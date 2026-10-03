@@ -183,7 +183,7 @@ static XSqliteLockGroup* xsqlite_lock_group_acquire(const XString* path)
                 XReadWriteLock_delete(freeGroup->m_shmLocks[index]);
                 freeGroup->m_shmLocks[index] = NULL;
             }
-            XString_delete_base(freeGroup->m_path);
+            XClassDelete(freeGroup->m_path);
             freeGroup->m_path = NULL;
             XMutex_unlock(g_xsqlite_lockRegistryMutex);
             return NULL;
@@ -214,7 +214,7 @@ static void xsqlite_lock_group_release(XSqliteLockGroup* group)
         XReadWriteLock_delete(group->m_shmLocks[index]);
         group->m_shmLocks[index] = NULL;
     }
-    if (group->m_path) XString_delete_base(group->m_path);
+    if (group->m_path) XClassDelete(group->m_path);
     group->m_path = NULL;
     XMutex_unlock(g_xsqlite_lockRegistryMutex);
 }
@@ -235,7 +235,7 @@ static int xsqlite_file_close(sqlite3_file* file)
         result = SQLITE_IOERR_DELETE;
     }
     if (sqliteFile->m_path) {
-        XString_delete_base(sqliteFile->m_path);
+        XClassDelete(sqliteFile->m_path);
         sqliteFile->m_path = NULL;
     }
     if (sqliteFile->m_lockGroup) {
@@ -390,7 +390,7 @@ static int xsqlite_file_shm_open(XSqliteFile* sqliteFile)
         : (XIODevice_ReadWrite | XIODevice_Create);
     sqliteFile->m_shmFd = xsqlite_open_file(sqliteFile->m_shmPath, mode, &error);
     if (sqliteFile->m_shmFd == XFD_INVALID) {
-        XString_delete_base(sqliteFile->m_shmPath);
+        XClassDelete(sqliteFile->m_shmPath);
         sqliteFile->m_shmPath = NULL;
         return sqliteFile->m_readOnly ? SQLITE_READONLY_CANTINIT : SQLITE_IOERR_SHMOPEN;
     }
@@ -526,7 +526,7 @@ static int xsqlite_file_shm_unmap(sqlite3_file* file, int deleteFlag)
         result = SQLITE_IOERR_DELETE;
     }
     if (sqliteFile->m_shmPath) {
-        XString_delete_base(sqliteFile->m_shmPath);
+        XClassDelete(sqliteFile->m_shmPath);
         sqliteFile->m_shmPath = NULL;
     }
     return result;
@@ -588,7 +588,7 @@ static int xsqlite_vfs_open(sqlite3_vfs* vfs, sqlite3_filename name,
     mode = xsqlite_file_open_mode(flags);
     sqliteFile->m_fd = xsqlite_open_file(path, mode, &error);
     if (sqliteFile->m_fd == XFD_INVALID) {
-        XString_delete_base(path);
+        XClassDelete(path);
         sqliteFile->m_parent.pMethods = NULL;
         return (flags & SQLITE_OPEN_MAIN_DB) ? SQLITE_CANTOPEN : SQLITE_CANTOPEN;
     }
@@ -601,7 +601,7 @@ static int xsqlite_vfs_open(sqlite3_vfs* vfs, sqlite3_filename name,
         if (!sqliteFile->m_lockGroup) {
             XDeviceFile_close(sqliteFile->m_fd);
             sqliteFile->m_fd = XFD_INVALID;
-            XString_delete_base(sqliteFile->m_path);
+            XClassDelete(sqliteFile->m_path);
             sqliteFile->m_path = NULL;
             sqliteFile->m_parent.pMethods = NULL;
             return SQLITE_NOMEM;
@@ -622,14 +622,14 @@ static int xsqlite_vfs_delete(sqlite3_vfs* vfs, const char* name, int syncDir)
     path = XString_create_utf8(name);
     if (!path) return SQLITE_NOMEM;
     if (!XDeviceFile_exists(path)) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return SQLITE_OK;
     }
     if (!XDeviceFile_removePermanent(path)) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return SQLITE_IOERR_DELETE;
     }
-    XString_delete_base(path);
+    XClassDelete(path);
     return SQLITE_OK;
 }
 
@@ -643,13 +643,13 @@ static int xsqlite_vfs_access(sqlite3_vfs* vfs, const char* name, int flags, int
     path = XString_create_utf8(name);
     if (!path) return SQLITE_NOMEM;
     if (!XDeviceFile_stat(path, &stat)) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return SQLITE_OK;
     }
     if (flags == SQLITE_ACCESS_EXISTS) *result = stat.exists != 0;
     else if (flags == SQLITE_ACCESS_READWRITE) *result = stat.isReadable && stat.isWritable;
     else if (flags == SQLITE_ACCESS_READ) *result = stat.isReadable != 0;
-    XString_delete_base(path);
+    XClassDelete(path);
     return SQLITE_OK;
 }
 

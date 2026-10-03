@@ -30,11 +30,11 @@ XConditionalFormatting* XConditionalFormatting_create(void)
 static void rule_deinit(XConditionalFormatting_Rule* rule)
 {
     if (!rule) return;
-    if (rule->m_formula1) XString_delete_base(rule->m_formula1);
-    if (rule->m_formula2) XString_delete_base(rule->m_formula2);
-    if (rule->m_formula3) XString_delete_base(rule->m_formula3);
-    if (rule->m_text) XString_delete_base(rule->m_text);
-    if (rule->m_timePeriod) XString_delete_base(rule->m_timePeriod);
+    if (rule->m_formula1) XClassDelete(rule->m_formula1);
+    if (rule->m_formula2) XClassDelete(rule->m_formula2);
+    if (rule->m_formula3) XClassDelete(rule->m_formula3);
+    if (rule->m_text) XClassDelete(rule->m_text);
+    if (rule->m_timePeriod) XClassDelete(rule->m_timePeriod);
     if (rule->m_format) XFormat_delete(rule->m_format);
     memset(rule, 0, sizeof(*rule));
 }
@@ -79,9 +79,9 @@ XConditionalFormatting* XConditionalFormatting_copy(const XConditionalFormatting
         dst.m_stdDev = src->m_stdDev;
         dst.m_showData = src->m_showData;
         dst.m_stopIfTrue = src->m_stopIfTrue;
-        if (src->m_formula1) { dst.m_formula1 = XString_create(); XCopy(dst.m_formula1, src->m_formula1); }
-        if (src->m_formula2) { dst.m_formula2 = XString_create(); XCopy(dst.m_formula2, src->m_formula2); }
-        if (src->m_formula3) { dst.m_formula3 = XString_create(); XCopy(dst.m_formula3, src->m_formula3); }
+        if (src->m_formula1) { dst.m_formula1 = XString_create(); XClassCopy(dst.m_formula1, src->m_formula1); }
+        if (src->m_formula2) { dst.m_formula2 = XString_create(); XClassCopy(dst.m_formula2, src->m_formula2); }
+        if (src->m_formula3) { dst.m_formula3 = XString_create(); XClassCopy(dst.m_formula3, src->m_formula3); }
         if (src->m_text) dst.m_text = XString_create_copy(src->m_text);
         if (src->m_timePeriod) dst.m_timePeriod = XString_create_copy(src->m_timePeriod);
         bool copied = (!src->m_format || dst.m_format) &&
@@ -113,8 +113,8 @@ void XConditionalFormatting_delete(XConditionalFormatting* self)
         XConditionalFormatting_Rule* r = (XConditionalFormatting_Rule*)XVector_at_base(self->m_rules, i);
         rule_deinit(r);
     }
-    if (self->m_rules) XVector_delete_base(self->m_rules);
-    if (self->m_ranges) XVector_delete_base(self->m_ranges);
+    if (self->m_rules) XClassDelete(self->m_rules);
+    if (self->m_ranges) XClassDelete(self->m_ranges);
     XFree_System(self);
 }
 

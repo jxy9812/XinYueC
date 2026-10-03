@@ -99,10 +99,10 @@ void XEvent_init(XEvent* event, XEventType type)
 
 ---
 
-#### XEvent_delete_base
+#### XClassDelete
 
 ```c
-void XEvent_delete_base(XEvent* event)
+void XClassDelete(XEvent* event)
 ```
 
 销毁事件并释放内存。
@@ -658,7 +658,7 @@ XVtable* MyEvent_class_init() {
 // 创建并发送事件
 MyEvent* event = MyEvent_create(myEventType, 100, someData);
 XObject_event_base(receiver, (XEvent*)event);
-XEvent_delete_base((XEvent*)event);
+XClassDelete((XEvent*)event);
 ```
 
 ---
@@ -1095,7 +1095,7 @@ aboutToBlock信号，事件循环即将阻塞时发射。
    └─> 分发到具体处理函数
 
 4. 事件销毁
-   └─> XEvent_delete_base()
+   └─> XClassDelete()
 ```
 
 ### 事件标志位说明

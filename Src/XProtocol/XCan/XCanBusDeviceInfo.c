@@ -21,23 +21,23 @@ void XCanBusDeviceInfo_deinit(XCanBusDeviceInfo* info)
 {
     if (!info) return;
     if (info->m_plugin) {
-        XString_delete_base(info->m_plugin);
+        XClassDelete(info->m_plugin);
         info->m_plugin = NULL;
     }
     if (info->m_name) {
-        XString_delete_base(info->m_name);
+        XClassDelete(info->m_name);
         info->m_name = NULL;
     }
     if (info->m_description) {
-        XString_delete_base(info->m_description);
+        XClassDelete(info->m_description);
         info->m_description = NULL;
     }
     if (info->m_serialNumber) {
-        XString_delete_base(info->m_serialNumber);
+        XClassDelete(info->m_serialNumber);
         info->m_serialNumber = NULL;
     }
     if (info->m_alias) {
-        XString_delete_base(info->m_alias);
+        XClassDelete(info->m_alias);
         info->m_alias = NULL;
     }
 }

@@ -103,7 +103,7 @@ XCLASS_DEFINE_EXTEND_END(XFileDialog, XDialog)
 /**
  * @brief      XFileDialog 文件对话框对象；m_base 必须是第一个成员。
  * @details    所有字符串字段为拥有型 XString*，列表字段为拥有型
- *             XStringList*；销毁随 XFileDialog_deinit_base 一并释放。
+ *             XStringList*；销毁随 XClassDeinit 一并释放。
  */
 typedef struct XFileDialog
 {
@@ -151,8 +151,6 @@ void XFileDialog_init(XFileDialog* self, XWidget* parent, XWidgetFlags flags);
  * @return     新对象指针；失败返回 NULL。
  */
 XFileDialog* XFileDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XFileDialog_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XFileDialog_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 实例属性（对标 QFileDialog） ==================== */
 
@@ -213,7 +211,7 @@ void XFileDialog_setNameFilters(XFileDialog* self, const XStringList* filters);
  * @brief      获取名称过滤器列表副本（对标 QFileDialog::nameFilters）。
  * @param      self 目标对话框；可为 NULL。
  * @return     新建的 XStringList 深拷贝，调用方拥有，须
- *             XStringList_delete_base；无效时返回空列表。
+ *             XClassDelete；无效时返回空列表。
  */
 XStringList* XFileDialog_nameFilters(const XFileDialog* self);
 /**
@@ -226,7 +224,7 @@ void XFileDialog_selectNameFilter(XFileDialog* self, const XString* filter);
 /**
  * @brief      获取当前选中的名称过滤器副本（对标 QFileDialog::selectedNameFilter）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效或无选中时返回空串。
  */
 XString* XFileDialog_selectedNameFilter(const XFileDialog* self);
@@ -240,7 +238,7 @@ void XFileDialog_setDirectory(XFileDialog* self, const XString* directory);
 /**
  * @brief      获取当前目录副本（对标 QFileDialog::directory）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效时返回空串。
  */
 XString* XFileDialog_directory(const XFileDialog* self);
@@ -255,13 +253,13 @@ void XFileDialog_selectFile(XFileDialog* self, const XString* filename);
  * @brief      获取已选文件列表副本（对标 QFileDialog::selectedFiles）。
  * @param      self 目标对话框；可为 NULL。
  * @return     新建的 XStringList 深拷贝，调用方拥有，须
- *             XStringList_delete_base；无效时返回空列表。
+ *             XClassDelete；无效时返回空列表。
  */
 XStringList* XFileDialog_selectedFiles(const XFileDialog* self);
 /**
  * @brief      获取第一个已选文件副本（对标 QFileDialog::selectedFiles 首项）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无选中或无效时返回空串。
  */
 XString* XFileDialog_selectedFile(const XFileDialog* self);
@@ -329,7 +327,7 @@ void XFileDialog_setDefaultSuffix(XFileDialog* self, const XString* suffix);
 /**
  * @brief      获取默认后缀副本（对标 QFileDialog::defaultSuffix）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效时返回空串。
  */
 XString* XFileDialog_defaultSuffix(const XFileDialog* self);
@@ -374,7 +372,7 @@ void XFileDialog_setLabelText(XFileDialog* self, XFileDialogDialogLabel label,
  * @brief      获取指定标签角色的文本副本（对标 QFileDialog::labelText）。
  * @param      self 目标对话框；可为 NULL。
  * @param      label 标签角色（XFileDialogDialogLabel）。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             未设置时返回空串。
  */
 XString* XFileDialog_labelText(const XFileDialog* self, XFileDialogDialogLabel label);
@@ -389,7 +387,7 @@ XString* XFileDialog_labelText(const XFileDialog* self, XFileDialogDialogLabel l
  * @param      dir 起始目录；可为 NULL。
  * @param      filter 名称过滤器；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getOpenFileName(XWidget* parent, const XString* caption,
                                      const XString* dir, const XString* filter,
@@ -402,7 +400,7 @@ XString* XFileDialog_getOpenFileName(XWidget* parent, const XString* caption,
  * @param      dir 起始目录（UTF-8）；可为 NULL。
  * @param      filter 名称过滤器（UTF-8）；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getOpenFileName_2(XWidget* parent, const char* caption,
                                        const char* dir, const char* filter,
@@ -415,7 +413,7 @@ XString* XFileDialog_getOpenFileName_2(XWidget* parent, const char* caption,
  * @param      dir 起始目录；可为 NULL。
  * @param      filter 名称过滤器；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XStringList，调用方拥有，须 XStringList_delete_base。
+ * @return     新建的 XStringList，调用方拥有，须 XClassDelete。
  */
 XStringList* XFileDialog_getOpenFileNames(XWidget* parent, const XString* caption,
                                           const XString* dir, const XString* filter,
@@ -428,7 +426,7 @@ XStringList* XFileDialog_getOpenFileNames(XWidget* parent, const XString* captio
  * @param      dir 起始目录（UTF-8）；可为 NULL。
  * @param      filter 名称过滤器（UTF-8）；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XStringList，调用方拥有，须 XStringList_delete_base。
+ * @return     新建的 XStringList，调用方拥有，须 XClassDelete。
  */
 XStringList* XFileDialog_getOpenFileNames_2(XWidget* parent, const char* caption,
                                             const char* dir, const char* filter,
@@ -441,7 +439,7 @@ XStringList* XFileDialog_getOpenFileNames_2(XWidget* parent, const char* caption
  * @param      dir 起始目录；可为 NULL。
  * @param      filter 名称过滤器；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getSaveFileName(XWidget* parent, const XString* caption,
                                      const XString* dir, const XString* filter,
@@ -454,7 +452,7 @@ XString* XFileDialog_getSaveFileName(XWidget* parent, const XString* caption,
  * @param      dir 起始目录（UTF-8）；可为 NULL。
  * @param      filter 名称过滤器（UTF-8）；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getSaveFileName_2(XWidget* parent, const char* caption,
                                        const char* dir, const char* filter,
@@ -465,7 +463,7 @@ XString* XFileDialog_getSaveFileName_2(XWidget* parent, const char* caption,
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      caption 对话框标题；可为 NULL。
  * @param      dir 起始目录；可为 NULL。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getExistingDirectory(XWidget* parent, const XString* caption,
                                           const XString* dir);
@@ -475,7 +473,7 @@ XString* XFileDialog_getExistingDirectory(XWidget* parent, const XString* captio
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      caption 对话框标题（UTF-8）；可为 NULL。
  * @param      dir 起始目录（UTF-8）；可为 NULL。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getExistingDirectory_2(XWidget* parent, const char* caption,
                                             const char* dir);
@@ -491,7 +489,7 @@ XString* XFileDialog_getExistingDirectory_2(XWidget* parent, const char* caption
  * @param      dir 起始目录；可为 NULL。
  * @param      filter 名称过滤器；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getOpenFileUrl(XWidget* parent, const XString* caption,
                                     const XString* dir, const XString* filter,
@@ -504,7 +502,7 @@ XString* XFileDialog_getOpenFileUrl(XWidget* parent, const XString* caption,
  * @param      dir 起始目录（UTF-8）；可为 NULL。
  * @param      filter 名称过滤器（UTF-8）；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getOpenFileUrl_2(XWidget* parent, const char* caption,
                                       const char* dir, const char* filter,
@@ -519,7 +517,7 @@ XString* XFileDialog_getOpenFileUrl_2(XWidget* parent, const char* caption,
  * @param      dir 起始目录或完整保存路径；可为 NULL。
  * @param      filter 名称过滤器；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getSaveFileUrl(XWidget* parent, const XString* caption,
                                     const XString* dir, const XString* filter,
@@ -532,7 +530,7 @@ XString* XFileDialog_getSaveFileUrl(XWidget* parent, const XString* caption,
  * @param      dir 起始目录或完整保存路径（UTF-8）；可为 NULL。
  * @param      filter 名称过滤器（UTF-8）；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getSaveFileUrl_2(XWidget* parent, const char* caption,
                                       const char* dir, const char* filter,
@@ -545,7 +543,7 @@ XString* XFileDialog_getSaveFileUrl_2(XWidget* parent, const char* caption,
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      caption 对话框标题；可为 NULL。
  * @param      dir 起始目录；可为 NULL。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getExistingDirectoryUrl(XWidget* parent,
                                              const XString* caption,
@@ -556,7 +554,7 @@ XString* XFileDialog_getExistingDirectoryUrl(XWidget* parent,
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      caption 对话框标题（UTF-8）；可为 NULL。
  * @param      dir 起始目录（UTF-8）；可为 NULL。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XFileDialog_getExistingDirectoryUrl_2(XWidget* parent,
                                                const char* caption,
@@ -571,7 +569,7 @@ XString* XFileDialog_getExistingDirectoryUrl_2(XWidget* parent,
  * @param      dir 起始目录；可为 NULL。
  * @param      filter 名称过滤器；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XStringList，调用方拥有，须 XStringList_delete_base。
+ * @return     新建的 XStringList，调用方拥有，须 XClassDelete。
  */
 XStringList* XFileDialog_getOpenFileUrls(XWidget* parent,
                                          const XString* caption,
@@ -586,7 +584,7 @@ XStringList* XFileDialog_getOpenFileUrls(XWidget* parent,
  * @param      dir 起始目录（UTF-8）；可为 NULL。
  * @param      filter 名称过滤器（UTF-8）；可为 NULL。
  * @param      selectedFilterIndex 输出：选中的过滤器下标（可为 NULL）。
- * @return     新建的 XStringList，调用方拥有，须 XStringList_delete_base。
+ * @return     新建的 XStringList，调用方拥有，须 XClassDelete。
  */
 XStringList* XFileDialog_getOpenFileUrls_2(XWidget* parent,
                                            const char* caption,

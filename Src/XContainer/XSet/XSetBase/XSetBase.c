@@ -88,7 +88,7 @@ size_t XSetBase_removeIf_base(XSetBase* this_set, XSetBase_predicate pred, void*
                 ++removed;
         }
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return removed;
 }
 

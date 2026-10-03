@@ -70,7 +70,7 @@ void XObjectBindableProperty_init_ex(XObjectBindableProperty* self, XObject* obj
 {
     XObjectBindableProperty_init(self, object, signal);
     if (!self || !initialValue) return;
-    XCopy((XClass*)&self->m_data.m_value, (const XClass*)initialValue);
+    XClassCopy((XClass*)&self->m_data.m_value, (const XClass*)initialValue);
 }
 
 void XObjectBindableProperty_deinit(XObjectBindableProperty* self)

@@ -112,8 +112,6 @@ void XDockWidget_init(XDockWidget* self, const char* utf8Title,
 XDockWidget* XDockWidget_create_ex(XMemoryType memory,
                                    const char* utf8Title,
                                    XWidget* parent, XWidgetFlags flags);
-#define XDockWidget_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XDockWidget_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief X停靠控件set控件（对标 Qt 同名接口）。
  * @details 对标 Qt setWidget 的替换语义：首次设置装入内容并立即摆到

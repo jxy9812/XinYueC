@@ -51,7 +51,7 @@ static void XSetTest_Basic(void)
 
     XSet_clear_base(set);
     XPrintf("  clear 后 size=%zu (期望 0)\n", XSet_size_base(set));
-    XSet_delete_base(set);
+    XClassDelete(set);
 }
 
 /* ==================== Qt 命名对齐测试 ==================== */
@@ -71,9 +71,9 @@ static void XSetTest_QtAliases(void)
     XPrintf("  keys.size=%zu values.size=%zu (%s)\n",
         XVector_size_base(keys), XVector_size_base(vals),
         (XVector_size_base(keys)==XVector_size_base(vals)?"OK":"FAIL"));
-    XVector_delete_base(keys);
-    XVector_delete_base(vals);
-    XSet_delete_base(set);
+    XClassDelete(keys);
+    XClassDelete(vals);
+    XClassDelete(set);
 }
 
 /* ==================== 压力/穿透测试 ==================== */
@@ -118,7 +118,7 @@ static void XSetTest_QtNewApis(void)
     size_t rem2 = XSet_erase_if_base(set, IsEven, NULL);
     XPrintf("  erase_if(偶数) 删除=%zu, 剩余=%zu\n", rem2, XSet_size_base(set));
 
-    XSet_delete_base(set);
+    XClassDelete(set);
 }
 
 static void XSetTest_Stress(void)
@@ -142,7 +142,7 @@ static void XSetTest_Stress(void)
     XSet_iterator_for_each(set, SumKeys, &sum);
     XPrintf("  遍历求和 sum=%lld\n", sum);
 
-    XSet_delete_base(set);
+    XClassDelete(set);
 }
 
 /* ==================== 主入口 ==================== */

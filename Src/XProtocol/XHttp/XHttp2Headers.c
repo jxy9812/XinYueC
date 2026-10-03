@@ -341,8 +341,8 @@ static void xhttp2_field_delete(XHttp2HeaderField* field)
 {
     if (!field)
         return;
-    if (field->m_name) XClass_delete_base((XClass*)field->m_name);
-    if (field->m_value) XClass_delete_base((XClass*)field->m_value);
+    if (field->m_name) XClassDelete((XClass*)field->m_name);
+    if (field->m_value) XClassDelete((XClass*)field->m_value);
     field->m_name = NULL;
     field->m_value = NULL;
 }
@@ -545,7 +545,7 @@ static XByteArray* xhttp2_huffman_encode(const XByteArray* value)
             current = (uint8_t)((current << 1) | bit);
             if (++bits == 8) {
                 if (!XByteArray_push_back_1(result, current)) {
-                    XClass_delete_base((XClass*)result);
+                    XClassDelete((XClass*)result);
                     return NULL;
                 }
                 current = 0;
@@ -557,7 +557,7 @@ static XByteArray* xhttp2_huffman_encode(const XByteArray* value)
         current = (uint8_t)(current << (8 - bits));
         current = (uint8_t)(current | (uint8_t)((1u << (8 - bits)) - 1u));
         if (!XByteArray_push_back_1(result, current)) {
-            XClass_delete_base((XClass*)result);
+            XClassDelete((XClass*)result);
             return NULL;
         }
     }
@@ -582,7 +582,7 @@ static XByteArray* xhttp2_huffman_decode(const uint8_t* data, size_t size)
             bool matched = false;
             code = (code << 1) | ((data[i] >> bitIndex) & 1u);
             if (++bits > 30) {
-                XClass_delete_base((XClass*)result);
+                XClassDelete((XClass*)result);
                 return NULL;
             }
             for (symbol = 0; symbol < 257; ++symbol) {
@@ -590,7 +590,7 @@ static XByteArray* xhttp2_huffman_decode(const uint8_t* data, size_t size)
                 if (entry->m_bits == bits &&
                     (entry->m_code >> (32 - bits)) == code) {
                     if (symbol == 256 || !XByteArray_push_back_1(result, (uint8_t)symbol)) {
-                        XClass_delete_base((XClass*)result);
+                        XClassDelete((XClass*)result);
                         return NULL;
                     }
                     code = 0;
@@ -603,7 +603,7 @@ static XByteArray* xhttp2_huffman_decode(const uint8_t* data, size_t size)
         }
     }
     if (bits > 7 || (bits != 0 && code != (uint32_t)((1u << bits) - 1u))) {
-        XClass_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -623,7 +623,7 @@ static bool xhttp2_encode_string(XByteArray* out, const XByteArray* value,
                                           XByteArray_constData((XByteArray*)payload),
                                           XByteArray_size_base((XByteArray*)payload)));
     if (compressed)
-        XClass_delete_base((XClass*)compressed);
+        XClassDelete((XClass*)compressed);
     return result;
 }
 
@@ -654,7 +654,7 @@ XByteArray* XHttp2HeaderList_encode(const XHttp2HeaderList* self, bool enableHuf
     }
     return out;
 fail:
-    XClass_delete_base((XClass*)out);
+    XClassDelete((XClass*)out);
     return NULL;
 }
 
@@ -767,8 +767,8 @@ static bool xhttp2_dynamic_prepend(XHttp2HeaderField** fields, size_t* size,
     nameCopy = XByteArray_create_copy(name);
     valueCopy = XByteArray_create_copy(value);
     if (!nameCopy || !valueCopy) {
-        if (nameCopy) XClass_delete_base((XClass*)nameCopy);
-        if (valueCopy) XClass_delete_base((XClass*)valueCopy);
+        if (nameCopy) XClassDelete((XClass*)nameCopy);
+        if (valueCopy) XClassDelete((XClass*)valueCopy);
         return false;
     }
     while (*size > 0 && *dataSize > maxSize - entrySize) {
@@ -784,8 +784,8 @@ static bool xhttp2_dynamic_prepend(XHttp2HeaderField** fields, size_t* size,
         replacement = (XHttp2HeaderField*)XRealloc_System(
             *fields, newCapacity * sizeof(**fields));
         if (!replacement) {
-            XClass_delete_base((XClass*)nameCopy);
-            XClass_delete_base((XClass*)valueCopy);
+            XClassDelete((XClass*)nameCopy);
+            XClassDelete((XClass*)valueCopy);
             return false;
         }
         *fields = replacement;
@@ -1028,7 +1028,7 @@ XByteArray* XHttp2HeaderEncoder_encode(XHttp2HeaderEncoder* self,
     self->m_sizeUpdatePending = false;
     return result;
 fail:
-    XClass_delete_base((XClass*)result);
+    XClassDelete((XClass*)result);
     return NULL;
 }
 
@@ -1179,8 +1179,8 @@ static bool xhttp2_table_field(size_t index, XHttp2HeaderField* dynamicFields,
         *value = XByteArray_create_copy(dynamicFields[dynamicIndex].m_value);
     }
     if (!*name || !*value) {
-        if (*name) XClass_delete_base((XClass*)*name);
-        if (*value) XClass_delete_base((XClass*)*value);
+        if (*name) XClassDelete((XClass*)*name);
+        if (*value) XClassDelete((XClass*)*value);
         *name = NULL;
         *value = NULL;
         return false;
@@ -1229,19 +1229,19 @@ XHttp2HeaderList* XHttp2HeaderDecoder_decode(XHttp2HeaderDecoder* decoder,
                 if (!xhttp2_table_field(index, decoder->m_dynamicFields,
                                         decoder->m_dynamicSize, &name, &indexedValue))
                     goto fail;
-                XClass_delete_base((XClass*)indexedValue);
+                XClassDelete((XClass*)indexedValue);
             } else {
                 name = xhttp2_decode_string(data, size, &offset);
             }
             value = xhttp2_decode_string(data, size, &offset);
         }
         if (!name || !value || !XHttp2HeaderList_append(result, name, value)) {
-            if (name) XClass_delete_base((XClass*)name);
-            if (value) XClass_delete_base((XClass*)value);
+            if (name) XClassDelete((XClass*)name);
+            if (value) XClassDelete((XClass*)value);
             goto fail;
         }
-        XClass_delete_base((XClass*)name);
-        XClass_delete_base((XClass*)value);
+        XClassDelete((XClass*)name);
+        XClassDelete((XClass*)value);
         if (incremental && !xhttp2_dynamic_prepend(&decoder->m_dynamicFields,
                                                    &decoder->m_dynamicSize,
                                                    &decoder->m_dynamicCapacity,
@@ -1253,7 +1253,7 @@ XHttp2HeaderList* XHttp2HeaderDecoder_decode(XHttp2HeaderDecoder* decoder,
     }
     return result;
 fail:
-    XClass_delete_base((XClass*)result);
+    XClassDelete((XClass*)result);
     return NULL;
 }
 
@@ -1263,7 +1263,7 @@ XHttp2HeaderList* XHttp2HeaderList_decode(const void* rawData, size_t size)
     XHttp2HeaderList* result = decoder ?
         XHttp2HeaderDecoder_decode(decoder, rawData, size) : NULL;
     if (decoder)
-        XClass_delete_base((XClass*)decoder);
+        XClassDelete((XClass*)decoder);
     return result;
 }
 #endif // XHTTP_ON

@@ -718,7 +718,7 @@ XPicture* XPicture_create_copy(const XPicture* other, XMemoryType memory)
     if (!other) return NULL;
     self = XPicture_create_ex(memory);
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -728,7 +728,7 @@ XPicture* XPicture_create_move(XPicture* other, XMemoryType memory)
     if (!other) return NULL;
     self = XPicture_create_ex(memory);
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -741,7 +741,7 @@ void XPicture_init(XPicture* self, int formatVersion)
     {
         memory = Class_Memory(self);
         isHeap = Class_IsHeap(self);
-        XPicture_deinit_base(self);
+        XClassDeinit(self);
     }
     XMemset(self, 0, sizeof(XPicture));
     XClass_init((XClass*)self);
@@ -1058,13 +1058,13 @@ bool XPicture_recordSetFont(XPicture* self, const XFont* font)
     length = utf8 ? XStrlen(utf8) : 0u;
     if (!utf8 || length == 0u || length > XPICTURE_MAX_FONT_TEXT)
     {
-        XString_delete_base((XClass*)snapshot);
+        XClassDelete((XClass*)snapshot);
         return false;
     }
     payload = (uint8_t*)XMalloc_Hybrid(length + XPICTURE_FONT_FIXED_SIZE);
     if (!payload)
     {
-        XString_delete_base((XClass*)snapshot);
+        XClassDelete((XClass*)snapshot);
         return false;
     }
     XPicture_putU32(payload, (uint32_t)length);
@@ -1073,7 +1073,7 @@ bool XPicture_recordSetFont(XPicture* self, const XFont* font)
     ok = XPicture_appendRecord(self, XPictureOpcode_SetFont, payload,
                                (uint32_t)(length + XPICTURE_FONT_FIXED_SIZE));
     XFree_Hybrid(payload);
-    XString_delete_base((XClass*)snapshot);
+    XClassDelete((XClass*)snapshot);
     return ok;
 }
 
@@ -1974,14 +1974,14 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             {
                 /* Do not call XPainter_setFont(): replay is deliberately
                    silent and must not append another SetFont record. */
-                XMove((XClass*)&painter->m_state.m_font,
+                XClassMove((XClass*)&painter->m_state.m_font,
                                 (XClass*)&font);
                 ok = true;
             }
-            /* XMove() leaves the source initialized with empty
+            /* XClassMove() leaves the source initialized with empty
                owned strings; keep the temporary's lifecycle paired on both
                the success and parse-failure paths. */
-            XFont_deinit_base((XClass*)&font);
+            XClassDeinit((XClass*)&font);
         }
         else if (opcode == XPictureOpcode_SetOpacity)
         {
@@ -2437,7 +2437,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                              XPicture_imageDataCleanup, imageBytes);
             if (XImage_isNull(&image))
             {
-                XImage_deinit_base(&image);
+                XClassDeinit(&image);
                 XFree_Hybrid(imageBytes);
                 return false;
             }
@@ -2461,7 +2461,7 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             ok = painter->m_drawImage(painter, &image,
                                     (int)XPicture_getI32(payload + 0),
                                     (int)XPicture_getI32(payload + 4));
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
         }
 #if XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON
         else if (opcode == XPictureOpcode_DrawPixmap)
@@ -2496,8 +2496,8 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                              XPicture_imageDataCleanup, imageBytes);
             if (XImage_isNull(&image))
             {
-                XImage_deinit_base(&image);
-                XPixmap_deinit_base(&pixmap);
+                XClassDeinit(&image);
+                XClassDeinit(&pixmap);
                 XFree_Hybrid(imageBytes);
                 return false;
             }
@@ -2531,8 +2531,8 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             drawOk = !XPixmap_isNull(&pixmap) &&
                      XPainter_drawPixmapRect(painter, &targetRect, &pixmap,
                                              &sourceRect);
-            XPixmap_deinit_base(&pixmap);
-            XImage_deinit_base(&image);
+            XClassDeinit(&pixmap);
+            XClassDeinit(&image);
             ok = drawOk;
         }
 #endif /* XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON */
@@ -2567,8 +2567,8 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
                              XPicture_imageDataCleanup, imageBytes);
             if (XImage_isNull(&image))
             {
-                XImage_deinit_base(&image);
-                XPixmap_deinit_base(&pixmap);
+                XClassDeinit(&image);
+                XClassDeinit(&pixmap);
                 XFree_Hybrid(imageBytes);
                 return false;
             }
@@ -2600,8 +2600,8 @@ static bool XPicture_play_inner(const XPicture* self, XPainter* painter)
             ok = !XPixmap_isNull(&pixmap) &&
                  XPainter_drawTiledPixmap(painter, &rect, &pixmap,
                                           &offsetPoint);
-            XPixmap_deinit_base(&pixmap);
-            XImage_deinit_base(&image);
+            XClassDeinit(&pixmap);
+            XClassDeinit(&image);
         }
 #endif /* XPAINTER_TILED_PIXMAP_ON && XPAINTER_PIXMAP_ON */
         if (!ok) return false;
@@ -2637,8 +2637,8 @@ bool XPicture_load(XPicture* self, const XString* fileName)
 {
     XFile* file; XByteArray* bytes; size_t size; bool success = false;
     if (!self || !self->m_data || !fileName || XContainer_isEmpty_base((const XContainer*)fileName)) return false;
-    file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClass_delete_base((XClass*)file); XPicture_reset(self); return false; }
-    bytes = XIODevice_readAll_3((XIODevice*)file); XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); size = bytes ? XByteArray_size_base((const XContainer*)bytes) : 0;
+    file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClassDelete((XClass*)file); XPicture_reset(self); return false; }
+    bytes = XIODevice_readAll_3((XIODevice*)file); XIODevice_close_base((XIODevice*)file); XClassDelete((XClass*)file); size = bytes ? XByteArray_size_base((const XContainer*)bytes) : 0;
     if (bytes && size <= UINT32_MAX)
     {
         /* Qt QPicture::load(QString) delegates to load(QIODevice*) after a
@@ -2651,7 +2651,7 @@ bool XPicture_load(XPicture* self, const XString* fileName)
                          (uint32_t)size);
         success = XPicture_isValidStream(self);
     }
-    if (bytes) XByteArray_delete_base((XClass*)bytes);
+    if (bytes) XClassDelete((XClass*)bytes);
     if (!bytes || size > UINT32_MAX)
         XPicture_reset(self);
     return success;
@@ -2661,7 +2661,7 @@ bool XPicture_load_2(XPicture* self, const char* fileName)
 {
     XString* value = fileName ? XString_create_utf8(fileName) : NULL;
     bool result = XPicture_load(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 
@@ -2681,7 +2681,7 @@ bool XPicture_load_device(XPicture* self, XIODevice* device)
         XPicture_setData(self, XByteArray_constData(bytes), (uint32_t)size);
         success = XPicture_isValidStream(self);
     }
-    if (bytes) XByteArray_delete_base((XClass*)bytes);
+    if (bytes) XClassDelete((XClass*)bytes);
     if (!bytes || size > UINT32_MAX)
         XPicture_reset(self);
     return success;
@@ -2691,9 +2691,9 @@ bool XPicture_save(const XPicture* self, const XString* fileName)
 {
     XFile* file; bool success;
     if (!self || !self->m_data || !fileName || XContainer_isEmpty_base((const XContainer*)fileName)) return false;
-    file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) { if (file) XClass_delete_base((XClass*)file); return false; }
+    file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) { if (file) XClassDelete((XClass*)file); return false; }
     success = XPicture_save_device(self, (XIODevice*)file);
-    XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file);
+    XIODevice_close_base((XIODevice*)file); XClassDelete((XClass*)file);
     return success;
 }
 
@@ -2701,7 +2701,7 @@ bool XPicture_save_2(const XPicture* self, const char* fileName)
 {
     XString* value = fileName ? XString_create_utf8(fileName) : NULL;
     bool result = XPicture_save(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 

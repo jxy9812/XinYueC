@@ -342,7 +342,7 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
                         ++occluderCount;
                     }
                 }
-                XVector_delete_base(tops);
+                XClassDelete(tops);
             }
         }
     }

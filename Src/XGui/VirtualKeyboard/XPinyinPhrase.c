@@ -259,15 +259,15 @@ static bool imePhraseTryOpen(const char* path, XString** outStr,
     file = str ? XFile_create() : NULL;
     if (!str || !file)
     {
-        if (file) XClass_delete_base((XClass*)file);
-        if (str) XClass_delete_base((XClass*)str);
+        if (file) XClassDelete((XClass*)file);
+        if (str) XClassDelete((XClass*)str);
         return false;
     }
     XFile_setFileName(file, str);
     if (!XFile_open_2(file, XIODevice_ReadOnly, 0))
     {
-        XClass_delete_base((XClass*)file);
-        XClass_delete_base((XClass*)str);
+        XClassDelete((XClass*)file);
+        XClassDelete((XClass*)str);
         return false;
     }
     *outStr = str;
@@ -337,7 +337,7 @@ static bool imePhraseReadFile(const char* path, char** outBlob, int32_t* outLen)
                         imePhraseTryOpen(joined, &str, &file);
                     }
                 }
-                XString_delete_base((XClass*)dir);
+                XClassDelete((XClass*)dir);
             }
         }
         if (!file)
@@ -360,15 +360,15 @@ static bool imePhraseReadFile(const char* path, char** outBlob, int32_t* outLen)
     }
     *outBlob = blob;
     *outLen = raw;
-    XClass_delete_base((XClass*)bytes);
-    XClass_delete_base((XClass*)file);
-    XClass_delete_base((XClass*)str);
+    XClassDelete((XClass*)bytes);
+    XClassDelete((XClass*)file);
+    XClassDelete((XClass*)str);
     return true;
 failed:
     if (blob) XFree_System(blob);
-    if (bytes) XClass_delete_base((XClass*)bytes);
-    if (file) XClass_delete_base((XClass*)file);
-    if (str) XClass_delete_base((XClass*)str);
+    if (bytes) XClassDelete((XClass*)bytes);
+    if (file) XClassDelete((XClass*)file);
+    if (str) XClassDelete((XClass*)str);
     return false;
 }
 

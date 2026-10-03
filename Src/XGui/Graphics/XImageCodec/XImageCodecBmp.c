@@ -562,11 +562,11 @@ bool XImageCodecInternal_decodeBmp(const uint8_t* data, size_t size, XImage* out
      * 新建图像的默认 3937 dots/meter 一致。 */
     XImage_setDotsPerMeterX(&temp, pelsPerMeterX);
     XImage_setDotsPerMeterY(&temp, pelsPerMeterY);
-    XMove(out, &temp);
+    XClassMove(out, &temp);
     ok = true;
 
 bmp_done:
-    if (!ok && tempInitialized) XImage_deinit_base(&temp);
+    if (!ok && tempInitialized) XClassDeinit(&temp);
     if (indexBuffer) XFree_System(indexBuffer);
     return ok;
 }
@@ -753,7 +753,7 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
                                        XImageFormat_ARGB32 : XImageFormat_RGB32,
                                    0u, &converted);
         if (XImage_isNull(&converted)) {
-            XImage_deinit_base(&converted);
+            XClassDeinit(&converted);
             return false;
         }
         source = &converted;
@@ -766,20 +766,20 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
     colorCount = XImage_colorCount(source);
     if (width <= 0 || height <= 0 || depth <= 0 || depth > 32 ||
         colorCount < 0 || colorCount > 256) {
-        if (hasConverted) XImage_deinit_base(&converted);
+        if (hasConverted) XClassDeinit(&converted);
         return false;
     }
     if ((size_t)width > (SIZE_MAX - 31u) / (size_t)depth) {
-        if (hasConverted) XImage_deinit_base(&converted);
+        if (hasConverted) XClassDeinit(&converted);
         return false;
     }
     if (((size_t)width * (size_t)depth + 31u) / 32u > (size_t)INT_MAX) {
-        if (hasConverted) XImage_deinit_base(&converted);
+        if (hasConverted) XClassDeinit(&converted);
         return false;
     }
     bitsPerLine = (int)(((size_t)width * (size_t)depth + 31u) / 32u);
     if ((size_t)bitsPerLine > SIZE_MAX / 4u) {
-        if (hasConverted) XImage_deinit_base(&converted);
+        if (hasConverted) XClassDeinit(&converted);
         return false;
     }
     bpl = (size_t)bitsPerLine * 4u;
@@ -787,33 +787,33 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
     nbits = depth;
     if (depth == 8 && colorCount <= 16) {
         if (bpl > SIZE_MAX - 1u || (bpl + 1u) / 2u > SIZE_MAX - 3u) {
-            if (hasConverted) XImage_deinit_base(&converted);
+            if (hasConverted) XClassDeinit(&converted);
             return false;
         }
         bplBmp = ((bpl + 1u) / 2u + 3u) & ~((size_t)3u);
         nbits = 4;
     } else if (depth == 32) {
         if ((size_t)width > (SIZE_MAX - 31u) / 24u) {
-            if (hasConverted) XImage_deinit_base(&converted);
+            if (hasConverted) XClassDeinit(&converted);
             return false;
         }
         bplBmp = (((size_t)width * 24u + 31u) / 32u) * 4u;
         nbits = 24;
     }
     if ((size_t)height > SIZE_MAX / bplBmp) {
-        if (hasConverted) XImage_deinit_base(&converted);
+        if (hasConverted) XClassDeinit(&converted);
         return false;
     }
     imageBytes = bplBmp * (size_t)height;
     colorBytes = depth == 32 ? 0u : (size_t)colorCount * 4u;
     if (imageBytes > UINT32_MAX || imageBytes > SIZE_MAX - 40u ||
         colorBytes > SIZE_MAX - 40u - imageBytes) {
-        if (hasConverted) XImage_deinit_base(&converted);
+        if (hasConverted) XClassDeinit(&converted);
         return false;
     }
     total = 40u + colorBytes + imageBytes;
     if (!XByteArray_resize_base((XVector*)out, total)) {
-        if (hasConverted) XImage_deinit_base(&converted);
+        if (hasConverted) XClassDeinit(&converted);
         return false;
     }
     dst = XByteArray_data(out);
@@ -846,13 +846,13 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
     if (nbits == 1 || nbits == 8) {
         int sourceBpl = XImage_bytesPerLine(source);
         if (sourceBpl < 0 || (size_t)sourceBpl < bpl) {
-            if (hasConverted) XImage_deinit_base(&converted);
+            if (hasConverted) XClassDeinit(&converted);
             return false;
         }
         for (y = height - 1; y >= 0; --y) {
             const uint8_t* pixels = XImage_constScanLine(source, y);
             if (!pixels) {
-                if (hasConverted) XImage_deinit_base(&converted);
+                if (hasConverted) XClassDeinit(&converted);
                 return false;
             }
             XMemcpy(dst + 40u + colorBytes + (size_t)(height - 1 - y) * bplBmp,
@@ -866,7 +866,7 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
             if (nbits == 4) {
                 const uint8_t* pixels = XImage_constScanLine(source, y);
                 if (!pixels || XImage_bytesPerLine(source) < width) {
-                    if (hasConverted) XImage_deinit_base(&converted);
+                    if (hasConverted) XClassDeinit(&converted);
                     return false;
                 }
                 for (x = 0; x < width / 2; ++x)
@@ -884,7 +884,7 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
             }
         }
     }
-    if (hasConverted) XImage_deinit_base(&converted);
+    if (hasConverted) XClassDeinit(&converted);
     return true;
 }
 

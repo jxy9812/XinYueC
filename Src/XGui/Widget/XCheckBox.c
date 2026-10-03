@@ -138,7 +138,7 @@ static XSize checkbox_computeSizeHint(const XCheckBox* self)
         if (h < XPainter_textHeight(&font))
             h = XPainter_textHeight(&font);
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     if (hasIcon) {
         XSize_init(&iconSize, 16, 16);
         if (checkbox_hasIconSize(self))
@@ -402,7 +402,7 @@ xcb_style_label:
         }
 #endif /* XPAINTER_TEXTLAYOUT_ON */
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     XPainter_restore(painter);
 }
 

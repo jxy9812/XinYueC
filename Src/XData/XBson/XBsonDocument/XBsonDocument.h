@@ -50,7 +50,7 @@ XBsonValue* XBsonElement_value(XBsonElement* element);
 
 /**
  * @brief 创建空 BSON 文档。
- * @return 新对象，失败返回 NULL；调用者使用 XBsonDocument_delete_base 释放。
+ * @return 新对象，失败返回 NULL；调用者使用 XClassDelete 释放。
  */
 XBsonDocument* XBsonDocument_create_ex(XMemoryType memory);
 /**
@@ -165,14 +165,12 @@ bool XBsonDocument_remove_keyUtf8(XBsonDocument* doc, const char* key);
 size_t XBsonDocument_removeAll_keyUtf8(XBsonDocument* doc, const char* key);
 /** @brief 删除指定索引元素。 */
 bool XBsonDocument_removeAt(XBsonDocument* doc, int64_t index);
-/** @brief 返回所有键的有序深拷贝向量，调用者使用 XVector_delete_base 释放。 */
+/** @brief 返回所有键的有序深拷贝向量，调用者使用 XClassDelete 释放。 */
 XVector* XBsonDocument_keys_base(const XBsonDocument* doc);
 
 /* 旧接口兼容别名。按键查找返回第一个元素索引，按索引擦除。 */
 #define XBsonDocument_find_base XBsonDocument_indexOf
 #define XBsonDocument_erase_base(doc,index) XBsonDocument_removeAt((doc),(index))
-#define XBsonDocument_deinit_base XVector_deinit_base
-#define XBsonDocument_delete_base XVector_delete_base
 #define XBsonDocument_clear_base XVector_clear_base
 #define XBsonDocument_isEmpty_base XVector_isEmpty_base
 #define XBsonDocument_size_base XVector_size_base

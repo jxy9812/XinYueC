@@ -98,7 +98,7 @@ static void VXFile_deinit(XFile* file)
 {
     if (!file) return;
     if (file->m_fileName) {
-        XString_delete_base(file->m_fileName);
+        XClassDelete(file->m_fileName);
         file->m_fileName = NULL;
     }
     XClass_Deinit_Parent(XFileDevice, file);
@@ -171,7 +171,7 @@ void XFile_setFileName(XFile* file, const XString* name)
         XIODevice_close_base((XIODevice*)&file->m_parent.m_parent);
     }
 
-    if (file->m_fileName) XString_delete_base(file->m_fileName);
+    if (file->m_fileName) XClassDelete(file->m_fileName);
     file->m_fileName = XString_create_copy(name);
 }
 
@@ -321,7 +321,7 @@ XString* XFile_symLinkTarget_static(const XString* fileName)
     if (!target) return NULL;
     
     if (!XDeviceFile_readLink(fileName, target)) {
-        XString_delete_base(target);
+        XClassDelete(target);
         return NULL;
     }
     return target;
@@ -341,7 +341,7 @@ bool XFile_resize_static(const XString* fileName, int64_t sz)
         result = XFile_resize_base((XFileDevice*)&file, sz);
         XIODevice_close_base((XIODevice*)&file);
     }
-    XClass_deinit_base(&file);
+    XClassDeinit(&file);
     return result;
 }
 
@@ -350,7 +350,7 @@ XFilePermissions XFile_permissions_static(const XString* fileName)
     XFile file;
     XFile_init_2(&file, fileName);
     XFilePermissions perms = XFile_permissions_base(&file);
-    XClass_deinit_base(&file);
+    XClassDeinit(&file);
     return perms;
 }
 
@@ -359,7 +359,7 @@ bool XFile_setPermissions_static(const XString* fileName, XFilePermissions permi
     XFile file;
     XFile_init_2(&file, fileName);
     bool result = XFile_setPermissions_base(&file, permissions);
-    XClass_deinit_base(&file);
+    XClassDeinit(&file);
     return result;
 }
 

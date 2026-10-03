@@ -249,11 +249,11 @@ void XAbstractNetIoRing_cleanupQueues(XAbstractNetIoRing* ring) {
 
     /* 释放 SQ/CQ 无锁队列 */
     if (ring->m_sq) {
-        XLockFreeQueue_delete_base(ring->m_sq);
+        XClassDelete(ring->m_sq);
         ring->m_sq = NULL;
     }
     if (ring->m_cq) {
-        XLockFreeQueue_delete_base(ring->m_cq);
+        XClassDelete(ring->m_cq);
         ring->m_cq = NULL;
     }
     ring->m_eventFd = XFD_INVALID;

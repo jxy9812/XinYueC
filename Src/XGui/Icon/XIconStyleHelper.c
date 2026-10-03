@@ -79,7 +79,7 @@ static void styleDisabled(const XPixmap* base, XPalette* palette, XPixmap* out)
     XImage_init(&image);
     XPixmap_toImage(base, &image);
     if (!XImage_convertToFormatInPlace(&image, XImageFormat_ARGB32, 0)) {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return;
     }
     width = XImage_width(&image);
@@ -126,7 +126,7 @@ static void styleDisabled(const XPixmap* base, XPalette* palette, XPixmap* out)
     }
     XPixmap_fromImage(&image, 0, out);
     XPixmap_setDevicePixelRatio(out, XPixmap_devicePixelRatio(base));
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 static void styleSelected(const XPixmap* base, XPalette* palette, XPixmap* out)
@@ -147,7 +147,7 @@ static void styleSelected(const XPixmap* base, XPalette* palette, XPixmap* out)
     XPixmap_toImage(base, &image);
     if (!XImage_convertToFormatInPlace(&image,
                                        XImageFormat_ARGB32_Premultiplied, 0)) {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return;
     }
     width = XImage_width(&image);
@@ -182,14 +182,14 @@ static void styleSelected(const XPixmap* base, XPalette* palette, XPixmap* out)
     }
     XPixmap_fromImage(&image, 0, out);
     XPixmap_setDevicePixelRatio(out, XPixmap_devicePixelRatio(base));
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 void XIconStyleHelper_apply(XIconMode mode, const XPixmap* base, XPixmap* out)
 {
     if (!out || !base || XPixmap_isNull(base)) return;
     if (mode != XIconMode_Disabled && mode != XIconMode_Selected) {
-        XCopy(out, base);
+        XClassCopy(out, base);
         return;
     }
 #if XGUIAPPLICATION_ON && XPALETTE_ON
@@ -199,7 +199,7 @@ void XIconStyleHelper_apply(XIconMode mode, const XPixmap* base, XPixmap* out)
     else
         styleSelected(base, &palette, out);
 #else
-    XCopy(out, base);
+    XClassCopy(out, base);
 #endif
 }
 

@@ -162,14 +162,14 @@ static XAccessible* xpa_accessibleForPath(XPlatformAccessibilityPosix* state,
             path + strlen(XPA_WIDGET_PREFIX), &end, 10);
         XAccessible* result = NULL;
         if (!end || *end != '\0' || !widgets) {
-            if (widgets) XVector_delete_base((XClass*)widgets);
+            if (widgets) XClassDelete((XClass*)widgets);
             return NULL;
         }
         for (i = 0; i < XVector_size_base((const XContainer*)widgets) && !result; ++i) {
             XWidget* widget = XVector_At_Base(widgets, (int64_t)i, XWidget*);
             result = xpa_findWidget(widget, target);
         }
-        XVector_delete_base((XClass*)widgets);
+        XClassDelete((XClass*)widgets);
         return result;
     }
 #endif
@@ -184,11 +184,11 @@ static XAccessible* xpa_accessibleForPath(XPlatformAccessibilityPosix* state,
             XWindow* window = XVector_At_Base(windows, (int64_t)i, XWindow*);
             if (window && (uintptr_t)window == target) {
                 XAccessible* result = (XAccessible*)XWindow_accessibleRoot(window);
-                XVector_delete_base((XClass*)windows);
+                XClassDelete((XClass*)windows);
                 return result;
             }
         }
-        XVector_delete_base((XClass*)windows);
+        XClassDelete((XClass*)windows);
         return NULL;
     }
     if (strncmp(path, XPA_WINDOW_PREFIX, strlen(XPA_WINDOW_PREFIX)) != 0)
@@ -201,11 +201,11 @@ static XAccessible* xpa_accessibleForPath(XPlatformAccessibilityPosix* state,
         XWindow* window = XVector_At_Base(windows, (int64_t)i, XWindow*);
         if (window && (unsigned long long)XWindow_winId(window) == id) {
             XAccessible* result = (XAccessible*)XWindow_accessibleRoot(window);
-            XVector_delete_base((XClass*)windows);
+            XClassDelete((XClass*)windows);
             return result;
         }
     }
-    XVector_delete_base((XClass*)windows);
+    XClassDelete((XClass*)windows);
     return NULL;
 }
 
@@ -295,13 +295,13 @@ static DBusHandlerResult xpa_handleMessage(DBusConnection* connection,
         XString* value = XAccessible_name(accessible);
         const char* text = value ? XString_toUtf8(value) : "";
         dbus_message_append_args(reply, DBUS_TYPE_STRING, &text, DBUS_TYPE_INVALID);
-        if (value) XString_delete_base((XClass*)value);
+        if (value) XClassDelete((XClass*)value);
     } else if (strcmp(interface, "org.a11y.atspi.Accessible") == 0 &&
                strcmp(member, "GetDescription") == 0) {
         XString* value = XAccessible_description(accessible);
         const char* text = value ? XString_toUtf8(value) : "";
         dbus_message_append_args(reply, DBUS_TYPE_STRING, &text, DBUS_TYPE_INVALID);
-        if (value) XString_delete_base((XClass*)value);
+        if (value) XClassDelete((XClass*)value);
     } else if (strcmp(interface, "org.a11y.atspi.Accessible") == 0 &&
                strcmp(member, "GetRole") == 0) {
         dbus_uint32_t role = (dbus_uint32_t)xpa_atspiRole(XAccessible_role(accessible));
@@ -440,7 +440,7 @@ static void xpa_registerAllWidgets(XPlatformAccessibilityPosix* state)
         XWidget* widget = XVector_At_Base(widgets, (int64_t)i, XWidget*);
         if (widget) xpa_registerWidgetTree(state, widget);
     }
-    XVector_delete_base((XClass*)widgets);
+    XClassDelete((XClass*)widgets);
 }
 #endif
 

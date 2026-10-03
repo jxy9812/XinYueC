@@ -30,7 +30,7 @@ XSqlRelationalDelegate* XSqlRelationalDelegate_create_ex(XMemoryType memory)
     return delegate;
 }
 
-int XSqlRelationalDelegate_fieldIndex(const XSqlTableModel* model, const XSqlDriver* driver, const XString* fieldName) { if (!model || !fieldName) return -1; XString* stripped = XSqlDriver_isIdentifierEscaped_base(driver, fieldName, XSqlIdentifierType_FieldName) ? XSqlDriver_stripDelimiters_base(driver, fieldName, XSqlIdentifierType_FieldName) : XString_create_copy(fieldName); int result = stripped ? XSqlTableModel_fieldIndex(model, XString_toUtf8(stripped)) : -1; if (stripped) XString_delete_base(stripped); return result; }
+int XSqlRelationalDelegate_fieldIndex(const XSqlTableModel* model, const XSqlDriver* driver, const XString* fieldName) { if (!model || !fieldName) return -1; XString* stripped = XSqlDriver_isIdentifierEscaped_base(driver, fieldName, XSqlIdentifierType_FieldName) ? XSqlDriver_stripDelimiters_base(driver, fieldName, XSqlIdentifierType_FieldName) : XString_create_copy(fieldName); int result = stripped ? XSqlTableModel_fieldIndex(model, XString_toUtf8(stripped)) : -1; if (stripped) XClassDelete(stripped); return result; }
 XVariant* XSqlRelationalDelegate_displayValue(const XSqlRelationalTableModel* model, int row, int column) { return XSqlRelationalTableModel_data(model, row, column, XSqlItemDataRole_Display); }
 XVariant* XSqlRelationalDelegate_editValue(const XSqlRelationalTableModel* model, int row, int column) { return XSqlRelationalTableModel_data(model, row, column, XSqlItemDataRole_Edit); }
 bool XSqlRelationalDelegate_setModelData(XSqlRelationalTableModel* model, int row, int column, const XVariant* displayValue, const XVariant* editValue)

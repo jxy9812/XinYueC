@@ -2362,7 +2362,7 @@ static void xtc_keyPressEvent(XTextControl* self, XKeyEvent* e)
                 self->m_cursorIsFocusIndicator = self->m_hasFocus;
                 xtc_emitString(self, XTextControl_linkActivated_signal, utf8);
             }
-            if (href) XString_delete_base((XClass*)href);
+            if (href) XClassDelete((XClass*)href);
             XEvent_accept((XEvent*)e);
             return;
         }
@@ -2665,7 +2665,7 @@ static void xtc_mousePressEvent(XTextControl* self, XMouseEvent* e)
         }
         if (utf8 && utf8[0])
             self->m_anchorOnMousePress = xtc_strdupN(utf8, -1);
-        if (anchor) XString_delete_base((XClass*)anchor);
+        if (anchor) XClassDelete((XClass*)anchor);
         if (self->m_cursorIsFocusIndicator) {
             self->m_cursorIsFocusIndicator = false;
             self->m_cursorAnchor = self->m_cursorPosition;
@@ -2793,7 +2793,7 @@ static void xtc_mouseMoveEvent(XTextControl* self, XMouseEvent* e)
             xtc_emitString(self, XTextControl_linkHovered_signal,
                            hasNew ? utf8 : "");
         }
-        if (anchor) XString_delete_base((XClass*)anchor);
+        if (anchor) XClassDelete((XClass*)anchor);
     }
 
     if (e->m_buttons & (int)XMouseButton_LeftButton) {
@@ -2895,7 +2895,7 @@ static void xtc_mouseReleaseEvent(XTextControl* self, XMouseEvent* e)
         anchor = XTextControl_anchorAt(self, &pos);
         utf8 = anchor ? XString_toUtf8(anchor) : NULL;
         if (!utf8 || !utf8[0]) {
-            if (anchor) XString_delete_base((XClass*)anchor);
+            if (anchor) XClassDelete((XClass*)anchor);
             XEvent_ignore((XEvent*)e);
             return;
         }
@@ -2906,7 +2906,7 @@ static void xtc_mouseReleaseEvent(XTextControl* self, XMouseEvent* e)
             int anchorPos = XTextControl_hitTest(
                 self, &pos, (int)XTextControlHitTestAccuracy_ExactHit);
             if (anchorPos < 0) {
-                if (anchor) XString_delete_base((XClass*)anchor);
+                if (anchor) XClassDelete((XClass*)anchor);
                 XEvent_ignore((XEvent*)e);
                 return;
             }
@@ -2918,7 +2918,7 @@ static void xtc_mouseReleaseEvent(XTextControl* self, XMouseEvent* e)
             }
             xtc_activateLinkUnderCursor(self);
         }
-        if (anchor) XString_delete_base((XClass*)anchor);
+        if (anchor) XClassDelete((XClass*)anchor);
     }
 }
 
@@ -4277,7 +4277,7 @@ void XTextControl_copy(XTextControl* self)
             XString* st = XString_create_utf8(text);
             if (st) {
                 XClipboard_setText(clip, st, (int)XClipboardMode_Clipboard);
-                XString_delete_base((XClass*)st);
+                XClassDelete((XClass*)st);
             }
         }
     }
@@ -4322,7 +4322,7 @@ static void xtc_pasteFromMode(XTextControl* self, int mode)
             if (st) {
                 const char* utf8 = XString_toUtf8(st);
                 if (utf8 && utf8[0]) owned = xtc_strdupN(utf8, -1);
-                XString_delete_base((XClass*)st);
+                XClassDelete((XClass*)st);
             }
         }
     }
@@ -5258,13 +5258,13 @@ void XTextControl_setFont(XTextControl* self, const XFont* font)
     familyChanged = (oldFamily != newFamily) &&
                     (oldFamily == NULL || newFamily == NULL ||
                      XStrcmp(oldFamily, newFamily) != 0);
-    XFont_deinit_base((XClass*)&self->m_font);
+    XClassDeinit((XClass*)&self->m_font);
     /* 深拷贝（对标 XWidget_font 的 Phase 3.2 裁定）：XFont 值拷贝共享
        XString 指针，浅拷贝会在任一持有方 deinit 后留下悬空指针。 */
     XFont_init(&self->m_font);
-    XCopy(&self->m_font, &f);
+    XClassCopy(&self->m_font, &f);
     /* 注意：f.m_family/f.m_styleName 归调用方字体对象所有（setFont
-       无权释放）；XCopy 已为 self 深拷贝出新串，调用方稍后自行
+       无权释放）；XClassCopy 已为 self 深拷贝出新串，调用方稍后自行
        deinit 其副本。 */
     ascent = XPainter_textAscent(&self->m_font);
     descent = XPainter_textDescent(&self->m_font);
@@ -5288,8 +5288,8 @@ void XTextControl_font(const XTextControl* self, XFont* out)
     if (!out) return;
     XFont_init(out);
     if (self) {
-        /* 文档契约：深拷贝（调用方配合 XFont_deinit_base 释放）。 */
-        XCopy(out, &self->m_font);
+        /* 文档契约：深拷贝（调用方配合 XClassDeinit 释放）。 */
+        XClassCopy(out, &self->m_font);
     }
 }
 
@@ -5495,10 +5495,10 @@ static void VXTextControl_deinit(XTextControl* self)
     self->m_highlightedAnchor = NULL;
     self->m_linkToCopy = NULL;
     xtc_clearPreeditState(self);
-    XFont_deinit_base((XClass*)&self->m_font);
+    XClassDeinit((XClass*)&self->m_font);
 #if XTEXTDOCUMENT_ON
     if (self->m_textDoc) {
-        XClass_delete_base((XClass*)self->m_textDoc);
+        XClassDelete((XClass*)self->m_textDoc);
         self->m_textDoc = NULL;
     }
 #endif

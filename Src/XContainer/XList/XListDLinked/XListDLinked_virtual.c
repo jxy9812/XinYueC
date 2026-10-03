@@ -760,7 +760,7 @@ void VXList_sort(XListDLinked* this_list, XSortOrder order)
             XStack_push_base(stack, &ListMiddle->next);
         }
     }
-    XStack_delete_base(stack);
+    XClassDelete(stack);
 #else
     IS_ON_DEBUG(XStack_ON);
 #endif

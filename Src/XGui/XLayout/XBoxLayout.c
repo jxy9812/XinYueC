@@ -1239,7 +1239,7 @@ void XBoxLayout_insertWidget(XBoxLayout* self, int index, XWidget* widget,
         XBoxLayout_insertStretchSlot(self, idx, stretch);
         XLayoutItem_invalidate_base((XLayoutItem*)self);
     } else {
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
     }
 }
 
@@ -1285,7 +1285,7 @@ void XBoxLayout_insertSpacing(XBoxLayout* self, int index, int size)
         XBoxLayout_insertStretchSlot(self, idx, 0);
         XLayoutItem_invalidate_base((XLayoutItem*)self);
     } else {
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
     }
 }
 
@@ -1311,7 +1311,7 @@ void XBoxLayout_insertStretch(XBoxLayout* self, int index, int stretch)
         XBoxLayout_insertStretchSlot(self, idx, stretch);
         XLayoutItem_invalidate_base((XLayoutItem*)self);
     } else {
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
     }
 }
 
@@ -1394,7 +1394,7 @@ void XBoxLayout_insertWidgetEx(XBoxLayout* self, int index, XWidget* widget,
         XBoxLayout_insertStretchSlot(self, idx, stretch);
         XLayoutItem_invalidate_base((XLayoutItem*)self);
     } else {
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
     }
 }
 
@@ -1442,7 +1442,7 @@ void XBoxLayout_addStrut(XBoxLayout* self, int size)
         XBoxLayout_insertStretchSlot(self, idx, 0);
         XLayoutItem_invalidate_base((XLayoutItem*)self);
     } else {
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
     }
 }
 
@@ -1463,7 +1463,7 @@ void XBoxLayout_insertSpacerItem(XBoxLayout* self, int index, XSpacerItem* item)
     } else {
         /* 所有权已按契约移交布局而条目未入列：与同文件 insertWidget/
          * insertSpacing 等同型入口一致，失败路径在此兜底释放。 */
-        XLayoutItem_delete_base((XLayoutItem*)item);
+        XClassDelete((XLayoutItem*)item);
     }
 }
 

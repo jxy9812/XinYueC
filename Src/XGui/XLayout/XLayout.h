@@ -146,9 +146,7 @@ XVtable* XLayout_class_init(void);
 void XLayout_init(XLayout* self);
 
 /** @brief 通过 XClass 虚表释放布局资源（栈/外部存储对象使用）。 */
-#define XLayout_deinit_base(self)  XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的布局对象。 */
-#define XLayout_delete_base(self)  XClass_delete_base((XClass*)(self))
 
 /* ==================== 条目管理虚函数（对标 QLayout 纯虚函数） ==================== */
 
@@ -218,7 +216,7 @@ XLayoutItem* XLayout_replaceItemAt_base(XLayout* self, int index,
 /**
  * @brief      移除包装指定控件的条目（对标 QLayout::removeWidget）。
  * @details    只移除条目，不删除控件；被移除的内部条目对象由调用方
- *             使用 XLayoutItem_delete_base 释放或析构管理。
+ *             使用 XClassDelete 释放或析构管理。
  * @param      self 目标布局；可为 NULL。
  * @param      widget 目标控件借用指针；可为 NULL（忽略）。
  */
@@ -227,7 +225,7 @@ void XLayout_removeWidget(XLayout* self, XWidget* widget);
 /**
  * @brief      移除指定条目（对标 QLayout::removeItem）。
  * @details    只移除条目；被移除的内部条目对象由调用方使用
- *             XLayoutItem_delete_base 释放或析构管理。
+ *             XClassDelete 释放或析构管理。
  * @param      self 目标布局；可为 NULL。
  * @param      item 目标条目借用指针；可为 NULL（忽略）。
  */

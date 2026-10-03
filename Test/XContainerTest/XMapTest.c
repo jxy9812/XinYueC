@@ -59,7 +59,7 @@ static void XMapTest_Basic(void)
 
     XMap_clear_base(map);
     XPrintf("  clear 后 size=%zu (期望 0)\n", XMap_size_base(map));
-    XMap_delete_base(map);
+    XClassDelete(map);
 }
 
 /* ==================== Qt 命名对齐 ==================== */
@@ -85,9 +85,9 @@ static void XMapTest_QtAliases(void)
     XPrintf("  keys.size=%zu values.size=%zu (%s)\n",
         XVector_size_base(keys), XVector_size_base(vals),
         (XVector_size_base(keys)==XVector_size_base(vals)?"OK":"FAIL"));
-    XVector_delete_base(keys);
-    XVector_delete_base(vals);
-    XMap_delete_base(map);
+    XClassDelete(keys);
+    XClassDelete(vals);
+    XClassDelete(map);
 }
 
 /* ==================== 新 API：removeIf / erase_if / reserve / squeeze ==================== */
@@ -122,7 +122,7 @@ static void XMapTest_QtNewApis(void)
     size_t rem2 = XMap_erase_if_base(map, ValIsOdd, NULL);
     XPrintf("  erase_if(val 为奇数) 删除=%zu, 剩余=%zu\n", rem2, XMap_size_base(map));
 
-    XMap_delete_base(map);
+    XClassDelete(map);
 }
 
 /* ==================== 压力测试 ==================== */
@@ -148,7 +148,7 @@ static void XMapTest_Stress(void)
     XMap_iterator_for_each(map, SumValues, &sum);
     XPrintf("  遍历求 val 和 sum=%lld\n", sum);
 
-    XMap_delete_base(map);
+    XClassDelete(map);
 }
 
 /* ==================== 主入口 ==================== */

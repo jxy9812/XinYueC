@@ -15,8 +15,8 @@ XCommandLineOptionGroup* XCommandLineOptionGroup_create(const XString* name,
     group->options = XVector_create(sizeof(XCommandLineOption*));
 
     if (!group->options) {
-        XString_delete_base(group->name);
-        XString_delete_base(group->description);
+        XClassDelete(group->name);
+        XClassDelete(group->description);
         XFree_System(group);
         return NULL;
     }
@@ -27,9 +27,9 @@ XCommandLineOptionGroup* XCommandLineOptionGroup_create(const XString* name,
 void XCommandLineOptionGroup_delete(XCommandLineOptionGroup* group)
 {
     if (!group) return;
-    XString_delete_base(group->name);
-    XString_delete_base(group->description);
-    XVector_delete_base(group->options);
+    XClassDelete(group->name);
+    XClassDelete(group->description);
+    XClassDelete(group->options);
     XFree_System(group);
 }
 

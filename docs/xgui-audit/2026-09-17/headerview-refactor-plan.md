@@ -48,7 +48,7 @@
 `m_hiddenCount`、`m_sectionsClickable`、`m_sectionsMovable`、`m_sortIndicatorShown/
 Section/Order`。
 
-公共 API 共 **39 个函数**（另含 create 宏与 deinit_base/delete_base 宏），分组：
+公共 API 共 **39 个函数**（另含 create 宏；反初始化/删除统一走 XClassDeinit/XClassDelete），分组：
 
 | 分组 | API |
 |---|---|
@@ -147,7 +147,7 @@ XTreeWidget→XTreeView。范式（XTableView.c:76-135）：
 | XTableWidget.c/.h | **零调用**。grep "header" 仅命中自有实现：`m_hHeaders/m_vHeaders`（XString* 标签数组，XTableWidget.h:61-63）、常量 `XTW_HEADER_H 24`/`XTW_HEADER_W 40`（.c:17-18）、标签转发到模型 headerData（.c:443）。表头几何由 XTableWidget 自绘自理 |
 | XTableView.c | **零调用**。表头用常量 `XTV_HEADER_H 20`（.c:24），绘制时直接 `XAbstractItemModel_headerData_2(model, col, 0)` 取文本（.c:542） |
 | XTreeView.c | 仅注释提及"参照 XHeaderView m_hidden 模式"（.c:65），非代码依赖 |
-| xgui_regression_test.c | **唯一构造点**：.c:129 包含头，28532-28568 一段测试（create→setCount→hide/show/clickable/movable/swap/move/sortIndicator→delete_base，10 条断言） |
+| xgui_regression_test.c | **唯一构造点**：.c:129 包含头，28532-28568 一段测试（create→setCount→hide/show/clickable/movable/swap/move/sortIndicator→XClassDelete，10 条断言） |
 | Test/XGuiTest、xgui_window_demo.c 等其他 demo/Test | 零命中 |
 | CMakeLists.txt | 递归 GLOB（CMakeLists.txt:61），改基类不涉构建脚本 |
 

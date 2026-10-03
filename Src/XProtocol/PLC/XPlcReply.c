@@ -60,28 +60,28 @@ static void VXPlcReply_deinit(XPlcReply* reply) {
 
     // 释放成员
     if (reply->m_errorString) {
-        XString_delete_base((XClass*)reply->m_errorString);
+        XClassDelete((XClass*)reply->m_errorString);
         reply->m_errorString = NULL;
     }
 
     if (reply->m_result) {
-        XVariant_delete_base((XClass*)reply->m_result);
+        XClassDelete((XClass*)reply->m_result);
         reply->m_result = NULL;
     }
 
     if (reply->m_rawResult) {
-        XByteArray_delete_base((XClass*)reply->m_rawResult);
+        XClassDelete((XClass*)reply->m_rawResult);
         reply->m_rawResult = NULL;
     }
 
     if (reply->m_request)
     {
-        XByteArray_delete_base((XClass*)reply->m_request);
+        XClassDelete((XClass*)reply->m_request);
         reply->m_request = NULL;
     }
 
     if (reply->m_intermediateErrors) {
-        XVector_delete_base((XClass*)reply->m_intermediateErrors);
+        XClassDelete((XClass*)reply->m_intermediateErrors);
         reply->m_intermediateErrors = NULL;
     }
 
@@ -160,7 +160,7 @@ XPlcDevice_Error XPlcReply_error(const XPlcReply* reply) {
 void XPlcReply_setResult(XPlcReply* reply, const XVariant* value) {
     if (!reply || !value) return;
     if (reply->m_result) {
-        XCopy(reply->m_result, value);
+        XClassCopy(reply->m_result, value);
     }
     else
     {
@@ -172,7 +172,7 @@ void XPlcReply_setResult_move(XPlcReply* reply, XVariant* value)
 {
     if (!reply || !value) return;
     if (reply->m_result) {
-        XMove(reply->m_result, value);
+        XClassMove(reply->m_result, value);
     }
     else
     {
@@ -184,7 +184,7 @@ void XPlcReply_setResult_ref(XPlcReply* reply, XVariant* value)
 {
     if (!reply) return;
     if (reply->m_result) {
-        XVariant_delete_base((XClass*)reply->m_result);
+        XClassDelete((XClass*)reply->m_result);
         reply->m_result = NULL;
     }
     if (value) {
@@ -195,7 +195,7 @@ void XPlcReply_setResult_ref(XPlcReply* reply, XVariant* value)
 void XPlcReply_setRawResult(XPlcReply* reply, const XByteArray* data) {
     if (!reply || !data) return;
     if (reply->m_rawResult)
-        XCopy(reply->m_rawResult, data);
+        XClassCopy(reply->m_rawResult, data);
     else
         reply->m_rawResult = XByteArray_create_copy(data);
 }
@@ -204,7 +204,7 @@ void XPlcReply_setRawResult_move(XPlcReply* reply, XByteArray* data)
 {
     if (!reply || !data) return;
     if (reply->m_rawResult)
-        XMove(reply->m_rawResult, data);
+        XClassMove(reply->m_rawResult, data);
     else
         reply->m_rawResult = XByteArray_create_move(data);
 }
@@ -213,7 +213,7 @@ void XPlcReply_setRawResult_ref(XPlcReply* reply, XByteArray* data)
 {
     if (!reply) return;
     if (reply->m_rawResult) {
-        XByteArray_delete_base((XClass*)reply->m_rawResult);
+        XClassDelete((XClass*)reply->m_rawResult);
         reply->m_rawResult = NULL;
     }
     if (data) {

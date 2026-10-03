@@ -145,9 +145,7 @@ XAbstractNetIoRing* XAbstractNetIoRing_create_ex(XMemoryType memory);
 void XAbstractNetIoRing_cleanupQueues(XAbstractNetIoRing* ring);
 
 /** @brief 反初始化（宏复用基类，等价于 XClass_deinit_base） */
-#define XAbstractNetIoRing_deinit_base  XClass_deinit_base
 /** @brief 释放对象（宏复用基类，等价于 XClass_delete_base） */
-#define XAbstractNetIoRing_delete_base  XClass_delete_base
 
 /* ==================== 核心功能（非虚函数，无 _base 后缀） ==================== */
 

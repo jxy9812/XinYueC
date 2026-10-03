@@ -24,11 +24,11 @@ static void xhttp_part_release_members(XHttpPart* self)
     if (!self)
         return;
     if (self->m_headers) {
-        XClass_delete_base((XClass*)self->m_headers);
+        XClassDelete((XClass*)self->m_headers);
         self->m_headers = NULL;
     }
     if (self->m_body) {
-        XClass_delete_base((XClass*)self->m_body);
+        XClassDelete((XClass*)self->m_body);
         self->m_body = NULL;
     }
     self->m_bodyDevice = NULL;
@@ -119,7 +119,7 @@ XHttpPart* XHttpPart_create_ex(XMemoryType memory)
         return NULL;
     XHttpPart_init(self);
     if (!self->m_headers || !self->m_body) {
-        XHttpPart_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -134,7 +134,7 @@ XHttpPart* XHttpPart_create_copy(const XHttpPart* other)
         return NULL;
     self = XHttpPart_create();
     if (self)
-        XCopy((XClass*)self, (const XClass*)other);
+        XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -145,7 +145,7 @@ XHttpPart* XHttpPart_create_move(XHttpPart* other)
         return NULL;
     self = XHttpPart_create();
     if (self)
-        XMove((XClass*)self, (XClass*)other);
+        XClassMove((XClass*)self, (XClass*)other);
     return self;
 }
 
@@ -168,8 +168,8 @@ static void VXHttpPart_copy(XHttpPart* dest, const XHttpPart* src)
     headers = src->m_headers ? XHttpHeaders_create_copy(src->m_headers) : XHttpHeaders_create();
     body = src->m_body ? XByteArray_create_copy(src->m_body) : XByteArray_create();
     if (!headers || !body) {
-        if (headers) XClass_delete_base((XClass*)headers);
-        if (body) XClass_delete_base((XClass*)body);
+        if (headers) XClassDelete((XClass*)headers);
+        if (body) XClassDelete((XClass*)body);
         return;
     }
     xhttp_part_release_members(dest);
@@ -208,8 +208,8 @@ bool XHttpPart_setRawHeader_utf8(XHttpPart* self, const char* name, const char* 
     nameBytes = XByteArray_create_utf8(name);
     valueBytes = XByteArray_create_utf8(value ? value : "");
     result = nameBytes && valueBytes && XHttpPart_setRawHeader(self, nameBytes, valueBytes);
-    if (nameBytes) XClass_delete_base((XClass*)nameBytes);
-    if (valueBytes) XClass_delete_base((XClass*)valueBytes);
+    if (nameBytes) XClassDelete((XClass*)nameBytes);
+    if (valueBytes) XClassDelete((XClass*)valueBytes);
     return result;
 }
 
@@ -222,7 +222,7 @@ bool XHttpPart_setHeader(XHttpPart* self, XHttpPart_KnownHeader header, const XB
         return false;
     nameBytes = XByteArray_create_utf8(name);
     result = nameBytes && XHttpPart_setRawHeader(self, nameBytes, value);
-    if (nameBytes) XClass_delete_base((XClass*)nameBytes);
+    if (nameBytes) XClassDelete((XClass*)nameBytes);
     return result;
 }
 
@@ -234,7 +234,7 @@ bool XHttpPart_setBody(XHttpPart* self, const XByteArray* body)
     replacement = body ? XByteArray_create_copy(body) : XByteArray_create();
     if (!replacement)
         return false;
-    if (self->m_body) XClass_delete_base((XClass*)self->m_body);
+    if (self->m_body) XClassDelete((XClass*)self->m_body);
     self->m_body = replacement;
     self->m_bodyDevice = NULL;
     return true;
@@ -248,7 +248,7 @@ bool XHttpPart_setBody_utf8(XHttpPart* self, const char* body)
         return false;
     bytes = XByteArray_create_utf8(body ? body : "");
     result = bytes && XHttpPart_setBody(self, bytes);
-    if (bytes) XClass_delete_base((XClass*)bytes);
+    if (bytes) XClassDelete((XClass*)bytes);
     return result;
 }
 
@@ -314,7 +314,7 @@ XHttpMultiPart* XHttpMultiPart_create_ex(XMemoryType memory, XHttpMultiPart_Cont
     XHttpMultiPart_init(self, type);
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_parts || !self->m_boundary) {
-        XHttpMultiPart_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -329,13 +329,13 @@ static void VXHttpMultiPart_deinit(XHttpMultiPart* self)
         for (size_t i = 0; i < XContainer_size_base((const XContainer*)self->m_parts); ++i) {
             XHttpPart** part = (XHttpPart**)XVector_at_base(self->m_parts, (int64_t)i);
             if (part && *part)
-                XClass_delete_base((XClass*)*part);
+                XClassDelete((XClass*)*part);
         }
-        XClass_delete_base((XClass*)self->m_parts);
+        XClassDelete((XClass*)self->m_parts);
         self->m_parts = NULL;
     }
     if (self->m_boundary) {
-        XClass_delete_base((XClass*)self->m_boundary);
+        XClassDelete((XClass*)self->m_boundary);
         self->m_boundary = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -350,7 +350,7 @@ bool XHttpMultiPart_append(XHttpMultiPart* self, const XHttpPart* part)
     if (!copy)
         return false;
     if (!XVector_push_back_1_base(self->m_parts, &copy)) {
-        XClass_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return false;
     }
     return true;
@@ -377,7 +377,7 @@ bool XHttpMultiPart_setBoundary(XHttpMultiPart* self, const XByteArray* boundary
     replacement = XByteArray_create_copy(boundary);
     if (!replacement)
         return false;
-    if (self->m_boundary) XClass_delete_base((XClass*)self->m_boundary);
+    if (self->m_boundary) XClassDelete((XClass*)self->m_boundary);
     self->m_boundary = replacement;
     return true;
 }
@@ -426,10 +426,10 @@ XByteArray* XHttpMultiPart_toByteArray(const XHttpMultiPart* self)
         partBody = deviceBody ? deviceBody : part->m_body;
         if (partBody && !xhttp_append_bytes(body, XByteArray_constData((XByteArray*)partBody),
                                             XByteArray_size_base((XContainer*)partBody))) {
-            if (deviceBody) XClass_delete_base((XClass*)deviceBody);
+            if (deviceBody) XClassDelete((XClass*)deviceBody);
             goto failed;
         }
-        if (deviceBody) XClass_delete_base((XClass*)deviceBody);
+        if (deviceBody) XClassDelete((XClass*)deviceBody);
         if (!XByteArray_append_utf8(body, "\r\n"))
             goto failed;
     }
@@ -440,7 +440,7 @@ XByteArray* XHttpMultiPart_toByteArray(const XHttpMultiPart* self)
     return body;
 
 failed:
-    XClass_delete_base((XClass*)body);
+    XClassDelete((XClass*)body);
     return NULL;
 }
 
@@ -457,7 +457,7 @@ XByteArray* XHttpMultiPart_contentType(const XHttpMultiPart* self)
         !xhttp_append_bytes(result, XByteArray_constData(self->m_boundary),
                             XByteArray_size_base((XContainer*)self->m_boundary)) ||
         !XByteArray_append_utf8(result, "\"")) {
-        if (result) XClass_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     return result;

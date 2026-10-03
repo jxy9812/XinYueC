@@ -102,9 +102,9 @@ static int xcal_titleLayout(const XCalendarWidget* cal,
     font = XWidget_font((XWidget*)cal);
     tw = XPainter_textWidth(&font, title);
     yw = XPainter_textWidth(&font, yearPart);
-    /* 显式 XClass 转换：XFont_deinit_base 为 XClass_deinit_base 裸别名
+    /* 显式 XClass 转换：XClassDeinit 为 XClass_deinit_base 裸别名
      * 宏，直呼指针类型不符（XChartView.c 同款注释）。 */
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
     if (tw <= 0) return -1;
     tx = (w - tw) / 2;
     if (tx < 0) tx = 0;
@@ -291,7 +291,7 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
     {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
-        XFont_deinit_base((XClass*)&font);
+        XClassDeinit((XClass*)&font);
     }
     y = 0;
     if (cal->m_navBarVisible) {
@@ -926,7 +926,7 @@ static void VXCalendarWidget_deinit(XCalendarWidget* self)
 {
     if (!self) return;
     if (self->m_yearEdit) {
-        XLineEdit_delete_base(self->m_yearEdit);
+        XClassDelete(self->m_yearEdit);
         self->m_yearEdit = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);

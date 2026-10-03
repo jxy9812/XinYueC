@@ -60,7 +60,7 @@ static bool xcookie_equal_literal(const XByteArray* value, const char* literal)
         return false;
     expected = XByteArray_create_utf8(literal);
     result = expected && xcookie_equal(value, expected);
-    if (expected) XClass_delete_base((XClass*)expected);
+    if (expected) XClassDelete((XClass*)expected);
     return result;
 }
 
@@ -113,10 +113,10 @@ static void xcookie_release_members(XNetworkCookie* self)
 {
     if (!self)
         return;
-    if (self->m_name) XClass_delete_base((XClass*)self->m_name);
-    if (self->m_value) XClass_delete_base((XClass*)self->m_value);
-    if (self->m_domain) XClass_delete_base((XClass*)self->m_domain);
-    if (self->m_path) XClass_delete_base((XClass*)self->m_path);
+    if (self->m_name) XClassDelete((XClass*)self->m_name);
+    if (self->m_value) XClassDelete((XClass*)self->m_value);
+    if (self->m_domain) XClassDelete((XClass*)self->m_domain);
+    if (self->m_path) XClassDelete((XClass*)self->m_path);
     self->m_name = NULL;
     self->m_value = NULL;
     self->m_domain = NULL;
@@ -166,7 +166,7 @@ XNetworkCookie* XNetworkCookie_create_ex(XMemoryType memory, const XByteArray* n
     if (!self->m_name || !self->m_value || !self->m_domain || !self->m_path ||
         (name && !XNetworkCookie_setName(self, name)) ||
         (value && !XNetworkCookie_setValue(self, value))) {
-        XNetworkCookie_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -180,7 +180,7 @@ XNetworkCookie* XNetworkCookie_create_copy(const XNetworkCookie* other)
     if (!other)
         return NULL;
     self = XNetworkCookie_create_empty();
-    if (self) XCopy((XClass*)self, (const XClass*)other);
+    if (self) XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -190,7 +190,7 @@ XNetworkCookie* XNetworkCookie_create_move(XNetworkCookie* other)
     if (!other)
         return NULL;
     self = XNetworkCookie_create_empty();
-    if (self) XMove((XClass*)self, (XClass*)other);
+    if (self) XClassMove((XClass*)self, (XClass*)other);
     return self;
 }
 
@@ -216,10 +216,10 @@ static void VXNetworkCookie_copy(XNetworkCookie* dest, const XNetworkCookie* src
     domain = src->m_domain ? XByteArray_create_copy(src->m_domain) : XByteArray_create();
     path = src->m_path ? XByteArray_create_copy(src->m_path) : XByteArray_create();
     if (!name || !value || !domain || !path) {
-        if (name) XClass_delete_base((XClass*)name);
-        if (value) XClass_delete_base((XClass*)value);
-        if (domain) XClass_delete_base((XClass*)domain);
-        if (path) XClass_delete_base((XClass*)path);
+        if (name) XClassDelete((XClass*)name);
+        if (value) XClassDelete((XClass*)value);
+        if (domain) XClassDelete((XClass*)domain);
+        if (path) XClassDelete((XClass*)path);
         return;
     }
     xcookie_release_members(dest);
@@ -260,7 +260,7 @@ static bool xcookie_set_bytes(XByteArray** target, const XByteArray* value)
     XByteArray* replacement = value ? XByteArray_create_copy(value) : XByteArray_create();
     if (!replacement)
         return false;
-    if (*target) XClass_delete_base((XClass*)*target);
+    if (*target) XClassDelete((XClass*)*target);
     *target = replacement;
     return true;
 }
@@ -403,7 +403,7 @@ XByteArray* XNetworkCookie_toRawForm(const XNetworkCookie* self, XNetworkCookie_
     if (self->m_sameSite == XNetworkCookie_SameSiteStrict && !XByteArray_append_utf8(result, "; SameSite=Strict")) goto failed;
     return result;
 failed:
-    if (result) XClass_delete_base((XClass*)result);
+    if (result) XClassDelete((XClass*)result);
     return NULL;
 }
 
@@ -430,8 +430,8 @@ XVector* XNetworkCookie_parseCookies(const XByteArray* cookieString)
     name = xcookie_trim(data, 0, equal);
     value = xcookie_trim(data, equal + 1, firstEnd);
     cookie = name && value ? XNetworkCookie_create(name, value) : NULL;
-    if (name) XClass_delete_base((XClass*)name);
-    if (value) XClass_delete_base((XClass*)value);
+    if (name) XClassDelete((XClass*)name);
+    if (value) XClassDelete((XClass*)value);
     if (!cookie)
         return NULL;
     while (firstEnd < size) {
@@ -463,13 +463,13 @@ XVector* XNetworkCookie_parseCookies(const XByteArray* cookieString)
             else if (xcookie_equal_literal(attrValue, "Lax")) cookie->m_sameSite = XNetworkCookie_SameSiteLax;
             else if (xcookie_equal_literal(attrValue, "Strict")) cookie->m_sameSite = XNetworkCookie_SameSiteStrict;
         }
-        if (attr) XClass_delete_base((XClass*)attr);
-        if (attrValue) XClass_delete_base((XClass*)attrValue);
+        if (attr) XClassDelete((XClass*)attr);
+        if (attrValue) XClassDelete((XClass*)attrValue);
     }
     result = XVector_create(sizeof(XNetworkCookie*));
     if (!result || !XVector_push_back_1_base(result, &cookie)) {
-        if (result) XClass_delete_base((XClass*)result);
-        XClass_delete_base((XClass*)cookie);
+        if (result) XClassDelete((XClass*)result);
+        XClassDelete((XClass*)cookie);
         return NULL;
     }
     return result;
@@ -491,10 +491,10 @@ bool XNetworkCookie_normalize(XNetworkCookie* self, const XUrl* url)
     if (!self->m_domain || XByteArray_size_base((XContainer*)self->m_domain) == 0) {
         value = XByteArray_create_with_data(XString_toUtf8(host), XString_toUtf8_length(host));
         if (!value || !xcookie_set_bytes(&self->m_domain, value)) {
-            if (value) XClass_delete_base((XClass*)value);
+            if (value) XClassDelete((XClass*)value);
             return false;
         }
-        XClass_delete_base((XClass*)value);
+        XClassDelete((XClass*)value);
     }
     if (!self->m_path || XByteArray_size_base((XContainer*)self->m_path) == 0) {
         pathSize = path ? XString_toUtf8_length(path) : 0;
@@ -507,10 +507,10 @@ bool XNetworkCookie_normalize(XNetworkCookie* self, const XUrl* url)
             value = XByteArray_create_with_data(pathData, slash <= 1 ? 1 : slash);
         }
         if (!value || !xcookie_set_bytes(&self->m_path, value)) {
-            if (value) XClass_delete_base((XClass*)value);
+            if (value) XClassDelete((XClass*)value);
             return false;
         }
-        XClass_delete_base((XClass*)value);
+        XClassDelete((XClass*)value);
     }
     return true;
 }
@@ -552,7 +552,7 @@ XNetworkCookieJar* XNetworkCookieJar_create_ex(XMemoryType memory)
         return NULL;
     XNetworkCookieJar_init(self);
     if (!self->m_cookies) {
-        XNetworkCookieJar_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -567,9 +567,9 @@ static void VXNetworkCookieJar_deinit(XNetworkCookieJar* self)
     if (self->m_cookies) {
         for (size_t i = 0; i < XContainer_size_base((const XContainer*)self->m_cookies); ++i) {
             XNetworkCookie* cookie = xcookie_at(self, i);
-            if (cookie) XClass_delete_base((XClass*)cookie);
+            if (cookie) XClassDelete((XClass*)cookie);
         }
-        XClass_delete_base((XClass*)self->m_cookies);
+        XClassDelete((XClass*)self->m_cookies);
         self->m_cookies = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -591,7 +591,7 @@ bool XNetworkCookieJar_deleteCookie(XNetworkCookieJar* self, const XNetworkCooki
         return false;
     XNetworkCookie* old = xcookie_at(self, (size_t)index);
     XVector_remove_base(self->m_cookies, index, 1);
-    if (old) XClass_delete_base((XClass*)old);
+    if (old) XClassDelete((XClass*)old);
     return true;
 }
 
@@ -606,7 +606,7 @@ bool XNetworkCookieJar_insertCookie(XNetworkCookieJar* self, const XNetworkCooki
         return true;
     copy = XNetworkCookie_create_copy(cookie);
     return copy && XVector_push_back_1_base(self->m_cookies, &copy)
-        ? true : (copy ? (XClass_delete_base((XClass*)copy), false) : false);
+        ? true : (copy ? (XClassDelete((XClass*)copy), false) : false);
 }
 
 bool XNetworkCookieJar_updateCookie(XNetworkCookieJar* self, const XNetworkCookie* cookie)
@@ -675,22 +675,22 @@ XVector* XNetworkCookieJar_cookiesForUrl(const XNetworkCookieJar* self, const XU
             continue;
         copy = XNetworkCookie_create_copy(cookie);
         if (!copy || !XVector_push_back_1_base(result, &copy)) {
-            if (copy) XClass_delete_base((XClass*)copy);
+            if (copy) XClassDelete((XClass*)copy);
             goto failed;
         }
     }
-    XClass_delete_base((XClass*)host);
-    XClass_delete_base((XClass*)path);
+    XClassDelete((XClass*)host);
+    XClassDelete((XClass*)path);
     return result;
 failed:
-    if (host) XClass_delete_base((XClass*)host);
-    if (path) XClass_delete_base((XClass*)path);
+    if (host) XClassDelete((XClass*)host);
+    if (path) XClassDelete((XClass*)path);
     if (result) {
         for (size_t i = 0; i < XContainer_size_base((const XContainer*)result); ++i) {
             XNetworkCookie** slot = (XNetworkCookie**)XVector_at_base(result, (int64_t)i);
-            if (slot && *slot) XClass_delete_base((XClass*)*slot);
+            if (slot && *slot) XClassDelete((XClass*)*slot);
         }
-        XClass_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
     }
     return NULL;
 }
@@ -712,9 +712,9 @@ bool XNetworkCookieJar_setCookiesFromUrl(XNetworkCookieJar* self, const XVector*
             }
             for (size_t j = 0; j < XContainer_size_base((const XContainer*)parsed); ++j) {
                 XNetworkCookie** cookieSlot = (XNetworkCookie**)XVector_at_base(parsed, (int64_t)j);
-                if (cookieSlot && *cookieSlot) XClass_delete_base((XClass*)*cookieSlot);
+                if (cookieSlot && *cookieSlot) XClassDelete((XClass*)*cookieSlot);
             }
-            XClass_delete_base((XClass*)parsed);
+            XClassDelete((XClass*)parsed);
         }
     }
     return changed;
@@ -730,8 +730,8 @@ bool XNetworkCookieJar_setCookiesFromHeaders(XNetworkCookieJar* self, const XHtt
     values = XVector_create(sizeof(XByteArray*));
     name = XByteArray_create_utf8("Set-Cookie");
     if (!values || !name) {
-        if (values) XClass_delete_base((XClass*)values);
-        if (name) XClass_delete_base((XClass*)name);
+        if (values) XClassDelete((XClass*)values);
+        if (name) XClassDelete((XClass*)name);
         return false;
     }
     for (size_t i = 0; i < XHttpHeaders_size(headers); ++i) {
@@ -741,17 +741,17 @@ bool XNetworkCookieJar_setCookiesFromHeaders(XNetworkCookieJar* self, const XHtt
         if (!fieldName || !value || !xcookie_equal(fieldName, name)) continue;
         copy = XByteArray_create_copy(value);
         if (!copy || !XVector_push_back_1_base(values, &copy)) {
-            if (copy) XClass_delete_base((XClass*)copy);
+            if (copy) XClassDelete((XClass*)copy);
             continue;
         }
     }
     result = XNetworkCookieJar_setCookiesFromUrl(self, values, url);
     for (size_t i = 0; i < XContainer_size_base((const XContainer*)values); ++i) {
         XByteArray** slot = (XByteArray**)XVector_at_base(values, (int64_t)i);
-        if (slot && *slot) XClass_delete_base((XClass*)*slot);
+        if (slot && *slot) XClassDelete((XClass*)*slot);
     }
-    XClass_delete_base((XClass*)values);
-    XClass_delete_base((XClass*)name);
+    XClassDelete((XClass*)values);
+    XClassDelete((XClass*)name);
     return result;
 }
 
@@ -769,25 +769,25 @@ XByteArray* XNetworkCookieJar_cookieHeader(const XNetworkCookieJar* self, const 
         XByteArray* raw = slot && *slot ? XNetworkCookie_toRawForm(*slot, XNetworkCookie_NameAndValueOnly) : NULL;
         if (!raw || (i != 0 && !XByteArray_append_utf8(result, "; ")) ||
             !xcookie_append(result, XByteArray_constData(raw), XByteArray_size_base((XContainer*)raw))) {
-            if (raw) XClass_delete_base((XClass*)raw);
+            if (raw) XClassDelete((XClass*)raw);
             goto failed;
         }
-        XClass_delete_base((XClass*)raw);
+        XClassDelete((XClass*)raw);
     }
     for (size_t i = 0; i < XContainer_size_base((const XContainer*)cookies); ++i) {
         XNetworkCookie** slot = (XNetworkCookie**)XVector_at_base(cookies, (int64_t)i);
-        if (slot && *slot) XClass_delete_base((XClass*)*slot);
+        if (slot && *slot) XClassDelete((XClass*)*slot);
     }
-    XClass_delete_base((XClass*)cookies);
+    XClassDelete((XClass*)cookies);
     return result;
 failed:
-    if (result) XClass_delete_base((XClass*)result);
+    if (result) XClassDelete((XClass*)result);
     if (cookies) {
         for (size_t i = 0; i < XContainer_size_base((const XContainer*)cookies); ++i) {
             XNetworkCookie** slot = (XNetworkCookie**)XVector_at_base(cookies, (int64_t)i);
-            if (slot && *slot) XClass_delete_base((XClass*)*slot);
+            if (slot && *slot) XClassDelete((XClass*)*slot);
         }
-        XClass_delete_base((XClass*)cookies);
+        XClassDelete((XClass*)cookies);
     }
     return NULL;
 }

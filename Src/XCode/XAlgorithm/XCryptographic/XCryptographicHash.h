@@ -178,7 +178,7 @@ void XCryptographicHash_reset(XCryptographicHash* hash);
 /**
  * @brief 计算当前输入并返回新建的结果数组。
  * @param hash 已初始化的上下文；计算后上下文标记为 finalized。
- * @return 新建的摘要数组；调用者负责使用 XByteArray_delete_base 释放，
+ * @return 新建的摘要数组；调用者负责使用 XClassDelete 释放，
  *         参数无效、算法不支持或分配失败返回 NULL。
  */
 XByteArray* XCryptographicHash_result(XCryptographicHash* hash);

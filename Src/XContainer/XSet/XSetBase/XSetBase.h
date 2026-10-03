@@ -175,15 +175,13 @@ XVector* XSetBase_keys_base(const XSetBase* this_set);
 
 /**
 * @brief 释放容器资源（继承自XContainer）
-* @note 宏定义，等价于XContainer_deinit_base，释放内部资源但不释放容器本身
+* @note 宏定义，等价于XClassDeinit，释放内部资源但不释放容器本身
 */
-#define XSetBase_deinit_base				XContainer_deinit_base	
 
 /**
 * @brief 删除容器实例（继承自XContainer）
-* @note 宏定义，等价于XContainer_delete_base，释放资源并销毁容器
+* @note 宏定义，等价于XClassDelete，释放资源并销毁容器
 */
-#define XSetBase_delete_base				XContainer_delete_base	
 
 /**
 * @brief 清空容器元素（继承自XContainer）

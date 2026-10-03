@@ -12,7 +12,7 @@ static void VXHistoryState_deinit(XHistoryState* state)
 
     state->m_defaultTransition = NULL;
     if (state->m_configuration) {
-        XVector_delete_base((XClass*)state->m_configuration);
+        XClassDelete((XClass*)state->m_configuration);
         state->m_configuration = NULL;
     }
     XVtableGetFunc(XAbstractState_class_init(), EXClass_Deinit,
@@ -98,7 +98,7 @@ bool XHistoryState_setDefaultState(XHistoryState* state, XAbstractState* default
     XAbstractTransition_init(transition, NULL);
     Set_Class_IsHeap(transition, true);
     if (!XAbstractTransition_setTargetState(transition, defaultState)) {
-        XAbstractTransition_delete_base((XClass*)transition);
+        XClassDelete((XClass*)transition);
         return false;
     }
     XHistoryState_setDefaultTransition(state, transition);

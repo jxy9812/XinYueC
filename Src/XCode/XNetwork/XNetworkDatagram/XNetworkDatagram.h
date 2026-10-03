@@ -58,7 +58,7 @@ void XNetworkDatagram_init(XNetworkDatagram* dgram);
 
 /**
  * @brief 创建一个空的 XNetworkDatagram 实例。
- * @return 新分配的实例，需调用 XNetworkDatagram_delete_base() 释放
+ * @return 新分配的实例，需调用 XClassDelete() 释放
  */
 XNetworkDatagram* XNetworkDatagram_create_ex(XMemoryType memory);
 
@@ -77,15 +77,6 @@ XNetworkDatagram* XNetworkDatagram_create_2(const XByteArray* data, const XHostA
  * @return 新创建的副本
  */
 XNetworkDatagram* XNetworkDatagram_create_copy(const XNetworkDatagram* other);
-
-/**
- * @brief 释放内部资源。
- * @param dgram 数据报实例
- */
-void XNetworkDatagram_deinit(XNetworkDatagram* dgram);
-
-#define XNetworkDatagram_delete_base    XClass_delete_base
-#define XNetworkDatagram_deinit_base    XClass_deinit_base
 
 /**
  * @brief 初始化虚函数表。

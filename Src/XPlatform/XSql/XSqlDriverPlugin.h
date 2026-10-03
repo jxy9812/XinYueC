@@ -43,13 +43,11 @@ void XSqlDriverPlugin_init(XSqlDriverPlugin* plugin);
 
 /**
  * @brief 创建驱动插件基对象。
- * @return 新插件对象，调用者必须使用 XSqlDriverPlugin_delete_base 释放；失败返回 NULL。
+ * @return 新插件对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlDriverPlugin* XSqlDriverPlugin_create_ex(XMemoryType memory);
 /** @brief 调用 XClass 析构入口释放插件工厂对象。 */
-#define XSqlDriverPlugin_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlDriverPlugin_create 返回的插件工厂对象。 */
-#define XSqlDriverPlugin_delete_base XClass_delete_base
 /**
  * @brief 按驱动名称创建驱动。
  * @param plugin 插件对象；不能为 NULL。

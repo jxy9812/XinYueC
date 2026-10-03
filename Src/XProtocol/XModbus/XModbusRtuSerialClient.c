@@ -274,7 +274,7 @@ static bool VXModbusRtuSerialClient_open(XModbusDevice* device)
 
     // 清除缓冲区
     XByteArray* array = XIODevice_readAll_3((XIODevice*)serialPort);
-    if (array) XByteArray_delete_base(array);
+    if (array) XClassDelete(array);
 
     XModbusDevice_setState(device, XModbusDevice_ConnectedState);
     XModbusDevice_setError(device, XModbusDevice_NoError, NULL);
@@ -395,7 +395,7 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
     /* XString* text= XByteArray_to16HexString(receiveBuffer);
      XPrintf_2(text);
      XPrintf("\n");
-     XString_delete_base(text);*/
+     XClassDelete(text);*/
 
      // 通过保护API调用虚函数（会调到子类重写的实现）
     bool success = XModbusClient_processResponse_base((XModbusClient*)client, response, resultUnit);
@@ -407,10 +407,10 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
         XModbusReply_setError(client->m_currentReply, XModbusDevice_UnknownError, "Response processing failed");
         // 释放临时结果单元
         /*if (resultUnit) {
-            XModbusDataUnit_delete_base(resultUnit);
+            XClassDelete(resultUnit);
         }*/
     }
-    //XModbusResponse_deinit_base(&response);
+    //XClassDeinit(&response);
 cleanup:
     //XModbusReply* reply = client->m_currentReply;
     client->m_currentReply = NULL;
@@ -480,7 +480,7 @@ bool startNewRequest(XModbusRtuSerialClient* client)
     /* XString* text= XByteArray_to16HexString(rtuClient->m_requestData);
      XPrintf_2(text);
      XPrintf("\n");
-     XString_delete_base(text);*/
+     XClassDelete(text);*/
 
      // 发送RTU请求
     int64_t sent = XIODevice_write_2(io, rtuClient->m_requestData);
@@ -521,7 +521,7 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
 
     //XByteArray* data = XIODevice_readAll_3(io);
     //if (!data || XByteArray_size_base(data) == 0) {
-    //    if (data) XByteArray_delete_base(data);
+    //    if (data) XClassDelete(data);
     //    return;
     //}
 
@@ -529,7 +529,7 @@ static void XModbusRtuSerialClient_onReadyRead(XObject* receiver, XVarList* args
     //XByteArray_push_back_2(client->m_receiveBuffer,
     //    XContainerDataAddr(data),
     //    XByteArray_size_base(data));
-    //XByteArray_delete_base(data);
+    //XClassDelete(data);
 
     // 启动/重启帧间延迟定时器
     // 如果在帧间延迟时间内没有新数据，认为一帧接收完成
@@ -695,11 +695,11 @@ static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client)
     XModbusDevice_disconnectDevice(client);
 
     if (client->m_requestData) {
-        XByteArray_delete_base(client->m_requestData);
+        XClassDelete(client->m_requestData);
         client->m_requestData = NULL;
     }
     if (client->m_receiveBuffer) {
-        XByteArray_delete_base(client->m_receiveBuffer);
+        XClassDelete(client->m_receiveBuffer);
         client->m_receiveBuffer = NULL;
     }
     if (client->m_currentReply) {
@@ -712,7 +712,7 @@ static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client)
 
     XIODevice* io = ((XModbusDevice*)client)->m_ioDevice;
     if (io) {
-        XSerialPort_delete_base((XSerialPort*)io);
+        XIODevice_deleteLater((XSerialPort*)io);
         ((XModbusDevice*)client)->m_ioDevice = NULL;
     }
 
@@ -846,7 +846,7 @@ static void XModbusRtuSerialClient_attemptReconnect(XModbusRtuSerialClient* clie
 
     // 清除缓冲区
     XByteArray* array = XIODevice_readAll_3((XIODevice*)serialPort);
-    if (array) XByteArray_delete_base(array);
+    if (array) XClassDelete(array);
 
     // 重连成功
     XModbusDevice_setState(device, XModbusDevice_ConnectedState);

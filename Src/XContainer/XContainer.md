@@ -1,4 +1,4 @@
-﻿# XinYueC 容器库文档
+# XinYueC 容器库文档
 
 ## 目录
 
@@ -109,7 +109,7 @@ XinYueC容器库是一套用C语言实现的通用容器库，采用面向对象
 | `_Base` | 类型安全宏后缀 | `XVector_Push_Back_Base` |
 | `_create` | 创建函数 | `XVector_create` |
 | `_init` | 初始化函数 | `XVector_init` |
-| `_delete_base` | 销毁函数 | `XVector_delete_base` |
+| `XClassDeinit`/`XClassDelete` | 反初始化/销毁函数 | `XClassDelete(obj)` |
 
 ---
 
@@ -143,10 +143,10 @@ typedef struct XContainer
 
 以下API适用于所有继承自XContainer的容器。
 
-##### XCopy
+##### XClassCopy
 
 ```c
-void XCopy(XContainer* dest, const XContainer* src)
+void XClassCopy(XContainer* dest, const XContainer* src)
 ```
 
 深拷贝容器内容。
@@ -161,10 +161,10 @@ void XCopy(XContainer* dest, const XContainer* src)
 
 ---
 
-##### XMove
+##### XClassMove
 
 ```c
-void XMove(XContainer* dest, XContainer* src)
+void XClassMove(XContainer* dest, XContainer* src)
 ```
 
 移动容器资源(转移所有权)。
@@ -179,10 +179,10 @@ void XMove(XContainer* dest, XContainer* src)
 
 ---
 
-##### XContainer_deinit_base
+##### XClassDeinit
 
 ```c
-void XContainer_deinit_base(XContainer* object)
+void XClassDeinit(XContainer* object)
 ```
 
 反初始化容器(释放内部资源，保留容器本身)。
@@ -196,10 +196,10 @@ void XContainer_deinit_base(XContainer* object)
 
 ---
 
-##### XContainer_delete_base
+##### XClassDelete
 
 ```c
-void XContainer_delete_base(XContainer* object)
+void XClassDelete(XContainer* object)
 ```
 
 销毁容器并释放所有内存。
@@ -1604,14 +1604,14 @@ void XVector_init(XVector* vec, size_t typeSize, bool useCow)
 
 **返回值:** 无
 
-**注意:** 用于栈上分配的向量，需配合XVector_deinit_base使用
+**注意:** 用于栈上分配的向量，需配合XClassDeinit使用
 
 ---
 
-##### XVector_delete_base
+##### XClassDelete
 
 ```c
-void XVector_delete_base(XVector* vec)
+void XClassDelete(XVector* vec)
 ```
 
 销毁XVector对象并释放所有内存。
@@ -2376,8 +2376,8 @@ if (XVector_find_base(vec, &key, &it)) {
 XVector* sub = XVector_mid(vec, 2, 5);
 
 // 销毁
-XVector_delete_base(vec);
-XVector_delete_base(sub);
+XClassDelete(vec);
+XClassDelete(sub);
 ```
 
 ---
@@ -2486,10 +2486,10 @@ void XByteArray_init(XByteArray* array, bool useCow)
 
 ---
 
-##### XByteArray_delete_base
+##### XClassDelete
 
 ```c
-void XByteArray_delete_base(XByteArray* array)
+void XClassDelete(XByteArray* array)
 ```
 
 销毁字节数组并释放所有内存。
@@ -3045,10 +3045,10 @@ void XListSLinked_init(XListSLinked* list, size_t typeSize, bool useCow)
 
 ---
 
-##### XListSLinked_delete_base
+##### XClassDelete
 
 ```c
-void XListSLinked_delete_base(XListSLinked* list)
+void XClassDelete(XListSLinked* list)
 ```
 
 销毁单向链表并释放所有内存。
@@ -3449,10 +3449,10 @@ void XListDLinked_init(XListDLinked* list, size_t typeSize, bool useCow)
 
 ---
 
-##### XListDLinked_delete_base
+##### XClassDelete
 
 ```c
-void XListDLinked_delete_base(XListDLinked* list)
+void XClassDelete(XListDLinked* list)
 ```
 
 销毁双向链表并释放所有内存。
@@ -3821,10 +3821,10 @@ void XLockFreeList_init(XLockFreeList* list, size_t typeSize)
 
 ---
 
-##### XLockFreeList_delete_base
+##### XClassDelete
 
 ```c
-void XLockFreeList_delete_base(XLockFreeList* list)
+void XClassDelete(XLockFreeList* list)
 ```
 
 销毁无锁链表并释放所有内存。
@@ -4158,10 +4158,10 @@ void XString_init(XString* str)
 
 ---
 
-##### XString_delete_base
+##### XClassDelete
 
 ```c
-void XString_delete_base(XString* str)
+void XClassDelete(XString* str)
 ```
 
 销毁字符串并释放所有内存。
@@ -4809,10 +4809,10 @@ void XStringList_init(XStringList* strList)
 
 ---
 
-##### XStringList_delete_base
+##### XClassDelete
 
 ```c
-void XStringList_delete_base(XStringList* strList)
+void XClassDelete(XStringList* strList)
 ```
 
 销毁字符串列表并释放所有内存。
@@ -5172,10 +5172,10 @@ void XVariantList_init(XVariantList* list)
 
 ---
 
-##### XVariantList_delete_base
+##### XClassDelete
 
 ```c
-void XVariantList_delete_base(XVariantList* list)
+void XClassDelete(XVariantList* list)
 ```
 
 销毁变体列表并释放所有内存。
@@ -5496,10 +5496,10 @@ void XMap_init(XMap* map, size_t keyTypeSize, size_t valTypeSize, XCompare compa
 
 ---
 
-##### XMap_delete_base
+##### XClassDelete
 
 ```c
-void XMap_delete_base(XMap* map)
+void XClassDelete(XMap* map)
 ```
 
 销毁映射并释放所有内存。
@@ -5836,10 +5836,10 @@ void XHashMap_init(XHashMap* map, size_t keyTypeSize, size_t valTypeSize, XHashF
 
 ---
 
-##### XHashMap_delete_base
+##### XClassDelete
 
 ```c
-void XHashMap_delete_base(XHashMap* map)
+void XClassDelete(XHashMap* map)
 ```
 
 销毁哈希映射并释放所有内存。
@@ -6022,10 +6022,10 @@ void XHashMap_clear_base(XHashMap* map)
 
 ---
 
-##### XCopy
+##### XClassCopy
 
 ```c
-void XCopy(XHashMap* dest, const XHashMap* src)
+void XClassCopy(XHashMap* dest, const XHashMap* src)
 ```
 
 拷贝另一个哈希映射的内容。
@@ -6038,10 +6038,10 @@ void XCopy(XHashMap* dest, const XHashMap* src)
 
 ---
 
-##### XMove
+##### XClassMove
 
 ```c
-void XMove(XHashMap* dest, XHashMap* src)
+void XClassMove(XHashMap* dest, XHashMap* src)
 ```
 
 移动另一个哈希映射的资源。
@@ -6143,10 +6143,10 @@ void XSet_init(XSet* set, size_t keyTypeSize, XCompare compare, bool useCow)
 
 ---
 
-##### XSet_delete_base
+##### XClassDelete
 
 ```c
-void XSet_delete_base(XSet* set)
+void XClassDelete(XSet* set)
 ```
 
 销毁有序集合并释放所有内存。
@@ -6420,10 +6420,10 @@ void XHashSet_init(XHashSet* set, size_t keyTypeSize, XHashFunc hash, XCompare c
 
 ---
 
-##### XHashSet_delete_base
+##### XClassDelete
 
 ```c
-void XHashSet_delete_base(XHashSet* set)
+void XClassDelete(XHashSet* set)
 ```
 
 销毁哈希集合并释放所有内存。
@@ -6671,10 +6671,10 @@ void XStack_init(XStack* stack, size_t typeSize)
 
 ---
 
-##### XStack_delete_base
+##### XClassDelete
 
 ```c
-void XStack_delete_base(XStack* stack)
+void XClassDelete(XStack* stack)
 ```
 
 销毁栈并释放所有内存。
@@ -6863,10 +6863,10 @@ void XLockFreeStack_init(XLockFreeStack* stack, size_t typeSize, size_t capacity
 
 ---
 
-##### XLockFreeStack_delete_base
+##### XClassDelete
 
 ```c
-void XLockFreeStack_delete_base(XLockFreeStack* stack)
+void XClassDelete(XLockFreeStack* stack)
 ```
 
 销毁无锁栈并释放所有内存。
@@ -7027,10 +7027,10 @@ void XQueue_init(XQueue* queue, size_t typeSize)
 
 ---
 
-##### XQueue_delete_base
+##### XClassDelete
 
 ```c
-void XQueue_delete_base(XQueue* queue)
+void XClassDelete(XQueue* queue)
 ```
 
 销毁队列并释放所有内存。
@@ -7239,10 +7239,10 @@ void XLockFreeQueue_init(XLockFreeQueue* queue, size_t typeSize, size_t count)
 
 ---
 
-##### XLockFreeQueue_delete_base
+##### XClassDelete
 
 ```c
-void XLockFreeQueue_delete_base(XLockFreeQueue* queue)
+void XClassDelete(XLockFreeQueue* queue)
 ```
 
 销毁无锁队列并释放所有内存。
@@ -7411,10 +7411,10 @@ void XPriorityQueue_init(XPriorityQueue* queue, size_t typeSize, XCompare compar
 
 ---
 
-##### XPriorityQueue_delete_base
+##### XClassDelete
 
 ```c
-void XPriorityQueue_delete_base(XPriorityQueue* queue)
+void XClassDelete(XPriorityQueue* queue)
 ```
 
 销毁优先队列并释放所有内存。
@@ -7625,10 +7625,10 @@ void XCircularQueue_init(XCircularQueue* queue, size_t typeSize, size_t count)
 
 ---
 
-##### XCircularQueue_delete_base
+##### XClassDelete
 
 ```c
-void XCircularQueue_delete_base(XCircularQueue* queue)
+void XClassDelete(XCircularQueue* queue)
 ```
 
 销毁环形队列并释放所有内存。
@@ -7881,10 +7881,10 @@ void XBitArray_init(XBitArray* array, size_t initialBitCount, bool useCow)
 
 ---
 
-##### XBitArray_delete_base
+##### XClassDelete
 
 ```c
-void XBitArray_delete_base(XBitArray* array)
+void XClassDelete(XBitArray* array)
 ```
 
 销毁比特数组并释放所有内存。
@@ -8102,10 +8102,10 @@ void XRingBuffer_init(XRingBuffer* buffer, size_t chunkSize)
 
 ---
 
-##### XRingBuffer_delete_base
+##### XClassDelete
 
 ```c
-void XRingBuffer_delete_base(XRingBuffer* buffer)
+void XClassDelete(XRingBuffer* buffer)
 ```
 
 销毁环形缓冲区并释放所有内存。
@@ -8330,10 +8330,10 @@ void XRingChunk_init(XRingChunk* chunk, size_t capacity)
 
 ---
 
-##### XRingChunk_delete_base
+##### XClassDelete
 
 ```c
-void XRingChunk_delete_base(XRingChunk* chunk)
+void XClassDelete(XRingChunk* chunk)
 ```
 
 销毁环形块并释放所有内存。
@@ -8806,8 +8806,8 @@ typedef enum {
    - 多线程环境：使用无锁容器
 
 2. **内存管理**
-   - 使用`create`函数创建对象，使用`delete_base`函数销毁
-   - 栈上分配的对象使用`init`初始化，使用`deinit_base`清理
+   - 使用`create`函数创建对象，使用`XClassDelete`销毁
+   - 栈上分配的对象使用`init`初始化，使用`XClassDeinit`清理
 
 3. **性能优化**
    - 预分配容量避免频繁扩容

@@ -163,19 +163,12 @@ void XTreeNode_delete(XTreeNode* node, XMemory* memory);
  * @param dataMethod 用户数据释放回调，可为 NULL。
  * @param args 传递给 dataMethod 的上下文参数，可为 NULL。
  * @param memory 节点释放所使用的内存管理器，可为 NULL。
+ * @note 本函数即原 XTree_delete_base（树节点算法接口，非 XClass 生命周期
+ *       API，_base 后缀已去除）。原 4 参便捷版（默认节点释放器）已并入：
+ *       默认行为请显式传 XTreeNode_delete 作 nodeMethod。
  */
-void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
+void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
 	XTreeNodeDataDeleteMethod dataMethod, void* args, XMemory* memory);
-
-/**
- * @brief 使用默认节点释放器递归释放整棵树。
- * @param this_root 树根节点；为 NULL 时无操作。
- * @param method 用户数据释放回调，可为 NULL。
- * @param args 传递给 method 的上下文参数，可为 NULL。
- * @param memory 节点释放所使用的内存管理器，可为 NULL。
- */
-void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method,
-	void* args, XMemory* memory);
 
 /**
  * @brief 获取节点用户数据的原始地址。

@@ -49,8 +49,8 @@ void XMqttStringPair_init(XMqttStringPair* pair, const char* name, const char* v
 static void VXMqttStringPair_deinit(XMqttStringPair* pair)
 {
     if (!pair) return;
-    XString_deinit_base(&pair->m_name);
-    XString_deinit_base(&pair->m_value);
+    XClassDeinit(&pair->m_name);
+    XClassDeinit(&pair->m_value);
     XClass_Deinit_Parent(XClass, pair);
 }
 
@@ -138,7 +138,7 @@ XMqttUserProperties* XMqttUserProperties_create(void)
         /* 直接用 XMqttStringPair 的虚函数 copy/move/deinit 作为容器元素回调 */
         XContainerSetDataCopyMethod(props, (XCDataCopyMethod)XClass_copy_base);
         XContainerSetDataMoveMethod(props, (XCDataMoveMethod)XClass_move_base);
-        XContainerSetDataDeinitMethod(props, (XCDataDeinitMethod)XMqttStringPair_deinit_base);
+        XContainerSetDataDeinitMethod(props, (XCDataDeinitMethod)XClass_deinit_base);
     }
     return props;
 }

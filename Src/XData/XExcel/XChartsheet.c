@@ -56,7 +56,7 @@ bool XChartsheet_saveToXmlData(const XChartsheet* self, uint8_t** outData, size_
             *outLen = size;
         }
     }
-    XXmlStreamWriter_delete_base(writer);
+    XClassDelete(writer);
     return *outData != NULL;
 }
 
@@ -66,12 +66,12 @@ bool XChartsheet_loadFromXmlData(XChartsheet* self, const uint8_t* data, size_t 
     XByteArray* bytes = XByteArray_create_with_data((const char*)data, len);
     XXmlStreamReader* reader = XXmlStreamReader_create();
     if (!bytes || !reader) {
-        if (bytes) XByteArray_delete_base(bytes);
-        if (reader) XXmlStreamReader_delete_base(reader);
+        if (bytes) XClassDelete(bytes);
+        if (reader) XClassDelete(reader);
         return false;
     }
     XXmlStreamReader_addData(reader, bytes);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     bool rootSeen = false;
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
@@ -80,7 +80,7 @@ bool XChartsheet_loadFromXmlData(XChartsheet* self, const uint8_t* data, size_t 
             XString_equals_utf8(name, "chartsheet", XChar_CaseSensitive)) rootSeen = true;
     }
     bool ok = rootSeen && !XXmlStreamReader_hasError(reader);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     return ok;
 }
 
@@ -90,6 +90,6 @@ XChartsheet* XChartsheet_create_utf8(const char* sheetName, int sheetId, void* b
 {
     XString* s = sheetName ? XString_create_utf8(sheetName) : NULL;
     XChartsheet* result = XChartsheet_create(s, sheetId, book, flag);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }

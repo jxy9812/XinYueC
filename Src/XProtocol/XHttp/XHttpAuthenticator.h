@@ -62,7 +62,7 @@ XVtable* XHttpAuthenticator_class_init(void);
 void XHttpAuthenticator_init(XHttpAuthenticator* self);
 /**
  * - @brief 创建空认证器。
- * - @return 新对象，调用者必须使用 XHttpAuthenticator_delete_base 释放；内存不足返回 NULL。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放；内存不足返回 NULL。
  */
 XHttpAuthenticator* XHttpAuthenticator_create_ex(XMemoryType memory);
 /**
@@ -78,8 +78,6 @@ XHttpAuthenticator* XHttpAuthenticator_create_copy(const XHttpAuthenticator* oth
  */
 XHttpAuthenticator* XHttpAuthenticator_create_move(XHttpAuthenticator* other);
 
-#define XHttpAuthenticator_deinit_base XClass_deinit_base
-#define XHttpAuthenticator_delete_base XClass_delete_base
 
 /**
  * - @brief 设置服务端解析出的认证挑战。

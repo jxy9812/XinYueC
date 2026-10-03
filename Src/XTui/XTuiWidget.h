@@ -59,7 +59,6 @@ void XTuiWidget_init(XTuiWidget* widget);
 /** @brief 在堆上创建控件对象。 */
 XTuiWidget* XTuiWidget_create_ex(XMemoryType memory);
 
-#define XTuiWidget_delete_base XClass_delete_base /**< 释放堆对象。 */
 
 /* ==================== 虚函数调度入口 ==================== */
 

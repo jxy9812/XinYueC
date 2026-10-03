@@ -223,7 +223,7 @@ bool XImageCodecInternal_decodePpm(const uint8_t* data, size_t size, XImage* out
             ? XImageFormat_Grayscale8 : XImageFormat_RGB32);
     XImage_init_ex(&temp, header.m_width, header.m_height, outputFormat);
     if (XImage_isNull(&temp)) {
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return false;
     }
     ascii = header.m_type <= 3;
@@ -232,7 +232,7 @@ bool XImageCodecInternal_decodePpm(const uint8_t* data, size_t size, XImage* out
         size_t rowBytes = ((size_t)header.m_width + 7u) / 8u;
         if (rowBytes > SIZE_MAX / (size_t)header.m_height ||
             size - pos < rowBytes * (size_t)header.m_height) {
-            XImage_deinit_base(&temp);
+            XClassDeinit(&temp);
             return false;
         }
         for (y = 0; y < header.m_height; ++y) {
@@ -257,7 +257,7 @@ bool XImageCodecInternal_decodePpm(const uint8_t* data, size_t size, XImage* out
                         ? ppm_readAsciiSample(data, size, &pos, header.m_maxValue, &first)
                         : ppm_readBinarySample(data, size, &pos, header.m_maxValue, &first));
                 if (!ok) {
-                    XImage_deinit_base(&temp);
+                    XClassDeinit(&temp);
                     return false;
                 }
                 if (header.m_type == 1) {
@@ -275,7 +275,7 @@ bool XImageCodecInternal_decodePpm(const uint8_t* data, size_t size, XImage* out
                         ? ppm_readAsciiSample(data, size, &pos, header.m_maxValue, &blue)
                         : ppm_readBinarySample(data, size, &pos, header.m_maxValue, &blue));
                     if (!greenOk || !blueOk) {
-                        XImage_deinit_base(&temp);
+                        XClassDeinit(&temp);
                         return false;
                     }
                     XImage_setPixel(&temp, x, y, 0xff000000u |
@@ -293,7 +293,7 @@ bool XImageCodecInternal_decodePpm(const uint8_t* data, size_t size, XImage* out
         XImage_setColor(&temp, 0, 0xffffffffu);
         XImage_setColor(&temp, 1, 0xff000000u);
     }
-    XMove(out, &temp);
+    XClassMove(out, &temp);
     return true;
 }
 

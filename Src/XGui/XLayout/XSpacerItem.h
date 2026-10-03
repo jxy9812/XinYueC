@@ -95,7 +95,7 @@ void XSpacerItem_init(XSpacerItem* self, int width, int height,
 /**
  * @brief      创建空白条目（对标 QSpacerItem 公开构造）。
  * @details    在堆上创建空白条目并初始化虚表。返回对象所有权归调用方：
- *             - 可直接作为 XLayoutItem 使用（XLayoutItem_delete_base 释放）；
+ *             - 可直接作为 XLayoutItem 使用（XClassDelete 释放）；
  *             - 可经 XLayoutItem_spacerItem_base 类型安全下转后查询/修改；
  *             - 可经 XBoxLayout_addSpacerItem / XBoxLayout_insertSpacerItem
  *               挂入布局，此时所有权转移给布局（布局销毁时一并释放）。

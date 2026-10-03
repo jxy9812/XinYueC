@@ -55,15 +55,15 @@ static void VXHostInfo_copy(XHostInfo* self, const XHostInfo* src) {
     
     // 先释放旧资源
     if (self->hostName) {
-        XString_delete_base(self->hostName);
+        XClassDelete(self->hostName);
         self->hostName = NULL;
     }
     if (self->addresses) {
-        XVector_delete_base(self->addresses);
+        XClassDelete(self->addresses);
         self->addresses = NULL;
     }
     if (self->errorString) {
-        XString_delete_base(self->errorString);
+        XClassDelete(self->errorString);
         self->errorString = NULL;
     }
     
@@ -90,13 +90,13 @@ static void VXHostInfo_move(XHostInfo* self, XHostInfo* src) {
     
     // 先释放旧资源
     if (self->hostName) {
-        XString_delete_base(self->hostName);
+        XClassDelete(self->hostName);
     }
     if (self->addresses) {
-        XVector_delete_base(self->addresses);
+        XClassDelete(self->addresses);
     }
     if (self->errorString) {
-        XString_delete_base(self->errorString);
+        XClassDelete(self->errorString);
     }
     
     // 移动资源
@@ -119,17 +119,17 @@ static void VXHostInfo_deinit(XHostInfo* self) {
     if (!self) return;
     
     if (self->hostName) {
-        XString_delete_base(self->hostName);
+        XClassDelete(self->hostName);
         self->hostName = NULL;
     }
     
     if (self->errorString) {
-        XString_delete_base(self->errorString);
+        XClassDelete(self->errorString);
         self->errorString = NULL;
     }
     
     if (self->addresses) {
-        XVector_delete_base(self->addresses);
+        XClassDelete(self->addresses);
         self->addresses = NULL;
     }
 }
@@ -172,7 +172,7 @@ XHostInfo* XHostInfo_create_copy(const XHostInfo* other) {
     if (!info) return NULL;
     
     XHostInfo_init(info);
-    XCopy(info, other);
+    XClassCopy(info, other);
     
     return info;
 }
@@ -188,7 +188,7 @@ void XHostInfo_setHostName(XHostInfo* info, const XString* name) {
     if (!info) return;
     
     if (info->hostName) {
-        XString_delete_base(info->hostName);
+        XClassDelete(info->hostName);
     }
     
     if (name) {
@@ -239,7 +239,7 @@ void XHostInfo_setErrorString(XHostInfo* info, const XString* str)
     if (!info) return;
     
     if (info->errorString) {
-        XString_delete_base(info->errorString);
+        XClassDelete(info->errorString);
     }
     
     if (str) {
@@ -267,7 +267,7 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
         XHostInfo_setError(info, XHostInfo_HostNotFound);
         XString* errStr = XString_create_fmt_utf8("Empty hostname");
         XHostInfo_setErrorString(info, errStr);
-        XString_delete_base(errStr);
+        XClassDelete(errStr);
         return info;
     }
     
@@ -303,7 +303,7 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
     }
     
     /* 释放 XVector */
-    XVector_delete_base(addrVec);
+    XClassDelete(addrVec);
     
     /* 存入缓存 */
     putToCache(name, info);
@@ -316,7 +316,7 @@ XHostInfo* XHostInfo_fromName2(const char* name)
     if (!name || *name == 0) return NULL;
     XString* str = XString_create_utf8(name);
     XHostInfo* info = XHostInfo_fromName1(str);
-    XString_delete_base(str);
+    XClassDelete(str);
     return info;
 }
 
@@ -340,7 +340,7 @@ XString* XHostInfo_localDomainName(void) {
         result = XString_create_utf8(dot + 1);
     }
     
-    XString_delete_base(hostname);
+    XClassDelete(hostname);
     return result;
 }
 
@@ -381,7 +381,7 @@ static void removeRequest(int id) {
         if ((*reqPtr)->id == id) {
             XHostInfoLookupRequest* req = *reqPtr;
             
-            if (req->hostName) XString_delete_base(req->hostName);
+            if (req->hostName) XClassDelete(req->hostName);
             XMutex_delete(req->mutex);
             XFree_System(req);
             
@@ -409,7 +409,7 @@ static void lookupWorker(XVarList* varlist) {
     XMutex_unlock(req->mutex);
     
     if (aborted) {
-        XHostInfo_delete_base(result);
+        XClassDelete(result);
         return;
     }
     
@@ -418,7 +418,7 @@ static void lookupWorker(XVarList* varlist) {
     } else if (req->callback) {
         req->callback(result, req->userData);
     } else {
-        XHostInfo_delete_base(result);
+        XClassDelete(result);
     }
     
     XMutex_lock(g_lookupMutex);
@@ -444,7 +444,7 @@ int XHostInfo_lookupHost(const XString* name, XHostInfo_Callback callback, void*
     
     XVarList* varlist = XVarList_Create(XVar(XHostInfoLookupRequest*, req));
     if (!varlist) {
-        if (req->hostName) XString_delete_base(req->hostName);
+        if (req->hostName) XClassDelete(req->hostName);
         if (req->mutex) XMutex_delete(req->mutex);
         XFree_System(req);
         return -1;
@@ -484,7 +484,7 @@ int XHostInfo_lookupHost_toObject(const XString* name, XObject* receiver, size_t
 
     XVarList* varlist = XVarList_Create(XVar(XHostInfoLookupRequest*, req));
     if (!varlist) {
-        if (req->hostName) XString_delete_base(req->hostName);
+        if (req->hostName) XClassDelete(req->hostName);
         if (req->mutex) XMutex_delete(req->mutex);
         XFree_System(req);
         return -1;
@@ -605,7 +605,7 @@ static XHostInfo* getFromCache(const XString* hostName) {
                 return result;
             }
             /* 已过期，移除缓存 */
-            XHostInfo_delete_base(entry->info);
+            XClassDelete(entry->info);
             XHashMap_erase_base(g_cacheManager.cache, &it, NULL);
         }
     }
@@ -633,7 +633,7 @@ static void putToCache(const XString* hostName, const XHostInfo* info) {
         XHostInfoCacheEntry* existing = (XHostInfoCacheEntry*)XPair_second(pair);
         if (existing) {
             if (existing->info) {
-                XHostInfo_delete_base(existing->info);
+                XClassDelete(existing->info);
             }
             existing->info = XHostInfo_create_copy(info);
             existing->timestamp = XDateTime_currentSecsSinceEpoch();
@@ -656,7 +656,7 @@ static void prefetchCallback(XHostInfo* result, void* userData) {
         putToCache(result->hostName, result);
     }
     if (result) {
-        XHostInfo_delete_base(result);
+        XClassDelete(result);
     }
 }
 
@@ -699,7 +699,7 @@ void XHostInfo_clearCache(void) {
         XPair* pair = XHashMap_iterator_data(&it);
         XHostInfoCacheEntry* entry = (XHostInfoCacheEntry*)XPair_second(pair);
         if (entry && entry->info) {
-            XHostInfo_delete_base(entry->info);
+            XClassDelete(entry->info);
             entry->info = NULL;
         }
         XHashMap_iterator_add(g_cacheManager.cache, &it);
@@ -720,7 +720,7 @@ void XHostInfo_removeFromCache(const XString* hostName) {
         XPair* pair = XHashMap_iterator_data(&it);
         XHostInfoCacheEntry* entry = (XHostInfoCacheEntry*)XPair_second(pair);
         if (entry && entry->info) {
-            XHostInfo_delete_base(entry->info);
+            XClassDelete(entry->info);
         }
         XHashMap_erase_base(g_cacheManager.cache, &it, NULL);
     }
@@ -734,7 +734,7 @@ void XHostInfo_prefetchName(const XString* hostName) {
     /* 检查缓存是否已存在 */
     XHostInfo* cached = getFromCache(hostName);
     if (cached) {
-        XHostInfo_delete_base(cached);
+        XClassDelete(cached);
         return;  /* 已缓存，无需预取 */
     }
     

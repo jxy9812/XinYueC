@@ -57,8 +57,8 @@ static int64_t mqtt_mock_write(XIODevice* device, const char* data, int64_t len)
 static void mqtt_mock_deinit(XMqttMockDevice* mock)
 {
     if (!mock) return;
-    if (mock->input) XByteArray_delete_base(mock->input);
-    if (mock->output) XByteArray_delete_base(mock->output);
+    if (mock->input) XClassDelete(mock->input);
+    if (mock->output) XClassDelete(mock->output);
     XClass_Deinit_Parent(XIODevice, mock);
 }
 
@@ -85,7 +85,7 @@ static XMqttMockDevice* mqtt_mock_create_ex(XMemoryType memory)
     Set_Class_Memory(mock, memory); Set_Class_IsHeap(mock, true);
     if (!mock->input || !mock->output ||
         !XIODevice_open_base((XIODevice*)mock, XIODevice_ReadWrite)) {
-        XClass_delete_base((XClass*)mock);
+        XClassDelete((XClass*)mock);
         return NULL;
     }
     return mock;
@@ -178,9 +178,9 @@ int XMqttPublicApiTest_run(void)
                XString_length_base(*level2) == 0 &&
                XString_length_base(*level3) == 0,
                "主题层级保留前导、连续和尾随空层级");
-    if (levels) XVector_delete_base(levels);
-    XMqttTopicName_delete_base(empty);
-    XMqttTopicName_delete_base(levelsName);
+    if (levels) XClassDelete(levels);
+    XClassDelete(empty);
+    XClassDelete(levelsName);
 
     XMqttTopicFilter* hash = XMqttTopicFilter_create("sport/#");
     XMqttTopicName* parent = XMqttTopicName_create("sport");
@@ -193,11 +193,11 @@ int XMqttPublicApiTest_run(void)
         XMqttTopicFilter_WildcardsDontMatchDollarTopicMatchOption),
         "美元主题通配符选项与 Qt 一致");
     MQTT_CHECK(!XMqttTopicFilter_isValid(invalidHash), "非法多层通配符被拒绝");
-    XMqttTopicFilter_delete_base(hash);
-    XMqttTopicName_delete_base(parent);
-    XMqttTopicFilter_delete_base(dollar);
-    XMqttTopicName_delete_base(systemTopic);
-    XMqttTopicFilter_delete_base(invalidHash);
+    XClassDelete(hash);
+    XClassDelete(parent);
+    XClassDelete(dollar);
+    XClassDelete(systemTopic);
+    XClassDelete(invalidHash);
 
     XMqttConnectionProperties* cp = XMqttConnectionProperties_create();
     MQTT_CHECK(cp && XMqttConnectionProperties_maximumReceive(cp) == UINT16_MAX &&
@@ -211,14 +211,14 @@ int XMqttPublicApiTest_run(void)
     MQTT_CHECK(XMqttConnectionProperties_maximumReceive(cp) == 20 &&
         XMqttConnectionProperties_maximumPacketSize(cp) == 1000,
         "连接属性拒绝协议禁止的零值");
-    XMqttConnectionProperties_delete_base(cp);
+    XClassDelete(cp);
 
     XMqttPublishProperties* pp = XMqttPublishProperties_create();
     XMqttPublishProperties_setTopicAlias(pp, 2);
     XMqttPublishProperties_setTopicAlias(pp, 0);
     MQTT_CHECK(XMqttPublishProperties_topicAlias(pp) == 2,
                "发布主题别名拒绝零值");
-    XMqttPublishProperties_delete_base(pp);
+    XClassDelete(pp);
 
     XMqttServerConnectionProperties* sp = XMqttServerConnectionProperties_create();
     MQTT_CHECK(sp && !XMqttServerConnectionProperties_isValid(sp) &&
@@ -228,7 +228,7 @@ int XMqttPublicApiTest_run(void)
         XMqttServerConnectionProperties_subscriptionIdentifierSupported(sp) &&
         XMqttServerConnectionProperties_sharedSubscriptionSupported(sp),
         "服务端连接属性默认能力与有效标志正确");
-    XMqttServerConnectionProperties_delete_base(sp);
+    XClassDelete(sp);
 
     XMqttClient* client = XMqttClient_create();
     XMqttMockDevice* mock = mqtt_mock_create();
@@ -237,8 +237,8 @@ int XMqttPublicApiTest_run(void)
         XString_length_base(XMqttClient_clientId_const(client)) == 23,
         "客户端默认端口和随机 Client ID 与 Qt 6.8 一致");
     if (!client || !mock) {
-        if (client) XClass_delete_base((XClass*)client);
-        if (mock) XClass_delete_base((XClass*)mock);
+        if (client) XClassDelete((XClass*)client);
+        if (mock) XClassDelete((XClass*)mock);
         return 1;
     }
     XMqttClient_setError(client, XMqttClient_TransportInvalid);
@@ -349,10 +349,10 @@ int XMqttPublicApiTest_run(void)
     MQTT_CHECK(XMqttClient_state(client) == XMqttClient_Disconnected,
                "主动断开回到 Disconnected");
 
-    XMqttTopicName_delete_base(publishTopic);
-    XMqttTopicFilter_delete_base(filter);
-    XClass_delete_base((XClass*)client);
-    XClass_delete_base((XClass*)mock);
+    XClassDelete(publishTopic);
+    XClassDelete(filter);
+    XClassDelete((XClass*)client);
+    XClassDelete((XClass*)mock);
 
     /* MQTT 5.0 属性、分片和主题别名。 */
     client = XMqttClient_create();
@@ -360,7 +360,7 @@ int XMqttPublicApiTest_run(void)
     cp = XMqttConnectionProperties_create();
     XMqttConnectionProperties_setMaximumTopicAlias(cp, 2);
     XMqttClient_setConnectionProperties(client, cp);
-    XMqttConnectionProperties_delete_base(cp);
+    XClassDelete(cp);
     XMqttClient_setProtocolVersion(client, XMqttClient_MQTT_5_0);
     XMqttClient_setClientId(client, "");
     XMqttClient_setAutoKeepAlive(client, false);
@@ -395,7 +395,7 @@ int XMqttPublicApiTest_run(void)
         mqtt_mock_feed(mock, m5Suback, sizeof(m5Suback));
         MQTT_CHECK(m5Sub && XMqttSubscription_state(m5Sub) == XMqttSubscription_Subscribed,
                    "MQTT 5 SUBACK 先读原因码再读属性长度");
-        XMqttTopicFilter_delete_base(m5Filter);
+        XClassDelete(m5Filter);
     }
 
     mqtt_received_count = 0;
@@ -440,20 +440,20 @@ int XMqttPublicApiTest_run(void)
     /* 值类型 move 自赋值必须保持对象有效，避免清空自身资源。 */
     XMqttTopicName* moveName = XMqttTopicName_create("move/topic");
     if (moveName) {
-        XMove(moveName, moveName);
+        XClassMove(moveName, moveName);
         MQTT_CHECK(XMqttTopicName_isValid(moveName) &&
                    XString_equals_utf8(XMqttTopicName_name_const(moveName),
                                        "move/topic", XChar_CaseSensitive),
                    "TopicName move 自赋值保持值不变");
-        XMqttTopicName_delete_base(moveName);
+        XClassDelete(moveName);
     } else {
         MQTT_CHECK(false, "TopicName move 自赋值保持值不变");
     }
-    XMqttAuthenticationProperties_delete_base(auth);
+    XClassDelete(auth);
     XMqttClient_disconnectFromHost_base(client);
-    XMqttTopicName_delete_base(publishTopic);
-    XClass_delete_base((XClass*)client);
-    XClass_delete_base((XClass*)mock);
+    XClassDelete(publishTopic);
+    XClassDelete((XClass*)client);
+    XClassDelete((XClass*)mock);
 
     XPrintf("========== XMqtt Qt 6.8 公开 API 回归完成: %d 通过, %d 失败 ==========\n",
             passed, failed);

@@ -21,7 +21,7 @@ static void font_clear(XPlatformFontDatabase* self)
     n = XVector_size_base((const XContainer*)self->m_families);
     for (i = 0; i < n; ++i) {
         XString** item = (XString**)XVector_at_base(self->m_families, (int64_t)i);
-        if (item && *item) XString_delete_base((XClass*)*item);
+        if (item && *item) XClassDelete((XClass*)*item);
     }
     XVector_clear_base(self->m_families);
 }
@@ -42,7 +42,7 @@ void XPlatformFontDatabase_destroy(XPlatformFontDatabase* self)
 {
     if (!self) return;
     font_clear(self);
-    if (self->m_families) XVector_delete_base((XClass*)self->m_families);
+    if (self->m_families) XClassDelete((XClass*)self->m_families);
     XFree_System(self);
 }
 
@@ -63,7 +63,7 @@ XVector* XPlatformFontDatabase_families(const XPlatformFontDatabase* self)
         XString* copy = item && *item ? XString_create_copy(*item) : NULL;
         /* 容器不接管的拷贝就地释放：扩容失败后继续 push 只会逐条复制逐条丢。 */
         if (copy && !XVector_push_back_1_base(out, &copy)) {
-            XString_delete_base((XClass*)copy);
+            XClassDelete((XClass*)copy);
             break;
         }
     }
@@ -94,7 +94,7 @@ bool XPlatformFontDatabase_hasFamily_2(const XPlatformFontDatabase* self,
     tmp = XString_create_utf8(family);
     if (!tmp) return false;
     ok = XPlatformFontDatabase_hasFamily(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return ok;
 }
 

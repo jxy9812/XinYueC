@@ -138,7 +138,7 @@ bool XComboBoxTest_runAll(void)
         XComboBox_clear(combo);
     }
 
-    XComboBox_delete_base(combo);
+    XClassDelete(combo);
 
     {
         int failures = cb_failures;

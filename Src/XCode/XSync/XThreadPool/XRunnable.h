@@ -42,9 +42,7 @@ void XRunnable_init(XRunnable* runnable);
  * @brief 销毁XRunnable实例
  * @param runnable 要销毁的XRunnable对象指针（非NULL）
  */
-#define XRunnable_delete_base      XClass_delete_base
 
-#define XRunnable_deinit_base      XClass_deinit_base
 /**
  * @brief 执行可运行任务（虚函数调用）
  * @param runnable XRunnable对象指针（非NULL）

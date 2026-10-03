@@ -64,17 +64,17 @@ void VXStepMotor_deinit(XStepMotor* motor)
 {
 	if (motor->m_ENA)
 	{
-		XSwitchDeviceBase_delete_base(motor->m_ENA);
+		XIODevice_deleteLater(motor->m_ENA);
 		motor->m_ENA=NULL;
 	}
 	if (motor->m_DIR)
 	{
-		XSwitchDeviceBase_delete_base(motor->m_DIR);
+		XIODevice_deleteLater(motor->m_DIR);
 		motor->m_DIR=NULL;
 	}
 	if (motor->m_PUL)
 	{
-		XPWMDeviceBase_delete_base(motor->m_PUL);
+		XIODevice_deleteLater(motor->m_PUL);
 		motor->m_PUL = NULL;
 	}
 	//调用父类释放方法

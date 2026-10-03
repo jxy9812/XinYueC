@@ -53,7 +53,7 @@ void XHstsPolicy_init(XHstsPolicy* self);
 
 /**
  * - @brief 创建空 HSTS 策略。
- * - @return 新对象；调用者必须使用 XHstsPolicy_delete_base 释放，失败返回 NULL。
+ * - @return 新对象；调用者必须使用 XClassDelete 释放，失败返回 NULL。
  */
 /**
  * - @brief 创建 HSTS 策略。
@@ -79,8 +79,6 @@ XHstsPolicy* XHstsPolicy_create_copy(const XHstsPolicy* other);
 XHstsPolicy* XHstsPolicy_create_move(XHstsPolicy* other);
 
 /** @brief HSTS 策略生命周期和值语义入口。 */
-#define XHstsPolicy_deinit_base XClass_deinit_base
-#define XHstsPolicy_delete_base XClass_delete_base
 
 /**
  * - @brief 设置策略主机。

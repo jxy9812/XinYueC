@@ -638,29 +638,29 @@ static void VX_mainWindow_deinit(XMainWindow* self)
     }
     self->m_dropAreaShown = 0;
     if (self->m_menuBarOwned && self->m_menuBar) {
-        XClass_delete_base((XClass*)self->m_menuBar);
+        XClassDelete((XClass*)self->m_menuBar);
     }
     if (self->m_statusBarOwned && self->m_statusBar) {
-        XClass_delete_base((XClass*)self->m_statusBar);
+        XClassDelete((XClass*)self->m_statusBar);
     }
     if (self->m_toolBars) {
-        XVector_delete_base(self->m_toolBars);
+        XClassDelete(self->m_toolBars);
         self->m_toolBars = NULL;
     }
     if (self->m_toolBarAreas) {
-        XVector_delete_base(self->m_toolBarAreas);
+        XClassDelete(self->m_toolBarAreas);
         self->m_toolBarAreas = NULL;
     }
     if (self->m_docks) {
-        XVector_delete_base(self->m_docks);
+        XClassDelete(self->m_docks);
         self->m_docks = NULL;
     }
     if (self->m_dockAreas) {
-        XVector_delete_base(self->m_dockAreas);
+        XClassDelete(self->m_dockAreas);
         self->m_dockAreas = NULL;
     }
     if (self->m_dockHeights) {
-        XVector_delete_base(self->m_dockHeights);
+        XClassDelete(self->m_dockHeights);
         self->m_dockHeights = NULL;
     }
     if (self->m_dockTabGroups) {
@@ -671,20 +671,20 @@ static void VX_mainWindow_deinit(XMainWindow* self)
                 (XVector**)XVector_at_base(self->m_dockTabGroups, i);
             XTabBar** bar = self->m_dockTabBars
                 ? (XTabBar**)XVector_at_base(self->m_dockTabBars, i) : NULL;
-            if (group && *group) XVector_delete_base(*group);
+            if (group && *group) XClassDelete(*group);
             /* 页签条为主窗口子控件，随控件树级联销毁，此处仅清登记。 */
             if (bar) *bar = NULL;
         }
-        XVector_delete_base(self->m_dockTabGroups);
+        XClassDelete(self->m_dockTabGroups);
         self->m_dockTabGroups = NULL;
     }
     if (self->m_dockTabBars) {
-        XVector_delete_base(self->m_dockTabBars);
+        XClassDelete(self->m_dockTabBars);
         self->m_dockTabBars = NULL;
     }
     if (self->m_dockTabBarPool) {
         /* 池中页签条同为主窗口子控件，随控件树级联销毁，此处仅清登记。 */
-        XVector_delete_base(self->m_dockTabBarPool);
+        XClassDelete(self->m_dockTabBarPool);
         self->m_dockTabBarPool = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -780,7 +780,7 @@ void XMainWindow_setMenuBar(XMainWindow* self, XWidget* menuBar)
 {
     if (!self) return;
     if (self->m_menuBarOwned && self->m_menuBar)
-        XClass_delete_base((XClass*)self->m_menuBar);
+        XClassDelete((XClass*)self->m_menuBar);
     self->m_menuBar = menuBar;
     self->m_menuBarOwned = false;
     if (menuBar) {
@@ -830,7 +830,7 @@ void XMainWindow_setStatusBar(XMainWindow* self, XWidget* statusBar)
 {
     if (!self) return;
     if (self->m_statusBarOwned && self->m_statusBar)
-        XClass_delete_base((XClass*)self->m_statusBar);
+        XClassDelete((XClass*)self->m_statusBar);
     self->m_statusBar = statusBar;
     self->m_statusBarOwned = false;
     if (statusBar) {
@@ -1009,7 +1009,7 @@ static void xmw_dockGroupDetach(XMainWindow* self, const XDockWidget* dock)
                                              &pooled);
                 *bar = NULL;
             }
-            XVector_delete_base(group);
+            XClassDelete(group);
             XVector_remove_base(self->m_dockTabBars, g, 1);
             XVector_remove_base(self->m_dockTabGroups, g, 1);
         }
@@ -2193,7 +2193,7 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
         for (g = 0; g < gn; ++g) {
             XVector* group =
                 XVector_At_Base(self->m_dockTabGroups, g, XVector*);
-            if (group) XVector_delete_base(group);
+            if (group) XClassDelete(group);
         }
         XVector_clear_base(self->m_dockTabGroups);
     }

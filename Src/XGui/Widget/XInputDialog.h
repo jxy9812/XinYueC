@@ -89,7 +89,7 @@ XCLASS_DEFINE_EXTEND_END(XInputDialog, XDialog)
 /**
  * @brief      XInputDialog 输入对话框对象；m_base 必须是第一个成员。
  * @details    字符串字段为拥有型 XString*，列表字段为拥有型 XStringList*；
- *             销毁随 XInputDialog_deinit_base 一并释放。
+ *             销毁随 XClassDeinit 一并释放。
  */
 typedef struct XInputDialog
 {
@@ -143,8 +143,6 @@ void XInputDialog_init(XInputDialog* self, XWidget* parent, XWidgetFlags flags);
  */
 XInputDialog* XInputDialog_create_ex(XMemoryType memory, XWidget* parent,
                                      XWidgetFlags flags);
-#define XInputDialog_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XInputDialog_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 实例属性（对标 QInputDialog） ==================== */
 
@@ -171,7 +169,7 @@ void XInputDialog_setLabelText(XInputDialog* self, const XString* text);
 /**
  * @brief      获取标签文本副本（对标 QInputDialog::labelText）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效时返回空串。
  */
 XString* XInputDialog_labelText(const XInputDialog* self);
@@ -186,7 +184,7 @@ void XInputDialog_setTextValue(XInputDialog* self, const XString* text);
 /**
  * @brief      获取文本值副本（对标 QInputDialog::textValue）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效时返回空串。
  */
 XString* XInputDialog_textValue(const XInputDialog* self);
@@ -229,7 +227,7 @@ void XInputDialog_setComboBoxItems(XInputDialog* self, const XStringList* items)
  * @brief      获取下拉项列表副本（对标 QInputDialog::comboBoxItems）。
  * @param      self 目标对话框；可为 NULL。
  * @return     新建的 XStringList 深拷贝，调用方拥有，须
- *             XStringList_delete_base；无效时返回空列表。
+ *             XClassDelete；无效时返回空列表。
  */
 XStringList* XInputDialog_comboBoxItems(const XInputDialog* self);
 /**
@@ -255,7 +253,7 @@ void XInputDialog_setOkButtonText(XInputDialog* self, const XString* text);
 /**
  * @brief      获取 OK 按钮文本副本（对标 QInputDialog::okButtonText）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效时返回空串。
  */
 XString* XInputDialog_okButtonText(const XInputDialog* self);
@@ -278,14 +276,14 @@ void XInputDialog_setPlaceholderText(XInputDialog* self, const XString* text);
 /**
  * @brief      获取占位提示文本副本（对标 QInputDialog::placeholderText）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效时返回空串。
  */
 XString* XInputDialog_placeholderText(const XInputDialog* self);
 /**
  * @brief      获取取消按钮文本副本（对标 QInputDialog::cancelButtonText）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效时返回空串。
  */
 XString* XInputDialog_cancelButtonText(const XInputDialog* self);
@@ -329,7 +327,7 @@ XInputDialogOptions XInputDialog_options(const XInputDialog* self);
  * @param      echo 回显模式（XInputDialogEchoMode）。
  * @param      text 初始文本；可为 NULL。
  * @param      ok 输出：是否确认（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getText(XWidget* parent, const XString* title,
                               const XString* label, XInputDialogEchoMode echo,
@@ -343,7 +341,7 @@ XString* XInputDialog_getText(XWidget* parent, const XString* title,
  * @param      echo 回显模式（XInputDialogEchoMode）。
  * @param      text 初始文本（UTF-8）；可为 NULL。
  * @param      ok 输出：是否确认（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getText_2(XWidget* parent, const char* title,
                                 const char* label, XInputDialogEchoMode echo,
@@ -360,7 +358,7 @@ XString* XInputDialog_getText_2(XWidget* parent, const char* title,
  *             消失，不进入返回值——对标 QInputDialog::setPlaceholderText
  *             + QLineEdit 占位语义）；可为 NULL。
  * @param      ok 输出：是否确认（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getText_3(XWidget* parent, const char* title,
                                 const char* label, XInputDialogEchoMode echo,
@@ -374,7 +372,7 @@ XString* XInputDialog_getText_3(XWidget* parent, const char* title,
  * @param      label 提示标签；可为 NULL。
  * @param      text 初始文本；可为 NULL。
  * @param      ok 输出：是否确认（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getMultiLineText(XWidget* parent, const XString* title,
                                        const XString* label, const XString* text,
@@ -387,7 +385,7 @@ XString* XInputDialog_getMultiLineText(XWidget* parent, const XString* title,
  * @param      label 提示标签（UTF-8）；可为 NULL。
  * @param      text 初始文本（UTF-8）；可为 NULL。
  * @param      ok 输出：是否确认（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getMultiLineText_2(XWidget* parent, const char* title,
                                          const char* label, const char* text,
@@ -469,7 +467,7 @@ double XInputDialog_getDouble_2(XWidget* parent, const char* title,
  * @param      current 当前选中下标（0 起）。
  * @param      editable 是否可编辑。
  * @param      ok 输出：是否确认（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getItem(XWidget* parent, const XString* title,
                               const XString* label, const XStringList* items,
@@ -486,7 +484,7 @@ XString* XInputDialog_getItem(XWidget* parent, const XString* title,
  * @param      current 当前选中下标（0 起）。
  * @param      editable 是否可编辑。
  * @param      ok 输出：是否确认（可为 NULL）。
- * @return     新建的 XString，调用方拥有，须 XString_delete_base。
+ * @return     新建的 XString，调用方拥有，须 XClassDelete。
  */
 XString* XInputDialog_getItem_2(XWidget* parent, const char* title,
                                 const char* label, const char* const* items,

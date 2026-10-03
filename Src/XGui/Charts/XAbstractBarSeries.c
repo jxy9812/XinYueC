@@ -175,7 +175,7 @@ static void VXAbstractBarSeries_deinit(XAbstractBarSeries* self)
     int i;
     if (!self) return;
     for (i = 0; i < self->m_barSetCount; ++i)
-        if (self->m_barSets[i]) XBarSet_delete_base(self->m_barSets[i]);
+        if (self->m_barSets[i]) XClassDelete(self->m_barSets[i]);
     if (self->m_barSets) {
         XFree_System(self->m_barSets);
         self->m_barSets = NULL;
@@ -183,7 +183,7 @@ static void VXAbstractBarSeries_deinit(XAbstractBarSeries* self)
     self->m_barSetCount = 0;
     self->m_barSetCapacity = 0;
     if (self->m_labelsFormat) {
-        XString_delete_base(self->m_labelsFormat);
+        XClassDelete(self->m_labelsFormat);
         self->m_labelsFormat = NULL;
     }
     XClass_Deinit_Parent(XAbstractSeries, (XAbstractSeries*)self);
@@ -241,7 +241,7 @@ static void VXAbstractBarSeries_move(XAbstractBarSeries* self,
         (XAbstractSeries*)self, (XAbstractSeries*)other);
     /* 释放 self 原有柱组与快照（基类资源已由父类 move 转移）。 */
     for (i = 0; i < self->m_barSetCount; ++i)
-        if (self->m_barSets[i]) XBarSet_delete_base(self->m_barSets[i]);
+        if (self->m_barSets[i]) XClassDelete(self->m_barSets[i]);
     if (self->m_barSets) {
         XFree_System(self->m_barSets);
         self->m_barSets = NULL;
@@ -249,7 +249,7 @@ static void VXAbstractBarSeries_move(XAbstractBarSeries* self,
     self->m_barSetCount = 0;
     self->m_barSetCapacity = 0;
     if (self->m_labelsFormat) {
-        XString_delete_base(self->m_labelsFormat);
+        XClassDelete(self->m_labelsFormat);
         self->m_labelsFormat = NULL;
     }
     self->m_barSets = other->m_barSets;
@@ -492,7 +492,7 @@ void XAbstractBarSeries_setLabelsFormat_2(XAbstractBarSeries* self,
         if (!tmp) return;
     }
     XAbstractBarSeries_setLabelsFormat(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XAbstractBarSeries_labelsFormat(const XAbstractBarSeries* self)

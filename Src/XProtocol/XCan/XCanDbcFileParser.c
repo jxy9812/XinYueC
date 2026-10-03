@@ -136,11 +136,11 @@ void XCanDbcFileParser_deinit(XCanDbcFileParser* parser)
     if (!parser) return;
 
     if (parser->m_messageDescriptions) {
-        XMap_delete_base(parser->m_messageDescriptions);
+        XClassDelete(parser->m_messageDescriptions);
         parser->m_messageDescriptions = NULL;
     }
     if (parser->m_valueDescriptions) {
-        XMap_delete_base(parser->m_valueDescriptions);
+        XClassDelete(parser->m_valueDescriptions);
         parser->m_valueDescriptions = NULL;
     }
     if (parser->m_isProcessingMessage) {
@@ -148,11 +148,11 @@ void XCanDbcFileParser_deinit(XCanDbcFileParser* parser)
         parser->m_isProcessingMessage = false;
     }
     if (parser->m_errorString) {
-        XString_delete_base(parser->m_errorString);
+        XClassDelete(parser->m_errorString);
         parser->m_errorString = NULL;
     }
     if (parser->m_warnings) {
-        XStringList_delete_base(parser->m_warnings);
+        XClassDelete(parser->m_warnings);
         parser->m_warnings = NULL;
     }
     if (parser->m_fileName) {
@@ -168,11 +168,11 @@ static void resetParser(XCanDbcFileParser* parser)
     if (!parser) return;
 
     if (parser->m_messageDescriptions) {
-        XMap_delete_base(parser->m_messageDescriptions);
+        XClassDelete(parser->m_messageDescriptions);
         parser->m_messageDescriptions = NULL;
     }
     if (parser->m_valueDescriptions) {
-        XMap_delete_base(parser->m_valueDescriptions);
+        XClassDelete(parser->m_valueDescriptions);
         parser->m_valueDescriptions = NULL;
     }
     if (parser->m_isProcessingMessage) {
@@ -180,11 +180,11 @@ static void resetParser(XCanDbcFileParser* parser)
         parser->m_isProcessingMessage = false;
     }
     if (parser->m_errorString) {
-        XString_delete_base(parser->m_errorString);
+        XClassDelete(parser->m_errorString);
         parser->m_errorString = NULL;
     }
     if (parser->m_warnings) {
-        XStringList_delete_base(parser->m_warnings);
+        XClassDelete(parser->m_warnings);
         parser->m_warnings = NULL;
     }
 
@@ -263,7 +263,7 @@ static bool parseFileInternal(XCanDbcFileParser* parser, const char* fileName)
 
     if (!nameString) {
         parser->m_error = XCanDbcFileParser_Error_FileReading;
-        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+        if (parser->m_errorString) XClassDelete(parser->m_errorString);
         parser->m_errorString = XString_create_utf8("Memory allocation failed");
         return false;
     }
@@ -271,34 +271,34 @@ static bool parseFileInternal(XCanDbcFileParser* parser, const char* fileName)
     XFile_init_2(&file, nameString);
     if (!XFile_open_2(&file, XIODevice_ReadOnly, 0)) {
         parser->m_error = XCanDbcFileParser_Error_FileReading;
-        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+        if (parser->m_errorString) XClassDelete(parser->m_errorString);
         parser->m_errorString = XString_create_fmt_utf8(
             "Cannot open file: '%s'", fileName);
-        XClass_deinit_base((XClass*)&file);
-        XString_delete_base((XClass*)nameString);
+        XClassDeinit((XClass*)&file);
+        XClassDelete((XClass*)nameString);
         return false;
     }
 
     fileSize = XFile_size_base(&file);
     if (fileSize <= 0) {
         parser->m_error = XCanDbcFileParser_Error_FileReading;
-        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+        if (parser->m_errorString) XClassDelete(parser->m_errorString);
         parser->m_errorString = XString_create_fmt_utf8(
             "Empty file: '%s'", fileName);
         XFile_close_base(&file);
-        XClass_deinit_base((XClass*)&file);
-        XString_delete_base((XClass*)nameString);
+        XClassDeinit((XClass*)&file);
+        XClassDelete((XClass*)nameString);
         return false;
     }
 
     buffer = (char*)XMalloc_System((size_t)fileSize + 1);
     if (!buffer) {
         parser->m_error = XCanDbcFileParser_Error_FileReading;
-        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+        if (parser->m_errorString) XClassDelete(parser->m_errorString);
         parser->m_errorString = XString_create_utf8("Memory allocation failed");
         XFile_close_base(&file);
-        XClass_deinit_base((XClass*)&file);
-        XString_delete_base((XClass*)nameString);
+        XClassDeinit((XClass*)&file);
+        XClassDelete((XClass*)nameString);
         return false;
     }
 
@@ -308,8 +308,8 @@ static bool parseFileInternal(XCanDbcFileParser* parser, const char* fileName)
     }
 
     XFile_close_base(&file);
-    XClass_deinit_base((XClass*)&file);
-    XString_delete_base((XClass*)nameString);
+    XClassDeinit((XClass*)&file);
+    XClassDelete((XClass*)nameString);
 
     result = parseDataInternal(parser, buffer);
     XFree_System(buffer);
@@ -324,7 +324,7 @@ static bool parseDataInternal(XCanDbcFileParser* parser, const char* data)
     char* workBuffer = XStrdup(data);
     if (!workBuffer) {
         parser->m_error = XCanDbcFileParser_Error_Parsing;
-        if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+        if (parser->m_errorString) XClassDelete(parser->m_errorString);
         parser->m_errorString = XString_create_utf8("Memory allocation failed");
         return false;
     }
@@ -375,7 +375,7 @@ static bool parseDataInternal(XCanDbcFileParser* parser, const char* data)
     if (!parser->m_messageDescriptions || XMap_size_base(parser->m_messageDescriptions) == 0) {
         if (parser->m_error == XCanDbcFileParser_Error_None) {
             parser->m_error = XCanDbcFileParser_Error_Parsing;
-            if (parser->m_errorString) XString_delete_base(parser->m_errorString);
+            if (parser->m_errorString) XClassDelete(parser->m_errorString);
             parser->m_errorString = XString_create_utf8(
                 "No valid message descriptions found in DBC data");
         }
@@ -755,13 +755,13 @@ static bool parseSignal(XCanDbcFileParser* parser, const char* data)
         XMap* muxSignals = XMap_create(sizeof(XString), sizeof(XCanSignalDescription_MultiplexValueRange), XString_compare);
         XMapBaseSetKeyCopyMethod(muxSignals, XClass_copy_base);
         XMapBaseSetKeyMoveMethod(muxSignals, XClass_move_base);
-        XMapBaseSetKeyDeinitMethod(muxSignals, XString_deinit_base);
+        XMapBaseSetKeyDeinitMethod(muxSignals, XClass_deinit_base);
         XMapBase_insert_base((XMapBase*)muxSignals, &dummyKey, &muxRange);
 
         XCanSignalDescription_setMultiplexSignals(&sigDesc, muxSignals);
-        XMap_delete_base(muxSignals);
+        XClassDelete(muxSignals);
 
-        XClass_deinit_base((XClass*)&dummyKey);
+        XClassDeinit((XClass*)&dummyKey);
     }
 
     /* 添加到当前消息 */
@@ -994,7 +994,7 @@ static void parseExtendedMux(XCanDbcFileParser* parser, const char* data)
         }
     }
 
-    XVector_delete_base(valueRanges);
+    XClassDelete(valueRanges);
     XFree_System(work);
 }
 
@@ -1041,11 +1041,11 @@ static void parseValueDescriptions(XCanDbcFileParser* parser, const char* data)
         XMap* tmpMap = XMap_create(sizeof(XString), sizeof(XCanDbcFileParser_ValueDescriptions), XString_compare);
         XMapBaseSetKeyCopyMethod(tmpMap, XClass_copy_base);
         XMapBaseSetKeyMoveMethod(tmpMap, XClass_move_base);
-        XMapBaseSetKeyDeinitMethod(tmpMap, XString_deinit_base);
+        XMapBaseSetKeyDeinitMethod(tmpMap, XClass_deinit_base);
 
         XCanBus_UniqueId uidKey = uid;
         XMapBase_insert_base((XMapBase*)parser->m_valueDescriptions, &uidKey, tmpMap);
-        XMap_delete_base(tmpMap);
+        XClassDelete(tmpMap);
 
         sigValueDesc = (XCanDbcFileParser_SignalValueDescriptions*)
             XMap_value_base(parser->m_valueDescriptions, &uidKey);
@@ -1085,7 +1085,7 @@ static void parseValueDescriptions(XCanDbcFileParser* parser, const char* data)
                 memset(&newValDesc, 0, sizeof(newValDesc));
                 XMap* tmpValMap = XMap_create(sizeof(uint32_t), sizeof(XString), uint32_t_compare);
                 XMapBase_insert_base((XMapBase*)sigValueDesc, &sigKey, tmpValMap);
-                XMap_delete_base(tmpValMap);
+                XClassDelete(tmpValMap);
 
                 valDesc = (XCanDbcFileParser_ValueDescriptions*)
                     XMap_value_base(sigValueDesc, &sigKey);
@@ -1096,10 +1096,10 @@ static void parseValueDescriptions(XCanDbcFileParser* parser, const char* data)
                 XString_init(&descStr);
                 XString_assign_utf8(&descStr, desc);
                 XMapBase_insert_base((XMapBase*)valDesc, &value, &descStr);
-                XClass_deinit_base((XClass*)&descStr);
+                XClassDeinit((XClass*)&descStr);
             }
 
-            XClass_deinit_base((XClass*)&sigKey);
+            XClassDeinit((XClass*)&sigKey);
         }
 
         XFree_System(desc);
@@ -1184,10 +1184,10 @@ static void postProcessSignalMultiplexing(XCanDbcFileParser* parser)
                                 XString_init(&muxKey);
                                 XString_assign_utf8(&muxKey, XString_toUtf8(multiplexorSignal));
                                 XMapBase_insert_base((XMapBase*)muxSignals, &muxKey, val);
-                                XClass_deinit_base((XClass*)&muxKey);
+                                XClassDeinit((XClass*)&muxKey);
                             }
 
-                            XClass_deinit_base((XClass*)&dummyKey);
+                            XClassDeinit((XClass*)&dummyKey);
                         }
                     }
                 }
@@ -1211,10 +1211,10 @@ static void postProcessSignalMultiplexing(XCanDbcFileParser* parser)
                             /* 存在虚拟信号条目，说明扩展多路复用解析有误 */
                             XCanBus_UniqueId uid = msgDesc->m_uniqueId;
                             XVector_push_back_1_base(uidsToRemove, &uid);
-                            XClass_deinit_base((XClass*)&dummyKey);
+                            XClassDeinit((XClass*)&dummyKey);
                             break;
                         }
-                        XClass_deinit_base((XClass*)&dummyKey);
+                        XClassDeinit((XClass*)&dummyKey);
                     }
                 }
             }
@@ -1237,7 +1237,7 @@ static void postProcessSignalMultiplexing(XCanDbcFileParser* parser)
         }
     }
 
-    XVector_delete_base(uidsToRemove);
+    XClassDelete(uidsToRemove);
 }
 
 // =============== 辅助方法 ===============

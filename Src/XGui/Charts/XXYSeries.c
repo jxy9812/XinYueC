@@ -235,11 +235,11 @@ static void VXXYSeries_deinit(XXYSeries* self)
         self->m_pointSizes = NULL;
     }
     if (self->m_pointLabelsFormat) {
-        XString_delete_base(self->m_pointLabelsFormat);
+        XClassDelete(self->m_pointLabelsFormat);
         self->m_pointLabelsFormat = NULL;
     }
     if (self->m_pointLabelsFontFamily) {
-        XString_delete_base(self->m_pointLabelsFontFamily);
+        XClassDelete(self->m_pointLabelsFontFamily);
         self->m_pointLabelsFontFamily = NULL;
     }
     XClass_Deinit_Parent(XAbstractSeries, (XAbstractSeries*)self);
@@ -313,7 +313,7 @@ static void VXXYSeries_move(XXYSeries* self, XXYSeries* other)
     if (self->m_points) XFree_System(self->m_points);
     if (self->m_selected) XFree_System(self->m_selected);
     if (self->m_pointLabelsFormat)
-        XString_delete_base(self->m_pointLabelsFormat);
+        XClassDelete(self->m_pointLabelsFormat);
     self->m_points = other->m_points;
     other->m_points = NULL;
     self->m_count = other->m_count;
@@ -336,7 +336,7 @@ static void VXXYSeries_move(XXYSeries* self, XXYSeries* other)
     self->m_bestFitColor = other->m_bestFitColor;
     self->m_bestFitWidth = other->m_bestFitWidth;
     if (self->m_pointLabelsFontFamily)
-        XString_delete_base(self->m_pointLabelsFontFamily);
+        XClassDelete(self->m_pointLabelsFontFamily);
     self->m_pointLabelsFontFamily = other->m_pointLabelsFontFamily;
     other->m_pointLabelsFontFamily = NULL;
     self->m_pointLabelsFormat = other->m_pointLabelsFormat;
@@ -649,7 +649,7 @@ void XXYSeries_setPointLabelsFormat_2(XXYSeries* self, const char* format)
         if (!tmp) return;
     }
     XXYSeries_setPointLabelsFormat(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XXYSeries_pointLabelsFormat(const XXYSeries* self)
@@ -953,7 +953,7 @@ void XXYSeries_setPointLabelsFont_2(XXYSeries* self, const char* family,
         if (!tmp) return;
     }
     XXYSeries_setPointLabelsFont(self, tmp, pointSize);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XXYSeries_pointLabelsFontFamily(const XXYSeries* self)

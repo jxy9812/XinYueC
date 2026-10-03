@@ -35,9 +35,7 @@ void XFontOutlineFace_initFile(XFontOutlineFace* self);
 XVtable* XFontOutlineFace_class_init(void);
 
 /** @brief 通过 XClass 虚表反初始化轮廓 face。 */
-#define XFontOutlineFace_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 通过 XClass 虚表删除堆上的轮廓 face。 */
-#define XFontOutlineFace_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief 注册一个轮廓 provider，并接入 XFontFace 解析表。 */
 bool XFontOutlineFace_registerProvider(const XFontOutlineProvider* provider);

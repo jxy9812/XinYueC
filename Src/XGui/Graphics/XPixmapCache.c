@@ -278,8 +278,8 @@ static void destroyEntry(XCacheEntry* entry)
         XPixmapCacheKeyData_invalidate(entry->m_keyData);
         XPixmapCacheKeyData_unref(entry->m_keyData);
     }
-    if (entry->m_key) XString_delete_base((XClass*)entry->m_key);
-    XPixmap_deinit_base(&entry->m_pixmap);
+    if (entry->m_key) XClassDelete((XClass*)entry->m_key);
+    XClassDeinit(&entry->m_pixmap);
     XFree_System(entry);
 }
 
@@ -389,7 +389,7 @@ bool XPixmapCache_find(const XString* key, XPixmap* pixmap)
         if (entry->m_hasStringKey && entry->m_key &&
             XString_equals(entry->m_key, key, XChar_CaseSensitive))
         {
-            if (pixmap) XCopy(pixmap, &entry->m_pixmap);
+            if (pixmap) XClassCopy(pixmap, &entry->m_pixmap);
             touchEntry(link);
             found = true;
             break;
@@ -406,7 +406,7 @@ bool XPixmapCache_find_2(const char* key, XPixmap* pixmap)
         return false;
     XString* value = key ? XString_create_utf8(key) : NULL;
     bool result = XPixmapCache_find(value, pixmap);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 
@@ -426,7 +426,7 @@ bool XPixmapCache_findKey(const XPixmapCacheKey* key, XPixmap* pixmap)
         XCacheEntry* entry = *link;
         if (entry->m_keyData == key->m_data)
         {
-            if (pixmap) XCopy(pixmap, &entry->m_pixmap);
+            if (pixmap) XClassCopy(pixmap, &entry->m_pixmap);
             touchEntry(link);
             found = true;
             break;
@@ -463,7 +463,7 @@ bool XPixmapCache_insert(const XString* key, const XPixmap* pixmap)
     entry->m_key = XString_create_copy(key);
     if (!entry->m_key) { XFree_System(entry); cacheLockRelease(); return false; }
     /* 条目已清零；copy 基类会初始化目标并取得共享像素数据引用。 */
-    XCopy(&entry->m_pixmap, pixmap);
+    XClassCopy(&entry->m_pixmap, pixmap);
     entry->m_size = cost;
     entry->m_hasStringKey = true;
     entry->m_next = g_cache.m_head;
@@ -481,7 +481,7 @@ bool XPixmapCache_insert_2(const char* key, const XPixmap* pixmap)
         return false;
     XString* value = key ? XString_create_utf8(key) : NULL;
     bool result = XPixmapCache_insert(value, pixmap);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 
@@ -526,7 +526,7 @@ bool XPixmapCache_insertKey(const XPixmap* pixmap, XPixmapCacheKey* key)
     }
     XMemset(entry, 0, sizeof(XCacheEntry));
     /* 条目已清零；copy 基类会初始化目标并取得共享像素数据引用。 */
-    XCopy(&entry->m_pixmap, pixmap);
+    XClassCopy(&entry->m_pixmap, pixmap);
     entry->m_keyData = keyData;
     entry->m_size = cost;
     entry->m_next = g_cache.m_head;
@@ -577,7 +577,7 @@ void XPixmapCache_remove_2(const char* key)
         return;
     XString* value = key ? XString_create_utf8(key) : NULL;
     XPixmapCache_remove(value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 void XPixmapCache_removeKey(const XPixmapCacheKey* key)

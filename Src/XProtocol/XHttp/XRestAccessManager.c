@@ -104,16 +104,16 @@ static XHttpReply* xrest_send_json(XRestAccessManager* self, const XHttpRequest*
         method == XHttpRequest_Put ? XNetworkAccessManager_PutOperation :
         XNetworkAccessManager_CustomOperation, copy, body,
         customMethod);
-    XClass_delete_base((XClass*)body);
-    XClass_delete_base((XClass*)contentType);
-    if (customMethod) XClass_delete_base((XClass*)customMethod);
-    XClass_delete_base((XClass*)copy);
+    XClassDelete((XClass*)body);
+    XClassDelete((XClass*)contentType);
+    if (customMethod) XClassDelete((XClass*)customMethod);
+    XClassDelete((XClass*)copy);
     return reply;
 failed:
-    if (body) XClass_delete_base((XClass*)body);
-    if (contentType) XClass_delete_base((XClass*)contentType);
-    if (customMethod) XClass_delete_base((XClass*)customMethod);
-    if (copy) XClass_delete_base((XClass*)copy);
+    if (body) XClassDelete((XClass*)body);
+    if (contentType) XClassDelete((XClass*)contentType);
+    if (customMethod) XClassDelete((XClass*)customMethod);
+    if (copy) XClassDelete((XClass*)copy);
     return NULL;
 }
 
@@ -133,7 +133,7 @@ XHttpReply* XRestAccessManager_patch(XRestAccessManager* self, const XHttpReques
     XByteArray* method = XByteArray_create_utf8("PATCH");
     XHttpReply* reply = method && self && self->m_manager ?
         XNetworkAccessManager_sendCustomRequest(self->m_manager, request, method, body) : NULL;
-    if (method) XClass_delete_base((XClass*)method);
+    if (method) XClassDelete((XClass*)method);
     return reply;
 }
 

@@ -103,8 +103,6 @@ XLcdNumber* XLcdNumber_create_ex(XMemoryType memory, XWidget* parent,
     XLcdNumber_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, (numDigits), (parent), (flags))
 XLcdNumber* XLcdNumber_create_ex_2(XMemoryType memory, unsigned numDigits,
                                    XWidget* parent, XWidgetFlags flags);
-#define XLcdNumber_deinit_base(self) XFrame_deinit_base((XFrame*)(self))
-#define XLcdNumber_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 专属属性（对标 QLCDNumber public API） ==================== */
 

@@ -109,7 +109,7 @@ void XMenu_init_2(XMenu* self, XWidget* parent, const char* utf8Title);
 /**
  * @brief      使用默认内存类型创建并初始化菜单对象。
  * @return     新建的已初始化对象指针；分配失败返回 NULL。成功返回的
- *             对象由调用方拥有，必须使用 XMenu_delete_base 释放。
+ *             对象由调用方拥有，必须使用 XClassDelete 释放。
  */
 XMenu* XMenu_create(void);
 
@@ -142,16 +142,14 @@ XMenu* XMenu_create_move(XMenu* other);
 /**
  * @brief      通过当前 XClass 虚表释放菜单对象所拥有的资源。
  * @param      self 已初始化的栈对象或外部存储对象；可为 NULL。
- * @return     无返回值；堆对象必须使用 XMenu_delete_base。
+ * @return     无返回值；堆对象必须使用 XClassDelete。
  */
-#define XMenu_deinit_base(self)  XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      释放菜单对象资源并按对象所有权删除其存储空间。
  * @param      self 由 XMenu_create 系列返回的堆对象；可为 NULL。
- * @return     无返回值；栈对象请使用 XMenu_deinit_base。
+ * @return     无返回值；栈对象请使用 XClassDeinit。
  */
-#define XMenu_delete_base(self)  XClass_delete_base((XClass*)(self))
 
 /* ==================== 动作容器（对标 QMenu） ==================== */
 
@@ -366,7 +364,7 @@ XMenu* XMenu_menuInAction(const XAction* action);
  * @brief      获取菜单标题拷贝（对标 QMenu::title）。
  * @param      self 菜单对象借用指针；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；未设置或 self 为 NULL 时返回 NULL。
+ *             XClassDelete；未设置或 self 为 NULL 时返回 NULL。
  */
 XString* XMenu_title(const XMenu* self);
 

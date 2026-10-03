@@ -388,7 +388,7 @@ static bool xkb_imeComposing(const XVirtualKeyboard* self)
     preedit = XVirtualKeyboardInputContext_preeditText(ctx);
     composing = preedit && XString_toUtf8(preedit) &&
                 XString_toUtf8(preedit)[0] != '\0';
-    if (preedit) XString_delete_base(preedit);
+    if (preedit) XClassDelete(preedit);
     return composing;
 }
 
@@ -416,7 +416,7 @@ static bool xkb_candidateText(const XVirtualKeyboard* self, int index, char* buf
     utf8 = text ? XString_toUtf8(text) : NULL;
     if (utf8) XStrncpy(buf, utf8, (size_t)bufSize);
     buf[bufSize - 1] = '\0';
-    XVariant_delete_base(value);
+    XClassDelete(value);
     return utf8 != NULL;
 }
 
@@ -434,7 +434,7 @@ static void xkb_preeditSnapshot(const XVirtualKeyboard* self, char* buf,
     if (preedit) {
         const char* utf8 = XString_toUtf8(preedit);
         if (utf8) XStrncpy(buf, utf8, (size_t)bufSize);
-        XString_delete_base(preedit);
+        XClassDelete(preedit);
     }
     buf[bufSize - 1] = '\0';
 }
@@ -594,7 +594,7 @@ static XWidget* xkb_resolveFloatingHost(XVirtualKeyboard* self, XWidget* host)
             best = w;
         }
     }
-    XVector_delete_base((XClass*)tops);
+    XClassDelete((XClass*)tops);
     return best ? best : host;
 }
 #else /* !XAPPLICATION_ON */

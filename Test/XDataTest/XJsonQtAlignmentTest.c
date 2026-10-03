@@ -16,7 +16,7 @@
 static void json_delete_variant(XVariant* variant)
 {
     if (variant)
-        XVariant_delete_base((XClass*)variant);
+        XClassDelete((XClass*)variant);
 }
 
 static void json_delete_ref_variant(XVariant* variant)
@@ -25,7 +25,7 @@ static void json_delete_ref_variant(XVariant* variant)
     if (variant)
     {
         variant->m_data = NULL;
-        XVariant_delete_base((XClass*)variant);
+        XClassDelete((XClass*)variant);
     }
 }
 
@@ -45,7 +45,7 @@ static void json_assert_parse_error(const char* data, size_t length, XJsonParseE
     assert(document == NULL);
     assert(error.error == expected);
     assert(error.offset >= 0);
-    XByteArray_delete_base((XClass*)input);
+    XClassDelete((XClass*)input);
 }
 
 static void test_json_parse_errors(void)
@@ -76,7 +76,7 @@ static void test_json_parse_errors(void)
         assert(XByteArray_push_back_1(deeply_nested, ']'));
     document = XJsonDocument_fromJson_ex(deeply_nested, &error);
     assert(document == NULL && error.error == XJsonParseError_DeepNesting);
-    XByteArray_delete_base((XClass*)deeply_nested);
+    XClassDelete((XClass*)deeply_nested);
 }
 
 static void test_json_value_api(void)
@@ -130,7 +130,7 @@ static void test_json_value_api(void)
     moved_text = XString_create_utf8("moved");
     XJsonValue_setString_move(&local, moved_text);
     json_assert_string(XJsonValue_toString(&local), "moved");
-    XString_delete_base((XClass*)moved_text);
+    XClassDelete((XClass*)moved_text);
     XJsonValue_clear(&local);
     assert(XJsonValue_isString(&local) && XString_isEmpty_base(local.data.string));
 
@@ -166,9 +166,9 @@ static void test_json_value_api(void)
     XJsonValue_delete(number);
     XJsonValue_delete(integer);
     XJsonValue_delete(string);
-    XString_delete_base((XClass*)text);
-    XJsonArray_delete_base((XClass*)array);
-    XJsonObject_delete_base((XClass*)object);
+    XClassDelete((XClass*)text);
+    XClassDelete((XClass*)array);
+    XClassDelete((XClass*)object);
     XJsonValue_delete(moved);
 }
 
@@ -240,10 +240,10 @@ static void test_json_array_api(void)
 
     string = XString_create_utf8("one");
     XStringList_push_back_base(strings, string);
-    XString_delete_base((XClass*)string);
+    XClassDelete((XClass*)string);
     string = XString_create_utf8("two");
     XStringList_push_back_base(strings, string);
-    XString_delete_base((XClass*)string);
+    XClassDelete((XClass*)string);
     from_strings = XJsonArray_fromStringList(strings);
     assert(from_strings && XJsonArray_size_base(from_strings) == 2);
     number = XVariant_create_int(8);
@@ -256,12 +256,12 @@ static void test_json_array_api(void)
     converted = XJsonArray_toVariantList(from_variants);
     assert(converted && XVariantList_size_base(converted) == 1 &&
         XVector_isSharedWith((XVector*)from_variants, (XVector*)moved_list_source));
-    XVariantList_delete_base(converted);
+    XClassDelete(converted);
     converted = XJsonArray_toVariantList_move(moved_list_source);
     item = XJsonArray_at_const(from_variants, 0);
     assert(converted && item && XJsonValue_isInt(item) && XJsonValue_toInt(item, 0) == 8);
-    XVariantList_delete_base(converted);
-    XJsonArray_delete_base((XClass*)moved_list_source);
+    XClassDelete(converted);
+    XClassDelete((XClass*)moved_list_source);
     variant = XJsonArray_toVariant(array);
     assert(variant && variant->m_type == XVariantType_JsonArray);
     json_delete_variant(variant);
@@ -273,15 +273,15 @@ static void test_json_array_api(void)
     json_delete_ref_variant(variant);
     serialized = XJsonArray_toString(array, XJsonDocument_Compact);
     assert(serialized != NULL);
-    XString_delete_base((XClass*)serialized);
+    XClassDelete((XClass*)serialized);
 
-    XStringList_delete_base((XClass*)strings);
-    XVariantList_delete_base((XClass*)variants);
-    XJsonArray_delete_base((XClass*)from_strings);
-    XJsonArray_delete_base((XClass*)from_variants);
-    XJsonArray_delete_base((XClass*)moved);
-    XJsonArray_delete_base((XClass*)copy);
-    XJsonArray_delete_base((XClass*)array);
+    XClassDelete((XClass*)strings);
+    XClassDelete((XClass*)variants);
+    XClassDelete((XClass*)from_strings);
+    XClassDelete((XClass*)from_variants);
+    XClassDelete((XClass*)moved);
+    XClassDelete((XClass*)copy);
+    XClassDelete((XClass*)array);
 }
 
 static void test_json_object_api(void)
@@ -321,16 +321,16 @@ static void test_json_object_api(void)
     XJsonValue_delete(value);
     assert(XJsonObject_insert_keyUtf8_array(object, "array", array));
     assert(XJsonObject_insert_keyUtf8_array_move(object, "array_move", array));
-    XJsonArray_delete_base((XClass*)array);
+    XClassDelete((XClass*)array);
     nested = XJsonObject_create();
     assert(nested && XJsonObject_insert_keyUtf8_int(nested, "nested", 1));
     assert(XJsonObject_insert_keyUtf8_object(object, "object", nested));
     assert(XJsonObject_insert_keyUtf8_object_move(object, "object_move", nested));
-    XJsonObject_delete_base((XClass*)nested);
+    XClassDelete((XClass*)nested);
     key = XString_create_utf8("key_move");
     value = XJsonValue_create_bool(false);
     assert(XJsonObject_insert_value_move(object, key, value));
-    XString_delete_base((XClass*)key);
+    XClassDelete((XClass*)key);
     XJsonValue_delete(value);
     assert(XJsonObject_size_base(object) == 13);
 
@@ -349,7 +349,7 @@ static void test_json_object_api(void)
     assert(moved && XJsonObject_equals(object, moved));
     keys = XJsonObject_keys_base(object);
     assert(keys && XVector_size_base(keys) == XJsonObject_size_base(object));
-    XVector_delete_base(keys);
+    XClassDelete(keys);
 
     map = XJsonObject_toVariantMap(object);
     hash = XJsonObject_toVariantHash(object);
@@ -357,16 +357,16 @@ static void test_json_object_api(void)
     nested = XJsonObject_create_copy(object);
     moved_map = XJsonObject_toVariantMap_move(nested);
     assert(moved_map != NULL);
-    XMap_delete_base((XClass*)moved_map);
-    XJsonObject_delete_base((XClass*)nested);
+    XClassDelete((XClass*)moved_map);
+    XClassDelete((XClass*)nested);
     nested = XJsonObject_fromVariantMap(map);
     assert(nested && XJsonObject_equals(object, nested));
-    XJsonObject_delete_base((XClass*)nested);
+    XClassDelete((XClass*)nested);
     nested = XJsonObject_fromVariantHash(hash);
     assert(nested && XJsonObject_equals(object, nested));
-    XJsonObject_delete_base((XClass*)nested);
-    XMap_delete_base((XClass*)map);
-    XHashMap_delete_base((XClass*)hash);
+    XClassDelete((XClass*)nested);
+    XClassDelete((XClass*)map);
+    XClassDelete((XClass*)hash);
     variant = XJsonObject_toVariant(object);
     assert(variant && variant->m_type == XVariantType_JsonObject);
     json_delete_variant(variant);
@@ -379,12 +379,12 @@ static void test_json_object_api(void)
     serialized = XJsonObject_toString(object, XJsonDocument_Compact);
     json = XJsonObject_toJson(object, XJsonDocument_Compact);
     assert(serialized && json);
-    XString_delete_base((XClass*)serialized);
-    XByteArray_delete_base((XClass*)json);
-    XString_delete_base((XClass*)text);
-    XJsonObject_delete_base((XClass*)moved);
-    XJsonObject_delete_base((XClass*)copy);
-    XJsonObject_delete_base((XClass*)object);
+    XClassDelete((XClass*)serialized);
+    XClassDelete((XClass*)json);
+    XClassDelete((XClass*)text);
+    XClassDelete((XClass*)moved);
+    XClassDelete((XClass*)copy);
+    XClassDelete((XClass*)object);
 }
 
 static void test_json_document_api(void)
@@ -422,8 +422,8 @@ static void test_json_document_api(void)
     unshared_document = XJsonDocument_fromJson_ex(unshared_input, &error);
     assert(unshared_document && error.error == XJsonParseError_NoError &&
         XJsonDocument_isArray(unshared_document));
-    XJsonDocument_delete(unshared_document);
-    XByteArray_delete_base((XClass*)unshared_input);
+    XClassDelete(unshared_document);
+    XClassDelete((XClass*)unshared_input);
     assert(XJsonDocument_isObject(document) && !XJsonDocument_isArray(document));
     assert(XJsonDocument_root(document) == &document->root);
     assert(XJsonDocument_root_const(document) == &document->root);
@@ -449,7 +449,7 @@ static void test_json_document_api(void)
     assert(XJsonDocument_setObject(document, object_copy));
     assert(XJsonDocument_isObject(document));
     assert(XJsonDocument_setObject_move(document, object_copy));
-    XJsonObject_delete_base((XClass*)object_copy);
+    XClassDelete((XClass*)object_copy);
     array = XJsonArray_create();
     value = XJsonValue_create_bool(true);
     assert(array && value && XJsonArray_append_move_base(array, value));
@@ -458,7 +458,7 @@ static void test_json_document_api(void)
     assert(array_copy && XJsonDocument_setArray(document, array_copy));
     assert(XJsonDocument_isArray(document));
     assert(XJsonDocument_setArray_move(document, array_copy));
-    XJsonArray_delete_base((XClass*)array_copy);
+    XClassDelete((XClass*)array_copy);
 
     bson_object = XJsonObject_create();
     assert(bson_object && XJsonObject_insert_keyUtf8_int(bson_object, "object", 1));
@@ -467,39 +467,39 @@ static void test_json_document_api(void)
     object_copy = XJsonObject_create_copy(bson_object);
     object_document_move = XJsonDocument_create_object_move(object_copy);
     assert(object_document_move && XJsonDocument_isObject(object_document_move));
-    XJsonObject_delete_base((XClass*)object_copy);
-    XJsonObject_delete_base((XClass*)bson_object);
-    XJsonDocument_delete(object_document);
-    XJsonDocument_delete(object_document_move);
+    XClassDelete((XClass*)object_copy);
+    XClassDelete((XClass*)bson_object);
+    XClassDelete(object_document);
+    XClassDelete(object_document_move);
 
     text = XString_create_utf8("[1,2,3]");
     value = NULL;
-    XJsonDocument_delete(document);
+    XClassDelete(document);
     document = XJsonDocument_fromString_ex(text, &error);
     assert(document && error.error == XJsonParseError_NoError && XJsonDocument_isArray(document));
     output = XJsonDocument_toJson(document, XJsonDocument_Compact);
     assert(output && XByteArray_size_base((XContainer*)output) == 7);
-    XByteArray_delete_base((XClass*)output);
+    XClassDelete((XClass*)output);
     output = XJsonDocument_toJson(document, XJsonDocument_Indented);
     assert(output && XByteArray_size_base((XContainer*)output) > 7);
-    XByteArray_delete_base((XClass*)output);
+    XClassDelete((XClass*)output);
     serialized_text = XJsonDocument_toString(document, XJsonDocument_Compact);
     assert(serialized_text != NULL);
-    XString_delete_base((XClass*)serialized_text);
-    XString_delete_base((XClass*)text);
-    XJsonDocument_delete(moved);
+    XClassDelete((XClass*)serialized_text);
+    XClassDelete((XClass*)text);
+    XClassDelete(moved);
     text = XString_create_utf8("[1,2,3]");
     moved = XJsonDocument_fromString(text);
     assert(moved && XJsonDocument_isArray(moved));
-    XString_delete_base((XClass*)text);
-    XJsonDocument_delete(moved);
+    XClassDelete((XClass*)text);
+    XClassDelete(moved);
 
-    XByteArray_delete_base((XClass*)input);
+    XClassDelete((XClass*)input);
     input = XByteArray_create_with_data("[1,]", 4);
     moved = XJsonDocument_fromJson_ex(input, &error);
     assert(moved == NULL && error.error != XJsonParseError_NoError && error.offset >= 0);
     assert(strlen(XJsonParseError_errorString(&error)) > 0);
-    XByteArray_delete_base((XClass*)input);
+    XClassDelete((XClass*)input);
     XJsonParseError_init(&error);
     assert(error.offset == -1 && error.error == XJsonParseError_NoError);
     for (int code = XJsonParseError_NoError; code <= XJsonParseError_GarbageAtEnd; ++code)
@@ -513,18 +513,18 @@ static void test_json_document_api(void)
     from_variant = XJsonDocument_fromVariant(variant);
     assert(from_variant && XJsonValue_equals(XJsonDocument_root(document),
                                              XJsonDocument_root(from_variant)));
-    XJsonDocument_delete(from_variant);
+    XClassDelete(from_variant);
     json_delete_variant(variant);
     variant = XJsonDocument_toVariant_move(document);
     assert(variant && XJsonDocument_isEmpty(document));
     json_delete_variant(variant);
     XJsonDocument_setArray(document, array);
     XJsonDocument_init(&local_document);
-    XJsonDocument_copy(&local_document, document);
+    XClassCopy(&local_document, document);
     assert(XJsonDocument_isArray(&local_document));
-    XJsonDocument_move(&local_document, document);
+    XClassMove(&local_document, document);
     assert(XJsonDocument_isArray(&local_document) && XJsonDocument_isEmpty(document));
-    XJsonDocument_move(document, &local_document);
+    XClassMove(document, &local_document);
     variant = XJsonDocument_toVariant_ref(document);
     assert(variant && variant->m_data == document);
     json_delete_ref_variant(variant);
@@ -532,8 +532,8 @@ static void test_json_document_api(void)
     assert(bson != NULL);
     bson_document = XJsonDocument_fromBson_array(bson);
     assert(bson_document && XJsonDocument_isArray(bson_document));
-    XJsonDocument_delete(bson_document);
-    XByteArray_delete_base((XClass*)bson);
+    XClassDelete(bson_document);
+    XClassDelete((XClass*)bson);
     bson_object = XJsonObject_create();
     assert(bson_object && XJsonObject_insert_keyUtf8_int(bson_object, "bson", 1));
     object_document = XJsonDocument_create_object(bson_object);
@@ -541,16 +541,16 @@ static void test_json_document_api(void)
     assert(object_bson != NULL);
     bson_document = XJsonDocument_fromBson_document(object_bson);
     assert(bson_document && XJsonDocument_isObject(bson_document));
-    XJsonDocument_delete(bson_document);
-    XByteArray_delete_base((XClass*)object_bson);
-    XJsonDocument_delete(object_document);
-    XJsonObject_delete_base((XClass*)bson_object);
+    XClassDelete(bson_document);
+    XClassDelete((XClass*)object_bson);
+    XClassDelete(object_document);
+    XClassDelete((XClass*)bson_object);
     XJsonDocument_clear(document);
     assert(XJsonDocument_isNull(document) && XJsonDocument_isEmpty(document));
-    XJsonDocument_deinit(document);
-    XJsonDocument_delete(document);
-    XJsonDocument_delete(copy);
-    XJsonArray_delete_base((XClass*)array);
+    XClassDeinit(document);
+    XClassDelete(document);
+    XClassDelete(copy);
+    XClassDelete((XClass*)array);
 }
 
 int XJsonQtAlignmentTest(void)

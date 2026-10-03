@@ -50,8 +50,6 @@ XSvgIconEngine* XSvgIconEngine_create(const XString* fileName);
  * @return 新建引擎指针；失败返回 NULL。
  */
 XSvgIconEngine* XSvgIconEngine_create_2(const char* utf8FileName);
-#define XSvgIconEngine_delete_base(self) XClass_delete_base((XClass*)(self))
-#define XSvgIconEngine_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 
 #ifdef __cplusplus

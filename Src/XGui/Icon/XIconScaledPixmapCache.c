@@ -48,13 +48,13 @@ bool XIconScaledPixmapCache_find(const char* prefix, const char* sourceKey,
     if (!key) return false;
     XPixmap_init(&cached);
     found = XPixmapCache_find(key, &cached);
-    XString_delete_base((XClass*)key);
+    XClassDelete((XClass*)key);
     if (!found) {
-        XPixmap_deinit_base(&cached);
+        XClassDeinit(&cached);
         return false;
     }
-    XCopy(out, &cached);
-    XPixmap_deinit_base(&cached);
+    XClassCopy(out, &cached);
+    XClassDeinit(&cached);
     return true;
 #else /* !XPIXMAPCACHE_ON */
     /* 像素图缓存裁剪（XPIXMAPCACHE_ON=0）时的回退路径：全局缓存不存在，
@@ -82,7 +82,7 @@ bool XIconScaledPixmapCache_insert(const char* prefix, const char* sourceKey,
     key = XString_create_utf8(keyBuffer);
     if (!key) return false;
     inserted = XPixmapCache_insert(key, pixmap);
-    XString_delete_base((XClass*)key);
+    XClassDelete((XClass*)key);
     return inserted;
 #else /* !XPIXMAPCACHE_ON */
     /* 像素图缓存裁剪时的回退路径：无处缓存，插入语义退化为拒绝并返回

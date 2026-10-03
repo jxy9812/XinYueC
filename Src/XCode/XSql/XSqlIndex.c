@@ -73,8 +73,8 @@ static bool xsql_index_reserve(XSqlIndex* index, size_t wanted)
 static void VXSqlIndex_deinit(XSqlIndex* index)
 {
     if (!index) return;
-    if (index->m_cursorName) XString_delete_base(index->m_cursorName);
-    if (index->m_name) XString_delete_base(index->m_name);
+    if (index->m_cursorName) XClassDelete(index->m_cursorName);
+    if (index->m_name) XClassDelete(index->m_name);
     if (index->m_descending) XFree_System(index->m_descending);
     index->m_cursorName = NULL;
     index->m_name = NULL;
@@ -89,8 +89,8 @@ static void VXSqlIndex_copy(XSqlIndex* dest, const XSqlIndex* src)
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XSqlIndex_init(dest);
     XClass_Parent(XSqlRecord, EXClass_Copy, void(*)(XSqlRecord*, const XSqlRecord*))(&dest->m_parent, &src->m_parent);
-    if (dest->m_cursorName) XString_delete_base(dest->m_cursorName);
-    if (dest->m_name) XString_delete_base(dest->m_name);
+    if (dest->m_cursorName) XClassDelete(dest->m_cursorName);
+    if (dest->m_name) XClassDelete(dest->m_name);
     if (dest->m_descending) XFree_System(dest->m_descending);
     dest->m_cursorName = src->m_cursorName ? XString_create_copy(src->m_cursorName) : NULL;
     dest->m_name = src->m_name ? XString_create_copy(src->m_name) : NULL;
@@ -109,8 +109,8 @@ static void VXSqlIndex_move(XSqlIndex* dest, XSqlIndex* src)
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XSqlIndex_init(dest);
     XClass_Parent(XSqlRecord, EXClass_Move, void(*)(XSqlRecord*, XSqlRecord*))(&dest->m_parent, &src->m_parent);
-    if (dest->m_cursorName) XString_delete_base(dest->m_cursorName);
-    if (dest->m_name) XString_delete_base(dest->m_name);
+    if (dest->m_cursorName) XClassDelete(dest->m_cursorName);
+    if (dest->m_name) XClassDelete(dest->m_name);
     if (dest->m_descending) XFree_System(dest->m_descending);
     dest->m_cursorName = src->m_cursorName;
     dest->m_name = src->m_name;
@@ -127,7 +127,7 @@ XSqlIndex* XSqlIndex_create_copy(const XSqlIndex* other)
 {
     if (!other) return NULL;
     XSqlIndex* result = XSqlIndex_create();
-    if (result) XCopy(result, other);
+    if (result) XClassCopy(result, other);
     return result;
 }
 
@@ -135,7 +135,7 @@ XSqlIndex* XSqlIndex_create_move(XSqlIndex* other)
 {
     if (!other) return NULL;
     XSqlIndex* result = XSqlIndex_create();
-    if (result) XMove(result, other);
+    if (result) XClassMove(result, other);
     return result;
 }
 
@@ -144,22 +144,22 @@ void XSqlIndex_swap(XSqlIndex* left, XSqlIndex* right)
     if (!left || !right || left == right) return;
     XSqlIndex* temp = XSqlIndex_create_move(left);
     if (!temp) return;
-    XMove(left, right);
-    XMove(right, temp);
-    XSqlIndex_delete_base(temp);
+    XClassMove(left, right);
+    XClassMove(right, temp);
+    XClassDelete(temp);
 }
 
 void XSqlIndex_setCursorName_utf8(XSqlIndex* index, const char* name)
 {
     XString* value = name ? XString_create_utf8(name) : NULL;
     XSqlIndex_setCursorName(index, value);
-    if (value) XString_delete_base(value);
+    if (value) XClassDelete(value);
 }
 
 void XSqlIndex_setCursorName(XSqlIndex* index, const XString* name)
 {
     if (!index) return;
-    if (index->m_cursorName) XString_delete_base(index->m_cursorName);
+    if (index->m_cursorName) XClassDelete(index->m_cursorName);
     index->m_cursorName = name ? XString_create_copy(name) : NULL;
 }
 
@@ -169,13 +169,13 @@ void XSqlIndex_setName_utf8(XSqlIndex* index, const char* name)
 {
     XString* value = name ? XString_create_utf8(name) : NULL;
     XSqlIndex_setName(index, value);
-    if (value) XString_delete_base(value);
+    if (value) XClassDelete(value);
 }
 
 void XSqlIndex_setName(XSqlIndex* index, const XString* name)
 {
     if (!index) return;
-    if (index->m_name) XString_delete_base(index->m_name);
+    if (index->m_name) XClassDelete(index->m_name);
     index->m_name = name ? XString_create_copy(name) : NULL;
 }
 

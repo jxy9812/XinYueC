@@ -270,7 +270,7 @@ PW_RENDERFULLCONTENT 抓窗口客户区 + 结构断言：标题栏横幅只允�
   unref 不释放 DIB）；native 模式单缓冲，跳过双缓冲同步与
   surfaceResized（重建会使 m_image 悬垂）；
 - 注意顺序：getNativeBuffer 会释放旧 DIB，resize 前必须先
-  `xpbs_deepCopy` 旧内容快照（XCopy 是 COW 共享，不够）；
+  `xpbs_deepCopy` 旧内容快照（XClassCopy 是 COW 共享，不够）；
 - present 在 native 模式下只剩按脏矩形 `BitBlt(memDC→窗口)`；
 - 非 native 缓冲（外部缓冲等）保留紧凑行缓冲路径
   （biWidth=rect.width，XSrc=YSrc=0，规避 GDI 源子矩形陷阱）。

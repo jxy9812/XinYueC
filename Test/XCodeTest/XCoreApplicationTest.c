@@ -286,28 +286,28 @@ static void test_application_meta(void)
     XPrintf("  应用名称: %s (预期 '测试应用')\n", got ? XString_toUtf8(got) : "NULL");
     assert(got != NULL);
     assert(strcmp(XString_toUtf8(got), "测试应用") == 0);
-    XString_delete_base(name);
+    XClassDelete(name);
 
     XString* ver = XString_create_utf8("1.0.0");
     XCoreApplication_setApplicationVersion(ver);
     const XString* gv = XCoreApplication_applicationVersion();
     assert(gv != NULL);
     assert(strcmp(XString_toUtf8(gv), "1.0.0") == 0);
-    XString_delete_base(ver);
+    XClassDelete(ver);
 
     XString* org = XString_create_utf8("测试组织");
     XCoreApplication_setOrganizationName(org);
     const XString* go = XCoreApplication_organizationName();
     assert(go != NULL);
     assert(strcmp(XString_toUtf8(go), "测试组织") == 0);
-    XString_delete_base(org);
+    XClassDelete(org);
 
     XString* dom = XString_create_utf8("test.org");
     XCoreApplication_setOrganizationDomain(dom);
     const XString* gd = XCoreApplication_organizationDomain();
     assert(gd != NULL);
     assert(strcmp(XString_toUtf8(gd), "test.org") == 0);
-    XString_delete_base(dom);
+    XClassDelete(dom);
 
     XPrintf("  [通过] 应用程序元信息正常\n");
 }
@@ -414,7 +414,7 @@ static void test_library_paths(void)
     paths = XCoreApplication_libraryPaths();
     XPrintf("  移除后数量: %zu (预期 0)\n", paths ? XStringList_size_base(paths) : 0);
 
-    XString_delete_base(path);
+    XClassDelete(path);
     XPrintf("  [通过] 库路径管理正常\n");
 }
 

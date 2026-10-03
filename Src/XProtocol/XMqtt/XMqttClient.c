@@ -102,18 +102,18 @@ static void V_deinit(XMqttClient* client)
         XMqttClientPrivate_delete(client->m_private);
         client->m_private = NULL;
     }
-    if (client->m_hostname) XString_delete_base(client->m_hostname);
-    if (client->m_clientId) XString_delete_base(client->m_clientId);
-    if (client->m_username) XString_delete_base(client->m_username);
-    if (client->m_password) XString_delete_base(client->m_password);
-    if (client->m_willTopic) XString_delete_base(client->m_willTopic);
-    if (client->m_willMessage) XByteArray_delete_base(client->m_willMessage);
+    if (client->m_hostname) XClassDelete(client->m_hostname);
+    if (client->m_clientId) XClassDelete(client->m_clientId);
+    if (client->m_username) XClassDelete(client->m_username);
+    if (client->m_password) XClassDelete(client->m_password);
+    if (client->m_willTopic) XClassDelete(client->m_willTopic);
+    if (client->m_willMessage) XClassDelete(client->m_willMessage);
     if (client->m_connectionProperties)
-        XMqttConnectionProperties_delete_base(client->m_connectionProperties);
+        XClassDelete(client->m_connectionProperties);
     if (client->m_lastWillProperties)
-        XMqttLastWillProperties_delete_base(client->m_lastWillProperties);
+        XClassDelete(client->m_lastWillProperties);
     if (client->m_serverConnectionProperties)
-        XMqttServerConnectionProperties_delete_base(client->m_serverConnectionProperties);
+        XClassDelete(client->m_serverConnectionProperties);
     client->m_transport = NULL;
     XClass_Deinit_Parent(XObject, client);
 }
@@ -369,7 +369,7 @@ static void mqtt_on_ready_read(XObject* receiver, XVarList* args)
     if (data) {
         XMqttProtocol_feed(client, (const uint8_t*)XByteArray_constData(data),
                            XByteArray_size_base(data));
-        XByteArray_delete_base(data);
+        XClassDelete(data);
     }
 }
 
@@ -438,7 +438,7 @@ static void mqtt_set_string(XString** target, const char* value)
 {
     XString* replacement = XString_create_utf8(value ? value : "");
     if (!replacement) return;
-    if (*target) XString_delete_base(*target);
+    if (*target) XClassDelete(*target);
     *target = replacement;
 }
 
@@ -513,9 +513,9 @@ void XMqttClient_setWillMessage(XMqttClient* c, const uint8_t* data, size_t size
     XByteArray* value = data && size ? XByteArray_create_with_data((const char*)data, size)
                                      : XByteArray_create();
     if (!value || (c->m_willMessage && XByteArray_compare(c->m_willMessage, value) == 0)) {
-        if (value) XByteArray_delete_base(value); return;
+        if (value) XClassDelete(value); return;
     }
-    if (c->m_willMessage) XByteArray_delete_base(c->m_willMessage);
+    if (c->m_willMessage) XClassDelete(c->m_willMessage);
     c->m_willMessage = value; XMqttClient_willMessageChanged_signal(c, value);
 }
 void XMqttClient_setWillRetain(XMqttClient* c, bool value)
@@ -536,7 +536,7 @@ void XMqttClient_setConnectionProperties(XMqttClient* c,
     XMqttConnectionProperties* copy = value ? XMqttConnectionProperties_create_copy(value)
                                             : XMqttConnectionProperties_create();
     if (!copy) return;
-    if (c->m_connectionProperties) XMqttConnectionProperties_delete_base(c->m_connectionProperties);
+    if (c->m_connectionProperties) XClassDelete(c->m_connectionProperties);
     c->m_connectionProperties = copy;
 }
 XMqttConnectionProperties* XMqttClient_connectionProperties(const XMqttClient* c)
@@ -550,7 +550,7 @@ void XMqttClient_setLastWillProperties(XMqttClient* c,
     XMqttLastWillProperties* copy = value ? XMqttLastWillProperties_create_copy(value)
                                          : XMqttLastWillProperties_create();
     if (!copy) return;
-    if (c->m_lastWillProperties) XMqttLastWillProperties_delete_base(c->m_lastWillProperties);
+    if (c->m_lastWillProperties) XClassDelete(c->m_lastWillProperties);
     c->m_lastWillProperties = copy;
 }
 XMqttLastWillProperties* XMqttClient_lastWillProperties(const XMqttClient* c)
@@ -565,14 +565,14 @@ void XMqttClient_authenticate(XMqttClient* c, const XMqttAuthenticationPropertie
 { XMqttProtocol_authenticate(c, value); }
 
 static void mqtt_string_arg_delete(XVarList* list)
-{ XVarList_args_1(list, XString*, value); if (value) XString_delete_base(value); }
+{ XVarList_args_1(list, XString*, value); if (value) XClassDelete(value); }
 static void mqtt_byte_array_arg_delete(XVarList* list)
-{ XVarList_args_1(list, XByteArray*, value); if (value) XByteArray_delete_base(value); }
+{ XVarList_args_1(list, XByteArray*, value); if (value) XClassDelete(value); }
 static void mqtt_message_args_delete(XVarList* list)
 {
     XVarList_args_2(list, XByteArray*, payload, XMqttTopicName*, topic);
-    if (payload) XByteArray_delete_base(payload);
-    if (topic) XMqttTopicName_delete_base(topic);
+    if (payload) XClassDelete(payload);
+    if (topic) XClassDelete(topic);
 }
 static void mqtt_status_args_delete(XVarList* list)
 {
@@ -580,10 +580,10 @@ static void mqtt_status_args_delete(XVarList* list)
     if (list)
         memcpy(&properties, list->data + sizeof(int32_t) + sizeof(uint8_t),
                sizeof(properties));
-    if (properties) XMqttMessageStatusProperties_delete_base(properties);
+    if (properties) XClassDelete(properties);
 }
 static void mqtt_auth_args_delete(XVarList* list)
-{ XVarList_args_1(list, XMqttAuthenticationProperties*, value); if (value) XMqttAuthenticationProperties_delete_base(value); }
+{ XVarList_args_1(list, XMqttAuthenticationProperties*, value); if (value) XClassDelete(value); }
 
 #define MQTT_SIMPLE_SIGNAL(object, function) \
     XEmitSignal(object, function, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL)

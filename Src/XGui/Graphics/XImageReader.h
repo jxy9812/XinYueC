@@ -96,9 +96,7 @@ void XImageReader_init_file(XImageReader* self, const XString* fileName, const X
  */
 void XImageReader_init_file_2(XImageReader* self, const char* fileName, const char* format);
 
-#define XImageReader_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的图像读取器。 @param self 待读取器指针。 */
-#define XImageReader_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 格式设置 ========== */
 
@@ -500,7 +498,7 @@ const char* XImageReader_imageFormatDevice_2(XIODevice* device);
 /**
  * @brief      获取支持的图像格式列表
  * @return 新分配的 XStringList（元素为 XString）；调用者负责使用
- *         XStringList_delete_base 释放列表，元素由列表拥有
+ *         XClassDelete 释放列表，元素由列表拥有
  */
 XStringList* XImageReader_supportedImageFormats();
 

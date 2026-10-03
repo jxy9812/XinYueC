@@ -397,7 +397,7 @@ static void xte_buildWords(const XTextEdit* self, const XTDBlock* blk,
                 /* 词分隔：收口未完词（行首不留空白的语义在填行侧）。 */
                 if (wordStart >= 0) {
                     if (!xte_pushWord(lay, j, wordStart, off, wordW)) {
-                        XFont_deinit_base(&font);
+                        XClassDeinit(&font);
                         return;
                     }
                     wordStart = -1;
@@ -409,14 +409,14 @@ static void xte_buildWords(const XTextEdit* self, const XTDBlock* blk,
                     /* CJK 逐字可断：收口前词、单字成词。 */
                     if (wordStart >= 0) {
                         if (!xte_pushWord(lay, j, wordStart, off, wordW)) {
-                            XFont_deinit_base(&font);
+                            XClassDeinit(&font);
                             return;
                         }
                         wordStart = -1;
                         wordW = 0;
                     }
                     if (!xte_pushWord(lay, j, off, off + n, w)) {
-                        XFont_deinit_base(&font);
+                        XClassDeinit(&font);
                         return;
                     }
                 } else if (wordStart < 0) {
@@ -430,7 +430,7 @@ static void xte_buildWords(const XTextEdit* self, const XTDBlock* blk,
         }
         if (wordStart >= 0)
             xte_pushWord(lay, j, wordStart, len, wordW);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
     }
 }
 
@@ -553,7 +553,7 @@ static int xte_walkRich(const XTextEdit* self, XTEFragFn fn, void* ud)
             XFont font = xte_makeFragFont(self, blockPx);
             blockH = XPainter_textHeight(&font);
             blockA = XPainter_textAscent(&font);
-            XFont_deinit_base(&font);
+            XClassDeinit(&font);
         } else {
             for (j = 0; j < blk->fragmentCount; ++j) {
                 const XTDFragment* f = &blk->fragments[j];
@@ -568,7 +568,7 @@ static int xte_walkRich(const XTextEdit* self, XTEFragFn fn, void* ud)
                             self, f, xte_fragPixelSize(self, f, blockPx));
                         int h = XPainter_textHeight(&font);
                         int a = XPainter_textAscent(&font);
-                        XFont_deinit_base(&font);
+                        XClassDeinit(&font);
                         if (h > blockH) blockH = h;
                         if (a > blockA) blockA = a;
                     }
@@ -635,7 +635,7 @@ static int xte_walkRich(const XTextEdit* self, XTEFragFn fn, void* ud)
                     geom.lineH = line->lineH;
                     geom.width = mkW;
                     fn((XTextEdit*)self, &geom, ud);
-                    XFont_deinit_base(&font);
+                    XClassDeinit(&font);
                 }
                 for (s = 0; s < line->segCount; ++s) {
                     const XTESeg* seg = &lay.segs[line->segFirst + s];
@@ -657,7 +657,7 @@ static int xte_walkRich(const XTextEdit* self, XTEFragFn fn, void* ud)
                     geom.markerText = NULL;
                     geom.markerBullet = 0;
                     fn((XTextEdit*)self, &geom, ud);
-                    XFont_deinit_base(&font);
+                    XClassDeinit(&font);
                 }
             }
             y += line->lineH > 0 ? line->lineH : 1;
@@ -668,7 +668,7 @@ static int xte_walkRich(const XTextEdit* self, XTEFragFn fn, void* ud)
     if (lay.words) XFree_System(lay.words);
     if (lay.segs) XFree_System(lay.segs);
     if (lay.lines) XFree_System(lay.lines);
-    XFont_deinit_base(&base);
+    XClassDeinit(&base);
     return y;
 }
 
@@ -820,11 +820,11 @@ static void xte_resetAnchorState(XTextEdit* self)
 {
     if (!self) return;
     if (self->m_hoverAnchor) {
-        XString_delete_base(self->m_hoverAnchor);
+        XClassDelete(self->m_hoverAnchor);
         self->m_hoverAnchor = NULL;
     }
     if (self->m_pressedAnchor) {
-        XString_delete_base(self->m_pressedAnchor);
+        XClassDelete(self->m_pressedAnchor);
         self->m_pressedAnchor = NULL;
     }
     XWidget_unsetCursor((XWidget*)self);
@@ -872,7 +872,7 @@ XString* XTextEdit_anchorAt(const XTextEdit* self, const XPoint* pos);
 static void xte_linkSignal_del(XVarList* list)
 {
     XVarList_args_1(list, XString*, link);
-    if (link) XString_delete_base((XClass*)link);
+    if (link) XClassDelete((XClass*)link);
 }
 
 /** @brief 发射携带 XString* 堆拷贝的链接信号；无接收者时释放参数。 */
@@ -885,7 +885,7 @@ static void xte_emitLinkSignal(XTextEdit* self, size_t signal, const char* url)
     if (!copy) return;
     args = XVarList_Create(XVar(XString*, copy));
     if (!args) {
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return;
     }
     XObject_emitSignal((XObject*)self, signal, args, xte_linkSignal_del,
@@ -907,14 +907,14 @@ static void VX_textEdit_mousePressEvent(XWidget* self, XEvent* event)
     anchor = XTextEdit_anchorAt(te, &me->m_position);
     url = (anchor && XString_toUtf8(anchor)) ? XString_toUtf8(anchor) : "";
     if (te->m_pressedAnchor) {
-        XString_delete_base(te->m_pressedAnchor);
+        XClassDelete(te->m_pressedAnchor);
         te->m_pressedAnchor = NULL;
     }
     if (url[0]) {
         te->m_pressedAnchor = XString_create_utf8(url);
         XEvent_accept(event);
     }
-    if (anchor) XString_delete_base(anchor);
+    if (anchor) XClassDelete(anchor);
 }
 
 /** @brief 鼠标释放：按下与释放命中同一链接时发 linkActivated（对标
@@ -946,8 +946,8 @@ static void VX_textEdit_mouseReleaseEvent(XWidget* self, XEvent* event)
             XEvent_accept(event);
         }
     }
-    XString_delete_base(pressed);
-    if (anchor) XString_delete_base(anchor);
+    XClassDelete(pressed);
+    if (anchor) XClassDelete(anchor);
 }
 
 /** @brief 鼠标移动：进出/切换链接（URL 去重）时发射 linkHovered、
@@ -979,7 +979,7 @@ static void VX_textEdit_mouseMoveEvent(XWidget* self, XEvent* event)
     if (changed) {
         XCursor cursor;
         if (te->m_hoverAnchor) {
-            XString_delete_base(te->m_hoverAnchor);
+            XClassDelete(te->m_hoverAnchor);
             te->m_hoverAnchor = NULL;
         }
         if (hasUrl) te->m_hoverAnchor = XString_create_utf8(url);
@@ -993,7 +993,7 @@ static void VX_textEdit_mouseMoveEvent(XWidget* self, XEvent* event)
         if (!hasUrl) XWidget_unsetCursor((XWidget*)te);
         XWidget_update((XWidget*)te);
     }
-    if (anchor) XString_delete_base(anchor);
+    if (anchor) XClassDelete(anchor);
 }
 
 static void VX_textEdit_resizeEvent(XWidget* self, XEvent* event)
@@ -1197,26 +1197,26 @@ static void VXTextEdit_deinit(XTextEdit* self)
 #if XTEXTDOCUMENT_ON
     /* 仅释放内部默认文档；setDocument 接管的外部文档所有权归调用方。 */
     if (self->m_textDoc && self->m_textDocOwned) {
-        XClass_delete_base((XClass*)self->m_textDoc);
+        XClassDelete((XClass*)self->m_textDoc);
     }
     self->m_textDoc = NULL;
 #endif
     /* 预览态锚点交互承载（对象拥有）。 */
     xte_resetAnchorState(self);
     if (self->m_fontFamily) {
-        XString_delete_base(self->m_fontFamily);
+        XClassDelete(self->m_fontFamily);
         self->m_fontFamily = NULL;
     }
     if (self->m_documentTitle) {
-        XString_delete_base(self->m_documentTitle);
+        XClassDelete(self->m_documentTitle);
         self->m_documentTitle = NULL;
     }
     if (self->m_markdown) {
-        XString_delete_base(self->m_markdown);
+        XClassDelete(self->m_markdown);
         self->m_markdown = NULL;
     }
     if (self->m_editor) {
-        XClass_delete_base((XClass*)self->m_editor);
+        XClassDelete((XClass*)self->m_editor);
         self->m_editor = NULL;
     }
     XClass_Deinit_Parent(XAbstractScrollArea, (XAbstractScrollArea*)self);
@@ -1785,7 +1785,7 @@ static void xte_applyFontDelta(XTextEdit* self, int delta)
     if (px < 1) px = 1;
     XFont_setPixelSize(&font, px);
     XWidget_setFont((XWidget*)self->m_editor, &font);
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
     XWidget_update((XWidget*)self->m_editor);
 }
 

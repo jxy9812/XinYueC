@@ -39,7 +39,7 @@ void XModbusDeviceIdentification_init(XModbusDeviceIdentification* id) {
     id->m_objects = XMap_Create(int, XByteArray,int_compare); 
     XContainerSetDataCopyMethod(id->m_objects, XClass_copy_base);
     XContainerSetDataMoveMethod(id->m_objects, XClass_move_base);
-    XContainerSetDataDeinitMethod(id->m_objects, XByteArray_deinit_base);
+    XContainerSetDataDeinitMethod(id->m_objects, XClass_deinit_base);
     id->m_conformityLevel = XModbusDeviceIdentification_BasicConformityLevel;
 }
 
@@ -48,7 +48,7 @@ static void VXModbusDeviceIdentification_deinit(XModbusDeviceIdentification* id)
 
     // 释放映射中的所有 XByteArray*
     if (id->m_objects) {
-        XMap_delete_base(id->m_objects);
+        XClassDelete(id->m_objects);
         id->m_objects = NULL;
     }
 }
@@ -66,9 +66,9 @@ bool XModbusDeviceIdentification_isValid(const XModbusDeviceIdentification* id) 
         revision && !XByteArray_isEmpty_base(revision);
 
     // 清理临时拷贝
-    if (vendor) XByteArray_delete_base(vendor);
-    if (product) XByteArray_delete_base(product);
-    if (revision) XByteArray_delete_base(revision);
+    if (vendor) XClassDelete(vendor);
+    if (product) XClassDelete(product);
+    if (revision) XClassDelete(revision);
 
     return valid;
 }
@@ -99,7 +99,7 @@ bool XModbusDeviceIdentification_insert(XModbusDeviceIdentification* id, int obj
     // 创建新的 XByteArray 并插入
     XByteArray* newData = XByteArray_create_with_data(data, size);
     XMap_insert_valueMove_base(id->m_objects, &objectId, newData);
-    XByteArray_delete_base(newData);
+    XClassDelete(newData);
     return true;
 }
 
@@ -145,7 +145,7 @@ XModbusDeviceIdentification* XModbusDeviceIdentification_fromByteArray(const uin
         uint8_t objLen = data[offset++];
         if (offset + objLen > size) {
             // 数据不完整，清理并返回 NULL
-            XModbusDeviceIdentification_delete_base(id);
+            XClassDelete(id);
             return NULL;
         }
         XModbusDeviceIdentification_insert(id, objId, &data[offset], objLen);

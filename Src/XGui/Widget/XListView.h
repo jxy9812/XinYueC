@@ -139,8 +139,6 @@ XListView* XListView_create_ex(XMemoryType memory, XWidget* parent,
                                XWidgetFlags flags);
 #define XListView_create(parent, flags) \
     XListView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
-#define XListView_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XListView_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 属性（对标 QListView） ==================== */
 

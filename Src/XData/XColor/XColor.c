@@ -471,7 +471,7 @@ void XColor_setNamedColor_2(XColor* self, const char* name)
      *（宏展开后 tmp 本身即 XString*，指向栈对象 _tmp） */
     XString_Init_Utf8(tmp, name);
     *self = XColor_fromString(tmp);
-    XString_deinit_base((XClass*)tmp);   /* 前例：XComboBox.c:1746 */
+    XClassDeinit((XClass*)tmp);   /* 前例：XComboBox.c:1746 */
 }
 
 bool XColor_isValidColorName(const XString* name)
@@ -487,7 +487,7 @@ bool XColor_isValidColorName_2(const char* name)
     if (!name) return false;
     XString_Init_Utf8(tmp, name);
     bool ok = XColor_isValidColorName(tmp);
-    XString_deinit_base((XClass*)tmp);
+    XClassDeinit((XClass*)tmp);
     return ok;
 }
 

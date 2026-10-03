@@ -1220,7 +1220,7 @@ static bool painterGpuSubmitSoftwareCommandLegacy(XPainter* self,
     {
         self->m_image = savedImage;
         self->m_gpuActive = savedGpu;
-        XImage_deinit_base(&local);
+        XClassDeinit(&local);
         return false;
     }
     drawCommand(self, userData);
@@ -1229,7 +1229,7 @@ static bool painterGpuSubmitSoftwareCommandLegacy(XPainter* self,
     ok = XGpuRenderBackend_drawImage(backend, &local, 0, 0,
                                      XImage_width(&local),
                                      XImage_height(&local), 1.0f, false);
-    XImage_deinit_base(&local);
+    XClassDeinit(&local);
     return ok;
 }
 
@@ -1275,7 +1275,7 @@ static bool painterGpuSubmitSoftwareCommandRect(XPainter* self,
                  XImage_height(&g_gpuBatchCanvas) !=
                      XGpuRenderBackend_height(backend)))
             {
-                XImage_deinit_base(&g_gpuBatchCanvas);
+                XClassDeinit(&g_gpuBatchCanvas);
                 g_gpuBatchCanvasInited = false;
                 g_gpuBatchClearBits = NULL; /* 画布已释放，行清缓存同步失效。 */
                 g_gpuBatchClearBpl = 0;
@@ -1561,7 +1561,7 @@ static bool painterGpuFillRectGradient(XPainter* self, const XRect* rect,
         self->m_state.m_opacity,
         self->m_state.m_compositionMode ==
             XPainterCompositionMode_SourceOver);
-    XImage_deinit_base(&lut);
+    XClassDeinit(&lut);
     return ok;
 }
 
@@ -2476,7 +2476,7 @@ static bool painterStatePush(XPainter* self)
 #endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
         *saved = self->m_state;
         XFont_init(&fontCopy);
-        XCopy(&fontCopy, &saved->m_font);
+        XClassCopy(&fontCopy, &saved->m_font);
         saved->m_font = fontCopy;
 #if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
         saved->m_clipPath = NULL;
@@ -2499,7 +2499,7 @@ static bool painterStatePush(XPainter* self)
                     saved->m_clipPath = NULL;
                 }
                 saved->m_clipPath = slotClipPath;
-                XFont_deinit_base((XClass*)&saved->m_font);
+                XClassDeinit((XClass*)&saved->m_font);
                 return false;
             }
         }
@@ -2517,7 +2517,7 @@ static bool painterStatePush(XPainter* self)
         {
             /* XRegion_copy() 保留旧 out 内容时，不能把这次保存计入栈深度；
                saved->m_font 已由本次保存初始化，先释放其独立字符串副本。 */
-            XFont_deinit_base((XClass*)&saved->m_font);
+            XClassDeinit((XClass*)&saved->m_font);
             return false;
         }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
@@ -2534,7 +2534,7 @@ static void painterStatePop(XPainter* self)
 {
     if (!self || self->m_stateCount <= 0) return;
     --self->m_stateCount;
-    XFont_deinit_base((XClass*)&self->m_state.m_font);
+    XClassDeinit((XClass*)&self->m_state.m_font);
     {
         XFont fontCopy;
         XPainterState* saved = &self->m_stateStack[self->m_stateCount];
@@ -2572,10 +2572,10 @@ static void painterStatePop(XPainter* self)
         }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
         XFont_init(&fontCopy);
-        XCopy(&fontCopy, &saved->m_font);
+        XClassCopy(&fontCopy, &saved->m_font);
         self->m_state = *saved;
         self->m_state.m_font = fontCopy;
-        XFont_deinit_base((XClass*)&saved->m_font);
+        XClassDeinit((XClass*)&saved->m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_PATH_ON
         self->m_state.m_clipPath = restoredClipPath;
         saved->m_clipPath = currentClipPath;
@@ -2620,7 +2620,7 @@ static void painterStateStackRelease(XPainter* self)
     }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
     for (i = 0; i < self->m_stateCount; ++i)
-        XFont_deinit_base((XClass*)&self->m_stateStack[i].m_font);
+        XClassDeinit((XClass*)&self->m_stateStack[i].m_font);
     XFree_System(self->m_stateStack);
     self->m_stateStack = NULL;
     self->m_stateCount = 0;
@@ -7864,7 +7864,7 @@ void XPainter_deinit(XPainter* self)
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
     /* 对象即将销毁，无需调用 end() 重建一次默认状态。 */
     painterStateStackRelease(self);
-    XFont_deinit_base((XClass*)&self->m_state.m_font);
+    XClassDeinit((XClass*)&self->m_state.m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
@@ -8291,7 +8291,7 @@ bool XPainter_end(XPainter* self)
     /* restore() 会把当前状态的区域容量交换回已弹出的栈槽；释放时
        必须遍历整个已初始化容量，而不是只遍历活动深度。 */
     painterStateStackRelease(self);
-    XFont_deinit_base((XClass*)&self->m_state.m_font);
+    XClassDeinit((XClass*)&self->m_state.m_font);
 #if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
     XRegion_deinit(&self->m_state.m_clipRegion);
 #endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
@@ -8322,7 +8322,7 @@ bool XPainter_end(XPainter* self)
     painterDefaultState(&self->m_state);
     /* defaultState 创建了新字体（含 XString）：end 后不再有持有者，
        释放避免泄漏（下次 begin 时状态会被重建）。 */
-    XFont_deinit_base((XClass*)&self->m_state.m_font);
+    XClassDeinit((XClass*)&self->m_state.m_font);
     return wasActive;
 }
 
@@ -8887,7 +8887,7 @@ bool XPainter_drawImageRect(XPainter* self, const XRect* targetRect,
         }
         if (XImage_isNull(&cropped))
         {
-            XImage_deinit_base(&cropped);
+            XClassDeinit(&cropped);
             return false;
         }
         XImage_init(&scaled);
@@ -8898,15 +8898,15 @@ bool XPainter_drawImageRect(XPainter* self, const XRect* targetRect,
                           0u, 0u, &scaled);
             if (XImage_isNull(&scaled))
             {
-                XImage_deinit_base(&scaled);
-                XImage_deinit_base(&cropped);
+                XClassDeinit(&scaled);
+                XClassDeinit(&cropped);
                 return false;
             }
             drawImage = &scaled;
         }
         ok = XPainter_drawImage(self, drawImage, targetX, targetY);
-        XImage_deinit_base(&scaled);
-        XImage_deinit_base(&cropped);
+        XClassDeinit(&scaled);
+        XClassDeinit(&cropped);
         return ok;
     }
     return false;
@@ -8934,7 +8934,7 @@ bool XPainter_drawPixmap(XPainter* self, const XPixmap* pixmap, int x, int y)
     XPixmap_toImage(pixmap, &image);
     if (XImage_isNull(&image))
     {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return true;
     }
 
@@ -8961,7 +8961,7 @@ bool XPainter_drawPixmap(XPainter* self, const XPixmap* pixmap, int x, int y)
         source.height = height;
         ok = XPicture_recordDrawPixmap(self->m_picture, &image,
                                        &target, &source);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return ok;
     }
 #endif /* XPAINTER_IMAGE_RECT_ON */
@@ -8984,7 +8984,7 @@ bool XPainter_drawPixmap(XPainter* self, const XPixmap* pixmap, int x, int y)
         source.height = height;
         if (target.width <= 0 || target.height <= 0)
         {
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
             return true;
         }
         ok = XPainter_drawImageRect(self, &target, &image, &source);
@@ -8994,7 +8994,7 @@ bool XPainter_drawPixmap(XPainter* self, const XPixmap* pixmap, int x, int y)
     {
         ok = XPainter_drawImage(self, &image, x, y);
     }
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     return ok;
 }
 
@@ -9019,7 +9019,7 @@ bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
     XPixmap_toImage(pixmap, &image);
     if (XImage_isNull(&image))
     {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return true;
     }
 #if XPAINTER_IMAGE_RECT_ON
@@ -9028,12 +9028,12 @@ bool XPainter_drawPixmapRect(XPainter* self, const XRect* targetRect,
     {
         ok = XPicture_recordDrawPixmap(self->m_picture, &image,
                                        targetRect, sourceRect);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return ok;
     }
 #endif /* XPAINTER_IMAGE_RECT_ON */
     ok = XPainter_drawImageRect(self, targetRect, &image, sourceRect);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     return ok;
 }
 
@@ -9100,13 +9100,13 @@ bool XPainter_drawTiledPixmap(XPainter* self, const XRect* rect,
         XPixmap_toImage(pixmap, &recordedImage);
         if (XImage_isNull(&recordedImage))
         {
-            XImage_deinit_base(&recordedImage);
+            XClassDeinit(&recordedImage);
             return true;
         }
         recorded = XPicture_recordDrawTiledPixmap(self->m_picture,
                                                    &recordedImage,
                                                    rect, offset);
-        XImage_deinit_base(&recordedImage);
+        XClassDeinit(&recordedImage);
         return recorded;
     }
 
@@ -9127,7 +9127,7 @@ bool XPainter_drawTiledPixmap(XPainter* self, const XRect* rect,
     XPixmap_toImage(pixmap, &image);
     if (XImage_isNull(&image))
     {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return true;
     }
     for (y = 0; y < rect->height; )
@@ -9158,7 +9158,7 @@ bool XPainter_drawTiledPixmap(XPainter* self, const XRect* rect,
             if (source.width > 0 && source.height > 0 &&
                 !XPainter_drawImageRect(self, &target, &image, &source))
             {
-                XImage_deinit_base(&image);
+                XClassDeinit(&image);
                 return false;
             }
             x += targetWidth;
@@ -9168,7 +9168,7 @@ bool XPainter_drawTiledPixmap(XPainter* self, const XRect* rect,
         offsetY = 0;
         offsetX = offset ? painterPixmapPositiveModulo(offset->x, tileWidth) : 0;
     }
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     return true;
 }
 #endif /* XPAINTER_TILED_PIXMAP_ON */
@@ -9190,11 +9190,11 @@ void XPainter_setFont(XPainter* self, const XFont* font)
 {
     if (!self || self->m_deviceKind == XPainterDevice_None) return;
     if (font)
-        XCopy(&self->m_state.m_font, font);
+        XClassCopy(&self->m_state.m_font, font);
     else {
         /* NULL 表示恢复默认字体；只有这个分支需要先释放旧字符串，
-           XCopy() 自身已经负责替换目标资源。 */
-        XFont_deinit_base((XClass*)&self->m_state.m_font);
+           XClassCopy() 自身已经负责替换目标资源。 */
+        XClassDeinit((XClass*)&self->m_state.m_font);
         XFont_init(&self->m_state.m_font);
     }
     /* Qt QPicturePaintEngine::updateFont() serializes the complete font

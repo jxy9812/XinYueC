@@ -93,7 +93,7 @@ static void V_deinit(XMqttServer* base)
         server->m_tcpServer = NULL;
     }
     if (server->m_connectedClients) {
-        XMapBase_delete_base((XMapBase*)server->m_connectedClients);
+        XClassDelete((XMapBase*)server->m_connectedClients);
         server->m_connectedClients = NULL;
     }
     XClass_Deinit_Parent(XMqttServer, server);
@@ -161,7 +161,7 @@ void XMqttTcpServer_close(XMqttTcpServer* server)
                 if (socket)
                     mqtt_tcp_drop_client(server, socket);
             }
-            XVector_delete_base(keys);
+            XClassDelete(keys);
         }
         XMapBase_clear_base((XMapBase*)clients);
     }
@@ -240,7 +240,7 @@ static void mqtt_tcp_on_ready_read(XObject* receiver, XVarList* args)
         XMqttServer_feedData((XMqttServer*)server, socket,
                              (const uint8_t*)XByteArray_constData(bytes),
                              (size_t)XByteArray_size_base(bytes));
-        XByteArray_delete_base(bytes);
+        XClassDelete(bytes);
     }
 }
 

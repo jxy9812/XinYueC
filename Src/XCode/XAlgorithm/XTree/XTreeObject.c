@@ -73,12 +73,6 @@ XTreeNode* XTreeNode_getChild(XTreeNode* this_root, const uint8_t nodeType)
 	return XTreeNode_GetChild(this_root,nodeType);
 	//return ((XTreeNode**)(this_root->nodes))[nodeType];
 }
-void XTree_delete(XTreeNode* this_root, XTreeNodeDataDeleteMethod method,
-	void* args, XMemory* memory)
-{
-	XTree_delete_base(this_root, XTreeNode_delete,method,args,memory);
-}
-
 void XTreeNode_delete(XTreeNode* node, XMemory* memory)
 {
 	if (node == NULL)
@@ -95,7 +89,10 @@ void XTreeNode_delete(XTreeNode* node, XMemory* memory)
 		XFree_System(node);
 }
 
-void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
+/* 原名 XTree_delete_base：树节点递归释放算法接口，非 XClass 生命周期
+   API；_base 后缀去除后与 XTreeNode_delete 等节点级接口同名成族，
+   原默认节点释放器的 4 参便捷版已并入（调用方显式传 XTreeNode_delete）。 */
+void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
 	XTreeNodeDataDeleteMethod dataMethod, void* args, XMemory* memory)
 {
 	if (this_root == NULL)
@@ -124,7 +121,7 @@ void XTree_delete_base(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
 		nodeMethod(currentNode, memory);//释放当前节点
 		sum++;
 	}
-	XStack_delete_base(stack);
+	XClassDelete(stack);
 	//return sum;
 #else
 	IS_ON_DEBUG(XStack_ON);

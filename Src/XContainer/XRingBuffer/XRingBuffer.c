@@ -38,7 +38,7 @@ static void VXRingBuffer_chunkDeleter(void* data)
     XRingChunk** chunkPtr = (XRingChunk**)data;
     if (*chunkPtr != NULL)
     {
-        XRingChunk_delete_base(*chunkPtr); // 调用基类删除宏，确保正确析构
+        XClassDelete(*chunkPtr); // 调用基类删除宏，确保正确析构
         *chunkPtr = NULL; // 防止悬空指针（虽非必需，但良好习惯）
     }
 }
@@ -77,7 +77,7 @@ static void XRingBuffer_init_with_memory(XRingBuffer* buffer,
         chunkSize);
     if (firstChunk == NULL)
     {
-        XVector_delete_base(buffer->m_chunks); // 现在delete会自动清理（虽然此时为空）
+        XClassDelete(buffer->m_chunks); // 现在delete会自动清理（虽然此时为空）
         buffer->m_chunks = NULL;
         XContainerCapacity(buffer) = 0;
         XContainerSize(buffer) = 0;
@@ -371,7 +371,7 @@ bool XRingBuffer_addChunk(XRingBuffer* buffer, size_t chunkSize)
 
     if (!XVector_push_back_1_base(buffer->m_chunks, &newChunk))
     {
-        XRingChunk_delete_base(newChunk);
+        XClassDelete(newChunk);
         return false;
     }
 
@@ -511,7 +511,7 @@ void VXRingBuffer_deinit(XRingBuffer* buffer)
     // 只需删除m_chunks向量，其析构方法会自动处理所有XRingChunk的释放
     if (buffer->m_chunks != NULL)
     {
-        XVector_delete_base(buffer->m_chunks);
+        XClassDelete(buffer->m_chunks);
         buffer->m_chunks = NULL;
     }
 
@@ -548,7 +548,7 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
                 XRingChunk_capacity_base(*srcChunkPtr));
             if (newChunk)
             {
-                XCopy(newChunk, *srcChunkPtr);
+                XClassCopy(newChunk, *srcChunkPtr);
                 XVector_push_back_1_base(object->m_chunks, &newChunk);
             }
         }
@@ -576,7 +576,7 @@ static void VXClass_move(XRingBuffer* object, XRingBuffer* src)
         object->m_chunks = NULL;
     }
     else if (object->m_chunks)
-        XVector_delete_base(object->m_chunks);
+        XClassDelete(object->m_chunks);
 
     memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XRingBuffer) - sizeof(XClass));
     Class_Memory(object) = source_memory;

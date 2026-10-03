@@ -58,7 +58,7 @@ static void VXAbstractAxis_deinit(XAbstractAxis* self)
 {
     if (!self) return;
     if (self->m_titleText) {
-        XString_delete_base(self->m_titleText);
+        XClassDelete(self->m_titleText);
         self->m_titleText = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -102,7 +102,7 @@ static void VXAbstractAxis_move(XAbstractAxis* self, XAbstractAxis* other)
     self->m_shadesVisible = other->m_shadesVisible;
     self->m_linePenColor = other->m_linePenColor;
     self->m_labelsBrushColor = other->m_labelsBrushColor;
-    if (self->m_titleText) XString_delete_base(self->m_titleText);
+    if (self->m_titleText) XClassDelete(self->m_titleText);
     self->m_titleText = other->m_titleText;
     other->m_titleText = XString_create();
     other->m_visible = true;
@@ -226,7 +226,7 @@ void XAbstractAxis_setTitleText_2(XAbstractAxis* self, const char* title)
         if (!tmp) return;
     }
     XAbstractAxis_setTitleText(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XAbstractAxis_titleText(const XAbstractAxis* self)

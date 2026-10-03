@@ -360,11 +360,11 @@ static void VXHeaderView_deinit(XHeaderView* self)
     xhv_pressRelease(self);
     xhv_resizeRelease(self);
     if (self->m_sections) {
-        XVector_delete_base(self->m_sections);
+        XClassDelete(self->m_sections);
         self->m_sections = NULL;
     }
     if (self->m_sectionModes) {
-        XVector_delete_base(self->m_sectionModes);
+        XClassDelete(self->m_sectionModes);
         self->m_sectionModes = NULL;
     }
     if (self->m_hidden) {
@@ -442,8 +442,8 @@ static void VXHeaderView_move(XHeaderView* self, XHeaderView* other)
     XClass_Parent(XWidget, EXClass_Move,
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                (XWidget*)other);
-    if (self->m_sections) XVector_delete_base(self->m_sections);
-    if (self->m_sectionModes) XVector_delete_base(self->m_sectionModes);
+    if (self->m_sections) XClassDelete(self->m_sections);
+    if (self->m_sectionModes) XClassDelete(self->m_sectionModes);
     if (self->m_hidden) XFree_System(self->m_hidden);
     self->m_orientation = other->m_orientation;
     self->m_count = other->m_count;
@@ -1184,7 +1184,7 @@ XByteArray* XHeaderView_saveState(const XHeaderView* self)
              xhv_stateWriteMode(out, mode);
     }
     if (!ok) {
-        XByteArray_delete_base(out);
+        XClassDelete(out);
         return NULL;
     }
     return out;

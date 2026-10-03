@@ -261,7 +261,7 @@ void XDevice_init(XDevice* self);
 /**
  * @brief 在堆上创建设备基类对象。
  * @return 新创建设备对象；失败返回 NULL。
- * @note   返回的是新对象，调用方不再使用时调用 XDevice_delete_base 释放。
+ * @note   返回的是新对象，调用方不再使用时调用 XClassDelete 释放。
  */
 XDevice* XDevice_create(void);
 
@@ -281,9 +281,7 @@ void XDevice_ref(XDevice* self);
 void XDevice_unref(XDevice* self);
 
 /** @brief 复用 XClass 的 deinit 基类虚函数实现。 */
-#define XDevice_deinit_base XClass_deinit_base
 /** @brief 复用 XClass 的 delete 基类虚函数实现。 */
-#define XDevice_delete_base XClass_delete_base
 
 /* ============================================================================
  * 统一公共门面 API

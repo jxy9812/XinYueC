@@ -121,7 +121,7 @@ static bool ac_ctlAlive;
 
 static void ac_open(const char* initialText)
 {
-    if (ac_ctlAlive) XLineControl_deinit_base((XClass*)&ac_ctl);
+    if (ac_ctlAlive) XClassDeinit((XClass*)&ac_ctl);
     XLineControl_init(&ac_ctl, initialText ? initialText : "");
     ac_ctlAlive = true;
     ac_sigN = 0;
@@ -206,9 +206,9 @@ static void ac_ime(const char* commit, const char* preedit, int cursor)
     XLineControl_processInputMethodEvent(&ac_ctl, &ime);
     /* init 深拷贝了预编辑/提交串（事件拥有），处理后必须 deinit，
        否则每条 IME 事件泄漏两份 XString。 */
-    XInputMethodEvent_deinit_base(&ime);
-    if (c) XString_delete_base((XClass*)c);
-    if (p) XString_delete_base((XClass*)p);
+    XClassDeinit(&ime);
+    if (c) XClassDelete((XClass*)c);
+    if (p) XClassDelete((XClass*)p);
 }
 
 static void ac_setClipboard(const char* text) { XTextClipboard_setText(text); }
@@ -989,7 +989,7 @@ bool XLineControlAcceptance_runAll(void)
     ac_groupD();
     ac_groupE();
     if (ac_ctlAlive) {
-        XLineControl_deinit_base((XClass*)&ac_ctl);
+        XClassDeinit((XClass*)&ac_ctl);
         ac_ctlAlive = false;
     }
 

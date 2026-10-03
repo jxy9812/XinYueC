@@ -166,8 +166,8 @@ XRegularExpressionMatchIterator
 
 - `XRegularExpression_create()` 创建空正则；
 - `XRegularExpression_create_utf8()`、`XRegularExpression_create_string()` 创建模式；
-- `XRegularExpression_copy()` 共享编译状态或共享私有数据；
-- `XRegularExpression_delete()` 释放引用，最后一个引用释放 `pcre2_code_16`；
+- `XClassCopy()` 共享编译状态或共享私有数据；
+- `XClassDelete()` 释放引用，最后一个引用释放 `pcre2_code_16`；
 - `XRegularExpression_match()` 对 `XString` 输入时持有字符串副本/共享引用，保证返回结果不会悬空；
 - `XRegularExpression_match_view()` 对 `XStringView` 输入时只保存非拥有视图，明确要求调用者保证源数据生命周期；
 - 空捕获组和没有匹配的捕获组必须区分：前者是有效的长度 0，后者返回 `start=-1`、`end=-1`；

@@ -131,7 +131,6 @@ XCoreApplication* XCoreApplication_create_ex(XMemoryType memory,  int argc, char
 void XCoreApplication_init(XCoreApplication* app, int argc, char** argv);
 
 /** @brief 删除 XCoreApplication 实例（委托给 XClass_delete_base） */
-#define XCoreApplication_delete_base      XClass_delete_base
 
 /* ==================== 应用程序元信息（对标 Qt QCoreApplication 属性） ==================== */
 

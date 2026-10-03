@@ -738,7 +738,7 @@ void XPoint_setVariant(XVariant* variant, XPoint point)
     if (variant->m_type != XVariantType_Point || !variant->m_data ||
         variant->m_dataSize != sizeof(XPoint)) {
         if (variant->m_data)
-            XVariant_deinit_base(variant);
+            XClassDeinit(variant);
         variant->m_data = XMalloc_System(sizeof(XPoint));
         if (!variant->m_data)
             return;

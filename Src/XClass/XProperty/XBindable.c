@@ -118,7 +118,7 @@ bool XBindable_value(XBindable* self, XVariant* out)
         memset(out, 0, sizeof(XVariant));
         XVariant_init(out, NULL, 0, XVariantType_NULL);
     }
-    XCopy((XClass*)out, (const XClass*)value);
+    XClassCopy((XClass*)out, (const XClass*)value);
     return true;
 }
 

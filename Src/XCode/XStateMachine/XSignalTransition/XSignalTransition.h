@@ -50,8 +50,6 @@ void XSignalTransition_init(XSignalTransition* transition);
  */
 void XSignalTransition_init_ex(XSignalTransition* transition, const XObject* sender, size_t signal, XState* sourceState);
 
-#define XSignalTransition_delete_base XAbstractTransition_delete_base
-#define XSignalTransition_deinit_base XAbstractTransition_deinit_base
 
 /**
  * @brief 获取信号发送对象。

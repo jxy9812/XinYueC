@@ -36,14 +36,14 @@ void XMqttMemoryLifecycleTest(void)
             XMqttClient_setWillMessage(client, payload, sizeof(payload) - 1);
             XMqttClient_setWillQoS(client, 1);
         }
-        if (message) XMqttMessage_delete_base(message);
-        if (publish) XMqttPublishProperties_delete_base(publish);
-        if (connection) XMqttConnectionProperties_delete_base(connection);
-        if (subscription) XMqttSubscriptionProperties_delete_base(subscription);
-        if (authentication) XMqttAuthenticationProperties_delete_base(authentication);
-        if (filter) XMqttTopicFilter_delete_base(filter);
-        if (topic) XMqttTopicName_delete_base(topic);
-        if (client) XClass_delete_base((XClass*)client);
+        if (message) XClassDelete(message);
+        if (publish) XClassDelete(publish);
+        if (connection) XClassDelete(connection);
+        if (subscription) XClassDelete(subscription);
+        if (authentication) XClassDelete(authentication);
+        if (filter) XClassDelete(filter);
+        if (topic) XClassDelete(topic);
+        if (client) XClassDelete((XClass*)client);
         if (!ok) {
             XPrintf("[失败] MQTT 生命周期回归第 %d 轮创建对象失败\n", i + 1);
             return;

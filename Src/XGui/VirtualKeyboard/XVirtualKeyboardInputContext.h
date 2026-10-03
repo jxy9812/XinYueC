@@ -138,7 +138,7 @@ uint32_t XVirtualKeyboardInputContext_inputMethodHints(
  * @brief      返回组串文本（对标 preeditText）。
  * @param      self 上下文对象借用指针；可为 NULL。
  * @return     新建 XString*（空组串返回空串对象）；self 为 NULL 返回
- *             NULL。调用方用 XString_delete_base 释放。
+ *             NULL。调用方用 XClassDelete 释放。
  */
 XString* XVirtualKeyboardInputContext_preeditText(
         const XVirtualKeyboardInputContext* self);
@@ -172,7 +172,7 @@ void XVirtualKeyboardInputContext_setPreeditText_2(
  * @brief      返回环绕文本（向焦点控件查询 ImSurroundingText；无焦点
  *             返回空串对象）。
  * @param      self 上下文对象借用指针；可为 NULL。
- * @return     新建 XString*，调用方用 XString_delete_base 释放；self
+ * @return     新建 XString*，调用方用 XClassDelete 释放；self
  *             为 NULL 或分配失败返回 NULL。
  */
 XString* XVirtualKeyboardInputContext_surroundingText(
@@ -182,7 +182,7 @@ XString* XVirtualKeyboardInputContext_surroundingText(
  * @brief      返回选中文本（向焦点控件查询 ImCurrentSelection；无焦点
  *             返回空串对象）。
  * @param      self 上下文对象借用指针；可为 NULL。
- * @return     新建 XString*，调用方用 XString_delete_base 释放；self
+ * @return     新建 XString*，调用方用 XClassDelete 释放；self
  *             为 NULL 或分配失败返回 NULL。
  */
 XString* XVirtualKeyboardInputContext_selectedText(
@@ -225,7 +225,7 @@ void XVirtualKeyboardInputContext_setAnimating(
 /**
  * @brief      返回区域语言（对标 locale；默认 "zh_CN"）。
  * @param      self 上下文对象借用指针；可为 NULL。
- * @return     新建 XString*，调用方用 XString_delete_base 释放；self
+ * @return     新建 XString*，调用方用 XClassDelete 释放；self
  *             为 NULL 或分配失败返回 NULL。
  */
 XString* XVirtualKeyboardInputContext_locale(

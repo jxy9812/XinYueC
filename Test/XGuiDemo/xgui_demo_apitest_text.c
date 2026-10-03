@@ -113,7 +113,7 @@ static int ttxt_fontLineHeight(const XWidget* w)
     if (!w) return 0;
     f = XWidget_font(w);
     h = XPainter_textAscent(&f) + XPainter_textDescent(&f);
-    XFont_deinit_base((XClass*)&f); /* XWidget_font 深拷贝契约。 */
+    XClassDeinit((XClass*)&f); /* XWidget_font 深拷贝契约。 */
     return h;
 }
 
@@ -311,14 +311,14 @@ static int ttxt_run_text_edit(void)
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "ab\ncd") == 0,
                     "XTextEdit: setPlainText/toPlainText 多行往返一致");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XTextEdit_setPlainText(te, NULL); /* 边界：NULL 按空串处理 */
     {
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && xapi_u8(plain)[0] == '\0',
                     "XTextEdit: setPlainText(NULL) 归空串");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     /* setPlainText 复位字符格式（与 setText 纯文本分支同口径）。 */
     XTextEdit_setBold(te, true);
@@ -334,21 +334,21 @@ static int ttxt_run_text_edit(void)
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "plain text") == 0,
                     "XTextEdit: setText 纯文本分支直写编辑器");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XTextEdit_setText(te, "<b>hi</b>");
     {
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "hi") == 0,
                     "XTextEdit: setText 探测富文本并剥离标签保留文本");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XTextEdit_setText(te, NULL); /* 边界：NULL 忽略 */
     {
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "hi") == 0,
                     "XTextEdit: setText(NULL) 忽略不破坏现内容");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
 
     /* ---- 6. setHtml 渲染子集 + setRichPreview 预览态。 ---- */
@@ -360,7 +360,7 @@ static int ttxt_run_text_edit(void)
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "BI") == 0,
                     "XTextEdit: setHtml 富文本进文档、编辑缓冲剥离为 BI");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XTextEdit_setHtml(te, NULL); /* 边界：NULL 忽略 */
     XTextEdit_setRichPreview(te, true);
@@ -400,7 +400,7 @@ static int ttxt_run_text_edit(void)
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "L1\nL2") == 0,
                     "XTextEdit: append 尾部另起一行（对标 appendPlainText）");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XTextEdit_setPlainText(te, "A");
     XTextEdit_setTextCursor(te, 0, 1);
@@ -409,14 +409,14 @@ static int ttxt_run_text_edit(void)
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "AB") == 0,
                     "XTextEdit: insertPlainText 光标处插入（insertPlain）");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XTextEdit_insertHtml(te, "<b>X</b>"); /* 平铺降级：剥离标签插入 */
     {
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "ABX") == 0,
                     "XTextEdit: insertHtml 剥离标签插入纯文本 X");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     /* 剪贴板链路：selectAll→copy→clear→paste 往返（Qt 剪贴板语义）。 */
     XTextEdit_setPlainText(te, "CPDATA");
@@ -427,14 +427,14 @@ static int ttxt_run_text_edit(void)
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && xapi_u8(plain)[0] == '\0',
                     "XTextEdit: clear_2 清空编辑缓冲");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XTextEdit_paste_2(te);
     {
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "CPDATA") == 0,
                     "XTextEdit: copy/clear/paste 剪贴板往返还原 CPDATA");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XAPI_EXPECT(XTextEdit_canPaste(te),
                 "XTextEdit: 可编辑态 canPaste=true（对标 canPaste）");
@@ -502,14 +502,14 @@ static int ttxt_run_text_edit(void)
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "abc") == 0,
                     "XTextEdit: 实机键入 abc 后 toPlainText 一致");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XTextEdit_undo(te);
     {
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strlen(xapi_u8(plain)) < 3,
                     "XTextEdit: undo 回退键入（文本变短，对标 undo 槽）");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XAPI_EXPECT(XTextEdit_canRedo(te),
                 "XTextEdit: undo 后 canRedo=true（重做栈非空）");
@@ -518,7 +518,7 @@ static int ttxt_run_text_edit(void)
         XString* plain = XTextEdit_toPlainText(te);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "abc") == 0,
                     "XTextEdit: redo 重放恢复 abc（对标 redo 槽）");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
 
     /* ---- 11. 平铺字符格式位集（setCurrent/mergeCurrentCharFormat）。 -- */
@@ -571,13 +571,13 @@ static int ttxt_run_text_edit(void)
                             plain &&
                             strcmp(xapi_u8(plain), "ext doc") == 0,
                             "XTextEdit: setDocument 接管外部文档并同步显示");
-                if (plain) XString_delete_base((XClass*)plain);
+                if (plain) XClassDelete((XClass*)plain);
             }
             XTextEdit_setDocument(te, NULL); /* 对标 setDocument(nullptr) */
             XAPI_EXPECT(XTextEdit_document(te) != NULL &&
                         XTextEdit_document(te) != doc,
                         "XTextEdit: setDocument(NULL) 重建内部默认文档");
-            XTextDocument_delete_base(doc); /* 外接文档所有权归调用方 */
+            XClassDelete(doc); /* 外接文档所有权归调用方 */
         } else {
             XAPI_EXPECT(false, "XTextEdit: 外接文档对象创建失败");
         }
@@ -589,7 +589,7 @@ static int ttxt_run_text_edit(void)
                 "XTextEdit: loadResource 恒 NULL（资源未建，Qt 无效载荷）");
 
     (void)g_xteTextChanged;
-    XTextEdit_delete_base((XClass*)te);
+    XClassDelete((XClass*)te);
     XPrintf("XGuiApiTest: [XTextEdit] %s\n",
             failures == 0 ? "PASS" : "FAIL");
     return failures;
@@ -710,7 +710,7 @@ static int ttxt_run_plain_text_edit(void)
         XString* title = XPlainTextEdit_documentTitle(pte);
         XAPI_EXPECT(title && strcmp(xapi_u8(title), "T1") == 0,
                     "XPlainTextEdit: setDocumentTitle_2/documentTitle 往返");
-        if (title) XString_delete_base((XClass*)title);
+        if (title) XClassDelete((XClass*)title);
     }
     XPlainTextEdit_setBackgroundVisible(pte, true);
     XPlainTextEdit_setCenterCursor(pte, false);
@@ -926,7 +926,7 @@ static int ttxt_run_plain_text_edit(void)
     XAPI_EXPECT(XPlainTextEdit_loadResource(pte, 0, "r") == NULL,
                 "XPlainTextEdit: loadResource 恒 NULL（无效 QVariant 口径）");
     XPlainTextEdit_clear(pte);
-    XPlainTextEdit_delete_base((XClass*)pte);
+    XClassDelete((XClass*)pte);
     XPrintf("XGuiApiTest: [XPlainTextEdit] %s\n",
             failures == 0 ? "PASS" : "FAIL");
     return failures;
@@ -1030,7 +1030,7 @@ static int ttxt_run_text_browser(void)
         XAPI_EXPECT(paths != NULL &&
                     XStringList_size_base((const XContainer*)paths) == 0,
                     "XTextBrowser: 默认搜索路径为空列表");
-        if (paths) XStringList_delete_base((XClass*)paths);
+        if (paths) XClassDelete((XClass*)paths);
     }
 
     /* ---- 2. setSource 导航 + 历史栈状态迁移。 ---- */
@@ -1110,8 +1110,8 @@ static int ttxt_run_text_browser(void)
             XAPI_EXPECT(got != NULL &&
                         XStringList_size_base((const XContainer*)got) == 2,
                         "XTextBrowser: setSearchPaths 深拷贝条数一致");
-            if (got) XStringList_delete_base((XClass*)got);
-            XStringList_delete_base((XClass*)paths);
+            if (got) XClassDelete((XClass*)got);
+            XClassDelete((XClass*)paths);
         } else {
             XAPI_EXPECT(false, "XTextBrowser: 搜索路径列表创建失败");
         }
@@ -1123,7 +1123,7 @@ static int ttxt_run_text_browser(void)
         XString* plain = XTextEdit_toPlainText((XTextEdit*)b);
         XAPI_EXPECT(plain && strcmp(xapi_u8(plain), "浏览器内容") == 0,
                     "XTextBrowser: setHtml 剥离标签保留文本（所见即所存）");
-        if (plain) XString_delete_base((XClass*)plain);
+        if (plain) XClassDelete((XClass*)plain);
     }
     XAPI_EXPECT(XTextEdit_isRichPreview((XTextEdit*)b),
                 "XTextBrowser: setHtml 自动进入只读富文本预览");
@@ -1144,7 +1144,7 @@ static int ttxt_run_text_browser(void)
         XAPI_EXPECT(anchor != NULL && XString_size_base(
                         (const XContainer*)anchor) == 0,
                     "XTextBrowser: anchorAt 无锚点处返回空串对象");
-        if (anchor) XString_delete_base((XClass*)anchor);
+        if (anchor) XClassDelete((XClass*)anchor);
     }
     {
         XRect r = XTextBrowser_cursorRect(b);
@@ -1156,7 +1156,7 @@ static int ttxt_run_text_browser(void)
                     "XTextBrowser: cursorRect 委托编辑器同口径（行高=字体度量）");
     }
 
-    XTextBrowser_delete_base((XClass*)b);
+    XClassDelete((XClass*)b);
     XPrintf("XGuiApiTest: [XTextBrowser] %s\n",
             failures == 0 ? "PASS" : "FAIL");
     return failures;
@@ -1387,7 +1387,7 @@ static int ttxt_run_text_document(void)
                     XTextDocument_fragment(d, 2, idx) != NULL &&
                     XTextDocument_fragment(d, 2, idx)->image != NULL,
                     "XTextDocument: insertImage 深拷贝为图片片段");
-        XImage_deinit_base((XClass*)&img);
+        XClassDeinit((XClass*)&img);
     }
 
     /* ---- 9. 默认格式（setDefaultFormat 全局承载）。 ---- */
@@ -1408,7 +1408,7 @@ static int ttxt_run_text_document(void)
     /* 注（不硬断言）：撤销栈快照入口当前无编辑路径调用（undo 永不可
      * 用），isUndoAvailable/undo 的 Qt 行为断言留待框架补快照接线，
      * 详见提交 notes。 */
-    XTextDocument_delete_base((XClass*)d);
+    XClassDelete((XClass*)d);
     XPrintf("XGuiApiTest: [XTextDocument] %s\n",
             failures == 0 ? "PASS" : "FAIL");
     return failures;
@@ -1460,8 +1460,8 @@ static int ttxt_run_completer(void)
     if (!model || !c) {
         XAPI_EXPECT(model != NULL, "XCompleter: 词条模型创建");
         XAPI_EXPECT(c != NULL, "XCompleter: 实例创建");
-        if (model) XAbstractItemModel_delete_base(model);
-        if (c) XCompleter_delete_base(c);
+        if (model) XClassDelete(model);
+        if (c) XClassDelete(c);
         return failures;
     }
     XObject_connect_1((XObject*)c,
@@ -1520,7 +1520,7 @@ static int ttxt_run_completer(void)
     s = XCompleter_currentCompletion(c);
     XAPI_EXPECT(s && strcmp(xapi_u8(s), "Open File") == 0,
                 "XCompleter: 命中首项为 Open File（currentCompletion）");
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     XAPI_EXPECT(XCompleter_currentRow(c) == 0,
                 "XCompleter: 当前完成行 0（完成列表 0 基）");
     XAPI_EXPECT(XCompleter_currentIndex(c) == 0,
@@ -1528,11 +1528,11 @@ static int ttxt_run_completer(void)
     s = XCompleter_completionPrefix(c);
     XAPI_EXPECT(s && strcmp(xapi_u8(s), "Ope") == 0,
                 "XCompleter: completionPrefix 返回前缀拷贝");
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     s = XCompleter_pathFromIndex(c, 1);
     XAPI_EXPECT(s && strcmp(xapi_u8(s), "Open Directory") == 0,
                 "XCompleter: pathFromIndex(1) 取 Open Directory");
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     XAPI_EXPECT(XCompleter_pathFromIndex(c, 999) == NULL,
                 "XCompleter: pathFromIndex 越界返回 NULL");
     XCompleter_complete(c);
@@ -1546,7 +1546,7 @@ static int ttxt_run_completer(void)
     XAPI_EXPECT(XCompleter_currentRow(c) == 1 && s &&
                 strcmp(xapi_u8(s), "Open Directory") == 0,
                 "XCompleter: 行 1 当前补全 Open Directory");
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     XAPI_EXPECT(XCompleter_currentIndex(c) == 1,
                 "XCompleter: 行切换后源模型索引同步为 1");
     XAPI_EXPECT(XCompleter_setCurrentRow(c, -1) &&
@@ -1618,7 +1618,7 @@ static int ttxt_run_completer(void)
             XAPI_EXPECT(XCompleter_completionCount(c) == 1,
                         "XCompleter: 有序模型二分路径命中 Bee 1 项");
             XCompleter_setModel(c, model);
-            XAbstractItemModel_delete_base(sorted);
+            XClassDelete(sorted);
         } else {
             XAPI_EXPECT(false, "XCompleter: 有序模型创建失败");
         }
@@ -1648,16 +1648,16 @@ static int ttxt_run_completer(void)
                     strcmp(xapi_u8(dir), "a/b") == 0 &&
                     strcmp(xapi_u8(file), "c.txt") == 0,
                     "XCompleter: splitPath 拆出目录 a/b 与文件 c.txt");
-        if (dir) XString_delete_base((XClass*)dir);
-        if (file) XString_delete_base((XClass*)file);
+        if (dir) XClassDelete((XClass*)dir);
+        if (file) XClassDelete((XClass*)file);
         dir = NULL;
         file = NULL;
         XCompleter_splitPath_2(c, "file.txt", &dir, &file);
         XAPI_EXPECT(dir && file && xapi_u8(dir)[0] == '\0' &&
                     strcmp(xapi_u8(file), "file.txt") == 0,
                     "XCompleter: 无分隔符时目录空/文件名整串");
-        if (dir) XString_delete_base((XClass*)dir);
-        if (file) XString_delete_base((XClass*)file);
+        if (dir) XClassDelete((XClass*)dir);
+        if (file) XClassDelete((XClass*)file);
         dir = NULL;
         file = NULL;
         XCompleter_splitPath_2(c, "dir/", &dir, &file);
@@ -1665,20 +1665,20 @@ static int ttxt_run_completer(void)
                     strcmp(xapi_u8(dir), "dir") == 0 &&
                     xapi_u8(file)[0] == '\0',
                     "XCompleter: 以 / 结尾时文件名为空串");
-        if (dir) XString_delete_base((XClass*)dir);
-        if (file) XString_delete_base((XClass*)file);
+        if (dir) XClassDelete((XClass*)dir);
+        if (file) XClassDelete((XClass*)file);
         dir = NULL;
         file = NULL;
         XCompleter_splitPath_2(c, NULL, &dir, &file); /* 边界：空路径 */
         XAPI_EXPECT(dir && file && xapi_u8(dir)[0] == '\0' &&
                     xapi_u8(file)[0] == '\0',
                     "XCompleter: splitPath(NULL) 等价空路径双空输出");
-        if (dir) XString_delete_base((XClass*)dir);
-        if (file) XString_delete_base((XClass*)file);
+        if (dir) XClassDelete((XClass*)dir);
+        if (file) XClassDelete((XClass*)file);
     }
 
-    XCompleter_delete_base(c);
-    XAbstractItemModel_delete_base(model);
+    XClassDelete(c);
+    XClassDelete(model);
     XPrintf("XGuiApiTest: [XCompleter] %s\n",
             failures == 0 ? "PASS" : "FAIL");
     return failures;
@@ -1893,7 +1893,7 @@ static int ttxt_run_key_sequence_edit(void)
                 "XKeySequenceEdit: setClearButtonEnabled(true) 往返");
     XKeySequenceEdit_setClearButtonEnabled(k, false);
 
-    XKeySequenceEdit_delete_base((XClass*)k);
+    XClassDelete((XClass*)k);
     XPrintf("XGuiApiTest: [XKeySequenceEdit] %s\n",
             failures == 0 ? "PASS" : "FAIL");
     return failures;

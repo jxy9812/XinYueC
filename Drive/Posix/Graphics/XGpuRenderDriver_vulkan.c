@@ -4399,7 +4399,7 @@ static bool xvkl_draw_alpha_bitmap(XGpuRenderDriverSession* self,
         ok = xvkl_draw_image(self, &proxy, x, y, width, height, 1.0f,
                              sourceOver);
     }
-    XImage_deinit_base(&proxy);
+    XClassDeinit(&proxy);
     XFree_System(gray);
     return ok;
 }

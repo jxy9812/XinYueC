@@ -27,7 +27,7 @@ static void VXAbstractTransition_deinit(XAbstractTransition* transition)
     if (transition->m_sourceState)
         XState_removeTransition(transition->m_sourceState, transition);
     if (transition->m_targetStates) {
-        XVector_delete_base((XClass*)transition->m_targetStates);
+        XClassDelete((XClass*)transition->m_targetStates);
         transition->m_targetStates = NULL;
     }
     XVtableGetFunc(XObject_class_init(), EXClass_Deinit,

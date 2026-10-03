@@ -138,8 +138,6 @@ XTreeWidget* XTreeWidget_create_ex(XMemoryType memory, XWidget* parent,
                                    XWidgetFlags flags);
 #define XTreeWidget_create(parent, flags) \
     XTreeWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
-#define XTreeWidget_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XTreeWidget_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 条目（对标 QTreeWidget） ==================== */
 

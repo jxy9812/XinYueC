@@ -16,9 +16,9 @@ static void xhttp_authenticator_release(XHttpAuthenticator* self)
 {
     if (!self)
         return;
-    if (self->m_user) XClass_delete_base((XClass*)self->m_user);
-    if (self->m_password) XClass_delete_base((XClass*)self->m_password);
-    if (self->m_realm) XClass_delete_base((XClass*)self->m_realm);
+    if (self->m_user) XClassDelete((XClass*)self->m_user);
+    if (self->m_password) XClassDelete((XClass*)self->m_password);
+    if (self->m_realm) XClassDelete((XClass*)self->m_realm);
     self->m_user = NULL;
     self->m_password = NULL;
     self->m_realm = NULL;
@@ -34,7 +34,7 @@ static bool xhttp_authenticator_replace(XByteArray** target, const XByteArray* s
     if (source && !replacement)
         return false;
     if (*target)
-        XClass_delete_base((XClass*)*target);
+        XClassDelete((XClass*)*target);
     *target = replacement;
     return true;
 }
@@ -59,9 +59,9 @@ static void VXHttpAuthenticator_copy(XHttpAuthenticator* dest,
     realm = src->m_realm ? XByteArray_create_copy(src->m_realm) : NULL;
     if ((src->m_user && !user) || (src->m_password && !password) ||
         (src->m_realm && !realm)) {
-        if (user) XClass_delete_base((XClass*)user);
-        if (password) XClass_delete_base((XClass*)password);
-        if (realm) XClass_delete_base((XClass*)realm);
+        if (user) XClassDelete((XClass*)user);
+        if (password) XClassDelete((XClass*)password);
+        if (realm) XClassDelete((XClass*)realm);
         return;
     }
     xhttp_authenticator_release(dest);
@@ -128,7 +128,7 @@ XHttpAuthenticator* XHttpAuthenticator_create_copy(const XHttpAuthenticator* oth
         return NULL;
     result = XHttpAuthenticator_create();
     if (result)
-        XCopy((XClass*)result, (const XClass*)other);
+        XClassCopy((XClass*)result, (const XClass*)other);
     return result;
 }
 
@@ -139,7 +139,7 @@ XHttpAuthenticator* XHttpAuthenticator_create_move(XHttpAuthenticator* other)
         return NULL;
     result = XHttpAuthenticator_create();
     if (result)
-        XMove((XClass*)result, (XClass*)other);
+        XClassMove((XClass*)result, (XClass*)other);
     return result;
 }
 
@@ -154,7 +154,7 @@ bool XHttpAuthenticator_setChallenge(XHttpAuthenticator* self,
     if (realm && !replacement)
         return false;
     if (self->m_realm)
-        XClass_delete_base((XClass*)self->m_realm);
+        XClassDelete((XClass*)self->m_realm);
     self->m_realm = replacement;
     self->m_method = method;
     return true;
@@ -184,7 +184,7 @@ bool XHttpAuthenticator_setUser_utf8(XHttpAuthenticator* self, const char* user)
 {
     XByteArray* value = user ? XByteArray_create_utf8(user) : NULL;
     bool result = self && (!user || value) && XHttpAuthenticator_setUser(self, value);
-    if (value) XClass_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 
@@ -207,7 +207,7 @@ bool XHttpAuthenticator_setPassword_utf8(XHttpAuthenticator* self, const char* p
 {
     XByteArray* value = password ? XByteArray_create_utf8(password) : NULL;
     bool result = self && (!password || value) && XHttpAuthenticator_setPassword(self, value);
-    if (value) XClass_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 

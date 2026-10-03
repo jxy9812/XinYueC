@@ -1,4 +1,4 @@
-﻿# XinYueC 面向对象系统文档
+# XinYueC 面向对象系统文档
 
 ## 目录
 
@@ -621,7 +621,7 @@ XVtable* MyObject_class_init()
 	XVTABLE_INHERIT_XCLASS(XClass);
     
     // 重载虚函数
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, (void*)MyObject_deinit_base);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, (void*)MyObject_deinit);
     
     // 添加新函数
     void* funcs[] = { (void*)MyObject_myFunc };
@@ -653,7 +653,7 @@ void MyObject_init(MyObject* obj) {
 
 ```c
 // 通过虚函数表调用
-void MyObject_deinit_base(MyObject* obj) {
+void MyObject_deinit(MyObject* obj) {
     // 先清理派生类资源
     obj->my_data = 0;
     
@@ -916,7 +916,7 @@ void XObject_setPollTime(XObject* object, size_t interval)
 | 创建 | `Xxx_create()` | 声明变量 |
 | 初始化 | `Xxx_init()` | `Xxx_init()` |
 | 使用 | ... | ... |
-| 清理 | `Xxx_delete_base()` | `Xxx_deinit_base()` |
+| 清理 | `XClassDelete()` | `XClassDeinit()` |
 | 延迟清理 | `XObject_deleteLater()` | `XObject_deinitLater()` |
 
 ### 定时器类型
@@ -966,8 +966,8 @@ void XObject_setPollTime(XObject* object, size_t interval)
 ### 最佳实践
 
 1. **对象创建**
-   - 堆对象使用`create`/`delete_base`
-   - 栈对象使用`init`/`deinit_base`
+   - 堆对象使用`create`/`XClassDelete`
+   - 栈对象使用`init`/`XClassDeinit`
 
 2. **虚函数重写**
    - 重写`deinit`时记得调用父类的`deinit`，必须用虚函数表的方式才可以调用父类或者使用提供的宏XClass_Deinit_Parent

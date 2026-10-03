@@ -17,9 +17,9 @@ static void VXHttp2ClientSession_deinit(XHttp2ClientSession* self)
 {
     if (!self) return;
     if (self->m_configuration)
-        XClass_delete_base((XClass*)self->m_configuration);
+        XClassDelete((XClass*)self->m_configuration);
     if (self->m_encoder)
-        XClass_delete_base((XClass*)self->m_encoder);
+        XClassDelete((XClass*)self->m_encoder);
     self->m_configuration = NULL;
     self->m_encoder = NULL;
     XClass_Deinit_Parent(XClass, (XClass*)self);
@@ -35,19 +35,19 @@ static void VXHttp2ClientSession_copy(XHttp2ClientSession* dest,
     configuration = XHttp2Configuration_create_copy(src->m_configuration);
     encoder = src->m_encoder ? (XHttp2HeaderEncoder*)XClass_Malloc(XHttp2HeaderEncoder) : NULL;
     if (!configuration || (src->m_encoder && !encoder)) {
-        if (configuration) XClass_delete_base((XClass*)configuration);
+        if (configuration) XClassDelete((XClass*)configuration);
         if (encoder) XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE)->free(encoder);
         return;
     }
     if (encoder) {
         XHttp2HeaderEncoder_init(encoder);
-        XCopy((XClass*)encoder, (const XClass*)src->m_encoder);
+        XClassCopy((XClass*)encoder, (const XClass*)src->m_encoder);
         Set_Class_IsHeap(encoder, true);
     }
     if (dest->m_configuration)
-        XClass_delete_base((XClass*)dest->m_configuration);
+        XClassDelete((XClass*)dest->m_configuration);
     if (dest->m_encoder)
-        XClass_delete_base((XClass*)dest->m_encoder);
+        XClassDelete((XClass*)dest->m_encoder);
     dest->m_configuration = configuration;
     dest->m_encoder = encoder;
     dest->m_nextStreamId = src->m_nextStreamId;
@@ -65,9 +65,9 @@ static void VXHttp2ClientSession_move(XHttp2ClientSession* dest,
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XHttp2ClientSession_init(dest);
     if (dest->m_configuration)
-        XClass_delete_base((XClass*)dest->m_configuration);
+        XClassDelete((XClass*)dest->m_configuration);
     if (dest->m_encoder)
-        XClass_delete_base((XClass*)dest->m_encoder);
+        XClassDelete((XClass*)dest->m_encoder);
     dest->m_configuration = src->m_configuration;
     dest->m_encoder = src->m_encoder;
     dest->m_nextStreamId = src->m_nextStreamId;
@@ -122,7 +122,7 @@ XHttp2ClientSession* XHttp2ClientSession_create_ex(XMemoryType memory)
     XHttp2ClientSession_init(self);
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_configuration || !self->m_encoder) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;
@@ -136,7 +136,7 @@ bool XHttp2ClientSession_setConfiguration(XHttp2ClientSession* self,
     replacement = XHttp2Configuration_create_copy(configuration);
     if (!replacement) return false;
     if (self->m_configuration)
-        XClass_delete_base((XClass*)self->m_configuration);
+        XClassDelete((XClass*)self->m_configuration);
     self->m_configuration = replacement;
     return true;
 }
@@ -254,20 +254,20 @@ XByteArray* XHttp2ClientSession_start(XHttp2ClientSession* self)
                                 sizeof(XHttp2Frame_ClientPreface) - 1) ||
         !XByteArray_push_back_2(result, XByteArray_constData(frameBytes),
                                 XByteArray_size_base(frameBytes))) {
-        if (frameBytes) XClass_delete_base((XClass*)frameBytes);
-        if (settings) XClass_delete_base((XClass*)settings);
-        XClass_delete_base((XClass*)settingsPayload);
-        XClass_delete_base((XClass*)result);
+        if (frameBytes) XClassDelete((XClass*)frameBytes);
+        if (settings) XClassDelete((XClass*)settings);
+        XClassDelete((XClass*)settingsPayload);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     self->m_started = true;
-    XClass_delete_base((XClass*)frameBytes);
-    XClass_delete_base((XClass*)settings);
-    XClass_delete_base((XClass*)settingsPayload);
+    XClassDelete((XClass*)frameBytes);
+    XClassDelete((XClass*)settings);
+    XClassDelete((XClass*)settingsPayload);
     return result;
 fail:
-    if (settingsPayload) XClass_delete_base((XClass*)settingsPayload);
-    XClass_delete_base((XClass*)result);
+    if (settingsPayload) XClassDelete((XClass*)settingsPayload);
+    XClassDelete((XClass*)result);
     return NULL;
 }
 
@@ -341,8 +341,8 @@ static bool xhttp2_client_append_string(XHttp2HeaderList* headers,
     byteValue = XByteArray_create_with_data(XString_toUtf8(value),
                                              XString_toUtf8_length(value));
     result = byteName && byteValue && XHttp2HeaderList_append(headers, byteName, byteValue);
-    if (byteName) XClass_delete_base((XClass*)byteName);
-    if (byteValue) XClass_delete_base((XClass*)byteValue);
+    if (byteName) XClassDelete((XClass*)byteName);
+    if (byteValue) XClassDelete((XClass*)byteValue);
     return result;
 }
 
@@ -405,8 +405,8 @@ XByteArray* XHttp2ClientSession_encodeRequest(XHttp2ClientSession* self,
         XByteArray* method = XByteArray_create_utf8(xhttp2_client_method(request));
         XByteArray* methodName = XByteArray_create_utf8(":method");
         bool ok = method && methodName && XHttp2HeaderList_append(headers, methodName, method);
-        if (method) XClass_delete_base((XClass*)method);
-        if (methodName) XClass_delete_base((XClass*)methodName);
+        if (method) XClassDelete((XClass*)method);
+        if (methodName) XClassDelete((XClass*)methodName);
         if (!ok) goto fail;
     }
     if (!xhttp2_client_append_string(headers, ":scheme", scheme) ||
@@ -454,16 +454,16 @@ XByteArray* XHttp2ClientSession_encodeRequest(XHttp2ClientSession* self,
             if (!part || !frame || !frameBytes ||
                 !XByteArray_push_back_2(result, XByteArray_constData(frameBytes),
                                         XByteArray_size_base(frameBytes))) {
-                if (frameBytes) XClass_delete_base((XClass*)frameBytes);
-                if (frame) XClass_delete_base((XClass*)frame);
-                if (part) XClass_delete_base((XClass*)part);
+                if (frameBytes) XClassDelete((XClass*)frameBytes);
+                if (frame) XClassDelete((XClass*)frame);
+                if (part) XClassDelete((XClass*)part);
                 goto fail;
             }
-            XClass_delete_base((XClass*)frameBytes);
-            XClass_delete_base((XClass*)frame);
+            XClassDelete((XClass*)frameBytes);
+            XClassDelete((XClass*)frame);
             frameBytes = NULL;
             frame = NULL;
-            XClass_delete_base((XClass*)part);
+            XClassDelete((XClass*)part);
             headerOffset += chunk;
             if (headerSize == 0) break;
         }
@@ -483,37 +483,37 @@ XByteArray* XHttp2ClientSession_encodeRequest(XHttp2ClientSession* self,
                 XByteArray* dataBytes = dataFrame ? XHttp2Frame_toByteArray(dataFrame) : NULL;
                 if (!part || !dataFrame || !dataBytes ||
                     !XByteArray_push_back_2(result, XByteArray_constData(dataBytes), XByteArray_size_base(dataBytes))) {
-                    if (dataBytes) XClass_delete_base((XClass*)dataBytes);
-                    if (dataFrame) XClass_delete_base((XClass*)dataFrame);
-                    if (part) XClass_delete_base((XClass*)part);
+                    if (dataBytes) XClassDelete((XClass*)dataBytes);
+                    if (dataFrame) XClassDelete((XClass*)dataFrame);
+                    if (part) XClassDelete((XClass*)part);
                     goto fail;
                 }
-                XClass_delete_base((XClass*)dataBytes);
-                XClass_delete_base((XClass*)dataFrame);
-                XClass_delete_base((XClass*)part);
+                XClassDelete((XClass*)dataBytes);
+                XClassDelete((XClass*)dataFrame);
+                XClassDelete((XClass*)part);
             }
             offset += chunk;
         }
     }
     *streamId = id;
     ++self->m_activeStreamCount;
-    XClass_delete_base((XClass*)headers);
-    XClass_delete_base((XClass*)authority);
-    XClass_delete_base((XClass*)path);
-    XClass_delete_base((XClass*)scheme);
-    if (headerBlock) XClass_delete_base((XClass*)headerBlock);
-    if (frameBytes) XClass_delete_base((XClass*)frameBytes);
-    if (frame) XClass_delete_base((XClass*)frame);
+    XClassDelete((XClass*)headers);
+    XClassDelete((XClass*)authority);
+    XClassDelete((XClass*)path);
+    XClassDelete((XClass*)scheme);
+    if (headerBlock) XClassDelete((XClass*)headerBlock);
+    if (frameBytes) XClassDelete((XClass*)frameBytes);
+    if (frame) XClassDelete((XClass*)frame);
     return result;
 fail:
-    if (headers) XClass_delete_base((XClass*)headers);
-    if (authority) XClass_delete_base((XClass*)authority);
-    if (path) XClass_delete_base((XClass*)path);
-    if (scheme) XClass_delete_base((XClass*)scheme);
-    if (headerBlock) XClass_delete_base((XClass*)headerBlock);
-    if (frameBytes) XClass_delete_base((XClass*)frameBytes);
-    if (frame) XClass_delete_base((XClass*)frame);
-    if (result) XClass_delete_base((XClass*)result);
+    if (headers) XClassDelete((XClass*)headers);
+    if (authority) XClassDelete((XClass*)authority);
+    if (path) XClassDelete((XClass*)path);
+    if (scheme) XClassDelete((XClass*)scheme);
+    if (headerBlock) XClassDelete((XClass*)headerBlock);
+    if (frameBytes) XClassDelete((XClass*)frameBytes);
+    if (frame) XClassDelete((XClass*)frame);
+    if (result) XClassDelete((XClass*)result);
     return NULL;
 }
 #endif // XHTTP_ON

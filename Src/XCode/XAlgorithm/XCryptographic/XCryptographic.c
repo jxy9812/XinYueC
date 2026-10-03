@@ -1997,7 +1997,7 @@ XByteArray* XCryptographic_aesCmac(XByteArrayView key, XByteArrayView message)
     XByteArray* result = XByteArray_create();
     if (!result || !XByteArray_resize_base((XVector*)result, 16) ||
         !XCryptographic_aesCmacInto(key, message, (char*)XByteArray_data(result), 16).m_data) {
-        if (result) XByteArray_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -3504,14 +3504,14 @@ XByteArray* XCryptographic_aeadEncrypt(
     if (plainText.m_size < 0 || tagSize > SIZE_MAX - (size_t)plainText.m_size) return NULL;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base((XVector*)result, (size_t)plainText.m_size + tagSize)) {
-        if (result) XByteArray_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     view = XCryptographic_aeadEncryptInto(key, nonce, associatedData, plainText, tagSize,
                                           (char*)XByteArray_data(result),
                                           (size_t)plainText.m_size + tagSize);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -3590,13 +3590,13 @@ XByteArray* XCryptographic_aeadDecrypt(
     plainTextLen = (size_t)encryptedData.m_size - tagSize;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base((XVector*)result, plainTextLen)) {
-        if (result) XByteArray_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     view = XCryptographic_aeadDecryptInto(key, nonce, associatedData, encryptedData, tagSize,
                                           (char*)XByteArray_data(result), plainTextLen);
     if (!view.m_data && plainTextLen != 0) {
-        XByteArray_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     if (!view.m_data && plainTextLen == 0) {
@@ -3604,7 +3604,7 @@ XByteArray* XCryptographic_aeadDecrypt(
         view = XCryptographic_aeadDecryptInto(key, nonce, associatedData, encryptedData, tagSize,
                                               &emptyOutput, sizeof(emptyOutput));
         if (!view.m_data) {
-            XByteArray_delete_base((XClass*)result);
+            XClassDelete((XClass*)result);
             return NULL;
         }
     }
@@ -9073,13 +9073,13 @@ XByteArray* XCryptographic_aesCtrUpdate(
     if (data.m_size < 0) return NULL;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base(result, (size_t)data.m_size)) {
-        if (result) XByteArray_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     view = XCryptographic_aesCtrUpdateInto(operation,
         (char*)XByteArray_data(result), (size_t)data.m_size, data);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -9105,13 +9105,13 @@ XByteArray* XCryptographic_exportPublicKey(XCryptographic_Key key)
     if (key.publicKeyLen == 0) return NULL;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base(result, key.publicKeyLen)) {
-        if (result) XByteArray_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     view = XCryptographic_exportPublicKeyInto((char*)XByteArray_data(result),
                                                    key.publicKeyLen, key);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -9143,13 +9143,13 @@ XByteArray* XCryptographic_ecdhAgree(XCryptographic_Key privateKey,
     XByteArray* result = XByteArray_create();
     XByteArrayView view;
     if (!result || !XByteArray_resize_base(result, outputSize)) {
-        if (result) XByteArray_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     view = XCryptographic_ecdhAgreeInto((char*)XByteArray_data(result), outputSize,
                                              privateKey, peerPublicKey);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -9315,13 +9315,13 @@ XByteArray* XCryptographic_ecdsaExportPrivateKey(XCryptographic_Key key)
     if (keySize == 0) return NULL;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base(result, keySize)) {
-        if (result) XByteArray_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     view = XCryptographic_ecdsaExportPrivateKeyInto(
         (char*)XByteArray_data(result), keySize, key);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -9424,13 +9424,13 @@ XByteArray* XCryptographic_ecdsaSignHash(
     if (signatureSize == 0) return NULL;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base(result, signatureSize)) {
-        if (result) XByteArray_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     view = XCryptographic_ecdsaSignHashInto(
         (char*)XByteArray_data(result), signatureSize, key, hash, deterministic);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -10973,7 +10973,7 @@ XByteArray *XCryptographic_rsaExportPrivateKey(const XCryptographic_RsaKey *key)
     int i;
     if (!result || !key || !XCRYPTOGRAPHIC_RSA_ON || !key->isPrivate ||
         key->n.n == 0) {
-        if (result) XByteArray_delete_base((XClass *)result);
+        if (result) XClassDelete((XClass *)result);
         return NULL;
     }
     fields[0] = &key->n;
@@ -10987,20 +10987,20 @@ XByteArray *XCryptographic_rsaExportPrivateKey(const XCryptographic_RsaKey *key)
     for (i = 0; i < 8; ++i) {
         size_t fl = xcrsa_der_integer_preview(fields[i]);
         if (fl == 0) {
-            XByteArray_delete_base((XClass *)result);
+            XClassDelete((XClass *)result);
             return NULL;
         }
         content_len += fl;
     }
     total_len = 1 + xcder_length_size(content_len) + content_len;
     if (!XByteArray_resize_base((XVector *)result, total_len)) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     view = XCryptographic_rsaExportPrivateKeyInto((char *)XByteArray_data(result),
                                                   total_len, key);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     return result;
@@ -11081,17 +11081,17 @@ XByteArray *XCryptographic_rsaEncrypt(const XCryptographic_RsaKey *key,
     XByteArrayView view;
     size_t k = XCryptographic_rsaKeyBytes(key);
     if (!result || k == 0) {
-        if (result) XByteArray_delete_base((XClass *)result);
+        if (result) XClassDelete((XClass *)result);
         return NULL;
     }
     if (!XByteArray_resize_base((XVector *)result, k)) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     view = XCryptographic_rsaEncryptInto((char *)XByteArray_data(result), k, key,
                                          padding, hash_alg, label, input);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     return result;
@@ -11159,21 +11159,21 @@ XByteArray *XCryptographic_rsaDecrypt(const XCryptographic_RsaKey *key,
     size_t k = XCryptographic_rsaKeyBytes(key);
     size_t out_len = 0;
     if (!result || k == 0) {
-        if (result) XByteArray_delete_base((XClass *)result);
+        if (result) XClassDelete((XClass *)result);
         return NULL;
     }
     if (!XByteArray_resize_base((XVector *)result, k)) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     view = XCryptographic_rsaDecryptInto((char *)XByteArray_data(result), k, key,
                                          padding, hash_alg, label, input, &out_len);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     if (!XByteArray_resize_base((XVector *)result, out_len)) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     return result;
@@ -11242,17 +11242,17 @@ XByteArray *XCryptographic_rsaSignHash(const XCryptographic_RsaKey *key,
     XByteArrayView view;
     size_t k = XCryptographic_rsaKeyBytes(key);
     if (!result || k == 0) {
-        if (result) XByteArray_delete_base((XClass *)result);
+        if (result) XClassDelete((XClass *)result);
         return NULL;
     }
     if (!XByteArray_resize_base((XVector *)result, k)) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     view = XCryptographic_rsaSignHashInto((char *)XByteArray_data(result), k, key,
                                           padding, hash_alg, hash);
     if (!view.m_data) {
-        XByteArray_delete_base((XClass *)result);
+        XClassDelete((XClass *)result);
         return NULL;
     }
     return result;

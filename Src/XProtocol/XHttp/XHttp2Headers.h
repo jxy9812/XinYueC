@@ -96,11 +96,9 @@ XVtable* XHttp2HeaderEncoder_class_init(void);
 void XHttp2HeaderList_init(XHttp2HeaderList* self);
 /**
  * - @brief 创建空 HTTP/2 头字段列表。
- * - @return 新建头字段列表；调用者必须使用 XHttp2HeaderList_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建头字段列表；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttp2HeaderList* XHttp2HeaderList_create_ex(XMemoryType memory);
-#define XHttp2HeaderList_deinit_base XClass_deinit_base
-#define XHttp2HeaderList_delete_base XClass_delete_base
 
 /**
  * - @brief 初始化有状态 HPACK 解码器。
@@ -109,11 +107,9 @@ XHttp2HeaderList* XHttp2HeaderList_create_ex(XMemoryType memory);
 void XHttp2HeaderDecoder_init(XHttp2HeaderDecoder* self);
 /**
  * - @brief 创建有状态 HPACK 解码器。
- * - @return 新建解码器；调用者必须使用 XHttp2HeaderDecoder_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建解码器；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttp2HeaderDecoder* XHttp2HeaderDecoder_create_ex(XMemoryType memory);
-#define XHttp2HeaderDecoder_deinit_base XClass_deinit_base
-#define XHttp2HeaderDecoder_delete_base XClass_delete_base
 
 /**
  * - @brief 初始化有状态 HPACK 编码器。
@@ -122,11 +118,9 @@ XHttp2HeaderDecoder* XHttp2HeaderDecoder_create_ex(XMemoryType memory);
 void XHttp2HeaderEncoder_init(XHttp2HeaderEncoder* self);
 /**
  * - @brief 创建有状态 HPACK 编码器。
- * - @return 新建编码器；调用者必须使用 XHttp2HeaderEncoder_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建编码器；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttp2HeaderEncoder* XHttp2HeaderEncoder_create_ex(XMemoryType memory);
-#define XHttp2HeaderEncoder_deinit_base XClass_deinit_base
-#define XHttp2HeaderEncoder_delete_base XClass_delete_base
 
 /**
  * - @brief 设置对端 SETTINGS_HEADER_TABLE_SIZE 上限。

@@ -43,7 +43,7 @@ extern "C" {
  *     XModbusPdu pdu;
  *     XModbusAdu_pdu(adu, &pdu);
  *     // ...
- *     XModbusPdu_deinit_base(&pdu);
+ *     XClassDeinit(&pdu);
  * }
  * XModbusAdu_delete(adu);
  *
@@ -220,7 +220,7 @@ int XModbusAdu_serverAddress(const XModbusAdu* adu);
  * @param out [out] 输出参数，调用者提供的XModbusPdu对象
  * @return true表示成功，false表示参数无效
  * @note 对齐Qt QModbusSerialAdu::pdu()，返回栈上构造的QModbusPdu
- *       调用者需在不再使用时调用 XModbusPdu_deinit_base(out)
+ *       调用者需在不再使用时调用 XClassDeinit(out)
  */
 bool XModbusAdu_pdu(const XModbusAdu* adu, XModbusPdu* out);
 

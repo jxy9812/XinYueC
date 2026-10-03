@@ -81,7 +81,7 @@ XJsonDocument* XRestReply_readJson(XRestReply* self, XString** errorText)
     document = body ? XJsonDocument_fromJson(body) : NULL;
     if (!document && errorText)
         *errorText = XString_create_utf8("REST 响应不是合法 JSON");
-    if (body) XClass_delete_base((XClass*)body);
+    if (body) XClassDelete((XClass*)body);
     return document;
 }
 
@@ -93,7 +93,7 @@ XString* XRestReply_readText(XRestReply* self)
     XByteArray* body = XRestReply_readBody(self);
     XString* text = body ? XString_create_with_length_utf8((const char*)XByteArray_constData(body),
                                                             XByteArray_size_base(body)) : NULL;
-    if (body) XClass_delete_base((XClass*)body);
+    if (body) XClassDelete((XClass*)body);
     return text;
 }
 

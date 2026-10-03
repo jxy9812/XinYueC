@@ -33,13 +33,11 @@ typedef struct XSqlRelationalDelegate {
 void XSqlRelationalDelegate_init(XSqlRelationalDelegate* delegate);
 /**
  * @brief 创建关系委托对象。
- * @return 新委托对象，调用者必须使用 XSqlRelationalDelegate_delete_base 释放；失败返回 NULL。
+ * @return 新委托对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlRelationalDelegate* XSqlRelationalDelegate_create_ex(XMemoryType memory);
 /** @brief 调用 XClass 析构入口释放关系委托对象。 */
-#define XSqlRelationalDelegate_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlRelationalDelegate_create 返回的关系委托对象。 */
-#define XSqlRelationalDelegate_delete_base XClass_delete_base
 /**
  * @brief 按驱动规则查找字段索引。
  * @param model 表模型；不能为 NULL。
@@ -53,7 +51,7 @@ int XSqlRelationalDelegate_fieldIndex(const XSqlTableModel* model, const XSqlDri
  * @param model 关系表模型；NULL 返回空值对象。
  * @param row 行号，从 0 开始。
  * @param column 列号，从 0 开始。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlRelationalDelegate_displayValue(const XSqlRelationalTableModel* model, int row, int column);
 /**
@@ -61,7 +59,7 @@ XVariant* XSqlRelationalDelegate_displayValue(const XSqlRelationalTableModel* mo
  * @param model 关系表模型；NULL 返回空值对象。
  * @param row 行号，从 0 开始。
  * @param column 列号，从 0 开始。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlRelationalDelegate_editValue(const XSqlRelationalTableModel* model, int row, int column);
 /**

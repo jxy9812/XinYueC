@@ -246,7 +246,7 @@ static void VXTui_deinit(XTui* self)
     if (!self)
         return;
     if (self->m_previousScreen) {
-        XTuiScreen_delete_base(self->m_previousScreen);
+        XClassDelete(self->m_previousScreen);
         self->m_previousScreen = NULL;
     }
     self->m_screen = NULL;
@@ -288,7 +288,7 @@ static void VXTui_copy(XTui* dest, const XTui* src)
         if (dest->m_previousScreen)
             XTuiScreen_copyFrom(dest->m_previousScreen, src->m_previousScreen);
     } else if (dest->m_previousScreen) {
-        XTuiScreen_delete_base(dest->m_previousScreen);
+        XClassDelete(dest->m_previousScreen);
         dest->m_previousScreen = NULL;
     }
 }
@@ -318,7 +318,7 @@ static void VXTui_move(XTui* dest, XTui* src)
     memcpy(dest->m_utf8Buf, src->m_utf8Buf, sizeof(src->m_utf8Buf));
 
     if (dest->m_previousScreen)
-        XTuiScreen_delete_base(dest->m_previousScreen);
+        XClassDelete(dest->m_previousScreen);
     dest->m_previousScreen = src->m_previousScreen;
     src->m_previousScreen = NULL;
 

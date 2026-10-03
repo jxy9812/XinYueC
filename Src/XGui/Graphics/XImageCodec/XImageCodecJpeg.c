@@ -533,8 +533,8 @@ typedef struct JpegCtx
 static void jpegFreeMetadata(JpegCtx* ctx)
 {
     if (!ctx) return;
-    XStringList_deinit_base((XClass*)&ctx->textKeys);
-    XStringList_deinit_base((XClass*)&ctx->textValues);
+    XClassDeinit((XClass*)&ctx->textKeys);
+    XClassDeinit((XClass*)&ctx->textValues);
     if (ctx->iccProfile) XFree_System(ctx->iccProfile);
     ctx->iccProfile = NULL;
     ctx->iccSize = 0;
@@ -568,7 +568,7 @@ static bool jpegParseComment(const uint8_t* data, size_t len, JpegCtx* ctx)
     text = XString_toUtf8(source);
     sourceLen = XString_toUtf8_length(source);
     if (!text || sourceLen == 0) {
-        XClass_delete_base((XClass*)source);
+        XClassDelete((XClass*)source);
         return true;
     }
     separator = XStrstr(text, ": ");
@@ -580,7 +580,7 @@ static bool jpegParseComment(const uint8_t* data, size_t len, JpegCtx* ctx)
         size_t keyLen = (size_t)(separator - text);
         char* keyUtf8 = (char*)XMalloc_System(keyLen + 1u);
         if (!keyUtf8) {
-            XClass_delete_base((XClass*)source);
+            XClassDelete((XClass*)source);
             return true;
         }
         XMemcpy(keyUtf8, text, keyLen);
@@ -589,15 +589,15 @@ static bool jpegParseComment(const uint8_t* data, size_t len, JpegCtx* ctx)
         XFree_System(keyUtf8);
         value = XString_create_utf8(separator + 2);
     }
-    XClass_delete_base((XClass*)source);
+    XClassDelete((XClass*)source);
     if (!key || !value) {
-        if (key) XClass_delete_base((XClass*)key);
-        if (value) XClass_delete_base((XClass*)value);
+        if (key) XClassDelete((XClass*)key);
+        if (value) XClassDelete((XClass*)value);
         return true;
     }
     simplified = XString_simplified(value);
     if (simplified) {
-        XClass_delete_base((XClass*)value);
+        XClassDelete((XClass*)value);
         value = simplified;
     }
     text = XString_toUtf8(value);
@@ -605,15 +605,15 @@ static bool jpegParseComment(const uint8_t* data, size_t len, JpegCtx* ctx)
             (int64_t)JPEG_MAX_TEXT_ITEMS ||
         !text || ctx->textBytes > JPEG_MAX_TEXT_BYTES -
             XString_toUtf8_length(value)) {
-        XClass_delete_base((XClass*)key);
-        XClass_delete_base((XClass*)value);
+        XClassDelete((XClass*)key);
+        XClassDelete((XClass*)value);
         return true;
     }
     XStringList_push_back_utf8(&ctx->textKeys, XString_toUtf8(key));
     XStringList_push_back_utf8(&ctx->textValues, text);
     ctx->textBytes += XString_toUtf8_length(value);
-    XClass_delete_base((XClass*)key);
-    XClass_delete_base((XClass*)value);
+    XClassDelete((XClass*)key);
+    XClassDelete((XClass*)value);
     return true;
 }
 
@@ -2212,7 +2212,7 @@ static bool jpegOutputImage(JpegCtx* ctx, XImage* out)
     }
     XImage_init_ex(&temp, w, h, XImageFormat_ARGB32);
     if (XImage_isNull(&temp)) {
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return false;
     }
 
@@ -2292,14 +2292,14 @@ static bool jpegOutputImage(JpegCtx* ctx, XImage* out)
             }
         }
 #else
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return false; /* CMYK 扩展被裁剪 */
 #endif
     } else {
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return false; /* 不支持的组件数量 */
     }
-    XMove(out, &temp);
+    XClassMove(out, &temp);
     if (ctx->densityUnit == 1) {
         /* 2.54 cm/in = 127/50 cm/in，按 Qt 的正数截断语义计算。 */
         XImage_setDotsPerMeterX(out, (ctx->densityX * 5000) / 127);
@@ -2719,22 +2719,22 @@ static bool jpegAppendIccProfile(XByteArray* out, const XImage* image)
     profile = XByteArray_create();
     if (!profile) return false;
     if (!XImageCodecInternal_copyIccProfile(image, profile)) {
-        XByteArray_delete_base((XClass*)profile);
+        XClassDelete((XClass*)profile);
         return false;
     }
     size = XByteArray_size_base((const XContainer*)profile);
     if (size == 0u) {
-        XByteArray_delete_base((XClass*)profile);
+        XClassDelete((XClass*)profile);
         return true;
     }
     markers = (size + maxPart - 1u) / maxPart;
     if (markers == 0u || markers > 255u) {
-        XByteArray_delete_base((XClass*)profile);
+        XClassDelete((XClass*)profile);
         return false;
     }
     payload = (uint8_t*)XMalloc_System(14u + maxPart);
     if (!payload) {
-        XByteArray_delete_base((XClass*)profile);
+        XClassDelete((XClass*)profile);
         return false;
     }
     XMemcpy(payload, "ICC_PROFILE\0", 12u);
@@ -2751,7 +2751,7 @@ static bool jpegAppendIccProfile(XByteArray* out, const XImage* image)
         offset += part;
     }
     XFree_System(payload);
-    XByteArray_delete_base((XClass*)profile);
+    XClassDelete((XClass*)profile);
     return ok;
 }
 

@@ -246,7 +246,7 @@ static void VXListWidget_deinit(XListWidget* self)
     }
     self->m_rowWidgetCapacity = 0;
     if (self->m_model) {
-        XAbstractItemModel_delete_base(self->m_model);
+        XClassDelete(self->m_model);
         self->m_model = NULL;
     }
     XClass_Deinit_Parent(XListView, (XListView*)self);
@@ -266,7 +266,7 @@ int XListWidget_addItem_2(XListWidget* self, const char* text)
     tmp = XString_create_utf8(text);
     if (!tmp) return -1;
     row = XListWidget_addItem(self, tmp);
-    XString_delete_base((XClass*)tmp);
+    XClassDelete((XClass*)tmp);
     return row;
 }
 
@@ -335,7 +335,7 @@ int XListWidget_insertItem_2(XListWidget* self, int row, const char* text)
     tmp = XString_create_utf8(text);
     if (!tmp) return -1;
     out = XListWidget_insertItem(self, row, tmp);
-    XString_delete_base((XClass*)tmp);
+    XClassDelete((XClass*)tmp);
     return out;
 }
 

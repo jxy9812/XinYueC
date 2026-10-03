@@ -250,7 +250,7 @@ void XWorksheet_delete(XWorksheet* self)
             XCell* cell = (XCell*)pairPointerValue(pair);
             if (cell) XCell_delete(cell);
         }
-        XMap_delete_base(self->m_cellTable);
+        XClassDelete(self->m_cellTable);
     }
     /* 释放列信息 */
     if (self->m_colInfoMap) {
@@ -261,7 +261,7 @@ void XWorksheet_delete(XWorksheet* self)
             XWorksheet_ColumnInfo* ci = (XWorksheet_ColumnInfo*)pairPointerValue(pair);
             if (ci) XFree_System(ci);
         }
-        XMap_delete_base(self->m_colInfoMap);
+        XClassDelete(self->m_colInfoMap);
     }
     /* 释放行信息 */
     if (self->m_rowInfoMap) {
@@ -272,27 +272,27 @@ void XWorksheet_delete(XWorksheet* self)
             XWorksheet_RowInfo* ri = (XWorksheet_RowInfo*)pairPointerValue(pair);
             if (ri) XFree_System(ri);
         }
-        XMap_delete_base(self->m_rowInfoMap);
+        XClassDelete(self->m_rowInfoMap);
     }
     /* 释放超链接 */
     if (self->m_hyperlinks) {
         for (size_t i = 0; i < XVector_size_base((XContainer*)self->m_hyperlinks); ++i) {
             XWorksheet_Hyperlink* hl = (XWorksheet_Hyperlink*)XVector_at_base(self->m_hyperlinks, i);
-            if (hl->m_url) XString_delete_base(hl->m_url);
-            if (hl->m_relationshipId) XString_delete_base(hl->m_relationshipId);
-            if (hl->m_display) XString_delete_base(hl->m_display);
-            if (hl->m_tip) XString_delete_base(hl->m_tip);
+            if (hl->m_url) XClassDelete(hl->m_url);
+            if (hl->m_relationshipId) XClassDelete(hl->m_relationshipId);
+            if (hl->m_display) XClassDelete(hl->m_display);
+            if (hl->m_tip) XClassDelete(hl->m_tip);
         }
-        XVector_delete_base(self->m_hyperlinks);
+        XClassDelete(self->m_hyperlinks);
     }
-    if (self->m_mergedCells) XVector_delete_base(self->m_mergedCells);
+    if (self->m_mergedCells) XClassDelete(self->m_mergedCells);
     /* 释放数据验证 */
     if (self->m_dataValidations) {
         for (size_t i = 0; i < XVector_size_base((XContainer*)self->m_dataValidations); ++i) {
             XDataValidation* dv = *(XDataValidation**)XVector_at_base(self->m_dataValidations, i);
             if (dv) XDataValidation_delete(dv);
         }
-        XVector_delete_base(self->m_dataValidations);
+        XClassDelete(self->m_dataValidations);
     }
     /* 释放条件格式 */
     if (self->m_conditionalFormatting) {
@@ -300,7 +300,7 @@ void XWorksheet_delete(XWorksheet* self)
             XConditionalFormatting* cf = *(XConditionalFormatting**)XVector_at_base(self->m_conditionalFormatting, i);
             if (cf) XConditionalFormatting_delete(cf);
         }
-        XVector_delete_base(self->m_conditionalFormatting);
+        XClassDelete(self->m_conditionalFormatting);
     }
     /* 释放媒体文件 */
     if (self->m_mediaFiles) {
@@ -308,10 +308,10 @@ void XWorksheet_delete(XWorksheet* self)
             XMediaFile* mf = *(XMediaFile**)XVector_at_base(self->m_mediaFiles, i);
             if (mf) XMediaFile_delete(mf);
         }
-        XVector_delete_base(self->m_mediaFiles);
+        XClassDelete(self->m_mediaFiles);
     }
     if (self->m_imagePositions) {
-        XVector_delete_base(self->m_imagePositions);
+        XClassDelete(self->m_imagePositions);
     }
     /* 释放图表文件 */
     if (self->m_chartFiles) {
@@ -319,9 +319,9 @@ void XWorksheet_delete(XWorksheet* self)
             XExcelChart* ch = *(XExcelChart**)XVector_at_base(self->m_chartFiles, i);
             if (ch) XExcelChart_delete(ch);
         }
-        XVector_delete_base(self->m_chartFiles);
+        XClassDelete(self->m_chartFiles);
     }
-    if (self->m_rowSpans) XMap_delete_base(self->m_rowSpans);
+    if (self->m_rowSpans) XClassDelete(self->m_rowSpans);
     XAbstractSheet_deinit(&self->m_base);
     XFree_System(self);
 }
@@ -362,22 +362,22 @@ bool XWorksheet_write(XWorksheet* self, int row, int column, const XVariant* val
         XString* tmpStr = XVariant_toString(value);
         XCell_setValue(cell, tmpStr);
         cell->m_cellType = XCell_SharedStringType;
-        XString_delete_base(tmpStr);
+        XClassDelete(tmpStr);
     } else if (type == XVariantType_Int || type == XVariantType_Double || type == XVariantType_Uint32 || type == XVariantType_Int64 || type == XVariantType_Uint64) {
         double dval = XVariant_toDouble(value);
         XString* numStr = XString_create_fmt_utf8("%.15g", dval);
         XCell_setValue(cell, numStr);
-        if (numStr) XString_delete_base(numStr);
+        if (numStr) XClassDelete(numStr);
         cell->m_cellType = XCell_NumberType;
     } else if (type == XVariantType_Bool) {
         XString* boolStr = XString_create_utf8(XVariant_toBool(value) ? "1" : "0");
         XCell_setValue(cell, boolStr);
-        if (boolStr) XString_delete_base(boolStr);
+        if (boolStr) XClassDelete(boolStr);
         cell->m_cellType = XCell_BooleanType;
     } else if (type == XVariantType_Double || type == XVariantType_Double || type == XVariantType_Double) {
         XString* dateStr = XString_create_fmt_utf8("%.15g", XVariant_toDouble(value));
         XCell_setValue(cell, dateStr);
-        if (dateStr) XString_delete_base(dateStr);
+        if (dateStr) XClassDelete(dateStr);
         cell->m_cellType = XCell_DateType;
     }
     return true;
@@ -456,7 +456,7 @@ bool XWorksheet_writeNumeric(XWorksheet* self, int row, int column, double value
     apply_cell_format(self, cell, format);
     XString* numStr = XString_create_fmt_utf8("%.15g", value);
     XCell_setValue(cell, numStr);
-    if (numStr) XString_delete_base(numStr);
+    if (numStr) XClassDelete(numStr);
     cell->m_cellType = XCell_NumberType;
     return true;
 }
@@ -477,11 +477,11 @@ bool XWorksheet_writeFormula(XWorksheet* self, int row, int column, const XCellF
     XString* resStr = XString_create_fmt_utf8("%.15g", result);
     if (!formulaCopy || !resStr) {
         if (formulaCopy) XCellFormula_delete(formulaCopy);
-        if (resStr) XString_delete_base(resStr);
+        if (resStr) XClassDelete(resStr);
         return false;
     }
     XCell_setValue(cell, resStr);
-    XString_delete_base(resStr);
+    XClassDelete(resStr);
     XCell_setFormula(cell, formulaCopy);
     cell->m_cellType = XCell_NumberType;
     return true;
@@ -518,7 +518,7 @@ bool XWorksheet_writeBool(XWorksheet* self, int row, int column, bool value, con
     apply_cell_format(self, cell, format);
     XString* boolStr = XString_create_utf8(value ? "1" : "0");
     XCell_setValue(cell, boolStr);
-    if (boolStr) XString_delete_base(boolStr);
+    if (boolStr) XClassDelete(boolStr);
     cell->m_cellType = XCell_BooleanType;
     return true;
 }
@@ -540,7 +540,7 @@ bool XWorksheet_writeDateTime(XWorksheet* self, int row, int column, int64_t tim
     double excelSerial = XUtility_dateTimeToExcelSerial(timestampMs, date1904);
     XString* dtStr = XString_create_fmt_utf8("%.15g", excelSerial);
     XCell_setValue(cell, dtStr);
-    if (dtStr) XString_delete_base(dtStr);
+    if (dtStr) XClassDelete(dtStr);
     cell->m_cellType = XCell_DateType;
     return true;
 }
@@ -562,7 +562,7 @@ bool XWorksheet_writeDate(XWorksheet* self, int row, int column, int year, int m
         excelSerial -= 1462.0;
     XString* dStr = XString_create_fmt_utf8("%.15g", excelSerial);
     XCell_setValue(cell, dStr);
-    if (dStr) XString_delete_base(dStr);
+    if (dStr) XClassDelete(dStr);
     cell->m_cellType = XCell_DateType;
     return true;
 }
@@ -583,7 +583,7 @@ bool XWorksheet_writeTime(XWorksheet* self, int row, int column, int hour, int m
     double excelSerial = (hour * 3600.0 + minute * 60.0 + second) / 86400.0;
     XString* tStr = XString_create_fmt_utf8("%.15g", excelSerial);
     XCell_setValue(cell, tStr);
-    if (tStr) XString_delete_base(tStr);
+    if (tStr) XClassDelete(tStr);
     cell->m_cellType = XCell_DateType;
     return true;
 }
@@ -610,9 +610,9 @@ bool XWorksheet_writeHyperlink(XWorksheet* self, int row, int column, const XStr
     if (display) { hl.m_display = XString_create_copy(display); }
     if (tip) { hl.m_tip = XString_create_copy(tip); }
     if (!hl.m_url || !XVector_push_back_2(self->m_hyperlinks, &hl, 1)) {
-        if (hl.m_url) XString_delete_base(hl.m_url);
-        if (hl.m_display) XString_delete_base(hl.m_display);
-        if (hl.m_tip) XString_delete_base(hl.m_tip);
+        if (hl.m_url) XClassDelete(hl.m_url);
+        if (hl.m_display) XClassDelete(hl.m_display);
+        if (hl.m_tip) XClassDelete(hl.m_tip);
         return false;
     }
     return true;
@@ -734,14 +734,14 @@ static bool image_type_from_path(const XString* imagePath, XString** suffix, XSt
     else if (XString_equals_utf8(ext, "gif", XChar_CaseInsensitive)) mime = "image/gif";
     else if (XString_equals_utf8(ext, "bmp", XChar_CaseInsensitive)) mime = "image/bmp";
     else {
-        XString_delete_base(ext);
+        XClassDelete(ext);
         return false;
     }
 
     *suffix = ext;
     *mimeType = XString_create_utf8(mime);
     if (!*mimeType) {
-        XString_delete_base(ext);
+        XClassDelete(ext);
         *suffix = NULL;
         return false;
     }
@@ -756,27 +756,27 @@ static XMediaFile* media_file_from_path(const XString* imagePath)
 
     XFile* file = XFile_create_2(imagePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
-        XString_delete_base(suffix);
-        XString_delete_base(mimeType);
+        if (file) XClassDelete((XClass*)file);
+        XClassDelete(suffix);
+        XClassDelete(mimeType);
         return NULL;
     }
     XByteArray* contents = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!contents || XByteArray_size_base(contents) == 0) {
-        if (contents) XByteArray_delete_base(contents);
-        XString_delete_base(suffix);
-        XString_delete_base(mimeType);
+        if (contents) XClassDelete(contents);
+        XClassDelete(suffix);
+        XClassDelete(mimeType);
         return NULL;
     }
 
     XMediaFile* media = XMediaFile_create_data(XByteArray_data(contents),
         XByteArray_size_base(contents), suffix, mimeType);
     if (media) XMediaFile_setFileName(media, imagePath);
-    XByteArray_delete_base(contents);
-    XString_delete_base(suffix);
-    XString_delete_base(mimeType);
+    XClassDelete(contents);
+    XClassDelete(suffix);
+    XClassDelete(mimeType);
     return media;
 }
 
@@ -1242,7 +1242,7 @@ static bool appendRangeList(XByteArray* output, const XVector* ranges)
         XString text = XCellRange_toString(range, false, false);
         if (wrote) XByteArray_append_utf8(output, " ");
         xmlEscape(XString_toUtf8(&text), output);
-        XString_deinit_base(&text);
+        XClassDeinit(&text);
         wrote = true;
     }
     return wrote;
@@ -1678,7 +1678,7 @@ bool XWorksheet_saveToXmlData(const XWorksheet* self, uint8_t** outData, size_t*
     
     XVector* rowNumbers = XVector_Create(int);
     if (!rowNumbers) {
-        XByteArray_delete_base(buf);
+        XClassDelete(buf);
         return false;
     }
     if (self->m_cellTable) {
@@ -1737,7 +1737,7 @@ bool XWorksheet_saveToXmlData(const XWorksheet* self, uint8_t** outData, size_t*
         }
         XByteArray_append_utf8(buf, "    </row>\n");
     }
-    XVector_delete_base(rowNumbers);
+    XClassDelete(rowNumbers);
     
     XByteArray_append_utf8(buf, "  </sheetData>\n");
     if (self->m_windowProtection)
@@ -1859,7 +1859,7 @@ skip_data_validations:;
             XString reference = XCellRange_toString(&hyperlink->m_range, false, false);
             XByteArray_append_utf8(buf, "    <hyperlink ref=\"");
             xmlEscape(XString_toUtf8(&reference), buf);
-            XString_deinit_base(&reference);
+            XClassDeinit(&reference);
             const char* url = XString_toUtf8(hyperlink->m_url);
             if (url && url[0] == '#') {
                 XByteArray_append_utf8(buf, "\" location=\"");
@@ -1896,7 +1896,7 @@ skip_data_validations:;
         *outLen = XByteArray_size_base((const XContainer*)buf);
         (*outData)[*outLen] = '\0';
     }
-    XByteArray_delete_base((XClass*)buf);
+    XClassDelete((XClass*)buf);
     return *outData != NULL;
 }
 
@@ -1908,13 +1908,13 @@ bool XWorksheet_saveToXmlFile(XWorksheet* self, const XString* filePath)
     
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         XFree_System(data);
         return false;
     }
     XIODevice_write_1((XIODevice*)file, data, (int64_t)len);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     XFree_System(data);
     return true;
 }
@@ -1928,7 +1928,7 @@ static const XString* worksheetAttribute(const XXmlStreamAttributes* attributes,
     const XString* value = strchr(name, ':')
         ? XXmlStreamAttributes_value(attributes, key)
         : XXmlStreamAttributes_value_ex(attributes, NULL, key);
-    XString_deinit_base(key);
+    XClassDeinit(key);
     return value;
 }
 
@@ -2108,10 +2108,10 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
             XWorksheet_Hyperlink* hyperlink =
                 (XWorksheet_Hyperlink*)XVector_at_base(self->m_hyperlinks, i);
             if (!hyperlink) continue;
-            if (hyperlink->m_url) XString_delete_base(hyperlink->m_url);
-            if (hyperlink->m_relationshipId) XString_delete_base(hyperlink->m_relationshipId);
-            if (hyperlink->m_display) XString_delete_base(hyperlink->m_display);
-            if (hyperlink->m_tip) XString_delete_base(hyperlink->m_tip);
+            if (hyperlink->m_url) XClassDelete(hyperlink->m_url);
+            if (hyperlink->m_relationshipId) XClassDelete(hyperlink->m_relationshipId);
+            if (hyperlink->m_display) XClassDelete(hyperlink->m_display);
+            if (hyperlink->m_tip) XClassDelete(hyperlink->m_tip);
         }
         XVector_clear_base(self->m_hyperlinks);
     }
@@ -2134,11 +2134,11 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
     XString* formulaText = XString_create();
     XString* cellType = NULL;
     if (!xml || !reader || !value || !formulaText) {
-        if (xml) XByteArray_delete_base(xml);
-        if (reader) XXmlStreamReader_delete_base(reader);
-        if (value) XString_delete_base(value);
-        if (formulaText) XString_delete_base(formulaText);
-        if (cellType) XString_delete_base(cellType);
+        if (xml) XClassDelete(xml);
+        if (reader) XClassDelete(reader);
+        if (value) XClassDelete(value);
+        if (formulaText) XClassDelete(formulaText);
+        if (cellType) XClassDelete(cellType);
         return false;
     }
     XXmlStreamReader_addData(reader, xml);
@@ -2162,7 +2162,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
 #define WS_ATTR(varName, literal) \
             XString_Init_Utf8(varName##Name, literal); \
             const XString* varName = attributes ? XXmlStreamAttributes_value_ex(attributes, NULL, varName##Name) : NULL; \
-            XString_deinit_base(varName##Name)
+            XClassDeinit(varName##Name)
 
             if (XString_equals_utf8(element, "sheetView", XChar_CaseSensitive)) {
                 WS_ATTR(showGridLines, "showGridLines");
@@ -2384,7 +2384,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 WS_ATTR(style, "s");
                 cellRow = cellColumn = 0;
                 cellStyle = style ? XString_toInt(style, NULL, 10) : -1;
-                if (cellType) { XString_delete_base(cellType); cellType = NULL; }
+                if (cellType) { XClassDelete(cellType); cellType = NULL; }
                 if (type) cellType = XString_create_copy(type);
                 if (reference) XReadSax_parseCellRef(reference, &cellRow, &cellColumn);
                 XString_clear_base(value);
@@ -2418,11 +2418,11 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                        XString_equals_utf8(element, "cfRule", XChar_CaseSensitive)) {
                 if (pendingFormatting &&
                     !XVector_push_back_2(pendingFormatting->m_rules, &pendingRule, 1)) {
-                    if (pendingRule.m_formula1) XString_delete_base(pendingRule.m_formula1);
-                    if (pendingRule.m_formula2) XString_delete_base(pendingRule.m_formula2);
-                    if (pendingRule.m_formula3) XString_delete_base(pendingRule.m_formula3);
-                    if (pendingRule.m_text) XString_delete_base(pendingRule.m_text);
-                    if (pendingRule.m_timePeriod) XString_delete_base(pendingRule.m_timePeriod);
+                    if (pendingRule.m_formula1) XClassDelete(pendingRule.m_formula1);
+                    if (pendingRule.m_formula2) XClassDelete(pendingRule.m_formula2);
+                    if (pendingRule.m_formula3) XClassDelete(pendingRule.m_formula3);
+                    if (pendingRule.m_text) XClassDelete(pendingRule.m_text);
+                    if (pendingRule.m_timePeriod) XClassDelete(pendingRule.m_timePeriod);
                     if (pendingRule.m_format) XFormat_delete(pendingRule.m_format);
                 }
                 memset(&pendingRule, 0, sizeof(pendingRule));
@@ -2460,19 +2460,19 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
     bool result = !XXmlStreamReader_hasError(reader);
     if (pendingValidation) XDataValidation_delete(pendingValidation);
     if (inConditionalRule) {
-        if (pendingRule.m_formula1) XString_delete_base(pendingRule.m_formula1);
-        if (pendingRule.m_formula2) XString_delete_base(pendingRule.m_formula2);
-        if (pendingRule.m_formula3) XString_delete_base(pendingRule.m_formula3);
-        if (pendingRule.m_text) XString_delete_base(pendingRule.m_text);
-        if (pendingRule.m_timePeriod) XString_delete_base(pendingRule.m_timePeriod);
+        if (pendingRule.m_formula1) XClassDelete(pendingRule.m_formula1);
+        if (pendingRule.m_formula2) XClassDelete(pendingRule.m_formula2);
+        if (pendingRule.m_formula3) XClassDelete(pendingRule.m_formula3);
+        if (pendingRule.m_text) XClassDelete(pendingRule.m_text);
+        if (pendingRule.m_timePeriod) XClassDelete(pendingRule.m_timePeriod);
         if (pendingRule.m_format) XFormat_delete(pendingRule.m_format);
     }
     if (pendingFormatting) XConditionalFormatting_delete(pendingFormatting);
-    if (cellType) XString_delete_base(cellType);
-    XString_delete_base(value);
-    XString_delete_base(formulaText);
-    XXmlStreamReader_delete_base(reader);
-    XByteArray_delete_base(xml);
+    if (cellType) XClassDelete(cellType);
+    XClassDelete(value);
+    XClassDelete(formulaText);
+    XClassDelete(reader);
+    XClassDelete(xml);
     return result;
 }
 
@@ -2481,14 +2481,14 @@ bool XWorksheet_loadFromXmlFile(XWorksheet* self, const XString* filePath)
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2(filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* xml = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     bool result = xml && XWorksheet_loadFromXmlData(self, XByteArray_data(xml), XByteArray_size_base(xml));
-    if (xml) XByteArray_delete_base(xml);
+    if (xml) XClassDelete(xml);
     return result;
 }
 
@@ -2498,6 +2498,6 @@ bool XWorksheet_writeString_utf8(XWorksheet* self, int row, int column, const ch
 {
     XString* s = value ? XString_create_utf8(value) : NULL;
     bool result = XWorksheet_writeString(self, row, column, s, format);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }

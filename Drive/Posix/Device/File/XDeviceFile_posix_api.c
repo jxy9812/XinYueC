@@ -243,7 +243,7 @@ void XDeviceFile_legacyClose(XFd fdx) {
             /* 移除事件环异步读完成时可能已投递到本对象的未处理事件，
                避免释放后事件队列仍引用本对象。 */
             XCoreApplication_removePostedEvents((XObject*)&mapping->m_object, 0);
-            XClass_deinit_base((XClass*)&mapping->m_object);
+            XClassDeinit((XClass*)&mapping->m_object);
             XFree_System(mapping);
         }
         XFd_free(fdx);
@@ -593,7 +593,7 @@ bool XDeviceFile_rmdir(const XString* path, bool recursive) {
             XString* subPath = XString_create_utf8(fullPath);
             if (subPath) {
                 if (!XDeviceFile_rmdir(subPath, true)) ok = false;
-                XString_delete_base(subPath);
+                XClassDelete(subPath);
             } else ok = false;
         } else {
             if (unlink(fullPath) != 0) ok = false;
@@ -1182,7 +1182,7 @@ fail:
     if (mapping) {
         if (mapping->signalFd >= 0) close(mapping->signalFd);
         if (mapping->created && mapping->signalPath[0]) unlink(mapping->signalPath);
-        XClass_deinit_base((XClass*)&mapping->m_object);
+        XClassDeinit((XClass*)&mapping->m_object);
         XFree_System(mapping);
     } else {
         if (signalFd >= 0) { close(signalFd); if (create && sigPath[0]) unlink(sigPath); }
@@ -1291,7 +1291,7 @@ bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userDa
     XString* path = XString_create_utf8("/");
     if (!path) return false;
     bool cont = callback(path, userData);
-    XString_delete_base(path);
+    XClassDelete(path);
     return cont;
 }
 

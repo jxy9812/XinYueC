@@ -58,8 +58,6 @@ void XMouseEventTransition_init_ex(XMouseEventTransition* transition, XObject* o
                                    XEventType type, XMouseButton button,
                                    XState* sourceState);
 
-#define XMouseEventTransition_delete_base XEventTransition_delete_base
-#define XMouseEventTransition_deinit_base XEventTransition_deinit_base
 
 /**
  * @brief 获取需要匹配的鼠标按键。

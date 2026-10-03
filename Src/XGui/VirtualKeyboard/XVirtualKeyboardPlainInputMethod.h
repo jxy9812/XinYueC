@@ -61,12 +61,6 @@ void XVirtualKeyboardPlainInputMethod_init(
 XVirtualKeyboardPlainInputMethod*
 XVirtualKeyboardPlainInputMethod_create_ex(XMemoryType memory);
 
-/** @brief 通过 XClass 虚表释放资源。 */
-#define XVirtualKeyboardPlainInputMethod_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-/** @brief 删除堆上对象。 */
-#define XVirtualKeyboardPlainInputMethod_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      locale 工厂（注册表签名；返回基类指针形态新实例）。

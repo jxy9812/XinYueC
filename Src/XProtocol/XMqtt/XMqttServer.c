@@ -271,7 +271,7 @@ static XByteArray* server_make_packet(uint8_t header, const XByteArray* payload)
     if (!packet || !server_append_u8(packet, header) ||
         !server_append_varint(packet, (uint32_t)size) ||
         !server_append(packet, payload ? XByteArray_constData((XByteArray*)payload) : NULL, size)) {
-        if (packet) XByteArray_delete_base(packet);
+        if (packet) XClassDelete(packet);
         return NULL;
     }
     return packet;
@@ -290,13 +290,13 @@ static bool server_send_packet(XMqttServer* server, XMqttServerClient* client,
     if (!packet) return false;
     size = XByteArray_size_base(packet);
     if (client && client->maxPacketSize && size > client->maxPacketSize) {
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
         return true; /* 按协议丢弃超限报文，不算写入失败 */
     }
     {
         bool ok = XMqttServer_sendData_base(server, client ? client->transport : NULL,
                                             (const uint8_t*)XByteArray_constData(packet), size);
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
         return ok;
     }
 }
@@ -315,13 +315,13 @@ static bool server_string_equal(const XString* a, const char* utf8)
 
 static void server_replace_string(XString** target, XString* value)
 {
-    if (*target) XString_delete_base(*target);
+    if (*target) XClassDelete(*target);
     *target = value;
 }
 
 static void server_replace_binary(XByteArray** target, XByteArray* value)
 {
-    if (*target) XByteArray_delete_base(*target);
+    if (*target) XClassDelete(*target);
     *target = value;
 }
 
@@ -366,17 +366,17 @@ static void server_private_delete(XMqttServer* server);
 static void server_client_delete(XMqttServerClient* client)
 {
     if (!client) return;
-    if (client->input) XByteArray_delete_base(client->input);
-    if (client->clientId) XString_delete_base(client->clientId);
-    if (client->assignedClientId) XString_delete_base(client->assignedClientId);
-    if (client->username) XString_delete_base(client->username);
-    if (client->password) XString_delete_base(client->password);
-    if (client->willTopic) XString_delete_base(client->willTopic);
-    if (client->willMessage) XByteArray_delete_base(client->willMessage);
-    if (client->willProperties) XMqttPublishProperties_delete_base(client->willProperties);
-    if (client->incomingQos2) XVector_delete_base(client->incomingQos2);
-    if (client->inboundAliases) XVector_delete_base(client->inboundAliases);
-    if (client->outboundAliases) XVector_delete_base(client->outboundAliases);
+    if (client->input) XClassDelete(client->input);
+    if (client->clientId) XClassDelete(client->clientId);
+    if (client->assignedClientId) XClassDelete(client->assignedClientId);
+    if (client->username) XClassDelete(client->username);
+    if (client->password) XClassDelete(client->password);
+    if (client->willTopic) XClassDelete(client->willTopic);
+    if (client->willMessage) XClassDelete(client->willMessage);
+    if (client->willProperties) XClassDelete(client->willProperties);
+    if (client->incomingQos2) XClassDelete(client->incomingQos2);
+    if (client->inboundAliases) XClassDelete(client->inboundAliases);
+    if (client->outboundAliases) XClassDelete(client->outboundAliases);
     XFree_System(client);
 }
 
@@ -410,9 +410,9 @@ static void server_subscription_deinit(void* value)
 {
     XMqttServerSubscription* sub = (XMqttServerSubscription*)value;
     if (!sub) return;
-    if (sub->filter) XString_delete_base(sub->filter);
-    if (sub->actualFilter) XString_delete_base(sub->actualFilter);
-    if (sub->shareName) XString_delete_base(sub->shareName);
+    if (sub->filter) XClassDelete(sub->filter);
+    if (sub->actualFilter) XClassDelete(sub->actualFilter);
+    if (sub->shareName) XClassDelete(sub->shareName);
     sub->filter = NULL;
     sub->actualFilter = NULL;
     sub->shareName = NULL;
@@ -422,9 +422,9 @@ static void server_queued_message_deinit(void* value)
 {
     XMqttServerQueuedMessage* msg = (XMqttServerQueuedMessage*)value;
     if (!msg) return;
-    if (msg->topic) XString_delete_base(msg->topic);
-    if (msg->payload) XByteArray_delete_base(msg->payload);
-    if (msg->properties) XMqttPublishProperties_delete_base(msg->properties);
+    if (msg->topic) XClassDelete(msg->topic);
+    if (msg->payload) XClassDelete(msg->payload);
+    if (msg->properties) XClassDelete(msg->properties);
     msg->topic = NULL;
     msg->payload = NULL;
     msg->properties = NULL;
@@ -433,9 +433,9 @@ static void server_queued_message_deinit(void* value)
 static void server_session_delete(XMqttServerSession* session)
 {
     if (!session) return;
-    if (session->clientId) XString_delete_base(session->clientId);
-    if (session->subscriptions) XVector_delete_base(session->subscriptions);
-    if (session->queuedMessages) XVector_delete_base(session->queuedMessages);
+    if (session->clientId) XClassDelete(session->clientId);
+    if (session->subscriptions) XClassDelete(session->subscriptions);
+    if (session->queuedMessages) XClassDelete(session->queuedMessages);
     XFree_System(session);
 }
 
@@ -468,9 +468,9 @@ static void server_retained_deinit(void* value)
 {
     XMqttServerRetainedMessage* msg = (XMqttServerRetainedMessage*)value;
     if (!msg) return;
-    if (msg->topic) XString_delete_base(msg->topic);
-    if (msg->payload) XByteArray_delete_base(msg->payload);
-    if (msg->properties) XMqttPublishProperties_delete_base(msg->properties);
+    if (msg->topic) XClassDelete(msg->topic);
+    if (msg->payload) XClassDelete(msg->payload);
+    if (msg->properties) XClassDelete(msg->properties);
     msg->topic = NULL;
     msg->payload = NULL;
     msg->properties = NULL;
@@ -481,10 +481,10 @@ static void server_pending_will_deinit(void* value)
 {
     XMqttServerPendingWill* will = (XMqttServerPendingWill*)value;
     if (!will) return;
-    if (will->clientId) XString_delete_base(will->clientId);
-    if (will->topic) XString_delete_base(will->topic);
-    if (will->payload) XByteArray_delete_base(will->payload);
-    if (will->properties) XMqttPublishProperties_delete_base(will->properties);
+    if (will->clientId) XClassDelete(will->clientId);
+    if (will->topic) XClassDelete(will->topic);
+    if (will->payload) XClassDelete(will->payload);
+    if (will->properties) XClassDelete(will->properties);
     will->clientId = NULL;
     will->topic = NULL;
     will->payload = NULL;
@@ -726,8 +726,8 @@ static bool server_parse_shared_filter(const XString* filter,
     *actualFilter = XString_create_with_length_utf8(data + shareEnd + 1,
                                                     size - shareEnd - 1);
     if (!*shareName || !*actualFilter) {
-        if (*shareName) XString_delete_base(*shareName);
-        if (*actualFilter) XString_delete_base(*actualFilter);
+        if (*shareName) XClassDelete(*shareName);
+        if (*actualFilter) XClassDelete(*actualFilter);
         *shareName = NULL;
         *actualFilter = NULL;
         return false;
@@ -762,7 +762,7 @@ static void server_shared_deinit(void* slot)
 {
     XString** key = (XString**)slot;
     if (key && *key) {
-        XString_delete_base(*key);
+        XClassDelete(*key);
         *key = NULL;
     }
 }
@@ -819,7 +819,7 @@ static bool server_shared_sub_matches(const XMqttServerSubscription* sub,
     XMqttTopicFilter_init(&filter, XString_toUtf8(sub->actualFilter));
     ok = XMqttTopicFilter_match(&filter, topicName,
         XMqttTopicFilter_WildcardsDontMatchDollarTopicMatchOption);
-    XMqttTopicFilter_deinit_base(&filter);
+    XClassDeinit(&filter);
     return ok;
 }
 
@@ -861,7 +861,7 @@ static size_t server_shared_member_count(XMqttServer* server, const XString* sha
             }
         }
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return count;
 }
 
@@ -907,7 +907,7 @@ static XMqttServerSession* server_shared_member_at(XMqttServer* server, const XS
             }
         }
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return result;
 }
 
@@ -944,13 +944,13 @@ static void server_shared_selections_deinit(XVector* selections)
         XMqttServerSharedSelection* sel = (XMqttServerSharedSelection*)XVector_at_base(
             selections, (int64_t)i);
         if (!sel) continue;
-        if (sel->shareName) XString_delete_base(sel->shareName);
-        if (sel->actualFilter) XString_delete_base(sel->actualFilter);
+        if (sel->shareName) XClassDelete(sel->shareName);
+        if (sel->actualFilter) XClassDelete(sel->actualFilter);
         sel->shareName = NULL;
         sel->actualFilter = NULL;
         sel->winner = NULL;
     }
-    XVector_delete_base(selections);
+    XClassDelete(selections);
 }
 
 /**
@@ -994,8 +994,8 @@ static XVector* server_shared_build_selections(XMqttServer* server,
                 sel.shareName = XString_create_copy(sub->shareName);
                 sel.actualFilter = XString_create_copy(sub->actualFilter);
                 if (!sel.shareName || !sel.actualFilter) {
-                    if (sel.shareName) XString_delete_base(sel.shareName);
-                    if (sel.actualFilter) XString_delete_base(sel.actualFilter);
+                    if (sel.shareName) XClassDelete(sel.shareName);
+                    if (sel.actualFilter) XClassDelete(sel.actualFilter);
                     continue;
                 }
                 XVector_push_back_1_base(selections, &sel);
@@ -1017,9 +1017,9 @@ static XVector* server_shared_build_selections(XMqttServer* server,
         sel->winner = server_shared_member_at(server, sel->shareName, sel->actualFilter,
                                               topicName, (size_t)(index % total));
         server_shared_set_index(server, key, index + 1);
-        XString_delete_base(key);
+        XClassDelete(key);
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return selections;
 }
 
@@ -1097,7 +1097,7 @@ static void server_inbound_alias_deinit(void* value)
 {
     XMqttServerTopicAlias* alias = (XMqttServerTopicAlias*)value;
     if (alias && alias->topic) {
-        XString_delete_base(alias->topic);
+        XClassDelete(alias->topic);
         alias->topic = NULL;
     }
 }
@@ -1106,7 +1106,7 @@ static void server_outbound_alias_deinit(void* value)
 {
     XMqttServerTopicAlias* alias = (XMqttServerTopicAlias*)value;
     if (alias && alias->topic) {
-        XString_delete_base(alias->topic);
+        XClassDelete(alias->topic);
         alias->topic = NULL;
     }
 }
@@ -1125,14 +1125,14 @@ static bool server_alias_set(XVector* aliases, uint16_t alias, const XString* to
 {
     XMqttServerTopicAlias* entry = server_alias_by_id(aliases, alias);
     if (entry) {
-        if (entry->topic) XString_delete_base(entry->topic);
+        if (entry->topic) XClassDelete(entry->topic);
         entry->topic = XString_create_copy(topic);
         return entry->topic != NULL;
     }
     {
         XMqttServerTopicAlias value = {alias, XString_create_copy(topic)};
         if (!value.topic || !XVector_push_back_1_base(aliases, &value)) {
-            if (value.topic) XString_delete_base(value.topic);
+            if (value.topic) XClassDelete(value.topic);
             return false;
         }
     }
@@ -1180,8 +1180,8 @@ static bool server_send_connack(XMqttServer* server, XMqttServerClient* client,
         if (ok) ok = server_append_property_block(payload, props);
     }
     if (ok) ok = server_send_packet(server, client, MQTT_CONNACK, payload);
-    if (props) XByteArray_delete_base(props);
-    if (payload) XByteArray_delete_base(payload);
+    if (props) XClassDelete(props);
+    if (payload) XClassDelete(payload);
     return ok;
 }
 
@@ -1201,8 +1201,8 @@ static bool server_send_suback(XMqttServer* server, XMqttServerClient* client,
     for (size_t i = 0; ok && i < count; ++i)
         ok = server_append_u8(payload, reasonCodes[i]);
     if (ok) ok = server_send_packet(server, client, MQTT_SUBACK, payload);
-    if (props) XByteArray_delete_base(props);
-    if (payload) XByteArray_delete_base(payload);
+    if (props) XClassDelete(props);
+    if (payload) XClassDelete(payload);
     return ok;
 }
 
@@ -1222,8 +1222,8 @@ static bool server_send_unsuback(XMqttServer* server, XMqttServerClient* client,
         if (ok) ok = server_append_property_block(payload, props);
     }
     if (ok) ok = server_send_packet(server, client, MQTT_UNSUBACK, payload);
-    if (props) XByteArray_delete_base(props);
-    if (payload) XByteArray_delete_base(payload);
+    if (props) XClassDelete(props);
+    if (payload) XClassDelete(payload);
     return ok;
 }
 
@@ -1239,7 +1239,7 @@ static bool server_send_ack(XMqttServer* server, XMqttServerClient* client,
         ok = server_append_u8(payload, reason) && server_append_u8(payload, 0);
     }
     if (ok) ok = server_send_packet(server, client, type, payload);
-    if (payload) XByteArray_delete_base(payload);
+    if (payload) XClassDelete(payload);
     return ok;
 }
 
@@ -1308,8 +1308,8 @@ static bool server_send_publish(XMqttServer* server, XMqttServerClient* client,
     if (ok) ok = server_append(body, payload ? XByteArray_constData((XByteArray*)payload) : NULL,
                                payload ? XByteArray_size_base(payload) : 0);
     if (ok) ok = server_send_packet(server, client, header, body);
-    if (props) XByteArray_delete_base(props);
-    if (body) XByteArray_delete_base(body);
+    if (props) XClassDelete(props);
+    if (body) XClassDelete(body);
     return ok;
 }
 
@@ -1327,7 +1327,7 @@ static bool server_send_disconnect(XMqttServer* server, XMqttServerClient* clien
              server_append_u8(payload, 0);
     }
     if (ok) ok = server_send_packet(server, client, MQTT_DISCONNECT, payload);
-    if (payload) XByteArray_delete_base(payload);
+    if (payload) XClassDelete(payload);
     return ok;
 }
 
@@ -1544,21 +1544,21 @@ static void server_handle_connect(XMqttServer* server, XMqttServerClient* client
                 XString* method = server_read_string(&propReader);
                 /* 当前实现不提供增强认证，要求空方法 */
                 if (method && server_string_present(method)) {
-                    XString_delete_base(method);
+                    XClassDelete(method);
                     failReason = XMqtt_ReasonCode_InvalidAuthenticationMethod;
                     goto reject;
                 }
-                if (method) XString_delete_base(method);
+                if (method) XClassDelete(method);
                 break;
             }
             case MQTT_PROP_AUTH_DATA: {
                 XByteArray* data = server_read_binary(&propReader);
                 if (data && XByteArray_size_base(data)) {
-                    XByteArray_delete_base(data);
+                    XClassDelete(data);
                     failReason = XMqtt_ReasonCode_InvalidAuthenticationMethod;
                     goto reject;
                 }
-                if (data) XByteArray_delete_base(data);
+                if (data) XClassDelete(data);
                 break;
             }
             case MQTT_PROP_REQUEST_PROBLEM_INFO:
@@ -1570,8 +1570,8 @@ static void server_handle_connect(XMqttServer* server, XMqttServerClient* client
             case MQTT_PROP_USER_PROPERTY: {
                 XString* name = server_read_string(&propReader);
                 XString* value = server_read_string(&propReader);
-                if (name) XString_delete_base(name);
-                if (value) XString_delete_base(value);
+                if (name) XClassDelete(name);
+                if (value) XClassDelete(value);
                 break;
             }
             default:
@@ -1637,10 +1637,10 @@ static void server_handle_connect(XMqttServer* server, XMqttServerClient* client
                     XMqttStringPair pair;
                     XMqttStringPair_init(&pair, XString_toUtf8(name), XString_toUtf8(value));
                     XVector_push_back_1_base((XVector*)willProps->m_userProperties, &pair);
-                    XMqttStringPair_deinit_base(&pair);
+                    XClassDeinit(&pair);
                 }
-                if (name) XString_delete_base(name);
-                if (value) XString_delete_base(value);
+                if (name) XClassDelete(name);
+                if (value) XClassDelete(value);
                 break;
             }
             default:
@@ -1730,7 +1730,7 @@ static void server_handle_connect(XMqttServer* server, XMqttServerClient* client
                     break;
                 }
             }
-            XVector_delete_base(clients);
+            XClassDelete(clients);
         }
     }
     if (oldClient) {
@@ -1788,13 +1788,13 @@ static void server_handle_connect(XMqttServer* server, XMqttServerClient* client
         client->willRetain = willRetain;
         client->willDelay = willDelay;
         if (willProps) {
-            if (client->willProperties) XMqttPublishProperties_delete_base(client->willProperties);
+            if (client->willProperties) XClassDelete(client->willProperties);
             client->willProperties = willProps; willProps = NULL;
         }
     } else {
-        if (client->willTopic) XString_delete_base(client->willTopic);
-        if (client->willMessage) XByteArray_delete_base(client->willMessage);
-        if (client->willProperties) XMqttPublishProperties_delete_base(client->willProperties);
+        if (client->willTopic) XClassDelete(client->willTopic);
+        if (client->willMessage) XClassDelete(client->willMessage);
+        if (client->willProperties) XClassDelete(client->willProperties);
         client->willTopic = NULL;
         client->willMessage = NULL;
         client->willProperties = NULL;
@@ -1839,13 +1839,13 @@ protocol_error:
     server_close_transport(server, client);
 
 cleanup:
-    if (protocolName) XString_delete_base(protocolName);
-    if (clientId) XString_delete_base(clientId);
-    if (username) XString_delete_base(username);
-    if (password) XByteArray_delete_base(password);
-    if (willTopic) XString_delete_base(willTopic);
-    if (willMessage) XByteArray_delete_base(willMessage);
-    if (willProps) XMqttPublishProperties_delete_base(willProps);
+    if (protocolName) XClassDelete(protocolName);
+    if (clientId) XClassDelete(clientId);
+    if (username) XClassDelete(username);
+    if (password) XClassDelete(password);
+    if (willTopic) XClassDelete(willTopic);
+    if (willMessage) XClassDelete(willMessage);
+    if (willProps) XClassDelete(willProps);
 }
 
 /* ==================== 路由引擎 ==================== */
@@ -1887,10 +1887,10 @@ static bool server_collect_matching(XMqttServer* server, XMqttServerSession* ses
             XMqttTopicFilter_init(&filter, XString_toUtf8(sub->actualFilter));
             if (!XMqttTopicFilter_match(&filter, &topicName,
                     XMqttTopicFilter_WildcardsDontMatchDollarTopicMatchOption)) {
-                XMqttTopicFilter_deinit_base(&filter);
+                XClassDeinit(&filter);
                 continue;
             }
-            XMqttTopicFilter_deinit_base(&filter);
+            XClassDeinit(&filter);
         }
         if (sub->noLocal && source && source->session == session) continue;
         matched = true;
@@ -1908,10 +1908,10 @@ static bool server_collect_matching(XMqttServer* server, XMqttServerSession* ses
             }
         }
     }
-    XMqttTopicName_deinit_base(&topicName);
+    XClassDeinit(&topicName);
     if (maxQos) *maxQos = resultQos;
     if (subscriptionIds) *subscriptionIds = ids;
-    else if (ids) XVector_delete_base(ids);
+    else if (ids) XClassDelete(ids);
     if (deliveredShared) *deliveredShared = sharedDelivered;
     return matched;
 }
@@ -1935,7 +1935,7 @@ static void server_deliver_to_session(XMqttServer* server, XMqttServerSession* s
                                       &maxSubQos, &subscriptionIds, NULL,
                                       sharedSelections);
     if (!matched) {
-        if (subscriptionIds) XVector_delete_base(subscriptionIds);
+        if (subscriptionIds) XClassDelete(subscriptionIds);
         return;
     }
     qos = qos > maxSubQos ? maxSubQos : qos;
@@ -1946,7 +1946,7 @@ static void server_deliver_to_session(XMqttServer* server, XMqttServerSession* s
             XMqttPublishProperties_create();
         if (merged) {
             if (merged->m_subscriptionIdentifiers)
-                XVector_delete_base(merged->m_subscriptionIdentifiers);
+                XClassDelete(merged->m_subscriptionIdentifiers);
             merged->m_subscriptionIdentifiers = subscriptionIds;
             subscriptionIds = NULL;
             merged->m_availableProperties |= XMqttPublishProperties_SubscriptionIdentifier;
@@ -1988,8 +1988,8 @@ static void server_deliver_to_session(XMqttServer* server, XMqttServerSession* s
                                    merged ? merged : properties, qos, retain);
         }
     }
-    if (merged) XMqttPublishProperties_delete_base(merged);
-    if (subscriptionIds) XVector_delete_base(subscriptionIds);
+    if (merged) XClassDelete(merged);
+    if (subscriptionIds) XClassDelete(subscriptionIds);
 }
 
 /**
@@ -2031,11 +2031,11 @@ static void server_route_message(XMqttServer* server, XMqttServerClient* source,
                     }
                 } else {
                     server_retained_deinit(msg);
-                    XString_delete_base(topicCopy);
+                    XClassDelete(topicCopy);
                 }
             } else {
                 if (msg) XFree_System(msg);
-                if (topicCopy) XString_delete_base(topicCopy);
+                if (topicCopy) XClassDelete(topicCopy);
             }
         } else {
             XMapBase_remove_base((XMapBase*)priv->m_retained, &topic);
@@ -2058,10 +2058,10 @@ static void server_route_message(XMqttServer* server, XMqttServerClient* source,
                 server_deliver_to_session(server, *slot, source, topic, payload,
                                           properties, qos, retain, sharedSelections);
             }
-            XVector_delete_base(keys);
+            XClassDelete(keys);
         }
         server_shared_selections_deinit(sharedSelections);
-        XMqttTopicName_deinit_base(&topicName);
+        XClassDeinit(&topicName);
     }
 }
 
@@ -2127,7 +2127,7 @@ static bool server_publish_common(XMqttServer* server, const XString* topic,
         if (!payloadBuf) return false;
     }
     server_route_message(server, NULL, topic, payloadBuf, properties, qos, retain);
-    XByteArray_delete_base(payloadBuf);
+    XClassDelete(payloadBuf);
     return true;
 }
 
@@ -2182,7 +2182,7 @@ static void server_purge_expired_sessions(XMqttServer* server)
             XMapBase_remove_base((XMapBase*)priv->m_sessions, key);
         }
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
 }
 
 /* ==================== 定时器事件 ==================== */
@@ -2224,7 +2224,7 @@ static void server_timer_event(XMqttServer* server, XTimerEvent* event)
                 client->keepAliveTimer = XTIMER_INVALID_ID;
                 server_start_keep_alive(server, client);
             }
-            XVector_delete_base(keys);
+            XClassDelete(keys);
         }
     }
     /* 会话过期定时器 */
@@ -2313,10 +2313,10 @@ static void server_handle_publish(XMqttServer* server, XMqttServerClient* client
                     XMqttStringPair pair;
                     XMqttStringPair_init(&pair, XString_toUtf8(name), XString_toUtf8(value));
                     XVector_push_back_1_base((XVector*)props->m_userProperties, &pair);
-                    XMqttStringPair_deinit_base(&pair);
+                    XClassDeinit(&pair);
                 }
-                if (name) XString_delete_base(name);
-                if (value) XString_delete_base(value);
+                if (name) XClassDelete(name);
+                if (value) XClassDelete(value);
                 break;
             }
             case MQTT_PROP_CONTENT_TYPE:
@@ -2376,15 +2376,15 @@ static void server_handle_publish(XMqttServer* server, XMqttServerClient* client
         XMqttTopicName* topicName = XMqttTopicName_create(XString_toUtf8(topic));
         if (topicName) {
             XMqttServer_messageReceived_signal(server, client->transport, topicName, payload);
-            XMqttTopicName_delete_base(topicName);
+            XClassDelete(topicName);
         }
     }
     if (qos == 1) server_send_ack(server, client, MQTT_PUBACK, packetId, 0);
     if (qos == 2) server_send_ack(server, client, MQTT_PUBREC, packetId, 0);
 cleanup:
-    if (topic) XString_delete_base(topic);
-    if (props) XMqttPublishProperties_delete_base(props);
-    if (payload) XByteArray_delete_base(payload);
+    if (topic) XClassDelete(topic);
+    if (props) XClassDelete(props);
+    if (payload) XClassDelete(payload);
 }
 
 static void server_handle_subscribe(XMqttServer* server, XMqttServerClient* client,
@@ -2408,8 +2408,8 @@ static void server_handle_subscribe(XMqttServer* server, XMqttServerClient* clie
             if (id == MQTT_PROP_USER_PROPERTY) {
                 XString* name = server_read_string(reader);
                 XString* value = server_read_string(reader);
-                if (name) XString_delete_base(name);
-                if (value) XString_delete_base(value);
+                if (name) XClassDelete(name);
+                if (value) XClassDelete(value);
             } else {
                 reader->ok = false;
             }
@@ -2428,7 +2428,7 @@ static void server_handle_subscribe(XMqttServer* server, XMqttServerClient* clie
         XString* shareName = NULL;
         XString* actualFilter = NULL;
         if (!filter || !reader->ok) {
-            if (filter) XString_delete_base(filter);
+            if (filter) XClassDelete(filter);
             reason[reasonCount] = XMqtt_ReasonCode_ProtocolError;
             ++reasonCount;
             continue;
@@ -2440,25 +2440,25 @@ static void server_handle_subscribe(XMqttServer* server, XMqttServerClient* clie
         sub.retainHandling = retainHandling;
         if (client->protocolVersion != 5 && (noLocal || retainAsPublished ||
                                              retainHandling || (options & 0xC0U))) {
-            XString_delete_base(filter);
+            XClassDelete(filter);
             reason[reasonCount] = XMqtt_ReasonCode_ProtocolError;
             ++reasonCount;
             continue;
         }
         if (options & 0xC0U) {
-            XString_delete_base(filter);
+            XClassDelete(filter);
             reason[reasonCount] = XMqtt_ReasonCode_ProtocolError;
             ++reasonCount;
             continue;
         }
         if (qos > 2) {
-            XString_delete_base(filter);
+            XClassDelete(filter);
             reason[reasonCount] = XMqtt_ReasonCode_MalformedPacket;
             ++reasonCount;
             continue;
         }
         if (qos > server->m_maximumQoS) {
-            XString_delete_base(filter);
+            XClassDelete(filter);
             reason[reasonCount] = XMqtt_ReasonCode_QoSNotSupported;
             ++reasonCount;
             continue;
@@ -2467,13 +2467,13 @@ static void server_handle_subscribe(XMqttServer* server, XMqttServerClient* clie
         if (XString_toUtf8_length(filter) >= 8 &&
             memcmp(XString_toUtf8(filter), "$share/", 7) == 0) {
             if (!server->m_sharedAvailable) {
-                XString_delete_base(filter);
+                XClassDelete(filter);
                 reason[reasonCount] = XMqtt_ReasonCode_SharedSubscriptionsNotSupported;
                 ++reasonCount;
                 continue;
             }
             if (!server_parse_shared_filter(filter, &shareName, &actualFilter)) {
-                XString_delete_base(filter);
+                XClassDelete(filter);
                 reason[reasonCount] = XMqtt_ReasonCode_InvalidTopicFilter;
                 ++reasonCount;
                 continue;
@@ -2481,16 +2481,16 @@ static void server_handle_subscribe(XMqttServer* server, XMqttServerClient* clie
         } else {
             actualFilter = XString_create_copy(filter);
             if (!actualFilter) {
-                XString_delete_base(filter);
+                XClassDelete(filter);
                 reason[reasonCount] = XMqtt_ReasonCode_ImplementationSpecificError;
                 ++reasonCount;
                 continue;
             }
         }
         if (!server_topic_filter_valid(actualFilter, server->m_wildcardAvailable)) {
-            if (shareName) XString_delete_base(shareName);
-            XString_delete_base(actualFilter);
-            XString_delete_base(filter);
+            if (shareName) XClassDelete(shareName);
+            XClassDelete(actualFilter);
+            XClassDelete(filter);
             reason[reasonCount] = server->m_wildcardAvailable ?
                 XMqtt_ReasonCode_InvalidTopicFilter : XMqtt_ReasonCode_WildCardSubscriptionsNotSupported;
             ++reasonCount;
@@ -2520,7 +2520,7 @@ static void server_handle_subscribe(XMqttServer* server, XMqttServerClient* clie
     if (reasonCount)
         server_send_suback(server, client, packetId, reason, reasonCount);
 cleanup:
-    if (propsBuf) XByteArray_delete_base(propsBuf);
+    if (propsBuf) XClassDelete(propsBuf);
 }
 
 static bool server_subscription_exists(const XMqttServerSession* session,
@@ -2592,10 +2592,10 @@ static void server_deliver_retained(XMqttServer* server, XMqttServerClient* clie
                 }
             }
         }
-        XMqttTopicName_deinit_base(&topicName);
+        XClassDeinit(&topicName);
     }
-    XMqttTopicFilter_deinit_base(&topicFilter);
-    XVector_delete_base(keys);
+    XClassDeinit(&topicFilter);
+    XClassDelete(keys);
 }
 
 static void server_handle_unsubscribe(XMqttServer* server, XMqttServerClient* client,
@@ -2617,8 +2617,8 @@ static void server_handle_unsubscribe(XMqttServer* server, XMqttServerClient* cl
             if (id == MQTT_PROP_USER_PROPERTY) {
                 XString* name = server_read_string(reader);
                 XString* value = server_read_string(reader);
-                if (name) XString_delete_base(name);
-                if (value) XString_delete_base(value);
+                if (name) XClassDelete(name);
+                if (value) XClassDelete(value);
             } else {
                 reader->ok = false;
             }
@@ -2628,7 +2628,7 @@ static void server_handle_unsubscribe(XMqttServer* server, XMqttServerClient* cl
     while (reader->ok && reader->pos < reader->size) {
         XString* filter = server_read_string(reader);
         if (!filter || !reader->ok) {
-            if (filter) XString_delete_base(filter);
+            if (filter) XClassDelete(filter);
             reason[reasonCount] = XMqtt_ReasonCode_ProtocolError;
             ++reasonCount;
             continue;
@@ -2639,7 +2639,7 @@ static void server_handle_unsubscribe(XMqttServer* server, XMqttServerClient* cl
             reason[reasonCount] = XMqtt_ReasonCode_NoSubscriptionExisted;
         }
         ++reasonCount;
-        XString_delete_base(filter);
+        XClassDelete(filter);
     }
     if (reasonCount > sizeof(reason) / sizeof(reason[0]))
         reasonCount = sizeof(reason) / sizeof(reason[0]);
@@ -2909,11 +2909,11 @@ static void V_deinit(XMqttServer* server)
 static void server_private_cleanup(XMqttServerPrivate* priv)
 {
     if (!priv) return;
-    if (priv->m_clients) XMapBase_delete_base(priv->m_clients);
-    if (priv->m_sessions) XMapBase_delete_base(priv->m_sessions);
-    if (priv->m_retained) XMapBase_delete_base(priv->m_retained);
-    if (priv->m_sharedIndex) XMapBase_delete_base(priv->m_sharedIndex);
-    if (priv->m_pendingWills) XVector_delete_base(priv->m_pendingWills);
+    if (priv->m_clients) XClassDelete(priv->m_clients);
+    if (priv->m_sessions) XClassDelete(priv->m_sessions);
+    if (priv->m_retained) XClassDelete(priv->m_retained);
+    if (priv->m_sharedIndex) XClassDelete(priv->m_sharedIndex);
+    if (priv->m_pendingWills) XClassDelete(priv->m_pendingWills);
     XFree_System(priv);
 }
 
@@ -2939,7 +2939,7 @@ static void server_private_delete(XMqttServer* server)
                     (XMqttServerClient**)XMapBase_value_base((XMapBase*)priv->m_clients, key) : NULL;
                 if (slot && *slot) server_stop_keep_alive(server, *slot);
             }
-            XVector_delete_base(keys);
+            XClassDelete(keys);
         }
     }
     /* 停止全部会话过期定时器 */
@@ -2952,7 +2952,7 @@ static void server_private_delete(XMqttServer* server)
                     (XMqttServerSession**)XMapBase_value_base((XMapBase*)priv->m_sessions, key) : NULL;
                 if (slot && *slot) server_session_stop_expiry(server, *slot);
             }
-            XVector_delete_base(keys);
+            XClassDelete(keys);
         }
     }
     /* 停止全部延迟遗嘱定时器 */
@@ -3080,8 +3080,8 @@ static void mqtt_server_message_args_delete(XVarList* list)
     (void)transportArg;
     topic = (XMqttTopicName*)topicArg;
     payload = (XByteArray*)payloadArg;
-    if (topic) XMqttTopicName_delete_base(topic);
-    if (payload) XByteArray_delete_base(payload);
+    if (topic) XClassDelete(topic);
+    if (payload) XClassDelete(payload);
 }
 
 void* XMqttServer_clientConnected_signal(XMqttServer* server, void* transport)
@@ -3131,7 +3131,7 @@ bool XMqttServer_publish(XMqttServer* server, const char* topic,
     if (!topicString) return false;
     ok = server_publish_common(server, topicString, NULL, payload, payloadLen,
                                qos, retain);
-    XString_delete_base(topicString);
+    XClassDelete(topicString);
     return ok;
 }
 
@@ -3147,7 +3147,7 @@ bool XMqttServer_publishWithProperties(XMqttServer* server, const char* topic,
     if (!topicString) return false;
     ok = server_publish_common(server, topicString, properties, payload, payloadLen,
                                qos, retain);
-    XString_delete_base(topicString);
+    XClassDelete(topicString);
     return ok;
 }
 

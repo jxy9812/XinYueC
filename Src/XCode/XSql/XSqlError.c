@@ -32,7 +32,7 @@ void XSqlError_init(XSqlError* error)
 static void xsql_error_assign_string(XString** target, const XString* source)
 {
     if (*target) {
-        XString_delete_base(*target);
+        XClassDelete(*target);
         *target = NULL;
     }
     if (source) *target = XString_create_copy(source);
@@ -41,9 +41,9 @@ static void xsql_error_assign_string(XString** target, const XString* source)
 static void VXSqlError_deinit(XSqlError* error)
 {
     if (!error) return;
-    if (error->m_driverText) XString_delete_base(error->m_driverText);
-    if (error->m_databaseText) XString_delete_base(error->m_databaseText);
-    if (error->m_errorCode) XString_delete_base(error->m_errorCode);
+    if (error->m_driverText) XClassDelete(error->m_driverText);
+    if (error->m_databaseText) XClassDelete(error->m_databaseText);
+    if (error->m_errorCode) XClassDelete(error->m_errorCode);
     error->m_driverText = NULL;
     error->m_databaseText = NULL;
     error->m_errorCode = NULL;
@@ -64,9 +64,9 @@ static void VXSqlError_move(XSqlError* dest, XSqlError* src)
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XSqlError_init(dest);
-    if (dest->m_driverText) XString_delete_base(dest->m_driverText);
-    if (dest->m_databaseText) XString_delete_base(dest->m_databaseText);
-    if (dest->m_errorCode) XString_delete_base(dest->m_errorCode);
+    if (dest->m_driverText) XClassDelete(dest->m_driverText);
+    if (dest->m_databaseText) XClassDelete(dest->m_databaseText);
+    if (dest->m_errorCode) XClassDelete(dest->m_errorCode);
     dest->m_driverText = src->m_driverText;
     dest->m_databaseText = src->m_databaseText;
     dest->m_errorCode = src->m_errorCode;
@@ -101,9 +101,9 @@ XSqlError* XSqlError_create_utf8(const char* driverText, const char* databaseTex
     XString* database = databaseText ? XString_create_utf8(databaseText) : NULL;
     XString* code = errorCode ? XString_create_utf8(errorCode) : NULL;
     XSqlError* result = XSqlError_create(driver, database, type, code);
-    if (driver) XString_delete_base(driver);
-    if (database) XString_delete_base(database);
-    if (code) XString_delete_base(code);
+    if (driver) XClassDelete(driver);
+    if (database) XClassDelete(database);
+    if (code) XClassDelete(code);
     return result;
 }
 
@@ -111,7 +111,7 @@ XSqlError* XSqlError_create_copy(const XSqlError* other)
 {
     if (!other) return NULL;
     XSqlError* result = XSqlError_create(NULL, NULL, XSqlErrorType_NoError, NULL);
-    if (result) XCopy(result, other);
+    if (result) XClassCopy(result, other);
     return result;
 }
 
@@ -119,7 +119,7 @@ XSqlError* XSqlError_create_move(XSqlError* other)
 {
     if (!other) return NULL;
     XSqlError* result = XSqlError_create(NULL, NULL, XSqlErrorType_NoError, NULL);
-    if (result) XMove(result, other);
+    if (result) XClassMove(result, other);
     return result;
 }
 
@@ -128,9 +128,9 @@ void XSqlError_swap(XSqlError* left, XSqlError* right)
     if (!left || !right || left == right) return;
     XSqlError* temp = XSqlError_create_move(left);
     if (!temp) return;
-    XMove(left, right);
-    XMove(right, temp);
-    XSqlError_delete_base(temp);
+    XClassMove(left, right);
+    XClassMove(right, temp);
+    XClassDelete(temp);
 }
 
 void XSqlError_setDriverText(XSqlError* error, const XString* text) { if (error) xsql_error_assign_string(&error->m_driverText, text); }

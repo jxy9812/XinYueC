@@ -26,11 +26,11 @@ void XBase64Test()
 	}
 
 	if (sour)
-		XByteArray_delete_base(sour);
+		XClassDelete(sour);
 	if (toBase)
-		XByteArray_delete_base(toBase);
+		XClassDelete(toBase);
 	if (fromBase64)
-		XByteArray_delete_base(fromBase64);
+		XClassDelete(fromBase64);
 	//XCoreApplication_quit();
 }
 void XTestMenu_XBase64Test(XTestMenu* root)

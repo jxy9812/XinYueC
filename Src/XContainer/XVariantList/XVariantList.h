@@ -175,12 +175,10 @@ void XVariantList_setVariant_ref(XVariant* var, XVariantList* list);
 * @brief 反初始化列表（基础版本）
 * @note 基于XVector的接口，释放内部资源但不销毁实例本身
 */
-#define XVariantList_deinit_base		XVector_deinit_base
 /**
 * @brief 删除列表实例（基础版本）
 * @note 基于XVector的接口，释放内部资源并销毁实例
 */
-#define XVariantList_delete_base		XVector_delete_base
 /**
 * @brief 清空列表元素（基础版本）
 * @note 基于XVector的接口，删除所有元素但保留列表结构

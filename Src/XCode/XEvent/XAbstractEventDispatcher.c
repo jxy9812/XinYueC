@@ -196,13 +196,13 @@ static bool console_ssh_attach(XAbstractEventDispatcher* self)
     server = XTcpServer_create();
     adapter = (XConsoleShellXTcpServerAdapter*)XCalloc_System(1, sizeof(*adapter));
     if (!server || !adapter) {
-        if (server) XClass_delete_base((XClass*)server);
+        if (server) XClassDelete((XClass*)server);
         if (adapter) XFree_System(adapter);
         return false;
     }
     if (!XTcpServer_listen(server, NULL,
                            (uint16_t)XCONSOLE_SHELL_XSSH_SERVER_PORT)) {
-        XClass_delete_base((XClass*)server);
+        XClassDelete((XClass*)server);
         XFree_System(adapter);
         return false;
     }
@@ -238,7 +238,7 @@ static void console_ssh_detach(XAbstractEventDispatcherPrivate* dp)
     }
     if (server) {
         XTcpServer_close(server);
-        XClass_delete_base((XClass*)server);
+        XClassDelete((XClass*)server);
         dp->m_consoleSshServer = NULL;
     }
 }
@@ -259,20 +259,20 @@ static bool console_telnet_attach(XAbstractEventDispatcher* self)
     server = XTcpServer_create();
     adapter = (XConsoleShellXTcpServerAdapter*)XCalloc_System(1, sizeof(*adapter));
     if (!server || !adapter) {
-        if (server) XClass_delete_base((XClass*)server);
+        if (server) XClassDelete((XClass*)server);
         if (adapter) XFree_System(adapter);
         return false;
     }
     if (!XTcpServer_listen(server, NULL,
                            (uint16_t)XCONSOLE_SHELL_XTELNET_SERVER_PORT)) {
-        XClass_delete_base((XClass*)server);
+        XClassDelete((XClass*)server);
         XFree_System(adapter);
         return false;
     }
     if (!XConsoleShellXTcpServerAdapter_initProtocol(
             adapter, (XConsoleShell*)dp->m_consoleShell, server,
             XConsoleShellXTcpServerProtocol_Telnet)) {
-        XClass_delete_base((XClass*)server);
+        XClassDelete((XClass*)server);
         XFree_System(adapter);
         return false;
     }
@@ -306,7 +306,7 @@ static void console_telnet_detach(XAbstractEventDispatcherPrivate* dp)
     }
     if (server) {
         XTcpServer_close(server);
-        XClass_delete_base((XClass*)server);
+        XClassDelete((XClass*)server);
         dp->m_consoleTelnetServer = NULL;
     }
 }
@@ -334,7 +334,7 @@ static bool console_shell_attach(XAbstractEventDispatcher* self)
     /* 本地控制台关闭时 inputAttach 为空，Shell 创建阶段不会自动启动异步；
        但 SSH/Telnet 会话仍需 Shell 处于运行态，这里显式启动且不读取 stdin。 */
     if (!XConsoleShell_startAsync(shell)) {
-        XConsoleShell_delete_base((XConsoleShell*)shell);
+        XClassDelete(shell);
         XFree_System(transport);
         return false;
     }
@@ -510,7 +510,7 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     XCONSOLE_SHELL_ASYNC_ON
     /* 默认 Shell 由调度器托管，析构时先停止异步并释放传输。 */
     if (dp->m_consoleShell) {
-        XConsoleShell_delete_base((XConsoleShell*)dp->m_consoleShell);
+        XClassDelete((XConsoleShell*)dp->m_consoleShell);
         dp->m_consoleShell = NULL;
     }
     if (dp->m_consoleTransport) {
@@ -529,7 +529,7 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     /* 高精度红黑树由 XDeviceTimer 统一管理，但实例仍归当前调度器所有。 */
     if (dp->notifiers)
     {
-        XHashMap_delete_base(dp->notifiers);
+        XClassDelete(dp->notifiers);
         dp->notifiers = NULL;
     }
     /* ioRing 是全局单例，生命周期独立，此处仅清空指针 */
@@ -637,7 +637,7 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     {
         if (!XThreadData_pushActivePostedEvents(events)) {
             XThreadData_push_front_list(events);
-            XVector_delete_base(events);
+            XClassDelete(events);
             return false;
         }
         for_each_iterator(events, XVector, it)
@@ -671,7 +671,7 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         }
         XThreadData_popActivePostedEvents(events);
         XThreadData_push_front_list(events);
-        XVector_delete_base(events);
+        XClassDelete(events);
     }
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
@@ -779,7 +779,7 @@ static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispa
     if (!self->d_ptr->notifiers)
     {
         self->d_ptr->notifiers = XHashMap_Create(XFd, XVector, uintptr_t_compare);
-        XContainerSetDataDeinitMethod(self->d_ptr->notifiers, XVector_deinit_base);
+        XContainerSetDataDeinitMethod(self->d_ptr->notifiers, XClass_deinit_base);
     }
     /* 从 dispatcher 全局 HashMap 查找或创建 XVector */
     XVector* v = (XVector*)XHashMap_value_base(self->d_ptr->notifiers, &fd);
@@ -788,7 +788,7 @@ static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispa
         v = XVector_Create(XSocketNotifier*);
         XContainerSetCompare(v, uintptr_t_compare);
         XMapBase_insert_valueMove_base(self->d_ptr->notifiers, &fd, v);
-        XVector_delete_base(v);
+        XClassDelete(v);
         v = (XVector*)XHashMap_value_base(self->d_ptr->notifiers, &fd);
         if (!v)return;
     }
@@ -822,7 +822,7 @@ static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDis
     if (XVector_isEmpty_base(v))
     {
         XHashMap_remove_base(self->d_ptr->notifiers, &fd);
-        //XVector_delete_base(v);
+        //XClassDelete(v);
         /* fd 上已无任何 notifier：从 ioRing 等待集注销，停止唤醒。 */
         {
             XAbstractNetIoRing* ring = self->d_ptr->m_ioRing;

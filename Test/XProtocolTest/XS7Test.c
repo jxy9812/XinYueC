@@ -118,19 +118,19 @@ static void xs7uBaAppend(XByteArray* b, const void* data, size_t n)
 }
 static void xs7uBaDelete(XByteArray* b)
 {
-    XClass_delete_base((XClass*)b);
+    XClassDelete((XClass*)b);
 }
 static void xs7uStrDelete(XString* s)
 {
-    XClass_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
 }
 static void xs7uVarDelete(XVariant* v)
 {
-    XClass_delete_base((XClass*)v);
+    XClassDelete((XClass*)v);
 }
 static void xs7uVecDelete(XVector* v)
 {
-    XClass_delete_base((XClass*)v);
+    XClassDelete((XClass*)v);
 }
 static size_t xs7uVecSize(const XVector* v)
 {
@@ -2086,7 +2086,7 @@ void XS7SessionTest()
     /* 12. feed 非法参数与对象释放 */
     (void)XS7Session_feed(s, NULL, 10);   /* 头文件未定义 NULL 行为：只验证不崩溃 */
     XS7U_CHECK(passed, failed, true, "feed(NULL data) 不崩溃");
-    XClass_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     XS7U_CHECK(passed, failed, true, "会话对象删除无崩溃");
 
     xs7uFinish("Session", passed, failed);
@@ -2281,7 +2281,7 @@ void XPlcReplyPublicApiTest()
             if (es != NULL) {
                 xs7uStrDelete(es);
             }
-            XClass_delete_base((XClass*)r2);
+            XClassDelete((XClass*)r2);
             XS7U_CHECK(passed, failed, true, "错误路径 Reply 对象删除无崩溃");
         } else {
             ++failed;
@@ -2355,7 +2355,7 @@ void XPlcReplyPublicApiTest()
     }
 
     /* 11. 对象删除 */
-    XClass_delete_base((XClass*)r);
+    XClassDelete((XClass*)r);
     XS7U_CHECK(passed, failed, true, "Reply 对象删除无崩溃");
 
     xs7uFinish("Reply", passed, failed);
@@ -2892,7 +2892,7 @@ static bool xs7fakeStart(void)
     if (!XTcpServer_listen(g_fakeServer, &addr, 0)) {
         XPrintf("[XS7][PLC] 假 PLC 桩监听失败\n");
         XTcpServer_close(g_fakeServer);
-        XClass_delete_base((XClass*)g_fakeServer);
+        XClassDelete((XClass*)g_fakeServer);
         g_fakeServer = NULL;
         return false;
     }
@@ -2908,7 +2908,7 @@ static void xs7fakeStop(void)
     int i;
     if (g_fakeServer != NULL) {
         XTcpServer_close(g_fakeServer);
-        XClass_delete_base((XClass*)g_fakeServer);
+        XClassDelete((XClass*)g_fakeServer);
         g_fakeServer = NULL;
     }
     for (i = 0; i < XS7FAKE_MAX_CLIENTS; ++i) {
@@ -4110,7 +4110,7 @@ static void integ_finish(void)
                 XThread_msleep(2);
             }
             g_integRunRestored = (XPlcReply_error(r) == XPlcDevice_NoError);
-            XClass_delete_base((XClass*)r);
+            XClassDelete((XClass*)r);
         }
         XPrintf("[XS7][PLC] 收尾恢复：PLC 回 RUN 态（%s）\n",
                 g_integRunRestored ? "成功" : "失败（需人工确认）");
@@ -4375,7 +4375,7 @@ bool XS7Test_integration_run(void)
                              (XObject*)g_integClient, integ_onDeviceError);
         XPlcDevice_disconnectDevice((XPlcDevice*)g_integClient);
         XCoreApplication_processEvents(XEventLoop_AllEvents);
-        XClass_delete_base((XClass*)g_integClient);
+        XClassDelete((XClass*)g_integClient);
         g_integClient = NULL;
     }
     xs7fakeStop();

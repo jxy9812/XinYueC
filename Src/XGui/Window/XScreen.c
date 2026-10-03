@@ -73,11 +73,11 @@ static XString* XScreen_copyString(const XString* value)
 static void XScreen_clearPrivateData(XScreenPrivate* data)
 {
     if (!data) return;
-    if (data->m_name) XString_delete_base((XClass*)data->m_name);
-    if (data->m_manufacturer) XString_delete_base((XClass*)data->m_manufacturer);
-    if (data->m_model) XString_delete_base((XClass*)data->m_model);
-    if (data->m_serialNumber) XString_delete_base((XClass*)data->m_serialNumber);
-    if (data->m_virtualSiblings) XVector_delete_base((XClass*)data->m_virtualSiblings);
+    if (data->m_name) XClassDelete((XClass*)data->m_name);
+    if (data->m_manufacturer) XClassDelete((XClass*)data->m_manufacturer);
+    if (data->m_model) XClassDelete((XClass*)data->m_model);
+    if (data->m_serialNumber) XClassDelete((XClass*)data->m_serialNumber);
+    if (data->m_virtualSiblings) XClassDelete((XClass*)data->m_virtualSiblings);
     data->m_name = NULL;
     data->m_manufacturer = NULL;
     data->m_model = NULL;
@@ -89,7 +89,7 @@ static void XScreen_clearPrivateData(XScreenPrivate* data)
 static void XScreen_setString(XString** dst, const XString* value)
 {
     XString* copy = value ? XString_create_copy(value) : NULL;
-    if (*dst) XString_delete_base((XClass*)*dst);
+    if (*dst) XClassDelete((XClass*)*dst);
     *dst = copy;
 }
 
@@ -244,7 +244,7 @@ static void XScreen_refreshVirtualGeometries(XScreen* changed)
             XScreen_virtualGeometryChanged_signal(screen, &virtualGeometry);
         }
     }
-    XVector_delete_base((XClass*)affected);
+    XClassDelete((XClass*)affected);
 }
 
 /* ==================== 虚函数表与生命周期 ==================== */
@@ -312,7 +312,7 @@ XScreen* XScreen_create_copy(const XScreen* other)
     if (!other) return NULL;
     self = XScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -322,7 +322,7 @@ XScreen* XScreen_create_move(XScreen* other)
     if (!other) return NULL;
     self = XScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -410,7 +410,7 @@ void XScreen_unregister(XScreen* screen)
     if (index < 0) return; /* 未注册是 no-op。 */
     XVector_remove_base(g_screens, index, 1);
     if (XVector_size_base((const XContainer*)g_screens) <= 0) {
-        XVector_delete_base((XClass*)g_screens);
+        XClassDelete((XClass*)g_screens);
         g_screens = NULL;
     } else {
         /* 成员退出后其余屏幕默认兄弟集合缩小，复查虚拟几何。 */
@@ -464,7 +464,7 @@ void XScreen_setName_2(XScreen* self, const char* name)
 {
     XString* value = name ? XString_create_utf8(name) : NULL;
     XScreen_setName(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 XString* XScreen_manufacturer(const XScreen* self)
@@ -482,7 +482,7 @@ void XScreen_setManufacturer_2(XScreen* self, const char* manufacturer)
 {
     XString* value = manufacturer ? XString_create_utf8(manufacturer) : NULL;
     XScreen_setManufacturer(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 XString* XScreen_model(const XScreen* self)
@@ -500,7 +500,7 @@ void XScreen_setModel_2(XScreen* self, const char* model)
 {
     XString* value = model ? XString_create_utf8(model) : NULL;
     XScreen_setModel(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 XString* XScreen_serialNumber(const XScreen* self)
@@ -518,7 +518,7 @@ void XScreen_setSerialNumber_2(XScreen* self, const char* serialNumber)
 {
     XString* value = serialNumber ? XString_create_utf8(serialNumber) : NULL;
     XScreen_setSerialNumber(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 /* ==================== 深度 ==================== */
@@ -693,7 +693,7 @@ void XScreen_setVirtualSiblings(XScreen* self, XScreen* const* siblings,
     int i;
     if (!self || !(data = self->m_data)) return;
     if (data->m_virtualSiblings) {
-        XVector_delete_base((XClass*)data->m_virtualSiblings);
+        XClassDelete((XClass*)data->m_virtualSiblings);
         data->m_virtualSiblings = NULL;
     }
     if (siblings && count > 0) {
@@ -727,7 +727,7 @@ XScreen* XScreen_virtualSiblingAt(const XScreen* self, XPoint point)
             break;
         }
     }
-    XVector_delete_base((XClass*)siblings);
+    XClassDelete((XClass*)siblings);
     return hit;
 }
 
@@ -754,7 +754,7 @@ XRect XScreen_virtualGeometry(const XScreen* self)
         geometry = XScreen_geometry(screen);
         result = XRect_united(&result, &geometry);
     }
-    XVector_delete_base((XClass*)siblings);
+    XClassDelete((XClass*)siblings);
     return result;
 }
 
@@ -781,7 +781,7 @@ XRect XScreen_availableVirtualGeometry(const XScreen* self)
         available = XScreen_availableGeometry(screen);
         result = XRect_united(&result, &available);
     }
-    XVector_delete_base((XClass*)siblings);
+    XClassDelete((XClass*)siblings);
     return result;
 }
 

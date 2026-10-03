@@ -36,7 +36,7 @@ void XRingBufferTest()
         assert(strcmp(readBuf, "Hello") == 0);
         assert(XRingBuffer_available(buffer) == 0);
 
-        XRingBuffer_delete_base(buffer);
+        XClassDelete(buffer);
 
         // ========================================
      // Test 2: Write Across Multiple Chunks
@@ -58,7 +58,7 @@ void XRingBufferTest()
         assert(strncmp(readBuf, longData, 10) == 0);
         assert(XRingBuffer_available(buffer) == 0);
 
-        XRingBuffer_delete_base(buffer);
+        XClassDelete(buffer);
 
         // ========================================
         // Test 3: Read/Write Wrap-Around with Partial Operations
@@ -95,7 +95,7 @@ void XRingBufferTest()
         assert(strncmp(readBuf, "CDEF", 4) == 0);
         assert(XRingBuffer_available(buffer) == 0);
 
-        XRingBuffer_delete_base(buffer);
+        XClassDelete(buffer);
 
         // ========================================
         // Test 4: Peek and Skip
@@ -124,7 +124,7 @@ void XRingBufferTest()
         assert(read == 4);
         assert(strcmp(readBuf, "Test") == 0);
 
-        XRingBuffer_delete_base(buffer);
+        XClassDelete(buffer);
 
         // ========================================
         // Test 5: Global Mark and ResetToMark (Across Chunks)
@@ -163,7 +163,7 @@ void XRingBufferTest()
         assert(read == 5);
         assert(strncmp(readBuf, "34567", 5) == 0);
 
-        XRingBuffer_delete_base(buffer);
+        XClassDelete(buffer);
 
         // ========================================
         // Test 6: Edge Cases - Zero Size Operations
@@ -183,7 +183,7 @@ void XRingBufferTest()
         XRingBuffer_skip(buffer, 10); // Should reset the buffer
         assert(XRingBuffer_available(buffer) == 0);
 
-        XRingBuffer_delete_base(buffer);
+        XClassDelete(buffer);
 
         XPrintf("\n=== All XRingBuffer Tests Completed Successfully! ===\n");
 	}

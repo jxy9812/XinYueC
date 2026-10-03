@@ -106,7 +106,7 @@ const XString* XRichString_toPlainString(const XRichString* self);
 /**
  * @brief      将富文本转换为 HTML 字符串
  * @param self 指针
- * @return     HTML 字符串（需调用 XString_deinit_base 释放）
+ * @return     HTML 字符串（需调用 XClassDeinit 释放）
  */
 XString XRichString_toHtml(const XRichString* self);
 

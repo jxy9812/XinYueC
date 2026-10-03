@@ -63,7 +63,7 @@ XVariant* XVariant_create_copy(const XVariant* copy)
 	if (!copy)return NULL;
 	XVariant* var = XVariant_create_null();
 	if (var && copy)
-		XCopy(var, copy);
+		XClassCopy(var, copy);
 	return var;
 }
 
@@ -71,7 +71,7 @@ XVariant* XVariant_create_move(XVariant* move)
 {
 	XVariant* var = XVariant_create_null();
 	if (var && move)
-		XMove(var, move);
+		XClassMove(var, move);
 	return var;
 }
 
@@ -426,7 +426,7 @@ static void setValue(XVariant* var, void* data, size_t size, int type)
 		return;
 	if (var->m_data && var->m_type != type)
 	{
-		XVariant_deinit_base(var);
+		XClassDeinit(var);
 	}
 	if (var->m_data == NULL || var->m_dataSize != size)
 	{
@@ -449,7 +449,7 @@ void XVariant_setValue(XVariant* var,const XVariant* newVar)
 {
 	/*if (var == NULL || newVar == NULL||newVar->m_data==NULL||newVar->m_dataSize==0)
 		return;*/
-	return XCopy(var, newVar);
+	return XClassCopy(var, newVar);
 		//setValue(var,NULL,);
 }
 
@@ -548,12 +548,12 @@ void VXVariant_copy(XVariant* var, const XVariant* src)
 	}
 	else if (var->m_type != src->m_type || var->m_dataSize != src->m_dataSize)
 	{
-		XVariant_deinit_base(var);//
+		XClassDeinit(var);//
 	}
 	if (src->m_dataSize == 0)
 	{
 		if (var->m_data)
-			XVariant_deinit_base(var);
+			XClassDeinit(var);
 		var->m_data = NULL;
 		var->m_dataSize = 0;
 		var->m_type = src->m_type;
@@ -589,7 +589,7 @@ void VXVariant_move(XVariant* var, XVariant* src)
 	}
 	/* Variant 的移动是整个数据对象的所有权转移，不需要逐字段移动。 */
 	if (var->m_data != NULL && var->m_data != src->m_data)
-		XVariant_deinit_base(var);
+		XClassDeinit(var);
 	if (var->m_class.m_vtable == NULL)
 		var->m_class = src->m_class;
 	var->m_data = src->m_data;
@@ -739,7 +739,7 @@ void XVariant_setDataRef(XVariant* var, void* data, size_t dataSize, int type)
 		return;
 	}
 	if (var->m_data)
-		XVariant_deinit_base(var);
+		XClassDeinit(var);
 	var->m_data = data;
 	var->m_dataSize = data ? dataSize : 0;
 	var->m_type = type;

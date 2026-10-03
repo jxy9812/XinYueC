@@ -65,7 +65,7 @@ bool XScrollBarTest_runAll(void)
         sb_expect(XScrollBar_orientation(h) ==
                   (int)XAbstractSliderOrientation_Vertical,
                   "setOrientation 切换");
-        XScrollBar_delete_base(h);
+        XClassDelete(h);
     }
 
     /* 3. 标准右键菜单条目（对标 contextMenuEvent：8 动作 + 3 分隔）。 */
@@ -75,7 +75,7 @@ bool XScrollBarTest_runAll(void)
         sb_expect(XMenu_actions(menu) != NULL &&
                   XVector_size_base(XMenu_actions(menu)) == 10,
                   "右键菜单 10 个条目（7 动作 + 3 分隔）");
-        XMenu_delete_base(menu);
+        XClassDelete(menu);
     }
 
     /* 4. valueChanged 信号：值变化触发一次，同值不触发。 */
@@ -97,8 +97,8 @@ bool XScrollBarTest_runAll(void)
                                   XAbstractSliderSliderAction_PageStepSub);
     sb_expect(XScrollBar_value(sb) == 50, "PageStepSub 60→50");
 
-    XScrollBar_delete_base(sb);
-    if (app) XGuiApplication_delete_base(app);
+    XClassDelete(sb);
+    if (app) XClassDelete(app);
 
     {
         int failures = sb_failures;

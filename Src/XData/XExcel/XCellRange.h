@@ -223,7 +223,7 @@ bool XCellRange_isValid(const XCellRange* self);
  * @param self     指针
  * @param row_abs  行是否绝对引用
  * @param col_abs  列是否绝对引用
- * @return     字符串表示（需调用 XString_deinit_base 释放）
+ * @return     字符串表示（需调用 XClassDeinit 释放）
  */
 XString XCellRange_toString(const XCellRange* self, bool row_abs, bool col_abs);
 

@@ -3164,7 +3164,7 @@ void XLineControl_copy(const XLineControl* self, int mode)
             XString* s = XString_create_utf8(t);
             if (s) {
                 XClipboard_setText(clip, s, (XClipboardMode)mode);
-                XString_delete_base((XClass*)s);
+                XClassDelete((XClass*)s);
                 written = true;
             }
         }
@@ -3204,7 +3204,7 @@ void XLineControl_paste(XLineControl* self, int mode)
                 if (blen > 0)
                     clipText = xlc_strdupRange(
                         XString_toUtf8(s), (int)blen);
-                XString_delete_base((XClass*)s);
+                XClassDelete((XClass*)s);
             }
         }
     }
@@ -3300,8 +3300,8 @@ void XLineControl_complete(XLineControl* self, int key)
                             n = (key == XKey_Up) ? -1 : 1;
                         XFree_System(prefix);
                     }
-                    if (current) XString_delete_base((XClass*)current);
-                    if (prefix0) XString_delete_base((XClass*)prefix0);
+                    if (current) XClassDelete((XClass*)current);
+                    if (prefix0) XClassDelete((XClass*)prefix0);
                 }
             } else {
                 XCompleter_setCompletionPrefix_2(self->m_completer, text);
@@ -3555,7 +3555,7 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
                 if (activated) {
                     XLineControl_setText(self,
                                          XString_toUtf8(activated));
-                    XString_delete_base((XClass*)activated);
+                    XClassDelete((XClass*)activated);
                 }
                 XCompleter_hidePopup(self->m_completer);
             }
@@ -3578,7 +3578,7 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
                         {
                             XLineControl_setText(self,
                                                  XString_toUtf8(text));
-                            XString_delete_base((XClass*)text);
+                            XClassDelete((XClass*)text);
                         }
                     }
                 }
@@ -3598,8 +3598,8 @@ void XLineControl_processKeyEvent(XLineControl* self, XKeyEvent* event)
                     XLineControl_setText(self, XString_toUtf8(current));
                     inlineCompletionAccepted = true;
                 }
-                if (current) XString_delete_base((XClass*)current);
-                if (prefix) XString_delete_base((XClass*)prefix);
+                if (current) XClassDelete((XClass*)current);
+                if (prefix) XClassDelete((XClass*)prefix);
                 if (after) XFree_System(after);
             }
         }
@@ -4018,13 +4018,13 @@ XObject* XLineControl_accessibleObject(const XLineControl* self)
 void XLineControl_setFont(XLineControl* self, const XFont* font)
 {
     if (!self) return;
-    if (self->m_font) { XFont_delete_base((XClass*)self->m_font); self->m_font = NULL; }
+    if (self->m_font) { XClassDelete((XClass*)self->m_font); self->m_font = NULL; }
     if (font) {
         self->m_font = (XFont*)XMalloc_System(sizeof(XFont));
         if (self->m_font) {
             XMemset(self->m_font, 0, sizeof(XFont));
-            XCopy(self->m_font, (const XClass*)font); /* 深拷贝（对标 QFont 值语义）。 */
-            /* 壳为堆分配：登记堆所有权位（XCopy 不继承；缺位时
+            XClassCopy(self->m_font, (const XClass*)font); /* 深拷贝（对标 QFont 值语义）。 */
+            /* 壳为堆分配：登记堆所有权位（XClassCopy 不继承；缺位时
                delete_base 只 deinit 不 free，逐替换泄漏 880B 壳，
                §8.0g7 ASan 定位）。 */
             Set_Class_IsHeap(self->m_font, true);
@@ -4435,7 +4435,7 @@ static void VXLineControl_deinit(XLineControl* self)
                 &self->m_maskReturnCap);
     xlc_bufFree(&self->m_cancelText, NULL, &self->m_cancelTextCap);
     if (self->m_font) {
-        XFont_delete_base((XClass*)self->m_font);
+        XClassDelete((XClass*)self->m_font);
         self->m_font = NULL;
     }
     if (self->m_maskData) {

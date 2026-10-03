@@ -19,10 +19,10 @@ void XCanMessageDescription_init(XCanMessageDescription* msg)
 void XCanMessageDescription_deinit(XCanMessageDescription* msg)
 {
     if (!msg) return;
-    if (msg->m_name) { XString_delete_base(msg->m_name); msg->m_name = NULL; }
-    if (msg->m_transmitter) { XString_delete_base(msg->m_transmitter); msg->m_transmitter = NULL; }
-    if (msg->m_comment) { XString_delete_base(msg->m_comment); msg->m_comment = NULL; }
-    if (msg->m_signalDescriptions) { XVector_delete_base(msg->m_signalDescriptions); msg->m_signalDescriptions = NULL; }
+    if (msg->m_name) { XClassDelete(msg->m_name); msg->m_name = NULL; }
+    if (msg->m_transmitter) { XClassDelete(msg->m_transmitter); msg->m_transmitter = NULL; }
+    if (msg->m_comment) { XClassDelete(msg->m_comment); msg->m_comment = NULL; }
+    if (msg->m_signalDescriptions) { XClassDelete(msg->m_signalDescriptions); msg->m_signalDescriptions = NULL; }
 }
 
 void XCanMessageDescription_copy(XCanMessageDescription* dest, const XCanMessageDescription* src)
@@ -85,7 +85,7 @@ XString* XCanMessageDescription_name(const XCanMessageDescription* msg)
 void XCanMessageDescription_setName(XCanMessageDescription* msg, const char* name)
 {
     if (!msg) return;
-    if (msg->m_name) { XString_delete_base(msg->m_name); msg->m_name = NULL; }
+    if (msg->m_name) { XClassDelete(msg->m_name); msg->m_name = NULL; }
     if (name) msg->m_name = XString_create_utf8(name);
 }
 
@@ -108,7 +108,7 @@ XString* XCanMessageDescription_transmitter(const XCanMessageDescription* msg)
 void XCanMessageDescription_setTransmitter(XCanMessageDescription* msg, const char* transmitter)
 {
     if (!msg) return;
-    if (msg->m_transmitter) { XString_delete_base(msg->m_transmitter); msg->m_transmitter = NULL; }
+    if (msg->m_transmitter) { XClassDelete(msg->m_transmitter); msg->m_transmitter = NULL; }
     if (transmitter) msg->m_transmitter = XString_create_utf8(transmitter);
 }
 
@@ -121,7 +121,7 @@ XString* XCanMessageDescription_comment(const XCanMessageDescription* msg)
 void XCanMessageDescription_setComment(XCanMessageDescription* msg, const char* text)
 {
     if (!msg) return;
-    if (msg->m_comment) { XString_delete_base(msg->m_comment); msg->m_comment = NULL; }
+    if (msg->m_comment) { XClassDelete(msg->m_comment); msg->m_comment = NULL; }
     if (text) msg->m_comment = XString_create_utf8(text);
 }
 
@@ -176,7 +176,7 @@ void XCanMessageDescription_setSignalDescriptions(XCanMessageDescription* msg,
 {
     if (!msg) return;
     if (msg->m_signalDescriptions) {
-        XVector_delete_base(msg->m_signalDescriptions);
+        XClassDelete(msg->m_signalDescriptions);
         msg->m_signalDescriptions = NULL;
     }
     if (descriptions)

@@ -99,8 +99,6 @@ XGuiClient* XGuiClient_create_ex(XMemoryType memory, XWidget* parent,
                                  XWidgetFlags flags);
 
 /** @brief 析构/反初始化映射(仓库惯例)。 */
-#define XGuiClient_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XGuiClient_delete_base(self) XClass_delete_base((XClass*)(self))
 /** @brief 延迟释放别名(事件循环内安全自删)。 */
 #define XGuiClient_deleteLater       XObject_deleteLater
 

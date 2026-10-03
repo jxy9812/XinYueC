@@ -8,7 +8,7 @@
 #include <string.h>
 
 XVARIANT_TYPE_OPS_DEFINE(XBsonArray, sizeof(XBsonArray), XClass_copy_base,
-	XClass_move_base, XBsonArray_clear_base, XBsonArray_deinit_base,
+	XClass_move_base, XBsonArray_clear_base, XClass_deinit_base,
 	NULL, "XBsonArray");
 
 /* BSON 数组以 XVector 保存值，序列化时键必须为连续十进制索引。 */
@@ -26,7 +26,7 @@ XBsonArray* XBsonArray_create_copy(const XBsonArray* other)
 	if (!other) return NULL;
 	XBsonArray* array = XBsonArray_create();
 	if (!array) return NULL;
-	XCopy(array, other);
+	XClassCopy(array, other);
 	return array;
 }
 
@@ -35,7 +35,7 @@ XBsonArray* XBsonArray_create_move(XBsonArray* other)
 	if (!other) return NULL;
 	XBsonArray* array = XBsonArray_create();
 	if (!array) return NULL;
-	XMove(array, other);
+	XClassMove(array, other);
 	return array;
 }
 
@@ -58,7 +58,7 @@ XJsonArray* XBsonArray_toJsonArray(const XBsonArray* bson_arr)
 		XJsonValue* json_val = XBsonValue_to_json(bson_val);
 		if (!json_val || !XJsonArray_append_move_base(json_arr, json_val)) {
 			XJsonValue_delete(json_val);
-			XJsonArray_delete_base(json_arr);
+			XClassDelete(json_arr);
 			return NULL;
 		}
 		XJsonValue_delete(json_val);
@@ -77,7 +77,7 @@ XBsonArray* XBsonArray_fromJsonArray(const XJsonArray* json_arr)
 		XBsonValue* bson_val = XBsonValue_from_json(json_val);
 		if (!bson_val || !XBsonArray_append_move_base(bson_arr, bson_val)) {
 			XBsonValue_delete(bson_val);
-			XBsonArray_delete_base(bson_arr);
+			XClassDelete(bson_arr);
 			return NULL;
 		}
 		XBsonValue_delete(bson_val);
@@ -97,7 +97,7 @@ XBsonArray* XBsonArray_fromBson(XByteArray* data)
 	if (!array) return NULL;
 	if (!XBsonArray_from_bytes(array, XContainerDataAddr(data),
 		XByteArray_size_base(data))) {
-		XBsonArray_delete_base(array);
+		XClassDelete(array);
 		return NULL;
 	}
 	return array;
@@ -108,7 +108,7 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
 	if (!array) return NULL;
 	XByteArray* bytes = XByteArray_create();
 	if (!bytes || !XByteArray_resize_base(bytes, 4)) {
-		XByteArray_delete_base(bytes);
+		XClassDelete(bytes);
 		return NULL;
 	}
 	for (size_t i = 0; i < XBsonArray_size_base(array); ++i) {
@@ -117,13 +117,13 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
 		int length = snprintf(key, sizeof(key), "%zu", i);
 		if (length <= 0 || (size_t)length >= sizeof(key) ||
 			!XBsonValue_serialize(value, key, bytes)) {
-			XByteArray_delete_base(bytes);
+			XClassDelete(bytes);
 			return NULL;
 		}
 	}
 	if (!XByteArray_push_back_1(bytes, 0x00) ||
 		XByteArray_size_base(bytes) > INT32_MAX) {
-		XByteArray_delete_base(bytes);
+		XClassDelete(bytes);
 		return NULL;
 	}
 	uint32_t size = (uint32_t)XByteArray_size_base(bytes);
@@ -154,12 +154,12 @@ bool XBsonArray_from_bytes(XBsonArray* array, const uint8_t* data, size_t size)
 			(size_t)expected_length < sizeof(expected) &&
 			strcmp(XString_toUtf8(key), expected) == 0;
 		if (!valid_key || !XBsonArray_append_move_base(array, value)) {
-			XString_delete_base(key);
+			XClassDelete(key);
 			XBsonValue_delete(value);
 			XBsonArray_clear_base(array);
 			return false;
 		}
-		XString_delete_base(key);
+		XClassDelete(key);
 		XBsonValue_delete(value);
 		++expected_index;
 	}
@@ -179,11 +179,11 @@ XVariantList* XBsonArray_toVariantList(const XBsonArray* arr)
 		const XBsonValue* value = XBsonArray_at_base(arr, (int64_t)i);
 		XVariant* var = XBsonValue_toVariant(value);
 		if (!var || !XVariantList_push_back_move_base(list, var)) {
-			XVariant_delete_base(var);
-			XVariantList_delete_base(list);
+			XClassDelete(var);
+			XClassDelete(list);
 			return NULL;
 		}
-		XVariant_delete_base(var);
+		XClassDelete(var);
 	}
 	return list;
 }
@@ -197,11 +197,11 @@ XVariantList* XBsonArray_toVariantList_move(XBsonArray* arr)
 		XBsonValue* value = XBsonArray_at_base(arr, (int64_t)i);
 		XVariant* var = XBsonValue_toVariant_move(value);
 		if (!var || !XVariantList_push_back_move_base(list, var)) {
-			XVariant_delete_base(var);
-			XVariantList_delete_base(list);
+			XClassDelete(var);
+			XClassDelete(list);
 			return NULL;
 		}
-		XVariant_delete_base(var);
+		XClassDelete(var);
 	}
 	XBsonArray_clear_base(arr);
 	return list;
@@ -212,11 +212,11 @@ XVariant* XBsonArray_toVariant(const XBsonArray* arr)
 	if (!arr) return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XBsonArray), XVariantType_BsonArray);
 	if (!var || !var->m_data) {
-		XVariant_delete_base(var);
+		XClassDelete(var);
 		return NULL;
 	}
 	XBsonArray_init((XBsonArray*)var->m_data);
-	XCopy((XBsonArray*)var->m_data, arr);
+	XClassCopy((XBsonArray*)var->m_data, arr);
 	return var;
 }
 
@@ -225,11 +225,11 @@ XVariant* XBsonArray_toVariant_move(XBsonArray* arr)
 	if (!arr) return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XBsonArray), XVariantType_BsonArray);
 	if (!var || !var->m_data) {
-		XVariant_delete_base(var);
+		XClassDelete(var);
 		return NULL;
 	}
 	XBsonArray_init((XBsonArray*)var->m_data);
-	XMove((XBsonArray*)var->m_data, arr);
+	XClassMove((XBsonArray*)var->m_data, arr);
 	return var;
 }
 
@@ -260,7 +260,7 @@ static bool XBsonArray_prepareVariant(XVariant* variant)
 	if (variant->m_type != XVariantType_BsonArray ||
 		!variant->m_data || variant->m_dataSize != sizeof(XBsonArray)) {
 		if (variant->m_data)
-			XVariant_deinit_base(variant);
+			XClassDeinit(variant);
 		variant->m_data = XMalloc_System(sizeof(XBsonArray));
 		if (!variant->m_data)
 			return false;
@@ -274,13 +274,13 @@ static bool XBsonArray_prepareVariant(XVariant* variant)
 void XBsonArray_setVariant(XVariant* variant, const XBsonArray* array)
 {
 	if (array && XBsonArray_prepareVariant(variant))
-		XCopy((XBsonArray*)variant->m_data, array);
+		XClassCopy((XBsonArray*)variant->m_data, array);
 }
 
 void XBsonArray_setVariant_move(XVariant* variant, XBsonArray* array)
 {
 	if (array && XBsonArray_prepareVariant(variant))
-		XMove((XBsonArray*)variant->m_data, array);
+		XClassMove((XBsonArray*)variant->m_data, array);
 }
 
 void XBsonArray_setVariant_ref(XVariant* variant, XBsonArray* array)

@@ -394,7 +394,7 @@ committed:
             if (!line) break;
             ++line;
         }
-        XFont_deinit_base(&fontCopy);
+        XClassDeinit(&fontCopy);
         curW = XWidget_width(base);
         curH = XWidget_height(base);
         wantW = maxLineW > 0 ? maxLineW + margin * 2 + cm.left + cm.right
@@ -435,7 +435,7 @@ static void VXPerformanceOverlay_copy(XPerformanceOverlay* self,
     self->m_memoryPercent = other->m_memoryPercent;
     self->m_memoryValid = other->m_memoryValid;
     if (self->m_format) {
-        XString_delete_base((XClass*)self->m_format);
+        XClassDelete((XClass*)self->m_format);
         self->m_format = NULL;
     }
     self->m_format = other->m_format
@@ -484,7 +484,7 @@ static void VXPerformanceOverlay_move(XPerformanceOverlay* self,
     self->m_memoryTotalBytes = other->m_memoryTotalBytes;
     self->m_memoryPercent = other->m_memoryPercent;
     self->m_memoryValid = other->m_memoryValid;
-    if (self->m_format) XString_delete_base((XClass*)self->m_format);
+    if (self->m_format) XClassDelete((XClass*)self->m_format);
     self->m_format = other->m_format;
     other->m_format = NULL;
     self->m_backgroundColor = other->m_backgroundColor;
@@ -539,7 +539,7 @@ static void VXPerformanceOverlay_deinit(XPerformanceOverlay* self)
 {
     if (!self) return;
     if (self->m_format) {
-        XString_delete_base((XClass*)self->m_format);
+        XClassDelete((XClass*)self->m_format);
         self->m_format = NULL;
     }
     XClass_Deinit_Parent(XLabel, &self->m_base);
@@ -620,11 +620,11 @@ void XPerformanceOverlay_setFontFamily(XPerformanceOverlay* self,
     if (!self) return;
     source = XWidget_font((XWidget*)&self->m_base);
     XFont_init(&font);
-    XCopy(&font, &source);
-    XFont_deinit_base(&source);
+    XClassCopy(&font, &source);
+    XClassDeinit(&source);
     XFont_setFamily(&font, family);
     XWidget_setFont((XWidget*)&self->m_base, &font);
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     performanceOverlay_updateText(self); /* 字号/行高可能变：重算贴底高度 */
 }
 
@@ -839,7 +839,7 @@ void XPerformanceOverlay_setFormat(XPerformanceOverlay* self,
 {
     if (!self) return;
     if (self->m_format) {
-        XString_delete_base((XClass*)self->m_format);
+        XClassDelete((XClass*)self->m_format);
         self->m_format = NULL;
     }
     if (format && format[0])

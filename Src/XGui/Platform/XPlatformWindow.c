@@ -43,7 +43,7 @@ static void VXPlatformWindow_deinit(XPlatformWindow* self)
             XPlatformNativeWindow_destroy(self->m_data->m_window);
 #endif
         if (self->m_data->m_properties) {
-            XHashMap_delete_base(self->m_data->m_properties);
+            XClassDelete(self->m_data->m_properties);
             self->m_data->m_properties = NULL;
         }
         XFree_System(self->m_data);
@@ -232,7 +232,7 @@ XScreen* XPlatformWindow_screenForGeometry(const XRect* geometry)
                 if (XRect_contains(&g, cx, cy)) best = screen;
             }
         }
-        XVector_delete_base(screens);
+        XClassDelete(screens);
     }
     if (best) return best;
     if (XScreen_primaryScreen()) return XScreen_primaryScreen();
@@ -282,7 +282,7 @@ XVariant* XPlatformWindow_property_2(const XPlatformWindow* self, const char* na
     tmp = XString_create_utf8(name);
     if (!tmp) return NULL;
     v = XPlatformWindow_property(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return v;
 }
 
@@ -307,7 +307,7 @@ void XPlatformWindow_setProperty_2(XPlatformWindow* self, const char* name,
     tmp = XString_create_utf8(name);
     if (!tmp) return;
     XPlatformWindow_setProperty(self, tmp, value);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
 }
 
 bool XPlatformWindow_removeProperty(XPlatformWindow* self, const XString* name)
@@ -325,7 +325,7 @@ bool XPlatformWindow_removeProperty_2(XPlatformWindow* self, const char* name)
     tmp = XString_create_utf8(name);
     if (!tmp) return false;
     removed = XPlatformWindow_removeProperty(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return removed;
 }
 

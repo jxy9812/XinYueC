@@ -85,10 +85,8 @@ XBarSet* XBarSet_create_ex_2(XMemoryType memory, const char* label);
 #define XBarSet_create(label)     XBarSet_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, label)
 
 /** @brief 析构入口（查表分派父类析构）。 */
-#define XBarSet_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /** @brief 删除堆上柱组（查表分派析构并释放内存）。 */
-#define XBarSet_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 标签（对标 QBarSet） ==================== */
 

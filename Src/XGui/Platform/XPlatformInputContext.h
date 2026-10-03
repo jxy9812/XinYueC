@@ -80,14 +80,14 @@ XVtable* XPlatformInputContext_class_init(void);
 
 /**
  * @brief      初始化空输入上下文（有效、无键盘、LTR、"C" 区域、无焦点对象）。
- * @param      self 待初始化对象；必须与 XPlatformInputContext_deinit_base 成对调用。
+ * @param      self 待初始化对象；必须与 XClassDeinit 成对调用。
  */
 void XPlatformInputContext_init(XPlatformInputContext* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建 XPlatformInputContext。
  * @return     新对象指针；失败返回 NULL，调用方用
- *             XPlatformInputContext_delete_base 释放。
+ *             XClassDelete 释放。
  */
 #define XPlatformInputContext_create() \
     XPlatformInputContext_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
@@ -100,9 +100,7 @@ void XPlatformInputContext_init(XPlatformInputContext* self);
 XPlatformInputContext* XPlatformInputContext_create_ex(XMemoryType memory);
 
 /** @brief 通过 XClass 虚表释放 XPlatformInputContext 资源（栈/外部存储对象使用）。 */
-#define XPlatformInputContext_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XPlatformInputContext 对象。 */
-#define XPlatformInputContext_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 能力与有效性（对标 QPlatformInputContext） ==================== */
 
@@ -263,7 +261,7 @@ void XPlatformInputContext_emitInputPanelVisibleChanged(XPlatformInputContext* s
 /**
  * @brief      返回当前区域语言。
  * @return     新建 XString（IETF 语言标签，默认 "C"）；调用方用
- *             XString_delete_base 释放。
+ *             XClassDelete 释放。
  */
 XString* XPlatformInputContext_locale(const XPlatformInputContext* self);
 

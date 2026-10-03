@@ -58,8 +58,6 @@ void XHistoryState_init(XHistoryState* state);
  */
 void XHistoryState_init_ex(XHistoryState* state, XHistoryState_HistoryType type, XState* parent);
 
-#define XHistoryState_delete_base XAbstractState_delete_base
-#define XHistoryState_deinit_base XAbstractState_deinit_base
 
 /**
  * @brief 获取无历史配置时使用的默认转换。

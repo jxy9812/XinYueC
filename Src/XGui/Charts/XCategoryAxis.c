@@ -60,7 +60,7 @@ int XCategoryAxis_append_2(XCategoryAxis* self, const char* label)
     tmp = XString_create_utf8(label);
     if (!tmp) return -1;
     idx = XCategoryAxis_append(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return idx;
 }
 
@@ -125,14 +125,14 @@ void XCategoryAxis_deinit_impl(XCategoryAxis* self)
     if (self->m_categories) {
         for (i = 0; i < self->m_count; ++i) {
             if (self->m_categories[i]) {
-                XString_delete_base(self->m_categories[i]);
+                XClassDelete(self->m_categories[i]);
                 self->m_categories[i] = NULL;
             }
         }
         XFree_System(self->m_categories);
         self->m_categories = NULL;
     }
-    XAbstractAxis_deinit_base(&self->m_base);
+    XClassDeinit(&self->m_base);
 }
 
 #endif /* XCHARTS_ON */

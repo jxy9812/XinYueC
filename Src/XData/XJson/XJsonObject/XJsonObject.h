@@ -252,14 +252,12 @@ XJsonObject* XJsonObject_fromVariantHash(const XVariantHashMap* hash);
 #define XJsonObject_keys_base					XMap_keys_base
 /**
 * @brief 反初始化XJsonObject（基础接口，释放内部资源，不释放实例本身）
-* @details 直接调用XMap_deinit_base
+* @details 直接调用XClassDeinit
 */
-#define XJsonObject_deinit_base				    XMap_deinit_base	
 /**
 * @brief 销毁XJsonObject（基础接口，释放内部资源及实例本身）
-* @details 直接调用XMap_delete_base
+* @details 直接调用XClassDelete
 */
-#define XJsonObject_delete_base				    XMap_delete_base	
 /**
 * @brief 清空XJsonObject的所有键值对（保留实例）
 * @details 直接调用XMap_clear_base

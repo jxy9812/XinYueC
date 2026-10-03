@@ -13,7 +13,7 @@ XSimpleOOXmlFile* XSimpleOOXmlFile_create(XAbstractOOXmlFile_CreateFlag flag) {
 }
 void XSimpleOOXmlFile_delete(XSimpleOOXmlFile* self) {
     if (!self) return;
-    if (self->m_xmlData) XString_delete_base(self->m_xmlData);
+    if (self->m_xmlData) XClassDelete(self->m_xmlData);
     XAbstractOOXmlFile_deinit(&self->m_base); XFree_System(self);
 }
 void XSimpleOOXmlFile_setXmlData(XSimpleOOXmlFile* self, const XString* data) {
@@ -60,14 +60,14 @@ bool XSimpleOOXmlFile_saveToXmlFile(XSimpleOOXmlFile* self, const XString* fileP
     if (!XSimpleOOXmlFile_saveToXmlData(self, &data, &length)) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         XFree_System(data);
         return false;
     }
     bool result = length == 0 || XIODevice_write_1((XIODevice*)file,
         (const char*)data, (int64_t)length) == (int64_t)length;
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     XFree_System(data);
     return result;
 }
@@ -82,14 +82,14 @@ bool XSimpleOOXmlFile_loadFromXmlFile(XSimpleOOXmlFile* self, const XString* fil
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* allData = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     bool result = allData && XSimpleOOXmlFile_loadFromXmlData(self,
         XByteArray_data(allData), XByteArray_size_base((XContainer*)allData));
-    if (allData) XByteArray_delete_base(allData);
+    if (allData) XClassDelete(allData);
     return result;
 }

@@ -43,7 +43,7 @@ void XUdpSocket_init(XUdpSocket* sock);
 
 /**
  * @brief 创建 XUdpSocket 实例。
- * @return 新分配的实例，需调用 XUdpSocket_delete_base() 释放
+ * @return 新分配的实例，需调用 XClassDelete() 释放
  */
 XUdpSocket* XUdpSocket_create_ex(XMemoryType memory);
 

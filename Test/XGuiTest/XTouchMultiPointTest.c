@@ -204,7 +204,7 @@ int XTouchMultiPointTest_run(void)
                   "多点负载 setPoints/points 一致");
         tp_expect(ev->m_position.x == 100,
                   "多点负载主点同步 points[0]");
-        XEvent_delete_base((XEvent*)ev);
+        XClassDelete((XEvent*)ev);
     }
 
     /* 3. XTouchEvent 生命周期：setPoints/points/clone/deinit 无泄漏。 */
@@ -233,14 +233,14 @@ int XTouchMultiPointTest_run(void)
                       ((const XTouchEvent*)copy)->m_pointCount == 2 &&
                       rd2[0].m_id == 9,
                       "clone 深拷贝触点列表");
-                XEvent_delete_base(copy);
+                XClassDelete(copy);
             }
-        XEvent_delete_base((XEvent*)ev);
+        XClassDelete((XEvent*)ev);
     }
 
-    XWidget_deinit_base(&sinkB.m_base);
-    XWidget_deinit_base(&sinkA.m_base);
-    XWidget_deinit_base(&top);
+    XClassDeinit(&sinkB.m_base);
+    XClassDeinit(&sinkA.m_base);
+    XClassDeinit(&top);
     fprintf(stderr, "[TP] failures=%d\n", tp_failures);
     return tp_failures;
 }

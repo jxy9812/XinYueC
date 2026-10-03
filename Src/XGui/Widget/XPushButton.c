@@ -147,7 +147,7 @@ static XSize pushbutton_computeSizeHint(const XPushButton* self)
         if (h < XPainter_textHeight(&font))
             h = XPainter_textHeight(&font);
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     if (self->m_menu)
         w += 12; /* PM_MenuButtonIndicator */
     w += 6 + 4; /* PM_ButtonMargin + PM_DefaultFrameWidth * 2 */
@@ -541,7 +541,7 @@ xpb_style_label:
         }
 #endif /* XPAINTER_TEXTLAYOUT_ON */
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     if (self->m_menu && rect.width >= 12 && rect.height >= 7) {
         int arrowX = rect.x + rect.width - 9;
         int arrowY = rect.y + (rect.height / 2) - 2;

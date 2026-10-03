@@ -164,11 +164,11 @@ static void deleteBuffers(XDeviceSerialPortContext* context)
 {
     if (!context) return;
     if (context->m_readBuffer) {
-        XRingBuffer_delete_base((XClass*)context->m_readBuffer);
+        XClassDelete((XClass*)context->m_readBuffer);
         context->m_readBuffer = NULL;
     }
     if (context->m_writeBuffer) {
-        XRingBuffer_delete_base((XClass*)context->m_writeBuffer);
+        XClassDelete((XClass*)context->m_writeBuffer);
         context->m_writeBuffer = NULL;
     }
 }
@@ -407,7 +407,7 @@ static bool getPlatformInt64(XDeviceSerialPortContext* context, uint32_t propert
     XVariant_init(&value, NULL, 0, XVariantType_NULL);
     ok = XDeviceSerialPort_platformGetProperty(context->m_base.m_fd, property, &value);
     if (ok) *result = XVariant_toInt64(&value);
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
     return ok;
 }
 
@@ -498,7 +498,7 @@ static bool VXDeviceSerialPort_control(XDevice* self, XDeviceContext* handle,
             if (VXDeviceSerialPort_getProperty(self, handle,
                     XDeviceSerialPortProperty_BytesAvailable, &value))
                 ready = XVariant_toInt64(&value) > 0;
-            XVariant_deinit_base((XClass*)&value);
+            XClassDeinit((XClass*)&value);
             memcpy(out->data, &ready, sizeof(ready));
             XVarList_start(out);
         }

@@ -86,14 +86,14 @@ bool XToolTip_isVisible(void);
 /**
  * @brief      获取当前提示文本的拷贝（对标 QToolTip::text）。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；未显示或无文本时返回 NULL。
+ *             XClassDelete；未显示或无文本时返回 NULL。
  */
 XString* XToolTip_text(void);
 
 /**
  * @brief      获取当前提示字体副本（对标 QToolTip::font）。
  * @return     XFont 值副本（含深拷贝资源），调用方使用后必须
- *             XFont_deinit_base 释放。
+ *             XClassDeinit 释放。
  */
 XFont XToolTip_font(void);
 

@@ -122,7 +122,7 @@ void XHrTimerTest()
         XPrintf("9. No extra callbacks fired after removal.\n");
 
         // 10. 清理资源
-        XClass_delete_base(timer_group);
+        XClassDelete(timer_group);
         //XDelete(timer_group);
         XPrintf("10. All tests passed! Cleanup done.\n");
     }

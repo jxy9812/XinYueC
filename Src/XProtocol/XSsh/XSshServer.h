@@ -67,10 +67,8 @@ typedef struct XSshServer {
 XVtable* XSshServer_class_init(void);
 /** @brief 初始化 SSH 服务器对象。 */
 void XSshServer_init(XSshServer* self);
-/** @brief 创建 SSH 服务器；销毁时使用 XSshServer_delete_base 释放。 */
+/** @brief 创建 SSH 服务器；销毁时使用 XClassDelete 释放。 */
 XSshServer* XSshServer_create_ex(XMemoryType memory);
-#define XSshServer_deinit_base XClass_deinit_base
-#define XSshServer_delete_base XClass_delete_base
 #define XSshServer_deleteLater XObject_deleteLater
 
 /**

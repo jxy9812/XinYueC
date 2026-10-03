@@ -518,7 +518,7 @@ static void VXAbstractSpinBox_copy(XAbstractSpinBox* self,
     self->m_cleared = other->m_cleared;
     self->m_wheelDeltaRemainder = other->m_wheelDeltaRemainder;
     if (self->m_specialValueText) {
-        XString_delete_base(self->m_specialValueText);
+        XClassDelete(self->m_specialValueText);
         self->m_specialValueText = NULL;
     }
     if (other->m_specialValueText)
@@ -526,7 +526,7 @@ static void VXAbstractSpinBox_copy(XAbstractSpinBox* self,
             XString_create_copy(other->m_specialValueText);
     /* 编辑框不可复制：重建默认编辑框（父控件指针指向自身）。 */
     if (self->m_lineEdit)
-        XLineEdit_delete_base(self->m_lineEdit);
+        XClassDelete(self->m_lineEdit);
     self->m_lineEdit = spinbox_createDefaultLineEdit(self);
 }
 
@@ -540,11 +540,11 @@ static void VXAbstractSpinBox_move(XAbstractSpinBox* self,
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                (XWidget*)other);
     if (self->m_lineEdit)
-        XLineEdit_delete_base(self->m_lineEdit);
+        XClassDelete(self->m_lineEdit);
     self->m_lineEdit = other->m_lineEdit;
     other->m_lineEdit = NULL;
     if (self->m_specialValueText) {
-        XString_delete_base(self->m_specialValueText);
+        XClassDelete(self->m_specialValueText);
         self->m_specialValueText = NULL;
     }
     self->m_specialValueText = other->m_specialValueText;
@@ -575,10 +575,10 @@ static void VXAbstractSpinBox_deinit(XClass* obj)
     XAbstractSpinBox* self = (XAbstractSpinBox*)obj;
     if (!self) return;
     if (self->m_lineEdit)
-        XLineEdit_delete_base(self->m_lineEdit);
+        XClassDelete(self->m_lineEdit);
     self->m_lineEdit = NULL;
     if (self->m_specialValueText) {
-        XString_delete_base(self->m_specialValueText);
+        XClassDelete(self->m_specialValueText);
         self->m_specialValueText = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)obj);

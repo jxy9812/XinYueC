@@ -121,8 +121,6 @@ XVtable* XDir_class_init(void);
  * 构造与析构（继承自 XClass）
  * ============================================================================ */
 
-#define XDir_delete_base    XClass_delete_base
-#define XDir_deinit_base    XClass_deinit_base
 
 /**
  * @brief 创建一个指向当前目录的 XDir 对象
@@ -298,7 +296,7 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
  * @param dir XDir 对象指针
  * @param filters 过滤器标志，使用 XDir_NoFilter 表示使用默认过滤器
  * @param sort 排序标志，使用 XDir_NoSort 表示使用默认排序
- * @return XFileInfo 数组指针（需要调用者释放，使用 XFileInfo_delete_base 释放每个元素）
+ * @return XFileInfo 数组指针（需要调用者释放，使用 XClassDelete 释放每个元素）
  */
 XFileInfoList* XDir_entryInfoList_1(const XDir* dir, XDirFilters filters, XDirSortFlags sort);
 

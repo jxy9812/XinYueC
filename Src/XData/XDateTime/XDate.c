@@ -361,7 +361,7 @@ void XDate_setVariant(XVariant* variant, const XDate* date)
     if (variant->m_type != XVariantType_Date || !variant->m_data ||
         variant->m_dataSize != sizeof(XDate)) {
         if (variant->m_data)
-            XVariant_deinit_base(variant);
+            XClassDeinit(variant);
         variant->m_data = XMalloc_System(sizeof(XDate));
         if (!variant->m_data)
             return;

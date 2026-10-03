@@ -71,7 +71,7 @@ void XModbusServer_init(XModbusServer* server)
     if (server->m_options) {
         XContainerSetDataCopyMethod(server->m_options, XClass_copy_base);
         XContainerSetDataMoveMethod(server->m_options, XClass_move_base);
-        XContainerSetDataDeinitMethod(server->m_options, XVariant_deinit_base);
+        XContainerSetDataDeinitMethod(server->m_options, XClass_deinit_base);
     }
 }
 
@@ -131,7 +131,7 @@ bool XModbusServer_data2(const XModbusServer* server, XModbusRegisterType table,
         *value = XModbusDataUnit_value(unit, 0);
     }
     
-    XModbusDataUnit_delete_base(unit);
+    XClassDelete(unit);
     return result;
 }
 
@@ -153,7 +153,7 @@ bool XModbusServer_setData2(XModbusServer* server, XModbusRegisterType table,
     XModbusDataUnit_setValue(unit, 0, value);
     bool result = XModbusServer_writeData_base(server, unit);
     
-    XModbusDataUnit_delete_base(unit);
+    XClassDelete(unit);
     return result;
 }
 
@@ -290,7 +290,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         if (!XModbusServer_readData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
@@ -310,7 +310,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XByteArray_push_back_1(respData, coilByte);
         }
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -333,7 +333,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         if (!XModbusServer_readData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
@@ -353,7 +353,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XByteArray_push_back_1(respData, inputByte);
         }
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -376,7 +376,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         if (!XModbusServer_readData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
@@ -394,7 +394,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XByteArray_push_back_2(respData, regBytes, 2);
         }
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -417,7 +417,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         if (!XModbusServer_readData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
@@ -434,7 +434,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XByteArray_push_back_2(respData, regBytes, 2);
         }
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -459,14 +459,14 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         XModbusDataUnit_setValue(unit, 0, (value == 0xFF00) ? 1 : 0);
 
         if (!XModbusServer_writeData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XModbusPdu_setData((XModbusPdu*)response, data, 4);
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -487,14 +487,14 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         XModbusDataUnit_setValue(unit, 0, value);
 
         if (!XModbusServer_writeData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XModbusPdu_setData((XModbusPdu*)response, data, 4);
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -517,7 +517,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             }
         }
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
 
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XModbusPdu_setData((XModbusPdu*)response, &status, 1);
@@ -559,7 +559,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         break;
 
         default:
-            XModbusResponse_delete_base(response);
+            XClassDelete(response);
             return createExceptionResponse(code, XModbusPdu_IllegalFunction);
         }
         return response;
@@ -624,7 +624,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         if (!XModbusServer_writeData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
@@ -636,7 +636,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         writeUint16ToData(respBytes, 2, quantity);
         XByteArray_push_back_2(respData, respBytes, 4);
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -669,7 +669,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         if (!XModbusServer_writeData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
@@ -681,7 +681,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         writeUint16ToData(respBytes, 2, quantity);
         XByteArray_push_back_2(respData, respBytes, 4);
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -734,7 +734,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         if (!XModbusServer_readData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
@@ -744,14 +744,14 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         XModbusDataUnit_setValue(unit, 0, newValue);
 
         if (!XModbusServer_writeData_base(server, unit)) {
-            XModbusDataUnit_delete_base(unit);
+            XClassDelete(unit);
             return createExceptionResponse(code, XModbusPdu_ServerDeviceFailure);
         }
 
         XModbusResponse* response = XModbusResponse_create_with_code(code);
         XModbusPdu_setData((XModbusPdu*)response, data, 8);
 
-        XModbusDataUnit_delete_base(unit);
+        XClassDelete(unit);
         return response;
     }
 
@@ -792,10 +792,10 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             }
 
             if (!XModbusServer_writeData_base(server, writeUnit)) {
-                XModbusDataUnit_delete_base(writeUnit);
+                XClassDelete(writeUnit);
                 return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
             }
-            XModbusDataUnit_delete_base(writeUnit);
+            XClassDelete(writeUnit);
         }
 
         // 执行读取
@@ -805,7 +805,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
         }
 
         if (!XModbusServer_readData_base(server, readUnit)) {
-            XModbusDataUnit_delete_base(readUnit);
+            XClassDelete(readUnit);
             return createExceptionResponse(code, XModbusPdu_IllegalDataAddress);
         }
 
@@ -822,7 +822,7 @@ static XModbusResponse* VXModbusServer_processRequest(XModbusServer* server, con
             XByteArray_push_back_2(respData, regBytes, 2);
         }
 
-        XModbusDataUnit_delete_base(readUnit);
+        XClassDelete(readUnit);
         return response;
     }
 
@@ -981,21 +981,21 @@ static bool VXModbusServer_setMap(XModbusServer* server, XModbusDataUnitMap* map
     if (type == XFuncParamType_Copy)
     {
         if (server->m_dataMap)
-            XCopy(server->m_dataMap, map);
+            XClassCopy(server->m_dataMap, map);
         else
             server->m_dataMap = XMap_create_copy(map);
     }
     else  if (type == XFuncParamType_Move)
     {
         if (server->m_dataMap)
-            XMove(server->m_dataMap, map);
+            XClassMove(server->m_dataMap, map);
         else
             server->m_dataMap = XMap_create_move(map);
     }
     else  if (type == XFuncParamType_Ref)
     {
         if (server->m_dataMap)
-            XModbusDataUnitMap_delete_base(server->m_dataMap);
+            XClassDelete(server->m_dataMap);
         server->m_dataMap = map;
     }
     return server->m_dataMap != NULL;
@@ -1031,7 +1031,7 @@ static bool VXModbusServer_setValue(XModbusServer* server, int option,XVariant* 
     // 检查是否已存在
     XVariant* existing = (XVariant*)XMapBase_value_base(server->m_options, &option);
     if (existing ) {
-        XVariant_delete_base(existing);
+        XClassDelete(existing);
     }
     
     // 插入新值
@@ -1048,13 +1048,13 @@ static void VXModbusServer_deinit(XModbusServer* server)
     
     // 释放数据映射表
     if (server->m_dataMap) {
-        XModbusDataUnitMap_delete_base(server->m_dataMap);
+        XClassDelete(server->m_dataMap);
         server->m_dataMap = NULL;
     }
     
     // 释放选项映射表
     if (server->m_options) {
-        XMapBase_delete_base(server->m_options);
+        XClassDelete(server->m_options);
         server->m_options = NULL;
     }
     

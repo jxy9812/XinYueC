@@ -259,14 +259,14 @@ static void XLatin1StringViewTest_ToString(void)
     XLatin1StringView v = XLatin1StringView_create_cstr("Hello");
     XString* s = XLatin1StringView_toString(&v);
     XPrintf("  toString(): size=%zu (期望 5)\n", XString_length_base(s));
-    XString_delete_base(s);
+    XClassDelete(s);
 
     /* null view */
     {
         XLatin1StringView nv = XLatin1StringView_create();
         XString* ns = XLatin1StringView_toString(&nv);
         XPrintf("  toString(null view): isNull=%d (期望 1)\n", ns ? XString_isNull(ns) : 1);
-        XString_delete_base(ns);
+        XClassDelete(ns);
     }
 
     XPrintf("\n");

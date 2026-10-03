@@ -255,14 +255,12 @@ XGuiApplication* XGuiApplication_create_ex(XMemoryType memory, int argc, char** 
  * @param      argc 命令行参数个数。
  * @param      argv 命令行参数数组。
  * @note       必须先初始化 XCoreApplication 基类再套用本类虚表，本函数内部
- *             完成该顺序；释放时用 XGuiApplication_deinit_base。
+ *             完成该顺序；释放时用 XClassDeinit。
  */
 void XGuiApplication_init(XGuiApplication* app, int argc, char** argv);
 
 /** @brief 通过 XClass 虚表释放 XGuiApplication 资源（栈/外部存储对象使用）。 */
-#define XGuiApplication_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XGuiApplication 对象。 */
-#define XGuiApplication_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 应用元信息（对标 QGuiApplication） ==================== */
 
@@ -326,7 +324,7 @@ int64_t XGuiApplication_badgeNumber(void);
  * @brief      返回全部已登记窗口（对标 QGuiApplication::allWindows）。
  * @note       含子窗口；顺序按登记时间。
  * @return     新建的 XVector（元素为 XWindow* 借用指针），调用方用
- *             XVector_delete_base 释放；无窗口时返回空列表。
+ *             XClassDelete 释放；无窗口时返回空列表。
  */
 XVector* XGuiApplication_allWindows(void);
 
@@ -375,7 +373,7 @@ void XGuiApplication_setWindowIcon(const XIcon* icon);
 
 /**
  * @brief      获取应用窗口图标（对标 QGuiApplication::windowIcon）。
- * @return     新建 XIcon 堆拷贝；未设置返回 NULL，调用方用 XIcon_delete_base
+ * @return     新建 XIcon 堆拷贝；未设置返回 NULL，调用方用 XClassDelete
  *             释放。
  */
 XIcon* XGuiApplication_windowIcon(void);
@@ -517,7 +515,7 @@ void XGuiApplication_setFont(const XFont* font);
 
 /**
  * @brief      获取应用字体（对标 QGuiApplication::font）。
- * @return     新建 XFont 堆拷贝；未设置返回 NULL，调用方用 XFont_delete_base
+ * @return     新建 XFont 堆拷贝；未设置返回 NULL，调用方用 XClassDelete
  *             释放。
  */
 XFont* XGuiApplication_font(void);

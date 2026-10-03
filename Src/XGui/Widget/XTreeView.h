@@ -77,8 +77,6 @@ XTreeView* XTreeView_create_ex(XMemoryType memory, XWidget* parent,
                                XWidgetFlags flags);
 #define XTreeView_create(parent, flags) \
     XTreeView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
-#define XTreeView_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XTreeView_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 属性（对标 QTreeView） ==================== */
 

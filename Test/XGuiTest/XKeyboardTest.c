@@ -133,7 +133,7 @@ static const char* xkb_imeBuffer(const XVirtualKeyboard* kb)
     } else {
         s_buf[0] = '\0';
     }
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     return s_buf;
 }
 #endif /* XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON */
@@ -464,7 +464,7 @@ static int xkb_preeditEq(const XVirtualKeyboardInputContext* ctx,
     int ok = (expect && expect[0] == '\0')
                  ? (u == NULL || u[0] == '\0')
                  : (u != NULL && strcmp(u, expect) == 0);
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     return ok;
 }
 #endif /* XVIRTUALKEYBOARD_ON */
@@ -807,7 +807,7 @@ bool XKeyboardTest_runAll(void)
         XObject_disconnect_1((XObject*)edit,
                              (size_t)XLineEdit_returnPressed_signal(NULL),
                              (XObject*)edit, xkb_returnPressedSlot);
-        XLineEdit_delete_base(edit);
+        XClassDelete(edit);
         xkb_expect(XVirtualKeyboard_textArea(kb) == NULL,
                    "目标销毁后 m_target 自动解绑");
     }
@@ -835,7 +835,7 @@ bool XKeyboardTest_runAll(void)
                          (size_t)XVirtualKeyboard_buttonActivated_signal(NULL, 0),
                          (XObject*)kb, xkb_activatedSlot);
 
-    XVirtualKeyboard_delete_base(kb);
+    XClassDelete(kb);
 
 #if XKEYBOARD_IME_ON
     /* ================================================================
@@ -1157,8 +1157,8 @@ bool XKeyboardTest_runAll(void)
                    "User1 槽位仍为拼音表（槽位占用约定，不恢复原表）");
 
         XVirtualKeyboard_setTextArea(kb2, NULL);
-        XLineEdit_delete_base(edit2);
-        XVirtualKeyboard_delete_base(kb2);
+        XClassDelete(edit2);
+        XClassDelete(kb2);
     }
 #else
     /* 无编辑控件适配：仅验证 IME 开关与布局装载。 */
@@ -1173,7 +1173,7 @@ bool XKeyboardTest_runAll(void)
         xkb_expect(XVirtualKeyboard_setImeEnabled(kb2, false) &&
                        !XVirtualKeyboard_imeEnabled(kb2),
                    "IME 关闭");
-        XVirtualKeyboard_delete_base(kb2);
+        XClassDelete(kb2);
     }
 #endif /* XLINEEDIT_ON && XVIRTUALKEYBOARD_ON */
 
@@ -1820,10 +1820,10 @@ bool XKeyboardTest_runAll(void)
 
             XVirtualKeyboard_closePopup(kg);
             XVirtualKeyboard_setParent(kg, NULL, 0);
-            XLineEdit_delete_base(ea);
-            XLineEdit_delete_base(eb);
-            XWidget_delete_base(plain);
-            XVirtualKeyboard_delete_base(kg);
+            XClassDelete(ea);
+            XClassDelete(eb);
+            XClassDelete(plain);
+            XClassDelete(kg);
         }
 
         /* ---- ⑦.1b 按下位置驱动（自动弹收主判据，标准触摸 UX；
@@ -1933,7 +1933,7 @@ bool XKeyboardTest_runAll(void)
             XVirtualKeyboard_closePopup(kp);
             XVirtualKeyboard_setAutoPopup(kp, false);
             XWidget_setParent((XWidget*)kp, NULL, 0);
-            XWidget_delete_base(win);
+            XClassDelete(win);
         }
 
         /* ---- ⑦.2 hints→布局映射表驱动（Keyboard.qml:42-49 优先级；
@@ -2048,8 +2048,8 @@ bool XKeyboardTest_runAll(void)
             XVirtualKeyboard_closePopup(kh);
             XWidget_setInputMethodHints((XWidget*)eh, (XInputMethodHints)0);
             XVirtualKeyboard_setParent(kh, NULL, 0);
-            XLineEdit_delete_base(eh);
-            XVirtualKeyboard_delete_base(kh);
+            XClassDelete(eh);
+            XClassDelete(kh);
         }
 
         /* ---- ⑦.3 shift/自动大写/大小写锁（shifthandler.cpp:197-306
@@ -2126,8 +2126,8 @@ bool XKeyboardTest_runAll(void)
                 XStyleHints_setMouseDoubleClickInterval(styleHints, savedDbl);
             XVirtualKeyboard_closePopup(ks);
             XVirtualKeyboard_setParent(ks, NULL, 0);
-            XLineEdit_delete_base(es);
-            XVirtualKeyboard_delete_base(ks);
+            XClassDelete(es);
+            XClassDelete(ks);
         }
 
         /* ---- ⑦.4 长按重复（重复从面板 400/100ms 移入 engine
@@ -2179,8 +2179,8 @@ bool XKeyboardTest_runAll(void)
             }
             XVirtualKeyboard_closePopup(kr);
             XVirtualKeyboard_setParent(kr, NULL, 0);
-            XLineEdit_delete_base(er);
-            XVirtualKeyboard_delete_base(kr);
+            XClassDelete(er);
+            XClassDelete(kr);
         }
 
         /* ---- ⑦.5 altKeys 长按弹层（alternativeKeys 数据 + 长按
@@ -2210,8 +2210,8 @@ bool XKeyboardTest_runAll(void)
                        "定时器分离）");
             XVirtualKeyboard_closePopup(ka);
             XVirtualKeyboard_setParent(ka, NULL, 0);
-            XLineEdit_delete_base(ea2);
-            XVirtualKeyboard_delete_base(ka);
+            XClassDelete(ea2);
+            XClassDelete(ka);
         }
 
         /* ---- ⑦.6 closeOnReturn（Settings 生效子集）：非 MultiLine
@@ -2247,8 +2247,8 @@ bool XKeyboardTest_runAll(void)
             XWidget_setInputMethodHints((XWidget*)ec, (XInputMethodHints)0);
             XVirtualKeyboard_closePopup(kc);
             XVirtualKeyboard_setParent(kc, NULL, 0);
-            XLineEdit_delete_base(ec);
-            XVirtualKeyboard_delete_base(kc);
+            XClassDelete(ec);
+            XClassDelete(kc);
         }
 
         /* ---- ⑦.7 commit/keyEvent 落地契约（评审#5 定型）：公共信
@@ -2288,8 +2288,8 @@ bool XKeyboardTest_runAll(void)
             xkb_expect(strcmp(XLineEdit_text(eu), "OKk") == 0,
                        "closePopup 断开：commitRequested 无人消费丢弃");
             XVirtualKeyboard_setParent(ku, NULL, 0);
-            XLineEdit_delete_base(eu);
-            XVirtualKeyboard_delete_base(ku);
+            XClassDelete(eu);
+            XClassDelete(ku);
         }
     }
 #endif /* XVIRTUALKEYBOARD_ON */

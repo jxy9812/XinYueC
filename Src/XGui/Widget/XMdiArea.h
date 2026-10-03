@@ -111,8 +111,6 @@ void* XMdiSubWindow_windowStateChanged_signal(XMdiSubWindow* self,
 
 XMdiSubWindow* XMdiSubWindow_create_ex(XMemoryType memory, XWidget* parent,
                                        XWidgetFlags flags);
-#define XMdiSubWindow_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XMdiSubWindow_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief XMdi子Windowset控件（对标 Qt 同名接口）。
  * @param self 目标控件指针。
@@ -259,8 +257,6 @@ void XMdiArea_init(XMdiArea* self, XWidget* parent, XWidgetFlags flags);
  */
 XMdiArea* XMdiArea_create_ex(XMemoryType memory, XWidget* parent,
                              XWidgetFlags flags);
-#define XMdiArea_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XMdiArea_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      添加子窗口。

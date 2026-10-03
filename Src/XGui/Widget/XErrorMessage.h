@@ -46,7 +46,6 @@ void XErrorMessage_init(XErrorMessage* self, XWidget* parent, XWidgetFlags flags
  * @return 返回对象指针；无效时返回 NULL。
  */
 XErrorMessage* XErrorMessage_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XErrorMessage_delete_base(self) XDialog_delete_base((XDialog*)(self))
 
 /** @brief XError消息show消息（对标 Qt 同名接口）。
  * @param self 目标控件指针。

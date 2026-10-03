@@ -94,10 +94,8 @@ XTableView* XTableView_create_ex(XMemoryType memory, XWidget* parent,
     XTableView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 
 /** @brief 析构入口（查表分派父类析构）。 */
-#define XTableView_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /** @brief 删除堆上视图（查表分派析构并释放内存）。 */
-#define XTableView_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 尺寸（对标 QTableView） ==================== */
 

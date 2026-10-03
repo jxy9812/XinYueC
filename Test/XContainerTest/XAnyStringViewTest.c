@@ -108,7 +108,7 @@ static void XAnyStringViewTest_Create(void)
         XAnyStringView v = XAnyStringView_create_string(s);
         XPrintf("  create_string('XString'): size=%lld (期望 7)\n",
             (long long)XAnyStringView_size(&v));
-        XString_delete_base(s);
+        XClassDelete(s);
     }
 
     XPrintf("\n");
@@ -287,7 +287,7 @@ static void XAnyStringViewTest_ToString(void)
         XAnyStringView v = XAnyStringView_create_utf8("Hello", 5);
         XString* s = XAnyStringView_toString(&v);
         XPrintf("  utf8 toString(): size=%zu (期望 5)\n", XString_length_base(s));
-        XString_delete_base(s);
+        XClassDelete(s);
     }
 
     /* Latin-1 */
@@ -296,7 +296,7 @@ static void XAnyStringViewTest_ToString(void)
         XAnyStringView v = XAnyStringView_create_latin1(&lv);
         XString* s = XAnyStringView_toString(&v);
         XPrintf("  latin1 toString(): size=%zu (期望 5)\n", XString_length_base(s));
-        XString_delete_base(s);
+        XClassDelete(s);
     }
 
     /* UTF-16 */
@@ -305,7 +305,7 @@ static void XAnyStringViewTest_ToString(void)
         XAnyStringView v = XAnyStringView_create_utf16(u16, 5);
         XString* s = XAnyStringView_toString(&v);
         XPrintf("  utf16 toString(): size=%zu (期望 5)\n", XString_length_base(s));
-        XString_delete_base(s);
+        XClassDelete(s);
     }
 
     /* null view */
@@ -313,7 +313,7 @@ static void XAnyStringViewTest_ToString(void)
         XAnyStringView nv = XAnyStringView_create();
         XString* ns = XAnyStringView_toString(&nv);
         XPrintf("  toString(null view): isNull=%d (期望 1)\n", ns ? XString_isNull(ns) : 1);
-        XString_delete_base(ns);
+        XClassDelete(ns);
     }
 
     XPrintf("\n");

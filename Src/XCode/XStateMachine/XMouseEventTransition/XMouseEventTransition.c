@@ -66,7 +66,7 @@ static void VXMouseEventTransition_deinit(XMouseEventTransition* transition)
     if (!transition)
         return;
     if (transition->m_hitTestPath) {
-        XVector_delete_base((XClass*)transition->m_hitTestPath);
+        XClassDelete((XClass*)transition->m_hitTestPath);
         transition->m_hitTestPath = NULL;
     }
     XVtableGetFunc(XEventTransition_class_init(), EXClass_Deinit,
@@ -152,7 +152,7 @@ bool XMouseEventTransition_setHitTestPath(XMouseEventTransition* transition,
     XVector* copy = path ? XVector_create_copy(path) : XVector_Create(XPoint);
     if (!copy)
         return false;
-    XVector_delete_base((XClass*)transition->m_hitTestPath);
+    XClassDelete((XClass*)transition->m_hitTestPath);
     transition->m_hitTestPath = copy;
     return true;
 }

@@ -103,8 +103,6 @@ void XMqttStringPair_setValue(XMqttStringPair* pair, const char* v);
  */
 bool XMqttStringPair_equal(const XMqttStringPair* a, const XMqttStringPair* b);
 
-#define XMqttStringPair_deinit_base XClass_deinit_base
-#define XMqttStringPair_delete_base XClass_delete_base
 
 /* ---------- XMqttUserProperties ---------- */
 
@@ -120,7 +118,6 @@ typedef XVector XMqttUserProperties;
  */
 XMqttUserProperties* XMqttUserProperties_create(void);
 
-#define XMqttUserProperties_delete_base XVector_delete_base
 
 #ifdef __cplusplus
 }

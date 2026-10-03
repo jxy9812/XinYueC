@@ -95,11 +95,11 @@ static void VXESP8266_deinit(XESP8266Wifi* device)
     if(!device) return;
 
     if (device->m_ssid) {
-        XString_delete_base(device->m_ssid);
+        XClassDelete(device->m_ssid);
         device->m_ssid = NULL;
     }
     if (device->m_password) {
-        XString_delete_base(device->m_password);
+        XClassDelete(device->m_password);
         device->m_password = NULL;
     }
 
@@ -109,11 +109,11 @@ static void VXESP8266_deinit(XESP8266Wifi* device)
         device->m_connections[i].isServer = false;
         device->m_connections[i].remaining_recv_size = 0;
         if (device->m_connections[i].m_readBuffer) {
-            XQueueBase_delete_base(device->m_connections[i].m_readBuffer);
+            XClassDelete(device->m_connections[i].m_readBuffer);
             device->m_connections[i].m_readBuffer = NULL;
         }
         if (device->m_connections[i].m_writeBuffer) {
-            XQueueBase_delete_base(device->m_connections[i].m_writeBuffer);
+            XClassDelete(device->m_connections[i].m_writeBuffer);
             device->m_connections[i].m_writeBuffer = NULL;
         }
         memset(device->m_connections[i].ip, 0, sizeof(device->m_connections[i].ip));
@@ -518,7 +518,7 @@ XHostAddress* XESP8266Wifi_getLocalIP(XESP8266Wifi* device, int msecs) {
   /*  if (XATComm_sendCommand(base, "AT+CIFSR", XESP8266_Op_GetLocalIP, msecs)) {
         if (!XHostAddress_isNull(&device->m_localIP)) {
             XHostAddress* addr = XMalloc_System(sizeof(XHostAddress));
-            XHostAddress_init(addr); XCopy(addr, &device->m_localIP); return addr;
+            XHostAddress_init(addr); XClassCopy(addr, &device->m_localIP); return addr;
         }
     }*/
     // 2. WIFI GOT IP 后 AT+CIPSTA? 可能短暂返回 "busy p..."，在调用方
@@ -532,7 +532,7 @@ XHostAddress* XESP8266Wifi_getLocalIP(XESP8266Wifi* device, int msecs) {
             XHostAddress* addr = XMalloc_System(sizeof(XHostAddress));
             if (!addr) return NULL;
             XHostAddress_init(addr);
-            XCopy(addr, &device->m_localIP);
+            XClassCopy(addr, &device->m_localIP);
             return addr;
         }
         if (msecs < 0) break;

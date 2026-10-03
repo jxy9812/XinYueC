@@ -340,7 +340,7 @@ static bool dlg_str_eq_take(XString* s, const char* want)
     bool eq;
     if (!s) return want && want[0] == '\0';
     eq = (want != NULL) && (strcmp(xapi_u8(s), want) == 0);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     return eq;
 }
 
@@ -350,7 +350,7 @@ static XStringList* dlg_make_list1(const char* a)
     XStringList* list = XStringList_create();
     XString* s = a ? XString_create_utf8(a) : XString_create();
     if (list && s) XStringList_push_back_move_base((XVector*)list, s);
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     return list;
 }
 
@@ -361,10 +361,10 @@ static XStringList* dlg_make_list2(const char* a, const char* b)
     XString* s;
     s = a ? XString_create_utf8(a) : XString_create();
     if (list && s) XStringList_push_back_move_base((XVector*)list, s);
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     s = b ? XString_create_utf8(b) : XString_create();
     if (list && s) XStringList_push_back_move_base((XVector*)list, s);
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     return list;
 }
 
@@ -530,7 +530,7 @@ int xapi_dialogs_run(void)
                         !XDialog_isSizeGripEnabled(NULL),
                         "NULL 入参 getter 安全（文档化：result/isModal/isSizeGripEnabled(NULL) 返回 0/false）");
 
-            XDialog_delete_base(dlg);
+            XClassDelete(dlg);
         }
     }
 
@@ -593,7 +593,7 @@ int xapi_dialogs_run(void)
                         "buttonRole(非成员)==InvalidRole(-1)（对标 QDialogButtonBox::buttonRole）");
 
             /* ---- addButton(文本, 角色)：创建按钮 ---- */
-            XWidget_delete_base((XWidget*)custom2); /* 探针按钮即测即毁。 */
+            XClassDelete((XWidget*)custom2); /* 探针按钮即测即毁。 */
             custom2 = XDialogButtonBox_addButton_2(
                 box, "自定义帮助", XDialogButtonBoxRole_HelpRole);
             XAPI_EXPECT(custom2 != NULL,
@@ -726,11 +726,11 @@ int xapi_dialogs_run(void)
                         "clear() 后成员/标准位掩码全空（对标 QDialogButtonBox::clear；盒自建标准按钮由盒删除）");
 
             /* custom1 为调用方所有（摘父归还），即测即毁。 */
-            XWidget_delete_base((XWidget*)custom1);
-            XDialogButtonBox_delete_base(box);
+            XClassDelete((XWidget*)custom1);
+            XClassDelete(box);
             /* custom2 由 addButton_2 创建、归调用方（Qt 同口径），clear
              * 已摘父，此处释放。 */
-            XWidget_delete_base((XWidget*)custom2);
+            XClassDelete((XWidget*)custom2);
         }
     }
 
@@ -784,7 +784,7 @@ int xapi_dialogs_run(void)
                                    "提示") == 0,
                             "setWindowTitle→windowTitle 往返（对标 Qt）");
                 if (boxTitle)
-                    XString_delete_base((XClass*)boxTitle);
+                    XClassDelete((XClass*)boxTitle);
             }
             XMessageBox_setIcon(box, XMessageBoxIcon_Warning);
             XAPI_EXPECT(XMessageBox_icon(box) == XMessageBoxIcon_Warning,
@@ -936,7 +936,7 @@ int xapi_dialogs_run(void)
                 XMessageBox_setIconPixmap(box, NULL);
                 XAPI_EXPECT(XMessageBox_iconPixmap(box) == NULL,
                             "setIconPixmap(NULL) 清除位图（对标传 NULL 清空）");
-                XImage_deinit_base(&pixmap);
+                XClassDeinit(&pixmap);
             }
 
             /* ---- 文本格式/交互标志往返 ---- */
@@ -965,8 +965,8 @@ int xapi_dialogs_run(void)
              * 非阻塞 API 测试口径不直调（阻塞等待无输入源会挂起）。 */
 
             /* custom 经 removeButton 摘除、归调用方，即测即毁。 */
-            XWidget_delete_base(custom);
-            XMessageBox_delete_base(box);
+            XClassDelete(custom);
+            XClassDelete(box);
         }
     }
 
@@ -1038,7 +1038,7 @@ int xapi_dialogs_run(void)
             {
                 XString* t = XString_create_utf8("8080");
                 XInputDialog_setTextValue(input, t);
-                XString_delete_base((XClass*)t);
+                XClassDelete((XClass*)t);
             }
             XAPI_EXPECT(dlg_str_eq_take(XInputDialog_textValue(input),
                                         "8080"),
@@ -1049,7 +1049,7 @@ int xapi_dialogs_run(void)
             {
                 XString* t = XString_create_utf8("8080");
                 XInputDialog_setTextValue(input, t);
-                XString_delete_base((XClass*)t);
+                XClassDelete((XClass*)t);
             }
             XAPI_EXPECT(g_dlgSig.textValueChanged == 1,
                         "同值重设不重复发射 textValueChanged（本库口径：实际变化才发射；Qt 为无条件发射，见 notes）");
@@ -1103,20 +1103,20 @@ int xapi_dialogs_run(void)
                 XStringList* items = dlg_make_list2("HTTP", "SOCKS");
                 XStringList* got;
                 XInputDialog_setComboBoxItems(input, items);
-                XStringList_delete_base((XClass*)items); /* setter 深拷贝。 */
+                XClassDelete((XClass*)items); /* setter 深拷贝。 */
                 got = XInputDialog_comboBoxItems(input);
                 XAPI_EXPECT(dlg_list_count(got) == 2 &&
                             dlg_list_at_eq(got, 0, "HTTP") &&
                             dlg_list_at_eq(got, 1, "SOCKS"),
                             "setComboBoxItems 深拷贝两元素并按序回读（对标 QInputDialog::setComboBoxItems/comboBoxItems）");
-                if (got) XStringList_delete_base((XClass*)got);
+                if (got) XClassDelete((XClass*)got);
             }
 
             /* ---- 按钮/标签文本往返（副本 getter） ---- */
             {
                 XString* t = XString_create_utf8("请输入端口");
                 XInputDialog_setLabelText(input, t);
-                XString_delete_base((XClass*)t);
+                XClassDelete((XClass*)t);
             }
             XAPI_EXPECT(dlg_str_eq_take(XInputDialog_labelText(input),
                                         "请输入端口"),
@@ -1124,10 +1124,10 @@ int xapi_dialogs_run(void)
             {
                 XString* t = XString_create_utf8("走你");
                 XInputDialog_setOkButtonText(input, t);
-                XString_delete_base((XClass*)t);
+                XClassDelete((XClass*)t);
                 t = XString_create_utf8("算了");
                 XInputDialog_setCancelButtonText(input, t);
-                XString_delete_base((XClass*)t);
+                XClassDelete((XClass*)t);
             }
             XAPI_EXPECT(dlg_str_eq_take(XInputDialog_okButtonText(input),
                                         "走你") &&
@@ -1145,7 +1145,7 @@ int xapi_dialogs_run(void)
                 XInputDialog_textValueSelected_signal(input, t);
                 XInputDialog_intValueSelected_signal(input, 9);
                 XInputDialog_comboBoxTextChanged_signal(input, t);
-                XString_delete_base((XClass*)t);
+                XClassDelete((XClass*)t);
                 /* 信号函数直发冒烟：发射路径与 XObject_emitSignal 一致，
                  * 断言其可安全调用（无接收者也不崩溃）。 */
                 XAPI_EXPECT(1, "textValueSelected/intValueSelected/comboBoxTextChanged 手动触发可安全直发（头文件注明的测试口径）");
@@ -1159,7 +1159,7 @@ int xapi_dialogs_run(void)
                         XInputDialog_options(NULL) == 0,
                         "NULL 入参 getter 安全（文档化：inputMode/intValue/doubleValue/options(NULL) 返回默认）");
 
-            XInputDialog_delete_base(input);
+            XClassDelete(input);
         }
     }
 
@@ -1238,14 +1238,14 @@ int xapi_dialogs_run(void)
             {
                 XString* f = XString_create_utf8("Images (*.png *.jpg)");
                 XFileDialog_setNameFilter(file, f);
-                XString_delete_base((XClass*)f);
+                XClassDelete((XClass*)f);
             }
             {
                 XStringList* got = XFileDialog_nameFilters(file);
                 XAPI_EXPECT(dlg_list_count(got) == 1 &&
                             dlg_list_at_eq(got, 0, "Images (*.png *.jpg)"),
                             "setNameFilter 后 nameFilters 单元素回读（对标 QFileDialog::setNameFilter/nameFilters）");
-                if (got) XStringList_delete_base((XClass*)got);
+                if (got) XClassDelete((XClass*)got);
             }
             {
                 XStringList* filters = dlg_make_list2("C 源码 (*.c)",
@@ -1253,14 +1253,14 @@ int xapi_dialogs_run(void)
                 XStringList* got;
                 XString* sel;
                 XFileDialog_setNameFilters(file, filters);
-                XStringList_delete_base((XClass*)filters);
+                XClassDelete((XClass*)filters);
                 got = XFileDialog_nameFilters(file);
                 XAPI_EXPECT(dlg_list_count(got) == 2,
                             "setNameFilters 两元素回读（对标 QFileDialog::setNameFilters）");
-                if (got) XStringList_delete_base((XClass*)got);
+                if (got) XClassDelete((XClass*)got);
                 sel = XString_create_utf8("文本 (*.txt)");
                 XFileDialog_selectNameFilter(file, sel);
-                XString_delete_base((XClass*)sel);
+                XClassDelete((XClass*)sel);
                 XAPI_EXPECT(dlg_str_eq_take(
                                 XFileDialog_selectedNameFilter(file),
                                 "文本 (*.txt)"),
@@ -1271,7 +1271,7 @@ int xapi_dialogs_run(void)
             {
                 XString* d = XString_create_utf8("doc");
                 XFileDialog_setDirectory(file, d);
-                XString_delete_base((XClass*)d);
+                XClassDelete((XClass*)d);
             }
             XAPI_EXPECT(dlg_str_eq_take(XFileDialog_directory(file), "doc"),
                         "setDirectory→directory 往返（对标 QFileDialog::setDirectory/directory）");
@@ -1280,8 +1280,8 @@ int xapi_dialogs_run(void)
                 XString* b = XString_create_utf8("b.txt");
                 XFileDialog_selectFile(file, a);
                 XFileDialog_selectFile(file, b);
-                XString_delete_base((XClass*)a);
-                XString_delete_base((XClass*)b);
+                XClassDelete((XClass*)a);
+                XClassDelete((XClass*)b);
             }
             {
                 XStringList* sf = XFileDialog_selectedFiles(file);
@@ -1295,16 +1295,16 @@ int xapi_dialogs_run(void)
                     XStringList* urls = XFileDialog_selectedUrls(file);
                     XAPI_EXPECT(dlg_list_count(urls) == 2,
                                 "selectedUrls 与 selectedFiles 同数（对标 selectedUrls 由选中文件派生）");
-                    if (urls) XStringList_delete_base((XClass*)urls);
+                    if (urls) XClassDelete((XClass*)urls);
                 }
-                if (sf) XStringList_delete_base((XClass*)sf);
+                if (sf) XClassDelete((XClass*)sf);
             }
 
             /* ---- 默认后缀 / 标签文本 ---- */
             {
                 XString* s = XString_create_utf8("png");
                 XFileDialog_setDefaultSuffix(file, s);
-                XString_delete_base((XClass*)s);
+                XClassDelete((XClass*)s);
             }
             XAPI_EXPECT(dlg_str_eq_take(XFileDialog_defaultSuffix(file), "png"),
                         "setDefaultSuffix→defaultSuffix 往返（对标 QFileDialog::setDefaultSuffix）");
@@ -1312,7 +1312,7 @@ int xapi_dialogs_run(void)
                 XString* s = XString_create_utf8("文件名：");
                 XFileDialog_setLabelText(file, XFileDialogDialogLabel_FileName,
                                          s);
-                XString_delete_base((XClass*)s);
+                XClassDelete((XClass*)s);
             }
             XAPI_EXPECT(dlg_str_eq_take(
                             XFileDialog_labelText(
@@ -1327,7 +1327,7 @@ int xapi_dialogs_run(void)
             {
                 XString* s = XString_create_utf8("(*.cpp)");
                 XFileDialog_setFilter(file, s);
-                XString_delete_base((XClass*)s);
+                XClassDelete((XClass*)s);
             }
             XAPI_EXPECT(dlg_str_eq_take(XFileDialog_filter(file), "(*.cpp)"),
                         "setFilter→filter 往返（对标 Qt5 遗留 QFileDialog::setFilter/filter，本库保留）");
@@ -1336,13 +1336,13 @@ int xapi_dialogs_run(void)
                 XStringList* got;
                 XString* sel = XString_create_utf8("text/html");
                 XFileDialog_setMimeTypeFilters(file, mime);
-                XStringList_delete_base((XClass*)mime);
+                XClassDelete((XClass*)mime);
                 got = XFileDialog_mimeTypeFilters(file);
                 XAPI_EXPECT(dlg_list_count(got) == 2,
                             "setMimeTypeFilters 两元素回读（对标 QFileDialog::setMimeTypeFilters）");
-                if (got) XStringList_delete_base((XClass*)got);
+                if (got) XClassDelete((XClass*)got);
                 XFileDialog_selectMimeTypeFilter(file, sel);
-                XString_delete_base((XClass*)sel);
+                XClassDelete((XClass*)sel);
                 XAPI_EXPECT(dlg_str_eq_take(
                                 XFileDialog_selectedMimeTypeFilter(file),
                                 "text/html"),
@@ -1352,26 +1352,26 @@ int xapi_dialogs_run(void)
                 XStringList* history = dlg_make_list1("/tmp");
                 XStringList* got;
                 XFileDialog_setHistory(file, history);
-                XStringList_delete_base((XClass*)history);
+                XClassDelete((XClass*)history);
                 got = XFileDialog_history(file);
                 XAPI_EXPECT(dlg_list_count(got) == 1,
                             "setHistory→history 单元素回读（对标 QFileDialog::setHistory/history）");
-                if (got) XStringList_delete_base((XClass*)got);
+                if (got) XClassDelete((XClass*)got);
                 got = XFileDialog_sidebarUrls(file);
                 XAPI_EXPECT(got != NULL && dlg_list_count(got) == 0,
                             "sidebarUrls 默认空列表非 NULL（对标 QFileDialog::sidebarUrls 默认空）");
-                if (got) XStringList_delete_base((XClass*)got);
+                if (got) XClassDelete((XClass*)got);
                 got = XFileDialog_supportedSchemes(file);
                 XAPI_EXPECT(got != NULL && dlg_list_count(got) == 0,
                             "supportedSchemes 默认空列表非 NULL（对标 QFileDialog::supportedSchemes 默认空）");
-                if (got) XStringList_delete_base((XClass*)got);
+                if (got) XClassDelete((XClass*)got);
             }
 
             /* ---- 目录 URL / selectUrl ---- */
             {
                 XString* u = XString_create_utf8("file:///tmp");
                 XFileDialog_setDirectoryUrl(file, u);
-                XString_delete_base((XClass*)u);
+                XClassDelete((XClass*)u);
             }
             XAPI_EXPECT(dlg_str_eq_take(XFileDialog_directoryUrl(file),
                                         "file:///tmp"),
@@ -1379,14 +1379,14 @@ int xapi_dialogs_run(void)
             {
                 XString* u = XString_create_utf8("file:///tmp/x.c");
                 XFileDialog_selectUrl(file, u);
-                XString_delete_base((XClass*)u);
+                XClassDelete((XClass*)u);
             }
             {
                 XStringList* sf = XFileDialog_selectedFiles(file);
                 XAPI_EXPECT(dlg_list_count(sf) == 3 &&
                             dlg_list_at_eq(sf, 2, "file:///tmp/x.c"),
                             "selectUrl 追加记录为选中文件（对标 QFileDialog::selectUrl；头文件注明落地为 selectedFiles，前有 a/b.txt 累积）");
-                if (sf) XStringList_delete_base((XClass*)sf);
+                if (sf) XClassDelete((XClass*)sf);
             }
 
             /* ---- saveState/restoreState（Task 2.20 已知未实现项） ---- */
@@ -1396,7 +1396,7 @@ int xapi_dialogs_run(void)
                 XFileDialog_saveState(file, ba); /* 冒烟：当前输出空。 */
                 XAPI_EXPECT(!XFileDialog_restoreState(file, ba),
                             "restoreState 恒 false（对标 QFileDialog::restoreState 返回是否成功；头文件注明未实现恒 false，Task 2.20）");
-                XByteArray_delete_base((XClass*)ba);
+                XClassDelete((XClass*)ba);
             }
 #endif
 
@@ -1423,8 +1423,8 @@ int xapi_dialogs_run(void)
                 XFileDialog_currentChanged_signal(file, s);
                 XFileDialog_directoryEntered_signal(file, s);
                 XFileDialog_filterSelected_signal(file, s);
-                XString_delete_base((XClass*)s);
-                XStringList_delete_base((XClass*)ls);
+                XClassDelete((XClass*)s);
+                XClassDelete((XClass*)ls);
                 XAPI_EXPECT(g_dlgSig.fileSelected == 1 &&
                             g_dlgSig.filesSelected == 1 &&
                             g_dlgSig.currentChanged == 1 &&
@@ -1438,10 +1438,10 @@ int xapi_dialogs_run(void)
                         "nameFilters(NULL) 返回空列表非 NULL（文档化：无效时返回空列表，调用方可释放）");
             {
                 XStringList* got = XFileDialog_nameFilters(NULL);
-                if (got) XStringList_delete_base((XClass*)got);
+                if (got) XClassDelete((XClass*)got);
             }
 
-            XFileDialog_delete_base(file);
+            XClassDelete(file);
         }
     }
 
@@ -1571,9 +1571,9 @@ int xapi_dialogs_run(void)
                             "currentColor(NULL) 返回无效色（文档化：无效时返回无效 XColor）");
             }
 
-            XColorDialog_delete_base(color);
+            XClassDelete(color);
         }
-        XColorDialog_deinit_base(&plain); /* 栈实例反初始化。 */
+        XClassDeinit(&plain); /* 栈实例反初始化。 */
     }
 
     /* ================================================================
@@ -1663,19 +1663,19 @@ int xapi_dialogs_run(void)
                 XString* lt = XString_create_utf8("处理中");
                 XString* ct = XString_create_utf8("停止");
                 XProgressDialog_init_full(&pd2, lt, ct, 10, 20, NULL);
-                XString_delete_base((XClass*)lt);
-                XString_delete_base((XClass*)ct);
+                XClassDelete((XClass*)lt);
+                XClassDelete((XClass*)ct);
                 XAPI_EXPECT(XProgressDialog_minimum(&pd2) == 10 &&
                             XProgressDialog_maximum(&pd2) == 20,
                             "init_full(标签,取消文本,10,20) 设置范围（对标 QProgressDialog 完整参构造）");
-                XProgressDialog_deinit_base(&pd2);
+                XClassDeinit(&pd2);
             }
 
             /* ---- 标签文本往返 ---- */
             {
                 XString* t = XString_create_utf8("复制中...");
                 XProgressDialog_setLabelText(pd, t);
-                XString_delete_base((XClass*)t);
+                XClassDelete((XClass*)t);
             }
             XAPI_EXPECT(dlg_str_eq_take(XProgressDialog_labelText(pd),
                                         "复制中..."),
@@ -1691,7 +1691,7 @@ int xapi_dialogs_run(void)
                 {
                     XString* t = XString_create_utf8("自定义标签文本");
                     XProgressDialog_setLabelText(pd, t);
-                    XString_delete_base((XClass*)t);
+                    XClassDelete((XClass*)t);
                 }
                 XAPI_EXPECT(dlg_str_eq_take(XProgressDialog_labelText(pd),
                                             "自定义标签文本"),
@@ -1710,7 +1710,7 @@ int xapi_dialogs_run(void)
                 {
                     XString* t = XString_create_utf8("停止");
                     XProgressDialog_setCancelButtonText(pd, t);
-                    XString_delete_base((XClass*)t);
+                    XClassDelete((XClass*)t);
                 }
                 XAPI_EXPECT(strcmp(xapi_u8(
                                  XAbstractButton_text((XAbstractButton*)btn)),
@@ -1733,7 +1733,7 @@ int xapi_dialogs_run(void)
             XProgressBar_init(&bar, NULL, 0);
             XProgressDialog_setBar(pd, &bar);
             XProgressDialog_setBar(pd, NULL);
-            XProgressBar_deinit_base(&bar);
+            XClassDeinit(&bar);
             XAPI_EXPECT(1, "setBar 借用登记/清除冒烟通过（对标 QProgressDialog::setBar；本库无 getter 仅存储，头文件注明）");
 
             /* ---- forceShow ---- */
@@ -1753,7 +1753,7 @@ int xapi_dialogs_run(void)
                         XProgressDialog_minimumDuration(NULL) == 4000,
                         "NULL 入参 getter 安全（文档化：NULL 返回 Qt 默认值）");
 
-            XProgressDialog_delete_base(pd);
+            XClassDelete(pd);
         }
     }
 
@@ -1839,7 +1839,7 @@ int xapi_dialogs_run(void)
             wiz = XWizard_create(NULL, 0);
             if (!wiz) {
                 XAPI_EXPECT(0, "XWizard 堆构造成功");
-                XWizardPage_delete_base(p0); /* 无父堆页对象失败分支自释（对标 1755 行 XProgressDialog_delete_base 惯用法）。 */
+                XClassDelete(p0); /* 无父堆页对象失败分支自释（对标 1755 行 XClassDelete 惯用法）。 */
                 p0 = NULL;
             } else {
                 dlg_sig_reset();
@@ -1889,7 +1889,7 @@ int xapi_dialogs_run(void)
                     XAPI_EXPECT(XWizard_button(wiz,
                                                XWizardButton_CommitButton) == NULL,
                                 "setButton(NULL) 清除登记（头文件注明 NULL 恢复内建）");
-                    XWidget_delete_base((XWidget*)custom);
+                    XClassDelete((XWidget*)custom);
                 }
                 {
                     struct XAbstractButton* nextBtn =
@@ -2048,7 +2048,7 @@ int xapi_dialogs_run(void)
                     XWizard_setSideWidget(wiz, NULL);
                     XAPI_EXPECT(XWizard_sideWidget(wiz) == NULL,
                                 "setSideWidget(NULL) 清除（借用方自持生命周期）");
-                    XWidget_deinit_base(&side);
+                    XClassDeinit(&side);
                 }
                 XAPI_EXPECT(XWizard_titleFormat(wiz) == 0 &&
                             XWizard_subTitleFormat(wiz) == 0,
@@ -2077,7 +2077,7 @@ int xapi_dialogs_run(void)
                             !XWidget_isVisible((XWidget*)wiz),
                             "done(1) 设置结果码并隐藏（对标 QWizard::done 委托 QDialog::done）");
 
-                XWizard_delete_base(wiz); /* 页 p0..p3 已入向导子树，级联释放。 */
+                XClassDelete(wiz); /* 页 p0..p3 已入向导子树，级联释放。 */
                 wiz = NULL;
                 p0 = NULL;
                 p1 = NULL;

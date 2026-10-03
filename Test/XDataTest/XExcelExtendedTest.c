@@ -64,20 +64,6 @@
 
 #if XEXCEL_TEST_BASE_CAST_FIX
 
-#undef XString_deinit_base
-#define XString_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#undef XString_delete_base
-#define XString_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XByteArray_delete_base
-#define XByteArray_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XStringList_delete_base
-#define XStringList_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XFont_delete_base
-#define XFont_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XXmlStreamReader_delete_base
-#define XXmlStreamReader_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XXmlStreamWriter_delete_base
-#define XXmlStreamWriter_delete_base(self) XClass_delete_base((XClass*)(self))
 #undef XVector_size_base
 #define XVector_size_base(self) XContainer_size_base((const XContainer*)(self))
 
@@ -92,13 +78,13 @@ static const char* xexcel_asset_path(const char* name)
     XString_init(&candidate);
     XString_assign_utf8(&candidate, path);
     if (XFile_exists_static(&candidate)) {
-        XString_deinit_base(&candidate);
+        XClassDeinit(&candidate);
         return path;
     }
     snprintf(path, sizeof(path), "../assets/%s", name);
     XString_assign_utf8(&candidate, path);
     bool exists = XFile_exists_static(&candidate);
-    XString_deinit_base(&candidate);
+    XClassDeinit(&candidate);
     return exists ? path : "";
 }
 
@@ -162,11 +148,11 @@ static bool test_sax_boundaries(void)
     CHECK(XString_equals_utf8(&translatedFormula, "XFD1048576+$XFD$1048576",
               XChar_CaseSensitive),
           "共享公式偏移结果限制在 Excel 最大行列边界");
-    XString_deinit_base(&translatedFormula);
-    XString_deinit_base(sharedFormula);
-    XString_deinit_base(maxRef);
-    XString_deinit_base(badColumn);
-    XString_deinit_base(badRow);
+    XClassDeinit(&translatedFormula);
+    XClassDeinit(sharedFormula);
+    XClassDeinit(maxRef);
+    XClassDeinit(badColumn);
+    XClassDeinit(badRow);
 
     const char* sharedXml =
         "<sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
@@ -198,8 +184,8 @@ static bool test_sax_boundaries(void)
     CHECK(strcmp(result.value[0], "rich text") == 0, "共享字符串索引解析正确");
     CHECK(strlen(result.value[1]) == 700, "内联字符串不再截断到固定缓冲区");
     CHECK(strcmp(result.value[2], "2") == 0, "公式文本不会与缓存结果拼接");
-    XString_deinit_base(&sheetXml);
-    if (shared) XStringList_delete_base(shared);
+    XClassDeinit(&sheetXml);
+    if (shared) XClassDelete(shared);
     return groupOk;
 }
 
@@ -237,9 +223,9 @@ static bool test_xmlstream_qt_behaviour(void)
     const XXmlStreamAttribute* idAttribute = XXmlStreamAttributes_at(attributes, 0);
     CHECK(idAttribute && XString_equals_utf8(XXmlStreamAttribute_prefix(idAttribute), "r",
           XChar_CaseSensitive), "属性前缀为对象内稳定数据");
-    XString_deinit_base(qualifiedId);
-    XString_deinit_base(namespaceUri);
-    XString_deinit_base(localId);
+    XClassDeinit(qualifiedId);
+    XClassDeinit(namespaceUri);
+    XClassDeinit(localId);
 
     XXmlStreamReader* copy = XXmlStreamReader_create_copy(reader);
     CHECK(copy && XXmlStreamReader_readNext(copy) == XXmlStream_StartElement &&
@@ -251,8 +237,8 @@ static bool test_xmlstream_qt_behaviour(void)
     CHECK(XXmlStreamNamespaceDeclarations_size(
               XXmlStreamReader_namespaceDeclarations(reader)) == 0,
           "子元素不重复报告父元素声明");
-    if (copy) XXmlStreamReader_delete_base(copy);
-    XXmlStreamReader_delete_base(reader);
+    if (copy) XClassDelete(copy);
+    XClassDelete(reader);
 
     XXmlStreamWriter* writer = XXmlStreamWriter_create();
     XXmlStreamWriter_writeStartDocument(writer);
@@ -282,10 +268,10 @@ static bool test_xmlstream_qt_behaviour(void)
           "Writer 生成元素可由 Reader 解析为正确命名空间 URI");
     CHECK(generatedAttribute && XString_equals_utf8(generatedAttribute, "7", XChar_CaseSensitive),
           "Writer 自动声明命名空间属性前缀并可按 URI 查询");
-    XString_deinit_base(attributeNamespace);
-    XString_deinit_base(attributeName);
-    XXmlStreamReader_delete_base(writtenReader);
-    XXmlStreamWriter_delete_base(writer);
+    XClassDeinit(attributeNamespace);
+    XClassDeinit(attributeName);
+    XClassDelete(writtenReader);
+    XClassDelete(writer);
 
     XXmlStreamReader* textReader = XXmlStreamReader_create();
     XXmlStreamReader_addData_utf8(textReader, "<g>before<x>inside</x>after<!--ignored--></g>");
@@ -298,7 +284,7 @@ static bool test_xmlstream_qt_behaviour(void)
           "readElementText 合并多段文本和子元素文本");
     CHECK(XXmlStreamReader_isEndElement(textReader),
           "readElementText 返回时定位在对应结束元素");
-    XXmlStreamReader_delete_base(textReader);
+    XClassDelete(textReader);
 
     textReader = XXmlStreamReader_create();
     XXmlStreamReader_addData_utf8(textReader, "<g>before<x>inside</x>after</g>");
@@ -309,7 +295,7 @@ static bool test_xmlstream_qt_behaviour(void)
         XXmlStream_ReadElementTextBehaviour_SkipChildElements);
     CHECK(skippedText && XString_equals_utf8(skippedText, "beforeafter", XChar_CaseSensitive),
           "readElementText SkipChildElements 跳过子元素内容但保留前后文本");
-    XXmlStreamReader_delete_base(textReader);
+    XClassDelete(textReader);
     return groupOk;
 }
 
@@ -318,12 +304,12 @@ static bool read_file_bytes(const XString* path, XByteArray** output)
     *output = NULL;
     XFile* file = XFile_create_2((XString*)path);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     *output = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     return *output != NULL;
 }
 
@@ -364,8 +350,8 @@ static bool test_zip_roundtrip(void)
     XByteArray* empty = fileReader ? XZipReader_fileData(fileReader, emptyName) : NULL;
     CHECK(empty && XByteArray_size_base((XContainer*)empty) == 0,
           "读取存储模式空文件");
-    if (empty) XByteArray_delete_base(empty);
-    if (first) XByteArray_delete_base(first);
+    if (empty) XClassDelete(empty);
+    if (first) XClassDelete(first);
     if (fileReader) XZipReader_delete(fileReader);
 
     XByteArray* archive = NULL;
@@ -377,9 +363,9 @@ static bool test_zip_roundtrip(void)
     CHECK(second && XByteArray_size_base((XContainer*)second) == sizeof(secondData) &&
           memcmp(XByteArray_data(second), secondData, sizeof(secondData)) == 0,
           "内存 ZIP 正确读取二进制条目");
-    if (second) XByteArray_delete_base(second);
+    if (second) XClassDelete(second);
     if (memoryReader) XZipReader_delete(memoryReader);
-    if (archive) XByteArray_delete_base(archive);
+    if (archive) XClassDelete(archive);
 
     XString_Init_Utf8(autoPath, "/tmp/xinyue_excel_autoclose.zip");
     XZipWriter* autoWriter = XZipWriter_create(autoPath);
@@ -390,13 +376,13 @@ static bool test_zip_roundtrip(void)
     CHECK(autoReader && XZipReader_exists(autoReader), "销毁未关闭写入器时自动写出中央目录");
     if (autoReader) XZipReader_delete(autoReader);
     remove(XString_toUtf8(autoPath));
-    XString_deinit_base(autoPath);
+    XClassDeinit(autoPath);
     remove(XString_toUtf8(path));
-    XString_deinit_base(path);
-    XString_deinit_base(directory);
-    XString_deinit_base(firstName);
-    XString_deinit_base(secondName);
-    XString_deinit_base(emptyName);
+    XClassDeinit(path);
+    XClassDeinit(directory);
+    XClassDeinit(firstName);
+    XClassDeinit(secondName);
+    XClassDeinit(emptyName);
     return groupOk;
 }
 
@@ -434,10 +420,10 @@ static bool test_workbook_worksheet_roundtrip(void)
     CHECK(XVector_size_base((XContainer*)loadedWorkbook->m_defineNames) == 1,
           "定义名称、注释和作用域被加载");
     if (workbookXml) XFree_System(workbookXml);
-    XString_deinit_base(definedName);
-    XString_deinit_base(definedFormula);
-    XString_deinit_base(comment);
-    XString_deinit_base(scope);
+    XClassDeinit(definedName);
+    XClassDeinit(definedFormula);
+    XClassDeinit(comment);
+    XClassDeinit(scope);
     XWorkbook_delete(workbook);
     XWorkbook_delete(loadedWorkbook);
 
@@ -457,7 +443,7 @@ static bool test_workbook_worksheet_roundtrip(void)
           "工作表名称按 31 个 Unicode 字符而不是 UTF-8 字节限制");
     XString_push_back_base(&chineseName, (XChar)0x4e2d);
     CHECK(!XUtility_isValidSheetName(&chineseName), "工作表名称拒绝超过 31 个字符");
-    XString_deinit_base(&chineseName);
+    XClassDeinit(&chineseName);
     CHECK(!XWorkbook_insertSheet(managedWorkbook, XWorkbook_sheetCount(managedWorkbook) + 1,
           NULL, XAbstractSheet_ST_WorkSheet), "插入工作表拒绝越界索引");
     XWorkbook_setActiveSheet(managedWorkbook, 1);
@@ -489,9 +475,9 @@ static bool test_workbook_worksheet_roundtrip(void)
           !XWorksheet_setRowHeight(copySource, 2, 1, 20.0) &&
           !XWorksheet_setRowHeight(copySource, 1, 1048577, 20.0),
           "行列属性 API 拒绝反向和 Excel 边界外范围");
-    XString_deinit_base(duplicateName);
-    XString_deinit_base(invalidName);
-    XString_deinit_base(frontName);
+    XClassDeinit(duplicateName);
+    XClassDeinit(invalidName);
+    XClassDeinit(frontName);
     XWorkbook_delete(managedWorkbook);
 
     XDocument* emptyDocument = XDocument_create();
@@ -500,7 +486,7 @@ static bool test_workbook_worksheet_roundtrip(void)
           !XDocument_saveAs(emptyDocument, emptyDocumentPath),
           "Document 拒绝保存没有工作表的无效 XLSX");
     remove(XString_toUtf8(emptyDocumentPath));
-    XString_deinit_base(emptyDocumentPath);
+    XClassDeinit(emptyDocumentPath);
     if (emptyDocument) XDocument_delete(emptyDocument);
 
     XWorkbook* owner = XWorkbook_create(XAbstractOOXmlFile_F_NewFromScratch);
@@ -546,10 +532,10 @@ static bool test_workbook_worksheet_roundtrip(void)
           XString_equals_utf8(XCellFormula_formulaText(XCell_formula(loadedFormula)),
           "SUM(B2,1)", XChar_CaseSensitive), "公式文本往返");
     if (sheetXml) XFree_System(sheetXml);
-    XString_delete_base(longText);
+    XClassDelete(longText);
     XWorksheet_delete(worksheet);
     XWorksheet_delete(loadedWorksheet);
-    XString_deinit_base(sheetName);
+    XClassDeinit(sheetName);
     XWorkbook_delete(owner);
     return groupOk;
 }
@@ -584,9 +570,9 @@ static bool test_chart_drawing_roundtrip(void)
           loaded->m_row == 4 && loaded->m_col == 5, "图表尺寸与位置往返");
     XExcelChart_delete(chart);
     XExcelChart_delete(loaded);
-    XString_deinit_base(axisTitle);
+    XClassDeinit(axisTitle);
     remove(XString_toUtf8(chartPath));
-    XString_deinit_base(chartPath);
+    XClassDeinit(chartPath);
 
     const uint8_t picture[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3, 4};
     XDrawingAnchor* anchor = XDrawingAnchor_create(NULL, XDAnchor_Picture);
@@ -605,7 +591,7 @@ static bool test_chart_drawing_roundtrip(void)
           XByteArray_size_base((XContainer*)extracted) == sizeof(picture) &&
           memcmp(XByteArray_data(extracted), picture, sizeof(picture)) == 0,
           "锚点返回图片字节副本");
-    XByteArray_delete_base(extracted);
+    XClassDelete(extracted);
 
     XXmlStreamWriter* writer = XXmlStreamWriter_create();
     XXmlStreamWriter_writeStartElement_utf8(writer, "xdr:wsDr");
@@ -634,8 +620,8 @@ static bool test_chart_drawing_roundtrip(void)
           loadedAnchor->m_rowOffset == 120 && loadedAnchor->m_colOffset == 340,
           "锚点位置和偏移往返");
     XDrawingAnchor_delete(loadedAnchor);
-    XXmlStreamReader_delete_base(anchorReader);
-    XXmlStreamWriter_delete_base(writer);
+    XClassDelete(anchorReader);
+    XClassDelete(writer);
 
     XDrawing* drawing = XDrawing_create(NULL, XAbstractOOXmlFile_F_NewFromScratch);
     anchor->m_drawing = drawing;
@@ -667,12 +653,12 @@ static bool test_chart_drawing_roundtrip(void)
           XVector_size_base((XContainer*)fileDrawing->m_anchors) == 1,
           "Drawing 文件接口完整往返");
     remove(XString_toUtf8(drawingPath));
-    XString_deinit_base(drawingPath);
+    XClassDeinit(drawingPath);
     if (drawingXml) XFree_System(drawingXml);
     if (drawing) XDrawing_delete(drawing);
     if (loadedDrawing) XDrawing_delete(loadedDrawing);
     if (fileDrawing) XDrawing_delete(fileDrawing);
-    XString_deinit_base(pngMime);
+    XClassDeinit(pngMime);
     return groupOk;
 }
 
@@ -715,12 +701,12 @@ static bool test_support_modules(void)
           !XDataValidation_create_ex((XDataValidation_ValidationType)999,
               XDataValidation_Between, NULL, NULL, false),
           "数据验证拒绝无效枚举值");
-    XString_deinit_base(message);
-    XString_deinit_base(title);
+    XClassDeinit(message);
+    XClassDeinit(title);
     XDataValidation_delete(validation);
     XDataValidation_delete(validationCopy);
-    XString_deinit_base(formula1);
-    XString_deinit_base(formula2);
+    XClassDeinit(formula1);
+    XClassDeinit(formula2);
 
     XSharedStrings* strings = XSharedStrings_create(XAbstractOOXmlFile_F_NewFromScratch);
     XString_Init_Utf8(sharedValue, "A & B <C>");
@@ -827,16 +813,16 @@ static bool test_support_modules(void)
               (const uint8_t*)invalidSharedXml, strlen(invalidSharedXml)) &&
           XSharedStrings_isEmpty(loadedStrings),
           "共享字符串加载拒绝与实际条目数不符的 uniqueCount");
-    XString_deinit_base(duplicateText);
+    XClassDeinit(duplicateText);
     if (exactSharedXml) XFree_System(exactSharedXml);
     if (xml) XFree_System(xml);
     XSharedStrings_delete(strings);
     XSharedStrings_delete(loadedStrings);
     XRichString_delete(richValue);
     XFormat_delete(richFormat);
-    XString_deinit_base(richFirst);
-    XString_deinit_base(richSecond);
-    XString_deinit_base(sharedValue);
+    XClassDeinit(richFirst);
+    XClassDeinit(richSecond);
+    XClassDeinit(sharedValue);
 
     XString_Init_Utf8(plainRichText, "plain");
     XRichString* plainRich = XRichString_create_utf8(plainRichText);
@@ -861,11 +847,11 @@ static bool test_support_modules(void)
     CHECK(!XRichString_isRichString(plainRich) &&
           XString_equals_utf8(XRichString_text(plainRich), "replacement",
               XChar_CaseSensitive), "富文本 setText 清除旧格式片段");
-    XString_deinit_base(&htmlRoundTrip);
+    XClassDeinit(&htmlRoundTrip);
     XRichString_delete(copiedRich);
     XRichString_delete(plainRich);
-    XString_deinit_base(htmlText);
-    XString_deinit_base(plainRichText);
+    XClassDeinit(htmlText);
+    XClassDeinit(plainRichText);
 
     const uint8_t mediaBytes[] = {0, 1, 2, 0xff};
     XString_Init_Utf8(mediaSuffix, "png");
@@ -934,9 +920,9 @@ static bool test_support_modules(void)
     XMediaFile_delete(mediaDuplicate2);
     if (mediaKey) XFree_System(mediaKey);
     XMediaFile_delete(media);
-    XString_deinit_base(mediaSuffix);
-    XString_deinit_base(mediaMime);
-    XString_deinit_base(mediaName);
+    XClassDeinit(mediaSuffix);
+    XClassDeinit(mediaMime);
+    XClassDeinit(mediaName);
 
     double serial = XUtility_epochToExcel(2024, 2, 29, 12, 34, 56);
     int year, month, day, hour, minute, second;
@@ -946,8 +932,8 @@ static bool test_support_modules(void)
     XString_Init_Utf8(invalidSheetName, "bad/name*with:chars");
     XString safeName = XUtility_safeSheetName(invalidSheetName);
     CHECK(XUtility_isValidSheetName(&safeName), "非法工作表名称清洗为有效名称");
-    XString_deinit_base(&safeName);
-    XString_deinit_base(invalidSheetName);
+    XClassDeinit(&safeName);
+    XClassDeinit(invalidSheetName);
 
     XCell* ownershipCell = XCell_create();
     XCellFormula* oldFormula = XCellFormula_create_ex_utf8("A1+1");
@@ -970,9 +956,9 @@ static bool test_support_modules(void)
     CHECK(!XCell_hasFormula(ownershipCell) && !XCell_isRichString(ownershipCell),
           "普通值覆盖会清除旧公式和富文本负载");
     XCell_delete(ownershipCell);
-    XString_deinit_base(firstRichText);
-    XString_deinit_base(secondRichText);
-    XString_deinit_base(replacementValue);
+    XClassDeinit(firstRichText);
+    XClassDeinit(secondRichText);
+    XClassDeinit(replacementValue);
 
     XString_Init_Utf8(dateCode, "yyyy-mm-dd hh:mm:ss");
     XString_Init_Utf8(elapsedCode, "[h]:mm:ss");
@@ -999,15 +985,15 @@ static bool test_support_modules(void)
           XFont_pointSize(returnedFont) == 13 && XFont_bold(returnedFont) &&
           XFont_italic(returnedFont) && XFont_underline(returnedFont) &&
           XFont_strikeOut(returnedFont), "XFormat 字体对象 API 完整复制支持的 XFont 属性");
-    if (sourceFont) XFont_delete_base(sourceFont);
-    if (returnedFont) XFont_delete_base(returnedFont);
+    if (sourceFont) XClassDelete(sourceFont);
+    if (returnedFont) XClassDelete(returnedFont);
     XFormat_delete(fontFormat);
-    XString_deinit_base(dateCode);
-    XString_deinit_base(elapsedCode);
-    XString_deinit_base(literalCode);
-    XString_deinit_base(colorCode);
-    XString_deinit_base(customId);
-    XString_deinit_base(builtinId);
+    XClassDeinit(dateCode);
+    XClassDeinit(elapsedCode);
+    XClassDeinit(literalCode);
+    XClassDeinit(colorCode);
+    XClassDeinit(customId);
+    XClassDeinit(builtinId);
 
     const char* unicodeXml = "<root><name>中文 &amp; UTF-8</name></root>";
     size_t unicodeLength = strlen(unicodeXml);
@@ -1029,7 +1015,7 @@ static bool test_support_modules(void)
               XSimpleOOXmlFile_xmlData(simpleFromFile), XChar_CaseSensitive),
           "SimpleOOXmlFile 中文文件接口按实际 UTF-8 字节往返");
     remove(XString_toUtf8(simplePath));
-    XString_deinit_base(simplePath);
+    XClassDeinit(simplePath);
     if (simpleData) XFree_System(simpleData);
     if (simple) XSimpleOOXmlFile_delete(simple);
     if (simpleFromFile) XSimpleOOXmlFile_delete(simpleFromFile);
@@ -1259,27 +1245,27 @@ static bool test_worksheet_features_roundtrip(void)
     if (xml) XFree_System(xml);
     if (loaded) XWorksheet_delete(loaded);
     XWorkbook_delete(workbook);
-    XString_deinit_base(sheetName);
-    XString_deinit_base(first);
-    XString_deinit_base(second);
-    XString_deinit_base(prompt);
-    XString_deinit_base(promptTitle);
-    XString_deinit_base(error);
-    XString_deinit_base(errorTitle);
-    XString_deinit_base(conditionFormula);
-    XString_deinit_base(topRank);
-    XString_deinit_base(matchText);
-    XString_deinit_base(dataMin);
-    XString_deinit_base(dataMax);
-    XString_deinit_base(externalUrl);
-    XString_deinit_base(externalDisplay);
-    XString_deinit_base(externalTip);
-    XString_deinit_base(internalUrl);
-    XString_deinit_base(loadedName);
-    XString_deinit_base(hyperlinkType);
-    XString_deinit_base(externalMode);
-    XString_deinit_base(customSheet);
-    XString_deinit_base(customChartSheet);
+    XClassDeinit(sheetName);
+    XClassDeinit(first);
+    XClassDeinit(second);
+    XClassDeinit(prompt);
+    XClassDeinit(promptTitle);
+    XClassDeinit(error);
+    XClassDeinit(errorTitle);
+    XClassDeinit(conditionFormula);
+    XClassDeinit(topRank);
+    XClassDeinit(matchText);
+    XClassDeinit(dataMin);
+    XClassDeinit(dataMax);
+    XClassDeinit(externalUrl);
+    XClassDeinit(externalDisplay);
+    XClassDeinit(externalTip);
+    XClassDeinit(internalUrl);
+    XClassDeinit(loadedName);
+    XClassDeinit(hyperlinkType);
+    XClassDeinit(externalMode);
+    XClassDeinit(customSheet);
+    XClassDeinit(customChartSheet);
     return groupOk;
 }
 
@@ -1287,7 +1273,7 @@ static void free_string_array(XString** values, int count)
 {
     if (!values) return;
     for (int i = 0; i < count; ++i) {
-        if (values[i]) XString_delete_base(values[i]);
+        if (values[i]) XClassDelete(values[i]);
     }
     XFree_System(values);
 }
@@ -1372,18 +1358,18 @@ static bool test_document_properties_roundtrip(void)
     XDocPropsCore_delete(loadedCore);
     XDocPropsApp_delete(app);
     XDocPropsApp_delete(loadedApp);
-    XString_deinit_base(titleName);
-    XString_deinit_base(titleValue);
-    XString_deinit_base(createdName);
-    XString_deinit_base(createdValue);
-    XString_deinit_base(authorName);
-    XString_deinit_base(authorValue);
-    XString_deinit_base(companyName);
-    XString_deinit_base(companyValue);
-    XString_deinit_base(headingName);
-    XString_deinit_base(partTitle);
-    XString_deinit_base(corePath);
-    XString_deinit_base(appPath);
+    XClassDeinit(titleName);
+    XClassDeinit(titleValue);
+    XClassDeinit(createdName);
+    XClassDeinit(createdValue);
+    XClassDeinit(authorName);
+    XClassDeinit(authorValue);
+    XClassDeinit(companyName);
+    XClassDeinit(companyValue);
+    XClassDeinit(headingName);
+    XClassDeinit(partTitle);
+    XClassDeinit(corePath);
+    XClassDeinit(appPath);
     return groupOk;
 }
 
@@ -1462,8 +1448,8 @@ static bool test_styles_roundtrip(void)
     XStyles_delete(styles);
     XStyles_delete(loaded);
     XFormat_delete(format);
-    XString_deinit_base(numberCode);
-    XString_deinit_base(stylePath);
+    XClassDeinit(numberCode);
+    XClassDeinit(stylePath);
     return groupOk;
 }
 
@@ -1529,11 +1515,11 @@ static bool test_document_charts_and_hyperlinks(void)
           strstr((const char*)XByteArray_data(chartSheetXml), "<pageMargins ") &&
           strstr((const char*)XByteArray_data(chartSheetXml), "<drawing r:id=\"rId1\"/>"),
           "Chartsheet 包含标准工作表属性、页边距和绘图关系");
-    if (chart1) XByteArray_delete_base(chart1);
-    if (chart2) XByteArray_delete_base(chart2);
-    if (chartSheetXml) XByteArray_delete_base(chartSheetXml);
-    if (drawing1) XByteArray_delete_base(drawing1);
-    if (drawing2) XByteArray_delete_base(drawing2);
+    if (chart1) XClassDelete(chart1);
+    if (chart2) XClassDelete(chart2);
+    if (chartSheetXml) XClassDelete(chartSheetXml);
+    if (drawing1) XClassDelete(drawing1);
+    if (drawing2) XClassDelete(drawing2);
     if (zip) XZipReader_delete(zip);
 
     XDocument* loaded = XDocument_createFromFile(path);
@@ -1568,15 +1554,15 @@ static bool test_document_charts_and_hyperlinks(void)
     XExcelChart_delete(chartsheetChart);
     if (loaded) XDocument_delete(loaded);
     remove(XString_toUtf8(path));
-    XString_deinit_base(path);
-    XString_deinit_base(url);
-    XString_deinit_base(display);
-    XString_deinit_base(chartSheetName);
-    XString_deinit_base(chart1Path);
-    XString_deinit_base(chart2Path);
-    XString_deinit_base(chartSheetPath);
-    XString_deinit_base(drawing1Path);
-    XString_deinit_base(drawing2Path);
+    XClassDeinit(path);
+    XClassDeinit(url);
+    XClassDeinit(display);
+    XClassDeinit(chartSheetName);
+    XClassDeinit(chart1Path);
+    XClassDeinit(chart2Path);
+    XClassDeinit(chartSheetPath);
+    XClassDeinit(drawing1Path);
+    XClassDeinit(drawing2Path);
     return groupOk;
 }
 
@@ -1613,11 +1599,11 @@ static bool test_document_device_and_images(void)
     XFile* outputDevice = XFile_create_2(packagePath);
     CHECK(outputDevice && XDocument_saveAsDevice(document, (XIODevice*)outputDevice),
           "直接保存到 XIODevice，无临时平台 API");
-    if (outputDevice) XClass_delete_base((XClass*)outputDevice);
+    if (outputDevice) XClassDelete((XClass*)outputDevice);
     XFile* inputDevice = XFile_create_2(packagePath);
     XDocument* loaded = inputDevice ? XDocument_createFromDevice((XIODevice*)inputDevice) : NULL;
     CHECK(loaded && XDocument_isLoadPackage(loaded), "从 XIODevice 内存包加载文档");
-    if (inputDevice) XClass_delete_base((XClass*)inputDevice);
+    if (inputDevice) XClassDelete((XClass*)inputDevice);
     XWorksheet* loadedWorksheet = loaded ? XDocument_currentWorksheet(loaded) : NULL;
     XCell* loadedCell = loadedWorksheet ? XWorksheet_cellAt(loadedWorksheet, 1, 1) : NULL;
     CHECK(loadedCell && XString_equals_utf8(XCell_value(loadedCell),
@@ -1644,14 +1630,14 @@ static bool test_document_device_and_images(void)
           memcmp(XByteArray_data(loadedImage), XByteArray_data(originalImage),
                  XByteArray_size_base((XContainer*)originalImage)) == 0,
           "设备往返恢复图片字节与锚点位置");
-    XByteArray_delete_base(originalImage);
-    XByteArray_delete_base(loadedImage);
+    XClassDelete(originalImage);
+    XClassDelete(loadedImage);
     XDocument_delete(document);
     if (loaded) XDocument_delete(loaded);
     remove(XString_toUtf8(packagePath));
-    XString_deinit_base(packagePath);
-    XString_deinit_base(imagePath);
-    XString_deinit_base(customTheme);
+    XClassDeinit(packagePath);
+    XClassDeinit(imagePath);
+    XClassDeinit(customTheme);
     return groupOk;
 }
 

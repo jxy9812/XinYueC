@@ -343,7 +343,7 @@ int xapi_buttons_run(void)
         icon = XAbstractButton_icon(&b);
         XAPI_EXPECT(XIcon_isNull(&icon),
                     "AbstractButton 默认 icon=空图标");
-        XIcon_deinit_base(&icon);
+        XClassDeinit(&icon);
 
         /* ---- text/setText 往返（QAbstractButton::setText/text） ---- */
         XAbstractButton_setText_2(&b, "确定");
@@ -355,7 +355,7 @@ int xapi_buttons_run(void)
                     "AbstractButton 重复 setText 相同文本为无操作");
         s = XString_create_utf8("再试");
         XAbstractButton_setText(&b, s);
-        XString_delete_base((XClass*)s);
+        XClassDelete((XClass*)s);
         t = XAbstractButton_text(&b);
         XAPI_EXPECT(t && strcmp(xapi_u8(t), "再试") == 0,
                     "AbstractButton setText(XString) 深拷贝往返");
@@ -384,7 +384,7 @@ int xapi_buttons_run(void)
         icon = XAbstractButton_icon(&b);
         XAPI_EXPECT(XIcon_isNull(&icon),
                     "AbstractButton setIcon(NULL) 保持空图标");
-        XIcon_deinit_base(&icon);
+        XClassDeinit(&icon);
 
         /* ---- 非 checkable 时 setChecked/toggle 均不生效
          *      （Qt: setChecked 对非 checkable 提前返回） ---- */
@@ -535,7 +535,7 @@ int xapi_buttons_run(void)
                     "AbstractButton setShortcut_2 文本往返");
         s = XString_create_utf8("Ctrl+O");
         XAbstractButton_setShortcut(&b, s);
-        XString_delete_base((XClass*)s);
+        XClassDelete((XClass*)s);
         sc = XAbstractButton_shortcut(&b);
         XAPI_EXPECT(sc && strcmp(xapi_u8(sc), "Ctrl+O") == 0,
                     "AbstractButton setShortcut(XString) 文本往返");
@@ -554,7 +554,7 @@ int xapi_buttons_run(void)
                     (size_t)XAbstractButton_clicked_signal(NULL, false),
                     "AbstractButton clicked 信号标识与实例无关");
 
-        XAbstractButton_deinit_base(&b);
+        XClassDeinit(&b);
     }
 
 #if XPUSHBUTTON_ON
@@ -679,8 +679,8 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(g_btnSig.lastClickedChecked == false,
                     "PushButton clicked(bool) 参数=点击后 checked=false");
 
-        XPushButton_deinit_base(&pb);
-        XMenu_deinit_base(&menu);
+        XClassDeinit(&pb);
+        XClassDeinit(&menu);
     }
 #endif /* XPUSHBUTTON_ON */
 
@@ -811,7 +811,7 @@ int xapi_buttons_run(void)
             XAPI_EXPECT(msh.width == sh.width && msh.height == sh.height,
                         "CheckBox minimumSizeHint 等于 sizeHint");
         }
-        XCheckBox_deinit_base(&cb);
+        XClassDeinit(&cb);
 
         /* ---- 鼠标注入点击：Unchecked→Checked 完整输入链路 ---- */
         XCheckBox_init(&cb2, NULL, 0);
@@ -835,7 +835,7 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(g_cbStateChanged == 1 &&
                     g_cbLastState == (int)XCheckState_Checked,
                     "CheckBox 鼠标链路发 checkStateChanged(Checked)");
-        XCheckBox_deinit_base(&cb2);
+        XClassDeinit(&cb2);
 
         /* ---- NULL 安全（头文件：NULL 返回 Unchecked/false） ---- */
         XAPI_EXPECT(XCheckBox_checkState(NULL) == XCheckState_Unchecked &&
@@ -961,7 +961,7 @@ int xapi_buttons_run(void)
                     "RadioButton click() 发 clicked");
 
         /* 父控件级联析构两枚单选按钮（堆对象经父子链释放）。 */
-        XWidget_delete_base(parent);
+        XClassDelete(parent);
     }
 #endif /* XRADIOBUTTON_ON */
 
@@ -1071,7 +1071,7 @@ int xapi_buttons_run(void)
 
         /* ---- 动作销毁自动解绑（头文件语义） ---- */
         XToolButton_setDefaultAction(&tb, act);
-        XAction_delete_base((XClass*)act);
+        XClassDelete((XClass*)act);
         XAPI_EXPECT(XToolButton_defaultAction(&tb) == NULL,
                     "ToolButton 动作销毁自动解绑");
 
@@ -1086,8 +1086,8 @@ int xapi_buttons_run(void)
                     "ToolButton sizeHint(NULL)=(0,0)");
         XToolButton_setToolButtonStyle(&tb, XToolButtonStyle_IconOnly);
 
-        XToolButton_deinit_base(&tb);
-        XMenu_deinit_base(&menu);
+        XClassDeinit(&tb);
+        XClassDeinit(&menu);
     }
 #endif /* XTOOLBUTTON_ON */
 
@@ -1145,7 +1145,7 @@ int xapi_buttons_run(void)
         }
         d = XString_create_utf8("XString 描述");
         XCommandLinkButton_setDescription(&cl, d);
-        XString_delete_base((XClass*)d);
+        XClassDelete((XClass*)d);
         XAPI_EXPECT(strcmp(xapi_u8(
                         XCommandLinkButton_description(&cl)),
                         "XString 描述") == 0,
@@ -1189,7 +1189,7 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(XCommandLinkButton_sizeHint(NULL).width == -1,
                     "CommandLinkButton sizeHint(NULL)=无效尺寸");
 
-        XCommandLinkButton_deinit_base(&cl);
+        XClassDeinit(&cl);
     }
 #endif /* XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
 
@@ -1362,10 +1362,10 @@ int xapi_buttons_run(void)
                     "ButtonGroup removeButton 后成员数=1");
 
         /* 析构次序：先组（桥断连需按钮存活），后按钮。 */
-        XButtonGroup_deinit_base(&grp);
-        XCheckBox_delete_base(b1);
-        XCheckBox_delete_base(b2);
-        XCheckBox_deinit_base(&outsider);
+        XClassDeinit(&grp);
+        XClassDelete(b1);
+        XClassDelete(b2);
+        XClassDeinit(&outsider);
     }
 #endif /* XBUTTONGROUP_ON */
 

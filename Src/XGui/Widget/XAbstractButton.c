@@ -378,7 +378,7 @@ void XAbstractButton_setText(XAbstractButton* self, const XString* text)
     if (!copy)
         return;
     if (self->m_text)
-        XString_delete_base((XClass*)self->m_text);
+        XClassDelete((XClass*)self->m_text);
     self->m_text = copy;
     abstractbutton_refresh(self);
 }
@@ -393,7 +393,7 @@ void XAbstractButton_setText_2(XAbstractButton* self, const char* utf8)
     if (!text)
         return;
     XAbstractButton_setText(self, text);
-    XString_delete_base((XClass*)text);
+    XClassDelete((XClass*)text);
 }
 
 XIcon XAbstractButton_icon(const XAbstractButton* self)
@@ -402,7 +402,7 @@ XIcon XAbstractButton_icon(const XAbstractButton* self)
 
     XIcon_init(&icon);
     if (self)
-        XCopy(&icon, &self->m_icon);
+        XClassCopy(&icon, &self->m_icon);
     return icon;
 }
 
@@ -411,9 +411,9 @@ void XAbstractButton_setIcon(XAbstractButton* self, const XIcon* icon)
     if (!self || icon == &self->m_icon)
         return;
 
-    XIcon_deinit_base(&self->m_icon);
+    XClassDeinit(&self->m_icon);
     if (icon && !XIcon_isNull(icon))
-        XCopy(&self->m_icon, icon);
+        XClassCopy(&self->m_icon, icon);
     abstractbutton_refresh(self);
 }
 
@@ -594,7 +594,7 @@ void XAbstractButton_setShortcut(XAbstractButton* self,
     if (shortcut && !copy)
         return; /* 分配失败保持原快捷键文本不变。 */
     if (self->m_shortcut)
-        XString_delete_base((XClass*)self->m_shortcut);
+        XClassDelete((XClass*)self->m_shortcut);
     self->m_shortcut = copy;
     /*
      * Qt 在此同时 grabShortcut 注册全局快捷键；本实现只保存文本承载，
@@ -616,7 +616,7 @@ void XAbstractButton_setShortcut_2(XAbstractButton* self, const char* utf8)
     if (!shortcut)
         return;
     XAbstractButton_setShortcut(self, shortcut);
-    XString_delete_base((XClass*)shortcut);
+    XClassDelete((XClass*)shortcut);
 }
 
 const XString* XAbstractButton_shortcut(const XAbstractButton* self)
@@ -1019,13 +1019,13 @@ static void VXAbstractButton_copy(XAbstractButton* self,
                   void(*)(XWidget*, const XWidget*))(
                       (XWidget*)self, (const XWidget*)other);
     if (self->m_text) {
-        XString_delete_base((XClass*)self->m_text);
+        XClassDelete((XClass*)self->m_text);
         self->m_text = NULL;
     }
-    XIcon_deinit_base(&self->m_icon);
+    XClassDeinit(&self->m_icon);
     self->m_text = other->m_text ? XString_create_copy(other->m_text)
                                  : XString_create();
-    XCopy(&self->m_icon, &other->m_icon);
+    XClassCopy(&self->m_icon, &other->m_icon);
     self->m_iconSize = other->m_iconSize;
     self->m_checkable = other->m_checkable;
     self->m_checked = other->m_checked;
@@ -1040,7 +1040,7 @@ static void VXAbstractButton_copy(XAbstractButton* self,
     /* 快捷键文本为对象拥有，深拷贝；组承载为借用不透明指针，拷贝体
      * 不继承登记关系（对齐 Qt：新按钮不属于任何 QButtonGroup）。 */
     if (self->m_shortcut) {
-        XString_delete_base((XClass*)self->m_shortcut);
+        XClassDelete((XClass*)self->m_shortcut);
         self->m_shortcut = NULL;
     }
     self->m_shortcut = other->m_shortcut
@@ -1066,13 +1066,13 @@ static void VXAbstractButton_move(XAbstractButton* self,
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                 (XWidget*)other);
     if (self->m_text) {
-        XString_delete_base((XClass*)self->m_text);
+        XClassDelete((XClass*)self->m_text);
         self->m_text = NULL;
     }
-    XIcon_deinit_base(&self->m_icon);
+    XClassDeinit(&self->m_icon);
     self->m_text = other->m_text;
     other->m_text = XString_create();
-    XMove(&self->m_icon, &other->m_icon);
+    XClassMove(&self->m_icon, &other->m_icon);
     self->m_iconSize = other->m_iconSize;
     XSize_init(&other->m_iconSize, 0, 0);
     self->m_checkable = other->m_checkable;
@@ -1110,15 +1110,15 @@ static void VXAbstractButton_deinit(XAbstractButton* self)
     abstractbutton_stopRepeatTimer(self);
     abstractbutton_stopAnimateTimer(self);
     if (self->m_text) {
-        XString_delete_base((XClass*)self->m_text);
+        XClassDelete((XClass*)self->m_text);
         self->m_text = NULL;
     }
     if (self->m_shortcut) {
-        XString_delete_base((XClass*)self->m_shortcut);
+        XClassDelete((XClass*)self->m_shortcut);
         self->m_shortcut = NULL;
     }
     self->m_group = NULL;
-    XIcon_deinit_base(&self->m_icon);
+    XClassDeinit(&self->m_icon);
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }
 

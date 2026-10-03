@@ -346,16 +346,14 @@ void XListBase_sort_base(XListBase* this_list, XSortOrder order);
 /**
 * @brief 销毁链表内部资源（保留实例本身）
 * @param this_list 链表实例指针
-* @note 宏定义，等价于XContainer_deinit_base，释放元素和节点内存，链表实例可复用
+* @note 宏定义，等价于XClassDeinit，释放元素和节点内存，链表实例可复用
 */
-#define XListBase_deinit_base			XContainer_deinit_base	
 
 /**
 * @brief 删除链表（释放所有资源）
 * @param this_list 链表实例指针
-* @note 宏定义，等价于XContainer_delete_base，释放内部资源及链表实例本身
+* @note 宏定义，等价于XClassDelete，释放内部资源及链表实例本身
 */
-#define XListBase_delete_base			XContainer_delete_base	
 
 /**
 * @brief 清空链表（保留容量）

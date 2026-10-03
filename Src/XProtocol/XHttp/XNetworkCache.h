@@ -52,24 +52,22 @@ XVtable* XNetworkCacheMetaData_class_init(void);
 void XNetworkCacheMetaData_init(XNetworkCacheMetaData* self);
 /**
  * - @brief 创建网络缓存元数据。
- * - @return 新建缓存元数据；调用者必须使用 XNetworkCacheMetaData_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建缓存元数据；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XNetworkCacheMetaData* XNetworkCacheMetaData_create_ex(XMemoryType memory);
 /**
  * - @brief 深拷贝创建网络缓存元数据。
  * - @param other 源缓存元数据；借用且不能为 NULL。
- * - @return 新建缓存元数据；调用者必须使用 XNetworkCacheMetaData_delete_base 释放，参数无效或拷贝失败返回 NULL。
+ * - @return 新建缓存元数据；调用者必须使用 XClassDelete 释放，参数无效或拷贝失败返回 NULL。
  */
 XNetworkCacheMetaData* XNetworkCacheMetaData_create_copy(const XNetworkCacheMetaData* other);
 /**
  * - @brief 移动创建网络缓存元数据。
  * - @param other 源缓存元数据；借用且不能为 NULL，成功后保持可释放的已初始化状态。
- * - @return 新建缓存元数据；调用者必须使用 XNetworkCacheMetaData_delete_base 释放，参数无效或分配失败返回 NULL。
+ * - @return 新建缓存元数据；调用者必须使用 XClassDelete 释放，参数无效或分配失败返回 NULL。
  */
 XNetworkCacheMetaData* XNetworkCacheMetaData_create_move(XNetworkCacheMetaData* other);
 
-#define XNetworkCacheMetaData_deinit_base XClass_deinit_base
-#define XNetworkCacheMetaData_delete_base XClass_delete_base
 
 /**
  * - @brief 设置缓存 URL。
@@ -181,11 +179,9 @@ XVtable* XNetworkDiskCache_class_init(void);
 void XNetworkDiskCache_init(XNetworkDiskCache* self);
 /**
  * - @brief 创建网络磁盘缓存对象。
- * - @return 新建磁盘缓存；调用者必须使用 XNetworkDiskCache_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建磁盘缓存；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XNetworkDiskCache* XNetworkDiskCache_create_ex(XMemoryType memory);
-#define XNetworkDiskCache_deinit_base XClass_deinit_base
-#define XNetworkDiskCache_delete_base XClass_delete_base
 #define XNetworkDiskCache_deleteLater XObject_deleteLater
 
 /**

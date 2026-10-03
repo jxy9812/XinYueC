@@ -103,7 +103,7 @@ void XBackingStore_reinit(XBackingStore* self, XWindow* window)
     /* 这里只能由已初始化对象调用；不要通过读取 vtable 猜测对象状态。 */
     memory = Class_Memory(self);
     isHeap = Class_IsHeap(self);
-    XBackingStore_deinit_base(self);
+    XClassDeinit(self);
     XBackingStore_init(self, window);
 
     /* init 会清零并恢复默认 XObject 元数据，重建后恢复原有所有权契约。 */

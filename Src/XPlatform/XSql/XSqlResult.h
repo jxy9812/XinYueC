@@ -106,14 +106,12 @@ void XSqlResult_init(XSqlResult* result, const XSqlDriver* driver);
 /**
  * @brief 创建结果对象。
  * @param driver 所属驱动；借用，可为 NULL。
- * @return 新结果对象，调用者必须使用 XSqlResult_delete_base 释放；失败返回 NULL。
+ * @return 新结果对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlResult* XSqlResult_create_ex(XMemoryType memory,  const XSqlDriver* driver);
 
 /** @brief 调用 XClass 析构入口释放查询文本、绑定值和后端结果资源。 */
-#define XSqlResult_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlResult_create 系列函数返回的结果对象。 */
-#define XSqlResult_delete_base XClass_delete_base
 
 /**
  * @brief 获取当前游标位置。
@@ -124,19 +122,19 @@ int XSqlResult_at(const XSqlResult* result);
 /**
  * @brief 获取最近设置的查询文本。
  * @param result 结果对象；NULL 返回空字符串对象。
- * @return 新字符串对象，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串对象，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlResult_lastQuery(const XSqlResult* result);
 /**
  * @brief 获取最近执行的查询文本。
  * @param result 结果对象；NULL 返回空字符串对象。
- * @return 新字符串对象，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串对象，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlResult_executedQuery(const XSqlResult* result);
 /**
  * @brief 获取最近错误的副本。
  * @param result 结果对象；NULL 返回未知错误对象。
- * @return 新错误对象，调用者必须使用 XSqlError_delete_base 释放。
+ * @return 新错误对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlError* XSqlResult_lastError(const XSqlResult* result);
 /**
@@ -270,40 +268,40 @@ void XSqlResult_addBindValue(XSqlResult* result, const XVariant* value, XSqlPara
  * @brief 按 UTF-8 名称获取绑定值副本。
  * @param result 结果对象；不能为 NULL。
  * @param name 占位符名称；借用。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放；不存在时返回空值对象。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放；不存在时返回空值对象。
  */
 XVariant* XSqlResult_boundValue_utf8(const XSqlResult* result, const char* name);
 /**
  * @brief 按 XString 占位符名称获取绑定值副本。
  * @param result 结果对象；可为 NULL。
  * @param name 占位符名称；借用，可为 NULL。
- * @return 新值对象所有权；调用者使用 XVariant_delete_base 释放，未找到返回空值对象。
+ * @return 新值对象所有权；调用者使用 XClassDelete 释放，未找到返回空值对象。
  */
 XVariant* XSqlResult_boundValue_2(const XSqlResult* result, const XString* name);
 /**
  * @brief 按位置获取绑定值副本。
  * @param result 结果对象；不能为 NULL。
  * @param position 参数位置，从 0 开始。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放；越界时返回空值对象。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放；越界时返回空值对象。
  */
 XVariant* XSqlResult_boundValue(const XSqlResult* result, int position);
 /**
  * @brief 获取全部绑定值副本。
  * @param result 结果对象；不能为 NULL。
- * @return 新列表，调用者必须使用 XVariantList_delete_base 释放。
+ * @return 新列表，调用者必须使用 XClassDelete 释放。
  */
 XVariantList* XSqlResult_boundValues(const XSqlResult* result);
 /**
  * @brief 获取命名绑定名称列表。
  * @param result 结果对象；不能为 NULL。
- * @return 新列表，调用者必须使用 XStringList_delete_base 释放。
+ * @return 新列表，调用者必须使用 XClassDelete 释放。
  */
 XStringList* XSqlResult_boundValueNames(const XSqlResult* result);
 /**
  * @brief 按位置获取绑定名称副本。
  * @param result 结果对象；不能为 NULL。
  * @param position 参数位置，从 0 开始。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放；不存在时返回空字符串对象。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放；不存在时返回空字符串对象。
  */
 XString* XSqlResult_boundValueName(const XSqlResult* result, int position);
 /**
@@ -342,7 +340,7 @@ XSqlBindingSyntax XSqlResult_bindingSyntax(const XSqlResult* result);
  * @brief 获取当前记录字段值。
  * @param result 结果对象；不能为 NULL。
  * @param field 字段索引，从 0 开始。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlResult_data_base(XSqlResult* result, int field);
 /**
@@ -405,13 +403,13 @@ int XSqlResult_numRowsAffected_base(XSqlResult* result);
 /**
  * @brief 获取当前记录描述副本。
  * @param result 结果对象；NULL 返回空记录对象。
- * @return 新记录对象，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlResult_record_base(XSqlResult* result);
 /**
  * @brief 获取最后插入 ID 副本。
  * @param result 结果对象；NULL 返回空值对象。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlResult_lastInsertId_base(XSqlResult* result);
 /**

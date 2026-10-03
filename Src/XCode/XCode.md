@@ -140,10 +140,10 @@ XVariant* XAction_getData(XAction* action)
 
 ---
 
-#### XAction_delete
+#### XClassDelete
 
 ```c
-void XAction_delete(XAction* action)
+void XClassDelete(XAction* action)
 ```
 
 销毁XAction实例。
@@ -989,10 +989,10 @@ XVector* XMenu_getMenus(XMenu* menu)
 
 ---
 
-#### XMenu_delete
+#### XClassDelete
 
 ```c
-void XMenu_delete(XMenu* menu)
+void XClassDelete(XMenu* menu)
 ```
 
 销毁菜单。

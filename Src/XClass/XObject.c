@@ -137,7 +137,7 @@ void XObject_setParent(XObject* object, XObject* parent)
 				XChildEvent* event = XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object);
 				if (event) {
 					XCoreApplication_sendEvent(prev_parent, (XEvent*)event);
-					XEvent_delete_base((XEvent*)event);
+					XClassDelete((XEvent*)event);
 				}
 			}
 		}
@@ -147,7 +147,7 @@ void XObject_setParent(XObject* object, XObject* parent)
 		XEvent* event = XEvent_create(XEVENT_TYPE_PARENT_ABOUT_TO_CHANGE);
 		if (event) {
 			XCoreApplication_sendEvent(object, event);
-			XEvent_delete_base(event);
+			XClassDelete(event);
 		}
 	}
 
@@ -166,7 +166,7 @@ void XObject_setParent(XObject* object, XObject* parent)
 			XChildEvent* event = XChildEvent_create(XEVENT_TYPE_CHILD_ADDED, object);
 			if (event) {
 				XCoreApplication_sendEvent(parent, (XEvent*)event);
-				XEvent_delete_base((XEvent*)event);
+				XClassDelete((XEvent*)event);
 			}
 		}
 	}
@@ -176,7 +176,7 @@ void XObject_setParent(XObject* object, XObject* parent)
 		XEvent* event = XEvent_create(XEVENT_TYPE_PARENT_CHANGE);
 		if (event) {
 			XCoreApplication_sendEvent(object, event);
-			XEvent_delete_base(event);
+			XClassDelete(event);
 		}
 	}
 }
@@ -247,7 +247,7 @@ static void XObject_moveToThread_helper(XObject* object)
 	XEvent* e = XEvent_create(XEVENT_TYPE_THREAD_CHANGE);
 	if (e) {
 		XCoreApplication_sendEvent(object, e);
-		XEvent_delete_base(e);
+		XClassDelete(e);
 	}
 
 	// 递归处理所有子对象
@@ -537,7 +537,7 @@ static void objectNameChanged_signal_del(struct XVarList* list)
 {
 	XVarList_args_1(list, XString*, objectName);
 	if (objectName)
-		XString_delete_base((XClass*)objectName);
+		XClassDelete((XClass*)objectName);
 }
 void XObject_objectNameChanged_signal(XObject* object, const XString* objectName)
 {
@@ -548,7 +548,7 @@ void XObject_objectNameChanged_signal(XObject* object, const XString* objectName
 		if (!args)
 		{
 			if (name)
-				XString_delete_base((XClass*)name);
+				XClassDelete((XClass*)name);
 			return;
 		}
 		if (object && object->m_signalSlot)
@@ -608,11 +608,11 @@ void VXObject_deinit(XObject* object)
 			childPtr[i] = NULL;
 			child->m_parent = NULL;
 			if (Class_IsHeap(child))
-				XClass_delete_base(child);
+				XClassDelete(child);
 			else
-				XClass_deinit_base(child);
+				XClassDeinit(child);
 		}
-		XVector_delete_base(object->m_children);
+		XClassDelete(object->m_children);
 		object->m_children = NULL;
 	}
 	object->currentChildBeingDeleted = NULL;
@@ -629,7 +629,7 @@ void VXObject_deinit(XObject* object)
 				XChildEvent* event = XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object);
 				if (event) {
 					XCoreApplication_sendEvent(parent, (XEvent*)event);
-					XEvent_delete_base((XEvent*)event);
+					XClassDelete((XEvent*)event);
 				}
 			}
 		}
@@ -637,12 +637,12 @@ void VXObject_deinit(XObject* object)
 
 	if (object->m_filters)
 	{
-		XVector_delete_base(object->m_filters);
+		XClassDelete(object->m_filters);
 		object->m_filters = NULL;
 	}
 	if (object->m_object_name)
 	{
-		XString_delete_base(object->m_object_name);
+		XClassDelete(object->m_object_name);
 		object->m_object_name = NULL;
 	}
 	//释放信号与槽
@@ -656,10 +656,10 @@ void VXObject_deinit(XObject* object)
 		for (int i = 0; i < (int)XContainerSize(object->m_dynamicPropertyNames); i++) {
 			XString** namePtr = (XString**)XContainerDataAddr(object->m_dynamicPropertyNames);
 			if (namePtr[i]) {
-				XString_delete_base(namePtr[i]);
+				XClassDelete(namePtr[i]);
 			}
 		}
-		XVector_delete_base(object->m_dynamicPropertyNames);
+		XClassDelete(object->m_dynamicPropertyNames);
 		object->m_dynamicPropertyNames = NULL;
 	}
 	if (object->m_dynamicPropertyValues)
@@ -667,9 +667,9 @@ void VXObject_deinit(XObject* object)
 		XVariant** values = (XVariant**)XContainerDataAddr(object->m_dynamicPropertyValues);
 		for (size_t i = 0; i < XContainerSize(object->m_dynamicPropertyValues); ++i) {
 			if (values[i])
-				XVariant_delete_base(values[i]);
+				XClassDelete(values[i]);
 		}
-		XVector_delete_base(object->m_dynamicPropertyValues);
+		XClassDelete(object->m_dynamicPropertyValues);
 		object->m_dynamicPropertyValues = NULL;
 	}
 	// Qt 6.8: ~QObjectPrivate() - 释放线程亲和性引用 (对标 thisThreadData->deref())
@@ -883,8 +883,8 @@ bool XObject_setProperty(XObject* self, const XString* name, XVariant* value)
 		self->m_dynamicPropertyNames = XVector_Create(XString*);
 		self->m_dynamicPropertyValues = XVector_Create(XVariant*);
 		if (!self->m_dynamicPropertyNames || !self->m_dynamicPropertyValues) {
-			if (self->m_dynamicPropertyNames) XVector_delete_base(self->m_dynamicPropertyNames);
-			if (self->m_dynamicPropertyValues) XVector_delete_base(self->m_dynamicPropertyValues);
+			if (self->m_dynamicPropertyNames) XClassDelete(self->m_dynamicPropertyNames);
+			if (self->m_dynamicPropertyValues) XClassDelete(self->m_dynamicPropertyValues);
 			self->m_dynamicPropertyNames = NULL;
 			self->m_dynamicPropertyValues = NULL;
 			return false;
@@ -905,19 +905,19 @@ bool XObject_setProperty(XObject* self, const XString* name, XVariant* value)
 		// 已存在: 更新值
 		XVariant** valPtr = (XVariant**)XContainerDataAddr(self->m_dynamicPropertyValues);
 		if (valPtr[idx])
-			XVariant_delete_base(valPtr[idx]);
+			XClassDelete(valPtr[idx]);
 		valPtr[idx] = value;
 	} else {
 		XString* key = XString_create_copy(name);
 		if (!key) return false;
 		if (!XVector_push_back_1_base(self->m_dynamicPropertyNames, &key)) {
-			XString_delete_base(key);
+			XClassDelete(key);
 			return false;
 		}
 		if (!XVector_push_back_1_base(self->m_dynamicPropertyValues, &value)) {
 			XVector_remove_base(self->m_dynamicPropertyNames,
 				(int64_t)XContainerSize(self->m_dynamicPropertyNames) - 1, 1);
-			XString_delete_base(key);
+			XClassDelete(key);
 			return false;
 		}
 	}
@@ -957,8 +957,8 @@ void XObject_removeProperty(XObject* self, const XString* name)
 		if (namePtr[i] && XString_compare(namePtr[i], name) == XCompare_Equality) {
 			XVariant** values = (XVariant**)XContainerDataAddr(self->m_dynamicPropertyValues);
 			if (values[i])
-				XVariant_delete_base(values[i]);
-			XString_delete_base(namePtr[i]);
+				XClassDelete(values[i]);
+			XClassDelete(namePtr[i]);
 			XVector_remove_base(self->m_dynamicPropertyNames, i, 1);
 			XVector_remove_base(self->m_dynamicPropertyValues, i, 1);
 			break;

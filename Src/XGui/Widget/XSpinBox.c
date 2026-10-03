@@ -827,11 +827,11 @@ static void VXSpinBox_copy(XSpinBox* self, const XSpinBox* other)
     self->m_activeUp = other->m_activeUp;
     self->m_activeDown = other->m_activeDown;
     if (self->m_prefix) {
-        XString_delete_base(self->m_prefix);
+        XClassDelete(self->m_prefix);
         self->m_prefix = NULL;
     }
     if (self->m_suffix) {
-        XString_delete_base(self->m_suffix);
+        XClassDelete(self->m_suffix);
         self->m_suffix = NULL;
     }
     if (other->m_prefix)
@@ -874,11 +874,11 @@ static void VXSpinBox_move(XSpinBox* self, XSpinBox* other)
     self->m_activeUp = other->m_activeUp;
     self->m_activeDown = other->m_activeDown;
     if (self->m_prefix) {
-        XString_delete_base(self->m_prefix);
+        XClassDelete(self->m_prefix);
         self->m_prefix = NULL;
     }
     if (self->m_suffix) {
-        XString_delete_base(self->m_suffix);
+        XClassDelete(self->m_suffix);
         self->m_suffix = NULL;
     }
     self->m_prefix = other->m_prefix;
@@ -908,11 +908,11 @@ static void VXSpinBox_deinit(XClass* obj)
     XSpinBox* self = (XSpinBox*)obj;
     if (!self) return;
     if (self->m_prefix) {
-        XString_delete_base(self->m_prefix);
+        XClassDelete(self->m_prefix);
         self->m_prefix = NULL;
     }
     if (self->m_suffix) {
-        XString_delete_base(self->m_suffix);
+        XClassDelete(self->m_suffix);
         self->m_suffix = NULL;
     }
     XClass_Deinit_Parent(XAbstractSpinBox, (XAbstractSpinBox*)obj);

@@ -62,7 +62,7 @@ XIconEngine* XIconEnginePlugin_createEngine_2_base(XIconEnginePlugin* self,
     XIconEngine* result;
     XString* value = fileName ? XString_create_utf8(fileName) : XString_create();
     result = XIconEnginePlugin_createEngine_base(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 
@@ -166,11 +166,11 @@ XIconEngine* XIconEnginePlugin_createEngineForFile(const char* fileName)
             if (key && iconSuffixMatch(fileName, XString_toUtf8(key))) {
                 XIconEngine* engine =
                     XIconEnginePlugin_createEngine_2_base(*item, fileName);
-                XStringList_delete_base(keys);
+                XClassDelete(keys);
                 return engine;
             }
         }
-        XStringList_delete_base(keys);
+        XClassDelete(keys);
     }
     return NULL;
 }

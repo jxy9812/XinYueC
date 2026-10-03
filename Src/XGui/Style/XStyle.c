@@ -717,7 +717,7 @@ int XStyle_dpiScaled(int value, const XStyleOption* option)
 void XStyle_setDefaultStyle(XStyle* style)
 {
     if (g_defaultStyle && g_defaultStyle != style)
-        XStyle_delete_base(g_defaultStyle);
+        XClassDelete(g_defaultStyle);
     g_defaultStyle = style;
 }
 
@@ -763,7 +763,7 @@ bool XStyle_installStyleSheet(const char* css)
          * ss 为本函数刚创建、尚无任何连接/在途事件的回滚对象，按
          * 「失败回滚→同步释放」约定保持同步删（对标删改约束备忘 3）。 */
         XStyleSheetStyle_setSourceStyle(ss, NULL);
-        XStyleSheetStyle_delete_base(ss);
+        XClassDelete(ss);
     }
     return ok;
 }

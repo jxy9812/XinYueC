@@ -1065,7 +1065,7 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
                        : (transparent ? XImageFormat_ARGB32 : XImageFormat_RGB32));
     if (XImage_isNull(&image)) {
         XFree_System(colors);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return false;
     }
     XImage_fill(&image, 0u);
@@ -1080,7 +1080,7 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
         int x;
         line = xpm_nextString(data, size, &pos, &length);
         if (!line) {
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
             XFree_System(colors);
             return false;
         }
@@ -1101,7 +1101,7 @@ bool XImageCodecInternal_decodeXpm(const uint8_t* data, size_t size, XImage* out
         XFree_System(line);
     }
     XFree_System(colors);
-    XMove(out, &image);
+    XClassMove(out, &image);
     return true;
 }
 

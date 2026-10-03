@@ -98,7 +98,7 @@ void XThreadData_delete(XThreadData* data)
     
     if (data->m_eventDispatcher)
     {
-        XClass_delete_base(data->m_eventDispatcher);
+        XClassDelete(data->m_eventDispatcher);
         data->m_eventDispatcher = NULL;
     }
     /* 清理 m_tryPostEventList 锁-free 队列中残留的事件，防止泄漏 */
@@ -112,7 +112,7 @@ void XThreadData_delete(XThreadData* data)
                     XAtomic_fetch_sub_int32(&pe.receiver->m_posted_events, 1,
                                             XAtomic_MemoryOrder_Release);
                 pe.event->posted = false;
-                XEvent_delete_base(pe.event);
+                XClassDelete(pe.event);
             }
         }
     }
@@ -126,13 +126,13 @@ void XThreadData_delete(XThreadData* data)
             if (post->receiver)
                 XAtomic_fetch_sub_int32(&post->receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
             post->event->posted = false;
-            XEvent_delete_base(post->event);
+            XClassDelete(post->event);
         }
     }
-    XLockFreeQueue_deinit_base(&data->m_tryPostEventList);
-    XVector_deinit_base(&data->m_postEventList);
-    XStack_deinit_base(&data->m_activePostEventLists);
-    XStack_deinit_base(&data->m_eventLoops);
+    XClassDeinit(&data->m_tryPostEventList);
+    XClassDeinit(&data->m_postEventList);
+    XClassDeinit(&data->m_activePostEventLists);
+    XClassDeinit(&data->m_eventLoops);
 #if XSEMAPHORE_ON
     if (data->m_wakeSemaphore)
     {
@@ -145,14 +145,14 @@ void XThreadData_delete(XThreadData* data)
         XMutex_delete(data->m_mutex);
         data->m_mutex = NULL;
     }
-    XStack_deinit_base(&data->m_senderStack);
+    XClassDeinit(&data->m_senderStack);
 #if XPROPERTY_ON
-    XStack_deinit_base(&data->m_bindingEvalStack);
+    XClassDeinit(&data->m_bindingEvalStack);
 #endif
     //// Qt 6.8: 清理 TLS
     //if (data->m_tls)
     //{
-    //    XVector_delete_base(data->m_tls);
+    //    XClassDelete(data->m_tls);
     //    data->m_tls = NULL;
     //}
     XAlignedFree_System(data);
@@ -418,7 +418,7 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority)
     XThreadData* td = XThreadData_lockPostEventList(receiver);
     if (!td)
     {
-        XEvent_delete_base(event);
+        XClassDelete(event);
         return;
     }
 
@@ -433,7 +433,7 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority)
         XAtomic_fetch_sub_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
         event->posted = false;
         XMutex_unlock(td->m_mutex);
-        XEvent_delete_base(event);
+        XClassDelete(event);
         return;
     }
 
@@ -524,7 +524,7 @@ XVector* XThreadData_takePostedEvents(void)
     XMutex_unlock(td->m_mutex);
 
     if (!hasEvents) {
-        XVector_delete_base(local);
+        XClassDelete(local);
         return NULL;
     }
 
@@ -554,7 +554,7 @@ bool XThreadData_deliverPostedEvent(XPostEvent* post)
         XAtomic_fetch_sub_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Acquire);
 
     bool delivered = receiver ? XCoreApplication_sendEvent(receiver, event) : false;
-    XEvent_delete_base(event);
+    XClassDelete(event);
     return delivered;
 }
 
@@ -567,7 +567,7 @@ void XThreadData_discardPostedEvent(XPostEvent* post)
     event->posted = false;
     if (post->receiver)
         XAtomic_fetch_sub_int32(&post->receiver->m_posted_events, 1, XAtomic_MemoryOrder_Acquire);
-    XEvent_delete_base(event);
+    XClassDelete(event);
 }
 
 bool XThreadData_pushActivePostedEvents(XVector* events)

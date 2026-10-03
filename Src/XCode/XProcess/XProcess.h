@@ -136,13 +136,8 @@ XVtable* XProcess_class_init(void);
 /** @brief 初始化栈上 XProcess；@param self 待初始化对象，必须保持有效。 */
 void XProcess_init(XProcess* self);
 
-/** @brief 创建堆上 XProcess；失败返回 NULL，调用方必须 delete_base。 */
+/** @brief 创建堆上 XProcess；失败返回 NULL，调用方必须 XClassDelete。 */
 XProcess* XProcess_create_ex(XMemoryType memory);
-
-/** @brief 复用 XClass 虚析构入口；会调用 XProcess 自己注册的 deinit 槽。 */
-#define XProcess_deinit_base XClass_deinit_base
-/** @brief 复用 XClass 堆对象删除入口；NULL 安全。 */
-#define XProcess_delete_base XClass_delete_base
 
 /* ============================== 属性 ============================== */
 

@@ -27,7 +27,7 @@ void XVariantListTest()
 		int64_t index = XVector_indexOf(list,find,0);
 		if (index!=-1)
 			XPrintf("找到了index:%d\n",index);
-		XVariant_delete_base(find);
+		XClassDelete(find);
 
 		XVariant_setValue_double(var, 100.0);
 
@@ -42,16 +42,16 @@ void XVariantListTest()
 		if (str)
 		{
 			XPrintf("%s\n",XString_toUtf8(str));
-			XString_delete_base(str);
+			XClassDelete(str);
 		}
 
 		XVariant_setValue_utf8_str(var,"1000");
 	
 		XPrintf("%d\n", XVariant_toInt(var));
 
-		XVariant_delete_base(var);
+		XClassDelete(var);
 		
-		XVariantList_delete_base(list);
+		XClassDelete(list);
 	}
 	XCoreApplication_quit();
 }
@@ -67,7 +67,7 @@ void XVariantListTest_list()
 		XVariantList_push_back_base(list, var);
 		XVariant_setValue_utf8_str(var, "9000");
 		XVariantList_push_back_base(list, var);
-		XVariant_delete_base(var);
+		XClassDelete(var);
 
 		XVariant* varList = XVariant_create_list(list);
 		XPrintf("当前类型:%s\n", XVariant_typeName(varList));
@@ -81,11 +81,11 @@ void XVariantListTest_list()
 				temp = XVariantList_iterator_data(&it);
 				XPrintf("%d\n", XVariant_toInt(temp));
 			}
-			XVariantList_delete_base(toList);
+			XClassDelete(toList);
 		}
 
-		XVariant_delete_base(varList);
-		XVariantList_delete_base(list);
+		XClassDelete(varList);
+		XClassDelete(list);
 	}
 	XCoreApplication_quit();
 }
@@ -100,19 +100,19 @@ void XVariantListTest_map()
 			XString_Init_Utf8(str, "6666");
 			XVariant* v = XVariant_create_int(9999);
 			XMapBase_insert_move_base(map, str, v);
-			XVariant_delete_base(v);
-			XString_deinit_base(str);
+			XClassDelete(v);
+			XClassDeinit(str);
 		}
 		{
 			XString* str = XString_create_utf8("111");
 			XVariant* v = XVariant_create_int(6666);
 			XMapBase_insert_move_base(map, str, v);
-			XString_delete_base(str);
-			XVariant_delete_base(v);
+			XClassDelete(str);
+			XClassDelete(v);
 		}
 		XVariant* varMap = XVariant_create_hash(map);
 		XPrintf("当前类型:%s\n", XVariant_typeName(varMap));
-		XMapBase_delete_base(map);
+		XClassDelete(map);
 		map = XVariant_toHash(varMap);
 		for_each_iterator(map, XHashMap, it)
 		{
@@ -121,8 +121,8 @@ void XVariantListTest_map()
 			XVariant* var = XPair_second(p);
 			XPrintf("key:%s val:%d\n", XString_c_str(str), XVariant_toInt(var));
 		}
-		XMap_delete_base(map);
-		XVariant_delete_base(varMap);
+		XClassDelete(map);
+		XClassDelete(varMap);
 	}
 	XCoreApplication_quit();
 }
@@ -138,14 +138,14 @@ void XVariantListTest_stringList()
 		XStringList_insert_utf8(list, 0, "彩虹猫");
 		XStringList_push_front_utf8(list, "星小白");
 		XVariant* var = XVariant_create_StringList(list);
-		XStringList_delete_base(list);
+		XClassDelete(list);
 		list=XVariant_toStringList(var);
-		XVariant_delete_base(var);
+		XClassDelete(var);
 		for_each_iterator(list, XStringList, it)
 		{
 			XPrintf("%s \n", XString_c_str(XStringList_iterator_data(&it)));
 		}
-		XStringList_delete_base(list);
+		XClassDelete(list);
 	}
 	XCoreApplication_quit();
 }

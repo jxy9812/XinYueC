@@ -33,9 +33,9 @@ static void xhttp2_connection_stream_delete(XHttp2Stream* stream)
 {
     if (!stream)
         return;
-    if (stream->m_reply && stream->m_replyOwned) XClass_delete_base((XClass*)stream->m_reply);
-    if (stream->m_wire) XClass_delete_base((XClass*)stream->m_wire);
-    if (stream->m_headerBlock) XClass_delete_base((XClass*)stream->m_headerBlock);
+    if (stream->m_reply && stream->m_replyOwned) XClassDelete((XClass*)stream->m_reply);
+    if (stream->m_wire) XClassDelete((XClass*)stream->m_wire);
+    if (stream->m_headerBlock) XClassDelete((XClass*)stream->m_headerBlock);
     XFree_System(stream);
 }
 
@@ -47,7 +47,7 @@ static void xhttp2_connection_clear_streams(XHttp2Connection* self)
         XHttp2Stream** slot = (XHttp2Stream**)XVector_at_base(self->m_streams, (int64_t)i);
         if (slot) xhttp2_connection_stream_delete(*slot);
     }
-    XVector_delete_base((XClass*)self->m_streams);
+    XClassDelete((XClass*)self->m_streams);
     self->m_streams = NULL;
 }
 
@@ -57,9 +57,9 @@ static void xhttp2_connection_clear_pushed(XHttp2Connection* self)
         return;
     for (size_t i = 0; i < XContainer_size_base((const XContainer*)self->m_pushedReplies); ++i) {
         XHttpReply** slot = (XHttpReply**)XVector_at_base(self->m_pushedReplies, (int64_t)i);
-        if (slot && *slot) XClass_delete_base((XClass*)*slot);
+        if (slot && *slot) XClassDelete((XClass*)*slot);
     }
-    XVector_delete_base((XClass*)self->m_pushedReplies);
+    XClassDelete((XClass*)self->m_pushedReplies);
     self->m_pushedReplies = NULL;
 }
 
@@ -140,8 +140,8 @@ static bool xhttp2_connection_append_frame(XHttp2Connection* self, uint8_t type,
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     result = wire && xhttp2_connection_append(self->m_outgoing, XByteArray_constData(wire),
                                                XContainer_size_base((const XContainer*)wire));
-    if (wire) XClass_delete_base((XClass*)wire);
-    if (frame) XClass_delete_base((XClass*)frame);
+    if (wire) XClassDelete((XClass*)wire);
+    if (frame) XClassDelete((XClass*)frame);
     return result;
 }
 
@@ -152,7 +152,7 @@ static bool xhttp2_connection_append_u32_frame(XHttp2Connection* self, uint8_t t
                         (uint8_t)(value >> 8), (uint8_t)value};
     XByteArray* payload = XByteArray_create_with_data((const char*)bytes, sizeof(bytes));
     bool result = payload && xhttp2_connection_append_frame(self, type, 0, streamId, payload);
-    if (payload) XClass_delete_base((XClass*)payload);
+    if (payload) XClassDelete((XClass*)payload);
     return result;
 }
 
@@ -187,7 +187,7 @@ static bool xhttp2_connection_send_goaway(XHttp2Connection* self, uint32_t error
         return self != NULL;
     payload = XByteArray_create_with_data((const char*)bytes, sizeof(bytes));
     result = payload && xhttp2_connection_append_frame(self, XHttp2Frame_GoAway, 0, 0, payload);
-    if (payload) XClass_delete_base((XClass*)payload);
+    if (payload) XClassDelete((XClass*)payload);
     if (result) self->m_goAwaySent = true;
     self->m_goingAway = true;
     return result;
@@ -362,7 +362,7 @@ static bool xhttp2_connection_finish_headers(XHttp2Connection* self, XHttp2Strea
             stream->m_state = XHttp2Stream_HalfClosedLocal;
         }
     }
-    if (headers) XClass_delete_base((XClass*)headers);
+    if (headers) XClassDelete((XClass*)headers);
     XByteArray_clear_base((XContainer*)stream->m_headerBlock);
     stream->m_headersActive = false;
     self->m_continuationStreamId = 0;
@@ -441,7 +441,7 @@ static bool xhttp2_connection_flush(XHttp2Connection* self)
             }
             frame = XHttp2Frame_fromBytes(wire + stream->m_writeOffset,
                                           total - stream->m_writeOffset, &consumed);
-            if (!frame || !consumed) { if (frame) XClass_delete_base((XClass*)frame); return false; }
+            if (!frame || !consumed) { if (frame) XClassDelete((XClass*)frame); return false; }
             if (XHttp2Frame_type(frame) != XHttp2Frame_Data) {
                 XByteArray* encoded = XHttp2Frame_toByteArray(frame);
                 bool ok = encoded && xhttp2_connection_append(self->m_outgoing,
@@ -460,12 +460,12 @@ static bool xhttp2_connection_flush(XHttp2Connection* self)
                 if (XHttp2Frame_type(frame) == XHttp2Frame_Headers &&
                     (XHttp2Frame_flags(frame) & XHttp2Frame_EndStream) &&
                     !xhttp2_connection_local_end_stream(self, stream)) {
-                    if (encoded) XClass_delete_base((XClass*)encoded);
-                    XClass_delete_base((XClass*)frame);
+                    if (encoded) XClassDelete((XClass*)encoded);
+                    XClassDelete((XClass*)frame);
                     return false;
                 }
-                if (encoded) XClass_delete_base((XClass*)encoded);
-                XClass_delete_base((XClass*)frame);
+                if (encoded) XClassDelete((XClass*)encoded);
+                XClassDelete((XClass*)frame);
                 if (!ok) return false;
                 stream->m_writeOffset += consumed;
                 continue;
@@ -482,9 +482,9 @@ static bool xhttp2_connection_flush(XHttp2Connection* self)
                 uint8_t flags = 0;
                 if (stream->m_dataOffset == payloadSize) {
                     stream->m_dataOffset = 0; stream->m_writeOffset += consumed;
-                    XClass_delete_base((XClass*)frame); continue;
+                    XClassDelete((XClass*)frame); continue;
                 }
-                if (allowed <= 0) { XClass_delete_base((XClass*)frame); break; }
+                if (allowed <= 0) { XClassDelete((XClass*)frame); break; }
                 chunk = payloadSize - stream->m_dataOffset;
                 if ((int64_t)chunk > allowed) chunk = (size_t)allowed;
                 if (chunk > self->m_peerMaxFrameSize) chunk = self->m_peerMaxFrameSize;
@@ -496,21 +496,21 @@ static bool xhttp2_connection_flush(XHttp2Connection* self)
                 encoded = out ? XHttp2Frame_toByteArray(out) : NULL;
                 if (!part || !out || !encoded || !xhttp2_connection_append(self->m_outgoing,
                     XByteArray_constData(encoded), XContainer_size_base((const XContainer*)encoded))) {
-                    if (encoded) XClass_delete_base((XClass*)encoded); if (out) XClass_delete_base((XClass*)out);
-                    if (part) XClass_delete_base((XClass*)part); XClass_delete_base((XClass*)frame); return false;
+                    if (encoded) XClassDelete((XClass*)encoded); if (out) XClassDelete((XClass*)out);
+                    if (part) XClassDelete((XClass*)part); XClassDelete((XClass*)frame); return false;
                 }
                 self->m_sessionSendWindow -= (int64_t)chunk; stream->m_sendWindow -= (int64_t)chunk;
                 stream->m_dataOffset += chunk;
                 if ((flags & XHttp2Frame_EndStream) &&
                     !xhttp2_connection_local_end_stream(self, stream)) {
-                    if (encoded) XClass_delete_base((XClass*)encoded);
-                    if (out) XClass_delete_base((XClass*)out);
-                    if (part) XClass_delete_base((XClass*)part);
-                    XClass_delete_base((XClass*)frame);
+                    if (encoded) XClassDelete((XClass*)encoded);
+                    if (out) XClassDelete((XClass*)out);
+                    if (part) XClassDelete((XClass*)part);
+                    XClassDelete((XClass*)frame);
                     return false;
                 }
-                if (encoded) XClass_delete_base((XClass*)encoded); if (out) XClass_delete_base((XClass*)out);
-                if (part) XClass_delete_base((XClass*)part); XClass_delete_base((XClass*)frame);
+                if (encoded) XClassDelete((XClass*)encoded); if (out) XClassDelete((XClass*)out);
+                if (part) XClassDelete((XClass*)part); XClassDelete((XClass*)frame);
             }
         }
     }
@@ -522,11 +522,11 @@ static void VXHttp2Connection_deinit(XHttp2Connection* self)
     if (!self) return;
     xhttp2_connection_clear_streams(self);
     xhttp2_connection_clear_pushed(self);
-    if (self->m_session) XClass_delete_base((XClass*)self->m_session);
-    if (self->m_decoder) XClass_delete_base((XClass*)self->m_decoder);
-    if (self->m_configuration) XClass_delete_base((XClass*)self->m_configuration);
-    if (self->m_input) XClass_delete_base((XClass*)self->m_input);
-    if (self->m_outgoing) XClass_delete_base((XClass*)self->m_outgoing);
+    if (self->m_session) XClassDelete((XClass*)self->m_session);
+    if (self->m_decoder) XClassDelete((XClass*)self->m_decoder);
+    if (self->m_configuration) XClassDelete((XClass*)self->m_configuration);
+    if (self->m_input) XClassDelete((XClass*)self->m_input);
+    if (self->m_outgoing) XClassDelete((XClass*)self->m_outgoing);
     self->m_session = NULL; self->m_decoder = NULL; self->m_configuration = NULL;
     self->m_input = NULL; self->m_outgoing = NULL;
     XClass_Deinit_Parent(XClass, (XClass*)self);
@@ -579,14 +579,14 @@ XHttp2Connection* XHttp2Connection_create_ex(XMemoryType memory,
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_configuration || !self->m_session || !self->m_decoder || !self->m_streams ||
         !self->m_pushedReplies || !self->m_input || !self->m_outgoing) {
-        XClass_delete_base((XClass*)self); return NULL;
+        XClassDelete((XClass*)self); return NULL;
     }
     if (!configuration) return self;
     copy = XHttp2Configuration_create_copy(configuration);
     if (!copy || !XHttp2ClientSession_setConfiguration(self->m_session, configuration)) {
-        if (copy) XClass_delete_base((XClass*)copy); XClass_delete_base((XClass*)self); return NULL;
+        if (copy) XClassDelete((XClass*)copy); XClassDelete((XClass*)self); return NULL;
     }
-    XClass_delete_base((XClass*)self->m_configuration);
+    XClassDelete((XClass*)self->m_configuration);
     self->m_configuration = copy;
     self->m_sessionRecvTarget = XHttp2Configuration_sessionReceiveWindowSize(copy);
     self->m_streamRecvTarget = XHttp2Configuration_streamReceiveWindowSize(copy);
@@ -608,9 +608,9 @@ static XHttpReply* xhttp2_connection_send_request(XHttp2Connection* self,
     if (!self || !request || !streamId || self->m_failed || self->m_goingAway)
         return NULL;
     wire = XHttp2ClientSession_encodeRequest(self->m_session, request, &id);
-    if (!wire || !id) { if (wire) XClass_delete_base((XClass*)wire); return NULL; }
+    if (!wire || !id) { if (wire) XClassDelete((XClass*)wire); return NULL; }
     stream = (XHttp2Stream*)XMalloc_System(sizeof(*stream));
-    if (!stream) { XClass_delete_base((XClass*)wire); XHttp2ClientSession_markStreamClosed(self->m_session); return NULL; }
+    if (!stream) { XClassDelete((XClass*)wire); XHttp2ClientSession_markStreamClosed(self->m_session); return NULL; }
     memset(stream, 0, sizeof(*stream));
     stream->m_reply = reply ? reply : XHttpReply_create(request);
     stream->m_replyOwned = replyOwned;
@@ -660,12 +660,12 @@ bool XHttp2Connection_adoptUpgradedRequest(XHttp2Connection* self,
         return false;
     wire = XHttp2ClientSession_start(self->m_session);
     if (!wire || !XHttp2ClientSession_adoptUpgradedStream(self->m_session)) {
-        if (wire) XClass_delete_base((XClass*)wire);
+        if (wire) XClassDelete((XClass*)wire);
         return false;
     }
     stream = (XHttp2Stream*)XMalloc_System(sizeof(*stream));
     if (!stream) {
-        XClass_delete_base((XClass*)wire);
+        XClassDelete((XClass*)wire);
         XHttp2ClientSession_markStreamClosed(self->m_session);
         return false;
     }
@@ -910,9 +910,9 @@ bool XHttp2Connection_feed(XHttp2Connection* self, const void* data, size_t size
             return xhttp2_connection_fail(self, XHTTP2_CONNECTION_FRAME_SIZE_ERROR);
         if (length > total - offset - 9) break;
         frame = XHttp2Frame_fromBytes(bytes + offset, total - offset, &consumed);
-        if (!frame || !consumed) { if (frame) XClass_delete_base((XClass*)frame); return xhttp2_connection_fail(self, XHTTP2_CONNECTION_PROTOCOL_ERROR); }
-        if (!xhttp2_connection_process_frame(self, frame)) { XClass_delete_base((XClass*)frame); return false; }
-        XClass_delete_base((XClass*)frame); offset += consumed;
+        if (!frame || !consumed) { if (frame) XClassDelete((XClass*)frame); return xhttp2_connection_fail(self, XHTTP2_CONNECTION_PROTOCOL_ERROR); }
+        if (!xhttp2_connection_process_frame(self, frame)) { XClassDelete((XClass*)frame); return false; }
+        XClassDelete((XClass*)frame); offset += consumed;
     }
     if (offset) XByteArray_remove_base((XVector*)self->m_input, 0, (int64_t)offset);
     return true;

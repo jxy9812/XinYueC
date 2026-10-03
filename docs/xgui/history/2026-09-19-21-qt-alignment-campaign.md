@@ -34,7 +34,7 @@ internalInsert 掩码分支每次击键净增一空槽(替换语义缺失)+
 stripString/clearString 槽位口径,为下一轮独立深挖项。
 
 **合规自查**:按约束文档核对——内存统一 XMemory API、
-init/deinit_base 成对、XCopy 深拷贝(2026-09-08 裁定)、setFont
+init/XClassDeinit 成对、XClassCopy 深拷贝(2026-09-08 裁定)、setFont
 条件发射符合"绘制期间 update 行为"审查底线、ac_open 守卫符合
 "deinit+init 删除需已初始化"底线、C99、git diff --check 干净、
 未提交 Git。
@@ -1154,7 +1154,7 @@ XLabel→XTextControl)已落地但未提交;首次完整跑通回归暴露两颗
 **控制器修复**:①removeSelectedText 循环补零进度断行
 (同文件 prevCharsByteLen 已有同型防御);②六处浅拷贝读点去
 deinit(只读不拥有,注释立约),setFont/font() getter 改
-XCopy 深拷贝(对齐 XWidget_font Phase 3.2 裁定),setFont 改
+XClassCopy 深拷贝(对齐 XWidget_font Phase 3.2 裁定),setFont 改
 度量/家族真变化才发 updateRequest(防壳同步→paint 回路);
 ③XLineControl 方向键四处改读解析后 layoutDirection(此前
 Auto 缺省被当 RTL,Left/Right 反相);④del() 由 SkipWords

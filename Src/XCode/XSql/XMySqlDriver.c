@@ -115,7 +115,7 @@ static void xmysql_clear_rows(XMySqlResult* result)
     for (row = 0; row < result->m_rowCount; ++row) {
         if (!result->m_rows[row]) continue;
         for (field = 0; field < result->m_columnCount; ++field)
-            if (result->m_rows[row][field]) XVariant_delete_base(result->m_rows[row][field]);
+            if (result->m_rows[row][field]) XClassDelete(result->m_rows[row][field]);
         XFree_System(result->m_rows[row]);
     }
     if (result->m_rows) XFree_System(result->m_rows);
@@ -154,7 +154,7 @@ static void xmysql_clear_result_state(XMySqlResult* result)
     if (!result) return;
     xmysql_clear_rows(result);
     XSqlRecord_clear(&result->m_parent.m_record);
-    XSqlError_deinit_base(&result->m_parent.m_lastError);
+    XClassDeinit(&result->m_parent.m_lastError);
     XSqlError_init(&result->m_parent.m_lastError);
     XVariant_setValue_null(&result->m_parent.m_lastInsertId);
     result->m_parent.m_at = XSqlLocation_BeforeFirstRow;
@@ -213,21 +213,21 @@ static XVariant* xmysql_value_variant(const XSqlMySqlField* field,
     if (field && field->m_nativeType == XMYSQL_NATIVE_BIT) {
         uint64_t number = utf8 ? strtoull(utf8, NULL, 10) : 0;
         XVariant* result = XVariant_create_uint64(number);
-        XString_delete_base(text);
+        XClassDelete(text);
         return result;
     }
     if (field && (field->m_nativeType == 0u || field->m_nativeType == 4u
                   || field->m_nativeType == 5u || field->m_nativeType == 246u)
         && policy == XSqlNumericalPrecisionPolicy_HighPrecision) {
         XVariant* result = XVariant_create_String_move(text);
-        XString_delete_base(text);
+        XClassDelete(text);
         return result;
     }
     if (field && (field->m_nativeType == XMYSQL_NATIVE_DATE
                   || field->m_nativeType == XMYSQL_NATIVE_NEWDATE)) {
         XDate date = XDate_fromString_iso(utf8);
         XVariant* result = XVariant_create_Date(&date);
-        XString_delete_base(text);
+        XClassDelete(text);
         return result;
     }
     if (field && (field->m_nativeType == XMYSQL_NATIVE_TIMESTAMP
@@ -236,7 +236,7 @@ static XVariant* xmysql_value_variant(const XSqlMySqlField* field,
                   || field->m_nativeType == XMYSQL_NATIVE_DATETIME2)) {
         XDateTime datetime = XDateTime_fromString_iso(utf8);
         XVariant* result = XVariant_create_DateTime(&datetime);
-        XString_delete_base(text);
+        XClassDelete(text);
         return result;
     }
     switch (value->m_type) {
@@ -250,7 +250,7 @@ static XVariant* xmysql_value_variant(const XSqlMySqlField* field,
                                          || field->m_nativeType == XMYSQL_NATIVE_YEAR)
                 ? XVariant_create_int32((int32_t)number)
                 : XVariant_create_int64((int64_t)number);
-            XString_delete_base(text);
+            XClassDelete(text);
             return result;
         }
     case XSqlMySqlValueType_UnsignedInteger:
@@ -267,7 +267,7 @@ static XVariant* xmysql_value_variant(const XSqlMySqlField* field,
                             || field->m_nativeType == XMYSQL_NATIVE_YEAR)
                     ? XVariant_create_uint32((uint32_t)number)
                     : XVariant_create_uint64((uint64_t)number);
-            XString_delete_base(text);
+            XClassDelete(text);
             return result;
         }
     case XSqlMySqlValueType_Real:
@@ -276,7 +276,7 @@ static XVariant* xmysql_value_variant(const XSqlMySqlField* field,
             double number = utf8 ? strtod(utf8, &end) : 0.0;
             XVariant* result;
             if (!utf8 || !end || end == utf8 || *end != 0) {
-                XString_delete_base(text);
+                XClassDelete(text);
                 return XVariant_create_null();
             }
             switch (policy) {
@@ -288,20 +288,20 @@ static XVariant* xmysql_value_variant(const XSqlMySqlField* field,
                 break;
             case XSqlNumericalPrecisionPolicy_HighPrecision:
                 result = XVariant_create_String_move(text);
-                XString_delete_base(text);
+                XClassDelete(text);
                 return result;
             case XSqlNumericalPrecisionPolicy_LowPrecisionDouble:
             default:
                 result = XVariant_create_double(number);
                 break;
             }
-            XString_delete_base(text);
+            XClassDelete(text);
             return result;
         }
     default:
         {
             XVariant* result = XVariant_create_String_move(text);
-            XString_delete_base(text);
+            XClassDelete(text);
             return result;
         }
     }
@@ -330,9 +330,9 @@ static bool xmysql_build_record(XMySqlResult* result, XSqlMySqlResult* raw,
             XSqlField_setRequired(sqlField, (info->m_flags & XMYSQL_FIELD_NOT_NULL) != 0);
             XSqlField_setAutoValue(sqlField, (info->m_flags & XMYSQL_FIELD_AUTO_INCREMENT) != 0);
         }
-        if (name) XString_delete_base(name);
-        if (table) XString_delete_base(table);
-        if (sqlField) XSqlField_delete_base(sqlField);
+        if (name) XClassDelete(name);
+        if (table) XClassDelete(table);
+        if (sqlField) XClassDelete(sqlField);
         if (!appended) return false;
     }
     return true;
@@ -378,12 +378,12 @@ static void xmysql_set_result_error(XMySqlResult* result, const XSqlMySqlError* 
     errorCode = XString_create_utf8(source && source->m_errorCode ? source->m_errorCode : "0");
     error = XSqlError_create(driverText, databaseText,
                              source ? source->m_type : XSqlErrorType_UnknownError, errorCode);
-    if (driverText) XString_delete_base(driverText);
-    if (databaseText) XString_delete_base(databaseText);
-    if (errorCode) XString_delete_base(errorCode);
+    if (driverText) XClassDelete(driverText);
+    if (databaseText) XClassDelete(databaseText);
+    if (errorCode) XClassDelete(errorCode);
     if (error) {
         XSqlResult_setLastError_base(&result->m_parent, error);
-        XSqlError_delete_base(error);
+        XClassDelete(error);
     }
 }
 
@@ -480,7 +480,7 @@ static bool xmysql_append_escaped_value(XString* query, const XVariant* value,
         bool ok = text
             ? xmysql_append_escaped_text(query, XString_toUtf8(text), XString_toUtf8_length(text))
             : XString_append_utf8(query, "NULL");
-        if (text) XString_delete_base(text);
+        if (text) XClassDelete(text);
         return ok;
     }
     if (type == XVariantType_ByteArray || binary) {
@@ -502,7 +502,7 @@ static bool xmysql_append_escaped_value(XString* query, const XVariant* value,
     if (type == XVariantType_Double || type == XVariantType_Float) {
         XString* number = XString_create_fmt_utf8("%.17g", XVariant_toDouble(value));
         bool ok = number && XString_append(query, number);
-        if (number) XString_delete_base(number);
+        if (number) XClassDelete(number);
         return ok;
     }
     if (type == XVariantType_Uint8 || type == XVariantType_Uint16
@@ -511,7 +511,7 @@ static bool xmysql_append_escaped_value(XString* query, const XVariant* value,
         XString* number = XString_create_fmt_utf8("%llu",
                                                    (unsigned long long)XVariant_toUint64(value));
         bool ok = number && XString_append(query, number);
-        if (number) XString_delete_base(number);
+        if (number) XClassDelete(number);
         return ok;
     }
     if (type == XVariantType_Int8 || type == XVariantType_Int16
@@ -520,7 +520,7 @@ static bool xmysql_append_escaped_value(XString* query, const XVariant* value,
         XString* number = XString_create_fmt_utf8("%lld",
                                                    (long long)XVariant_toInt64(value));
         bool ok = number && XString_append(query, number);
-        if (number) XString_delete_base(number);
+        if (number) XClassDelete(number);
         return ok;
     }
     {
@@ -612,7 +612,7 @@ static XString* xmysql_build_query(const XSqlResult* result)
     }
     return output;
 fail:
-    XString_delete_base(output);
+    XClassDelete(output);
     return NULL;
 }
 
@@ -692,7 +692,7 @@ static XString* xmysql_build_prepared_query(const XSqlResult* result,
     return output;
 fail:
     if (positions) XFree_System(positions);
-    XString_delete_base(output);
+    XClassDelete(output);
     return NULL;
 }
 
@@ -885,7 +885,7 @@ static bool VXMySqlResult_isNull(XSqlResult* base, int field)
 {
     XVariant* value = VXMySqlResult_data(base, field);
     bool isNull = !value || !XVariant_isValid(value);
-    if (value) XVariant_delete_base(value);
+    if (value) XClassDelete(value);
     return isNull;
 }
 
@@ -947,7 +947,7 @@ static bool VXMySqlResult_exec(XSqlResult* base)
                 /* Prepared execution succeeded. */
             } else {
                 if (binds) { XFree_System(binds); binds = NULL; }
-                if (query) { XString_delete_base(query); query = NULL; }
+                if (query) { XClassDelete(query); query = NULL; }
                 if (order) { XFree_System(order); order = NULL; }
                 xmysql_apply_client_error(result, driver, "Unable to execute MySQL prepared query");
                 return false;
@@ -955,12 +955,12 @@ static bool VXMySqlResult_exec(XSqlResult* base)
         }
     }
     if (!raw) {
-        if (query) XString_delete_base(query);
+        if (query) XClassDelete(query);
         query = xmysql_build_query(base);
         if (!query || !api->execute(driver->m_client, XString_toUtf8(query),
                                    XString_toUtf8_length(query), &raw)) {
             xmysql_apply_client_error(result, driver, "Unable to execute MySQL query");
-            if (query) XString_delete_base(query);
+            if (query) XClassDelete(query);
             if (order) XFree_System(order);
             if (binds) XFree_System(binds);
             return false;
@@ -969,7 +969,7 @@ static bool VXMySqlResult_exec(XSqlResult* base)
     if (!xmysql_build_record(result, raw, api) || !xmysql_cache_rows(result, raw, api)) {
         xmysql_set_result_error(result, NULL, "Unable to cache MySQL result");
         api->resultDestroy(raw);
-        if (query) XString_delete_base(query);
+        if (query) XClassDelete(query);
         if (order) XFree_System(order);
         if (binds) XFree_System(binds);
         return false;
@@ -985,9 +985,9 @@ static bool VXMySqlResult_exec(XSqlResult* base)
     }
     base->m_active = true;
     base->m_at = XSqlLocation_BeforeFirstRow;
-    if (base->m_executedQuery) XString_delete_base(base->m_executedQuery);
+    if (base->m_executedQuery) XClassDelete(base->m_executedQuery);
     base->m_executedQuery = query ? XString_create_copy(query) : XString_create_copy(base->m_lastQuery);
-    if (query) XString_delete_base(query);
+    if (query) XClassDelete(query);
     if (order) XFree_System(order);
     if (binds) XFree_System(binds);
     return true;
@@ -1080,7 +1080,7 @@ static bool VXMySqlResult_execBatch(XSqlResult* base, XSqlBatchExecutionMode mod
             if (ok && base->m_numRowsAffected > 0) totalAffected += base->m_numRowsAffected;
         }
         for (field = 0; field < base->m_boundCount; ++field) {
-            if (selected[field]) XVariant_delete_base(selected[field]);
+            if (selected[field]) XClassDelete(selected[field]);
             selected[field] = NULL;
             base->m_boundValues[field] = originals[field];
         }
@@ -1156,10 +1156,10 @@ static bool xmysql_exec_simple(XMySqlDriver* driver, const char* sql, XSqlErrorT
         XString* databaseText = XString_create_utf8(source && source->m_databaseText ? source->m_databaseText : "");
         XString* errorCode = XString_create_utf8(source && source->m_errorCode ? source->m_errorCode : "0");
         error = XSqlError_create(driverText, databaseText, type, errorCode);
-        if (driverText) XString_delete_base(driverText);
-        if (databaseText) XString_delete_base(databaseText);
-        if (errorCode) XString_delete_base(errorCode);
-        if (error) { XSqlDriver_setLastError(&driver->m_parent, error); XSqlError_delete_base(error); }
+        if (driverText) XClassDelete(driverText);
+        if (databaseText) XClassDelete(databaseText);
+        if (errorCode) XClassDelete(errorCode);
+        if (error) { XSqlDriver_setLastError(&driver->m_parent, error); XClassDelete(error); }
         return false;
     }
     if (raw) api->resultDestroy(raw);
@@ -1179,7 +1179,7 @@ static XString* xmysql_quote_identifier(const char* text, size_t size)
     if (!XString_append_utf8(result, "`")) goto fail;
     return result;
 fail:
-    XString_delete_base(result);
+    XClassDelete(result);
     return NULL;
 }
 
@@ -1197,7 +1197,7 @@ static XString* xmysql_quote_dotted_identifier(const char* text)
                                        separator ? (size_t)(separator - cursor)
                                                  : strlen(cursor));
         if (!part || !XString_append(result, part)) goto fail;
-        XString_delete_base(part);
+        XClassDelete(part);
         part = NULL;
         if (!separator) break;
         if (!XString_append_utf8(result, ".")) goto fail;
@@ -1205,8 +1205,8 @@ static XString* xmysql_quote_dotted_identifier(const char* text)
     }
     return result;
 fail:
-    if (part) XString_delete_base(part);
-    XString_delete_base(result);
+    if (part) XClassDelete(part);
+    XClassDelete(result);
     return NULL;
 }
 
@@ -1219,7 +1219,7 @@ static XSqlResult* xmysql_exec_metadata(const XSqlDriver* base, const XString* s
 {
     XSqlResult* result = XSqlDriver_createResult_base(base);
     if (!result || !sql || !XSqlResult_reset_base(result, sql)) {
-        if (result) XSqlResult_delete_base(result);
+        if (result) XClassDelete(result);
         return NULL;
     }
     return result;
@@ -1323,15 +1323,15 @@ static XSqlField* xmysql_field_from_column(XSqlResult* query,
             && xmysql_ascii_contains(XString_toUtf8(extraText), "auto_increment"));
         xmysql_apply_type_shape(field, type ? XString_toUtf8(type) : NULL);
     }
-    if (nameValue) XVariant_delete_base(nameValue);
-    if (typeValue) XVariant_delete_base(typeValue);
-    if (nullValue) XVariant_delete_base(nullValue);
-    if (defaultValue) XVariant_delete_base(defaultValue);
-    if (extraValue) XVariant_delete_base(extraValue);
-    if (name) XString_delete_base(name);
-    if (type) XString_delete_base(type);
-    if (nullText) XString_delete_base(nullText);
-    if (extraText) XString_delete_base(extraText);
+    if (nameValue) XClassDelete(nameValue);
+    if (typeValue) XClassDelete(typeValue);
+    if (nullValue) XClassDelete(nullValue);
+    if (defaultValue) XClassDelete(defaultValue);
+    if (extraValue) XClassDelete(extraValue);
+    if (name) XClassDelete(name);
+    if (type) XClassDelete(type);
+    if (nullText) XClassDelete(nullText);
+    if (extraText) XClassDelete(extraText);
     return field;
 }
 
@@ -1349,10 +1349,10 @@ static void xmysql_append_table_names(XStringList* list, XSqlResult* query,
         if (tableName && ((isView && (type & XSqlTableType_Views))
                           || (!isView && (type & XSqlTableType_Tables))))
             XStringList_push_back_base(list, tableName);
-        if (tableName) XString_delete_base(tableName);
-        if (tableType) XString_delete_base(tableType);
-        if (name) XVariant_delete_base(name);
-        if (kind) XVariant_delete_base(kind);
+        if (tableName) XClassDelete(tableName);
+        if (tableType) XClassDelete(tableType);
+        if (name) XClassDelete(name);
+        if (kind) XClassDelete(kind);
     }
 }
 
@@ -1432,10 +1432,10 @@ static bool VXMySqlDriver_open(XSqlDriver* base, const XString* database,
         XString* errorCode = XString_create_utf8(source && source->m_errorCode ? source->m_errorCode : "0");
         error = XSqlError_create(driverText, databaseText,
                                  source ? source->m_type : XSqlErrorType_ConnectionError, errorCode);
-        if (driverText) XString_delete_base(driverText);
-        if (databaseText) XString_delete_base(databaseText);
-        if (errorCode) XString_delete_base(errorCode);
-        if (error) { XSqlDriver_setLastError(base, error); XSqlError_delete_base(error); }
+        if (driverText) XClassDelete(driverText);
+        if (databaseText) XClassDelete(databaseText);
+        if (errorCode) XClassDelete(errorCode);
+        if (error) { XSqlDriver_setLastError(base, error); XClassDelete(error); }
     }
     return ok;
 }
@@ -1478,9 +1478,9 @@ static XStringList* VXMySqlDriver_tables(const XSqlDriver* base, XSqlTableType t
     query = xmysql_exec_metadata(base, sql);
     if (query) {
         xmysql_append_table_names(result, query, type);
-        XSqlResult_delete_base(query);
+        XClassDelete(query);
     }
-    if (sql) XString_delete_base(sql);
+    if (sql) XClassDelete(sql);
     return result;
 }
 
@@ -1505,21 +1505,21 @@ static XSqlIndex* VXMySqlDriver_primaryIndex(const XSqlDriver* base, const XStri
                 : name ? XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, name, XVariantType_String, tableName) : NULL;
             if (field) {
                 XSqlIndex_append(index, field);
-                XSqlField_delete_base(field);
+                XClassDelete(field);
             }
             XSqlIndex_setCursorName(index, cursorName);
             XSqlIndex_setName_utf8(index, "PRIMARY");
-            if (cursorName) XString_delete_base(cursorName);
-            if (cursorValue) XVariant_delete_base(cursorValue);
-            if (name) XString_delete_base(name);
-            if (value) XVariant_delete_base(value);
+            if (cursorName) XClassDelete(cursorName);
+            if (cursorValue) XClassDelete(cursorValue);
+            if (name) XClassDelete(name);
+            if (value) XClassDelete(value);
         }
-        XSqlResult_delete_base(query);
+        XClassDelete(query);
     }
-    if (sql) XString_delete_base(sql);
+    if (sql) XClassDelete(sql);
 done:
-    if (fields) XSqlRecord_delete_base(fields);
-    if (table) XString_delete_base(table);
+    if (fields) XClassDelete(fields);
+    if (table) XClassDelete(table);
     return index;
 }
 
@@ -1543,17 +1543,17 @@ static XSqlRecord* VXMySqlDriver_record(const XSqlDriver* base, const XString* t
             for (index = 0; index < count; ++index) {
                 XSqlField* field = XSqlRecord_field(rawRecord, index);
                 if (!field || !XSqlRecord_append(result, field)) {
-                    if (field) XSqlField_delete_base(field);
+                    if (field) XClassDelete(field);
                     XSqlRecord_clear(result);
                     break;
                 }
-                XSqlField_delete_base(field);
+                XClassDelete(field);
             }
         }
-        XSqlResult_delete_base(query);
+        XClassDelete(query);
         query = NULL;
     }
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
 
     sql = XString_create_fmt_utf8("SHOW COLUMNS FROM %s", XString_toUtf8(table));
     query = xmysql_exec_metadata(base, sql);
@@ -1568,24 +1568,24 @@ static XSqlRecord* VXMySqlDriver_record(const XSqlDriver* base, const XString* t
                 if (actual) {
                     XSqlField_setDefaultValue(actual, defaultValue);
                     XSqlRecord_replace(result, index, actual);
-                    XSqlField_delete_base(actual);
+                    XClassDelete(actual);
                 }
-                if (defaultValue) XVariant_delete_base(defaultValue);
+                if (defaultValue) XClassDelete(defaultValue);
             } else if (field && !XSqlRecord_append(result, field)) {
-                XSqlField_delete_base(field);
+                XClassDelete(field);
                 break;
             }
-            if (name) XString_delete_base(name);
-            if (field) XSqlField_delete_base(field);
+            if (name) XClassDelete(name);
+            if (field) XClassDelete(field);
         }
     }
-    if (query) { XSqlResult_delete_base(query); query = NULL; }
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
 done:
-    if (rawRecord) XSqlRecord_delete_base(rawRecord);
-    if (query) XSqlResult_delete_base(query);
-    if (sql) XString_delete_base(sql);
-    if (table) XString_delete_base(table);
+    if (rawRecord) XClassDelete(rawRecord);
+    if (query) XClassDelete(query);
+    if (sql) XClassDelete(sql);
+    if (table) XClassDelete(table);
     return result;
 }
 
@@ -1603,16 +1603,16 @@ static XString* VXMySqlDriver_formatValue(const XSqlDriver* base, const XSqlFiel
         XString* text = XVariant_toString(value);
         XString* trimmed = text ? XString_trimmed(text) : NULL;
         if (trimmed) formattedValue = XVariant_create_String_move(trimmed);
-        if (text) XString_delete_base(text);
+        if (text) XClassDelete(text);
     }
     result = XString_create();
     ok = result && xmysql_append_escaped_value(result,
                                                 formattedValue ? formattedValue : value,
                                                 false);
-    if (formattedValue) XVariant_delete_base(formattedValue);
-    if (value) XVariant_delete_base(value);
+    if (formattedValue) XClassDelete(formattedValue);
+    if (value) XClassDelete(value);
     if (!ok) {
-        if (result) XString_delete_base(result);
+        if (result) XClassDelete(result);
         return XString_create();
     }
     return result;
@@ -1744,7 +1744,7 @@ bool XMySqlDriver_register(void)
     creator = XSqlDriverCreator_create(XMySqlDriver_create_default);
     if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_MySql,
                                                          &creator->m_parent)) {
-        if (creator) XSqlDriverCreator_delete_base(creator);
+        if (creator) XClassDelete(creator);
         creator = NULL;
         return false;
     }

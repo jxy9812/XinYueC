@@ -56,8 +56,6 @@ void XScrollArea_init(XScrollArea* self, XWidget* parent,
 #define XScrollArea_create(parent, flags) XScrollArea_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XScrollArea* XScrollArea_create_ex(XMemoryType memory, XWidget* parent,
                                    XWidgetFlags flags);
-#define XScrollArea_deinit_base(self) XAbstractScrollArea_deinit_base((XAbstractScrollArea*)(self))
-#define XScrollArea_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 内容管理（对标 QScrollArea public API） ==================== */
 

@@ -132,7 +132,7 @@ static void xactiongroup_bridgeDestroyDeferred(XActionGroupBridge* bridge, bool 
     if (!bridge) return;
     if (bridge->m_actionDead) {
         /* 动作已销毁：其连接表随之消亡，直接删除桥。 */
-        XClass_delete_base((XClass*)bridge);
+        XClassDelete((XClass*)bridge);
         return;
     }
     XObject_disconnect_1((XObject*)bridge->m_action,
@@ -150,7 +150,7 @@ static void xactiongroup_bridgeDestroyDeferred(XActionGroupBridge* bridge, bool 
     if (deferred)
         XObject_deleteLater((XObject*)bridge);
     else
-        XClass_delete_base((XClass*)bridge);
+        XClassDelete((XClass*)bridge);
 }
 
 /** @brief triggered 转发：互斥维护 + 发射组 triggered(action)。 */
@@ -294,7 +294,7 @@ static void VX_actionGroup_deinit(XActionGroup* self)
         }
     }
     if (self->m_actions) {
-        XVector_delete_base((XClass*)self->m_actions);
+        XClassDelete((XClass*)self->m_actions);
         self->m_actions = NULL;
     }
     if (self->m_bridges) {
@@ -306,7 +306,7 @@ static void VX_actionGroup_deinit(XActionGroup* self)
             if (bp && *bp)
                 xactiongroup_bridgeDestroyDeferred(*bp, false);
         }
-        XVector_delete_base((XClass*)self->m_bridges);
+        XClassDelete((XClass*)self->m_bridges);
         self->m_bridges = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);

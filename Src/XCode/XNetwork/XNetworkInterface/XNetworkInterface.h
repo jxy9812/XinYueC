@@ -104,7 +104,7 @@ typedef struct XNetworkInterface {
 
 /**
  * @brief 创建一个空的 XNetworkInterface 实例。
- * @return 新分配的实例，需调用 XNetworkInterface_delete_base() 释放。
+ * @return 新分配的实例，需调用 XClassDelete() 释放。
  */
 XNetworkInterface* XNetworkInterface_create_ex(XMemoryType memory);
 
@@ -128,8 +128,6 @@ void XNetworkInterface_init(XNetworkInterface* iface);
  */
 XVtable* XNetworkInterface_class_init(void);
 
-#define XNetworkInterface_delete_base    XClass_delete_base
-#define XNetworkInterface_deinit_base    XClass_deinit_base
 
 // ==================== 属性访问器 ====================
 

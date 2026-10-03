@@ -251,7 +251,7 @@ static void xcv_applyLabelFont(XPainter* painter, const XWidget* widget,
     if (sizePts > 0)
         XFont_setPointSize(&font, sizePts);
     XPainter_setFont(painter, &font);
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
 }
 
 /**
@@ -470,7 +470,7 @@ static void xcv_paintTitle(XChartView* self, XPainter* painter,
         if (xcv_textVisible(dirty, tx, ty, (int)XStrlen(title) * 8))
             XPainter_drawText(painter, tx, ty, title, text);
     }
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
 }
 
 /** @brief 绘制数值轴网格 + 刻度标签（颜色取自主题规格，轴级颜色可覆盖；
@@ -495,7 +495,7 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
     int ticks;
     if (!ax || !ay) return;
     /* 字体深拷贝下移到空轴早退之后（XWidget_font 契约：用后必须
-     * XFont_deinit_base）：此前先拷贝再在空轴处 return，副本（家族
+     * XClassDeinit）：此前先拷贝再在空轴处 return，副本（家族
      * XString）随早退泄漏。 */
     font = XWidget_font((XWidget*)self);
     /* 根因（R-106）：轴 m_visible 此前只存不用——setVisible(false) 后
@@ -505,9 +505,9 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
     visX = ax->m_base.m_visible;
     visY = ay->m_base.m_visible;
     if (!visX && !visY) {
-        /* 显式 XClass 转换：XFont_deinit_base 为裸别名宏，直呼会新增
+        /* 显式 XClass 转换：XClassDeinit 为裸别名宏，直呼会新增
          * 指针类型诊断（同 xcv_staticFingerprint 尾部注释约定）。 */
-        XClass_deinit_base((XClass*)&font);
+        XClassDeinit((XClass*)&font);
         return;
     }
     axisPenX = ax->m_base.m_linePenColor != 0
@@ -633,7 +633,7 @@ static void xcv_paintAxes(XChartView* self, XPainter* painter,
                                   textX);
         }
     }
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
 }
 
 #if XCHARTVIEW_STATIC_LAYER_ON
@@ -854,9 +854,9 @@ static uint64_t xcv_staticFingerprint(const XChartView* cv)
         h = xcv_fnv1aU32(h, (uint32_t)(faceAddr >> 32));
         h = xcv_fnv1aInt(h, face ? (int)XFontFace_kind(face) : 0);
     }
-    /* XFont_deinit_base 是 XClass_deinit_base 的裸别名宏（无 XClass
+    /* XClassDeinit 是 XClass_deinit_base 的裸别名宏（无 XClass
      * 转换）；此处显式转换既释放深拷贝字体又免新增指针类型诊断。 */
-    XClass_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
     /* 调色板窗口文本色（标题画刷为 0 时的回退色，随调色板变化）。 */
     h = xcv_fnv1aU32(h, xcv_color(cv, XPaletteColorRole_WindowText));
     return h;
@@ -1847,12 +1847,12 @@ static void xcv_paintLegend(XChartView* self, XPainter* painter,
             y += 20;
         }
     }
-    /* 根因（R-37）：XFont_deinit_base 此前误放在折线图例循环体内——
+    /* 根因（R-37）：XClassDeinit 此前误放在折线图例循环体内——
      * m_lineCount==0（纯柱/饼图）时循环体永不执行，每次重绘泄漏一份
      * XWidget_font 深拷贝（动画逐帧累积）；且循环多轮时会对同一副本
      * 反复 deinit（二次释放）。对照 xcv_paintTitle/xcv_paintAxes 正确
      * 范式：setFont 持有的副本在函数尾恰好释放一次。 */
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
 }
 
 /** @brief 渲染整张图表到图像（paintEvent 与 renderToImage 共用管线）。
@@ -2175,12 +2175,12 @@ static void VX_chartView_deinit(XChartView* self)
      * =0 裁剪构建连注册都没有，图表必然泄漏——故移出该开关（仅层画布
      * 两行留在开关内：字段本身随头文件裁剪）。 */
     if (self->m_chart) {
-        XChart_delete_base(self->m_chart);
+        XClassDelete(self->m_chart);
         self->m_chart = NULL;
     }
 #if XCHARTVIEW_STATIC_LAYER_ON
-    XImage_deinit_base(&self->m_staticLayer);
-    XImage_deinit_base(&self->m_legendLayer);
+    XClassDeinit(&self->m_staticLayer);
+    XClassDeinit(&self->m_legendLayer);
 #endif /* XCHARTVIEW_STATIC_LAYER_ON */
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
 }

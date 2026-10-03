@@ -20,7 +20,7 @@
 #define XCRYPTO_PRIMITIVE_REQUIRE(condition, name, reason) \
     do { if (!(condition)) { XCRYPTO_PRIMITIVE_FAIL(name, reason); return false; } } while (0)
 #define XCRYPTO_PRIMITIVE_SIZE(array) XByteArray_size_base((XContainer*)(array))
-#define XCRYPTO_PRIMITIVE_DELETE(array) XByteArray_delete_base((XClass*)(array))
+#define XCRYPTO_PRIMITIVE_DELETE(array) XClassDelete((XClass*)(array))
 
 static XByteArrayView xcryptographic_test_view(const uint8_t* data, size_t size)
 {

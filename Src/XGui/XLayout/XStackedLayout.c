@@ -295,7 +295,7 @@ int XStackedLayout_insertWidget(XStackedLayout* self, int index,
     if (!item) return -1;
     actual = XLayout_insertItemAt(&self->m_base, index, item, true);
     if (actual < 0) {
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
         return -1;
     }
     if (oldCurrent < 0) {
@@ -367,7 +367,7 @@ void XStackedLayout_removeWidget(XStackedLayout* self, XWidget* widget)
            （parent 置 NULL），控件归还调用方管理。 */
         XWidget_setParentPlain(page, NULL);
     }
-    XLayoutItem_delete_base(item);
+    XClassDelete(item);
 }
 
 void XStackedLayout_setCurrentIndex(XStackedLayout* self, int index)

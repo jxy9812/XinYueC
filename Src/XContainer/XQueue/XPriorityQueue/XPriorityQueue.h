@@ -140,12 +140,10 @@ size_t XPriorityQueue_remove(XPriorityQueue* this_queue, const void* value, size
 * @brief 反初始化容器（基于基类实现）
 * @note 复用XQueueBase的接口，释放队列资源但不销毁实例本身
 */
-#define XPriorityQueue_deinit_base				XQueueBase_deinit_base
 /**
 * @brief 删除容器实例（基于基类实现）
 * @note 复用XQueueBase的接口，释放队列资源并销毁实例
 */
-#define XPriorityQueue_delete_base				XQueueBase_delete_base
 /**
 * @brief 清空容器元素（基于基类实现）
 * @note 复用XQueueBase的接口，删除队列中所有元素但保留结构

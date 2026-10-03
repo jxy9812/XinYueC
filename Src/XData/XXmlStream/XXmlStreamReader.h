@@ -523,28 +523,28 @@ XXmlStreamReader* XXmlStreamReader_create_ex(XMemoryType memory);
 /**
  * @brief      创建并追加字节数组输入的 Reader。
  * @param      data XML 字节数组，只借用。
- * @return     新 Reader；调用方使用 XXmlStreamReader_delete_base 释放。
+ * @return     新 Reader；调用方使用 XClassDelete 释放。
  */
 XXmlStreamReader* XXmlStreamReader_create_byteArray(const XByteArray* data);
 
 /**
  * @brief      创建并追加 UTF-16 XString 输入的 Reader。
  * @param      data UTF-16 XML 文本，只借用。
- * @return     新 Reader；调用方使用 XXmlStreamReader_delete_base 释放。
+ * @return     新 Reader；调用方使用 XClassDelete 释放。
  */
 XXmlStreamReader* XXmlStreamReader_create_string(const XString* data);
 
 /**
  * @brief      创建并追加 UTF-8 C 字符串输入的 Reader。
  * @param      data UTF-8 XML 字符串，只借用。
- * @return     新 Reader；调用方使用 XXmlStreamReader_delete_base 释放。
+ * @return     新 Reader；调用方使用 XClassDelete 释放。
  */
 XXmlStreamReader* XXmlStreamReader_create_utf8(const char* data);
 
 /**
  * @brief      创建并关联 XIODevice 的 Reader。
  * @param      device 输入设备，只借用，Reader 不负责打开、关闭或释放。
- * @return     新 Reader；调用方使用 XXmlStreamReader_delete_base 释放。
+ * @return     新 Reader；调用方使用 XClassDelete 释放。
  */
 XXmlStreamReader* XXmlStreamReader_create_device(struct XIODevice* device);
 
@@ -569,8 +569,6 @@ XXmlStreamReader* XXmlStreamReader_create_move(XXmlStreamReader* other);
  */
 void XXmlStreamReader_init(XXmlStreamReader* self);
 
-#define  XXmlStreamReader_deinit_base           XClass_deinit_base
-#define  XXmlStreamReader_delete_base           XClass_delete_base
 
 /* ========== 数据设置 ========== */
 
@@ -1439,13 +1437,6 @@ XXmlStreamEntityResolver* XXmlStreamEntityResolver_create(void);
  * @return      无；NULL 输入不执行操作，成功后对象状态按函数说明更新。
  */
 void XXmlStreamEntityResolver_init(XXmlStreamEntityResolver* self);
-
-/**
- * @brief      销毁实体解析器
- * @param      self 目标 XXmlStreamEntityResolver 指针
- * @return      无；NULL 输入不执行操作，成功后对象状态按函数说明更新。
- */
-void XXmlStreamEntityResolver_delete(XXmlStreamEntityResolver* self);
 
 /**
  * @brief      解析实体

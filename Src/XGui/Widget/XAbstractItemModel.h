@@ -59,10 +59,6 @@ void XAbstractItemModel_init(XAbstractItemModel* self);
 XAbstractItemModel* XAbstractItemModel_create_ex(XMemoryType memory);
 #define XAbstractItemModel_create() \
     XAbstractItemModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-#define XAbstractItemModel_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-#define XAbstractItemModel_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 
 /* ==================== 维度 ==================== */
 

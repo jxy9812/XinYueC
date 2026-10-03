@@ -105,8 +105,6 @@ bool XMqttSubscriptionProperties_noLocal(const XMqttSubscriptionProperties* prop
  */
 void XMqttSubscriptionProperties_setNoLocal(XMqttSubscriptionProperties* prop, bool noloc);
 
-#define XMqttSubscriptionProperties_deinit_base XClass_deinit_base
-#define XMqttSubscriptionProperties_delete_base XClass_delete_base
 
 /* ---------- XMqttUnsubscriptionProperties ---------- */
 
@@ -168,8 +166,6 @@ XMqttUserProperties* XMqttUnsubscriptionProperties_userProperties(const XMqttUns
  */
 void XMqttUnsubscriptionProperties_setUserProperties(XMqttUnsubscriptionProperties* prop, const XMqttUserProperties* user);
 
-#define XMqttUnsubscriptionProperties_deinit_base XClass_deinit_base
-#define XMqttUnsubscriptionProperties_delete_base XClass_delete_base
 
 #ifdef __cplusplus
 }

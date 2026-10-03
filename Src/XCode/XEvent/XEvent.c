@@ -422,9 +422,9 @@ void XDeferredDeleteEvent_handler(XDeferredDeleteEvent* event, XObject* receiver
 
 	XEvent_accept((XEvent*)event);
 	if (event->isDelete)
-		XClass_delete_base(receiver);
+		XClassDelete(receiver);
 	else
-		XClass_deinit_base(receiver);
+		XClassDeinit(receiver);
 }
 
 bool XDeferredDeleteEvent_shouldDeliver(const XDeferredDeleteEvent* event,
@@ -572,15 +572,18 @@ static void VXEvent_copy(XEvent* dest, const XEvent* src)
 }
 
 /** @brief 基类 Clone 默认实现：只负责分配，复制全部收敛到 Copy（EXClass_Copy）。
- *  分配后继承 src 的虚表保持多态身份，随后经虚表派发复制数据区。 */
+ *  分配后继承 src 的虚表保持多态身份，随后经虚表派发复制数据区。
+ *  @note 克隆件沿源事件自身保存的内存分配器族（Class_Memory）分配与记账，
+ *        不再硬编码 XClass_Malloc 的系统堆默认值：源事件在内存池，副本也
+ *        留在内存池；源在系统堆，副本也走系统堆。全部事件类统一此口径。 */
 XEvent* VXEvent_default_clone(const XEvent* event)
 {
-	XEvent* copy = (XEvent*)XClass_Malloc(XEvent);
+	XEvent* copy = (XEvent*)Class_Memory(event)->malloc(sizeof(XEvent));
 	if (!copy) return NULL;
 	XClassGetVtable(copy) = XClassGetVtable(event);
-	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+	Class_Memory(copy) = Class_Memory(event);
 	Set_Class_IsHeap(copy, true);
-	XCopy(copy, event);
+	XClassCopy(copy, event);
 	return copy;
 }
 
@@ -598,12 +601,13 @@ static void VXKeyEvent_copy(XKeyEvent* dest, const XKeyEvent* src)
 
 static XEvent* VXKeyEvent_clone(const XKeyEvent* event)
 {
-	XKeyEvent* copy = XClass_Malloc(XKeyEvent);
+	/* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+	XKeyEvent* copy = (XKeyEvent*)Class_Memory(event)->malloc(sizeof(XKeyEvent));
 	if (!copy) return NULL;
 	XClassGetVtable(copy) = XClassGetVtable(event);
-	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+	Class_Memory(copy) = Class_Memory(event);
 	Set_Class_IsHeap(copy, true);
-	XCopy(copy, event);
+	XClassCopy(copy, event);
 	return (XEvent*)copy;
 }
 
@@ -623,11 +627,12 @@ static void VXMouseEvent_copy(XMouseEvent* dest, const XMouseEvent* src)
 
 static XEvent* VXMouseEvent_clone(const XMouseEvent* event)
 {
-	XMouseEvent* copy = XClass_Malloc(XMouseEvent);
+	/* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+	XMouseEvent* copy = (XMouseEvent*)Class_Memory(event)->malloc(sizeof(XMouseEvent));
 	if (!copy) return NULL;
 	XClassGetVtable(copy) = XClassGetVtable(event);
-	Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+	Class_Memory(copy) = Class_Memory(event);
 	Set_Class_IsHeap(copy, true);
-	XCopy(copy, event);
+	XClassCopy(copy, event);
 	return (XEvent*)copy;
 }

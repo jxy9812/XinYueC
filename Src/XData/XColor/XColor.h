@@ -1022,7 +1022,7 @@ bool XColor_equals(const XColor* a, const XColor* b);
 /**
  * @brief      获取所有 SVG/CSS 命名颜色名称列表
  * @return     XStringList 指针（新建对象，含 148 项命名颜色，由调用者
- *             XStringList_delete_base 释放）；分配失败返回 NULL
+ *             XClassDelete 释放）；分配失败返回 NULL
  * @note       对齐 `QColor::colorNames()`（qcolor.cpp:1000-1003）；命名表
  *             与 Qt rgbTbl 全量对齐（148 项，含 transparent）。
  */

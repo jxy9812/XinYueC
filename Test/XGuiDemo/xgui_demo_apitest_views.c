@@ -683,7 +683,7 @@ int xapi_views_run(void)
                     xapi_cstr(XAbstractItemModel_data_2(&model, 3, 0))[0] == '\0',
                     "setRowCount(4) 补空行");
 
-        XAbstractItemModel_deinit_base(&model);
+        XClassDeinit(&model);
     }
 
     /* ================================================================
@@ -996,7 +996,7 @@ int xapi_views_run(void)
             XAbstractItemView_setIndexWidget(&view, 0, 0, NULL);
             XAPI_EXPECT(XAbstractItemView_indexWidget(&view, 0, 0) == NULL,
                         "setIndexWidget(NULL) 清除（同 Qt）");
-            if (iw) XWidget_delete_base(iw);
+            if (iw) XClassDelete(iw);
         }
         /* ---- reset 清空持久编辑器与条目控件承载（Qt：reset 关闭全部） ---- */
         XAbstractItemView_openPersistentEditor(&view, 1, 1);
@@ -1198,8 +1198,8 @@ int xapi_views_run(void)
         XAPI_EXPECT(XAbstractItemView_rootIndex(&view, &r, &c),
                     "doItemsLayout 后 rootIndex 查询仍有效（仅重绘请求）");
 
-        if (model) XAbstractItemModel_delete_base(model);
-        XAbstractItemView_deinit_base(&view);
+        if (model) XClassDelete(model);
+        XClassDeinit(&view);
     }
 
     /* ================================================================
@@ -1379,8 +1379,8 @@ int xapi_views_run(void)
                         "indexesMoved 句柄可手工触发（预留发射点）");
         }
 
-        if (model) XAbstractItemModel_delete_base(model);
-        XListView_deinit_base(&lv);
+        if (model) XClassDelete(model);
+        XClassDeinit(&lv);
     }
 
     /* ================================================================
@@ -1446,7 +1446,7 @@ int xapi_views_run(void)
             XAPI_EXPECT(copy != NULL &&
                         strcmp(xapi_u8(copy), "置顶") == 0,
                         "item_new 返回独立文本副本");
-            if (copy) XString_delete_base((XClass*)copy);
+            if (copy) XClassDelete((XClass*)copy);
         }
         /* ---- 当前项与信号（对标 setCurrentItem/setCurrentRow 联动） ---- */
         vsig_reset();
@@ -1508,7 +1508,7 @@ int xapi_views_run(void)
         XAPI_EXPECT(XListWidget_currentItem(&lw) == -1 &&
                     g_sig.lwCurrentChanged >= 1 && g_sig.lwPrev == 1,
                     "当前项被移除失效并发射 currentItemChanged");
-        if (taken) XString_delete_base((XClass*)taken);
+        if (taken) XClassDelete((XClass*)taken);
         XAPI_EXPECT(XListWidget_takeItem(&lw, 99) == NULL,
                     "takeItem 越界返回 NULL");
 
@@ -1571,7 +1571,7 @@ int xapi_views_run(void)
                         "removeItemWidget 仅解除关联（置 NULL）");
             XAPI_EXPECT(XListWidget_itemWidget(&lw, 9) == NULL,
                         "itemWidget 越界返回 NULL");
-            if (rowWidget) XWidget_delete_base(rowWidget);
+            if (rowWidget) XClassDelete(rowWidget);
         }
         /* ---- 索引反查（对标 indexFromItem/itemFromIndex/row） ---- */
         XAPI_EXPECT(XListWidget_indexFromItem(&lw, 0) == 0 &&
@@ -1608,7 +1608,7 @@ int xapi_views_run(void)
         XAPI_EXPECT(g_sig.lwCurrentChanged >= 1 && g_sig.lwSelChanged >= 1,
                     "clear 发射当前项/选择变化信号");
 
-        XListWidget_deinit_base(&lw);
+        XClassDeinit(&lw);
     }
 
     /* ================================================================
@@ -1862,9 +1862,9 @@ int xapi_views_run(void)
         XTreeView_dataChanged(&tv, 0, 0, 0, 0);
         XAPI_EXPECT(true, "dataChanged 槽调用无崩溃（无效区间丢弃）");
 
-        if (header) XHeaderView_delete_base(header);
-        if (model) XAbstractItemModel_delete_base(model);
-        XTreeView_deinit_base(&tv);
+        if (header) XClassDelete(header);
+        if (model) XClassDelete(model);
+        XClassDeinit(&tv);
     }
 
     /* ================================================================
@@ -2104,7 +2104,7 @@ int xapi_views_run(void)
                         strcmp(xapi_cstr(XTreeWidgetItem_text_2(r1)),
                                "Epsilon") == 0,
                         "sortItems(1,0) 按列 1 键升序整行随动");
-            XTreeWidget_deinit_base(&colTree);
+            XClassDeinit(&colTree);
         }
         /* ---- 内建模型桥（§8.0g22 四期②）：行=顶层行、列=列号文本
          *      同步；排序后模型行序经桥同步跟随。本块 sortItems(0,0)
@@ -2214,7 +2214,7 @@ int xapi_views_run(void)
             XTreeWidget_removeItemWidget(&tree, 0, 0);
             XAPI_EXPECT(XTreeWidget_itemWidget(&tree, 0, 0) == NULL,
                         "removeItemWidget 置 NULL");
-            if (cellWidget) XWidget_delete_base(cellWidget);
+            if (cellWidget) XClassDelete(cellWidget);
         }
         XTreeWidget_setColumnCount(&tree, 3);
         XAPI_EXPECT(XTreeWidget_columnCount(&tree) == 3,
@@ -2253,7 +2253,7 @@ int xapi_views_run(void)
         XAPI_EXPECT(g_sig.twCurChanged >= 1 && g_sig.twSelChanged >= 1,
                     "clear 发射当前项失效/选择清空信号");
 
-        XTreeWidget_deinit_base(&tree);
+        XClassDeinit(&tree);
     }
 
     /* ================================================================
@@ -2433,10 +2433,10 @@ int xapi_views_run(void)
                     "selectColumn(1) 当前列=1");
 
         XTableView_setVerticalHeader(&table, NULL); /* 删除前解挂，与 hHeader 口径一致 */
-        if (hHeader) XHeaderView_delete_base(hHeader);
-        if (vHeader) XHeaderView_delete_base(vHeader);
-        if (model) XAbstractItemModel_delete_base(model);
-        XTableView_deinit_base(&table);
+        if (hHeader) XClassDelete(hHeader);
+        if (vHeader) XClassDelete(vHeader);
+        if (model) XClassDelete(model);
+        XClassDeinit(&table);
     }
 
     /* ================================================================
@@ -2528,7 +2528,7 @@ int xapi_views_run(void)
             src.foreground = 0xFF0000FFu;
             src.background = 0xFF00FF00u;
             XTableWidget_setItem(&table, 2, 1, &src);
-            XString_delete_base((XClass*)src.text);
+            XClassDelete((XClass*)src.text);
             got = XTableWidget_item(&table, 2, 1);
             XAPI_EXPECT(got != NULL &&
                         strcmp(xapi_u8(got->text), "整格") == 0 &&
@@ -2600,7 +2600,7 @@ int xapi_views_run(void)
         {
             XString* single = XString_create_utf8("单列头");
             XTableWidget_setHorizontalHeaderItem(&table, 1, single);
-            XString_delete_base((XClass*)single);
+            XClassDelete((XClass*)single);
             XAPI_EXPECT(strcmp(XTableWidget_horizontalHeaderItem(&table, 1),
                                "单列头") == 0,
                         "setHorizontalHeaderItem 单列覆写（表格拷贝文本）");
@@ -2610,12 +2610,12 @@ int xapi_views_run(void)
                     strcmp(xapi_u8(taken), "单列头") == 0 &&
                     xapi_cstr(XTableWidget_horizontalHeaderItem(&table, 1))[0] == '\0',
                     "takeHorizontalHeaderItem 所有权转移并置空");
-        if (taken) XString_delete_base((XClass*)taken);
+        if (taken) XClassDelete((XClass*)taken);
         taken = XTableWidget_takeVerticalHeaderItem(&table, 0);
         XAPI_EXPECT(taken != NULL &&
                     strcmp(xapi_u8(taken), "甲行") == 0,
                     "takeVerticalHeaderItem 取出行表头文本");
-        if (taken) XString_delete_base((XClass*)taken);
+        if (taken) XClassDelete((XClass*)taken);
         /* ---- 查找（对标 findItems 精确/包含） ---- */
         count = XTableWidget_findItems(&table, "苹果", 1, rows, cols, 4);
         XAPI_EXPECT(count == 1 && rows[0] == 0 && cols[0] == 0,
@@ -2630,7 +2630,7 @@ int xapi_views_run(void)
                         (int)XVector_size_base((const XContainer*)found) == 1 &&
                         XVector_At_Base(found, 0, int) == 1,
                         "items 精确反查命中行 1");
-            if (found) XVector_delete_base((XClass*)found);
+            if (found) XClassDelete((XClass*)found);
         }
         /* ---- 排序（对标 sortItems 整行重排；ASCII 键避免字节序歧义） ---- */
         XTableWidget_setText(&table, 0, 0, "b");
@@ -2680,7 +2680,7 @@ int xapi_views_run(void)
             XTableWidget_setCellWidget(&table, 0, 1, NULL);
             XAPI_EXPECT(XTableWidget_cellWidget(&table, 0, 1) == NULL,
                         "setCellWidget(NULL) 等价 removeCellWidget");
-            if (cellWidget) XWidget_delete_base(cellWidget);
+            if (cellWidget) XClassDelete(cellWidget);
         }
         /* ---- takeItem（对标 takeItem：文本所有权转移） ---- */
         vsig_reset();
@@ -2690,7 +2690,7 @@ int xapi_views_run(void)
         XAPI_EXPECT(xapi_cstr(XTableWidget_text(&table, 2, 1))[0] == '\0' &&
                     g_sig.tblCellChanged >= 1,
                     "取出后置空并发射 cellChanged");
-        if (taken) XString_delete_base((XClass*)taken);
+        if (taken) XClassDelete((XClass*)taken);
         XAPI_EXPECT(XTableWidget_takeItem(&table, 2, 1) == NULL,
                     "空单元格 takeItem 返回 NULL（不发信号）");
         /* ---- 索引反查/恒等承载（对标 indexFromItem/row/column） ---- */
@@ -2709,7 +2709,7 @@ int xapi_views_run(void)
             XString* rowText = XTableWidget_itemFromIndex(&table, 0);
             XAPI_EXPECT(rowText != NULL,
                         "itemFromIndex 返回行首列文本副本");
-            if (rowText) XString_delete_base((XClass*)rowText);
+            if (rowText) XClassDelete((XClass*)rowText);
         }
         /* ---- 视觉序（平铺模型视觉序=逻辑序） ---- */
         XAPI_EXPECT(XTableWidget_visualRow(&table, 2) == 2 &&
@@ -2751,7 +2751,7 @@ int xapi_views_run(void)
                     "clear 复位当前单元格");
 
         /* 栈对象：delete_base 经 IsHeap=false 仅析构不释放。 */
-        XTableWidget_delete_base(&table);
+        XClassDelete(&table);
     }
 
     /* ================================================================
@@ -3081,16 +3081,16 @@ int xapi_views_run(void)
                             "指示器/末尾拉伸恢复");
                 XAPI_EXPECT(!XHeaderView_restoreState(&vertical, state),
                             "方向不符整体拒绝（水平态入垂直头）");
-                if (state) XByteArray_delete_base((XClass*)state);
-                if (bad) XByteArray_delete_base((XClass*)bad);
+                if (state) XClassDelete((XClass*)state);
+                if (bad) XClassDelete((XClass*)bad);
             }
-            XHeaderView_deinit_base(&donor);
-            XHeaderView_deinit_base(&acceptor);
+            XClassDeinit(&donor);
+            XClassDeinit(&acceptor);
         }
 #endif /* XByteArray_ON */
 
-        XHeaderView_deinit_base(&header);
-        XHeaderView_deinit_base(&vertical);
+        XClassDeinit(&header);
+        XClassDeinit(&vertical);
     }
 
 #else /* XWIDGET_ON && XTABLEWIDGET_ON */

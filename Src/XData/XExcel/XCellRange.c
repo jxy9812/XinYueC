@@ -190,8 +190,8 @@ XString XCellRange_toString(const XCellRange* self, bool row_abs, bool col_abs)
     XCellReference_init_ex(&brRef, self->m_lastRow, self->m_lastColumn);
     XString br = XCellReference_toString(&brRef, row_abs, col_abs);
     XString_append_utf8(&result, XString_toUtf8(&br));
-    XString_deinit_base(&br);
-    XString_deinit_base(&tl);
+    XClassDeinit(&br);
+    XClassDeinit(&tl);
     return result;
 }
 
@@ -232,6 +232,6 @@ XCellRange XCellRange_create_str_utf8(const char* range)
 {
     XString* s = range ? XString_create_utf8(range) : NULL;
     XCellRange result = XCellRange_create_str(s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }

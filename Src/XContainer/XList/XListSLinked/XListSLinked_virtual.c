@@ -709,7 +709,7 @@ void VXList_sort(XListSLinked* this_list, XSortOrder order)
         }
     }
 
-    XStack_delete_base(stack);
+    XClassDelete(stack);
 #else
     IS_ON_DEBUG(XStack_ON);
 #endif

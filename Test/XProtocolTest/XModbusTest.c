@@ -46,7 +46,7 @@ static void rtuFinished(XObject* sender, XVarList* args)
     XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), rtuFinished);
     XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply, XObject_deleteLater, XConnectionType_Auto);
     //XObject_deleteLater(sender);
-    XModbusDataUnit_delete_base(read);
+    XClassDelete(read);
 }
 
 void XModbusRtuSerialClientTest()
@@ -88,7 +88,7 @@ static void tcpFinished(XObject* receiver, XVarList* args)
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
     if (!reply) {
         XObject_deleteLater(sender);
-        XModbusDataUnit_delete_base(read);
+        XClassDelete(read);
         return;
     }
     XObject_setParent(reply, client);
@@ -97,8 +97,8 @@ static void tcpFinished(XObject* receiver, XVarList* args)
    //XObject_connect_2(reply, XSignal(XModbusReply_finished_signal), XObject_deleteLater);
     XObject_deleteLater(sender);
     //XPrintf("请求释放:%p\n", sender);
-    //XClass_delete_base(sender);
-    XModbusDataUnit_delete_base(read);
+    //XClassDelete(sender);
+    XClassDelete(read);
 }
 
 static void tcpStart(XObject* sender, XVarList* args)
@@ -111,13 +111,13 @@ static void tcpStart(XObject* sender, XVarList* args)
     XModbusDataUnit_setValue(read, 0, true);
     XModbusReply* reply = XModbusClient_sendWriteRequest(client, read, 1);
     if (!reply) {
-        XModbusDataUnit_delete_base(read);
+        XClassDelete(read);
         return;
     }
     XObject_setParent(reply, client);
     XObject_connect_1(reply, XSignal(XModbusReply_finished_signal), reply,tcpFinished,XConnectionType_Queued);
 
-    XModbusDataUnit_delete_base(read);
+    XClassDelete(read);
 
 }
 void XModbusTcpClientTest()
@@ -467,14 +467,14 @@ void XModbusAduTest(void)
                     if (dRaw[0] != 0x01 || dRaw[1] != 0x03 ||
                         dRaw[2] != 0x00 || dRaw[3] != 0x00 ||
                         dRaw[4] != 0x00 || dRaw[5] != 0x0A) ok = false;
-                    XByteArray_delete_base(d);
+                    XClassDelete(d);
                 }
 
                 if (XModbusAdu_rawSize(adu) != (int)frameSize) ok = false;
 
                 XByteArray* rd = XModbusAdu_rawData(adu);
                 if (!rd || XByteArray_size_base(rd) != frameSize) ok = false;
-                if (rd) XByteArray_delete_base(rd);
+                if (rd) XClassDelete(rd);
 
                 if (!XModbusAdu_matchingChecksum(adu)) ok = false;
 
@@ -488,9 +488,9 @@ void XModbusAduTest(void)
                         uint8_t* oRaw = XByteArray_data(outData);
                         if (oRaw[0] != 0x00 || oRaw[1] != 0x00 ||
                             oRaw[2] != 0x00 || oRaw[3] != 0x0A) ok = false;
-                        XByteArray_delete_base(outData);
+                        XClassDelete(outData);
                     }
-                    XModbusPdu_deinit_base(&outPdu);
+                    XClassDeinit(&outPdu);
                 }
 
                 if (ok) {
@@ -502,9 +502,9 @@ void XModbusAduTest(void)
                 }
                 XModbusAdu_delete(adu);
             }
-            XByteArray_delete_base(frame);
+            XClassDelete(frame);
         }
-        XModbusPdu_deinit_base(&pdu);
+        XClassDeinit(&pdu);
     }
 
     // ========== 5. 测试 ASCII 帧格式 ==========
@@ -547,7 +547,7 @@ void XModbusAduTest(void)
                     if (dRaw[0] != 0x01 || dRaw[1] != 0x03 ||
                         dRaw[2] != 0x00 || dRaw[3] != 0x00 ||
                         dRaw[4] != 0x00 || dRaw[5] != 0x0A) ok = false;
-                    XByteArray_delete_base(d);
+                    XClassDelete(d);
                 }
 
                 if (!XModbusAdu_matchingChecksum(adu)) ok = false;
@@ -561,9 +561,9 @@ void XModbusAduTest(void)
                 }
                 XModbusAdu_delete(adu);
             }
-            XByteArray_delete_base(frame);
+            XClassDelete(frame);
         }
-        XModbusPdu_deinit_base(&pdu);
+        XClassDeinit(&pdu);
     }
 
     // ========== 6. parseRtu 边界测试 ==========
@@ -796,12 +796,12 @@ void XModbusAduTest(void)
                     XPrintf("  [失败] pdu() 提取失败\n");
                     fail++;
                 }
-                XModbusPdu_deinit_base(&outPdu);
+                XClassDeinit(&outPdu);
                 XModbusAdu_delete(adu2);
             }
-            XByteArray_delete_base(frame2);
+            XClassDelete(frame2);
         }
-        XModbusPdu_deinit_base(&pdu);
+        XClassDeinit(&pdu);
     }
 
     // ========== 11. createRtuFrame NULL PDU 测试 ==========
@@ -813,7 +813,7 @@ void XModbusAduTest(void)
         } else {
             XPrintf("  [失败] createRtuFrame(NULL PDU) 未返回 NULL\n");
             fail++;
-            XByteArray_delete_base(frame3);
+            XClassDelete(frame3);
         }
     }
 
@@ -826,7 +826,7 @@ void XModbusAduTest(void)
         } else {
             XPrintf("  [失败] createAsciiFrame(NULL PDU) 未返回 NULL\n");
             fail++;
-            XByteArray_delete_base(frame4);
+            XClassDelete(frame4);
         }
     }
 
@@ -842,8 +842,8 @@ void XModbusAduTest(void)
             XByteArray* rtuFrame = XModbusAdu_createRtuFrame(i & 0xFF, &pdu3);
             XByteArray* asciiFrame = XModbusAdu_createAsciiFrame(i & 0xFF, &pdu3, '\n');
             if (!rtuFrame || !asciiFrame) ok = false;
-            if (rtuFrame) XByteArray_delete_base(rtuFrame);
-            if (asciiFrame) XByteArray_delete_base(asciiFrame);
+            if (rtuFrame) XClassDelete(rtuFrame);
+            if (asciiFrame) XClassDelete(asciiFrame);
         }
 
         if (ok) {
@@ -853,7 +853,7 @@ void XModbusAduTest(void)
             XPrintf("  [失败] 循环 RTU/ASCII 失败\n");
             fail++;
         }
-        XModbusPdu_deinit_base(&pdu3);
+        XClassDeinit(&pdu3);
     }
 
     XPrintf("========== XModbusAdu 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);

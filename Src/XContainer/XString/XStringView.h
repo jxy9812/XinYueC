@@ -461,7 +461,7 @@ int64_t XStringView_count_regularExpression(const XStringView* self,
 * @param self 待分隔的 UTF-16 视图；不能为 NULL。
 * @param separator 分隔符正则表达式；函数只借用，不能为 NULL。
 * @param keepEmptyParts 是否保留空字段。
-* @return 成功返回新 XStringList，调用方必须使用 XStringList_delete_base 释放；参数无效或分配失败返回 NULL，正则无效时返回空列表。
+* @return 成功返回新 XStringList，调用方必须使用 XClassDelete 释放；参数无效或分配失败返回 NULL，正则无效时返回空列表。
 */
 XStringList* XStringView_split_regularExpression(const XStringView* self,
                                                  const XRegularExpression* separator,

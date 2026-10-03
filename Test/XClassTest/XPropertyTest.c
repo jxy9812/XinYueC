@@ -106,7 +106,7 @@ static bool test_basic(void)
 		XVariant* v = make_int(42);
 		if (!v) { TEST_FAIL("创建变体", "返回NULL"); goto cleanup; }
 		XProperty_setValue(p, v);
-		XVariant_delete_base((XClass*)v);
+		XClassDelete((XClass*)v);
 	}
 	if (!is_int(XProperty_value_const(p), 42)) { TEST_FAIL("读取属性", "值不等于42"); goto cleanup; }
 
@@ -115,25 +115,25 @@ static bool test_basic(void)
 		XVariant out;
 		memset(&out, 0, sizeof(XVariant));
 		XVariant_init(&out, NULL, 0, XVariantType_NULL);
-		if (!XProperty_value(p, &out) || !is_int(&out, 42)) { XVariant_deinit_base((XClass*)&out); TEST_FAIL("拷贝读取", "失败"); goto cleanup; }
-		XVariant_deinit_base((XClass*)&out);
+		if (!XProperty_value(p, &out) || !is_int(&out, 42)) { XClassDeinit((XClass*)&out); TEST_FAIL("拷贝读取", "失败"); goto cleanup; }
+		XClassDeinit((XClass*)&out);
 	}
 
 	/* 拷贝/移动语义 */
 	{
 		XProperty* copy = XProperty_create_copy(p);
-		if (!copy || !is_int(XProperty_value_const(copy), 42)) { if (copy) XProperty_delete_base((XClass*)copy); TEST_FAIL("拷贝创建", "失败"); goto cleanup; }
-		XProperty_delete_base((XClass*)copy);
+		if (!copy || !is_int(XProperty_value_const(copy), 42)) { if (copy) XClassDelete((XClass*)copy); TEST_FAIL("拷贝创建", "失败"); goto cleanup; }
+		XClassDelete((XClass*)copy);
 
 		XProperty moved;
 		XProperty_init(&moved);
-		XMove((XClass*)&moved, (XClass*)p);
-		if (!is_int(XProperty_value_const(&moved), 42)) { XProperty_deinit_base((XClass*)&moved); TEST_FAIL("移动语义", "值丢失"); goto cleanup; }
-		XProperty_deinit_base((XClass*)&moved);
+		XClassMove((XClass*)&moved, (XClass*)p);
+		if (!is_int(XProperty_value_const(&moved), 42)) { XClassDeinit((XClass*)&moved); TEST_FAIL("移动语义", "值丢失"); goto cleanup; }
+		XClassDeinit((XClass*)&moved);
 	}
 	pass = true;
 cleanup:
-	XProperty_delete_base((XClass*)p);
+	XClassDelete((XClass*)p);
 	if (pass) TEST_PASS("基础读写");
 	return pass;
 }
@@ -160,8 +160,8 @@ static bool test_binding_eval(void)
 	if (!a || !b || !c) { TEST_FAIL("创建属性", "返回NULL"); goto cleanup; }
 	ctx.a = a; ctx.b = b;
 	{
-		XVariant* va = make_int(1); XProperty_setValue(a, va); XVariant_delete_base((XClass*)va);
-		XVariant* vb = make_int(2); XProperty_setValue(b, vb); XVariant_delete_base((XClass*)vb);
+		XVariant* va = make_int(1); XProperty_setValue(a, va); XClassDelete((XClass*)va);
+		XVariant* vb = make_int(2); XProperty_setValue(b, vb); XClassDelete((XClass*)vb);
 	}
 	if (!XProperty_setBinding_eval(c, eval_sum, &ctx, NULL)) { TEST_FAIL("设置绑定", "失败"); goto cleanup; }
 	if (!XProperty_hasBinding(c)) { TEST_FAIL("hasBinding", "应为true"); goto cleanup; }
@@ -172,14 +172,14 @@ static bool test_binding_eval(void)
 
 	/* 依赖已捕获：改 a 后重读 c 自动更新 */
 	{
-		XVariant* va = make_int(10); XProperty_setValue(a, va); XVariant_delete_base((XClass*)va);
+		XVariant* va = make_int(10); XProperty_setValue(a, va); XClassDelete((XClass*)va);
 	}
 	if (!is_int(XProperty_value_const(c), 12)) { TEST_FAIL("依赖更新", "10+2!=12"); goto cleanup; }
 	pass = true;
 cleanup:
-	if (a) XProperty_delete_base((XClass*)a);
-	if (b) XProperty_delete_base((XClass*)b);
-	if (c) XProperty_delete_base((XClass*)c);
+	if (a) XClassDelete((XClass*)a);
+	if (b) XClassDelete((XClass*)b);
+	if (c) XClassDelete((XClass*)c);
 	if (pass) TEST_PASS("绑定求值与依赖捕获");
 	return pass;
 }
@@ -197,7 +197,7 @@ static bool test_cascade_notify(void)
 	if (!a || !c) { TEST_FAIL("创建属性", "返回NULL"); goto cleanup; }
 	ctx.a = a; ctx.b = a;   /* c = a + a */
 	{
-		XVariant* va = make_int(1); XProperty_setValue(a, va); XVariant_delete_base((XClass*)va);
+		XVariant* va = make_int(1); XProperty_setValue(a, va); XClassDelete((XClass*)va);
 	}
 	if (!XProperty_setBinding_eval(c, eval_sum, &ctx, NULL)) { TEST_FAIL("设置绑定", "失败"); goto cleanup; }
 	(void)XProperty_value_const(c);   /* 首次求值：c=2 */
@@ -209,7 +209,7 @@ static bool test_cascade_notify(void)
 	if (!XProperty_subscribe(c, obs)) { TEST_FAIL("订阅", "失败"); goto cleanup; }
 	{
 		/* 改 a：级联把 c 标脏并立即通知 c 的观察者（对标 Qt 默认 Asynchronous 语义） */
-		XVariant* va = make_int(5); XProperty_setValue(a, va); XVariant_delete_base((XClass*)va);
+		XVariant* va = make_int(5); XProperty_setValue(a, va); XClassDelete((XClass*)va);
 	}
 	if (fired < 1) { TEST_FAIL("级联通知", "依赖变化未通知 c 的观察者"); goto cleanup; }
 	/* 读取 c 触发重算写入：值实际变化，观察者再次收到（对标 Qt 双段通知） */
@@ -217,8 +217,8 @@ static bool test_cascade_notify(void)
 	pass = true;
 cleanup:
 	if (obs) XPropertyObserver_delete(obs);
-	if (a) XProperty_delete_base((XClass*)a);
-	if (c) XProperty_delete_base((XClass*)c);
+	if (a) XClassDelete((XClass*)a);
+	if (c) XClassDelete((XClass*)c);
 	if (pass) TEST_PASS("级联通知");
 	return pass;
 }
@@ -258,8 +258,8 @@ static bool test_dynamic_dependency(void)
 	if (!cond || !src || !c) { TEST_FAIL("创建属性", "返回NULL"); goto cleanup; }
 	ctx.cond = cond; ctx.src = src;
 	{
-		XVariant* vt = XVariant_create_bool(true); XProperty_setValue(cond, vt); XVariant_delete_base((XClass*)vt);
-		XVariant* vs = make_int(7); XProperty_setValue(src, vs); XVariant_delete_base((XClass*)vs);
+		XVariant* vt = XVariant_create_bool(true); XProperty_setValue(cond, vt); XClassDelete((XClass*)vt);
+		XVariant* vs = make_int(7); XProperty_setValue(src, vs); XClassDelete((XClass*)vs);
 	}
 	if (!XProperty_setBinding_eval(c, eval_conditional, &ctx, NULL)) { TEST_FAIL("设置绑定", "失败"); goto cleanup; }
 	if (!is_int(XProperty_value_const(c), 7)) { TEST_FAIL("条件求值", "cond=true 应取 src"); goto cleanup; }
@@ -271,21 +271,21 @@ static bool test_dynamic_dependency(void)
 
 	/* cond 变 false：cond 与 src 都是依赖，src 变化会通知 c */
 	{
-		XVariant* vf = XVariant_create_bool(false); XProperty_setValue(cond, vf); XVariant_delete_base((XClass*)vf);
+		XVariant* vf = XVariant_create_bool(false); XProperty_setValue(cond, vf); XClassDelete((XClass*)vf);
 	}
 	(void)XProperty_value_const(c);   /* 重算：c=-1，此后依赖仅剩 cond */
 	{
 		int before = fired;
-		XVariant* vs = make_int(99); XProperty_setValue(src, vs); XVariant_delete_base((XClass*)vs);
+		XVariant* vs = make_int(99); XProperty_setValue(src, vs); XClassDelete((XClass*)vs);
 		if (fired != before) { TEST_FAIL("动态依赖", "src 已不再是依赖，不应通知 c"); goto cleanup; }
 	}
 	if (!is_int(XProperty_value_const(c), -1)) { TEST_FAIL("条件求值", "cond=false 应为-1"); goto cleanup; }
 	pass = true;
 cleanup:
 	if (obs) XPropertyObserver_delete(obs);
-	if (cond) XProperty_delete_base((XClass*)cond);
-	if (src) XProperty_delete_base((XClass*)src);
-	if (c) XProperty_delete_base((XClass*)c);
+	if (cond) XClassDelete((XClass*)cond);
+	if (src) XClassDelete((XClass*)src);
+	if (c) XClassDelete((XClass*)c);
 	if (pass) TEST_PASS("动态依赖重捕获");
 	return pass;
 }
@@ -308,7 +308,7 @@ static bool test_binding_loop(void)
 	XProperty* p = XProperty_create();
 	if (!p) { TEST_FAIL("创建属性", "返回NULL"); goto cleanup; }
 	{
-		XVariant* v = make_int(9); XProperty_setValue(p, v); XVariant_delete_base((XClass*)v);
+		XVariant* v = make_int(9); XProperty_setValue(p, v); XClassDelete((XClass*)v);
 	}
 	/* 绑定求值中读取自身目标属性：BindingLoop，返回现值，不重入不崩溃 */
 	(void)XProperty_setBinding_eval(p, eval_self, p, NULL);
@@ -322,7 +322,7 @@ static bool test_binding_loop(void)
 	if (!is_int(XProperty_value_const(p), 9)) { TEST_FAIL("循环回退", "现值应保持9"); goto cleanup; }
 	pass = true;
 cleanup:
-	if (p) XProperty_delete_base((XClass*)p);
+	if (p) XClassDelete((XClass*)p);
 	if (pass) TEST_PASS("绑定循环检测");
 	return pass;
 }
@@ -338,17 +338,17 @@ static bool test_binding_break(void)
 	if (!a || !c) { TEST_FAIL("创建属性", "返回NULL"); goto cleanup; }
 	ctx.a = a; ctx.b = a;
 	{
-		XVariant* va = make_int(1); XProperty_setValue(a, va); XVariant_delete_base((XClass*)va);
+		XVariant* va = make_int(1); XProperty_setValue(a, va); XClassDelete((XClass*)va);
 	}
 	XProperty_setBinding_eval(c, eval_sum, &ctx, NULL);
 	(void)XProperty_value_const(c);   /* c=2 */
 	{
 		/* 显式赋值断开绑定（与值是否相等无关，对标 Qt） */
-		XVariant* v = make_int(999); XProperty_setValue(c, v); XVariant_delete_base((XClass*)v);
+		XVariant* v = make_int(999); XProperty_setValue(c, v); XClassDelete((XClass*)v);
 	}
 	if (XProperty_hasBinding(c)) { TEST_FAIL("赋值断开", "hasBinding 应为 false"); goto cleanup; }
 	{
-		XVariant* va = make_int(100); XProperty_setValue(a, va); XVariant_delete_base((XClass*)va);
+		XVariant* va = make_int(100); XProperty_setValue(a, va); XClassDelete((XClass*)va);
 	}
 	if (!is_int(XProperty_value_const(c), 999)) { TEST_FAIL("断开后独立", "c 不应再随 a 变化"); goto cleanup; }
 
@@ -359,15 +359,15 @@ static bool test_binding_break(void)
 		if (!d) { TEST_FAIL("创建属性", "返回NULL"); goto cleanup; }
 		XProperty_setBinding_eval(d, eval_sum, &ctx, NULL);
 		taken = XProperty_takeBinding(d);
-		if (!taken || XProperty_hasBinding(d)) { if (taken) XPropertyBinding_unref(taken); XProperty_delete_base((XClass*)d); TEST_FAIL("takeBinding", "应取出并解除"); goto cleanup; }
-		if (!XPropertyBinding_isValid(taken)) { XPropertyBinding_unref(taken); XProperty_delete_base((XClass*)d); TEST_FAIL("takeBinding", "取出的绑定无效"); goto cleanup; }
+		if (!taken || XProperty_hasBinding(d)) { if (taken) XPropertyBinding_unref(taken); XClassDelete((XClass*)d); TEST_FAIL("takeBinding", "应取出并解除"); goto cleanup; }
+		if (!XPropertyBinding_isValid(taken)) { XPropertyBinding_unref(taken); XClassDelete((XClass*)d); TEST_FAIL("takeBinding", "取出的绑定无效"); goto cleanup; }
 		XPropertyBinding_unref(taken);
-		XProperty_delete_base((XClass*)d);
+		XClassDelete((XClass*)d);
 	}
 	pass = true;
 cleanup:
-	if (a) XProperty_delete_base((XClass*)a);
-	if (c) XProperty_delete_base((XClass*)c);
+	if (a) XClassDelete((XClass*)a);
+	if (c) XClassDelete((XClass*)c);
 	if (pass) TEST_PASS("赋值断开与takeBinding");
 	return pass;
 }
@@ -384,7 +384,7 @@ static bool test_alias(void)
 	XPropertyObserver* obs = NULL;
 	if (!a) { TEST_FAIL("创建属性", "返回NULL"); goto cleanup; }
 	{
-		XVariant* va = make_int(10); XProperty_setValue(a, va); XVariant_delete_base((XClass*)va);
+		XVariant* va = make_int(10); XProperty_setValue(a, va); XClassDelete((XClass*)va);
 	}
 	XPropertyAlias_init(&alias);
 	XPropertyAlias_init(&aliasOfAlias);
@@ -396,11 +396,11 @@ static bool test_alias(void)
 
 	/* 别名写入穿透到源属性 */
 	{
-		XVariant* v = make_int(20); XPropertyAlias_setValue(&alias, v); XVariant_delete_base((XClass*)v);
+		XVariant* v = make_int(20); XPropertyAlias_setValue(&alias, v); XClassDelete((XClass*)v);
 	}
 	if (!is_int(XProperty_value_const(a), 20)) { TEST_FAIL("别名写入", "源属性应为20"); goto cleanup; }
 	{
-		XVariant* v = make_int(30); XPropertyAlias_setValue(&aliasOfAlias, v); XVariant_delete_base((XClass*)v);
+		XVariant* v = make_int(30); XPropertyAlias_setValue(&aliasOfAlias, v); XClassDelete((XClass*)v);
 	}
 	if (!is_int(XProperty_value_const(a), 30)) { TEST_FAIL("别名链写入", "源属性应为30"); goto cleanup; }
 
@@ -410,7 +410,7 @@ static bool test_alias(void)
 	XPropertyObserver_setHandler(obs, count_handler, &fired);
 	if (!XPropertyAlias_subscribe(&alias, obs)) { TEST_FAIL("别名订阅", "失败"); goto cleanup; }
 	{
-		XVariant* v = make_int(40); XProperty_setValue(a, v); XVariant_delete_base((XClass*)v);
+		XVariant* v = make_int(40); XProperty_setValue(a, v); XClassDelete((XClass*)v);
 	}
 	if (fired != 1) { TEST_FAIL("别名订阅", "源属性变化未通知"); goto cleanup; }
 	pass = true;
@@ -418,7 +418,7 @@ cleanup:
 	if (obs) XPropertyObserver_delete(obs);
 	XPropertyAlias_deinit(&alias);
 	XPropertyAlias_deinit(&aliasOfAlias);
-	if (a) XProperty_delete_base((XClass*)a);
+	if (a) XClassDelete((XClass*)a);
 	if (pass) TEST_PASS("属性别名");
 	return pass;
 }
@@ -448,7 +448,7 @@ static bool test_object_property(void)
 		receiver, value_changed_slot, XConnectionType_Direct))
 	{ TEST_FAIL("连接信号", "失败"); goto cleanup; }
 	{
-		XVariant* v = make_int(5); XObjectBindableProperty_setValue(&obj->m_value, v); XVariant_delete_base((XClass*)v);
+		XVariant* v = make_int(5); XObjectBindableProperty_setValue(&obj->m_value, v); XClassDelete((XClass*)v);
 	}
 	if (s_signalCount != 1) { TEST_FAIL("直写信号", "应收到1次"); goto cleanup; }
 	if (!is_int(XObjectBindableProperty_value_const(&obj->m_value), 5)) { TEST_FAIL("对象属性读取", "应为5"); goto cleanup; }
@@ -459,14 +459,14 @@ static bool test_object_property(void)
 		if (!ctx) { TEST_FAIL("分配上下文", "返回NULL"); goto cleanup; }
 		ctx->a = src; ctx->b = src;
 		{
-			XVariant* vs = make_int(2); XProperty_setValue(src, vs); XVariant_delete_base((XClass*)vs);
+			XVariant* vs = make_int(2); XProperty_setValue(src, vs); XClassDelete((XClass*)vs);
 		}
 		if (!XObjectBindableProperty_setBinding_eval(&obj->m_value, eval_sum, ctx, NULL))
 		{ XFree_System(ctx); TEST_FAIL("设置绑定", "失败"); goto cleanup; }
 		(void)XObjectBindableProperty_value_const(&obj->m_value);   /* 首次求值 m_value=4 */
 		s_signalCount = 0;
 		{
-			XVariant* vs = make_int(3); XProperty_setValue(src, vs); XVariant_delete_base((XClass*)vs);
+			XVariant* vs = make_int(3); XProperty_setValue(src, vs); XClassDelete((XClass*)vs);
 		}
 		if (s_signalCount < 1) { TEST_FAIL("级联信号", "依赖变化应发 notify 信号"); goto cleanup; }
 		if (!is_int(XObjectBindableProperty_value_const(&obj->m_value), 6)) { TEST_FAIL("绑定重算", "3+3!=6"); goto cleanup; }
@@ -478,7 +478,7 @@ static bool test_object_property(void)
 	}
 	pass = true;
 cleanup:
-	if (src) XProperty_delete_base((XClass*)src);
+	if (src) XClassDelete((XClass*)src);
 	/* 对象参与信号槽：对标 Qt 用 deleteLater 经事件循环安全释放（连接随析构自动断开） */
 	if (obj) XObject_deleteLater((XObject*)obj);
 	if (receiver) XObject_deleteLater(receiver);
@@ -509,14 +509,14 @@ static bool test_change_handler_once(void)
 	XPropertyObserver_setHandler(obs, handler_once, &fired);
 	XPropertyObserver_observe_property(obs, p);
 	{
-		XVariant* v = make_int(1); XProperty_setValue(p, v); XVariant_delete_base((XClass*)v);
-		XVariant* v2 = make_int(2); XProperty_setValue(p, v2); XVariant_delete_base((XClass*)v2);
+		XVariant* v = make_int(1); XProperty_setValue(p, v); XClassDelete((XClass*)v);
+		XVariant* v2 = make_int(2); XProperty_setValue(p, v2); XClassDelete((XClass*)v2);
 	}
 	if (fired != 1) { TEST_FAIL("自动注销", "应只处理一次"); goto cleanup; }
 	pass = true;
 cleanup:
 	if (obs) XPropertyObserver_delete(obs);   /* 已解挂，delete 安全 */
-	if (p) XProperty_delete_base((XClass*)p);
+	if (p) XClassDelete((XClass*)p);
 	if (pass) TEST_PASS("ChangeHandler 自动注销");
 	return pass;
 }
@@ -545,14 +545,14 @@ static bool test_error_object(void)
 	{
 		XPropertyBindingError* heap = XPropertyBindingError_create_ex_2(XPropertyBindingError_BindingLoop, "loop!");
 		XPropertyBindingError* copy = heap ? XPropertyBindingError_create_copy(heap) : NULL;
-		if (!heap || !copy) { if (heap) XPropertyBindingError_delete_base((XClass*)heap); TEST_FAIL("堆创建", "失败"); goto cleanup; }
+		if (!heap || !copy) { if (heap) XClassDelete((XClass*)heap); TEST_FAIL("堆创建", "失败"); goto cleanup; }
 		if (XPropertyBindingError_type(copy) != XPropertyBindingError_BindingLoop) { TEST_FAIL("拷贝错误", "类型不符"); goto cleanup; }
-		XPropertyBindingError_delete_base((XClass*)copy);
-		XPropertyBindingError_delete_base((XClass*)heap);
+		XClassDelete((XClass*)copy);
+		XClassDelete((XClass*)heap);
 	}
 	pass = true;
 cleanup:
-	XPropertyBindingError_deinit_base((XClass*)&err);
+	XClassDeinit((XClass*)&err);
 	if (pass) TEST_PASS("绑定错误对象");
 	return pass;
 }
@@ -576,14 +576,14 @@ static bool test_bindable(void)
 	XUntypedBindable untyped;
 	if (!a || !c) { TEST_FAIL("创建属性", "返回NULL"); goto cleanup; }
 	{
-		XVariant* va = make_int(21); XProperty_setValue(a, va); XVariant_delete_base((XClass*)va);
+		XVariant* va = make_int(21); XProperty_setValue(a, va); XClassDelete((XClass*)va);
 	}
 	XBindable_init_property(&bindable, a);
 	if (!XUntypedBindable_isValid(&bindable)) { TEST_FAIL("门面有效", "失败"); goto cleanup; }
 	{
 		XVariant* v = make_int(50); TEST_INFO("b1a:v");
 		XBindable_setValue(&bindable, v); TEST_INFO("b1b:set");
-		XVariant_delete_base((XClass*)v);
+		XClassDelete((XClass*)v);
 	}
 	if (!is_int(XBindable_value_const(&bindable), 50)) { TEST_FAIL("门面写入", "应为50"); goto cleanup; }
 
@@ -603,8 +603,8 @@ static bool test_bindable(void)
 	}
 	pass = true;
 cleanup:
-	if (a) XProperty_delete_base((XClass*)a);
-	if (c) XProperty_delete_base((XClass*)c);
+	if (a) XClassDelete((XClass*)a);
+	if (c) XClassDelete((XClass*)c);
 	if (pass) TEST_PASS("可绑定门面");
 	return pass;
 }
@@ -667,7 +667,7 @@ static void th_worker1_func(XThread* thread, XVarList* list)
 
     v = XVariant_create_int32(10);
     XProperty_setValue(ctx->local, v);
-    XVariant_delete_base((XClass*)v);
+    XClassDelete((XClass*)v);
 
     b = XProperty_setBinding_eval(ctx->mirror, th_eval_inc, ctx->local, NULL);
     if (!b) { XAtomic_fetch_add_int32(&ctx->done, 1, XAtomic_MemoryOrder_Release); return; }
@@ -727,8 +727,8 @@ static bool test_thread_local_eval(void)
     if (ctx.result != 11) { TEST_FAIL("线程内求值", "10+1!=11"); goto cleanup; }
     pass = true;
 cleanup:
-    if (ctx.local) XProperty_delete_base((XClass*)ctx.local);
-    if (ctx.mirror) XProperty_delete_base((XClass*)ctx.mirror);
+    if (ctx.local) XClassDelete((XClass*)ctx.local);
+    if (ctx.mirror) XClassDelete((XClass*)ctx.mirror);
     if (pass) TEST_PASS("多线程:线程内绑定求值");
     return pass;
 }
@@ -750,7 +750,7 @@ static bool test_thread_dep_isolation(void)
     {
         XVariant* v = make_int(100);
         XProperty_setValue(ctx.shared, v);
-        XVariant_delete_base((XClass*)v);
+        XClassDelete((XClass*)v);
     }
     /* 主线程先做一次求值（占住主线程求值栈的捕获路径） */
     mainBinding = XPropertyBinding_create_eval(th_eval_shared, ctx.shared, NULL);
@@ -779,13 +779,13 @@ static bool test_thread_dep_isolation(void)
     {
         XVariant* v2 = make_int(200);
         XProperty_setValue(ctx.shared, v2);
-        XVariant_delete_base((XClass*)v2);
+        XClassDelete((XClass*)v2);
     }
     if (!is_int(XProperty_value_const(ctx.shared), 200)) { TEST_FAIL("跨线程后读取", "应为200"); goto cleanup; }
     pass = true;
 cleanup:
     if (mainBinding) XPropertyBinding_unref(mainBinding);
-    if (ctx.shared) XProperty_delete_base((XClass*)ctx.shared);
+    if (ctx.shared) XClassDelete((XClass*)ctx.shared);
     if (pass) TEST_PASS("多线程:依赖捕获隔离");
     return pass;
 }
@@ -806,7 +806,7 @@ static void th_rw_func(XThread* thread, XVarList* list)
     {
         XVariant* nv = XVariant_create_int32(mine);
         XProperty_setValue(g_sharedProp, nv);
-        XVariant_delete_base((XClass*)nv);
+        XClassDelete((XClass*)nv);
     }
     v = XProperty_value_const(g_sharedProp);
     if (v && v->m_data) {
@@ -856,7 +856,7 @@ static bool test_thread_shared_rw(void)
     if (!is_int(final, 1) && !is_int(final, 2)) { TEST_FAIL("并发写终值", "非法值"); goto cleanup; }
     pass = true;
 cleanup:
-    if (g_sharedProp) XProperty_delete_base((XClass*)g_sharedProp);
+    if (g_sharedProp) XClassDelete((XClass*)g_sharedProp);
     g_sharedProp = NULL;
     if (pass) TEST_PASS("多线程:共享属性并发写");
     return pass;

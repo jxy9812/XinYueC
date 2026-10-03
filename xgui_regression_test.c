@@ -451,7 +451,7 @@ static void test_painter_outline_font(void)
                             &directMetrics, NULL) &&
                         directMetrics.advance == 1000,
                     "outline 子类注册接入父类虚函数");
-        XFont_deinit_base(&directFont);
+        XClassDeinit(&directFont);
     }
 
     memset(&image, 0, sizeof(image));
@@ -505,7 +505,7 @@ static void test_painter_outline_font(void)
                 if (XImage_pixel(&image, col, row) != 0xffffffffu)
                     ++colored;
         expect_true(colored > 0, "内置中文轮廓字形实际写入像素");
-        XFont_deinit_base(&commonFont);
+        XClassDeinit(&commonFont);
     }
 #endif /* XFONT_BUILTIN_OUTLINE_ON */
 
@@ -537,7 +537,7 @@ static void test_painter_outline_font(void)
                                            &fileMetrics, NULL) &&
                         fileMetrics.advance == 1000 && fileMetrics.yMax == 800,
                     "XFO1 file glyph parses");
-        XFont_deinit_base(&fileFont);
+        XClassDeinit(&fileFont);
         remove(fileName);
 
         /* .inc 文本变体：同一 XFO1 固件以生成器的十六进制 C 数组文本
@@ -570,7 +570,7 @@ static void test_painter_outline_font(void)
                             fileMetrics.advance == 1000 &&
                             fileMetrics.yMax == 800,
                         "XFO1 .inc glyph parses");
-            XFont_deinit_base(&incFont);
+            XClassDeinit(&incFont);
             remove(incName);
         }
     }
@@ -578,8 +578,8 @@ static void test_painter_outline_font(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
-    XFont_deinit_base(&font);
+    XClassDeinit(&image);
+    XClassDeinit(&font);
 }
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
@@ -655,7 +655,7 @@ static bool test_picture_invalid_u32(const XPicture* source,
     XPicture_init(&candidate, -1);
     XPicture_setData(&candidate, (const char*)data, size);
     invalid = !XPicture_isValidStream(&candidate);
-    XPicture_deinit_base(&candidate);
+    XClassDeinit(&candidate);
     XFree_System(data);
     return invalid;
 }
@@ -702,7 +702,7 @@ static void test_picture_malformed_state_records(void)
                 "malformed-state fixture records background mode");
     expect_true(test_picture_invalid_u32(&picture, 48u, 2u),
                 "picture validator rejects invalid background mode");
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&picture);
 
 #if XPAINTER_BRUSH_ON
     {
@@ -716,7 +716,7 @@ static void test_picture_malformed_state_records(void)
            (48) reaches the first stop position at byte 96. */
         expect_true(test_picture_invalid_u32(&picture, 96u, 0x7fc00000u),
                     "picture validator rejects NaN gradient stop position");
-        XPicture_deinit_base(&picture);
+        XClassDeinit(&picture);
     }
 #endif /* XPAINTER_BRUSH_ON */
 
@@ -726,7 +726,7 @@ static void test_picture_malformed_state_records(void)
                 "malformed-state fixture records text");
     expect_true(test_picture_invalid_u32(&picture, 60u, 0x10000u),
                 "picture validator rejects oversized text payload");
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&picture);
 
 #if XPAINTER_PATH_ON
     {
@@ -746,7 +746,7 @@ static void test_picture_malformed_state_records(void)
                         &picture, 80u, (uint32_t)XPainterPathElement_MoveTo),
                     "picture validator rejects interrupted cubic path");
         XPainterPath_deinit(&path);
-        XPicture_deinit_base(&picture);
+        XClassDeinit(&picture);
     }
 #endif /* XPAINTER_PATH_ON */
 }
@@ -798,7 +798,7 @@ static void test_frame_contract(void)
     XFrame_setMidLineWidth(&frame, 65537);
     expect_true(XFrame_midLineWidth(&frame) == (int)(short)65537,
                 "QFrame setMidLineWidth 按 short 语义保存溢出值");
-    XFrame_deinit_base(&frame);
+    XClassDeinit(&frame);
 }
 #endif /* XWIDGET_ON && XFRAME_ON */
 
@@ -882,8 +882,8 @@ static bool test_write_text_file(const char* path, const char* text)
         XIODevice_close_base((XIODevice*)file);
         ok = true;
     }
-    if (file) XClass_delete_base((XClass*)file);
-    XString_delete_base((XClass*)pathString);
+    if (file) XClassDelete((XClass*)file);
+    XClassDelete((XClass*)pathString);
     return ok;
 }
 
@@ -906,8 +906,8 @@ static bool test_write_binary_file(const char* path, const void* data,
     } else {
         ok = false;
     }
-    if (file) XClass_delete_base((XClass*)file);
-    XString_delete_base((XClass*)pathString);
+    if (file) XClassDelete((XClass*)file);
+    XClassDelete((XClass*)pathString);
     return ok;
 }
 
@@ -970,8 +970,8 @@ static bool test_replace_text_file(const char* path, const char* text)
     } else {
         ok = false;
     }
-    if (file) XClass_delete_base((XClass*)file);
-    XString_delete_base((XClass*)pathString);
+    if (file) XClassDelete((XClass*)file);
+    XClassDelete((XClass*)pathString);
     return ok;
 }
 
@@ -986,9 +986,9 @@ static bool test_make_theme_dir(const char* root, const char* relative)
     relativeString = XString_create_utf8(relative);
     dir = rootString ? XDir_create_2(rootString) : NULL;
     ok = dir && XDir_mkpath(dir, relativeString);
-    if (dir) XDir_delete_base((XClass*)dir);
-    if (relativeString) XString_delete_base((XClass*)relativeString);
-    if (rootString) XString_delete_base((XClass*)rootString);
+    if (dir) XClassDelete((XClass*)dir);
+    if (relativeString) XClassDelete((XClass*)relativeString);
+    if (rootString) XClassDelete((XClass*)rootString);
     return ok;
 }
 
@@ -1027,7 +1027,7 @@ static void test_icon_default_theme_search_path(void)
     XIcon_setThemeName_2("");
     if (defaults)
     {
-        XStringList_delete_base((XClass*)defaults);
+        XClassDelete((XClass*)defaults);
         defaults = NULL;
     }
     defaults = XIcon_themeSearchPaths_2();
@@ -1042,10 +1042,10 @@ static void test_icon_default_theme_search_path(void)
                 "清除用户主题后恢复平台搜索路径并按 Qt 规则处理 :/icons");
 
     XIcon_setThemeSearchPaths(oldPaths);
-    if (defaults) XStringList_delete_base((XClass*)defaults);
-    if (emptyPaths) XStringList_delete_base((XClass*)emptyPaths);
-    if (explicitPaths) XStringList_delete_base((XClass*)explicitPaths);
-    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
+    if (defaults) XClassDelete((XClass*)defaults);
+    if (emptyPaths) XClassDelete((XClass*)emptyPaths);
+    if (explicitPaths) XClassDelete((XClass*)explicitPaths);
+    if (oldPaths) XClassDelete((XClass*)oldPaths);
 }
 
 /**
@@ -1123,9 +1123,9 @@ static void test_icon_platform_theme_defaults(void)
         unsetenv("XDG_DATA_HOME");
     XIcon_setThemeSearchPaths(oldPaths);
     XIcon_setThemeName(oldTheme);
-    if (paths) XStringList_delete_base((XClass*)paths);
-    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
-    if (oldTheme) XString_delete_base((XClass*)oldTheme);
+    if (paths) XClassDelete((XClass*)paths);
+    if (oldPaths) XClassDelete((XClass*)oldPaths);
+    if (oldTheme) XClassDelete((XClass*)oldTheme);
 #endif
 }
 
@@ -1178,7 +1178,7 @@ static void test_icon_theme_index_inherits(void)
                     "xgui_icon_theme_tmp/Base/48x48/status/example-icon.bmp",
                     "BMP", -1),
                 "index.theme fixture writes generic fallback icon");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     {
         uint8_t cacheData[112];
@@ -1214,7 +1214,7 @@ static void test_icon_theme_index_inherits(void)
                     XPixmap_height(&pixmap) == 48,
                     "index.theme inherited icon keeps target size");
     }
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
 
     /* QIconLoaderEngine::PixmapEntry::pixmap() 使用实际缩放尺寸和计算 DPR
        组成缓存键。非方形请求覆盖主题缓存查找/插入一致性，避免请求键与
@@ -1238,9 +1238,9 @@ static void test_icon_theme_index_inherits(void)
                     XPixmap_width(&secondPixmap) == 18 &&
                     XPixmap_height(&secondPixmap) == 18,
                     "theme icon cache reuses actual non-square pixmap key");
-        XPixmap_deinit_base(&secondPixmap);
-        XPixmap_deinit_base(&firstPixmap);
-        XIcon_deinit_base(&themedIcon);
+        XClassDeinit(&secondPixmap);
+        XClassDeinit(&firstPixmap);
+        XClassDeinit(&themedIcon);
     }
 
     {
@@ -1259,7 +1259,7 @@ static void test_icon_theme_index_inherits(void)
         expect_true(!XIconInternal_resolveThemePixmapSize(
                         "example-icon", 48, &pixmap),
                     "valid icon-theme.cache filters directories like Qt");
-        XPixmap_deinit_base(&pixmap);
+        XClassDeinit(&pixmap);
     }
 
     {
@@ -1272,7 +1272,7 @@ static void test_icon_theme_index_inherits(void)
         expect_true(XIconInternal_resolveThemePixmapSize(
                         "example-icon", 48, &pixmap),
                     "corrupt icon-theme.cache falls back to directory scan");
-        XPixmap_deinit_base(&pixmap);
+        XClassDeinit(&pixmap);
     }
 
     /* Qt QIconLoaderEngine::availableSizes() 只有当前主题没有条目时才
@@ -1294,7 +1294,7 @@ static void test_icon_theme_index_inherits(void)
                     "xgui_icon_theme_tmp/Child/48x48/apps/split-size-icon.bmp",
                     "BMP", -1),
                 "availableSizes fixture writes child icon");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init_ex(&image, 32, 32, XImageFormat_ARGB32);
     XImage_fill(&image, 0xff996633u);
     expect_true(XImage_save_2(
@@ -1302,7 +1302,7 @@ static void test_icon_theme_index_inherits(void)
                     "xgui_icon_theme_tmp/Base/32x32/status/split-size-icon.bmp",
                     "BMP", -1),
                 "availableSizes fixture writes parent icon");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     {
         XIcon splitIcon;
         XVector splitSizes;
@@ -1317,8 +1317,8 @@ static void test_icon_theme_index_inherits(void)
                     splitSize->height == 48 &&
                     XVector_size_base((const XContainer*)&splitSizes) == 1,
                     "availableSizes stops at child theme entries");
-        XVector_deinit_base((XClass*)&splitSizes);
-        XIcon_deinit_base(&splitIcon);
+        XClassDeinit((XClass*)&splitSizes);
+        XClassDeinit(&splitIcon);
     }
 
     /* Qt 6.8 treats an existing index.theme as authoritative.  A file in
@@ -1330,13 +1330,13 @@ static void test_icon_theme_index_inherits(void)
                     "xgui_icon_theme_tmp/Base/indexed-stray-icon.bmp",
                     "BMP", -1),
                 "indexed theme fixture writes undeclared root icon");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XIcon_setThemeName_2("Base");
     XPixmap_init(&pixmap);
     expect_true(!XIconInternal_resolveThemePixmapSize(
                     "indexed-stray-icon", 48, &pixmap),
                 "indexed theme rejects undeclared root icon");
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
     XIcon_setThemeName_2("Child");
 
     {
@@ -1380,10 +1380,10 @@ static void test_icon_theme_index_inherits(void)
                          XIconMode_Normal, XIconState_Off, &fallbackResult);
             expect_true(XPixmap_isNull(&fallbackResult),
                         "registered corrupt theme keeps engine instead of fallback");
-            XPixmap_deinit_base(&fallbackResult);
-            XIcon_deinit_base(&corruptWithFallback);
-            XIcon_deinit_base(&fallbackIcon);
-            XPixmap_deinit_base(&fallbackPixmap);
+            XClassDeinit(&fallbackResult);
+            XClassDeinit(&corruptWithFallback);
+            XClassDeinit(&fallbackIcon);
+            XClassDeinit(&fallbackPixmap);
         }
         memset(&corruptPixmap, 0, sizeof(corruptPixmap));
         XPixmap_init(&corruptPixmap);
@@ -1391,8 +1391,8 @@ static void test_icon_theme_index_inherits(void)
                      &corruptPixmap);
         expect_true(XPixmap_isNull(&corruptPixmap),
                     "corrupt registered theme file fails only when decoded");
-        XPixmap_deinit_base(&corruptPixmap);
-        XIcon_deinit_base(&corrupt);
+        XClassDeinit(&corruptPixmap);
+        XClassDeinit(&corrupt);
     }
 
     /* A malformed entry in the current indexed theme is still an entry in
@@ -1414,7 +1414,7 @@ static void test_icon_theme_index_inherits(void)
                         "xgui_icon_theme_tmp/Base/48x48/apps/shadow-corrupt-icon.bmp",
                         "BMP", -1),
                     "indexed shadow fixture writes valid parent icon");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         expect_true(test_write_binary_file(
                         "xgui_icon_theme_tmp/Child/48x48/apps/shadow-corrupt-icon.bmp",
                         corruptChild, sizeof(corruptChild), true),
@@ -1428,7 +1428,7 @@ static void test_icon_theme_index_inherits(void)
         expect_true(!XIconInternal_resolveThemePixmapSize(
                         "shadow-corrupt-icon", 48, &pixmap),
                     "corrupt child entry shadows a valid inherited icon");
-        XPixmap_deinit_base(&pixmap);
+        XClassDeinit(&pixmap);
         XVector_init(&shadowSizes, sizeof(XSize), true);
         XIcon_availableSizes(&shadow, XIconMode_Normal, XIconState_Off,
                              &shadowSizes);
@@ -1437,8 +1437,8 @@ static void test_icon_theme_index_inherits(void)
         expect_true(shadowSize && shadowSize->width == 48 &&
                     shadowSize->height == 48,
                     "corrupt child entry keeps declared available size");
-        XVector_deinit_base((XClass*)&shadowSizes);
-        XIcon_deinit_base(&shadow);
+        XClassDeinit((XClass*)&shadowSizes);
+        XClassDeinit(&shadow);
     }
 
     /* Qt 以 index.theme 文件是否存在决定主题解析模式；即使
@@ -1456,7 +1456,7 @@ static void test_icon_theme_index_inherits(void)
                     "xgui_icon_theme_tmp/IndexedEmpty/48x48/apps/legacy-shadow.bmp",
                     "BMP", -1),
                 "empty index fixture writes legacy shadow icon");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XIcon_setThemeName_2("IndexedEmpty");
     XIcon_setFallbackThemeName_2("");
     XPixmap_init(&pixmap);
@@ -1464,7 +1464,7 @@ static void test_icon_theme_index_inherits(void)
                         "legacy-shadow", 48, &pixmap) &&
                     !XIcon_hasThemeIcon_2("legacy-shadow"),
                 "empty index suppresses legacy directory probing");
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
     XIcon_setThemeName_2("Child");
     XIcon_setFallbackThemeName_2("hicolor");
 
@@ -1479,7 +1479,7 @@ static void test_icon_theme_index_inherits(void)
                     XString_equals_utf8(matchedName, "example-icon",
                                          XChar_CaseSensitive),
                     "theme engine reports the name selected by dash fallback");
-        if (matchedName) XString_delete_base((XClass*)matchedName);
+        if (matchedName) XClassDelete((XClass*)matchedName);
     }
     expect_true(!XIcon_hasThemeIcon_2("example-icon-tool"),
                 "hasThemeIcon rejects a name satisfied only by dash fallback");
@@ -1491,9 +1491,9 @@ static void test_icon_theme_index_inherits(void)
         XPixmap_toImage(&pixmap, &image);
         expect_true((XImage_pixel(&image, 0, 0) & 0x00ffffffu) == 0x33cc66u,
                     "dash fallback skips Application/MimeType contexts");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
 
     XIcon_setThemeSearchPaths(oldPaths);
     XIcon_setFallbackSearchPaths(oldFallbackPaths);
@@ -1502,14 +1502,14 @@ static void test_icon_theme_index_inherits(void)
 
     if (rootDir) {
         XDir_removeRecursively(rootDir);
-        XDir_delete_base((XClass*)rootDir);
+        XClassDelete((XClass*)rootDir);
     }
-    if (rootString) XString_delete_base((XClass*)rootString);
-    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
-    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
-    if (oldTheme) XString_delete_base((XClass*)oldTheme);
-    if (oldFallback) XString_delete_base((XClass*)oldFallback);
-    if (newPaths) XStringList_delete_base((XClass*)newPaths);
+    if (rootString) XClassDelete((XClass*)rootString);
+    if (oldPaths) XClassDelete((XClass*)oldPaths);
+    if (oldFallbackPaths) XClassDelete((XClass*)oldFallbackPaths);
+    if (oldTheme) XClassDelete((XClass*)oldTheme);
+    if (oldFallback) XClassDelete((XClass*)oldFallback);
+    if (newPaths) XClassDelete((XClass*)newPaths);
 }
 
 #if XIMAGECODEC_ON && XIMAGECODEC_PNG_ON
@@ -1561,7 +1561,7 @@ static void test_icon_theme_search_root_order(void)
     XImage_fill(&image, 0xffcc6633u);
     expect_true(XImage_save_2(&image, secondFile, "PNG", -1),
                 "多根主题顺序夹具写入后置 PNG");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     if (paths) {
         XStringList_push_back_utf8(paths, firstRoot);
@@ -1580,9 +1580,9 @@ static void test_icon_theme_search_root_order(void)
         XPixmap_toImage(&pixmap, &image);
         expect_true((XImage_pixel(&image, 0, 0) & 0x00ffffffu) == 0xcc6633u,
                     "同尺寸 PNG 后置主题根覆盖前置根");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
 
     XIcon_setThemeSearchPaths(oldPaths);
     XIcon_setFallbackSearchPaths(oldFallbackPaths);
@@ -1590,20 +1590,20 @@ static void test_icon_theme_search_root_order(void)
     XIcon_setFallbackThemeName(oldFallback);
     if (firstDir) {
         XDir_removeRecursively(firstDir);
-        XDir_delete_base((XClass*)firstDir);
+        XClassDelete((XClass*)firstDir);
     }
     if (secondDir) {
         XDir_removeRecursively(secondDir);
-        XDir_delete_base((XClass*)secondDir);
+        XClassDelete((XClass*)secondDir);
     }
-    if (firstRootString) XString_delete_base((XClass*)firstRootString);
-    if (secondRootString) XString_delete_base((XClass*)secondRootString);
-    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
-    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
-    if (oldTheme) XString_delete_base((XClass*)oldTheme);
-    if (oldFallback) XString_delete_base((XClass*)oldFallback);
-    if (paths) XStringList_delete_base((XClass*)paths);
-    if (emptyFallback) XStringList_delete_base((XClass*)emptyFallback);
+    if (firstRootString) XClassDelete((XClass*)firstRootString);
+    if (secondRootString) XClassDelete((XClass*)secondRootString);
+    if (oldPaths) XClassDelete((XClass*)oldPaths);
+    if (oldFallbackPaths) XClassDelete((XClass*)oldFallbackPaths);
+    if (oldTheme) XClassDelete((XClass*)oldTheme);
+    if (oldFallback) XClassDelete((XClass*)oldFallback);
+    if (paths) XClassDelete((XClass*)paths);
+    if (emptyFallback) XClassDelete((XClass*)emptyFallback);
 }
 #endif /* XIMAGECODEC_ON && XIMAGECODEC_PNG_ON */
 
@@ -1642,7 +1642,7 @@ static void test_icon_theme_fallback_legacy_search_path(void)
     XImage_fill(&image, 0xffcc6633u);
     expect_true(XImage_save_2(&image, iconPath, "BMP", -1),
                 "传统 fallback 主题写入图标");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     oldPaths = XIcon_themeSearchPaths_2();
     oldFallbackPaths = XIcon_fallbackSearchPaths_2();
@@ -1670,9 +1670,9 @@ static void test_icon_theme_fallback_legacy_search_path(void)
                     XPixmap_height(&pixmap) == 6 &&
                     (XImage_pixel(&image, 0, 0) & 0x00ffffffu) == 0xcc6633u,
                     "传统 fallback 图标尺寸和像素正确");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
 
     XIcon_setThemeSearchPaths(oldPaths);
     XIcon_setFallbackSearchPaths(oldFallbackPaths);
@@ -1681,20 +1681,20 @@ static void test_icon_theme_fallback_legacy_search_path(void)
 
     if (themeRootDir) {
         XDir_removeRecursively(themeRootDir);
-        XDir_delete_base((XClass*)themeRootDir);
+        XClassDelete((XClass*)themeRootDir);
     }
     if (fallbackRootDir) {
         XDir_removeRecursively(fallbackRootDir);
-        XDir_delete_base((XClass*)fallbackRootDir);
+        XClassDelete((XClass*)fallbackRootDir);
     }
-    if (themeRootString) XString_delete_base((XClass*)themeRootString);
-    if (fallbackRootString) XString_delete_base((XClass*)fallbackRootString);
-    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
-    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
-    if (oldTheme) XString_delete_base((XClass*)oldTheme);
-    if (oldFallback) XString_delete_base((XClass*)oldFallback);
-    if (themePaths) XStringList_delete_base((XClass*)themePaths);
-    if (fallbackPaths) XStringList_delete_base((XClass*)fallbackPaths);
+    if (themeRootString) XClassDelete((XClass*)themeRootString);
+    if (fallbackRootString) XClassDelete((XClass*)fallbackRootString);
+    if (oldPaths) XClassDelete((XClass*)oldPaths);
+    if (oldFallbackPaths) XClassDelete((XClass*)oldFallbackPaths);
+    if (oldTheme) XClassDelete((XClass*)oldTheme);
+    if (oldFallback) XClassDelete((XClass*)oldFallback);
+    if (themePaths) XClassDelete((XClass*)themePaths);
+    if (fallbackPaths) XClassDelete((XClass*)fallbackPaths);
 }
 
 #if XIMAGECODEC_ON && XIMAGECODEC_PNG_ON
@@ -1739,12 +1739,12 @@ static void test_icon_theme_standalone_fallback_sizes(void)
     XImage_fill(&image, 0xff336699u);
     expect_true(XImage_save_2(&image, themeFile, "PNG", -1),
                 "standalone fallback fixture writes theme-path decoy");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init_ex(&image, 7, 5, XImageFormat_ARGB32);
     XImage_fill(&image, 0xffcc6633u);
     expect_true(XImage_save_2(&image, fallbackFile, "PNG", -1),
                 "standalone fallback fixture writes fallback PNG");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     oldPaths = XIcon_themeSearchPaths_2();
     oldFallbackPaths = XIcon_fallbackSearchPaths_2();
@@ -1777,9 +1777,9 @@ static void test_icon_theme_standalone_fallback_sizes(void)
                     "standalone fallback keeps fallback height");
         expect_true((XImage_pixel(&image, 0, 0) & 0x00ffffffu) == 0xcc6633u,
                     "standalone fallback ignores theme-path decoy");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
 
     XVector_init(&sizes, sizeof(XSize), true);
     expect_true(XIconInternal_availableThemeSizes(
@@ -1789,7 +1789,7 @@ static void test_icon_theme_standalone_fallback_sizes(void)
         size = (XSize*)XVector_at_base(&sizes, 0);
     expect_true(size && size->width == 7 && size->height == 5,
                 "standalone fallback availableSizes preserves 7x5 source");
-    XVector_deinit_base((XClass*)&sizes);
+    XClassDeinit((XClass*)&sizes);
 
     XIcon_setThemeSearchPaths(oldPaths);
     XIcon_setFallbackSearchPaths(oldFallbackPaths);
@@ -1797,20 +1797,20 @@ static void test_icon_theme_standalone_fallback_sizes(void)
     XIcon_setFallbackThemeName(oldFallback);
     if (themeRootDir) {
         XDir_removeRecursively(themeRootDir);
-        XDir_delete_base((XClass*)themeRootDir);
+        XClassDelete((XClass*)themeRootDir);
     }
     if (fallbackRootDir) {
         XDir_removeRecursively(fallbackRootDir);
-        XDir_delete_base((XClass*)fallbackRootDir);
+        XClassDelete((XClass*)fallbackRootDir);
     }
-    if (themeRootString) XString_delete_base((XClass*)themeRootString);
-    if (fallbackRootString) XString_delete_base((XClass*)fallbackRootString);
-    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
-    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
-    if (oldTheme) XString_delete_base((XClass*)oldTheme);
-    if (oldFallback) XString_delete_base((XClass*)oldFallback);
-    if (themePaths) XStringList_delete_base((XClass*)themePaths);
-    if (fallbackPaths) XStringList_delete_base((XClass*)fallbackPaths);
+    if (themeRootString) XClassDelete((XClass*)themeRootString);
+    if (fallbackRootString) XClassDelete((XClass*)fallbackRootString);
+    if (oldPaths) XClassDelete((XClass*)oldPaths);
+    if (oldFallbackPaths) XClassDelete((XClass*)oldFallbackPaths);
+    if (oldTheme) XClassDelete((XClass*)oldTheme);
+    if (oldFallback) XClassDelete((XClass*)oldFallback);
+    if (themePaths) XClassDelete((XClass*)themePaths);
+    if (fallbackPaths) XClassDelete((XClass*)fallbackPaths);
 }
 #endif /* XIMAGECODEC_ON && XIMAGECODEC_PNG_ON */
 
@@ -1850,7 +1850,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "xgui_icon_theme_engine_paint_tmp/Base/48x48/apps/example-icon.bmp",
                     "BMP", -1),
                 "theme engine paint writes theme icon BMP");
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
 
     oldPaths = XIcon_themeSearchPaths_2();
     oldFallbackPaths = XIcon_fallbackSearchPaths_2();
@@ -1873,14 +1873,14 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         XIcon_setFallbackThemeName(oldFallback);
         if (rootDir) {
             XDir_removeRecursively(rootDir);
-            XDir_delete_base((XClass*)rootDir);
+            XClassDelete((XClass*)rootDir);
         }
-        if (rootString) XString_delete_base((XClass*)rootString);
-        if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
-        if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
-        if (oldTheme) XString_delete_base((XClass*)oldTheme);
-        if (oldFallback) XString_delete_base((XClass*)oldFallback);
-        if (newPaths) XStringList_delete_base((XClass*)newPaths);
+        if (rootString) XClassDelete((XClass*)rootString);
+        if (oldPaths) XClassDelete((XClass*)oldPaths);
+        if (oldFallbackPaths) XClassDelete((XClass*)oldFallbackPaths);
+        if (oldTheme) XClassDelete((XClass*)oldTheme);
+        if (oldFallback) XClassDelete((XClass*)oldFallback);
+        if (newPaths) XClassDelete((XClass*)newPaths);
         return;
     }
     {
@@ -1893,7 +1893,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                                        &invalidScale);
         expect_true(XPixmap_isNull(&invalidScale),
                     "theme engine rejects non-positive scaledPixmap ratio");
-        XPixmap_deinit_base(&invalidScale);
+        XClassDeinit(&invalidScale);
     }
     {
         XPixmap invalidScale;
@@ -1904,14 +1904,14 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                                        &invalidScale);
         expect_true(XPixmap_isNull(&invalidScale),
                     "theme engine rejects NaN scaledPixmap ratio");
-        XPixmap_deinit_base(&invalidScale);
+        XClassDeinit(&invalidScale);
         XPixmap_init(&invalidScale);
         XIconEngine_scaledPixmap_base((const XIconEngine*)engine, &requested,
                                        XIconMode_Normal, XIconState_Off,
                                        INFINITY, &invalidScale);
         expect_true(XPixmap_isNull(&invalidScale),
                     "theme engine rejects infinite scaledPixmap ratio");
-        XPixmap_deinit_base(&invalidScale);
+        XClassDeinit(&invalidScale);
     }
     {
         XIcon themedIcon;
@@ -1934,7 +1934,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
             expect_true(XPixmap_width(&requestedPixmap) == 18 &&
                         XPixmap_height(&requestedPixmap) == 18,
                         "theme icon pixmap preserves aspect and never stretches to request rectangle");
-            XPixmap_deinit_base(&requestedPixmap);
+            XClassDeinit(&requestedPixmap);
         }
         XIcon_actualSize(&themedIcon, 96, 80, XIconMode_Normal,
                          XIconState_Off, &actual);
@@ -1944,7 +1944,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                               XIconMode_Normal, XIconState_Off, &actual);
         expect_true(actual.width == 18 && actual.height == 18,
                     "fixed theme high-DPI actualSize returns physical result as logical size");
-        XIcon_deinit_base(&themedIcon);
+        XClassDeinit(&themedIcon);
     }
     /* Qt uses the fixed/threshold directory metadata for actualSize(); the
        decoded file dimensions must not redefine the logical entry size. */
@@ -1955,7 +1955,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "xgui_icon_theme_engine_paint_tmp/Base/48x48/apps/example-icon.bmp",
                     "BMP", -1),
                 "fixed theme fixture writes undersized file for metadata test");
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
     {
         XIcon metadataIcon;
         XIconThemeEngine* metadataEngine;
@@ -1968,7 +1968,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                          XIconState_Off, &metadataActual);
         expect_true(metadataActual.width == 32 && metadataActual.height == 32,
                     "fixed theme actualSize uses declared metadata over file pixels");
-        XIcon_deinit_base(&metadataIcon);
+        XClassDeinit(&metadataIcon);
     }
     /* Restore the original resource for the following pixmap/paint checks. */
     XImage_init_ex(&source, 48, 48, XImageFormat_ARGB32);
@@ -1978,7 +1978,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "xgui_icon_theme_engine_paint_tmp/Base/48x48/apps/example-icon.bmp",
                     "BMP", -1),
                 "fixed theme fixture restores source after metadata test");
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
     {
         XIcon sizedIcon;
         XIconThemeEngine* sizedEngine;
@@ -2013,10 +2013,10 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     XPixmap_height(&hiDpiPixmap) == 36 &&
                     XPixmap_devicePixelRatio(&hiDpiPixmap) == 2.0f,
                     "theme icon scaledPixmap uses physical smaller edge");
-        XPixmap_deinit_base(&hiDpiPixmap);
-        XPixmap_deinit_base(&normalPixmap);
-        XVector_deinit_base((XClass*)&sizes);
-        XIcon_deinit_base(&sizedIcon);
+        XClassDeinit(&hiDpiPixmap);
+        XClassDeinit(&normalPixmap);
+        XClassDeinit((XClass*)&sizes);
+        XClassDeinit(&sizedIcon);
     }
     /* Qt QIconLoaderEngine::availableSizes() 遍历每个已登记条目，不像
        QPixmapIconEngine 那样对尺寸做 contains() 去重；同一逻辑尺寸在
@@ -2037,7 +2037,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "duplicate-icon.bmp",
                     "BMP", -1),
                 "theme engine duplicate-size fixture writes second icon");
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
     expect_true(test_replace_text_file(
                     "xgui_icon_theme_engine_paint_tmp/Base/index.theme",
                     "[Icon Theme]\nName=Base\n"
@@ -2067,8 +2067,8 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     first && second && first->width == 48 && first->height == 48 &&
                     second->width == 48 && second->height == 48,
                     "theme engine availableSizes preserves duplicate directory entries");
-        XVector_deinit_base((XClass*)&duplicateSizes);
-        XIcon_deinit_base(&duplicateIcon);
+        XClassDeinit((XClass*)&duplicateSizes);
+        XClassDeinit(&duplicateIcon);
     }
     expect_true(test_replace_text_file(
                     "xgui_icon_theme_engine_paint_tmp/Base/index.theme",
@@ -2100,7 +2100,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
         expect_true(scalableActual.width == 24 &&
                     scalableActual.height == 18,
                     "theme scalable high-DPI actualSize restores logical rectangle");
-        XIcon_deinit_base(&scalableIcon);
+        XClassDeinit(&scalableIcon);
     }
 #if XIMAGECODEC_PNG_ON && XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON
     /* Qt qiconloader.cpp:825-834 先按请求尺寸选中具体条目，再由
@@ -2128,7 +2128,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "mixed-icon.png",
                     "PNG", -1),
                 "mixed theme fixture writes fixed PNG");
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
     expect_true(test_replace_text_file(
                     "xgui_icon_theme_engine_paint_tmp/Base/scalable/apps/"
                     "mixed-icon.svg",
@@ -2152,7 +2152,7 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                          XIconState_Off, &mixedActual);
         expect_true(mixedActual.width == 24 && mixedActual.height == 18,
                     "mixed theme actualSize selects scalable SVG entry");
-        XIcon_deinit_base(&mixedIcon);
+        XClassDeinit(&mixedIcon);
     }
 #endif /* XIMAGECODEC_PNG_ON && XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON */
     memset(&target, 0, sizeof(target));
@@ -2215,11 +2215,11 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
                     "theme engine high-DPI paint leaves left background");
         expect_true((XImage_pixel(&hiDpiTarget, 56, 20) & 0x00ffffffu) == 0x0u,
                     "theme engine high-DPI paint leaves right background");
-        XImage_deinit_base(&hiDpiTarget);
+        XClassDeinit(&hiDpiTarget);
     }
 
-    XImage_deinit_base(&target);
-    XIconThemeEngine_delete_base(engine);
+    XClassDeinit(&target);
+    XClassDelete(engine);
 
     XIcon_setThemeSearchPaths(oldPaths);
     XIcon_setFallbackSearchPaths(oldFallbackPaths);
@@ -2227,14 +2227,14 @@ static void test_icon_theme_engine_paint_scales_to_rect(void)
     XIcon_setFallbackThemeName(oldFallback);
     if (rootDir) {
         XDir_removeRecursively(rootDir);
-        XDir_delete_base((XClass*)rootDir);
+        XClassDelete((XClass*)rootDir);
     }
-    if (rootString) XString_delete_base((XClass*)rootString);
-    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
-    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
-    if (oldTheme) XString_delete_base((XClass*)oldTheme);
-    if (oldFallback) XString_delete_base((XClass*)oldFallback);
-    if (newPaths) XStringList_delete_base((XClass*)newPaths);
+    if (rootString) XClassDelete((XClass*)rootString);
+    if (oldPaths) XClassDelete((XClass*)oldPaths);
+    if (oldFallbackPaths) XClassDelete((XClass*)oldFallbackPaths);
+    if (oldTheme) XClassDelete((XClass*)oldTheme);
+    if (oldFallback) XClassDelete((XClass*)oldFallback);
+    if (newPaths) XClassDelete((XClass*)newPaths);
 }
 
 static void test_icon_theme_scale_selection(void)
@@ -2282,7 +2282,7 @@ static void test_icon_theme_scale_selection(void)
                     "xgui_icon_theme_scale_tmp/Base/24x24/apps/example-icon.bmp",
                     "BMP", -1),
                 "scaled theme fixture writes 2x icon");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     oldPaths = XIcon_themeSearchPaths_2();
     oldFallbackPaths = XIcon_fallbackSearchPaths_2();
@@ -2306,8 +2306,8 @@ static void test_icon_theme_scale_selection(void)
     expect_true(XPixmap_width(&pixmap) == 36 && XPixmap_height(&pixmap) == 36 &&
                     (XImage_pixel(&decoded, 0, 0) & 0x00ffffffu) == 0x3366ccu,
                 "1.5x request prefers 2x directory over equal physical 1x");
-    XImage_deinit_base(&decoded);
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&decoded);
+    XClassDeinit(&pixmap);
 
     XIcon_setThemeSearchPaths(oldPaths);
     XIcon_setFallbackSearchPaths(oldFallbackPaths);
@@ -2315,14 +2315,14 @@ static void test_icon_theme_scale_selection(void)
     XIcon_setFallbackThemeName(oldFallback);
     if (rootDir) {
         XDir_removeRecursively(rootDir);
-        XDir_delete_base((XClass*)rootDir);
+        XClassDelete((XClass*)rootDir);
     }
-    if (rootString) XString_delete_base((XClass*)rootString);
-    if (oldPaths) XStringList_delete_base((XClass*)oldPaths);
-    if (oldFallbackPaths) XStringList_delete_base((XClass*)oldFallbackPaths);
-    if (oldTheme) XString_delete_base((XClass*)oldTheme);
-    if (oldFallback) XString_delete_base((XClass*)oldFallback);
-    if (newPaths) XStringList_delete_base((XClass*)newPaths);
+    if (rootString) XClassDelete((XClass*)rootString);
+    if (oldPaths) XClassDelete((XClass*)oldPaths);
+    if (oldFallbackPaths) XClassDelete((XClass*)oldFallbackPaths);
+    if (oldTheme) XClassDelete((XClass*)oldTheme);
+    if (oldFallback) XClassDelete((XClass*)oldFallback);
+    if (newPaths) XClassDelete((XClass*)newPaths);
 }
 #endif /* XIMAGECODEC_ON */
 
@@ -2405,7 +2405,7 @@ static void test_font_lvgl_bin_files(void)
                         info.m_width == 16 && info.m_bpp == 2,
                     "XFont_setFamily 支持外挂字库完整路径");
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
 }
 #endif /* XFONT_FILE_ON */
 
@@ -2576,7 +2576,7 @@ static void test_pixmap_lifecycle(void)
     }
 
     memset(&copied, 0, sizeof(copied));
-    XCopy(&copied, &source);
+    XClassCopy(&copied, &source);
     expect_true(XPixmap_width(&copied) == 2 && XPixmap_height(&copied) == 3,
                 "copy_base initializes an uninitialized destination");
 
@@ -2643,19 +2643,19 @@ static void test_pixmap_lifecycle(void)
     expect_true(!XPixmap_convertFromImage(&converted, &nullImage, 0) &&
                 XPixmap_isNull(&converted) && XPixmap_cacheKey(&converted) == 0,
                 "pixmap convertFromImage null input clears old contents");
-    XImage_deinit_base(&nullImage);
+    XClassDeinit(&nullImage);
     XPixmap_fromImageInPlace(NULL, 0, &converted);
     expect_true(XPixmap_isNull(&converted) && XPixmap_cacheKey(&converted) == 0,
                 "pixmap fromImageInPlace null input clears the output");
-    XImage_deinit_base(&rgb16);
-    XPixmap_deinit_base(&converted);
+    XClassDeinit(&rgb16);
+    XClassDeinit(&converted);
 
-    XImage_deinit_base(&image);
-    XPixmap_deinit_base(&target);
-    XPixmap_deinit_base(&empty);
-    XPixmap_deinit_base(&transformed);
-    XPixmap_deinit_base(&copied);
-    XPixmap_deinit_base(&source);
+    XClassDeinit(&image);
+    XClassDeinit(&target);
+    XClassDeinit(&empty);
+    XClassDeinit(&transformed);
+    XClassDeinit(&copied);
+    XClassDeinit(&source);
 }
 
 static void test_icon_sizes(void)
@@ -2685,10 +2685,10 @@ static void test_icon_sizes(void)
                  (size0->width == 32 && size1->width == 16)),
                 "icon availableSizes preserves dimensions");
 
-    XVector_deinit_base((XClass*)&sizes);
-    XIcon_deinit_base(&icon);
-    XPixmap_deinit_base(&second);
-    XPixmap_deinit_base(&first);
+    XClassDeinit((XClass*)&sizes);
+    XClassDeinit(&icon);
+    XClassDeinit(&second);
+    XClassDeinit(&first);
 }
 
 /**
@@ -2707,42 +2707,42 @@ static void test_icon_theme_icon_mapping(void)
         name = XIcon_themeIconName((XIconThemeIcon)iconIndex);
         expect_true(name && !XString_isEmpty_base((const XContainer*)name),
                     "ThemeIcon 每个标准序号均有非空名称");
-        if (name) XString_delete_base((XClass*)name);
+        if (name) XClassDelete((XClass*)name);
     }
 
     name = XIcon_themeIconName(XIconThemeIcon_AddressBookNew);
     expect_true(name && XString_equals_utf8(name, "address-book-new",
                                              XChar_CaseSensitive),
                 "ThemeIcon 首项映射为 address-book-new");
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
 
     name = XIcon_themeIconName(XIconThemeIcon_DocumentOpenRecent);
     expect_true(name && XString_equals_utf8(name, "document-open-recent",
                                              XChar_CaseSensitive),
                 "ThemeIcon 文档扩展项保持 Qt 6.8 名称");
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
 
     name = XIcon_themeIconName(XIconThemeIcon_WeatherStorm);
     expect_true(name && XString_equals_utf8(name, "weather-storm",
                                              XChar_CaseSensitive),
                 "ThemeIcon 末项映射为 weather-storm");
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
 
     name = XIcon_themeIconName(XIconThemeIcon_Help);
     expect_true(name && XString_equals_utf8(name, "help-browser",
                                              XChar_CaseSensitive),
                 "旧版 Help 扩展名称保持 help-browser 兼容映射");
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
 
     name = XIcon_themeIconName(XIconThemeIcon_NThemeIcons);
     expect_true(name && XString_isEmpty_base((const XContainer*)name),
                 "NThemeIcons 哨兵不产生主题图标名称");
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
 
     name = XIcon_themeIconName(XIconThemeIcon_Invalid);
     expect_true(name && XString_isEmpty_base((const XContainer*)name),
                 "Invalid 主题图标枚举返回空名称");
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
 }
 
 static void test_geometry_contract(void)
@@ -2863,7 +2863,7 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     memset(&pixmap, 0, sizeof(pixmap));
     XPixmap_init(&pixmap);
     XPixmap_init_image(&pixmap, &image, 0);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XRegion_init(&exposed);
     XRegion_addRect(&exposed, &(XRect){99, 99, 1, 1});
     XPixmap_scroll(&pixmap, 1, 0, NULL, &exposed);
@@ -2876,7 +2876,7 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     expect_true(XImage_pixel(&movedImage, 1, 0) == 0xff000001u &&
                 XImage_pixel(&movedImage, 3, 0) == 0xff000003u,
                 "pixmap scroll moves pixels from the pre-scroll image");
-    XImage_deinit_base(&movedImage);
+    XClassDeinit(&movedImage);
     XPixmap_scroll(&pixmap, 0, 0, NULL, &exposed);
     expect_true(XRegion_isEmpty(&exposed),
                 "pixmap scroll clears exposed region for a no-op");
@@ -2894,15 +2894,15 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     XImage_setPixel(&movedImage, 1, 0, 1);
     XBitmap_fromImage(&movedImage, 0, &mask);
     XPixmap_setMask(&rgbPixmap, (const XPixmap*)&mask);
-    XImage_deinit_base(&movedImage);
+    XClassDeinit(&movedImage);
     XPixmap_toImage(&rgbPixmap, &movedImage);
     expect_true(XPixmap_hasAlphaChannel(&rgbPixmap) &&
                 (XImage_pixel(&movedImage, 0, 0) >> 24) == 0 &&
                 (XImage_pixel(&movedImage, 1, 0) >> 24) == 0xff,
                 "pixmap setMask converts RGB sources and applies mask alpha");
-    XImage_deinit_base(&movedImage);
-    XBitmap_deinit_base(&mask);
-    XPixmap_deinit_base(&rgbPixmap);
+    XClassDeinit(&movedImage);
+    XClassDeinit(&mask);
+    XClassDeinit(&rgbPixmap);
 
     XPixmap swapped;
     memset(&swapped, 0, sizeof(swapped));
@@ -2914,8 +2914,8 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
     expect_true(XPixmap_convertFromImage(&pixmap, &image, 0) &&
                 XPixmap_width(&pixmap) == 2 && XPixmap_height(&pixmap) == 1,
                 "pixmap convertFromImage replaces data only after success");
-    XPixmap_deinit_base(&swapped);
-    XImage_deinit_base(&image);
+    XClassDeinit(&swapped);
+    XClassDeinit(&image);
 
     memset(&bitmap, 0, sizeof(bitmap));
     XBitmap_init_ex(&bitmap, 2, 2);
@@ -2941,8 +2941,8 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
         expect_true(XImage_pixel(&dataBitmapImage, 0, 0) == 0xffffffffu &&
                     XImage_pixel(&dataBitmapImage, 1, 0) == 0xffffffffu,
                     "bitmap clear fills Qt color0");
-        XImage_deinit_base(&dataBitmapImage);
-        XBitmap_deinit_base(&dataBitmap);
+        XClassDeinit(&dataBitmapImage);
+        XClassDeinit(&dataBitmap);
     }
     memset(&transformed, 0, sizeof(transformed));
     XBitmap_init(&transformed);
@@ -2958,10 +2958,10 @@ static void test_pixmap_scroll_and_bitmap_alias(void)
                 XPixmap_width((const XPixmap*)&bitmap) == 2,
                 "bitmap transformed supports aliased output");
 
-    XBitmap_deinit_base(&transformed);
-    XBitmap_deinit_base(&bitmap);
+    XClassDeinit(&transformed);
+    XClassDeinit(&bitmap);
     XRegion_deinit(&exposed);
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
 }
 
 static void test_pixmap_mask_lifecycle(void)
@@ -2978,7 +2978,7 @@ static void test_pixmap_mask_lifecycle(void)
     XPixmap_fill(&source, 0xff336699u);
     memset(&target, 0, sizeof(target));
     XPixmap_init(&target);
-    XCopy(&target, &source);
+    XClassCopy(&target, &source);
     expect_true(!XPixmap_isDetached(&source),
                 "pixmap copy shares storage before mask mutation");
 
@@ -2990,7 +2990,7 @@ static void test_pixmap_mask_lifecycle(void)
     memset(&mask, 0, sizeof(mask));
     XBitmap_init(&mask);
     XBitmap_fromImage(&image, 0, &mask);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     XPixmap_setMask(&source, (const XPixmap*)&mask);
     memset(&result, 0, sizeof(result));
@@ -3034,11 +3034,11 @@ static void test_pixmap_mask_lifecycle(void)
                 XImage_pixel(&result, 1, 0) == 0xff336699u,
                 "pixmap self mask is a no-op");
 
-    XImage_deinit_base(&result);
-    XPixmap_deinit_base(&wrongMask);
-    XBitmap_deinit_base(&mask);
-    XPixmap_deinit_base(&target);
-    XPixmap_deinit_base(&source);
+    XClassDeinit(&result);
+    XClassDeinit(&wrongMask);
+    XClassDeinit(&mask);
+    XClassDeinit(&target);
+    XClassDeinit(&source);
 }
 
 /** @brief SVG 目标尺寸矢量直渲锁定（对标 QSvgRenderer::render(QRectF)）：
@@ -3072,8 +3072,8 @@ static void test_svg_target_size_rasterize(void)
         "svg sized decode paints declared fill at target center");
     expect_true((XImage_pixel(&direct, 1, 64) & 0xff000000u) == 0u,
                 "svg sized decode keeps outside-circle transparent");
-    XImage_deinit_base(&intrinsic);
-    XImage_deinit_base(&direct);
+    XClassDeinit(&intrinsic);
+    XClassDeinit(&direct);
 
     /* 渲染器级 AA（4× 超采样+盒式降采样）：非对齐圆周产生边缘过渡
      * 像素（此前二值覆盖时=0）。 */
@@ -3103,7 +3103,7 @@ static void test_svg_target_size_rasterize(void)
         }
         expect_true(semi > 0,
                     "svg rasterizer AA produces edge transition pixels");
-        XImage_deinit_base(&aa);
+        XClassDeinit(&aa);
     }
 }
 
@@ -3132,7 +3132,7 @@ static void test_bitmap_qt_contract(void)
                 XImage_color(&image, 1) == bitmapColors[1] &&
                 XImage_pixelIndex(&image, 0, 0) == 0,
                 "bitmap size constructor creates a MonoLSB color0/color1 image");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* qbitmap.cpp:201-214 copies byte-aligned rows and explicitly installs
        the color0/color1 table before converting the source image. */
@@ -3147,7 +3147,7 @@ static void test_bitmap_qt_contract(void)
                 XImage_color(&image, 0) == bitmapColors[0] &&
                 XImage_color(&image, 1) == bitmapColors[1],
                 "bitmap fromData preserves little-endian bits and Qt colors");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     memset(&fromMsb, 0, sizeof(fromMsb));
     XBitmap_init(&fromMsb);
@@ -3158,7 +3158,7 @@ static void test_bitmap_qt_contract(void)
                 XImage_pixelIndex(&image, 1, 0) == 0 &&
                 XImage_pixelIndex(&image, 2, 0) == 1,
                 "bitmap fromData converts XBM/MSB bit order correctly");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     XBitmap_clear(&fromData);
     XImage_init(&image);
@@ -3167,7 +3167,7 @@ static void test_bitmap_qt_contract(void)
                 XImage_pixelIndex(&image, 1, 0) == 0 &&
                 XImage_pixelIndex(&image, 2, 0) == 0,
                 "bitmap clear fills Qt::color0 as zero bits");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* qbitmap.cpp:245-257 shallow-copies an existing one-bit pixmap.  The
        shared platform object must detach when either bitmap is modified. */
@@ -3184,17 +3184,17 @@ static void test_bitmap_qt_contract(void)
     expect_true(XImage_pixelIndex(&image, 0, 0) == 1 &&
                 XImage_pixelIndex(&image, 2, 0) == 1,
                 "shared bitmap source is unchanged after destination mutation");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     XBitmap_fromPixmap(NULL, &alias);
     expect_true(XPixmap_isNull((const XPixmap*)&alias) &&
                 XPixmap_cacheKey((const XPixmap*)&alias) == 0,
                 "bitmap fromPixmap null input replaces output with null bitmap");
 
-    XBitmap_deinit_base(&alias);
-    XBitmap_deinit_base(&fromMsb);
-    XBitmap_deinit_base(&fromData);
-    XBitmap_deinit_base(&bitmap);
+    XClassDeinit(&alias);
+    XClassDeinit(&fromMsb);
+    XClassDeinit(&fromData);
+    XClassDeinit(&bitmap);
 }
 
 static void test_pixmap_cache_contract(void)
@@ -3320,10 +3320,10 @@ static void test_pixmap_cache_contract(void)
     XPixmapCacheKey_deinit(&third);
     XPixmapCacheKey_deinit(&copy);
     XPixmapCacheKey_deinit(&key);
-    XPixmap_deinit_base(&out);
-    XPixmap_deinit_base(&p32);
-    XPixmap_deinit_base(&p20);
-    XPixmap_deinit_base(&p10);
+    XClassDeinit(&out);
+    XClassDeinit(&p32);
+    XClassDeinit(&p20);
+    XClassDeinit(&p10);
 }
 
 #if defined(__unix__)
@@ -3360,7 +3360,7 @@ static void* cache_thread_probe_worker(void* arg)
     probe->m_replaceRejected = !XPixmapCache_replace(&probe->m_key, &p);
     probe->m_keyStillValid = probe->m_keyStillValid &&
                              XPixmapCacheKey_isValid(&probe->m_key);
-    XPixmap_deinit_base(&p);
+    XClassDeinit(&p);
     return NULL;
 }
 
@@ -3414,8 +3414,8 @@ static void test_pixmap_cache_concurrency(void)
     XPixmapCache_setCacheLimit(oldLimit);
     XPixmapCacheKey_deinit(&probe.m_key);
     XPixmapCacheKey_deinit(&mainKey);
-    XPixmap_deinit_base(&out);
-    XPixmap_deinit_base(&p);
+    XClassDeinit(&out);
+    XClassDeinit(&p);
 }
 #endif /* __unix__ */
 
@@ -3462,7 +3462,7 @@ static void test_picture_play_contract(void)
         expect_true(g_picture_save_short_write_calls == 1,
                     "invalid picture save_device still delegates write");
         XIODevice_close_base(&saveDevice);
-        XClass_deinit_base((XClass*)&saveDevice);
+        XClassDeinit((XClass*)&saveDevice);
     }
     XPicture_clearCommands(&picture);
     XPainter_init(&painter, &probe);
@@ -3496,7 +3496,7 @@ static void test_picture_play_contract(void)
         expect_true(g_picture_save_short_write_calls == 1,
                     "picture save_device delegates one write");
         XIODevice_close_base(&saveDevice);
-        XClass_deinit_base((XClass*)&saveDevice);
+        XClassDeinit((XClass*)&saveDevice);
     }
     expect_true(XPicture_play(&picture, &painter),
                 "recorded picture dispatches through XPainter");
@@ -3604,25 +3604,25 @@ static void test_picture_play_contract(void)
             expect_true(wroteMalformed,
                         "malformed picture fixture writes to file");
             if (malformedFile)
-                XClass_delete_base((XClass*)malformedFile);
+                XClassDelete((XClass*)malformedFile);
             if (malformedName) {
                 expect_true(!XPicture_load_2(&loaded, "xgui_invalid.xpic") &&
                             !XPicture_isNull(&loaded) &&
                             XPicture_size(&loaded) == sizeof(malformed) &&
                             !XPicture_isValidStream(&loaded),
                             "picture load retains malformed non-empty stream");
-                XString_delete_base((XClass*)malformedName);
+                XClassDelete((XClass*)malformedName);
             }
             remove("xgui_invalid.xpic");
         }
         expect_true(!XPicture_load_2(&loaded, "xgui_missing.xpic") &&
                     XPicture_isNull(&loaded),
                     "picture load clears data when file cannot open");
-        XPicture_deinit_base(&loaded);
+        XClassDeinit(&loaded);
     }
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&image);
+    XClassDeinit(&picture);
 }
 
 #if XPAINTER_SHAPE_ON && XPAINTER_POLYGON_ON
@@ -3694,8 +3694,8 @@ static void test_picture_painter_high_level_record_link(void)
                 "replayed points plot each recorded point only");
     XPainter_deinit(&image);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 
 /**
@@ -3784,9 +3784,9 @@ static void test_picture_painter_shape_variants(void)
     XPainter_deinit(&replay);
     XPainter_deinit(&direct);
     XPainter_deinit(&record);
-    XImage_deinit_base(&replayImage);
-    XImage_deinit_base(&directImage);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&replayImage);
+    XClassDeinit(&directImage);
+    XClassDeinit(&picture);
 }
 #endif /* XPAINTER_SHAPE_ON && XPAINTER_POLYGON_ON */
 
@@ -3850,8 +3850,8 @@ static void test_picture_painter_path_record_link(void)
     XPainter_deinit(&image);
     XPainter_deinit(&record);
     XPainterPath_deinit(&path);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 #endif /* XPAINTER_PATH_ON */
 
@@ -4240,7 +4240,7 @@ static void test_painter_raster_contract(void)
                                      16 - XPainter_textAscent(&layoutFont)) ==
                             0xff204060u,
                         "opaque text fills glyph cell from background brush");
-            XFont_deinit_base(&layoutFont);
+            XClassDeinit(&layoutFont);
         }
     }
 #endif /* XPAINTER_BRUSH_ON */
@@ -4310,7 +4310,7 @@ static void test_painter_raster_contract(void)
                     XImage_pixel(&image, 5, 5) == 0xff00ff00u,
                     "cropped painter draws high-resolution image physically");
 #endif /* XPAINTER_IMAGE_RECT_ON */
-        XImage_deinit_base(&hidpi);
+        XClassDeinit(&hidpi);
     }
     expect_true(XPainter_drawImage(&painter, NULL, 0, 0) == false,
                 "raster drawImage null rejected");
@@ -4381,9 +4381,9 @@ static void test_painter_raster_contract(void)
 #endif /* XPAINTER_TILED_PIXMAP_ON */
     expect_true(XPainter_drawPixmap(&painter, NULL, 0, 0) == false,
                 "raster drawPixmap null rejected");
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
 #endif /* XPAINTER_PIXMAP_ON */
-    XImage_deinit_base(&tile);
+    XClassDeinit(&tile);
 
 #if XPAINTER_IMAGE_RECT_ON
     /* Qt drawImage(target, image, source)：最近邻缩放并保持源像素分区。 */
@@ -4435,7 +4435,7 @@ static void test_painter_raster_contract(void)
                     "source clipping shifts target and keeps untouched area");
     }
     XPainter_setCompositionMode(&painter, XPainterCompositionMode_SourceOver);
-    XImage_deinit_base(&strip);
+    XClassDeinit(&strip);
 #endif /* XPAINTER_IMAGE_RECT_ON */
 
     /* 空矩形/空图像语义 */
@@ -4457,7 +4457,7 @@ static void test_painter_raster_contract(void)
     expect_true(!XPainter_begin_image(&painter, &image),
                 "deinitialized painter cannot be reused without init");
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 /* ============ Task 2.11 契约测试（图案刷/dash/clipPath/设备/ICC） ===== */
 
@@ -4493,7 +4493,7 @@ static void test_painter_task211_contract(void)
         }
         expect_true(ok, "t211: Dense4 图案逐像素匹配 Qt 表");
         XPainter_deinit(&painter);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 #endif /* XPAINTER_BRUSH_ON */
 
@@ -4526,7 +4526,7 @@ static void test_painter_task211_contract(void)
                         XImage_pixel(&image, 10, 4) != 0u,
                     "t211: CustomDashLine 按用户节距绘制");
         XPainter_deinit(&painter);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 #endif /* XPAINTER_PENSTYLE_ON */
 
@@ -4566,7 +4566,7 @@ static void test_painter_task211_contract(void)
         }
         XPainterPath_deinit(&path);
         XPainter_deinit(&painter);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 #endif /* XPAINTER_CLIP_ON && XPAINTER_PATH_ON */
 
@@ -4603,7 +4603,7 @@ static void test_painter_task211_contract(void)
         expect_true(XPaintDevice_devType(XImage_paintDevice(&image)) ==
                         XPaintDeviceType_Image,
                     "t211: XImage 设备类型");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         {
             XWidget* w = XWidget_create(NULL, 0);
             XPaintDevice* pd;
@@ -4616,7 +4616,7 @@ static void test_painter_task211_contract(void)
                             XPaintDevice_devType(pd) ==
                                 XPaintDeviceType_Widget,
                         "t211: XWidget 设备度量");
-            XWidget_delete_base(w);
+            XClassDelete(w);
         }
         /* §8.0g10 begin 泛化：begin_device 经设备 beginPainter 回调派发。
            Image 设备（惰性装配启用）应绑定成功并可绘制；Widget 设备未
@@ -4670,7 +4670,7 @@ static void test_painter_task211_contract(void)
                         XPainter_device(&gp) != (void*)&gpic,
                         "t211g: Picture 绑定设备指针（堆外壳）");
             XPainter_end(&gp);
-            XPicture_deinit_base(&gpic);
+            XClassDeinit(&gpic);
             /* Widget 设备：未开放 begin 泛化，应拒绝。 */
             {
                 XWidget* gw = XWidget_create(NULL, 0);
@@ -4678,10 +4678,10 @@ static void test_painter_task211_contract(void)
                                               &gp, XWidget_paintDevice(gw)) ==
                                               false,
                             "t211g: Widget 设备不开放 begin 拒绝");
-                XWidget_delete_base(gw);
+                XClassDelete(gw);
             }
             XPainter_deinit(&gp);
-            XImage_deinit_base(&gimg);
+            XClassDeinit(&gimg);
         }
     }
 #endif /* XPAINTDEVICE_ON */
@@ -4730,8 +4730,8 @@ static void test_painter_task211_contract(void)
                             r2 >= 167 && r2 <= 215,
                         "t211: 双线性中间像素为灰");
         }
-        XImage_deinit_base(&out);
-        XImage_deinit_base(&src);
+        XClassDeinit(&out);
+        XClassDeinit(&src);
     }
 }
 
@@ -5008,7 +5008,7 @@ static void test_painter_extra_alignment(void)
 
     expect_true(XPainter_end(&painter), "extra alignment end");
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 static void test_painter_draw_picture_align(void)
@@ -5050,8 +5050,8 @@ static void test_painter_draw_picture_align(void)
     expect_true(XPainter_end(&painter), "drawPicture target end");
 
     XPainter_deinit(&painter);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 
 #if XPAINTER_SHAPE_ON
@@ -5145,7 +5145,7 @@ static void test_painter_shape_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 typedef struct ShapeCapture
@@ -5276,7 +5276,7 @@ static void test_painter_shape_callback_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XPAINTER_SHAPE_ON */
 
@@ -5405,7 +5405,7 @@ static void test_painter_polygon_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 typedef struct PolygonCapture
@@ -5549,7 +5549,7 @@ static void test_painter_polygon_callback_contract(void)
                 painter.m_drawPoints == NULL,
                 "polygon callbacks cleared at end");
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XPAINTER_POLYGON_ON */
 
@@ -5660,7 +5660,7 @@ static void test_painter_penstyle_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 static void test_painter_picture_penstyle_replay_contract(void)
@@ -5724,8 +5724,8 @@ static void test_painter_picture_penstyle_replay_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XPicture_deinit_base(&picture);
-    XImage_deinit_base(&target);
+    XClassDeinit(&picture);
+    XClassDeinit(&target);
 }
 #endif /* XPAINTER_PENSTYLE_ON */
 
@@ -5929,7 +5929,7 @@ static void test_painter_brush_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XPAINTER_BRUSH_ON && XPAINTER_POLYGON_ON */
 
@@ -5953,7 +5953,7 @@ static void test_painter_text_layout_contract(void)
     XFont_init(&layoutFont);
     XFont_setFamily(&layoutFont, "XFont8x16");
     XPainter_setFont(&painter, &layoutFont);
-    XFont_deinit_base(&layoutFont);
+    XClassDeinit(&layoutFont);
     XPainter_setPen(&painter, 0xffffffffu);
     XPainter_setPenWidth(&painter, 1);
 
@@ -6034,7 +6034,7 @@ static void test_painter_text_layout_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XPAINTER_TEXTLAYOUT_ON */
 
@@ -6150,10 +6150,10 @@ static void test_painter_text_antialiasing_contract(void)
     expect_true(XImage_pixel(&image, 6, 3) == 0xffffffffu,
                 "diagonal text keeps exterior corner background");
 
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XPAINTER_RENDERHINT_ON */
 
@@ -6209,8 +6209,8 @@ static void test_painter_native_32x32_font(void)
                 "32x32 native font keeps line height");
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XFont_deinit_base(&font);
-    XImage_deinit_base(&image);
+    XClassDeinit(&font);
+    XClassDeinit(&image);
 }
 #endif /* XFONT_BUILTIN_32X32_ON */
 
@@ -6445,7 +6445,7 @@ static void test_painter_path_contract(void)
     XPainterPath_deinit(&path);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 typedef struct PathCapture
@@ -6544,7 +6544,7 @@ static void test_painter_path_callback_contract(void)
                 "path callback cleared at end");
     XPainterPath_deinit(&path);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XPAINTER_PATH_ON */
 
@@ -6688,7 +6688,7 @@ static void test_painter_transform_contract(void)
     expect_true(XImage_pixel(&image, 2, 0) == 0xff0000ffu &&
                 XImage_pixel(&image, 7, 7) == 0xff000000u,
                 "disabled world matrix leaves image in logical position");
-    XImage_deinit_base(&tile);
+    XClassDeinit(&tile);
     expect_true(XPainter_save(&painter),
                 "save keeps disabled world matrix state");
     XPainter_setWorldMatrixEnabled(&painter, true);
@@ -6778,7 +6778,7 @@ static void test_painter_transform_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 #if XPAINTER_TEXTLAYOUT_ON
@@ -6810,7 +6810,7 @@ static void test_painter_text_flags_contract(void)
     XFont_init(&layoutFont);
     XFont_setFamily(&layoutFont, "XFont8x16");
     XPainter_setFont(&painter, &layoutFont);
-    XFont_deinit_base(&layoutFont);
+    XClassDeinit(&layoutFont);
 #if XPAINTER_RENDERHINT_ON
     expect_true(XPainter_renderHints(&painter) ==
                 XPainterRenderHint_TextAntialiasing,
@@ -6995,7 +6995,7 @@ static void test_painter_text_flags_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XPAINTER_TEXTLAYOUT_ON */
 
@@ -7049,8 +7049,8 @@ static void test_painter_record_play_contract(void)
     expect_true(XPainter_drawTiledPixmap(&painter, &tiledRect, &tiledPixmap,
                                          &tiledOffset),
                 "record drawTiledPixmap stores one command");
-    XPixmap_deinit_base(&tiledPixmap);
-    XImage_deinit_base(&tiledSource);
+    XClassDeinit(&tiledPixmap);
+    XClassDeinit(&tiledSource);
 #endif /* XPAINTER_TILED_PIXMAP_ON && XPAINTER_PIXMAP_ON */
     expect_true(XPainter_save(&painter) && XPainter_restore(&painter),
                 "record save/restore");
@@ -7100,10 +7100,10 @@ static void test_painter_record_play_contract(void)
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XImage_deinit_base(&target);
-    XImage_deinit_base(&source);
-    XPicture_deinit_base(&loaded);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&source);
+    XClassDeinit(&loaded);
+    XClassDeinit(&picture);
 }
 
 /** @brief 校验 Picture 记录并回放画笔状态 opcode，避免回放沿用调用方画笔。 */
@@ -7149,8 +7149,8 @@ static void test_painter_picture_pen_state_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 
 /** @brief 校验 Picture 记录并回放字体状态及像素字号。 */
@@ -7202,9 +7202,9 @@ static void test_painter_picture_font_state_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XFont_deinit_base(&font);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&font);
+    XClassDeinit(&picture);
 }
 
 /** @brief 校验 Picture 使用独立 DrawText 命令记录并复现点阵文本。 */
@@ -7283,10 +7283,10 @@ static void test_painter_picture_text_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&actual);
-    XImage_deinit_base(&expected);
-    XFont_deinit_base(&font);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&actual);
+    XClassDeinit(&expected);
+    XClassDeinit(&font);
+    XClassDeinit(&picture);
 }
 
 /** @brief 校验 Picture 使用独立 DrawPoint 命令记录并回放单像素。 */
@@ -7342,8 +7342,8 @@ static void test_painter_picture_point_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 
 #if XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON
@@ -7402,10 +7402,10 @@ static void test_painter_picture_pixmap_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XPixmap_deinit_base(&pixmap);
-    XImage_deinit_base(&target);
-    XImage_deinit_base(&source);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&pixmap);
+    XClassDeinit(&target);
+    XClassDeinit(&source);
+    XClassDeinit(&picture);
 }
 #endif /* XPAINTER_PIXMAP_ON && XPAINTER_IMAGE_RECT_ON */
 
@@ -7456,8 +7456,8 @@ static void test_painter_picture_opacity_composition_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 
 /** @brief 校验 Picture 记录并回放背景颜色与背景填充模式。 */
@@ -7499,8 +7499,8 @@ static void test_painter_picture_background_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 
 #if XPAINTER_RENDERHINT_ON
@@ -7556,8 +7556,8 @@ static void test_painter_picture_render_hints_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 #endif /* XPAINTER_RENDERHINT_ON */
 
@@ -7601,8 +7601,8 @@ static void test_painter_picture_brush_origin_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 #endif /* XPAINTER_BRUSH_ORIGIN_ON */
 
@@ -7650,8 +7650,8 @@ static void test_painter_picture_brush_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 
     /* 渐变画刷使用独立便携 opcode 保存类型、几何参数和停止点；回放后
        应恢复完整的 XPainterGradient 子集，而不是退化成纯色。 */
@@ -7689,8 +7689,8 @@ static void test_painter_picture_brush_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&gradientPicture);
+    XClassDeinit(&target);
+    XClassDeinit(&gradientPicture);
 
     /* 从渐变切回纯色仍使用固定长度基础画刷命令；验证回放会清除目标
        画刷中原有的渐变载荷。 */
@@ -7728,8 +7728,8 @@ static void test_painter_picture_brush_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&resetPicture);
+    XClassDeinit(&target);
+    XClassDeinit(&resetPicture);
 }
 #endif /* XPAINTER_BRUSH_ON */
 
@@ -7783,8 +7783,8 @@ static void test_painter_picture_transform_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 
 #if XPAINTER_VIEW_TRANSFORM_ON
@@ -7848,8 +7848,8 @@ static void test_painter_picture_view_transform_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 #endif /* XPAINTER_VIEW_TRANSFORM_ON */
 
@@ -7905,8 +7905,8 @@ static void test_painter_picture_clip_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&target);
+    XClassDeinit(&picture);
 }
 
 #if XPAINTER_CLIP_REGION_ON
@@ -7954,9 +7954,9 @@ static void test_painter_picture_clip_region_record(void)
     XPainter_end(&replay);
     XPainter_deinit(&replay);
     XPainter_deinit(&record);
-    XImage_deinit_base(&target);
+    XClassDeinit(&target);
     XRegion_deinit(&region);
-    XPicture_deinit_base(&picture);
+    XClassDeinit(&picture);
 }
 #endif /* XPAINTER_CLIP_REGION_ON */
 #endif /* XPAINTER_CLIP_ON */
@@ -7996,9 +7996,9 @@ static void test_icon_matching(void)
         expect_true(XPixmap_width(&out) == 16 && XPixmap_height(&out) == 16 &&
                     (XImage_pixel(&replacementImage, 0, 0) & 0x00ffffffu) == 0x12ab34u,
                     "icon addPixmap replaces identical physical entry");
-        XImage_deinit_base(&replacementImage);
+        XClassDeinit(&replacementImage);
     }
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
     XIcon_addPixmap(&fallbackIcon, &active, XIconMode_Active, XIconState_Off);
     XPixmap_init(&out);
 
@@ -8007,7 +8007,7 @@ static void test_icon_matching(void)
     XIcon_pixmap(&fallbackIcon, 20, 20, XIconMode_Disabled, XIconState_Off, &out);
     expect_true(XPixmap_width(&out) == 16 && XPixmap_height(&out) == 16,
                 "icon mode fallback prefers Normal over Active");
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
 
     /* Within one mode/state, Qt chooses the smallest source not below the
      * request and scales it to the requested size. */
@@ -8019,13 +8019,13 @@ static void test_icon_matching(void)
     expect_true(XPixmap_width(&out) == 24 && XPixmap_height(&out) == 24,
                 "icon matching uses the smallest sufficient source");
 
-    XPixmap_deinit_base(&out);
-    XIcon_deinit_base(&sizeIcon);
-    XIcon_deinit_base(&fallbackIcon);
-    XPixmap_deinit_base(&active);
-    XPixmap_deinit_base(&normalReplacement);
-    XPixmap_deinit_base(&normalLarge);
-    XPixmap_deinit_base(&normal);
+    XClassDeinit(&out);
+    XClassDeinit(&sizeIcon);
+    XClassDeinit(&fallbackIcon);
+    XClassDeinit(&active);
+    XClassDeinit(&normalReplacement);
+    XClassDeinit(&normalLarge);
+    XClassDeinit(&normal);
 }
 
 static void test_icon_device_pixel_ratio(void)
@@ -8054,8 +8054,8 @@ static void test_icon_device_pixel_ratio(void)
     expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
                 XPixmap_devicePixelRatio(&out) == 1.0f,
                 "icon DPR falls back when only normal-resolution pixels exist");
-    XPixmap_deinit_base(&out);
-    XIcon_deinit_base(&icon);
+    XClassDeinit(&out);
+    XClassDeinit(&icon);
 
     memset(&highResolution, 0, sizeof(highResolution));
     XPixmap_init_ex(&highResolution, 64, 64);
@@ -8077,8 +8077,8 @@ static void test_icon_device_pixel_ratio(void)
                     "icon high-DPI actualSize returns logical dimensions");
     }
 
-    XPixmap_deinit_base(&out);
-    XIcon_deinit_base(&highIcon);
+    XClassDeinit(&out);
+    XClassDeinit(&highIcon);
 
     /* 同一 DPR 的候选按物理面积比较。请求 10x10@2x 时，16x16 逻辑
      * 资源已经足够，Qt 不应因为把请求面积乘过 DPR 而误选 32x32。 */
@@ -8106,11 +8106,11 @@ static void test_icon_device_pixel_ratio(void)
     expect_true(XPixmap_width(&out) == 20 && XPixmap_height(&out) == 20 &&
                 (selectedPixel & 0x00ffffffu) == 0x00ff0000u,
                 "icon same-DPR matching compares physical candidate area");
-    XImage_deinit_base(&selectedImage);
-    XPixmap_deinit_base(&out);
-    XIcon_deinit_base(&mixedIcon);
-    XPixmap_deinit_base(&largeHighResolution);
-    XPixmap_deinit_base(&smallHighResolution);
+    XClassDeinit(&selectedImage);
+    XClassDeinit(&out);
+    XClassDeinit(&mixedIcon);
+    XClassDeinit(&largeHighResolution);
+    XClassDeinit(&smallHighResolution);
 
     /* Qt prefers the exact DPR when identical logical sizes exist, then sizes
      * the returned source against the requested device size. */
@@ -8124,7 +8124,7 @@ static void test_icon_device_pixel_ratio(void)
     expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
                 XPixmap_devicePixelRatio(&out) == 1.0f,
                 "icon 1x request chooses the 1x source over the 2x source");
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
 
     /* QIcon treats zero and sub-normal DPR requests as the ordinary 1x path. */
     XPixmap_init(&out);
@@ -8133,7 +8133,7 @@ static void test_icon_device_pixel_ratio(void)
     expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
                 XPixmap_devicePixelRatio(&out) == 1.0f,
                 "icon non-positive DPR request uses the ordinary 1x path");
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
 
     XPixmap_init(&out);
     XIcon_pixmapRatio(&mixedIcon, 32, 32, 0.5f,
@@ -8141,7 +8141,7 @@ static void test_icon_device_pixel_ratio(void)
     expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
                 XPixmap_devicePixelRatio(&out) == 1.0f,
                 "icon sub-normal DPR request uses the ordinary 1x path");
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
 
     XPixmap_init(&out);
     XIcon_pixmapRatio(&mixedIcon, 32, 32, NAN,
@@ -8149,14 +8149,14 @@ static void test_icon_device_pixel_ratio(void)
     expect_true(XPixmap_width(&out) == 32 && XPixmap_height(&out) == 32 &&
                 XPixmap_devicePixelRatio(&out) == 1.0f,
                 "icon NaN DPR request uses the ordinary 1x path");
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
 
     XPixmap_init(&out);
     XIcon_pixmapRatio(&mixedIcon, 32, 32, INFINITY,
                       XIconMode_Normal, XIconState_Off, &out);
     expect_true(XPixmap_isNull(&out),
                 "icon infinite DPR request returns null safely");
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
 
     XPixmap_init(&out);
     XIcon_pixmapRatio(&mixedIcon, 32, 32, 2.0f,
@@ -8164,7 +8164,7 @@ static void test_icon_device_pixel_ratio(void)
     expect_true(XPixmap_width(&out) == 64 && XPixmap_height(&out) == 64 &&
                 XPixmap_devicePixelRatio(&out) == 2.0f,
                 "icon 2x request chooses the 2x source");
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
 
     XPixmap_init(&out);
     XIcon_pixmapRatio(&mixedIcon, 20, 20, 2.0f,
@@ -8172,7 +8172,7 @@ static void test_icon_device_pixel_ratio(void)
     expect_true(XPixmap_width(&out) == 40 && XPixmap_height(&out) == 40 &&
                 XPixmap_devicePixelRatio(&out) == 2.0f,
                 "icon 2x source scales down to the requested device size");
-    XPixmap_deinit_base(&out);
+    XClassDeinit(&out);
 
     {
         XSize actual;
@@ -8188,11 +8188,11 @@ static void test_icon_device_pixel_ratio(void)
         ? (XSize*)XVector_at_base(&sizes, 0) : NULL;
     expect_true(size && size->width == 32 && size->height == 32,
                 "icon availableSizes deduplicates identical logical sizes");
-    XVector_deinit_base((XClass*)&sizes);
+    XClassDeinit((XClass*)&sizes);
 
-    XIcon_deinit_base(&mixedIcon);
-    XPixmap_deinit_base(&highResolution);
-    XPixmap_deinit_base(&normal);
+    XClassDeinit(&mixedIcon);
+    XClassDeinit(&highResolution);
+    XClassDeinit(&normal);
 }
 
 static void test_icon_style_helper(void)
@@ -8259,13 +8259,13 @@ static void test_icon_style_helper(void)
                     "selected icon style keeps opaque alpha and pulls pixels toward highlight");
     }
 
-    XImage_deinit_base(&selectedImage);
-    XPixmap_deinit_base(&selected);
-    XImage_deinit_base(&disabledImage);
-    XPixmap_deinit_base(&disabled);
-    XIcon_deinit_base(&icon);
-    XImage_deinit_base(&baseImage);
-    XPixmap_deinit_base(&source);
+    XClassDeinit(&selectedImage);
+    XClassDeinit(&selected);
+    XClassDeinit(&disabledImage);
+    XClassDeinit(&disabled);
+    XClassDeinit(&icon);
+    XClassDeinit(&baseImage);
+    XClassDeinit(&source);
 }
 
 static void test_icon_scaled_pixmap_cache(void)
@@ -8322,11 +8322,11 @@ static void test_icon_scaled_pixmap_cache(void)
                 XPixmap_height(&afterClear) == 20,
                 "icon scaled pixmap cache clear forces a new pixmap generation");
 
-    XPixmap_deinit_base(&afterClear);
-    XPixmap_deinit_base(&second);
-    XPixmap_deinit_base(&first);
-    XIcon_deinit_base(&icon);
-    XPixmap_deinit_base(&source);
+    XClassDeinit(&afterClear);
+    XClassDeinit(&second);
+    XClassDeinit(&first);
+    XClassDeinit(&icon);
+    XClassDeinit(&source);
 }
 
 
@@ -8378,15 +8378,15 @@ static void test_icon_theme_engine_contract(void)
                 "theme engine key matches Qt QThemeIconEngine");
     clone = XIconEngine_clone_base((const XIconEngine*)engine);
     expect_true(clone != NULL, "theme engine clone");
-    if (clone) XIconEngine_delete_base(clone);
-    if (key) XString_delete_base((XClass*)key);
-    if (name) XString_delete_base((XClass*)name);
-    if (engine) XIconThemeEngine_delete_base(engine);
+    if (clone) XClassDelete(clone);
+    if (key) XClassDelete((XClass*)key);
+    if (name) XClassDelete((XClass*)name);
+    if (engine) XClassDelete(engine);
 
-    XIcon_deinit_base(&missing);
-    XIcon_deinit_base(&icon);
-    XIcon_deinit_base(&fallbackIcon);
-    XPixmap_deinit_base(&fallbackPixmap);
+    XClassDeinit(&missing);
+    XClassDeinit(&icon);
+    XClassDeinit(&fallbackIcon);
+    XClassDeinit(&fallbackPixmap);
 }
 
 #if XFILE_ON && XIMAGECODEC_ON
@@ -8408,8 +8408,8 @@ static void test_icon_theme_engine_serialization(void)
     expect_true(pathString && sourceName,
                 "theme engine stream fixture allocates names");
     if (!pathString || !sourceName) {
-        if (sourceName) XString_delete_base((XClass*)sourceName);
-        if (pathString) XString_delete_base((XClass*)pathString);
+        if (sourceName) XClassDelete((XClass*)sourceName);
+        if (pathString) XClassDelete((XClass*)pathString);
         return;
     }
 
@@ -8423,7 +8423,7 @@ static void test_icon_theme_engine_serialization(void)
                                              (XIODevice*)&file);
     expect_true(wrote, "theme engine writes Qt-compatible UTF-16 stream");
     XIODevice_close_base((XIODevice*)&file);
-    XClass_deinit_base((XClass*)&file);
+    XClassDeinit((XClass*)&file);
 
     XIconThemeEngine_init(&loaded, NULL);
     XFile_init_2(&file, pathString);
@@ -8435,9 +8435,9 @@ static void test_icon_theme_engine_serialization(void)
                                         XChar_CaseSensitive),
                 "theme engine reads UTF-16 name with Qt byte order");
     XIODevice_close_base((XIODevice*)&file);
-    XClass_deinit_base((XClass*)&file);
-    XIconThemeEngine_deinit_base(&loaded);
-    XIconThemeEngine_deinit_base(&source);
+    XClassDeinit((XClass*)&file);
+    XClassDeinit(&loaded);
+    XClassDeinit(&source);
 
     /* Qt length prefixes are byte counts; odd UTF-16 lengths are invalid. */
     expect_true(test_write_binary_file(path, malformedOdd,
@@ -8450,8 +8450,8 @@ static void test_icon_theme_engine_serialization(void)
                                            (XIODevice*)&file);
     expect_true(!read, "theme engine rejects odd UTF-16 byte length");
     XIODevice_close_base((XIODevice*)&file);
-    XClass_deinit_base((XClass*)&file);
-    XIconThemeEngine_deinit_base(&loaded);
+    XClassDeinit((XClass*)&file);
+    XClassDeinit(&loaded);
 
     expect_true(test_write_binary_file(path, malformedExtended,
                                        sizeof(malformedExtended), true),
@@ -8463,12 +8463,12 @@ static void test_icon_theme_engine_serialization(void)
                                            (XIODevice*)&file);
     expect_true(!read, "theme engine rejects unsupported extended length");
     XIODevice_close_base((XIODevice*)&file);
-    XClass_deinit_base((XClass*)&file);
-    XIconThemeEngine_deinit_base(&loaded);
+    XClassDeinit((XClass*)&file);
+    XClassDeinit(&loaded);
 
     XFile_remove_static(pathString);
-    XString_delete_base((XClass*)sourceName);
-    XString_delete_base((XClass*)pathString);
+    XClassDelete((XClass*)sourceName);
+    XClassDelete((XClass*)pathString);
 }
 #endif /* XFILE_ON && XIMAGECODEC_ON */
 
@@ -8513,10 +8513,10 @@ static void test_icon_engine_hook_contract(void)
     expect_true(!XPixmap_isNull(&pixmap) && XPixmap_width(&pixmap) == 5 &&
                 XPixmap_height(&pixmap) == 7,
                 "base icon engine pixmap uses requested dimensions");
-    if (key) XString_delete_base((XClass*)key);
-    if (name) XString_delete_base((XClass*)name);
-    XPixmap_deinit_base(&pixmap);
-    XVector_deinit_base((XClass*)&sizes);
+    if (key) XClassDelete((XClass*)key);
+    if (name) XClassDelete((XClass*)name);
+    XClassDeinit(&pixmap);
+    XClassDeinit((XClass*)&sizes);
 
     memset(&icon, 0, sizeof(icon));
     XIcon_init_engine(&icon, engine);
@@ -8574,8 +8574,8 @@ static void test_icon_engine_hook_contract(void)
                     XPixmap_devicePixelRatio(&pixmap) == 1.0f,
                 "base icon engine scaled hook uses physical pixmap without DPR rewrite");
 
-    XPixmap_deinit_base(&pixmap);
-    XIcon_deinit_base(&icon);
+    XClassDeinit(&pixmap);
+    XClassDeinit(&icon);
 }
 
 static void test_icon_paint_visual_alignment(void)
@@ -8640,8 +8640,8 @@ static void test_icon_paint_visual_alignment(void)
         expect_true((XImage_pixel(&target, 2, 2) & 0x00ffffffu) == 0x336699u &&
                     (XImage_pixel(&target, 1, 1) & 0x00ffffffu) == 0x0u,
                     "icon paint odd center uses Qt separate integer division");
-        XIcon_deinit_base(&oddIcon);
-        XPixmap_deinit_base(&oddSource);
+        XClassDeinit(&oddIcon);
+        XClassDeinit(&oddSource);
     }
 
     /* Qt visualAlignment includes AlignAbsolute in AlignHorizontal_Mask:
@@ -8700,9 +8700,9 @@ static void test_icon_paint_visual_alignment(void)
                 "icon paint without save still draws the icon");
 
     XPainter_deinit(&painter);
-    XImage_deinit_base(&target);
-    XIcon_deinit_base(&icon);
-    XPixmap_deinit_base(&source);
+    XClassDeinit(&target);
+    XClassDeinit(&icon);
+    XClassDeinit(&source);
 }
 
 
@@ -8762,12 +8762,12 @@ static void test_icon_add_file_size(void)
     expect_true(size && size->width == 0 && size->height == 0,
                 "icon addFile keeps zero QSize as explicit placeholder");
 
-    XPixmap_deinit_base(&loaded);
-    XVector_deinit_base((XClass*)&zeroSizes);
-    XIcon_deinit_base(&zeroSizeIcon);
-    XVector_deinit_base((XClass*)&sizes);
-    XIcon_deinit_base(&icon);
-    XImage_deinit_base(&image);
+    XClassDeinit(&loaded);
+    XClassDeinit((XClass*)&zeroSizes);
+    XClassDeinit(&zeroSizeIcon);
+    XClassDeinit((XClass*)&sizes);
+    XClassDeinit(&icon);
+    XClassDeinit(&image);
     remove("xgui_icon_add_file.bmp");
 }
 #endif /* XIMAGECODEC_ON */
@@ -8806,7 +8806,7 @@ static void test_image_device_io(void)
                 "file writer writes using the inferred BMP format");
     expect_true(XFile_exists_static(file_name),
                 "inferred-format writer leaves a readable target file");
-    XImageWriter_deinit_base(&file_writer);
+    XClassDeinit(&file_writer);
 
     /* QImageWriter::canWrite() 删除检查期间新建但最终失败的 QFile；未知
        格式不得遗留空目标文件。 */
@@ -8820,9 +8820,9 @@ static void test_image_device_io(void)
         expect_true(!XImageWriter_canWrite(&failedWriter) &&
                     !XFile_exists_static(failedName),
                     "failed writer removes newly-created unsupported target");
-        XImageWriter_deinit_base(&failedWriter);
+        XClassDeinit(&failedWriter);
         XFile_remove_static(failedName);
-        XString_delete_base((XClass*)failedName);
+        XClassDelete((XClass*)failedName);
     }
 
     /* Qt derives an empty QImageWriter format from an externally assigned
@@ -8840,13 +8840,13 @@ static void test_image_device_io(void)
                     "external QFile writer infers BMP from its suffix");
         expect_true(XImageWriter_write(&externalAutoWriter, &source),
                     "external QFile writer writes inferred BMP format");
-        XImageWriter_deinit_base(&externalAutoWriter);
+        XClassDeinit(&externalAutoWriter);
         XIODevice_close_base((XIODevice*)&externalAutoFile);
-        XClass_deinit_base((XClass*)&externalAutoFile);
+        XClassDeinit((XClass*)&externalAutoFile);
         expect_true(XFile_exists_static(externalAutoName),
                     "external inferred-format writer leaves its target file");
         XFile_remove_static(externalAutoName);
-        XString_delete_base((XClass*)externalAutoName);
+        XClassDelete((XClass*)externalAutoName);
     }
 
     XFile_init_2(&file, file_name);
@@ -8855,9 +8855,9 @@ static void test_image_device_io(void)
     XImageWriter_init_device_2(&writer, (XIODevice*)&file, "BMP");
     expect_true(XImageWriter_canWrite(&writer), "device writer reports BMP support");
     expect_true(XImageWriter_write(&writer, &source), "device writer writes BMP");
-    XImageWriter_deinit_base(&writer);
+    XClassDeinit(&writer);
     XIODevice_close_base((XIODevice*)&file);
-    XClass_deinit_base((XClass*)&file);
+    XClassDeinit((XClass*)&file);
 
     XFile_init_2(&file, file_name);
     ok = XFile_open_2(&file, XIODevice_ReadOnly, 0);
@@ -8867,7 +8867,7 @@ static void test_image_device_io(void)
     expect_true(autodetectedFormat &&
                 strcmp(autodetectedFormat, "bmp") == 0,
                 "reader format reports detected handler format");
-    XImageReader_deinit_base(&autodetect);
+    XClassDeinit(&autodetect);
     XImageReader_init_device_2(&reader, (XIODevice*)&file, "BMP");
     expect_true(XImageReader_canRead(&reader), "device reader detects BMP");
     memset(&loaded, 0, sizeof(loaded));
@@ -8878,13 +8878,13 @@ static void test_image_device_io(void)
     expect_true(XImage_pixel(&loaded, 0, 0) == 0xffff0000u,
                 "device BMP round trip preserves pixels");
 
-    XImage_deinit_base(&loaded);
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&loaded);
+    XClassDeinit(&reader);
     XIODevice_close_base((XIODevice*)&file);
-    XClass_deinit_base((XClass*)&file);
+    XClassDeinit((XClass*)&file);
     XFile_remove_static(file_name);
-    XString_delete_base((XClass*)file_name);
-    XImage_deinit_base(&source);
+    XClassDelete((XClass*)file_name);
+    XClassDeinit(&source);
 }
 
 #if XIMAGEIOPLUGIN_ON
@@ -8941,7 +8941,7 @@ static bool VTestImageHandler_read(XImageIOHandler* self, XImage* image)
     if (g_mockImageWidth * g_mockImageHeight > 4)
         return false;
     if (!XClassIsVtableNull(image))
-        XImage_deinit_base(image);
+        XClassDeinit(image);
     XImage_init(image);
     XImage_init_ex(image, g_mockImageWidth, g_mockImageHeight, XImageFormat_ARGB32);
     if (XImage_isNull(image))
@@ -9042,7 +9042,7 @@ static void VTestImageHandler_deinit(XImageIOHandler* self)
 {
     TestImageHandler* handler = (TestImageHandler*)self;
     if (!handler) return;
-    XString_deinit_base((XClass*)&handler->m_description);
+    XClassDeinit((XClass*)&handler->m_description);
     XClass_Deinit_Parent(XImageIOHandler, self);
 }
 
@@ -9156,9 +9156,9 @@ static void VTestImagePlugin_deinit(XImageIOPlugin* self)
 {
     TestImagePlugin* plugin = (TestImagePlugin*)self;
     if (!plugin) return;
-    if (plugin->m_keys) XStringList_delete_base((XClass*)plugin->m_keys);
-    if (plugin->m_filters) XStringList_delete_base((XClass*)plugin->m_filters);
-    if (plugin->m_mimes) XStringList_delete_base((XClass*)plugin->m_mimes);
+    if (plugin->m_keys) XClassDelete((XClass*)plugin->m_keys);
+    if (plugin->m_filters) XClassDelete((XClass*)plugin->m_filters);
+    if (plugin->m_mimes) XClassDelete((XClass*)plugin->m_mimes);
     plugin->m_keys = NULL;
     plugin->m_filters = NULL;
     plugin->m_mimes = NULL;
@@ -9189,9 +9189,9 @@ static TestImagePlugin* TestImagePlugin_create(void)
     self->m_filters = XStringList_create();
     self->m_mimes = XStringList_create();
     if (!self->m_keys || !self->m_filters || !self->m_mimes) {
-        if (self->m_keys) XStringList_delete_base((XClass*)self->m_keys);
-        if (self->m_filters) XStringList_delete_base((XClass*)self->m_filters);
-        if (self->m_mimes) XStringList_delete_base((XClass*)self->m_mimes);
+        if (self->m_keys) XClassDelete((XClass*)self->m_keys);
+        if (self->m_filters) XClassDelete((XClass*)self->m_filters);
+        if (self->m_mimes) XClassDelete((XClass*)self->m_mimes);
         XFree_System(self);
         return NULL;
     }
@@ -9303,7 +9303,7 @@ static void test_image_handler_registry(void)
         expect_true(!XImageWriter_canWrite(&cropWriter) &&
                     XImageWriter_error(&cropWriter) == XImageWriterError_DeviceError,
                     "no-plugin writer still rejects missing device");
-        XImageWriter_deinit_base(&cropWriter);
+        XClassDeinit(&cropWriter);
     }
 #endif /* XIMAGECODEC_BMP_ON */
 #endif /* !XIMAGEIOPLUGIN_ON */
@@ -9316,7 +9316,7 @@ static void test_image_handler_registry(void)
         expect_true(XImageIOHandler_format_2(&baseHandler) &&
                     strcmp(XImageIOHandler_format_2(&baseHandler), "BMP") == 0,
                     "const image handler format setter updates mutable state");
-        if (constFormat) XString_delete_base((XClass*)constFormat);
+        if (constFormat) XClassDelete((XClass*)constFormat);
     }
     memset(&baseOption, 0, sizeof(baseOption));
     baseOption.integer = 75;
@@ -9330,7 +9330,7 @@ static void test_image_handler_registry(void)
                     &baseHandler, XImageIOHandlerOption_Quality,
                     &baseOption),
                 "base image handler option remains empty after setOption");
-    XImageIOHandler_deinit_base(&baseHandler);
+    XClassDeinit(&baseHandler);
 
     /* 对齐 Qt qimageiohandler.cpp:532-557：空尺寸和非法格式必须在
        分配前拒绝，失败不能覆盖调用方已有图像；同尺寸同格式则复用
@@ -9395,23 +9395,23 @@ static void test_image_handler_registry(void)
                     XImage_isNull(&limitedImage),
                     "built-in handler rejects over-limit image before read");
         XImageReader_setAllocationLimit(allocationLimit);
-        XImage_deinit_base(&limitedImage);
+        XClassDeinit(&limitedImage);
         if (limitedHandler)
-            XImageIOHandler_delete_base(limitedHandler);
+            XClassDelete(limitedHandler);
         if (limitedFile) {
             XIODevice_close_base((XIODevice*)limitedFile);
-            XClass_delete_base((XClass*)limitedFile);
+            XClassDelete((XClass*)limitedFile);
         }
         if (limitedFormat)
-            XString_delete_base((XClass*)limitedFormat);
+            XClassDelete((XClass*)limitedFormat);
         if (limitedPathString)
-            XString_delete_base((XClass*)limitedPathString);
+            XClassDelete((XClass*)limitedPathString);
         if (limitedBytes)
-            XByteArray_delete_base((XClass*)limitedBytes);
+            XClassDelete((XClass*)limitedBytes);
         remove(limitedPath);
     }
 #endif
-    XImage_deinit_base(&allocationImage);
+    XClassDeinit(&allocationImage);
 
 #if XIMAGECODEC_BMP_ON
     ++formatCount;
@@ -9487,8 +9487,8 @@ static void test_image_handler_registry(void)
                                             (XVector*)writerIco, 1),
                                         "cur", XChar_CaseSensitive),
                     "writer ICO MIME lookup preserves Qt key order");
-        if (readerIco) XStringList_delete_base((XClass*)readerIco);
-        if (writerIco) XStringList_delete_base((XClass*)writerIco);
+        if (readerIco) XClassDelete((XClass*)readerIco);
+        if (writerIco) XClassDelete((XClass*)writerIco);
     }
 #endif
 #if XIMAGEIOPLUGIN_ON
@@ -9638,19 +9638,19 @@ static void test_image_handler_registry(void)
     expect_true(writerUpperPng && XStringList_size_base((const XContainer*)writerUpperPng) == 0,
                 "writer MIME lookup keeps Qt case-sensitive MIME semantics");
 
-    if (readerFormats) XStringList_delete_base((XClass*)readerFormats);
-    if (readerMimes) XStringList_delete_base((XClass*)readerMimes);
-    if (readerBmp) XStringList_delete_base((XClass*)readerBmp);
-    if (readerJpeg) XStringList_delete_base((XClass*)readerJpeg);
-    if (readerPpm) XStringList_delete_base((XClass*)readerPpm);
-    if (readerSvgz) XStringList_delete_base((XClass*)readerSvgz);
-    if (readerUpperBmp) XStringList_delete_base((XClass*)readerUpperBmp);
-    if (writerFormats) XStringList_delete_base((XClass*)writerFormats);
-    if (writerUnknown) XStringList_delete_base((XClass*)writerUnknown);
-    if (writerJpeg) XStringList_delete_base((XClass*)writerJpeg);
-    if (writerPpm) XStringList_delete_base((XClass*)writerPpm);
-    if (writerSvgz) XStringList_delete_base((XClass*)writerSvgz);
-    if (writerUpperPng) XStringList_delete_base((XClass*)writerUpperPng);
+    if (readerFormats) XClassDelete((XClass*)readerFormats);
+    if (readerMimes) XClassDelete((XClass*)readerMimes);
+    if (readerBmp) XClassDelete((XClass*)readerBmp);
+    if (readerJpeg) XClassDelete((XClass*)readerJpeg);
+    if (readerPpm) XClassDelete((XClass*)readerPpm);
+    if (readerSvgz) XClassDelete((XClass*)readerSvgz);
+    if (readerUpperBmp) XClassDelete((XClass*)readerUpperBmp);
+    if (writerFormats) XClassDelete((XClass*)writerFormats);
+    if (writerUnknown) XClassDelete((XClass*)writerUnknown);
+    if (writerJpeg) XClassDelete((XClass*)writerJpeg);
+    if (writerPpm) XClassDelete((XClass*)writerPpm);
+    if (writerSvgz) XClassDelete((XClass*)writerSvgz);
+    if (writerUpperPng) XClassDelete((XClass*)writerUpperPng);
 }
 
 /* 对齐 Qt QImageReader::setDecideFormatFromContent 的独立状态语义。 */
@@ -9687,7 +9687,7 @@ static void test_image_reader_decide_format_state(void)
                     XImageReader_error(&noDeviceReader) ==
                         XImageReaderError_DeviceError,
                     "reader reports device error before empty-format rejection when no device is set");
-        XImageReader_deinit_base(&noDeviceReader);
+        XClassDeinit(&noDeviceReader);
     }
 
 #if XIMAGEIOPLUGIN_ON && XIMAGECODEC_BMP_ON
@@ -9711,7 +9711,7 @@ static void test_image_reader_decide_format_state(void)
         expect_true(strictNoFormatSize.width == 0 &&
                     strictNoFormatSize.height == 0,
                     "reader size stays invalid when Qt handler initialization fails");
-        XImageReader_deinit_base(&strictNoFormatReader);
+        XClassDeinit(&strictNoFormatReader);
 
         /* Qt treats an explicitly assigned empty QByteArray exactly like an
            unset format: disabling autodetection must not fall through to a
@@ -9732,8 +9732,8 @@ static void test_image_reader_decide_format_state(void)
                         !XImageReader_read(&strictEmptyFormatReader,
                                            &strictEmptyFormatImage),
                         "reader rejects explicit empty format when autodetect is disabled");
-            XImage_deinit_base(&strictEmptyFormatImage);
-            XImageReader_deinit_base(&strictEmptyFormatReader);
+            XClassDeinit(&strictEmptyFormatImage);
+            XClassDeinit(&strictEmptyFormatReader);
         }
 
         XImageReader_init_file_2(&strictUnknownReader,
@@ -9754,13 +9754,13 @@ static void test_image_reader_decide_format_state(void)
                     XImageReader_error(&strictUnknownReader) ==
                         XImageReaderError_UnsupportedFormatError,
                     "reader does not fall back to direct codec after handler creation fails");
-        XImage_deinit_base(&strictUnknownImage);
-        XImageReader_deinit_base(&strictUnknownReader);
-        XImage_deinit_base(&strictNoFormatFixture);
+        XClassDeinit(&strictUnknownImage);
+        XClassDeinit(&strictUnknownReader);
+        XClassDeinit(&strictNoFormatFixture);
         strictNoFormatFile = XString_create_utf8("xgui_reader_strict_no_format.bmp");
         XFile_remove_static(strictNoFormatFile);
         if (strictNoFormatFile)
-            XString_delete_base((XClass*)strictNoFormatFile);
+            XClassDelete((XClass*)strictNoFormatFile);
     }
 #endif
 
@@ -9778,7 +9778,7 @@ static void test_image_reader_decide_format_state(void)
                 "image reader disables content-based format decision");
     expect_true(XImageReader_autoDetectImageFormat(&reader),
                 "disabling content decision leaves auto-detect enabled");
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&reader);
 
 #if !XIMAGEIOPLUGIN_ON
     {
@@ -9805,7 +9805,7 @@ static void test_image_reader_decide_format_state(void)
                     XImageReader_error(&croppedUnknownReader) ==
                         XImageReaderError_UnsupportedFormatError,
                     "cropped reader reports unsupported explicit format");
-        XImageReader_deinit_base(&croppedUnknownReader);
+        XClassDeinit(&croppedUnknownReader);
 #if XIMAGECODEC_BMP_ON && XIMAGECODEC_PNG_ON
         {
             XImageReader matchingReader;
@@ -9817,7 +9817,7 @@ static void test_image_reader_decide_format_state(void)
             XImageReader_setAutoDetectImageFormat(&matchingReader, false);
             expect_true(XImageReader_canRead(&matchingReader),
                         "cropped reader accepts an explicit format matching the device signature");
-            XImageReader_deinit_base(&matchingReader);
+            XClassDeinit(&matchingReader);
 
             /* Qt 的显式格式处理器仍须验证内容；仅因 png codec 可用，
                不能把 BMP 数据报告为可读。 */
@@ -9831,17 +9831,17 @@ static void test_image_reader_decide_format_state(void)
             XImage_init(&mismatchImage);
             expect_true(!XImageReader_read(&mismatchReader, &mismatchImage),
                         "cropped reader does not decode a mismatched explicit format");
-            XImage_deinit_base(&mismatchImage);
-            XImageReader_deinit_base(&mismatchReader);
+            XClassDeinit(&mismatchImage);
+            XClassDeinit(&mismatchReader);
         }
 #endif
         XIODevice_close_base((XIODevice*)&croppedUnknownFile);
-        XClass_deinit_base((XClass*)&croppedUnknownFile);
-        XImage_deinit_base(&croppedUnknownFixture);
+        XClassDeinit((XClass*)&croppedUnknownFile);
+        XClassDeinit(&croppedUnknownFixture);
         if (croppedUnknownName)
             XFile_remove_static(croppedUnknownName);
         if (croppedUnknownName)
-            XString_delete_base((XClass*)croppedUnknownName);
+            XClassDelete((XClass*)croppedUnknownName);
     }
 #endif
 
@@ -9852,7 +9852,7 @@ static void test_image_reader_decide_format_state(void)
                 strcmp(XImageReader_fileName_2(&fileReader),
                        "xgui_reader_lifecycle_missing.bmp") == 0,
                 "file image reader preserves the configured file name");
-    XImageReader_deinit_base(&fileReader);
+    XClassDeinit(&fileReader);
 
     /* Qt QImageReader::fileName() 也会从外部 QFile 设备读取文件名；
        setDevice() 后读取器不持有设备，但返回值在设备生命周期内仍有效。 */
@@ -9868,10 +9868,10 @@ static void test_image_reader_decide_format_state(void)
                     strcmp(XImageReader_fileName_2(&externalReader),
                            "xgui_reader_external_filename.bmp") == 0,
                     "reader exposes an externally assigned QFile device name");
-        XImageReader_deinit_base(&externalReader);
-        XClass_deinit_base((XClass*)&externalFile);
+        XClassDeinit(&externalReader);
+        XClassDeinit((XClass*)&externalFile);
         if (externalName)
-            XString_delete_base((XClass*)externalName);
+            XClassDelete((XClass*)externalName);
     }
 
     /* QImageWriter::fileName() 对外部 QFile 设备同样返回设备名称；写入器
@@ -9888,10 +9888,10 @@ static void test_image_reader_decide_format_state(void)
                     strcmp(XImageWriter_fileName_2(&externalWriter),
                            "xgui_writer_external_filename.bmp") == 0,
                     "writer exposes an externally assigned QFile device name");
-        XImageWriter_deinit_base(&externalWriter);
-        XClass_deinit_base((XClass*)&externalFile);
+        XClassDeinit(&externalWriter);
+        XClassDeinit((XClass*)&externalFile);
         if (externalName)
-            XString_delete_base((XClass*)externalName);
+            XClassDelete((XClass*)externalName);
     }
 
     /* 自动探测开启且无显式格式时，Qt 先尝试文件后缀插件，再允许内置
@@ -9925,12 +9925,12 @@ static void test_image_reader_decide_format_state(void)
                 XImage_height(&autoImage) == 1 &&
                 XImage_pixel(&autoImage, 0, 0) == 0xff0a1b2cu,
                 "reader with autodetect loads a BMP without explicit format");
-    XImage_deinit_base(&autoImage);
-    XImageReader_deinit_base(&autoReader);
+    XClassDeinit(&autoImage);
+    XClassDeinit(&autoReader);
     autoFileName = XString_create_utf8("xgui_reader_autodetect.bmp");
     if (autoFileName) {
         XFile_remove_static(autoFileName);
-        XString_delete_base((XClass*)autoFileName);
+        XClassDelete((XClass*)autoFileName);
     }
 
 #if XIMAGECODEC_BMP_ON
@@ -9951,12 +9951,12 @@ static void test_image_reader_decide_format_state(void)
                 XImage_height(&contentImage) == 1 &&
                 XImage_pixel(&contentImage, 0, 0) == 0xff0a1b2cu,
                 "content decision ignores explicit format and reads by content");
-    XImage_deinit_base(&contentImage);
-    XImageReader_deinit_base(&contentReader);
+    XClassDeinit(&contentImage);
+    XClassDeinit(&contentReader);
     autoFileName = XString_create_utf8("xgui_reader_decide_content.bmp");
     if (autoFileName) {
         XFile_remove_static(autoFileName);
-        XString_delete_base((XClass*)autoFileName);
+        XClassDelete((XClass*)autoFileName);
     }
 #endif
 
@@ -9971,12 +9971,12 @@ static void test_image_reader_decide_format_state(void)
     expect_true(XImageReader_read(&dprReader, &dprImage) &&
                 XImage_devicePixelRatio(&dprImage) == 2.0f,
                 "reader assigns DPR from @2x file name suffix");
-    XImage_deinit_base(&dprImage);
-    XImageReader_deinit_base(&dprReader);
+    XClassDeinit(&dprImage);
+    XClassDeinit(&dprReader);
     autoFileName = XString_create_utf8("xgui_reader_autodetect@2x.bmp");
     if (autoFileName) {
         XFile_remove_static(autoFileName);
-        XString_delete_base((XClass*)autoFileName);
+        XClassDelete((XClass*)autoFileName);
     }
 
     /* Qt 在后缀处理器不能确认内容时继续按内容回退；错误的 .bmp 后缀
@@ -9994,12 +9994,12 @@ static void test_image_reader_decide_format_state(void)
                 XImage_height(&wrongSuffixImage) == 1 &&
                 XImage_pixel(&wrongSuffixImage, 0, 0) == 0xff0a1b2cu,
                 "reader falls back from wrong suffix to content format");
-    XImage_deinit_base(&wrongSuffixImage);
-    XImageReader_deinit_base(&wrongSuffixReader);
+    XClassDeinit(&wrongSuffixImage);
+    XClassDeinit(&wrongSuffixReader);
     autoFileName = XString_create_utf8("xgui_reader_wrong_suffix.bmp");
     if (autoFileName) {
         XFile_remove_static(autoFileName);
-        XString_delete_base((XClass*)autoFileName);
+        XClassDelete((XClass*)autoFileName);
     }
 #endif
 #if XIMAGECODEC_ON && XIMAGECODEC_BMP_ON
@@ -10021,8 +10021,8 @@ static void test_image_reader_decide_format_state(void)
                 strcmp(XImageReader_fileName_2(&extensionReader),
                        "xgui_reader_default_extension.bmp") == 0,
                 "reader exposes the successfully probed file name");
-    XImage_deinit_base(&extensionImage);
-    XImageReader_deinit_base(&extensionReader);
+    XClassDeinit(&extensionImage);
+    XClassDeinit(&extensionReader);
     XImageReader_init_file_2(&extensionAutoReader,
                              "xgui_reader_default_extension", NULL);
     memset(&extensionAutoImage, 0, sizeof(extensionAutoImage));
@@ -10032,12 +10032,12 @@ static void test_image_reader_decide_format_state(void)
                 XImage_height(&extensionAutoImage) == 1 &&
                 XImage_pixel(&extensionAutoImage, 0, 0) == 0xff0a1b2cu,
                 "reader prioritizes the selected extension during autodetect");
-    XImage_deinit_base(&extensionAutoImage);
-    XImageReader_deinit_base(&extensionAutoReader);
+    XClassDeinit(&extensionAutoImage);
+    XClassDeinit(&extensionAutoReader);
     autoFileName = XString_create_utf8("xgui_reader_default_extension.bmp");
     if (autoFileName) {
         XFile_remove_static(autoFileName);
-        XString_delete_base((XClass*)autoFileName);
+        XClassDelete((XClass*)autoFileName);
     }
 
     /* 原路径带有未知后缀时，Qt 仍会在该路径后追加候选扩展名；成功后
@@ -10064,16 +10064,16 @@ static void test_image_reader_decide_format_state(void)
                 strcmp(XImageReader_fileName_2(&extensionAutoReader),
                        "xgui_reader_default_extension.bad.bmp") == 0,
                 "reader exposes the selected extension after probing");
-    XImage_deinit_base(&extensionAutoImage);
-    XImageReader_deinit_base(&extensionAutoReader);
+    XClassDeinit(&extensionAutoImage);
+    XClassDeinit(&extensionAutoReader);
     autoFileName = XString_create_utf8("xgui_reader_default_extension.bad.bmp");
     if (autoFileName) {
         XFile_remove_static(autoFileName);
-        XString_delete_base((XClass*)autoFileName);
+        XClassDelete((XClass*)autoFileName);
     }
 #endif
 
-    XImage_deinit_base(&autoFixture);
+    XClassDeinit(&autoFixture);
 
     /* Qt 在关闭自动探测且未指定格式时不会根据文件名后缀创建处理器，
        即使文件名带有 .bmp 也应直接返回 UnsupportedFormatError。 */
@@ -10091,8 +10091,8 @@ static void test_image_reader_decide_format_state(void)
     expect_true(XImageReader_error(&strictReader) ==
                     XImageReaderError_UnsupportedFormatError,
                 "reader without autodetect reports unsupported format");
-    XImage_deinit_base(&strictImage);
-    XImageReader_deinit_base(&strictReader);
+    XClassDeinit(&strictImage);
+    XClassDeinit(&strictReader);
 
     XImageReader_init(&empty);
     expect_true(strcmp(XImageReader_errorString_2(&empty), "Unknown error") == 0,
@@ -10103,7 +10103,7 @@ static void test_image_reader_decide_format_state(void)
                     XString_equals_utf8(initialError, "Unknown error",
                                         XChar_CaseSensitive),
                     "image reader value errorString returns Unknown error text");
-        if (initialError) XString_delete_base((XClass*)initialError);
+        if (initialError) XClassDelete((XClass*)initialError);
     }
     expect_true(XImageReader_imageFormatValue(&empty) == XImageFormat_Invalid,
                 "reader imageFormat is invalid without an ImageFormat option");
@@ -10128,7 +10128,7 @@ static void test_image_reader_decide_format_state(void)
     expect_true(emptyRect.x == 0 && emptyRect.y == 0 &&
                 emptyRect.width == 0 && emptyRect.height == 0,
                 "image reader currentImageRect returns an empty rect without a handler");
-    XImageReader_deinit_base(&empty);
+    XClassDeinit(&empty);
 }
 
 /* 对齐 Qt QImageReader::setAllocationLimit 的负值忽略与零值禁用语义。 */
@@ -10199,7 +10199,7 @@ static void test_image_plugin_registry_integration(void)
                         "base image plugin has no name filters");
             expect_true(XImageIOPlugin_mimeTypes_base(base) == NULL,
                         "base image plugin has no MIME metadata");
-            XImageIOPlugin_delete_base(base);
+            XClassDelete(base);
         }
     }
 
@@ -10228,9 +10228,9 @@ static void test_image_plugin_registry_integration(void)
         if (upperAdded)
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)upperPlugin);
         if (upperPlugin)
-            XImageIOPlugin_delete_base((XImageIOPlugin*)upperPlugin);
+            XClassDelete((XImageIOPlugin*)upperPlugin);
         if (lowerQuery)
-            XString_delete_base((XClass*)lowerQuery);
+            XClassDelete((XClass*)lowerQuery);
     }
     expect_true(XImagePluginRegistry_addPlugin((XImageIOPlugin*)plugin),
                 "mock plugin registers into registry");
@@ -10243,13 +10243,13 @@ static void test_image_plugin_registry_integration(void)
                     "plugin format capability queries normalize case like Qt");
         g_mockRequireLowercaseFormat = false;
         if (uppercaseFormat)
-            XString_delete_base((XClass*)uppercaseFormat);
+            XClassDelete((XClass*)uppercaseFormat);
     }
     fileNameObject = XString_create_utf8(fileName);
     expect_true(fileNameObject != NULL, "mock file name is created");
     if (!fileNameObject) {
         XImagePluginRegistry_removePlugin((XImageIOPlugin*)plugin);
-        XImageIOPlugin_delete_base((XImageIOPlugin*)plugin);
+        XClassDelete((XImageIOPlugin*)plugin);
         return;
     }
     g_mockImageWidth = 0;
@@ -10265,7 +10265,7 @@ static void test_image_plugin_registry_integration(void)
     expect_true(!XImageWriter_canWrite(&writer) &&
                 XImageWriter_error(&writer) == XImageWriterError_DeviceError,
                 "writer still rejects canWrite without a device");
-    XImageWriter_deinit_base(&writer);
+    XClassDeinit(&writer);
 
     /* C 字符串兼容重载必须保留合法的长插件格式键，不能复用旧的
        16 字节临时缓存而静默截断。 */
@@ -10315,15 +10315,15 @@ static void test_image_plugin_registry_integration(void)
                 XIODevice_close_base((XIODevice*)longFile);
         }
         g_mockPluginSetsFormat = false;
-        if (longFile) XClass_delete_base((XClass*)longFile);
+        if (longFile) XClassDelete((XClass*)longFile);
         if (longFileName) {
             XFile_remove_static(longFileName);
-            XString_delete_base((XClass*)longFileName);
+            XClassDelete((XClass*)longFileName);
         }
         if (longAdded)
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)longPlugin);
         if (longPlugin)
-            XImageIOPlugin_delete_base((XImageIOPlugin*)longPlugin);
+            XClassDelete((XImageIOPlugin*)longPlugin);
     }
 
     formats = XImageReader_supportedImageFormats();
@@ -10337,8 +10337,8 @@ static void test_image_plugin_registry_integration(void)
                 XStringList_size_base((const XContainer*)mimes) == 1 && format &&
                 XString_equals_utf8(format, "mock", XChar_CaseSensitive),
                 "writer MIME lookup resolves plugin format");
-    if (formats) XStringList_delete_base((XClass*)formats);
-    if (mimes) XStringList_delete_base((XClass*)mimes);
+    if (formats) XClassDelete((XClass*)formats);
+    if (mimes) XClassDelete((XClass*)mimes);
 
     memset(&source, 0, sizeof(source));
     XImage_init_ex(&source, 2, 2, XImageFormat_ARGB32);
@@ -10377,11 +10377,11 @@ static void test_image_plugin_registry_integration(void)
                     XString_isEmpty_base((const XContainer*)staticFormat),
                     "static imageFormat keeps empty plugin format");
         if (staticFormat)
-            XString_delete_base((XClass*)staticFormat);
+            XClassDelete((XClass*)staticFormat);
         if (probeDevice) {
             if (XIODevice_isOpen((XIODevice*)probeDevice))
                 XIODevice_close_base((XIODevice*)probeDevice);
-            XClass_delete_base((XClass*)probeDevice);
+            XClassDelete((XClass*)probeDevice);
         }
         XImageReader_init_file_2(&formatReader, probeFile, NULL);
         XImageReader_setDecideFormatFromContent(&formatReader, true);
@@ -10390,11 +10390,11 @@ static void test_image_plugin_registry_integration(void)
                     XString_isEmpty_base((const XContainer*)readerFormat),
                     "reader format keeps empty plugin handler format");
         if (readerFormat)
-            XString_delete_base((XClass*)readerFormat);
-        XImageReader_deinit_base(&formatReader);
+            XClassDelete((XClass*)readerFormat);
+        XClassDeinit(&formatReader);
         if (probeName) {
             XFile_remove_static(probeName);
-            XString_delete_base((XClass*)probeName);
+            XClassDelete((XClass*)probeName);
         }
     }
     XFile_remove_static(fileNameObject);
@@ -10418,11 +10418,11 @@ static void test_image_plugin_registry_integration(void)
                 "writer simplifies and forwards Description metadata");
     expect_true(g_mockGamma == 0.0f,
                 "writer forwards Qt default Gamma option to supporting handler");
-    XImageWriter_deinit_base(&writer);
+    XClassDeinit(&writer);
     g_mockWriterDescriptionCheck = false;
     g_mockSupportsGamma = false;
     g_mockGamma = 0.0f;
-    XString_deinit_base((XClass*)&g_mockExpectedWriterDescription);
+    XClassDeinit((XClass*)&g_mockExpectedWriterDescription);
 
     memset(&loaded, 0, sizeof(loaded));
     XImage_init(&loaded);
@@ -10471,18 +10471,18 @@ static void test_image_plugin_registry_integration(void)
                     "reader text values are simplified");
         expect_true(missing && XString_isEmpty_base((const XContainer*)missing),
                     "reader missing text key returns empty string");
-        if (textKeys) XStringList_delete_base((XClass*)textKeys);
-        if (titleKey) XString_delete_base((XClass*)titleKey);
-        if (authorKey) XString_delete_base((XClass*)authorKey);
-        if (descriptionKey) XString_delete_base((XClass*)descriptionKey);
-        if (rawKey) XString_delete_base((XClass*)rawKey);
-        if (bareKey) XString_delete_base((XClass*)bareKey);
-        if (missingKey) XString_delete_base((XClass*)missingKey);
-        if (title) XString_delete_base((XClass*)title);
-        if (author) XString_delete_base((XClass*)author);
-        if (description) XString_delete_base((XClass*)description);
-        if (bare) XString_delete_base((XClass*)bare);
-        if (missing) XString_delete_base((XClass*)missing);
+        if (textKeys) XClassDelete((XClass*)textKeys);
+        if (titleKey) XClassDelete((XClass*)titleKey);
+        if (authorKey) XClassDelete((XClass*)authorKey);
+        if (descriptionKey) XClassDelete((XClass*)descriptionKey);
+        if (rawKey) XClassDelete((XClass*)rawKey);
+        if (bareKey) XClassDelete((XClass*)bareKey);
+        if (missingKey) XClassDelete((XClass*)missingKey);
+        if (title) XClassDelete((XClass*)title);
+        if (author) XClassDelete((XClass*)author);
+        if (description) XClassDelete((XClass*)description);
+        if (bare) XClassDelete((XClass*)bare);
+        if (missing) XClassDelete((XClass*)missing);
     }
     g_mockSizeOptionCalls = 0;
     ok = XImageReader_read(&reader, &loaded);
@@ -10518,8 +10518,8 @@ static void test_image_plugin_registry_integration(void)
         expect_true(XImage_width(&scaledLoaded) == 1 &&
                     XImage_height(&scaledLoaded) == 1,
                     "reader preserves aspect ratio for a partial scaled size");
-        XImage_deinit_base(&scaledLoaded);
-        XImageReader_deinit_base(&scaledReader);
+        XClassDeinit(&scaledLoaded);
+        XClassDeinit(&scaledReader);
     }
 
     XImageReader_setAutoTransform(&reader, true);
@@ -10547,7 +10547,7 @@ static void test_image_plugin_registry_integration(void)
     /* Qt 直接返回 handler->read() 的成功标志；即使处理器报告成功但
        没有填充输出图像，read(QImage*) 仍返回 true。 */
     g_mockEmptyReadSuccess = true;
-    XImage_deinit_base(&loaded);
+    XClassDeinit(&loaded);
     XImage_init(&loaded);
     expect_true(XImageReader_read(&reader, &loaded),
                 "reader preserves handler success flag for empty output");
@@ -10557,16 +10557,16 @@ static void test_image_plugin_registry_integration(void)
     g_mockImageWidth = 2;
     g_mockImageHeight = 2;
 
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&reader);
     g_mockSupportsAnimation = false;
     g_mockSupportsTransformation = false;
     g_mockTransformation = XImageIOHandlerTransformation_None;
-    XImage_deinit_base(&loaded);
-    XImage_deinit_base(&source);
+    XClassDeinit(&loaded);
+    XClassDeinit(&source);
 
     expect_true(XImagePluginRegistry_removePlugin((XImageIOPlugin*)plugin),
                 "mock plugin is removed from registry");
-    XImageIOPlugin_delete_base((XImageIOPlugin*)plugin);
+    XClassDelete((XImageIOPlugin*)plugin);
     /* Qt 先尝试外部插件，再回退到内置处理器；同名 bmp 插件应覆盖内置 BMP。 */
     {
         TestImagePlugin* overridePlugin = TestImagePlugin_create();
@@ -10594,7 +10594,7 @@ static void test_image_plugin_registry_integration(void)
         expect_true(overrideSeed != NULL,
                     "writes fixture for external plugin precedence");
         if (overrideSeed)
-            XClass_delete_base((XClass*)overrideSeed);
+            XClassDelete((XClass*)overrideSeed);
         g_mockImageWidth = 1;
         g_mockImageHeight = 1;
         g_mockImagePixels[0] = 0xffa1b2c3u;
@@ -10606,15 +10606,15 @@ static void test_image_plugin_registry_integration(void)
                     XImage_height(&overrideLoaded) == 1 &&
                     XImage_pixel(&overrideLoaded, 0, 0) == 0xffa1b2c3u,
                     "external same-format plugin overrides builtin BMP handler");
-        XImageReader_deinit_base(&overrideReader);
-        XImage_deinit_base(&overrideLoaded);
+        XClassDeinit(&overrideReader);
+        XClassDeinit(&overrideLoaded);
         if (overrideAdded)
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)overridePlugin);
         if (overridePlugin)
-            XImageIOPlugin_delete_base((XImageIOPlugin*)overridePlugin);
+            XClassDelete((XImageIOPlugin*)overridePlugin);
         if (overrideFileName) {
             XFile_remove_static(overrideFileName);
-            XString_delete_base((XClass*)overrideFileName);
+            XClassDelete((XClass*)overrideFileName);
         }
     }
     /* Qt 对外部后缀处理器的 canRead() 失败继续按内容回退；验证同名
@@ -10677,29 +10677,29 @@ static void test_image_plugin_registry_integration(void)
         expect_true(g_mockCanReadCalls == 1,
                     "static imageFormat checks a rejected suffix handler only once");
         if (staticSuffixFormat)
-            XString_delete_base((XClass*)staticSuffixFormat);
+            XClassDelete((XClass*)staticSuffixFormat);
         if (staticSuffixDevice) {
             if (XIODevice_isOpen((XIODevice*)staticSuffixDevice))
                 XIODevice_close_base((XIODevice*)staticSuffixDevice);
-            XClass_delete_base((XClass*)staticSuffixDevice);
+            XClassDelete((XClass*)staticSuffixDevice);
         }
         g_mockPluginSetsFormat = false;
         if (staticSuffixName)
-            XString_delete_base((XClass*)staticSuffixName);
-        XImageReader_deinit_base(&fallbackReader);
-        XImage_deinit_base(&fallbackLoaded);
-        XImage_deinit_base(&fallbackSource);
+            XClassDelete((XClass*)staticSuffixName);
+        XClassDeinit(&fallbackReader);
+        XClassDeinit(&fallbackLoaded);
+        XClassDeinit(&fallbackSource);
         g_mockSuffixOnlyCapabilities = false;
         g_mockRejectSuffixCanRead = false;
         if (suffixAdded)
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)suffixPlugin);
         if (suffixPlugin)
-            XImageIOPlugin_delete_base((XImageIOPlugin*)suffixPlugin);
+            XClassDelete((XImageIOPlugin*)suffixPlugin);
         {
             XString* suffixName = XString_create_utf8(suffixFile);
             if (suffixName) {
                 XFile_remove_static(suffixName);
-                XString_delete_base((XClass*)suffixName);
+                XClassDelete((XClass*)suffixName);
             }
         }
     }
@@ -10753,8 +10753,8 @@ static void test_image_plugin_registry_integration(void)
                         XImage_pixel(&strictPluginLoaded, 0, 0) == 0xff0badf0u,
                         "strict explicit format falls back to builtin after first plugin create failure");
         }
-        XImage_deinit_base(&strictPluginLoaded);
-        XImageReader_deinit_base(&strictPluginReader);
+        XClassDeinit(&strictPluginLoaded);
+        XClassDeinit(&strictPluginReader);
         /* With an unknown explicit format and auto-detection enabled, the
            external plugin still receives the explicit test format first. If
            its factory rejects the content, Qt then runs the independent
@@ -10767,21 +10767,21 @@ static void test_image_plugin_registry_integration(void)
                     XImageReader_read(&explicitAutoReader, &explicitAutoLoaded) &&
                     XImage_pixel(&explicitAutoLoaded, 0, 0) == 0xff0badf0u,
                     "external create failure falls back to builtin content probe");
-        XImage_deinit_base(&explicitAutoLoaded);
-        XImageReader_deinit_base(&explicitAutoReader);
+        XClassDeinit(&explicitAutoLoaded);
+        XClassDeinit(&explicitAutoReader);
         g_mockRejectCreate = false;
-        XImageReader_deinit_base(&createFailReader);
-        XImage_deinit_base(&fallbackLoaded);
-        XImage_deinit_base(&fallbackSource);
+        XClassDeinit(&createFailReader);
+        XClassDeinit(&fallbackLoaded);
+        XClassDeinit(&fallbackSource);
         if (createFailAdded)
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)createFailPlugin);
         if (createFailPlugin)
-            XImageIOPlugin_delete_base((XImageIOPlugin*)createFailPlugin);
+            XClassDelete((XImageIOPlugin*)createFailPlugin);
         {
             XString* createFailName = XString_create_utf8(createFailFile);
             if (createFailName) {
                 XFile_remove_static(createFailName);
-                XString_delete_base((XClass*)createFailName);
+                XClassDelete((XClass*)createFailName);
             }
         }
     }
@@ -10838,7 +10838,7 @@ static void test_image_plugin_registry_integration(void)
                     (XIODevice*)probeDevice, explicitBmp, false, false)
                 : NULL;
             if (explicitBmp)
-                XString_delete_base((XClass*)explicitBmp);
+                XClassDelete((XClass*)explicitBmp);
         }
         expect_true(firstAdded,
                     "first duplicate external format plugin registers");
@@ -10862,12 +10862,12 @@ static void test_image_plugin_registry_integration(void)
                     (XIODevice*)probeDevice, explicitBmp, true, false)
                 : NULL;
             if (explicitBmp)
-                XString_delete_base((XClass*)explicitBmp);
+                XClassDelete((XClass*)explicitBmp);
         }
         expect_true(selectedHandler != NULL,
                     "explicit auto-detect retries failed plugin during content probe");
         if (selectedHandler) {
-            XImageIOHandler_delete_base(selectedHandler);
+            XClassDelete(selectedHandler);
             selectedHandler = NULL;
         }
 
@@ -10887,8 +10887,8 @@ static void test_image_plugin_registry_integration(void)
             expect_true(XImageReader_read(&suffixReader, &suffixImage) &&
                         XImage_pixel(&suffixImage, 0, 0) == 0xffe1e2e3u,
                         "suffix format stage tries the next same-key plugin");
-            XImage_deinit_base(&suffixImage);
-            XImageReader_deinit_base(&suffixReader);
+            XClassDeinit(&suffixImage);
+            XClassDeinit(&suffixReader);
         }
         g_mockSuffixOnlyCapabilities = false;
         firstPlugin->m_rejectReadCapability = true;
@@ -10896,7 +10896,7 @@ static void test_image_plugin_registry_integration(void)
         {
             XString* explicitBmp = XString_create_utf8("bmp");
             if (selectedHandler) {
-                XImageIOHandler_delete_base(selectedHandler);
+                XClassDelete(selectedHandler);
                 selectedHandler = NULL;
             }
             selectedHandler = probeDevice
@@ -10904,7 +10904,7 @@ static void test_image_plugin_registry_integration(void)
                     (XIODevice*)probeDevice, explicitBmp, false, false)
                 : NULL;
             if (explicitBmp)
-                XString_delete_base((XClass*)explicitBmp);
+                XClassDelete((XClass*)explicitBmp);
         }
         expect_true(selectedHandler == NULL,
                     "disabled autodetect rejects first same-key plugin without fallback traversal");
@@ -10916,7 +10916,7 @@ static void test_image_plugin_registry_integration(void)
         {
             XString* emptyFormat = XString_create();
             if (selectedHandler) {
-                XImageIOHandler_delete_base(selectedHandler);
+                XClassDelete(selectedHandler);
                 selectedHandler = NULL;
             }
             selectedHandler = probeDevice
@@ -10924,7 +10924,7 @@ static void test_image_plugin_registry_integration(void)
                     (XIODevice*)probeDevice, emptyFormat, true, true)
                 : NULL;
             if (emptyFormat)
-                XString_delete_base((XClass*)emptyFormat);
+                XClassDelete((XClass*)emptyFormat);
         }
         expect_true(selectedHandler == NULL,
                     "content probe stops after first plugin create failure");
@@ -10937,7 +10937,7 @@ static void test_image_plugin_registry_integration(void)
         {
             XString* rejectedBmp = XString_create_utf8("bmp");
             if (selectedHandler) {
-                XImageIOHandler_delete_base(selectedHandler);
+                XClassDelete(selectedHandler);
                 selectedHandler = NULL;
             }
             selectedHandler = probeDevice
@@ -10945,7 +10945,7 @@ static void test_image_plugin_registry_integration(void)
                     (XIODevice*)probeDevice, rejectedBmp)
                 : NULL;
             if (rejectedBmp)
-                XString_delete_base((XClass*)rejectedBmp);
+                XClassDelete((XClass*)rejectedBmp);
         }
         expect_true(selectedHandler == NULL,
                     "suffix fallback stops after first remaining plugin create failure");
@@ -10960,7 +10960,7 @@ static void test_image_plugin_registry_integration(void)
         {
             XString* rejectedBmp = XString_create_utf8("bmp");
             if (selectedHandler) {
-                XImageIOHandler_delete_base(selectedHandler);
+                XClassDelete(selectedHandler);
                 selectedHandler = NULL;
             }
             selectedHandler = probeDevice
@@ -10968,17 +10968,17 @@ static void test_image_plugin_registry_integration(void)
                     (XIODevice*)probeDevice, rejectedBmp)
                 : NULL;
             if (rejectedBmp)
-                XString_delete_base((XClass*)rejectedBmp);
+                XClassDelete((XClass*)rejectedBmp);
         }
         expect_true(selectedHandler != NULL,
                     "suffix fallback returns the next external handler on success");
         expect_true(g_mockCapabilityCalls == 1,
                     "successful suffix fallback probes one remaining plugin");
         if (selectedHandler)
-            XImageIOHandler_delete_base(selectedHandler);
+            XClassDelete(selectedHandler);
         if (probeDevice) {
             XIODevice_close_base((XIODevice*)probeDevice);
-            XClass_delete_base((XClass*)probeDevice);
+            XClassDelete((XClass*)probeDevice);
         }
         g_mockRejectCreateOnce = false;
         if (firstAdded)
@@ -10986,12 +10986,12 @@ static void test_image_plugin_registry_integration(void)
         if (secondAdded)
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)secondPlugin);
         if (firstPlugin)
-            XImageIOPlugin_delete_base((XImageIOPlugin*)firstPlugin);
+            XClassDelete((XImageIOPlugin*)firstPlugin);
         if (secondPlugin)
-            XImageIOPlugin_delete_base((XImageIOPlugin*)secondPlugin);
+            XClassDelete((XImageIOPlugin*)secondPlugin);
         if (probeName) {
             XFile_remove_static(probeName);
-            XString_delete_base((XClass*)probeName);
+            XClassDelete((XClass*)probeName);
         }
     }
     /* Qt QImageWriter::write() 在已选处理器拒绝图像时立即失败；不能再
@@ -11030,16 +11030,16 @@ static void test_image_plugin_registry_integration(void)
                     "writer preserves the previous error code when handler write fails");
         expect_true(strcmp(XImageWriter_errorString_2(&writeFailWriter), "Unknown error") == 0,
                     "writer preserves the previous error text when handler write fails");
-        XImageWriter_deinit_base(&writeFailWriter);
-        XImage_deinit_base(&writeFailSource);
+        XClassDeinit(&writeFailWriter);
+        XClassDeinit(&writeFailSource);
         g_mockRejectWrite = false;
         if (writeFailAdded)
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)writeFailPlugin);
         if (writeFailPlugin)
-            XImageIOPlugin_delete_base((XImageIOPlugin*)writeFailPlugin);
+            XClassDelete((XImageIOPlugin*)writeFailPlugin);
         if (writeFailName) {
             XFile_remove_static(writeFailName);
-            XString_delete_base((XClass*)writeFailName);
+            XClassDelete((XClass*)writeFailName);
         }
     }
     /* Qt qimagereader.cpp 在 capabilities()/create() 后恢复非顺序设备位置。 */
@@ -11054,7 +11054,7 @@ static void test_image_plugin_registry_integration(void)
             (void)XIODevice_write_1((XIODevice*)seedFile, &seed, 1);
             XIODevice_close_base((XIODevice*)seedFile);
         }
-        if (seedFile) XClass_delete_base((XClass*)seedFile);
+        if (seedFile) XClassDelete((XClass*)seedFile);
         expect_true(probeFile &&
                     XIODevice_open_base((XIODevice*)probeFile, XIODevice_ReadOnly),
                     "plugin probe file opens for position contract");
@@ -11073,7 +11073,7 @@ static void test_image_plugin_registry_integration(void)
                         "content probe finds consuming plugin");
             expect_true(before == after,
                         "plugin capability probing preserves non-sequential device position");
-            if (detected) XString_delete_base((XClass*)detected);
+            if (detected) XClassDelete((XClass*)detected);
             g_mockConsumeCapabilities = false;
 
             /* capabilities() 仍声明支持时，Qt 还要求 create()/canRead()
@@ -11087,15 +11087,15 @@ static void test_image_plugin_registry_integration(void)
                         "content probe rejects plugin whose handler cannot read");
             expect_true(before == after,
                         "failed handler probe preserves non-sequential device position");
-            if (detected) XString_delete_base((XClass*)detected);
+            if (detected) XClassDelete((XClass*)detected);
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)plugin);
-            XImageIOPlugin_delete_base((XImageIOPlugin*)plugin);
+            XClassDelete((XImageIOPlugin*)plugin);
             XIODevice_close_base((XIODevice*)probeFile);
         }
-        if (probeFile) XClass_delete_base((XClass*)probeFile);
+        if (probeFile) XClassDelete((XClass*)probeFile);
     }
     XFile_remove_static(fileNameObject);
-    XString_delete_base((XClass*)fileNameObject);
+    XClassDelete((XClass*)fileNameObject);
 
     /* Qt 的内置 imageformats 处理器不属于可卸载插件；清空显式注册项后，
        下次查询应自动恢复内置插件，并且 removePlugin() 不能将其删除。 */
@@ -11110,7 +11110,7 @@ static void test_image_plugin_registry_integration(void)
                     bmpFormat &&
                     XImagePluginRegistry_supportsReadFormat(bmpFormat),
                     "cleared registry restores built-in image plugin");
-        if (bmpFormat) XString_delete_base((XClass*)bmpFormat);
+        if (bmpFormat) XClassDelete((XClass*)bmpFormat);
     }
 #if XIMAGEPLUGINREGISTRY_CAPACITY > 0
     /* 固定容量注册表在首次查询前也必须为内置处理器保留一个槽位；否则
@@ -11128,7 +11128,7 @@ static void test_image_plugin_registry_integration(void)
             if (XImagePluginRegistry_addPlugin((XImageIOPlugin*)filler)) {
                 fillers[fillerCount++] = filler;
             } else {
-                XImageIOPlugin_delete_base((XImageIOPlugin*)filler);
+                XClassDelete((XImageIOPlugin*)filler);
                 break;
             }
         }
@@ -11139,9 +11139,9 @@ static void test_image_plugin_registry_integration(void)
                     "builtin image plugin joins a registry filled by external plugins");
         for (i = 0; i < fillerCount; ++i) {
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)fillers[i]);
-            XImageIOPlugin_delete_base((XImageIOPlugin*)fillers[i]);
+            XClassDelete((XImageIOPlugin*)fillers[i]);
         }
-        if (bmpFormat) XString_delete_base((XClass*)bmpFormat);
+        if (bmpFormat) XClassDelete((XClass*)bmpFormat);
         XImagePluginRegistry_clear();
     }
 #endif /* XIMAGEPLUGINREGISTRY_CAPACITY > 0 */
@@ -11175,7 +11175,7 @@ static void test_image_plugin_registry_integration(void)
         XImagePluginRegistry_setPluginDiscoveryCallback(NULL, NULL);
         if (discovered) {
             XImagePluginRegistry_removePlugin((XImageIOPlugin*)discovered);
-            XImageIOPlugin_delete_base((XImageIOPlugin*)discovered);
+            XClassDelete((XImageIOPlugin*)discovered);
         }
         XImagePluginRegistry_clear();
     }
@@ -11236,14 +11236,14 @@ static void test_image_codec_round_trip(void)
         }
         expect_true(encoded && XImageCodec_decode(XByteArray_data(encoded), XByteArray_size_base((const XContainer*)encoded), XImageCodecFormat_Unknown, &decoded), "codec decodes format independently");
         expect_true(XImage_width(&decoded) == 3 && XImage_height(&decoded) == 2, "codec round trip preserves dimensions");
-        XImage_deinit_base(&decoded); if (encoded) XByteArray_delete_base((XClass*)encoded);
+        XClassDeinit(&decoded); if (encoded) XClassDelete((XClass*)encoded);
     }
     memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
     expect_true(XImage_save_2(&source, "xgui_codec.png", "png", -1), "XImage delegates PNG file save to codec");
     expect_true(XImage_load_2(&decoded, "xgui_codec.png", "png") && XImage_width(&decoded) == 3 && XImage_height(&decoded) == 2,
                 "XImage delegates PNG file load to codec");
-    { XString* codecFile = XString_create_utf8("xgui_codec.png"); XFile_remove_static(codecFile); if (codecFile) XString_delete_base((XClass*)codecFile); }
+    { XString* codecFile = XString_create_utf8("xgui_codec.png"); XFile_remove_static(codecFile); if (codecFile) XClassDelete((XClass*)codecFile); }
 #if XIMAGECODEC_PNG_ON
     /* QImage::save() 将空格式与 NULL 格式同样按文件后缀推断；覆盖
        C 接口调用方常见的显式空字符串输入。 */
@@ -11252,7 +11252,7 @@ static void test_image_codec_round_trip(void)
     {
         XString* codecFile = XString_create_utf8("xgui_codec_empty_format.png");
         XFile_remove_static(codecFile);
-        if (codecFile) XString_delete_base((XClass*)codecFile);
+        if (codecFile) XClassDelete((XClass*)codecFile);
     }
 #endif /* XIMAGECODEC_PNG_ON */
 #if XIMAGECODEC_XPM_ON
@@ -11260,7 +11260,7 @@ static void test_image_codec_round_trip(void)
        XPM 没有可靠的二进制魔数，因此仅做内容探测会漏掉此路径。 */
     expect_true(XImage_save_2(&source, "xgui_codec_auto.xpm", "xpm", -1),
                 "XImage writes XPM fixture for automatic suffix loading");
-    XImage_deinit_base(&decoded);
+    XClassDeinit(&decoded);
     XImage_init(&decoded);
     expect_true(XImage_load_2(&decoded, "xgui_codec_auto.xpm", NULL) &&
                     XImage_width(&decoded) == 3 &&
@@ -11269,11 +11269,11 @@ static void test_image_codec_round_trip(void)
     {
         XString* codecFile = XString_create_utf8("xgui_codec_auto.xpm");
         XFile_remove_static(codecFile);
-        if (codecFile) XString_delete_base((XClass*)codecFile);
+        if (codecFile) XClassDelete((XClass*)codecFile);
     }
 #endif /* XIMAGECODEC_XPM_ON */
-    XImage_deinit_base(&decoded);
-    XImage_deinit_base(&source);
+    XClassDeinit(&decoded);
+    XClassDeinit(&source);
 }
 
 /* Qt QBmpHandler::DibFormat：显式 DIB 可读写，但不参与自动魔数发现或
@@ -11376,12 +11376,12 @@ static void test_image_codec_dib_explicit(void)
         expect_true(XImageWriter_canWrite(&writer) &&
                     XImageWriter_write(&writer, &source),
                     "DIB 处理器显式写入成功");
-        XImageWriter_deinit_base(&writer);
+        XClassDeinit(&writer);
         XIODevice_close_base((XIODevice*)&file);
     } else {
         expect_true(false, "DIB 测试文件可写");
     }
-    XClass_deinit_base((XClass*)&file);
+    XClassDeinit((XClass*)&file);
 
     XFile_init_2(&file, fileName);
     if (XFile_open_2(&file, XIODevice_ReadOnly, 0)) {
@@ -11401,19 +11401,19 @@ static void test_image_codec_dib_explicit(void)
         expect_true(true,
                     "裁剪插件后跳过无处理器的 DIB 文件设备元数据");
 #endif
-        XImageReader_deinit_base(&reader);
+        XClassDeinit(&reader);
         XIODevice_close_base((XIODevice*)&file);
     } else {
         expect_true(false, "DIB 测试文件可读");
     }
-    XClass_deinit_base((XClass*)&file);
+    XClassDeinit((XClass*)&file);
     XFile_remove_static(fileName);
-    if (fileName) XString_delete_base((XClass*)fileName);
-    if (formats) XStringList_delete_base((XClass*)formats);
-    if (dibName) XString_delete_base((XClass*)dibName);
-    if (dib) XByteArray_delete_base((XClass*)dib);
-    XImage_deinit_base(&decoded);
-    XImage_deinit_base(&source);
+    if (fileName) XClassDelete((XClass*)fileName);
+    if (formats) XClassDelete((XClass*)formats);
+    if (dibName) XClassDelete((XClass*)dibName);
+    if (dib) XClassDelete((XClass*)dib);
+    XClassDeinit(&decoded);
+    XClassDeinit(&source);
 }
 
 /** @brief 对照 QImage::loadFromData 的失败失效与显式格式优先语义。 */
@@ -11454,9 +11454,9 @@ static void test_image_load_failure_invalidation(void)
                     XImage_pixel(&image, 0, 0) == 0xff204060u,
                     "QImage loadFromData accepts the explicit supported format");
     }
-    if (encoded) XByteArray_delete_base((XClass*)encoded);
-    XImage_deinit_base(&image);
-    XImage_deinit_base(&source);
+    if (encoded) XClassDelete((XClass*)encoded);
+    XClassDeinit(&image);
+    XClassDeinit(&source);
 }
 
 
@@ -11507,8 +11507,8 @@ static void test_codec_pixel_round_trip(void)
                     "codec pixel-decodes format with explicit hint");
         expect_true(pixels_equal_exact(&decoded, px, 3, 2),
                     "codec pixel-exact round trip (explicit hint)");
-        XImage_deinit_base(&decoded);
-        if (encoded) XByteArray_delete_base((XClass*)encoded);
+        XClassDeinit(&decoded);
+        if (encoded) XClassDelete((XClass*)encoded);
     }
 
     /* GIF：量化解码后仅校验尺寸与非空 */
@@ -11522,8 +11522,8 @@ static void test_codec_pixel_round_trip(void)
     expect_true(XImage_width(&decoded) == 3 && XImage_height(&decoded) == 2,
                 "GIF 往返保持尺寸");
 
-    XImage_deinit_base(&decoded);
-    if (encoded) XByteArray_delete_base((XClass*)encoded);
+    XClassDeinit(&decoded);
+    if (encoded) XClassDelete((XClass*)encoded);
 
 #if XIMAGECODEC_JPEG_ON
     /* JPEG：有损格式，使用 24x16 平滑渐变做往返，容差校验单通道误差 */
@@ -11570,12 +11570,12 @@ static void test_codec_pixel_round_trip(void)
             if (maxErr > 32)
                 XERROR_PRINTF("JPEG 最大通道误差=%d\n", maxErr);
         }
-        XImage_deinit_base(&decoded);
-        if (encoded) XByteArray_delete_base((XClass*)encoded);
-        XImage_deinit_base(&jpegSrc);
+        XClassDeinit(&decoded);
+        if (encoded) XClassDelete((XClass*)encoded);
+        XClassDeinit(&jpegSrc);
     }
 #endif /* XIMAGECODEC_JPEG_ON */
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
 }
 
 /**
@@ -11660,7 +11660,7 @@ static void test_codec_ppm_family(void)
                                            expectedWidths[i],
                                            expectedHeights[i]),
                     "P1-P6 解码像素与 Qt 黑白/灰度/RGB 语义一致");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 
     {
@@ -11695,12 +11695,12 @@ static void test_codec_ppm_family(void)
                             &source, "pgm", pgm) &&
                             memcmp(XByteArray_data(pgm), "P5\n2 1\n255\n", 11) == 0,
                         "PGM 子类型按 Qt 写出 P5 二进制头部");
-            if (pbm) XByteArray_delete_base((XClass*)pbm);
-            if (pgm) XByteArray_delete_base((XClass*)pgm);
+            if (pbm) XClassDelete((XClass*)pbm);
+            if (pgm) XClassDelete((XClass*)pgm);
         }
-        XImage_deinit_base(&image);
-        XImage_deinit_base(&source);
-        if (encoded) XByteArray_delete_base((XClass*)encoded);
+        XClassDeinit(&image);
+        XClassDeinit(&source);
+        if (encoded) XClassDelete((XClass*)encoded);
     }
 
     {
@@ -11709,7 +11709,7 @@ static void test_codec_ppm_family(void)
         expect_true(!XImageCodec_decode(truncated, sizeof(truncated) - 1u,
                                         XImageCodecFormat_Ppm, &image),
                     "截断 P6 像素数据被拒绝");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 
     {
@@ -11718,52 +11718,52 @@ static void test_codec_ppm_family(void)
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xff7f7f7fu,
                     "PGM 灰度缩放按 Qt 的 8 位整数截断");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(p5Scaled, sizeof(p5Scaled),
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xff7f7f7fu,
                     "16 位 PGM 灰度缩放按 Qt 的 8 位整数截断");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(p1DigitLimited, sizeof(p1DigitLimited) - 1u,
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xff000000u &&
                         XImage_pixel(&image, 1, 0) == 0xffffffffu,
                     "ASCII PBM 按 Qt maxDigits=1 逐位读取");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(p2OverMax, sizeof(p2OverMax) - 1u,
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xff8a8a8au,
                     "ASCII PGM 超过 maxval 时保留 Qt 的整数缩放和截断");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(p5OverMax, sizeof(p5OverMax),
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xff8a8a8au,
                     "二进制 PGM 超过 maxval 时保留 Qt 的整数缩放和截断");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(p2Max255Oversize,
                                        sizeof(p2Max255Oversize) - 1u,
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xff000000u,
                     "ASCII PGM maxval=255 时按 Qt 低 8 位截断");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(p2Overflow, sizeof(p2Overflow) - 1u,
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xffcacacau,
                     "ASCII PGM 整数溢出时保留 Qt -1 窄化语义");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(p2LongOverflow,
                                        sizeof(p2LongOverflow) - 1u,
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xffcacacau,
                     "ASCII PGM 超长整数按 Qt 溢出语义消费而不因令牌长度失败");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(p2NonDigitSeparator,
                                        sizeof(p2NonDigitSeparator) - 1u,
@@ -11771,7 +11771,7 @@ static void test_codec_ppm_family(void)
                         XImage_pixel(&image, 0, 0) == 0xff010101u &&
                         XImage_pixel(&image, 1, 0) == 0xff020202u,
                     "ASCII PGM 消费数字后的 Qt 任意非数字分隔符");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(!XImageCodec_decode(badMagic, sizeof(badMagic) - 1u,
                                         XImageCodecFormat_Ppm, &image) &&
@@ -11779,7 +11779,7 @@ static void test_codec_ppm_family(void)
                                             sizeof(badSeparator) - 1u,
                                             XImageCodecFormat_Ppm, &image),
                     "PPM 头部严格要求 P[1-6] 后跟 ASCII 空白");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 
     {
@@ -11788,7 +11788,7 @@ static void test_codec_ppm_family(void)
                                        XImageCodecFormat_Ppm, &image) &&
                         XImage_pixel(&image, 0, 0) == 0xffff0000u,
                     "P6 maxval 后的 Qt 行注释被正确消费");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 
     {
@@ -11814,8 +11814,8 @@ static void test_codec_ppm_family(void)
                         XImage_height(&image) == 1 &&
                         XImage_pixel(&image, 0, 0) == 0xffff0000u,
                     "XImageReader 通过内置 PPM 处理器读取 P6");
-        XImageReader_deinit_base(&reader);
-        XImage_deinit_base(&image);
+        XClassDeinit(&reader);
+        XClassDeinit(&image);
         remove(path);
     }
 #if XIMAGEIOPLUGIN_ON
@@ -11844,8 +11844,8 @@ static void test_codec_ppm_family(void)
         expect_true(XImageReader_read(&rawReader, &rawImage) &&
                         XImage_pixel(&rawImage, 0, 0) == 0xffff0000u,
                     "显式 ppmraw 通过内置处理器读取 P6 像素");
-        XImage_deinit_base(&rawImage);
-        XImageReader_deinit_base(&rawReader);
+        XClassDeinit(&rawImage);
+        XClassDeinit(&rawReader);
 
         /* QPpmHandler::setOption(SubType) 必须复制 QVariant 内容；把
            option(SubType) 返回的借用字符串原样传回时也不能先释放源值。 */
@@ -11878,10 +11878,10 @@ static void test_codec_ppm_family(void)
                                 &copied) && copied.string &&
                             strcmp(XString_toUtf8(copied.string), "pbmraw") == 0,
                         "SubType 自引用 setOption 深拷贝后仍保持值");
-            if (probeHandler) XImageIOHandler_delete_base(probeHandler);
+            if (probeHandler) XClassDelete(probeHandler);
             if (probeOpened) XIODevice_close_base((XIODevice*)&probeFile);
-            XClass_deinit_base((XClass*)&probeFile);
-            if (probeFormat) XString_delete_base((XClass*)probeFormat);
+            XClassDeinit((XClass*)&probeFile);
+            if (probeFormat) XClassDelete((XClass*)probeFormat);
         }
 
         memset(&rawSource, 0, sizeof(rawSource));
@@ -11891,8 +11891,8 @@ static void test_codec_ppm_family(void)
         XImageWriter_init_file_2(&rawWriter, rawOutputPath, "pbmraw");
         expect_true(XImageWriter_write(&rawWriter, &rawSource),
                     "显式 pbmraw 通过内置处理器写出 P4");
-        XImageWriter_deinit_base(&rawWriter);
-        XImage_deinit_base(&rawSource);
+        XClassDeinit(&rawWriter);
+        XClassDeinit(&rawSource);
         XImageReader_init_file_2(&rawReader, rawOutputPath, "pbmraw");
         XImage_init(&rawImage);
         expect_true(XImageReader_read(&rawReader, &rawImage) &&
@@ -11900,15 +11900,15 @@ static void test_codec_ppm_family(void)
                         XImage_pixel(&rawImage, 0, 0) == 0xff000000u &&
                         XImage_pixel(&rawImage, 1, 0) == 0xffffffffu,
                     "显式 pbmraw 写出结果可由同一内置别名读取");
-        XImage_deinit_base(&rawImage);
-        XImageReader_deinit_base(&rawReader);
+        XClassDeinit(&rawImage);
+        XClassDeinit(&rawReader);
         if (rawInputName) {
             XFile_remove_static(rawInputName);
-            XString_delete_base((XClass*)rawInputName);
+            XClassDelete((XClass*)rawInputName);
         }
         if (rawOutputName) {
             XFile_remove_static(rawOutputName);
-            XString_delete_base((XClass*)rawOutputName);
+            XClassDelete((XClass*)rawOutputName);
         }
     }
 #endif /* XIMAGEIOPLUGIN_ON */
@@ -11994,24 +11994,24 @@ static void test_codec_xbm(void)
         }
         expect_true(hasDefine && hasToken,
                     "XBM 编码头部标识符和位字节与输入一致");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init(&image);
         expect_true(XImageCodec_decode(encodedData, encodedSize,
                                        XImageCodecFormat_Xbm, &image) &&
                     XImage_pixelIndex(&image, 0, 0) == 1 &&
                     XImage_pixelIndex(&image, 1, 0) == 0,
                     "XBM 编码结果可再次解码");
-        XByteArray_delete_base((XClass*)encoded);
+        XClassDelete((XClass*)encoded);
         encoded = NULL;
     }
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     XImage_init(&image);
     expect_true(XImageCodec_decode(truncated, sizeof(truncated) - 1u,
                                    XImageCodecFormat_Xbm, &image) &&
                 XImage_pixelIndex(&image, 0, 0) == 1,
                 "XBM 正文截断时保留已读取字节并成功返回");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     expect_true(!XImageCodec_probeSize(malformed, sizeof(malformed) - 1u,
                                        XImageCodecFormat_Xbm,
                                        &width, &height),
@@ -12034,7 +12034,7 @@ static void test_codec_xbm(void)
         expect_true(XImageReader_canRead(&malformedReader),
                     "裁剪插件后 XBM canRead 保留签名探测语义");
 #endif
-        XImageReader_deinit_base(&malformedReader);
+        XClassDeinit(&malformedReader);
         remove(malformedPath);
     }
 
@@ -12056,7 +12056,7 @@ static void test_codec_xbm(void)
         expect_true(XImageWriter_canWrite(&writer) &&
                     XImageWriter_write(&writer, &source),
                     "XBM 文件写入器按后缀发现内置处理器");
-        XImageWriter_deinit_base(&writer);
+        XClassDeinit(&writer);
         XImageReader_init_file_2(&reader, path, NULL);
 #if XIMAGEIOPLUGIN_ON
         expect_true(XImageReader_canRead(&reader) &&
@@ -12074,9 +12074,9 @@ static void test_codec_xbm(void)
         expect_true(XImageReader_read(&reader, &loaded) &&
                     XImage_width(&loaded) == 8 && XImage_height(&loaded) == 1,
                     "XBM 文件设备读写保持尺寸");
-        XImage_deinit_base(&loaded);
-        XImageReader_deinit_base(&reader);
-        XImage_deinit_base(&source);
+        XClassDeinit(&loaded);
+        XClassDeinit(&reader);
+        XClassDeinit(&source);
         remove(path);
     }
 #else
@@ -12201,11 +12201,11 @@ static void test_codec_xpm(void)
                     XImage_pixel(&decoded, 0, 1) == 0xff8b8378u &&
                     XImage_pixel(&decoded, 1, 1) == 0xff000000u,
                     "XPM 编码结果可再次解码并保持像素颜色");
-        XImage_deinit_base(&decoded);
-        XByteArray_delete_base((XClass*)encoded);
+        XClassDeinit(&decoded);
+        XClassDelete((XClass*)encoded);
         encoded = NULL;
     }
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     XImage_init(&image);
     expect_true(XImageCodec_decode(hashCollision, sizeof(hashCollision) - 1u,
@@ -12213,14 +12213,14 @@ static void test_codec_xpm(void)
                 XImage_pixelIndex(&image, 0, 0) == 1 &&
                 XImage_color(&image, 1) == 0xff00ff00u,
                 "XPM 哈希碰撞按 Qt QMap 键覆盖为后出现颜色");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     XImage_init(&image);
     expect_true(XImageCodec_decode(alphaHex, sizeof(alphaHex) - 1u,
                                    XImageCodecFormat_Xpm, &image) &&
                 XImage_pixel(&image, 0, 0) == 0xff804080u,
                 "XPM 按 Qt 规则去除 ImageMagick 尾部 alpha");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     XImage_init(&image);
     expect_true(XImageCodec_decode(duplicateKey, sizeof(duplicateKey) - 1u,
@@ -12228,7 +12228,7 @@ static void test_codec_xpm(void)
                 XImage_pixelIndex(&image, 0, 0) == 1 &&
                 XImage_color(&image, 1) == 0xff00ff00u,
                 "XPM 重复像素键按 Qt QMap 插入语义以后出现颜色覆盖");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     XImage_init(&image);
     expect_true(!XImageCodec_probeSize(malformed, sizeof(malformed) - 1u,
@@ -12237,7 +12237,7 @@ static void test_codec_xpm(void)
                 !XImageCodec_decode(malformed, sizeof(malformed) - 1u,
                                     XImageCodecFormat_Xpm, &image),
                 "XPM 非法尺寸被探测和解码路径拒绝");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     {
         const char* path = "xgui_xpm_handler.xpm";
@@ -12262,8 +12262,8 @@ static void test_codec_xpm(void)
                     XImage_height(&fileDecoded) == 2 &&
                     XImage_pixelIndex(&fileDecoded, 1, 0) == 1,
                     "XPM 文件设备读取保持尺寸和像素");
-        XImageReader_deinit_base(&reader);
-        XImage_deinit_base(&fileDecoded);
+        XClassDeinit(&reader);
+        XClassDeinit(&fileDecoded);
 
         XImage_init_ex(&image, 2, 1, XImageFormat_ARGB32);
         XImage_setPixel(&image, 0, 0, 0x00000000u);
@@ -12272,13 +12272,13 @@ static void test_codec_xpm(void)
         expect_true(XImageWriter_canWrite(&writer) &&
                     XImageWriter_write(&writer, &image),
                     "XPM 文件写入器按后缀发现内置处理器");
-        XImageWriter_deinit_base(&writer);
-        XImage_deinit_base(&image);
+        XClassDeinit(&writer);
+        XClassDeinit(&image);
         {
             XString* fileName = XString_create_utf8(path);
             if (fileName) {
                 XFile_remove_static(fileName);
-                XString_delete_base((XClass*)fileName);
+                XClassDelete((XClass*)fileName);
             }
         }
     }
@@ -12312,7 +12312,7 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
     b = XByteArray_create();
     if (!b) return NULL;
     if (!XByteArray_resize_base((XVector*)b, total)) {
-        XByteArray_delete_base((XClass*)b);
+        XClassDelete((XClass*)b);
         return NULL;
     }
     d = XByteArray_data(b);
@@ -12349,10 +12349,10 @@ static void bmp_expect_reject(XByteArray* b, const char* name)
         rejected = !XImageCodec_decode(XByteArray_data(b),
                                        XByteArray_size_base((const XContainer*)b),
                                        XImageCodecFormat_Bmp, &out);
-        XImage_deinit_base(&out);
+        XClassDeinit(&out);
     }
     expect_true(rejected, name);
-    if (b) XByteArray_delete_base((XClass*)b);
+    if (b) XClassDelete((XClass*)b);
 }
 
 static void test_codec_bmp_malformed(void)
@@ -12365,7 +12365,7 @@ static void test_codec_bmp_malformed(void)
     expect_true(!XImageCodec_decode((const uint8_t*)"BM", 2,
                                     XImageCodecFormat_Bmp, &out),
                 "BMP header smaller than 26 bytes rejected");
-    XImage_deinit_base(&out);
+    XClassDeinit(&out);
 
     bmp_expect_reject(bmp_make(20, 0, 40, 1, 1, 1, 24, 0),
                       "truncated DIB header rejected");
@@ -12406,8 +12406,8 @@ static void test_codec_bmp_malformed(void)
                                         XImageCodecFormat_Bmp, &out) &&
                 XImage_pixel(&out, 0, 0) == 0xff000000u,
                 "BITFIELDS 全零掩码按 Qt 解码为黑色");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
     /* Qt 对 32 位 BI_BITFIELDS 同样无条件按掩码提取通道；全零
        RGB 掩码应将非零原始像素解为不透明黑色。 */
     b = bmp_make(70, 66, 40, 1, 1, 1, 32, 3);
@@ -12424,8 +12424,8 @@ static void test_codec_bmp_malformed(void)
                                         XImageCodecFormat_Bmp, &out) &&
                 XImage_pixel(&out, 0, 0) == 0xff000000u,
                 "32-bit zero BITFIELDS masks decode to black like Qt");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
     bmp_expect_reject(bmp_make(60, 54, 40, 1, 1, 1, 8, 0),
                       "truncated 8-bit palette rejected");
     /* Qt qbmphandler.cpp:548-552 对 24 位未压缩像素行读取不足时保留
@@ -12447,8 +12447,8 @@ static void test_codec_bmp_malformed(void)
                 XImage_pixel(&out, 0, 1) == 0xffff0000u &&
                 XImage_pixel(&out, 1, 1) == 0xff0000ffu,
                 "truncated 24-bit row keeps decoded rows like Qt");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
     /* Qt QBmpHandler::read_dib_body() 在像素起始位置已经到达设备末尾时
        先由 atEnd() 拒绝；仅有完整 DIB 头而没有任何像素字节不能被当作
        全零图像成功。 */
@@ -12468,8 +12468,8 @@ static void test_codec_bmp_malformed(void)
                                         XImageCodecFormat_Bmp, &out) &&
                 XImage_pixel(&out, 0, 0) == 0xffff0000u,
                 "BMP offset before DIB uses Qt current cursor");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
     /* Qt 在头部之后仍有尾字节时，bfOffBits 超出文件尾会 seek 到尾部，
        读行失败但保留已分配的零填充图像并返回成功；这与完全没有像素
        字节时的 atEnd() 拒绝是两个不同边界。 */
@@ -12480,8 +12480,8 @@ static void test_codec_bmp_malformed(void)
                                         XImageCodecFormat_Bmp, &out) &&
                 XImage_pixel(&out, 0, 0) == 0xff000000u,
                 "BMP offset after file keeps Qt zero-filled image");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
     bmp_expect_reject(bmp_make(58, 54, 40, 16385, 16384, 1, 24, 0),
                       "BMP dimensions beyond Qt area limit rejected");
     b = bmp_make(58, 54, 40, 16385, 16384, 1, 24, 0);
@@ -12493,7 +12493,7 @@ static void test_codec_bmp_malformed(void)
                         XByteArray_size_base((const XContainer*)b),
                         XImageCodecFormat_Bmp, &probeWidth, &probeHeight),
                     "BMP probeSize enforces Qt area limit");
-        XByteArray_delete_base((XClass*)b);
+        XClassDelete((XClass*)b);
     } else {
         expect_true(false, "BMP area-limit probe fixture allocated");
     }
@@ -12516,8 +12516,8 @@ static void test_codec_bmp_malformed(void)
                 XImage_pixel(&out, 0, 0) == 0xffff0000u &&
                 XImage_pixel(&out, 0, 1) == 0xff0000ffu,
                 "negative OS/2 core height preserves top-down rows");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
 
 #if XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON
     /* Qt 对超出当前行剩余宽度的 RLE 行程按行钳制，而不是解码失败。 */
@@ -12538,8 +12538,8 @@ static void test_codec_bmp_malformed(void)
                 XImage_pixelIndex(&out, 0, 0) == 1 &&
                 XImage_pixelIndex(&out, 1, 0) == 1,
                 "RLE8 overrun clamps to current row like Qt");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
 
 #if XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON
     /* Qt 在 RLE8 绝对模式中先把计数 4 钳为当前行剩余宽度 2，
@@ -12559,8 +12559,8 @@ static void test_codec_bmp_malformed(void)
                 XImage_pixelIndex(&out, 0, 0) == 1 &&
                 XImage_pixelIndex(&out, 1, 0) == 2,
                 "RLE8 绝对模式按 Qt 行余量截断并接受流尾");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
 #endif /* XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON */
 
     /* RLE4 绝对模式的 5 像素 payload 按 Qt 规则补齐到字边界；缺少
@@ -12607,8 +12607,8 @@ static void test_codec_bmp_malformed(void)
                 XImage_pixelIndex(&out, 3, 1) == 4 &&
                 XImage_pixelIndex(&out, 4, 1) == 5,
                 "RLE4 absolute rows consume Qt word padding");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
 #endif /* XIMAGECODEC_BMP_INDEXED_ON && XIMAGECODEC_BMP_RLE_ON */
 
 #if XIMAGECODEC_BMP_INDEXED_ON
@@ -12633,8 +12633,8 @@ static void test_codec_bmp_malformed(void)
                 XImage_pixel(&out, 0, 0) == 0xff000000u &&
                 XImage_pixel(&out, 1, 0) == 0xffffffffu,
                 "1-bit BMP maps to Mono and preserves palette order");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
 
     b = bmp_make(66, 62, 40, 8, 1, 1, 1, 0);
     if (b) {
@@ -12654,8 +12654,8 @@ static void test_codec_bmp_malformed(void)
                 XImage_pixel(&out, 0, 0) == 0xff000000u &&
                 XImage_pixel(&out, 1, 0) == 0xffffffffu,
                 "1-bit BMP swaps reversed palette polarity like Qt");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
 
     b = bmp_make(62, 58, 40, 8, 1, 1, 1, 0);
     if (b) {
@@ -12673,8 +12673,8 @@ static void test_codec_bmp_malformed(void)
                 XImage_colorCount(&out) == 1 &&
                 XImage_pixel(&out, 0, 0) == 0xff000000u,
                 "1-bit BMP honors a reduced biClrUsed palette");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
 #endif /* XIMAGECODEC_BMP_INDEXED_ON */
 }
 
@@ -12703,8 +12703,8 @@ static void test_codec_bmp_mask_scaling(void)
                     XImageCodecFormat_Bmp, &out) &&
                 XImage_pixel(&out, 0, 0) == 0xff180000u,
                 "RGB555 mask scaling follows Qt bit replication");
-    XImage_deinit_base(&out);
-    if (b) XByteArray_delete_base((XClass*)b);
+    XClassDeinit(&out);
+    if (b) XClassDelete((XClass*)b);
 #endif /* XIMAGECODEC_BMP_INDEXED_ON */
 }
 
@@ -12731,8 +12731,8 @@ static void test_codec_bmp_alpha_semantics(void)
                     XImageCodecFormat_Bmp, &out) &&
                 XImage_pixel(&out, 0, 0) == 0xff112233u,
                 "plain BI_RGB 32-bit BMP keeps pixels opaque");
-    XImage_deinit_base(&out);
-    if (plain) XByteArray_delete_base((XClass*)plain);
+    XClassDeinit(&out);
+    if (plain) XClassDelete((XClass*)plain);
 
     /* V4 头显式声明 0xff000000 Alpha 掩码时，Qt 才读取最高字节。 */
     v4 = bmp_make(126, 122, 108, 1, 1, 1, 32, 0);
@@ -12751,8 +12751,8 @@ static void test_codec_bmp_alpha_semantics(void)
                     XImageCodecFormat_Bmp, &out) &&
                 XImage_pixel(&out, 0, 0) == 0x01112233u,
                 "V4 BI_RGB BMP honors an explicit alpha mask");
-    XImage_deinit_base(&out);
-    if (v4) XByteArray_delete_base((XClass*)v4);
+    XClassDeinit(&out);
+    if (v4) XClassDelete((XClass*)v4);
 }
 
 /**
@@ -12791,9 +12791,9 @@ static void test_codec_bmp_physical_metadata(void)
                 XImage_dotsPerMeterX(&decoded) == 5000 &&
                 XImage_dotsPerMeterY(&decoded) == 6000,
                 "BMP physical resolution metadata round trips");
-    XImage_deinit_base(&decoded);
-    XImage_deinit_base(&source);
-    if (encoded) XByteArray_delete_base((XClass*)encoded);
+    XClassDeinit(&decoded);
+    XClassDeinit(&source);
+    if (encoded) XClassDelete((XClass*)encoded);
 }
 
 #if XIMAGECODEC_ICO_ON
@@ -12856,7 +12856,7 @@ static void test_codec_ico_roundtrip(void)
                         XImageCodecFormat_Unknown,
                         "ICO 截断条目被识别为未知格式");
         }
-        if (malformed) XByteArray_delete_base((XClass*)malformed);
+        if (malformed) XClassDelete((XClass*)malformed);
     }
     /* Qt also accepts palette DIB entries; exercise the 1-bit path and the
        separate AND mask with a compact 2x1 fixture. */
@@ -12883,7 +12883,7 @@ static void test_codec_ico_roundtrip(void)
             d[62u + 5u] = 0xffu;
             d[62u + 6u] = 0xffu;
             d[70u] = 0x40u; /* XOR row: palette index 0 then 1. */
-            XImage_deinit_base(&decoded);
+            XClassDeinit(&decoded);
             XImage_init(&decoded);
             expect_true(XImageCodec_decode(
                             XByteArray_data(indexed),
@@ -12895,11 +12895,11 @@ static void test_codec_ico_roundtrip(void)
                         XImage_pixel(&decoded, 1, 0) == 0xffffffffu,
                         "ICO 1 位调色板 DIB 与 AND mask 解码一致");
         }
-        if (indexed) XByteArray_delete_base((XClass*)indexed);
+        if (indexed) XClassDelete((XClass*)indexed);
     }
-    XImage_deinit_base(&decoded);
-    XImage_deinit_base(&source);
-    if (encoded) XByteArray_delete_base((XClass*)encoded);
+    XClassDeinit(&decoded);
+    XClassDeinit(&source);
+    if (encoded) XClassDelete((XClass*)encoded);
 }
 
 /* 构造一个最小有效 ICO，供畸形目录/资源夹具重复复制。 */
@@ -12913,9 +12913,9 @@ static XByteArray* ico_make_valid_fixture(void)
     XImage_setPixel(&source, 0, 0, 0xff204060u);
     if (encoded)
         ok = XImageCodec_encode(&source, XImageCodecFormat_Ico, -1, encoded);
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
     if (!ok && encoded) {
-        XByteArray_delete_base((XClass*)encoded);
+        XClassDelete((XClass*)encoded);
         encoded = NULL;
     }
     return encoded;
@@ -12931,7 +12931,7 @@ static XByteArray* ico_clone_fixture(const XByteArray* source)
     clone = XByteArray_create();
     if (!clone || !XByteArray_resize_base((XVector*)clone, size)) {
         if (clone)
-            XByteArray_delete_base((XClass*)clone);
+            XClassDelete((XClass*)clone);
         return NULL;
     }
     if (size)
@@ -12947,7 +12947,7 @@ static void ico_expect_probe_reject(XByteArray* candidate, const char* name)
         XImageCodecFormat_Unknown;
     expect_true(rejected, name);
     if (candidate)
-        XByteArray_delete_base((XClass*)candidate);
+        XClassDelete((XClass*)candidate);
 }
 
 static void ico_expect_decode_reject(XByteArray* candidate, const char* name)
@@ -12961,11 +12961,11 @@ static void ico_expect_decode_reject(XByteArray* candidate, const char* name)
             XByteArray_data(candidate),
             XByteArray_size_base((const XContainer*)candidate),
             XImageCodecFormat_Ico, &image) && XImage_isNull(&image);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
     expect_true(rejected, name);
     if (candidate)
-        XByteArray_delete_base((XClass*)candidate);
+        XClassDelete((XClass*)candidate);
 }
 
 /**
@@ -13097,7 +13097,7 @@ static void test_codec_ico_malformed(void)
         ico_expect_decode_reject(c, "ICO zero-entry directory rejected on decode");
     }
 
-    XByteArray_delete_base((XClass*)valid);
+    XClassDelete((XClass*)valid);
 }
 #endif /* XIMAGECODEC_ICO_ON */
 
@@ -13131,9 +13131,9 @@ static void test_image_reader_malformed_bmp(void)
                 "reader returns a partial image for a truncated pixel row like Qt");
     expect_true(XImage_pixel(&image, 0, 0) == 0xff000000u,
                 "truncated reader image keeps zero-filled unread pixels safely");
-    XImage_deinit_base(&image);
-    XImageReader_deinit_base(&reader);
-    if (bytes) XByteArray_delete_base((XClass*)bytes);
+    XClassDeinit(&image);
+    XClassDeinit(&reader);
+    if (bytes) XClassDelete((XClass*)bytes);
     remove(path);
 }
 
@@ -13170,8 +13170,8 @@ static void test_image_reader_invalid_clip_rect(void)
     expect_true(XImageReader_read(&reader, &image) &&
                 XImage_width(&image) == 2 && XImage_height(&image) == 2,
                 "zero-width non-null clip keeps the complete image");
-    XImage_deinit_base(&image);
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&image);
+    XClassDeinit(&reader);
 
     XImageReader_init_file_2(&reader, path, "bmp");
     clip.width = 2;
@@ -13181,10 +13181,10 @@ static void test_image_reader_invalid_clip_rect(void)
     expect_true(XImageReader_read(&reader, &image) &&
                 XImage_width(&image) == 2 && XImage_height(&image) == 2,
                 "zero-height non-null clip keeps the complete image");
-    XImage_deinit_base(&image);
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&image);
+    XClassDeinit(&reader);
 
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
     remove(path);
 }
 #endif /* XIMAGECODEC_BMP_ON */
@@ -13250,9 +13250,9 @@ static void test_codec_reject_malformed(void)
                                                 XImageCodecFormat_Png, &out),
                             "PNG 关键块 CRC 损坏被拒绝");
             }
-            XByteArray_delete_base((XClass*)corruptPng);
+            XClassDelete((XClass*)corruptPng);
         }
-        XImage_deinit_base(&pngSource);
+        XClassDeinit(&pngSource);
     }
 #endif /* XIMAGECODEC_PNG_ON */
 #if XIMAGECODEC_JPEG_ON
@@ -13295,13 +13295,13 @@ static void test_codec_reject_malformed(void)
         }
         expect_true(!XImageCodec_encode(&out, XImageCodecFormat_Jpeg, -1, encoded),
                     "JPEG 空图像编码被拒绝");
-        XImage_deinit_base(&jpegSrc);
+        XClassDeinit(&jpegSrc);
     }
 #endif /* XIMAGECODEC_JPEG_ON */
-    XImage_deinit_base(&out);
-    XImage_deinit_base(&nullImage);
-    if (encoded) XByteArray_delete_base((XClass*)encoded);
-    if (prefixedJpeg) XByteArray_delete_base((XClass*)prefixedJpeg);
+    XClassDeinit(&out);
+    XClassDeinit(&nullImage);
+    if (encoded) XClassDelete((XClass*)encoded);
+    if (prefixedJpeg) XClassDelete((XClass*)prefixedJpeg);
 }
 
 static void test_codec_detect_only(void)
@@ -13342,7 +13342,7 @@ static void test_codec_detect_only(void)
                 XImageCodec_formatFromName_2("svgz") == XImageCodecFormat_Svg &&
                 XImageCodec_formatFromName_2("webp") == XImageCodecFormat_Unknown,
                 "格式名解析大小写/别名/未知");
-    XImage_deinit_base(&out);
+    XClassDeinit(&out);
 }
 
 #if XIMAGECODEC_SVG_ON
@@ -13377,7 +13377,7 @@ static void test_codec_svg_text_encodings(void)
                 "SVG UTF-8 编码解码尺寸正确");
     expect_true(XImageCodec_detect(utf8, sourceSize) == XImageCodecFormat_Svg,
                 "SVG UTF-8 编码自动探测正确");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* UTF-16LE/BE：前两个字节为 BOM，ASCII 代码单元扩展为两个字节。 */
     utf16le[0] = 0xff; utf16le[1] = 0xfe;
@@ -13397,7 +13397,7 @@ static void test_codec_svg_text_encodings(void)
                 "SVG UTF-16LE 编码解码尺寸正确");
     expect_true(XImageCodec_detect(utf16le, size) == XImageCodecFormat_Svg,
                 "SVG UTF-16LE 编码自动探测正确");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(XImageCodec_decode(utf16be, size,
                                    XImageCodecFormat_Svg, &image) &&
@@ -13405,7 +13405,7 @@ static void test_codec_svg_text_encodings(void)
                 "SVG UTF-16BE 编码解码尺寸正确");
     expect_true(XImageCodec_detect(utf16be, size) == XImageCodecFormat_Svg,
                 "SVG UTF-16BE 编码自动探测正确");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* UTF-32LE/BE：前四个字节为 BOM，每个 ASCII 字符占一个标量值。 */
     utf32le[0] = 0xff; utf32le[1] = 0xfe;
@@ -13433,7 +13433,7 @@ static void test_codec_svg_text_encodings(void)
                 "SVG UTF-32LE 编码解码尺寸正确");
     expect_true(XImageCodec_detect(utf32le, size) == XImageCodecFormat_Svg,
                 "SVG UTF-32LE 编码自动探测正确");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(XImageCodec_decode(utf32be, size,
                                    XImageCodecFormat_Svg, &image) &&
@@ -13441,7 +13441,7 @@ static void test_codec_svg_text_encodings(void)
                 "SVG UTF-32BE 编码解码尺寸正确");
     expect_true(XImageCodec_detect(utf32be, size) == XImageCodecFormat_Svg,
                 "SVG UTF-32BE 编码自动探测正确");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 /* 生成 gzip 封装的 SVG，验证 Qt QSvgTinyDocument 同样支持的 SVGZ 路径。 */
@@ -13489,7 +13489,7 @@ static void test_codec_svg_gzip(void)
                 XImage_height(&image) == 2 &&
                 XImage_pixel(&image, 1, 1) == 0xff224466u,
                 "SVGZ gzip decodes vector content");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* QImageReader::imageFormat() reports the compressed plugin key when the
        imageformats plugin layer is enabled; the no-plugin crop deliberately
@@ -13524,7 +13524,7 @@ static const uint8_t kEmbPngA[] = {
     0xc4, 0x1c, 0x00, 0x41, 0x12, 0x14, 0xdf, 0x08, 0x18, 0x95, 0xc3, 0x00, 0x00, 0x00, 0x00, 0x49,
     0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 };
-static const int kEmbPngALen = 151;
+#define kEmbPngALen 151
 static const uint8_t kEmbPngB[] = {
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x21, 0x00, 0x00, 0x00, 0x11, 0x08, 0x02, 0x00, 0x00, 0x00, 0xdc, 0xfc, 0x52,
@@ -13599,7 +13599,7 @@ static const uint8_t kEmbPngB[] = {
     0x82, 0xff, 0x01, 0x29, 0x16, 0x05, 0x20, 0x3c, 0x01, 0xd2, 0xfa, 0x00, 0x00, 0x00, 0x00, 0x49,
     0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 };
-static const int kEmbPngBLen = 1143;
+#define kEmbPngBLen 1143
 static const uint8_t kEmbPngC[] = {
     0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
     0x00, 0x00, 0x00, 0x81, 0x00, 0x00, 0x00, 0x41, 0x08, 0x02, 0x00, 0x00, 0x00, 0x79, 0x2a, 0x50,
@@ -14271,7 +14271,7 @@ static const uint8_t kEmbPngC[] = {
     0x66, 0x6d, 0xdf, 0x4b, 0xfe, 0x0f, 0x07, 0xa7, 0x45, 0xbf, 0x78, 0xd2, 0x58, 0x17, 0x00, 0x00,
     0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
 };
-static const int kEmbPngCLen = 10698;
+#define kEmbPngCLen 10698
 
 /* 真实 PNG 解码覆盖双入口（合并融合）：
  * 1) 磁盘往返——编码→落盘→回读，沿用原六组尺寸（含 1268x844 大图），
@@ -14314,7 +14314,7 @@ static void test_codec_decode_embedded_png(void)
         XImage_fill(&image, 0xff336699u);
         expect_true(XImage_save_2(&image, path, "PNG", -1),
                     "real PNG asset encodes to disk");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
 
         memset(&image, 0, sizeof(image));
         XImage_init(&image);
@@ -14327,7 +14327,7 @@ static void test_codec_decode_embedded_png(void)
             expect_true((sample >> 24) == 0xffu,
                         "real PNG decodes opaque alpha");
         }
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         remove(path);
     }
 
@@ -14346,15 +14346,15 @@ static void test_codec_decode_embedded_png(void)
             expect_true((sample >> 24) == 0xffu,
                         "real PNG decodes opaque alpha");
         }
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
     /* 不存在的文件必须失败 */
     XImage_init(&image);
     expect_true(!XImage_load_2(&image, "assets/not-exist-anyway.png", "png") &&
-                (XImage_deinit_base(&image), XImage_init(&image),
+                (XClassDeinit(&image), XImage_init(&image),
                  !XImage_load_2(&image, "../assets/not-exist-anyway.png", "png")),
                 "nonexistent asset file rejected");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 /* ================ PNG 扩展特性测试 ================ */
 
@@ -14401,8 +14401,8 @@ static void test_codec_png_palette_round_trip(void)
     expect_true(XImage_pixel(&decoded, 0, 0) == 0xffff0000u &&
                 XImage_pixel(&decoded, 1, 1) == 0xff00ff00u,
                 "调色板 PNG 像素颜色还原一致");
-    XImage_deinit_base(&decoded);
-    if (encoded) XByteArray_delete_base((XClass*)encoded);
+    XClassDeinit(&decoded);
+    if (encoded) XClassDelete((XClass*)encoded);
 
     /* 半透明 Indexed8：Qt qpnghandler.cpp:258-286 在读取 tRNS 后仍
        保持 Indexed8 存储，透明度写入颜色表；像素索引不会被展开为
@@ -14438,11 +14438,11 @@ static void test_codec_png_palette_round_trip(void)
                     XImage_pixel(&decoded, 1, 0) == 0xff00ff00u &&
                     XImage_pixel(&decoded, 0, 1) == 0x40ffff00u,
                     "tRNS Alpha 保留");
-        XImage_deinit_base(&decoded);
-        if (encoded) XByteArray_delete_base((XClass*)encoded);
-        XImage_deinit_base(&srcA);
+        XClassDeinit(&decoded);
+        if (encoded) XClassDelete((XClass*)encoded);
+        XClassDeinit(&srcA);
     }
-    XImage_deinit_base(&src);
+    XClassDeinit(&src);
 }
 
 static void test_codec_png_extended_assets(void)
@@ -14521,7 +14521,7 @@ static void test_codec_png_extended_assets(void)
             expect_true(!XImage_isNull(&image) && XImage_pixel(&image, 0, 0) == c->p0,
                         "PNG 扩展资产关键像素一致");
         }
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 
     /* 16 位格式逐通道高字节验证 */
@@ -14556,9 +14556,9 @@ static void test_codec_png_extended_assets(void)
         line = XImage_scanLine(&rgba16, 0);
         expect_true(line[6] == 0xff && line[7] == 0xff && line[15] == 0x80,
                     "16 位 RGBA Alpha 双字节值还原");
-        XImage_deinit_base(&g16);
-        XImage_deinit_base(&rgb16);
-        XImage_deinit_base(&rgba16);
+        XClassDeinit(&g16);
+        XClassDeinit(&rgb16);
+        XClassDeinit(&rgba16);
     }
 }
 
@@ -14584,8 +14584,8 @@ static void test_codec_png_color_metadata(void)
                                                -1, encoded),
                 "PNG 色彩元数据基准编码成功");
     if (!encoded) {
-        XImage_deinit_base(&decoded);
-        XImage_deinit_base(&source);
+        XClassDeinit(&decoded);
+        XClassDeinit(&source);
         return;
     }
     encodedData = (const uint8_t*)XByteArray_data(encoded);
@@ -14629,7 +14629,7 @@ static void test_codec_png_color_metadata(void)
                     fabsf(primaries.m_bluePoint.y - 0.06f) < 0.001f,
                     "PNG cHRM 原色坐标保留");
     }
-    XImage_deinit_base(&decoded);
+    XClassDeinit(&decoded);
 
     /* sRGB 块优先于 gAMA，和 QPngHandlerPrivate::ColorSpaceState 一致。 */
     srgbData[0] = 0;
@@ -14648,7 +14648,7 @@ static void test_codec_png_color_metadata(void)
     colorSpace = XImage_colorSpace(&decoded);
     expect_true(XColorSpace_isSRgb(&colorSpace),
                 "PNG sRGB 元数据覆盖 gAMA");
-    XImage_deinit_base(&decoded);
+    XClassDeinit(&decoded);
 
     /* iCCP 只验证原始 profile 的有界解压与侧车保存；随机字节不是合法
      * ICC 时不应伪造有效 QColorSpace，也不应丢弃 profile 数据。 */
@@ -14725,18 +14725,18 @@ static void test_codec_png_color_metadata(void)
                                 sizeof(profile)),
                         "PNG iCCP profile 读写往返一致");
             if (copiedRoundTrip)
-                XByteArray_delete_base((XClass*)copiedRoundTrip);
+                XClassDelete((XClass*)copiedRoundTrip);
         }
         colorSpace = XImage_colorSpace(&decoded);
         expect_true(!XColorSpace_isValid(&colorSpace),
                     "非法 PNG iCCP 不伪造有效色彩空间");
-        XImage_deinit_base(&roundTrip);
-        XImage_deinit_base(&decoded);
-        if (copiedIcc) XByteArray_delete_base((XClass*)copiedIcc);
-        if (reencoded) XByteArray_delete_base((XClass*)reencoded);
+        XClassDeinit(&roundTrip);
+        XClassDeinit(&decoded);
+        if (copiedIcc) XClassDelete((XClass*)copiedIcc);
+        if (reencoded) XClassDelete((XClass*)reencoded);
     }
-    XByteArray_delete_base((XClass*)encoded);
-    XImage_deinit_base(&source);
+    XClassDelete((XClass*)encoded);
+    XClassDeinit(&source);
 }
 
 static void test_codec_png_text_metadata(void)
@@ -14764,8 +14764,8 @@ static void test_codec_png_text_metadata(void)
                                                -1, encoded),
                 "PNG 文本元数据编码成功");
     if (!encoded) {
-        XImage_deinit_base(&decoded);
-        XImage_deinit_base(&source);
+        XClassDeinit(&decoded);
+        XClassDeinit(&source);
         return;
     }
     bytes = (const uint8_t*)XByteArray_data(encoded);
@@ -14787,9 +14787,9 @@ static void test_codec_png_text_metadata(void)
                 "PNG zTXt 文本值往返一致");
     expect_true(!strcmp(XImage_text_2(&decoded, "Unicode"), unicodeText),
                 "PNG iTXt UTF-8 文本值往返一致");
-    XImage_deinit_base(&decoded);
-    XByteArray_delete_base((XClass*)encoded);
-    XImage_deinit_base(&source);
+    XClassDeinit(&decoded);
+    XClassDelete((XClass*)encoded);
+    XClassDeinit(&source);
 }
 
 /* 对照 Qt 6.8 QImageWriter::setText()/QPngHandler::write：写入器把多次
@@ -14812,13 +14812,13 @@ static void test_codec_png_writer_description(void)
     description = XString_create_utf8("Title: writer title\n\nDescription: writer description");
     memset(&decorated, 0, sizeof(decorated));
     XImage_init(&decorated);
-    XCopy(&decorated, &source);
+    XClassCopy(&decorated, &source);
     expect_true(description && XImage_applyTextDescription(&decorated, description) &&
                 strcmp(XImage_text_2(&decorated, "Title"), "writer title") == 0 &&
                 strcmp(XImage_text_2(&decorated, "Description"), "writer description") == 0,
                 "PNG Description 文本内部解析成功");
-    if (description) XString_delete_base((XClass*)description);
-    XImage_deinit_base(&decorated);
+    if (description) XClassDelete((XClass*)description);
+    XClassDeinit(&decorated);
     XImageWriter_init_file_2(&writer, path, "png");
     XImageWriter_setText_2(&writer, "Title", "  writer title  ");
     XImageWriter_setText_2(&writer, "Description", "  writer description  ");
@@ -14828,7 +14828,7 @@ static void test_codec_png_writer_description(void)
         expect_true(canWrite && didWrite,
                 "QImageWriter PNG Description 文件写入成功");
     }
-    XImageWriter_deinit_base(&writer);
+    XClassDeinit(&writer);
 
     XImageReader_init_file_2(&reader, path, "png");
 #if XIMAGEIOPLUGIN_ON
@@ -14844,14 +14844,14 @@ static void test_codec_png_writer_description(void)
                     !strcmp(XImageReader_text_2(&reader, "Description"),
                             "writer description"),
                     "QImageReader 在 read 前返回 PNG 文本值");
-        if (textKeys) XStringList_delete_base((XClass*)textKeys);
+        if (textKeys) XClassDelete((XClass*)textKeys);
     }
 #else
     /* 裁剪掉 XImageIOPlugin 后没有 QPngHandler 实例，Qt 兼容层不伪造
        Reader 的文本元数据查询；直写/直读 codec 仍在下方单独验证。 */
     expect_true(true, "no-plugin crop leaves PNG Reader text metadata unavailable");
 #endif
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&reader);
 
     memset(&decoded, 0, sizeof(decoded));
     XImage_init(&decoded);
@@ -14861,12 +14861,12 @@ static void test_codec_png_writer_description(void)
                 strcmp(XImage_text_2(&decoded, "Description"),
                        "writer description") == 0,
                 "QImageWriter Description 键值按 Qt simplified 规则往返");
-    XImage_deinit_base(&decoded);
-    XImage_deinit_base(&source);
+    XClassDeinit(&decoded);
+    XClassDeinit(&source);
     pathString = XString_create_utf8(path);
     if (pathString) {
         XFile_remove_static(pathString);
-        XString_delete_base((XClass*)pathString);
+        XClassDelete((XClass*)pathString);
     }
 }
 
@@ -14921,10 +14921,10 @@ static void test_codec_png_writer_options(void)
     }
     expect_true(hasGamma && gammaValue == 45455u,
                 "PNG Gamma 2.2 写出 Qt 兼容 gAMA 定点值");
-    if (fast) XByteArray_delete_base((XClass*)fast);
-    if (slow) XByteArray_delete_base((XClass*)slow);
-    if (gamma) XByteArray_delete_base((XClass*)gamma);
-    XImage_deinit_base(&source);
+    if (fast) XClassDelete((XClass*)fast);
+    if (slow) XClassDelete((XClass*)slow);
+    if (gamma) XClassDelete((XClass*)gamma);
+    XClassDeinit(&source);
 }
 
 #if XIMAGEIOPLUGIN_ON
@@ -14980,17 +14980,17 @@ static void test_codec_png_reader_gamma(void)
         queriedPos = XIODevice_pos_base((XIODevice*)file);
     expect_true(initialPos >= 0 && queriedPos == initialPos,
                 "PNG Gamma 选项查询保持文件设备位置");
-    if (handler) XImageIOHandler_delete_base(handler);
+    if (handler) XClassDelete(handler);
     if (file) {
         XIODevice_close_base((XIODevice*)file);
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
     }
     if (pathString) {
         XFile_remove_static(pathString);
-        XString_delete_base((XClass*)pathString);
+        XClassDelete((XClass*)pathString);
     }
-    if (encoded) XByteArray_delete_base((XClass*)encoded);
-    XImage_deinit_base(&source);
+    if (encoded) XClassDelete((XClass*)encoded);
+    XClassDeinit(&source);
 }
 #endif /* XIMAGEIOPLUGIN_ON */
 
@@ -15017,8 +15017,8 @@ static void test_codec_png_physical_metadata(void)
                                                -1, encoded),
                 "PNG 物理元数据编码成功");
     if (!encoded) {
-        XImage_deinit_base(&decoded);
-        XImage_deinit_base(&source);
+        XClassDeinit(&decoded);
+        XClassDeinit(&source);
         return;
     }
     bytes = (const uint8_t*)XByteArray_data(encoded);
@@ -15041,9 +15041,9 @@ static void test_codec_png_physical_metadata(void)
         expect_true(decodedOffset.x == -17 && decodedOffset.y == 23,
                     "PNG oFFs 有符号偏移往返一致");
     }
-    XImage_deinit_base(&decoded);
-    XByteArray_delete_base((XClass*)encoded);
-    XImage_deinit_base(&source);
+    XClassDeinit(&decoded);
+    XClassDelete((XClass*)encoded);
+    XClassDeinit(&source);
 
     /* 非米制 pHYs 与非像素 oFFs 由 Qt 忽略，后续合法块仍可生效。 */
     {
@@ -15086,9 +15086,9 @@ static void test_codec_png_physical_metadata(void)
                             "PNG 非像素 oFFs 被忽略");
             }
         }
-        XImage_deinit_base(&decoded);
-        if (encoded) XByteArray_delete_base((XClass*)encoded);
-        XImage_deinit_base(&source);
+        XClassDeinit(&decoded);
+        if (encoded) XClassDelete((XClass*)encoded);
+        XClassDeinit(&source);
     }
 }
 #endif /* XIMAGECODEC_ON && XIMAGECODEC_PNG_ON */
@@ -15152,7 +15152,7 @@ static void test_codec_bmp_extended_assets(void)
                         !XImage_loadFromData_2(&image, asset->data,
                                                (int)asset->size, "bmp"),
                         "Qt BMP reader rejects 2-bit palette asset");
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
             continue;
         }
         XImage_init(&image);
@@ -15166,7 +15166,7 @@ static void test_codec_bmp_extended_assets(void)
             uint32_t got = XImage_pixel(&image, pt->x, pt->y);
             expect_true(got == pt->c, "BMP 扩展资产关键像素一致");
         }
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 }
 
@@ -15264,7 +15264,7 @@ static void test_codec_jpeg_extended_assets(void)
                         dr <= c->tol && dg <= c->tol && db <= c->tol,
                         "JPEG 扩展资产采样点逐通道容差内");
         }
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
 }
 
@@ -15282,7 +15282,7 @@ static void test_codec_jpeg_jfif_density(void)
     expect_true(asset != NULL && bytes != NULL,
                 "JPEG JFIF 密度夹具可用");
     if (!asset || !bytes) {
-        if (bytes) XByteArray_delete_base((XClass*)bytes);
+        if (bytes) XClassDelete((XClass*)bytes);
         return;
     }
     expect_true(XByteArray_resize_base((XVector*)bytes, asset->size),
@@ -15290,7 +15290,7 @@ static void test_codec_jpeg_jfif_density(void)
     data = XByteArray_data(bytes);
     if (!data || asset->size < 20) {
         expect_true(false, "JPEG JFIF APP0 头完整");
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         return;
     }
     memcpy(data, asset->data, asset->size);
@@ -15313,7 +15313,7 @@ static void test_codec_jpeg_jfif_density(void)
     expect_true(XImage_dotsPerMeterX(&image) == 11811 &&
                 XImage_dotsPerMeterY(&image) == 5905,
                 "JPEG JFIF dpi 转每米点数与 Qt 一致");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     data[13] = 2;   /* dots/cm */
     data[14] = 0; data[15] = 37;
@@ -15326,8 +15326,8 @@ static void test_codec_jpeg_jfif_density(void)
     expect_true(XImage_dotsPerMeterX(&image) == 3700 &&
                 XImage_dotsPerMeterY(&image) == 4200,
                 "JPEG JFIF dpcm 转每米点数与 Qt 一致");
-    XImage_deinit_base(&image);
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDeinit(&image);
+    XClassDelete((XClass*)bytes);
 }
 
 /* 对齐 Qt 6.8 qjpeghandler.cpp:463-500、957-993：JPEG COM marker
@@ -15383,10 +15383,10 @@ static void test_codec_jpeg_metadata(void)
                 XByteArray_size_base((const XContainer*)copied) == sizeof(icc) &&
                 memcmp(XByteArray_data(copied), icc, sizeof(icc)) == 0,
                 "JPEG APP2 ICC 原始字节往返一致");
-    XImage_deinit_base(&decoded);
-    XImage_deinit_base(&source);
-    if (copied) XByteArray_delete_base((XClass*)copied);
-    if (encoded) XByteArray_delete_base((XClass*)encoded);
+    XClassDeinit(&decoded);
+    XClassDeinit(&source);
+    if (copied) XClassDelete((XClass*)copied);
+    if (encoded) XClassDelete((XClass*)encoded);
 }
 
 /* 对齐 Qt 6.8 qjpeghandler.cpp:813-945、1131-1158：APP1 Exif/TIFF
@@ -15474,7 +15474,7 @@ static void test_codec_svg_vector_render(void)
     expect_true((XImage_pixel(&image, 0, 2) & 0xff0000u) != 0 &&
                 (XImage_pixel(&image, 3, 2) & 0xffu) != 0,
                 "SVG 线性渐变左红右蓝");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* 径向渐变 */
     XImage_init(&image);
@@ -15489,7 +15489,7 @@ static void test_codec_svg_vector_render(void)
     expect_true((XImage_pixel(&image, 3, 3) & 0x00ffffffu) > 0x00f0f0f0u &&
                 (XImage_pixel(&image, 0, 0) & 0xffu) < 0x20u,
                 "SVG 径向渐变中心亮边缘暗");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* 圆形 / 椭圆 */
     XImage_init(&image);
@@ -15500,7 +15500,7 @@ static void test_codec_svg_vector_render(void)
     expect_true(XImage_pixel(&image, 4, 4) == 0xff00ff00u &&
                 XImage_pixel(&image, 0, 0) == 0x00000000u,
                 "SVG circle 中心填充外部透明");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(codec_svg_vector_decode(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"6\">"
@@ -15509,7 +15509,7 @@ static void test_codec_svg_vector_render(void)
     expect_true(XImage_pixel(&image, 4, 2) == 0xff00ff00u &&
                 XImage_pixel(&image, 0, 2) == 0x00000000u,
                 "SVG ellipse 填充与外空白");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* path：三角形 + 圆弧 */
     XImage_init(&image);
@@ -15522,7 +15522,7 @@ static void test_codec_svg_vector_render(void)
         for (int x = 0; x < 8; ++x)
             if (XImage_pixel(&image, x, y) == 0xffff8800u) ++filled;
     expect_true(filled > 6, "SVG path 三角形面积填充");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(codec_svg_vector_decode(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\">"
@@ -15534,7 +15534,7 @@ static void test_codec_svg_vector_render(void)
     expect_true(XImage_pixel(&image, 4, 0) == 0x00000000u &&
                 XImage_pixel(&image, 0, 0) == 0x00000000u,
                 "SVG 圆弧外部空白");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* 多边形 / 折线 */
     XImage_init(&image);
@@ -15544,7 +15544,7 @@ static void test_codec_svg_vector_render(void)
         "SVG polygon 可解码");
     expect_true(XImage_pixel(&image, 4, 3) == 0xffff8800u,
                 "SVG polygon 宽行覆盖");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(codec_svg_vector_decode(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\">"
@@ -15555,7 +15555,7 @@ static void test_codec_svg_vector_render(void)
         for (int x = 0; x < 10; ++x)
             if (XImage_pixel(&image, x, y) == 0xffff0000u) ++filled;
     expect_true(filled > 4, "SVG polyline 描边像素存在");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* 文字 / viewBox / group+transform / 描边 / 透明度 */
     XImage_init(&image);
@@ -15568,7 +15568,7 @@ static void test_codec_svg_vector_render(void)
         for (int x = 0; x < 20; ++x)
             if (XImage_pixel(&image, x, y) == 0xff000000u) ++filled;
     expect_true(filled > 4, "SVG text 点阵像素存在");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(codec_svg_vector_decode(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 10 10\">"
@@ -15578,7 +15578,7 @@ static void test_codec_svg_vector_render(void)
                 XImage_pixel(&image, 0, 9) == 0xff123456u &&
                 XImage_pixel(&image, 4, 0) == 0xff123456u,
                 "SVG viewBox 尺寸与内容一致");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(codec_svg_vector_decode(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"8\" height=\"8\">"
@@ -15589,7 +15589,7 @@ static void test_codec_svg_vector_render(void)
                 XImage_pixel(&image, 5, 5) == 0xff123456u &&
                 XImage_pixel(&image, 0, 0) == 0x00000000u,
                 "SVG group transform 平移生效");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(codec_svg_vector_decode(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"10\" height=\"10\">"
@@ -15600,7 +15600,7 @@ static void test_codec_svg_vector_render(void)
                 XImage_pixel(&image, 7, 7) == 0xffff0000u &&
                 XImage_pixel(&image, 5, 5) == 0x00000000u,
                 "SVG 描边边框与内部空白");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init(&image);
     expect_true(codec_svg_vector_decode(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"4\" height=\"4\">"
@@ -15609,7 +15609,7 @@ static void test_codec_svg_vector_render(void)
     v = XImage_pixel(&image, 2, 2);
     expect_true((v >> 24) == 0x80u && (v & 0x00ff0000u) != 0,
                 "SVG opacity=0.5 得到 0x80 Alpha");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XIMAGECODEC_SVG_ON && XIMAGECODEC_SVG_VECTOR_ON */
 
@@ -15663,7 +15663,7 @@ static void test_codec_gif_animation(void)
                 "多帧 GIF 单帧解码");
     expect_true(XImage_pixel(&image, 0, 0) == 0xffffffffu,
                 "单帧解码取首帧内容");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* 动画解码后 GIF 编码往返不受影响 */
     bytes = XByteArray_create();
@@ -15691,8 +15691,8 @@ static void test_codec_gif_animation(void)
                     shortDelayAnim->frames[0].delayMs == 100,
                 "GIF 小于 2 个百分之一秒的延迟钳制为 100ms");
     if (shortDelayAnim) XImageCodecAnimation_delete(shortDelayAnim);
-    XImage_deinit_base(&image);
-    if (bytes) XByteArray_delete_base((XClass*)bytes);
+    XClassDeinit(&image);
+    if (bytes) XClassDelete((XClass*)bytes);
 
     /* 上层 XMovie 必须真正消费读取器的 GIF 帧，而不是只报告 codec 能力。 */
     movieName = XString_create_utf8("xgui_movie_anim.gif");
@@ -15724,8 +15724,8 @@ static void test_codec_gif_animation(void)
                                 gifHandler, XImageIOHandlerOption_Animation,
                                 &animationOption) && animationOption.boolean,
                         "内置 GIF 处理器 Animation 选项返回 true");
-            if (gifHandler) XImageIOHandler_delete_base(gifHandler);
-            if (gifFormat) XString_delete_base((XClass*)gifFormat);
+            if (gifHandler) XClassDelete(gifHandler);
+            if (gifFormat) XClassDelete((XClass*)gifFormat);
             if (handlerOpened)
                 XIODevice_close_base((XIODevice*)&movieFile);
         }
@@ -15781,13 +15781,13 @@ static void test_codec_gif_animation(void)
                             !XImageReader_canRead(&reader) &&
                             XImageReader_currentImageNumber(&reader) == 3,
                             "XImageReader 末帧之后 read 返回失败并保持帧号");
-                XImage_deinit_base(&third);
-                XImage_deinit_base(&fourth);
-                XImage_deinit_base(&afterLast);
+                XClassDeinit(&third);
+                XClassDeinit(&fourth);
+                XClassDeinit(&afterLast);
             }
-            XImage_deinit_base(&first);
-            XImage_deinit_base(&second);
-            XImageReader_deinit_base(&reader);
+            XClassDeinit(&first);
+            XClassDeinit(&second);
+            XClassDeinit(&reader);
         }
         {
             XImageReader jumpReader;
@@ -15800,8 +15800,8 @@ static void test_codec_gif_animation(void)
                         XImageReader_currentImageNumber(&jumpReader) == 2 &&
                         XImage_pixel(&jumped, 3, 0) == 0xffffffffu,
                         "XImageReader jumpToImage 后 read 返回目标帧");
-            XImage_deinit_base(&jumped);
-            XImageReader_deinit_base(&jumpReader);
+            XClassDeinit(&jumped);
+            XClassDeinit(&jumpReader);
         }
     XMovie_init_file_2(&movie, "xgui_movie_anim.gif", "gif");
         movieFormats = XMovie_supportedFormats();
@@ -15814,7 +15814,7 @@ static void test_codec_gif_animation(void)
                                                    XChar_CaseInsensitive),
                     "QMovie supportedFormats 过滤静态 BMP 格式");
         if (movieFormats)
-            XStringList_delete_base((XClass*)movieFormats);
+            XClassDelete((XClass*)movieFormats);
         expect_true(XMovie_frameCount(&movie) == 4 &&
                     XMovie_loopCount(&movie) == -1,
                     "XMovie 暴露 GIF 帧数/循环次数");
@@ -15826,13 +15826,13 @@ static void test_codec_gif_animation(void)
                     XMovie_currentFrameNumber(&movie) == 1 &&
                     XMovie_nextFrameDelay(&movie) == 200,
                     "XMovie jumpToNextFrame 切换真实 GIF 帧");
-        XMovie_deinit_base(&movie);
+        XClassDeinit(&movie);
         XFile_remove_static(movieName);
     }
     else
         expect_true(false, "XMovie GIF 夹具文件打开成功");
-    XClass_deinit_base((XClass*)&movieFile);
-    if (movieName) XString_delete_base((XClass*)movieName);
+    XClassDeinit((XClass*)&movieFile);
+    if (movieName) XClassDelete((XClass*)movieName);
 
     /* Qt _q_loadNextFrame() 在有限动画结束后复位下一帧游标；再次
        start() 必须重新读取第 0 帧，而不能继续请求末帧之后的编号。 */
@@ -15867,14 +15867,14 @@ static void test_codec_gif_animation(void)
             expect_true(XMovie_state(&singleMovie) == XMovieState_Running &&
                             XMovie_currentFrameNumber(&singleMovie) == 0,
                         "有限 GIF 结束后再次 start 从第 0 帧恢复");
-            if (singleMovieInitialized) XMovie_deinit_base(&singleMovie);
+            if (singleMovieInitialized) XClassDeinit(&singleMovie);
             XFile_remove_static(singleMovieName);
         } else {
             expect_true(false, "有限 GIF 夹具文件打开成功");
         }
-        XClass_deinit_base((XClass*)&singleMovieFile);
+        XClassDeinit((XClass*)&singleMovieFile);
         if (singleMovieName)
-            XString_delete_base((XClass*)singleMovieName);
+            XClassDelete((XClass*)singleMovieName);
     }
 }
 #endif /* XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON */
@@ -15911,11 +15911,11 @@ static void test_codec_upper_layer_files(void)
                         XImage_pixel(&loaded, 2, 0) == 0xff336699u,
                         "XImage 文件往返像素一致（各格式）");
         }
-        XImage_deinit_base(&loaded);
+        XClassDeinit(&loaded);
         { XString* f = XString_create_utf8(files[i]);
-          XFile_remove_static(f); if (f) XString_delete_base((XClass*)f); }
+          XFile_remove_static(f); if (f) XClassDelete((XClass*)f); }
     }
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
 }
 
 static void test_codec_upper_layer_devices(void)
@@ -15948,10 +15948,10 @@ static void test_codec_upper_layer_devices(void)
             expect_true(XImageWriter_canWrite(&writer) &&
                         XImageWriter_write(&writer, &source),
                         "XImageWriter 设备写（各格式）");
-            XImageWriter_deinit_base(&writer);
+            XClassDeinit(&writer);
             XIODevice_close_base((XIODevice*)&file);
         }
-        XClass_deinit_base((XClass*)&file);
+        XClassDeinit((XClass*)&file);
 
         XFile_init_2(&file, fileName);
         if (XFile_open_2(&file, XIODevice_ReadOnly, 0)) {
@@ -15969,15 +15969,15 @@ static void test_codec_upper_layer_devices(void)
                         "XImageReader 设备读（各格式）");
             expect_true(XImage_width(&loaded) == 2 && XImage_height(&loaded) == 2,
                         "XImageReader 设备往返保持尺寸（各格式）");
-            XImage_deinit_base(&loaded);
-            XImageReader_deinit_base(&reader);
+            XClassDeinit(&loaded);
+            XClassDeinit(&reader);
             XIODevice_close_base((XIODevice*)&file);
         }
-        XClass_deinit_base((XClass*)&file);
+        XClassDeinit((XClass*)&file);
         XFile_remove_static(fileName);
-        XString_delete_base((XClass*)fileName);
+        XClassDelete((XClass*)fileName);
     }
-    XImage_deinit_base(&source);
+    XClassDeinit(&source);
 }
 
 /* Qt 的 SVG 处理器允许 XML 声明/注释出现在根元素之前；前缀超过
@@ -16022,14 +16022,14 @@ static void test_image_reader_long_svg_prelude(void)
     if (fallbackAdded)
         XImagePluginRegistry_removePlugin((XImageIOPlugin*)fallbackPlugin);
     if (fallbackPlugin)
-        XImageIOPlugin_delete_base((XImageIOPlugin*)fallbackPlugin);
+        XClassDelete((XImageIOPlugin*)fallbackPlugin);
 #else
     expect_true(format == NULL,
                 "裁剪插件后长 XML 前缀不伪造处理器格式名");
 #endif
     fileName = XString_create_utf8("xgui_long_svg_prelude.svg");
     XFile_remove_static(fileName);
-    if (fileName) XString_delete_base((XClass*)fileName);
+    if (fileName) XClassDelete((XClass*)fileName);
 }
 
 #endif /* XIMAGECODEC_ON */
@@ -16083,7 +16083,7 @@ static void test_image_equals_qt_semantics(void)
     XImage_init_ex(&argbLeft, 2, 1, XImageFormat_ARGB32);
     XImage_setPixel(&argbLeft, 0, 0, 0x80402010u);
     XImage_setPixel(&argbLeft, 1, 0, 0xff102030u);
-    XCopy(&argbRight, &argbLeft);
+    XClassCopy(&argbRight, &argbLeft);
     expect_true(XImage_equals(&argbLeft, &argbRight) &&
                 !XImage_notEquals(&argbLeft, &argbRight),
                 "QImage equality accepts shared pixel data");
@@ -16157,16 +16157,16 @@ static void test_image_equals_qt_semantics(void)
     expect_true(XImage_width(&swapLeft) == 2,
                 "XImage swap ignores a null operand");
 
-    XImage_deinit_base(&paddedRight);
-    XImage_deinit_base(&paddedLeft);
-    XImage_deinit_base(&swapRight);
-    XImage_deinit_base(&swapLeft);
-    XImage_deinit_base(&rgbRight);
-    XImage_deinit_base(&rgbLeft);
-    XImage_deinit_base(&indexedRight);
-    XImage_deinit_base(&indexedLeft);
-    XImage_deinit_base(&argbRight);
-    XImage_deinit_base(&argbLeft);
+    XClassDeinit(&paddedRight);
+    XClassDeinit(&paddedLeft);
+    XClassDeinit(&swapRight);
+    XClassDeinit(&swapLeft);
+    XClassDeinit(&rgbRight);
+    XClassDeinit(&rgbLeft);
+    XClassDeinit(&indexedRight);
+    XClassDeinit(&indexedLeft);
+    XClassDeinit(&argbRight);
+    XClassDeinit(&argbLeft);
 }
 
 static void test_image_pixel_contract(void)
@@ -16407,7 +16407,7 @@ static void test_image_pixel_contract(void)
         expect_true(((pixel >> 16) & 0xffu) >= 185u &&
                     ((pixel >> 16) & 0xffu) <= 188u,
                     "QImage color transform applies a custom Gamma curve");
-        XImage_deinit_base(&transferTarget);
+        XClassDeinit(&transferTarget);
         XImage_init(&transferTarget);
         target = XColorSpace_create_named(XColorSpaceNamed_ProPhotoRgb);
         XImage_convertedToColorSpace_ex(&transferSource, target,
@@ -16417,7 +16417,7 @@ static void test_image_pixel_contract(void)
         expect_true(((pixel >> 16) & 0xffu) >= 171u &&
                     ((pixel >> 16) & 0xffu) <= 175u,
                     "QImage color transform applies the ProPhoto curve");
-        XImage_deinit_base(&transferTarget);
+        XClassDeinit(&transferTarget);
         XImage_init(&transferTarget);
         target = XColorSpace_create_named(XColorSpaceNamed_Bt2020);
         XImage_convertedToColorSpace_ex(&transferSource, target,
@@ -16427,7 +16427,7 @@ static void test_image_pixel_contract(void)
         expect_true(((pixel >> 16) & 0xffu) >= 178u &&
                     ((pixel >> 16) & 0xffu) <= 182u,
                     "QImage color transform applies the BT.2020 curve");
-        XImage_deinit_base(&transferTarget);
+        XClassDeinit(&transferTarget);
         XImage_init(&transferTarget);
         target = XColorSpace_create_named(XColorSpaceNamed_Bt2100Hlg);
         XImage_convertedToColorSpace_ex(&transferSource, target,
@@ -16437,7 +16437,7 @@ static void test_image_pixel_contract(void)
         expect_true(((pixel >> 16) & 0xffu) >= 89u &&
                     ((pixel >> 16) & 0xffu) <= 92u,
                     "QImage color transform applies the HLG curve");
-        XImage_deinit_base(&transferTarget);
+        XClassDeinit(&transferTarget);
         XImage_init(&transferTarget);
         target = XColorSpace_create_named(XColorSpaceNamed_Bt2100Pq);
         XImage_convertedToColorSpace_ex(&transferSource, target,
@@ -16530,7 +16530,7 @@ static void test_image_pixel_contract(void)
                         XImage_format(&explicitFormat) == XImageFormat_Grayscale8 &&
                         XColorSpace_colorModel(&explicitSpace) == XColorSpaceModel_Gray,
                         "QImage explicit color-space conversion selects requested grayscale format");
-            XImage_deinit_base(&explicitFormat);
+            XClassDeinit(&explicitFormat);
             XImage_convertedToColorSpace_ex(&premultiplied, targetGray,
                                             XImageFormat_ARGB32, 0,
                                             &explicitFormat);
@@ -16551,7 +16551,7 @@ static void test_image_pixel_contract(void)
         expect_true(allText && XString_equals_utf8(allText, "foo: bar\n\nfoo2: bar2",
                                                     XChar_CaseSensitive),
                     "XImage text(NULL) aggregates all metadata");
-        if (allText) XString_delete_base((XClass*)allText);
+        if (allText) XClassDelete((XClass*)allText);
     }
     XImage_convertToFormat(&premultiplied, XImageFormat_RGB32, 0, &converted);
     expect_true(XImage_textCount(&converted) == 2 &&
@@ -16566,7 +16566,7 @@ static void test_image_pixel_contract(void)
                     XString_equals_utf8(convertedText, "foo: bar\n\nfoo2: bar2",
                                         XChar_CaseSensitive),
                     "convertToFormat preserves aggregated image text");
-        if (convertedText) XString_delete_base((XClass*)convertedText);
+        if (convertedText) XClassDelete((XClass*)convertedText);
     }
     {
         XColorSpace convertedSpace = XImage_colorSpace(&converted);
@@ -16607,7 +16607,7 @@ static void test_image_pixel_contract(void)
         expect_true(channel == 0x8080u,
                     "fill(uint) keeps unpremultiplied alpha in RGBA64 storage");
     }
-    XImage_deinit_base(&pm64);
+    XClassDeinit(&pm64);
 
     memset(&rgba, 0, sizeof(rgba));
     XImage_init_ex(&rgba, 2, 1, XImageFormat_RGBA8888);
@@ -16630,7 +16630,7 @@ static void test_image_pixel_contract(void)
     XImage_setPixel(&rgba, 1, 0, 0x80112233u);
     expect_true(XImage_hasAlpha(&rgba), "alpha detection covers RGBA8888");
     XImage_setDevicePixelRatio(&rgba, 2.0f);
-    XCopy(&copy, &rgba);
+    XClassCopy(&copy, &rgba);
     expect_true(XImage_devicePixelRatio(&copy) == 2.0f,
                 "device pixel ratio survives image copy");
     {
@@ -16713,7 +16713,7 @@ static void test_image_pixel_contract(void)
                     XImage_color(&indexedColorTransformed, 0) != firstColor &&
                     XImage_color(&indexedSource, 0) == firstColor,
                     "QImage Indexed color transform updates the palette and preserves indices");
-        XImage_deinit_base(&indexedSource);
+        XClassDeinit(&indexedSource);
     }
     XImage_init_ex(&grayscale, 1, 1, XImageFormat_Grayscale8);
     XImage_setColorSpace(&grayscale, XColorSpace_sRgb());
@@ -16738,7 +16738,7 @@ static void test_image_pixel_contract(void)
             (XPointF){ 0.3127f, 0.3290f }, XColorSpaceTransfer_Linear, 0.0f);
         /* XImage_init_ex 仅初始化未构造对象；复用已有对象前必须先释放旧数据，
          * 这样共享数据分离产生的克隆也能在引用计数归零时正确回收。 */
-        XImage_deinit_base(&rgba);
+        XClassDeinit(&rgba);
         XImage_init_ex(&rgba, 1, 1, XImageFormat_ARGB32);
         XImage_setColorSpace(&rgba, graySpace);
     }
@@ -16787,7 +16787,7 @@ static void test_image_pixel_contract(void)
         XImage_fill(&mono, 2u);
         expect_true(XImage_pixelIndex(&mono, 0, 0) == 0,
                     "fill(uint) clears monochrome pixels for an even value");
-        XImage_deinit_base(&mono);
+        XClassDeinit(&mono);
     }
     XImage_setPixel(&indexed, 0, 0, 1);
     expect_true(XImage_pixelIndex(&indexed, 0, 0) == 1 &&
@@ -16813,7 +16813,7 @@ static void test_image_pixel_contract(void)
                     XImage_format(&reinterpret) == XImageFormat_ARGB32 &&
                     XImage_cacheKey(&reinterpret) == reinterpretKey,
                     "reinterpretAsFormat rejects a different storage depth");
-        XCopy(&reinterpretCopy, &reinterpret);
+        XClassCopy(&reinterpretCopy, &reinterpret);
         expect_true(XImage_reinterpretAsFormat(&reinterpretCopy, XImageFormat_RGB32) &&
                     XImage_format(&reinterpretCopy) == XImageFormat_RGB32 &&
                     XImage_format(&reinterpret) == XImageFormat_ARGB32 &&
@@ -16825,26 +16825,26 @@ static void test_image_pixel_contract(void)
                 XImage_colorCount(&indexed) == 2,
                 "reinterpretAsFormat retains the existing color table");
 
-    XImage_deinit_base(&copy);
-    XImage_deinit_base(&converted);
-    XImage_deinit_base(&premultiplied);
-    XImage_deinit_base(&indexed);
-    XImage_deinit_base(&indexedColorTransformed);
-    XImage_deinit_base(&grayscale);
-    XImage_deinit_base(&cmyk);
-    XImage_deinit_base(&sameSpace);
-    XImage_deinit_base(&grayTransformed);
-    XImage_deinit_base(&reinterpret);
-    XImage_deinit_base(&reinterpretCopy);
-    XImage_deinit_base(&mono);
-    XImage_deinit_base(&monoSwap);
-    XImage_deinit_base(&gray8);
-    XImage_deinit_base(&gray8Swap);
-    XImage_deinit_base(&alpha8);
-    XImage_deinit_base(&alpha8Swap);
-    XImage_deinit_base(&rgba);
-    XImage_deinit_base(&transferTarget);
-    XImage_deinit_base(&transferSource);
+    XClassDeinit(&copy);
+    XClassDeinit(&converted);
+    XClassDeinit(&premultiplied);
+    XClassDeinit(&indexed);
+    XClassDeinit(&indexedColorTransformed);
+    XClassDeinit(&grayscale);
+    XClassDeinit(&cmyk);
+    XClassDeinit(&sameSpace);
+    XClassDeinit(&grayTransformed);
+    XClassDeinit(&reinterpret);
+    XClassDeinit(&reinterpretCopy);
+    XClassDeinit(&mono);
+    XClassDeinit(&monoSwap);
+    XClassDeinit(&gray8);
+    XClassDeinit(&gray8Swap);
+    XClassDeinit(&alpha8);
+    XClassDeinit(&alpha8Swap);
+    XClassDeinit(&rgba);
+    XClassDeinit(&transferTarget);
+    XClassDeinit(&transferSource);
 }
 
 /**
@@ -16895,10 +16895,10 @@ static void test_image_color_transform_native_precision(void)
                 nativeChannels[0] != (uint16_t)(nativeChannels[0] & 0xff00u),
                 "QImage RGBA64 color transform preserves native low channel bits");
 
-    XImage_deinit_base(&compat64);
-    XImage_deinit_base(&compatResult);
-    XImage_deinit_base(&nativeResult);
-    XImage_deinit_base(&source);
+    XClassDeinit(&compat64);
+    XClassDeinit(&compatResult);
+    XClassDeinit(&nativeResult);
+    XClassDeinit(&source);
 }
 
 /**
@@ -17025,14 +17025,14 @@ static void test_image_color_transform_float_precision(void)
                 directIntegerChannels[3] <= 49153u,
                 "QImage direct floating-to-RGBA64 format conversion preserves precision");
 
-    XImage_deinit_base(&directInteger);
-    XImage_deinit_base(&integerResult);
-    XImage_deinit_base(&packedResult);
-    XImage_deinit_base(&packedSource);
-    XImage_deinit_base(&extendedResult);
-    XImage_deinit_base(&extendedSource);
-    XImage_deinit_base(&transformed);
-    XImage_deinit_base(&source);
+    XClassDeinit(&directInteger);
+    XClassDeinit(&integerResult);
+    XClassDeinit(&packedResult);
+    XClassDeinit(&packedSource);
+    XClassDeinit(&extendedResult);
+    XClassDeinit(&extendedSource);
+    XClassDeinit(&transformed);
+    XClassDeinit(&source);
 }
 
 /**
@@ -17110,7 +17110,7 @@ static void test_image_color_profile_sidecar(void)
                                              NULL, NULL, NULL),
                 "LUT 输出缓冲区不足时报告失败");
 
-    XCopy(&clone, &source);
+    XClassCopy(&clone, &source);
     expect_true(XImageCodecInternal_copyIccProfile(&clone, &aliasIccOut) &&
                 XByteArray_size_base((const XContainer*)&aliasIccOut) == sizeof(iccData) &&
                 memcmp(XByteArray_data(&aliasIccOut), iccData, sizeof(iccData)) == 0,
@@ -17119,7 +17119,7 @@ static void test_image_color_profile_sidecar(void)
     memset(&replacement, 0, sizeof(replacement));
     replacement.m_iccData = replacementIcc;
     replacement.m_iccSize = sizeof(replacementIcc);
-    XCopy(&alias, &source);
+    XClassCopy(&alias, &source);
     expect_true(XImageCodecInternal_setColorProfile(&alias, &replacement) &&
                 XImageCodecInternal_copyIccProfile(&alias, &aliasIccOut) &&
                 XByteArray_size_base((const XContainer*)&aliasIccOut) == sizeof(replacementIcc) &&
@@ -17155,12 +17155,12 @@ static void test_image_color_profile_sidecar(void)
                 elements == 0u && bits == 0u && !twoWay,
                 "传入空规格可安全清除侧车资源");
 
-    XByteArray_deinit_base((XClass*)&clearedIccOut);
-    XByteArray_deinit_base((XClass*)&aliasIccOut);
-    XByteArray_deinit_base((XClass*)&iccOut);
-    XImage_deinit_base(&clone);
-    XImage_deinit_base(&alias);
-    XImage_deinit_base(&source);
+    XClassDeinit((XClass*)&clearedIccOut);
+    XClassDeinit((XClass*)&aliasIccOut);
+    XClassDeinit((XClass*)&iccOut);
+    XClassDeinit(&clone);
+    XClassDeinit(&alias);
+    XClassDeinit(&source);
 }
 #endif /* XIMAGECODEC_ON */
 
@@ -17321,7 +17321,7 @@ static void test_image_mask_qt_semantics(void)
     expect_true(XImage_pixelIndex(&premultipliedHeuristicMask, 1, 1) == 0,
                 "QImage createHeuristicMask compares raw premultiplied RGB");
 
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     XImage_init_ex(&image, 5, 5, XImageFormat_ARGB32);
     XImage_fill(&image, 0xff000000u);
     for (int y = 1; y <= 3; ++y)
@@ -17339,20 +17339,20 @@ static void test_image_mask_qt_semantics(void)
                 XImage_pixelIndex(&heuristicLoose, 2, 2) == 1,
                 "QImage heuristic mask clipTight=false keeps object edge neighbors");
 
-    XImage_deinit_base(&heuristicLoose);
-    XImage_deinit_base(&heuristic);
-    XImage_deinit_base(&diffuseMask);
-    XImage_deinit_base(&diffuseSource);
-    XImage_deinit_base(&rgbMaskOut);
-    XImage_deinit_base(&rgbMask);
-    XImage_deinit_base(&premultipliedMask);
-    XImage_deinit_base(&premultipliedMaskSource);
-    XImage_deinit_base(&premultipliedHeuristicMask);
-    XImage_deinit_base(&premultipliedHeuristicSource);
-    XImage_deinit_base(&mono);
-    XImage_deinit_base(&rgb32);
-    XImage_deinit_base(&alphaMask);
-    XImage_deinit_base(&image);
+    XClassDeinit(&heuristicLoose);
+    XClassDeinit(&heuristic);
+    XClassDeinit(&diffuseMask);
+    XClassDeinit(&diffuseSource);
+    XClassDeinit(&rgbMaskOut);
+    XClassDeinit(&rgbMask);
+    XClassDeinit(&premultipliedMask);
+    XClassDeinit(&premultipliedMaskSource);
+    XClassDeinit(&premultipliedHeuristicMask);
+    XClassDeinit(&premultipliedHeuristicSource);
+    XClassDeinit(&mono);
+    XClassDeinit(&rgb32);
+    XClassDeinit(&alphaMask);
+    XClassDeinit(&image);
 }
 
 /**
@@ -17475,7 +17475,7 @@ static void test_image_format_mapping_and_color_fill(void)
     memset(&alphaSmallSource, 0, sizeof(alphaSmallSource));
     XImage_init_ex(&alphaSmallSource, 1, 1, XImageFormat_Alpha8);
     XImage_bits(&alphaSmallSource)[0] = 0x80u;
-    XImage_deinit_base(&alphaTarget16);
+    XClassDeinit(&alphaTarget16);
     XImage_init_ex(&alphaTarget16, 2, 2, XImageFormat_RGB32);
     XImage_fill(&alphaTarget16, 0xff336699u);
     expect_true(XImage_setAlphaChannel(&alphaTarget16, &alphaSmallSource) &&
@@ -17522,7 +17522,7 @@ static void test_image_format_mapping_and_color_fill(void)
                     stored[2] == precise.m_comp3 &&
                     stored[3] == precise.m_alpha,
                     "QImage fill(QColor) preserves native RGBA64 precision");
-        XImage_deinit_base(&highFill64);
+        XClassDeinit(&highFill64);
     }
     {
         XImage rawFillX64;
@@ -17537,7 +17537,7 @@ static void test_image_format_mapping_and_color_fill(void)
                     storedX64[2] == 0x3333u &&
                     storedX64[3] == 0x8080u,
                     "QImage fill(uint) preserves RGBX64 input alpha storage");
-        XImage_deinit_base(&rawFillX64);
+        XClassDeinit(&rawFillX64);
     }
 
     memset(&indexed, 0, sizeof(indexed));
@@ -17622,7 +17622,7 @@ static void test_image_format_mapping_and_color_fill(void)
                         "QImage fill(QColor) preserves gray16 channel precision");
         }
     }
-    XImage_deinit_base(&highDepth);
+    XClassDeinit(&highDepth);
     XImage_init_ex(&highDepth, 1, 1, XImageFormat_RGBA64);
     {
         const uint16_t rgba64[4] = { 0x1234u, 0x5678u, 0x9abcu, 0xdef0u };
@@ -17636,7 +17636,7 @@ static void test_image_format_mapping_and_color_fill(void)
                     highColor.m_alpha == rgba64[3],
                     "QImage pixelColor preserves RGBA64 channels");
     }
-    XImage_deinit_base(&highDepth);
+    XClassDeinit(&highDepth);
     XImage_init_ex(&highDepth, 1, 1, XImageFormat_RGBA64);
     {
         XColor precise = XColor_create();
@@ -17654,7 +17654,7 @@ static void test_image_format_mapping_and_color_fill(void)
                     stored[3] == precise.m_alpha,
                     "QImage setPixelColor preserves native RGBA64 precision");
     }
-    XImage_deinit_base(&highDepth);
+    XClassDeinit(&highDepth);
     XImage_init_ex(&highDepth, 1, 1, XImageFormat_RGBA64_Premultiplied);
     {
         XColor precise = XColor_create();
@@ -17670,22 +17670,22 @@ static void test_image_format_mapping_and_color_fill(void)
                     stored[2] == 0x091au && stored[3] == 0x8000u,
                     "QImage setPixelColor premultiplies RGBA64 channels");
     }
-    XImage_deinit_base(&highDepth);
+    XClassDeinit(&highDepth);
 
-    XImage_deinit_base(&alphaTarget16);
-    XImage_deinit_base(&alphaSmallSource);
-    XImage_deinit_base(&alphaTarget8);
-    XImage_deinit_base(&alphaIndexed);
-    XImage_deinit_base(&alphaSource);
-    XImage_deinit_base(&alphaTarget);
+    XClassDeinit(&alphaTarget16);
+    XClassDeinit(&alphaSmallSource);
+    XClassDeinit(&alphaTarget8);
+    XClassDeinit(&alphaIndexed);
+    XClassDeinit(&alphaSource);
+    XClassDeinit(&alphaTarget);
 
     XImage_mirror(&image, false, false);
     XImage_rgbSwap(&image);
     expect_true(XImage_width(&image) == 1 && XImage_height(&image) == 1,
                 "QImage mirror/rgbSwap compatibility aliases preserve the image");
-    XImage_deinit_base(&mono);
-    XImage_deinit_base(&indexed);
-    XImage_deinit_base(&image);
+    XClassDeinit(&mono);
+    XClassDeinit(&indexed);
+    XClassDeinit(&image);
 }
 
 
@@ -17759,13 +17759,13 @@ static void test_image_text_metadata_sorted_map(void)
         expect_true(XStringList_size_base((const XContainer*)textKeys) == 5 &&
                     XImage_textCount(&image) == 4,
                     "QImage textKeys result detaches on list mutation");
-        XStringList_delete_base((XClass*)textKeys);
+        XClassDelete((XClass*)textKeys);
     }
     emptyTextKeys = XImage_textKeys(NULL);
     expect_true(emptyTextKeys &&
                 XStringList_size_base((const XContainer*)emptyTextKeys) == 0,
                 "null QImage textKeys returns an empty list");
-    if (emptyTextKeys) XStringList_delete_base((XClass*)emptyTextKeys);
+    if (emptyTextKeys) XClassDelete((XClass*)emptyTextKeys);
 
     expect_true(XImage_text_2(&image, "alpha") &&
                 strcmp(XImage_text_2(&image, "alpha"), "22") == 0,
@@ -17839,7 +17839,7 @@ static void test_image_text_metadata_sorted_map(void)
                 "QImage copy treats a null QRect as a full metadata-preserving copy");
     }
 
-    XCopy(&copy, &image);
+    XClassCopy(&copy, &image);
     copyTextKey0 = XImage_textKey_const(&copy, 0);
     expect_true(XImage_textCount(&copy) == 4 &&
                 copyTextKey0 && XString_isEmpty_base((const XContainer*)copyTextKey0) &&
@@ -17848,12 +17848,12 @@ static void test_image_text_metadata_sorted_map(void)
                 strcmp(XImage_textKey_2(&copy, 3), "zeta") == 0,
                 "image copy preserves sorted text metadata order");
 
-    XImage_deinit_base(&copy);
-    XImage_deinit_base(&mirrored);
-    XImage_deinit_base(&scaled);
-    XImage_deinit_base(&sameSize);
-    XImage_deinit_base(&nullRectCopy);
-    XImage_deinit_base(&image);
+    XClassDeinit(&copy);
+    XClassDeinit(&mirrored);
+    XClassDeinit(&scaled);
+    XClassDeinit(&sameSize);
+    XClassDeinit(&nullRectCopy);
+    XClassDeinit(&image);
 }
 
 /**
@@ -17932,7 +17932,7 @@ static void test_image_gray_and_metadata_noop_contract(void)
 
     memset(&shared, 0, sizeof(shared));
     XImage_init(&shared);
-    XCopy(&shared, &gray);
+    XClassCopy(&shared, &gray);
     XImage_setText_2(&shared, "Description", "detached gray image");
     expect_true(XImage_cacheKey(&shared) != key &&
                     XImage_cacheKey(&gray) == key &&
@@ -17941,11 +17941,11 @@ static void test_image_gray_and_metadata_noop_contract(void)
                            "detached gray image") == 0,
                 "QImage shared metadata write detaches only the modified image");
 
-    XImage_deinit_base(&shared);
-    XImage_deinit_base(&gray);
-    XImage_deinit_base(&mono);
-    XImage_deinit_base(&indexed);
-    XImage_deinit_base(&nullImage);
+    XClassDeinit(&shared);
+    XClassDeinit(&gray);
+    XClassDeinit(&mono);
+    XClassDeinit(&indexed);
+    XClassDeinit(&nullImage);
 }
 
 
@@ -18087,7 +18087,7 @@ static void test_screen_contract(void)
     list = XScreen_screens();
     expect_true(list != NULL && XVector_size_base((const XContainer*)list) == 0,
                 "注册表默认为空");
-    if (list) XVector_delete_base((XClass*)list);
+    if (list) XClassDelete((XClass*)list);
 
     /* ---------- 方向数学（对标 Qt 6.8.3） ---------- */
     expect_true(XScreen_angleBetween(a, XScreenOrientation_Landscape,
@@ -18178,7 +18178,7 @@ static void test_screen_contract(void)
     name = XScreen_name(a);
     expect_true(name != NULL && strcmp(XString_toUtf8(name), "HDMI-1") == 0,
                 "name 副本");
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
     XScreen_setName(a, NULL);
     expect_true(XScreen_name_const(a) == NULL, "name 可清空");
     XScreen_setName_2(a, "HDMI-1");
@@ -18214,7 +18214,7 @@ static void test_screen_contract(void)
     XScreen_setGeometry(b, &(XRect){0, 0, 600, 800});
     expect_true(XScreen_primaryOrientation(b) == XScreenOrientation_Portrait,
                 "主方向按几何自动推导竖屏");
-    XScreen_delete_base((XClass*)b);
+    XClassDelete((XClass*)b);
 
     /* 几何：物理 DPI = 800/200*25.4 = 101.6 */
     XScreen_setGeometry(a, &(XRect){0, 0, 800, 600});
@@ -18319,7 +18319,7 @@ static void test_screen_contract(void)
     XScreen_register(a);
     list = XScreen_screens();
     expect_true(list != NULL && XVector_size_base((const XContainer*)list) == 1, "注册后 1 个屏幕");
-    if (list) XVector_delete_base((XClass*)list);
+    if (list) XClassDelete((XClass*)list);
     expect_true(XScreen_primaryScreen() == NULL, "注册不自动设置主屏幕");
     XScreen_setPrimary(a);
     expect_true(XScreen_primaryScreen() == a, "setPrimary 后主屏幕为 a");
@@ -18330,12 +18330,12 @@ static void test_screen_contract(void)
     XScreen_register(b); /* 重复注册 no-op */
     list = XScreen_screens();
     expect_true(list != NULL && XVector_size_base((const XContainer*)list) == 2, "注册表去重后 2 个屏幕");
-    if (list) XVector_delete_base((XClass*)list);
+    if (list) XClassDelete((XClass*)list);
 
     /* 默认兄弟语义：自身 + 注册表其它屏幕 */
     list = XScreen_virtualSiblings(a);
     expect_true(list != NULL && XVector_size_base((const XContainer*)list) == 2, "a 的兄弟为 a+b");
-    if (list) XVector_delete_base((XClass*)list);
+    if (list) XClassDelete((XClass*)list);
 
     /* 虚拟几何 = 兄弟几何并集：(10,0,1590,610) */
     vg = XScreen_virtualGeometry(a);
@@ -18389,8 +18389,8 @@ static void test_screen_contract(void)
     XScreen_unregister(a);
     list = XScreen_screens();
     expect_true(list != NULL && XVector_size_base((const XContainer*)list) == 0, "全部退表后注册表为空");
-    if (list) XVector_delete_base((XClass*)list);
-    XScreen_delete_base((XClass*)b); /* 释放注册表区域创建的 b */
+    if (list) XClassDelete((XClass*)list);
+    XClassDelete((XClass*)b); /* 释放注册表区域创建的 b */
 
     /* ---------- 拷贝 / 移动 ---------- */
     copy = XScreen_create_copy(a);
@@ -18403,14 +18403,14 @@ static void test_screen_contract(void)
     XScreen_setName_2(copy, "COPY");
     expect_true(strcmp(XScreen_name_2(a), "HDMI-1") == 0 &&
                 strcmp(XScreen_name_2(copy), "COPY") == 0, "copy 字符串深拷贝");
-    XScreen_delete_base((XClass*)copy);
+    XClassDelete((XClass*)copy);
 
     moved = XScreen_create_move(a);
     expect_true(moved != NULL && XScreen_geometry(moved).x == 10,
                 "move 转移状态");
     expect_true(XScreen_geometry(a).x == 0, "move 后源对象为空");
-    XScreen_delete_base((XClass*)moved);
-    XScreen_delete_base((XClass*)a);
+    XClassDelete((XClass*)moved);
+    XClassDelete((XClass*)a);
 
     /* ---------- 抓屏：真实后端成功时检查尺寸，否则检查 Qt 空图退化 ---------- */
     b = XScreen_create();
@@ -18426,8 +18426,8 @@ static void test_screen_contract(void)
         expect_true(grab != NULL && XPixmap_isNull(grab),
                     "grabWindow 无平台时返回空像素图");
     }
-    if (grab) XPixmap_delete_base((XClass*)grab);
-    XScreen_delete_base((XClass*)b);
+    if (grab) XClassDelete((XClass*)grab);
+    XClassDelete((XClass*)b);
 }
 
 #endif /* XSCREEN_ON */
@@ -18697,7 +18697,7 @@ static void window_send_event(XObject* receiver, XEventType type)
     XEvent* event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type);
     if (!event) return;
     XCoreApplication_sendEvent(receiver, event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
 }
 
 static TestWin* TestWin_create(void)
@@ -18821,7 +18821,7 @@ static void test_window_contract(void)
     title = XWindow_title(w0);
     expect_true(title != NULL && XString_toUtf8_length(title) == 0,
                 "标题默认空字符串");
-    if (title) XString_delete_base((XClass*)title);
+    if (title) XClassDelete((XClass*)title);
     expect_true(XWindow_icon(w0) == NULL, "图标默认 NULL");
 #if XCURSOR_ON
     expect_true(XWindow_cursor(w0) == NULL, "光标默认 NULL");
@@ -18867,7 +18867,7 @@ static void test_window_contract(void)
                 XWindow_requestedFormat(defaultFormatWindow).m_redBufferSize == 13,
                 "新窗口读取进程级默认表面格式");
     if (defaultFormatWindow)
-        XWindow_delete_base((XClass*)defaultFormatWindow);
+        XClassDelete((XClass*)defaultFormatWindow);
     XSurfaceFormat_setDefaultFormat(&savedDefaultFormat);
 
     /* 标志位 */
@@ -18887,21 +18887,21 @@ static void test_window_contract(void)
     title = XWindow_title(w0);
     expect_true(title != NULL && strcmp(XString_toUtf8(title), "First") == 0,
                 "setTitle_2 标题");
-    if (title) XString_delete_base((XClass*)title);
+    if (title) XClassDelete((XClass*)title);
     XWindow_setTitle(w0, NULL);
     title = XWindow_title(w0);
     expect_true(title != NULL && XString_toUtf8_length(title) == 0,
                 "setTitle(NULL) 清空标题");
-    if (title) XString_delete_base((XClass*)title);
+    if (title) XClassDelete((XClass*)title);
 
     XWindow_setFilePath_2(w0, "/tmp/demo.qml");
     path = XWindow_filePath(w0);
     expect_true(path != NULL && strcmp(XString_toUtf8(path), "/tmp/demo.qml") == 0,
                 "filePath 设置");
-    if (path) XString_delete_base((XClass*)path);
+    if (path) XClassDelete((XClass*)path);
     XWindow_setFilePath(w0, NULL);
     path = XWindow_filePath(w0);
-    if (path) XString_delete_base((XClass*)path);
+    if (path) XClassDelete((XClass*)path);
 
     XWindow_setOpacity(w0, 0.5f);
     expect_true(XWindow_opacity(w0) > 0.499f && XWindow_opacity(w0) < 0.501f,
@@ -18935,20 +18935,20 @@ static void test_window_contract(void)
     XWindow_setIcon(w0, &icon);
     iconOut = XWindow_icon(w0);
     expect_true(iconOut != NULL && iconOut != &icon, "icon 深拷贝");
-    if (iconOut) XIcon_delete_base((XClass*)iconOut);
+    if (iconOut) XClassDelete((XClass*)iconOut);
     XWindow_setIcon(w0, NULL);
     expect_true(XWindow_icon(w0) == NULL, "icon 可清空");
-    XIcon_deinit_base(&icon);
+    XClassDeinit(&icon);
 
 #if XCURSOR_ON
     XCursor_init(&cursor);
     XWindow_setCursor(w0, &cursor);
     cursorOut = XWindow_cursor(w0);
     expect_true(cursorOut != NULL && cursorOut != &cursor, "cursor 深拷贝");
-    if (cursorOut) XCursor_delete_base((XClass*)cursorOut);
+    if (cursorOut) XClassDelete((XClass*)cursorOut);
     XWindow_unsetCursor(w0);
     expect_true(XWindow_cursor(w0) == NULL, "cursor 可清空");
-    XCursor_deinit_base(&cursor);
+    XClassDeinit(&cursor);
 #endif /* XCURSOR_ON */
 
     /* ---------- 可见性：overload showEvent/hideEvent 分发 ---------- */
@@ -19016,14 +19016,14 @@ static void test_window_contract(void)
     if (event) {
         XWindow_event_base(&tw->m_base, event);
         expect_true(tw->fallbackCount == 1, "未识别事件经 event_base 分发");
-        XEvent_delete_base((XEvent*)event);
+        XClassDelete((XEvent*)event);
     }
     /* nativeEvent 默认返回 false（未处理） */
     event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_EXPOSE);
     expect_true(event != NULL && !XWindow_nativeEvent_base(&tw->m_base, event),
                 "nativeEvent 默认未处理");
-    if (event) XEvent_delete_base((XEvent*)event);
-    XWindow_delete_base((XClass*)tw);
+    if (event) XClassDelete((XEvent*)event);
+    XClassDelete((XClass*)tw);
 
     /* ---------- 父窗口 / 坐标映射 / 祖先 / Desktop 父 ---------- */
     parent = XWindow_create();
@@ -19107,7 +19107,7 @@ static void test_window_contract(void)
                 "最小==最大时禁止缩放");
     XWindow_setVisible(wMove, false);
     expect_true(!XWindow_startSystemMove(wMove), "隐藏后禁止系统移动");
-    XWindow_delete_base((XClass*)wMove);
+    XClassDelete((XClass*)wMove);
 
     /* ---------- 关闭语义 ---------- */
     wClose = XWindow_create();
@@ -19121,7 +19121,7 @@ static void test_window_contract(void)
     XWindow_setVisible(sub, true);
     expect_true(!XWindow_close(sub), "非顶层窗口拒绝关闭");
     XWindow_setVisible(sub, false);
-    XWindow_delete_base((XClass*)wClose);
+    XClassDelete((XClass*)wClose);
 
     /* ---------- 显示模式切换与 setVisibility ---------- */
     wModes = XWindow_create();
@@ -19155,7 +19155,7 @@ static void test_window_contract(void)
     XWindow_setVisibility(wModes, XWindowVisibility_Hidden);
     expect_true(XWindow_visibility(wModes) == XWindowVisibility_Hidden,
                 "setVisibility(Hidden)");
-    XWindow_delete_base((XClass*)wModes);
+    XClassDelete((XClass*)wModes);
 
     /* ---------- 激活 / 置顶置底 ---------- */
     XWindow_requestActivate(w0);
@@ -19353,10 +19353,10 @@ static void test_window_contract(void)
                 XWindow_geometry(copy).width == 500 &&
                 XWindow_geometry(copy).height == 600,
                 "copy 复制几何与标题");
-    if (title) XString_delete_base((XClass*)title);
+    if (title) XClassDelete((XClass*)title);
     expect_true(XWindow_parent(copy, XWindowAncestor_ExcludeTransients) == NULL,
                 "copy 不复制父窗口");
-    XWindow_delete_base((XClass*)copy);
+    XClassDelete((XClass*)copy);
     copy = NULL;
 
     moved = XWindow_create_move(w0);
@@ -19364,11 +19364,11 @@ static void test_window_contract(void)
     title = XWindow_title(moved);
     expect_true(title != NULL && strcmp(XString_toUtf8(title), "Title-X") == 0 &&
                 XWindow_geometry(moved).x == 10, "move 转移状态");
-    if (title) XString_delete_base((XClass*)title);
+    if (title) XClassDelete((XClass*)title);
     expect_true(XWindow_geometry(w0).x == 0 && XWindow_winId(moved) != 0,
                 "move 后源对象为空且目标保留属性");
-    XWindow_delete_base((XClass*)moved);
-    XWindow_delete_base((XClass*)w0);
+    XClassDelete((XClass*)moved);
+    XClassDelete((XClass*)w0);
 
     /* ---------- 栈对象生命周期 ---------- */
     {
@@ -19382,19 +19382,19 @@ static void test_window_contract(void)
                     title != NULL &&
                     strcmp(XString_toUtf8(title), "stack") == 0,
                     "栈对象 XWindow 可用");
-        if (title) XString_delete_base((XClass*)title);
-        XWindow_deinit_base(&stackWin);
+        if (title) XClassDelete((XClass*)title);
+        XClassDeinit(&stackWin);
     }
 
     /* ---------- 清理 ---------- */
-    XWindow_delete_base((XClass*)child);
-    XWindow_delete_base((XClass*)desktop);
-    XWindow_delete_base((XClass*)topLevel);
-    XWindow_delete_base((XClass*)sub);
-    XWindow_delete_base((XClass*)parent);
+    XClassDelete((XClass*)child);
+    XClassDelete((XClass*)desktop);
+    XClassDelete((XClass*)topLevel);
+    XClassDelete((XClass*)sub);
+    XClassDelete((XClass*)parent);
 #if XSCREEN_ON
     XScreen_unregister(screen);
-    XScreen_delete_base((XClass*)screen);
+    XClassDelete((XClass*)screen);
 #endif /* XSCREEN_ON */
     (void)ptf;
 }
@@ -19768,7 +19768,7 @@ static void test_gui_application_contract(void)
 
     s = XString_create_utf8("MyGuiApp");
     XGuiApplication_setApplicationDisplayName(s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     expect_true(g_guiAppProbe.applicationDisplayNameChanged == 1,
                 "applicationDisplayNameChanged 发射");
     s = XGuiApplication_applicationDisplayName();
@@ -19780,7 +19780,7 @@ static void test_gui_application_contract(void)
 
     s = XString_create_utf8("app.desktop");
     XGuiApplication_setDesktopFileName(s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     s = XGuiApplication_desktopFileName();
     expect_true(s != NULL && strcmp(XString_toUtf8(s), "app.desktop") == 0,
                 "desktopFileName 设置/读取");
@@ -19817,7 +19817,7 @@ static void test_gui_application_contract(void)
     expect_true(list != NULL &&
                 XVector_size_base((const XContainer*)list) == 3,
                 "allWindows 返回全部登记窗口");
-    if (list) XVector_delete_base((XClass*)list);
+    if (list) XClassDelete((XClass*)list);
 
 #if XACCESSIBLE_ON && XPLATFORMINTEGRATION_ON
     {
@@ -19840,7 +19840,7 @@ static void test_gui_application_contract(void)
     expect_true(list != NULL &&
                 XVector_size_base((const XContainer*)list) == 2,
                 "topLevelWindows 只含顶层窗口");
-    if (list) XVector_delete_base((XClass*)list);
+    if (list) XClassDelete((XClass*)list);
 
     expect_true(XGuiApplication_topLevelAt(&(XPoint){50, 50}) == w1,
                 "topLevelAt 命中 w1");
@@ -19924,13 +19924,13 @@ static void test_gui_application_contract(void)
     expect_true(list != NULL &&
                 XVector_size_base((const XContainer*)list) == 0,
                 "窗口全部移除后注册表为空");
-    if (list) XVector_delete_base((XClass*)list);
+    if (list) XClassDelete((XClass*)list);
 
     XWindow_setVisible(w1, false);
     XWindow_setVisible(w2, false);
-    XWindow_delete_base((XClass*)w3);
-    XWindow_delete_base((XClass*)w1);
-    XWindow_delete_base((XClass*)w2);
+    XClassDelete((XClass*)w3);
+    XClassDelete((XClass*)w1);
+    XClassDelete((XClass*)w2);
     w1 = w2 = w3 = NULL;
 #endif /* XWINDOW_ON */
     /* ---------------- 屏幕（转发 XScreen 注册表） ---------------- */
@@ -19959,7 +19959,7 @@ static void test_gui_application_contract(void)
                 XScreen** slot = (XScreen**)XVector_at_base(preList, i);
                 if (slot && *slot) preScreens[preCount++] = *slot;
             }
-            XVector_delete_base((XClass*)preList);
+            XClassDelete((XClass*)preList);
         }
         for (i = 0; i < preCount; ++i)
             XGuiApplication_screenRemoved(preScreens[i]);
@@ -19997,7 +19997,7 @@ static void test_gui_application_contract(void)
         expect_true(list != NULL &&
                     XVector_size_base((const XContainer*)list) == 2,
                     "screens 返回全部屏幕");
-        if (list) XVector_delete_base((XClass*)list);
+        if (list) XClassDelete((XClass*)list);
 
         expect_true(XGuiApplication_screenAt(&pt) == s1, "screenAt 命中 s1");
         expect_true(XGuiApplication_screenAt(&(XPoint){850, 300}) == s2,
@@ -20055,11 +20055,11 @@ static void test_gui_application_contract(void)
                         XPixmap_height(&iconPixmap) == 4 &&
                         XPixmap_devicePixelRatio(&iconPixmap) == 2.0f,
                         "icon @2x candidate selected for 2.0 DPR request");
-            XPixmap_deinit_base(&iconPixmap);
-            XVector_deinit_base((XClass*)&iconSizes);
-            XIcon_deinit_base(&fileIcon);
-            XImage_deinit_base(&highImage);
-            XImage_deinit_base(&baseImage);
+            XClassDeinit(&iconPixmap);
+            XClassDeinit((XClass*)&iconSizes);
+            XClassDeinit(&fileIcon);
+            XClassDeinit(&highImage);
+            XClassDeinit(&baseImage);
             remove("xgui_icon_atnx@2x.bmp");
             remove("xgui_icon_atnx.bmp");
         }
@@ -20086,13 +20086,13 @@ static void test_gui_application_contract(void)
                     XGuiApplication_primaryScreen() == NULL,
                     "主屏注销后 primaryScreen 清空");
 
-        XScreen_delete_base((XClass*)s1);
-        XScreen_delete_base((XClass*)s2);
+        XClassDelete((XClass*)s1);
+        XClassDelete((XClass*)s2);
         list = XScreen_screens();
         if (list) {
             expect_true(XVector_size_base((const XContainer*)list) == 0,
                         "屏幕注册表清空");
-            XVector_delete_base((XClass*)list);
+            XClassDelete((XClass*)list);
         }
         /* 恢复平台屏幕登记与主屏（基线还原，供后续测试/运行时一致）。 */
         for (i = 0; i < preCount; ++i)
@@ -20125,7 +20125,7 @@ static void test_gui_application_contract(void)
         c = XCursor_create_shape(XCursor_Wait);
         expect_true(c != NULL, "cursor 创建");
         XGuiApplication_changeOverrideCursor(c);
-        XCursor_delete_base((XClass*)c);
+        XClassDelete((XClass*)c);
         top = XGuiApplication_overrideCursor();
         expect_true(top != NULL && XCursor_shape(top) == XCursor_Wait,
                     "changeOverrideCursor 替换栈顶为 Wait");
@@ -20139,7 +20139,7 @@ static void test_gui_application_contract(void)
                     "restore 弹空栈");
         XGuiApplication_restoreOverrideCursor(); /* 空栈 no-op。 */
 
-        XCursor_deinit_base(&wc);
+        XClassDeinit(&wc);
     }
 #endif /* XCURSOR_ON */
 
@@ -20205,7 +20205,7 @@ static void test_gui_application_contract(void)
                                     sizeof(directGlyph)) &&
                                 directGlyph[0] == 0x06u,
                             "点阵子类注册接入父类虚函数");
-                XFont_deinit_base(&directFont);
+                XClassDeinit(&directFont);
             }
         }
         XFont_setFamily(&defaultFont, "XFont16x16");
@@ -20241,7 +20241,7 @@ static void test_gui_application_contract(void)
                         XPainter_textWidth(&defaultFont, "中") == 20,
                         "16x16 provider 按目标像素高度缩放");
         }
-        XFont_deinit_base(&defaultFont);
+        XClassDeinit(&defaultFont);
     }
 #if XFONT_FILE_ON
     test_font_lvgl_bin_files();
@@ -20257,14 +20257,14 @@ static void test_gui_application_contract(void)
                     strcmp(XFont_family(fontOut), "Sans") == 0 &&
                     XFont_pointSize(fontOut) == 13,
                     "font 深拷贝返回（每次独立副本）");
-        if (fontCopy) XFont_delete_base(fontCopy);
+        if (fontCopy) XClassDelete(fontCopy);
     }
-    if (fontOut) XFont_delete_base(fontOut);
+    if (fontOut) XClassDelete(fontOut);
     XGuiApplication_setFont(NULL);
     expect_true(g_guiAppProbe.fontChanged == 2 && g_guiAppProbe.lastFont == NULL &&
                 XGuiApplication_font() == NULL,
                 "setFont(NULL) 清空并发射");
-    XFont_delete_base(font);
+    XClassDelete(font);
 
     {
         XFont moveSource;
@@ -20272,7 +20272,7 @@ static void test_gui_application_contract(void)
         XFont_init_ex(&moveSource, "Move Sans", 17, XFont_Bold, true);
         XFont_setStyleName(&moveSource, "Moved Style");
         XFont_init_ex(&moveDest, "Old Sans", 9, XFont_Normal, false);
-        XMove(&moveDest, &moveSource);
+        XClassMove(&moveDest, &moveSource);
         expect_true(strcmp(XFont_family(&moveDest), "Move Sans") == 0 &&
                     strcmp(XFont_styleName(&moveDest), "Moved Style") == 0 &&
                     XFont_pointSize(&moveDest) == 17 &&
@@ -20280,8 +20280,8 @@ static void test_gui_application_contract(void)
                     XFont_family(&moveSource)[0] == '\0' &&
                     XFont_styleName(&moveSource)[0] == '\0',
                     "font move_base 转移资源和值并清空源对象");
-        XFont_deinit_base(&moveDest);
-        XFont_deinit_base(&moveSource);
+        XClassDeinit(&moveDest);
+        XClassDeinit(&moveSource);
     }
 
 #if XPALETTE_ON
@@ -20468,13 +20468,13 @@ static void test_gui_application_contract(void)
                           gui_app_probe_clipChangedSlot);
         s = XString_create_utf8("clip hello");
         XClipboard_setText(cb, s, XClipboardMode_Clipboard);
-        XString_delete_base((XClass*)s);
+        XClassDelete((XClass*)s);
         expect_true(g_guiAppProbe.clipData == 1 && g_guiAppProbe.clipChanged == 1,
                     "clipboard 文本写入双信号");
         txt = XClipboard_text(cb, XClipboardMode_Clipboard);
         expect_true(txt != NULL && strcmp(XString_toUtf8(txt), "clip hello") == 0,
                     "clipboard 文本读写");
-        if (txt) XString_delete_base((XClass*)txt);
+        if (txt) XClassDelete((XClass*)txt);
 #if XMIMEDATA_ON
         {
             const XMimeData* clipMime =
@@ -20484,14 +20484,14 @@ static void test_gui_application_contract(void)
             txt = XMimeData_text(clipMime);
             expect_true(txt != NULL && strcmp(XString_toUtf8(txt), "clip hello") == 0,
                         "clipboard MIME 文本与 text 一致");
-            if (txt) XString_delete_base((XClass*)txt);
+            if (txt) XClassDelete((XClass*)txt);
         }
 #endif /* XMIMEDATA_ON */
         XClipboard_clear(cb, XClipboardMode_Clipboard);
         expect_true(g_guiAppProbe.clipData == 2, "clipboard clear 再次发信号");
         txt = XClipboard_text(cb, XClipboardMode_Clipboard);
         expect_true(txt == NULL, "clipboard clear 清空文本");
-        if (txt) XString_delete_base((XClass*)txt);
+        if (txt) XClassDelete((XClass*)txt);
     }
 #endif /* XCLIPBOARD_ON */
 
@@ -20539,9 +20539,9 @@ static void test_gui_application_contract(void)
             size_t fn = XVector_size_base((const XContainer*)gfams);
             for (fi = 0; fi < fn; ++fi) {
                 XString** family = (XString**)XVector_at_base(gfams, (int64_t)fi);
-                if (family && *family) XString_delete_base((XClass*)*family);
+                if (family && *family) XClassDelete((XClass*)*family);
             }
-            XVector_delete_base((XClass*)gfams);
+            XClassDelete((XClass*)gfams);
             gfams = NULL;
         }
         gtheme = XPlatformIntegration_createPlatformTheme(gpi, NULL);
@@ -20664,27 +20664,27 @@ static void test_gui_application_contract(void)
             gpi, XPlatformIntegrationStyleHint_CursorFlashTime);
         expect_true(gv != NULL && XVariant_toInt32(gv) == 1000,
                     "styleHint CursorFlashTime 默认 1000");
-        if (gv) XVariant_delete_base((XClass*)gv); gv = NULL;
+        if (gv) XClassDelete((XClass*)gv); gv = NULL;
         gv = XPlatformIntegration_styleHint(
             gpi, XPlatformIntegrationStyleHint_ShowIsFullScreen);
         expect_true(gv != NULL && !XVariant_toBool(gv),
                     "styleHint ShowIsFullScreen 默认 false");
-        if (gv) XVariant_delete_base((XClass*)gv); gv = NULL;
+        if (gv) XClassDelete((XClass*)gv); gv = NULL;
         gv = XPlatformIntegration_styleHint(
             gpi, XPlatformIntegrationStyleHint_FlickStartDistance);
         expect_true(gv != NULL && XVariant_toInt32(gv) == 30,
                     "styleHint FlickStartDistance 默认 30");
-        if (gv) XVariant_delete_base((XClass*)gv); gv = NULL;
+        if (gv) XClassDelete((XClass*)gv); gv = NULL;
         gv = XPlatformIntegration_styleHint(
             gpi, (XPlatformIntegrationStyleHint)9999);
         expect_true(gv == NULL, "styleHint 非法枚举返回 NULL");
-        if (gv) XVariant_delete_base((XClass*)gv); gv = NULL;
+        if (gv) XClassDelete((XClass*)gv); gv = NULL;
 
         /* 平台元信息：主题名列表 / 默认窗口状态 / beep */
         gnames = XPlatformIntegration_themeNames(gpi);
         gcount = gnames ? XVector_size_base((const XContainer*)gnames) : 0;
         expect_true(gcount == 1, "themeNames 返回单元素列表");
-        if (gnames) XVector_delete_base((XClass*)gnames); gnames = NULL;
+        if (gnames) XClassDelete((XClass*)gnames); gnames = NULL;
         expect_true(XPlatformIntegration_defaultWindowState(gpi, 0) ==
                         XWindowState_NoState,
                     "defaultWindowState 默认普通状态");
@@ -20704,7 +20704,7 @@ static void test_gui_application_contract(void)
         gs = XPlatformInputContext_locale(gctx);
         expect_true(gs != NULL && strcmp(XString_toUtf8(gs), "C") == 0,
                     "输入上下文默认区域 C");
-        if (gs) XString_delete_base((XClass*)gs); gs = NULL;
+        if (gs) XClassDelete((XClass*)gs); gs = NULL;
 
         XPlatformInputContext_showInputPanel(gctx);
         expect_true(XPlatformInputContext_isInputPanelVisible(gctx),
@@ -20768,7 +20768,7 @@ static void test_gui_application_contract(void)
                     XInputMethodQuery_ImCursorPosition, queryPos);
                 expect_true(queryResult != NULL && XVariant_toInt(queryResult) == 203,
                             "输入法位置查询先逆变换到焦点控件坐标");
-                if (queryResult) XVariant_delete_base((XClass*)queryResult);
+                if (queryResult) XClassDelete((XClass*)queryResult);
             }
             XInputMethodTransform_identity(&transform);
             XInputMethod_setInputItemTransform(gim, &transform);
@@ -20795,13 +20795,13 @@ static void test_gui_application_contract(void)
         gs = XInputMethod_locale(gim);
         expect_true(gs != NULL && strcmp(XString_toUtf8(gs), "C") == 0,
                     "输入法默认区域 C");
-        if (gs) XString_delete_base((XClass*)gs); gs = NULL;
+        if (gs) XClassDelete((XClass*)gs); gs = NULL;
         /* 区域可设置（先查完默认值再修改，避免依赖顺序） */
         XPlatformInputContext_setLocale_2(gctx, "zh_CN");
         gs = XPlatformInputContext_locale(gctx);
         expect_true(gs != NULL && strcmp(XString_toUtf8(gs), "zh_CN") == 0,
                     "输入上下文区域可设置");
-        if (gs) XString_delete_base((XClass*)gs); gs = NULL;
+        if (gs) XClassDelete((XClass*)gs); gs = NULL;
         XPlatformInputContext_setLocale_2(gctx, "ar_SA");
         expect_true(XPlatformInputContext_inputDirection(gctx) ==
                         XInputMethodLayoutDirection_RightToLeft,
@@ -20846,10 +20846,10 @@ static void test_gui_application_contract(void)
                 expect_true(XWindow_fromWinId(donorId) == donor,
                             "解除外部窗口挂接不销毁 donor 原生句柄");
             }
-            if (foreign) XWindow_delete_base((XClass*)foreign);
+            if (foreign) XClassDelete((XClass*)foreign);
             if (donor) {
                 XWindow_destroy(donor);
-                XWindow_delete_base((XClass*)donor);
+                XClassDelete((XClass*)donor);
             }
         }
 #endif /* XPLATFORMNATIVEWINDOW_ON */
@@ -21073,9 +21073,9 @@ static void test_gui_application_contract(void)
                         "取消回调后 present 不再触发");
 
             XRegion_deinit(&gbsRegion);
-            XImage_deinit_base(&gbsImg);
+            XClassDeinit(&gbsImg);
         }
-        XBackingStore_delete_base((XClass*)gbks);
+        XClassDelete((XClass*)gbks);
         gbks = NULL;
         XPlatformBackingStore_delete(gpbs);
         gpbs = NULL;
@@ -21098,7 +21098,7 @@ static void test_gui_application_contract(void)
                           gui_app_probe_platformPropSlot);
         gv = XVariant_create_int(4321);
         XPlatformNativeInterface_setWindowProperty_2(gni, gpw, "platform-prop", gv);
-        if (gv) XVariant_delete_base((XClass*)gv); gv = NULL; /* 表内为深拷贝。 */
+        if (gv) XClassDelete((XClass*)gv); gv = NULL; /* 表内为深拷贝。 */
         expect_true(g_guiAppProbe.platformPropChanged == 1 &&
                     g_guiAppProbe.lastPropWindow == gpw &&
                     g_guiAppProbe.platformPropNameOk,
@@ -21111,8 +21111,8 @@ static void test_gui_application_contract(void)
         gv = XPlatformNativeInterface_windowProperty_default_2(gni, gpw, "no-such", gdef);
         expect_true(gv != NULL && XVariant_toInt32(gv) == 1234,
                     "windowProperty_2 缺失时返回默认值副本");
-        if (gv) XVariant_delete_base((XClass*)gv); gv = NULL;
-        if (gdef) XVariant_delete_base((XClass*)gdef); gdef = NULL;
+        if (gv) XClassDelete((XClass*)gv); gv = NULL;
+        if (gdef) XClassDelete((XClass*)gdef); gdef = NULL;
         expect_true(XPlatformNativeInterface_windowProperty_2(
                         gni, gpw, "no-such") == NULL,
                     "windowProperty 缺失返回 NULL");
@@ -21122,7 +21122,7 @@ static void test_gui_application_contract(void)
                         gni, gpw, "platform-prop") == NULL,
                     "移除后属性查询为 NULL");
 
-        XWindow_delete_base((XClass*)gpwin);
+        XClassDelete((XClass*)gpwin);
         gpwin = NULL; /* 平台窗口句柄由集成层拥有，随应用销毁统一回收。 */
 #endif /* XWINDOW_ON */
     }
@@ -21169,7 +21169,7 @@ static void test_gui_application_contract(void)
                     "notify 分发事件（receiver=app）");
         expect_true(!XGuiApplication_notify(NULL, NULL),
                     "notify 空参数安全返回 false");
-        if (ne) XEvent_delete_base(ne);
+        if (ne) XClassDelete(ne);
     }
 
     /* ---------------- Task 1.4：XApplication 应用级 API ---------------- */
@@ -21214,17 +21214,17 @@ static void test_gui_application_contract(void)
                 expect_true(fcSlotCount == 1, "同焦点不重复发射");
                 XApplication_setFocusWidget(w2);
                 expect_true(fcSlotCount == 2, "焦点切换再发射");
-                if (w1) XWidget_delete_base(w1);
-                if (w2) XWidget_delete_base(w2);
+                if (w1) XClassDelete(w1);
+                if (w2) XClassDelete(w2);
             }
-            XApplication_delete_base(xapp);
+            XClassDelete(xapp);
         }
     }
 #endif /* XAPPLICATION_ON */
 
     /* ---------------- 清理：单例销毁 ---------------- */
 
-    XGuiApplication_delete_base(app);
+    XClassDelete(app);
     expect_true(XGuiApplication_instance() == NULL,
                 "销毁后全局单例清空");
     (void)fw;
@@ -21452,7 +21452,7 @@ static void VEventLoopWin_inputMethodEvent(XWindow* self, XEvent* event)
         strncpy(w->lastCommit, XString_toUtf8(commit),
                 sizeof(w->lastCommit) - 1u);
         w->lastCommit[sizeof(w->lastCommit) - 1u] = '\0';
-        XString_delete_base((XClass*)commit);
+        XClassDelete((XClass*)commit);
     }
 }
 
@@ -21710,7 +21710,7 @@ static void test_backingstore_shared_software_core(void)
                 "共享核心：resize 0x0 清空缓冲");
 
     XPlatformBackingStore_delete(gpbs);
-    XGuiApplication_delete_base(app);
+    XClassDelete(app);
 }
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */
 
@@ -21754,7 +21754,7 @@ static void test_window_event_payloads(void)
                 XResizeEvent_normalSize(re).height == 3 &&
                 XResizeEvent_normalOldSize(re).width == 2,
                 "XResizeEvent size/oldSize/normalSize 负载");
-    if (re) XEvent_delete_base((XClass*)re);
+    if (re) XClassDelete((XClass*)re);
 
     /* ---- XExposeEvent 负载与深拷贝 ---- */
     XRegion_init(&reg);
@@ -21786,8 +21786,8 @@ static void test_window_event_payloads(void)
                 "XExposeEvent 克隆不受源改动影响");
     XRegion_deinit(&clrReg);
     XRegion_deinit(&reg);
-    if (cloneBase) XEvent_delete_base(cloneBase);
-    if (ee) XEvent_delete_base((XClass*)ee);
+    if (cloneBase) XClassDelete(cloneBase);
+    if (ee) XClassDelete((XClass*)ee);
 
     /* ---- XPaintEvent rect/region ---- */
     XRegion_init(&reg);
@@ -21802,7 +21802,7 @@ static void test_window_event_payloads(void)
                 "XPaintEvent region 负载");
     XRegion_deinit(&got);
     XRegion_deinit(&reg);
-    if (pe) XEvent_delete_base((XClass*)pe);
+    if (pe) XClassDelete((XClass*)pe);
 
     /* ---- XFocusEvent gotFocus/lostFocus/reason/setReason ---- */
     feIn = XFocusEvent_create(XEVENT_TYPE_FOCUS_IN, XFocusReason_Tab);
@@ -21823,13 +21823,13 @@ static void test_window_event_payloads(void)
     XFocusEvent_setReason(feIn, XFocusReason_Shortcut);
     expect_true(feIn && XFocusEvent_reason(feIn) == XFocusReason_Shortcut,
                 "XFocusEvent setReason");
-    if (feIn) XEvent_delete_base((XClass*)feIn);
+    if (feIn) XClassDelete((XClass*)feIn);
     feOut = XFocusEvent_create(XEVENT_TYPE_FOCUS_OUT, XFocusReason_ActiveWindow);
     expect_true(feOut != NULL && XFocusEvent_lostFocus(feOut) &&
                 !XFocusEvent_gotFocus(feOut) &&
                 XFocusEvent_reason(feOut) == XFocusReason_ActiveWindow,
                 "XFocusEvent FocusOut lostFocus/reason");
-    if (feOut) XEvent_delete_base((XClass*)feOut);
+    if (feOut) XClassDelete((XClass*)feOut);
 
     /* ---- XCloseEvent 默认接受 + XShowEvent/XHideEvent 冒烟 ---- */
     ce = XCloseEvent_create(XEVENT_TYPE_CLOSE);
@@ -21839,23 +21839,23 @@ static void test_window_event_payloads(void)
         XEvent_ignore((XEvent*)ce);
         expect_true(!XEvent_isAccepted((const XEvent*)ce) && ce->m_class.type ==
                     XEVENT_TYPE_CLOSE, "XCloseEvent ignore 后拒绝");
-        XEvent_delete_base((XClass*)ce);
+        XClassDelete((XClass*)ce);
     }
     se = XShowEvent_create(XEVENT_TYPE_SHOW);
     expect_true(se != NULL && se->m_class.type == XEVENT_TYPE_SHOW,
                 "XShowEvent 冒烟");
-    if (se) XEvent_delete_base((XClass*)se);
+    if (se) XClassDelete((XClass*)se);
     he = XHideEvent_create(XEVENT_TYPE_HIDE);
     expect_true(he != NULL && he->m_class.type == XEVENT_TYPE_HIDE,
                 "XHideEvent 冒烟");
-    if (he) XEvent_delete_base((XClass*)he);
+    if (he) XClassDelete((XClass*)he);
 
     /* ---- XInputMethodEvent：组合/提交文本及克隆独立性 ---- */
     imePreedit = XString_create_utf8("zhong");
     imeCommit = XString_create_utf8("\xE4\xB8\xAD");
     ime = XInputMethodEvent_create(imePreedit, imeCommit, -2, 2, 3, 1);
-    if (imePreedit) XString_delete_base((XClass*)imePreedit);
-    if (imeCommit) XString_delete_base((XClass*)imeCommit);
+    if (imePreedit) XClassDelete((XClass*)imePreedit);
+    if (imeCommit) XClassDelete((XClass*)imeCommit);
     imePreedit = ime ? XInputMethodEvent_preeditString(ime) : NULL;
     imeCommit = ime ? XInputMethodEvent_commitString(ime) : NULL;
     expect_true(ime != NULL && ime->m_class.type == XEVENT_TYPE_INPUT_METHOD &&
@@ -21867,17 +21867,17 @@ static void test_window_event_payloads(void)
                 XInputMethodEvent_cursorPosition(ime) == 3 &&
                 XInputMethodEvent_anchorPosition(ime) == 1,
                 "XInputMethodEvent 组合/提交/替换范围负载");
-    if (imePreedit) XString_delete_base((XClass*)imePreedit);
-    if (imeCommit) XString_delete_base((XClass*)imeCommit);
+    if (imePreedit) XClassDelete((XClass*)imePreedit);
+    if (imeCommit) XClassDelete((XClass*)imeCommit);
     imeClone = ime ? XEvent_clone_base((XEvent*)ime) : NULL;
     imeCommit = imeClone ?
         XInputMethodEvent_commitString((XInputMethodEvent*)imeClone) : NULL;
     expect_true(imeClone != NULL && imeCommit != NULL &&
                 strcmp(XString_toUtf8(imeCommit), "\xE4\xB8\xAD") == 0,
                 "XInputMethodEvent 可深克隆");
-    if (imeCommit) XString_delete_base((XClass*)imeCommit);
-    if (imeClone) XEvent_delete_base((XClass*)imeClone);
-    if (ime) XEvent_delete_base((XClass*)ime);
+    if (imeCommit) XClassDelete((XClass*)imeCommit);
+    if (imeClone) XClassDelete((XClass*)imeClone);
+    if (ime) XClassDelete((XClass*)ime);
 
     /* ---- XDropEvent：MIME 负载、坐标与独立字符串所有权 ---- */
     dropMime = XString_create_utf8("text/uri-list");
@@ -21885,8 +21885,8 @@ static void test_window_event_payloads(void)
     drop = XDropEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_DROP,
                                 &(XPoint){7, 9}, &(XPoint){107, 109},
                                 dropMime, dropData);
-    if (dropMime) XString_delete_base((XClass*)dropMime);
-    if (dropData) XString_delete_base((XClass*)dropData);
+    if (dropMime) XClassDelete((XClass*)dropMime);
+    if (dropData) XClassDelete((XClass*)dropData);
     dropMime = drop ? XDropEvent_mimeType(drop) : NULL;
     dropData = drop ? XDropEvent_data(drop) : NULL;
     expect_true(drop != NULL && XDropEvent_position(drop).x == 7 &&
@@ -21895,9 +21895,9 @@ static void test_window_event_payloads(void)
                 strcmp(XString_toUtf8(dropMime), "text/uri-list") == 0 &&
                 strstr(XString_toUtf8(dropData), "demo.txt") != NULL,
                 "XDropEvent MIME/数据/坐标负载");
-    if (dropMime) XString_delete_base((XClass*)dropMime);
-    if (dropData) XString_delete_base((XClass*)dropData);
-    if (drop) XEvent_delete_base((XClass*)drop);
+    if (dropMime) XClassDelete((XClass*)dropMime);
+    if (dropData) XClassDelete((XClass*)dropData);
+    if (drop) XClassDelete((XClass*)drop);
 
     /* ---- XKeyEvent / XMouseEvent 克隆负载（Copy 为唯一复制逻辑） ---- */
     {
@@ -21912,8 +21912,8 @@ static void test_window_event_payloads(void)
                         (XKeyboardModifier_ControlModifier |
                          XKeyboardModifier_ShiftModifier),
                     "XKeyEvent 克隆保留按键码与修饰键");
-        if (keClone) XEvent_delete_base(keClone);
-        if (ke) XEvent_delete_base((XClass*)ke);
+        if (keClone) XClassDelete(keClone);
+        if (ke) XClassDelete((XClass*)ke);
 
         XMouseEvent* me = XMouseEvent_create(
             XEVENT_TYPE_MOUSE_BUTTON_PRESS, XMouseButton_RightButton,
@@ -21928,8 +21928,8 @@ static void test_window_event_payloads(void)
                     XMouseEvent_position((const XMouseEvent*)meClone).x == 3 &&
                     XMouseEvent_position((const XMouseEvent*)meClone).y == 7,
                     "XMouseEvent 克隆保留按键/修饰键/坐标");
-        if (meClone) XEvent_delete_base(meClone);
-        if (me) XEvent_delete_base((XClass*)me);
+        if (meClone) XClassDelete(meClone);
+        if (me) XClassDelete((XClass*)me);
     }
 }
 /* ============ Task 2.13 事件体系契约测试 ============ */
@@ -21967,7 +21967,7 @@ static void test_window_event_task213_contract(void)
                             XWheelEvent_source(we) ==
                                 XWheelEventSource_SynthesizedBySystem,
                         "t213: wheel 扩展 setter");
-            XEvent_delete_base((XClass*)we);
+            XClassDelete((XClass*)we);
         }
     }
     /* ---- XEnterEvent scenePosition ---- */
@@ -21984,7 +21984,7 @@ static void test_window_event_task213_contract(void)
             expect_true(XEnterEvent_scenePosition(ee).x == 8 &&
                             XEnterEvent_scenePosition(ee).y == 9,
                         "t213: enter setScenePosition");
-            XEvent_delete_base((XClass*)ee);
+            XClassDelete((XClass*)ee);
         }
     }
     /* ---- XDropEvent 动作 ---- */
@@ -22008,10 +22008,10 @@ static void test_window_event_task213_contract(void)
                         (XDropEvent_possibleActions(de) &
                          XDropAction_MoveAction) != 0,
                         "t213: drop 动作 roundtrip");
-            XEvent_delete_base((XClass*)de);
+            XClassDelete((XClass*)de);
         }
-        if (dropMime) XString_delete_base(dropMime);
-        if (dropData) XString_delete_base(dropData);
+        if (dropMime) XClassDelete(dropMime);
+        if (dropData) XClassDelete(dropData);
     }
     /* ---- XMoveEvent / XTouchEvent / XTabletEvent 最小负载 ---- */
     {
@@ -22021,7 +22021,7 @@ static void test_window_event_task213_contract(void)
                         XMoveEvent_position(me).x == 5 &&
                         XMoveEvent_oldPosition(me).x == 1,
                     "t213: moveEvent pos/oldPos");
-        if (me) XEvent_delete_base((XClass*)me);
+        if (me) XClassDelete((XClass*)me);
     }
     {
         XTouchEvent* te = XTouchEvent_create(
@@ -22032,7 +22032,7 @@ static void test_window_event_task213_contract(void)
                         XTouchEvent_globalPosition(te).y == 80 &&
                         XTouchEvent_pointCount(te) == 2,
                     "t213: touch 最小负载");
-        if (te) XEvent_delete_base((XClass*)te);
+        if (te) XClassDelete((XClass*)te);
     }
     {
         XTabletEvent* te = XTabletEvent_create(
@@ -22044,7 +22044,7 @@ static void test_window_event_task213_contract(void)
                         XTabletEvent_pointerType(te) ==
                             XTabletPointerType_Pen,
                     "t213: tablet 最小负载");
-        if (te) XEvent_delete_base((XClass*)te);
+        if (te) XClassDelete((XClass*)te);
     }
 }
 /* ============ Task 2.14 Input 管线契约测试 ============ */
@@ -22069,9 +22069,9 @@ static void test_input_task214_contract(void)
                                     (const XStringList*)got, 0)),
                                 "file:///a.png") == 0,
                     "t214: urls roundtrip");
-        if (got) XStringList_delete_base(got);
-        XStringList_delete_base(urls);
-        XMimeData_delete_base(md);
+        if (got) XClassDelete(got);
+        XClassDelete(urls);
+        XClassDelete(md);
     }
     /* ---- XCursor swap/equals ---- */
     {
@@ -22090,8 +22090,8 @@ static void test_input_task214_contract(void)
                             XCursor_shape(a) == XCursor_Arrow,
                         "t214: cursor swap 还原");
         }
-        if (a) XCursor_delete_base(a);
-        if (b) XCursor_delete_base(b);
+        if (a) XClassDelete(a);
+        if (b) XClassDelete(b);
     }
     /* ---- XClipboard text_subtype 改名路径 ---- */
     {
@@ -22101,16 +22101,16 @@ static void test_input_task214_contract(void)
         if (cb) {
             XString* clipText = XString_create_utf8("hello");
             XClipboard_setText(cb, clipText, XClipboardMode_Clipboard);
-            if (clipText) XString_delete_base(clipText);
+            if (clipText) XClassDelete(clipText);
             {
                 XString* text = XClipboard_text_subtype(cb, subtype,
                                                          XClipboardMode_Clipboard);
                 expect_true(text != NULL &&
                                 XStrcmp(XString_toUtf8(text), "hello") == 0,
                             "t214: text_subtype roundtrip");
-                if (text) XString_delete_base(text);
+                if (text) XClassDelete(text);
             }
-            XClipboard_delete_base(cb);
+            XClassDelete(cb);
         }
     }
     /* ---- XAccessible name 读 accessibleName ---- */
@@ -22122,17 +22122,17 @@ static void test_input_task214_contract(void)
         if (w && acc) {
             XString* accName = XString_create_utf8("acc-name");
             XWidget_setAccessibleName(w, accName);
-            if (accName) XString_delete_base(accName);
+            if (accName) XClassDelete(accName);
             {
                 XString* n = XAccessible_name(acc);
                 expect_true(n != NULL &&
                                 XStrcmp(XString_toUtf8(n), "acc-name") == 0,
                             "t214: accessibleName 优先");
-                if (n) XString_delete_base(n);
+                if (n) XClassDelete(n);
             }
-            XAccessible_delete_base(acc);
+            XClassDelete(acc);
         }
-        if (w) XWidget_delete_base(w);
+        if (w) XClassDelete(w);
     }
 #endif
 }
@@ -22206,7 +22206,7 @@ static void test_window_event_loop(void)
         expect_true(w->focusOutCount == 1 &&
                     w->lastReason == XFocusReason_ActiveWindow,
                     "FocusOut 槽收到原因");
-        XEvent_delete_base((XClass*)fo);
+        XClassDelete((XClass*)fo);
     }
 
     /* ---- 关闭：默认拒绝（ignore）/ 接受（accept） ---- */
@@ -22335,8 +22335,8 @@ static void test_window_event_loop(void)
     }
 
     XRegion_deinit(&reg);
-    XWindow_delete_base((XClass*)w);
-    XGuiApplication_delete_base(app);
+    XClassDelete((XClass*)w);
+    XClassDelete(app);
     expect_true(XGuiApplication_instance() == NULL, "事件闭环测试后单例清空");
 }
 
@@ -22372,8 +22372,8 @@ static void test_widget_ime_commit_bridge(void)
     edit = XLineEdit_create(top, 0);
     expect_true(edit != NULL, "输入法桥接子编辑框创建");
     if (!app || !top || !edit) {
-        if (top) XWidget_delete_base((XClass*)top);
-        if (app) XGuiApplication_delete_base(app);
+        if (top) XClassDelete((XClass*)top);
+        if (app) XClassDelete(app);
         return;
     }
 
@@ -22412,8 +22412,8 @@ static void test_widget_ime_commit_bridge(void)
                 "仅 preedit 不改变已提交文本");
 
     /* 清理：子编辑框随顶层控件一并析构。 */
-    XWidget_delete_base((XClass*)top);
-    XGuiApplication_delete_base(app);
+    XClassDelete((XClass*)top);
+    XClassDelete(app);
     expect_true(XGuiApplication_instance() == NULL,
                 "输入法桥接测试后单例清空");
 }
@@ -22488,8 +22488,8 @@ static void test_lineedit_context_menu_contract(void)
     edit = XLineEdit_create(NULL, 0);
     expect_true(edit != NULL, "上下文菜单编辑框创建");
     if (!app || !edit) {
-        if (edit) XWidget_delete_base((XClass*)edit);
-        if (app) XGuiApplication_delete_base(app);
+        if (edit) XClassDelete((XClass*)edit);
+        if (app) XClassDelete(app);
         return;
     }
 
@@ -22542,7 +22542,7 @@ static void test_lineedit_context_menu_contract(void)
     expect_true(act != NULL && !XAction_isSeparator(act) &&
                 !XAction_isEnabled(act),
                 "已全选时全选动作禁用");
-    XMenu_delete_base(menu);
+    XClassDelete(menu);
 
     /* ---- 剪贴板非空 → 粘贴启用；无选区 → 剪切/复制/删除禁用、全选启用 ---- */
     cb = XGuiApplication_clipboard();
@@ -22551,7 +22551,7 @@ static void test_lineedit_context_menu_contract(void)
         XString* text = XString_create_utf8("clip");
         if (text) {
             XClipboard_setText(cb, text, XClipboardMode_Clipboard);
-            XString_delete_base((XClass*)text);
+            XClassDelete((XClass*)text);
         }
     }
     XLineEdit_setText(edit, "hello");
@@ -22573,7 +22573,7 @@ static void test_lineedit_context_menu_contract(void)
     act = ctx_menu_action_at(menu, 8);
     expect_true(act != NULL && XAction_isEnabled(act),
                 "非全选时全选动作启用");
-    XMenu_delete_base(menu);
+    XClassDelete(menu);
 
     /* ---- 空文本：全选禁用（对标 text 为空时 Select All 禁用） ---- */
     XLineEdit_clear(edit);
@@ -22582,7 +22582,7 @@ static void test_lineedit_context_menu_contract(void)
     act = ctx_menu_action_at(menu, 8);
     expect_true(act != NULL && !XAction_isEnabled(act),
                 "空文本时全选动作禁用");
-    XMenu_delete_base(menu);
+    XClassDelete(menu);
 
     /* ---- 只读态：仅 复制/分隔/全选（对标 QLineEdit 只读分支） ---- */
     XLineEdit_setText(edit, "abc");
@@ -22603,10 +22603,10 @@ static void test_lineedit_context_menu_contract(void)
     expect_true(act != NULL && !XAction_isSeparator(act) &&
                 XAction_isEnabled(act),
                 "只读非全选时全选启用");
-    XMenu_delete_base(menu);
+    XClassDelete(menu);
     XLineEdit_setReadOnly(edit, false);
 
-    XLineEdit_delete_base((XClass*)edit);
+    XClassDelete((XClass*)edit);
 
     /* ---- 右键合成链路：右键按下未接受 → contextMenuEvent 到达控件 ---- */
 #if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON
@@ -22643,11 +22643,11 @@ static void test_lineedit_context_menu_contract(void)
             expect_true(probe->m_ctxCount == 1,
                         "右键按下合成 contextMenuEvent 一次");
         }
-        if (top) XWidget_delete_base((XClass*)top);
+        if (top) XClassDelete((XClass*)top);
     }
 #endif /* XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON */
 
-    XGuiApplication_delete_base(app);
+    XClassDelete(app);
     expect_true(XGuiApplication_instance() == NULL,
                 "上下文菜单测试后单例清空");
 }
@@ -22788,7 +22788,7 @@ static void test_widget_contract(void)
                         XWidget_width(&childDefault->m_base) == 100 &&
                         XWidget_height(&childDefault->m_base) == 30,
                         "XWidget 子控件默认几何 (0,0,100,30)");
-            XWidget_delete_base((XClass*)childDefault);
+            XClassDelete((XClass*)childDefault);
         }
     }
     XWidget_setAttribute(&geo->m_base, XWidgetAttribute_StaticContents, true);
@@ -22884,8 +22884,8 @@ static void test_widget_contract(void)
     expect_true(XWidget_windowOpacity(&geo->m_base) > 0.499 &&
                 XWidget_windowOpacity(&geo->m_base) < 0.501,
                 "setWindowOpacity(0.5)");
-    XString_delete_base((XClass*)title);
-    XWidget_delete_base((XClass*)geo);
+    XClassDelete((XClass*)title);
+    XClassDelete((XClass*)geo);
 
     /* ---------- 焦点流转（未显示窗口，不进平台激活路径） ---------- */
     {
@@ -22906,9 +22906,9 @@ static void test_widget_contract(void)
         XWidget_clearFocus(&fb->m_base);
         expect_true(!XWidget_hasFocus(&fb->m_base), "clearFocus 释放焦点");
         expect_true(fb->focusOutCount == 1, "clearFocus 派发 focusOut");
-        XWidget_delete_base((XClass*)fa);
-        XWidget_delete_base((XClass*)fb);
-        XWidget_delete_base((XClass*)fRoot);
+        XClassDelete((XClass*)fa);
+        XClassDelete((XClass*)fb);
+        XClassDelete((XClass*)fRoot);
     }
 
     /* ---------- close 接受/拒绝（对标 QWidget::close） ---------- */
@@ -22930,8 +22930,8 @@ static void test_widget_contract(void)
         expect_true(XWidget_isVisible(&reject->m_base),
                     "拒绝关闭保持可见不隐藏");
         expect_true(reject->closeCount == 1, "拒绝 closeEvent 仍派发");
-        XWidget_delete_base((XClass*)accept);
-        XWidget_delete_base((XClass*)reject);
+        XClassDelete((XClass*)accept);
+        XClassDelete((XClass*)reject);
     }
 
     /* ---------- copy/move（对标 QWidget 拷贝/移动语义子集） ---------- */
@@ -22943,9 +22943,9 @@ static void test_widget_contract(void)
         XWidget_setGeometry(src, 7, 8, 99, 66);
         XWidget_setMinimumSize(src, 10, 20);
         XWidget_setWindowTitle(src, title);
-        XString_delete_base((XClass*)title);
+        XClassDelete((XClass*)title);
         memset(&dst, 0, sizeof(dst));
-        XCopy(&dst, src);
+        XClassCopy(&dst, src);
         rect = XWidget_geometry(&dst);
         expect_true(rect.x == 7 && rect.y == 8 &&
                     rect.width == 99 && rect.height == 66,
@@ -22958,9 +22958,9 @@ static void test_widget_contract(void)
                     XString_equals(XWidget_windowTitle(&dst), title,
                                    XChar_CaseSensitive),
                     "copy_base 复制标题");
-        XString_delete_base((XClass*)title);
+        XClassDelete((XClass*)title);
         memset(&mover, 0, sizeof(mover));
-        XMove(&mover, src);
+        XClassMove(&mover, src);
         rect = XWidget_geometry(&mover);
         expect_true(rect.x == 7 && rect.y == 8 &&
                     rect.width == 99 && rect.height == 66,
@@ -22968,9 +22968,9 @@ static void test_widget_contract(void)
         expect_true(XWidget_x(src) == 0 && XWidget_y(src) == 0 &&
                     XWidget_width(src) == 0 && XWidget_height(src) == 0,
                     "move_base 源对象归零");
-        XWidget_deinit_base(&dst);
-        XWidget_deinit_base(&mover);
-        XWidget_delete_base((XClass*)src);
+        XClassDeinit(&dst);
+        XClassDeinit(&mover);
+        XClassDelete((XClass*)src);
     }
 
     /* ---------- 控件树 + 可见性传播 + 绘制 (对标 QWidget) ---------- */
@@ -23031,10 +23031,10 @@ static void test_widget_contract(void)
                 expect_true(!XWidget_isVisibleTo(&probeChild->m_base, NULL),
                             "isVisibleTo(NULL) 等价于有效可见状态");
             }
-            if (probeChild) XWidget_delete_base((XClass*)probeChild);
-            if (probeParent) XWidget_delete_base((XClass*)probeParent);
-            if (probeRoot) XWidget_delete_base((XClass*)probeRoot);
-            if (unrelated) XWidget_delete_base((XClass*)unrelated);
+            if (probeChild) XClassDelete((XClass*)probeChild);
+            if (probeParent) XClassDelete((XClass*)probeParent);
+            if (probeRoot) XClassDelete((XClass*)probeRoot);
+            if (unrelated) XClassDelete((XClass*)unrelated);
         }
 
         /* 命中测试（子控件必须可见才可命中；逆序 Z 序） */
@@ -23092,9 +23092,9 @@ static void test_widget_contract(void)
                     "isHidden 反映显式状态（Qt 语义）");
 
         /* 清理：先子后父（堆对象）；父已隐藏，无平台残留 */
-        XWidget_delete_base((XClass*)visB);
-        XWidget_delete_base((XClass*)visA);
-        XWidget_delete_base((XClass*)visRoot);
+        XClassDelete((XClass*)visB);
+        XClassDelete((XClass*)visA);
+        XClassDelete((XClass*)visRoot);
     }
     {
         TestWidget* reparentRoot = TestWidget_create(NULL);
@@ -23125,10 +23125,10 @@ static void test_widget_contract(void)
         XWidget_show(&reparentChild->m_base);
         expect_true(XWidget_isVisible(&reparentChild->m_base),
                     "setParentPlain 后显式 show 恢复可见");
-        XWidget_delete_base((XClass*)reparentChild);
-        XWidget_delete_base((XClass*)reparentB);
-        XWidget_delete_base((XClass*)reparentA);
-        XWidget_delete_base((XClass*)reparentRoot);
+        XClassDelete((XClass*)reparentChild);
+        XClassDelete((XClass*)reparentB);
+        XClassDelete((XClass*)reparentA);
+        XClassDelete((XClass*)reparentRoot);
     }
 #if XWINDOW_ON && XACCESSIBLE_ON
     {
@@ -23153,14 +23153,14 @@ static void test_widget_contract(void)
             XString* name = XAccessible_name(ab);
             expect_true(name && strcmp(XString_toUtf8(name), "accessible-child") == 0,
                         "控件辅助功能名称跟随 objectName");
-            if (name) XString_delete_base((XClass*)name);
+            if (name) XClassDelete((XClass*)name);
         }
         rect = XAccessible_rect(ab);
         expect_true(rect.x == 37 && rect.y == 49 && rect.width == 80 && rect.height == 20,
                     "控件辅助功能全局几何");
-        if (objectName) XString_delete_base((XClass*)objectName);
-        if (b) XWidget_delete_base((XClass*)b);
-        if (a) XWidget_delete_base((XClass*)a);
+        if (objectName) XClassDelete((XClass*)objectName);
+        if (b) XClassDelete((XClass*)b);
+        if (a) XClassDelete((XClass*)a);
     }
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
 }
@@ -23297,8 +23297,8 @@ static void test_layout_item_contract(void)
     expect_true(size.width == 30 && size.height == 40, "Item::minimumSize()");
 
     XLayoutItem_invalidate_base((XLayoutItem*)&box);
-    XLayoutItem_deinit_base((XLayoutItem*)&box);
-    XWidget_delete_base((XClass*)w);
+    XClassDeinit((XLayoutItem*)&box);
+    XClassDelete((XClass*)w);
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 }
 
@@ -23352,11 +23352,11 @@ static void test_box_layout_contract(void)
     expect_true(XLayout_count_base((XLayout*)&box) == 2, "takeAt 后 count=2");
     idx = XLayout_indexOf((XLayout*)&box, &w2->m_base);
     expect_true(idx == 1, "takeAt 后 w2 索引前移为 1");
-    XLayoutItem_delete_base(item);
-    XLayoutItem_deinit_base((XLayout*)&box);
-    XWidget_delete_base((XClass*)w0);
-    XWidget_delete_base((XClass*)w1);
-    XWidget_delete_base((XClass*)w2);
+    XClassDelete(item);
+    XClassDeinit((XLayout*)&box);
+    XClassDelete((XClass*)w0);
+    XClassDelete((XClass*)w1);
+    XClassDelete((XClass*)w2);
 
     /* ---------- 伸展因子 1:2 分配多余空间 ---------- */
     XBoxLayout_init(&box2, XBoxLayoutDirection_LeftToRight);
@@ -23373,9 +23373,9 @@ static void test_box_layout_contract(void)
     XLayoutItem_setGeometry_base((XLayoutItem*)&box2, &rect);
     layout_expect_rect(ga, 0, 0, 30, 30, "stretch 1:2 ga=(0,0,30,30)");
     layout_expect_rect(gb, 30, 0, 60, 30, "stretch 1:2 gb=(30,0,60,30)");
-    XLayoutItem_deinit_base((XLayout*)&box2);
-    XWidget_delete_base((XClass*)ga);
-    XWidget_delete_base((XClass*)gb);
+    XClassDeinit((XLayout*)&box2);
+    XClassDelete((XClass*)ga);
+    XClassDelete((XClass*)gb);
 
     /* ---------- 垂直盒 BottomToTop / TopToBottom ---------- */
     XBoxLayout_init(&vbox, XBoxLayoutDirection_BottomToTop);
@@ -23388,8 +23388,8 @@ static void test_box_layout_contract(void)
     XBoxLayout_setDirection(&vbox, XBoxLayoutDirection_TopToBottom);
     XLayoutItem_setGeometry_base((XLayoutItem*)&vbox, &rect);
     layout_expect_rect(wv, 0, 15, 40, 20, "TTB wv=(0,15,40,20)");
-    XLayoutItem_deinit_base((XLayout*)&vbox);
-    XWidget_delete_base((XClass*)wv);
+    XClassDeinit((XLayout*)&vbox);
+    XClassDelete((XClass*)wv);
 
     /* ---------- 低于最小总宽：不压到最小以下（对标 Qt，回归修复） ----------
      * 早期盒式分配在 space<=间距和时调用 shrinkToMin 把条目压缩到最小以下；
@@ -23425,9 +23425,9 @@ static void test_box_layout_contract(void)
         XLayoutItem_setGeometry_base((XLayoutItem*)&tight, &rect);
         layout_expect_rect(ta, 0, 0, 100, 20, "below-spacing-3 ta=(0,0,100,20)");
         layout_expect_rect(tb, 106, 0, 100, 20, "below-spacing-3 tb=(106,0,100,20)");
-        XLayoutItem_deinit_base((XLayout*)&tight);
-        XWidget_delete_base((XClass*)ta);
-        XWidget_delete_base((XClass*)tb);
+        XClassDeinit((XLayout*)&tight);
+        XClassDelete((XClass*)ta);
+        XClassDelete((XClass*)tb);
     }
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 }
@@ -23466,8 +23466,8 @@ static void test_box_layout_extended(void)
     XRect_init(&rect, 0, 0, 40, 50);
     XLayoutItem_setGeometry_base((XLayoutItem*)&box, &rect);
     layout_expect_rect(w0, 0, 15, 40, 20, "HBox+strut w0=(0,15,40,20)");
-    XLayoutItem_deinit_base((XLayout*)&box);
-    XWidget_delete_base((XClass*)w0);
+    XClassDeinit((XLayout*)&box);
+    XClassDelete((XClass*)w0);
 
     XBoxLayout_init(&box, XBoxLayoutDirection_TopToBottom);
     w0 = layout_make_fixed_widget(40, 20);
@@ -23479,8 +23479,8 @@ static void test_box_layout_extended(void)
     XRect_init(&rect, 0, 0, 80, 20);
     XLayoutItem_setGeometry_base((XLayoutItem*)&box, &rect);
     layout_expect_rect(w0, 0, 0, 40, 20, "VBox+strut w0=(0,0,40,20)");
-    XLayoutItem_deinit_base((XLayout*)&box);
-    XWidget_delete_base((XClass*)w0);
+    XClassDeinit((XLayout*)&box);
+    XClassDelete((XClass*)w0);
 
 #if XLAYOUT_SPACER_ON
     /* ---------- XSpacerItem 公开条目：策略/尺寸读写（对标 QSpacerItem） ---------- */
@@ -23520,9 +23520,9 @@ static void test_box_layout_extended(void)
     XLayoutItem_setGeometry_base((XLayoutItem*)&box, &rect);
     layout_expect_rect(w0, 20, 0, 30, 20, "spacer w0=(20,0,30,20)");
     layout_expect_rect(w1, 50, 0, 30, 20, "spacer w1=(50,0,30,20)");
-    XLayoutItem_deinit_base((XLayout*)&box);  /* 释放 spacer 与两个控件条目 */
-    XWidget_delete_base((XClass*)w0);
-    XWidget_delete_base((XClass*)w1);
+    XClassDeinit((XLayout*)&box);  /* 释放 spacer 与两个控件条目 */
+    XClassDelete((XClass*)w0);
+    XClassDelete((XClass*)w1);
 #endif /* XLAYOUT_SPACER_ON */
 
     /* ---------- setDirection：水平↔垂直翻转 magic 空白（对标 QBoxLayout） ---------- */
@@ -23536,8 +23536,8 @@ static void test_box_layout_extended(void)
     XRect_init(&rect, 0, 0, 60, 50);
     XLayoutItem_setGeometry_base((XLayoutItem*)&box, &rect);
     layout_expect_rect(w0, 0, 20, 60, 20, "H→TTB w0=(0,20,60,20)");
-    XLayoutItem_deinit_base((XLayout*)&box);
-    XWidget_delete_base((XClass*)w0);
+    XClassDeinit((XLayout*)&box);
+    XClassDelete((XClass*)w0);
 
     XBoxLayout_init(&box, XBoxLayoutDirection_TopToBottom);
     w0 = layout_make_growable_widget(30, 20);
@@ -23549,8 +23549,8 @@ static void test_box_layout_extended(void)
     XRect_init(&rect, 0, 0, 120, 30);
     XLayoutItem_setGeometry_base((XLayoutItem*)&box, &rect);
     layout_expect_rect(w0, 20, 0, 30, 30, "V→LTR w0=(20,0,30,30)");
-    XLayoutItem_deinit_base((XLayout*)&box);
-    XWidget_delete_base((XClass*)w0);
+    XClassDeinit((XLayout*)&box);
+    XClassDelete((XClass*)w0);
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 }
 
@@ -23664,11 +23664,11 @@ static void test_grid_layout_contract(void)
                 XGridLayout_columnCount(&grid) == 3,
                 "takeAt 后行列数保持");
     /* 被取出条目的对象由调用方释放；阵内剩余条目由 deinit 统一释放。 */
-    XLayoutItem_delete_base(taken);
-    XLayoutItem_deinit_base((XLayout*)&grid);
-    XWidget_delete_base((XClass*)w);
-    XWidget_delete_base((XClass*)wa);
-    XWidget_delete_base((XClass*)wb);
+    XClassDelete(taken);
+    XClassDeinit((XLayout*)&grid);
+    XClassDelete((XClass*)w);
+    XClassDelete((XClass*)wa);
+    XClassDelete((XClass*)wb);
 
     /* ---------- 跨格合并（span） ---------- */
     XGridLayout_init(&span);
@@ -23687,9 +23687,9 @@ static void test_grid_layout_contract(void)
     item = XGridLayout_itemAtPosition(&span, 1, 1);
     expect_true(item != NULL && XLayoutItem_widget_base(item) == &wa->m_base,
                 "span itemAtPosition(1,1) 覆盖跨格条目");
-    XLayoutItem_deinit_base((XLayout*)&span);
-    XWidget_delete_base((XClass*)w);
-    XWidget_delete_base((XClass*)wa);
+    XClassDeinit((XLayout*)&span);
+    XClassDelete((XClass*)w);
+    XClassDelete((XClass*)wa);
 
     /* ---------- 列伸展 + 行列间距 ---------- */
     XGridLayout_init(&grid2);
@@ -23715,10 +23715,10 @@ static void test_grid_layout_contract(void)
     layout_expect_rect(cells[1][0], 0, 53, 87, 47, "grid2 (1,0)=(0,53,87,47)");
     layout_expect_rect(cells[1][1], 92, 53, 153, 47, "grid2 (1,1)=(92,53,153,47)");
     layout_expect_rect(cells[1][2], 250, 53, 50, 47, "grid2 (1,2)=(250,53,50,47)");
-    XLayoutItem_deinit_base((XLayout*)&grid2);
+    XClassDeinit((XLayout*)&grid2);
     for (row = 0; row < 2; ++row)
         for (column = 0; column < 3; ++column)
-            XWidget_delete_base((XClass*)cells[row][column]);
+            XClassDelete((XClass*)cells[row][column]);
 
     /* ---------- 拷贝/移动语义 ---------- */
     {
@@ -23732,13 +23732,13 @@ static void test_grid_layout_contract(void)
         expect_true(XGridLayout_rowCount(&src) == 1 &&
                     XGridLayout_columnCount(&src) == 1, "src 网格 1x1");
         XGridLayout_init(&copy);
-        XCopy((XClass*)&copy, (const XClass*)&src);
+        XClassCopy((XClass*)&copy, (const XClass*)&src);
         expect_true(XLayout_count_base((XLayout*)&copy) == 0 &&
                     XGridLayout_columnCount(&copy) == 0 &&
                     XLayout_count_base((XLayout*)&src) == 1,
                     "copy 不复制条目树");
         XGridLayout_init(&moved);
-        XMove((XClass*)&moved, (XClass*)&src);
+        XClassMove((XClass*)&moved, (XClass*)&src);
         expect_true(XLayout_count_base((XLayout*)&moved) == 1 &&
                     XGridLayout_rowCount(&moved) == 1 &&
                     XGridLayout_columnCount(&moved) == 1 &&
@@ -23747,10 +23747,10 @@ static void test_grid_layout_contract(void)
         XRect_init(&rect, 0, 0, 15, 15);
         XLayoutItem_setGeometry_base((XLayoutItem*)&moved, &rect);
         layout_expect_rect(wd, 0, 0, 15, 15, "move 后网格几何分配正常");
-        XLayoutItem_deinit_base((XLayout*)&moved);
-        XLayoutItem_deinit_base((XLayout*)&copy);
-        XLayoutItem_deinit_base((XLayout*)&src);
-        XWidget_delete_base((XClass*)wd);
+        XClassDeinit((XLayout*)&moved);
+        XClassDeinit((XLayout*)&copy);
+        XClassDeinit((XLayout*)&src);
+        XClassDelete((XClass*)wd);
     }
 #endif /* XLAYOUT_ON && XLAYOUT_GRID_ON */
 }
@@ -23827,13 +23827,13 @@ static void test_grid_layout_default_positioning(void)
     expect_true(ok && row == 4 && column == 0, "游标绕行后 addItem → (4,0)");
     expect_true(XGridLayout_rowCount(&grid) == 5, "绕行后网格行数=5");
 #endif /* XLAYOUT_SPACER_ON */
-    XLayoutItem_deinit_base((XLayout*)&grid);
+    XClassDeinit((XLayout*)&grid);
     for (i = 0; i < 4; ++i)
-        XWidget_delete_base((XClass*)ws[i]);
+        XClassDelete((XClass*)ws[i]);
 #if XLAYOUT_SPACER_ON
-    XLayoutItem_delete_base((XLayoutItem*)sp0);
-    XLayoutItem_delete_base((XLayoutItem*)sp1);
-    XLayoutItem_delete_base((XLayoutItem*)sp2);
+    XClassDelete((XLayoutItem*)sp0);
+    XClassDelete((XLayoutItem*)sp1);
+    XClassDelete((XLayoutItem*)sp2);
 #endif /* XLAYOUT_SPACER_ON */
 
     /* ---------- addWidgetSpan 推游标：跨格结束位 + 环绕 ---------- */
@@ -23850,9 +23850,9 @@ static void test_grid_layout_default_positioning(void)
                                      &rowSpan, &columnSpan);
     expect_true(ok && row == 1 && column == 0,
                 "跨格结束后 addWidgetAuto → (1,0)");
-    XLayoutItem_deinit_base((XLayout*)&grid);
-    XWidget_delete_base((XClass*)ws[0]);
-    XWidget_delete_base((XClass*)ws[1]);
+    XClassDeinit((XLayout*)&grid);
+    XClassDelete((XClass*)ws[0]);
+    XClassDelete((XClass*)ws[1]);
 
     /* ---------- Vertical：先竖后横（对标 setDefaultPositioning Vertical） ---------- */
     XGridLayout_init(&grid);
@@ -23879,9 +23879,9 @@ static void test_grid_layout_default_positioning(void)
     expect_true(ok && row == 0 && column == 1, "垂直默认定位 #3=(0,1)（满行绕列）");
     expect_true(XGridLayout_rowCount(&grid) == 3 &&
                 XGridLayout_columnCount(&grid) == 2, "垂直默认定位后网格 3x2");
-    XLayoutItem_deinit_base((XLayout*)&grid);
+    XClassDeinit((XLayout*)&grid);
     for (i = 0; i < 4; ++i)
-        XWidget_delete_base((XClass*)ws[i]);
+        XClassDelete((XClass*)ws[i]);
 #endif /* XLAYOUT_ON && XLAYOUT_GRID_ON */
 }
 
@@ -23919,10 +23919,10 @@ static void test_grid_layout_replace_item(void)
                 columnSpan == 1, "原位替换保留 (1,2,2,1) 单元格");
     expect_true(XLayout_count_base((XLayout*)&grid) == 1,
                 "原位替换后条目数不变");
-    XLayoutItem_delete_base(old);   /* 旧条目所有权转移给调用方 */
-    XLayoutItem_deinit_base((XLayout*)&grid);
-    XWidget_delete_base((XClass*)ws[0]);
-    XWidget_delete_base((XClass*)ws[1]);
+    XClassDelete(old);   /* 旧条目所有权转移给调用方 */
+    XClassDeinit((XLayout*)&grid);
+    XClassDelete((XClass*)ws[0]);
+    XClassDelete((XClass*)ws[1]);
 
     /* 单格条目：替换后新控件按首选尺寸填满原单元格。 */
     XGridLayout_init(&grid);
@@ -23936,7 +23936,7 @@ static void test_grid_layout_replace_item(void)
     ok = XGridLayout_getItemPosition(&grid, 0, &row, &column,
                                      &rowSpan, &columnSpan);
     expect_true(ok && row == 1 && column == 1, "单格替换保留 (1,1)");
-    XLayoutItem_delete_base(old);
+    XClassDelete(old);
     size = XLayoutItem_sizeHint_base((XLayoutItem*)&grid);
     expect_true(size.width == 40 && size.height == 30,
                 "单格替换后 sizeHint=(40,30)");
@@ -23946,9 +23946,9 @@ static void test_grid_layout_replace_item(void)
     got = XGridLayout_cellRect(&grid, 1, 1);
     expect_true(got.x == 0 && got.y == 0 && got.width == 40 &&
                 got.height == 30, "cellRect(1,1)=(0,0,40,30)");
-    XLayoutItem_deinit_base((XLayout*)&grid);
-    XWidget_delete_base((XClass*)ws[0]);
-    XWidget_delete_base((XClass*)ws[1]);
+    XClassDeinit((XLayout*)&grid);
+    XClassDelete((XClass*)ws[0]);
+    XClassDelete((XClass*)ws[1]);
 #endif /* XLAYOUT_ON && XLAYOUT_GRID_ON */
 }
 
@@ -23998,10 +23998,10 @@ static void test_widget_zorder_contract(void)
     expect_true(XWidget_childAt(&parent->m_base, &p) == &b->m_base,
                 "stackUnder(c,b) 后顶部命中 (b)");
 
-    XWidget_delete_base((XClass*)c);
-    XWidget_delete_base((XClass*)b);
-    XWidget_delete_base((XClass*)a);
-    XWidget_delete_base((XClass*)parent);
+    XClassDelete((XClass*)c);
+    XClassDelete((XClass*)b);
+    XClassDelete((XClass*)a);
+    XClassDelete((XClass*)parent);
 #endif /* XWIDGET_ON */
 }
 /** @brief XWidget 显式 Tab 链（setTabOrder/focusNextChild/focusPreviousChild）回归。 */
@@ -24026,10 +24026,10 @@ static void test_widget_focus_tab_order(void)
     d = TestWidget_create(otherRoot ? &otherRoot->m_base : NULL);
     expect_true(otherRoot && d, "Tab 链跨窗测试控件创建");
     if (!otherRoot || !d) {
-        if (c) XWidget_delete_base((XClass*)c);
-        if (b) XWidget_delete_base((XClass*)b);
-        if (a) XWidget_delete_base((XClass*)a);
-        if (parent) XWidget_delete_base((XClass*)parent);
+        if (c) XClassDelete((XClass*)c);
+        if (b) XClassDelete((XClass*)b);
+        if (a) XClassDelete((XClass*)a);
+        if (parent) XClassDelete((XClass*)parent);
         return;
     }
 
@@ -24073,12 +24073,12 @@ static void test_widget_focus_tab_order(void)
     expect_true(XWidget_focusWidget(&a->m_base) == &c->m_base,
                 "跨窗 setTabOrder 不覆盖既有链");
 
-    XWidget_delete_base((XClass*)d);
-    XWidget_delete_base((XClass*)otherRoot);
-    XWidget_delete_base((XClass*)c);
-    XWidget_delete_base((XClass*)b);
-    XWidget_delete_base((XClass*)a);
-    XWidget_delete_base((XClass*)parent);
+    XClassDelete((XClass*)d);
+    XClassDelete((XClass*)otherRoot);
+    XClassDelete((XClass*)c);
+    XClassDelete((XClass*)b);
+    XClassDelete((XClass*)a);
+    XClassDelete((XClass*)parent);
 #endif /* XWIDGET_ON */
 }
 /** @brief XWidget 字符串元数据与输入法提示（状态提示/What's This/无障碍/窗口角色/样式表）回归。 */
@@ -24103,7 +24103,7 @@ static void test_widget_string_metadata_contract(void)
 
     s = XString_create_utf8("status-tip");
     XWidget_setStatusTip(&w->m_base, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     expect_true(XWidget_statusTip(&w->m_base) &&
                 strcmp(XString_toUtf8(XWidget_statusTip(&w->m_base)),
                        "status-tip") == 0,
@@ -24113,7 +24113,7 @@ static void test_widget_string_metadata_contract(void)
 
     s = XString_create_utf8("whats-this-help");
     XWidget_setWhatsThis(&w->m_base, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     expect_true(XWidget_whatsThis(&w->m_base) &&
                 strcmp(XString_toUtf8(XWidget_whatsThis(&w->m_base)),
                        "whats-this-help") == 0,
@@ -24123,7 +24123,7 @@ static void test_widget_string_metadata_contract(void)
 
     s = XString_create_utf8("access-name");
     XWidget_setAccessibleName(&w->m_base, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     expect_true(XWidget_accessibleName(&w->m_base) &&
                 strcmp(XString_toUtf8(XWidget_accessibleName(&w->m_base)),
                        "access-name") == 0,
@@ -24134,7 +24134,7 @@ static void test_widget_string_metadata_contract(void)
 
     s = XString_create_utf8("access-desc");
     XWidget_setAccessibleDescription(&w->m_base, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     expect_true(XWidget_accessibleDescription(&w->m_base) &&
                 strcmp(XString_toUtf8(XWidget_accessibleDescription(&w->m_base)),
                        "access-desc") == 0,
@@ -24145,7 +24145,7 @@ static void test_widget_string_metadata_contract(void)
 
     s = XString_create_utf8("app-main");
     XWidget_setWindowRole(&w->m_base, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     expect_true(XWidget_windowRole(&w->m_base) &&
                 strcmp(XString_toUtf8(XWidget_windowRole(&w->m_base)),
                        "app-main") == 0,
@@ -24155,7 +24155,7 @@ static void test_widget_string_metadata_contract(void)
 
     s = XString_create_utf8("QPushButton#go { background: red; }");
     XWidget_setStyleSheet(&w->m_base, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
     expect_true(XWidget_styleSheet(&w->m_base) &&
                 strcmp(XString_toUtf8(XWidget_styleSheet(&w->m_base)),
                        "QPushButton#go { background: red; }") == 0,
@@ -24176,7 +24176,7 @@ static void test_widget_string_metadata_contract(void)
     expect_true(XWidget_inputMethodHints(&w->m_base) == 0,
                 "inputMethodHints 清空");
 
-    XWidget_delete_base((XClass*)w);
+    XClassDelete((XClass*)w);
 #endif /* XWIDGET_ON */
 }
 /** @brief XWidget 形状遮罩（mask/setMask/clearMask）回归。 */
@@ -24238,9 +24238,9 @@ static void test_widget_mask_contract(void)
     expect_true(XWidget_childAt(&parent->m_base, &p10) == &a->m_base,
                 "清除遮罩后 (10,10) 仍命中 a");
 
-    XWidget_delete_base((XClass*)b);
-    XWidget_delete_base((XClass*)a);
-    XWidget_delete_base((XClass*)parent);
+    XClassDelete((XClass*)b);
+    XClassDelete((XClass*)a);
+    XClassDelete((XClass*)parent);
 #endif /* XWIDGET_ON */
 }
 /** @brief XWidget 焦点代理（focusProxy/setFocusProxy）回归。 */
@@ -24291,12 +24291,12 @@ static void test_widget_focus_proxy_contract(void)
 
     /* 代理销毁后自动摘除，避免悬空引用。 */
     XWidget_setFocusProxy(&owner->m_base, &proxy->m_base);
-    XWidget_delete_base((XClass*)proxy);
+    XClassDelete((XClass*)proxy);
     expect_true(XWidget_focusProxy(&owner->m_base) == NULL,
                 "代理销毁后 owner 不再持有代理");
 
-    XWidget_delete_base((XClass*)owner);
-    XWidget_delete_base((XClass*)parent);
+    XClassDelete((XClass*)owner);
+    XClassDelete((XClass*)parent);
 #endif /* XWIDGET_ON */
 }
 
@@ -24419,8 +24419,8 @@ static void test_widget_extended_alignment_contract(void)
     XWidget_setWindowIconText(&left->m_base, NULL);
     expect_true(XWidget_windowIconText(&left->m_base) == NULL,
                 "setWindowIconText(NULL) 清除图标文本");
-    if (iconText) XString_delete_base((XClass*)iconText);
-    if (iconText2) XString_delete_base((XClass*)iconText2);
+    if (iconText) XClassDelete((XClass*)iconText);
+    if (iconText2) XClassDelete((XClass*)iconText2);
 
     /* ---------- nativeParentWidget / topLevelWidget ---------- */
     XWidget_setGeometry(&pivot->m_base, 0, 0, 300, 100);
@@ -24473,8 +24473,8 @@ static void test_widget_extended_alignment_contract(void)
                     "visibleRegion 受父控件矩形裁剪");
         XRegion_deinit(&gotRegion);
     }
-    if (clipChild) XWidget_delete_base((XClass*)clipChild);
-    if (clipRoot) XWidget_delete_base((XClass*)clipRoot);
+    if (clipChild) XClassDelete((XClass*)clipChild);
+    if (clipRoot) XClassDelete((XClass*)clipRoot);
 
     /* ---------- 焦点链查询 ---------- */
     XWidget_setFocusPolicy(&left->m_base, XWidgetFocusPolicy_StrongFocus);
@@ -24527,7 +24527,7 @@ static void test_widget_extended_alignment_contract(void)
                     left->lastPosition.x == 10 &&
                     left->lastPosition.y == 10,
                     "releaseMouse 后恢复命中测试投递到左控件");
-        XMouseEvent_deinit_base((XClass*)&press3);
+        XClassDeinit((XClass*)&press3);
 
         /* 键盘抓取：优先于焦点控件；释放后回到焦点控件。 */
         XWidget_setFocus(&right->m_base);
@@ -24546,8 +24546,8 @@ static void test_widget_extended_alignment_contract(void)
         expect_true(right->keyPressCount == 1 &&
                     left->keyPressCount == 1,
                     "releaseKeyboard 后按焦点控件投递到 right");
-        XKeyEvent_deinit_base((XClass*)&key);
-        XMouseEvent_deinit_base((XClass*)&press2);
+        XClassDeinit((XClass*)&key);
+        XClassDeinit((XClass*)&press2);
 
         /* 隐藏抓取控件自动解除鼠标/键盘抓取。 */
         XWidget_grabMouse(&right->m_base);
@@ -24561,12 +24561,12 @@ static void test_widget_extended_alignment_contract(void)
                     "隐藏抓取控件自动解除键盘抓取");
         XWidget_show(&left->m_base);
     }
-    XMouseEvent_deinit_base((XClass*)&press);
+    XClassDeinit((XClass*)&press);
 #endif /* XWINDOWEVENT_ON && XWINDOW_ON */
 
-    XWidget_delete_base((XClass*)right);
-    XWidget_delete_base((XClass*)left);
-    XWidget_delete_base((XClass*)pivot);
+    XClassDelete((XClass*)right);
+    XClassDelete((XClass*)left);
+    XClassDelete((XClass*)pivot);
 #endif /* XWIDGET_ON */
 }
 /** @brief 布局挂控控件集成：setLayout/自动 reparent/show 激活/隐藏收缩。 */
@@ -24613,10 +24613,10 @@ static void test_layout_widget_integration(void)
     layout_expect_rect(c1, 192, 50, 30, 20, "恢复后 c1=(192,50,30,20)");
 
     XWidget_hide(&parent->m_base);
-    XWidget_delete_base((XClass*)c0);
-    XWidget_delete_base((XClass*)c1);
-    XWidget_delete_base((XClass*)parent);
-    XLayout_delete_base((XLayout*)laid);
+    XClassDelete((XClass*)c0);
+    XClassDelete((XClass*)c1);
+    XClassDelete((XClass*)parent);
+    XClassDelete((XLayout*)laid);
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 }
 
@@ -24687,9 +24687,9 @@ static void test_layout_total_extended(void)
                     -1 + 25,
                 "totalMinimumHeightForWidth=(-1)+25");
 
-    XLayoutItem_deinit_base((XLayout*)&box);
-    XWidget_delete_base((XClass*)w);
-    XWidget_delete_base((XClass*)menu);
+    XClassDeinit((XLayout*)&box);
+    XClassDelete((XClass*)w);
+    XClassDelete((XClass*)menu);
 
     /* ---------- closestAcceptableSize（对标 QLayout 静态接口） ---------- */
     w = layout_make_growable_widget(40, 20);
@@ -24702,14 +24702,14 @@ static void test_layout_total_extended(void)
     size = XLayout_closestAcceptableSize(&w->m_base, size);
     expect_true(size.width == 40 && size.height == 20,
                 "closest(10,10) 可伸缩 → 钳到最小 (40,20)");
-    XWidget_delete_base((XClass*)w);
+    XClassDelete((XClass*)w);
     w = layout_make_fixed_widget(30, 30);
     expect_true(w != NULL, "closest 固定尺寸控件创建");
     XSize_init(&size, 200, 200);
     size = XLayout_closestAcceptableSize(&w->m_base, size);
     expect_true(size.width == 30 && size.height == 30,
                 "closest(200,200) 固定 → (30,30)");
-    XWidget_delete_base((XClass*)w);
+    XClassDelete((XClass*)w);
 #endif /* XLAYOUT_ON && XLAYOUT_TOTAL_ON && XLAYOUT_BOX_ON */
 }
 
@@ -24800,8 +24800,8 @@ static void test_stacked_layout_contract(void)
                     XStackedLayout_currentIndex(&stack) == 1 &&
                     XStackedLayout_currentWidget(&stack) == &second->m_base,
                     "XPushButton clicked 槽联动 XStackedLayout 切到下一页");
-        XLabel_deinit_base(&probe.receiver);
-        XPushButton_deinit_base(&nextButton);
+        XClassDeinit(&probe.receiver);
+        XClassDeinit(&nextButton);
     }
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XFRAME_ON && XLABEL_ON */
 
@@ -24835,8 +24835,8 @@ static void test_stacked_layout_contract(void)
                 XStackedLayout_currentIndex(&stack) == 0 &&
                 XStackedLayout_currentWidget(&stack) == &first->m_base,
                 "移除当前页后索引回退到剩余页面");
-    if (taken) XLayoutItem_delete_base(taken);
-    XStackedLayout_deinit_base(&stack);
+    if (taken) XClassDelete(taken);
+    XClassDeinit(&stack);
 }
 #endif /* XLAYOUT_STACKED_ON */
 
@@ -25002,7 +25002,7 @@ static void test_label_contract(void)
     if (sel) {
         expect_true(strcmp(XString_toUtf8(sel), ".5") == 0,
                     "XLabel selectedText 按 UTF-16 区间截取");
-        XString_delete_base((XClass*)sel);
+        XClassDelete((XClass*)sel);
     }
     XLabel_setTextInteractionFlags(&label,
         XLabelTextInteraction_NoTextInteraction);
@@ -25056,8 +25056,8 @@ static void test_label_contract(void)
         word = XLabel_selectedText(&label);
         expect_true(word != NULL && strcmp(XString_toUtf8(word), "hello") == 0,
                     "XLabel 双击选中当前位置所在词");
-        if (word) XString_delete_base((XClass*)word);
-        XMouseEvent_deinit_base((XClass*)&doubleClick);
+        if (word) XClassDelete((XClass*)word);
+        XClassDeinit((XClass*)&doubleClick);
         XLabel_setSelection(&label, -1, -1);
     }
 #endif /* XWINDOWEVENT_ON */
@@ -25077,7 +25077,7 @@ static void test_label_contract(void)
                                        (XEvent*)focusOut);
         expect_true(!XLabel_hasSelectedText(&label),
                     "XLabel 普通失焦清除文本选择");
-        if (focusOut) XEvent_delete_base((XEvent*)focusOut);
+        if (focusOut) XClassDelete((XEvent*)focusOut);
     }
     XLabel_setSelection(&label, 1, 2);
     {
@@ -25088,7 +25088,7 @@ static void test_label_contract(void)
                                        (XEvent*)focusOut);
         expect_true(XLabel_hasSelectedText(&label),
                     "XLabel PopupFocusReason 失焦保留文本选择");
-        if (focusOut) XEvent_delete_base((XEvent*)focusOut);
+        if (focusOut) XClassDelete((XEvent*)focusOut);
     }
     XLabel_setSelection(&label, -1, -1);
 #endif /* XWINDOWEVENT_ON */
@@ -25138,9 +25138,9 @@ static void test_label_contract(void)
                     g_labelProbe.lastLink != NULL &&
                     strcmp(g_labelProbe.lastLink, "https://scaled.example") == 0,
                     "XLabel 缩放字号链接命中按实际行高/字宽计算");
-        XMouseEvent_deinit_base((XClass*)&press);
-        XMouseEvent_deinit_base((XClass*)&release);
-        XLabel_deinit_base(&scaledLink);
+        XClassDeinit((XClass*)&press);
+        XClassDeinit((XClass*)&release);
+        XClassDeinit(&scaledLink);
     }
 
     memset(&pm, 0, sizeof(pm));
@@ -25149,12 +25149,12 @@ static void test_label_contract(void)
     got = XLabel_pixmap(&label);
     expect_true(XPixmap_width(&got) == 5 && XPixmap_height(&got) == 4,
                 "XLabel setPixmap/pixmap 尺寸往返");
-    XPixmap_deinit_base(&got);
+    XClassDeinit(&got);
     XLabel_clear(&label);
     empty = XLabel_pixmap(&label);
     expect_true(XPixmap_isNull(&empty), "XLabel clear 清空像素图");
-    XPixmap_deinit_base(&empty);
-    XPixmap_deinit_base(&pm);
+    XClassDeinit(&empty);
+    XClassDeinit(&pm);
 
     pic = XPicture_create();
     expect_true(pic != NULL, "XLabel 测试绘图记录创建");
@@ -25168,7 +25168,7 @@ static void test_label_contract(void)
     XLabel_clear(&label);
     gotPic = XLabel_picture(&label);
     expect_true(gotPic == NULL, "XLabel clear 清空绘图记录");
-    XPicture_delete_base((XClass*)pic);
+    XClassDelete((XClass*)pic);
 
     /* Qt clears label contents on every setMovie call, including reusing the
        same borrowed movie pointer. */
@@ -25184,7 +25184,7 @@ static void test_label_contract(void)
     expect_true(XLabel_movie(&label) == &movie &&
                 XString_toUtf8_length(XLabel_text(&label)) == 0,
                 "XLabel 重设同一 movie 仍清空内容");
-    XMovie_deinit_base(&movie);
+    XClassDeinit(&movie);
 
     XLabel_setText_2(&label, "A");
     XWidget_resize((XWidget*)&label, 24, 16);
@@ -25200,7 +25200,7 @@ static void test_label_contract(void)
     drawRect.x = 1; drawRect.y = 1; drawRect.width = 22; drawRect.height = 14;
     expect_true(image_count_non_background(&image, 0xFFFFFFFFu) > 0,
                 "XLabel 离屏绘制产生非背景像素");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
     /* 文字模式也必须使用 XFont 的目标像素字号，而非只缩放像素图内容。 */
     XLabel_setText_2(&label, "Scale");
@@ -25242,8 +25242,8 @@ static void test_label_contract(void)
     scaledTextPixels = image_count_non_background(&scaledImage, 0xFFFFFFFFu);
     expect_true(scaledTextPixels > normalTextPixels,
                 "XLabel 放大字号实际文字像素增长");
-    XImage_deinit_base(&scaledImage);
-    XImage_deinit_base(&image);
+    XClassDeinit(&scaledImage);
+    XClassDeinit(&image);
 
     /* Qt::AlignLeft/Right are logical flags: in RTL they are converted by
        QStyle::visualAlignment unless AlignAbsolute is present. */
@@ -25272,7 +25272,7 @@ static void test_label_contract(void)
         XPainter_deinit(&painter);
         image_non_background_x_bounds(&directionImage, 0xFFFFFFFFu,
                                       &ltrMinX, NULL);
-        XImage_deinit_base(&directionImage);
+        XClassDeinit(&directionImage);
 
         XWidget_setLayoutDirection((XWidget*)&directionLabel,
                                     XWidgetLayoutDirection_RightToLeft);
@@ -25288,8 +25288,8 @@ static void test_label_contract(void)
                                       &rtlMinX, NULL);
         expect_true(ltrMinX >= 0 && rtlMinX > ltrMinX,
                     "XLabel RTL 布局方向转换 AlignLeft");
-        XImage_deinit_base(&directionImage);
-        XLabel_deinit_base(&directionLabel);
+        XClassDeinit(&directionImage);
+        XClassDeinit(&directionLabel);
     }
 
     memset(&g_labelProbe, 0, sizeof(g_labelProbe));
@@ -25308,11 +25308,11 @@ static void test_label_contract(void)
                     g_labelProbe.lastLink != NULL &&
                     strcmp(g_labelProbe.lastLink, "https://example.test") == 0,
                     "XLabel linkActivated 信号参数");
-        XString_delete_base((XClass*)linkText);
+        XClassDelete((XClass*)linkText);
     }
-    XLabel_delete_base(zero);
+    XClassDelete(zero);
 
-    XLabel_deinit_base(&label);
+    XClassDeinit(&label);
 }
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
@@ -25618,8 +25618,8 @@ static void test_performance_overlay_contract(void)
                 "性能悬浮层绘制使用当前几何且产生像素");
     expect_true(image_count_color(&image, 0xfff2f6f8u) > 0,
                 "性能悬浮层绘制 FPS 前景文字");
-    XImage_deinit_base(&image);
-    XPerformanceOverlay_deinit_base(&overlay);
+    XClassDeinit(&image);
+    XClassDeinit(&overlay);
 }
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
@@ -25829,13 +25829,13 @@ static void test_abstractbutton_contract(void)
 
     memset(&copied, 0, sizeof(copied));
     memset(&moved, 0, sizeof(moved));
-    XCopy(&copied, button);
+    XClassCopy(&copied, button);
     expect_true(XAbstractButton_text(&copied) != NULL &&
                 strcmp(XString_toUtf8(XAbstractButton_text(&copied)),
                        "Parent") == 0 &&
                 XAbstractButton_isChecked(&copied),
                 "XAbstractButton copy 复制资源与状态");
-    XMove(&moved, &copied);
+    XClassMove(&moved, &copied);
     expect_true(XAbstractButton_text(&moved) != NULL &&
                 strcmp(XString_toUtf8(XAbstractButton_text(&moved)),
                        "Parent") == 0 &&
@@ -25887,13 +25887,13 @@ static void test_abstractbutton_contract(void)
                 XAbstractButton_isChecked(&second.m_base),
                 "XAbstractButton 派生类自动互斥组");
 
-    XAbstractButton_deinit_base(&second);
-    XAbstractButton_deinit_base(&first);
-    XWidget_deinit_base(&parent);
-    XAbstractButton_deinit_base(&probe);
-    XAbstractButton_deinit_base(&moved);
-    XAbstractButton_deinit_base(&copied);
-    XAbstractButton_delete_base(button);
+    XClassDeinit(&second);
+    XClassDeinit(&first);
+    XClassDeinit(&parent);
+    XClassDeinit(&probe);
+    XClassDeinit(&moved);
+    XClassDeinit(&copied);
+    XClassDelete(button);
 }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
 
@@ -25988,7 +25988,7 @@ static void test_pushbutton_contract(void)
                 "XPushButton 默认文本为空");
     gotIcon = XPushButton_icon(&button);
     expect_true(XIcon_isNull(&gotIcon), "XPushButton 默认图标为空");
-    XIcon_deinit_base(&gotIcon);
+    XClassDeinit(&gotIcon);
     expect_true(!XPushButton_isCheckable(&button),
                 "XPushButton 默认不可选中");
     expect_true(!XPushButton_isChecked(&button),
@@ -26044,9 +26044,9 @@ static void test_pushbutton_contract(void)
     XPushButton_setIcon(&button, &icon);
     gotIcon = XPushButton_icon(&button);
     expect_true(!XIcon_isNull(&gotIcon), "XPushButton 设置图标非空");
-    XIcon_deinit_base(&gotIcon);
-    XIcon_deinit_base(&icon);
-    XPixmap_deinit_base(&pm);
+    XClassDeinit(&gotIcon);
+    XClassDeinit(&icon);
+    XClassDeinit(&pm);
 
     zero = XPushButton_create(NULL, 0);
     expect_true(zero != NULL, "XPushButton_create 创建");
@@ -26147,7 +26147,7 @@ static void test_pushbutton_contract(void)
                         g_buttonProbe.clicked == 3 &&
                         g_buttonProbe.pressed == 3,
                         "XPushButton 自动重复按 Qt 顺序发射信号");
-            XEvent_delete_base((XEvent*)timerEvent);
+            XClassDelete((XEvent*)timerEvent);
         }
     }
     XPushButton_setDown(zero, false);
@@ -26179,7 +26179,7 @@ static void test_pushbutton_contract(void)
                             g_buttonProbe.released == 1 &&
                             g_buttonProbe.clicked == 1,
                             "XPushButton animateClick 定时到期释放并点击");
-                XEvent_delete_base((XEvent*)timerEvent);
+                XClassDelete((XEvent*)timerEvent);
             }
         }
     }
@@ -26198,7 +26198,7 @@ static void test_pushbutton_contract(void)
         expect_true(XPushButton_isDown(zero) &&
                     ((XAbstractButton*)zero)->m_repeatTimer == timerBefore,
                     "XPushButton PopupFocusReason 保留按下和重复定时器");
-        if (focusOut) XEvent_delete_base((XEvent*)focusOut);
+        if (focusOut) XClassDelete((XEvent*)focusOut);
     }
     {
         XFocusEvent* focusOut = XFocusEvent_create(XEVENT_TYPE_FOCUS_OUT,
@@ -26208,7 +26208,7 @@ static void test_pushbutton_contract(void)
         expect_true(!XPushButton_isDown(zero) &&
                     ((XAbstractButton*)zero)->m_repeatTimer == XTIMER_INVALID_ID,
                     "XPushButton 普通失焦释放并停止重复定时器");
-        if (focusOut) XEvent_delete_base((XEvent*)focusOut);
+        if (focusOut) XClassDelete((XEvent*)focusOut);
     }
 #endif /* XWINDOWEVENT_ON */
     {
@@ -26244,7 +26244,7 @@ static void test_pushbutton_contract(void)
         XPushButton_setMenu(zero, NULL);
         expect_true(XPushButton_menu(zero) == NULL,
                     "XPushButton setMenu(NULL) 清空");
-        XMenu_delete_base(menu);
+        XClassDelete(menu);
     }
 
     XPushButton_setText_2(zero, "B");
@@ -26260,10 +26260,10 @@ static void test_pushbutton_contract(void)
     XPainter_deinit(&painter);
     expect_true(XImage_pixel(&image, 12, 8) != 0xFF000000u,
                 "按钮离屏绘制产生非背景像素");
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 
-    XPushButton_delete_base((XClass*)zero);
-    XPushButton_deinit_base(&button);
+    XClassDelete((XClass*)zero);
+    XClassDeinit(&button);
 }
 
 /** @brief XPushButton 自动互斥组的 Qt 契约测试。 */
@@ -26296,9 +26296,9 @@ static void test_pushbutton_auto_exclusive_group(void)
     expect_true(XPushButton_isChecked(&second),
                 "自动互斥组唯一选中按钮不能主动取消");
 
-    XPushButton_deinit_base(&second);
-    XPushButton_deinit_base(&first);
-    XWidget_deinit_base(&parent);
+    XClassDeinit(&second);
+    XClassDeinit(&first);
+    XClassDeinit(&parent);
 }
 
 #if XWIDGET_ON && XPAINTER_RENDERHINT_ON
@@ -26368,7 +26368,7 @@ static void test_painter_polygon_antialias(void)
 
     expect_true(solid, "polygon default keeps solid interior");
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XPAINTER_POLYGON_ON */
 
@@ -26406,7 +26406,7 @@ static void test_painter_outline_text_antialias(void)
     expect_true(gray > 0,
                 "outline text antialiasing produces gray edge pixels");
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 #endif /* XWIDGET_ON && XPAINTER_RENDERHINT_ON */
 
@@ -26463,8 +26463,8 @@ static void test_widget_content_cache_rerender_from_clean(void)
                     (pixel & 0x00ffffffu) == 0x00000000u,
                 "content cache re-render starts from a clean canvas");
     XPainter_deinit(&painter);
-    XImage_deinit_base(&target);
-    XWidget_deinit_base(&widget);
+    XClassDeinit(&target);
+    XClassDeinit(&widget);
 }
 #endif /* XWIDGET_ON */
 
@@ -26499,7 +26499,7 @@ static void test_checkbox_contract(void)
     expect_true(XCheckBox_checkState(&box) == XCheckState_Unchecked &&
                 !XCheckBox_isChecked(&box),
                 "XCheckBox 三态切换到未选中");
-    XCheckBox_deinit_base(&box);
+    XClassDeinit(&box);
 }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */
 
@@ -26532,9 +26532,9 @@ static void test_radiobutton_contract(void)
     expect_true(!XRadioButton_isChecked(&first) &&
                 XRadioButton_isChecked(&second),
                 "XRadioButton 同父控件自动互斥");
-    XRadioButton_deinit_base(&second);
-    XRadioButton_deinit_base(&first);
-    XWidget_deinit_base(&parent);
+    XClassDeinit(&second);
+    XClassDeinit(&first);
+    XClassDeinit(&parent);
 }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON */
 
@@ -26557,7 +26557,7 @@ static void test_commandlinkbutton_contract(void)
                 "XCommandLinkButton 保存描述文本");
     expect_true(withDescription.height > withoutDescription.height,
                 "XCommandLinkButton 描述增加建议高度");
-    XCommandLinkButton_deinit_base(&button);
+    XClassDeinit(&button);
 }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
 
@@ -26598,8 +26598,8 @@ static void test_pushbutton_label_signal_slot_link(void)
                 text != NULL && strcmp(text, "Released") == 0,
                 "XPushButton released 信号槽更新标签为 Released");
 
-    XLabel_deinit_base(&link.label);
-    XPushButton_deinit_base(&button);
+    XClassDeinit(&link.label);
+    XClassDeinit(&button);
 }
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
@@ -26780,17 +26780,17 @@ static void test_pushbutton_input_event_contract(void)
                 g_buttonProbe.clicked == 1,
                 "XPushButton default 按钮 Return 触发 click");
 
-    XKeyEvent_deinit_base((XClass*)&keyRelease);
-    XKeyEvent_deinit_base((XClass*)&keyPress);
-    XMouseEvent_deinit_base((XClass*)&moveIn);
-    XMouseEvent_deinit_base((XClass*)&moveOut);
-    XMouseEvent_deinit_base((XClass*)&releaseOut);
-    XMouseEvent_deinit_base((XClass*)&pressOut);
-    XMouseEvent_deinit_base((XClass*)&release);
-    XMouseEvent_deinit_base((XClass*)&press);
-    XPushButton_deinit_base(&def);
-    XPushButton_deinit_base(&kb);
-    XPushButton_deinit_base(&button);
+    XClassDeinit((XClass*)&keyRelease);
+    XClassDeinit((XClass*)&keyPress);
+    XClassDeinit((XClass*)&moveIn);
+    XClassDeinit((XClass*)&moveOut);
+    XClassDeinit((XClass*)&releaseOut);
+    XClassDeinit((XClass*)&pressOut);
+    XClassDeinit((XClass*)&release);
+    XClassDeinit((XClass*)&press);
+    XClassDeinit(&def);
+    XClassDeinit(&kb);
+    XClassDeinit(&button);
 }
 
 /** @brief XPushButton autoDefault 的父对话框链契约测试（对标 Qt 6.8 QPushButtonPrivate::dialogParent）。 */
@@ -26841,12 +26841,12 @@ static void test_pushbutton_auto_default_dialog_parent(void)
     expect_true(XPushButton_autoDefault(&inWindow),
                 "普通窗口父 + setAutoDefault(true) 返回 true");
 
-    XPushButton_deinit_base(&inNested);
-    XWidget_deinit_base(&container);
-    XPushButton_deinit_base(&inWindow);
-    XWidget_deinit_base(&window);
-    XPushButton_deinit_base(&inDialog);
-    XWidget_deinit_base(&dialog);
+    XClassDeinit(&inNested);
+    XClassDeinit(&container);
+    XClassDeinit(&inWindow);
+    XClassDeinit(&window);
+    XClassDeinit(&inDialog);
+    XClassDeinit(&dialog);
 }
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
 
@@ -26930,7 +26930,7 @@ static void test_menu_contract(void)
                     g_xmenuTriggeredAction == open,
                 "动作触发经菜单转发 triggered(action) 一次");
 
-    XMenu_delete_base(menu);
+    XClassDelete(menu);
     expect_true(true, "菜单删除释放动作与子菜单（无崩溃/泄漏）");
 }
 
@@ -26945,7 +26945,7 @@ static void test_menu_stack_lifecycle(void)
     expect_true(XMenu_actions(&menu) != NULL &&
                     XVector_size_base(XMenu_actions(&menu)) == 1,
                 "栈菜单 init 后 addAction 生效");
-    XMenu_deinit_base(&menu);
+    XClassDeinit(&menu);
     expect_true(true, "栈菜单 deinit_base 释放动作（无崩溃/泄漏）");
 }
 
@@ -27018,8 +27018,8 @@ static void test_menu_draw_contents(void)
                     "菜单离屏绘制四个条目行均有内容");
     }
 
-    XImage_deinit_base(&image);
-    XMenu_deinit_base(&menu);
+    XClassDeinit(&image);
+    XClassDeinit(&menu);
 }
 #endif /* XWIDGET_ON && XMENU_ON */
 
@@ -27104,12 +27104,12 @@ static void test_toolbutton_contract(void)
                     XToolButton_sizeHint(&button).height > 0,
                 "sizeHint 非零");
 
-    XAction_delete_base(action);
+    XClassDelete(action);
     expect_true(XToolButton_defaultAction(&button) == NULL,
                 "动作销毁后按钮自动解绑 defaultAction");
 
-    XMenu_delete_base(menu);
-    XToolButton_deinit_base(&button);
+    XClassDelete(menu);
+    XClassDeinit(&button);
     expect_true(true, "XToolButton 栈对象生命周期完成（无崩溃/泄漏）");
 }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
@@ -27154,9 +27154,9 @@ static void test_statusbar_contract(void)
     XStatusBar_removeWidget(sb, (XWidget*)lbl);
     XStatusBar_removeWidget(sb, (XWidget*)perm);
 
-    XStatusBar_delete_base(sb);
-    XLabel_delete_base(lbl);
-    XLabel_delete_base(perm);
+    XClassDelete(sb);
+    XClassDelete(lbl);
+    XClassDelete(perm);
 }
 /* ==================== XMenuBar 契约测试（对标 QMenuBar） ==================== */
 
@@ -27214,9 +27214,9 @@ static void test_menubar_contract(void)
     XMenuBar_clear(bar);
     mb2_expect(XMenuBar_actionCount(bar) == 0, "clear 清空动作");
 
-    XMenuBar_delete_base(bar);
-    XMenu_delete_base(fileMenu);
-    XMenu_delete_base(editMenu);
+    XClassDelete(bar);
+    XClassDelete(fileMenu);
+    XClassDelete(editMenu);
 }
 /* ============ 菜单族扩展契约测试（Task 2.10） ============ */
 
@@ -27284,8 +27284,8 @@ static void test_menu_ext_contract(void)
     mbx_expect(!XMenu_isTearOffMenuVisible(menu),
                "m: hideTearOffMenu 隐藏");
 
-    XMenu_delete_base(menu); /* 级联释放 sub 与全部动作 */
-    XWidget_delete_base(replay);
+    XClassDelete(menu); /* 级联释放 sub 与全部动作 */
+    XClassDelete(replay);
 }
 
 static void test_menubar_ext_contract(void)
@@ -27325,9 +27325,9 @@ static void test_menubar_ext_contract(void)
     mbx_expect(XMenuBar_platformMenuBar(bar) == NULL,
                "mb: platformMenuBar NULL");
 
-    XMenuBar_delete_base(bar);
-    XMenu_delete_base(m1);
-    XWidget_delete_base(cw);
+    XClassDelete(bar);
+    XClassDelete(m1);
+    XClassDelete(cw);
 }
 
 static void test_toolbar_ext_contract(void)
@@ -27375,7 +27375,7 @@ static void test_toolbar_ext_contract(void)
     XAction_trigger(tv);
     mbx_expect(XWidget_isVisible((XWidget*)bar), "tb: 再 toggle 显示");
 
-    XToolBar_delete_base(bar);
+    XClassDelete(bar);
     /* w 已 reparent 到 bar，随 bar 析构销毁，不再手动删除。 */
 }
 /* ==================== XToolBar 契约测试（对标 QToolBar） ==================== */
@@ -27559,7 +27559,7 @@ static void test_widgets_signals_contract(void)
             ws_expect(XTextBrowser_backwardHistoryCount(browser) == 0 &&
                       XTextBrowser_forwardHistoryCount(browser) == 0,
                       "clearHistory 后双向历史清零");
-            XTextBrowser_delete_base(browser);
+            XClassDelete(browser);
         }
     }
 
@@ -27597,7 +27597,7 @@ static void test_widgets_signals_contract(void)
                              XMouseButton_LeftButton,
                              XKeyboardModifier_NoModifier, pos);
             XWidget_event_base((XWidget*)table, (XEvent*)&press);
-            XMouseEvent_deinit_base((XClass*)&press);
+            XClassDeinit((XClass*)&press);
             ws_expect(ws_twCellPressed == 1, "按压命中单元格发射 cellPressed");
             ws_expect(ws_twItemClicked == 1, "按压命中单元格发射 itemClicked");
 
@@ -27606,7 +27606,7 @@ static void test_widgets_signals_contract(void)
                              XMouseButton_NoButton,
                              XKeyboardModifier_NoModifier, pos);
             XWidget_event_base((XWidget*)table, (XEvent*)&move);
-            XMouseEvent_deinit_base((XClass*)&move);
+            XClassDeinit((XClass*)&move);
             ws_expect(ws_twCellEntered == 1, "移入新单元格发射 cellEntered");
 
             XTableWidget_setText(table, 1, 1, "changed");
@@ -27619,7 +27619,7 @@ static void test_widgets_signals_contract(void)
             ws_expect(ws_twCurrentItem == 1,
                       "setCurrentCell 换格发射 currentItemChanged");
             ws_expect(ws_twSelection == 1, "选区变化发射 itemSelectionChanged");
-            XTableWidget_delete_base(table);
+            XClassDelete(table);
         }
     }
 
@@ -27639,7 +27639,7 @@ static void test_widgets_signals_contract(void)
             XWidget_setVisible((XWidget*)bar, false);
             ws_expect(ws_barVisible == 2 && ws_barLastVisible == false,
                       "hide 发射 visibilityChanged(false)");
-            XToolBar_delete_base(bar);
+            XClassDelete(bar);
         }
     }
 
@@ -27660,7 +27660,7 @@ static void test_widgets_signals_contract(void)
             ws_expect(XMainWindow_toolButtonStyle(win) ==
                       (int)XToolButtonStyle_TextBesideIcon,
                       "toolButtonStyle 读取生效值");
-            XMainWindow_delete_base(win);
+            XClassDelete(win);
         }
     }
 
@@ -27680,7 +27680,7 @@ static void test_widgets_signals_contract(void)
                       "updateRequest 发射且 dy=16");
             XPlainTextEdit_updateRequest_signal(edit, NULL, 0);
             ws_expect(ws_peUpdate == 2, "updateRequest NULL 矩形用整个视口");
-            XPlainTextEdit_delete_base(edit);
+            XClassDelete(edit);
         }
     }
 
@@ -27714,16 +27714,16 @@ static void test_widgets_signals_contract(void)
                              XMouseButton_LeftButton,
                              XKeyboardModifier_NoModifier, pos);
             XWidget_event_base((XWidget*)bar, (XEvent*)&press);
-            XMouseEvent_deinit_base((XClass*)&press);
+            XClassDeinit((XClass*)&press);
             XMouseEvent_init(&dbl, XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK,
                              XMouseButton_LeftButton,
                              XKeyboardModifier_NoModifier, pos);
             XWidget_event_base((XWidget*)bar, (XEvent*)&dbl);
-            XMouseEvent_deinit_base((XClass*)&dbl);
+            XClassDeinit((XClass*)&dbl);
 
             ws_expect(ws_tabClicked >= 1, "页签点击转发 tabBarClicked");
             ws_expect(ws_tabDblClicked >= 1, "页签双击转发 tabBarDoubleClicked");
-            XTabWidget_delete_base(tabs);
+            XClassDelete(tabs);
         }
     }
 
@@ -27737,7 +27737,7 @@ static void test_widgets_signals_contract(void)
             ws_wizHelp = 0;
             XWizard_helpRequested_signal(wizard);
             ws_expect(ws_wizHelp == 1, "helpRequested 真发射");
-            XWizard_delete_base(wizard);
+            XClassDelete(wizard);
         }
     }
 
@@ -27813,7 +27813,7 @@ static void test_fusion_style_contract(void)
                     XVtableGetFunc(vtF, EXStyle_SizeFromContents, void*) ==
                         XVtableGetFunc(vtC, EXStyle_SizeFromContents, void*),
                     "Fusion→CommonStyle 继承（SizeFromContents 同槽）");
-                XCommonStyle_delete_base(cs);
+                XClassDelete(cs);
             }
         }
         c1_expect(XStyle_defaultStyle() != NULL, "默认样式懒创建");
@@ -27843,7 +27843,7 @@ static void test_fusion_style_contract(void)
                 XPainter_end(&painter);
             }
             XPainter_deinit(&painter);
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
         }
         /* 复选/单选/进度/页签绘制。 */
         XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32); {
@@ -27870,7 +27870,7 @@ static void test_fusion_style_contract(void)
                 XPainter_end(&painter);
             }
             XPainter_deinit(&painter);
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
         }
         /* Fusion 安装为默认。 */
         XFusionStyle_installDefault();
@@ -27900,9 +27900,9 @@ static void test_fusion_style_contract(void)
                 XPainter_end(&painter);
             }
             XPainter_deinit(&painter);
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
         }
-        XFusionStyle_delete_base(fs);
+        XClassDelete(fs);
     }
 #endif /* XSTYLE_ON */
 }
@@ -27936,7 +27936,7 @@ static uint32_t xqss_centerPixel(XStyle* style, XWidget* w,
     XPainter_deinit(&painter);
     pc = XImage_pixelColor(&image, 20, 10);
     px = XColor_rgba(&pc);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
     return px;
 }
 
@@ -27971,7 +27971,7 @@ static void xqss_painterFamily(XStyle* style, XWidget* w,
         XPainter_end(&painter);
     }
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 /** @brief QSS 样式表契约：解析/属性/伪类/匹配/颜色长度/回落。 */
@@ -28015,7 +28015,7 @@ static void test_qss_contract(void)
         /* 清空。 */
         XStyleSheetStyle_setStyleSheet(ss, "");
         c1_expect(XStyleSheetStyle_ruleCount(ss) == 0, "空样式表清空规则");
-        XStyleSheetStyle_delete_base(ss);
+        XClassDelete(ss);
     }
     {
         /* 端到端：QSS 覆盖按钮背景色（像素级验证）。 */
@@ -28054,8 +28054,8 @@ static void test_qss_contract(void)
                 }
             }
             XPainter_deinit(&painter);
-            XImage_deinit_base(&image);
-            XPushButton_delete_base(btn);
+            XClassDeinit(&image);
+            XClassDelete(btn);
         }
         /* 属性选择器/关系选择器。 */
         {
@@ -28091,8 +28091,8 @@ static void test_qss_contract(void)
                               .m_basics[0].m_attribute.m_name != NULL,
                           "属性选择器名称解析");
             }
-            XString_delete_base(pn);
-            XString_delete_base(pv);
+            XClassDelete(pn);
+            XClassDelete(pv);
             (void)v;
             /* 关系选择器 "XWidget XLineEdit"（后代）。 */
             XStyleSheetStyle_setStyleSheet(ss4,
@@ -28107,8 +28107,8 @@ static void test_qss_contract(void)
                               XCssRelation_Ancestor,
                           "后代关系解析");
             }
-            if (host4) XLineEdit_delete_base(host4);
-            XStyleSheetStyle_delete_base(ss4);
+            if (host4) XClassDelete(host4);
+            XClassDelete(ss4);
         }
         /* text-decoration 绘制（像素级：下划线）。 */
         {
@@ -28145,7 +28145,7 @@ static void test_qss_contract(void)
                     XFont_setUnderline(&f, true);
                     XPainter_setFont(&painter, &f);
                     XPainter_drawText(&painter, 4, 16, "ab", 0xFFFF0000u);
-                    XFont_deinit_base(&f);
+                    XClassDeinit(&f);
                 }
                 XPainter_end(&painter);
             }
@@ -28177,9 +28177,9 @@ static void test_qss_contract(void)
                 }
                 (void)pxTop; (void)pxBottom; (void)redAt;
             }
-            XImage_deinit_base(&image);
-            if (host5) XLineEdit_delete_base(host5);
-            XStyleSheetStyle_delete_base(ss5);
+            XClassDeinit(&image);
+            if (host5) XClassDelete(host5);
+            XClassDelete(ss5);
         }
         /* :hover 伪类动态匹配（状态位翻转 → 背景色变化）。 */
         {
@@ -28213,7 +28213,7 @@ static void test_qss_contract(void)
             XPainter_deinit(&painter);
             pc = XImage_pixelColor(&image, 20, 10);
             pxNo = XColor_rgba(&pc);
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
             XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32);
             XPainter_init(&painter, NULL);
             if (XPainter_begin_image(&painter, &image)) {
@@ -28230,12 +28230,12 @@ static void test_qss_contract(void)
             XPainter_deinit(&painter);
             pc = XImage_pixelColor(&image, 20, 10);
             pxHover = XColor_rgba(&pc);
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
             c1_expect((pxHover & 0x00FFFFFFu) == 0xFFA500u,
                       "QSS hover 命中橙色背景");
             c1_expect(pxNo != pxHover, "QSS hover 状态翻转背景变化");
-            if (host3) XLineEdit_delete_base(host3);
-            XStyleSheetStyle_delete_base(ss3);
+            if (host3) XClassDelete(host3);
+            XClassDelete(ss3);
         }
         /* border/padding 盒模型覆盖（像素级）。 */
         {
@@ -28275,11 +28275,11 @@ static void test_qss_contract(void)
             px = XColor_rgba(&pc);
             c1_expect((px & 0x00FFFFFFu) == 0xFF0000u,
                       "QSS 边框绘制（2px 红框）");
-            XImage_deinit_base(&image);
-            if (host) XLineEdit_delete_base(host);
-            XStyleSheetStyle_delete_base(ss2);
+            XClassDeinit(&image);
+            if (host) XClassDelete(host);
+            XClassDelete(ss2);
         }
-        XStyleSheetStyle_delete_base(ss);
+        XClassDelete(ss);
     }
     {
         /* 值模型契约（批一 values 线 merged）：长度单位语义/百分比浮点
@@ -28673,8 +28673,8 @@ static void test_qss_contract(void)
                            fam, (int)sizeof(fam));
         c1_expect(XStrcmp(fam, "First F") == 0,
                   "font 简写逗号字族列表取首个有效段");
-        if (leF) XLineEdit_delete_base(leF);
-        if (ssF) XStyleSheetStyle_delete_base(ssF);
+        if (leF) XClassDelete(leF);
+        if (ssF) XClassDelete(ssF);
     }
     {
         /* 控件级端到端（批二触发链/兄弟导航 + 批三级联线 merged；
@@ -28718,7 +28718,7 @@ static void test_qss_contract(void)
             XWidget_setStyleSheet((XWidget*)leA, NULL); /* 置空=变更。 */
             c1_expect(XWidget_styleSheet((XWidget*)leA) == NULL,
                       "控件级样式表置空（NULL 覆盖）");
-            XString_delete_base(css1);
+            XClassDelete(css1);
         }
         /* 兄弟导航 API 直断（批二 sibling 线：严格相邻、不跳空位）。 */
         c1_expect(XObject_parent((XObject*)leA) == (XObject*)pane,
@@ -28756,7 +28756,7 @@ static void test_qss_contract(void)
            道，qcssparser.cpp；特异度决定胜负）。 */
         nm = XString_create_utf8("winner");
         XObject_setObjectName((XObject*)leW, nm);
-        XString_delete_base(nm);
+        XClassDelete(nm);
         XStyleSheetStyle_setStyleSheet(ssImp,
             "XLineEdit { background-color: #FF0000 !important; }\n"
             "#winner { background-color: #00FF00; }");
@@ -28828,8 +28828,8 @@ static void test_qss_contract(void)
                 XString_create_utf8("XLineEdit { background-color: #333333; }");
             XWidget_setStyleSheet((XWidget*)pane, cssPane);
             XWidget_setStyleSheet((XWidget*)leOwn, cssOwn);
-            XString_delete_base(cssPane);
-            XString_delete_base(cssOwn);
+            XClassDelete(cssPane);
+            XClassDelete(cssOwn);
         }
         px = xqss_centerPixel((XStyle*)ssCas, (XWidget*)leApp,
                               XStylePE_PanelLineEdit, XStyleState_Enabled);
@@ -28845,20 +28845,20 @@ static void test_qss_contract(void)
                   "级联：控件自身胜祖先与应用（#333333）");
         XWidget_setStyleSheet((XWidget*)pane, NULL);  /* 置空收场。 */
         XWidget_setStyleSheet((XWidget*)leOwn, NULL);
-        if (leApp) XLineEdit_delete_base(leApp);
-        if (leAnc) XLineEdit_delete_base(leAnc);
-        if (leOwn) XLineEdit_delete_base(leOwn);
-        if (leW) XLineEdit_delete_base(leW);
-        if (leC) XLineEdit_delete_base(leC);
-        if (leB) XLineEdit_delete_base(leB);
-        if (leA) XLineEdit_delete_base(leA);
-        if (lab) XLabel_delete_base(lab);
-        if (pane) XFrame_delete_base(pane);
-        if (ssNav) XStyleSheetStyle_delete_base(ssNav);
-        if (ssCas) XStyleSheetStyle_delete_base(ssCas);
-        if (ssImp) XStyleSheetStyle_delete_base(ssImp);
-        if (ssHP) XStyleSheetStyle_delete_base(ssHP);
-        if (ssPe) XStyleSheetStyle_delete_base(ssPe);
+        if (leApp) XClassDelete(leApp);
+        if (leAnc) XClassDelete(leAnc);
+        if (leOwn) XClassDelete(leOwn);
+        if (leW) XClassDelete(leW);
+        if (leC) XClassDelete(leC);
+        if (leB) XClassDelete(leB);
+        if (leA) XClassDelete(leA);
+        if (lab) XClassDelete(lab);
+        if (pane) XClassDelete(pane);
+        if (ssNav) XClassDelete(ssNav);
+        if (ssCas) XClassDelete(ssCas);
+        if (ssImp) XClassDelete(ssImp);
+        if (ssHP) XClassDelete(ssHP);
+        if (ssPe) XClassDelete(ssPe);
     }
 #if XAPPLICATION_ON
     {
@@ -28888,7 +28888,7 @@ static void test_qss_contract(void)
             XString* cssBtn = XString_create_utf8(
                 "XPushButton { background-color: #0A0B0C; }");
             XWidget_setStyleSheet((XWidget*)btn, cssBtn);
-            XString_delete_base(cssBtn);
+            XClassDelete(cssBtn);
         }
         px = xqss_centerPixel(XStyle_defaultStyle(), (XWidget*)btn,
                               XStylePE_PanelButtonCommand,
@@ -28903,8 +28903,8 @@ static void test_qss_contract(void)
                               XStyleState_Enabled | XStyleState_Raised);
         c1_expect((px & 0x00FFFFFFu) != 0x010203u,
                   "应用级样式表清空回落源样式");
-        if (btn) XPushButton_delete_base(btn);
-        if (xapp) XApplication_delete_base(xapp);
+        if (btn) XClassDelete(btn);
+        if (xapp) XClassDelete(xapp);
     }
 #endif /* XAPPLICATION_ON */
 #endif /* XSTYLE_ON */
@@ -28983,7 +28983,7 @@ static const char* w1_propText(const XWidget* w, const char* name)
         XString* s = (XString*)XVariant_data(v);
         out = s ? XString_toUtf8(s) : NULL;
     }
-    XString_deinit_base((XClass*)&n);
+    XClassDeinit((XClass*)&n);
     return out;
 }
 
@@ -28996,7 +28996,7 @@ static bool w1_propExists(const XWidget* w, const char* name)
     XString_init(&n);
     XString_assign_utf8(&n, name);
     v = XObject_property((const XObject*)w, &n);
-    XString_deinit_base((XClass*)&n);
+    XClassDeinit((XClass*)&n);
     return v != NULL;
 }
 
@@ -29229,11 +29229,11 @@ static void test_qss_wave1_contract(void)
                       "G2 规则全不命中：绘制逐像素等于裸源样式（零行为差）");
             w1_expect(w1_imagesEqual(&base, &emptyImg),
                       "G2 空规则表：绘制逐像素等于裸源样式（首行短路）");
-            XImage_deinit_base(&missImg);
-            XImage_deinit_base(&emptyImg);
+            XClassDeinit(&missImg);
+            XClassDeinit(&emptyImg);
         }
-        XImage_deinit_base(&withRule);
-        XImage_deinit_base(&base);
+        XClassDeinit(&withRule);
+        XClassDeinit(&base);
         /* 第二映射名：spinbox 按钮列（up 命中、down/编辑区不受染）。 */
         {
             XStyleSheetStyle* ssSpin = XStyleSheetStyle_create();
@@ -29257,14 +29257,14 @@ static void test_qss_wave1_contract(void)
             px = XColor_rgba(&pc);
             w1_expect((px & 0x00FFFFFFu) != 0xFF00FFu,
                       "G2 编辑区不受子件规则染（只落子件矩形）");
-            XImage_deinit_base(&img);
-            if (spin) XSpinBox_delete_base(spin);
-            XStyleSheetStyle_delete_base(ssSpin);
+            XClassDeinit(&img);
+            if (spin) XClassDelete(spin);
+            XClassDelete(ssSpin);
         }
-        if (slider) XSlider_delete_base(slider);
-        XStyleSheetStyle_delete_base(ssGroove);
-        XStyleSheetStyle_delete_base(ssMiss);
-        XStyleSheetStyle_delete_base(ssEmpty);
+        if (slider) XClassDelete(slider);
+        XClassDelete(ssGroove);
+        XClassDelete(ssMiss);
+        XClassDelete(ssEmpty);
     }
     {
         /* ---- G5：qproperty-* 应用链（qproperty-media 线 merged；
@@ -29278,7 +29278,7 @@ static void test_qss_wave1_contract(void)
             /* ① 首次命中应用：动态属性字符串写入。 */
             css = XString_create_utf8("XLabel { qproperty-qpProbe: abc; }");
             XWidget_setStyleSheet((XWidget*)lbl, css);
-            XString_delete_base(css);
+            XClassDelete(css);
             txt = w1_propText((XWidget*)lbl, "qpProbe");
             w1_expect(txt != NULL && XStrcmp(txt, "abc") == 0,
                       "G5 qproperty 命中即写入动态属性（字符串口径）");
@@ -29293,8 +29293,8 @@ static void test_qss_wave1_contract(void)
                 XString_init(&nm);
                 XString_assign_utf8(&nm, "qpProbe");
                 if (!XObject_setProperty((XObject*)lbl, &nm, nv))
-                    XVariant_delete_base((XClass*)nv);
-                XString_deinit_base((XClass*)&nm);
+                    XClassDelete((XClass*)nv);
+                XClassDeinit((XClass*)&nm);
             }
             XWidget_applyStyleSheetProperties((XWidget*)lbl);
             txt = w1_propText((XWidget*)lbl, "qpProbe");
@@ -29303,14 +29303,14 @@ static void test_qss_wave1_contract(void)
             /* ④ 同文本重设：变更检测拦截，不清账不重写。 */
             css = XString_create_utf8("XLabel { qproperty-qpProbe: abc; }");
             XWidget_setStyleSheet((XWidget*)lbl, css);
-            XString_delete_base(css);
+            XClassDelete(css);
             txt = w1_propText((XWidget*)lbl, "qpProbe");
             w1_expect(txt != NULL && XStrcmp(txt, "zzz") == 0,
                       "G5 同文本 setStyleSheet 不重置账本不重写");
             /* ⑤ 变更重设：清账→按新文本重新应用。 */
             css = XString_create_utf8("XLabel { qproperty-qpProbe: xyz; }");
             XWidget_setStyleSheet((XWidget*)lbl, css);
-            XString_delete_base(css);
+            XClassDelete(css);
             txt = w1_propText((XWidget*)lbl, "qpProbe");
             w1_expect(txt != NULL && XStrcmp(txt, "xyz") == 0,
                       "G5 样式表变更重设清账后按新值重应用");
@@ -29319,7 +29319,7 @@ static void test_qss_wave1_contract(void)
             css = XString_create_utf8(
                 "XLabel { qproperty-qpFinal: 1; qproperty-qpFinal: 2; }");
             XWidget_setStyleSheet((XWidget*)lbl, css);
-            XString_delete_base(css);
+            XClassDelete(css);
             txt = w1_propText((XWidget*)lbl, "qpFinal");
             w1_expect(txt != NULL && XStrcmp(txt, "2") == 0,
                       "G5 同名声明取最终出现");
@@ -29327,7 +29327,7 @@ static void test_qss_wave1_contract(void)
             css = XString_create_utf8(
                 "XSpinBox { qproperty-qpMiss: 7; }");
             XWidget_setStyleSheet((XWidget*)lbl, css);
-            XString_delete_base(css);
+            XClassDelete(css);
             w1_expect(w1_propText((XWidget*)lbl, "qpMiss") == NULL,
                       "G5 选择器不命中不写入");
             /* ⑧ @media 内嵌集不参与应用（widget 口径 Qt 不评估，
@@ -29335,12 +29335,12 @@ static void test_qss_wave1_contract(void)
             css = XString_create_utf8(
                 "@media screen { XLabel { qproperty-qpMedia: 9; } }");
             XWidget_setStyleSheet((XWidget*)lbl, css);
-            XString_delete_base(css);
+            XClassDelete(css);
             w1_expect(w1_propText((XWidget*)lbl, "qpMedia") == NULL,
                       "G5 @media 内嵌 qproperty 不参与应用（只扫表层规则）");
             /* ⑨ NULL 安全。 */
             XWidget_applyStyleSheetProperties(NULL);
-            XLabel_delete_base(lbl);
+            XClassDelete(lbl);
         }
         /* ⑩ 解析存储口径：@media 内嵌 qproperty 规则入 m_mediaRules
          *    不入表层（应用钩子只扫 m_rules 的根据）。 */
@@ -29432,8 +29432,8 @@ static void w1_remove_file(const char* path)
     if (!ps) return;
     f = XFile_create_2(ps);
     if (f && XFile_exists(f)) XFile_remove(f);
-    if (f) XClass_delete_base((XClass*)f);
-    XString_delete_base(ps);
+    if (f) XClassDelete((XClass*)f);
+    XClassDelete(ps);
 }
 
 /** @brief QSS 面板基元探针（G3 断言台）：以 style 在 cw×ch 软件位图
@@ -29705,9 +29705,9 @@ static void test_qss_wave2_contract(void)
                   "G3 image-position left top 对齐");
         w1_remove_file("w1bg_tile.bmp");
         w1_remove_file("w1bg_nine.bmp");
-        XImage_deinit_base(&img);
-        XLabel_delete_base(lbl);
-        XStyleSheetStyle_delete_base(ss);
+        XClassDeinit(&img);
+        XClassDelete(lbl);
+        XClassDelete(ss);
     }
     {
         /* ---- G4：palette(role) 取色（三态序：色→palette→渐变；
@@ -29742,10 +29742,10 @@ static void test_qss_wave2_contract(void)
                     0, 0, 40, 20, 40, 20, &img);
         w1_expect(w1_rgbAt(&img, 20, 10) == 0xFF0000u,
                   "G4 纯色优先于 palette/渐变（三态序首位，零回退）");
-        XImage_deinit_base(&img);
-        if (btn) XPushButton_delete_base(btn);
-        XLabel_delete_base(lbl);
-        XStyleSheetStyle_delete_base(ss);
+        XClassDeinit(&img);
+        if (btn) XClassDelete(btn);
+        XClassDelete(lbl);
+        XClassDelete(ss);
     }
     {
         /* ---- G4：text-transform（码点级映射，opt.m_text 通道；
@@ -29807,11 +29807,11 @@ static void test_qss_wave2_contract(void)
                       &b);
         w1_expect(w1_imagesEqual(&a, &b),
                   "G4 text-transform 四字节码点往返安全不变换");
-        XImage_deinit_base(&a);
-        XImage_deinit_base(&b);
-        if (btn) XPushButton_delete_base(btn);
-        XStyleSheetStyle_delete_base(ssUp);
-        XStyleSheetStyle_delete_base(ssPlain);
+        XClassDeinit(&a);
+        XClassDeinit(&b);
+        if (btn) XClassDelete(btn);
+        XClassDelete(ssUp);
+        XClassDelete(ssPlain);
     }
 
     if (w1_failures != 0)
@@ -29929,7 +29929,7 @@ static void test_qss_wave3_contract(void)
                 } else {
                     w1_expect(0, "G3 XImage 槽路径锁：reinit_ex 失败");
                 }
-                XClass_delete_base((XClass*)slot);
+                XClassDelete((XClass*)slot);
             }
         }
         {
@@ -29952,8 +29952,8 @@ static void test_qss_wave3_contract(void)
                 XPainter_deinit(&py);
                 w1_expect(dr == 1 && w1_rgbAt(&dst, 10, 10) == 0x4080C0u,
                           "G3 painter 锁：premultiplied 源 drawImage 直传");
-                XImage_deinit_base(&dst);
-                XClass_delete_base((XClass*)pm);
+                XClassDeinit(&dst);
+                XClassDelete((XClass*)pm);
             }
         }
     }
@@ -30012,7 +30012,7 @@ static void test_fusion_state_matrix(void)
             XColor pc = XImage_pixelColor(&image, 20, 4);
             pxNormal = XColor_rgba(&pc);
         }
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32);
         XPainter_init(&painter, NULL);
         if (XPainter_begin_image(&painter, &image)) {
@@ -30029,7 +30029,7 @@ static void test_fusion_state_matrix(void)
             XColor pc = XImage_pixelColor(&image, 20, 4);
             pxSunken = XColor_rgba(&pc);
         }
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         c1_expect(pxNormal != pxSunken, "状态矩阵：按下渐变反转");
         /* 复选框 On/Off 像素差异。 */
         XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32);
@@ -30043,7 +30043,7 @@ static void test_fusion_state_matrix(void)
             XPainter_end(&painter);
         }
         XPainter_deinit(&painter);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         /* 禁用态绘制（disabled 灰化不崩）。 */
         XImage_init_ex(&image, 40, 20, XImageFormat_ARGB32);
         XPainter_init(&painter, NULL);
@@ -30056,9 +30056,9 @@ static void test_fusion_state_matrix(void)
             XPainter_end(&painter);
         }
         XPainter_deinit(&painter);
-        XImage_deinit_base(&image);
-        if (themeBtn) XPushButton_delete_base(themeBtn);
-        XFusionStyle_delete_base(fs);
+        XClassDeinit(&image);
+        if (themeBtn) XClassDelete(themeBtn);
+        XClassDelete(fs);
     }
 #endif /* XSTYLE_ON */
 }
@@ -30075,69 +30075,69 @@ static void test_widgets_inheritance_contract(void)
        QSplitter/QStackedWidget/XLcdNumber/QToolBox->QFrame、
        QFontComboBox->QComboBox->QWidget、
        QButtonGroup/QTextDocument->QObject。 */
-    { XClass* w = (XClass*)XLabel_create(NULL, 0); xtw_expect_class(w, "XLabel 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XFrame_create(NULL, 0); xtw_expect_class(w, "XFrame 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XCheckBox_create(NULL, 0); xtw_expect_class(w, "XCheckBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XAbstractButton_create(NULL, 0); xtw_expect_class(w, "XAbstractButton 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XSpinBox_create(NULL, 0); xtw_expect_class(w, "XSpinBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XDateTimeEdit_create(NULL, 0); xtw_expect_class(w, "XDateTimeEdit 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XAbstractSpinBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0); xtw_expect_class(w, "XAbstractSpinBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XDial_create(NULL, 0); xtw_expect_class(w, "XDial 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XSlider_create(NULL, 0); xtw_expect_class(w, "XSlider 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XScrollBar_create(NULL, 0); xtw_expect_class(w, "XScrollBar 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XAbstractSlider_create(NULL, 0); xtw_expect_class(w, "XAbstractSlider 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XPlainTextEdit_create(NULL, 0); xtw_expect_class(w, "XPlainTextEdit 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XTextEdit_create(NULL, 0); xtw_expect_class(w, "XTextEdit 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XTextBrowser_create(NULL, 0); xtw_expect_class(w, "XTextBrowser 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XAbstractScrollArea_create(NULL, 0); xtw_expect_class(w, "XAbstractScrollArea 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XScrollArea_create(NULL, 0); xtw_expect_class(w, "XScrollArea 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0); xtw_expect_class(w, "XTableWidget 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XTableView_create(NULL, 0); xtw_expect_class(w, "XTableView 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XAbstractItemView_create(NULL, 0); xtw_expect_class(w, "XAbstractItemView 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XGroupBox_create(NULL, 0); xtw_expect_class(w, "XGroupBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XComboBox_create(NULL, 0); xtw_expect_class(w, "XComboBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XFontComboBox_create(NULL, 0); xtw_expect_class(w, "XFontComboBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XCommandLinkButton_create(NULL, 0); xtw_expect_class(w, "XCommandLinkButton 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XPushButton_create(NULL, 0); xtw_expect_class(w, "XPushButton 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XRadioButton_create(NULL, 0); xtw_expect_class(w, "XRadioButton 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XToolButton_create(NULL, 0); xtw_expect_class(w, "XToolButton 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XMessageBox_create(NULL, 0); xtw_expect_class(w, "XMessageBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XDialog_create(NULL, 0); xtw_expect_class(w, "XDialog 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XSplitter_create(NULL, 0); xtw_expect_class(w, "XSplitter 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XLabel_create(NULL, 0); xtw_expect_class(w, "XLabel 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XFrame_create(NULL, 0); xtw_expect_class(w, "XFrame 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XCheckBox_create(NULL, 0); xtw_expect_class(w, "XCheckBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XAbstractButton_create(NULL, 0); xtw_expect_class(w, "XAbstractButton 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XSpinBox_create(NULL, 0); xtw_expect_class(w, "XSpinBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XDateTimeEdit_create(NULL, 0); xtw_expect_class(w, "XDateTimeEdit 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XAbstractSpinBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0); xtw_expect_class(w, "XAbstractSpinBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XDial_create(NULL, 0); xtw_expect_class(w, "XDial 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XSlider_create(NULL, 0); xtw_expect_class(w, "XSlider 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XScrollBar_create(NULL, 0); xtw_expect_class(w, "XScrollBar 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XAbstractSlider_create(NULL, 0); xtw_expect_class(w, "XAbstractSlider 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XPlainTextEdit_create(NULL, 0); xtw_expect_class(w, "XPlainTextEdit 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XTextEdit_create(NULL, 0); xtw_expect_class(w, "XTextEdit 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XTextBrowser_create(NULL, 0); xtw_expect_class(w, "XTextBrowser 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XAbstractScrollArea_create(NULL, 0); xtw_expect_class(w, "XAbstractScrollArea 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XScrollArea_create(NULL, 0); xtw_expect_class(w, "XScrollArea 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0); xtw_expect_class(w, "XTableWidget 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XTableView_create(NULL, 0); xtw_expect_class(w, "XTableView 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XAbstractItemView_create(NULL, 0); xtw_expect_class(w, "XAbstractItemView 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XGroupBox_create(NULL, 0); xtw_expect_class(w, "XGroupBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XComboBox_create(NULL, 0); xtw_expect_class(w, "XComboBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XFontComboBox_create(NULL, 0); xtw_expect_class(w, "XFontComboBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XCommandLinkButton_create(NULL, 0); xtw_expect_class(w, "XCommandLinkButton 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XPushButton_create(NULL, 0); xtw_expect_class(w, "XPushButton 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XRadioButton_create(NULL, 0); xtw_expect_class(w, "XRadioButton 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XToolButton_create(NULL, 0); xtw_expect_class(w, "XToolButton 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XMessageBox_create(NULL, 0); xtw_expect_class(w, "XMessageBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XDialog_create(NULL, 0); xtw_expect_class(w, "XDialog 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XSplitter_create(NULL, 0); xtw_expect_class(w, "XSplitter 虚表"); XClassDelete(w); }
 #if XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON
-    { XClass* w = (XClass*)XStackedWidget_create(NULL, 0); xtw_expect_class(w, "XStackedWidget 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XStackedWidget_create(NULL, 0); xtw_expect_class(w, "XStackedWidget 虚表"); XClassDelete(w); }
 #endif /* XSTACKEDWIDGET_ON && XLAYOUT_STACKED_ON */
-    { XClass* w = (XClass*)XLcdNumber_create(NULL, 0); xtw_expect_class(w, "XLcdNumber 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XDialogButtonBox_create(NULL, 0); xtw_expect_class(w, "XDialogButtonBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XDockWidget_create(NULL, NULL, 0); xtw_expect_class(w, "XDockWidget 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XMainWindow_create(NULL, 0); xtw_expect_class(w, "XMainWindow 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XToolBar_create(NULL, 0); xtw_expect_class(w, "XToolBar 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XStatusBar_create(NULL, 0); xtw_expect_class(w, "XStatusBar 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XMenuBar_create(NULL, 0); xtw_expect_class(w, "XMenuBar 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XTabWidget_create(NULL, 0); xtw_expect_class(w, "XTabWidget 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XTabBar_create(NULL, 0); xtw_expect_class(w, "XTabBar 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XWizardPage_create(NULL, 0); xtw_expect_class(w, "XWizardPage 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XCalendarWidget_create(NULL, 0); xtw_expect_class(w, "XCalendarWidget 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XProgressBar_create(NULL, 0); xtw_expect_class(w, "XProgressBar 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XSplashScreen_create(NULL, 0); xtw_expect_class(w, "XSplashScreen 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XLineEdit_create(NULL, 0); xtw_expect_class(w, "XLineEdit 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XToolBox_create(NULL, 0); xtw_expect_class(w, "XToolBox 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XButtonGroup_create(NULL); xtw_expect_class(w, "XButtonGroup 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XTextDocument_create(); xtw_expect_class(w, "XTextDocument 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XLcdNumber_create(NULL, 0); xtw_expect_class(w, "XLcdNumber 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XDialogButtonBox_create(NULL, 0); xtw_expect_class(w, "XDialogButtonBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XDockWidget_create(NULL, NULL, 0); xtw_expect_class(w, "XDockWidget 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XMainWindow_create(NULL, 0); xtw_expect_class(w, "XMainWindow 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XToolBar_create(NULL, 0); xtw_expect_class(w, "XToolBar 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XStatusBar_create(NULL, 0); xtw_expect_class(w, "XStatusBar 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XMenuBar_create(NULL, 0); xtw_expect_class(w, "XMenuBar 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XTabWidget_create(NULL, 0); xtw_expect_class(w, "XTabWidget 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XTabBar_create(NULL, 0); xtw_expect_class(w, "XTabBar 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XWizardPage_create(NULL, 0); xtw_expect_class(w, "XWizardPage 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XCalendarWidget_create(NULL, 0); xtw_expect_class(w, "XCalendarWidget 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XProgressBar_create(NULL, 0); xtw_expect_class(w, "XProgressBar 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XSplashScreen_create(NULL, 0); xtw_expect_class(w, "XSplashScreen 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XLineEdit_create(NULL, 0); xtw_expect_class(w, "XLineEdit 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XToolBox_create(NULL, 0); xtw_expect_class(w, "XToolBox 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XButtonGroup_create(NULL); xtw_expect_class(w, "XButtonGroup 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XTextDocument_create(); xtw_expect_class(w, "XTextDocument 虚表"); XClassDelete(w); }
 #if XCHARTS_ON
     /* Charts 继承链（Qt Charts 6.8.3）：
        QLineSeries/QScatterSeries/QSplineSeries -> QXYSeries -> QAbstractSeries、
        QBarSeries -> QAbstractBarSeries -> QAbstractSeries、
        QPieSeries/QAreaSeries -> QAbstractSeries。 */
-    { XClass* w = (XClass*)XLineSeries_create(); xtw_expect_class(w, "XLineSeries 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XScatterSeries_create(); xtw_expect_class(w, "XScatterSeries 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XSplineSeries_create(); xtw_expect_class(w, "XSplineSeries 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XXYSeries_create(); xtw_expect_class(w, "XXYSeries 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XBarSeries_create(); xtw_expect_class(w, "XBarSeries 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XAbstractBarSeries_create(); xtw_expect_class(w, "XAbstractBarSeries 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XPieSeries_create(); xtw_expect_class(w, "XPieSeries 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XAreaSeries_create(); xtw_expect_class(w, "XAreaSeries 虚表"); XClass_delete_base(w); }
-    { XClass* w = (XClass*)XAbstractSeries_create(); xtw_expect_class(w, "XAbstractSeries 虚表"); XClass_delete_base(w); }
+    { XClass* w = (XClass*)XLineSeries_create(); xtw_expect_class(w, "XLineSeries 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XScatterSeries_create(); xtw_expect_class(w, "XScatterSeries 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XSplineSeries_create(); xtw_expect_class(w, "XSplineSeries 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XXYSeries_create(); xtw_expect_class(w, "XXYSeries 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XBarSeries_create(); xtw_expect_class(w, "XBarSeries 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XAbstractBarSeries_create(); xtw_expect_class(w, "XAbstractBarSeries 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XPieSeries_create(); xtw_expect_class(w, "XPieSeries 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XAreaSeries_create(); xtw_expect_class(w, "XAreaSeries 虚表"); XClassDelete(w); }
+    { XClass* w = (XClass*)XAbstractSeries_create(); xtw_expect_class(w, "XAbstractSeries 虚表"); XClassDelete(w); }
 #endif /* XCHARTS_ON */
 }
 
@@ -30204,33 +30204,33 @@ static void test_chart_interaction_contract(void)
                          XMouseButton_LeftButton,
                          XKeyboardModifier_NoModifier, pos);
         XWidget_event_base((XWidget*)&view, (XEvent*)&press);
-        XMouseEvent_deinit_base((XClass*)&press);
+        XClassDeinit((XClass*)&press);
         c1_expect(s_chartHitPressed == 1, "点击按压命中发射 pressed");
         XPoint_init(&pos, 200, 150);
         XMouseEvent_init(&release, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
                          XMouseButton_LeftButton,
                          XKeyboardModifier_NoModifier, pos);
         XWidget_event_base((XWidget*)&view, (XEvent*)&release);
-        XMouseEvent_deinit_base((XClass*)&release);
+        XClassDeinit((XClass*)&release);
         c1_expect(s_chartHitClicked == 1 && s_chartHitReleased == 1,
                   "点击抬起发射 clicked/released");
         XPoint_init(&pos, 200, 150);
         XMouseEvent_init(&move, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
                          XKeyboardModifier_NoModifier, pos);
         XWidget_event_base((XWidget*)&view, (XEvent*)&move);
-        XMouseEvent_deinit_base((XClass*)&move);
+        XClassDeinit((XClass*)&move);
         c1_expect(s_chartHitHoverIn >= 1, "悬停命中发射 hovered(进入)");
         XPoint_init(&pos, 10, 10);
         XMouseEvent_init(&move, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
                          XKeyboardModifier_NoModifier, pos);
         XWidget_event_base((XWidget*)&view, (XEvent*)&move);
-        XMouseEvent_deinit_base((XClass*)&move);
+        XClassDeinit((XClass*)&move);
         c1_expect(s_chartHitHoverIn >= 2, "离开命中发射 hovered(离开)");
         (void)x; (void)y;
         /* m_chart 已随视图 delete_base 的析构释放（XChartView.h 契约
          * 「内部拥有；setChart 转移」，f93a7c05 起析构必释放）；此处再
          * delete 同一图表即双重释放。 */
-        XChartView_delete_base((XClass*)&view);
+        XClassDelete((XClass*)&view);
     }
     {
         /* Charts 高级 API 契约：轴挂接/type/笔刷/点配置/最佳拟合/面积/柱集合。 */
@@ -30328,7 +30328,7 @@ static void test_chart_interaction_contract(void)
             c1_expect(took == set3 &&
                       XAbstractBarSeries_take(&bar->m_base, took) &&
                       XAbstractBarSeries_count(&bar->m_base) == 2, "柱 take");
-            XBarSet_delete_base(took);
+            XClassDelete(took);
         }
         /* 饼图 slices */
         {
@@ -30340,7 +30340,7 @@ static void test_chart_interaction_contract(void)
                 XCLASS_DEFAULT_MEMORY_TYPE, "b", 2.0));
             c1_expect(XPieSeries_slices(pie, ss, 4) == 2, "饼图 slices");
             c1_expect(XPieSeries_count(pie) == 2, "饼图切片数");
-            XPieSeries_delete_base(pie);
+            XClassDelete(pie);
         }
         /* 图表轴与映射 */
         {
@@ -30358,13 +30358,13 @@ static void test_chart_interaction_contract(void)
             XChart_mapToPosition(chart, 5, 5, &mx, &my);
             c1_expect(mx > 100 && mx < 300, "mapToPosition X");
             c1_expect(XChart_series(chart, 0) == NULL, "series 空表");
-            XChart_delete_base(chart);
-            if (removed) XValueAxis_delete_base(removed);
+            XClassDelete(chart);
+            if (removed) XValueAxis_deinit_impl(removed), XFree_System(removed);
         }
-        XLineSeries_delete_base(line);
-        XAreaSeries_delete_base(area);
-        XBarSeries_delete_base(bar);
-        XValueAxis_deinit_base(&ax);
+        XClassDelete(line);
+        XClassDelete(area);
+        XClassDelete(bar);
+        XValueAxis_deinit_impl(&ax);
     }
 #endif /* XCHARTS_ON */
 }
@@ -30477,7 +30477,7 @@ static void test_chart_c1_contract(void)
                 XAbstractAxis_setReverse(axis, true);
                 c1_expect(XAbstractAxis_isReverse(axis),
                           "XAbstractAxis reverse");
-                XAbstractAxis_delete_base(axis);
+                XClassDelete(axis);
             }
             if (caxis) {
                 XObject_connect_2((XObject*)&caxis->m_base,
@@ -30495,7 +30495,7 @@ static void test_chart_c1_contract(void)
                 c1_expect(XCategoryAxis_min(caxis) == 0.0 &&
                           XCategoryAxis_max(caxis) == 3.0,
                           "setRange 钳位到 [0, count]");
-                XCategoryAxis_delete_base(caxis);
+                XCategoryAxis_deinit_impl(caxis), XFree_System(caxis);
             }
         }
         XChart_scroll(chart, 0.1, 0.0);
@@ -30536,7 +30536,7 @@ static void test_chart_c1_contract(void)
             XChart_mapToValue(chart, 110.0f, 110.0f, &vx, &vy);
             c1_expect(vx == 10.0 && vy == 0.0, "mapToValue 右下角");
         }
-        XChart_delete_base(chart);
+        XClassDelete(chart);
     }
 
     /* XChartView：setChart/rubberBand 契约。 */
@@ -30558,7 +30558,7 @@ static void test_chart_c1_contract(void)
          * 移」契约，f93a7c05 起析构必释放 m_chart），不得再外部 delete：
          * 此前先删图表再删视图，析构二次释放同一图表（AV 于
          * XClass_delete_base 读已释放块，门禁实测二机会崩溃点）。 */
-        XChartView_delete_base(view);
+        XClassDelete(view);
     }
 
     if (c1_failures != 0)
@@ -30605,7 +30605,7 @@ static void test_toolbar_contract(void)
     XToolBar_clear(bar);
     tb_expect(XToolBar_actionCount(bar) == 0, "clear 清空");
 
-    XToolBar_delete_base(bar);
+    XClassDelete(bar);
 }
 /* ==================== XSplitter 契约测试（对标 QSplitter） ==================== */
 
@@ -30668,12 +30668,12 @@ static void test_splitter_contract(void)
         if (saved) {
             sp_expect(!XSplitter_restoreState(sp2, saved),
                       "restoreState 恢复失败（页数不匹配应失败）");
-            XByteArray_delete_base(saved);
+            XClassDelete(saved);
         }
-        XSplitter_delete_base(sp2);
+        XClassDelete(sp2);
     }
 
-    XSplitter_delete_base(sp);
+    XClassDelete(sp);
     /* p0/p1/p2 已随分割器析构（addWidget 后所有权归容器） */
 }
 /* ==================== XToolBox 契约测试（对标 QToolBox） ==================== */
@@ -30754,10 +30754,10 @@ static void test_toolbox_contract(void)
     /* removeItem 已摘除父链、控件归还调用方（XToolBox_removeItem 的
        Qt 契约「widget 本身不删除」）：p2 此后由测试自删，否则整棵
        label 子树（含 XTextDocument）滞留到进程退出成 ASan 残留。 */
-    XLabel_delete_base(p2);
+    XClassDelete(p2);
     p2 = NULL;
 
-    XToolBox_delete_base(box);
+    XClassDelete(box);
     /* p0/p1 仍为 box 子控件（随 addItem 挂父），随 box 析构一并销毁；
        p2 已在 removeItem 后归还并由上方补删。 */
 }
@@ -30813,8 +30813,8 @@ static void test_scrollarea_contract(void)
         sa_expect(XScrollArea_widget(area) == NULL, "takeWidget 后无内容");
     }
 
-    XScrollArea_delete_base(area);
-    XLabel_delete_base(content);
+    XClassDelete(area);
+    XClassDelete(content);
 }
 /* ============ XAbstractScrollArea 扩展契约测试（Task 2.9） ========= */
 
@@ -30913,7 +30913,7 @@ static void test_abstractscrollarea_ext_contract(void)
     sa_ext_expect(size.width == 300 && size.height == 200,
                   "ext: XScrollArea_sizeHint 用视口");
 
-    XScrollArea_delete_base(area);
+    XClassDelete(area);
 }
 /* ==================== 小控件契约测试：SizeGrip/RubberBand/FocusFrame == */
 
@@ -30935,7 +30935,7 @@ static void test_small_widgets_contract(void)
             sml_expect(hint.width == 16 && hint.height == 16,
                        "sizeGrip sizeHint 16x16");
         }
-        XSizeGrip_delete_base(grip);
+        XClassDelete(grip);
     }
 
     /* ---- XRubberBand ---- */
@@ -30949,7 +30949,7 @@ static void test_small_widgets_contract(void)
         sml_expect(XWidget_width((XWidget*)rb) == 60 &&
                    XWidget_height((XWidget*)rb) == 40,
                    "setGeometry 生效");
-        XRubberBand_delete_base(rb);
+        XClassDelete(rb);
     }
 
     /* ---- XFocusFrame ---- */
@@ -30960,8 +30960,8 @@ static void test_small_widgets_contract(void)
         XFocusFrame_setWidget(ff, (XWidget*)target);
         sml_expect(XFocusFrame_widget(ff) == (XWidget*)target,
                    "setWidget/widget 往返");
-        XFocusFrame_delete_base(ff);
-        XLabel_delete_base(target);
+        XClassDelete(ff);
+        XClassDelete(target);
     }
 }
 /* ==================== XSplashScreen 契约测试（对标 QSplashScreen） === */
@@ -31002,7 +31002,7 @@ static void test_splashscreen_contract(void)
 
     XSplashScreen_repaint(splash);
 
-    XSplashScreen_delete_base(splash);
+    XClassDelete(splash);
 }
 /* ==================== XMessageBox 契约测试（对标 QMessageBox） ===== */
 
@@ -31037,7 +31037,7 @@ static void test_messagebox_contract(void)
                                   boxTitle, XChar_CaseSensitive),
                    "setWindowTitle/windowTitle 往返（对标 Qt）");
         if (boxTitle)
-            XString_delete_base((XClass*)boxTitle);
+            XClassDelete((XClass*)boxTitle);
     }
     XMessageBox_setIcon(box, XMessageBoxIcon_Question);
     msg_expect(XMessageBox_icon(box) == XMessageBoxIcon_Question,
@@ -31052,7 +31052,7 @@ static void test_messagebox_contract(void)
     msg_expect(XMessageBox_clickedButton(box) == NULL,
                "初始 clickedButton NULL");
 
-    XMessageBox_delete_base(box);
+    XClassDelete(box);
 }
 /* ==================== XMessageBox::open_receiver 收口时序测试 =========
  * 对标 qmessagebox.cpp:492-513（两种载荷 receiver 均恰回调一次）：
@@ -31117,8 +31117,8 @@ static void test_messagebox_open_receiver_contract(void)
                                               XDialogButtonBoxStandard_Ok),
                        "open a) clickedButton 回填为被点按钮");
         }
-        XLabel_deinit_base(&receiver);
-        XMessageBox_delete_base(box);
+        XClassDeinit(&receiver);
+        XClassDelete(box);
     }
     /* b) 关闭路径：open 后经 closeEvent（[×] 等价收口）关闭。 */
     {
@@ -31142,8 +31142,8 @@ static void test_messagebox_open_receiver_contract(void)
             msg_expect(!XWidget_isVisible((XWidget*)box),
                        "open b) 关闭后隐藏");
         }
-        XLabel_deinit_base(&receiver);
-        XMessageBox_delete_base(box);
+        XClassDeinit(&receiver);
+        XClassDelete(box);
     }
     /* c) 同盒二次 open_receiver：收口每次恰一次（防叠连）。 */
     {
@@ -31166,8 +31166,8 @@ static void test_messagebox_open_receiver_contract(void)
             msg_expect(!XWidget_isVisible((XWidget*)box),
                        "open c) 收口后隐藏");
         }
-        XLabel_deinit_base(&receiver);
-        XMessageBox_delete_base(box);
+        XClassDeinit(&receiver);
+        XClassDelete(box);
     }
     /* modal 属性消费链路（对标 Qt：构造完 windowModality 已
      * ApplicationModal，show 后阻塞门登记，hide 对称解除）。 */
@@ -31187,7 +31187,7 @@ static void test_messagebox_open_receiver_contract(void)
             msg_expect(XWidget_applicationModalWidget() == NULL,
                        "modal 属性：hide 对称解除模态门");
         }
-        XMessageBox_delete_base(box);
+        XClassDelete(box);
     }
 }
 /* ==================== XDockWidget/XMainWindow 契约测试 ================ */
@@ -31320,7 +31320,7 @@ static void test_dock_float_cycle_leak(void)
     /* 内存允许小幅抖动（分配器 retained），线性增长即泄漏。 */
     mw_expect(mem1 - mem0 < (long)cycles * 256,
               "浮循环：内存无近似线性增长");
-    XMainWindow_delete_base(win);
+    XClassDelete(win);
 }
 /* ==================== tab 化循环子控件累积探针 ==================== */
 /* 复现"同一面板拖出-停靠回中央带反复后卡顿"：历史实现里组解散只隐藏
@@ -31367,7 +31367,7 @@ static void test_dock_tabify_cycle_widget_growth(void)
     /* 页签条回收复用：子控件数不得随循环增长。 */
     mw_expect(children1 == children0,
               "tab 循环：主窗口子控件数恒定（页签条已回收复用）");
-    XMainWindow_delete_base(win);
+    XClassDelete(win);
 }
 
 static void test_mainwindow_contract(void)
@@ -31386,7 +31386,7 @@ static void test_mainwindow_contract(void)
         sml_expect(XDockWidget_isFloating(dock), "setFloating 生效");
         XDockWidget_setFeatures(dock, 0x1);
         sml_expect(XDockWidget_features(dock) == 0x1, "setFeatures 生效");
-        XDockWidget_delete_base(dock);
+        XClassDelete(dock);
         /* 内容控件随 dock 析构一并销毁；已释放对象不可再访问（ASan
            验证），此处仅注释确认销毁语义。 */
     }
@@ -31419,7 +31419,7 @@ static void test_mainwindow_contract(void)
                    (int)XMainWindowDockOption_AllowTabbedDocks,
                    "dockOptions 存储");
 
-        XMainWindow_delete_base(win);
+        XClassDelete(win);
         /* 中央控件随主窗口析构一并销毁；已释放对象不可再访问。 */
     }
 
@@ -31463,9 +31463,9 @@ static void test_mainwindow_contract(void)
             mw_expect(state != NULL, "saveState 生成快照");
             mw_expect(XMainWindow_restoreState(win, state),
                       "restoreState 接受快照");
-            if (state) XString_delete_base(state);
+            if (state) XClassDelete(state);
         }
-        XMainWindow_delete_base(win);
+        XClassDelete(win);
     }
 
     /* ---- 主窗口 + 停靠面板组合 ---- */
@@ -31483,8 +31483,8 @@ static void test_mainwindow_contract(void)
         XMainWindow_removeDockWidget(win, (XWidget*)dock);
         sml_expect(XObject_parent((XObject*)dock) == NULL,
                    "removeDockWidget 后 dock 归还调用方");
-        XDockWidget_delete_base(dock);
-        XMainWindow_delete_base(win);
+        XClassDelete(dock);
+        XClassDelete(win);
     }
 
     /* ---- 拖出/回归状态机（对标 QDockWidget unplug/plug + tab 化） ---- */
@@ -31537,7 +31537,7 @@ static void test_mainwindow_contract(void)
         mw_expect(!XDockWidget_isFloating(dr) &&
                   XWidget_isVisible((XWidget*)dr),
                   "余员显示后 dr 可再次停靠");
-        XMainWindow_delete_base(win); /* 级联：dl/dr 随 win 析构 */
+        XClassDelete(win); /* 级联：dl/dr 随 win 析构 */
     }
 }
 /* ==================== XDateTimeEdit 契约测试（对标 QDateTimeEdit） == */
@@ -31635,7 +31635,7 @@ static void test_datetimeedit_contract(void)
                (int)XDateTimeEditSection_DaySection) != 0,
               "新格式含日段");
 
-    XDateTimeEdit_delete_base(edit);
+    XClassDelete(edit);
 }
 /* ==================== XDateTimeEdit 扩展格式引擎（对标 Qt ddd/hh/zzz/AP） ==================== */
 
@@ -31661,15 +31661,15 @@ static void test_datetimeedit_format_ext(void)
     txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_HourSection);
     dt_expect(txt && strcmp(XString_toUtf8(txt), "03") == 0,
               "dtext: hh 15 点折 03");
-    if (txt) XString_delete_base(txt);
+    if (txt) XClassDelete(txt);
     txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_MSecSection);
     dt_expect(txt && strcmp(XString_toUtf8(txt), "045") == 0,
               "dtext: zzz=045");
-    if (txt) XString_delete_base(txt);
+    if (txt) XClassDelete(txt);
     txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_AmPmSection);
     dt_expect(txt && strcmp(XString_toUtf8(txt), "下午") == 0,
               "dtext: 15 点=下午");
-    if (txt) XString_delete_base(txt);
+    if (txt) XClassDelete(txt);
 
     /* dddd 星期文案（独立格式验证：DaySection 取格式中先出现者，
        9 段长格式中 dd 在前故此处单独验证）。 */
@@ -31677,7 +31677,7 @@ static void test_datetimeedit_format_ext(void)
     txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_DaySection);
     dt_expect(txt && strcmp(XString_toUtf8(txt), "星期二") == 0,
               "dtext: dddd=星期二");
-    if (txt) XString_delete_base(txt);
+    if (txt) XClassDelete(txt);
 
     /* z 尾零截断（对标 qlocale：毫秒按秒小数处理）。 */
     XTime_setHMS(&dt.m_time, 0, 0, 0, 200);
@@ -31686,7 +31686,7 @@ static void test_datetimeedit_format_ext(void)
     txt = XDateTimeEdit_sectionText(edit, XDateTimeEditSection_MSecSection);
     dt_expect(txt && strcmp(XString_toUtf8(txt), "2") == 0,
               "dtext: z 截尾零 ms200=2");
-    if (txt) XString_delete_base(txt);
+    if (txt) XClassDelete(txt);
 
     /* 毫秒步进跨秒进位（999+1 经 epoch 进秒）+ 上下午步进翻转。 */
     XTime_setHMS(&dt.m_time, 10, 20, 30, 999);
@@ -31730,7 +31730,7 @@ static void test_datetimeedit_format_ext(void)
                   (int)XDateTimeEditSection_YearSection,
                   "dtext: Left 端点停驻年段");
     }
-    XDateTimeEdit_delete_base(edit);
+    XClassDelete(edit);
 }
 /* ==================== XComboBox 补全/插入策略（对标 QCompleter/insertPolicy） ==================== */
 
@@ -31811,11 +31811,11 @@ static void test_combobox_completer_policy(void)
     dt_expect(XComboBox_count(combo) == 4, "cbp: NoInsert 不插入");
     dt_expect(XComboBox_currentIndex(combo) == 0, "cbp: 命中置当前 Alpha");
 
-    XString_delete_base((XClass*)a);
-    XString_delete_base((XClass*)b);
-    XString_delete_base((XClass*)g);
-    XString_delete_base((XClass*)zz);
-    XComboBox_delete_base(combo);
+    XClassDelete((XClass*)a);
+    XClassDelete((XClass*)b);
+    XClassDelete((XClass*)g);
+    XClassDelete((XClass*)zz);
+    XClassDelete(combo);
 }
 /* ==================== XWidget windowIcon/saveGeometry（对标 QWidget） ==================== */
 
@@ -31831,7 +31831,7 @@ static void test_xwidget_icon_geometry(void)
     {
         XIcon none = XWidget_windowIcon(top);
         dt_expect(XIcon_isNull(&none), "wig: 默认空图标");
-        XIcon_deinit_base(&none);
+        XClassDeinit(&none);
     }
 
     memset(&pm, 0, sizeof(pm));
@@ -31844,9 +31844,9 @@ static void test_xwidget_icon_geometry(void)
         dt_expect(!XIcon_isNull(&got) &&
                   XIcon_cacheKey(&got) == XIcon_cacheKey(&icon),
                   "wig: 子控件回链顶层图标");
-        XIcon_deinit_base(&got);
+        XClassDeinit(&got);
     }
-    XIcon_deinit_base(&icon);
+    XClassDeinit(&icon);
 
     /* 几何存取往返。 */
     XWidget_setGeometry(top, 10, 20, 300, 200);
@@ -31867,17 +31867,17 @@ static void test_xwidget_icon_geometry(void)
                          XByteArray_data(saved),
                          (size_t)XVector_size_base((const XContainer*)saved)) == 0,
                   "wig: 往返后序列化逐字节一致");
-        if (again) XByteArray_delete_base(again);
+        if (again) XClassDelete(again);
     }
 
     /* 损坏数据拒绝且零副作用。 */
     {
         XByteArray* bad = XByteArray_create_utf8("BAD1 1 2 3 4 5 6 7 8 9");
         dt_expect(!XWidget_restoreGeometry(top, bad), "wig: 魔数错误拒绝");
-        XByteArray_delete_base(bad);
+        XClassDelete(bad);
         bad = XByteArray_create_utf8("XWG1 1 2 3");
         dt_expect(!XWidget_restoreGeometry(top, bad), "wig: 字段不足拒绝");
-        XByteArray_delete_base(bad);
+        XClassDelete(bad);
         dt_expect(XWidget_geometry(top).x == 10 &&
                   XWidget_geometry(top).width == 300,
                   "wig: 拒绝后几何未被改动");
@@ -31888,10 +31888,10 @@ static void test_xwidget_icon_geometry(void)
     dt_expect(!XWidget_restoreGeometry(child, saved),
               "wig: 子控件 restore 失败");
 
-    if (saved) XByteArray_delete_base(saved);
-    XWidget_delete_base(child);
-    XWidget_delete_base(top);
-    XPixmap_deinit_base((XClass*)&pm); /* 逐套 deinit 纪律：源位图补拆。 */
+    if (saved) XClassDelete(saved);
+    XClassDelete(child);
+    XClassDelete(top);
+    XClassDeinit((XClass*)&pm); /* 逐套 deinit 纪律：源位图补拆。 */
 }
 /* ==================== XDateTimeEdit/XFontComboBox 已在上方;下面补录 ===
  * QFontComboBox 契约测试（对标 QFontComboBox） ==================== */
@@ -31922,7 +31922,7 @@ static void test_fontcombobox_contract(void)
     fcb_expect(XComboBox_count((XComboBox*)fcb) >= 0,
                "字体族条目可查询");
 
-    XFontComboBox_delete_base(fcb);
+    XClassDelete(fcb);
 }
 /* ==================== XPlainTextEdit 契约测试 ==================== */
 
@@ -32025,7 +32025,7 @@ static void test_plaintextedit_contract(void)
         if (text) XFree_System(text);
     }
 
-    XPlainTextEdit_delete_base(edit);
+    XClassDelete(edit);
 }
 /* ==================== Phase 3.1 P1 新 API 契约测试 ==================== */
 
@@ -32106,7 +32106,7 @@ static void test_phase31_p1_contract(void)
         (void)tgot;
         got = XDateTimeEdit_maximumDate(edit);
         p31_expect(XDate_year(&got) == 2030, "setDateRange 上界生效");
-        XDateTimeEdit_delete_base(edit);
+        XClassDelete(edit);
     }
 
     /* --- XTabBar：形状/图标尺寸/自动隐藏/移除选择行为 --- */
@@ -32124,7 +32124,7 @@ static void test_phase31_p1_contract(void)
         XTabBar_setChangeCurrentOnDrag(bar, true);
         p31_expect(XTabBar_changeCurrentOnDrag(bar),
                    "TabBar changeCurrentOnDrag");
-        XTabBar_delete_base(bar);
+        XClassDelete(bar);
     }
 
     /* --- XTabWidget：clear + 属性转发 --- */
@@ -32151,7 +32151,7 @@ static void test_phase31_p1_contract(void)
                    "TabWidget tabWhatsThis 与提示共用");
         XTabWidget_clear(tw);
         p31_expect(XTabWidget_count(tw) == 0, "TabWidget clear 清空");
-        XTabWidget_delete_base(tw);
+        XClassDelete(tw);
     }
 
     /* --- XToolBox：条目提示 --- */
@@ -32165,7 +32165,7 @@ static void test_phase31_p1_contract(void)
         XToolBox_setItemToolTip(tb, 0, NULL);
         p31_expect(XToolBox_itemToolTip(tb, 0) == NULL,
                    "ToolBox NULL 清除提示");
-        XToolBox_delete_base(tb);
+        XClassDelete(tb);
     }
 
     /* --- XMenu：图标 + isTearOffEnabled 别名 --- */
@@ -32177,7 +32177,7 @@ static void test_phase31_p1_contract(void)
         p31_expect(XMenu_icon(menu) == NULL, "Menu NULL 清除图标");
         XMenu_setTearOffEnabled(menu, true);
         p31_expect(XMenu_isTearOffEnabled(menu), "Menu isTearOffEnabled 别名");
-        XMenu_delete_base(menu);
+        XClassDelete(menu);
     }
 
     /* --- XDialog：尺寸手柄 + open 窗口模态 --- */
@@ -32188,7 +32188,7 @@ static void test_phase31_p1_contract(void)
         /* 基线：open 前的顶层登记数（注册表为借用指针，读时即拷贝计数）。 */
         tops0 = XGuiApplication_topLevelWindows();
         baseline = tops0 ? XVector_size_base((const XContainer*)tops0) : 0;
-        if (tops0) XVector_delete_base((XClass*)tops0);
+        if (tops0) XClassDelete((XClass*)tops0);
         XDialog_setSizeGripEnabled(dlg, true);
         p31_expect(XDialog_isSizeGripEnabled(dlg), "Dialog sizeGripEnabled");
         p31_expect(((XWidget*)dlg)->m_isWindow,
@@ -32200,7 +32200,7 @@ static void test_phase31_p1_contract(void)
                        XWindowModality_WindowModal,
                    "Dialog open 置窗口模态（对标 QDialog::open）");
         p31_expect(!XDialog_isModal(dlg), "Dialog modal 属性保持默认 false");
-        XDialog_delete_base(dlg);
+        XClassDelete(dlg);
         /* 回归加固（复活悬垂探针）：open→delete 直删（不 done/close）时，
            removeWindow 的 lastWindowClosed 退出策略曾经 XDialog_done 兜底
            重入垂死对话框，把半析构桥接窗复活登记进注册表——悬垂槽位在
@@ -32210,7 +32210,7 @@ static void test_phase31_p1_contract(void)
             XVector* tops1 = XGuiApplication_topLevelWindows();
             size_t after = tops1 ?
                 XVector_size_base((const XContainer*)tops1) : 0;
-            if (tops1) XVector_delete_base((XClass*)tops1);
+            if (tops1) XClassDelete((XClass*)tops1);
             p31_expect(after == baseline,
                        "Dialog open 后直删（不 done/close）顶层登记数回落基线");
         }
@@ -32224,14 +32224,14 @@ static void test_phase31_p1_contract(void)
                    "DockWidget isAreaAllowed 命中");
         p31_expect(!XDockWidget_isAreaAllowed(dock, 0),
                    "DockWidget isAreaAllowed 0 不命中");
-        XDockWidget_delete_base(dock);
+        XClassDelete(dock);
 
         XToolBar* tb = XToolBar_create(NULL, 0);
         p31_expect(!XToolBar_isFloating(tb), "ToolBar isFloating 默认 false");
         p31_expect(XToolBar_isAreaAllowed(tb,
                    XToolBar_allowedAreas(tb)),
                    "ToolBar isAreaAllowed 命中");
-        XToolBar_delete_base(tb);
+        XClassDelete(tb);
     }
 
     /* --- XComboBox：currentData --- */
@@ -32246,7 +32246,7 @@ static void test_phase31_p1_contract(void)
                    strcmp(XString_toUtf8(
                        (XString*)XComboBox_currentData(cb)), "db") == 0,
                    "ComboBox currentData 跟随当前项");
-        XComboBox_delete_base(cb);
+        XClassDelete(cb);
     }
 
     /* --- XMessageBox：setOption --- */
@@ -32257,7 +32257,7 @@ static void test_phase31_p1_contract(void)
         XMessageBox_setOption(mb, 0x1, false);
         p31_expect(!XMessageBox_testOption(mb, 0x1),
                    "MsgBox setOption 清除");
-        XMessageBox_delete_base(mb);
+        XClassDelete(mb);
     }
 
     /* --- XWizard / XWizardPage：导航别名 + 页面属性 --- */
@@ -32290,14 +32290,14 @@ static void test_phase31_p1_contract(void)
         XWizardPage_setPixmap_2(pg0, 0, "logo.png");
         p31_expect(XWizardPage_pixmap(pg0, 0) != NULL,
                    "WizardPage pixmap 读取");
-        XWizard_delete_base(wiz);
+        XClassDelete(wiz);
     }
 
     /* --- XFontComboBox / XTextEdit：命名别名 --- */
     {
         XFontComboBox* fcb = XFontComboBox_create(NULL, 0);
         (void)fcb;
-        XFontComboBox_delete_base(fcb);
+        XClassDelete(fcb);
 
         XTextEdit* te = XTextEdit_create(NULL, 0);
         XTextEdit_setFontItalic(te, true);
@@ -32305,7 +32305,7 @@ static void test_phase31_p1_contract(void)
         XTextEdit_setFontUnderline(te, true);
         p31_expect(XTextEdit_fontUnderline(te),
                    "TextEdit fontUnderline 别名");
-        XTextEdit_delete_base(te);
+        XClassDelete(te);
     }
 
     /* --- XCalendarWidget：格式/延迟/范围/翻页 --- */
@@ -32353,7 +32353,7 @@ static void test_phase31_p1_contract(void)
                    "Calendar showPreviousYear");
         XCalendarWidget_showToday(cal);
         XCalendarWidget_showSelectedDate(cal);
-        XCalendarWidget_delete_base(cal);
+        XClassDelete(cal);
     }
 
     /* --- XLayout：addWidget 基类转发 --- */
@@ -32365,8 +32365,8 @@ static void test_phase31_p1_contract(void)
         XLayout_addWidget((XLayout*)box, (XWidget*)w);
         p31_expect(XLayout_count_base((XLayout*)box) == 1,
                    "Layout addWidget 基类转发");
-        XBoxLayout_delete_base(box);
-        XWidget_delete_base(host);
+        XClassDelete(box);
+        XClassDelete(host);
     }
 }
 /* ==================== Phase 3.2 P2 新 API 契约测试 ==================== */
@@ -32459,7 +32459,7 @@ static void test_phase32_p2_contract(void)
             XMessageBox_setIconPixmap(box, NULL);
             p32_expect(XMessageBox_iconPixmap(box) == NULL,
                        "msgbox: setIconPixmap(NULL) 清除");
-            XImage_deinit_base(&img);
+            XClassDeinit(&img);
         }
         p32_expect((int)XMessageBox_textFormat(box) == 2,
                    "msgbox: textFormat 默认 AutoText");
@@ -32472,7 +32472,7 @@ static void test_phase32_p2_contract(void)
         /* aboutQt 已对齐 Qt 为真实阻塞弹窗（经 about/exec 收口），
          * 非阻塞测试口径不直调（阻塞等待无输入源会挂起）；弹窗语义
          * 由 about/exec 路径覆盖。 */
-        XMessageBox_delete_base(box);
+        XClassDelete(box);
     }
 
     /* --- XMessageBox：按钮角色/移除/文本 --- */
@@ -32490,7 +32490,7 @@ static void test_phase32_p2_contract(void)
         text = XMessageBox_buttonText(box, (int)XDialogButtonBoxStandard_Ok);
         p32_expect(text && XString_equals_utf8(text, "确定", XChar_CaseSensitive),
                    "msgbox: setButtonText_2/buttonText 回读");
-        if (text) XString_delete_base(text);
+        if (text) XClassDelete(text);
 
         p32_expect(XMessageBox_buttonRole(
                        box, XMessageBox_button(box,
@@ -32502,16 +32502,16 @@ static void test_phase32_p2_contract(void)
                                          (int)XMessageBoxButtonRole_ActionRole);
         btns = XMessageBox_buttons(box);
         before = btns ? (int)XVector_size_base((const XContainer*)btns) : 0;
-        if (btns) XVector_delete_base(btns);
+        if (btns) XClassDelete(btns);
         XMessageBox_removeButton(box, custom);
         btns = XMessageBox_buttons(box);
         after = btns ? (int)XVector_size_base((const XContainer*)btns) : 0;
-        if (btns) XVector_delete_base(btns);
+        if (btns) XClassDelete(btns);
         p32_expect(before - after == 1, "msgbox: removeButton 摘除一钮");
         p32_expect(XMessageBox_buttonRole(box, custom)
                        == XMessageBoxButtonRole_InvalidRole,
                    "msgbox: 移除后角色为 InvalidRole");
-        XMessageBox_delete_base(box);
+        XClassDelete(box);
     }
 
     /* --- XMessageBox：standardIcon（API 契约；样式图标生成为后续批次） --- */
@@ -32520,7 +32520,7 @@ static void test_phase32_p2_contract(void)
         /* 当前样式未注册 StandardIcon 虚槽：契约要求不崩溃、返回 NULL
          * 或有效图标；样式侧图标生成列入样式绘制批次。 */
         p32_expect(ic == NULL || ic != NULL, "msgbox: standardIcon 不崩溃");
-        if (ic) XIcon_delete_base(ic);
+        if (ic) XClassDelete(ic);
         p32_expect(XMessageBox_standardIcon(
                        XMessageBoxIcon_NoIcon) == NULL,
                    "msgbox: NoIcon 无图标");
@@ -32553,12 +32553,12 @@ static void test_phase32_p2_contract(void)
                                         XDateTimeEditSection_YearSection);
         p32_expect(txt && XString_equals_utf8(txt, "2024", XChar_CaseSensitive),
                    "dtedit: sectionText 年 4 位");
-        if (txt) XString_delete_base(txt);
+        if (txt) XClassDelete(txt);
         txt = XDateTimeEdit_sectionText(edit,
                                         XDateTimeEditSection_MonthSection);
         p32_expect(txt && XString_equals_utf8(txt, "03", XChar_CaseSensitive),
                    "dtedit: sectionText 月 2 位补零");
-        if (txt) XString_delete_base(txt);
+        if (txt) XClassDelete(txt);
 
         XDateTimeEdit_setSelectedSection(edit,
                                          XDateTimeEditSection_MonthSection);
@@ -32570,7 +32570,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XDateTimeEdit_currentSection(edit) ==
                        XDateTimeEditSection_MonthSection,
                    "dtedit: 未显示分段不生效");
-        XDateTimeEdit_delete_base(edit);
+        XClassDelete(edit);
     }
 
     /* --- 7:00 并发批次:QTreeWidget 信号便捷族 + QFontComboBox 状态族 --- */
@@ -32585,7 +32585,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(hits >= 0, "tree7: selectedItems 安全");
         XTreeWidget_scrollToItem(tw, 0);
         p32_expect(1, "tree7: scrollToItem 安全");
-        XTreeWidget_delete_base(tw);
+        XClassDelete(tw);
     }
     {
         XFontComboBox* fcb = XFontComboBox_create(NULL, 0);
@@ -32593,7 +32593,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XFontComboBox_writingSystem(fcb) ==
                        XFontComboBoxWritingSystem_SimplifiedChinese,
                    "fcb: writingSystem 存取");
-        XFontComboBox_delete_base(fcb);
+        XClassDelete(fcb);
     }
 
     /* --- 8:00 并发批次:QTreeView 17 项 + XListWidget 15 项 + XAbstractItemView 9/XFontComboBox 5 --- */
@@ -32614,7 +32614,7 @@ static void test_phase32_p2_contract(void)
                    "tv8: firstColumnSpanned 平铺恒 false");
         XTreeView_resetIndentation(tv);
         p32_expect(1, "tv8: resetIndentation 安全");
-        XTreeView_delete_base(tv);
+        XClassDelete(tv);
     }
     {
         XListWidget* lw = XListWidget_create(NULL, 0);
@@ -32629,7 +32629,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XListWidget_row(lw, "Two") >= 0, "lw8: row 按文本反查");
         p32_expect(XListWidget_isSortingEnabled(lw),
                    "lw8: sortItems 后排序开");
-        XListWidget_delete_base(lw);
+        XClassDelete(lw);
     }
     {
         XFontComboBox* fcb = XFontComboBox_create(NULL, 0);
@@ -32639,8 +32639,8 @@ static void test_phase32_p2_contract(void)
         XFontComboBox_setDisplayFont(fcb, &font);
         sample = XFontComboBox_sampleTextForFont(fcb, "Test");
         p32_expect(sample != NULL, "fcb: sampleTextForFont 返回");
-        if (sample) XString_delete_base(sample);
-        XFontComboBox_delete_base(fcb);
+        if (sample) XClassDelete(sample);
+        XClassDelete(fcb);
     }
 
     /* --- 6:00 并发批次:QHeaderView 9 项 + QPlainTextEdit 14 项 + QTextEdit 17 项 --- */
@@ -32655,7 +32655,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XHeaderView_offset(hv) == 5, "hv6: offset 存取");
         XHeaderView_setStretchLastSection(hv, true);
         p32_expect(XHeaderView_stretchLastSection(hv), "hv6: stretchLastSection getter");
-        XHeaderView_delete_base(hv);
+        XClassDelete(hv);
     }
     {
         XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
@@ -32667,7 +32667,7 @@ static void test_phase32_p2_contract(void)
             XFont_init(&hitFont);
             XFont_setFamily(&hitFont, "XFont8x16");
             XWidget_setFont((XWidget*)pe, &hitFont);
-            XFont_deinit_base(&hitFont);
+            XClassDeinit(&hitFont);
         }
         cur = XPlainTextEdit_cursorForPosition(pe, &(XPoint){4, 18});
         p32_expect(cur.x == 1 && cur.y >= 0, "pe: cursorForPosition 反查");
@@ -32675,7 +32675,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XPlainTextEdit_currentCharFormat(pe) == 0x1, "pe: charFormat 存取");
         XPlainTextEdit_zoomIn(pe, 1);
         XPlainTextEdit_zoomOut(pe, 1);
-        XPlainTextEdit_delete_base(pe);
+        XClassDelete(pe);
     }
     {
         XTextEdit* te = XTextEdit_create(NULL, 0);
@@ -32689,9 +32689,9 @@ static void test_phase32_p2_contract(void)
             XString* plain = XTextEdit_toPlainText(te);
             p32_expect(plain && XStrstr(XString_toUtf8(plain), "X") != NULL,
                        "xte: insertPlainText 插入");
-            if (plain) XString_delete_base(plain);
+            if (plain) XClassDelete(plain);
         }
-        XTextEdit_delete_base(te);
+        XClassDelete(te);
     }
 
     /* --- 5:00 并发批次:XListWidget 剩余 + XHeaderView 剩余 + 零散 --- */
@@ -32704,7 +32704,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(hits == 1 && rows[0] == 1, "lw5: findItems 精确命中");
         XListWidget_sortItems(lw, 0);
         p32_expect(1, "lw5: sortItems 稳定排序");
-        XListWidget_delete_base(lw);
+        XClassDelete(lw);
     }
     {
         XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
@@ -32713,7 +32713,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XHeaderView_sectionSize(hv, 0) == 66, "hv5: resizeSection");
         XHeaderView_setSectionHidden(hv, 1, true);
         p32_expect(XHeaderView_isSectionHidden(hv, 1), "hv5: setSectionHidden 转发");
-        XHeaderView_delete_base(hv);
+        XClassDelete(hv);
     }
     {
         /* saveState/restoreState 往返 */
@@ -32728,9 +32728,9 @@ static void test_phase32_p2_contract(void)
         XHeaderView_restoreState(h2, saved);
         p32_expect(XHeaderView_sectionSize(h2, 0) == 55, "hv5: restoreState 尺寸回读");
         p32_expect(XHeaderView_isSectionHidden(h2, 1), "hv5: restoreState 隐藏回读");
-        if (saved) XByteArray_delete_base(saved);
-        XHeaderView_delete_base(h1);
-        XHeaderView_delete_base(h2);
+        if (saved) XClassDelete(saved);
+        XClassDelete(h1);
+        XClassDelete(h2);
     }
     {
         XTextBrowser* tb = XTextBrowser_create(NULL, 0);
@@ -32739,9 +32739,9 @@ static void test_phase32_p2_contract(void)
         {
             XString* a = XTextBrowser_anchorAt(tb, &p0);
             p32_expect(a != NULL, "tb5: anchorAt 返回对象");
-            if (a) XString_delete_base(a);
+            if (a) XClassDelete(a);
         }
-        XTextBrowser_delete_base(tb);
+        XClassDelete(tb);
     }
     {
         XWizard* wz = XWizard_create(NULL, 0);
@@ -32750,14 +32750,14 @@ static void test_phase32_p2_contract(void)
         p32_expect(wz != NULL, "wizard: 创建");
         n = XWizard_visitedIds(wz, ids, 8);
         p32_expect(n >= 0, "wizard: visitedIds 查询");
-        XWizard_delete_base(wz);
+        XClassDelete(wz);
     }
 
     /* --- 10:00 并发批次:XHeaderView viewport + XPlainTextEdit 选区查询 --- */
     {
         XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
         p32_expect(XHeaderView_viewport(hv) != NULL, "hv10: viewport 返回自身");
-        XHeaderView_delete_base(hv);
+        XClassDelete(hv);
     }
     {
         XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
@@ -32773,7 +32773,7 @@ static void test_phase32_p2_contract(void)
             p32_expect(sel != NULL, "pe: selectedText 返回对象");
             if (sel) XFree_System(sel);
         }
-        XPlainTextEdit_delete_base(pe);
+        XClassDelete(pe);
     }
 
     /* --- 8:00/9:00 并发批次:sectionsMoved/gridSize/XTableWidget 便捷族 --- */
@@ -32784,7 +32784,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XHeaderView_sectionSize(hv, 0) ==
                    XHeaderView_sectionSize(hv, 1) || 1,
                    "hv8: sectionsMoved 别名句柄安全");
-        XHeaderView_delete_base(hv);
+        XClassDelete(hv);
     }
     {
         XListView* lv = XListView_create(NULL, 0);
@@ -32792,7 +32792,7 @@ static void test_phase32_p2_contract(void)
         XListView_setGridSize(lv, 30, 40);
         XListView_gridSize(lv, &gw, &gh);
         p32_expect(gw == 30 && gh == 40, "lview: gridSize 双输出");
-        XListView_delete_base(lv);
+        XClassDelete(lv);
     }
     {
         XTableWidget* tw = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
@@ -32806,7 +32806,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XTableWidget_cellWidget(tw, 1, 1) == NULL,
                    "table: removeCellWidget 清除");
         XTableWidget_clear(tw);
-        XTableWidget_delete_base(tw);
+        XClassDelete(tw);
     }
 
     /* --- 4:20 并发批次:XListView 剩余 + XTableView 几何表头族 --- */
@@ -32819,7 +32819,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XListView_uniformItemSizes(lv),
                    "lv5: uniformItemSizes 状态");
         XListView_clearPropertyFlags(lv); /* 接口存在性,安全 */
-        XListView_delete_base(lv);
+        XClassDelete(lv);
     }
 
     /* --- 4:00 并发批次:QListWidget 便捷族 + XHeaderView 剩余 + XTreeView 剩余 --- */
@@ -32838,14 +32838,14 @@ static void test_phase32_p2_contract(void)
                    "lw4: itemWidget 借用");
         XListWidget_removeItemWidget(lw, 0);
         p32_expect(XListWidget_itemWidget(lw, 0) == NULL, "lw4: 移除部件");
-        XListWidget_delete_base(lw);
+        XClassDelete(lw);
     }
     {
         XHeaderView* hv = XHeaderView_create(NULL, 0, 0);
         XHeaderView_setSortIndicatorClearable(hv, true);
         p32_expect(XHeaderView_isSortIndicatorClearable(hv),
                    "hv4: sortIndicatorClearable 状态");
-        XHeaderView_delete_base(hv);
+        XClassDelete(hv);
     }
     {
         XTreeView* tv = XTreeView_create(NULL, 0);
@@ -32854,7 +32854,7 @@ static void test_phase32_p2_contract(void)
         XRect vr = XTreeView_visualRect(tv, 0, 0);
         p32_expect(vr.width >= 0 && vr.height >= 0, "tv4: visualRect 安全");
         p32_expect(XTreeView_rowAt(tv, -1) == -1, "tv4: rowAt 负坐标 -1");
-        XTreeView_delete_base(tv);
+        XClassDelete(tv);
     }
 
     /* --- 3:40 并发批次:QAbstractItemView 批次二 + QTreeWidget 便捷族一 --- */
@@ -32878,7 +32878,7 @@ static void test_phase32_p2_contract(void)
         XAbstractItemView_closePersistentEditor(iv, 0, 0);
         p32_expect(!XAbstractItemView_isPersistentEditorOpen(iv, 0, 0),
                    "aiv3: closePersistentEditor 关闭");
-        XAbstractItemView_delete_base(iv);
+        XClassDelete(iv);
     }
     {
         XTreeWidget* tw = XTreeWidget_create(NULL, 0);
@@ -32897,12 +32897,12 @@ static void test_phase32_p2_contract(void)
         p32_expect(XTreeWidget_itemWidget(tw, 1, 0) == NULL,
                    "tree3: removeItemWidget 清除");
         /* removeItemWidget 后 cw 归还调用方（借用语义），摘除即自删。 */
-        XWidget_delete_base(cw);
+        XClassDelete(cw);
         XTreeWidget_insertTopLevelItems(tw, 0, items, 1);
         p32_expect(XTreeWidget_sortColumn(tw) == -1, "tree3: 未排序 -1");
         p32_expect(XTreeWidget_visualItemRect(tw, 2).width > 0 || 1,
                    "tree3: visualItemRect 安全");
-        XTreeWidget_delete_base(tw);
+        XClassDelete(tw);
     }
 
     /* --- 3:20 并发批次:XWidget grab/render + XTextEdit 几何 --- */
@@ -32923,7 +32923,7 @@ static void test_phase32_p2_contract(void)
         if (img) {
             p32_expect(XImage_width(img) == 120 && XImage_height(img) == 80,
                        "grab: 快照尺寸等于控件");
-            XImage_delete_base(img);
+            XClassDelete(img);
         }
         /* render:painter 绑画布后渲染控件内容 */
         memset(&canvas, 0, sizeof(canvas));
@@ -32936,8 +32936,8 @@ static void test_phase32_p2_contract(void)
         p32_expect(ok, "grab: render 等尺寸路径");
         XPainter_end(&painter);
         XPainter_deinit(&painter);
-        XImage_deinit_base(&canvas);
-        XWidget_delete_base(w);
+        XClassDeinit(&canvas);
+        XClassDelete(w);
     }
     {
         XTextEdit* te = XTextEdit_create(NULL, 0);
@@ -32949,7 +32949,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XTextEdit_textCursorLine(te) == 1 &&
                    XTextEdit_textCursorColumn(te) == 1,
                    "xte: setTextCursor 钳位设置");
-        XTextEdit_delete_base(te);
+        XClassDelete(te);
     }
 
     /* --- 3:00 并发批次:XHeaderView 信号发射点 + XPlainTextEdit 几何查找 --- */
@@ -32967,7 +32967,7 @@ static void test_phase32_p2_contract(void)
                    "hv3: length 为段尺寸和");
         p32_expect(XHeaderView_logicalIndexAt(hv, 0) == 0,
                    "hv3: logicalIndexAt(0) 反查首段");
-        XHeaderView_delete_base(hv);
+        XClassDelete(hv);
     }
     {
         XPlainTextEdit* pe = XPlainTextEdit_create(NULL, 0);
@@ -32984,9 +32984,9 @@ static void test_phase32_p2_contract(void)
             p0.x = 5; p0.y = 5;
             XString* anchor = XPlainTextEdit_anchorAt(pe, &p0);
             p32_expect(anchor != NULL, "pe: anchorAt 返回空串对象");
-            if (anchor) XString_delete_base(anchor);
+            if (anchor) XClassDelete(anchor);
         }
-        XPlainTextEdit_delete_base(pe);
+        XClassDelete(pe);
     }
 
     /* --- 2:20 并发批次:XWidget fontMetrics + XTextEdit 补齐 --- */
@@ -32997,7 +32997,7 @@ static void test_phase32_p2_contract(void)
         fm = XWidget_fontMetrics(w);
         /* 值拷贝的 XFont:家族指针字段应与默认构造一致(XString* 值语义)。 */
         p32_expect(fm.m_family != NULL || 1, "w: fontMetrics 返回字体值");
-        XWidget_delete_base(w);
+        XClassDelete(w);
     }
     {
         XTextEdit* te = XTextEdit_create(NULL, 0);
@@ -33010,7 +33010,7 @@ static void test_phase32_p2_contract(void)
             p32_expect(u && XStrstr(u, "Hi") != NULL,
                        "xte: toPlainText 含富文本剥离后文本");
         }
-        XString_delete_base(plain);
+        XClassDelete(plain);
         XTextEdit_setText(te, "line"); /* 纯文本探测分流 */
         /* 对标 Qt：程序化 setText 清空撤销栈（不进撤销）。 */
         p32_expect(!XTextEdit_canUndo(te), "xte: setText 清空撤销栈");
@@ -33023,12 +33023,12 @@ static void test_phase32_p2_contract(void)
             p32_expect(plain2 && XString_equals_utf8(plain2, "line",
                        XChar_CaseSensitive),
                        "xte: undo 文本回退");
-            if (plain2) XString_delete_base(plain2);
+            if (plain2) XClassDelete(plain2);
         }
         p32_expect(XTextEdit_canRedo(te), "xte: canRedo 重做可用");
         XTextEdit_redo(te);
         p32_expect(XTextEdit_canUndo(te), "xte: redo 后回到已编辑态");
-        XTextEdit_delete_base(te);
+        XClassDelete(te);
     }
 
     /* --- 2:00 并发批次:初始化漏网修复验证 + QAbstractItemView 批次二 --- */
@@ -33049,7 +33049,7 @@ static void test_phase32_p2_contract(void)
                                        XAbstractItemViewScrollHint_EnsureVisible);
         XAbstractItemView_keyboardSearch_2(iv, "ab");
         p32_expect(1, "aiv2: 批次二行为 API 调用安全");
-        XAbstractItemView_delete_base(iv);
+        XClassDelete(iv);
     }
 
     /* --- 0:20 并发批次:QPlainTextEdit 状态族(恢复) --- */
@@ -33070,7 +33070,7 @@ static void test_phase32_p2_contract(void)
         title = XPlainTextEdit_documentTitle(pe);
         p32_expect(title && XString_equals_utf8(title, "t1", XChar_CaseSensitive),
                    "pe: documentTitle 回读");
-        if (title) XString_delete_base(title);
+        if (title) XClassDelete(title);
         XPlainTextEdit_moveCursor(pe, 11, 0); /* 11 = XTextControlMove_End（Qt End） */
         p32_expect(XPlainTextEdit_cursorLine(pe) == 2, "pe: moveCursor End 到末行");
         XPlainTextEdit_appendHtml(pe, "<b>bold</b>");
@@ -33078,7 +33078,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(plainText && XStrstr(plainText, "bold") != NULL,
                    "pe: appendHtml 剥标签追加");
         if (plainText) XFree_System(plainText);
-        XPlainTextEdit_delete_base(pe);
+        XClassDelete(pe);
     }
 
     /* --- 23:40 并发批次:QTableWidget 便捷族 + XMenuBar 动作所有权 --- */
@@ -33101,9 +33101,9 @@ static void test_phase32_p2_contract(void)
         }
         taken = XTableWidget_takeItem(tw, 1, 0);
         p32_expect(taken != NULL, "table: takeItem 取出");
-        if (taken) XString_delete_base(taken);
+        if (taken) XClassDelete(taken);
         XTableWidget_clearSpans(tw); /* 平铺模型无操作,验证安全 */
-        XTableWidget_delete_base(tw);
+        XClassDelete(tw);
     }
     {
         XMenuBar* mb = XMenuBar_create(NULL, 0);
@@ -33115,10 +33115,10 @@ static void test_phase32_p2_contract(void)
         b = XMenuBar_addAction_2(mb, "Edit");
         XMenuBar_insertAction(mb, a, b); /* 移动语义:插到 File 前 */
         XMenuBar_removeAction(mb, b);    /* 摘除不释放 */
-        if (b) XAction_delete_base(b);   /* 所有权归调用方 */
+        if (b) XClassDelete(b);   /* 所有权归调用方 */
         p32_expect(XMenuBar_actionCount(mb) >= 1,
                    "menubar: 移除后仍有动作");
-        XMenuBar_delete_base(mb);
+        XClassDelete(mb);
     }
 
     /* --- 23:20 并发批次:QListView/QTableView 状态族 + 死声明清理验证 --- */
@@ -33144,7 +33144,7 @@ static void test_phase32_p2_contract(void)
             XRect vr = XListView_visualRect(lv, 0);
             p32_expect(vr.width >= 0 && vr.height >= 0, "lview: visualRect 安全");
         }
-        XListView_delete_base(lv);
+        XClassDelete(lv);
     }
     {
         XTableView* tv = XTableView_create(NULL, 0);
@@ -33200,7 +33200,7 @@ static void test_phase32_p2_contract(void)
                 XWidget_show((XWidget*)tv);
                 img = XWidget_grab((XWidget*)tv);
                 p32_expect(img != NULL, "tview: 合并 grab 快照");
-                if (img) XImage_delete_base(img);
+                if (img) XClassDelete(img);
                 /* indexAt 覆盖格映射回原点。 */
                 {
                     int hr = -1;
@@ -33210,10 +33210,10 @@ static void test_phase32_p2_contract(void)
                     p32_expect(hr == 0 && hc == 0,
                                "tview: indexAt 覆盖格归原点");
                 }
-                XAbstractItemModel_delete_base(m);
+                XClassDelete(m);
             }
         }
-        XTableView_delete_base(tv);
+        XClassDelete(tv);
     }
 
     /* --- 23:20 并发批次:树展开族/calendarWidget/standardIcon 补足 --- */
@@ -33234,7 +33234,7 @@ static void test_phase32_p2_contract(void)
         XTreeView_dataChanged(tv, 0, 0, 1, 1);
         XTreeView_dataChanged(tv, 2, 0, 1, 1);   /* 逆序：忽略。 */
         XTreeView_dataChanged(tv, 0, 0, -1, 1);  /* 负值：忽略。 */
-        XTreeView_delete_base(tv);
+        XClassDelete(tv);
     }
     {
         /* --- 11:56 批次:QTreeWidget 四件套 + XTextEdit currentFont --- */
@@ -33301,7 +33301,7 @@ static void test_phase32_p2_contract(void)
                        XStrcmp(XTreeWidget_headerLabel(tw, 1), "H1") == 0,
                        "tw4: headerItem→labels 回填");
         }
-        XTreeWidget_delete_base(tw);
+        XClassDelete(tw);
     }
     {
         XTextEdit* te = XTextEdit_create(NULL, 0);
@@ -33315,8 +33315,8 @@ static void test_phase32_p2_contract(void)
         p32_expect(XFont_pointSize(&font) == 12 && XFont_weight(&font) == 700 &&
                    XFont_italic(&font),
                    "te-cf: currentFont 组合属性");
-        XFont_deinit_base(&font);
-        XTextEdit_delete_base(te);
+        XClassDeinit(&font);
+        XClassDelete(te);
     }
     {
         /* anchorAt：富文档锚点几何命中（与绘制同口径）。 */
@@ -33336,13 +33336,13 @@ static void test_phase32_p2_contract(void)
         p32_expect(anchor != NULL &&
                    XStrcmp(XString_toUtf8(anchor), "https://x.y/z") == 0,
                    "anchor: 链接片段命中");
-        if (anchor) XString_delete_base(anchor);
+        if (anchor) XClassDelete(anchor);
         pos.x = 200; /* 片段右侧：块带内无链接。 */
         anchor = XTextEdit_anchorAt(te, &pos);
         /* 空串 XString 的 toUtf8 返回 NULL（本库惯例），须判空。 */
         p32_expect(anchor != NULL && XString_toUtf8(anchor) == NULL,
                    "anchor: 片段外空串");
-        if (anchor) XString_delete_base(anchor);
+        if (anchor) XClassDelete(anchor);
         /* 浏览器层委托同一富文档命中（浏览器挂同一文档）。 */
         {
             XTextBrowser* tb = XTextBrowser_create(NULL, 0);
@@ -33361,14 +33361,14 @@ static void test_phase32_p2_contract(void)
             p32_expect(anchor != NULL &&
                        XStrcmp(XString_toUtf8(anchor), "https://x.y/z") == 0,
                        "anchor: 浏览器委托命中");
-            if (anchor) XString_delete_base(anchor);
-            XString_delete_base(fmt2.anchorHref);
-            XTextEdit_delete_base(base);
-            XClass_delete_base((XClass*)bdoc);
+            if (anchor) XClassDelete(anchor);
+            XClassDelete(fmt2.anchorHref);
+            XClassDelete(base);
+            XClassDelete((XClass*)bdoc);
         }
-        XString_delete_base(fmt.anchorHref);
-        XTextEdit_delete_base(te);
-        XClass_delete_base((XClass*)doc);
+        XClassDelete(fmt.anchorHref);
+        XClassDelete(te);
+        XClassDelete((XClass*)doc);
     }
     {
         /* 列表文字像素级验证(防 drawText color=0 透明文字回归)。 */
@@ -33396,10 +33396,10 @@ static void test_phase32_p2_contract(void)
                     ++dark;
             }
             p32_expect(dark > 20, "lvtext: 列表行文字像素可见");
-            XImage_delete_base(img);
+            XClassDelete(img);
         }
-        XAbstractItemModel_delete_base(m);
-        XListView_delete_base(lv);
+        XClassDelete(m);
+        XClassDelete(lv);
     }
     {
         /* 弹层 indexAt 虚槽继承完整(防 XVTABLE 尾槽代际丢失回归):
@@ -33421,7 +33421,7 @@ static void test_phase32_p2_contract(void)
             p32_expect(row == 1, "popup-idx: indexAt 虚槽继承(行命中)");
         }
         XComboBox_hidePopup_base(cbp);
-        XComboBox_delete_base(cbp);
+        XClassDelete(cbp);
     }
     {
         /* anchorClicked/highlighted 真发射：经编辑器事件过滤器。 */
@@ -33480,9 +33480,9 @@ static void test_phase32_p2_contract(void)
         p32_expect(g_anchorProbe.highlighted == 2 &&
                    g_anchorProbe.lastUrl && g_anchorProbe.lastUrl[0] == '\0',
                    "anchor-hover: 离开链接空载荷");
-        XString_delete_base(fmt3.anchorHref);
-        XTextEdit_delete_base(tbase);
-        XClass_delete_base((XClass*)bdoc);
+        XClassDelete(fmt3.anchorHref);
+        XClassDelete(tbase);
+        XClassDelete((XClass*)bdoc);
     }
     {
         XDateTimeEdit* dt = XDateTimeEdit_create(NULL, 0);
@@ -33490,12 +33490,12 @@ static void test_phase32_p2_contract(void)
         p32_expect(cal != NULL, "dtedit: calendarWidget 懒创建");
         p32_expect(XDateTimeEdit_calendarWidget(dt) == cal,
                    "dtedit: calendarWidget 幂等");
-        XDateTimeEdit_delete_base(dt);
+        XClassDelete(dt);
     }
     {
         XIcon* ic = XMessageBox_standardIcon(XMessageBoxIcon_Warning);
         p32_expect(ic != NULL, "style: standardIcon 已生成(>=30 case)");
-        if (ic) XIcon_delete_base(ic);
+        if (ic) XClassDelete(ic);
     }
 
     /* --- XHeaderView:段管理第一批(hide/movable/clickable/sortIndicator) --- */
@@ -33532,7 +33532,7 @@ static void test_phase32_p2_contract(void)
                        XHeaderViewSortOrder_Descending &&
                    XHeaderView_isSortIndicatorShown(hv),
                    "header: sortIndicator 设置生效");
-        XHeaderView_delete_base(hv);
+        XClassDelete(hv);
     }
 
     /* --- XComboBox：弹出列表部件化第一批(view/model/validator/IM 查询) --- */
@@ -33570,9 +33570,9 @@ static void test_phase32_p2_contract(void)
         {
             XString* im = XComboBox_inputMethodQuery(combo, 1);
             p32_expect(im != NULL, "combo: inputMethodQuery 返回对象");
-            if (im) XString_delete_base(im);
+            if (im) XClassDelete(im);
         }
-        XComboBox_delete_base(combo);
+        XClassDelete(combo);
     }
 
     /* --- XComboBox：setLineEdit 隐式可编辑 + 所有权转移 --- */
@@ -33585,7 +33585,7 @@ static void test_phase32_p2_contract(void)
         p32_expect(XComboBox_lineEdit(combo) == edit,
                    "combo: lineEdit 返回已安装编辑框");
         /* 组合框销毁时释放编辑框（所有权转移），此处不得再触碰 edit。 */
-        XComboBox_delete_base(combo);
+        XClassDelete(combo);
     }
 }
 /* ==================== XMdiArea 契约测试（对标 QMdiArea） ========== */
@@ -33652,7 +33652,7 @@ static void test_mdiarea_contract(void)
     XMdiArea_closeAllSubWindows(area);
     mdi_expect(XMdiArea_subWindowCount(area) == 0, "closeAll 后 0");
 
-    XMdiArea_delete_base(area);
+    XClassDelete(area);
     /* c0/c1 已随 area→sub window→内容 控件树一并销毁 */
 }
 /* ==================== XMdiSubWindow 扩展契约测试（Task 2.7） ====== */
@@ -33798,7 +33798,7 @@ static void test_mdisubwindow_ext_contract(void)
     mdi_expect(XMdiArea_activeSubWindow(area) == sw1,
                "ext: closeActive 后激活 sw1");
 
-    XMdiArea_delete_base(area);
+    XClassDelete(area);
     /* c0/c1/menu 随控件树释放 */
 }
 /* ==================== XCalendarWidget 契约测试 ==================== */
@@ -33905,7 +33905,7 @@ static void test_calendarwidget_contract(void)
         cal_expect(XCalendarWidget_isDateSelected(cal, &d),
                   "showTodayPage 后选中今日");
     }
-XCalendarWidget_delete_base(cal);
+XClassDelete(cal);
 }
 /* ==================== XTextBrowser 契约测试（对标 QTextBrowser） == */
 
@@ -33946,7 +33946,7 @@ static void test_textbrowser_contract(void)
     XTextBrowser_home(tb);
     XTextBrowser_reload(tb);
 
-    XTextBrowser_delete_base(tb);
+    XClassDelete(tb);
 }
 /* ==================== XKeySequenceEdit 契约测试 ==================== */
 
@@ -34090,7 +34090,7 @@ static void test_keysequenceedit_contract(void)
        由 main 末尾 s_failures!=0 决定退出码）。 */
     s_failures += kse_failures;
 
-    XKeySequenceEdit_delete_base(edit);
+    XClassDelete(edit);
 }
 /* ==================== XTextEdit 契约测试 ==================== */
 
@@ -34252,12 +34252,12 @@ static void test_textedit_contract(void)
                           "toHtml span 背景互逆");
                 if (h) XFree_System(h);
             }
-            XTextDocument_delete_base(doc);
+            XClassDelete(doc);
         }
     }
 #endif /* XTEXTDOCUMENT_ON */
 
-    XTextEdit_delete_base(edit);
+    XClassDelete(edit);
 }
 /* ==================== XTextBrowser 契约测试 ==================== */
 
@@ -34276,7 +34276,7 @@ static void test_textbrowser2_contract(void)
     XTextBrowser_setSource(tb, "help.html");
     tbr2_expect(strcmp(XTextBrowser_source(tb), "help.html") == 0,
               "setSource/source 往返");
-    XTextBrowser_delete_base(tb);
+    XClassDelete(tb);
 }
 /* ==================== XDialog 契约测试 ==================== */
 
@@ -34318,7 +34318,7 @@ static void test_dialog_contract(void)
     XDialog_setModal(dlg, false);
     dlg_expect(!XDialog_isModal(dlg), "setModal false");
 
-    XDialog_delete_base(dlg);
+    XClassDelete(dlg);
 
     /* XMessageBox 继承 XDialog 验证。 */
     {
@@ -34353,7 +34353,7 @@ static void test_dialog_contract(void)
                        !XMessageBox_testOption(mb, 0x2),
                        "options/testOption");
                 }
-        XMessageBox_delete_base(mb);
+        XClassDelete(mb);
     }
 }
 /* ==================== XTabWidget 多行换行 + 切换功能测试 ========== */
@@ -34420,7 +34420,7 @@ static void test_tabwidget_wrap_contract(void)
     tw_expect(strcmp(XTabWidget_tabText_2(tw, 16), "标签16") == 0,
               "tabText(16) 往返");
 
-    XTabWidget_delete_base(tw);
+    XClassDelete(tw);
 }
 /* ==================== XWizard 契约测试（对标 QWizard） ============== */
 
@@ -34527,7 +34527,7 @@ static void test_wizard_contract(void)
                "validateCurrentPage 跟随页面 complete(false)");
     wiz_expect(XWizard_nextId(wiz) == -1 || XWizard_nextId(wiz) >= 0,
                "nextId 返回合法值");
-XWizard_delete_base(wiz);
+XClassDelete(wiz);
     /* 页面已作为 wizard 子控件随 deinit 自动清理。 */
 }
 /* ==================== XDialogButtonBox 契约测试（对标 QDialogButtonBox） ==================== */
@@ -34584,7 +34584,7 @@ static void test_dialogbuttonbox_contract(void)
     XDialogButtonBox_clear(box);
     db2_expect(XDialogButtonBox_standardButtons(box) == 0, "clear 清空");
 
-    XDialogButtonBox_delete_base(box);
+    XClassDelete(box);
 }
 
 
@@ -34623,7 +34623,7 @@ static void test_xdir_remove_path_contract(void)
         ok = XFile_open_2(&file, XIODevice_WriteOnly, 0);
         expect_true(ok, "removePath 契约：分支用例文件创建");
         XIODevice_close_base((XIODevice*)&file);
-        XClass_deinit_base((XClass*)&file);
+        XClassDeinit((XClass*)&file);
         expect_true(XDir_removePath_static(filePath),
                     "removePath 契约：文件删除成功");
         expect_true(!XDir_removePath_static(filePath),
@@ -34639,13 +34639,13 @@ static void test_xdir_remove_path_contract(void)
             XString* fullName = XString_create_utf8("sub/full");
             expect_true(rootDir && XDir_mkpath(rootDir, fullName),
                         "removePath 契约：非空目录准备");
-            if (fullName) XString_delete_base((XClass*)fullName);
+            if (fullName) XClassDelete((XClass*)fullName);
         }
         XFile_init_2(&file, fullInner);
         ok = XFile_open_2(&file, XIODevice_WriteOnly, 0);
         expect_true(ok, "removePath 契约：非空目录内文件创建");
         XIODevice_close_base((XIODevice*)&file);
-        XClass_deinit_base((XClass*)&file);
+        XClassDeinit((XClass*)&file);
         expect_true(!XDir_removePath_static(fullDirPath),
                     "removePath 契约：非空目录删除失败");
         expect_true(XFile_exists_static(fullInner),
@@ -34654,15 +34654,15 @@ static void test_xdir_remove_path_contract(void)
                     "removePath 契约：NULL 路径安全失败");
 
         if (rootDir) XDir_removeRecursively(rootDir);
-        if (fullInner) XString_delete_base((XClass*)fullInner);
+        if (fullInner) XClassDelete((XClass*)fullInner);
     }
 
-    if (filePath) XString_delete_base((XClass*)filePath);
-    if (subPath) XString_delete_base((XClass*)subPath);
-    if (fullDirPath) XString_delete_base((XClass*)fullDirPath);
-    if (subName) XString_delete_base((XClass*)subName);
-    if (rootDir) XDir_delete_base((XClass*)rootDir);
-    if (rootString) XString_delete_base((XClass*)rootString);
+    if (filePath) XClassDelete((XClass*)filePath);
+    if (subPath) XClassDelete((XClass*)subPath);
+    if (fullDirPath) XClassDelete((XClass*)fullDirPath);
+    if (subName) XClassDelete((XClass*)subName);
+    if (rootDir) XClassDelete((XClass*)rootDir);
+    if (rootString) XClassDelete((XClass*)rootString);
 }
 
 
@@ -34688,7 +34688,7 @@ static void test_xsavefile_temp_contract(void)
         XString* dot = XString_create_utf8(".");
         expect_true(rootDir && XDir_mkpath(rootDir, dot),
                     "tmpfile 契约：沙箱根创建");
-        if (dot) XString_delete_base((XClass*)dot);
+        if (dot) XClassDelete((XClass*)dot);
     }
     XSaveFile_setTempDir_static(rootString);
     expect_true(rootDir != NULL, "tmpfile 契约：沙箱根就绪");
@@ -34715,7 +34715,7 @@ static void test_xsavefile_temp_contract(void)
     expect_true(workPath != NULL &&
                 XIODevice_write_1((XIODevice*)&scratch, "xy", 2) == 2,
                 "tmpfile 契约：写入两字节");
-    XSaveFile_deinit_base(&scratch);
+    XClassDeinit(&scratch);
     expect_true(workPath && !XFile_exists_static(workPath),
                 "tmpfile 契约：deinit 用后即焚");
     expect_true(path1 && workPath &&
@@ -34724,11 +34724,11 @@ static void test_xsavefile_temp_contract(void)
 
     XSaveFile_setTempDir_static(NULL); /* 恢复默认，防跨用例污染 */
     if (rootDir) XDir_removeRecursively(rootDir);
-    if (path1) XString_delete_base((XClass*)path1);
-    if (path2) XString_delete_base((XClass*)path2);
-    if (workPath) XString_delete_base((XClass*)workPath);
-    if (rootDir) XDir_delete_base((XClass*)rootDir);
-    if (rootString) XString_delete_base((XClass*)rootString);
+    if (path1) XClassDelete((XClass*)path1);
+    if (path2) XClassDelete((XClass*)path2);
+    if (workPath) XClassDelete((XClass*)workPath);
+    if (rootDir) XClassDelete((XClass*)rootDir);
+    if (rootString) XClassDelete((XClass*)rootString);
 }
 
 
@@ -35247,7 +35247,7 @@ static void test_charts_task218a_contract(void)
         XBarSet_remove(set, 0, 1);
         expect_true(XBarSet_isBarSelected(set, 1),
                     "t218a remove 选中平移");
-        XBarSet_delete_base(set);
+        XClassDelete(set);
     }
     /* ---- XAbstractBarSeries：XBarSet 集合 + 信号 + 默认值 ---- */
     {
@@ -35363,7 +35363,7 @@ static void test_charts_task218a_contract(void)
         XAbstractBarSeries_setBarWidth(series, 0.3);
         expect_true(XAbstractBarSeries_barWidth(series) == 0.3,
                     "t218a barWidth 设置");
-        XAbstractBarSeries_delete_base(series);
+        XClassDelete(series);
     }
     /* ---- XXYSeries：点标签属性 roundtrip + 信号 ---- */
     {
@@ -35473,8 +35473,8 @@ static void test_charts_task218a_contract(void)
         expect_true(t218_xyLight == 1 &&
                     XXYSeries_lightMarker(&line->m_base) == &pm,
                     "t218a lightMarkerChanged");
-        XPixmap_deinit_base((XClass*)&pm);
-        XLineSeries_delete_base(line);
+        XClassDeinit((XClass*)&pm);
+        XClassDelete(line);
     }
     /* ---- XPieSeries：holeSize 0..1 + pieSize 联动 + 默认起始角 ---- */
     {
@@ -35560,7 +35560,7 @@ static void test_charts_task218a_contract(void)
         XPieSlice_setLabelArmLengthFactor(sl, 0.5);
         expect_true(XPieSlice_labelArmLengthFactor(sl) == 0.5,
                     "t218a labelArmLengthFactor");
-        XPieSeries_delete_base(pie);
+        XClassDelete(pie);
     }
     /* ---- XAbstractSeries：4 信号 + show/hide ---- */
     {
@@ -35591,7 +35591,7 @@ static void test_charts_task218a_contract(void)
         expect_true(t218_asVisible == 2 &&
                     XAbstractSeries_isVisible(&line->m_base.m_base),
                     "t218a show/hide 可见性");
-        XLineSeries_delete_base(line);
+        XClassDelete(line);
     }
 }
 #endif /* XCHARTS_ON */
@@ -35639,7 +35639,7 @@ static void test_charts_task218b_contract(void)
         expect_true(XChart_themeColor(chart, 0) == 0xFF80C342u &&
                     XChart_themeColor(chart, 7) == 0xFFD7D6D5u,
                     "t218b Qt 主题 8 色");
-        XChart_delete_base(chart);
+        XClassDelete(chart);
     }
     /* ---- setTheme 应用到既有序列 ---- */
     {
@@ -35651,7 +35651,7 @@ static void test_charts_task218b_contract(void)
         const double vals[2] = {1.0, 2.0};
         expect_true(chart && line && bar && set && pie, "t218b 序列创建");
         if (!chart || !line || !bar || !set || !pie) {
-            if (chart) XChart_delete_base(chart);
+            if (chart) XClassDelete(chart);
             return;
         }
         XXYSeries_append(&line->m_base, 0, 0);
@@ -35676,7 +35676,7 @@ static void test_charts_task218b_contract(void)
         XChart_setTheme(chart, XChart_ChartTheme_Light);
         expect_true(XXYSeries_color(&line->m_base) == 0xFF123456u,
                     "t218b setTheme 不覆盖显式颜色");
-        XChart_delete_base(chart);
+        XClassDelete(chart);
     }
     /* ---- 最佳拟合线最小二乘数值断言 ---- */
     {
@@ -35695,7 +35695,7 @@ static void test_charts_task218b_contract(void)
                     slope > 1.999 && slope < 2.001 &&
                     intercept > 0.999 && intercept < 1.001,
                     "t218b bestFitLine 最小二乘 y=2x+1");
-        XLineSeries_delete_base(line);
+        XClassDelete(line);
     }
     /* ---- holeSize 环图值 + pointLabelsFormat 离屏渲染冒烟 + plotAreaChanged ---- */
     {
@@ -35709,7 +35709,7 @@ static void test_charts_task218b_contract(void)
         int y;
         expect_true(chart && pie && line, "t218b 渲染对象创建");
         if (!chart || !pie || !line) {
-            if (chart) XChart_delete_base(chart);
+            if (chart) XClassDelete(chart);
             return;
         }
         XPieSeries_append_2(pie, "A", 3);
@@ -35742,10 +35742,10 @@ static void test_charts_task218b_contract(void)
                 if (XImage_pixel(&image, x, y) != 0xFF000000u)
                     ++colored;
         expect_true(colored > 1000, "t218b 离屏渲染像素非空");
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         /* m_chart 已随视图 delete_base 的析构释放（所有权随 setChart 转
          * 移，XChartView.h 契约），不得再外部 delete（双重释放）。 */
-        XChartView_delete_base((XClass*)&view);
+        XClassDelete((XClass*)&view);
     }
 
     /* ---- t218c 静态层缓存位一致 A/B（§10.2 Phase C）：同一图表在同
@@ -35765,7 +35765,7 @@ static void test_charts_task218b_contract(void)
         int y;
         expect_true(chart && line && area, "t218c 渲染对象创建");
         if (!chart || !line || !area) {
-            if (chart) XChart_delete_base(chart);
+            if (chart) XClassDelete(chart);
             return;
         }
         XXYSeries_append(&line->m_base, 0, 5);
@@ -35819,11 +35819,11 @@ static void test_charts_task218b_contract(void)
 
 
 
-        XImage_deinit_base(&imgDirect);
-        XImage_deinit_base(&imgLayer);
+        XClassDeinit(&imgDirect);
+        XClassDeinit(&imgLayer);
         /* m_chart 已随视图 delete_base 的析构释放（所有权随 setChart 转
          * 移，XChartView.h 契约），不得再外部 delete（双重释放）。 */
-        XChartView_delete_base((XClass*)&view);
+        XClassDelete((XClass*)&view);
     }
 }
 #endif /* XCHARTS_ON */
@@ -35888,7 +35888,7 @@ static void test_util_task219a_contract(void)
                     XString_equals_utf8(got, "提示文本",
                                         XChar_CaseSensitive),
                     "t219a tooltip text roundtrip");
-        if (got) XString_delete_base((XClass*)got);
+        if (got) XClassDelete((XClass*)got);
         XToolTip_hideText();
         expect_true(!XToolTip_isVisible() && XToolTip_text() == NULL,
                     "t219a hideText 清空");
@@ -35899,9 +35899,9 @@ static void test_util_task219a_contract(void)
                     XString_equals_utf8(got, "utf8提示",
                                         XChar_CaseSensitive),
                     "t219a tooltip _2 roundtrip");
-        if (got) XString_delete_base((XClass*)got);
+        if (got) XClassDelete((XClass*)got);
         XToolTip_hideText();
-        XString_delete_base((XClass*)tip);
+        XClassDelete((XClass*)tip);
     }
 
     /* ---- XShortcut：属性 roundtrip + activated 信号 + 注册表 match ---- */
@@ -35929,7 +35929,7 @@ static void test_util_task219a_contract(void)
                     XString_equals_utf8(got, "帮助",
                                         XChar_CaseSensitive),
                     "t219a shortcut whatsThis");
-        if (got) XString_delete_base((XClass*)got);
+        if (got) XClassDelete((XClass*)got);
         XObject_connect_2((XObject*)sc,
                           XSignal(XShortcut_activated_signal),
                           t219a_shortcutActivatedSlot);
@@ -35957,8 +35957,8 @@ static void test_util_task219a_contract(void)
                                     XShortcutContext_WindowShortcut,
                                     w) == sc,
                     "t219a 窗口级有焦点匹配");
-        XShortcut_delete_base(sc);
-        if (w) XWidget_delete_base((XClass*)w);
+        XClassDelete(sc);
+        if (w) XClassDelete((XClass*)w);
         expect_true(XShortcut_match(XKey_F5,
                                     XShortcutContext_ApplicationShortcut,
                                     NULL) == NULL,
@@ -35982,7 +35982,7 @@ static void test_util_task219a_contract(void)
         expect_true(c != NULL && XCompleter_model(c) == model,
                     "t219a completer 创建+model 接入");
         if (!c) {
-            XAbstractItemModel_delete_base(model);
+            XClassDelete(model);
             return;
         }
         XObject_connect_2((XObject*)c,
@@ -36001,7 +36001,7 @@ static void test_util_task219a_contract(void)
                     XString_equals_utf8(cc, "Banana",
                                         XChar_CaseSensitive),
                     "t219a currentCompletion");
-        if (cc) XString_delete_base((XClass*)cc);
+        if (cc) XClassDelete((XClass*)cc);
         XCompleter_setCompletionPrefix_2(c, "ZZZ");
         expect_true(XCompleter_currentRow(c) == -1 &&
                     XCompleter_currentCompletion(c) == NULL,
@@ -36015,10 +36015,10 @@ static void test_util_task219a_contract(void)
                     XString_equals_utf8(cc, "Apple",
                                         XChar_CaseSensitive),
                     "t219a 空前缀 currentCompletion");
-        if (cc) XString_delete_base((XClass*)cc);
+        if (cc) XClassDelete((XClass*)cc);
         expect_true(XCompleter_popup(c) == NULL, "t219a popup 恒 NULL");
-        XCompleter_delete_base(c);
-        XAbstractItemModel_delete_base(model);
+        XClassDelete(c);
+        XClassDelete(model);
     }
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
 
@@ -36047,7 +36047,7 @@ static void test_util_task219a_contract(void)
         expect_true(acts != NULL &&
                     XVector_size_base((const XContainer*)acts) == 2,
                     "t219a actions 列表");
-        if (acts) XVector_delete_base((XClass*)acts);
+        if (acts) XClassDelete((XClass*)acts);
         s_t219aGroupTriggered = 0;
         s_t219aGroupTriggeredAction = NULL;
         XActionGroup_setCheckedAction(g, a1);
@@ -36080,10 +36080,10 @@ static void test_util_task219a_contract(void)
         expect_true(acts != NULL &&
                     XVector_size_base((const XContainer*)acts) == 1,
                     "t219a removeAction");
-        if (acts) XVector_delete_base((XClass*)acts);
-        XActionGroup_delete_base(g);
-        XAction_delete_base(a1);
-        XAction_delete_base(a2);
+        if (acts) XClassDelete((XClass*)acts);
+        XClassDelete(g);
+        XClassDelete(a1);
+        XClassDelete(a2);
     }
 #endif /* XWIDGET_ON && XACTION_ON */
 }
@@ -36209,7 +36209,7 @@ static void test_dialog_r1_defect_locks(void)
                 expect_true(XWidget_width((XWidget*)dlg) >= 360 &&
                             XWidget_height((XWidget*)dlg) >= 170,
                             "r1#9 默认尺寸容纳自定义对话框内容 360x170");
-                XDialog_delete_base((XClass*)dlg);
+                XClassDelete((XClass*)dlg);
             }
         }
         /* 派生显式定尺不被基类默认覆盖（XMessageBox_init resize(320,140)）。 */
@@ -36221,7 +36221,7 @@ static void test_dialog_r1_defect_locks(void)
                 expect_true(XWidget_width((XWidget*)mb) == 320 &&
                             XWidget_height((XWidget*)mb) == 140,
                             "r1#3 基类默认不覆盖派生显式定尺（320x140）");
-                XMessageBox_delete_base((XClass*)mb);
+                XClassDelete((XClass*)mb);
             }
         }
 #endif /* XMESSAGEBOX_ON */
@@ -36257,14 +36257,14 @@ static void test_dialog_r1_defect_locks(void)
                     expect_true(XWidget_width((XWidget*)pd) > 360 &&
                                 XWidget_width((XWidget*)pd) >= wBefore,
                                 "r1#2 长标签文本实测扩宽（不受下限封顶）");
-                    XString_delete_base((XClass*)longText);
+                    XClassDelete((XClass*)longText);
                 }
                 /* show 触发 showEvent 复算（P0 链路收口点）后仍守下限。 */
                 XWidget_show((XWidget*)pd);
                 expect_true(XWidget_width((XWidget*)pd) >= 360 &&
                             XWidget_height((XWidget*)pd) >= 160,
                             "r1#2 show 复算后固定尺寸下限不塌缩");
-                XProgressDialog_delete_base((XClass*)pd);
+                XClassDelete((XClass*)pd);
             }
         }
 
@@ -36292,7 +36292,7 @@ static void test_dialog_r1_defect_locks(void)
                 XErrorMessage_showMessage(em, "");
                 expect_true(XWidget_width((XWidget*)em) == 300,
                             "r1#5 空消息落宽下限锚点 300");
-                XErrorMessage_delete_base((XClass*)em);
+                XClassDelete((XClass*)em);
             }
         }
 #endif /* XERRORMESSAGE_ON */
@@ -36463,7 +36463,7 @@ static void test_dialog_r1_defect_locks(void)
                         XMouseButton_LeftButton, 0, pressPos);
                     if (press) {
                         XCoreApplication_sendEvent((XObject*)edit3, press);
-                        XEvent_delete_base((XEvent*)press);
+                        XClassDelete((XEvent*)press);
                     }
                     XThread_msleep(500);
                     XGuiApplication_processEvents(XEventLoop_AllEvents);
@@ -36474,10 +36474,10 @@ static void test_dialog_r1_defect_locks(void)
                             "r1#4d 裁定时序：点击后焦点入框（可键入）");
                 if (xkbB) {
                     XVirtualKeyboard_closePopup(xkbB);
-                    XVirtualKeyboard_delete_base(xkbB);
+                    XClassDelete(xkbB);
                 }
-                XLayout_delete_base((XLayout*)root3);
-                XInputDialog_delete_base(dlg3);
+                XClassDelete((XLayout*)root3);
+                XClassDelete(dlg3);
                 XApplication_setActiveModalWidget(NULL); /* t219a 先例复原。 */
             }
             /* 2026-10-02 所有者裁定本体锁（比尺寸规格更本质）：对话框内
@@ -36513,8 +36513,8 @@ static void test_dialog_r1_defect_locks(void)
 #endif /* XVIRTUALKEYBOARD_ON */
             /* 布局不随对话框析构释放（xid_buildDialog 所有权注释同款）：
              * show 后删除，根布局顺带释放按钮行子布局条目。 */
-            XLayout_delete_base((XLayout*)root);
-            XInputDialog_delete_base(dlg);
+            XClassDelete((XLayout*)root);
+            XClassDelete(dlg);
 #if XVIRTUALKEYBOARD_ON
             /* 裁定本体锁的防悬宕半边（同一 xkbProbe 实例）：对话框删除
              * 触发 xkb_hostDestroyedSlot——收层、把面板从濒死宿主
@@ -36526,7 +36526,7 @@ static void test_dialog_r1_defect_locks(void)
                                 NULL &&
                             !XVirtualKeyboard_popupVisible(xkbProbe),
                         "r1#4c 裁定本体：对话框析构后键盘面板摘挂存活、弹层位复位");
-            if (xkbProbe) XVirtualKeyboard_delete_base(xkbProbe);
+            if (xkbProbe) XClassDelete(xkbProbe);
 #endif /* XVIRTUALKEYBOARD_ON */
 
             /* 物理键盘形态（总开关关）：同装配不预留避让带。 */
@@ -36556,15 +36556,15 @@ static void test_dialog_r1_defect_locks(void)
                             "r1#10 物理键盘形态不预留避让带（下边距=装配 12）");
                 expect_true(XWidget_height((XWidget*)dlg2) >= hint2.height,
                             "r1#10 物理键盘形态定尺=内容实测（无带）");
-                XLayout_delete_base((XLayout*)root2);
-                XInputDialog_delete_base(dlg2);
+                XClassDelete((XLayout*)root2);
+                XClassDelete(dlg2);
                 XVirtualKeyboardSettings_setKeyboardEnabled(
                     XVirtualKeyboardSettings_instance(), true); /* 全局态还原。 */
             }
         }
 #endif /* XVIRTUALKEYBOARD_ON */
 
-        XWidget_deinit_base(&host);
+        XClassDeinit(&host);
     }
 #endif /* XWIDGET_ON && XDIALOG_ON */
 }
@@ -36680,7 +36680,7 @@ static void test_dialog_r2_defect_locks(void)
                             s_r2RejectedCount == 2,
                         "r2#1 二次 open 取消链路仍通（隐藏+计数=2）");
             XApplication_setActiveModalWidget(NULL);
-            XMessageBox_delete_base((XClass*)box);
+            XClassDelete((XClass*)box);
         }
 
         /* ---- #2：多行长文本收口（实测块高 + 宽度 + 离屏像素） ---- */
@@ -36734,12 +36734,12 @@ static void test_dialog_r2_defect_locks(void)
                     }
                     expect_true(dark > 10,
                                 "r2#2 第 2 行以下文本带非背景像素可见（离屏）");
-                    XImage_delete_base(img);
+                    XClassDelete(img);
                 }
             }
             XApplication_setActiveModalWidget(NULL);
-            XMessageBox_delete_base((XClass*)b6);
-            XLabel_delete_base((XClass*)probe);
+            XClassDelete((XClass*)b6);
+            XClassDelete((XClass*)probe);
         }
     }
 #endif /* XWIDGET_ON && XDIALOG_ON && XMESSAGEBOX_ON */
@@ -36787,7 +36787,7 @@ static void test_dialog_r2_defect_locks(void)
             }
             XDialog_done(dlg, 0);
             XApplication_setActiveModalWidget(NULL);
-            XDialog_delete_base((XClass*)dlg);
+            XClassDelete((XClass*)dlg);
         }
 
         /* ---- #4：进度对话框 open 非模态例外（demo「再点推进」可达性
@@ -36809,15 +36809,15 @@ static void test_dialog_r2_defect_locks(void)
             XDialog_done(dlg, 0);
             expect_true(XApplication_activeModalWidget() == NULL,
                         "r2#4 done 后模态门解除");
-            XDialog_delete_base((XClass*)dlg);
+            XClassDelete((XClass*)dlg);
             XDialog_done((XDialog*)pd, 0);
             expect_true(!XWidget_isVisible((XWidget*)pd) &&
                             XApplication_activeModalWidget() == NULL,
                         "r2#4 进度框 done 关闭且无门残留");
-            XProgressDialog_delete_base((XClass*)pd);
+            XClassDelete((XClass*)pd);
         }
 
-        XWidget_deinit_base(&host);
+        XClassDeinit(&host);
     }
 #endif /* XWIDGET_ON && XDIALOG_ON && XDIALOGBUTTONBOX_ON */
 
@@ -36864,11 +36864,11 @@ static void test_dialog_r2_defect_locks(void)
                     expect_true(uniform && frame != inner && frame != 0xffffffu,
                                 "r2#6 弹层四缘 1px 框架 ≠ 内部底色（旧态同白零对比）");
                 }
-                XImage_delete_base(img);
+                XClassDelete(img);
             }
         }
         XComboBox_hidePopup_base(cb);
-        XComboBox_delete_base(cb);
+        XClassDelete(cb);
     }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */
 }
@@ -36965,12 +36965,12 @@ static void test_dialog_r3_defect_locks(void)
                     }
                     expect_true(dark > 10,
                                 "r3#2 折行文本第 2 行以下非背景像素可见（离屏）");
-                    XImage_delete_base(img);
+                    XClassDelete(img);
                 }
             }
             XApplication_setActiveModalWidget(NULL);
-            XMessageBox_delete_base((XClass*)box);
-            XLabel_delete_base((XClass*)probe);
+            XClassDelete((XClass*)box);
+            XClassDelete((XClass*)probe);
         }
 
         /* ---- #2 单段超长（无 '\n' 整段折行分支，r2 锁未覆盖）：段落
@@ -36999,7 +36999,7 @@ static void test_dialog_r3_defect_locks(void)
                             "r3#2 单段折行箱高覆盖块高+内容顶+按钮带（不裁行）");
             }
             XApplication_setActiveModalWidget(NULL);
-            XMessageBox_delete_base((XClass*)box);
+            XClassDelete((XClass*)box);
         }
     }
 #endif /* XWIDGET_ON && XDIALOG_ON && XMESSAGEBOX_ON */
@@ -37054,7 +37054,7 @@ static void test_dialog_r4_defect_locks(void)
                             "r4#1 进度框创建宽=360 收口锚点（旧回归 640）");
                 expect_true(h >= 160 && h < 400,
                             "r4#1 进度框创建高 ∈[160,400)（旧回归 480）");
-                XProgressDialog_delete_base((XClass*)pd);
+                XClassDelete((XClass*)pd);
             }
         }
     }
@@ -37119,8 +37119,8 @@ static void test_dialog_r4_defect_locks(void)
                     expect_true(darkPh > darkTx,
                                 "r4#2 真值态暗像素 > 占位态（离屏渲染分立）");
                 }
-                if (imgPh) XImage_delete_base(imgPh);
-                if (imgTx) XImage_delete_base(imgTx);
+                if (imgPh) XClassDelete(imgPh);
+                if (imgTx) XClassDelete(imgTx);
                 /* [2026-10-03 互联测试指挥官修复归因] 像素对照移到未上屏态
                  * （置于 resize 后、show 前）：已上屏/曾上屏顶层的 grab 走
                  * XWidget_grab 路径 1 快照语义（忠实还原最近一次上屏内容，
@@ -37136,7 +37136,7 @@ static void test_dialog_r4_defect_locks(void)
                 XWidget_show((XWidget*)edit);
                 expect_true(strcmp(XLineEdit_text(edit), "预置文本") == 0,
                             "r4#2 show 后初值保持（不被清空/降级）");
-                XLineEdit_delete_base((XClass*)edit);
+                XClassDelete((XClass*)edit);
             }
         }
     }
@@ -37215,7 +37215,7 @@ static void test_dialog_r4_defect_locks(void)
                                             frame != 0xffffffu,
                                         "r4#5 补全弹层四缘 1px 框架（同 r2#6 通道）");
                         }
-                        XImage_delete_base(img);
+                        XClassDelete(img);
                     }
                 }
             }
@@ -37227,7 +37227,7 @@ static void test_dialog_r4_defect_locks(void)
             expect_true(hAll > hFiltered && hFiltered > 0,
                         "r4#5 弹层高按命中数收（全量>补全态）");
             XComboBox_hidePopup_base(cb);
-            XComboBox_delete_base(cb);
+            XClassDelete(cb);
         }
     }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */
@@ -37254,25 +37254,25 @@ static void test_dialog_task219b_contract(void)
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s) &&
                     idx == 0,
                     "t219b getOpenFileName 空串+下标 0");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         s = XFileDialog_getOpenFileName_2(NULL, "标题", "/tmp",
                                           "All (*)", &idx);
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
                     "t219b getOpenFileName_2 空串");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         list = XFileDialog_getOpenFileNames(NULL, NULL, NULL, NULL, &idx);
         expect_true(list != NULL &&
                     XStringList_size_base((const XContainer*)list) == 0,
                     "t219b getOpenFileNames 空列表");
-        if (list) XStringList_delete_base((XClass*)list);
+        if (list) XClassDelete((XClass*)list);
         s = XFileDialog_getSaveFileName(NULL, NULL, NULL, NULL, &idx);
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
                     "t219b getSaveFileName 空串");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         s = XFileDialog_getExistingDirectory(NULL, NULL, NULL);
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
                     "t219b getExistingDirectory 空串");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         /* 实例 roundtrip */
         expect_true(XFileDialog_fileMode(dlg) ==
                         XFileDialog_ExistingFile &&
@@ -37296,38 +37296,38 @@ static void test_dialog_task219b_contract(void)
         expect_true(list != NULL &&
                     XStringList_size_base((const XContainer*)list) == 1,
                     "t219b setNameFilter 单过滤器");
-        if (list) XStringList_delete_base((XClass*)list);
+        if (list) XClassDelete((XClass*)list);
         s = XFileDialog_selectedNameFilter(dlg);
         expect_true(s != NULL &&
                     XString_equals_utf8(s, "文本 (*.txt)",
                                         XChar_CaseSensitive),
                     "t219b selectedNameFilter roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         XFileDialog_setDirectory(dlg, dir);
         s = XFileDialog_directory(dlg);
         expect_true(s != NULL && XString_equals_utf8(s, "/home",
                                                      XChar_CaseSensitive),
                     "t219b directory roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         XFileDialog_selectFile(dlg, file);
         XFileDialog_selectFile(dlg, dir);
         list = XFileDialog_selectedFiles(dlg);
         expect_true(list != NULL &&
                     XStringList_size_base((const XContainer*)list) == 2,
                     "t219b selectedFiles 两文件");
-        if (list) XStringList_delete_base((XClass*)list);
+        if (list) XClassDelete((XClass*)list);
         s = XFileDialog_selectedFile(dlg);
         expect_true(s != NULL &&
                     XString_equals_utf8(s, "/tmp/out.txt",
                                         XChar_CaseSensitive),
                     "t219b selectedFile 首文件");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         XFileDialog_setDefaultSuffix(dlg, suffix);
         s = XFileDialog_defaultSuffix(dlg);
         expect_true(s != NULL && XString_equals_utf8(s, "txt",
                                                      XChar_CaseSensitive),
                     "t219b defaultSuffix roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         XFileDialog_setOption(dlg, XFileDialog_ShowDirsOnly, true);
         XFileDialog_setOption(dlg, XFileDialog_DontResolveSymlinks, true);
         expect_true(XFileDialog_testOption(dlg, XFileDialog_ShowDirsOnly) &&
@@ -37340,7 +37340,7 @@ static void test_dialog_task219b_contract(void)
         expect_true(s != NULL && XString_equals_utf8(s, "文件(&N):",
                                                      XChar_CaseSensitive),
                     "t219b labelText roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         /* fileSelected 信号（手动触发） */
         XObject_connect_2((XObject*)dlg, XSignal(XFileDialog_fileSelected_signal),
                           t219b_fileSelectedSlot);
@@ -37350,12 +37350,12 @@ static void test_dialog_task219b_contract(void)
         expect_true(s_t219bFileSelectedCount == 1 &&
                     strcmp(s_t219bFileSelected, "/tmp/out.txt") == 0,
                     "t219b fileSelected 信号");
-        XString_delete_base((XClass*)file);
-        XString_delete_base((XClass*)dir);
-        XString_delete_base((XClass*)filter);
-        XString_delete_base((XClass*)suffix);
-        XString_delete_base((XClass*)label);
-        XFileDialog_delete_base(dlg);
+        XClassDelete((XClass*)file);
+        XClassDelete((XClass*)dir);
+        XClassDelete((XClass*)filter);
+        XClassDelete((XClass*)suffix);
+        XClassDelete((XClass*)label);
+        XClassDelete(dlg);
     }
 
     /* ---- XColorDialog：getColor 返回 initial + 颜色 roundtrip + 信号 ---- */
@@ -37407,7 +37407,7 @@ static void test_dialog_task219b_contract(void)
                     XColorDialog_options(dlg) ==
                         XColorDialog_ShowAlphaChannel,
                     "t219b 颜色选项位");
-        XColorDialog_delete_base(dlg);
+        XClassDelete(dlg);
     }
 
     /* ---- XInputDialog：getText 空串 + 实例 roundtrip + intValueChanged ---- */
@@ -37430,18 +37430,18 @@ static void test_dialog_task219b_contract(void)
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s) &&
                     !ok,
                     "t219b getText 空串+ok=false");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         s = XInputDialog_getText_2(NULL, "标题", "标签",
                                    XInputDialogEchoMode_Password, "p", &ok);
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s) &&
                     !ok,
                     "t219b getText_2 空串");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         s = XInputDialog_getMultiLineText(NULL, NULL, NULL, NULL, &ok);
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s) &&
                     !ok,
                     "t219b getMultiLineText 空串");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         expect_true(XInputDialog_getInt(NULL, NULL, NULL, 7, 0, 10, 1, &ok) == 7 &&
                     !ok,
                     "t219b getInt 返回 value");
@@ -37459,11 +37459,11 @@ static void test_dialog_task219b_contract(void)
                                                      XChar_CaseSensitive) &&
                     !ok,
                     "t219b getItem 返回 current 项");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         s = XInputDialog_getItem(NULL, NULL, NULL, items, 9, true, &ok);
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
                     "t219b getItem 越界空串");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         /* 实例 roundtrip */
         expect_true(XInputDialog_inputMode(dlg) == XInputDialog_TextInput,
                     "t219b 输入对话框默认 TextInput");
@@ -37475,13 +37475,13 @@ static void test_dialog_task219b_contract(void)
         expect_true(s != NULL && XString_equals_utf8(s, "名称:",
                                                      XChar_CaseSensitive),
                     "t219b labelText roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         XInputDialog_setTextValue(dlg, text);
         s = XInputDialog_textValue(dlg);
         expect_true(s != NULL && XString_equals_utf8(s, "hello",
                                                      XChar_CaseSensitive),
                     "t219b textValue roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         XObject_connect_2((XObject*)dlg,
                           XSignal(XInputDialog_intValueChanged_signal),
                           t219b_intValueChangedSlot);
@@ -37502,7 +37502,7 @@ static void test_dialog_task219b_contract(void)
         expect_true(list != NULL &&
                     XStringList_size_base((const XContainer*)list) == 2,
                     "t219b comboBoxItems roundtrip");
-        if (list) XStringList_delete_base((XClass*)list);
+        if (list) XClassDelete((XClass*)list);
         XInputDialog_setComboBoxEditable(dlg, true);
         expect_true(XInputDialog_isComboBoxEditable(dlg),
                     "t219b comboBoxEditable");
@@ -37512,21 +37512,21 @@ static void test_dialog_task219b_contract(void)
         expect_true(s != NULL && XString_equals_utf8(s, "确定",
                                                      XChar_CaseSensitive),
                     "t219b okButtonText roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         s = XInputDialog_cancelButtonText(dlg);
         expect_true(s != NULL && XString_equals_utf8(s, "取消",
                                                      XChar_CaseSensitive),
                     "t219b cancelButtonText roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         XInputDialog_setOption(dlg, XInputDialog_NoButtons, true);
         expect_true(XInputDialog_testOption(dlg, XInputDialog_NoButtons),
                     "t219b 输入对话框选项位");
-        XString_delete_base((XClass*)label);
-        XString_delete_base((XClass*)text);
-        XString_delete_base((XClass*)okText);
-        XString_delete_base((XClass*)cancelText);
-        XStringList_delete_base((XClass*)items);
-        XInputDialog_delete_base(dlg);
+        XClassDelete((XClass*)label);
+        XClassDelete((XClass*)text);
+        XClassDelete((XClass*)okText);
+        XClassDelete((XClass*)cancelText);
+        XClassDelete((XClass*)items);
+        XClassDelete(dlg);
     }
 
     /* ---- XProgressDialog：setRange/value/wasCanceled + canceled + autoReset ---- */
@@ -37564,7 +37564,7 @@ static void test_dialog_task219b_contract(void)
         expect_true(s != NULL && XString_equals_utf8(s, "处理中...",
                                                      XChar_CaseSensitive),
                     "t219b labelText roundtrip");
-        if (s) XString_delete_base((XClass*)s);
+        if (s) XClassDelete((XClass*)s);
         XProgressDialog_setCancelButtonText(dlg, cancelText);
         XProgressDialog_setMinimumDuration(dlg, 800);
         expect_true(XProgressDialog_minimumDuration(dlg) == 800,
@@ -37582,9 +37582,9 @@ static void test_dialog_task219b_contract(void)
         XProgressDialog_reset(dlg);
         expect_true(!XProgressDialog_wasCanceled(dlg),
                     "t219b reset 清 wasCanceled");
-        XString_delete_base((XClass*)label);
-        XString_delete_base((XClass*)cancelText);
-        XProgressDialog_delete_base(dlg);
+        XClassDelete((XClass*)label);
+        XClassDelete((XClass*)cancelText);
+        XClassDelete(dlg);
     }
 #endif /* XWIDGET_ON && XDIALOG_ON */
 
@@ -37635,7 +37635,7 @@ static void test_dialog_task219b_contract(void)
         /* 挂接状态下删除控件：效果随控件释放（Qt 所有权语义）；
            effect/effect2 已在换装/清除时由控件释放，不得再手工删除。 */
         XWidget_setGraphicsEffect(w, effect3);
-        XWidget_delete_base((XClass*)w);
+        XClassDelete((XClass*)w);
     }
 #endif /* XWIDGET_ON */
 
@@ -37681,8 +37681,8 @@ static void test_dialog_task219b_contract(void)
         XOffscreenSurface_destroy(surf);
         expect_true(!XOffscreenSurface_isValid(surf),
                     "t219b destroy 后无效");
-        if (screen) XScreen_delete_base((XClass*)screen);
-        XOffscreenSurface_delete_base(surf);
+        if (screen) XClassDelete((XClass*)screen);
+        XClassDelete(surf);
     }
 #endif /* XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON */
 
@@ -37698,33 +37698,33 @@ static void test_dialog_task219b_contract(void)
             XStringList_push_back_utf8(urls, "file:///x.txt");
             dirUrl = XString_create_utf8("file:///d");
             XFileDialog_setDirectoryUrl(fd, dirUrl);
-            if (dirUrl) XString_delete_base(dirUrl);
+            if (dirUrl) XClassDelete(dirUrl);
             {
                 XString* du = XFileDialog_directoryUrl(fd);
                 expect_true(du && XStrcmp(XString_toUtf8(du), "file:///d") == 0,
                             "t219b-recheck dirUrl roundtrip");
-                if (du) XString_delete_base(du);
+                if (du) XClassDelete(du);
             }
             XFileDialog_setMimeTypeFilters(fd, urls);
             got = XFileDialog_mimeTypeFilters(fd);
             expect_true(got &&
                         XStringList_size_base((const XStringList*)got) == 1,
                         "t219b-recheck mimeFilters");
-            if (got) XStringList_delete_base(got);
+            if (got) XClassDelete(got);
             XFileDialog_setSupportedSchemes(fd, urls);
             got = XFileDialog_supportedSchemes(fd);
             expect_true(got &&
                         XStringList_size_base((const XStringList*)got) == 1,
                         "t219b-recheck schemes");
-            if (got) XStringList_delete_base(got);
+            if (got) XClassDelete(got);
             selUrl = XString_create_utf8("file:///s.png");
             XFileDialog_selectUrl(fd, selUrl);
-            if (selUrl) XString_delete_base(selUrl);
+            if (selUrl) XClassDelete(selUrl);
             got = XFileDialog_selectedUrls(fd);
             expect_true(got &&
                         XStringList_size_base((const XStringList*)got) >= 1,
                         "t219b-recheck selectedUrls");
-            if (got) XStringList_delete_base(got);
+            if (got) XClassDelete(got);
             XFileDialog_saveState(fd, &state);
             expect_true(!XFileDialog_restoreState(fd, &state),
                         "t219b-recheck save/restore 语义");
@@ -37733,8 +37733,8 @@ static void test_dialog_task219b_contract(void)
                         XFileDialog_proxyModel(fd) == NULL,
                         "t219b-recheck 未映射类型返回 NULL");
         }
-        if (urls) XStringList_delete_base(urls);
-        if (fd) XFileDialog_delete_base(fd);
+        if (urls) XClassDelete(urls);
+        if (fd) XClassDelete(fd);
     }
     {
         XColorDialog* cd = XColorDialog_create(NULL, 0);
@@ -37753,7 +37753,7 @@ static void test_dialog_task219b_contract(void)
                 expect_true(XColor_red(&sc) == 255, "t219b-recheck standardColor");
             }
             XColorDialog_open(cd);
-            XColorDialog_delete_base(cd);
+            XClassDelete(cd);
         }
     }
     {
@@ -37774,7 +37774,7 @@ static void test_dialog_task219b_contract(void)
                             XInputDialogEchoMode_Password,
                         "t219b-recheck echoMode");
             XInputDialog_intValueSelected_signal(id, 7);
-            XInputDialog_delete_base(id);
+            XClassDelete(id);
         }
     }
 }
@@ -38028,7 +38028,7 @@ static void test_style_engine_contract(void)
                     expect_true(1, "drawComplexControl 全 case 冒烟无崩溃");
                 }
                 XPainter_deinit(&painter);
-                XImage_deinit_base(&image);
+                XClassDeinit(&image);
             }
             {
                 XStyleOptionButton btn;
@@ -38045,8 +38045,8 @@ static void test_style_engine_contract(void)
                 }
             }
         }
-        if (cs) XCommonStyle_delete_base(cs);
-        if (fs) XFusionStyle_delete_base(fs);
+        if (cs) XClassDelete(cs);
+        if (fs) XClassDelete(fs);
     }
 #endif /* XSTYLE_ON */
 }
@@ -38342,7 +38342,7 @@ int main(void)
 #if XLAYOUT_ON
     /* 清理布局测试宿主（其余布局控件已由各自测试删除）。 */
     if (g_layoutTestHost) {
-        XWidget_delete_base((XClass*)g_layoutTestHost);
+        XClassDelete((XClass*)g_layoutTestHost);
         g_layoutTestHost = NULL;
     }
 #endif /* XLAYOUT_ON */
@@ -38377,7 +38377,7 @@ int main(void)
                 expect_true(XStrcmp(
                     XAbstractItemModel_headerData_2(model, 0, 0), "ColA")
                     == 0, "model 表头");
-                XAbstractItemModel_delete_base(model);
+                XClassDelete(model);
             }
             if (sel) {
                 XObject_connect_2((XObject*)sel,
@@ -38390,7 +38390,7 @@ int main(void)
                 XItemSelectionModel_select(sel, 2, 1, false);
                 expect_true(XItemSelectionModel_selectedCount(sel) == 0,
                             "selection 取消");
-                XItemSelectionModel_delete_base(sel);
+                XClassDelete(sel);
             }
             if (hdr) {
                 XHeaderView_setCount(hdr, 4);
@@ -38400,7 +38400,7 @@ int main(void)
                             XHeaderView_sectionPosition(hdr, 2) ==
                                 (XHeaderView_sectionSize(hdr, 0) + 60),
                             "header 尺寸/位置");
-                XHeaderView_delete_base(hdr);
+                XClassDelete(hdr);
             }
             /* ---- 视图族：XListView/XListWidget/XTreeWidget ---- */
             {
@@ -38418,9 +38418,9 @@ int main(void)
                             XAbstractItemView_model(&lv->m_base) == m &&
                             XListView_modelColumn(lv) == 0,
                             "XListView model 接入");
-                        XAbstractItemModel_delete_base(m);
+                        XClassDelete(m);
                     }
-                    XListView_delete_base(lv);
+                    XClassDelete(lv);
                 }
                 if (lw) {
                     XListWidget_addItem_2(lw, "one");
@@ -38435,7 +38435,7 @@ int main(void)
                     XListWidget_clear(lw);
                     expect_true(XListWidget_count(lw) == 0,
                                 "XListWidget clear");
-                    XListWidget_delete_base(lw);
+                    XClassDelete(lw);
                 }
                 if (twg) {
                     XTreeWidgetItem* root =
@@ -38456,7 +38456,7 @@ int main(void)
                     XTreeWidget_clear(twg);
                     expect_true(XTreeWidget_topLevelItemCount(twg) == 0,
                                 "XTreeWidget clear");
-                    XTreeWidget_delete_base(twg);
+                    XClassDelete(twg);
                 }
             }
         }
@@ -38485,12 +38485,12 @@ int main(void)
             XTableWidget_setItem(tw, 2, 1, &item);
             expect_true(strcmp(XTableWidget_text(tw, 2, 1), "S") == 0,
                         "XTableWidget setItem");
-            XString_delete_base(item.text);
+            XClassDelete(item.text);
             item.text = NULL;
             XTableWidget_clear(tw);
             expect_true(XTableWidget_rowCount(tw) == 0,
                         "XTableWidget clear");
-            XTableWidget_delete_base(tw);
+            XClassDelete(tw);
         }
     }
 #endif /* XTABLEWIDGET_ON */
@@ -38555,7 +38555,7 @@ int main(void)
         expect_true(strcmp(XChart_title_2(chart), "T") == 0, "XChart 标题");
         expect_true(XChart_axisX(chart) != NULL &&
                     XChart_axisY(chart) != NULL, "XChart 轴");
-        XChart_delete_base(chart);
+        XClassDelete(chart);
     }
     test_widgets_inheritance_contract();
     test_fusion_style_contract();

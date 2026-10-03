@@ -131,7 +131,7 @@ static void ftp_applyProxy(XFtp* ftp, XAbstractSocket* socket)
         type, ftp->m_proxyHost, ftp->m_proxyPort, ftp->m_proxyUser, ftp->m_proxyPass);
     if (proxy) {
         XAbstractSocket_setProxy(socket, proxy);
-        XClass_delete_base((XClass*)proxy);
+        XClassDelete((XClass*)proxy);
     }
 }
 
@@ -166,7 +166,7 @@ static bool ftp_compressCommandData(XFtpCommand* cmd)
     if (!cmd || !cmd->m_data) return false;
     XByteArray* compressed = XByteArray_toCompress(cmd->m_data);
     if (!compressed) return false;
-    XClass_delete_base((XClass*)cmd->m_data);
+    XClassDelete((XClass*)cmd->m_data);
     cmd->m_data = compressed;
     return true;
 }
@@ -183,18 +183,18 @@ static bool ftp_compressDeviceData(XFtpCommand* cmd)
     for (;;) {
         int64_t n = XIODevice_read_1(device, buf, (int64_t)sizeof(buf));
         if (n < 0) {
-            XClass_delete_base((XClass*)plain);
+            XClassDelete((XClass*)plain);
             return false;
         }
         if (n == 0) break;
         if (!XByteArray_push_back_2(plain, buf, (size_t)n)) {
-            XClass_delete_base((XClass*)plain);
+            XClassDelete((XClass*)plain);
             return false;
         }
     }
 
     XByteArray* compressed = XByteArray_toCompress(plain);
-    XClass_delete_base((XClass*)plain);
+    XClassDelete((XClass*)plain);
     if (!compressed) return false;
 
     cmd->m_data = compressed;
@@ -213,7 +213,7 @@ static bool ftp_decompressDtpBuffer(XFtp* ftp)
     bool copied = size == 0 || XByteArray_push_back_2(
         ftp->m_readBuffer,
         (const char*)XByteArray_data(decompressed), size);
-    XClass_delete_base((XClass*)decompressed);
+    XClassDelete((XClass*)decompressed);
     return copied;
 }
 
@@ -369,12 +369,6 @@ void XFtp_init(XFtp* ftp)
     }
 }
 
-void XFtp_deinit_base(XFtp* ftp)
-{
-    if (!ftp) return;
-    VXFtp_deinit(ftp);
-}
-
 XFtp* XFtp_create_ex(XMemoryType memory)
 {
     XFtp* ftp = (XFtp*)XMalloc(sizeof(XFtp), XMEMORY_TYPE_SYSTEM);
@@ -385,16 +379,10 @@ XFtp* XFtp_create_ex(XMemoryType memory)
         !ftp->m_readBuffer ||
         !ftp->m_pendingCommands || !ftp->m_commandMutex ||
         !ftp->m_errorString || !ftp->m_listInfo) {
-        XClass_delete_base((XClass*)ftp);
+        XClassDelete((XClass*)ftp);
         return NULL;
     }
     return ftp;
-}
-
-void XFtp_delete(XFtp* ftp)
-{
-    if (!ftp) return;
-    XClass_delete_base((XClass*)ftp);
 }
 
 static void VXFtp_deinit(XFtp* ftp)
@@ -403,7 +391,7 @@ static void VXFtp_deinit(XFtp* ftp)
 
     if (ftp->m_reconnectTimer) {
         XTimer_stop_base(ftp->m_reconnectTimer);
-        XClass_delete_base((XClass*)ftp->m_reconnectTimer);
+        XClassDelete((XClass*)ftp->m_reconnectTimer);
         ftp->m_reconnectTimer = NULL;
     }
 
@@ -420,7 +408,7 @@ static void VXFtp_deinit(XFtp* ftp)
 
     // 关闭 socket
     if (ftp->m_piSocket) {
-        XClass_delete_base((XClass*)ftp->m_piSocket);
+        XClassDelete((XClass*)ftp->m_piSocket);
         ftp->m_piSocket = NULL;
     }
     if (ftp->m_dtpSocket) {
@@ -430,11 +418,11 @@ static void VXFtp_deinit(XFtp* ftp)
 
     // 释放缓冲
     if (ftp->m_piBuffer) {
-        XClass_delete_base((XClass*)ftp->m_piBuffer);
+        XClassDelete((XClass*)ftp->m_piBuffer);
         ftp->m_piBuffer = NULL;
     }
     if (ftp->m_readBuffer) {
-        XClass_delete_base((XClass*)ftp->m_readBuffer);
+        XClassDelete((XClass*)ftp->m_readBuffer);
         ftp->m_readBuffer = NULL;
     }
 
@@ -442,9 +430,9 @@ static void VXFtp_deinit(XFtp* ftp)
     if (ftp->m_pendingCommands) {
         for (size_t i = 0; i < XVector_size_base(ftp->m_pendingCommands); i++) {
             XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, i, XFtpCommand);
-            if (cmd) XFtpCommand_delete(cmd);
+            if (cmd) XClassDelete(cmd);
         }
-        XClass_delete_base((XClass*)ftp->m_pendingCommands);
+        XClassDelete((XClass*)ftp->m_pendingCommands);
         ftp->m_pendingCommands = NULL;
     }
 
@@ -455,27 +443,27 @@ static void VXFtp_deinit(XFtp* ftp)
     }
 
     // 释放字符串
-    if (ftp->m_host) { XClass_delete_base((XClass*)ftp->m_host); ftp->m_host = NULL; }
-    if (ftp->m_user) { XClass_delete_base((XClass*)ftp->m_user); ftp->m_user = NULL; }
-    if (ftp->m_password) { XClass_delete_base((XClass*)ftp->m_password); ftp->m_password = NULL; }
-    if (ftp->m_proxyHost) { XClass_delete_base((XClass*)ftp->m_proxyHost); ftp->m_proxyHost = NULL; }
-    if (ftp->m_proxyUser) { XClass_delete_base((XClass*)ftp->m_proxyUser); ftp->m_proxyUser = NULL; }
-    if (ftp->m_proxyPass) { XClass_delete_base((XClass*)ftp->m_proxyPass); ftp->m_proxyPass = NULL; }
-    if (ftp->m_sslPeerVerifyName) { XClass_delete_base((XClass*)ftp->m_sslPeerVerifyName); ftp->m_sslPeerVerifyName = NULL; }
-    if (ftp->m_errorString) { XClass_delete_base((XClass*)ftp->m_errorString); ftp->m_errorString = NULL; }
+    if (ftp->m_host) { XClassDelete((XClass*)ftp->m_host); ftp->m_host = NULL; }
+    if (ftp->m_user) { XClassDelete((XClass*)ftp->m_user); ftp->m_user = NULL; }
+    if (ftp->m_password) { XClassDelete((XClass*)ftp->m_password); ftp->m_password = NULL; }
+    if (ftp->m_proxyHost) { XClassDelete((XClass*)ftp->m_proxyHost); ftp->m_proxyHost = NULL; }
+    if (ftp->m_proxyUser) { XClassDelete((XClass*)ftp->m_proxyUser); ftp->m_proxyUser = NULL; }
+    if (ftp->m_proxyPass) { XClassDelete((XClass*)ftp->m_proxyPass); ftp->m_proxyPass = NULL; }
+    if (ftp->m_sslPeerVerifyName) { XClassDelete((XClass*)ftp->m_sslPeerVerifyName); ftp->m_sslPeerVerifyName = NULL; }
+    if (ftp->m_errorString) { XClassDelete((XClass*)ftp->m_errorString); ftp->m_errorString = NULL; }
 
     // 释放列表
     if (ftp->m_listInfo) {
         for (size_t i = 0; i < XVector_size_base(ftp->m_listInfo); i++) {
             XFileInfo* info = *(XFileInfo**)XVector_at_base(ftp->m_listInfo, i);
-            if (info) XClass_delete_base((XClass*)info);
+            if (info) XClassDelete((XClass*)info);
         }
-        XClass_delete_base((XClass*)ftp->m_listInfo);
+        XClassDelete((XClass*)ftp->m_listInfo);
         ftp->m_listInfo = NULL;
     }
 
     if (ftp->m_replyText) {
-        XClass_delete_base((XClass*)ftp->m_replyText);
+        XClassDelete((XClass*)ftp->m_replyText);
         ftp->m_replyText = NULL;
     }
 
@@ -1027,7 +1015,7 @@ static void ftp_failQueuedCommands(XFtp* ftp)
         XMutex_unlock(ftp->m_commandMutex);
         if (!cmd) break;
         XFtp_commandFinished_signal(ftp, cmd->m_id, true);
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
     }
 }
 
@@ -1057,7 +1045,7 @@ static void ftp_releaseDtpSocket(XFtp* ftp)
     ftp->m_dtpSocket = NULL;
     ftp_disconnectDtpSocketSignals(ftp, socket);
     XAbstractSocket_disconnectFromHost_base(socket);
-    XClass_delete_base((XClass*)socket);
+    XClassDelete((XClass*)socket);
 }
 
 static void ftp_releaseDtpServer(XFtp* ftp)
@@ -1068,7 +1056,7 @@ static void ftp_releaseDtpServer(XFtp* ftp)
     XObject_disconnect_1((XObject*)server, XSignal(XTcpServer_newConnection_signal),
                          (XObject*)ftp, ftp_dtp_server_newConnection_handler);
     XTcpServer_close(server);
-    XClass_delete_base((XClass*)server);
+    XClassDelete((XClass*)server);
 }
 
 static void ftp_configureDtpSslSocket(XFtp* ftp, XSslSocket* socket)
@@ -1181,7 +1169,7 @@ static const XString* ftp_sslPeerVerifyName(const XFtp* ftp)
 static int ftp_queueCommand(XFtp* ftp, XFtpCommand* cmd)
 {
     if (!ftp || !cmd || !ftp->m_pendingCommands || !ftp->m_commandMutex) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     XMutex_lock(ftp->m_commandMutex);
@@ -1190,7 +1178,7 @@ static int ftp_queueCommand(XFtp* ftp, XFtpCommand* cmd)
     bool queued = XVector_size_base(ftp->m_pendingCommands) == before + 1;
     XMutex_unlock(ftp->m_commandMutex);
     int id = cmd->m_id;
-    if (!queued) XFtpCommand_delete(cmd);
+    if (!queued) XClassDelete(cmd);
     return queued ? id : -1;
 }
 
@@ -1972,7 +1960,7 @@ static void ftp_pi_finishCommand(XFtp* ftp, int code, const char* text)
     XMutex_lock(ftp->m_commandMutex);
     if (ftp->m_pendingCommands && XVector_size_base(ftp->m_pendingCommands) > 0) {
         XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         XVector_remove_base(ftp->m_pendingCommands, 0, 1);
     }
     ftp->m_currentCommand = NULL;
@@ -2188,7 +2176,7 @@ static void ftp_pi_handleError(XFtp* ftp, int code, const char* text)
     XMutex_lock(ftp->m_commandMutex);
     if (ftp->m_pendingCommands && XVector_size_base(ftp->m_pendingCommands) > 0) {
         XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         XVector_remove_base(ftp->m_pendingCommands, 0, 1);
     }
     ftp->m_currentCommand = NULL;
@@ -2246,7 +2234,7 @@ static void ftp_dtp_connect(XFtp* ftp, const char* host, uint16_t port)
                     memcpy(peerIp, s, cpLen);
                     peerIp[cpLen] = '\0';
                 }
-                XClass_delete_base((XClass*)addrStr);
+                XClassDelete((XClass*)addrStr);
             }
         }
         targetHost = peerIp[0] ? peerIp : "127.0.0.1";
@@ -2451,7 +2439,7 @@ static void ftp_dtp_finishTransfer(XFtp* ftp)
             XMutex_lock(ftp->m_commandMutex);
             if (ftp->m_pendingCommands && XVector_size_base(ftp->m_pendingCommands) > 0) {
                 XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
-                if (cmd) XFtpCommand_delete(cmd);
+                if (cmd) XClassDelete(cmd);
                 XVector_remove_base(ftp->m_pendingCommands, 0, 1);
             }
             ftp->m_currentCommand = NULL;
@@ -2515,7 +2503,7 @@ static int ftp_dtp_startListen(XFtp* ftp, char* portCmd, size_t portCmdSize)
 					strncpy(ipStr, utf8, sizeof(ipStr) - 1);
 					ipStr[sizeof(ipStr) - 1] = '\0';
 				}
-				XClass_delete_base((XClass*)addrStr);
+				XClassDelete((XClass*)addrStr);
 			}
 		}
 	}
@@ -2784,12 +2772,12 @@ static bool ftp_parse_list_line(XFtp* ftp, const char* line)
     if (!info) return false;
 
     if (info->m_filePath) {
-        XString_delete_base(info->m_filePath);
+        XClassDelete(info->m_filePath);
         info->m_filePath = NULL;
     }
     info->m_filePath = XString_create_utf8(name);
     if (!info->m_filePath) {
-        XFileInfo_delete_base(info);
+        XClassDelete(info);
         return false;
     }
     info->m_stat.size = size >= 0 ? size : 0;
@@ -2802,7 +2790,7 @@ static bool ftp_parse_list_line(XFtp* ftp, const char* line)
     }
 
     if (!XVector_push_back_1_base(ftp->m_listInfo, &info)) {
-        XFileInfo_delete_base(info);
+        XClassDelete(info);
         return false;
     }
     XFtp_listInfo_signal(ftp, info);
@@ -2873,10 +2861,10 @@ int XFtp_connectToHost(XFtp* ftp, const char* host, uint16_t port)
     char portStr[16];
     snprintf(portStr, sizeof(portStr), "%u", port);
     if (!ftp_addRawArg(cmd, host) || !ftp_addRawArg(cmd, portStr)) {
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
         return -1;
     }
-    if (ftp->m_host) XClass_delete_base((XClass*)ftp->m_host);
+    if (ftp->m_host) XClassDelete((XClass*)ftp->m_host);
     ftp->m_host = XString_create_utf8(host);
     ftp->m_port = port;
     {
@@ -2922,12 +2910,12 @@ int XFtp_login(XFtp* ftp, const char* user, const char* password)
     if (!cmd) return -1;
     if (!ftp_addRawArg(cmd, user ? user : "anonymous") ||
         !ftp_addRawArg(cmd, password ? password : "")) {
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
         return -1;
     }
-    if (ftp->m_user) XClass_delete_base((XClass*)ftp->m_user);
+    if (ftp->m_user) XClassDelete((XClass*)ftp->m_user);
     ftp->m_user = XString_create_utf8(user ? user : "anonymous");
-    if (ftp->m_password) XClass_delete_base((XClass*)ftp->m_password);
+    if (ftp->m_password) XClassDelete((XClass*)ftp->m_password);
     ftp->m_password = XString_create_utf8(password ? password : "");
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
     ftp_pi_startNextCommand(ftp);
@@ -2941,7 +2929,7 @@ int XFtp_list(XFtp* ftp, const char* dir)
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_List);
     if (!cmd) return -1;
     if (dir && dir[0] && !ftp_addRawArg(cmd, dir)) {
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -2955,7 +2943,7 @@ int XFtp_get(XFtp* ftp, const char* file, void* device, int type)
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Get);
     if (!cmd || !ftp_addRawArg(cmd, file)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     cmd->m_device = device;
@@ -2971,7 +2959,7 @@ int XFtp_get_resume(XFtp* ftp, const char* file, void* device, int64_t offset, i
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Get);
     if (!cmd || !ftp_addRawArg(cmd, file)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     cmd->m_device = device;
@@ -2989,13 +2977,13 @@ static int ftp_put_internal(XFtp* ftp, const char* file, const void* data, int64
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Put);
     if (!cmd || !ftp_addRawArg(cmd, file)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     if (data && size > 0) {
         cmd->m_data = XByteArray_create();
         if (!cmd->m_data) {
-            XFtpCommand_delete(cmd);
+            XClassDelete(cmd);
             return -1;
         }
         XByteArray_resize_base(cmd->m_data, size);
@@ -3024,7 +3012,7 @@ int XFtp_remove(XFtp* ftp, const char* file)
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Remove);
     if (!cmd || !ftp_addRawArg(cmd, file)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3038,7 +3026,7 @@ int XFtp_rename(XFtp* ftp, const char* oldname, const char* newname)
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Rename);
     if (!cmd || !ftp_addRawArg(cmd, oldname) || !ftp_addRawArg(cmd, newname)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3052,7 +3040,7 @@ int XFtp_mkdir(XFtp* ftp, const char* dir)
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Mkdir);
     if (!cmd || !ftp_addRawArg(cmd, dir)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3066,7 +3054,7 @@ int XFtp_rmdir(XFtp* ftp, const char* dir)
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Rmdir);
     if (!cmd || !ftp_addRawArg(cmd, dir)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3080,7 +3068,7 @@ int XFtp_cd(XFtp* ftp, const char* dir)
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Cd);
     if (!cmd || !ftp_addRawArg(cmd, dir)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3094,7 +3082,7 @@ static int ftp_queueCdInternal(XFtp* ftp, const char* dir)
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Cd);
     if (!cmd || !ftp_addRawArg(cmd, dir)) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3114,7 +3102,7 @@ int XFtp_size(XFtp* ftp, const char* file)
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Size);
     if (!cmd) return -1;
     if (!ftp_addRawArg(cmd, file)) {
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3129,7 +3117,7 @@ int XFtp_mdtm(XFtp* ftp, const char* file)
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Mdtm);
     if (!cmd) return -1;
     if (!ftp_addRawArg(cmd, file)) {
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3144,7 +3132,7 @@ int XFtp_mlst(XFtp* ftp, const char* file)
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_Mlst);
     if (!cmd) return -1;
     if (file && file[0] && !ftp_addRawArg(cmd, file)) {
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
         return -1;
     }
     if (XFtp_enqueue(ftp, cmd) < 0) return -1;
@@ -3158,7 +3146,7 @@ int XFtp_rawCommand(XFtp* ftp, const char* command)
     int id = XFtp_nextId(ftp);
     XFtpCommand* cmd = XFtpCommand_create(id, XFtpCommand_RawCommand);
     if (!cmd || !cmd->m_rawCmd) {
-        if (cmd) XFtpCommand_delete(cmd);
+        if (cmd) XClassDelete(cmd);
         return -1;
     }
     {
@@ -3207,7 +3195,7 @@ void XFtp_abort(XFtp* ftp)
         XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
         XVector_remove_base(ftp->m_pendingCommands, 0, 1);
         if (canceled) XVector_push_back_1_base(canceled, &cmd);
-        else if (cmd) XFtpCommand_delete(cmd);
+        else if (cmd) XClassDelete(cmd);
     }
     ftp->m_currentCommand = NULL;
     ftp->m_currentId = 0;
@@ -3221,10 +3209,10 @@ void XFtp_abort(XFtp* ftp)
             XFtpCommand* cmd = XVEC_GET(canceled, i, XFtpCommand);
             if (cmd) {
                 XFtp_commandFinished_signal(ftp, cmd->m_id, true);
-                XFtpCommand_delete(cmd);
+                XClassDelete(cmd);
             }
         }
-        XClass_delete_base((XClass*)canceled);
+        XClassDelete((XClass*)canceled);
     }
     ftp->m_abortRequested = 0;
     XFtp_done_signal(ftp, true);
@@ -3237,7 +3225,7 @@ int XFtp_connectToUrl(XFtp* ftp, const char* url)
     XString* urlStr = XString_create_utf8(url);
     if (!urlStr) return -1;
     XUrl* parsed = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlStr, XUrl_TolerantMode);
-    XString_delete_base(urlStr);
+    XClassDelete(urlStr);
     if (!parsed) return -1;
 
     const XString* schemeStr = XUrl_scheme_const(parsed);
@@ -3246,7 +3234,7 @@ int XFtp_connectToUrl(XFtp* ftp, const char* url)
     bool isFtps = schemeLen == 5 && xftp_stricmp_n(scheme, "ftps", 5) == 0;
     bool isFtp = schemeLen == 3 && xftp_stricmp_n(scheme, "ftp", 3) == 0;
     if (scheme && scheme[0] && !isFtp && !isFtps) {
-        XClass_delete_base((XClass*)parsed);
+        XClassDelete((XClass*)parsed);
         return -1;
     }
 
@@ -3261,12 +3249,12 @@ int XFtp_connectToUrl(XFtp* ftp, const char* url)
     int port = XUrl_port(parsed);
 
     if (!host || !host[0]) {
-        XClass_delete_base((XClass*)parsed);
+        XClassDelete((XClass*)parsed);
         return -1;
     }
 
     if (port < 0 || port > 65535) {
-        XClass_delete_base((XClass*)parsed);
+        XClassDelete((XClass*)parsed);
         return -1;
     }
     uint16_t actualPort = (port > 0) ? (uint16_t)port : 21;
@@ -3276,7 +3264,7 @@ int XFtp_connectToUrl(XFtp* ftp, const char* url)
     // 1. 连接主机
     int id = XFtp_connectToHost(ftp, host, actualPort);
     if (id < 0) {
-        XClass_delete_base((XClass*)parsed);
+        XClassDelete((XClass*)parsed);
         return -1;
     }
 
@@ -3286,7 +3274,7 @@ int XFtp_connectToUrl(XFtp* ftp, const char* url)
             (userName && userName[0]) ? userName : "anonymous",
             password ? password : "");
         if (loginId < 0) {
-            XClass_delete_base((XClass*)parsed);
+            XClassDelete((XClass*)parsed);
             return -1;
         }
     }
@@ -3297,7 +3285,7 @@ int XFtp_connectToUrl(XFtp* ftp, const char* url)
         (void)cdId;
     }
 
-    XClass_delete_base((XClass*)parsed);
+    XClassDelete((XClass*)parsed);
     return id;
 }
 
@@ -3409,7 +3397,7 @@ void XFtp_setSslPeerVerifyName(XFtp* ftp, const char* name)
 {
     if (!ftp || ftp->m_state != XFtp_State_Unconnected) return;
     if (ftp->m_sslPeerVerifyName) {
-        XClass_delete_base((XClass*)ftp->m_sslPeerVerifyName);
+        XClassDelete((XClass*)ftp->m_sslPeerVerifyName);
         ftp->m_sslPeerVerifyName = NULL;
     }
     if (name && name[0]) ftp->m_sslPeerVerifyName = XString_create_utf8(name);
@@ -3447,9 +3435,9 @@ void XFtp_setAutoReconnect(XFtp* ftp, bool autoReconnect, int intervalMs, int ma
 void XFtp_setProxy(XFtp* ftp, const char* host, uint16_t port)
 {
     if (!ftp || !host) return;
-    if (ftp->m_proxyHost) XClass_delete_base((XClass*)ftp->m_proxyHost);
-    if (ftp->m_proxyUser) XClass_delete_base((XClass*)ftp->m_proxyUser);
-    if (ftp->m_proxyPass) XClass_delete_base((XClass*)ftp->m_proxyPass);
+    if (ftp->m_proxyHost) XClassDelete((XClass*)ftp->m_proxyHost);
+    if (ftp->m_proxyUser) XClassDelete((XClass*)ftp->m_proxyUser);
+    if (ftp->m_proxyPass) XClassDelete((XClass*)ftp->m_proxyPass);
     ftp->m_proxyHost = XString_create_utf8(host);
     ftp->m_proxyUser = NULL;
     ftp->m_proxyPass = NULL;
@@ -3461,7 +3449,7 @@ void XFtp_setProxy(XFtp* ftp, const char* host, uint16_t port)
                                                        ftp->m_proxyHost, port, NULL, NULL);
         if (proxy) {
             XAbstractSocket_setProxy(ftp->m_piSocket, proxy);
-            XClass_delete_base((XClass*)proxy);
+            XClassDelete((XClass*)proxy);
         }
     }
 }
@@ -3470,9 +3458,9 @@ void XFtp_setSocks5Proxy(XFtp* ftp, const char* host, uint16_t port,
                          const char* user, const char* password)
 {
     if (!ftp || !host) return;
-    if (ftp->m_proxyHost) XClass_delete_base((XClass*)ftp->m_proxyHost);
-    if (ftp->m_proxyUser) XClass_delete_base((XClass*)ftp->m_proxyUser);
-    if (ftp->m_proxyPass) XClass_delete_base((XClass*)ftp->m_proxyPass);
+    if (ftp->m_proxyHost) XClassDelete((XClass*)ftp->m_proxyHost);
+    if (ftp->m_proxyUser) XClassDelete((XClass*)ftp->m_proxyUser);
+    if (ftp->m_proxyPass) XClassDelete((XClass*)ftp->m_proxyPass);
     ftp->m_proxyHost = XString_create_utf8(host);
     ftp->m_proxyUser = user ? XString_create_utf8(user) : NULL;
     ftp->m_proxyPass = password ? XString_create_utf8(password) : NULL;
@@ -3484,7 +3472,7 @@ void XFtp_setSocks5Proxy(XFtp* ftp, const char* host, uint16_t port,
                                                        ftp->m_proxyUser, ftp->m_proxyPass);
         if (proxy) {
             XAbstractSocket_setProxy(ftp->m_piSocket, proxy);
-            XClass_delete_base((XClass*)proxy);
+            XClassDelete((XClass*)proxy);
         }
     }
 }
@@ -3492,9 +3480,9 @@ void XFtp_setSocks5Proxy(XFtp* ftp, const char* host, uint16_t port,
 void XFtp_clearProxy(XFtp* ftp)
 {
     if (!ftp) return;
-    if (ftp->m_proxyHost) { XClass_delete_base((XClass*)ftp->m_proxyHost); ftp->m_proxyHost = NULL; }
-    if (ftp->m_proxyUser) { XClass_delete_base((XClass*)ftp->m_proxyUser); ftp->m_proxyUser = NULL; }
-    if (ftp->m_proxyPass) { XClass_delete_base((XClass*)ftp->m_proxyPass); ftp->m_proxyPass = NULL; }
+    if (ftp->m_proxyHost) { XClassDelete((XClass*)ftp->m_proxyHost); ftp->m_proxyHost = NULL; }
+    if (ftp->m_proxyUser) { XClassDelete((XClass*)ftp->m_proxyUser); ftp->m_proxyUser = NULL; }
+    if (ftp->m_proxyPass) { XClassDelete((XClass*)ftp->m_proxyPass); ftp->m_proxyPass = NULL; }
     ftp->m_proxyPort = 0;
     ftp->m_proxyType = XFtp_ProxyType_None;
     if (ftp->m_piSocket) {

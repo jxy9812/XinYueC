@@ -126,9 +126,7 @@ XTuiKeyType XTuiKeyEvent_keyType(const XTuiKeyEvent* event);
 XKeyboardModifiers XTuiKeyEvent_modifiers(const XTuiKeyEvent* event);
 
 /** @brief 释放堆上创建的 TUI 键盘事件。 */
-#define XTuiKeyEvent_delete_base XEvent_delete_base
 /** @brief 反初始化栈上创建的 TUI 键盘事件。 */
-#define XTuiKeyEvent_deinit_base XEvent_deinit_base
 
 /* ========== 颜色工具 ========== */
 

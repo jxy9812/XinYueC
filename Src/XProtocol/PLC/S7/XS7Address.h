@@ -60,7 +60,7 @@ bool XS7Address_parse_2(XS7Address* out, const char* addrUtf8);
 /**
  * @brief 地址转回字符串（诊断用）
  * @param addr 地址结构（非NULL）
- * @return 新建的 XString（调用者负责 XString_delete_base），失败返回NULL
+ * @return 新建的 XString（调用者负责 XClassDelete），失败返回NULL
  */
 XString* XS7Address_toString(const XS7Address* addr);
 

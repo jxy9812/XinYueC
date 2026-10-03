@@ -58,14 +58,12 @@ void XStackedLayout_init(XStackedLayout* self);
 /**
  * @brief 创建堆叠布局。
  * @param parent 可选父控件；非 NULL 时自动调用 XWidget_setLayout。
- * @return 新布局对象；失败返回 NULL，调用方使用 XLayout_delete_base 释放。
+ * @return 新布局对象；失败返回 NULL，调用方使用 XClassDelete 释放。
  */
 XStackedLayout* XStackedLayout_create(XWidget* parent);
 
 /** @brief 通过 XClass 虚表释放布局资源。 */
-#define XStackedLayout_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的堆叠布局对象。 */
-#define XStackedLayout_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief 向末尾追加页面控件（对标 QStackedLayout::addWidget）。

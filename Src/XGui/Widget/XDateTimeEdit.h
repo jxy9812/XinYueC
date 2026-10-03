@@ -148,7 +148,6 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
 #define XDateTimeEdit_create(parent, flags) XDateTimeEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XDateTimeEdit* XDateTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
                                        XWidgetFlags flags);
-#define XDateTimeEdit_deinit_base(self) XAbstractSpinBox_deinit_base((XAbstractSpinBox*)(self))
 /** @brief 设置日历弹出（对标 setCalendarPopup）。
  * @details true 时控件呈可编辑下拉形态（右侧日历箭头，对标 Qt 以
  *          CC_ComboBox 呈现），点箭头在下缘弹出日历弹层（贴边超屏
@@ -207,7 +206,6 @@ void XDateTimeEdit_setCurrentSectionIndex(XDateTimeEdit* self, int index);
 /** @brief 查询当前分段序号（对标 Q_PROPERTY currentSectionIndex READ；
  *         序号为分段在显示格式中的 0 基位置，与分段枚举码分离）。 */
 int XDateTimeEdit_currentSectionIndex(const XDateTimeEdit* self);
-#define XDateTimeEdit_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      设置日期时间。
@@ -442,7 +440,7 @@ int XDateTimeEdit_sectionAt(const XDateTimeEdit* self, int index);
  *             中先出现者。
  * @param      self 目标控件；NULL 返回空文本对象。
  * @param      section 分段枚举值（XDateTimeEditSection）。
- * @return     新建 XString*；调用方负责 XString_delete_base 释放。
+ * @return     新建 XString*；调用方负责 XClassDelete 释放。
  */
 XString* XDateTimeEdit_sectionText(const XDateTimeEdit* self, int section);
 /**

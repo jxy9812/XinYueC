@@ -29,7 +29,7 @@ static void VXItemSelectionModel_deinit(XItemSelectionModel* self)
 {
     if (!self) return;
     if (self->m_selected) {
-        XVector_delete_base(self->m_selected);
+        XClassDelete(self->m_selected);
         self->m_selected = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -65,7 +65,7 @@ static void VXItemSelectionModel_move(XItemSelectionModel* self,
     XClass_Parent(XObject, EXClass_Move,
                   void(*)(XObject*, XObject*))((XObject*)self,
                                                (XObject*)other);
-    if (self->m_selected) XVector_delete_base(self->m_selected);
+    if (self->m_selected) XClassDelete(self->m_selected);
     self->m_selected = other->m_selected;
     self->m_currentRow = other->m_currentRow;
     self->m_currentCol = other->m_currentCol;

@@ -11,7 +11,7 @@
 #include "XCryptographic.h"
 
 XVARIANT_TYPE_OPS_DEFINE(XString, sizeof(XString), XClass_copy_base,
-	XClass_move_base, XString_clear_base, XString_deinit_base,
+	XClass_move_base, XString_clear_base, XClass_deinit_base,
 	XString_compare, "XString");
 
 XVariant* XString_toVariant(const XString* str)
@@ -23,7 +23,7 @@ XVariant* XString_toVariant(const XString* str)
 	if (!var)
 		return NULL;
 	XString_init((XString*)XVariant_data(var));
-	XCopy(XVariant_data(var), str);
+	XClassCopy(XVariant_data(var), str);
 	return var;
 }
 
@@ -36,7 +36,7 @@ XVariant* XString_toVariant_move(XString* str)
 	if (!var)
 		return NULL;
 	XString_init((XString*)XVariant_data(var));
-	XMove(XVariant_data(var), str);
+	XClassMove(XVariant_data(var), str);
 	return var;
 }
 
@@ -86,7 +86,7 @@ static bool XString_prepareVariant(XVariant* var)
 		return false;
 	if (var->m_type != XVariantType_String)
 	{
-		XVariant_deinit_base(var);
+		XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XString));
 		if (!var->m_data)
 		{
@@ -100,7 +100,7 @@ static bool XString_prepareVariant(XVariant* var)
 	else if (!var->m_data || var->m_dataSize != sizeof(XString))
 	{
 		if (var->m_data)
-			XVariant_deinit_base(var);
+			XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XString));
 		if (!var->m_data)
 		{
@@ -117,14 +117,14 @@ void XString_setVariant(XVariant* var, const XString* str)
 {
 	if (!str || !XString_prepareVariant(var))
 		return;
-	XCopy(XVariant_data(var), str);
+	XClassCopy(XVariant_data(var), str);
 }
 
 void XString_setVariant_move(XVariant* var, XString* str)
 {
 	if (!str || !XString_prepareVariant(var))
 		return;
-	XMove(XVariant_data(var), str);
+	XClassMove(XVariant_data(var), str);
 }
 
 void XString_setVariant_ref(XVariant* var, XString* str)
@@ -179,10 +179,10 @@ static bool XString_append_match_replacement(XString* result, const XString* aft
                 XString* captured = XRegularExpressionMatch_captured(match, index);
                 if (!captured) return false;
                 if (!XString_append(result, captured)) {
-                    XString_delete_base(captured);
+                    XClassDelete(captured);
                     return false;
                 }
-                XString_delete_base(captured);
+                XClassDelete(captured);
                 i += consumed;
                 continue;
             }
@@ -207,8 +207,8 @@ int64_t XString_indexOf_regularExpression(const XString* str,
     bool hasMatch = XRegularExpressionMatch_hasMatch(result);
     int64_t position = hasMatch ?
             XRegularExpressionMatch_capturedStart(result, 0) : -1;
-    if (match && hasMatch) XCopy(match, result);
-    XRegularExpressionMatch_delete_base(result);
+    if (match && hasMatch) XClassCopy(match, result);
+    XClassDelete(result);
     return position;
 }
 
@@ -239,16 +239,16 @@ int64_t XString_lastIndexOf_regularExpression(const XString* str,
         if (!current) break;
         int64_t position = XRegularExpressionMatch_capturedStart(current, 0);
         if (position < 0 || position >= endPosition) {
-            XRegularExpressionMatch_delete_base(current);
+            XClassDelete(current);
             break;
         }
-        if (last) XRegularExpressionMatch_delete_base(last);
+        if (last) XClassDelete(last);
         last = current;
         resultPosition = position;
     }
-    if (match && last) XCopy(match, last);
-    if (last) XRegularExpressionMatch_delete_base(last);
-    XRegularExpressionMatchIterator_delete_base(iterator);
+    if (match && last) XClassCopy(match, last);
+    if (last) XClassDelete(last);
+    XClassDelete(iterator);
     return resultPosition;
 }
 
@@ -279,14 +279,14 @@ size_t XString_count_regularExpression(const XString* str,
                 XRegularExpression_NoMatchOption);
         if (!match) break;
         if (!XRegularExpressionMatch_hasMatch(match)) {
-            XRegularExpressionMatch_delete_base(match);
+            XClassDelete(match);
             break;
         }
         ++count;
         index = XRegularExpressionMatch_capturedStart(match, 0);
         if (index >= 0 && index < length && data && XChar_isHighSurrogate(data[index]))
             ++index;
-        XRegularExpressionMatch_delete_base(match);
+        XClassDelete(match);
     }
     return count;
 }
@@ -310,41 +310,41 @@ bool XString_replace_regularExpression(XString* str,
         int64_t start = XRegularExpressionMatch_capturedStart(match, 0);
         int64_t end = XRegularExpressionMatch_capturedEnd(match, 0);
         if (start < 0 || end < start || (size_t)start < cursor) {
-            XRegularExpressionMatch_delete_base(match);
-            XString_deinit_base(&result);
-            XRegularExpressionMatchIterator_delete_base(iterator);
+            XClassDelete(match);
+            XClassDeinit(&result);
+            XClassDelete(iterator);
             return false;
         }
         XString* prefix = XString_regularExpression_substring(str, cursor, (size_t)start - cursor);
         bool ok = prefix && XString_append(&result, prefix);
-        if (prefix) XString_delete_base(prefix);
+        if (prefix) XClassDelete(prefix);
         if (ok) ok = XString_append_match_replacement(&result, after, match);
         if (!ok) {
-            XRegularExpressionMatch_delete_base(match);
-            XString_deinit_base(&result);
-            XRegularExpressionMatchIterator_delete_base(iterator);
+            XClassDelete(match);
+            XClassDeinit(&result);
+            XClassDelete(iterator);
             return false;
         }
         cursor = (size_t)end;
         replaced = true;
-        XRegularExpressionMatch_delete_base(match);
+        XClassDelete(match);
     }
-    XRegularExpressionMatchIterator_delete_base(iterator);
+    XClassDelete(iterator);
     if (!replaced) {
-        XString_deinit_base(&result);
+        XClassDeinit(&result);
         return true;
     }
 
     XString* suffix = XString_regularExpression_substring(
             str, cursor, XString_size_base(str) - cursor);
     if (!suffix || !XString_append(&result, suffix)) {
-        if (suffix) XString_delete_base(suffix);
-        XString_deinit_base(&result);
+        if (suffix) XClassDelete(suffix);
+        XClassDeinit(&result);
         return false;
     }
-    XString_delete_base(suffix);
-    XMove(str, &result);
-    XString_deinit_base(&result);
+    XClassDelete(suffix);
+    XClassMove(str, &result);
+    XClassDeinit(&result);
     return true;
 }
 
@@ -355,7 +355,7 @@ bool XString_remove_regularExpression(XString* str,
     XString* empty = XString_create();
     if (!empty) return false;
     bool result = XString_replace_regularExpression(str, expression, empty);
-    XString_delete_base(empty);
+    XClassDelete(empty);
     return result;
 }
 
@@ -371,7 +371,7 @@ XStringList* XString_split_regularExpression(const XString* str,
             separator, str, 0, XRegularExpression_NormalMatch,
             XRegularExpression_NoMatchOption);
     if (!iterator) {
-        XStringList_delete_base(result);
+        XClassDelete(result);
         return NULL;
     }
 
@@ -382,25 +382,25 @@ XStringList* XString_split_regularExpression(const XString* str,
         int64_t start = XRegularExpressionMatch_capturedStart(match, 0);
         int64_t end = XRegularExpressionMatch_capturedEnd(match, 0);
         if (start < 0 || end < start || (size_t)start < cursor) {
-            XRegularExpressionMatch_delete_base(match);
-            XRegularExpressionMatchIterator_delete_base(iterator);
-            XStringList_delete_base(result);
+            XClassDelete(match);
+            XClassDelete(iterator);
+            XClassDelete(result);
             return NULL;
         }
         XString* part = XString_regularExpression_substring(str, cursor, (size_t)start - cursor);
         if (part && (keepEmptyParts || !XString_isEmpty_base(part)))
             XStringList_push_back_base(result, part);
-        if (part) XString_delete_base(part);
+        if (part) XClassDelete(part);
         cursor = (size_t)end;
-        XRegularExpressionMatch_delete_base(match);
+        XClassDelete(match);
     }
-    XRegularExpressionMatchIterator_delete_base(iterator);
+    XClassDelete(iterator);
 
     XString* tail = XString_regularExpression_substring(
             str, cursor, XString_size_base(str) - cursor);
     if (tail && (keepEmptyParts || !XString_isEmpty_base(tail)))
         XStringList_push_back_base(result, tail);
-    if (tail) XString_delete_base(tail);
+    if (tail) XClassDelete(tail);
     return result;
 }
 
@@ -438,7 +438,7 @@ bool FuncName(XString* str, FloatType n, char format, int precision) { \
 XString* FuncName(NumType n, int base) { \
     XString* str = XString_create(); \
     if (!str) return NULL; \
-    if (!SetNumFunc(str, n, base)) { XString_delete_base(str); return NULL; } \
+    if (!SetNumFunc(str, n, base)) { XClassDelete(str); return NULL; } \
     return str; \
 }
 
@@ -447,7 +447,7 @@ XString* FuncName(NumType n, int base) { \
 XString* FuncName(FloatType n, char format, int precision) { \
     XString* str = XString_create(); \
     if (!str) return NULL; \
-    if (!SetNumFunc(str, n, format, precision)) { XString_delete_base(str); return NULL; } \
+    if (!SetNumFunc(str, n, format, precision)) { XClassDelete(str); return NULL; } \
     return str; \
 }
 
@@ -507,7 +507,7 @@ XString* XString_create_copy(const XString* other)
     if (!str) return NULL;
     memset(str, 0, sizeof(XString));
 
-    XCopy(str, other);
+    XClassCopy(str, other);
     Set_Class_IsHeap(str, true);
 
     return str;
@@ -520,7 +520,7 @@ XString* XString_create_move(XString* other)
         XContainer_memory_type((const XContainer*)other));
     if (!str) return NULL;
     memset(str, 0, sizeof(XString));
-    XMove(str,other);
+    XClassMove(str,other);
     Set_Class_IsHeap(str, true);
     return str;
 }
@@ -587,7 +587,7 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
     xchar_count = XChar_fromUtf16Stream(utf16_str, len, data, (size_t)xchar_count + 1);
 
     if (xchar_count <= 0) {
-        XString_delete_base(str);
+        XClassDelete(str);
         return NULL;
     }
 
@@ -752,7 +752,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
         default_memory->free(temp_gbk); // 转换完成后释放临时缓冲区
 
     if (xchar_count <= 0) {
-        XString_delete_base(str);
+        XClassDelete(str);
         return NULL;
     }
 
@@ -1341,12 +1341,12 @@ bool XString_prepend_utf8(XString* str, const char* utf8_str)
 
     XString_clear_base(str);
     if (!XString_append_utf8(str, utf8_str)) {
-        XString_delete_base(original);
+        XClassDelete(original);
         return false;
     }
 
     bool success = XString_append_utf8(str, XString_toUtf8(original));
-    XString_delete_base(original);
+    XClassDelete(original);
     return success;
 }
 
@@ -1400,7 +1400,7 @@ bool XString_insert_utf8(XString* str, size_t pos, const char* utf8_str)
     if (!insert_str) return false;
     size_t insert_len = XString_length_base(insert_str);
     if (insert_len == 0) {
-        XString_delete_base(insert_str);
+        XClassDelete(insert_str);
         return true;
     }
 
@@ -1419,7 +1419,7 @@ bool XString_insert_utf8(XString* str, size_t pos, const char* utf8_str)
 
     XString_deinitCache(str);
 
-    XString_delete_base(insert_str);
+    XClassDelete(insert_str);
     return true;
 }
 
@@ -1497,16 +1497,16 @@ bool XString_replace_utf8(XString* str, const char* before, const char* after, X
     XString* before_str = XString_create_utf8(before);
     XString* after_str = XString_create_utf8(after);
     if (!before_str || !after_str) {
-        XString_delete_base(before_str);
-        XString_delete_base(after_str);
+        XClassDelete(before_str);
+        XClassDelete(after_str);
         return false;
     }
 
     size_t before_len = XString_length_base(before_str);
     size_t after_len = XString_length_base(after_str);
     if (before_len == 0) {
-        XString_delete_base(before_str);
-        XString_delete_base(after_str);
+        XClassDelete(before_str);
+        XClassDelete(after_str);
         return false;
     }
 
@@ -1517,8 +1517,8 @@ bool XString_replace_utf8(XString* str, const char* before, const char* after, X
         pos = XString_indexOf_utf8(str, before, (size_t)pos + after_len, cs);
     }
 
-    XString_delete_base(before_str);
-    XString_delete_base(after_str);
+    XClassDelete(before_str);
+    XClassDelete(after_str);
     return true;
 }
 
@@ -1616,13 +1616,13 @@ int64_t XString_indexOf_utf8(const XString* str, const char* substr, size_t from
 
     // 处理空模式串
     if (substr_len == 0) {
-        XString_delete_base(substr_str);
+        XClassDelete(substr_str);
         return (from <= str_len) ? (int64_t)from : -1;
     }
 
     // 模式串长于主串时直接返回-1
     if (substr_len > str_len) {
-        XString_delete_base(substr_str);
+        XClassDelete(substr_str);
         return -1;
     }
 
@@ -1632,7 +1632,7 @@ int64_t XString_indexOf_utf8(const XString* str, const char* substr, size_t from
     // 分配并计算前缀表
     int* prefix = (int*)XContainer_malloc(str, substr_len * sizeof(int));
     if (!prefix) {
-        XString_delete_base(substr_str);
+        XClassDelete(substr_str);
         return -1;
     }
     compute_prefix(pattern, substr_len, prefix, cs);
@@ -1642,7 +1642,7 @@ int64_t XString_indexOf_utf8(const XString* str, const char* substr, size_t from
 
     // 清理资源
     XContainer_free(str, prefix);
-    XString_delete_base(substr_str);
+    XClassDelete(substr_str);
     return result;
 }
 // 辅助函数：KMP反向搜索（用于last_index_of）
@@ -1696,13 +1696,13 @@ int64_t XString_lastIndexOf_utf8(const XString* str, const char* substr, size_t 
 
     // 处理空模式串
     if (substr_len == 0) {
-        XString_delete_base(substr_str);
+        XClassDelete(substr_str);
         return (from < str_len) ? (int64_t)from : (int64_t)str_len;
     }
 
     // 模式串长于主串时直接返回-1
     if (substr_len > str_len) {
-        XString_delete_base(substr_str);
+        XClassDelete(substr_str);
         return -1;
     }
 
@@ -1730,7 +1730,7 @@ int64_t XString_lastIndexOf_utf8(const XString* str, const char* substr, size_t 
     // 执行反向KMP搜索（使用转换后的start_idx）
     int64_t result = kmp_reverse_search(text, str_len, pattern, substr_len, cs, start_idx);
 
-    XString_delete_base(substr_str);
+    XClassDelete(substr_str);
     return result;
 }
 
@@ -1754,7 +1754,7 @@ bool XString_contains_utf8(const XString* str, const char* utf8_substr, XChar_Ca
     bool result = XString_contains(str, substr, cs);
 
     // 释放临时创建的XString
-    XString_delete_base(substr);
+    XClassDelete(substr);
     return result;
 }
 
@@ -1835,7 +1835,7 @@ bool XString_startsWith_utf8(const XString* str, const char* prefix, XChar_CaseS
 
     bool result = (XString_length_base(prefix_str) <= XString_length_base(str)) &&
         (XString_indexOf_utf8(str, prefix, 0,cs) == 0);
-    XString_delete_base(prefix_str);
+    XClassDelete(prefix_str);
     return result;
 }
 
@@ -1858,7 +1858,7 @@ bool XString_endsWith_utf8(const XString* str, const char* suffix, XChar_CaseSen
     bool result = (suffix_len <= str_len) &&
         (XString_lastIndexOf_utf8(str, suffix, 0, cs) == (int64_t)(str_len - suffix_len));
 
-    XString_delete_base(suffix_str);
+    XClassDelete(suffix_str);
     return result;
 }
 
@@ -1870,7 +1870,7 @@ bool XString_equals_utf8(const XString* str, const char* utf8_str, XChar_CaseSen
     if (!tmp) return false;
 
     bool result = XString_equals(str, tmp, cs);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -2290,7 +2290,7 @@ XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar
             {
                 XStringList_push_back_move_base(result, substr);
             }
-            XString_delete_base(substr);
+            XClassDelete(substr);
         }
         return result;
     }
@@ -2308,7 +2308,7 @@ XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar
             {
                 XStringList_push_back_move_base(result, substr);
             }
-            XString_delete_base(substr);
+            XClassDelete(substr);
         }
 
         // 终止条件：未找到分隔符
@@ -2353,7 +2353,7 @@ XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter,
                 XStringList_push_back_move_base(result, substr);
                 split_count++;
             }
-            XString_delete_base(substr);
+            XClassDelete(substr);
         }
         return result;
     }
@@ -2370,7 +2370,7 @@ XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter,
                 XStringList_push_back_move_base(result, substr);
                 split_count++;
             }
-            XString_delete_base(substr);
+            XClassDelete(substr);
         }
 
         // 达到最大拆分次数，终止循环
@@ -2392,7 +2392,7 @@ XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter,
         if (substr) {
             XStringList_push_back_move_base(result, substr);
         }
-        XString_delete_base(substr);
+        XClassDelete(substr);
     }
 
     return result;
@@ -2806,7 +2806,7 @@ size_t XString_count_utf8(const XString* str, const char* sub, XChar_CaseSensiti
     XString* sub_str = XString_create_utf8(sub);
     if (!sub_str) return 0;
     size_t result = XString_count(str, sub_str, cs);
-    XString_delete_base(sub_str);
+    XClassDelete(sub_str);
     return result;
 }
 
@@ -3026,7 +3026,7 @@ XString* XString_section(const XString* str, const XString* sep, int64_t start, 
             if (segEnd > seg) {
                 XString* piece = XString_mid(str, seg, segEnd - seg);
                 XString_append(ret, piece);
-                XString_delete_base(piece);
+                XClassDelete(piece);
             }
         }
         if (!empty || !skipEmpty) x++;
@@ -3044,7 +3044,7 @@ XString* XString_section_utf8(const XString* str, const char* sep, int64_t start
     if (!str || !sep) return XString_create_utf8("");
     XString* sepStr = XString_create_utf8(sep);
     XString* ret = XString_section(str, sepStr, start, end, flags);
-    XString_delete_base(sepStr);
+    XClassDelete(sepStr);
     return ret;
 }
 
@@ -3054,7 +3054,7 @@ XString* XString_section_char(const XString* str, XChar sep, int64_t start, int6
     XString* sepStr = XString_create();
     if (sepStr) XString_push_back_base(sepStr, sep);
     XString* ret = XString_section(str, sepStr, start, end, flags);
-    XString_delete_base(sepStr);
+    XClassDelete(sepStr);
     return ret;
 }
 
@@ -3084,10 +3084,10 @@ static bool XString_section_regularExpression_append(
     XString* section = XString_regularExpression_substring(source, position, length);
     if (!section) return false;
     if (!XStringList_push_back_base(sections, section)) {
-        XString_delete_base(section);
+        XClassDelete(section);
         return false;
     }
-    XString_delete_base(section);
+    XClassDelete(section);
     (*separatorLengths)[*sectionCount] = separatorLength;
     ++*sectionCount;
     return true;
@@ -3114,8 +3114,8 @@ XString* XString_section_regularExpression(const XString* str,
             separator, str, 0, XRegularExpression_NormalMatch,
             XRegularExpression_NoMatchOption);
     if (!iterator || !XRegularExpressionMatchIterator_isValid(iterator)) {
-        if (iterator) XRegularExpressionMatchIterator_delete_base(iterator);
-        XRegularExpression_delete_base(separator);
+        if (iterator) XClassDelete(iterator);
+        XClassDelete(separator);
         return XString_create();
     }
 
@@ -3137,7 +3137,7 @@ XString* XString_section_regularExpression(const XString* str,
         int64_t endPosition = XRegularExpressionMatch_capturedEnd(match, 0);
         if (startPosition < 0 || endPosition < startPosition ||
                 (size_t)startPosition < lastPosition) {
-            XRegularExpressionMatch_delete_base(match);
+            XClassDelete(match);
             ok = false;
             break;
         }
@@ -3147,7 +3147,7 @@ XString* XString_section_regularExpression(const XString* str,
                 lastSeparatorLength);
         lastPosition = (size_t)startPosition;
         lastSeparatorLength = (size_t)endPosition - (size_t)startPosition;
-        XRegularExpressionMatch_delete_base(match);
+        XClassDelete(match);
     }
 
     if (ok) {
@@ -3157,11 +3157,11 @@ XString* XString_section_regularExpression(const XString* str,
                 lastSeparatorLength);
     }
 
-    XRegularExpressionMatchIterator_delete_base(iterator);
-    XRegularExpression_delete_base(separator);
+    XClassDelete(iterator);
+    XClassDelete(separator);
     if (!ok || sectionCount == 0) {
         if (separatorLengths) XContainer_free(str, separatorLengths);
-        if (sections) XStringList_delete_base(sections);
+        if (sections) XClassDelete(sections);
         return XString_create();
     }
 
@@ -3184,9 +3184,9 @@ XString* XString_section_regularExpression(const XString* str,
 
     XString* result = XString_create();
     if (!result || start < 0 || end < 0 || start >= sectionsSize || start > end) {
-        if (result) XString_delete_base(result);
+        if (result) XClassDelete(result);
         XContainer_free(str, separatorLengths);
-        XStringList_delete_base(sections);
+        XClassDelete(sections);
         return XString_create();
     }
 
@@ -3206,17 +3206,17 @@ XString* XString_section_regularExpression(const XString* str,
                         section, separatorLengths[i],
                         XString_size_base(section) - separatorLengths[i]);
                 if (!piece || !XString_append(result, piece)) {
-                    if (piece) XString_delete_base(piece);
-                    XString_delete_base(result);
+                    if (piece) XClassDelete(piece);
+                    XClassDelete(result);
                     XContainer_free(str, separatorLengths);
-                    XStringList_delete_base(sections);
+                    XClassDelete(sections);
                     return XString_create();
                 }
-                XString_delete_base(piece);
+                XClassDelete(piece);
             } else if (!XString_append(result, section)) {
-                XString_delete_base(result);
+                XClassDelete(result);
                 XContainer_free(str, separatorLengths);
-                XStringList_delete_base(sections);
+                XClassDelete(sections);
                 return XString_create();
             }
         }
@@ -3229,13 +3229,13 @@ XString* XString_section_regularExpression(const XString* str,
         XString* prefix = section ? XString_regularExpression_substring(
                 section, 0, separatorLengths[firstIndex]) : NULL;
         if (!prefix || !XString_prepend(result, prefix)) {
-            if (prefix) XString_delete_base(prefix);
-            XString_delete_base(result);
+            if (prefix) XClassDelete(prefix);
+            XClassDelete(result);
             XContainer_free(str, separatorLengths);
-            XStringList_delete_base(sections);
+            XClassDelete(sections);
             return XString_create();
         }
-        XString_delete_base(prefix);
+        XClassDelete(prefix);
     }
     if ((flags & XString_SectionIncludeTrailingSep) &&
             lastIndex >= 0 && lastIndex + 1 < (int64_t)sectionCount) {
@@ -3244,17 +3244,17 @@ XString* XString_section_regularExpression(const XString* str,
         XString* suffix = section ? XString_regularExpression_substring(
                 section, 0, separatorLengths[lastIndex + 1]) : NULL;
         if (!suffix || !XString_append(result, suffix)) {
-            if (suffix) XString_delete_base(suffix);
-            XString_delete_base(result);
+            if (suffix) XClassDelete(suffix);
+            XClassDelete(result);
             XContainer_free(str, separatorLengths);
-            XStringList_delete_base(sections);
+            XClassDelete(sections);
             return XString_create();
         }
-        XString_delete_base(suffix);
+        XClassDelete(suffix);
     }
 
     XContainer_free(str, separatorLengths);
-    XStringList_delete_base(sections);
+    XClassDelete(sections);
     return result;
 }
 #endif
@@ -3373,7 +3373,7 @@ XString* XString_arg_utf8(const XString* str, const char* a, int fieldWidth, XCh
     if (!str) return NULL;
     XString* as = XString_create_utf8(a);
     XString* ret = XString_arg(str, as, fieldWidth, fillChar);
-    XString_delete_base(as);
+    XClassDelete(as);
     return ret;
 }
 
@@ -3383,7 +3383,7 @@ XString* XString_arg_char(const XString* str, XChar a, int fieldWidth, XChar fil
     XString* as = XString_create();
     if (as) XString_push_back_base(as, a);
     XString* ret = XString_arg(str, as, fieldWidth, fillChar);
-    XString_delete_base(as);
+    XClassDelete(as);
     return ret;
 }
 
@@ -3398,9 +3398,9 @@ XString* XString_arg_char(const XString* str, XChar a, int fieldWidth, XChar fil
 XString* FuncName(const XString* str, IntType a, int fieldWidth, int base, XChar fillChar) { \
     XString* num = XString_create(); \
     if (!num) return XString_create_copy(str); \
-    if (!SetNumFunc(num, a, base)) { XString_delete_base(num); return XString_create_copy(str); } \
+    if (!SetNumFunc(num, a, base)) { XClassDelete(num); return XString_create_copy(str); } \
     XString* ret = XString_arg(str, num, fieldWidth, fillChar); \
-    XString_delete_base(num); \
+    XClassDelete(num); \
     return ret; \
 }
 
@@ -3412,9 +3412,9 @@ XString* XString_arg_double(const XString* str, double a, int fieldWidth, char f
     if (!str) return NULL;
     XString* num = XString_create();
     if (!num) return XString_create_copy(str);
-    if (!XString_setNum_double(num, a, format, precision)) { XString_delete_base(num); return XString_create_copy(str); }
+    if (!XString_setNum_double(num, a, format, precision)) { XClassDelete(num); return XString_create_copy(str); }
     XString* ret = XString_arg(str, num, fieldWidth, fillChar);
-    XString_delete_base(num);
+    XClassDelete(num);
     return ret;
 }
 

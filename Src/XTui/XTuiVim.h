@@ -216,7 +216,6 @@ void XTuiVim_init(XTuiVim* vim);
 /** @brief 在堆上创建控件对象。 */
 XTuiVim* XTuiVim_create_ex(XMemoryType memory);
 
-#define XTuiVim_delete_base XClass_delete_base /**< 释放堆对象。 */
 
 /* ==================== 缓冲访问 ==================== */
 

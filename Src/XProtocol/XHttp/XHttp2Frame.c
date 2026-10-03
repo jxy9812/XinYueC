@@ -15,7 +15,7 @@
 static void xhttp2_frame_release_payload(XHttp2Frame* self)
 {
     if (self && self->m_payload) {
-        XClass_delete_base((XClass*)self->m_payload);
+        XClassDelete((XClass*)self->m_payload);
         self->m_payload = NULL;
     }
 }
@@ -92,13 +92,13 @@ XHttp2Frame* XHttp2Frame_create_ex(XMemoryType memory, uint8_t type, uint8_t fla
         return NULL;
     XHttp2Frame_init(self);
     if (!self->m_payload) {
-        XHttp2Frame_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_free(self, memory);
         return NULL;
     }
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self || !XHttp2Frame_setStreamId(self, streamId) || !XHttp2Frame_setPayload(self, payload)) {
-        if (self) XClass_delete_base((XClass*)self);
+        if (self) XClassDelete((XClass*)self);
         return NULL;
     }
     self->m_type = type;
@@ -251,7 +251,7 @@ XByteArray* XHttp2Frame_toByteArray(const XHttp2Frame* self)
     if (!result || !XByteArray_push_back_2((XVector*)result, header, sizeof(header)) ||
         (length != 0 && !XByteArray_push_back_2((XVector*)result,
                                                  XByteArray_constData(self->m_payload), length))) {
-        if (result) XClass_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -276,9 +276,9 @@ XHttp2Frame* XHttp2Frame_fromBytes(const void* data, size_t size, size_t* consum
                                   ((uint32_t)(bytes[5] & 0x7f) << 24) |
                                   ((uint32_t)bytes[6] << 16) |
                                   ((uint32_t)bytes[7] << 8) | bytes[8], payload);
-    XClass_delete_base((XClass*)payload);
+    XClassDelete((XClass*)payload);
     if (frame && !XHttp2Frame_validatePayload(frame)) {
-        XClass_delete_base((XClass*)frame);
+        XClassDelete((XClass*)frame);
         frame = NULL;
     }
     if (frame && consumed)

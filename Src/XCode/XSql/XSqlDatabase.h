@@ -59,7 +59,7 @@ XVtable* XSqlDriverCreator_class_init(void);
 /**
  * @brief 创建带回调的驱动创建器。
  * @param createMethod 驱动创建回调；不能为 NULL。
- * @return 新创建器，调用者必须使用 XSqlDriverCreator_delete_base 释放；失败返回 NULL。
+ * @return 新创建器，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlDriverCreator* XSqlDriverCreator_create_ex(XMemoryType memory,  XSqlDriverCreateMethod createMethod);
 /**
@@ -76,10 +76,6 @@ void XSqlDriverCreator_init(XSqlDriverCreator* creator, XSqlDriverCreateMethod c
  */
 XSqlDriver* XSqlDriverCreatorBase_createObject_base(const XSqlDriverCreatorBase* creator);
 
-#define XSqlDriverCreator_deinit_base XClass_deinit_base
-#define XSqlDriverCreator_delete_base XClass_delete_base
-#define XSqlDriverCreatorBase_deinit_base XClass_deinit_base
-#define XSqlDriverCreatorBase_delete_base XClass_delete_base
 
 XCLASS_DEFINE_BEGING(XSqlDatabase)
 XCLASS_DEFINE_EXTEND_END(XSqlDatabase, XClass)
@@ -111,7 +107,7 @@ XVtable* XSqlDatabase_class_init(void);
 void XSqlDatabase_init(XSqlDatabase* database);
 /**
  * @brief 创建空数据库句柄。
- * @return 新句柄，调用者必须使用 XSqlDatabase_delete_base 释放；失败返回 NULL。
+ * @return 新句柄，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlDatabase* XSqlDatabase_create_ex(XMemoryType memory);
 /**
@@ -123,14 +119,12 @@ XSqlDatabase* XSqlDatabase_create_copy(const XSqlDatabase* other);
 /**
  * @brief 移动创建数据库句柄。
  * @param other 源句柄；不能为 NULL，成功后句柄为空但仍需反初始化。
- * @return 新句柄，调用者必须使用 XSqlDatabase_delete_base 释放；失败返回 NULL。
+ * @return 新句柄，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlDatabase* XSqlDatabase_create_move(XSqlDatabase* other);
 
 /** @brief 调用 XClass 的析构入口销毁数据库句柄内部共享引用。 */
-#define XSqlDatabase_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlDatabase_create 系列函数返回的数据库句柄。 */
-#define XSqlDatabase_delete_base XClass_delete_base
 
 /**
  * @brief 按驱动枚举添加连接。
@@ -228,12 +222,12 @@ bool XSqlDatabase_contains(const char* connectionName);
 bool XSqlDatabase_contains_2(const XString* connectionName);
 /**
  * @brief 获取已注册驱动名称列表。
- * @return 新字符串列表，调用者必须使用 XStringList_delete_base 释放。
+ * @return 新字符串列表，调用者必须使用 XClassDelete 释放。
  */
 XStringList* XSqlDatabase_drivers(void);
 /**
  * @brief 获取连接名称列表。
- * @return 新字符串列表，调用者必须使用 XStringList_delete_base 释放。
+ * @return 新字符串列表，调用者必须使用 XClassDelete 释放。
  */
 XStringList* XSqlDatabase_connectionNames(void);
 /**
@@ -313,55 +307,55 @@ bool XSqlDatabase_isOpenError(const XSqlDatabase* database);
  * @brief 获取表名列表。
  * @param database 数据库句柄；不能为 NULL。
  * @param type 表类型过滤标志。
- * @return 新字符串列表，调用者必须使用 XStringList_delete_base 释放。
+ * @return 新字符串列表，调用者必须使用 XClassDelete 释放。
  */
 XStringList* XSqlDatabase_tables(const XSqlDatabase* database, XSqlTableType type);
 /**
  * @brief 获取主键索引副本。
  * @param database 数据库句柄；不能为 NULL。
  * @param tableName 表名；借用。
- * @return 新索引，调用者必须使用 XSqlIndex_delete_base 释放。
+ * @return 新索引，调用者必须使用 XClassDelete 释放。
  */
 XSqlIndex* XSqlDatabase_primaryIndex(const XSqlDatabase* database, const XString* tableName);
 /**
  * @brief 使用 UTF-8 表名获取主键索引副本。
  * @param database 数据库句柄；不能为 NULL。
  * @param tableName UTF-8 表名；借用。
- * @return 新索引，调用者必须使用 XSqlIndex_delete_base 释放。
+ * @return 新索引，调用者必须使用 XClassDelete 释放。
  */
 XSqlIndex* XSqlDatabase_primaryIndex_utf8(const XSqlDatabase* database, const char* tableName);
 /**
  * @brief 获取表记录描述副本。
  * @param database 数据库句柄；不能为 NULL。
  * @param tableName 表名；借用。
- * @return 新记录，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlDatabase_record(const XSqlDatabase* database, const XString* tableName);
 /**
  * @brief 使用 UTF-8 表名获取记录描述副本。
  * @param database 数据库句柄；不能为 NULL。
  * @param tableName UTF-8 表名；借用。
- * @return 新记录，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlDatabase_record_utf8(const XSqlDatabase* database, const char* tableName);
 /**
  * @brief 执行 SQL 查询。
  * @param database 数据库句柄；不能为 NULL。
  * @param query SQL 文本；借用。
- * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放；失败或跨线程调用返回 NULL。
+ * @return 新查询对象，调用者必须使用 XClassDelete 释放；失败或跨线程调用返回 NULL。
  */
 XSqlQuery* XSqlDatabase_exec(const XSqlDatabase* database, const XString* query);
 /**
  * @brief 使用 UTF-8 SQL 执行查询。
  * @param database 数据库句柄；不能为 NULL。
  * @param query UTF-8 SQL 字符串；借用。
- * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放；失败返回 NULL。
+ * @return 新查询对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlQuery* XSqlDatabase_exec_utf8(const XSqlDatabase* database, const char* query);
 /**
  * @brief 获取最近错误副本。
  * @param database 数据库句柄；NULL 返回未知错误对象。
- * @return 新错误对象，调用者必须使用 XSqlError_delete_base 释放。
+ * @return 新错误对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlError* XSqlDatabase_lastError(const XSqlDatabase* database);
 /**
@@ -430,21 +424,21 @@ void XSqlDatabase_setPort(XSqlDatabase* database, int port);
  * @return 无；已打开连接不受影响。
  */
 void XSqlDatabase_setConnectOptions(XSqlDatabase* database, const XString* options);
-/** @brief 获取数据库名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取数据库名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlDatabase_databaseName(const XSqlDatabase* database);
-/** @brief 获取用户名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取用户名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlDatabase_userName(const XSqlDatabase* database);
-/** @brief 获取密码副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取密码副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlDatabase_password(const XSqlDatabase* database);
-/** @brief 获取主机名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取主机名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlDatabase_hostName(const XSqlDatabase* database);
-/** @brief 获取驱动名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取驱动名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlDatabase_driverName(const XSqlDatabase* database);
 /** @brief 获取配置端口。 @param database 数据库句柄；可为 NULL。 @return 已设置端口；NULL 或未设置时返回 -1。 */
 int XSqlDatabase_port(const XSqlDatabase* database);
-/** @brief 获取连接选项副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取连接选项副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlDatabase_connectOptions(const XSqlDatabase* database);
-/** @brief 获取连接名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取连接名副本。 @param database 数据库句柄；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlDatabase_connectionName(const XSqlDatabase* database);
 /** @brief 设置数值精度策略。 @param database 数据库句柄；不能为 NULL。 @param policy 策略；影响以后创建的结果对象。 @return 无；已存在结果保持原策略。 */
 void XSqlDatabase_setNumericalPrecisionPolicy(XSqlDatabase* database, XSqlNumericalPrecisionPolicy policy);

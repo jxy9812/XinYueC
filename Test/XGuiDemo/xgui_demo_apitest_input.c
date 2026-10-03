@@ -790,7 +790,7 @@ int xapi_input_run(void)
                 XAPI_EXPECT(kev != NULL, "补全键事件构造成功");
                 if (kev) {
                     XObject_event_base((XObject*)&le, (XEvent*)kev);
-                    XEvent_delete_base((XEvent*)kev);
+                    XClassDelete((XEvent*)kev);
                 }
                 XAPI_EXPECT(strcmp(xapi_cstr(XLineEdit_text(&le)), "O") == 0,
                             "直发 O 键插入字符");
@@ -815,7 +815,7 @@ int xapi_input_run(void)
                         (int)XKey_Down, 0);
                     if (down) {
                         XObject_event_base((XObject*)&le, (XEvent*)down);
-                        XEvent_delete_base((XEvent*)down);
+                        XClassDelete((XEvent*)down);
                     }
                 }
                 XAPI_EXPECT(strcmp(xapi_cstr(XLineEdit_text(&le)),
@@ -827,8 +827,8 @@ int xapi_input_run(void)
                 XCompleter_hidePopup(comp);
                 XLineEdit_setCompleter(&le, NULL);
             }
-            if (cmodel) XAbstractItemModel_delete_base((XClass*)cmodel);
-            if (comp) XCompleter_delete_base((XClass*)comp);
+            if (cmodel) XClassDelete((XClass*)cmodel);
+            if (comp) XClassDelete((XClass*)comp);
         }
 
         /* ---- placeholder/margins/alignment/frame 等属性往返 ---- */
@@ -888,7 +888,7 @@ int xapi_input_run(void)
                     XLineEdit_echoMode(NULL) == (int)XLineEditEchoMode_Normal,
                     "LineEdit NULL 对象查询走缺省值（头文件 NULL 语义）");
         XLineEdit_setText(NULL, "noop");
-        XLineEdit_deinit_base(&le);
+        XClassDeinit(&le);
     }
 #endif /* XWIDGET_ON && XLINEEDIT_ON */
 
@@ -1060,7 +1060,7 @@ int xapi_input_run(void)
                         "AbstractSpinBox Return 提交发射 editingFinished");
         }
 
-        XAbstractSpinBox_deinit_base(&ab);
+        XClassDeinit(&ab);
     }
 #endif /* XWIDGET_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */
 
@@ -1349,7 +1349,7 @@ int xapi_input_run(void)
         XAPI_EXPECT(g_spinSig.valueChanged == 2,
                     "SpinBox 键盘步进发射 valueChanged");
 
-        XSpinBox_deinit_base(&spin);
+        XClassDeinit(&spin);
     }
 #endif /* XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */
 
@@ -1564,18 +1564,18 @@ int xapi_input_run(void)
                                         (int)XDateTimeEditSection_YearSection);
         XAPI_EXPECT(sec != NULL && strcmp(xapi_u8(sec), "2024") == 0,
                     "DateTimeEdit sectionText(Year)=2024（按当前值渲染）");
-        XString_delete_base((XClass*)sec);
+        XClassDelete((XClass*)sec);
         sec = XDateTimeEdit_sectionText(
             &dt, (int)XDateTimeEditSection_MonthSection);
         XAPI_EXPECT(sec != NULL && strcmp(xapi_u8(sec), "06") == 0,
                     "DateTimeEdit sectionText(Month)=06 两位补零");
-        XString_delete_base((XClass*)sec);
+        XClassDelete((XClass*)sec);
         XDateTimeEdit_setDisplayFormat(&dt, "yyyy");
         sec = XDateTimeEdit_sectionText(
             &dt, (int)XDateTimeEditSection_MonthSection);
         XAPI_EXPECT(sec != NULL && xapi_u8(sec)[0] == '\0',
                     "DateTimeEdit 格式外的分段 sectionText=空文本");
-        XString_delete_base((XClass*)sec);
+        XClassDelete((XClass*)sec);
         XDateTimeEdit_setDisplayFormat(&dt, "yyyy-MM-dd HH:mm:ss");
 
         /* ---- 分段定位（setCurrentSection/Index/setSelectedSection） ---- */
@@ -1681,7 +1681,7 @@ int xapi_input_run(void)
                     "DateTimeEdit NULL 对象分段查询走缺省值");
         XDateTimeEdit_setSelectedSection(NULL, 0);
 
-        XDateTimeEdit_deinit_base(&dt);
+        XClassDeinit(&dt);
     }
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
 
@@ -1835,7 +1835,7 @@ int xapi_input_run(void)
                 XVirtualKeyboard_closePopup(kbA);
             }
             XVirtualKeyboard_setParent(kbA, NULL, 0);
-            XVirtualKeyboard_delete_base(kbA);
+            XClassDelete(kbA);
         }
 #endif /* XKEYBOARD_ON */
 
@@ -1925,7 +1925,7 @@ int xapi_input_run(void)
                             }
                         }
                     }
-                    XImage_delete_base(shot);
+                    XClassDelete(shot);
                 }
                 XAPI_EXPECT(found,
                             "缺陷D：渲染图像当前段区域存在 Highlight 高亮像素");
@@ -1953,7 +1953,7 @@ int xapi_input_run(void)
                     "缺陷F：弹层同步钩子空弹层守卫路径不崩且值正常落账");
         de.m_base.m_popupVisible = false;
 
-        XDateEdit_deinit_base(&de);
+        XClassDeinit(&de);
     }
 #endif /* XDATEEDIT_ON */
 
@@ -2031,7 +2031,7 @@ int xapi_input_run(void)
         XAPI_EXPECT(strcmp(XDateTimeEdit_displayFormat(&te.m_base),
                            "HH:mm:ss") == 0,
                     "TimeEdit 纯日期格式被拒（parserType=Time，原格式保持）");
-        XTimeEdit_deinit_base(&te);
+        XClassDeinit(&te);
     }
 #endif /* XTIMEEDIT_ON */
 
@@ -2130,7 +2130,7 @@ int xapi_input_run(void)
             XString* it = XComboBox_itemText(&cb, 1);
             XAPI_EXPECT(it != NULL && strcmp(xapi_u8(it), "Beta") == 0,
                         "ComboBox itemText XString 版本堆拷贝");
-            XString_delete_base((XClass*)it);
+            XClassDelete((XClass*)it);
         }
         XAPI_EXPECT(XComboBox_itemText(&cb, 99) == NULL &&
                     xapi_cstr(XComboBox_itemText_2(&cb, -1))[0] == '\0',
@@ -2171,7 +2171,7 @@ int xapi_input_run(void)
         {
             XString* s = XString_create_utf8("S1");
             XComboBox_insertItem(&cb, 2, s);
-            XString_delete_base((XClass*)s);
+            XClassDelete((XClass*)s);
             XAPI_EXPECT(strcmp(xapi_cstr(XComboBox_itemText_2(&cb, 2)), "S1") == 0,
                         "ComboBox insertItem(XString) 深拷贝插入");
         }
@@ -2290,7 +2290,7 @@ int xapi_input_run(void)
                 XAPI_EXPECT(ph != NULL &&
                             strcmp(xapi_u8(ph), "请选择") == 0,
                             "ComboBox placeholderText XString 版本堆拷贝");
-                XString_delete_base((XClass*)ph);
+                XClassDelete((XClass*)ph);
             }
             XComboBox_setPlaceholderText_2(&cb, NULL);
             XAPI_EXPECT(xapi_cstr(XComboBox_placeholderText_2(&cb))[0] == '\0',
@@ -2323,7 +2323,7 @@ int xapi_input_run(void)
             XAPI_EXPECT(im != NULL &&
                         strcmp(xapi_u8(im), "B1") == 0,
                         "ComboBox inputMethodQuery 非可编辑返回当前项文本");
-            XString_delete_base((XClass*)im);
+            XClassDelete((XClass*)im);
         }
 
         /* ---- 补全模式开关 ---- */
@@ -2346,7 +2346,7 @@ int xapi_input_run(void)
         XAPI_EXPECT(!XComboBox_popupVisible(&cb) && g_cbSig.popupHidden == 1,
                     "ComboBox hidePopup 收起并发射 popupHidden");
 
-        XComboBox_deinit_base(&cb);
+        XClassDeinit(&cb);
     }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */
 
@@ -2439,39 +2439,39 @@ int xapi_input_run(void)
         gotFont = XFontComboBox_displayFont(&fcb);
         XAPI_EXPECT(strcmp(xapi_cstr(XFont_family(&gotFont)), "XApiSerif") == 0,
                     "FontComboBox setDisplayFont/displayFont 深拷贝往返");
-        XClass_deinit_base((XClass*)&gotFont);
-        XClass_deinit_base((XClass*)&font);
+        XClassDeinit((XClass*)&gotFont);
+        XClassDeinit((XClass*)&font);
 
         /* ---- 样例文本（族名回退/自定义/移除） ---- */
         sample = XFontComboBox_sampleTextForFont(&fcb, "XApiTestFamily");
         XAPI_EXPECT(sample != NULL &&
                     strcmp(xapi_u8(sample), "XApiTestFamily") == 0,
                     "FontComboBox 未采样时 sampleTextForFont 回退族名（头文件口径）");
-        XString_delete_base((XClass*)sample);
+        XClassDelete((XClass*)sample);
         XFontComboBox_setSampleTextForFont(&fcb, "XApiTestFamily",
                                            "ABC xyz");
         sample = XFontComboBox_sampleTextForFont(&fcb, "XApiTestFamily");
         XAPI_EXPECT(sample != NULL &&
                     strcmp(xapi_u8(sample), "ABC xyz") == 0,
                     "FontComboBox 自定义族样例文本往返");
-        XString_delete_base((XClass*)sample);
+        XClassDelete((XClass*)sample);
         XFontComboBox_setSampleTextForFont(&fcb, "XApiTestFamily", NULL);
         sample = XFontComboBox_sampleTextForFont(&fcb, "XApiTestFamily");
         XAPI_EXPECT(sample != NULL &&
                     strcmp(xapi_u8(sample), "XApiTestFamily") == 0,
                     "FontComboBox sample=NULL 移除自定义回退默认");
-        XString_delete_base((XClass*)sample);
+        XClassDelete((XClass*)sample);
         XAPI_EXPECT(XFontComboBox_sampleTextForFont(&fcb, NULL) == NULL,
                     "FontComboBox sampleTextForFont(NULL 族名) 返回 NULL");
         sample = XFontComboBox_sampleTextForSystem(
             &fcb, (int)XFontComboBoxWritingSystem_Latin);
         XAPI_EXPECT(sample != NULL,
                     "FontComboBox 合法书写系统样例查询非空（回退当前族名）");
-        XString_delete_base((XClass*)sample);
+        XClassDelete((XClass*)sample);
         XAPI_EXPECT(XFontComboBox_sampleTextForSystem(&fcb, -1) == NULL,
                     "FontComboBox 非法书写系统样例查询返回 NULL");
 
-        XComboBox_deinit_base(&fcb);
+        XClassDeinit(&fcb);
     }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */
 
@@ -2769,12 +2769,12 @@ int xapi_input_run(void)
                         "Keyboard closePopup 后不可见");
 
             /* 先删键盘（popup 曾把它挂为 le 子控件）再删编辑框。 */
-            XVirtualKeyboard_delete_base(kb);
-            XLineEdit_delete_base(le);
+            XClassDelete(kb);
+            XClassDelete(le);
         }
 #else
         /* 无编辑控件适配：核心 API 段收尾即释放。 */
-        XVirtualKeyboard_delete_base(kb);
+        XClassDelete(kb);
 #endif /* XLINEEDIT_ON */
     }
 
@@ -2805,7 +2805,7 @@ int xapi_input_run(void)
                             XInputMethodHint_DigitsOnly,
                         "SpinBox 内嵌 lineEdit 自标注 DigitsOnly"
                         "（qspinbox 口径，守护按数字盘弹出）");
-            XSpinBox_deinit_base(&spin);
+            XClassDeinit(&spin);
         }
 #endif /* XSPINBOX_ON && XABSTRACTSPINBOX_ON */
 
@@ -2824,7 +2824,7 @@ int xapi_input_run(void)
                             XInputMethodHint_DigitsOnly,
                         "DateTimeEdit 壳自标注 DigitsOnly"
                         "（缺陷⑥定版，守护/直点均按 Digits 弹出）");
-            XDateTimeEdit_deinit_base(&dt);
+            XClassDeinit(&dt);
         }
 #endif /* XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
 
@@ -2889,26 +2889,26 @@ int xapi_input_run(void)
                     (XObject*)le, XInputMethodQuery_ImEnabled, NULL, NULL);
                 XAPI_EXPECT(v != NULL && XVariant_toBool(v),
                             "ImEnabled 查询：enabled+可编辑==true");
-                if (v) XVariant_delete_base((XClass*)v);
+                if (v) XClassDelete((XClass*)v);
                 XLineEdit_setEnabled(le, false);
                 v = XInputMethod_defaultQueryHandler(
                     (XObject*)le, XInputMethodQuery_ImEnabled, NULL, NULL);
                 XAPI_EXPECT(v != NULL && !XVariant_toBool(v),
                             "ImEnabled 查询：disabled==false");
-                if (v) XVariant_delete_base((XClass*)v);
+                if (v) XClassDelete((XClass*)v);
                 XLineEdit_setEnabled(le, true);
                 XLineEdit_setReadOnly(le, true);
                 v = XInputMethod_defaultQueryHandler(
                     (XObject*)le, XInputMethodQuery_ImEnabled, NULL, NULL);
                 XAPI_EXPECT(v != NULL && !XVariant_toBool(v),
                             "ImEnabled 查询：readOnly==false");
-                if (v) XVariant_delete_base((XClass*)v);
+                if (v) XClassDelete((XClass*)v);
                 XLineEdit_setReadOnly(le, false);
                 v = XInputMethod_defaultQueryHandler(
                     (XObject*)le, XInputMethodQuery_ImEnabled, NULL, NULL);
                 XAPI_EXPECT(v != NULL && XVariant_toBool(v),
                             "ImEnabled 查询：恢复可编辑==true");
-                if (v) XVariant_delete_base((XClass*)v);
+                if (v) XClassDelete((XClass*)v);
 
                 /* ImHints 查询桥往返（既有链保持）：控件位 → Int32
                  * 载荷原值。 */
@@ -2920,12 +2920,12 @@ int xapi_input_run(void)
                                     XVariant_toInt32(v) ==
                                 XInputMethodHint_DigitsOnly,
                             "ImHints 查询桥往返：控件位原值 Int32 承载");
-                if (v) XVariant_delete_base((XClass*)v);
+                if (v) XClassDelete((XClass*)v);
                 XWidget_setInputMethodHints((XWidget*)le,
                                             (XInputMethodHints)0);
             }
 #endif /* XINPUTMETHOD_ON */
-            XLineEdit_delete_base(le);
+            XClassDelete(le);
         }
 
 #if XINPUTMETHOD_ON
@@ -2962,8 +2962,8 @@ int xapi_input_run(void)
                         "不弹（opt-out）");
             XVirtualKeyboard_closePopup(kbOpt);
             XVirtualKeyboard_setParent(kbOpt, NULL, 0);
-            XLineEdit_delete_base(leOpt);
-            XVirtualKeyboard_delete_base(kbOpt);
+            XClassDelete(leOpt);
+            XClassDelete(kbOpt);
         }
 #endif /* XINPUTMETHOD_ON */
     }

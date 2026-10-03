@@ -35,8 +35,6 @@ void XFocusFrame_init(XFocusFrame* self, XWidget* parent, XWidgetFlags flags);
 #define XFocusFrame_create(parent, flags) XFocusFrame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XFocusFrame* XFocusFrame_create_ex(XMemoryType memory, XWidget* parent,
                                    XWidgetFlags flags);
-#define XFocusFrame_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XFocusFrame_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief 建立焦点框与目标控件的关联（对标 setWidget）。 */
 /**

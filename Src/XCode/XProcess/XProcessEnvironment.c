@@ -108,7 +108,7 @@ XProcessEnvironment* XProcessEnvironment_createCopy(const XProcessEnvironment* o
             XProcessEnvironment_delete(self);
             return NULL;
         }
-        XStringList_delete_base(self->m_entries);
+        XClassDelete(self->m_entries);
         self->m_entries = copy;
     }
     return self;
@@ -118,7 +118,7 @@ void XProcessEnvironment_deinit(XProcessEnvironment* self)
 {
     if (!self) return;
     if (self->m_entries) {
-        XStringList_delete_base(self->m_entries);
+        XClassDelete(self->m_entries);
         self->m_entries = NULL;
     }
     self->m_inherit = false;
@@ -180,17 +180,17 @@ bool XProcessEnvironment_equals(const XProcessEnvironment* self,
         if (!name) return false;
         index = xpe_find_index(other, XString_toUtf8(name));
         if (index < 0) {
-            XString_delete_base(name);
+            XClassDelete(name);
             return false;
         }
         value = XProcessEnvironment_value_utf8(other, XString_toUtf8(name), NULL);
-        XString_delete_base(name);
+        XClassDelete(name);
         if (!value) return false;
         if (strcmp(XString_toUtf8(value), equal + 1) != 0) {
-            XString_delete_base(value);
+            XClassDelete(value);
             return false;
         }
-        XString_delete_base(value);
+        XClassDelete(value);
     }
     return true;
 }
@@ -219,7 +219,7 @@ bool XProcessEnvironment_insert_utf8(XProcessEnvironment* self,
     if (index >= 0) XStringList_remove_base(self->m_entries, index, 1);
     before = XStringList_size_base(self->m_entries);
     XStringList_push_back_base(self->m_entries, entry);
-    XString_delete_base(entry);
+    XClassDelete(entry);
     return XStringList_size_base(self->m_entries) == before + 1;
 }
 
@@ -285,11 +285,11 @@ XStringList* XProcessEnvironment_keys(const XProcessEnvironment* self)
         if (equal) {
             XString* key = XString_create_with_length_utf8(text, (size_t)(equal - text));
             if (!key) {
-                XStringList_delete_base(result);
+                XClassDelete(result);
                 return NULL;
             }
             XStringList_push_back_base(result, key);
-            XString_delete_base(key);
+            XClassDelete(key);
         }
     }
     return result;
@@ -313,7 +313,7 @@ bool XProcessEnvironment_insertEnvironment(XProcessEnvironment* self,
         name = XString_create_with_length_utf8(text, (size_t)(equal - text));
         if (!name) return false;
         inserted = XProcessEnvironment_insert_utf8(self, XString_toUtf8(name), equal + 1);
-        XString_delete_base(name);
+        XClassDelete(name);
         if (!inserted) return false;
     }
     return true;

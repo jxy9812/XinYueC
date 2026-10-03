@@ -77,13 +77,13 @@ XVtable* XStyleHints_class_init(void);
 
 /**
  * @brief      以平台默认参数初始化 XStyleHints。
- * @param      self 待初始化对象；必须与 XStyleHints_deinit_base 成对调用。
+ * @param      self 待初始化对象；必须与 XClassDeinit 成对调用。
  */
 void XStyleHints_init(XStyleHints* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建 XStyleHints。
- * @return     新对象指针；失败返回 NULL，调用方用 XStyleHints_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 #define XStyleHints_create() XStyleHints_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
@@ -94,9 +94,7 @@ void XStyleHints_init(XStyleHints* self);
  */
 XStyleHints* XStyleHints_create_ex(XMemoryType memory);
 
-#define XStyleHints_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XStyleHints 对象。 */
-#define XStyleHints_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 可写属性（setter + 通知信号） ==================== */
 

@@ -177,8 +177,8 @@ void XCssStyleSheet_init(XCssStyleSheet* sheet)
 static void xcss_freeAttr(XCssAttributeSelector* a)
 {
     if (!a) return;
-    if (a->m_name) XString_delete_base(a->m_name);
-    if (a->m_value) XString_delete_base(a->m_value);
+    if (a->m_name) XClassDelete(a->m_name);
+    if (a->m_value) XClassDelete(a->m_value);
     XMemset(a, 0, sizeof(*a));
 }
 
@@ -188,16 +188,16 @@ static void xcss_freeBasic(XCssBasicSelector* b)
 {
     int i;
     if (!b) return;
-    if (b->m_elementName) XString_delete_base(b->m_elementName);
-    if (b->m_id) XString_delete_base(b->m_id);
+    if (b->m_elementName) XClassDelete(b->m_elementName);
+    if (b->m_id) XClassDelete(b->m_id);
     for (i = 0; i < b->m_idCount; ++i)
-        if (b->m_ids[i]) XString_delete_base(b->m_ids[i]);
+        if (b->m_ids[i]) XClassDelete(b->m_ids[i]);
     if (b->m_ids) XFree_System(b->m_ids);
     xcss_freeAttr(&b->m_attribute);
     for (i = 0; i < b->m_attributeCount; ++i)
         xcss_freeAttr(&b->m_attributes[i]);
     if (b->m_attributes) XFree_System(b->m_attributes);
-    if (b->m_pseudoElement) XString_delete_base(b->m_pseudoElement);
+    if (b->m_pseudoElement) XClassDelete(b->m_pseudoElement);
     XMemset(b, 0, sizeof(*b));
 }
 
@@ -216,9 +216,9 @@ static void xcss_freeRule(XCssStyleRule* rule)
     if (rule->m_selectors) XFree_System(rule->m_selectors);
     for (i = 0; i < rule->m_declarationCount; ++i) {
         if (rule->m_declarations[i].m_value)
-            XString_delete_base(rule->m_declarations[i].m_value);
+            XClassDelete(rule->m_declarations[i].m_value);
         if (rule->m_declarations[i].m_propertyName)
-            XString_delete_base(rule->m_declarations[i].m_propertyName);
+            XClassDelete(rule->m_declarations[i].m_propertyName);
     }
     if (rule->m_declarations) XFree_System(rule->m_declarations);
     XMemset(rule, 0, sizeof(*rule));
@@ -229,9 +229,9 @@ static void xcss_freeImportRule(XCssImportRule* rule)
 {
     int i;
     if (!rule) return;
-    if (rule->m_href) XString_delete_base(rule->m_href);
+    if (rule->m_href) XClassDelete(rule->m_href);
     for (i = 0; i < rule->m_mediaCount; ++i)
-        if (rule->m_media[i]) XString_delete_base(rule->m_media[i]);
+        if (rule->m_media[i]) XClassDelete(rule->m_media[i]);
     if (rule->m_media) XFree_System(rule->m_media);
     XMemset(rule, 0, sizeof(*rule));
 }
@@ -242,7 +242,7 @@ static void xcss_freeMediaRule(XCssMediaRule* rule)
     int i;
     if (!rule) return;
     for (i = 0; i < rule->m_mediaCount; ++i)
-        if (rule->m_media[i]) XString_delete_base(rule->m_media[i]);
+        if (rule->m_media[i]) XClassDelete(rule->m_media[i]);
     if (rule->m_media) XFree_System(rule->m_media);
     for (i = 0; i < rule->m_ruleCount; ++i)
         xcss_freeRule(&rule->m_rules[i]);
@@ -255,12 +255,12 @@ static void xcss_freePageRule(XCssPageRule* rule)
 {
     int i;
     if (!rule) return;
-    if (rule->m_selector) XString_delete_base(rule->m_selector);
+    if (rule->m_selector) XClassDelete(rule->m_selector);
     for (i = 0; i < rule->m_declarationCount; ++i) {
         if (rule->m_declarations[i].m_value)
-            XString_delete_base(rule->m_declarations[i].m_value);
+            XClassDelete(rule->m_declarations[i].m_value);
         if (rule->m_declarations[i].m_propertyName)
-            XString_delete_base(rule->m_declarations[i].m_propertyName);
+            XClassDelete(rule->m_declarations[i].m_propertyName);
     }
     if (rule->m_declarations) XFree_System(rule->m_declarations);
     XMemset(rule, 0, sizeof(*rule));
@@ -508,8 +508,8 @@ static bool xcss_appendDecl(XCssDeclaration** arr, int* count,
     d->m_value = xcss_newString(value, vlen);
     d->m_propertyName = xcss_newString(name, nlen);
     if (!d->m_value || !d->m_propertyName) {
-        if (d->m_value) XString_delete_base(d->m_value);
-        if (d->m_propertyName) XString_delete_base(d->m_propertyName);
+        if (d->m_value) XClassDelete(d->m_value);
+        if (d->m_propertyName) XClassDelete(d->m_propertyName);
         return false;
     }
     ++*count;
@@ -637,7 +637,7 @@ static bool xcss_parseAttribute(XCssParseCtx* ctx, XCssAttributeSelector* a)
             v = p;
             while (p < end && *p != q) ++p;
             if (p >= end) {
-                XString_delete_base(name);
+                XClassDelete(name);
                 return xcss_failAt(ctx, "属性值引号未闭合", p);
             }
             vlen = (size_t)(p - v);
@@ -649,15 +649,15 @@ static bool xcss_parseAttribute(XCssParseCtx* ctx, XCssAttributeSelector* a)
         if (vlen > 0) {
             value = xcss_newString(v, vlen);
             if (!value) {
-                XString_delete_base(name);
+                XClassDelete(name);
                 return xcss_failOom(ctx);
             }
         }
         while (p < end && *p != ']') ++p;
     }
     if (p >= end) {
-        if (name) XString_delete_base(name);
-        if (value) XString_delete_base(value);
+        if (name) XClassDelete(name);
+        if (value) XClassDelete(value);
         return xcss_failAt(ctx, "属性选择器未闭合（缺少 ']'）", p);
     }
     ++p; /* 越过 ']'。 */
@@ -782,7 +782,7 @@ static bool xcss_parseBasic(XCssParseCtx* ctx, XCssBasicSelector* basic,
         if (!basic->m_id) {
             basic->m_id = s;
         } else if (!xcss_appendString(&basic->m_ids, &basic->m_idCount, s)) {
-            XString_delete_base(s);
+            XClassDelete(s);
             return xcss_failOom(ctx);
         }
         stored = true;
@@ -1057,7 +1057,7 @@ static bool xcss_parseMediaList(XCssParseCtx* ctx, XString*** arr,
         s = xcss_newString(n, len);
         if (!s) return xcss_failOom(ctx);
         if (!xcss_appendString(arr, count, s)) {
-            XString_delete_base(s);
+            XClassDelete(s);
             return xcss_failOom(ctx);
         }
         *progressed = true;
@@ -1274,11 +1274,11 @@ static bool xcss_parsePage(XCssParseCtx* ctx)
         if (!joined ||
             !XString_append_with_length_utf8(joined, ":", 1) ||
             !XString_append_with_length_utf8(joined, n, (size_t)(p - n))) {
-            if (joined) XString_delete_base(joined);
+            if (joined) XClassDelete(joined);
             xcss_freePageRule(&rule);
             return xcss_failOom(ctx);
         }
-        if (rule.m_selector) XString_delete_base(rule.m_selector);
+        if (rule.m_selector) XClassDelete(rule.m_selector);
         rule.m_selector = joined;
         ctx->p = p;
     }

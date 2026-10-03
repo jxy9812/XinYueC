@@ -28,7 +28,7 @@ static void VXImageIOHandler_deinit(XImageIOHandler* self)
     if (ISNULL(self, "XImageIOHandler")) return;
     if (self->m_data)
     {
-        if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
+        if (self->m_data->m_format) XClassDelete((XClass*)self->m_data->m_format);
         XFree_System(self->m_data);
         self->m_data = NULL;
     }
@@ -191,7 +191,7 @@ void XImageIOHandler_setFormat_const(const XImageIOHandler* self, const XString*
        否则释放旧成员后再复制会读取悬空 XString。 */
     copy = format ? XString_create_copy(format) : NULL;
     if (format && !copy) return;
-    if (data->m_format) XString_delete_base((XClass*)data->m_format);
+    if (data->m_format) XClassDelete((XClass*)data->m_format);
     data->m_format = copy;
 }
 
@@ -199,7 +199,7 @@ void XImageIOHandler_setFormat_2(XImageIOHandler* self, const char* format)
 {
     XString* value = format ? XString_create_utf8(format) : NULL;
     XImageIOHandler_setFormat(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 const XString* XImageIOHandler_format_const(const XImageIOHandler* self)
@@ -403,7 +403,7 @@ bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImag
     /* Qt 只有通过全部参数与限制校验后才替换输出图像，失败时保留
        调用方原有内容。image 按本 API 契约已完成 XImage_init，因此在
        init_ex 只初始化当前存储前显式释放原有像素数据。 */
-    XImage_deinit_base(image);
+    XClassDeinit(image);
     XImage_init_ex(image, size->width, size->height, format);
     return !XImage_isNull(image);
 }

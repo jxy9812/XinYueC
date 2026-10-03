@@ -4371,10 +4371,10 @@ static XIcon* xcsi_build(XcsiIconPainter fn)
         XPixmap_init_image(&pm, &img, 0);
         icon = XIcon_create();
         if (icon) XIcon_init_pixmap(icon, &pm);
-        XPixmap_deinit_base(&pm);
+        XClassDeinit(&pm);
     }
     XPainter_deinit(&painter);
-    XImage_deinit_base(&img);
+    XClassDeinit(&img);
     return icon;
 }
 

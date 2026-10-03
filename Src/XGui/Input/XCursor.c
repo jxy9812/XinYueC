@@ -3,7 +3,7 @@
  * @brief      XCursor 光标类实现（对标 Qt 6.8 QCursor）。
  * @details    本文件实现 XCursor 的光标形状、位图/掩码/像素图自定义光标、
  *             热点与进程级光标位置。复制语义与 Qt 隐式共享的 QCursor 对齐：
- *             XCopy 深拷贝全部自定义资源（位图/掩码/像素图），
+ *             XClassCopy 深拷贝全部自定义资源（位图/掩码/像素图），
  *             移动语义转移资源并使源对象回到默认空光标。进程级光标位置
  *             保存在静态变量中，无平台输入后端时由 XCursor_setPos 维护。
  * @note       模块总开关 XCURSOR_ON 定义于 XGuiConfig.h；置 0 时本文件
@@ -58,7 +58,7 @@ static struct XBitmap* XCursor_copyBitmap(const struct XBitmap* source)
     if (!source) return NULL;
     copy = XBitmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XCopy(copy, source);
+    XClassCopy(copy, source);
     return copy;
 }
 
@@ -69,7 +69,7 @@ static struct XPixmap* XCursor_copyPixmap(const struct XPixmap* source)
     if (!source) return NULL;
     copy = XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XCopy(copy, source);
+    XClassCopy(copy, source);
     return copy;
 }
 
@@ -77,9 +77,9 @@ static struct XPixmap* XCursor_copyPixmap(const struct XPixmap* source)
 static void XCursor_resetResources(XCursor* self)
 {
     if (!self) return;
-    if (self->m_bitmap) XBitmap_delete_base(self->m_bitmap);
-    if (self->m_mask) XBitmap_delete_base(self->m_mask);
-    if (self->m_pixmap) XPixmap_delete_base(self->m_pixmap);
+    if (self->m_bitmap) XClassDelete(self->m_bitmap);
+    if (self->m_mask) XClassDelete(self->m_mask);
+    if (self->m_pixmap) XClassDelete(self->m_pixmap);
     self->m_bitmap = NULL;
     self->m_mask = NULL;
     self->m_pixmap = NULL;

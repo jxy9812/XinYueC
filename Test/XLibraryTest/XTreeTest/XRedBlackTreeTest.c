@@ -42,7 +42,7 @@ void XRedBlackTreeTest()
 		XPrintf("中序遍历:%d\n", XVector_size_base(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("size:%d\n", XVector_size_base(TreePreorder));
-		XVector_delete_base(TreePreorder);
+		XClassDelete(TreePreorder);
 	}
 	else
 	{
@@ -62,7 +62,7 @@ void XRedBlackTreeTest()
 		XPrintf("中序遍历:%d\n", XVector_size_base(TreePreorder));
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("size:%d\n", XVector_size_base(TreePreorder));
-		XVector_delete_base(TreePreorder);
+		XClassDelete(TreePreorder);
 	}
 	else
 	{

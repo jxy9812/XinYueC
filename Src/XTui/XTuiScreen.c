@@ -165,7 +165,7 @@ XTuiScreen* XTuiScreen_create_ex(XMemoryType memory, int width, int height)
     XTuiScreen_init(screen);
     Set_Class_Memory(screen, memory); Set_Class_IsHeap(screen, true);
     if (!XTuiScreen_resize(screen, width, height)) {
-        XTuiScreen_delete_base(screen);
+        XClassDelete(screen);
         return NULL;
     }
     return screen;
@@ -377,7 +377,7 @@ bool XTuiScreen_copyFrom(XTuiScreen* dest, const XTuiScreen* src)
 {
     if (!dest || !src)
         return false;
-    XCopy(dest, (const XClass*)src);
+    XClassCopy(dest, (const XClass*)src);
     return true;
 }
 

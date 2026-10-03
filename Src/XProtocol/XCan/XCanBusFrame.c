@@ -58,7 +58,7 @@ void XCanBusFrame_deinit(XCanBusFrame* frame)
 {
     if (!frame) return;
     if (frame->m_load) {
-        XByteArray_delete_base(frame->m_load);
+        XClassDelete(frame->m_load);
         frame->m_load = NULL;
     }
 }
@@ -174,7 +174,7 @@ void XCanBusFrame_setPayload(XCanBusFrame* frame, const uint8_t* data, size_t si
     if (!frame) return;
 
     if (frame->m_load) {
-        XByteArray_delete_base(frame->m_load);
+        XClassDelete(frame->m_load);
         frame->m_load = NULL;
     }
 
@@ -191,7 +191,7 @@ void XCanBusFrame_setPayload_from_array(XCanBusFrame* frame, const XByteArray* d
     if (!frame) return;
 
     if (frame->m_load) {
-        XByteArray_delete_base(frame->m_load);
+        XClassDelete(frame->m_load);
         frame->m_load = NULL;
     }
 
@@ -324,7 +324,7 @@ XString* XCanBusFrame_toString(const XCanBusFrame* frame)
         XString* tmp = XString_create_fmt_utf8(ext ? "%08X" : "%03X", id);
         if (tmp) {
             XString_append(&result, tmp);
-            XString_delete_base(tmp);
+            XClassDelete(tmp);
         }
     }
 
@@ -340,7 +340,7 @@ XString* XCanBusFrame_toString(const XCanBusFrame* frame)
         XString* tmp = XString_create_fmt_utf8("[%zu]", payloadSize);
         if (tmp) {
             XString_append(&result, tmp);
-            XString_delete_base(tmp);
+            XClassDelete(tmp);
         }
     }
 
@@ -355,13 +355,13 @@ XString* XCanBusFrame_toString(const XCanBusFrame* frame)
             XString* tmp = XString_create_fmt_utf8("%02X", data[i]);
             if (tmp) {
                 XString_append(&result, tmp);
-                XString_delete_base(tmp);
+                XClassDelete(tmp);
             }
         }
     }
 
     XString* ret = XString_create_move(&result);
-    XString_deinit_base(&result);
+    XClassDeinit(&result);
     return ret;
 }
 

@@ -122,10 +122,10 @@ bool XLcdNumberTest_runAll(void)
         XLcdNumber* lcd2 = XLcdNumber_create_2(8u, NULL, 0);
         ln_expect(lcd2 != NULL && XLcdNumber_digitCount(lcd2) == 8,
                   "create_2 指定 8 位");
-        XLcdNumber_delete_base(lcd2);
+        XClassDelete(lcd2);
     }
 
-    XLcdNumber_delete_base(lcd);
+    XClassDelete(lcd);
 
     {
         int failures = ln_failures;

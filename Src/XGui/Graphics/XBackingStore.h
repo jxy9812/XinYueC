@@ -88,7 +88,7 @@ XVtable* XBackingStore_class_init(void);
  *             window 为借用指针，随其生命周期由调用方管理。本函数只接受
  *             尚未初始化的存储；不会读取或释放 self 中的旧对象状态。
  * @param      self   尚未初始化的对象；成功或失败后都必须与
- *                    XBackingStore_deinit_base 成对调用。
+ *                    XClassDeinit 成对调用。
  * @param      window 目标 XWindow 借用指针；可为 NULL（纯离屏缓冲）。
  */
 void XBackingStore_init(XBackingStore* self, XWindow* window);
@@ -109,7 +109,7 @@ void XBackingStore_reinit(XBackingStore* self, XWindow* window);
 /**
  * @brief      使用默认内存类型创建绑定指定窗口的后备存储。
  * @param      window 目标 XWindow 借用指针；可为 NULL。
- * @return     新对象指针；失败返回 NULL，调用方用 XBackingStore_delete_base
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete
  *             释放（释放空对象安全）。
  */
 #define XBackingStore_create(window) \
@@ -123,9 +123,7 @@ void XBackingStore_reinit(XBackingStore* self, XWindow* window);
  */
 XBackingStore* XBackingStore_create_ex(XMemoryType memory, XWindow* window);
 
-#define XBackingStore_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XBackingStore 对象。 */
-#define XBackingStore_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 窗口与可绘制设备（对标 QBackingStore） ==================== */
 
@@ -207,7 +205,7 @@ XPlatformBackingStore* XBackingStore_handle(const XBackingStore* self);
  *             的像素格式深拷贝生成副本。内部缓冲未 resize 或后端不可用
  *             时返回 false，out 保持不变。
  * @param      self 目标对象；可为 NULL。
- * @param      out  输出 XImage 指针（调用方持有，用完 XImage_deinit_base）。
+ * @param      out  输出 XImage 指针（调用方持有，用完 XClassDeinit）。
  * @return     true 成功；false 入参非法或缓冲不可用。
  */
 bool XBackingStore_toImage(XBackingStore* self, XImage* out);

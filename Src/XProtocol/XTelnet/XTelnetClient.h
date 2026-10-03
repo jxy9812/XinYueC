@@ -56,8 +56,6 @@ typedef struct XTelnetClient {
 XVtable* XTelnetClient_class_init(void);
 void XTelnetClient_init(XTelnetClient* self);
 XTelnetClient* XTelnetClient_create_ex(XMemoryType memory);
-#define XTelnetClient_deinit_base XClass_deinit_base
-#define XTelnetClient_delete_base XClass_delete_base
 #define XTelnetClient_deleteLater XObject_deleteLater
 
 /** @brief 绑定已连接的字节流设备，并接管其 readyRead 驱动。 */

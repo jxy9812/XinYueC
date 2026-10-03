@@ -163,8 +163,6 @@ bool XModbusServer_setValue_move_base(XModbusServer* server, int option, XVarian
 void* XModbusServer_dataWritten_signal(XModbusServer* server, XModbusRegisterType table, int address, int size);
 
 // =============== 内存管理宏 ===============
-//#define XModbusServer_copy_base     XModbusDevice_copy_base
-//#define XModbusServer_move_base     XModbusDevice_move_base
 
 #define XModbusServer_deinitLater   XModbusDevice_deinitLater
 #define XModbusServer_deleteLater   XModbusDevice_deleteLater

@@ -1486,11 +1486,11 @@ static void VXLineEdit_deinit(XLineEdit* self)
          * QWidgetLineControl 析构前焦点清理已 setBlinkingCursorEnabled
          * (false)）。 */
         XLineControl_setBlinkingCursorEnabled(self->m_control, false);
-        XLineControl_delete_base((XClass*)self->m_control);
+        XClassDelete((XClass*)self->m_control);
         self->m_control = NULL;
     }
     if (self->m_placeholder) {
-        XString_delete_base((XClass*)self->m_placeholder);
+        XClassDelete((XClass*)self->m_placeholder);
         self->m_placeholder = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -1561,7 +1561,7 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     /* 断开源壳上的转发连接后整体转移控制器。 */
     xlineedit_disconnectControlSignals(other, other);
     if (self->m_control)
-        XLineControl_delete_base((XClass*)self->m_control);
+        XClassDelete((XClass*)self->m_control);
     self->m_control = other->m_control;
     other->m_control = xlineedit_createControl();
     if (other->m_control) {
@@ -1575,7 +1575,7 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
            接收方整体移除，信号转发链不随指针转移）。 */
         xlineedit_connectControlSignals(self, self);
     }
-    if (self->m_placeholder) XString_delete_base((XClass*)self->m_placeholder);
+    if (self->m_placeholder) XClassDelete((XClass*)self->m_placeholder);
     self->m_placeholder = other->m_placeholder;
     other->m_placeholder = XString_create();
     self->m_viewOffset = other->m_viewOffset;

@@ -4,7 +4,7 @@
  * @details      对齐 Qt 6.8 的 QDomNode、QDomDocument、QDomElement 及其相关类型。
  *             字符串对象使用 XinYueC 的 UTF-16 内部表示，字节输入输出使用 UTF-8。
  *             本模块只依赖 XinYueC 抽象层，不调用 Win32、POSIX、Qt 或其他平台 API，
- *             可用于嵌入式环境。所有返回的对象都必须使用对应的 *_delete_base 释放。
+ *             可用于嵌入式环境。所有返回的对象都必须使用 XClassDelete 释放。
  */
 #ifndef XDOM_H
 #define XDOM_H
@@ -377,22 +377,20 @@ XVtable* XDomImplementation_class_init(void);
 
 /**
  * @brief      声明 DOM 类型的标准生命周期 API。
- * @details      `XCopy` 和 `XMove` 会先检查目标、源和目标 vtable；目标未初始化时
+ * @details      `XClassCopy` 和 `XClassMove` 会先检查目标、源和目标 vtable；目标未初始化时
  *             自动调用完整的 Type_init。移动成功后源对象仍可反初始化，但内部句柄为空。
  * @param      Type DOM 类型名称；该宏只在头文件内部用于生成声明。
- * @param      self init、deinit_base 和 delete_base 操作的目标句柄；可为 NULL 时按对应 API 规则处理。
+ * @param      self init 操作的目标句柄；可为 NULL 时按对应 API 规则处理。
  * @param      other create_copy 或 create_move 的源句柄；调用期间只借用，移动后源句柄为空。
  * @return      create、create_copy 和 create_move 返回新堆句柄，失败返回 NULL；其余生命周期
  *             API 无返回值，class_init 返回共享且不由调用者释放的虚函数表。
- * @note      堆对象必须使用对应 Type_delete_base；栈对象必须成对调用 Type_init 和 Type_deinit_base。
+ * @note      堆对象必须使用 XClassDelete 释放；栈对象与 Type_init 成对调用 XClassDeinit 反初始化。
  */
 #define XDOM_DECLARE_LIFECYCLE(Type) \
     void Type##_init(Type* self); \
     Type* Type##_create(void); \
     Type* Type##_create_copy(const Type* other); \
-    Type* Type##_create_move(Type* other); \
-    void Type##_deinit_base(Type* self); \
-    void Type##_delete_base(Type* self)
+    Type* Type##_create_move(Type* other)
 
 XDOM_DECLARE_LIFECYCLE(XDomNode);
 XDOM_DECLARE_LIFECYCLE(XDomNodeList);
@@ -419,7 +417,7 @@ XDomImplementation* XDomImplementation_create_ex(XMemoryType memory);
  * @brief      QDomNode 节点树和节点查询 API。
  * @param      self 目标节点；允许为空或空句柄，查询函数会返回默认值。
  * @param      newChild、oldChild、refChild 参与树操作的节点；输入句柄只借用，
- *             返回的新句柄由调用者使用对应的 *_delete_base 释放。
+ *             返回的新句柄由调用者使用 XClassDelete 释放。
  * @return      查询函数返回的新句柄或只读字符串均由本模块管理；新句柄由调用者释放，
  *             字符串在所属节点有效期间保持有效。树操作失败时返回空句柄。
  * @note      节点包装是隐式共享的，复制句柄不会复制树；需要独立树时使用 cloneNode。
@@ -429,7 +427,7 @@ XDomImplementation* XDomImplementation_create_ex(XMemoryType memory);
  * @param      self 父节点；必须允许拥有子节点。
  * @param      newChild 要插入的节点；只借用，不取得所有权。
  * @param      refChild 参考子节点；NULL 表示插入到第一个子节点之前。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；失败返回空句柄。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；失败返回空句柄。
  * @note      对齐 `QDomNode::insertBefore`，输入节点与返回句柄共享底层节点。
  */
 XDomNode* XDomNode_insertBefore(XDomNode* self, const XDomNode* newChild, const XDomNode* refChild);
@@ -438,7 +436,7 @@ XDomNode* XDomNode_insertBefore(XDomNode* self, const XDomNode* newChild, const 
  * @param      self 父节点；必须允许拥有子节点。
  * @param      newChild 要插入的节点；只借用，不取得所有权。
  * @param      refChild 参考子节点；NULL 表示追加到末尾。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；失败返回空句柄。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；失败返回空句柄。
  * @note      对齐 XinYueC 的扩展 API，等价于在参考节点后执行插入。
  */
 XDomNode* XDomNode_insertAfter(XDomNode* self, const XDomNode* newChild, const XDomNode* refChild);
@@ -447,7 +445,7 @@ XDomNode* XDomNode_insertAfter(XDomNode* self, const XDomNode* newChild, const X
  * @param      self 旧节点的父节点；必须是有效节点。
  * @param      newChild 替换节点；只借用，不取得所有权。
  * @param      oldChild self 的直接子节点；只借用。
- * @return      被替换节点句柄，调用者使用 XDomNode_delete_base 释放；失败返回空句柄。
+ * @return      被替换节点句柄，调用者使用 XClassDelete 释放；失败返回空句柄。
  * @note      对齐 `QDomNode::replaceChild`，参数非法时不修改原树。
  */
 XDomNode* XDomNode_replaceChild(XDomNode* self, const XDomNode* newChild, const XDomNode* oldChild);
@@ -455,7 +453,7 @@ XDomNode* XDomNode_replaceChild(XDomNode* self, const XDomNode* newChild, const 
  * @brief      移除直接子节点。
  * @param      self 父节点；必须是有效节点。
  * @param      oldChild self 的直接子节点；只借用。
- * @return      被移除节点句柄，调用者使用 XDomNode_delete_base 释放；失败返回空句柄。
+ * @return      被移除节点句柄，调用者使用 XClassDelete 释放；失败返回空句柄。
  * @note      对齐 `QDomNode::removeChild`，参数非法时不修改原树。
  */
 XDomNode* XDomNode_removeChild(XDomNode* self, const XDomNode* oldChild);
@@ -463,7 +461,7 @@ XDomNode* XDomNode_removeChild(XDomNode* self, const XDomNode* oldChild);
  * @brief      将节点追加到子节点末尾。
  * @param      self 父节点；必须允许拥有子节点。
  * @param      newChild 要追加的节点；只借用，不取得所有权。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；失败返回空句柄。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；失败返回空句柄。
  * @note      对齐 `QDomNode::appendChild`，参数非法时不修改原树。
  */
 XDomNode* XDomNode_appendChild(XDomNode* self, const XDomNode* newChild);
@@ -477,7 +475,7 @@ bool XDomNode_hasChildNodes(const XDomNode* self);
  * @brief      克隆节点。
  * @param      self 要克隆的节点；只借用，不取得所有权。
  * @param      deep true 时递归复制子树，false 时只复制当前节点及属性。
- * @return      独立的新节点句柄，调用者使用 XDomNode_delete_base 释放；失败返回空句柄。
+ * @return      独立的新节点句柄，调用者使用 XClassDelete 释放；失败返回空句柄。
  * @note      对齐 `QDomNode::cloneNode`，克隆结果不与源节点共享树结构。
  */
 XDomNode* XDomNode_cloneNode(const XDomNode* self, bool deep);
@@ -520,50 +518,50 @@ XDomNodeType XDomNode_nodeType(const XDomNode* self);
 /**
  * @brief      获取父节点。
  * @param      self 目标节点；可为 NULL。
- * @return      新父节点句柄，调用者使用 XDomNode_delete_base 释放；无父节点时为空。
+ * @return      新父节点句柄，调用者使用 XClassDelete 释放；无父节点时为空。
  */
 XDomNode* XDomNode_parentNode(const XDomNode* self);
 /**
  * @brief      获取实时子节点列表。
  * @param      self 目标节点；可为 NULL。
- * @return      新列表句柄，调用者使用 XDomNodeList_delete_base 释放；失败返回空句柄。
+ * @return      新列表句柄，调用者使用 XClassDelete 释放；失败返回空句柄。
  * @note      列表会反映所属树后续的节点变化。
  */
 XDomNodeList* XDomNode_childNodes(const XDomNode* self);
 /**
  * @brief      获取第一个直接子节点。
  * @param      self 目标节点；可为 NULL。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；没有子节点时为空。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；没有子节点时为空。
  */
 XDomNode* XDomNode_firstChild(const XDomNode* self);
 /**
  * @brief      获取最后一个直接子节点。
  * @param      self 目标节点；可为 NULL。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；没有子节点时为空。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；没有子节点时为空。
  */
 XDomNode* XDomNode_lastChild(const XDomNode* self);
 /**
  * @brief      获取前一个兄弟节点。
  * @param      self 目标节点；可为 NULL。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；没有兄弟节点时为空。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；没有兄弟节点时为空。
  */
 XDomNode* XDomNode_previousSibling(const XDomNode* self);
 /**
  * @brief      获取后一个兄弟节点。
  * @param      self 目标节点；可为 NULL。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；没有兄弟节点时为空。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；没有兄弟节点时为空。
  */
 XDomNode* XDomNode_nextSibling(const XDomNode* self);
 /**
  * @brief      获取节点属性映射。
  * @param      self 目标节点；元素节点的映射可修改，其他节点返回空映射。
- * @return      新映射句柄，调用者使用 XDomNamedNodeMap_delete_base 释放。
+ * @return      新映射句柄，调用者使用 XClassDelete 释放。
  */
 XDomNamedNodeMap* XDomNode_attributes(const XDomNode* self);
 /**
  * @brief      获取所属文档。
  * @param      self 目标节点；可为 NULL。
- * @return      新文档句柄，调用者使用 XDomDocument_delete_base 释放；没有所属文档时为空。
+ * @return      新文档句柄，调用者使用 XClassDelete 释放；没有所属文档时为空。
  */
 XDomDocument* XDomNode_ownerDocument(const XDomNode* self);
 /**
@@ -628,14 +626,14 @@ void XDomNode_setPrefix_utf8(XDomNode* self, const char* prefix);
  * @brief      按名称查找节点。
  * @param      self 映射或元素节点；可为 NULL。
  * @param      name 节点名称；只借用，不取得所有权。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；找不到时为空。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；找不到时为空。
  */
 XDomNode* XDomNode_namedItem(const XDomNode* self, const XString* name);
 /**
  * @brief      按名称查找节点的 UTF-8 版本。
  * @param      self 映射或元素节点；可为 NULL。
  * @param      name UTF-8 节点名称；只借用。
- * @return      新节点句柄，调用者使用 XDomNode_delete_base 释放；找不到时为空。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；找不到时为空。
  */
 XDomNode* XDomNode_namedItem_utf8(const XDomNode* self, const char* name);
 /**
@@ -731,79 +729,79 @@ bool XDomNode_isComment(const XDomNode* self);
 /**
  * @brief      将节点转换为元素句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；类型不符时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomElement* XDomNode_toElement(const XDomNode* self);
 /**
  * @brief      将节点转换为属性句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新属性句柄，调用者使用 XDomAttr_delete_base 释放；类型不符时为空。
+ * @return      新属性句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomAttr* XDomNode_toAttr(const XDomNode* self);
 /**
  * @brief      将节点转换为文本句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新文本句柄，调用者使用 XDomText_delete_base 释放；类型不符时为空。
+ * @return      新文本句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomText* XDomNode_toText(const XDomNode* self);
 /**
  * @brief      将节点转换为 CDATA 句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新 CDATA 句柄，调用者使用 XDomCDATASection_delete_base 释放；类型不符时为空。
+ * @return      新 CDATA 句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomCDATASection* XDomNode_toCDATASection(const XDomNode* self);
 /**
  * @brief      将节点转换为注释句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新注释句柄，调用者使用 XDomComment_delete_base 释放；类型不符时为空。
+ * @return      新注释句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomComment* XDomNode_toComment(const XDomNode* self);
 /**
  * @brief      将节点转换为字符数据句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新字符数据句柄，调用者使用 XDomCharacterData_delete_base 释放；类型不符时为空。
+ * @return      新字符数据句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomCharacterData* XDomNode_toCharacterData(const XDomNode* self);
 /**
  * @brief      将节点转换为文档句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新文档句柄，调用者使用 XDomDocument_delete_base 释放；类型不符时为空。
+ * @return      新文档句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomDocument* XDomNode_toDocument(const XDomNode* self);
 /**
  * @brief      将节点转换为文档类型句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新文档类型句柄，调用者使用 XDomDocumentType_delete_base 释放；类型不符时为空。
+ * @return      新文档类型句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomDocumentType* XDomNode_toDocumentType(const XDomNode* self);
 /**
  * @brief      将节点转换为文档片段句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新片段句柄，调用者使用 XDomDocumentFragment_delete_base 释放；类型不符时为空。
+ * @return      新片段句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomDocumentFragment* XDomNode_toDocumentFragment(const XDomNode* self);
 /**
  * @brief      将节点转换为实体引用句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新实体引用句柄，调用者使用 XDomEntityReference_delete_base 释放；类型不符时为空。
+ * @return      新实体引用句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomEntityReference* XDomNode_toEntityReference(const XDomNode* self);
 /**
  * @brief      将节点转换为实体声明句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新实体句柄，调用者使用 XDomEntity_delete_base 释放；类型不符时为空。
+ * @return      新实体句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomEntity* XDomNode_toEntity(const XDomNode* self);
 /**
  * @brief      将节点转换为符号声明句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新符号句柄，调用者使用 XDomNotation_delete_base 释放；类型不符时为空。
+ * @return      新符号句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomNotation* XDomNode_toNotation(const XDomNode* self);
 /**
  * @brief      将节点转换为处理指令句柄。
  * @param      self 目标节点；只借用，不取得所有权。
- * @return      新处理指令句柄，调用者使用 XDomProcessingInstruction_delete_base 释放；类型不符时为空。
+ * @return      新处理指令句柄，调用者使用 XClassDelete 释放；类型不符时为空。
  */
 XDomProcessingInstruction* XDomNode_toProcessingInstruction(const XDomNode* self);
 /**
@@ -811,7 +809,7 @@ XDomProcessingInstruction* XDomNode_toProcessingInstruction(const XDomNode* self
  * @param      self 父节点；只借用。
  * @param      tagName 标签名；可为 NULL，表示不按标签名筛选。
  * @param      namespaceURI 命名空间 URI；可为 NULL，表示不按命名空间筛选。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；没有匹配项时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；没有匹配项时为空。
  */
 XDomElement* XDomNode_firstChildElement(const XDomNode* self, const XString* tagName, const XString* namespaceURI);
 /**
@@ -819,7 +817,7 @@ XDomElement* XDomNode_firstChildElement(const XDomNode* self, const XString* tag
  * @param      self 父节点；只借用。
  * @param      tagName UTF-8 标签名；可为 NULL，表示不筛选。
  * @param      namespaceURI UTF-8 命名空间 URI；可为 NULL，表示不筛选。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；没有匹配项时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；没有匹配项时为空。
  */
 XDomElement* XDomNode_firstChildElement_utf8(const XDomNode* self, const char* tagName, const char* namespaceURI);
 /**
@@ -827,7 +825,7 @@ XDomElement* XDomNode_firstChildElement_utf8(const XDomNode* self, const char* t
  * @param      self 父节点；只借用。
  * @param      tagName 标签名；可为 NULL，表示不筛选。
  * @param      namespaceURI 命名空间 URI；可为 NULL，表示不筛选。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；没有匹配项时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；没有匹配项时为空。
  */
 XDomElement* XDomNode_lastChildElement(const XDomNode* self, const XString* tagName, const XString* namespaceURI);
 /**
@@ -835,7 +833,7 @@ XDomElement* XDomNode_lastChildElement(const XDomNode* self, const XString* tagN
  * @param      self 父节点；只借用。
  * @param      tagName UTF-8 标签名；可为 NULL，表示不筛选。
  * @param      namespaceURI UTF-8 命名空间 URI；可为 NULL，表示不筛选。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；没有匹配项时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；没有匹配项时为空。
  */
 XDomElement* XDomNode_lastChildElement_utf8(const XDomNode* self, const char* tagName, const char* namespaceURI);
 /**
@@ -843,7 +841,7 @@ XDomElement* XDomNode_lastChildElement_utf8(const XDomNode* self, const char* ta
  * @param      self 当前节点；只借用。
  * @param      tagName 标签名；可为 NULL，表示不筛选。
  * @param      namespaceURI 命名空间 URI；可为 NULL，表示不筛选。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；没有匹配项时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；没有匹配项时为空。
  */
 XDomElement* XDomNode_previousSiblingElement(const XDomNode* self, const XString* tagName, const XString* namespaceURI);
 /**
@@ -851,7 +849,7 @@ XDomElement* XDomNode_previousSiblingElement(const XDomNode* self, const XString
  * @param      self 当前节点；只借用。
  * @param      tagName UTF-8 标签名；可为 NULL，表示不筛选。
  * @param      namespaceURI UTF-8 命名空间 URI；可为 NULL，表示不筛选。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；没有匹配项时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；没有匹配项时为空。
  */
 XDomElement* XDomNode_previousSiblingElement_utf8(const XDomNode* self, const char* tagName, const char* namespaceURI);
 /**
@@ -859,7 +857,7 @@ XDomElement* XDomNode_previousSiblingElement_utf8(const XDomNode* self, const ch
  * @param      self 当前节点；只借用。
  * @param      tagName 标签名；可为 NULL，表示不筛选。
  * @param      namespaceURI 命名空间 URI；可为 NULL，表示不筛选。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；没有匹配项时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；没有匹配项时为空。
  */
 XDomElement* XDomNode_nextSiblingElement(const XDomNode* self, const XString* tagName, const XString* namespaceURI);
 /**
@@ -867,7 +865,7 @@ XDomElement* XDomNode_nextSiblingElement(const XDomNode* self, const XString* ta
  * @param      self 当前节点；只借用。
  * @param      tagName UTF-8 标签名；可为 NULL，表示不筛选。
  * @param      namespaceURI UTF-8 命名空间 URI；可为 NULL，表示不筛选。
- * @return      新元素句柄，调用者使用 XDomElement_delete_base 释放；没有匹配项时为空。
+ * @return      新元素句柄，调用者使用 XClassDelete 释放；没有匹配项时为空。
  */
 XDomElement* XDomNode_nextSiblingElement_utf8(const XDomNode* self, const char* tagName, const char* namespaceURI);
 /**
@@ -886,7 +884,7 @@ int64_t XDomNode_columnNumber(const XDomNode* self);
  * @brief      将节点序列化为字符串。
  * @param      self 目标节点；只借用。
  * @param      indent 缩进宽度；小于 0 表示紧凑输出。
- * @return      新分配的 UTF-16 XString，调用者使用 XString_delete_base 释放；失败返回 NULL。
+ * @return      新分配的 UTF-16 XString，调用者使用 XClassDelete 释放；失败返回 NULL。
  */
 XString* XDomNode_toString(const XDomNode* self, int indent);
 /**
@@ -910,15 +908,15 @@ bool XDomNode_equals(const XDomNode* left, const XDomNode* right);
  * @brief      按索引获取实时节点列表中的节点。
  * @param      self 列表句柄；由 childNodes 或 elementsByTagName 系列函数创建。
  * @param      index 从零开始的列表索引。
- * @return      新节点句柄，调用者使用 XDomNode_delete 释放；越界或输入为空时返回 NULL。
- * @note      列表反映底层节点树的后续变化，列表本身仍需使用 XDomNodeList_delete 释放。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；越界或输入为空时返回 NULL。
+ * @note      列表反映底层节点树的后续变化，列表本身仍需使用 XClassDelete 释放。
  */
 XDomNode* XDomNodeList_item(const XDomNodeList* self, int index);
 /**
  * @brief      按索引获取实时节点列表中的节点，Qt QDomNodeList::at 的兼容别名。
  * @param      self 列表句柄；只借用。
  * @param      index 从零开始的列表索引。
- * @return      新节点句柄，调用者使用 XDomNode_delete 释放；越界或输入为空时返回 NULL。
+ * @return      新节点句柄，调用者使用 XClassDelete 释放；越界或输入为空时返回 NULL。
  */
 XDomNode* XDomNodeList_at(const XDomNodeList* self, int index);
 /**
@@ -2100,7 +2098,7 @@ void XDomImplementation_setInvalidDataPolicy(XDomInvalidDataPolicy policy);
 /**
  * @brief      把各具体 DOM 句柄转换为共享的 XDomNode 句柄。
  * @param      self 具体节点句柄；输入只借用，必须与目标函数要求的节点类型一致。
- * @return      返回共享节点的新包装句柄，由调用者使用 XDomNode_delete_base 释放；类型不符
+ * @return      返回共享节点的新包装句柄，由调用者使用 XClassDelete 释放；类型不符
  *             或输入为空时返回空节点句柄，不复制底层树。
  */
 /**

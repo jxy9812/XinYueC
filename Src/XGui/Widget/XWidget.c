@@ -418,7 +418,7 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
     XTouchEvent_setPoints(sub, group, count);
     if (!sub->m_points) {
         /* 触点列表分配失败：该组本批不派发（防御，等价丢点）。 */
-        XEvent_delete_base((XEvent*)sub);
+        XClassDelete((XEvent*)sub);
         return false;
     }
     XEvent_setAccepted_base((XEvent*)sub, false);
@@ -455,7 +455,7 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
         XWidget_sendEvent(target, (XEvent*)sub);
     }
     accepted = XEvent_isAccepted((XEvent*)sub);
-    XEvent_delete_base((XEvent*)sub);
+    XClassDelete((XEvent*)sub);
     return accepted;
 }
 
@@ -471,7 +471,7 @@ static XString* XWidget_copyString(const XString* source)
 static void XWidget_freeString(XString** slot)
 {
     if (slot && *slot) {
-        XString_delete_base((XClass*)*slot);
+        XClassDelete((XClass*)*slot);
         *slot = NULL;
     }
 }
@@ -559,7 +559,7 @@ static bool XWidget_postPaintEvent(XWidget* top)
     if (!XCoreApplication_tryPostEvent(receiver, event, 0)) {
         /* tryPostEvent 失败时不接管 event；由本调用方释放，并保留 dirty
            与 PendingUpdate，使后续 update/show 能再次尝试投递。 */
-        XEvent_delete_base((XClass*)event);
+        XClassDelete((XClass*)event);
         XAtomic_store_int32(&top->m_paintEventPosted, 0,
                             XAtomic_MemoryOrder_Release);
         return false;
@@ -699,12 +699,12 @@ static void XWidget_sendShowHide(XWidget* self, bool visible)
         XShowEvent event;
         XShowEvent_init(&event, XEVENT_TYPE_SHOW);
         XWidget_event_base(self, (XEvent*)&event);
-        XShowEvent_deinit_base(&event);
+        XClassDeinit(&event);
     } else {
         XHideEvent event;
         XHideEvent_init(&event, XEVENT_TYPE_HIDE);
         XWidget_event_base(self, (XEvent*)&event);
-        XHideEvent_deinit_base(&event);
+        XClassDeinit(&event);
     }
 #else /* !XWINDOWEVENT_ON */
     (void)self;
@@ -1021,7 +1021,7 @@ static void XWidget_destroyWindow(XWidget* top, bool defer)
                                             XEVENT_TYPE_NONE);
         XObject_deleteLater((XObject*)window);
     } else {
-        XClass_delete_base((XClass*)window);
+        XClassDelete((XClass*)window);
     }
 }
 
@@ -1033,7 +1033,7 @@ static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason)
     if (!self || g_focusWidget != self) return;
     XFocusEvent_init(&event, XEVENT_TYPE_FOCUS_OUT, reason);
     XWidget_event_base(self, (XEvent*)&event);
-    XFocusEvent_deinit_base(&event);
+    XClassDeinit(&event);
 #endif /* XWINDOWEVENT_ON */
     g_focusWidget = NULL;
 #if XAPPLICATION_ON && XGUIAPPLICATION_ON
@@ -1632,10 +1632,10 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
                 XEvent_ignore((XEvent*)ctx); /* 默认忽略：处理者显式接受 */
                 XWidget_sendEvent(w, (XEvent*)ctx);
                 if (XEvent_isAccepted((XEvent*)ctx)) {
-                    XEvent_delete_base((XEvent*)ctx);
+                    XClassDelete((XEvent*)ctx);
                     return true;
                 }
-                XEvent_delete_base((XEvent*)ctx);
+                XClassDelete((XEvent*)ctx);
             }
             if (w == top) break;
             w = XWidget_parentWidget(w);
@@ -1736,7 +1736,7 @@ static bool xwidget_shortcutOverrideAsk(const XWidget* top, const XKeyEvent* key
                    key->m_key, key->m_modifiers);
     XEvent_ignore((XEvent*)&ask); /* 默认忽略：接收侧显式 accept 才覆盖 */
     XWidget_sendEvent(focus, (XEvent*)&ask);
-    XClass_deinit_base((XClass*)&ask); /* 栈上询问事件：无堆资源，走基类清理 */
+    XClassDeinit((XClass*)&ask); /* 栈上询问事件：无堆资源，走基类清理 */
     return XEvent_isAccepted((XEvent*)&ask);
 }
 
@@ -1862,7 +1862,7 @@ static bool XWidget_synthesizeMouseFromTouch(XWidget* top, XEventType type,
     XMouseEvent_setTimestamp(mouse, XWindowSystemInterface_touchTimestamp());
 #endif
     accepted = XWidget_dispatchPointerEvent(top, (XEvent*)mouse);
-    XEvent_delete_base((XEvent*)mouse);
+    XClassDelete((XEvent*)mouse);
     return accepted;
 }
 
@@ -2324,7 +2324,7 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
            下一年编提交 disconnect_1 解引已释放堆页 AV——页堆取证
            XMemory_free ← XClass_delete_base ← XDeferredDeleteEvent_
            handler ← VXWidgetWindow_event 链实证）。 */
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         XEvent_accept(event);
         return true;
     default:
@@ -2612,7 +2612,7 @@ static void XWidget_freeContentCache(XWidget* self)
 {
     if (!self) return;
     if (self->m_contentCache) {
-        XImage_delete_base(self->m_contentCache);
+        XClassDelete(self->m_contentCache);
         self->m_contentCache = NULL;
     }
     self->m_contentCacheDirty = true;
@@ -2751,7 +2751,7 @@ static void VXWidget_deinit(XWidget* self)
 #if XWINDOW_ON && XACCESSIBLE_ON
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_ObjectDestroyed, self);
     if (self->m_accessible) {
-        XAccessible_delete_base(self->m_accessible);
+        XClassDelete(self->m_accessible);
         self->m_accessible = NULL;
     }
 #endif
@@ -2785,12 +2785,12 @@ static void VXWidget_deinit(XWidget* self)
     XWidget_freeString(&self->m_styleSheet);
 #if XCURSOR_ON
     if (self->m_cursor) {
-        XCursor_delete_base((XClass*)self->m_cursor);
+        XClassDelete((XClass*)self->m_cursor);
         self->m_cursor = NULL;
     }
 #endif /* XCURSOR_ON */
-    XFont_deinit_base(&self->m_font);
-    XIcon_deinit_base(&self->m_icon);
+    XClassDeinit(&self->m_font);
+    XClassDeinit(&self->m_icon);
     XRegion_deinit(&self->m_dirty);
     XRegion_deinit(&self->m_staticContents);
     XWidget_freeContentCache(self);
@@ -2799,12 +2799,12 @@ static void VXWidget_deinit(XWidget* self)
     XRegion_deinit(&self->m_mask);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     if (self->m_backingStore) {
-        XBackingStore_delete_base(self->m_backingStore);
+        XClassDelete(self->m_backingStore);
         self->m_backingStore = NULL;
     }
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
     if (self->m_graphicsEffect) {
-        XGraphicsEffect_delete_base(self->m_graphicsEffect);
+        XClassDelete(self->m_graphicsEffect);
         self->m_graphicsEffect = NULL;
     }
 #if XGUI_CUSTOM_TITLEBAR_ON
@@ -2836,13 +2836,13 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     XWidget_destroyWindow(self, true);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     if (self->m_backingStore) {
-        XBackingStore_delete_base(self->m_backingStore);
+        XClassDelete(self->m_backingStore);
         self->m_backingStore = NULL;
     }
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
 #if XWINDOW_ON && XACCESSIBLE_ON
     if (self->m_accessible) {
-        XAccessible_delete_base(self->m_accessible);
+        XClassDelete(self->m_accessible);
         self->m_accessible = NULL;
     }
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
@@ -2864,7 +2864,7 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     XWidget_freeString(&self->m_styleSheet);
 #if XCURSOR_ON
     if (self->m_cursor) {
-        XCursor_delete_base((XClass*)self->m_cursor);
+        XClassDelete((XClass*)self->m_cursor);
         self->m_cursor = NULL;
     }
 #endif /* XCURSOR_ON */
@@ -2872,7 +2872,7 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     /* 图形效果为控件独占资源：拷贝前释放自身效果，拷贝不继承效果
        （对标 Qt：QWidget 拷贝不复制 graphicsEffect）。 */
     if (self->m_graphicsEffect) {
-        XGraphicsEffect_delete_base(self->m_graphicsEffect);
+        XClassDelete(self->m_graphicsEffect);
         self->m_graphicsEffect = NULL;
     }
     XWidget_freeContentCache(self);
@@ -2935,13 +2935,13 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
 #else
     self->m_palette = other->m_palette;
 #endif
-    XCopy(&self->m_font, &other->m_font);
-    XCopy(&self->m_icon, &other->m_icon);
+    XClassCopy(&self->m_font, &other->m_font);
+    XClassCopy(&self->m_icon, &other->m_icon);
 #if XCURSOR_ON
     if (other->m_cursor) {
         self->m_cursor = XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (self->m_cursor)
-            XCopy(self->m_cursor, other->m_cursor);
+            XClassCopy(self->m_cursor, other->m_cursor);
     }
 #endif /* XCURSOR_ON */
     XRegion_copy(&other->m_dirty, &self->m_dirty);
@@ -3015,12 +3015,12 @@ static void VXWidget_move(XWidget* self, XWidget* other)
 #if XWINDOW_ON && XACCESSIBLE_ON
     self->m_accessible = XAccessible_createForWidget(self);
     if (other->m_accessible) {
-        XAccessible_delete_base(other->m_accessible);
+        XClassDelete(other->m_accessible);
         other->m_accessible = NULL;
     }
 #endif
-    XMove(&self->m_icon, &other->m_icon);
-    XMove(&self->m_font, &other->m_font);
+    XClassMove(&self->m_icon, &other->m_icon);
+    XClassMove(&self->m_font, &other->m_font);
 #if XLAYOUT_ON
     /* 布局为借用指针：转移挂接并把布局反向引用改指目标控件。 */
     self->m_layout = other->m_layout;
@@ -3089,7 +3089,7 @@ static void VXWidget_move(XWidget* self, XWidget* other)
 #endif /* XGUI_CUSTOM_TITLEBAR_ON */
     XMemset((char*)other + sizeof(XObject), 0, sizeof(XWidget) - sizeof(XObject));
     /* 上面的整体清零不能破坏嵌入式 XClass 对象的析构前提。移动后的
-       源控件不再拥有资源，但仍必须能被 XWidget_delete_base 安全销毁。 */
+       源控件不再拥有资源，但仍必须能被 XClassDelete 安全销毁。 */
     XFont_init(&other->m_font);
     XIcon_init(&other->m_icon);
     other->m_windowFlags = 0;
@@ -3587,7 +3587,7 @@ static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
         XSize_init(&oldSize, old.width, old.height);
         XResizeEvent_init(&event, XEVENT_TYPE_RESIZE, &size, &oldSize);
         XWidget_sendEvent(self, (XEvent*)&event);
-        XResizeEvent_deinit_base(&event);
+        XClassDeinit(&event);
 #if XLAYOUT_ON
         if (self->m_layout)
             XLayout_activate(self->m_layout);
@@ -4895,7 +4895,7 @@ bool XWidget_close(XWidget* self)
     XCloseEvent_init(&event, XEVENT_TYPE_CLOSE);
     XWidget_event_base(self, (XEvent*)&event);
     accepted = XEvent_isAccepted((XEvent*)&event);
-    XCloseEvent_deinit_base(&event);
+    XClassDeinit(&event);
     self->m_isClosing = 0;
     if (accepted)
         XWidget_setVisible(self, false);
@@ -4972,17 +4972,17 @@ XIcon XWidget_windowIcon(const XWidget* self)
     while (w && ((const XObject*)w)->is_widget && XIcon_isNull(&w->m_icon))
         w = (const XWidget*)XObject_parent((XObject*)w);
     if (w && ((const XObject*)w)->is_widget && !XIcon_isNull(&w->m_icon)) {
-        /* XCopy 对 XIcon 是共享私有数据（refcount 增量）的浅拷贝；调用方
-           用 XIcon_deinit_base 释放本副本即可（契约同 XWidget_font）。 */
-        XCopy(&out, &w->m_icon);
+        /* XClassCopy 对 XIcon 是共享私有数据（refcount 增量）的浅拷贝；调用方
+           用 XClassDeinit 释放本副本即可（契约同 XWidget_font）。 */
+        XClassCopy(&out, &w->m_icon);
         return out;
     }
 #if XGUIAPPLICATION_ON
     {
         XIcon* appIcon = XGuiApplication_windowIcon();
         if (appIcon) {
-            XCopy(&out, appIcon);
-            XIcon_delete_base((XClass*)appIcon);
+            XClassCopy(&out, appIcon);
+            XClassDelete((XClass*)appIcon);
         }
     }
 #endif /* XGUIAPPLICATION_ON */
@@ -4998,12 +4998,12 @@ void XWidget_setWindowIcon(XWidget* self, const XIcon* icon)
     oldKey = XIcon_cacheKey(&self->m_icon);
     if (icon) {
         /* 共享式浅拷贝（XIconPrivate refcount 增量），旧引用自动释放。 */
-        XCopy(&self->m_icon, icon);
+        XClassCopy(&self->m_icon, icon);
     } else {
         /* setWindowIcon(空图标) 清除图标（对标 setWindowIcon(QIcon())）。 */
         XIcon_init(&empty);
-        XCopy(&self->m_icon, &empty);
-        XIcon_deinit_base(&empty);
+        XClassCopy(&self->m_icon, &empty);
+        XClassDeinit(&empty);
     }
     newKey = XIcon_cacheKey(&self->m_icon);
     /* 对标 QWidget::setWindowIcon_sys：仅顶层控件且桥接窗口已创建时刷新
@@ -5274,7 +5274,7 @@ void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
 #if XWINDOWEVENT_ON
     XFocusEvent_init(&event, XEVENT_TYPE_FOCUS_IN, reason);
     XWidget_event_base(focusTarget, (XEvent*)&event);
-    XFocusEvent_deinit_base(&event);
+    XClassDeinit(&event);
 #endif /* XWINDOWEVENT_ON */
     /* 复合控件容器补 update（持焦侧）：同失焦侧口径——焦点靶是代理
      * 子控件时宿主容器画布同步重绘，聚焦环得以画出。 */
@@ -5492,7 +5492,7 @@ static XWidget* XWidget_focusChainTarget(XWidget* self, bool forward)
     XWidget_collectTabFocusable((const XWidget*)root, list);
     n = XVector_size_base((const XContainer*)list);
     if (n == 0) {
-        XVector_delete_base((XClass*)list);
+        XClassDelete((XClass*)list);
         return NULL;
     }
     cur = n; /* 未找到当前控件时从头/尾开始。 */
@@ -5538,7 +5538,7 @@ static XWidget* XWidget_focusChainTarget(XWidget* self, bool forward)
             break;
         }
     }
-    XVector_delete_base((XClass*)list);
+    XClassDelete((XClass*)list);
     return target;
 }
 
@@ -5847,7 +5847,7 @@ XCursor XWidget_cursor(const XWidget* self)
     XCursor out;
     XCursor_init(&out); /* 默认 ArrowCursor；与 Qt 未设置时语义一致。 */
     if (self && self->m_cursor)
-        XCopy(&out, self->m_cursor);
+        XClassCopy(&out, self->m_cursor);
     return out;
 #else
     XCursor out;
@@ -5866,7 +5866,7 @@ void XWidget_setCursor(XWidget* self, const XCursor* cursor)
         self->m_cursor = XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (!self->m_cursor) return;
     }
-    XCopy(self->m_cursor, cursor);
+    XClassCopy(self->m_cursor, cursor);
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetCursor, true);
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (top && top->m_windowHandle) {
@@ -5890,7 +5890,7 @@ void XWidget_unsetCursor(XWidget* self)
     XWidget* top;
     if (!self) return;
     if (self->m_cursor) {
-        XCursor_delete_base((XClass*)self->m_cursor);
+        XClassDelete((XClass*)self->m_cursor);
         self->m_cursor = NULL;
     }
     XWidget_attrSet(&self->m_attributes, XWidgetAttribute_SetCursor, false);
@@ -6082,7 +6082,7 @@ static bool xwidget_qpropertyLedgerApplied(const XWidget* self)
     XString_init(&key);
     XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
     v = XObject_property((const XObject*)self, &key);
-    XString_deinit_base((XClass*)&key);
+    XClassDeinit((XClass*)&key);
     return v != NULL;
 }
 
@@ -6098,8 +6098,8 @@ static void xwidget_qpropertyLedgerMark(XWidget* self)
     XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
     /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
     if (!XObject_setProperty((XObject*)self, &key, v))
-        XVariant_delete_base((XClass*)v);
-    XString_deinit_base((XClass*)&key);
+        XClassDelete((XClass*)v);
+    XClassDeinit((XClass*)&key);
 }
 
 /** @brief 清账（样式表重设时调用；下次钩子调用重新应用——对标 Qt
@@ -6113,7 +6113,7 @@ static void xwidget_qpropertyLedgerReset(XWidget* self)
     XString_init(&key);
     XString_assign_utf8(&key, XWIDGET_QPROPERTY_LEDGER_KEY);
     XObject_removeProperty((XObject*)self, &key);
-    XString_deinit_base((XClass*)&key);
+    XClassDeinit((XClass*)&key);
 }
 
 /** @brief 声明是否为 qproperty-* 并取动态属性名。
@@ -6416,7 +6416,7 @@ void XWidget_applyStyleSheetProperties(XWidget* self)
                 XString_init(&key);
                 XString_assign_utf8(&key, "styleSheet");
                 cur = XObject_property((const XObject*)self, &key);
-                XString_deinit_base((XClass*)&key);
+                XClassDeinit((XClass*)&key);
                 if (cur) {
                     const char* curText = (const char*)XVariant_data(cur);
                     if (curText && XStrcmp(curText, value) == 0) same = true;
@@ -6430,8 +6430,8 @@ void XWidget_applyStyleSheetProperties(XWidget* self)
             XString_init(&nameStr);
             XString_assign_utf8(&nameStr, name);
             if (!XObject_setProperty((XObject*)self, &nameStr, v))
-                XVariant_delete_base((XClass*)v);
-            XString_deinit_base((XClass*)&nameStr);
+                XClassDelete((XClass*)v);
+            XClassDeinit((XClass*)&nameStr);
         }
     }
     if (ruleHit) XFree_System(ruleHit);
@@ -6479,12 +6479,12 @@ XFont XWidget_font(const XWidget* self)
 {
     /* 深拷贝语义（Phase 3.2 裁定）：XFont 值拷贝共享 XString 指针且
        无引用计数，浅拷贝会在任一持有方 deinit 后留下悬空指针（UAF）。
-       返回独立副本，调用方使用后必须 XFont_deinit_base。 */
+       返回独立副本，调用方使用后必须 XClassDeinit。 */
     XFont out;
     XFont_init(&out);
     if (!self)
         return out;
-    XCopy(&out, &self->m_font);
+    XClassCopy(&out, &self->m_font);
     return out;
 }
 
@@ -6493,8 +6493,8 @@ void XWidget_setFont(XWidget* self, const XFont* font)
     XFont temp;
     if (!self || !font) return;
     XFont_init(&temp);
-    XCopy(&temp, font);
-    XMove(&self->m_font, &temp);
+    XClassCopy(&temp, font);
+    XClassMove(&self->m_font, &temp);
     XWidget_updateGeometry(self);
     XWidget_update(self);
 }
@@ -6506,7 +6506,7 @@ XFont XWidget_fontMetrics(const XWidget* self)
        XPainter_textHeight 等测量接口直接以 XFont 为入参，故按值返回
        字体拷贝作为测量凭据，调用方将其传入上述测量函数完成度量。
        控件未显式 setFont 时即为 XWidget_font 的默认构造字体结果；
-       深拷贝契约与 XWidget_font 一致（使用完毕必须 XFont_deinit_base）。 */
+       深拷贝契约与 XWidget_font 一致（使用完毕必须 XClassDeinit）。 */
     return XWidget_font(self);
 }
 
@@ -6517,7 +6517,7 @@ XFont XWidget_fontInfo(const XWidget* self)
        字体替换/匹配引擎，XFont 即光栅化最终使用的字体描述，解析结果
        与控件字体一致，故按 XWidget_fontMetrics 相同的 XFont 值拷贝
        方案返回。深拷贝契约与 XWidget_font 一致（使用完毕必须
-       XFont_deinit_base）。 */
+       XClassDeinit）。 */
     return XWidget_font(self);
 }
 
@@ -6955,7 +6955,7 @@ XImage* XWidget_beginContentCacheFormat(XWidget* self, int width, int height,
     if (!self->m_contentCache)
         return NULL;
     if (!XImage_reinit_ex(self->m_contentCache, width, height, format)) {
-        XImage_delete_base(self->m_contentCache);
+        XClassDelete(self->m_contentCache);
         self->m_contentCache = NULL;
         return NULL;
     }
@@ -7125,7 +7125,7 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
            借用化是本轮帧率提升的最大单项之一（默认页 4430→9063 FPS）。 */
         XPaintEvent_initBorrow(&event, XEVENT_TYPE_PAINT, paintRegion);
         XWidget_paintEvent_base(widget, (XEvent*)&event);
-        XPaintEvent_deinit_base(&event);
+        XClassDeinit(&event);
         widget->m_inPaintEvent = 0;
     }
     children = XObject_children((XObject*)widget);
@@ -7164,7 +7164,7 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
  *          autoFillBackground/paintEvent 自行负责）。
  * @param      width 画布宽度；须大于 0。
  * @param      height 画布高度；须大于 0。
- * @return     新建 XImage（堆对象，调用方 XImage_delete_base 释放）；
+ * @return     新建 XImage（堆对象，调用方 XClassDelete 释放）；
  *             失败返回 NULL。
  */
 static XImage* xwidget_createSnapshotImage(int width, int height)
@@ -7173,7 +7173,7 @@ static XImage* xwidget_createSnapshotImage(int width, int height)
     if (!image) return NULL;
     if (!XImage_reinit_ex(image, width, height,
                           XImageFormat_ARGB32_Premultiplied)) {
-        XImage_delete_base(image);
+        XClassDelete(image);
         return NULL;
     }
     /* 与 XWidget_drawContentCached 相同的语义：重渲染从全透明画布开始，
@@ -7956,13 +7956,13 @@ bool XWidget_render(XWidget* self, XPainter* painter, const XRect* targetRect)
     image = xwidget_createSnapshotImage(width, height);
     if (!image) return false;
     if (!xwidget_renderSubtree(self, image, 0, 0)) {
-        XImage_delete_base(image);
+        XClassDelete(image);
         return false;
     }
     /* 经调用方绘制器输出：目标平移/裁剪/合成属性全部由 painter 现有
        状态接管（源完全等尺寸，目标只需一个绘制原点）。 */
     drawn = XPainter_drawImage(painter, image, target.x, target.y);
-    XImage_delete_base(image);
+    XClassDelete(image);
     return drawn;
 }
 
@@ -7996,7 +7996,7 @@ XImage* XWidget_grab(const XWidget* self)
             {
                 if (XBackingStore_toImage(store, image))
                     return image;
-                XImage_delete_base(image);
+                XClassDelete(image);
             }
         }
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
@@ -8007,7 +8007,7 @@ XImage* XWidget_grab(const XWidget* self)
     image = xwidget_createSnapshotImage(width, height);
     if (!image) return NULL;
     if (!xwidget_renderSubtree(widget, image, 0, 0)) {
-        XImage_delete_base(image);
+        XClassDelete(image);
         return NULL;
     }
     return image;
@@ -8080,7 +8080,7 @@ void XWidget_setGraphicsEffect(XWidget* self, XGraphicsEffect* effect)
            脏区残环/窗口化 WM 同族第四例，昆仑通态实修点）。 */
         XGraphicsEffect_update(self->m_graphicsEffect);
         XGraphicsEffect_setSource(self->m_graphicsEffect, NULL);
-        XGraphicsEffect_delete_base(self->m_graphicsEffect);
+        XClassDelete(self->m_graphicsEffect);
         self->m_graphicsEffect = NULL;
     }
     self->m_graphicsEffect = effect;
@@ -8148,11 +8148,11 @@ static bool xwidget_drawWithGraphicsEffect(XWidget* widget,
     }
     widget->m_graphicsEffect = effect;
     if (!rendered) {
-        XImage_delete_base(snapshot);
+        XClassDelete(snapshot);
         return false;
     }
     drawn = XGraphicsEffect_drawWidget(effect, widget, snapshot, paintRegion);
-    XImage_delete_base(snapshot);
+    XClassDelete(snapshot);
     return drawn;
 }
 
@@ -8198,7 +8198,7 @@ static void xwidget_retainedDropCache(XWidget* self)
     g_retainedBytes -= xwidget_retainedImageBytes(
         XImage_width(self->m_retainedCache),
         XImage_height(self->m_retainedCache));
-    XImage_delete_base(self->m_retainedCache);
+    XClassDelete(self->m_retainedCache);
     self->m_retainedCache = NULL;
     self->m_retainedValid = false;
 }
@@ -8291,7 +8291,7 @@ static XImage* xwidget_retainedEnsureCache(XWidget* self, int width, int height)
     if (!image) return NULL;
     if (!XImage_reinit_ex(image, width, height,
                           XImageFormat_ARGB32_Premultiplied)) {
-        XImage_delete_base(image);
+        XClassDelete(image);
         return NULL;
     }
     /* 与 grab 快照同语义：缓存画布从全透明开始，未覆盖像素保持 0。 */
@@ -8520,7 +8520,7 @@ void XWidget_applyWindowGeometry(XWidget* self, const XRect* geometry,
         XSize_init(&size, geometry->width, geometry->height);
         XResizeEvent_init(&event, XEVENT_TYPE_RESIZE, &size, oldSize);
         XWidget_sendEvent(self, (XEvent*)&event);
-        XResizeEvent_deinit_base(&event);
+        XClassDeinit(&event);
     }
 }
 
@@ -8554,7 +8554,7 @@ void XWidget_setWindowTitle_2(XWidget* self, const char* utf8)
         if (!tmp) return;
     }
     XWidget_setWindowTitle(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 

@@ -19,7 +19,7 @@ static void readData(XObject* sender, XVarList* args)
 	{
 		XPrintf("%c", XByteArray_iterator_data(&it));
 	}
-	XByteArray_delete_base(data);
+	XClassDelete(data);
 	//XPrintf_3(XContainerDataAddr(data));
 }
 
@@ -38,7 +38,7 @@ static void readDataBaidu(XObject* sender, XVarList* args)
 		XPrintf(XByteArray_data(data), 1, XByteArray_size_base(data), stdout);
 		fflush(stdout);
 	}
-	XByteArray_delete_base(data);
+	XClassDelete(data);
 }
 
 static void onBaiduDisconnected(XObject* sender, XVarList* args)
@@ -61,11 +61,11 @@ void XSocketTest_Baidu()
 			XString* ipStr = XHostAddress_toString(addr);
 			XPrintf_2(ipStr);
 			XPrintf("\n");
-			XString_delete_base(ipStr);
+			XClassDelete(ipStr);
 		} else {
 			XPrintf("[百度] DNS解析: 无IP地址\n");
 		}
-		XHostInfo_delete_base(info);
+		XClassDelete(info);
 	} else {
 		XPrintf("[百度] DNS解析失败\n");
 		return;
@@ -85,7 +85,7 @@ void XSocketTest_Baidu()
 		XPrintf("[百度] 已发送HTTP请求，等待响应...\n");
 	} else {
 		XPrintf("[百度] TCP连接超时(5s)\n");
-		XClass_delete_base((XClass*)socket);
+		XClassDelete((XClass*)socket);
 		return;
 	}
 
@@ -105,7 +105,7 @@ void XSocketTest_Baidu()
 		XPrintf("[百度] 等待HTTP响应超时，主动断开连接\n");
 		XTcpSocket_abort(socket);
 	}
-	XClass_delete_base((XClass*)socket);
+	XClassDelete((XClass*)socket);
 }
 
 /* ===================================================================
@@ -129,11 +129,11 @@ void XSocketTest_BaiduHttps()
 			XPrintf("[百度HTTPS] DNS: ");
 			XPrintf_2(ipStr);
 			XPrintf("\n");
-			XString_delete_base(ipStr);
+			XClassDelete(ipStr);
 		} else {
 			XPrintf("[百度HTTPS] DNS 解析: 无 IP 地址\n");
 		}
-		XHostInfo_delete_base(info);
+		XClassDelete(info);
 	} else {
 		XPrintf("[百度HTTPS] DNS 解析失败\n");
 		return;
@@ -145,24 +145,24 @@ void XSocketTest_BaiduHttps()
 	XSslSocket_setPeerVerifyMode(ssl, XSSL_VerifyNone); /* 无 CA，只验证握手成功 */
 	XString* verifyName = XString_create_utf8("www.baidu.com");
 	XSslSocket_setPeerVerifyName(ssl, verifyName);
-	XString_delete_base(verifyName);
+	XClassDelete(verifyName);
 
 	/* 3) 发起 TCP + TLS 加密连接 */
 	XPrintf("[百度HTTPS] 发起 TCP+TLS 加密连接 www.baidu.com:443 ...\n");
 	XString* hostName = XString_create_utf8("www.baidu.com");
 	XSslSocket_connectToHostEncrypted(ssl, hostName, 443);
-	XString_delete_base(hostName);
+	XClassDelete(hostName);
 
 	if (!XSslSocket_waitForConnected_base(ssl, 10000)) {
 		XPrintf("[百度HTTPS] TCP 连接超时(10s)\n");
-		XClass_delete_base((XClass*)ssl);
+		XClassDelete((XClass*)ssl);
 		return;
 	}
 	XPrintf("[百度HTTPS] TCP 连接成功，等待 TLS 握手...\n");
 
 	if (!XSslSocket_waitForEncrypted(ssl, 15000)) {
 		XPrintf("[百度HTTPS] TLS 握手失败/超时(15s)\n");
-		XClass_delete_base((XClass*)ssl);
+		XClassDelete((XClass*)ssl);
 		return;
 	}
 	XString* proto = XSslSocket_sessionProtocol((const XSslSocket*)ssl);
@@ -170,8 +170,8 @@ void XSocketTest_BaiduHttps()
 	XPrintf("[百度HTTPS] TLS 握手成功: proto=%s cipher=%s\n",
 		XString_toUtf8(proto),
 		XString_toUtf8(cipher));
-	XString_delete_base(proto);
-	XString_delete_base(cipher);
+	XClassDelete(proto);
+	XClassDelete(cipher);
 
 	/* 4) 明文接口发送 HTTPS GET（内部自动加密） */
 	/*const char* httpReq =
@@ -198,7 +198,7 @@ void XSocketTest_BaiduHttps()
 
 	XSslSocket_disconnectFromHost_base(ssl);
 	XPrintf("[百度HTTPS] 连接已关闭\n");
-	XClass_delete_base((XClass*)ssl);
+	XClassDelete((XClass*)ssl);
 }
 
 void XSocketTest()

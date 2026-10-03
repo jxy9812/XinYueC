@@ -64,7 +64,7 @@ static const char* xexcel_asset_path(const char* name)
     XString_init(&candidate);
     XString_assign_utf8(&candidate, path);
     if (XFile_exists_static(&candidate)) {
-        XString_deinit_base(&candidate);
+        XClassDeinit(&candidate);
         return path;
     }
 
@@ -72,7 +72,7 @@ static const char* xexcel_asset_path(const char* name)
     XString_clear_base(&candidate);
     XString_assign_utf8(&candidate, path);
     if (XFile_exists_static(&candidate)) {
-        XString_deinit_base(&candidate);
+        XClassDeinit(&candidate);
         return path;
     }
 
@@ -80,11 +80,11 @@ static const char* xexcel_asset_path(const char* name)
     XString_clear_base(&candidate);
     XString_assign_utf8(&candidate, path);
     if (XFile_exists_static(&candidate)) {
-        XString_deinit_base(&candidate);
+        XClassDeinit(&candidate);
         return path;
     }
 
-    XString_deinit_base(&candidate);
+    XClassDeinit(&candidate);
     return "";
 }
 
@@ -92,7 +92,7 @@ static bool xexcel_file_exists(const char* name)
 {
     XString* path = name ? XString_create_utf8(name) : NULL;
     bool exists = path && XFile_exists_static(path);
-    if (path) XString_delete_base(path);
+    if (path) XClassDelete(path);
     return exists;
 }
 
@@ -101,7 +101,7 @@ static void xexcel_remove_file(const char* name)
     XString* path = name ? XString_create_utf8(name) : NULL;
     if (path) {
         XFile_remove_static(path);
-        XString_delete_base(path);
+        XClassDelete(path);
     }
 }
 
@@ -250,9 +250,9 @@ static bool test_data_roundtrip_flow(void)
         XString_Init_Utf8(tip, "open project page");
         CHECK_OK(XWorksheet_writeHyperlink(summary, 3, 10, url, body, display, tip),
             "write hyperlink");
-        XString_deinit_base(url);
-        XString_deinit_base(display);
-        XString_deinit_base(tip);
+        XClassDeinit(url);
+        XClassDeinit(display);
+        XClassDeinit(tip);
 
         rich = XRichString_create();
         richBold = XFormat_create();
@@ -274,7 +274,7 @@ static bool test_data_roundtrip_flow(void)
         variant = XVariant_create_utf8_str("written by XVariant");
         CHECK_OK(variant && XWorksheet_write(summary, 3, 12, variant, body),
             "write XVariant value");
-        XVariant_delete_base(variant);
+        XClassDelete(variant);
         variant = NULL;
 
         XCellReference ref = XCellReference_create_ex(4, 1);
@@ -308,7 +308,7 @@ static bool test_data_roundtrip_flow(void)
         variant = XVariant_create_int(2026);
         CHECK_OK(variant && XDocument_write(document, 4, 2, variant, number),
             "write with XDocument API");
-        XVariant_delete_base(variant);
+        XClassDelete(variant);
         variant = NULL;
         CHECK_OK(XWorksheet_setColumnWidth(types, 1, 1, 24.0), "set Types label width");
         CHECK_OK(XWorksheet_setColumnWidth(types, 2, 2, 20.0), "set Types value width");
@@ -331,12 +331,12 @@ static bool test_data_roundtrip_flow(void)
     title = header = body = number = date = NULL;
     XCellFormula_delete(formula);
     formula = NULL;
-    XString_deinit_base(numberCode);
-    XString_deinit_base(dateCode);
+    XClassDeinit(numberCode);
+    XClassDeinit(dateCode);
 
     XString* loadPath = XString_create_utf8(output);
     loaded = XDocument_createFromFile(loadPath);
-    XString_delete_base(loadPath);
+    XClassDelete(loadPath);
     CHECK_OK(loaded != NULL, "load data workflow");
     if (loaded) {
         CHECK_OK(XWorkbook_sheetCount(XDocument_workbook(loaded)) == 3,
@@ -355,7 +355,7 @@ static bool test_data_roundtrip_flow(void)
         readVariant = XDocument_read(loaded, 3, 2);
         CHECK_OK(readVariant && XVariant_toDouble(readVariant) == 42.0,
             "read numeric XVariant");
-        XVariant_delete_base(readVariant);
+        XClassDelete(readVariant);
         readVariant = NULL;
         CHECK_OK(XDocument_selectSheet_utf8(loaded, "Types"), "select loaded Types");
         XCell* loadedDate = XDocument_cellAt(loaded, 4, 2);
@@ -459,8 +459,8 @@ static bool test_feature_roundtrip_flow(void)
         if (validation && feature->m_dataValidations &&
             XVector_size_base((XContainer*)feature->m_dataValidations) > 0)
             validation = NULL;
-        XString_deinit_base(minValue);
-        XString_deinit_base(maxValue);
+        XClassDeinit(minValue);
+        XClassDeinit(maxValue);
 
         conditional = XConditionalFormatting_create();
         XString_Init_Utf8(conditionFormula, "B3>75");
@@ -472,7 +472,7 @@ static bool test_feature_roundtrip_flow(void)
         if (conditional && feature->m_conditionalFormatting &&
             XVector_size_base((XContainer*)feature->m_conditionalFormatting) > 0)
             conditional = NULL;
-        XString_deinit_base(conditionFormula);
+        XClassDeinit(conditionFormula);
 
         XExcelChart* inlineChart = XWorksheet_insertChart(feature, 10, 1, 640, 360);
         CHECK_OK(inlineChart != NULL, "insert worksheet chart");
@@ -512,10 +512,10 @@ static bool test_feature_roundtrip_flow(void)
         XByteArray* imageData = XByteArray_create();
         CHECK_OK(imageData && XDocument_getImageAt(document, 3, 1, imageData) &&
             XByteArray_size_base((XContainer*)imageData) > 0, "read Gallery image");
-        XByteArray_delete_base(imageData);
+        XClassDelete(imageData);
         XString_Init_Utf8(replacement, xexcel_asset_path("克隆信息.png"));
         CHECK_OK(XDocument_changeImage(document, 0, replacement), "replace Gallery image");
-        XString_deinit_base(replacement);
+        XClassDeinit(replacement);
         for (int column = 1; column <= 12; ++column)
             CHECK_OK(XWorksheet_setColumnWidth(gallery, column, column, 13.0),
                 "set Gallery column width");
@@ -539,7 +539,7 @@ static bool test_feature_roundtrip_flow(void)
             XExcelChart_setDataSheetName_utf8(chartSheetChart, "Feature");
             XExcelChart_addSeries(chartSheetChart, &chartRange, true, true, false);
             XChartsheet_setChart(chartSheet, chartSheetChart);
-            XString_deinit_base(axisTitle);
+            XClassDeinit(axisTitle);
         }
     } else {
         TEST_FAIL("获取图表工作表", "工作表类型不正确");
@@ -563,7 +563,7 @@ static bool test_feature_roundtrip_flow(void)
 
     XString* loadPath = XString_create_utf8(output);
     loaded = XDocument_createFromFile(loadPath);
-    XString_delete_base(loadPath);
+    XClassDelete(loadPath);
     CHECK_OK(loaded != NULL, "load feature workflow");
     if (loaded) {
         CHECK_OK(XWorkbook_sheetCount(XDocument_workbook(loaded)) == 3,
@@ -749,8 +749,8 @@ static bool test_office_inspection_flow(void)
         XString_Init_Utf8(typesDisplay, "Types link");
         CHECK_OK(XWorksheet_writeHyperlink(types, 11, 2, typesUrl, body, typesDisplay, NULL),
             "write Types hyperlink");
-        XString_deinit_base(typesUrl);
-        XString_deinit_base(typesDisplay);
+        XClassDeinit(typesUrl);
+        XClassDeinit(typesDisplay);
         CHECK_OK(XWorksheet_setColumnWidth(types, 1, 1, 16.0), "set Types name width");
         CHECK_OK(XWorksheet_setColumnWidth(types, 2, 2, 24.0), "set Types example width");
     }
@@ -839,7 +839,7 @@ static bool test_office_inspection_flow(void)
 
     XString* loadPath = XString_create_utf8(output);
     loaded = XDocument_createFromFile(loadPath);
-    XString_delete_base(loadPath);
+    XClassDelete(loadPath);
     CHECK_OK(loaded != NULL, "load Office inspection workbook");
     if (loaded) {
         CHECK_OK(XWorkbook_sheetCount(XDocument_workbook(loaded)) == 5,

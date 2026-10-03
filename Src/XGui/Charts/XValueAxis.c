@@ -52,7 +52,7 @@ void XValueAxis_setLabelFormat_2(XValueAxis* self, const char* fmt)
         if (!tmp) return;
     }
     XValueAxis_setLabelFormat(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 void XValueAxis_setTitleText(XValueAxis* self, const XString* title)
@@ -79,10 +79,10 @@ void XValueAxis_deinit_impl(XValueAxis* self)
 {
     if (!self) return;
     if (self->m_labelFormat) {
-        XString_delete_base(self->m_labelFormat);
+        XClassDelete(self->m_labelFormat);
         self->m_labelFormat = NULL;
     }
-    XAbstractAxis_deinit_base(&self->m_base);
+    XClassDeinit(&self->m_base);
 }
 
 #endif /* XCHARTS_ON */

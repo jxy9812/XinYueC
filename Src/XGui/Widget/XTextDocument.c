@@ -45,7 +45,7 @@ static void VX_td_deinit(XTextDocument* self)
             for (j = 0; j < self->m_blocks[i].fragmentCount; ++j)
                 xtd_fragClear(&self->m_blocks[i].fragments[j]);
             if (self->m_blocks[i].blockFormat) {
-                XString_delete_base(self->m_blocks[i].blockFormat);
+                XClassDelete(self->m_blocks[i].blockFormat);
                 self->m_blocks[i].blockFormat = NULL;
             }
         }
@@ -53,38 +53,38 @@ static void VX_td_deinit(XTextDocument* self)
         self->m_blocks = NULL;
     }
     if (self->m_title) {
-        XString_delete_base(self->m_title);
+        XClassDelete(self->m_title);
         self->m_title = NULL;
     }
     if (self->m_url) {
-        XString_delete_base(self->m_url);
+        XClassDelete(self->m_url);
         self->m_url = NULL;
     }
     if (self->m_cssMedia) {
-        XString_delete_base(self->m_cssMedia);
+        XClassDelete(self->m_cssMedia);
         self->m_cssMedia = NULL;
     }
     if (self->m_frontMatter) {
-        XString_delete_base(self->m_frontMatter);
+        XClassDelete(self->m_frontMatter);
         self->m_frontMatter = NULL;
     }
     if (self->m_baseUrl) {
-        XString_delete_base(self->m_baseUrl);
+        XClassDelete(self->m_baseUrl);
         self->m_baseUrl = NULL;
     }
     xtd_formatClear(&self->m_defaultFormat);
     for (i = 0; i < self->m_resourceCount; ++i) {
         XTDResource* res = &self->m_resources[i];
         if (res->name) {
-            XString_delete_base(res->name);
+            XClassDelete(res->name);
             res->name = NULL;
         }
         if (res->text) {
-            XString_delete_base(res->text);
+            XClassDelete(res->text);
             res->text = NULL;
         }
         if (res->image) {
-            XImage_delete_base((XClass*)res->image);
+            XClassDelete((XClass*)res->image);
             res->image = NULL;
         }
     }
@@ -248,7 +248,7 @@ static void xtd_enforceMaximumBlockCount(XTextDocument* self)
         for (j = 0; j < blk->fragmentCount; ++j)
             xtd_fragClear(&blk->fragments[j]);
         if (blk->blockFormat) {
-            XString_delete_base(blk->blockFormat);
+            XClassDelete(blk->blockFormat);
             blk->blockFormat = NULL;
         }
     }
@@ -272,7 +272,7 @@ static void xtd_clearBlocksOnly(XTextDocument* self)
         for (j = 0; j < blk->fragmentCount; ++j)
             xtd_fragClear(&blk->fragments[j]);
         if (blk->blockFormat) {
-            XString_delete_base(blk->blockFormat);
+            XClassDelete(blk->blockFormat);
             blk->blockFormat = NULL;
         }
         XMemset(blk, 0, sizeof(XTDBlock));
@@ -288,15 +288,15 @@ static void xtd_clearResources(XTextDocument* self)
     for (i = 0; i < self->m_resourceCount; ++i) {
         XTDResource* res = &self->m_resources[i];
         if (res->name) {
-            XString_delete_base(res->name);
+            XClassDelete(res->name);
             res->name = NULL;
         }
         if (res->text) {
-            XString_delete_base(res->text);
+            XClassDelete(res->text);
             res->text = NULL;
         }
         if (res->image) {
-            XImage_delete_base((XClass*)res->image);
+            XClassDelete((XClass*)res->image);
             res->image = NULL;
         }
     }
@@ -331,11 +331,11 @@ static void xtd_formatClear(XTDCharFormat* fmt)
 {
     if (!fmt) return;
     if (fmt->fontFamily) {
-        XString_delete_base(fmt->fontFamily);
+        XClassDelete(fmt->fontFamily);
         fmt->fontFamily = NULL;
     }
     if (fmt->anchorHref) {
-        XString_delete_base(fmt->anchorHref);
+        XClassDelete(fmt->anchorHref);
         fmt->anchorHref = NULL;
     }
 }
@@ -364,11 +364,11 @@ static void xtd_fragClear(XTDFragment* frag)
 {
     if (!frag) return;
     if (frag->text) {
-        XString_delete_base(frag->text);
+        XClassDelete(frag->text);
         frag->text = NULL;
     }
     if (frag->image) {
-        XImage_delete_base((XClass*)frag->image);
+        XClassDelete((XClass*)frag->image);
         frag->image = NULL;
     }
     xtd_formatClear(&frag->fmt);
@@ -518,7 +518,7 @@ static void xtd_fillPlainTextBlocks(XTextDocument* self, const char* utf8)
         }
         {
             XTDFragment* frag = &self->m_blocks[blockIdx].fragments[0];
-            if (frag->text) XString_delete_base(frag->text);
+            if (frag->text) XClassDelete(frag->text);
             frag->text = (len > 0)
                 ? XString_create_with_length_utf8(p, len)
                 : XString_create_utf8("");
@@ -990,7 +990,7 @@ static void xtd_closeInline(XTDCharFormat* cur, XTDCharFormat* stack,
     if (*depth <= 0) return;
     top = stack[--(*depth)];
     if (cur->anchorHref != top.anchorHref && cur->anchorHref)
-        XString_delete_base(cur->anchorHref);
+        XClassDelete(cur->anchorHref);
     *cur = top;
 }
 
@@ -1099,7 +1099,7 @@ static void xtd_parseHtml(XTextDocument* self, const char* html,
                                 }
                             }
                             if (!aliased && cur.fontFamily)
-                                XString_delete_base(cur.fontFamily);
+                                XClassDelete(cur.fontFamily);
                             cur.fontFamily = preSavedFamily;
                         }
                         preSavedFamily = NULL;
@@ -1155,7 +1155,7 @@ static void xtd_parseHtml(XTextDocument* self, const char* html,
                             buf[0]) {
                             /* href 对象独立新建（栈中旧指针不受影响）。 */
                             if (cur.anchorHref)
-                                XString_delete_base(cur.anchorHref);
+                                XClassDelete(cur.anchorHref);
                             cur.anchorHref = XString_create_utf8(buf);
                         }
                     }
@@ -1354,7 +1354,7 @@ static void xtd_parseHtml(XTextDocument* self, const char* html,
         }
     }
     /* 收尾：释放解析器仍持有的 href 对象（片段已深拷贝，不受影响）。 */
-    if (cur.anchorHref) XString_delete_base(cur.anchorHref);
+    if (cur.anchorHref) XClassDelete(cur.anchorHref);
     /* 块数钳位：保证 m_blockCount 不越过容量（此前的 <br> 连发路径存在
      * 越界读隐患，见 setPlainText 容量补零修复的同族问题）。 */
     if (self->m_blockCount < 1) self->m_blockCount = 1;
@@ -2180,15 +2180,15 @@ static void xtd_resourceEntryClear(XTDResource* res)
 {
     if (!res) return;
     if (res->name) {
-        XString_delete_base(res->name);
+        XClassDelete(res->name);
         res->name = NULL;
     }
     if (res->text) {
-        XString_delete_base(res->text);
+        XClassDelete(res->text);
         res->text = NULL;
     }
     if (res->image) {
-        XImage_delete_base((XClass*)res->image);
+        XClassDelete((XClass*)res->image);
         res->image = NULL;
     }
     res->type = 0;
@@ -2239,7 +2239,7 @@ void XTextDocument_addResource(XTextDocument* self, int type,
                 XRect_init(&full, 0, 0, XImage_width(img), XImage_height(img));
                 XImage_copyRect(img, &full, slot->image);
                 if (XImage_isNull(slot->image)) {
-                    XImage_delete_base((XClass*)slot->image);
+                    XClassDelete((XClass*)slot->image);
                     slot->image = NULL;
                 }
             }
@@ -2309,7 +2309,7 @@ XTextDocument* XTextDocument_clone(const XTextDocument* self)
                                XImage_height(sf->image));
                     XImage_copyRect(sf->image, &full, df->image);
                     if (XImage_isNull(df->image)) {
-                        XImage_delete_base((XClass*)df->image);
+                        XClassDelete((XClass*)df->image);
                         df->image = NULL;
                     }
                 }

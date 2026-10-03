@@ -99,10 +99,10 @@ static void rs_collectLocalIPv4(char* buf, int cap, int maxAddrs)
             if (!s) continue;
             if (buf[0]) strncat(buf, ",", (size_t)cap - strlen(buf) - 1);
             strncat(buf, XString_toUtf8(s), (size_t)cap - strlen(buf) - 1);
-            XString_delete_base(s);
+            XClassDelete(s);
             ++count;
         }
-        XVector_delete_base(addrs);
+        XClassDelete(addrs);
     }
     if (count == 0)
         snprintf(buf, (size_t)cap, "none");

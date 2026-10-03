@@ -40,7 +40,7 @@ static void XLFQBasicTest(void)
     }
     XPrintf("FIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
         mismatch, (int)XLockFreeQueue_empty_base(q));
-    XLockFreeQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -65,7 +65,7 @@ static void XLFQFullTest(void)
     XPrintf("clear后 count=%zu empty=%d\n",
         XLockFreeQueue_count_base(q),
         (int)XLockFreeQueue_empty_base(q));
-    XLockFreeQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -87,7 +87,7 @@ static void XLFQBulkTest(void)
     while (XLockFreeQueue_dequeue_base(q, &out)) popped++;
     XPrintf("pushed=%zu popped=%zu 剩余count=%zu (期望:100000/100000/0)\n",
         pushed, popped, XLockFreeQueue_count_base(q));
-    XLockFreeQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -201,7 +201,7 @@ static void XLFQConcurrentTest(void)
         XAtomic_load_size_t(&consumed, XAtomic_MemoryOrder_Relaxed),
         XLockFreeQueue_count_base(q),
         total, total);
-    XLockFreeQueue_delete_base(q);
+    XClassDelete(q);
     XPrintf("\n");
     //XCoreApplication_quit();
 }

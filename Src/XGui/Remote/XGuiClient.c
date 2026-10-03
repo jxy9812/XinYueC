@@ -1414,7 +1414,7 @@ static void xgc_connectNetwork(XGuiClient* self)
                 XSslSocket_connectToHostEncrypted_3(
                     ssl, host, d->m_port, peer, XIODevice_ReadWrite,
                     XAbstractSocket_AnyIPProtocol);
-                XClass_delete_base((XClass*)peer);
+                XClassDelete((XClass*)peer);
             } else {
                 XSslSocket_connectToHostEncrypted_2(
                     ssl, host, d->m_port, XIODevice_ReadWrite,
@@ -1425,7 +1425,7 @@ static void xgc_connectNetwork(XGuiClient* self)
                 ssl, host, d->m_port, XIODevice_ReadWrite,
                 XAbstractSocket_AnyIPProtocol);
         }
-        XClass_delete_base((XClass*)host);
+        XClassDelete((XClass*)host);
         /* 异步握手启动(§4.3): 本仓 XSslSocket 后端的握手只在显式
          * startClientEncryption/同步 waitFor* 路径推进(connectToHost-
          * Encrypted 的信号异步路径不自动开跑)——缺此调用客户端永不发
@@ -1945,7 +1945,7 @@ static void VX_xgc_deinit(XGuiClient* self)
         d->m_outbox = NULL;
     }
     XMemset(d->m_password, 0, sizeof(d->m_password)); /* 口令即焚。 */
-    XImage_deinit_base(&d->m_fb);
+    XClassDeinit(&d->m_fb);
     XFree_System(d);
     self->m_d = NULL;
     XClass_Deinit_Parent(XWidget, (XWidget*)self);

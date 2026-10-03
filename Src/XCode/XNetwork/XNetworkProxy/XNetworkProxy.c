@@ -20,9 +20,9 @@ static bool g_useSystemConfiguration = false;
 
 static void VXNetworkProxyQuery_deinit(XNetworkProxyQuery* query) {
     if (!query) return;
-    if (query->peerHostName) XString_delete_base(query->peerHostName);
-    if (query->protocolTag) XString_delete_base(query->protocolTag);
-    if (query->url) XString_delete_base(query->url);
+    if (query->peerHostName) XClassDelete(query->peerHostName);
+    if (query->protocolTag) XClassDelete(query->protocolTag);
+    if (query->url) XClassDelete(query->url);
 }
 
 static void VXNetworkProxyQuery_copy(XNetworkProxyQuery* dest, const XNetworkProxyQuery* src) {
@@ -123,7 +123,7 @@ XNetworkProxyQuery* XNetworkProxyQuery_create_4(uint16_t bindPort, const XString
     return query;
 }
 
-// deinit/delete/copy 通过宏 XNetworkProxyQuery_deinit_base 等调用基类函数
+// deinit/delete/copy 通过宏 XClassDeinit 等调用基类函数
 
 XNetworkProxyQuery_QueryType XNetworkProxyQuery_queryType(const XNetworkProxyQuery* query) {
     return query ? query->queryType : XNetworkProxyQuery_TcpSocket;
@@ -150,7 +150,7 @@ XString* XNetworkProxyQuery_peerHostName(const XNetworkProxyQuery* query)
 }
 void XNetworkProxyQuery_setPeerHostName(XNetworkProxyQuery* query, const XString* hostname) {
     if (!query) return;
-    if (query->peerHostName) XString_delete_base(query->peerHostName);
+    if (query->peerHostName) XClassDelete(query->peerHostName);
     query->peerHostName = hostname ? XString_create_copy(hostname) : NULL;
 }
 
@@ -173,7 +173,7 @@ XString* XNetworkProxyQuery_protocolTag(const XNetworkProxyQuery* query)
 
 void XNetworkProxyQuery_setProtocolTag(XNetworkProxyQuery* query, const XString* tag) {
     if (!query) return;
-    if (query->protocolTag) XString_delete_base(query->protocolTag);
+    if (query->protocolTag) XClassDelete(query->protocolTag);
     query->protocolTag = tag ? XString_create_copy(tag) : NULL;
 }
 
@@ -188,7 +188,7 @@ XString* XNetworkProxyQuery_url(const XNetworkProxyQuery* query)
 
 void XNetworkProxyQuery_setUrl(XNetworkProxyQuery* query, const XString* url) {
     if (!query) return;
-    if (query->url) XString_delete_base(query->url);
+    if (query->url) XClassDelete(query->url);
     query->url = url ? XString_create_copy(url) : NULL;
 }
 
@@ -215,9 +215,9 @@ bool XNetworkProxyQuery_equal(const XNetworkProxyQuery* a, const XNetworkProxyQu
 
 static void VXNetworkProxy_deinit_base(XNetworkProxy* proxy) {
     if (!proxy) return;
-    if (proxy->hostName) XString_delete_base(proxy->hostName);
-    if (proxy->user) XString_delete_base(proxy->user);
-    if (proxy->password) XString_delete_base(proxy->password);
+    if (proxy->hostName) XClassDelete(proxy->hostName);
+    if (proxy->user) XClassDelete(proxy->user);
+    if (proxy->password) XClassDelete(proxy->password);
 }
 
 static void VXNetworkProxy_copy(XNetworkProxy* dest, const XNetworkProxy* src) {
@@ -292,21 +292,7 @@ XNetworkProxy* XNetworkProxy_create_2(XNetworkProxy_ProxyType type, const XStrin
     return proxy;
 }
 
-// deinit/delete/copy/move 通过宏 XNetworkProxy_deinit_base_base 等调用基类函数
-
-XNetworkProxy* XNetworkProxy_copy(const XNetworkProxy* other) {
-    if (!other) return NULL;
-    XNetworkProxy* proxy = XNetworkProxy_create();
-    if (proxy) {
-        proxy->type = other->type;
-        proxy->capabilities = other->capabilities;
-        proxy->port = other->port;
-        if (other->hostName) proxy->hostName = XString_create_copy(other->hostName);
-        if (other->user) proxy->user = XString_create_copy(other->user);
-        if (other->password) proxy->password = XString_create_copy(other->password);
-    }
-    return proxy;
-}
+// deinit/delete/copy/move 统一通过 XClassDeinit/XClassDelete/XClassCopy/XClassMove 宏完成
 
 XNetworkProxy_ProxyType XNetworkProxy_type(const XNetworkProxy* proxy) {
     return proxy ? proxy->type : XNetworkProxy_DefaultProxy;
@@ -370,7 +356,7 @@ XString* XNetworkProxy_user(const XNetworkProxy* proxy)
 
 void XNetworkProxy_setUser(XNetworkProxy* proxy, const XString* userName) {
     if (!proxy) return;
-    if (proxy->user) XString_delete_base(proxy->user);
+    if (proxy->user) XClassDelete(proxy->user);
     proxy->user = userName ? XString_create_copy(userName) : NULL;
 }
 
@@ -385,7 +371,7 @@ XString* XNetworkProxy_password(const XNetworkProxy* proxy)
 
 void XNetworkProxy_setPassword(XNetworkProxy* proxy, const XString* password) {
     if (!proxy) return;
-    if (proxy->password) XString_delete_base(proxy->password);
+    if (proxy->password) XClassDelete(proxy->password);
     proxy->password = password ? XString_create_copy(password) : NULL;
 }
 
@@ -400,7 +386,7 @@ XString* XNetworkProxy_hostName(const XNetworkProxy* proxy)
 
 void XNetworkProxy_setHostName(XNetworkProxy* proxy, const XString* hostName) {
     if (!proxy) return;
-    if (proxy->hostName) XString_delete_base(proxy->hostName);
+    if (proxy->hostName) XClassDelete(proxy->hostName);
     proxy->hostName = hostName ? XString_create_copy(hostName) : NULL;
 }
 
@@ -444,16 +430,16 @@ void XNetworkProxy_setApplicationProxy(const XNetworkProxy* proxy) {
         g_applicationProxy.capabilities = proxy->capabilities;
         g_applicationProxy.port = proxy->port;
 
-        if (g_applicationProxy.hostName) XString_delete_base(g_applicationProxy.hostName);
+        if (g_applicationProxy.hostName) XClassDelete(g_applicationProxy.hostName);
         g_applicationProxy.hostName = proxy->hostName ? XString_create_copy(proxy->hostName) : NULL;
 
-        if (g_applicationProxy.user) XString_delete_base(g_applicationProxy.user);
+        if (g_applicationProxy.user) XClassDelete(g_applicationProxy.user);
         g_applicationProxy.user = proxy->user ? XString_create_copy(proxy->user) : NULL;
 
-        if (g_applicationProxy.password) XString_delete_base(g_applicationProxy.password);
+        if (g_applicationProxy.password) XClassDelete(g_applicationProxy.password);
         g_applicationProxy.password = proxy->password ? XString_create_copy(proxy->password) : NULL;
     } else {
-        XNetworkProxy_deinit_base(&g_applicationProxy);
+        XClassDeinit(&g_applicationProxy);
         XNetworkProxy_init(&g_applicationProxy);
     }
 }
@@ -519,7 +505,7 @@ XNetworkProxyFactory* XNetworkProxyFactory_create_ex(XMemoryType memory, XNetwor
     return factory;
 }
 
-// deinit/delete 通过宏 XNetworkProxyFactory_deinit_base 等调用基类函数
+// deinit/delete 通过宏 XClassDeinit 等调用基类函数
 
 XNetworkProxy* XNetworkProxyFactory_queryProxy(XNetworkProxyFactory* factory, const XNetworkProxyQuery* query) {
     if (!factory || !factory->queryProxy) return NULL;
@@ -550,7 +536,11 @@ XNetworkProxy* XNetworkProxyFactory_proxyForQuery(const XNetworkProxyQuery* quer
     }
 
     // 默认返回应用级代理
-    return XNetworkProxy_copy(XNetworkProxy_applicationProxy());
+    XNetworkProxy* proxy = XNetworkProxy_create();
+    if (proxy) {
+        XClassCopy(proxy, XNetworkProxy_applicationProxy());
+    }
+    return proxy;
 }
 
 XNetworkProxy* XNetworkProxyFactory_systemProxyForQuery(const XNetworkProxyQuery* query) {

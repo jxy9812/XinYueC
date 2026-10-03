@@ -114,7 +114,7 @@ static XImageCodecFormat builtin_detectWithDevice(XIODevice* device)
         format = XImageCodec_detect(
             (const uint8_t*)XByteArray_data(header),
             (size_t)XByteArray_size_base((const XContainer*)header));
-        XByteArray_delete_base((XClass*)header);
+        XClassDelete((XClass*)header);
     }
     return format;
 }
@@ -138,7 +138,7 @@ static const char* builtin_ppmSubtypeName(XIODevice* device)
         else if (data[1] == '2' || data[1] == '5') subtype = "pgm";
         else if (data[1] == '3' || data[1] == '6') subtype = "ppm";
     }
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     return subtype;
 }
 
@@ -162,7 +162,7 @@ static XImageFormat builtin_bmpImageFormat(XIODevice* device)
     data = (const uint8_t*)XByteArray_data(bytes);
     size = (size_t)XByteArray_size_base((const XContainer*)bytes);
     if (!data || size < 26 || data[0] != 'B' || data[1] != 'M') {
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         return XImageFormat_Invalid;
     }
     dibSize = (uint32_t)data[14] | ((uint32_t)data[15] << 8) |
@@ -179,10 +179,10 @@ static XImageFormat builtin_bmpImageFormat(XIODevice* device)
             alphaMask = (uint32_t)data[66] | ((uint32_t)data[67] << 8) |
                         ((uint32_t)data[68] << 16) | ((uint32_t)data[69] << 24);
     } else {
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         return XImageFormat_Invalid;
     }
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     switch (bpp) {
         case 32:
         case 24:
@@ -219,7 +219,7 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
         data = (const uint8_t*)XByteArray_data(bytes);
         size = (size_t)XByteArray_size_base((const XContainer*)bytes);
         if (!data || size < 12u) {
-            XByteArray_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             return XImageFormat_Invalid;
         }
         dibSize = XImageCodecInternal_readU32LE(data);
@@ -230,10 +230,10 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
             if (dibSize >= 108u && size >= 56u)
                 alphaMask = XImageCodecInternal_readU32LE(data + 52u);
         } else {
-            XByteArray_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             return XImageFormat_Invalid;
         }
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         if (bpp == 32u && (compression == 3u || compression == 4u) &&
             alphaMask != 0u)
             return XImageFormat_ARGB32;
@@ -251,11 +251,11 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
         size = (size_t)XByteArray_size_base((const XContainer*)bytes);
         if (!data || size < 2 || data[0] != 'P' ||
             data[1] < '1' || data[1] > '6') {
-            XByteArray_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             return XImageFormat_Invalid;
         }
         type = data[1];
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         return (type == '1' || type == '4')
             ? XImageFormat_Mono
             : ((type == '2' || type == '5')
@@ -276,10 +276,10 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
                 (const uint8_t*)XByteArray_data(bytes),
                 (size_t)XByteArray_size_base((const XContainer*)bytes),
                 &width, &height, &imageFormat)) {
-            XByteArray_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             return XImageFormat_Invalid;
         }
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         /* QXpmHandler reports Indexed8 for <=256 colors and Invalid for
            larger palettes until the complete table has been consumed. */
         return imageFormat;
@@ -296,13 +296,13 @@ static XImageFormat builtin_imageFormat(XImageIOHandler* self)
                 (const uint8_t*)XByteArray_data(bytes),
                 (size_t)XByteArray_size_base((const XContainer*)bytes),
                 &width, &height)) {
-            XByteArray_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             return XImageFormat_Invalid;
         }
         if (XByteArray_size_base((const XContainer*)bytes) >= 14u)
             bitCount = XImageCodecInternal_readU16LE(
                 (const uint8_t*)XByteArray_data(bytes) + 12u);
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         /* Qt's QIcoHandler::option(ImageFormat) reports the directory
            bit-count: 1-bit mono, 24-bit RGB32, 32-bit ARGB32, and indexed
            for the remaining palette depths. */
@@ -337,7 +337,7 @@ static XImageIOHandlerTransformation builtin_jpegTransformation(XIODevice* devic
         (const uint8_t*)XByteArray_data(bytes),
         (size_t)XByteArray_size_base((const XContainer*)bytes),
         &transformation);
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     return ok && transformation >= 0 && transformation <= 7
         ? (XImageIOHandlerTransformation)transformation
         : XImageIOHandlerTransformation_None;
@@ -431,7 +431,7 @@ static bool builtin_imageSize(XImageIOHandler* self, XSize* out)
         (const uint8_t*)XByteArray_data(bytes),
         (size_t)XByteArray_size_base((const XContainer*)bytes),
         format, &out->width, &out->height);
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     return ok;
 #else
     (void)self;
@@ -500,8 +500,8 @@ static bool builtin_validateXbmDevice(XIODevice* device)
         valid = XImageCodecInternal_decodeXbm(
             (const uint8_t*)XByteArray_data(bytes),
             (size_t)XByteArray_size_base((const XContainer*)bytes), &image);
-    XImage_deinit_base(&image);
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDeinit(&image);
+    XClassDelete((XClass*)bytes);
     return valid;
 }
 #endif /* XIMAGECODEC_XBM_ON */
@@ -544,7 +544,7 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
             ? (size_t)XByteArray_size_base((const XContainer*)svgHeader) : 0;
         compressedSvg = (requestedUtf8 && XStrcmp(requestedUtf8, "svgz") == 0) ||
             (raw && rawSize >= 2 && raw[0] == 0x1fu && raw[1] == 0x8bu);
-        if (svgHeader) XByteArray_delete_base((XClass*)svgHeader);
+        if (svgHeader) XClassDelete((XClass*)svgHeader);
     }
 #endif
 #if XIMAGECODEC_XBM_ON
@@ -568,17 +568,17 @@ static bool VXImageBuiltinHandler_canRead(const XImageIOHandler* self)
                 (XImageBuiltinHandler*)self;
             if (canonical) {
                 if (detectedName)
-                    XString_delete_base((XClass*)detectedName);
+                    XClassDelete((XClass*)detectedName);
                 detectedName = canonical;
                 if (mutableHandler->m_subType)
-                    XString_delete_base((XClass*)mutableHandler->m_subType);
+                    XClassDelete((XClass*)mutableHandler->m_subType);
                 mutableHandler->m_subType = XString_create_copy(canonical);
             }
         }
     }
     if (detectedName) {
         XImageIOHandler_setFormat_const(self, detectedName);
-        XString_delete_base((XClass*)detectedName);
+        XClassDelete((XClass*)detectedName);
     }
     return true;
 }
@@ -612,14 +612,14 @@ static bool VXImageBuiltinHandler_read(XImageIOHandler* self, XImage* image)
                 format, &imageSize.width, &imageSize.height) &&
             !XImageIOHandler_checkAllocation(&imageSize,
                                               XImageFormat_ARGB32)) {
-            XByteArray_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             return false;
         }
         ok = XImageCodec_decode((const uint8_t*)XByteArray_data(bytes),
                                 (size_t)XByteArray_size_base((const XContainer*)bytes),
                                 format, image);
     }
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     return ok;
 }
 
@@ -683,11 +683,11 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
             descriptionValue.string &&
             !XContainer_isEmpty_base((const XContainer*)descriptionValue.string)) {
             XImage_init(&described);
-            XCopy(&described, image);
+            XClassCopy(&described, image);
             if (!described.m_data ||
                 !XImage_applyTextDescription(&described, descriptionValue.string)) {
-                XImage_deinit_base(&described);
-                XByteArray_delete_base((XClass*)bytes);
+                XClassDeinit(&described);
+                XClassDelete((XClass*)bytes);
                 return false;
             }
             source = &described;
@@ -723,9 +723,9 @@ static bool VXImageBuiltinHandler_write(XImageIOHandler* self, const XImage* ima
         encoded = XImageCodec_encode(source, format, quality, bytes);
     if (encoded)
         ok = builtin_writeBytes(device, bytes);
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     if (describedInitialized)
-        XImage_deinit_base(&described);
+        XClassDeinit(&described);
     return ok;
 }
 
@@ -751,7 +751,7 @@ static void VXImageBuiltinHandler_setOption(XImageIOHandler* self,
         if (optionValue->string && !replacement)
             return;
         if (handler->m_subType)
-            XString_delete_base((XClass*)handler->m_subType);
+            XClassDelete((XClass*)handler->m_subType);
         handler->m_subType = replacement;
     }
     else if (builtin_supportsOption(self, option) &&
@@ -764,7 +764,7 @@ static void VXImageBuiltinHandler_setOption(XImageIOHandler* self,
         if (optionValue->string && !replacement)
             return;
         if (handler->m_description)
-            XString_delete_base((XClass*)handler->m_description);
+            XClassDelete((XClass*)handler->m_description);
         handler->m_description = replacement;
     }
 }
@@ -839,9 +839,9 @@ static void VXImageBuiltinHandler_deinit(XImageIOHandler* self)
     if (!self) return;
     handler = (XImageBuiltinHandler*)self;
     if (handler->m_description)
-        XString_delete_base((XClass*)handler->m_description);
+        XClassDelete((XClass*)handler->m_description);
     if (handler->m_subType)
-        XString_delete_base((XClass*)handler->m_subType);
+        XClassDelete((XClass*)handler->m_subType);
     handler->m_description = NULL;
     handler->m_subType = NULL;
     XClass_Deinit_Parent(XImageIOHandler, self);
@@ -901,8 +901,8 @@ static void builtin_loadPngDescription(XImageBuiltinHandler* handler)
         !XString_isEmpty_base((const XContainer*)description))
         handler->m_description = description;
     else if (description)
-        XString_delete_base((XClass*)description);
-    XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)description);
+    XClassDelete((XClass*)bytes);
 #else
     (void)handler;
 #endif
@@ -937,7 +937,7 @@ static void builtin_loadPngGamma(XImageBuiltinHandler* handler)
         XImageIOHandler_storeOptionValue(&handler->m_base,
                                           XImageIOHandlerOption_Gamma, &value);
     }
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
 #else
     (void)handler;
 #endif
@@ -1008,11 +1008,11 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(const XImageIOPlugin* self,
                         XString* compressedName = XString_create_utf8("svgz");
                         if (compressedName) {
                             if (detectedName)
-                                XString_delete_base((XClass*)detectedName);
+                                XClassDelete((XClass*)detectedName);
                             detectedName = compressedName;
                         }
                     }
-                    if (svgHeader) XByteArray_delete_base((XClass*)svgHeader);
+                    if (svgHeader) XClassDelete((XClass*)svgHeader);
                 }
                 if (detected == XImageCodecFormat_Ppm) {
                     XByteArray* head = XIODevice_peek_3(device, 2);
@@ -1027,20 +1027,20 @@ static XImageIOHandler* VXImageBuiltinPlugin_create(const XImageIOPlugin* self,
                         XString* subtypeString = XString_create_utf8(subtype);
                         if (subtypeString) {
                             if (detectedName)
-                                XString_delete_base((XClass*)detectedName);
+                                XClassDelete((XClass*)detectedName);
                             detectedName = subtypeString;
                         }
                     }
-                    if (head) XByteArray_delete_base((XClass*)head);
+                    if (head) XClassDelete((XClass*)head);
                 }
                 if (detectedName) {
                     XImageIOHandler_setFormat(&handler->m_base, detectedName);
                     if (detected == XImageCodecFormat_Ppm) {
                         if (handler->m_subType)
-                            XString_delete_base((XClass*)handler->m_subType);
+                            XClassDelete((XClass*)handler->m_subType);
                         handler->m_subType = XString_create_copy(detectedName);
                     }
-                    XString_delete_base((XClass*)detectedName);
+                    XClassDelete((XClass*)detectedName);
                 }
             }
         }
@@ -1070,9 +1070,9 @@ static void VXImageBuiltinPlugin_deinit(XImageIOPlugin* self)
     XImageBuiltinPlugin* plugin;
     if (!self) return;
     plugin = (XImageBuiltinPlugin*)self;
-    if (plugin->m_keys) XStringList_delete_base((XClass*)plugin->m_keys);
-    if (plugin->m_mimes) XStringList_delete_base((XClass*)plugin->m_mimes);
-    if (plugin->m_filters) XStringList_delete_base((XClass*)plugin->m_filters);
+    if (plugin->m_keys) XClassDelete((XClass*)plugin->m_keys);
+    if (plugin->m_mimes) XClassDelete((XClass*)plugin->m_mimes);
+    if (plugin->m_filters) XClassDelete((XClass*)plugin->m_filters);
     plugin->m_keys = NULL;
     plugin->m_mimes = NULL;
     plugin->m_filters = NULL;
@@ -1106,11 +1106,11 @@ static XImageBuiltinPlugin* XImageBuiltinPlugin_ensure(void)
     if (!g_builtinPlugin.m_keys || !g_builtinPlugin.m_mimes ||
         !g_builtinPlugin.m_filters) {
         if (g_builtinPlugin.m_keys)
-            XStringList_delete_base((XClass*)g_builtinPlugin.m_keys);
+            XClassDelete((XClass*)g_builtinPlugin.m_keys);
         if (g_builtinPlugin.m_mimes)
-            XStringList_delete_base((XClass*)g_builtinPlugin.m_mimes);
+            XClassDelete((XClass*)g_builtinPlugin.m_mimes);
         if (g_builtinPlugin.m_filters)
-            XStringList_delete_base((XClass*)g_builtinPlugin.m_filters);
+            XClassDelete((XClass*)g_builtinPlugin.m_filters);
         XMemset(&g_builtinPlugin, 0, sizeof(g_builtinPlugin));
         return NULL;
     }

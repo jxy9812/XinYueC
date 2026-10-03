@@ -461,7 +461,7 @@ bool XSpinBoxTest_runAll(void)
     sb_expect(XWidget_width((XWidget*)spin) == 100 &&
               XWidget_height((XWidget*)spin) == 30, "几何设置生效");
 
-    XSpinBox_delete_base(spin);
+    XClassDelete(spin);
 
     {
         int failures = sb_failures;

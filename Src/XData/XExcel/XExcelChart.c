@@ -56,13 +56,13 @@ XExcelChart* XExcelChart_copy(const XExcelChart* source, XAbstractSheet* parent)
 }
 void XExcelChart_delete(XExcelChart* self) {
     if (!self) return;
-    if (self->m_chartTitle) XString_delete_base(self->m_chartTitle);
-    if (self->m_axisTitleLeft) XString_delete_base(self->m_axisTitleLeft);
-    if (self->m_axisTitleRight) XString_delete_base(self->m_axisTitleRight);
-    if (self->m_axisTitleTop) XString_delete_base(self->m_axisTitleTop);
-    if (self->m_axisTitleBottom) XString_delete_base(self->m_axisTitleBottom);
-    if (self->m_dataSheetName) XString_delete_base(self->m_dataSheetName);
-    if (self->m_series) XVector_delete_base(self->m_series);
+    if (self->m_chartTitle) XClassDelete(self->m_chartTitle);
+    if (self->m_axisTitleLeft) XClassDelete(self->m_axisTitleLeft);
+    if (self->m_axisTitleRight) XClassDelete(self->m_axisTitleRight);
+    if (self->m_axisTitleTop) XClassDelete(self->m_axisTitleTop);
+    if (self->m_axisTitleBottom) XClassDelete(self->m_axisTitleBottom);
+    if (self->m_dataSheetName) XClassDelete(self->m_dataSheetName);
+    if (self->m_series) XClassDelete(self->m_series);
     XAbstractOOXmlFile_deinit(&self->m_base); XFree_System(self);
 }
 void XExcelChart_addSeries(XExcelChart* self, const XCellRange* range, bool headerH, bool headerV, bool swapHeaders) {
@@ -73,7 +73,7 @@ void XExcelChart_addSeries(XExcelChart* self, const XCellRange* range, bool head
 void XExcelChart_setDataSheetName(XExcelChart* self, const XString* name) {
     if (!self) return;
     if (self->m_dataSheetName) {
-        XString_delete_base(self->m_dataSheetName);
+        XClassDelete(self->m_dataSheetName);
         self->m_dataSheetName = NULL;
     }
     if (name) self->m_dataSheetName = XString_create_copy(name);
@@ -81,7 +81,7 @@ void XExcelChart_setDataSheetName(XExcelChart* self, const XString* name) {
 void XExcelChart_setDataSheetName_utf8(XExcelChart* self, const char* name) {
     XString* sheetName = name ? XString_create_utf8(name) : NULL;
     XExcelChart_setDataSheetName(self, sheetName);
-    if (sheetName) XString_delete_base(sheetName);
+    if (sheetName) XClassDelete(sheetName);
 }
 void XExcelChart_setChartType(XExcelChart* self, XExcelChart_ChartType type) { if (self) self->m_chartType = type; }
 void XExcelChart_setChartStyle(XExcelChart* self, int id) { if (self) self->m_chartStyle = id; }
@@ -142,7 +142,7 @@ static const XString* chart_attribute(const XXmlStreamAttributes* attributes, co
     if (!attributes || !name) return NULL;
     XString_Init_Utf8(key, name);
     const XString* result = XXmlStreamAttributes_value_ex(attributes, NULL, key);
-    XString_deinit_base(key);
+    XClassDeinit(key);
     return result;
 }
 
@@ -194,7 +194,7 @@ static XString chart_formula_for_range(const XExcelChart* self, const XCellRange
     }
     XString rangeText = XCellRange_toString(range, true, true);
     XString_append(&formula, &rangeText);
-    XString_deinit_base(&rangeText);
+    XClassDeinit(&rangeText);
     return formula;
 }
 
@@ -208,7 +208,7 @@ static void write_chart_reference(XXmlStreamWriter* writer, const char* containe
     XXmlStreamWriter_writeTextElement_utf8(writer, "c:f", XString_toUtf8(&formula));
     XXmlStreamWriter_writeEndElement(writer);
     XXmlStreamWriter_writeEndElement(writer);
-    XString_deinit_base(&formula);
+    XClassDeinit(&formula);
 }
 
 static bool chart_series_ranges(const XExcelChart_Series* series, XCellRange* valueRange,
@@ -423,7 +423,7 @@ bool XExcelChart_saveToXmlData(XExcelChart* self, uint8_t** outData, size_t* out
             *outLen = size;
         }
     }
-    XXmlStreamWriter_delete_base(writer);
+    XClassDelete(writer);
     return *outData != NULL;
 }
 
@@ -439,7 +439,7 @@ bool XExcelChart_saveToXmlFile(XExcelChart* self, const XString* filePath)
     if (ok) ok = XIODevice_write_1((XIODevice*)file, xml, (int64_t)size) == (int64_t)size;
     if (file) {
         XIODevice_close_base((XIODevice*)file);
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
     }
     XFree_System(xml);
     return ok;
@@ -487,9 +487,9 @@ bool XExcelChart_loadFromXmlData(XExcelChart* self, const uint8_t* bytes, size_t
     XByteArray* data = XByteArray_create_with_data((const char*)bytes, len);
     if (!data) return false;
     XXmlStreamReader* reader = XXmlStreamReader_create();
-    if (!reader) { XByteArray_delete_base(data); return false; }
+    if (!reader) { XClassDelete(data); return false; }
     XXmlStreamReader_addData(reader, data);
-    XByteArray_delete_base(data);
+    XClassDelete(data);
     XVector_clear_base(self->m_series);
     XExcelChart_Series pending;
     memset(&pending, 0, sizeof(pending));
@@ -574,7 +574,7 @@ bool XExcelChart_loadFromXmlData(XExcelChart* self, const uint8_t* bytes, size_t
         }
     }
     bool ok = !XXmlStreamReader_hasError(reader) && self->m_chartType != XExcelChart_NoStatementChart;
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     return ok;
 }
 
@@ -583,15 +583,15 @@ bool XExcelChart_loadFromXmlFile(XExcelChart* self, const XString* filePath)
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* data = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     bool ok = data && XExcelChart_loadFromXmlData(self, XByteArray_data(data),
         XByteArray_size_base((XContainer*)data));
-    if (data) XByteArray_delete_base(data);
+    if (data) XClassDelete(data);
     return ok;
 }
 
@@ -601,5 +601,5 @@ void XExcelChart_setChartTitle_utf8(XExcelChart* self, const char* title)
 {
     XString* s = title ? XString_create_utf8(title) : NULL;
     XExcelChart_setChartTitle(self, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
 }

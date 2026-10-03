@@ -117,7 +117,7 @@ static XSize radiobutton_computeSizeHint(const XRadioButton* self)
         if (h < XPainter_textHeight(&font))
             h = XPainter_textHeight(&font);
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     /* R-75 根因：QRadioButton 继承 QAbstractButton 却从不消费 m_icon，
        sizeHint 不计入图标宽度/高度（同族 XCheckBox 已计入），带图标
        单选钮布局缺位。比照 checkbox_computeSizeHint 补齐。 */
@@ -328,7 +328,7 @@ radiobutton_style_label:
         }
 #endif /* XPAINTER_TEXTLAYOUT_ON */
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     XPainter_restore(painter);
 }
 

@@ -180,8 +180,8 @@ void VXTimeWheelGroup_deinit(XTimeWheelGroup* group)
 {
     while (!XVector_isEmpty_base(&group->m_timeWheel))
         XTimeWheelGroup_removeTimeWheel(group);
-    //XVector_delete_base(&&group->m_timeWheel);
-    XVector_deinit_base(&group->m_timeWheel);
+    //XClassDelete(&&group->m_timeWheel);
+    XClassDeinit(&group->m_timeWheel);
     reclaim_retired_nodes(group);
     // 释放父对象
     XClass_Parent(XIODevice,EXClass_Deinit, void(*)(XIODevice*))(group);
@@ -581,7 +581,7 @@ void XTimeWheelGroup_init(XTimeWheelGroup* group, uint16_t precision)
     XClassGetVtable(group) = XTimeWheelGroup_class_init();
     //初始化数据
     XVector_init(&group->m_timeWheel, sizeof(XTimeWheel),false);
-    XContainerSetDataDeinitMethod(&group->m_timeWheel, XVector_deinit_base);
+    XContainerSetDataDeinitMethod(&group->m_timeWheel, XClass_deinit_base);
     //group->m_timeWheel = XVector_Create(XTimeWheel);
     //group->m_class.m_current_tick = ((XTimerGroupBase*)group)->m_high_res_time_func() / group->m_class.m_precision;
     XAtomic_init(group->m_count, 0);

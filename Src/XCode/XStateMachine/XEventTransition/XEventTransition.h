@@ -49,8 +49,6 @@ void XEventTransition_init(XEventTransition* transition);
  */
 void XEventTransition_init_ex(XEventTransition* transition, XObject* object, XEventType type, XState* sourceState);
 
-#define XEventTransition_delete_base XAbstractTransition_delete_base
-#define XEventTransition_deinit_base XAbstractTransition_deinit_base
 
 /**
  * @brief 获取事件源。

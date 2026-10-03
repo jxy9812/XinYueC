@@ -237,8 +237,6 @@ bool XNetworkProxyQuery_equal(const XNetworkProxyQuery* a, const XNetworkProxyQu
 
 // =============== 继承自 XClass 的 API（符号重命名，无参数包装）===============
 
-#define XNetworkProxyQuery_deinit_base    XClass_deinit_base
-#define XNetworkProxyQuery_delete_base    XClass_delete_base
 
 // =============== XNetworkProxy 虚函数表定义 ===============
 
@@ -300,18 +298,6 @@ XNetworkProxy* XNetworkProxy_create_ex(XMemoryType memory);
  */
 XNetworkProxy* XNetworkProxy_create_2(XNetworkProxy_ProxyType type, const XString* hostName, 
                                               uint16_t port, const XString* user, const XString* password);
-
-// =============== 继承自 XClass 的 API（符号重命名，无参数包装）===============
-
-#define XNetworkProxy_deinit_base    XClass_deinit_base
-#define XNetworkProxy_delete_base    XClass_delete_base
-
-/**
- * @brief 深拷贝一个 XNetworkProxy 实例。
- * @param other 源代理实例
- * @return 新创建的副本
- */
-XNetworkProxy* XNetworkProxy_copy(const XNetworkProxy* other);
 
 /**
  * @brief 获取代理类型。
@@ -492,8 +478,6 @@ XNetworkProxyFactory* XNetworkProxyFactory_create_ex(XMemoryType memory,  XNetwo
 
 // =============== 继承自 XClass 的 API（符号重命名，无参数包装）===============
 
-#define XNetworkProxyFactory_deinit_base    XClass_deinit_base
-#define XNetworkProxyFactory_delete_base    XClass_delete_base
 
 /**
  * @brief 使用工厂查询代理配置。

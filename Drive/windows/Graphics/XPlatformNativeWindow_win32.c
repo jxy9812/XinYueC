@@ -1164,7 +1164,7 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             if (ev) {
                 XGuiApplication_sendSpontaneousEvent((XObject*)entry->m_window,
                                                      ev);
-                XEvent_delete_base((XClass*)ev);
+                XClassDelete((XClass*)ev);
             }
         }
         return 0;
@@ -1784,7 +1784,7 @@ static BOOL CALLBACK xpwn_monitorEnumProc(HMONITOR monitor, HDC dc,
        QGuiApplication::screenAdded）。返回 false=未登记（无应用单例/
        注册失败），所有权仍在平台层：此处回收新建对象，防泄漏。 */
     if (!XWindowSystemInterface_handleScreenAdded(screen)) {
-        XScreen_delete_base(screen);
+        XClassDelete(screen);
         return TRUE;
     }
     /* 本轮新登记：立即置差分标记，防 xpwn_screensRefresh 的移除循环把
@@ -1848,7 +1848,7 @@ static void xpwn_screensInit(void)
                 xpwn_screenRegister(screen, L"\\\\.\\DISPLAY1", &monitorRect);
                 XGuiApplication_setPrimaryScreen(screen);
             } else {
-                XScreen_delete_base(screen);
+                XClassDelete(screen);
             }
         }
     }
@@ -1952,9 +1952,9 @@ static void xpwn_screenRemove(XScreen* screen)
             XWindow_setScreen(window, NULL); /* 无屏可迁，回退主屏语义。 */
         }
     }
-    if (windows) XVector_delete_base((XClass*)windows);
+    if (windows) XClassDelete((XClass*)windows);
     /* 3) 平台层持有所有权，负责释放。 */
-    XScreen_delete_base((XClass*)screen);
+    XClassDelete((XClass*)screen);
     /* 4) R22 槽位压实：尾段前移 + count−−（对标 posix 数组管理）。 */
     if (index < g_xpwnScreenCount - 1) {
         memmove(&g_xpwnScreens[index], &g_xpwnScreens[index + 1],
@@ -3054,7 +3054,7 @@ bool XPlatformNativeWindow_create(XWindow* window)
     /* 初始标题同步（公共层 createHandle 后也会再同步，这里是兜底）。 */
     title = XWindow_title(window);
     xpwn_applyTitle(hwnd, title);
-    if (title) XString_delete_base((XClass*)title);
+    if (title) XClassDelete((XClass*)title);
     return true;
 }
 
@@ -3481,7 +3481,7 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     }
     XImage_init_ex(&image, width, height, XImageFormat_ARGB32_Premultiplied);
     if (XImage_isNull(&image)) {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XFree_Hybrid(pixels);
         SelectObject(memoryDc, oldBitmap);
         DeleteObject(bitmap);
@@ -3509,13 +3509,13 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     XPixmap_init_image(&captured, &image, 0);
     result = XPixmap_create();
     if (!result) {
-        XPixmap_deinit_base(&captured);
-        XImage_deinit_base(&image);
+        XClassDeinit(&captured);
+        XClassDeinit(&image);
         return NULL;
     }
-    XMove(result, &captured);
-    XPixmap_deinit_base(&captured);
-    XImage_deinit_base(&image);
+    XClassMove(result, &captured);
+    XClassDeinit(&captured);
+    XClassDeinit(&image);
     return result;
 }
 

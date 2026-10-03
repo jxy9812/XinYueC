@@ -33,7 +33,7 @@ XMqttPublishProperties* XMqttPublishProperties_create_copy(const XMqttPublishPro
 {
     if (!other) return NULL;
     XMqttPublishProperties* p = XMqttPublishProperties_create();
-    if (p) XCopy(p, other);
+    if (p) XClassCopy(p, other);
     return p;
 }
 
@@ -48,11 +48,11 @@ void XMqttPublishProperties_init(XMqttPublishProperties* prop)
 static void V_deinit(XMqttPublishProperties* prop)
 {
     if (!prop) return;
-    if (prop->m_responseTopic) { XString_delete_base(prop->m_responseTopic); prop->m_responseTopic = NULL; }
-    if (prop->m_correlationData) { XByteArray_delete_base(prop->m_correlationData); prop->m_correlationData = NULL; }
-    if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); prop->m_userProperties = NULL; }
-    if (prop->m_subscriptionIdentifiers) { XVector_delete_base(prop->m_subscriptionIdentifiers); prop->m_subscriptionIdentifiers = NULL; }
-    if (prop->m_contentType) { XString_delete_base(prop->m_contentType); prop->m_contentType = NULL; }
+    if (prop->m_responseTopic) { XClassDelete(prop->m_responseTopic); prop->m_responseTopic = NULL; }
+    if (prop->m_correlationData) { XClassDelete(prop->m_correlationData); prop->m_correlationData = NULL; }
+    if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); prop->m_userProperties = NULL; }
+    if (prop->m_subscriptionIdentifiers) { XClassDelete(prop->m_subscriptionIdentifiers); prop->m_subscriptionIdentifiers = NULL; }
+    if (prop->m_contentType) { XClassDelete(prop->m_contentType); prop->m_contentType = NULL; }
     XClass_Deinit_Parent(XClass, prop);
 }
 
@@ -63,11 +63,11 @@ static void V_copy(XMqttPublishProperties* dest, const XMqttPublishProperties* s
     if (XClassIsVtableNull(dest))
         XMqttPublishProperties_init(dest);
     else {
-        if (dest->m_responseTopic) XString_delete_base(dest->m_responseTopic);
-        if (dest->m_correlationData) XByteArray_delete_base(dest->m_correlationData);
-        if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
-        if (dest->m_subscriptionIdentifiers) XVector_delete_base(dest->m_subscriptionIdentifiers);
-        if (dest->m_contentType) XString_delete_base(dest->m_contentType);
+        if (dest->m_responseTopic) XClassDelete(dest->m_responseTopic);
+        if (dest->m_correlationData) XClassDelete(dest->m_correlationData);
+        if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
+        if (dest->m_subscriptionIdentifiers) XClassDelete(dest->m_subscriptionIdentifiers);
+        if (dest->m_contentType) XClassDelete(dest->m_contentType);
         dest->m_responseTopic = NULL; dest->m_correlationData = NULL;
         dest->m_userProperties = NULL; dest->m_subscriptionIdentifiers = NULL; dest->m_contentType = NULL;
     }
@@ -89,11 +89,11 @@ static void V_move(XMqttPublishProperties* dest, XMqttPublishProperties* src)
     if (XClassIsVtableNull(dest))
         XMqttPublishProperties_init(dest);
     else {
-        if (dest->m_responseTopic) XString_delete_base(dest->m_responseTopic);
-        if (dest->m_correlationData) XByteArray_delete_base(dest->m_correlationData);
-        if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
-        if (dest->m_subscriptionIdentifiers) XVector_delete_base(dest->m_subscriptionIdentifiers);
-        if (dest->m_contentType) XString_delete_base(dest->m_contentType);
+        if (dest->m_responseTopic) XClassDelete(dest->m_responseTopic);
+        if (dest->m_correlationData) XClassDelete(dest->m_correlationData);
+        if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
+        if (dest->m_subscriptionIdentifiers) XClassDelete(dest->m_subscriptionIdentifiers);
+        if (dest->m_contentType) XClassDelete(dest->m_contentType);
     }
     dest->m_availableProperties = src->m_availableProperties;
     dest->m_payloadFormatIndicator = src->m_payloadFormatIndicator;
@@ -125,15 +125,15 @@ void XMqttPublishProperties_setTopicAlias(XMqttPublishProperties* prop, uint16_t
 
 const XString* XMqttPublishProperties_responseTopic_const(const XMqttPublishProperties* prop) { return prop ? prop->m_responseTopic : NULL; }
 XString* XMqttPublishProperties_responseTopic(const XMqttPublishProperties* prop) { if (!prop || !prop->m_responseTopic) return NULL; return XString_create_copy(prop->m_responseTopic); }
-void XMqttPublishProperties_setResponseTopic(XMqttPublishProperties* prop, const char* topic) { if (prop) { if (prop->m_responseTopic) { XString_delete_base(prop->m_responseTopic); } prop->m_responseTopic = topic ? XString_create_utf8(topic) : NULL; prop->m_availableProperties |= XMqttPublishProperties_ResponseTopic; } }
+void XMqttPublishProperties_setResponseTopic(XMqttPublishProperties* prop, const char* topic) { if (prop) { if (prop->m_responseTopic) { XClassDelete(prop->m_responseTopic); } prop->m_responseTopic = topic ? XString_create_utf8(topic) : NULL; prop->m_availableProperties |= XMqttPublishProperties_ResponseTopic; } }
 
 const XByteArray* XMqttPublishProperties_correlationData_const(const XMqttPublishProperties* prop) { return prop ? prop->m_correlationData : NULL; }
 XByteArray* XMqttPublishProperties_correlationData(const XMqttPublishProperties* prop) { if (!prop || !prop->m_correlationData) return NULL; return XByteArray_create_copy(prop->m_correlationData); }
-void XMqttPublishProperties_setCorrelationData(XMqttPublishProperties* prop, const uint8_t* data, size_t len) { if (prop) { if (prop->m_correlationData) { XByteArray_delete_base(prop->m_correlationData); } prop->m_correlationData = (data && len) ? XByteArray_create_with_data((const char*)data, len) : NULL; prop->m_availableProperties |= XMqttPublishProperties_CorrelationData; } }
+void XMqttPublishProperties_setCorrelationData(XMqttPublishProperties* prop, const uint8_t* data, size_t len) { if (prop) { if (prop->m_correlationData) { XClassDelete(prop->m_correlationData); } prop->m_correlationData = (data && len) ? XByteArray_create_with_data((const char*)data, len) : NULL; prop->m_availableProperties |= XMqttPublishProperties_CorrelationData; } }
 
 const XMqttUserProperties* XMqttPublishProperties_userProperties_const(const XMqttPublishProperties* prop) { return prop ? prop->m_userProperties : NULL; }
 XMqttUserProperties* XMqttPublishProperties_userProperties(const XMqttPublishProperties* prop) { if (!prop || !prop->m_userProperties) return NULL; return (XMqttUserProperties*)XVector_create_copy((XVector*)prop->m_userProperties); }
-void XMqttPublishProperties_setUserProperties(XMqttPublishProperties* prop, const XMqttUserProperties* props) { if (prop) { if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); } prop->m_userProperties = props ? (XMqttUserProperties*)XVector_create_copy((XVector*)props) : NULL; prop->m_availableProperties |= XMqttPublishProperties_UserProperty; } }
+void XMqttPublishProperties_setUserProperties(XMqttPublishProperties* prop, const XMqttUserProperties* props) { if (prop) { if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); } prop->m_userProperties = props ? (XMqttUserProperties*)XVector_create_copy((XVector*)props) : NULL; prop->m_availableProperties |= XMqttPublishProperties_UserProperty; } }
 
 const XVector* XMqttPublishProperties_subscriptionIdentifiers_const(const XMqttPublishProperties* prop) { return prop ? prop->m_subscriptionIdentifiers : NULL; }
 XVector* XMqttPublishProperties_subscriptionIdentifiers(const XMqttPublishProperties* prop) { if (!prop || !prop->m_subscriptionIdentifiers) return NULL; return XVector_create_copy(prop->m_subscriptionIdentifiers); }
@@ -146,14 +146,14 @@ void XMqttPublishProperties_setSubscriptionIdentifiers(XMqttPublishProperties* p
             if (!id || *id == 0 || *id > 268435455U) return;
         }
     }
-    if (prop->m_subscriptionIdentifiers) XVector_delete_base(prop->m_subscriptionIdentifiers);
+    if (prop->m_subscriptionIdentifiers) XClassDelete(prop->m_subscriptionIdentifiers);
     prop->m_subscriptionIdentifiers = ids ? XVector_create_copy(ids) : NULL;
     prop->m_availableProperties |= XMqttPublishProperties_SubscriptionIdentifier;
 }
 
 const XString* XMqttPublishProperties_contentType_const(const XMqttPublishProperties* prop) { return prop ? prop->m_contentType : NULL; }
 XString* XMqttPublishProperties_contentType(const XMqttPublishProperties* prop) { if (!prop || !prop->m_contentType) return NULL; return XString_create_copy(prop->m_contentType); }
-void XMqttPublishProperties_setContentType(XMqttPublishProperties* prop, const char* type) { if (prop) { if (prop->m_contentType) { XString_delete_base(prop->m_contentType); } prop->m_contentType = type ? XString_create_utf8(type) : NULL; prop->m_availableProperties |= XMqttPublishProperties_ContentType; } }
+void XMqttPublishProperties_setContentType(XMqttPublishProperties* prop, const char* type) { if (prop) { if (prop->m_contentType) { XClassDelete(prop->m_contentType); } prop->m_contentType = type ? XString_create_utf8(type) : NULL; prop->m_availableProperties |= XMqttPublishProperties_ContentType; } }
 
 // ==================== XMqttMessageStatusProperties ====================
 
@@ -182,7 +182,7 @@ XMqttMessageStatusProperties* XMqttMessageStatusProperties_create_copy(const XMq
 {
     if (!other) return NULL;
     XMqttMessageStatusProperties* p = XMqttMessageStatusProperties_create();
-    if (p) XCopy(p, other);
+    if (p) XClassCopy(p, other);
     return p;
 }
 
@@ -197,8 +197,8 @@ void XMqttMessageStatusProperties_init(XMqttMessageStatusProperties* prop)
 static void VMS_deinit(XMqttMessageStatusProperties* prop)
 {
     if (!prop) return;
-    if (prop->m_reason) { XString_delete_base(prop->m_reason); prop->m_reason = NULL; }
-    if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); prop->m_userProperties = NULL; }
+    if (prop->m_reason) { XClassDelete(prop->m_reason); prop->m_reason = NULL; }
+    if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); prop->m_userProperties = NULL; }
     XClass_Deinit_Parent(XClass, prop);
 }
 
@@ -209,8 +209,8 @@ static void VMS_copy(XMqttMessageStatusProperties* dest, const XMqttMessageStatu
     if (XClassIsVtableNull(dest))
         XMqttMessageStatusProperties_init(dest);
     else {
-        if (dest->m_reason) XString_delete_base(dest->m_reason);
-        if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+        if (dest->m_reason) XClassDelete(dest->m_reason);
+        if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
         dest->m_reason = NULL; dest->m_userProperties = NULL;
     }
     dest->m_reasonCode = src->m_reasonCode;
@@ -224,8 +224,8 @@ static void VMS_move(XMqttMessageStatusProperties* dest, XMqttMessageStatusPrope
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttMessageStatusProperties_init(dest);
-    if (dest->m_reason) XString_delete_base(dest->m_reason);
-    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+    if (dest->m_reason) XClassDelete(dest->m_reason);
+    if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
     dest->m_reasonCode = src->m_reasonCode;
     dest->m_reason = src->m_reason;
     dest->m_userProperties = src->m_userProperties;

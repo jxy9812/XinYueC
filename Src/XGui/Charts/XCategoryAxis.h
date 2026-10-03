@@ -36,10 +36,7 @@ XCategoryAxis* XCategoryAxis_create_ex(XMemoryType memory);
 /** @brief 反初始化（释放基类资源与类别数组）。 */
 /** @brief 反初始化（释放类别数组与基类资源）。 */
 void XCategoryAxis_deinit_impl(XCategoryAxis* self);
-#define XCategoryAxis_deinit_base(self) XCategoryAxis_deinit_impl(self)
 /** @brief 删除堆上类别轴（反初始化并释放结构体）。 */
-#define XCategoryAxis_delete_base(self) \
-    XCategoryAxis_deinit_base(self), XFree_System(self)
 
 /** @brief 追加类别（XString 主版本；对标 QBarCategoryAxis::append）。
  * @param self 目标轴指针。

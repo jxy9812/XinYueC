@@ -134,11 +134,11 @@ static void xhttp_field_deinit(XHttpHeaderField* field)
     if (!field)
         return;
     if (field->m_name) {
-        XClass_delete_base((XClass*)field->m_name);
+        XClassDelete((XClass*)field->m_name);
         field->m_name = NULL;
     }
     if (field->m_value) {
-        XClass_delete_base((XClass*)field->m_value);
+        XClassDelete((XClass*)field->m_value);
         field->m_value = NULL;
     }
 }
@@ -154,9 +154,9 @@ static bool xhttp_field_assign(XHttpHeaderField* field, const XByteArray* name, 
     XByteArray* newValue = XByteArray_trimmed(value);
     if (!newName || !newValue) {
         if (newName)
-            XClass_delete_base((XClass*)newName);
+            XClassDelete((XClass*)newName);
         if (newValue)
-            XClass_delete_base((XClass*)newValue);
+            XClassDelete((XClass*)newValue);
         return false;
     }
     XByteArray_toLower(newName);
@@ -285,7 +285,7 @@ XHttpHeaders* XHttpHeaders_create_copy(const XHttpHeaders* other)
     XHttpHeaders* self = XHttpHeaders_create();
     if (!self)
         return NULL;
-    XCopy((XClass*)self, (const XClass*)other);
+    XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -296,7 +296,7 @@ XHttpHeaders* XHttpHeaders_create_move(XHttpHeaders* other)
     XHttpHeaders* self = XHttpHeaders_create();
     if (!self)
         return NULL;
-    XMove((XClass*)self, (XClass*)other);
+    XClassMove((XClass*)self, (XClass*)other);
     return self;
 }
 
@@ -313,9 +313,9 @@ bool XHttpHeaders_append_utf8(XHttpHeaders* self, const char* name, const char* 
     XByteArray* byteValue = XByteArray_create_utf8(value ? value : "");
     bool result = byteName && byteValue && XHttpHeaders_append(self, byteName, byteValue);
     if (byteName)
-        XClass_delete_base((XClass*)byteName);
+        XClassDelete((XClass*)byteName);
     if (byteValue)
-        XClass_delete_base((XClass*)byteValue);
+        XClassDelete((XClass*)byteValue);
     return result;
 }
 
@@ -326,7 +326,7 @@ bool XHttpHeaders_appendKnown(XHttpHeaders* self,
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     bool result = fieldName && XHttpHeaders_append(self, fieldName, value);
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -357,7 +357,7 @@ bool XHttpHeaders_insertKnown(XHttpHeaders* self,
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     bool result = fieldName && XHttpHeaders_insert(self, index, fieldName, value);
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -376,7 +376,7 @@ bool XHttpHeaders_replaceKnown(XHttpHeaders* self,
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     bool result = fieldName && XHttpHeaders_replace(self, index, fieldName, value);
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -405,7 +405,7 @@ bool XHttpHeaders_replaceOrAppendKnown(XHttpHeaders* self,
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     bool result = fieldName && XHttpHeaders_replaceOrAppend(self, fieldName, value);
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -419,7 +419,7 @@ bool XHttpHeaders_containsKnown(const XHttpHeaders* self, XHttpHeaders_WellKnown
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     bool result = fieldName && XHttpHeaders_contains(self, fieldName);
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -446,7 +446,7 @@ XByteArray* XHttpHeaders_valueKnown(const XHttpHeaders* self,
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     XByteArray* result = fieldName ? XHttpHeaders_value(self, fieldName) : NULL;
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -468,7 +468,7 @@ XByteArray* XHttpHeaders_valueKnownOr(const XHttpHeaders* self,
     XByteArray* result = fieldName ? XHttpHeaders_value_or(self, fieldName, defaultValue) :
                                      (defaultValue ? XByteArray_create_copy(defaultValue) : XByteArray_create());
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -486,7 +486,7 @@ XVector* XHttpHeaders_values(const XHttpHeaders* self, const XByteArray* name)
         value = XByteArray_create_copy(self->m_fields[i].m_value);
         if (!value || !XVector_push_back_1_base(values, &value)) {
             if (value)
-                XClass_delete_base((XClass*)value);
+                XClassDelete((XClass*)value);
             XHttpHeaders_values_free(values);
             return NULL;
         }
@@ -500,7 +500,7 @@ XVector* XHttpHeaders_valuesKnown(const XHttpHeaders* self,
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     XVector* result = fieldName ? XHttpHeaders_values(self, fieldName) : XVector_create(sizeof(XByteArray*));
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -511,9 +511,9 @@ void XHttpHeaders_values_free(XVector* values)
     for (size_t i = 0; i < XContainer_size_base((const XContainer*)values); ++i) {
         XByteArray** value = (XByteArray**)XVector_at_base(values, i);
         if (value && *value)
-            XClass_delete_base((XClass*)*value);
+            XClassDelete((XClass*)*value);
     }
-    XClass_delete_base((XClass*)values);
+    XClassDelete((XClass*)values);
 }
 
 XByteArray* XHttpHeaders_combinedValue(const XHttpHeaders* self, const XByteArray* name)
@@ -544,7 +544,7 @@ XByteArray* XHttpHeaders_combinedValueKnown(const XHttpHeaders* self,
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     XByteArray* result = fieldName ? XHttpHeaders_combinedValue(self, fieldName) : NULL;
     if (fieldName)
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     return result;
 }
 
@@ -591,7 +591,7 @@ void XHttpHeaders_removeAllKnown(XHttpHeaders* self, XHttpHeaders_WellKnownHeade
     XByteArray* fieldName = xhttp_well_known_header_name_array(name);
     if (fieldName) {
         XHttpHeaders_removeAll(self, fieldName);
-        XClass_delete_base((XClass*)fieldName);
+        XClassDelete((XClass*)fieldName);
     }
 }
 

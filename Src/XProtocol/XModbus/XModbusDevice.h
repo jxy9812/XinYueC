@@ -206,8 +206,8 @@ void XModbusDevice_init(XModbusDevice* dev);
   * if (portName) {
   *     XString* str = XVariant_toString(portName);
   *     // 使用 str...
-  *     XString_delete_base(str);
-  *     XVariant_delete_base(portName);
+  *     XClassDelete(str);
+  *     XClassDelete(portName);
   * }
   * @endcode
   */

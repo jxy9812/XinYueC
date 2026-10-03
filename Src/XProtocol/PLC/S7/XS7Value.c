@@ -115,7 +115,7 @@ static void s7_value_set_byte_array_result(XVariant* out, XByteArray* arr)
         return;
     }
     XByteArray_setVariant_move(out, arr);   /* move 进变体自持成员 */
-    XByteArray_delete_base((XClass*)arr);   /* 仅释放已搬空的外壳 */
+    XClassDelete((XClass*)arr);   /* 仅释放已搬空的外壳 */
 }
 
 /**
@@ -132,7 +132,7 @@ static bool s7_value_make_result_array(size_t size, XByteArray** outArr, uint8_t
     XByteArray* arr = XByteArray_create();
     if (!arr || !XByteArray_resize_base((XVector*)arr, size)) {
         if (arr) {
-            XByteArray_delete_base((XClass*)arr);
+            XClassDelete((XClass*)arr);
         }
         return false;
     }
@@ -458,7 +458,7 @@ bool XS7Value_decode(XS7ValueType type, int count, const uint8_t* data, size_t d
             return false;
         }
         XString_setVariant_move(out, str);
-        XString_delete_base((XClass*)str);
+        XClassDelete((XClass*)str);
         return true;
     }
 

@@ -239,7 +239,7 @@ static void xtw_shiftColumnsLeft(XTableWidget* self, int column)
         XTableWidgetItem* row = self->m_cells[i];
         if (!row) continue;
         if (row[column].text) {
-            XString_delete_base((XClass*)row[column].text);
+            XClassDelete((XClass*)row[column].text);
             row[column].text = NULL;
         }
         for (c = column + 1; c < oldCols; ++c)
@@ -336,7 +336,7 @@ static void xtw_freeRowItems(XTableWidgetItem* row, int cols)
     if (!row) return;
     for (i = 0; i < cols; ++i)
         if (row[i].text) {
-            XString_delete_base((XClass*)row[i].text);
+            XClassDelete((XClass*)row[i].text);
             row[i].text = NULL;
         }
     XFree_System(row);
@@ -355,7 +355,7 @@ static void VXTableWidget_deinit(XTableWidget* self)
     if (self->m_hHeaders) {
         for (i = 0; i < self->m_base.m_colCapacity; ++i) {
             if (self->m_hHeaders[i]) {
-                XString_delete_base((XClass*)self->m_hHeaders[i]);
+                XClassDelete((XClass*)self->m_hHeaders[i]);
                 self->m_hHeaders[i] = NULL;
             }
         }
@@ -365,7 +365,7 @@ static void VXTableWidget_deinit(XTableWidget* self)
     if (self->m_vHeaders) {
         for (i = 0; i < self->m_vHeaderCapacity; ++i) {
             if (self->m_vHeaders[i]) {
-                XString_delete_base((XClass*)self->m_vHeaders[i]);
+                XClassDelete((XClass*)self->m_vHeaders[i]);
                 self->m_vHeaders[i] = NULL;
             }
         }
@@ -373,7 +373,7 @@ static void VXTableWidget_deinit(XTableWidget* self)
         self->m_vHeaders = NULL;
     }
     if (self->m_model) {
-        XClass_delete_base((XClass*)self->m_model);
+        XClassDelete((XClass*)self->m_model);
         self->m_model = NULL;
     }
     if (self->m_cellWidgets) {
@@ -555,7 +555,7 @@ void XTableWidget_setItem(XTableWidget* self, int row, int column,
     XTableWidgetItem* cell = xtw_cell(self, row, column);
     if (!cell || !item) return;
     if (cell->text) {
-        XString_delete_base((XClass*)cell->text);
+        XClassDelete((XClass*)cell->text);
         cell->text = NULL;
     }
     if (item->text)
@@ -788,7 +788,7 @@ XString* XTableWidget_takeHorizontalHeaderItem(XTableWidget* self, int column)
         column >= self->m_base.m_colCapacity || !self->m_hHeaders[column])
         return NULL;
     taken = self->m_hHeaders[column];
-    self->m_hHeaders[column] = NULL; /* 所有权移交调用方（XString_delete_base 释放）。 */
+    self->m_hHeaders[column] = NULL; /* 所有权移交调用方（XClassDelete 释放）。 */
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setHeaderData_2(self->m_model, column, 0, "");
@@ -802,7 +802,7 @@ XString* XTableWidget_takeVerticalHeaderItem(XTableWidget* self, int row)
         row >= self->m_vHeaderCapacity || !self->m_vHeaders[row])
         return NULL;
     taken = self->m_vHeaders[row];
-    self->m_vHeaders[row] = NULL; /* 所有权移交调用方（XString_delete_base 释放）。 */
+    self->m_vHeaders[row] = NULL; /* 所有权移交调用方（XClassDelete 释放）。 */
     XWidget_update((XWidget*)self);
     return taken;
 }
@@ -849,7 +849,7 @@ void XTableWidget_clear(XTableWidget* self)
             if (!self->m_cells[i]) continue;
             for (k = 0; k < self->m_base.m_colCapacity; ++k) {
                 if (self->m_cells[i][k].text) {
-                    XString_delete_base((XClass*)self->m_cells[i][k].text);
+                    XClassDelete((XClass*)self->m_cells[i][k].text);
                     self->m_cells[i][k].text = NULL;
                 }
             }
@@ -865,7 +865,7 @@ void XTableWidget_clear(XTableWidget* self)
     if (self->m_hHeaders) {
         for (i = 0; i < self->m_base.m_colCapacity; ++i) {
             if (self->m_hHeaders[i]) {
-                XString_delete_base((XClass*)self->m_hHeaders[i]);
+                XClassDelete((XClass*)self->m_hHeaders[i]);
                 self->m_hHeaders[i] = NULL;
             }
         }
@@ -873,7 +873,7 @@ void XTableWidget_clear(XTableWidget* self)
     if (self->m_vHeaders) {
         for (i = 0; i < self->m_vHeaderCapacity; ++i) {
             if (self->m_vHeaders[i]) {
-                XString_delete_base((XClass*)self->m_vHeaders[i]);
+                XClassDelete((XClass*)self->m_vHeaders[i]);
                 self->m_vHeaders[i] = NULL;
             }
         }
@@ -899,7 +899,7 @@ void XTableWidget_clearContents(XTableWidget* self)
         if (!self->m_cells[i]) continue;
         for (k = 0; k < self->m_base.m_colCapacity; ++k) {
             if (self->m_cells[i][k].text) {
-                XString_delete_base((XClass*)self->m_cells[i][k].text);
+                XClassDelete((XClass*)self->m_cells[i][k].text);
                 self->m_cells[i][k].text = NULL;
             }
         }
@@ -1128,7 +1128,7 @@ XString* XTableWidget_takeItem(XTableWidget* self, int row, int column)
     XString* taken;
     if (!cell || !cell->text) return NULL;
     taken = cell->text;
-    cell->text = NULL; /* 所有权移交调用方（以 XString_delete_base 释放）。 */
+    cell->text = NULL; /* 所有权移交调用方（以 XClassDelete 释放）。 */
     xtw_emitCellSignal(self, (size_t)XTableWidget_cellChanged_signal,
                        row, column);
     xtw_emitItemSignal(self, (size_t)XTableWidget_itemChanged_signal, cell);
@@ -1218,7 +1218,7 @@ XVector* XTableWidget_items(const XTableWidget* self, const char* text)
             rowNo = row;
             if (!XVector_push_back_1_base(rows, &rowNo)) {
                 /* 分配失败：容器归还调用方语义不成立，整体置空返回 NULL。 */
-                XVector_delete_base((XClass*)rows);
+                XClassDelete((XClass*)rows);
                 return NULL;
             }
             break; /* 每行至多输出一次。 */

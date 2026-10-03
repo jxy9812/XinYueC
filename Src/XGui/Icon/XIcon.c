@@ -50,7 +50,7 @@ static void XIconEntry_copy(void* destination, const void* source)
     const XIconEntry* src = (const XIconEntry*)source;
     XIconEntry* dest = (XIconEntry*)destination;
     if (!dest || !src) return;
-    XCopy(&dest->m_pixmap, &src->m_pixmap);
+    XClassCopy(&dest->m_pixmap, &src->m_pixmap);
     dest->m_fileName = src->m_fileName
         ? XString_create_copy(src->m_fileName) : NULL;
     dest->m_requestedSize = src->m_requestedSize;
@@ -64,7 +64,7 @@ static void XIconEntry_move(void* destination, const void* source)
     XIconEntry* dest = (XIconEntry*)destination;
     XIconEntry* src = (XIconEntry*)source;
     if (!dest || !src) return;
-    XMove(&dest->m_pixmap, &src->m_pixmap);
+    XClassMove(&dest->m_pixmap, &src->m_pixmap);
     dest->m_fileName = src->m_fileName;
     src->m_fileName = NULL;
     dest->m_requestedSize = src->m_requestedSize;
@@ -77,8 +77,8 @@ static void XIconEntry_deinit(void* value)
 {
     XIconEntry* entry = (XIconEntry*)value;
     if (!entry) return;
-    if (entry->m_fileName) XString_delete_base((XClass*)entry->m_fileName);
-    XPixmap_deinit_base(&entry->m_pixmap);
+    if (entry->m_fileName) XClassDelete((XClass*)entry->m_fileName);
+    XClassDeinit(&entry->m_pixmap);
 }
 
 /**
@@ -145,14 +145,14 @@ static const char* XIcon_platformThemeName(bool fallback)
 static void XIcon_replaceString(XString** destination, const char* value)
 {
     XString* replacement = value ? XString_create_utf8(value) : NULL;
-    if (*destination) XString_delete_base((XClass*)*destination);
+    if (*destination) XClassDelete((XClass*)*destination);
     *destination = replacement;
 }
 
 static void XIcon_replaceString_2(XString** destination, const XString* value)
 {
     XString* replacement = value ? XString_create_copy(value) : NULL;
-    if (*destination) XString_delete_base((XClass*)*destination);
+    if (*destination) XClassDelete((XClass*)*destination);
     *destination = replacement;
 }
 
@@ -209,7 +209,7 @@ static XString* XIcon_findAtNxFile(const XString* baseFileName,
         if (candidateString && XFile_exists_static(candidateString))
             return candidateString;
         if (candidateString)
-            XString_delete_base((XClass*)candidateString);
+            XClassDelete((XClass*)candidateString);
     }
     return NULL;
 }
@@ -260,9 +260,9 @@ static void XIconPrivate_unref(XIconPrivate* d)
     if (!d) return;
     if (XAtomic_fetch_add_int32(&d->m_refCount, -1, XAtomic_MemoryOrder_SeqCst) == 1)
     {
-        XVector_deinit_base((XClass*)&d->m_entries);
-        if (d->m_name) XString_delete_base((XClass*)d->m_name);
-        if (d->m_engine) XIconEngine_delete_base(d->m_engine);
+        XClassDeinit((XClass*)&d->m_entries);
+        if (d->m_name) XClassDelete((XClass*)d->m_name);
+        if (d->m_engine) XClassDelete(d->m_engine);
         XFree_System(d);
     }
 }
@@ -273,13 +273,13 @@ static void XIconPrivate_setName(XIconPrivate* d, const char* name)
 {
     XString* value = name ? XString_create_utf8(name) : NULL;
     XIconPrivate_setName_2(d, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 static void XIconPrivate_setName_2(XIconPrivate* d, const XString* name)
 {
     if (!d) return;
-    if (d->m_name) XString_delete_base((XClass*)d->m_name);
+    if (d->m_name) XClassDelete((XClass*)d->m_name);
     d->m_name = name ? XString_create_copy(name) : NULL;
     XIconPrivate_touch(d);
 }
@@ -321,10 +321,10 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
             continue;
         if (existing->m_fileName)
         {
-            XString_delete_base((XClass*)existing->m_fileName);
+            XClassDelete((XClass*)existing->m_fileName);
             existing->m_fileName = NULL;
         }
-        XCopy(&existing->m_pixmap, pixmap);
+        XClassCopy(&existing->m_pixmap, pixmap);
         existing->m_requestedSize.width = 0;
         existing->m_requestedSize.height = 0;
         existing->m_loaded = true;
@@ -333,12 +333,12 @@ static void XIconPrivate_addEntry(XIconPrivate* d, const XPixmap* pixmap, XIconM
     }
     XMemset(&entry, 0, sizeof(entry));
     XPixmap_init(&entry.m_pixmap);
-    XCopy(&entry.m_pixmap, pixmap);
+    XClassCopy(&entry.m_pixmap, pixmap);
     entry.m_mode = mode;
     entry.m_state = state;
     entry.m_loaded = true;
     if (!XVector_push_back_move_1_base(&d->m_entries, &entry))
-        XPixmap_deinit_base(&entry.m_pixmap);
+        XClassDeinit(&entry.m_pixmap);
     XIconPrivate_touch(d);
 }
 
@@ -349,7 +349,7 @@ static bool XIconPrivate_canReadFile(const XString* fileName)
     if (!fileName) return false;
     XImageReader_init_file(&reader, fileName, NULL);
     canRead = XImageReader_canRead(&reader);
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&reader);
     return canRead;
 }
 
@@ -409,7 +409,7 @@ static void XIconPrivate_addFileEntries(XIconPrivate* d,
                 XIconPrivate_addFileEntry(d, fileName, size.width, size.height,
                                           mode, state);
         } while (XImageReader_jumpToNextImage(&reader));
-        XImageReader_deinit_base(&reader);
+        XClassDeinit(&reader);
         return;
     }
 
@@ -423,8 +423,8 @@ static void XIconPrivate_addFileEntries(XIconPrivate* d,
         XMemset(&pixmap, 0, sizeof(pixmap)); XPixmap_init(&pixmap);
         if (XPixmap_load(&pixmap, fileName, NULL, 0))
             XIconPrivate_addEntry(d, &pixmap, mode, state);
-        XPixmap_deinit_base(&pixmap);
-        XImageReader_deinit_base(&reader);
+        XClassDeinit(&pixmap);
+        XClassDeinit(&reader);
         return;
     }
 
@@ -434,17 +434,17 @@ static void XIconPrivate_addFileEntries(XIconPrivate* d,
         XMemset(&pixmap, 0, sizeof(pixmap)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
         XImage_init(&image);
         if (!XImageReader_read(&reader, &image)) {
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
             break;
         }
         XPixmap_init(&pixmap);
         XPixmap_init_image(&pixmap, &image, 0);
         if (!XPixmap_isNull(&pixmap))
             XIconPrivate_addEntry(d, &pixmap, mode, state);
-        XPixmap_deinit_base(&pixmap);
-        XImage_deinit_base(&image);
+        XClassDeinit(&pixmap);
+        XClassDeinit(&image);
     }
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&reader);
 }
 
 /* 在基础文件登记后追加 Qt 约定的高 DPI 兄弟文件。 */
@@ -469,7 +469,7 @@ static void XIconPrivate_addAtNx(XIconPrivate* d, const XString* fileName,
     } else {
         XIconPrivate_addFileEntries(d, sibling, mode, state);
     }
-    XString_delete_base((XClass*)sibling);
+    XClassDelete((XClass*)sibling);
 }
 
 /* ========== 虚函数实现 ========== */
@@ -556,7 +556,7 @@ void XIcon_init_file_2(XIcon* self, const char* fileName)
 {
     XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
     XIcon_init_file(self, fileNameString);
-    if (fileNameString) XString_delete_base((XClass*)fileNameString);
+    if (fileNameString) XClassDelete((XClass*)fileNameString);
 }
 
 void XIcon_init_file(XIcon* self, const XString* fileName)
@@ -579,14 +579,14 @@ void XIcon_init_engine(XIcon* self, XIconEngine* engine)
     XString* name;
     XIcon_init(self);
     if (!self || !self->m_data) {
-        if (engine) XIconEngine_delete_base(engine);
+        if (engine) XClassDelete(engine);
         return;
     }
     self->m_data->m_engine = engine;
     name = engine ? XIconEngine_iconName_base(engine) : NULL;
     if (name) {
         XIconPrivate_setName_2(self->m_data, name);
-        XString_delete_base((XClass*)name);
+        XClassDelete((XClass*)name);
     }
 }
 bool XIcon_isNull(const XIcon* self)
@@ -754,34 +754,34 @@ static bool XIconPrivate_loadFileEntry(XIconPrivate* d, XIconEntry* entry,
                 exact = true;
                 break;
             }
-            XCopy(&previous, &image);
-            XImage_deinit_base(&image);
+            XClassCopy(&previous, &image);
+            XClassDeinit(&image);
         }
         if (!exact && XImage_isNull(&image) && !XImage_isNull(&previous)) {
-            XMove(&image, &previous);
+            XClassMove(&image, &previous);
         }
         ok = readAny || !XImage_isNull(&image);
     }
 
     if (!ok || XImage_isNull(&image)) {
-        XImage_deinit_base(&previous);
-        XImage_deinit_base(&image);
-        XImageReader_deinit_base(&reader);
+        XClassDeinit(&previous);
+        XClassDeinit(&image);
+        XClassDeinit(&reader);
         return false;
     }
 
     XPixmap_init_image(&entry->m_pixmap, &image, 0);
     if (XPixmap_isNull(&entry->m_pixmap)) {
-        XImage_deinit_base(&previous);
-        XImage_deinit_base(&image);
-        XImageReader_deinit_base(&reader);
+        XClassDeinit(&previous);
+        XClassDeinit(&image);
+        XClassDeinit(&reader);
         return false;
     }
     XPixmap_setDevicePixelRatio(&entry->m_pixmap, scale);
     entry->m_loaded = true;
-    XImage_deinit_base(&previous);
-    XImage_deinit_base(&image);
-    XImageReader_deinit_base(&reader);
+    XClassDeinit(&previous);
+    XClassDeinit(&image);
+    XClassDeinit(&reader);
     return true;
 }
 
@@ -1050,7 +1050,7 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
             "qt_icon_scale/", sourceKey, paletteKey, mode,
             actual.width, actual.height, dprThousand, out))
         return;
-    XCopy(out, &best->m_pixmap);
+    XClassCopy(out, &best->m_pixmap);
     if (actual.width != XPixmap_width(&best->m_pixmap) ||
         actual.height != XPixmap_height(&best->m_pixmap))
     {
@@ -1061,10 +1061,10 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
                        &scaled);
         if (!XPixmap_isNull(&scaled))
         {
-            XMove(out, &scaled);
+            XClassMove(out, &scaled);
         }
         else
-            XPixmap_deinit_base(&scaled);
+            XClassDeinit(&scaled);
     }
     if (best->m_mode != mode && mode != XIconMode_Normal)
     {
@@ -1074,10 +1074,10 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XMove(out, &styled);
+            XClassMove(out, &styled);
         }
         else
-            XPixmap_deinit_base(&styled);
+            XClassDeinit(&styled);
     }
     XPixmap_setDevicePixelRatio(out, outputRatio);
     if (!XPixmap_isNull(out))
@@ -1329,8 +1329,8 @@ void XIcon_paint(const XIcon* self, void* painter, int x, int y, int w, int h,
         target->m_drawImage(target, &image, drawX, drawY);
     }
     if (saved && target->m_restore) target->m_restore(target);
-    XImage_deinit_base(&image);
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&image);
+    XClassDeinit(&pixmap);
 }
 
 void XIcon_addPixmap(XIcon* self, const XPixmap* pixmap, XIconMode mode, XIconState state)
@@ -1350,7 +1350,7 @@ void XIcon_addFile_2(XIcon* self, const char* fileName, int width, int height,
 {
     XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
     XIcon_addFile(self, fileNameString, width, height, mode, state);
-    if (fileNameString) XString_delete_base((XClass*)fileNameString);
+    if (fileNameString) XClassDelete((XClass*)fileNameString);
 }
 
 void XIcon_addFile(XIcon* self, const XString* fileName, int width, int height,
@@ -1364,11 +1364,11 @@ void XIcon_addFile(XIcon* self, const XString* fileName, int width, int height,
         XIconEngine_addFile_base(self->m_data->m_engine, fileName, &size, mode, state);
         key = XIconEngine_key_base(self->m_data->m_engine);
         if (key && XString_equals_utf8(key, "svg", XChar_CaseSensitive)) {
-            XString_delete_base((XClass*)key);
+            XClassDelete((XClass*)key);
             XIconPrivate_touch(self->m_data);
             return;
         }
-        if (key) XString_delete_base((XClass*)key);
+        if (key) XClassDelete((XClass*)key);
         XIconPrivate_addAtNx(self->m_data, fileName, width, height, mode, state);
         XIconPrivate_touch(self->m_data);
         return;
@@ -1466,7 +1466,7 @@ static void XIcon_fromThemeImpl(const XString* nameString,
            该构造函数自身会初始化输出，因此不要先创建一个临时私有数据。 */
         if (nameUtf8 && (nameUtf8[0] == '/' || nameUtf8[0] == ':')) {
             if (XClassGetVtable(out) == XIcon_class_init())
-                XIcon_deinit_base(out);
+                XClassDeinit(out);
             XIcon_init_file(out, nameString);
             goto fromTheme_done;
         }
@@ -1477,7 +1477,7 @@ static void XIcon_fromThemeImpl(const XString* nameString,
        此时其中的虚表字段可能是随机值，不能仅用“非 NULL”判定后调用析构；
        只有明确绑定 XIcon 虚表的对象才允许释放。 */
     if (XClassGetVtable(out) == XIcon_class_init())
-        XIcon_deinit_base(out);
+        XClassDeinit(out);
     XIcon_init(out);
     if (nameString) {
         engine = XIconThemeEngine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
@@ -1490,14 +1490,14 @@ static void XIcon_fromThemeImpl(const XString* nameString,
                 (const XIconEngine*)engine);
             if (engineName) {
                 XIconPrivate_setName_2(out->m_data, engineName);
-                XString_delete_base((XClass*)engineName);
+                XClassDelete((XClass*)engineName);
             }
         } else if (engine) {
-            XIconEngine_delete_base((XIconEngine*)engine);
+            XClassDelete((XIconEngine*)engine);
         }
     }
 fromTheme_done:
-    if (created) XString_delete_base((XClass*)created);
+    if (created) XClassDelete((XClass*)created);
     if (fallback) {
         bool useFallback = XIcon_isNull(out);
         /* Qt 6.8 QIcon::fromTheme(name, fallback) treats an engine with no
@@ -1512,10 +1512,10 @@ fromTheme_done:
                                  &available);
             useFallback = XVector_size_base(
                 (const XContainer*)&available) == 0;
-            XVector_deinit_base((XClass*)&available);
+            XClassDeinit((XClass*)&available);
         }
         if (useFallback)
-            XCopy(out, fallback);
+            XClassCopy(out, fallback);
     }
 }
 
@@ -1533,7 +1533,7 @@ bool XIcon_hasThemeIcon_2(const char* name)
 {
     XString* nameString = name ? XString_create_utf8(name) : NULL;
     bool found = XIcon_hasThemeIcon(nameString);
-    if (nameString) XString_delete_base((XClass*)nameString);
+    if (nameString) XClassDelete((XClass*)nameString);
     return found;
 }
 
@@ -1560,7 +1560,7 @@ bool XIcon_hasThemeIcon(const XString* name)
     resolvedName = XIconInternal_resolveThemeIconName(nameUtf8);
     matched = resolvedName && XString_equals_utf8(
         resolvedName, nameUtf8, XChar_CaseSensitive);
-    if (resolvedName) XString_delete_base((XClass*)resolvedName);
+    if (resolvedName) XClassDelete((XClass*)resolvedName);
     return matched;
 }
 
@@ -1665,7 +1665,7 @@ XStringList* XIcon_themeSearchPaths()
         XStringList_push_back_utf8(paths, ":/icons");
     }
     if (paths)
-        XCopy((XClass*)copy, (const XClass*)paths);
+        XClassCopy((XClass*)copy, (const XClass*)paths);
     return copy;
 }
 
@@ -1679,7 +1679,7 @@ void XIcon_setThemeSearchPaths(const XStringList* source)
     XStringList* destination = XIcon_paths(false);
     if (destination == source) return;
     XStringList_clear_base((XContainer*)destination);
-    if (source) XCopy((XClass*)destination, (const XClass*)source);
+    if (source) XClassCopy((XClass*)destination, (const XClass*)source);
     XIconScaledPixmapCache_clear();
 }
 
@@ -1696,7 +1696,7 @@ XStringList* XIcon_fallbackSearchPaths()
     if (paths && XStringList_size_base((const XContainer*)paths) == 0)
         (void)XIcon_platformIconSearchPaths(true, paths);
     if (paths)
-        XCopy((XClass*)copy, (const XClass*)paths);
+        XClassCopy((XClass*)copy, (const XClass*)paths);
     return copy;
 }
 
@@ -1710,7 +1710,7 @@ void XIcon_setFallbackSearchPaths(const XStringList* source)
     XStringList* destination = XIcon_paths(true);
     if (destination == source) return;
     XStringList_clear_base((XContainer*)destination);
-    if (source) XCopy((XClass*)destination, (const XClass*)source);
+    if (source) XClassCopy((XClass*)destination, (const XClass*)source);
     XIconScaledPixmapCache_clear();
 }
 

@@ -335,7 +335,7 @@ static void xpbs_copyRectPixels(const XImage* src, int sx, int sy,
                 (size_t)w * pixelBytes);
 }
 
-/** @brief 把源图像深拷贝到目标图像（XCopy 为共享引用，不能用）。
+/** @brief 把源图像深拷贝到目标图像（XClassCopy 为共享引用，不能用）。
  *  @note  D1 容量化后 src 可以是容量 stride 的逻辑尺寸视图：行距按源/
  *         目标各自的 bytesPerLine 寻址，每行只拷 w×每像素字节的 有效
  *         数据（原实现要求两者行距相等，视图 stride 更大时会误判失
@@ -499,7 +499,7 @@ static void xpbs_initConfiguredImage(XImage* image, int width, int height,
     {
         /* deinit 释放旧像素但保留对象的虚表与堆所有权标记；不能让
            resize(0, 0) 把旧数据留在对象里。 */
-        XImage_deinit_base(image);
+        XClassDeinit(image);
         return;
     }
     if (buffer)
@@ -558,7 +558,7 @@ static bool xpbs_batchEnsureBuffer(XPlatformBackingStore* self)
         XImage_width(&self->m_batchImage) >= bw &&
         XImage_height(&self->m_batchImage) >= bh)
         return true;
-    XImage_deinit_base(&self->m_batchImage);
+    XClassDeinit(&self->m_batchImage);
     XImage_init(&self->m_batchImage);
     XImage_init_ex(&self->m_batchImage, bw, bh, xpbs_surfaceFormat());
     return self->m_batchImage.m_data != NULL;
@@ -610,7 +610,7 @@ static void xpbs_batchReset(XPlatformBackingStore* self)
     self->m_batchStartMs = 0;
     if (self->m_batchImage.m_data)
     {
-        XImage_deinit_base(&self->m_batchImage);
+        XClassDeinit(&self->m_batchImage);
         XImage_init(&self->m_batchImage);
     }
 }
@@ -696,24 +696,24 @@ void XPlatformBackingStore_delete(XPlatformBackingStore* self)
         self->m_nativeState = NULL;
     }
     if (self->m_image.m_data)
-        XImage_deinit_base(&self->m_image);
+        XClassDeinit(&self->m_image);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     if (self->m_image2.m_data)
-        XImage_deinit_base(&self->m_image2);
+        XClassDeinit(&self->m_image2);
 #endif
     /* D1：视图先于容量宿主释放亦可（视图不拥有位数据）；顺序无关。 */
     if (self->m_capacityImage.m_data)
-        XImage_deinit_base(&self->m_capacityImage);
+        XClassDeinit(&self->m_capacityImage);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     if (self->m_capacityImage2.m_data)
-        XImage_deinit_base(&self->m_capacityImage2);
+        XClassDeinit(&self->m_capacityImage2);
 #endif
     XRegion_deinit(&self->m_staticContents);
     XRegion_deinit(&self->m_paintRegion);
     XRegion_deinit(&self->m_flushRegion);
 #if XPBS_TILE_BATCHING_ON
     if (self->m_batchImage.m_data)
-        XImage_deinit_base(&self->m_batchImage);
+        XClassDeinit(&self->m_batchImage);
     XRegion_deinit(&self->m_batchRegion);
 #endif
     XFree_System(self);
@@ -1055,7 +1055,7 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         !self->m_nativeBufferNoBuf)
     {
         /* 关键顺序：getNativeBuffer 内部会释放旧 DIB，必须先把旧内容
-           深拷贝快照（XCopy 是 COW 共享，不解决悬垂），再查询新缓冲。 */
+           深拷贝快照（XClassCopy 是 COW 共享，不解决悬垂），再查询新缓冲。 */
         XImage snapshot;
         bool haveSnap = false;
         XImage_init(&snapshot);
@@ -1089,13 +1089,13 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
                     }
                     /* m_image 共享 native 视图（外部缓冲，m_ownsData=
                        false：unref 不释放 DIB，归 driver 管理）。 */
-                    XImage_deinit_base(&self->m_image);
+                    XClassDeinit(&self->m_image);
                     XImage_init(&self->m_image);
-                    XCopy(&self->m_image, &nativeImage);
-                    XImage_deinit_base(&nativeImage);
+                    XClassCopy(&self->m_image, &nativeImage);
+                    XClassDeinit(&nativeImage);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
                     /* native 模式单缓冲：第二缓冲置空（inactive 不用）。 */
-                    XImage_deinit_base(&self->m_image2);
+                    XClassDeinit(&self->m_image2);
                     XImage_init(&self->m_image2);
 #endif
                     self->m_nativeBufferMode = true;
@@ -1117,13 +1117,13 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
                     xpbs_clipRegion(&self->m_staticContents, w, h, &cropped);
                     XRegion_copy(&cropped, &self->m_staticContents);
                     XRegion_deinit(&cropped);
-                    XImage_deinit_base(&snapshot);
+                    XClassDeinit(&snapshot);
                     return;
                 }
-                XImage_deinit_base(&nativeImage);
+                XClassDeinit(&nativeImage);
             }
         }
-        XImage_deinit_base(&snapshot);
+        XClassDeinit(&snapshot);
         /* 驱动拒绝该尺寸（罕见）：native 标志复位，走自分配路径。
            恒 NULL 驱动（fbdev）在此闩住，后续 resize 短路整个探测
            分支（含徒劳的整窗深拷贝快照）。 */
@@ -1172,13 +1172,13 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         w <= XImage_width(&self->m_capacityImage) &&
         h <= XImage_height(&self->m_capacityImage))
     {
-        XImage_deinit_base(&self->m_image);
+        XClassDeinit(&self->m_image);
         XImage_init(&self->m_image);
         xpbs_rebuildCapacityView(&self->m_image, &self->m_capacityImage, w, h);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
         if (!self->m_softwareSingleBuffer && self->m_capacityImage2.m_data)
         {
-            XImage_deinit_base(&self->m_image2);
+            XClassDeinit(&self->m_image2);
             XImage_init(&self->m_image2);
             xpbs_rebuildCapacityView(&self->m_image2,
                                      &self->m_capacityImage2, w, h);
@@ -1205,7 +1205,7 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
     /* 先快照旧内容（共享引用），重建缓冲，最后回拷左上重叠区。 */
     XImage_init(&oldImage);
     if (active && active->m_data)
-        XCopy(&oldImage, active);
+        XClassCopy(&oldImage, active);
     ow = XImage_width(&oldImage);
     oh = XImage_height(&oldImage);
     XImage_init(&newImage);
@@ -1266,7 +1266,7 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
                 capOk = false;
                 capW = w;
                 capH = h;
-                XImage_deinit_base(&newImage);
+                XClassDeinit(&newImage);
                 xpbs_initConfiguredImage(&newImage, w, h,
                     self->m_externalBuffers ? self->m_buffer1 : NULL,
                     self->m_bufferSize);
@@ -1289,11 +1289,11 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
 #endif
        )
     {
-        XImage_deinit_base(&newImage);
+        XClassDeinit(&newImage);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-        XImage_deinit_base(&newImage2);
+        XClassDeinit(&newImage2);
 #endif
-        XImage_deinit_base(&oldImage);
+        XClassDeinit(&oldImage);
         return;
     }
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
@@ -1312,44 +1312,44 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         }
     }
 #endif
-    XImage_deinit_base(&oldImage);
+    XClassDeinit(&oldImage);
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
     /* D1：容量分配成功时存储归容量缓冲所有，m_image 改持逻辑视图；
-       失败/桌面路径维持既有"m_image 自有"语义。XMove 对目标旧数据
+       失败/桌面路径维持既有"m_image 自有"语义。XClassMove 对目标旧数据
        先 unref——旧容量存储（若有）随 Move 释放，无泄漏。 */
-    XImage_deinit_base(&self->m_image);
+    XClassDeinit(&self->m_image);
     if (capOk)
     {
-        XMove(&self->m_capacityImage, &newImage);
+        XClassMove(&self->m_capacityImage, &newImage);
         xpbs_rebuildCapacityView(&self->m_image, &self->m_capacityImage,
                                  w, h);
     }
     else
     {
-        XImage_deinit_base(&self->m_capacityImage);
-        XMove(&self->m_image, &newImage);
+        XClassDeinit(&self->m_capacityImage);
+        XClassMove(&self->m_image, &newImage);
     }
     self->m_capacityMode = capOk;
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    XImage_deinit_base(&self->m_image2);
+    XClassDeinit(&self->m_image2);
     if (capOk && !self->m_softwareSingleBuffer && newImage2.m_data)
     {
-        XMove(&self->m_capacityImage2, &newImage2);
+        XClassMove(&self->m_capacityImage2, &newImage2);
         xpbs_rebuildCapacityView(&self->m_image2, &self->m_capacityImage2,
                                  w, h);
     }
     else
     {
-        XImage_deinit_base(&self->m_capacityImage2);
-        XMove(&self->m_image2, &newImage2);
+        XClassDeinit(&self->m_capacityImage2);
+        XClassMove(&self->m_image2, &newImage2);
     }
 #endif
 #else /* PARTIAL：tile 缓冲语义不变（不参与容量化）。 */
-    XImage_deinit_base(&self->m_image);
-    XMove(&self->m_image, &newImage);
+    XClassDeinit(&self->m_image);
+    XClassMove(&self->m_image, &newImage);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
-    XImage_deinit_base(&self->m_image2);
-    XMove(&self->m_image2, &newImage2);
+    XClassDeinit(&self->m_image2);
+    XClassMove(&self->m_image2, &newImage2);
 #endif
 #endif
     self->m_size.width = w;
@@ -1447,7 +1447,7 @@ bool XPlatformBackingStore_scroll(XPlatformBackingStore* self,
         }
         xpbs_fillRegion(image, &vacated, 0u);
     }
-    XImage_deinit_base(&snapshot);
+    XClassDeinit(&snapshot);
     XRegion_deinit(&dest);
     XRegion_deinit(&vacated);
     XRegion_deinit(&clip);

@@ -89,14 +89,14 @@ XVtable* XMqttServer_class_init(void);
 /**
  * @brief 在堆上创建并初始化 XMqttServer 实例。
  * @param memory 内存类型（XCLASS_DEFAULT_MEMORY_TYPE 使用系统默认内存）。
- * @return 新创建的实例指针，失败返回 NULL；调用者负责调用 XMqttServer_delete_base 释放。
+ * @return 新创建的实例指针，失败返回 NULL；调用者负责调用 XClassDelete 释放。
  */
 XMqttServer* XMqttServer_create_ex(XMemoryType memory);
 
 /**
  * @brief 初始化已分配的 XMqttServer 实例。
  * @param server 待初始化的实例指针（非 NULL）。
- * @note 栈上使用必须与 XMqttServer_deinit_base 成对调用。
+ * @note 栈上使用必须与 XClassDeinit 成对调用。
  */
 void XMqttServer_init(XMqttServer* server);
 

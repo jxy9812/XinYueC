@@ -87,17 +87,6 @@ XVtable* XVirtualKeyboardSelectionListModel_class_init(void);
 
 /* ==================== 生命周期（所有权边界） ==================== */
 
-/**
- * @brief      通过 XClass 虚表反初始化（栈/外部存储对象使用）。
- * @details    创建入口在 Protected 头（仅引擎 TU 构造），归属方
- *             （XVirtualKeyboardInputEngine）在自身 TU 内释放，故释放
- *             接口必须在公开头声明。
- */
-#define XVirtualKeyboardSelectionListModel_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-/** @brief 删除堆上对象（归属方释放自有候选模型用）。 */
-#define XVirtualKeyboardSelectionListModel_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 
 /* ==================== 查询 ==================== */
 

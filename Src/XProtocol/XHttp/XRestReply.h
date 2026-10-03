@@ -38,18 +38,16 @@ void XRestReply_init(XRestReply* self, XHttpReply* reply);
 /**
  * - @brief 创建 REST 响应包装。
  * - @param reply 被包装的 HTTP 响应；借用，可为 NULL，必须在包装使用期间保持有效。
- * - @return 新建 REST 包装；调用者必须使用 XRestReply_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建 REST 包装；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XRestReply* XRestReply_create_ex(XMemoryType memory,  XHttpReply* reply);
 /**
  * - @brief 深拷贝创建 REST 响应包装。
  * - @param other 源包装；借用且不能为 NULL，内部 HTTP 响应指针仍按借用语义复制。
- * - @return 新建 REST 包装；调用者必须使用 XRestReply_delete_base 释放，参数无效或分配失败返回 NULL。
+ * - @return 新建 REST 包装；调用者必须使用 XClassDelete 释放，参数无效或分配失败返回 NULL。
  */
 XRestReply* XRestReply_create_copy(const XRestReply* other);
 
-#define XRestReply_deinit_base XClass_deinit_base
-#define XRestReply_delete_base XClass_delete_base
 
 /**
  * - @brief 获取被包装的 HTTP 响应。
@@ -60,20 +58,20 @@ XHttpReply* XRestReply_networkReply(const XRestReply* self);
 /**
  * - @brief 读取 JSON body。
  * - @param self REST 包装；不能为 NULL。
- * - @param errorText 可选输出参数；失败时接收新建中文错误描述，调用者使用 XString_delete_base 释放。
- * - @return 新建 JSON 文档；调用者必须使用 XJsonDocument_delete 释放，失败返回 NULL。
+ * - @param errorText 可选输出参数；失败时接收新建中文错误描述，调用者使用 XClassDelete 释放。
+ * - @return 新建 JSON 文档；调用者必须使用 XClassDelete 释放，失败返回 NULL。
  */
 XJsonDocument* XRestReply_readJson(XRestReply* self, XString** errorText);
 /**
  * - @brief 读取剩余响应 body。
  * - @param self REST 包装；不能为 NULL。
- * - @return 新建 body 字节数组；调用者必须使用 XByteArray_delete_base 释放，参数无效或分配失败返回 NULL。
+ * - @return 新建 body 字节数组；调用者必须使用 XClassDelete 释放，参数无效或分配失败返回 NULL。
  */
 XByteArray* XRestReply_readBody(XRestReply* self);
 /**
  * - @brief 按 UTF-8 读取剩余响应 body。
  * - @param self REST 包装；不能为 NULL。
- * - @return 新建 UTF-8 字符串；调用者必须使用 XString_delete_base 释放，参数无效或转换失败返回 NULL。
+ * - @return 新建 UTF-8 字符串；调用者必须使用 XClassDelete 释放，参数无效或转换失败返回 NULL。
  */
 XString* XRestReply_readText(XRestReply* self);
 /**
@@ -109,7 +107,7 @@ XHttpReply_NetworkError XRestReply_error(const XRestReply* self);
 /**
  * - @brief 获取错误描述副本。
  * - @param self REST 包装；可为 NULL。
- * - @return 新建错误描述字符串；调用者必须使用 XString_delete_base 释放，未设置错误时返回 NULL。
+ * - @return 新建错误描述字符串；调用者必须使用 XClassDelete 释放，未设置错误时返回 NULL。
  */
 XString* XRestReply_errorString(const XRestReply* self);
 

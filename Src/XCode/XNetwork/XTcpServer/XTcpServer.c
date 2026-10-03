@@ -140,7 +140,7 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 	if (handle < 0) {
 		server->lastError = XAbstractSocket_ConnectionRefusedError;
 		if (server->errorString) {
-			XString_delete_base(server->errorString);
+			XClassDelete(server->errorString);
 		}
 		server->errorString = XString_create_utf8("Invalid socket descriptor");
 		XTcpServer_acceptError_signal(server, XAbstractSocket_ConnectionRefusedError);
@@ -155,7 +155,7 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 	if (!socket) {
 		server->lastError = XAbstractSocket_SocketResourceError;
 		if (server->errorString) {
-			XString_delete_base(server->errorString);
+			XClassDelete(server->errorString);
 		}
 		server->errorString = XString_create_utf8("Failed to create socket object");
 		// 关闭不接受的句柄
@@ -171,7 +171,7 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 		XTcpSocket_deleteLater(socket);
 		server->lastError = XAbstractSocket_ConnectionRefusedError;
 		if (server->errorString) {
-			XString_delete_base(server->errorString);
+			XClassDelete(server->errorString);
 		}
 		server->errorString = XString_create_utf8("Failed to set socket descriptor");
 			xtcpserver_closeAcceptedSocket(server, handle);
@@ -209,22 +209,22 @@ static void VXTcpServer_deinit(XTcpServer* server)
 				XObject_deinitLater((XObject*)sock);
 			}
 		}
-		XVector_delete_base(server->pendingConnections);
+		XClassDelete(server->pendingConnections);
 		server->pendingConnections = NULL;
 	}
 
 	// 娓呯悊閿欒瀛楃涓?
 	if (server->errorString) {
-		XString_delete_base(server->errorString);
+		XClassDelete(server->errorString);
 		server->errorString = NULL;
 	}
 
 	// 释放地址结构（close 中已重置 serverAddress，这里再次 deinit 是安全的）
-	XHostAddress_deinit_base(&server->serverAddress);
-	XHostAddress_deinit_base(&server->lastAcceptedAddr);
+	XClassDeinit(&server->serverAddress);
+	XClassDeinit(&server->lastAcceptedAddr);
 	
 	// 释放代理资源
-	XNetworkProxy_deinit_base(&server->proxy);
+	XClassDeinit(&server->proxy);
 	
 	// 调用父类析构（XObject → XClass）
 	XClass_Deinit_Parent(XObject, server);
@@ -286,7 +286,7 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	XHostAddress listenAddr;
 	XHostAddress_init(&listenAddr);
 	if (address) {
-		XCopy(&listenAddr, address);
+		XClassCopy(&listenAddr, address);
 	} else {
 		XHostAddress_setAddressSpecial(&listenAddr, XHostAddress_AnySpecial);
 	}
@@ -302,17 +302,17 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	options.m_listenBacklog = server->listenBacklogSize;
 	server->m_deviceFd = XDevice_open(XDeviceType_Socket, &options.m_base, &error);
 	if (server->m_deviceFd == XFD_INVALID) {
-		XHostAddress_deinit_base(&listenAddr);
+		XClassDeinit(&listenAddr);
 		server->lastError = XAbstractSocket_AddressInUseError;
 		if (server->errorString) {
-			XString_delete_base(server->errorString);
+			XClassDelete(server->errorString);
 		}
 		server->errorString = XString_create_utf8("Failed to bind to address");
 		return false;
 	}
-	XHostAddress_deinit_base(&server->serverAddress);
-	XCopy(&server->serverAddress, &listenAddr);
-	XHostAddress_deinit_base(&listenAddr);
+	XClassDeinit(&server->serverAddress);
+	XClassCopy(&server->serverAddress, &listenAddr);
+	XClassDeinit(&listenAddr);
 	memset(&value, 0, sizeof(value));
 	if (!XDevice_getProperty(server->m_deviceFd, (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
 		XDevice_close(server->m_deviceFd);
@@ -341,7 +341,7 @@ void XTcpServer_close(XTcpServer* server)
 	server->m_deviceFd = XFD_INVALID;
 	server->listening = false;
 	server->serverPort = 0;
-	XHostAddress_deinit_base(&server->serverAddress);
+	XClassDeinit(&server->serverAddress);
 	XHostAddress_init(&server->serverAddress);
 }
 
@@ -547,7 +547,7 @@ void XTcpServer_setProxy(XTcpServer* server, const XNetworkProxy* proxy)
 {
 	if (!server || !proxy) return;
 	// 鍏堥噴鏀炬棫鐨勪唬鐞嗚祫婧?
-	XNetworkProxy_deinit_base(&server->proxy);
+	XClassDeinit(&server->proxy);
 	// 閲嶆柊鍒濆鍖栧苟娣辨嫹璐?
 	XNetworkProxy_init(&server->proxy);
 	server->proxy.type = proxy->type;

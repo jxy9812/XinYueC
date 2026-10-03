@@ -344,8 +344,8 @@ static bool XFont_readFileBytes(const char* filePath, XByteArray** outBytes)
             (filePath[2] == '/' || filePath[2] == '\\'))
         {
             const char* alternatePath = filePath + 3;
-            XClass_delete_base((XClass*)file);
-            XClass_delete_base((XClass*)path);
+            XClassDelete((XClass*)file);
+            XClassDelete((XClass*)path);
             file = NULL;
             path = XString_create_utf8(alternatePath);
             file = path ? XFile_create() : NULL;
@@ -363,13 +363,13 @@ static bool XFont_readFileBytes(const char* filePath, XByteArray** outBytes)
     if (!bytes)
         goto failed;
     *outBytes = bytes;
-    XClass_delete_base((XClass*)file);
-    XClass_delete_base((XClass*)path);
+    XClassDelete((XClass*)file);
+    XClassDelete((XClass*)path);
     return true;
 failed:
-    if (bytes) XClass_delete_base((XClass*)bytes);
-    if (file) XClass_delete_base((XClass*)file);
-    if (path) XClass_delete_base((XClass*)path);
+    if (bytes) XClassDelete((XClass*)bytes);
+    if (file) XClassDelete((XClass*)file);
+    if (path) XClassDelete((XClass*)path);
     return false;
 }
 
@@ -629,7 +629,7 @@ static bool XFont_exeDir(char* buf, size_t cap)
     ok = utf8 && utf8[0] && strlen(utf8) < cap;
     if (ok)
         memcpy(buf, utf8, strlen(utf8) + 1u);
-    XString_delete_base((XClass*)dir);
+    XClassDelete((XClass*)dir);
     return ok;
 }
 
@@ -667,7 +667,7 @@ static bool XFont_outlineFamilyLoad(const char* family, unsigned char** outData,
                 blobSize = raw;
             }
         }
-        XClass_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         if (!blob)
             continue;
         if (!XFont_xfoHeader(blob, blobSize, NULL, NULL, NULL, NULL, NULL,
@@ -815,9 +815,9 @@ static void VXFont_deinit(XFont* self)
 {
     if (!self) return;
     if (!XFont_isSharedFamily(self->m_family))
-        XString_delete_base((XClass*)self->m_family);
+        XClassDelete((XClass*)self->m_family);
     self->m_family = NULL;
-    XString_delete_base((XClass*)self->m_styleName);
+    XClassDelete((XClass*)self->m_styleName);
     self->m_styleName = NULL;
 }
 
@@ -844,9 +844,9 @@ static void VXFont_copy(XFont* dest, const XFont* src)
                                 : NULL;
         if (oldFamily && oldFamily != dest->m_family &&
             !XFont_isSharedFamily(oldFamily))
-            XString_delete_base((XClass*)oldFamily);
+            XClassDelete((XClass*)oldFamily);
         if (oldStyle && oldStyle != dest->m_styleName)
-            XString_delete_base((XClass*)oldStyle);
+            XClassDelete((XClass*)oldStyle);
     }
     /* 复制值字段 */
     dest->m_pointSizeF = src->m_pointSizeF;
@@ -879,8 +879,8 @@ static void VXFont_move(XFont* dest, XFont* src)
         XFont_init(dest);
     /* 目标先释放原有字符串，再转移源字符串所有权。 */
     if (!XFont_isSharedFamily(dest->m_family))
-        XString_delete_base((XClass*)dest->m_family);
-    XString_delete_base((XClass*)dest->m_styleName);
+        XClassDelete((XClass*)dest->m_family);
+    XClassDelete((XClass*)dest->m_styleName);
     dest->m_family = src->m_family;
     dest->m_styleName = src->m_styleName;
     src->m_family = NULL;
@@ -1180,8 +1180,8 @@ static bool XFont_load_lvgl_bin_glyph(const char* filePath, uint32_t cp,
             (filePath[2] == '/' || filePath[2] == '\\'))
         {
             const char* alternatePath = filePath + 3;
-            XClass_delete_base((XClass*)file);
-            XClass_delete_base((XClass*)path);
+            XClassDelete((XClass*)file);
+            XClassDelete((XClass*)path);
             file = NULL;
             path = XString_create_utf8(alternatePath);
             file = path ? XFile_create() : NULL;
@@ -1431,14 +1431,14 @@ static bool XFont_load_lvgl_bin_glyph(const char* filePath, uint32_t cp,
                 (p % (size_t)dsc->box_w) * bpp, bpp, pixels[p]);
     }
 success:
-    XClass_delete_base((XClass*)bytes);
-    XClass_delete_base((XClass*)file);
-    XClass_delete_base((XClass*)path);
+    XClassDelete((XClass*)bytes);
+    XClassDelete((XClass*)file);
+    XClassDelete((XClass*)path);
     return true;
 failed:
-    if (bytes) XClass_delete_base((XClass*)bytes);
-    if (file) XClass_delete_base((XClass*)file);
-    if (path) XClass_delete_base((XClass*)path);
+    if (bytes) XClassDelete((XClass*)bytes);
+    if (file) XClassDelete((XClass*)file);
+    if (path) XClassDelete((XClass*)path);
     return false;
 }
 #endif /* XFONT_FILE_ON && XFONT_LVGL8_FILE_ON */
@@ -1562,7 +1562,7 @@ void XFont_setFamily(XFont* self, const char* family)
 {
     if (!self) return;
     if (!XFont_isSharedFamily(self->m_family))
-        XString_delete_base((XClass*)self->m_family);
+        XClassDelete((XClass*)self->m_family);
     self->m_family = NULL;
     if (family && family[0])
     {
@@ -1585,7 +1585,7 @@ const char* XFont_styleName(const XFont* self)
 void XFont_setStyleName(XFont* self, const char* styleName)
 {
     if (!self) return;
-    if (self->m_styleName) XString_delete_base((XClass*)self->m_styleName);
+    if (self->m_styleName) XClassDelete((XClass*)self->m_styleName);
     if (styleName && styleName[0]) {
         self->m_styleName = XString_create_utf8(styleName);
     } else {

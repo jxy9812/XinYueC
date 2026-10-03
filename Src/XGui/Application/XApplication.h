@@ -91,7 +91,7 @@ XVtable* XApplication_class_init(void);
  *             实例指针即指向本对象，后续 XGuiApplication_instance() 可见。
  *             初始化后本对象作为进程唯一应用直至生命周期结束。
  * @param      self 待初始化对象；生命周期结束时必须成对调用
- *             XApplication_deinit_base。
+ *             XClassDeinit。
  * @param      argc 命令行参数个数（可为 0）。
  * @param      argv 命令行参数数组（可为 NULL）。
  */
@@ -109,14 +109,12 @@ void XApplication_init(XApplication* self, int argc, char** argv);
  *             原实例指针。
  * @param      memory 对象内存类型。
  * @return     新对象指针；失败或已存在其它应用返回 NULL，成功用
- *             XApplication_deinit_base 释放。
+ *             XClassDeinit 释放。
  */
 XApplication* XApplication_create_ex(XMemoryType memory, int argc, char** argv);
 
 /** @brief 通过 XClass 虚表释放 XApplication 资源（栈/外部存储对象使用）。 */
-#define XApplication_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XApplication 对象。 */
-#define XApplication_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      查询唯一 XApplication 实例（对标 QApplication::instance）。
@@ -261,7 +259,7 @@ void XApplication_setStyle(XStyle* style);
  *             width()/height()/ascent() 等度量成员，本适配返回 XFont
  *             值拷贝，度量由调用方把副本传入 XPainter_textWidth 等测量
  *             接口完成；副本拥有独立的家族/样式名字符串，使用完毕必须
- *             调用 XFont_deinit_base 释放（与 XWidget_fontMetrics 相同的
+ *             调用 XClassDeinit 释放（与 XWidget_fontMetrics 相同的
  *             深拷贝契约）。
  */
 XFont XApplication_fontMetrics(void);

@@ -76,7 +76,7 @@ static void XStringViewTest_Create(void)
         XString* s = XString_create_utf8("XString");
         XStringView v = XStringView_create_string(s);
         XPrintf("  create_string('XString'): size=%lld (期望 7)\n", (long long)XStringView_size(&v));
-        XString_delete_base(s);
+        XClassDelete(s);
     }
 
     /* create_string(NULL) */
@@ -406,14 +406,14 @@ static void XStringViewTest_ToString(void)
     XStringView v = XStringView_create_data(data, 5);
     XString* s = XStringView_toString(&v);
     XPrintf("  toString(): size=%zu (期望 5)\n", XString_length_base(s));
-    XString_delete_base(s);
+    XClassDelete(s);
 
     /* null view toString */
     {
         XStringView nv = XStringView_create();
         XString* ns = XStringView_toString(&nv);
         XPrintf("  toString(null view): isNull=%d (期望 1)\n", ns ? XString_isNull(ns) : 1);
-        XString_delete_base(ns);
+        XClassDelete(ns);
     }
 
     XPrintf("\n");

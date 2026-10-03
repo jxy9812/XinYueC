@@ -566,8 +566,8 @@ int64_t XStringView_indexOf_regularExpression(const XStringView* self,
     bool hasMatch = XRegularExpressionMatch_hasMatch(result);
     int64_t position = hasMatch ?
             XRegularExpressionMatch_capturedStart(result, 0) : -1;
-    if (match && hasMatch) XCopy(match, result);
-    XRegularExpressionMatch_delete_base((XClass*)result);
+    if (match && hasMatch) XClassCopy(match, result);
+    XClassDelete((XClass*)result);
     return position;
 }
 
@@ -591,7 +591,7 @@ int64_t XStringView_lastIndexOf_regularExpression(const XStringView* self,
             expression, self, 0, XRegularExpression_NormalMatch,
             XRegularExpression_NoMatchOption);
     if (!iterator || !XRegularExpressionMatchIterator_isValid(iterator)) {
-        if (iterator) XRegularExpressionMatchIterator_delete_base((XClass*)iterator);
+        if (iterator) XClassDelete((XClass*)iterator);
         return -1;
     }
 
@@ -602,16 +602,16 @@ int64_t XStringView_lastIndexOf_regularExpression(const XStringView* self,
         if (!current) break;
         int64_t position = XRegularExpressionMatch_capturedStart(current, 0);
         if (position < 0 || position >= endPosition) {
-            XRegularExpressionMatch_delete_base((XClass*)current);
+            XClassDelete((XClass*)current);
             break;
         }
-        if (last) XRegularExpressionMatch_delete_base((XClass*)last);
+        if (last) XClassDelete((XClass*)last);
         last = current;
         resultPosition = position;
     }
-    if (match && last) XCopy(match, last);
-    if (last) XRegularExpressionMatch_delete_base((XClass*)last);
-    XRegularExpressionMatchIterator_delete_base((XClass*)iterator);
+    if (match && last) XClassCopy(match, last);
+    if (last) XClassDelete((XClass*)last);
+    XClassDelete((XClass*)iterator);
     return resultPosition;
 }
 
@@ -640,7 +640,7 @@ int64_t XStringView_count_regularExpression(const XStringView* self,
                 XRegularExpression_NoMatchOption);
         if (!match) break;
         if (!XRegularExpressionMatch_hasMatch(match)) {
-            XRegularExpressionMatch_delete_base((XClass*)match);
+            XClassDelete((XClass*)match);
             break;
         }
         ++count;
@@ -649,7 +649,7 @@ int64_t XStringView_count_regularExpression(const XStringView* self,
                 XChar_isHighSurrogate(self->m_data[index])) {
             ++index;
         }
-        XRegularExpressionMatch_delete_base((XClass*)match);
+        XClassDelete((XClass*)match);
     }
     return count;
 }
@@ -664,7 +664,7 @@ XStringList* XStringView_split_regularExpression(const XStringView* self,
     if (!value) return NULL;
     XStringList* result = XString_split_regularExpression(value, separator,
                                                            keepEmptyParts);
-    XString_delete_base((XClass*)value);
+    XClassDelete((XClass*)value);
     return result;
 }
 #endif

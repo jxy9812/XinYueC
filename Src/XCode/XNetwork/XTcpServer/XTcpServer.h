@@ -80,7 +80,7 @@ void XTcpServer_init(XTcpServer* server);
 
 /**
  * @brief 创建 XTcpServer 实例。
- * @return 新分配的实例，需调用 XTcpServer_delete_base() 释放
+ * @return 新分配的实例，需调用 XClassDelete() 释放
  */
 XTcpServer* XTcpServer_create_ex(XMemoryType memory);
 

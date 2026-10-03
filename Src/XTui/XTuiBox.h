@@ -50,7 +50,6 @@ void XTuiBox_init(XTuiBox* box);
 /** @brief 在堆上创建控件对象。 */
 XTuiBox* XTuiBox_create_ex(XMemoryType memory);
 
-#define XTuiBox_delete_base XClass_delete_base /**< 释放堆对象。 */
 
 /** @brief 设置标题文本（深拷贝）。 */
 void XTuiBox_setTitle(XTuiBox* box, const char* title);

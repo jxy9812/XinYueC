@@ -185,7 +185,7 @@ static int labels_frame(void)
                     XFrame_lineWidth((const XFrame*)NULL) == 1,
                 "XFrame NULL 查询返回默认值");
 
-    XFrame_deinit_base(&frame);
+    XClassDeinit(&frame);
     return failures;
 }
 
@@ -396,7 +396,7 @@ static int labels_label(void)
         XString* sel = XLabel_selectedText(&selectable);
         XAPI_EXPECT(XString_equals_utf8(sel, "ell", XChar_CaseSensitive),
                     "XLabel selectedText=UTF-16 码元切片 ell");
-        XString_delete_base((XClass*)sel);
+        XClassDelete((XClass*)sel);
     }
     /* 任一参数 -1 清除选择（Qt setSelection 语义）。 */
     XLabel_setSelection(&selectable, -1, 0);
@@ -410,7 +410,7 @@ static int labels_label(void)
                         XString_equals_utf8(sel, "Hello",
                                             XChar_CaseSensitive),
                     "XLabel 选区超长钳位到文本末 Hello");
-        XString_delete_base((XClass*)sel);
+        XClassDelete((XClass*)sel);
     }
 
     /* ---- 尺寸提示（Qt hasHeightForWidth/heightForWidth：wordWrap 时
@@ -470,11 +470,11 @@ static int labels_label(void)
      * 渲染效果不在本套件断言职责内）。 */
     XLabel_drawContents(&linkLabel, NULL);
 
-    XLabel_deinit_base(&linkLabel);
-    XLabel_deinit_base(&wrap);
-    XLabel_deinit_base(&selectable);
-    XLabel_deinit_base(&label);
-    XWidget_deinit_base(&buddy);
+    XClassDeinit(&linkLabel);
+    XClassDeinit(&wrap);
+    XClassDeinit(&selectable);
+    XClassDeinit(&label);
+    XClassDeinit(&buddy);
     return failures;
 }
 
@@ -646,9 +646,9 @@ static int labels_groupbox(void)
                     !XGroupBox_isChecked(NULL),
                 "XGroupBox NULL 查询返回默认值");
 
-    XLabel_deinit_base(&child);
-    XGroupBox_deinit_base(&box2);
-    XGroupBox_deinit_base(&box);
+    XClassDeinit(&child);
+    XClassDeinit(&box2);
+    XClassDeinit(&box);
     return failures;
 }
 
@@ -791,7 +791,7 @@ static int labels_lcd(void)
                     XLcdNumber_value(NULL) == 0.0,
                 "XLcdNumber NULL 查询返回默认值");
 
-    XLcdNumber_deinit_base(&lcd);
+    XClassDeinit(&lcd);
     return failures;
 }
 
@@ -949,9 +949,9 @@ static int labels_progress(void)
                     XProgressBar_isTextVisible(NULL),
                 "XProgressBar NULL 查询返回默认值");
 
-    XProgressBar_deinit_base(&bar3);
-    XProgressBar_deinit_base(&bar2);
-    XProgressBar_deinit_base(&bar);
+    XClassDeinit(&bar3);
+    XClassDeinit(&bar2);
+    XClassDeinit(&bar);
     return failures;
 }
 

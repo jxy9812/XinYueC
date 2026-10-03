@@ -15,7 +15,7 @@
  * 联动、separator/priority/menuRole/iconVisibleInMenu/
  * shortcutVisibleInContextMenu、data 所有权、trigger/activate/hover 的
  * triggered/toggled/hovered 语义、显式禁用时忽略触发、changed 通知计数、
- * XCopy/XMove 与父对象级联释放，以及 XTestMenu_setActionFunction 的菜单绑定。
+ * XClassCopy/XClassMove 与父对象级联释放，以及 XTestMenu_setActionFunction 的菜单绑定。
  */
 
 static int g_failures = 0;
@@ -171,7 +171,7 @@ static void XActionTest_defaults(void)
                            !XAction_isShortcutVisibleInContextMenu(action),
                        "默认非分隔条且菜单图标/快捷键显示关闭");
     XActionTest_expect(XAction_data(action) == NULL, "默认无用户数据");
-    XAction_delete_base(action);
+    XClassDelete(action);
 }
 
 static void XActionTest_textFamily(void)
@@ -226,19 +226,19 @@ static void XActionTest_textFamily(void)
                                                XChar_CaseSensitive),
                        "text 返回深拷贝");
     if (copy)
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
 
     str = XString_create_utf8("另存为");
     XActionTest_expect(str != NULL, "XString 构造成功");
     XAction_setText(action, str);
-    XString_delete_base((XClass*)str);
+    XClassDelete((XClass*)str);
     XActionTest_expect(XAction_text_const(action) != NULL &&
                            XString_equals_utf8(XAction_text_const(action),
                                                "另存为",
                                                XChar_CaseSensitive),
                        "setText(XString) 深拷贝后可用");
 
-    XAction_delete_base(action);
+    XClassDelete(action);
 }
 
 static void XActionTest_checkable(void)
@@ -274,7 +274,7 @@ static void XActionTest_checkable(void)
     XAction_setChecked(action, true);
     XActionTest_expect(g_toggledCount == 2, "关闭可选中后 setChecked 不再发 toggled");
 
-    XAction_delete_base(action);
+    XClassDelete(action);
 }
 
 static void XActionTest_enabledVisible(void)
@@ -331,7 +331,7 @@ static void XActionTest_enabledVisible(void)
     XAction_setDisabled(action, true);
     XActionTest_expect(!XAction_isEnabled(action), "setDisabled(true) 等价禁用");
 
-    XAction_delete_base(action);
+    XClassDelete(action);
 }
 
 static void XActionTest_triggerAndHover(void)
@@ -369,7 +369,7 @@ static void XActionTest_triggerAndHover(void)
     XAction_activate(action, XActionEvent_Hover);
     XActionTest_expect(g_hoveredCount == 2, "activate(Hover) 再发射 hovered");
 
-    XAction_delete_base(action);
+    XClassDelete(action);
 }
 
 static void XActionTest_miscProperties(void)
@@ -401,7 +401,7 @@ static void XActionTest_miscProperties(void)
     XActionTest_expect(g_changedCount == 5,
                        "五个属性变化各发射一次 changed");
 
-    XAction_delete_base(action);
+    XClassDelete(action);
 }
 
 static void XActionTest_copyMove(void)
@@ -420,15 +420,15 @@ static void XActionTest_copyMove(void)
     XAction_setChecked(&src, true);
     XAction_setPriority(&src, XActionPriority_High);
 
-    XCopy(&dst, &src);
+    XClassCopy(&dst, &src);
     XActionTest_expect(XAction_text_const(&dst) != NULL &&
                            XString_equals_utf8(XAction_text_const(&dst),
                                                "复制源",
                                                XChar_CaseSensitive),
-                       "XCopy 复制文本");
-    XActionTest_expect(XAction_isChecked(&dst), "XCopy 复制选中状态");
+                       "XClassCopy 复制文本");
+    XActionTest_expect(XAction_isChecked(&dst), "XClassCopy 复制选中状态");
     XActionTest_expect(XAction_priority(&dst) == XActionPriority_High,
-                       "XCopy 复制优先级");
+                       "XClassCopy 复制优先级");
 
     copy = XAction_create_copy(&src);
     XActionTest_expect(copy != NULL &&
@@ -437,26 +437,26 @@ static void XActionTest_copyMove(void)
                                                "复制源",
                                                XChar_CaseSensitive),
                        "create_copy 深拷贝属性");
-    XAction_delete_base(copy);
+    XClassDelete(copy);
 
-    XAction_deinit_base(&dst);
-    XAction_deinit_base(&src);
+    XClassDeinit(&dst);
+    XClassDeinit(&src);
 
     a = XAction_create();
     b = XAction_create();
     XAction_setText_2(a, "移动A");
     XAction_setText_2(b, "移动B");
     XAction_setCheckable(b, true);
-    XMove(a, b);
+    XClassMove(a, b);
     XActionTest_expect(XAction_text_const(a) != NULL &&
                            XString_equals_utf8(XAction_text_const(a),
                                                "移动B",
                                                XChar_CaseSensitive),
-                       "XMove 转移文本到目标");
-    XActionTest_expect(XAction_text_const(b) == NULL, "XMove 后源文本为空");
-    XActionTest_expect(!XAction_isCheckable(b), "XMove 后源可选中复位");
-    XAction_delete_base(a);
-    XAction_delete_base(b);
+                       "XClassMove 转移文本到目标");
+    XActionTest_expect(XAction_text_const(b) == NULL, "XClassMove 后源文本为空");
+    XActionTest_expect(!XAction_isCheckable(b), "XClassMove 后源可选中复位");
+    XClassDelete(a);
+    XClassDelete(b);
 }
 
 static void XActionTest_parentOwnership(void)
@@ -469,7 +469,7 @@ static void XActionTest_parentOwnership(void)
     XActionTest_expect(child != NULL, "带父对象 create_ex 成功");
     XActionTest_expect(XObject_parent((XObject*)child) == parent,
                        "子动作已登记父对象");
-    XClass_delete_base((XClass*)parent);
+    XClassDelete((XClass*)parent);
     XActionTest_expect(true, "父对象释放后子动作级联释放（无崩溃/泄漏）");
 }
 
@@ -484,7 +484,7 @@ static void XActionTest_data(void)
     XAction_setData(action, NULL);
     XActionTest_expect(XAction_data(action) == NULL, "setData(NULL) 清空数据");
 
-    XAction_delete_base(action);
+    XClassDelete(action);
 }
 
 static void XActionTest_menuBinding(void)

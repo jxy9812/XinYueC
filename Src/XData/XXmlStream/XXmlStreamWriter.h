@@ -91,7 +91,7 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self);
 /**
  * @brief      创建写入外部 XByteArray 的 Writer。
  * @param      array 外部字节数组，只借用，Writer 不负责释放。
- * @return     新 Writer；调用方使用 XXmlStreamWriter_delete_base 释放。
+ * @return     新 Writer；调用方使用 XClassDelete 释放。
  * @note       输出同时保留在 Writer 内部缓冲区，兼容现有 toString API。
  */
 XXmlStreamWriter* XXmlStreamWriter_create_byteArray(XByteArray* array);
@@ -99,14 +99,12 @@ XXmlStreamWriter* XXmlStreamWriter_create_byteArray(XByteArray* array);
 /**
  * @brief      创建写入外部 XString 的 Writer。
  * @param      string 外部 UTF-16 字符串，只借用，Writer 不负责释放。
- * @return     新 Writer；调用方使用 XXmlStreamWriter_delete_base 释放。
+ * @return     新 Writer；调用方使用 XClassDelete 释放。
  * @note       对标 Qt QXmlStreamWriter(QString*)，输出追加到目标字符串。
  */
 XXmlStreamWriter* XXmlStreamWriter_create_string(XString* string);
 
 
-#define  XXmlStreamWriter_deinit_base           XClass_deinit_base
-#define  XXmlStreamWriter_delete_base           XClass_delete_base
 
 /* ========== 设备设置 ========== */
 

@@ -56,7 +56,7 @@ static int64_t toolbutton_int64Prop(const XToolButton* self,
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
     v = XObject_property((const XObject*)self, &key);
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
     return v ? XVariant_toInt64(v) : fallback;
 }
 
@@ -75,8 +75,8 @@ static void toolbutton_setInt64Prop(XToolButton* self, const char* keyUtf8,
     XString_assign_utf8(&key, keyUtf8);
     /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
     if (!XObject_setProperty((XObject*)self, &key, v))
-        XVariant_delete_base((XClass*)v);
-    XString_deinit_base(&key);
+        XClassDelete((XClass*)v);
+    XClassDeinit(&key);
 }
 
 static void toolbutton_removeProp(XToolButton* self, const char* keyUtf8)
@@ -88,7 +88,7 @@ static void toolbutton_removeProp(XToolButton* self, const char* keyUtf8)
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
     XObject_removeProperty((XObject*)self, &key);
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
 }
 
 /** @brief 取消未决的按住弹出定时器（无未决时为幂等）。 */
@@ -255,7 +255,7 @@ static void toolbutton_mirrorFromAction(XToolButton* self)
     text = action ? XAction_text(action) : NULL;
     XAbstractButton_setText((XAbstractButton*)self, text);
     if (text)
-        XString_delete_base((XClass*)text);
+        XClassDelete((XClass*)text);
     /* 对标 Qt 6.8 QToolButton::setDefaultAction：图标随动作镜像
        （QToolButtonPrivate 与动作 icon 联动）。XGui 动作图标以路径
        承载（XAction_icon），经 XIcon_init_file 落到按钮；动作无图
@@ -266,7 +266,7 @@ static void toolbutton_mirrorFromAction(XToolButton* self)
         XIcon_init_file(&mirroredIcon,
                         iconPath); /* NULL 路径=空图标，置空按钮图标。 */
         XAbstractButton_setIcon((XAbstractButton*)self, &mirroredIcon);
-        XIcon_deinit_base((XClass*)&mirroredIcon);
+        XClassDeinit((XClass*)&mirroredIcon);
     }
     XAbstractButton_setCheckable((XAbstractButton*)self,
                                  action ? XAction_isCheckable(action) : false);
@@ -476,7 +476,7 @@ XSize XToolButton_sizeHint(const XToolButton* self)
     font = XWidget_font((XWidget*)self);
     textW = ab->m_text ? XPainter_textWidth(&font, XString_toUtf8(ab->m_text)) : 0;
     textH = ab->m_text ? XPainter_textHeight(&font) : 0;
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
 
     switch (toolbutton_effectiveStyle(self)) {
     case XToolButtonStyle_IconOnly:
@@ -719,7 +719,7 @@ xtb_style_label:
         }
     }
 
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
 #endif /* XWINDOWEVENT_ON */

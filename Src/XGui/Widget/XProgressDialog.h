@@ -114,8 +114,6 @@ void XProgressDialog_init_full(XProgressDialog* self, const XString* labelText,
  */
 XProgressDialog* XProgressDialog_create_ex(XMemoryType memory, XWidget* parent,
                                            XWidgetFlags flags);
-#define XProgressDialog_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XProgressDialog_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 范围与值（对标 QProgressDialog） ==================== */
 
@@ -191,7 +189,7 @@ void XProgressDialog_setLabelText(XProgressDialog* self, const XString* text);
 /**
  * @brief      获取提示文本副本（对标 QProgressDialog::labelText）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XString_delete_base；
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
  *             无效时返回空串。
  */
 XString* XProgressDialog_labelText(const XProgressDialog* self);

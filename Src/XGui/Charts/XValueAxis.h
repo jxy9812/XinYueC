@@ -31,11 +31,8 @@ void XValueAxis_init(XValueAxis* self);
 /** @brief 反初始化（释放基类资源与标签格式；栈/堆对象统一入口）。 */
 /** @brief 反初始化（释放标签格式与基类资源；栈/堆对象统一入口）。 */
 void XValueAxis_deinit_impl(XValueAxis* self);
-#define XValueAxis_deinit_base(self) XValueAxis_deinit_impl(self)
 /** @brief 删除堆上数值轴（反初始化并释放结构体；结构体按 XChart 现有
  *         约定由 XFree_System 释放，本宏供独立创建/释放场景使用）。 */
-#define XValueAxis_delete_base(self) \
-    XValueAxis_deinit_base(self), XFree_System(self)
 
 /** @brief 设置轴范围。 @param self 目标轴指针。 @param min 最小值。 @param max 最大值。 @return 无返回值。 */
 void XValueAxis_setRange(XValueAxis* self, double min, double max);

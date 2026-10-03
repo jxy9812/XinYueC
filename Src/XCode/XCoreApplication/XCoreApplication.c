@@ -52,7 +52,7 @@ bool XCoreApplication_compressEvent(XEvent* event, XObject* receiver, void* post
             XPostEvent* pe = (XPostEvent*)XVector_at_base(postList, i);
             if (pe && pe->event && pe->event->type == XEVENT_TYPE_TIMER && pe->receiver == receiver) {
                 if (((XTimerEvent*)pe->event)->timerId == timerId) {
-                    XEvent_delete_base(event);
+                    XClassDelete(event);
                     return true;
                 }
             }
@@ -64,7 +64,7 @@ bool XCoreApplication_compressEvent(XEvent* event, XObject* receiver, void* post
         for (size_t i = 0; i < XVector_size_base(postList); ++i) {
             XPostEvent* pe = (XPostEvent*)XVector_at_base(postList, i);
             if (pe && pe->event && pe->event->type == XEVENT_TYPE_QUIT && pe->receiver == receiver) {
-                XEvent_delete_base(event);
+                XClassDelete(event);
                 return true;
             }
         }
@@ -146,7 +146,7 @@ void XCoreApplication_setApplicationName(const XString* applicationName)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (!app) return;
-    if (app->m_applicationName) XString_delete_base(app->m_applicationName);
+    if (app->m_applicationName) XClassDelete(app->m_applicationName);
     app->m_applicationName = applicationName ? XString_create_copy(applicationName) : NULL;
     XCoreApplication_applicationNameChanged_signal(app);
 }
@@ -161,7 +161,7 @@ void XCoreApplication_setApplicationVersion(const XString* version)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (!app) return;
-    if (app->m_version) XString_delete_base(app->m_version);
+    if (app->m_version) XClassDelete(app->m_version);
     app->m_version = version ? XString_create_copy(version) : NULL;
     XCoreApplication_applicationVersionChanged_signal(app);
 }
@@ -176,7 +176,7 @@ void XCoreApplication_setOrganizationName(const XString* orgName)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (!app) return;
-    if (app->m_orgName) XString_delete_base(app->m_orgName);
+    if (app->m_orgName) XClassDelete(app->m_orgName);
     app->m_orgName = orgName ? XString_create_copy(orgName) : NULL;
     XCoreApplication_organizationNameChanged_signal(app);
 }
@@ -191,7 +191,7 @@ void XCoreApplication_setOrganizationDomain(const XString* orgDomain)
 {
     XCoreApplication* app = XCoreApplication_instance();
     if (!app) return;
-    if (app->m_orgDomain) XString_delete_base(app->m_orgDomain);
+    if (app->m_orgDomain) XClassDelete(app->m_orgDomain);
     app->m_orgDomain = orgDomain ? XString_create_copy(orgDomain) : NULL;
     XCoreApplication_organizationDomainChanged_signal(app);
 }
@@ -245,7 +245,7 @@ XStringList* XCoreApplication_arguments(void)
             XString* s = XString_create_utf8(app->m_argv[i]);
             if (s) {
                 XStringList_push_back_move_base(args, s);
-                XString_delete_base(s);
+                XClassDelete(s);
             }
         }
     }
@@ -509,7 +509,7 @@ void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority)
 
     XThreadData* td = XThreadData_lockPostEventList(receiver);
     if (!td) {
-        XEvent_delete_base(event);
+        XClassDelete(event);
         return;
     }
 
@@ -529,7 +529,7 @@ void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority)
         XAtomic_fetch_sub_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
         event->posted = false;
         XMutex_unlock(td->m_mutex);
-        XEvent_delete_base(event);
+        XClassDelete(event);
         return;
     }
 
@@ -560,7 +560,7 @@ void XCoreApplication_removePostedEvents(XObject* receiver, XEventType eventType
         XThreadData_discardPostedEvent(ePost);
     }
     XThreadData_push_front_list(events);
-    XVector_delete_base(events);
+    XClassDelete(events);
 }
 
 /* ==================== sendPostedEvents（对标 Qt 6.8 QCoreApplication::sendPostedEvents） ==================== */
@@ -574,7 +574,7 @@ void XCoreApplication_sendPostedEvents(XObject* receiver, XEventType eventType)
     if (!events) return;
     if (!XThreadData_pushActivePostedEvents(events)) {
         XThreadData_push_front_list(events);
-        XVector_delete_base(events);
+        XClassDelete(events);
         return;
     }
 
@@ -621,7 +621,7 @@ void XCoreApplication_sendPostedEvents(XObject* receiver, XEventType eventType)
 
     XThreadData_popActivePostedEvents(events);
     XThreadData_push_front_list(events);
-    XVector_delete_base(events);
+    XClassDelete(events);
 }
 
 /* ==================== eventDispatcher ==================== */
@@ -654,7 +654,7 @@ void XCoreApplication_setLibraryPaths(const XStringList* paths)
     XCoreApplication* app = XCoreApplication_instance();
     if (!app) return;
     if (!app->m_paths) app->m_paths = XStringList_create();
-    XCopy(app->m_paths, paths);
+    XClassCopy(app->m_paths, paths);
 }
 
 const XStringList* XCoreApplication_libraryPaths(void)
@@ -831,31 +831,31 @@ void VXCoreApplication_deinit(XCoreApplication* app)
 
     /* 释放应用程序元信息字符串 */
     if (app->m_applicationName) {
-        XString_delete_base(app->m_applicationName);
+        XClassDelete(app->m_applicationName);
         app->m_applicationName = NULL;
     }
     if (app->m_version) {
-        XString_delete_base(app->m_version);
+        XClassDelete(app->m_version);
         app->m_version = NULL;
     }
     if (app->m_orgName) {
-        XString_delete_base(app->m_orgName);
+        XClassDelete(app->m_orgName);
         app->m_orgName = NULL;
     }
     if (app->m_orgDomain) {
-        XString_delete_base(app->m_orgDomain);
+        XClassDelete(app->m_orgDomain);
         app->m_orgDomain = NULL;
     }
     if (app->m_paths) {
-        XStringList_delete_base(app->m_paths);
+        XClassDelete(app->m_paths);
         app->m_paths = NULL;
     }
-    XBitArray_deinit_base(&app->m_attribute);
+    XClassDeinit(&app->m_attribute);
 
     /* 释放事件分发器 */
     XThreadData* td = XObject_threadData((XObject*)app);
     if (td && td->m_eventDispatcher) {
-        XClass_delete_base(td->m_eventDispatcher);
+        XClassDelete(td->m_eventDispatcher);
         td->m_eventDispatcher = NULL;
     }
 

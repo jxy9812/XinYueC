@@ -205,27 +205,27 @@ static void VXAbstractSocket_deinit(XAbstractSocket* sock)
 
     // 清理自身资源
     if (sock->errorString) {
-        XString_delete_base(sock->errorString);
+        XClassDelete(sock->errorString);
         sock->errorString = NULL;
     }
     if (sock->peerName) {
-        XString_delete_base(sock->peerName);
+        XClassDelete(sock->peerName);
         sock->peerName = NULL;
     }
     if (sock->protocolTag) {
-        XString_delete_base(sock->protocolTag);
+        XClassDelete(sock->protocolTag);
         sock->protocolTag = NULL;
     }
     // 释放代理配置资源
-    XNetworkProxy_deinit_base(&sock->proxy);
+    XClassDeinit(&sock->proxy);
     // 释放代理握手上下文
     if (sock->proxyHandshakeCtx) {
         XNetworkProxyHandshake_destroyContext(sock->proxyHandshakeCtx);
         sock->proxyHandshakeCtx = NULL;
     }
     // 释放地址对象
-    XHostAddress_deinit_base((XHostAddress*)&sock->localAddress);
-    XHostAddress_deinit_base((XHostAddress*)&sock->peerAddress);
+    XClassDeinit((XHostAddress*)&sock->localAddress);
+    XClassDeinit((XHostAddress*)&sock->peerAddress);
     // 调用父类析构（XIODevice → XObject → XClass）
     XClass_Deinit_Parent(XIODevice, sock);
 }
@@ -350,7 +350,7 @@ void XAbstractSocket_setProtocolTag(XAbstractSocket* sock, const char* tag)
   
     // 释放旧的标签
     if (sock->protocolTag) {
-        XString_delete_base(sock->protocolTag);
+        XClassDelete(sock->protocolTag);
         sock->protocolTag = NULL;
     }
   
@@ -366,10 +366,10 @@ void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy)
 
     // 释放旧的代理配置资源（inline 释放，避开 vtable 调度：
     // sock->proxy 是值类型成员，XAbstractSocket_init 时没给它设 vtable，
-    // 走 XNetworkProxy_deinit_base 会读 garbage m_class.m_vtable 崩溃）
-    if (sock->proxy.hostName) { XString_delete_base(sock->proxy.hostName); sock->proxy.hostName = NULL; }
-    if (sock->proxy.user)     { XString_delete_base(sock->proxy.user);     sock->proxy.user = NULL;     }
-    if (sock->proxy.password) { XString_delete_base(sock->proxy.password); sock->proxy.password = NULL; }
+    // 走 XClassDeinit 会读 garbage m_class.m_vtable 崩溃）
+    if (sock->proxy.hostName) { XClassDelete(sock->proxy.hostName); sock->proxy.hostName = NULL; }
+    if (sock->proxy.user)     { XClassDelete(sock->proxy.user);     sock->proxy.user = NULL;     }
+    if (sock->proxy.password) { XClassDelete(sock->proxy.password); sock->proxy.password = NULL; }
 
     if (proxy) {
         // 深拷贝代理配置，字符串副本统一由 XMemory 管理。
@@ -423,7 +423,7 @@ void XAbstractSocket_setLocalAddress(XAbstractSocket* sock, const XHostAddress* 
 {
     if (sock && address)
     {
-        XCopy(&sock->localAddress, address);
+        XClassCopy(&sock->localAddress, address);
     }
 }
 
@@ -435,7 +435,7 @@ void XAbstractSocket_setPeerPort(XAbstractSocket* sock, uint16_t port)
 void XAbstractSocket_setPeerAddress(XAbstractSocket* sock, const XHostAddress* address)
 {
     if (sock && address) {
-        XCopy(&sock->peerAddress, address);
+        XClassCopy(&sock->peerAddress, address);
     }
 }
 
@@ -521,7 +521,7 @@ bool XAbstractSocket_bindAny(XAbstractSocket* sock, uint16_t port, XAbstractSock
         XHostAddress_setAddressSpecial(&any, XHostAddress_AnyIPv6Special);
     }
     bool result = XAbstractSocket_bind_base(sock, &any, port, mode);
-    XHostAddress_deinit_base(&any);
+    XClassDeinit(&any);
     return result;
 }
 
@@ -980,11 +980,11 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
         options.m_operation = XDeviceNetworkOpen_Connect;
         options.m_port = port;
         if (socketOpenDevice(self, &options, &error) == XFD_INVALID) {
-            XString_delete_base(hostStr);
+            XClassDelete(hostStr);
             XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             return;
         }
-        XString_delete_base(hostStr);
+        XClassDelete(hostStr);
 
         XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
     }
@@ -1147,7 +1147,7 @@ void XAbstractSocket_connectToHostByAddress(XAbstractSocket* sock, const XHostAd
     const char* hostStr = XString_toUtf8(s);
     /* NetworkLayerProtocol: 依据地址决定 IPv4/IPv6，交给内部协议识别 */
     XAbstractSocket_connectToHost_base(sock, hostStr, port, mode, XAbstractSocket_AnyIPProtocol);
-    XString_delete_base(s);
+    XClassDelete(s);
 }
 
 bool XAbstractSocket_connectLocalStream_private(XAbstractSocket* sock,

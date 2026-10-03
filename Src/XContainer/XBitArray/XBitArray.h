@@ -173,13 +173,11 @@ void XBitArray_truncate(XBitArray* array, int64_t pos);
  * @brief 复用XContainer的反初始化容器实现
  * @param array 要反初始化的比特数组
  */
-#define XBitArray_deinit_base        XContainer_deinit_base
 
 /**
 * @brief 复用XContainer的销毁容器并释放内存实现
 * @param array 要销毁的比特数组
 */
-#define XBitArray_delete_base        XContainer_delete_base
 
 /**
 * @brief 复用XContainer的判断容器是否为空实现

@@ -144,8 +144,6 @@ void XMainWindow_init(XMainWindow* self, XWidget* parent,
 #define XMainWindow_create(parent, flags) XMainWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XMainWindow* XMainWindow_create_ex(XMemoryType memory, XWidget* parent,
                                    XWidgetFlags flags);
-#define XMainWindow_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XMainWindow_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 菜单栏与状态栏 ==================== */
 
@@ -175,7 +173,7 @@ void XMainWindow_setMenuWidget(XMainWindow* self, XWidget* menuWidget);
  * @details 新建空 XMenu 并把父对象设为本主窗口（未释放时随主窗口析构
  *          级联销毁）。
  * @param self 目标主窗口；可为 NULL。
- * @return 新建的 XMenu 指针，所有权归调用方，必须用 XMenu_delete_base
+ * @return 新建的 XMenu 指针，所有权归调用方，必须用 XClassDelete
  *         释放；self 为 NULL 或分配失败时返回 NULL。
  * @note 与 Qt 差异：Qt 会向菜单填充各停靠面板/工具栏的 toggleViewAction，
  *       并在无可填充项时返回 nullptr；XMenu 没有“加入已有 XAction”的

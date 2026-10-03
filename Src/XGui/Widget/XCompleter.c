@@ -80,7 +80,7 @@ static void xcompleter_replaceString(XString** slot, const XString* src)
     XString* copy;
     if (!slot) return;
     if (*slot) {
-        XString_delete_base((XClass*)*slot);
+        XClassDelete((XClass*)*slot);
         *slot = NULL;
     }
     if (!src) return;
@@ -126,7 +126,7 @@ static XString* xcompleter_subStringUtf8(const char* utf8, size_t begin,
     if (!s) return NULL;
     if (len == 0) return s; /* XString_create 已是空串。 */
     if (!XString_assign_with_length_utf8(s, utf8 + begin, len)) {
-        XString_delete_base((XClass*)s);
+        XClassDelete((XClass*)s);
         return NULL;
     }
     return s;
@@ -168,17 +168,17 @@ static bool xcompleter_sortedLowerBound(const XCompleter* self, int64_t rows,
             self->m_model, (int)mid, self->m_completionColumn);
         int32_t cmp;
         if (!cell) { /* 空洞破坏有序假设：放弃二分。 */
-            if (prefixLower) XString_delete_base((XClass*)prefixLower);
+            if (prefixLower) XClassDelete((XClass*)prefixLower);
             return false;
         }
         if (insensitive) {
             XString* cellLower = XString_toLower(cell);
             if (!cellLower) {
-                XString_delete_base((XClass*)prefixLower);
+                XClassDelete((XClass*)prefixLower);
                 return false;
             }
             cmp = XString_compare(cellLower, prefixLower);
-            XString_delete_base((XClass*)cellLower);
+            XClassDelete((XClass*)cellLower);
         } else {
             cmp = XString_compare(cell, self->m_prefix);
         }
@@ -187,7 +187,7 @@ static bool xcompleter_sortedLowerBound(const XCompleter* self, int64_t rows,
         else
             hi = mid;
     }
-    if (prefixLower) XString_delete_base((XClass*)prefixLower);
+    if (prefixLower) XClassDelete((XClass*)prefixLower);
     *outStart = lo;
     return true;
 }
@@ -240,7 +240,7 @@ static void xcompleter_rebuild(XCompleter* self)
 
     if (!self->m_model) {
         /* 无模型早退同样跳过了函数尾的备份释放，须在此补齐。 */
-        if (oldCompletion) XString_delete_base((XClass*)oldCompletion);
+        if (oldCompletion) XClassDelete((XClass*)oldCompletion);
         return;
     }
     rows = XAbstractItemModel_rowCount(self->m_model);
@@ -286,7 +286,7 @@ static void xcompleter_rebuild(XCompleter* self)
         }
     }
     if (oldCompletion)
-        XString_delete_base((XClass*)oldCompletion);
+        XClassDelete((XClass*)oldCompletion);
 }
 
 /* ==================== 生命周期与虚表 ==================== */
@@ -296,15 +296,15 @@ static void VX_completer_deinit(XCompleter* self)
     if (!self) return;
     xc_completerStopGuard(self);
     if (self->m_prefix) {
-        XString_delete_base((XClass*)self->m_prefix);
+        XClassDelete((XClass*)self->m_prefix);
         self->m_prefix = NULL;
     }
     if (self->m_currentCompletion) {
-        XString_delete_base((XClass*)self->m_currentCompletion);
+        XClassDelete((XClass*)self->m_currentCompletion);
         self->m_currentCompletion = NULL;
     }
     if (self->m_matches) {
-        XVector_delete_base((XClass*)self->m_matches);
+        XClassDelete((XClass*)self->m_matches);
         self->m_matches = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -406,7 +406,7 @@ void XCompleter_setCompletionPrefix_2(XCompleter* self, const char* utf8)
     prefix = utf8 ? XString_create_utf8(utf8) : NULL;
     XCompleter_setCompletionPrefix(self, prefix);
     if (prefix)
-        XString_delete_base((XClass*)prefix);
+        XClassDelete((XClass*)prefix);
 }
 
 XString* XCompleter_completionPrefix(const XCompleter* self)
@@ -541,7 +541,7 @@ static void xc_popupClickedSlot(XObject* receiver, XVarList* args)
                           text ? XString_toUtf8(text) : "");
         XLineEdit_cursorForward((XLineEdit*)editor, false, 1 << 20);
     }
-    if (text) XString_delete_base((XClass*)text);
+    if (text) XClassDelete((XClass*)text);
     XCompleter_hidePopup(self);
 }
 
@@ -930,7 +930,7 @@ void XCompleter_splitPath_2(const XCompleter* self, const char* path,
     }
     tmp = XString_create_utf8(path);
     XCompleter_splitPath(self, tmp, dirOut, fileOut);
-    if (tmp) XString_delete_base((XClass*)tmp);
+    if (tmp) XClassDelete((XClass*)tmp);
 }
 
 XWidget* XCompleter_popup(const XCompleter* self)

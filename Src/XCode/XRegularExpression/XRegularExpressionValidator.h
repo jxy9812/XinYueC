@@ -52,12 +52,12 @@ XVtable* XRegularExpressionValidator_class_init(void);
 void XRegularExpressionValidator_init(XRegularExpressionValidator* validator);
 /**
  * @brief 创建默认校验器。
- * @return 成功返回堆对象，调用者必须使用 XRegularExpressionValidator_delete_base 释放；失败返回 NULL。
+ * @return 成功返回堆对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 /**
  * @brief 使用指定正则表达式创建校验器。
  * @param expression 初始正则表达式；函数只读取该对象，不能传入 NULL。
- * @return 成功返回新校验器，调用者必须使用 XRegularExpressionValidator_delete_base 释放；失败返回 NULL。
+ * @return 成功返回新校验器，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XRegularExpressionValidator* XRegularExpressionValidator_create_ex(XMemoryType memory,
         const XRegularExpression* expression);
@@ -75,17 +75,9 @@ XRegularExpressionValidator* XRegularExpressionValidator_create_copy(const XRegu
 XRegularExpressionValidator* XRegularExpressionValidator_create_move(XRegularExpressionValidator* other);
 
 /**
- * @brief 校验器的基础生命周期操作宏。
- * @details 宏统一转发到 XClass 虚函数，保证校验器内部两个正则对象按生命周期规则释放。
- * @note delete_base 仅用于堆对象；栈对象只调用 deinit_base。
- */
-#define XRegularExpressionValidator_deinit_base XClass_deinit_base
-#define XRegularExpressionValidator_delete_base XClass_delete_base
-
-/**
  * @brief 获取当前正则表达式的副本。
  * @param validator 校验器对象
- * @return 新创建的正则表达式，调用者负责 delete_base；参数无效时返回 NULL
+ * @return 新创建的正则表达式，调用者负责 XClassDelete；参数无效时返回 NULL
  */
 XRegularExpression* XRegularExpressionValidator_regularExpression(const XRegularExpressionValidator* validator);
 

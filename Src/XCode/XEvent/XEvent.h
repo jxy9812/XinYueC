@@ -49,8 +49,6 @@ XEvent* XEvent_create_ex(XMemoryType memory,  XEventType code);
  * @param type 事件类型。
  */
 void XEvent_init(XEvent* event, XEventType type);
-#define XEvent_deinit_base                           XClass_deinit_base
-#define XEvent_delete_base                           XClass_delete_base
 #define XEvent_DataPtr(event)                   (&(((XEvent*)event)->data))
 #define XEvent_Data(event,dataType)             (*((dataType*)XEvent_DataPtr(event)))
 
@@ -404,8 +402,6 @@ uint32_t XKeyEvent_timestamp(const XKeyEvent* event);
  */
 void XKeyEvent_setTimestamp(XKeyEvent* event, uint32_t timestamp);
 
-#define XKeyEvent_delete_base XEvent_delete_base
-#define XKeyEvent_deinit_base XEvent_deinit_base
 
 /** @brief 携带按键、修饰键和位置数据的鼠标事件。 */
 XCLASS_DEFINE_BEGING(XMouseEvent)
@@ -522,8 +518,6 @@ uint32_t XMouseEvent_timestamp(const XMouseEvent* event);
  */
 void XMouseEvent_setTimestamp(XMouseEvent* event, uint32_t timestamp);
 
-#define XMouseEvent_delete_base XEvent_delete_base
-#define XMouseEvent_deinit_base XEvent_deinit_base
 
 // ------------------ 工具 ------------------
 

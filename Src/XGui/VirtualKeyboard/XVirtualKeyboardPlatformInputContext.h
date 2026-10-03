@@ -95,12 +95,6 @@ void XVirtualKeyboardPlatformInputContext_init(
 XVirtualKeyboardPlatformInputContext*
 XVirtualKeyboardPlatformInputContext_create_ex(XMemoryType memory);
 
-/** @brief 通过 XClass 虚表释放资源。 */
-#define XVirtualKeyboardPlatformInputContext_deinit_base(self) \
-    XPlatformInputContext_deinit_base((XPlatformInputContext*)(self))
-/** @brief 删除堆上对象。 */
-#define XVirtualKeyboardPlatformInputContext_delete_base(self) \
-    XPlatformInputContext_delete_base((XPlatformInputContext*)(self))
 
 /**
  * @brief      绑定默认面板（借用；TODO 指向 XGuiApplication 装配链所

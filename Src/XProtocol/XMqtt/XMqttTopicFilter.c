@@ -45,7 +45,7 @@ void XMqttTopicFilter_init(XMqttTopicFilter* filter, const char* f)
 static void VXMqttTopicFilter_deinit(XMqttTopicFilter* filter)
 {
     if (!filter) return;
-    if (filter->m_filter) { XString_delete_base(filter->m_filter); filter->m_filter = NULL; }
+    if (filter->m_filter) { XClassDelete(filter->m_filter); filter->m_filter = NULL; }
     XClass_Deinit_Parent(XClass, filter);
 }
 
@@ -55,7 +55,7 @@ static void VXMqttTopicFilter_copy(XMqttTopicFilter* dest, const XMqttTopicFilte
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttTopicFilter_init(dest, NULL);
-    if (dest->m_filter) XString_delete_base(dest->m_filter);
+    if (dest->m_filter) XClassDelete(dest->m_filter);
     dest->m_filter = src->m_filter ? XString_create_copy(src->m_filter) : XString_create_utf8(NULL);
 }
 
@@ -65,7 +65,7 @@ static void VXMqttTopicFilter_move(XMqttTopicFilter* dest, XMqttTopicFilter* src
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttTopicFilter_init(dest, NULL);
-    if (dest->m_filter) XString_delete_base(dest->m_filter);
+    if (dest->m_filter) XClassDelete(dest->m_filter);
     dest->m_filter = src->m_filter; src->m_filter = NULL;
 }
 
@@ -80,7 +80,7 @@ XString* XMqttTopicFilter_filter(const XMqttTopicFilter* filter)
 void XMqttTopicFilter_setFilter(XMqttTopicFilter* filter, const char* f)
 {
     if (!filter) return;
-    if (filter->m_filter) { XString_delete_base(filter->m_filter); filter->m_filter = NULL; }
+    if (filter->m_filter) { XClassDelete(filter->m_filter); filter->m_filter = NULL; }
     filter->m_filter = XString_create_utf8(f ? f : "");
 }
 

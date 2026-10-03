@@ -80,10 +80,8 @@ typedef struct XTelnetServer {
 XVtable* XTelnetServer_class_init(void);
 /** @brief 初始化 Telnet 服务器对象。 */
 void XTelnetServer_init(XTelnetServer* self);
-/** @brief 创建 Telnet 服务器；销毁时使用 XTelnetServer_delete_base 释放。 */
+/** @brief 创建 Telnet 服务器；销毁时使用 XClassDelete 释放。 */
 XTelnetServer* XTelnetServer_create_ex(XMemoryType memory);
-#define XTelnetServer_deinit_base XClass_deinit_base
-#define XTelnetServer_delete_base XClass_delete_base
 #define XTelnetServer_deleteLater XObject_deleteLater
 
 /**

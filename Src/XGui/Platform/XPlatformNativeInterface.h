@@ -83,14 +83,14 @@ XVtable* XPlatformNativeInterface_class_init(void);
 
 /**
  * @brief      初始化空 XPlatformNativeInterface。
- * @param      self 待初始化对象；必须与 XPlatformNativeInterface_deinit_base 成对调用。
+ * @param      self 待初始化对象；必须与 XClassDeinit 成对调用。
  */
 void XPlatformNativeInterface_init(XPlatformNativeInterface* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建 XPlatformNativeInterface。
  * @return     新对象指针；失败返回 NULL，调用方用
- *             XPlatformNativeInterface_delete_base 释放。
+ *             XClassDelete 释放。
  */
 #define XPlatformNativeInterface_create() \
     XPlatformNativeInterface_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
@@ -103,9 +103,7 @@ void XPlatformNativeInterface_init(XPlatformNativeInterface* self);
 XPlatformNativeInterface* XPlatformNativeInterface_create_ex(XMemoryType memory);
 
 /** @brief 通过 XClass 虚表释放 XPlatformNativeInterface 资源（栈/外部存储对象使用）。 */
-#define XPlatformNativeInterface_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XPlatformNativeInterface 对象。 */
-#define XPlatformNativeInterface_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 所属集成层（内部关联） ==================== */
 
@@ -307,7 +305,7 @@ XVariant* XPlatformNativeInterface_windowProperty_2(
  * @brief      读取窗口原生属性，不存在时返回默认值（对标
  *             windowProperty(window, name, defaultValue)）。
  * @details    无论命中与否都返回新建堆对象（QPlatformNativeInterface 按值
- *             返回 QVariant 的 C 等价），调用方用 XVariant_delete_base 释放。
+ *             返回 QVariant 的 C 等价），调用方用 XClassDelete 释放。
  * @param      self 目标对象；可为 NULL。
  * @param      platformWindow 平台窗口借用指针；可为 NULL。
  * @param      name UTF-8 属性名；可为 NULL。

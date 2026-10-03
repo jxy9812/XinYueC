@@ -187,7 +187,7 @@ void XRBTreeNode_delete(XTreeNode* node, XMemory* memory);
  * @param args 传递给 method 的上下文参数。
  * @param memory 节点释放所使用的内存管理器。
  */
-#define XRBTree_delete(this_root,method,args,memory)		XTree_delete_base(this_root,XRBTreeNode_delete,method,args,memory)
+#define XRBTree_delete(this_root,method,args,memory)		XTree_delete(this_root,XRBTreeNode_delete,method,args,memory)
 #ifdef __cplusplus
 }
 #endif

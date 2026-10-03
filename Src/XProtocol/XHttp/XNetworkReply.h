@@ -39,8 +39,6 @@ typedef XHttpReply_NetworkError XNetworkReply_NetworkError;
 #define XNetworkReply_class_init XHttpReply_class_init
 #define XNetworkReply_init XHttpReply_init
 #define XNetworkReply_create XHttpReply_create
-#define XNetworkReply_deinit_base XHttpReply_deinit_base
-#define XNetworkReply_delete_base XHttpReply_delete_base
 #define XNetworkReply_deleteLater XHttpReply_deleteLater
 #define XNetworkReply_request XHttpReply_request
 #define XNetworkReply_request_const XHttpReply_request_const

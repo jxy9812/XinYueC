@@ -91,10 +91,6 @@ XRemoteSessionBar* XRemoteSessionBar_create_ex(XMemoryType memory,
                                                XWidgetFlags flags);
 
 /** @brief 析构/反初始化映射(仓库惯例)。 */
-#define XRemoteSessionBar_deinit_base(self) \
-    XWidget_deinit_base((XWidget*)(self))
-#define XRemoteSessionBar_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 /** @brief 延迟释放别名(事件循环内安全自删)。 */
 #define XRemoteSessionBar_deleteLater XObject_deleteLater
 

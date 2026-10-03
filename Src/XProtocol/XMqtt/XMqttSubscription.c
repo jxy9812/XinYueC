@@ -49,10 +49,10 @@ void XMqttSubscription_init(XMqttSubscription* sub, const XMqttTopicFilter* topi
 static void VXMQ_deinit(XMqttSubscription* sub)
 {
     if (!sub) return;
-    if (sub->m_topic) { XMqttTopicFilter_delete_base(sub->m_topic); sub->m_topic = NULL; }
-    if (sub->m_reason) { XString_delete_base(sub->m_reason); sub->m_reason = NULL; }
-    if (sub->m_sharedSubscriptionName) { XString_delete_base(sub->m_sharedSubscriptionName); sub->m_sharedSubscriptionName = NULL; }
-    if (sub->m_userProperties) { XMqttUserProperties_delete_base(sub->m_userProperties); sub->m_userProperties = NULL; }
+    if (sub->m_topic) { XClassDelete(sub->m_topic); sub->m_topic = NULL; }
+    if (sub->m_reason) { XClassDelete(sub->m_reason); sub->m_reason = NULL; }
+    if (sub->m_sharedSubscriptionName) { XClassDelete(sub->m_sharedSubscriptionName); sub->m_sharedSubscriptionName = NULL; }
+    if (sub->m_userProperties) { XClassDelete(sub->m_userProperties); sub->m_userProperties = NULL; }
     sub->m_client = NULL;
     XClass_Deinit_Parent(XObject, sub);
 }
@@ -162,7 +162,7 @@ void* XMqttSubscription_qosChanged_signal(XMqttSubscription* sub, uint8_t qos)
 static void XMqttSubscription_message_args_delete(XVarList* list)
 {
     XVarList_args_1(list, XMqttMessage*, message);
-    if (message) XMqttMessage_delete_base(message);
+    if (message) XClassDelete(message);
 }
 
 void* XMqttSubscription_messageReceived_signal(XMqttSubscription* sub, XMqttMessage* msg)

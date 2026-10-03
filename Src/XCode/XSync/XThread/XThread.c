@@ -156,7 +156,7 @@ void XThread_setEventDispatcher(XThread* thread, XEventDispatcher* eventDispatch
         return;
     }
     if (thread->m_data->m_eventDispatcher) {
-        XClass_delete_base(thread->m_data->m_eventDispatcher);
+        XClassDelete(thread->m_data->m_eventDispatcher);
     }
     thread->m_data->m_eventDispatcher = eventDispatcher;
     XObject_setParent((XObject*)eventDispatcher, (XObject*)thread);
@@ -226,7 +226,7 @@ void VXThread_run(XThread* thread)
     /* The event loop and deferred worker objects are destroyed in the worker. */
     if (thread->m_loop)
     {
-        XClass_delete_base((XClass*)thread->m_loop);
+        XClassDelete((XClass*)thread->m_loop);
         thread->m_loop = NULL;
     }
 
@@ -247,7 +247,7 @@ void VXThread_run(XThread* thread)
     {
         XAbstractEventDispatcher* ed = data->m_eventDispatcher;
         data->m_eventDispatcher = NULL;
-        XClass_delete_base((XClass*)ed);
+        XClassDelete((XClass*)ed);
     }
 
     if (!isMainThread)

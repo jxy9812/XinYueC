@@ -127,7 +127,7 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible);
 
 /**
  * @brief      同步窗口几何到真实原生窗口。
- * @details    X11 用 XMoveResizeWindow；Win32 用 SetWindowPos。实现内部
+ * @details    X11 用 XClassMoveResizeWindow；Win32 用 SetWindowPos。实现内部
  *             按原生窗口当前几何去重（相同则跳过），从源头上避免
  *             ConfigureNotify/WM_SIZE 回注造成的递归震荡。
  * @param      window   目标窗口借用指针；可为 NULL。
@@ -138,7 +138,7 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry);
 
 /**
  * @brief      挂起/恢复窗口几何的立即落窗（拖拽改尺寸手势专用）。
- * @details    桌面 X11 每步改尺寸若立即 XMoveResizeWindow，服务器当场按
+ * @details    桌面 X11 每步改尺寸若立即 XClassMoveResizeWindow，服务器当场按
  *             background_pixel（ForgetGravity 口径为整窗）把扩区填黑，
  *             盖掉黑底的整窗重绘要等下一轮事件循环的 PAINT→present——
  *             「服务器先黑、客户端后补」构成单帧黑闪。挂起后 setGeometry

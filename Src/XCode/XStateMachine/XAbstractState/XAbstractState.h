@@ -54,8 +54,6 @@ XVtable* XAbstractState_class_init(void);
  */
 void XAbstractState_init(XAbstractState* state, XAbstractState_Kind kind, XState* parent);
 
-#define XAbstractState_delete_base XClass_delete_base
-#define XAbstractState_deinit_base XClass_deinit_base
 
 /**
  * @brief 获取父状态。

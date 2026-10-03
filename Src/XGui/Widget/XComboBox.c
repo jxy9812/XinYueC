@@ -315,7 +315,7 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     self->m_minimumContentsLength = other->m_minimumContentsLength;
     self->m_frame = other->m_frame;
     if (self->m_placeholderText)
-        XString_delete_base((XClass*)self->m_placeholderText);
+        XClassDelete((XClass*)self->m_placeholderText);
     self->m_placeholderText = other->m_placeholderText;
     other->m_placeholderText = XString_create();
     other->m_maxCount = 2147483647;
@@ -374,23 +374,23 @@ static void VXComboBox_deinit(XComboBox* self)
     /* 先解除弹窗模态抓取（内部引用弹窗指针，须先于删除视图执行）。 */
     xcombo_releaseGrab(self);
     if (self->m_placeholderText) {
-        XString_delete_base((XClass*)self->m_placeholderText);
+        XClassDelete((XClass*)self->m_placeholderText);
         self->m_placeholderText = NULL;
     }
     if (self->m_popupView) {
-        XListView_delete_base((XClass*)self->m_popupView);
+        XClassDelete((XClass*)self->m_popupView);
         self->m_popupView = NULL;
     }
     if (self->m_model) {
-        XAbstractItemModel_delete_base((XClass*)self->m_model);
+        XClassDelete((XClass*)self->m_model);
         self->m_model = NULL;
     }
     for (i = 0; i < self->m_itemCount; ++i) {
-        if (self->m_items[i]) XString_delete_base((XClass*)self->m_items[i]);
+        if (self->m_items[i]) XClassDelete((XClass*)self->m_items[i]);
         if (self->m_itemData && self->m_itemData[i])
-            XString_delete_base((XClass*)self->m_itemData[i]);
+            XClassDelete((XClass*)self->m_itemData[i]);
         if (self->m_itemIcons && self->m_itemIcons[i])
-            XString_delete_base((XClass*)self->m_itemIcons[i]);
+            XClassDelete((XClass*)self->m_itemIcons[i]);
         self->m_items[i] = NULL;
     }
     if (self->m_items) {
@@ -1539,7 +1539,7 @@ XString* XComboBox_inputMethodQuery(XComboBox* self, int query)
         XString* cur = XComboBox_currentText(self);
         if (cur) {
             XString_assign(out, cur);
-            XString_delete_base((XClass*)cur);
+            XClassDelete((XClass*)cur);
         }
     }
     return out;
@@ -1743,7 +1743,7 @@ void XComboBox_insertItem_2(XComboBox* self, int index, const char* text)
 {
     XString_Init_Utf8(tmp, text ? text : "");
     XComboBox_insertItem(self, index, tmp);
-    XString_deinit_base((XClass*)tmp);
+    XClassDeinit((XClass*)tmp);
 }
 
 void XComboBox_insertItems(XComboBox* self, int index, const XStringList* texts)
@@ -1801,18 +1801,18 @@ void XComboBox_removeItem(XComboBox* self, int index)
              sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
     if (self->m_itemData) {
         if (self->m_itemData[index])
-            XString_delete_base((XClass*)self->m_itemData[index]);
+            XClassDelete((XClass*)self->m_itemData[index]);
         XMemmove(&self->m_itemData[index], &self->m_itemData[index + 1],
                  sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
     }
     if (self->m_itemIcons) {
         if (self->m_itemIcons[index])
-            XString_delete_base((XClass*)self->m_itemIcons[index]);
+            XClassDelete((XClass*)self->m_itemIcons[index]);
         XMemmove(&self->m_itemIcons[index], &self->m_itemIcons[index + 1],
                  sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
     }
     --self->m_itemCount;
-    XString_delete_base((XClass*)removed);
+    XClassDelete((XClass*)removed);
     if (self->m_currentIndex >= self->m_itemCount)
         self->m_currentIndex = self->m_itemCount - 1;
     XWidget_update((XWidget*)self);
@@ -1836,13 +1836,13 @@ void XComboBox_clear(XComboBox* self)
     int i;
     if (!self) return;
     for (i = 0; i < self->m_itemCount; ++i) {
-        if (self->m_items[i]) XString_delete_base((XClass*)self->m_items[i]);
+        if (self->m_items[i]) XClassDelete((XClass*)self->m_items[i]);
         if (self->m_itemData && self->m_itemData[i]) {
-            XString_delete_base((XClass*)self->m_itemData[i]);
+            XClassDelete((XClass*)self->m_itemData[i]);
             self->m_itemData[i] = NULL;
         }
         if (self->m_itemIcons && self->m_itemIcons[i]) {
-            XString_delete_base((XClass*)self->m_itemIcons[i]);
+            XClassDelete((XClass*)self->m_itemIcons[i]);
             self->m_itemIcons[i] = NULL;
         }
     }
@@ -2168,7 +2168,7 @@ void XComboBox_setItemIcon(XComboBox* self, int index, const XString* path)
     repl = path ? XString_create_copy(path) : NULL;
     if (path && !repl) return;
     if (self->m_itemIcons[index])
-        XString_delete_base((XClass*)self->m_itemIcons[index]);
+        XClassDelete((XClass*)self->m_itemIcons[index]);
     self->m_itemIcons[index] = repl;
     XWidget_update((XWidget*)self);
 }
@@ -2180,7 +2180,7 @@ void XComboBox_setItemIcon_2(XComboBox* self, int index, const char* path)
         if (!tmp) return;
     }
     XComboBox_setItemIcon(self, index, tmp);
-    if (tmp) XString_delete_base((XClass*)tmp);
+    if (tmp) XClassDelete((XClass*)tmp);
 }
 const XString* XComboBox_itemIcon(const XComboBox* self, int index)
 {
@@ -2206,7 +2206,7 @@ void XComboBox_setItemData(XComboBox* self, int index, const XString* data)
     repl = data ? XString_create_copy(data) : NULL;
     if (data && !repl) return;
     if (self->m_itemData[index])
-        XString_delete_base((XClass*)self->m_itemData[index]);
+        XClassDelete((XClass*)self->m_itemData[index]);
     self->m_itemData[index] = repl;
 }
 void XComboBox_setItemData_2(XComboBox* self, int index, const char* data)
@@ -2217,7 +2217,7 @@ void XComboBox_setItemData_2(XComboBox* self, int index, const char* data)
         if (!tmp) return;
     }
     XComboBox_setItemData(self, index, tmp);
-    if (tmp) XString_delete_base((XClass*)tmp);
+    if (tmp) XClassDelete((XClass*)tmp);
 }
 const XString* XComboBox_itemData(const XComboBox* self, int index)
 {
@@ -2257,7 +2257,7 @@ int XComboBox_findData_2(const XComboBox* self, const char* data)
     tmp = XString_create_utf8(data);
     if (!tmp) return -1;
     out = XComboBox_findData(self, tmp);
-    XString_delete_base((XClass*)tmp);
+    XClassDelete((XClass*)tmp);
     return out;
 }
 

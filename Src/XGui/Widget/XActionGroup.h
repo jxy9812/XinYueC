@@ -73,14 +73,12 @@ void XActionGroup_init(XActionGroup* self, XObject* parent);
  * @brief      使用默认内存类型创建分组对象（对标 QActionGroup(parent)）。
  * @param      parent 父对象借用指针；可为 NULL。
  * @return     新建的已初始化对象指针；失败返回 NULL。成功后必须
- *             XActionGroup_delete_base 释放。
+ *             XClassDelete 释放。
  */
 #define XActionGroup_create(parent) \
     XActionGroup_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent))
 XActionGroup* XActionGroup_create_ex(XMemoryType memory, XObject* parent);
 
-#define XActionGroup_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XActionGroup_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 成员管理（对标 QActionGroup） ==================== */
 
@@ -107,7 +105,7 @@ void XActionGroup_removeAction(XActionGroup* self, XAction* action);
  * @brief      返回成员动作列表（对标 QActionGroup::actions）。
  * @details    Qt 返回 QList<QAction*>；XGui 返回新建的
  *             XVector<XAction*>（按加入顺序），由调用方拥有，使用后
- *             必须 XVector_delete_base 释放；无成员返回空数组。
+ *             必须 XClassDelete 释放；无成员返回空数组。
  * @param      self 目标分组对象；可为 NULL。
  * @return     新建的 XVector（元素为 XAction*）；分配失败返回 NULL。
  */

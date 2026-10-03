@@ -65,10 +65,10 @@ static void addRel(XRelationships* self, const char* type, const char* target, c
     if (!rel.m_id || !rel.m_type || !rel.m_target ||
         (targetMode && !rel.m_targetMode) ||
         !XVector_push_back_2(self->m_relationships, &rel, 1)) {
-        if (rel.m_id) XString_delete_base(rel.m_id);
-        if (rel.m_type) XString_delete_base(rel.m_type);
-        if (rel.m_target) XString_delete_base(rel.m_target);
-        if (rel.m_targetMode) XString_delete_base(rel.m_targetMode);
+        if (rel.m_id) XClassDelete(rel.m_id);
+        if (rel.m_type) XClassDelete(rel.m_type);
+        if (rel.m_target) XClassDelete(rel.m_target);
+        if (rel.m_targetMode) XClassDelete(rel.m_targetMode);
         return;
     }
     self->m_lastAssignedRid = assigned;
@@ -137,10 +137,10 @@ void XRelationships_clear(XRelationships* self) {
     for (size_t i = 0; i < count; i++) {
         XlsxRelationship* rel = (XlsxRelationship*)XVector_at_base(self->m_relationships, i);
         if (rel) {
-            if (rel->m_id) { XString_delete_base(rel->m_id); }
-            if (rel->m_type) { XString_delete_base(rel->m_type); }
-            if (rel->m_target) { XString_delete_base(rel->m_target); }
-            if (rel->m_targetMode) { XString_delete_base(rel->m_targetMode); }
+            if (rel->m_id) { XClassDelete(rel->m_id); }
+            if (rel->m_type) { XClassDelete(rel->m_type); }
+            if (rel->m_target) { XClassDelete(rel->m_target); }
+            if (rel->m_targetMode) { XClassDelete(rel->m_targetMode); }
         }
     }
     XVector_clear_base(self->m_relationships);
@@ -170,13 +170,13 @@ void XRelationships_delete(XRelationships* self) {
         for (size_t i = 0; i < count; i++) {
             XlsxRelationship* rel = (XlsxRelationship*)XVector_at_base(self->m_relationships, i);
             if (rel) {
-                if (rel->m_id) { XString_delete_base(rel->m_id); }
-                if (rel->m_type) { XString_delete_base(rel->m_type); }
-                if (rel->m_target) { XString_delete_base(rel->m_target); }
-                if (rel->m_targetMode) { XString_delete_base(rel->m_targetMode); }
+                if (rel->m_id) { XClassDelete(rel->m_id); }
+                if (rel->m_type) { XClassDelete(rel->m_type); }
+                if (rel->m_target) { XClassDelete(rel->m_target); }
+                if (rel->m_targetMode) { XClassDelete(rel->m_targetMode); }
             }
         }
-        XVector_delete_base(self->m_relationships);
+        XClassDelete(self->m_relationships);
     }
     XFree_System(self);
 }
@@ -191,14 +191,14 @@ bool XRelationships_saveToXmlFile(const XRelationships* self, const XString* fil
     
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         XFree_System(data);
         return false;
     }
     bool result = XIODevice_write_1((XIODevice*)file, (const char*)data,
         (int64_t)len) == (int64_t)len;
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     XFree_System(data);
     return result;
 }
@@ -208,16 +208,16 @@ bool XRelationships_loadFromXmlFile(XRelationships* self, const XString* filePat
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* allData = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!allData) return false;
     bool result = XRelationships_loadFromXmlData(self, XByteArray_data(allData),
         XByteArray_size_base((XContainer*)allData));
-    XByteArray_delete_base(allData);
+    XClassDelete(allData);
     return result;
 }
 
@@ -263,7 +263,7 @@ bool XRelationships_saveToXmlData(const XRelationships* self, uint8_t** outData,
         XFree_System(*outData);
         *outData = NULL;
     }
-    XXmlStreamWriter_delete_base(writer);
+    XClassDelete(writer);
     return *outData != NULL;
 }
 
@@ -273,7 +273,7 @@ static const XString* relationship_attribute(const XXmlStreamAttributes* attribu
     if (!attributes || !name) return NULL;
     XString_Init_Utf8(key, name);
     const XString* value = XXmlStreamAttributes_value_ex(attributes, NULL, key);
-    XString_deinit_base(key);
+    XClassDeinit(key);
     return value;
 }
 
@@ -283,14 +283,14 @@ bool XRelationships_loadFromXmlData(XRelationships* self, const uint8_t* data, s
     XByteArray* bytes = XByteArray_create_with_data((const char*)data, len);
     XXmlStreamReader* reader = XXmlStreamReader_create();
     if (!bytes || !reader) {
-        if (bytes) XByteArray_delete_base(bytes);
-        if (reader) XXmlStreamReader_delete_base(reader);
+        if (bytes) XClassDelete(bytes);
+        if (reader) XClassDelete(reader);
         return false;
     }
     XRelationships_clear(self);
     self->m_lastAssignedRid = 0;
     XXmlStreamReader_addData(reader, bytes);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     bool rootSeen = false;
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
@@ -315,10 +315,10 @@ bool XRelationships_loadFromXmlData(XRelationships* self, const uint8_t* data, s
         relationship.m_targetMode = mode ? XString_create_copy(mode) : NULL;
         if (!relationship.m_id || !relationship.m_type || !relationship.m_target ||
             !XVector_push_back_1_base(self->m_relationships, &relationship)) {
-            if (relationship.m_id) XString_delete_base(relationship.m_id);
-            if (relationship.m_type) XString_delete_base(relationship.m_type);
-            if (relationship.m_target) XString_delete_base(relationship.m_target);
-            if (relationship.m_targetMode) XString_delete_base(relationship.m_targetMode);
+            if (relationship.m_id) XClassDelete(relationship.m_id);
+            if (relationship.m_type) XClassDelete(relationship.m_type);
+            if (relationship.m_target) XClassDelete(relationship.m_target);
+            if (relationship.m_targetMode) XClassDelete(relationship.m_targetMode);
             continue;
         }
         const char* idText = XString_toUtf8(id);
@@ -326,7 +326,7 @@ bool XRelationships_loadFromXmlData(XRelationships* self, const uint8_t* data, s
         if (numeric > self->m_lastAssignedRid) self->m_lastAssignedRid = numeric;
     }
     bool result = rootSeen && !XXmlStreamReader_hasError(reader);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     if (!result) XRelationships_clear(self);
     return result;
 }

@@ -222,13 +222,11 @@ XString* XStringList_join_utf8(const XStringList* strList, const char* separator
 * @brief 反初始化XStringList对象（释放资源但保留对象本身）
 * @param strList 指向XStringList对象的指针
 */
-#define XStringList_deinit_base								    XVector_deinit_base	
 
 /**
 * @brief 销毁XStringList对象（释放资源和对象内存）
 * @param strList 指向要销毁的XStringList对象的指针
 */
-#define XStringList_delete_base								    XVector_delete_base	
 
 /**
 * @brief 清空列表中的所有元素

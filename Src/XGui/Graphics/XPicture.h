@@ -146,14 +146,12 @@ void XPicture_swap(XPicture* self, XPicture* other);
  * @param self 待释放的对象指针
  */
 /** @brief 通过 XClass 虚表释放绘图记录。 @param self 待释放的绘图记录指针。 */
-#define XPicture_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      虚函数调度：删除（释放堆上对象）
  * @param self 待删除的对象指针
  */
 /** @brief 删除堆上的绘图记录对象。 @param self 待删除的绘图记录指针。 */
-#define XPicture_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 查询方法 ========== */
 

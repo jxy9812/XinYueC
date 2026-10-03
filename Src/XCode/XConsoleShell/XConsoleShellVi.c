@@ -99,7 +99,7 @@ static bool xvi_tui_save_buffer(XConsoleShell* shell,
     fd = xvi_open_file(pathObj, XDeviceFile_WriteOnly | XDeviceFile_Create |
                           XDeviceFile_Truncate, &error);
     if (fd == XFD_INVALID) {
-        XString_delete_base(pathObj);
+        XClassDelete(pathObj);
         return false;
     }
     for (i = 0; i < XTuiVim_lineCount(vim) && ok; ++i) {
@@ -114,7 +114,7 @@ static bool xvi_tui_save_buffer(XConsoleShell* shell,
     if (ok)
         ok = XDeviceFile_flush(fd);
     XDeviceFile_close(fd);
-    XString_delete_base(pathObj);
+    XClassDelete(pathObj);
     return ok;
 }
 
@@ -225,30 +225,30 @@ static bool xvi_tui_open_buffer(XConsoleShell* shell, XConsoleShellSession* sess
     if (!shell || !session || !tui || !input || !input[0]) return false;
     path = XString_create();
     if (!path || !xvi_make_path(session, input, path)) {
-        if (path) XString_delete_base(path);
+        if (path) XClassDelete(path);
         return false;
     }
     for (i = 0; i < tui->bufferCount; ++i) {
         if (strcmp(XTuiVim_path(tui->buffers[i]), XString_toUtf8(path)) == 0) {
             bool ok = xvi_tui_switch(tui, i);
-            XString_delete_base(path);
+            XClassDelete(path);
             return ok;
         }
     }
     if (tui->bufferCount >= XVI_TUI_MAX_BUFFERS ||
         !xvi_load_lines(shell, session, path)) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return false;
     }
     vim = xvi_tui_make_buffer(tui, session, path);
     if (!vim) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return false;
     }
     tui->buffers[tui->bufferCount] = vim;
     ++tui->bufferCount;
     i = tui->bufferCount - 1;
-    XString_delete_base(path);
+    XClassDelete(path);
     return xvi_tui_switch(tui, i);
 }
 
@@ -274,7 +274,7 @@ static void xvi_tui_delete_buffers(XviTui* tui)
     int i;
     if (!tui) return;
     for (i = 0; i < tui->bufferCount; ++i) {
-        if (tui->buffers[i]) XTuiVim_delete_base(tui->buffers[i]);
+        if (tui->buffers[i]) XClassDelete(tui->buffers[i]);
         tui->buffers[i] = NULL;
     }
     tui->bufferCount = 0;
@@ -298,7 +298,7 @@ static bool xvi_tui_close_current_buffer(XviTui* tui)
         if (!replacement) return false;
         xvi_tui_attach(tui, replacement);
     }
-    if (tui->buffers[index]) XTuiVim_delete_base(tui->buffers[index]);
+    if (tui->buffers[index]) XClassDelete(tui->buffers[index]);
     for (i = index; i + 1 < tui->bufferCount; ++i)
         tui->buffers[i] = tui->buffers[i + 1];
     tui->buffers[tui->bufferCount - 1] = NULL;
@@ -350,7 +350,7 @@ static XConsoleResult xvi_tui_after_input(XConsoleShell* shell,
         } else {
             (void)xvi_write_line(shell, "vi: 保存失败");
         }
-        if (path) XString_delete_base(path);
+        if (path) XClassDelete(path);
         XTuiVim_ackAction(actionVim);
         XTui_refresh(tui->tui);
         return XConsoleResult_MoreOutput;
@@ -483,9 +483,9 @@ static XConsoleResult xvi_tui_after_input(XConsoleShell* shell,
     if (quit) {
         XTui_stop(tui->tui);
         xvi_tui_delete_buffers(tui);
-        if (tui->screen) XTuiScreen_delete_base(tui->screen);
-        if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
-        if (tui->tui) XTui_delete_base(tui->tui);
+        if (tui->screen) XClassDelete(tui->screen);
+        if (tui->terminal) XClassDelete(tui->terminal);
+        if (tui->tui) XClassDelete(tui->tui);
         XFree_System(tui);
         xvi_set_input_echo(shell, true);
         session->editorTui = NULL;
@@ -554,10 +554,10 @@ static bool xvi_tui_open(XConsoleShell* shell, XConsoleShellSession* session,
     xvi_set_input_echo(shell, false);
     return true;
 fail:
-    if (tui->vim) XTuiVim_delete_base(tui->vim);
-    if (tui->screen) XTuiScreen_delete_base(tui->screen);
-    if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
-    if (tui->tui) XTui_delete_base(tui->tui);
+    if (tui->vim) XClassDelete(tui->vim);
+    if (tui->screen) XClassDelete(tui->screen);
+    if (tui->terminal) XClassDelete(tui->terminal);
+    if (tui->tui) XClassDelete(tui->tui);
     XFree_System(tui);
     return false;
 }
@@ -583,7 +583,7 @@ static bool xvi_make_path(const XConsoleShellSession* session, const char* input
         XString* prefix = XString_create_utf8(
             session->currentPath[0] ? session->currentPath : "/");
         if (!prefix) {
-            XString_delete_base(raw);
+            XClassDelete(raw);
             return false;
         }
         if (strcmp(value, ".") != 0) {
@@ -591,18 +591,18 @@ static bool xvi_make_path(const XConsoleShellSession* session, const char* input
             if (text[0]) {
                 if (!XString_append_utf8(prefix, "/") ||
                     !XString_append_utf8(prefix, text)) {
-                    XString_delete_base(prefix);
-                    XString_delete_base(raw);
+                    XClassDelete(prefix);
+                    XClassDelete(raw);
                     return false;
                 }
             }
         }
-        XString_delete_base(raw);
+        XClassDelete(raw);
         raw = prefix;
     }
     if (!XDeviceFile_resolvePath(raw, output, XPathStyle_Absolute))
         XString_assign(output, raw);
-    XString_delete_base(raw);
+    XClassDelete(raw);
     return XString_size_base(output) < XCONSOLE_SHELL_MAX_PATH;
 }
 
@@ -811,11 +811,11 @@ static XConsoleResult xvi_finish(XConsoleShell* shell,
     if (save) {
         path = XString_create();
         if (!path || !xvi_make_path(session, session->editorPath, path)) {
-            if (path) XString_delete_base(path);
+            if (path) XClassDelete(path);
             return XConsoleResult_Failed;
         }
         ok = xvi_save_lines(shell, session, path);
-        XString_delete_base(path);
+        XClassDelete(path);
         if (!ok) {
             (void)xvi_write_line(shell, "vi: 保存失败");
             return XConsoleResult_Failed;
@@ -860,11 +860,11 @@ static XConsoleResult xvi_command(XConsoleShell* shell,
                 XString* path = XString_create();
                 bool saved;
                 if (!path || !xvi_make_path(session, session->editorPath, path)) {
-                    if (path) XString_delete_base(path);
+                    if (path) XClassDelete(path);
                     return XConsoleResult_Failed;
                 }
                 saved = xvi_save_lines(shell, session, path);
-                XString_delete_base(path);
+                XClassDelete(path);
                 if (!saved) return XConsoleResult_Failed;
                 session->editorModified = false;
                 (void)xvi_write_line(shell, "vi: 已保存");
@@ -1102,27 +1102,27 @@ static int xvi_open(XConsoleShell* shell, XConsoleShellSession* session,
     if (argc != 1 || !shell || !session) return XConsoleResult_InvalidArgument;
     path = XString_create();
     if (!path || !xvi_make_path(session, argv[0], path)) {
-        if (path) XString_delete_base(path);
+        if (path) XClassDelete(path);
         return XConsoleResult_InvalidArgument;
     }
     xvi_clear(session);
 #if XCONSOLE_SHELL_EDITOR_TUI_ON && XTUI_ON && XTUI_VIM_ON
     if (xvi_tui_open(shell, session, path)) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return XConsoleResult_MoreOutput;
     }
 #endif
     if (!xvi_load_lines(shell, session, path)) {
-        XString_delete_base(path);
+        XClassDelete(path);
         (void)xvi_write_line(shell, "vi: 文件行数超过编辑上限");
         return XConsoleResult_Failed;
     }
     if (XString_size_base(path) >= sizeof(session->editorPath)) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return XConsoleResult_InvalidArgument;
     }
     memcpy(session->editorPath, XString_toUtf8(path), XString_size_base(path) + 1u);
-    XString_delete_base(path);
+    XClassDelete(path);
     session->editorActive = true;
     session->editorInsertMode = false;
     session->editorModified = false;
@@ -1220,9 +1220,9 @@ void XConsoleShellVi_cancel(XConsoleShell* shell, XConsoleShellSession* session)
         XviTui* tui = (XviTui*)session->editorTui;
         XTui_stop(tui->tui);
         xvi_tui_delete_buffers(tui);
-        if (tui->screen) XTuiScreen_delete_base(tui->screen);
-        if (tui->terminal) XTuiTerminal_delete_base(tui->terminal);
-        if (tui->tui) XTui_delete_base(tui->tui);
+        if (tui->screen) XClassDelete(tui->screen);
+        if (tui->terminal) XClassDelete(tui->terminal);
+        if (tui->tui) XClassDelete(tui->tui);
         XFree_System(tui);
         xvi_set_input_echo(shell, true);
         session->editorTui = NULL;

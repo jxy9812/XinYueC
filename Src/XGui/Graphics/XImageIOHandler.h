@@ -136,9 +136,7 @@ void XImageIOHandler_init(XImageIOHandler* self);
  * @brief      虚函数调度：释放
  * @param self 待释放的对象指针
  */
-#define XImageIOHandler_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的图像处理器。 @param self 待删除的处理器指针。 */
-#define XImageIOHandler_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 设备管理 ========== */
 

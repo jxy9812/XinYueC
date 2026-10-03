@@ -31,7 +31,7 @@ void XAbstractSheet_setRid(XAbstractSheet* self, int rid)
 void XAbstractSheet_deinit(XAbstractSheet* self)
 {
     if (!self) return;
-    if (self->m_sheetName) XString_delete_base(self->m_sheetName);
+    if (self->m_sheetName) XClassDelete(self->m_sheetName);
     XAbstractOOXmlFile_deinit(&self->m_base);
 }
 

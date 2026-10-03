@@ -44,8 +44,6 @@ typedef struct XSshClient {
 XVtable* XSshClient_class_init(void);
 void XSshClient_init(XSshClient* self);
 XSshClient* XSshClient_create_ex(XMemoryType memory);
-#define XSshClient_deinit_base XClass_deinit_base
-#define XSshClient_delete_base XClass_delete_base
 #define XSshClient_deleteLater XObject_deleteLater
 
 /** @brief 绑定已连接的字节流设备，并连接 readyRead 驱动。 */

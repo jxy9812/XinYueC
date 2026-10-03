@@ -90,8 +90,6 @@ void XCalendarWidget_init(XCalendarWidget* self, XWidget* parent,
 #define XCalendarWidget_create(parent, flags) XCalendarWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XCalendarWidget* XCalendarWidget_create_ex(XMemoryType memory,
                                            XWidget* parent, XWidgetFlags flags);
-#define XCalendarWidget_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XCalendarWidget_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      获取选中日期。

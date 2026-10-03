@@ -39,8 +39,8 @@ static bool XRegularExpression_assign_utf16(XString* target, const uint16_t* dat
 
     XString* value = XString_create_with_length_utf16(data, length);
     if (!value) return false;
-    XMove(target, value);
-    XString_delete_base(value);
+    XClassMove(target, value);
+    XClassDelete(value);
     return true;
 }
 
@@ -58,16 +58,16 @@ static XRegularExpressionData* XRegularExpression_data_create(void)
     data->m_dirty = true;
     data->m_generalContext = pcre2_xin_general_context_create();
     if (!data->m_generalContext) {
-        XString_deinit_base(&data->m_pattern);
-        XString_deinit_base(&data->m_errorString);
+        XClassDeinit(&data->m_pattern);
+        XClassDeinit(&data->m_errorString);
         XFree_System(data);
         return NULL;
     }
     data->m_compileMutex = XMutex_create(XLock_NonRecursive);
     if (!data->m_compileMutex) {
         pcre2_general_context_free(data->m_generalContext);
-        XString_deinit_base(&data->m_pattern);
-        XString_deinit_base(&data->m_errorString);
+        XClassDeinit(&data->m_pattern);
+        XClassDeinit(&data->m_errorString);
         XFree_System(data);
         return NULL;
     }
@@ -96,8 +96,8 @@ static void XRegularExpression_data_destroy(XRegularExpressionData* data)
         pcre2_general_context_free(data->m_generalContext);
     if (data->m_compileMutex)
         XMutex_delete(data->m_compileMutex);
-    XString_deinit_base(&data->m_pattern);
-    XString_deinit_base(&data->m_errorString);
+    XClassDeinit(&data->m_pattern);
+    XClassDeinit(&data->m_errorString);
     XFree_System(data);
 }
 
@@ -272,14 +272,14 @@ static int XRegularExpression_captureIndexForName(const XRegularExpressionData* 
         } else if (nameString) {
             XString* current = XString_create_with_length_utf16(currentName, currentLength);
             equal = current && XString_equals(current, nameString, XChar_CaseSensitive);
-            if (current) XString_delete_base(current);
+            if (current) XClassDelete(current);
         }
         if (equal) {
             result = (int)row[0];
             break;
         }
     }
-    if (nameString) XString_delete_base(nameString);
+    if (nameString) XClassDelete(nameString);
     return result;
 }
 
@@ -338,7 +338,7 @@ static XRegularExpressionMatch* XRegularExpression_matchInternal(const XRegularE
 {
     XRegularExpressionMatch* match = XRegularExpressionMatch_create();
     if (!match) return NULL;
-    if (expression) XCopy(&match->m_regularExpression, expression);
+    if (expression) XClassCopy(&match->m_regularExpression, expression);
     if (!XRegularExpression_setSubject(&match->m_subject, subject, subjectLength)) {
         match->m_isValid = false;
         return match;
@@ -459,7 +459,7 @@ static XString* XRegularExpression_wildcardInternal(const XStringView* pattern,
     if (!pattern || !XStringView_data(pattern)) {
         if (!(options & XRegularExpression_UnanchoredWildcardConversion)) {
             XString* anchored = XRegularExpression_anchoredPattern_2(result);
-            XString_delete_base(result);
+            XClassDelete(result);
             return anchored;
         }
         return result;
@@ -538,7 +538,7 @@ static XString* XRegularExpression_wildcardInternal(const XStringView* pattern,
 
     if (!(options & XRegularExpression_UnanchoredWildcardConversion)) {
         XString* anchored = XRegularExpression_anchoredPattern_2(result);
-        XString_delete_base(result);
+        XClassDelete(result);
         return anchored;
     }
     return result;
@@ -577,8 +577,8 @@ static void VXRegularExpressionMatch_deinit(XRegularExpressionMatch* match)
     if (match->m_capturedOffsets) XFree_System(match->m_capturedOffsets);
     match->m_capturedOffsets = NULL;
     match->m_capturedCount = 0;
-    XRegularExpression_deinit_base(&match->m_regularExpression);
-    XString_deinit_base(&match->m_subject);
+    XClassDeinit(&match->m_regularExpression);
+    XClassDeinit(&match->m_subject);
 }
 
 static void VXRegularExpressionMatch_copy(XRegularExpressionMatch* dest,
@@ -586,8 +586,8 @@ static void VXRegularExpressionMatch_copy(XRegularExpressionMatch* dest,
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XRegularExpressionMatch_init(dest);
-    XCopy(&dest->m_regularExpression, &src->m_regularExpression);
-    XCopy(&dest->m_subject, &src->m_subject);
+    XClassCopy(&dest->m_regularExpression, &src->m_regularExpression);
+    XClassCopy(&dest->m_subject, &src->m_subject);
     if (dest->m_capturedOffsets) XFree_System(dest->m_capturedOffsets);
     dest->m_capturedOffsets = NULL;
     dest->m_capturedCount = src->m_capturedCount;
@@ -611,8 +611,8 @@ static void VXRegularExpressionMatch_move(XRegularExpressionMatch* dest,
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XRegularExpressionMatch_init(dest);
-    XMove(&dest->m_regularExpression, &src->m_regularExpression);
-    XMove(&dest->m_subject, &src->m_subject);
+    XClassMove(&dest->m_regularExpression, &src->m_regularExpression);
+    XClassMove(&dest->m_subject, &src->m_subject);
     if (dest->m_capturedOffsets) XFree_System(dest->m_capturedOffsets);
     dest->m_capturedOffsets = src->m_capturedOffsets;
     dest->m_capturedCount = src->m_capturedCount;
@@ -631,10 +631,10 @@ static void VXRegularExpressionMatch_move(XRegularExpressionMatch* dest,
 static void VXRegularExpressionMatchIterator_deinit(XRegularExpressionMatchIterator* iterator)
 {
     if (!iterator) return;
-    if (iterator->m_next) XRegularExpressionMatch_delete_base(iterator->m_next);
+    if (iterator->m_next) XClassDelete(iterator->m_next);
     iterator->m_next = NULL;
-    XRegularExpression_deinit_base(&iterator->m_regularExpression);
-    XString_deinit_base(&iterator->m_subject);
+    XClassDeinit(&iterator->m_regularExpression);
+    XClassDeinit(&iterator->m_subject);
 }
 
 static void VXRegularExpressionMatchIterator_copy(XRegularExpressionMatchIterator* dest,
@@ -642,9 +642,9 @@ static void VXRegularExpressionMatchIterator_copy(XRegularExpressionMatchIterato
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XRegularExpressionMatchIterator_init(dest);
-    XCopy(&dest->m_regularExpression, &src->m_regularExpression);
-    XCopy(&dest->m_subject, &src->m_subject);
-    if (dest->m_next) XRegularExpressionMatch_delete_base(dest->m_next);
+    XClassCopy(&dest->m_regularExpression, &src->m_regularExpression);
+    XClassCopy(&dest->m_subject, &src->m_subject);
+    if (dest->m_next) XClassDelete(dest->m_next);
     dest->m_next = src->m_next ? XRegularExpressionMatch_create_copy(src->m_next) : NULL;
     dest->m_nextOffset = src->m_nextOffset;
     dest->m_matchType = src->m_matchType;
@@ -657,9 +657,9 @@ static void VXRegularExpressionMatchIterator_move(XRegularExpressionMatchIterato
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XRegularExpressionMatchIterator_init(dest);
-    XMove(&dest->m_regularExpression, &src->m_regularExpression);
-    XMove(&dest->m_subject, &src->m_subject);
-    if (dest->m_next) XRegularExpressionMatch_delete_base(dest->m_next);
+    XClassMove(&dest->m_regularExpression, &src->m_regularExpression);
+    XClassMove(&dest->m_subject, &src->m_subject);
+    if (dest->m_next) XClassDelete(dest->m_next);
     dest->m_next = src->m_next;
     dest->m_nextOffset = src->m_nextOffset;
     dest->m_matchType = src->m_matchType;
@@ -755,7 +755,7 @@ XRegularExpression* XRegularExpression_create_copy(const XRegularExpression* oth
     if (!other) return NULL;
     XRegularExpression* expression = XRegularExpression_create();
     if (!expression) return NULL;
-    XCopy(expression, other);
+    XClassCopy(expression, other);
     return expression;
 }
 
@@ -764,7 +764,7 @@ XRegularExpression* XRegularExpression_create_move(XRegularExpression* other)
     if (!other) return NULL;
     XRegularExpression* expression = XRegularExpression_create();
     if (!expression) return NULL;
-    XMove(expression, other);
+    XClassMove(expression, other);
     return expression;
 }
 
@@ -792,7 +792,7 @@ XRegularExpressionMatch* XRegularExpressionMatch_create_copy(const XRegularExpre
     if (!other) return NULL;
     XRegularExpressionMatch* match = XRegularExpressionMatch_create();
     if (!match) return NULL;
-    XCopy(match, other);
+    XClassCopy(match, other);
     return match;
 }
 
@@ -801,7 +801,7 @@ XRegularExpressionMatch* XRegularExpressionMatch_create_move(XRegularExpressionM
     if (!other) return NULL;
     XRegularExpressionMatch* match = XRegularExpressionMatch_create();
     if (!match) return NULL;
-    XMove(match, other);
+    XClassMove(match, other);
     return match;
 }
 
@@ -821,7 +821,7 @@ XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_copy(
     if (!other) return NULL;
     XRegularExpressionMatchIterator* iterator = XRegularExpressionMatchIterator_create();
     if (!iterator) return NULL;
-    XCopy(iterator, other);
+    XClassCopy(iterator, other);
     return iterator;
 }
 
@@ -831,7 +831,7 @@ XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_move(
     if (!other) return NULL;
     XRegularExpressionMatchIterator* iterator = XRegularExpressionMatchIterator_create();
     if (!iterator) return NULL;
-    XMove(iterator, other);
+    XClassMove(iterator, other);
     return iterator;
 }
 
@@ -950,7 +950,7 @@ XStringList* XRegularExpression_namedCaptureGroups(const XRegularExpression* exp
             if (name && destination) {
                 XString_assign(destination, name);
             }
-            if (name) XString_delete_base(name);
+            if (name) XClassDelete(name);
         }
     }
     return result;
@@ -1056,7 +1056,7 @@ XRegularExpressionMatch* XRegularExpression_match_utf8(const XRegularExpression*
     if (!value) return NULL;
     XRegularExpressionMatch* result = XRegularExpression_match(expression, value, offset,
                                                                  matchType, matchOptions);
-    XString_delete_base(value);
+    XClassDelete(value);
     return result;
 }
 
@@ -1115,7 +1115,7 @@ XRegularExpression* XRegularExpression_fromWildcard(const XStringView* pattern,
         if (caseSensitivity != XChar_CaseSensitive)
             XRegularExpression_setPatternOptions(result, XRegularExpression_CaseInsensitiveOption);
     }
-    XString_delete_base(converted);
+    XClassDelete(converted);
     return result;
 }
 
@@ -1128,7 +1128,7 @@ XString* XRegularExpression_anchoredPattern(const XStringView* expression)
                                                           (size_t)XStringView_size(expression));
         if (value) {
             XString_append(result, value);
-            XString_delete_base(value);
+            XClassDelete(value);
         }
     }
     XRegularExpression_append_literal(result, ")\\z");
@@ -1272,7 +1272,7 @@ XStringList* XRegularExpressionMatch_capturedTexts(const XRegularExpressionMatch
         XString* text = XRegularExpressionMatch_captured(match, (int)i);
         if (text) {
             XStringList_push_back_base(result, text);
-            XString_deinit_base(text);
+            XClassDeinit(text);
             XFree_System(text);
         }
     }
@@ -1355,7 +1355,7 @@ XRegularExpressionMatch* XRegularExpressionMatchIterator_next(XRegularExpression
             XString_size_base(&iterator->m_subject), iterator->m_nextOffset,
             XRegularExpressionMatch_matchType(iterator->m_next),
             XRegularExpressionMatch_matchOptions(iterator->m_next), iterator->m_next);
-    XRegularExpressionMatch_delete_base(iterator->m_next);
+    XClassDelete(iterator->m_next);
     iterator->m_next = next;
     return result;
 }
@@ -1422,12 +1422,12 @@ static XRegularExpressionMatchIterator* XRegularExpression_globalMatchInternal(
 {
     XRegularExpressionMatchIterator* iterator = XRegularExpressionMatchIterator_create();
     if (!iterator) return NULL;
-    if (expression) XCopy(&iterator->m_regularExpression, expression);
+    if (expression) XClassCopy(&iterator->m_regularExpression, expression);
     XRegularExpression_setSubject(&iterator->m_subject, subject, subjectLength);
     iterator->m_nextOffset = offset;
     iterator->m_matchType = matchType;
     iterator->m_matchOptions = matchOptions;
-    if (iterator->m_next) XRegularExpressionMatch_delete_base(iterator->m_next);
+    if (iterator->m_next) XClassDelete(iterator->m_next);
     iterator->m_next = XRegularExpression_match(&iterator->m_regularExpression,
                                                  &iterator->m_subject, offset,
                                                  matchType, matchOptions);
@@ -1469,6 +1469,6 @@ XRegularExpressionMatchIterator* XRegularExpression_globalMatch_utf8(const XRegu
     if (!value) return NULL;
     XRegularExpressionMatchIterator* result = XRegularExpression_globalMatch(expression, value, offset,
                                                                                matchType, matchOptions);
-    XString_delete_base(value);
+    XClassDelete(value);
     return result;
 }

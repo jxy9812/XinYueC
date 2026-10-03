@@ -49,21 +49,21 @@ static void VSvgEngine_pixmap(const XIconEngine* self, const XSize* size,
             bytes = XIODevice_readAll_3((XIODevice*)file);
             XIODevice_close_base((XIODevice*)file);
         }
-        if (file) XClass_delete_base((XClass*)file);
-        if (path) XString_delete_base((XClass*)path);
+        if (file) XClassDelete((XClass*)file);
+        if (path) XClassDelete((XClass*)path);
         if (bytes && XByteArray_size_base((const XContainer*)bytes) > 0 &&
             XImageCodecInternal_decodeSvg_ex(
                 (const uint8_t*)XByteArray_data(bytes),
                 XByteArray_size_base((const XContainer*)bytes),
                 size->width, size->height, &image) &&
             !XImage_isNull(&image)) {
-            XByteArray_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             XPixmap_fromImage(&image, 0, out);
-            XImage_deinit_base(&image);
+            XClassDeinit(&image);
             return;
         }
-        if (bytes) XByteArray_delete_base((XClass*)bytes);
-        XImage_deinit_base(&image);
+        if (bytes) XClassDelete((XClass*)bytes);
+        XClassDeinit(&image);
         XImage_init(&image);
     }
     /* 对标 QSvgIconEngine 的 pixmap 缓存诉求：每次请求都完整「读文件 +
@@ -71,7 +71,7 @@ static void VSvgEngine_pixmap(const XIconEngine* self, const XSize* size,
        XImageCache（默认开）在此路径命中后跳过全部 IO 与解析，是本缓存
        的首个受益者。 */
     if (!XImage_load(&image, se->m_fileName, NULL) || XImage_isNull(&image)) {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return;
     }
     /* 根因（R-108）：此前 (void)size 显式忽略请求尺寸，按 SVG 固有尺寸
@@ -89,8 +89,8 @@ static void VSvgEngine_pixmap(const XIconEngine* self, const XSize* size,
         if (!XImage_isNull(&scaled)) renderImage = &scaled;
     }
     XPixmap_fromImage(renderImage, 0, out);
-    if (scaledInited) XImage_deinit_base(&scaled);
-    XImage_deinit_base(&image);
+    if (scaledInited) XClassDeinit(&scaled);
+    XClassDeinit(&image);
 }
 
 /** @brief Key 虚槽：返回 "svg"。 */
@@ -119,7 +119,7 @@ static void VSvgEngine_deinit(XSvgIconEngine* self)
 {
     if (!self) return;
     if (self->m_fileName) {
-        XString_delete_base(self->m_fileName);
+        XClassDelete(self->m_fileName);
         self->m_fileName = NULL;
     }
     XClass_Deinit_Parent(XIconEngine, (XIconEngine*)self);
@@ -169,7 +169,7 @@ XSvgIconEngine* XSvgIconEngine_create_2(const char* utf8FileName)
     name = XString_create_utf8(utf8FileName);
     if (!name) return NULL;
     engine = XSvgIconEngine_create(name);
-    XString_delete_base(name);
+    XClassDelete(name);
     return engine;
 }
 #endif /* XSVGICON_ON */

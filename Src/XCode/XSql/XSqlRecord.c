@@ -53,7 +53,7 @@ static bool xsql_record_reserve(XSqlRecord* record, size_t wanted)
 
 static void xsql_record_destroy_field(XSqlField* field)
 {
-    if (field) XSqlField_delete_base(field);
+    if (field) XClassDelete(field);
 }
 
 static bool xsql_record_name_equals(const XSqlField* field, const char* name)
@@ -121,7 +121,7 @@ XSqlRecord* XSqlRecord_create_copy(const XSqlRecord* other)
 {
     if (!other) return NULL;
     XSqlRecord* result = XSqlRecord_create();
-    if (result) XCopy(result, other);
+    if (result) XClassCopy(result, other);
     return result;
 }
 
@@ -129,7 +129,7 @@ XSqlRecord* XSqlRecord_create_move(XSqlRecord* other)
 {
     if (!other) return NULL;
     XSqlRecord* result = XSqlRecord_create();
-    if (result) XMove(result, other);
+    if (result) XClassMove(result, other);
     return result;
 }
 
@@ -138,9 +138,9 @@ void XSqlRecord_swap(XSqlRecord* left, XSqlRecord* right)
     if (!left || !right || left == right) return;
     XSqlRecord* temp = XSqlRecord_create_move(left);
     if (!temp) return;
-    XMove(left, right);
-    XMove(right, temp);
-    XSqlRecord_delete_base(temp);
+    XClassMove(left, right);
+    XClassMove(right, temp);
+    XClassDelete(temp);
 }
 
 XVariant* XSqlRecord_value(const XSqlRecord* record, int index)
@@ -340,9 +340,9 @@ XSqlRecord* XSqlRecord_keyValues(const XSqlRecord* record, const XSqlRecord* key
             XSqlField_setValue(field, value);
             XSqlRecord_append(result, field);
         }
-        if (value) XVariant_delete_base(value);
-        if (field) XSqlField_delete_base(field);
-        if (name) XString_delete_base(name);
+        if (value) XClassDelete(value);
+        if (field) XClassDelete(field);
+        if (name) XClassDelete(name);
     }
     return result;
 }

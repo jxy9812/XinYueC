@@ -286,7 +286,7 @@ static bool xssh_hostkey_save(const uint8_t* keyBytes, size_t keyLen)
     fd = xssh_open_file(path, XDeviceFile_WriteOnly | XDeviceFile_Create |
                                XDeviceFile_Truncate, &error);
     if (fd == XFD_INVALID) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return false;
     }
     xssh_write_u32(header, XSSH_HOSTKEY_FILE_MAGIC);
@@ -298,7 +298,7 @@ static bool xssh_hostkey_save(const uint8_t* keyBytes, size_t keyLen)
                                       (int64_t)(sizeof(header) - done));
         if (n <= 0) {
             XDeviceFile_close(fd);
-            XString_delete_base(path);
+            XClassDelete(path);
             return false;
         }
         done += (size_t)n;
@@ -309,20 +309,20 @@ static bool xssh_hostkey_save(const uint8_t* keyBytes, size_t keyLen)
                                       (int64_t)(keyLen - done));
         if (n <= 0) {
             XDeviceFile_close(fd);
-            XString_delete_base(path);
+            XClassDelete(path);
             return false;
         }
         done += (size_t)n;
     }
     if (!XDeviceFile_flush(fd)) {
         XDeviceFile_close(fd);
-        XString_delete_base(path);
+        XClassDelete(path);
         return false;
     }
     XDeviceFile_close(fd);
     /* 主机密钥属敏感材料，尽力限制为仅属主可读写。 */
     (void)XDeviceFile_setPermissions(path, XFile_ReadOwner | XFile_WriteOwner);
-    XString_delete_base(path);
+    XClassDelete(path);
     return true;
 }
 
@@ -343,11 +343,11 @@ static bool xssh_hostkey_load(uint8_t* keyBytes, size_t keyCap, size_t* keyLen)
     if (!XDeviceFile_stat(path, &stat) || !stat.exists || !stat.isFile ||
         stat.size < (int64_t)XSSH_HOSTKEY_FILE_HEADER ||
         stat.size > (int64_t)(XSSH_HOSTKEY_FILE_HEADER + XSSH_HOSTKEY_MAX_BYTES)) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return false;
     }
     fd = xssh_open_file(path, XDeviceFile_ReadOnly, &error);
-    XString_delete_base(path);
+    XClassDelete(path);
     if (fd == XFD_INVALID) return false;
     done = 0;
     while (done < sizeof(header)) {

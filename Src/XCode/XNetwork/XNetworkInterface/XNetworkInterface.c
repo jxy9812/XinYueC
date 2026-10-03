@@ -33,22 +33,22 @@ static void VXNetworkInterface_deinit(XNetworkInterface* iface)
     if (!iface) return;
     
     if (iface->name) {
-        XString_delete_base(iface->name);
+        XClassDelete(iface->name);
         iface->name = NULL;
     }
     
     if (iface->humanReadableName) {
-        XString_delete_base(iface->humanReadableName);
+        XClassDelete(iface->humanReadableName);
         iface->humanReadableName = NULL;
     }
     
     if (iface->hardwareAddress) {
-        XString_delete_base(iface->hardwareAddress);
+        XClassDelete(iface->hardwareAddress);
         iface->hardwareAddress = NULL;
     }
     
     if (iface->addressEntries) {
-        XVector_delete_base(iface->addressEntries);
+        XClassDelete(iface->addressEntries);
         iface->addressEntries = NULL;
     }
 }
@@ -71,7 +71,7 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (src->name) 
     {
         if (dest->name)
-            XCopy(dest->name, src->name);
+            XClassCopy(dest->name, src->name);
         else
             dest->name = XString_create_copy(src->name);
     }
@@ -79,7 +79,7 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (src->humanReadableName) 
     {
         if (dest->humanReadableName)
-            XCopy(dest->humanReadableName, src->humanReadableName);
+            XClassCopy(dest->humanReadableName, src->humanReadableName);
         else
             dest->humanReadableName = XString_create_copy(src->humanReadableName);
     }
@@ -87,7 +87,7 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (src->hardwareAddress)
     {
         if (dest->hardwareAddress)
-            XCopy(dest->hardwareAddress, src->hardwareAddress);
+            XClassCopy(dest->hardwareAddress, src->hardwareAddress);
         else
             dest->hardwareAddress = XString_create_copy(src->hardwareAddress);
     }
@@ -96,7 +96,7 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
     if (src->addressEntries) 
     {
         if (dest->addressEntries)
-            XCopy(dest->addressEntries, src->addressEntries);
+            XClassCopy(dest->addressEntries, src->addressEntries);
         else
             dest->addressEntries = XVector_create_copy(src->addressEntries);
     }
@@ -147,7 +147,7 @@ void XNetworkInterface_init(XNetworkInterface* iface)
     iface->addressEntries = XVector_create(sizeof(XNetworkAddressEntry));
     XContainerSetDataCopyMethod(iface->addressEntries, XClass_copy_base);
     XContainerSetDataMoveMethod(iface->addressEntries, XClass_move_base);
-    XContainerSetDataDeinitMethod(iface->addressEntries, XNetworkAddressEntry_deinit_base);
+    XContainerSetDataDeinitMethod(iface->addressEntries, XClass_deinit_base);
     iface->type = XNetworkInterface_Unknown;
     iface->isValid = false;
 }
@@ -169,7 +169,7 @@ XNetworkInterface* XNetworkInterface_create_copy(const XNetworkInterface* other)
     XNetworkInterface* iface = XNetworkInterface_create();
     if (!iface) return NULL;
     
-    XCopy(iface, other);
+    XClassCopy(iface, other);
     return iface;
 }
 
@@ -180,7 +180,7 @@ XNetworkInterface* XNetworkInterface_create_move(const XNetworkInterface* other)
     XNetworkInterface* iface = XNetworkInterface_create();
     if (!iface) return NULL;
 
-    XMove(iface, other);
+    XClassMove(iface, other);
     return iface;
 }
 
@@ -254,7 +254,7 @@ XVector* XNetworkInterface_allAddresses(void)
     if (!addresses) return NULL;
     XContainerSetDataCopyMethod(addresses, XClass_copy_base);
     XContainerSetDataMoveMethod(addresses, XClass_move_base);
-    XContainerSetDataDeinitMethod(addresses, XHostAddress_deinit_base);
+    XContainerSetDataDeinitMethod(addresses, XClass_deinit_base);
     XVector* interfaces = XNetworkInterface_allInterfaces();
     if (!interfaces) return addresses;
     
@@ -277,7 +277,7 @@ XVector* XNetworkInterface_allAddresses(void)
         }
     }
     
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
     
     return addresses;
 }
@@ -288,10 +288,10 @@ XVector* XNetworkInterface_allInterfaces(void)
     if (!result) return NULL;
     XContainerSetDataCopyMethod(result, XClass_copy_base);
     XContainerSetDataMoveMethod(result, XClass_move_base);
-    XContainerSetDataDeinitMethod(result, XNetworkInterface_deinit_base);
+    XContainerSetDataDeinitMethod(result, XClass_deinit_base);
     XDeviceNetworkInterfaceIterator iter = XDeviceNetwork_enumInterfacesBegin();
     if (!iter) {
-        XVector_delete_base(result);
+        XClassDelete(result);
         return NULL;
     }   
     
@@ -299,7 +299,7 @@ XVector* XNetworkInterface_allInterfaces(void)
     while ((iface = XDeviceNetwork_enumInterfacesNext(iter)) != NULL) {
         /* 接口信息已在平台层填充完毕，直接添加到结果向量 */
         XVector_push_back_move_1_base(result, iface);
-        XNetworkInterface_delete_base(iface);
+        XClassDelete(iface);
     }
     
     XDeviceNetwork_enumInterfacesEnd(iter);
@@ -327,7 +327,7 @@ XNetworkInterface* XNetworkInterface_interfaceFromName(const XString* name)
         }
     }
     
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
     return result;
 }
 
@@ -348,7 +348,7 @@ XNetworkInterface* XNetworkInterface_interfaceFromIndex(int index)
         }
     }
     
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
     return result;
 }
 
@@ -364,12 +364,12 @@ int XNetworkInterface_interfaceIndexFromName(const XString* name)
         if (iface->name) {
             if (XString_compare(iface->name, name) == XCompare_Equality) {
                 int index = iface->index;
-                XNetworkInterface_delete_base(iface);
+                XClassDelete(iface);
                 XDeviceNetwork_enumInterfacesEnd(iter);
                 return index;
             }
         }
-        XNetworkInterface_delete_base(iface);
+        XClassDelete(iface);
     }
     
     XDeviceNetwork_enumInterfacesEnd(iter);
@@ -387,11 +387,11 @@ XString* XNetworkInterface_interfaceNameFromIndex(int index)
     while ((iface = XDeviceNetwork_enumInterfacesNext(iter)) != NULL) {
         if (iface->index == index) {
             XString* result = XString_create_copy(iface->name);
-            XNetworkInterface_delete_base(iface);
+            XClassDelete(iface);
             XDeviceNetwork_enumInterfacesEnd(iter);
             return result;
         }
-        XNetworkInterface_delete_base(iface);
+        XClassDelete(iface);
     }
     
     XDeviceNetwork_enumInterfacesEnd(iter);

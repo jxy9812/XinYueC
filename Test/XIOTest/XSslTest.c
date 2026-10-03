@@ -120,7 +120,7 @@ static XTcpSocket* xssl_test_socket_factory(void* context)
     XSslSocket_setPeerVerifyMode(socket, XSSL_VerifyNone);
     if (cipher_suites) {
         (void)XSslSocket_setCipherSuites(socket, cipher_suites);
-        XString_delete_base((XClass*)cipher_suites);
+        XClassDelete((XClass*)cipher_suites);
     }
     XSslSocket_setLocalCertificate(socket, factory->certificate);
     XSslSocket_setPrivateKey(socket, factory->private_key);
@@ -3350,9 +3350,9 @@ static void xssl_test_delete_protocols(XVector* protocols)
     if (!protocols) return;
     for (index = 0; index < XContainer_size_base((const XContainer*)protocols); ++index) {
         XByteArray** value = (XByteArray**)XVector_at_base(protocols, (int64_t)index);
-        if (value && *value) XClass_delete_base((XClass*)*value);
+        if (value && *value) XClassDelete((XClass*)*value);
     }
-    XVector_delete_base((XClass*)protocols);
+    XClassDelete((XClass*)protocols);
 }
 
 static bool xssl_test_socket_configuration(void)
@@ -3382,9 +3382,9 @@ static bool xssl_test_socket_configuration(void)
                       XSslSocket_nextProtocolNegotiationStatus(socket) == XSSL_NextProtocolNegotiationUnsupported,
                       "XSslSocket ALPN", "ALPN 配置或深拷贝错误");
     xssl_test_delete_protocols(copied_protocols);
-    XString_delete_base((XClass*)cipher_suites);
+    XClassDelete((XClass*)cipher_suites);
     xssl_test_delete_protocols(protocols);
-    XClass_delete_base((XClass*)socket);
+    XClassDelete((XClass*)socket);
     XSSL_TEST_PASS("XSslSocket configuration and lifecycle");
     return true;
 }
@@ -3481,14 +3481,14 @@ static bool xssl_test_socket_tls12_loopback(void)
 cleanup:
     if (client) {
         XSslSocket_disconnectFromHost_base((XAbstractSocket*)client);
-        XClass_delete_base((XClass*)client);
+        XClassDelete((XClass*)client);
     }
     if (listener) {
         XTcpServer_close(listener);
-        XClass_delete_base((XClass*)listener);
+        XClassDelete((XClass*)listener);
     }
-    if (cipher_suites) XString_delete_base((XClass*)cipher_suites);
-    if (host_name) XString_delete_base((XClass*)host_name);
+    if (cipher_suites) XClassDelete((XClass*)cipher_suites);
+    if (host_name) XClassDelete((XClass*)host_name);
     if (private_key) XSsl_keyDestroy(private_key);
     if (certificate) XSsl_certificateDestroy(certificate);
     XSSL_TEST_REQUIRE(ok, "XSslSocket local TLS 1.2", "本地回环握手或双向读写失败");

@@ -91,9 +91,7 @@ XRadioButton* XRadioButton_create_ex(XMemoryType memory, XWidget* parent,
                                      XWidgetFlags flags);
 
 /** @brief 通过 XClass 虚表释放 XRadioButton 资源（栈/外部存储对象使用）。 */
-#define XRadioButton_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XRadioButton 对象。 */
-#define XRadioButton_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 继承 XAbstractButton 的公共 API（宏别名保持原名称） ==================== */
 

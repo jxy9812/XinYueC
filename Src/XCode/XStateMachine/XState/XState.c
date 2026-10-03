@@ -18,7 +18,7 @@ static void VXState_deinit(XState* state)
             XStateMachine_unregisterTransition_internal(state->m_class.m_machine, transition, false); /* 析构路径:同步删 */
             transition->m_sourceState = NULL;
         }
-        XVector_delete_base((XClass*)state->m_transitions);
+        XClassDelete((XClass*)state->m_transitions);
         state->m_transitions = NULL;
     }
 
@@ -30,7 +30,7 @@ static void VXState_deinit(XState* state)
             child->m_parentState = NULL;
             XAbstractState_setMachine_internal(child, NULL);
         }
-        XVector_delete_base((XClass*)state->m_childStates);
+        XClassDelete((XClass*)state->m_childStates);
         state->m_childStates = NULL;
     }
 
@@ -209,7 +209,7 @@ XSignalTransition* XState_addTransition_2(XState* state, const XObject* sender,
     if (!transition)
         return NULL;
     if (!XAbstractTransition_setTargetState((XAbstractTransition*)transition, target)) {
-        XSignalTransition_delete_base((XClass*)transition);
+        XClassDelete((XClass*)transition);
         return NULL;
     }
     return transition;
@@ -226,7 +226,7 @@ XAbstractTransition* XState_addTransition_3(XState* state, XAbstractState* targe
     XAbstractTransition_init(transition, state);
     Set_Class_IsHeap(transition, true);
     if (!XAbstractTransition_setTargetState(transition, target)) {
-        XAbstractTransition_delete_base((XClass*)transition);
+        XClassDelete((XClass*)transition);
         return NULL;
     }
     return transition;

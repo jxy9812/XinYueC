@@ -3,7 +3,7 @@
 #include "XVariantTypeOps.h"
 
 XVARIANT_TYPE_OPS_DEFINE(XVariantList, sizeof(XVariantList), XClass_copy_base,
-	XClass_move_base, XVariantList_clear_base, XVariantList_deinit_base,
+	XClass_move_base, XVariantList_clear_base, XClass_deinit_base,
 	NULL, "XVariantList");
 
 XVariant* XVariantList_toVariant(const XVariantList* list)
@@ -15,7 +15,7 @@ XVariant* XVariantList_toVariant(const XVariantList* list)
 	if (!var)
 		return NULL;
 	XVariantList_init((XVariantList*)XVariant_data(var));
-	XCopy(XVariant_data(var), list);
+	XClassCopy(XVariant_data(var), list);
 	return var;
 }
 
@@ -28,7 +28,7 @@ XVariant* XVariantList_toVariant_move(XVariantList* list)
 	if (!var)
 		return NULL;
 	XVariantList_init((XVariantList*)XVariant_data(var));
-	XMove(XVariant_data(var), list);
+	XClassMove(XVariant_data(var), list);
 	return var;
 }
 
@@ -60,7 +60,7 @@ static bool XVariantList_prepareVariant(XVariant* var)
 		return false;
 	if (var->m_type != XVariantType_List)
 	{
-		XVariant_deinit_base(var);
+		XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XVariantList));
 		if (!var->m_data)
 		{
@@ -74,7 +74,7 @@ static bool XVariantList_prepareVariant(XVariant* var)
 	else if (!var->m_data || var->m_dataSize != sizeof(XVariantList))
 	{
 		if (var->m_data)
-			XVariant_deinit_base(var);
+			XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XVariantList));
 		if (!var->m_data)
 		{
@@ -91,14 +91,14 @@ void XVariantList_setVariant(XVariant* var, const XVariantList* list)
 {
 	if (!list || !XVariantList_prepareVariant(var))
 		return;
-	XCopy(XVariant_data(var), list);
+	XClassCopy(XVariant_data(var), list);
 }
 
 void XVariantList_setVariant_move(XVariant* var, XVariantList* list)
 {
 	if (!list || !XVariantList_prepareVariant(var))
 		return;
-	XMove(XVariant_data(var), list);
+	XClassMove(XVariant_data(var), list);
 }
 
 void XVariantList_setVariant_ref(XVariant* var, XVariantList* list)
@@ -127,7 +127,7 @@ XVariantList* XVariantList_create_copy(const XVariantList* other)
 	XVariantList* list = XVariantList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if (list == NULL)
 		return NULL;
-	XCopy(list, other);
+	XClassCopy(list, other);
 	return list;
 }
 XVariantList* XVariantList_create_move(XVariantList* other)
@@ -137,7 +137,7 @@ XVariantList* XVariantList_create_move(XVariantList* other)
 	XVariantList* list = XVariantList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if (list == NULL)
 		return NULL;
-	XMove(list, other);
+	XClassMove(list, other);
 	return list;
 }
 void XVariantList_init(XVariantList* list)
@@ -148,6 +148,6 @@ void XVariantList_init(XVariantList* list)
 	XClassGetVtable(list) = XVariantList_class_init();
 	XContainerSetDataCopyMethod(list, XClass_copy_base);
 	XContainerSetDataMoveMethod(list, XClass_move_base);
-	XContainerSetDataDeinitMethod(list, XVariant_deinit_base);
+	XContainerSetDataDeinitMethod(list, XClass_deinit_base);
 	XContainerSetCompare(list, uintptr_t_compare);
 }

@@ -75,8 +75,6 @@ void XOffscreenSurface_init(XOffscreenSurface* self);
  * @return     新对象指针；失败返回 NULL。
  */
 XOffscreenSurface* XOffscreenSurface_create_ex(XMemoryType memory);
-#define XOffscreenSurface_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XOffscreenSurface_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      设置表面格式（对标 QOffscreenSurface::setFormat）。

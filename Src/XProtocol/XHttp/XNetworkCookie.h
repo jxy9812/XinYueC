@@ -66,13 +66,13 @@ XVtable* XNetworkCookie_class_init(void);
  * - @brief 创建 Cookie。
  * - @param name 名称；借用，创建时深拷贝；可为空以创建空对象。
  * - @param value 值；借用，创建时深拷贝；可为 NULL。
- * - @return 新 Cookie；调用者必须使用 XNetworkCookie_delete_base 释放。
+ * - @return 新 Cookie；调用者必须使用 XClassDelete 释放。
  */
 XNetworkCookie* XNetworkCookie_create_ex(XMemoryType memory,  const XByteArray* name, const XByteArray* value);
 
 /**
  * - @brief 创建空 HTTP Cookie。
- * - @return 新建 Cookie；调用者必须使用 XNetworkCookie_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建 Cookie；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XNetworkCookie* XNetworkCookie_create_empty(void);
 
@@ -97,8 +97,6 @@ XNetworkCookie* XNetworkCookie_create_move(XNetworkCookie* other);
 void XNetworkCookie_init(XNetworkCookie* self);
 
 /** @brief Cookie 生命周期与值语义入口。 */
-#define XNetworkCookie_deinit_base XClass_deinit_base
-#define XNetworkCookie_delete_base XClass_delete_base
 
 /**
  * - @brief 设置 Cookie 名称。
@@ -269,7 +267,7 @@ typedef struct XNetworkCookieJar {
 XVtable* XNetworkCookieJar_class_init(void);
 /**
  * - @brief 创建空 CookieJar。
- * - @return 新建 CookieJar；调用者必须使用 XNetworkCookieJar_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建 CookieJar；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XNetworkCookieJar* XNetworkCookieJar_create_ex(XMemoryType memory);
 /**
@@ -278,8 +276,6 @@ XNetworkCookieJar* XNetworkCookieJar_create_ex(XMemoryType memory);
  */
 void XNetworkCookieJar_init(XNetworkCookieJar* self);
 /** @brief CookieJar 生命周期入口。 */
-#define XNetworkCookieJar_deinit_base XClass_deinit_base
-#define XNetworkCookieJar_delete_base XClass_delete_base
 #define XNetworkCookieJar_deleteLater XObject_deleteLater
 
 /**
@@ -332,7 +328,7 @@ bool XNetworkCookieJar_setCookiesFromHeaders(XNetworkCookieJar* self, const XHtt
  * - @brief 生成请求 Cookie 头字段值。
  * - @param self CookieJar；可为 NULL。
  * - @param url 请求 URL；借用且不能为 NULL，用于 Domain、Path 和 Secure 过滤。
- * - @return 新建 Cookie 头值；调用者必须使用 XByteArray_delete_base 释放，参数无效或分配失败返回 NULL。
+ * - @return 新建 Cookie 头值；调用者必须使用 XClassDelete 释放，参数无效或分配失败返回 NULL。
  */
 XByteArray* XNetworkCookieJar_cookieHeader(const XNetworkCookieJar* self, const XUrl* url);
 /**

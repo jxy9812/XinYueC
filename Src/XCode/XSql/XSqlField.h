@@ -59,51 +59,49 @@ void XSqlField_init_ex(XSqlField* field, const XString* fieldName,
                        int metaType, const XString* tableName);
 /**
  * @brief 创建空字段。
- * @return 新字段，调用者必须使用 XSqlField_delete_base 释放；失败返回 NULL。
+ * @return 新字段，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 /**
  * @brief 创建字段。
  * @param fieldName 字段名；借用。
  * @param metaType XVariant 类型编号。
  * @param tableName 所属表名；借用。
- * @return 新字段，调用者必须使用 XSqlField_delete_base 释放；失败返回 NULL。
+ * @return 新字段，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlField* XSqlField_create_ex(XMemoryType memory, const XString* fieldName, int metaType,
                                const XString* tableName);
 /**
  * @brief 深拷贝创建字段。
  * @param other 源字段；借用，不能为 NULL。
- * @return 新字段，调用者必须使用 XSqlField_delete_base 释放；失败返回 NULL。
+ * @return 新字段，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlField* XSqlField_create_copy(const XSqlField* other);
 /**
  * @brief 移动创建字段。
  * @param other 源字段；不能为 NULL，成功后资源被移出。
- * @return 新字段，调用者必须使用 XSqlField_delete_base 释放；失败返回 NULL。
+ * @return 新字段，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlField* XSqlField_create_move(XSqlField* other);
 
 /** @brief 调用 XClass 析构入口释放字段名称和字段值。 */
-#define XSqlField_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlField_create 系列函数返回的字段对象。 */
-#define XSqlField_delete_base XClass_delete_base
 
 /** @brief 交换两个字段对象内容。 @param left 左字段；不能为 NULL。 @param right 右字段；不能为 NULL。 @return 无；元数据、当前值和默认值一并交换。 */
 void XSqlField_swap(XSqlField* left, XSqlField* right);
 
 /** @brief 设置字段当前值。 @param field 字段对象；不能为 NULL。 @param value 字段值；借用并深复制，可为 NULL 以设置 SQL NULL。 @return 无；内存不足时保留旧值。 */
 void XSqlField_setValue(XSqlField* field, const XVariant* value);
-/** @brief 获取字段当前值副本。 @param field 字段对象；可为 NULL。 @return 新值所有权；调用者使用 XVariant_delete_base 释放。 */
+/** @brief 获取字段当前值副本。 @param field 字段对象；可为 NULL。 @return 新值所有权；调用者使用 XClassDelete 释放。 */
 XVariant* XSqlField_value(const XSqlField* field);
 /** @brief 获取字段内部值借用指针。 @param field 字段对象；可为 NULL。 @return 只读内部值；调用者不得释放或修改，字段销毁或赋新值后失效。 */
 const XVariant* XSqlField_value_const(const XSqlField* field);
 /** @brief 设置字段名。 @param field 字段对象；不能为 NULL。 @param name 字段名；借用并深复制，可为 NULL 以清空。 @return 无；内存不足时保留旧名称。 */
 void XSqlField_setName(XSqlField* field, const XString* name);
-/** @brief 获取字段名副本。 @param field 字段对象；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取字段名副本。 @param field 字段对象；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlField_name(const XSqlField* field);
 /** @brief 设置所属表名。 @param field 字段对象；不能为 NULL。 @param name 表名；借用并深复制，可为 NULL 以清空。 @return 无；内存不足时保留旧名称。 */
 void XSqlField_setTableName(XSqlField* field, const XString* name);
-/** @brief 获取所属表名副本。 @param field 字段对象；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取所属表名副本。 @param field 字段对象；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlField_tableName(const XSqlField* field);
 /** @brief 将字段当前值置为 SQL NULL。 @param field 字段对象；不能为 NULL。 @return 无；不会修改默认值或元数据。 */
 void XSqlField_clear(XSqlField* field);
@@ -147,7 +145,7 @@ void XSqlField_setPrecision(XSqlField* field, int precision);
 int XSqlField_precision(const XSqlField* field);
 /** @brief 设置字段默认值。 @param field 字段对象；不能为 NULL。 @param value 默认值；借用并深复制，可为 NULL 以设为 SQL NULL。 @return 无；内存不足时保留旧默认值。 */
 void XSqlField_setDefaultValue(XSqlField* field, const XVariant* value);
-/** @brief 获取字段默认值副本。 @param field 字段对象；可为 NULL。 @return 新值所有权；调用者使用 XVariant_delete_base 释放。 */
+/** @brief 获取字段默认值副本。 @param field 字段对象；可为 NULL。 @return 新值所有权；调用者使用 XClassDelete 释放。 */
 XVariant* XSqlField_defaultValue(const XSqlField* field);
 /** @brief 设置是否参与 SQL 生成。 @param field 字段对象；不能为 NULL。 @param generated 是否纳入 INSERT/UPDATE 语句。 @return 无；不会修改字段值。 */
 void XSqlField_setGenerated(XSqlField* field, bool generated);

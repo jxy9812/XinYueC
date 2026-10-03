@@ -7,7 +7,7 @@
 #include <string.h>
 
 XVARIANT_TYPE_OPS_DEFINE(XByteArray, sizeof(XByteArray), XClass_copy_base,
-	XClass_move_base, XByteArray_clear_base, XByteArray_deinit_base,
+	XClass_move_base, XByteArray_clear_base, XClass_deinit_base,
 	XByteArray_compare, "XByteArray");
 uint8_t * XByteArray_data(XByteArray* other);
 
@@ -20,7 +20,7 @@ XVariant* XByteArray_toVariant(const XByteArray* array)
 	if (!var)
 		return NULL;
 	XByteArray_init((XByteArray*)XVariant_data(var), true);
-	XCopy(XVariant_data(var), array);
+	XClassCopy(XVariant_data(var), array);
 	return var;
 }
 
@@ -33,7 +33,7 @@ XVariant* XByteArray_toVariant_move(XByteArray* array)
 	if (!var)
 		return NULL;
 	XByteArray_init((XByteArray*)XVariant_data(var), true);
-	XMove(XVariant_data(var), array);
+	XClassMove(XVariant_data(var), array);
 	return var;
 }
 
@@ -65,7 +65,7 @@ static bool XByteArray_prepareVariant(XVariant* var)
 		return false;
 	if (var->m_type != XVariantType_ByteArray)
 	{
-		XVariant_deinit_base(var);
+		XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XByteArray));
 		if (!var->m_data)
 		{
@@ -96,14 +96,14 @@ void XByteArray_setVariant(XVariant* var, const XByteArray* array)
 {
 	if (!array || !XByteArray_prepareVariant(var))
 		return;
-	XCopy(XVariant_data(var), array);
+	XClassCopy(XVariant_data(var), array);
 }
 
 void XByteArray_setVariant_move(XVariant* var, XByteArray* array)
 {
 	if (!array || !XByteArray_prepareVariant(var))
 		return;
-	XMove(XVariant_data(var), array);
+	XClassMove(XVariant_data(var), array);
 }
 
 void XByteArray_setVariant_ref(XVariant* var, XByteArray* array)
@@ -170,7 +170,7 @@ XByteArray* XByteArray_create_copy(const XByteArray* other)
 	if (other == NULL)
 		return NULL;
 	XByteArray* v = XByteArray_create_ex(XContainer_memory_type((const XContainer*)other), true);
-	XCopy(v, other);
+	XClassCopy(v, other);
 	return v;
 }
 
@@ -179,7 +179,7 @@ XByteArray* XByteArray_create_move(XByteArray* other)
 	if (other == NULL)
 		return NULL;
 	XByteArray* v = XByteArray_create_ex(XContainer_memory_type((const XContainer*)other), true);
-	XMove(v, other);
+	XClassMove(v, other);
 	return v;
 }
 
@@ -274,7 +274,7 @@ XByteArray* XByteArray_toBase64(XByteArray* array)
 	size_t len = XContainerSize(base64);
 	if (XBase64_encode(XByteArray_data(array), XContainerSize(array), XByteArray_data(base64), &len) != 0)
 	{
-		XByteArray_delete_base(base64);
+		XClassDelete(base64);
 		return NULL;
 	}
 	XContainerSize(base64) = len;
@@ -291,7 +291,7 @@ XByteArray* XByteArray_fromBase64(XByteArray* base64)
 	size_t len = XContainerSize(data);
 	if (XBase64_decode(XByteArray_data(base64), XContainerSize(base64), XByteArray_data(data), &len) != 0)
 	{
-		XByteArray_delete_base(data);
+		XClassDelete(data);
 		return NULL;
 	}
 	XContainerSize(data) = len;
@@ -318,7 +318,7 @@ XByteArray* XByteArray_toCompress(XByteArray* sData)
 	if (compressed == NULL)
 		return NULL;
 	if (!XByteArray_resize_base(compressed, output_len)) {
-		XByteArray_delete_base(compressed);
+		XClassDelete(compressed);
 		return NULL;
 	}
 
@@ -328,7 +328,7 @@ XByteArray* XByteArray_toCompress(XByteArray* sData)
 	int ret = compress(output_data, &output_len, input_data, input_len);
 	if (ret != Z_OK)
 	{
-		XByteArray_delete_base(compressed);
+		XClassDelete(compressed);
 		return NULL;
 	}
 
@@ -376,7 +376,7 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 			output_len *= 2;
 			if (!XByteArray_resize_base(decompressed, output_len))
 			{
-				XByteArray_delete_base(decompressed);
+				XClassDelete(decompressed);
 				return NULL;
 			}
 			attempts++;
@@ -384,13 +384,13 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 		else
 		{
 			// 其他错误（如数据损坏）
-			XByteArray_delete_base(decompressed);
+			XClassDelete(decompressed);
 			return NULL;
 		}
 	}
 
 	// 超过最大尝试次数
-	XByteArray_delete_base(decompressed);
+	XClassDelete(decompressed);
 	return NULL;
 }
 
@@ -532,9 +532,9 @@ void XByteArray_split_free(XVector* parts)
     size_t n = XVector_size_base(parts);
     for (size_t i = 0; i < n; ++i) {
         XByteArray** pp = (XByteArray**)XVector_at_base(parts, i);
-        if (pp && *pp) XByteArray_delete_base(*pp);
+        if (pp && *pp) XClassDelete(*pp);
     }
-    XVector_delete_base(parts);
+    XClassDelete(parts);
 }
 
 /* ---- trimmed / simplified ---- */

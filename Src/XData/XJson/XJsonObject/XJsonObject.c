@@ -15,7 +15,7 @@ int32_t XJsonObject_compare(const XJsonObject* lhs, const XJsonObject* rhs)
 }
 
 XVARIANT_TYPE_OPS_DEFINE(XJsonObject, sizeof(XJsonObject), XClass_copy_base,
-	XClass_move_base, XJsonObject_clear_base, XJsonObject_deinit_base,
+	XClass_move_base, XJsonObject_clear_base, XClass_deinit_base,
 	XJsonObject_compare, "XJsonObject");
 
 XJsonObject* XJsonObject_create_ex(XMemoryType memory)
@@ -32,7 +32,7 @@ XJsonObject* XJsonObject_create_copy(XJsonObject* copy)
 {
     XJsonObject* object = XJsonObject_create();
     if (object && copy)
-        XCopy(object, copy);
+        XClassCopy(object, copy);
     return object;
 }
 
@@ -40,7 +40,7 @@ XJsonObject* XJsonObject_create_move(XJsonObject* move)
 {
     XJsonObject* object = XJsonObject_create();
     if (object && move)
-        XMove(object, move);
+        XClassMove(object, move);
     return object;
 }
 
@@ -52,7 +52,7 @@ void XJsonObject_init(XJsonObject* object)
 
     XMapBaseSetKeyCopyMethod(object, XClass_copy_base);
     XMapBaseSetKeyMoveMethod(object, XClass_move_base);
-    XMapBaseSetKeyDeinitMethod(object, XString_deinit_base);
+    XMapBaseSetKeyDeinitMethod(object, XClass_deinit_base);
 
     XContainerSetDataCopyMethod(object, XJsonValue_copy);
     XContainerSetDataMoveMethod(object, XJsonValue_move);
@@ -65,7 +65,7 @@ bool XJsonObject_insert_keyUtf8_value(XJsonObject* object, const char* key, XJso
         return false;
     XString_Init_Utf8(str, key);
     bool ret=XMap_insert_keyMove_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     return ret;
 }
 
@@ -75,7 +75,7 @@ bool XJsonObject_insert_keyUtf8_value_move(XJsonObject* object, const char* key,
         return false;
     XString_Init_Utf8(str, key);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     return ret;
 }
 
@@ -87,7 +87,7 @@ bool XJsonObject_insert_keyUtf8_double(XJsonObject* object, const char* key, dou
     XJsonValue_Init(value, XJsonValue_Double);
     value->data.number = d;
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -100,7 +100,7 @@ bool XJsonObject_insert_keyUtf8_int(XJsonObject* object, const char* key, int64_
     XJsonValue_Init(value, XJsonValue_Int);
     value->data.integer = i;
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -113,7 +113,7 @@ bool XJsonObject_insert_keyUtf8_string(XJsonObject* object, const char* key, con
     XJsonValue_Init(value, XJsonValue_String);
     value->data.string = XString_create_copy(strValue);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -126,7 +126,7 @@ bool XJsonObject_insert_keyUtf8_string_move(XJsonObject* object, const char* key
     XJsonValue_Init(value, XJsonValue_String);
     value->data.string = strValue;
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -139,7 +139,7 @@ bool XJsonObject_insert_keyUtf8_utf8(XJsonObject* object, const char* key, const
     XJsonValue_Init(value, XJsonValue_String);
     value->data.string = XString_create_utf8(utf8);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -151,7 +151,7 @@ bool XJsonObject_insert_keyUtf8_null(XJsonObject* object, const char* key)
     XString_Init_Utf8(str, key);
     XJsonValue_Init(value, XJsonValue_Null);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -164,7 +164,7 @@ bool XJsonObject_insert_keyUtf8_bool(XJsonObject* object, const char* key, bool 
     XJsonValue_Init(value, XJsonValue_Bool);
     value->data.boolean=b;
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -177,7 +177,7 @@ bool XJsonObject_insert_keyUtf8_array(XJsonObject* object, const char* key, cons
     XJsonValue_Init(value, XJsonValue_Array);
     value->data.array = XJsonArray_create_copy(array);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -190,7 +190,7 @@ bool XJsonObject_insert_keyUtf8_array_move(XJsonObject* object, const char* key,
     XJsonValue_Init(value, XJsonValue_Array);
     value->data.array = XJsonArray_create_move(array);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -203,7 +203,7 @@ bool XJsonObject_insert_keyUtf8_object(XJsonObject* object, const char* key, con
     XJsonValue_Init(value, XJsonValue_Object);
     value->data.object = XJsonObject_create_copy(val);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -216,7 +216,7 @@ bool XJsonObject_insert_keyUtf8_object_move(XJsonObject* object, const char* key
     XJsonValue_Init(value, XJsonValue_Object);
     value->data.object = XJsonObject_create_move(val);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     XJsonValue_deinit(value);
     return ret;
 }
@@ -228,7 +228,7 @@ bool XJsonObject_insert_value_move(XJsonObject* object, const XString* key, XJso
     XString_Init_Utf8(str, NULL);
     XString_assign(str,key);
     bool ret = XJsonObject_insert_move_base(object, str, value);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     return ret;
 }
 
@@ -238,7 +238,7 @@ bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key)
         return false;
     XString_Init_Utf8(str,key);
     bool ret = XJsonObject_remove_base(object,str);
-    XString_deinit_base(str);
+    XClassDeinit(str);
     return ret;
 }
 
@@ -252,7 +252,7 @@ XJsonValue* XJsonObject_value_keyUtf8(const XJsonObject* object, const char* key
     if (!string)
         return NULL;
     value = XJsonObject_value_base((XJsonObject*)object, string);
-    XString_delete_base(string);
+    XClassDelete(string);
     return value ? XJsonValue_create_copy(value) : XJsonValue_create_undefined();
 }
 
@@ -266,7 +266,7 @@ bool XJsonObject_contains_keyUtf8(const XJsonObject* object, const char* key)
     if (!string)
         return false;
     contains = XJsonObject_contains(object, string);
-    XString_delete_base(string);
+    XClassDelete(string);
     return contains;
 }
 
@@ -303,7 +303,7 @@ bool XJsonObject_equals(const XJsonObject* left, const XJsonObject* right)
             break;
         }
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return equal;
 }
 
@@ -319,7 +319,7 @@ XJsonObject* XJsonObject_fromVariantMap(const XVariantMap* map)
         return NULL;
     keys = XMap_keys_base(map);
     if (!keys) {
-        XJsonObject_delete_base(object);
+        XClassDelete(object);
         return NULL;
     }
     for (index = 0; index < XVector_size_base(keys); ++index) {
@@ -328,13 +328,13 @@ XJsonObject* XJsonObject_fromVariantMap(const XVariantMap* map)
         XJsonValue* value = XJsonValue_fromVariant(variant);
         if (!key || !value || !XJsonObject_insert_value_move(object, key, value)) {
             if (value) XJsonValue_delete(value);
-            XVector_delete_base(keys);
-            XJsonObject_delete_base(object);
+            XClassDelete(keys);
+            XClassDelete(object);
             return NULL;
         }
         XJsonValue_delete(value);
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return object;
 }
 
@@ -350,7 +350,7 @@ XJsonObject* XJsonObject_fromVariantHash(const XVariantHashMap* hash)
         return NULL;
     keys = XMapBase_keys_base((const XMapBase*)hash);
     if (!keys) {
-        XJsonObject_delete_base(object);
+        XClassDelete(object);
         return NULL;
     }
     for (index = 0; index < XVector_size_base(keys); ++index) {
@@ -359,13 +359,13 @@ XJsonObject* XJsonObject_fromVariantHash(const XVariantHashMap* hash)
         XJsonValue* value = XJsonValue_fromVariant(variant);
         if (!key || !value || !XJsonObject_insert_value_move(object, key, value)) {
             if (value) XJsonValue_delete(value);
-            XVector_delete_base(keys);
-            XJsonObject_delete_base(object);
+            XClassDelete(keys);
+            XClassDelete(object);
             return NULL;
         }
         XJsonValue_delete(value);
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return object;
 }
 
@@ -383,7 +383,7 @@ XString* XJsonObject_toString(const XJsonObject* object, XJsonDocumentFormat for
     //恢复防止释放 XJsonObject
     doc->root.data.object = NULL;
     doc->root.type = XJsonValue_Invalid;
-    XJsonDocument_delete(doc);
+    XClassDelete(doc);
     return str;
 }
 XByteArray* XJsonObject_toJson(const XJsonObject* object, XJsonDocumentFormat format)
@@ -398,7 +398,7 @@ XByteArray* XJsonObject_toJson(const XJsonObject* object, XJsonDocumentFormat fo
     //恢复防止释放 XJsonObject
     doc->root.data.object = NULL;
     doc->root.type = XJsonValue_Invalid;
-    XJsonDocument_delete(doc);
+    XClassDelete(doc);
     return json;
 }
 XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object)
@@ -413,7 +413,7 @@ XVariantMap* XJsonObject_toVariantMap(const XJsonObject* object)
         pair = XMap_iterator_data(&it);
         var = XJsonValue_toVariant(XPair_second(pair));
         XMap_insert_valueMove_base(map,XPair_first(pair),var);
-        XVariant_delete_base(var);
+        XClassDelete(var);
     }
     return map;
 }
@@ -430,7 +430,7 @@ XVariantHashMap* XJsonObject_toVariantHash(const XJsonObject* object)
         return NULL;
     keys = XMapBase_keys_base((const XMapBase*)object);
     if (!keys) {
-        XHashMap_delete_base(hash);
+        XClassDelete(hash);
         return NULL;
     }
     for (index = 0; index < XVector_size_base(keys); ++index) {
@@ -438,14 +438,14 @@ XVariantHashMap* XJsonObject_toVariantHash(const XJsonObject* object)
         XJsonValue* value = key ? XMapBase_value_base((XMapBase*)object, key) : NULL;
         XVariant* variant = XJsonValue_toVariant(value);
         if (!key || !variant || !XHashMap_insert_base(hash, key, variant)) {
-            if (variant) XVariant_delete_base(variant);
-            XVector_delete_base(keys);
-            XHashMap_delete_base(hash);
+            if (variant) XClassDelete(variant);
+            XClassDelete(keys);
+            XClassDelete(hash);
             return NULL;
         }
-        XVariant_delete_base(variant);
+        XClassDelete(variant);
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return hash;
 }
 XVariantMap* XJsonObject_toVariantMap_move(XJsonObject* object)
@@ -457,7 +457,7 @@ XVariantMap* XJsonObject_toVariantMap_move(XJsonObject* object)
         return NULL;
     XMap_detach((XMap*)object);
     if (!XMap_isDetached((const XMap*)object)) {
-        XMap_delete_base(map);
+        XClassDelete(map);
         return NULL;
     }
     XPair* pair = NULL;
@@ -467,7 +467,7 @@ XVariantMap* XJsonObject_toVariantMap_move(XJsonObject* object)
         pair = XMap_iterator_data(&it);
         var = XJsonValue_toVariant_move(XPair_second(pair));
         XMap_insert_valueMove_base(map, XPair_first(pair), var);
-        XVariant_delete_base(var);
+        XClassDelete(var);
     }
     return map;
 }
@@ -477,7 +477,7 @@ XVariant* XJsonObject_toVariant(const XJsonObject* obj)
         return NULL;
     XVariant* var = XVariant_create(NULL, sizeof(XJsonObject), XVariantType_JsonObject);
     XJsonObject_init(var->m_data);
-    XCopy(var->m_data, obj);
+    XClassCopy(var->m_data, obj);
     return var;
 }
 XVariant* XJsonObject_toVariant_move(XJsonObject* obj)
@@ -486,7 +486,7 @@ XVariant* XJsonObject_toVariant_move(XJsonObject* obj)
         return NULL;
     XVariant* var = XVariant_create(NULL, sizeof(XJsonObject), XVariantType_JsonObject);
     XJsonObject_init(var->m_data);
-    XMove(var->m_data, obj);
+    XClassMove(var->m_data, obj);
     return var;
 }
 XVariant* XJsonObject_toVariant_ref(XJsonObject* obj)
@@ -518,7 +518,7 @@ static bool XJsonObject_prepareVariant(XVariant* variant)
     if (variant->m_type != XVariantType_JsonObject ||
         !variant->m_data || variant->m_dataSize != sizeof(XJsonObject)) {
         if (variant->m_data)
-            XVariant_deinit_base(variant);
+            XClassDeinit(variant);
         variant->m_data = XMalloc_System(sizeof(XJsonObject));
         if (!variant->m_data)
             return false;
@@ -532,13 +532,13 @@ static bool XJsonObject_prepareVariant(XVariant* variant)
 void XJsonObject_setVariant(XVariant* variant, const XJsonObject* object)
 {
     if (object && XJsonObject_prepareVariant(variant))
-        XCopy((XJsonObject*)variant->m_data, object);
+        XClassCopy((XJsonObject*)variant->m_data, object);
 }
 
 void XJsonObject_setVariant_move(XVariant* variant, XJsonObject* object)
 {
     if (object && XJsonObject_prepareVariant(variant))
-        XMove((XJsonObject*)variant->m_data, object);
+        XClassMove((XJsonObject*)variant->m_data, object);
 }
 
 void XJsonObject_setVariant_ref(XVariant* variant, XJsonObject* object)

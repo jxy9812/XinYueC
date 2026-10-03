@@ -75,7 +75,7 @@ static void VXPlcClient_deinit(XPlcClient* client) {
     XPlcClient_reconnectTimerStop(client);
     if (client->m_poolMap)
     {
-        XMapBase_delete_base((XClass*)client->m_poolMap);
+        XClassDelete((XClass*)client->m_poolMap);
         client->m_poolMap = NULL;
     }
     // 调用基类析构
@@ -127,7 +127,7 @@ XPlcReply* XPlcClient_createReply(XPlcClient* client, const XByteArray* request,
     if (!copy) return NULL;
     XPlcReply* reply = XPlcClient_createReply_ref(client, copy, type);
     if (!reply)
-        XByteArray_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
     return reply;
 }
 
@@ -140,7 +140,7 @@ XPlcReply* XPlcClient_createReply_move(XPlcClient* client, XByteArray* request, 
     if (!moved) return NULL;
     XPlcReply* reply = XPlcClient_createReply_ref(client, moved, type);
     if (!reply)
-        XByteArray_delete_base((XClass*)moved);
+        XClassDelete((XClass*)moved);
     return reply;
 }
 

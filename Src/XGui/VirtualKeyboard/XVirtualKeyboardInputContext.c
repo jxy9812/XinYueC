@@ -101,7 +101,7 @@ static void XVkc_deinit(XVirtualKeyboardInputContext* self)
             priv->m_focusConn = NULL;
         }
         if (priv->m_engine) {
-            XVirtualKeyboardInputEngine_delete_base(priv->m_engine);
+            XClassDelete(priv->m_engine);
             priv->m_engine = NULL;
         }
         XFree_System(priv);
@@ -227,7 +227,7 @@ static int xvkc_queryInt(XVirtualKeyboardInputContextPrivate* priv,
                                              NULL, NULL);
     if (value) {
         out = XVariant_toInt32(value);
-        XVariant_delete_base(value);
+        XClassDelete(value);
     }
     return out;
 }
@@ -246,7 +246,7 @@ static XRectF xvkc_queryRect(XVirtualKeyboardInputContextPrivate* priv,
         void* ref = XVariant_toRef(value, XVariantType_User);
         if (ref && XVariant_dataSize(value) >= sizeof(XRectF))
             out = *(const XRectF*)ref;
-        XVariant_delete_base(value);
+        XClassDelete(value);
     }
     return out;
 }
@@ -462,7 +462,7 @@ void XVirtualKeyboardInputContext_autoCapitalize(
             } else {
                 xvkc_setShiftActive(self, false);
             }
-            XVariant_delete_base(value);
+            XClassDelete(value);
         }
     }
 }
@@ -554,7 +554,7 @@ XString* XVirtualKeyboardInputContext_surroundingText(
     if (value) {
         const XString* text = XVariant_toString_const(value);
         if (text) out = XString_create_copy(text);
-        XVariant_delete_base(value);
+        XClassDelete(value);
     }
     return out ? out : XString_create_utf8("");
 }
@@ -571,7 +571,7 @@ XString* XVirtualKeyboardInputContext_selectedText(
     if (value) {
         const XString* text = XVariant_toString_const(value);
         if (text) out = XString_create_copy(text);
-        XVariant_delete_base(value);
+        XClassDelete(value);
     }
     return out ? out : XString_create_utf8("");
 }

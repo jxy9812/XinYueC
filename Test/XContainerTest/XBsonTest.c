@@ -39,27 +39,6 @@
 
 #if XBSON_TEST_BASE_CAST_FIX
 
-// ---- 释放：各 *_delete_base 宏链最终都落在 XClass_delete_base(XClass*) ----
-#undef XBsonDocument_delete_base
-#define XBsonDocument_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XBsonArray_delete_base
-#define XBsonArray_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XByteArray_delete_base
-#define XByteArray_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XString_delete_base
-#define XString_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XJsonArray_delete_base
-#define XJsonArray_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XJsonObject_delete_base
-#define XJsonObject_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XVariant_delete_base
-#define XVariant_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XVariantList_delete_base
-#define XVariantList_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XMap_delete_base
-#define XMap_delete_base(self) XClass_delete_base((XClass*)(self))
-#undef XVector_delete_base
-#define XVector_delete_base(self) XClass_delete_base((XClass*)(self))
 
 // ---- 尺寸/判空：各 *_size_base、*_isEmpty_base 宏链最终落在 XContainer 基类形参 ----
 #undef XBsonDocument_size_base
@@ -177,7 +156,7 @@ static void XBsonTest_printJsonObject(const char* title,
 {
 	XString* text = object ? XJsonObject_toString(object, XJsonDocument_Indented) : NULL;
 	XPrintf("【调试】%s：%s\n", title, text ? XString_toUtf8(text) : "<空>");
-	XString_delete_base(text);
+	XClassDelete(text);
 }
 
 static bool XBsonTest_appendOwned(XBsonDocument* doc, const char* key,
@@ -204,10 +183,10 @@ static bool XBsonTest_documentRoundTrip(const XBsonDocument* doc,
 	XBsonDocument* parsed = first ? XBsonDocument_fromBson(first) : NULL;
 	XByteArray* second = parsed ? XBsonDocument_toBson(parsed) : NULL;
 	bool result = XBsonTest_bytesEqual(first, second);
-	XByteArray_delete_base(first);
-	XByteArray_delete_base(second);
+	XClassDelete(first);
+	XClassDelete(second);
 	if (parsedOut) *parsedOut = parsed;
-	else XBsonDocument_delete_base(parsed);
+	else XClassDelete(parsed);
 	return result;
 }
 
@@ -269,18 +248,18 @@ static XBsonDocument* XBsonTest_createAllTypes(void)
 	if (ok) ok = XBsonTest_appendOwned(doc, "minKey", XBsonValue_create_min_key());
 	if (ok) ok = XBsonTest_appendOwned(doc, "maxKey", XBsonValue_create_max_key());
 
-	XString_delete_base(text);
-	XString_delete_base(pattern);
-	XString_delete_base(options);
-	XString_delete_base(nameSpace);
-	XString_delete_base(code);
-	XString_delete_base(symbol);
-	XByteArray_delete_base(binary);
-	XBsonArray_delete_base(array);
-	XBsonDocument_delete_base(nested);
-	XBsonDocument_delete_base(scope);
+	XClassDelete(text);
+	XClassDelete(pattern);
+	XClassDelete(options);
+	XClassDelete(nameSpace);
+	XClassDelete(code);
+	XClassDelete(symbol);
+	XClassDelete(binary);
+	XClassDelete(array);
+	XClassDelete(nested);
+	XClassDelete(scope);
 	if (!ok) {
-		XBsonDocument_delete_base(doc);
+		XClassDelete(doc);
 		return NULL;
 	}
 	return doc;
@@ -315,10 +294,10 @@ static void XBsonTest_standardAndTypes(void)
 		"空文档编码为 5 字节 BSON");
 	XBsonTest_check(XBsonTest_bytesEqualData(emptyArrayBytes, emptyBson, sizeof(emptyBson)),
 		"空数组编码为 5 字节 BSON");
-	XByteArray_delete_base(emptyDocBytes);
-	XByteArray_delete_base(emptyArrayBytes);
-	XBsonDocument_delete_base(emptyDoc);
-	XBsonArray_delete_base(emptyArray);
+	XClassDelete(emptyDocBytes);
+	XClassDelete(emptyArrayBytes);
+	XClassDelete(emptyDoc);
+	XClassDelete(emptyArray);
 
 	XBsonDocument* duplicate = XBsonDocument_create();
 	XBsonDocument_insert_keyUtf8_int32(duplicate, "a", 1);
@@ -329,9 +308,9 @@ static void XBsonTest_standardAndTypes(void)
 	XBsonDocument* duplicateParsed = XBsonDocument_fromBson(duplicateBytes);
 	XBsonTest_check(duplicateParsed && XBsonDocument_count_keyUtf8(duplicateParsed, "a") == 2,
 		"反序列化保留重复键");
-	XByteArray_delete_base(duplicateBytes);
-	XBsonDocument_delete_base(duplicateParsed);
-	XBsonDocument_delete_base(duplicate);
+	XClassDelete(duplicateBytes);
+	XClassDelete(duplicateParsed);
+	XClassDelete(duplicate);
 
 	XBsonDocument* allTypes = XBsonTest_createAllTypes();
 	XBsonDocument* parsed = NULL;
@@ -366,8 +345,8 @@ static void XBsonTest_standardAndTypes(void)
 		XBsonValue_timestamp(timestampValue) == 0xaabbccddU,
 		"时间戳增量和秒值顺序正确");
 
-	XBsonDocument_delete_base(parsed);
-	XBsonDocument_delete_base(allTypes);
+	XClassDelete(parsed);
+	XClassDelete(allTypes);
 }
 
 // 文档、数组和值对象的创建、拷贝、移动和访问接口测试
@@ -415,7 +394,7 @@ static void XBsonTest_documentApi(void)
 		"值移动插入后源值进入可释放空状态");
 	XBsonValue_delete(copiedValue);
 	XBsonValue_delete(movedValue);
-	XString_delete_base(keyCopy);
+	XClassDelete(keyCopy);
 
 	XString* appendKey = XString_create_utf8("append");
 	XBsonValue* appendValue = XBsonValue_create_bool(false);
@@ -426,8 +405,8 @@ static void XBsonTest_documentApi(void)
 		"append 拷贝与 append_move 接口成功");
 	XBsonTest_check(XString_toUtf8_length(appendMoveKey) == 0 &&
 		XBsonValue_type(appendMoveValue) == 0, "append_move 正确转移键和值");
-	XString_delete_base(appendKey);
-	XString_delete_base(appendMoveKey);
+	XClassDelete(appendKey);
+	XClassDelete(appendMoveKey);
 	XBsonValue_delete(appendValue);
 	XBsonValue_delete(appendMoveValue);
 
@@ -442,7 +421,7 @@ static void XBsonTest_documentApi(void)
 		XBsonDocument_count_keyUtf8(doc, "重复") == 3 &&
 		XBsonDocument_contains_keyUtf8(doc, "重复"),
 		"重复键查询返回首项并能统计全部同名元素");
-	XString_delete_base(duplicateKey);
+	XClassDelete(duplicateKey);
 
 	XBsonElement* first = XBsonDocument_at_base(doc, 0);
 	const XBsonElement* firstConst = XBsonDocument_at_const(doc, 0);
@@ -452,14 +431,14 @@ static void XBsonTest_documentApi(void)
 	XVector* keys = XBsonDocument_keys_base(doc);
 	XBsonTest_check(keys && XVector_size_base(keys) == XBsonDocument_size_base(doc),
 		"keys API 按元素数量返回有序键副本");
-	XVector_delete_base(keys);
+	XClassDelete(keys);
 
 	XBsonDocument* copied = XBsonDocument_create_copy(doc);
 	XBsonDocument* moved = copied ? XBsonDocument_create_move(copied) : NULL;
 	XBsonTest_check(copied && moved && XBsonDocument_isEmpty_base(copied) &&
 		XBsonDocument_size_base(moved) == XBsonDocument_size_base(doc),
 		"文档深拷贝和移动构造保持正确生命周期");
-	XBsonDocument_delete_base(copied);
+	XClassDelete(copied);
 
 	XBsonTest_check(XBsonDocument_remove_keyUtf8(moved, "重复") &&
 		XBsonDocument_count_keyUtf8(moved, "重复") == 2,
@@ -479,25 +458,25 @@ static void XBsonTest_documentApi(void)
 	XBsonTest_check(map && XMap_size_base(map) == 1 &&
 		XBsonDocument_size_base(variantDoc) == 2,
 		"转 VariantMap 时重复键最后值覆盖且不修改源文档");
-	XMap_delete_base(map);
+	XClassDelete(map);
 	XVariantMap* movedMap = XBsonDocument_toVariantMap_move(variantDoc);
 	XBsonTest_check(movedMap && XBsonDocument_isEmpty_base(variantDoc),
 		"移动转 VariantMap 后源文档为空");
-	XMap_delete_base(movedMap);
-	XBsonDocument_delete_base(variantDoc);
+	XClassDelete(movedMap);
+	XClassDelete(variantDoc);
 
 	XVariant* docVariant = XBsonDocument_toVariant(doc);
 	XBsonDocument* variantCopy = docVariant ? XVariant_toBsonDocument_ref(docVariant) : NULL;
 	XBsonTest_check(variantCopy && variantCopy != doc &&
 		XBsonDocument_size_base(variantCopy) == XBsonDocument_size_base(doc),
 		"文档深拷贝转换为 XVariant");
-	XVariant_delete_base(docVariant);
+	XClassDelete(docVariant);
 	XBsonDocument* moveVariantSource = XBsonDocument_create_copy(doc);
 	XVariant* movedVariant = XBsonDocument_toVariant_move(moveVariantSource);
 	XBsonTest_check(movedVariant && XBsonDocument_isEmpty_base(moveVariantSource),
 		"文档移动转换为 XVariant 后源文档为空");
-	XVariant_delete_base(movedVariant);
-	XBsonDocument_delete_base(moveVariantSource);
+	XClassDelete(movedVariant);
+	XClassDelete(moveVariantSource);
 
 	XBsonArray* apiArray = XBsonArray_create();
 	XBsonValue* value = XBsonValue_create_int32(2);
@@ -523,38 +502,38 @@ static void XBsonTest_documentApi(void)
 	XBsonTest_check(arrayClone && arrayMoved && XBsonArray_isEmpty_base(arrayClone) &&
 		XBsonArray_size_base(arrayMoved) == XBsonArray_size_base(apiArray),
 		"数组深拷贝和移动构造成功");
-	XBsonArray_delete_base(arrayClone);
-	XBsonArray_delete_base(arrayMoved);
+	XClassDelete(arrayClone);
+	XClassDelete(arrayMoved);
 	XVariantList* list = XBsonArray_toVariantList(apiArray);
 	XBsonTest_check(list && XVariantList_size_base(list) == XBsonArray_size_base(apiArray) &&
 		!XBsonArray_isEmpty_base(apiArray), "数组深拷贝转换为 VariantList");
-	XVariantList_delete_base(list);
+	XClassDelete(list);
 	XBsonArray* listMoveSource = XBsonArray_create_copy(apiArray);
 	XVariantList* movedList = XBsonArray_toVariantList_move(listMoveSource);
 	XBsonTest_check(movedList && XBsonArray_isEmpty_base(listMoveSource),
 		"数组移动转换为 VariantList 后源数组为空");
-	XVariantList_delete_base(movedList);
-	XBsonArray_delete_base(listMoveSource);
+	XClassDelete(movedList);
+	XClassDelete(listMoveSource);
 	XVariant* arrayVariant = XBsonArray_toVariant(apiArray);
 	XBsonTest_check(arrayVariant && XVariant_toBsonArray_ref(arrayVariant) != apiArray,
 		"数组深拷贝转换为 XVariant");
-	XVariant_delete_base(arrayVariant);
+	XClassDelete(arrayVariant);
 	XBsonArray* arrayVariantSource = XBsonArray_create_copy(apiArray);
 	XVariant* arrayMovedVariant = XBsonArray_toVariant_move(arrayVariantSource);
 	XBsonTest_check(arrayMovedVariant && XBsonArray_isEmpty_base(arrayVariantSource),
 		"数组移动转换为 XVariant 后源数组为空");
-	XVariant_delete_base(arrayMovedVariant);
-	XBsonArray_delete_base(arrayVariantSource);
-	XBsonArray_delete_base(apiArray);
+	XClassDelete(arrayMovedVariant);
+	XClassDelete(arrayVariantSource);
+	XClassDelete(apiArray);
 
-	XBsonDocument_delete_base(moved);
-	XString_delete_base(copiedString);
-	XString_delete_base(movedString);
-	XBsonArray_delete_base(arrayCopy);
-	XBsonArray_delete_base(arrayMove);
-	XBsonDocument_delete_base(documentCopy);
-	XBsonDocument_delete_base(documentMove);
-	XBsonDocument_delete_base(doc);
+	XClassDelete(moved);
+	XClassDelete(copiedString);
+	XClassDelete(movedString);
+	XClassDelete(arrayCopy);
+	XClassDelete(arrayMove);
+	XClassDelete(documentCopy);
+	XClassDelete(documentMove);
+	XClassDelete(doc);
 }
 
 static void XBsonTest_valueApi(void)
@@ -585,12 +564,12 @@ static void XBsonTest_valueApi(void)
 	XBsonValue* variantValue = variant ? XVariant_toBsonValue_ref(variant) : NULL;
 	XBsonTest_check(variantValue && variantValue != copied && XBsonValue_isString(variantValue),
 		"值深拷贝转换为 XVariant");
-	XVariant_delete_base(variant);
+	XClassDelete(variant);
 	XVariant* movedVariant = XBsonValue_toVariant_move(moved);
 	XBsonTest_check(movedVariant && XBsonValue_type(moved) == 0 &&
 		XBsonValue_isString(XVariant_toBsonValue_ref(movedVariant)),
 		"值移动转换为 XVariant 后源值为空");
-	XVariant_delete_base(movedVariant);
+	XClassDelete(movedVariant);
 
 	XBsonValue_setUndefined(copied);
 	XBsonTest_check(XBsonValue_isUndefined(copied), "undefined 设置与类型判断");
@@ -638,7 +617,7 @@ static void XBsonTest_jsonConversions(void)
 	}
 	XBsonTest_check(objectEqual,
 		"XJsonObject -> XBsonDocument -> XJsonObject 内容一致");
-	XJsonObject_delete_base(objectRoundTrip);
+	XClassDelete(objectRoundTrip);
 
 	XJsonDocument* jsonDoc = XJsonDocument_create_object(object);
 	XByteArray* bsonBytes = XJsonDocument_toBson(jsonDoc);
@@ -651,9 +630,9 @@ static void XBsonTest_jsonConversions(void)
 			jsonDocRoundTrip ? XJsonDocument_object(jsonDocRoundTrip) : NULL);
 	}
 	XBsonTest_check(documentEqual, "XJsonDocument 对象与 BSON 文档字节双向转换一致");
-	XJsonDocument_delete(jsonDocRoundTrip);
-	XByteArray_delete_base(bsonBytes);
-	XJsonDocument_delete(jsonDoc);
+	XClassDelete(jsonDocRoundTrip);
+	XClassDelete(bsonBytes);
+	XClassDelete(jsonDoc);
 
 	XJsonArray* rootArray = XJsonArray_create();
 	XJsonValue* intValue = XJsonValue_create_int(-1);
@@ -663,7 +642,7 @@ static void XBsonTest_jsonConversions(void)
 	XJsonArray_append_move_base(rootArray, stringValue);
 	XJsonValue_delete(intValue);
 	XJsonValue_delete(stringValue);
-	XString_delete_base(arrayText);
+	XClassDelete(arrayText);
 	XBsonArray* bsonArray = XBsonArray_fromJsonArray(rootArray);
 	XJsonArray* arrayRoundTrip = bsonArray ? XBsonArray_toJsonArray(bsonArray) : NULL;
 	XBsonTest_check(arrayRoundTrip && XJsonArray_equals(rootArray, arrayRoundTrip),
@@ -674,12 +653,12 @@ static void XBsonTest_jsonConversions(void)
 	XBsonTest_check(arrayDocRoundTrip && XJsonDocument_isArray(arrayDocRoundTrip) &&
 		XJsonArray_equals(rootArray, XJsonDocument_array(arrayDocRoundTrip)),
 		"XJsonDocument 数组与 BSON 数组字节双向转换一致");
-	XJsonDocument_delete(arrayDocRoundTrip);
-	XByteArray_delete_base(arrayBytes);
-	XJsonDocument_delete(arrayDoc);
-	XJsonArray_delete_base(arrayRoundTrip);
-	XBsonArray_delete_base(bsonArray);
-	XJsonArray_delete_base(rootArray);
+	XClassDelete(arrayDocRoundTrip);
+	XClassDelete(arrayBytes);
+	XClassDelete(arrayDoc);
+	XClassDelete(arrayRoundTrip);
+	XClassDelete(bsonArray);
+	XClassDelete(rootArray);
 
 	XBsonDocument* allTypes = XBsonTest_createAllTypes();
 	bool specialRoundTrip = allTypes != NULL;
@@ -695,14 +674,14 @@ static void XBsonTest_jsonConversions(void)
 			XBsonValue_serialize(restored, "v", restoredBytes) &&
 			XBsonTest_bytesEqual(sourceBytes, restoredBytes);
 		specialRoundTrip = itemOk;
-		XByteArray_delete_base(sourceBytes);
-		XByteArray_delete_base(restoredBytes);
+		XClassDelete(sourceBytes);
+		XClassDelete(restoredBytes);
 		XBsonValue_delete(restored);
 		XJsonValue_delete(jsonValue);
 	}
 	XBsonTest_check(specialRoundTrip,
 		"全部 BSON 类型经 XJsonValue 表示后可恢复为相同 BSON 字节");
-	XBsonDocument_delete_base(allTypes);
+	XClassDelete(allTypes);
 
 	XBsonDocument* duplicate = XBsonDocument_create();
 	XBsonDocument_insert_keyUtf8_int32(duplicate, "same", 1);
@@ -714,14 +693,14 @@ static void XBsonTest_jsonConversions(void)
 		duplicateBack && XBsonDocument_count_keyUtf8(duplicateBack, "same") == 1 &&
 		XBsonValue_toInt32(XBsonDocument_value_keyUtf8(duplicateBack, "same"), -1) == 2,
 		"BSON 重复键转 JSON 时按约定保留最后一个值");
-	XBsonDocument_delete_base(duplicateBack);
-	XJsonObject_delete_base(duplicateJson);
-	XBsonDocument_delete_base(duplicate);
+	XClassDelete(duplicateBack);
+	XClassDelete(duplicateJson);
+	XClassDelete(duplicate);
 
-	XBsonDocument_delete_base(bsonDoc);
-	XJsonArray_delete_base(childArray);
-	XJsonObject_delete_base(childObject);
-	XJsonObject_delete_base(object);
+	XClassDelete(bsonDoc);
+	XClassDelete(childArray);
+	XClassDelete(childObject);
+	XClassDelete(object);
 }
 
 static void XBsonTest_invalidInputs(void)
@@ -775,18 +754,18 @@ static void XBsonTest_invalidInputs(void)
 		sizeof(badOldBinaryLength)), "拒绝旧二进制子类型内外长度不一致");
 	XBsonTest_check(!XBsonDocument_from_bytes(doc, unknownType, sizeof(unknownType)),
 		"拒绝未知 BSON 类型标签");
-	XBsonDocument_delete_base(doc);
+	XClassDelete(doc);
 
 	XBsonArray* array = XBsonArray_create();
 	XBsonTest_check(!XBsonArray_from_bytes(array, badArrayKey, sizeof(badArrayKey)) &&
 		XBsonArray_isEmpty_base(array), "拒绝不从 0 连续编号的 BSON 数组键");
-	XBsonArray_delete_base(array);
+	XClassDelete(array);
 
 	XByteArray* malformed = XByteArray_create_with_data((const char*)stringLengthZero,
 		sizeof(stringLengthZero));
 	XBsonTest_check(XBsonDocument_fromBson(malformed) == NULL,
 		"fromBson 对非法完整字节流返回 NULL");
-	XByteArray_delete_base(malformed);
+	XClassDelete(malformed);
 	XBsonTest_check(XBsonValue_create_string(NULL) == NULL &&
 		XBsonValue_create_document(NULL) == NULL &&
 		XBsonValue_create_array(NULL) == NULL &&

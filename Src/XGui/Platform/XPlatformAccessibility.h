@@ -47,8 +47,6 @@ XVtable* XPlatformAccessibility_class_init(void);
 XPlatformAccessibility* XPlatformAccessibility_create_ex(XMemoryType memory);
 #define XPlatformAccessibility_create() \
     XPlatformAccessibility_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-#define XPlatformAccessibility_delete_base(self) XClass_delete_base((XClass*)(self))
-#define XPlatformAccessibility_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 XAccessible* XPlatformAccessibility_root(const XPlatformAccessibility* self);
 bool XPlatformAccessibility_isActive(const XPlatformAccessibility* self);

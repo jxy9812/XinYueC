@@ -301,15 +301,15 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
 static void VXUrl_deinit(XUrl* self)
 {
     if (!self) return;
-    XString_delete_base(self->m_scheme);   self->m_scheme = NULL;
-    XString_delete_base(self->m_userName); self->m_userName = NULL;
-    XString_delete_base(self->m_password); self->m_password = NULL;
-    XString_delete_base(self->m_host);     self->m_host = NULL;
-    XString_delete_base(self->m_path);     self->m_path = NULL;
-    XString_delete_base(self->m_query);    self->m_query = NULL;
-    XString_delete_base(self->m_fragment); self->m_fragment = NULL;
-    XString_delete_base(self->m_userInfo); self->m_userInfo = NULL;
-    XString_delete_base(self->m_authority); self->m_authority = NULL;
+    XClassDelete(self->m_scheme);   self->m_scheme = NULL;
+    XClassDelete(self->m_userName); self->m_userName = NULL;
+    XClassDelete(self->m_password); self->m_password = NULL;
+    XClassDelete(self->m_host);     self->m_host = NULL;
+    XClassDelete(self->m_path);     self->m_path = NULL;
+    XClassDelete(self->m_query);    self->m_query = NULL;
+    XClassDelete(self->m_fragment); self->m_fragment = NULL;
+    XClassDelete(self->m_userInfo); self->m_userInfo = NULL;
+    XClassDelete(self->m_authority); self->m_authority = NULL;
 }
 
 static void VXUrl_copy(XUrl* dest, const XUrl* src)
@@ -323,19 +323,19 @@ static void VXUrl_copy(XUrl* dest, const XUrl* src)
         !dest->m_path || !dest->m_query || !dest->m_fragment || !dest->m_userInfo ||
         !dest->m_authority)
         return;
-    if (src->m_scheme) XCopy(dest->m_scheme, src->m_scheme);
+    if (src->m_scheme) XClassCopy(dest->m_scheme, src->m_scheme);
     else XString_clear_base(dest->m_scheme);
-    if (src->m_userName) XCopy(dest->m_userName, src->m_userName);
+    if (src->m_userName) XClassCopy(dest->m_userName, src->m_userName);
     else XString_clear_base(dest->m_userName);
-    if (src->m_password) XCopy(dest->m_password, src->m_password);
+    if (src->m_password) XClassCopy(dest->m_password, src->m_password);
     else XString_clear_base(dest->m_password);
-    if (src->m_host) XCopy(dest->m_host, src->m_host);
+    if (src->m_host) XClassCopy(dest->m_host, src->m_host);
     else XString_clear_base(dest->m_host);
-    if (src->m_path) XCopy(dest->m_path, src->m_path);
+    if (src->m_path) XClassCopy(dest->m_path, src->m_path);
     else XString_clear_base(dest->m_path);
-    if (src->m_query) XCopy(dest->m_query, src->m_query);
+    if (src->m_query) XClassCopy(dest->m_query, src->m_query);
     else XString_clear_base(dest->m_query);
-    if (src->m_fragment) XCopy(dest->m_fragment, src->m_fragment);
+    if (src->m_fragment) XClassCopy(dest->m_fragment, src->m_fragment);
     else XString_clear_base(dest->m_fragment);
     /* 缓存由 const 访问按需重建，复制时不能共享临时视图。 */
     XString_clear_base(dest->m_userInfo);
@@ -358,13 +358,13 @@ static void VXUrl_move(XUrl* dest, XUrl* src)
         !src->m_userInfo || !src->m_authority)
         return;
     /* 移动各字符串内容，源 URL 仍保持已初始化且可继续使用。 */
-    XMove(dest->m_scheme, src->m_scheme);
-    XMove(dest->m_userName, src->m_userName);
-    XMove(dest->m_password, src->m_password);
-    XMove(dest->m_host, src->m_host);
-    XMove(dest->m_path, src->m_path);
-    XMove(dest->m_query, src->m_query);
-    XMove(dest->m_fragment, src->m_fragment);
+    XClassMove(dest->m_scheme, src->m_scheme);
+    XClassMove(dest->m_userName, src->m_userName);
+    XClassMove(dest->m_password, src->m_password);
+    XClassMove(dest->m_host, src->m_host);
+    XClassMove(dest->m_path, src->m_path);
+    XClassMove(dest->m_query, src->m_query);
+    XClassMove(dest->m_fragment, src->m_fragment);
     XString_clear_base(dest->m_userInfo);
     XString_clear_base(dest->m_authority);
     XString_clear_base(src->m_userInfo);
@@ -394,7 +394,7 @@ XUrl* XUrl_create_copy(const XUrl* other)
     if (!other) return NULL;
     XUrl* self = XUrl_create();
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -403,7 +403,7 @@ XUrl* XUrl_create_move(XUrl* other)
     if (!other) return NULL;
     XUrl* self = XUrl_create();
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -443,7 +443,7 @@ void XUrl_init_ex(XUrl* self, const XString* urlString, XUrl_ParsingMode mode)
     XUrl_setUrl(self, urlString, mode);
 }
 
-/* XUrl_copy / XUrl_move / XCopy / XMove / XUrl_deinit_base / XUrl_delete_base
+/* XUrl_copy / XUrl_move / XClassCopy / XClassMove / XClassDeinit / XClassDelete
    通过宏映射到 XClass_*_base，使用前需确保目标已初始化（XUrl_init） */
 
 /* ========== 虚函数调度 ========== */
@@ -707,14 +707,14 @@ XString* XUrl_toEncoded(const XUrl* self)
     XString* plain = XUrl_toString(self);
     if (!plain) return NULL;
     XString* result = XString_create();
-    if (!result) { XString_delete_base(plain); return NULL; }
+    if (!result) { XClassDelete(plain); return NULL; }
     const char* utf8 = XString_toUtf8(plain);
     for (int i = 0; utf8[i]; i++) {
         char enc[4];
         int n = percentEncode(utf8[i], enc);
         XString_append_utf8(result, enc);
     }
-    XString_delete_base(plain);
+    XClassDelete(plain);
     return result;
 }
 
@@ -724,7 +724,7 @@ XString* XUrl_toDisplayString(const XUrl* self, int options)
     XString* result = XUrl_toString(self);
     if (!result) return NULL;
     char* temp = XStrdup(XString_toUtf8(result));
-    if (!temp) { XString_delete_base(result); return NULL; }
+    if (!temp) { XClassDelete(result); return NULL; }
     if (options & XUrl_RemoveScheme) {
         const XString* scheme = XUrl_scheme_const(self);
         if (scheme && !XString_isEmpty_base(scheme)) {
@@ -766,7 +766,7 @@ XUrl* XUrl_fromLocalFile(const XString* localfile)
     XString_append_utf8(urlBuf, "file:///");
     XString_append(urlBuf, localfile);
     XUrl* url = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlBuf, XUrl_TolerantMode);
-    XString_delete_base(urlBuf);
+    XClassDelete(urlBuf);
     return url;
 }
 
@@ -787,7 +787,7 @@ void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
     if (!self || !out) return;
     if (!relative || XString_isEmpty_base(relative)) {
         XUrl_init(out);
-        XCopy(out, self);
+        XClassCopy(out, self);
         return;
     }
     const char* relUtf8 = XString_toUtf8(relative);
@@ -798,7 +798,7 @@ void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
     XString* base = XUrl_toString(self);
     if (!base) return;
     char* baseUtf8 = XStrdup(XString_toUtf8(base));
-    XString_delete_base(base);
+    XClassDelete(base);
     if (!baseUtf8) return;
     char* lastSlash = strrchr(baseUtf8, '/');
     size_t baseLength = strlen(baseUtf8);
@@ -830,7 +830,7 @@ void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
     XFree_System(combinedUtf8);
     XFree_System(baseUtf8);
     XUrl_setUrl(out, combined, XUrl_TolerantMode);
-    XString_delete_base(combined);
+    XClassDelete(combined);
 }
 
 XString* XUrl_toPercentEncoding(const XString* input, const XString* exclude, const XString* include)

@@ -53,8 +53,6 @@ void XStackedWidget_init(XStackedWidget* self, XWidget* parent,
 #define XStackedWidget_create(parent, flags) XStackedWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XStackedWidget* XStackedWidget_create_ex(XMemoryType memory, XWidget* parent,
                                          XWidgetFlags flags);
-#define XStackedWidget_deinit_base(self) XFrame_deinit_base((XFrame*)(self))
-#define XStackedWidget_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 页面管理（对标 QStackedWidget public API） ==================== */
 

@@ -16,7 +16,7 @@ static void XNetworkAddressEntry_createTest(void)
     XNetworkAddressEntry* entry1 = XNetworkAddressEntry_create();
     if (entry1) {
         XPrintf("  OK 空创建成功\n");
-        XNetworkAddressEntry_delete_base(entry1);
+        XClassDelete(entry1);
     } else {
         XPrintf("  ERR 空创建失败\n");
     }
@@ -34,11 +34,11 @@ static void XNetworkAddressEntry_createTest(void)
             XPrintf("    IP: ");
             XPrintf_2(ipStr);
             XPrintf("\n");
-            XString_delete_base(ipStr);
+            XClassDelete(ipStr);
         }
-        XNetworkAddressEntry_delete_base(entry2);
+        XClassDelete(entry2);
     }
-    XHostAddress_deinit_base(&ip);
+    XClassDeinit(&ip);
     /* 完整创建 */
     XHostAddress netmask;
     XHostAddress_init(&netmask);
@@ -50,11 +50,11 @@ static void XNetworkAddressEntry_createTest(void)
     XNetworkAddressEntry* entry3 = XNetworkAddressEntry_createFull(&ip, &netmask, &broadcast);
     if (entry3) {
         XPrintf("  OK 完整创建成功\n");
-        XNetworkAddressEntry_delete_base(entry3);
+        XClassDelete(entry3);
     }
 
-    XHostAddress_deinit_base(&netmask);
-    XHostAddress_deinit_base(&broadcast);
+    XClassDeinit(&netmask);
+    XClassDeinit(&broadcast);
 }
 
 // ==================== 属性设置测试 ====================
@@ -80,9 +80,9 @@ static void XNetworkAddressEntry_propertyTest(void)
         XPrintf("  IP: ");
         XPrintf_2(ipStr);
         XPrintf("\n");
-        XString_delete_base(ipStr);
+        XClassDelete(ipStr);
     }
-    XHostAddress_deinit_base(&ip);
+    XClassDeinit(&ip);
     
     /* 设置子网掩码 */
     XHostAddress netmask;
@@ -95,9 +95,9 @@ static void XNetworkAddressEntry_propertyTest(void)
         XPrintf("  子网掩码: ");
         XPrintf_2(maskStr);
         XPrintf("\n");
-        XString_delete_base(maskStr);
+        XClassDelete(maskStr);
     }
-    XHostAddress_deinit_base(&netmask);
+    XClassDeinit(&netmask);
     
     /* 设置广播地址 */
     XHostAddress broadcast;
@@ -111,10 +111,10 @@ static void XNetworkAddressEntry_propertyTest(void)
             XPrintf("  广播地址: ");
             XPrintf_2(bcastStr);
             XPrintf("\n");
-            XString_delete_base(bcastStr);
+            XClassDelete(bcastStr);
         }
     }
-    XHostAddress_deinit_base(&broadcast);
+    XClassDeinit(&broadcast);
     
     /* 前缀长度 */
     int prefix = XNetworkAddressEntry_prefixLength(entry);
@@ -125,7 +125,7 @@ static void XNetworkAddressEntry_propertyTest(void)
     prefix = XNetworkAddressEntry_prefixLength(entry);
     XPrintf("  设置前缀长度为24后: %d\n", prefix);
     
-    XNetworkAddressEntry_delete_base(entry);
+    XClassDelete(entry);
 }
 
 // ==================== 生命周期测试 ====================
@@ -159,7 +159,7 @@ static void XNetworkAddressEntry_lifetimeTest(void)
     XPrintf("  清除后生命周期已知: %s\n", 
             XNetworkAddressEntry_isLifetimeKnown(entry) ? "是" : "否");
     
-    XNetworkAddressEntry_delete_base(entry);
+    XClassDelete(entry);
 }
 
 // ==================== DNS资格测试 ====================
@@ -189,7 +189,7 @@ static void XNetworkAddressEntry_dnsTest(void)
     status = XNetworkAddressEntry_dnsEligibility(entry);
     XPrintf("  设置后DNS资格: %s\n", statusStr[status + 1]);
     
-    XNetworkAddressEntry_delete_base(entry);
+    XClassDelete(entry);
 }
 
 // ==================== 地址类型测试 ====================
@@ -217,7 +217,7 @@ static void XNetworkAddressEntry_typeTest(void)
     XPrintf("  设置后是否临时: %s\n", 
             XNetworkAddressEntry_isTemporary(entry) ? "是" : "否");
     
-    XNetworkAddressEntry_delete_base(entry);
+    XClassDelete(entry);
 }
 
 // ==================== 比较测试 ====================
@@ -254,13 +254,13 @@ static void XNetworkAddressEntry_compareTest(void)
         }
     }
     
-    if (entry1) XNetworkAddressEntry_delete_base(entry1);
-    if (entry2) XNetworkAddressEntry_delete_base(entry2);
-    if (entry3) XNetworkAddressEntry_delete_base(entry3);
+    if (entry1) XClassDelete(entry1);
+    if (entry2) XClassDelete(entry2);
+    if (entry3) XClassDelete(entry3);
     
-    XHostAddress_deinit_base(&ip1);
-    XHostAddress_deinit_base(&ip2);
-    XHostAddress_deinit_base(&netmask);
+    XClassDeinit(&ip1);
+    XClassDeinit(&ip2);
+    XClassDeinit(&netmask);
 }
 
 // ==================== 复制测试 ====================
@@ -278,8 +278,8 @@ static void XNetworkAddressEntry_copyTest(void)
     XNetworkAddressEntry* original = XNetworkAddressEntry_createFull(&ip, &netmask, NULL);
     if (!original) {
         XPrintf("  ERR 创建失败\n");
-        XHostAddress_deinit_base(&ip);
-        XHostAddress_deinit_base(&netmask);
+        XClassDeinit(&ip);
+        XClassDeinit(&netmask);
         return;
     }
     
@@ -296,12 +296,12 @@ static void XNetworkAddressEntry_copyTest(void)
             XPrintf("  OK 复制内容相等\n");
         }
         
-        XNetworkAddressEntry_delete_base(copied);
+        XClassDelete(copied);
     }
     
-    XNetworkAddressEntry_delete_base(original);
-    XHostAddress_deinit_base(&ip);
-    XHostAddress_deinit_base(&netmask);
+    XClassDelete(original);
+    XClassDeinit(&ip);
+    XClassDeinit(&netmask);
 }
 
 // ==================== 交换测试 ====================
@@ -326,9 +326,9 @@ static void XNetworkAddressEntry_swapTest(void)
         XString* str2 = XHostAddress_toString(XNetworkAddressEntry_ip(entry2));
         
         XPrintf("  交换前: entry1=");
-        if (str1) { XPrintf_2(str1); XString_delete_base(str1); }
+        if (str1) { XPrintf_2(str1); XClassDelete(str1); }
         XPrintf(", entry2=");
-        if (str2) { XPrintf_2(str2); XString_delete_base(str2); }
+        if (str2) { XPrintf_2(str2); XClassDelete(str2); }
         XPrintf("\n");
         
         /* 交换 */
@@ -338,18 +338,18 @@ static void XNetworkAddressEntry_swapTest(void)
         str2 = XHostAddress_toString(XNetworkAddressEntry_ip(entry2));
         
         XPrintf("  交换后: entry1=");
-        if (str1) { XPrintf_2(str1); XString_delete_base(str1); }
+        if (str1) { XPrintf_2(str1); XClassDelete(str1); }
         XPrintf(", entry2=");
-        if (str2) { XPrintf_2(str2); XString_delete_base(str2); }
+        if (str2) { XPrintf_2(str2); XClassDelete(str2); }
         XPrintf("\n");
     }
     
-    if (entry1) XNetworkAddressEntry_delete_base(entry1);
-    if (entry2) XNetworkAddressEntry_delete_base(entry2);
+    if (entry1) XClassDelete(entry1);
+    if (entry2) XClassDelete(entry2);
     
-    XHostAddress_deinit_base(&ip1);
-    XHostAddress_deinit_base(&ip2);
-    XHostAddress_deinit_base(&netmask);
+    XClassDeinit(&ip1);
+    XClassDeinit(&ip2);
+    XClassDeinit(&netmask);
 }
 
 // ==================== 综合测试 ====================

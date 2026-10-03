@@ -42,7 +42,7 @@ static void XQueueBasicTest(void)
     }
     XPrintf("\n剩余 empty=%d count=%zu (期望:1/0)\n",
         (int)XQueue_empty_base(q), XQueue_count_base(q));
-    XQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -62,7 +62,7 @@ static void XQueueMoveTest(void)
         XQueue_dequeue_void_base(q);
     }
     XPrintf("\n");
-    XQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -84,7 +84,7 @@ static void XQueueBulkTest(void)
     }
     XPrintf("FIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
         mismatch, (int)XQueue_empty_base(q));
-    XQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 #endif /* XQueue_ON */
@@ -124,8 +124,8 @@ static void XPriorityQueueBasicTest(void)
         XPriorityQueue_dequeue_void_base(q);
     }
     XPrintf("\n");
-    XPriorityQueue_delete_base(q);
-    XVector_delete_base(v);
+    XClassDelete(q);
+    XClassDelete(v);
     //XCoreApplication_quit();
 }
 
@@ -145,7 +145,7 @@ static void XPriorityQueueAscTest(void)
         XPriorityQueue_dequeue_void_base(q);
     }
     XPrintf("\n");
-    XPriorityQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -167,7 +167,7 @@ static void XPriorityQueueRemoveTest(void)
         XPriorityQueue_dequeue_void_base(q);
     }
     XPrintf("\n");
-    XPriorityQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 #endif /* XPriorityQueue_ON */

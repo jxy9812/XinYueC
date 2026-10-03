@@ -50,7 +50,7 @@ static int xprogressdialog_fontLineHeight(const XProgressDialog* self)
         info.m_kind == XFontFace_Bitmap && info.m_bitmap.m_height > 0)
         base = info.m_bitmap.m_height;
     scaleNum = XFont_pixelSize(&font) > 0 ? XFont_pixelSize(&font) : base;
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     /* 行高 = 位图行高 × (pixelSize / 位图行高) = 像素字号（同 XLabel
      * label_scaledMetric 的 base×scale 取整口径，恒 ≥1）。 */
     return scaleNum < 1 ? 1 : scaleNum;
@@ -69,7 +69,7 @@ static int xprogressdialog_textWidth(const XProgressDialog* self,
     if (!utf8 || !utf8[0]) return 0;
     font = XWidget_font((XWidget*)self);
     width = XPainter_textWidthRange(&font, utf8, 0, (int)XStrlen(utf8));
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     return width > 0 ? width : 0;
 }
 
@@ -77,7 +77,7 @@ static int xprogressdialog_textWidth(const XProgressDialog* self,
 static void xprogressdialog_freeString(XString** slot)
 {
     if (slot && *slot) {
-        XString_delete_base((XClass*)*slot);
+        XClassDelete((XClass*)*slot);
         *slot = NULL;
     }
 }
@@ -413,13 +413,13 @@ static void VXProgressDialog_deinit(XProgressDialog* self)
     xprogressdialog_freeString(&self->m_cancelButtonText);
 #if XFRAME_ON && XLABEL_ON
     if (self->m_label) {
-        XLabel_delete_base((XClass*)self->m_label);
+        XClassDelete((XClass*)self->m_label);
         self->m_label = NULL;
     }
 #endif
 #if XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
     if (self->m_cancelButton) {
-        XPushButton_delete_base((XClass*)self->m_cancelButton);
+        XClassDelete((XClass*)self->m_cancelButton);
         self->m_cancelButton = NULL;
     }
 #endif
@@ -473,7 +473,7 @@ void XProgressDialog_init(XProgressDialog* self, XWidget* parent,
         XString* title = XString_create_utf8("正在执行");
         if (title) {
             XWidget_setWindowTitle((XWidget*)self, title);
-            XString_delete_base((XClass*)title);
+            XClassDelete((XClass*)title);
         }
     }
     /* 账本 #2/#8 根修：创建即按内容收口固定尺寸（XWidget_init 的有父
@@ -639,7 +639,7 @@ void XProgressDialog_setLabel(XProgressDialog* self, XLabel* label)
     if (!self || self->m_label == label) return;
     /* 对标 Qt setLabel：删除旧标签并接管新标签所有权。 */
     if (self->m_label) {
-        XLabel_delete_base((XClass*)self->m_label);
+        XClassDelete((XClass*)self->m_label);
         self->m_label = NULL;
     }
     self->m_label = label;
@@ -667,7 +667,7 @@ void XProgressDialog_setCancelButton(XProgressDialog* self,
         XObject_disconnect_1((XObject*)self->m_cancelButton,
                              XSignal(XAbstractButton_clicked_signal),
                              (XObject*)self, xprogressdialog_cancelClickedSlot);
-        XPushButton_delete_base((XClass*)self->m_cancelButton);
+        XClassDelete((XClass*)self->m_cancelButton);
         self->m_cancelButton = NULL;
     }
     self->m_cancelButton = button;

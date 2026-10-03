@@ -31,7 +31,7 @@ static int xerr_fontLineHeight(const XErrorMessage* self)
         info.m_kind == XFontFace_Bitmap && info.m_bitmap.m_height > 0)
         base = info.m_bitmap.m_height;
     scaleNum = XFont_pixelSize(&font) > 0 ? XFont_pixelSize(&font) : base;
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     /* 行高 = 位图行高 × (pixelSize / 位图行高) = 像素字号（恒 ≥1）。 */
     return scaleNum < 1 ? 1 : scaleNum;
 }
@@ -44,7 +44,7 @@ static int xerr_textWidth(const XErrorMessage* self, const char* utf8)
     if (!self || !utf8 || !utf8[0]) return 0;
     font = XWidget_font((XWidget*)self);
     width = XPainter_textWidthRange(&font, utf8, 0, (int)XStrlen(utf8));
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     return width > 0 ? width : 0;
 }
 
@@ -130,7 +130,7 @@ static void VXErrorMessage_deinit(XErrorMessage* self)
 {
     if (!self) return;
     if (self->m_message) {
-        XString_delete_base(self->m_message);
+        XClassDelete(self->m_message);
         self->m_message = NULL;
     }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);

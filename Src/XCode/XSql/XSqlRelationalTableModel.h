@@ -48,20 +48,18 @@ void XSqlRelationalTableModel_init(XSqlRelationalTableModel* model, const XSqlDa
 /**
  * @brief 创建关系表模型。
  * @param database 数据库连接；创建时复制连接句柄，可为 NULL。
- * @return 新模型，调用者必须使用 XSqlRelationalTableModel_delete_base 释放；失败返回 NULL。
+ * @return 新模型，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlRelationalTableModel* XSqlRelationalTableModel_create_ex(XMemoryType memory,  const XSqlDatabase* database);
 /** @brief 调用 XClass 析构入口释放关系、子模型与行缓存。 */
-#define XSqlRelationalTableModel_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlRelationalTableModel_create 返回的关系表模型。 */
-#define XSqlRelationalTableModel_delete_base XClass_delete_base
 /**
  * @brief 获取关系字段显示值或编辑值副本。
  * @param model 关系表模型；NULL 返回空值对象。
  * @param row 行号，从 0 开始。
  * @param column 列号，从 0 开始。
  * @param role 数据角色。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlRelationalTableModel_data(const XSqlRelationalTableModel* model, int row, int column, XSqlItemDataRole role);
 /**
@@ -120,7 +118,7 @@ void XSqlRelationalTableModel_setRelation(XSqlRelationalTableModel* model, int c
  * @brief 获取关系描述副本。
  * @param model 关系表模型；NULL 返回空关系对象。
  * @param column 外键列，从 0 开始。
- * @return 新关系对象，调用者必须使用 XSqlRelation_delete_base 释放。
+ * @return 新关系对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlRelation* XSqlRelationalTableModel_relation(const XSqlRelationalTableModel* model, int column);
 /**
@@ -146,13 +144,13 @@ XSqlRelationJoinMode XSqlRelationalTableModel_joinMode(const XSqlRelationalTable
 /**
  * @brief 生成包含关系连接的 SELECT 语句。
  * @param model 关系表模型；NULL 或未设置表名时返回空字符串对象。
- * @return 新 SQL 字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新 SQL 字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlRelationalTableModel_selectStatement(const XSqlRelationalTableModel* model);
 /**
  * @brief 生成关系模型排序子句。
  * @param model 关系表模型；NULL 返回空字符串对象。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlRelationalTableModel_orderByClause(const XSqlRelationalTableModel* model);
 /**

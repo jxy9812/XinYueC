@@ -332,8 +332,8 @@ static void xsp_setPressOffset(XSplitter* self, int64_t value)
     XString_assign_utf8(&key, XSPLITTER_PROP_PRESS_OFFSET);
     /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
     if (!XObject_setProperty((XObject*)self, &key, v))
-        XVariant_delete_base((XClass*)v);
-    XString_deinit_base(&key);
+        XClassDelete((XClass*)v);
+    XClassDeinit(&key);
 }
 
 static int64_t xsp_pressOffset(const XSplitter* self)
@@ -344,7 +344,7 @@ static int64_t xsp_pressOffset(const XSplitter* self)
     XString_init(&key);
     XString_assign_utf8(&key, XSPLITTER_PROP_PRESS_OFFSET);
     v = XObject_property((const XObject*)self, &key);
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
     return v ? XVariant_toInt64(v) : 0;
 }
 

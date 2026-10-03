@@ -61,8 +61,6 @@ XAccessible* XAccessible_createForWidget_ex(XMemoryType memory, XWidget* widget)
 XAccessible* XAccessible_createApplication_ex(XMemoryType memory);
 #define XAccessible_createApplication() \
     XAccessible_createApplication_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-#define XAccessible_delete_base(self) XClass_delete_base((XClass*)(self))
-#define XAccessible_deinit_base(self) XClass_deinit_base((XClass*)(self))
 bool XAccessible_isValid(const XAccessible* self);
 XAccessibleRole XAccessible_role(const XAccessible* self);
 XRect XAccessible_rect(const XAccessible* self);

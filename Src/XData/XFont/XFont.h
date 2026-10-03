@@ -187,7 +187,7 @@ XVtable* XFont_class_init(void);
 /**
  * @brief      在堆上创建 XFont 实例。
  * @details    新对象使用 XFONT_DEFAULT_* 配置的默认字体参数；调用方必须用
- *             XFont_delete_base 释放返回对象。
+ *             XClassDelete 释放返回对象。
  * @return     指向新创建的 XFont 对象的指针，失败返回 NULL
  */
 /**
@@ -204,7 +204,7 @@ XFont* XFont_create_ex(XMemoryType memory, const char* family, int pointSize, in
 /**
  * @brief      初始化 XFont 实例。
  * @details    self 必须指向调用方提供的未初始化存储；重复初始化前应先调用
- *             XFont_deinit_base。默认参数来自 XFONT_DEFAULT_* 配置。
+ *             XClassDeinit。默认参数来自 XFONT_DEFAULT_* 配置。
  * @param self 待初始化的 XFont 对象指针；NULL 时不执行任何操作。
  * @return     无；self 为 NULL 时对象状态不变。
  */
@@ -228,13 +228,11 @@ void XFont_init_ex(XFont* self, const char* family, int pointSize, int weight, b
  * @param self 已由 XFont_init 初始化的栈对象；NULL 时不执行。
  * @return 无；反初始化后必须重新 init 才能使用。
  */
-#define XFont_deinit_base XClass_deinit_base
 /**
  * @brief 反初始化并释放堆上的 XFont 对象。
  * @param self 由 XFont_create_ex 创建的堆对象；NULL 时不执行。
  * @return 无；不能用于栈对象。
  */
-#define XFont_delete_base XClass_delete_base
 
 /* ========== 属性访问 ========== */
 

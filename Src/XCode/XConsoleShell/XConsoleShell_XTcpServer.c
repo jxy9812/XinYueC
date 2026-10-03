@@ -294,7 +294,7 @@ static bool xcs_tcpserver_ssh_setup(XConsoleShellXTcpServerBinding* binding,
     if (!server) return false;
     binding->ssh = server;
     if (!XSshServer_setDevice(server, (XIODevice*)socket)) {
-        XSshServer_delete_base(server);
+        XClassDelete(server);
         binding->ssh = NULL;
         return false;
     }
@@ -359,7 +359,7 @@ static bool xcs_tcpserver_ssh_flush(XConsoleShellXTcpServerBinding* binding)
 static void xcs_tcpserver_ssh_close(XConsoleShellXTcpServerBinding* binding)
 {
     if (binding && binding->ssh) {
-        XSshServer_delete_base(binding->ssh);
+        XClassDelete(binding->ssh);
         binding->ssh = NULL;
     }
 }

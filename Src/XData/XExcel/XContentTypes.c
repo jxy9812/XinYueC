@@ -30,7 +30,7 @@ static void addDefault_cstr(XContentTypes* self, const char* key, const char* va
     if (!kstr) return;
     XString_append_utf8(kstr, key);
     XString* vstr = XString_create();
-    if (!vstr) { XString_delete_base(kstr); return; }
+    if (!vstr) { XClassDelete(kstr); return; }
     XString_append_utf8(vstr, value);
     intptr_t pk = (intptr_t)kstr;
     intptr_t pv = (intptr_t)vstr;
@@ -51,7 +51,7 @@ static void XStringContainer_deinit(void* p)
     intptr_t v;
     memcpy(&v, p, sizeof(v));
     XString* s = (XString*)v;
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
 }
 
 /* 内部辅助：接受 const char* 的 addOverride */
@@ -62,7 +62,7 @@ static void addOverride_cstr(XContentTypes* self, const char* key, const char* v
     if (!kstr) return;
     XString_append_utf8(kstr, key);
     XString* vstr = XString_create();
-    if (!vstr) { XString_delete_base(kstr); return; }
+    if (!vstr) { XClassDelete(kstr); return; }
     XString_append_utf8(vstr, value);
     intptr_t pk = (intptr_t)kstr;
     intptr_t pv = (intptr_t)vstr;
@@ -198,7 +198,7 @@ XContentTypes* XContentTypes_create(void)
     XContentTypes* self = (XContentTypes*)XMalloc_System(sizeof(XContentTypes));
     if (!self) return NULL;
     memset(self, 0, sizeof(XContentTypes));
-    /* 用 sizeof(intptr_t) 存 XString*，并注册 deinit 方法让 XMap_delete_base 自动清理 */
+    /* 用 sizeof(intptr_t) 存 XString*，并注册 deinit 方法让 XClassDelete 自动清理 */
     self->m_defaults = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
     self->m_overrides = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
     /* 通知 map 在清空条目时调用的 deinit 方法（按 key、按 value 各一次） */
@@ -221,9 +221,9 @@ void XContentTypes_delete(XContentTypes* self)
 {
     if (!self) return;
     /* map 创建时已设置 KeyDeinit/DataDeinit 为 XStringContainer_deinit，
-       XMap_delete_base 会自动调用它们释放每个 entry 中的 XString* */
-    if (self->m_defaults) XMap_delete_base(self->m_defaults);
-    if (self->m_overrides) XMap_delete_base(self->m_overrides);
+       XClassDelete 会自动调用它们释放每个 entry 中的 XString* */
+    if (self->m_defaults) XClassDelete(self->m_defaults);
+    if (self->m_overrides) XClassDelete(self->m_overrides);
     XFree_System(self);
 }
 
@@ -289,7 +289,7 @@ bool XContentTypes_saveToXmlData(const XContentTypes* self, uint8_t** outData, s
         *outLen = XByteArray_size_base(buf);
         (*outData)[*outLen] = '\0';
     }
-    XByteArray_delete_base(buf);
+    XClassDelete(buf);
     return *outData != NULL;
 }
 
@@ -301,14 +301,14 @@ bool XContentTypes_saveToXmlFile(const XContentTypes* self, const XString* fileP
     
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         XFree_System(data);
         return false;
     }
     bool result = XIODevice_write_1((XIODevice*)file, (const char*)data,
         (int64_t)len) == (int64_t)len;
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     XFree_System(data);
     return result;
 }
@@ -318,7 +318,7 @@ static const XString* content_type_attribute(const XXmlStreamAttributes* attribu
 {
     XString_Init_Utf8(attributeName, name);
     const XString* result = XXmlStreamAttributes_value_ex(attributes, NULL, attributeName);
-    XString_deinit_base(attributeName);
+    XClassDeinit(attributeName);
     return result;
 }
 
@@ -327,8 +327,8 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
     XByteArray* bytes = XByteArray_create_with_data((const char*)data, len);
     XXmlStreamReader* reader = XXmlStreamReader_create();
     if (!bytes || !reader) {
-        if (bytes) XByteArray_delete_base(bytes);
-        if (reader) XXmlStreamReader_delete_base(reader);
+        if (bytes) XClassDelete(bytes);
+        if (reader) XClassDelete(reader);
         return false;
     }
     XMap_clear_base(self->m_defaults);
@@ -337,7 +337,7 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
     self->m_drawingCount = self->m_commentCount = self->m_tableCount = 0;
     self->m_externalLinkCount = self->m_vmlCount = 0;
     XXmlStreamReader_addData(reader, bytes);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     bool sawRoot = false;
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
@@ -358,7 +358,7 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
         }
     }
     bool result = sawRoot && !XXmlStreamReader_hasError(reader);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     if (!result) {
         XMap_clear_base(self->m_defaults);
         XMap_clear_base(self->m_overrides);
@@ -371,16 +371,16 @@ bool XContentTypes_loadFromXmlFile(XContentTypes* self, const XString* filePath)
     
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* allData = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!allData) return false;
     
     bool result = XContentTypes_loadFromXmlData(self, XByteArray_data(allData), XByteArray_size_base(allData));
-    XByteArray_delete_base(allData);
+    XClassDelete(allData);
     return result;
 }
 
@@ -400,5 +400,5 @@ void XContentTypes_addWorksheetName_utf8(XContentTypes* self, const char* name)
 {
     XString* value = name ? XString_create_utf8(name) : NULL;
     XContentTypes_addWorksheetName(self, value);
-    if (value) XString_delete_base(value);
+    if (value) XClassDelete(value);
 }

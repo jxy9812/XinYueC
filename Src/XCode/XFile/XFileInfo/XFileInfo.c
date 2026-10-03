@@ -18,7 +18,7 @@ static void VXFileInfo_copy(XFileInfo* self, const XFileInfo* other)
     
     // 拷贝路径
     if (self->m_filePath) {
-        XString_delete_base(self->m_filePath);
+        XClassDelete(self->m_filePath);
     }
     self->m_filePath = other->m_filePath ? XString_create_copy(other->m_filePath) : NULL;
     
@@ -35,7 +35,7 @@ static void VXFileInfo_move(XFileInfo* self, XFileInfo* other)
     
     // 移动路径
     if (self->m_filePath) {
-        XString_delete_base(self->m_filePath);
+        XClassDelete(self->m_filePath);
     }
     self->m_filePath = other->m_filePath;
     other->m_filePath = NULL;
@@ -53,7 +53,7 @@ static void VXFileInfo_deinit(XFileInfo* self)
     if (!self) return;
     
     if (self->m_filePath) {
-        XString_delete_base(self->m_filePath);
+        XClassDelete(self->m_filePath);
         self->m_filePath = NULL;
     }
 }
@@ -128,7 +128,7 @@ void XFileInfo_init_2(XFileInfo* info, const XString* path)
 {
     XFileInfo_init_1(info);
     if (path) {
-        XString_delete_base(info->m_filePath);
+        XClassDelete(info->m_filePath);
         info->m_filePath = XString_create_copy(path);
     }
 }
@@ -146,7 +146,7 @@ void XFileInfo_init_3(XFileInfo* info, const XString* dir, const XString* path)
     
     // 如果 path 是绝对路径，忽略 dir
     if (XFileInfo_isAbsolutePath_static(path)) {
-        XString_delete_base(info->m_filePath);
+        XClassDelete(info->m_filePath);
         info->m_filePath = XString_create_copy(path);
         return;
     }
@@ -166,7 +166,7 @@ void XFileInfo_init_3(XFileInfo* info, const XString* dir, const XString* path)
         pathStart++;
     }
     
-    XString_delete_base(info->m_filePath);
+    XClassDelete(info->m_filePath);
     info->m_filePath = XString_create_utf8("");
     XString_append_with_length_utf8(info->m_filePath, dirUtf8, dirLen);
     XString_append_utf8(info->m_filePath, "/");
@@ -182,7 +182,7 @@ void XFileInfo_setFile_1(XFileInfo* info, const XString* path)
     if (!info) return;
     
     if (info->m_filePath) {
-        XString_delete_base(info->m_filePath);
+        XClassDelete(info->m_filePath);
     }
     info->m_filePath = path ? XString_create_copy(path) : XString_create();
     info->m_cacheValid = false;
@@ -254,7 +254,7 @@ XString* XFileInfo_baseName(const XFileInfo* info)
         result = XString_create_copy(fileName);
     }
     
-    XString_delete_base(fileName);
+    XClassDelete(fileName);
     return result;
 }
 
@@ -272,7 +272,7 @@ XString* XFileInfo_completeBaseName(const XFileInfo* info)
         result = XString_create_copy(fileName);
     }
     
-    XString_delete_base(fileName);
+    XClassDelete(fileName);
     return result;
 }
 
@@ -296,7 +296,7 @@ XString* XFileInfo_suffix(const XFileInfo* info)
         result = XString_create();
     }
     
-    XString_delete_base(fileName);
+    XClassDelete(fileName);
     return result;
 }
 
@@ -320,7 +320,7 @@ XString* XFileInfo_completeSuffix(const XFileInfo* info)
         result = XString_create();
     }
     
-    XString_delete_base(fileName);
+    XClassDelete(fileName);
     return result;
 }
 
@@ -428,7 +428,7 @@ XString* XFileInfo_absoluteFilePath(const XFileInfo* info)
     if (!result) return NULL;
     
     if (!XDeviceFile_resolvePath(info->m_filePath, result, XPathStyle_Absolute)) {
-        XString_delete_base(result);
+        XClassDelete(result);
         return NULL;
     }
     return result;
@@ -443,7 +443,7 @@ XString* XFileInfo_absolutePath(const XFileInfo* info)
 {
     XString* absFilePath = XFileInfo_absoluteFilePath(info);
     if (!absFilePath || XString_length_base(absFilePath) == 0) {
-        if (absFilePath) XString_delete_base(absFilePath);
+        if (absFilePath) XClassDelete(absFilePath);
         return XString_create();
     }
     
@@ -459,7 +459,7 @@ XString* XFileInfo_absolutePath(const XFileInfo* info)
         result = XString_create_utf8(".");
     }
     
-    XString_delete_base(absFilePath);
+    XClassDelete(absFilePath);
     return result;
 }
 
@@ -541,7 +541,7 @@ bool XFileInfo_isRoot(const XFileInfo* info)
     
     const char* absUtf8 = XString_toUtf8(absPath);
     if (!absUtf8) {
-        XString_delete_base(absPath);
+        XClassDelete(absPath);
         return false;
     }
     
@@ -558,7 +558,7 @@ bool XFileInfo_isRoot(const XFileInfo* info)
         result = true;
     }
     
-    XString_delete_base(absPath);
+    XClassDelete(absPath);
     return result;
 }
 
@@ -618,11 +618,11 @@ bool XFileInfo_makeAbsolute(XFileInfo* info)
     
     XString* absPath = XFileInfo_absoluteFilePath(info);
     if (!absPath || XString_length_base(absPath) == 0) {
-        if (absPath) XString_delete_base(absPath);
+        if (absPath) XClassDelete(absPath);
         return false;
     }
     
-    XString_delete_base(info->m_filePath);
+    XClassDelete(info->m_filePath);
     info->m_filePath = absPath;
     info->m_cacheValid = false;
     return true;
@@ -772,7 +772,7 @@ XString* XFileInfo_symLinkTarget(const XFileInfo* info)
     if (!target) return NULL;
     
     if (!XDeviceFile_readLink(info->m_filePath, target)) {
-        XString_delete_base(target);
+        XClassDelete(target);
         return NULL;
     }
     
@@ -804,15 +804,15 @@ bool XFileInfo_equals(const XFileInfo* lhs, const XFileInfo* rhs)
     XString* path2 = XFileInfo_canonicalFilePath(rhs);
     
     if (!path1 || !path2) {
-        if (path1) XString_delete_base(path1);
-        if (path2) XString_delete_base(path2);
+        if (path1) XClassDelete(path1);
+        if (path2) XClassDelete(path2);
         return false;
     }
     
     bool result = XString_equals(path1, path2, XChar_CaseSensitive);
     
-    XString_delete_base(path1);
-    XString_delete_base(path2);
+    XClassDelete(path1);
+    XClassDelete(path2);
     
     return result;
 }

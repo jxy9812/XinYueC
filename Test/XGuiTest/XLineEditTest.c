@@ -181,7 +181,7 @@ bool XLineEditTest_runAll(void)
             le_expect(cr.width == 1 && cr.height > 0,
                       "cursorRect 返回 1px 宽矩形");
         }
-        XAction_delete_base(act);
+        XClassDelete(act);
     }
 
     /* 12. 回显模式语义（对标 QLineEdit::displayText）。 */
@@ -201,7 +201,7 @@ bool XLineEditTest_runAll(void)
         XLineEdit_clear(edit);
     }
 
-    XLineEdit_delete_base(edit);
+    XClassDelete(edit);
 
     {
         int failures = le_failures;

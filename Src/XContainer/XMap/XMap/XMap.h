@@ -198,12 +198,10 @@ bool XMap_isDetached(const XMap* this_map);
 * @brief 反初始化容器（基础版本）
 * @note 继承自XMapBase的反初始化操作，释放资源但不释放容器本身
 */
-#define XMap_deinit_base              XMapBase_deinit_base
 /**
 * @brief 删除容器实例（基础版本）
 * @note 继承自XMapBase的删除操作，释放资源并销毁容器实例
 */
-#define XMap_delete_base              XMapBase_delete_base
 /**
 * @brief 清空容器元素（基础版本）
 * @note 继承自XMapBase的清空操作，删除所有元素但保留容器结构

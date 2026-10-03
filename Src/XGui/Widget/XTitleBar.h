@@ -61,7 +61,7 @@ XCLASS_DEFINE_END(XTitleBar)
  *             XTitleBar_Protected.h 声明的 API 访问。
  * @note       释放约定：XObject 派生控件的常规释放走异步
  *             XObject_deleteLater（事件循环下次处理时安全释放）；同步
- *             XTitleBar_delete_base 极少使用，仅供显式同步释放场景。
+ *             XClassDelete 极少使用，仅供显式同步释放场景。
  */
 typedef struct XTitleBar
 {
@@ -106,7 +106,7 @@ XVtable* XTitleBar_class_init(void);
  *             （标题栏不得作为顶层窗口）。m_activeSubControls 置 0、
  *             m_stripKick 置 false、m_releaseVerifyTimer 置
  *             XTIMER_INVALID_ID（未排程）。调用方负责生命周期结束后
- *             的 XTitleBar_deinit_base。
+ *             的 XClassDeinit。
  * @param      self   待初始化对象；不可为 NULL，且必须尚未初始化。
  * @param      parent 宿主控件借用指针；可为 NULL（此时默认实现不绘制，
  *                    挂载到宿主后才生效），函数不取得其所有权。
@@ -120,7 +120,7 @@ void XTitleBar_init(XTitleBar* self, XWidget* parent, XWidgetFlags flags);
  * @param      parent 宿主控件借用指针；可为 NULL，宏不取得其所有权。
  * @param      flags  窗口标志；标题栏应传 0（子控件）。
  * @return     新建的已初始化对象指针；分配失败返回 NULL。成功返回的
- *             对象由调用方拥有，必须使用 XTitleBar_delete_base 释放。
+ *             对象由调用方拥有，必须使用 XClassDelete 释放。
  */
 #define XTitleBar_create(parent, flags) \
     XTitleBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
@@ -131,7 +131,7 @@ void XTitleBar_init(XTitleBar* self, XWidget* parent, XWidgetFlags flags);
  * @param      parent 宿主控件借用指针；可为 NULL，函数不取得其所有权。
  * @param      flags  窗口标志；标题栏应传 0（子控件）。
  * @return     新建的已初始化对象指针；分配或初始化失败返回 NULL。成功
- *             返回的堆对象由调用方拥有，必须使用 XTitleBar_delete_base
+ *             返回的堆对象由调用方拥有，必须使用 XClassDelete
  *             释放。
  */
 XTitleBar* XTitleBar_create_ex(XMemoryType memory, XWidget* parent,
@@ -146,18 +146,16 @@ XTitleBar* XTitleBar_create_ex(XMemoryType memory, XWidget* parent,
  * @param      self 待反初始化对象；NULL 或虚表未初始化时不执行任何操作。
  * @return     无返回值。
  */
-#define XTitleBar_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /**
  * @brief      删除堆上的 XTitleBar 对象（先经虚表反初始化，再按登记分配
  *             器释放结构体内存；宏映射 XClass 基类入口）。
  * @details    释放约定：常规释放走异步 XObject_deleteLater；同步
  *             delete_base 极少使用，仅供显式同步释放场景（如无事件循环
  *             的测试环境）。只能配对 XTitleBar_create/create_ex 返回的
- *             堆对象，栈对象走 XTitleBar_deinit_base。
+ *             堆对象，栈对象走 XClassDeinit。
  * @param      self 待删除的堆对象；NULL 不执行任何操作。
  * @return     无返回值。
  */
-#define XTitleBar_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 类型守卫（装饰路径动态类型校验） ==================== */
 

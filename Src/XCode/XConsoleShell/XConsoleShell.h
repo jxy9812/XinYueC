@@ -291,7 +291,7 @@ XVtable* XConsoleShell_class_init(void);
 /**
  * @brief      初始化调用方提供存储的 Shell 对象。
  * @details    self 必须指向尚未初始化的存储；使用结束后必须调用
- *             XConsoleShell_deinit_base。内置命令注册失败时对象仍完成初始化，
+ *             XClassDeinit。内置命令注册失败时对象仍完成初始化，
  *             但会停止接收输入且命令表为空。
  * @param      self 待初始化对象；调用方提供可写存储；传入 NULL 时不执行操作。
  * @param      io 传输回调集合；只在调用期间读取并复制回调值，可为 NULL；
@@ -304,22 +304,9 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io);
  * @param      io 传输回调集合；只在调用期间读取并复制回调值，可为 NULL；
  *             Shell 不取得其中 userData 的所有权。
  * @return     新对象的拥有指针；分配失败返回 NULL。调用方必须使用
- *             XConsoleShell_delete_base 释放非 NULL 返回值。
+ *             XClassDelete 释放非 NULL 返回值。
  */
 XConsoleShell* XConsoleShell_create_ex(XMemoryType memory,  const XConsoleShellIo* io);
-/**
- * @brief      释放 Shell 内部资源但保留调用方提供的对象存储。
- * @param      self 已由 XConsoleShell_init 初始化的对象；可为 NULL；函数不
- *             释放 self 本身，非 NULL 对象不得重复反初始化。
- * @return     无。self 为 NULL 时不执行操作。
- */
-void XConsoleShell_deinit_base(XConsoleShell* self);
-/**
- * @brief      反初始化并删除由 XConsoleShell_create 返回的堆对象。
- * @param      self 待删除对象的拥有指针；可为 NULL；调用后该指针失效。
- * @return     无。self 为 NULL 时不执行操作。
- */
-void XConsoleShell_delete_base(XConsoleShell* self);
 
 #if XCONSOLE_SHELL_TASKS_ON
 /**

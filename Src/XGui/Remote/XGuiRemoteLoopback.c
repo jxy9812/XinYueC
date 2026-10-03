@@ -375,7 +375,7 @@ XGuiRemoteLoopbackDevice* XGuiRemoteLoopbackDevice_createPair_ex(
     XGuiRemoteLoopbackDevice_init(a, b, ringCapacity);
     if (!a->m_d) {
         /* 绑定失败(分配失败): a 已完成对象初始化, 走正规析构。 */
-        XClass_deinit_base((XClass*)a);
+        XClassDeinit((XClass*)a);
         XMemory_free(a, memory);
         if (b) XMemory_free(b, memory); /* b 未初始化, 直接释放 */
         return NULL;
@@ -383,9 +383,9 @@ XGuiRemoteLoopbackDevice* XGuiRemoteLoopbackDevice_createPair_ex(
     if (b) {
         XGuiRemoteLoopbackDevice_init(b, a, ringCapacity);
         if (!b->m_d) {
-            XClass_deinit_base((XClass*)a);
+            XClassDeinit((XClass*)a);
             XMemory_free(a, memory);
-            XClass_deinit_base((XClass*)b);
+            XClassDeinit((XClass*)b);
             XMemory_free(b, memory);
             return NULL;
         }

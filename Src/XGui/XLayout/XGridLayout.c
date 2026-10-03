@@ -1511,7 +1511,7 @@ void XGridLayout_addWidgetAuto(XGridLayout* self, XWidget* widget)
     idx = XGridLayout_appendCellItem(self, item, true,
                                      self->m_nextR, self->m_nextC, 1, 1, 0);
     if (idx < 0) {
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
         return;
     }
     XGridLayout_setNextPosAfter(self, self->m_cells[idx].m_rowSpan,
@@ -1536,7 +1536,7 @@ void XGridLayout_addWidgetSpan(XGridLayout* self, XWidget* widget,
     idx = XGridLayout_appendCellItem(self, item, true, row, column,
                                      rowSpan, columnSpan, alignment);
     if (idx < 0) {
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
         return;
     }
     XGridLayout_setNextPosAfter(self, self->m_cells[idx].m_rowSpan,

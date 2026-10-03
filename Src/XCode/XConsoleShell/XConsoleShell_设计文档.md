@@ -1,4 +1,4 @@
-﻿# XConsoleShell 设计文档
+# XConsoleShell 设计文档
 
 ## 1. 文档状态
 
@@ -572,7 +572,7 @@ malloc/free。
 - 如果未来增加虚函数，枚举值从 XCLASS_VTABLE_GET_SIZE(XObject) 开始。
 - 所有 VXConsoleShell_* 静态实现必须匹配槽位签名。
 - deinit 释放历史、动态命令、进程句柄和内部资源，并把拥有指针置 NULL。
-- Shell 含有 I/O 和用户借用指针，首版不公开 copy/move。若以后公开，必须实现完整 copy_base/move_base，禁止 memcpy。
+- Shell 含有 I/O 和用户借用指针，首版不公开 copy/move。若以后公开，必须重载拷贝/移动虚槽并经 XClassCopy/XClassMove 分派，禁止 memcpy。
 
 ### 7.3 栈对象和堆对象
 
@@ -580,7 +580,7 @@ malloc/free。
 XConsoleShell shell;
 XConsoleShell_init(&shell, &io);
 XConsoleShell_feedData(&shell, input, length);
-XConsoleShell_deinit_base(&shell);
+XClassDeinit(&shell);
 ~~~
 
 所有 init 与 deinit 必须成对；create 失败的每条返回路径必须释放已经获得的资源。
@@ -660,8 +660,8 @@ XVtable* XConsoleShell_class_init(void);
 void XConsoleShell_init(XConsoleShell* self,
                         const XConsoleShellIo* io);
 XConsoleShell* XConsoleShell_create(const XConsoleShellIo* io);
-void XConsoleShell_deinit_base(XConsoleShell* self);
-void XConsoleShell_delete_base(XConsoleShell* self);
+void XClassDeinit(XConsoleShell* self);
+void XClassDelete(XConsoleShell* self);
 XConsoleResult XConsoleShell_feedByte(XConsoleShell* self, uint8_t byte);
 XConsoleResult XConsoleShell_feedData(XConsoleShell* self,
                                       const void* data, size_t size);
@@ -1125,7 +1125,7 @@ Shell；若产品在独立任务中轮询，仍需把所有 Shell API 调用纳�
 
 - 核心行缓冲、token 指针、命令表和单会话状态默认静态或由调用方提供。
 - 不使用 malloc、calloc、realloc、free、strdup；动态内存只能走 XMemory.h。
-- XString 临时对象必须 init/deinit_base 成对，禁止 memcpy。
+- XString 临时对象必须 init/XClassDeinit 成对，禁止 memcpy。
 - 默认不保存 token 副本；异步命令显式复制参数。
 - 动态注册、历史和异步进程开启后必须在 API 文档中明确所有权。
 

@@ -83,8 +83,6 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags);
  * @return 返回对象指针；无效时返回 NULL。
  */
 XTabBar* XTabBar_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XTabBar_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XTabBar_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== API（对标 QTabBar public API 子集） ==================== */
 

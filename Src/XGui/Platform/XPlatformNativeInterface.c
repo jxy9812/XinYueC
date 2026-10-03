@@ -53,7 +53,7 @@ static void VXPlatformNativeInterface_deinit(XPlatformNativeInterface* self)
     if (self->m_data) {
         for (i = 0; i < XPLATFORMNATIVEINTERFACE_MAX_FUNCTIONS; ++i) {
             if (self->m_data->m_functions[i].m_name)
-                XString_delete_base(self->m_data->m_functions[i].m_name);
+                XClassDelete(self->m_data->m_functions[i].m_name);
         }
         XFree_System(self->m_data);
         self->m_data = NULL;
@@ -133,7 +133,7 @@ void* XPlatformNativeInterface_nativeResourceForIntegration_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceForIntegration(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -163,7 +163,7 @@ void* XPlatformNativeInterface_nativeResourceForWindow_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceForWindow(self, tmp, window);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -195,7 +195,7 @@ void* XPlatformNativeInterface_nativeResourceForScreen_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceForScreen(self, tmp, screen);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -226,7 +226,7 @@ void* XPlatformNativeInterface_nativeResourceForBackingStore_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceForBackingStore(self, tmp, backingStore);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -248,7 +248,7 @@ void* XPlatformNativeInterface_nativeResourceForCursor_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceForCursor(self, tmp, cursor);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -267,7 +267,7 @@ void* XPlatformNativeInterface_nativeResourceFunctionForIntegration_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceFunctionForIntegration(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -286,7 +286,7 @@ void* XPlatformNativeInterface_nativeResourceFunctionForScreen_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceFunctionForScreen(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -305,7 +305,7 @@ void* XPlatformNativeInterface_nativeResourceFunctionForWindow_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceFunctionForWindow(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -324,7 +324,7 @@ void* XPlatformNativeInterface_nativeResourceFunctionForBackingStore_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceFunctionForBackingStore(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -343,7 +343,7 @@ void* XPlatformNativeInterface_nativeResourceFunctionForCursor_2(
     tmp = XString_create_utf8(resource);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_nativeResourceFunctionForCursor(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -371,7 +371,7 @@ void* XPlatformNativeInterface_platformFunction_2(
     tmp = XString_create_utf8(name);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_platformFunction(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -393,7 +393,7 @@ bool XPlatformNativeInterface_registerPlatformFunction(
         if (!XString_equals_utf8(entry->m_name, name_utf8,
                                   XChar_CaseSensitive)) continue;
         if (!function) {
-            XString_delete_base(entry->m_name);
+            XClassDelete(entry->m_name);
             entry->m_name = NULL;
             entry->m_function = NULL;
         } else {
@@ -418,7 +418,7 @@ bool XPlatformNativeInterface_registerPlatformFunction_2(
     tmp = XString_create_utf8(name);
     if (!tmp) return false;
     result = XPlatformNativeInterface_registerPlatformFunction(self, tmp, function);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -451,7 +451,7 @@ XVariant* XPlatformNativeInterface_windowProperty_2(
     tmp = XString_create_utf8(name);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_windowProperty(self, platformWindow, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -478,7 +478,7 @@ XVariant* XPlatformNativeInterface_windowProperty_default_2(
     tmp = XString_create_utf8(name);
     if (!tmp) return NULL;
     result = XPlatformNativeInterface_windowProperty_default(self, platformWindow, tmp, defaultValue);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return result;
 }
 
@@ -511,7 +511,7 @@ void XPlatformNativeInterface_setWindowProperty_2(
     tmp = XString_create_utf8(name);
     if (!tmp) return;
     XPlatformNativeInterface_setWindowProperty(self, platformWindow, tmp, value);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
 }
 
 
@@ -527,7 +527,7 @@ static void windowPropertyChanged_args_del(XVarList* list)
                     XString*, propertyName);
     (void)platformWindow;
     if (propertyName)
-        XString_delete_base(propertyName);
+        XClassDelete(propertyName);
 }
 
 void* XPlatformNativeInterface_windowPropertyChanged_signal(
@@ -541,7 +541,7 @@ void* XPlatformNativeInterface_windowPropertyChanged_signal(
     args = XVarList_Create(XVar(XPlatformWindow*, platformWindow),
                            XVar(XString*, copy));
     if (!args) {
-        if (copy) XString_delete_base(copy);
+        if (copy) XClassDelete(copy);
         return (void*)(size_t)XPlatformNativeInterface_windowPropertyChanged_signal;
     }
     /* 属性名拷贝归信号系统所有：有接收者时经 del 回调释放，无接收者

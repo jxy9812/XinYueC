@@ -52,11 +52,9 @@ XVtable* XHttp2ClientSession_class_init(void);
 void XHttp2ClientSession_init(XHttp2ClientSession* self);
 /**
  * - @brief 创建 HTTP/2 客户端会话。
- * - @return 新建客户端会话；调用者必须使用 XHttp2ClientSession_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建客户端会话；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttp2ClientSession* XHttp2ClientSession_create_ex(XMemoryType memory);
-#define XHttp2ClientSession_deinit_base XClass_deinit_base
-#define XHttp2ClientSession_delete_base XClass_delete_base
 
 /**
  * - @brief 设置 HTTP/2 配置。

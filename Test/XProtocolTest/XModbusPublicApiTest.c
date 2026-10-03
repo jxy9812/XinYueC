@@ -32,7 +32,7 @@ static int g_fail;
 
 static void delete_pdu(XModbusPdu *pdu)
 {
-    if (pdu) XModbusPdu_delete_base(pdu);
+    if (pdu) XClassDelete(pdu);
 }
 
 static bool configure_holding_registers(XModbusServer *server, uint16_t start, size_t count)
@@ -44,8 +44,8 @@ static bool configure_holding_registers(XModbusServer *server, uint16_t start, s
 
     if (map && unit && XMap_insert_base(map, &type, unit))
         ok = XModbusServer_setMap_base(server, map);
-    if (unit) XModbusDataUnit_delete_base(unit);
-    if (map) XModbusDataUnitMap_delete_base(map);
+    if (unit) XClassDelete(unit);
+    if (map) XClassDelete(map);
     return ok;
 }
 
@@ -96,7 +96,7 @@ static void test_pdu(void)
         "异常响应创建和异常码");
     delete_pdu(copy);
     delete_pdu(pdu);
-    if (exception) XModbusExceptionResponse_delete_base(exception);
+    if (exception) XClassDelete(exception);
 }
 
 static void test_adu(void)
@@ -129,12 +129,12 @@ static void test_adu(void)
     if (parsedRtu) pduOk = XModbusAdu_pdu(parsedRtu, &parsedPdu);
     CHECK(pduOk && XModbusPdu_functionCode(&parsedPdu) == XModbusPdu_ReadHoldingRegisters &&
         XModbusPdu_dataSize(&parsedPdu) == sizeof(requestData), "ADU PDU 往返");
-    if (pduOk) XModbusPdu_deinit_base(&parsedPdu);
+    if (pduOk) XClassDeinit(&parsedPdu);
     if (parsedRtu) XModbusAdu_delete(parsedRtu);
     if (parsedAscii) XModbusAdu_delete(parsedAscii);
-    if (rtu) XByteArray_delete_base(rtu);
-    if (ascii) XByteArray_delete_base(ascii);
-    if (request) XModbusRequest_delete_base(request);
+    if (rtu) XClassDelete(rtu);
+    if (ascii) XClassDelete(ascii);
+    if (request) XClassDelete(request);
 }
 
 static void test_data_unit(void)
@@ -169,12 +169,12 @@ static void test_data_unit(void)
             XModbusDataUnit_value(coils, 1) == 1 && XModbusDataUnit_values2(coils) != NULL,
             "DataUnit 位数组读写");
     }
-    if (copyValues) XVector_delete_base(copyValues);
-    if (values) XVector_delete_base(values);
-    if (bits) XBitArray_delete_base(bits);
-    if (invalid) XModbusDataUnit_delete_base(invalid);
-    if (registers) XModbusDataUnit_delete_base(registers);
-    if (coils) XModbusDataUnit_delete_base(coils);
+    if (copyValues) XClassDelete(copyValues);
+    if (values) XClassDelete(values);
+    if (bits) XClassDelete(bits);
+    if (invalid) XClassDelete(invalid);
+    if (registers) XClassDelete(registers);
+    if (coils) XClassDelete(coils);
 }
 
 static void test_reply_device(void)
@@ -218,15 +218,15 @@ static void test_reply_device(void)
         CHECK(XModbusReply_error(reply) == XModbusDevice_ProtocolError &&
             XModbusReply_isFinished(reply) && errorText &&
             strcmp(XString_toUtf8(errorText), "协议错误测试") == 0, "Reply 错误和完成状态");
-        if (errors) XVector_delete_base(errors);
-        if (errorText) XString_delete_base(errorText);
+        if (errors) XClassDelete(errors);
+        if (errorText) XClassDelete(errorText);
         {
             XModbusDataUnit *resultCopy = XModbusReply_result(reply);
             if (resultCopy) {
                 XModbusDataUnit_setValue(resultCopy, 0, 0);
                 CHECK(XModbusDataUnit_value(XModbusReply_result_const(reply), 0) == 0xAAAA,
                     "Reply 结果确实深拷贝");
-                XModbusDataUnit_delete_base(resultCopy);
+                XClassDelete(resultCopy);
             } else CHECK(false, "Reply 结果确实深拷贝");
         }
     }
@@ -246,19 +246,19 @@ static void test_reply_device(void)
         variant = XVariant_create_int(12345);
         XModbusDevice_setConnectionParameter((XModbusDevice *)tcp,
             XModbusDevice_NetworkPortParameter, variant);
-        if (variant) XVariant_delete_base(variant);
+        if (variant) XClassDelete(variant);
         variant = XModbusDevice_connectionParameter((XModbusDevice *)tcp,
             XModbusDevice_NetworkPortParameter);
         CHECK(variant && XVariant_toInt(variant) == 12345, "设备连接参数深拷贝");
-        if (variant) XVariant_delete_base(variant);
+        if (variant) XClassDelete(variant);
     }
     CHECK(rtu && XModbusRtuSerialClient_turnaroundDelay(rtu) == 100,
         "RTU 客户端创建和默认参数");
     CHECK(rtuServer && XModbusRtuSerialServer_serialPort(rtuServer) != NULL &&
         rtuServer->m_turnaroundDelay == 100, "RTU 服务端创建和串口访问");
     if (reply) XModbusReply_deleteLater(reply);
-    if (unit) XModbusDataUnit_delete_base(unit);
-    if (response) XModbusResponse_delete_base(response);
+    if (unit) XClassDelete(unit);
+    if (response) XClassDelete(response);
     if (tcp) XModbusTcpClient_deleteLater(tcp);
     if (rtu) XModbusRtuSerialClient_deleteLater(rtu);
     if (rtuServer) XModbusRtuSerialServer_deleteLater(rtuServer);
@@ -282,16 +282,16 @@ static void test_server_request(void)
     option = XVariant_create_int(42);
     CHECK(server && option && XModbusServer_setValue_base(server, XModbusServer_ServerIdentifier, option),
         "服务器选项设置");
-    if (option) XVariant_delete_base(option);
+    if (option) XClassDelete(option);
     option = server ? XModbusServer_value_base(server, XModbusServer_ServerIdentifier) : NULL;
     CHECK(option && XVariant_toInt(option) == 42, "服务器选项读取");
-    if (option) XVariant_delete_base(option);
+    if (option) XClassDelete(option);
     if (request) XModbusPdu_setData((XModbusPdu *)request, data, sizeof(data));
     response = server && request ? XModbusServer_processRequest_base(server, request) : NULL;
     CHECK(response && XModbusPdu_functionCode((XModbusPdu *)response) == XModbusPdu_ReadHoldingRegisters &&
         XModbusPdu_dataSize((XModbusPdu *)response) == 5, "服务器读取请求处理");
-    if (response) XModbusResponse_delete_base(response);
-    if (request) XModbusRequest_delete_base(request);
+    if (response) XClassDelete(response);
+    if (request) XClassDelete(request);
     if (server) XModbusServer_deleteLater(server);
     XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
@@ -312,8 +312,8 @@ static void test_tcp_loopback(void)
         XModbusDevice_NetworkAddressParameter, address);
     if (server && port) XModbusDevice_setConnectionParameter_ref((XModbusDevice *)server,
         XModbusDevice_NetworkPortParameter, port);
-    if (address) XVariant_delete_base(address);
-    if (port) XVariant_delete_base(port);
+    if (address) XClassDelete(address);
+    if (port) XClassDelete(port);
     if (server) {
         configure_holding_registers((XModbusServer *)server, 0, 16);
         XModbusServer_setData2((XModbusServer *)server,
@@ -348,7 +348,7 @@ static void test_tcp_loopback(void)
         CHECK(result && XModbusDataUnit_value(result, 0) == 0x1357, "TCP Modbus 读结果校验");
         XModbusReply_deleteLater(reply);
     }
-    if (read) XModbusDataUnit_delete_base(read);
+    if (read) XClassDelete(read);
     if (client) { XModbusDevice_disconnectDevice((XModbusDevice *)client); XModbusTcpClient_deleteLater(client); }
     if (server) { XModbusDevice_disconnectDevice((XModbusDevice *)server); XModbusTcpServer_deleteLater(server); }
     XCoreApplication_processEvents(XEventLoop_AllEvents);

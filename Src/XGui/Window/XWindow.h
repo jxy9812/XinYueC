@@ -299,7 +299,7 @@ XVtable* XWindow_class_init(void);
  *             格式（XSurfaceFormat_defaultFormat）；该值反映进程级默认表面
  *             格式，窗口创建后可通过 XWindow_setFormat 覆盖。
  * @param      self 待初始化的对象指针；生命周期结束时必须成对调用
- *             XWindow_deinit_base。
+ *             XClassDeinit。
  */
 void XWindow_init(XWindow* self);
 
@@ -314,10 +314,8 @@ void XWindow_init_parent(XWindow* self, XWindow* parent);
 /**
  * @brief      通过 XClass 虚表释放 XWindow 资源（栈/外部存储对象使用）。
  */
-#define XWindow_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /** @brief 删除堆上的 XWindow 对象（虚表调用析构语义）。 */
-#define XWindow_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief 使用默认内存类型在堆上创建空 XWindow。 @return 新对象指针；失败返回 NULL。 */
 #define XWindow_create() XWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
@@ -325,7 +323,7 @@ void XWindow_init_parent(XWindow* self, XWindow* parent);
 /**
  * @brief      使用指定内存类型在堆上创建空 XWindow。
  * @param      memory 对象内存类型。
- * @return     新对象指针；失败返回 NULL，调用方用 XWindow_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 XWindow* XWindow_create_ex(XMemoryType memory);
 
@@ -564,7 +562,7 @@ XWindowType XWindow_type(const XWindow* self);
  * @brief      返回窗口标题（对标 QWindow::title；返回深拷贝，调用方负责释放）。
  * @param      self 目标窗口；可为 NULL。
  * @return     新 XString；失败返回空字符串对象，调用方用
- *             XString_delete_base 释放。
+ *             XClassDelete 释放。
  */
 XString* XWindow_title(const XWindow* self);
 
@@ -974,7 +972,7 @@ void XWindow_setFilePath_2(XWindow* self, const char* filePath);
 /**
  * @brief      返回窗口文件路径（对标 QWindow::filePath；返回深拷贝）。
  * @param      self 目标窗口；可为 NULL。
- * @return     新 XString；调用方用 XString_delete_base 释放。
+ * @return     新 XString；调用方用 XClassDelete 释放。
  */
 XString* XWindow_filePath(const XWindow* self);
 
@@ -989,7 +987,7 @@ void XWindow_setIcon(XWindow* self, const XIcon* icon);
 /**
  * @brief      返回窗口图标（对标 QWindow::icon；返回深拷贝，调用方负责释放）。
  * @param      self 目标窗口；可为 NULL。
- * @return     新 XIcon；无图标或失败返回 NULL，调用方用 XIcon_deinit_base
+ * @return     新 XIcon；无图标或失败返回 NULL，调用方用 XClassDeinit
  *             释放。
  */
 XIcon* XWindow_icon(const XWindow* self);
@@ -1127,7 +1125,7 @@ XPointF XWindow_mapFromGlobal_f(const XWindow* self, const XPointF* pos);
  * @brief      返回窗口光标（对标 QWindow::cursor；返回深拷贝，调用方负责释放）。
  * @param      self 目标窗口；可为 NULL。
  * @return     新 XCursor；无光标或入参非法返回 NULL，调用方用
- *             XCursor_deinit_base 释放。
+ *             XClassDeinit 释放。
  */
 XCursor* XWindow_cursor(const XWindow* self);
 

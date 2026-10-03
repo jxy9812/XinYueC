@@ -196,9 +196,7 @@ void XFontFace_init(XFontFace* self);
 XVtable* XFontFace_class_init(void);
 
 /** @brief 通过 XClass 虚表反初始化基类对象。 */
-#define XFontFace_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 通过 XClass 虚表删除堆对象。 */
-#define XFontFace_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief 注册一个具有静态存储期的字库 face。

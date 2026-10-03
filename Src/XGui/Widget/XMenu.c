@@ -187,7 +187,7 @@ bool XMenu_addMenu(XMenu* self, XMenu* menu)
     title = XMenu_title(menu);
     if (title) {
         XAction_setText(action, title);
-        XString_delete_base((XClass*)title);
+        XClassDelete((XClass*)title);
     }
     XAction_setMenu(action, menu);
     return xmenu_addActionInternal(self, action) != NULL;
@@ -204,7 +204,7 @@ XMenu* XMenu_addMenu_2(XMenu* self, const char* utf8Title)
     if (!child)
         return NULL;
     if (!XMenu_addMenu(self, child)) {
-        XMenu_delete_base(child);
+        XClassDelete(child);
         return NULL;
     }
     return child;
@@ -220,7 +220,7 @@ void XMenu_clear(XMenu* self)
         action = *(XAction**)XVector_at_base((XContainer*)self->m_actions,
                                              0);
         if (action)
-            XAction_delete_base(action);
+            XClassDelete(action);
         /* 销毁回调会把元素移出列表；未连接时下面显式清空兜底。 */
         if (XVector_size_base((XContainer*)self->m_actions) > 0)
             XVector_remove_base((XContainer*)self->m_actions, 0, 1);
@@ -284,7 +284,7 @@ XAction* XMenu_menuAction(XMenu* self)
         title = XMenu_title(self);
         if (title) {
             XAction_setText(self->m_menuAction, title);
-            XString_delete_base((XClass*)title);
+            XClassDelete((XClass*)title);
         }
     }
     return self->m_menuAction;
@@ -328,7 +328,7 @@ void XMenu_setTitle(XMenu* self, const XString* title)
     if (!copy)
         return;
     if (self->m_title)
-        XString_delete_base((XClass*)self->m_title);
+        XClassDelete((XClass*)self->m_title);
     self->m_title = copy;
     if (self->m_menuAction)
         XAction_setText(self->m_menuAction, self->m_title);
@@ -343,7 +343,7 @@ void XMenu_setIcon(XMenu* self, const XString* icon)
         return;
     if (!icon) {
         if (self->m_icon) {
-            XString_delete_base((XClass*)self->m_icon);
+            XClassDelete((XClass*)self->m_icon);
             self->m_icon = NULL;
         }
         return;
@@ -352,7 +352,7 @@ void XMenu_setIcon(XMenu* self, const XString* icon)
     if (!copy)
         return;
     if (self->m_icon)
-        XString_delete_base((XClass*)self->m_icon);
+        XClassDelete((XClass*)self->m_icon);
     self->m_icon = copy;
 }
 
@@ -369,7 +369,7 @@ void XMenu_setIcon_2(XMenu* self, const char* utf8)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, utf8);
     XMenu_setIcon(self, &tmp);
-    XString_deinit_base(&tmp);
+    XClassDeinit(&tmp);
 }
 
 const XString* XMenu_icon(const XMenu* self)
@@ -387,7 +387,7 @@ void XMenu_setTitle_2(XMenu* self, const char* utf8)
     if (!text)
         return;
     XMenu_setTitle(self, text);
-    XString_delete_base((XClass*)text);
+    XClassDelete((XClass*)text);
 }
 
 XAction* XMenu_defaultAction(const XMenu* self)
@@ -475,7 +475,7 @@ static void xmenu_removeProp(XMenu* self, const char* keyUtf8)
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
     XObject_removeProperty((XObject*)self, &key);
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
 }
 
 static void xmenu_setInt64Prop(XMenu* self, const char* keyUtf8,
@@ -493,8 +493,8 @@ static void xmenu_setInt64Prop(XMenu* self, const char* keyUtf8,
     XString_assign_utf8(&key, keyUtf8);
     /* setProperty 成功后变体所有权转移给对象；失败则自回滚防泄漏。 */
     if (!XObject_setProperty((XObject*)self, &key, v))
-        XVariant_delete_base((XClass*)v);
-    XString_deinit_base(&key);
+        XClassDelete((XClass*)v);
+    XClassDeinit(&key);
 }
 
 static int64_t xmenu_int64Prop(const XMenu* self, const char* keyUtf8,
@@ -508,7 +508,7 @@ static int64_t xmenu_int64Prop(const XMenu* self, const char* keyUtf8,
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
     v = XObject_property((const XObject*)self, &key);
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
     return v ? XVariant_toInt64(v) : fallback;
 }
 
@@ -525,8 +525,8 @@ static void xmenu_setPtrProp(XMenu* self, const char* keyUtf8, void* value)
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
     if (!XObject_setProperty((XObject*)self, &key, v))
-        XVariant_delete_base((XClass*)v);
-    XString_deinit_base(&key);
+        XClassDelete((XClass*)v);
+    XClassDeinit(&key);
 }
 
 static void* xmenu_ptrProp(const XMenu* self, const char* keyUtf8)
@@ -539,7 +539,7 @@ static void* xmenu_ptrProp(const XMenu* self, const char* keyUtf8)
     XString_init(&key);
     XString_assign_utf8(&key, keyUtf8);
     v = XObject_property((const XObject*)self, &key);
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
     return v ? XVariant_toPtr(v) : NULL;
 }
 
@@ -786,7 +786,7 @@ XAction* XMenu_exec(XMenu* self)
     /* 先取结果再兑现删除：删除后不得再解引用 self。 */
     result = self->m_execResult;
     if (deleteOnClose)
-        XMenu_delete_base(self);
+        XClassDelete(self);
     return result;
 }
 
@@ -827,7 +827,7 @@ XSize XMenu_sizeHint(const XMenu* self)
                 maxWidth = width;
         }
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     out.width = maxWidth + 24;
     out.height = (int)count * (self->m_actionHeight > 0
                                    ? self->m_actionHeight
@@ -865,7 +865,7 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
         XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
         font = XWidget_font((XWidget*)self);
         XPainter_setFont(painter, &font);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
         n = self->m_actions
                 ? (int64_t)XVector_size_base((const XContainer*)self->m_actions)
                 : 0;
@@ -910,7 +910,7 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
     XPainter_fillRect(painter, &rect, 0xFFF0F0F0u);
     font = XWidget_font((XWidget*)self);
     XPainter_setFont(painter, &font);
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     count = self->m_actions
                 ? (int64_t)XVector_size_base(
                       (const XContainer*)self->m_actions)
@@ -969,7 +969,7 @@ void XMenu_drawContents(XMenu* self, XPainter* painter)
             XPainter_fillRect(painter, &tri, 0xFF606060u);
         }
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
 }
 
 static void VXMenu_paintEvent(XWidget* self, XEvent* event)
@@ -1260,13 +1260,13 @@ static void VXMenu_copy(XMenu* self, const XMenu* other)
 
     XMenu_clear(self);
     if (self->m_title) {
-        XString_delete_base((XClass*)self->m_title);
+        XClassDelete((XClass*)self->m_title);
         self->m_title = NULL;
     }
     self->m_title = other->m_title ? XString_create_copy(other->m_title)
                                    : NULL;
     if (self->m_icon) {
-        XString_delete_base((XClass*)self->m_icon);
+        XClassDelete((XClass*)self->m_icon);
         self->m_icon = NULL;
     }
     self->m_icon = other->m_icon ? XString_create_copy(other->m_icon)
@@ -1315,7 +1315,7 @@ static void VXMenu_move(XMenu* self, XMenu* other)
 
     XMenu_clear(self);
     if (self->m_title) {
-        XString_delete_base((XClass*)self->m_title);
+        XClassDelete((XClass*)self->m_title);
         self->m_title = NULL;
     }
     self->m_title = other->m_title;
@@ -1362,7 +1362,7 @@ static void VXMenu_deinit(XMenu* self)
             XAction** item = (XAction**)XVector_at_base(
                 (XContainer*)self->m_actions, 0);
             if (item && *item)
-                XAction_delete_base(*item);
+                XClassDelete(*item);
             /* 动作析构经 destroyed 信号自摘（xmenu_actionDestroyedSlot
              * 已把自身移出向量）——尺寸已缩时不可再补 remove，否则会把
              * 下一个动作指针丢弃不删（隔个漏删，§8.0g6 ASan 复扫定位的
@@ -1370,19 +1370,19 @@ static void VXMenu_deinit(XMenu* self)
             if (XVector_size_base((XContainer*)self->m_actions) == sizeBefore)
                 XVector_remove_base((XContainer*)self->m_actions, 0, 1);
         }
-        XVector_delete_base(self->m_actions);
+        XClassDelete(self->m_actions);
         self->m_actions = NULL;
     }
     if (self->m_menuAction) {
-        XAction_delete_base(self->m_menuAction);
+        XClassDelete(self->m_menuAction);
         self->m_menuAction = NULL;
     }
     if (self->m_title) {
-        XString_delete_base((XClass*)self->m_title);
+        XClassDelete((XClass*)self->m_title);
         self->m_title = NULL;
     }
     if (self->m_icon) {
-        XString_delete_base((XClass*)self->m_icon);
+        XClassDelete((XClass*)self->m_icon);
         self->m_icon = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -1458,7 +1458,7 @@ XMenu* XMenu_create_copy(const XMenu* other)
     self = XMenu_create();
     if (!self)
         return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -1471,7 +1471,7 @@ XMenu* XMenu_create_move(XMenu* other)
     self = XMenu_create();
     if (!self)
         return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -1598,7 +1598,7 @@ XAction* XMenu_insertMenu(XMenu* self, XAction* before, XMenu* menu)
     title = XMenu_title(menu);
     if (title) {
         XAction_setText(action, title);
-        XString_delete_base((XClass*)title);
+        XClassDelete((XClass*)title);
     }
     XAction_setMenu(action, menu);
     index = xmenu_findIndex(self, before);

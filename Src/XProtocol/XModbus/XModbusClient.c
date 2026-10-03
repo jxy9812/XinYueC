@@ -95,7 +95,7 @@ static void VXModbusClient_deinit(XModbusClient* client) {
     }
     if (client->m_poolMap)
     {
-        XMapBase_delete_base(client->m_poolMap);
+        XClassDelete(client->m_poolMap);
         client->m_poolMap = NULL;
     }
     // 调用基类析构
@@ -270,7 +270,7 @@ XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbus
         return NULL;
     }
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
-    //XModbusRequest_delete_base(request);
+    //XClassDelete(request);
     return reply;
 }
 
@@ -284,7 +284,7 @@ XModbusReply* XModbusClient_pollReadRequest(XModbusClient* client, const XModbus
         return NULL;
     }
     XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
-    //XModbusRequest_delete_base(request);
+    //XClassDelete(request);
     return reply;
 }
 
@@ -297,7 +297,7 @@ XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbu
         return NULL;
     }
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
-    //XModbusRequest_delete_base(request);
+    //XClassDelete(request);
     return reply;
 }
 
@@ -311,7 +311,7 @@ XModbusReply* XModbusClient_pollWriteRequest(XModbusClient* client, const XModbu
         return NULL;
     }
     XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
-    //XModbusRequest_delete_base(request);
+    //XClassDelete(request);
     return reply;
 }
 
@@ -326,7 +326,7 @@ XModbusReply* XModbusClient_sendReadWriteRequest(XModbusClient* client, const XM
     }
 
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
-    //XModbusRequest_delete_base(request);
+    //XClassDelete(request);
     return reply;
 }
 
@@ -342,7 +342,7 @@ XModbusReply* XModbusClient_pollReadWriteRequest(XModbusClient* client, const XM
     }
 
     XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
-    //XModbusRequest_delete_base(request);
+    //XClassDelete(request);
     return reply;
 }
 
@@ -386,7 +386,7 @@ XModbusReply* XModbusClient_pollRawRequest(XModbusClient* client, const XModbusR
     XModbusRequest* req = XModbusRequest_create_copy(request);
     if (!req)return NULL;
     XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, req, serverAddress, pollIntervalMs);
-    if (!reply)XModbusRequest_delete_base(req);
+    if (!reply)XClassDelete(req);
     return reply;
 }
 
@@ -398,7 +398,7 @@ XModbusReply* XModbusClient_pollRawRequest_move(XModbusClient* client, const XMo
     XModbusRequest* req=XModbusRequest_create_move(request);
     if (!req)return NULL;
     XModbusReply* reply=XModbusClient_pollRawRequest_ref(client, req, serverAddress, pollIntervalMs);
-    if (!reply)XModbusRequest_delete_base(req);
+    if (!reply)XClassDelete(req);
     return reply;
 }
 
@@ -436,7 +436,7 @@ XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequ
     if (!req) return NULL;
     XModbusReply* reply = XModbusClient_createReply_ref(client, req, serverAddress);
     if (!reply)
-        XModbusRequest_delete_base(req);
+        XClassDelete(req);
     return reply;
 }
 
@@ -449,7 +449,7 @@ XModbusReply* XModbusClient_createReply_move(XModbusClient* client, XModbusReque
     if (!req)return NULL;
     XModbusReply* reply = XModbusClient_createReply_ref(client, req, serverAddress);
     if (!reply)
-        XModbusRequest_delete_base(req);
+        XClassDelete(req);
     return reply;
 }
 

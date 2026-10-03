@@ -760,27 +760,27 @@ static void xtabbar_releaseTabs(XTabBar* self)
     if (!self) return;
     for (i = 0; i < self->m_count; ++i) {
         if (self->m_titles && self->m_titles[i]) {
-            XString_delete_base(self->m_titles[i]);
+            XClassDelete(self->m_titles[i]);
             self->m_titles[i] = NULL;
         }
         if (self->m_tabToolTips && self->m_tabToolTips[i]) {
-            XString_delete_base(self->m_tabToolTips[i]);
+            XClassDelete(self->m_tabToolTips[i]);
             self->m_tabToolTips[i] = NULL;
         }
         if (self->m_tabWhatsThis && self->m_tabWhatsThis[i]) {
-            XString_delete_base(self->m_tabWhatsThis[i]);
+            XClassDelete(self->m_tabWhatsThis[i]);
             self->m_tabWhatsThis[i] = NULL;
         }
         if (self->m_tabAccessibleNames && self->m_tabAccessibleNames[i]) {
-            XString_delete_base(self->m_tabAccessibleNames[i]);
+            XClassDelete(self->m_tabAccessibleNames[i]);
             self->m_tabAccessibleNames[i] = NULL;
         }
         if (self->m_tabIcons && self->m_tabIcons[i]) {
-            XString_delete_base(self->m_tabIcons[i]);
+            XClassDelete(self->m_tabIcons[i]);
             self->m_tabIcons[i] = NULL;
         }
         if (self->m_tabData && self->m_tabData[i]) {
-            XString_delete_base(self->m_tabData[i]);
+            XClassDelete(self->m_tabData[i]);
             self->m_tabData[i] = NULL;
         }
     }
@@ -1039,32 +1039,32 @@ int XTabBar_insertTab_2(XTabBar* self, int index, const char* text)
     if (!text) return -1;
     XString_Init_Utf8(tmp, text);
     index = XTabBar_insertTab(self, index, tmp);
-    XString_deinit_base(tmp);
+    XClassDeinit(tmp);
     return index;
 }
 
 void XTabBar_removeTab(XTabBar* self, int index)
 {
     if (!self || index < 0 || index >= self->m_count) return;
-    if (self->m_titles[index]) XString_delete_base(self->m_titles[index]);
+    if (self->m_titles[index]) XClassDelete(self->m_titles[index]);
     if (self->m_tabToolTips && self->m_tabToolTips[index]) {
-        XString_delete_base(self->m_tabToolTips[index]);
+        XClassDelete(self->m_tabToolTips[index]);
         self->m_tabToolTips[index] = NULL;
     }
     if (self->m_tabWhatsThis && self->m_tabWhatsThis[index]) {
-        XString_delete_base(self->m_tabWhatsThis[index]);
+        XClassDelete(self->m_tabWhatsThis[index]);
         self->m_tabWhatsThis[index] = NULL;
     }
     if (self->m_tabAccessibleNames && self->m_tabAccessibleNames[index]) {
-        XString_delete_base(self->m_tabAccessibleNames[index]);
+        XClassDelete(self->m_tabAccessibleNames[index]);
         self->m_tabAccessibleNames[index] = NULL;
     }
     if (self->m_tabIcons && self->m_tabIcons[index]) {
-        XString_delete_base(self->m_tabIcons[index]);
+        XClassDelete(self->m_tabIcons[index]);
         self->m_tabIcons[index] = NULL;
     }
     if (self->m_tabData && self->m_tabData[index]) {
-        XString_delete_base(self->m_tabData[index]);
+        XClassDelete(self->m_tabData[index]);
         self->m_tabData[index] = NULL;
     }
     XMemmove(&self->m_titles[index], &self->m_titles[index + 1],
@@ -1432,7 +1432,7 @@ void XTabBar_setTabIcon(XTabBar* self, int index, const XString* path)
         return;
     repl = path ? XString_create_copy(path) : NULL;
     if (path && !repl) return;
-    if (self->m_tabIcons[index]) XString_delete_base(self->m_tabIcons[index]);
+    if (self->m_tabIcons[index]) XClassDelete(self->m_tabIcons[index]);
     self->m_tabIcons[index] = repl;
     XWidget_update((XWidget*)self);
 }
@@ -1445,7 +1445,7 @@ void XTabBar_setTabIcon_2(XTabBar* self, int index, const char* path)
         if (!tmp) return;
     }
     XTabBar_setTabIcon(self, index, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XTabBar_tabIcon(const XTabBar* self, int index)
@@ -1485,7 +1485,7 @@ void XTabBar_setTabToolTip(XTabBar* self, int index, const XString* tip)
     repl = tip ? XString_create_copy(tip) : NULL;
     if (tip && !repl) return;
     if (self->m_tabToolTips[index])
-        XString_delete_base(self->m_tabToolTips[index]);
+        XClassDelete(self->m_tabToolTips[index]);
     self->m_tabToolTips[index] = repl;
 }
 
@@ -1497,7 +1497,7 @@ void XTabBar_setTabToolTip_2(XTabBar* self, int index, const char* tip)
         if (!tmp) return;
     }
     XTabBar_setTabToolTip(self, index, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XTabBar_tabToolTip(const XTabBar* self, int index)
@@ -1522,7 +1522,7 @@ void XTabBar_setTabWhatsThis(XTabBar* self, int index, const XString* text)
     repl = text ? XString_create_copy(text) : NULL;
     if (text && !repl) return;
     if (self->m_tabWhatsThis[index])
-        XString_delete_base(self->m_tabWhatsThis[index]);
+        XClassDelete(self->m_tabWhatsThis[index]);
     self->m_tabWhatsThis[index] = repl;
 }
 
@@ -1534,7 +1534,7 @@ void XTabBar_setTabWhatsThis_2(XTabBar* self, int index, const char* text)
         if (!tmp) return;
     }
     XTabBar_setTabWhatsThis(self, index, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XTabBar_tabWhatsThis(const XTabBar* self, int index)
@@ -1561,7 +1561,7 @@ void XTabBar_setAccessibleTabName(XTabBar* self, int index,
     repl = name ? XString_create_copy(name) : NULL;
     if (name && !repl) return;
     if (self->m_tabAccessibleNames[index])
-        XString_delete_base(self->m_tabAccessibleNames[index]);
+        XClassDelete(self->m_tabAccessibleNames[index]);
     self->m_tabAccessibleNames[index] = repl;
 }
 
@@ -1573,7 +1573,7 @@ void XTabBar_setAccessibleTabName_2(XTabBar* self, int index, const char* name)
         if (!tmp) return;
     }
     XTabBar_setAccessibleTabName(self, index, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XTabBar_accessibleTabName(const XTabBar* self, int index)
@@ -1614,7 +1614,7 @@ void XTabBar_setTabData(XTabBar* self, int index, const XString* data)
         return;
     repl = data ? XString_create_copy(data) : NULL;
     if (data && !repl) return;
-    if (self->m_tabData[index]) XString_delete_base(self->m_tabData[index]);
+    if (self->m_tabData[index]) XClassDelete(self->m_tabData[index]);
     self->m_tabData[index] = repl;
 }
 
@@ -1626,7 +1626,7 @@ void XTabBar_setTabData_2(XTabBar* self, int index, const char* data)
         if (!tmp) return;
     }
     XTabBar_setTabData(self, index, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XTabBar_tabData(const XTabBar* self, int index)

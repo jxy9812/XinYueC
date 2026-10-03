@@ -10,7 +10,7 @@
 #include <string.h>
 
 XVARIANT_TYPE_OPS_DEFINE(XMap, sizeof(XMap), XClass_copy_base, XClass_move_base,
-	XMap_clear_base, XMap_deinit_base, NULL, "XMap<XString,XVariant>");
+	XMap_clear_base, XClass_deinit_base, NULL, "XMap<XString,XVariant>");
 
 XVariant* XMap_toVariant(const XMap* map)
 {
@@ -22,7 +22,7 @@ XVariant* XMap_toVariant(const XMap* map)
 		return NULL;
 	XMap_init((XMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
 	          XContainerTypeSize(map), XContainerCompare(map), XContainerIsCow(map));
-	XCopy(XVariant_data(var), map);
+	XClassCopy(XVariant_data(var), map);
 	return var;
 }
 
@@ -36,7 +36,7 @@ XVariant* XMap_toVariant_move(XMap* map)
 		return NULL;
 	XMap_init((XMap*)XVariant_data(var), ((const XMapBase*)map)->m_keyTypeSize,
 	          XContainerTypeSize(map), XContainerCompare(map), XContainerIsCow(map));
-	XMove(XVariant_data(var), map);
+	XClassMove(XVariant_data(var), map);
 	return var;
 }
 
@@ -68,7 +68,7 @@ static bool XMap_prepareVariant(XVariant* var, const XMap* source)
 		return false;
 	if (var->m_type != XVariantType_Map)
 	{
-		XVariant_deinit_base(var);
+		XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XMap));
 		if (!var->m_data)
 		{
@@ -83,7 +83,7 @@ static bool XMap_prepareVariant(XVariant* var, const XMap* source)
 	else if (!var->m_data || var->m_dataSize != sizeof(XMap))
 	{
 		if (var->m_data)
-			XVariant_deinit_base(var);
+			XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XMap));
 		if (!var->m_data)
 		{
@@ -101,14 +101,14 @@ void XMap_setVariant(XVariant* var, const XMap* map)
 {
 	if (!XMap_prepareVariant(var, map))
 		return;
-	XCopy(XVariant_data(var), map);
+	XClassCopy(XVariant_data(var), map);
 }
 
 void XMap_setVariant_move(XVariant* var, XMap* map)
 {
 	if (!XMap_prepareVariant(var, map))
 		return;
-	XMove(XVariant_data(var), map);
+	XClassMove(XVariant_data(var), map);
 }
 
 void XMap_setVariant_ref(XVariant* var, XMap* map)
@@ -270,16 +270,16 @@ static bool VXMapDetachIfNeeded(XMap* this_map)
         ((XTreeNode*)newNode)->parentNode = NULL;
         XRBTree_insertNode(&newRoot, XContainerCompare(this_map), XCompareRuleTwo_XMap, newNode, XContainer_memory(this_map));
     }
-    XVector_delete_base(nodes);
+    XClassDelete(nodes);
 
     if (!success) {
-        XTree_delete(newRoot, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+        XTree_delete(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
         return false;
     }
 
     XSharedData* newShared = XSharedData_create_ex(NULL, sizeof(XRBTreeNode*), XContainer_memory(this_map));
     if (!newShared) {
-        XTree_delete(newRoot, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+        XTree_delete(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
         return false;
     }
     *(XRBTreeNode**)newShared->data = newRoot;
@@ -293,7 +293,7 @@ static void VXMapDataDelete(void* data, XMap* this_map)
     if (data == NULL || this_map == NULL) return;
     XRBTreeNode* root = *(XRBTreeNode**)data;
     if (root)
-        XTree_delete(root, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+        XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
     XContainerSize(this_map) = 0;
     XContainerCapacity(this_map) = 0;
     XContainerSetDataPtr(this_map, NULL);
@@ -490,7 +490,7 @@ void VXMap_clear(XMap* this_map)
     }
     XRBTreeNode* root = XMap_root(this_map);
     if (root)
-    XTree_delete(root, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+    XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
     if (XContainerIsCow(this_map))
         *XMap_root_ptr(this_map) = NULL;
     else
@@ -520,7 +520,7 @@ void VXClass_copy(XMap* object, const XMap* src)
         else {
             XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(object);
             if (root)
-                XTree_delete(root, XMapBase_deleteNodeData, object, XContainer_memory(object));
+                XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
             XContainerDataPtr(object) = NULL;
         }
     }
@@ -555,8 +555,8 @@ void VXClass_copy(XMap* object, const XMap* src)
                 XPair* oldPair = XBTreeNode_GetDataPtr(oldNode);
                 XRBTreeNode* newNode = XRBTree_create_ex(NULL, XMapBasePairTypeSize(object), XContainer_memory(object));
                 if (!newNode) {
-                    XVector_delete_base(nodes);
-                    XTree_delete(newRoot, XMapBase_deleteNodeData, object, XContainer_memory(object));
+                    XClassDelete(nodes);
+                    XTree_delete(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
                     return;
                 }
                 XPair* newPair = XBTreeNode_GetDataPtr(newNode);
@@ -574,7 +574,7 @@ void VXClass_copy(XMap* object, const XMap* src)
                 ((XTreeNode*)newNode)->parentNode = NULL;
                 XRBTree_insertNode(&newRoot, XContainerCompare(object), XCompareRuleTwo_XMap, newNode, XContainer_memory(object));
             }
-            XVector_delete_base(nodes);
+            XClassDelete(nodes);
             XContainerDataPtr(object) = newRoot;
         }
         else {
@@ -606,7 +606,7 @@ void VXClass_move(XMap* object, XMap* src)
         else {
             XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(object);
             if (root)
-        XTree_delete(root, XMapBase_deleteNodeData, object, XContainer_memory(object));
+        XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
             XContainerDataPtr(object) = NULL;
         }
         // 3. 清空目标的大小和容量（已经由释放函数完成？不，需要显式清零）
@@ -632,7 +632,7 @@ void VXMap_deinit(XMap* this_map)
     else {
         XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(this_map);
         if (root)
-            XTree_delete(root, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+            XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
         XContainerDataPtr(this_map) = NULL;
     }
     XContainerSize(this_map) = 0;
@@ -667,7 +667,7 @@ XMap* XMap_create_copy(const XMap* other)
     XMemoryType memory = XContainerIsCow(other) ? XContainer_memory_type(other) : XCLASS_DEFAULT_MEMORY_TYPE;
     XMap* map = XMap_create_ex(memory, ((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), XContainerCompare(other), XContainerIsCow(other));
     if (map == NULL) return NULL;
-    XCopy(map, other);
+    XClassCopy(map, other);
     return map;
 }
 XMap* XMap_create_move(XMap* other)
@@ -675,7 +675,7 @@ XMap* XMap_create_move(XMap* other)
     if (other == NULL) return NULL;
     XMap* map = XMap_create_ex(XContainer_memory_type(other), ((XMapBase*)other)->m_keyTypeSize, XContainerTypeSize(other), XContainerCompare(other), XContainerIsCow(other));
     if (map == NULL) return NULL;
-    XMove(map, other);
+    XClassMove(map, other);
     return map;
 }
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow)
@@ -724,11 +724,11 @@ XVariantMap* XMap_create_XVariantMap()
 
     XMapBaseSetKeyCopyMethod(map, XClass_copy_base);
     XMapBaseSetKeyMoveMethod(map, XClass_move_base);
-    XMapBaseSetKeyDeinitMethod(map, XString_deinit_base);
+    XMapBaseSetKeyDeinitMethod(map, XClass_deinit_base);
 
     XContainerSetDataCopyMethod(map, XClass_copy_base);
     XContainerSetDataMoveMethod(map, XClass_move_base);
-    XContainerSetDataDeinitMethod(map, XVariant_deinit_base);
+    XContainerSetDataDeinitMethod(map, XClass_deinit_base);
 
     return map;
 }

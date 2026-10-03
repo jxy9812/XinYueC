@@ -1,4 +1,4 @@
-﻿# XinYueC 库代码风格指南
+# XinYueC 库代码风格指南
 
 ## 目录
 1. [命名规范](#命名规范)
@@ -72,7 +72,7 @@
 ### 特殊后缀
 | 后缀 | 含义 | 示例 |
 |------|------|------|
-| `_base` | 所有虚函数的公共调度入口 | `XHostAddress_deinit_base()`、`XExample_event_base()` |
+| `_base` | 所有虚函数的公共调度入口 | `XClassDeinit()`、`XExample_event_base()` |
 | `_utf8` | UTF-8 编码版本 | `XString_append_utf8()` |
 | `_gbk` | GBK 编码版本 | `XString_create_gbk()` |
 | `_utf16` | UTF-16 编码版本 | 编码缓存相关 |
@@ -156,14 +156,16 @@
 
 ## 类的创建
 
-> ⚠️ **迁移说明（2026-09-08 起，本文示例均已按此更新）**：拷贝/移动统一使用
-> `XCopy(dst, src)` / `XMove(dst, src)`（XClass.h 定义，多态分派到
+> ⚠️ **迁移说明（拷贝/移动 2026-09-08 起，反初始化/删除随后统一，本文示例均已按此更新）**：
+> 拷贝/移动统一使用 `XClassCopy(dst, src)` / `XClassMove(dst, src)`（XClass.h 定义，多态分派到
 > `VXType_copy/VXType_move` 虚槽），不再提供 `*_copy_base/*_move_base` 别名宏；
-> `*_deinit_base/*_delete_base` 保持不变。
-> 继承 `XClass` 的类型只公开 `XCopy`/`XMove` 与 `XType_deinit_base`/`XType_delete_base`
-> （两者直接宏映射到带 XClass 指针转换的 `XClass_deinit_base`/`XClass_delete_base`），
+> 反初始化/删除同样已统一：派生类不再声明 `*_deinit_base`/`*_delete_base` 别名宏，
+> 一律改用 `XClassDeinit(obj)` / `XClassDelete(obj)`（XClass.h 定义，仿 XClassCopy/XClassMove）。
+> 继承 `XClass` 的类型只公开 `XClassCopy`/`XClassMove` 与 `XClassDeinit`/`XClassDelete`
+> （`XClassDeinit`/`XClassDelete` 直接宏映射到带 XClass 指针转换的
+> `XClass_deinit_base`/`XClass_delete_base`，这两个底层真实函数仍存在），
 > **禁止**为继承 XClass 的类型声明或实现 `XType_deinit`、`XType_copy`、`XType_move`
-> 这类非 base 转发 API；栈对象和堆对象都必须通过对应的 base 入口释放，虚表中的
+> 这类非 base 转发 API；栈对象和堆对象都必须通过对应入口释放，虚表中的
 > `VXType_deinit` 只负责具体资源清理。这样保证未初始化目标的兜底初始化、COW 引用
 > 计数和派生类重载行为始终由同一入口处理。
 
@@ -201,9 +203,7 @@ XVtable* XExample_class_init(void);
 void XExample_init(XExample* obj);
 XExample* XExample_create(void);   // 无参构造
 
-// 反初始化/释放：用宏复用父类（拷贝/移动用 XCopy/XMove，见本章节开头迁移说明）
-#define XExample_deinit_base XClass_deinit_base
-#define XExample_delete_base XClass_delete_base
+// 反初始化/释放：统一用 XClassDeinit/XClassDelete（拷贝/移动用 XClassCopy/XClassMove，见本章节开头迁移说明）
 
 // ==================== 功能函数 ====================
 void XExample_setValue(XExample* obj, int value);
@@ -322,7 +322,7 @@ XExample* XExample_create_copy(const XExample* other)
     if (!other) return NULL;
     XExample* obj = XExample_create();
     if (!obj) return NULL;
-    XCopy(obj, other);
+    XClassCopy(obj, other);
     return obj;
 }
 
@@ -432,7 +432,7 @@ void XExample_childEvent_base(XExample* self, XChildEvent* event)
     XHead_event_base((XHead*)(self), (event))
 ```
 
-- 生命周期入口 `XType_deinit_base / XType_delete_base` 一律宏复用父类；拷贝/移动统一用 `XCopy(dst, src) / XMove(dst, src)`（见「类的创建」迁移说明）。
+- 生命周期入口 `XClassDeinit / XClassDelete` 一律宏复用父类；拷贝/移动统一用 `XClassCopy(dst, src) / XClassMove(dst, src)`（见「类的创建」迁移说明）。
 - 如果某虚函数本来就从父类继承而来（例如 XWidget 的 Event 继承自 XObject），子类也不必重新实现 `XType_event_base`，直接宏替换成父类的 base 入口即可。
 - 只有子类**新增了槽位**或**确实要改变行为/参数**时，才保留子类自己的 `*_base` 函数或在虚表中注册新的 `VXChild_xxx`。
 
@@ -472,7 +472,7 @@ static bool VXFrame_event(XWidget* self, XEvent* event)
 XHostAddress addr;                          // 1. 声明对象
 XHostAddress_init(&addr);                   // 2. 初始化
 XHostAddress_setAddress(&addr, "192.168.1.1");  // 3. 使用对象
-XHostAddress_deinit_base(&addr);            // 4. 反初始化（必须成对出现！）
+XClassDeinit(&addr);            // 4. 反初始化（必须成对出现！）
 ```
 
 ### 堆上对象
@@ -481,28 +481,28 @@ XHostAddress_deinit_base(&addr);            // 4. 反初始化（必须成对出
 XHostAddress* addr = XHostAddress_create();     // 1. 创建对象
 if (!addr) return;
 XHostAddress_setAddress(addr, "192.168.1.1");   // 2. 使用对象
-XHostAddress_delete_base(addr);                 // 3. 删除对象
+XClassDelete(addr);                 // 3. 删除对象
 ```
 
 ### init/deinit 成对原则
 
-**重要**：`XType_init()` 和 `XType_deinit_base()` 必须成对出现！
+**重要**：`XType_init()` 和 `XClassDeinit()` 必须成对出现！
 
 ```c
-// ✅ 正确：init 与 deinit_base 成对
+// ✅ 正确：init 与 XClassDeinit 成对
 XHostAddress addr;
 XHostAddress_init(&addr);
 // ... 使用对象 ...
-XHostAddress_deinit_base(&addr);
+XClassDeinit(&addr);
 
-// ❌ 错误：忘记 init 是未定义行为；忘记 deinit_base 是内存泄漏
+// ❌ 错误：忘记 init 是未定义行为；忘记 XClassDeinit 是内存泄漏
 XHostAddress addr;
 XHostAddress_setAddress(&addr, "192.168.1.1");
 ```
 
 ### 已初始化区域的清空与容量复用
 
-"`init` / `deinit_base` 必须成对"是对象生命周期规则，不表示每次重新写入都必须销毁并重新初始化对象。对于已初始化、生命周期仍在使用中、且会被反复写入的 `XRegion`，应优先使用 `XRegion_clear()` 清空元素并保留已有的矩形数组容量，禁止在高频路径中无意义地销毁重建：
+"`init` / `XClassDeinit` 必须成对"是对象生命周期规则，不表示每次重新写入都必须销毁并重新初始化对象。对于已初始化、生命周期仍在使用中、且会被反复写入的 `XRegion`，应优先使用 `XRegion_clear()` 清空元素并保留已有的矩形数组容量，禁止在高频路径中无意义地销毁重建：
 
 ```c
 // ❌ 错误：每次刷新都释放并重新申请矩形数组
@@ -519,7 +519,7 @@ XRegion_addRect(&region, &rect);
 
 - `XRegion_clear()` 只能用于已通过 `XRegion_init()` 或等价构造流程初始化的对象；不能用它代替首次初始化，也不能对未初始化的栈对象调用。
 - 反复写入的脏区、绘制区、裁剪区和后备缓冲提交区等长期对象，应在创建时初始化一次，在重绘/刷新时 `clear` 后复用容量，最终销毁时再调用一次 `XRegion_deinit()`。
-- 当操作需要替换整个对象、替换底层数组、改变资源分配器或格式，必须保留对象替换流程，并保证旧资源只释放一次。涉及资源转移时使用类型已有的 `XMove` / 移动语义，不能用结构体赋值冒充所有权转移。
+- 当操作需要替换整个对象、替换底层数组、改变资源分配器或格式，必须保留对象替换流程，并保证旧资源只释放一次。涉及资源转移时使用类型已有的 `XClassMove` / 移动语义，不能用结构体赋值冒充所有权转移。
 - 当输出对象必须接收新资源且需要保留强异常安全或失败回退语义时，可以先创建局部临时对象；临时对象必须先初始化。无论提交成功还是失败，临时对象的回收都按本指南「move 后源对象的清理责任」执行：由创建者按分配方式负责，不能为了减少一次释放而留下临时资源或悬挂指针。
 - `XRegion_copy`、并集、交集、差集等写入已有输出对象的实现，应在容量足够时覆盖元素并更新 `count`，容量不足时才扩容；扩容失败应保留原输出内容，不能先 `deinit` 输出再尝试分配。
 - 不能机械地全局删除 `deinit + init`：对象整体替换、失败路径清理、对象类型或分配器确实改变等场景仍必须走对应释放流程。被 move 的源对象由创建者按「move 后源对象的清理责任」释放，接收方不得在 move 现场代劳。
@@ -532,10 +532,10 @@ XRegion_addRect(&region, &rect);
 
 ```c
 XString_Init_Utf8(str, "Hello World");        // 栈上字符串快速初始化
-XString_deinit_base(str);
+XClassDeinit(str);
 
 XString_Init_Fmt_Utf8(msg, "Error code: %d", errorCode);  // 格式化字符串
-XString_deinit_base(msg);
+XClassDeinit(msg);
 ```
 
 ### 拷贝构造与移动构造
@@ -551,43 +551,43 @@ XExample* dest = XExample_create_move(src);
 XExample dest, src;
 XExample_init(&dest);
 XExample_init(&src);
-XCopy(&dest, &src);               // 多态拷贝
-XExample_deinit_base(&dest);
-XExample_deinit_base(&src);
+XClassCopy(&dest, &src);               // 多态拷贝
+XClassDeinit(&dest);
+XClassDeinit(&src);
 
 // 栈上移动
 XExample dest, src;
 XExample_init(&dest);
 XExample_init(&src);
-XMove(&dest, &src);               // src 资源转移到 dest
-XExample_deinit_base(&dest);
-// src 已为空；创建者仍需 deinit_base 完成生命周期收尾（堆对象则用 delete_base）
-XExample_deinit_base(&src);
+XClassMove(&dest, &src);               // src 资源转移到 dest
+XClassDeinit(&dest);
+// src 已为空；创建者仍需 XClassDeinit 完成生命周期收尾（堆对象则用 XClassDelete）
+XClassDeinit(&src);
 ```
 
 #### copy/move 目标初始化约束
 
-- 所有 `copy` / `move` 虚函数，以及负责私有数据复制或移动的辅助函数，在访问目标成员前必须检查目标对象的 vtable：目标未初始化（vtable 为空）时，必须先调用对应类型的 `XType_init()` 完整初始化（包括分配资源、设置 vtable），再释放旧资源或写入新资源。这样 `XCopy`/`XMove` 可以安全地在未 init 的目标上调用，`XType_create_copy(src)` 这类便捷 API 无需关心 dest 是否已 init；调用方也可以先 `XType_init(&dest)` 再拷贝（检测到 vtable 非空，不会重复 init）。
+- 所有 `copy` / `move` 虚函数，以及负责私有数据复制或移动的辅助函数，在访问目标成员前必须检查目标对象的 vtable：目标未初始化（vtable 为空）时，必须先调用对应类型的 `XType_init()` 完整初始化（包括分配资源、设置 vtable），再释放旧资源或写入新资源。这样 `XClassCopy`/`XClassMove` 可以安全地在未 init 的目标上调用，`XType_create_copy(src)` 这类便捷 API 无需关心 dest 是否已 init；调用方也可以先 `XType_init(&dest)` 再拷贝（检测到 vtable 非空，不会重复 init）。
 - 源对象未初始化时必须安全返回；源对象与目标对象相同时，`copy` / `move` 必须直接返回。
 - 目标对象初始化检查应放在虚函数实现或私有操作入口中，不能只依赖调用方提前 `init`。
 - ❌ 错误写法：只 set vtable、没分配成员——`if (XClassIsVtableNull(dest)) { XClassSetVtable(dest, XExample); }`，成员还未分配。也不用 `XClassEnsureVtable` 之类只设置 vtable 的捷径，对 copy/move 来说不够。
 
 #### move 后源对象的清理责任
 
-`XMove` / 移动虚槽只转移资源所有权。移动完成后，源对象处于"已初始化但为空"的状态：虚表、内存方法和堆所有权标记保持不变，源对象仍可被安全地 `deinit_base` 或 `delete_base`。**清理责任不随 move 转移，仍属于创建者；move 现场只转移资源，不代替创建者清理源对象。**
+`XClassMove` / 移动虚槽只转移资源所有权。移动完成后，源对象处于"已初始化但为空"的状态：虚表、内存方法和堆所有权标记保持不变，源对象仍可被安全地 `XClassDeinit` 或 `XClassDelete`。**清理责任不随 move 转移，仍属于创建者；move 现场只转移资源，不代替创建者清理源对象。**
 
-- 只有创建者知道源对象是栈对象还是堆对象：栈对象由 `XType_init()` 建立，用 `XType_deinit_base()` 释放；堆对象由 `XType_create()` / `XType_create_ex()` 等建立，用 `XType_delete_base()` / `XClass_delete_base()` 释放（`delete_base` 内部先反初始化，再按堆所有权释放结构体）。
-- 当源对象来自参数、对象成员或调用方输出时，执行 move 的函数只是接收方，不得在 move 现场调用 `deinit_base` 或 `delete_base`：接收方不知道源对象的分配方式，擅自清理会造成错误释放或双释放。最终清理仍由创建者在自己的清理点完成。
-- 当函数自己创建临时对象并把资源 move 出去时，该函数就是创建者：栈临时对象在作用域结束时按栈上对象规则收尾（`deinit_base`，资源已转出时为空操作）；堆临时对象必须由创建者 `delete_base`，不能因"源已为空"跳过结构体释放。
+- 只有创建者知道源对象是栈对象还是堆对象：栈对象由 `XType_init()` 建立，用 `XClassDeinit()` 释放；堆对象由 `XType_create()` / `XType_create_ex()` 等建立，用 `XClassDelete()` / `XClassDelete()` 释放（`XClassDelete` 内部先反初始化，再按堆所有权释放结构体）。
+- 当源对象来自参数、对象成员或调用方输出时，执行 move 的函数只是接收方，不得在 move 现场调用 `XClassDeinit` 或 `XClassDelete`：接收方不知道源对象的分配方式，擅自清理会造成错误释放或双释放。最终清理仍由创建者在自己的清理点完成。
+- 当函数自己创建临时对象并把资源 move 出去时，该函数就是创建者：栈临时对象在作用域结束时按栈上对象规则收尾（`XClassDeinit`，资源已转出时为空操作）；堆临时对象必须由创建者 `XClassDelete`，不能因"源已为空"跳过结构体释放。
 - 移动后仍继续存活的源对象（控件成员、容器元素等）保持原有清理点不变：由拥有它的对象在自身的 `deinit` / 私有释放路径中统一清理，不在 move 现场重复释放。
 
 ```c
 // 接收方只转移资源，不清理源；源与目标都由各自的创建者按分配方式释放
 XExample* heapSrc  = XExample_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
 XExample* heapDest = XExample_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-XMove(heapDest, heapSrc);     // heapSrc 变为空对象
-XExample_delete_base(heapDest);   // 创建者：堆对象用 delete_base
-XExample_delete_base(heapSrc);    // 创建者：空源对象同样 delete_base（安全）
+XClassMove(heapDest, heapSrc);     // heapSrc 变为空对象
+XClassDelete(heapDest);   // 创建者：堆对象用 XClassDelete
+XClassDelete(heapSrc);    // 创建者：空源对象同样 XClassDelete（安全）
 ```
 
 ### deleteLater 模式
@@ -611,7 +611,7 @@ XObject 派生对象（结构体首成员为 XObject，或 `_init` 调用 `XObje
 ```c
 // ✗ 错误：槽函数内同步删除自身参与发射链的对象（悬垂）
 static void VXView_onClose(XView* self, XVarList* args) {
-    XClass_delete_base((XClass*)self);        // 发射循环可能还在遍历本对象连接
+    XClassDelete((XClass*)self);        // 发射循环可能还在遍历本对象连接
 }
 // ✓ 正确
 static void VXView_onClose(XView* self, XVarList* args) {
@@ -623,7 +623,7 @@ static void VXView_onClose(XView* self, XVarList* args) {
 **必须同步释放（禁止改为延迟）：**
 
 1. 析构函数内部（`VXxx_deinit`）清理自己的成员与子对象——延迟删除析构路径会引入重入与顺序问题；
-2. 栈上/嵌入对象的 `deinit_base` 收尾；
+2. 栈上/嵌入对象的 `XClassDeinit` 收尾；
 3. 非 XObject 的值类型（XString/XVariant/容器等，无 deleteLater 入口）；
 4. 能证明对象无任何信号槽连接、无在途事件且删除不在对象自身调用栈上的纯业务对象（此时同步释放成本更低、语义更明确）。
 
@@ -764,11 +764,11 @@ void XXmlDomElement_setAttribute(XXmlDomElement* self,
 - `@brief` 使用一句话概括可观察行为；不要写"设置变量""调用函数"等无信息注释。
 - `@details` 说明与 Qt 的差异、节点类型限制、编码转换、快照/实时容器语义和错误替代策略。
 - `@param` 说明输入方向：只读参数写"借用、不会取得所有权"，输出参数写"调用方提供存储空间"，输入输出参数写"函数可能修改"。
-- `@return` 说明所有成功、失败、空结果和越界路径；返回对象若需要调用 `*_delete_base`，必须明确写出。
+- `@return` 说明所有成功、失败、空结果和越界路径；返回对象若需要调用 `XClassDelete`，必须明确写出。
 - `@note` 用于生命周期、隐式共享、UTF-16 索引、线程安全和 Qt 对齐细节；`@warning` 只用于错误后果明确的误用风险。
 - UTF-8 接口要写明输入按 UTF-8 解码，`XString` 接口要写明字符串内部按 UTF-16 代码单元处理。索引和长度若按 UTF-16 代码单元计数，必须在参数说明中明确。
 - 空句柄采用"对象已初始化但内部节点为空"的表述；NULL 指针采用"调用者没有提供对象"的表述，二者不得混写。
-- `init`、`create`、`create_copy`、`create_move`、`deinit_base`、`delete_base` 都必须说明初始化前提、目标未初始化时的行为、源对象在移动后的状态和释放方式。
+- `init`、`create`、`create_copy`、`create_move`、`XClassDeinit`、`XClassDelete` 都必须说明初始化前提、目标未初始化时的行为、源对象在移动后的状态和释放方式。
 - Qt 对齐 API 的注释应直接写明对应 Qt 名称，例如"对齐 `QDomNode::appendChild`"；若 C API 因指针、返回值或错误处理不同，必须同时说明 XinYueC 的实际行为，不能只复制 Qt 文档。
 
 ### 头文件自检清单
@@ -795,19 +795,19 @@ memcpy(&dest, &src, sizeof(XHostAddress));
 
 // ✅ 正确：多态拷贝（内部经虚槽深拷贝）
 XHostAddress_init(&dest);
-XCopy(&dest, &src);
-XHostAddress_deinit_base(&dest);
-XHostAddress_deinit_base(&src);
+XClassCopy(&dest, &src);
+XClassDeinit(&dest);
+XClassDeinit(&src);
 ```
 
 ### 拷贝/移动/释放入口
 
 | 函数 | 用途 |
 |------|------|
-| `XCopy(dest, src)` | 深拷贝对象（多态分派；回调槽位需要函数指针时用 `XClass_copy_base`） |
-| `XMove(dest, src)` | 移动语义，转移资源所有权（函数指针用 `XClass_move_base`） |
-| `XType_deinit_base(obj)` | 反初始化对象（释放资源） |
-| `XType_delete_base(obj)` | 删除堆对象（反初始化 + 释放内存） |
+| `XClassCopy(dest, src)` | 深拷贝对象（多态分派；回调槽位需要函数指针时用 `XClass_copy_base`） |
+| `XClassMove(dest, src)` | 移动语义，转移资源所有权（函数指针用 `XClass_move_base`） |
+| `XClassDeinit(obj)` | 反初始化对象（释放资源） |
+| `XClassDelete(obj)` | 删除堆对象（反初始化 + 释放内存） |
 
 ### 强制内存分配规则与分配器体系
 
@@ -890,9 +890,9 @@ if (!addr) {
 XString* str = XHostAddress_toString(addr);
 if (str) {
     // 使用 str
-    XString_delete_base(str);
+    XClassDelete(str);
 }
-XHostAddress_delete_base(addr);
+XClassDelete(addr);
 ```
 
 ---
@@ -1204,7 +1204,7 @@ XFileSystem API（通用层，Src/ 中）
 
 - 多个 `XString` 使用 `XStringList`；键值成对时使用两个对应索引的 `XStringList`，或使用已有的映射/键值容器。
 - 连续的非字符串对象使用 `XVector` 或其类型别名；字节使用 `XByteArray`；映射使用 `XMap/XHashMap`。
-- 容器字段应嵌入对象或由对象明确拥有，并在 `init` 中初始化，在 `deinit_base`/私有释放路径中调用对应的 `*_deinit_base` 或 `*_clear_base`。不得把容器元素指针直接当作独立堆对象数组管理。
+- 容器字段应嵌入对象或由对象明确拥有，并在 `init` 中初始化，在 `XClassDeinit`/私有释放路径中调用对应的反初始化或 `*_clear_base`。不得把容器元素指针直接当作独立堆对象数组管理。
 - `XStringList` 的元素类型是 `XString` 对象，不是 `char*`。插入 XString 使用 `XStringList_push_back_base`/`XStringList_push_back_move_base`，插入 UTF-8 使用 `XStringList_push_back_utf8`；读取使用 `XStringList_at_base` 并按 `XString*` 处理。
 - 容器复制、移动和写时复制必须使用容器已有的 `*_copy_base`、`*_move_base`、`*_clear_base` 等接口，不能用 `memcpy` 复制含有所有权或虚函数表的元素。
 - 容器 API 的返回对象、借用指针和删除方式必须在头文件注释中写明；调用方不得释放 `at/front/back` 返回的内部元素。
@@ -1401,7 +1401,7 @@ typedef void (*XATComm_ErrorCallback)(XATComm*);
 
 - 删除 `deinit + init` 只能在目标对象已初始化且析构责任明确时进行；不能通过读取未初始化栈对象的 vtable、字段或地址登记表推断其生命周期。
 - 任何复用容量的优化都必须保留对象的可析构状态、旧数据失败回退语义和资源所有权；扩容或新资源创建失败时不得丢失原对象内容。
-- 不得使用直接 `malloc`、`realloc`、`free` 替代项目内存 API；不得引入 C11 语法。值类型、容器、图像、字体和区域对象必须保持 `init/deinit_base` 成对。
+- 不得使用直接 `malloc`、`realloc`、`free` 替代项目内存 API；不得引入 C11 语法。值类型、容器、图像、字体和区域对象必须保持 `init`/`XClassDeinit` 成对。
 - 涉及事件队列、脏区、绘制回调或线程数据时，必须检查重入、事件压缩、队列投递失败和绘制期间再次 `update()` 的行为，不能只以单次编译通过作为完成依据。
 - 任何新增的全局生命周期登记、缓存或锁都必须说明并发保护、登记失败、地址复用、进程退出和线程退出语义；无法证明安全时不得作为优化合入。
 
@@ -1420,19 +1420,19 @@ typedef void (*XATComm_ErrorCallback)(XATComm*);
 
 ## 常见错误与最佳实践
 
-1. **忘记初始化/反初始化**：未 `init` 就使用是未定义行为，用完不 `deinit_base` 是内存泄漏；❌/✅ 写法见「对象生命周期管理 → init/deinit 成对原则」。
+1. **忘记初始化/反初始化**：未 `init` 就使用是未定义行为，用完不 `XClassDeinit` 是内存泄漏；❌/✅ 写法见「对象生命周期管理 → init/deinit 成对原则」。
 2. **错误返回路径未清理资源**：每个返回路径都必须先清理再返回。
    ```c
    XHostAddress temp;
    XHostAddress_init(&temp);
    if (someCondition) {
-       XHostAddress_deinit_base(&temp);  // ✅ 清理后再返回（❌ 错误写法：直接 return 漏掉本行）
+       XClassDeinit(&temp);  // ✅ 清理后再返回（❌ 错误写法：直接 return 漏掉本行）
        return;
    }
-   XCopy(result, &temp);
-   XHostAddress_deinit_base(&temp);
+   XClassCopy(result, &temp);
+   XClassDeinit(&temp);
    ```
-3. **忘记给堆对象设置释放函数**：`XMalloc_System` + `init` 之后缺少 `Set_Class_Memory`，`delete_base` 时无法正确释放。
+3. **忘记给堆对象设置释放函数**：`XMalloc_System` + `init` 之后缺少 `Set_Class_Memory`，`XClassDelete` 时无法正确释放。
    ```c
    XExample* obj = (XExample*)XMalloc_System(sizeof(XExample));
    XExample_init(obj);
@@ -1440,7 +1440,7 @@ typedef void (*XATComm_ErrorCallback)(XATComm*);
    ```
 4. **在虚函数表中先重载后继承**：先 `XVTABLE_OVERLOAD_DEFAULT` 再 `XVTABLE_INHERIT_XCLASS` 会覆盖重载，必须先继承后重载（见「虚函数重载注意事项」）。
 5. **copy/move 不支持未初始化目标**：所有 `VXxxx_copy`/`VXxxx_move` 实现在第一行参数检查之后，必须用 `XClassIsVtableNull(dest)` 检查目标 vtable，为空则调用 `XType_init(dest)` 兜底完整初始化；只 `XClassSetVtable` 不分配成员是错误写法。规则与示例见「对象生命周期管理 → copy/move 目标初始化约束」。
-6. **用 memcpy 代替拷贝**：浅拷贝共享底层数据，导致双重释放/crash；必须用 `XCopy`。`XString` 还会共享编码缓存指针，见「内存管理注意事项 → 禁止使用 memcpy 复制对象」。
+6. **用 memcpy 代替拷贝**：浅拷贝共享底层数据，导致双重释放/crash；必须用 `XClassCopy`。`XString` 还会共享编码缓存指针，见「内存管理注意事项 → 禁止使用 memcpy 复制对象」。
 7. **忘记检查虚函数表和 ISNULL**：`*_base` 函数中未做 `ISNULL(self, ...)` + `ISNULL(XClassGetVtable(self), ...)` 检查就直接分派，空指针会崩溃；正确写法见「虚函数表与虚函数重载 → `*_base` 调度入口」。
 
 ---
@@ -1449,9 +1449,9 @@ typedef void (*XATComm_ErrorCallback)(XATComm*);
 
 1. **命名规范**：`X` 前缀 + 大驼峰，函数名为 `X类型_功能`，成员变量 `m_` 前缀，内部虚函数 `V` 前缀
 2. **外部依赖**：库内已有同功能 API（XFile/XDateTime/XChar/XMemory/XString/XVarList 等）时禁止引入外部库/C 标准库；白名单与登记要求见「外部依赖约束」
-3. **类创建**：继承 `XClass`/`XObject`，使用虚函数表宏定义，遵循标准头文件/源文件结构；拷贝/移动统一 `XCopy`/`XMove`
+3. **类创建**：继承 `XClass`/`XObject`，使用虚函数表宏定义，遵循标准头文件/源文件结构；拷贝/移动统一 `XClassCopy`/`XClassMove`
 4. **虚函数表**：先继承 `XVTABLE_INHERIT_XCLASS`，再 `XVTABLE_OVERLOAD_DEFAULT`，不可颠倒
-5. **生命周期**：`init` / `deinit_base` 必须成对出现，堆对象记得 `Set_Class_Memory`，move 后源对象由创建者清理
+5. **生命周期**：`init` / `XClassDeinit` 必须成对出现，堆对象记得 `Set_Class_Memory`，move 后源对象由创建者清理
 6. **内存管理**：禁止 `memcpy` 复制对象，禁用 `malloc` 族，统一使用 XMemory 接口
 7. **错误处理**：使用 `ISNULL` 检查指针，`XAssert` 断言关键条件，检查所有返回值
 8. **文件组织**：UTF-8 BOM 编码，标准头文件结构，可选 `_virtual.c` 和 `_Protected.h`

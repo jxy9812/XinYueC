@@ -518,7 +518,7 @@ size_t XVector_count_value(const XVector* this_vector, const void* value);
  * @param from 源位置索引（0-based）
  * @param to 目标位置索引（0-based）
  * @note from与to都必须在有效范围内且不相等；其余元素相应顺移，元素总数不变。
- *       注意：本函数为元素重定位，与移动语义的XVector_move_base（整体资源转移）含义不同
+ *       注意：本函数为元素重定位，与移动语义的XClassMove（整体资源转移）含义不同
  */
 void  XVector_move(XVector* this_vector, int64_t from, int64_t to);
 
@@ -652,14 +652,12 @@ size_t XVector_maxSize(size_t typeSize);
 	(((index) >= 0 && (size_t)(index) < XVector_size_base(this_vector)) ? XVector_at_base(this_vector, index) : (void*)(defaultValue))
 /**
  * @brief 复用XContainer的接口，析构容器（释放资源，可重复调用）
- * @note 宏实现，等价于XContainer_deinit_base
+ * @note 宏实现，等价于XClassDeinit
  */
-#define XVector_deinit_base							XContainer_deinit_base	
 /**
  * @brief 复用XContainer的接口，删除并释放堆对象（先析构再释放内存）
- * @note 宏实现，等价于XContainer_delete_base
+ * @note 宏实现，等价于XClassDelete
  */
-#define XVector_delete_base							XContainer_delete_base	
 /**
  * @brief 复用XContainer的接口，清空所有元素（保留容量）
  * @note 宏实现，等价于XContainer_clear_base

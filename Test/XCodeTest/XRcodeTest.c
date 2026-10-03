@@ -10,7 +10,7 @@ void XRcodeTest()
 	XByteArray* array= XByteArray_create_utf8("测试\n");
 	XRcode_encode(code, array,20,0);
 	XRcode_print_matrix(code);
-	XByteArray_delete_base(array);
+	XClassDelete(array);
 	XRcode_delete(code);
 	XCoreApplication_quit();
 }

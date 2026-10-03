@@ -234,9 +234,7 @@ void XLabel_init(XLabel* self, XWidget* parent, XWidgetFlags flags);
 XLabel* XLabel_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
 /** @brief 通过 XClass 虚表释放 XLabel 资源（栈/外部存储对象使用）。 */
-#define XLabel_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XLabel 对象。 */
-#define XLabel_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 文本（对标 QLabel text/setText/setNum） ==================== */
 

@@ -25,10 +25,10 @@ static void xsql_relational_clear_relations(XSqlRelationalTableModel* model)
     if (!model) return;
     for (size_t i = 0; i < model->m_relationCount; ++i) {
         if (model->m_relationModels && model->m_relationModels[i])
-            XSqlTableModel_delete_base(model->m_relationModels[i]);
+            XClassDelete(model->m_relationModels[i]);
     }
     for (size_t i = 0; i < model->m_relationCount; ++i) {
-        if (model->m_relations[i]) XSqlRelation_delete_base(model->m_relations[i]);
+        if (model->m_relations[i]) XClassDelete(model->m_relations[i]);
     }
     if (model->m_relations) XFree_System(model->m_relations);
     if (model->m_relationModels) XFree_System(model->m_relationModels);
@@ -112,7 +112,7 @@ static void VXSqlRelationalTableModel_deinit(XSqlRelationalTableModel* model)
 {
     if (!model) return;
     xsql_relational_clear_relations(model);
-    XSqlRecord_deinit_base(&model->m_baseRecord);
+    XClassDeinit(&model->m_baseRecord);
     XClass_Deinit_Parent(XSqlTableModel, model);
 }
 
@@ -152,21 +152,21 @@ static XVariant* xsql_relational_lookup(const XSqlRelationalTableModel* model, i
                 XString* left = xsql_relational_variant_text(indexValue);
                 XString* right = xsql_relational_variant_text(source);
                 equal = left && right && XString_equals(left, right, XChar_CaseSensitive);
-                if (left) XString_delete_base(left);
-                if (right) XString_delete_base(right);
+                if (left) XClassDelete(left);
+                if (right) XClassDelete(right);
             }
             if (equal) {
                 result = XSqlTableModel_data(child, childRow, displayColumn, XSqlItemDataRole_Display);
-                XVariant_delete_base(indexValue);
+                XClassDelete(indexValue);
                 break;
             }
-            if (indexValue) XVariant_delete_base(indexValue);
+            if (indexValue) XClassDelete(indexValue);
         }
     }
     if (!result) result = source ? XVariant_create_copy(source) : XVariant_create_null();
-    if (source) XVariant_delete_base(source);
-    if (indexName) XString_delete_base(indexName);
-    if (displayName) XString_delete_base(displayName);
+    if (source) XClassDelete(source);
+    if (indexName) XClassDelete(indexName);
+    if (displayName) XClassDelete(displayName);
     return result;
 }
 
@@ -198,7 +198,7 @@ bool XSqlRelationalTableModel_setData(XSqlRelationalTableModel* model, int row, 
     child = XSqlRelationalTableModel_relationModel(model, column);
     indexName = XSqlRelation_indexColumn(relation);
     indexColumn = indexName ? XSqlTableModel_fieldIndex(child, XString_toUtf8(indexName)) : -1;
-    if (indexName) XString_delete_base(indexName);
+    if (indexName) XClassDelete(indexName);
     for (int childRow = 0; child && indexColumn >= 0 && childRow < XSqlTableModel_rowCount(child); ++childRow) {
         XVariant* indexValue = XSqlTableModel_data(child, childRow, indexColumn,
                                                     XSqlItemDataRole_Edit);
@@ -208,10 +208,10 @@ bool XSqlRelationalTableModel_setData(XSqlRelationalTableModel* model, int row, 
             XString* left = xsql_relational_variant_text(indexValue);
             XString* right = xsql_relational_variant_text(value);
             found = left && right && XString_equals(left, right, XChar_CaseSensitive);
-            if (left) XString_delete_base(left);
-            if (right) XString_delete_base(right);
+            if (left) XClassDelete(left);
+            if (right) XClassDelete(right);
         }
-        if (indexValue) XVariant_delete_base(indexValue);
+        if (indexValue) XClassDelete(indexValue);
         if (found) break;
     }
     if (!found) return false;
@@ -224,8 +224,8 @@ bool XSqlRelationalTableModel_removeColumns(XSqlRelationalTableModel* model, int
     if ((size_t)column < model->m_relationCount) {
         size_t end = model->m_relationCount < (size_t)(column + count) ? model->m_relationCount : (size_t)(column + count);
         for (size_t i = (size_t)column; i < end; ++i) {
-            if (model->m_relations[i]) XSqlRelation_delete_base(model->m_relations[i]);
-            if (model->m_relationModels[i]) XSqlTableModel_delete_base(model->m_relationModels[i]);
+            if (model->m_relations[i]) XClassDelete(model->m_relations[i]);
+            if (model->m_relationModels[i]) XClassDelete(model->m_relationModels[i]);
         }
         memmove(&model->m_relations[column], &model->m_relations[end], (model->m_relationCount - end) * sizeof(XSqlRelation*));
         memmove(&model->m_relationModels[column], &model->m_relationModels[end],
@@ -255,8 +255,8 @@ static void VXSqlRelationalTableModel_setTable(XSqlRelationalTableModel* model, 
     record = model->m_parent.m_database
         ? XSqlDatabase_record_utf8(model->m_parent.m_database, tableName) : NULL;
     if (record) {
-        XMove(&model->m_baseRecord, record);
-        XSqlRecord_delete_base(record);
+        XClassMove(&model->m_baseRecord, record);
+        XClassDelete(record);
     }
     XClass_Parent(XSqlTableModel, EXSqlTableModel_SetTable,
                   void(*)(XSqlTableModel*, const char*))(&model->m_parent, tableName);
@@ -270,8 +270,8 @@ static void VXSqlRelationalTableModel_setRelation(XSqlRelationalTableModel* mode
         model->m_relations[model->m_relationCount] = NULL;
         model->m_relationModels[model->m_relationCount++] = NULL;
     }
-    if (model->m_relations[column]) XSqlRelation_delete_base(model->m_relations[column]);
-    if (model->m_relationModels[column]) XSqlTableModel_delete_base(model->m_relationModels[column]);
+    if (model->m_relations[column]) XClassDelete(model->m_relations[column]);
+    if (model->m_relationModels[column]) XClassDelete(model->m_relationModels[column]);
     model->m_relations[column] = relation ? XSqlRelation_create_copy(relation) : NULL;
     model->m_relationModels[column] = NULL;
 }
@@ -286,16 +286,16 @@ static XSqlTableModel* VXSqlRelationalTableModel_relationModel(const XSqlRelatio
         return model->m_relationModels[column];
     XSqlDatabase* database = XSqlTableModel_database(&model->m_parent);
     XSqlTableModel* child = XSqlTableModel_create(database);
-    if (database) XSqlDatabase_delete_base(database);
+    if (database) XClassDelete(database);
     XString* table = XSqlRelation_tableName(relation);
     if (child) {
         XSqlTableModel_setTable_utf8(child, XString_toUtf8(table));
         if (!XSqlTableModel_select(child)) {
-            XSqlTableModel_delete_base(child);
+            XClassDelete(child);
             child = NULL;
         }
     }
-    if (table) XString_delete_base(table);
+    if (table) XClassDelete(table);
     if (child) mutableModel->m_relationModels[column] = child;
     return child;
 }
@@ -335,12 +335,12 @@ static XString* VXSqlRelationalTableModel_selectStatement(const XSqlRelationalTa
             XString* escapedField = xsql_relational_escape(model->m_parent.m_database, field, XSqlIdentifierType_FieldName);
             XString_append(result, escapedAlias); XString_append_utf8(result, "."); XString_append(result, escapedDisplay);
             XString_append_utf8(result, " AS "); XString_append(result, escapedField);
-            XString_delete_base(relationTable); XString_delete_base(display); XString_delete_base(alias); XString_delete_base(escapedAlias); XString_delete_base(escapedDisplay); XString_delete_base(escapedField);
+            XClassDelete(relationTable); XClassDelete(display); XClassDelete(alias); XClassDelete(escapedAlias); XClassDelete(escapedDisplay); XClassDelete(escapedField);
         } else {
             XString* escapedField = xsql_relational_escape(model->m_parent.m_database, field, XSqlIdentifierType_FieldName);
-            XString_append(result, table); XString_append_utf8(result, "."); XString_append(result, escapedField); XString_delete_base(escapedField);
+            XString_append(result, table); XString_append_utf8(result, "."); XString_append(result, escapedField); XClassDelete(escapedField);
         }
-        if (field) XString_delete_base(field);
+        if (field) XClassDelete(field);
     }
     if (columns == 0) XString_append_utf8(result, "*");
     XString_append_utf8(result, " FROM "); XString_append(result, table);
@@ -357,11 +357,11 @@ static XString* VXSqlRelationalTableModel_selectStatement(const XSqlRelationalTa
         XString* escapedField = xsql_relational_escape(model->m_parent.m_database, field, XSqlIdentifierType_FieldName);
         XString_append_utf8(result, model->m_joinMode == XSqlRelationJoinMode_LeftJoin ? " LEFT JOIN " : " INNER JOIN ");
         XString_append(result, escapedTable); XString_append_utf8(result, " AS "); XString_append(result, escapedAlias); XString_append_utf8(result, " ON "); XString_append(result, table); XString_append_utf8(result, "."); XString_append(result, escapedField); XString_append_utf8(result, " = "); XString_append(result, escapedAlias); XString_append_utf8(result, "."); XString_append(result, escapedIndex);
-        XString_delete_base(relationTable); XString_delete_base(index); XString_delete_base(field); XString_delete_base(escapedTable); XString_delete_base(alias); XString_delete_base(escapedAlias); XString_delete_base(escapedIndex); XString_delete_base(escapedField);
+        XClassDelete(relationTable); XClassDelete(index); XClassDelete(field); XClassDelete(escapedTable); XClassDelete(alias); XClassDelete(escapedAlias); XClassDelete(escapedIndex); XClassDelete(escapedField);
     }
     if (model->m_parent.m_filter && XString_length_base(model->m_parent.m_filter) > 0) { XString_append_utf8(result, " WHERE "); XString_append(result, model->m_parent.m_filter); }
-    XString* order = XSqlRelationalTableModel_orderByClause(model); if (order) { XString_append(result, order); XString_delete_base(order); }
-    if (table) XString_delete_base(table);
+    XString* order = XSqlRelationalTableModel_orderByClause(model); if (order) { XString_append(result, order); XClassDelete(order); }
+    if (table) XClassDelete(table);
     return result;
 }
 XString* XSqlRelationalTableModel_selectStatement(const XSqlRelationalTableModel* model) { return model && !XClassIsVtableNull(model) ? XClassGetVirtualFunc(model, EXSqlTableModel_SelectStatement, XString*(*)(const XSqlRelationalTableModel*))(model) : XString_create(); }
@@ -388,10 +388,10 @@ static XString* VXSqlRelationalTableModel_orderByClause(const XSqlRelationalTabl
                                      XString_toUtf8(escapedDisplay),
                                      model->m_parent.m_sortOrder == XSqlSortOrder_Descending
                                          ? "DESC" : "ASC");
-    if (alias) XString_delete_base(alias);
-    if (display) XString_delete_base(display);
-    if (escapedAlias) XString_delete_base(escapedAlias);
-    if (escapedDisplay) XString_delete_base(escapedDisplay);
+    if (alias) XClassDelete(alias);
+    if (display) XClassDelete(display);
+    if (escapedAlias) XClassDelete(escapedAlias);
+    if (escapedDisplay) XClassDelete(escapedDisplay);
     return result;
 }
 XString* XSqlRelationalTableModel_orderByClause(const XSqlRelationalTableModel* model) { return model ? XSqlTableModel_orderByClause(&model->m_parent) : XString_create(); }
@@ -407,7 +407,7 @@ static bool VXSqlRelationalTableModel_updateRowInTable(XSqlTableModel* base, int
     XSqlRelationalTableModel* model = (XSqlRelationalTableModel*)base;
     XSqlRecord* translated = values ? XSqlRecord_create_copy(values) : NULL;
     bool result;
-    if (!model || !translated) { if (translated) XSqlRecord_delete_base(translated); return false; }
+    if (!model || !translated) { if (translated) XClassDelete(translated); return false; }
     for (int i = 0; i < XSqlRecord_count(&model->m_baseRecord) && i < XSqlRecord_count(translated); ++i) {
         const XSqlRelation* relation = xsql_relational_relation_const(model, i);
         if (relation && XSqlRelation_isValid(relation)) {
@@ -418,13 +418,13 @@ static bool VXSqlRelationalTableModel_updateRowInTable(XSqlTableModel* base, int
                 XSqlField_setGenerated(field, XSqlRecord_isGenerated(translated, i));
                 XSqlRecord_replace(translated, i, field);
             }
-            if (field) XSqlField_delete_base(field);
-            if (value) XVariant_delete_base(value);
+            if (field) XClassDelete(field);
+            if (value) XClassDelete(value);
         }
     }
     result = XClass_Parent(XSqlTableModel, EXSqlTableModel_UpdateRowInTable,
                             bool(*)(XSqlTableModel*, int, const XSqlRecord*))(base, row, translated);
-    XSqlRecord_delete_base(translated);
+    XClassDelete(translated);
     return result;
 }
 static bool VXSqlRelationalTableModel_insertRowIntoTable(XSqlTableModel* base,
@@ -433,7 +433,7 @@ static bool VXSqlRelationalTableModel_insertRowIntoTable(XSqlTableModel* base,
     XSqlRelationalTableModel* model = (XSqlRelationalTableModel*)base;
     XSqlRecord* translated = values ? XSqlRecord_create_copy(values) : NULL;
     bool result;
-    if (!model || !translated) { if (translated) XSqlRecord_delete_base(translated); return false; }
+    if (!model || !translated) { if (translated) XClassDelete(translated); return false; }
     for (int i = 0; i < XSqlRecord_count(&model->m_baseRecord) && i < XSqlRecord_count(translated); ++i) {
         const XSqlRelation* relation = xsql_relational_relation_const(model, i);
         if (relation && XSqlRelation_isValid(relation)) {
@@ -444,13 +444,13 @@ static bool VXSqlRelationalTableModel_insertRowIntoTable(XSqlTableModel* base,
                 XSqlField_setGenerated(field, XSqlRecord_isGenerated(translated, i));
                 XSqlRecord_replace(translated, i, field);
             }
-            if (field) XSqlField_delete_base(field);
-            if (value) XVariant_delete_base(value);
+            if (field) XClassDelete(field);
+            if (value) XClassDelete(value);
         }
     }
     result = XClass_Parent(XSqlTableModel, EXSqlTableModel_InsertRowIntoTable,
                             bool(*)(XSqlTableModel*, const XSqlRecord*))(base, translated);
-    XSqlRecord_delete_base(translated);
+    XClassDelete(translated);
     return result;
 }
 static void VXSqlRelationalTableModel_revertRow(XSqlRelationalTableModel* model, int row) { if (model) XClass_Parent(XSqlTableModel, EXSqlTableModel_RevertRow, void(*)(XSqlTableModel*, int))(&model->m_parent, row); }

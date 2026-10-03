@@ -129,7 +129,7 @@ static void test_xftp_create_destroy(void)
     XASSERT_FALSE(XFtp_hasPendingCommands(ftp));
     XASSERT_EQ(XFtp_currentId(ftp), 0);
     XASSERT_EQ(XFtp_currentCommand(ftp), XFtpCommand_None);
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf("通过\n");
 }
 
@@ -154,7 +154,7 @@ static void test_xftp_transfer_mode(void)
     XFtp_setAutoReconnect(ftp, true, 2000, 5);
     XFtp_abort(ftp);
 
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf("通过\n");
 }
 
@@ -165,7 +165,7 @@ static void test_xftp_error_query(void)
     XASSERT_NOT_NULL(ftp);
     XASSERT_STR_EQ(XFtp_errorString(ftp), "");
     XFtp_abort(ftp);
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf("通过\n");
 }
 
@@ -201,7 +201,7 @@ static void test_xftp_state_queries(void)
     XASSERT_EQ(XFtp_transferType(ftp), XFtp_DataType_Binary);
     XASSERT_FALSE(XFtp_isUtf8(ftp));
     XASSERT_FALSE(XFtp_hasPendingCommands(ftp));
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf("通过\n");
 }
 
@@ -222,7 +222,7 @@ static void test_xftp_command_queue(void)
     XASSERT_FALSE(XFtp_hasPendingCommands(ftp));
     XFtp_abort(ftp);
 
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf("通过\n");
 }
 
@@ -240,7 +240,7 @@ static void test_xftp_signal_connect(void)
                       (XObject*)ftp, on_commandFinished, XConnectionType_Direct);
 
     XFtp_abort(ftp);
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf("通过\n");
 }
 
@@ -262,7 +262,7 @@ static void test_xftp_ssl_config(void)
     XFtp_setSsl(ftp, false);
     XFtp_setSsl(ftp, true);
     XFtp_abort(ftp);
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf("通过\n");
 }
 
@@ -288,7 +288,7 @@ static void test_xftp_advanced_config(void)
     XFtp_clearProxy(ftp);
 
     XFtp_abortTransfer(ftp);
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf("通过\n");
 }
 
@@ -327,7 +327,7 @@ static void test_xftp_e2e_connect(void)
         XASSERT_EQ(XFtp_state(ftp), XFtp_State_LoggedIn);
         XASSERT_FALSE(XFtp_hasPendingCommands(ftp));
     }
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf(ok ? "通过\n" : "跳过（未连上服务器）\n");
 }
 
@@ -345,7 +345,7 @@ static void test_xftp_e2e_feat(void)
         XASSERT_TRUE(XFtp_supportsFeature(ftp, XFtp_Feature_MLSD));
         XASSERT_TRUE(XFtp_supportsFeature(ftp, XFtp_Feature_EPSV));
     }
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf(ok ? "通过\n" : "跳过（未连上服务器）\n");
 }
 
@@ -372,7 +372,7 @@ static void test_xftp_e2e_list(void)
             XPrintf("列表失败 ");
         }
     }
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf(ok ? "通过\n" : "跳过（未连上服务器）\n");
 }
 
@@ -399,7 +399,7 @@ static void test_xftp_e2e_mkdir_rmdir(void)
             XPrintf("删目录失败 ");
         }
     }
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf(ok ? "通过\n" : "跳过（未连上服务器）\n");
 }
 
@@ -434,7 +434,7 @@ static void test_xftp_e2e_put_get(void)
             XPrintf("下载失败 ");
         }
     }
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf(ok ? "通过\n" : "跳过（未连上服务器）\n");
 }
 
@@ -466,7 +466,7 @@ static void test_xftp_e2e_rename_remove(void)
             XPrintf("删除失败 ");
         }
     }
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf(ok ? "通过\n" : "跳过（未连上服务器）\n");
 }
 
@@ -492,7 +492,7 @@ static void test_xftp_e2e_raw(void)
         if (id > 0 && wait_for_command(3000)) XPrintf("NOOP成功 ");
         else                                    XPrintf("NOOP失败 ");
     }
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     XPrintf(ok ? "通过\n" : "跳过（未连上服务器）\n");
 }
 

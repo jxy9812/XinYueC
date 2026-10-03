@@ -29,7 +29,7 @@ static void XCQBasicTest(void)
         XPrintf("dequeue=%d ", v);
     }
     XPrintf("\ncount=%zu (期望:0)\n", XCircularQueue_count_base(q));
-    XCircularQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -61,7 +61,7 @@ static void XCQWrapTest(void)
         XCircularQueue_dequeue_void_base(q);
     }
     XPrintf("\n");
-    XCircularQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -85,7 +85,7 @@ static void XCQAutoExpansionTest(void)
     }
     XPrintf("FIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
         mismatch, (int)XCircularQueue_empty_base(q));
-    XCircularQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -106,7 +106,7 @@ static void XCQFullTest(void)
     bool ok = XCircularQueue_enqueue_base(q, &over);
     XPrintf("满时再入队 返回=%d (期望:0) 计数=%zu\n",
         (int)ok, XCircularQueue_count_base(q));
-    XCircularQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -130,7 +130,7 @@ static void XCQRemoveTest(void)
         XCircularQueue_dequeue_void_base(q);
     }
     XPrintf("\n");
-    XCircularQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 
@@ -157,7 +157,7 @@ static void XCQBulkTest(void)
     }
     XPrintf("pushed=%zu popped=%zu rejected=%zu 剩余count=%zu\n",
         pushed, popped, rejected, XCircularQueue_count_base(q));
-    XCircularQueue_delete_base(q);
+    XClassDelete(q);
     //XCoreApplication_quit();
 }
 

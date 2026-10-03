@@ -14,15 +14,15 @@ static void VXAreaSeries_deinit(XAreaSeries* self)
 {
     if (!self) return;
     if (self->m_upper) {
-        XLineSeries_delete_base(self->m_upper);
+        XClassDelete(self->m_upper);
         self->m_upper = NULL;
     }
     if (self->m_pointLabelsFormat) {
-        XString_delete_base(self->m_pointLabelsFormat);
+        XClassDelete(self->m_pointLabelsFormat);
         self->m_pointLabelsFormat = NULL;
     }
     if (self->m_pointLabelsFontFamily) {
-        XString_delete_base(self->m_pointLabelsFontFamily);
+        XClassDelete(self->m_pointLabelsFontFamily);
         self->m_pointLabelsFontFamily = NULL;
     }
     XClass_Deinit_Parent(XAbstractSeries, &self->m_base);
@@ -143,7 +143,7 @@ void XAreaSeries_setPointLabelsFormat_2(XAreaSeries* self, const char* format)
         if (!tmp) return;
     }
     XAreaSeries_setPointLabelsFormat(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XAreaSeries_pointLabelsFormat(const XAreaSeries* self)
@@ -185,7 +185,7 @@ void XAreaSeries_setPointLabelsFont_2(XAreaSeries* self, const char* family,
         if (!tmp) return;
     }
     XAreaSeries_setPointLabelsFont(self, tmp, pointSize);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XAreaSeries_pointLabelsFontFamily(const XAreaSeries* self)

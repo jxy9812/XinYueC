@@ -90,9 +90,9 @@ static XString* xcache_file_path(const XNetworkDiskCache* self, const XUrl* url)
     fileName = XString_create_fmt_utf8("%016llX.xnc", (unsigned long long)hash);
     directory = XDir_create_2(self->m_cacheDirectory);
     result = directory && fileName ? XDir_filePath(directory, fileName) : NULL;
-    if (directory) XClass_delete_base((XClass*)directory);
-    if (fileName) XClass_delete_base((XClass*)fileName);
-    XClass_delete_base((XClass*)urlText);
+    if (directory) XClassDelete((XClass*)directory);
+    if (fileName) XClassDelete((XClass*)fileName);
+    XClassDelete((XClass*)urlText);
     return result;
 }
 
@@ -108,13 +108,13 @@ static bool xcache_ensure_directory(const XNetworkDiskCache* self)
     if (!directory)
         return false;
     if (XDir_exists_1(directory)) {
-        XClass_delete_base((XClass*)directory);
+        XClassDelete((XClass*)directory);
         return true;
     }
     current = XString_create_utf8(".");
     result = current && XDir_mkpath(directory, current);
-    if (current) XClass_delete_base((XClass*)current);
-    XClass_delete_base((XClass*)directory);
+    if (current) XClassDelete((XClass*)current);
+    XClassDelete((XClass*)directory);
     return result;
 }
 
@@ -155,11 +155,11 @@ static XByteArray* xcache_serialize(const XNetworkCacheMetaData* metadata,
         !xcache_append_u64(result, (uint64_t)XByteArray_size_base(data)) ||
         !XByteArray_push_back_2(result, XByteArray_constData((XByteArray*)data), XByteArray_size_base(data)))
         goto failed;
-    XClass_delete_base((XClass*)urlText);
+    XClassDelete((XClass*)urlText);
     return result;
 failed:
-    if (urlText) XClass_delete_base((XClass*)urlText);
-    if (result) XClass_delete_base((XClass*)result);
+    if (urlText) XClassDelete((XClass*)urlText);
+    if (result) XClassDelete((XClass*)result);
     return NULL;
 }
 
@@ -180,9 +180,9 @@ static bool xcache_write_file(const XNetworkDiskCache* self, const XUrl* url,
         result = XIODevice_write_2((XIODevice*)file, serialized) == (int64_t)XByteArray_size_base(serialized);
         XFile_close_base(file);
     }
-    if (file) XClass_delete_base((XClass*)file);
-    if (serialized) XClass_delete_base((XClass*)serialized);
-    if (path) XClass_delete_base((XClass*)path);
+    if (file) XClassDelete((XClass*)file);
+    if (serialized) XClassDelete((XClass*)serialized);
+    if (path) XClassDelete((XClass*)path);
     return result;
 }
 
@@ -227,7 +227,7 @@ static bool xcache_read_file(const XNetworkDiskCache* self, const XUrl* url,
     parsedUrl = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlText, XUrl_TolerantMode);
     if (!parsedUrl || !XNetworkCacheMetaData_setUrl(metadataValue, parsedUrl))
         goto done_serialized;
-    XClass_delete_base((XClass*)parsedUrl);
+    XClassDelete((XClass*)parsedUrl);
     parsedUrl = NULL;
     metadataValue->m_lastModifiedMSecs = (int64_t)value64;
     if (!xcache_read_u64(serialized, &offset, &value64)) goto done_serialized;
@@ -247,18 +247,18 @@ static bool xcache_read_file(const XNetworkDiskCache* self, const XUrl* url,
         name = XByteArray_create_with_data((const char*)XByteArray_constData(serialized) + offset, length);
         offset += length;
         if (!xcache_read_u32(serialized, &offset, &length) || length > XByteArray_size_base(serialized) - offset) {
-            if (name) XClass_delete_base((XClass*)name);
+            if (name) XClassDelete((XClass*)name);
             goto done_serialized;
         }
         value = XByteArray_create_with_data((const char*)XByteArray_constData(serialized) + offset, length);
         offset += length;
         if (!name || !value || !XHttpHeaders_append(metadataValue->m_headers, name, value)) {
-            if (name) XClass_delete_base((XClass*)name);
-            if (value) XClass_delete_base((XClass*)value);
+            if (name) XClassDelete((XClass*)name);
+            if (value) XClassDelete((XClass*)value);
             goto done_serialized;
         }
-        XClass_delete_base((XClass*)name);
-        XClass_delete_base((XClass*)value);
+        XClassDelete((XClass*)name);
+        XClassDelete((XClass*)value);
     }
     if (!xcache_read_u64(serialized, &offset, &value64) || value64 > SIZE_MAX ||
         value64 > XByteArray_size_base(serialized) - offset)
@@ -272,14 +272,14 @@ static bool xcache_read_file(const XNetworkDiskCache* self, const XUrl* url,
     dataValue = NULL;
     ok = true;
 done_serialized:
-    if (serialized) XClass_delete_base((XClass*)serialized);
+    if (serialized) XClassDelete((XClass*)serialized);
 done:
-    if (file) XClass_delete_base((XClass*)file);
-    if (path) XClass_delete_base((XClass*)path);
-    if (urlText) XClass_delete_base((XClass*)urlText);
-    if (parsedUrl) XClass_delete_base((XClass*)parsedUrl);
-    if (metadataValue) XClass_delete_base((XClass*)metadataValue);
-    if (dataValue) XClass_delete_base((XClass*)dataValue);
+    if (file) XClassDelete((XClass*)file);
+    if (path) XClassDelete((XClass*)path);
+    if (urlText) XClassDelete((XClass*)urlText);
+    if (parsedUrl) XClassDelete((XClass*)parsedUrl);
+    if (metadataValue) XClassDelete((XClass*)metadataValue);
+    if (dataValue) XClassDelete((XClass*)dataValue);
     return ok;
 }
 
@@ -287,8 +287,8 @@ static void xcache_metadata_release(XNetworkCacheMetaData* self)
 {
     if (!self)
         return;
-    if (self->m_url) XClass_delete_base((XClass*)self->m_url);
-    if (self->m_headers) XClass_delete_base((XClass*)self->m_headers);
+    if (self->m_url) XClassDelete((XClass*)self->m_url);
+    if (self->m_headers) XClassDelete((XClass*)self->m_headers);
     self->m_url = NULL;
     self->m_headers = NULL;
 }
@@ -313,8 +313,8 @@ static void VXNetworkCacheMetaData_copy(XNetworkCacheMetaData* dest,
     url = src->m_url ? XUrl_create_copy(src->m_url) : XUrl_create();
     headers = src->m_headers ? XHttpHeaders_create_copy(src->m_headers) : XHttpHeaders_create();
     if (!url || !headers) {
-        if (url) XClass_delete_base((XClass*)url);
-        if (headers) XClass_delete_base((XClass*)headers);
+        if (url) XClassDelete((XClass*)url);
+        if (headers) XClassDelete((XClass*)headers);
         return;
     }
     xcache_metadata_release(dest);
@@ -382,7 +382,7 @@ XNetworkCacheMetaData* XNetworkCacheMetaData_create_ex(XMemoryType memory)
         return NULL;
     XNetworkCacheMetaData_init(self);
     if (!self->m_url || !self->m_headers) {
-        XNetworkCacheMetaData_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -396,7 +396,7 @@ XNetworkCacheMetaData* XNetworkCacheMetaData_create_copy(const XNetworkCacheMeta
     if (!other)
         return NULL;
     self = XNetworkCacheMetaData_create();
-    if (self) XCopy((XClass*)self, (const XClass*)other);
+    if (self) XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -406,7 +406,7 @@ XNetworkCacheMetaData* XNetworkCacheMetaData_create_move(XNetworkCacheMetaData* 
     if (!other)
         return NULL;
     self = XNetworkCacheMetaData_create();
-    if (self) XMove((XClass*)self, (XClass*)other);
+    if (self) XClassMove((XClass*)self, (XClass*)other);
     return self;
 }
 
@@ -415,7 +415,7 @@ bool XNetworkCacheMetaData_setUrl(XNetworkCacheMetaData* self, const XUrl* url)
     XUrl* replacement = url ? XUrl_create_copy(url) : XUrl_create();
     if (!self || !replacement)
         return false;
-    if (self->m_url) XClass_delete_base((XClass*)self->m_url);
+    if (self->m_url) XClassDelete((XClass*)self->m_url);
     self->m_url = replacement;
     self->m_valid = url && XUrl_isValid(url);
     return true;
@@ -432,7 +432,7 @@ bool XNetworkCacheMetaData_setHeaders(XNetworkCacheMetaData* self,
     XHttpHeaders* replacement = headers ? XHttpHeaders_create_copy(headers) : XHttpHeaders_create();
     if (!self || !replacement)
         return false;
-    if (self->m_headers) XClass_delete_base((XClass*)self->m_headers);
+    if (self->m_headers) XClassDelete((XClass*)self->m_headers);
     self->m_headers = replacement;
     return true;
 }
@@ -509,8 +509,8 @@ bool XNetworkCacheMetaData_equals(const XNetworkCacheMetaData* lhs,
             }
         }
     }
-    if (leftUrl) XClass_delete_base((XClass*)leftUrl);
-    if (rightUrl) XClass_delete_base((XClass*)rightUrl);
+    if (leftUrl) XClassDelete((XClass*)leftUrl);
+    if (rightUrl) XClassDelete((XClass*)rightUrl);
     return result;
 }
 
@@ -534,8 +534,8 @@ static void xcache_entry_delete(XNetworkCacheEntry* entry)
 {
     if (!entry)
         return;
-    if (entry->m_metadata) XClass_delete_base((XClass*)entry->m_metadata);
-    if (entry->m_data) XClass_delete_base((XClass*)entry->m_data);
+    if (entry->m_metadata) XClassDelete((XClass*)entry->m_metadata);
+    if (entry->m_data) XClassDelete((XClass*)entry->m_data);
     XFree_System(entry);
 }
 
@@ -548,9 +548,9 @@ static void VXNetworkDiskCache_deinit(XNetworkDiskCache* self)
             XNetworkCacheEntry** entry = (XNetworkCacheEntry**)XVector_at_base(self->m_entries, (int64_t)i);
             if (entry && *entry) xcache_entry_delete(*entry);
         }
-        XClass_delete_base((XClass*)self->m_entries);
+        XClassDelete((XClass*)self->m_entries);
     }
-    if (self->m_cacheDirectory) XClass_delete_base((XClass*)self->m_cacheDirectory);
+    if (self->m_cacheDirectory) XClassDelete((XClass*)self->m_cacheDirectory);
     self->m_entries = NULL;
     self->m_cacheDirectory = NULL;
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -586,7 +586,7 @@ XNetworkDiskCache* XNetworkDiskCache_create_ex(XMemoryType memory)
         return NULL;
     XNetworkDiskCache_init(self);
     if (!self->m_cacheDirectory || !self->m_entries) {
-        XNetworkDiskCache_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -611,10 +611,10 @@ static int64_t xcache_url_index(const XNetworkDiskCache* self, const XUrl* url)
         current = XUrl_toString((*entry)->m_metadata->m_url);
         if (current && XString_equals(current, wanted, XChar_CaseSensitive))
             result = (int64_t)i;
-        if (current) XClass_delete_base((XClass*)current);
+        if (current) XClassDelete((XClass*)current);
         if (result >= 0) break;
     }
-    XClass_delete_base((XClass*)wanted);
+    XClassDelete((XClass*)wanted);
     return result;
 }
 
@@ -626,7 +626,7 @@ bool XNetworkDiskCache_setCacheDirectory(XNetworkDiskCache* self, const XString*
     replacement = directory ? XString_create_copy(directory) : XString_create();
     if (!replacement)
         return false;
-    if (self->m_cacheDirectory) XClass_delete_base((XClass*)self->m_cacheDirectory);
+    if (self->m_cacheDirectory) XClassDelete((XClass*)self->m_cacheDirectory);
     self->m_cacheDirectory = replacement;
     if (self->m_cacheDirectory && !XString_isEmpty_base(self->m_cacheDirectory))
         xcache_ensure_directory(self);
@@ -675,7 +675,7 @@ XNetworkCacheMetaData* XNetworkDiskCache_metaData(const XNetworkDiskCache* self,
         return entry && *entry ? XNetworkCacheMetaData_create_copy((*entry)->m_metadata) : NULL;
     }
     if (xcache_read_file(self, url, &diskMetadata, &diskData)) {
-        if (diskData) XClass_delete_base((XClass*)diskData);
+        if (diskData) XClassDelete((XClass*)diskData);
         return diskMetadata;
     }
     return XNetworkCacheMetaData_create();
@@ -689,7 +689,7 @@ XByteArray* XNetworkDiskCache_data(const XNetworkDiskCache* self, const XUrl* ur
         XNetworkCacheMetaData* diskMetadata = NULL;
         XByteArray* diskData = NULL;
         if (xcache_read_file(self, url, &diskMetadata, &diskData)) {
-            if (diskMetadata) XClass_delete_base((XClass*)diskMetadata);
+            if (diskMetadata) XClassDelete((XClass*)diskMetadata);
             return diskData;
         }
         return NULL;
@@ -716,8 +716,8 @@ bool XNetworkDiskCache_insert(XNetworkDiskCache* self,
     dataCopy = XByteArray_create_copy(data);
     entry = (XNetworkCacheEntry*)XMalloc_System(sizeof(XNetworkCacheEntry));
     if (!metadataCopy || !dataCopy || !entry) {
-        if (metadataCopy) XClass_delete_base((XClass*)metadataCopy);
-        if (dataCopy) XClass_delete_base((XClass*)dataCopy);
+        if (metadataCopy) XClassDelete((XClass*)metadataCopy);
+        if (dataCopy) XClassDelete((XClass*)dataCopy);
         if (entry) XFree_System(entry);
         return false;
     }
@@ -744,7 +744,7 @@ bool XNetworkDiskCache_insert(XNetworkDiskCache* self,
             XString* path = xcache_file_path(self, XNetworkCacheMetaData_url_const(metadata));
             if (path) {
                 XFile_remove_static(path);
-                XClass_delete_base((XClass*)path);
+                XClassDelete((XClass*)path);
             }
         }
     }
@@ -767,7 +767,7 @@ bool XNetworkDiskCache_remove(XNetworkDiskCache* self, const XUrl* url)
         XString* path = xcache_file_path(self, url);
         if (path) {
             XFile_remove_static(path);
-            XClass_delete_base((XClass*)path);
+            XClassDelete((XClass*)path);
         }
     }
     return true;
@@ -794,9 +794,9 @@ void XNetworkDiskCache_clear(XNetworkDiskCache* self)
                     if (name && XString_endsWith_utf8(name, ".xnc", XChar_CaseSensitive))
                         XDir_remove(directory, name);
                 }
-                XClass_delete_base((XClass*)names);
+                XClassDelete((XClass*)names);
             }
-            XClass_delete_base((XClass*)directory);
+            XClassDelete((XClass*)directory);
         }
     }
 }

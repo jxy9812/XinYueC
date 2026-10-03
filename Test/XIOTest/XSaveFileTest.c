@@ -52,7 +52,7 @@ void XSaveFileTest()
                 XByteArray* writeData = XByteArray_create_utf8(lines[i]);
                 size += XContainerSize(writeData);
                 XIODevice_write_2((XIODevice*)saveFile1, writeData);
-                XByteArray_delete_base(writeData);
+                XClassDelete(writeData);
             }
 
             XPrintf_3("写入内容: 完成\n");
@@ -80,8 +80,8 @@ void XSaveFileTest()
                 XString* strContent = XString_create_utf8((const char*)XByteArray_data(content));
                 XPrintf_3("文件内容:\n");
                 XPrintf_2(strContent);
-                XString_delete_base(strContent);
-                XByteArray_delete_base(content);
+                XClassDelete(strContent);
+                XClassDelete(content);
             }
             XIODevice_close_base((XIODevice*)readFile);
             XFile_deleteLater(readFile);
@@ -99,7 +99,7 @@ void XSaveFileTest()
             // 写入数据
             XByteArray* writeData = XByteArray_create_utf8("这不应该被保存\n");
             XIODevice_write_2((XIODevice*)saveFile2, writeData);
-            XByteArray_delete_base(writeData);
+            XClassDelete(writeData);
 
             XPrintf_3("写入临时数据: 完成\n");
 
@@ -133,7 +133,7 @@ void XSaveFileTest()
         if (opened) {
             XByteArray* writeData = XByteArray_create_utf8("直接写入模式测试\n");
             XIODevice_write_2((XIODevice*)saveFile3, writeData);
-            XByteArray_delete_base(writeData);
+            XClassDelete(writeData);
 
             bool committed = XSaveFile_commit(saveFile3);
             XPrintf("提交（直接写入）: %s\n", committed ? "成功" : "失败");
@@ -157,7 +157,7 @@ void XSaveFileTest()
         if (opened) {
             XByteArray* writeData = XByteArray_create_utf8("追加的内容（使用 XFile）\n");
             XIODevice_write_2((XIODevice*)appendFile, writeData);
-            XByteArray_delete_base(writeData);
+            XClassDelete(writeData);
             XIODevice_close_base((XIODevice*)appendFile);
             XPrintf_3("使用 XFile 追加内容: 成功\n");
         } else {
@@ -175,9 +175,9 @@ void XSaveFileTest()
 
     XPrintf_3("删除测试文件: 完成\n");
 
-    XString_delete_base(testFileName);
-    XString_delete_base(cancelFileName);
-    XString_delete_base(directFileName);
+    XClassDelete(testFileName);
+    XClassDelete(cancelFileName);
+    XClassDelete(directFileName);
 
     XPrintf_3("\n=== XSaveFile 测试完成 ===\n");
 }

@@ -291,13 +291,13 @@ static void VX_toolBar_deinit(XToolBar* self)
              * 释放（复扫 R-19，比照 XMenuBar 借用语义）。显式删除时
              * 动作会自摘出本栏 XObject 子列表，后续基类级联不重删。 */
             if (item && *item && xtb_ownsAction(self, *item))
-                XAction_delete_base(*item);
+                XClassDelete(*item);
         }
-        XVector_delete_base(self->m_actions);
+        XClassDelete(self->m_actions);
         self->m_actions = NULL;
     }
     if (self->m_buttons) {
-        XVector_delete_base(self->m_buttons);
+        XClassDelete(self->m_buttons);
         self->m_buttons = NULL;
     }
     if (self->m_bridges) {
@@ -306,18 +306,18 @@ static void VX_toolBar_deinit(XToolBar* self)
             XTBBridge** b =
                 (XTBBridge**)XVector_at_base(self->m_bridges, i);
             if (b && *b)
-                XClass_delete_base((XClass*)*b);
+                XClassDelete((XClass*)*b);
         }
-        XVector_delete_base(self->m_bridges);
+        XClassDelete(self->m_bridges);
         self->m_bridges = NULL;
     }
     if (self->m_widgets) {
         /* 附加控件归调用方，仅释放容器。 */
-        XVector_delete_base(self->m_widgets);
+        XClassDelete(self->m_widgets);
         self->m_widgets = NULL;
     }
     if (self->m_toggleAction) {
-        XAction_delete_base(self->m_toggleAction);
+        XClassDelete(self->m_toggleAction);
         self->m_toggleAction = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -519,7 +519,7 @@ int XToolBar_toolButtonStyle(const XToolBar* self)
  *  （addAction_2/addSeparator/insertSeparator/insertWidget 占位），
  * addAction(XAction*) 注入的外部动作不改父对象、仅为借用——比照
  *  XMenuBar 的 m_actionOwned 语义，借用动作在 removeAction/clear/
- *  析构只摘除、不释放（此前无条件 XAction_delete_base 产生悬垂/
+ *  析构只摘除、不释放（此前无条件 XClassDelete 产生悬垂/
  *  双重释放可达路径：调用方与父对象树仍各持一份所有权）。 */
 static bool xtb_ownsAction(const XToolBar* self, const XAction* action)
 {

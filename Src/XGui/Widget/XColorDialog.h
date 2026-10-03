@@ -100,8 +100,6 @@ void XColorDialog_init_default(XColorDialog* self, XWidget* parent);
  */
 XColorDialog* XColorDialog_create_ex(XMemoryType memory, XColor initial,
                                      XWidget* parent, XWidgetFlags flags);
-#define XColorDialog_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XColorDialog_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 实例属性（对标 QColorDialog） ==================== */
 

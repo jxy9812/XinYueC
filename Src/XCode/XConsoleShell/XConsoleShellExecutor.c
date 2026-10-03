@@ -37,8 +37,8 @@ static XString* xexec_resolve_path(const XConsoleShellSession* session,
     path = XString_create();
     resolved = XString_create();
     if (!path || !resolved) {
-        if (path) XString_delete_base(path);
-        if (resolved) XString_delete_base(resolved);
+        if (path) XClassDelete(path);
+        if (resolved) XClassDelete(resolved);
         return NULL;
     }
     if (rawPath[0] == '/') {
@@ -50,11 +50,11 @@ static XString* xexec_resolve_path(const XConsoleShellSession* session,
     }
     if (!XDeviceFile_resolvePath(path, resolved, XPathStyle_Absolute))
         XString_assign(resolved, path);
-    XString_delete_base(path);
+    XClassDelete(path);
     return resolved;
 fail:
-    XString_delete_base(path);
-    XString_delete_base(resolved);
+    XClassDelete(path);
+    XClassDelete(resolved);
     return NULL;
 }
 
@@ -73,7 +73,7 @@ static bool xexec_write_redirect(const XConsoleShellSession* session,
     if (!filePath) return false;
     fd = xexec_open_file(filePath, XDeviceFile_WriteOnly | XDeviceFile_Create |
                           (append ? XDeviceFile_Append : XDeviceFile_Truncate), &error);
-    XString_delete_base(filePath);
+    XClassDelete(filePath);
     if (fd == XFD_INVALID) return false;
     size = XByteArray_size_base(bytes);
     data = (const uint8_t*)XByteArray_data(bytes);
@@ -120,7 +120,7 @@ static XConsoleResult xexec_drain_channel(XConsoleShell* shell, XProcess* proces
         }
         if (ok) *started = true;
     }
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     return ok ? XConsoleResult_Ok : XConsoleResult_IoError;
 }
 
@@ -173,7 +173,7 @@ static bool xexec_set_input_file(XProcess* process,
     path = xexec_resolve_path(session, rawPath);
     if (!path) return false;
     result = XProcess_setStandardInputFile(process, path);
-    XString_delete_base(path);
+    XClassDelete(path);
     return result;
 }
 
@@ -214,7 +214,7 @@ static void xexec_drain_async_channel(XConsoleShell* shell,
     if (XByteArray_size_base(bytes))
         (void)xexec_write_to_session(shell, job->sessionId,
                                      XByteArray_data(bytes), XByteArray_size_base(bytes));
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
 }
 
 static int xexec_start_async(XConsoleShell* shell, XConsoleShellSession* session,
@@ -233,14 +233,14 @@ static int xexec_start_async(XConsoleShell* shell, XConsoleShellSession* session
         !XProcess_setWorkingDirectory_utf8(process, session->currentPath) ||
         !XProcess_start_utf8(process, argv[1], argv + 2,
                                           (size_t)(argc - 2), XIODevice_ReadOnly)) {
-        if (process) XProcess_delete_base(process);
+        if (process) XClassDelete(process);
         return XConsoleResult_Failed;
     }
     job = (XConsoleShellAsyncProcess*)XCalloc_System(1, sizeof(*job));
     if (!job) {
         XProcess_kill(process);
         XProcess_waitForFinished(process, -1);
-        XProcess_delete_base(process);
+        XClassDelete(process);
         return XConsoleResult_ResourceLimit;
     }
     job->process = process;
@@ -261,7 +261,7 @@ size_t XConsoleShellExecutor_pollAsync(XConsoleShell* shell, int timeoutMsecs)
         xexec_drain_async_channel(shell, job, XProcessChannel_StandardOutput);
         xexec_drain_async_channel(shell, job, XProcessChannel_StandardError);
         if (XProcess_state(job->process) != XProcessState_NotRunning) continue;
-        XProcess_delete_base(job->process);
+        XClassDelete(job->process);
         XFree_System(job);
         shell->m_asyncProcesses[i] = NULL;
         ++completed;
@@ -281,7 +281,7 @@ void XConsoleShellExecutor_abortAsync(XConsoleShell* shell)
                 XProcess_kill(job->process);
                 XProcess_waitForFinished(job->process, -1);
             }
-            XProcess_delete_base(job->process);
+            XClassDelete(job->process);
         }
         XFree_System(job);
         shell->m_asyncProcesses[i] = NULL;
@@ -328,8 +328,8 @@ static int xexec_run_pipe(XConsoleShell* shell, XConsoleShellSession* session,
                              (size_t)(producerCount - 1), XIODevice_ReadOnly)) {
         if (source) XProcess_kill(source);
         if (sink) XProcess_kill(sink);
-        if (source) XProcess_delete_base(source);
-        if (sink) XProcess_delete_base(sink);
+        if (source) XClassDelete(source);
+        if (sink) XClassDelete(sink);
         return XConsoleResult_Failed;
     }
     if (!XProcess_waitForFinished(source, -1) || !XProcess_waitForFinished(sink, -1)) {
@@ -337,8 +337,8 @@ static int xexec_run_pipe(XConsoleShell* shell, XConsoleShellSession* session,
         XProcess_kill(sink);
         XProcess_waitForFinished(source, -1);
         XProcess_waitForFinished(sink, -1);
-        XProcess_delete_base(source);
-        XProcess_delete_base(sink);
+        XClassDelete(source);
+        XClassDelete(sink);
         return XConsoleResult_Failed;
     }
     output = XProcess_readAllStandardOutput(sink);
@@ -350,10 +350,10 @@ static int xexec_run_pipe(XConsoleShell* shell, XConsoleShellSession* session,
         result = XConsoleResult_IoError;
     else if (XProcess_exitCode(source) == 0 && XProcess_exitCode(sink) == 0)
         result = XConsoleResult_Ok;
-    if (output) XByteArray_delete_base(output);
-    if (error) XByteArray_delete_base(error);
-    XProcess_delete_base(source);
-    XProcess_delete_base(sink);
+    if (output) XClassDelete(output);
+    if (error) XClassDelete(error);
+    XClassDelete(source);
+    XClassDelete(sink);
     return result;
 }
 #endif
@@ -393,18 +393,18 @@ static int xexec_run(XConsoleShell* shell, XConsoleShellSession* session,
     process = XProcess_create();
     if (!process) return XConsoleResult_Failed;
     if (!session || !XProcess_setWorkingDirectory_utf8(process, session->currentPath)) {
-        XProcess_delete_base(process);
+        XClassDelete(process);
         return XConsoleResult_Failed;
     }
 #if XCONSOLE_SHELL_REDIRECT_ON
     if (stdinPath && !xexec_set_input_file(process, session, stdinPath)) {
-        XProcess_delete_base(process);
+        XClassDelete(process);
         return XConsoleResult_Failed;
     }
 #endif
     if (!XProcess_start_utf8(process, childArgs[0], childArgs + 1,
                              (size_t)(childCount - 1), XIODevice_ReadOnly)) {
-        if (process) XProcess_delete_base(process);
+        if (process) XClassDelete(process);
         return XConsoleResult_Failed;
     }
     for (;;) {
@@ -414,7 +414,7 @@ static int xexec_run(XConsoleShell* shell, XConsoleShellSession* session,
         if (shell->m_io.cancelled && shell->m_io.cancelled(shell->m_io.userData)) {
             XProcess_kill(process);
             (void)XProcess_waitForFinished(process, -1);
-            XProcess_delete_base(process);
+            XClassDelete(process);
             return XConsoleResult_Cancelled;
         }
         {
@@ -425,7 +425,7 @@ static int xexec_run(XConsoleShell* shell, XConsoleShellSession* session,
             if (rd1 != XConsoleResult_Ok || rd2 != XConsoleResult_Ok) {
                 XProcess_kill(process);
                 (void)XProcess_waitForFinished(process, -1);
-                XProcess_delete_base(process);
+                XClassDelete(process);
                 return XConsoleResult_IoError;
             }
         }
@@ -437,12 +437,12 @@ static int xexec_run(XConsoleShell* shell, XConsoleShellSession* session,
         XConsoleResult rd2 = xexec_drain_channel(shell, process, session, XProcessChannel_StandardError,
                                                  stderrPath, append, &stderrStarted);
         if (rd1 != XConsoleResult_Ok || rd2 != XConsoleResult_Ok) {
-            XProcess_delete_base(process);
+            XClassDelete(process);
             return XConsoleResult_IoError;
         }
     }
     i = XProcess_exitCode(process);
-    XProcess_delete_base(process);
+    XClassDelete(process);
     return i == 0 ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
 

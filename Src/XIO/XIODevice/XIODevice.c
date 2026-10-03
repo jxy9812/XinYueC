@@ -438,7 +438,7 @@ void XIODevice_setErrorString(XIODevice* self, const char* str)
 {
 	if (!self || !self->m_d) return;
 	if (self->m_d->errorString) {
-		XString_delete_base(self->m_d->errorString);
+		XClassDelete(self->m_d->errorString);
 		self->m_d->errorString = NULL;
 	}
 	if (str) {

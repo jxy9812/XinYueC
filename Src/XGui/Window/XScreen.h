@@ -96,27 +96,27 @@ XVtable* XScreen_class_init(void);
  *             逻辑 DPI 96、设备像素比 1.0、方向为 Primary、主方向按几何
  *             宽高推导（0x0 视为横屏）、刷新率 60、平台句柄 NULL。
  * @param      self 待初始化的对象指针；生命周期结束时必须成对调用
- *             XScreen_deinit_base。
+ *             XClassDeinit。
  */
 void XScreen_init(XScreen* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建 XScreen。
- * @return     新对象指针；失败返回 NULL，调用方用 XScreen_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 #define XScreen_create() XScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 /**
  * @brief      使用指定内存类型在堆上创建 XScreen。
  * @param      memory 对象内存类型。
- * @return     新对象指针；失败返回 NULL，调用方用 XScreen_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 XScreen* XScreen_create_ex(XMemoryType memory);
 
 /**
  * @brief      拷贝创建：深拷贝源对象属性快照与显式兄弟列表。
  * @param      other 源对象；可为 NULL。
- * @return     新对象指针；失败返回 NULL，调用方用 XScreen_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  * @note       信号连接、父子关系、注册表归属不随拷贝转移。
  */
 XScreen* XScreen_create_copy(const XScreen* other);
@@ -124,14 +124,12 @@ XScreen* XScreen_create_copy(const XScreen* other);
 /**
  * @brief      移动创建：转移源对象私有数据所有权。
  * @param      other 源对象；移动后其 m_data 置空，仍需 deinit_base。
- * @return     新对象指针；失败返回 NULL，调用方用 XScreen_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 XScreen* XScreen_create_move(XScreen* other);
 
 /** @brief 通过 XClass 虚表释放 XScreen 资源（栈/外部存储对象使用）。 */
-#define XScreen_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XScreen 对象。 */
-#define XScreen_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 屏幕注册表（未来由 XGuiApplication 接管） ==================== */
 
@@ -170,7 +168,7 @@ void XScreen_setPrimary(XScreen* screen);
 /**
  * @brief      返回当前注册的所有屏幕（对标 QGuiApplication::screens）。
  * @return     新建的 XVector，元素为 XScreen* 借用指针，按注册顺序排列；
- *             调用方用 XVector_delete_base 释放。
+ *             调用方用 XClassDelete 释放。
  */
 XVector* XScreen_screens(void);
 
@@ -446,7 +444,7 @@ XSize XScreen_availableSize(const XScreen* self);
  * @brief      返回兄弟屏幕列表（对标 QScreen::virtualSiblings()）。
  * @details    若设置了显式兄弟列表，返回该列表副本；否则返回“自身 +
  *             注册表中的全部其它屏幕”。返回的是新建 XVector，元素为
- *             XScreen* 借用指针，调用方用 XVector_delete_base 释放。
+ *             XScreen* 借用指针，调用方用 XClassDelete 释放。
  * @param      self 目标屏幕；可为 NULL。
  * @return     新建兄弟列表；NULL 入参返回空列表。
  */
@@ -640,7 +638,7 @@ bool XScreen_isLandscape(const XScreen* self, XScreenOrientation orientation);
  * @param      w 抓取宽度；负值表示到窗口右边界。
  * @param      h 抓取高度；负值表示到窗口下边界。
  * @return     新建 XPixmap；分配失败返回 NULL，调用方用
- *             XPixmap_delete_base 释放。
+ *             XClassDelete 释放。
  */
 XPixmap* XScreen_grabWindow(XScreen* self, XWindowId window,
                             int x, int y, int w, int h);

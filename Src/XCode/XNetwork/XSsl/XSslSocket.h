@@ -415,7 +415,7 @@ XVector* XSslSocket_allowedNextProtocols(const XSslSocket* self);
 /**
  * @brief 获取 TLS 协商出的 ALPN 协议副本。
  * @param self TLS 套接字；可为 NULL。
- * @return 新 XByteArray 所有权；调用者使用 XByteArray_delete_base 释放，未协商返回 NULL。
+ * @return 新 XByteArray 所有权；调用者使用 XClassDelete 释放，未协商返回 NULL。
  */
 XByteArray* XSslSocket_nextNegotiatedProtocol(const XSslSocket* self);
 /**

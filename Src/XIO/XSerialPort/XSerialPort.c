@@ -52,7 +52,7 @@ static bool VXSerialPort_open(XIODevice* io, XIODeviceBaseMode mode)
     options.m_readBufferSize = port->readBufferSize;
 
     port->base.m_fd = XDevice_open(XDeviceType_Serial, &options.m_base, &error);
-    XString_delete_base((XClass*)target);
+    XClassDelete((XClass*)target);
     if (port->base.m_fd == XFD_INVALID) {
         port->error = error == XDeviceError_NotFound ? XSerialPort_DeviceNotFoundError :
                       XSerialPort_OpenError;
@@ -93,7 +93,7 @@ static int64_t VXSerialPort_bytesAvailable(const XIODevice* io)
     XVariant_init(&value, NULL, 0, XVariantType_NULL);
     if (XDevice_getProperty(port->base.m_fd, XDeviceSerialPortProperty_BytesAvailable, &value))
         result = XVariant_toInt64(&value);
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
     return result > 0 ? result : 0;
 }
 
@@ -107,7 +107,7 @@ static int64_t VXSerialPort_bytesToWrite(const XIODevice* io)
     XVariant_init(&value, NULL, 0, XVariantType_NULL);
     if (XDevice_getProperty(port->base.m_fd, XDeviceSerialPortProperty_BytesToWrite, &value))
         result = XVariant_toInt64(&value);
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
     return result > 0 ? result : 0;
 }
 
@@ -278,7 +278,7 @@ static bool setIntProperty(XSerialPort* port, uint32_t property, int value)
     XVariant_init(&variant, NULL, 0, XVariantType_NULL);
     XVariant_setValue_int(&variant, value);
     ok = port->isOpen ? XDevice_setProperty(port->base.m_fd, (XDeviceProperty)property, &variant) : true;
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     return ok;
 }
 
@@ -290,7 +290,7 @@ static bool setInt64Property(XSerialPort* port, uint32_t property, int64_t value
     XVariant_init(&variant, NULL, 0, XVariantType_NULL);
     XVariant_setValue_int64(&variant, value);
     ok = port->isOpen ? XDevice_setProperty(port->base.m_fd, (XDeviceProperty)property, &variant) : true;
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     return ok;
 }
 
@@ -302,7 +302,7 @@ static bool setBoolProperty(XSerialPort* port, uint32_t property, bool value)
     XVariant_init(&variant, NULL, 0, XVariantType_NULL);
     XVariant_setValue_bool(&variant, value);
     ok = port->isOpen ? XDevice_setProperty(port->base.m_fd, (XDeviceProperty)property, &variant) : true;
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     return ok;
 }
 
@@ -394,7 +394,7 @@ XHandle XSerialPort_handle(const XSerialPort* port)
         handleRef = (void**)XVariant_toRef(&value, XVariantType_Ptr);
         if (handleRef) handle = *handleRef;
     }
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
     return handle ? (XHandle)handle : (XHandle)-1;
 }
 
@@ -437,7 +437,7 @@ XSerialPort_PinoutSignal XSerialPort_pinoutSignals(const XSerialPort* port)
     XVariant_init(&value, NULL, 0, XVariantType_NULL);
     if (XDevice_getProperty(port->base.m_fd, XDeviceSerialPortProperty_PinoutSignals, &value))
         result = XVariant_toInt(&value);
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
     return (XSerialPort_PinoutSignal)result;
 }
 

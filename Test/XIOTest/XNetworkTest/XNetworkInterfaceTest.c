@@ -94,14 +94,14 @@ static void XNetworkInterface_allInterfacesTest(void)
                 XString* ipStr = XHostAddress_toString(&entry->ip);
                 if (ipStr) {
                     XPrintf_2(ipStr);
-                    XString_delete_base(ipStr);
+                    XClassDelete(ipStr);
                 }
                 
                 XPrintf(" / 掩码: ");
                 XString* maskStr = XHostAddress_toString(&entry->netmask);
                 if (maskStr) {
                     XPrintf_2(maskStr);
-                    XString_delete_base(maskStr);
+                    XClassDelete(maskStr);
                 }
                 XPrintf("\n");
             }
@@ -110,7 +110,7 @@ static void XNetworkInterface_allInterfacesTest(void)
         XPrintf("\n");
     }
     
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
 }
 
 // ==================== 获取所有IP地址测试 ====================
@@ -135,12 +135,12 @@ static void XNetworkInterface_allAddressesTest(void)
                 XPrintf("    - ");
                 XPrintf_2(addrStr);
                 XPrintf("\n");
-                XString_delete_base(addrStr);
+                XClassDelete(addrStr);
             }
         }
     }
     
-    XVector_delete_base(addresses);
+    XClassDelete(addresses);
 }
 
 // ==================== 按名称查找接口测试 ====================
@@ -153,7 +153,7 @@ static void XNetworkInterface_interfaceFromNameTest(void)
     XVector* interfaces = XNetworkInterface_allInterfaces();
     if (!interfaces || XVector_size_base(interfaces) == 0) {
         XPrintf("  没有可用的网络接口\n");
-        if (interfaces) XVector_delete_base(interfaces);
+        if (interfaces) XClassDelete(interfaces);
         return;
     }
     
@@ -167,7 +167,7 @@ static void XNetworkInterface_interfaceFromNameTest(void)
     XPrintf("\n");
     
     /* 清理列表 */
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
     
     /* 按名称查找 */
     XNetworkInterface* found = XNetworkInterface_interfaceFromName(firstName);
@@ -175,11 +175,11 @@ static void XNetworkInterface_interfaceFromNameTest(void)
         XPrintf("  成功找到接口\n");
         XPrintf("    索引: %d\n", XNetworkInterface_index(found));
         XPrintf("    MTU: %d\n", XNetworkInterface_maximumTransmissionUnit(found));
-        XNetworkInterface_delete_base(found);
+        XClassDelete(found);
     } else {
         XPrintf("  未找到接口\n");
     }
-    XString_delete_base(firstName);
+    XClassDelete(firstName);
 }
 
 // ==================== 按索引查找接口测试 ====================
@@ -192,7 +192,7 @@ static void XNetworkInterface_interfaceFromIndexTest(void)
     XVector* interfaces = XNetworkInterface_allInterfaces();
     if (!interfaces || XVector_size_base(interfaces) == 0) {
         XPrintf("  没有可用的网络接口\n");
-        if (interfaces) XVector_delete_base(interfaces);
+        if (interfaces) XClassDelete(interfaces);
         return;
     }
     
@@ -204,7 +204,7 @@ static void XNetworkInterface_interfaceFromIndexTest(void)
     XPrintf("  使用接口索引: %d\n", firstIndex);
     
     /* 清理列表 */
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
     
     /* 按索引查找 */
     XNetworkInterface* found = XNetworkInterface_interfaceFromIndex(firstIndex);
@@ -216,7 +216,7 @@ static void XNetworkInterface_interfaceFromIndexTest(void)
             XPrintf_2(name);
             XPrintf("\n");
         }
-        XNetworkInterface_delete_base(found);
+        XClassDelete(found);
     } else {
         XPrintf("  未找到接口\n");
     }
@@ -232,7 +232,7 @@ static void XNetworkInterface_nameIndexConversionTest(void)
     XVector* interfaces = XNetworkInterface_allInterfaces();
     if (!interfaces || XVector_size_base(interfaces) == 0) {
         XPrintf("  没有可用的网络接口\n");
-        if (interfaces) XVector_delete_base(interfaces);
+        if (interfaces) XClassDelete(interfaces);
         return;
     }
     
@@ -246,7 +246,7 @@ static void XNetworkInterface_nameIndexConversionTest(void)
     XPrintf(" (索引: %d)\n", index);
     
     /* 清理列表 */
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
     
     /* 名称 -> 索引 */
     int foundIndex = XNetworkInterface_interfaceIndexFromName(name);
@@ -258,7 +258,7 @@ static void XNetworkInterface_nameIndexConversionTest(void)
         XPrintf("  索引转名称: ");
         XPrintf_2(foundName);
         XPrintf("\n");
-        XString_delete_base(foundName);
+        XClassDelete(foundName);
     }
     
     /* 验证 */
@@ -267,7 +267,7 @@ static void XNetworkInterface_nameIndexConversionTest(void)
     } else {
         XPrintf("  ERR 名称->索引转换错误\n");
     }
-    XString_delete_base(name);
+    XClassDelete(name);
 }
 
 // ==================== 复制测试 ====================
@@ -280,7 +280,7 @@ static void XNetworkInterface_copyTest(void)
     XVector* interfaces = XNetworkInterface_allInterfaces();
     if (!interfaces || XVector_size_base(interfaces) == 0) {
         XPrintf("  没有可用的网络接口\n");
-        if (interfaces) XVector_delete_base(interfaces);
+        if (interfaces) XClassDelete(interfaces);
         return;
     }
     
@@ -305,11 +305,11 @@ static void XNetworkInterface_copyTest(void)
             }
         }
         
-        XNetworkInterface_delete_base(copied);
+        XClassDelete(copied);
     }
     
     /* 清理 */
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
 }
 
 // ==================== 综合测试 ====================

@@ -39,7 +39,7 @@ void XClass_delete_base(XClass* object)
 	XMemory* memory = Class_Memory(object);
 	if (!memory)
 		memory = XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE);
-	XClass_deinit_base(object);
+	XClassDeinit(object);
 	if (!is_heap)
 		return;
 	if (memory && memory->free)

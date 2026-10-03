@@ -64,9 +64,9 @@ static void xserverchan_test_handler(const XHttpServerRequest* request,
     }
     response = XByteArray_create_utf8("{\"code\":0,\"message\":\"ok\"}");
     XHttpServerResponder_write(responder, response, NULL, XHttpServerResponse_Ok);
-    if (response) XByteArray_delete_base(response);
-    if (contentType) XByteArray_delete_base(contentType);
-    if (contentTypeName) XByteArray_delete_base(contentTypeName);
+    if (response) XClassDelete(response);
+    if (contentType) XClassDelete(contentType);
+    if (contentTypeName) XClassDelete(contentTypeName);
 }
 
 static void xserverchan_test_local_send(void)
@@ -91,9 +91,9 @@ static void xserverchan_test_local_send(void)
            !strcmp(XString_toUtf8(XServerChanResult_message_const(result)), "ok"));
     assert(state.m_requests == 1 && state.m_methodValid && state.m_pathValid &&
            state.m_headersValid && state.m_bodyValid);
-    XServerChanResult_delete_base(result);
-    XServerChan_delete_base(client);
-    XHttpServer_delete_base(server);
+    XClassDelete(result);
+    XClassDelete(client);
+    XClassDelete(server);
     XPrintf("XServerChan 本地发送与 JSON 解析测试通过\n");
 }
 
@@ -120,12 +120,12 @@ static void xserverchan_test_lifecycle(void)
     resultMove = resultCopy ? XServerChanResult_create_move(resultCopy) : NULL;
     assert(resultCopy && resultMove && XServerChanResult_isSuccess(resultMove) &&
            !XServerChanResult_isSuccess(resultCopy));
-    XServerChanResult_delete_base(resultMove);
-    XServerChanResult_delete_base(resultCopy);
-    XServerChanResult_delete_base(result);
-    XServerChan_delete_base(moved);
-    XServerChan_delete_base(copy);
-    XServerChan_delete_base(client);
+    XClassDelete(resultMove);
+    XClassDelete(resultCopy);
+    XClassDelete(result);
+    XClassDelete(moved);
+    XClassDelete(copy);
+    XClassDelete(client);
     XPrintf("XServerChan 类生命周期、拷贝移动和 SendKey 校验测试通过\n");
 }
 
@@ -172,7 +172,7 @@ static void xserverchan_test_live_send(void)
     }
     if (i == sizeof(caPaths) / sizeof(caPaths[0])) {
         XPrintf("未找到可用系统 CA，跳过真实发送测试（不关闭证书校验）\n");
-        XServerChan_delete_base(client);
+        XClassDelete(client);
         return;
     }
     XServerChan_setTransferTimeout(client, 15000);
@@ -194,10 +194,10 @@ static void xserverchan_test_live_send(void)
             if (message && XString_toUtf8(message) && *XString_toUtf8(message))
                 XPrintf("失败原因：%s\n", XString_toUtf8(message));
         }
-        if (result) XServerChanResult_delete_base(result);
+        if (result) XClassDelete(result);
         XThread_msleep(200);
     }
-    XServerChan_delete_base(client);
+    XClassDelete(client);
     XPrintf("真实发送测试完成：%zu/%zu 成功\n", successCount,
            sizeof(cases) / sizeof(cases[0]));
 }

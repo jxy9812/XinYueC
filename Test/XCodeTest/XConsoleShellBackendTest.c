@@ -132,7 +132,7 @@ cleanup:
         XTcpServer_close(server);
         XTcpServer_deleteLater((XObject*)server);
     }
-    if (shell) XConsoleShell_delete_base(shell);
+    if (shell) XClassDelete(shell);
     return ok;
 }
 
@@ -269,7 +269,7 @@ cleanup:
         XTcpServer_close(server);
         XTcpServer_deleteLater((XObject*)server);
     }
-    if (shell) XConsoleShell_delete_base(shell);
+    if (shell) XClassDelete(shell);
     return ok;
 }
 #endif
@@ -379,7 +379,7 @@ cleanup:
         XTcpServer_close(server);
         XTcpServer_deleteLater((XObject*)server);
     }
-    if (shell) XConsoleShell_delete_base(shell);
+    if (shell) XClassDelete(shell);
     return ok;
 }
 
@@ -504,7 +504,7 @@ cleanup:
         XTcpServer_close(server);
         XTcpServer_deleteLater((XObject*)server);
     }
-    if (shell) XConsoleShell_delete_base(shell);
+    if (shell) XClassDelete(shell);
     return ok;
 }
 #endif
@@ -597,7 +597,7 @@ cleanup:
         XTcpServer_close(telnetServer);
         XTcpServer_deleteLater((XObject*)telnetServer);
     }
-    if (shell) XConsoleShell_delete_base(shell);
+    if (shell) XClassDelete(shell);
     return ok;
 }
 #endif
@@ -691,7 +691,7 @@ cleanup:
         XTcpServer_close(server);
         XTcpServer_deleteLater((XObject*)server);
     }
-    if (shell) XConsoleShell_delete_base(shell);
+    if (shell) XClassDelete(shell);
     return ok;
 }
 #endif

@@ -476,7 +476,7 @@ err_t sys_mbox_new(sys_mbox_t* mbox, int size)
     impl->sem = XSemaphore_create(0, (int32_t)size);
 
     if (!impl->queue || !impl->sem) {
-        if (impl->queue) XLockFreeQueue_delete_base(impl->queue);
+        if (impl->queue) XClassDelete(impl->queue);
         if (impl->sem) XSemaphore_delete(impl->sem);
         XFree_System(impl);
         return ERR_MEM;
@@ -559,7 +559,7 @@ void sys_mbox_free(sys_mbox_t* mbox)
     if (!mbox || !mbox->mbx) return;
     mbox_impl_t* impl = (mbox_impl_t*)mbox->mbx;
 
-    XLockFreeQueue_delete_base(impl->queue);
+    XClassDelete(impl->queue);
     XSemaphore_delete(impl->sem);
     XFree_System(impl);
     mbox->mbx = NULL;

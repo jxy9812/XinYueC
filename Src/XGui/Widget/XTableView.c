@@ -400,8 +400,8 @@ static int xtv_measureColumnTextWidth(const XTableView* self, int column)
         w = XPainter_textWidth(&font, text);
         if (w > maxW) maxW = w;
     }
-    /* XFont_deinit_base 即 XClass_deinit_base 的别名，显式收窄基类指针。 */
-    XFont_deinit_base((XClass*)&font);
+    /* XClassDeinit 即 XClass_deinit_base 的别名，显式收窄基类指针。 */
+    XClassDeinit((XClass*)&font);
     return maxW;
 }
 
@@ -440,7 +440,7 @@ void XTableView_resizeRowToContents(XTableView* self, int row)
     if (!model || row < 0 || row >= model->m_rows) return;
     font = XWidget_font((const XWidget*)self);
     content = XPainter_textHeight(&font);
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
     if (content <= 0) return;
     /* 统一行高承载：单行调整即整体行高（与 setRowHeight 同一存储）。 */
     XTableView_setRowHeight(self, content + 2 * XTV_CONTENT_VMARGIN);

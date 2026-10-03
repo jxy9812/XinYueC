@@ -96,7 +96,7 @@ static void xsql_result_assign_string(XString** target, const XString* source)
 {
     if (!target || *target == source) return;
     if (*target) {
-        XString_delete_base(*target);
+        XClassDelete(*target);
         *target = NULL;
     }
     if (source) *target = XString_create_copy(source);
@@ -106,8 +106,8 @@ static void xsql_result_clear_bindings(XSqlResult* result)
 {
     if (!result) return;
     for (size_t i = 0; i < result->m_boundCount; ++i) {
-        if (result->m_boundValues && result->m_boundValues[i]) XVariant_delete_base(result->m_boundValues[i]);
-        if (result->m_boundNames && result->m_boundNames[i]) XString_delete_base(result->m_boundNames[i]);
+        if (result->m_boundValues && result->m_boundValues[i]) XClassDelete(result->m_boundValues[i]);
+        if (result->m_boundNames && result->m_boundNames[i]) XClassDelete(result->m_boundNames[i]);
     }
     if (result->m_boundValues) XFree_System(result->m_boundValues);
     if (result->m_boundTypes) XFree_System(result->m_boundTypes);
@@ -156,7 +156,7 @@ static bool xsql_result_store_value(XSqlResult* result, size_t position,
     if (!result || !value || position >= result->m_boundCount) return false;
     copy = XVariant_create_copy(value);
     if (!copy) return false;
-    if (result->m_boundValues[position]) XVariant_delete_base(result->m_boundValues[position]);
+    if (result->m_boundValues[position]) XClassDelete(result->m_boundValues[position]);
     result->m_boundValues[position] = copy;
     result->m_boundTypes[position] = type;
     return true;
@@ -166,12 +166,12 @@ static bool xsql_result_append_placeholder(XSqlResult* result, XString* name)
 {
     size_t position;
     if (!result) {
-        if (name) XString_delete_base(name);
+        if (name) XClassDelete(name);
         return false;
     }
     position = result->m_boundCount;
     if (!xsql_result_reserve_bindings(result, position + 1)) {
-        if (name) XString_delete_base(name);
+        if (name) XClassDelete(name);
         return false;
     }
     result->m_boundValues[position] = XVariant_create_null();
@@ -247,7 +247,7 @@ static bool xsql_result_set_binding(XSqlResult* result, int position,
         result->m_boundNames[index] = NULL;
     }
     if (!xsql_result_store_value(result, (size_t)position, value, type)) return false;
-    if (result->m_boundNames[position]) XString_delete_base(result->m_boundNames[position]);
+    if (result->m_boundNames[position]) XClassDelete(result->m_boundNames[position]);
     result->m_boundNames[position] = name ? XString_create_copy(name) : NULL;
     return result->m_boundValues[position] != NULL;
 }
@@ -256,13 +256,13 @@ static void VXSqlResult_deinit(XSqlResult* result)
 {
     if (!result) return;
     xsql_result_clear_bindings(result);
-    if (result->m_lastQuery) XString_delete_base(result->m_lastQuery);
-    if (result->m_executedQuery) XString_delete_base(result->m_executedQuery);
+    if (result->m_lastQuery) XClassDelete(result->m_lastQuery);
+    if (result->m_executedQuery) XClassDelete(result->m_executedQuery);
     result->m_lastQuery = NULL;
     result->m_executedQuery = NULL;
-    XSqlError_deinit_base(&result->m_lastError);
-    XSqlRecord_deinit_base(&result->m_record);
-    XVariant_deinit_base(&result->m_lastInsertId);
+    XClassDeinit(&result->m_lastError);
+    XClassDeinit(&result->m_record);
+    XClassDeinit(&result->m_lastInsertId);
     XClass_Deinit_Parent(XClass, result);
 }
 
@@ -271,9 +271,9 @@ static void VXSqlResult_copy(XSqlResult* dest, const XSqlResult* src)
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XSqlResult_init(dest, src->m_driver);
     dest->m_driver = src->m_driver;
-    XCopy(&dest->m_lastError, &src->m_lastError);
-    XCopy(&dest->m_record, &src->m_record);
-    XCopy(&dest->m_lastInsertId, &src->m_lastInsertId);
+    XClassCopy(&dest->m_lastError, &src->m_lastError);
+    XClassCopy(&dest->m_record, &src->m_record);
+    XClassCopy(&dest->m_lastInsertId, &src->m_lastInsertId);
     xsql_result_assign_string(&dest->m_lastQuery, src->m_lastQuery);
     xsql_result_assign_string(&dest->m_executedQuery, src->m_executedQuery);
     xsql_result_clear_bindings(dest);
@@ -318,7 +318,7 @@ bool XSqlResult_prepare_base(XSqlResult* result, const XString* query) { return 
 bool XSqlResult_savePrepare_base(XSqlResult* result, const XString* query) { return result && !XClassIsVtableNull(result) && XClassGetVirtualFunc(result, EXSqlResult_SavePrepare, bool(*)(XSqlResult*, const XString*))(result, query); }
 void XSqlResult_bindValue_base(XSqlResult* result, int position, const XVariant* value, XSqlParamType type) { if (result && !XClassIsVtableNull(result)) XClassGetVirtualFunc(result, EXSqlResult_BindValuePos, void(*)(XSqlResult*, int, const XVariant*, XSqlParamType))(result, position, value, type); }
 void XSqlResult_bindValue_2_base(XSqlResult* result, const XString* name, const XVariant* value, XSqlParamType type) { if (result && name && !XClassIsVtableNull(result)) XClassGetVirtualFunc(result, EXSqlResult_BindValueName, void(*)(XSqlResult*, const XString*, const XVariant*, XSqlParamType))(result, name, value, type); }
-void XSqlResult_bindValue_utf8_base(XSqlResult* result, const char* name, const XVariant* value, XSqlParamType type) { XString* key = name ? XString_create_utf8(name) : NULL; if (result && key && !XClassIsVtableNull(result)) XClassGetVirtualFunc(result, EXSqlResult_BindValueName, void(*)(XSqlResult*, const XString*, const XVariant*, XSqlParamType))(result, key, value, type); if (key) XString_delete_base(key); }
+void XSqlResult_bindValue_utf8_base(XSqlResult* result, const char* name, const XVariant* value, XSqlParamType type) { XString* key = name ? XString_create_utf8(name) : NULL; if (result && key && !XClassIsVtableNull(result)) XClassGetVirtualFunc(result, EXSqlResult_BindValueName, void(*)(XSqlResult*, const XString*, const XVariant*, XSqlParamType))(result, key, value, type); if (key) XClassDelete(key); }
 void XSqlResult_addBindValue(XSqlResult* result, const XVariant* value, XSqlParamType type) { if (result) { XSqlResult_bindValue_base(result, (int)result->m_bindCount, value, type); ++result->m_bindCount; } }
 
 XVariant* XSqlResult_boundValue_utf8(const XSqlResult* result, const char* name) { return XSqlResult_boundValue(result, xsql_result_find_name(result, name)); }
@@ -340,7 +340,7 @@ bool XSqlResult_hasOutValues(const XSqlResult* result) { if (!result) return fal
 XSqlBindingSyntax XSqlResult_bindingSyntax(const XSqlResult* result) { return result ? result->m_bindingSyntax : XSqlBindingSyntax_Positional; }
 
 static XVariant* VXSqlResult_data(XSqlResult* result, int field) { (void)field; return result && result->m_at >= 0 ? XSqlRecord_value(&result->m_record, field) : XVariant_create_null(); }
-static bool VXSqlResult_isNull(XSqlResult* result, int field) { XVariant* value = VXSqlResult_data(result, field); bool null = !value || !XVariant_isValid(value); if (value) XVariant_delete_base(value); return null; }
+static bool VXSqlResult_isNull(XSqlResult* result, int field) { XVariant* value = VXSqlResult_data(result, field); bool null = !value || !XVariant_isValid(value); if (value) XClassDelete(value); return null; }
 static bool VXSqlResult_reset(XSqlResult* result, const XString* query) { XSqlResult_setQuery_base(result, query); return XSqlResult_exec_base(result); }
 static bool VXSqlResult_fetch(XSqlResult* result, int index) { if (!result || index < 0 || (result->m_size >= 0 && index >= result->m_size)) { if (result) result->m_at = XSqlLocation_AfterLastRow; return false; } result->m_at = index; return true; }
 static bool VXSqlResult_fetchNext(XSqlResult* result) { return result ? XSqlResult_fetch_base(result, result->m_at + 1) : false; }
@@ -400,7 +400,7 @@ static void VXSqlResult_bindValueName(XSqlResult* result, const XString* name, c
 }
 static void VXSqlResult_setAt(XSqlResult* result, int at) { if (result) result->m_at = at; }
 static void VXSqlResult_setActive(XSqlResult* result, bool active) { if (result) { if (active) xsql_result_assign_string(&result->m_executedQuery, result->m_lastQuery); result->m_active = active; } }
-static void VXSqlResult_setLastError(XSqlResult* result, const XSqlError* error) { if (result && error) XCopy(&result->m_lastError, error); }
+static void VXSqlResult_setLastError(XSqlResult* result, const XSqlError* error) { if (result && error) XClassCopy(&result->m_lastError, error); }
 static void VXSqlResult_setQuery(XSqlResult* result, const XString* query) { if (result) xsql_result_assign_string(&result->m_lastQuery, query); }
 static void VXSqlResult_setSelect(XSqlResult* result, bool select) { if (result) result->m_select = select; }
 static void VXSqlResult_setForwardOnly(XSqlResult* result, bool forwardOnly) { if (result) result->m_forwardOnly = forwardOnly; }
@@ -430,7 +430,7 @@ void XSqlResult_setPositionalBindingEnabled(XSqlResult* result, bool enable) { i
 bool XSqlResult_isPositionalBindingEnabled(const XSqlResult* result) { return result && result->m_positionalBindingEnabled; }
 bool XSqlResult_nextResult_base(XSqlResult* result) { return result && !XClassIsVtableNull(result) && XClassGetVirtualFunc(result, EXSqlResult_NextResult, bool(*)(XSqlResult*))(result); }
 void* XSqlResult_handle_base(XSqlResult* result) { return result && !XClassIsVtableNull(result) ? XClassGetVirtualFunc(result, EXSqlResult_Handle, void*(*)(XSqlResult*))(result) : NULL; }
-void XSqlResult_clear(XSqlResult* result) { if (!result) return; XSqlResult_detachFromResultSet_base(result); xsql_result_clear_bindings(result); if (result->m_lastQuery) { XString_delete_base(result->m_lastQuery); result->m_lastQuery = NULL; } if (result->m_executedQuery) { XString_delete_base(result->m_executedQuery); result->m_executedQuery = NULL; } XSqlRecord_clear(&result->m_record); XSqlError_deinit_base(&result->m_lastError); XSqlError_init(&result->m_lastError); XVariant_setValue_null(&result->m_lastInsertId); result->m_at = XSqlLocation_BeforeFirstRow; result->m_size = -1; result->m_numRowsAffected = -1; result->m_active = false; result->m_select = false; }
+void XSqlResult_clear(XSqlResult* result) { if (!result) return; XSqlResult_detachFromResultSet_base(result); xsql_result_clear_bindings(result); if (result->m_lastQuery) { XClassDelete(result->m_lastQuery); result->m_lastQuery = NULL; } if (result->m_executedQuery) { XClassDelete(result->m_executedQuery); result->m_executedQuery = NULL; } XSqlRecord_clear(&result->m_record); XClassDeinit(&result->m_lastError); XSqlError_init(&result->m_lastError); XVariant_setValue_null(&result->m_lastInsertId); result->m_at = XSqlLocation_BeforeFirstRow; result->m_size = -1; result->m_numRowsAffected = -1; result->m_active = false; result->m_select = false; }
 void XSqlResult_resetBindCount(XSqlResult* result) { if (result) result->m_bindCount = 0; }
 static void VXSqlResult_move(XSqlResult* dest, XSqlResult* src)
 {
@@ -438,9 +438,9 @@ static void VXSqlResult_move(XSqlResult* dest, XSqlResult* src)
     if (XClassIsVtableNull(dest)) XSqlResult_init(dest, src->m_driver);
     XSqlResult_clear(dest);
     dest->m_driver = src->m_driver;
-    XMove(&dest->m_lastError, &src->m_lastError);
-    XMove(&dest->m_record, &src->m_record);
-    XMove(&dest->m_lastInsertId, &src->m_lastInsertId);
+    XClassMove(&dest->m_lastError, &src->m_lastError);
+    XClassMove(&dest->m_record, &src->m_record);
+    XClassMove(&dest->m_lastInsertId, &src->m_lastInsertId);
     dest->m_lastQuery = src->m_lastQuery;
     dest->m_executedQuery = src->m_executedQuery;
     dest->m_boundValues = src->m_boundValues;

@@ -158,7 +158,7 @@ static void xcd_setName(XObject* obj, const char* name)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, name);
     XObject_setObjectName(obj, &tmp);
-    XClass_deinit_base((XClass*)&tmp);
+    XClassDeinit((XClass*)&tmp);
 }
 
 /* 子控件 objectName 常量（对标 Qt 对话框私有子对象命名；槽内经
@@ -181,7 +181,7 @@ static XWidget* xcd_childByName(XDialog* dlg, const char* name)
     XString_assign_utf8(&tmp, name);
     w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
                                     XFindDirectChildrenOnly);
-    XClass_deinit_base((XClass*)&tmp);
+    XClassDeinit((XClass*)&tmp);
     return w;
 }
 
@@ -472,7 +472,7 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
         if (title)
             XWidget_setWindowTitle((XWidget*)dlg, title);
         XColorDialog_setOptions(dlg, options);
-        XColorDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return initial;
     }
     /* 子控件形态：见 XInputDialog 同款注记（单原生窗口模型下窗口
@@ -486,7 +486,7 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
     xcd_initStandardTable(dlg);
     root = XBoxLayout_create(XBoxLayoutDirection_TopToBottom, (XWidget*)dlg);
     if (!root) {
-        XColorDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return initial;
     }
     /* 标题条带让位（对标 Qt qcolordialog.cpp 布局：色板区在标题栏
@@ -614,10 +614,10 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
             result = XColorDialog_selectedColor(dlg);
         else
             result = XColor_create(); /* 对标 Qt：取消返回失效颜色。 */
-        if (root) XLayout_delete_base((XLayout*)root);
-        if (rgbRow) XLayout_delete_base((XLayout*)rgbRow);
-        if (bar) XLayout_delete_base((XLayout*)bar);
-        XColorDialog_delete_base(dlg);
+        if (root) XClassDelete((XLayout*)root);
+        if (rgbRow) XClassDelete((XLayout*)rgbRow);
+        if (bar) XClassDelete((XLayout*)bar);
+        XClassDelete(dlg);
         return result;
     }
 }
@@ -627,7 +627,7 @@ XColor XColorDialog_getColor_2(XColor initial, XWidget* parent,
 {
     XString* t = title ? XString_create_utf8(title) : NULL;
     XColor result = XColorDialog_getColor(initial, parent, t, options);
-    if (t) XString_delete_base((XClass*)t);
+    if (t) XClassDelete((XClass*)t);
     return result;
 }
 

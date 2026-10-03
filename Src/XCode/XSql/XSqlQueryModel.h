@@ -62,14 +62,12 @@ XVtable* XSqlQueryModel_class_init(void);
 void XSqlQueryModel_init(XSqlQueryModel* model);
 /**
  * @brief 创建查询模型。
- * @return 新模型，调用者必须使用 XSqlQueryModel_delete_base 释放；失败返回 NULL。
+ * @return 新模型，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlQueryModel* XSqlQueryModel_create_ex(XMemoryType memory);
 
 /** @brief 调用 XClass 析构入口释放查询、行缓存、表头和最近错误。 */
-#define XSqlQueryModel_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlQueryModel_create 返回的查询模型。 */
-#define XSqlQueryModel_delete_base XClass_delete_base
 
 /**
  * @brief 获取当前已加载行数。
@@ -87,13 +85,13 @@ int XSqlQueryModel_columnCount(const XSqlQueryModel* model);
  * @brief 获取指定行记录副本。
  * @param model 查询模型；NULL 返回空记录。
  * @param row 行号，从 0 开始。
- * @return 新记录对象，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlQueryModel_record(const XSqlQueryModel* model, int row);
 /**
  * @brief 获取当前查询字段记录副本。
  * @param model 查询模型；NULL 返回空记录。
- * @return 新记录对象，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlQueryModel_record_current(const XSqlQueryModel* model);
 /**
@@ -102,7 +100,7 @@ XSqlRecord* XSqlQueryModel_record_current(const XSqlQueryModel* model);
  * @param row 行号，从 0 开始。
  * @param column 列号，从 0 开始。
  * @param role 数据角色。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlQueryModel_data(const XSqlQueryModel* model, int row, int column, XSqlItemDataRole role);
 /**
@@ -111,7 +109,7 @@ XVariant* XSqlQueryModel_data(const XSqlQueryModel* model, int row, int column, 
  * @param section 表头索引，从 0 开始。
  * @param orientation 水平或垂直方向。
  * @param role 数据角色。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlQueryModel_headerData(const XSqlQueryModel* model, int section, XSqlOrientation orientation, XSqlItemDataRole role);
 /**
@@ -179,7 +177,7 @@ const XSqlQuery* XSqlQueryModel_query_const(const XSqlQueryModel* model);
 /**
  * @brief 获取当前查询副本。
  * @param model 查询模型；NULL 返回空查询对象。
- * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放。
+ * @return 新查询对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlQuery* XSqlQueryModel_query(const XSqlQueryModel* model);
 /**
@@ -191,7 +189,7 @@ void XSqlQueryModel_clear(XSqlQueryModel* model);
 /**
  * @brief 获取最近模型错误副本。
  * @param model 查询模型；NULL 返回未知错误对象。
- * @return 新错误对象，调用者必须使用 XSqlError_delete_base 释放。
+ * @return 新错误对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlError* XSqlQueryModel_lastError(const XSqlQueryModel* model);
 /**
@@ -209,7 +207,7 @@ bool XSqlQueryModel_canFetchMore(const XSqlQueryModel* model);
 /**
  * @brief 获取角色名称列表。
  * @param model 查询模型；当前参数仅用于保持 API 一致，可为 NULL。
- * @return 新字符串列表，调用者必须使用 XStringList_delete_base 释放。
+ * @return 新字符串列表，调用者必须使用 XClassDelete 释放。
  */
 XStringList* XSqlQueryModel_roleNames(const XSqlQueryModel* model);
 /**

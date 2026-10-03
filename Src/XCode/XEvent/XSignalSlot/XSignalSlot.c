@@ -83,10 +83,10 @@ void XSignalSlot_deinit(XSignalSlot* manager)
 				XVector_remove_base(recvSS->bindSignalList, XVector_indexOf(recvSS->bindSignalList, &conn,0),1);
 			}
 		}
-		XVector_delete_base(signal->connList);  // 释放连接堆内存
+		XClassDelete(signal->connList);  // 释放连接堆内存
 		signal->connList = NULL;
 	}
-	XMapBase_delete_base(manager->signalMap);
+	XClassDelete(manager->signalMap);
 	manager->signalMap = NULL;
 	//清除链接的信号(本对象作为接收者)
 	for_each_iterator(manager->bindSignalList, XVector, it)
@@ -100,7 +100,7 @@ void XSignalSlot_deinit(XSignalSlot* manager)
 		//从发送者的连接列表中移除(会释放连接堆内存)
 		XVector_remove_base(signalObj->connList, XVector_indexOf(signalObj->connList, &conn,0),1);
 	}
-	XVector_delete_base(manager->bindSignalList);
+	XClassDelete(manager->bindSignalList);
 	manager->bindSignalList = NULL;
 
 	manager->obj = NULL;
@@ -444,7 +444,7 @@ static void emit(XSignalSlot* manager, size_t signal, XVarList* args, XAtomic_in
 		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args,ref_count, priority); break;
 		}
 	}
-	XVector_delete_base(snapshot);
+	XClassDelete(snapshot);
 	emit_release_ref(args, ref_count);  // 释放本emit引用
 }
 void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, int priority)

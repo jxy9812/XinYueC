@@ -316,14 +316,12 @@ void XIcon_init_engine(XIcon* self, XIconEngine* engine);
  * @param self 待释放的对象指针
  */
 /** @brief 通过 XClass 虚表释放图标资源。 @param self 待释放的图标对象指针。 */
-#define XIcon_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      虚函数调度：删除（释放堆上对象）
  * @param self 待删除的对象指针
  */
 /** @brief 删除堆上的图标对象。 @param self 待删除的图标对象指针。 */
-#define XIcon_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 查询方法 ========== */
 

@@ -127,7 +127,7 @@ void XToolButton_init(XToolButton* self, XWidget* parent,
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      flags 窗口标志；可传 0。
  * @return     新建的已初始化对象指针；分配失败返回 NULL。成功返回的
- *             对象由调用方拥有，必须使用 XToolButton_delete_base 释放。
+ *             对象由调用方拥有，必须使用 XClassDelete 释放。
  */
 #define XToolButton_create(parent, flags) \
     XToolButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
@@ -145,16 +145,14 @@ XToolButton* XToolButton_create_ex(XMemoryType memory, XWidget* parent,
 /**
  * @brief      通过当前 XClass 虚表释放工具按钮对象所拥有的资源。
  * @param      self 已初始化的栈对象或外部存储对象；可为 NULL。
- * @return     无返回值；堆对象必须使用 XToolButton_delete_base。
+ * @return     无返回值；堆对象必须使用 XClassDelete。
  */
-#define XToolButton_deinit_base(self)  XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      释放工具按钮对象资源并按对象所有权删除其存储空间。
  * @param      self 由 XToolButton_create 系列返回的堆对象；可为 NULL。
- * @return     无返回值；栈对象请使用 XToolButton_deinit_base。
+ * @return     无返回值；栈对象请使用 XClassDeinit。
  */
-#define XToolButton_delete_base(self)  XClass_delete_base((XClass*)(self))
 
 /* ==================== 默认动作（对标 QToolButton） ==================== */
 

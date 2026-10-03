@@ -221,25 +221,12 @@ XVtable* XFtp_class_init(void);
 void XFtp_init(XFtp* ftp);
 
 /**
- * @brief 反初始化 XFtp 对象（释放资源，不释放自身内存）
- * @param[in,out] ftp 已初始化的对象
- */
-void XFtp_deinit_base(XFtp* ftp);
-
-/**
  * @brief 创建 FTP 客户端实例
- * @return 新实例；失败返回 NULL。调用方使用 XFtp_delete 释放；在 XFtp 信号
- *         （readyRead/commandFinished/done 等）槽内禁止 XFtp_delete，须用
+ * @return 新实例；失败返回 NULL。调用方使用 XClassDelete 释放；在 XFtp 信号
+ *         （readyRead/commandFinished/done 等）槽内禁止 XClassDelete，须用
  *         XFtp_deleteLater。
  */
 XFtp* XFtp_create_ex(XMemoryType memory);
-
-/**
- * @brief 销毁 FTP 客户端实例
- * @param[in] ftp XFtp_create 返回的实例；NULL 安全
- * @note 仅限非重入上下文的显式析构；信号/回调上下文须改用 XFtp_deleteLater
- */
-void XFtp_delete(XFtp* ftp);
 
 /******************************************************************************************
  * 内存管理宏

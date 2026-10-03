@@ -180,7 +180,7 @@ bool XImageCodecInternal_decodeXbm(const uint8_t* data, size_t size, XImage* out
     expected = rowBytes * (size_t)header.m_height;
     XImage_init_ex(&image, header.m_width, header.m_height, XImageFormat_MonoLSB);
     if (XImage_isNull(&image)) {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return false;
     }
     XImage_fill(&image, 0u);
@@ -199,7 +199,7 @@ bool XImageCodecInternal_decodeXbm(const uint8_t* data, size_t size, XImage* out
             int high = xbm_hex(data[current + 2u]);
             int low = xbm_hex(data[current + 3u]);
             if (high < 0 || low < 0) {
-                XImage_deinit_base(&image);
+                XClassDeinit(&image);
                 return false;
             }
             {
@@ -207,7 +207,7 @@ bool XImageCodecInternal_decodeXbm(const uint8_t* data, size_t size, XImage* out
                 size_t x = written % rowBytes;
                 uint8_t* line = XImage_scanLine(&image, y);
                 if (!line) {
-                    XImage_deinit_base(&image);
+                    XClassDeinit(&image);
                     return false;
                 }
                 line[x] = (uint8_t)((high << 4) | low);
@@ -216,7 +216,7 @@ bool XImageCodecInternal_decodeXbm(const uint8_t* data, size_t size, XImage* out
             cursor = current + 4u;
         }
     }
-    XMove(out, &image);
+    XClassMove(out, &image);
     return true;
 }
 
@@ -282,14 +282,14 @@ bool XImageCodecInternal_encodeXbmNamed(const XImage* image, const char* name,
                  "static char %s_bits[] = {\n ",
                  identifier, width, identifier, height, identifier) <= 0 ||
         !XImageCodecInternal_appendBytes(out, header, XStrlen(header))) {
-        XImage_deinit_base(&mono);
+        XClassDeinit(&mono);
         return false;
     }
     rowBytes = (width + 7) / 8;
     for (y = 0; y < height; ++y) {
         const uint8_t* line = XImage_constScanLine(&mono, y);
         if (!line) {
-            XImage_deinit_base(&mono);
+            XClassDeinit(&mono);
             return false;
         }
         for (i = 0; i < rowBytes; ++i) {
@@ -298,12 +298,12 @@ bool XImageCodecInternal_encodeXbmNamed(const XImage* image, const char* name,
             if (invert) value = (uint8_t)~value;
             if (XSnprintf(token, sizeof(token), "0x%02x%s", value, last ? "" : ",") <= 0 ||
                 !XImageCodecInternal_appendBytes(out, token, XStrlen(token))) {
-                XImage_deinit_base(&mono);
+                XClassDeinit(&mono);
                 return false;
             }
             if (!last && ++count == 15) {
                 if (!XImageCodecInternal_appendBytes(out, "\n ", 2u)) {
-                    XImage_deinit_base(&mono);
+                    XClassDeinit(&mono);
                     return false;
                 }
                 count = 0;
@@ -311,10 +311,10 @@ bool XImageCodecInternal_encodeXbmNamed(const XImage* image, const char* name,
         }
     }
     if (!XImageCodecInternal_appendBytes(out, " };\n", 4u)) {
-        XImage_deinit_base(&mono);
+        XClassDeinit(&mono);
         return false;
     }
-    XImage_deinit_base(&mono);
+    XClassDeinit(&mono);
     return true;
 }
 

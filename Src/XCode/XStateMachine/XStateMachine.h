@@ -121,8 +121,6 @@ void XStateMachine_init(XStateMachine* machine);
  */
 void XStateMachine_init_ex(XStateMachine* machine, XState_ChildMode childMode);
 
-#define XStateMachine_delete_base XState_delete_base
-#define XStateMachine_deinit_base XState_deinit_base
 
 /**
  * @brief 将状态添加为状态机的顶层状态并取得所有权。

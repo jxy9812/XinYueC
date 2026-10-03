@@ -174,14 +174,12 @@ void XImage_init_file_2(XImage* self, const char* fileName, const char* format);
  * @param self 待释放的对象指针
  */
 /** @brief 通过 XClass 虚表释放图像资源。 @param self 待释放的图像对象指针。 */
-#define XImage_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      虚函数调度：删除（释放堆上对象）
  * @param self 待删除的对象指针
  */
 /** @brief 删除堆上的图像对象。 @param self 待删除的图像对象指针。 */
-#define XImage_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 查询方法 ========== */
 
@@ -856,7 +854,7 @@ int XImage_textCount(const XImage* self);
 /**
  * @brief 获取图像文本元数据键的深复制列表。
  * @param self 图像对象指针；空图像也会返回空列表。
- * @return 新建的 XStringList；调用者负责使用 XStringList_delete_base 释放。
+ * @return 新建的 XStringList；调用者负责使用 XClassDelete 释放。
  * @note 返回列表按键的升序排列，修改返回列表不会影响图像自身。
  */
 XStringList* XImage_textKeys(const XImage* self);

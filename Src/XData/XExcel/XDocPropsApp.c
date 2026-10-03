@@ -37,8 +37,8 @@ void XDocPropsApp_delete(XDocPropsApp* self)
 {
     if (!self) return;
     XDocPropsApp_clearParts(self);
-    if (self->m_titlesOfPartsList) XStringList_delete_base(self->m_titlesOfPartsList);
-    if (self->m_headingPairsList) XVector_delete_base(self->m_headingPairsList);
+    if (self->m_titlesOfPartsList) XClassDelete(self->m_titlesOfPartsList);
+    if (self->m_headingPairsList) XClassDelete(self->m_headingPairsList);
     if (self->m_properties)
     {
         /* 释放所有 XString* 键和值 */
@@ -50,12 +50,12 @@ void XDocPropsApp_delete(XDocPropsApp* self)
             if (pair)
             {
                 XString* key = *(XString**)XPair_first(pair);
-                if (key) XString_delete_base(key);
+                if (key) XClassDelete(key);
                 XString* val = *(XString**)XPair_second(pair);
-                if (val) XString_delete_base(val);
+                if (val) XClassDelete(val);
             }
         }
-        XMap_delete_base(self->m_properties);
+        XClassDelete(self->m_properties);
     }
     XAbstractOOXmlFile_deinit(&self->m_base);
     XFree_System(self);
@@ -74,7 +74,7 @@ void XDocPropsApp_addHeadingPair(XDocPropsApp* self, const XString* name, int va
     pair.m_name = XString_create_copy(name);
     pair.m_value = value;
     if (!pair.m_name || !XVector_push_back_2(self->m_headingPairsList, &pair, 1)) {
-        if (pair.m_name) XString_delete_base(pair.m_name);
+        if (pair.m_name) XClassDelete(pair.m_name);
     }
 }
 
@@ -93,7 +93,7 @@ bool XDocPropsApp_setProperty(XDocPropsApp* self, const XString* name, const XSt
     XString* keyStr = XString_create_copy(name);
     if (!keyStr) return false;
     XString* valStr = XString_create_copy(value);
-    if (!valStr) { XString_delete_base(keyStr); return false; }
+    if (!valStr) { XClassDelete(keyStr); return false; }
     XMap_insert_base(self->m_properties, &keyStr, &valStr);
     return true;
 }
@@ -134,7 +134,7 @@ int XDocPropsApp_propertyNames(const XDocPropsApp* self, XString*** names)
         XString* key = pair ? *(XString**)XPair_first(pair) : NULL;
         result[index] = key ? XString_create_copy(key) : NULL;
         if (!result[index]) {
-            for (int i = 0; i < index; ++i) XString_delete_base(result[i]);
+            for (int i = 0; i < index; ++i) XClassDelete(result[i]);
             XFree_System(result);
             return 0;
         }
@@ -153,8 +153,8 @@ static void clear_properties(XDocPropsApp* self)
         if (!pair) continue;
         XString* key = *(XString**)XPair_first(pair);
         XString* value = *(XString**)XPair_second(pair);
-        if (key) XString_delete_base(key);
-        if (value) XString_delete_base(value);
+        if (key) XClassDelete(key);
+        if (value) XClassDelete(value);
     }
     XMap_clear_base(self->m_properties);
 }
@@ -168,7 +168,7 @@ void XDocPropsApp_clearParts(XDocPropsApp* self)
         for (size_t i = 0; i < count; ++i) {
             XDocPropsAppHeadingPair* pair =
                 (XDocPropsAppHeadingPair*)XVector_at_base(self->m_headingPairsList, i);
-            if (pair && pair->m_name) XString_delete_base(pair->m_name);
+            if (pair && pair->m_name) XClassDelete(pair->m_name);
         }
         XVector_clear_base(self->m_headingPairsList);
     }
@@ -186,7 +186,7 @@ bool XDocPropsApp_saveToXmlFile(XDocPropsApp* self, const XString* filePath)
         XIODevice_write_1((XIODevice*)file, (const char*)data, (int64_t)len) == (int64_t)len;
     if (file) {
         if (XIODevice_isOpen((XIODevice*)file)) XIODevice_close_base((XIODevice*)file);
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
     }
     XFree_System(data);
     return ok;
@@ -197,16 +197,16 @@ bool XDocPropsApp_loadFromXmlFile(XDocPropsApp* self, const XString* filePath)
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* data = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!data) return false;
     bool ok = XDocPropsApp_loadFromXmlData(self, XByteArray_data(data),
         XByteArray_size_base((XContainer*)data));
-    XByteArray_delete_base(data);
+    XClassDelete(data);
     return ok;
 }
 
@@ -286,7 +286,7 @@ bool XDocPropsApp_saveToXmlData(const XDocPropsApp* self, uint8_t** outData, siz
             *outLen = size;
         }
     }
-    XXmlStreamWriter_delete_base(writer);
+    XClassDelete(writer);
     return *outData != NULL;
 }
 
@@ -296,12 +296,12 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
     XByteArray* bytes = XByteArray_create_with_data((const char*)data, len);
     XXmlStreamReader* reader = XXmlStreamReader_create();
     if (!bytes || !reader) {
-        if (bytes) XByteArray_delete_base(bytes);
-        if (reader) XXmlStreamReader_delete_base(reader);
+        if (bytes) XClassDelete(bytes);
+        if (reader) XClassDelete(reader);
         return false;
     }
     XXmlStreamReader_addData(reader, bytes);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     XDocPropsApp_clearParts(self);
     clear_properties(self);
     bool inHeadingPairs = false;
@@ -320,7 +320,7 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (inTitles) XDocPropsApp_addPartTitle(self, value);
                 else if (inHeadingPairs) {
-                    if (pendingHeading) XString_delete_base(pendingHeading);
+                    if (pendingHeading) XClassDelete(pendingHeading);
                     pendingHeading = value ? XString_create_copy(value) : NULL;
                 }
             } else if (inHeadingPairs && XString_equals_utf8(name, "i4", XChar_CaseSensitive)) {
@@ -328,7 +328,7 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (pendingHeading && value) {
                     XDocPropsApp_addHeadingPair(self, pendingHeading, XString_toInt(value, NULL, 10));
-                    XString_delete_base(pendingHeading);
+                    XClassDelete(pendingHeading);
                     pendingHeading = NULL;
                 }
             } else if (!inHeadingPairs && !inTitles &&
@@ -339,23 +339,23 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
                 const XString* value = XXmlStreamReader_readElementText(reader,
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (!key || !value || !XDocPropsApp_setProperty(self, key, value)) {
-                    if (key) XString_delete_base(key);
-                    if (pendingHeading) XString_delete_base(pendingHeading);
-                    XXmlStreamReader_delete_base(reader);
+                    if (key) XClassDelete(key);
+                    if (pendingHeading) XClassDelete(pendingHeading);
+                    XClassDelete(reader);
                     XDocPropsApp_clearParts(self);
                     clear_properties(self);
                     return false;
                 }
-                XString_delete_base(key);
+                XClassDelete(key);
             }
         } else if (token == XXmlStream_EndElement && name) {
             if (XString_equals_utf8(name, "HeadingPairs", XChar_CaseSensitive)) inHeadingPairs = false;
             else if (XString_equals_utf8(name, "TitlesOfParts", XChar_CaseSensitive)) inTitles = false;
         }
     }
-    if (pendingHeading) XString_delete_base(pendingHeading);
+    if (pendingHeading) XClassDelete(pendingHeading);
     bool ok = !XXmlStreamReader_hasError(reader);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     if (!ok) {
         XDocPropsApp_clearParts(self);
         clear_properties(self);

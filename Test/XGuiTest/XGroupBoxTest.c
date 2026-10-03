@@ -177,12 +177,12 @@ bool XGroupBoxTest_runAll(void)
             XObject_disconnect_2(conn3);
         }
 
-        XWidget_delete_base(grandChild);
-        XWidget_delete_base(child);
+        XClassDelete(grandChild);
+        XClassDelete(child);
         XGroupBox_setCheckable(box, false);
     }
 
-    XGroupBox_delete_base(box);
+    XClassDelete(box);
 
     {
         int failures = gb_failures;

@@ -101,7 +101,6 @@ XChartView* XChartView_create_ex(XMemoryType memory, XWidget* parent,
     XChartView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, flags)
 
 /** @brief 删除堆上图表视图（查表分派析构并释放内存）。 */
-#define XChartView_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief 读取图表模型。 @param self 目标视图指针。 @return 图表指针（内部拥有）。 */
 XChart* XChartView_chart(const XChartView* self);

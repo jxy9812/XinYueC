@@ -171,7 +171,7 @@ XMenu* XTextMenu_createStandard(const XTextMenuOps* ops)
     name = XString_create_utf8("qt_edit_menu");
     if (name) {
         XObject_setObjectName((XObject*)menu, name);
-        XString_delete_base((XClass*)name);
+        XClassDelete((XClass*)name);
     }
     ctx = xtextmenu_contextCreate(ops, menu);
     if (!ctx) return menu; /* 分配失败：返回无条目菜单（不接回调）。 */

@@ -83,8 +83,6 @@ void XMenuBar_init(XMenuBar* self, XWidget* parent, XWidgetFlags flags);
 #define XMenuBar_create(parent, flags) XMenuBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XMenuBar* XMenuBar_create_ex(XMemoryType memory, XWidget* parent,
                              XWidgetFlags flags);
-#define XMenuBar_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XMenuBar_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 菜单管理（对标 QMenuBar public API） ==================== */
 

@@ -203,7 +203,7 @@ bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes);
 /**
  * @brief 获取本机主机名。
  * @return 成功返回新建的 XString 主机名，内部按 UTF-16 代码单元存储，调用方
- *         必须使用 XString_delete_base 释放；平台不支持、查询或分配失败返回 NULL。
+ *         必须使用 XClassDelete 释放；平台不支持、查询或分配失败返回 NULL。
  */
 XString* XDeviceNetwork_localHostName(void);
 
@@ -212,7 +212,7 @@ XString* XDeviceNetwork_localHostName(void);
  * @param name 待解析主机名；不能为 NULL，调用期间只读借用，内部按 UTF-16
  *             代码单元存储，函数不会保存或取得所有权。
  * @return 成功返回新建的 XVector<XHostAddress> 地址列表，元素由容器拥有，
- *         调用方必须使用 XVector_delete_base 释放；参数无效、解析或分配失败
+ *         调用方必须使用 XClassDelete 释放；参数无效、解析或分配失败
  *         返回 NULL。成功但没有地址时允许返回空容器。
  */
 XVector* XDeviceNetwork_lookupName(const XString* name);

@@ -464,7 +464,7 @@ static void VXGroupBox_move(XGroupBox* self, XGroupBox* other)
     XClass_Parent(XWidget, EXClass_Move,
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                (XWidget*)other);
-    if (self->m_title) XString_delete_base(self->m_title);
+    if (self->m_title) XClassDelete(self->m_title);
     self->m_title = other->m_title;
     other->m_title = XString_create();
     self->m_alignment = other->m_alignment;
@@ -484,7 +484,7 @@ static void VXGroupBox_deinit(XGroupBox* self)
 {
     if (!self) return;
     if (self->m_title) {
-        XString_delete_base(self->m_title);
+        XClassDelete(self->m_title);
         self->m_title = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);

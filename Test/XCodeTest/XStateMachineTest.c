@@ -312,8 +312,8 @@ static void XStateMachineTest_keyEventTransition(void)
     XStateMachineTest_expect(XAbstractState_active((XAbstractState*)finalState),
                              "按键和必要修饰键掩码同时匹配时进入目标状态");
 
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)eventSource);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)eventSource);
 }
 
 /** @brief 验证鼠标按键和命中测试多边形共同参与鼠标事件匹配。 */
@@ -333,7 +333,7 @@ static void XStateMachineTest_mouseEventTransition(void)
 
     XVector_push_back_2(path, points, sizeof(points) / sizeof(points[0]));
     XMouseEventTransition_setHitTestPath(transition, path);
-    XVector_delete_base((XClass*)path);
+    XClassDelete((XClass*)path);
     XAbstractTransition_setTargetState(
         (XAbstractTransition*)transition, (XAbstractState*)finalState);
     XState_setInitialState((XState*)machine, (XAbstractState*)waiting);
@@ -362,8 +362,8 @@ static void XStateMachineTest_mouseEventTransition(void)
     XStateMachineTest_expect(XAbstractState_active((XAbstractState*)finalState),
                              "鼠标按键和命中测试区域同时匹配时进入目标状态");
 
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)eventSource);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)eventSource);
 }
 
 /**
@@ -438,9 +438,9 @@ static void XStateMachineTest_postEventPriority(void)
         !XStateMachine_postEvent(
             machine, rejectedEvent, XStateMachine_NormalPriority),
         "停止后的状态机拒绝 postEvent 且不取得事件所有权");
-    XEvent_delete_base((XClass*)rejectedEvent);
+    XClassDelete((XClass*)rejectedEvent);
 
-    XStateMachine_delete_base((XClass*)machine);
+    XClassDelete((XClass*)machine);
 }
 
 // ==================== 信号转换和执行算法测试 ====================
@@ -495,8 +495,8 @@ static void XStateMachineTest_parallelSignalEvent(void)
 
     XStateMachine_stop(machine);
     XStateMachineTest_processEvents();
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)sender);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)sender);
 }
 
 /**
@@ -529,7 +529,7 @@ static void XStateMachineTest_multipleTargetStates(void)
         targets, targetArray, sizeof(targetArray) / sizeof(targetArray[0]));
     bool targetsSet = XAbstractTransition_setTargetStates(
         (XAbstractTransition*)transition, targets);
-    XVector_delete_base((XClass*)targets);
+    XClassDelete((XClass*)targets);
     XState_setInitialState((XState*)machine, (XAbstractState*)source);
 
     XStateMachineTest_expect(
@@ -556,8 +556,8 @@ static void XStateMachineTest_multipleTargetStates(void)
 
     XStateMachine_stop(machine);
     XStateMachineTest_processEvents();
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)sender);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)sender);
 }
 
 /** @brief 验证同一事件下，后代源状态的转换优先于祖先源状态。 */
@@ -596,8 +596,8 @@ static void XStateMachineTest_descendantTransitionPriority(void)
 
     XStateMachine_stop(machine);
     XStateMachineTest_processEvents();
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)sender);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)sender);
 }
 
 /**
@@ -652,8 +652,8 @@ static void XStateMachineTest_transitionType(
 
     XStateMachine_stop(machine);
     XStateMachineTest_processEvents();
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)sender);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)sender);
 }
 
 /** @brief 验证显式停止的异步信号时序及 configuration 保留行为。 */
@@ -701,7 +701,7 @@ static void XStateMachineTest_explicitStop(void)
         XAbstractState_active((XAbstractState*)waiting),
         "显式停止不执行退出动作并保留最后活动配置");
 
-    XStateMachine_delete_base((XClass*)machine);
+    XClassDelete((XClass*)machine);
 }
 
 /** @brief 验证延迟事件到期投递、取消和失败时的所有权规则。 */
@@ -770,11 +770,11 @@ static void XStateMachineTest_delayedEventCancellation(void)
     XStateMachineTest_expect(
         XStateMachine_postDelayedEvent(machine, rejectedEvent, -1) == -1,
         "负延迟被拒绝并返回 -1");
-    XEvent_delete_base((XClass*)rejectedEvent);
+    XClassDelete((XClass*)rejectedEvent);
 
     XStateMachine_stop(machine);
     XStateMachineTest_processEvents();
-    XStateMachine_delete_base((XClass*)machine);
+    XClassDelete((XClass*)machine);
 }
 
 /** @brief 验证状态、历史状态和转换属性 API 的参数约束与读回结果。 */
@@ -881,15 +881,15 @@ static void XStateMachineTest_propertyApi(void)
         !XMouseEventTransition_setHitTestPath(mouseTransition, invalidPath),
         "鼠标命中路径拒绝非 XPoint 元素类型的容器");
 
-    XVector_delete_base((XClass*)invalidPath);
-    XMouseEventTransition_delete_base((XClass*)mouseTransition);
-    XKeyEventTransition_delete_base((XClass*)keyTransition);
-    XEventTransition_delete_base((XClass*)eventTransition);
-    XSignalTransition_delete_base((XClass*)signalTransition);
-    XState_delete_base((XClass*)detached);
-    XStateMachine_delete_base((XClass*)otherMachine);
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)sender);
+    XClassDelete((XClass*)invalidPath);
+    XClassDelete((XClass*)mouseTransition);
+    XClassDelete((XClass*)keyTransition);
+    XClassDelete((XClass*)eventTransition);
+    XClassDelete((XClass*)signalTransition);
+    XClassDelete((XClass*)detached);
+    XClassDelete((XClass*)otherMachine);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)sender);
 }
 
 /** @brief 验证目标状态销毁后，转换不会保留悬空指针。 */
@@ -903,14 +903,14 @@ static void XStateMachineTest_targetDeletion(void)
     XAbstractTransition* transition = XState_addTransition_3(
         source, (XAbstractState*)target);
 
-    XState_delete_base((XClass*)target);
+    XClassDelete((XClass*)target);
     XStateMachineTest_expect(
         XAbstractTransition_targetState(transition) == NULL
             && XVector_isEmpty_base((const XContainer*)
                 XAbstractTransition_targetStates_const(transition)),
         "销毁目标状态会同步清除转换中的受保护目标引用");
 
-    XStateMachine_delete_base((XClass*)machine);
+    XClassDelete((XClass*)machine);
 }
 
 /** @brief 验证入口错误由最近祖先的 errorState 恢复。 */
@@ -947,7 +947,7 @@ static void XStateMachineTest_errorState(void)
 
     XStateMachine_stop(machine);
     XStateMachineTest_processEvents();
-    XStateMachine_delete_base((XClass*)machine);
+    XClassDelete((XClass*)machine);
 }
 
 /** @brief 验证没有 errorState 时，状态图错误会停止状态机。 */
@@ -975,7 +975,7 @@ static void XStateMachineTest_unrecoverableError(void)
         !XStateMachine_isRunning(machine) && g_stoppedCount == 1,
         "无法恢复的状态图错误会停止状态机并发出 stopped");
 
-    XStateMachine_delete_base((XClass*)machine);
+    XClassDelete((XClass*)machine);
 }
 
 // ==================== 历史状态测试 ====================
@@ -1034,8 +1034,8 @@ static void XStateMachineTest_shallowHistory(void)
 
     XStateMachine_stop(machine);
     XStateMachineTest_processEvents();
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)sender);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)sender);
 }
 
 // ==================== 菜单公开测试入口 ====================
@@ -1072,8 +1072,8 @@ void XStateMachineEventTest(void)
     XStateMachineTest_expect(!XStateMachine_isRunning(machine),
                              "进入顶层最终状态后状态机自然完成");
 
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)eventSource);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)eventSource);
 
     XStateMachineTest_keyEventTransition();
     XStateMachineTest_mouseEventTransition();
@@ -1112,8 +1112,8 @@ void XStateMachineSignalTest(void)
     XStateMachineTest_expect(!XStateMachine_isRunning(machine),
                              "自然完成清除 running，且不走显式 stopped 路径");
 
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)sender);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)sender);
 
     // 2. 扩展算法和边界 API 测试。
     XStateMachineTest_parallelSignalEvent();
@@ -1188,8 +1188,8 @@ void XHistoryState_Test(void)
 
     XStateMachine_stop(machine);
     XStateMachineTest_processEvents();
-    XStateMachine_delete_base((XClass*)machine);
-    XClass_delete_base((XClass*)sender);
+    XClassDelete((XClass*)machine);
+    XClassDelete((XClass*)sender);
 
     XStateMachineTest_shallowHistory();
     XStateMachineTest_end();

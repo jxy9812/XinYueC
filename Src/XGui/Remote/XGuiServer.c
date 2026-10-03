@@ -312,9 +312,9 @@ static bool xgs_tlsTryLoadFiles(const char* certPath, const char* keyPath)
         ok = XSslSocket_localCertificate(probe) != NULL &&
              XSslSocket_privateKey(probe) != NULL;
     }
-    if (certStr) XString_delete_base((XClass*)certStr);
-    if (keyStr) XString_delete_base((XClass*)keyStr);
-    XClass_delete_base((XClass*)probe);
+    if (certStr) XClassDelete((XClass*)certStr);
+    if (keyStr) XClassDelete((XClass*)keyStr);
+    XClassDelete((XClass*)probe);
     return ok;
 }
 #endif /* XGUI_REMOTE_TLS_ON */
@@ -389,13 +389,13 @@ static bool xgs_sessionReallocShadowLocked(XgsSession* s, int w, int h,
                     XImage_bits(&converted) + (size_t)y * (size_t)dstStride,
                     pf, w);
             }
-            XImage_deinit_base(&s->shadow);
+            XClassDeinit(&s->shadow);
             s->shadow = converted;
         } else {
-            XImage_deinit_base(&converted);
+            XClassDeinit(&converted);
         }
     } else if (s->shadowInited) {
-        XImage_deinit_base(&s->shadow);
+        XClassDeinit(&s->shadow);
         XImage_init(&s->shadow);
     }
 
@@ -540,7 +540,7 @@ static void xgs_buildFbMeta(XGuiServer* self, XgsSession* s,
         if (len > XGUI_REMOTE_MAX_NAME_BYTES) len = XGUI_REMOTE_MAX_NAME_BYTES;
         memcpy(meta->title, utf8, len);
         meta->titleBytes = (uint16_t)len;
-        XString_delete_base(title);
+        XClassDelete(title);
     }
 }
 
@@ -1638,7 +1638,7 @@ static void xgs_pumpSession(XGuiServer* self, XgsSession* s)
                 snprintf(s->lastTitle, sizeof(s->lastTitle), "%s", cur);
                 s->metaPending = true;
             }
-            if (t) XString_delete_base((XClass*)t);
+            if (t) XClassDelete((XClass*)t);
         }
     }
 
@@ -1751,7 +1751,7 @@ static bool xgs_sessionStartWorker(XgsSession* s)
         return false;
     }
     if (!XThread_start(s->thread)) {
-        XClass_delete_base((XClass*)s->thread);
+        XClassDelete((XClass*)s->thread);
         s->thread = NULL;
         XVarList_delete(s->threadArgs);
         s->threadArgs = NULL;
@@ -1816,7 +1816,7 @@ static void xgs_sessionClose(XGuiServer* self, XgsSession* s,
     if (s->thread) {
         XThread_requestInterruption(s->thread);
         if (s->threadStarted) (void)XThread_wait(s->thread, XGS_WORKER_JOIN_MS);
-        XClass_delete_base((XClass*)s->thread);
+        XClassDelete((XClass*)s->thread);
         s->thread = NULL;
     }
     if (s->threadArgs) {
@@ -1826,7 +1826,7 @@ static void xgs_sessionClose(XGuiServer* self, XgsSession* s,
     /* 设备: 拥有(TCP accept)则关闭并销毁; 借用(attachTransport)不动。 */
     if (s->ownDevice && s->device) {
         XIODevice_close_base(s->device);
-        XClass_delete_base((XClass*)s->device);
+        XClassDelete((XClass*)s->device);
     }
     s->device = NULL;
     /* 队列与待写缓冲。 */
@@ -1850,7 +1850,7 @@ static void xgs_sessionClose(XGuiServer* self, XgsSession* s,
     }
     XGuiRemoteFrameReader_deinit(&s->reader);
     if (s->shadowInited) {
-        XImage_deinit_base(&s->shadow);
+        XClassDeinit(&s->shadow);
         s->shadowInited = false;
     }
     if (s->dirtyGrid) XFree_System(s->dirtyGrid);
@@ -1937,7 +1937,7 @@ static void VXGuiServer_deinit(XGuiServer* self)
 #if XNETWORK_ON && XNETWORK_TCPSERVER_ON
         if (d->tcpServer) {
             XTcpServer_close(d->tcpServer);
-            XClass_delete_base((XClass*)d->tcpServer);
+            XClassDelete((XClass*)d->tcpServer);
             d->tcpServer = NULL;
         }
 #endif
@@ -1990,7 +1990,7 @@ XGuiServer* XGuiServer_create_ex(XMemoryType memory, XObject* parent)
     if (!self) return NULL;
     XGuiServer_init(self, parent);
     if (!self->m_d) {
-        XClass_delete_base((XClass*)self); /* 私有块失败: 回收半成品。 */
+        XClassDelete((XClass*)self); /* 私有块失败: 回收半成品。 */
         return NULL;
     }
     Set_Class_Memory(self, memory);
@@ -2143,7 +2143,7 @@ static void xgs_slotNewConnection(XObject* receiver, XVarList* args)
                                                  buf, n);
             }
             XIODevice_close_base(dev);
-            XClass_delete_base((XClass*)sock);
+            XClassDelete((XClass*)sock);
             continue;
         }
 #if XGUI_REMOTE_TLS_ON
@@ -2163,8 +2163,8 @@ static void xgs_slotNewConnection(XObject* receiver, XVarList* args)
                                                XSSL_KeyAlgorithm_Rsa,
                                                XSSL_Pem, NULL);
                 }
-                if (certStr) XString_delete_base((XClass*)certStr);
-                if (keyStr) XString_delete_base((XClass*)keyStr);
+                if (certStr) XClassDelete((XClass*)certStr);
+                if (keyStr) XClassDelete((XClass*)keyStr);
             }
             XSslSocket_startServerEncryption((XSslSocket*)sock);
         }
@@ -2174,7 +2174,7 @@ static void xgs_slotNewConnection(XObject* receiver, XVarList* args)
             if (s) xgs_sessionClose(self, s, -1, (int)XGUI_REMOTE_ERR_INTERNAL);
             else {
                 XIODevice_close_base(dev);
-                XClass_delete_base((XClass*)sock);
+                XClassDelete((XClass*)sock);
             }
             continue;
         }
@@ -2333,11 +2333,11 @@ bool XGuiServer_setPassword(XGuiServer* self, const char* passwordUtf8)
     data = XByteArray_constData(digest);
     size = (int64_t)XByteArray_size_base(digest);
     if (!data || size != (int64_t)XGUI_REMOTE_AUTH_RESPONSE_BYTES) {
-        XByteArray_delete_base(digest);
+        XClassDelete(digest);
         return false;
     }
     memcpy(d->passwordHash, data, XGUI_REMOTE_AUTH_RESPONSE_BYTES);
-    XByteArray_delete_base(digest);
+    XClassDelete(digest);
     d->hasPassword = true;
     return true;
 }

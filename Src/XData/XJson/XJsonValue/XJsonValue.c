@@ -167,19 +167,19 @@ void XJsonValue_deinit(XJsonValue* value)
      case XJsonValue_String:
          if (value->data.string) 
          {
-             XString_delete_base(value->data.string);
+             XClassDelete(value->data.string);
          }
          break;
      case XJsonValue_Array:
          if (value->data.array) 
          {
-             XJsonArray_delete_base(value->data.array);
+             XClassDelete(value->data.array);
          }
          break;
      case XJsonValue_Object:
          if (value->data.object) 
          {
-             XJsonObject_delete_base(value->data.object);
+             XClassDelete(value->data.object);
          }
          break;
      default:
@@ -458,14 +458,14 @@ XVariant* XJsonValue_toVariant(const XJsonValue* val)
     {
         XVariantList* list = XJsonArray_toVariantList(val->data.array);
         XVariant* variant = list ? XVariant_create_list(list) : XVariant_create_null();
-        if (list) XVariantList_delete_base(list);
+        if (list) XClassDelete(list);
         return variant;
     }
     case XJsonValue_Object:
     {
         XVariantMap* map = XJsonObject_toVariantMap(val->data.object);
         XVariant* variant = map ? XVariant_create_map(map) : XVariant_create_null();
-        if (map) XMap_delete_base(map);
+        if (map) XClassDelete(map);
         return variant;
     }
     default:
@@ -525,14 +525,14 @@ XJsonValue* XJsonValue_fromVariant(const XVariant* variant) {
     {
         XJsonArray* array = XJsonArray_fromVariantList(XVariant_toList_ref(variant));
         XJsonValue* value = array ? XJsonValue_create_array(array) : XJsonValue_create_null();
-        if (array) XJsonArray_delete_base(array);
+        if (array) XClassDelete(array);
         return value;
     }
     case XVariantType_Map:
     {
         XJsonObject* object = XJsonObject_fromVariantMap(XVariant_toMap_ref(variant));
         XJsonValue* value = object ? XJsonValue_create_object(object) : XJsonValue_create_null();
-        if (object) XJsonObject_delete_base(object);
+        if (object) XClassDelete(object);
         return value;
     }
     case XVariantType_JsonValue:
@@ -572,7 +572,7 @@ static bool XJsonValue_prepareVariant(XVariant* variant, XJsonValueType type)
     if (variant->m_type != XVariantType_JsonValue ||
         !variant->m_data || variant->m_dataSize != sizeof(XJsonValue)) {
         if (variant->m_data)
-            XVariant_deinit_base(variant);
+            XClassDeinit(variant);
         variant->m_data = XMalloc_System(sizeof(XJsonValue));
         if (!variant->m_data)
             return false;

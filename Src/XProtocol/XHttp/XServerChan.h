@@ -74,7 +74,7 @@ void XServerChanResult_init(XServerChanResult* self);
 
 /**
  * - @brief 创建空结果对象。
- * - @return 新对象；调用者必须使用 XServerChanResult_delete_base 释放。
+ * - @return 新对象；调用者必须使用 XClassDelete 释放。
  */
 XServerChanResult* XServerChanResult_create_ex(XMemoryType memory);
 
@@ -93,8 +93,6 @@ XServerChanResult* XServerChanResult_create_copy(const XServerChanResult* other)
 XServerChanResult* XServerChanResult_create_move(XServerChanResult* other);
 
 /** @brief 结果对象的反初始化、删除、拷贝和移动调度入口。 */
-#define XServerChanResult_deinit_base XClass_deinit_base
-#define XServerChanResult_delete_base XClass_delete_base
 
 /**
  * - @brief 获取 Server酱返回的 code。
@@ -169,7 +167,7 @@ void XServerChan_init(XServerChan* self);
 
 /**
  * - @brief 创建空客户端。
- * - @return 新对象；调用者必须使用 XServerChan_delete_base 释放。
+ * - @return 新对象；调用者必须使用 XClassDelete 释放。
  */
 /**
  * - @brief 使用 SendKey 创建客户端。
@@ -193,8 +191,6 @@ XServerChan* XServerChan_create_copy(const XServerChan* other);
 XServerChan* XServerChan_create_move(XServerChan* other);
 
 /** @brief 客户端的反初始化、删除、拷贝和移动调度入口。 */
-#define XServerChan_deinit_base XClass_deinit_base
-#define XServerChan_delete_base XClass_delete_base
 
 /**
  * - @brief 设置 SendKey。
@@ -259,7 +255,7 @@ int XServerChan_transferTimeout(const XServerChan* self);
  * - @param self 客户端；不能为 NULL且必须设置有效 SendKey。
  * - @param title 消息标题；UTF-8 借用，不能为空且不能包含换行。
  * - @param desp 消息正文；UTF-8 借用，可为 NULL；支持 Server酱 Markdown。
- * - @return 新建 HTTP 回复；调用者必须使用 XHttpReply_delete_base 释放；参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 回复；调用者必须使用 XClassDelete 释放；参数无效或发送失败返回 NULL。
  * - @note 返回后需要由调用者运行 XCoreApplication 事件循环；完成后检查 XHttpReply。
  */
 XHttpReply* XServerChan_send(XServerChan* self, const char* title, const char* desp);
@@ -269,7 +265,7 @@ XHttpReply* XServerChan_send(XServerChan* self, const char* title, const char* d
  * - @param self 客户端；不能为 NULL且必须设置有效 SendKey。
  * - @param title 消息标题；UTF-8 借用，不能为空且不能包含换行。
  * - @param desp 消息正文；UTF-8 借用，可为 NULL；支持 Server酱 Markdown。
- * - @return 新建结果对象；调用者必须使用 XServerChanResult_delete_base 释放；始终返回本地结果，失败信息位于结果对象的 m_error 字段。
+ * - @return 新建结果对象；调用者必须使用 XClassDelete 释放；始终返回本地结果，失败信息位于结果对象的 m_error 字段。
  * - @note 当前线程必须已经有 XCoreApplication 事件循环；函数会按 transferTimeout 轮询网络事件。
  */
 XServerChanResult* XServerChan_sendBlocking(XServerChan* self,

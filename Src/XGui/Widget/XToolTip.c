@@ -96,7 +96,7 @@ static void xtooltip_applyAppearance(void)
 static void xtooltip_setText(const XString* text)
 {
     if (s_tooltipText) {
-        XString_delete_base((XClass*)s_tooltipText);
+        XClassDelete((XClass*)s_tooltipText);
         s_tooltipText = NULL;
     }
     if (text)
@@ -213,7 +213,7 @@ void XToolTip_showText_2(int x, int y, const char* utf8, XWidget* widget,
     text = XString_create_utf8(utf8);
     if (!text) return;
     XToolTip_showText(x, y, text, widget, rect, msecShowTime);
-    XString_delete_base((XClass*)text);
+    XClassDelete((XClass*)text);
 }
 
 void XToolTip_hideText(void)
@@ -226,7 +226,7 @@ void XToolTip_hideText(void)
         XWidget_hide(s_tooltipWidget);
     }
     if (s_tooltipText) {
-        XString_delete_base((XClass*)s_tooltipText);
+        XClassDelete((XClass*)s_tooltipText);
         s_tooltipText = NULL;
     }
     s_tooltipVisible = false;
@@ -250,7 +250,7 @@ XFont XToolTip_font(void)
     XFont out;
     XFont_init(&out);
     if (s_tooltipFontSet)
-        XCopy(&out, &s_tooltipFont);
+        XClassCopy(&out, &s_tooltipFont);
     return out;
 }
 
@@ -259,12 +259,12 @@ void XToolTip_setFont(const XFont* font)
     XFont temp;
     if (!font) return;
     XFont_init(&temp);
-    XCopy(&temp, font);
+    XClassCopy(&temp, font);
     if (s_tooltipFontSet)
-        XMove(&s_tooltipFont, &temp);
+        XClassMove(&s_tooltipFont, &temp);
     else {
         XFont_init(&s_tooltipFont);
-        XMove(&s_tooltipFont, &temp);
+        XClassMove(&s_tooltipFont, &temp);
         s_tooltipFontSet = true;
     }
     if (s_tooltipWidget)

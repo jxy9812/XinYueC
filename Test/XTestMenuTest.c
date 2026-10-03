@@ -126,7 +126,7 @@ static bool XTestMenuTest_renderPage(XTestMenu** menuRef, int column, XVector* c
 	menus = XTestMenu_getMenus(menu);
 	if (!actions || !menus)
 	{
-		if (menus) XVector_delete_base(menus);
+		if (menus) XClassDelete(menus);
 		return false;
 	}
 	XPrintf("\n---------------%s---------------\n", XTestMenu_getTitle(menu));
@@ -162,7 +162,7 @@ static bool XTestMenuTest_renderPage(XTestMenu** menuRef, int column, XVector* c
 		data.data = child;
 		XVector_push_back_1_base(choices, &data);
 	}
-	XVector_delete_base(menus);
+	XClassDelete(menus);
 	XPrintf("---------------%s---------------\n", XTestMenu_getTitle(menu));
 	XPrintf("请输入序号进行选择 0~%d,输入q退出\n", XContainerSize(choices) - 1);
 	return true;
@@ -177,13 +177,13 @@ int XTestMenuTest_show(XTestMenu* menu, int column)
 	{
 		if (!XTestMenuTest_renderPage(&menu, column, v))
 		{
-			XVector_delete_base(v);
+			XClassDelete(v);
 			return -1;
 		}
 		if (!XTestMenuTest_readCommand(command, sizeof(command)) ||
 			strcmp(command, "q") == 0 || strcmp(command, "Q") == 0) {
 			clearerr(stdin);
-			XVector_delete_base(v);
+			XClassDelete(v);
 			return 0;
 		}
 		if (command[0] == '\0')
@@ -261,7 +261,7 @@ XTestMenuTestRemoteResult XTestMenuTestRemoteSession_processLine(
 void XTestMenuTestRemoteSession_destroy(XTestMenuTestRemoteSession* session)
 {
 	if (!session) return;
-	if (session->choices) XVector_delete_base(session->choices);
+	if (session->choices) XClassDelete(session->choices);
 	if (session->menu) XTestMenu_delete(session->menu);
 	XFree_System(session);
 }

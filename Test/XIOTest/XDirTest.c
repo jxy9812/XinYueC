@@ -56,10 +56,10 @@ void XDirTest()
         
         XString* absPath = XDir_absolutePath(dir1);
         XDirTest_print_xstring("绝对路径", absPath);
-        XString_delete_base(absPath);
+        XClassDelete(absPath);
         
-        XString_delete_base(currentPath);
-        XDir_delete_base(dir1);
+        XClassDelete(currentPath);
+        XClassDelete(dir1);
     }
 
     // 1.2 创建指定路径的 XDir
@@ -68,11 +68,11 @@ void XDirTest()
     if (dir2) {
         XString* dirName = XDir_dirName(dir2);
         XDirTest_print_xstring("目录名称", dirName);
-        XString_delete_base(dirName);
+        XClassDelete(dirName);
         
-        XDir_delete_base(dir2);
+        XClassDelete(dir2);
     }
-    XString_delete_base(testPath);
+    XClassDelete(testPath);
 
     // ====== 2. 目录内容枚举 ======
     XPrintf_3("\n========== 2. 目录内容枚举 ==========\n");
@@ -87,7 +87,7 @@ void XDirTest()
         // 获取条目列表
         XStringList* entries = XDir_entryList_1(dir3, XDir_NoFilter, XDir_NoSort);
         XDirTest_print_stringlist("当前目录内容", entries);
-        XStringList_delete_base(entries);
+        XClassDelete(entries);
 
         // 使用名称过滤器
         XStringList* filters = XStringList_create();
@@ -96,12 +96,12 @@ void XDirTest()
         
         XStringList* filtered = XDir_entryList_2(dir3, filters, XDir_Files, XDir_Name);
         XDirTest_print_stringlist("C/H 文件", filtered);
-        XStringList_delete_base(filtered);
-        XStringList_delete_base(filters);
+        XClassDelete(filtered);
+        XClassDelete(filters);
 
-        XDir_delete_base(dir3);
+        XClassDelete(dir3);
     }
-    XString_delete_base(dotPath);
+    XClassDelete(dotPath);
 
     // ====== 3. 目录导航 ======
     XPrintf_3("\n========== 3. 目录导航 ==========\n");
@@ -116,16 +116,16 @@ void XDirTest()
         if (XDir_cd(dir4, xcodeSubdir)) {
             XDirTest_print_xstring("cd XCode 后", XDir_path(dir4));
         }
-        XString_delete_base(xcodeSubdir);
+        XClassDelete(xcodeSubdir);
 
         // 切换到上级目录
         if (XDir_cdUp(dir4)) {
             XDirTest_print_xstring("cdUp 后", XDir_path(dir4));
         }
 
-        XDir_delete_base(dir4);
+        XClassDelete(dir4);
     }
-    XString_delete_base(srcPath);
+    XClassDelete(srcPath);
 
     // ====== 4. 目录操作 ======
     XPrintf_3("\n========== 4. 目录操作 ==========\n");
@@ -146,24 +146,24 @@ void XDirTest()
         bool removed = XDir_rmdir(dir5, testDirPath);
         XPrintf("删除目录: %s\n", removed ? "成功" : "失败");
 
-        XDir_delete_base(dir5);
+        XClassDelete(dir5);
     }
-    XString_delete_base(testDirPath);
+    XClassDelete(testDirPath);
 
     // ====== 5. 特殊目录 ======
     XPrintf_3("\n========== 5. 特殊目录 ==========\n");
 
     XString* homePath = XDir_homePath();
     XDirTest_print_xstring("用户主目录", homePath);
-    XString_delete_base(homePath);
+    XClassDelete(homePath);
 
     XString* tempPath = XDir_tempPath();
     XDirTest_print_xstring("临时目录", tempPath);
-    XString_delete_base(tempPath);
+    XClassDelete(tempPath);
 
     XString* rootPath = XDir_rootPath();
     XDirTest_print_xstring("根目录", rootPath);
-    XString_delete_base(rootPath);
+    XClassDelete(rootPath);
 
     // ====== 6. 路径操作静态函数 ======
     XPrintf_3("\n========== 6. 路径操作静态函数 ==========\n");
@@ -171,19 +171,19 @@ void XDirTest()
     XString* messyPath = XString_create_utf8("./Src/../Src/./XCode//");
     XString* cleanPath = XDir_cleanPath(messyPath);
     XDirTest_print_xstring("清理路径 \"./Src/../Src/./XCode//\"", cleanPath);
-    XString_delete_base(messyPath);
-    XString_delete_base(cleanPath);
+    XClassDelete(messyPath);
+    XClassDelete(cleanPath);
 
     // 检查绝对路径
     XString* absTestPath = XString_create_utf8("/usr/local");
     bool isAbs = XDir_isAbsolutePath(absTestPath);
     XPrintf("\"/usr/local\" 是绝对路径: %s\n", isAbs ? "是" : "否");
-    XString_delete_base(absTestPath);
+    XClassDelete(absTestPath);
 
     XString* relTestPath = XString_create_utf8("Src/XCode");
     bool isRel = XDir_isRelativePath(relTestPath);
     XPrintf("\"Src/XCode\" 是相对路径: %s\n", isRel ? "是" : "否");
-    XString_delete_base(relTestPath);
+    XClassDelete(relTestPath);
 
     XPrintf_3("\n=== XDir 测试完成 ===\n");
 }
@@ -220,7 +220,7 @@ static bool xdirtest_fatfs_drive_callback(const XString* path, void* userData)
     XString* copy = XString_create_copy(path);
     if (!copy) return false;
     XStringList_push_back_move_base(list, copy);
-    XString_delete_base(copy);
+    XClassDelete(copy);
     return true;
 }
 
@@ -235,7 +235,7 @@ void XDirTest_fatfs(void)
     if (!XDeviceFile_enumerateDrives(xdirtest_fatfs_drive_callback, drives) ||
         XStringList_size_base(drives) == 0) {
         XPrintf_3("没有可用的驱动器，测试终止。\n");
-        XStringList_delete_base(drives);
+        XClassDelete(drives);
         return;
     }
     int driveCount = (int)XStringList_size_base(drives);
@@ -300,7 +300,7 @@ void XDirTest_fatfs(void)
             /* 2d. 在测试目录下列出内容 */
             XStringList* entries = XDir_entryList_1(dir, XDir_Files | XDir_Dirs, XDir_Name);
             XDirTest_print_stringlist("测试目录内容", entries);
-            XStringList_delete_base(entries);
+            XClassDelete(entries);
 
             /* 2e. 返回上级目录 */
             if (XDir_cdUp(dir)) {
@@ -311,8 +311,8 @@ void XDirTest_fatfs(void)
             bool removed = XDir_rmdir(dir, testDirName);
             XPrintf("删除目录 \"FatfsTestDir\": %s\n", removed ? "成功" : "失败");
 
-            XDir_delete_base(dir);
-            XString_delete_base(testDirName);
+            XClassDelete(dir);
+            XClassDelete(testDirName);
             foundValid = true;
             break;
         }
@@ -325,25 +325,25 @@ void XDirTest_fatfs(void)
     XPrintf_3("\n========== 3. 特殊路径 ==========\n");
     XString* home = XDir_homePath();
     XDirTest_print_xstring("homePath", home);
-    XString_delete_base(home);
+    XClassDelete(home);
 
     XString* temp = XDir_tempPath();
     XDirTest_print_xstring("tempPath", temp);
-    XString_delete_base(temp);
+    XClassDelete(temp);
 
     XString* root = XDir_rootPath();
     XDirTest_print_xstring("rootPath", root);
-    XString_delete_base(root);
+    XClassDelete(root);
 
     for (int i = 0; i < driveCount; i++) {
         if (infos[i]) {
             if (infos[i]->fileSystemType) {
-                XString_delete_base(infos[i]->fileSystemType);
+                XClassDelete(infos[i]->fileSystemType);
             }
             XFree_System(infos[i]);
         }
     }
-    XStringList_delete_base(drives);
+    XClassDelete(drives);
     XFree_System(infos);
 
     XPrintf_3("\n=== Fatfs 驱动器测试完成 ===\n");

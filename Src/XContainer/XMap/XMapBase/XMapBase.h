@@ -214,15 +214,13 @@ XVector* XMapBase_values_base(const XMapBase* this_map);
 
 /**
 * @brief 释放容器资源（继承自XContainer）
-* @note 宏定义，等价于XContainer_deinit_base
+* @note 宏定义，等价于XClassDeinit
 */
-#define XMapBase_deinit_base			XContainer_deinit_base	
 
 /**
 * @brief 删除容器实例（继承自XContainer）
-* @note 宏定义，等价于XContainer_delete_base
+* @note 宏定义，等价于XClassDelete
 */
-#define XMapBase_delete_base			XContainer_delete_base	
 
 /**
 * @brief 清空容器元素（继承自XContainer）

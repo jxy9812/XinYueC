@@ -209,7 +209,7 @@ bool XSaveFile_directWriteFallback(const XSaveFile* file);
 void XSaveFile_setTempDir_static(const XString* dir);
 
 /**
- * @brief 取当前模块临时目录（调用方负责 XString_delete_base 释放）
+ * @brief 取当前模块临时目录（调用方负责 XClassDelete 释放）
  * @return 临时目录路径（堆上 XString 对象），失败返回 NULL
  */
 XString* XSaveFile_tempDir_static(void);

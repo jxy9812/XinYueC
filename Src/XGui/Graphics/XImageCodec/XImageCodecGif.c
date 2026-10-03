@@ -472,13 +472,13 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
             {
                 XImage snapshot;
                 XImage_init(&snapshot);
-                XCopy(&snapshot, &canvas);
+                XClassCopy(&snapshot, &canvas);
                 if (XImage_isNull(&snapshot)) {
-                    XImage_deinit_base(&snapshot);
+                    XClassDeinit(&snapshot);
                     XFree_System(compressed);
                     goto done;
                 }
-                XMove(&previous, &snapshot);
+                XClassMove(&previous, &snapshot);
             }
 
             if ((size_t)width > (size_t)-1 / (size_t)height)
@@ -518,12 +518,12 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
                 /* 单帧模式：首帧已合成，捕获当前画布后结束。 */
                 XImage snapshot;
                 XImage_init(&snapshot);
-                XCopy(&snapshot, &canvas);
+                XClassCopy(&snapshot, &canvas);
                 if (XImage_isNull(&snapshot)) {
-                    XImage_deinit_base(&snapshot);
+                    XClassDeinit(&snapshot);
                     goto done;
                 }
-                XMove(singleOut, &snapshot);
+                XClassMove(singleOut, &snapshot);
                 ok = true;
                 break;
             }
@@ -532,9 +532,9 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
             if (count < maxFrames) {
                 XImageCodecFrame* frame = &frames[count];
                 XImage_init(&frame->image);
-                XCopy(&frame->image, &canvas);
+                XClassCopy(&frame->image, &canvas);
                 if (XImage_isNull(&frame->image)) {
-                    XImage_deinit_base(&frame->image);
+                    XClassDeinit(&frame->image);
                     goto done;
                 }
                 frame->delayMs = pendingDelayMs;
@@ -563,12 +563,12 @@ static bool gifDecodeCore(const uint8_t* data, size_t size, XImage* singleOut,
             } else if (pendingDisposal == 3) {
                 XImage snapshot;
                 XImage_init(&snapshot);
-                XCopy(&snapshot, &previous);
+                XClassCopy(&snapshot, &previous);
                 if (XImage_isNull(&snapshot)) {
-                    XImage_deinit_base(&snapshot);
+                    XClassDeinit(&snapshot);
                     goto done;
                 }
-                XMove(&canvas, &snapshot);
+                XClassMove(&canvas, &snapshot);
             }
             /* 透明索引和处置方式只影响紧随其后的图像描述。Qt 的
                nextDelay 则由 QGifHandler 持有，只有再次遇到 GCE 才更新；
@@ -594,8 +594,8 @@ done:
     if (outCount) *outCount = count;
     if (outLoop)
         *outLoop = loop == 0 ? -1 : (loop < 0 ? 0 : loop);
-    XImage_deinit_base(&canvas);
-    XImage_deinit_base(&previous);
+    XClassDeinit(&canvas);
+    XClassDeinit(&previous);
     return ok;
 }
 
@@ -624,7 +624,7 @@ bool XImageCodecInternal_decodeGifFrames(const uint8_t* data, size_t size,
                        XIMAGECODEC_GIF_ANIM_MAX_FRAMES, &count, &loop);
     if (!ok) {
         for (int i = 0; i < count; ++i)
-            XImage_deinit_base(&frames[i].image);
+            XClassDeinit(&frames[i].image);
         XFree_System(frames);
         return false;
     }
@@ -734,12 +734,12 @@ bool XImageCodecInternal_encodeGif(const XImage* image, XByteArray* out)
             !XByteArray_push_back_1(out, ';'))
             goto gif_encode_done;
     }
-    XByteArray_delete_base((XClass*)stream);
-    XByteArray_delete_base((XClass*)block);
+    XClassDelete((XClass*)stream);
+    XClassDelete((XClass*)block);
     return true;
 gif_encode_done:
-    if (stream) XByteArray_delete_base((XClass*)stream);
-    if (block) XByteArray_delete_base((XClass*)block);
+    if (stream) XClassDelete((XClass*)stream);
+    if (block) XClassDelete((XClass*)block);
     return false;
 }
 

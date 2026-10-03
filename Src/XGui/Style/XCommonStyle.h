@@ -46,10 +46,8 @@ XCommonStyle* XCommonStyle_create_ex(XMemoryType memory);
 #define XCommonStyle_create() XCommonStyle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 /** @brief 析构入口（查表分派父类析构）。 */
-#define XCommonStyle_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /** @brief 删除堆上样式（查表分派析构并释放内存）。 */
-#define XCommonStyle_delete_base(self) XClass_delete_base((XClass*)(self))
 
 #endif /* XSTYLE_ON */
 #ifdef __cplusplus

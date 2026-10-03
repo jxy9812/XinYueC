@@ -113,7 +113,7 @@ bool XMqttTcpServerProcess_run(void)
                       XConnectionType_Direct);
     if (!XMqttTcpServer_listen(server, NULL, XMqttInteropPort)) {
         XPrintf("[MQTT联调][服务器] 监听端口 %u 失败\n", (unsigned)XMqttInteropPort);
-        XClass_delete_base((XClass*)server);
+        XClassDelete((XClass*)server);
         return false;
     }
     XPrintf("%s\n", XMqttInteropReadyMarker);
@@ -122,7 +122,7 @@ bool XMqttTcpServerProcess_run(void)
             g_mqttInteropConnections, g_mqttInteropDisconnections,
             ok ? "正常" : "超时");
     XMqttTcpServer_close(server);
-    XClass_delete_base((XClass*)server);
+    XClassDelete((XClass*)server);
     return ok && g_mqttInteropConnections >= 1;
 }
 
@@ -288,9 +288,9 @@ bool XMqttTcpClientProcess_run(void)
     result = connected && subscribed && publishedQos0 && publishedQos1 &&
              publishedQos2 && retained && echoed && pinged && unsubscribed &&
              disconnected;
-    if (filter) XMqttTopicFilter_delete_base(filter);
-    if (topic) XMqttTopicName_delete_base(topic);
-    if (client) XClass_delete_base((XClass*)client);
+    if (filter) XClassDelete(filter);
+    if (topic) XClassDelete(topic);
+    if (client) XClassDelete((XClass*)client);
     return result;
 }
 
@@ -318,18 +318,18 @@ bool XMqttTcpInteropTest_run(void)
     XPrintf("========== MQTT 双进程联调开始 ==========\n");
     if (!program) {
         XPrintf("[MQTT联调][父进程] 无法获取应用程序路径\n");
-        if (appPath) XString_delete_base((XString*)appPath);
+        if (appPath) XClassDelete((XString*)appPath);
         return false;
     }
     server = XProcess_create();
     if (!server) {
-        if (appPath) XString_delete_base((XString*)appPath);
+        if (appPath) XClassDelete((XString*)appPath);
         return false;
     }
     if (!XProcess_start_utf8(server, program, serverArgs, 2, XIODevice_ReadOnly)) {
         XPrintf("[MQTT联调][父进程] 启动服务器进程失败\n");
-        XClass_delete_base((XClass*)server);
-        if (appPath) XString_delete_base((XString*)appPath);
+        XClassDelete((XClass*)server);
+        if (appPath) XClassDelete((XString*)appPath);
         return false;
     }
     /* 等待服务器就绪标记 */
@@ -346,7 +346,7 @@ bool XMqttTcpInteropTest_run(void)
                         (const uint8_t*)XByteArray_constData(output),
                         (size_t)XByteArray_size_base(output),
                         XMqttInteropReadyMarker);
-                    XByteArray_delete_base(output);
+                    XClassDelete(output);
                 }
             }
             if (!ready) XThread_msleep(10);
@@ -357,23 +357,23 @@ bool XMqttTcpInteropTest_run(void)
         if (server) {
             XProcess_kill(server);
             XProcess_waitForFinished(server, 5000);
-            XClass_delete_base((XClass*)server);
+            XClassDelete((XClass*)server);
         }
-        if (appPath) XString_delete_base((XString*)appPath);
+        if (appPath) XClassDelete((XString*)appPath);
         return false;
     }
     XPrintf("[MQTT联调][父进程] 服务器已就绪，启动客户端进程\n");
     client = XProcess_create();
     if (!client) {
-        if (server) XClass_delete_base((XClass*)server);
-        if (appPath) XString_delete_base((XString*)appPath);
+        if (server) XClassDelete((XClass*)server);
+        if (appPath) XClassDelete((XString*)appPath);
         return false;
     }
     if (!XProcess_start_utf8(client, program, clientArgs, 2, XIODevice_ReadOnly)) {
         XPrintf("[MQTT联调][父进程] 启动客户端进程失败\n");
-        if (client) XClass_delete_base((XClass*)client);
-        if (server) XClass_delete_base((XClass*)server);
-        if (appPath) XString_delete_base((XString*)appPath);
+        if (client) XClassDelete((XClass*)client);
+        if (server) XClassDelete((XClass*)server);
+        if (appPath) XClassDelete((XString*)appPath);
         return false;
     }
     serverOk = XProcess_waitForFinished(server, 30000);
@@ -389,13 +389,13 @@ bool XMqttTcpInteropTest_run(void)
             XPrintf("[MQTT联调][父进程] 服务器输出:\n%.*s\n",
                     (int)XByteArray_size_base(serverOutput),
                     (const char*)XByteArray_constData(serverOutput));
-            XByteArray_delete_base(serverOutput);
+            XClassDelete(serverOutput);
         }
         if (clientOutput) {
             XPrintf("[MQTT联调][父进程] 客户端输出:\n%.*s\n",
                     (int)XByteArray_size_base(clientOutput),
                     (const char*)XByteArray_constData(clientOutput));
-            XByteArray_delete_base(clientOutput);
+            XClassDelete(clientOutput);
         }
     }
     result = serverOk && clientOk;
@@ -404,9 +404,9 @@ bool XMqttTcpInteropTest_run(void)
             clientOk ? XProcess_exitCode(client) : -1, clientOk ? "正常" : "失败",
             result ? "通过" : "失败");
     XPrintf("========== MQTT 双进程联调结束 ==========\n");
-    if (client) XClass_delete_base((XClass*)client);
-    if (server) XClass_delete_base((XClass*)server);
-    if (appPath) XString_delete_base((XString*)appPath);
+    if (client) XClassDelete((XClass*)client);
+    if (server) XClassDelete((XClass*)server);
+    if (appPath) XClassDelete((XString*)appPath);
     return result;
 }
 
@@ -444,7 +444,7 @@ void XMqttTcpServerIntegrationTest(void)
                       XConnectionType_Direct);
     if (!XMqttTcpServer_listen(g_inprocServer, NULL, XMqttInteropPort)) {
         XPrintf("[失败] MQTT TCP 服务器监听端口 %u\n", (unsigned)XMqttInteropPort);
-        XClass_delete_base((XClass*)g_inprocServer);
+        XClassDelete((XClass*)g_inprocServer);
         g_inprocServer = NULL;
         return;
     }
@@ -452,7 +452,7 @@ void XMqttTcpServerIntegrationTest(void)
     XPrintf("[服务器] 真实 MQTT TCP Broker 已启动，监听端口 %u\n", (unsigned)XMqttInteropPort);
     interop_wait(&g_inprocServerQuit, 120000);
     XMqttTcpServer_close(g_inprocServer);
-    XClass_delete_base((XClass*)g_inprocServer);
+    XClassDelete((XClass*)g_inprocServer);
     g_inprocServer = NULL;
     XPrintf("[服务器] 联调结束\n");
 }
@@ -826,12 +826,12 @@ bool XMqttTcpServerApiUnitTest_run(void)
                  "close 后客户端数归零");
 
 cleanup:
-    if (filter) XMqttTopicFilter_delete_base(filter);
-    if (topic) XMqttTopicName_delete_base(topic);
-    if (client) XClass_delete_base((XClass*)client);
+    if (filter) XClassDelete(filter);
+    if (topic) XClassDelete(topic);
+    if (client) XClassDelete((XClass*)client);
     if (server) {
         XMqttTcpServer_close(server);
-        XClass_delete_base((XClass*)server);
+        XClassDelete((XClass*)server);
     }
 
     /* ---- 认证回调测试（独立服务器与端口） ---- */
@@ -861,7 +861,7 @@ cleanup:
                              "错误凭据被拒绝");
                 TCPAPI_CHECK(XMqttClient_error(bad) == XMqttClient_NotAuthorized,
                              "错误凭据错误码为 NotAuthorized");
-                XClass_delete_base((XClass*)bad);
+                XClassDelete((XClass*)bad);
             }
             {
                 XMqttClient* good = tcp_api_create_client(XMqttTcpApiAuthPort, "tcpapi-good");
@@ -877,13 +877,13 @@ cleanup:
                     if (XMqttClient_state(good) == XMqttClient_Connected)
                         XMqttClient_disconnectFromHost_base(good);
                     tcp_api_wait_client_state(good, XMqttClient_Disconnected, 5000);
-                    XClass_delete_base((XClass*)good);
+                    XClassDelete((XClass*)good);
                 }
             }
         }
         XMqttTcpServer_close(server);
         TCPAPI_CHECK(!XMqttTcpServer_isListening(server), "认证服务器 close 后不再监听");
-        XClass_delete_base((XClass*)server);
+        XClassDelete((XClass*)server);
         server = NULL;
     }
 

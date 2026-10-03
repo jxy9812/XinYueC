@@ -7,7 +7,7 @@
 #include"XString.h"
 
 XVARIANT_TYPE_OPS_DEFINE(XStringList, sizeof(XStringList), XClass_copy_base,
-	XClass_move_base, XStringList_clear_base, XStringList_deinit_base,
+	XClass_move_base, XStringList_clear_base, XClass_deinit_base,
 	NULL, "XStringList");
 
 XVariant* XStringList_toVariant(const XStringList* list)
@@ -19,7 +19,7 @@ XVariant* XStringList_toVariant(const XStringList* list)
 	if (!var)
 		return NULL;
 	XStringList_init((XStringList*)XVariant_data(var));
-	XCopy(XVariant_data(var), list);
+	XClassCopy(XVariant_data(var), list);
 	return var;
 }
 
@@ -32,7 +32,7 @@ XVariant* XStringList_toVariant_move(XStringList* list)
 	if (!var)
 		return NULL;
 	XStringList_init((XStringList*)XVariant_data(var));
-	XMove(XVariant_data(var), list);
+	XClassMove(XVariant_data(var), list);
 	return var;
 }
 
@@ -64,7 +64,7 @@ static bool XStringList_prepareVariant(XVariant* var)
 		return false;
 	if (var->m_type != XVariantType_StringList)
 	{
-		XVariant_deinit_base(var);
+		XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XStringList));
 		if (!var->m_data)
 		{
@@ -78,7 +78,7 @@ static bool XStringList_prepareVariant(XVariant* var)
 	else if (!var->m_data || var->m_dataSize != sizeof(XStringList))
 	{
 		if (var->m_data)
-			XVariant_deinit_base(var);
+			XClassDeinit(var);
 		var->m_data = XMalloc_System(sizeof(XStringList));
 		if (!var->m_data)
 		{
@@ -95,14 +95,14 @@ void XStringList_setVariant(XVariant* var, const XStringList* list)
 {
 	if (!list || !XStringList_prepareVariant(var))
 		return;
-	XCopy(XVariant_data(var), list);
+	XClassCopy(XVariant_data(var), list);
 }
 
 void XStringList_setVariant_move(XVariant* var, XStringList* list)
 {
 	if (!list || !XStringList_prepareVariant(var))
 		return;
-	XMove(XVariant_data(var), list);
+	XClassMove(XVariant_data(var), list);
 }
 
 void XStringList_setVariant_ref(XVariant* var, XStringList* list)
@@ -150,7 +150,7 @@ XStringList* XStringList_create_copy(const XStringList* other)
 	XStringList* list = XStringList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if(list==NULL)
 		return NULL;
-	XCopy(list,other);
+	XClassCopy(list,other);
 	return list;
 }
 XStringList* XStringList_create_move(XStringList* other)
@@ -160,7 +160,7 @@ XStringList* XStringList_create_move(XStringList* other)
 	XStringList* list = XStringList_create_ex(XContainer_memory_type((const XContainer*)other));
 	if (list == NULL)
 		return NULL;
-	XMove(list, other);
+	XClassMove(list, other);
 	return list;
 }
 void XStringList_init(XStringList* strList)
@@ -178,19 +178,19 @@ void XStringList_push_front_utf8(XStringList* strList, const char* utf8_str)
 {
 	XString_Init_Utf8(str,utf8_str);
 	XStringList_push_front_move_base(strList, str);
-	XString_deinit_base(str);
+	XClassDeinit(str);
 }
 void XStringList_push_back_utf8(XStringList* strList, const char* utf8_str)
 {
 	XString_Init_Utf8(str, utf8_str);
 	XStringList_push_back_move_base(strList, str);
-	XString_deinit_base(str);
+	XClassDeinit(str);
 }
 void XStringList_insert_utf8(XStringList* strList, int64_t index, const char* utf8_str)
 {
 	XString_Init_Utf8(str, utf8_str);
 	XStringList_insert_move_base(strList,index, str);
-	XString_deinit_base(str);
+	XClassDeinit(str);
 }
 
 XString* XStringList_join(const XStringList* strList, const XString* separator)
@@ -225,7 +225,7 @@ XString* XStringList_join_utf8(const XStringList* strList, const char* separator
 		return NULL;
 	XString* temp = XString_create_utf8(separator);
 	XString* str = XStringList_join(strList, temp);
-	XString_delete_base(temp);
+	XClassDelete(temp);
 	return str;
 }
 
@@ -247,8 +247,8 @@ static XRegularExpression* XStringList_exactRegularExpression(
                                                   XRegularExpression_patternOptions(expression));
         }
     }
-    if (anchored) XString_delete_base(anchored);
-    XString_delete_base(pattern);
+    if (anchored) XClassDelete(anchored);
+    XClassDelete(pattern);
     return result;
 }
 
@@ -280,11 +280,11 @@ int64_t XStringList_indexOf_regularExpression(const XStringList* strList,
     for (int64_t i = from; i < count; ++i) {
         const XString* value = (const XString*)XStringList_at_base(strList, (int64_t)i);
         if (value && XString_contains_regularExpression(value, exact)) {
-            XRegularExpression_delete_base(exact);
+            XClassDelete(exact);
             return (int64_t)i;
         }
     }
-    XRegularExpression_delete_base(exact);
+    XClassDelete(exact);
     return -1;
 }
 
@@ -301,11 +301,11 @@ int64_t XStringList_lastIndexOf_regularExpression(const XStringList* strList,
     for (int64_t i = from; i >= 0; --i) {
         const XString* value = (const XString*)XStringList_at_base(strList, i);
         if (value && XString_contains_regularExpression(value, exact)) {
-            XRegularExpression_delete_base(exact);
+            XClassDelete(exact);
             return i;
         }
     }
-    XRegularExpression_delete_base(exact);
+    XClassDelete(exact);
     return -1;
 }
 
@@ -417,7 +417,7 @@ XStringList* XStringList_filter_utf8(const XStringList* strList, const char* utf
 	XString* temp = XString_create_utf8(utf8_str);
 	if (!temp) return NULL;
 	XStringList* result = XStringList_filter(strList, temp, cs);
-	XString_delete_base(temp);
+	XClassDelete(temp);
 	return result;
 }
 
@@ -437,13 +437,13 @@ void XStringList_replaceInStrings_utf8(XStringList* strList, const char* before,
 	XString* b = XString_create_utf8(before);
 	XString* a = XString_create_utf8(after);
 	if (!b || !a) {
-		XString_delete_base(b);
-		XString_delete_base(a);
+		XClassDelete(b);
+		XClassDelete(a);
 		return;
 	}
 	XStringList_replaceInStrings(strList, b, a, cs);
-	XString_delete_base(b);
-	XString_delete_base(a);
+	XClassDelete(b);
+	XClassDelete(a);
 }
 
 bool XStringList_contains(const XStringList* strList, const XString* str, XChar_CaseSensitivity cs)
@@ -464,7 +464,7 @@ bool XStringList_contains_utf8(const XStringList* strList, const char* utf8_str,
 	XString* temp = XString_create_utf8(utf8_str);
 	if (!temp) return false;
 	bool result = XStringList_contains(strList, temp, cs);
-	XString_delete_base(temp);
+	XClassDelete(temp);
 	return result;
 }
 
@@ -487,7 +487,7 @@ int64_t XStringList_indexOf_utf8(const XStringList* strList, const char* utf8_st
 	XString* temp = XString_create_utf8(utf8_str);
 	if (!temp) return -1;
 	int64_t result = XStringList_indexOf(strList, temp, from, cs);
-	XString_delete_base(temp);
+	XClassDelete(temp);
 	return result;
 }
 
@@ -511,7 +511,7 @@ int64_t XStringList_lastIndexOf_utf8(const XStringList* strList, const char* utf
 	XString* temp = XString_create_utf8(utf8_str);
 	if (!temp) return -1;
 	int64_t result = XStringList_lastIndexOf(strList, temp, from, cs);
-	XString_delete_base(temp);
+	XClassDelete(temp);
 	return result;
 }
 #endif

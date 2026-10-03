@@ -156,7 +156,7 @@ static void xbgroup_bridgeDestroyDeferred(XBGroupBridge* bridge, bool deferred)
     if (!bridge) return;
     if (bridge->m_buttonDead && !deferred) {
         /* 按钮已销毁：其连接表随之消亡，直接删除桥。 */
-        XClass_delete_base((XClass*)bridge);
+        XClassDelete((XClass*)bridge);
         return;
     }
     /* 桥销毁前必须断开按钮侧连接，避免按钮信号访问已释放的桥。 */
@@ -175,7 +175,7 @@ static void xbgroup_bridgeDestroyDeferred(XBGroupBridge* bridge, bool deferred)
     if (deferred)
         XObject_deleteLater((XObject*)bridge);
     else
-        XClass_delete_base((XClass*)bridge);
+        XClassDelete((XClass*)bridge);
 }
 
 /** @brief toggled 转发：维护 checkedButton/checkedId、互斥、发射信号。 */
@@ -374,11 +374,11 @@ static void VX_buttonGroup_deinit(XButtonGroup* self)
         }
     }
     if (self->m_buttons) {
-        XVector_delete_base(self->m_buttons);
+        XClassDelete(self->m_buttons);
         self->m_buttons = NULL;
     }
     if (self->m_ids) {
-        XVector_delete_base(self->m_ids);
+        XClassDelete(self->m_ids);
         self->m_ids = NULL;
     }
     if (self->m_bridges) {
@@ -390,7 +390,7 @@ static void VX_buttonGroup_deinit(XButtonGroup* self)
             if (bp && *bp)
                 xbgroup_bridgeDestroyDeferred(*bp, false);
         }
-        XVector_delete_base(self->m_bridges);
+        XClassDelete(self->m_bridges);
         self->m_bridges = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);

@@ -27,7 +27,7 @@ static XStringList* makeArgs(const char* prog, const char* arg1, const char* arg
 static void deleteArgs(XStringList* args)
 {
     if (!args) return;
-    XStringList_delete_base(args);
+    XClassDelete(args);
 }
 
 /* ==================== 测试 1: 基本选项解析 ==================== */
@@ -147,7 +147,7 @@ static void test_help_text(void)
     XPrintf("  帮助文本:\n%s\n", help ? XString_toUtf8(help) : "NULL");
     assert(help != NULL && XString_length_base(help) > 0);
 
-    XString_delete_base(help);
+    XClassDelete(help);
     XCommandLineParser_delete(parser);
 
     XPrintf("  [通过] 帮助文本生成正常\n");
@@ -350,7 +350,7 @@ static void test_multi_values(void)
 
     XPrintf("  [通过] 多值选项正常\n");
 
-    XStringList_delete_base(args);
+    XClassDelete(args);
     XCommandLineParser_delete(parser);
 }
 

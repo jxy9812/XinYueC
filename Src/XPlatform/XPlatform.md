@@ -1,4 +1,4 @@
-﻿# XPlatform 平台抽象接口
+# XPlatform 平台抽象接口
 
 XPlatform 用于存放 XinYueC 跨平台公共代码依赖的抽象契约。这里描述能力、类型、枚举和后端接入规则，不放置具体操作系统实现、具体数据库客户端实现或第三方库实现。
 
@@ -364,7 +364,7 @@ MySQL 真实服务器联调测试位于 `Test/XDataTest/XSqlMySqlTest.c`。测�
 - 后端客户端句柄由后端结构体持有，驱动关闭时按客户端库要求释放。
 - XSqlDriver_handle_base 和 XSqlResult_handle_base 返回借用句柄，不转移所有权。
 - 后端错误统一通过 XSqlDriver_setLastError 或结果对象的错误路径转换为 XSqlError。
-- 公共 API 返回的新 XSqlError、XSqlRecord、XSqlField、XSqlIndex 等对象，调用者应按照对应的 delete_base 接口释放。
+- 公共 API 返回的新 XSqlError、XSqlRecord、XSqlField、XSqlIndex 等对象，调用者应按照对应的 `XClassDelete` 接口释放。
 - NULL 必须与空字符串、零值和无效值区分，不能在后端转换时丢失 NULL 语义。
 - 客户端库的字符串、错误对象和句柄不能直接泄漏到公共 API。
 - 可选数据库客户端依赖只能出现在具体后端的构建目标中，不能污染公共 XPlatform 或 XCode 头文件。

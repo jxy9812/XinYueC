@@ -100,7 +100,7 @@ wait_child:
 cleanup:
     if (address) (void)XDeviceFile_unmap(fd, address, 256);
     if (fd != XFD_INVALID) XDevice_close(fd);
-    XString_delete_base((XClass*)name);
+    XClassDelete((XClass*)name);
     return ok;
 }
 #endif
@@ -284,7 +284,7 @@ cleanup:
         (void)XDeviceFile_unmap(fd, mapped, 4);
     if (fd != XFD_INVALID) XDevice_close(fd);
     (void)XDeviceFile_removePermanent(path);
-    XString_delete_base((XClass*)path);
+    XClassDelete((XClass*)path);
     if (ok) puts("XDeviceFile test: PASS");
     else printf("XDeviceFile test: FAIL (%s)\n", failedStep ? failedStep : "unknown");
     return ok;

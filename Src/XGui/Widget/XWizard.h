@@ -142,7 +142,6 @@ void XWizardPage_init(XWizardPage* self, XWidget* parent, XWidgetFlags flags);
  * @return 返回对象指针；无效时返回 NULL。
  */
 XWizardPage* XWizardPage_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XWizardPage_delete_base(self) XWidget_deinit_base((XWidget*)(self))
 /** @brief completeChanged() 信号（对标 QWizardPage::completeChanged；
  *         页完成状态变化时由 setComplete/validatePage 触发，Task 2.6 接线）。 */
 void* XWizardPage_completeChanged_signal(XWizardPage* self);
@@ -358,7 +357,6 @@ void XWizard_init(XWizard* self, XWidget* parent, XWidgetFlags flags);
  * @return 返回对象指针；无效时返回 NULL。
  */
 XWizard* XWizard_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XWizard_delete_base(self) XDialog_delete_base((XDialog*)(self))
 
 /** @brief XWizardadd页（对标 Qt 同名接口）。
  * @param self 目标控件指针。

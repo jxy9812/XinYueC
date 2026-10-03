@@ -85,7 +85,7 @@ void XNetworkAccessManager_init(XNetworkAccessManager* self);
 
 /**
  * - @brief 创建管理器。
- * - @return 新对象，调用者必须使用 XNetworkAccessManager_delete_base 释放；失败返回 NULL。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XNetworkAccessManager* XNetworkAccessManager_create_ex(XMemoryType memory);
 
@@ -94,8 +94,6 @@ XNetworkAccessManager* XNetworkAccessManager_create_ex(XMemoryType memory);
  * - @details 删除管理器时会取消所有活动响应并断开底层套接字连接；返回给调用者的响应
  *          默认仍需由调用者释放。
  */
-#define XNetworkAccessManager_deinit_base XClass_deinit_base
-#define XNetworkAccessManager_delete_base XClass_delete_base
 #define XNetworkAccessManager_deleteLater XObject_deleteLater
 #define XNetworkAccessManager_deinitLater XObject_deinitLater
 
@@ -106,7 +104,7 @@ XNetworkAccessManager* XNetworkAccessManager_create_ex(XMemoryType memory);
  * - @param request 请求对象；借用，函数执行时深拷贝；不能为 NULL。
  * - @param body 请求体；借用，函数执行时深拷贝；无请求体传 NULL。
  * - @param customMethod 自定义方法字节；借用，CustomOperation 时必须提供。
- * - @return 新响应对象，默认由调用者使用 XHttpReply_delete_base 释放；失败返回 NULL。
+ * - @return 新响应对象，默认由调用者使用 XClassDelete 释放；失败返回 NULL。
  */
 XHttpReply* XNetworkAccessManager_sendRequest(XNetworkAccessManager* self,
                                               XNetworkAccessManager_Operation operation,

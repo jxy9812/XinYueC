@@ -68,19 +68,13 @@ XVirtualKeyboardObserver* XVirtualKeyboardObserver_instance(void);
 XVirtualKeyboardObserver* XVirtualKeyboardObserver_create_ex(
         XMemoryType memory);
 
-/** @brief 通过 XClass 虚表释放资源（栈/外部存储对象使用）。 */
-#define XVirtualKeyboardObserver_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-/** @brief 删除堆上对象。 */
-#define XVirtualKeyboardObserver_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      返回当前键盘布局描述符（对标 layout()）。
  * @details    新建 XVariant*（XVariantType_String，UTF-8 描述符
  *             "<layoutType>/<locale>/<inputMode>"，如
  *             "main/zh_CN/3"；layoutType ∈ main/symbols/digits/
- *             numbers/dialpad）。调用方用 XVariant_delete_base 释放。
+ *             numbers/dialpad）。调用方用 XClassDelete 释放。
  * @param      self 观察器借用指针；NULL 返回 NULL。
  * @return     新建 XVariant*；调用方释放。
  */

@@ -96,9 +96,7 @@ void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags);
 XGroupBox* XGroupBox_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
 /** @brief 通过 XClass 虚表释放栈上/外部存储的 XGroupBox。 */
-#define XGroupBox_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
 /** @brief 删除堆上的 XGroupBox 对象。 */
-#define XGroupBox_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 父类 XWidget API 宏转发（对齐库内 XRadioButton 惯例） ==================== */
 

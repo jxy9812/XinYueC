@@ -22,9 +22,9 @@ static void VXHttpServerRouter_deinit(XHttpServerRouter* self)
             XHttpServerRouterRule** slot =
                 (XHttpServerRouterRule**)XVector_at_base(self->m_rules, (int64_t)i);
             if (slot && *slot)
-                XClass_delete_base((XClass*)*slot);
+                XClassDelete((XClass*)*slot);
         }
-        XClass_delete_base((XClass*)self->m_rules);
+        XClassDelete((XClass*)self->m_rules);
         self->m_rules = NULL;
     }
     self->m_server = NULL;
@@ -55,7 +55,7 @@ XHttpServerRouter* XHttpServerRouter_create_ex(XMemoryType memory, XHttpServer* 
     self->m_rules = XVector_Create(XHttpServerRouterRule*);
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_rules) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;
@@ -88,7 +88,7 @@ XHttpServerRouterRule* XHttpServerRouter_addRule_utf8(
     if (!rule)
         return NULL;
     if (!XHttpServerRouter_addRule(self, rule)) {
-        XClass_delete_base((XClass*)rule);
+        XClassDelete((XClass*)rule);
         return NULL;
     }
     return rule;
@@ -103,7 +103,7 @@ void XHttpServerRouter_clear(XHttpServerRouter* self)
         XHttpServerRouterRule** slot =
             (XHttpServerRouterRule**)XVector_at_base(self->m_rules, (int64_t)i);
         if (slot && *slot)
-            XClass_delete_base((XClass*)*slot);
+            XClassDelete((XClass*)*slot);
     }
     XVector_clear_base(self->m_rules);
 }

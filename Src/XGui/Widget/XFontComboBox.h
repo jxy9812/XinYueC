@@ -84,8 +84,6 @@ void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
 #define XFontComboBox_create(parent, flags) XFontComboBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XFontComboBox* XFontComboBox_create_ex(XMemoryType memory, XWidget* parent,
                                        XWidgetFlags flags);
-#define XFontComboBox_deinit_base(self) XComboBox_deinit_base((XComboBox*)(self))
-#define XFontComboBox_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      设置字体过滤器。
@@ -155,7 +153,7 @@ void XFontComboBox_setDisplayFont(XFontComboBox* self, const XFont* font);
  *
  * @param self 目标控件；NULL 返回默认构造字体。
  * @return XFont 值拷贝；调用方负责以
- *         XClass_deinit_base((XClass*)&font)（宏 XFont_deinit_base）
+ *         XClassDeinit((XClass*)&font)（宏 XClassDeinit）
  *         释放内部字符串后复用或弃置。
  *
  * @note 简化项：Qt 按族名查询每族覆盖字体并返回 std::optional（无
@@ -167,7 +165,7 @@ void XFontComboBox_setDisplayFont(XFontComboBox* self, const XFont* font);
 XFont XFontComboBox_displayFont(const XFontComboBox* self);
 /**
  * @brief 查询字体族样例文本（新建 XString 返回；调用方持有并负责
- *        XString_delete_base 释放）。
+ *        XClassDelete 释放）。
  *
  *        已用 setSampleTextForFont 自定义该族样例时返回自定义文本；
  *        否则回退返回家族名本身（同 Qt 无采样时的可用近似）。
@@ -183,7 +181,7 @@ XString* XFontComboBox_sampleTextForFont(const XFontComboBox* self,
                                          const char* family);
 /**
  * @brief 查询书写系统样例文本（新建 XString 返回；调用方持有并负责
- *        XString_delete_base 释放）。
+ *        XClassDelete 释放）。
  *
  *        已用 setSampleTextForSystem 自定义该系统样例时返回自定义
  *        文本；否则回退返回当前字体族名（同 sampleTextForFont 的

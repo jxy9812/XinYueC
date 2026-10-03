@@ -55,8 +55,6 @@ void XKeyEventTransition_init(XKeyEventTransition* transition);
 void XKeyEventTransition_init_ex(XKeyEventTransition* transition, XObject* object,
                                  XEventType type, int key, XState* sourceState);
 
-#define XKeyEventTransition_delete_base XEventTransition_delete_base
-#define XKeyEventTransition_deinit_base XEventTransition_deinit_base
 
 /**
  * @brief 获取需要匹配的按键码。

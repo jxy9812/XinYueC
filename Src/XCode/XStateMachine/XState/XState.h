@@ -70,8 +70,6 @@ void XState_init(XState* state);
  */
 void XState_init_ex(XState* state, XState_ChildMode childMode, XState* parent);
 
-#define XState_delete_base XAbstractState_delete_base
-#define XState_deinit_base XAbstractState_deinit_base
 
 /**
  * @brief 获取本状态配置的错误状态。

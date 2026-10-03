@@ -36,7 +36,7 @@ static bool XBitmap_makeBitmapImage(const XImage* source, uint32_t flags,
     XImage_convertToFormat(source, XImageFormat_MonoLSB, flags, out);
     if (XImage_isNull(out))
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return false;
     }
 
@@ -153,7 +153,7 @@ void XBitmap_init(XBitmap* self)
     {
         memory = Class_Memory(self);
         isHeap = Class_IsHeap(self) != 0;
-        XClass_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
     }
     XMemset(self, 0, sizeof(XBitmap));
     XClass_init((XClass*)self);
@@ -174,13 +174,13 @@ void XBitmap_init_ex(XBitmap* self, int width, int height)
     if (XImage_isNull(&img))
     {
         XBitmap_resetOutput(self);
-        XImage_deinit_base(&img);
+        XClassDeinit(&img);
         return;
     }
     XImage_setColorTable(&img, bitmapColors, 2);
     XPixmap_init_bitmap_image((XPixmap*)self, &img, 0);
     XClassSetVtable(self, XBitmap);
-    XImage_deinit_base(&img);
+    XClassDeinit(&img);
 }
 
 void XBitmap_init_size(XBitmap* self, const XSize* size)
@@ -196,8 +196,8 @@ void XBitmap_init_file_2(XBitmap* self, const char* fileName, const char* format
     XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
     XString* formatString = format ? XString_create_utf8(format) : NULL;
     XBitmap_init_file(self, fileNameString, formatString);
-    if (fileNameString) XString_delete_base((XClass*)fileNameString);
-    if (formatString) XString_delete_base((XClass*)formatString);
+    if (fileNameString) XClassDelete((XClass*)fileNameString);
+    if (formatString) XClassDelete((XClass*)formatString);
 }
 
 void XBitmap_init_file(XBitmap* self, const XString* fileName, const XString* format)
@@ -211,7 +211,7 @@ void XBitmap_init_file(XBitmap* self, const XString* fileName, const XString* fo
     }
     else
         XBitmap_resetOutput(self);
-    XImage_deinit_base(&img);
+    XClassDeinit(&img);
 }
 
 void XBitmap_init_pixmap(XBitmap* self, const XPixmap* other)
@@ -272,8 +272,8 @@ void XBitmap_transformed(const XBitmap* self, const XImageTransform* matrix,
     XPixmap_toImage((const XPixmap*)self, &source);
     XImage_transformed(&source, matrix, 0, &transformed);
     XBitmap_fromImage(&transformed, 0, out);
-    XImage_deinit_base(&source);
-    XImage_deinit_base(&transformed);
+    XClassDeinit(&source);
+    XClassDeinit(&transformed);
 }
 
 XVariant* XBitmap_toVariant(const XBitmap* self)
@@ -304,7 +304,7 @@ void XBitmap_fromImage(const XImage* image, uint32_t flags, XBitmap* out)
     }
     XPixmap_init_bitmap_image((XPixmap*)out, &mono, 0);
     XClassSetVtable(out, XBitmap);
-    XImage_deinit_base(&mono);
+    XClassDeinit(&mono);
 }
 
 void XBitmap_fromData(const XSize* size, const uint8_t* bits, XImageFormat monoFormat, XBitmap* out)
@@ -322,19 +322,19 @@ void XBitmap_fromData(const XSize* size, const uint8_t* bits, XImageFormat monoF
     if (XImage_isNull(&img))
     {
         XBitmap_resetOutput(out);
-        XImage_deinit_base(&img);
+        XClassDeinit(&img);
         return;
     }
     XImage_setColorTable(&img, bitmapColors, 2);
     if ((int64_t)size->width + 7 > INT_MAX) {
-        XImage_deinit_base(&img);
+        XClassDeinit(&img);
         return;
     }
     const int sourceStride = (size->width + 7) / 8;
     for (int y = 0; y < size->height; ++y)
         XMemcpy(XImage_scanLine(&img, y), bits + y * sourceStride, (size_t)sourceStride);
     XBitmap_fromImage(&img, 0, out);
-    XImage_deinit_base(&img);
+    XClassDeinit(&img);
 }
 
 void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out)
@@ -353,7 +353,7 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out)
        output is marked as a bitmap. */
     if (XPixmap_depth(pixmap) == 1 && XPixmap_isQBitmap(pixmap))
     {
-        XCopy((XPixmap*)out, pixmap);
+        XClassCopy((XPixmap*)out, pixmap);
         XClassSetVtable(out, XBitmap);
         return;
     }
@@ -361,7 +361,7 @@ void XBitmap_fromPixmap(const XPixmap* pixmap, XBitmap* out)
     XImage_init(&img);   /* XPixmap_toImage 要求 out 为已初始化/空的 XImage 对象 */
     XPixmap_toImage(pixmap, &img);
     XBitmap_fromImage(&img, 0, out);
-    XImage_deinit_base(&img);
+    XClassDeinit(&img);
 }
 
 #if XPAINTDEVICE_ON

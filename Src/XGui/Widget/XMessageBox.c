@@ -516,15 +516,15 @@ static void VXMessageBox_deinit(XMessageBox* self)
 {
     if (!self) return;
     if (self->m_text) {
-        XString_delete_base(self->m_text);
+        XClassDelete(self->m_text);
         self->m_text = NULL;
     }
     if (self->m_detailedText) {
-        XString_delete_base(self->m_detailedText);
+        XClassDelete(self->m_detailedText);
         self->m_detailedText = NULL;
     }
     if (self->m_informativeText) {
-        XString_delete_base(self->m_informativeText);
+        XClassDelete(self->m_informativeText);
         self->m_informativeText = NULL;
     }
     /* 补充标签/详细区/Show Details 按钮为消息框子控件，随父子链级联
@@ -535,12 +535,12 @@ static void VXMessageBox_deinit(XMessageBox* self)
 #endif
     self->m_detailsButton = NULL;
     if (self->m_iconPixmap) {
-        XImage_delete_base((XClass*)self->m_iconPixmap);
+        XClassDelete((XClass*)self->m_iconPixmap);
         self->m_iconPixmap = NULL;
     }
 #if XCHECKBOX_ON
     if (self->m_checkBox) {
-        XCheckBox_delete_base((XClass*)self->m_checkBox);
+        XClassDelete((XClass*)self->m_checkBox);
         self->m_checkBox = NULL;
     }
 #endif
@@ -620,7 +620,7 @@ static void VXMessageBox_keyPressEvent(XWidget* self, XEvent* event)
                         XClipboard_setText(clipboard, payload,
                                            XClipboardMode_Clipboard);
                 }
-                XString_delete_base((XClass*)payload);
+                XClassDelete((XClass*)payload);
             }
             XEvent_accept(event);
             return;
@@ -758,7 +758,7 @@ static void xmsg_drawIcon(XMessageBox* box, XEvent* event)
         XPixmap_init(&pm);
         XPixmap_init_image(&pm, (const XImage*)box->m_iconPixmap, 0);
         XIcon_init_pixmap(icon, &pm);
-        XPixmap_deinit_base(&pm);
+        XClassDeinit(&pm);
     } else {
         icon = XMessageBox_standardIcon(box->m_icon);
     }
@@ -775,7 +775,7 @@ static void xmsg_drawIcon(XMessageBox* box, XEvent* event)
         XPainter_end(&painter);
     }
     XPainter_deinit(&painter);
-    XIcon_delete_base(icon);
+    XClassDelete(icon);
 }
 
 /** @brief 绘制：先静态父调用 XDialog 面板绘制，再叠画图标区。 */
@@ -994,7 +994,7 @@ static XDialogButtonBoxStandardButton xmsg_runStatic(
     if (title && title[0]) {
         XString* windowTitle = XString_create_utf8(title);
         XWidget_setWindowTitle((XWidget*)box, windowTitle);
-        if (windowTitle) XString_delete_base((XClass*)windowTitle);
+        if (windowTitle) XClassDelete((XClass*)windowTitle);
     }
     XMessageBox_setText(box, text);
     XMessageBox_setIcon(box, (XMessageBoxIcon)icon);
@@ -1023,7 +1023,7 @@ static XDialogButtonBoxStandardButton xmsg_runStatic(
     /* 递归 exec 的 -1 防护（对标 exec()==-1 → Cancel）。 */
     if ((int)result == -1)
         result = XDialogButtonBoxStandard_Cancel;
-    XMessageBox_delete_base(box);
+    XClassDelete(box);
     return result;
 }
 
@@ -1395,7 +1395,7 @@ void XMessageBox_setCheckBox(XMessageBox* self, XCheckBox* checkBox)
 {
     if (!self || self->m_checkBox == checkBox) return;
     if (self->m_checkBox) {
-        XCheckBox_delete_base((XClass*)self->m_checkBox);
+        XClassDelete((XClass*)self->m_checkBox);
         self->m_checkBox = NULL;
     }
     self->m_checkBox = checkBox;
@@ -1416,7 +1416,7 @@ void XMessageBox_setIconPixmap(XMessageBox* self, const XImage* pixmap)
     if (!self) return;
     if (!pixmap) {
         if (self->m_iconPixmap) {
-            XImage_delete_base((XClass*)self->m_iconPixmap);
+            XClassDelete((XClass*)self->m_iconPixmap);
             self->m_iconPixmap = NULL;
             /* 清除后图标列可能消失，文本回填让位（对标 Qt setPixmap
                (QPixmap()) → updateIcon 布局刷新）。 */
@@ -1429,7 +1429,7 @@ void XMessageBox_setIconPixmap(XMessageBox* self, const XImage* pixmap)
         self->m_iconPixmap = XImage_create();
         if (!self->m_iconPixmap) return;
     }
-    XCopy(self->m_iconPixmap, (const XClass*)pixmap);
+    XClassCopy(self->m_iconPixmap, (const XClass*)pixmap);
     /* 对标 Qt setPixmap：设置后 icon() 回读为 NoIcon
        （qmessagebox.cpp:1423-1429 口径），图标列布局按位图让位。 */
     self->m_icon = (int)XMessageBoxIcon_NoIcon;
@@ -1548,7 +1548,7 @@ void XMessageBox_aboutQt(XWidget* parent, const XString* title)
                           "Qt 为跨平台应用框架，更多信息参见 "
                           "qt.io。本对话框用于演示 aboutQt 便捷入口。");
     }
-    XString_delete_base((XClass*)boxTitle);
+    XClassDelete((XClass*)boxTitle);
 }
 
 XIcon* XMessageBox_standardIcon(int icon)

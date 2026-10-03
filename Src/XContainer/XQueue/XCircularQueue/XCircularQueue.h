@@ -148,12 +148,10 @@ void XCircularQueue_setAutoExpansion(XCircularQueue* this_queue, bool autoExpans
 * @brief 反初始化容器
 * @note 基于XQueueBase的接口，释放队列资源但不销毁实例本身
 */
-#define XCircularQueue_deinit_base			XQueueBase_deinit_base
 /**
 * @brief 删除容器实例
 * @note 基于XQueueBase的接口，释放队列资源并销毁实例
 */
-#define XCircularQueue_delete_base			XQueueBase_delete_base
 /**
 * @brief 清空容器元素
 * @note 基于XQueueBase的接口，删除所有元素但保留队列结构

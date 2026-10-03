@@ -223,13 +223,11 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits);
 * @brief 基类析构宏（继承自XClass）
 * @details 复用XClass的析构基础逻辑，实现XModbusDataUnit的资源释放
 */
-#define XModbusDataUnit_deinit_base		    XClass_deinit_base
 
 /**
 * @brief 基类删除宏（继承自XClass）
 * @details 复用XClass的删除基础逻辑，释放XModbusDataUnit实例的内存
 */
-#define XModbusDataUnit_delete_base		    XClass_delete_base
 
 /**
 * @brief Modbus服务器数据映射表
@@ -237,7 +235,6 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits);
 */
 typedef XMap XModbusDataUnitMap;
 XModbusDataUnitMap* XModbusDataUnitMap_create();
-#define XModbusDataUnitMap_delete_base XMapBase_delete_base
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusDataUnit_create

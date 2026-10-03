@@ -89,8 +89,6 @@ void XKeySequenceEdit_init(XKeySequenceEdit* self, XWidget* parent,
  * @return 返回对象指针；无效时返回 NULL。
  */
 XKeySequenceEdit* XKeySequenceEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XKeySequenceEdit_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XKeySequenceEdit_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      获取当前快捷键序列（对标 keySequence）。

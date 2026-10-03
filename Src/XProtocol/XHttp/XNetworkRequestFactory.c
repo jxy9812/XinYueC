@@ -32,7 +32,7 @@ static bool xrequest_factory_replace_bytes(XByteArray** target, const XByteArray
     if (!replacement)
         return false;
     if (*target)
-        XClass_delete_base((XClass*)*target);
+        XClassDelete((XClass*)*target);
     *target = replacement;
     return true;
 }
@@ -45,7 +45,7 @@ static void xrequest_factory_release_attributes(XNetworkRequestFactory* self)
         XNetworkRequestFactory_AttributeItem* item =
             (XNetworkRequestFactory_AttributeItem*)XVector_at_base(self->m_attributes, (int64_t)i);
         if (item && item->m_value)
-            XClass_delete_base((XClass*)item->m_value);
+            XClassDelete((XClass*)item->m_value);
     }
     XContainer_clear_base((XContainer*)self->m_attributes);
 }
@@ -82,7 +82,7 @@ static bool xrequest_factory_has_header(const XHttpRequest* request, const char*
     XByteArray* key = name ? XByteArray_create_utf8(name) : NULL;
     bool result = key && XHttpHeaders_contains(XHttpRequest_headers_const(request), key);
     if (key)
-        XClass_delete_base((XClass*)key);
+        XClassDelete((XClass*)key);
     return result;
 }
 
@@ -117,14 +117,14 @@ static bool xrequest_factory_apply_auth(XNetworkRequestFactory* self, XHttpReque
     if (value && !XHttpHeaders_replaceOrAppendKnown(XHttpRequest_headers(request),
                                                      XHttpHeaders_WellKnownHeader_Authorization, value))
         goto failed;
-    if (value) XClass_delete_base((XClass*)value);
-    if (credentials) XClass_delete_base((XClass*)credentials);
-    if (encoded) XClass_delete_base((XClass*)encoded);
+    if (value) XClassDelete((XClass*)value);
+    if (credentials) XClassDelete((XClass*)credentials);
+    if (encoded) XClassDelete((XClass*)encoded);
     return true;
 failed:
-    if (value) XClass_delete_base((XClass*)value);
-    if (credentials) XClass_delete_base((XClass*)credentials);
-    if (encoded) XClass_delete_base((XClass*)encoded);
+    if (value) XClassDelete((XClass*)value);
+    if (credentials) XClassDelete((XClass*)credentials);
+    if (encoded) XClassDelete((XClass*)encoded);
     return false;
 }
 
@@ -144,8 +144,8 @@ static bool xrequest_factory_apply_query(XNetworkRequestFactory* self, XHttpRequ
         XUrl_setQuery(url, text);
         result = XHttpRequest_setUrl(request, url);
     }
-    if (url) XClass_delete_base((XClass*)url);
-    if (text) XClass_delete_base((XClass*)text);
+    if (url) XClassDelete((XClass*)url);
+    if (text) XClassDelete((XClass*)text);
     return result;
 }
 
@@ -168,7 +168,7 @@ static XHttpRequest* xrequest_factory_create_internal(const XNetworkRequestFacto
     } else if (path) {
         XString* absolute = XString_create_utf8(path);
         resolved = absolute ? XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, absolute, XUrl_TolerantMode) : NULL;
-        if (absolute) XClass_delete_base((XClass*)absolute);
+        if (absolute) XClassDelete((XClass*)absolute);
         request = resolved ? XHttpRequest_create_url(resolved) : NULL;
     } else if (self->m_baseUrl) {
         request = XHttpRequest_create_url(self->m_baseUrl);
@@ -187,27 +187,27 @@ static XHttpRequest* xrequest_factory_create_internal(const XNetworkRequestFacto
         if (item && item->m_value)
             XHttpRequest_setAttribute(request, item->m_code, item->m_value);
     }
-    if (resolved) XClass_delete_base((XClass*)resolved);
-    if (relative) XClass_delete_base((XClass*)relative);
+    if (resolved) XClassDelete((XClass*)resolved);
+    if (relative) XClassDelete((XClass*)relative);
     return request;
 failed:
-    if (request) XClass_delete_base((XClass*)request);
-    if (resolved) XClass_delete_base((XClass*)resolved);
-    if (relative) XClass_delete_base((XClass*)relative);
+    if (request) XClassDelete((XClass*)request);
+    if (resolved) XClassDelete((XClass*)resolved);
+    if (relative) XClassDelete((XClass*)relative);
     return NULL;
 }
 
 static void xrequest_factory_release(XNetworkRequestFactory* self)
 {
     if (!self) return;
-    if (self->m_baseUrl) XClass_delete_base((XClass*)self->m_baseUrl);
-    if (self->m_commonHeaders) XClass_delete_base((XClass*)self->m_commonHeaders);
-    if (self->m_bearerToken) XClass_delete_base((XClass*)self->m_bearerToken);
-    if (self->m_userName) XClass_delete_base((XClass*)self->m_userName);
-    if (self->m_password) XClass_delete_base((XClass*)self->m_password);
-    if (self->m_queryParameters) XClass_delete_base((XClass*)self->m_queryParameters);
+    if (self->m_baseUrl) XClassDelete((XClass*)self->m_baseUrl);
+    if (self->m_commonHeaders) XClassDelete((XClass*)self->m_commonHeaders);
+    if (self->m_bearerToken) XClassDelete((XClass*)self->m_bearerToken);
+    if (self->m_userName) XClassDelete((XClass*)self->m_userName);
+    if (self->m_password) XClassDelete((XClass*)self->m_password);
+    if (self->m_queryParameters) XClassDelete((XClass*)self->m_queryParameters);
     xrequest_factory_release_attributes(self);
-    if (self->m_attributes) XClass_delete_base((XClass*)self->m_attributes);
+    if (self->m_attributes) XClassDelete((XClass*)self->m_attributes);
     self->m_baseUrl = NULL; self->m_commonHeaders = NULL; self->m_bearerToken = NULL;
     self->m_userName = NULL; self->m_password = NULL; self->m_queryParameters = NULL;
     self->m_attributes = NULL;
@@ -233,7 +233,7 @@ static void VXNetworkRequestFactory_copy(XNetworkRequestFactory* dest,
         !XNetworkRequestFactory_setUserName(copy, src->m_userName) ||
         !XNetworkRequestFactory_setPassword(copy, src->m_password) ||
         !XNetworkRequestFactory_setQueryParameters(copy, src->m_queryParameters)) {
-        XClass_delete_base((XClass*)copy); return;
+        XClassDelete((XClass*)copy); return;
     }
     copy->m_transferTimeout = src->m_transferTimeout;
     copy->m_priority = src->m_priority;
@@ -241,7 +241,7 @@ static void VXNetworkRequestFactory_copy(XNetworkRequestFactory* dest,
         XNetworkRequestFactory_AttributeItem* item =
             (XNetworkRequestFactory_AttributeItem*)XVector_at_base(src->m_attributes, (int64_t)i);
         if (!item || !XNetworkRequestFactory_setAttribute(copy, item->m_code, item->m_value)) {
-            XClass_delete_base((XClass*)copy); return;
+            XClassDelete((XClass*)copy); return;
         }
     }
     xrequest_factory_release(dest);
@@ -254,7 +254,7 @@ static void VXNetworkRequestFactory_copy(XNetworkRequestFactory* dest,
     dest->m_attributes = copy->m_attributes; copy->m_attributes = NULL;
     dest->m_transferTimeout = copy->m_transferTimeout;
     dest->m_priority = copy->m_priority;
-    XClass_delete_base((XClass*)copy);
+    XClassDelete((XClass*)copy);
 }
 
 static void VXNetworkRequestFactory_move(XNetworkRequestFactory* dest,
@@ -305,7 +305,7 @@ XNetworkRequestFactory* XNetworkRequestFactory_create_ex(XMemoryType memory)
     if (!self) return NULL;
     XNetworkRequestFactory_init(self);
     if (!self->m_commonHeaders || !self->m_attributes) {
-        XNetworkRequestFactory_deinit_base((XClass*)self); XMemory_method(memory)->free(self); return NULL;
+        XClassDeinit((XClass*)self); XMemory_method(memory)->free(self); return NULL;
     }
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
@@ -315,7 +315,7 @@ XNetworkRequestFactory* XNetworkRequestFactory_create_url(const XUrl* baseUrl)
 {
     XNetworkRequestFactory* self = XNetworkRequestFactory_create();
     if (self && !XNetworkRequestFactory_setBaseUrl(self, baseUrl)) {
-        XNetworkRequestFactory_delete_base((XClass*)self); return NULL;
+        XClassDelete((XClass*)self); return NULL;
     }
     return self;
 }
@@ -324,7 +324,7 @@ XNetworkRequestFactory* XNetworkRequestFactory_create_copy(const XNetworkRequest
 {
     if (!other) return NULL;
     XNetworkRequestFactory* self = XNetworkRequestFactory_create();
-    if (self) XCopy((XClass*)self, (const XClass*)other);
+    if (self) XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -332,7 +332,7 @@ XNetworkRequestFactory* XNetworkRequestFactory_create_move(XNetworkRequestFactor
 {
     if (!other) return NULL;
     XNetworkRequestFactory* self = XNetworkRequestFactory_create();
-    if (self) XMove((XClass*)self, (XClass*)other);
+    if (self) XClassMove((XClass*)self, (XClass*)other);
     return self;
 }
 
@@ -344,7 +344,7 @@ bool XNetworkRequestFactory_setBaseUrl(XNetworkRequestFactory* self, const XUrl*
     if (!self) return false;
     XUrl* replacement = url ? XUrl_create_copy(url) : NULL;
     if (url && !replacement) return false;
-    if (self->m_baseUrl) XClass_delete_base((XClass*)self->m_baseUrl);
+    if (self->m_baseUrl) XClassDelete((XClass*)self->m_baseUrl);
     self->m_baseUrl = replacement; return true;
 }
 
@@ -356,7 +356,7 @@ bool XNetworkRequestFactory_setCommonHeaders(XNetworkRequestFactory* self, const
     if (!self) return false;
     XHttpHeaders* replacement = headers ? XHttpHeaders_create_copy(headers) : XHttpHeaders_create();
     if (!replacement) return false;
-    if (self->m_commonHeaders) XClass_delete_base((XClass*)self->m_commonHeaders);
+    if (self->m_commonHeaders) XClassDelete((XClass*)self->m_commonHeaders);
     self->m_commonHeaders = replacement; return true;
 }
 
@@ -368,25 +368,25 @@ XByteArray* XNetworkRequestFactory_bearerToken(const XNetworkRequestFactory* sel
 bool XNetworkRequestFactory_setBearerToken(XNetworkRequestFactory* self, const XByteArray* token)
 { return self ? xrequest_factory_replace_bytes(&self->m_bearerToken, token) : false; }
 void XNetworkRequestFactory_clearBearerToken(XNetworkRequestFactory* self)
-{ if (self && self->m_bearerToken) { XClass_delete_base((XClass*)self->m_bearerToken); self->m_bearerToken = NULL; } }
+{ if (self && self->m_bearerToken) { XClassDelete((XClass*)self->m_bearerToken); self->m_bearerToken = NULL; } }
 bool XNetworkRequestFactory_setUserName(XNetworkRequestFactory* self, const XByteArray* name)
 { return self ? xrequest_factory_replace_bytes(&self->m_userName, name) : false; }
 XByteArray* XNetworkRequestFactory_userName(const XNetworkRequestFactory* self)
 { return self && self->m_userName ? XByteArray_create_copy(self->m_userName) : XByteArray_create(); }
 void XNetworkRequestFactory_clearUserName(XNetworkRequestFactory* self)
-{ if (self && self->m_userName) { XClass_delete_base((XClass*)self->m_userName); self->m_userName = NULL; } }
+{ if (self && self->m_userName) { XClassDelete((XClass*)self->m_userName); self->m_userName = NULL; } }
 bool XNetworkRequestFactory_setPassword(XNetworkRequestFactory* self, const XByteArray* password)
 { return self ? xrequest_factory_replace_bytes(&self->m_password, password) : false; }
 XByteArray* XNetworkRequestFactory_password(const XNetworkRequestFactory* self)
 { return self && self->m_password ? XByteArray_create_copy(self->m_password) : XByteArray_create(); }
 void XNetworkRequestFactory_clearPassword(XNetworkRequestFactory* self)
-{ if (self && self->m_password) { XClass_delete_base((XClass*)self->m_password); self->m_password = NULL; } }
+{ if (self && self->m_password) { XClassDelete((XClass*)self->m_password); self->m_password = NULL; } }
 bool XNetworkRequestFactory_setQueryParameters(XNetworkRequestFactory* self, const XByteArray* query)
 { return self ? xrequest_factory_replace_bytes(&self->m_queryParameters, query) : false; }
 XByteArray* XNetworkRequestFactory_queryParameters(const XNetworkRequestFactory* self)
 { return self && self->m_queryParameters ? XByteArray_create_copy(self->m_queryParameters) : XByteArray_create(); }
 void XNetworkRequestFactory_clearQueryParameters(XNetworkRequestFactory* self)
-{ if (self && self->m_queryParameters) { XClass_delete_base((XClass*)self->m_queryParameters); self->m_queryParameters = NULL; } }
+{ if (self && self->m_queryParameters) { XClassDelete((XClass*)self->m_queryParameters); self->m_queryParameters = NULL; } }
 void XNetworkRequestFactory_setTransferTimeout(XNetworkRequestFactory* self, int timeout)
 { if (self) self->m_transferTimeout = timeout < 0 ? 0 : timeout; }
 int XNetworkRequestFactory_transferTimeout(const XNetworkRequestFactory* self)
@@ -423,12 +423,12 @@ bool XNetworkRequestFactory_setAttribute(XNetworkRequestFactory* self, int code,
     copy = XVariant_create_copy(value);
     if (!copy) return false;
     if (item) {
-        if (item->m_value) XClass_delete_base((XClass*)item->m_value);
+        if (item->m_value) XClassDelete((XClass*)item->m_value);
         item->m_value = copy; return true;
     }
     XNetworkRequestFactory_AttributeItem created = { code, copy };
     if (!XVector_push_back_1_base(self->m_attributes, &created)) {
-        XClass_delete_base((XClass*)copy); return false;
+        XClassDelete((XClass*)copy); return false;
     }
     return true;
 }
@@ -446,7 +446,7 @@ void XNetworkRequestFactory_clearAttribute(XNetworkRequestFactory* self, int cod
         XNetworkRequestFactory_AttributeItem* item =
             (XNetworkRequestFactory_AttributeItem*)XVector_at_base(self->m_attributes, (int64_t)i);
         if (item && item->m_code == code) {
-            if (item->m_value) XClass_delete_base((XClass*)item->m_value);
+            if (item->m_value) XClassDelete((XClass*)item->m_value);
             XVector_removeAt_base(self->m_attributes, (int64_t)i); return;
         }
     }

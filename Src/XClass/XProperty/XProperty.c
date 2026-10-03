@@ -40,7 +40,7 @@ void XPropertyData_init_ex(XPropertyData* self, const XVariant* initialValue)
     XPropertyData_init(self);
     if (!self || !initialValue)
         return;
-    XCopy((XClass*)&self->m_value, (const XClass*)initialValue);
+    XClassCopy((XClass*)&self->m_value, (const XClass*)initialValue);
 }
 
 void XPropertyData_deinit(XPropertyData* self)
@@ -58,7 +58,7 @@ void XPropertyData_deinit(XPropertyData* self)
         }
         self->m_firstObserver = NULL;
     }
-    XVariant_deinit_base((XClass*)&self->m_value);
+    XClassDeinit((XClass*)&self->m_value);
     self->m_interface = NULL;
 }
 
@@ -98,7 +98,7 @@ bool XPropertyData_value(XPropertyData* data, XVariant* out)
         memset(out, 0, sizeof(XVariant));
         XVariant_init(out, NULL, 0, XVariantType_NULL);
     }
-    XCopy((XClass*)out, (const XClass*)value);
+    XClassCopy((XClass*)out, (const XClass*)value);
     return true;
 }
 
@@ -120,7 +120,7 @@ void XPropertyData_setValue_move(XPropertyData* data, XVariant* v)
         XPropertyData_removeBindingInternal(data);
     {
         bool changed = !XProperty_valueEquals(&data->m_value, v);
-        XMove((XClass*)&data->m_value, (XClass*)v);
+        XClassMove((XClass*)&data->m_value, (XClass*)v);
         if (changed)
         {
             XPropertyData_notifyObservers(data);
@@ -141,12 +141,12 @@ bool XPropertyData_writeAndNotify(XPropertyData* data, const XVariant* v)
         bool changed = !XProperty_valueEquals(&data->m_value, target);
         if (changed)
         {
-            XCopy((XClass*)&data->m_value, (const XClass*)target);
+            XClassCopy((XClass*)&data->m_value, (const XClass*)target);
             XPropertyData_notifyObservers(data);
             if (data->m_interface && data->m_interface->m_notifyChanged)
                 data->m_interface->m_notifyChanged(data);
         }
-        XVariant_deinit_base((XClass*)&nullVariant);
+        XClassDeinit((XClass*)&nullVariant);
         return changed;
     }
 }
@@ -305,7 +305,7 @@ void XPropertyData_setValueBypassingBinding(XPropertyData* data, const XVariant*
 {
     if (!data) return;
     if (v)
-        XCopy((XClass*)&data->m_value, (const XClass*)v);
+        XClassCopy((XClass*)&data->m_value, (const XClass*)v);
     else
     {
         XVariant_init(&data->m_value, NULL, 0, XVariantType_NULL);
@@ -327,7 +327,7 @@ static void VXProperty_copy(XProperty* dest, const XProperty* src)
     if (XClassIsVtableNull(dest))
         XProperty_init(dest);
     /* Qt 禁止拷贝 QProperty；此处按库规范弱化为仅拷贝值，绑定/观察者不随拷贝 */
-    XCopy((XClass*)&dest->m_data.m_value, (const XClass*)&src->m_data.m_value);
+    XClassCopy((XClass*)&dest->m_data.m_value, (const XClass*)&src->m_data.m_value);
 }
 
 static void VXProperty_move(XProperty* dest, XProperty* src)
@@ -349,7 +349,7 @@ static void VXProperty_move(XProperty* dest, XProperty* src)
         dest->m_data.m_firstObserver = NULL;
     }
     /* 转移值/接口/绑定/观察者，并重定向节点与绑定的回指指针 */
-    XMove((XClass*)&dest->m_data.m_value, (XClass*)&src->m_data.m_value);
+    XClassMove((XClass*)&dest->m_data.m_value, (XClass*)&src->m_data.m_value);
     dest->m_data.m_interface = src->m_data.m_interface;
     dest->m_data.m_binding = src->m_data.m_binding;
     if (dest->m_data.m_binding)
@@ -387,7 +387,7 @@ void XProperty_init_ex(XProperty* self, const XVariant* initialValue)
 {
     XProperty_init(self);
     if (!self || !initialValue) return;
-    XCopy((XClass*)&self->m_data.m_value, (const XClass*)initialValue);
+    XClassCopy((XClass*)&self->m_data.m_value, (const XClass*)initialValue);
 }
 
 XProperty* XProperty_create(void)
@@ -406,7 +406,7 @@ XProperty* XProperty_create_ex(const XVariant* initialValue)
     XProperty* self = XProperty_create();
     if (!self) return NULL;
     if (initialValue)
-        XCopy((XClass*)&self->m_data.m_value, (const XClass*)initialValue);
+        XClassCopy((XClass*)&self->m_data.m_value, (const XClass*)initialValue);
     return self;
 }
 
@@ -415,7 +415,7 @@ XProperty* XProperty_create_copy(const XProperty* other)
     if (!other) return NULL;
     XProperty* self = XProperty_create();
     if (!self) return NULL;
-    XCopy((XClass*)self, (const XClass*)other);
+    XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 

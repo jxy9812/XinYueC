@@ -77,22 +77,22 @@ static void test_create_destroy(void)
         CHECK(XString_compare(got, fn) == 0, "XFile_create_2 文件名正确");
         XFile_deleteLater(f2);
     }
-    XString_delete_base(fn);
+    XClassDelete(fn);
 
     /* 1.3 栈上 XFile_init / XFile_init_2 */
     XFile sf;
     XFile_init(&sf);
     CHECK(XString_size_base(XFile_fileName_base((XFileDevice*)&sf)) == 0,
           "XFile_init 栈对象 fileName 为空");
-    XClass_deinit_base(&sf);
+    XClassDeinit(&sf);
 
     XString* fn2 = XString_create_utf8("stack_init.txt");
     XFile sf2;
     XFile_init_2(&sf2, fn2);
     CHECK(XString_compare(XFile_fileName_base((XFileDevice*)&sf2), fn2) == 0,
           "XFile_init_2 栈对象文件名正确");
-    XClass_deinit_base(&sf2);
-    XString_delete_base(fn2);
+    XClassDeinit(&sf2);
+    XClassDelete(fn2);
 }
 
 /* ============================================================================
@@ -115,8 +115,8 @@ static void test_setFileName(void)
     got = XFile_fileName_base((XFileDevice*)f);
     CHECK(XString_compare(got, fn2) == 0, "setFileName 覆盖后 fileName 正确");
 
-    XString_delete_base(fn);
-    XString_delete_base(fn2);
+    XClassDelete(fn);
+    XClassDelete(fn2);
     XFile_deleteLater(f);
 }
 
@@ -170,7 +170,7 @@ static void test_open_modes(void)
     ok = XIODevice_open_base((XIODevice*)f, XIODevice_ReadOnly | XIODevice_Existing);
     CHECK(!ok, "ReadOnly|Existing 对不存在文件应失败");
     XFile_deleteLater(f);
-    XString_delete_base(nofile);
+    XClassDelete(nofile);
 
     /* 3.5 ReadWrite 模式 */
     f = XFile_create_2(fn);
@@ -212,7 +212,7 @@ static void test_open_modes(void)
 
     /* 清理 */
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -236,7 +236,7 @@ static void test_open_with_permissions(void)
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -278,7 +278,7 @@ static void test_open_from_fd(void)
     }
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -305,7 +305,7 @@ static void test_write_operations(void)
         XByteArray* ba = XByteArray_create_utf8(", XFile!");
         n = XIODevice_write_2((XIODevice*)f, ba);
         CHECK(n == 8, "write_2 写入 8 字节");
-        XByteArray_delete_base(ba);
+        XClassDelete(ba);
 
         /* 6.3 write_3 (C 字符串) */
         n = XIODevice_write_3((XIODevice*)f, "\nLine2\n");
@@ -335,13 +335,13 @@ static void test_write_operations(void)
         CHECK(XByteArray_size_base(all) == 21, "写入总字节数正确 (5+8+7+1=21)");
         const char* data = (const char*)XByteArray_data(all);
         CHECK(memcmp(data, "Hello, XFile!\nLine2\nX", 21) == 0, "写入内容完全正确");
-        XByteArray_delete_base(all);
+        XClassDelete(all);
         XIODevice_close_base((XIODevice*)f);
     }
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -407,13 +407,13 @@ static void test_read_operations(void)
         /* peek 不移动位置 */
         int64_t posAfterPeek = XIODevice_pos_base((XIODevice*)f);
         CHECK(posAfterPeek == 12, "peek 后 pos 不变 (12)");
-        XByteArray_delete_base(peeked);
+        XClassDelete(peeked);
 
         /* 7.9 readLine_3 (返回 XByteArray) */
         XByteArray* line3 = XIODevice_readLine_3((XIODevice*)f);
         CHECK(XByteArray_size_base(line3) == 6, "readLine_3 读取 6 字节");
         CHECK(memcmp(XByteArray_data(line3), "Line3\n", 6) == 0, "readLine_3 内容正确");
-        XByteArray_delete_base(line3);
+        XClassDelete(line3);
 
         /* 7.10 atEnd (现在应在末尾) */
         CHECK(XIODevice_atEnd_base((XIODevice*)f), "读完后 atEnd == true");
@@ -445,7 +445,7 @@ static void test_read_operations(void)
         XByteArray* ba = XByteArray_create();
         int64_t n = XIODevice_readAll_2((XIODevice*)f, ba, false);
         CHECK(n == 18, "readAll_2 读取 18 字节");
-        XByteArray_delete_base(ba);
+        XClassDelete(ba);
         XIODevice_close_base((XIODevice*)f);
     }
     XFile_deleteLater(f);
@@ -457,13 +457,13 @@ static void test_read_operations(void)
         XByteArray* chunk = XIODevice_read_3((XIODevice*)f, 6);
         CHECK(XByteArray_size_base(chunk) == 6, "read_3 读取 6 字节");
         CHECK(memcmp(XByteArray_data(chunk), "Line1\n", 6) == 0, "read_3 内容正确");
-        XByteArray_delete_base(chunk);
+        XClassDelete(chunk);
         XIODevice_close_base((XIODevice*)f);
     }
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -529,7 +529,7 @@ static void test_seek_pos_reset(void)
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -575,10 +575,10 @@ static void test_handle_error(void)
     err = XFile_error((XFileDevice*)f);
     CHECK(err != XFileDevice_NoError, "打开失败后 error != NoError");
     XFile_deleteLater(f);
-    XString_delete_base(nofile);
+    XClassDelete(nofile);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -636,7 +636,7 @@ static void test_file_time(void)
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -696,7 +696,7 @@ static void test_resize(void)
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -742,7 +742,7 @@ static void test_permissions(void)
     XFile_setPermissions_static(fn, XFile_PermsOwner | XFile_ReadUser);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -771,7 +771,7 @@ static void test_exists(void)
 
     XFile_deleteLater(f);
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -811,8 +811,8 @@ static void test_remove(void)
     removed = XFile_remove_static(fn1);
     CHECK(!removed, "删除不存在文件应失败");
 
-    XString_delete_base(fn1);
-    XString_delete_base(fn2);
+    XClassDelete(fn1);
+    XClassDelete(fn2);
 }
 
 /* 14.4 打开状态下的 remove: Qt 行为是先关闭再删除 */
@@ -829,7 +829,7 @@ static void test_remove_open(void)
     CHECK(ok, "打开中 XFile_remove 成功");
     CHECK(!XFile_exists_static(fn), "打开中 remove 后文件不存在");
     XFile_deleteLater(f);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -882,10 +882,10 @@ static void test_rename(void)
 
     XFile_remove_static(dst2);
     XFile_remove_static(existing);
-    XString_delete_base(src);
-    XString_delete_base(dst);
-    XString_delete_base(dst2);
-    XString_delete_base(existing);
+    XClassDelete(src);
+    XClassDelete(dst);
+    XClassDelete(dst2);
+    XClassDelete(existing);
 }
 
 /* ============================================================================
@@ -920,7 +920,7 @@ static void test_copy(void)
     XByteArray* data = XIODevice_readAll_3((XIODevice*)f);
     CHECK(XByteArray_size_base(data) == 14, "copy 后目标文件大小正确");
     CHECK(memcmp(XByteArray_data(data), "copy test data", 14) == 0, "copy 后内容一致");
-    XByteArray_delete_base(data);
+    XClassDelete(data);
     XIODevice_close_base((XIODevice*)f);
     XFile_deleteLater(f);
 
@@ -948,10 +948,10 @@ static void test_copy(void)
     XFile_remove_static(dst);
     XFile_remove_static(dst2);
     XFile_remove_static(dst3);
-    XString_delete_base(src);
-    XString_delete_base(dst);
-    XString_delete_base(dst2);
-    XString_delete_base(dst3);
+    XClassDelete(src);
+    XClassDelete(dst);
+    XClassDelete(dst2);
+    XClassDelete(dst3);
 }
 
 /* ============================================================================
@@ -987,14 +987,14 @@ static void test_link(void)
         const char* resolvedStr = XString_toUtf8(resolved);
         CHECK(resolvedStr != NULL && strstr(resolvedStr, "xfile_link_target.txt") != NULL,
               "symLinkTarget 指向正确目标");
-        XString_delete_base(resolved);
+        XClassDelete(resolved);
     }
 
     /* 17.3 成员 symLinkTarget */
     f = XFile_create_2(linkName);
     XString* resolved2 = XFile_symLinkTarget(f);
     CHECK(resolved2 != NULL, "成员 symLinkTarget 返回非 NULL");
-    if (resolved2) XString_delete_base(resolved2);
+    if (resolved2) XClassDelete(resolved2);
     XFile_deleteLater(f);
 
     /* 17.4 成员 link */
@@ -1013,7 +1013,7 @@ static void test_link(void)
         XByteArray* data = XIODevice_readAll_3((XIODevice*)f);
         CHECK(XByteArray_size_base(data) == 11, "通过链接读取大小正确");
         CHECK(memcmp(XByteArray_data(data), "link target", 11) == 0, "通过链接读取内容正确");
-        XByteArray_delete_base(data);
+        XClassDelete(data);
         XIODevice_close_base((XIODevice*)f);
     }
     XFile_deleteLater(f);
@@ -1021,9 +1021,9 @@ static void test_link(void)
     XFile_remove_static(linkName);
     XFile_remove_static(linkName2);
     XFile_remove_static(target);
-    XString_delete_base(target);
-    XString_delete_base(linkName);
-    XString_delete_base(linkName2);
+    XClassDelete(target);
+    XClassDelete(linkName);
+    XClassDelete(linkName2);
 }
 
 /* ============================================================================
@@ -1064,8 +1064,8 @@ static void test_moveToTrash(void)
     CHECK(!XFile_exists_static(fn2), "成员 moveToTrash 后文件不存在");
     XFile_deleteLater(f);
 
-    XString_delete_base(fn);
-    XString_delete_base(fn2);
+    XClassDelete(fn);
+    XClassDelete(fn2);
 }
 
 /* 18.1 打开中的 moveToTrash: Qt 行为是先关闭再放入回收站 */
@@ -1082,7 +1082,7 @@ static void test_moveToTrash_open(void)
     CHECK(ok, "打开中 XFile_moveToTrash 成功");
     CHECK(!XFile_exists_static(fn), "打开中 moveToTrash 后文件不存在");
     XFile_deleteLater(f);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -1128,7 +1128,7 @@ static void test_mmap(void)
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -1305,7 +1305,7 @@ static void test_shared_memory(void)
         XString* missing = XString_create_utf8("xin_yue_c_shared_memory_no_such");
         fd = XDeviceFile_openSharedMemory(missing, false, 0, NULL);
         CHECK(fd < 0, "打开不存在的共享内存段应失败");
-        XString_delete_base(missing);
+        XClassDelete(missing);
     }
 
     /* 参数校验：空名称或非法大小应失败 */
@@ -1314,11 +1314,11 @@ static void test_shared_memory(void)
     fd = XDeviceFile_openSharedMemory(name, true, 0, NULL);
     CHECK(fd < 0, "非法大小创建共享内存段应失败");
 
-    XString_delete_base(name);
+    XClassDelete(name);
 
     /* 独立测试创建的事件环由本测试负责释放 */
     if (testApp)
-        XCoreApplication_delete_base(testApp);
+        XClassDelete(testApp);
 }
 
 /* ============================================================================
@@ -1353,11 +1353,11 @@ static void test_encode_decode(void)
         const char* expC2 = XString_toUtf8(expected);
         CHECK(decC2 && expC2 && strcmp(decC2, expC2) == 0, "decodeName_2 还原正确 (按字节)");
 
-    XByteArray_delete_base(encoded);
-    XString_delete_base(decoded);
-    XString_delete_base(decoded2);
-    XString_delete_base(expected);
-    XString_delete_base(fn);
+    XClassDelete(encoded);
+    XClassDelete(decoded);
+    XClassDelete(decoded2);
+    XClassDelete(expected);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -1395,13 +1395,13 @@ static void test_append_mode(void)
         XByteArray* all = XIODevice_readAll_3((XIODevice*)f);
         CHECK(XByteArray_size_base(all) == 11, "Append 后总大小 11");
         CHECK(memcmp(XByteArray_data(all), "FIRSTSECOND", 11) == 0, "Append 后内容正确");
-        XByteArray_delete_base(all);
+        XClassDelete(all);
         XIODevice_close_base((XIODevice*)f);
     }
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -1441,14 +1441,14 @@ static void test_readwrite(void)
         const char* finalData = (const char*)XByteArray_data(all);
         CHECK(finalLen == 10, "ReadWrite 后总大小 10 字节");
         CHECK(memcmp(finalData, "ABCDEXYHIJ", 10) == 0, "ReadWrite 覆盖写入后内容正确 (ABCDEXYHIJ)");
-        XByteArray_delete_base(all);
+        XClassDelete(all);
 
         XIODevice_close_base((XIODevice*)f);
     }
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -1475,7 +1475,7 @@ static void test_text_mode(void)
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -1506,7 +1506,7 @@ static void test_channels(void)
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
-    XString_delete_base(fn);
+    XClassDelete(fn);
 }
 
 /* ============================================================================
@@ -1555,7 +1555,7 @@ static void test_edge_cases(void)
         CHECK(XIODevice_atEnd_base((XIODevice*)f), "空文件 atEnd == true");
         XByteArray* data = XIODevice_readAll_3((XIODevice*)f);
         CHECK(XByteArray_size_base(data) == 0, "空文件 readAll 返回 0 字节");
-        XByteArray_delete_base(data);
+        XClassDelete(data);
         XIODevice_close_base((XIODevice*)f);
     }
     XFile_deleteLater(f);
@@ -1575,15 +1575,15 @@ static void test_edge_cases(void)
         XByteArray* lineBa = XByteArray_create();
         int64_t ln = XIODevice_readLine_2((XIODevice*)f, lineBa);
         CHECK(ln == 4, "readLine_2 读取 4 字节 (无换行)");
-        XByteArray_delete_base(lineBa);
+        XClassDelete(lineBa);
         XIODevice_close_base((XIODevice*)f);
     }
     XFile_deleteLater(f);
 
     XFile_remove_static(fn);
     XFile_remove_static(emptyFn);
-    XString_delete_base(fn);
-    XString_delete_base(emptyFn);
+    XClassDelete(fn);
+    XClassDelete(emptyFn);
 }
 
 /* ============================================================================

@@ -93,10 +93,10 @@ void XIODevicePrivate_deinit(XIODevicePrivate* d)
         for (size_t i = 0; i < XVector_size_base(d->readBuffers); ++i) {
             XRingBuffer** bufPtr = (XRingBuffer**)XVector_at_base(d->readBuffers, i);
             if (bufPtr && *bufPtr) {
-                XRingBuffer_delete_base(*bufPtr);
+                XClassDelete(*bufPtr);
             }
         }
-        XVector_delete_base(d->readBuffers);
+        XClassDelete(d->readBuffers);
         d->readBuffers = NULL;
     }
 
@@ -104,15 +104,15 @@ void XIODevicePrivate_deinit(XIODevicePrivate* d)
         for (size_t i = 0; i < XVector_size_base(d->writeBuffers); ++i) {
             XRingBuffer** bufPtr = (XRingBuffer**)XVector_at_base(d->writeBuffers, i);
             if (bufPtr && *bufPtr) {
-                XRingBuffer_delete_base(*bufPtr);
+                XClassDelete(*bufPtr);
             }
         }
-        XVector_delete_base(d->writeBuffers);
+        XClassDelete(d->writeBuffers);
         d->writeBuffers = NULL;
     }
 
     if (d->errorString) {
-        XString_delete_base(d->errorString);
+        XClassDelete(d->errorString);
         d->errorString = NULL;
     }
 }

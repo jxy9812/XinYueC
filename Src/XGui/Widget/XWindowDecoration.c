@@ -258,7 +258,7 @@ static void xwd_ensureBar(XWindowDecorationState* st)
 /** @brief 装饰失活/宿主注销时释放本模块创建的默认条（自定义条为借用，
  *  调用方只清指针，不经此处）。
  *  释放约定：XObject 派生控件一律 XObject_deleteLater 异步释放（禁止
- *  同步 XTitleBar_delete_base 直调——条控件可能仍被事件派发/绘制队列
+ *  同步 XClassDelete 直调——条控件可能仍被事件派发/绘制队列
  *  引用，同步删会造成悬垂回调）。先隐藏防异步窗口期残像，再置异步删；
  *  XObject 析构会自行从父 children 摘链并撤销未派发的挂起事件
  *  （XObject.c VXObject_deinit），宿主先于延迟删被销毁亦无双重释放。
@@ -416,7 +416,7 @@ static void xwd_updateEdgeCursor(XWindowDecorationState* st, int zone)
     XCursor_init(&cursor);
     XCursor_setShape(&cursor, shape);
     XWidget_setCursor(st->m_top, &cursor);
-    XCursor_deinit_base(&cursor);
+    XClassDeinit(&cursor);
 }
 
 /* ==================== 内部辅助：重绘与几何 ==================== */
@@ -1169,7 +1169,7 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                         XMouseEvent_globalPosition(mouse);
                     st->m_resizeGeometry = XWidget_geometry(top);
                     /* 几何挂起至 present 批内落地：拖拽每步若立即
-                       XMoveResizeWindow，服务器按 background_pixel=0
+                       XClassMoveResizeWindow，服务器按 background_pixel=0
                        （ForgetGravity 口径整窗）当场填黑扩区，盖黑帧要
                        等下一轮 PAINT——桌面 X11 四方位同源的单帧黑闪
                        根因；挂起后几何与整窗内容同一请求批生效，黑态

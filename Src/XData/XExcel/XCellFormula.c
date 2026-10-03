@@ -53,8 +53,8 @@ void XCellFormula_delete(XCellFormula* self)
 {
     if (self)
     {
-        if (self->m_text) XString_delete_base(self->m_text);
-        if (self->m_ca) XString_delete_base(self->m_ca);
+        if (self->m_text) XClassDelete(self->m_text);
+        if (self->m_ca) XClassDelete(self->m_ca);
         XFree_System(self);
     }
 }
@@ -150,7 +150,7 @@ XCellFormula* XCellFormula_create_ex_utf8(const char* text)
 {
     XString* s = text ? XString_create_utf8(text) : NULL;
     XCellFormula* result = XCellFormula_create_ex(s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }
 
@@ -158,5 +158,5 @@ void XCellFormula_setText_utf8(XCellFormula* self, const char* text)
 {
     XString* s = text ? XString_create_utf8(text) : NULL;
     XCellFormula_setText(self, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
 }

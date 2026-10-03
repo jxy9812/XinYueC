@@ -55,7 +55,7 @@ extern "C" {
  *     XModbusDeviceIdentification_VendorNameObjectId);
  *
  * // 清理
- * XModbusDeviceIdentification_delete_base(id);
+ * XClassDelete(id);
  * @endcode
  */
 
@@ -240,8 +240,6 @@ void XModbusDeviceIdentification_setConformityLevel(XModbusDeviceIdentification*
  */
 XModbusDeviceIdentification* XModbusDeviceIdentification_fromByteArray(const uint8_t* data, size_t size);
 
-#define XModbusDeviceIdentification_deinit_base XClass_deinit_base
-#define XModbusDeviceIdentification_delete_base XClass_delete_base
 
 #ifdef __cplusplus
 }

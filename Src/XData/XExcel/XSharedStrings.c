@@ -110,7 +110,7 @@ void XSharedStrings_delete(XSharedStrings* self)
 {
     if (!self) return;
     shared_strings_clear(self);
-    if (self->m_stringTable) XMap_delete_base(self->m_stringTable);
+    if (self->m_stringTable) XClassDelete(self->m_stringTable);
     if (self->m_stringList)
     {
         size_t count = XVector_size_base(self->m_stringList);
@@ -119,7 +119,7 @@ void XSharedStrings_delete(XSharedStrings* self)
             XRichString* rich = *(XRichString**)XVector_at_base(self->m_stringList, i);
             if (rich) XRichString_delete(rich);
         }
-        XVector_delete_base(self->m_stringList);
+        XClassDelete(self->m_stringList);
     }
     XAbstractOOXmlFile_deinit(&self->m_base);
     XFree_System(self);
@@ -419,7 +419,7 @@ bool XSharedStrings_saveToXmlData(const XSharedStrings* self, uint8_t** outData,
         *outLen = XByteArray_size_base(buf);
         (*outData)[*outLen] = '\0';
     }
-    XByteArray_delete_base(buf);
+    XClassDelete(buf);
     return *outData != NULL;
 }
 
@@ -431,14 +431,14 @@ bool XSharedStrings_saveToXmlFile(XSharedStrings* self, const XString* filePath)
     
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         XFree_System(data);
         return false;
     }
     bool result = XIODevice_write_1((XIODevice*)file, (const char*)data,
         (int64_t)len) == (int64_t)len;
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     XFree_System(data);
     return result;
 }
@@ -468,7 +468,7 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
     XString_Init_Utf8(attributeName##Key, #attributeName); \
     const XString* attributeName##Value = XXmlStreamAttributes_value( \
         XXmlStreamReader_attributes(reader), attributeName##Key); \
-    XString_deinit_base(attributeName##Key)
+    XClassDeinit(attributeName##Key)
 
     while (!XXmlStreamReader_atEnd(reader)) {
         int tt = XXmlStreamReader_readNext(reader);
@@ -605,7 +605,7 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
     }
     if (format) XFormat_delete(format);
     if (rich) XRichString_delete(rich);
-    XString_delete_base(acc);
+    XClassDelete(acc);
     size_t loadedCount = XVector_size_base(self->m_stringList);
     if (declaredUniqueCount >= 0 && (size_t)declaredUniqueCount != loadedCount) ok = false;
     if (declaredCount >= 0 && (size_t)declaredCount < loadedCount) ok = false;
@@ -621,15 +621,15 @@ bool XSharedStrings_loadFromXmlData(XSharedStrings* self, const uint8_t* data, s
     XByteArray* bytes = XByteArray_create_with_data((const char*)data, len);
     XXmlStreamReader* reader = XXmlStreamReader_create();
     if (!bytes || !reader) {
-        if (bytes) XByteArray_delete_base(bytes);
-        if (reader) XXmlStreamReader_delete_base(reader);
+        if (bytes) XClassDelete(bytes);
+        if (reader) XClassDelete(reader);
         return false;
     }
     shared_strings_clear(self);
     XXmlStreamReader_addData(reader, bytes);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     bool ok = sharedStrings_loadFromReader(self, reader);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     if (!ok) shared_strings_clear(self);
     return ok;
 }
@@ -639,15 +639,15 @@ bool XSharedStrings_loadFromXmlFile(XSharedStrings* self, const XString* filePat
     
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* allData = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!allData) return false;
     
     bool result = XSharedStrings_loadFromXmlData(self, XByteArray_data(allData), XByteArray_size_base(allData));
-    XByteArray_delete_base(allData);
+    XClassDelete(allData);
     return result;
 }

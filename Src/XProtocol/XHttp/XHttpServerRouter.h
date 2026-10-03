@@ -38,11 +38,9 @@ XVtable* XHttpServerRouter_class_init(void);
 /**
  * - @brief 创建 HTTP 服务端路由器。
  * - @param server 所属服务端；借用，可为 NULL，必须在路由器使用期间保持有效。
- * - @return 新建路由器；调用者必须使用 XHttpServerRouter_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建路由器；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttpServerRouter* XHttpServerRouter_create_ex(XMemoryType memory,  XHttpServer* server);
-#define XHttpServerRouter_deinit_base XClass_deinit_base
-#define XHttpServerRouter_delete_base XClass_delete_base
 /**
  * - @brief 获取已注册规则数量。
  * - @param self HTTP 服务端路由器；可为 NULL。

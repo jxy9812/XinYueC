@@ -45,7 +45,7 @@ XMqttMessage* XMqttMessage_create_copy(const XMqttMessage* other)
 {
     if (!other) return NULL;
     XMqttMessage* msg = XMqttMessage_create();
-    if (msg) XCopy(msg, other);
+    if (msg) XClassCopy(msg, other);
     return msg;
 }
 
@@ -73,9 +73,9 @@ void XMqttMessage_init_full(XMqttMessage* msg, const char* topic, const uint8_t*
 static void VMSG_deinit(XMqttMessage* msg)
 {
     if (!msg) return;
-    if (msg->m_topic) { XMqttTopicName_delete_base(msg->m_topic); msg->m_topic = NULL; }
-    if (msg->m_payload) { XByteArray_delete_base(msg->m_payload); msg->m_payload = NULL; }
-    if (msg->m_publishProperties) { XMqttPublishProperties_delete_base(msg->m_publishProperties); msg->m_publishProperties = NULL; }
+    if (msg->m_topic) { XClassDelete(msg->m_topic); msg->m_topic = NULL; }
+    if (msg->m_payload) { XClassDelete(msg->m_payload); msg->m_payload = NULL; }
+    if (msg->m_publishProperties) { XClassDelete(msg->m_publishProperties); msg->m_publishProperties = NULL; }
     XClass_Deinit_Parent(XClass, msg);
 }
 
@@ -86,9 +86,9 @@ static void VMSG_copy(XMqttMessage* dest, const XMqttMessage* src)
     if (XClassIsVtableNull(dest))
         XMqttMessage_init(dest);
     else {
-        if (dest->m_topic) XMqttTopicName_delete_base(dest->m_topic);
-        if (dest->m_payload) XByteArray_delete_base(dest->m_payload);
-        if (dest->m_publishProperties) XMqttPublishProperties_delete_base(dest->m_publishProperties);
+        if (dest->m_topic) XClassDelete(dest->m_topic);
+        if (dest->m_payload) XClassDelete(dest->m_payload);
+        if (dest->m_publishProperties) XClassDelete(dest->m_publishProperties);
         dest->m_topic = NULL; dest->m_payload = NULL; dest->m_publishProperties = NULL;
     }
     if (src->m_topic) dest->m_topic = XMqttTopicName_create_copy(src->m_topic);
@@ -107,9 +107,9 @@ static void VMSG_move(XMqttMessage* dest, XMqttMessage* src)
     if (XClassIsVtableNull(dest))
         XMqttMessage_init(dest);
     else {
-        if (dest->m_topic) XMqttTopicName_delete_base(dest->m_topic);
-        if (dest->m_payload) XByteArray_delete_base(dest->m_payload);
-        if (dest->m_publishProperties) XMqttPublishProperties_delete_base(dest->m_publishProperties);
+        if (dest->m_topic) XClassDelete(dest->m_topic);
+        if (dest->m_payload) XClassDelete(dest->m_payload);
+        if (dest->m_publishProperties) XClassDelete(dest->m_publishProperties);
     }
     dest->m_topic = src->m_topic;
     dest->m_payload = src->m_payload;

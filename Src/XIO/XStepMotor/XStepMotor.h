@@ -109,7 +109,6 @@ void XStepMotor_IRQHandler(XStepMotor* motor);
 
 void XStepMotor_close_base(XStepMotor* motor);
 
-#define XStepMotor_delete_base	XClass_delete_base
 /*         设置回调函数             */
 //设置运行状态改变回调函数
 void XStepMotor_setSpeedChangeCb(XStepMotor* motor, void (*speedChangeCb)(XStepMotor* motor));

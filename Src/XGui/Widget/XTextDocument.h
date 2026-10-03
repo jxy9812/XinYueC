@@ -196,7 +196,6 @@ XVtable* XTextDocument_class_init(void);
 void XTextDocument_init(XTextDocument* self);
 #define XTextDocument_create() XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 XTextDocument* XTextDocument_create_ex(XMemoryType memory);
-#define XTextDocument_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ===== 块操作 ===== */
 void XTextDocument_clear(XTextDocument* self);

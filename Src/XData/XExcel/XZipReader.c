@@ -70,13 +70,13 @@ static XByteArray* load_archive_data(const XZipReader* self)
     XFile* file = XFile_create_2(self->m_fileName);
     if (!file) return NULL;
     if (!XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
         return NULL;
     }
 
     XByteArray* data = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!data) return NULL;
 
     ((XZipReader*)self)->m_archiveData = data;
@@ -147,9 +147,9 @@ XZipReader* XZipReader_createFromData(const uint8_t* data, size_t size)
 void XZipReader_delete(XZipReader* self)
 {
     if (!self) return;
-    if (self->m_fileName) XString_delete_base(self->m_fileName);
-    if (self->m_filePaths) XStringList_delete_base(self->m_filePaths);
-    if (self->m_archiveData) XByteArray_delete_base(self->m_archiveData);
+    if (self->m_fileName) XClassDelete(self->m_fileName);
+    if (self->m_filePaths) XClassDelete(self->m_filePaths);
+    if (self->m_archiveData) XClassDelete(self->m_archiveData);
     XFree_System(self);
 }
 

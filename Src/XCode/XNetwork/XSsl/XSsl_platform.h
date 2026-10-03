@@ -384,7 +384,7 @@ extern "C" {
      * @param algorithm 公钥算法，目前 MySQL caching_sha2_password 使用 RSA。
      * @param data 待加密数据，借用，不能为 NULL。
      * @param dataSize 待加密数据长度。
-     * @param encrypted 输出密文对象，由调用者使用 XByteArray_delete_base 释放。
+     * @param encrypted 输出密文对象，由调用者使用 XClassDelete 释放。
      * @return 加密成功返回 true；后端不支持、输入无效或加密失败返回 false。
      */
     bool XSsl_publicKeyEncrypt(const uint8_t* publicKey, size_t publicKeySize,

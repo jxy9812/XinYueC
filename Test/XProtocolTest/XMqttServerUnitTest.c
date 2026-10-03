@@ -90,7 +90,7 @@ static void V_mock_deinit(XMqttServer* base)
     if (mock) {
         for (i = 0; i < XMQTT_MOCK_SLOTS; ++i) {
             if (mock->slots[i].output) {
-                XByteArray_delete_base(mock->slots[i].output);
+                XClassDelete(mock->slots[i].output);
                 mock->slots[i].output = NULL;
             }
             mock->slots[i].transport = NULL;
@@ -124,7 +124,7 @@ static XMqttServerMock* mock_server_create(void)
 
 static void mock_server_delete(XMqttServerMock* mock)
 {
-    if (mock) XClass_delete_base((XClass*)mock);
+    if (mock) XClassDelete((XClass*)mock);
 }
 
 static XByteArray* mock_output(XMqttServerMock* mock, void* transport)
@@ -203,7 +203,7 @@ static XByteArray* mock_packet(uint8_t header, const XByteArray* payload)
         !mock_append_varint(packet, (uint32_t)size) ||
         (size && !mock_append_bytes(packet,
             payload ? XByteArray_constData((XByteArray*)payload) : NULL, size))) {
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
         return NULL;
     }
     return packet;
@@ -220,11 +220,11 @@ static XByteArray* mock_connect_v4(const char* clientId, bool clean, uint16_t ke
         !mock_append_u8(body, flags) ||
         !mock_append_u16(body, keepAlive) ||
         !mock_append_string(body, clientId)) {
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         return NULL;
     }
     packet = mock_packet(0x10, body);
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return packet;
 }
 
@@ -254,12 +254,12 @@ static XByteArray* mock_connect_v5(const char* clientId, bool cleanStart,
                             (size_t)XByteArray_size_base(props)))) goto fail;
     if (!mock_append_string(body, clientId)) goto fail;
     packet = mock_packet(0x10, body);
-    XByteArray_delete_base(body);
-    XByteArray_delete_base(props);
+    XClassDelete(body);
+    XClassDelete(props);
     return packet;
 fail:
-    if (body) XByteArray_delete_base(body);
-    if (props) XByteArray_delete_base(props);
+    if (body) XClassDelete(body);
+    if (props) XClassDelete(props);
     return NULL;
 }
 
@@ -275,10 +275,10 @@ static XByteArray* mock_publish(const char* topic, const uint8_t* payload,
     if (qos && !mock_append_u16(body, packetId)) goto fail;
     if (payloadSize && !mock_append_bytes(body, payload, payloadSize)) goto fail;
     packet = mock_packet(header, body);
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return packet;
 fail:
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return NULL;
 }
 
@@ -298,10 +298,10 @@ static XByteArray* mock_subscribe(uint16_t packetId, const MockSubscribeItem* it
             !mock_append_u8(body, items[i].qos & 0x03U)) goto fail;
     }
     packet = mock_packet(0x82, body);
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return packet;
 fail:
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return NULL;
 }
 
@@ -319,10 +319,10 @@ static XByteArray* mock_subscribe_v5(uint16_t packetId,
             !mock_append_u8(body, items[i].qos & 0x03U)) goto fail;
     }
     packet = mock_packet(0x82, body);
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return packet;
 fail:
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return NULL;
 }
 
@@ -336,10 +336,10 @@ static XByteArray* mock_unsubscribe(uint16_t packetId, const char* const* filter
         if (!mock_append_string(body, filters[i])) goto fail;
     }
     packet = mock_packet(0xA2, body);
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return packet;
 fail:
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return NULL;
 }
 
@@ -349,10 +349,10 @@ static XByteArray* mock_ack(uint8_t type, uint16_t packetId)
     XByteArray* packet;
     if (!body || !mock_append_u16(body, packetId)) goto fail;
     packet = mock_packet(type, body);
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return packet;
 fail:
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return NULL;
 }
 
@@ -424,7 +424,7 @@ static int mock_count_packets(XByteArray* out, uint8_t type)
         XByteArray* body = NULL;
         if (!mock_parse_packet(data, size, &offset, &header, &body)) break;
         if ((header & 0xF0U) == type) ++count;
-        if (body) XByteArray_delete_base(body);
+        if (body) XClassDelete(body);
     }
     return count;
 }
@@ -450,7 +450,7 @@ static bool mock_find_packet(XByteArray* out, uint8_t type, XByteArray** bodyOut
             *bodyOut = body;
             return true;
         }
-        if (body) XByteArray_delete_base(body);
+        if (body) XClassDelete(body);
     }
     return false;
 }
@@ -478,7 +478,7 @@ static bool mock_find_packet_header(XByteArray* out, uint8_t type,
             *bodyOut = body;
             return true;
         }
-        if (body) XByteArray_delete_base(body);
+        if (body) XClassDelete(body);
     }
     return false;
 }
@@ -514,9 +514,9 @@ static bool mock_connect_v5_existing_ex(XMqttServerMock* mock, void* transport,
     XMqttServer_feedData((XMqttServer*)mock, transport,
                          (const uint8_t*)XByteArray_constData(connect),
                          (size_t)XByteArray_size_base(connect));
-    XByteArray_delete_base(connect);
+    XClassDelete(connect);
     if (!mock_find_packet(mock_output(mock, transport), 0x20, &connack)) return false;
-    XByteArray_delete_base(connack);
+    XClassDelete(connack);
     if (clearConnack) mock_clear_output(mock, transport);
     return true;
 }
@@ -547,10 +547,10 @@ static XByteArray* mock_publish_v5(const char* topic, const XByteArray* props,
                                         propsSize)) goto fail;
     if (payloadSize && !mock_append_bytes(body, payload, payloadSize)) goto fail;
     packet = mock_packet(header, body);
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return packet;
 fail:
-    XByteArray_delete_base(body);
+    XClassDelete(body);
     return NULL;
 }
 
@@ -678,9 +678,9 @@ static bool mock_connect_existing_ex(XMqttServerMock* mock, void* transport,
     XMqttServer_feedData((XMqttServer*)mock, transport,
                          (const uint8_t*)XByteArray_constData(connect),
                          (size_t)XByteArray_size_base(connect));
-    XByteArray_delete_base(connect);
+    XClassDelete(connect);
     if (!mock_find_packet(mock_output(mock, transport), 0x20, &connack)) return false;
-    XByteArray_delete_base(connack);
+    XClassDelete(connack);
     if (clearConnack) mock_clear_output(mock, transport);
     return true;
 }
@@ -711,14 +711,14 @@ static void mock_test_connect(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(packet),
                              (size_t)XByteArray_size_base(packet));
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x20, &body),
                "收到 CONNACK");
     if (body) {
         MOCK_CHECK(XByteArray_size_base(body) == 2 && XByteArray_constData(body)[0] == 0 && XByteArray_constData(body)[1] == 0,
                    "CONNACK v4 成功（会话标志 0、原因码 0）");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_clear_output(mock, T1);
@@ -731,14 +731,14 @@ static void mock_test_connect(void)
         XMqttServer_feedData((XMqttServer*)mock, T2,
                              (const uint8_t*)XByteArray_constData(packet),
                              (size_t)XByteArray_size_base(packet));
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x20, &body),
                "v5 收到 CONNACK");
     if (body) {
         MOCK_CHECK(XByteArray_size_base(body) >= 2 && XByteArray_constData(body)[0] == 0 && XByteArray_constData(body)[1] == 0,
                    "CONNACK v5 会话标志/原因码正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);
@@ -768,11 +768,11 @@ static void mock_test_publish_qos0(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x90, &body),
                "订阅者收到 SUBACK");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     mock_clear_output(mock, T1);
 
     pub = mock_publish("topic/hello", payload, sizeof(payload) - 1, 0, false, 0);
@@ -781,7 +781,7 @@ static void mock_test_publish_qos0(void)
         XMqttServer_feedData((XMqttServer*)mock, T2,
                              (const uint8_t*)XByteArray_constData(pub),
                              (size_t)XByteArray_size_base(pub));
-        XByteArray_delete_base(pub);
+        XClassDelete(pub);
     }
     if (mock_find_packet_header(mock_output(mock, T1), 0x30, &header, &body)) {
         const uint8_t* bytes = (const uint8_t*)XByteArray_constData(body);
@@ -793,7 +793,7 @@ static void mock_test_publish_qos0(void)
                    size == 2 + topicSize + sizeof(payload) - 1 &&
                    memcmp(bytes + 2 + topicSize, payload, sizeof(payload) - 1) == 0,
                    "QoS0 PUBLISH 主题与载荷正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
         header = 0;
     } else {
@@ -826,7 +826,7 @@ static void mock_test_publish_qos1(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T1);
 
@@ -836,13 +836,13 @@ static void mock_test_publish_qos1(void)
         XMqttServer_feedData((XMqttServer*)mock, T2,
                              (const uint8_t*)XByteArray_constData(pub),
                              (size_t)XByteArray_size_base(pub));
-        XByteArray_delete_base(pub);
+        XClassDelete(pub);
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x40, &body),
                "发布者收到 PUBACK");
     if (body) {
         MOCK_CHECK(mock_body_u16(body, 0) == 0x1234, "PUBACK 报文标识符正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     if (mock_find_packet_header(mock_output(mock, T1), 0x30, &header, &body)) {
@@ -854,7 +854,7 @@ static void mock_test_publish_qos1(void)
                    memcmp(bytes + 2, "q1/msg", 6) == 0 &&
                    mock_body_u16(body, 2 + topicSize) > 0,
                    "QoS1 PUBLISH 标头/主题/报文标识符正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
         header = 0;
         /* 订阅者回 PUBACK，验证后不再有 PUBREL */
@@ -864,7 +864,7 @@ static void mock_test_publish_qos1(void)
                 XMqttServer_feedData((XMqttServer*)mock, T1,
                                      (const uint8_t*)XByteArray_constData(puback),
                                      (size_t)XByteArray_size_base(puback));
-                XByteArray_delete_base(puback);
+                XClassDelete(puback);
             }
         }
         mock_clear_output(mock, T1);
@@ -873,7 +873,7 @@ static void mock_test_publish_qos1(void)
         MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x30, &body) &&
                        body && mock_body_u16(body, 2 + 8) > 0,
                    "PUBACK 后会话队列清空，新 QoS1 可继续投递");
-        if (body) XByteArray_delete_base(body);
+        if (body) XClassDelete(body);
     }
     mock_server_delete(mock);
 }
@@ -902,7 +902,7 @@ static void mock_test_publish_qos2(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T1);
 
@@ -912,13 +912,13 @@ static void mock_test_publish_qos2(void)
         XMqttServer_feedData((XMqttServer*)mock, T2,
                              (const uint8_t*)XByteArray_constData(pub),
                              (size_t)XByteArray_size_base(pub));
-        XByteArray_delete_base(pub);
+        XClassDelete(pub);
     }
     /* 发布者：PUBLISH -> PUBREC */
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x50, &body) && body &&
                    mock_body_u16(body, 0) == 0x5678,
                "发布者收到 PUBREC（含报文标识符）");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     /* 发布者回 PUBREL */
     {
         XByteArray* pubrel = mock_ack(0x62, 0x5678);
@@ -927,20 +927,20 @@ static void mock_test_publish_qos2(void)
             XMqttServer_feedData((XMqttServer*)mock, T2,
                                  (const uint8_t*)XByteArray_constData(pubrel),
                                  (size_t)XByteArray_size_base(pubrel));
-            XByteArray_delete_base(pubrel);
+            XClassDelete(pubrel);
         }
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x70, &body) && body &&
                    mock_body_u16(body, 0) == 0x5678,
                "发布者收到 PUBCOMP");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     /* 订阅者收到 QoS2 PUBLISH */
     if (mock_find_packet_header(mock_output(mock, T1), 0x30, &header, &body)) {
         uint16_t deliveredId = mock_body_u16(body, 2 + 6);
         MOCK_CHECK((header & 0x06U) == 0x04U &&
                        deliveredId > 0,
                    "投递 QoS2 PUBLISH 标头与报文标识符正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
         header = 0;
         /* 订阅者回 PUBREC -> 服务器回 PUBREL -> 订阅者回 PUBCOMP */
@@ -951,12 +951,12 @@ static void mock_test_publish_qos2(void)
                 XMqttServer_feedData((XMqttServer*)mock, T1,
                                      (const uint8_t*)XByteArray_constData(pubrec),
                                      (size_t)XByteArray_size_base(pubrec));
-                XByteArray_delete_base(pubrec);
+                XClassDelete(pubrec);
             }
             MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x60, &pubrel) &&
                        pubrel && mock_body_u16(pubrel, 0) == deliveredId,
                        "服务器收到 PUBREC 后回 PUBREL");
-            if (pubrel) XByteArray_delete_base(pubrel);
+            if (pubrel) XClassDelete(pubrel);
             mock_clear_output(mock, T1);
             {
                 XByteArray* pubcomp = mock_ack(0x70, deliveredId);
@@ -964,7 +964,7 @@ static void mock_test_publish_qos2(void)
                     XMqttServer_feedData((XMqttServer*)mock, T1,
                                          (const uint8_t*)XByteArray_constData(pubcomp),
                                          (size_t)XByteArray_size_base(pubcomp));
-                    XByteArray_delete_base(pubcomp);
+                    XClassDelete(pubcomp);
                 }
             }
             /* 投递新 QoS2 验证队列已清空 */
@@ -972,7 +972,7 @@ static void mock_test_publish_qos2(void)
                                 (const uint8_t*)"y", 1, 2, false);
             MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x30, &body),
                        "PUBCOMP 后队列清空，新 QoS2 可继续投递");
-            if (body) XByteArray_delete_base(body);
+            if (body) XClassDelete(body);
         }
     }
     mock_server_delete(mock);
@@ -999,7 +999,7 @@ static void mock_test_retained(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(pub),
                              (size_t)XByteArray_size_base(pub));
-        XByteArray_delete_base(pub);
+        XClassDelete(pub);
     }
     mock_clear_output(mock, T1);
     XMqttServer_endClient((XMqttServer*)mock, T1);
@@ -1014,7 +1014,7 @@ static void mock_test_retained(void)
             XMqttServer_feedData((XMqttServer*)mock, T1,
                                  (const uint8_t*)XByteArray_constData(sub),
                                  (size_t)XByteArray_size_base(sub));
-            XByteArray_delete_base(sub);
+            XClassDelete(sub);
         }
     }
     if (mock_find_packet_header(mock_output(mock, T1), 0x30, &header, &body)) {
@@ -1025,7 +1025,7 @@ static void mock_test_retained(void)
                    size >= 2 + topicSize &&
                    memcmp(bytes + 2, "ret/state", 9) == 0,
                    "保留消息带 RETAIN 标志且主题正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
         header = 0;
     } else {
@@ -1039,7 +1039,7 @@ static void mock_test_retained(void)
             XMqttServer_feedData((XMqttServer*)mock, T1,
                                  (const uint8_t*)XByteArray_constData(clear),
                                  (size_t)XByteArray_size_base(clear));
-            XByteArray_delete_base(clear);
+            XClassDelete(clear);
         }
     }
     mock_clear_output(mock, T1);
@@ -1051,7 +1051,7 @@ static void mock_test_retained(void)
             XMqttServer_feedData((XMqttServer*)mock, T1,
                                  (const uint8_t*)XByteArray_constData(sub),
                                  (size_t)XByteArray_size_base(sub));
-            XByteArray_delete_base(sub);
+            XClassDelete(sub);
         }
     }
     MOCK_CHECK(mock_count_packets(mock_output(mock, T1), 0x30) == 0,
@@ -1080,7 +1080,7 @@ static void mock_test_unsubscribe(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T1);
     {
@@ -1090,12 +1090,12 @@ static void mock_test_unsubscribe(void)
             XMqttServer_feedData((XMqttServer*)mock, T1,
                                  (const uint8_t*)XByteArray_constData(unsub),
                                  (size_t)XByteArray_size_base(unsub));
-            XByteArray_delete_base(unsub);
+            XClassDelete(unsub);
         }
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0xB0, &body),
                "收到 UNSUBACK");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     mock_clear_output(mock, T1);
     XMqttServer_publish((XMqttServer*)mock, "u/x", payload, sizeof(payload) - 1, 0, false);
     MOCK_CHECK(mock_count_packets(mock_output(mock, T1), 0x30) == 0,
@@ -1120,11 +1120,11 @@ static void mock_test_ping(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(ping),
                              (size_t)XByteArray_size_base(ping));
-        XByteArray_delete_base(ping);
+        XClassDelete(ping);
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0xD0, &body),
                "收到 PINGRESP");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     mock_server_delete(mock);
 }
 
@@ -1149,7 +1149,7 @@ static void mock_test_will(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T1);
 
@@ -1171,15 +1171,15 @@ static void mock_test_will(void)
                     XMqttServer_feedData((XMqttServer*)mock, T2,
                                          (const uint8_t*)XByteArray_constData(packet),
                                          (size_t)XByteArray_size_base(packet));
-                    XByteArray_delete_base(packet);
+                    XClassDelete(packet);
                 }
             }
-            XByteArray_delete_base(body_buf);
+            XClassDelete(body_buf);
         }
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x20, &body),
                "带遗嘱客户端 CONNECT 成功");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     mock_clear_output(mock, T2);
 
     /* 异常断开（未发 DISCONNECT）触发遗嘱 */
@@ -1195,7 +1195,7 @@ static void mock_test_will(void)
                    size == 2 + topicSize + 4 &&
                    memcmp(bytes + 2 + topicSize, "gone", 4) == 0,
                    "遗嘱主题与载荷正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);
@@ -1219,7 +1219,7 @@ static void mock_test_disconnect_clean(void)
             XMqttServer_feedData((XMqttServer*)mock, T1,
                                  (const uint8_t*)XByteArray_constData(sub),
                                  (size_t)XByteArray_size_base(sub));
-            XByteArray_delete_base(sub);
+            XClassDelete(sub);
         }
     }
     mock_clear_output(mock, T1);
@@ -1240,10 +1240,10 @@ static void mock_test_disconnect_clean(void)
                     XMqttServer_feedData((XMqttServer*)mock, T2,
                                          (const uint8_t*)XByteArray_constData(packet),
                                          (size_t)XByteArray_size_base(packet));
-                    XByteArray_delete_base(packet);
+                    XClassDelete(packet);
                 }
             }
-            XByteArray_delete_base(body_buf);
+            XClassDelete(body_buf);
         }
     }
     mock_clear_output(mock, T2);
@@ -1253,7 +1253,7 @@ static void mock_test_disconnect_clean(void)
             XMqttServer_feedData((XMqttServer*)mock, T2,
                                  (const uint8_t*)XByteArray_constData(disc),
                                  (size_t)XByteArray_size_base(disc));
-            XByteArray_delete_base(disc);
+            XClassDelete(disc);
         }
     }
     XMqttServer_endClient((XMqttServer*)mock, T2);
@@ -1301,16 +1301,16 @@ static void mock_test_auth(void)
                     XMqttServer_feedData((XMqttServer*)mock, T1,
                                          (const uint8_t*)XByteArray_constData(packet),
                                          (size_t)XByteArray_size_base(packet));
-                    XByteArray_delete_base(packet);
+                    XClassDelete(packet);
                 }
             }
-            XByteArray_delete_base(body_buf);
+            XClassDelete(body_buf);
         }
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x20, &body) && body &&
                    XByteArray_size_base(body) >= 2 && XByteArray_constData(body)[1] != 0,
                "认证失败返回非成功 CONNACK");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     MOCK_CHECK(mock->closeCount > 0, "认证失败后传输被关闭");
     mock_clear_output(mock, T1);
 
@@ -1332,16 +1332,16 @@ static void mock_test_auth(void)
                     XMqttServer_feedData((XMqttServer*)mock, T2,
                                          (const uint8_t*)XByteArray_constData(packet),
                                          (size_t)XByteArray_size_base(packet));
-                    XByteArray_delete_base(packet);
+                    XClassDelete(packet);
                 }
             }
-            XByteArray_delete_base(body_buf);
+            XClassDelete(body_buf);
         }
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x20, &body) && body &&
                    XByteArray_size_base(body) >= 2 && XByteArray_constData(body)[1] == 0,
                "认证成功返回成功 CONNACK");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     MOCK_CHECK(calls >= 2, "认证回调被调用");
     mock_server_delete(mock);
 }
@@ -1366,7 +1366,7 @@ static void mock_test_server_publish(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T1);
     MOCK_CHECK(XMqttServer_publish((XMqttServer*)mock, "srv/hello",
@@ -1381,7 +1381,7 @@ static void mock_test_server_publish(void)
         MOCK_CHECK(topicSize == 9 && size >= 2 + topicSize &&
                    memcmp(bytes + 2, "srv/hello", 9) == 0,
                    "服务端发布主题正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);
@@ -1407,7 +1407,7 @@ static void mock_test_persistent_session(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T1);
     XMqttServer_endClient((XMqttServer*)mock, T1);
@@ -1422,7 +1422,7 @@ static void mock_test_persistent_session(void)
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x20, &body) && body &&
                    XByteArray_size_base(body) >= 1 && (XByteArray_constData(body)[0] & 0x01U) != 0,
                "重连时 CONNACK 会话已恢复（sessionPresent=1）");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x30, &body),
                "重连后收到离线队列消息");
     if (body) {
@@ -1432,7 +1432,7 @@ static void mock_test_persistent_session(void)
         MOCK_CHECK(topicSize == 10 && size >= 2 + topicSize + 2 &&
                    memcmp(bytes + 2, "off/queued", 10) == 0,
                    "离线队列消息主题正确");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);
@@ -1457,7 +1457,7 @@ static void mock_test_shared_subscription(void)
         XMqttServer_feedData((XMqttServer*)mock, T1,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T1);
     MOCK_CHECK(mock_connect_existing(mock, T2, "shared-2", true, 0), "共享订阅者2 CONNECT 成功");
@@ -1467,7 +1467,7 @@ static void mock_test_shared_subscription(void)
         XMqttServer_feedData((XMqttServer*)mock, T2,
                              (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T2);
 
@@ -1506,7 +1506,7 @@ static void mock_test_topic_alias(void)
             XMqttServer_feedData((XMqttServer*)mock, T1,
                                  (const uint8_t*)XByteArray_constData(connect),
                                  (size_t)XByteArray_size_base(connect));
-            XByteArray_delete_base(connect);
+            XClassDelete(connect);
         }
     }
     mock_clear_output(mock, T1);
@@ -1516,7 +1516,7 @@ static void mock_test_topic_alias(void)
             XMqttServer_feedData((XMqttServer*)mock, T1,
                                  (const uint8_t*)XByteArray_constData(sub),
                                  (size_t)XByteArray_size_base(sub));
-            XByteArray_delete_base(sub);
+            XClassDelete(sub);
         }
     }
     mock_clear_output(mock, T1);
@@ -1537,15 +1537,15 @@ static void mock_test_topic_alias(void)
                     XMqttServer_feedData((XMqttServer*)mock, T1,
                                          (const uint8_t*)XByteArray_constData(packet),
                                          (size_t)XByteArray_size_base(packet));
-                    XByteArray_delete_base(packet);
+                    XClassDelete(packet);
                 }
             }
-            XByteArray_delete_base(body_buf);
+            XClassDelete(body_buf);
         }
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x30, &body),
                "首次发布（带别名）回显给订阅者");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     mock_clear_output(mock, T1);
     /* 第二次发布：空主题 + 别名 3 */
     {
@@ -1562,10 +1562,10 @@ static void mock_test_topic_alias(void)
                     XMqttServer_feedData((XMqttServer*)mock, T1,
                                          (const uint8_t*)XByteArray_constData(packet),
                                          (size_t)XByteArray_size_base(packet));
-                    XByteArray_delete_base(packet);
+                    XClassDelete(packet);
                 }
             }
-            XByteArray_delete_base(body_buf);
+            XClassDelete(body_buf);
         }
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x30, &body),
@@ -1576,7 +1576,7 @@ static void mock_test_topic_alias(void)
         size_t topicSize = ((size_t)bytes[0] << 8) | bytes[1];
         MOCK_CHECK(topicSize == 10 && memcmp(bytes + 2, "alias/long", 10) == 0,
                    "别名解析回原主题");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);
@@ -1598,7 +1598,7 @@ static void mock_test_clientid_takeover(void)
                "新连接 CONNECT 成功");
     MOCK_CHECK(mock_find_packet(mock_output(mock, T2), 0x20, &body),
                "新连接 CONNACK 成功");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     MOCK_CHECK(mock->closeCount >= 1, "旧连接被服务器关闭");
     mock_server_delete(mock);
 }
@@ -1740,7 +1740,7 @@ static void mock_test_base_virtuals(void)
     XMqttServer_closeClient_base(server, T1);
     XMqttServer_publish(server, "a/b", (const uint8_t*)"x", 1, 0, false);
     MOCK_CHECK(true, "基类 closeClient_base/publish 不崩溃");
-    XClass_delete_base((XClass*)server);
+    XClassDelete((XClass*)server);
 }
 
 /* 19. 服务端主动发布（带 MQTT 5.0 属性） */
@@ -1765,7 +1765,7 @@ static void mock_test_publish_with_properties(void)
     if (sub) {
         XMqttServer_feedData(server, T1, (const uint8_t*)XByteArray_constData(sub),
                              (size_t)XByteArray_size_base(sub));
-        XByteArray_delete_base(sub);
+        XClassDelete(sub);
     }
     mock_clear_output(mock, T1);
 
@@ -1787,10 +1787,10 @@ static void mock_test_publish_with_properties(void)
                        "PUBLISH 携带载荷格式属性");
             MOCK_CHECK(mock_body_contains(body, (const uint8_t*)"\x02\x00\x00\x0E\x10", 5),
                        "PUBLISH 携带消息过期属性");
-            XByteArray_delete_base(body);
+            XClassDelete(body);
             body = NULL;
         }
-        XMqttPublishProperties_delete_base(props);
+        XClassDelete(props);
         props = NULL;
     }
     mock_clear_output(mock, T1);
@@ -1799,7 +1799,7 @@ static void mock_test_publish_with_properties(void)
                "publishWithProperties(属性为 NULL) 返回 true");
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x30, &body),
                "属性为 NULL 时订阅者仍收到 PUBLISH");
-    if (body) XByteArray_delete_base(body);
+    if (body) XClassDelete(body);
     mock_server_delete(mock);
 }
 
@@ -1897,7 +1897,7 @@ static void mock_test_signals(void)
     if (packet) {
         XMqttServer_feedData(server, T1, (const uint8_t*)XByteArray_constData(packet),
                              (size_t)XByteArray_size_base(packet));
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
     }
     MOCK_CHECK(g_sigReceivedCount == 1, "messageReceived 信号触发 1 次");
     MOCK_CHECK(g_sigReceivedTransport == T1, "信号 transport 参数正确");
@@ -1933,7 +1933,7 @@ static void mock_test_feature_switches(void)
     if (body) {
         MOCK_CHECK(mock_connack_find_property(body, 0x25, &value, &valueLen) &&
                    valueLen >= 1 && value[0] == 0, "CONNACK 声明保留消息可用=0");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_clear_output(mock, T1);
@@ -1942,14 +1942,14 @@ static void mock_test_feature_switches(void)
     if (packet) {
         XMqttServer_feedData(server, T1, (const uint8_t*)XByteArray_constData(packet),
                              (size_t)XByteArray_size_base(packet));
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
         packet = NULL;
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0xE0, &body), "收到 DISCONNECT");
     if (body) {
         MOCK_CHECK(XByteArray_size_base(body) >= 1 && XByteArray_constData(body)[0] == 0x9A,
                    "DISCONNECT 原因码 RetainNotSupported(0x9A)");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     MOCK_CHECK(mock->closeCount >= 1, "传输被服务器关闭");
@@ -1967,7 +1967,7 @@ static void mock_test_feature_switches(void)
     if (body) {
         MOCK_CHECK(mock_connack_find_property(body, 0x28, &value, &valueLen) &&
                    valueLen >= 1 && value[0] == 0, "CONNACK 声明通配符可用=0");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_clear_output(mock, T1);
@@ -1976,14 +1976,14 @@ static void mock_test_feature_switches(void)
     if (packet) {
         XMqttServer_feedData(server, T1, (const uint8_t*)XByteArray_constData(packet),
                              (size_t)XByteArray_size_base(packet));
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
         packet = NULL;
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0x90, &body), "收到 SUBACK");
     if (body) {
         MOCK_CHECK(mock_suback_reason(body, true, 0) == 0xA2,
                    "SUBACK 原因码通配符不支持(0xA2)");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);
@@ -2003,7 +2003,7 @@ static void mock_test_feature_switches(void)
         if (packet) {
             XMqttServer_feedData(server, T1, (const uint8_t*)XByteArray_constData(packet),
                                  (size_t)XByteArray_size_base(packet));
-            XByteArray_delete_base(packet);
+            XClassDelete(packet);
             packet = NULL;
         }
     }
@@ -2011,7 +2011,7 @@ static void mock_test_feature_switches(void)
     if (body) {
         MOCK_CHECK(mock_suback_reason(body, true, 0) == 0x9E,
                    "SUBACK 原因码共享订阅不支持(0x9E)");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);
@@ -2028,7 +2028,7 @@ static void mock_test_feature_switches(void)
     if (body) {
         MOCK_CHECK(mock_connack_find_property(body, 0x24, &value, &valueLen) &&
                    valueLen >= 1 && value[0] == 1, "CONNACK 声明最大 QoS=1");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_clear_output(mock, T1);
@@ -2037,14 +2037,14 @@ static void mock_test_feature_switches(void)
     if (packet) {
         XMqttServer_feedData(server, T1, (const uint8_t*)XByteArray_constData(packet),
                              (size_t)XByteArray_size_base(packet));
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
         packet = NULL;
     }
     MOCK_CHECK(mock_find_packet(mock_output(mock, T1), 0xE0, &body), "收到 DISCONNECT");
     if (body) {
         MOCK_CHECK(XByteArray_size_base(body) >= 1 && XByteArray_constData(body)[0] == 0x9B,
                    "DISCONNECT 原因码 QoSNotSupported(0x9B)");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     MOCK_CHECK(mock->closeCount >= 1, "传输被服务器关闭");
@@ -2065,7 +2065,7 @@ static void mock_test_feature_switches(void)
         if (packet) {
             XMqttServer_feedData(server, T1, (const uint8_t*)XByteArray_constData(packet),
                                  (size_t)XByteArray_size_base(packet));
-            XByteArray_delete_base(packet);
+            XClassDelete(packet);
             packet = NULL;
         }
     }
@@ -2073,7 +2073,7 @@ static void mock_test_feature_switches(void)
     if (body) {
         MOCK_CHECK(mock_suback_reason(body, true, 0) == 0x9B,
                    "SUBACK 原因码 QoSNotSupported(0x9B)");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);
@@ -2091,7 +2091,7 @@ static void mock_test_feature_switches(void)
         MOCK_CHECK(mock_connack_find_property(body, 0x27, &value, &valueLen) &&
                    valueLen >= 4 && value[0] == 0 && value[3] == 64,
                    "CONNACK 声明最大报文大小=64");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_clear_output(mock, T1);
@@ -2103,7 +2103,7 @@ static void mock_test_feature_switches(void)
         if (packet) {
             XMqttServer_feedData(server, T1, (const uint8_t*)XByteArray_constData(packet),
                                  (size_t)XByteArray_size_base(packet));
-            XByteArray_delete_base(packet);
+            XClassDelete(packet);
             packet = NULL;
         }
     }
@@ -2130,7 +2130,7 @@ static void mock_test_feature_switches(void)
         MOCK_CHECK(mock_connack_find_property(body, 0x22, &value, &valueLen) &&
                    valueLen >= 2 && value[0] == 0 && value[1] == 10,
                    "CONNACK 声明主题别名上限=10");
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         body = NULL;
     }
     mock_server_delete(mock);

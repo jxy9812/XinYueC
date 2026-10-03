@@ -79,7 +79,7 @@ XVtable* XPlatformWindow_class_init(void);
 /**
  * @brief      初始化绑定指定 XWindow 的轻量平台句柄。
  * @details    为窗口分配自增原生句柄 ID 并创建空原生属性表；窗口借用不持有。
- * @param      self 待初始化对象；必须与 XPlatformWindow_deinit_base 成对调用。
+ * @param      self 待初始化对象；必须与 XClassDeinit 成对调用。
  * @param      window 目标 XWindow 借用指针；可为 NULL（纯属性承载）。
  */
 void XPlatformWindow_init(XPlatformWindow* self, XWindow* window);
@@ -87,7 +87,7 @@ void XPlatformWindow_init(XPlatformWindow* self, XWindow* window);
 /**
  * @brief      使用默认内存类型创建绑定指定 XWindow 的平台句柄。
  * @param      window 目标 XWindow 借用指针；可为 NULL。
- * @return     新对象指针；失败返回 NULL，调用方用 XPlatformWindow_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 #define XPlatformWindow_create(window) \
     XPlatformWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (window))
@@ -101,9 +101,7 @@ void XPlatformWindow_init(XPlatformWindow* self, XWindow* window);
 XPlatformWindow* XPlatformWindow_create_ex(XMemoryType memory, XWindow* window);
 
 /** @brief 通过 XClass 虚表释放 XPlatformWindow 资源（栈/外部存储对象使用）。 */
-#define XPlatformWindow_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XPlatformWindow 对象。 */
-#define XPlatformWindow_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 窗口句柄访问（对标 QPlatformWindow 核心） ==================== */
 

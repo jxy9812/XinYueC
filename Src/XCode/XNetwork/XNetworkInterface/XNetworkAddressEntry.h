@@ -67,7 +67,7 @@ typedef struct XNetworkAddressEntry {
 
 /**
  * @brief 创建一个空的 XNetworkAddressEntry 实例。
- * @return 新分配的实例，需调用 XNetworkAddressEntry_delete_base() 释放。
+ * @return 新分配的实例，需调用 XClassDelete() 释放。
  */
 XNetworkAddressEntry* XNetworkAddressEntry_create_ex(XMemoryType memory);
 
@@ -108,8 +108,6 @@ void XNetworkAddressEntry_init(XNetworkAddressEntry* entry);
  */
 XVtable* XNetworkAddressEntry_class_init(void);
 
-#define XNetworkAddressEntry_delete_base    XClass_delete_base
-#define XNetworkAddressEntry_deinit_base    XClass_deinit_base
 
 // ==================== 属性访问器 ====================
 

@@ -33,7 +33,7 @@ static XSerialPort* openSerialByName(const char* portName)
 
     if (!XSerialPort_open_base((XIODevice*)serial, XIODevice_ReadWrite)) {
         XPrintf("  无法打开串口 %s (error=%d)\n", portName, (int)XSerialPort_error(serial));
-        XSerialPort_delete_base(serial);
+        XIODevice_deleteLater(serial);
         return NULL;
     }
     XPrintf("  串口已打开: %s\n", portName);
@@ -145,7 +145,7 @@ static void closeSerial(XSerialPort* serial)
 {
     if (!serial) return;
     XSerialPort_close_base((XIODevice*)serial);
-    XSerialPort_delete_base(serial);
+    XIODevice_deleteLater(serial);
 }
 
 static bool readTextInput(const char* prompt, char text[64])
@@ -348,7 +348,7 @@ static void XESP8266WifiTest_tcpServer(XVariant* data)
     if (ip) {
         XString* ipStr = XHostAddress_toString(ip);
         XPrintf("  本机 IP: %s\n", XString_toUtf8(ipStr));
-        XString_delete_base(ipStr);
+        XClassDelete(ipStr);
         XFree_System(ip);
     } else {
         XPrintf("  IP 查询: ❌ 失败\n");
@@ -494,11 +494,11 @@ static void VMockAtIo_deinit(XIODevice* base)
     XMockAtIo* io = (XMockAtIo*)base;
     if (!io) return;
     if (io->m_input) {
-        XByteArray_delete_base(io->m_input);
+        XClassDelete(io->m_input);
         io->m_input = NULL;
     }
     if (io->m_writes) {
-        XByteArray_delete_base(io->m_writes);
+        XClassDelete(io->m_writes);
         io->m_writes = NULL;
     }
     XClass_Deinit_Parent(XIODevice, base);
@@ -525,7 +525,7 @@ static XMockAtIo* mockAtIo_create_ex(XMemoryType memory)
     io->m_input = XByteArray_create();
     io->m_writes = XByteArray_create();
     if (!io->m_input || !io->m_writes || !XIODevice_open_base(&io->m_base, XIODevice_ReadWrite)) {
-        XClass_delete_base((XClass*)io);
+        XClassDelete((XClass*)io);
         return NULL;
     }
     Set_Class_Memory(io, memory); Set_Class_IsHeap(io, true);
@@ -661,8 +661,8 @@ int XESP8266WifiTest_runUnit(void)
         allOk &= automatedStep("XATComm 超时信号", !XATComm_sendCommand(comm, "AT+TIMEOUT", 74, 80) &&
             comm->m_currentOp == 0 && g_atTimeoutCount == 1 && g_atTimeoutOp == 74);
     }
-    if (comm) XClass_delete_base((XClass*)comm);
-    if (atIo) XClass_delete_base((XClass*)atIo);
+    if (comm) XClassDelete((XClass*)comm);
+    if (atIo) XClassDelete((XClass*)atIo);
 
     wifiIo = mockAtIo_create();
     wifi = wifiIo ? XESP8266Wifi_create((XIODevice*)wifiIo) : NULL;
@@ -728,7 +728,7 @@ int XESP8266WifiTest_runUnit(void)
         localIpText = localIp ? XHostAddress_toString(localIp) : NULL;
         allOk &= automatedStep("ESP 查询本地 IP", localIpText &&
             strcmp(XString_toUtf8(localIpText), "192.168.10.86") == 0);
-        if (localIpText) XString_delete_base(localIpText);
+        if (localIpText) XClassDelete(localIpText);
         if (localIp) XFree_System(localIp);
 
         allOk &= mockAtIo_queueResponse(wifiIo, "CONNECT\r\n");
@@ -819,8 +819,8 @@ int XESP8266WifiTest_runUnit(void)
         allOk &= automatedStep("ESP 断开 WiFi", XESP8266Wifi_disconnectWiFi(wifi, 100) &&
             XESP8266Wifi_getWiFiStatus(wifi) == XESP8266_Status_Disconnected && g_responseCount > 0 && g_okCount > 0);
     }
-    if (wifi) XClass_delete_base((XClass*)wifi);
-    if (wifiIo) XClass_delete_base((XClass*)wifiIo);
+    if (wifi) XClassDelete((XClass*)wifi);
+    if (wifiIo) XClassDelete((XClass*)wifiIo);
 
     XPrintf("========== 模拟回归 %s ==========\n", allOk ? "通过" : "失败");
     return allOk ? 0 : 1;
@@ -855,12 +855,12 @@ static bool hostTcpResolveLocalAddress(XHostAddress* out)
         if (candidate && XHostAddress_protocol(candidate) == XHostAddress_IPv4Protocol &&
             !XHostAddress_isNull(candidate) && !XHostAddress_isLoopback(candidate) &&
             !XHostAddress_isLinkLocal(candidate)) {
-            XCopy(out, candidate);
-            XVector_delete_base(addresses);
+            XClassCopy(out, candidate);
+            XClassDelete(addresses);
             return true;
         }
     }
-    XVector_delete_base(addresses);
+    XClassDelete(addresses);
     return false;
 }
 
@@ -1098,7 +1098,7 @@ int XESP8266WifiTest_runAutomated(const char* portName, const char* ssid, const 
                     espIp[sizeof(espIp) - 1] = '\0';
                     XPrintf("  ESP 本地 IP: %s\n", espIp);
                 }
-                XString_delete_base(ipText);
+                XClassDelete(ipText);
             }
             XFree_System(localIp);
         }
@@ -1114,7 +1114,7 @@ int XESP8266WifiTest_runAutomated(const char* portName, const char* ssid, const 
                 strncpy(hostIp, text, sizeof(hostIp) - 1);
                 hostIp[sizeof(hostIp) - 1] = '\0';
             }
-            XString_delete_base(hostIpText);
+            XClassDelete(hostIpText);
         }
         XPrintf("  主机网口地址: %s\n", hostIp[0] ? hostIp : "(未找到)");
         allOk &= automatedStep("确定主机网口地址", hostIpOk && hostIp[0] != '\0');
@@ -1260,7 +1260,7 @@ cleanup:
         XESP8266Wifi_deleteLater(wifi);
     }
     closeSerial(serial);
-    XHostAddress_deinit_base(&hostAddress);
+    XClassDeinit(&hostAddress);
     XPrintf("========== 自动化测试 %s ==========\n", allOk ? "通过" : "失败");
     return allOk ? 0 : 1;
 }

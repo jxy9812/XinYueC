@@ -61,7 +61,7 @@ bool XDialTest_runAll(void)
                                   XAbstractSliderSliderAction_SingleStepAdd);
     dl_expect(XDial_value(dial) == 11, "SingleStepAdd 步进");
 
-    XDial_delete_base(dial);
+    XClassDelete(dial);
 
     {
         int failures = dl_failures;

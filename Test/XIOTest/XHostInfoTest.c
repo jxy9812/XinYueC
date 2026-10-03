@@ -44,7 +44,7 @@ static void XHostInfo_syncLookupTest(void)
 				XPrintf_2(errStr);
 				XPrintf("\n");
 			}
-			XHostInfo_delete_base(info);
+			XClassDelete(info);
 			continue;
 		}
 		
@@ -67,12 +67,12 @@ static void XHostInfo_syncLookupTest(void)
 					XPrintf("    - ");
 					XPrintf_2(addrStr);
 					XPrintf("\n");
-					XString_delete_base(addrStr);
+					XClassDelete(addrStr);
 				}
 			}
 		}
 		
-		XHostInfo_delete_base(info);
+		XClassDelete(info);
 	}
 }
 
@@ -87,7 +87,7 @@ static void onHostLookupComplete(XHostInfo* info, void* userData)
 	XHostInfo_Error err = XHostInfo_error(info);
 	if (err != XHostInfo_NoError) {
 		XPrintf("  错误: %d\n", err);
-		XHostInfo_delete_base(info);
+		XClassDelete(info);
 		return;
 	}
 	
@@ -109,12 +109,12 @@ static void onHostLookupComplete(XHostInfo* info, void* userData)
 				XPrintf("    - ");
 				XPrintf_2(addrStr);
 				XPrintf("\n");
-				XString_delete_base(addrStr);
+				XClassDelete(addrStr);
 			}
 		}
 	}
 	
-	XHostInfo_delete_base(info);
+	XClassDelete(info);
 }
 
 static void XHostInfo_asyncLookupTest(void)
@@ -132,9 +132,9 @@ static void XHostInfo_asyncLookupTest(void)
 	XPrintf("已发起异步查询: ID=%d, ID=%d, ID=%d\n", id1, id2, id3);
 	XPrintf("等待查询结果...\n");
 	
-	XString_delete_base(host1);
-	XString_delete_base(host2);
-	XString_delete_base(host3);
+	XClassDelete(host1);
+	XClassDelete(host2);
+	XClassDelete(host3);
 	
 	// 运行事件循环等待结果
 	for (int i = 0; i < 10; i++) {
@@ -155,7 +155,7 @@ static void XHostInfo_localInfoTest(void)
 		XPrintf("  本地主机名: ");
 		XPrintf_2(localHost);
 		XPrintf("\n");
-		XString_delete_base(localHost);
+		XClassDelete(localHost);
 	} else {
 		XPrintf("  无法获取本地主机名\n");
 	}
@@ -166,7 +166,7 @@ static void XHostInfo_localInfoTest(void)
 		XPrintf("  本地域名: ");
 		XPrintf_2(localDomain);
 		XPrintf("\n");
-		XString_delete_base(localDomain);
+		XClassDelete(localDomain);
 	} else {
 		XPrintf("  无法获取本地域名\n");
 	}

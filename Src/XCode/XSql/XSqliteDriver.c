@@ -101,8 +101,8 @@ static void xsqlite_update_hook(void* context, int operation, const char* databa
     if (name && payload)
         XSqlDriver_notification_signal(&driver->m_parent, name,
                                        XSqlNotificationSource_Unknown, payload);
-    if (name) XString_delete_base(name);
-    if (payload) XVariant_delete_base(payload);
+    if (name) XClassDelete(name);
+    if (payload) XClassDelete(payload);
 }
 
 static int xsqlite_type_from_name(const char* name)
@@ -150,7 +150,7 @@ static int xsqlite_type_from_column(sqlite3_stmt* statement, int column)
 static void xsqlite_clear_error(XSqlError* error)
 {
     if (!error) return;
-    XSqlError_deinit_base(error);
+    XClassDeinit(error);
     XSqlError_init(error);
 }
 
@@ -167,12 +167,12 @@ static void xsqlite_set_result_error(XSqliteResult* result, const char* text,
     databaseText = XString_create_utf8(database ? sqlite3_errmsg(database) : "");
     errorCode = XString_create_fmt_utf8("%d", code);
     error = XSqlError_create(driverText, databaseText, type, errorCode);
-    if (driverText) XString_delete_base(driverText);
-    if (databaseText) XString_delete_base(databaseText);
-    if (errorCode) XString_delete_base(errorCode);
+    if (driverText) XClassDelete(driverText);
+    if (databaseText) XClassDelete(databaseText);
+    if (errorCode) XClassDelete(errorCode);
     if (error) {
         XSqlResult_setLastError_base(&result->m_parent, error);
-        XSqlError_delete_base(error);
+        XClassDelete(error);
     }
     (void)code;
 }
@@ -189,12 +189,12 @@ static void xsqlite_set_driver_error(XSqliteDriver* driver, const char* text,
                                            ? sqlite3_errmsg(driver->m_database) : "");
     errorCode = XString_create_fmt_utf8("%d", code);
     error = XSqlError_create(driverText, databaseText, type, errorCode);
-    if (driverText) XString_delete_base(driverText);
-    if (databaseText) XString_delete_base(databaseText);
-    if (errorCode) XString_delete_base(errorCode);
+    if (driverText) XClassDelete(driverText);
+    if (databaseText) XClassDelete(databaseText);
+    if (errorCode) XClassDelete(errorCode);
     if (error) {
         XSqlDriver_setLastError(&driver->m_parent, error);
-        XSqlError_delete_base(error);
+        XClassDelete(error);
     }
 }
 
@@ -206,7 +206,7 @@ static void xsqlite_clear_rows(XSqliteResult* result)
     for (row = 0; row < result->m_rowCount; ++row) {
         if (!result->m_rows[row]) continue;
         for (column = 0; column < result->m_columnCount; ++column)
-            if (result->m_rows[row][column]) XVariant_delete_base(result->m_rows[row][column]);
+            if (result->m_rows[row][column]) XClassDelete(result->m_rows[row][column]);
         XFree_System(result->m_rows[row]);
     }
     if (result->m_rows) XFree_System(result->m_rows);
@@ -252,7 +252,7 @@ static XVariant* xsqlite_column_value(sqlite3_stmt* statement, int column)
             (const char*)sqlite3_column_text(statement, column),
             (size_t)sqlite3_column_bytes(statement, column));
         XVariant* value = string ? XVariant_create_String_move(string) : NULL;
-        if (string) XString_delete_base(string);
+        if (string) XClassDelete(string);
         return value;
     }
     default:
@@ -273,9 +273,9 @@ static bool xsqlite_build_record(XSqliteResult* result)
         XString* tableName = table ? XString_create_utf8(table) : NULL;
         XSqlField* field = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, fieldName, xsqlite_type_from_column(result->m_statement, column), tableName);
         bool appended = field && XSqlRecord_append(&result->m_parent.m_record, field);
-        if (fieldName) XString_delete_base(fieldName);
-        if (tableName) XString_delete_base(tableName);
-        if (field) XSqlField_delete_base(field);
+        if (fieldName) XClassDelete(fieldName);
+        if (tableName) XClassDelete(tableName);
+        if (field) XClassDelete(field);
         if (!appended) return false;
     }
     return true;
@@ -293,7 +293,7 @@ static bool xsqlite_append_row(XSqliteResult* result)
         if (!row[column]) {
             int cleanup;
             for (cleanup = 0; cleanup < column; ++cleanup)
-                XVariant_delete_base(row[cleanup]);
+                XClassDelete(row[cleanup]);
             XFree_System(row);
             return false;
         }
@@ -347,7 +347,7 @@ static bool xsqlite_bind_variant(sqlite3_stmt* statement, int index, const XVari
         int result = text ? sqlite3_bind_text(statement, index, XString_toUtf8(text),
                                               (int)XString_toUtf8_length(text), SQLITE_TRANSIENT)
                           : SQLITE_NOMEM;
-        if (text) XString_delete_base(text);
+        if (text) XClassDelete(text);
         return result == SQLITE_OK;
     }
     case XVariantType_Time: {
@@ -359,7 +359,7 @@ static bool xsqlite_bind_variant(sqlite3_stmt* statement, int index, const XVari
         int result = text ? sqlite3_bind_text(statement, index, XString_toUtf8(text),
                                               (int)XString_toUtf8_length(text), SQLITE_TRANSIENT)
                           : SQLITE_NOMEM;
-        if (text) XString_delete_base(text);
+        if (text) XClassDelete(text);
         return result == SQLITE_OK;
     }
     case XVariantType_DateTime: {
@@ -374,7 +374,7 @@ static bool xsqlite_bind_variant(sqlite3_stmt* statement, int index, const XVari
         int result = text ? sqlite3_bind_text(statement, index, XString_toUtf8(text),
                                               (int)XString_toUtf8_length(text), SQLITE_TRANSIENT)
                           : SQLITE_NOMEM;
-        if (text) XString_delete_base(text);
+        if (text) XClassDelete(text);
         return result == SQLITE_OK;
     }
     case XVariantType_Uint8:
@@ -573,7 +573,7 @@ static bool VXSqliteResult_isNull(XSqlResult* base, int field)
 {
     XVariant* value = VXSqliteResult_data(base, field);
     bool result = !value || !XVariant_isValid(value);
-    if (value) XVariant_delete_base(value);
+    if (value) XClassDelete(value);
     return result;
 }
 
@@ -676,7 +676,7 @@ static bool VXSqliteResult_exec(XSqlResult* base)
                                 (int64_t)sqlite3_last_insert_rowid(database));
     }
     if (base->m_lastQuery) {
-        if (base->m_executedQuery) XString_delete_base(base->m_executedQuery);
+        if (base->m_executedQuery) XClassDelete(base->m_executedQuery);
         base->m_executedQuery = XString_create_copy(base->m_lastQuery);
     }
     return true;
@@ -808,11 +808,11 @@ static XSqlResult* xsqlite_exec_metadata(const XSqlDriver* driver, const char* s
     XSqlResult* result = XSqlDriver_createResult_base(driver);
     XString* query = sql ? XString_create_utf8(sql) : NULL;
     if (!result || !query || !XSqlResult_reset_base(result, query)) {
-        if (result) XSqlResult_delete_base(result);
-        if (query) XString_delete_base(query);
+        if (result) XClassDelete(result);
+        if (query) XClassDelete(query);
         return NULL;
     }
-    XString_delete_base(query);
+    XClassDelete(query);
     return result;
 }
 
@@ -824,9 +824,9 @@ static void xsqlite_append_table_names(XStringList* list, XSqlResult* result)
         XString* name = value ? XVariant_toString(value) : NULL;
         if (name) {
             XStringList_push_back_base(list, name);
-            XString_delete_base(name);
+            XClassDelete(name);
         }
-        if (value) XVariant_delete_base(value);
+        if (value) XClassDelete(value);
     }
 }
 
@@ -882,17 +882,17 @@ static XSqlField* xsqlite_field_from_info(XSqlResult* result, const XString* tab
         if (isPrimary && type && strcmp(XString_toUtf8(type), "INTEGER") == 0)
             XSqlField_setAutoValue(field, true);
         if (primaryOnly && !isPrimary) {
-            XSqlField_delete_base(field);
+            XClassDelete(field);
             field = NULL;
         }
     }
-    if (nameValue) XVariant_delete_base(nameValue);
-    if (typeValue) XVariant_delete_base(typeValue);
-    if (notNullValue) XVariant_delete_base(notNullValue);
-    if (defaultValue) XVariant_delete_base(defaultValue);
-    if (primaryValue) XVariant_delete_base(primaryValue);
-    if (name) XString_delete_base(name);
-    if (type) XString_delete_base(type);
+    if (nameValue) XClassDelete(nameValue);
+    if (typeValue) XClassDelete(typeValue);
+    if (notNullValue) XClassDelete(notNullValue);
+    if (defaultValue) XClassDelete(defaultValue);
+    if (primaryValue) XClassDelete(primaryValue);
+    if (name) XClassDelete(name);
+    if (type) XClassDelete(type);
     return field;
 }
 
@@ -909,27 +909,27 @@ static XSqlRecord* xsqlite_table_record(const XSqliteDriver* driver, const XStri
     if (!driver || !driver->m_database || !tableName) goto fail;
     escaped = VXSqliteDriver_escapeIdentifier(&driver->m_parent, tableName, XSqlIdentifierType_TableName);
     sql = escaped ? XString_create_fmt_utf8("PRAGMA table_info(%s)", XString_toUtf8(escaped)) : NULL;
-    if (escaped) XString_delete_base(escaped);
+    if (escaped) XClassDelete(escaped);
     result = sql ? xsqlite_exec_metadata(&driver->m_parent, XString_toUtf8(sql)) : NULL;
-    if (sql) XString_delete_base(sql);
+    if (sql) XClassDelete(sql);
     if (!result) goto fail;
     while ((record || index) && XSqlResult_fetchNext_base(result)) {
         XSqlField* field = xsqlite_field_from_info(result, tableName, primaryOnly, &primary);
         if (!field && primaryOnly && XSqlResult_at(result) >= 0) continue;
         if (!field) break;
-        if (record && !XSqlRecord_append(record, field)) { XSqlField_delete_base(field); goto fail_result; }
-        if (index && primary && !XSqlIndex_append(index, field)) { XSqlField_delete_base(field); goto fail_result; }
-        XSqlField_delete_base(field);
+        if (record && !XSqlRecord_append(record, field)) { XClassDelete(field); goto fail_result; }
+        if (index && primary && !XSqlIndex_append(index, field)) { XClassDelete(field); goto fail_result; }
+        XClassDelete(field);
     }
-    XSqlResult_delete_base(result);
+    XClassDelete(result);
     if (primaryOnly) return index;
     return record;
 
 fail_result:
-    XSqlResult_delete_base(result);
+    XClassDelete(result);
 fail:
-    if (record) XSqlRecord_delete_base(record);
-    if (index) XSqlIndex_delete_base(index);
+    if (record) XClassDelete(record);
+    if (index) XClassDelete(index);
     return NULL;
 }
 
@@ -970,7 +970,7 @@ XSqlDriver* XSqliteDriver_create_ex(XMemoryType memory)
     Set_Class_Memory(driver, memory); Set_Class_IsHeap(driver, true);
     driver->m_notifications = XStringList_create();
     if (!driver->m_notifications) {
-        XClass_delete_base((XClass*)driver);
+        XClassDelete((XClass*)driver);
         return NULL;
     }
     return &driver->m_parent;
@@ -981,7 +981,7 @@ static void VXSqliteDriver_deinit(XSqliteDriver* driver)
     if (!driver) return;
     VXSqliteDriver_close(&driver->m_parent);
     if (driver->m_notifications) {
-        XStringList_delete_base(driver->m_notifications);
+        XClassDelete(driver->m_notifications);
         driver->m_notifications = NULL;
     }
     XClass_Deinit_Parent(XSqlDriver, driver);
@@ -1112,7 +1112,7 @@ static XStringList* VXSqliteDriver_tables(const XSqlDriver* base, XSqlTableType 
         query = xsqlite_exec_metadata(base, sql);
         if (query) {
             xsqlite_append_table_names(result, query);
-            XSqlResult_delete_base(query);
+            XClassDelete(query);
         }
     }
     if (type & XSqlTableType_SystemTables) XStringList_push_back_utf8(result, "sqlite_master");
@@ -1165,12 +1165,12 @@ static XString* VXSqliteDriver_escapeIdentifier(const XSqlDriver* base, const XS
             && XString_append(result, escapedRight)) {
             /* result is complete. */
         } else {
-            if (result) { XString_delete_base(result); result = NULL; }
+            if (result) { XClassDelete(result); result = NULL; }
         }
-        if (left) XString_delete_base(left);
-        if (right) XString_delete_base(right);
-        if (escapedLeft) XString_delete_base(escapedLeft);
-        if (escapedRight) XString_delete_base(escapedRight);
+        if (left) XClassDelete(left);
+        if (right) XClassDelete(right);
+        if (escapedLeft) XClassDelete(escapedLeft);
+        if (escapedRight) XClassDelete(escapedRight);
     }
     return result;
 }
@@ -1244,17 +1244,17 @@ static XString* VXSqliteDriver_stripDelimiters(const XSqlDriver* base,
                 && XString_append_utf8(result, ".") && XString_append(result, rightText)) {
                 /* result is complete. */
             } else if (result) {
-                XString_delete_base(result);
+                XClassDelete(result);
                 result = NULL;
             }
-            if (leftText) XString_delete_base(leftText);
-            if (rightText) XString_delete_base(rightText);
-            if (left) XString_delete_base(left);
-            if (right) XString_delete_base(right);
+            if (leftText) XClassDelete(leftText);
+            if (rightText) XClassDelete(rightText);
+            if (left) XClassDelete(left);
+            if (right) XClassDelete(right);
             return result;
         }
-        if (left) XString_delete_base(left);
-        if (right) XString_delete_base(right);
+        if (left) XClassDelete(left);
+        if (right) XClassDelete(right);
     }
     if (xsqlite_is_escaped(identifier)) return XString_sliced_2(identifier, 1, length - 2);
     result = XString_create_copy(identifier);
@@ -1278,7 +1278,7 @@ bool XSqliteDriver_register(void)
     if (creator) return true;
     creator = XSqlDriverCreator_create(XSqliteDriver_create_default);
     if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_Sqlite, &creator->m_parent)) {
-        if (creator) XSqlDriverCreator_delete_base(creator);
+        if (creator) XClassDelete(creator);
         creator = NULL;
         return false;
     }

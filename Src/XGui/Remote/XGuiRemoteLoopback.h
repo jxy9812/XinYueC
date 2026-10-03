@@ -92,10 +92,6 @@ void XGuiRemoteLoopbackDevice_init(XGuiRemoteLoopbackDevice* self,
                                    size_t ringCapacity);
 
 /** @brief 析构/反初始化映射(仓库惯例; 断开对端关联并释放环形缓冲)。 */
-#define XGuiRemoteLoopbackDevice_deinit_base(self) \
-    XIODevice_deinit_base((XIODevice*)(self))
-#define XGuiRemoteLoopbackDevice_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 #define XGuiRemoteLoopbackDevice_deleteLater       XObject_deleteLater
 
 /* ==================== 访问与语义 ==================== */

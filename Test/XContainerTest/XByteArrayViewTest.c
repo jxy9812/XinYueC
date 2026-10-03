@@ -76,7 +76,7 @@ static void XByteArrayViewTest_Create(void)
         XByteArrayView v = XByteArrayView_create_bytearray(ba);
         XPrintf("  create_bytearray('ByteArray'): size=%lld (期望 9)\n",
             (long long)XByteArrayView_size(&v));
-        XByteArray_delete_base(ba);
+        XClassDelete(ba);
     }
 
     /* create_bytearray(NULL) */

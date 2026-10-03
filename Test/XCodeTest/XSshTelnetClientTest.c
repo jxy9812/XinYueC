@@ -43,7 +43,7 @@ static int64_t xshtelnet_test_write(XIODevice* device, const char* data,
 static void xshtelnet_test_deinit(XSshTelnetTestDevice* device)
 {
     if (!device) return;
-    if (device->output) XByteArray_delete_base(device->output);
+    if (device->output) XClassDelete(device->output);
     XClass_Deinit_Parent(XIODevice, device);
 }
 
@@ -68,7 +68,7 @@ static XSshTelnetTestDevice* xshtelnet_test_device_create_ex(XMemoryType memory)
     device->output = XByteArray_create();
     Set_Class_Memory(device, memory); Set_Class_IsHeap(device, true);
     if (!device->output || !XIODevice_open_base((XIODevice*)device, XIODevice_ReadWrite)) {
-        XClass_delete_base((XClass*)device);
+        XClassDelete((XClass*)device);
         return NULL;
     }
     return device;
@@ -318,10 +318,10 @@ static bool xshtelnet_test_ssh(void)
         (void)XSshServer_setInputEcho(server, true);
     }
 cleanup:
-    if (client) XClass_delete_base((XClass*)client);
-    if (server) XClass_delete_base((XClass*)server);
-    if (clientDevice) XClass_delete_base((XClass*)clientDevice);
-    if (serverDevice) XClass_delete_base((XClass*)serverDevice);
+    if (client) XClassDelete((XClass*)client);
+    if (server) XClassDelete((XClass*)server);
+    if (clientDevice) XClassDelete((XClass*)clientDevice);
+    if (serverDevice) XClassDelete((XClass*)serverDevice);
     return ready;
 }
 
@@ -427,8 +427,8 @@ static bool xshtelnet_test_telnet_server_echo(void)
             ok = false;
     }
 cleanup:
-    if (server) XClass_delete_base((XClass*)server);
-    if (device) XClass_delete_base((XClass*)device);
+    if (server) XClassDelete((XClass*)server);
+    if (device) XClassDelete((XClass*)device);
     return ok;
 }
 
@@ -459,8 +459,8 @@ static bool xshtelnet_test_telnet(void)
     ok = xshtelnet_client_data_count >= 3 && xshtelnet_telnet_text_len == 4 &&
          memcmp(xshtelnet_telnet_text, "hi\nx", 4) == 0;
 cleanup:
-    if (client) XClass_delete_base((XClass*)client);
-    if (device) XClass_delete_base((XClass*)device);
+    if (client) XClassDelete((XClass*)client);
+    if (device) XClassDelete((XClass*)device);
     return ok;
 }
 

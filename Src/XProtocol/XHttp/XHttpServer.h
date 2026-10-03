@@ -145,11 +145,9 @@ typedef struct XHttpServerRequest {
 XVtable* XHttpServerRequest_class_init(void);
 /**
  * - @brief 创建服务端请求对象。
- * - @return 新建请求对象；调用者必须使用 XHttpServerRequest_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建请求对象；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttpServerRequest* XHttpServerRequest_create_ex(XMemoryType memory);
-#define XHttpServerRequest_deinit_base XClass_deinit_base
-#define XHttpServerRequest_delete_base XClass_delete_base
 /**
  * - @brief 获取请求 URL。
  * - @param self 服务端请求；可为 NULL。
@@ -184,7 +182,7 @@ const XByteArray* XHttpServerRequest_body_const(const XHttpServerRequest* self);
  * - @brief 获取指定请求头值副本。
  * - @param self 服务端请求；可为 NULL。
  * - @param key 请求头名称；借用且不能为 NULL，比较忽略 ASCII 大小写。
- * - @return 新建请求头值；调用者必须使用 XByteArray_delete_base 释放，未找到、参数无效或分配失败返回 NULL。
+ * - @return 新建请求头值；调用者必须使用 XClassDelete 释放，未找到、参数无效或分配失败返回 NULL。
  */
 XByteArray* XHttpServerRequest_value(const XHttpServerRequest* self, const XByteArray* key);
 /**
@@ -220,14 +218,14 @@ XVtable* XHttpServerResponse_class_init(void);
 /**
  * - @brief 创建指定状态码的服务端响应。
  * - @param status HTTP 响应状态码。
- * - @return 新建响应对象；调用者必须使用 XHttpServerResponse_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建响应对象；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttpServerResponse* XHttpServerResponse_create_status(XHttpServerResponse_StatusCode status);
 /**
  * - @brief 创建带正文的服务端响应。
  * - @param body 响应正文；借用，可为 NULL，创建时深拷贝。
  * - @param status HTTP 响应状态码。
- * - @return 新建响应对象；调用者必须使用 XHttpServerResponse_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建响应对象；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttpServerResponse* XHttpServerResponse_create_body(const XByteArray* body,
                                                      XHttpServerResponse_StatusCode status);
@@ -236,13 +234,11 @@ XHttpServerResponse* XHttpServerResponse_create_body(const XByteArray* body,
  * - @param mimeType MIME 类型；借用，可为 NULL，创建时深拷贝。
  * - @param body 响应正文；借用，可为 NULL，创建时深拷贝。
  * - @param status HTTP 响应状态码。
- * - @return 新建响应对象；调用者必须使用 XHttpServerResponse_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建响应对象；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttpServerResponse* XHttpServerResponse_create_mime(const XByteArray* mimeType,
                                                      const XByteArray* body,
                                                      XHttpServerResponse_StatusCode status);
-#define XHttpServerResponse_deinit_base XClass_deinit_base
-#define XHttpServerResponse_delete_base XClass_delete_base
 /**
  * - @brief 获取响应正文。
  * - @param self 服务端响应；可为 NULL。
@@ -364,11 +360,9 @@ XVtable* XHttpServer_class_init(void);
 void XHttpServer_init(XHttpServer* self);
 /**
  * - @brief 创建 HTTP 服务端。
- * - @return 新建服务端；调用者必须使用 XHttpServer_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建服务端；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttpServer* XHttpServer_create_ex(XMemoryType memory);
-#define XHttpServer_deinit_base XClass_deinit_base
-#define XHttpServer_delete_base XClass_delete_base
 #define XHttpServer_deleteLater XObject_deleteLater
 
 /**

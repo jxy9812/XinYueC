@@ -38,7 +38,6 @@ void XSwitchDeviceSTM32_init(XSwitchDeviceSTM32* sw);
 #define XSwitchDeviceSTM32_open_base		 			XSwitchDeviceBase_open_base
 #define XSwitchDeviceSTM32_close_base		    		XSwitchDeviceBase_close_base
 #define XSwitchDeviceSTM32_setDevice_base 				XSwitchDeviceBase_setDevice_base
-#define XSwitchDeviceSTM32_delete_base					XSwitchDeviceBase_delete_base
 #define XSwitchDeviceSTM32_poll_base		 			XSwitchDeviceBase_poll_base
 #ifdef __cplusplus
 }

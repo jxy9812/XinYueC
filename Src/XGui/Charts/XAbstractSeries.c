@@ -56,7 +56,7 @@ static void VXAbstractSeries_deinit(XAbstractSeries* self)
 {
     if (!self) return;
     if (self->m_name) {
-        XString_delete_base(self->m_name);
+        XClassDelete(self->m_name);
         self->m_name = NULL;
     }
     if (self->m_axes) {
@@ -98,7 +98,7 @@ static void VXAbstractSeries_move(XAbstractSeries* self,
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XAbstractSeries_init(self);
-    if (self->m_name) XString_delete_base(self->m_name);
+    if (self->m_name) XClassDelete(self->m_name);
     self->m_name = other->m_name;
     other->m_name = NULL;
     self->m_visible = other->m_visible;
@@ -137,7 +137,7 @@ void XAbstractSeries_setName_2(XAbstractSeries* self, const char* name)
         if (!tmp) return;
     }
     XAbstractSeries_setName(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XAbstractSeries_name(const XAbstractSeries* self)

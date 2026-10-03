@@ -137,7 +137,7 @@ static HGLOBAL xpdrag_text(const XPDragData* d, bool wide)
            XMimeData_text(d->mime);
     if (!text) return NULL;
     utf8 = XString_toUtf8(text);
-    if (!utf8) { XString_delete_base((XClass*)text); return NULL; }
+    if (!utf8) { XClassDelete((XClass*)text); return NULL; }
     if (wide) {
         chars = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
         block = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)(chars > 0 ? chars : 1) * sizeof(WCHAR));
@@ -156,7 +156,7 @@ static HGLOBAL xpdrag_text(const XPDragData* d, bool wide)
             GlobalUnlock(block);
         }
     }
-    XString_delete_base((XClass*)text);
+    XClassDelete((XClass*)text);
     return block;
 }
 

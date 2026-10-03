@@ -23,7 +23,7 @@
 static bool xdom_node_is_null(XDomNode* node)
 {
     bool result = !node || XDomNode_isNull(node);
-    if (node) XDomNode_delete_base(node);
+    if (node) XClassDelete(node);
     return result;
 }
 
@@ -62,11 +62,11 @@ static bool test_implementation_and_conversions(void)
     XDomElement* otherMaterializer = XDomDocument_createElement_utf8(otherDocument, "other");
     XDomDocumentType* nullDocumentType = XDomDocument_doctype(document);
     XDomNode* nullDocumentTypeNode = XDomDocumentType_toNode(nullDocumentType);
-    XDomImplementation_delete_base(implementation);
+    XClassDelete(implementation);
     implementation = XDomDocument_implementation(document);
-    XDomImplementation_delete_base(sameDocumentImplementation);
+    XClassDelete(sameDocumentImplementation);
     sameDocumentImplementation = XDomDocument_implementation(document);
-    XDomImplementation_delete_base(otherImplementation);
+    XClassDelete(otherImplementation);
     otherImplementation = XDomDocument_implementation(otherDocument);
     if (emptyImplementation && XDomImplementation_isNull(emptyImplementation) &&
         emptyDocumentNode && XDomNode_isNull(emptyDocumentNode) &&
@@ -107,7 +107,7 @@ static bool test_implementation_and_conversions(void)
         createdType && xdom_string_equals(XDomDocumentType_name(createdType), "root"))
         TEST_PASS("创建文档并挂接文档类型");
     else { TEST_FAIL("创建文档", "根元素、命名空间或文档类型错误"); all_pass = false; }
-    XDomNode_delete_base(createdRootNode);
+    XClassDelete(createdRootNode);
     if (doctypeConstructed && doctypeConstructedType &&
         xdom_string_equals(XDomDocumentType_name(doctypeConstructedType), "root"))
         TEST_PASS("按文档类型构造文档");
@@ -137,38 +137,38 @@ static bool test_implementation_and_conversions(void)
         TEST_PASS("具体节点转换保持共享引用");
     else { TEST_FAIL("具体节点转换", "转换后节点为空"); all_pass = false; }
 
-    XDomNode_delete_base(processingInstructionNode);
-    XDomNode_delete_base(entityReferenceNode);
-    XDomNode_delete_base(characterDataNode);
-    XDomNode_delete_base(commentNode);
-    XDomNode_delete_base(cdataNode);
-    XDomNode_delete_base(textNode);
-    XDomNode_delete_base(attrNode);
-    XDomProcessingInstruction_delete_base(processingInstruction);
-    XDomEntityReference_delete_base(entityReference);
-    XDomComment_delete_base(comment);
-    XDomCDATASection_delete_base(cdata);
-    XDomText_delete_base(text);
-    XDomAttr_delete_base(attr);
-    XDomNode_delete_base(typeNode);
-    XDomNode_delete_base(documentNode);
-    XDomDocumentType_delete_base(createdType);
-    XDomDocumentType_delete_base(doctypeConstructedType);
-    XDomDocumentType_delete_base(nullDocumentType);
-    XDomNode_delete_base(nullDocumentTypeNode);
-    XDomElement_delete_base(otherMaterializer);
-    XDomElement_delete_base(materializer);
-    XDomNode_delete_base(emptyDocumentNode);
-    XDomElement_delete_base(root);
-    XDomDocument_delete_base(created);
-    XDomDocument_delete_base(doctypeConstructed);
-    XDomDocumentType_delete_base(type);
-    XDomImplementation_delete_base(implementation);
-    XDomImplementation_delete_base(emptyImplementation);
-    XDomImplementation_delete_base(otherImplementation);
-    XDomDocument_delete_base(otherDocument);
-    XDomImplementation_delete_base(sameDocumentImplementation);
-    XDomDocument_delete_base(document);
+    XClassDelete(processingInstructionNode);
+    XClassDelete(entityReferenceNode);
+    XClassDelete(characterDataNode);
+    XClassDelete(commentNode);
+    XClassDelete(cdataNode);
+    XClassDelete(textNode);
+    XClassDelete(attrNode);
+    XClassDelete(processingInstruction);
+    XClassDelete(entityReference);
+    XClassDelete(comment);
+    XClassDelete(cdata);
+    XClassDelete(text);
+    XClassDelete(attr);
+    XClassDelete(typeNode);
+    XClassDelete(documentNode);
+    XClassDelete(createdType);
+    XClassDelete(doctypeConstructedType);
+    XClassDelete(nullDocumentType);
+    XClassDelete(nullDocumentTypeNode);
+    XClassDelete(otherMaterializer);
+    XClassDelete(materializer);
+    XClassDelete(emptyDocumentNode);
+    XClassDelete(root);
+    XClassDelete(created);
+    XClassDelete(doctypeConstructed);
+    XClassDelete(type);
+    XClassDelete(implementation);
+    XClassDelete(emptyImplementation);
+    XClassDelete(otherImplementation);
+    XClassDelete(otherDocument);
+    XClassDelete(sameDocumentImplementation);
+    XClassDelete(document);
     return all_pass;
 }
 
@@ -202,14 +202,14 @@ static bool test_tree_and_live_lists(void)
     appended = xdom_append(rootNode, nestedNode);
     XDomNode* nestedChild = XDomElement_toNode(nested);
     bool secondAppendOk = !xdom_node_is_null(xdom_append(nestedChild, secondNode));
-    XDomNode_delete_base(nestedChild);
+    XClassDelete(nestedChild);
     XDomNode* secondItem = XDomNodeList_item(items, 1);
     if (!xdom_node_is_null(appended) && secondAppendOk && XDomNodeList_length(children) == 2 &&
         XDomNodeList_length(items) == 2 &&
         xdom_string_equals(XDomNode_nodeName(secondItem), "item"))
         TEST_PASS("节点列表变更后保持实时");
     else { TEST_FAIL("节点列表实时性", "后续树变化未反映到列表"); all_pass = false; }
-    XDomNode_delete_base(secondItem);
+    XClassDelete(secondItem);
 
     XDomNode* movedBefore = XDomNode_insertBefore(rootNode, firstNode, nestedNode);
     XDomNode* movedAfter = XDomNode_insertAfter(rootNode, nestedNode, firstNode);
@@ -220,10 +220,10 @@ static bool test_tree_and_live_lists(void)
         xdom_string_equals(XDomNode_nodeName(secondAfterMove), "nested"))
         TEST_PASS("同父节点移动保持 Qt 插入位置");
     else { TEST_FAIL("同父节点移动", "已有子节点移动后顺序错误"); all_pass = false; }
-    XDomNode_delete_base(secondAfterMove);
-    XDomNode_delete_base(firstAfterMove);
-    XDomNode_delete_base(movedAfter);
-    XDomNode_delete_base(movedBefore);
+    XClassDelete(secondAfterMove);
+    XClassDelete(firstAfterMove);
+    XClassDelete(movedAfter);
+    XClassDelete(movedBefore);
 
     XDomElement* duplicateRoot = XDomDocument_createElement_utf8(document, "other");
     XDomNode* duplicateRootNode = XDomElement_toNode(duplicateRoot);
@@ -241,22 +241,22 @@ static bool test_tree_and_live_lists(void)
         TEST_PASS("深拷贝保持独立");
     else { TEST_FAIL("深拷贝", "深拷贝与源节点发生错误共享"); all_pass = false; }
 
-    XDomNode_delete_base(rootClone);
-    XDomElement_delete_base(cloneElement);
-    XDomElement_delete_base(duplicateRoot);
-    XDomNode_delete_base(duplicateRootNode);
-    XDomNode_delete_base(nestedNode);
-    XDomElement_delete_base(nested);
-    XDomElement_delete_base(second);
-    XDomNode_delete_base(secondNode);
-    XDomNode_delete_base(firstNode);
-    XDomElement_delete_base(first);
-    XDomElement_delete_base(root);
-    XDomNode_delete_base(documentNode);
-    XDomNode_delete_base(rootNode);
-    XDomNodeList_delete_base(children);
-    XDomNodeList_delete_base(items);
-    XDomDocument_delete_base(document);
+    XClassDelete(rootClone);
+    XClassDelete(cloneElement);
+    XClassDelete(duplicateRoot);
+    XClassDelete(duplicateRootNode);
+    XClassDelete(nestedNode);
+    XClassDelete(nested);
+    XClassDelete(second);
+    XClassDelete(secondNode);
+    XClassDelete(firstNode);
+    XClassDelete(first);
+    XClassDelete(root);
+    XClassDelete(documentNode);
+    XClassDelete(rootNode);
+    XClassDelete(children);
+    XClassDelete(items);
+    XClassDelete(document);
     return all_pass;
 }
 
@@ -271,8 +271,8 @@ static bool test_qt_tree_and_import_semantics(void)
     XDomNode* rootNode = XDomElement_toNode(root);
     XDomNode* childNode = XDomElement_toNode(child);
     XDomNode* appended = xdom_append(documentNode, rootNode);
-    XDomNode_delete_base(appended);
-    XDomNode_delete_base(xdom_append(rootNode, childNode));
+    XClassDelete(appended);
+    XClassDelete(xdom_append(rootNode, childNode));
 
     XDomNode* clone = XDomNode_cloneNode(rootNode, true);
     XDomDocument* cloneOwner = XDomNode_ownerDocument(clone);
@@ -298,8 +298,8 @@ static bool test_qt_tree_and_import_semantics(void)
     XDomNode* beforeNode = XDomElement_toNode(before);
     XDomNode* afterNode = XDomElement_toNode(after);
     XDomNode* replacementNode = XDomElement_toNode(replacement);
-    XDomNode_delete_base(xdom_append(rootNode, firstNode));
-    XDomNode_delete_base(xdom_append(rootNode, secondNode));
+    XClassDelete(xdom_append(rootNode, firstNode));
+    XClassDelete(xdom_append(rootNode, secondNode));
     XDomNode* inserted = XDomNode_insertBefore(rootNode, beforeNode, NULL);
     XDomNode* selfInsert = XDomNode_insertBefore(rootNode, beforeNode, beforeNode);
     XDomNode* firstChild = XDomNode_firstChild(rootNode);
@@ -340,7 +340,7 @@ static bool test_qt_tree_and_import_semantics(void)
     XDomText* referenceText = XDomDocument_createTextNode_utf8(document, "expanded");
     XDomNode* referenceNode = XDomEntityReference_toNode(reference);
     XDomNode* referenceTextNode = XDomText_toNode(referenceText);
-    XDomNode_delete_base(xdom_append(referenceNode, referenceTextNode));
+    XClassDelete(xdom_append(referenceNode, referenceTextNode));
     XDomNode* importedReference = XDomDocument_importNode(targetDocument, referenceNode, true);
     XDomNodeList* importedReferenceChildren = XDomNode_childNodes(importedReference);
     if (importedReference && XDomNodeList_length(importedReferenceChildren) == 0)
@@ -368,13 +368,13 @@ static bool test_qt_tree_and_import_semantics(void)
     if (saveOk && savedText && strstr(savedText, "<root"))
         TEST_PASS("节点 save 写入 XinYueC 设备");
     else { TEST_FAIL("节点 save", "节点序列化未完整写入设备"); all_pass = false; }
-    XByteArray_delete_base(savedBytes);
+    XClassDelete(savedBytes);
     if (readSavedFile) {
         XIODevice_close_base((XIODevice*)readSavedFile);
         XFile_deleteLater(readSavedFile);
     }
     XFile_remove_static(savePath);
-    XString_delete_base(savePath);
+    XClassDelete(savePath);
 
     XDomNodeList* sourceChildrenCopy = XDomNodeList_create_copy(sourceChildren);
     XDomNodeList* sourceChildrenFresh = XDomNode_childNodes(rootNode);
@@ -386,55 +386,55 @@ static bool test_qt_tree_and_import_semantics(void)
         TEST_PASS("列表和命名映射句柄相等性");
     else { TEST_FAIL("句柄相等性", "复制句柄未保持底层对象相等"); all_pass = false; }
 
-    XDomNode_delete_base(importedReference);
-    XDomNodeList_delete_base(importedReferenceChildren);
-    XDomNode_delete_base(referenceTextNode);
-    XDomText_delete_base(referenceText);
-    XDomNode_delete_base(referenceNode);
-    XDomEntityReference_delete_base(reference);
-    XDomNode_delete_base(documentImport);
-    XDomNamedNodeMap_delete_base(attributesCopy);
-    XDomNamedNodeMap_delete_base(attributes);
-    XDomNodeList_delete_base(sourceChildrenCopy);
-    XDomNodeList_delete_base(sourceChildrenFresh);
-    XDomNode_delete_base(doctypeImport);
-    XDomNode_delete_base(doctypeNode);
-    XDomDocumentType_delete_base(doctype);
-    XDomImplementation_delete_base(implementation);
-    XDomNode_delete_base(targetDocumentNode);
-    XDomNode_delete_base(importedOwnerNode);
-    XDomDocument_delete_base(importedOwner);
-    XDomNode_delete_base(imported);
-    XDomDocument_delete_base(targetDocument);
-    XDomNode_delete_base(removed);
-    XDomNode_delete_base(replaced);
-    XDomNode_delete_base(lastChild);
-    XDomNode_delete_base(appendedAfter);
-    XDomNode_delete_base(firstChild);
-    XDomNode_delete_base(inserted);
-    XDomNode_delete_base(selfInsert);
-    XDomNode_delete_base(selfReplace);
-    XDomNode_delete_base(replacementNode);
-    XDomNode_delete_base(afterNode);
-    XDomNode_delete_base(beforeNode);
-    XDomNode_delete_base(secondNode);
-    XDomNode_delete_base(firstNode);
-    XDomElement_delete_base(replacement);
-    XDomElement_delete_base(after);
-    XDomElement_delete_base(before);
-    XDomElement_delete_base(second);
-    XDomElement_delete_base(first);
-    XDomNodeList_delete_base(sourceChildren);
-    XDomDocument_delete_base(cloneOwner);
-    XDomNode_delete_base(cloneOwnerNode);
-    XDomNode_delete_base(clone);
-    XDomNode_delete_base(shared);
-    XDomNode_delete_base(childNode);
-    XDomElement_delete_base(child);
-    XDomNode_delete_base(rootNode);
-    XDomElement_delete_base(root);
-    XDomNode_delete_base(documentNode);
-    XDomDocument_delete_base(document);
+    XClassDelete(importedReference);
+    XClassDelete(importedReferenceChildren);
+    XClassDelete(referenceTextNode);
+    XClassDelete(referenceText);
+    XClassDelete(referenceNode);
+    XClassDelete(reference);
+    XClassDelete(documentImport);
+    XClassDelete(attributesCopy);
+    XClassDelete(attributes);
+    XClassDelete(sourceChildrenCopy);
+    XClassDelete(sourceChildrenFresh);
+    XClassDelete(doctypeImport);
+    XClassDelete(doctypeNode);
+    XClassDelete(doctype);
+    XClassDelete(implementation);
+    XClassDelete(targetDocumentNode);
+    XClassDelete(importedOwnerNode);
+    XClassDelete(importedOwner);
+    XClassDelete(imported);
+    XClassDelete(targetDocument);
+    XClassDelete(removed);
+    XClassDelete(replaced);
+    XClassDelete(lastChild);
+    XClassDelete(appendedAfter);
+    XClassDelete(firstChild);
+    XClassDelete(inserted);
+    XClassDelete(selfInsert);
+    XClassDelete(selfReplace);
+    XClassDelete(replacementNode);
+    XClassDelete(afterNode);
+    XClassDelete(beforeNode);
+    XClassDelete(secondNode);
+    XClassDelete(firstNode);
+    XClassDelete(replacement);
+    XClassDelete(after);
+    XClassDelete(before);
+    XClassDelete(second);
+    XClassDelete(first);
+    XClassDelete(sourceChildren);
+    XClassDelete(cloneOwner);
+    XClassDelete(cloneOwnerNode);
+    XClassDelete(clone);
+    XClassDelete(shared);
+    XClassDelete(childNode);
+    XClassDelete(child);
+    XClassDelete(rootNode);
+    XClassDelete(root);
+    XClassDelete(documentNode);
+    XClassDelete(document);
     return all_pass;
 }
 
@@ -520,36 +520,36 @@ static bool test_qt_attribute_and_policy_semantics(void)
     else { TEST_FAIL("ReturnNullNode", "非法名称未返回空节点"); all_pass = false; }
     XDomImplementation_setInvalidDataPolicy(XDom_AcceptInvalidChars);
 
-    XDomNode_delete_base(returnedTextNode);
-    XDomNode_delete_base(returnedCommentNode);
-    XDomNode_delete_base(returnedCDataNode);
-    XDomNode_delete_base(returnedPINode);
-    XDomProcessingInstruction_delete_base(returnedPI);
-    XDomCDATASection_delete_base(returnedCData);
-    XDomComment_delete_base(returnedComment);
-    XDomText_delete_base(returnedText);
-    XDomProcessingInstruction_delete_base(droppedPI);
-    XDomCDATASection_delete_base(droppedCData);
-    XDomComment_delete_base(droppedComment);
-    XDomText_delete_base(droppedText);
-    XString_delete_base(invalidTextData);
-    XDomNode_delete_base(droppedOnlyInvalidNode);
-    XDomElement_delete_base(invalidQualified);
-    XDomElement_delete_base(invalidName);
-    XDomElement_delete_base(droppedOnlyInvalid);
-    XDomElement_delete_base(droppedNS);
-    XDomElement_delete_base(dropped);
-    XString_delete_base(localName);
-    XString_delete_base(ratioName);
-    XString_delete_base(namespacedName);
-    XString_delete_base(namespaceURI);
-    XString_delete_base(name);
-    XDomNamedNodeMap_delete_base(attributesAgain);
-    XDomNamedNodeMap_delete_base(attributes);
-    XDomNode_delete_base(invalidQualifiedNode);
-    XDomNode_delete_base(invalidNameNode);
-    XDomElement_delete_base(element);
-    XDomDocument_delete_base(document);
+    XClassDelete(returnedTextNode);
+    XClassDelete(returnedCommentNode);
+    XClassDelete(returnedCDataNode);
+    XClassDelete(returnedPINode);
+    XClassDelete(returnedPI);
+    XClassDelete(returnedCData);
+    XClassDelete(returnedComment);
+    XClassDelete(returnedText);
+    XClassDelete(droppedPI);
+    XClassDelete(droppedCData);
+    XClassDelete(droppedComment);
+    XClassDelete(droppedText);
+    XClassDelete(invalidTextData);
+    XClassDelete(droppedOnlyInvalidNode);
+    XClassDelete(invalidQualified);
+    XClassDelete(invalidName);
+    XClassDelete(droppedOnlyInvalid);
+    XClassDelete(droppedNS);
+    XClassDelete(dropped);
+    XClassDelete(localName);
+    XClassDelete(ratioName);
+    XClassDelete(namespacedName);
+    XClassDelete(namespaceURI);
+    XClassDelete(name);
+    XClassDelete(attributesAgain);
+    XClassDelete(attributes);
+    XClassDelete(invalidQualifiedNode);
+    XClassDelete(invalidNameNode);
+    XClassDelete(element);
+    XClassDelete(document);
     return all_pass;
 }
 
@@ -563,10 +563,10 @@ static bool test_handle_semantics(void)
     XDomElement* child = XDomDocument_createElement_utf8(document, "child");
     XDomNode* childNode = XDomElement_toNode(child);
     XDomNode* appended = XDomNode_appendChild(originalNode, childNode);
-    XDomNode_delete_base(appended);
+    XClassDelete(appended);
 
     XDomElement copiedTarget = {0};
-    XCopy(&copiedTarget, original);
+    XClassCopy(&copiedTarget, original);
     XDomElement_setAttribute_utf8(&copiedTarget, "shared", "yes");
     XDomNode* copiedNode = XDomElement_toNode(&copiedTarget);
     XDomNodeList* copiedChildren = XDomNode_childNodes(copiedNode);
@@ -577,7 +577,7 @@ static bool test_handle_semantics(void)
     else { TEST_FAIL("浅拷贝", "复制句柄没有共享底层 DOM 数据"); all_pass = false; }
 
     XDomElement movedTarget = {0};
-    XMove(&movedTarget, &copiedTarget);
+    XClassMove(&movedTarget, &copiedTarget);
     XDomNode* movedNode = XDomElement_toNode(&movedTarget);
     XDomNode* movedSourceNode = XDomElement_toNode(&copiedTarget);
     if (movedNode && !XDomNode_isNull(movedNode) &&
@@ -599,19 +599,19 @@ static bool test_handle_semantics(void)
         TEST_PASS("浅克隆不复制子节点");
     else { TEST_FAIL("浅克隆", "浅克隆错误复制了子树"); all_pass = false; }
 
-    XDomNodeList_delete_base(shallowChildren);
-    XDomNode_delete_base(shallowClone);
-    XDomElement_delete_base(emptyCopy);
-    XDomNode_delete_base(movedNode);
-    XDomNode_delete_base(copiedNode);
-    XDomNodeList_delete_base(copiedChildren);
-    XDomElement_deinit_base(&movedTarget);
-    XDomElement_deinit_base(&copiedTarget);
-    XDomNode_delete_base(childNode);
-    XDomElement_delete_base(child);
-    XDomNode_delete_base(originalNode);
-    XDomElement_delete_base(original);
-    XDomDocument_delete_base(document);
+    XClassDelete(shallowChildren);
+    XClassDelete(shallowClone);
+    XClassDelete(emptyCopy);
+    XClassDelete(movedNode);
+    XClassDelete(copiedNode);
+    XClassDelete(copiedChildren);
+    XClassDeinit(&movedTarget);
+    XClassDeinit(&copiedTarget);
+    XClassDelete(childNode);
+    XClassDelete(child);
+    XClassDelete(originalNode);
+    XClassDelete(original);
+    XClassDelete(document);
     return all_pass;
 }
 
@@ -633,15 +633,15 @@ static bool test_normalize_behavior(void)
     XDomNode* nestedFirstNode = XDomText_toNode(nestedFirst);
     XDomNode* nestedSecondNode = XDomText_toNode(nestedSecond);
     XDomNode* appended = XDomNode_appendChild(outerNode, firstTextNode);
-    XDomNode_delete_base(appended);
+    XClassDelete(appended);
     appended = XDomNode_appendChild(outerNode, secondTextNode);
-    XDomNode_delete_base(appended);
+    XClassDelete(appended);
     appended = XDomNode_appendChild(outerNode, nestedNode);
-    XDomNode_delete_base(appended);
+    XClassDelete(appended);
     appended = XDomNode_appendChild(nestedNode, nestedFirstNode);
-    XDomNode_delete_base(appended);
+    XClassDelete(appended);
     appended = XDomNode_appendChild(nestedNode, nestedSecondNode);
-    XDomNode_delete_base(appended);
+    XClassDelete(appended);
 
     XDomNode_normalize(outerNode);
     XDomNodeList* outerChildren = XDomNode_childNodes(outerNode);
@@ -654,23 +654,23 @@ static bool test_normalize_behavior(void)
         TEST_PASS("只合并当前层文本和字符数据区段");
     else { TEST_FAIL("normalize", "递归层级或文本合并结果不符合 Qt 行为"); all_pass = false; }
 
-    XDomCharacterData_delete_base(mergedData);
-    XDomNode_delete_base(mergedNode);
-    XDomNodeList_delete_base(nestedChildren);
-    XDomNodeList_delete_base(outerChildren);
-    XDomNode_delete_base(nestedSecondNode);
-    XDomText_delete_base(nestedSecond);
-    XDomNode_delete_base(nestedFirstNode);
-    XDomText_delete_base(nestedFirst);
-    XDomNode_delete_base(secondTextNode);
-    XDomCDATASection_delete_base(secondText);
-    XDomNode_delete_base(firstTextNode);
-    XDomText_delete_base(firstText);
-    XDomNode_delete_base(nestedNode);
-    XDomElement_delete_base(nested);
-    XDomNode_delete_base(outerNode);
-    XDomElement_delete_base(outer);
-    XDomDocument_delete_base(document);
+    XClassDelete(mergedData);
+    XClassDelete(mergedNode);
+    XClassDelete(nestedChildren);
+    XClassDelete(outerChildren);
+    XClassDelete(nestedSecondNode);
+    XClassDelete(nestedSecond);
+    XClassDelete(nestedFirstNode);
+    XClassDelete(nestedFirst);
+    XClassDelete(secondTextNode);
+    XClassDelete(secondText);
+    XClassDelete(firstTextNode);
+    XClassDelete(firstText);
+    XClassDelete(nestedNode);
+    XClassDelete(nested);
+    XClassDelete(outerNode);
+    XClassDelete(outer);
+    XClassDelete(document);
     return all_pass;
 }
 
@@ -695,10 +695,10 @@ static bool test_attributes_and_character_data(void)
         XDomElement_hasAttributeNS(element, namespaceName, localName))
         TEST_PASS("属性和命名节点映射");
     else { TEST_FAIL("属性和命名节点映射", "属性查询结果错误"); all_pass = false; }
-    XDomNode_delete_base(idNode);
-    XString_delete_base(countName);
-    XString_delete_base(namespaceName);
-    XString_delete_base(localName);
+    XClassDelete(idNode);
+    XClassDelete(countName);
+    XClassDelete(namespaceName);
+    XClassDelete(localName);
 
     XDomText* text = XDomDocument_createTextNode_utf8(document, "ab");
     XDomNode* textNode = XDomText_toNode(text);
@@ -716,7 +716,7 @@ static bool test_attributes_and_character_data(void)
     if (xdom_string_equals(XDomCharacterData_data((XDomCharacterData*)suffix), "bc"))
         TEST_PASS("字符数据超范围插入保持原值");
     else { TEST_FAIL("字符数据", "超范围插入未按 Qt 保持原值"); all_pass = false; }
-    XString_delete_base(inserted);
+    XClassDelete(inserted);
 
     XDomCDATASection* cdata = XDomDocument_createCDATASection_utf8(document, "a&<]]>b");
     XDomNode* cdataNode = XDomCDATASection_toNode(cdata);
@@ -725,17 +725,17 @@ static bool test_attributes_and_character_data(void)
         TEST_PASS("字符数据区段原样序列化并拆分终止符");
     else { TEST_FAIL("字符数据区段序列化", cdataXml ? XString_toUtf8(cdataXml) : "序列化失败"); all_pass = false; }
 
-    XString_delete_base(cdataXml);
-    XDomNode_delete_base(cdataNode);
-    XDomCDATASection_delete_base(cdata);
-    XDomNodeList_delete_base(textChildren);
-    XDomText_delete_base(suffix);
-    XDomNode_delete_base(textNode);
-    XDomText_delete_base(text);
-    XDomNamedNodeMap_delete_base(attributes);
-    XDomNode_delete_base(elementNode);
-    XDomElement_delete_base(element);
-    XDomDocument_delete_base(document);
+    XClassDelete(cdataXml);
+    XClassDelete(cdataNode);
+    XClassDelete(cdata);
+    XClassDelete(textChildren);
+    XClassDelete(suffix);
+    XClassDelete(textNode);
+    XClassDelete(text);
+    XClassDelete(attributes);
+    XClassDelete(elementNode);
+    XClassDelete(element);
+    XClassDelete(document);
     return all_pass;
 }
 
@@ -764,7 +764,7 @@ static bool test_alternate_input_sources(void)
     if (legacyStringOk && !legacyError)
         TEST_PASS("XString 旧式错误参数接口");
     else { TEST_FAIL("XString 旧式接口", "成功解析不应返回错误消息"); all_pass = false; }
-    XString_delete_base(legacyError);
+    XClassDelete(legacyError);
 
     XXmlStreamReader* reader = XXmlStreamReader_create();
     XDomDocument* readerDocument = XDomDocument_create();
@@ -777,7 +777,7 @@ static bool test_alternate_input_sources(void)
         xdom_string_equals(XDomElement_tagName(readerRoot), "reader-root"))
         TEST_PASS("已有 Reader 输入和声明查询");
     else { TEST_FAIL("Reader 输入", "Reader 解析或声明状态错误"); all_pass = false; }
-    XDomElement_delete_base(readerRoot);
+    XClassDelete(readerRoot);
 
     XXmlStreamReader* legacyReader = XXmlStreamReader_create();
     XDomDocument* legacyReaderDocument = XDomDocument_create();
@@ -790,7 +790,7 @@ static bool test_alternate_input_sources(void)
         !XXmlStreamReader_hasXmlDeclaration(legacyReader))
         TEST_PASS("Reader 旧式接口和无声明状态");
     else { TEST_FAIL("Reader 旧式接口", "成功解析不应返回错误消息"); all_pass = false; }
-    XString_delete_base(readerError);
+    XClassDelete(readerError);
 
     XString* path = XString_create_utf8("xdom_device_input_test.xml");
     XFile_remove_static(path);
@@ -814,7 +814,7 @@ static bool test_alternate_input_sources(void)
         xdom_string_equals(XDomElement_tagName(deviceRoot), "device-root"))
         TEST_PASS("XIODevice 输入");
     else { TEST_FAIL("XIODevice 输入", "设备内容解析失败"); all_pass = false; }
-    XDomElement_delete_base(deviceRoot);
+    XClassDelete(deviceRoot);
 
     XString* deviceError = NULL;
     bool nullDeviceOk = XDomDocument_setContent_device(
@@ -822,7 +822,7 @@ static bool test_alternate_input_sources(void)
     if (!nullDeviceOk && deviceError)
         TEST_PASS("空设备失败结果和错误消息");
     else { TEST_FAIL("空设备", "空设备应返回失败和错误消息"); all_pass = false; }
-    XString_delete_base(deviceError);
+    XClassDelete(deviceError);
 
     XDomParseResult_deinit(&deviceResult);
     if (input) {
@@ -830,17 +830,17 @@ static bool test_alternate_input_sources(void)
         XFile_deleteLater(input);
     }
     XFile_remove_static(path);
-    XString_delete_base(path);
+    XClassDelete(path);
     XDomParseResult_deinit(&readerResult);
-    XXmlStreamReader_delete_base(reader);
-    XDomDocument_delete_base(readerDocument);
-    XXmlStreamReader_delete_base(legacyReader);
-    XDomDocument_delete_base(legacyReaderDocument);
-    XDomDocument_delete_base(deviceDocument);
+    XClassDelete(reader);
+    XClassDelete(readerDocument);
+    XClassDelete(legacyReader);
+    XClassDelete(legacyReaderDocument);
+    XClassDelete(deviceDocument);
     XDomParseResult_deinit(&stringResult);
-    XString_delete_base(stringSerialized);
-    XString_delete_base(xmlText);
-    XDomDocument_delete_base(stringDocument);
+    XClassDelete(stringSerialized);
+    XClassDelete(xmlText);
+    XClassDelete(stringDocument);
     return all_pass;
 }
 
@@ -873,7 +873,7 @@ static bool test_qt_remaining_semantics(void)
     XDomNode* rootNode = XDomElement_toNode(root);
     XDomNode* childNode = XDomElement_toNode(child);
     XDomElement_setAttribute_utf8(root, "id", "1");
-    XDomNode_delete_base(xdom_append(rootNode, childNode));
+    XClassDelete(xdom_append(rootNode, childNode));
     XDomAttr* historicalAttr = XDomDocument_createAttribute_utf8(document, "historical");
     XDomNode* historicalAttrNode = XDomAttr_toNode(historicalAttr);
     XDomNode* historicalAttrResult = xdom_append(rootNode, historicalAttrNode);
@@ -882,8 +882,8 @@ static bool test_qt_remaining_semantics(void)
         XDomNode_equals(historicalAttrParent, rootNode))
         TEST_PASS("Qt 历史兼容属性节点插入");
     else { TEST_FAIL("属性节点插入", "appendChild 未接受属性节点"); all_pass = false; }
-    XDomNode_delete_base(historicalAttrResult);
-    XDomNode_delete_base(historicalAttrParent);
+    XClassDelete(historicalAttrResult);
+    XClassDelete(historicalAttrParent);
     XDomNode* childByName = XDomNode_namedItem_utf8(rootNode, "child");
     XDomNode* attrByName = XDomNode_namedItem_utf8(rootNode, "id");
     XDomElement_setTagName_utf8(root, "~原样标签");
@@ -904,8 +904,8 @@ static bool test_qt_remaining_semantics(void)
         xdom_string_equals(XDomNode_localName(modifiedNamespaceNode), "item"))
         TEST_PASS("命名空间 setPrefix/setTagName 原样语义");
     else { TEST_FAIL("命名空间修改", "prefix 或 name/localName 不符合 Qt"); all_pass = false; }
-    XString_delete_base(changedTagName);
-    XString_delete_base(changedPrefix);
+    XClassDelete(changedTagName);
+    XClassDelete(changedPrefix);
 
     XDomImplementation* implementation = XDomDocument_implementation(document);
     XDomDocumentType* type = XDomImplementation_createDocumentType_utf8(
@@ -1008,59 +1008,59 @@ static bool test_qt_remaining_semantics(void)
     if (policySaved && policyText && strstr(policyText, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"))
         TEST_PASS("EncodingFromTextStream 输出 UTF-8 XML 声明");
     else { TEST_FAIL("save 编码策略", "EncodingFromTextStream 未输出 Qt 风格声明"); all_pass = false; }
-    XByteArray_delete_base(policyBytes);
+    XClassDelete(policyBytes);
     if (policyInput) {
         XIODevice_close_base((XIODevice*)policyInput);
         XFile_deleteLater(policyInput);
     }
     XFile_remove_static(savePath);
 
-    XDomNode_delete_base(documentNode);
-    XString_delete_base(savePath);
-    XString_delete_base(orderedText);
-    XDomNode_delete_base(orderedNode);
-    XDomElement_delete_base(ordered);
-    XString_delete_base(namespacedText);
-    XDomNode_delete_base(modifiedNamespaceNode);
-    XDomElement_delete_base(namespaced);
-    XString_delete_base(parsedSerialized);
-    XDomNode_delete_base(parsedDocumentChildren ? parsedDocumentNode : NULL);
-    XDomNodeList_delete_base(parsedDocumentChildren);
-    XDomNode_delete_base(parsedEntity);
-    XDomNodeList_delete_base(parsedTypeChildren);
-    XDomNode_delete_base(parsedTypeNode);
-    XDomDocumentType_delete_base(parsedType);
+    XClassDelete(documentNode);
+    XClassDelete(savePath);
+    XClassDelete(orderedText);
+    XClassDelete(orderedNode);
+    XClassDelete(ordered);
+    XClassDelete(namespacedText);
+    XClassDelete(modifiedNamespaceNode);
+    XClassDelete(namespaced);
+    XClassDelete(parsedSerialized);
+    XClassDelete(parsedDocumentChildren ? parsedDocumentNode : NULL);
+    XClassDelete(parsedDocumentChildren);
+    XClassDelete(parsedEntity);
+    XClassDelete(parsedTypeChildren);
+    XClassDelete(parsedTypeNode);
+    XClassDelete(parsedType);
     XDomParseResult_deinit(&parsed);
-    XDomDocument_delete_base(parsedDocument);
-    XDomNamedNodeMap_delete_base(internalEntities);
-    XDomDocumentType_delete_base(internalType);
-    XDomNode_delete_base(internalRootNode);
-    XDomElement_delete_base(internalRoot);
+    XClassDelete(parsedDocument);
+    XClassDelete(internalEntities);
+    XClassDelete(internalType);
+    XClassDelete(internalRootNode);
+    XClassDelete(internalRoot);
     XDomParseResult_deinit(&internalParsed);
-    XDomDocument_delete_base(internalDocument);
+    XClassDelete(internalDocument);
     XDomParseResult_deinit(&multipleDtd);
-    XDomDocument_delete_base(multipleDtdDocument);
-    XDomDocumentType_delete_base(type);
-    XDomDocumentType_delete_base(emptySystemType);
-    XDomImplementation_delete_base(implementation);
-    XDomNode_delete_base(attrClone);
-    XDomNodeList_delete_base(attrCloneChildren);
-    XDomNode_delete_base(attrText);
-    XDomNodeList_delete_base(attrChildrenAfter);
-    XDomNodeList_delete_base(attrChildren);
-    XDomNode_delete_base(attrNode);
-    XDomAttr_delete_base(attr);
-    XDomNode_delete_base(namespacedNode);
-    XDomElement_delete_base(namespacedElement);
-    XDomNode_delete_base(historicalAttrNode);
-    XDomAttr_delete_base(historicalAttr);
-    XDomNode_delete_base(attrByName);
-    XDomNode_delete_base(childByName);
-    XDomNode_delete_base(childNode);
-    XDomElement_delete_base(child);
-    XDomNode_delete_base(rootNode);
-    XDomElement_delete_base(root);
-    XDomDocument_delete_base(document);
+    XClassDelete(multipleDtdDocument);
+    XClassDelete(type);
+    XClassDelete(emptySystemType);
+    XClassDelete(implementation);
+    XClassDelete(attrClone);
+    XClassDelete(attrCloneChildren);
+    XClassDelete(attrText);
+    XClassDelete(attrChildrenAfter);
+    XClassDelete(attrChildren);
+    XClassDelete(attrNode);
+    XClassDelete(attr);
+    XClassDelete(namespacedNode);
+    XClassDelete(namespacedElement);
+    XClassDelete(historicalAttrNode);
+    XClassDelete(historicalAttr);
+    XClassDelete(attrByName);
+    XClassDelete(childByName);
+    XClassDelete(childNode);
+    XClassDelete(child);
+    XClassDelete(rootNode);
+    XClassDelete(root);
+    XClassDelete(document);
     return all_pass;
 }
 
@@ -1120,13 +1120,13 @@ static bool test_parse_and_serialize(void)
         xdom_string_equals(XDomNode_localName(noNamespaceChildNode), ""))
         TEST_PASS("关闭命名空间后的节点字段");
     else { TEST_FAIL("关闭命名空间", "prefix、localName 或 namespaceURI 未清空"); all_pass = false; }
-    XString_delete_base(attemptedPrefix);
-    XDomNode_delete_base(noNamespaceChildNode);
-    XDomElement_delete_base(noNamespaceChild);
-    XDomNode_delete_base(noNamespaceRootNode);
-    XDomElement_delete_base(noNamespaceRoot);
+    XClassDelete(attemptedPrefix);
+    XClassDelete(noNamespaceChildNode);
+    XClassDelete(noNamespaceChild);
+    XClassDelete(noNamespaceRootNode);
+    XClassDelete(noNamespaceRoot);
     XDomParseResult_deinit(&noNamespaceResult);
-    XDomDocument_delete_base(noNamespaceDocument);
+    XClassDelete(noNamespaceDocument);
 
     XString* serialized = XDomDocument_toString(document, -1);
     XDomDocument* roundTrip = XDomDocument_create();
@@ -1153,7 +1153,7 @@ static bool test_parse_and_serialize(void)
     }
 
     XDomParseResult_deinit(&error);
-    XDomDocument_delete_base(invalid);
+    XClassDelete(invalid);
     XDomDocument* declarationDocument = XDomDocument_create();
     XDomParseResult declarationParsed = XDomDocument_setContent_utf8_result(
         declarationDocument, "<?xml version=\"1.0\"?><root/>", XDom_ParseDefault);
@@ -1167,24 +1167,24 @@ static bool test_parse_and_serialize(void)
         strstr(XString_toUtf8(withoutDeclaration), "<?xml") == NULL)
         TEST_PASS("移除 xml 处理指令后不再合成 XML 声明");
     else { TEST_FAIL("移除 XML 声明", "文档序列化仍错误保留 XML 声明"); all_pass = false; }
-    XString_delete_base(withoutDeclaration);
-    XDomNode_delete_base(removedDeclaration);
-    XDomNode_delete_base(declarationToRemove);
-    XDomNode_delete_base(declarationDocumentNode);
+    XClassDelete(withoutDeclaration);
+    XClassDelete(removedDeclaration);
+    XClassDelete(declarationToRemove);
+    XClassDelete(declarationDocumentNode);
     XDomParseResult_deinit(&declarationParsed);
-    XDomDocument_delete_base(declarationDocument);
+    XClassDelete(declarationDocument);
     XDomParseResult_deinit(&reparsed);
-    XDomElement_delete_base(roundRoot);
-    XDomDocument_delete_base(roundTrip);
-    XString_delete_base(serialized);
-    XDomNamedNodeMap_delete_base(entities);
-    XDomProcessingInstruction_delete_base(declaration);
-    XDomNode_delete_base(declarationNode);
-    XDomNode_delete_base(declarationDocumentRoot);
-    XDomDocumentType_delete_base(type);
-    XDomElement_delete_base(root);
+    XClassDelete(roundRoot);
+    XClassDelete(roundTrip);
+    XClassDelete(serialized);
+    XClassDelete(entities);
+    XClassDelete(declaration);
+    XClassDelete(declarationNode);
+    XClassDelete(declarationDocumentRoot);
+    XClassDelete(type);
+    XClassDelete(root);
     XDomParseResult_deinit(&parsed);
-    XDomDocument_delete_base(document);
+    XClassDelete(document);
     return all_pass;
 }
 

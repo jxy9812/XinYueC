@@ -223,7 +223,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     ctx->m_peerPort = nopts->m_peerPort;
     XHostAddress_init(&ctx->m_peerAddress);
     if (nopts->m_peerAddress) {
-        XCopy((XClass*)&ctx->m_peerAddress,
+        XClassCopy((XClass*)&ctx->m_peerAddress,
                          (const XClass*)nopts->m_peerAddress);
         ctx->m_hasPeerAddress = true;
     }
@@ -242,7 +242,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
         ctx->m_ownsSocket = true;
     }
     if (!ctx->m_isServer && !ctx->m_endpoint.m_socket) {
-        XClass_deinit_base((XClass*)&ctx->m_peerAddress);
+        XClassDeinit((XClass*)&ctx->m_peerAddress);
         XDeviceNetwork_cleanup();
         XDeviceNetwork_deleteContext(ctx);
         if (err) *err = (int)XDeviceError_OutOfMemory;
@@ -252,10 +252,10 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
     ctx->m_base.m_fd = XFd_alloc(XFD_TYPE_CLASS, &ctx->m_base, ctx->m_owner);
     if (ctx->m_base.m_fd == XFD_INVALID) {
         if (ctx->m_ownsSocket) {
-            XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
+            XClassDeinit((XClass*)ctx->m_endpoint.m_socket);
             XFree_System(ctx->m_endpoint.m_socket);
         }
-        XClass_deinit_base((XClass*)&ctx->m_peerAddress);
+        XClassDeinit((XClass*)&ctx->m_peerAddress);
         XDeviceNetwork_deleteContext(ctx);
         XDeviceNetwork_cleanup();
         if (err) *err = (int)XDeviceError_OutOfMemory;
@@ -279,7 +279,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
         operationOk = XSocketDescriptor_isValid(XSocketDescriptor_fromIntptr(ctx->m_endpoint.m_serverHandle));
         if (operationOk) actualPort = XDeviceNetwork_serverPort(ctx->m_endpoint.m_serverHandle);
         if (!nopts->m_address)
-            XClass_deinit_base((XClass*)&anyAddress);
+            XClassDeinit((XClass*)&anyAddress);
     } else if (nopts->m_operation == XDeviceNetworkOpen_ListenAdopt) {
         operationOk = nopts->m_socketDescriptor >= 0 &&
             XDeviceNetwork_serverSetDescriptor(ctx->m_base.m_fd, nopts->m_socketDescriptor);
@@ -303,7 +303,7 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
             ctx->m_endpoint.m_socket->state = XAbstractSocket_BoundState;
         }
         if (!nopts->m_address)
-            XClass_deinit_base((XClass*)&anyAddress);
+            XClassDeinit((XClass*)&anyAddress);
     } else if (nopts->m_operation == XDeviceNetworkOpen_Connect) {
         ctx->m_connectedMode = true;
         operationOk = XDeviceNetwork_socketConnect(ctx->m_base.m_fd, nopts->m_base.m_target, nopts->m_port,
@@ -331,10 +331,10 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
         else
             XDeviceNetwork_socketDisconnect(ctx->m_base.m_fd);
         if (ctx->m_ownsSocket) {
-            XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
+            XClassDeinit((XClass*)ctx->m_endpoint.m_socket);
             XFree_System(ctx->m_endpoint.m_socket);
         }
-        XClass_deinit_base((XClass*)&ctx->m_peerAddress);
+        XClassDeinit((XClass*)&ctx->m_peerAddress);
         XFd_free(ctx->m_base.m_fd);
         XDeviceNetwork_deleteContext(ctx);
         XDeviceNetwork_cleanup();
@@ -370,10 +370,10 @@ static void VXDeviceNetwork_close(XDevice* self, XDeviceContext* handle)
     else
         XDeviceNetwork_socketDisconnect(ctx->m_base.m_fd);
     if (ctx->m_ownsSocket) {
-        XClass_deinit_base((XClass*)ctx->m_endpoint.m_socket);
+        XClassDeinit((XClass*)ctx->m_endpoint.m_socket);
         XFree_System(ctx->m_endpoint.m_socket);
     }
-    XClass_deinit_base((XClass*)&ctx->m_peerAddress);
+    XClassDeinit((XClass*)&ctx->m_peerAddress);
     XDeviceNetwork_deleteContext(ctx);
     XDeviceNetwork_cleanup();
 
@@ -565,7 +565,7 @@ static bool networkGetPropertyVariant(XFd fd, XDeviceNetworkProperty property,
     XVariant_init(value, NULL, 0, XVariantType_NULL);
     result = XDevice_getProperty(fd, (XDeviceProperty)property, value);
     if (!result)
-        XVariant_deinit_base((XClass*)value);
+        XClassDeinit((XClass*)value);
     return result;
 }
 
@@ -577,7 +577,7 @@ static bool networkSetPropertyValue(XFd fd, XDeviceNetworkProperty property,
     memset(&value, 0, sizeof(value));
     XVariant_init(&value, (void*)data, size, type);
     result = XDevice_setProperty(fd, (XDeviceProperty)property, &value);
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
     return result;
 }
 
@@ -588,7 +588,7 @@ bool XDeviceNetwork_getSocketType(XFd fd, XDeviceNetworkSocketType* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_SocketType, &variant))
         return false;
     *value = (XDeviceNetworkSocketType)XVariant_toInt(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     result = isSocketTypeValid(*value);
     return result;
 }
@@ -600,7 +600,7 @@ bool XDeviceNetwork_getProtocol(XFd fd, XDeviceNetworkProtocol* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_Protocol, &variant))
         return false;
     *value = (XDeviceNetworkProtocol)XVariant_toInt(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     result = isProtocolValid(*value);
     return result;
 }
@@ -611,7 +611,7 @@ bool XDeviceNetwork_getConnected(XFd fd, bool* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_Connected, &variant))
         return false;
     *value = XVariant_toBool(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     return true;
 }
 
@@ -622,7 +622,7 @@ bool XDeviceNetwork_getLocalPort(XFd fd, uint16_t* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_LocalPort, &variant))
         return false;
     port = XVariant_toInt64(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     if (port < 0 || port > UINT16_MAX) return false;
     *value = (uint16_t)port;
     return true;
@@ -635,7 +635,7 @@ bool XDeviceNetwork_getPeerPort(XFd fd, uint16_t* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_PeerPort, &variant))
         return false;
     port = XVariant_toInt64(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     if (port < 0 || port > UINT16_MAX) return false;
     *value = (uint16_t)port;
     return true;
@@ -653,7 +653,7 @@ bool XDeviceNetwork_getReadBufferSize(XFd fd, int64_t* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_ReadBufferSize, &variant))
         return false;
     *value = XVariant_toInt64(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     return true;
 }
 
@@ -670,7 +670,7 @@ bool XDeviceNetwork_getReadFinishedBytes(XFd fd, size_t* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_ReadFinishedBytes, &variant))
         return false;
     *value = XVariant_toSize_t(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     return true;
 }
 
@@ -680,7 +680,7 @@ bool XDeviceNetwork_getWriteFinishedBytes(XFd fd, size_t* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_WriteFinishedBytes, &variant))
         return false;
     *value = XVariant_toSize_t(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     return true;
 }
 
@@ -690,7 +690,7 @@ bool XDeviceNetwork_getWritePending(XFd fd, bool* value)
     if (!value || !networkGetPropertyVariant(fd, XDeviceNetworkProperty_WritePending, &variant))
         return false;
     *value = XVariant_toBool(&variant);
-    XVariant_deinit_base((XClass*)&variant);
+    XClassDeinit((XClass*)&variant);
     return true;
 }
 

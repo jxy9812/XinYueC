@@ -162,13 +162,11 @@ XLockFreeStack* XLockFreeStack_create_ex(XMemoryType memory,  size_t typeSize, s
 * @brief 反初始化容器
 * @note 复用XStackBase的接口，释放栈资源但不销毁实例本身
 */
-#define XLockFreeStack_deinit_base          XStackBase_deinit_base
 
 /**
 * @brief 删除容器实例
 * @note 复用XStackBase的接口，释放栈资源并销毁实例
 */
-#define XLockFreeStack_delete_base          XStackBase_delete_base
 
 /**
 * @brief 清空容器元素

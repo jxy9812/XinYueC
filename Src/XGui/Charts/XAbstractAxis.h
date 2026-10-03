@@ -70,8 +70,6 @@ void XAbstractAxis_init(XAbstractAxis* self);
  */
 XAbstractAxis* XAbstractAxis_create_ex(XMemoryType memory);
 #define XAbstractAxis_create() XAbstractAxis_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-#define XAbstractAxis_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XAbstractAxis_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 属性（对标 QAbstractAxis） ==================== */
 

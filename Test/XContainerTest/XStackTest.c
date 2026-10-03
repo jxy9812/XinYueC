@@ -44,7 +44,7 @@ static void XStackBasicTest(void)
     }
     XPrintf("\n剩余 empty=%d count=%zu (期望:1/0)\n",
         (int)XStack_empty_base(s), XStack_count_base(s));
-    XStack_delete_base(s);
+    XClassDelete(s);
     XCoreApplication_quit();
 }
 
@@ -65,7 +65,7 @@ static void XStackMoveTest(void)
         XStack_pop_base(s);
     }
     XPrintf("\n");
-    XStack_delete_base(s);
+    XClassDelete(s);
     XCoreApplication_quit();
 }
 
@@ -84,7 +84,7 @@ static void XStackStringTest(void)
         XPrintf("%s\n", XStack_top_base(s));
         XStack_pop_base(s);
     }
-    XStack_delete_base(s);
+    XClassDelete(s);
     XCoreApplication_quit();
 }
 
@@ -106,7 +106,7 @@ static void XStackBulkTest(void)
     }
     XPrintf("LIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
         mismatch, (int)XStack_empty_base(s));
-    XStack_delete_base(s);
+    XClassDelete(s);
     XCoreApplication_quit();
 }
 
@@ -120,7 +120,7 @@ static void XStackClearTest(void)
     XStack_clear_base(s);
     XPrintf("清空后 count=%zu empty=%d (期望:0/1)\n",
         XStack_count_base(s), (int)XStack_empty_base(s));
-    XStack_delete_base(s);
+    XClassDelete(s);
     XCoreApplication_quit();
 }
 
@@ -151,7 +151,7 @@ static void XLFSBasicTest(void)
     }
     XPrintf("LIFO 顺序 mismatch=%d empty=%d (期望:0/1)\n",
         mismatch, (int)XLockFreeStack_empty_base(s));
-    XLockFreeStack_delete_base(s);
+    XClassDelete(s);
     XCoreApplication_quit();
 }
 
@@ -170,7 +170,7 @@ static void XLFSFullTest(void)
     XPrintf("实际填入=%d count=%zu isFull=%d (期望:16/16/1)\n",
         filled, XLockFreeStack_count_base(s),
         (int)XLockFreeStack_isFull_base(s));
-    XLockFreeStack_delete_base(s);
+    XClassDelete(s);
     XCoreApplication_quit();
 }
 
@@ -192,7 +192,7 @@ static void XLFSBulkTest(void)
     while (XLockFreeStack_pop_return_base(s, &out)) popped++;
     XPrintf("pushed=%zu popped=%zu 剩余count=%zu (期望:100000/100000/0)\n",
         pushed, popped, XLockFreeStack_count_base(s));
-    XLockFreeStack_delete_base(s);
+    XClassDelete(s);
     XCoreApplication_quit();
 }
 
@@ -306,7 +306,7 @@ static void XLFSConcurrentTest(void)
         XAtomic_load_size_t(&consumed, XAtomic_MemoryOrder_Relaxed),
         XLockFreeStack_count_base(s),
         total, total);
-    XLockFreeStack_delete_base(s);
+    XClassDelete(s);
     XPrintf("\n");
     XCoreApplication_quit();
 }

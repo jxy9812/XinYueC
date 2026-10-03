@@ -61,14 +61,12 @@ void XImageIOPlugin_init(XImageIOPlugin* self);
  * @brief 释放插件实例持有的资源。
  * @param self 待释放的插件指针。
  */
-#define XImageIOPlugin_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief 删除堆上分配的插件实例。
  * @param self 待删除的插件指针。
  */
 /** @brief 删除堆上的图像 I/O 插件。 @param self 待删除的插件指针。 */
-#define XImageIOPlugin_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief 查询插件对设备和格式的能力。

@@ -46,7 +46,7 @@
 static void xinputdialog_freeString(XString** slot)
 {
     if (slot && *slot) {
-        XString_delete_base((XClass*)*slot);
+        XClassDelete((XClass*)*slot);
         *slot = NULL;
     }
 }
@@ -63,7 +63,7 @@ static void xinputdialog_stringSignal_del(XVarList* list)
 {
     XVarList_args_1(list, XString*, text);
     if (text)
-        XString_delete_base((XClass*)text);
+        XClassDelete((XClass*)text);
 }
 
 /** @brief 发射携带 XString* 深拷贝的信号；无接收者时释放参数列表。 */
@@ -78,7 +78,7 @@ static void xinputdialog_emitString(XInputDialog* self, size_t signal,
     if (!copy) return;
     args = XVarList_Create(XVar(XString*, copy));
     if (!args) {
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return;
     }
     if (self && ((XObject*)self)->m_signalSlot) {
@@ -135,7 +135,7 @@ static void VXInputDialog_deinit(XInputDialog* self)
     xinputdialog_freeString(&self->m_cancelButtonText);
     xinputdialog_freeString(&self->m_placeholderText);
     if (self->m_comboBoxItems) {
-        XStringList_delete_base((XClass*)self->m_comboBoxItems);
+        XClassDelete((XClass*)self->m_comboBoxItems);
         self->m_comboBoxItems = NULL;
     }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
@@ -225,7 +225,7 @@ void XInputDialog_setTextValue(XInputDialog* self, const XString* text)
     if (!copy) return;
     if (self->m_textValue &&
         XString_compare(self->m_textValue, copy) == 0) {
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return;
     }
     xinputdialog_freeString(&self->m_textValue);
@@ -280,7 +280,7 @@ void XInputDialog_setComboBoxItems(XInputDialog* self, const XStringList* items)
         if (copy) {
             XStringList_push_back_move_base(
                 (XVector*)self->m_comboBoxItems, copy);
-            XString_delete_base((XClass*)copy);
+            XClassDelete((XClass*)copy);
             copy = NULL;
         }
     }
@@ -301,7 +301,7 @@ XStringList* XInputDialog_comboBoxItems(const XInputDialog* self)
         XString* copy = item ? XString_create_copy(item) : XString_create();
         if (copy) {
             XStringList_push_back_move_base((XVector*)out, copy);
-            XString_delete_base((XClass*)copy);
+            XClassDelete((XClass*)copy);
             copy = NULL;
         }
     }
@@ -391,7 +391,7 @@ static void xid_setName(XObject* obj, const char* name)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, name);
     XObject_setObjectName(obj, &tmp);
-    XClass_deinit_base((XClass*)&tmp);
+    XClassDeinit((XClass*)&tmp);
 }
 
 /* 子控件 objectName 常量（对标 Qt 对话框私有子对象命名；槽内经
@@ -413,7 +413,7 @@ static XWidget* xid_childByName(XDialog* dlg, const char* name)
     XString_assign_utf8(&tmp, name);
     w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
                                     XFindDirectChildrenOnly);
-    XClass_deinit_base((XClass*)&tmp);
+    XClassDeinit((XClass*)&tmp);
     return w;
 }
 
@@ -434,7 +434,7 @@ static void xid_rejectSlot(XObject* receiver, XVarList* args)
 
 /** @brief 组装对话框骨架：Dialog 窗口标志 + 标题 + 垂直布局 + 可选标签。
  * @param outRoot 输出顶层布局；调用方在对话框删除后负责
- *                XLayout_delete_base（布局不随控件析构释放）。 */
+ *                XClassDelete（布局不随控件析构释放）。 */
 static XInputDialog* xid_buildDialog(XWidget* parent, const XString* title,
                                      const XString* label,
                                      XBoxLayout** outRoot)
@@ -454,7 +454,7 @@ static XInputDialog* xid_buildDialog(XWidget* parent, const XString* title,
         XWidget_setWindowTitle((XWidget*)dlg, title);
     root = XBoxLayout_create(XBoxLayoutDirection_TopToBottom, (XWidget*)dlg);
     if (!root) {
-        XInputDialog_delete_base((XClass*)dlg);
+        XClassDelete((XClass*)dlg);
         return NULL;
     }
     XLayout_setContentsMargins((XLayout*)root, 12, 12, 12, 12);
@@ -540,7 +540,7 @@ static int xid_fontLineHeight(const XWidget* w)
         info.m_kind == XFontFace_Bitmap && info.m_bitmap.m_height > 0)
         base = info.m_bitmap.m_height;
     scaleNum = XFont_pixelSize(&font) > 0 ? XFont_pixelSize(&font) : base;
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
     return scaleNum < 1 ? 1 : scaleNum;
 }
 
@@ -686,9 +686,9 @@ static bool xid_execDialog(XInputDialog* dlg, int w, int h)
  *  递归销毁，对标 Qt 父子所有权）。 */
 static void xid_teardown(XInputDialog* dlg, XBoxLayout* root, XBoxLayout* bar)
 {
-    if (root) XLayout_delete_base((XLayout*)root);
-    if (bar) XLayout_delete_base((XLayout*)bar);
-    if (dlg) XInputDialog_delete_base((XClass*)dlg);
+    if (root) XClassDelete((XLayout*)root);
+    if (bar) XClassDelete((XLayout*)bar);
+    if (dlg) XClassDelete((XClass*)dlg);
 }
 
 /** @brief open_2 信号选择→信号地址（对标 Qt signalForMember 候选信号
@@ -771,7 +771,7 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
                  * textValueSelected（载荷=当前选中项文本）。 */
                 XInputDialog_setTextValue(dlg, t);
                 XInputDialog_textValueSelected_signal(dlg, t);
-                XString_delete_base((XClass*)t);
+                XClassDelete((XClass*)t);
             }
         }
         break;
@@ -801,7 +801,7 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
         if (v) {
             XInputDialog_setTextValue(dlg, v);
             XInputDialog_textValueSelected_signal(dlg, v);
-            XString_delete_base((XClass*)v);
+            XClassDelete((XClass*)v);
         }
         break;
     }
@@ -848,7 +848,7 @@ static XString* xid_getTextImpl(XWidget* parent, const XString* title,
         XInputDialog_setInputMode(dlg, XInputDialog_TextInput);
         XInputDialog_setTextValue(dlg, text);
         result = XString_create();
-        XInputDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return result;
     }
     dlg = xid_buildDialog(parent, title, label, &root);
@@ -898,9 +898,9 @@ XString* XInputDialog_getText_2(XWidget* parent, const char* title,
     XString* l = label ? XString_create_utf8(label) : NULL;
     XString* v = text ? XString_create_utf8(text) : NULL;
     XString* result = XInputDialog_getText(parent, t, l, echo, v, ok);
-    if (t) XString_delete_base((XClass*)t);
-    if (l) XString_delete_base((XClass*)l);
-    if (v) XString_delete_base((XClass*)v);
+    if (t) XClassDelete((XClass*)t);
+    if (l) XClassDelete((XClass*)l);
+    if (v) XClassDelete((XClass*)v);
     return result;
 }
 
@@ -914,10 +914,10 @@ XString* XInputDialog_getText_3(XWidget* parent, const char* title,
     XString* v = text ? XString_create_utf8(text) : NULL;
     XString* ph = placeholder ? XString_create_utf8(placeholder) : NULL;
     XString* result = xid_getTextImpl(parent, t, l, echo, v, ph, ok);
-    if (t) XString_delete_base((XClass*)t);
-    if (l) XString_delete_base((XClass*)l);
-    if (v) XString_delete_base((XClass*)v);
-    if (ph) XString_delete_base((XClass*)ph);
+    if (t) XClassDelete((XClass*)t);
+    if (l) XClassDelete((XClass*)l);
+    if (v) XClassDelete((XClass*)v);
+    if (ph) XClassDelete((XClass*)ph);
     return result;
 }
 
@@ -938,7 +938,7 @@ XString* XInputDialog_getMultiLineText(XWidget* parent, const XString* title,
         XInputDialog_setInputMode(dlg, XInputDialog_TextInput);
         XInputDialog_setTextValue(dlg, text);
         result = XString_create();
-        XInputDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return result;
     }
     dlg = xid_buildDialog(parent, title, label, &root);
@@ -970,7 +970,7 @@ XString* XInputDialog_getMultiLineText(XWidget* parent, const XString* title,
                 XString* v = XString_create_utf8(buf);
                 if (v) {
                     XInputDialog_setTextValue(dlg, v);
-                    XString_delete_base((XClass*)v);
+                    XClassDelete((XClass*)v);
                 }
                 XFree_System(buf);
             }
@@ -989,9 +989,9 @@ XString* XInputDialog_getMultiLineText_2(XWidget* parent, const char* title,
     XString* l = label ? XString_create_utf8(label) : NULL;
     XString* v = text ? XString_create_utf8(text) : NULL;
     XString* result = XInputDialog_getMultiLineText(parent, t, l, v, ok);
-    if (t) XString_delete_base((XClass*)t);
-    if (l) XString_delete_base((XClass*)l);
-    if (v) XString_delete_base((XClass*)v);
+    if (t) XClassDelete((XClass*)t);
+    if (l) XClassDelete((XClass*)l);
+    if (v) XClassDelete((XClass*)v);
     return result;
 }
 
@@ -1011,7 +1011,7 @@ int XInputDialog_getInt(XWidget* parent, const XString* title,
         if (!dlg) return value;
         XInputDialog_setInputMode(dlg, XInputDialog_IntInput);
         XInputDialog_setIntValue(dlg, value);
-        XInputDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return value;
     }
     dlg = xid_buildDialog(parent, title, label, &root);
@@ -1049,8 +1049,8 @@ int XInputDialog_getInt_2(XWidget* parent, const char* title, const char* label,
     XString* l = label ? XString_create_utf8(label) : NULL;
     int result = XInputDialog_getInt(parent, t, l, value, minValue, maxValue,
                                      step, ok);
-    if (t) XString_delete_base((XClass*)t);
-    if (l) XString_delete_base((XClass*)l);
+    if (t) XClassDelete((XClass*)t);
+    if (l) XClassDelete((XClass*)l);
     return result;
 }
 
@@ -1071,7 +1071,7 @@ double XInputDialog_getDouble(XWidget* parent, const XString* title,
         if (!dlg) return value;
         XInputDialog_setInputMode(dlg, XInputDialog_DoubleInput);
         XInputDialog_setDoubleValue(dlg, value);
-        XInputDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return value;
     }
     dlg = xid_buildDialog(parent, title, label, &root);
@@ -1086,7 +1086,7 @@ double XInputDialog_getDouble(XWidget* parent, const XString* title,
             int dec = decimals < 0 ? 6 : (decimals > 10 ? 10 : decimals);
             txt = XString_create_fmt_utf8("%.*f", dec, value);
             XLineEdit_setText(edit, txt ? XString_toUtf8(txt) : "");
-            if (txt) XString_delete_base((XClass*)txt);
+            if (txt) XClassDelete((XClass*)txt);
             XWidget_setMinimumSize((XWidget*)edit, 220, 24);
             /* 对标 Qt 私有子对象命名：accept 结算经 findChild 解析行
                编辑当前文本（同 getText 的 #25 根因，此前确认后恒回
@@ -1116,8 +1116,8 @@ double XInputDialog_getDouble_2(XWidget* parent, const char* title,
     XString* l = label ? XString_create_utf8(label) : NULL;
     double result = XInputDialog_getDouble(parent, t, l, value, minValue,
                                            maxValue, decimals, ok);
-    if (t) XString_delete_base((XClass*)t);
-    if (l) XString_delete_base((XClass*)l);
+    if (t) XClassDelete((XClass*)t);
+    if (l) XClassDelete((XClass*)l);
     return result;
 }
 
@@ -1146,7 +1146,7 @@ XString* XInputDialog_getItem(XWidget* parent, const XString* title,
                     (const XVector*)items, current);
         }
         result = item ? XString_create_copy(item) : XString_create();
-        XInputDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return result;
     }
     dlg = xid_buildDialog(parent, title, label, &root);
@@ -1196,8 +1196,8 @@ XString* XInputDialog_getItem_2(XWidget* parent, const char* title,
     if (ok) *ok = false;
     list = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!list) {
-        if (t) XString_delete_base((XClass*)t);
-        if (l) XString_delete_base((XClass*)l);
+        if (t) XClassDelete((XClass*)t);
+        if (l) XClassDelete((XClass*)l);
         return XString_create();
     }
     for (i = 0; i < count; ++i) {
@@ -1208,9 +1208,9 @@ XString* XInputDialog_getItem_2(XWidget* parent, const char* title,
     }
     /* 对标 Qt：UTF-8 重载与 XString 重载等价（修正此前标题/标签丢失）。 */
     result = XInputDialog_getItem(parent, t, l, list, current, editable, ok);
-    XStringList_delete_base((XClass*)list);
-    if (t) XString_delete_base((XClass*)t);
-    if (l) XString_delete_base((XClass*)l);
+    XClassDelete((XClass*)list);
+    if (t) XClassDelete((XClass*)t);
+    if (l) XClassDelete((XClass*)l);
     return result;
 }
 

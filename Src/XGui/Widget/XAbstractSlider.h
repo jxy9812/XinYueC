@@ -163,9 +163,7 @@ XAbstractSlider* XAbstractSlider_create_ex(XMemoryType memory,
                                            XWidget* parent,
                                            XWidgetFlags flags);
 /** @brief 通过 XClass 虚表释放 XAbstractSlider 资源（栈/外部存储对象使用）。 */
-#define XAbstractSlider_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
 /** @brief 删除堆上的 XAbstractSlider 对象。 */
-#define XAbstractSlider_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 父类 XWidget API 宏转发（对齐库内 XRadioButton 惯例） ==================== */
 

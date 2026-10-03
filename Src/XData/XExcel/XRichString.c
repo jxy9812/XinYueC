@@ -20,7 +20,7 @@ static void clear_fragments(XRichString* self)
         XRichStringFragment* frag =
             (XRichStringFragment*)XVector_back_base(self->m_fragments);
         if (frag) {
-            if (frag->m_text) XString_delete_base(frag->m_text);
+            if (frag->m_text) XClassDelete(frag->m_text);
             if (frag->m_format) XFormat_delete(frag->m_format);
         }
         XVector_pop_back_base(self->m_fragments);
@@ -30,7 +30,7 @@ static void clear_fragments(XRichString* self)
 static void clear_plain_text(XRichString* self)
 {
     if (!self || !self->m_plainText) return;
-    XString_delete_base(self->m_plainText);
+    XClassDelete(self->m_plainText);
     self->m_plainText = NULL;
 }
 
@@ -96,7 +96,7 @@ static void add_html_fragment(XRichString* self, const char* text, size_t length
     XString* decoded = decode_html_text(text, length);
     if (!decoded) return;
     if (!XString_isEmpty_base(decoded)) XRichString_addFragment(self, decoded, format);
-    XString_delete_base(decoded);
+    XClassDelete(decoded);
 }
 
 
@@ -146,7 +146,7 @@ void XRichString_delete(XRichString* self)
     if (self->m_fragments)
     {
         clear_fragments(self);
-        XVector_delete_base(self->m_fragments);
+        XClassDelete(self->m_fragments);
     }
     XFree_System(self);
 }
@@ -281,7 +281,7 @@ void XRichString_setHtml(XRichString* self, const XString* text)
         bool italic = tagString &&
             (XString_startsWith_utf8(tagString, "<i>", XChar_CaseSensitive) ||
              XString_startsWith_utf8(tagString, "<em>", XChar_CaseSensitive));
-        if (tagString) XString_delete_base(tagString);
+        if (tagString) XClassDelete(tagString);
         if (span || bold || italic) {
             const char* closeTag = span ? "</span>" : (bold ? "</b>" : "</i>");
             const char* close = strstr(tagEnd + 1, closeTag);
@@ -319,9 +319,9 @@ void XRichString_setHtml(XRichString* self, const XString* text)
                                             XString_toUtf8(name), strlen(XString_toUtf8(name)));
                                         if (decodedName) {
                                             XFormat_setFontName(format, decodedName);
-                                            XString_delete_base(decodedName);
+                                            XClassDelete(decodedName);
                                         }
-                                        XString_delete_base(name);
+                                        XClassDelete(name);
                                     }
                                 }
                             }
@@ -341,11 +341,11 @@ void XRichString_setHtml(XRichString* self, const XString* text)
             bool br = brString &&
                 (XString_startsWith_utf8(brString, "<br", XChar_CaseSensitive) ||
                  XString_startsWith_utf8(brString, "<BR", XChar_CaseSensitive));
-            if (brString) XString_delete_base(brString);
+            if (brString) XClassDelete(brString);
             if (br) {
                 XString_Init_Utf8(newline, "\n");
                 XRichString_addFragment(self, newline, NULL);
-                XString_deinit_base(newline);
+                XClassDeinit(newline);
                 cursor = tagEnd + 1;
                 continue;
             }
@@ -376,13 +376,13 @@ void XRichString_addFragment(XRichString* self, const XString* text, const XForm
     {
         frag.m_format = XFormat_create();
         if (!frag.m_format) {
-            XString_delete_base(frag.m_text);
+            XClassDelete(frag.m_text);
             return;
         }
         XFormat_copy(frag.m_format, format);
     }
     if (!XVector_push_back_1_base(self->m_fragments, &frag)) {
-        XString_delete_base(frag.m_text);
+        XClassDelete(frag.m_text);
         if (frag.m_format) XFormat_delete(frag.m_format);
         return;
     }
@@ -428,7 +428,7 @@ void XRichString_setText(XRichString* self, const XString* text)
         frag.m_text = XString_create_copy(self->m_plainText);
         /* 不复制格式引用，setText 不带格式 */
         if (frag.m_text && !XVector_push_back_1_base(self->m_fragments, &frag))
-            XString_delete_base(frag.m_text);
+            XClassDelete(frag.m_text);
     }
 }
 
@@ -445,12 +445,12 @@ void XRichString_setText_utf8(XRichString* self, const char* text)
 {
     XString* s = text ? XString_create_utf8(text) : NULL;
     XRichString_setText(self, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
 }
 
 void XRichString_addFragment_utf8(XRichString* self, const char* text, const XFormat* format)
 {
     XString* s = text ? XString_create_utf8(text) : NULL;
     XRichString_addFragment(self, s, format);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
 }

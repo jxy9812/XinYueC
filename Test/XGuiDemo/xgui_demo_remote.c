@@ -264,7 +264,7 @@ static int xr_runServer(void)
     g_win = XWidget_create(NULL, 0);
     if (!g_win) {
         XPrintf("XGuiRemoteDemo: 服务端窗口创建失败\n");
-        XGuiApplication_delete_base(app);
+        XClassDelete(app);
         return 1;
     }
     XWidget_resize(g_win, 480, 320);
@@ -313,7 +313,7 @@ static int xr_runServer(void)
     {
         XString* title = XString_create_utf8("XGuiRemote 演示·服务端");
         XWidget_setWindowTitle(g_win, title);
-        XString_delete_base((XClass*)title);
+        XClassDelete((XClass*)title);
     }
     XWidget_show(g_win);
 
@@ -351,14 +351,14 @@ static int xr_runServer(void)
     /* 清理: 先解绑镜像(恢复 present 回调)再销毁窗口, 最后应用单例。 */
     if (g_server) {
         XGuiServer_close(g_server);
-        XGuiServer_delete_base(g_server);
+        XClassDelete(g_server);
         g_server = NULL;
     }
     if (g_win) {
-        XWidget_delete_base(g_win);
+        XClassDelete(g_win);
         g_win = NULL;
     }
-    XGuiApplication_delete_base(app);
+    XClassDelete(app);
     return rc;
 }
 
@@ -475,7 +475,7 @@ static int xr_runClient(void)
     win = XWidget_create(NULL, 0);
     if (!win) {
         XPrintf("XGuiRemoteDemo: 客户端窗口创建失败\n");
-        XGuiApplication_delete_base(app);
+        XClassDelete(app);
         return 1;
     }
     /* V1 恒 1:1(§7.2 setFixedSize): 远端典型 800x600, 窗口按「镜像
@@ -503,7 +503,7 @@ static int xr_runClient(void)
     {
         XString* title = XString_create_utf8("XGuiRemote 演示·客户端");
         XWidget_setWindowTitle(win, title);
-        XString_delete_base((XClass*)title);
+        XClassDelete((XClass*)title);
     }
     XWidget_show(win);
 
@@ -541,9 +541,9 @@ static int xr_runClient(void)
         g_statsPoll = NULL;
     }
     XGuiClient_disconnectFromServer(g_client);
-    XWidget_delete_base(win); /* 先于 client: 父子同删(client 为其子)。 */
+    XClassDelete(win); /* 先于 client: 父子同删(client 为其子)。 */
     g_client = NULL;
-    XGuiApplication_delete_base(app);
+    XClassDelete(app);
     return rc;
 }
 

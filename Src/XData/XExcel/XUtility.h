@@ -65,7 +65,7 @@ void XUtility_excelToEpoch(double serial, int* year, int* month, int* day, int* 
 /**
  * @brief  将字符串转换为安全的工作表名称（替换非法字符为空格，截断到31字符）
  * @param  src  原始名称字符串
- * @return 安全的工作表名称（栈上 XString，调用者需调用 XString_deinit_base 释放）
+ * @return 安全的工作表名称（栈上 XString，调用者需调用 XClassDeinit 释放）
  */
 XString XUtility_safeSheetName(const XString* src);
 
@@ -114,7 +114,7 @@ void XUtility_splitPath(const XString* path, XString* dir, XString* fileName);
 /**
  * @brief  获取路径中的文件名部分（去掉目录前缀）
  * @param  filePath  完整文件路径
- * @return 文件名（栈上 XString，调用者需调用 XString_deinit_base 释放）
+ * @return 文件名（栈上 XString，调用者需调用 XClassDeinit 释放）
  */
 XString XUtility_getRelFilePath(const XString* filePath);
 
@@ -123,14 +123,14 @@ XString XUtility_getRelFilePath(const XString* filePath);
 /**
  * @brief  对工作表名称进行转义（包含特殊字符时用单引号包裹）
  * @param  sheetName  原始工作表名称
- * @return 转义后的名称（栈上 XString，调用者需调用 XString_deinit_base 释放）
+ * @return 转义后的名称（栈上 XString，调用者需调用 XClassDeinit 释放）
  */
 XString XUtility_escapeSheetName(const XString* sheetName);
 
 /**
  * @brief  对工作表名称进行反转义（去掉首尾单引号，还原内部 '' 为 '）
  * @param  sheetName  转义后的工作表名称
- * @return 反转义后的名称（栈上 XString，调用者需调用 XString_deinit_base 释放）
+ * @return 反转义后的名称（栈上 XString，调用者需调用 XClassDeinit 释放）
  */
 XString XUtility_unescapeSheetName(const XString* sheetName);
 
@@ -148,7 +148,7 @@ bool XUtility_isSpaceReserveNeeded(const XString* str);
  * @param  rootFormula  根公式文本
  * @param  rootCell     根单元格引用
  * @param  cell         目标单元格引用
- * @return 转换后的公式（栈上 XString，调用者需调用 XString_deinit_base 释放）
+ * @return 转换后的公式（栈上 XString，调用者需调用 XClassDeinit 释放）
  */
 XString XUtility_convertSharedFormula(const XString* rootFormula, const XCellReference* rootCell, const XCellReference* cell);
 

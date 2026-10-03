@@ -130,16 +130,6 @@ XLockFreeQueue* XLockFreeQueue_create_ex(XMemoryType memory,  size_t typeSize, s
 #define XLockFreeQueue_typeSize_base		XQueueBase_typeSize_base
 // ------------------------------ 容器管理 ------------------------------
 /**
-* @brief 反初始化容器
-* @note 复用XQueueBase的接口，释放队列资源但不销毁实例本身
-*/
-#define XLockFreeQueue_deinit_base		XQueueBase_deinit_base
-/**
-* @brief 删除容器实例
-* @note 复用XQueueBase的接口，释放队列资源并销毁实例
-*/
-void XLockFreeQueue_delete_base(XLockFreeQueue* this_queue);
-/**
 * @brief 清空容器元素
 * @note 复用XQueueBase的接口，删除所有元素但保留队列结构，线程安全
 */

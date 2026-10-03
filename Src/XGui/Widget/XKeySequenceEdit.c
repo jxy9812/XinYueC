@@ -393,13 +393,13 @@ static void VX_kse_paintEvent(XWidget* self, XEvent* event)
         XPainter_setFont(&painter, &hintFont);
         XPainter_drawText(&painter, 6, h / 2 + 5, "Press shortcut",
                           0xFF909090u);
-        XFont_deinit_base(&hintFont);
+        XClassDeinit(&hintFont);
     }
     if (display[0] != '\0') {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
         XPainter_drawText(&painter, 6, h / 2 + 5, display, textCol);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
     }
     XPainter_deinit(&painter);
 }

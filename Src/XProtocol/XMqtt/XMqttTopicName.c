@@ -13,7 +13,7 @@ static void VXMqttTopicName_move(XMqttTopicName* dest, XMqttTopicName* src);
 static void XMqttTopicName_level_deinit(XString** level)
 {
     if (level && *level) {
-        XString_delete_base(*level);
+        XClassDelete(*level);
         *level = NULL;
     }
 }
@@ -58,7 +58,7 @@ void XMqttTopicName_init(XMqttTopicName* name, const char* topic)
 static void VXMqttTopicName_deinit(XMqttTopicName* name)
 {
     if (!name) return;
-    if (name->m_name) { XString_delete_base(name->m_name); name->m_name = NULL; }
+    if (name->m_name) { XClassDelete(name->m_name); name->m_name = NULL; }
     XClass_Deinit_Parent(XClass, name);
 }
 
@@ -68,7 +68,7 @@ static void VXMqttTopicName_copy(XMqttTopicName* dest, const XMqttTopicName* src
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttTopicName_init(dest, NULL);
-    if (dest->m_name) XString_delete_base(dest->m_name);
+    if (dest->m_name) XClassDelete(dest->m_name);
     dest->m_name = src->m_name ? XString_create_copy(src->m_name) : XString_create_utf8(NULL);
 }
 
@@ -78,7 +78,7 @@ static void VXMqttTopicName_move(XMqttTopicName* dest, XMqttTopicName* src)
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttTopicName_init(dest, NULL);
-    if (dest->m_name) XString_delete_base(dest->m_name);
+    if (dest->m_name) XClassDelete(dest->m_name);
     dest->m_name = src->m_name; src->m_name = NULL;
 }
 
@@ -96,7 +96,7 @@ XString* XMqttTopicName_name(const XMqttTopicName* name)
 void XMqttTopicName_setName(XMqttTopicName* name, const char* topic)
 {
     if (!name) return;
-    if (name->m_name) { XString_delete_base(name->m_name); name->m_name = NULL; }
+    if (name->m_name) { XClassDelete(name->m_name); name->m_name = NULL; }
     name->m_name = XString_create_utf8(topic ? topic : "");
 }
 
@@ -142,8 +142,8 @@ XVector* XMqttTopicName_levels(const XMqttTopicName* name)
         XString* level = len ? XString_create_with_length_utf8(p, len) :
                                XString_create_utf8("");
         if (!level || !XVector_push_back_1_base(vec, &level)) {
-            if (level) XString_delete_base(level);
-            XVector_delete_base(vec);
+            if (level) XClassDelete(level);
+            XClassDelete(vec);
             return NULL;
         }
         if (!slash) break;

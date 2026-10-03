@@ -697,10 +697,10 @@ static bool test_proxy(void)
     }
 
     XTcpServer_deleteLater(server);
-    XNetworkProxy_deinit_base(&proxy);
-    if (hostStr) XString_delete_base(hostStr);
-    if (userStr) XString_delete_base(userStr);
-    if (passStr) XString_delete_base(passStr);
+    XClassDeinit(&proxy);
+    if (hostStr) XClassDelete(hostStr);
+    if (userStr) XClassDelete(userStr);
+    if (passStr) XClassDelete(passStr);
     XCoreApplication_processEvents(XEventLoop_AllEvents);
 
     TEST_PASS("代理设置测试");
@@ -781,7 +781,7 @@ static bool test_server_address(void)
         const char* utf8 = XString_toUtf8(addrStr);
         XPrintf("  [信息] 服务器地址: %s 端口: %u\n",
                 utf8 ? utf8 : "NULL", XTcpServer_serverPort(server));
-        XString_delete_base(addrStr);
+        XClassDelete(addrStr);
     }
 
     XTcpServer_close(server);

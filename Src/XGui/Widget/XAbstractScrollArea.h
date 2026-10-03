@@ -82,8 +82,6 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
 #define XAbstractScrollArea_create(parent, flags) XAbstractScrollArea_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XAbstractScrollArea* XAbstractScrollArea_create_ex(
     XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XAbstractScrollArea_deinit_base(self) XFrame_deinit_base((XFrame*)(self))
-#define XAbstractScrollArea_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 视口与滚动条（对标公共 API） ==================== */
 

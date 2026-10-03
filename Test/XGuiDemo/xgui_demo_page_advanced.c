@@ -299,7 +299,7 @@ static void adv_setToolTip(XWidget* widget, const char* text)
     tip = XString_create_utf8(text);
     if (!tip) return;
     XWidget_setToolTip(widget, tip);
-    XString_delete_base((XClass*)tip);
+    XClassDelete((XClass*)tip);
 }
 #endif
 
@@ -341,7 +341,7 @@ static void adv_completerTextChangedSlot(XObject* receiver, XVarList* args)
                  "补全: 前缀'%s' → %d 个候选，当前: %s",
                  text, count, currentUtf8);
         if (current)
-            XString_delete_base((XClass*)current);
+            XClassDelete((XClass*)current);
     } else {
         snprintf(buf, sizeof(buf), "补全: 前缀'%s' → 无候选", text);
     }
@@ -422,7 +422,7 @@ static void adv_btnSplashSlot(XObject* receiver, XVarList* args)
             hasLogo = XPixmap_load_2(&logo, "assets/运行.png", "PNG", 0);
             if (hasLogo)
                 XSplashScreen_setPixmap(s_adv.splash, &logo);
-            XPixmap_deinit_base(&logo);
+            XClassDeinit(&logo);
             XSplashScreen_showMessage(s_adv.splash,
                                       "XGui 高级控件页启动画面…",
                                       XAlignment_Left | XAlignment_Bottom,
@@ -506,7 +506,7 @@ static void adv_ensureMainWindow(void)
         XString* title = XString_create_utf8("高级控件演示 - XMainWindow");
         if (title) {
             XWidget_setWindowTitle((XWidget*)s_adv.mainWindow, title);
-            XString_delete_base((XClass*)title);
+            XClassDelete((XClass*)title);
         }
     }
     /* 菜单栏（惰性创建）+ 两个菜单。 */
@@ -1123,7 +1123,7 @@ int demo_page_advanced_autotest(XWidget* page)
                                                 XChar_CaseSensitive),
                    "XTextEdit 实机键入 abc 后 toPlainText 一致");
         if (plain)
-            XString_delete_base((XClass*)plain);
+            XClassDelete((XClass*)plain);
         /* setHtml：富文本文档 + 编辑缓冲同步剥离标签（所见即所存）。 */
         XTextEdit_setHtml(s_adv.textEdit, ADV_RICH_HTML);
         XTextEdit_setRichPreview(s_adv.textEdit, true); /* 只读预览呈现 */
@@ -1140,7 +1140,7 @@ int demo_page_advanced_autotest(XWidget* page)
                                                    XChar_CaseSensitive),
                    "XTextEdit setHtml 后纯文本不含标签标记");
         if (plain)
-            XString_delete_base((XClass*)plain);
+            XClassDelete((XClass*)plain);
     } else {
         ADV_EXPECT(false, "XTextEdit 实例缺失");
     }
@@ -1159,7 +1159,7 @@ int demo_page_advanced_autotest(XWidget* page)
                                                   XChar_CaseSensitive),
                    "XCompleter 当前补全为 Open File");
         if (current)
-            XString_delete_base((XClass*)current);
+            XClassDelete((XClass*)current);
         /* 直接调用路径：setCurrentRow 环绕语义 + 行/索引/取词 getter。 */
         ADV_EXPECT(XCompleter_setCurrentRow(s_adv.completer, 1),
                    "XCompleter setCurrentRow(1) 成功");
@@ -1171,13 +1171,13 @@ int demo_page_advanced_autotest(XWidget* page)
                                                   XChar_CaseSensitive),
                    "XCompleter 行切换后当前补全为 Open Directory");
         if (current)
-            XString_delete_base((XClass*)current);
+            XClassDelete((XClass*)current);
         current = XCompleter_pathFromIndex(s_adv.completer, 0);
         ADV_EXPECT(current && XString_equals_utf8(current, "Open File",
                                                   XChar_CaseSensitive),
                    "XCompleter pathFromIndex(0) 取词 Open File");
         if (current)
-            XString_delete_base((XClass*)current);
+            XClassDelete((XClass*)current);
     } else {
         ADV_EXPECT(false, "XCompleter 实例缺失");
     }
@@ -1276,7 +1276,7 @@ int demo_page_advanced_autotest(XWidget* page)
                        tipText, "XGui 自动测试提示", XChar_CaseSensitive),
                        "XToolTip text getter 一致");
             if (tipText)
-                XString_delete_base((XClass*)tipText);
+                XClassDelete((XClass*)tipText);
         }
         XToolTip_hideText();
         ADV_EXPECT(!XToolTip_isVisible(), "XToolTip hideText 后隐藏");
@@ -1346,7 +1346,7 @@ int demo_page_advanced_autotest(XWidget* page)
             XSplashScreen_finish(splash, NULL);
             ADV_EXPECT(!XWidget_isVisible((XWidget*)splash),
                        "XSplashScreen finish 后不可见");
-            XSplashScreen_delete_base(splash); /* 临时顶层销毁 */
+            XClassDelete(splash); /* 临时顶层销毁 */
         }
     }
 #endif /* ADV_SPLASH_ON */
@@ -1402,7 +1402,7 @@ int demo_page_advanced_autotest(XWidget* page)
             ADV_EXPECT(dockLeft && XDockWidget_widget(dockLeft) ==
                        (XWidget*)leftContent,
                        "XDockWidget 内容控件 getter 一致");
-            XMainWindow_delete_base(win); /* 级联销毁菜单/停靠/标签 */
+            XClassDelete(win); /* 级联销毁菜单/停靠/标签 */
         }
     }
 #endif /* ADV_MAINWIN_ON */

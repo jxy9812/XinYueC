@@ -202,7 +202,7 @@ static XStringList* XImageReader_supportedFormats(void)
                     !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
-            XStringList_delete_base((XClass*)plugin);
+            XClassDelete((XClass*)plugin);
         }
     }
 #endif
@@ -258,7 +258,7 @@ static bool XImageReader_isSupportedFormat(const char* format)
     {
         XString* value = XString_create_utf8(format);
         bool supported = value && XImagePluginRegistry_supportsReadFormat(value);
-        if (value) XString_delete_base((XClass*)value);
+        if (value) XClassDelete((XClass*)value);
         if (supported) return true;
     }
 #else
@@ -309,7 +309,7 @@ static bool XImageReader_explicitFormatMatchesDevice(
     actual = XImageCodec_detect(
         (const uint8_t*)XByteArray_data(bytes),
         (size_t)XByteArray_size_base((const XContainer*)bytes));
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     return expected != XImageCodecFormat_Unknown && expected == actual;
 #else
     (void)requested;
@@ -377,7 +377,7 @@ static void XImageReader_clearDetectedFormat(XImageReaderPrivate* data)
 {
     if (!data) return;
     if (data->m_detectedFormat)
-        XString_delete_base((XClass*)data->m_detectedFormat);
+        XClassDelete((XClass*)data->m_detectedFormat);
     data->m_detectedFormat = NULL;
 }
 
@@ -401,7 +401,7 @@ static void XImageReader_storeText(XImageReaderPrivate* data,
             XString* target = (XString*)XStringList_at_base(
                 (XVector*)&data->m_textValues, i);
             if (target)
-                XCopy((XClass*)target, (const XClass*)value);
+                XClassCopy((XClass*)target, (const XClass*)value);
             return;
         }
         if (XString_compare(item, key) > 0) {
@@ -447,7 +447,7 @@ static void XImageReader_loadText(XImageReader* self)
     if (!description)
         return;
     pairs = XString_split_utf8(description, "\n\n", XChar_CaseSensitive);
-    XString_delete_base((XClass*)description);
+    XClassDelete((XClass*)description);
     if (!pairs)
         return;
     count = (int64_t)XStringList_size_base((const XContainer*)pairs);
@@ -461,7 +461,7 @@ static void XImageReader_loadText(XImageReader* self)
         if (!pair) continue;
         simplified = XString_simplified(pair);
         if (!simplified || XString_isEmpty_base((const XContainer*)simplified)) {
-            if (simplified) XString_delete_base((XClass*)simplified);
+            if (simplified) XClassDelete((XClass*)simplified);
             continue;
         }
         /* QStringView::indexOf() 以 UTF-16 代码单元计数；不能用 UTF-8
@@ -484,11 +484,11 @@ static void XImageReader_loadText(XImageReader* self)
             if (key) {
                 XString* keyCheck = XString_simplified(key);
                 if (!keyCheck || XString_isEmpty_base((const XContainer*)keyCheck)) {
-                    if (keyCheck) XString_delete_base((XClass*)keyCheck);
-                    XString_delete_base((XClass*)key);
+                    if (keyCheck) XClassDelete((XClass*)keyCheck);
+                    XClassDelete((XClass*)key);
                     key = NULL;
                 } else {
-                    XString_delete_base((XClass*)keyCheck);
+                    XClassDelete((XClass*)keyCheck);
                 }
             }
             /* qt_getImageTextFromDescription 使用 pair.mid(index + 2)，
@@ -505,17 +505,17 @@ static void XImageReader_loadText(XImageReader* self)
             }
             if (value) {
                 XString* normalized = XString_simplified(value);
-                XString_delete_base((XClass*)value);
+                XClassDelete((XClass*)value);
                 value = normalized;
             }
         }
         if (key && value)
             XImageReader_storeText(data, key, value);
-        if (key) XString_delete_base((XClass*)key);
-        if (value) XString_delete_base((XClass*)value);
-        if (simplified) XString_delete_base((XClass*)simplified);
+        if (key) XClassDelete((XClass*)key);
+        if (value) XClassDelete((XClass*)value);
+        if (simplified) XClassDelete((XClass*)simplified);
     }
-    XStringList_delete_base((XClass*)pairs);
+    XClassDelete((XClass*)pairs);
 }
 
 static uint32_t XImageReader_readLe32(const unsigned char* data)
@@ -571,16 +571,16 @@ static bool XImageReader_probeSize(XImageReader* self)
         XMemcpy(header, XByteArray_data(self->m_data->m_sourceBytes), size);
     } else if (self->m_data->m_fileName) {
         fileObject = XFile_create_2(self->m_data->m_fileName);
-        if (!fileObject || !XIODevice_open_base((XIODevice*)fileObject, XIODevice_ReadOnly)) { if (fileObject) XClass_delete_base((XClass*)fileObject); return false; }
-        bytes = XIODevice_readAll_3((XIODevice*)fileObject); XIODevice_close_base((XIODevice*)fileObject); XClass_delete_base((XClass*)fileObject);
-        if (!bytes) return false; size = XByteArray_size_base((const XContainer*)bytes); if (size > sizeof(header)) size = sizeof(header); if (size) XMemcpy(header, XByteArray_data(bytes), size); XByteArray_delete_base((XClass*)bytes);
+        if (!fileObject || !XIODevice_open_base((XIODevice*)fileObject, XIODevice_ReadOnly)) { if (fileObject) XClassDelete((XClass*)fileObject); return false; }
+        bytes = XIODevice_readAll_3((XIODevice*)fileObject); XIODevice_close_base((XIODevice*)fileObject); XClassDelete((XClass*)fileObject);
+        if (!bytes) return false; size = XByteArray_size_base((const XContainer*)bytes); if (size > sizeof(header)) size = sizeof(header); if (size) XMemcpy(header, XByteArray_data(bytes), size); XClassDelete((XClass*)bytes);
     } else if (self->m_data->m_device) {
         bytes = XIODevice_peek_3(self->m_data->m_device, (int64_t)sizeof(header));
         if (!bytes) return false;
         size = (size_t)XByteArray_size_base((const XContainer*)bytes);
         if (size > sizeof(header)) size = sizeof(header);
         if (size) XMemcpy(header, XByteArray_data(bytes), size);
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
     } else {
         return false;
     }
@@ -599,7 +599,7 @@ static bool XImageReader_probeSize(XImageReader* self)
 static void XImageReader_setError(XImageReader* self, XImageReaderError error, const char* message)
 {
     if (!self || !self->m_data) return;
-    if (self->m_data->m_errorString) XString_delete_base((XClass*)self->m_data->m_errorString);
+    if (self->m_data->m_errorString) XClassDelete((XClass*)self->m_data->m_errorString);
     self->m_data->m_errorString = NULL;
     self->m_data->m_error = error;
     if (message) self->m_data->m_errorString = XString_create_utf8(message);
@@ -608,7 +608,7 @@ static void XImageReader_setError(XImageReader* self, XImageReaderError error, c
 static void XImageReader_releaseHandler(XImageReaderPrivate* data)
 {
     if (!data) return;
-    if (data->m_handler) XImageIOHandler_delete_base(data->m_handler);
+    if (data->m_handler) XClassDelete(data->m_handler);
     data->m_handler = NULL;
     /* 文件名构造的设备归读取器所有；重建处理器时只关闭并复用它。 */
     if (data->m_fileDevice && XIODevice_isOpen(data->m_fileDevice))
@@ -624,7 +624,7 @@ static void XImageReader_releaseOwnedDevice(XImageReaderPrivate* data)
         XIODevice_close_base(data->m_fileDevice);
     if (data->m_device == data->m_fileDevice)
         data->m_device = NULL;
-    XClass_delete_base((XClass*)data->m_fileDevice);
+    XClassDelete((XClass*)data->m_fileDevice);
     data->m_fileDevice = NULL;
 }
 
@@ -656,7 +656,7 @@ static XString* XImageReader_fileSuffix(const XString* fileName)
     suffix = XString_create_utf8(dot + 1);
     if (!suffix) return NULL;
     lower = XString_toLower(suffix);
-    XString_delete_base((XClass*)suffix);
+    XClassDelete((XClass*)suffix);
     return lower;
 }
 
@@ -736,7 +736,7 @@ static bool XImageReader_tryDefaultExtensions(XImageReaderPrivate* data)
     if (!extensions) return false;
     original = XString_create_copy(data->m_fileName);
     if (!original) {
-        XStringList_delete_base((XClass*)extensions);
+        XClassDelete((XClass*)extensions);
         return false;
     }
     count = (int64_t)XStringList_size_base((const XContainer*)extensions);
@@ -765,23 +765,23 @@ static bool XImageReader_tryDefaultExtensions(XImageReaderPrivate* data)
         candidate = XString_create_copy(original);
         if (!candidate || !XString_append_utf8(candidate, ".") ||
             !XString_append(candidate, extension)) {
-            if (candidate) XString_delete_base((XClass*)candidate);
+            if (candidate) XClassDelete((XClass*)candidate);
             continue;
         }
         XFile_setFileName(file, candidate);
         if (XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-            XString_delete_base((XClass*)data->m_fileName);
+            XClassDelete((XClass*)data->m_fileName);
             data->m_fileName = candidate;
-            XString_delete_base((XClass*)original);
-            XStringList_delete_base((XClass*)extensions);
+            XClassDelete((XClass*)original);
+            XClassDelete((XClass*)extensions);
             return true;
         }
-        XString_delete_base((XClass*)candidate);
+        XClassDelete((XClass*)candidate);
     }
     /* 所有候选都失败时恢复 QFile 的原始名称，保持 fileName() 契约。 */
     XFile_setFileName(file, original);
-    XString_delete_base((XClass*)original);
-    XStringList_delete_base((XClass*)extensions);
+    XClassDelete((XClass*)original);
+    XClassDelete((XClass*)extensions);
     return false;
 }
 
@@ -828,7 +828,7 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
                     XImageReader_setError(self, XImageReaderError_FileNotFoundError,
                                           "File not found");
                     if (suffixFormat)
-                        XString_delete_base((XClass*)suffixFormat);
+                        XClassDelete((XClass*)suffixFormat);
                     return NULL;
                 }
                 /* tryDefaultExtensions() 已经打开候选文件。 */
@@ -837,7 +837,7 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
                 if (!hasExplicitFormat && !data->m_decideFromContent &&
                     data->m_autoDetectFormat && data->m_fileName) {
                     if (suffixFormat)
-                        XString_delete_base((XClass*)suffixFormat);
+                        XClassDelete((XClass*)suffixFormat);
                     suffixFormat = XImageReader_fileSuffix(data->m_fileName);
                     handlerFormat = suffixFormat;
                 }
@@ -846,7 +846,7 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
             XImageReader_setError(self, XImageReaderError_DeviceError,
                                   "Invalid device");
             if (suffixFormat)
-                XString_delete_base((XClass*)suffixFormat);
+                XClassDelete((XClass*)suffixFormat);
             return NULL;
         }
     }
@@ -862,7 +862,7 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
                               XImageReaderError_UnsupportedFormatError,
                               "Unsupported image format");
         if (suffixFormat)
-            XString_delete_base((XClass*)suffixFormat);
+            XClassDelete((XClass*)suffixFormat);
         return NULL;
     }
 #if XIMAGEIOPLUGIN_ON
@@ -887,12 +887,12 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
             if (position >= 0)
                 (void)XIODevice_seek_base(device, position);
             if (!canRead) {
-                XImageIOHandler_delete_base(data->m_handler);
+                XClassDelete(data->m_handler);
                 data->m_handler = NULL;
             }
         }
         if (data->m_handler) {
-            if (suffixFormat) XString_delete_base((XClass*)suffixFormat);
+            if (suffixFormat) XClassDelete((XClass*)suffixFormat);
             return data->m_handler;
         }
         /* 仅自动探测模式会产生 suffixFormat；此时与 Qt 一样，后缀
@@ -902,7 +902,7 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
             data->m_handler = XImagePluginRegistry_createReadHandlerContentFallback(
                 device, suffixFormat);
             if (data->m_handler) {
-                XString_delete_base((XClass*)suffixFormat);
+                XClassDelete((XClass*)suffixFormat);
                 return data->m_handler;
             }
         }
@@ -911,7 +911,7 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
     (void)self;
     (void)device;
 #endif
-    if (suffixFormat) XString_delete_base((XClass*)suffixFormat);
+    if (suffixFormat) XClassDelete((XClass*)suffixFormat);
     /* Qt QImageReaderPrivate::initHandler() 只要处理器工厂最终返回
        nullptr，就统一报告 UnsupportedFormatError。设备打开失败等更早
        产生的 DeviceError/FileNotFoundError 必须保持不变，因此仅覆盖
@@ -928,17 +928,17 @@ static void VXImageReader_deinit(XImageReader* self)
     if (ISNULL(self, "XImageReader")) return;
     if (self->m_data)
     {
-        if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
-        if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
-        if (self->m_data->m_errorString) XString_delete_base((XClass*)self->m_data->m_errorString);
+        if (self->m_data->m_fileName) XClassDelete((XClass*)self->m_data->m_fileName);
+        if (self->m_data->m_format) XClassDelete((XClass*)self->m_data->m_format);
+        if (self->m_data->m_errorString) XClassDelete((XClass*)self->m_data->m_errorString);
         XImageReader_releaseHandler(self->m_data);
         XImageReader_releaseOwnedDevice(self->m_data);
-        XStringList_deinit_base((XClass*)&self->m_data->m_textKeys);
-        XStringList_deinit_base((XClass*)&self->m_data->m_textValues);
-        XString_deinit_base((XClass*)&self->m_data->m_textCache);
+        XClassDeinit((XClass*)&self->m_data->m_textKeys);
+        XClassDeinit((XClass*)&self->m_data->m_textValues);
+        XClassDeinit((XClass*)&self->m_data->m_textCache);
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
         if (self->m_data->m_animation) XImageCodecAnimation_delete(self->m_data->m_animation);
-        if (self->m_data->m_sourceBytes) XByteArray_delete_base((XClass*)self->m_data->m_sourceBytes);
+        if (self->m_data->m_sourceBytes) XClassDelete((XClass*)self->m_data->m_sourceBytes);
 #endif
         XFree_System(self->m_data);
         self->m_data = NULL;
@@ -951,7 +951,7 @@ static void XImageReader_clearAnimation(XImageReaderPrivate* data)
     if (!data) return;
     if (data->m_animation) XImageCodecAnimation_delete(data->m_animation);
     data->m_animation = NULL;
-    if (data->m_sourceBytes) XByteArray_delete_base((XClass*)data->m_sourceBytes);
+    if (data->m_sourceBytes) XClassDelete((XClass*)data->m_sourceBytes);
     data->m_sourceBytes = NULL;
     data->m_currentImageNumber = -1;
     data->m_imageJumpPending = false;
@@ -973,18 +973,18 @@ static bool XImageReader_prepareAnimation(XImageReader* self)
         XByteArray* head = XIODevice_peek_3(data->m_device, 8);
         bool isGif = head && XImageCodec_detect((const uint8_t*)XByteArray_data(head),
                                                  XByteArray_size_base((const XContainer*)head)) == XImageCodecFormat_Gif;
-        if (head) XByteArray_delete_base((XClass*)head);
+        if (head) XClassDelete((XClass*)head);
         if (!isGif) return false;
     }
     if (data->m_fileName) {
         file = XFile_create_2(data->m_fileName);
         if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-            if (file) XClass_delete_base((XClass*)file);
+            if (file) XClassDelete((XClass*)file);
             return false;
         }
         bytes = XIODevice_readAll_3((XIODevice*)file);
         XIODevice_close_base((XIODevice*)file);
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
     } else if (data->m_device) {
         bytes = XIODevice_readAll_3(data->m_device);
     }
@@ -992,12 +992,12 @@ static bool XImageReader_prepareAnimation(XImageReader* self)
     raw = (const uint8_t*)XByteArray_data(bytes);
     size = XByteArray_size_base((const XContainer*)bytes);
     if (XImageCodec_detect(raw, size) != XImageCodecFormat_Gif) {
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         return false;
     }
     data->m_animation = XImageCodec_decodeAnimation(raw, size);
     if (!data->m_animation) {
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         return false;
     }
     data->m_sourceBytes = bytes;
@@ -1064,7 +1064,7 @@ void XImageReader_init_device_2(XImageReader* self, XIODevice* device, const cha
 {
     XString* formatString = format ? XString_create_utf8(format) : NULL;
     XImageReader_init_device(self, device, formatString);
-    if (formatString) XString_delete_base((XClass*)formatString);
+    if (formatString) XClassDelete((XClass*)formatString);
 }
 
 void XImageReader_init_file(XImageReader* self, const XString* fileName, const XString* format)
@@ -1085,8 +1085,8 @@ void XImageReader_init_file_2(XImageReader* self, const char* fileName, const ch
     XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
     XString* formatString = format ? XString_create_utf8(format) : NULL;
     XImageReader_init_file(self, fileNameString, formatString);
-    if (fileNameString) XString_delete_base((XClass*)fileNameString);
-    if (formatString) XString_delete_base((XClass*)formatString);
+    if (fileNameString) XClassDelete((XClass*)fileNameString);
+    if (formatString) XClassDelete((XClass*)formatString);
 }
 
 void XImageReader_setFormat(XImageReader* self, const XString* format)
@@ -1096,7 +1096,7 @@ void XImageReader_setFormat(XImageReader* self, const XString* format)
     /* format 可能就是 format_const() 返回的内部借用对象。 */
     copy = format ? XString_create_copy(format) : NULL;
     if (format && !copy) return;
-    if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
+    if (self->m_data->m_format) XClassDelete((XClass*)self->m_data->m_format);
     self->m_data->m_format = copy;
 }
 
@@ -1104,7 +1104,7 @@ void XImageReader_setFormat_2(XImageReader* self, const char* format)
 {
     XString* value = format ? XString_create_utf8(format) : NULL;
     XImageReader_setFormat(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 const XString* XImageReader_format_const(const XImageReader* self)
@@ -1185,7 +1185,7 @@ void XImageReader_setDevice(XImageReader* self, XIODevice* device)
     XImageReader_clearDetectedFormat(self->m_data);
     XImageReader_clearText(self->m_data);
     self->m_data->m_device = device;
-    if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
+    if (self->m_data->m_fileName) XClassDelete((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = NULL;
     self->m_data->m_hasSize = false;
 }
@@ -1209,7 +1209,7 @@ void XImageReader_setFileName(XImageReader* self, const XString* fileName)
     /* 新文件名对应新设备，所有内容派生状态都必须失效。 */
     XImageReader_clearDetectedFormat(self->m_data);
     XImageReader_clearText(self->m_data);
-    if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
+    if (self->m_data->m_fileName) XClassDelete((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = copy;
     self->m_data->m_device = NULL;
     if (self->m_data->m_fileName)
@@ -1221,7 +1221,7 @@ void XImageReader_setFileName_2(XImageReader* self, const char* fileName)
 {
     XString* value = fileName ? XString_create_utf8(fileName) : NULL;
     XImageReader_setFileName(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 const XString* XImageReader_fileName_const(const XImageReader* self)
@@ -1331,21 +1331,21 @@ const char* XImageReader_text_2(const XImageReader* self, const char* key)
     keyString = XString_create_utf8(key);
     if (!keyString) return NULL;
     value = XImageReader_text(self, keyString);
-    XString_delete_base((XClass*)keyString);
+    XClassDelete((XClass*)keyString);
     if (!value) return empty;
     utf8 = XString_toUtf8(value);
     if (!utf8 || !utf8[0]) {
-        XString_delete_base((XClass*)value);
+        XClassDelete((XClass*)value);
         return empty;
     }
     /* 兼容重载返回读取器内部缓存；下一次调用会覆盖该缓存。 */
     if (self && self->m_data) {
-        XCopy((XClass*)&self->m_data->m_textCache,
+        XClassCopy((XClass*)&self->m_data->m_textCache,
                           (const XClass*)value);
-        XString_delete_base((XClass*)value);
+        XClassDelete((XClass*)value);
         return XString_toUtf8(&self->m_data->m_textCache);
     }
-    XString_delete_base((XClass*)value);
+    XClassDelete((XClass*)value);
     return empty;
 }
 
@@ -1516,9 +1516,9 @@ static void XImageReader_applyAutoTransform(
     XImage_init(&rotated);
     XImage_transformed(image, &matrix, 0, &rotated);
     if (!XImage_isNull(&rotated)) {
-        XMove(image, &rotated);
+        XClassMove(image, &rotated);
     } else
-        XImage_deinit_base(&rotated);
+        XClassDeinit(&rotated);
 }
 
 XImageIOHandlerTransformation XImageReader_transformation(const XImageReader* self)
@@ -1799,7 +1799,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
             : self->m_data->m_currentImageNumber + 1;
         if (frame < 0) frame = 0;
         if (animation && frame >= 0 && frame < animation->frameCount) {
-            XCopy(out, &animation->frames[frame].image);
+            XClassCopy(out, &animation->frames[frame].image);
             loadedByHandler = !XImage_isNull(out);
             if (loadedByHandler) {
                 self->m_data->m_currentImageNumber = frame;
@@ -1862,9 +1862,9 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                self->m_data->m_decideFromContent ? NULL :
                                XString_toUtf8(self->m_data->m_format));
             if (ok)
-                XMove(out, &loaded);
+                XClassMove(out, &loaded);
             else
-                XImage_deinit_base(&loaded);
+                XClassDeinit(&loaded);
             if (!ok) {
             if (!XFile_exists_static(self->m_data->m_fileName))
                 XImageReader_setError(self, XImageReaderError_FileNotFoundError,
@@ -1890,10 +1890,10 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                    self->m_data->m_decideFromContent ? NULL :
                                    XString_toUtf8(self->m_data->m_format));
         if (ok)
-            XMove(out, &loaded);
+            XClassMove(out, &loaded);
         else
-            XImage_deinit_base(&loaded);
-        if (bytes) XByteArray_delete_base((XClass*)bytes);
+            XClassDeinit(&loaded);
+        if (bytes) XClassDelete((XClass*)bytes);
         if (!ok) {
             XImageReader_setError(self, XImageReaderError_InvalidDataError,
                                   "Image data from the device is invalid or unsupported");
@@ -1917,14 +1917,14 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                    self->m_data->m_scaledClipH };
                 XImage_init(&clipped);
                 XImage_copyRect(out, &clipRect, &clipped);
-                XMove(out, &clipped);
+                XClassMove(out, &clipped);
             }
         } else if (!supportScaledClipRect) {
             if (scaledSizeValid) {
                 XImage scaled;
                 XImage_init(&scaled);
                 XImage_scaled(out, scaledSize.width, scaledSize.height, 0, 0, &scaled);
-                XMove(out, &scaled);
+                XClassMove(out, &scaled);
             }
             if (scaledClipRectValid) {
                 XImage clipped;
@@ -1934,7 +1934,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                    self->m_data->m_scaledClipH };
                 XImage_init(&clipped);
                 XImage_copyRect(out, &clipRect, &clipped);
-                XMove(out, &clipped);
+                XClassMove(out, &clipped);
             }
         }
     } else if (supportScaledSize && clipRectNull) {
@@ -1946,7 +1946,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                self->m_data->m_scaledClipH };
             XImage_init(&clipped);
             XImage_copyRect(out, &clipRect, &clipped);
-            XMove(out, &clipped);
+            XClassMove(out, &clipped);
         }
     } else if (!supportScaledClipRect) {
         if (!clipRectNull && clipRectValid) {
@@ -1957,13 +1957,13 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                self->m_data->m_clipH };
             XImage_init(&clipped);
             XImage_copyRect(out, &clipRect, &clipped);
-            XMove(out, &clipped);
+            XClassMove(out, &clipped);
         }
         if (scaledSizeValid) {
             XImage scaled;
             XImage_init(&scaled);
             XImage_scaled(out, scaledSize.width, scaledSize.height, 0, 0, &scaled);
-            XMove(out, &scaled);
+            XClassMove(out, &scaled);
         }
         if (scaledClipRectValid) {
             XImage clipped;
@@ -1973,7 +1973,7 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                self->m_data->m_scaledClipH };
             XImage_init(&clipped);
             XImage_copyRect(out, &clipRect, &clipped);
-            XMove(out, &clipped);
+            XClassMove(out, &clipped);
         }
     }
     /* 成功读取后按文件名设置高 DPI 设备像素比；设备输入没有文件名时
@@ -2139,10 +2139,10 @@ XString* XImageReader_imageFormat(const XString* fileName)
     XFile* file;
     XString* result;
     if (!fileName) return XString_create();
-    file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClass_delete_base((XClass*)file); return XString_create(); }
+    file = XFile_create_2(fileName); if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) { if (file) XClassDelete((XClass*)file); return XString_create(); }
     result = XImageReader_imageFormatDevice((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     return result;
 }
 
@@ -2158,8 +2158,8 @@ const char* XImageReader_imageFormat_2(const char* fileName)
     } else {
         format[0] = '\0';
     }
-    if (result) XString_delete_base((XClass*)result);
-    if (value) XString_delete_base((XClass*)value);
+    if (result) XClassDelete((XClass*)result);
+    if (value) XClassDelete((XClass*)value);
     return format[0] ? format : NULL;
 }
 
@@ -2205,7 +2205,7 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
             if (pos >= 0)
                 (void)XIODevice_seek_base(device, pos);
             if (!handlerCanRead) {
-                XImageIOHandler_delete_base(handler);
+                XClassDelete(handler);
                 handler = NULL;
             }
         }
@@ -2218,7 +2218,7 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
         }
     }
     if (suffix)
-        XString_delete_base((XClass*)suffix);
+        XClassDelete((XClass*)suffix);
     /* QImageReader::imageFormat(QIODevice*) 的 createReadHandlerHelper()
        在外部插件阶段之后仍会继续尝试内置处理器；通用 Ex 入口为了保持
        首个内容插件 create() 失败时的停止语义而不会执行该内置阶段，故在
@@ -2232,11 +2232,11 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
             if (handlerFormat &&
                 !XContainer_isEmpty_base((const XContainer*)handlerFormat)) {
                 XString* format = XString_create_copy(handlerFormat);
-                XImageIOHandler_delete_base(handler);
+                XClassDelete(handler);
                 if (format) return format;
             }
         }
-        XImageIOHandler_delete_base(handler);
+        XClassDelete(handler);
         return XString_create();
     }
 #else
@@ -2250,7 +2250,7 @@ XString* XImageReader_imageFormatDevice(XIODevice* device)
         result = XImageReader_detectSignature(
             (const unsigned char*)XByteArray_data(bytes),
             (size_t)XByteArray_size_base((const XContainer*)bytes));
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
     }
 #if !XIMAGEIOPLUGIN_ON && XIMAGECODEC_SVG_ON
     /* SVG 仅通过 Qt SVG 图像处理器提供公共 imageFormat() 结果；裁剪掉
@@ -2275,7 +2275,7 @@ const char* XImageReader_imageFormatDevice_2(XIODevice* device)
     } else {
         format[0] = '\0';
     }
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return format[0] ? format : NULL;
 }
 
@@ -2308,7 +2308,7 @@ XStringList* XImageReader_supportedMimeTypes()
                     !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
-            XStringList_delete_base((XClass*)plugin);
+            XClassDelete((XClass*)plugin);
         }
     }
 #endif
@@ -2356,7 +2356,7 @@ XStringList* XImageReader_imageFormatsForMimeType(const XString* mimeType)
                     !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
-            XStringList_delete_base((XClass*)plugin);
+            XClassDelete((XClass*)plugin);
         }
     }
 #endif
@@ -2371,7 +2371,7 @@ XStringList* XImageReader_imageFormatsForMimeType_2(const char* mimeType)
 {
     XString* value = mimeType ? XString_create_utf8(mimeType) : NULL;
     XStringList* result = XImageReader_imageFormatsForMimeType(value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 int XImageReader_allocationLimit() { return XImageReader_effectiveAllocationLimit(); }

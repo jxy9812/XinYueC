@@ -18,6 +18,11 @@ typedef struct XJsonDocument {
 	XClass m_class; ///< 文档对象的内存方法和堆对象标志
 	XJsonValue root; ///< 文档的根节点值（支持对象、数组、基本类型等）
 } XJsonDocument;
+/**
+* @brief 返回 XJsonDocument 类的共享虚函数表。
+* @return 类虚函数表；首次调用时完成初始化，生命周期由类系统管理。
+*/
+XVtable* XJsonDocument_class_init(void);
 // 构造与析构函数
 /**
 * @brief 创建一个空的XJsonDocument实例
@@ -103,38 +108,11 @@ void XJsonDocument_setVariant_ref(XVariant* variant, XJsonDocument* document);
 */
 void XJsonDocument_init(XJsonDocument* document);
 /**
-* @brief 反初始化XJsonDocument实例
-* @param document 需要反初始化的XJsonDocument指针
-* @details 释放根节点资源，但不释放实例本身
-*/
-void XJsonDocument_deinit(XJsonDocument* document);
-/**
-* @brief 销毁XJsonDocument实例
-* @param document 需要销毁的XJsonDocument指针
-* @details 释放根节点资源及实例本身
-*/
-void XJsonDocument_delete(XJsonDocument* document);
-/**
 * @brief 清空XJsonDocument的内容
 * @param document 目标XJsonDocument指针
 * @details 将根节点重置为Invalid类型，释放原有资源
 */
 void XJsonDocument_clear(XJsonDocument* document);
-// 拷贝与移动
-/**
-* @brief 深拷贝XJsonDocument内容
-* @param doc 目标XJsonDocument指针
-* @param src 源XJsonDocument指针
-* @details 将src的根节点深拷贝到doc
-*/
-void XJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src);
-/**
-* @brief 移动XJsonDocument资源
-* @param doc 目标XJsonDocument指针
-* @param src 源XJsonDocument指针
-* @details 将src的根节点资源转移到doc，src变为空
-*/
-void XJsonDocument_move(XJsonDocument* doc, XJsonDocument* src);
 // 根节点操作
 /**
 * @brief 获取文档的根节点（可修改）

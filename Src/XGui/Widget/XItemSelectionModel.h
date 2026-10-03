@@ -44,10 +44,6 @@ void XItemSelectionModel_init(XItemSelectionModel* self);
 XItemSelectionModel* XItemSelectionModel_create_ex(XMemoryType memory);
 #define XItemSelectionModel_create() \
     XItemSelectionModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-#define XItemSelectionModel_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-#define XItemSelectionModel_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 
 /* ==================== 选择操作 ==================== */
 

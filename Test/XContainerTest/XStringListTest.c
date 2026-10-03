@@ -35,8 +35,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("sort(大小写敏感,5项) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:Apple,Cherry,apple,banana,banana)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 大小写不敏感排序
@@ -50,8 +50,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("sort(大小写不敏感,5项) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:Apple,apple,banana,banana,Cherry)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 空列表排序（不崩溃）
@@ -59,7 +59,7 @@ void XStringListQtAlignTest()
 		XStringList_sort(list, XChar_CaseSensitive);
 		XPrintf("sort(空列表)=%s  (期望:无崩溃)\n",
 			XStringList_isEmpty_base(list) ? "空,无崩溃" : "异常");
-		XStringList_delete_base(list);
+		XClassDelete(list);
 	}
 	{
 		// 单元素排序
@@ -69,8 +69,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("sort(单元素) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:Only)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 中文排序
@@ -83,8 +83,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("sort(中文) = "); XPrintf_2(joined);
 		XPrintf_3("\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 数字字符串排序
@@ -97,8 +97,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("sort(数字字符串) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:1,10,2,20)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 
 	// ================================================================
@@ -118,8 +118,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf("removeDuplicates: 移除%zu项, 结果=", removed);
 		XPrintf_2(joined); XPrintf_3("  (期望:移除3项, a,b,c)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 无重复
@@ -129,7 +129,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "c");
 		size_t removed = XStringList_removeDuplicates(list);
 		XPrintf("removeDuplicates(无重复): 移除%zu项  (期望:0)\n", removed);
-		XStringList_delete_base(list);
+		XClassDelete(list);
 	}
 	{
 		// 全部相同
@@ -141,8 +141,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf("removeDuplicates(全相同): 移除%zu项, 结果=", removed);
 		XPrintf_2(joined); XPrintf_3("  (期望:移除2项, x)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 空列表
@@ -155,7 +155,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "one");
 		size_t removed = XStringList_removeDuplicates(list);
 		XPrintf("removeDuplicates(单元素): 移除%zu项  (期望:0)\n", removed);
-		XStringList_delete_base(list);
+		XClassDelete(list);
 	}
 
 	// ================================================================
@@ -174,10 +174,10 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(filtered, ",");
 		XPrintf_3("filter(Hello,大小写敏感) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:Hello)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(filtered);
-		XString_delete_base(needle);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(filtered);
+		XClassDelete(needle);
+		XClassDelete(list);
 	}
 	{
 		// 大小写不敏感筛选
@@ -191,10 +191,10 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(filtered, ",");
 		XPrintf_3("filter(Hello,大小写不敏感) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:Hello,HELLO)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(filtered);
-		XString_delete_base(needle);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(filtered);
+		XClassDelete(needle);
+		XClassDelete(list);
 	}
 	{
 		// filter_utf8
@@ -207,9 +207,9 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(filtered, ",");
 		XPrintf_3("filter_utf8(test) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:test)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(filtered);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(filtered);
+		XClassDelete(list);
 	}
 	{
 		// 无匹配
@@ -219,8 +219,8 @@ void XStringListQtAlignTest()
 		XStringList* filtered = XStringList_filter_utf8(list, "z", XChar_CaseSensitive);
 		XPrintf("filter(无匹配): 结果%s  (期望:空列表)\n",
 			XStringList_isEmpty_base(filtered) ? "为空" : "非空");
-		XStringList_delete_base(filtered);
-		XStringList_delete_base(list);
+		XClassDelete(filtered);
+		XClassDelete(list);
 	}
 	{
 		// 全部匹配
@@ -231,8 +231,8 @@ void XStringListQtAlignTest()
 		XStringList* filtered = XStringList_filter_utf8(list, "abc", XChar_CaseSensitive);
 		XPrintf("filter(全部匹配): 结果%zu项  (期望:3项)\n",
 			XStringList_size_base(filtered));
-		XStringList_delete_base(filtered);
-		XStringList_delete_base(list);
+		XClassDelete(filtered);
+		XClassDelete(list);
 	}
 	{
 		// 空列表筛选
@@ -240,8 +240,8 @@ void XStringListQtAlignTest()
 		XStringList* filtered = XStringList_filter_utf8(list, "x", XChar_CaseSensitive);
 		XPrintf("filter(空列表): 结果%s  (期望:空列表)\n",
 			XStringList_isEmpty_base(filtered) ? "为空" : "非空");
-		XStringList_delete_base(filtered);
-		XStringList_delete_base(list);
+		XClassDelete(filtered);
+		XClassDelete(list);
 	}
 
 	// ================================================================
@@ -260,10 +260,10 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("replaceInStrings(Hello→Hi,敏感) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:Hi World,hello world,HELLO WORLD)\n");
-		XString_delete_base(joined);
-		XString_delete_base(before);
-		XString_delete_base(after);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(before);
+		XClassDelete(after);
+		XClassDelete(list);
 	}
 	{
 		// 大小写不敏感替换（utf8）
@@ -275,8 +275,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("replaceInStrings_utf8(world→Earth,不敏感) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:Hello Earth,hello Earth,HELLO Earth)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 无匹配项
@@ -287,8 +287,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("replaceInStrings(无匹配) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:abc,def)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 多次出现
@@ -299,8 +299,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("replaceInStrings(-→_) = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:a_b_c,d_e_f)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 
 	// ================================================================
@@ -318,7 +318,7 @@ void XStringListQtAlignTest()
 			XStringList_contains(list, s, XChar_CaseSensitive) ? "是" : "否");
 		XPrintf("contains(apple,不敏感)=%s  (期望:是)\n",
 			XStringList_contains(list, s, XChar_CaseInsensitive) ? "是" : "否");
-		XString_delete_base(s);
+		XClassDelete(s);
 		// utf8
 		XPrintf("contains_utf8(Banana)=%s  (期望:是)\n",
 			XStringList_contains_utf8(list, "Banana", XChar_CaseSensitive) ? "是" : "否");
@@ -327,7 +327,7 @@ void XStringListQtAlignTest()
 		// 空列表
 		XPrintf("contains_utf8(空列表)=%s  (期望:否)\n",
 			XStringList_contains_utf8(NULL, "x", XChar_CaseSensitive) ? "是" : "否");
-		XStringList_delete_base(list);
+		XClassDelete(list);
 	}
 
 	// ================================================================
@@ -360,8 +360,8 @@ void XStringListQtAlignTest()
 		XString* sA = XString_create_utf8("A");
 		XPrintf("indexOf(A,不敏感)=%lld  (期望:0)\n",
 			(long long)XStringList_indexOf(list, sA, 0, XChar_CaseInsensitive));
-		XString_delete_base(sA);
-		XString_delete_base(s);
+		XClassDelete(sA);
+		XClassDelete(s);
 		// utf8
 		XPrintf("indexOf_utf8(b)=%lld  (期望:1)\n",
 			(long long)XStringList_indexOf_utf8(list, "b", 0, XChar_CaseSensitive));
@@ -369,7 +369,7 @@ void XStringListQtAlignTest()
 			(long long)XStringList_indexOf_utf8(list, "NotExist", 0, XChar_CaseSensitive));
 		XPrintf("lastIndexOf_utf8(b)=%lld  (期望:1)\n",
 			(long long)XStringList_lastIndexOf_utf8(list, "b", -1, XChar_CaseSensitive));
-		XStringList_delete_base(list);
+		XClassDelete(list);
 	}
 
 	// ================================================================
@@ -384,8 +384,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ", ");
 		XPrintf_3("join(\", \") = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:Hello, World, Test)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// 单分隔符
@@ -396,8 +396,8 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, "-");
 		XPrintf_3("join(\"-\") = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:A-B-C)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 
 	// ================================================================
@@ -413,7 +413,7 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("push+insert = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:A,C,B)\n");
-		XString_delete_base(joined);
+		XClassDelete(joined);
 		// size / isEmpty
 		XPrintf("size=%zu isEmpty=%s  (期望:3,否)\n",
 			XStringList_size_base(list),
@@ -431,8 +431,8 @@ void XStringListQtAlignTest()
 		joined = XStringList_join_utf8(list, ",");
 		XPrintf_3("pop_back+pop_front = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:C)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(list);
 	}
 	{
 		// create_copy
@@ -443,9 +443,9 @@ void XStringListQtAlignTest()
 		XString* joined = XStringList_join_utf8(copy, ",");
 		XPrintf_3("create_copy = "); XPrintf_2(joined);
 		XPrintf_3("  (期望:X,Y)\n");
-		XString_delete_base(joined);
-		XStringList_delete_base(copy);
-		XStringList_delete_base(list);
+		XClassDelete(joined);
+		XClassDelete(copy);
+		XClassDelete(list);
 	}
 	{
 		// clear
@@ -455,7 +455,7 @@ void XStringListQtAlignTest()
 		XStringList_clear_base(list);
 		XPrintf("clear后 isEmpty=%s  (期望:是)\n",
 			XStringList_isEmpty_base(list) ? "是" : "否");
-		XStringList_delete_base(list);
+		XClassDelete(list);
 	}
 
 	// ================================================================
@@ -500,13 +500,13 @@ void XStringListTest()
 		XString* str = XStringList_join_utf8(list, "-");
 		if (str) {
 			XPrintf("join结果: %s\n", XString_toUtf8(str));
-			XString_delete_base(str);
+			XClassDelete(str);
 		}
 		XPrintf("遍历: ");
 		XStringList_iterator_for_each(list, XFor_each_XString, NULL);
 		XPrintf("\n");
 		XPrintf("size=%zu\n", XStringList_size_base(list));
-		XStringList_delete_base(list);
+		XClassDelete(list);
 	}
 #else
 	IS_ON_DEBUG(XVector_ON);

@@ -45,31 +45,31 @@ void XSqlQuery_init(XSqlQuery* query);
 void XSqlQuery_init_database(XSqlQuery* query, const XSqlDatabase* database);
 /**
  * @brief 创建空查询。
- * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放；失败返回 NULL。
+ * @return 新查询对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlQuery* XSqlQuery_create_ex(XMemoryType memory);
 /**
  * @brief 使用数据库连接创建查询。
  * @param database 数据库连接；借用，可为 NULL。
- * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放；失败返回 NULL。
+ * @return 新查询对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlQuery* XSqlQuery_create_database(const XSqlDatabase* database);
 /**
  * @brief 使用结果对象创建查询。
  * @param result 结果对象；转移所有权，可为 NULL。
- * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放；失败时 result 仍由调用者负责。
+ * @return 新查询对象，调用者必须使用 XClassDelete 释放；失败时 result 仍由调用者负责。
  */
 XSqlQuery* XSqlQuery_create_result(XSqlResult* result);
 /**
  * @brief 深拷贝创建查询。
  * @param other 源查询；借用，不能为 NULL。
- * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放；失败返回 NULL。
+ * @return 新查询对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlQuery* XSqlQuery_create_copy(const XSqlQuery* other);
 /**
  * @brief 移动创建查询。
  * @param other 源查询；不能为 NULL，成功后资源被移出。
- * @return 新查询对象，调用者必须使用 XSqlQuery_delete_base 释放；失败返回 NULL。
+ * @return 新查询对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlQuery* XSqlQuery_create_move(XSqlQuery* other);
 /**
@@ -81,9 +81,7 @@ XSqlQuery* XSqlQuery_create_move(XSqlQuery* other);
 void XSqlQuery_swap(XSqlQuery* left, XSqlQuery* right);
 
 /** @brief 调用 XClass 析构入口释放查询对象内部资源。 */
-#define XSqlQuery_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlQuery_create 系列函数返回的查询对象。 */
-#define XSqlQuery_delete_base XClass_delete_base
 
 /** @brief 判断查询是否位于有效记录。 @param query 查询对象；可为 NULL。 @return 位于有效记录返回 true，否则返回 false。 */
 bool XSqlQuery_isValid(const XSqlQuery* query);
@@ -97,11 +95,11 @@ bool XSqlQuery_isNull_utf8(const XSqlQuery* query, const char* name);
 bool XSqlQuery_isNull_2(const XSqlQuery* query, const XString* name);
 /** @brief 获取当前游标位置。 @param query 查询对象；可为 NULL。 @return 行索引；无效位置使用 XSqlLocation 特殊值。 */
 int XSqlQuery_at(const XSqlQuery* query);
-/** @brief 获取最近设置的查询文本副本。 @param query 查询对象；可为 NULL。 @return 新字符串所有权；调用者使用 XString_delete_base 释放。 */
+/** @brief 获取最近设置的查询文本副本。 @param query 查询对象；可为 NULL。 @return 新字符串所有权；调用者使用 XClassDelete 释放。 */
 XString* XSqlQuery_lastQuery(const XSqlQuery* query);
 /** @brief 获取最近语句的受影响行数。 @param query 查询对象；可为 NULL。 @return 行数；不可用时返回 -1。 */
 int XSqlQuery_numRowsAffected(const XSqlQuery* query);
-/** @brief 获取最近错误副本。 @param query 查询对象；可为 NULL。 @return 新错误所有权；调用者使用 XSqlError_delete_base 释放。 */
+/** @brief 获取最近错误副本。 @param query 查询对象；可为 NULL。 @return 新错误所有权；调用者使用 XClassDelete 释放。 */
 XSqlError* XSqlQuery_lastError(const XSqlQuery* query);
 /** @brief 判断当前结果是否为 SELECT 结果集。 @param query 查询对象；可为 NULL。 @return 是 SELECT 返回 true，否则返回 false。 */
 bool XSqlQuery_isSelect(const XSqlQuery* query);
@@ -113,7 +111,7 @@ const XSqlDriver* XSqlQuery_driver(const XSqlQuery* query);
 const XSqlResult* XSqlQuery_result(const XSqlQuery* query);
 /** @brief 获取只向前遍历状态。 @param query 查询对象；可为 NULL。 @return 启用时返回 true，否则返回 false。 */
 bool XSqlQuery_isForwardOnly(const XSqlQuery* query);
-/** @brief 获取当前记录描述副本。 @param query 查询对象；可为 NULL。 @return 新记录所有权；调用者使用 XSqlRecord_delete_base 释放。 */
+/** @brief 获取当前记录描述副本。 @param query 查询对象；可为 NULL。 @return 新记录所有权；调用者使用 XClassDelete 释放。 */
 XSqlRecord* XSqlQuery_record(const XSqlQuery* query);
 /** @brief 设置查询是否只向前遍历。 @param query 查询对象；不能为 NULL。 @param forwardOnly 是否启用只向前模式。 @return 无；已激活查询改变模式可能失败或清空结果。 */
 void XSqlQuery_setForwardOnly(XSqlQuery* query, bool forwardOnly);
@@ -121,11 +119,11 @@ void XSqlQuery_setForwardOnly(XSqlQuery* query, bool forwardOnly);
 bool XSqlQuery_exec_query(XSqlQuery* query, const XString* sql);
 /** @brief 执行 UTF-8 SQL 文本并替换当前结果。 @param query 查询对象；不能为 NULL。 @param sql SQL 字符串；借用，调用期间有效，可为 NULL。 @return 执行成功返回 true，否则返回 false。 */
 bool XSqlQuery_exec_utf8(XSqlQuery* query, const char* sql);
-/** @brief 获取当前记录字段值副本。 @param query 查询对象；可为 NULL。 @param field 字段索引，从 0 开始。 @return 新值所有权；调用者使用 XVariant_delete_base 释放，越界返回空值对象。 */
+/** @brief 获取当前记录字段值副本。 @param query 查询对象；可为 NULL。 @param field 字段索引，从 0 开始。 @return 新值所有权；调用者使用 XClassDelete 释放，越界返回空值对象。 */
 XVariant* XSqlQuery_value(const XSqlQuery* query, int field);
-/** @brief 按 UTF-8 字段名获取当前值副本。 @param query 查询对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XVariant_delete_base 释放，未找到返回空值对象。 */
+/** @brief 按 UTF-8 字段名获取当前值副本。 @param query 查询对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XClassDelete 释放，未找到返回空值对象。 */
 XVariant* XSqlQuery_value_utf8(const XSqlQuery* query, const char* name);
-/** @brief 按 XString 字段名获取当前值副本。 @param query 查询对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XVariant_delete_base 释放，未找到返回空值对象。 */
+/** @brief 按 XString 字段名获取当前值副本。 @param query 查询对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XClassDelete 释放，未找到返回空值对象。 */
 XVariant* XSqlQuery_value_2(const XSqlQuery* query, const XString* name);
 /**
  * @brief 设置数值精度策略。
@@ -241,52 +239,52 @@ void XSqlQuery_addBindValue(XSqlQuery* query, const XVariant* value, XSqlParamTy
  * @brief 按 UTF-8 名称获取绑定值副本。
  * @param query 查询对象；NULL 返回空值对象。
  * @param placeholder 占位符名称；借用。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlQuery_boundValue_utf8(const XSqlQuery* query, const char* placeholder);
 /**
  * @brief 按 XString 占位符名称获取绑定值副本。
  * @param query 查询对象；可为 NULL。
  * @param placeholder 占位符名称；借用，可为 NULL。
- * @return 新值所有权；调用者使用 XVariant_delete_base 释放，名称不存在返回空值对象。
+ * @return 新值所有权；调用者使用 XClassDelete 释放，名称不存在返回空值对象。
  */
 XVariant* XSqlQuery_boundValue_2(const XSqlQuery* query, const XString* placeholder);
 /**
  * @brief 按位置获取绑定值副本。
  * @param query 查询对象；NULL 返回空值对象。
  * @param position 参数位置，从 0 开始。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlQuery_boundValue(const XSqlQuery* query, int position);
 /**
  * @brief 获取全部绑定值副本。
  * @param query 查询对象；NULL 返回空列表。
- * @return 新列表，调用者必须使用 XVariantList_delete_base 释放。
+ * @return 新列表，调用者必须使用 XClassDelete 释放。
  */
 XVariantList* XSqlQuery_boundValues(const XSqlQuery* query);
 /**
  * @brief 获取绑定名称列表。
  * @param query 查询对象；NULL 返回空列表。
- * @return 新列表，调用者必须使用 XStringList_delete_base 释放。
+ * @return 新列表，调用者必须使用 XClassDelete 释放。
  */
 XStringList* XSqlQuery_boundValueNames(const XSqlQuery* query);
 /**
  * @brief 按位置获取绑定名称副本。
  * @param query 查询对象；NULL 返回空字符串对象。
  * @param position 参数位置，从 0 开始。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlQuery_boundValueName(const XSqlQuery* query, int position);
 /**
  * @brief 获取实际执行 SQL 副本。
  * @param query 查询对象；NULL 返回空字符串对象。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlQuery_executedQuery(const XSqlQuery* query);
 /**
  * @brief 获取最后插入 ID 副本。
  * @param query 查询对象；NULL 返回空值对象。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlQuery_lastInsertId(const XSqlQuery* query);
 /**

@@ -82,7 +82,7 @@ static void VXATComm_deinit(XATComm* comm)
         comm->m_timeoutId = XFD_INVALID;
     }
     if (comm->m_responseBuffer) {
-        XByteArray_delete_base(comm->m_responseBuffer);
+        XClassDelete(comm->m_responseBuffer);
         comm->m_responseBuffer = NULL;
     }
 

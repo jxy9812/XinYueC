@@ -91,7 +91,7 @@ void XDateTimeTest()
     test_and_print_date("Parsed from '2023-12-25'", parsed_date);
 
     // 清理
-    XString_delete_base(iso_str);
+    XClassDelete(iso_str);
 
     // ====== 2. XTime 测试 ======
     XPrintf("\n========== Testing XTime ==========\n");
@@ -124,7 +124,7 @@ void XDateTimeTest()
     test_and_print_time("Parsed from '14:30:45'", parsed_time);
 
     // 清理
-    XString_delete_base(time_str);
+    XClassDelete(time_str);
 
     // ====== 3. XDateTime 测试 ======
     XPrintf("\n========== Testing XDateTime ==========\n");
@@ -162,8 +162,8 @@ void XDateTimeTest()
     print_xstring("Custom Format 'yyyy/MM/dd HH-mm-ss'", custom_format_str);
 
     // 清理
-    XString_delete_base(dt_iso_str);
-    XString_delete_base(custom_format_str);
+    XClassDelete(dt_iso_str);
+    XClassDelete(custom_format_str);
 
     XPrintf("\n=== All tests completed ===\n");
     return 0;

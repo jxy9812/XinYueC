@@ -54,7 +54,7 @@ void XStackedWidget_init(XStackedWidget* self, XWidget* parent,
 static void VX_stackedWidget_deinit(XStackedWidget* self)
 {
     if (!self) return;
-    XStackedLayout_deinit_base(&self->m_layout);
+    XClassDeinit(&self->m_layout);
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
 }
 

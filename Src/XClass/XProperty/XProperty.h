@@ -217,21 +217,17 @@ void XProperty_init(XProperty* self);
  */
 void XProperty_init_ex(XProperty* self, const XVariant* initialValue);
 
-/** @brief 反初始化独立属性；与 init 成对使用。 */
-#define XProperty_deinit_base XClass_deinit_base
-/** @brief 删除堆上独立属性；内部先反初始化再释放内存。 */
-#define XProperty_delete_base XClass_delete_base
 
 /**
  * @brief 堆上创建独立属性（对标 QProperty()）。
- * @return 新属性指针；分配失败返回 NULL。用 XProperty_delete_base 释放。
+ * @return 新属性指针；分配失败返回 NULL。用 XClassDelete 释放。
  */
 XProperty* XProperty_create(void);
 
 /**
  * @brief 堆上创建独立属性并设置初值（对标 QProperty(const T&)）。
  * @param initialValue 初值变体；借用，可为 NULL。内部深拷贝。
- * @return 新属性指针；分配失败返回 NULL。用 XProperty_delete_base 释放。
+ * @return 新属性指针；分配失败返回 NULL。用 XClassDelete 释放。
  */
 XProperty* XProperty_create_ex(const XVariant* initialValue);
 
@@ -239,7 +235,7 @@ XProperty* XProperty_create_ex(const XVariant* initialValue);
  * @brief 拷贝创建独立属性（对标 Qt：QProperty 禁止拷贝；此处按库规范提供
  *        仅拷贝值的弱化语义，绑定与观察者不随拷贝转移）。
  * @param other 源属性；不能为 NULL。
- * @return 新属性指针；分配失败返回 NULL。用 XProperty_delete_base 释放。
+ * @return 新属性指针；分配失败返回 NULL。用 XClassDelete 释放。
  */
 XProperty* XProperty_create_copy(const XProperty* other);
 

@@ -848,7 +848,7 @@ XVector* XVector_create_copy(const XVector* other)
         return NULL;
     XMemoryType memory = XContainerIsCow(other) ? XContainer_memory_type(other) : XCLASS_DEFAULT_MEMORY_TYPE;
     XVector* v = XVector_create_ex(memory, (((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
-    XCopy(v, other);
+    XClassCopy(v, other);
     return v;
 }
 
@@ -858,7 +858,7 @@ XVector* XVector_create_move(XVector* other)
         return NULL;
     XVector* v = XVector_create_ex(XContainer_memory_type(other),
         (((XContainer*)(other))->m_typeSize), XContainerIsCow(other));
-    XMove(v, other);
+    XClassMove(v, other);
     return v;
 }
 
@@ -1165,7 +1165,7 @@ XVector* XVector_mid(const XVector* this_vector, int64_t pos, int64_t length)
         const void* elem = srcData + (pos + i) * typeSize;
         if (!XVector_push_back_1_base(result, elem))
         {
-            XVector_delete_base(result);
+            XClassDelete(result);
             return NULL;
         }
     }
@@ -1668,7 +1668,7 @@ XVector* XVector_create_text_fmt(bool appendNull, const char* format, ...)
     va_end(args);
     if (!result)
     {
-        XVector_delete_base(data);
+        XClassDelete(data);
         return NULL;
     }
     return data;

@@ -181,8 +181,6 @@ void XString_init(XString* str);
 #define XString_Init_Fmt_Utf8(name, ...)     XString _##name,*name=&_##name;XString_init(name);XString_assign_fmt_utf8(name,__VA_ARGS__)
      // -------------------------- 基础操作宏（继承自 XContainer） --------------------------
 
-#define XString_deinit_base					XContainer_deinit_base	// 销毁对象（基础实现）
-#define XString_delete_base					XContainer_delete_base	// 删除对象（释放内存）
 #define XString_clear_base				    XContainer_clear_base	// 清空字符串内容
 #define XString_isEmpty_base				XContainer_isEmpty_base	// 判断字符串是否为空
 #define XString_size_base					XContainer_size_base	// 获取字符串长度（字符数）
@@ -1448,7 +1446,7 @@ XString* XString_section_char(const XString* str, XChar sep, int64_t start, int6
  * @param start 起始段编号，包含该段；负数从末尾倒数。
  * @param end 结束段编号，包含该段；负数从末尾倒数，通常传 -1 表示最后一段。
  * @param flags `XString_SectionFlag` 按位或组合；支持跳过空段、包含首尾分隔符和分隔符大小写不敏感。
- * @return 成功返回新创建的 XString，调用者必须使用 XString_delete_base 释放；正则无效、参数无效或范围无效时返回空 XString。
+ * @return 成功返回新创建的 XString，调用者必须使用 XClassDelete 释放；正则无效、参数无效或范围无效时返回空 XString。
  * @note 字符索引和长度均按 XString 内部 UTF-16 code unit 计数；函数不修改输入对象。
  */
 XString* XString_section_regularExpression(const XString* str,

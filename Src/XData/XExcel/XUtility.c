@@ -37,8 +37,8 @@ XString XUtility_safeSheetName(const XString* src) {
     /* 截断到31个字符 */
     if (XString_size_base(&result) > 31) {
         XString* tmp = XString_left(&result, 31);
-        XString_deinit_base(&result);
-        if (tmp) { result = *tmp; XString_delete_base(tmp); }
+        XClassDeinit(&result);
+        if (tmp) { result = *tmp; XClassDelete(tmp); }
     }
     return result;
 }

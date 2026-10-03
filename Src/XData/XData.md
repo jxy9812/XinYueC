@@ -1,4 +1,4 @@
-﻿# XinYueC 数据类型文档
+# XinYueC 数据类型文档
 
 ## 目录
 
@@ -566,10 +566,10 @@ const XString* XVariant_toString(const XVariant* variant);
 
 ---
 
-#### XVariant_delete
+#### XClassDelete
 
 ```c
-void XVariant_delete(XVariant* variant)
+void XClassDelete(XVariant* variant)
 ```
 
 释放XVariant实例。
@@ -1125,7 +1125,6 @@ const XJsonValue* XJsonArray_at_const(const XJsonArray* array, int64_t index)
 #define XJsonArray_insert           XVector_insert
 #define XJsonArray_removeAt_base    XVector_removeAt_base
 #define XJsonArray_clear_base       XVector_clear_base
-#define XJsonArray_delete_base      XVector_delete_base
 ```
 
 #### 转换函数
@@ -1318,7 +1317,6 @@ bool XJsonObject_remove_keyUtf8(XJsonObject* object, const char* key)
 #define XJsonObject_size_base     XMap_size_base
 #define XJsonObject_isEmpty_base  XMap_isEmpty_base
 #define XJsonObject_clear_base    XMap_clear_base
-#define XJsonObject_delete_base   XMap_delete_base
 ```
 
 #### 转换函数
@@ -1543,10 +1541,10 @@ bool XJsonDocument_isEmpty(const XJsonDocument* document)
 
 #### 析构函数
 
-##### XJsonDocument_delete
+##### XClassDelete
 
 ```c
-void XJsonDocument_delete(XJsonDocument* document)
+void XClassDelete(XJsonDocument* document)
 ```
 
 销毁XJsonDocument实例。
@@ -1581,7 +1579,7 @@ if (doc && XJsonDocument_isObject(doc)) {
     }
 }
 
-XJsonDocument_delete(doc);
+XClassDelete(doc);
 
 // 创建JSON对象
 XJsonObject* obj = XJsonObject_create();
@@ -1594,7 +1592,7 @@ XJsonDocument* doc2 = XJsonDocument_create_object(obj);
 XString* output = XJsonDocument_toString(doc2, XJsonDocument_Indented);
 printf("JSON: %s\n", XString_toUtf8(output));
 
-XJsonDocument_delete(doc2);
+XClassDelete(doc2);
 ```
 
 ---
@@ -3688,7 +3686,6 @@ XBsonArray* XBsonArray_create_move(XBsonArray* other)
 #define XBsonArray_size_base        XVector_size_base
 #define XBsonArray_isEmpty_base     XVector_isEmpty_base
 #define XBsonArray_clear_base       XVector_clear_base
-#define XBsonArray_delete_base      XVector_delete_base
 ```
 
 #### 转换函数
@@ -3904,7 +3901,6 @@ bool XBsonDocument_remove_keyUtf8(XBsonDocument* doc, const char* key)
 #define XBsonDocument_size_base     XMap_size_base
 #define XBsonDocument_isEmpty_base  XMap_isEmpty_base
 #define XBsonDocument_clear_base    XMap_clear_base
-#define XBsonDocument_delete_base   XMap_delete_base
 ```
 
 #### 转换函数
@@ -3998,7 +3994,7 @@ XBsonDocument_insert_keyUtf8_null(doc, "optional");
 XBsonDocument* nested = XBsonDocument_create();
 XBsonDocument_insert_keyUtf8_utf8(nested, "city", "Beijing");
 XBsonDocument_insert_keyUtf8_document(doc, "address", nested);
-XBsonDocument_delete_base(nested);
+XClassDelete(nested);
 
 // 插入数组
 XBsonArray* arr = XBsonArray_create();
@@ -4007,7 +4003,7 @@ XBsonValue* v2 = XBsonValue_create_int32(2);
 XBsonArray_append_move_base(arr, v1);
 XBsonArray_append_move_base(arr, v2);
 XBsonDocument_insert_keyUtf8_array(doc, "tags", arr);
-XBsonArray_delete_base(arr);
+XClassDelete(arr);
 
 // 序列化为BSON二进制
 XByteArray* bsonData = XBsonDocument_toBson(doc);
@@ -4017,7 +4013,7 @@ XByteArray* jsonData = XBsonDocument_toJson(doc, XJsonDocument_Indented);
 printf("JSON: %s\n", XByteArray_data(jsonData));
 
 // 清理
-XBsonDocument_delete(doc);
+XClassDelete(doc);
 ```
 
 ---

@@ -104,8 +104,6 @@ XHeaderView* XHeaderView_create_ex(XMemoryType memory, XWidget* parent,
 #define XHeaderView_create(parent, flags, orientation) \
     XHeaderView_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags), \
                           (orientation))
-#define XHeaderView_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XHeaderView_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 几何 ==================== */
 

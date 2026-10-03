@@ -1128,17 +1128,17 @@ static XRegularExpression* xvim_create_regular_expression(XTuiVim* vim, const ch
 
 static void xvim_delete_regular_expression(XRegularExpression* expression)
 {
-    if (expression) XRegularExpression_delete_base((XClass*)expression);
+    if (expression) XClassDelete((XClass*)expression);
 }
 
 static void xvim_delete_regular_match(XRegularExpressionMatch* match)
 {
-    if (match) XRegularExpressionMatch_delete_base((XClass*)match);
+    if (match) XClassDelete((XClass*)match);
 }
 
 static void xvim_delete_regular_iterator(XRegularExpressionMatchIterator* iterator)
 {
-    if (iterator) XRegularExpressionMatchIterator_delete_base((XClass*)iterator);
+    if (iterator) XClassDelete((XClass*)iterator);
 }
 
 #if XTUI_VIM_SEARCH_ON
@@ -1590,7 +1590,7 @@ static bool xvim_append_substitute_capture(char* out, size_t capacity, size_t* u
     text = XString_toUtf8(captured);
     ok = xvim_append_substitute_bytes(out, capacity, used, text ? text : "",
                                       text ? strlen(text) : 0u);
-    XClass_delete_base((XClass*)captured);
+    XClassDelete((XClass*)captured);
     return ok;
 }
 

@@ -10,8 +10,8 @@
 static void VXRegularExpressionValidator_deinit(XRegularExpressionValidator* validator)
 {
     if (!validator) return;
-    XRegularExpression_deinit_base(&validator->m_originalExpression);
-    XRegularExpression_deinit_base(&validator->m_usedExpression);
+    XClassDeinit(&validator->m_originalExpression);
+    XClassDeinit(&validator->m_usedExpression);
 }
 
 static void VXRegularExpressionValidator_copy(XRegularExpressionValidator* dest,
@@ -19,8 +19,8 @@ static void VXRegularExpressionValidator_copy(XRegularExpressionValidator* dest,
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XRegularExpressionValidator_init(dest);
-    XCopy(&dest->m_originalExpression, &src->m_originalExpression);
-    XCopy(&dest->m_usedExpression, &src->m_usedExpression);
+    XClassCopy(&dest->m_originalExpression, &src->m_originalExpression);
+    XClassCopy(&dest->m_usedExpression, &src->m_usedExpression);
 }
 
 static void VXRegularExpressionValidator_move(XRegularExpressionValidator* dest,
@@ -28,8 +28,8 @@ static void VXRegularExpressionValidator_move(XRegularExpressionValidator* dest,
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XRegularExpressionValidator_init(dest);
-    XMove(&dest->m_originalExpression, &src->m_originalExpression);
-    XMove(&dest->m_usedExpression, &src->m_usedExpression);
+    XClassMove(&dest->m_originalExpression, &src->m_originalExpression);
+    XClassMove(&dest->m_usedExpression, &src->m_usedExpression);
 }
 
 XVtable* XRegularExpressionValidator_class_init(void)
@@ -71,7 +71,7 @@ XRegularExpressionValidator* XRegularExpressionValidator_create_copy(
     if (!other) return NULL;
     XRegularExpressionValidator* validator = XRegularExpressionValidator_create();
     if (!validator) return NULL;
-    XCopy(validator, other);
+    XClassCopy(validator, other);
     return validator;
 }
 
@@ -81,7 +81,7 @@ XRegularExpressionValidator* XRegularExpressionValidator_create_move(
     if (!other) return NULL;
     XRegularExpressionValidator* validator = XRegularExpressionValidator_create();
     if (!validator) return NULL;
-    XMove(validator, other);
+    XClassMove(validator, other);
     return validator;
 }
 
@@ -102,8 +102,8 @@ void XRegularExpressionValidator_setRegularExpression(XRegularExpressionValidato
 {
     if (!validator) return;
     if (expression) {
-        XCopy(&validator->m_originalExpression, expression);
-        XCopy(&validator->m_usedExpression, expression);
+        XClassCopy(&validator->m_originalExpression, expression);
+        XClassCopy(&validator->m_usedExpression, expression);
     } else {
         XRegularExpression_setPattern_utf8(&validator->m_originalExpression, "");
         XRegularExpression_setPatternOptions(&validator->m_originalExpression,
@@ -117,9 +117,9 @@ void XRegularExpressionValidator_setRegularExpression(XRegularExpressionValidato
     XString* anchored = XRegularExpression_anchoredPattern_2(pattern);
     if (anchored) {
         XRegularExpression_setPattern(&validator->m_usedExpression, anchored);
-        XString_delete_base(anchored);
+        XClassDelete(anchored);
     }
-    if (pattern) XString_delete_base(pattern);
+    if (pattern) XClassDelete(pattern);
 }
 
 XRegularExpressionValidator_State XRegularExpressionValidator_validate(
@@ -145,7 +145,7 @@ XRegularExpressionValidator_State XRegularExpressionValidator_validate(
         if (position) *position = input ? (int64_t)XString_size_base(input) : 0;
         state = XRegularExpressionValidator_Invalid;
     }
-    XRegularExpressionMatch_delete_base(match);
+    XClassDelete(match);
     return state;
 }
 
@@ -156,6 +156,6 @@ XRegularExpressionValidator_State XRegularExpressionValidator_validate_utf8(
     if (!value) return XRegularExpressionValidator_Invalid;
     XRegularExpressionValidator_State state =
             XRegularExpressionValidator_validate(validator, value, position);
-    XString_delete_base(value);
+    XClassDelete(value);
     return state;
 }

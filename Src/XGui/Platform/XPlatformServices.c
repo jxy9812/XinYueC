@@ -34,7 +34,7 @@ bool XPlatformServices_openUrl_2(XPlatformServices* self, const char* url)
     tmp = XString_create_utf8(url);
     if (!tmp) return false;
     ok = XPlatformServices_openUrl(self, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return ok;
 }
 #endif

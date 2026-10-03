@@ -116,7 +116,7 @@ static int xcsn_write_interface(XConsoleShell* shell, const XNetworkInterface* i
             written = snprintf(line, sizeof(line), "    inet  %s",
                                XString_toUtf8(addressText));
         }
-        XString_delete_base(addressText);
+        XClassDelete(addressText);
         if (written < 0 || (size_t)written >= sizeof(line) ||
             !xcsn_write_line(shell, line))
             return XConsoleResult_IoError;
@@ -145,12 +145,12 @@ static int xcsn_ifconfig(XConsoleShell* shell, XConsoleShellSession* session,
         XString* name = XString_create_utf8(selectedName);
         if (!name) return XConsoleResult_Failed;
         selected = XNetworkInterface_interfaceFromName(name);
-        XString_delete_base(name);
+        XClassDelete(name);
         if (!selected) return XConsoleResult_Failed;
     }
     if (selected) {
         result = xcsn_write_interface(shell, selected);
-        XNetworkInterface_delete_base(selected);
+        XClassDelete(selected);
         return result;
     }
     interfaces = XNetworkInterface_allInterfaces();
@@ -161,7 +161,7 @@ static int xcsn_ifconfig(XConsoleShell* shell, XConsoleShellSession* session,
         result = xcsn_write_interface(shell, iface);
         if (result < 0) break;
     }
-    XVector_delete_base(interfaces);
+    XClassDelete(interfaces);
     return result;
 }
 
@@ -176,10 +176,10 @@ static int xcsn_hostname(XConsoleShell* shell, XConsoleShellSession* session,
     name = XHostInfo_localHostName();
     if (!name) return XConsoleResult_Failed;
     if (!xcsn_write_line(shell, XString_toUtf8(name))) {
-        XString_delete_base(name);
+        XClassDelete(name);
         return XConsoleResult_IoError;
     }
-    XString_delete_base(name);
+    XClassDelete(name);
     return XConsoleResult_Ok;
 }
 
@@ -200,7 +200,7 @@ static int xcsn_resolve(XConsoleShell* shell, XConsoleShellSession* session,
     if (!addresses) {
         const XString* error = XHostInfo_errorString(info);
         if (error) xcsn_write_line(shell, XString_toUtf8(error));
-        XHostInfo_delete_base(info);
+        XClassDelete(info);
         return XConsoleResult_Failed;
     }
     for (i = 0; i < XVector_size_base(addresses); ++i) {
@@ -210,13 +210,13 @@ static int xcsn_resolve(XConsoleShell* shell, XConsoleShellSession* session,
         int written;
         if (!text) continue;
         written = snprintf(line, sizeof(line), "%-32s %s", argv[0], XString_toUtf8(text));
-        XString_delete_base(text);
+        XClassDelete(text);
         if (written < 0 || (size_t)written >= sizeof(line) || !xcsn_write_line(shell, line)) {
-            XHostInfo_delete_base(info);
+            XClassDelete(info);
             return XConsoleResult_IoError;
         }
     }
-    XHostInfo_delete_base(info);
+    XClassDelete(info);
     return XConsoleResult_Ok;
 }
 
@@ -311,12 +311,12 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
     }
     if (!target) {
         xcsn_write_line(shell, "ping: 没有可用的 IPv4/IPv6 地址");
-        XHostInfo_delete_base(info);
+        XClassDelete(info);
         return XConsoleResult_Failed;
     }
     targetText = XHostAddress_toString(target);
     if (!targetText) {
-        XHostInfo_delete_base(info);
+        XClassDelete(info);
         return XConsoleResult_IoError;
     }
     {
@@ -324,8 +324,8 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
         snprintf(header, sizeof(header), "\xe6\xad\xa3\xe5\x9c\xa8 Ping %s \xe5\x85\xb7\xe6\x9c\x89 32 \xe5\xad\x97\xe8\x8a\x82\xe7\x9a\x84\xe6\x95\xb0\xe6\x8d\xae:",
                  XString_toUtf8(targetText));
         if (!xcsn_write_line(shell, header)) {
-            XString_delete_base(targetText);
-            XHostInfo_delete_base(info);
+            XClassDelete(targetText);
+            XClassDelete(info);
             return XConsoleResult_IoError;
         }
     }
@@ -394,15 +394,15 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
                 snprintf(line, sizeof(line), "\xe8\xaf\xb7\xe6\xb1\x82\xe8\xb6\x85\xe6\x97\xb6\xe3\x80\x82");
             }
             if (!xcsn_write_line(shell, line)) {
-                XString_delete_base(targetText);
-                XHostInfo_delete_base(info);
+                XClassDelete(targetText);
+                XClassDelete(info);
                 return XConsoleResult_IoError;
             }
             if (i + 1u < count) XThread_msleep(1000);
         }
         if (!xcsn_write_line(shell, "")) {
-            XString_delete_base(targetText);
-            XHostInfo_delete_base(info);
+            XClassDelete(targetText);
+            XClassDelete(info);
             return XConsoleResult_IoError;
         }
         {
@@ -411,36 +411,36 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
             snprintf(summary, sizeof(summary), "%s \xe7\x9a\x84 Ping \xe7\xbb\x9f\xe8\xae\xa1\xe4\xbf\xa1\xe6\x81\xaf:",
                      XString_toUtf8(targetText));
             if (!xcsn_write_line(shell, summary)) {
-                XString_delete_base(targetText);
-                XHostInfo_delete_base(info);
+                XClassDelete(targetText);
+                XClassDelete(info);
                 return XConsoleResult_IoError;
             }
             snprintf(summary, sizeof(summary), "    \xe6\x95\xb0\xe6\x8d\xae\xe5\x8c\x85: \xe5\xb7\xb2\xe5\x8f\x91\xe9\x80\x81 = %u\xef\xbc\x8c\xe5\xb7\xb2\xe6\x8e\xa5\xe6\x94\xb6 = %u\xef\xbc\x8c\xe4\xb8\xa2\xe5\xa4\xb1 = %u (%u%% \xe4\xb8\xa2\xe5\xa4\xb1)\xef\xbc\x8c",
                      total, received, total - received, lossPercent);
             if (!xcsn_write_line(shell, summary)) {
-                XString_delete_base(targetText);
-                XHostInfo_delete_base(info);
+                XClassDelete(targetText);
+                XClassDelete(info);
                 return XConsoleResult_IoError;
             }
             if (received) {
                 snprintf(summary, sizeof(summary), "\xe5\xbe\x80\xe8\xbf\x94\xe8\xa1\x8c\xe7\xa8\x8b\xe7\x9a\x84\xe4\xbc\xb0\xe8\xae\xa1\xe6\x97\xb6\xe9\x97\xb4(\xe4\xbb\xa5\xe6\xaf\xab\xe7\xa7\x92\xe4\xb8\xba\xe5\x8d\x95\xe4\xbd\x8d):");
                 if (!xcsn_write_line(shell, summary)) {
-                    XString_delete_base(targetText);
-                    XHostInfo_delete_base(info);
+                    XClassDelete(targetText);
+                    XClassDelete(info);
                     return XConsoleResult_IoError;
                 }
                 snprintf(summary, sizeof(summary), "    \xe6\x9c\x80\xe7\x9f\xad = %ums\xef\xbc\x8c\xe6\x9c\x80\xe9\x95\xbf = %ums\xef\xbc\x8c\xe5\xb9\xb3\xe5\x9d\x87 = %ums",
                          minimum, maximum, (unsigned)(sum / received));
                 if (!xcsn_write_line(shell, summary)) {
-                    XString_delete_base(targetText);
-                    XHostInfo_delete_base(info);
+                    XClassDelete(targetText);
+                    XClassDelete(info);
                     return XConsoleResult_IoError;
                 }
             }
         }
     }
-    XString_delete_base(targetText);
-    XHostInfo_delete_base(info);
+    XClassDelete(targetText);
+    XClassDelete(info);
     return received ? XConsoleResult_Ok : XConsoleResult_Failed;
 #endif
 }
@@ -517,11 +517,11 @@ static void xcsn_ping_cleanup(XConsoleShell* shell)
         shell->m_pingTimer = XTIMER_INVALID_ID;
     }
     if (state->targetText) {
-        XString_delete_base(state->targetText);
+        XClassDelete(state->targetText);
         state->targetText = NULL;
     }
     if (state->info) {
-        XHostInfo_delete_base(state->info);
+        XClassDelete(state->info);
         state->info = NULL;
     }
     state->target = NULL;

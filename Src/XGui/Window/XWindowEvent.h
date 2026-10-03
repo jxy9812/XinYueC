@@ -106,7 +106,7 @@ XInputMethodEvent* XInputMethodEvent_create_ex(
         int replacementLength, int cursorPosition, int anchorPosition);
 #define XInputMethodEvent_create(preeditString, commitString, replacementStart, \
                                  replacementLength, cursorPosition, anchorPosition) \
-    XInputMethodEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (preeditString), \
+    XInputMethodEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, (preeditString), \
         (commitString), (replacementStart), (replacementLength), \
         (cursorPosition), (anchorPosition))
 void XInputMethodEvent_init(XInputMethodEvent* event,
@@ -122,8 +122,6 @@ int XInputMethodEvent_replacementStart(const XInputMethodEvent* event);
 int XInputMethodEvent_replacementLength(const XInputMethodEvent* event);
 int XInputMethodEvent_cursorPosition(const XInputMethodEvent* event);
 int XInputMethodEvent_anchorPosition(const XInputMethodEvent* event);
-#define XInputMethodEvent_delete_base XEvent_delete_base
-#define XInputMethodEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XDropEvent 拖放事件（对标 QDropEvent 家族）                 */
@@ -166,7 +164,7 @@ XDropEvent* XDropEvent_create_ex(XMemoryType memory, XEventType type,
                                  const XString* mimeType,
                                  const XString* data);
 #define XDropEvent_create(type, position, globalPosition, mimeType, data) \
-    XDropEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (type), (position), \
+    XDropEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, (type), (position), \
         (globalPosition), (mimeType), (data))
 void XDropEvent_init(XDropEvent* event, XEventType type,
                      const XPoint* position, const XPoint* globalPosition,
@@ -183,8 +181,6 @@ void XDropEvent_setDropAction(XDropEvent* event, int action);
 int XDropEvent_possibleActions(const XDropEvent* event);
 /** @brief 设置可用动作位组合。 */
 void XDropEvent_setPossibleActions(XDropEvent* event, int actions);
-#define XDropEvent_delete_base XEvent_delete_base
-#define XDropEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XResizeEvent 调整大小事件（对标 QResizeEvent）               */
@@ -235,9 +231,7 @@ XSize XResizeEvent_normalSize(const XResizeEvent* event);
 /** @brief 获取去除边框后的正常旧尺寸（对标 QResizeEvent::normalOldSize）。 */
 XSize XResizeEvent_normalOldSize(const XResizeEvent* event);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XResizeEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XResizeEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XExposeEvent 暴露事件（对标 QExposeEvent）                   */
@@ -282,9 +276,7 @@ void XExposeEvent_init(XExposeEvent* event, XEventType type,
  */
 XRegion XExposeEvent_region(const XExposeEvent* event);
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */
-#define XExposeEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */
-#define XExposeEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XPaintEvent 绘制事件（对标 QPaintEvent）                     */
@@ -343,7 +335,7 @@ void XPaintEvent_initBorrow(XPaintEvent* event, XEventType type,
  *             本函数用原子单槽把「事件本体 + 区域数组」的每帧 malloc/free
  *             归零（区域缓冲随对象保留，XRegion_copy 容量足够时零分配）。
  *             槽空时退化为一次堆分配，由 deinit 归还。
- * @note       返回对象 is_heap=false：XEvent_delete_base 只触发 deinit，
+ * @note       返回对象 is_heap=false：XClassDelete 只触发 deinit，
  *             对象由 deinit 归还单槽（或被新归还者顶替释放）。
  */
 XPaintEvent* XPaintEvent_createRecycled(XMemoryType memory, XEventType type,
@@ -357,9 +349,7 @@ XRegion XPaintEvent_region(const XPaintEvent* event);
 /** @brief 获取绘制区域的外接矩形（对标 QPaintEvent::rect）。 */
 XRect XPaintEvent_rect(const XPaintEvent* event);
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */
-#define XPaintEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent；事件内部 XRegion 由 deinit 虚槽释放。 */
-#define XPaintEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XCloseEvent 关闭事件（对标 QCloseEvent）                     */
@@ -388,9 +378,7 @@ XCloseEvent* XCloseEvent_create_ex(XMemoryType memory, XEventType type);
 /** @brief 初始化调用者提供的关闭事件存储。 @param event 待初始化存储。 @param type 事件类型；通常为 XEVENT_TYPE_CLOSE。 */
 void XCloseEvent_init(XCloseEvent* event, XEventType type);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XCloseEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XCloseEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XShowEvent 显示事件（对标 QShowEvent）                       */
@@ -418,9 +406,7 @@ XShowEvent* XShowEvent_create_ex(XMemoryType memory, XEventType type);
 /** @brief 初始化调用者提供的显示事件存储。 @param event 待初始化存储。 @param type 事件类型；通常为 XEVENT_TYPE_SHOW。 */
 void XShowEvent_init(XShowEvent* event, XEventType type);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XShowEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XShowEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XHideEvent 隐藏事件（对标 QHideEvent）                       */
@@ -448,9 +434,7 @@ XHideEvent* XHideEvent_create_ex(XMemoryType memory, XEventType type);
 /** @brief 初始化调用者提供的隐藏事件存储。 @param event 待初始化存储。 @param type 事件类型；通常为 XEVENT_TYPE_HIDE。 */
 void XHideEvent_init(XHideEvent* event, XEventType type);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XHideEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XHideEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XFocusEvent 焦点事件（对标 QFocusEvent）                     */
@@ -489,9 +473,7 @@ XFocusReason XFocusEvent_reason(const XFocusEvent* event);
 /** @brief 设置焦点变化原因（对标 QFocusEvent::setReason）。 */
 void XFocusEvent_setReason(XFocusEvent* event, XFocusReason reason);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XFocusEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XFocusEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XWheelEvent 滚轮事件（对标 QWheelEvent）                     */
@@ -591,9 +573,7 @@ int XWheelEvent_source(const XWheelEvent* event);
 /** @brief 设置事件来源（XWheelEventSource）。 */
 void XWheelEvent_setSource(XWheelEvent* event, int source);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XWheelEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XWheelEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*                XEnterEvent 指针进入事件（对标 QEnterEvent）                 */
@@ -638,9 +618,7 @@ XPoint XEnterEvent_scenePosition(const XEnterEvent* event);
 /** @brief 设置场景坐标（平台层填充；默认与 position 相同）。 */
 void XEnterEvent_setScenePosition(XEnterEvent* event, const XPoint* pos);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XEnterEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XEnterEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*          XContextMenuEvent 上下文菜单事件（对标 QContextMenuEvent）          */
@@ -704,9 +682,7 @@ XContextMenuReason XContextMenuEvent_reason(const XContextMenuEvent* event);
 /** @brief 获取键盘修饰键（对标 QInputEvent::modifiers）。 */
 XKeyboardModifiers XContextMenuEvent_modifiers(const XContextMenuEvent* event);
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XContextMenuEvent_delete_base XEvent_delete_base
 /** @brief 释放方式沿用 XEvent（无动态成员）。 */
-#define XContextMenuEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*      XClass create API default-memory wrappers（默认内存池快速创建）。      */
@@ -768,8 +744,6 @@ void XMoveEvent_init(XMoveEvent* event, XEventType type,
 XPoint XMoveEvent_position(const XMoveEvent* event);
 /** @brief 获取旧位置（对标 QMoveEvent::oldPos）。 */
 XPoint XMoveEvent_oldPosition(const XMoveEvent* event);
-#define XMoveEvent_delete_base XEvent_delete_base
-#define XMoveEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*        XTouchEvent 触摸事件（对标 QTouchEvent 最小负载）                    */
@@ -804,7 +778,12 @@ typedef struct XTouchPoint
  * @note m_position/m_globalPosition 保留为主点（points[0]）兼容视图；
  *       旧读代码继续读主点字段。m_points 由事件拥有（deinit 释放，
  *       clone 深拷贝）；旧 init/create 造 1 点列表，多点经
- *       XTouchEvent_setPoints 注入。 */
+ *       XTouchEvent_setPoints 注入。
+ * @note 内存分配器口径：m_points 及克隆件整体一律沿事件对象自身保存的
+ *       内存分配器族（Class_Memory，由 create_ex 的 memory 参数决定）
+ *       分配与释放，不使用固定系统分配器——事件在内存池，触点数组与
+ *       副本也留内存池；释放/再分配自动与分配配对（deinit/clone/
+ *       setPoints 三处统一）。 */
 typedef struct XTouchEvent
 {
     XEvent m_class;          /**< 继承 XEvent；必须为第一个成员。 */
@@ -848,8 +827,6 @@ const XTouchPoint* XTouchEvent_points(const XTouchEvent* event);
  * @note 覆盖既有列表（先释放）；主点字段同步为 points[0]。 */
 void XTouchEvent_setPoints(XTouchEvent* event,
                            const XTouchPoint* points, int count);
-#define XTouchEvent_delete_base XEvent_delete_base
-#define XTouchEvent_deinit_base XEvent_deinit_base
 
 /* ========================================================================== */
 /*        XTabletEvent 数位板事件（对标 QTabletEvent 最小负载）                */
@@ -909,8 +886,6 @@ XPoint XTabletEvent_globalPosition(const XTabletEvent* event);
 float XTabletEvent_pressure(const XTabletEvent* event);
 /** @brief 获取指针类型（XTabletPointerType）。 */
 int XTabletEvent_pointerType(const XTabletEvent* event);
-#define XTabletEvent_delete_base XEvent_delete_base
-#define XTabletEvent_deinit_base XEvent_deinit_base
 
 #endif /* XWINDOWEVENT_ON */
 

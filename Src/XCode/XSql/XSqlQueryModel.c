@@ -50,7 +50,7 @@ XSqlQueryModel* XSqlQueryModel_create_ex(XMemoryType memory)
 static void xsql_model_clear_rows(XSqlQueryModel* model)
 {
     if (!model) return;
-    for (size_t i = 0; i < model->m_rowCount; ++i) if (model->m_rows[i]) XSqlRecord_delete_base(model->m_rows[i]);
+    for (size_t i = 0; i < model->m_rowCount; ++i) if (model->m_rows[i]) XClassDelete(model->m_rows[i]);
     if (model->m_rows) XFree_System(model->m_rows);
     model->m_rows = NULL;
     model->m_rowCount = 0;
@@ -91,7 +91,7 @@ static void xsql_model_clear_headers(XSqlQueryModel* model)
 {
     if (!model) return;
     for (size_t i = 0; i < model->m_headerCount; ++i)
-        if (model->m_headers[i].m_value) XString_delete_base(model->m_headers[i].m_value);
+        if (model->m_headers[i].m_value) XClassDelete(model->m_headers[i].m_value);
     if (model->m_headers) XFree_System(model->m_headers);
     model->m_headers = NULL;
     model->m_headerCount = 0;
@@ -119,9 +119,9 @@ static void VXSqlQueryModel_deinit(XSqlQueryModel* model)
     if (!model) return;
     xsql_model_clear_rows(model);
     xsql_model_clear_headers(model);
-    XSqlQuery_deinit_base(&model->m_query);
-    XSqlRecord_deinit_base(&model->m_record);
-    XSqlError_deinit_base(&model->m_lastError);
+    XClassDeinit(&model->m_query);
+    XClassDeinit(&model->m_record);
+    XClassDeinit(&model->m_lastError);
     XClass_Deinit_Parent(XObject, model);
 }
 
@@ -155,7 +155,7 @@ XVariant* XSqlQueryModel_headerData(const XSqlQueryModel* model, int section, XS
                                                       ? XSqlRecord_fieldName(&model->m_record, section)
                                                       : NULL);
     XVariant* result = name ? XVariant_create_String_move(name) : XVariant_create_null();
-    if (name) XString_delete_base(name);
+    if (name) XClassDelete(name);
     return result;
 }
 bool XSqlQueryModel_setHeaderData(XSqlQueryModel* model, int section, XSqlOrientation orientation, const XVariant* value, XSqlItemDataRole role)
@@ -168,12 +168,12 @@ bool XSqlQueryModel_setHeaderData(XSqlQueryModel* model, int section, XSqlOrient
     if (!headerValue) return false;
     header = xsql_model_find_header(model, section, role);
     if (header) {
-        if (header->m_value) XString_delete_base(header->m_value);
+        if (header->m_value) XClassDelete(header->m_value);
         header->m_value = headerValue;
         return true;
     }
     if (!xsql_model_reserve_headers(model, model->m_headerCount + 1)) {
-        XString_delete_base(headerValue);
+        XClassDelete(headerValue);
         return false;
     }
     header = &model->m_headers[model->m_headerCount++];
@@ -194,7 +194,7 @@ static bool xsql_model_insert_record_columns(XSqlRecord* record, int column, int
             XSqlField_setGenerated(field, false);
         }
         bool ok = field && XSqlRecord_insert(record, column + inserted, field);
-        if (field) XSqlField_delete_base(field);
+        if (field) XClassDelete(field);
         if (!ok) break;
     }
     if (inserted == count) return true;
@@ -241,7 +241,7 @@ bool XSqlQueryModel_removeColumns(XSqlQueryModel* model, int column, int count)
     for (size_t i = 0; i < model->m_headerCount;) {
         XSqlModelHeaderValue* header = &model->m_headers[i];
         if (header->m_section >= column && header->m_section < column + count) {
-            if (header->m_value) XString_delete_base(header->m_value);
+            if (header->m_value) XClassDelete(header->m_value);
             if (i + 1 < model->m_headerCount)
                 memmove(header, header + 1,
                         (model->m_headerCount - i - 1) * sizeof(XSqlModelHeaderValue));
@@ -264,14 +264,14 @@ static bool xsql_model_append_current_row(XSqlQueryModel* model)
     if (!model) return false;
     row = XSqlQuery_record(&model->m_query);
     if (!row || !xsql_model_reserve_rows(model, model->m_rowCount + 1)) {
-        if (row) XSqlRecord_delete_base(row);
+        if (row) XClassDelete(row);
         return false;
     }
     for (int column = 0; column < XSqlRecord_count(row); ++column) {
         XVariant* value = XSqlQuery_value(&model->m_query, column);
         if (value) {
             XSqlRecord_setValue(row, column, value);
-            XVariant_delete_base(value);
+            XClassDelete(value);
         }
     }
     model->m_rows[model->m_rowCount++] = row;
@@ -310,8 +310,8 @@ static void xsql_model_load_query(XSqlQueryModel* model)
         return;
     record = XSqlQuery_record(&model->m_query);
     if (record) {
-        XMove(&model->m_record, record);
-        XSqlRecord_delete_base(record);
+        XClassMove(&model->m_record, record);
+        XClassDelete(record);
     }
     driver = XSqlQuery_driver(&model->m_query);
     hasQuerySize = driver && XSqlDriver_hasFeature_base(driver,
@@ -329,7 +329,7 @@ void XSqlQueryModel_setQuery_move(XSqlQueryModel* model, XSqlQuery* query)
 {
     XSqlError* error;
     if (!model || !query || model->m_query.m_result == query->m_result) return;
-    if (model->m_query.m_ownsResult && model->m_query.m_result) XSqlResult_delete_base(model->m_query.m_result);
+    if (model->m_query.m_ownsResult && model->m_query.m_result) XClassDelete(model->m_query.m_result);
     model->m_query.m_result = query->m_result;
     model->m_query.m_ownsResult = query->m_ownsResult;
     query->m_result = NULL;
@@ -341,20 +341,20 @@ void XSqlQueryModel_setQuery_move(XSqlQueryModel* model, XSqlQuery* query)
                                       NULL, XSqlErrorType_ConnectionError, NULL);
         if (error) {
             XSqlQueryModel_setLastError(model, error);
-            XSqlError_delete_base(error);
+            XClassDelete(error);
         }
         model->m_canFetchMore = false;
     } else if (!XSqlQuery_isActive(&model->m_query)) {
         error = XSqlQuery_lastError(&model->m_query);
         if (error) {
             XSqlQueryModel_setLastError(model, error);
-            XSqlError_delete_base(error);
+            XClassDelete(error);
         }
         xsql_model_clear_rows(model);
         XSqlRecord_clear(&model->m_record);
         model->m_canFetchMore = false;
     } else {
-        XSqlError_deinit_base(&model->m_lastError);
+        XClassDeinit(&model->m_lastError);
         XSqlError_init(&model->m_lastError);
         xsql_model_load_query(model);
     }
@@ -371,11 +371,11 @@ bool XSqlQueryModel_setQuery_copy(XSqlQueryModel* model, const XSqlQuery* query)
     if (!copy) return false;
     ok = XSqlQuery_isActive(copy) && !XSqlQuery_isForwardOnly(copy);
     XSqlQueryModel_setQuery_move(model, copy);
-    XSqlQuery_delete_base(copy);
+    XClassDelete(copy);
     return ok;
 }
-bool XSqlQueryModel_setQuery(XSqlQueryModel* model, const XString* sql, const XSqlDatabase* database) { if (!model || !sql) return false; XSqlQuery* query = XSqlDatabase_exec(database, sql); if (!query) return false; bool ok = XSqlQuery_isActive(query) && !XSqlQuery_isForwardOnly(query); XSqlQueryModel_setQuery_move(model, query); XSqlQuery_delete_base(query); return ok; }
-bool XSqlQueryModel_setQuery_utf8(XSqlQueryModel* model, const char* sql, const XSqlDatabase* database) { XString* text = sql ? XString_create_utf8(sql) : NULL; bool result = XSqlQueryModel_setQuery(model, text, database); if (text) XString_delete_base(text); return result; }
+bool XSqlQueryModel_setQuery(XSqlQueryModel* model, const XString* sql, const XSqlDatabase* database) { if (!model || !sql) return false; XSqlQuery* query = XSqlDatabase_exec(database, sql); if (!query) return false; bool ok = XSqlQuery_isActive(query) && !XSqlQuery_isForwardOnly(query); XSqlQueryModel_setQuery_move(model, query); XClassDelete(query); return ok; }
+bool XSqlQueryModel_setQuery_utf8(XSqlQueryModel* model, const char* sql, const XSqlDatabase* database) { XString* text = sql ? XString_create_utf8(sql) : NULL; bool result = XSqlQueryModel_setQuery(model, text, database); if (text) XClassDelete(text); return result; }
 const XSqlQuery* XSqlQueryModel_query_const(const XSqlQueryModel* model) { return model ? &model->m_query : NULL; }
 XSqlQuery* XSqlQueryModel_query(const XSqlQueryModel* model) { return model ? XSqlQuery_create_copy(&model->m_query) : XSqlQuery_create(); }
 static void VXSqlQueryModel_clear(XSqlQueryModel* model)
@@ -385,7 +385,7 @@ static void VXSqlQueryModel_clear(XSqlQueryModel* model)
     xsql_model_clear_headers(model);
     XSqlQuery_clear(&model->m_query);
     XSqlRecord_clear(&model->m_record);
-    XSqlError_deinit_base(&model->m_lastError);
+    XClassDeinit(&model->m_lastError);
     XSqlError_init(&model->m_lastError);
     model->m_canFetchMore = false;
     XSqlQueryModel_modelReset_signal(model);
@@ -410,7 +410,7 @@ XSqlModelIndex XSqlQueryModel_indexInQuery(const XSqlQueryModel* model, XSqlMode
         ? XClassGetVirtualFunc(model, EXSqlQueryModel_IndexInQuery, XSqlModelIndex(*)(const XSqlQueryModel*, XSqlModelIndex))(model, item)
         : item;
 }
-void XSqlQueryModel_setLastError(XSqlQueryModel* model, const XSqlError* error) { if (model && error) XCopy(&model->m_lastError, error); }
+void XSqlQueryModel_setLastError(XSqlQueryModel* model, const XSqlError* error) { if (model && error) XClassCopy(&model->m_lastError, error); }
 static void VXSqlQueryModel_queryChange(XSqlQueryModel* model) { (void)model; }
 void XSqlQueryModel_queryChange(XSqlQueryModel* model)
 {

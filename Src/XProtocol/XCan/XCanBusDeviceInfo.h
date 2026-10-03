@@ -34,7 +34,7 @@ extern "C" {
  * // 查询属性
  * XString* name = XCanBusDeviceInfo_name(&info);
  * bool isVirtual = XCanBusDeviceInfo_isVirtual(&info);
- * XString_delete_base(name);
+ * XClassDelete(name);
  * XCanBusDeviceInfo_deinit(&info);
  * @endcode
  */

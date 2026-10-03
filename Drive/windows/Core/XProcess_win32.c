@@ -157,19 +157,19 @@ static wchar_t* xpw_build_command_line(const XProcess* self)
     command = XString_create();
     if (!command) return NULL;
     if (!xpw_append_quoted(command, XString_toUtf8(self->m_program))) {
-        XString_delete_base(command);
+        XClassDelete(command);
         return NULL;
     }
     for (i = 0; self->m_arguments && i < XStringList_size_base(self->m_arguments); ++i) {
         const XString* argument = XStringList_at_base(self->m_arguments, i);
         if (!XString_append_utf8(command, " ") ||
             !xpw_append_quoted(command, argument ? XString_toUtf8(argument) : "")) {
-            XString_delete_base(command);
+            XClassDelete(command);
             return NULL;
         }
     }
     result = xpw_utf8_to_wide(XString_toUtf8(command));
-    XString_delete_base(command);
+    XClassDelete(command);
     return result;
 }
 
@@ -231,8 +231,8 @@ static void xpw_dispose_backend(XProcessWin32Backend* backend)
     xpw_close_handle(&backend->stderrRead);
     xpw_close_handle(&backend->threadHandle);
     xpw_close_handle(&backend->processHandle);
-    if (backend->stdoutBuffer) XRingBuffer_delete_base(backend->stdoutBuffer);
-    if (backend->stderrBuffer) XRingBuffer_delete_base(backend->stderrBuffer);
+    if (backend->stdoutBuffer) XClassDelete(backend->stdoutBuffer);
+    if (backend->stderrBuffer) XClassDelete(backend->stderrBuffer);
     XFree_System(backend);
 }
 
@@ -395,7 +395,7 @@ static wchar_t* xpw_build_environment(const XProcess* self, bool* borrowed)
         if (result) result[used] = L'\0';
     }
     if (inherited) FreeEnvironmentStringsW(inherited);
-    XStringList_delete_base(list);
+    XClassDelete(list);
     return result;
 }
 
@@ -743,7 +743,7 @@ bool XProcess_backend_startDetached(const XString* program,
         result = XProcess_backend_start(temporary, XIODevice_NotOpen, true);
         if (result && pidOut) *pidOut = temporary->m_processId;
     }
-    XProcess_delete_base(temporary);
+    XClassDelete(temporary);
     return result;
 }
 

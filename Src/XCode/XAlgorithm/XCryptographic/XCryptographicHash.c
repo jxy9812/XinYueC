@@ -3531,7 +3531,7 @@ bool XCryptographicHash_addData_4(XCryptographicHash* hash, XIODevice* device)
     if (!data) return false;
 
     XCryptographicHash_addData_3(hash, data);
-    XByteArray_delete_base(data);
+    XClassDelete(data);
     return true;
 }
 
@@ -3875,7 +3875,7 @@ XByteArray* XCryptographicHash_result(XCryptographicHash* hash)
     char* data = (char*)XByteArray_data(result);
 
     if (!computeHash(hash, (uint8_t*)data)) {
-        XByteArray_delete_base(result);
+        XClassDelete(result);
         return NULL;
     }
     hash->finalized = true;
@@ -4425,7 +4425,7 @@ XByteArray* XCryptographicHash_hmac(
     XByteArrayView view = XCryptographicHash_hmacInto(data, hashLen, key, keyLen, message, msgLen, method);
 
     if (!view.m_data) {
-        XByteArray_delete_base(result);
+        XClassDelete(result);
         return NULL;
     }
 

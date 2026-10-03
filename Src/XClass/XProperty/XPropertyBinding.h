@@ -92,14 +92,10 @@ void XPropertyBindingError_init_ex(XPropertyBindingError* self, XPropertyBinding
  */
 void XPropertyBindingError_init_ex_2(XPropertyBindingError* self, XPropertyBindingErrorType type, const char* description);
 
-/** @brief 反初始化绑定错误对象；与 init 成对使用，释放内部描述字符串。 */
-#define XPropertyBindingError_deinit_base XClass_deinit_base
-/** @brief 删除堆上绑定错误对象；内部先反初始化再释放结构体内存。 */
-#define XPropertyBindingError_delete_base XClass_delete_base
 
 /**
  * @brief 在堆上创建绑定错误对象（默认 NoError；对标 QPropertyBindingError()）。
- * @return 新对象指针；分配失败返回 NULL。用 XPropertyBindingError_delete_base 释放。
+ * @return 新对象指针；分配失败返回 NULL。用 XClassDelete 释放。
  */
 XPropertyBindingError* XPropertyBindingError_create(void);
 
@@ -107,7 +103,7 @@ XPropertyBindingError* XPropertyBindingError_create(void);
  * @brief 在堆上创建绑定错误对象并设置类型与描述（XString 主版本）。
  * @param type        错误类型。
  * @param description 错误描述；借用，可为 NULL。函数内部深拷贝。
- * @return 新对象指针；分配失败返回 NULL。用 XPropertyBindingError_delete_base 释放。
+ * @return 新对象指针；分配失败返回 NULL。用 XClassDelete 释放。
  */
 XPropertyBindingError* XPropertyBindingError_create_ex(XPropertyBindingErrorType type, const XString* description);
 
@@ -115,14 +111,14 @@ XPropertyBindingError* XPropertyBindingError_create_ex(XPropertyBindingErrorType
  * @brief 在堆上创建绑定错误对象并设置类型与 UTF-8 描述（_2 为 UTF-8 兼容版本）。
  * @param type        错误类型。
  * @param description UTF-8 编码描述；借用，可为 NULL，按 UTF-8 解码。
- * @return 新对象指针；分配失败返回 NULL。用 XPropertyBindingError_delete_base 释放。
+ * @return 新对象指针；分配失败返回 NULL。用 XClassDelete 释放。
  */
 XPropertyBindingError* XPropertyBindingError_create_ex_2(XPropertyBindingErrorType type, const char* description);
 
 /**
  * @brief 拷贝创建绑定错误对象（深拷贝描述字符串）。
  * @param other 源对象；不能为 NULL。
- * @return 新对象指针；分配失败返回 NULL。用 XPropertyBindingError_delete_base 释放。
+ * @return 新对象指针；分配失败返回 NULL。用 XClassDelete 释放。
  */
 XPropertyBindingError* XPropertyBindingError_create_copy(const XPropertyBindingError* other);
 

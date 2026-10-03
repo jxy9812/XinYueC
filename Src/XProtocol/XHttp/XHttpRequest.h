@@ -145,28 +145,28 @@ void XHttpRequest_init(XHttpRequest* self);
 
 /**
  * - @brief 创建默认 HTTP 请求对象。
- * - @return 新对象，调用者必须使用 XHttpRequest_delete_base 释放；失败返回 NULL。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XHttpRequest* XHttpRequest_create_ex(XMemoryType memory);
 
 /**
  * - @brief 从 URL 创建 HTTP 请求对象。
  * - @param url 请求 URL；借用，创建时深拷贝；NULL 时返回 NULL。
- * - @return 新对象，调用者必须使用 XHttpRequest_delete_base 释放。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放。
  */
 XHttpRequest* XHttpRequest_create_url(const XUrl* url);
 
 /**
  * - @brief 深拷贝创建 HTTP 请求。
  * - @param other 源请求；NULL 时返回 NULL。
- * - @return 新对象，调用者必须使用 XHttpRequest_delete_base 释放。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放。
  */
 XHttpRequest* XHttpRequest_create_copy(const XHttpRequest* other);
 
 /**
  * - @brief 移动创建 HTTP 请求。
  * - @param other 源请求；成功后源对象保持已初始化但为空的状态。
- * - @return 新对象，调用者必须使用 XHttpRequest_delete_base 释放。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放。
  */
 XHttpRequest* XHttpRequest_create_move(XHttpRequest* other);
 
@@ -174,8 +174,6 @@ XHttpRequest* XHttpRequest_create_move(XHttpRequest* other);
  * - @brief 反初始化、删除、拷贝和移动调度入口。
  * - @details copy/move 支持未初始化目标，并处理目标与源相同的情况。
  */
-#define XHttpRequest_deinit_base XClass_deinit_base
-#define XHttpRequest_delete_base XClass_delete_base
 
 /**
  * - @brief 获取请求 URL 的借用只读指针。
@@ -233,7 +231,7 @@ bool XHttpRequest_hasRawHeader(const XHttpRequest* self, const XByteArray* name)
  * - @brief 获取首个同名原始请求头值副本。
  * - @param self HTTP 请求对象；可为 NULL。
  * - @param name 请求头名称；借用且必须是合法 HTTP token，比较忽略 ASCII 大小写。
- * - @return 新建请求头值；调用者必须使用 XByteArray_delete_base 释放，未找到、参数无效或拷贝失败返回 NULL。
+ * - @return 新建请求头值；调用者必须使用 XClassDelete 释放，未找到、参数无效或拷贝失败返回 NULL。
  */
 XByteArray* XHttpRequest_rawHeader(const XHttpRequest* self, const XByteArray* name);
 /**
@@ -255,7 +253,7 @@ bool XHttpRequest_setHeaderKnown(XHttpRequest* self, XHttpHeaders_WellKnownHeade
  * - @brief 获取已知请求头值副本。
  * - @param self HTTP 请求对象；可为 NULL。
  * - @param header 已知请求头枚举；使用 XHttpHeaders_WellKnownHeader 的合法值。
- * - @return 新建请求头值；调用者必须使用 XByteArray_delete_base 释放，未设置、参数无效或拷贝失败返回 NULL。
+ * - @return 新建请求头值；调用者必须使用 XClassDelete 释放，未设置、参数无效或拷贝失败返回 NULL。
  */
 XByteArray* XHttpRequest_headerKnown(const XHttpRequest* self,
                                      XHttpHeaders_WellKnownHeader header);
@@ -440,7 +438,7 @@ bool XHttpRequest_setAttribute(XHttpRequest* self, int code, const XVariant* val
  * - @brief 获取请求属性副本。
  * - @param self 请求对象；可为 NULL。
  * - @param code 属性编号。
- * - @return 新属性值；未设置返回 NULL，调用者必须使用 XVariant_delete_base 释放。
+ * - @return 新属性值；未设置返回 NULL，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XHttpRequest_attribute(const XHttpRequest* self, int code);
 /**
@@ -459,7 +457,7 @@ void XHttpRequest_clearAttributes(XHttpRequest* self);
  * - @brief 将请求序列化为 HTTP/1.1 wire 数据。
  * - @param self 请求对象；不能为 NULL。
  * - @param includeConnectionClose true 时自动添加 Connection: close（未显式设置时）。
- * - @return 新建请求字节数组，调用者必须使用 XByteArray_delete_base 释放；失败返回 NULL。
+ * - @return 新建请求字节数组，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XByteArray* XHttpRequest_toHttp1(const XHttpRequest* self, bool includeConnectionClose);
 

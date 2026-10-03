@@ -176,7 +176,7 @@ static bool buildAndSendRequest(XModbusTcpClient* client, XModbusReply* reply,
 
     // 发送数据
     int64_t sent = XIODevice_write_2((XIODevice*)socket, requestData);
-    //XByteArray_delete_base(requestData);
+    //XClassDelete(requestData);
 
     if (sent <= 0) return false;
 
@@ -420,7 +420,7 @@ static void processReceivedFrame(XModbusTcpClient* client)
     //XString* text= XByteArray_to16HexString(buffer);
     //XPrintf_2(text);
     //XPrintf("\n");
-    //XString_delete_base(text);
+    //XClassDelete(text);
 
     while (bufLen >= 7) {
         const uint8_t* data = XContainerDataAddr(buffer);
@@ -533,7 +533,7 @@ static void processReceivedFrame(XModbusTcpClient* client)
  //            XString* text= XByteArray_to16HexString(response->m_base.m_data);
  //XPrintf_2(text);
  //XPrintf("\n");
- //XString_delete_base(text);
+ //XClassDelete(text);
             bool success = XModbusClient_processResponse_base((XModbusClient*)client, response, reply->m_result);
             if (!success) {
                 XModbusReply_setError(reply, XModbusDevice_UnknownError, "Response processing failed");
@@ -642,11 +642,11 @@ static void VXModbusTcpClient_timerEvent(XObject* obj, XTimerEvent* event)
 
                     // 清理旧的结果
                     if (reply->m_rawResult) {
-                        XModbusResponse_delete_base(reply->m_rawResult);
+                        XClassDelete(reply->m_rawResult);
                         reply->m_rawResult = NULL;
                     }
                     if (reply->m_result) {
-                        XModbusDataUnit_delete_base(reply->m_result);
+                        XClassDelete(reply->m_result);
                         reply->m_result = NULL;
                     }
 
@@ -814,11 +814,11 @@ static void VXModbusTcpClient_deinit(XModbusTcpClient* client)
     XModbusDevice_disconnectDevice(client);
 
     if (client->m_receiveBuffer) {
-        XByteArray_delete_base(client->m_receiveBuffer);
+        XClassDelete(client->m_receiveBuffer);
         client->m_receiveBuffer = NULL;
     }
     if (client->m_requestData) {
-        XByteArray_delete_base(client->m_requestData);
+        XClassDelete(client->m_requestData);
         client->m_requestData = NULL;
     }
   
@@ -826,11 +826,11 @@ static void VXModbusTcpClient_deinit(XModbusTcpClient* client)
 
     // 容器会自动调用 pendingRequestDeinit 释放元素
     if (client->m_pendingRequests) {
-        XMapBase_delete_base(client->m_pendingRequests);
+        XClassDelete(client->m_pendingRequests);
         client->m_pendingRequests = NULL;
     }
     if (client->m_timerMap) {
-        XHashMap_delete_base(client->m_timerMap);
+        XClassDelete(client->m_timerMap);
         client->m_timerMap = NULL;
     }
 

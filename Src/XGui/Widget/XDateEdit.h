@@ -83,9 +83,7 @@ void XDateEdit_init(XDateEdit* self, XWidget* parent, XWidgetFlags flags);
 XDateEdit* XDateEdit_create_ex(XMemoryType memory, XWidget* parent,
                                XWidgetFlags flags);
 /** @brief 析构调度入口宏（复用基类 XDateTimeEdit 的 deinit 链）。 */
-#define XDateEdit_deinit_base(self) XDateTimeEdit_deinit_base((XDateTimeEdit*)(self))
 /** @brief 删除堆对象入口宏（XClass_delete_base 转发）。 */
-#define XDateEdit_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 信号 ==================== */
 

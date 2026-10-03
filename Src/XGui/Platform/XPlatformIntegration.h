@@ -230,14 +230,14 @@ XVtable* XPlatformIntegration_class_init(void);
 
 /**
  * @brief      初始化嵌入式平台集成层（默认能力位/主题名 "embedded"）。
- * @param      self 待初始化对象；必须与 XPlatformIntegration_deinit_base 成对调用。
+ * @param      self 待初始化对象；必须与 XClassDeinit 成对调用。
  */
 void XPlatformIntegration_init(XPlatformIntegration* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建 XPlatformIntegration。
  * @return     新对象指针；失败返回 NULL，调用方用
- *             XPlatformIntegration_delete_base 释放。
+ *             XClassDelete 释放。
  */
 #define XPlatformIntegration_create() \
     XPlatformIntegration_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
@@ -250,9 +250,7 @@ void XPlatformIntegration_init(XPlatformIntegration* self);
 XPlatformIntegration* XPlatformIntegration_create_ex(XMemoryType memory);
 
 /** @brief 通过 XClass 虚表释放 XPlatformIntegration 资源（栈/外部存储对象使用）。 */
-#define XPlatformIntegration_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XPlatformIntegration 对象。 */
-#define XPlatformIntegration_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 能力查询（对标 hasCapability） ==================== */
 

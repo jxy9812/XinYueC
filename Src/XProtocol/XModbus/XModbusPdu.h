@@ -44,7 +44,7 @@ extern "C" {
  * }
  *
  * // 清理
- * XModbusRequest_delete_base(request);
+ * XClassDelete(request);
  * @endcode
  */
 
@@ -580,13 +580,11 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
  * @brief 析构PDU
  * @param pdu PDU指针
  */
-#define XModbusPdu_deinit_base      XClass_deinit_base
 
 /**
  * @brief 删除PDU（立即释放）
  * @param pdu PDU指针
  */
-#define XModbusPdu_delete_base      XClass_delete_base
 
 /******************************************************************************************
 * 内存管理宏 - XModbusRequest
@@ -598,13 +596,11 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
  * @brief 析构请求
  * @param req 请求指针
  */
-#define XModbusRequest_deinit_base      XModbusPdu_deinit_base
 
 /**
  * @brief 删除请求（立即释放）
  * @param req 请求指针
  */
-#define XModbusRequest_delete_base      XModbusPdu_delete_base
 
 /******************************************************************************************
 * 内存管理宏 - XModbusResponse
@@ -616,13 +612,11 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 * @brief 析构响应
 * @param resp 响应指针
 */
-#define XModbusResponse_deinit_base     XModbusPdu_deinit_base
 
 /**
 * @brief 删除响应（立即释放）
 * @param resp 响应指针
 */
-#define XModbusResponse_delete_base     XModbusPdu_delete_base
 
 /******************************************************************************************
 * 内存管理宏 - XModbusExceptionResponse
@@ -634,13 +628,11 @@ void XModbusResponse_registerDataSizeCalculator(XModbusPdu_FunctionCode fc, XMod
 * @brief 析构异常响应
 * @param exc 异常响应指针
 */
-#define XModbusExceptionResponse_deinit_base    XModbusResponse_deinit_base
 
 /**
 * @brief 删除异常响应（立即释放）
 * @param exc 异常响应指针
 */
-#define XModbusExceptionResponse_delete_base    XModbusResponse_delete_base
 
 #ifdef __cplusplus
 }

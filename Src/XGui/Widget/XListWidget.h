@@ -85,8 +85,6 @@ XListWidget* XListWidget_create_ex(XMemoryType memory, XWidget* parent,
                                    XWidgetFlags flags);
 #define XListWidget_create(parent, flags) \
     XListWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
-#define XListWidget_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XListWidget_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 条目（对标 QListWidget） ==================== */
 
@@ -143,7 +141,7 @@ const char* XListWidget_item_2(const XListWidget* self, int row);
 /** @brief 读取条目文本（新建副本版；对标 item 的独立持有形态）。
  * @param self 目标控件。
  * @param row 行号（越界返回 NULL）。
- * @return 新建 XString*（堆上文本副本，由调用方用 XString_delete_base
+ * @return 新建 XString*（堆上文本副本，由调用方用 XClassDelete
  *         释放；行文本为空时返回空串对象）。
  */
 XString* XListWidget_item_new(const XListWidget* self, int row);
@@ -151,7 +149,7 @@ XString* XListWidget_item_new(const XListWidget* self, int row);
  * @param self 目标控件。
  * @param row 行号（越界返回 NULL）。
  * @return 被取出条目的文本副本（堆上 XString*，由调用方用
- *         XString_delete_base 释放；空文本行返回空串对象）；
+ *         XClassDelete 释放；空文本行返回空串对象）；
  *         该行自列表移除，其后条目整体前移。
  */
 XString* XListWidget_takeItem(XListWidget* self, int row);

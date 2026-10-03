@@ -126,11 +126,11 @@ int xapi_core_run(void)
     childB = XWidget_create(top, 0);
     if (!top || !child || !childB) {
         XPrintf("XGuiApiTest: [FAIL] core 夹具创建失败（内存不足）\n");
-        if (top) XWidget_delete_base(top); /* 级联释放已挂树的 child/childB。 */
+        if (top) XClassDelete(top); /* 级联释放已挂树的 child/childB。 */
         else {
             /* top 失败时二者各为顶层（父为 NULL），需各自单独释放。 */
-            if (child) XWidget_delete_base(child);
-            if (childB) XWidget_delete_base(childB);
+            if (child) XClassDelete(child);
+            if (childB) XClassDelete(childB);
         }
         return 1;
     }
@@ -541,7 +541,7 @@ int xapi_core_run(void)
     {
         XString* tip = XString_create_utf8("提示文本");
         XWidget_setToolTip(child, tip);
-        XString_delete_base((XClass*)tip);
+        XClassDelete((XClass*)tip);
         XAPI_EXPECT(XWidget_toolTip(child) != NULL &&
                         XString_equals_utf8(XWidget_toolTip(child), "提示文本",
                                             XChar_CaseSensitive),
@@ -550,7 +550,7 @@ int xapi_core_run(void)
     {
         XString* empty = XString_create_utf8("");
         XWidget_setToolTip(child, empty);
-        XString_delete_base((XClass*)empty);
+        XClassDelete((XClass*)empty);
         XAPI_EXPECT(XWidget_toolTip(child) != NULL &&
                         XString_isEmpty_base(
                             (const XContainer*)XWidget_toolTip(child)),
@@ -571,7 +571,7 @@ int xapi_core_run(void)
     {
         XString* s = XString_create_utf8("就绪");
         XWidget_setStatusTip(child, s);
-        XString_delete_base((XClass*)s);
+        XClassDelete((XClass*)s);
         XAPI_EXPECT(XWidget_statusTip(child) != NULL &&
                         XString_equals_utf8(XWidget_statusTip(child), "就绪",
                                             XChar_CaseSensitive),
@@ -580,7 +580,7 @@ int xapi_core_run(void)
     {
         XString* s = XString_create_utf8("这是帮助");
         XWidget_setWhatsThis(child, s);
-        XString_delete_base((XClass*)s);
+        XClassDelete((XClass*)s);
         XAPI_EXPECT(XWidget_whatsThis(child) != NULL &&
                         XString_equals_utf8(XWidget_whatsThis(child), "这是帮助",
                                             XChar_CaseSensitive),
@@ -589,7 +589,7 @@ int xapi_core_run(void)
     {
         XString* s = XString_create_utf8("无障碍名");
         XWidget_setAccessibleName(child, s);
-        XString_delete_base((XClass*)s);
+        XClassDelete((XClass*)s);
         XAPI_EXPECT(XWidget_accessibleName(child) != NULL &&
                         XString_equals_utf8(XWidget_accessibleName(child),
                                             "无障碍名", XChar_CaseSensitive),
@@ -613,7 +613,7 @@ int xapi_core_run(void)
     {
         XString* t = XString_create_utf8("核心测试");
         XWidget_setWindowTitle(child, t);
-        XString_delete_base((XClass*)t);
+        XClassDelete((XClass*)t);
         XAPI_EXPECT(XWidget_windowTitle(child) != NULL &&
                         XString_equals_utf8(XWidget_windowTitle(child),
                                             "核心测试", XChar_CaseSensitive),
@@ -625,7 +625,7 @@ int xapi_core_run(void)
         {
             XString* t2 = XString_create_utf8("核心测试");
             XWidget_setWindowTitle(child, t2);
-            XString_delete_base((XClass*)t2);
+            XClassDelete((XClass*)t2);
             XAPI_EXPECT(g_core_sig.titleChanged == 1,
                         "重复同标题不重复发射（变化才发射）");
         }
@@ -654,7 +654,7 @@ int xapi_core_run(void)
     XWidget_setWindowModified(child, false);
 
     /* ---- 字体（对标 QWidget::setFont/font：副本深拷贝契约，用后
-     *      XFont_deinit_base；默认值随 XFONT_DEFAULT_* 配置不确定，
+     *      XClassDeinit；默认值随 XFONT_DEFAULT_* 配置不确定，
      *      不硬断言默认家族/字号）。 ---- */
     XFont_init(&font);
     XFont_setFamily(&font, "ApiTestFont");
@@ -662,7 +662,7 @@ int xapi_core_run(void)
     XFont_setBold(&font, true);
     XFont_setItalic(&font, true);
     XWidget_setFont(child, &font);
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
     fontCopy = XWidget_font(child);
     XAPI_EXPECT(strcmp(xapi_cstr(XFont_family(&fontCopy)), "ApiTestFont") == 0,
                 "setFont/font 家族往返");
@@ -674,9 +674,9 @@ int xapi_core_run(void)
         XFont fm = XWidget_fontMetrics(child);
         XAPI_EXPECT(XFont_pixelSize(&fm) == 20,
                     "fontMetrics 与控件字体一致（XFont 值拷贝方案）");
-        XFont_deinit_base((XClass*)&fm);
+        XClassDeinit((XClass*)&fm);
     }
-    XFont_deinit_base((XClass*)&fontCopy);
+    XClassDeinit((XClass*)&fontCopy);
 
     /* ================================================================
      * 5. XWidget palette 角色 + XPalette 颜色角色往返。
@@ -922,7 +922,7 @@ int xapi_core_run(void)
         XStyle_unpolish(style, child);
         XAPI_EXPECT(XWidget_isEnabled(child),
                     "基类 polish/unpolish 空实现不改变控件状态");
-        XStyle_delete_base(style);
+        XClassDelete(style);
     }
     else {
         XAPI_EXPECT(0, "XStyle_create 失败");
@@ -1014,7 +1014,7 @@ int xapi_core_run(void)
                             out.width == 100.0f && out.height == 50.0f,
                         "基类 boundingRectFor 原样返回源矩形（Qt 基类一致）");
         }
-        XGraphicsEffect_delete_base(baseEffect);
+        XClassDelete(baseEffect);
     }
     else {
         XAPI_EXPECT(0, "XGraphicsEffect_create 失败");
@@ -1151,16 +1151,16 @@ int xapi_core_run(void)
     }
     else {
         /* 创建失败路径：释放已建部分，避免泄漏。 */
-        if (opacity) XGraphicsOpacityEffect_delete_base(opacity);
-        if (blur) XGraphicsBlurEffect_delete_base(blur);
-        if (shadow) XGraphicsDropShadowEffect_delete_base(shadow);
+        if (opacity) XClassDelete(opacity);
+        if (blur) XClassDelete(blur);
+        if (shadow) XClassDelete(shadow);
         XAPI_EXPECT(0, "内置效果创建分配失败");
     }
 
     /* ---- 收尾：清焦点后级联析构（焦点全局登记不悬空）。 ---- */
     XWidget_clearFocus(child);
     XWidget_clearFocus(childB);
-    XWidget_delete_base(top);
+    XClassDelete(top);
 
 #else /* XWIDGET_ON */
 

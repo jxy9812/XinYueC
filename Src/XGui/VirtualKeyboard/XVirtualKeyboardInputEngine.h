@@ -171,19 +171,6 @@ XVtable* XVirtualKeyboardInputEngine_class_init(void);
 
 /* ==================== 生命周期（所有权边界） ==================== */
 
-/**
- * @brief      通过 XClass 虚表反初始化（栈/外部存储对象使用）。
- * @details    创建入口在 Protected 头（仅 InputContext TU 构造），
- *             归属方（XVirtualKeyboardInputContext）在自身 TU 内释放，
- *             故释放接口必须在公开头声明。
- */
-#define XVirtualKeyboardInputEngine_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-/**
- * @brief      删除堆上对象（归属方释放自有引擎用；释放后指针失效）。
- */
-#define XVirtualKeyboardInputEngine_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 
 /* ==================== 虚键族（Q_INVOKABLE 对标） ==================== */
 

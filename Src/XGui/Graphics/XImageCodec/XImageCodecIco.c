@@ -189,7 +189,7 @@ static bool ico_decodeDib(const uint8_t* payload, size_t payloadSize,
     outputFormat = XImageFormat_ARGB32;
     XImage_init_ex(&temp, width, height, outputFormat);
     if (XImage_isNull(&temp)) {
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return false;
     }
     for (int fileY = 0; fileY < height; ++fileY) {
@@ -203,7 +203,7 @@ static bool ico_decodeDib(const uint8_t* payload, size_t payloadSize,
                                                           (int)bitCount));
                 const uint8_t* palette = payload + ICO_DIB_HEADER_SIZE;
                 if ((size_t)index >= paletteEntries) {
-                    XImage_deinit_base(&temp);
+                    XClassDeinit(&temp);
                     return false;
                 }
                 color = 0xff000000u | ((uint32_t)palette[(size_t)index * 4u + 2u] << 16) |
@@ -241,7 +241,7 @@ static bool ico_decodeDib(const uint8_t* payload, size_t payloadSize,
     }
     /* Qt keeps a 32-bit ICO payload in an alpha-capable image and applies
        the AND mask for 24-bit payloads. */
-    XMove(out, &temp);
+    XClassMove(out, &temp);
     return true;
 }
 
@@ -314,17 +314,17 @@ bool XImageCodecInternal_encodeIco(const XImage* image, XByteArray* out)
     maskStride = (((size_t)width) + 31u) / 32u * 4u;
     maskBytes = maskStride * (size_t)height;
     if (colorBytes > SIZE_MAX - maskBytes - imageOffset - ICO_DIB_HEADER_SIZE) {
-        if (hasScaled) XImage_deinit_base(&scaled);
+        if (hasScaled) XClassDeinit(&scaled);
         return false;
     }
     total = imageOffset + ICO_DIB_HEADER_SIZE + colorBytes + maskBytes;
     if (!XByteArray_resize_base((XVector*)out, total)) {
-        if (hasScaled) XImage_deinit_base(&scaled);
+        if (hasScaled) XClassDeinit(&scaled);
         return false;
     }
     bytes = XByteArray_data(out);
     if (!bytes) {
-        if (hasScaled) XImage_deinit_base(&scaled);
+        if (hasScaled) XClassDeinit(&scaled);
         return false;
     }
     XMemset(bytes, 0, total);
@@ -375,7 +375,7 @@ bool XImageCodecInternal_encodeIco(const XImage* image, XByteArray* out)
             }
         }
     }
-    if (hasScaled) XImage_deinit_base(&scaled);
+    if (hasScaled) XClassDeinit(&scaled);
     return true;
 }
 

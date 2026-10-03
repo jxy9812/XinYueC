@@ -178,7 +178,7 @@ static void XImageColorProfileResource_unref(XImageColorProfileResource* resourc
                                 XAtomic_MemoryOrder_SeqCst) != 1)
         return;
     if (resource->m_iccData)
-        XByteArray_delete_base((XClass*)resource->m_iccData);
+        XClassDelete((XClass*)resource->m_iccData);
     for (channel = 0; channel < 3; ++channel)
         XFree_System(resource->m_lutData[channel]);
     XFree_System(resource);
@@ -346,7 +346,7 @@ static void XImageData_deinitText(XImageData* d)
         XString* item = (XString*)XStringList_at_base(
             (XVector*)&d->m_textKeys, (int64_t)i);
         if (item)
-            XString_deinit_base((XClass*)item);
+            XClassDeinit((XClass*)item);
     }
     XContainerSize((XContainer*)&d->m_textKeys) = 0;
     count = XStringList_size_base((const XContainer*)&d->m_textValues);
@@ -355,13 +355,13 @@ static void XImageData_deinitText(XImageData* d)
         XString* item = (XString*)XStringList_at_base(
             (XVector*)&d->m_textValues, (int64_t)i);
         if (item)
-            XString_deinit_base((XClass*)item);
+            XClassDeinit((XClass*)item);
     }
     XContainerSize((XContainer*)&d->m_textValues) = 0;
 
-    XStringList_deinit_base((XClass*)&d->m_textKeys);
-    XStringList_deinit_base((XClass*)&d->m_textValues);
-    XString_deinit_base((XClass*)&d->m_textAll);
+    XClassDeinit((XClass*)&d->m_textKeys);
+    XClassDeinit((XClass*)&d->m_textValues);
+    XClassDeinit((XClass*)&d->m_textAll);
 }
 
 /**
@@ -434,14 +434,14 @@ static XString* XImageData_buildAllText(const XImageData* d)
                     : XString_toUtf8(simplified);
         if (XString_isEmpty_base((const XContainer*)key) == false && !keyUtf8)
         {
-            XString_delete_base((XClass*)simplified);
-            XString_delete_base((XClass*)result);
+            XClassDelete((XClass*)simplified);
+            XClassDelete((XClass*)result);
             return NULL;
         }
         if (XString_isEmpty_base((const XContainer*)simplified) == false && !valueUtf8)
         {
-            XString_delete_base((XClass*)simplified);
-            XString_delete_base((XClass*)result);
+            XClassDelete((XClass*)simplified);
+            XClassDelete((XClass*)result);
             return NULL;
         }
         if ((XString_isEmpty_base((const XContainer*)key) ||
@@ -455,11 +455,11 @@ static XString* XImageData_buildAllText(const XImageData* d)
         }
         else
         {
-            XString_delete_base((XClass*)simplified);
-            XString_delete_base((XClass*)result);
+            XClassDelete((XClass*)simplified);
+            XClassDelete((XClass*)result);
             return NULL;
         }
-        XString_delete_base((XClass*)simplified);
+        XClassDelete((XClass*)simplified);
     }
     {
         size_t length = XString_length_base((const XContainer*)result);
@@ -794,11 +794,11 @@ bool XImage_reinit_ex(XImage* self, int width, int height, XImageFormat format)
        已存在目标的 XClass 元数据或 m_data 所有权。 */
     XImage_init_ex(&replacement, width, height, format);
     if (XImage_isNull(&replacement)) {
-        XImage_deinit_base(&replacement);
+        XClassDeinit(&replacement);
         return false;
     }
-    XMove(self, &replacement);
-    XImage_deinit_base(&replacement);
+    XClassMove(self, &replacement);
+    XClassDeinit(&replacement);
     return true;
 }
 
@@ -817,8 +817,8 @@ void XImage_init_file_2(XImage* self, const char* fileName, const char* format)
     XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
     XString* formatString = format ? XString_create_utf8(format) : NULL;
     XImage_init_file(self, fileNameString, formatString);
-    if (fileNameString) XString_delete_base((XClass*)fileNameString);
-    if (formatString) XString_delete_base((XClass*)formatString);
+    if (fileNameString) XClassDelete((XClass*)fileNameString);
+    if (formatString) XClassDelete((XClass*)formatString);
 }
 
 void XImage_init_file(XImage* self, const XString* fileName, const XString* format)
@@ -2051,7 +2051,7 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
         !XColorSpace_isValid(&self->m_data->m_colorSpace) ||
         !XColorSpace_isValidTarget(&colorSpace))
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     if (out == self)
@@ -2059,7 +2059,7 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
         XImage_convertToColorSpace(out, colorSpace, flags);
         return;
     }
-    XCopy(out, self);
+    XClassCopy(out, self);
     /* Qt changes to a color-capable format when the source model cannot
      * represent the target color space (for example CMYK -> RGB).  The
      * current XColorSpace value type describes RGB spaces only, so ARGB32 is
@@ -2071,11 +2071,11 @@ void XImage_convertedToColorSpace(const XImage* self, XColorSpace colorSpace,
         XImage_convertToFormat(self, XImageFormat_ARGB32, flags, &converted);
         if (XImage_isNull(&converted))
         {
-            XImage_deinit_base(out);
-            XImage_deinit_base(&converted);
+            XClassDeinit(out);
+            XClassDeinit(&converted);
             return;
         }
-        XMove(out, &converted);
+        XClassMove(out, &converted);
     }
     XImage_convertColorSpacePixels(self, out, self->m_data->m_colorSpace, colorSpace);
     XImage_setColorSpace(out, colorSpace);
@@ -2092,7 +2092,7 @@ void XImage_convertedToColorSpace_ex(const XImage* self, XColorSpace colorSpace,
         !XColorSpace_isValidTarget(&colorSpace) ||
         !XImage_colorSpaceTargetCompatibleFormat(format, &colorSpace))
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     if (XColorSpace_equals(&self->m_data->m_colorSpace, &colorSpace))
@@ -2142,10 +2142,10 @@ bool XImage_convertToColorSpace_ex(XImage* self, XColorSpace colorSpace,
     XImage_convertedToColorSpace_ex(self, colorSpace, format, flags, &converted);
     if (XImage_isNull(&converted))
     {
-        XImage_deinit_base(&converted);
+        XClassDeinit(&converted);
         return false;
     }
-    XMove(self, &converted);
+    XClassMove(self, &converted);
     return true;
 }
 
@@ -2158,7 +2158,7 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
     if (!self || !out || !transform ||
         !XColorSpace_isValidTarget(&transform->m_target))
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     source = transform->m_source;
@@ -2167,7 +2167,7 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         !XImage_colorSpaceCompatible(self, &source))
     {
         if (out != self)
-            XImage_deinit_base(out);
+            XClassDeinit(out);
         return;
     }
     /* Qt QColorTransform::isIdentity() returns without touching pixels.  The
@@ -2180,7 +2180,7 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         if (format == XImageFormat_Invalid || format == XImage_format(self))
         {
             if (out != self)
-                XCopy(out, self);
+                XClassCopy(out, self);
             return;
         }
         if (out == self)
@@ -2204,7 +2204,7 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         if (outputFormat == XImageFormat_Invalid)
         {
             if (out != self)
-                XImage_deinit_base(out);
+                XClassDeinit(out);
             return;
         }
     }
@@ -2230,7 +2230,7 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
                                                      &transform->m_target))
         {
             if (out != self)
-                XImage_deinit_base(out);
+                XClassDeinit(out);
             return;
         }
     }
@@ -2245,16 +2245,16 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         transformFormat = XImage_isIndexedColorFormat(XImage_format(self))
             ? XImage_format(self) : XImageFormat_ARGB32;
     }
-    XCopy(out, self);
+    XClassCopy(out, self);
     if (transformFormat != XImageFormat_Invalid &&
         transformFormat != XImage_format(out))
     {
         XImage converted;
         XImage_init(&converted);
         XImage_convertToFormat(out, transformFormat, flags, &converted);
-        XMove(out, &converted);
+        XClassMove(out, &converted);
     }
-    /* XCopy() above intentionally shares the source data.  A
+    /* XClassCopy() above intentionally shares the source data.  A
        color transform writes every destination pixel, so detach the output
        first whenever it is a distinct image; otherwise converting a copied
        RGBA32FPx4 image would mutate the caller's source in place. */
@@ -2268,7 +2268,7 @@ void XImage_applyColorTransform(const XImage* self, const XColorTransform* trans
         XImage converted;
         XImage_init(&converted);
         XImage_convertToFormat(out, outputFormat, flags, &converted);
-        XMove(out, &converted);
+        XClassMove(out, &converted);
     }
     XImage_setColorSpace(out, transform->m_target);
 }
@@ -2814,7 +2814,7 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
     XImage_init(&sourceCopy);
     if ((const XImage*)self == alphaChannel)
     {
-        XCopy(&sourceCopy, alphaChannel);
+        XClassCopy(&sourceCopy, alphaChannel);
         if (!sourceCopy.m_data)
             return false;
         source = &sourceCopy;
@@ -2832,15 +2832,15 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
         XImage_convertToFormat(self, targetFormat, 0, &converted);
         if (XImage_isNull(&converted))
         {
-            XImage_deinit_base(&sourceCopy);
+            XClassDeinit(&sourceCopy);
             return false;
         }
-        XMove(self, &converted);
+        XClassMove(self, &converted);
     }
     XImage_detach(self);
     if (!XImage_isDetached(self))
     {
-        XImage_deinit_base(&sourceCopy);
+        XClassDeinit(&sourceCopy);
         return false;
     }
 
@@ -2850,12 +2850,12 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
     XImage_init(&sourceImage);
     if (XImage_format(source) == XImageFormat_Alpha8)
     {
-        XCopy(&sourceImage, source);
+        XClassCopy(&sourceImage, source);
         sourceImageInitialized = sourceImage.m_data != NULL;
     }
     else if (XImage_depth(source) == 8 && XImage_isGrayscale(source))
     {
-        XCopy(&sourceImage, source);
+        XClassCopy(&sourceImage, source);
         sourceImageInitialized = sourceImage.m_data != NULL &&
                                  XImage_reinterpretAsFormat(&sourceImage,
                                                             XImageFormat_Alpha8);
@@ -2869,8 +2869,8 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
     }
     if (!sourceImageInitialized)
     {
-        XImage_deinit_base(&sourceImage);
-        XImage_deinit_base(&sourceCopy);
+        XClassDeinit(&sourceImage);
+        XClassDeinit(&sourceCopy);
         return false;
     }
 
@@ -2904,8 +2904,8 @@ bool XImage_setAlphaChannel(XImage* self, const XImage* alphaChannel)
                                    ((uint32_t)composedAlpha << 24));
         }
     XImageData_markDirty(self->m_data);
-    XImage_deinit_base(&sourceImage);
-    XImage_deinit_base(&sourceCopy);
+    XClassDeinit(&sourceImage);
+    XClassDeinit(&sourceCopy);
     return true;
 }
 
@@ -2916,11 +2916,11 @@ static void XImage_initMask(const XImage* source, XImage* out,
     if (!source || !source->m_data || source->m_data->m_width <= 0 ||
         source->m_data->m_height <= 0 || (const XImage*)out == source)
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     /* Qt 的所有 QImage 掩码工厂均返回小端位序 MonoLSB。 */
-    XImage_deinit_base(out);
+    XClassDeinit(out);
     XImage_init_ex(out, source->m_data->m_width, source->m_data->m_height,
                    XImageFormat_MonoLSB);
     if (!out->m_data) return;
@@ -3108,7 +3108,7 @@ void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out)
     if (!out) return;
     if (!self || !self->m_data || self->m_data->m_format == XImageFormat_RGB32)
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     if (self->m_data->m_depth == 1)
@@ -3122,9 +3122,9 @@ void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out)
             XImage_createAlphaMask(&indexed, flags, out);
         else
         {
-            XImage_deinit_base(out);
+            XClassDeinit(out);
         }
-        XImage_deinit_base(&indexed);
+        XClassDeinit(&indexed);
         return;
     }
     XImage_initMask(self, out, true);
@@ -3137,7 +3137,7 @@ void XImage_createAlphaMask(const XImage* self, uint32_t flags, XImage* out)
     {
         /* QImage's failed allocation produces a null result rather than a
            partially initialized mask. */
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     XImageData_markDirty(out->m_data);
@@ -3193,9 +3193,9 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
             /* Qt qimage.cpp:3158-3161 returns the result of the temporary
                RGB32 image directly; if that conversion fails, the temporary
                image is null and the mask factory must also return null. */
-            XImage_deinit_base(out);
+            XClassDeinit(out);
         }
-        XImage_deinit_base(&image32);
+        XClassDeinit(&image32);
         return;
     }
     XImage_initMask(self, out, true);
@@ -3227,7 +3227,7 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
     count = (size_t)width * (size_t)height;
     if (count > SIZE_MAX / sizeof(size_t))
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     if (count <= XIMAGE_HEURISTIC_QUEUE_STACK_COUNT)
@@ -3241,7 +3241,7 @@ void XImage_createHeuristicMask(const XImage* self, bool clipTight, XImage* out)
     {
         /* QImage returns a null image when the mask allocation fails; do not
            expose the provisional all-opaque buffer as a successful result. */
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     head = 0;
@@ -4139,7 +4139,7 @@ void XImage_copyRect(const XImage* self, const XRect* rect, XImage* out)
         XImage temp;
         XImage_init(&temp);
         XImage_copyRect(self, rect, &temp);
-        XMove(out, &temp);
+        XClassMove(out, &temp);
         return;
     }
     int w = self->m_data->m_width, h = self->m_data->m_height;
@@ -4158,17 +4158,17 @@ void XImage_copyRect(const XImage* self, const XRect* rect, XImage* out)
     }
     if (rw <= 0 || rh <= 0)
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
-    XImage_deinit_base(out);
+    XClassDeinit(out);
     XImage_init_ex(out, rw, rh, self->m_data->m_format);
     if (!out->m_data) return;
     XImageData_copyMetadata(out->m_data, self->m_data);
     if (self->m_data->m_colorCount > 0 && self->m_data->m_colorTable)
     {
         out->m_data->m_colorTable = (uint32_t*)XMalloc_System((size_t)self->m_data->m_colorCount * sizeof(uint32_t));
-        if (!out->m_data->m_colorTable) { XImage_deinit_base(out); return; }
+        if (!out->m_data->m_colorTable) { XClassDeinit(out); return; }
         XMemcpy(out->m_data->m_colorTable, self->m_data->m_colorTable, (size_t)self->m_data->m_colorCount * sizeof(uint32_t));
         out->m_data->m_colorCount = self->m_data->m_colorCount;
     }
@@ -4194,10 +4194,10 @@ void XImage_convertToFormat(const XImage* self, XImageFormat format, uint32_t fl
         XImage temp;
         XImage_init(&temp);
         XImage_convertToFormat(self, format, flags, &temp);
-        XMove(out, &temp);
+        XClassMove(out, &temp);
         return;
     }
-    XImage_deinit_base(out);
+    XClassDeinit(out);
     if (!self || !self->m_data || !self->m_data->m_data ||
         format <= XImageFormat_Invalid || format >= XImageFormat_NImageFormats) return;
     if (self->m_data->m_format == format)
@@ -4306,10 +4306,10 @@ bool XImage_convertToFormatInPlace(XImage* self, XImageFormat format, uint32_t f
     XImage_convertToFormat(self, format, flags, &temp);
     if (XImage_isNull(&temp))
     {
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return false;
     }
-    XMove(self, &temp);
+    XClassMove(self, &temp);
     return true;
 }
 
@@ -4337,7 +4337,7 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
     if (self && out && (!horizontal && !vertical ||
                         (self->m_data && self->m_data->m_width <= 1 && self->m_data->m_height <= 1)))
     {
-        if ((const XImage*)out != self) XCopy(out, self);
+        if ((const XImage*)out != self) XClassCopy(out, self);
         return;
     }
     if (self && (const XImage*)out == self)
@@ -4346,16 +4346,16 @@ void XImage_mirrored(const XImage* self, bool horizontal, bool vertical, XImage*
         XImage_init(&temp);
         XImage_mirrored(self, horizontal, vertical, &temp);
         if (temp.m_data)
-            XMove(out, &temp);
+            XClassMove(out, &temp);
         return;
     }
     if (!out) return;
     if (!self || !self->m_data || !self->m_data->m_data)
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
-    XImage_deinit_base(out);
+    XClassDeinit(out);
     XImage_init_ex(out, self->m_data->m_width, self->m_data->m_height, self->m_data->m_format);
     if (!out->m_data) return;
     XImageData_copyMetadata(out->m_data, self->m_data);
@@ -4402,7 +4402,7 @@ void XImage_mirroredInPlace(XImage* self, bool horizontal, bool vertical)
     XImage_init(&temp);
     XImage_mirrored(self, horizontal, vertical, &temp);
     if (temp.m_data)
-        XMove(self, &temp);
+        XClassMove(self, &temp);
 }
 
 void XImage_mirror(XImage* self, bool horizontal, bool vertical)
@@ -4418,7 +4418,7 @@ void XImage_rgbSwapped(const XImage* self, XImage* out)
         XImage_init(&temp);
         XImage_rgbSwapped(self, &temp);
         if (temp.m_data)
-            XMove(out, &temp);
+            XClassMove(out, &temp);
         return;
     }
     if (!out) return;
@@ -4429,10 +4429,10 @@ void XImage_rgbSwapped(const XImage* self, XImage* out)
     {
         /* Qt qimage.cpp:3584-3588 返回 *this；这些格式没有可交换的
          * 红蓝通道，必须共享原数据而不是制造新的 cacheKey。 */
-        XCopy(out, self);
+        XClassCopy(out, self);
         return;
     }
-    XImage_deinit_base(out);
+    XClassDeinit(out);
     if (!self || !self->m_data || !self->m_data->m_data) return;
     out->m_data = XImageData_clone(self->m_data);
     if (!out->m_data) return;
@@ -4493,10 +4493,10 @@ void XImage_rgbSwappedInPlace(XImage* self)
     XImage_rgbSwapped(self, &temp);
     if (XImage_isNull(&temp))
     {
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return;
     }
-    XMove(self, &temp);
+    XClassMove(self, &temp);
 }
 
 void XImage_rgbSwap(XImage* self)
@@ -4512,10 +4512,10 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
         XImage temp;
         XImage_init(&temp);
         XImage_scaled(self, width, height, aspectMode, mode, &temp);
-        XMove(out, &temp);
+        XClassMove(out, &temp);
         return;
     }
-    XImage_deinit_base(out);
+    XClassDeinit(out);
     if (!self || !self->m_data || !self->m_data->m_data || width <= 0 || height <= 0) return;
     int sw = self->m_data->m_width;
     int sh = self->m_data->m_height;
@@ -4538,7 +4538,7 @@ void XImage_scaled(const XImage* self, int width, int height, uint32_t aspectMod
      * cacheKey in that case instead of allocating an identical pixel buffer. */
     if (targetWidth == sw && targetHeight == sh)
     {
-        XCopy(out, self);
+        XClassCopy(out, self);
         return;
     }
     out->m_data = XImageData_create(targetWidth, targetHeight, self->m_data->m_format,
@@ -4597,13 +4597,13 @@ void XImage_scaledToWidth(const XImage* self, int width, uint32_t mode, XImage* 
        non-positive width.  Replace an existing destination safely instead
        of reinitializing it over a live shared-data reference. */
     if (!self || !self->m_data || width <= 0) {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     int64_t scaledHeight = ((int64_t)self->m_data->m_height * width + self->m_data->m_width / 2) / self->m_data->m_width;
     if (scaledHeight < 1) scaledHeight = 1;
     if (scaledHeight > INT_MAX) {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     int height = (int)scaledHeight;
@@ -4616,13 +4616,13 @@ void XImage_scaledToHeight(const XImage* self, int height, uint32_t mode, XImage
     /* 与 scaledToWidth() 相同，非法高度必须安全地把已存在的目标
        替换为空图像，不能覆盖其 m_data 指针造成泄漏。 */
     if (!self || !self->m_data || height <= 0) {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     int64_t scaledWidth = ((int64_t)self->m_data->m_width * height + self->m_data->m_height / 2) / self->m_data->m_height;
     if (scaledWidth < 1) scaledWidth = 1;
     if (scaledWidth > INT_MAX) {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     int width = (int)scaledWidth;
@@ -4744,25 +4744,25 @@ void XImage_transformed(const XImage* self, const XImageTransform* matrix,
     {
         XImage sourceCopy;
         XImage_init(&sourceCopy);
-        XCopy(&sourceCopy, self);
+        XClassCopy(&sourceCopy, self);
         XImage_transformed(&sourceCopy, matrix, mode, out);
-        XImage_deinit_base(&sourceCopy);
+        XClassDeinit(&sourceCopy);
         return;
     }
     XImage_trueMatrix(matrix, self ? XImage_width(self) : 0,
                       self ? XImage_height(self) : 0, &adjusted, &size);
     if (!self || !self->m_data || size.width <= 0 || size.height <= 0)
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
     XImage_transformMatrix(&adjusted, transform);
     if (!XImage_transformInverse(transform, inverse))
     {
-        XImage_deinit_base(out);
+        XClassDeinit(out);
         return;
     }
-    XImage_deinit_base(out);
+    XClassDeinit(out);
     XImage_init_ex(out, size.width, size.height, self->m_data->m_format);
     if (!out->m_data) return;
     XImageData_copyMetadata(out->m_data, self->m_data);
@@ -4880,28 +4880,28 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format)
     if (!self || !fileName) return false;
     /* 对标 LVGL lv_image_cache 的「load 先查缓存」模式：文件加载漏斗
      * 逐次重复文件 IO + 解码，命中时把缓存条目浅共享转移进 self
-     * （XMove 窃取 m_data 引用，禁止深拷贝），完全跳过下方文件 IO 与
+     * （XClassMove 窃取 m_data 引用，禁止深拷贝），完全跳过下方文件 IO 与
      * 解码。XIMAGECACHE_ON=0 时 lookup 为空实现，恒未命中，直通零
      * 开销。键与稍后 insert 保持一致：fileName 原串 + format 原指针
      * 内容，不做规范化。 */
     XImage_init(&cached);
     if (XImageCache_lookup(fileName, format, &cached)) {
-        XMove(self, &cached);
+        XClassMove(self, &cached);
         return true;
     }
     path = XString_create_utf8(fileName);
     file = path ? XFile_create_2(path) : NULL;
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
-        if (path) XString_delete_base((XClass*)path);
+        if (file) XClassDelete((XClass*)file);
+        if (path) XClassDelete((XClass*)path);
         return false;
     }
     bytes = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!bytes || XByteArray_size_base((const XContainer*)bytes) > INT_MAX) {
-        if (bytes) XByteArray_delete_base((XClass*)bytes);
-        if (path) XString_delete_base((XClass*)path);
+        if (bytes) XClassDelete((XClass*)bytes);
+        if (path) XClassDelete((XClass*)path);
         return false;
     }
 
@@ -4938,7 +4938,7 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format)
         if (!result) {
             /* 每次失败都将临时图像恢复为空，随后按内容探测；这也
                保持 XImage_loadFromData_2() 的失败失效契约。 */
-            XImage_deinit_base(&decoded);
+            XClassDeinit(&decoded);
             result = XImage_loadFromData_2(
                 &decoded, XByteArray_data(bytes),
                 (int)XByteArray_size_base((const XContainer*)bytes), NULL);
@@ -4946,18 +4946,18 @@ bool XImage_load_2(XImage* self, const char* fileName, const char* format)
     }
     if (result) {
         /* 先登记缓存再移交 self：insert 内部对 decoded 深拷贝，本副本
-         * 所有权不动，随后 XMove 照常移交，无 double-free 风险。键与
+         * 所有权不动，随后 XClassMove 照常移交，无 double-free 风险。键与
          * 命中路径一致（fileName 原串 + format 原指针内容）。加载失败
          * 不 invalidate：文件可能只是暂时不可读，保守保留旧条目。 */
         XImageCache_insert(fileName, format, &decoded);
-        XMove(self, &decoded);
+        XClassMove(self, &decoded);
     } else {
         /* 与 QImage::load() 一致，失败结果替换为 null 图像。 */
-        XImage_deinit_base(self);
-        XImage_deinit_base(&decoded);
+        XClassDeinit(self);
+        XClassDeinit(&decoded);
     }
-    XByteArray_delete_base((XClass*)bytes);
-    if (path) XString_delete_base((XClass*)path);
+    XClassDelete((XClass*)bytes);
+    if (path) XClassDelete((XClass*)path);
     return result;
 }
 
@@ -4990,12 +4990,12 @@ bool XImage_loadFromData_2(XImage* self, const uint8_t* data, int len, const cha
     }
 #endif
     if (!result) goto failed;
-    XMove(self, &decoded);
+    XClassMove(self, &decoded);
     return true;
 
 failed:
-    XImage_deinit_base(&decoded);
-    XImage_deinit_base(self);
+    XClassDeinit(&decoded);
+    XClassDeinit(self);
     return false;
 }
 
@@ -5056,7 +5056,7 @@ bool XImage_save_2(const XImage* self, const char* fileName, const char* format,
                  (int64_t)XByteArray_size_base((const XContainer*)bytes);
     }
 #endif
-    if (file) { XIODevice_close_base((XIODevice*)file); XClass_delete_base((XClass*)file); } if (bytes) XByteArray_delete_base((XClass*)bytes); if (path) XString_delete_base((XClass*)path); if (type) XString_delete_base((XClass*)type); if (extension) XString_delete_base((XClass*)extension); return ok;
+    if (file) { XIODevice_close_base((XIODevice*)file); XClassDelete((XClass*)file); } if (bytes) XClassDelete((XClass*)bytes); if (path) XClassDelete((XClass*)path); if (type) XClassDelete((XClass*)type); if (extension) XClassDelete((XClass*)extension); return ok;
 }
 
 bool XImage_save(const XImage* self, const XString* fileName, const XString* format, int quality)
@@ -5073,7 +5073,7 @@ bool XImage_loadDevice_2(XImage* self, XIODevice* device, const char* format)
     if (!bytes) return false;
     result = XImage_loadFromData_2(self, XByteArray_data(bytes),
                                  (int)XByteArray_size_base((const XContainer*)bytes), format);
-    XByteArray_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     return result;
 }
 
@@ -5113,7 +5113,7 @@ bool XImage_saveDevice_2(const XImage* self, XIODevice* device, const char* form
       }
     }
 #endif
-    if (bytes) XByteArray_delete_base((XClass*)bytes); if (type) XString_delete_base((XClass*)type); return ok;
+    if (bytes) XClassDelete((XClass*)bytes); if (type) XClassDelete((XClass*)type); return ok;
 }
 
 bool XImage_saveDevice(const XImage* self, XIODevice* device, const XString* format, int quality)
@@ -5169,19 +5169,19 @@ const char* XImage_text_2(const XImage* self, const char* key)
             aggregated = XImageData_buildAllText(self->m_data);
             if (!aggregated)
             {
-                XString_delete_base((XClass*)keyString);
+                XClassDelete((XClass*)keyString);
                 return NULL;
             }
             XString_assign(&self->m_data->m_textAll, aggregated);
-            XString_delete_base((XClass*)aggregated);
+            XClassDelete((XClass*)aggregated);
         }
-        XString_delete_base((XClass*)keyString);
+        XClassDelete((XClass*)keyString);
         if (XString_isEmpty_base((const XContainer*)&self->m_data->m_textAll))
             return emptyUtf8;
         return XString_toUtf8(&self->m_data->m_textAll);
     }
     value = XImage_text_const(self, keyString);
-    if (keyString) XString_delete_base((XClass*)keyString);
+    if (keyString) XClassDelete((XClass*)keyString);
     if (!value) return emptyUtf8;
     return XString_isEmpty_base((const XContainer*)value) ? emptyUtf8
                                                           : XString_toUtf8(value);
@@ -5195,8 +5195,8 @@ void XImage_setText_2(XImage* self, const char* key, const char* value)
     keyString = XString_create_utf8(key);
     valueString = XString_create_utf8(value);
     if (keyString && valueString) XImage_setText(self, keyString, valueString);
-    if (keyString) XString_delete_base((XClass*)keyString);
-    if (valueString) XString_delete_base((XClass*)valueString);
+    if (keyString) XClassDelete((XClass*)keyString);
+    if (valueString) XClassDelete((XClass*)valueString);
 }
 
 XString* XImage_text(const XImage* self, const XString* key)
@@ -5244,7 +5244,7 @@ void XImage_setText(XImage* self, const XString* key, const XString* value)
         {
             XString* target = (XString*)XStringList_at_base((XVector*)&self->m_data->m_textValues, i);
             if (!target) return;
-            XCopy((XClass*)target, (const XClass*)value);
+            XClassCopy((XClass*)target, (const XClass*)value);
             XImageData_clearTextAll(self->m_data);
             return;
         }
@@ -5294,7 +5294,7 @@ bool XImage_applyTextDescription(XImage* self, const XString* description)
         simplified = XString_simplified(pair);
         if (!simplified || XString_isEmpty_base((const XContainer*)simplified))
         {
-            if (simplified) XString_delete_base((XClass*)simplified);
+            if (simplified) XClassDelete((XClass*)simplified);
             continue;
         }
         colonIndex = XString_indexOf_char(pair, (XChar)':', 0,
@@ -5318,12 +5318,12 @@ bool XImage_applyTextDescription(XImage* self, const XString* description)
                 XString* keyCheck = XString_simplified(key);
                 if (!keyCheck || XString_isEmpty_base((const XContainer*)keyCheck))
                 {
-                    if (keyCheck) XString_delete_base((XClass*)keyCheck);
-                    XString_delete_base((XClass*)key);
+                    if (keyCheck) XClassDelete((XClass*)keyCheck);
+                    XClassDelete((XClass*)key);
                     key = NULL;
                 }
                 else
-                    XString_delete_base((XClass*)keyCheck);
+                    XClassDelete((XClass*)keyCheck);
             }
             valuePos = colonIndex >= 0 ? (size_t)colonIndex + 2u : 1u;
             pairLength = XString_length_base((const XContainer*)pair);
@@ -5332,17 +5332,17 @@ bool XImage_applyTextDescription(XImage* self, const XString* description)
             if (value)
             {
                 XString* normalized = XString_simplified(value);
-                XString_delete_base((XClass*)value);
+                XClassDelete((XClass*)value);
                 value = normalized;
             }
         }
         if (key && value)
             XImage_setText(self, key, value);
-        if (key) XString_delete_base((XClass*)key);
-        if (value) XString_delete_base((XClass*)value);
-        if (simplified) XString_delete_base((XClass*)simplified);
+        if (key) XClassDelete((XClass*)key);
+        if (value) XClassDelete((XClass*)value);
+        if (simplified) XClassDelete((XClass*)simplified);
     }
-    XStringList_delete_base((XClass*)pairs);
+    XClassDelete((XClass*)pairs);
     return true;
 }
 
@@ -5497,7 +5497,7 @@ void XImage_fromData_2(const uint8_t* data, int size, const char* format, XImage
 {
     XString* formatString = format ? XString_create_utf8(format) : NULL;
     XImage_fromData(data, size, formatString, out);
-    if (formatString) XString_delete_base((XClass*)formatString);
+    if (formatString) XClassDelete((XClass*)formatString);
 }
 
 void XImage_fromData(const uint8_t* data, int size, const XString* format, XImage* out)
@@ -5734,10 +5734,10 @@ void XImage_invertPixels(XImage* self, XImageInvertMode mode)
         {
             XImage_invertPixels(&temp, mode);
             XImage_convertToFormat(&temp, original, 0, self);
-            XImage_deinit_base(&temp);
+            XClassDeinit(&temp);
             return;
         }
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
     }
     if (depth < 32)
     {

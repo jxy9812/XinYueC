@@ -42,11 +42,11 @@ static void clearConnBuffers(XESP8266ConnInfo* info)
 {
     if (!info) return;
     if (info->m_readBuffer) {
-        XQueueBase_delete_base(info->m_readBuffer);
+        XClassDelete(info->m_readBuffer);
         info->m_readBuffer = NULL;
     }
     if (info->m_writeBuffer) {
-        XQueueBase_delete_base(info->m_writeBuffer);
+        XClassDelete(info->m_writeBuffer);
         info->m_writeBuffer = NULL;
     }
     info->remaining_recv_size = 0;
@@ -360,8 +360,8 @@ bool ClosedClient(XESP8266Wifi* device)
             info->connId = -1;
             info->status = XESP8266_Status_Disconnected;
             info->isServer = true;
-            if (info->m_readBuffer) { XQueueBase_delete_base(info->m_readBuffer); info->m_readBuffer = NULL; }
-            if (info->m_writeBuffer) { XQueueBase_delete_base(info->m_writeBuffer); info->m_writeBuffer = NULL; }
+            if (info->m_readBuffer) { XClassDelete(info->m_readBuffer); info->m_readBuffer = NULL; }
+            if (info->m_writeBuffer) { XClassDelete(info->m_writeBuffer); info->m_writeBuffer = NULL; }
             if (wasConnected) {
                 if (device->m_activeConnCount > 0) device->m_activeConnCount--;
                 XESP8266Wifi_serverStatusChanged_signal(device, connId, XESP8266_Status_Disconnected);

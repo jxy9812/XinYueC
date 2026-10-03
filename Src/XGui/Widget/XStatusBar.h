@@ -63,8 +63,6 @@ void XStatusBar_init(XStatusBar* self, XWidget* parent, XWidgetFlags flags);
 #define XStatusBar_create(parent, flags) XStatusBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XStatusBar* XStatusBar_create_ex(XMemoryType memory, XWidget* parent,
                                  XWidgetFlags flags);
-#define XStatusBar_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XStatusBar_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 常驻控件（对标 QStatusBar public API） ==================== */
 

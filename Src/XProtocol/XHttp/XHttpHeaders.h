@@ -242,27 +242,27 @@ XVtable* XHttpHeaders_class_init(void);
 /**
  * - @brief 初始化一个栈上或已分配的 HTTP 字段集合。
  * - @param self 待初始化对象；不能为 NULL。
- * - @return 无。初始化后对象为空，可配对调用 XHttpHeaders_deinit_base。
+ * - @return 无。初始化后对象为空，可配对调用 XClassDeinit。
  */
 void XHttpHeaders_init(XHttpHeaders* self);
 
 /**
  * - @brief 在堆上创建一个空 HTTP 字段集合。
- * - @return 新对象，调用者必须使用 XHttpHeaders_delete_base 释放；分配失败返回 NULL。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放；分配失败返回 NULL。
  */
 XHttpHeaders* XHttpHeaders_create_ex(XMemoryType memory);
 
 /**
  * - @brief 深拷贝创建 HTTP 字段集合。
  * - @param other 源字段集合；NULL 时返回 NULL。
- * - @return 新对象，调用者必须使用 XHttpHeaders_delete_base 释放；失败返回 NULL。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XHttpHeaders* XHttpHeaders_create_copy(const XHttpHeaders* other);
 
 /**
  * - @brief 移动创建 HTTP 字段集合。
  * - @param other 源字段集合；不能为 NULL。成功后源对象保持已初始化但为空的状态。
- * - @return 新对象，调用者必须使用 XHttpHeaders_delete_base 释放；失败返回 NULL。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XHttpHeaders* XHttpHeaders_create_move(XHttpHeaders* other);
 
@@ -270,8 +270,6 @@ XHttpHeaders* XHttpHeaders_create_move(XHttpHeaders* other);
  * - @brief 反初始化、删除、深拷贝与移动的 XClass 调度入口。
  * - @details 对齐 QHttpHeaders 的值语义；copy/move 支持未初始化目标并处理自赋值。
  */
-#define XHttpHeaders_deinit_base XClass_deinit_base
-#define XHttpHeaders_delete_base XClass_delete_base
 
 /**
  * - @brief 以字节数组形式追加一个 HTTP 字段。
@@ -389,7 +387,7 @@ bool XHttpHeaders_containsKnown(const XHttpHeaders* self, XHttpHeaders_WellKnown
  * - @brief 获取首个同名字段值的深拷贝。
  * - @param self 字段集合；NULL 时返回 NULL。
  * - @param name 要查找的名称；借用，NULL 时返回 NULL。
- * - @return 新建 XByteArray，调用者必须使用 XByteArray_delete_base 释放；未找到返回 NULL。
+ * - @return 新建 XByteArray，调用者必须使用 XClassDelete 释放；未找到返回 NULL。
  */
 XByteArray* XHttpHeaders_value(const XHttpHeaders* self, const XByteArray* name);
 
@@ -407,7 +405,7 @@ XByteArray* XHttpHeaders_valueKnown(const XHttpHeaders* self,
  * - @param self 字段集合；可为 NULL。
  * - @param name 要查找的名称；借用，NULL 时返回 defaultValue 的拷贝。
  * - @param defaultValue 未找到时使用的默认值；借用，NULL 等价于空字节数组。
- * - @return 新建 XByteArray，调用者必须使用 XByteArray_delete_base 释放；分配失败返回 NULL。
+ * - @return 新建 XByteArray，调用者必须使用 XClassDelete 释放；分配失败返回 NULL。
  */
 XByteArray* XHttpHeaders_value_or(const XHttpHeaders* self,
                                   const XByteArray* name,
@@ -460,7 +458,7 @@ const XByteArray* XHttpHeaders_value_const(const XHttpHeaders* self, const XByte
  * - @brief 合并所有同名字段值。
  * - @param self 字段集合；NULL 时返回 NULL。
  * - @param name 要查找的名称；借用，NULL 时返回 NULL。
- * - @return 以 `, ` 连接的字段值新对象；调用者必须使用 XByteArray_delete_base 释放；未找到返回 NULL。
+ * - @return 以 `, ` 连接的字段值新对象；调用者必须使用 XClassDelete 释放；未找到返回 NULL。
  * - @note 对齐 QHttpHeaders::combinedValue；调用方应避免将 Set-Cookie 作为可逗号合并字段处理。
  */
 XByteArray* XHttpHeaders_combinedValue(const XHttpHeaders* self, const XByteArray* name);

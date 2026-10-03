@@ -25,7 +25,6 @@ void XSwitchDeviceModbus_init(XSwitchDeviceModbus* sw);
 #define XSwitchDeviceModbus_open_base		 			XSwitchDeviceBase_open_base
 #define XSwitchDeviceModbus_close_base		    		XSwitchDeviceBase_close_base
 #define XSwitchDeviceModbus_setDevice_base 				XSwitchDeviceBase_setDevice_base
-#define XSwitchDeviceModbus_delete_base					XSwitchDeviceBase_delete_base
 #define XSwitchDeviceModbus_poll_base		 			XSwitchDeviceBase_poll_base
 #ifdef __cplusplus
 }

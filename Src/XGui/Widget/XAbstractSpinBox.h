@@ -141,8 +141,6 @@ void XAbstractSpinBox_init(XAbstractSpinBox* self, XWidget* parent, XWidgetFlags
  * @return 返回对象指针；无效时返回 NULL。
  */
 XAbstractSpinBox* XAbstractSpinBox_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XAbstractSpinBox_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XAbstractSpinBox_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 父类 XWidget API 宏转发（对齐库内 XRadioButton 惯例） ==================== */
 

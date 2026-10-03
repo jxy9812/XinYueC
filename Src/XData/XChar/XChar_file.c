@@ -170,12 +170,12 @@ static bool open_file_for_thread(XChar_ThreadFile* tf)
     tf->file = XFile_create();
     if (!tf->file)
     {
-        XString_delete_base(xpath);
+        XClassDelete(xpath);
         return false;
     }
     
     XFile_setFileName(tf->file, xpath);
-    XString_delete_base(xpath);
+    XClassDelete(xpath);
     
     if (!XFile_open_2(tf->file, XIODevice_ReadOnly, 0))
     {
@@ -257,10 +257,10 @@ static XFile* open_binary_file(void)
     if (!xpath) return NULL;
 
     s_files.file = XFile_create();
-    if (!s_files.file) { XString_delete_base(xpath); return NULL; }
+    if (!s_files.file) { XClassDelete(xpath); return NULL; }
 
     XFile_setFileName(s_files.file, xpath);
-    XString_delete_base(xpath);
+    XClassDelete(xpath);
 
     if (!XFile_open_2(s_files.file, XIODevice_ReadOnly, 0)) {
         XFile_deleteLater(s_files.file); s_files.file = NULL;
@@ -618,7 +618,7 @@ void XCharPlatform_cleanupAll(void)
     }
     
     XMapBase_clear_base(g_thread_map);
-    XHashMap_delete_base(g_thread_map);
+    XClassDelete(g_thread_map);
     g_thread_map = NULL;
     
     XReadWriteLock_unlock(g_lock);

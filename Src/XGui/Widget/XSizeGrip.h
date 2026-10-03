@@ -41,8 +41,6 @@ void XSizeGrip_init(XSizeGrip* self, XWidget* parent);
  * @brief      按指定内存类型创建控件实例。
  */
 XSizeGrip* XSizeGrip_create_ex(XMemoryType memory, XWidget* parent);
-#define XSizeGrip_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XSizeGrip_delete_base(self) XClass_delete_base((XClass*)(self))
 
 #endif /* XWIDGET_ON && XSIZEGRIP_ON */
 

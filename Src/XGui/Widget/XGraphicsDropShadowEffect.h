@@ -67,10 +67,6 @@ void XGraphicsDropShadowEffect_init(XGraphicsDropShadowEffect* self);
  */
 XGraphicsDropShadowEffect* XGraphicsDropShadowEffect_create_ex(
     XMemoryType memory);
-#define XGraphicsDropShadowEffect_deinit_base(self) \
-    XGraphicsEffect_deinit_base((XGraphicsEffect*)(self))
-#define XGraphicsDropShadowEffect_delete_base(self) \
-    XGraphicsEffect_delete_base((XGraphicsEffect*)(self))
 
 /**
  * @brief      获取投影偏移（对标 QGraphicsDropShadowEffect::offset）。

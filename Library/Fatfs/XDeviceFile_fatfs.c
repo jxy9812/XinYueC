@@ -238,7 +238,7 @@ static const char* XFATFS_parseVolumeLocked(const char* utf8Path,
                 driveUtf8 = driveName;
             }
         }
-        XString_delete_base(xDrive);
+        XClassDelete(xDrive);
         if (!driveUtf8 || bestLen == 0) return NULL;
 
         *outPath = utf8Path + bestLen;
@@ -872,7 +872,7 @@ bool XDeviceFile_rmdir(const XString* path, bool recursive)
         if (fno.fattrib & AM_DIR) {
             XString* subPath = XString_create_utf8(fullPath);
             XDeviceFile_rmdir(subPath, true);
-            XString_delete_base(subPath);
+            XClassDelete(subPath);
         } else {
             f_unlink(fullPath);
         }
@@ -982,7 +982,7 @@ bool XDeviceFile_resolvePath(const XString* path, XString* result, XPathStyle st
                     snprintf(absPath, sizeof(absPath), "%s%s", driveUtf8, resolvedFatfs + 2);
                 }
             }
-            if (xDrive) XString_delete_base(xDrive);
+            if (xDrive) XClassDelete(xDrive);
             if (absPath[0] == '\0') strcpy(absPath, resolvedFatfs);
         } else {
             strcpy(absPath, resolvedFatfs);
@@ -1014,11 +1014,11 @@ bool XDeviceFile_getSpecialPath(XSpecialPath type, XString* path)
                         char converted[256];
                         snprintf(converted, sizeof(converted), "%s%s", driveUtf8, cwd + 2);
                         XString_assign_utf8(path, converted);
-                        XString_delete_base(xDrive);
+                        XClassDelete(xDrive);
                         return true;
                     }
                 }
-                if (xDrive) XString_delete_base(xDrive);
+                if (xDrive) XClassDelete(xDrive);
             }
         }
         XString_assign_utf8(path, cwd);
@@ -1191,9 +1191,9 @@ bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userDa
         XString* path = XString_create();
         if (!path) return false;
         bool ok = XFATFS_platformDriveAt(i, path);
-        if (!ok) { XString_delete_base(path); return false; }
+        if (!ok) { XClassDelete(path); return false; }
         bool cont = callback(path, userData);
-        XString_delete_base(path);
+        XClassDelete(path);
         if (!cont) return false;
     }
     return true;

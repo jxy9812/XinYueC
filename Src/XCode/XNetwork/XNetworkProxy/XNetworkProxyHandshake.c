@@ -332,27 +332,27 @@ void XNetworkProxyHandshake_destroyContext(XProxyHandshakeContext* ctx) {
         return;
     }
     
-    XString_delete_base(ctx->targetHost);
-    XByteArray_delete_base(ctx->socks5Buffer);
-    XByteArray_delete_base(ctx->httpBuffer);
-    XByteArray_delete_base(ctx->httpAuthHeader);
+    XClassDelete(ctx->targetHost);
+    XClassDelete(ctx->socks5Buffer);
+    XClassDelete(ctx->httpBuffer);
+    XClassDelete(ctx->httpAuthHeader);
     
     // 释放Digest参数
-    XString_delete_base(ctx->digestParams.realm);
-    XString_delete_base(ctx->digestParams.nonce);
-    XString_delete_base(ctx->digestParams.opaque);
-    XString_delete_base(ctx->digestParams.algorithm);
-    XString_delete_base(ctx->digestParams.qop);
-    XString_delete_base(ctx->digestParams.cnonce);
+    XClassDelete(ctx->digestParams.realm);
+    XClassDelete(ctx->digestParams.nonce);
+    XClassDelete(ctx->digestParams.opaque);
+    XClassDelete(ctx->digestParams.algorithm);
+    XClassDelete(ctx->digestParams.qop);
+    XClassDelete(ctx->digestParams.cnonce);
     
     // 释放NTLM上下文
-    XByteArray_delete_base(ctx->ntlmContext.type1Message);
-    XByteArray_delete_base(ctx->ntlmContext.type2Message);
-    XByteArray_delete_base(ctx->ntlmContext.type3Message);
-    XString_delete_base(ctx->ntlmContext.workstation);
-    XString_delete_base(ctx->ntlmContext.domain);
+    XClassDelete(ctx->ntlmContext.type1Message);
+    XClassDelete(ctx->ntlmContext.type2Message);
+    XClassDelete(ctx->ntlmContext.type3Message);
+    XClassDelete(ctx->ntlmContext.workstation);
+    XClassDelete(ctx->ntlmContext.domain);
     
-    XString_delete_base(ctx->errorMessage);
+    XClassDelete(ctx->errorMessage);
     
     XFree_System(ctx);
 }
@@ -991,7 +991,7 @@ int XHttpProxy_buildDigestAuth(
     
     char ha1[33];
     byteArrayToHex(ha1Hash, ha1, sizeof(ha1));
-    XByteArray_delete_base(ha1Hash);
+    XClassDelete(ha1Hash);
     
     // HA2 = MD5(method:uri)
     char ha2Input[512];
@@ -1004,7 +1004,7 @@ int XHttpProxy_buildDigestAuth(
     
     char ha2[33];
     byteArrayToHex(ha2Hash, ha2, sizeof(ha2));
-    XByteArray_delete_base(ha2Hash);
+    XClassDelete(ha2Hash);
     
     // 计算response
     char responseInput[1024];
@@ -1026,7 +1026,7 @@ int XHttpProxy_buildDigestAuth(
     
     char response[33];
     byteArrayToHex(responseHash, response, sizeof(response));
-    XByteArray_delete_base(responseHash);
+    XClassDelete(responseHash);
     
     // 构建Authorization头
     int len;
@@ -1092,7 +1092,7 @@ static void ntlmHash(const char* password, uint8_t* hashOut) {
         if (len >= 16) {
             memcpy(hashOut, data, 16);
         }
-        XByteArray_delete_base(hash);
+        XClassDelete(hash);
     }
     
     XFree_System(utf16Pwd);
@@ -1138,7 +1138,7 @@ static void ntlm2Hash(const char* password, const char* username, const char* do
         if (len >= 16) {
             memcpy(hashOut, data, 16);
         }
-        XByteArray_delete_base(hmacResult);
+        XClassDelete(hmacResult);
     }
 }
 
@@ -1800,7 +1800,7 @@ XProxyHandshakeState XNetworkProxyHandshake_process(
                     // 调用平台GSSAPI认证
                     XString* svcStr = XString_create_utf8(serviceName);
                     int gssResult = XDeviceNetwork_gssapiAuth(svcStr, NULL, outputToken, &ctx->gssContext);
-                    XString_delete_base(svcStr);
+                    XClassDelete(svcStr);
                     
                     if (gssResult >= 0 && XByteArray_size_base(outputToken) > 0) {
                         // Base64编码输出令牌
@@ -1822,7 +1822,7 @@ XProxyHandshakeState XNetworkProxyHandshake_process(
                         }
                     }
                     
-                    XByteArray_delete_base(outputToken);
+                    XClassDelete(outputToken);
                 }
             }
             
@@ -2008,7 +2008,7 @@ static bool getProxyFromEnv(const char* envVar, XNetworkProxy* outProxy) {
         XString* hostStr = XString_create_utf8(host);
         if (hostStr) {
             XNetworkProxy_setHostName(outProxy, hostStr);
-            XString_delete_base(hostStr);
+            XClassDelete(hostStr);
         }
         XNetworkProxy_setPort(outProxy, port);
         return true;
@@ -2055,7 +2055,7 @@ bool XNetworkProxy_getSystemProxy(
     // XDeviceNetwork_getSystemProxy 在 Windows 上使用 WinHTTP，在其他平台可能使用不同机制
     XString* queryUrlStr = queryUrl ? XString_create_utf8(queryUrl) : NULL;
     bool sysProxyOk = XDeviceNetwork_getSystemProxy(queryUrlStr, outProxy);
-    XString_delete_base(queryUrlStr);
+    XClassDelete(queryUrlStr);
     if (sysProxyOk) {
         // 平台函数成功获取代理
         // 检查是否需要绕过代理

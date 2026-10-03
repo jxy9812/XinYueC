@@ -28,7 +28,7 @@ static void XModbusTcpServer_deinitClientBuffer(void* value)
 {
     XByteArray** buffer = (XByteArray**)value;
     if (buffer && *buffer) {
-        XByteArray_delete_base(*buffer);
+        XClassDelete(*buffer);
         *buffer = NULL;
     }
 }
@@ -127,10 +127,10 @@ static void processTcpFrame(XModbusTcpServer* server, XTcpSocket* client, const 
             XFree_System(respFrame);
         }
 
-        XModbusResponse_delete_base(response);
+        XClassDelete(response);
     }
 
-    XModbusRequest_delete_base(request);
+    XClassDelete(request);
 }
 
 // =============== 类初始化 ================
@@ -203,7 +203,7 @@ static void VXModbusTcpServer_deinit(XModbusTcpServer* server)
 
     // 释放客户端映射
     if (server->m_connectedClients) {
-        XMapBase_delete_base(server->m_connectedClients);
+        XClassDelete(server->m_connectedClients);
         server->m_connectedClients = NULL;
     }
 
@@ -231,7 +231,7 @@ static bool VXModbusTcpServer_open(XModbusDevice* device)
         XString* addrStr = XVariant_toString(addrVar);
         if (addrStr) {
             addr=XHostAddress_create_fromString(XString_constData(addrStr));
-            XString_delete_base(addrStr);
+            XClassDelete(addrStr);
         }
     }
 
@@ -244,7 +244,7 @@ static bool VXModbusTcpServer_open(XModbusDevice* device)
             "Failed to start TCP server");
     }
     if(addr)
-        XHostAddress_delete_base(addr);
+        XClassDelete(addr);
     return result;
 }
 

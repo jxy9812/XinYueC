@@ -35,11 +35,11 @@ void XModbusAdu_deinit(XModbusAdu* adu)
 {
     if (!adu) return;
     if (adu->m_rawData) {
-        XByteArray_delete_base(adu->m_rawData);
+        XClassDelete(adu->m_rawData);
         adu->m_rawData = NULL;
     }
     if (adu->m_data) {
-        XByteArray_delete_base(adu->m_data);
+        XClassDelete(adu->m_data);
         adu->m_data = NULL;
     }
 }
@@ -59,14 +59,14 @@ XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu)
 
     XByteArray* result = XByteArray_create();
     if (!result) {
-        if (pduData) XByteArray_delete_base(pduData);
+        if (pduData) XClassDelete(pduData);
         return NULL;
     }
 
     // 直接resize到最终大小——单次分配，无需后续拷贝
     if (!XByteArray_resize_base(result, frameSize)) {
-        if (pduData) XByteArray_delete_base(pduData);
-        XByteArray_delete_base(result);
+        if (pduData) XClassDelete(pduData);
+        XClassDelete(result);
         return NULL;
     }
 
@@ -85,7 +85,7 @@ XByteArray* XModbusAdu_createRtuFrame(int serverAddress, const XModbusPdu* pdu)
     XMemory_write_data(data + frameSize - 2, XBYTE_ORDER_LITTLE_ENDIAN,
                        (const uint8_t*)&crc, sizeof(crc));
 
-    if (pduData) XByteArray_delete_base(pduData);
+    if (pduData) XClassDelete(pduData);
     return result;
 }
 
@@ -115,14 +115,14 @@ XByteArray* XModbusAdu_createAsciiFrame(int serverAddress, const XModbusPdu* pdu
 
     XByteArray* result = XByteArray_create();
     if (!result) {
-        if (pduData) XByteArray_delete_base(pduData);
+        if (pduData) XClassDelete(pduData);
         return NULL;
     }
 
     // 直接resize到最终大小——单次分配，无需后续拷贝
     if (!XByteArray_resize_base(result, frameSize)) {
-        if (pduData) XByteArray_delete_base(pduData);
-        XByteArray_delete_base(result);
+        if (pduData) XClassDelete(pduData);
+        XClassDelete(result);
         return NULL;
     }
 
@@ -158,7 +158,7 @@ XByteArray* XModbusAdu_createAsciiFrame(int serverAddress, const XModbusPdu* pdu
     data[pos++] = '\r';
     data[pos++] = (uint8_t)delimiter;
 
-    if (pduData) XByteArray_delete_base(pduData);
+    if (pduData) XClassDelete(pduData);
     return result;
 }
 
@@ -233,7 +233,7 @@ XModbusAdu* XModbusAdu_parseAscii(const uint8_t* data, size_t size)
     // data: 直接resize + hex解析写入，消除临时binData缓冲
     adu->m_data = XByteArray_create();
     if (!adu->m_data || !XByteArray_resize_base(adu->m_data, binLen)) {
-        if (adu->m_data) XByteArray_delete_base(adu->m_data);
+        if (adu->m_data) XClassDelete(adu->m_data);
         XModbusAdu_deinit(adu);
         XFree_System(adu);
         return NULL;
@@ -307,7 +307,7 @@ bool XModbusAdu_pdu(const XModbusAdu* adu, XModbusPdu* out)
 
     size_t dSize = XByteArray_size_base(d);
     if (dSize < 2) {
-        XByteArray_delete_base(d);
+        XClassDelete(d);
         return false;
     }
 
@@ -319,7 +319,7 @@ bool XModbusAdu_pdu(const XModbusAdu* adu, XModbusPdu* out)
     if (dSize > 2)
         XModbusPdu_setData(out, raw + 2, dSize - 2);
 
-    XByteArray_delete_base(d);
+    XClassDelete(d);
     return true;
 }
 

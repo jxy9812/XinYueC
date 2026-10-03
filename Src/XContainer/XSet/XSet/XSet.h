@@ -134,12 +134,10 @@ void XSet_init(XSet* this_set, const size_t keyTypeSize, XCompare compare, bool 
 * @brief 反初始化集合
 * @note 基于XSetBase的接口，释放内部资源但不销毁实例本身
 */
-#define XSet_deinit_base XSetBase_deinit_base
 /**
 * @brief 删除集合实例
 * @note 基于XSetBase的接口，释放内部资源并销毁实例
 */
-#define XSet_delete_base XSetBase_delete_base
 /**
 * @brief 清空集合元素
 * @note 基于XSetBase的接口，删除所有元素但保留集合结构

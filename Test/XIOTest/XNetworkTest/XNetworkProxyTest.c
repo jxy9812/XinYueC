@@ -20,7 +20,7 @@ static void testProxyQuery_basic(void)
         XPrintf("  查询类型: %d\n", XNetworkProxyQuery_queryType(query));
         XPrintf("  目标端口: %d\n", XNetworkProxyQuery_peerPort(query));
         XPrintf("  本地端口: %d\n", XNetworkProxyQuery_localPort(query));
-        XNetworkProxyQuery_delete_base(query);
+        XClassDelete(query);
     }
     
     // 测试使用 URL 创建
@@ -35,9 +35,9 @@ static void testProxyQuery_basic(void)
             XPrintf_2(queryUrl);
             XPrintf("\n");
         }
-        XNetworkProxyQuery_delete_base(query);
+        XClassDelete(query);
     }
-    XString_delete_base(url);
+    XClassDelete(url);
     
     // 测试使用主机名和端口创建
     XString* hostname = XString_create_utf8("www.google.com");
@@ -59,10 +59,10 @@ static void testProxyQuery_basic(void)
             XPrintf_2(tag);
             XPrintf("\n");
         }
-        XNetworkProxyQuery_delete_base(query);
+        XClassDelete(query);
     }
-    XString_delete_base(hostname);
-    XString_delete_base(protocolTag);
+    XClassDelete(hostname);
+    XClassDelete(protocolTag);
     
     // 测试服务器绑定创建
     query = XNetworkProxyQuery_create_4(8080, NULL, XNetworkProxyQuery_TcpServer);
@@ -70,7 +70,7 @@ static void testProxyQuery_basic(void)
         XPrintf("\n服务器绑定创建:\n");
         XPrintf("  查询类型: %d (TcpServer)\n", XNetworkProxyQuery_queryType(query));
         XPrintf("  本地端口: %d\n", XNetworkProxyQuery_localPort(query));
-        XNetworkProxyQuery_delete_base(query);
+        XClassDelete(query);
     }
 }
 
@@ -102,7 +102,7 @@ static void testProxyQuery_setters(void)
         XPrintf_2(host);
         XPrintf("\n");
     }
-    XString_delete_base(hostname);
+    XClassDelete(hostname);
     
     // 设置协议标签
     XString* tag = XString_create_utf8("https");
@@ -113,7 +113,7 @@ static void testProxyQuery_setters(void)
         XPrintf_2(protocolTag);
         XPrintf("\n");
     }
-    XString_delete_base(tag);
+    XClassDelete(tag);
     
     // 设置 URL
     XString* url = XString_create_utf8("https://secure.example.com/api");
@@ -124,9 +124,9 @@ static void testProxyQuery_setters(void)
         XPrintf_2(queryUrl);
         XPrintf("\n");
     }
-    XString_delete_base(url);
+    XClassDelete(url);
     
-    XNetworkProxyQuery_deinit_base(&query);
+    XClassDeinit(&query);
 }
 
 static void testProxyQuery_copy(void)
@@ -135,13 +135,13 @@ static void testProxyQuery_copy(void)
     
     XString* hostname = XString_create_utf8("www.test.com");
     XNetworkProxyQuery* original = XNetworkProxyQuery_create_3(hostname, 443, NULL, XNetworkProxyQuery_TcpSocket);
-    XString_delete_base(hostname);
+    XClassDelete(hostname);
     
     if (original) {
         // 栈上拷贝
         XNetworkProxyQuery copied;
         XNetworkProxyQuery_init(&copied);
-        XCopy(&copied, original);
+        XClassCopy(&copied, original);
         
         XPrintf("原始查询端口: %d\n", XNetworkProxyQuery_peerPort(original));
         XPrintf("拷贝查询端口: %d\n", XNetworkProxyQuery_peerPort(&copied));
@@ -153,8 +153,8 @@ static void testProxyQuery_copy(void)
             XPrintf("拷贝测试: FAILED\n");
         }
         
-        XNetworkProxyQuery_deinit_base(&copied);
-        XNetworkProxyQuery_delete_base(original);
+        XClassDeinit(&copied);
+        XClassDelete(original);
     }
 }
 
@@ -172,7 +172,7 @@ static void testProxy_basic(void)
         XPrintf("  端口: %d\n", XNetworkProxy_port(proxy));
         XPrintf("  是否缓存代理: %s\n", XNetworkProxy_isCachingProxy(proxy) ? "是" : "否");
         XPrintf("  是否透明代理: %s\n", XNetworkProxy_isTransparentProxy(proxy) ? "是" : "否");
-        XNetworkProxy_delete_base(proxy);
+        XClassDelete(proxy);
     }
     
     // 测试带参数创建
@@ -210,12 +210,12 @@ static void testProxy_basic(void)
         XPrintf("  是否缓存代理: %s\n", XNetworkProxy_isCachingProxy(proxy) ? "是" : "否");
         XPrintf("  是否透明代理: %s\n", XNetworkProxy_isTransparentProxy(proxy) ? "是" : "否");
         
-        XNetworkProxy_delete_base(proxy);
+        XClassDelete(proxy);
     }
     
-    XString_delete_base(host);
-    XString_delete_base(user);
-    XString_delete_base(pass);
+    XClassDelete(host);
+    XClassDelete(user);
+    XClassDelete(pass);
 }
 
 static void testProxy_types(void)
@@ -253,7 +253,7 @@ static void testProxy_types(void)
         XPrintf("  透明代理: %s\n", XNetworkProxy_isTransparentProxy(&proxy) ? "是" : "否");
     }
     
-    XNetworkProxy_deinit_base(&proxy);
+    XClassDeinit(&proxy);
 }
 
 static void testProxy_capabilities(void)
@@ -278,7 +278,7 @@ static void testProxy_capabilities(void)
     XPrintf("\n添加 UDP 隧道能力:\n");
     XPrintf("  能力值: 0x%04x\n", XNetworkProxy_capabilities(&proxy));
     
-    XNetworkProxy_deinit_base(&proxy);
+    XClassDeinit(&proxy);
 }
 
 static void testProxy_setters(void)
@@ -301,7 +301,7 @@ static void testProxy_setters(void)
         XPrintf_2(proxyHost);
         XPrintf("\n");
     }
-    XString_delete_base(host);
+    XClassDelete(host);
     
     // 设置端口
     XNetworkProxy_setPort(&proxy, 8080);
@@ -316,7 +316,7 @@ static void testProxy_setters(void)
         XPrintf_2(proxyUser);
         XPrintf("\n");
     }
-    XString_delete_base(user);
+    XClassDelete(user);
     
     // 设置密码
     XString* pass = XString_create_utf8("secret123");
@@ -327,9 +327,9 @@ static void testProxy_setters(void)
         XPrintf_2(proxyPass);
         XPrintf("\n");
     }
-    XString_delete_base(pass);
+    XClassDelete(pass);
     
-    XNetworkProxy_deinit_base(&proxy);
+    XClassDeinit(&proxy);
 }
 
 static void testProxy_copy(void)
@@ -341,14 +341,15 @@ static void testProxy_copy(void)
     XString* pass = XString_create_utf8("testpass");
     
     XNetworkProxy* original = XNetworkProxy_create_2(XNetworkProxy_Socks5Proxy, host, 1080, user, pass);
-    XString_delete_base(host);
-    XString_delete_base(user);
-    XString_delete_base(pass);
+    XClassDelete(host);
+    XClassDelete(user);
+    XClassDelete(pass);
     
     if (original) {
         // 使用拷贝函数
-        XNetworkProxy* copied = XNetworkProxy_copy(original);
+        XNetworkProxy* copied = XNetworkProxy_create();
         if (copied) {
+            XClassCopy(copied, original);
             XPrintf("原始代理端口: %d\n", XNetworkProxy_port(original));
             XPrintf("拷贝代理端口: %d\n", XNetworkProxy_port(copied));
             
@@ -359,18 +360,18 @@ static void testProxy_copy(void)
                 XPrintf("拷贝测试: FAILED\n");
             }
             
-            XNetworkProxy_delete_base(copied);
+            XClassDelete(copied);
         }
         
         // 栈上拷贝
         XNetworkProxy stackCopy;
         XNetworkProxy_init(&stackCopy);
-        XCopy(&stackCopy, original);
+        XClassCopy(&stackCopy, original);
         
         XPrintf("栈上拷贝端口: %d\n", XNetworkProxy_port(&stackCopy));
         
-        XNetworkProxy_deinit_base(&stackCopy);
-        XNetworkProxy_delete_base(original);
+        XClassDeinit(&stackCopy);
+        XClassDelete(original);
     }
 }
 
@@ -381,7 +382,7 @@ static void testProxy_applicationProxy(void)
     // 创建代理
     XString* host = XString_create_utf8("global-proxy.example.com");
     XNetworkProxy* appProxy = XNetworkProxy_create_2(XNetworkProxy_HttpProxy, host, 3128, NULL, NULL);
-    XString_delete_base(host);
+    XClassDelete(host);
     
     if (appProxy) {
         // 设置应用级代理
@@ -407,7 +408,7 @@ static void testProxy_applicationProxy(void)
         XNetworkProxy_setApplicationProxy(NULL);
         XPrintf("清除应用级代理\n");
         
-        XNetworkProxy_delete_base(appProxy);
+        XClassDelete(appProxy);
     }
 }
 
@@ -422,7 +423,7 @@ static XNetworkProxy* testQueryFunc(XNetworkProxyFactory* factory, const XNetwor
     // 返回一个固定的代理配置
     XString* host = XString_create_utf8("custom-proxy.example.com");
     XNetworkProxy* proxy = XNetworkProxy_create_2(XNetworkProxy_HttpProxy, host, 8888, NULL, NULL);
-    XString_delete_base(host);
+    XClassDelete(host);
     
     return proxy;
 }
@@ -439,7 +440,7 @@ static void testProxyFactory_basic(void)
         // 创建查询
         XString* hostname = XString_create_utf8("www.example.com");
         XNetworkProxyQuery* query = XNetworkProxyQuery_create_3(hostname, 80, NULL, XNetworkProxyQuery_TcpSocket);
-        XString_delete_base(hostname);
+        XClassDelete(hostname);
         
         if (query) {
             // 使用工厂查询代理
@@ -456,13 +457,13 @@ static void testProxyFactory_basic(void)
                     XPrintf("\n");
                 }
                 
-                XNetworkProxy_delete_base(proxy);
+                XClassDelete(proxy);
             }
             
-            XNetworkProxyQuery_delete_base(query);
+            XClassDelete(query);
         }
         
-        XNetworkProxyFactory_delete_base(factory);
+        XClassDelete(factory);
     }
 }
 
@@ -484,7 +485,7 @@ static void testProxyFactory_systemConfig(void)
     // 创建查询并获取系统代理
     XString* hostname = XString_create_utf8("www.google.com");
     XNetworkProxyQuery* query = XNetworkProxyQuery_create_3(hostname, 443, NULL, XNetworkProxyQuery_TcpSocket);
-    XString_delete_base(hostname);
+    XClassDelete(hostname);
     
     if (query) {
         XNetworkProxy* systemProxy = XNetworkProxyFactory_systemProxyForQuery(query);
@@ -500,12 +501,12 @@ static void testProxyFactory_systemConfig(void)
                 XPrintf("\n");
             }
             
-            XNetworkProxy_delete_base(systemProxy);
+            XClassDelete(systemProxy);
         } else {
             XPrintf("无系统代理配置\n");
         }
         
-        XNetworkProxyQuery_delete_base(query);
+        XClassDelete(query);
     }
     
     // 恢复默认
@@ -525,7 +526,7 @@ static void testProxyFactory_applicationFactory(void)
         // 使用 proxyForQuery 查询
         XString* hostname = XString_create_utf8("www.test.com");
         XNetworkProxyQuery* query = XNetworkProxyQuery_create_3(hostname, 8080, NULL, XNetworkProxyQuery_TcpSocket);
-        XString_delete_base(hostname);
+        XClassDelete(hostname);
         
         if (query) {
             XNetworkProxy* proxy = XNetworkProxyFactory_proxyForQuery(query);
@@ -534,17 +535,17 @@ static void testProxyFactory_applicationFactory(void)
                 XPrintf("  类型: %d\n", XNetworkProxy_type(proxy));
                 XPrintf("  端口: %d\n", XNetworkProxy_port(proxy));
                 
-                XNetworkProxy_delete_base(proxy);
+                XClassDelete(proxy);
             }
             
-            XNetworkProxyQuery_delete_base(query);
+            XClassDelete(query);
         }
         
         // 清除应用级工厂
         XNetworkProxyFactory_setApplicationProxyFactory(NULL);
         XPrintf("清除应用级代理工厂\n");
         
-        XNetworkProxyFactory_delete_base(factory);
+        XClassDelete(factory);
     }
 }
 

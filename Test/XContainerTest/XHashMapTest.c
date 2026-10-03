@@ -58,7 +58,7 @@ static void XHashMapTest_Basic(void)
 
     XHashMap_clear_base(map);
     XPrintf("  clear 后 size=%zu (期望 0)\n", XHashMap_size_base(map));
-    XHashMap_delete_base(map);
+    XClassDelete(map);
 }
 
 /* ==================== Qt 命名对齐 ==================== */
@@ -84,9 +84,9 @@ static void XHashMapTest_QtAliases(void)
     XPrintf("  keys.size=%zu values.size=%zu (%s)\n",
         XVector_size_base(keys), XVector_size_base(vals),
         (XVector_size_base(keys)==XVector_size_base(vals)?"OK":"FAIL"));
-    XVector_delete_base(keys);
-    XVector_delete_base(vals);
-    XHashMap_delete_base(map);
+    XClassDelete(keys);
+    XClassDelete(vals);
+    XClassDelete(map);
 }
 
 /* ==================== 新 API：removeIf / erase_if / reserve / squeeze ==================== */
@@ -125,7 +125,7 @@ static void XHashMapTest_QtNewApis(void)
     size_t cap_after = XHashMap_capacity_base(map);
     XPrintf("  squeeze: capacity %zu -> %zu\n", cap_before, cap_after);
 
-    XHashMap_delete_base(map);
+    XClassDelete(map);
 }
 
 /* ==================== 压力测试 ==================== */
@@ -152,7 +152,7 @@ static void XHashMapTest_Stress(void)
     XHashMap_iterator_for_each(map, SumValues, &sum);
     XPrintf("  遍历求 val 和 sum=%lld\n", sum);
 
-    XHashMap_delete_base(map);
+    XClassDelete(map);
 }
 
 /* ==================== 主入口 ==================== */

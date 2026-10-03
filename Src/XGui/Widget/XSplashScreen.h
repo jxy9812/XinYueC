@@ -52,8 +52,6 @@ void XSplashScreen_init(XSplashScreen* self, XWidget* parent,
 #define XSplashScreen_create(parent, flags) XSplashScreen_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XSplashScreen* XSplashScreen_create_ex(XMemoryType memory, XWidget* parent,
                                        XWidgetFlags flags);
-#define XSplashScreen_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XSplashScreen_delete_base(self) XClass_delete_base((XClass*)(self))
 
 #if XPIXMAP_ON
 /** @brief 设置背景图（对标 setPixmap；内部深拷贝）。 */

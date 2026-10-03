@@ -24,7 +24,7 @@ static void VXPlatformAccessibility_deinit(XPlatformAccessibility* self)
         self->m_nativeState = NULL;
     }
     self->m_active = false;
-    if (self->m_root) XAccessible_delete_base(self->m_root);
+    if (self->m_root) XClassDelete(self->m_root);
     self->m_root = NULL;
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }

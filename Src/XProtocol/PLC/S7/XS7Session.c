@@ -180,11 +180,11 @@ static void VX7Session_deinit(XS7Session* session)
     if (!session) return;
 
     if (session->m_buffer) {
-        XByteArray_delete_base(session->m_buffer);
+        XClassDelete(session->m_buffer);
         session->m_buffer = NULL;
     }
     if (session->m_frame) {
-        XByteArray_delete_base(session->m_frame);
+        XClassDelete(session->m_frame);
         session->m_frame = NULL;
     }
     session->m_pendingEvent = XS7SessionEv_None;

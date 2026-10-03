@@ -232,7 +232,7 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
             XThread_msleep(XMYSQL_SHM_OPEN_RETRY_WAIT_MS);
         }
     }
-    XString_delete_base(name);
+    XClassDelete(name);
     name = NULL;
     if (connectFd < 0) goto fail;
     connectMap = (XMySqlSharedMemoryConnect*)XDeviceFile_map(
@@ -275,7 +275,7 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
             XThread_msleep(XMYSQL_SHM_OPEN_RETRY_WAIT_MS);
         }
     }
-    XString_delete_base(name);
+    XClassDelete(name);
     name = NULL;
     if (connectFd < 0) goto fail;
 
@@ -301,7 +301,7 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
     return shared;
 
 fail:
-    if (name) XString_delete_base(name);
+    if (name) XClassDelete(name);
     if (connectMap)
         XDeviceFile_unmap(connectFd, connectMap,
                           (int64_t)sizeof(XMySqlSharedMemoryConnect));

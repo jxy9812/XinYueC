@@ -160,15 +160,13 @@ XFrame* XFrame_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags
 /**
  * @brief      通过 XClass 虚表释放 XFrame 资源。
  * @param      self 待释放的栈对象或外部存储对象；可为 NULL。
- * @return     无返回值；堆对象应使用 XFrame_delete_base。
+ * @return     无返回值；堆对象应使用 XClassDelete。
  */
-#define XFrame_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /**
  * @brief      删除堆上的 XFrame 对象。
  * @param      self 由 XFrame_create 或 XFrame_create_ex 返回的对象；可为 NULL。
  * @return     无返回值。
  */
-#define XFrame_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 样式属性（对标 QFrame public API） ==================== */
 

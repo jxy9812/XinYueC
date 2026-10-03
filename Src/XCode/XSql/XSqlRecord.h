@@ -32,26 +32,24 @@ typedef struct XSqlRecord {
 XVtable* XSqlRecord_class_init(void);
 /** @brief 初始化空记录。 @param record 待初始化记录；不能为 NULL。 @return 无；对象进入可析构的空记录状态。 */
 void XSqlRecord_init(XSqlRecord* record);
-/** @brief 创建空记录。 @return 新记录所有权；调用者使用 XSqlRecord_delete_base 释放，失败返回 NULL。 */
+/** @brief 创建空记录。 @return 新记录所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
 XSqlRecord* XSqlRecord_create_ex(XMemoryType memory);
-/** @brief 深拷贝创建记录。 @param other 源记录；借用，不能为 NULL。 @return 新记录所有权；调用者使用 XSqlRecord_delete_base 释放，失败返回 NULL。 */
+/** @brief 深拷贝创建记录。 @param other 源记录；借用，不能为 NULL。 @return 新记录所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
 XSqlRecord* XSqlRecord_create_copy(const XSqlRecord* other);
-/** @brief 移动创建记录。 @param other 源记录；不能为 NULL，成功后资源被移出但对象仍需反初始化。 @return 新记录所有权；调用者使用 XSqlRecord_delete_base 释放，失败返回 NULL。 */
+/** @brief 移动创建记录。 @param other 源记录；不能为 NULL，成功后资源被移出但对象仍需反初始化。 @return 新记录所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
 XSqlRecord* XSqlRecord_create_move(XSqlRecord* other);
 
 /** @brief 调用 XClass 析构入口释放记录拥有的字段数组。 */
-#define XSqlRecord_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlRecord_create 系列函数返回的记录对象。 */
-#define XSqlRecord_delete_base XClass_delete_base
 
 /** @brief 交换两个记录对象内容。 @param left 左记录；不能为 NULL。 @param right 右记录；不能为 NULL。 @return 无；字段数组所有权一并交换。 */
 void XSqlRecord_swap(XSqlRecord* left, XSqlRecord* right);
 
-/** @brief 按位置获取字段值副本。 @param record 记录对象；可为 NULL。 @param index 字段索引，从 0 开始。 @return 新值所有权；调用者使用 XVariant_delete_base 释放，越界返回空值对象。 */
+/** @brief 按位置获取字段值副本。 @param record 记录对象；可为 NULL。 @param index 字段索引，从 0 开始。 @return 新值所有权；调用者使用 XClassDelete 释放，越界返回空值对象。 */
 XVariant* XSqlRecord_value(const XSqlRecord* record, int index);
-/** @brief 按 UTF-8 字段名获取字段值副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XVariant_delete_base 释放，未找到返回空值对象。 */
+/** @brief 按 UTF-8 字段名获取字段值副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XClassDelete 释放，未找到返回空值对象。 */
 XVariant* XSqlRecord_value_utf8(const XSqlRecord* record, const char* name);
-/** @brief 按 XString 字段名获取字段值副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XVariant_delete_base 释放，未找到返回空值对象。 */
+/** @brief 按 XString 字段名获取字段值副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新值所有权；调用者使用 XClassDelete 释放，未找到返回空值对象。 */
 XVariant* XSqlRecord_value_2(const XSqlRecord* record, const XString* name);
 /** @brief 按位置设置字段值。 @param record 记录对象；不能为 NULL。 @param index 字段索引，从 0 开始。 @param value 字段值；借用并深复制，可为 NULL 表示 SQL NULL。 @return 无；越界或内存不足时保持原字段值。 */
 void XSqlRecord_setValue(XSqlRecord* record, int index, const XVariant* value);
@@ -75,13 +73,13 @@ bool XSqlRecord_isNull_2(const XSqlRecord* record, const XString* name);
 int XSqlRecord_indexOf_utf8(const XSqlRecord* record, const char* name);
 /** @brief 按 XString 字段名查找索引。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 字段索引；未找到返回 -1。 */
 int XSqlRecord_indexOf(const XSqlRecord* record, const XString* name);
-/** @brief 获取字段名副本。 @param record 记录对象；可为 NULL。 @param index 字段索引，从 0 开始。 @return 新字符串所有权；调用者使用 XString_delete_base 释放，越界返回空字符串。 */
+/** @brief 获取字段名副本。 @param record 记录对象；可为 NULL。 @param index 字段索引，从 0 开始。 @return 新字符串所有权；调用者使用 XClassDelete 释放，越界返回空字符串。 */
 XString* XSqlRecord_fieldName(const XSqlRecord* record, int index);
-/** @brief 获取字段描述副本。 @param record 记录对象；可为 NULL。 @param index 字段索引，从 0 开始。 @return 新字段所有权；调用者使用 XSqlField_delete_base 释放，越界返回空字段。 */
+/** @brief 获取字段描述副本。 @param record 记录对象；可为 NULL。 @param index 字段索引，从 0 开始。 @return 新字段所有权；调用者使用 XClassDelete 释放，越界返回空字段。 */
 XSqlField* XSqlRecord_field(const XSqlRecord* record, int index);
-/** @brief 按 UTF-8 名称获取字段描述副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新字段所有权；调用者使用 XSqlField_delete_base 释放，未找到返回空字段。 */
+/** @brief 按 UTF-8 名称获取字段描述副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新字段所有权；调用者使用 XClassDelete 释放，未找到返回空字段。 */
 XSqlField* XSqlRecord_field_utf8(const XSqlRecord* record, const char* name);
-/** @brief 按 XString 名称获取字段描述副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新字段所有权；调用者使用 XSqlField_delete_base 释放，未找到返回空字段。 */
+/** @brief 按 XString 名称获取字段描述副本。 @param record 记录对象；可为 NULL。 @param name 字段名；借用，可为 NULL。 @return 新字段所有权；调用者使用 XClassDelete 释放，未找到返回空字段。 */
 XSqlField* XSqlRecord_field_2(const XSqlRecord* record, const XString* name);
 /** @brief 获取内部字段描述借用指针。 @param record 记录对象；可为 NULL。 @param index 字段索引，从 0 开始。 @return 只读字段借用指针；不得释放或修改，越界返回 NULL。 */
 const XSqlField* XSqlRecord_field_const(const XSqlRecord* record, int index);
@@ -113,7 +111,7 @@ void XSqlRecord_clear(XSqlRecord* record);
 void XSqlRecord_clearValues(XSqlRecord* record);
 /** @brief 获取字段数量。 @param record 记录对象；可为 NULL。 @return 字段数量；NULL 返回 0。 */
 int XSqlRecord_count(const XSqlRecord* record);
-/** @brief 按键字段提取键值记录副本。 @param record 源记录；可为 NULL。 @param keyFields 键字段描述；借用，可为 NULL。 @return 新记录所有权；调用者使用 XSqlRecord_delete_base 释放。 */
+/** @brief 按键字段提取键值记录副本。 @param record 源记录；可为 NULL。 @param keyFields 键字段描述；借用，可为 NULL。 @return 新记录所有权；调用者使用 XClassDelete 释放。 */
 XSqlRecord* XSqlRecord_keyValues(const XSqlRecord* record, const XSqlRecord* keyFields);
 /** @brief 比较两个记录内容。 @param left 左记录；可为 NULL，按空记录处理。 @param right 右记录；可为 NULL，按空记录处理。 @return 字段数量、元数据和值均相等返回 true，否则返回 false。 */
 bool XSqlRecord_equals(const XSqlRecord* left, const XSqlRecord* right);

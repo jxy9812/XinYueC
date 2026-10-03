@@ -86,10 +86,10 @@ static bool XSqlTest_resultReset(XSqlResult* result, const XString* query)
     XSqlField* textField = XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, textName, XVariantType_String, NULL);
     bool ok = idField && textField && XSqlRecord_append(&result->m_record, idField)
         && XSqlRecord_append(&result->m_record, textField);
-    if (idName) XString_delete_base(idName);
-    if (textName) XString_delete_base(textName);
-    if (idField) XSqlField_delete_base(idField);
-    if (textField) XSqlField_delete_base(textField);
+    if (idName) XClassDelete(idName);
+    if (textName) XClassDelete(textName);
+    if (idField) XClassDelete(idField);
+    if (textField) XClassDelete(textField);
     XSqlResult_setActive_base(result, ok);
     return ok;
 }
@@ -177,10 +177,10 @@ static XSqlRecord* XSqlTest_driverRecord(const XSqlDriver* driver, const XString
         || !XSqlRecord_append(record, textField)) {
         XSqlRecord_clear(record);
     }
-    if (idField) XSqlField_delete_base(idField);
-    if (textField) XSqlField_delete_base(textField);
-    if (idName) XString_delete_base(idName);
-    if (textName) XString_delete_base(textName);
+    if (idField) XClassDelete(idField);
+    if (textField) XClassDelete(textField);
+    if (idName) XClassDelete(idName);
+    if (textName) XClassDelete(textName);
     return record;
 }
 
@@ -245,7 +245,7 @@ static bool XSqlTest_run_value_api(const XSqlDatabase* database)
         XSqlRecord_setValue(leftRecord, 0, keyValue);
         keyValues = XSqlRecord_keyValues(leftRecord, leftRecord);
         ok = keyValue && keyValues && XSqlRecord_equals(leftRecord, keyValues);
-        if (keyValue) XVariant_delete_base(keyValue);
+        if (keyValue) XClassDelete(keyValue);
         XSqlField_setValue(rightField, NULL);
         ok = ok && XSqlField_isNull(rightField) && XSqlField_isValid(rightField);
         {
@@ -263,8 +263,8 @@ static bool XSqlTest_run_value_api(const XSqlDatabase* database)
             XSqlField_setSqlType(leftField, 42);
             ok = ok && !XSqlField_equals(leftField, rightField);
             XSqlField_setSqlType(leftField, -1);
-            if (retainedValue) XVariant_delete_base(retainedValue);
-            if (readOnlyValue) XVariant_delete_base(readOnlyValue);
+            if (retainedValue) XClassDelete(retainedValue);
+            if (readOnlyValue) XClassDelete(readOnlyValue);
             XSqlField_setReadOnly(rightField, false);
         }
     }
@@ -278,39 +278,39 @@ static bool XSqlTest_run_value_api(const XSqlDatabase* database)
         XSqlQuery_swap(leftQuery, rightQuery);
         text = XSqlError_driverText(leftError);
         ok = text && XString_equals_utf8(text, "right", XChar_CaseSensitive);
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         text = XSqlField_name(leftField);
         ok = ok && text && XString_equals_utf8(text, "right_field", XChar_CaseSensitive);
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         text = XSqlRecord_fieldName(leftRecord, 0);
         ok = ok && text && XString_equals_utf8(text, "right_field", XChar_CaseSensitive);
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         text = XSqlIndex_name(leftIndex);
         ok = ok && text && XString_equals_utf8(text, "right_index", XChar_CaseSensitive);
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         ok = ok && XSqlResult_bindValueType(XSqlQuery_result(leftQuery), 0) == XSqlParamType_InOut
             && XSqlResult_bindValueType_utf8(XSqlQuery_result(rightQuery), ":outValue") == XSqlParamType_Out;
     }
 
-    if (text) XString_delete_base(text);
-    if (boundValue) XVariant_delete_base(boundValue);
-    if (leftQuery) XSqlQuery_delete_base(leftQuery);
-    if (rightQuery) XSqlQuery_delete_base(rightQuery);
-    if (leftIndex) XSqlIndex_delete_base(leftIndex);
-    if (rightIndex) XSqlIndex_delete_base(rightIndex);
-    if (leftRecord) XSqlRecord_delete_base(leftRecord);
-    if (rightRecord) XSqlRecord_delete_base(rightRecord);
-    if (keyValues) XSqlRecord_delete_base(keyValues);
-    if (leftField) XSqlField_delete_base(leftField);
-    if (rightField) XSqlField_delete_base(rightField);
-    if (leftName) XString_delete_base(leftName);
-    if (rightName) XString_delete_base(rightName);
-    if (leftError) XSqlError_delete_base(leftError);
-    if (rightError) XSqlError_delete_base(rightError);
-    if (strippedIdentifier) XString_delete_base(strippedIdentifier);
-    if (quotedIdentifier) XString_delete_base(quotedIdentifier);
-    if (plainIdentifier) XString_delete_base(plainIdentifier);
-    if (stateDriver) XSqlDriver_delete_base(stateDriver);
+    if (text) XClassDelete(text);
+    if (boundValue) XClassDelete(boundValue);
+    if (leftQuery) XClassDelete(leftQuery);
+    if (rightQuery) XClassDelete(rightQuery);
+    if (leftIndex) XClassDelete(leftIndex);
+    if (rightIndex) XClassDelete(rightIndex);
+    if (leftRecord) XClassDelete(leftRecord);
+    if (rightRecord) XClassDelete(rightRecord);
+    if (keyValues) XClassDelete(keyValues);
+    if (leftField) XClassDelete(leftField);
+    if (rightField) XClassDelete(rightField);
+    if (leftName) XClassDelete(leftName);
+    if (rightName) XClassDelete(rightName);
+    if (leftError) XClassDelete(leftError);
+    if (rightError) XClassDelete(rightError);
+    if (strippedIdentifier) XClassDelete(strippedIdentifier);
+    if (quotedIdentifier) XClassDelete(quotedIdentifier);
+    if (plainIdentifier) XClassDelete(plainIdentifier);
+    if (stateDriver) XClassDelete(stateDriver);
     return ok;
 }
 
@@ -320,20 +320,20 @@ int XSqlTest_run(void)
     bool builtinDriversOk = builtinDrivers
         && XStringList_contains_utf8(builtinDrivers, "QSQLITE", XChar_CaseSensitive)
         && XStringList_contains_utf8(builtinDrivers, "QMYSQL", XChar_CaseSensitive);
-    if (builtinDrivers) XStringList_delete_base(builtinDrivers);
+    if (builtinDrivers) XClassDelete(builtinDrivers);
     if (!builtinDriversOk) return 1;
     XSqlDriverCreator* creator = XSqlDriverCreator_create(XSqlTest_createDriver);
     if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_Custom, &creator->m_parent)) {
-        if (creator) XSqlDriverCreator_delete_base(creator);
+        if (creator) XClassDelete(creator);
         return 1;
     }
     XSqlDatabase* database = XSqlDatabase_addDatabase(XSqlDriverType_Custom, "xsql-test");
     if (!database) return 2;
-    if (!XSqlDatabase_open(database)) { XSqlDatabase_delete_base(database); return 2; }
+    if (!XSqlDatabase_open(database)) { XClassDelete(database); return 2; }
     XSqlQuery* query = XSqlDatabase_exec_utf8(database, "  SELECT id, text FROM test  ");
     if (!query || !XSqlQuery_isActive(query) || XSqlQuery_size(query) != 2 || !XSqlQuery_first(query)) {
-        if (query) XSqlQuery_delete_base(query);
-        XSqlDatabase_delete_base(database);
+        if (query) XClassDelete(query);
+        XClassDelete(database);
         return 3;
     }
     bool validPositionOk = XSqlQuery_isValid(query);
@@ -341,9 +341,9 @@ int XSqlTest_run(void)
     validPositionOk = validPositionOk && XSqlQuery_isValid(query);
     XSqlResult_setActive_base(XSqlQuery_result(query), true);
     if (!validPositionOk) {
-        XSqlQuery_delete_base(query);
+        XClassDelete(query);
         XSqlDatabase_removeDatabase("xsql-test");
-        XSqlDatabase_delete_base(database);
+        XClassDelete(database);
         return 3;
     }
     XVariant* id = XSqlQuery_value_utf8(query, "id");
@@ -353,10 +353,10 @@ int XSqlTest_run(void)
     bool valuesOk = id && textValue && executedQuery && XVariant_toInt32(id) == 1
         && XString_equals_utf8(textValue, "alpha", XChar_CaseSensitive)
         && XString_equals_utf8(executedQuery, "SELECT id, text FROM test", XChar_CaseSensitive);
-    if (id) XVariant_delete_base(id);
-    if (text) XVariant_delete_base(text);
-    if (textValue) XString_delete_base(textValue);
-    if (executedQuery) XString_delete_base(executedQuery);
+    if (id) XClassDelete(id);
+    if (text) XClassDelete(text);
+    if (textValue) XClassDelete(textValue);
+    if (executedQuery) XClassDelete(executedQuery);
     XSqlQueryModel* queryModel = XSqlQueryModel_create();
     bool queryModelSet = queryModel && XSqlQueryModel_setQuery_utf8(queryModel, "SELECT id, text FROM test", database);
     bool modelOk = queryModelSet
@@ -370,9 +370,9 @@ int XSqlTest_run(void)
     modelOk = modelOk && invalidRole && !XVariant_isValid(invalidRole)
         && verticalHeader && XVariant_toInt32(verticalHeader) == 1
         && queryRoles && XStringList_size_base(queryRoles) == 1;
-    if (invalidRole) XVariant_delete_base(invalidRole);
-    if (verticalHeader) XVariant_delete_base(verticalHeader);
-    if (queryRoles) XStringList_delete_base(queryRoles);
+    if (invalidRole) XClassDelete(invalidRole);
+    if (verticalHeader) XClassDelete(verticalHeader);
+    if (queryRoles) XClassDelete(queryRoles);
     bool inserted = modelOk && XSqlQueryModel_insertColumns(queryModel, 1, 1)
         && XSqlQueryModel_columnCount(queryModel) == 3;
     XVariant* insertedColumn = inserted ? XSqlQueryModel_data(queryModel, 0, 1,
@@ -380,7 +380,7 @@ int XSqlTest_run(void)
     modelOk = inserted && insertedColumn && !XVariant_isValid(insertedColumn)
         && XSqlQueryModel_removeColumns(queryModel, 1, 1)
         && XSqlQueryModel_columnCount(queryModel) == 2;
-    if (insertedColumn) XVariant_delete_base(insertedColumn);
+    if (insertedColumn) XClassDelete(insertedColumn);
     XVariant* editHeader = XVariant_create_utf8_str("编辑列");
     XVariant* userHeader = XVariant_create_utf8_str("自定义列");
     bool headerRoles = queryModel && editHeader && userHeader
@@ -398,12 +398,12 @@ int XSqlTest_run(void)
         && displayHeaderText && returnedUserHeaderText
         && XString_equals_utf8(displayHeaderText, "编辑列", XChar_CaseSensitive)
         && XString_equals_utf8(returnedUserHeaderText, "自定义列", XChar_CaseSensitive);
-    if (displayHeaderText) XString_delete_base(displayHeaderText);
-    if (returnedUserHeaderText) XString_delete_base(returnedUserHeaderText);
-    if (displayHeader) XVariant_delete_base(displayHeader);
-    if (returnedUserHeader) XVariant_delete_base(returnedUserHeader);
-    if (editHeader) XVariant_delete_base(editHeader);
-    if (userHeader) XVariant_delete_base(userHeader);
+    if (displayHeaderText) XClassDelete(displayHeaderText);
+    if (returnedUserHeaderText) XClassDelete(returnedUserHeaderText);
+    if (displayHeader) XClassDelete(displayHeader);
+    if (returnedUserHeader) XClassDelete(returnedUserHeader);
+    if (editHeader) XClassDelete(editHeader);
+    if (userHeader) XClassDelete(userHeader);
     modelOk = modelOk && headerRoles;
     XSqlRelation* relation = XSqlRelation_create_utf8("test", "id", "text");
     XSqlRelationalTableModel* relationalModel = XSqlRelationalTableModel_create(database);
@@ -424,20 +424,20 @@ int XSqlTest_run(void)
         relationalOk = relationalOk && relationEdit && displayText
             && XString_equals_utf8(displayText, "beta", XChar_CaseSensitive);
         modelOk = modelOk && relationalOk;
-        if (relationKey) XVariant_delete_base(relationKey);
-        if (displayText) XString_delete_base(displayText);
-        if (display) XVariant_delete_base(display);
+        if (relationKey) XClassDelete(relationKey);
+        if (displayText) XClassDelete(displayText);
+        if (display) XClassDelete(display);
     } else {
         relationalOk = false;
         modelOk = false;
     }
-    if (relationalModel) XSqlRelationalTableModel_delete_base(relationalModel);
-    if (relation) XSqlRelation_delete_base(relation);
-    if (queryModel) XSqlQueryModel_delete_base(queryModel);
+    if (relationalModel) XClassDelete(relationalModel);
+    if (relation) XClassDelete(relation);
+    if (queryModel) XClassDelete(queryModel);
     bool valueApiOk = XSqlTest_run_value_api(database);
-    XSqlQuery_delete_base(query);
+    XClassDelete(query);
     XSqlDatabase_removeDatabase("xsql-test");
-    XSqlDatabase_delete_base(database);
+    XClassDelete(database);
     if (!valuesOk || !modelOk || !valueApiOk) {
         return 4;
     }
@@ -490,7 +490,7 @@ static bool XSqlTest_run_sqlite(void)
         openedDatabase = XSqlDatabase_database("xsql-sqlite", true);
         ok = openedDatabase && XSqlDatabase_isOpen(openedDatabase);
         if (openedDatabase) {
-            XSqlDatabase_delete_base(openedDatabase);
+            XClassDelete(openedDatabase);
             openedDatabase = NULL;
         }
     }
@@ -503,9 +503,9 @@ static bool XSqlTest_run_sqlite(void)
             XVarList_Create(XVar(XSqlDatabase*, database)));
         if (affinityThread && XThread_start(affinityThread)) {
             XThread_wait(affinityThread, 5000);
-            XClass_delete_base((XClass*)affinityThread);
+            XClassDelete((XClass*)affinityThread);
         } else if (affinityThread) {
-            XClass_delete_base((XClass*)affinityThread);
+            XClassDelete((XClass*)affinityThread);
         }
         ok = XAtomic_load_bool(&g_sqlThreadAffinityOk, XAtomic_MemoryOrder_Acquire);
     }
@@ -535,7 +535,7 @@ static bool XSqlTest_run_sqlite(void)
         "CREATE TABLE people (id INTEGER PRIMARY KEY, name TEXT NOT NULL, payload BLOB, score REAL)") : NULL;
     ok = ok && query && XSqlQuery_isActive(query);
     XPrintf("SQLite 创建表：%s\n", ok ? "通过" : "失败");
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
 
     if (ok) {
         XSqlQuery* repeatQuery = XSqlQuery_create_database(database);
@@ -552,13 +552,13 @@ static bool XSqlTest_run_sqlite(void)
         }
         XPrintf("SQLite 位置占位符元数据：%s\n", repeatOk ? "通过" : "失败");
         ok = ok && repeatOk;
-        if (boundName) { XString_delete_base(boundName); boundName = NULL; }
+        if (boundName) { XClassDelete(boundName); boundName = NULL; }
         if (repeatOk) {
             XSqlQuery_addBindValue(repeatQuery, firstValue, XSqlParamType_In);
             repeatOk = XSqlQuery_exec(repeatQuery) && XSqlQuery_first(repeatQuery);
             readValue = repeatOk ? XSqlQuery_value(repeatQuery, 0) : NULL;
             repeatOk = repeatOk && readValue && XVariant_toInt32(readValue) == 11;
-            if (readValue) { XVariant_delete_base(readValue); readValue = NULL; }
+            if (readValue) { XClassDelete(readValue); readValue = NULL; }
         }
         if (repeatOk) {
             XSqlQuery_addBindValue(repeatQuery, secondValue, XSqlParamType_In);
@@ -568,10 +568,10 @@ static bool XSqlTest_run_sqlite(void)
         }
         XPrintf("SQLite addBindValue 重复执行：%s\n", repeatOk ? "通过" : "失败");
         ok = ok && repeatOk;
-        if (readValue) XVariant_delete_base(readValue);
-        if (firstValue) XVariant_delete_base(firstValue);
-        if (secondValue) XVariant_delete_base(secondValue);
-        if (repeatQuery) XSqlQuery_delete_base(repeatQuery);
+        if (readValue) XClassDelete(readValue);
+        if (firstValue) XClassDelete(firstValue);
+        if (secondValue) XClassDelete(secondValue);
+        if (repeatQuery) XClassDelete(repeatQuery);
     }
 
     query = ok ? XSqlQuery_create_database(database) : NULL;
@@ -579,16 +579,16 @@ static bool XSqlTest_run_sqlite(void)
         "INSERT INTO people (name, payload, score) VALUES (?, ?, ?)");
     value = XVariant_create_utf8_str("Alice");
     if (ok) XSqlQuery_bindValue(query, 0, value, XSqlParamType_In);
-    if (value) { XVariant_delete_base(value); value = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
     value = XVariant_create_byteArray("xy", 2);
     if (ok) XSqlQuery_bindValue(query, 1, value, XSqlParamType_In);
-    if (value) { XVariant_delete_base(value); value = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
     value = XVariant_create_double(1.5);
     if (ok) XSqlQuery_bindValue(query, 2, value, XSqlParamType_In);
-    if (value) { XVariant_delete_base(value); value = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
     ok = ok && XSqlQuery_exec(query) && XSqlQuery_numRowsAffected(query) == 1;
     XPrintf("SQLite 位置参数绑定：%s\n", ok ? "通过" : "失败");
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
 
     query = ok ? XSqlQuery_create_database(database) : NULL;
     ok = ok && query && XSqlQuery_prepare_utf8(query,
@@ -600,20 +600,20 @@ static bool XSqlTest_run_sqlite(void)
             && boundNames && XStringList_size_base(boundNames) == 3;
         XPrintf("SQLite 命名占位符元数据：%s\n", metadataOk ? "通过" : "失败");
         ok = ok && metadataOk;
-        if (boundNames) XStringList_delete_base(boundNames);
+        if (boundNames) XClassDelete(boundNames);
     }
     value = XVariant_create_utf8_str("Bob");
     if (ok) XSqlQuery_bindValue_utf8(query, ":name", value, XSqlParamType_In);
-    if (value) { XVariant_delete_base(value); value = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
     value = XVariant_create_null();
     if (ok) XSqlQuery_bindValue_utf8(query, ":payload", value, XSqlParamType_In);
-    if (value) { XVariant_delete_base(value); value = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
     value = XVariant_create_double(2.5);
     if (ok) XSqlQuery_bindValue_utf8(query, ":score", value, XSqlParamType_In);
-    if (value) { XVariant_delete_base(value); value = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
     ok = ok && XSqlQuery_exec(query) && XSqlQuery_numRowsAffected(query) == 1;
     XPrintf("SQLite 命名参数绑定：%s\n", ok ? "通过" : "失败");
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
 
     if (ok) {
         XSqlQuery* duplicateQuery = XSqlQuery_create_database(database);
@@ -630,9 +630,9 @@ static bool XSqlTest_run_sqlite(void)
         duplicateOk = duplicateOk && duplicateOutput && XVariant_toInt32(duplicateOutput) == 10;
         XPrintf("SQLite 重复命名占位符绑定：%s\n", duplicateOk ? "通过" : "失败");
         ok = ok && duplicateOk;
-        if (duplicateOutput) XVariant_delete_base(duplicateOutput);
-        if (duplicateInput) XVariant_delete_base(duplicateInput);
-        if (duplicateQuery) XSqlQuery_delete_base(duplicateQuery);
+        if (duplicateOutput) XClassDelete(duplicateOutput);
+        if (duplicateInput) XClassDelete(duplicateInput);
+        if (duplicateQuery) XClassDelete(duplicateQuery);
     }
 
     if (ok) {
@@ -666,7 +666,7 @@ static bool XSqlTest_run_sqlite(void)
         query = XSqlDatabase_exec_utf8(database,
             "CREATE TABLE temporal (date_value DATE, datetime_value DATETIME, time_value TIME)");
         temporalOk = query && XSqlQuery_isActive(query);
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (query) { XClassDelete(query); query = NULL; }
         query = temporalOk ? XSqlQuery_create_database(database) : NULL;
         temporalOk = temporalOk && query && XSqlQuery_prepare_utf8(query,
             "INSERT INTO temporal VALUES (?, ?, ?)");
@@ -676,7 +676,7 @@ static bool XSqlTest_run_sqlite(void)
             XSqlQuery_bindValue(query, 2, timeValue, XSqlParamType_In);
             temporalOk = XSqlQuery_exec(query);
         }
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (query) { XClassDelete(query); query = NULL; }
         query = temporalOk ? XSqlDatabase_exec_utf8(database,
             "SELECT date_value, datetime_value, time_value FROM temporal") : NULL;
         temporalOk = temporalOk && query && XSqlQuery_first(query);
@@ -694,21 +694,21 @@ static bool XSqlTest_run_sqlite(void)
         }
         XPrintf("SQLite 日期时间对象绑定：%s\n", temporalOk ? "通过" : "失败");
         ok = ok && temporalOk;
-        if (dateText) XString_delete_base(dateText);
-        if (datetimeText) XString_delete_base(datetimeText);
-        if (timeText) XString_delete_base(timeText);
-        if (dateRead) XVariant_delete_base(dateRead);
-        if (datetimeRead) XVariant_delete_base(datetimeRead);
-        if (timeRead) XVariant_delete_base(timeRead);
-        if (query) XSqlQuery_delete_base(query);
-        if (dateValue) XVariant_delete_base(dateValue);
-        if (datetimeValue) XVariant_delete_base(datetimeValue);
-        if (timeValue) XVariant_delete_base(timeValue);
-        if (nullDateValue) XVariant_delete_base(nullDateValue);
-        if (nullTimeValue) XVariant_delete_base(nullTimeValue);
-        if (nullDateTimeValue) XVariant_delete_base(nullDateTimeValue);
+        if (dateText) XClassDelete(dateText);
+        if (datetimeText) XClassDelete(datetimeText);
+        if (timeText) XClassDelete(timeText);
+        if (dateRead) XClassDelete(dateRead);
+        if (datetimeRead) XClassDelete(datetimeRead);
+        if (timeRead) XClassDelete(timeRead);
+        if (query) XClassDelete(query);
+        if (dateValue) XClassDelete(dateValue);
+        if (datetimeValue) XClassDelete(datetimeValue);
+        if (timeValue) XClassDelete(timeValue);
+        if (nullDateValue) XClassDelete(nullDateValue);
+        if (nullTimeValue) XClassDelete(nullTimeValue);
+        if (nullDateTimeValue) XClassDelete(nullDateTimeValue);
         query = XSqlDatabase_exec_utf8(database, "DROP TABLE IF EXISTS temporal");
-        if (query) XSqlQuery_delete_base(query);
+        if (query) XClassDelete(query);
     }
 
     query = ok ? XSqlDatabase_exec_utf8(database,
@@ -726,9 +726,9 @@ static bool XSqlTest_run_sqlite(void)
             && XString_equals_utf8(rowText, "Alice", XChar_CaseSensitive);
         XPrintf("SQLite 查询记录携带当前行值：%s\n", recordValueOk ? "通过" : "失败");
         ok = ok && recordValueOk;
-        if (rowText) XString_delete_base(rowText);
-        if (rowValue) XVariant_delete_base(rowValue);
-        if (rowRecord) XSqlRecord_delete_base(rowRecord);
+        if (rowText) XClassDelete(rowText);
+        if (rowValue) XClassDelete(rowValue);
+        if (rowRecord) XClassDelete(rowRecord);
     }
     nameField = ok ? XString_create_utf8("name") : NULL;
     value = ok ? XSqlQuery_value(query, 2) : NULL;
@@ -738,11 +738,11 @@ static bool XSqlTest_run_sqlite(void)
     ok = ok && blob && XByteArray_size_base(blob) == 2
         && memcmp(XByteArray_data(blob), "xy", 2) == 0
         && nameText && XString_equals_utf8(nameText, "Alice", XChar_CaseSensitive);
-    if (blob) XByteArray_delete_base(blob);
-    if (value) XVariant_delete_base(value);
-    if (nameText) XString_delete_base(nameText);
-    if (nameValue) XVariant_delete_base(nameValue);
-    if (nameField) { XString_delete_base(nameField); nameField = NULL; }
+    if (blob) XClassDelete(blob);
+    if (value) XClassDelete(value);
+    if (nameText) XClassDelete(nameText);
+    if (nameValue) XClassDelete(nameValue);
+    if (nameField) { XClassDelete(nameField); nameField = NULL; }
     ok = ok && XSqlQuery_next(query) && XSqlQuery_isNull(query, 2)
         && XSqlQuery_last(query) && XSqlQuery_at(query) == 1
         && !XSqlQuery_next(query) && XSqlQuery_at(query) == XSqlLocation_AfterLastRow;
@@ -752,21 +752,21 @@ static bool XSqlTest_run_sqlite(void)
         && XSqlQuery_size(query) == -1 && XSqlQuery_numRowsAffected(query) == -1
         && XSqlQuery_exec(query) && XSqlQuery_first(query);
     XPrintf("SQLite 查询和记录定位：%s\n", ok ? "通过" : "失败");
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
 
     ok = ok && XSqlDatabase_transaction(database);
     query = ok ? XSqlDatabase_exec_utf8(database,
         "INSERT INTO people (name, score) VALUES ('rollback', 3.5)") : NULL;
     ok = ok && query && XSqlQuery_isActive(query);
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
     ok = ok && XSqlDatabase_rollback(database);
     query = ok ? XSqlDatabase_exec_utf8(database, "SELECT count(*) FROM people") : NULL;
     ok = ok && query && XSqlQuery_first(query);
     value = ok ? XSqlQuery_value(query, 0) : NULL;
     ok = ok && value && XVariant_toInt64(value) == 2;
     XPrintf("SQLite 事务回滚：%s\n", ok ? "通过" : "失败");
-    if (value) XVariant_delete_base(value);
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (value) XClassDelete(value);
+    if (query) { XClassDelete(query); query = NULL; }
 
     tables = ok ? XSqlDatabase_tables(database, XSqlTableType_Tables) : NULL;
     peopleName = ok ? XString_create_utf8("people") : NULL;
@@ -797,7 +797,7 @@ static bool XSqlTest_run_sqlite(void)
         if (copyQuerySet) XSqlQueryModel_fetchMore(copyModel);
         copyQuerySet = copyQuerySet && XSqlQueryModel_rowCount(copyModel) == 300
             && !XSqlQueryModel_canFetchMore(copyModel);
-        if (modelQuery) { XSqlQuery_delete_base(modelQuery); modelQuery = NULL; }
+        if (modelQuery) { XClassDelete(modelQuery); modelQuery = NULL; }
         batchModel = XSqlQueryModel_create();
         batchFetch = batchModel && XSqlQueryModel_setQuery_utf8(batchModel,
             batchSql,
@@ -810,7 +810,7 @@ static bool XSqlTest_run_sqlite(void)
         batchFetch = batchFetch && XSqlQueryModel_rowCount(batchModel) == 300
             && !XSqlQueryModel_canFetchMore(batchModel)
             && value && XVariant_toInt64(value) == 300;
-        if (value) { XVariant_delete_base(value); value = NULL; }
+        if (value) { XClassDelete(value); value = NULL; }
         ok = ok && batchFetch && copyQuerySet;
         XPrintf("SQLite 查询模型分批取数和复制查询重载：%s\n",
                batchFetch && copyQuerySet ? "通过" : "失败");
@@ -843,7 +843,7 @@ static bool XSqlTest_run_sqlite(void)
         name = XVariant_create_utf8_str("Alice-model");
         tableUpdate = tableSelect && name && XSqlTableModel_setData(tableModel, 0, 1, name,
                                                                      XSqlItemDataRole_Edit);
-        if (name) { XVariant_delete_base(name); name = NULL; }
+        if (name) { XClassDelete(name); name = NULL; }
         modelRecord = tableModel ? XSqlTableModel_record_current(tableModel) : NULL;
         name = XVariant_create_utf8_str("Model-insert");
         score = XVariant_create_double(7.5);
@@ -855,42 +855,42 @@ static bool XSqlTest_run_sqlite(void)
             && XSqlTableModel_insertRecord(tableModel, -1, modelRecord)
             && XSqlTableModel_removeRows(tableModel, 1, 1)
             && XSqlTableModel_submitAll(tableModel);
-        if (name) { XVariant_delete_base(name); name = NULL; }
-        if (score) { XVariant_delete_base(score); score = NULL; }
-        if (modelRecord) { XSqlRecord_delete_base(modelRecord); modelRecord = NULL; }
+        if (name) { XClassDelete(name); name = NULL; }
+        if (score) { XClassDelete(score); score = NULL; }
+        if (modelRecord) { XClassDelete(modelRecord); modelRecord = NULL; }
         query = tableInsertDelete ? XSqlDatabase_exec_utf8(database,
             "SELECT name FROM people ORDER BY id") : NULL;
         tableRead = query && XSqlQuery_first(query);
         value = tableRead ? XSqlQuery_value(query, 0) : NULL;
         text = value ? XVariant_toString(value) : NULL;
         tableRead = tableRead && text && XString_equals_utf8(text, "Alice-model", XChar_CaseSensitive);
-        if (value) { XVariant_delete_base(value); value = NULL; }
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (value) { XClassDelete(value); value = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         tableRead = tableRead && XSqlQuery_next(query);
         value = tableRead ? XSqlQuery_value(query, 0) : NULL;
         text = value ? XVariant_toString(value) : NULL;
         tableRead = tableRead && text && XString_equals_utf8(text, "Model-insert", XChar_CaseSensitive)
             && !XSqlQuery_next(query);
-        if (value) { XVariant_delete_base(value); value = NULL; }
-        if (text) { XString_delete_base(text); text = NULL; }
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (value) { XClassDelete(value); value = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
+        if (query) { XClassDelete(query); query = NULL; }
 
         query = tableRead ? XSqlDatabase_exec_utf8(database,
             "UPDATE people SET name = 'external-refresh' WHERE id = 1") : NULL;
         tableRefresh = query && XSqlQuery_isActive(query) && XSqlTableModel_selectRow(tableModel, 0);
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (query) { XClassDelete(query); query = NULL; }
         value = tableRefresh ? XSqlTableModel_data(tableModel, 0, 1,
                                                     XSqlItemDataRole_Display) : NULL;
         text = value ? XVariant_toString(value) : NULL;
         tableRefresh = tableRefresh && text
             && XString_equals_utf8(text, "external-refresh", XChar_CaseSensitive);
-        if (value) { XVariant_delete_base(value); value = NULL; }
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (value) { XClassDelete(value); value = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
 
         name = XVariant_create_utf8_str("discarded");
         tableRevert = tableRefresh && name && XSqlTableModel_setData(tableModel, 0, 1, name,
                                                                    XSqlItemDataRole_Edit);
-        if (name) { XVariant_delete_base(name); name = NULL; }
+        if (name) { XClassDelete(name); name = NULL; }
         if (tableModel) XSqlTableModel_revertRow(tableModel, 0);
 
         XSqlTableModel_setEditStrategy(tableModel, XSqlTableEditStrategy_OnManualSubmit);
@@ -898,7 +898,7 @@ static bool XSqlTest_run_sqlite(void)
         tableManualSubmit = tableRevert && name
             && XSqlTableModel_setData(tableModel, 0, 1, name, XSqlItemDataRole_Edit)
             && XSqlTableModel_submit(tableModel) && XSqlTableModel_isDirty(tableModel);
-        if (name) { XVariant_delete_base(name); name = NULL; }
+        if (name) { XClassDelete(name); name = NULL; }
         query = tableManualSubmit ? XSqlDatabase_exec_utf8(database,
             "SELECT name FROM people WHERE id = 1") : NULL;
         tableManualSubmit = tableManualSubmit && query && XSqlQuery_first(query);
@@ -906,9 +906,9 @@ static bool XSqlTest_run_sqlite(void)
         text = value ? XVariant_toString(value) : NULL;
         tableManualSubmit = tableManualSubmit && text
             && XString_equals_utf8(text, "external-refresh", XChar_CaseSensitive);
-        if (value) { XVariant_delete_base(value); value = NULL; }
-        if (text) { XString_delete_base(text); text = NULL; }
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (value) { XClassDelete(value); value = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
+        if (query) { XClassDelete(query); query = NULL; }
 
         tableManualDelete = tableManualSubmit && XSqlTableModel_removeRows(tableModel, 1, 1)
             && XSqlTableModel_rowCount(tableModel) == 2
@@ -919,15 +919,15 @@ static bool XSqlTest_run_sqlite(void)
         text = value ? XVariant_toString(value) : NULL;
         tableManualDelete = tableManualDelete && text
             && XString_equals_utf8(text, "!", XChar_CaseSensitive);
-        if (value) { XVariant_delete_base(value); value = NULL; }
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (value) { XClassDelete(value); value = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         if (tableModel) XSqlTableModel_revertRow(tableModel, 1);
         value = tableManualDelete ? XSqlTableModel_headerData(tableModel, 1,
                                                                XSqlOrientation_Vertical,
                                                                XSqlItemDataRole_Display) : NULL;
         tableManualDelete = tableManualDelete && value && XVariant_toInt32(value) == 2
             && !XSqlTableModel_isDirty_row(tableModel, 1);
-        if (value) XVariant_delete_base(value);
+        if (value) XClassDelete(value);
 
         XSqlTableModel_setEditStrategy(tableModel, XSqlTableEditStrategy_OnFieldChange);
         value = tableManualSubmit ? XSqlTableModel_data(tableModel, 0, 1,
@@ -935,12 +935,12 @@ static bool XSqlTest_run_sqlite(void)
         text = value ? XVariant_toString(value) : NULL;
         tableStrategyRevert = tableManualSubmit && !XSqlTableModel_isDirty(tableModel)
             && text && XString_equals_utf8(text, "external-refresh", XChar_CaseSensitive);
-        if (value) { XVariant_delete_base(value); value = NULL; }
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (value) { XClassDelete(value); value = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         name = XVariant_create_utf8_str("Model-field-change");
         tableFieldChange = tableStrategyRevert && name && XSqlTableModel_setData(tableModel, 1, 1, name,
                                                                           XSqlItemDataRole_Edit);
-        if (name) { XVariant_delete_base(name); name = NULL; }
+        if (name) { XClassDelete(name); name = NULL; }
         query = tableFieldChange ? XSqlDatabase_exec_utf8(database,
             "SELECT name FROM people ORDER BY id") : NULL;
         tableFieldChange = tableFieldChange && query && XSqlQuery_first(query);
@@ -948,24 +948,24 @@ static bool XSqlTest_run_sqlite(void)
         text = value ? XVariant_toString(value) : NULL;
         tableFieldChange = tableFieldChange && text
             && XString_equals_utf8(text, "external-refresh", XChar_CaseSensitive);
-        if (value) { XVariant_delete_base(value); value = NULL; }
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (value) { XClassDelete(value); value = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         tableFieldChange = tableFieldChange && XSqlQuery_next(query);
         value = tableFieldChange ? XSqlQuery_value(query, 0) : NULL;
         text = value ? XVariant_toString(value) : NULL;
         tableFieldChange = tableFieldChange && text
             && XString_equals_utf8(text, "Model-field-change", XChar_CaseSensitive);
-        if (value) XVariant_delete_base(value);
-        if (text) XString_delete_base(text);
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (value) XClassDelete(value);
+        if (text) XClassDelete(text);
+        if (query) { XClassDelete(query); query = NULL; }
         tableFieldChange = tableFieldChange && XSqlTableModel_removeRows(tableModel, 1, 1);
         query = tableFieldChange ? XSqlDatabase_exec_utf8(database,
             "SELECT count(*) FROM people") : NULL;
         tableFieldChange = tableFieldChange && query && XSqlQuery_first(query);
         value = tableFieldChange ? XSqlQuery_value(query, 0) : NULL;
         tableFieldChange = tableFieldChange && value && XVariant_toInt64(value) == 1;
-        if (value) XVariant_delete_base(value);
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (value) XClassDelete(value);
+        if (query) { XClassDelete(query); query = NULL; }
         tableColumnRemoval = tableFieldChange
             && XSqlTableModel_removeColumns(tableModel, 2, 1)
             && XSqlQueryModel_columnCount(&tableModel->m_parent) == 3;
@@ -973,7 +973,7 @@ static bool XSqlTest_run_sqlite(void)
         tableColumnRemoval = tableColumnRemoval && text
             && !XString_contains_utf8(text, "payload", XChar_CaseInsensitive)
             && XString_contains_utf8(text, "score", XChar_CaseInsensitive);
-        if (text) { XString_delete_base(text); text = NULL; }
+        if (text) { XClassDelete(text); text = NULL; }
         ok = ok && tableSelect && tableUpdate && tableInsertDelete && tableRead
             && tableRefresh && tableRevert && tableManualSubmit && tableStrategyRevert
             && tableManualDelete && tableFieldChange && tableColumnRemoval;
@@ -990,8 +990,8 @@ static bool XSqlTest_run_sqlite(void)
                    tableFieldChange ? "通过" : "失败", tableColumnRemoval ? "通过" : "失败");
             if (errorText && XString_length_base(errorText) > 0)
                 XPrintf("SQLite 表模型错误：%s\n", XString_toUtf8(errorText));
-            if (errorText) XString_delete_base(errorText);
-            if (error) XSqlError_delete_base(error);
+            if (errorText) XClassDelete(errorText);
+            if (error) XClassDelete(error);
         }
     }
 
@@ -1002,24 +1002,24 @@ static bool XSqlTest_run_sqlite(void)
         XString* journalMode = value ? XVariant_toString(value) : NULL;
         ok = ok && journalMode && XString_equals_utf8(journalMode, "wal", XChar_CaseInsensitive);
         XPrintf("SQLite 共享内存映射：%s\n", ok ? "通过" : "失败");
-        if (journalMode) XString_delete_base(journalMode);
-        if (value) XVariant_delete_base(value);
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (journalMode) XClassDelete(journalMode);
+        if (value) XClassDelete(value);
+        if (query) { XClassDelete(query); query = NULL; }
         query = ok ? XSqlDatabase_exec_utf8(database,
             "INSERT INTO people (name, score) VALUES ('wal', 4.5)") : NULL;
         ok = ok && query && XSqlQuery_isActive(query);
-        if (query) { XSqlQuery_delete_base(query); query = NULL; }
+        if (query) { XClassDelete(query); query = NULL; }
     }
 
-    if (tables) XStringList_delete_base(tables);
-    if (record) XSqlRecord_delete_base(record);
-    if (metadataField) XSqlField_delete_base(metadataField);
-    if (primaryIndex) XSqlIndex_delete_base(primaryIndex);
-    if (batchModel) XSqlQueryModel_delete_base(batchModel);
-    if (copyModel) XSqlQueryModel_delete_base(copyModel);
-    if (modelQuery) XSqlQuery_delete_base(modelQuery);
-    if (modelRecord) XSqlRecord_delete_base(modelRecord);
-    if (tableModel) XSqlTableModel_delete_base(tableModel);
+    if (tables) XClassDelete(tables);
+    if (record) XClassDelete(record);
+    if (metadataField) XClassDelete(metadataField);
+    if (primaryIndex) XClassDelete(primaryIndex);
+    if (batchModel) XClassDelete(batchModel);
+    if (copyModel) XClassDelete(copyModel);
+    if (modelQuery) XClassDelete(modelQuery);
+    if (modelRecord) XClassDelete(modelRecord);
+    if (tableModel) XClassDelete(tableModel);
     XSqlDatabase_close(database);
     notificationNamesAfterClose = sqliteDriver
         ? XSqlDriver_subscribedToNotifications_base(sqliteDriver) : NULL;
@@ -1033,8 +1033,8 @@ static bool XSqlTest_run_sqlite(void)
         ok = ok && query && XSqlQuery_first(query);
         value = ok ? XSqlQuery_value(query, 0) : NULL;
         ok = ok && value && XVariant_toInt64(value) == 2;
-        if (value) XVariant_delete_base(value);
-        if (query) XSqlQuery_delete_base(query);
+        if (value) XClassDelete(value);
+        if (query) XClassDelete(query);
         XSqlDatabase_close(database);
     }
     XFile_remove_static(databaseName);
@@ -1042,19 +1042,19 @@ static bool XSqlTest_run_sqlite(void)
     XFile_remove_static(shmName);
     if (notificationSubscribed && sqliteDriver && notificationName)
         XSqlDriver_unsubscribeFromNotification_base(sqliteDriver, notificationName);
-    if (notificationNames) XStringList_delete_base(notificationNames);
-    if (notificationNamesAfterClose) XStringList_delete_base(notificationNamesAfterClose);
-    if (notificationName) XString_delete_base(notificationName);
-    if (peopleName) XString_delete_base(peopleName);
-    if (nameField) XString_delete_base(nameField);
-    if (filterText) XString_delete_base(filterText);
-    if (connectionName) XString_delete_base(connectionName);
-    if (openedDatabase) XSqlDatabase_delete_base(openedDatabase);
-    XString_delete_base(databaseName);
-    XString_delete_base(walName);
-    XString_delete_base(shmName);
+    if (notificationNames) XClassDelete(notificationNames);
+    if (notificationNamesAfterClose) XClassDelete(notificationNamesAfterClose);
+    if (notificationName) XClassDelete(notificationName);
+    if (peopleName) XClassDelete(peopleName);
+    if (nameField) XClassDelete(nameField);
+    if (filterText) XClassDelete(filterText);
+    if (connectionName) XClassDelete(connectionName);
+    if (openedDatabase) XClassDelete(openedDatabase);
+    XClassDelete(databaseName);
+    XClassDelete(walName);
+    XClassDelete(shmName);
     XSqlDatabase_removeDatabase("xsql-sqlite");
-    if (database) XSqlDatabase_delete_base(database);
+    if (database) XClassDelete(database);
     XPrintf("SQLite XFile 文件抽象：%s\n", ok ? "通过" : "失败");
     return ok;
 }

@@ -174,7 +174,7 @@ XVtable* XVirtualKeyboardAbstractInputMethod_class_init(void);
 /**
  * @brief      初始化默认状态（未装配引擎/上下文，全部槽位为默认实现）。
  * @param      self 待初始化对象；必须与
- *             XVirtualKeyboardAbstractInputMethod_deinit_base 成对调用。
+ *             XClassDeinit 成对调用。
  */
 void XVirtualKeyboardAbstractInputMethod_init(
         XVirtualKeyboardAbstractInputMethod* self);
@@ -194,12 +194,6 @@ void XVirtualKeyboardAbstractInputMethod_init(
 XVirtualKeyboardAbstractInputMethod*
 XVirtualKeyboardAbstractInputMethod_create_ex(XMemoryType memory);
 
-/** @brief 通过 XClass 虚表释放资源（栈/外部存储对象使用）。 */
-#define XVirtualKeyboardAbstractInputMethod_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-/** @brief 删除堆上对象。 */
-#define XVirtualKeyboardAbstractInputMethod_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 
 /* ==================== 反向引用（对标 Qt inputContext/inputEngine） ==================== */
 

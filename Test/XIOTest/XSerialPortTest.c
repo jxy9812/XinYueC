@@ -29,7 +29,7 @@ void XSerialPortTest()
     XSerialPort_setPortName(serial,"COM20");
     if (!XSerialPort_open_base(serial, XIODevice_ReadWrite))
     {
-        XSerialPort_delete_base(serial);
+        XIODevice_deleteLater(serial);
         //XCoreApplication_quit();
         //return;
         continue;
@@ -44,7 +44,7 @@ void XSerialPortTest()
             buff[len] = 0;
             XPrintf("%s", buff);
         }
-        XSerialPort_delete_base(serial);
+        XIODevice_deleteLater(serial);
         XCoreApplication_processEvents(0);
     }
    

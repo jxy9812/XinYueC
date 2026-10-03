@@ -24,7 +24,7 @@ static void threadFunc(XThread* thread, XVarList* list)
 
 	XThread_exec(thread);
 	//XTimer_deleteLater(timer);
-	//XClass_delete_base(timer);
+	//XClassDelete(timer);
 	int value = XAtomic_fetch_sub_int32(rt, 1, XAtomic_MemoryOrder_Relaxed);
 	if (value <= 1)
 	{

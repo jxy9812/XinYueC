@@ -72,7 +72,7 @@ static void VXPlatformInputContext_deinit(XPlatformInputContext* self)
     if (!self) return;
     if (self->m_data) {
         if (self->m_data->m_locale) {
-            XString_delete_base(self->m_data->m_locale);
+            XClassDelete(self->m_data->m_locale);
             self->m_data->m_locale = NULL;
         }
         XFree_System(self->m_data);
@@ -442,12 +442,12 @@ void XPlatformInputContext_setLocale(XPlatformInputContext* self,
     if (!value) return;
     if (self->m_data->m_locale &&
         XString_equals(self->m_data->m_locale, value, XChar_CaseSensitive)) {
-        XString_delete_base(value);
+        XClassDelete(value);
         return;
     }
     old = self->m_data->m_locale;
     self->m_data->m_locale = value;
-    if (old) XString_delete_base(old);
+    if (old) XClassDelete(old);
     XPlatformInputContext_emitLocaleChanged(self);
     /* 按 Qt QLocale::textDirection 语义在区域变化时重估输入方向。 */
     XPlatformInputContext_setInputDirection(
@@ -465,7 +465,7 @@ void XPlatformInputContext_setLocale_2(XPlatformInputContext* self,
         if (!tmp) return;
     }
     XPlatformInputContext_setLocale(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 void XPlatformInputContext_emitLocaleChanged(XPlatformInputContext* self)
@@ -591,7 +591,7 @@ XVariant* XPlatformInputContext_queryFocusObject(XInputMethodQuery query,
     argument = XVariant_create((void*)&position, sizeof(position),
                                 XVariantType_User);
     result = XInputMethod_queryFocusObject(query, argument);
-    if (argument) XVariant_delete_base((XClass*)argument);
+    if (argument) XClassDelete((XClass*)argument);
 #else
     (void)query; (void)position;
 #endif /* XGUIAPPLICATION_ON && XINPUTMETHOD_ON */

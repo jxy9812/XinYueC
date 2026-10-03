@@ -29,8 +29,6 @@ typedef struct XAbstractNativeEventFilter
 // =============== 构造/析构 ====================
 XVtable* XAbstractNativeEventFilter_class_init(void);
 void XAbstractNativeEventFilter_init(XAbstractNativeEventFilter* self);
-#define XAbstractNativeEventFilter_deinit_base    XClass_deinit_base
-#define XAbstractNativeEventFilter_delete_base    XClass_delete_base
 
 // =============== 虚函数多态入口 ===============
 /**

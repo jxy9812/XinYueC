@@ -199,8 +199,8 @@ static bool pngParseTextChunk(const char type[4], const uint8_t* data,
         *totalBytes += textLen;
     }
 done:
-    if (key) XString_delete_base((XClass*)key);
-    if (value) XString_delete_base((XClass*)value);
+    if (key) XClassDelete((XClass*)key);
+    if (value) XClassDelete((XClass*)value);
     if (inflated) XFree_System(inflated);
     return key != NULL && value != NULL;
 }
@@ -236,10 +236,10 @@ static bool pngBuildDescription(const XStringList* keys,
             !XString_append_utf8(out, ": ") ||
             !XString_append_with_length_utf8(out, valueUtf8,
                                              XString_toUtf8_length(simplified))) {
-            XString_delete_base((XClass*)simplified);
+            XClassDelete((XClass*)simplified);
             return false;
         }
-        XString_delete_base((XClass*)simplified);
+        XClassDelete((XClass*)simplified);
     }
     return true;
 }
@@ -294,8 +294,8 @@ bool XImageCodecInternal_extractPngDescription(const uint8_t* data,
         pos += (size_t)length + 12u;
     }
 done:
-    XStringList_deinit_base((XClass*)&keys);
-    XStringList_deinit_base((XClass*)&values);
+    XClassDeinit((XClass*)&keys);
+    XClassDeinit((XClass*)&values);
     return ok;
 }
 
@@ -379,12 +379,12 @@ static bool pngAppendColorProfile(const XImage* image, XByteArray* out)
     profile = XByteArray_create();
     if (!profile) return false;
     if (!XImageCodecInternal_copyIccProfile(image, profile)) {
-        XByteArray_delete_base((XClass*)profile);
+        XClassDelete((XClass*)profile);
         return false;
     }
     profileSize = XByteArray_size_base((const XContainer*)profile);
     if (profileSize == 0) {
-        XByteArray_delete_base((XClass*)profile);
+        XClassDelete((XClass*)profile);
         return true;
     }
     profileData = (const uint8_t*)XByteArray_data(profile);
@@ -428,7 +428,7 @@ static bool pngAppendColorProfile(const XImage* image, XByteArray* out)
 done:
     if (compressed) XFree_System(compressed);
     if (payload) XFree_System(payload);
-    XByteArray_delete_base((XClass*)profile);
+    XClassDelete((XClass*)profile);
     return ok;
 }
 
@@ -443,7 +443,7 @@ static bool pngImageHasIccProfile(const XImage* image)
     if (!profile) return false;
     result = XImageCodecInternal_copyIccProfile(image, profile) &&
              XByteArray_size_base((const XContainer*)profile) > 0;
-    XByteArray_delete_base((XClass*)profile);
+    XClassDelete((XClass*)profile);
     return result;
 }
 
@@ -1420,19 +1420,19 @@ bool XImageCodecInternal_decodePng(const uint8_t* data, size_t size, XImage* out
             if (key && value) XImage_setText(&temp, key, value);
         }
     }
-    XStringList_deinit_base((XClass*)&textKeys);
-    XStringList_deinit_base((XClass*)&textValues);
+    XClassDeinit((XClass*)&textKeys);
+    XClassDeinit((XClass*)&textValues);
     if (iccProfile) {
         XFree_System(iccProfile);
         iccProfile = NULL;
     }
-    XMove(out, &temp);
+    XClassMove(out, &temp);
     ok = true;
 
 fail:
-    if (!ok && tempInitialized) XImage_deinit_base(&temp);
-    XStringList_deinit_base((XClass*)&textKeys);
-    XStringList_deinit_base((XClass*)&textValues);
+    if (!ok && tempInitialized) XClassDeinit(&temp);
+    XClassDeinit((XClass*)&textKeys);
+    XClassDeinit((XClass*)&textValues);
     if (iccProfile) XFree_System(iccProfile);
     if (samples) XFree_System(samples);
     if (raw) XFree_System(raw);
@@ -1559,10 +1559,10 @@ bool XImageCodecInternal_encodePngOptions(const XImage* image,
     if (description &&
         !XString_isEmpty_base((const XContainer*)description)) {
         XImage_init(&decorated);
-        XCopy(&decorated, image);
+        XClassCopy(&decorated, image);
         if (!decorated.m_data ||
             !XImage_applyTextDescription(&decorated, description)) {
-            XImage_deinit_base(&decorated);
+            XClassDeinit(&decorated);
             return false;
         }
         source = &decorated;
@@ -1572,7 +1572,7 @@ bool XImageCodecInternal_encodePngOptions(const XImage* image,
 #if XIMAGECODEC_PNG_PALETTE_ON
     if (XImage_format(source) == XImageFormat_Indexed8) {
         bool indexedOk = pngEncodeIndexed(source, compressionLevel, gamma, out);
-        if (decoratedInitialized) XImage_deinit_base(&decorated);
+        if (decoratedInitialized) XClassDeinit(&decorated);
         return indexedOk;
     }
 #endif
@@ -1619,7 +1619,7 @@ bool XImageCodecInternal_encodePngOptions(const XImage* image,
 done:
     if (raw) XFree_System(raw);
     if (compressed) XFree_System(compressed);
-    if (decoratedInitialized) XImage_deinit_base(&decorated);
+    if (decoratedInitialized) XClassDeinit(&decorated);
     return ok;
 }
 

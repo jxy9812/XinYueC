@@ -58,12 +58,12 @@ void XDocPropsCore_delete(XDocPropsCore* self)
             if (pair)
             {
                 XString* key = *(XString**)XPair_first(pair);
-                if (key) XString_delete_base(key);
+                if (key) XClassDelete(key);
                 XString* val = *(XString**)XPair_second(pair);
-                if (val) XString_delete_base(val);
+                if (val) XClassDelete(val);
             }
         }
-        XMap_delete_base(self->m_properties);
+        XClassDelete(self->m_properties);
     }
     XAbstractOOXmlFile_deinit(&self->m_base);
     XFree_System(self);
@@ -85,7 +85,7 @@ bool XDocPropsCore_setProperty(XDocPropsCore* self, const XString* name, const X
         ? XString_create_utf8("creator") : XString_create_copy(name);
     if (!keyStr) return false;
     XString* valStr = XString_create_copy(value);
-    if (!valStr) { XString_delete_base(keyStr); return false; }
+    if (!valStr) { XClassDelete(keyStr); return false; }
     XMap_insert_base(self->m_properties, &keyStr, &valStr);
     return true;
 }
@@ -99,8 +99,8 @@ static void clear_properties(XDocPropsCore* self)
         if (!pair) continue;
         XString* key = *(XString**)XPair_first(pair);
         XString* value = *(XString**)XPair_second(pair);
-        if (key) XString_delete_base(key);
-        if (value) XString_delete_base(value);
+        if (key) XClassDelete(key);
+        if (value) XClassDelete(value);
     }
     XMap_clear_base(self->m_properties);
 }
@@ -162,7 +162,7 @@ bool XDocPropsCore_saveToXmlFile(XDocPropsCore* self, const XString* filePath)
         XIODevice_write_1((XIODevice*)file, (const char*)data, (int64_t)len) == (int64_t)len;
     if (file) {
         if (XIODevice_isOpen((XIODevice*)file)) XIODevice_close_base((XIODevice*)file);
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
     }
     XFree_System(data);
     return ok;
@@ -173,16 +173,16 @@ bool XDocPropsCore_loadFromXmlFile(XDocPropsCore* self, const XString* filePath)
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* data = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!data) return false;
     bool ok = XDocPropsCore_loadFromXmlData(self, XByteArray_data(data),
         XByteArray_size_base((XContainer*)data));
-    XByteArray_delete_base(data);
+    XClassDelete(data);
     return ok;
 }
 
@@ -258,7 +258,7 @@ bool XDocPropsCore_saveToXmlData(const XDocPropsCore* self, uint8_t** outData, s
             *outLen = size;
         }
     }
-    XXmlStreamWriter_delete_base(writer);
+    XClassDelete(writer);
     return *outData != NULL;
 }
 
@@ -268,12 +268,12 @@ bool XDocPropsCore_loadFromXmlData(XDocPropsCore* self, const uint8_t* data, siz
     XByteArray* bytes = XByteArray_create_with_data((const char*)data, len);
     XXmlStreamReader* reader = XXmlStreamReader_create();
     if (!bytes || !reader) {
-        if (bytes) XByteArray_delete_base(bytes);
-        if (reader) XXmlStreamReader_delete_base(reader);
+        if (bytes) XClassDelete(bytes);
+        if (reader) XClassDelete(reader);
         return false;
     }
     XXmlStreamReader_addData(reader, bytes);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     clear_properties(self);
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
@@ -284,15 +284,15 @@ bool XDocPropsCore_loadFromXmlData(XDocPropsCore* self, const uint8_t* data, siz
         const XString* value = XXmlStreamReader_readElementText(reader,
             XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
         if (!key || !value || !XDocPropsCore_setProperty(self, key, value)) {
-            if (key) XString_delete_base(key);
-            XXmlStreamReader_delete_base(reader);
+            if (key) XClassDelete(key);
+            XClassDelete(reader);
             clear_properties(self);
             return false;
         }
-        XString_delete_base(key);
+        XClassDelete(key);
     }
     bool ok = !XXmlStreamReader_hasError(reader);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     if (!ok) clear_properties(self);
     return ok;
 }

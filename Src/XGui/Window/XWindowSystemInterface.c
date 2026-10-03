@@ -199,7 +199,7 @@ static void xwsi_hoverSendEnter(XWidget* w, const XPoint* topLocalPos,
                                   XEVENT_TYPE_ENTER, &local, globalPos);
     if (!event) return;
     XCoreApplication_sendEvent((XObject*)w, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
 }
 
 /** @brief 按新旧靶合成 ENTER/LEAVE（对标 Qt dispatchEnterLeave 的链序
@@ -353,7 +353,7 @@ void XWindowSystemInterface_handleGeometryChange(XWindow* window, const XRect* r
                                    XEVENT_TYPE_RESIZE, &newSize, &oldSize);
     if (!event) return;
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
 }
 
 bool XWindowSystemInterface_handleExposeEvent(XWindow* window, const XRegion* region)
@@ -373,7 +373,7 @@ bool XWindowSystemInterface_handleExposeEvent(XWindow* window, const XRegion* re
     XRegion_deinit(&payload);
     XWindow_setExposed(window, exposed);
     handled = XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return handled;
 }
 
@@ -386,7 +386,7 @@ bool XWindowSystemInterface_handlePaintEvent(XWindow* window, const XRegion* reg
                                   XEVENT_TYPE_PAINT, region);
     if (!event) return false;
     handled = XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return handled;
 }
 
@@ -431,7 +431,7 @@ void XWindowSystemInterface_handleFocusWindowChanged(XWindow* window,
         if (event) {
             XGuiApplication_sendSpontaneousEvent((XObject*)oldFocused,
                                                  (XEvent*)event);
-            XEvent_delete_base((XEvent*)event);
+            XClassDelete((XEvent*)event);
         }
     }
 
@@ -443,7 +443,7 @@ void XWindowSystemInterface_handleFocusWindowChanged(XWindow* window,
         if (!event) return;
         XGuiApplication_sendSpontaneousEvent((XObject*)window,
                                              (XEvent*)event);
-        XEvent_delete_base((XEvent*)event);
+        XClassDelete((XEvent*)event);
     }
 
     /* 更新应用焦点窗口与焦点对象：内部发射 focusWindowChanged /
@@ -564,7 +564,7 @@ bool XWindowSystemInterface_handleCloseEvent(XWindow* window)
         /* 关闭事件以 accept 状态表达「是否允许关闭」，与 QCloseEvent 一致。 */
         handled = XEvent_isAccepted((const XEvent*)event);
     }
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return handled;
 }
 
@@ -576,7 +576,7 @@ bool XWindowSystemInterface_handleShowEvent(XWindow* window)
     event = XShowEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_SHOW);
     if (!event) return false;
     handled = XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return handled;
 }
 
@@ -588,7 +588,7 @@ bool XWindowSystemInterface_handleHideEvent(XWindow* window)
     event = XHideEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_HIDE);
     if (!event) return false;
     handled = XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return handled;
 }
 
@@ -615,7 +615,7 @@ bool XWindowSystemInterface_handleKeyEvent_ex(XWindow* window, XEventType type,
     XKeyEvent_setNativeScanCode(event, nativeScanCode);
     XKeyEvent_setTimestamp(event, timestamp);
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return true;
 }
 
@@ -632,16 +632,16 @@ bool XWindowSystemInterface_handleInputMethodEvent(
     preedit = XString_create_utf8(preeditUtf8 ? preeditUtf8 : "");
     commit = XString_create_utf8(commitUtf8 ? commitUtf8 : "");
     if (!preedit || !commit) {
-        if (preedit) XString_delete_base((XClass*)preedit);
-        if (commit) XString_delete_base((XClass*)commit);
+        if (preedit) XClassDelete((XClass*)preedit);
+        if (commit) XClassDelete((XClass*)commit);
         return false;
     }
     event = XInputMethodEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, preedit,
                                         commit, replacementStart,
                                         replacementLength, cursorPosition,
                                         anchorPosition);
-    XString_delete_base((XClass*)preedit);
-    XString_delete_base((XClass*)commit);
+    XClassDelete((XClass*)preedit);
+    XClassDelete((XClass*)commit);
     if (!event) return false;
     /* 与其它窗口系统接口事件保持一致：经应用自发事件入口投递，
        由 XWidgetWindow 桥接到当前焦点控件（例如 XLineEdit）。
@@ -649,7 +649,7 @@ bool XWindowSystemInterface_handleInputMethodEvent(
        只到达窗口而不会到达实际编辑控件。 */
     handled = XGuiApplication_sendSpontaneousEvent((XObject*)window,
                                                     (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return handled;
 }
 
@@ -669,19 +669,19 @@ bool XWindowSystemInterface_handleDropEvent(
     mimeType = XString_create_utf8(mimeTypeUtf8 ? mimeTypeUtf8 : "");
     data = XString_create_utf8(dataUtf8 ? dataUtf8 : "");
     if (!mimeType || !data) {
-        if (mimeType) XString_delete_base((XClass*)mimeType);
-        if (data) XString_delete_base((XClass*)data);
+        if (mimeType) XClassDelete((XClass*)mimeType);
+        if (data) XClassDelete((XClass*)data);
         return false;
     }
     event = XDropEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, &position,
                                  globalPosition, mimeType, data);
-    XString_delete_base((XClass*)mimeType);
-    XString_delete_base((XClass*)data);
+    XClassDelete((XClass*)mimeType);
+    XClassDelete((XClass*)data);
     if (!event) return false;
     handled = XGuiApplication_sendSpontaneousEvent((XObject*)window,
                                                    (XEvent*)event);
     handled = handled && XEvent_isAccepted((XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return handled;
 }
 
@@ -720,7 +720,7 @@ bool XWindowSystemInterface_handleMouseEvent_ex(XWindow* window, XEventType type
     XMouseEvent_setGlobalPosition(event, globalPosition);
     XMouseEvent_setTimestamp(event, timestamp);
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return true;
 }
 
@@ -737,7 +737,7 @@ bool XWindowSystemInterface_handleWheelEvent(XWindow* window,
                                   angleDelta, buttons, modifiers);
     if (!event) return false;
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return true;
 }
 
@@ -781,7 +781,7 @@ bool XWindowSystemInterface_handleTouchEvent_ex(XWindow* window, XEventType type
         return false;
     }
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     g_touchTimestamp = 0;
     return true;
 }
@@ -811,7 +811,7 @@ bool XWindowSystemInterface_handleTouchPoints_ex(XWindow* window,
     }
     XTouchEvent_setPoints(event, points, count);
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     g_touchTimestamp = 0;
     return true;
 }
@@ -837,7 +837,7 @@ bool XWindowSystemInterface_handleTabletEvent(XWindow* window, XEventType type,
                                    globalPosition, pressure, pointerType);
     if (!event) return false;
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     return true;
 }
 
@@ -866,7 +866,7 @@ void XWindowSystemInterface_handleEnterEvent(XWindow* window,
                                   globalPosition);
     if (!event) return;
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
 }
 
 void XWindowSystemInterface_handleLeaveEvent(XWindow* window)

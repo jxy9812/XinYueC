@@ -52,7 +52,7 @@ void XRingChunkTest()
     assert(strcmp(readBuf, "Hello") == 0);
     assert(XRingChunk_available(chunk) == 0);
 
-    XRingChunk_delete_base(chunk);
+    XClassDelete(chunk);
 
     // ========================================
 // 测试 2: 环绕写入 (Write Wrap-Around)
@@ -79,7 +79,7 @@ void XRingChunkTest()
     written = XRingChunk_write(chunk, "X", 1);
     assert(written == 0); // 缓冲区已满
 
-    XRingChunk_delete_base(chunk);
+    XClassDelete(chunk);
 
     // ========================================
     // 测试 3: 环绕读取 (Read Wrap-Around)
@@ -106,7 +106,7 @@ void XRingChunkTest()
     XRingChunk_read(chunk, readBuf, 2);
     assert(readBuf[0] == 'F' && readBuf[1] == 'G');
 
-    XRingChunk_delete_base(chunk);
+    XClassDelete(chunk);
 
     // ========================================
     // 测试 4: Peek 和 Skip 功能
@@ -130,7 +130,7 @@ void XRingChunkTest()
     XRingChunk_read(chunk, readBuf, 4);
     assert(strncmp(readBuf, "Test", 4) == 0);
 
-    XRingChunk_delete_base(chunk);
+    XClassDelete(chunk);
 
     // ========================================
     // 测试 5: Mark 和 ResetToMark 功能
@@ -159,7 +159,7 @@ void XRingChunkTest()
     XRingChunk_read(chunk, readBuf, 4);
     assert(strncmp(readBuf, "rkMe", 4) == 0);
 
-    XRingChunk_delete_base(chunk);
+    XClassDelete(chunk);
 
     // 测试 6: Unget 功能 (修正版 - Simple Case)
     // ========================================
@@ -185,7 +185,7 @@ void XRingChunkTest()
         assert(read == 1);
         assert(readBuf[0] == 'U'); // 这次应该成功！
 
-        XRingChunk_delete_base(chunk);
+        XClassDelete(chunk);
     }
    
 
@@ -231,7 +231,7 @@ void XRingChunkTest()
         XPrintf("  -> Unexpectedly succeeded.\n");
     }
 
-    XRingChunk_delete_base(chunk);
+    XClassDelete(chunk);
 
 
     // ========================================
@@ -245,7 +245,7 @@ void XRingChunkTest()
     assert(XRingChunk_peek(chunk, readBuf, 0) == 0);
     XRingChunk_skip(chunk, 0);
 
-    XRingChunk_delete_base(chunk);
+    XClassDelete(chunk);
 
     XPrintf("\n=== All Tests Completed Successfully! ===\n");
 	XCoreApplication_quit();

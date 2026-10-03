@@ -44,7 +44,7 @@ static XVariant* xmysql_test_string_value(const char* text)
 {
     XString* string = XString_create_utf8(text ? text : "");
     XVariant* value = string ? XVariant_create_String_move(string) : NULL;
-    if (string) XString_delete_base(string);
+    if (string) XClassDelete(string);
     return value;
 }
 
@@ -54,7 +54,7 @@ static void xmysql_test_print_error(const char* prefix, const XSqlError* error)
     XPrintf("MySQL：%s%s%s\n", prefix ? prefix : "错误",
            text && XString_length_base(text) > 0 ? "：" : "",
            text ? XString_toUtf8(text) : "未知错误");
-    if (text) XString_delete_base(text);
+    if (text) XClassDelete(text);
 }
 
 static bool xmysql_test_query_ok(const char* label, XSqlQuery* query)
@@ -64,7 +64,7 @@ static bool xmysql_test_query_ok(const char* label, XSqlQuery* query)
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("查询错误", error);
-        if (error) XSqlError_delete_base(error);
+        if (error) XClassDelete(error);
     }
     return ok;
 }
@@ -74,7 +74,7 @@ static bool xmysql_test_statement(const XSqlDatabase* database, const char* labe
 {
     XSqlQuery* query = XSqlDatabase_exec_utf8(database, sql);
     bool ok = xmysql_test_query_ok(label, query);
-    if (query) XSqlQuery_delete_base(query);
+    if (query) XClassDelete(query);
     return ok;
 }
 
@@ -86,7 +86,7 @@ static bool xmysql_test_affected_statement(const XSqlDatabase* database,
     bool ok = xmysql_test_query_ok(label, query)
         && XSqlQuery_numRowsAffected(query) == expected;
     XPrintf("MySQL：%s影响行数：%s\n", label, ok ? "通过" : "失败");
-    if (query) XSqlQuery_delete_base(query);
+    if (query) XClassDelete(query);
     return ok;
 }
 
@@ -96,7 +96,7 @@ static XString* xmysql_test_quoted_name(const XSqlDatabase* database, const char
     XString* source = name ? XString_create_utf8(name) : NULL;
     XString* result = driver && source
         ? XSqlDriver_escapeIdentifier_base(driver, source, XSqlIdentifierType_TableName) : NULL;
-    if (source) XString_delete_base(source);
+    if (source) XClassDelete(source);
     return result;
 }
 
@@ -113,7 +113,7 @@ static XString* xmysql_test_category_insert_sql(const XString* category)
     XString* sql = XString_create_utf8("INSERT INTO ");
     if (!sql || !category || !XString_append(sql, category)
         || !XString_append_utf8(sql, " (title) VALUES ('分类一'), ('分类二')")) {
-        if (sql) XString_delete_base(sql);
+        if (sql) XClassDelete(sql);
         return NULL;
     }
     return sql;
@@ -131,15 +131,15 @@ static XSqlDatabase* xmysql_test_open_admin(const char* host, int port,
         XSqlDatabase_setPort(database, port);
         ok = XSqlDatabase_open_utf8(database, user, password);
     }
-    if (hostText) XString_delete_base(hostText);
+    if (hostText) XClassDelete(hostText);
     if (!ok) {
         if (database) {
             XSqlError* error = XSqlDatabase_lastError(database);
             xmysql_test_print_error("管理连接错误", error);
-            if (error) XSqlError_delete_base(error);
+            if (error) XClassDelete(error);
             XSqlDatabase_close(database);
             XSqlDatabase_removeDatabase("xsql-mysql-admin");
-            XSqlDatabase_delete_base(database);
+            XClassDelete(database);
         }
         return NULL;
     }
@@ -164,9 +164,9 @@ static bool xmysql_test_prepare_temporary_database(const char* host, int port,
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("检查临时测试库错误", error);
-        if (error) XSqlError_delete_base(error);
+        if (error) XClassDelete(error);
     }
-    if (query) XSqlQuery_delete_base(query);
+    if (query) XClassDelete(query);
     if (ok && !exists) {
         query = XSqlDatabase_exec_utf8(admin,
             "CREATE DATABASE `xin_sql_mysql_test_database` CHARACTER SET utf8mb4");
@@ -175,14 +175,14 @@ static bool xmysql_test_prepare_temporary_database(const char* host, int port,
         if (!ok && query) {
             XSqlError* error = XSqlQuery_lastError(query);
             xmysql_test_print_error("创建临时测试库错误", error);
-            if (error) XSqlError_delete_base(error);
+            if (error) XClassDelete(error);
         }
         if (ok && created) *created = true;
-        if (query) XSqlQuery_delete_base(query);
+        if (query) XClassDelete(query);
     }
     XSqlDatabase_close(admin);
     XSqlDatabase_removeDatabase("xsql-mysql-admin");
-    XSqlDatabase_delete_base(admin);
+    XClassDelete(admin);
     return ok;
 }
 
@@ -200,13 +200,13 @@ static void xmysql_test_drop_temporary_database(const char* host, int port,
         if (!XSqlQuery_isActive(query)) {
             XSqlError* error = XSqlQuery_lastError(query);
             xmysql_test_print_error("删除临时测试库错误", error);
-            if (error) XSqlError_delete_base(error);
+            if (error) XClassDelete(error);
         }
-        XSqlQuery_delete_base(query);
+        XClassDelete(query);
     }
     XSqlDatabase_close(admin);
     XSqlDatabase_removeDatabase("xsql-mysql-admin");
-    XSqlDatabase_delete_base(admin);
+    XClassDelete(admin);
 }
 
 static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
@@ -232,27 +232,27 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
         "SELECT PLUGIN_NAME FROM INFORMATION_SCHEMA.PLUGINS "
         "WHERE PLUGIN_NAME = 'caching_sha2_password'");
     pluginAvailable = query && XSqlQuery_isActive(query) && XSqlQuery_size(query) > 0;
-    if (query) XSqlQuery_delete_base(query);
+    if (query) XClassDelete(query);
     if (!pluginAvailable) {
         XPrintf("MySQL：caching_sha2_password RSA 测试：服务器未安装插件，跳过\n");
         XSqlDatabase_close(admin);
         XSqlDatabase_removeDatabase("xsql-mysql-admin");
-        XSqlDatabase_delete_base(admin);
+        XClassDelete(admin);
         return true;
     }
     query = XSqlDatabase_exec_utf8(admin,
         "DROP USER IF EXISTS 'xin_sql_caching_sha2_test'@'%'");
     ok = query && XSqlQuery_isActive(query);
-    if (query) XSqlQuery_delete_base(query);
+    if (query) XClassDelete(query);
     query = ok ? XSqlDatabase_exec_utf8(admin,
         "CREATE USER 'xin_sql_caching_sha2_test'@'%' "
         "IDENTIFIED WITH caching_sha2_password BY 'XinSqlRsa_Test_981103'") : NULL;
     ok = ok && query && XSqlQuery_isActive(query);
-    if (query) XSqlQuery_delete_base(query);
+    if (query) XClassDelete(query);
     created = ok;
     XSqlDatabase_close(admin);
     XSqlDatabase_removeDatabase("xsql-mysql-admin");
-    XSqlDatabase_delete_base(admin);
+    XClassDelete(admin);
     if (!created) {
         XPrintf("MySQL：caching_sha2_password RSA 测试账号创建：失败\n");
         return false;
@@ -270,10 +270,10 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
         XSqlDatabase_setPassword(rsaDatabase, passwordText);
         XSqlDatabase_setConnectOptions(rsaDatabase, options);
         ok = hostText && options && userText && passwordText && XSqlDatabase_open(rsaDatabase);
-        if (hostText) XString_delete_base(hostText);
-        if (options) XString_delete_base(options);
-        if (userText) XString_delete_base(userText);
-        if (passwordText) XString_delete_base(passwordText);
+        if (hostText) XClassDelete(hostText);
+        if (options) XClassDelete(options);
+        if (userText) XClassDelete(userText);
+        if (passwordText) XClassDelete(passwordText);
         hostText = NULL;
         options = NULL;
         userText = NULL;
@@ -285,12 +285,12 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
     if (!ok && rsaDatabase) {
         XSqlError* error = XSqlDatabase_lastError(rsaDatabase);
         xmysql_test_print_error("RSA 认证错误", error);
-        if (error) XSqlError_delete_base(error);
+        if (error) XClassDelete(error);
     }
     if (rsaDatabase) {
         XSqlDatabase_close(rsaDatabase);
         XSqlDatabase_removeDatabase("xsql-mysql-rsa");
-        XSqlDatabase_delete_base(rsaDatabase);
+        XClassDelete(rsaDatabase);
     }
 
     admin = xmysql_test_open_admin(host, port, adminUser, adminPassword);
@@ -298,10 +298,10 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
         query = XSqlDatabase_exec_utf8(admin,
             "DROP USER IF EXISTS 'xin_sql_caching_sha2_test'@'%'");
         ok = ok && query && XSqlQuery_isActive(query);
-        if (query) XSqlQuery_delete_base(query);
+        if (query) XClassDelete(query);
         XSqlDatabase_close(admin);
         XSqlDatabase_removeDatabase("xsql-mysql-admin");
-        XSqlDatabase_delete_base(admin);
+        XClassDelete(admin);
     } else {
         ok = false;
     }
@@ -350,13 +350,13 @@ static bool xmysql_test_check_values(XSqlQuery* query)
                payloadOk ? "通过" : "失败", noteOk ? "通过" : "失败",
                nullOk ? "通过" : "失败");
     }
-    if (id) XVariant_delete_base(id);
-    if (name) XVariant_delete_base(name);
-    if (score) XVariant_delete_base(score);
-    if (flag) XVariant_delete_base(flag);
-    if (payload) XVariant_delete_base(payload);
-    if (note) XVariant_delete_base(note);
-    if (nameText) XString_delete_base(nameText);
+    if (id) XClassDelete(id);
+    if (name) XClassDelete(name);
+    if (score) XClassDelete(score);
+    if (flag) XClassDelete(flag);
+    if (payload) XClassDelete(payload);
+    if (note) XClassDelete(note);
+    if (nameText) XClassDelete(nameText);
     return ok;
 }
 
@@ -379,7 +379,7 @@ static bool xmysql_test_basic_queries(const XSqlDatabase* database,
 
     sql = xmysql_test_category_insert_sql(category);
     ok = ok && sql && xmysql_test_statement(database, "插入分类数据", XString_toUtf8(sql));
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
 
     query = XSqlQuery_create_database(database);
     id = XVariant_create_int64(0);
@@ -404,14 +404,14 @@ static bool xmysql_test_basic_queries(const XSqlDatabase* database,
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("位置绑定错误", error);
-        if (error) XSqlError_delete_base(error);
+        if (error) XClassDelete(error);
     }
     value = query ? XSqlQuery_lastInsertId(query) : NULL;
     if (value && XVariant_isValid(value)) XVariant_setValue_int64(id, XVariant_toInt64(value));
-    if (value) XVariant_delete_base(value);
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
-    if (sql) { XString_delete_base(sql); sql = NULL; }
-    if (id) { XVariant_delete_base(id); id = NULL; }
+    if (value) XClassDelete(value);
+    if (query) { XClassDelete(query); query = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
+    if (id) { XClassDelete(id); id = NULL; }
 
     query = XSqlQuery_create_database(database);
     sql = xmysql_test_sql("INSERT INTO %s (name, score, flag, payload, note, category_id) VALUES (:name, :score, :flag, :payload, :note, :category)", table, NULL);
@@ -429,26 +429,26 @@ static bool xmysql_test_basic_queries(const XSqlDatabase* database,
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("命名绑定错误", error);
-        if (error) XSqlError_delete_base(error);
+        if (error) XClassDelete(error);
     }
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
-    if (sql) { XString_delete_base(sql); sql = NULL; }
-    if (name) { XVariant_delete_base(name); name = NULL; }
-    if (score) { XVariant_delete_base(score); score = NULL; }
-    if (flag) { XVariant_delete_base(flag); flag = NULL; }
-    if (payload) { XVariant_delete_base(payload); payload = NULL; }
-    if (note) { XVariant_delete_base(note); note = NULL; }
-    if (categoryId) { XVariant_delete_base(categoryId); categoryId = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
+    if (name) { XClassDelete(name); name = NULL; }
+    if (score) { XClassDelete(score); score = NULL; }
+    if (flag) { XClassDelete(flag); flag = NULL; }
+    if (payload) { XClassDelete(payload); payload = NULL; }
+    if (note) { XClassDelete(note); note = NULL; }
+    if (categoryId) { XClassDelete(categoryId); categoryId = NULL; }
 
     sql = xmysql_test_sql("INSERT INTO %s (name, score, flag, category_id) VALUES ('临时数据', 1.0, 1, 1)", table, NULL);
     ok = ok && sql && xmysql_test_affected_statement(database, "更新删除测试插入", XString_toUtf8(sql), 1);
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     sql = xmysql_test_sql("UPDATE %s SET score = 2.0 WHERE name = '临时数据'", table, NULL);
     ok = ok && sql && xmysql_test_affected_statement(database, "更新记录", XString_toUtf8(sql), 1);
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     sql = xmysql_test_sql("DELETE FROM %s WHERE name = '临时数据'", table, NULL);
     ok = ok && sql && xmysql_test_affected_statement(database, "删除记录", XString_toUtf8(sql), 1);
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
 
     sql = xmysql_test_sql("SELECT id, name, score, flag, payload, note, category_id FROM %s ORDER BY id", table, NULL);
     query = XSqlDatabase_exec(database, sql);
@@ -462,10 +462,10 @@ static bool xmysql_test_basic_queries(const XSqlDatabase* database,
         XPrintf("MySQL：首行、末行、上一行和定位：%s\n", ok ? "通过" : "失败");
         XSqlQuery_finish(query);
         XPrintf("MySQL：结束结果集：%s\n", !XSqlQuery_isActive(query) ? "通过" : "失败");
-        XSqlQuery_delete_base(query);
+        XClassDelete(query);
         query = NULL;
     }
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     return ok;
 }
 
@@ -483,9 +483,9 @@ static bool xmysql_test_transactions(const XSqlDatabase* database, const XString
     if (ok) {
         XVariant* value = XSqlQuery_value(query, 0);
         ok = value && XVariant_toInt64(value) == 2;
-        if (value) XVariant_delete_base(value);
+        if (value) XClassDelete(value);
     }
-    if (query) XSqlQuery_delete_base(query);
+    if (query) XClassDelete(query);
     XPrintf("MySQL：事务回滚：%s\n", ok ? "通过" : "失败");
     ok = ok && XSqlDatabase_transaction((XSqlDatabase*)database)
         && commitSql && xmysql_test_statement(database, "事务提交插入", XString_toUtf8(commitSql))
@@ -495,13 +495,13 @@ static bool xmysql_test_transactions(const XSqlDatabase* database, const XString
     if (ok) {
         XVariant* value = XSqlQuery_value(query, 0);
         ok = value && XVariant_toInt64(value) == 3;
-        if (value) XVariant_delete_base(value);
+        if (value) XClassDelete(value);
     }
-    if (query) XSqlQuery_delete_base(query);
+    if (query) XClassDelete(query);
     XPrintf("MySQL：事务提交：%s\n", ok ? "通过" : "失败");
-    if (sql) XString_delete_base(sql);
-    if (insertSql) XString_delete_base(insertSql);
-    if (commitSql) XString_delete_base(commitSql);
+    if (sql) XClassDelete(sql);
+    if (insertSql) XClassDelete(insertSql);
+    if (commitSql) XClassDelete(commitSql);
     return ok;
 }
 
@@ -588,27 +588,27 @@ static bool xmysql_test_metadata_and_models(const XSqlDatabase* database,
         XPrintf("MySQL：关系委托编辑模型：%s\n", editorModel ? "通过" : "失败");
         ok = ok && editorModel != NULL;
     }
-    if (modelValue) XVariant_delete_base(modelValue);
-    if (relationValue) XVariant_delete_base(relationValue);
-    if (relation) XSqlRelation_delete_base(relation);
-    if (qualifiedEscaped) XString_delete_base(qualifiedEscaped);
-    if (qualifiedIdentifier) XString_delete_base(qualifiedIdentifier);
-    if (relationModel) XSqlRelationalTableModel_delete_base(relationModel);
-    if (tableModel) XSqlTableModel_delete_base(tableModel);
-    if (queryModel) XSqlQueryModel_delete_base(queryModel);
-    if (index) XSqlIndex_delete_base(index);
-    if (record) XSqlRecord_delete_base(record);
-    if (idField) XSqlField_delete_base(idField);
-    if (dateField) XSqlField_delete_base(dateField);
-    if (datetimeField) XSqlField_delete_base(datetimeField);
-    if (tables) XStringList_delete_base(tables);
-    if (escaped) XString_delete_base(escaped);
-    if (plainTable) XString_delete_base(plainTable);
-    if (modelSql) XString_delete_base(modelSql);
-    if (modelFilter) XString_delete_base(modelFilter);
-    if (relationTableName) XString_delete_base(relationTableName);
-    if (relationIndexColumn) XString_delete_base(relationIndexColumn);
-    if (relationDisplayColumn) XString_delete_base(relationDisplayColumn);
+    if (modelValue) XClassDelete(modelValue);
+    if (relationValue) XClassDelete(relationValue);
+    if (relation) XClassDelete(relation);
+    if (qualifiedEscaped) XClassDelete(qualifiedEscaped);
+    if (qualifiedIdentifier) XClassDelete(qualifiedIdentifier);
+    if (relationModel) XClassDelete(relationModel);
+    if (tableModel) XClassDelete(tableModel);
+    if (queryModel) XClassDelete(queryModel);
+    if (index) XClassDelete(index);
+    if (record) XClassDelete(record);
+    if (idField) XClassDelete(idField);
+    if (dateField) XClassDelete(dateField);
+    if (datetimeField) XClassDelete(datetimeField);
+    if (tables) XClassDelete(tables);
+    if (escaped) XClassDelete(escaped);
+    if (plainTable) XClassDelete(plainTable);
+    if (modelSql) XClassDelete(modelSql);
+    if (modelFilter) XClassDelete(modelFilter);
+    if (relationTableName) XClassDelete(relationTableName);
+    if (relationIndexColumn) XClassDelete(relationIndexColumn);
+    if (relationDisplayColumn) XClassDelete(relationDisplayColumn);
     (void)category;
     return ok;
 }
@@ -647,7 +647,7 @@ static bool xmysql_test_table_model_writes(const XSqlDatabase* database, const X
     updateOk = selectOk && name
         && XSqlTableModel_setData(model, 0, 1, name, XSqlItemDataRole_Edit);
     ok = ok && updateOk;
-    if (name) { XVariant_delete_base(name); name = NULL; }
+    if (name) { XClassDelete(name); name = NULL; }
 
     record = model ? XSqlTableModel_record_current(model) : NULL;
     name = xmysql_test_string_value("模型新增");
@@ -664,11 +664,11 @@ static bool xmysql_test_table_model_writes(const XSqlDatabase* database, const X
     removeOk = insertOk && XSqlTableModel_removeRows(model, 1, 1);
     submitOk = removeOk && XSqlTableModel_submitAll(model);
     ok = ok && insertOk && removeOk && submitOk;
-    if (name) XVariant_delete_base(name);
-    if (score) XVariant_delete_base(score);
-    if (flag) XVariant_delete_base(flag);
-    if (category) XVariant_delete_base(category);
-    if (record) XSqlRecord_delete_base(record);
+    if (name) XClassDelete(name);
+    if (score) XClassDelete(score);
+    if (flag) XClassDelete(flag);
+    if (category) XClassDelete(category);
+    if (record) XClassDelete(record);
 
     sql = xmysql_test_sql("SELECT name FROM %s WHERE category_id = 1 ORDER BY id", table, NULL);
     query = submitOk && sql ? XSqlDatabase_exec(database, sql) : NULL;
@@ -676,17 +676,17 @@ static bool xmysql_test_table_model_writes(const XSqlDatabase* database, const X
     value = ok ? XSqlQuery_value(query, 0) : NULL;
     text = value ? XVariant_toString(value) : NULL;
     ok = ok && text && XString_equals_utf8(text, "模型更新", XChar_CaseSensitive);
-    if (value) { XVariant_delete_base(value); value = NULL; }
-    if (text) { XString_delete_base(text); text = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
+    if (text) { XClassDelete(text); text = NULL; }
     ok = ok && XSqlQuery_next(query);
     value = ok ? XSqlQuery_value(query, 0) : NULL;
     text = value ? XVariant_toString(value) : NULL;
     ok = ok && text && XString_equals_utf8(text, "模型新增", XChar_CaseSensitive)
         && !XSqlQuery_next(query);
-    if (value) XVariant_delete_base(value);
-    if (text) XString_delete_base(text);
-    if (query) XSqlQuery_delete_base(query);
-    if (sql) XString_delete_base(sql);
+    if (value) XClassDelete(value);
+    if (text) XClassDelete(text);
+    if (query) XClassDelete(query);
+    if (sql) XClassDelete(sql);
     if (!ok) {
         XSqlError* error = model ? XSqlQueryModel_lastError(&model->m_parent) : NULL;
         XPrintf("MySQL：表模型写回诊断：加载=%s（行数=%d），更新=%s，插入=%s，删除=%s，提交=%s\n",
@@ -696,11 +696,11 @@ static bool xmysql_test_table_model_writes(const XSqlDatabase* database, const X
                submitOk ? "通过" : "失败");
         if (error) {
             xmysql_test_print_error("表模型错误", error);
-            XSqlError_delete_base(error);
+            XClassDelete(error);
         }
     }
-    if (model) XSqlTableModel_delete_base(model);
-    if (plainTable) XString_delete_base(plainTable);
+    if (model) XClassDelete(model);
+    if (plainTable) XClassDelete(plainTable);
     XPrintf("MySQL：表模型插入、更新和删除写回：%s\n", ok ? "通过" : "失败");
     return ok;
 }
@@ -748,10 +748,10 @@ static bool xmysql_test_temporal_values(const XSqlDatabase* database, const XStr
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("日期时间绑定错误", error);
-        if (error) XSqlError_delete_base(error);
+        if (error) XClassDelete(error);
     }
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
 
     sql = xmysql_test_sql("SELECT date_value, datetime_value, time_value, CAST('838:59:59' AS TIME) AS wide_time FROM %s WHERE name = '日期绑定'", table, NULL);
     query = ok && sql ? XSqlDatabase_exec(database, sql) : NULL;
@@ -782,30 +782,30 @@ static bool xmysql_test_temporal_values(const XSqlDatabase* database, const XStr
     if (!ok && query) {
         XSqlError* error = XSqlQuery_lastError(query);
         xmysql_test_print_error("日期时间读取错误", error);
-        if (error) XSqlError_delete_base(error);
+        if (error) XClassDelete(error);
     }
-    if (timeText) XString_delete_base(timeText);
-    if (wideTimeText) XString_delete_base(wideTimeText);
-    if (readDate) XVariant_delete_base(readDate);
-    if (readDatetime) XVariant_delete_base(readDatetime);
-    if (readTime) XVariant_delete_base(readTime);
-    if (readWideTime) XVariant_delete_base(readWideTime);
-    if (query) XSqlQuery_delete_base(query);
-    if (sql) XString_delete_base(sql);
-    if (name) XVariant_delete_base(name);
-    if (score) XVariant_delete_base(score);
-    if (flag) XVariant_delete_base(flag);
-    if (category) XVariant_delete_base(category);
-    if (dateValue) XVariant_delete_base(dateValue);
-    if (datetimeValue) XVariant_delete_base(datetimeValue);
-    if (timeValue) XVariant_delete_base(timeValue);
+    if (timeText) XClassDelete(timeText);
+    if (wideTimeText) XClassDelete(wideTimeText);
+    if (readDate) XClassDelete(readDate);
+    if (readDatetime) XClassDelete(readDatetime);
+    if (readTime) XClassDelete(readTime);
+    if (readWideTime) XClassDelete(readWideTime);
+    if (query) XClassDelete(query);
+    if (sql) XClassDelete(sql);
+    if (name) XClassDelete(name);
+    if (score) XClassDelete(score);
+    if (flag) XClassDelete(flag);
+    if (category) XClassDelete(category);
+    if (dateValue) XClassDelete(dateValue);
+    if (datetimeValue) XClassDelete(datetimeValue);
+    if (timeValue) XClassDelete(timeValue);
     return ok;
 }
 
 static void xmysql_test_batch_value(XVariantList* list, XVariant* value)
 {
     if (list && value) XVariantList_push_back_base(list, value);
-    if (value) XVariant_delete_base(value);
+    if (value) XClassDelete(value);
 }
 
 static bool xmysql_test_extended_features(XSqlDatabase* database, const XString* table)
@@ -837,9 +837,9 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
         && XString_equals_utf8(text, "+00:00", XChar_CaseSensitive);
     featureOk = featureOk && timeZoneOk;
     XPrintf("MySQL：Qt 6.8 UTC 会话时区：%s\n", timeZoneOk ? "通过" : "失败");
-    if (text) { XString_delete_base(text); text = NULL; }
-    if (value) { XVariant_delete_base(value); value = NULL; }
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (text) { XClassDelete(text); text = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
 
     sql = xmysql_test_sql("SELECT flag FROM %s ORDER BY id LIMIT 1", table, NULL);
     query = XSqlQuery_create_database(database);
@@ -849,9 +849,9 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
     featureOk = featureOk && value && XVariant_type(value) == XVariantType_Int32
         && XVariant_toInt32(value) == 1;
     XPrintf("MySQL：二进制预处理读取 TINYINT：%s\n", featureOk ? "通过" : "失败");
-    if (value) { XVariant_delete_base(value); value = NULL; }
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
 
     XSqlDatabase_setNumericalPrecisionPolicy(database,
         XSqlNumericalPrecisionPolicy_LowPrecisionInt32);
@@ -860,8 +860,8 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
     if (query && XSqlQuery_first(query)) value = XSqlQuery_value_utf8(query, "decimal_value");
     featureOk = featureOk && value && XVariant_type(value) == XVariantType_Int32
         && XVariant_toInt32(value) == 123;
-    if (value) { XVariant_delete_base(value); value = NULL; }
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
     XSqlDatabase_setNumericalPrecisionPolicy(database,
         XSqlNumericalPrecisionPolicy_LowPrecisionInt64);
     query = XSqlDatabase_exec_utf8(database,
@@ -869,16 +869,16 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
     if (query && XSqlQuery_first(query)) value = XSqlQuery_value_utf8(query, "decimal_value");
     featureOk = featureOk && value && XVariant_type(value) == XVariantType_Int64
         && XVariant_toInt64(value) == 123;
-    if (value) { XVariant_delete_base(value); value = NULL; }
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
     XSqlDatabase_setNumericalPrecisionPolicy(database,
         XSqlNumericalPrecisionPolicy_LowPrecisionDouble);
     query = XSqlDatabase_exec_utf8(database,
         "SELECT CAST('123.456789012345678901234567890' AS DECIMAL(30,27)) AS decimal_value");
     if (query && XSqlQuery_first(query)) value = XSqlQuery_value_utf8(query, "decimal_value");
     featureOk = featureOk && value && XVariant_type(value) == XVariantType_Double;
-    if (value) { XVariant_delete_base(value); value = NULL; }
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (value) { XClassDelete(value); value = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
     XSqlDatabase_setNumericalPrecisionPolicy(database,
         XSqlNumericalPrecisionPolicy_HighPrecision);
     query = XSqlDatabase_exec_utf8(database,
@@ -888,9 +888,9 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
     featureOk = featureOk && text
         && XString_equals_utf8(text, "123.456789012345678901234567890", XChar_CaseSensitive);
     XPrintf("MySQL：DECIMAL 数值精度策略和高精度保持：%s\n", featureOk ? "通过" : "失败");
-    if (text) XString_delete_base(text);
-    if (value) XVariant_delete_base(value);
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
+    if (text) XClassDelete(text);
+    if (value) XClassDelete(value);
+    if (query) { XClassDelete(query); query = NULL; }
 
     names = XVariantList_create();
     scores = XVariantList_create();
@@ -911,16 +911,16 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
         && XSqlQuery_prepare(query, sql)) {
         listValue = XVariant_create_list(names);
         XSqlQuery_bindValue(query, 0, listValue, XSqlParamType_In);
-        if (listValue) { XVariant_delete_base(listValue); listValue = NULL; }
+        if (listValue) { XClassDelete(listValue); listValue = NULL; }
         listValue = XVariant_create_list(scores);
         XSqlQuery_bindValue(query, 1, listValue, XSqlParamType_In);
-        if (listValue) { XVariant_delete_base(listValue); listValue = NULL; }
+        if (listValue) { XClassDelete(listValue); listValue = NULL; }
         listValue = XVariant_create_list(flags);
         XSqlQuery_bindValue(query, 2, listValue, XSqlParamType_In);
-        if (listValue) { XVariant_delete_base(listValue); listValue = NULL; }
+        if (listValue) { XClassDelete(listValue); listValue = NULL; }
         listValue = XVariant_create_list(categories);
         XSqlQuery_bindValue(query, 3, listValue, XSqlParamType_In);
-        if (listValue) { XVariant_delete_base(listValue); listValue = NULL; }
+        if (listValue) { XClassDelete(listValue); listValue = NULL; }
         featureOk = featureOk && XSqlQuery_execBatch(query, XSqlBatchExecutionMode_ValuesAsRows)
             && XSqlQuery_numRowsAffected(query) == 2;
         featureOk = featureOk && XSqlQuery_execBatch(query, XSqlBatchExecutionMode_ValuesAsColumns)
@@ -929,12 +929,12 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
         featureOk = false;
     }
     XPrintf("MySQL：ValuesAsRows/ValuesAsColumns 批量回退：%s\n", featureOk ? "通过" : "失败");
-    if (query) XSqlQuery_delete_base(query);
-    if (sql) XString_delete_base(sql);
-    if (names) XVariantList_delete_base(names);
-    if (scores) XVariantList_delete_base(scores);
-    if (flags) XVariantList_delete_base(flags);
-    if (categories) XVariantList_delete_base(categories);
+    if (query) XClassDelete(query);
+    if (sql) XClassDelete(sql);
+    if (names) XClassDelete(names);
+    if (scores) XClassDelete(scores);
+    if (flags) XClassDelete(flags);
+    if (categories) XClassDelete(categories);
 
     if (xmysql_test_env_set("XMYSQL_TEST_MULTI_RESULTS")) {
         XSqlRecord* emptyRecord = NULL;
@@ -943,14 +943,14 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
         if (query && XSqlQuery_first(query)) {
             value = XSqlQuery_value(query, 0);
             multiResultOk = multiResultOk && value && XVariant_toInt64(value) == 1;
-            if (value) { XVariant_delete_base(value); value = NULL; }
+            if (value) { XClassDelete(value); value = NULL; }
         } else {
             multiResultOk = false;
         }
         if (query && XSqlQuery_nextResult(query) && XSqlQuery_first(query)) {
             value = XSqlQuery_value(query, 0);
             multiResultOk = multiResultOk && value && XVariant_toInt64(value) == 2;
-            if (value) XVariant_delete_base(value);
+            if (value) XClassDelete(value);
         } else {
             multiResultOk = false;
         }
@@ -963,8 +963,8 @@ static bool xmysql_test_extended_features(XSqlDatabase* database, const XString*
         multiResultOk = multiResultOk && emptyRecord && XSqlRecord_count(emptyRecord) == 0;
         XPrintf("MySQL：多语句多结果集及结束状态：%s\n", multiResultOk ? "通过" : "失败");
         featureOk = featureOk && multiResultOk;
-        if (emptyRecord) XSqlRecord_delete_base(emptyRecord);
-        if (query) XSqlQuery_delete_base(query);
+        if (emptyRecord) XClassDelete(emptyRecord);
+        if (query) XClassDelete(query);
     }
     return featureOk;
 }
@@ -998,9 +998,9 @@ static bool xmysql_test_local_infile(XSqlDatabase* database)
     variableText = variable ? XVariant_toString(variable) : NULL;
     if (!variableText || !XString_equals_utf8(variableText, "ON", XChar_CaseInsensitive)) {
         XPrintf("MySQL：LOAD DATA LOCAL INFILE：服务器未启用，跳过\n");
-        if (variableText) XString_delete_base(variableText);
-        if (variable) XVariant_delete_base(variable);
-        if (variableQuery) XSqlQuery_delete_base(variableQuery);
+        if (variableText) XClassDelete(variableText);
+        if (variable) XClassDelete(variable);
+        if (variableQuery) XClassDelete(variableQuery);
         return true;
     }
     path = XString_create_utf8(pathText);
@@ -1012,44 +1012,44 @@ static bool xmysql_test_local_infile(XSqlDatabase* database)
             == (int64_t)strlen(rowText);
     if (file) {
         XIODevice_close_base((XIODevice*)file);
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
     }
     file = NULL;
     sql = table ? XString_create_fmt_utf8("DROP TABLE IF EXISTS %s", XString_toUtf8(table)) : NULL;
     ok = ok && sql && xmysql_test_statement(database, "清理 LOCAL INFILE 测试表", XString_toUtf8(sql));
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     sql = table ? XString_create_fmt_utf8("CREATE TABLE %s (value VARCHAR(128) NOT NULL)",
                                           XString_toUtf8(table)) : NULL;
     ok = ok && sql && xmysql_test_statement(database, "创建 LOCAL INFILE 测试表", XString_toUtf8(sql));
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     sql = ok ? XString_create_fmt_utf8(
         "LOAD DATA LOCAL INFILE '%s' INTO TABLE %s FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n' (value)",
         pathText, XString_toUtf8(table)) : NULL;
     query = sql ? XSqlDatabase_exec(database, sql) : NULL;
     ok = ok && query && XSqlQuery_isActive(query);
-    if (query) { XSqlQuery_delete_base(query); query = NULL; }
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (query) { XClassDelete(query); query = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     sql = ok ? XString_create_fmt_utf8("SELECT value FROM %s", XString_toUtf8(table)) : NULL;
     query = sql ? XSqlDatabase_exec(database, sql) : NULL;
     if (query && XSqlQuery_first(query)) value = XSqlQuery_value(query, 0);
     valueText = value ? XVariant_toString(value) : NULL;
     ok = ok && valueText && XString_equals_utf8(valueText, "local-infile-row", XChar_CaseSensitive);
     XPrintf("MySQL：LOAD DATA LOCAL INFILE：%s\n", ok ? "通过" : "失败");
-    if (query) XSqlQuery_delete_base(query);
-    if (sql) XString_delete_base(sql);
-    if (valueText) XString_delete_base(valueText);
-    if (value) XVariant_delete_base(value);
-    if (variableText) XString_delete_base(variableText);
-    if (variable) XVariant_delete_base(variable);
-    if (variableQuery) XSqlQuery_delete_base(variableQuery);
+    if (query) XClassDelete(query);
+    if (sql) XClassDelete(sql);
+    if (valueText) XClassDelete(valueText);
+    if (value) XClassDelete(value);
+    if (variableText) XClassDelete(variableText);
+    if (variable) XClassDelete(variable);
+    if (variableQuery) XClassDelete(variableQuery);
     if (table) {
         sql = XString_create_fmt_utf8("DROP TABLE IF EXISTS %s", XString_toUtf8(table));
-        if (sql) { xmysql_test_statement(database, "删除 LOCAL INFILE 测试表", XString_toUtf8(sql)); XString_delete_base(sql); }
-        XString_delete_base(table);
+        if (sql) { xmysql_test_statement(database, "删除 LOCAL INFILE 测试表", XString_toUtf8(sql)); XClassDelete(sql); }
+        XClassDelete(table);
     }
     if (path) {
         XFile_remove_static(path);
-        XString_delete_base(path);
+        XClassDelete(path);
     }
     return ok;
 }
@@ -1118,7 +1118,7 @@ bool XSqlMySqlTest_run(void)
     if (!ok && database) {
         XSqlError* error = XSqlDatabase_lastError(database);
         xmysql_test_print_error("连接错误", error);
-        if (error) XSqlError_delete_base(error);
+        if (error) XClassDelete(error);
         goto cleanup;
     }
 
@@ -1127,16 +1127,16 @@ bool XSqlMySqlTest_run(void)
 
     sql = xmysql_test_sql("DROP TABLE IF EXISTS %s", category, NULL);
     ok = ok && sql && xmysql_test_statement(database, "清理分类表", XString_toUtf8(sql));
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     sql = xmysql_test_sql("DROP TABLE IF EXISTS %s", table, NULL);
     ok = ok && sql && xmysql_test_statement(database, "清理测试表", XString_toUtf8(sql));
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     sql = xmysql_test_sql("CREATE TABLE %s (id BIGINT NOT NULL AUTO_INCREMENT, title VARCHAR(128) NOT NULL, PRIMARY KEY (id))", category, NULL);
     ok = ok && sql && xmysql_test_statement(database, "创建分类表", XString_toUtf8(sql));
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     sql = xmysql_test_sql("CREATE TABLE %s (id BIGINT NOT NULL AUTO_INCREMENT, name VARCHAR(128) NOT NULL, score DOUBLE NOT NULL, flag TINYINT NOT NULL, payload BLOB NULL, note VARCHAR(128) NULL, category_id BIGINT NOT NULL, date_value DATE NULL, datetime_value DATETIME(6) NULL, time_value TIME(6) NULL, PRIMARY KEY (id))", table, NULL);
     ok = ok && sql && xmysql_test_statement(database, "创建测试表", XString_toUtf8(sql));
-    if (sql) { XString_delete_base(sql); sql = NULL; }
+    if (sql) { XClassDelete(sql); sql = NULL; }
     ok = ok && xmysql_test_basic_queries(database, table, category);
     ok = ok && xmysql_test_transactions(database, table);
     ok = ok && xmysql_test_metadata_and_models(database, table, category);
@@ -1149,24 +1149,24 @@ bool XSqlMySqlTest_run(void)
 cleanup:
     if (database && XSqlDatabase_isOpen(database)) {
         sql = xmysql_test_sql("DROP TABLE IF EXISTS %s", table, NULL);
-        if (sql) { xmysql_test_statement(database, "删除测试表", XString_toUtf8(sql)); XString_delete_base(sql); sql = NULL; }
+        if (sql) { xmysql_test_statement(database, "删除测试表", XString_toUtf8(sql)); XClassDelete(sql); sql = NULL; }
         sql = xmysql_test_sql("DROP TABLE IF EXISTS %s", category, NULL);
-        if (sql) { xmysql_test_statement(database, "删除分类表", XString_toUtf8(sql)); XString_delete_base(sql); sql = NULL; }
+        if (sql) { xmysql_test_statement(database, "删除分类表", XString_toUtf8(sql)); XClassDelete(sql); sql = NULL; }
         XSqlDatabase_close(database);
     }
     XSqlDatabase_removeDatabase("xsql-mysql-live");
-    if (database) XSqlDatabase_delete_base(database);
+    if (database) XClassDelete(database);
     if (temporaryDatabaseCreated)
         xmysql_test_drop_temporary_database(host, xmysql_test_port(), user, password);
-    if (drivers) XStringList_delete_base(drivers);
-    if (driverName) XString_delete_base(driverName);
-    if (hostText) XString_delete_base(hostText);
-    if (databaseText) XString_delete_base(databaseText);
-    if (userText) XString_delete_base(userText);
-    if (passwordText) XString_delete_base(passwordText);
-    if (optionsText) XString_delete_base(optionsText);
-    if (table) XString_delete_base(table);
-    if (category) XString_delete_base(category);
+    if (drivers) XClassDelete(drivers);
+    if (driverName) XClassDelete(driverName);
+    if (hostText) XClassDelete(hostText);
+    if (databaseText) XClassDelete(databaseText);
+    if (userText) XClassDelete(userText);
+    if (passwordText) XClassDelete(passwordText);
+    if (optionsText) XClassDelete(optionsText);
+    if (table) XClassDelete(table);
+    if (category) XClassDelete(category);
     XPrintf("结束---------------MySQL/MariaDB 联调测试---------------\n\n");
     return ok;
 }

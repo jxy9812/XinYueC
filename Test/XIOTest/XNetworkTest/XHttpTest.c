@@ -97,8 +97,8 @@ static bool xhttp_test_ntlm_authorization(const XByteArray* header, unsigned int
                 userLength != 0 && userOffset <= size && userLength <= size - userOffset;
         }
     }
-    if (message) XClass_delete_base((XClass*)message);
-    if (encoded) XClass_delete_base((XClass*)encoded);
+    if (message) XClassDelete((XClass*)message);
+    if (encoded) XClassDelete((XClass*)encoded);
     return result;
 }
 
@@ -153,12 +153,12 @@ static bool xhttp_test_ntlm_v2_proof_valid(const XByteArray* header)
     result = expectedProof && XContainer_size_base((const XContainer*)expectedProof) == 16 &&
         memcmp(data + ntOffset, XByteArray_constData(expectedProof), 16) == 0;
 done:
-    if (expectedProof) XClass_delete_base((XClass*)expectedProof);
-    if (proofInput) XClass_delete_base((XClass*)proofInput);
-    if (v2Hash) XClass_delete_base((XClass*)v2Hash);
-    if (ntHash) XClass_delete_base((XClass*)ntHash);
-    if (message) XClass_delete_base((XClass*)message);
-    if (encoded) XClass_delete_base((XClass*)encoded);
+    if (expectedProof) XClassDelete((XClass*)expectedProof);
+    if (proofInput) XClassDelete((XClass*)proofInput);
+    if (v2Hash) XClassDelete((XClass*)v2Hash);
+    if (ntHash) XClassDelete((XClass*)ntHash);
+    if (message) XClassDelete((XClass*)message);
+    if (encoded) XClassDelete((XClass*)encoded);
     return result;
 }
 
@@ -208,12 +208,12 @@ static XByteArray* xhttp_test_ntlm_type2_header(void)
         result = XByteArray_create();
         if (!result || !XByteArray_append_utf8(result, "NTLM " ) ||
             !XByteArray_push_back_2((XVector*)result, XByteArray_constData(encoded), size)) {
-            if (result) XClass_delete_base((XClass*)result);
+            if (result) XClassDelete((XClass*)result);
             result = NULL;
         }
     }
-    if (encoded) XClass_delete_base((XClass*)encoded);
-    if (raw) XClass_delete_base((XClass*)raw);
+    if (encoded) XClassDelete((XClass*)encoded);
+    if (raw) XClassDelete((XClass*)raw);
     return result;
 }
 
@@ -234,7 +234,7 @@ static void xhttp_test_ntlm_server_handler(const XHttpServerRequest* request,
             XHttpHeaders_append_utf8(XHttpServerResponse_headers(response),
                                     "WWW-Authenticate", (const char*)XByteArray_constData(challenge));
         if (state) ++state->m_type1;
-        if (challenge) XClass_delete_base((XClass*)challenge);
+        if (challenge) XClassDelete((XClass*)challenge);
     } else if (authorization && xhttp_test_ntlm_authorization(authorization, 3) &&
                xhttp_test_ntlm_v2_proof_valid(authorization)) {
         body = XByteArray_create_utf8("ntlm-ok");
@@ -247,10 +247,10 @@ static void xhttp_test_ntlm_server_handler(const XHttpServerRequest* request,
                                     "WWW-Authenticate", "NTLM");
     }
     assert(response && XHttpServerResponder_sendResponse(responder, response));
-    if (response) XClass_delete_base((XClass*)response);
-    if (body) XClass_delete_base((XClass*)body);
-    if (authorization) XClass_delete_base((XClass*)authorization);
-    if (name) XClass_delete_base((XClass*)name);
+    if (response) XClassDelete((XClass*)response);
+    if (body) XClassDelete((XClass*)body);
+    if (authorization) XClassDelete((XClass*)authorization);
+    if (name) XClassDelete((XClass*)name);
 }
 
 static bool xhttp_test_has_header(const XHttpHeaders* headers, const char* name)
@@ -258,7 +258,7 @@ static bool xhttp_test_has_header(const XHttpHeaders* headers, const char* name)
     XByteArray* field = XByteArray_create_utf8(name);
     bool result = field && XHttpHeaders_contains(headers, field);
     if (field)
-        XClass_delete_base((XClass*)field);
+        XClassDelete((XClass*)field);
     return result;
 }
 
@@ -286,14 +286,14 @@ static void xhttp_test_headers(void)
     {
         XByteArray* field = XByteArray_create_utf8("x-test");
         combined = XHttpHeaders_combinedValue(headers, field);
-        XClass_delete_base((XClass*)field);
+        XClassDelete((XClass*)field);
     }
     assert(xhttp_test_bytes_equal(combined, "one, two"));
-    XClass_delete_base((XClass*)combined);
+    XClassDelete((XClass*)combined);
     field = XByteArray_create_utf8("x-test");
     assert(field);
     values = XHttpHeaders_values(headers, field);
-    XClass_delete_base((XClass*)field);
+    XClassDelete((XClass*)field);
     assert(values && XContainer_size_base((const XContainer*)values) == 2);
     XHttpHeaders_values_free(values);
     assert(!XHttpHeaders_append_utf8(headers, "Bad Name", "value"));
@@ -302,21 +302,21 @@ static void xhttp_test_headers(void)
     replaceValue = XByteArray_create_utf8("replacement");
     assert(replaceName && replaceValue);
     assert(XHttpHeaders_replaceOrAppend(headers, replaceName, replaceValue));
-    XClass_delete_base((XClass*)replaceName);
-    XClass_delete_base((XClass*)replaceValue);
+    XClassDelete((XClass*)replaceName);
+    XClassDelete((XClass*)replaceValue);
     assert(XHttpHeaders_size(headers) == 1);
     defaultValue = XByteArray_create_utf8("default");
     missingName = XByteArray_create_utf8("missing");
     assert(defaultValue && missingName);
     result = XHttpHeaders_value_or(headers, missingName, defaultValue);
     assert(xhttp_test_bytes_equal(result, "default"));
-    XClass_delete_base((XClass*)result);
-    XClass_delete_base((XClass*)missingName);
-    XClass_delete_base((XClass*)defaultValue);
+    XClassDelete((XClass*)result);
+    XClassDelete((XClass*)missingName);
+    XClassDelete((XClass*)defaultValue);
     copy = XHttpHeaders_create_copy(headers);
     assert(copy && XHttpHeaders_size(copy) == XHttpHeaders_size(headers));
-    XClass_delete_base((XClass*)copy);
-    XClass_delete_base((XClass*)headers);
+    XClassDelete((XClass*)copy);
+    XClassDelete((XClass*)headers);
 
     knownHeaders = XHttpHeaders_create();
     knownValue = XByteArray_create_utf8(" text/plain ");
@@ -338,12 +338,12 @@ static void xhttp_test_headers(void)
     result = XHttpHeaders_valueKnown(knownHeaders,
                                      XHttpHeaders_WellKnownHeader_ContentType);
     assert(xhttp_test_bytes_equal(result, "text/plain"));
-    XClass_delete_base((XClass*)result);
+    XClassDelete((XClass*)result);
     result = XHttpHeaders_valueKnownOr(knownHeaders,
                                        XHttpHeaders_WellKnownHeader_Authorization,
                                        knownDefault);
     assert(xhttp_test_bytes_equal(result, "default"));
-    XClass_delete_base((XClass*)result);
+    XClassDelete((XClass*)result);
     knownValues = XHttpHeaders_valuesKnown(knownHeaders,
                                            XHttpHeaders_WellKnownHeader_ContentType);
     assert(knownValues && XContainer_size_base((const XContainer*)knownValues) == 1);
@@ -351,12 +351,12 @@ static void xhttp_test_headers(void)
     result = XHttpHeaders_combinedValueKnown(knownHeaders,
                                              XHttpHeaders_WellKnownHeader_ContentType);
     assert(xhttp_test_bytes_equal(result, "text/plain"));
-    XClass_delete_base((XClass*)result);
+    XClassDelete((XClass*)result);
     XHttpHeaders_removeAllKnown(knownHeaders, XHttpHeaders_WellKnownHeader_Host);
     assert(!XHttpHeaders_containsKnown(knownHeaders, XHttpHeaders_WellKnownHeader_Host));
-    XClass_delete_base((XClass*)knownDefault);
-    XClass_delete_base((XClass*)knownValue);
-    XClass_delete_base((XClass*)knownHeaders);
+    XClassDelete((XClass*)knownDefault);
+    XClassDelete((XClass*)knownValue);
+    XClassDelete((XClass*)knownHeaders);
 }
 
 static void xhttp_test_request(void)
@@ -404,9 +404,9 @@ static void xhttp_test_request(void)
                XHttpRequest_http2Configuration_const(copy)) == 1024);
     assert(XHttp2Configuration_maxFrameSize(
                XHttpRequest_http2Configuration_const(copy)) == XHttp2Configuration_MaxFrameSize);
-    XClass_delete_base((XClass*)copy);
-    XClass_delete_base((XClass*)http2);
-    XClass_delete_base((XClass*)http1);
+    XClassDelete((XClass*)copy);
+    XClassDelete((XClass*)http2);
+    XClassDelete((XClass*)http1);
     assert(XHttpRequest_setUrl_utf8(request, "http://example.com/a?b=1"));
     assert(XHttpRequest_setMethod(request, XHttpRequest_Post));
     assert(XHttpRequest_setBody_utf8(request, "abc"));
@@ -418,27 +418,27 @@ static void xhttp_test_request(void)
     assert(rawValue && xhttp_test_bytes_equal(rawValue, "text/plain") && rawNames &&
            XContainer_size_base((const XContainer*)rawNames) >= 1);
     XHttpHeaders_values_free(rawNames);
-    XClass_delete_base((XClass*)rawValue);
-    XClass_delete_base((XClass*)rawName);
+    XClassDelete((XClass*)rawValue);
+    XClassDelete((XClass*)rawName);
     userAgent = XByteArray_create_utf8("XinYueC");
     assert(userAgent && XHttpRequest_setHeaderKnown(request,
         XHttpHeaders_WellKnownHeader_UserAgent, userAgent));
-    XClass_delete_base((XClass*)userAgent);
+    XClassDelete((XClass*)userAgent);
     rawValue = XHttpRequest_headerKnown(request, XHttpHeaders_WellKnownHeader_UserAgent);
     assert(rawValue && xhttp_test_bytes_equal(rawValue, "XinYueC"));
-    XClass_delete_base((XClass*)rawValue);
+    XClassDelete((XClass*)rawValue);
     wire = XHttpRequest_toHttp1(request, false);
     assert(wire);
     assert(xhttp_test_bytes_contains(wire, "POST /a?b=1 HTTP/1.1\r\n"));
     assert(xhttp_test_bytes_contains(wire, "Host: example.com\r\n"));
     assert(xhttp_test_bytes_contains(wire, "Content-Length: 3\r\n"));
     assert(xhttp_test_bytes_contains(wire, "\r\n\r\nabc"));
-    XClass_delete_base((XClass*)wire);
+    XClassDelete((XClass*)wire);
     assert(XHttpRequest_setCustomMethod(request, "MKCOL"));
     wire = XHttpRequest_toHttp1(request, false);
     assert(wire && memcmp(XByteArray_constData(wire), "MKCOL ", 6) == 0);
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)request);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)request);
 }
 
 static void xhttp_test_multipart(void)
@@ -467,12 +467,12 @@ static void xhttp_test_multipart(void)
     assert(xhttp_test_bytes_contains(body, "content-disposition: form-data; name=\"field\"\r\n\r\nvalue\r\n"));
     assert(xhttp_test_bytes_contains(body, "copy-value\r\n--test-boundary--\r\n"));
     assert(xhttp_test_bytes_equal(contentType, "multipart/form-data; boundary=\"test-boundary\""));
-    XClass_delete_base((XClass*)contentType);
-    XClass_delete_base((XClass*)body);
-    XClass_delete_base((XClass*)boundary);
-    XClass_delete_base((XClass*)copy);
-    XClass_delete_base((XClass*)part);
-    XClass_delete_base((XClass*)multipart);
+    XClassDelete((XClass*)contentType);
+    XClassDelete((XClass*)body);
+    XClassDelete((XClass*)boundary);
+    XClassDelete((XClass*)copy);
+    XClassDelete((XClass*)part);
+    XClassDelete((XClass*)multipart);
 }
 
 static void xhttp_test_cookie(void)
@@ -492,11 +492,11 @@ static void xhttp_test_cookie(void)
     assert(XNetworkCookieJar_setCookiesFromUrl(jar, parsed, XHttpRequest_url_const(request)));
     header = XNetworkCookieJar_cookieHeader(jar, XHttpRequest_url_const(request));
     assert(header && xhttp_test_bytes_equal(header, "sid=abc"));
-    XClass_delete_base((XClass*)header);
-    XClass_delete_base((XClass*)parsed);
-    XClass_delete_base((XClass*)setCookie);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)jar);
+    XClassDelete((XClass*)header);
+    XClassDelete((XClass*)parsed);
+    XClassDelete((XClass*)setCookie);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)jar);
 }
 
 static void xhttp_test_content_length_reply(void)
@@ -531,11 +531,11 @@ static void xhttp_test_content_length_reply(void)
     assert(copiedHeaders);
     assert(XHttpHeaders_size(copiedHeaders) == 2);
     XHttpHeaders_values_free(rawNames);
-    XClass_delete_base((XClass*)copiedHeaders);
-    XClass_delete_base((XClass*)rawValue);
-    XClass_delete_base((XClass*)rawName);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
+    XClassDelete((XClass*)copiedHeaders);
+    XClassDelete((XClass*)rawValue);
+    XClassDelete((XClass*)rawName);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
 }
 
 static void xhttp_test_chunked_reply(void)
@@ -550,7 +550,7 @@ static void xhttp_test_chunked_reply(void)
     assert(XHttpReply_isFinished(reply));
     assert(xhttp_test_bytes_equal(XHttpReply_body_const(reply), "Wikipedia"));
     assert(xhttp_test_has_header(XHttpReply_trailers_const(reply), "x-trailer"));
-    XClass_delete_base((XClass*)reply);
+    XClassDelete((XClass*)reply);
 }
 
 static void xhttp_test_close_delimited_reply(void)
@@ -562,7 +562,7 @@ static void xhttp_test_close_delimited_reply(void)
     assert(!XHttpReply_isFinished(reply));
     assert(XHttpReply_endOfInput(reply));
     assert(xhttp_test_bytes_equal(XHttpReply_body_const(reply), "body"));
-    XClass_delete_base((XClass*)reply);
+    XClassDelete((XClass*)reply);
 }
 
 static void xhttp_test_invalid_reply(void)
@@ -573,7 +573,7 @@ static void xhttp_test_invalid_reply(void)
     assert(!XHttpReply_feed(reply, response, sizeof(response) - 1));
     assert(XHttpReply_isFinished(reply));
     assert(XHttpReply_error(reply) == XHttpReply_ProtocolInvalidOperationError);
-    XClass_delete_base((XClass*)reply);
+    XClassDelete((XClass*)reply);
 }
 
 static void xhttp_test_hsts(void)
@@ -608,13 +608,13 @@ static void xhttp_test_hsts(void)
     current = XNetworkAccessManager_strictTransportSecurityHosts(reopened);
     assert(current && XContainer_size_base((const XContainer*)current) == 1);
     XHstsPolicy_list_free(current);
-    XClass_delete_base((XClass*)copy);
-    XClass_delete_base((XClass*)policy);
-    XClass_delete_base((XClass*)policies);
-    XClass_delete_base((XClass*)host);
-    XClass_delete_base((XClass*)directory);
-    XClass_delete_base((XClass*)reopened);
-    XClass_delete_base((XClass*)manager);
+    XClassDelete((XClass*)copy);
+    XClassDelete((XClass*)policy);
+    XClassDelete((XClass*)policies);
+    XClassDelete((XClass*)host);
+    XClassDelete((XClass*)directory);
+    XClassDelete((XClass*)reopened);
+    XClassDelete((XClass*)manager);
 }
 
 static void xhttp_test_cache(void)
@@ -638,20 +638,20 @@ static void xhttp_test_cache(void)
     assert(XNetworkDiskCache_cacheSize(cache) == 6);
     result = XNetworkDiskCache_data(cache, XHttpRequest_url_const(request));
     assert(result && xhttp_test_bytes_equal(result, "cached"));
-    XClass_delete_base((XClass*)result);
+    XClassDelete((XClass*)result);
     assert(XNetworkDiskCache_setCacheDirectory(reopened, directory));
     result = XNetworkDiskCache_data(reopened, XHttpRequest_url_const(request));
     assert(result && xhttp_test_bytes_equal(result, "cached"));
-    XClass_delete_base((XClass*)result);
+    XClassDelete((XClass*)result);
     XNetworkDiskCache_setMaximumCacheSize(cache, 3);
     assert(XNetworkDiskCache_cacheSize(cache) == 0);
     assert(!XNetworkDiskCache_remove(cache, XHttpRequest_url_const(request)));
-    XClass_delete_base((XClass*)body);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)metadata);
-    XClass_delete_base((XClass*)directory);
-    XClass_delete_base((XClass*)reopened);
-    XClass_delete_base((XClass*)cache);
+    XClassDelete((XClass*)body);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)metadata);
+    XClassDelete((XClass*)directory);
+    XClassDelete((XClass*)reopened);
+    XClassDelete((XClass*)cache);
 }
 
 static void xhttp_test_http2_frame(void)
@@ -675,10 +675,10 @@ static void xhttp_test_http2_frame(void)
     assert(xhttp_test_bytes_equal(XHttp2Frame_payload_const(decoded), "abc"));
     assert(XHttp2Frame_hasClientPreface(XHttp2Frame_ClientPreface,
                                         sizeof(XHttp2Frame_ClientPreface) - 1));
-    XClass_delete_base((XClass*)decoded);
-    XClass_delete_base((XClass*)encoded);
-    XClass_delete_base((XClass*)frame);
-    XClass_delete_base((XClass*)payload);
+    XClassDelete((XClass*)decoded);
+    XClassDelete((XClass*)encoded);
+    XClassDelete((XClass*)frame);
+    XClassDelete((XClass*)payload);
 }
 
 static void xhttp_test_http2_frame_validation(void)
@@ -700,7 +700,7 @@ static void xhttp_test_http2_frame_validation(void)
     frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Settings, XHttp2Frame_Ack, 0, payload);
     assert(frame && !XHttp2Frame_validateHeader(frame) &&
            !XHttp2Frame_toByteArray(frame));
-    XClass_delete_base((XClass*)frame);
+    XClassDelete((XClass*)frame);
     assert(!XHttp2Frame_fromBytes(settingsAckWithPayload, sizeof(settingsAckWithPayload), &consumed));
     assert(consumed == 0);
     assert(!XHttp2Frame_fromBytes(shortPriority, sizeof(shortPriority), &consumed));
@@ -709,7 +709,7 @@ static void xhttp_test_http2_frame_validation(void)
     assert(consumed == 0);
     assert(!XHttp2Frame_fromBytes(shortPriorityHeaders, sizeof(shortPriorityHeaders), &consumed));
     assert(consumed == 0);
-    XClass_delete_base((XClass*)payload);
+    XClassDelete((XClass*)payload);
 }
 
 static void xhttp_test_http2_headers(void)
@@ -733,16 +733,16 @@ static void xhttp_test_http2_headers(void)
     assert(xhttp_test_bytes_equal(XHttp2HeaderList_valueAt_const(decoded, 0), "GET"));
     assert(xhttp_test_bytes_equal(XHttp2HeaderList_nameAt_const(decoded, 1), "content-type"));
     assert(xhttp_test_bytes_equal(XHttp2HeaderList_valueAt_const(decoded, 1), "text/plain"));
-    XClass_delete_base((XClass*)decoded);
-    XClass_delete_base((XClass*)encoded);
+    XClassDelete((XClass*)decoded);
+    XClassDelete((XClass*)encoded);
     encoded = XHttp2HeaderList_encode(headers, true);
     assert(encoded);
     decoded = XHttp2HeaderList_decode(XByteArray_constData(encoded),
                                       XContainer_size_base((const XContainer*)encoded));
     assert(decoded && XHttp2HeaderList_size(decoded) == 2);
     assert(xhttp_test_bytes_equal(XHttp2HeaderList_valueAt_const(decoded, 1), "text/plain"));
-    XClass_delete_base((XClass*)decoded);
-    XClass_delete_base((XClass*)encoded);
+    XClassDelete((XClass*)decoded);
+    XClassDelete((XClass*)encoded);
     {
         static const uint8_t dynamicBlock[] = {
             0x40, 0x03, 'f', 'o', 'o', 0x03, 'b', 'a', 'r', 0xbe
@@ -751,13 +751,13 @@ static void xhttp_test_http2_headers(void)
         assert(decoded && XHttp2HeaderList_size(decoded) == 2);
         assert(xhttp_test_bytes_equal(XHttp2HeaderList_nameAt_const(decoded, 1), "foo"));
         assert(xhttp_test_bytes_equal(XHttp2HeaderList_valueAt_const(decoded, 1), "bar"));
-        XClass_delete_base((XClass*)decoded);
+        XClassDelete((XClass*)decoded);
     }
-    XClass_delete_base((XClass*)text);
-    XClass_delete_base((XClass*)type);
-    XClass_delete_base((XClass*)get);
-    XClass_delete_base((XClass*)method);
-    XClass_delete_base((XClass*)headers);
+    XClassDelete((XClass*)text);
+    XClassDelete((XClass*)type);
+    XClassDelete((XClass*)get);
+    XClassDelete((XClass*)method);
+    XClassDelete((XClass*)headers);
 }
 
 static void xhttp_test_http2_stateful_decoder(void)
@@ -781,9 +781,9 @@ static void xhttp_test_http2_stateful_decoder(void)
     assert(second && XHttp2HeaderList_size(second) == 1);
     assert(xhttp_test_bytes_equal(XHttp2HeaderList_nameAt_const(second, 0), "x-dynamic"));
     assert(xhttp_test_bytes_equal(XHttp2HeaderList_valueAt_const(second, 0), "one"));
-    XClass_delete_base((XClass*)second);
-    XClass_delete_base((XClass*)first);
-    XClass_delete_base((XClass*)decoder);
+    XClassDelete((XClass*)second);
+    XClassDelete((XClass*)first);
+    XClassDelete((XClass*)decoder);
 }
 
 static void xhttp_test_http2_stateful_encoder(void)
@@ -805,14 +805,14 @@ static void xhttp_test_http2_stateful_encoder(void)
                                           XContainer_size_base((const XContainer*)first));
     assert(decoded && xhttp_test_bytes_equal(XHttp2HeaderList_nameAt_const(decoded, 0),
                                              "x-dynamic"));
-    XClass_delete_base((XClass*)decoded);
+    XClassDelete((XClass*)decoded);
     second = XHttp2HeaderEncoder_encode(encoder, headers, false);
     assert(second && XContainer_size_base((const XContainer*)second) == 1 &&
            XByteArray_constData(second)[0] == 0xbe);
     decoded = XHttp2HeaderDecoder_decode(decoder, XByteArray_constData(second),
                                           XContainer_size_base((const XContainer*)second));
     assert(decoded && xhttp_test_bytes_equal(XHttp2HeaderList_valueAt_const(decoded, 0), "one"));
-    XClass_delete_base((XClass*)decoded);
+    XClassDelete((XClass*)decoded);
     assert(XHttp2HeaderEncoder_setMaxDynamicTableSize(encoder, 0));
     assert(XHttp2HeaderDecoder_setMaxDynamicTableSize(decoder, 0));
     resized = XHttp2HeaderEncoder_encode(encoder, headers, false);
@@ -821,15 +821,15 @@ static void xhttp_test_http2_stateful_encoder(void)
     decoded = XHttp2HeaderDecoder_decode(decoder, XByteArray_constData(resized),
                                           XContainer_size_base((const XContainer*)resized));
     assert(decoded && XHttp2HeaderList_size(decoded) == 1);
-    XClass_delete_base((XClass*)decoded);
-    XClass_delete_base((XClass*)resized);
-    XClass_delete_base((XClass*)second);
-    XClass_delete_base((XClass*)first);
-    XClass_delete_base((XClass*)value);
-    XClass_delete_base((XClass*)name);
-    XClass_delete_base((XClass*)headers);
-    XClass_delete_base((XClass*)decoder);
-    XClass_delete_base((XClass*)encoder);
+    XClassDelete((XClass*)decoded);
+    XClassDelete((XClass*)resized);
+    XClassDelete((XClass*)second);
+    XClassDelete((XClass*)first);
+    XClassDelete((XClass*)value);
+    XClassDelete((XClass*)name);
+    XClassDelete((XClass*)headers);
+    XClassDelete((XClass*)decoder);
+    XClassDelete((XClass*)encoder);
 }
 
 static void xhttp_test_http2_peer_header_limit(void)
@@ -846,7 +846,7 @@ static void xhttp_test_http2_peer_header_limit(void)
     assert(XHttp2ClientSession_setPeerMaxHeaderListSize(session, SIZE_MAX));
     wire = XHttp2ClientSession_encodeRequest(session, request, &streamId);
     assert(wire && streamId == 1);
-    XClass_delete_base((XClass*)wire);
+    XClassDelete((XClass*)wire);
     assert(XHttp2ClientSession_activeStreamCount(session) == 1);
     assert(XHttp2ClientSession_setPeerMaxConcurrentStreams(session, 1));
     streamId = 0;
@@ -855,7 +855,7 @@ static void xhttp_test_http2_peer_header_limit(void)
     assert(XHttp2ClientSession_markStreamClosed(session));
     wire = XHttp2ClientSession_encodeRequest(session, request, &streamId);
     assert(wire && streamId == 3 && XHttp2ClientSession_activeStreamCount(session) == 1);
-    XClass_delete_base((XClass*)wire);
+    XClassDelete((XClass*)wire);
     assert(XHttp2ClientSession_markStreamClosed(session));
     /* 最高合法奇数流号 0x7fffffff 分配后，保留位不能被用于下一条流。 */
     session->m_nextStreamId = UINT32_C(0x7fffffff);
@@ -865,8 +865,8 @@ static void xhttp_test_http2_peer_header_limit(void)
     assert(XHttp2ClientSession_isGoingAway(session));
     streamId = 0;
     assert(!XHttp2ClientSession_encodeRequest(session, request, &streamId));
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)session);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)session);
 }
 
 static void xhttp_test_http2_connection_multiplex(void)
@@ -894,7 +894,7 @@ static void xhttp_test_http2_connection_multiplex(void)
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing && XHttp2Frame_hasClientPreface(XByteArray_constData(outgoing),
                                                      XContainer_size_base((const XContainer*)outgoing)));
-    XClass_delete_base((XClass*)outgoing);
+    XClassDelete((XClass*)outgoing);
     firstFrame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers,
         XHttp2Frame_EndHeaders | XHttp2Frame_EndStream, firstId, payload);
     secondFrame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers,
@@ -912,15 +912,15 @@ static void xhttp_test_http2_connection_multiplex(void)
     assert(XHttpReply_isFinished(firstReply) && XHttpReply_isFinished(secondReply));
     assert(XHttpReply_statusCode(firstReply) == 200 && XHttpReply_statusCode(secondReply) == 200);
     assert(XHttp2Connection_streamCount(connection) == 2);
-    XClass_delete_base((XClass*)input);
-    XClass_delete_base((XClass*)secondWire);
-    XClass_delete_base((XClass*)firstWire);
-    XClass_delete_base((XClass*)secondFrame);
-    XClass_delete_base((XClass*)firstFrame);
-    XClass_delete_base((XClass*)payload);
-    XClass_delete_base((XClass*)second);
-    XClass_delete_base((XClass*)first);
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)input);
+    XClassDelete((XClass*)secondWire);
+    XClassDelete((XClass*)firstWire);
+    XClassDelete((XClass*)secondFrame);
+    XClassDelete((XClass*)firstFrame);
+    XClassDelete((XClass*)payload);
+    XClassDelete((XClass*)second);
+    XClassDelete((XClass*)first);
+    XClassDelete((XClass*)connection);
 }
 
 static void xhttp_test_http2_connection_initial_window(void)
@@ -970,12 +970,12 @@ static void xhttp_test_http2_connection_initial_window(void)
     payload = XByteArray_constData((XByteArray*)XHttp2Frame_payload_const(update));
     assert(((uint32_t)payload[0] << 24 | (uint32_t)payload[1] << 16 |
             (uint32_t)payload[2] << 8 | payload[3]) == 34465);
-    XClass_delete_base((XClass*)update);
-    XClass_delete_base((XClass*)settings);
-    XClass_delete_base((XClass*)outgoing);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)connection);
-    XClass_delete_base((XClass*)configuration);
+    XClassDelete((XClass*)update);
+    XClassDelete((XClass*)settings);
+    XClassDelete((XClass*)outgoing);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)connection);
+    XClassDelete((XClass*)configuration);
 }
 
 static void xhttp_test_http2_connection_h2c_upgrade(void)
@@ -1023,18 +1023,18 @@ static void xhttp_test_http2_connection_h2c_upgrade(void)
                                  XContainer_size_base((const XContainer*)input)));
     assert(XHttpReply_isFinished(reply) && XHttpReply_statusCode(reply) == 200 &&
            xhttp_test_bytes_equal(XHttpReply_body_const(reply), "upgraded"));
-    XClass_delete_base((XClass*)input);
-    XClass_delete_base((XClass*)dataWire);
-    XClass_delete_base((XClass*)headerWire);
-    XClass_delete_base((XClass*)data);
-    XClass_delete_base((XClass*)headers);
-    XClass_delete_base((XClass*)dataPayload);
-    XClass_delete_base((XClass*)headerPayload);
-    XClass_delete_base((XClass*)settings);
-    XClass_delete_base((XClass*)outgoing);
-    XClass_delete_base((XClass*)connection);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
+    XClassDelete((XClass*)input);
+    XClassDelete((XClass*)dataWire);
+    XClassDelete((XClass*)headerWire);
+    XClassDelete((XClass*)data);
+    XClassDelete((XClass*)headers);
+    XClassDelete((XClass*)dataPayload);
+    XClassDelete((XClass*)headerPayload);
+    XClassDelete((XClass*)settings);
+    XClassDelete((XClass*)outgoing);
+    XClassDelete((XClass*)connection);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
 }
 
 static void xhttp_test_http2_connection_protocol_limits(void)
@@ -1061,10 +1061,10 @@ static void xhttp_test_http2_connection_protocol_limits(void)
            !XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                   XContainer_size_base((const XContainer*)wire)) &&
            XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)settings);
-    XClass_delete_base((XClass*)settingsPayload);
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)settings);
+    XClassDelete((XClass*)settingsPayload);
+    XClassDelete((XClass*)connection);
 
     /* Qt 将未主动发送 PING 时收到的 ACK 作为诊断状态，不关闭连接。 */
     connection = XHttp2Connection_create();
@@ -1076,17 +1076,17 @@ static void xhttp_test_http2_connection_protocol_limits(void)
            XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                  XContainer_size_base((const XContainer*)wire)) &&
            !XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)ping);
-    XClass_delete_base((XClass*)pingPayload);
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)ping);
+    XClassDelete((XClass*)pingPayload);
+    XClassDelete((XClass*)connection);
 
     /* 即使只收到 9 字节帧头，也要拒绝超过本端 SETTINGS_MAX_FRAME_SIZE 的载荷。 */
     connection = XHttp2Connection_create();
     assert(connection && !XHttp2Connection_feed(connection, oversizedHeader,
                                                   sizeof(oversizedHeader)) &&
            XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)connection);
 
     /* HPACK 解码失败必须发送连接级 GOAWAY(COMPRESSION_ERROR)，不能静默停在半包状态。 */
     {
@@ -1104,7 +1104,7 @@ static void xhttp_test_http2_connection_protocol_limits(void)
                XHttp2Connection_sendRequest(connection, request, &streamId) && streamId == 1);
         outgoing = XHttp2Connection_takeOutgoing(connection);
         assert(outgoing);
-        XClass_delete_base((XClass*)outgoing);
+        XClassDelete((XClass*)outgoing);
         assert(!XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                       XContainer_size_base((const XContainer*)wire)) &&
                XHttp2Connection_isGoingAway(connection));
@@ -1117,13 +1117,13 @@ static void xhttp_test_http2_connection_protocol_limits(void)
         assert(outgoing && goaway && goawayPayload &&
                XHttp2Frame_type(goaway) == XHttp2Frame_GoAway &&
                goawayPayload[7] == 9);
-        XClass_delete_base((XClass*)goaway);
-        XClass_delete_base((XClass*)outgoing);
-        XClass_delete_base((XClass*)wire);
-        XClass_delete_base((XClass*)invalidHeaders);
-        XClass_delete_base((XClass*)invalidHeaderPayload);
-        XClass_delete_base((XClass*)request);
-        XClass_delete_base((XClass*)connection);
+        XClassDelete((XClass*)goaway);
+        XClassDelete((XClass*)outgoing);
+        XClassDelete((XClass*)wire);
+        XClassDelete((XClass*)invalidHeaders);
+        XClassDelete((XClass*)invalidHeaderPayload);
+        XClassDelete((XClass*)request);
+        XClassDelete((XClass*)connection);
     }
 }
 
@@ -1152,7 +1152,7 @@ static void xhttp_test_http2_connection_detach_closed_reply(void)
            firstId == 1);
     wire = XHttp2Connection_takeOutgoing(connection);
     assert(wire);
-    XClass_delete_base((XClass*)wire);
+    XClassDelete((XClass*)wire);
     response = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers,
                                      XHttp2Frame_EndHeaders | XHttp2Frame_EndStream,
                                      firstId, payload);
@@ -1162,8 +1162,8 @@ static void xhttp_test_http2_connection_detach_closed_reply(void)
            XHttpReply_isFinished(firstReply) &&
            XHttp2Connection_detachReply(connection, firstId, firstReply) &&
            XHttp2Connection_streamCount(connection) == 0);
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)response);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)response);
 
     /* 已关闭流的 WINDOW_UPDATE/RST_STREAM 可忽略；DATA 必须以 STREAM_CLOSED 拒绝。 */
     controlPayload = XByteArray_create_with_data("\0\0\0\1", 4);
@@ -1173,34 +1173,34 @@ static void xhttp_test_http2_connection_detach_closed_reply(void)
     assert(update && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                     XContainer_size_base((const XContainer*)wire)) &&
            !XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)update);
-    XClass_delete_base((XClass*)controlPayload);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)update);
+    XClassDelete((XClass*)controlPayload);
     latePayload = XByteArray_create_utf8("late");
     data = latePayload ? XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Data, 0, firstId,
                                                latePayload) : NULL;
     wire = data ? XHttp2Frame_toByteArray(data) : NULL;
     assert(data && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                   XContainer_size_base((const XContainer*)wire)));
-    XClass_delete_base((XClass*)wire);
+    XClassDelete((XClass*)wire);
     wire = XHttp2Connection_takeOutgoing(connection);
     rst = wire ? XHttp2Frame_fromBytes(XByteArray_constData(wire),
                                        XContainer_size_base((const XContainer*)wire), NULL) : NULL;
     assert(wire && rst && XHttp2Frame_type(rst) == XHttp2Frame_RstStream &&
            XHttp2Frame_streamId(rst) == firstId);
-    XClass_delete_base((XClass*)rst);
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)data);
-    XClass_delete_base((XClass*)latePayload);
+    XClassDelete((XClass*)rst);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)data);
+    XClassDelete((XClass*)latePayload);
     secondReply = XHttpReply_create(secondRequest);
     assert(secondReply && XHttp2Connection_sendRequestReply(connection, secondReply, &secondId) &&
            secondId == 3);
-    XClass_delete_base((XClass*)connection);
-    XClass_delete_base((XClass*)secondReply);
-    XClass_delete_base((XClass*)firstReply);
-    XClass_delete_base((XClass*)secondRequest);
-    XClass_delete_base((XClass*)firstRequest);
-    XClass_delete_base((XClass*)payload);
+    XClassDelete((XClass*)connection);
+    XClassDelete((XClass*)secondReply);
+    XClassDelete((XClass*)firstReply);
+    XClassDelete((XClass*)secondRequest);
+    XClassDelete((XClass*)firstRequest);
+    XClassDelete((XClass*)payload);
 }
 
 static void xhttp_test_http2_connection_idle_stream_errors(void)
@@ -1215,10 +1215,10 @@ static void xhttp_test_http2_connection_idle_stream_errors(void)
            XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                  XContainer_size_base((const XContainer*)wire)) &&
            !XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)update);
-    XClass_delete_base((XClass*)payload);
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)update);
+    XClassDelete((XClass*)payload);
+    XClassDelete((XClass*)connection);
 
     /* Qt 将没有对应主动 PING 的 ACK 作为诊断信息，不关闭连接。 */
     connection = XHttp2Connection_create();
@@ -1229,10 +1229,10 @@ static void xhttp_test_http2_connection_idle_stream_errors(void)
            XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                  XContainer_size_base((const XContainer*)wire)) &&
            !XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)update);
-    XClass_delete_base((XClass*)payload);
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)update);
+    XClassDelete((XClass*)payload);
+    XClassDelete((XClass*)connection);
 
     /* 活动流收到零窗口增量时只发送 RST_STREAM，其他流和连接仍可继续。 */
     {
@@ -1251,7 +1251,7 @@ static void xhttp_test_http2_connection_idle_stream_errors(void)
         assert(reply && streamId == 1);
         outgoing = XHttp2Connection_takeOutgoing(connection);
         assert(outgoing);
-        XClass_delete_base((XClass*)outgoing);
+        XClassDelete((XClass*)outgoing);
         assert(XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                      XContainer_size_base((const XContainer*)wire)) &&
                !XHttp2Connection_isGoingAway(connection) &&
@@ -1262,13 +1262,13 @@ static void xhttp_test_http2_connection_idle_stream_errors(void)
                                                 NULL) : NULL;
         assert(outgoing && rst && XHttp2Frame_type(rst) == XHttp2Frame_RstStream &&
                XHttp2Frame_streamId(rst) == streamId);
-        XClass_delete_base((XClass*)rst);
-        XClass_delete_base((XClass*)outgoing);
-        XClass_delete_base((XClass*)wire);
-        XClass_delete_base((XClass*)update);
-        XClass_delete_base((XClass*)payload);
-        XClass_delete_base((XClass*)request);
-        XClass_delete_base((XClass*)connection);
+        XClassDelete((XClass*)rst);
+        XClassDelete((XClass*)outgoing);
+        XClassDelete((XClass*)wire);
+        XClassDelete((XClass*)update);
+        XClassDelete((XClass*)payload);
+        XClassDelete((XClass*)request);
+        XClassDelete((XClass*)connection);
     }
 }
 
@@ -1316,13 +1316,13 @@ static void xhttp_test_authenticator_and_deferred_authentication(void)
     assert(XHttpReply_error(reply) == XHttpReply_AuthenticationRequiredError &&
            XHttpReply_emitFinished(reply));
 
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)manager);
-    XClass_delete_base((XClass*)moved);
-    XClass_delete_base((XClass*)copy);
-    XClass_delete_base((XClass*)authenticator);
-    XClass_delete_base((XClass*)realm);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)manager);
+    XClassDelete((XClass*)moved);
+    XClassDelete((XClass*)copy);
+    XClassDelete((XClass*)authenticator);
+    XClassDelete((XClass*)realm);
 }
 
 /* 覆盖 Qt QHttp2Connection 对无效 PRIORITY、PUSH_PROMISE 编号和 RST_STREAM 的处理。 */
@@ -1352,23 +1352,23 @@ static void xhttp_test_http2_connection_qt_stream_state(void)
            !XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                   XContainer_size_base((const XContainer*)wire)) &&
            XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)frame);
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)frame);
+    XClassDelete((XClass*)connection);
 
     connection = XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, configuration);
     assert(connection && XHttp2Connection_sendRequest(connection, request, &streamId) && streamId == 1);
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing);
-    XClass_delete_base((XClass*)outgoing);
+    XClassDelete((XClass*)outgoing);
 
     frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
                                   streamId, firstPromisePayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                    XContainer_size_base((const XContainer*)wire)));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)frame);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)frame);
 
     /* 已接收服务端流 4 后，服务端不能再承诺更小的流 2。 */
     frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
@@ -1377,37 +1377,37 @@ static void xhttp_test_http2_connection_qt_stream_state(void)
     assert(frame && wire && !XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                     XContainer_size_base((const XContainer*)wire)) &&
            XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)frame);
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)frame);
+    XClassDelete((XClass*)connection);
 
     /* 已见过服务端流 4 时，未记录的较小偶数 RST_STREAM 按关闭流忽略。 */
     connection = XHttp2Connection_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, configuration);
     assert(connection && XHttp2Connection_sendRequest(connection, request, &streamId) && streamId == 1);
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing);
-    XClass_delete_base((XClass*)outgoing);
+    XClassDelete((XClass*)outgoing);
     frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
                                   streamId, firstPromisePayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                    XContainer_size_base((const XContainer*)wire)));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)frame);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)frame);
     frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_RstStream, 0, 2, rstPayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                    XContainer_size_base((const XContainer*)wire)) &&
            !XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)frame);
-    XClass_delete_base((XClass*)connection);
-    XClass_delete_base((XClass*)rstPayload);
-    XClass_delete_base((XClass*)secondPromisePayload);
-    XClass_delete_base((XClass*)firstPromisePayload);
-    XClass_delete_base((XClass*)priorityPayload);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)configuration);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)frame);
+    XClassDelete((XClass*)connection);
+    XClassDelete((XClass*)rstPayload);
+    XClassDelete((XClass*)secondPromisePayload);
+    XClassDelete((XClass*)firstPromisePayload);
+    XClassDelete((XClass*)priorityPayload);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)configuration);
 }
 
 static void xhttp_test_http2_connection_goaway(void)
@@ -1432,15 +1432,15 @@ static void xhttp_test_http2_connection_goaway(void)
     assert(firstReply && firstId == 1);
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing);
-    XClass_delete_base((XClass*)outgoing);
+    XClassDelete((XClass*)outgoing);
     frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_GoAway, 0, 0, invalidPayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && !XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                     XContainer_size_base((const XContainer*)wire)) &&
            XHttp2Connection_isGoingAway(connection));
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)frame);
-    XClass_delete_base((XClass*)connection);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)frame);
+    XClassDelete((XClass*)connection);
 
     connection = XHttp2Connection_create();
     assert(connection);
@@ -1449,19 +1449,19 @@ static void xhttp_test_http2_connection_goaway(void)
     assert(firstReply && secondReply && firstId == 1 && secondId == 3);
     outgoing = XHttp2Connection_takeOutgoing(connection);
     assert(outgoing);
-    XClass_delete_base((XClass*)outgoing);
+    XClassDelete((XClass*)outgoing);
     frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_GoAway, 0, 0, gracefulPayload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     assert(frame && wire && XHttp2Connection_feed(connection, XByteArray_constData(wire),
                                                    XContainer_size_base((const XContainer*)wire)) &&
            XHttpReply_error(secondReply) == XHttpReply_ContentReSendError);
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)frame);
-    XClass_delete_base((XClass*)connection);
-    XClass_delete_base((XClass*)gracefulPayload);
-    XClass_delete_base((XClass*)invalidPayload);
-    XClass_delete_base((XClass*)second);
-    XClass_delete_base((XClass*)first);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)frame);
+    XClassDelete((XClass*)connection);
+    XClassDelete((XClass*)gracefulPayload);
+    XClassDelete((XClass*)invalidPayload);
+    XClassDelete((XClass*)second);
+    XClassDelete((XClass*)first);
 }
 
 static void xhttp_test_http2_connection_push_promise(void)
@@ -1486,7 +1486,7 @@ static void xhttp_test_http2_connection_push_promise(void)
            XHttp2Connection_sendRequest(connection, request, &streamId) && streamId == 1);
     discarded = XHttp2Connection_takeOutgoing(connection);
     assert(discarded);
-    XClass_delete_base((XClass*)discarded);
+    XClassDelete((XClass*)discarded);
     promise = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_PushPromise, XHttp2Frame_EndHeaders,
                                     streamId, promisePayload);
     response = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XHttp2Frame_Headers,
@@ -1503,17 +1503,17 @@ static void xhttp_test_http2_connection_push_promise(void)
                                   XContainer_size_base((const XContainer*)input)));
     pushed = XHttp2Connection_takePushedReply(connection);
     assert(pushed && XHttpReply_isFinished(pushed) && XHttpReply_statusCode(pushed) == 200);
-    XClass_delete_base((XClass*)pushed);
-    XClass_delete_base((XClass*)input);
-    XClass_delete_base((XClass*)responseWire);
-    XClass_delete_base((XClass*)promiseWire);
-    XClass_delete_base((XClass*)response);
-    XClass_delete_base((XClass*)promise);
-    XClass_delete_base((XClass*)responsePayload);
-    XClass_delete_base((XClass*)promisePayload);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)connection);
-    XClass_delete_base((XClass*)configuration);
+    XClassDelete((XClass*)pushed);
+    XClassDelete((XClass*)input);
+    XClassDelete((XClass*)responseWire);
+    XClassDelete((XClass*)promiseWire);
+    XClassDelete((XClass*)response);
+    XClassDelete((XClass*)promise);
+    XClassDelete((XClass*)responsePayload);
+    XClassDelete((XClass*)promisePayload);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)connection);
+    XClassDelete((XClass*)configuration);
 }
 
 static void xhttp_test_server_values(void)
@@ -1545,7 +1545,7 @@ static void xhttp_test_server_values(void)
     {
         XByteArray* missing = XByteArray_create_utf8("missing");
         value = XHttpServerRequest_value(request, missing);
-        if (missing) XClass_delete_base((XClass*)missing);
+        if (missing) XClassDelete((XClass*)missing);
     }
     assert(!value);
     assert(XHttpServerRequest_query_const(request) &&
@@ -1563,7 +1563,7 @@ static void xhttp_test_server_values(void)
     assert(routeCount == 1);
     request->m_method = XHttpServerRequest_Post;
     assert(!XHttpServerRouterRule_matches(rule, request));
-    XClass_delete_base((XClass*)router);
+    XClassDelete((XClass*)router);
     denyMessage = XByteArray_create_utf8("not allowed");
     upgrade = XHttpServerWebSocketUpgradeResponse_denyWith(401, denyMessage);
     upgradeCopy = XHttpServerWebSocketUpgradeResponse_create_copy(upgrade);
@@ -1574,18 +1574,18 @@ static void xhttp_test_server_values(void)
            xhttp_test_bytes_equal(
                XHttpServerWebSocketUpgradeResponse_denyMessage_const(upgradeCopy),
                "not allowed"));
-    XClass_delete_base((XClass*)upgradeCopy);
-    XClass_delete_base((XClass*)upgrade);
-    XClass_delete_base((XClass*)denyMessage);
+    XClassDelete((XClass*)upgradeCopy);
+    XClassDelete((XClass*)upgrade);
+    XClassDelete((XClass*)denyMessage);
     assert(XHttpServerResponse_statusCode(response) == XHttpServerResponse_Created);
     assert(xhttp_test_bytes_equal(XHttpServerResponse_data_const(response), "server-body"));
     assert(xhttp_test_bytes_equal(XHttpServerResponse_mimeType_const(response), "text/plain"));
-    XClass_delete_base((XClass*)response);
-    XClass_delete_base((XClass*)headers);
-    XClass_delete_base((XClass*)mime);
-    XClass_delete_base((XClass*)body);
-    XClass_delete_base((XClass*)urlText);
-    XClass_delete_base((XClass*)request);
+    XClassDelete((XClass*)response);
+    XClassDelete((XClass*)headers);
+    XClassDelete((XClass*)mime);
+    XClassDelete((XClass*)body);
+    XClassDelete((XClass*)urlText);
+    XClassDelete((XClass*)request);
 }
 
 static void xhttp_test_http2_client(void)
@@ -1612,8 +1612,8 @@ static void xhttp_test_http2_client(void)
            XContainer_size_base((const XContainer*)XHttp2Frame_payload_const(frame)) == 6 &&
            XByteArray_constData((XByteArray*)XHttp2Frame_payload_const(frame))[0] == 0 &&
            XByteArray_constData((XByteArray*)XHttp2Frame_payload_const(frame))[1] == 2);
-    XClass_delete_base((XClass*)frame);
-    XClass_delete_base((XClass*)start);
+    XClassDelete((XClass*)frame);
+    XClassDelete((XClass*)start);
     wire = XHttp2ClientSession_encodeRequest(session, request, &streamId);
     assert(wire && streamId == 1);
     offset = 0;
@@ -1622,15 +1622,15 @@ static void xhttp_test_http2_client(void)
     assert(frame && XHttp2Frame_type(frame) == XHttp2Frame_Headers &&
            XHttp2Frame_streamId(frame) == streamId);
     offset += consumed;
-    XClass_delete_base((XClass*)frame);
+    XClassDelete((XClass*)frame);
     frame = XHttp2Frame_fromBytes(XByteArray_constData(wire) + offset,
                                   XByteArray_size_base(wire) - offset, &consumed);
     assert(frame && XHttp2Frame_type(frame) == XHttp2Frame_Data &&
            XHttp2Frame_flags(frame) == XHttp2Frame_EndStream);
-    XClass_delete_base((XClass*)frame);
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)session);
+    XClassDelete((XClass*)frame);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)session);
 }
 
 static void xhttp_test_http2_reply(void)
@@ -1667,17 +1667,17 @@ static void xhttp_test_http2_reply(void)
     /* HTTP/2 尾部字段必须携带 END_STREAM，不能在其后继续接收 DATA。 */
     assert(!XHttpReply_feedHttp2Headers(invalidTrailerReply, trailers, false) &&
            XHttpReply_error(invalidTrailerReply) == XHttpReply_ProtocolInvalidOperationError);
-    XClass_delete_base((XClass*)invalidTrailerReply);
-    XClass_delete_base((XClass*)trailerValue);
-    XClass_delete_base((XClass*)trailerName);
-    XClass_delete_base((XClass*)trailers);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)text);
-    XClass_delete_base((XClass*)contentType);
-    XClass_delete_base((XClass*)status);
-    XClass_delete_base((XClass*)statusName);
-    XClass_delete_base((XClass*)headers);
-    XClass_delete_base((XClass*)request);
+    XClassDelete((XClass*)invalidTrailerReply);
+    XClassDelete((XClass*)trailerValue);
+    XClassDelete((XClass*)trailerName);
+    XClassDelete((XClass*)trailers);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)text);
+    XClassDelete((XClass*)contentType);
+    XClassDelete((XClass*)status);
+    XClassDelete((XClass*)statusName);
+    XClassDelete((XClass*)headers);
+    XClassDelete((XClass*)request);
 }
 
 static void xhttp_test_http2_reply_header_rules(void)
@@ -1702,23 +1702,23 @@ static void xhttp_test_http2_reply_header_rules(void)
     assert(XHttp2HeaderList_append(headers, statusName, status));
     assert(!XHttpReply_feedHttp2Headers(reply, headers, false));
     assert(XHttpReply_error(reply) == XHttpReply_ProtocolInvalidOperationError);
-    XClass_delete_base((XClass*)reply);
+    XClassDelete((XClass*)reply);
     reply = XHttpReply_create(request);
     assert(reply);
     assert(XHttp2HeaderList_append(forbidden, statusName, status));
     assert(XHttp2HeaderList_append(forbidden, connection, close));
     assert(!XHttpReply_feedHttp2Headers(reply, forbidden, false));
     assert(XHttpReply_error(reply) == XHttpReply_ProtocolInvalidOperationError);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)close);
-    XClass_delete_base((XClass*)connection);
-    XClass_delete_base((XClass*)forbidden);
-    XClass_delete_base((XClass*)status);
-    XClass_delete_base((XClass*)statusName);
-    XClass_delete_base((XClass*)text);
-    XClass_delete_base((XClass*)contentType);
-    XClass_delete_base((XClass*)headers);
-    XClass_delete_base((XClass*)request);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)close);
+    XClassDelete((XClass*)connection);
+    XClassDelete((XClass*)forbidden);
+    XClassDelete((XClass*)status);
+    XClassDelete((XClass*)statusName);
+    XClassDelete((XClass*)text);
+    XClassDelete((XClass*)contentType);
+    XClassDelete((XClass*)headers);
+    XClassDelete((XClass*)request);
 }
 
 static void xhttp_test_ssl_alpn_api(void)
@@ -1739,18 +1739,18 @@ static void xhttp_test_ssl_alpn_api(void)
            XSSL_NextProtocolNegotiationUnsupported);
     for (size_t i = 0; i < XContainer_size_base((const XContainer*)configured); ++i) {
         XByteArray** slot = (XByteArray**)XVector_at_base(configured, (int64_t)i);
-        if (slot && *slot) XClass_delete_base((XClass*)*slot);
+        if (slot && *slot) XClassDelete((XClass*)*slot);
     }
-    XVector_delete_base((XContainer*)configured);
+    XClassDelete((XContainer*)configured);
     empty = XVector_create(sizeof(XByteArray*));
     assert(empty && XSslSocket_setAllowedNextProtocols(socket, empty));
     assert(XSslSocket_nextProtocolNegotiationStatus(socket) ==
            XSSL_NextProtocolNegotiationNone);
-    XVector_delete_base((XContainer*)empty);
-    XClass_delete_base((XClass*)h2);
-    XClass_delete_base((XClass*)http11);
-    XVector_delete_base((XContainer*)protocols);
-    XClass_delete_base((XClass*)socket);
+    XClassDelete((XContainer*)empty);
+    XClassDelete((XClass*)h2);
+    XClassDelete((XClass*)http11);
+    XClassDelete((XContainer*)protocols);
+    XClassDelete((XClass*)socket);
 }
 
 static void xhttp_test_manager_ssl_api(void)
@@ -1764,7 +1764,7 @@ static void xhttp_test_manager_ssl_api(void)
     assert(XNetworkAccessManager_sslPeerVerifyMode(manager) == XSSL_AutoVerifyPeer);
     assert(XNetworkAccessManager_setSslCaCertificate(manager, NULL));
     assert(XNetworkAccessManager_sslCaCertificate_const(manager) == NULL);
-    XClass_delete_base((XClass*)manager);
+    XClassDelete((XClass*)manager);
 }
 
 static void xhttp_test_request_factory_and_rest(void)
@@ -1805,10 +1805,10 @@ static void xhttp_test_request_factory_and_rest(void)
     redirectAttribute = XHttpRequest_attribute(request,
                                                 XNetworkRequestFactory_RedirectPolicyAttribute);
     assert(redirectAttribute);
-    XClass_delete_base((XClass*)redirectAttribute);
+    XClassDelete((XClass*)redirectAttribute);
     requestUrl = XUrl_toString(XHttpRequest_url_const(request));
     assert(requestUrl && strcmp(XString_toUtf8(requestUrl), "https://example.com/items?page=2") == 0);
-    XClass_delete_base((XClass*)requestUrl);
+    XClassDelete((XClass*)requestUrl);
 
     reply = XHttpReply_create(request);
     assert(reply);
@@ -1818,22 +1818,22 @@ static void xhttp_test_request_factory_and_rest(void)
     assert(rest && XRestReply_isSuccess(rest));
     json = XRestReply_readJson(rest, &errorText);
     assert(json && !errorText && XJsonDocument_isObject(json));
-    XJsonDocument_delete(json);
+    XClassDelete(json);
     manager = XNetworkAccessManager_create();
     restManager = XRestAccessManager_create(manager);
     assert(manager && restManager && XRestAccessManager_networkAccessManager(restManager) == manager);
-    XClass_delete_base((XClass*)restManager);
-    XClass_delete_base((XClass*)manager);
-    XClass_delete_base((XClass*)rest);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)priorityValue);
-    XClass_delete_base((XClass*)baseUrl);
-    XClass_delete_base((XClass*)baseUrlText);
-    XClass_delete_base((XClass*)token);
-    XClass_delete_base((XClass*)query);
-    XClass_delete_base((XClass*)common);
-    XClass_delete_base((XClass*)factory);
+    XClassDelete((XClass*)restManager);
+    XClassDelete((XClass*)manager);
+    XClassDelete((XClass*)rest);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)priorityValue);
+    XClassDelete((XClass*)baseUrl);
+    XClassDelete((XClass*)baseUrlText);
+    XClassDelete((XClass*)token);
+    XClassDelete((XClass*)query);
+    XClassDelete((XClass*)common);
+    XClassDelete((XClass*)factory);
 }
 
 static void xhttp_test_manager_local(XVariant* data)
@@ -1857,9 +1857,9 @@ static void xhttp_test_manager_local(XVariant* data)
     assert(XHttpReply_error(reply) == XHttpReply_NoError);
     assert(XHttpReply_statusCode(reply) == 200);
     assert(XNetworkAccessManager_activeReplyCount(manager) == 0);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)manager);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)manager);
     XPrintf("XNetworkAccessManager 本地 HTTP 测试通过\n");
 }
 
@@ -1885,9 +1885,9 @@ static void xhttp_test_manager_redirect(XVariant* data)
     assert(XHttpReply_statusCode(reply) == 200);
     assert(xhttp_test_bytes_equal(XHttpReply_body_const(reply), "redirect-ok"));
     assert(XNetworkAccessManager_activeReplyCount(manager) == 0);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)manager);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)manager);
     XPrintf("XNetworkAccessManager 重定向测试通过\n");
 }
 
@@ -1919,9 +1919,9 @@ static void xhttp_test_manager_authentication(XVariant* data)
     assert(xhttp_test_bytes_equal(XHttpReply_body_const(reply), "auth-ok"));
     assert(xhttp_test_authentication_signal_count == 1);
     assert(XNetworkAccessManager_activeReplyCount(manager) == 0);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)manager);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)manager);
     XPrintf("XNetworkAccessManager Basic 认证重发测试通过\n");
 }
 
@@ -1953,9 +1953,9 @@ static void xhttp_test_manager_digest_authentication(XVariant* data)
     assert(xhttp_test_bytes_equal(XHttpReply_body_const(reply), "digest-ok"));
     assert(xhttp_test_authentication_signal_count == 1);
     assert(XNetworkAccessManager_activeReplyCount(manager) == 0);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)manager);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)manager);
     XPrintf("XNetworkAccessManager Digest 优先认证重发测试通过\n");
 }
 
@@ -1987,9 +1987,9 @@ static void xhttp_test_manager_authentication_fallback(XVariant* data)
     assert(xhttp_test_bytes_equal(XHttpReply_body_const(reply), "fallback-ok"));
     assert(xhttp_test_authentication_signal_count == 1);
     assert(XNetworkAccessManager_activeReplyCount(manager) == 0);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)manager);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)manager);
     XPrintf("XNetworkAccessManager Basic 回退认证测试通过\n");
 }
 
@@ -2034,10 +2034,10 @@ static void xhttp_test_manager_ntlm_authentication(XVariant* data)
     assert(xhttp_test_authentication_signal_count == 1);
     assert(state.m_requests == 3 && state.m_type1 == 1 && state.m_type3 == 1);
     assert(XNetworkAccessManager_activeReplyCount(manager) == 0);
-    XClass_delete_base((XClass*)reply);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)manager);
-    XClass_delete_base((XClass*)server);
+    XClassDelete((XClass*)reply);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)manager);
+    XClassDelete((XClass*)server);
     XPrintf("XNetworkAccessManager NTLMv2 两阶段认证测试通过\n");
 }
 

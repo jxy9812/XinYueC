@@ -140,7 +140,7 @@ static void sendRtuResponse(XModbusRtuSerialServer* server,
     XIODevice_write_1((XIODevice*)server->m_serialPort,
         (const char*)XByteArray_data(frame), XByteArray_size_base(frame));
 
-    XByteArray_delete_base(frame);
+    XClassDelete(frame);
 }
 
 /**
@@ -188,7 +188,7 @@ static void processRtuFrame(XModbusRtuSerialServer* server,
     // 创建请求PDU对象
     XModbusRequest* request = XModbusRequest_create();
     if (!request) {
-        XModbusPdu_deinit_base(&pdu);
+        XClassDeinit(&pdu);
         XModbusAdu_delete(adu);
         return;
     }
@@ -201,18 +201,18 @@ static void processRtuFrame(XModbusRtuSerialServer* server,
     if (pduData) {
         XModbusPdu_setData((XModbusPdu*)request,
             XByteArray_data(pduData), XByteArray_size_base(pduData));
-        XByteArray_delete_base(pduData);
+        XClassDelete(pduData);
     }
-    XModbusPdu_deinit_base(&pdu);
+    XClassDeinit(&pdu);
 
     // 广播请求不发送响应
     if (isBroadcast) {
         XModbusResponse* response = XModbusServer_processRequest_base(
             (XModbusServer*)server, request);
         if (response) {
-            XModbusResponse_delete_base(response);
+            XClassDelete(response);
         }
-        XModbusRequest_delete_base(request);
+        XClassDelete(request);
         XModbusAdu_delete(adu);
         return;
     }
@@ -223,10 +223,10 @@ static void processRtuFrame(XModbusRtuSerialServer* server,
 
     if (response) {
         sendRtuResponse(server, (uint8_t)serverAddress, response);
-        XModbusResponse_delete_base(response);
+        XClassDelete(response);
     }
 
-    XModbusRequest_delete_base(request);
+    XClassDelete(request);
     XModbusAdu_delete(adu);
 }
 
@@ -554,7 +554,7 @@ static void VXModbusRtuSerialServer_deinit(XModbusRtuSerialServer* server)
 
     // 释放接收缓冲区
     if (server->m_receiveBuffer) {
-        XByteArray_delete_base(server->m_receiveBuffer);
+        XClassDelete(server->m_receiveBuffer);
         server->m_receiveBuffer = NULL;
     }
 

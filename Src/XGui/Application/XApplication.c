@@ -42,7 +42,7 @@ static void VXApplication_deinit(XApplication* self)
     if (!self) return;
     if (g_xapp == self) g_xapp = NULL;
     if (self->m_topLevelWidgets) {
-        XVector_delete_base((XClass*)self->m_topLevelWidgets);
+        XClassDelete((XClass*)self->m_topLevelWidgets);
         self->m_topLevelWidgets = NULL;
     }
     self->m_activeWindow = NULL;
@@ -52,7 +52,7 @@ static void VXApplication_deinit(XApplication* self)
     /* m_styleSheet 为对象拥有字段：析构时释放，防泄漏（与 init 的 NULL
      * 初值配对）。 */
     if (self->m_styleSheet) {
-        XString_delete_base((XClass*)self->m_styleSheet);
+        XClassDelete((XClass*)self->m_styleSheet);
         self->m_styleSheet = NULL;
     }
     XClass_Deinit_Parent(XGuiApplication, (XGuiApplication*)self);
@@ -434,8 +434,8 @@ XFont XApplication_fontMetrics(void)
     XFont_init(&font);
     appFont = XGuiApplication_font(); /* 应用未设置字体时返回 NULL。 */
     if (appFont) {
-        XCopy(&font, appFont);
-        XFont_delete_base((XClass*)appFont);
+        XClassCopy(&font, appFont);
+        XClassDelete((XClass*)appFont);
     }
     /* 无实例或未设置字体：font 即 XFont_init 的默认构造字体（对齐
        QApplication 默认字体回退与 XWidget_font 的默认值路径）。 */
@@ -616,7 +616,7 @@ void XApplication_setStyleSheet_2(const char* css)
         if (!tmp) return;
     }
     XApplication_setStyleSheet(tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 bool XApplication_autoSipEnabled(void)

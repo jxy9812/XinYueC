@@ -1,4 +1,4 @@
-﻿# XGui 模块文档
+# XGui 模块文档
 
 > **文档导航**：本文件是 XGui 模块的**活文档**（架构与当前状态）。
 > 按日的战役实施记录已归档至 `docs/xgui/history/`（2026-09-21 文档重构
@@ -537,7 +537,7 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
   探针 1×/5×/20× 泄漏恒等 100973B——连接级一次性持有，随 X 连接
   存亡，非逐操作增长。我们的 destroyOffscreen 路径（解绑/销毁上下文/
   销毁 pbuffer/释放 state）完整无缺。
-- **真缺陷 ①：XMenu 析构隔个漏删**——deinit 循环 delete_base(0) 后
+- **真缺陷 ①：XMenu 析构隔个漏删**——deinit 循环 XClassDelete(0) 后
   动作经 destroyed 信号自摘（xmenu_actionDestroyedSlot 已移出向量），
   循环尾再补 remove(0) 把下一个动作指针丢弃不删。修复：按尺寸是否
   自缩判定（自摘已缩则不补删；未缩防御性手摘防死循环）。影响面：
@@ -562,11 +562,11 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
   m_fontSet 字段持有，窗口销毁在 XDestroyIC 之后释放。ASan 归因四个
   测试点同款 3730B/28blk 签名即此（ime_bridge/lineedit 菜单/gui_app×2）。
 - **XLineControl_setFont 壳泄漏（-26.9KB，回归残余的 75%）**：m_font 以
-  裸 XMalloc_System+XCopy 深拷贝承载，但 XCopy 不继承堆所有权位——
-  delete_base 只 deinit 不 free，880B 壳逐替换泄漏。微探针隔离复现
+  裸 XMalloc_System+XClassCopy 深拷贝承载，但 XClassCopy 不继承堆所有权位——
+  XClassDelete 只 deinit 不 free，880B 壳逐替换泄漏。微探针隔离复现
   （单控件建/打/删 4255B→647B 纯库级；10 次 setFont 同）。修复：
   拷贝后 Set_Class_IsHeap(true)（XTextMenuContext 同款纪律）；全库巡
-  检其余 XCopy 站点均走 create_ex（is_heap 已置），无同款反模式。
+  检其余 XClassCopy 站点均走 create_ex（is_heap 已置），无同款反模式。
 - **上一批遗留确认**：菜单域泄漏清零（XMenu 析构修复生效，scrollbar/
   menu/menubar 族测试从归因表消失）。
 - **量化**：195469→151790→136870→**109942B**（会话累计 -85.5KB/-44%）
@@ -1228,7 +1228,7 @@ create/destroy 1/5/20× 恒等实证，非逐操作增长），~51KB 为夹具�
 - **【P0·demo 启动确定性 AV 已根修】**`XAbstractItemModel_setDimension`
   行数组按**当前列数** calloc、`xaim_growCols` 却假设所有行有 capCols
   容量——先窄列建行再扩列（cols≤capCols 不触发扩）→ 高列号写越界堆
-  → `XString_delete_base(垃圾指针)`。demo 条目视图页模型桥建树首屏即
+  → `XClassDelete(垃圾指针)`。demo 条目视图页模型桥建树首屏即
   崩（cdb 栈证实），且是 demo 全功能（基准/截图/autotest）的总闸。
   修：先统一提升列容量，行数组一律按 capCols 整块分配。
 - **【GL 直通重构二步：脏区批量提交】**批量暂存画布从「批首全帧
@@ -1855,13 +1855,13 @@ paintEvent 缺 paintOffset 平移（paintImage=顶层后备存储，非零偏移
 >   容量/逻辑列数错配**。cdb 纯 8a174def 构建（/Zi+/DEBUG）抓到
 >   完整符号栈：`main→DemoWin_create→demo_page_views_build→
 >   XTreeWidgetItem_setTextAt_2→XAbstractItemModel_setData→
->   XClass_delete_base`，rcx=垃圾指针（0x8c000600_83d5d2e4，与
+>   XClassDelete`（底层符号 `XClass_delete_base`），rcx=垃圾指针（0x8c000600_83d5d2e4，与
 >   前轮 ttxt_slotTeTextChanged 崩溃的 0x8e000600_... 同形=堆损
 >   坏特征）。机制：行数组按逻辑列数 calloc，而 xaim_growCols 以
 >   m_capCols 判定「无需扩容」即跳过——树控件默认 1 列灌行（首行
 >   恰逢容量 0→4 扩容被补齐，其余行保持 1 槽短数组）→
 >   setColumnCount(2) 后 bridgeSync 对短行 setData(col=1) 越界读
->   邻接堆块拿到垃圾，`if (cells[col]) XString_delete_base(...)` AV。
+>   邻接堆块拿到垃圾，`if (cells[col]) XClassDelete(...)` AV。
 >   **修复**：每行先 growCols 保证 m_capCols≥cols，新行按
 >   m_capCols 全零分配，维持「行数组长度=m_capCols 且
 >   [m_cols,m_capCols) 槽位恒 NULL」不变式（比中途出现的
@@ -2076,7 +2076,7 @@ Qt 源码对照路径与 off-screen 探针方法见 git 历史（8a24b127 前版
   伪元素）须在无 pane 表时完成，级联三档用例移到块尾收场并置空收场。
 
 **验证**：`gcc -fsyntax-only` 全头目录口径——改动文件与基线告警数同为 177（零新增），error 同为
-2 处基线既有所致（XTextClipboard_setText/XSaveFile_deinit_base 隐式声明，本机 ad-hoc include 环境
+2 处基线既有所致（XTextClipboard_setText/XSaveFile 的 XClassDeinit 隐式声明，本机 ad-hoc include 环境
 产物，与本次改动无关）；修复后整库回归门禁口径实跑（门禁旗标编译+按 link.txt 重链接，
 `XGUI_CSD=0` 于快照树根运行）：exit=0、0 FAIL、`XGui regression tests passed`——资产/字体相对路径
 依赖仓库根 cwd（XGui.md §7 口径）。门禁构建与三套件终验由编排脚本代跑。未 commit。
@@ -2248,7 +2248,7 @@ XWidget.h（setStyleSheet @details 更新 + 钩子声明，`#if XSTYLE_ON` 内�
 C_FLAGS 原文 + CMakeLists.txt:57-60 的 -Wno-error=\* 集，`gcc -fsyntax-only`）——基线
 （git archive HEAD 提取）XWidget.c exit=0/诊断 16 条 = 改后 exit=0/诊断 16 条，**诊断多重
 集逐条相同（零新增）**；XCssStyleSheet.c(24)/XStyleSheetStyle.c(1)/XObject.c(31) 头消费
-端复验 exit=0。`XString_deinit_base` 调用点取 `XString_deinit_base((XClass*)&key)` 铸型
+端复验 exit=0。`XClassDeinit` 调用点取 `XClassDeinit((XClass*)&key)` 铸型
 形态（同文件 :1691 先例、XImage.c:331 先例），消除与 XSplitter.c:336 裸形态同源的告警。
 门禁构建与三套件由编排脚本代跑；未 commit。
 
@@ -2687,7 +2687,7 @@ XErrorMessage 另锁 setFixedSize 契约（min==max==当前）：
 
 **测试侧防复踩记录**：①测试装配勿以 XDialogButtonBox 控件形态作盒布局条目（控件
 析构与布局条目所有权交错悬垂），按 xid_addButtons 同构 XBoxLayout 子布局替代，show
-后显式 XLayout_delete_base（布局不随对话框析构）；②t219a XDialog open 直删后模态门
+后显式 XClassDelete（布局不随对话框析构）；②t219a XDialog open 直删后模态门
 悬垂（hideEvent 对称解除被 delete 跳过），后继同宿主对话框 show 前需
 `XApplication_setActiveModalWidget(NULL)` 复原。
 

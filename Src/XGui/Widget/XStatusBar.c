@@ -74,7 +74,7 @@ static void xsb_destroyVector(XVector* vec)
             (XStatusBarItem**)XVector_at_base(vec, i);
         xsb_itemDestroy(item ? *item : NULL);
     }
-    XVector_delete_base(vec);
+    XClassDelete(vec);
 }
 
 /** @brief sizegrip 角位条带宽度（对标 QStyle::PM_SizeGripSize 的 16px
@@ -238,7 +238,7 @@ static void VX_statusBar_paintEvent(XWidget* self, XEvent* event)
         XRect_init(&msgRect, 4, 1, w - 8, h - 2);
         XPainter_drawText(&painter, 4, h - 6,
                           XString_toUtf8(sb->m_currentMessage), text);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
     }
     (void)msgRect;
     XPainter_deinit(&painter);
@@ -270,14 +270,14 @@ static void xstatusbar_freeItems(XVector* v)
         if (it && *it)
             XFree_System(*it);
     }
-    XVector_delete_base(v);
+    XClassDelete(v);
 }
 
 static void VXStatusBar_deinit(XStatusBar* self)
 {
     if (!self) return;
     if (self->m_currentMessage) {
-        XString_delete_base(self->m_currentMessage);
+        XClassDelete(self->m_currentMessage);
         self->m_currentMessage = NULL;
     }
     xstatusbar_freeItems(self->m_items);
@@ -524,7 +524,7 @@ const char* XStatusBar_currentMessage(const XStatusBar* self)
 static void xsb_str_args_del(XVarList* list)
 {
     XVarList_args_1(list, XString*, val);
-    if (val) XString_delete_base((XClass*)val);
+    if (val) XClassDelete((XClass*)val);
 }
 
 void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text)
@@ -541,7 +541,7 @@ void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text)
                                args, xsb_str_args_del, NULL,
                                XEVENT_PRIORITY_NORMAL);
         } else if (value) {
-            XString_delete_base((XClass*)value);
+            XClassDelete((XClass*)value);
         }
     }
     return (void*)(size_t)XStatusBar_messageChanged_signal;

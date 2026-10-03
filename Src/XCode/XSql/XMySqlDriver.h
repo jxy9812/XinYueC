@@ -16,7 +16,7 @@ extern "C" {
 
 /**
  * @brief 创建 MySQL/MariaDB 源码驱动。
- * @return 新驱动对象，调用者取得所有权并必须使用 XSqlDriver_delete_base
+ * @return 新驱动对象，调用者取得所有权并必须使用 XClassDelete
  *         释放；内存不足或默认客户端不可用时返回 NULL。
  */
 XSqlDriver* XMySqlDriver_create_ex(XMemoryType memory);

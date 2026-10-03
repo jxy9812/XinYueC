@@ -59,7 +59,7 @@ static void VXCanBus_deinit(XCanBus* canBus)
                 XCanBus_PluginEntry* entry = (XCanBus_PluginEntry*)XPair_second(pair);
                 if (entry) {
                     if (entry->m_key) {
-                        XString_delete_base(entry->m_key);
+                        XClassDelete(entry->m_key);
                     }
                     if (entry->m_factory) {
                         XCanBusFactory_destroy(entry->m_factory);
@@ -68,7 +68,7 @@ static void VXCanBus_deinit(XCanBus* canBus)
             }
             XMap_iterator_add(canBus->m_plugins, &it);
         }
-        XMap_delete_base(canBus->m_plugins);
+        XClassDelete(canBus->m_plugins);
         canBus->m_plugins = NULL;
     }
 
@@ -124,7 +124,7 @@ bool XCanBus_registerPlugin(XCanBus* canBus, const char* plugin, XCanBusFactory*
 
     XMapBase_insert_base((XMapBase*)canBus->m_plugins, &key, &entry);
 
-    XClass_deinit_base((XClass*)&key);
+    XClassDeinit((XClass*)&key);
     return true;
 }
 
@@ -140,13 +140,13 @@ XVector* XCanBus_availableDevices(const XCanBus* canBus, const char* plugin, cha
     XString_assign_utf8(&key, plugin);
 
     XCanBus_PluginEntry* entry = (XCanBus_PluginEntry*)XMap_value_base(canBus->m_plugins, &key);
-    XClass_deinit_base((XClass*)&key);
+    XClassDeinit((XClass*)&key);
 
     if (!entry || !entry->m_factory) {
         if (errorMessage) {
             XString* err = XString_create_fmt_utf8("No such plugin: '%s'", plugin);
             *errorMessage = XStrdup(XString_toUtf8(err));
-            XString_delete_base(err);
+            XClassDelete(err);
         }
         return NULL;
     }
@@ -180,7 +180,7 @@ XVector* XCanBus_availableDevices_all(const XCanBus* canBus, char** errorMessage
                             XVector_push_back_1_base(result, info);
                         }
                     }
-                    XVector_delete_base(devices);
+                    XClassDelete(devices);
                 }
                 if (pluginError) XFree_System(pluginError);
             }
@@ -204,13 +204,13 @@ XCanBusDevice* XCanBus_createDevice(const XCanBus* canBus,
     XString_assign_utf8(&key, plugin);
 
     XCanBus_PluginEntry* entry = (XCanBus_PluginEntry*)XMap_value_base(canBus->m_plugins, &key);
-    XClass_deinit_base((XClass*)&key);
+    XClassDeinit((XClass*)&key);
 
     if (!entry || !entry->m_factory) {
         if (errorMessage) {
             XString* err = XString_create_fmt_utf8("No such plugin: '%s'", plugin);
             *errorMessage = XStrdup(XString_toUtf8(err));
-            XString_delete_base(err);
+            XClassDelete(err);
         }
         return NULL;
     }

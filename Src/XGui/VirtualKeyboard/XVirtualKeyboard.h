@@ -332,7 +332,7 @@ XVtable* XVirtualKeyboard_class_init(void);
 /**
  * @brief      初始化键盘控件（栈对象路径；须先备妥对象内存）。
  * @details    初始化前提：self 为未初始化（或已 deinit）的内存块，由
- *             调用者提供存储；初始化后成对调用 XVirtualKeyboard_deinit_base
+ *             调用者提供存储；初始化后成对调用 XClassDeinit
  *             释放内部资源（定时器/连接/弹层）。
  * @param      self 待初始化键盘对象；不能为 NULL。
  * @param      parent 父控件借用指针；可为 NULL（无宿主，弹层挂顶层）。
@@ -343,17 +343,15 @@ void XVirtualKeyboard_init(XVirtualKeyboard* self, XWidget* parent, XWidgetFlags
 /**
  * @brief      创建堆上键盘对象（XVirtualKeyboard_create 宏的主实现；
  *             对标初始化前提与释放方式：堆对象用后须调
- *             XVirtualKeyboard_delete_base 回收）。
+ *             XClassDelete 回收）。
  * @param      memory 对象内存类型（XMemoryType）。
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      flags 控件标志（可按位组合）。
- * @return     新建键盘对象指针，调用方负责 XVirtualKeyboard_delete_base
+ * @return     新建键盘对象指针，调用方负责 XClassDelete
  *             释放；分配失败返回 NULL。
  */
 #define XVirtualKeyboard_create(parent, flags) XVirtualKeyboard_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XVirtualKeyboard* XVirtualKeyboard_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XVirtualKeyboard_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XVirtualKeyboard_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 父类 XWidget API 宏转发 ==================== */
 

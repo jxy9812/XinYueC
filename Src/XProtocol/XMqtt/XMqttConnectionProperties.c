@@ -33,7 +33,7 @@ XMqttLastWillProperties* XMqttLastWillProperties_create_copy(const XMqttLastWill
 {
     if (!other) return NULL;
     XMqttLastWillProperties* p = XMqttLastWillProperties_create();
-    if (p) XCopy(p, other);
+    if (p) XClassCopy(p, other);
     return p;
 }
 
@@ -48,10 +48,10 @@ void XMqttLastWillProperties_init(XMqttLastWillProperties* prop)
 static void VLW_deinit(XMqttLastWillProperties* prop)
 {
     if (!prop) return;
-    if (prop->m_contentType) { XString_delete_base(prop->m_contentType); prop->m_contentType = NULL; }
-    if (prop->m_responseTopic) { XString_delete_base(prop->m_responseTopic); prop->m_responseTopic = NULL; }
-    if (prop->m_correlationData) { XByteArray_delete_base(prop->m_correlationData); prop->m_correlationData = NULL; }
-    if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); prop->m_userProperties = NULL; }
+    if (prop->m_contentType) { XClassDelete(prop->m_contentType); prop->m_contentType = NULL; }
+    if (prop->m_responseTopic) { XClassDelete(prop->m_responseTopic); prop->m_responseTopic = NULL; }
+    if (prop->m_correlationData) { XClassDelete(prop->m_correlationData); prop->m_correlationData = NULL; }
+    if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); prop->m_userProperties = NULL; }
     XClass_Deinit_Parent(XClass, prop);
 }
 
@@ -62,10 +62,10 @@ static void VLW_copy(XMqttLastWillProperties* dest, const XMqttLastWillPropertie
     if (XClassIsVtableNull(dest))
         XMqttLastWillProperties_init(dest);
     else {
-        if (dest->m_contentType) XString_delete_base(dest->m_contentType);
-        if (dest->m_responseTopic) XString_delete_base(dest->m_responseTopic);
-        if (dest->m_correlationData) XByteArray_delete_base(dest->m_correlationData);
-        if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+        if (dest->m_contentType) XClassDelete(dest->m_contentType);
+        if (dest->m_responseTopic) XClassDelete(dest->m_responseTopic);
+        if (dest->m_correlationData) XClassDelete(dest->m_correlationData);
+        if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
         dest->m_contentType = NULL; dest->m_responseTopic = NULL;
         dest->m_correlationData = NULL; dest->m_userProperties = NULL;
     }
@@ -84,10 +84,10 @@ static void VLW_move(XMqttLastWillProperties* dest, XMqttLastWillProperties* src
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttLastWillProperties_init(dest);
-    if (dest->m_contentType) XString_delete_base(dest->m_contentType);
-    if (dest->m_responseTopic) XString_delete_base(dest->m_responseTopic);
-    if (dest->m_correlationData) XByteArray_delete_base(dest->m_correlationData);
-    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+    if (dest->m_contentType) XClassDelete(dest->m_contentType);
+    if (dest->m_responseTopic) XClassDelete(dest->m_responseTopic);
+    if (dest->m_correlationData) XClassDelete(dest->m_correlationData);
+    if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
     dest->m_willDelayInterval = src->m_willDelayInterval;
     dest->m_payloadFormatIndicator = src->m_payloadFormatIndicator;
     dest->m_messageExpiryInterval = src->m_messageExpiryInterval;
@@ -105,16 +105,16 @@ uint32_t XMqttLastWillProperties_messageExpiryInterval(const XMqttLastWillProper
 void XMqttLastWillProperties_setMessageExpiryInterval(XMqttLastWillProperties* prop, uint32_t expiry) { if (prop) prop->m_messageExpiryInterval = expiry; }
 const XString* XMqttLastWillProperties_contentType_const(const XMqttLastWillProperties* prop) { return prop ? prop->m_contentType : NULL; }
 XString* XMqttLastWillProperties_contentType(const XMqttLastWillProperties* prop) { if (!prop || !prop->m_contentType) return NULL; return XString_create_copy(prop->m_contentType); }
-void XMqttLastWillProperties_setContentType(XMqttLastWillProperties* prop, const char* content) { if (prop) { if (prop->m_contentType) { XString_delete_base(prop->m_contentType); } prop->m_contentType = content ? XString_create_utf8(content) : NULL; } }
+void XMqttLastWillProperties_setContentType(XMqttLastWillProperties* prop, const char* content) { if (prop) { if (prop->m_contentType) { XClassDelete(prop->m_contentType); } prop->m_contentType = content ? XString_create_utf8(content) : NULL; } }
 const XString* XMqttLastWillProperties_responseTopic_const(const XMqttLastWillProperties* prop) { return prop ? prop->m_responseTopic : NULL; }
 XString* XMqttLastWillProperties_responseTopic(const XMqttLastWillProperties* prop) { if (!prop || !prop->m_responseTopic) return NULL; return XString_create_copy(prop->m_responseTopic); }
-void XMqttLastWillProperties_setResponseTopic(XMqttLastWillProperties* prop, const char* response) { if (prop) { if (prop->m_responseTopic) { XString_delete_base(prop->m_responseTopic); } prop->m_responseTopic = response ? XString_create_utf8(response) : NULL; } }
+void XMqttLastWillProperties_setResponseTopic(XMqttLastWillProperties* prop, const char* response) { if (prop) { if (prop->m_responseTopic) { XClassDelete(prop->m_responseTopic); } prop->m_responseTopic = response ? XString_create_utf8(response) : NULL; } }
 const XByteArray* XMqttLastWillProperties_correlationData_const(const XMqttLastWillProperties* prop) { return prop ? prop->m_correlationData : NULL; }
 XByteArray* XMqttLastWillProperties_correlationData(const XMqttLastWillProperties* prop) { if (!prop || !prop->m_correlationData) return NULL; return XByteArray_create_copy(prop->m_correlationData); }
-void XMqttLastWillProperties_setCorrelationData(XMqttLastWillProperties* prop, const uint8_t* data, size_t len) { if (prop) { if (prop->m_correlationData) { XByteArray_delete_base(prop->m_correlationData); } prop->m_correlationData = (data && len) ? XByteArray_create_with_data((const char*)data, len) : NULL; } }
+void XMqttLastWillProperties_setCorrelationData(XMqttLastWillProperties* prop, const uint8_t* data, size_t len) { if (prop) { if (prop->m_correlationData) { XClassDelete(prop->m_correlationData); } prop->m_correlationData = (data && len) ? XByteArray_create_with_data((const char*)data, len) : NULL; } }
 const XMqttUserProperties* XMqttLastWillProperties_userProperties_const(const XMqttLastWillProperties* prop) { return prop ? prop->m_userProperties : NULL; }
 XMqttUserProperties* XMqttLastWillProperties_userProperties(const XMqttLastWillProperties* prop) { if (!prop || !prop->m_userProperties) return NULL; return (XMqttUserProperties*)XVector_create_copy((XVector*)prop->m_userProperties); }
-void XMqttLastWillProperties_setUserProperties(XMqttLastWillProperties* prop, const XMqttUserProperties* props) { if (prop) { if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); } prop->m_userProperties = props ? (XMqttUserProperties*)XVector_create_copy((XVector*)props) : NULL; } }
+void XMqttLastWillProperties_setUserProperties(XMqttLastWillProperties* prop, const XMqttUserProperties* props) { if (prop) { if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); } prop->m_userProperties = props ? (XMqttUserProperties*)XVector_create_copy((XVector*)props) : NULL; } }
 
 // ==================== XMqttConnectionProperties ====================
 
@@ -143,7 +143,7 @@ XMqttConnectionProperties* XMqttConnectionProperties_create_copy(const XMqttConn
 {
     if (!other) return NULL;
     XMqttConnectionProperties* p = XMqttConnectionProperties_create();
-    if (p) XCopy(p, other);
+    if (p) XClassCopy(p, other);
     return p;
 }
 
@@ -161,9 +161,9 @@ void XMqttConnectionProperties_init(XMqttConnectionProperties* prop)
 static void VCP_deinit(XMqttConnectionProperties* prop)
 {
     if (!prop) return;
-    if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); prop->m_userProperties = NULL; }
-    if (prop->m_authenticationMethod) { XString_delete_base(prop->m_authenticationMethod); prop->m_authenticationMethod = NULL; }
-    if (prop->m_authenticationData) { XByteArray_delete_base(prop->m_authenticationData); prop->m_authenticationData = NULL; }
+    if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); prop->m_userProperties = NULL; }
+    if (prop->m_authenticationMethod) { XClassDelete(prop->m_authenticationMethod); prop->m_authenticationMethod = NULL; }
+    if (prop->m_authenticationData) { XClassDelete(prop->m_authenticationData); prop->m_authenticationData = NULL; }
     XClass_Deinit_Parent(XClass, prop);
 }
 
@@ -174,9 +174,9 @@ static void VCP_copy(XMqttConnectionProperties* dest, const XMqttConnectionPrope
     if (XClassIsVtableNull(dest))
         XMqttConnectionProperties_init(dest);
     else {
-        if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
-        if (dest->m_authenticationMethod) XString_delete_base(dest->m_authenticationMethod);
-        if (dest->m_authenticationData) XByteArray_delete_base(dest->m_authenticationData);
+        if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
+        if (dest->m_authenticationMethod) XClassDelete(dest->m_authenticationMethod);
+        if (dest->m_authenticationData) XClassDelete(dest->m_authenticationData);
         dest->m_userProperties = NULL; dest->m_authenticationMethod = NULL; dest->m_authenticationData = NULL;
     }
     dest->m_sessionExpiryInterval = src->m_sessionExpiryInterval;
@@ -196,9 +196,9 @@ static void VCP_move(XMqttConnectionProperties* dest, XMqttConnectionProperties*
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttConnectionProperties_init(dest);
-    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
-    if (dest->m_authenticationMethod) XString_delete_base(dest->m_authenticationMethod);
-    if (dest->m_authenticationData) XByteArray_delete_base(dest->m_authenticationData);
+    if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
+    if (dest->m_authenticationMethod) XClassDelete(dest->m_authenticationMethod);
+    if (dest->m_authenticationData) XClassDelete(dest->m_authenticationData);
     dest->m_sessionExpiryInterval = src->m_sessionExpiryInterval;
     dest->m_maximumReceive = src->m_maximumReceive;
     dest->m_maximumPacketSize = src->m_maximumPacketSize;
@@ -227,13 +227,13 @@ bool XMqttConnectionProperties_requestProblemInformation(const XMqttConnectionPr
 void XMqttConnectionProperties_setRequestProblemInformation(XMqttConnectionProperties* prop, bool problem) { if (prop) prop->m_requestProblemInformation = problem; }
 const XMqttUserProperties* XMqttConnectionProperties_userProperties_const(const XMqttConnectionProperties* prop) { return prop ? prop->m_userProperties : NULL; }
 XMqttUserProperties* XMqttConnectionProperties_userProperties(const XMqttConnectionProperties* prop) { if (!prop || !prop->m_userProperties) return NULL; return (XMqttUserProperties*)XVector_create_copy((XVector*)prop->m_userProperties); }
-void XMqttConnectionProperties_setUserProperties(XMqttConnectionProperties* prop, const XMqttUserProperties* props) { if (prop) { if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); } prop->m_userProperties = props ? (XMqttUserProperties*)XVector_create_copy((XVector*)props) : NULL; } }
+void XMqttConnectionProperties_setUserProperties(XMqttConnectionProperties* prop, const XMqttUserProperties* props) { if (prop) { if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); } prop->m_userProperties = props ? (XMqttUserProperties*)XVector_create_copy((XVector*)props) : NULL; } }
 const XString* XMqttConnectionProperties_authenticationMethod_const(const XMqttConnectionProperties* prop) { return prop ? prop->m_authenticationMethod : NULL; }
 XString* XMqttConnectionProperties_authenticationMethod(const XMqttConnectionProperties* prop) { if (!prop || !prop->m_authenticationMethod) return NULL; return XString_create_copy(prop->m_authenticationMethod); }
-void XMqttConnectionProperties_setAuthenticationMethod(XMqttConnectionProperties* prop, const char* authMethod) { if (prop) { if (prop->m_authenticationMethod) { XString_delete_base(prop->m_authenticationMethod); } prop->m_authenticationMethod = authMethod ? XString_create_utf8(authMethod) : NULL; } }
+void XMqttConnectionProperties_setAuthenticationMethod(XMqttConnectionProperties* prop, const char* authMethod) { if (prop) { if (prop->m_authenticationMethod) { XClassDelete(prop->m_authenticationMethod); } prop->m_authenticationMethod = authMethod ? XString_create_utf8(authMethod) : NULL; } }
 const XByteArray* XMqttConnectionProperties_authenticationData_const(const XMqttConnectionProperties* prop) { return prop ? prop->m_authenticationData : NULL; }
 XByteArray* XMqttConnectionProperties_authenticationData(const XMqttConnectionProperties* prop) { if (!prop || !prop->m_authenticationData) return NULL; return XByteArray_create_copy(prop->m_authenticationData); }
-void XMqttConnectionProperties_setAuthenticationData(XMqttConnectionProperties* prop, const uint8_t* data, size_t len) { if (prop) { if (prop->m_authenticationData) { XByteArray_delete_base(prop->m_authenticationData); } prop->m_authenticationData = (data && len) ? XByteArray_create_with_data((const char*)data, len) : NULL; } }
+void XMqttConnectionProperties_setAuthenticationData(XMqttConnectionProperties* prop, const uint8_t* data, size_t len) { if (prop) { if (prop->m_authenticationData) { XClassDelete(prop->m_authenticationData); } prop->m_authenticationData = (data && len) ? XByteArray_create_with_data((const char*)data, len) : NULL; } }
 
 // ==================== XMqttServerConnectionProperties ====================
 
@@ -262,7 +262,7 @@ XMqttServerConnectionProperties* XMqttServerConnectionProperties_create_copy(con
 {
     if (!other) return NULL;
     XMqttServerConnectionProperties* p = XMqttServerConnectionProperties_create();
-    if (p) XCopy(p, other);
+    if (p) XClassCopy(p, other);
     return p;
 }
 
@@ -282,9 +282,9 @@ void XMqttServerConnectionProperties_init(XMqttServerConnectionProperties* prop)
 static void VSCP_deinit(XMqttServerConnectionProperties* prop)
 {
     if (!prop) return;
-    if (prop->m_reason) { XString_delete_base(prop->m_reason); prop->m_reason = NULL; }
-    if (prop->m_responseInformation) { XString_delete_base(prop->m_responseInformation); prop->m_responseInformation = NULL; }
-    if (prop->m_serverReference) { XString_delete_base(prop->m_serverReference); prop->m_serverReference = NULL; }
+    if (prop->m_reason) { XClassDelete(prop->m_reason); prop->m_reason = NULL; }
+    if (prop->m_responseInformation) { XClassDelete(prop->m_responseInformation); prop->m_responseInformation = NULL; }
+    if (prop->m_serverReference) { XClassDelete(prop->m_serverReference); prop->m_serverReference = NULL; }
     XClass_Deinit_Parent(XMqttConnectionProperties, prop);
 }
 
@@ -295,12 +295,12 @@ static void VSCP_copy(XMqttServerConnectionProperties* dest, const XMqttServerCo
     if (XClassIsVtableNull(dest))
         XMqttServerConnectionProperties_init(dest);
     else {
-        if (dest->m_reason) XString_delete_base(dest->m_reason);
-        if (dest->m_responseInformation) XString_delete_base(dest->m_responseInformation);
-        if (dest->m_serverReference) XString_delete_base(dest->m_serverReference);
+        if (dest->m_reason) XClassDelete(dest->m_reason);
+        if (dest->m_responseInformation) XClassDelete(dest->m_responseInformation);
+        if (dest->m_serverReference) XClassDelete(dest->m_serverReference);
         dest->m_reason = NULL; dest->m_responseInformation = NULL; dest->m_serverReference = NULL;
     }
-    XCopy((XMqttConnectionProperties*)dest, (const XMqttConnectionProperties*)src);
+    XClassCopy((XMqttConnectionProperties*)dest, (const XMqttConnectionProperties*)src);
     dest->m_valid = src->m_valid;
     dest->m_availableProperties = src->m_availableProperties;
     dest->m_maximumQoS = src->m_maximumQoS;
@@ -322,10 +322,10 @@ static void VSCP_move(XMqttServerConnectionProperties* dest, XMqttServerConnecti
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttServerConnectionProperties_init(dest);
-    if (dest->m_reason) XString_delete_base(dest->m_reason);
-    if (dest->m_responseInformation) XString_delete_base(dest->m_responseInformation);
-    if (dest->m_serverReference) XString_delete_base(dest->m_serverReference);
-    XMove(&dest->m_base, &src->m_base);
+    if (dest->m_reason) XClassDelete(dest->m_reason);
+    if (dest->m_responseInformation) XClassDelete(dest->m_responseInformation);
+    if (dest->m_serverReference) XClassDelete(dest->m_serverReference);
+    XClassMove(&dest->m_base, &src->m_base);
     dest->m_valid = src->m_valid; dest->m_availableProperties = src->m_availableProperties;
     dest->m_maximumQoS = src->m_maximumQoS; dest->m_retainAvailable = src->m_retainAvailable;
     dest->m_clientIdAssigned = src->m_clientIdAssigned; dest->m_reason = src->m_reason;

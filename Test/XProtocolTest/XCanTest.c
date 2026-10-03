@@ -135,13 +135,13 @@ static void XCanBusFrameTest(void)
             XPrintf("  [失败] setPayload 返回 NULL 或长度错误\n");
             fail++;
         }
-        XByteArray_delete_base(payload);
+        XClassDelete(payload);
 
         // 测试 setPayload_from_array
         XByteArray* ba = XByteArray_create();
         XByteArray_append_2(ba, data, 8);
         XCanBusFrame_setPayload_from_array(&frame, ba);
-        XByteArray_delete_base(ba);
+        XClassDelete(ba);
 
         XByteArray* payload2 = XCanBusFrame_payload(&frame);
         if (payload2 && XByteArray_size_base(payload2) == 8) {
@@ -151,7 +151,7 @@ static void XCanBusFrameTest(void)
             XPrintf("  [失败] setPayload_from_array 失败\n");
             fail++;
         }
-        XByteArray_delete_base(payload2);
+        XClassDelete(payload2);
 
         XCanBusFrame_deinit(&frame);
     }
@@ -351,7 +351,7 @@ static void XCanBusFrameTest(void)
         if (str) {
             XPrintf("  [通过] toString = \"%s\"\n", XString_toUtf8(str));
             pass++;
-            XString_delete_base(str);
+            XClassDelete(str);
         } else {
             XPrintf("  [失败] toString 返回 NULL\n");
             fail++;
@@ -363,7 +363,7 @@ static void XCanBusFrameTest(void)
         if (errStr) {
             XPrintf("  [通过] ErrorFrame toString = \"%s\"\n", XString_toUtf8(errStr));
             pass++;
-            XString_delete_base(errStr);
+            XClassDelete(errStr);
         } else {
             XPrintf("  [失败] ErrorFrame toString 返回 NULL\n");
             fail++;
@@ -443,7 +443,7 @@ static void XCanBusFrameTest(void)
         if (copy && XCanBusFrame_frameId(copy) == 0x456) {
             XByteArray* cp = XCanBusFrame_payload(copy);
             bool match = cp && XByteArray_size_base(cp) == 2;
-            XByteArray_delete_base(cp);
+            XClassDelete(cp);
             if (match) {
                 XPrintf("  [通过] create_copy 深拷贝正确\n");
                 pass++;
@@ -505,8 +505,8 @@ static void XCanBusDeviceInfoTest(void)
             XPrintf("  [失败] createDeviceInfo plugin/name 错误\n");
             fail++;
         }
-        XString_delete_base(plugin);
-        XString_delete_base(name);
+        XClassDelete(plugin);
+        XClassDelete(name);
 
         if (XCanBusDeviceInfo_hasFlexibleDataRate(&info) == true &&
             XCanBusDeviceInfo_isVirtual(&info) == false) {
@@ -540,9 +540,9 @@ static void XCanBusDeviceInfoTest(void)
             strcmp(XString_toUtf8(alias), "mycan") == 0 &&
             XCanBusDeviceInfo_channel(&info) == 0;
 
-        XString_delete_base(desc);
-        XString_delete_base(serial);
-        XString_delete_base(alias);
+        XClassDelete(desc);
+        XClassDelete(serial);
+        XClassDelete(alias);
 
         if (ok) {
             XPrintf("  [通过] createDeviceInfo_full 完整属性正确\n");
@@ -571,8 +571,8 @@ static void XCanBusDeviceInfoTest(void)
             strcmp(XString_toUtf8(name1), XString_toUtf8(name2)) == 0 &&
             XCanBusDeviceInfo_isVirtual(&info2) == true;
 
-        XString_delete_base(name1);
-        XString_delete_base(name2);
+        XClassDelete(name1);
+        XClassDelete(name2);
 
         if (ok) {
             XPrintf("  [通过] copy 深拷贝正确\n");
@@ -667,9 +667,9 @@ static void XCanSignalDescriptionTest(void)
             XCanSignalDescription_minimum(&sig) == 0.0 &&
             XCanSignalDescription_maximum(&sig) == 8000.0;
 
-        XString_delete_base(name);
-        XString_delete_base(unit);
-        XString_delete_base(receiver);
+        XClassDelete(name);
+        XClassDelete(unit);
+        XClassDelete(receiver);
 
         if (ok) {
             XPrintf("  [通过] 信号属性设置/获取正确\n");
@@ -751,7 +751,7 @@ static void XCanSignalDescriptionTest(void)
             XCanSignalDescription_bitLength(&sig2) == 32 &&
             XCanSignalDescription_factor(&sig2) == 2.0;
 
-        XString_delete_base(name2);
+        XClassDelete(name2);
 
         if (ok) {
             XPrintf("  [通过] copy 深拷贝正确\n");
@@ -838,9 +838,9 @@ static void XCanMessageDescriptionTest(void)
             XCanMessageDescription_uniqueId(&msg) == 0x123 &&
             XCanMessageDescription_size(&msg) == 8;
 
-        XString_delete_base(name);
-        XString_delete_base(transmitter);
-        XString_delete_base(comment);
+        XClassDelete(name);
+        XClassDelete(transmitter);
+        XClassDelete(comment);
 
         if (ok) {
             XPrintf("  [通过] 消息属性设置/获取正确\n");
@@ -911,7 +911,7 @@ static void XCanMessageDescriptionTest(void)
             bool match = foundName &&
                 strcmp(XString_toUtf8(foundName), "Speed") == 0 &&
                 XCanSignalDescription_startBit(&found) == 0;
-            XString_delete_base(foundName);
+            XClassDelete(foundName);
 
             if (match) {
                 XPrintf("  [通过] signalDescriptionForName 找到信号\n");
@@ -947,7 +947,7 @@ static void XCanMessageDescriptionTest(void)
                     sigs ? XVector_size_base(sigs) : 0);
             fail++;
         }
-        XVector_delete_base(sigs);
+        XClassDelete(sigs);
 
         // 清除信号
         XCanMessageDescription_clearSignalDescriptions(&msg);
@@ -959,7 +959,7 @@ static void XCanMessageDescriptionTest(void)
             XPrintf("  [失败] clearSignalDescriptions 后信号数不为 0\n");
             fail++;
         }
-        XVector_delete_base(sigs2);
+        XClassDelete(sigs2);
 
         XCanSignalDescription_deinit(&sig1);
         XCanSignalDescription_deinit(&sig2);
@@ -983,7 +983,7 @@ static void XCanMessageDescriptionTest(void)
             strcmp(XString_toUtf8(name2), "CopyMsg") == 0 &&
             XCanMessageDescription_uniqueId(&msg2) == 0x456;
 
-        XString_delete_base(name2);
+        XClassDelete(name2);
 
         if (ok) {
             XPrintf("  [通过] copy 深拷贝正确\n");
@@ -1189,7 +1189,7 @@ static void XCanFrameProcessorTest(void)
         XVector* descs = XVector_create(sizeof(XCanMessageDescription));
         XVector_push_back_1_base(descs, &msgDesc);
         XCanFrameProcessor_addMessageDescriptions(&processor, descs);
-        XVector_delete_base(descs);
+        XClassDelete(descs);
 
         // 查询消息描述
         XVector* result = XCanFrameProcessor_messageDescriptions(&processor);
@@ -1200,7 +1200,7 @@ static void XCanFrameProcessorTest(void)
             XPrintf("  [失败] addMessageDescriptions 结果错误\n");
             fail++;
         }
-        XVector_delete_base(result);
+        XClassDelete(result);
 
         // 清除消息描述
         XCanFrameProcessor_clearMessageDescriptions(&processor);
@@ -1212,7 +1212,7 @@ static void XCanFrameProcessorTest(void)
             XPrintf("  [失败] clearMessageDescriptions 后仍有消息\n");
             fail++;
         }
-        XVector_delete_base(empty);
+        XClassDelete(empty);
 
         XCanMessageDescription_deinit(&msgDesc);
         XCanFrameProcessor_deinit(&processor);
@@ -1252,7 +1252,7 @@ static void XCanFrameProcessorTest(void)
         XVector* descs = XVector_create(sizeof(XCanMessageDescription));
         XVector_push_back_1_base(descs, &msgDesc);
         XCanFrameProcessor_addMessageDescriptions(&processor, descs);
-        XVector_delete_base(descs);
+        XClassDelete(descs);
 
         // 创建 CAN 帧
         XCanBusFrame frame;
@@ -1304,13 +1304,13 @@ static void XCanFrameProcessorTest(void)
         XVector* descs = XVector_create(sizeof(XCanMessageDescription));
         XVector_push_back_1_base(descs, &msgDesc);
         XCanFrameProcessor_addMessageDescriptions(&processor, descs);
-        XVector_delete_base(descs);
+        XClassDelete(descs);
 
         // 准备信号值映射
         XMap* signalValues = XMap_create(sizeof(XString), sizeof(XVariant), XString_compare);
         XMapBaseSetKeyCopyMethod(signalValues, XClass_copy_base);
         XMapBaseSetKeyMoveMethod(signalValues, XClass_move_base);
-        XMapBaseSetKeyDeinitMethod(signalValues, XString_deinit_base);
+        XMapBaseSetKeyDeinitMethod(signalValues, XClass_deinit_base);
 
         XString sigName;
         XString_init(&sigName);
@@ -1320,8 +1320,8 @@ static void XCanFrameProcessorTest(void)
         XVariant_init(&var, NULL, 0, XVariantType_Double);
         XVariant_setValue_double(&var, 255.0);
         XMapBase_insert_base((XMapBase*)signalValues, &sigName, &var);
-        XClass_deinit_base((XClass*)&var);
-        XClass_deinit_base((XClass*)&sigName);
+        XClassDeinit((XClass*)&var);
+        XClassDeinit((XClass*)&sigName);
 
         // 编码帧
         XCanBusFrame* encoded = XCanFrameProcessor_prepareFrame(&processor, 0x456, signalValues);
@@ -1333,7 +1333,7 @@ static void XCanFrameProcessorTest(void)
             fail++;
         }
         XCanBusFrame_delete(encoded);
-        XMap_delete_base(signalValues);
+        XClassDelete(signalValues);
         XCanMessageDescription_deinit(&msgDesc);
         XCanFrameProcessor_deinit(&processor);
     }
@@ -1355,7 +1355,7 @@ static void XCanFrameProcessorTest(void)
         if (errStr) {
             XPrintf("  [通过] errorString 初始非 NULL\n");
             pass++;
-            XString_delete_base(errStr);
+            XClassDelete(errStr);
         } else {
             XPrintf("  [失败] errorString 初始为 NULL\n");
             fail++;
@@ -1365,7 +1365,7 @@ static void XCanFrameProcessorTest(void)
         if (warnings) {
             XPrintf("  [通过] warnings 初始非 NULL\n");
             pass++;
-            XStringList_delete_base(warnings);
+            XClassDelete(warnings);
         } else {
             XPrintf("  [失败] warnings 初始为 NULL\n");
             fail++;
@@ -1472,7 +1472,7 @@ static void XCanDbcFileParserTest(void)
             XString* errStr = XCanDbcFileParser_errorString(&parser);
             XPrintf("  [失败] parseData 解析失败: %s\n",
                     errStr ? XString_toUtf8(errStr) : "unknown");
-            if (errStr) XString_delete_base(errStr);
+            if (errStr) XClassDelete(errStr);
             fail++;
         }
 
@@ -1485,7 +1485,7 @@ static void XCanDbcFileParserTest(void)
             XPrintf("  [失败] messageDescriptions 返回 NULL\n");
             fail++;
         }
-        XVector_delete_base(messages);
+        XClassDelete(messages);
 
         // 检查错误码
         if (XCanDbcFileParser_error(&parser) == XCanDbcFileParser_Error_None) {
@@ -1501,7 +1501,7 @@ static void XCanDbcFileParserTest(void)
         if (warnings) {
             XPrintf("  [通过] warnings 非 NULL (%zu 条)\n", XStringList_size_base(warnings));
             pass++;
-            XStringList_delete_base(warnings);
+            XClassDelete(warnings);
         } else {
             XPrintf("  [失败] warnings 为 NULL\n");
             fail++;
@@ -1604,7 +1604,7 @@ static void XCanBusTest(void)
         if (plugins != NULL) {
             XPrintf("  [通过] plugins 返回非 NULL (%zu 个插件)\n", XStringList_size_base(plugins));
             pass++;
-            XStringList_delete_base(plugins);
+            XClassDelete(plugins);
         } else {
             XPrintf("  [失败] plugins 返回 NULL\n");
             fail++;
@@ -1622,7 +1622,7 @@ static void XCanBusTest(void)
             XFree_System(errorMsg);
         } else {
             XPrintf("  [失败] availableDevices(不存在的插件) 行为错误\n");
-            if (devices) XVector_delete_base(devices);
+            if (devices) XClassDelete(devices);
             if (errorMsg) XFree_System(errorMsg);
             fail++;
         }
@@ -1754,10 +1754,10 @@ static void XCanBusDeviceTest(void)
         if (errStr && strstr(XString_toUtf8(errStr), "Connection refused") != NULL) {
             XPrintf("  [通过] errorString 包含 \"Connection refused\"\n");
             pass++;
-            XString_delete_base(errStr);
+            XClassDelete(errStr);
         } else {
             XPrintf("  [失败] errorString 不正确\n");
-            if (errStr) XString_delete_base(errStr);
+            if (errStr) XClassDelete(errStr);
             fail++;
         }
 
@@ -1781,13 +1781,13 @@ static void XCanBusDeviceTest(void)
         // 设置配置参数
         XVariant* rawFilter = XVariant_create_utf8_str("123");
         XCanBusDevice_setConfigurationParameter(dev, XCanBusDevice_RawFilterKey, rawFilter);
-        XVariant_delete_base(rawFilter);
+        XClassDelete(rawFilter);
 
         XVariant* val = XCanBusDevice_configurationParameter(dev, XCanBusDevice_RawFilterKey);
         if (val != NULL) {
             XPrintf("  [通过] setConfigurationParameter/getConfigurationParameter 正确\n");
             pass++;
-            XVariant_delete_base(val);
+            XClassDelete(val);
         } else {
             XPrintf("  [失败] getConfigurationParameter 返回 NULL\n");
             fail++;
@@ -1800,7 +1800,7 @@ static void XCanBusDeviceTest(void)
             pass++;
         } else {
             XPrintf("  [失败] getConfigurationParameter(不存在的键) 未返回 NULL\n");
-            XVariant_delete_base(noVal);
+            XClassDelete(noVal);
             fail++;
         }
 
@@ -1839,7 +1839,7 @@ static void XCanBusDeviceTest(void)
         XCanBusFrame* framePtr = &frame;
         XVector_push_back_1_base(frames, &framePtr);
         XCanBusDevice_enqueueReceivedFrames(dev, frames);
-        XVector_delete_base(frames);
+        XClassDelete(frames);
 
         if (XCanBusDevice_framesAvailable(dev) > 0) {
             XPrintf("  [通过] enqueueReceivedFrames 后 framesAvailable > 0\n");

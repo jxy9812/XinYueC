@@ -256,7 +256,7 @@ XVtable* XCanBusDevice_class_init(void);
 /**
  * @brief 在堆上创建并初始化一个 XCanBusDevice 实例
  * @return 成功返回指向新分配 XCanBusDevice 对象的指针，失败返回 NULL
- * @note 返回的对象必须通过 XObject_deleteLater 或 XCanBusDevice_delete_base 释放
+ * @note 返回的对象必须通过 XObject_deleteLater 或 XClassDelete 释放
  */
 XCanBusDevice* XCanBusDevice_create_ex(XMemoryType memory);
 

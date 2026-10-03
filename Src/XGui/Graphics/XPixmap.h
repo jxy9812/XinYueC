@@ -104,7 +104,7 @@ void XPixmap_init_file_2(XPixmap* self, const char* fileName, const char* format
 /**
  * @brief      从 XImage 创建像素图
  * @param self   待初始化的 XPixmap 对象指针；调用前应为未初始化对象，
- *               或已通过 XPixmap_deinit_base() 释放的平台数据
+ *               或已通过 XClassDeinit() 释放的平台数据
  * @param image  源 XImage 对象指针
  * @param flags  转换标志
  */
@@ -140,14 +140,12 @@ void XPixmap_init_bitmap_image(XPixmap* self, const XImage* image, uint32_t flag
  * @param self 待释放的对象指针
  */
 /** @brief 通过 XClass 虚表释放像素图资源。 @param self 待释放的像素图指针。 */
-#define XPixmap_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      虚函数调度：删除（释放堆上对象）
  * @param self 待删除的对象指针
  */
 /** @brief 删除堆上的像素图对象。 @param self 待删除的像素图指针。 */
-#define XPixmap_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 查询方法 ========== */
 

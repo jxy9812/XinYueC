@@ -119,7 +119,7 @@ void XQuicPitSort_Stack(void* LParray, const size_t nSize, const size_t TypeSize
 			XStack_push_base(st, &left);
 		}
 	}
-	XStack_delete_base(st);
+	XClassDelete(st);
 #else
 	IS_ON_DEBUG(XStack_ON);
 #endif

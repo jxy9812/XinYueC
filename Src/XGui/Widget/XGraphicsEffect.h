@@ -120,8 +120,6 @@ void XGraphicsEffect_init(XGraphicsEffect* self);
  * @return     新对象指针；失败返回 NULL。
  */
 XGraphicsEffect* XGraphicsEffect_create_ex(XMemoryType memory);
-#define XGraphicsEffect_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XGraphicsEffect_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      查询效果是否启用（对标 QGraphicsEffect::isEnabled）。

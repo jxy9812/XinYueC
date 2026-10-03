@@ -141,8 +141,6 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent,
 #define XPlainTextEdit_create(parent, flags) XPlainTextEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XPlainTextEdit* XPlainTextEdit_create_ex(XMemoryType memory,
                                          XWidget* parent, XWidgetFlags flags);
-#define XPlainTextEdit_deinit_base(self) XAbstractScrollArea_deinit_base((XAbstractScrollArea*)(self))
-#define XPlainTextEdit_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 文本（对标 QPlainTextEdit public API） ========== */
 
@@ -238,7 +236,7 @@ XRect XPlainTextEdit_cursorRect(const XPlainTextEdit* self);
  *             字符串（经 appendHtml 等路径登记锚点后返回命中 href）。
  * @param      self 目标控件指针；可为 NULL。
  * @param      pos 控件局部坐标点；可为 NULL。
- * @return     堆上新建的 XString*，调用方以 XString_delete_base 释放；
+ * @return     堆上新建的 XString*，调用方以 XClassDelete 释放；
  *             分配失败返回 NULL。
  */
 XString* XPlainTextEdit_anchorAt(const XPlainTextEdit* self,
@@ -377,7 +375,7 @@ XPoint XPlainTextEdit_cursorForPosition(const XPlainTextEdit* self,
  *             只读时仅提供复制/全选。弹出（popup）与 DeleteOnClose 由
  *             调用方负责（参照 contextMenuEvent 用法）。
  * @param      self 目标控件指针；可为 NULL（返回 NULL）。
- * @return     新建的 XMenu*；所有权转移给调用方（用 XMenu_delete_base
+ * @return     新建的 XMenu*；所有权转移给调用方（用 XClassDelete
  *             释放）；创建失败返回 NULL。
  */
 XMenu* XPlainTextEdit_createStandardContextMenu(XPlainTextEdit* self);

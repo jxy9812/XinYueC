@@ -207,14 +207,14 @@ static void xsql_database_private_ref(XSqlDatabasePrivate* privateData)
 static void xsql_database_private_delete(XSqlDatabasePrivate* privateData)
 {
     if (!privateData) return;
-    if (privateData->m_driver) XSqlDriver_delete_base(privateData->m_driver);
-    if (privateData->m_databaseName) XString_delete_base(privateData->m_databaseName);
-    if (privateData->m_userName) XString_delete_base(privateData->m_userName);
-    if (privateData->m_password) XString_delete_base(privateData->m_password);
-    if (privateData->m_hostName) XString_delete_base(privateData->m_hostName);
-    if (privateData->m_driverName) XString_delete_base(privateData->m_driverName);
-    if (privateData->m_connectOptions) XString_delete_base(privateData->m_connectOptions);
-    if (privateData->m_connectionName) XString_delete_base(privateData->m_connectionName);
+    if (privateData->m_driver) XClassDelete(privateData->m_driver);
+    if (privateData->m_databaseName) XClassDelete(privateData->m_databaseName);
+    if (privateData->m_userName) XClassDelete(privateData->m_userName);
+    if (privateData->m_password) XClassDelete(privateData->m_password);
+    if (privateData->m_hostName) XClassDelete(privateData->m_hostName);
+    if (privateData->m_driverName) XClassDelete(privateData->m_driverName);
+    if (privateData->m_connectOptions) XClassDelete(privateData->m_connectOptions);
+    if (privateData->m_connectionName) XClassDelete(privateData->m_connectionName);
     XFree_System(privateData);
 }
 
@@ -243,7 +243,7 @@ static XSqlDatabasePrivate* xsql_database_private_create(XSqlDriver* driver, con
 
 static void xsql_database_assign_string(XString** target, const XString* source)
 {
-    if (*target) { XString_delete_base(*target); *target = NULL; }
+    if (*target) { XClassDelete(*target); *target = NULL; }
     if (source) *target = XString_create_copy(source);
 }
 
@@ -277,7 +277,7 @@ XSqlDatabase* XSqlDatabase_create_copy(const XSqlDatabase* other)
 {
     if (!other) return NULL;
     XSqlDatabase* result = XSqlDatabase_create();
-    if (result) XCopy(result, other);
+    if (result) XClassCopy(result, other);
     return result;
 }
 
@@ -285,7 +285,7 @@ XSqlDatabase* XSqlDatabase_create_move(XSqlDatabase* other)
 {
     if (!other) return NULL;
     XSqlDatabase* result = XSqlDatabase_create();
-    if (result) XMove(result, other);
+    if (result) XClassMove(result, other);
     return result;
 }
 
@@ -314,7 +314,7 @@ static int xsql_find_connection_entry(const char* name)
 static void xsql_remove_connection_entry(size_t index)
 {
     if (index >= g_connectionEntryCount) return;
-    if (g_connectionEntries[index].m_name) XString_delete_base(g_connectionEntries[index].m_name);
+    if (g_connectionEntries[index].m_name) XClassDelete(g_connectionEntries[index].m_name);
     xsql_database_private_release(g_connectionEntries[index].m_private);
     memmove(&g_connectionEntries[index], &g_connectionEntries[index + 1], (g_connectionEntryCount - index - 1) * sizeof(XSqlConnectionEntry));
     --g_connectionEntryCount;
@@ -340,7 +340,7 @@ bool XSqlDatabase_registerSqlDriver(const char* name, XSqlDriverCreatorBase* cre
             xsql_registry_unlock(mutex);
             return false;
         }
-    } else if (g_driverEntries[index].m_creator) XSqlDriverCreatorBase_delete_base(g_driverEntries[index].m_creator);
+    } else if (g_driverEntries[index].m_creator) XClassDelete(g_driverEntries[index].m_creator);
     g_driverEntries[index].m_creator = creator;
     g_driverEntries[index].m_type = XSqlDriverType_fromName_utf8(name);
     xsql_registry_unlock(mutex);
@@ -389,13 +389,13 @@ XSqlDatabase* XSqlDatabase_addDatabase_driver(XSqlDriver* driver, const char* co
     int old = xsql_find_connection_entry(name);
     if (old >= 0) xsql_remove_connection_entry((size_t)old);
     if (g_connectionEntryCount >= XSQL_MAX_CONNECTIONS) {
-        XSqlDriver_delete_base(driver);
+        XClassDelete(driver);
         xsql_registry_unlock(mutex);
         return NULL;
     }
     XSqlDatabasePrivate* privateData = xsql_database_private_create(driver, name);
     if (!privateData) {
-        XSqlDriver_delete_base(driver);
+        XClassDelete(driver);
         xsql_registry_unlock(mutex);
         return NULL;
     }
@@ -409,7 +409,7 @@ XSqlDatabase* XSqlDatabase_addDatabase_driver(XSqlDriver* driver, const char* co
     g_connectionEntries[g_connectionEntryCount].m_name = XString_create_utf8(name);
     g_connectionEntries[g_connectionEntryCount].m_private = privateData;
     if (!g_connectionEntries[g_connectionEntryCount].m_name) {
-        XSqlDatabase_delete_base(result);
+        XClassDelete(result);
         xsql_registry_unlock(mutex);
         return NULL;
     }
@@ -442,7 +442,7 @@ XSqlDatabase* XSqlDatabase_database(const char* connectionName, bool open)
     result->m_d = g_connectionEntries[index].m_private;
     xsql_database_private_ref(result->m_d);
     xsql_registry_unlock(mutex);
-    if (open && !XSqlDatabase_isOpen(result) && !XSqlDatabase_open(result)) { XSqlDatabase_delete_base(result); return NULL; }
+    if (open && !XSqlDatabase_isOpen(result) && !XSqlDatabase_open(result)) { XClassDelete(result); return NULL; }
     return result;
 }
 
@@ -469,7 +469,7 @@ XSqlDatabase* XSqlDatabase_cloneDatabase_name(const char* otherConnectionName, c
     XSqlDatabase* other = XSqlDatabase_database(otherConnectionName, false);
     if (!other) return NULL;
     XSqlDatabase* result = XSqlDatabase_cloneDatabase(other, connectionName);
-    XSqlDatabase_delete_base(other);
+    XClassDelete(other);
     return result;
 }
 
@@ -498,17 +498,17 @@ static bool xsql_database_open_with(XSqlDatabase* database, const XString* user,
 
 bool XSqlDatabase_open(XSqlDatabase* database) { return xsql_database_open_with(database, NULL, NULL); }
 bool XSqlDatabase_open_2(XSqlDatabase* database, const XString* user, const XString* password) { return xsql_database_open_with(database, user, password); }
-bool XSqlDatabase_open_utf8(XSqlDatabase* database, const char* user, const char* password) { XString* u = user ? XString_create_utf8(user) : NULL; XString* p = password ? XString_create_utf8(password) : NULL; bool result = XSqlDatabase_open_2(database, u, p); if (u) XString_delete_base(u); if (p) XString_delete_base(p); return result; }
+bool XSqlDatabase_open_utf8(XSqlDatabase* database, const char* user, const char* password) { XString* u = user ? XString_create_utf8(user) : NULL; XString* p = password ? XString_create_utf8(password) : NULL; bool result = XSqlDatabase_open_2(database, u, p); if (u) XClassDelete(u); if (p) XClassDelete(p); return result; }
 void XSqlDatabase_close(XSqlDatabase* database) { if (database && database->m_d && database->m_d->m_driver && xsql_database_thread_allowed(database->m_d)) XSqlDriver_close_base(database->m_d->m_driver); }
 bool XSqlDatabase_isOpen(const XSqlDatabase* database) { return database && database->m_d && database->m_d->m_driver && xsql_database_thread_allowed(database->m_d) && XSqlDriver_isOpen(database->m_d->m_driver); }
 bool XSqlDatabase_isOpenError(const XSqlDatabase* database) { return !database || !database->m_d || !database->m_d->m_driver || !xsql_database_thread_allowed(database->m_d) || XSqlDriver_isOpenError(database->m_d->m_driver); }
 XStringList* XSqlDatabase_tables(const XSqlDatabase* database, XSqlTableType type) { return database && database->m_d && database->m_d->m_driver && xsql_database_thread_allowed(database->m_d) ? XSqlDriver_tables_base(database->m_d->m_driver, type) : XStringList_create(); }
 XSqlIndex* XSqlDatabase_primaryIndex(const XSqlDatabase* database, const XString* tableName) { return database && database->m_d && database->m_d->m_driver && xsql_database_thread_allowed(database->m_d) ? XSqlDriver_primaryIndex_base(database->m_d->m_driver, tableName) : XSqlIndex_create(); }
-XSqlIndex* XSqlDatabase_primaryIndex_utf8(const XSqlDatabase* database, const char* tableName) { XString* name = tableName ? XString_create_utf8(tableName) : NULL; XSqlIndex* result = XSqlDatabase_primaryIndex(database, name); if (name) XString_delete_base(name); return result; }
+XSqlIndex* XSqlDatabase_primaryIndex_utf8(const XSqlDatabase* database, const char* tableName) { XString* name = tableName ? XString_create_utf8(tableName) : NULL; XSqlIndex* result = XSqlDatabase_primaryIndex(database, name); if (name) XClassDelete(name); return result; }
 XSqlRecord* XSqlDatabase_record(const XSqlDatabase* database, const XString* tableName) { return database && database->m_d && database->m_d->m_driver && xsql_database_thread_allowed(database->m_d) ? XSqlDriver_record_base(database->m_d->m_driver, tableName) : XSqlRecord_create(); }
-XSqlRecord* XSqlDatabase_record_utf8(const XSqlDatabase* database, const char* tableName) { XString* name = tableName ? XString_create_utf8(tableName) : NULL; XSqlRecord* result = XSqlDatabase_record(database, name); if (name) XString_delete_base(name); return result; }
+XSqlRecord* XSqlDatabase_record_utf8(const XSqlDatabase* database, const char* tableName) { XString* name = tableName ? XString_create_utf8(tableName) : NULL; XSqlRecord* result = XSqlDatabase_record(database, name); if (name) XClassDelete(name); return result; }
 XSqlQuery* XSqlDatabase_exec(const XSqlDatabase* database, const XString* query) { XSqlQuery* result = xsql_database_thread_allowed(database ? database->m_d : NULL) ? XSqlQuery_create_database(database) : NULL; if (result && query) XSqlQuery_exec_query(result, query); return result; }
-XSqlQuery* XSqlDatabase_exec_utf8(const XSqlDatabase* database, const char* query) { XString* text = query ? XString_create_utf8(query) : NULL; XSqlQuery* result = XSqlDatabase_exec(database, text); if (text) XString_delete_base(text); return result; }
+XSqlQuery* XSqlDatabase_exec_utf8(const XSqlDatabase* database, const char* query) { XString* text = query ? XString_create_utf8(query) : NULL; XSqlQuery* result = XSqlDatabase_exec(database, text); if (text) XClassDelete(text); return result; }
 XSqlError* XSqlDatabase_lastError(const XSqlDatabase* database) { return database && database->m_d && database->m_d->m_driver && xsql_database_thread_allowed(database->m_d) ? XSqlDriver_lastError(database->m_d->m_driver) : XSqlError_create(NULL, NULL, XSqlErrorType_UnknownError, NULL); }
 bool XSqlDatabase_isValid(const XSqlDatabase* database) { return database && database->m_d && database->m_d->m_driver; }
 bool XSqlDatabase_transaction(XSqlDatabase* database) { return database && database->m_d && xsql_database_thread_allowed(database->m_d) && XSqlDriver_hasFeature_base(database->m_d->m_driver, XSqlDriverFeature_Transactions) && XSqlDriver_beginTransaction_base(database->m_d->m_driver); }

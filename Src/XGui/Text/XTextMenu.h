@@ -89,7 +89,7 @@ typedef struct XTextMenuOps
  *             释放）。表内无任何动作回调时返回不带条目的空菜单；ops
  *             为 NULL 或菜单对象分配失败时返回 NULL。
  * @param      ops 控件回调表借用指针；不可为 NULL。
- * @return     新建的菜单指针（调用方拥有，XMenu_delete_base 或
+ * @return     新建的菜单指针（调用方拥有，XClassDelete 或
  *             DeleteOnClose 关闭自删释放）；菜单对象创建失败返回 NULL。
  */
 XMenu* XTextMenu_createStandard(const XTextMenuOps* ops);

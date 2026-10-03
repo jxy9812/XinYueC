@@ -51,8 +51,6 @@ XVtable* XDial_class_init(void);
 void XDial_init(XDial* self, XWidget* parent, XWidgetFlags flags);
 #define XDial_create(parent, flags) XDial_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XDial* XDial_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XDial_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XDial_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 专属属性（对标 QDial public API） ==================== */
 

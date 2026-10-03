@@ -46,7 +46,7 @@ static XByteArray* xhttp_reply_slice(const uint8_t* data, size_t start, size_t e
 static void xhttp_reply_delete_class(void* object)
 {
     if (object)
-        XClass_delete_base((XClass*)object);
+        XClassDelete((XClass*)object);
 }
 
 static bool xhttp_reply_find_crlf(const uint8_t* data, size_t start, size_t size, size_t* end)
@@ -190,7 +190,7 @@ static void xhttp_reply_replace_error(XHttpReply* self, const char* text)
 {
     XString* replacement = text ? XString_create_utf8(text) : NULL;
     if (self->m_errorString)
-        XClass_delete_base((XClass*)self->m_errorString);
+        XClassDelete((XClass*)self->m_errorString);
     self->m_errorString = replacement;
 }
 
@@ -333,7 +333,7 @@ static int xhttp_reply_parse_headers(XHttpReply* self)
                          (int)(data[statusStart + 1] - '0') * 10 +
                          (int)(data[statusStart + 2] - '0');
     if (self->m_reason)
-        XClass_delete_base((XClass*)self->m_reason);
+        XClassDelete((XClass*)self->m_reason);
     self->m_reason = xhttp_reply_slice(data,
                                         statusStart + 3 < statusEnd ? statusStart + 4 : statusEnd,
                                         statusEnd);
@@ -616,7 +616,7 @@ XHttpReply* XHttpReply_create_ex(XMemoryType memory, const XHttpRequest* request
     XHttpReply_init(self, request);
     if (!self->m_headers || !self->m_trailers || !self->m_body || !self->m_input ||
         !self->m_reason || (request && !self->m_request)) {
-        XHttpReply_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -628,13 +628,13 @@ static void VXHttpReply_deinit(XHttpReply* self)
 {
     if (!self)
         return;
-    if (self->m_request) XClass_delete_base((XClass*)self->m_request);
-    if (self->m_headers) XClass_delete_base((XClass*)self->m_headers);
-    if (self->m_trailers) XClass_delete_base((XClass*)self->m_trailers);
-    if (self->m_body) XClass_delete_base((XClass*)self->m_body);
-    if (self->m_input) XClass_delete_base((XClass*)self->m_input);
-    if (self->m_reason) XClass_delete_base((XClass*)self->m_reason);
-    if (self->m_errorString) XClass_delete_base((XClass*)self->m_errorString);
+    if (self->m_request) XClassDelete((XClass*)self->m_request);
+    if (self->m_headers) XClassDelete((XClass*)self->m_headers);
+    if (self->m_trailers) XClassDelete((XClass*)self->m_trailers);
+    if (self->m_body) XClassDelete((XClass*)self->m_body);
+    if (self->m_input) XClassDelete((XClass*)self->m_input);
+    if (self->m_reason) XClassDelete((XClass*)self->m_reason);
+    if (self->m_errorString) XClassDelete((XClass*)self->m_errorString);
     self->m_request = NULL;
     self->m_headers = NULL;
     self->m_trailers = NULL;
@@ -695,7 +695,7 @@ XVector* XHttpReply_rawHeaderList(const XHttpReply* self)
         if (!duplicate && name) {
             XByteArray* copy = XByteArray_create_copy(name);
             if (!copy || !XVector_push_back_1_base(result, &copy)) {
-                if (copy) XClass_delete_base((XClass*)copy);
+                if (copy) XClassDelete((XClass*)copy);
                 XHttpHeaders_values_free(result); return NULL;
             }
         }
@@ -781,7 +781,7 @@ bool XHttpReply_resetForRequest(XHttpReply* self, const XHttpRequest* request)
     if (!replacement)
         return false;
     if (self->m_request)
-        XClass_delete_base((XClass*)self->m_request);
+        XClassDelete((XClass*)self->m_request);
     self->m_request = replacement;
     XHttpHeaders_clear(self->m_headers);
     XHttpHeaders_clear(self->m_trailers);
@@ -789,7 +789,7 @@ bool XHttpReply_resetForRequest(XHttpReply* self, const XHttpRequest* request)
     XByteArray_clear_base((XContainer*)self->m_input);
     XByteArray_clear_base((XContainer*)self->m_reason);
     if (self->m_errorString) {
-        XClass_delete_base((XClass*)self->m_errorString);
+        XClassDelete((XClass*)self->m_errorString);
         self->m_errorString = NULL;
     }
     self->m_parseOffset = 0;
@@ -844,7 +844,7 @@ XUrl* XHttpReply_redirectTarget(const XHttpReply* self)
     data = xhttp_reply_data(value);
     size = xhttp_reply_size(value);
     if (field)
-        XClass_delete_base((XClass*)field);
+        XClassDelete((XClass*)field);
     if (!data || size == 0)
         return NULL;
     text = (char*)XMalloc_System(size + 1);
@@ -864,11 +864,11 @@ XUrl* XHttpReply_redirectTarget(const XHttpReply* self)
         else
             XUrl_setUrl(target, location, XUrl_TolerantMode);
         if (!XUrl_isValid(target)) {
-            XClass_delete_base((XClass*)target);
+            XClassDelete((XClass*)target);
             target = NULL;
         }
     }
-    XClass_delete_base((XClass*)location);
+    XClassDelete((XClass*)location);
     return target;
 }
 

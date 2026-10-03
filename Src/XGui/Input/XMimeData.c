@@ -57,22 +57,22 @@ static void mime_clearPrivate(XMimeDataPrivate* d)
     size_t i;
     if (!d)
         return;
-    if (d->m_text)  { XString_delete_base(d->m_text);  d->m_text  = NULL; }
-    if (d->m_html)  { XString_delete_base(d->m_html);  d->m_html  = NULL; }
-    if (d->m_image) { XImage_delete_base((XClass*)d->m_image); d->m_image = NULL; }
-    if (d->m_urls)  { XStringList_delete_base(d->m_urls); d->m_urls = NULL; }
+    if (d->m_text)  { XClassDelete(d->m_text);  d->m_text  = NULL; }
+    if (d->m_html)  { XClassDelete(d->m_html);  d->m_html  = NULL; }
+    if (d->m_image) { XClassDelete((XClass*)d->m_image); d->m_image = NULL; }
+    if (d->m_urls)  { XClassDelete(d->m_urls); d->m_urls = NULL; }
     d->m_hasColor = false;
     XColor_init_rgb(&d->m_color, 0, 0, 0, 0);
     if (d->m_custom) {
         for (i = 0; i < XVector_size_base((const XContainer*)d->m_custom); ++i) {
             XMimeCustomEntry* entry = mime_customAt(d->m_custom, (int64_t)i);
             if (entry) {
-                if (entry->m_format) XString_delete_base(entry->m_format);
-                if (entry->m_data)   XByteArray_delete_base((XClass*)entry->m_data);
+                if (entry->m_format) XClassDelete(entry->m_format);
+                if (entry->m_data)   XClassDelete((XClass*)entry->m_data);
                 XFree_System(entry);
             }
         }
-        XVector_delete_base((XClass*)d->m_custom);
+        XClassDelete((XClass*)d->m_custom);
         d->m_custom = NULL;
     }
 }
@@ -107,7 +107,7 @@ static void VXMimeData_copy(XMimeData* self, const XMimeData* other)
     if (source->m_image) {
         target->m_image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (target->m_image)
-            XCopy(target->m_image, source->m_image);
+            XClassCopy(target->m_image, source->m_image);
     }
     if (source->m_urls)
         target->m_urls = XStringList_create_copy(source->m_urls);
@@ -128,8 +128,8 @@ static void VXMimeData_copy(XMimeData* self, const XMimeData* other)
             if (target->m_custom) {
                 XVector_Push_Back_Base(target->m_custom, XMimeCustomEntry*, dstEntry);
             } else {
-                if (dstEntry->m_format) XString_delete_base(dstEntry->m_format);
-                if (dstEntry->m_data)   XByteArray_delete_base((XClass*)dstEntry->m_data);
+                if (dstEntry->m_format) XClassDelete(dstEntry->m_format);
+                if (dstEntry->m_data)   XClassDelete((XClass*)dstEntry->m_data);
                 XFree_System(dstEntry);
             }
         }
@@ -345,7 +345,7 @@ void XMimeData_setUrls(XMimeData* self, const XStringList* urls)
     XMimeDataPrivate* d;
     if (!self || !(d = self->m_data)) return;
     if (d->m_urls)
-        XStringList_delete_base(d->m_urls);
+        XClassDelete(d->m_urls);
     d->m_urls = urls ? XStringList_create_copy(urls) : NULL;
 }
 
@@ -365,7 +365,7 @@ void XMimeData_setText(XMimeData* self, const XString* text)
 {
     if (!self || !self->m_data)
         return;
-    if (self->m_data->m_text) XString_delete_base(self->m_data->m_text);
+    if (self->m_data->m_text) XClassDelete(self->m_data->m_text);
     self->m_data->m_text = text ? XString_create_copy(text) : XString_create_utf8("");
 }
 
@@ -385,7 +385,7 @@ void XMimeData_setHtml(XMimeData* self, const XString* html)
 {
     if (!self || !self->m_data)
         return;
-    if (self->m_data->m_html) XString_delete_base(self->m_data->m_html);
+    if (self->m_data->m_html) XClassDelete(self->m_data->m_html);
     self->m_data->m_html = html ? XString_create_copy(html) : XString_create_utf8("");
 }
 
@@ -423,7 +423,7 @@ XImage* XMimeData_imageData(const XMimeData* self)
     image = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!image)
         return NULL;
-    XCopy(image, self->m_data->m_image);
+    XClassCopy(image, self->m_data->m_image);
     return image;
 }
 
@@ -435,10 +435,10 @@ void XMimeData_setImageData(XMimeData* self, const XImage* image)
     if (image) {
         copy = XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
         if (copy)
-            XCopy(copy, image);
+            XClassCopy(copy, image);
     }
     if (self->m_data->m_image)
-        XImage_delete_base((XClass*)self->m_data->m_image);
+        XClassDelete((XClass*)self->m_data->m_image);
     self->m_data->m_image = copy;
 }
 
@@ -469,7 +469,7 @@ void XMimeData_setData_bytes(XMimeData* self, const char* format,
             XMimeData_setText(self, text);
         else
             XMimeData_setHtml(self, text);
-        XString_delete_base(text);
+        XClassDelete(text);
         return;
     }
 
@@ -483,17 +483,17 @@ void XMimeData_setData_bytes(XMimeData* self, const char* format,
     if (index >= 0) {
         entry = mime_customAt(self->m_data->m_custom, index);
         if (!entry) {
-            XByteArray_delete_base((XClass*)blob);
+            XClassDelete((XClass*)blob);
             return;
         }
-        if (entry->m_data) XByteArray_delete_base((XClass*)entry->m_data);
+        if (entry->m_data) XClassDelete((XClass*)entry->m_data);
         entry->m_data = blob;
         return;
     }
 
     entry = (XMimeCustomEntry*)XMalloc_System(sizeof(XMimeCustomEntry));
     if (!entry) {
-        XByteArray_delete_base((XClass*)blob);
+        XClassDelete((XClass*)blob);
         return;
     }
     fmt = XString_create_utf8(format);
@@ -502,8 +502,8 @@ void XMimeData_setData_bytes(XMimeData* self, const char* format,
     if (!self->m_data->m_custom)
         self->m_data->m_custom = XVector_Create(XMimeCustomEntry*);
     if (!self->m_data->m_custom) {
-        if (entry->m_format) XString_delete_base(entry->m_format);
-        if (entry->m_data)   XByteArray_delete_base((XClass*)entry->m_data);
+        if (entry->m_format) XClassDelete(entry->m_format);
+        if (entry->m_data)   XClassDelete((XClass*)entry->m_data);
         XFree_System(entry);
         return;
     }
@@ -536,7 +536,7 @@ XByteArray* XMimeData_data_bytes(const XMimeData* self, const char* format)
             return NULL;
         bytes = XByteArray_create_with_data(XString_toUtf8(text),
                                             XString_toUtf8_length(text));
-        XString_delete_base(text);
+        XClassDelete(text);
         return bytes;
     }
     if (mime_ascii_icmp(format, "text/html") == 0) {
@@ -546,7 +546,7 @@ XByteArray* XMimeData_data_bytes(const XMimeData* self, const char* format)
             return NULL;
         bytes = XByteArray_create_with_data(XString_toUtf8(html),
                                             XString_toUtf8_length(html));
-        XString_delete_base(html);
+        XClassDelete(html);
         return bytes;
     }
     /* 自定义格式：XByteArray 载荷深拷贝，逐字节精确（含 0x00/0x89 等）。 */
@@ -602,13 +602,13 @@ bool XMimeData_removeFormat(XMimeData* self, const char* format)
      * text()/html() 即返回 NULL（与 Qt 删除映射项后 data() 为空一致）。 */
     if (mime_ascii_icmp(format, "text/plain") == 0) {
         if (self->m_data->m_text) {
-            XString_delete_base(self->m_data->m_text);
+            XClassDelete(self->m_data->m_text);
             self->m_data->m_text = NULL;
             removed = true;
         }
     } else if (mime_ascii_icmp(format, "text/html") == 0) {
         if (self->m_data->m_html) {
-            XString_delete_base(self->m_data->m_html);
+            XClassDelete(self->m_data->m_html);
             self->m_data->m_html = NULL;
             removed = true;
         }
@@ -620,7 +620,7 @@ bool XMimeData_removeFormat(XMimeData* self, const char* format)
         }
     } else if (mime_ascii_icmp(format, "application/x-qt-image") == 0) {
         if (self->m_data->m_image) {
-            XImage_delete_base((XClass*)self->m_data->m_image);
+            XClassDelete((XClass*)self->m_data->m_image);
             self->m_data->m_image = NULL;
             removed = true;
         }
@@ -630,8 +630,8 @@ bool XMimeData_removeFormat(XMimeData* self, const char* format)
         if (index >= 0) {
             XMimeCustomEntry* entry = mime_customAt(self->m_data->m_custom, index);
             if (entry) {
-                if (entry->m_format) XString_delete_base(entry->m_format);
-                if (entry->m_data)   XByteArray_delete_base((XClass*)entry->m_data);
+                if (entry->m_format) XClassDelete(entry->m_format);
+                if (entry->m_data)   XClassDelete((XClass*)entry->m_data);
                 XFree_System(entry);
             }
             XVector_remove_base(self->m_data->m_custom, index, 1);

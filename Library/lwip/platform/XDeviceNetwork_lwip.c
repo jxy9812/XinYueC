@@ -511,7 +511,7 @@ static void syncSocketEndpoints(XDeviceNetworkContext* priv)
         XAbstractSocket_setPeerAddress(socket, &endpoint);
         XAbstractSocket_setPeerPort(socket, s->upcb->remote_port);
     }
-    XHostAddress_deinit_base((XClass*)&endpoint);
+    XClassDeinit((XClass*)&endpoint);
 }
 
 static struct tcp_pcb* createTcpPcb(const ip_addr_t* address)
@@ -556,7 +556,7 @@ static void release_detached_private(XDeviceNetworkContextLwip* s)
 {
     if (!s || s->base.m_owner) return;
     if (s->rxBuf) XFree_System(s->rxBuf);
-    if (s->base.m_notifiers) XVector_delete_base((XClass*)s->base.m_notifiers);
+    if (s->base.m_notifiers) XClassDelete((XClass*)s->base.m_notifiers);
     XFree_System(s);
 }
 
@@ -921,7 +921,7 @@ void XDeviceNetwork_deleteContext(XDeviceNetworkContext* priv) {
     /* 释放资源 */
     s->fd = XFD_INVALID;
     if (s->rxBuf) XFree_System(s->rxBuf);
-    if (s->base.m_notifiers) XVector_delete_base((XClass*)s->base.m_notifiers);
+    if (s->base.m_notifiers) XClassDelete((XClass*)s->base.m_notifiers);
 
     /* 清理未领取的 Accept 连接 */
     if (s->pendingAccept) {
@@ -1536,7 +1536,7 @@ XVector* XDeviceNetwork_lookupName(const XString* name) {
     if (!vec) return NULL;
     XContainerSetDataMoveMethod(vec, XClass_move_base);
     XContainerSetDataCopyMethod(vec, XClass_copy_base);
-    XContainerSetDataDeinitMethod(vec, XHostAddress_deinit_base);
+    XContainerSetDataDeinitMethod(vec, XClass_deinit_base);
 
     XHostAddress addr;
     XHostAddress_init(&addr);
@@ -1591,7 +1591,7 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
             entry.broadcastIsValid = true;
         }
         XVector_push_back_move_1_base(iface->addressEntries, &entry);
-        XClass_deinit_base((XClass*)&entry);
+        XClassDeinit(&entry);
     }
     iface->isValid = true; it->idx++;
     return iface;

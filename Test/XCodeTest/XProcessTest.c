@@ -56,11 +56,11 @@ static bool XProcessTest_environment(void)
     value = XProcessEnvironment_value_utf8(&environment, "XP_TEST", "missing");
     XPTEST_CHECK(value && XString_equals_utf8(value, "two", XChar_CaseSensitive),
                  "environment value");
-    XString_delete_base(value);
+    XClassDelete(value);
     keys = XProcessEnvironment_keys(&environment);
     XPTEST_CHECK(keys && XStringList_size_base(keys) == 1,
                  "environment keys");
-    XStringList_delete_base(keys);
+    XClassDelete(keys);
     XPTEST_CHECK(XProcessEnvironment_remove_utf8(&environment, "XP_TEST"),
                  "environment remove");
     XProcessEnvironment_initInherit(&inherit);
@@ -90,7 +90,7 @@ static bool XProcessTest_environment(void)
     value = XProcessEnvironment_value_utf8(&environment, "XP_TEST_SOURCE", "");
     XPTEST_CHECK(value && XString_equals_utf8(value, "merged", XChar_CaseSensitive),
                  "environment bulk insert value");
-    XString_delete_base(value);
+    XClassDelete(value);
     XProcessEnvironment_deinit(&source);
     XProcessEnvironment_deinit(&environment);
     return true;
@@ -108,8 +108,8 @@ static bool XProcessTest_splitCommand(void)
     XPTEST_CHECK(XString_equals_utf8(XStringList_at_base(parts, 2), "\"quoted\"",
                                      XChar_CaseSensitive),
                  "split command escaped quote");
-    XStringList_delete_base(parts);
-    XString_delete_base(command);
+    XClassDelete(parts);
+    XClassDelete(command);
     return true;
 }
 
@@ -135,9 +135,9 @@ static bool XProcessTest_output(void)
     XPTEST_CHECK(XProcess_exitCode(process) == 7 &&
                      XProcess_exitStatus(process) == XProcessExitStatus_NormalExit,
                  "exit result");
-    XByteArray_delete_base(output);
-    XByteArray_delete_base(error);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(error);
+    XClassDelete(process);
     return true;
 }
 
@@ -167,8 +167,8 @@ static bool XProcessTest_environmentAndWorkingDirectory(void)
     XPTEST_CHECK(output && XByteArray_size_base(output) == 14 &&
                  memcmp(XByteArray_data(output), "environment-ok", 14) == 0,
                  "environment child value");
-    XByteArray_delete_base(output);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(process);
 
     process = XProcess_create();
     environmentList = XStringList_create();
@@ -185,9 +185,9 @@ static bool XProcessTest_environmentAndWorkingDirectory(void)
     XPTEST_CHECK(output && XByteArray_size_base(output) == 15 &&
                      memcmp(XByteArray_data(output), "set-environment", 15) == 0,
                  "set environment child value");
-    XByteArray_delete_base(output);
-    XStringList_delete_base(environmentList);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(environmentList);
+    XClassDelete(process);
 
     process = XProcess_create();
     XPTEST_CHECK(process && XProcess_setWorkingDirectory_utf8(process, "/tmp") &&
@@ -198,13 +198,13 @@ static bool XProcessTest_environmentAndWorkingDirectory(void)
     XPTEST_CHECK(output && XByteArray_size_base(output) >= 5 &&
                  memcmp(XByteArray_data(output), "/tmp", 4) == 0,
                  "working directory child value");
-    XByteArray_delete_base(output);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(process);
 
     systemEnvironment = XProcess_systemEnvironment_static();
     XPTEST_CHECK(systemEnvironment && XStringList_size_base(systemEnvironment) > 0,
                  "system environment enumeration");
-    XStringList_delete_base(systemEnvironment);
+    XClassDelete(systemEnvironment);
     return true;
 }
 
@@ -225,7 +225,7 @@ static bool XProcessTest_restart(void)
         XPTEST_CHECK(output && XByteArray_size_base(output) == 6 &&
                          memcmp(XByteArray_data(output), "reused", 6) == 0,
                      "open process output");
-        XByteArray_delete_base(output);
+        XClassDelete(output);
     }
     for (i = 0; i < 64; ++i) {
         XByteArray* output;
@@ -235,7 +235,7 @@ static bool XProcessTest_restart(void)
         XPTEST_CHECK(output && XByteArray_size_base(output) == 6 &&
                          memcmp(XByteArray_data(output), "reused", 6) == 0,
                      "restart process output");
-        XByteArray_delete_base(output);
+        XClassDelete(output);
     }
     XPTEST_CHECK(XProcess_started_signal(process) != NULL &&
                      XProcess_finished_signal(process, 0, XProcessExitStatus_NormalExit) != NULL &&
@@ -244,7 +244,7 @@ static bool XProcessTest_restart(void)
                      XProcess_readyReadStandardOutput_signal(process) != NULL &&
                      XProcess_readyReadStandardError_signal(process) != NULL,
                  "signal return value");
-    XProcess_delete_base(process);
+    XClassDelete(process);
     return true;
 }
 
@@ -265,8 +265,8 @@ static bool XProcessTest_stdin(void)
     XPTEST_CHECK(output && XByteArray_size_base(output) == sizeof(text) - 1 &&
                      memcmp(XByteArray_data(output), text, sizeof(text) - 1) == 0,
                  "cat output");
-    XByteArray_delete_base(output);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(process);
     return true;
 }
 
@@ -278,8 +278,8 @@ static bool XProcessTest_nullArguments(void)
                   XProcess_start(process, program, NULL, XIODevice_ReadOnly) &&
                   XProcess_waitForFinished(process, 3000) &&
                   XProcess_exitCode(process) == 0;
-    if (program) XString_delete_base(program);
-    if (process) XProcess_delete_base(process);
+    if (program) XClassDelete(program);
+    if (process) XClassDelete(process);
     return result;
 }
 
@@ -300,7 +300,7 @@ static bool XProcessTest_openModes(void)
     if (!XProcess_start_utf8(process, "sh", arguments, 2, XIODevice_ReadOnly)) goto cleanup;
     if (XIODevice_write_1(&process->base, "x", 1) >= 0) goto cleanup;
     if (!XProcess_waitForFinished(process, 3000)) goto cleanup;
-    XProcess_delete_base(process);
+    XClassDelete(process);
     process = XProcess_create();
     if (!process) return false;
     if (!XProcess_start_utf8(process, "sh", arguments, 2, XIODevice_WriteOnly)) goto cleanup;
@@ -309,7 +309,7 @@ static bool XProcessTest_openModes(void)
     result = XIODevice_bytesAvailable_base(&process->base) == 0;
 
 cleanup:
-    if (process) XProcess_delete_base(process);
+    if (process) XClassDelete(process);
     return result;
 }
 
@@ -339,9 +339,9 @@ static bool XProcessTest_largeStdin(void)
     result = output && XByteArray_size_base(output) == dataSize &&
              memcmp(XByteArray_data(output), XByteArray_data(input), dataSize) == 0;
 cleanup:
-    if (output) XByteArray_delete_base(output);
-    if (input) XByteArray_delete_base(input);
-    if (process) XProcess_delete_base(process);
+    if (output) XClassDelete(output);
+    if (input) XClassDelete(input);
+    if (process) XClassDelete(process);
     return result;
 }
 
@@ -364,22 +364,22 @@ static bool XProcessTest_outputProcess(void)
     XPTEST_CHECK(output && XByteArray_size_base(output) == 5 &&
                      memcmp(XByteArray_data(output), "piped", 5) == 0,
                  "pipe output");
-    XByteArray_delete_base(output);
-    XProcess_delete_base(source);
-    XProcess_delete_base(sink);
+    XClassDelete(output);
+    XClassDelete(source);
+    XClassDelete(sink);
 
     /* 管道目标提前销毁后，源对象必须解除借用关系而不是解引用悬空指针。 */
     sink = XProcess_create();
     source = XProcess_create();
     XPTEST_CHECK(sink && source && XProcess_setStandardOutputProcess(source, sink),
                  "set pipe lifetime relation");
-    XProcess_delete_base(sink);
+    XClassDelete(sink);
     sink = NULL;
     XPTEST_CHECK(XProcess_start_utf8(source, "sh", sourceArguments, 2,
                                      XIODevice_ReadOnly) &&
                      XProcess_waitForFinished(source, 3000),
                  "pipe source survives destination destroy");
-    XProcess_delete_base(source);
+    XClassDelete(source);
     return true;
 }
 
@@ -407,9 +407,9 @@ static bool XProcessTest_redirect(void)
     n = XDeviceFile_read(fd, buffer, sizeof(buffer) - 1);
     XDeviceFile_close(fd);
     XPTEST_CHECK(n == 10 && memcmp(buffer, "redirected", 10) == 0, "redirect content");
-    XProcess_delete_base(process);
+    XClassDelete(process);
     XDeviceFile_removePermanent(path);
-    XString_delete_base(path);
+    XClassDelete(path);
     return true;
 #endif
 }
@@ -423,17 +423,17 @@ static bool XProcessTest_failures(void)
                                    XIODevice_ReadOnly);
     if (!started) {
         XPrintf("[FAIL] XProcess: 启动失败用例未建立错误握手\n");
-        XProcess_delete_base(process);
+        XClassDelete(process);
         return false;
     }
     XProcess_poll(process, 1000);
     if (XProcess_state(process) != XProcessState_NotRunning ||
         XProcess_error(process) != XProcessError_FailedToStart) {
         XPrintf("[FAIL] XProcess: 启动失败状态未收敛\n");
-        XProcess_delete_base(process);
+        XClassDelete(process);
         return false;
     }
-    XProcess_delete_base(process);
+    XClassDelete(process);
     return true;
 }
 
@@ -449,8 +449,8 @@ static bool XProcessTest_detached(void)
     result = XProcess_startDetached_static(program, list, NULL, &pid);
     (void)arguments;
     XPTEST_CHECK(result && pid > 0, "detached start");
-    XStringList_delete_base(list);
-    XString_delete_base(program);
+    XClassDelete(list);
+    XClassDelete(program);
     return true;
 }
 
@@ -472,8 +472,8 @@ static bool XProcessTest_unixParameters(void)
     XPTEST_CHECK(output && XByteArray_size_base(output) == 8 &&
                      memcmp(XByteArray_data(output), "survived", 8) == 0,
                  "ignore SIGPIPE parameter");
-    XByteArray_delete_base(output);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(process);
     return true;
 }
 
@@ -483,7 +483,7 @@ static bool XProcessTest_lifecycleStress(void)
     for (i = 0; i < 10000; ++i) {
         XProcess* process = XProcess_create();
         XPTEST_CHECK(process != NULL, "lifecycle stress create");
-        XProcess_delete_base(process);
+        XClassDelete(process);
     }
     return true;
 }
@@ -534,13 +534,13 @@ static bool XProcessTest_windowsRunAll(void)
         XByteArray_size_base(error) != 6 ||
         memcmp(XByteArray_data(error), "err \r\n", 6) != 0 ||
         XProcess_exitCode(process) != 7) {
-        if (output) XByteArray_delete_base(output);
-        if (error) XByteArray_delete_base(error);
+        if (output) XClassDelete(output);
+        if (error) XClassDelete(error);
         goto cleanup_process;
     }
-    XByteArray_delete_base(output);
-    XByteArray_delete_base(error);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(error);
+    XClassDelete(process);
     process = NULL;
 
     process = XProcess_create();
@@ -556,17 +556,17 @@ static bool XProcessTest_windowsRunAll(void)
                                      XIODevice_ReadOnly, &output, NULL) ||
         !output || XByteArray_size_base(output) != 16 ||
         memcmp(XByteArray_data(output), "environment-ok\r\n", 16) != 0) {
-        if (output) XByteArray_delete_base(output);
+        if (output) XClassDelete(output);
         goto cleanup_process;
     }
-    XByteArray_delete_base(output);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(process);
     process = NULL;
 
     process = XProcess_create();
     environmentList = XStringList_create();
     if (!process || !environmentList) {
-        if (environmentList) XStringList_delete_base(environmentList);
+        if (environmentList) XClassDelete(environmentList);
         goto cleanup_process;
     }
     XStringList_push_back_utf8(environmentList,
@@ -577,13 +577,13 @@ static bool XProcessTest_windowsRunAll(void)
                                      XIODevice_ReadOnly, &output, NULL) ||
         !output || XByteArray_size_base(output) != 17 ||
         memcmp(XByteArray_data(output), "set-environment\r\n", 17) != 0) {
-        if (output) XByteArray_delete_base(output);
-        if (environmentList) XStringList_delete_base(environmentList);
+        if (output) XClassDelete(output);
+        if (environmentList) XClassDelete(environmentList);
         goto cleanup_process;
     }
-    XByteArray_delete_base(output);
-    XStringList_delete_base(environmentList);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(environmentList);
+    XClassDelete(process);
     process = NULL;
 
     process = XProcess_create();
@@ -591,11 +591,11 @@ static bool XProcessTest_windowsRunAll(void)
         !XProcessTest_windowsCommand(process, "cd", XIODevice_ReadOnly,
                                      &output, NULL) || !output ||
         XByteArray_size_base(output) < 3) {
-        if (output) XByteArray_delete_base(output);
+        if (output) XClassDelete(output);
         goto cleanup_process;
     }
-    XByteArray_delete_base(output);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(process);
     process = NULL;
 
     process = XProcess_create();
@@ -613,12 +613,12 @@ static bool XProcessTest_windowsRunAll(void)
         output = XProcess_readAllStandardOutput(process);
         if (!output || XByteArray_size_base(output) != 8 ||
             memcmp(XByteArray_data(output), "reused\r\n", 8) != 0) {
-            if (output) XByteArray_delete_base(output);
+            if (output) XClassDelete(output);
             goto cleanup_process;
         }
-        XByteArray_delete_base(output);
+        XClassDelete(output);
     }
-    XProcess_delete_base(process);
+    XClassDelete(process);
     process = NULL;
 
     process = XProcess_create();
@@ -636,11 +636,11 @@ static bool XProcessTest_windowsRunAll(void)
     output = XProcess_readAllStandardOutput(process);
     if (!output || XByteArray_size_base(output) != 12 ||
         memcmp(XByteArray_data(output), "stdin-data\r\n", 12) != 0) {
-        if (output) XByteArray_delete_base(output);
+        if (output) XClassDelete(output);
         goto cleanup_process;
     }
-    XByteArray_delete_base(output);
-    XProcess_delete_base(process);
+    XClassDelete(output);
+    XClassDelete(process);
     process = NULL;
 
     {
@@ -654,31 +654,31 @@ static bool XProcessTest_windowsRunAll(void)
             !XProcess_setStandardOutputProcess(source, sink) ||
             !XProcess_start_utf8(source, "cmd.exe", sourceArguments, 3,
                                  XIODevice_ReadOnly)) {
-            if (source) XProcess_delete_base(source);
-            if (sink) XProcess_delete_base(sink);
+            if (source) XClassDelete(source);
+            if (sink) XClassDelete(sink);
             goto cleanup_process;
         }
         if (!XProcess_waitForFinished(source, 3000)) {
-            XProcess_delete_base(source);
-            XProcess_delete_base(sink);
+            XClassDelete(source);
+            XClassDelete(sink);
             goto cleanup_process;
         }
         if (!XProcess_waitForFinished(sink, 3000)) {
-            XProcess_delete_base(source);
-            XProcess_delete_base(sink);
+            XClassDelete(source);
+            XClassDelete(sink);
             goto cleanup_process;
         }
         output = XProcess_readAllStandardOutput(sink);
         if (!output || XByteArray_size_base(output) != 9 ||
             memcmp(XByteArray_data(output), "piped\r\n\r\n", 9) != 0) {
-            if (output) XByteArray_delete_base(output);
-            XProcess_delete_base(source);
-            XProcess_delete_base(sink);
+            if (output) XClassDelete(output);
+            XClassDelete(source);
+            XClassDelete(sink);
             goto cleanup_process;
         }
-        XByteArray_delete_base(output);
-        XProcess_delete_base(source);
-        XProcess_delete_base(sink);
+        XClassDelete(output);
+        XClassDelete(source);
+        XClassDelete(sink);
     }
 
     redirectPath = XString_create_utf8("xprocess_redirect_test.txt");
@@ -694,7 +694,7 @@ static bool XProcessTest_windowsRunAll(void)
             !XProcess_waitForFinished(process, 3000))
             goto cleanup_redirect;
     }
-    XProcess_delete_base(process);
+    XClassDelete(process);
     process = NULL;
     fd = xprocesstest_open_file(redirectPath, XDeviceFile_ReadOnly, &fdError);
     fileSize = fd == XFD_INVALID ? -1 : XDeviceFile_read(fd, fileData, sizeof(fileData) - 1);
@@ -702,7 +702,7 @@ static bool XProcessTest_windowsRunAll(void)
     if (fileSize != 12 || memcmp(fileData, "redirected\r\n", 12) != 0)
         goto cleanup_redirect;
     XDeviceFile_removePermanent(redirectPath);
-    XString_delete_base(redirectPath);
+    XClassDelete(redirectPath);
     redirectPath = NULL;
 
     process = XProcess_create();
@@ -711,7 +711,7 @@ static bool XProcessTest_windowsRunAll(void)
         XProcess_state(process) != XProcessState_NotRunning ||
         XProcess_error(process) != XProcessError_FailedToStart)
         goto cleanup_process;
-    XProcess_delete_base(process);
+    XClassDelete(process);
     process = NULL;
 
     {
@@ -719,36 +719,36 @@ static bool XProcessTest_windowsRunAll(void)
         XStringList* arguments = XStringList_create();
         XProcessId pid = -1;
         if (!program || !arguments) {
-            if (program) XString_delete_base(program);
-            if (arguments) XStringList_delete_base(arguments);
+            if (program) XClassDelete(program);
+            if (arguments) XClassDelete(arguments);
             goto cleanup_process;
         }
         XStringList_push_back_utf8(arguments, "/D");
         XStringList_push_back_utf8(arguments, "/C");
         XStringList_push_back_utf8(arguments, "exit 0");
         if (!XProcess_startDetached_static(program, arguments, NULL, &pid) || pid <= 0) {
-            if (program) XString_delete_base(program);
-            if (arguments) XStringList_delete_base(arguments);
+            if (program) XClassDelete(program);
+            if (arguments) XClassDelete(arguments);
             goto cleanup_process;
         }
-        XString_delete_base(program);
-        XStringList_delete_base(arguments);
+        XClassDelete(program);
+        XClassDelete(arguments);
     }
     result = true;
 
 cleanup_process:
-    if (process) XProcess_delete_base(process);
+    if (process) XClassDelete(process);
     if (!result && redirectPath) {
         XDeviceFile_removePermanent(redirectPath);
-        XString_delete_base(redirectPath);
+        XClassDelete(redirectPath);
     }
     return result;
 
 cleanup_redirect:
-    if (process) XProcess_delete_base(process);
+    if (process) XClassDelete(process);
     if (redirectPath) {
         XDeviceFile_removePermanent(redirectPath);
-        XString_delete_base(redirectPath);
+        XClassDelete(redirectPath);
     }
     return false;
 }
@@ -770,35 +770,35 @@ bool XProcessTest_runAll(void)
         if (!process) return false;
 #if !XPROCESS_REDIRECT_ON
         if (XProcess_setStandardInputFile_utf8(process, "disabled-input")) {
-            XProcess_delete_base(process);
+            XClassDelete(process);
             return false;
         }
 #endif
 #if !XPROCESS_PIPE_ON
         if (XProcess_setStandardOutputProcess(process, process)) {
-            XProcess_delete_base(process);
+            XClassDelete(process);
             return false;
         }
 #endif
 #if !XPROCESS_DETACHED_ON
         if (XProcess_startDetached(process, NULL)) {
-            XProcess_delete_base(process);
+            XClassDelete(process);
             return false;
         }
 #endif
 #if !XPROCESS_UNIX_PARAMETERS_ON
         if (XProcess_setUnixProcessParameters(process, &parameters)) {
-            XProcess_delete_base(process);
+            XClassDelete(process);
             return false;
         }
 #endif
 #if !XPROCESS_SIGNAL_ON
         if (XProcess_started_signal(process) != NULL) {
-            XProcess_delete_base(process);
+            XClassDelete(process);
             return false;
         }
 #endif
-        XProcess_delete_base(process);
+        XClassDelete(process);
     }
     XPrintf("[SKIP] XProcess 全量测试（环境子模块关闭）\n");
     return true;

@@ -407,10 +407,6 @@ void XLineControl_init(XLineControl* self, const char* txt);
 XLineControl* XLineControl_create_ex(XMemoryType memory, const char* txt);
 #define XLineControl_create(txt) \
     XLineControl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (txt))
-/** @brief 析构基调用宏（对标 ~QWidgetLineControl；密码内存清零）。 */
-#define XLineControl_deinit_base(self) XClass_deinit_base((XClass*)(self))
-/** @brief 删除基调用宏（堆对象；析构 + 释放）。 */
-#define XLineControl_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 文本模型（对标 text/setText/insert/…） ==================== */
 

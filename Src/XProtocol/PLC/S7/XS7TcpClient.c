@@ -229,7 +229,7 @@ static inline void s7ByteArrayClear(XByteArray* b)
 
 static inline void s7ByteArrayDelete(XByteArray* b)
 {
-    XClass_delete_base((XClass*)b);
+    XClassDelete((XClass*)b);
 }
 
 static inline bool s7MapInsert(XHashMap* m, const void* key, const void* val)
@@ -259,7 +259,7 @@ static inline size_t s7MapSize(const XHashMap* m)
 
 static inline void s7MapDelete(XHashMap* m)
 {
-    XClass_delete_base((XClass*)m);
+    XClassDelete((XClass*)m);
 }
 
 static inline bool s7QueuePush(XQueue* q, void* val)
@@ -289,7 +289,7 @@ static inline size_t s7QueueSize(const XQueue* q)
 
 static inline void s7QueueDelete(XQueue* q)
 {
-    XClass_delete_base((XClass*)q);
+    XClassDelete((XClass*)q);
 }
 
 /** @brief 有界字符串长度（替代 strlen，遵守 string.h 白名单：memcpy/memset/memmove/memcmp） */
@@ -1130,7 +1130,7 @@ static void XS7TcpClient_finishReply(XS7TcpClient* client, XPlcReply* reply, uin
                 XPlcReply_setError(reply, XPlcDevice_InvalidResponseError,
                                    "S7 value decode failed");
             }
-            XVariant_delete_base((XClass*)decoded);
+            XClassDelete((XClass*)decoded);
         }
     }
 
@@ -1214,7 +1214,7 @@ static void XS7TcpClient_processFrame(XS7TcpClient* client, const uint8_t* s7, s
         XByteArray_init(&pdu, true);
         s7ByteArrayAppend(&pdu, s7, len);
         ok = XPlcClient_processResponse_base(&client->m_base, &pdu, reply);
-        XClass_deinit_base((XClass*)&pdu);
+        XClassDeinit((XClass*)&pdu);
     }
 
     /* 摘除该片 pending（无论成败均不再复用）；推进所需字段先拷出 */
@@ -1632,7 +1632,7 @@ static bool VXPlcClient_processResponse_s7(XPlcClient* baseClient, const XByteAr
             (unsigned)header.errorClass, (unsigned)header.errorCode);
         if (msgStr) {
             s7CopyBounded(msg, sizeof(msg), XString_toUtf8(msgStr));
-            XString_delete_base((XClass*)msgStr);
+            XClassDelete((XClass*)msgStr);
         }
         else {
             s7CopyBounded(msg, sizeof(msg), "S7 negative ack (header error)");
@@ -1726,7 +1726,7 @@ static bool VXPlcClient_processResponse_s7(XPlcClient* baseClient, const XByteAr
         XVariant* result = XVariant_create_int((int)status);
         if (result) {
             XPlcReply_setResult(reply, result);
-            XVariant_delete_base((XClass*)result);
+            XClassDelete((XClass*)result);
         }
         return true;
 #else
@@ -1740,18 +1740,18 @@ static bool VXPlcClient_processResponse_s7(XPlcClient* baseClient, const XByteAr
         XVector* blocks = XVector_Create(XS7BlockInfo);
         if (!blocks) return false;
         if (!XS7Block_parseListBlocksAck(s7, len, blocks)) {
-            XVector_delete_base((XClass*)blocks);
+            XClassDelete((XClass*)blocks);
             return false;
         }
         /* 结果经 ptr 型 XVariant 随行；向量所有权移交调用方
-         *（取用后 XVector_delete_base 释放，见 XS7TcpClient.h 契约） */
+         *（取用后 XClassDelete 释放，见 XS7TcpClient.h 契约） */
         XVariant* result = XVariant_create_ptr(blocks);
         if (!result) {
-            XVector_delete_base((XClass*)blocks);
+            XClassDelete((XClass*)blocks);
             return false;
         }
         XPlcReply_setResult(reply, result);
-        XVariant_delete_base((XClass*)result);
+        XClassDelete((XClass*)result);
         return true;
     }
 
@@ -2113,7 +2113,7 @@ XPlcReply* XS7TcpClient_sendRead(XS7TcpClient* client, const XString* address, X
     s7ByteArrayAppend(&echoBuf, echo, XS7_ECHO_HEADER_SIZE);
 
     XPlcReply* reply = XPlcClient_createReply(&client->m_base, &echoBuf, XPlcReply_Common);
-    XClass_deinit_base((XClass*)&echoBuf);
+    XClassDeinit((XClass*)&echoBuf);
     if (!reply) return NULL;
 
     /* 逐片构建（首片 ref 回填 Reply 供外部定位） */
@@ -2175,7 +2175,7 @@ XPlcReply* XS7TcpClient_sendRead_2(XS7TcpClient* client, const char* addressUtf8
     XString* address = XString_create_utf8(addressUtf8);
     if (!address) return NULL;
     XPlcReply* reply = XS7TcpClient_sendRead(client, address, type, count);
-    XString_delete_base((XClass*)address);
+    XClassDelete((XClass*)address);
     return reply;
 }
 
@@ -2246,7 +2246,7 @@ XPlcReply* XS7TcpClient_sendWrite(XS7TcpClient* client, const XString* address, 
     }
 
     XPlcReply* reply = XPlcClient_createReply(&client->m_base, &echoBuf, XPlcReply_Common);
-    XClass_deinit_base((XClass*)&echoBuf);
+    XClassDeinit((XClass*)&echoBuf);
     if (!reply) {
         s7ByteArrayDelete(encoded);
         return NULL;
@@ -2340,7 +2340,7 @@ XPlcReply* XS7TcpClient_sendWrite_2(XS7TcpClient* client, const char* addressUtf
     XString* address = XString_create_utf8(addressUtf8);
     if (!address) return NULL;
     XPlcReply* reply = XS7TcpClient_sendWrite(client, address, type, count, value);
-    XString_delete_base((XClass*)address);
+    XClassDelete((XClass*)address);
     return reply;
 }
 
@@ -2381,7 +2381,7 @@ XPlcReply* XS7TcpClient_sendReadRaw(XS7TcpClient* client, const XString* address
 
     /* Raw 语义：结果只落 rawResult（完整拼接字节块），不做类型解码 */
     XPlcReply* reply = XPlcClient_createReply(&client->m_base, &echoBuf, XPlcReply_Raw);
-    XClass_deinit_base((XClass*)&echoBuf);
+    XClassDeinit((XClass*)&echoBuf);
     if (!reply) return NULL;
 
     XS7PendingRequest** pendings =
@@ -2460,7 +2460,7 @@ XPlcReply* XS7TcpClient_sendPlcRun(XS7TcpClient* client, XS7RunMode mode)
     s7ByteArrayAppend(&echoBuf, echo, XS7_ECHO_HEADER_SIZE);
 
     XPlcReply* reply = XPlcClient_createReply(&client->m_base, &echoBuf, XPlcReply_Common);
-    XClass_deinit_base((XClass*)&echoBuf);
+    XClassDeinit((XClass*)&echoBuf);
     if (!reply) return NULL;
 
     XS7PendingRequest* pending = XS7TcpClient_createPending(reply, pduRef, XS7Pending_Control, 0, 1);
@@ -2516,7 +2516,7 @@ XPlcReply* XS7TcpClient_sendPlcStop(XS7TcpClient* client)
     s7ByteArrayAppend(&echoBuf, echo, XS7_ECHO_HEADER_SIZE);
 
     XPlcReply* reply = XPlcClient_createReply(&client->m_base, &echoBuf, XPlcReply_Common);
-    XClass_deinit_base((XClass*)&echoBuf);
+    XClassDeinit((XClass*)&echoBuf);
     if (!reply) return NULL;
 
     XS7PendingRequest* pending = XS7TcpClient_createPending(reply, pduRef, XS7Pending_Control, 0, 1);
@@ -2575,7 +2575,7 @@ XPlcReply* XS7TcpClient_sendListBlocks(XS7TcpClient* client)
     s7ByteArrayAppend(&echoBuf, echo, XS7_ECHO_HEADER_SIZE);
 
     XPlcReply* reply = XPlcClient_createReply(&client->m_base, &echoBuf, XPlcReply_Common);
-    XClass_deinit_base((XClass*)&echoBuf);
+    XClassDeinit((XClass*)&echoBuf);
     if (!reply) return NULL;
 
     XS7PendingRequest* pending = XS7TcpClient_createPending(reply, pduRef, XS7Pending_BlockList, 0, 1);
@@ -2626,7 +2626,7 @@ XPlcReply* XS7TcpClient_sendUploadBlock(XS7TcpClient* client, const XString* blo
     if (name) {
         s7CopyBounded(nameBuf, sizeof(nameBuf), name);
     }
-    XString_delete_base((XClass*)nameStr);
+    XClassDelete((XClass*)nameStr);
     if (nameBuf[0] == '\0') {
         XPlcDevice_setError(device, XPlcDevice_ConfigurationError, "invalid block name");
         return NULL;
@@ -2653,7 +2653,7 @@ XPlcReply* XS7TcpClient_sendUploadBlock(XS7TcpClient* client, const XString* blo
     }
 
     XPlcReply* reply = XPlcClient_createReply(&client->m_base, &echoBuf, XPlcReply_Common);
-    XClass_deinit_base((XClass*)&echoBuf);
+    XClassDeinit((XClass*)&echoBuf);
     if (!reply) return NULL;
 
     XS7PendingRequest* pending = XS7TcpClient_createPending(reply, pduRef, XS7Pending_BlockUpStart, 0, 0);
@@ -2705,7 +2705,7 @@ XPlcReply* XS7TcpClient_sendDownloadBlock(XS7TcpClient* client, const XString* b
     if (name) {
         s7CopyBounded(nameBuf, sizeof(nameBuf), name);
     }
-    XString_delete_base((XClass*)nameStr);
+    XClassDelete((XClass*)nameStr);
     if (nameBuf[0] == '\0') {
         XPlcDevice_setError(device, XPlcDevice_ConfigurationError, "invalid block name");
         return NULL;
@@ -2736,7 +2736,7 @@ XPlcReply* XS7TcpClient_sendDownloadBlock(XS7TcpClient* client, const XString* b
     }
 
     XPlcReply* reply = XPlcClient_createReply(&client->m_base, &echoBuf, XPlcReply_Common);
-    XClass_deinit_base((XClass*)&echoBuf);
+    XClassDeinit((XClass*)&echoBuf);
     if (!reply) return NULL;
 
     XS7PendingRequest* pending = XS7TcpClient_createPending(reply, pduRef, XS7Pending_BlockDlStart, 0, 0);

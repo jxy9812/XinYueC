@@ -101,7 +101,7 @@ void XBoxLayout_init(XBoxLayout* self, XBoxLayoutDirection direction);
  * @brief      创建水平盒式布局（对标 QHBoxLayout(QWidget* parent)）。
  * @param      parent 可选父控件；非 NULL 时自动挂接
  *             （XWidget_setLayout），布局本身仍为调用方所有。
- * @return     新布局对象；失败返回 NULL，调用方用 XLayout_delete_base 释放。
+ * @return     新布局对象；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 XHBoxLayout* XHBoxLayout_create(XWidget* parent);
 
@@ -121,9 +121,7 @@ XVBoxLayout* XVBoxLayout_create(XWidget* parent);
 XBoxLayout* XBoxLayout_create(XBoxLayoutDirection direction, XWidget* parent);
 
 /** @brief 通过 XClass 虚表释放盒式布局资源。 */
-#define XBoxLayout_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的盒式布局对象。 */
-#define XBoxLayout_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 方向访问 ==================== */
 

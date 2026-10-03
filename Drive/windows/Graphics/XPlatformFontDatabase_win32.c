@@ -25,7 +25,7 @@ static int CALLBACK xpfont_enum(const LOGFONTW* lf, const TEXTMETRICW* tm,
         XString** exist = (XString**)XVector_at_base(families, (int64_t)i);
         if (exist && *exist && XString_equals(*exist, value,
                                                XChar_CaseSensitive)) {
-            XString_delete_base((XClass*)value);
+            XClassDelete((XClass*)value);
             return 1;
         }
     }

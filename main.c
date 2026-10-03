@@ -153,7 +153,7 @@ int main(int argc, char* args[])
 
     parser = XCommandLineParser_create();
     if (!parser) {
-        XCoreApplication_delete_base(app);
+        XClassDelete(app);
         return 1;
     }
     XCommandLineParser_setApplicationDescription(parser, "XinYueC 控制台");
@@ -161,14 +161,14 @@ int main(int argc, char* args[])
     if (!option) {
         if (option) XCommandLineOption_delete(option);
         XCommandLineParser_delete(parser);
-        XCoreApplication_delete_base(app);
+        XClassDelete(app);
         return 1;
     }
     XCommandLineOption_addName(option, "test");
     if (!XCommandLineParser_addOption(parser, option)) {
         XCommandLineOption_delete(option);
         XCommandLineParser_delete(parser);
-        XCoreApplication_delete_base(app);
+        XClassDelete(app);
         return 1;
     }
     XCommandLineOption_delete(option);
@@ -176,14 +176,14 @@ int main(int argc, char* args[])
     if (!option) {
         if (option) XCommandLineOption_delete(option);
         XCommandLineParser_delete(parser);
-        XCoreApplication_delete_base(app);
+        XClassDelete(app);
         return 1;
     }
     XCommandLineOption_addName(option, "list");
     if (!XCommandLineParser_addOption(parser, option)) {
         XCommandLineOption_delete(option);
         XCommandLineParser_delete(parser);
-        XCoreApplication_delete_base(app);
+        XClassDelete(app);
         return 1;
     }
     XCommandLineOption_delete(option);
@@ -193,7 +193,7 @@ int main(int argc, char* args[])
         arguments = XStringList_create();
         if (!arguments) {
             XCommandLineParser_delete(parser);
-            XCoreApplication_delete_base(app);
+            XClassDelete(app);
             return 1;
         }
         for (int i = 0; i < argc; ++i)
@@ -201,9 +201,9 @@ int main(int argc, char* args[])
         if (!XCommandLineParser_parse(parser, arguments)) {
             XPrintf("错误: %s\n", XCommandLineParser_errorText(parser));
             XPrintf("使用 --help 查看帮助信息。\n");
-            XStringList_delete_base(arguments);
+            XClassDelete(arguments);
             XCommandLineParser_delete(parser);
-            XCoreApplication_delete_base(app);
+            XClassDelete(app);
             return 1;
         }
         if (XCommandLineParser_isSet(parser, "help") ||
@@ -211,30 +211,30 @@ int main(int argc, char* args[])
             XString* help = XCommandLineParser_helpText(parser);
             if (help) {
                 XPrintf("%s\n", XString_toUtf8(help));
-                XString_delete_base(help);
+                XClassDelete(help);
             }
-            XStringList_delete_base(arguments);
+            XClassDelete(arguments);
             XCommandLineParser_delete(parser);
-            XCoreApplication_delete_base(app);
+            XClassDelete(app);
             return 0;
         }
         if (XCommandLineParser_isSet(parser, "list") ||
             XCommandLineParser_isSet(parser, "l")) {
             main_print_test_list();
-            XStringList_delete_base(arguments);
+            XClassDelete(arguments);
             XCommandLineParser_delete(parser);
-            XCoreApplication_delete_base(app);
+            XClassDelete(app);
             return 0;
         }
         if (XCommandLineParser_isSet(parser, "test") ||
             XCommandLineParser_isSet(parser, "t")) {
             result = main_run_test_path(XCommandLineParser_value(parser, "test"));
-            XStringList_delete_base(arguments);
+            XClassDelete(arguments);
             XCommandLineParser_delete(parser);
-            XCoreApplication_delete_base(app);
+            XClassDelete(app);
             return result;
         }
-        XStringList_delete_base(arguments);
+        XClassDelete(arguments);
     }
     XCommandLineParser_delete(parser);
 
@@ -250,6 +250,6 @@ int main(int argc, char* args[])
 #else
     result = XCoreApplication_exec();
 #endif
-    XCoreApplication_delete_base(app);
+    XClassDelete(app);
     return result;
 }

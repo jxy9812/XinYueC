@@ -1759,7 +1759,7 @@ static void VXDateTimePopup_paintEvent(XWidget* self, XEvent* event)
             XPainter_fillRect(&painter, &sr, mid);
         }
         xdtp_drawTimeRow(popup, &painter, &font);
-        XFont_deinit_base((XClass*)&font);
+        XClassDeinit((XClass*)&font);
     }
     XPainter_deinit(&painter);
 }
@@ -3264,27 +3264,27 @@ static void VXDateTimeEdit_deinit(XDateTimeEdit* self)
     /* 时间行编辑器先于弹层容器删除（显式摘离子链，防级联重复释放）。 */
     for (i = 0; i < 3; ++i) {
         if (self->m_timeEdits[i]) {
-            XLineEdit_delete_base(self->m_timeEdits[i]);
+            XClassDelete(self->m_timeEdits[i]);
             self->m_timeEdits[i] = NULL;
         }
     }
     if (self->m_displayFormat) {
-        XString_delete_base((XClass*)self->m_displayFormat);
+        XClassDelete((XClass*)self->m_displayFormat);
         self->m_displayFormat = NULL;
     }
     /* 释放内置/接管的日历控件（先删日历：显式删除已将其摘离弹层
      * 子链，随后删弹层容器不会级联重复释放）。 */
     if (self->m_calendar) {
-        XCalendarWidget_delete_base((XClass*)self->m_calendar);
+        XClassDelete((XClass*)self->m_calendar);
         self->m_calendar = NULL;
     }
     if (self->m_popup) {
-        XClass_delete_base((XClass*)self->m_popup);
+        XClassDelete((XClass*)self->m_popup);
         self->m_popup = NULL;
     }
 #else
     if (self->m_displayFormat) {
-        XString_delete_base((XClass*)self->m_displayFormat);
+        XClassDelete((XClass*)self->m_displayFormat);
         self->m_displayFormat = NULL;
     }
 #endif
@@ -3946,7 +3946,7 @@ void XDateTimeEdit_setCalendarWidget(XDateTimeEdit* self,
     if (!self || calendar == self->m_calendar) return;
     /* 取得所有权：先释放旧的内置/接管日历。 */
     if (self->m_calendar) {
-        XCalendarWidget_delete_base((XClass*)self->m_calendar);
+        XClassDelete((XClass*)self->m_calendar);
         self->m_calendar = NULL;
     }
     self->m_calendar = calendar;

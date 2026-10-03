@@ -89,8 +89,6 @@ void XToolBar_init(XToolBar* self, XWidget* parent, XWidgetFlags flags);
 #define XToolBar_create(parent, flags) XToolBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XToolBar* XToolBar_create_ex(XMemoryType memory, XWidget* parent,
                              XWidgetFlags flags);
-#define XToolBar_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XToolBar_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 属性（对标 QToolBar public API） ==================== */
 

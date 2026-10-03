@@ -41,7 +41,7 @@ static void configEntryDeinit(void* entry)
 {
     XCanBusDevice_ConfigEntry* e = (XCanBusDevice_ConfigEntry*)entry;
     if (e->m_value) {
-        XVariant_delete_base((XVariant*)e->m_value);
+        XClassDelete((XVariant*)e->m_value);
         e->m_value = NULL;
     }
 }
@@ -126,7 +126,7 @@ static void VXCanBusDevice_deinit(XCanBusDevice* dev)
 
     // 释放错误字符串
     if (dev->m_errorString) {
-        XString_delete_base(dev->m_errorString);
+        XClassDelete(dev->m_errorString);
         dev->m_errorString = NULL;
     }
 
@@ -139,7 +139,7 @@ static void VXCanBusDevice_deinit(XCanBusDevice* dev)
                 XCanBusFrame_delete(*frame);
             }
         }
-        XVector_delete_base(dev->m_incomingFrames);
+        XClassDelete(dev->m_incomingFrames);
         dev->m_incomingFrames = NULL;
     }
 
@@ -152,13 +152,13 @@ static void VXCanBusDevice_deinit(XCanBusDevice* dev)
                 XCanBusFrame_delete(*frame);
             }
         }
-        XVector_delete_base(dev->m_outgoingFrames);
+        XClassDelete(dev->m_outgoingFrames);
         dev->m_outgoingFrames = NULL;
     }
 
     // 释放配置参数
     if (dev->m_configOptions) {
-        XVector_delete_base(dev->m_configOptions);
+        XClassDelete(dev->m_configOptions);
         dev->m_configOptions = NULL;
     }
 
@@ -186,7 +186,7 @@ void XCanBusDevice_setConfigurationParameter(XCanBusDevice* dev,
         if (entry && entry->m_key == key) {
             // 更新现有值
             if (entry->m_value) {
-                XCopy((XVariant*)entry->m_value, (const XVariant*)value);
+                XClassCopy((XVariant*)entry->m_value, (const XVariant*)value);
             } else {
                 entry->m_value = XVariant_create_copy((const XVariant*)value);
             }
@@ -664,7 +664,7 @@ void XCanBusDevice_setError(XCanBusDevice* dev, XCanBusDevice_Error error, const
 
     // 释放旧错误字符串
     if (dev->m_errorString) {
-        XString_delete_base(dev->m_errorString);
+        XClassDelete(dev->m_errorString);
         dev->m_errorString = NULL;
     }
 
@@ -684,7 +684,7 @@ void XCanBusDevice_clearError(XCanBusDevice* dev)
     if (!dev) return;
     dev->m_error = XCanBusDevice_NoError;
     if (dev->m_errorString) {
-        XString_delete_base(dev->m_errorString);
+        XClassDelete(dev->m_errorString);
         dev->m_errorString = NULL;
     }
 }

@@ -444,7 +444,7 @@ static bool XConsoleShellTest_runStress(XConsoleShell* shell,
     for (i = 0; i < 10000u; ++i) {
         XConsoleShell* temporary = XConsoleShell_create(io);
         if (!temporary) return false;
-        XConsoleShell_delete_base(temporary);
+        XClassDelete(temporary);
     }
     return true;
 }
@@ -583,8 +583,8 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         int x;
         XTuiWidget_setRect((XTuiWidget*)vim, &rect);
         if (!screen || !XTuiWidget_render_base((XTuiWidget*)vim, screen)) {
-            if (screen) XTuiScreen_delete_base(screen);
-            XTuiVim_delete_base(vim);
+            if (screen) XClassDelete(screen);
+            XClassDelete(vim);
             return false;
         }
         for (x = 0; x < 40; ++x) {
@@ -603,14 +603,14 @@ static bool XConsoleShellTest_runVimAdvanced(void)
             rect.height = 5;
             XTuiWidget_setRect((XTuiWidget*)vim, &rect);
             if (!XTuiScreen_resize(screen, 40, 5)) {
-                XTuiScreen_delete_base(screen);
-                XTuiVim_delete_base(vim);
+                XClassDelete(screen);
+                XClassDelete(vim);
                 return false;
             }
             XTuiScreen_clear(screen);
             if (!XTuiWidget_render_base((XTuiWidget*)vim, screen)) {
-                XTuiScreen_delete_base(screen);
-                XTuiVim_delete_base(vim);
+                XClassDelete(screen);
+                XClassDelete(vim);
                 return false;
             }
             cell = XTuiScreen_cell(screen, 0, 3);
@@ -627,7 +627,7 @@ static bool XConsoleShellTest_runVimAdvanced(void)
             XCS_TEST_CHECK(cell && strcmp(cell->m_utf8, "1") == 0,
                            "vim status shows current line number");
         }
-        XTuiScreen_delete_base(screen);
+        XClassDelete(screen);
     }
 #if XTUI_VIM_ADVANCED_MOTION_ON && XTUI_VIM_REPLACE_ON
     XTuiVim_setLines(vim, initial, 3);
@@ -1372,7 +1372,7 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         XTuiVim moved;
         memset(&copy, 0, sizeof(copy));
         memset(&moved, 0, sizeof(moved));
-        XCopy((XClass*)&copy, (const XClass*)vim);
+        XClassCopy((XClass*)&copy, (const XClass*)vim);
         XCS_TEST_CHECK(copy.m_lines &&
                        strcmp(XTuiVim_line(&copy, 0), XTuiVim_line(vim, 0)) == 0,
                        "Vim 复制保留文本缓冲");
@@ -1390,7 +1390,7 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         XCS_TEST_CHECK(copy.m_macroState && copy.m_macroState != vim->m_macroState,
                        "Vim 复制深拷贝宏表");
 #endif
-        XMove((XClass*)&moved, (XClass*)&copy);
+        XClassMove((XClass*)&moved, (XClass*)&copy);
         XCS_TEST_CHECK(moved.m_lines && copy.m_lines == NULL,
                        "Vim 同内存池移动转移文本缓冲");
 #if XTUI_VIM_HISTORY_ON
@@ -1402,8 +1402,8 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         XCS_TEST_CHECK(moved.m_registerState && copy.m_registerState == NULL,
                        "Vim 同内存池移动转移寄存器表");
 #endif
-        XClass_deinit_base((XClass*)&moved);
-        XClass_deinit_base((XClass*)&copy);
+        XClassDeinit((XClass*)&moved);
+        XClassDeinit((XClass*)&copy);
     }
 #if XTUI_VIM_HISTORY_ON
     {
@@ -1415,17 +1415,17 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         XConsoleShellTest_vimKey(source, ':');
         XConsoleShellTest_vimKey(source, 'w');
         XConsoleShellTest_vimEnter(source);
-        XMove((XClass*)target, (XClass*)source);
+        XClassMove((XClass*)target, (XClass*)source);
         XCS_TEST_CHECK(target->m_commandHistoryState &&
                        source->m_commandHistoryState == NULL,
                        "Vim 跨内存池移动深拷贝历史状态");
-        XTuiVim_delete_base(source);
-        XTuiVim_delete_base(target);
+        XClassDelete(source);
+        XClassDelete(target);
     }
 #endif
     ok = true;
 cleanup:
-    XTuiVim_delete_base(vim);
+    XClassDelete(vim);
     return ok;
 }
 #endif
@@ -1486,10 +1486,10 @@ static bool XConsoleShellTest_runFileCommands(
         XString* command = XString_create_fmt_utf8("fs cd %s", XString_toUtf8(root));
         if (!command || !XConsoleShellTest_runLine(shell, transport,
                 XString_toUtf8(command), XConsoleResult_Ok, NULL)) {
-            if (command) XString_delete_base(command);
+            if (command) XClassDelete(command);
             goto cleanup;
         }
-        XString_delete_base(command);
+        XClassDelete(command);
     }
     if (!XConsoleShellTest_runLine(shell, transport, "fs pwd", XConsoleResult_Ok,
                                    XString_toUtf8(root))) goto cleanup;
@@ -1507,18 +1507,18 @@ static bool XConsoleShellTest_runFileCommands(
         if (!command || !XConsoleShellTest_runLine(shell, transport,
                 XString_toUtf8(command), XConsoleResult_Ok,
                 XString_toUtf8(longName))) {
-            if (command) XString_delete_base(command);
+            if (command) XClassDelete(command);
             goto cleanup;
         }
-        XString_delete_base(command);
+        XClassDelete(command);
         command = XString_create_fmt_utf8("ls -l %s", XString_toUtf8(longName));
         if (!command || !XConsoleShellTest_runLine(shell, transport,
                 XString_toUtf8(command), XConsoleResult_Ok,
                 XString_toUtf8(longName))) {
-            if (command) XString_delete_base(command);
+            if (command) XClassDelete(command);
             goto cleanup;
         }
-        XString_delete_base(command);
+        XClassDelete(command);
     }
 #endif
     if (!XConsoleShellTest_runLine(shell, transport, "fs mkdir nested/deep --parents",
@@ -1596,18 +1596,18 @@ static bool XConsoleShellTest_runFileCommands(
 
 cleanup:
     if (rootCreated && root) XDeviceFile_rmdir(root, true);
-    if (source) XString_delete_base(source);
-    if (copy) XString_delete_base(copy);
-    if (moved) XString_delete_base(moved);
-    if (link) XString_delete_base(link);
-    if (linkTarget) XString_delete_base(linkTarget);
-    if (nested) XString_delete_base(nested);
+    if (source) XClassDelete(source);
+    if (copy) XClassDelete(copy);
+    if (moved) XClassDelete(moved);
+    if (link) XClassDelete(link);
+    if (linkTarget) XClassDelete(linkTarget);
+    if (nested) XClassDelete(nested);
 #if XCONSOLE_SHELL_FS_LS_ON
-    if (longName) XString_delete_base(longName);
-    if (longPath) XString_delete_base(longPath);
+    if (longName) XClassDelete(longName);
+    if (longPath) XClassDelete(longPath);
 #endif
-    if (root) XString_delete_base(root);
-    if (temp) XString_delete_base(temp);
+    if (root) XClassDelete(root);
+    if (temp) XClassDelete(temp);
     return ok;
 }
 
@@ -1672,7 +1672,7 @@ static bool XConsoleShellTest_runEditorCommands(
                    "vim 尺寸变化重新查询终端尺寸");
     XCS_TEST_CHECK(strstr(transport->output, "\x1b[2J\x1b[H") != NULL,
                    "vim 尺寸变化发送完整清屏序列");
-    XString_delete_base(command);
+    XClassDelete(command);
     command = NULL;
     /* i 进入插入模式，输入内容后 ESC 返回命令模式。 */
     if (!XConsoleShellTest_feedEditor(shell, transport, "i", 1,
@@ -1721,7 +1721,7 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
                                    XConsoleResult_MoreOutput, NULL))
         goto cleanup;
-    XString_delete_base(command);
+    XClassDelete(command);
     command = NULL;
     if (!XConsoleShellTest_feedEditor(shell, transport, ":q\n", 3,
                                       XConsoleResult_Ok, NULL))
@@ -1734,14 +1734,14 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
                                    XConsoleResult_MoreOutput, NULL))
         goto cleanup;
-    XString_delete_base(command);
+    XClassDelete(command);
     command = XString_create_fmt_utf8(":e %s\n", XString_toUtf8(other));
     if (!command) goto cleanup;
     if (!XConsoleShellTest_feedEditor(shell, transport, XString_toUtf8(command),
                                       XString_size_base(command),
                                       XConsoleResult_MoreOutput, NULL))
         goto cleanup;
-    XString_delete_base(command);
+    XClassDelete(command);
     command = NULL;
     if (!XConsoleShellTest_feedEditor(shell, transport, "iB\x1b", 3,
                                       XConsoleResult_MoreOutput, NULL) ||
@@ -1778,7 +1778,7 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
                                    XConsoleResult_MoreOutput, NULL))
         goto cleanup;
-    XString_delete_base(command);
+    XClassDelete(command);
     command = NULL;
     if (!XConsoleShellTest_feedEditor(shell, transport, "i", 1,
                                       XConsoleResult_MoreOutput, NULL))
@@ -1809,7 +1809,7 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
                                    XConsoleResult_MoreOutput, "vi 命令模式"))
         goto cleanup;
-    XString_delete_base(command);
+    XClassDelete(command);
     command = NULL;
     /* i 1：在第 1 行前插入两行内容。 */
     if (!XConsoleShellTest_runLine(shell, transport, "i 1",
@@ -1844,7 +1844,7 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
                                    XConsoleResult_MoreOutput, "命令模式"))
         goto cleanup;
-    XString_delete_base(command);
+    XClassDelete(command);
     command = NULL;
     if (!XConsoleShellTest_runLine(shell, transport, ":q",
                                    XConsoleResult_Ok, NULL))
@@ -1856,7 +1856,7 @@ static bool XConsoleShellTest_runEditorCommands(
     if (!XConsoleShellTest_runLine(shell, transport, XString_toUtf8(command),
                                    XConsoleResult_MoreOutput, "命令模式"))
         goto cleanup;
-    XString_delete_base(command);
+    XClassDelete(command);
     command = NULL;
     if (!XConsoleShellTest_runLine(shell, transport, "i 1",
                                    XConsoleResult_MoreOutput, "插入模式"))
@@ -1884,11 +1884,11 @@ static bool XConsoleShellTest_runEditorCommands(
 
 cleanup:
     if (rootCreated && root) XDeviceFile_rmdir(root, true);
-    if (file) XString_delete_base(file);
-    if (other) XString_delete_base(other);
-    if (command) XString_delete_base(command);
-    if (root) XString_delete_base(root);
-    if (temp) XString_delete_base(temp);
+    if (file) XClassDelete(file);
+    if (other) XClassDelete(other);
+    if (command) XClassDelete(command);
+    if (root) XClassDelete(root);
+    if (temp) XClassDelete(temp);
     return ok;
 }
 #endif
@@ -1961,8 +1961,8 @@ static bool XConsoleShellTest_runCrlfLoginFlow(void)
     ok = true;
 
     XDeviceFile_removePermanent(crlfPath);
-    if (crlfShell) XConsoleShell_delete_base(crlfShell);
-    XString_delete_base(crlfPath);
+    if (crlfShell) XClassDelete(crlfShell);
+    XClassDelete(crlfPath);
     return ok;
 }
 #endif
@@ -2028,7 +2028,7 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
             ok = XDeviceFile_write(wfd, "COMPLETE_OK", 11) == 11;
             XDeviceFile_close(wfd);
         }
-        XString_delete_base(testPath);
+        XClassDelete(testPath);
         if (!ok) return false;
     }
     memset(transport->output, 0, sizeof(transport->output));
@@ -2046,7 +2046,7 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         XString* cleanupPath = XString_create_utf8("/tmp/xcs_complete_test_file.txt");
         if (cleanupPath) {
             XDeviceFile_removePermanent(cleanupPath);
-            XString_delete_base(cleanupPath);
+            XClassDelete(cleanupPath);
         }
     }
 #endif
@@ -2118,9 +2118,9 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         if (dirA) XDeviceFile_rmdir(dirA, false);
         if (dirB) XDeviceFile_rmdir(dirB, false);
         if (fileN) XDeviceFile_removePermanent(fileN);
-        XString_delete_base(dirA);
-        XString_delete_base(dirB);
-        XString_delete_base(fileN);
+        XClassDelete(dirA);
+        XClassDelete(dirB);
+        XClassDelete(fileN);
         if (!ok) return false;
     }
     /* 5. 含空格文件名补全：补全后仍能通过 cat 正确读取 */
@@ -2139,31 +2139,31 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
             XDeviceFile_close(wfd);
         }
         if (!ok) {
-            XString_delete_base(spaced);
+            XClassDelete(spaced);
             return false;
         }
         memset(transport->output, 0, sizeof(transport->output));
         transport->length = 0;
         if (XConsoleShell_feedData(shell, "cat /tmp/xcs\\ compl\t\n", 21) != XConsoleResult_Ok) {
             XDeviceFile_removePermanent(spaced);
-            XString_delete_base(spaced);
+            XClassDelete(spaced);
             return false;
         }
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
         if (!XConsoleShell_flushOutput(shell)) {
             XDeviceFile_removePermanent(spaced);
-            XString_delete_base(spaced);
+            XClassDelete(spaced);
             return false;
         }
 #endif
         if (!strstr(transport->output, "SPACE_OK")) {
             XPrintf("escaped-space path output missing: [%s]\n", transport->output);
             XDeviceFile_removePermanent(spaced);
-            XString_delete_base(spaced);
+            XClassDelete(spaced);
             return false;
         }
         XDeviceFile_removePermanent(spaced);
-        XString_delete_base(spaced);
+        XClassDelete(spaced);
     }
     /* 6. fs cd 子命令参数目录补全 */
     {
@@ -2193,7 +2193,7 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
             }
         }
         XDeviceFile_rmdir(subDir, false);
-        XString_delete_base(subDir);
+        XClassDelete(subDir);
         if (!ok) return false;
     }
     /* 6b. 选项补全：fs cat --off<Tab> 唯一补全为 --offset */
@@ -2259,20 +2259,20 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
             XDeviceFile_close(wfd);
         }
         if (!ok) {
-            XString_delete_base(script);
+            XClassDelete(script);
             return false;
         }
         memset(transport->output, 0, sizeof(transport->output));
         transport->length = 0;
         if (XConsoleShell_feedData(shell, "cd /tmp\n", 8) != XConsoleResult_Ok) {
             XDeviceFile_removePermanent(script);
-            XString_delete_base(script);
+            XClassDelete(script);
             return false;
         }
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
         if (!XConsoleShell_flushOutput(shell)) {
             XDeviceFile_removePermanent(script);
-            XString_delete_base(script);
+            XClassDelete(script);
             return false;
         }
 #endif
@@ -2280,24 +2280,24 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
         transport->length = 0;
         if (XConsoleShell_feedData(shell, "./xcs_complete_sc\t", 18) != XConsoleResult_Ok) {
             XDeviceFile_removePermanent(script);
-            XString_delete_base(script);
+            XClassDelete(script);
             return false;
         }
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
         if (!XConsoleShell_flushOutput(shell)) {
             XDeviceFile_removePermanent(script);
-            XString_delete_base(script);
+            XClassDelete(script);
             return false;
         }
 #endif
         if (!strstr(transport->output, "./xcs_complete_script.sh")) {
             XPrintf("./ command path completion missing: [%s]\n", transport->output);
             XDeviceFile_removePermanent(script);
-            XString_delete_base(script);
+            XClassDelete(script);
             return false;
         }
         XDeviceFile_removePermanent(script);
-        XString_delete_base(script);
+        XClassDelete(script);
         /* 清空上一轮补全留下的活动行，避免影响引号补全用例。 */
         memset(transport->output, 0, sizeof(transport->output));
         transport->length = 0;
@@ -2326,7 +2326,7 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
             XDeviceFile_close(wfd);
         }
         if (!ok) {
-            XString_delete_base(q);
+            XClassDelete(q);
             return false;
         }
         memset(transport->output, 0, sizeof(transport->output));
@@ -2335,25 +2335,25 @@ static bool XConsoleShellTest_runCompletion(XConsoleShell* shell,
             XConsoleResult rq = XConsoleShell_feedData(shell, "cat \"/tmp/xcs compl\t\n", 21);
             if (rq != XConsoleResult_Ok) {
                 XDeviceFile_removePermanent(q);
-                XString_delete_base(q);
+                XClassDelete(q);
                 return false;
             }
         }
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
         if (!XConsoleShell_flushOutput(shell)) {
             XDeviceFile_removePermanent(q);
-            XString_delete_base(q);
+            XClassDelete(q);
             return false;
         }
 #endif
         if (!strstr(transport->output, "QUOTE_OK")) {
             XPrintf("quoted path completion missing: [%s]\n", transport->output);
             XDeviceFile_removePermanent(q);
-            XString_delete_base(q);
+            XClassDelete(q);
             return false;
         }
         XDeviceFile_removePermanent(q);
-        XString_delete_base(q);
+        XClassDelete(q);
     }
 #endif
     return true;
@@ -2673,7 +2673,7 @@ bool XConsoleShellTest_runAll(void)
                        "logout requires login again");
 #endif
         XDeviceFile_removePermanent(loginPath);
-        XString_delete_base(loginPath);
+        XClassDelete(loginPath);
         XConsoleShell_setAuthenticated(shell, true);
         XConsoleShell_session(shell)->permissionMask = UINT32_MAX;
     }
@@ -2885,7 +2885,7 @@ bool XConsoleShellTest_runAll(void)
                            XConsoleResult_Ok && adapter.echoEscape == 0 &&
                            !strstr(telnetTransport.output, "ABCD"),
                        "telnet arrow sequences are not echoed as letters");
-        XConsoleShell_delete_base(telnetShell);
+        XClassDelete(telnetShell);
     }
 #endif
 #if XCONSOLE_SHELL_XSERIALPORT_BACKEND_ON
@@ -2922,7 +2922,7 @@ bool XConsoleShellTest_runAll(void)
                            XConsoleShellXTcpServerAdapter_pump(&adapter, 64) == 0,
                        "tcp server adapter idle");
         XTcpServer_close(&server);
-        XClass_deinit_base((XClass*)&server);
+        XClassDeinit((XClass*)&server);
     }
 #endif
 #if XCONSOLE_SHELL_AUTH_ON && XCONSOLE_SHELL_FS_FORMAT_ON
@@ -3863,7 +3863,7 @@ bool XConsoleShellTest_runAll(void)
                            XConsoleResult_Ok && strstr(transport.output, "scripted"),
                        "source command");
         XDeviceFile_removePermanent(scriptPath);
-        XString_delete_base(scriptPath);
+        XClassDelete(scriptPath);
     }
 #endif
 #if XCONSOLE_SHELL_FS_CAT_ON
@@ -3983,7 +3983,7 @@ bool XConsoleShellTest_runAll(void)
                            "chmod symbolic X exec on directory");
         }
         if (dir) XDeviceFile_removePermanent(dir);
-        XString_delete_base(dir);
+        XClassDelete(dir);
     }
     XCS_TEST_CHECK(XConsoleShellTest_runLine(
                        shell, &transport, "chmod badmode xconsole_shell_test.txt",
@@ -4140,7 +4140,7 @@ bool XConsoleShellTest_runAll(void)
                        "redirect output content");
         XDeviceFile_close(redirectFd);
         XDeviceFile_removePermanent(redirectPath);
-        XString_delete_base(redirectPath);
+        XClassDelete(redirectPath);
     }
 #endif
 #endif
@@ -4160,16 +4160,16 @@ bool XConsoleShellTest_runAll(void)
                    "vim Linux behavior commands");
 #endif
     XDeviceFile_removePermanent(filePath);
-    XString_delete_base(filePath);
+    XClassDelete(filePath);
 #if XCONSOLE_SHELL_COMPLETION_ON
     XCS_TEST_CHECK(XConsoleShellTest_runCompletion(shell, &transport),
                    "shell completion");
 #endif
-    XConsoleShell_delete_base(shell);
+    XClassDelete(shell);
     for (size_t i = 0; i < 10000; ++i) {
         shell = XConsoleShell_create(&io);
         XCS_TEST_CHECK(shell != NULL, "lifecycle stress create");
-        XConsoleShell_delete_base(shell);
+        XClassDelete(shell);
     }
     XPrintf("[PASS] XConsoleShell 全量测试\n");
     return true;

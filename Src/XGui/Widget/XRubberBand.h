@@ -44,8 +44,6 @@ void XRubberBand_init(XRubberBand* self, XRubberBandShape shape,
 #define XRubberBand_create(shape, parent) XRubberBand_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (shape), (parent))
 XRubberBand* XRubberBand_create_ex(XMemoryType memory,
                                    XRubberBandShape shape, XWidget* parent);
-#define XRubberBand_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XRubberBand_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief 查询形状（对标 shape()）。 */
 XRubberBandShape XRubberBand_shape(const XRubberBand* self);

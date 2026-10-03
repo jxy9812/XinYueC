@@ -460,7 +460,7 @@ static bool w32_has_stream_handle(const XDeviceNetworkContextWin32* priv)
 static void destroyContext(XDeviceNetworkContextWin32* p)
 {
     if (!p) return;
-    XHostAddress_deinit_base(&p->pendingPeerAddr);
+    XClassDeinit(&p->pendingPeerAddr);
     XFree_System(p);
 }
 
@@ -527,7 +527,7 @@ static void syncSocketEndpoints(XDeviceNetworkContext* priv)
         XAbstractSocket_setPeerAddress(socket, &endpoint);
         XAbstractSocket_setPeerPort(socket, port);
     }
-    XHostAddress_deinit_base(&endpoint);
+    XClassDeinit(&endpoint);
 }
 
 /* =========================================================================
@@ -1392,7 +1392,7 @@ XVector* XDeviceNetwork_lookupName(const XString* name)
     }
     XContainerSetDataMoveMethod(vec, XClass_move_base);
     XContainerSetDataCopyMethod(vec, XClass_copy_base);
-    XContainerSetDataDeinitMethod(vec, XHostAddress_deinit_base);
+    XContainerSetDataDeinitMethod(vec, XClass_deinit_base);
     /* 遍历解析结果，填充地址向量 */
     struct addrinfo* p = result;
     while (p) {
@@ -1406,7 +1406,7 @@ XVector* XDeviceNetwork_lookupName(const XString* name)
     freeaddrinfo(result);
 
     if (XVector_size_base(vec) == 0) {
-        XVector_delete_base(vec);
+        XClassDelete(vec);
         return NULL;
     }
 
@@ -1530,7 +1530,7 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
             XHostAddress_init(&mask);
             XHostAddress_setAddressIPv4(&mask, maskVal);
             XNetworkAddressEntry_setNetmask(&entry, &mask);
-            XHostAddress_deinit_base(&mask);
+            XClassDeinit(&mask);
         }
         else {
             uint8_t maskBytes[16] = { 0 };
@@ -1549,12 +1549,12 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
             XHostAddress_init(&mask);
             XHostAddress_setAddressIPv6(&mask, maskBytes);
             XNetworkAddressEntry_setNetmask(&entry, &mask);
-            XHostAddress_deinit_base(&mask);
+            XClassDeinit(&mask);
         }
 
         XVector_push_back_move_1_base(iface->addressEntries, &entry);
-        XNetworkAddressEntry_deinit_base(&entry);
-        XHostAddress_deinit_base(&addr);
+        XClassDeinit(&entry);
+        XClassDeinit(&addr);
 
         ua = ua->Next;
     }
@@ -1750,7 +1750,7 @@ bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outPr
                     XNetworkProxy_setHostName(outProxy, host);
                     XNetworkProxy_setPort(outProxy, (uint16_t)atoi(colon + 1));
                     XNetworkProxy_setType(outProxy, XNetworkProxy_HttpProxy);
-                    XString_delete_base(host);
+                    XClassDelete(host);
                 }
             }
 
@@ -1797,7 +1797,7 @@ bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outPr
                     XNetworkProxy_setHostName(outProxy, host);
                     XNetworkProxy_setPort(outProxy, (uint16_t)atoi(colon + 1));
                     XNetworkProxy_setType(outProxy, XNetworkProxy_HttpProxy);
-                    XString_delete_base(host);
+                    XClassDelete(host);
                 }
             }
         }

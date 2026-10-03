@@ -182,7 +182,7 @@ static const char* kbd_composeText(const XVirtualKeyboard* kb)
     } else {
         s_buf[0] = '\0';
     }
-    if (s) XString_delete_base((XClass*)s);
+    if (s) XClassDelete((XClass*)s);
     return s_buf;
 }
 
@@ -211,7 +211,7 @@ static bool kbd_firstCandidateIs(const XVirtualKeyboard* kb, const char* utf8)
         const char* u = s ? XString_toUtf8((XString*)s) : NULL;
         ok = (u != NULL && strcmp(u, utf8) == 0);
     }
-    if (v) XVariant_delete_base((XClass*)v);
+    if (v) XClassDelete((XClass*)v);
     return ok;
 }
 #endif /* XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON */

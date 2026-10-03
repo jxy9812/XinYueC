@@ -77,14 +77,14 @@ static void XLockFreeListCreateTest(void)
 			XLockFreeList_isEmpty_base(li) ? "是" : "否");
 		XPrintf("  typeSize=%zu (期望:%zu)\n",
 			XLockFreeList_typeSize_base(li), sizeof(int));
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XLockFreeList* li = XLockFreeList_create(sizeof(double));
 		XContainerSetCompare(li, double_compare);
 		XPrintf("XLockFreeList_create(sizeof(double)): typeSize=%zu (期望:%zu)\n",
 			XLockFreeList_typeSize_base(li), sizeof(double));
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 	//XCoreApplication_quit();
@@ -101,7 +101,7 @@ static void XLockFreeListInsertTest(void)
 			XLockFreeList_push_front_base(li, &i);
 		XLockFreeListPrintInt(li, "push_front(1..5): ");
 		XPrintf("  期望: 5 4 3 2 1\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
@@ -113,7 +113,7 @@ static void XLockFreeListInsertTest(void)
 		XPrintf("  front=%d (期望:1), back=%d (期望:5)\n",
 			XLockFreeList_Front_Base(li, int),
 			XLockFreeList_Back_Base(li, int));
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
@@ -126,7 +126,7 @@ static void XLockFreeListInsertTest(void)
 		XLockFreeList_Push_Front_Base(li, int, c);
 		XLockFreeListPrintInt(li, "混合插入: ");
 		XPrintf("  期望顺序: 30 10 1 999 20\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5 };
@@ -140,7 +140,7 @@ static void XLockFreeListInsertTest(void)
 			XLockFreeListPrintInt(li, "在3前insert(100): ");
 			XPrintf("  期望包含: 1 2 100 3 4 5\n");
 		}
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3 };
@@ -154,7 +154,7 @@ static void XLockFreeListInsertTest(void)
 			XLockFreeListPrintInt(li, "在2前insert_array: ");
 			XPrintf("  期望包含: 1 100 200 300 2 3\n");
 		}
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 	//XCoreApplication_quit();
@@ -173,7 +173,7 @@ static void XLockFreeListRemoveTest(void)
 		XLockFreeList_pop_back_base(li);
 		XLockFreeListPrintInt(li, "pop_back: ");
 		XPrintf("  期望剩: 2 3 4, size=3\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 10, 20, 30, 20, 40 };
@@ -185,7 +185,7 @@ static void XLockFreeListRemoveTest(void)
 		XLockFreeList_Remove_Base(li, int, 20);
 		XLockFreeListPrintInt(li, "  Remove_Base(20)后: ");
 		XPrintf("  期望: 10 30 40\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5 };
@@ -201,7 +201,7 @@ static void XLockFreeListRemoveTest(void)
 				XPrintf("  next.data=%d (期望:4)\n",
 					XLockFreeListNode_Data(next.node, int));
 		}
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5 };
@@ -210,7 +210,7 @@ static void XLockFreeListRemoveTest(void)
 		XPrintf("clear: isEmpty=%s (期望:是), size=%zu (期望:0)\n",
 			XLockFreeList_isEmpty_base(li) ? "是" : "否",
 			XLockFreeList_size_base(li));
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	/* --- Qt 6.8 对齐：removeAll / removeOne / removeIf --- */
 	{
@@ -222,7 +222,7 @@ static void XLockFreeListRemoveTest(void)
 		XPrintf("removeAll(2): 移除%zu个 (期望:3)\n", r);
 		XLockFreeListPrintInt(li, "  结果: ");
 		XPrintf("  期望: 1 3 4 5\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 2, 4 };
@@ -235,7 +235,7 @@ static void XLockFreeListRemoveTest(void)
 		rm = 999;
 		XPrintf("removeOne(999): %s (期望:否)\n",
 			XLockFreeList_removeOne_base(li, &rm) ? "是" : "否");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
@@ -245,7 +245,7 @@ static void XLockFreeListRemoveTest(void)
 		XPrintf("removeIf(偶数): 移除%zu个 (期望:4)\n", r);
 		XLockFreeListPrintInt(li, "  结果: ");
 		XPrintf("  期望: 1 3 5 7\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 5, 15, 25, 35, 45 };
@@ -256,7 +256,7 @@ static void XLockFreeListRemoveTest(void)
 		XPrintf("removeIf(>20): 移除%zu个 (期望:3)\n", r);
 		XLockFreeListPrintInt(li, "  结果: ");
 		XPrintf("  期望: 5 15\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 	//XCoreApplication_quit();
@@ -275,7 +275,7 @@ static void XLockFreeListAccessTest(void)
 		XPrintf("Front_Base=%d, Back_Base=%d\n",
 			XLockFreeList_Front_Base(li, int),
 			XLockFreeList_Back_Base(li, int));
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 10, 20, 30, 40, 50 };
@@ -293,7 +293,7 @@ static void XLockFreeListAccessTest(void)
 			XLockFreeList_contains(li, &f1) ? "是" : "否");
 		XPrintf("contains(999): %s (期望:否)\n",
 			XLockFreeList_contains(li, &f2) ? "是" : "否");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	/* --- Qt 6.8 对齐：indexOf / lastIndexOf --- */
 	{
@@ -325,7 +325,7 @@ static void XLockFreeListAccessTest(void)
 				XLockFreeListNode_Data(it.node, int));
 		XPrintf("lastIndexOf(999,6): %s (期望:否)\n",
 			XLockFreeList_lastIndexOf_base(li, &n, 6, &it) ? "是" : "否");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 	//XCoreApplication_quit();
@@ -341,7 +341,7 @@ static void XLockFreeListIteratorTest(void)
 		XPrintf("iterator_for_each: ");
 		XLockFreeList_iterator_for_each(li, XLockFreeListForEachInt, NULL);
 		XPrintf("\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 10, 20, 30, 40, 50 };
@@ -352,7 +352,7 @@ static void XLockFreeListIteratorTest(void)
 			XPrintf("%d ", XLockFreeListNode_Data(it.node, int));
 		}
 		XPrintf("\n");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
@@ -371,7 +371,7 @@ static void XLockFreeListIteratorTest(void)
 		XLockFreeList_iterator_add(li, &it);
 		XPrintf("add后: isEnd=%s (期望:是)\n",
 			XLockFreeList_iterator_isEnd(&it) ? "是" : "否");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 	//XCoreApplication_quit();
@@ -392,32 +392,32 @@ static void XLockFreeListCompareTest(void)
 		XLockFreeListPrintInt(v1, "swap后 v1: ");
 		XLockFreeListPrintInt(v2, "swap后 v2: ");
 		XPrintf("  期望 v1=4 5, v2=3 2 1\n");
-		XLockFreeList_delete_base(v1);
-		XLockFreeList_delete_base(v2);
+		XClassDelete(v1);
+		XClassDelete(v2);
 	}
 	{
 		int src[] = { 7, 8, 9 };
 		XLockFreeList* s = XLockFreeListMakeInt(src, 3);
 		XLockFreeList* d = XLockFreeList_Create(int);
 		XContainerSetCompare(d, int_compare);
-		XCopy(d, s);
+		XClassCopy(d, s);
 		XLockFreeListPrintInt(s, "copy后 src: ");
 		XLockFreeListPrintInt(d, "copy后 dst: ");
 		XPrintf("  期望 src/dst 均为 7 8 9\n");
-		XLockFreeList_delete_base(s);
-		XLockFreeList_delete_base(d);
+		XClassDelete(s);
+		XClassDelete(d);
 	}
 	{
 		int src[] = { 11, 22, 33 };
 		XLockFreeList* s = XLockFreeListMakeInt(src, 3);
 		XLockFreeList* d = XLockFreeList_Create(int);
 		XContainerSetCompare(d, int_compare);
-		XMove(d, s);
+		XClassMove(d, s);
 		XLockFreeListPrintInt(d, "move后 dst: ");
 		XPrintf("move后 src.isEmpty=%s (期望:是)\n",
 			XLockFreeList_isEmpty_base(s) ? "是" : "否");
-		XLockFreeList_delete_base(s);
-		XLockFreeList_delete_base(d);
+		XClassDelete(s);
+		XClassDelete(d);
 	}
 	{
 		int arr[] = { 5, 2, 8, 1, 9, 3 };
@@ -427,7 +427,7 @@ static void XLockFreeListCompareTest(void)
 		XLockFreeListPrintInt(li, "升序后: ");
 		XLockFreeList_sort_base(li, XSORT_DESC);
 		XLockFreeListPrintInt(li, "降序后: ");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 	//XCoreApplication_quit();
@@ -445,7 +445,7 @@ static void XLockFreeListPopAtomicTest(void)
 		while (XLockFreeList_pop_and_copy_front(li, &out))
 			XPrintf("%d ", out);
 		XPrintf("(结束, size=%zu 期望:0)\n", XLockFreeList_size_base(li));
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3 };
@@ -455,7 +455,7 @@ static void XLockFreeListPopAtomicTest(void)
 		while (XLockFreeList_pop_and_move_front(li, &out))
 			XPrintf("%d ", out);
 		XPrintf("(结束, size=%zu 期望:0)\n", XLockFreeList_size_base(li));
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XLockFreeList* empty = XLockFreeList_Create(int);
@@ -465,7 +465,7 @@ static void XLockFreeListPopAtomicTest(void)
 			XLockFreeList_pop_and_copy_front(empty, &out) ? "是" : "否");
 		XPrintf("空表 pop_and_move_front: %s (期望:否)\n",
 			XLockFreeList_pop_and_move_front(empty, &out) ? "是" : "否");
-		XLockFreeList_delete_base(empty);
+		XClassDelete(empty);
 	}
 	XPrintf("\n");
 	//XCoreApplication_quit();
@@ -496,7 +496,7 @@ static void XLockFreeListSafetyTest(void)
 			XLockFreeList_find_base(li, &val, &it) ? "是" : "否",
 			XLockFreeList_indexOf_base(li, &val, 0, &it) ? "是" : "否",
 			XLockFreeList_lastIndexOf_base(li, &val, 0, &it) ? "是" : "否");
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int val = 1;
@@ -536,7 +536,7 @@ static void XLockFreeListSafetyTest(void)
 			XPrintf("push %d pop %d, size=%zu (期望:0)\n",
 				v, out, XLockFreeList_size_base(li));
 		}
-		XLockFreeList_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 	//XCoreApplication_quit();
@@ -561,7 +561,7 @@ static void XLockFreeListSortDemo(void)
 	clock_t t2 = clock();
 	XLockFreeListPrintInt(li, "排序后: ");
 	XPrintf("耗时: %ld ticks\n", (long)(t2 - t1));
-	XLockFreeList_delete_base(li);
+	XClassDelete(li);
 	XPrintf("\n");
 	//XCoreApplication_quit();
 }
@@ -688,7 +688,7 @@ static void XLockFreeListConcurrentTest(void)
 		XAtomic_load_size_t(&consumed, XAtomic_MemoryOrder_Relaxed),
 		XLockFreeList_size_base(list),
 		XLFL_PRODUCERS * per, XLFL_PRODUCERS * per);
-	XLockFreeList_delete_base(list);
+	XClassDelete(list);
 	XPrintf("\n");
 	//XCoreApplication_quit();
 }

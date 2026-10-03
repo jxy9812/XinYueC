@@ -500,9 +500,7 @@ size_t XVariant_dataSize(XVariant* var);
  */
 void XVariant_setDataRef(XVariant* var, void* data, size_t dataSize, int type);
 /** @brief 反初始化变体并释放其内部数据。 @param var 变体对象；不能为 NULL。 @return 无。 */
-#define XVariant_deinit_base		XClass_deinit_base
 /** @brief 释放由 XVariant_create 系列函数返回的变体。 @param var 变体对象所有权。 @return 无。 */
-#define XVariant_delete_base		XClass_delete_base
 /** @brief 取出变体内部数据并按指定类型解引用；仅适用于类型已确认的对象。 */
 #define XVariant_Value(Var,Type)   (*((Type*)XVariant_data(Var)))
 #ifdef __cplusplus

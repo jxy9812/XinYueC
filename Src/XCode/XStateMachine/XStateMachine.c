@@ -60,7 +60,7 @@ static void XStateMachine_clearSignalConnections(XStateMachine* machine)
                 (XObject*)record, XStateMachine_signalSlot);
         }
         record->m_connection = NULL;
-        XClass_delete_base((XClass*)record);
+        XClassDelete((XClass*)record);
     }
     XVector_clear_base((XContainer*)machine->m_signalConnections);
 }
@@ -166,7 +166,7 @@ static void XStateMachine_clearOwnedEvents(XVector* queue)
     for (int64_t i = 0; i < (int64_t)XVector_size_base((const XContainer*)queue); ++i) {
         XEvent* event = XVector_At_Base(queue, i, XEvent*);
         if (event)
-            XEvent_delete_base((XClass*)event);
+            XClassDelete((XClass*)event);
     }
     XVector_clear_base((XContainer*)queue);
 }
@@ -189,7 +189,7 @@ static void XStateMachine_cancelAllDelayedEvents(XStateMachine* machine)
         if (delayed->m_timerId != XTIMER_INVALID_ID)
             XObject_killTimer((XObject*)machine, delayed->m_timerId);
         if (delayed->m_event)
-            XEvent_delete_base((XClass*)delayed->m_event);
+            XClassDelete((XClass*)delayed->m_event);
     }
     XVector_clear_base((XContainer*)machine->m_delayedEvents);
 }
@@ -211,7 +211,7 @@ static void XStateMachine_activateZeroDelayedEvents(XStateMachine* machine)
         if (machine->m_state != XStateMachine_Running
             || !XVector_push_back_1_base(
                 machine->m_externalEventQueue, &delayed.m_event)) {
-            XEvent_delete_base((XClass*)delayed.m_event);
+            XClassDelete((XClass*)delayed.m_event);
         }
     }
 }
@@ -404,7 +404,7 @@ static XVector* XStateMachine_exitSetForTransition(XStateMachine* machine,
         }
     }
     if (targets)
-        XVector_delete_base((XClass*)targets);
+        XClassDelete((XClass*)targets);
     return exitSet;
 }
 
@@ -429,7 +429,7 @@ static void XStateMachine_removeConflictingTransitions(XStateMachine* machine, X
             XAbstractTransition* second = XVector_At_Base(transitions, j, XAbstractTransition*);
             XVector* secondExit = XStateMachine_exitSetForTransition(machine, second);
             if (!XStateMachine_vectorsIntersect(firstExit, secondExit)) {
-                XVector_delete_base((XClass*)secondExit);
+                XClassDelete((XClass*)secondExit);
                 ++j;
                 continue;
             }
@@ -437,15 +437,15 @@ static void XStateMachine_removeConflictingTransitions(XStateMachine* machine, X
             if (XStateMachine_isDescendant((XAbstractState*)second->m_sourceState,
                                            (XAbstractState*)first->m_sourceState)) {
                 XVector_removeAt_base(transitions, i);
-                XVector_delete_base((XClass*)secondExit);
+                XClassDelete((XClass*)secondExit);
                 --i;
                 break;
             }
 
             XVector_removeAt_base(transitions, j);
-            XVector_delete_base((XClass*)secondExit);
+            XClassDelete((XClass*)secondExit);
         }
-        XVector_delete_base((XClass*)firstExit);
+        XClassDelete((XClass*)firstExit);
     }
 }
 
@@ -518,7 +518,7 @@ static XVector* XStateMachine_computeExitSet(XStateMachine* machine, XVector* tr
             XStateMachine_vectorAppendUnique(exitSet, state);
         }
         if (local)
-            XVector_delete_base((XClass*)local);
+            XClassDelete((XClass*)local);
     }
     XStateMachine_sortStates(exitSet, true);
     return exitSet;
@@ -581,7 +581,7 @@ static bool XStateMachine_addEntryPath(XStateMachine* machine,
         current = (XAbstractState*)current->m_parentState;
     }
     if (domain && current != domain) {
-        XVector_delete_base((XClass*)path);
+        XClassDelete((XClass*)path);
         XStateMachine_setError(machine,
                                XStateMachine_NoCommonAncestorForTransitionError,
                                target);
@@ -591,7 +591,7 @@ static bool XStateMachine_addEntryPath(XStateMachine* machine,
         XAbstractState* state = XVector_At_Base(path, i, XAbstractState*);
         XStateMachine_vectorAppendUnique(entries, state);
     }
-    XVector_delete_base((XClass*)path);
+    XClassDelete((XClass*)path);
     return true;
 }
 
@@ -734,7 +734,7 @@ static XVector* XStateMachine_computeEntrySet(XStateMachine* machine,
             XAbstractState* domain = XStateMachine_transitionDomain(machine, transition, targets);
             if (machine->m_stopRequested && machine->m_error != XStateMachine_NoError) {
                 if (targets)
-                    XVector_delete_base((XClass*)targets);
+                    XClassDelete((XClass*)targets);
                 continue;
             }
             for (int64_t j = 0; targets && j < (int64_t)XVector_size_base((const XContainer*)targets); ++j) {
@@ -742,7 +742,7 @@ static XVector* XStateMachine_computeEntrySet(XStateMachine* machine,
                 XStateMachine_addEntryPath(machine, target, domain, entries);
             }
             if (targets)
-                XVector_delete_base((XClass*)targets);
+                XClassDelete((XClass*)targets);
         }
         if (machine->m_pendingErrorState) {
             XAbstractState* pendingErrorState = machine->m_pendingErrorState;
@@ -867,9 +867,9 @@ static bool XStateMachine_microstep(XStateMachine* machine, XEvent* event, XVect
     bool finished = XStateMachine_emitFinishedStates(machine, entries);
 
     if (exitSet)
-        XVector_delete_base((XClass*)exitSet);
+        XClassDelete((XClass*)exitSet);
     if (entries)
-        XVector_delete_base((XClass*)entries);
+        XClassDelete((XClass*)entries);
     return finished;
 }
 
@@ -932,13 +932,13 @@ static void XStateMachine_process(XStateMachine* machine)
             XStateMachine_beginMicrostep_base(machine, &nullEvent);
             finished = XStateMachine_microstep(machine, &nullEvent, enabled);
             XStateMachine_endMicrostep_base(machine, &nullEvent);
-            XVector_delete_base((XClass*)enabled);
-            XEvent_deinit_base((XClass*)&nullEvent);
+            XClassDelete((XClass*)enabled);
+            XClassDeinit((XClass*)&nullEvent);
             continue;
         }
         if (enabled)
-            XVector_delete_base((XClass*)enabled);
-        XEvent_deinit_base((XClass*)&nullEvent);
+            XClassDelete((XClass*)enabled);
+        XClassDeinit((XClass*)&nullEvent);
 
         XEvent* event = NULL;
         do {
@@ -949,9 +949,9 @@ static void XStateMachine_process(XStateMachine* machine)
                 break;
             enabled = XStateMachine_selectTransitions(machine, event);
             if (enabled && XVector_isEmpty_base((const XContainer*)enabled)) {
-                XVector_delete_base((XClass*)enabled);
+                XClassDelete((XClass*)enabled);
                 enabled = NULL;
-                XEvent_delete_base((XClass*)event);
+                XClassDelete((XClass*)event);
                 event = NULL;
             }
         } while (!enabled);
@@ -964,8 +964,8 @@ static void XStateMachine_process(XStateMachine* machine)
         XStateMachine_beginMicrostep_base(machine, event);
         finished = XStateMachine_microstep(machine, event, enabled);
         XStateMachine_endMicrostep_base(machine, event);
-        XVector_delete_base((XClass*)enabled);
-        XEvent_delete_base((XClass*)event);
+        XClassDelete((XClass*)enabled);
+        XClassDelete((XClass*)event);
     }
 
     if (finished) {
@@ -1039,8 +1039,8 @@ static void XStateMachine_startInternal(XStateMachine* machine)
     XStateMachine_sortStates(entries, false);
     XStateMachine_enterStates(machine, &nullEvent, entries);
     bool finished = XStateMachine_emitFinishedStates(machine, entries);
-    XEvent_deinit_base((XClass*)&nullEvent);
-    XVector_delete_base((XClass*)entries);
+    XClassDeinit((XClass*)&nullEvent);
+    XClassDelete((XClass*)entries);
 
     XStateMachine_started_signal(machine);
     XStateMachine_runningChanged_signal(machine, true);
@@ -1089,7 +1089,7 @@ static bool VXStateMachine_eventFilter(XStateMachine* machine, XObject* watched,
         return false;
     XStateMachine_WrappedEvent* wrapped = XStateMachine_WrappedEvent_create(watched, clone);
     if (!wrapped) {
-        XEvent_delete_base((XClass*)clone);
+        XClassDelete((XClass*)clone);
         return false;
     }
     XStateMachine_postInternalEvent_internal(machine, (XEvent*)wrapped);
@@ -1109,7 +1109,7 @@ static void VXStateMachine_timerEvent(XStateMachine* machine, XTimerEvent* event
         XObject_killTimer((XObject*)machine, timerId);
         XVector_removeAt_base(machine->m_delayedEvents, i);
         if (!XStateMachine_postEvent(machine, delayed.m_event, XStateMachine_NormalPriority))
-            XEvent_delete_base((XClass*)delayed.m_event);
+            XClassDelete((XClass*)delayed.m_event);
         break;
     }
     XEvent_accept((XEvent*)event);
@@ -1124,11 +1124,11 @@ static void VXStateMachine_deinit(XStateMachine* machine)
     XStateMachine_cancelAllDelayedEvents(machine);
     XStateMachine_clearOwnedEvents(machine->m_internalEventQueue);
     XStateMachine_clearOwnedEvents(machine->m_externalEventQueue);
-    XVector_delete_base((XClass*)machine->m_configuration);
-    XVector_delete_base((XClass*)machine->m_internalEventQueue);
-    XVector_delete_base((XClass*)machine->m_externalEventQueue);
-    XVector_delete_base((XClass*)machine->m_delayedEvents);
-    XVector_delete_base((XClass*)machine->m_signalConnections);
+    XClassDelete((XClass*)machine->m_configuration);
+    XClassDelete((XClass*)machine->m_internalEventQueue);
+    XClassDelete((XClass*)machine->m_externalEventQueue);
+    XClassDelete((XClass*)machine->m_delayedEvents);
+    XClassDelete((XClass*)machine->m_signalConnections);
     machine->m_configuration = NULL;
     machine->m_internalEventQueue = NULL;
     machine->m_externalEventQueue = NULL;
@@ -1287,7 +1287,7 @@ bool XStateMachine_postEvent(XStateMachine* machine, XEvent* event,
 void XStateMachine_postInternalEvent_internal(XStateMachine* machine, XEvent* event)
 {
     if (!XStateMachine_postEvent(machine, event, XStateMachine_HighPriority) && event)
-        XEvent_delete_base((XClass*)event);
+        XClassDelete((XClass*)event);
 }
 
 int XStateMachine_postDelayedEvent(XStateMachine* machine, XEvent* event, int delayMs)
@@ -1337,7 +1337,7 @@ bool XStateMachine_cancelDelayedEvent(XStateMachine* machine, int id)
             continue;
         if (delayed.m_timerId != XTIMER_INVALID_ID)
             XObject_killTimer((XObject*)machine, delayed.m_timerId);
-        XEvent_delete_base((XClass*)delayed.m_event);
+        XClassDelete((XClass*)delayed.m_event);
         XVector_removeAt_base(machine->m_delayedEvents, i);
         return true;
     }
@@ -1399,7 +1399,7 @@ void XStateMachine_registerSignalTransition_internal(XStateMachine* machine,
                 (XObject*)record->m_sender, record->m_signal,
                 (XObject*)record, XStateMachine_signalSlot);
         }
-        XClass_delete_base((XClass*)record);
+        XClassDelete((XClass*)record);
         return;
     }
 
@@ -1449,7 +1449,7 @@ void XStateMachine_unregisterSignalTransition_internal(XStateMachine* machine,
         if (deferred)
             XObject_deleteLater((XObject*)record);
         else
-            XClass_delete_base((XClass*)record);
+            XClassDelete((XClass*)record);
         return;
     }
 
@@ -1644,7 +1644,7 @@ const XVarList* XStateMachine_SignalEvent_arguments_const(const XStateMachine_Si
 static void VXStateMachine_WrappedEvent_deinit(XStateMachine_WrappedEvent* event)
 {
     if (event && event->m_event) {
-        XEvent_delete_base((XClass*)event->m_event);
+        XClassDelete((XClass*)event->m_event);
         event->m_event = NULL;
     }
     XVtableGetFunc(XEvent_class_init(), EXClass_Deinit,

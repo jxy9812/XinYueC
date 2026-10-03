@@ -227,7 +227,7 @@ static const XSqlMySqlClientApi g_xmysql_client_api = {
 static void xmysql_clear_string(XString** value)
 {
     if (value && *value) {
-        XString_delete_base(*value);
+        XClassDelete(*value);
         *value = NULL;
     }
 }
@@ -249,11 +249,11 @@ static bool xmysql_store_connection_parameters(XSqlMySqlClient* client,
     hostText = XString_create_utf8(host ? host : "");
     optionsText = XString_create_utf8(options ? options : "");
     if (!databaseText || !userText || !passwordText || !hostText || !optionsText) {
-        if (databaseText) XString_delete_base(databaseText);
-        if (userText) XString_delete_base(userText);
-        if (passwordText) XString_delete_base(passwordText);
-        if (hostText) XString_delete_base(hostText);
-        if (optionsText) XString_delete_base(optionsText);
+        if (databaseText) XClassDelete(databaseText);
+        if (userText) XClassDelete(userText);
+        if (passwordText) XClassDelete(passwordText);
+        if (hostText) XClassDelete(hostText);
+        if (optionsText) XClassDelete(optionsText);
         return false;
     }
     xmysql_clear_string(&client->m_connectionDatabase);
@@ -388,11 +388,11 @@ static bool xmysql_read_packet(XSqlMySqlClient* client, XByteArray** payload, ui
     if (size > XMYSQL_MAX_PACKET_SIZE) return false;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base(result, size)) {
-        if (result) XByteArray_delete_base(result);
+        if (result) XClassDelete(result);
         return false;
     }
     if (size > 0 && !xmysql_socket_read(client, XByteArray_data(result), size, timeout)) {
-        XByteArray_delete_base(result);
+        XClassDelete(result);
         return false;
     }
     if (sequence) *sequence = header[3];
@@ -417,7 +417,7 @@ static void xmysql_compression_clear_buffer(XSqlMySqlClient* client)
 {
     if (!client) return;
     if (client->m_compressedReadBuffer) {
-        XByteArray_delete_base(client->m_compressedReadBuffer);
+        XClassDelete(client->m_compressedReadBuffer);
         client->m_compressedReadBuffer = NULL;
     }
 }
@@ -474,8 +474,8 @@ static bool xmysql_send_compressed_packet(XSqlMySqlClient* client, const void* d
         xmysql_set_error(client, "Unable to write MySQL compressed packet", "", 0,
                          XSqlErrorType_ConnectionError);
 done:
-    if (raw) XByteArray_delete_base(raw);
-    if (compressed) XByteArray_delete_base(compressed);
+    if (raw) XClassDelete(raw);
+    if (compressed) XClassDelete(compressed);
     return ok;
 }
 
@@ -500,7 +500,7 @@ static bool xmysql_compressed_extract_packet(XSqlMySqlClient* client,
         return false;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base(result, packetSize)) {
-        if (result) XByteArray_delete_base(result);
+        if (result) XClassDelete(result);
         return false;
     }
     if (packetSize > 0)
@@ -582,8 +582,8 @@ static bool xmysql_read_compressed_packet(XSqlMySqlClient* client)
     }
     ok = true;
 done:
-    if (packet) XByteArray_delete_base(packet);
-    if (decoded) XByteArray_delete_base(decoded);
+    if (packet) XClassDelete(packet);
+    if (decoded) XClassDelete(decoded);
     return ok;
 }
 
@@ -881,9 +881,9 @@ static bool xmysql_result_parse_field(XSqlMySqlResult* result, int index,
     result->m_fields[index].m_unsigned = (flags & XMYSQL_FLAG_UNSIGNED) != 0;
     return true;
 fail:
-    if (name) XString_delete_base(name);
-    if (table) XString_delete_base(table);
-    if (database) XString_delete_base(database);
+    if (name) XClassDelete(name);
+    if (table) XClassDelete(table);
+    if (database) XClassDelete(database);
     return false;
 }
 
@@ -951,14 +951,14 @@ static void xmysql_result_destroy(XSqlMySqlResult* result)
     if (result->m_cells) {
         for (index = 0; index < result->m_rowCount * result->m_fieldCount; ++index)
             if (result->m_cells[index].m_bytes)
-                XByteArray_delete_base(result->m_cells[index].m_bytes);
+                XClassDelete(result->m_cells[index].m_bytes);
         XFree_System(result->m_cells);
     }
     if (result->m_fieldNames) {
         for (index = 0; index < result->m_fieldCount; ++index) {
-            if (result->m_fieldNames[index]) XString_delete_base(result->m_fieldNames[index]);
-            if (result->m_fieldTables[index]) XString_delete_base(result->m_fieldTables[index]);
-            if (result->m_fieldDatabases[index]) XString_delete_base(result->m_fieldDatabases[index]);
+            if (result->m_fieldNames[index]) XClassDelete(result->m_fieldNames[index]);
+            if (result->m_fieldTables[index]) XClassDelete(result->m_fieldTables[index]);
+            if (result->m_fieldDatabases[index]) XClassDelete(result->m_fieldDatabases[index]);
         }
     }
     if (result->m_fields) XFree_System(result->m_fields);
@@ -1010,10 +1010,10 @@ static bool xmysql_native_password(const char* password, const uint8_t* scramble
             output[index] = XByteArray_data(third)[index] ^ XByteArray_data(first)[index];
         ok = true;
     }
-    if (first) XByteArray_delete_base(first);
-    if (second) XByteArray_delete_base(second);
-    if (input) XByteArray_delete_base(input);
-    if (third) XByteArray_delete_base(third);
+    if (first) XClassDelete(first);
+    if (second) XClassDelete(second);
+    if (input) XClassDelete(input);
+    if (third) XClassDelete(third);
     return ok;
 }
 
@@ -1045,10 +1045,10 @@ static bool xmysql_caching_sha2_password(const char* password, const uint8_t* sc
             output[index] = XByteArray_data(first)[index] ^ XByteArray_data(third)[index];
         ok = true;
     }
-    if (first) XByteArray_delete_base(first);
-    if (second) XByteArray_delete_base(second);
-    if (input) XByteArray_delete_base(input);
-    if (third) XByteArray_delete_base(third);
+    if (first) XClassDelete(first);
+    if (second) XClassDelete(second);
+    if (input) XClassDelete(input);
+    if (third) XClassDelete(third);
     return ok;
 }
 
@@ -1068,7 +1068,7 @@ static bool xmysql_encrypt_caching_sha2_password(const char* password,
     passwordSize = strlen(password) + 1;
     plain = XByteArray_create_with_data(password, passwordSize);
     if (!plain || !XByteArray_data(plain)) {
-        if (plain) XByteArray_delete_base(plain);
+        if (plain) XClassDelete(plain);
         return false;
     }
     for (size_t i = 0; i < passwordSize; ++i)
@@ -1076,7 +1076,7 @@ static bool xmysql_encrypt_caching_sha2_password(const char* password,
     bool ok = XSsl_publicKeyEncrypt(
         (const uint8_t*)publicKey, publicKeySize, XSSL_Pem, XSSL_KeyAlgorithm_Rsa,
         (const uint8_t*)XByteArray_data(plain), XByteArray_size_base(plain), encrypted);
-    XByteArray_delete_base(plain);
+    XClassDelete(plain);
     return ok;
 }
 
@@ -1294,7 +1294,7 @@ static bool xmysql_parse_handshake(XSqlMySqlClient* client, XByteArray* payload,
         /* SSLRequest is exactly the fixed 32-byte capability prefix. */
         if (!xmysql_client_send_packet(client, XByteArray_data(response),
                                 XByteArray_size_base(response), 1)) goto fail;
-        XByteArray_delete_base(response);
+        XClassDelete(response);
         response = NULL;
         XSslSocket_startClientEncryption((XSslSocket*)client->m_socket);
         if (!XSslSocket_waitForEncrypted((XSslSocket*)client->m_socket, 30000)) {
@@ -1302,7 +1302,7 @@ static bool xmysql_parse_handshake(XSqlMySqlClient* client, XByteArray* payload,
             xmysql_set_error(client, "Unable to establish MySQL TLS connection",
                              sslError ? XString_toUtf8(sslError) : "", 0,
                              XSqlErrorType_ConnectionError);
-            if (sslError) XString_delete_base(sslError);
+            if (sslError) XClassDelete(sslError);
             goto fail;
         }
         response = XByteArray_create();
@@ -1320,12 +1320,12 @@ static bool xmysql_parse_handshake(XSqlMySqlClient* client, XByteArray* payload,
         && !xmysql_append_cstring(response, client->m_authPlugin)) goto fail;
     if (!xmysql_client_send_packet(client, XByteArray_data(response),
                             XByteArray_size_base(response), client->m_useTls ? 2 : 1)) goto fail;
-    XByteArray_delete_base(response);
+    XClassDelete(response);
     response = NULL;
     if (responseSequence) *responseSequence = 2;
     return true;
 fail:
-    if (response) XByteArray_delete_base(response);
+    if (response) XClassDelete(response);
     if (client && client->m_errorType == XSqlErrorType_NoError)
         xmysql_set_error(client, "Unable to send MySQL handshake response", "", 0,
                          XSqlErrorType_ConnectionError);
@@ -1347,7 +1347,7 @@ static bool xmysql_client_handshake(XSqlMySqlClient* client, const char* databas
         goto done;
     }
     if (!xmysql_parse_handshake(client, payload, database, user, password, &sequence)) goto done;
-    XByteArray_delete_base(payload);
+    XClassDelete(payload);
     payload = NULL;
     if (!xmysql_client_read_packet(client, &authResponse, &sequence)) goto done;
     if (XByteArray_size_base(authResponse) > 0 && XByteArray_data(authResponse)[0] == 0x00u) {
@@ -1409,13 +1409,13 @@ static bool xmysql_client_handshake(XSqlMySqlClient* client, const char* databas
                                      "The MySQL server did not return a usable RSA public key",
                                      0, XSqlErrorType_ConnectionError);
                 }
-                if (publicKeyRequest) XByteArray_delete_base(publicKeyRequest);
-                if (publicKeyResponse) XByteArray_delete_base(publicKeyResponse);
-                if (encryptedPassword) XByteArray_delete_base(encryptedPassword);
-                if (finalResponse) XByteArray_delete_base(finalResponse);
+                if (publicKeyRequest) XClassDelete(publicKeyRequest);
+                if (publicKeyResponse) XClassDelete(publicKeyResponse);
+                if (encryptedPassword) XClassDelete(encryptedPassword);
+                if (finalResponse) XClassDelete(finalResponse);
             }
-            if (fullAuth) XByteArray_delete_base(fullAuth);
-            if (finalResponse) XByteArray_delete_base(finalResponse);
+            if (fullAuth) XClassDelete(fullAuth);
+            if (finalResponse) XClassDelete(finalResponse);
         } else {
             xmysql_set_error(client, "Unsupported caching_sha2_password authentication state",
                              "", authState, XSqlErrorType_ConnectionError);
@@ -1429,8 +1429,8 @@ static bool xmysql_client_handshake(XSqlMySqlClient* client, const char* databas
                          XSqlErrorType_ConnectionError);
     }
 done:
-    if (payload) XByteArray_delete_base(payload);
-    if (authResponse) XByteArray_delete_base(authResponse);
+    if (payload) XClassDelete(payload);
+    if (authResponse) XClassDelete(authResponse);
     if (ok) {
         client->m_compressionActive = client->m_compress
             && (client->m_serverCapabilities & XMYSQL_CLIENT_COMPRESS) != 0;
@@ -1454,7 +1454,7 @@ static void xmysql_client_close(XSqlMySqlClient* client)
     client->m_useSharedMemory = false;
     if (client->m_socket) {
         XTcpSocket_disconnectFromHost_base(client->m_socket);
-        XClass_delete_base((XClass*)client->m_socket);
+        XClassDelete((XClass*)client->m_socket);
         client->m_socket = NULL;
     }
     if (client->m_caCertificate) {
@@ -1710,7 +1710,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
             if (!sslPathString) goto tls_option_fail;
             XSslSocket_setLocalCertificate_2((XSslSocket*)client->m_socket,
                                              sslPathString, XSSL_Pem);
-            XString_delete_base(sslPathString);
+            XClassDelete(sslPathString);
             sslPathString = NULL;
             if (!XSslSocket_localCertificate((XSslSocket*)client->m_socket)) goto tls_option_fail;
         }
@@ -1721,7 +1721,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
             XSslSocket_setPrivateKey_2((XSslSocket*)client->m_socket,
                                        sslPathString, XSSL_KeyAlgorithm_Rsa,
                                        XSSL_Pem, NULL);
-            XString_delete_base(sslPathString);
+            XClassDelete(sslPathString);
             sslPathString = NULL;
             if (!XSslSocket_privateKey((XSslSocket*)client->m_socket)) goto tls_option_fail;
         }
@@ -1730,30 +1730,30 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
             XString* cipherText = XString_create_utf8(sslCipher);
             if (!cipherText
                 || !XSslSocket_setCipherSuites((XSslSocket*)client->m_socket, cipherText)) {
-                if (cipherText) XString_delete_base(cipherText);
+                if (cipherText) XClassDelete(cipherText);
                 goto tls_option_fail;
             }
-            XString_delete_base(cipherText);
+            XClassDelete(cipherText);
         }
         if (xmysql_option_value_alias(options, "SSL_CRL", "MYSQL_OPT_SSL_CRL",
                                       sslCrl, sizeof(sslCrl))) {
             XString* crlText = XString_create_utf8(sslCrl);
             if (!crlText
                 || !XSslSocket_setCrlFile((XSslSocket*)client->m_socket, crlText)) {
-                if (crlText) XString_delete_base(crlText);
+                if (crlText) XClassDelete(crlText);
                 goto tls_option_fail;
             }
-            XString_delete_base(crlText);
+            XClassDelete(crlText);
         }
         if (xmysql_option_value_alias(options, "SSL_CRLPATH", "MYSQL_OPT_SSL_CRLPATH",
                                       sslCrlPath, sizeof(sslCrlPath))) {
             XString* crlPathText = XString_create_utf8(sslCrlPath);
             if (!crlPathText
                 || !XSslSocket_setCrlPath((XSslSocket*)client->m_socket, crlPathText)) {
-                if (crlPathText) XString_delete_base(crlPathText);
+                if (crlPathText) XClassDelete(crlPathText);
                 goto tls_option_fail;
             }
-            XString_delete_base(crlPathText);
+            XClassDelete(crlPathText);
         }
         XSslSocket_setProtocol((XSslSocket*)client->m_socket, client->m_tlsProtocol);
         XString* peer = XString_create_utf8(host && host[0] ? host : "127.0.0.1");
@@ -1761,7 +1761,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
                                       client->m_verifyPeer ? XSSL_VerifyPeer : XSSL_VerifyNone);
         if (peer) {
             XSslSocket_setPeerVerifyName((XSslSocket*)client->m_socket, peer);
-            XString_delete_base(peer);
+            XClassDelete(peer);
         }
         if (xmysql_option_value_alias(options, "SSL_CA", "MYSQL_OPT_SSL_CA",
                                       caPath, sizeof(caPath))) {
@@ -1773,13 +1773,13 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
                 XString* caPathText = XString_create_utf8(caPath);
                 if (!caPathText
                     || !XSslSocket_setCaPath((XSslSocket*)client->m_socket, caPathText)) {
-                    if (caPathText) XString_delete_base(caPathText);
+                    if (caPathText) XClassDelete(caPathText);
                     xmysql_set_error(client, "Unable to configure MySQL TLS CA path", caPath, 0,
                                      XSqlErrorType_ConnectionError);
                     xmysql_client_close(client);
                     return false;
                 }
-                XString_delete_base(caPathText);
+                XClassDelete(caPathText);
             }
         }
         if (xmysql_option_value_alias(options, "SSL_CAPATH", "MYSQL_OPT_SSL_CAPATH",
@@ -1787,13 +1787,13 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
             XString* caPathText = XString_create_utf8(sslCaPath);
             if (!caPathText
                 || !XSslSocket_setCaPath((XSslSocket*)client->m_socket, caPathText)) {
-                if (caPathText) XString_delete_base(caPathText);
+                if (caPathText) XClassDelete(caPathText);
                 xmysql_set_error(client, "Unable to configure MySQL TLS CA directory", sslCaPath, 0,
                                  XSqlErrorType_ConnectionError);
                 xmysql_client_close(client);
                 return false;
             }
-            XString_delete_base(caPathText);
+            XClassDelete(caPathText);
         }
     }
     if (useSharedMemory) {
@@ -1806,7 +1806,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
         }
         client->m_sharedMemory = XMySqlSharedMemory_open(sharedMemoryBaseNameText,
                                                           client->m_connectTimeout);
-        XString_delete_base(sharedMemoryBaseNameText);
+        XClassDelete(sharedMemoryBaseNameText);
         if (!client->m_sharedMemory) {
             xmysql_set_error(client, "Unable to connect to MySQL shared memory",
                              sharedMemoryBaseName, 0, XSqlErrorType_ConnectionError);
@@ -1821,13 +1821,13 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
                                                            namedPipeText,
                                                            XDeviceNetwork_LocalStream_NamedPipe,
                                                            client->m_connectTimeout)) {
-            if (namedPipeText) XString_delete_base(namedPipeText);
+            if (namedPipeText) XClassDelete(namedPipeText);
             xmysql_set_error(client, "Unable to connect to MySQL named pipe", namedPipe, 0,
                              XSqlErrorType_ConnectionError);
             xmysql_client_close(client);
             return false;
         }
-        XString_delete_base(namedPipeText);
+        XClassDelete(namedPipeText);
         namedPipeText = NULL;
     } else if (useUnixSocket) {
         unixSocketText = XString_create_utf8(unixSocket);
@@ -1836,13 +1836,13 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
                                                             unixSocketText,
                                                             XDeviceNetwork_LocalStream_UnixSocket,
                                                             client->m_connectTimeout)) {
-            if (unixSocketText) XString_delete_base(unixSocketText);
+            if (unixSocketText) XClassDelete(unixSocketText);
             xmysql_set_error(client, "Unable to connect to MySQL Unix socket", unixSocket, 0,
                              XSqlErrorType_ConnectionError);
             xmysql_client_close(client);
             return false;
         }
-        XString_delete_base(unixSocketText);
+        XClassDelete(unixSocketText);
         unixSocketText = NULL;
     } else {
         XAbstractSocket_connectToHost_base((XAbstractSocket*)client->m_socket,
@@ -1856,7 +1856,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
         xmysql_set_error(client, "Unable to connect to MySQL server",
                          socketError ? XString_toUtf8(socketError) : "", 0,
                          XSqlErrorType_ConnectionError);
-        if (socketError) XString_delete_base(socketError);
+        if (socketError) XClassDelete(socketError);
         xmysql_client_close(client);
         return false;
     }
@@ -1876,7 +1876,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
     }
     return true;
 tls_option_fail:
-    if (sslPathString) XString_delete_base(sslPathString);
+    if (sslPathString) XClassDelete(sslPathString);
     xmysql_set_error(client, "Unable to load MySQL TLS client credentials", "", 0,
                      XSqlErrorType_ConnectionError);
     xmysql_client_close(client);
@@ -1900,11 +1900,11 @@ static bool xmysql_client_reconnect(XSqlMySqlClient* client)
     host = XString_create_copy(client->m_connectionHost);
     options = XString_create_copy(client->m_connectionOptions);
     if (!database || !user || !password || !host || !options) {
-        if (database) XString_delete_base(database);
-        if (user) XString_delete_base(user);
-        if (password) XString_delete_base(password);
-        if (host) XString_delete_base(host);
-        if (options) XString_delete_base(options);
+        if (database) XClassDelete(database);
+        if (user) XClassDelete(user);
+        if (password) XClassDelete(password);
+        if (host) XClassDelete(host);
+        if (options) XClassDelete(options);
         return false;
     }
     client->m_reconnecting = true;
@@ -1912,11 +1912,11 @@ static bool xmysql_client_reconnect(XSqlMySqlClient* client)
                             XString_toUtf8(password), XString_toUtf8(host),
                             client->m_connectionPort, XString_toUtf8(options));
     client->m_reconnecting = false;
-    XString_delete_base(database);
-    XString_delete_base(user);
-    XString_delete_base(password);
-    XString_delete_base(host);
-    XString_delete_base(options);
+    XClassDelete(database);
+    XClassDelete(user);
+    XClassDelete(password);
+    XClassDelete(host);
+    XClassDelete(options);
     return ok;
 }
 
@@ -2142,25 +2142,25 @@ static bool xmysql_send_local_infile(XSqlMySqlClient* client,
     path = XString_create_with_length_utf8((const char*)data + 1, size - 1);
     if (!path) return false;
     file = XFile_create_2(path);
-    XString_delete_base(path);
+    XClassDelete(path);
     if (!file || !XFile_open_2(file, XIODevice_ReadOnly, 0)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     sequence = (uint8_t)(requestSequence + 1u);
     for (;;) {
         int64_t count = XIODevice_read_1((XIODevice*)file, (char*)packet, sizeof(packet));
         if (count < 0) {
-            XClass_delete_base((XClass*)file);
+            XClassDelete((XClass*)file);
             return false;
         }
         if (count == 0) break;
         if (!xmysql_client_send_packet(client, packet, (size_t)count, sequence++)) {
-            XClass_delete_base((XClass*)file);
+            XClassDelete((XClass*)file);
             return false;
         }
     }
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     return xmysql_client_send_packet(client, NULL, 0, sequence);
 }
 
@@ -2190,7 +2190,7 @@ static bool xmysql_read_result(XSqlMySqlClient* client, XByteArray* first,
                              XSqlErrorType_StatementError);
             goto fail;
         }
-        XByteArray_delete_base(payload);
+        XClassDelete(payload);
         payload = NULL;
         if (!xmysql_client_read_packet(client, &payload, &sequence)
             || XByteArray_size_base(payload) == 0) goto fail;
@@ -2202,26 +2202,26 @@ static bool xmysql_read_result(XSqlMySqlClient* client, XByteArray* first,
         }
         if (data[0] != 0x00u) goto fail;
         xmysql_client_parse_ok(result, data, XByteArray_size_base(payload));
-        XByteArray_delete_base(payload);
+        XClassDelete(payload);
         *output = result;
         return true;
     }
     if (data[0] == 0x00u) {
         xmysql_client_parse_ok(result, data, XByteArray_size_base(payload));
-        XByteArray_delete_base(payload);
+        XClassDelete(payload);
         *output = result;
         return true;
     }
     if (!xmysql_read_lenenc(&data, XByteArray_data(payload) + XByteArray_size_base(payload),
                             &columnCount, &isNull) || isNull || columnCount > INT_MAX
         || !xmysql_result_allocate_fields(result, (size_t)columnCount)) goto fail;
-    XByteArray_delete_base(payload);
+    XClassDelete(payload);
     payload = NULL;
     for (field = 0; field < (int)columnCount; ++field) {
         if (!xmysql_client_read_packet(client, &payload, &sequence)
             || !xmysql_result_parse_field(result, field, XByteArray_data(payload),
                                           XByteArray_size_base(payload))) goto fail;
-        XByteArray_delete_base(payload);
+        XClassDelete(payload);
         payload = NULL;
     }
     if (!xmysql_client_read_packet(client, &payload, &sequence)) goto fail;
@@ -2229,7 +2229,7 @@ static bool xmysql_read_result(XSqlMySqlClient* client, XByteArray* first,
     if (XByteArray_size_base(payload) < 9)
         xmysql_result_parse_eof(result, XByteArray_data(payload),
                                 XByteArray_size_base(payload));
-    XByteArray_delete_base(payload);
+    XClassDelete(payload);
     payload = NULL;
     result->m_select = true;
     for (;;) {
@@ -2237,7 +2237,7 @@ static bool xmysql_read_result(XSqlMySqlClient* client, XByteArray* first,
         data = XByteArray_data(payload);
         if (XByteArray_size_base(payload) < 9 && data[0] == 0xfeu) {
             xmysql_result_parse_eof(result, data, XByteArray_size_base(payload));
-            XByteArray_delete_base(payload);
+            XClassDelete(payload);
             payload = NULL;
             break;
         }
@@ -2248,14 +2248,14 @@ static bool xmysql_read_result(XSqlMySqlClient* client, XByteArray* first,
         }
         if (binaryRows ? !xmysql_result_append_binary_row(result, data, XByteArray_size_base(payload))
                        : !xmysql_result_append_row(result, data, XByteArray_size_base(payload))) goto fail;
-        XByteArray_delete_base(payload);
+        XClassDelete(payload);
         payload = NULL;
     }
     result->m_at = XSqlLocation_BeforeFirstRow;
     *output = result;
     return true;
 fail:
-    if (payload) XByteArray_delete_base(payload);
+    if (payload) XClassDelete(payload);
     if (result) xmysql_result_destroy(result);
     return false;
 }
@@ -2292,7 +2292,7 @@ static bool xmysql_client_execute_once(XSqlMySqlClient* client, const char* quer
             XSqlMySqlResult* next = NULL;
             if (!xmysql_client_read_packet(client, &nextPayload, &sequence)
                 || !xmysql_read_result(client, nextPayload, false, sequence, &next)) {
-                if (nextPayload) XByteArray_delete_base(nextPayload);
+                if (nextPayload) XClassDelete(nextPayload);
                 goto fail;
             }
             tail->m_next = next;
@@ -2301,16 +2301,16 @@ static bool xmysql_client_execute_once(XSqlMySqlClient* client, const char* quer
     }
     goto success;
 fail:
-    if (packet) XByteArray_delete_base(packet);
-    if (payload) XByteArray_delete_base(payload);
+    if (packet) XClassDelete(packet);
+    if (payload) XClassDelete(payload);
     if (output) xmysql_result_destroy(output);
     if (client->m_errorType == XSqlErrorType_NoError)
         xmysql_set_error(client, "Unable to execute MySQL query", "", 0,
                          XSqlErrorType_StatementError);
     return false;
 success:
-    if (packet) XByteArray_delete_base(packet);
-    if (payload) XByteArray_delete_base(payload);
+    if (packet) XClassDelete(packet);
+    if (payload) XClassDelete(payload);
     *result = output;
     return true;
 }
@@ -2437,25 +2437,25 @@ static bool xmysql_client_execute_prepared_once(XSqlMySqlClient* client, const c
         | ((uint16_t)XByteArray_data(response)[6] << 8);
     parameterCount = (uint16_t)XByteArray_data(response)[7]
         | ((uint16_t)XByteArray_data(response)[8] << 8);
-    XByteArray_delete_base(response);
+    XClassDelete(response);
     response = NULL;
     if (parameterCount != bindCount) goto fail;
     for (i = 0; i < parameterCount; ++i) {
         if (!xmysql_client_read_packet(client, &discard, &sequence)) goto fail;
-        XByteArray_delete_base(discard);
+        XClassDelete(discard);
         discard = NULL;
     }
     if (parameterCount > 0 && !xmysql_client_read_packet(client, &discard, &sequence)) goto fail;
-    if (discard) { XByteArray_delete_base(discard); discard = NULL; }
+    if (discard) { XClassDelete(discard); discard = NULL; }
     for (i = 0; i < columnCount; ++i) {
         if (!xmysql_client_read_packet(client, &discard, &sequence)) goto fail;
-        XByteArray_delete_base(discard);
+        XClassDelete(discard);
         discard = NULL;
     }
     if (columnCount > 0 && !xmysql_client_read_packet(client, &discard, &sequence)) goto fail;
-    if (discard) { XByteArray_delete_base(discard); discard = NULL; }
+    if (discard) { XClassDelete(discard); discard = NULL; }
 
-    XByteArray_delete_base(packet);
+    XClassDelete(packet);
     packet = XByteArray_create();
     if (!packet || !xmysql_append_u8(packet, XMYSQL_COM_STMT_EXECUTE)
         || !xmysql_append_u32(packet, statementId)
@@ -2490,7 +2490,7 @@ static bool xmysql_client_execute_prepared_once(XSqlMySqlClient* client, const c
             XSqlMySqlResult* next = NULL;
             if (!xmysql_client_read_packet(client, &nextPayload, &sequence)
                 || !xmysql_read_result(client, nextPayload, true, sequence, &next)) {
-                if (nextPayload) XByteArray_delete_base(nextPayload);
+                if (nextPayload) XClassDelete(nextPayload);
                 goto fail;
             }
             tail->m_next = next;
@@ -2504,16 +2504,16 @@ static bool xmysql_client_execute_prepared_once(XSqlMySqlClient* client, const c
                 && xmysql_append_u32(closePacket, statementId))
                 xmysql_client_send_packet(client, XByteArray_data(closePacket),
                                    XByteArray_size_base(closePacket), 0);
-            XByteArray_delete_base(closePacket);
+            XClassDelete(closePacket);
         }
     }
-    XByteArray_delete_base(packet);
+    XClassDelete(packet);
     *result = output;
     return true;
 fail:
-    if (packet) XByteArray_delete_base(packet);
-    if (response) XByteArray_delete_base(response);
-    if (discard) XByteArray_delete_base(discard);
+    if (packet) XClassDelete(packet);
+    if (response) XClassDelete(response);
+    if (discard) XClassDelete(discard);
     if (output) xmysql_result_destroy(output);
     if (client->m_errorType == XSqlErrorType_NoError)
         xmysql_set_error(client, "Unable to execute MySQL prepared query", "", 0,

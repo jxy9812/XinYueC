@@ -59,7 +59,7 @@ static void VX_shortcut_deinit(XShortcut* self)
     if (!self) return;
     XShortcut_unregister(self);
     if (self->m_whatsThis) {
-        XString_delete_base((XClass*)self->m_whatsThis);
+        XClassDelete((XClass*)self->m_whatsThis);
         self->m_whatsThis = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -162,7 +162,7 @@ void XShortcut_setWhatsThis(XShortcut* self, const XString* text)
     if (!self) return;
     copy = text ? XString_create_copy(text) : NULL;
     if (self->m_whatsThis)
-        XString_delete_base((XClass*)self->m_whatsThis);
+        XClassDelete((XClass*)self->m_whatsThis);
     self->m_whatsThis = copy;
 }
 
@@ -173,7 +173,7 @@ void XShortcut_setWhatsThis_2(XShortcut* self, const char* utf8)
     text = utf8 ? XString_create_utf8(utf8) : NULL;
     XShortcut_setWhatsThis(self, text);
     if (text)
-        XString_delete_base((XClass*)text);
+        XClassDelete((XClass*)text);
 }
 
 XString* XShortcut_whatsThis(const XShortcut* self)

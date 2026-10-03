@@ -47,7 +47,7 @@ XCommandLineOption* XCommandLineOption_createWithNames(const XStringList* names)
                 XString* copy = XString_create_copy(s);
                 if (copy) {
                     XStringList_push_back_move_base(opt->names, copy);
-                    XString_delete_base(copy);
+                    XClassDelete(copy);
                 }
             }
         }
@@ -104,10 +104,10 @@ void XCommandLineOption_addName(XCommandLineOption* option, const char* name)
 void XCommandLineOption_delete(XCommandLineOption* option)
 {
     if (!option) return;
-    XStringList_delete_base(option->names);
-    XString_delete_base(option->description);
-    XString_delete_base(option->valueName);
-    XStringList_delete_base(option->defaultValues);
+    XClassDelete(option->names);
+    XClassDelete(option->description);
+    XClassDelete(option->valueName);
+    XClassDelete(option->defaultValues);
     XFree_System(option);
 }
 
@@ -119,7 +119,7 @@ const XStringList* XCommandLineOption_names(const XCommandLineOption* option)
 void XCommandLineOption_setValueName(XCommandLineOption* option, const char* name)
 {
     if (!option) return;
-    XString_delete_base(option->valueName);
+    XClassDelete(option->valueName);
     option->valueName = name ? XString_create_utf8(name) : NULL;
 }
 
@@ -131,7 +131,7 @@ const char* XCommandLineOption_valueName(const XCommandLineOption* option)
 void XCommandLineOption_setDescription(XCommandLineOption* option, const char* description)
 {
     if (!option) return;
-    XString_delete_base(option->description);
+    XClassDelete(option->description);
     option->description = description ? XString_create_utf8(description) : NULL;
 }
 
@@ -160,7 +160,7 @@ void XCommandLineOption_setDefaultValues(XCommandLineOption* option, const XStri
                 XString* copy = XString_create_copy(s);
                 if (copy) {
                     XStringList_push_back_move_base(option->defaultValues, copy);
-                    XString_delete_base(copy);
+                    XClassDelete(copy);
                 }
             }
         }

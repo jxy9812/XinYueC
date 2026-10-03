@@ -199,10 +199,10 @@ XRcode* XRcode_create(void) {
 
 void XRcode_delete(XRcode* qr) {
     if (!qr) return;
-    XByteArray_deinit_base(&qr->data_code);
-    XByteArray_deinit_base(&qr->rsec_code);
-    XByteArray_deinit_base(&qr->code_word);
-    XByteArray_deinit_base(&qr->matrix);
+    XClassDeinit(&qr->data_code);
+    XClassDeinit(&qr->rsec_code);
+    XClassDeinit(&qr->code_word);
+    XClassDeinit(&qr->matrix);
     XFree_System(qr);
 }
 

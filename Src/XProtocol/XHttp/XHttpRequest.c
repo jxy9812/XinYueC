@@ -14,7 +14,7 @@ static bool xhttp_request_set_bytes(XByteArray** target, const XByteArray* value
     if (!replacement)
         return false;
     if (*target)
-        XClass_delete_base((XClass*)*target);
+        XClassDelete((XClass*)*target);
     *target = replacement;
     return true;
 }
@@ -41,7 +41,7 @@ static bool xhttp_request_has_header(const XHttpRequest* self, const char* name)
     XByteArray* field = XByteArray_create_utf8(name);
     bool result = field && XHttpHeaders_contains(self ? self->m_headers : NULL, field);
     if (field)
-        XClass_delete_base((XClass*)field);
+        XClassDelete((XClass*)field);
     return result;
 }
 
@@ -74,27 +74,27 @@ static void xhttp_request_release_members(XHttpRequest* self)
     if (!self)
         return;
     if (self->m_url) {
-        XClass_delete_base((XClass*)self->m_url);
+        XClassDelete((XClass*)self->m_url);
         self->m_url = NULL;
     }
     if (self->m_headers) {
-        XClass_delete_base((XClass*)self->m_headers);
+        XClassDelete((XClass*)self->m_headers);
         self->m_headers = NULL;
     }
     if (self->m_body) {
-        XClass_delete_base((XClass*)self->m_body);
+        XClassDelete((XClass*)self->m_body);
         self->m_body = NULL;
     }
     if (self->m_customMethod) {
-        XClass_delete_base((XClass*)self->m_customMethod);
+        XClassDelete((XClass*)self->m_customMethod);
         self->m_customMethod = NULL;
     }
     if (self->m_http1Configuration) {
-        XClass_delete_base((XClass*)self->m_http1Configuration);
+        XClassDelete((XClass*)self->m_http1Configuration);
         self->m_http1Configuration = NULL;
     }
     if (self->m_http2Configuration) {
-        XClass_delete_base((XClass*)self->m_http2Configuration);
+        XClassDelete((XClass*)self->m_http2Configuration);
         self->m_http2Configuration = NULL;
     }
     if (self->m_attributes) {
@@ -102,10 +102,10 @@ static void xhttp_request_release_members(XHttpRequest* self)
             XHttpRequest_AttributeItem* item =
                 (XHttpRequest_AttributeItem*)XVector_at_base(self->m_attributes, (int64_t)i);
             if (item && item->m_value)
-                XClass_delete_base((XClass*)item->m_value);
+                XClassDelete((XClass*)item->m_value);
         }
         XContainer_clear_base((XContainer*)self->m_attributes);
-        XClass_delete_base((XClass*)self->m_attributes);
+        XClassDelete((XClass*)self->m_attributes);
         self->m_attributes = NULL;
     }
 }
@@ -148,13 +148,13 @@ static void VXHttpRequest_copy(XHttpRequest* dest, const XHttpRequest* src)
         XHttp2Configuration_create_copy(src->m_http2Configuration) : XHttp2Configuration_create();
     XVector* attributes = XVector_create(sizeof(XHttpRequest_AttributeItem));
     if (!headers || !body || !http1 || !http2 || !attributes || (src->m_url && !url) || (src->m_customMethod && !custom)) {
-        if (url) XClass_delete_base((XClass*)url);
-        if (headers) XClass_delete_base((XClass*)headers);
-        if (body) XClass_delete_base((XClass*)body);
-        if (custom) XClass_delete_base((XClass*)custom);
-        if (http1) XClass_delete_base((XClass*)http1);
-        if (http2) XClass_delete_base((XClass*)http2);
-        if (attributes) XClass_delete_base((XClass*)attributes);
+        if (url) XClassDelete((XClass*)url);
+        if (headers) XClassDelete((XClass*)headers);
+        if (body) XClassDelete((XClass*)body);
+        if (custom) XClassDelete((XClass*)custom);
+        if (http1) XClassDelete((XClass*)http1);
+        if (http2) XClassDelete((XClass*)http2);
+        if (attributes) XClassDelete((XClass*)attributes);
         return;
     }
     xhttp_request_release_members(dest);
@@ -256,7 +256,7 @@ XHttpRequest* XHttpRequest_create_ex(XMemoryType memory)
     XHttpRequest_init(self);
     if (!self->m_headers || !self->m_body || !self->m_http1Configuration ||
         !self->m_http2Configuration || !self->m_attributes) {
-        XHttpRequest_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -270,7 +270,7 @@ XHttpRequest* XHttpRequest_create_url(const XUrl* url)
         return NULL;
     XHttpRequest* self = XHttpRequest_create();
     if (self && !XHttpRequest_setUrl(self, url)) {
-        XHttpRequest_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;
@@ -282,7 +282,7 @@ XHttpRequest* XHttpRequest_create_copy(const XHttpRequest* other)
         return NULL;
     XHttpRequest* self = XHttpRequest_create();
     if (self)
-        XCopy((XClass*)self, (const XClass*)other);
+        XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -292,7 +292,7 @@ XHttpRequest* XHttpRequest_create_move(XHttpRequest* other)
         return NULL;
     XHttpRequest* self = XHttpRequest_create();
     if (self)
-        XMove((XClass*)self, (XClass*)other);
+        XClassMove((XClass*)self, (XClass*)other);
     return self;
 }
 
@@ -316,7 +316,7 @@ bool XHttpRequest_setHttp1Configuration(XHttpRequest* self,
     if (!replacement)
         return false;
     if (self->m_http1Configuration)
-        XClass_delete_base((XClass*)self->m_http1Configuration);
+        XClassDelete((XClass*)self->m_http1Configuration);
     self->m_http1Configuration = replacement;
     return true;
 }
@@ -336,7 +336,7 @@ bool XHttpRequest_setHttp2Configuration(XHttpRequest* self,
     if (!replacement)
         return false;
     if (self->m_http2Configuration)
-        XClass_delete_base((XClass*)self->m_http2Configuration);
+        XClassDelete((XClass*)self->m_http2Configuration);
     self->m_http2Configuration = replacement;
     return true;
 }
@@ -349,7 +349,7 @@ bool XHttpRequest_setUrl(XHttpRequest* self, const XUrl* url)
     if (url && !replacement)
         return false;
     if (self->m_url)
-        XClass_delete_base((XClass*)self->m_url);
+        XClassDelete((XClass*)self->m_url);
     self->m_url = replacement;
     return true;
 }
@@ -361,8 +361,8 @@ bool XHttpRequest_setUrl_utf8(XHttpRequest* self, const char* url)
     XString* text = XString_create_utf8(url);
     XUrl* parsed = text ? XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, text, XUrl_TolerantMode) : NULL;
     bool result = parsed && XUrl_isValid(parsed) && XHttpRequest_setUrl(self, parsed);
-    if (text) XClass_delete_base((XClass*)text);
-    if (parsed) XClass_delete_base((XClass*)parsed);
+    if (text) XClassDelete((XClass*)text);
+    if (parsed) XClassDelete((XClass*)parsed);
     return result;
 }
 
@@ -383,8 +383,8 @@ bool XHttpRequest_setRawHeader(XHttpRequest* self, const char* name, const char*
     XByteArray* n = XByteArray_create_utf8(name);
     XByteArray* v = XByteArray_create_utf8(value ? value : "");
     bool result = n && v && XHttpHeaders_replaceOrAppend(self->m_headers, n, v);
-    if (n) XClass_delete_base((XClass*)n);
-    if (v) XClass_delete_base((XClass*)v);
+    if (n) XClassDelete((XClass*)n);
+    if (v) XClassDelete((XClass*)v);
     return result;
 }
 
@@ -410,7 +410,7 @@ XVector* XHttpRequest_rawHeaderList(const XHttpRequest* self)
         if (!duplicate && name) {
             XByteArray* copy = XByteArray_create_copy(name);
             if (!copy || !XVector_push_back_1_base(result, &copy)) {
-                if (copy) XClass_delete_base((XClass*)copy);
+                if (copy) XClassDelete((XClass*)copy);
                 XHttpHeaders_values_free(result); return NULL;
             }
         }
@@ -444,7 +444,7 @@ bool XHttpRequest_setBody_utf8(XHttpRequest* self, const char* body)
     if (!bytes)
         return false;
     bool result = XHttpRequest_setBody(self, bytes);
-    XClass_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     return result;
 }
 
@@ -464,7 +464,7 @@ bool XHttpRequest_setCustomMethod(XHttpRequest* self, const char* method)
     if (!value)
         return false;
     bool result = XHttpRequest_setCustomMethod_bytes(self, value);
-    XClass_delete_base((XClass*)value);
+    XClassDelete((XClass*)value);
     return result;
 }
 
@@ -488,12 +488,12 @@ bool XHttpRequest_setCustomMethod_bytes(XHttpRequest* self, const XByteArray* me
         }
     }
     if (result) {
-        if (self->m_customMethod) XClass_delete_base((XClass*)self->m_customMethod);
+        if (self->m_customMethod) XClassDelete((XClass*)self->m_customMethod);
         self->m_customMethod = value;
         self->m_method = XHttpRequest_Custom;
         return true;
     }
-    XClass_delete_base((XClass*)value);
+    XClassDelete((XClass*)value);
     return false;
 }
 
@@ -583,7 +583,7 @@ bool XHttpRequest_setAttribute(XHttpRequest* self, int code, const XVariant* val
     if (!copy)
         return false;
     if (item) {
-        if (item->m_value) XClass_delete_base((XClass*)item->m_value);
+        if (item->m_value) XClassDelete((XClass*)item->m_value);
         item->m_value = copy;
         if (code == XHttpRequest_RedirectPolicyAttribute && XVariant_type(copy) == XVariantType_Int)
             XHttpRequest_setRedirectPolicy(self,
@@ -592,7 +592,7 @@ bool XHttpRequest_setAttribute(XHttpRequest* self, int code, const XVariant* val
     }
     XHttpRequest_AttributeItem created = { code, copy };
     if (!XVector_push_back_1_base(self->m_attributes, &created)) {
-        XClass_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return false;
     }
     if (code == XHttpRequest_RedirectPolicyAttribute && XVariant_type(copy) == XVariantType_Int)
@@ -615,7 +615,7 @@ void XHttpRequest_clearAttribute(XHttpRequest* self, int code)
         XHttpRequest_AttributeItem* item =
             (XHttpRequest_AttributeItem*)XVector_at_base(self->m_attributes, (int64_t)i);
         if (item && item->m_code == code) {
-            if (item->m_value) XClass_delete_base((XClass*)item->m_value);
+            if (item->m_value) XClassDelete((XClass*)item->m_value);
             XVector_removeAt_base(self->m_attributes, (int64_t)i);
             return;
         }
@@ -630,7 +630,7 @@ void XHttpRequest_clearAttributes(XHttpRequest* self)
         XHttpRequest_AttributeItem* item =
             (XHttpRequest_AttributeItem*)XVector_at_base(self->m_attributes, (int64_t)i);
         if (item && item->m_value)
-            XClass_delete_base((XClass*)item->m_value);
+            XClassDelete((XClass*)item->m_value);
     }
     XContainer_clear_base((XContainer*)self->m_attributes);
 }
@@ -721,7 +721,7 @@ XByteArray* XHttpRequest_toHttp1(const XHttpRequest* self, bool includeConnectio
     return result;
 
 failed:
-    XClass_delete_base((XClass*)result);
+    XClassDelete((XClass*)result);
     return NULL;
 }
 #endif // XHTTP_ON

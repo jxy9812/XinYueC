@@ -57,28 +57,28 @@ static void VXModbusReply_deinit(XModbusReply* reply) {
     //XPrintf("释放:%p\n",reply);
     // 释放成员
     if (reply->m_errorString) {
-        XString_delete_base(reply->m_errorString);
+        XClassDelete(reply->m_errorString);
         reply->m_errorString = NULL;
     }
 
     if (reply->m_result) {
-        XModbusDataUnit_delete_base(reply->m_result);
+        XClassDelete(reply->m_result);
         reply->m_result = NULL;
     }
 
     if (reply->m_rawResult) {
-        XModbusPdu_delete_base((XModbusPdu*)reply->m_rawResult);
+        XClassDelete((XModbusPdu*)reply->m_rawResult);
         reply->m_rawResult = NULL;
     }
 
     if (reply->m_request)
     {
-        XModbusRequest_delete_base(reply->m_request);
+        XClassDelete(reply->m_request);
         reply->m_request = NULL;
     }
 
     if (reply->m_intermediateErrors) {
-        XVector_delete_base(reply->m_intermediateErrors);
+        XClassDelete(reply->m_intermediateErrors);
         reply->m_intermediateErrors = NULL;
     }
         // 调用基类析构
@@ -154,7 +154,7 @@ XModbusDevice_Error XModbusReply_error(const XModbusReply* reply) {
 void XModbusReply_setResult(XModbusReply* reply, const XModbusDataUnit* unit) {
     if (!reply) return;
     if (reply->m_result) {
-        XCopy(reply->m_result, unit);
+        XClassCopy(reply->m_result, unit);
     }
     else
     {
@@ -166,7 +166,7 @@ void XModbusReply_setResult_move(XModbusReply* reply, const XModbusDataUnit* uni
 {
     if (!reply) return;
     if (reply->m_result) {
-        XMove(reply->m_result, unit);
+        XClassMove(reply->m_result, unit);
     }
     else
     {
@@ -178,7 +178,7 @@ void XModbusReply_setResult_ref(XModbusReply * reply, const XModbusDataUnit * un
 {
     if (!reply) return;
     if (reply->m_result) {
-        XModbusDataUnit_delete_base(reply->m_result);
+        XClassDelete(reply->m_result);
         reply->m_result = NULL;
     }
     if (unit) {
@@ -189,7 +189,7 @@ void XModbusReply_setResult_ref(XModbusReply * reply, const XModbusDataUnit * un
 void XModbusReply_setRawResult(XModbusReply* reply, const XModbusResponse* response) {
     if (!reply) return;
     if (reply->m_rawResult) 
-        XCopy(reply->m_rawResult, response);
+        XClassCopy(reply->m_rawResult, response);
     else
         reply->m_rawResult = (XModbusResponse*)XModbusResponse_create_copy((XModbusPdu*)response);
 }
@@ -198,7 +198,7 @@ void XModbusReply_setRawResult_move(XModbusReply* reply, const XModbusResponse* 
 {
     if (!reply) return;
     if (reply->m_rawResult)
-        XMove(reply->m_rawResult, response);
+        XClassMove(reply->m_rawResult, response);
     else
         reply->m_rawResult = (XModbusResponse*)XModbusResponse_create_move((XModbusPdu*)response);
 }
@@ -207,7 +207,7 @@ void XModbusReply_setRawResult_ref(XModbusReply * reply, const XModbusResponse *
 {
     if (!reply) return;
     if (reply->m_rawResult) {
-        XModbusPdu_delete_base((XModbusPdu*)reply->m_rawResult);
+        XClassDelete((XModbusPdu*)reply->m_rawResult);
         reply->m_rawResult = NULL;
     }
     if (response) {

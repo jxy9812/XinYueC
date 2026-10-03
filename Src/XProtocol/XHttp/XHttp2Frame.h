@@ -71,7 +71,7 @@ XVtable* XHttp2Frame_class_init(void);
 void XHttp2Frame_init(XHttp2Frame* self);
 /**
  * - @brief 创建空 HTTP/2 帧。
- * - @return 新建帧对象；调用者必须使用 XHttp2Frame_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建帧对象；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 /**
  * - @brief 创建指定字段的 HTTP/2 帧。
@@ -79,12 +79,10 @@ void XHttp2Frame_init(XHttp2Frame* self);
  * - @param flags 帧标志；由调用方按帧类型提供。
  * - @param streamId 流 ID；仅允许低 31 位，最高位必须为 0。
  * - @param payload 帧载荷；借用，NULL 等价于空载荷，创建时深拷贝。
- * - @return 新建帧对象；调用者必须使用 XHttp2Frame_delete_base 释放，字段无效或分配失败返回 NULL。
+ * - @return 新建帧对象；调用者必须使用 XClassDelete 释放，字段无效或分配失败返回 NULL。
  */
 XHttp2Frame* XHttp2Frame_create_ex(XMemoryType memory, uint8_t type, uint8_t flags, uint32_t streamId,
                                    const XByteArray* payload);
-#define XHttp2Frame_deinit_base XClass_deinit_base
-#define XHttp2Frame_delete_base XClass_delete_base
 
 /**
  * - @brief 设置帧载荷。

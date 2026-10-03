@@ -51,7 +51,7 @@ typedef struct XHostInfo {
 
 /**
  * @brief 创建一个空的 XHostInfo 实例。
- * @return 新分配的 XHostInfo 实例，需调用 XHostInfo_delete() 释放。
+ * @return 新分配的 XHostInfo 实例，需调用 XClassDelete() 释放。
  */
 XHostInfo* XHostInfo_create_ex(XMemoryType memory);
 
@@ -70,8 +70,6 @@ void XHostInfo_init(XHostInfo* info);
  */
 XVtable* XHostInfo_class_init(void);
 
-#define XHostInfo_delete_base    XClass_delete_base
-#define XHostInfo_deinit_base    XClass_deinit_base
 
 #undef XHostInfo_create
 #define XHostInfo_create() XHostInfo_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
@@ -164,7 +162,7 @@ XHostInfo* XHostInfo_fromName2(const char* name);
 /**
  * @brief 获取本机的主机名。
  *
- * @return XString 指针（需调用 XString_delete_base 释放），失败返回 NULL。
+ * @return XString 指针（需调用 XClassDelete 释放），失败返回 NULL。
  */
 XString* XHostInfo_localHostName(void);
 
@@ -172,7 +170,7 @@ XString* XHostInfo_localHostName(void);
  * @brief 获取本机的域名（若系统支持）。
  *
  * @note 在大多数 POSIX 系统上，此函数可能无法可靠获取域名。
- * @return XString 指针（需调用 XString_delete_base 释放），失败或不支持返回 NULL。
+ * @return XString 指针（需调用 XClassDelete 释放），失败或不支持返回 NULL。
  */
 XString* XHostInfo_localDomainName(void);
 

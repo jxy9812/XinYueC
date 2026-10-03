@@ -136,13 +136,11 @@ typedef struct XStackBase
 * @brief 反初始化容器（基础版本）
 * @note 继承自XContainer的反初始化操作，释放资源但不释放容器本身
 */
-#define XStackBase_deinit_base            XContainer_deinit_base
 
 /**
 * @brief 删除容器实例（基础版本）
 * @note 继承自XContainer的删除操作，释放资源并销毁容器实例
 */
-#define XStackBase_delete_base            XContainer_delete_base
 
 /**
 * @brief 清空容器元素（基础版本）

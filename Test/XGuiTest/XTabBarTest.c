@@ -72,7 +72,7 @@ bool XTabBarTest_runAll(void)
     XTabWidget_setMovable(tw, true);
     tb_expect(XTabWidget_isMovable(tw), "setMovable 生效");
 
-    XTabWidget_delete_base(tw);
+    XClassDelete(tw);
     /* 6. Task 2.2：外观/几何/项属性。 */
     XTabBar_setDocumentMode(bar, true);
     tb_expect(XTabBar_documentMode(bar), "documentMode");
@@ -130,9 +130,9 @@ bool XTabBarTest_runAll(void)
                   fresh->m_scrollRepeatTimer == XTIMER_INVALID_ID &&
                   fresh->m_repeatSkip == 0,
                   "连发状态初始为无");
-        if (fresh) XTabBar_delete_base(fresh);
+        if (fresh) XClassDelete(fresh);
     }
-    XTabBar_delete_base(bar);
+    XClassDelete(bar);
 
     {
         int failures = tb_failures;

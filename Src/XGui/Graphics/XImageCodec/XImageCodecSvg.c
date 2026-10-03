@@ -205,7 +205,7 @@ static XByteArray* svgBase64Decode(const uint8_t* data, size_t size)
         return NULL;
     }
     if (capacity && !XByteArray_resize_base((XVector*)out, capacity)) {
-        XByteArray_delete_base((XClass*)out);
+        XClassDelete((XClass*)out);
         XFree_Hybrid(clean);
         return NULL;
     }
@@ -215,7 +215,7 @@ static XByteArray* svgBase64Decode(const uint8_t* data, size_t size)
     if (result != 0 ||
         (actual != capacity &&
          !XByteArray_resize_base((XVector*)out, actual))) {
-        XByteArray_delete_base((XClass*)out);
+        XClassDelete((XClass*)out);
         XFree_Hybrid(clean);
         return NULL;
     }
@@ -3097,7 +3097,7 @@ static bool svgVectorDecode(const char* text, size_t size,
     r.m_height = renderHeight;
     XImage_init_ex(&temp, r.m_width, r.m_height, XImageFormat_ARGB32);
     if (XImage_isNull(&temp)) {
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         svgArenaCleanup(&arena);
         return false;
     }
@@ -3105,20 +3105,20 @@ static bool svgVectorDecode(const char* text, size_t size,
     r.m_root = root;
     if (!svgCollectGradients(&r, root)) {
         svgArenaCleanup(&arena);
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return false;
     }
     if (!svgRootTransform(&r, root, r.m_width, r.m_height, &rootCtm,
                            intrinsicWidth, intrinsicHeight)) {
         svgArenaCleanup(&arena);
-        XImage_deinit_base(&temp);
+        XClassDeinit(&temp);
         return false;
     }
     svgStyleInit(&rootStyle);
     for (c = root->m_first; c; c = c->m_next) {
         if (!svgRenderNode(&r, c, &rootStyle, &rootCtm)) {
             svgArenaCleanup(&arena);
-            XImage_deinit_base(&temp);
+            XClassDeinit(&temp);
             return false;
         }
     }
@@ -3129,15 +3129,15 @@ static bool svgVectorDecode(const char* text, size_t size,
                            XImageFormat_ARGB32);
             if (XImage_isNull(&finalImage) ||
                 !svgDownsampleAA(&temp, &finalImage)) {
-                XImage_deinit_base(&finalImage);
-                XImage_deinit_base(&temp);
+                XClassDeinit(&finalImage);
+                XClassDeinit(&temp);
                 return false;
             }
-            XImage_deinit_base(&temp);
-            XMove(out, &finalImage);
+            XClassDeinit(&temp);
+            XClassMove(out, &finalImage);
             return true;
         }
-        XMove(out, &temp);
+        XClassMove(out, &temp);
         return true;
     }
 }
@@ -3421,7 +3421,7 @@ bool XImageCodecInternal_decodeSvg_ex(const uint8_t* data, size_t size,
                  XImageCodecInternal_decodePng(
                      XByteArray_data(encoded),
                      XByteArray_size_base((const XContainer*)encoded), out);
-        if (encoded) XByteArray_delete_base((XClass*)encoded);
+        if (encoded) XClassDelete((XClass*)encoded);
         XFree_Hybrid(text);
         return result;
     }
@@ -3450,13 +3450,13 @@ bool XImageCodecInternal_decodeSvg_ex(const uint8_t* data, size_t size,
         XImage_init_ex(&temp, width, height, XImageFormat_ARGB32);
         if (XImage_isNull(&temp)) {
             XFree_Hybrid(text);
-            XImage_deinit_base(&temp);
+            XClassDeinit(&temp);
             return false;
         }
         for (int y = 0; y < height; ++y)
             for (int x = 0; x < width; ++x)
                 XImage_setPixel(&temp, x, y, color);
-        XMove(out, &temp);
+        XClassMove(out, &temp);
     }
     XFree_Hybrid(text);
     return true;
@@ -3478,11 +3478,11 @@ bool XImageCodecInternal_encodeSvg(const XImage* image, XByteArray* out)
     char header[160];
     int length;
     if (!png || !image || !out || XImage_isNull(image)) {
-        if (png) XByteArray_delete_base((XClass*)png);
+        if (png) XClassDelete((XClass*)png);
         return false;
     }
     if (!XImageCodecInternal_encodePng(image, png)) {
-        XByteArray_delete_base((XClass*)png);
+        XClassDelete((XClass*)png);
         return false;
     }
     width = XImage_width(image);
@@ -3496,10 +3496,10 @@ bool XImageCodecInternal_encodeSvg(const XImage* image, XByteArray* out)
         !svgBase64Append(out, XByteArray_data(png),
                          XByteArray_size_base((const XContainer*)png)) ||
         !XImageCodecInternal_appendBytes(out, "\"/></svg>", 9)) {
-        XByteArray_delete_base((XClass*)png);
+        XClassDelete((XClass*)png);
         return false;
     }
-    XByteArray_delete_base((XClass*)png);
+    XClassDelete((XClass*)png);
     return true;
 }
 

@@ -416,27 +416,27 @@ void XBsonValue_deinit(XBsonValue* value)
 	case XBSON_TYPE_STRING:
 	case XBSON_TYPE_JAVASCRIPT:
 	case XBSON_TYPE_SYMBOL:
-		XString_delete_base(value->data.str);
+		XClassDelete(value->data.str);
 		break;
 	case XBSON_TYPE_DOCUMENT:
-		XBsonDocument_delete_base(value->data.doc);
+		XClassDelete(value->data.doc);
 		break;
 	case XBSON_TYPE_ARRAY:
-		XBsonArray_delete_base(value->data.arr);
+		XClassDelete(value->data.arr);
 		break;
 	case XBSON_TYPE_BINARY:
-		XByteArray_delete_base(value->data.binary.data);
+		XClassDelete(value->data.binary.data);
 		break;
 	case XBSON_TYPE_REGEX:
-	XString_delete_base(value->data.regex.pattern);
-		XString_delete_base(value->data.regex.options);
+	XClassDelete(value->data.regex.pattern);
+		XClassDelete(value->data.regex.options);
 		break;
 	case XBSON_TYPE_DBPOINTER:
-		XString_delete_base(value->data.dbpointer.m_namespace);
+		XClassDelete(value->data.dbpointer.m_namespace);
 		break;
 	case XBSON_TYPE_JAVASCRIPT_SCOPE:
-		XString_delete_base(value->data.str);
-		XBsonDocument_delete_base(value->data.doc);
+		XClassDelete(value->data.str);
+		XClassDelete(value->data.doc);
 		break;
 	default:
 		break;
@@ -895,7 +895,7 @@ static XJsonValue* XBsonValue_jsonObjectValue(const XJsonObject* object,
 	if (!object || !key) return NULL;
 	XString_Init_Utf8(name, key);
 	XJsonValue* value = (XJsonValue*)XJsonObject_value_base(object, name);
-	XString_deinit_base(name);
+	XClassDeinit(name);
 	return value;
 }
 
@@ -903,7 +903,7 @@ static XJsonValue* XBsonValue_wrapObject(XJsonObject* object)
 {
 	if (!object) return NULL;
 	XJsonValue* value = XJsonValue_create_object(object);
-	XJsonObject_delete_base(object);
+	XClassDelete(object);
 	return value;
 }
 
@@ -930,7 +930,7 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val)
 		XJsonArray* array = XBsonArray_toJsonArray(bson_val->data.arr);
 		if (!array) return NULL;
 		XJsonValue* value = XJsonValue_create_array(array);
-		XJsonArray_delete_base(array);
+		XClassDelete(array);
 		return value;
 	}
 	case XBSON_TYPE_BINARY: {
@@ -941,22 +941,22 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val)
 			!XJsonObject_insert_keyUtf8_int(object, "$binarySubtype",
 				bson_val->data.binary.subtype) ||
 			!XJsonObject_insert_keyUtf8_string(object, "$binaryData", hex)) {
-			XJsonObject_delete_base(object);
-			XString_delete_base(hex);
+			XClassDelete(object);
+			XClassDelete(hex);
 			return NULL;
 		}
-		XString_delete_base(hex);
+		XClassDelete(hex);
 		return XBsonValue_wrapObject(object);
 	}
 	case XBSON_TYPE_OBJECT_ID: {
 		XJsonObject* object = XJsonObject_create();
 		XString* hex = XBsonValue_toHexString(bson_val->data.oid, 12);
 		if (!object || !hex || !XJsonObject_insert_keyUtf8_string(object, "$oid", hex)) {
-			XJsonObject_delete_base(object);
-			XString_delete_base(hex);
+			XClassDelete(object);
+			XClassDelete(hex);
 			return NULL;
 		}
-		XString_delete_base(hex);
+		XClassDelete(hex);
 		return XBsonValue_wrapObject(object);
 	}
 	case XBSON_TYPE_DATETIME: {
@@ -969,7 +969,7 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val)
 		if (object && XJsonObject_insert_keyUtf8_string(object, "$regex", bson_val->data.regex.pattern) &&
 			XJsonObject_insert_keyUtf8_string(object, "$options", bson_val->data.regex.options))
 			return XBsonValue_wrapObject(object);
-		XJsonObject_delete_base(object);
+		XClassDelete(object);
 		return NULL;
 	}
 	case XBSON_TYPE_DBPOINTER: {
@@ -981,23 +981,23 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val)
 			!XJsonObject_insert_keyUtf8_string(pointer, "$ref", ns) ||
 			!XJsonObject_insert_keyUtf8_string(oid_object, "$oid", oid) ||
 			!XJsonObject_insert_keyUtf8_object_move(pointer, "$id", oid_object)) {
-			XJsonObject_delete_base(pointer);
-			XJsonObject_delete_base(oid_object);
-			XString_delete_base(ns);
-			XString_delete_base(oid);
+			XClassDelete(pointer);
+			XClassDelete(oid_object);
+			XClassDelete(ns);
+			XClassDelete(oid);
 			return NULL;
 		}
-		XString_delete_base(ns);
-		XString_delete_base(oid);
+		XClassDelete(ns);
+		XClassDelete(oid);
 		/* $id 已由 pointer 持有副本，移动创建后的临时对象仍需释放外壳。 */
-		XJsonObject_delete_base(oid_object);
+		XClassDelete(oid_object);
 		XJsonObject* wrapper = XJsonObject_create();
 		if (!wrapper || !XJsonObject_insert_keyUtf8_object_move(wrapper, "$dbPointer", pointer)) {
-			XJsonObject_delete_base(wrapper);
-			XJsonObject_delete_base(pointer);
+			XClassDelete(wrapper);
+			XClassDelete(pointer);
 			return NULL;
 		}
-		XJsonObject_delete_base(pointer);
+		XClassDelete(pointer);
 		return XBsonValue_wrapObject(wrapper);
 	}
 	case XBSON_TYPE_JAVASCRIPT: {
@@ -1016,11 +1016,11 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val)
 		if (!object || !scope ||
 			!XJsonObject_insert_keyUtf8_string(object, "$javascript", bson_val->data.str) ||
 			!XJsonObject_insert_keyUtf8_object_move(object, "$scope", scope)) {
-			XJsonObject_delete_base(object);
-			XJsonObject_delete_base(scope);
+			XClassDelete(object);
+			XClassDelete(scope);
 			return NULL;
 		}
-		XJsonObject_delete_base(scope);
+		XClassDelete(scope);
 		return XBsonValue_wrapObject(object);
 	}
 	case XBSON_TYPE_TIMESTAMP: {
@@ -1028,18 +1028,18 @@ XJsonValue* XBsonValue_to_json(const XBsonValue* bson_val)
 		if (object && XJsonObject_insert_keyUtf8_int(object, "$timestamp", bson_val->data.ts.timestamp) &&
 			XJsonObject_insert_keyUtf8_int(object, "$increment", bson_val->data.ts.increment))
 			return XBsonValue_wrapObject(object);
-		XJsonObject_delete_base(object);
+		XClassDelete(object);
 		return NULL;
 	}
 	case XBSON_TYPE_DECIMAL128: {
 		XJsonObject* object = XJsonObject_create();
 		XString* hex = XBsonValue_toHexString(bson_val->data.decimal, 16);
 		if (!object || !hex || !XJsonObject_insert_keyUtf8_string(object, "$decimal128", hex)) {
-			XJsonObject_delete_base(object);
-			XString_delete_base(hex);
+			XClassDelete(object);
+			XClassDelete(hex);
 			return NULL;
 		}
-		XString_delete_base(hex);
+		XClassDelete(hex);
 		return XBsonValue_wrapObject(object);
 	}
 	case XBSON_TYPE_MIN_KEY: {
@@ -1081,7 +1081,7 @@ XBsonValue* XBsonValue_from_json(const XJsonValue* json_val)
 		XBsonArray* array = XBsonArray_fromJsonArray(XJsonValue_toArray(json_val));
 		if (!array) return NULL;
 		XBsonValue* value = XBsonValue_create_array(array);
-		XBsonArray_delete_base(array);
+		XClassDelete(array);
 		return value;
 	}
 	case XJsonValue_Null: return XBsonValue_create_null();
@@ -1111,11 +1111,11 @@ XBsonValue* XBsonValue_from_json(const XJsonValue* json_val)
 			XByteArray* data = XByteArray_create();
 			if (!data || !XByteArray_resize_base(data, size) ||
 				!XBsonValue_fromHexString(text, XContainerDataAddr(data), size)) {
-				XByteArray_delete_base(data);
+				XClassDelete(data);
 				return NULL;
 			}
 			XBsonValue* value = XBsonValue_create_binary((XBsonBinarySubtype)subtype_number, data);
-			XByteArray_delete_base(data);
+			XClassDelete(data);
 			return value;
 		}
 		if (XJsonObject_contains_keyUtf8(object, "$date")) {
@@ -1140,7 +1140,7 @@ XBsonValue* XBsonValue_from_json(const XJsonValue* json_val)
 				XBsonDocument* scope = XBsonDocument_fromJsonObject(XJsonValue_toObject(scope_value));
 				if (!scope) return NULL;
 				XBsonValue* value = XBsonValue_create_javascript_scope(code, scope);
-				XBsonDocument_delete_base(scope);
+				XClassDelete(scope);
 				return value;
 			}
 			return XBsonValue_create_javascript(code);
@@ -1197,7 +1197,7 @@ XBsonValue* XBsonValue_from_json(const XJsonValue* json_val)
 		XBsonDocument* document = XBsonDocument_fromJsonObject(object);
 		if (!document) return NULL;
 		XBsonValue* value = XBsonValue_create_document(document);
-		XBsonDocument_delete_base(document);
+		XClassDelete(document);
 		return value;
 	}
 	default:
@@ -1216,7 +1216,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key,
 	if (!valid_key || !XByteArray_push_back_1(output, (uint8_t)value->type) ||
 		!XBsonValue_appendBytes(output, key_utf8, key_length) ||
 		!XByteArray_push_back_1(output, 0x00)) {
-		XString_deinit_base(name);
+		XClassDeinit(name);
 		return false;
 	}
 	bool result = true;
@@ -1236,14 +1236,14 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key,
 		XByteArray* nested = XBsonDocument_toBson(value->data.doc);
 		result = nested && XBsonValue_appendBytes(output, XContainerDataAddr(nested),
 			XByteArray_size_base(nested));
-		XByteArray_delete_base(nested);
+		XClassDelete(nested);
 		break;
 	}
 	case XBSON_TYPE_ARRAY: {
 		XByteArray* nested = XBsonArray_toBson(value->data.arr);
 		result = nested && XBsonValue_appendBytes(output, XContainerDataAddr(nested),
 			XByteArray_size_base(nested));
-		XByteArray_delete_base(nested);
+		XClassDelete(nested);
 		break;
 	}
 	case XBSON_TYPE_BINARY: {
@@ -1287,7 +1287,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key,
 	case XBSON_TYPE_JAVASCRIPT_SCOPE: {
 		XByteArray* scope = XBsonDocument_toBson(value->data.doc);
 		if (!scope || !value->data.str) {
-			XByteArray_delete_base(scope);
+			XClassDelete(scope);
 			result = false;
 			break;
 		}
@@ -1297,7 +1297,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key,
 		result = total <= INT32_MAX && XBsonValue_writeU32(output, (uint32_t)total) &&
 			XBsonValue_writeString(output, value->data.str) &&
 			XBsonValue_appendBytes(output, XContainerDataAddr(scope), XByteArray_size_base(scope));
-		XByteArray_delete_base(scope);
+		XClassDelete(scope);
 		break;
 	}
 	case XBSON_TYPE_INT32: {
@@ -1324,7 +1324,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key,
 		result = false;
 		break;
 	}
-	XString_deinit_base(name);
+	XClassDeinit(name);
 	return result;
 }
 
@@ -1341,7 +1341,7 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end,
 	if (!XBsonValue_readCString(ptr, end, &key)) return NULL;
 	XBsonValue* value = XBsonValue_create((XBsonType)type_byte);
 	if (!value) {
-		XString_delete_base(key);
+		XClassDelete(key);
 		return NULL;
 	}
 	bool result = true;
@@ -1412,13 +1412,13 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end,
 			XBsonValue_readCString(ptr, end, &options) &&
 			XBsonValue_isSortedRegexOptions(options);
 		if (result) {
-			XString_delete_base(value->data.regex.pattern);
-			XString_delete_base(value->data.regex.options);
+			XClassDelete(value->data.regex.pattern);
+			XClassDelete(value->data.regex.options);
 			value->data.regex.pattern = pattern;
 			value->data.regex.options = options;
 		} else {
-			XString_delete_base(pattern);
-			XString_delete_base(options);
+			XClassDelete(pattern);
+			XClassDelete(options);
 		}
 		break;
 	}
@@ -1468,11 +1468,11 @@ XBsonValue* XBsonValue_deserialize(const uint8_t** ptr, const uint8_t* end,
 	}
 	if (!result) {
 		XBsonValue_delete(value);
-		XString_delete_base(key);
+		XClassDelete(key);
 		return NULL;
 	}
 	if (key_out) *key_out = key;
-	else XString_delete_base(key);
+	else XClassDelete(key);
 	return value;
 }
 
@@ -1481,7 +1481,7 @@ XVariant* XBsonValue_toVariant(const XBsonValue* val)
 	if (!val) return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XBsonValue), XVariantType_BsonValue);
 	if (!var || !var->m_data) {
-		XVariant_delete_base(var);
+		XClassDelete(var);
 		return NULL;
 	}
 	XBsonValue_init((XBsonValue*)var->m_data, val->type);
@@ -1494,7 +1494,7 @@ XVariant* XBsonValue_toVariant_move(XBsonValue* val)
 	if (!val) return NULL;
 	XVariant* var = XVariant_create(NULL, sizeof(XBsonValue), XVariantType_BsonValue);
 	if (!var || !var->m_data) {
-		XVariant_delete_base(var);
+		XClassDelete(var);
 		return NULL;
 	}
 	XBsonValue_init((XBsonValue*)var->m_data, val->type);
@@ -1529,7 +1529,7 @@ static bool XBsonValue_prepareVariant(XVariant* variant, XBsonType type)
 	if (variant->m_type != XVariantType_BsonValue ||
 		!variant->m_data || variant->m_dataSize != sizeof(XBsonValue)) {
 		if (variant->m_data)
-			XVariant_deinit_base(variant);
+			XClassDeinit(variant);
 		variant->m_data = XMalloc_System(sizeof(XBsonValue));
 		if (!variant->m_data)
 			return false;

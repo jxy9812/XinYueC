@@ -73,8 +73,8 @@ static void clipboard_clearModeData(XClipboardModeData* data)
 {
     if (!data)
         return;
-    if (data->m_text) { XString_delete_base(data->m_text); data->m_text = NULL; }
-    if (data->m_mime) { XMimeData_delete_base(data->m_mime); data->m_mime = NULL; }
+    if (data->m_text) { XClassDelete(data->m_text); data->m_text = NULL; }
+    if (data->m_mime) { XClassDelete(data->m_mime); data->m_mime = NULL; }
     data->m_owns = false;
     data->m_externalMerged = false;
 }
@@ -476,7 +476,7 @@ static void clipboard_pushImagePngToBackend(int mode, const XMimeData* mime)
     if (!image)
         return;
     if (XImage_isNull(image)) {
-        XImage_delete_base((XClass*)image);
+        XClassDelete((XClass*)image);
         return;
     }
     png = XByteArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, true);
@@ -490,9 +490,9 @@ static void clipboard_pushImagePngToBackend(int mode, const XMimeData* mime)
                 (const unsigned char*)XByteArray_constData(png),
                 (int)XByteArray_size_base((const XContainer*)png));
         }
-        XByteArray_delete_base((XClass*)png);
+        XClassDelete((XClass*)png);
     }
-    XImage_delete_base((XClass*)image);
+    XClassDelete((XClass*)image);
 }
 #endif /* XIMAGECODEC_ON */
 
@@ -544,9 +544,9 @@ static void clipboard_pushMimeToBackend(int mode, const XMimeData* mime)
             g_clipboardBackend.setMimeData(g_clipboardBackend.ud, mode, fmt,
                 (const unsigned char*)XByteArray_constData(bytes),
                 (int)XByteArray_size_base((const XContainer*)bytes));
-        XByteArray_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
     }
-    XStringList_delete_base((XClass*)formats);
+    XClassDelete((XClass*)formats);
 }
 #endif /* XMIMEDATA_ON */
 
@@ -586,7 +586,7 @@ static XImage* clipboard_decodeImageBytes(const unsigned char* bytes, int len,
     ok = XImageCodec_decode(bytes, (size_t)len, format, image);
     /* 解码失败或得到空图像（尺寸非法等）都按"无图像"处理。 */
     if (!ok || XImage_isNull(image)) {
-        XImage_delete_base((XClass*)image);
+        XClassDelete((XClass*)image);
         return NULL;
     }
     return image;
@@ -649,7 +649,7 @@ XImage* XClipboard_image(const XClipboard* self, XClipboardMode mode)
                 XByteArray_constData(bytes),
                 (int)XByteArray_size_base((const XContainer*)bytes),
                 kImageAtoms[k].m_fmt);
-            XByteArray_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             if (decoded)
                 return decoded;
         }
@@ -687,7 +687,7 @@ XPixmap* XClipboard_pixmap(const XClipboard* self, XClipboardMode mode)
     pixmap = XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (pixmap)
         XPixmap_fromImage(image, 0, pixmap);
-    XImage_delete_base((XClass*)image);
+    XClassDelete((XClass*)image);
     return pixmap;
 }
 
@@ -702,12 +702,12 @@ void XClipboard_setPixmap(XClipboard* self, const XPixmap* pixmap, XClipboardMod
         return;
     copy = XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (copy) {
-        XCopy(copy, pixmap);
+        XClassCopy(copy, pixmap);
         XPixmap_toImage(copy, image);
-        XPixmap_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
     }
     XClipboard_setImage(self, image, mode);
-    XImage_delete_base((XClass*)image);
+    XClassDelete((XClass*)image);
 }
 
 /* ==================== 信号（4 个，对标 QClipboard 全部信号） ==================== */

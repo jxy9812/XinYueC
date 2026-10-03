@@ -181,7 +181,7 @@ static uint32_t XImagePluginRegistry_capabilitiesUtf8(XImageIOPlugin* plugin,
         ? XImagePluginRegistry_savePos(device) : -1;
     uint32_t cap = XImageIOPlugin_capabilities_base(plugin, device, value);
     XImagePluginRegistry_restorePos(device, pos);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return cap;
 }
 
@@ -280,7 +280,7 @@ static bool XImagePluginRegistry_pluginCanRead(XImageIOPlugin* plugin,
     XImagePluginRegistry_setupHandler(handler, device, format);
     readable = XImageIOHandler_canRead_base(handler);
     XImagePluginRegistry_restorePos(device, pos);
-    XImageIOHandler_delete_base(handler);
+    XClassDelete(handler);
     return readable;
 }
 
@@ -563,7 +563,7 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerEx(
         }
     }
 done:
-    if (normalizedFormat) XString_delete_base((XClass*)normalizedFormat);
+    if (normalizedFormat) XClassDelete((XClass*)normalizedFormat);
     XImagePluginRegistry_unlock(mutex);
     return handler;
 }
@@ -650,7 +650,7 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerSuffix(
                                               normalizedFormat);
     }
 done:
-    XString_delete_base((XClass*)normalizedFormat);
+    XClassDelete((XClass*)normalizedFormat);
     XImagePluginRegistry_unlock(mutex);
     return handler;
 }
@@ -702,7 +702,7 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerContentFallback(
         XImagePluginRegistry_restorePos(device, pos);
         if (handler) {
             XImagePluginRegistry_setupHandler(handler, device, createFormat);
-            if (normalizedFormat) XString_delete_base((XClass*)normalizedFormat);
+            if (normalizedFormat) XClassDelete((XClass*)normalizedFormat);
             XImagePluginRegistry_unlock(mutex);
             return handler;
         }
@@ -718,12 +718,12 @@ XImageIOHandler* XImagePluginRegistry_createReadHandlerContentFallback(
         XImageIOHandler* handler = XImageIOPlugin_create_base(builtin, device, NULL);
         if (handler) {
             XImagePluginRegistry_setupHandler(handler, device, NULL);
-            if (normalizedFormat) XString_delete_base((XClass*)normalizedFormat);
+            if (normalizedFormat) XClassDelete((XClass*)normalizedFormat);
             XImagePluginRegistry_unlock(mutex);
             return handler;
         }
     }
-    if (normalizedFormat) XString_delete_base((XClass*)normalizedFormat);
+    if (normalizedFormat) XClassDelete((XClass*)normalizedFormat);
     XImagePluginRegistry_unlock(mutex);
     return NULL;
 }
@@ -765,12 +765,12 @@ XImageIOHandler* XImagePluginRegistry_createWriteHandler(XIODevice* device,
                尝试第二个同键插件或回退到内置处理器。否则外部插件的工厂
                错误会被内置编码器静默吞掉，改变 QImageWriter 的选择结果。 */
             if (normalizedFormat)
-                XString_delete_base((XClass*)normalizedFormat);
+                XClassDelete((XClass*)normalizedFormat);
             XImagePluginRegistry_unlock(mutex);
             return handler;
         }
     }
-    if (normalizedFormat) XString_delete_base((XClass*)normalizedFormat);
+    if (normalizedFormat) XClassDelete((XClass*)normalizedFormat);
     XImagePluginRegistry_unlock(mutex);
     return NULL;
 }
@@ -794,13 +794,13 @@ bool XImagePluginRegistry_supportsReadFormat(const XString* format)
         if (XImagePluginRegistry_pluginSupports(g_plugins[i], true, NULL, formatUtf8))
         {
             if (normalizedFormat)
-                XString_delete_base((XClass*)normalizedFormat);
+                XClassDelete((XClass*)normalizedFormat);
             XImagePluginRegistry_unlock(mutex);
             return true;
         }
     }
     if (normalizedFormat)
-        XString_delete_base((XClass*)normalizedFormat);
+        XClassDelete((XClass*)normalizedFormat);
     XImagePluginRegistry_unlock(mutex);
     return false;
 }
@@ -823,13 +823,13 @@ bool XImagePluginRegistry_supportsWriteFormat(const XString* format)
         if (XImagePluginRegistry_pluginSupports(g_plugins[i], false, NULL, formatUtf8))
         {
             if (normalizedFormat)
-                XString_delete_base((XClass*)normalizedFormat);
+                XClassDelete((XClass*)normalizedFormat);
             XImagePluginRegistry_unlock(mutex);
             return true;
         }
     }
     if (normalizedFormat)
-        XString_delete_base((XClass*)normalizedFormat);
+        XClassDelete((XClass*)normalizedFormat);
     XImagePluginRegistry_unlock(mutex);
     return false;
 }
@@ -862,19 +862,19 @@ bool XImagePluginRegistry_supportsReadOption(const XString* format,
         handler = XImageIOPlugin_create_base(plugin, NULL, normalizedFormat);
         if (!handler) continue;
         if (XImageIOHandler_supportsOption_base(handler, option)) {
-            XImageIOHandler_delete_base(handler);
-            XString_delete_base((XClass*)normalizedFormat);
+            XClassDelete(handler);
+            XClassDelete((XClass*)normalizedFormat);
             XImagePluginRegistry_unlock(mutex);
             return true;
         }
-        XImageIOHandler_delete_base(handler);
+        XClassDelete(handler);
         /* One plugin owns the format key in Qt's key map.  A handler that
            was created successfully but does not expose the option therefore
            terminates this format's lookup instead of falling through to a
            lower-priority duplicate plugin. */
         break;
     }
-    XString_delete_base((XClass*)normalizedFormat);
+    XClassDelete((XClass*)normalizedFormat);
     XImagePluginRegistry_unlock(mutex);
     return false;
 }
@@ -1063,7 +1063,7 @@ XStringList* XImagePluginRegistry_imageFormatsForMimeType_2(const char* mimeType
 {
     XString* value = mimeType ? XString_create_utf8(mimeType) : NULL;
     XStringList* result = XImagePluginRegistry_imageFormatsForMimeType(value, readOnly);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }
 

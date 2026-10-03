@@ -279,7 +279,7 @@ static void VXTabWidget_deinit(XTabWidget* self)
            页对象会泄漏本体）。 */
         for (i = 0; i < self->m_count; ++i) {
             if (self->m_pages[i]) {
-                XWidget_deinit_base(self->m_pages[i]);
+                XClassDeinit(self->m_pages[i]);
                 XFree_System(self->m_pages[i]);
                 self->m_pages[i] = NULL;
             }
@@ -429,7 +429,7 @@ int XTabWidget_insertTab_2(XTabWidget* self, int index, XWidget* page,
 {
     XString_Init_Utf8(tmp, label ? label : "");
     index = XTabWidget_insertTab(self, index, page, tmp);
-    XString_deinit_base(tmp);
+    XClassDeinit(tmp);
     return index;
 }
 

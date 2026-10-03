@@ -85,8 +85,6 @@ void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags);
  * @return 返回对象指针；无效时返回 NULL。
  */
 XSpinBox* XSpinBox_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XSpinBox_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XSpinBox_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 父类 API 宏转发（对齐库内 XRadioButton 惯例） ==================== */
 

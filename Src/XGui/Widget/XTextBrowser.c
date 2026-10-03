@@ -109,7 +109,7 @@ static const XString* xtb_history_relative(const XTextBrowser* self, int index)
 static void xtb_str_args_del(XVarList* list)
 {
     XVarList_args_1(list, XString*, val);
-    if (val) XString_delete_base((XClass*)val);
+    if (val) XClassDelete((XClass*)val);
 }
 
 static void xtb_emitStr(XTextBrowser* self, size_t signal, const char* text)
@@ -120,7 +120,7 @@ static void xtb_emitStr(XTextBrowser* self, size_t signal, const char* text)
     val = XString_create_utf8(text ? text : "");
     if (!val) return;
     args = XVarList_Create(XVar(XString*, val));
-    if (!args) { XString_delete_base((XClass*)val); return; }
+    if (!args) { XClassDelete((XClass*)val); return; }
     if (((XObject*)self)->m_signalSlot) {
         XObject_emitSignal((XObject*)self, signal, args,
                            xtb_str_args_del, NULL, XEVENT_PRIORITY_NORMAL);
@@ -187,17 +187,17 @@ static void VXTextBrowser_deinit(XTextBrowser* self)
         XObject_removeEventFilter((XObject*)self->m_base.m_editor,
                                   (XObject*)self);
     if (self->m_hoverAnchor) {
-        XString_delete_base(self->m_hoverAnchor);
+        XClassDelete(self->m_hoverAnchor);
         self->m_hoverAnchor = NULL;
     }
     if (self->m_source) {
-        XString_delete_base((XClass*)self->m_source);
+        XClassDelete((XClass*)self->m_source);
         self->m_source = NULL;
     }
     /* 历史环形数组：按逻辑下标遍历释放全部条目后释放槽位数组。 */
     for (i = 0; i < self->m_historyCount; ++i) {
         XString* entry = xtb_history_entry(self, i);
-        if (entry) XString_delete_base((XClass*)entry);
+        if (entry) XClassDelete((XClass*)entry);
     }
     if (self->m_history) {
         XFree_System(self->m_history);
@@ -208,7 +208,7 @@ static void VXTextBrowser_deinit(XTextBrowser* self)
     self->m_historyCapacity = 0;
     self->m_historyStart = 0;
     if (self->m_searchPaths) {
-        XStringList_delete_base((XClass*)self->m_searchPaths);
+        XClassDelete((XClass*)self->m_searchPaths);
         self->m_searchPaths = NULL;
     }
     XClass_Deinit_Parent(XTextEdit, (XTextEdit*)self);
@@ -246,7 +246,7 @@ static void xtb_linkActivatedForward(XObject* receiver, XVarList* args)
         XPlatformServices* svc = XPlatformServices_create();
         if (svc) {
             XPlatformServices_openUrl_2(svc, url);
-            XClass_delete_base((XClass*)svc);
+            XClassDelete((XClass*)svc);
         }
     } else if (browser->m_openLinks) {
         XTextBrowser_setSource(browser, url);
@@ -292,14 +292,14 @@ static bool VX_browser_eventFilter(XObject* self, XObject* watched,
                 XPlatformServices* svc = XPlatformServices_create();
                 if (svc) {
                     XPlatformServices_openUrl_2(svc, url);
-                    XClass_delete_base((XClass*)svc);
+                    XClassDelete((XClass*)svc);
                 }
             } else {
                 /* 对标 openLinks 默认：链接作为浏览源触发导航。 */
                 XTextBrowser_setSource(browser, url);
             }
         }
-        XString_delete_base(anchor);
+        XClassDelete(anchor);
     } else if (XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE) {
         /* 悬停高亮：进入/离开/切换链接（URL 变化）时发射 highlighted；
            离开时载荷为空串（Qt 语义）。 */
@@ -315,7 +315,7 @@ static bool VX_browser_eventFilter(XObject* self, XObject* watched,
                        (hasUrl && hasHover && XStrcmp(url, hover) != 0);
         if (changed) {
             if (browser->m_hoverAnchor) {
-                XString_delete_base(browser->m_hoverAnchor);
+                XClassDelete(browser->m_hoverAnchor);
                 browser->m_hoverAnchor = NULL;
             }
             if (hasUrl)
@@ -325,7 +325,7 @@ static bool VX_browser_eventFilter(XObject* self, XObject* watched,
                                                                  url),
                          hasUrl ? url : "");
         }
-        if (anchor) XString_delete_base(anchor);
+        if (anchor) XClassDelete(anchor);
     }
     return false;
 }
@@ -357,7 +357,7 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags)
 #if XTEXTDOCUMENT_ON
     /* XTextEdit_init 已创建 m_textDoc：覆盖前释放旧对象（否则泄漏）。 */
     if (self->m_base.m_textDoc) {
-        XClass_delete_base((XClass*)self->m_base.m_textDoc);
+        XClassDelete((XClass*)self->m_base.m_textDoc);
         self->m_base.m_textDoc = NULL;
     }
     self->m_base.m_textDoc = XTextDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
@@ -497,7 +497,7 @@ static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
        forward 条目被截断并释放，避免环形覆盖泄漏）。 */
     for (li = self->m_historyIndex + 1; li < self->m_historyCount; ++li) {
         XString* stale = xtb_history_entry(self, li);
-        if (stale) XString_delete_base((XClass*)stale);
+        if (stale) XClassDelete((XClass*)stale);
         xtb_history_set(self, li, NULL);
     }
     if (self->m_historyCount > self->m_historyIndex + 1)
@@ -508,14 +508,14 @@ static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
         return;
     }
     if (!xtb_history_alloc(self)) {
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         xtb_updateNavigationState(self);
         return;
     }
     /* 容量已满：环形覆盖最老条目（逻辑第 0 条）。 */
     if (self->m_historyCount >= self->m_historyCapacity) {
         XString* oldest = xtb_history_entry(self, 0);
-        if (oldest) XString_delete_base((XClass*)oldest);
+        if (oldest) XClassDelete((XClass*)oldest);
         xtb_history_set(self, 0, NULL);
         self->m_historyStart =
             (self->m_historyStart + 1) % self->m_historyCapacity;
@@ -576,7 +576,7 @@ void* XTextBrowser_sourceChanged_signal(XTextBrowser* self, const char* url)
         return (void*)(size_t)XTextBrowser_sourceChanged_signal;
     args = XVarList_Create(XVar(XString*, val));
     if (!args) {
-        XString_delete_base((XClass*)val);
+        XClassDelete((XClass*)val);
         return (void*)(size_t)XTextBrowser_sourceChanged_signal;
     }
     if (((XObject*)self)->m_signalSlot)
@@ -639,7 +639,7 @@ void XTextBrowser_clearHistory(XTextBrowser* self)
             XString* stale;
             if (li == keepLogical) continue;
             stale = xtb_history_entry(self, li);
-            if (stale) XString_delete_base((XClass*)stale);
+            if (stale) XClassDelete((XClass*)stale);
             xtb_history_set(self, li, NULL);
         }
         /* 重设环形起点，使保留的当前条目成为逻辑第 0 条。 */
@@ -773,7 +773,7 @@ void XTextBrowser_setSearchPaths(XTextBrowser* self, const XStringList* paths)
     copy = paths ? XStringList_create_copy(paths) : NULL;
     if (paths && !copy) return;
     if (self->m_searchPaths) {
-        XStringList_delete_base((XClass*)self->m_searchPaths);
+        XClassDelete((XClass*)self->m_searchPaths);
         self->m_searchPaths = NULL;
     }
     self->m_searchPaths = copy;
@@ -783,7 +783,7 @@ void XTextBrowser_setSearchPaths(XTextBrowser* self, const XStringList* paths)
  * @brief      获取资源搜索路径列表（对标 QTextBrowser::searchPaths）。
  * @param      self 目标控件；可为 NULL。
  * @return     新建的深拷贝 XStringList*，由调用方以
- *             XStringList_delete_base 释放；内部为空（从未设置）时返回
+ *             XClassDelete 释放；内部为空（从未设置）时返回
  *             新建空列表，分配失败返回 NULL。
  */
 XStringList* XTextBrowser_searchPaths(const XTextBrowser* self)
@@ -815,7 +815,7 @@ XRect XTextBrowser_cursorRect(const XTextBrowser* self)
  *             fmt.anchorHref）为承载、与富绘制路径同口径几何命中；片段
  *             无锚点或块带未命中返回 0 长度字符串对象。
  * @note       返回值为堆上新建的 XString*（空串对象或锚点文本），由
- *             调用方以 XString_delete_base 释放；内存分配失败返回 NULL。
+ *             调用方以 XClassDelete 释放；内存分配失败返回 NULL。
  * @param      self 目标控件指针；可为 NULL。
  * @param      pos 控件局部坐标点；可为 NULL，不被使用。
  * @return     堆上新建的 XString*；语义见 @note。

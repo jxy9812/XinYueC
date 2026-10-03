@@ -105,7 +105,7 @@ static bool VXHashSetDetachIfNeeded(XHashSet* this_set)
                 void* oldKey = XBTreeNode_GetDataPtr(oldNode);
                 XRBTreeNode* newNode = XRBTree_create_ex(NULL, typeSize, XContainer_memory(this_set));
                 if (!newNode) {
-                    XVector_delete_base(nodes);
+                    XClassDelete(nodes);
                     XSharedData_release(newShared, XContainer_memory(this_set));
                     return false;
                 }
@@ -119,7 +119,7 @@ static bool VXHashSetDetachIfNeeded(XHashSet* this_set)
                 ((XTreeNode*)newNode)->parentNode = NULL;
                 XRBTree_insertNode(&newBuckets[i], XContainerCompare(this_set), XCompareRuleTwo_XSet, newNode, XContainer_memory(this_set));
             }
-            XVector_delete_base(nodes);
+            XClassDelete(nodes);
         }
     }
 
@@ -135,7 +135,7 @@ static void VXHashSetDataDelete(void* data, XHashSet* this_set)
     size_t capacity = XContainerCapacity(this_set);
     for (size_t i = 0; i < capacity; i++) {
         if (buckets[i])
-            XTree_delete(buckets[i], XSet_deleteNodeData, this_set, XContainer_memory(this_set));
+            XTree_delete(buckets[i], XTreeNode_delete, XSet_deleteNodeData, this_set, XContainer_memory(this_set));
     }
     XContainerSize(this_set) = 0;
     XContainerCapacity(this_set) = 0;
@@ -179,7 +179,7 @@ static bool XHashSet_resize(XHashSet* set, size_t new_capacity)
                 ((XTreeNode*)node)->parentNode = NULL;
                 XRBTree_insertNode(&newBuckets[idx], XContainerCompare(set), XCompareRuleTwo_XSet, node, XContainer_memory(set));
             }
-            XVector_delete_base(nodes);
+            XClassDelete(nodes);
         }
     }
 
@@ -363,7 +363,7 @@ void VXSet_clear(XHashSet* this_set)
     size_t cap = XContainerCapacity(this_set);
     for (size_t i = 0; i < cap; i++) {
         if (buckets[i])
-            XTree_delete(buckets[i], XSet_deleteNodeData, this_set, XContainer_memory(this_set));
+            XTree_delete(buckets[i], XTreeNode_delete, XSet_deleteNodeData, this_set, XContainer_memory(this_set));
     }
     if (XContainerIsCow(this_set)) {
         if ((XSharedData*)XContainerDataPtr(this_set))
@@ -399,7 +399,7 @@ void VXClass_copy(XHashSet* object, const XHashSet* src)
                 size_t cap = XContainerCapacity(object);
                 for (size_t i = 0; i < cap; i++) {
                     if (buckets[i])
-                        XTree_delete(buckets[i], XSet_deleteNodeData, object, XContainer_memory(object));
+                        XTree_delete(buckets[i], XTreeNode_delete, XSet_deleteNodeData, object, XContainer_memory(object));
                 }
                         XContainer_free(object, buckets);
             }
@@ -436,7 +436,7 @@ void VXClass_copy(XHashSet* object, const XHashSet* src)
                     void* oldKey = XBTreeNode_GetDataPtr(oldNode);
                     XRBTreeNode* newNode = XRBTree_create_ex(NULL, typeSize, XContainer_memory(object));
                     if (!newNode) {
-                        XVector_delete_base(nodes);
+                        XClassDelete(nodes);
                         XContainer_free(object, newBuckets);
                         return;
                     }
@@ -450,7 +450,7 @@ void VXClass_copy(XHashSet* object, const XHashSet* src)
                     ((XTreeNode*)newNode)->parentNode = NULL;
                     XRBTree_insertNode(&newBuckets[i], XContainerCompare(object), XCompareRuleTwo_XSet, newNode, XContainer_memory(object));
                 }
-                XVector_delete_base(nodes);
+                XClassDelete(nodes);
             }
         }
         XContainerDataPtr(object) = newBuckets;
@@ -479,7 +479,7 @@ void VXClass_move(XHashSet* object, XHashSet* src)
                 size_t cap = XContainerCapacity(object);
                 for (size_t i = 0; i < cap; i++) {
                     if (buckets[i])
-                        XTree_delete(buckets[i], XSet_deleteNodeData, object, XContainer_memory(object));
+                        XTree_delete(buckets[i], XTreeNode_delete, XSet_deleteNodeData, object, XContainer_memory(object));
                 }
                         XContainer_free(object, buckets);
             }
@@ -508,7 +508,7 @@ void VXSet_deinit(XHashSet* this_set)
             size_t cap = XContainerCapacity(this_set);
             for (size_t i = 0; i < cap; i++) {
                 if (buckets[i])
-                    XTree_delete(buckets[i], XSet_deleteNodeData, this_set, XContainer_memory(this_set));
+                    XTree_delete(buckets[i], XTreeNode_delete, XSet_deleteNodeData, this_set, XContainer_memory(this_set));
             }
             XContainer_free(this_set, buckets);
         }

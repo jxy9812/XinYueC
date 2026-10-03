@@ -257,7 +257,7 @@ static bool verify_public_api_contract(void)
     ok = ok && stackFtp.m_proxyType == XFtp_ProxyType_None;
     XFtp_abortTransfer(&stackFtp);
     XFtp_abort(&stackFtp);
-    XFtp_deinit_base(&stackFtp);
+    XClassDeinit(&stackFtp);
 
     XFtpCommand* cmd = XFtpCommand_create(73, XFtpCommand_RawCommand);
     ok = ok && cmd && cmd->m_id == 73;
@@ -271,7 +271,7 @@ static bool verify_public_api_contract(void)
             const char* arg = *(const char**)XVector_at_base(cmd->m_rawCmds, 0);
             ok = ok && arg && strcmp(arg, "NOOP") == 0;
         }
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
     }
 
     XFtp* signalFtp = XFtp_create();
@@ -318,13 +318,13 @@ static bool verify_public_api_contract(void)
         ok = ok && s_signal_probe.rawReplyCount == 1 && s_signal_probe.rawCode == 211;
         ok = ok && s_signal_probe.rawText && strcmp(s_signal_probe.rawText, "contract") == 0;
         ok = ok && s_signal_probe.doneCount == 1 && s_signal_probe.doneError;
-        XFtp_delete(signalFtp);
+        XClassDelete(signalFtp);
     }
 
     XFtp_init(NULL);
-    XFtp_deinit_base(NULL);
-    XFtp_delete(NULL);
-    XFtpCommand_delete(NULL);
+    XClassDeinit(NULL);
+    XClassDelete(NULL);
+    XClassDelete(NULL);
     return ok;
 }
 
@@ -387,7 +387,7 @@ static bool verify_prelogin_error_contract(void)
                 connectId, connected, notLoggedIn, closeId, duplicateClose, closed,
                 XFtp_state(probe), XFtp_error(probe));
     }
-    XClass_delete_base((XClass*)probe);
+    XClassDelete((XClass*)probe);
     return notLoggedIn && duplicateClose && closed;
 }
 
@@ -546,11 +546,11 @@ static bool t_resume(XFtp* ftp)
     int64_t offset = 10;
     XString* lfname = XString_create_utf8("xftp_resume_local.bin");
     XFile* wf = XFile_create_2(lfname);
-    if (!wf) { XString_delete_base(lfname); return false; }
+    if (!wf) { XClassDelete(lfname); return false; }
     if (!XIODevice_open_base((XIODevice*)wf,
                              XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) {
-        XClass_delete_base((XClass*)wf);
-        XString_delete_base(lfname);
+        XClassDelete((XClass*)wf);
+        XClassDelete(lfname);
         return false;
     }
 
@@ -558,8 +558,8 @@ static bool t_resume(XFtp* ftp)
     bool got = (id >= 0) && wait_cmd(5000, id);
     XIODevice_close_base((XIODevice*)wf);
     if (!got) {
-        XClass_delete_base((XClass*)wf);
-        XString_delete_base(lfname);
+        XClassDelete((XClass*)wf);
+        XClassDelete(lfname);
         return false;
     }
 
@@ -576,13 +576,13 @@ static bool t_resume(XFtp* ftp)
             XPrintf("    [断点续传 offset=%lld: 期望 %lld 字节，实得 %lld 字节，内容%s]\n",
                 (long long)offset, (long long)expect, (long long)gotsz,
                 ok ? "正确" : "错误");
-            XByteArray_delete_base(content);
+            XClassDelete(content);
         }
         XIODevice_close_base((XIODevice*)rf);
     }
-    if (rf) XClass_delete_base((XClass*)rf);
-    XClass_delete_base((XClass*)wf);
-    XString_delete_base(lfname);
+    if (rf) XClassDelete((XClass*)rf);
+    XClassDelete((XClass*)wf);
+    XClassDelete(lfname);
 
     /* 清理远程文件 */
     id = XFtp_remove(ftp, "xftp_resume.txt");
@@ -601,10 +601,10 @@ static bool download_verify(XFtp* ftp, const char* remote,
     snprintf(nameBuf, sizeof(nameBuf), "xftp_dl_%d.bin", s_dl_seq++);
     XString* lfn = XString_create_utf8(nameBuf);
     XFile* wf = XFile_create_2(lfn);
-    if (!wf) { XString_delete_base(lfn); return false; }
+    if (!wf) { XClassDelete(lfn); return false; }
     if (!XIODevice_open_base((XIODevice*)wf,
                              XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) {
-        XClass_delete_base((XClass*)wf); XString_delete_base(lfn); return false;
+        XClassDelete((XClass*)wf); XClassDelete(lfn); return false;
     }
     int id = XFtp_get(ftp, remote, wf, 0);
     bool got = (id >= 0) && wait_cmd(30000, id);
@@ -613,7 +613,7 @@ static bool download_verify(XFtp* ftp, const char* remote,
         XPrintf("    [GET 命令未完成: state=%d error=%d current=%d id=%d pending=%d]\n",
                 XFtp_state(ftp), XFtp_error(ftp), XFtp_currentCommand(ftp),
                 XFtp_currentId(ftp), XFtp_hasPendingCommands(ftp) ? 1 : 0);
-        XClass_delete_base((XClass*)wf); XString_delete_base(lfn); return false;
+        XClassDelete((XClass*)wf); XClassDelete(lfn); return false;
     }
 
     XFile* rf = XFile_create_2(lfn);
@@ -624,13 +624,13 @@ static bool download_verify(XFtp* ftp, const char* remote,
             int64_t gotsz = XByteArray_size_base(c);
             ok = (gotsz == expectLen) &&
                  (memcmp(XByteArray_data(c), expect, (size_t)expectLen) == 0);
-            XByteArray_delete_base(c);
+            XClassDelete(c);
         }
         XIODevice_close_base((XIODevice*)rf);
     }
-    if (rf) XClass_delete_base((XClass*)rf);
-    XClass_delete_base((XClass*)wf);
-    XString_delete_base(lfn);
+    if (rf) XClassDelete((XClass*)rf);
+    XClassDelete((XClass*)wf);
+    XClassDelete(lfn);
     return ok;
 }
 
@@ -927,7 +927,7 @@ int main(int argc, char* argv[])
 
     if (!verify_public_api_contract()) {
         XPrintf("[致命] XFtp 公开 API/信号契约自检失败\n");
-        XCoreApplication_delete_base(XCoreApplication_instance());
+        XClassDelete(XCoreApplication_instance());
         return 1;
     }
     XPrintf("公开 API/信号契约自检: 通过\n");
@@ -945,8 +945,8 @@ int main(int argc, char* argv[])
             caCert = XSsl_certificateLoad(s_ca_cert_path, XSSL_Pem);
             if (!caCert) {
                 XPrintf("[致命] 无法加载 CA 证书: %s\n", s_ca_cert_path);
-                XClass_delete_base((XClass*)ftp);
-                XCoreApplication_delete_base(XCoreApplication_instance());
+                XClassDelete((XClass*)ftp);
+                XClassDelete(XCoreApplication_instance());
                 return 1;
             }
             XFtp_setSslCaCertificate(ftp, caCert);
@@ -973,16 +973,16 @@ int main(int argc, char* argv[])
         XFtp_error(ftp) != XFtp_Error_NotConnected ||
         XFtp_close(ftp) != -1 || XFtp_error(ftp) != XFtp_Error_NotConnected) {
         XPrintf("[致命] 未连接操作未按约定失败\n");
-        XClass_delete_base((XClass*)ftp);
+        XClassDelete((XClass*)ftp);
         if (caCert) XSsl_certificateDestroy(caCert);
-        XCoreApplication_delete_base(XCoreApplication_instance());
+        XClassDelete(XCoreApplication_instance());
         return 1;
     }
     if (!verify_prelogin_error_contract()) {
         XPrintf("[致命] 已连接未登录/重复关闭错误码未按约定返回\n");
-        XClass_delete_base((XClass*)ftp);
+        XClassDelete((XClass*)ftp);
         if (caCert) XSsl_certificateDestroy(caCert);
-        XCoreApplication_delete_base(XCoreApplication_instance());
+        XClassDelete(XCoreApplication_instance());
         return 1;
     }
     XObject_connect_1((XObject*)ftp, XSignal(XFtp_commandFinished_signal),
@@ -1024,15 +1024,15 @@ int main(int argc, char* argv[])
             XPrintf("    [预期 TLS 握手失败: err=%d text=%s %s]\n",
                     XFtp_error(ftp), XFtp_errorString(ftp),
                     expected ? "OK" : "错");
-            XClass_delete_base((XClass*)ftp);
+            XClassDelete((XClass*)ftp);
             if (caCert) XSsl_certificateDestroy(caCert);
-            XCoreApplication_delete_base(XCoreApplication_instance());
+            XClassDelete(XCoreApplication_instance());
             return expected ? 0 : 2;
         }
         XPrintf("[致命] 连接或登录失败，请检查 ftp_test_server.py 是否运行\n");
-        XClass_delete_base((XClass*)ftp);
+        XClassDelete((XClass*)ftp);
         if (caCert) XSsl_certificateDestroy(caCert);
-        XCoreApplication_delete_base(XCoreApplication_instance());
+        XClassDelete(XCoreApplication_instance());
         return 2;
     }
     XPrintf("    [登录成功，state=%d]\n", XFtp_state(ftp));
@@ -1043,9 +1043,9 @@ int main(int argc, char* argv[])
                         XFtp_error(ftp) == XFtp_Error_DirectoryListingFailed;
         XPrintf("    [预期列表解析失败: err=%d text=%s %s]\n",
                 XFtp_error(ftp), XFtp_errorString(ftp), expected ? "OK" : "错");
-        XClass_delete_base((XClass*)ftp);
+        XClassDelete((XClass*)ftp);
         if (caCert) XSsl_certificateDestroy(caCert);
-        XCoreApplication_delete_base(XCoreApplication_instance());
+        XClassDelete(XCoreApplication_instance());
         return expected ? 0 : 2;
     }
 
@@ -1064,8 +1064,8 @@ int main(int argc, char* argv[])
     }
     XPrintf("\n通过率: %d / %d\n", passCnt, n);
 
-    XClass_delete_base((XClass*)ftp);
+    XClassDelete((XClass*)ftp);
     if (caCert) XSsl_certificateDestroy(caCert);
-    XCoreApplication_delete_base(XCoreApplication_instance());
+    XClassDelete(XCoreApplication_instance());
     return passCnt == n ? 0 : 1;
 }

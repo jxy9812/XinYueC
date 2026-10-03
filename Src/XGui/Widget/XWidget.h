@@ -678,9 +678,7 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags);
 XWidget* XWidget_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
 /** @brief 通过 XClass 虚表释放 XWidget 资源（栈/外部存储对象使用）。 */
-#define XWidget_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XWidget 对象。 */
-#define XWidget_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 属性与窗口标志（对标 QWidget） ==================== */
 
@@ -884,7 +882,7 @@ void XWidget_adjustSize(XWidget* self);
  *             字段，依次为 frameGeometry x/y/w/h、正常态几何 x/y/w/h、
  *             窗口状态标志 Maximized|FullScreen；对标 Qt 的 magic+version+
  *             frameGeometry+normalGeometry+savedState，最小化为瞬态不保存）。
- *             调用方用 XByteArray_delete_base 释放返回对象。
+ *             调用方用 XClassDelete 释放返回对象。
  * @param      self 目标顶层控件；可为 NULL。
  * @return     序列化字节串（堆对象，调用方拥有）；非顶层控件、空指针或
  *             分配失败返回 NULL。
@@ -1240,7 +1238,7 @@ void XWidget_setWindowIconText(XWidget* self, const XString* text);
  *             显示在标题栏（经桥接窗口 XWindow_setIcon 生效）。
  * @param      self 目标控件；可为 NULL。
  * @return     生效图标的 XIcon 值副本；内部为共享私有数据的引用计数拷贝，
- *             调用方使用完毕必须调用 XIcon_deinit_base 释放（契约同
+ *             调用方使用完毕必须调用 XClassDeinit 释放（契约同
  *             XWidget_font）；空指针返回空图标。
  */
 XIcon XWidget_windowIcon(const XWidget* self);
@@ -1296,7 +1294,7 @@ void XWidget_setWindowModified(XWidget* self, bool modified);
  * @return     无返回值。
  * @warning    bar 生命周期由创建方负责：宿主控件析构时框架会在级联删子
  *             前把条解挂归还（不随宿主删除），创建方此后自行释放；控件
- *             树槽位不随值拷贝/移动，XCopy/XMove 后新对象槽位为空。
+ *             树槽位不随值拷贝/移动，XClassCopy/XClassMove 后新对象槽位为空。
  * @warning    顶层窗口消费场景（self 为顶层控件）要求 bar 派生自
  *             XTitleBar：装饰路径的类型化操作（命中测试虚槽/活动子控件
  *             注入/选项组装）按 XTitleBar 布局访问条控件，挂载非派生控
@@ -1599,7 +1597,7 @@ void XWidget_applyStyleSheetProperties(XWidget* self);
 /**
  * @brief      返回控件字体副本（对标 QWidget::font）。
  * @details    深拷贝语义（Phase 3.2 裁定）：副本拥有独立的家族/样式名
- *             字符串，调用方使用完毕必须调用 XFont_deinit_base 释放。
+ *             字符串，调用方使用完毕必须调用 XClassDeinit 释放。
  * @param      self 目标控件；可为 NULL。
  * @return     控件当前字体的独立副本；空指针返回默认构造字体。
  */
@@ -1621,7 +1619,7 @@ void XWidget_setFont(XWidget* self, const XFont* font);
  *             height()/ascent() 等度量成员，本适配返回 XFont 值拷贝，测量
  *             由调用方以 XPainter_textWidth/XPainter_textHeight 等接口完成；
  *             副本拥有独立的家族/样式名字符串，使用完毕必须调用
- *             XFont_deinit_base 释放（与 XWidget_font 相同的深拷贝契约）。
+ *             XClassDeinit 释放（与 XWidget_font 相同的深拷贝契约）。
  *             fontInfo() 采用同一 XFont 值拷贝方案提供（见
  *             XWidget_fontInfo；本仓库未建立 QFontInfo 等价承载类型）。
  */
@@ -1639,7 +1637,7 @@ XFont XWidget_fontMetrics(const XWidget* self);
  * @note       与 Qt 的承载差异：Qt 返回 QFontInfo 对象并提供 family()/
  *             pointSize()/italic() 等解析结果查询成员，本适配返回 XFont
  *             值拷贝；副本拥有独立的家族/样式名字符串，使用完毕必须调用
- *             XFont_deinit_base 释放（与 XWidget_font 相同的深拷贝契约）。
+ *             XClassDeinit 释放（与 XWidget_font 相同的深拷贝契约）。
  */
 XFont XWidget_fontInfo(const XWidget* self);
 /** @brief 查询调色板（对标 QWidget::palette；未设置时返回应用调色板）。 */
@@ -1759,7 +1757,7 @@ typedef XVariant* (*XWidgetInputMethodQuerySlot)(const XWidget* self,
  *             - 其余查询项返回 NULL（等价 Qt 的无效 QVariant）。
  * @param      self 目标控件；可为 NULL。
  * @param      query 查询项（XInputMethodQuery 取值与 Qt::InputMethodQuery 一致）。
- * @return     新建的 XVariant（调用方用 XVariant_delete_base 释放）；不支持的
+ * @return     新建的 XVariant（调用方用 XClassDelete 释放）；不支持的
  *             查询项、控件为 NULL 或分配失败返回 NULL。
  * @note       与 Qt 的差异：ImFont 返回 NULL（XGui 未建立字体变体类型）、
  *             ImAnchorPosition 不回落 ImCursorPosition（无光标位置概念的
@@ -1906,7 +1904,7 @@ void* XWidget_paintEngine(const XWidget* self);
 /**
  * @brief      抓取控件当前内容为图像（对标 QWidget::grab）。
  * @details    返回新建 XImage（控件全幅尺寸，ARGB32_Premultiplied，未被
- *             内容覆盖的像素为全透明），调用方以 XImage_delete_base 释放。
+ *             内容覆盖的像素为全透明），调用方以 XClassDelete 释放。
  *             按控件状态择一路径：
  *              - 顶层控件且后备存储已持有同尺寸有效像素（最近一次上屏
  *                内容）→ 经 XBackingStore_toImage 深拷贝，不触发重绘；

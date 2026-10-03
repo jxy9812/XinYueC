@@ -124,9 +124,7 @@ void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags);
 XSlider* XSlider_create_ex(XMemoryType memory, XWidget* parent,
                            XWidgetFlags flags);
 /** @brief 通过 XClass 虚表释放 XSlider 资源（栈/外部存储对象使用）。 */
-#define XSlider_deinit_base(self) XAbstractSlider_deinit_base((XAbstractSlider*)(self))
 /** @brief 删除堆上的 XSlider 对象。 */
-#define XSlider_delete_base(self) XAbstractSlider_delete_base((XAbstractSlider*)(self))
 
 /* ==================== 刻度（对标 QSlider） ==================== */
 

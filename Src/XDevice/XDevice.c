@@ -111,7 +111,7 @@ void XDevice_unref(XDevice* self)
 {
 	if (!self || self->m_refCount == 0) return;
 	if (--self->m_refCount == 0 && !self->m_registered && Class_IsHeap(self)) {
-		XDevice_delete_base((XClass*)self);
+		XClassDelete((XClass*)self);
 	}
 }
 

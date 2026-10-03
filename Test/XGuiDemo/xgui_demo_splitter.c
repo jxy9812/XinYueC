@@ -229,7 +229,7 @@ XWidget* DemoSplitter_create_ex(int memoryType, XWidget* parent, int edge,
                                            : XCursor_SizeVer);
         if (cursor) {
             XWidget_setCursor(&sp->m_base, cursor);
-            XCursor_delete_base(cursor);
+            XClassDelete(cursor);
         }
     }
 #endif

@@ -244,7 +244,7 @@ XCellReference XCellReference_create_str_utf8(const char* cell)
 {
     XString* s = cell ? XString_create_utf8(cell) : NULL;
     XCellReference result = XCellReference_create_str(s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }
 

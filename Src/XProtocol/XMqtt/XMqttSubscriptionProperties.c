@@ -33,7 +33,7 @@ XMqttSubscriptionProperties* XMqttSubscriptionProperties_create_copy(const XMqtt
 {
     if (!other) return NULL;
     XMqttSubscriptionProperties* p = XMqttSubscriptionProperties_create();
-    if (p) XCopy(p, other);
+    if (p) XClassCopy(p, other);
     return p;
 }
 
@@ -48,7 +48,7 @@ void XMqttSubscriptionProperties_init(XMqttSubscriptionProperties* prop)
 static void VSP_deinit(XMqttSubscriptionProperties* prop)
 {
     if (!prop) return;
-    if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); prop->m_userProperties = NULL; }
+    if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); prop->m_userProperties = NULL; }
     XClass_Deinit_Parent(XClass, prop);
 }
 
@@ -59,7 +59,7 @@ static void VSP_copy(XMqttSubscriptionProperties* dest, const XMqttSubscriptionP
     if (XClassIsVtableNull(dest))
         XMqttSubscriptionProperties_init(dest);
     else if (dest->m_userProperties) {
-        XMqttUserProperties_delete_base(dest->m_userProperties);
+        XClassDelete(dest->m_userProperties);
         dest->m_userProperties = NULL;
     }
     dest->m_subscriptionIdentifier = src->m_subscriptionIdentifier;
@@ -73,7 +73,7 @@ static void VSP_move(XMqttSubscriptionProperties* dest, XMqttSubscriptionPropert
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttSubscriptionProperties_init(dest);
-    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+    if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
     dest->m_userProperties = src->m_userProperties;
     dest->m_subscriptionIdentifier = src->m_subscriptionIdentifier;
     dest->m_noLocal = src->m_noLocal;
@@ -82,7 +82,7 @@ static void VSP_move(XMqttSubscriptionProperties* dest, XMqttSubscriptionPropert
 
 const XMqttUserProperties* XMqttSubscriptionProperties_userProperties_const(const XMqttSubscriptionProperties* prop) { return prop ? prop->m_userProperties : NULL; }
 XMqttUserProperties* XMqttSubscriptionProperties_userProperties(const XMqttSubscriptionProperties* prop) { if (!prop || !prop->m_userProperties) return NULL; return (XMqttUserProperties*)XVector_create_copy((XVector*)prop->m_userProperties); }
-void XMqttSubscriptionProperties_setUserProperties(XMqttSubscriptionProperties* prop, const XMqttUserProperties* user) { if (prop) { if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); } prop->m_userProperties = user ? (XMqttUserProperties*)XVector_create_copy((XVector*)user) : NULL; } }
+void XMqttSubscriptionProperties_setUserProperties(XMqttSubscriptionProperties* prop, const XMqttUserProperties* user) { if (prop) { if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); } prop->m_userProperties = user ? (XMqttUserProperties*)XVector_create_copy((XVector*)user) : NULL; } }
 uint32_t XMqttSubscriptionProperties_subscriptionIdentifier(const XMqttSubscriptionProperties* prop) { return prop ? prop->m_subscriptionIdentifier : 0; }
 void XMqttSubscriptionProperties_setSubscriptionIdentifier(XMqttSubscriptionProperties* prop, uint32_t id) { if (prop) prop->m_subscriptionIdentifier = id; }
 bool XMqttSubscriptionProperties_noLocal(const XMqttSubscriptionProperties* prop) { return prop ? prop->m_noLocal : false; }
@@ -115,7 +115,7 @@ XMqttUnsubscriptionProperties* XMqttUnsubscriptionProperties_create_copy(const X
 {
     if (!other) return NULL;
     XMqttUnsubscriptionProperties* p = XMqttUnsubscriptionProperties_create();
-    if (p) XCopy(p, other);
+    if (p) XClassCopy(p, other);
     return p;
 }
 
@@ -130,7 +130,7 @@ void XMqttUnsubscriptionProperties_init(XMqttUnsubscriptionProperties* prop)
 static void VUSP_deinit(XMqttUnsubscriptionProperties* prop)
 {
     if (!prop) return;
-    if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); prop->m_userProperties = NULL; }
+    if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); prop->m_userProperties = NULL; }
     XClass_Deinit_Parent(XClass, prop);
 }
 
@@ -141,7 +141,7 @@ static void VUSP_copy(XMqttUnsubscriptionProperties* dest, const XMqttUnsubscrip
     if (XClassIsVtableNull(dest))
         XMqttUnsubscriptionProperties_init(dest);
     else if (dest->m_userProperties) {
-        XMqttUserProperties_delete_base(dest->m_userProperties);
+        XClassDelete(dest->m_userProperties);
         dest->m_userProperties = NULL;
     }
     if (src->m_userProperties) dest->m_userProperties = (XMqttUserProperties*)XVector_create_copy((XVector*)src->m_userProperties);
@@ -153,14 +153,14 @@ static void VUSP_move(XMqttUnsubscriptionProperties* dest, XMqttUnsubscriptionPr
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttUnsubscriptionProperties_init(dest);
-    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+    if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
     dest->m_userProperties = src->m_userProperties;
     src->m_userProperties = NULL;
 }
 
 const XMqttUserProperties* XMqttUnsubscriptionProperties_userProperties_const(const XMqttUnsubscriptionProperties* prop) { return prop ? prop->m_userProperties : NULL; }
 XMqttUserProperties* XMqttUnsubscriptionProperties_userProperties(const XMqttUnsubscriptionProperties* prop) { if (!prop || !prop->m_userProperties) return NULL; return (XMqttUserProperties*)XVector_create_copy((XVector*)prop->m_userProperties); }
-void XMqttUnsubscriptionProperties_setUserProperties(XMqttUnsubscriptionProperties* prop, const XMqttUserProperties* user) { if (prop) { if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); } prop->m_userProperties = user ? (XMqttUserProperties*)XVector_create_copy((XVector*)user) : NULL; } }
+void XMqttUnsubscriptionProperties_setUserProperties(XMqttUnsubscriptionProperties* prop, const XMqttUserProperties* user) { if (prop) { if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); } prop->m_userProperties = user ? (XMqttUserProperties*)XVector_create_copy((XVector*)user) : NULL; } }
 
 #endif /* XMQTT_SUBSCRIPTION_ON || XMQTT_PROPERTIES_ON */
 #endif /* XMQTT_ON */

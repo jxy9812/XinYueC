@@ -26,7 +26,7 @@ static void xserverchan_result_set_message(XServerChanResult* self, const char* 
     if (!self) return;
     value = XString_create_utf8(message ? message : "");
     if (!value) return;
-    if (self->m_message) XString_delete_base(self->m_message);
+    if (self->m_message) XClassDelete(self->m_message);
     self->m_message = value;
 }
 
@@ -37,7 +37,7 @@ static void xserverchan_result_set_message_string(XServerChanResult* self,
     if (!self) return;
     value = message ? XString_create_copy(message) : XString_create_utf8("");
     if (!value) return;
-    if (self->m_message) XString_delete_base(self->m_message);
+    if (self->m_message) XClassDelete(self->m_message);
     self->m_message = value;
 }
 
@@ -45,11 +45,11 @@ static void VXServerChanResult_deinit(XServerChanResult* self)
 {
     if (!self) return;
     if (self->m_message) {
-        XString_delete_base(self->m_message);
+        XClassDelete(self->m_message);
         self->m_message = NULL;
     }
     if (self->m_responseBody) {
-        XByteArray_delete_base(self->m_responseBody);
+        XClassDelete(self->m_responseBody);
         self->m_responseBody = NULL;
     }
     self->m_apiCode = -1;
@@ -67,11 +67,11 @@ static void VXServerChanResult_copy(XServerChanResult* dest,
     if (XClassIsVtableNull(dest)) XServerChanResult_init(dest);
     if (src->m_message && !(message = XString_create_copy(src->m_message))) return;
     if (src->m_responseBody && !(body = XByteArray_create_copy(src->m_responseBody))) {
-        if (message) XString_delete_base(message);
+        if (message) XClassDelete(message);
         return;
     }
-    if (dest->m_message) XString_delete_base(dest->m_message);
-    if (dest->m_responseBody) XByteArray_delete_base(dest->m_responseBody);
+    if (dest->m_message) XClassDelete(dest->m_message);
+    if (dest->m_responseBody) XClassDelete(dest->m_responseBody);
     dest->m_message = message;
     dest->m_responseBody = body;
     dest->m_apiCode = src->m_apiCode;
@@ -84,8 +84,8 @@ static void VXServerChanResult_move(XServerChanResult* dest, XServerChanResult* 
 {
     if (!dest || !src || dest == src || XClassIsVtableNull(src)) return;
     if (XClassIsVtableNull(dest)) XServerChanResult_init(dest);
-    if (dest->m_message) XString_delete_base(dest->m_message);
-    if (dest->m_responseBody) XByteArray_delete_base(dest->m_responseBody);
+    if (dest->m_message) XClassDelete(dest->m_message);
+    if (dest->m_responseBody) XClassDelete(dest->m_responseBody);
     dest->m_message = src->m_message;
     dest->m_responseBody = src->m_responseBody;
     dest->m_apiCode = src->m_apiCode;
@@ -138,7 +138,7 @@ XServerChanResult* XServerChanResult_create_copy(const XServerChanResult* other)
     if (!other || XClassIsVtableNull(other)) return NULL;
     self = XServerChanResult_create();
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -148,7 +148,7 @@ XServerChanResult* XServerChanResult_create_move(XServerChanResult* other)
     if (!other || XClassIsVtableNull(other)) return NULL;
     self = XServerChanResult_create();
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -221,12 +221,12 @@ static XByteArray* xserverchan_create_form_body(const char* title, const char* d
     XByteArray* body = XByteArray_create();
     if (!body || !XByteArray_append_utf8(body, "title=") ||
         !xserverchan_append_form_value(body, title)) {
-        if (body) XByteArray_delete_base(body);
+        if (body) XClassDelete(body);
         return NULL;
     }
     if (desp && (!XByteArray_append_utf8(body, "&desp=") ||
                  !xserverchan_append_form_value(body, desp))) {
-        XByteArray_delete_base(body);
+        XClassDelete(body);
         return NULL;
     }
     return body;
@@ -284,7 +284,7 @@ static void xserverchan_parse_reply(XServerChanResult* result, const XHttpReply*
             ? XServerChanResult_Timeout : XServerChanResult_NetworkError;
         result->m_success = false;
         xserverchan_result_set_message_string(result, errorString);
-        if (errorString) XString_delete_base(errorString);
+        if (errorString) XClassDelete(errorString);
         return;
     }
     if (result->m_httpStatusCode < 200 || result->m_httpStatusCode >= 300) {
@@ -300,16 +300,16 @@ static void xserverchan_parse_reply(XServerChanResult* result, const XHttpReply*
     if (!codeValue || !XJsonValue_isInt(codeValue)) {
         xserverchan_set_result_error(result, XServerChanResult_InvalidResponse,
                                      "Server酱响应不是包含整数 code 的 JSON 对象");
-        if (codeKey) XString_delete_base(codeKey);
-        if (document) XJsonDocument_delete(document);
+        if (codeKey) XClassDelete(codeKey);
+        if (document) XClassDelete(document);
         return;
     }
     code = XJsonValue_toInt(codeValue, -1);
     if (code > INT_MAX || code < INT_MIN) {
         xserverchan_set_result_error(result, XServerChanResult_InvalidResponse,
                                      "Server酱响应 code 超出 int 范围");
-        XString_delete_base(codeKey);
-        XJsonDocument_delete(document);
+        XClassDelete(codeKey);
+        XClassDelete(document);
         return;
     }
     result->m_apiCode = (int)code;
@@ -327,24 +327,24 @@ static void xserverchan_parse_reply(XServerChanResult* result, const XHttpReply*
         if (!result->m_message || XString_isEmpty_base(result->m_message))
             xserverchan_result_set_message(result, "Server酱返回非零 code");
     }
-    XString_delete_base(codeKey);
-    if (messageKey) XString_delete_base(messageKey);
-    XJsonDocument_delete(document);
+    XClassDelete(codeKey);
+    if (messageKey) XClassDelete(messageKey);
+    XClassDelete(document);
 }
 
 static void VXServerChan_deinit(XServerChan* self)
 {
     if (!self) return;
     if (self->m_manager) {
-        XNetworkAccessManager_delete_base(self->m_manager);
+        XClassDelete(self->m_manager);
         self->m_manager = NULL;
     }
     if (self->m_sendKey) {
-        XString_delete_base(self->m_sendKey);
+        XClassDelete(self->m_sendKey);
         self->m_sendKey = NULL;
     }
     if (self->m_endpointUrl) {
-        XString_delete_base(self->m_endpointUrl);
+        XClassDelete(self->m_endpointUrl);
         self->m_endpointUrl = NULL;
     }
     self->m_transferTimeout = 30000;
@@ -361,25 +361,25 @@ static void VXServerChan_copy(XServerChan* dest, const XServerChan* src)
     if (src->m_endpointUrl && !(endpoint = XString_create_copy(src->m_endpointUrl))) goto failed;
     if (!dest->m_manager && !(manager = XNetworkAccessManager_create())) goto failed;
     if (manager) dest->m_manager = manager;
-    if (dest->m_sendKey) XString_delete_base(dest->m_sendKey);
-    if (dest->m_endpointUrl) XString_delete_base(dest->m_endpointUrl);
+    if (dest->m_sendKey) XClassDelete(dest->m_sendKey);
+    if (dest->m_endpointUrl) XClassDelete(dest->m_endpointUrl);
     dest->m_sendKey = sendKey;
     dest->m_endpointUrl = endpoint;
     dest->m_transferTimeout = src->m_transferTimeout;
     XNetworkAccessManager_setTransferTimeout(dest->m_manager, dest->m_transferTimeout);
     return;
 failed:
-    if (sendKey) XString_delete_base(sendKey);
-    if (endpoint) XString_delete_base(endpoint);
+    if (sendKey) XClassDelete(sendKey);
+    if (endpoint) XClassDelete(endpoint);
 }
 
 static void VXServerChan_move(XServerChan* dest, XServerChan* src)
 {
     if (!dest || !src || dest == src || XClassIsVtableNull(src)) return;
     if (XClassIsVtableNull(dest)) XServerChan_init(dest);
-    if (dest->m_manager) XNetworkAccessManager_delete_base(dest->m_manager);
-    if (dest->m_sendKey) XString_delete_base(dest->m_sendKey);
-    if (dest->m_endpointUrl) XString_delete_base(dest->m_endpointUrl);
+    if (dest->m_manager) XClassDelete(dest->m_manager);
+    if (dest->m_sendKey) XClassDelete(dest->m_sendKey);
+    if (dest->m_endpointUrl) XClassDelete(dest->m_endpointUrl);
     dest->m_manager = src->m_manager;
     dest->m_sendKey = src->m_sendKey;
     dest->m_endpointUrl = src->m_endpointUrl;
@@ -422,7 +422,7 @@ XServerChan* XServerChan_create_ex(XMemoryType memory, const char* sendKey)
     XServerChan_init(self);
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_manager || (sendKey && !XServerChan_setSendKey_utf8(self, sendKey))) {
-        if (self) XServerChan_delete_base(self);
+        if (self) XClassDelete(self);
         return NULL;
     }
     return self;
@@ -434,7 +434,7 @@ XServerChan* XServerChan_create_copy(const XServerChan* other)
     if (!other || XClassIsVtableNull(other)) return NULL;
     self = XServerChan_create();
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -444,7 +444,7 @@ XServerChan* XServerChan_create_move(XServerChan* other)
     if (!other || XClassIsVtableNull(other)) return NULL;
     self = XServerChan_create();
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -454,7 +454,7 @@ bool XServerChan_setSendKey_utf8(XServerChan* self, const char* sendKey)
     if (!self || !xserverchan_send_key_is_valid(sendKey)) return false;
     value = XString_create_utf8(sendKey);
     if (!value) return false;
-    if (self->m_sendKey) XString_delete_base(self->m_sendKey);
+    if (self->m_sendKey) XClassDelete(self->m_sendKey);
     self->m_sendKey = value;
     return true;
 }
@@ -478,7 +478,7 @@ bool XServerChan_setEndpointUrl_utf8(XServerChan* self, const char* endpointUrl)
     bool valid;
     if (!self) return false;
     if (!endpointUrl) {
-        if (self->m_endpointUrl) XString_delete_base(self->m_endpointUrl);
+        if (self->m_endpointUrl) XClassDelete(self->m_endpointUrl);
         self->m_endpointUrl = NULL;
         return true;
     }
@@ -487,12 +487,12 @@ bool XServerChan_setEndpointUrl_utf8(XServerChan* self, const char* endpointUrl)
     scheme = url ? XUrl_scheme_const(url) : NULL;
     valid = url && XUrl_isValid(url) && scheme &&
         (!strcmp(XString_toUtf8(scheme), "http") || !strcmp(XString_toUtf8(scheme), "https"));
-    if (url) XUrl_delete_base(url);
+    if (url) XClassDelete(url);
     if (!valid) {
-        if (value) XString_delete_base(value);
+        if (value) XClassDelete(value);
         return false;
     }
-    if (self->m_endpointUrl) XString_delete_base(self->m_endpointUrl);
+    if (self->m_endpointUrl) XClassDelete(self->m_endpointUrl);
     self->m_endpointUrl = value;
     return true;
 }
@@ -540,15 +540,15 @@ XHttpReply* XServerChan_send(XServerChan* self, const char* title, const char* d
         !XHttpRequest_setRawHeader(request, "Content-Type",
                                    "application/x-www-form-urlencoded; charset=UTF-8") ||
         !XHttpRequest_setRawHeader(request, "Accept", "application/json")) {
-        if (request) XHttpRequest_delete_base(request);
-        if (body) XByteArray_delete_base(body);
-        if (endpoint) XString_delete_base(endpoint);
+        if (request) XClassDelete(request);
+        if (body) XClassDelete(body);
+        if (endpoint) XClassDelete(endpoint);
         return NULL;
     }
     reply = XNetworkAccessManager_post(self->m_manager, request, body);
-    XHttpRequest_delete_base(request);
-    XByteArray_delete_base(body);
-    XString_delete_base(endpoint);
+    XClassDelete(request);
+    XClassDelete(body);
+    XClassDelete(endpoint);
     return reply;
 }
 
@@ -605,7 +605,7 @@ XServerChanResult* XServerChan_sendBlocking(XServerChan* self,
         if (XNetworkAccessManager_activeReplyCount(self->m_manager) != 0)
             XThread_msleep(1);
     }
-    XHttpReply_delete_base(reply);
+    XClassDelete(reply);
     return result;
 }
 #endif // XHTTP_ON

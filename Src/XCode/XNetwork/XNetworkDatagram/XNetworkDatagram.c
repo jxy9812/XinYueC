@@ -90,18 +90,6 @@ XNetworkDatagram* XNetworkDatagram_create_copy(const XNetworkDatagram* other)
     return dgram;
 }
 
-void XNetworkDatagram_deinit(XNetworkDatagram* dgram)
-{
-    if (!dgram) return;
-    
-    if (dgram->data) {
-        XByteArray_delete_base(dgram->data);
-        dgram->data = NULL;
-    }
-    
-    XClass_deinit_base(&dgram->m_class);
-}
-
 /* ============================================================================
  * 清空与有效性
  * ============================================================================ */
@@ -111,12 +99,12 @@ void XNetworkDatagram_clear(XNetworkDatagram* dgram)
     if (!dgram) return;
     
     if (dgram->data) {
-        XByteArray_delete_base(dgram->data);
+        XClassDelete(dgram->data);
         dgram->data = NULL;
     }
     
-    XHostAddress_deinit_base(&dgram->senderAddress);
-    XHostAddress_deinit_base(&dgram->destinationAddress);
+    XClassDeinit(&dgram->senderAddress);
+    XClassDeinit(&dgram->destinationAddress);
     XHostAddress_init(&dgram->senderAddress);
     XHostAddress_init(&dgram->destinationAddress);
     
@@ -155,7 +143,7 @@ void XNetworkDatagram_setData(XNetworkDatagram* dgram, const XByteArray* data)
     if (!dgram) return;
     
     if (dgram->data) {
-        XByteArray_delete_base(dgram->data);
+        XClassDelete(dgram->data);
         dgram->data = NULL;
     }
     

@@ -102,8 +102,6 @@ void XTextEdit_init(XTextEdit* self, XWidget* parent, XWidgetFlags flags);
  * @return 返回对象指针；无效时返回 NULL。
  */
 XTextEdit* XTextEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XTextEdit_deinit_base(self) XAbstractScrollArea_deinit_base((XAbstractScrollArea*)(self))
-#define XTextEdit_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* 字符格式 */
 /**
@@ -225,7 +223,7 @@ bool XTextEdit_isRichPreview(const XTextEdit* self);
 /** @brief 导出纯文本（对标 QTextEdit::toPlainText；去除全部标记）。
  * @param self 目标控件指针。
  * @return 返回新建 XString*（UTF-8 内容；self 无效时为空串对象）；
- *         内存分配失败返回 NULL。调用方负责用 XString_delete_base 释放。
+ *         内存分配失败返回 NULL。调用方负责用 XClassDelete 释放。
  */
 XString* XTextEdit_toPlainText(const XTextEdit* self);
 /** @brief 设置文本内容（对标 QTextEdit::setText；HTML/纯文本自动探测）。
@@ -410,7 +408,7 @@ void XTextEdit_setCurrentFont(XTextEdit* self, const char* family);
  *         XFont；self 为空返回默认构造字体。
  * @note Qt 返回光标处字符格式的字体；本库为整篇单格式（纯文本模型），
  *       即当前字体属性的组合值。返回对象所有权归调用方，使用完毕
- *       必须 XFont_deinit_base。
+ *       必须 XClassDeinit。
  */
 XFont XTextEdit_currentFont(const XTextEdit* self);
 /** @brief X文本EditzoomIn（对标 Qt 同名接口）。
@@ -634,7 +632,7 @@ XRect XTextEdit_cursorRect(const XTextEdit* self);
  * @param self 目标控件指针；可为 NULL。
  * @param pos 控件局部坐标点；可为 NULL。
  * @return 堆上新建的 XString*（锚点 href 或空串），调用方以
- *         XString_delete_base 释放；内存分配失败返回 NULL。
+ *         XClassDelete 释放；内存分配失败返回 NULL。
  */
 XString* XTextEdit_anchorAt(const XTextEdit* self, const XPoint* pos);
 
@@ -865,7 +863,7 @@ void XTextEdit_print(XTextEdit* self, void* printer);
  *             只读时仅提供复制/全选）。弹出（popup）与 DeleteOnClose 由
  *             调用方负责（参照 contextMenuEvent 用法）。
  * @param      self 目标控件指针；可为 NULL（返回 NULL）。
- * @return     新建的 XMenu*；所有权转移给调用方（用 XMenu_delete_base
+ * @return     新建的 XMenu*；所有权转移给调用方（用 XClassDelete
  *             释放）；创建失败返回 NULL。
  */
 XMenu* XTextEdit_createStandardContextMenu(XTextEdit* self);

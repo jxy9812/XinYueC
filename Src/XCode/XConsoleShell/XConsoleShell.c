@@ -449,8 +449,8 @@ static int xcs_source(XConsoleShell* shell, XConsoleShellSession* session,
         --shell->m_scriptDepth;
     }
     if (fd != XFD_INVALID) XDeviceFile_close(fd);
-    if (rawPath) XString_delete_base(rawPath);
-    if (path) XString_delete_base(path);
+    if (rawPath) XClassDelete(rawPath);
+    if (path) XClassDelete(path);
     return result;
 }
 
@@ -1110,8 +1110,8 @@ static void xcs_complete_path(XConsoleShell* self, const char* line,
     }
 cleanup:
     if (iterator != XFD_INVALID) XDeviceDir_close(iterator);
-    if (entryName) XString_delete_base(entryName);
-    if (dirPath) XString_delete_base(dirPath);
+    if (entryName) XClassDelete(entryName);
+    if (dirPath) XClassDelete(dirPath);
 }
 #endif /* XCONSOLE_SHELL_FILESYSTEM_ON */
 
@@ -1587,7 +1587,7 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
                     sizeof(self->m_session.currentPath) - 1);
             self->m_session.currentPath[sizeof(self->m_session.currentPath) - 1] = '\0';
         }
-        if (current) XString_delete_base(current);
+        if (current) XClassDelete(current);
     }
 #endif
     self->m_lineLength = 0;
@@ -1854,16 +1854,6 @@ static void VXConsoleShell_deinit(XObject* object)
     self->m_asyncOutputSize = 0;
 #endif
     XClass_Deinit_Parent(XObject, (XObject*)self);
-}
-
-void XConsoleShell_deinit_base(XConsoleShell* self)
-{
-    if (self) XClass_deinit_base((XClass*)self);
-}
-
-void XConsoleShell_delete_base(XConsoleShell* self)
-{
-    if (self) XClass_delete_base((XClass*)self);
 }
 
 #if XCONSOLE_SHELL_TASKS_ON
@@ -2692,7 +2682,7 @@ bool XConsoleShell_startAsync(XConsoleShell* self)
             return false;
         }
         if (!XObject_moveToThread((XObject*)self, thread)) {
-            XClass_delete_base((XClass*)thread);
+            XClassDelete((XClass*)thread);
             return false;
         }
         self->m_asyncOwnerThread = owner;
@@ -2705,7 +2695,7 @@ bool XConsoleShell_startAsync(XConsoleShell* self)
         if (!XThread_start(thread)) {
             (void)XObject_moveToThread((XObject*)self, owner);
             self->m_asyncThread = NULL;
-            XClass_delete_base((XClass*)thread);
+            XClassDelete((XClass*)thread);
             XAtomic_store_bool(&self->m_asyncRunning, false,
                                XAtomic_MemoryOrder_Release);
             return false;
@@ -2782,7 +2772,7 @@ bool XConsoleShell_stopAsync(XConsoleShell* self, uint32_t timeoutMs)
         XThread_quit(thread);
         if (!XThread_wait(thread, waitMs)) return false;
         self->m_asyncThread = NULL;
-        XClass_delete_base((XClass*)thread);
+        XClassDelete((XClass*)thread);
     }
 #else
     (void)timeoutMs;
@@ -2843,7 +2833,7 @@ bool XConsoleShell_notifyInput(XConsoleShell* self)
                                         XEVENT_PRIORITY_NORMAL)) {
         XAtomic_store_bool(&self->m_asyncInputPosted, false,
                            XAtomic_MemoryOrder_Release);
-        XEvent_delete_base(event);
+        XClassDelete(event);
         return false;
     }
     return true;

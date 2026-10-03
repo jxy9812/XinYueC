@@ -20,14 +20,14 @@ void XCanFrameProcessor_ParseResult_init(XCanFrameProcessor_ParseResult* result)
     result->m_signalValues = XMap_create(sizeof(XString), sizeof(XVariant), XString_compare);
     XMapBaseSetKeyCopyMethod(result->m_signalValues, XClass_copy_base);
     XMapBaseSetKeyMoveMethod(result->m_signalValues, XClass_move_base);
-    XMapBaseSetKeyDeinitMethod(result->m_signalValues, XString_deinit_base);
+    XMapBaseSetKeyDeinitMethod(result->m_signalValues, XClass_deinit_base);
 }
 
 void XCanFrameProcessor_ParseResult_deinit(XCanFrameProcessor_ParseResult* result)
 {
     if (!result) return;
     if (result->m_signalValues) {
-        XMap_delete_base(result->m_signalValues);
+        XClassDelete(result->m_signalValues);
         result->m_signalValues = NULL;
     }
 }
@@ -46,15 +46,15 @@ void XCanFrameProcessor_deinit(XCanFrameProcessor* processor)
 {
     if (!processor) return;
     if (processor->m_messageDescriptions) {
-        XVector_delete_base(processor->m_messageDescriptions);
+        XClassDelete(processor->m_messageDescriptions);
         processor->m_messageDescriptions = NULL;
     }
     if (processor->m_errorString) {
-        XString_delete_base(processor->m_errorString);
+        XClassDelete(processor->m_errorString);
         processor->m_errorString = NULL;
     }
     if (processor->m_warnings) {
-        XStringList_delete_base(processor->m_warnings);
+        XClassDelete(processor->m_warnings);
         processor->m_warnings = NULL;
     }
 }
@@ -108,7 +108,7 @@ void XCanFrameProcessor_setMessageDescriptions(XCanFrameProcessor* processor,
 {
     if (!processor) return;
     if (processor->m_messageDescriptions) {
-        XVector_delete_base(processor->m_messageDescriptions);
+        XClassDelete(processor->m_messageDescriptions);
         processor->m_messageDescriptions = NULL;
     }
     if (descriptions)
@@ -164,7 +164,7 @@ XCanBusFrame* XCanFrameProcessor_prepareFrame(XCanFrameProcessor* processor,
     if (!msgDesc) {
         processor->m_error = XCanFrameProcessor_Error_Encoding;
         if (processor->m_errorString) {
-            XString_delete_base(processor->m_errorString);
+            XClassDelete(processor->m_errorString);
         }
         processor->m_errorString = XString_create_fmt_utf8(
             "No message description found for unique ID 0x%X", uniqueId);
@@ -229,7 +229,7 @@ bool XCanFrameProcessor_parseFrame(XCanFrameProcessor* processor,
     if (!XCanBusFrame_isValid(frame)) {
         processor->m_error = XCanFrameProcessor_Error_InvalidFrame;
         if (processor->m_errorString) {
-            XString_delete_base(processor->m_errorString);
+            XClassDelete(processor->m_errorString);
         }
         processor->m_errorString = XString_create_utf8("Invalid CAN frame");
         return false;
@@ -240,7 +240,7 @@ bool XCanFrameProcessor_parseFrame(XCanFrameProcessor* processor,
     if (type != XCanBusFrame_DataFrame) {
         processor->m_error = XCanFrameProcessor_Error_UnsupportedFrameFormat;
         if (processor->m_errorString) {
-            XString_delete_base(processor->m_errorString);
+            XClassDelete(processor->m_errorString);
         }
         processor->m_errorString = XString_create_utf8("Only data frames can be parsed");
         return false;
@@ -276,7 +276,7 @@ bool XCanFrameProcessor_parseFrame(XCanFrameProcessor* processor,
     if (!msgDesc) {
         processor->m_error = XCanFrameProcessor_Error_Decoding;
         if (processor->m_errorString) {
-            XString_delete_base(processor->m_errorString);
+            XClassDelete(processor->m_errorString);
         }
         processor->m_errorString = XString_create_fmt_utf8(
             "No message description found for unique ID 0x%X", uniqueId);
@@ -330,8 +330,8 @@ bool XCanFrameProcessor_parseFrame(XCanFrameProcessor* processor,
             XVariant_init(&var, NULL, 0, XVariantType_Double);
             XVariant_setValue_double(&var, physicalValue);
             XMapBase_insert_base((XMapBase*)result->m_signalValues, &sigName, &var);
-            XClass_deinit_base((XClass*)&var);
-            XClass_deinit_base((XClass*)&sigName);
+            XClassDeinit((XClass*)&var);
+            XClassDeinit((XClass*)&sigName);
         }
     }
 

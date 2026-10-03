@@ -163,8 +163,6 @@ void XMessageBox_init(XMessageBox* self, XWidget* parent,
 #define XMessageBox_create(parent, flags) XMessageBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XMessageBox* XMessageBox_create_ex(XMemoryType memory, XWidget* parent,
                                    XWidgetFlags flags);
-#define XMessageBox_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XMessageBox_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 文本与图标 ==================== */
 
@@ -566,7 +564,7 @@ void XMessageBox_removeButton(XMessageBox* self, XAbstractButton* button);
  * @param      self 目标对话框；传入 NULL 时返回 NULL。
  * @param      button 标准按钮值（StandardButton 位标志单值）。
  * @return     新建 XString*（找不到按钮时为空文本）；调用方负责
- *             XString_delete_base 释放。
+ *             XClassDelete 释放。
  */
 XString* XMessageBox_buttonText(const XMessageBox* self, int button);
 /**
@@ -606,7 +604,7 @@ void XMessageBox_aboutQt(XWidget* parent, const XString* title);
  * @details    按图标枚举映射 XStyleStandardPixmap（Information/Warning/
  *             Critical/Question）并经当前应用样式生成。
  * @param      icon 图标枚举（XMessageBoxIcon）；NoIcon/未知值返回 NULL。
- * @return     新建 XIcon*（NULL=无）；调用方负责 XIcon_delete_base 释放。
+ * @return     新建 XIcon*（NULL=无）；调用方负责 XClassDelete 释放。
  */
 XIcon* XMessageBox_standardIcon(int icon);
 

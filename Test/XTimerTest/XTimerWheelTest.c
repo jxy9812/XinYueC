@@ -200,11 +200,11 @@ static void XTimerTimeWheelMpscRegressionTest(XVariant* menuData)
 	{
 		if (!XThread_wait(threads[i], 10000))
 			waitsPassed = false;
-		XClass_delete_base((XClass*)threads[i]);
+		XClassDelete((XClass*)threads[i]);
 	}
 	for (size_t i = started; i < TIMEWHEEL_MPSC_THREAD_COUNT; ++i)
 	{
-		if (threads[i]) XClass_delete_base((XClass*)threads[i]);
+		if (threads[i]) XClassDelete((XClass*)threads[i]);
 	}
 
 	/* 处理最后一批在线程退出前刚标记取消的节点。 */

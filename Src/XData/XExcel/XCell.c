@@ -49,7 +49,7 @@ XCell* XCell_copy(const XCell* other)
     if (other->m_value)
     {
         self->m_value = XString_create();
-        if (self->m_value) XCopy(self->m_value, other->m_value);
+        if (self->m_value) XClassCopy(self->m_value, other->m_value);
     }
     if (other->m_format) self->m_format = other->m_format;
     if (other->m_formula) self->m_formula = XCellFormula_copy(other->m_formula);
@@ -64,7 +64,7 @@ void XCell_delete(XCell* self)
 {
     if (self)
     {
-        if (self->m_value) XString_delete_base(self->m_value);
+        if (self->m_value) XClassDelete(self->m_value);
         if (self->m_formula) XCellFormula_delete(self->m_formula);
         if (self->m_richString) XRichString_delete(self->m_richString);
         XFree_System(self);
@@ -160,7 +160,7 @@ XCell* XCell_create_ex_utf8(const char* value, XCell_CellType type, XFormat* for
 {
     XString* s = value ? XString_create_utf8(value) : NULL;
     XCell* result = XCell_create_ex(s, type, format);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }
 
@@ -168,5 +168,5 @@ void XCell_setValue_utf8(XCell* self, const char* value)
 {
     XString* s = value ? XString_create_utf8(value) : NULL;
     XCell_setValue(self, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
 }

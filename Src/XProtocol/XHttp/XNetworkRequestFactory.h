@@ -92,35 +92,33 @@ XVtable* XNetworkRequestFactory_class_init(void);
 void XNetworkRequestFactory_init(XNetworkRequestFactory* self);
 /**
  * - @brief 创建空请求工厂。
- * - @return 新建请求工厂；调用者必须使用 XNetworkRequestFactory_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建请求工厂；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XNetworkRequestFactory* XNetworkRequestFactory_create_ex(XMemoryType memory);
 /**
  * - @brief 从基础 URL 创建请求工厂。
  * - @param baseUrl 基础 URL；借用，可为 NULL，创建时深拷贝。
- * - @return 新建请求工厂；调用者必须使用 XNetworkRequestFactory_delete_base 释放，分配或拷贝失败返回 NULL。
+ * - @return 新建请求工厂；调用者必须使用 XClassDelete 释放，分配或拷贝失败返回 NULL。
  */
 XNetworkRequestFactory* XNetworkRequestFactory_create_url(const XUrl* baseUrl);
 /**
  * - @brief 深拷贝创建请求工厂。
  * - @param other 源请求工厂；借用且不能为 NULL。
- * - @return 新建请求工厂；调用者必须使用 XNetworkRequestFactory_delete_base 释放，参数无效或拷贝失败返回 NULL。
+ * - @return 新建请求工厂；调用者必须使用 XClassDelete 释放，参数无效或拷贝失败返回 NULL。
  */
 XNetworkRequestFactory* XNetworkRequestFactory_create_copy(const XNetworkRequestFactory* other);
 /**
  * - @brief 移动创建请求工厂。
  * - @param other 源请求工厂；借用且不能为 NULL，成功后保留已初始化的空状态。
- * - @return 新建请求工厂；调用者必须使用 XNetworkRequestFactory_delete_base 释放，参数无效或分配失败返回 NULL。
+ * - @return 新建请求工厂；调用者必须使用 XClassDelete 释放，参数无效或分配失败返回 NULL。
  */
 XNetworkRequestFactory* XNetworkRequestFactory_create_move(XNetworkRequestFactory* other);
 
-#define XNetworkRequestFactory_deinit_base XClass_deinit_base
-#define XNetworkRequestFactory_delete_base XClass_delete_base
 
 /**
  * - @brief 获取基础 URL 副本。
  * - @param self 请求工厂；可为 NULL。
- * - @return 新建基础 URL；调用者必须使用 XUrl_delete_base 释放，未设置或 self 为空时返回 NULL。
+ * - @return 新建基础 URL；调用者必须使用 XClassDelete 释放，未设置或 self 为空时返回 NULL。
  */
 XUrl* XNetworkRequestFactory_baseUrl(const XNetworkRequestFactory* self);
 /**
@@ -133,7 +131,7 @@ bool XNetworkRequestFactory_setBaseUrl(XNetworkRequestFactory* self, const XUrl*
 /**
  * - @brief 获取公共请求头副本。
  * - @param self 请求工厂；可为 NULL。
- * - @return 新建请求头对象；调用者必须使用 XHttpHeaders_delete_base 释放，self 为空或分配失败返回 NULL。
+ * - @return 新建请求头对象；调用者必须使用 XClassDelete 释放，self 为空或分配失败返回 NULL。
  */
 XHttpHeaders* XNetworkRequestFactory_commonHeaders(const XNetworkRequestFactory* self);
 /**
@@ -151,7 +149,7 @@ void XNetworkRequestFactory_clearCommonHeaders(XNetworkRequestFactory* self);
 /**
  * - @brief 获取 Bearer 令牌副本。
  * - @param self 请求工厂；可为 NULL。
- * - @return 新建 Bearer 令牌；调用者必须使用 XByteArray_delete_base 释放，未设置或 self 为空时返回 NULL。
+ * - @return 新建 Bearer 令牌；调用者必须使用 XClassDelete 释放，未设置或 self 为空时返回 NULL。
  */
 XByteArray* XNetworkRequestFactory_bearerToken(const XNetworkRequestFactory* self);
 /**
@@ -176,7 +174,7 @@ bool XNetworkRequestFactory_setUserName(XNetworkRequestFactory* self, const XByt
 /**
  * - @brief 获取 Basic 认证用户名副本。
  * - @param self 请求工厂；可为 NULL。
- * - @return 新建用户名；调用者必须使用 XByteArray_delete_base 释放，未设置或 self 为空时返回 NULL。
+ * - @return 新建用户名；调用者必须使用 XClassDelete 释放，未设置或 self 为空时返回 NULL。
  */
 XByteArray* XNetworkRequestFactory_userName(const XNetworkRequestFactory* self);
 /**
@@ -194,7 +192,7 @@ bool XNetworkRequestFactory_setPassword(XNetworkRequestFactory* self, const XByt
 /**
  * - @brief 获取 Basic 认证密码副本。
  * - @param self 请求工厂；可为 NULL。
- * - @return 新建密码；调用者必须使用 XByteArray_delete_base 释放，未设置或 self 为空时返回 NULL。
+ * - @return 新建密码；调用者必须使用 XClassDelete 释放，未设置或 self 为空时返回 NULL。
  */
 XByteArray* XNetworkRequestFactory_password(const XNetworkRequestFactory* self);
 /**
@@ -212,7 +210,7 @@ bool XNetworkRequestFactory_setQueryParameters(XNetworkRequestFactory* self, con
 /**
  * - @brief 获取原始查询参数副本。
  * - @param self 请求工厂；可为 NULL。
- * - @return 新建查询参数字节数组；调用者必须使用 XByteArray_delete_base 释放，未设置或 self 为空时返回 NULL。
+ * - @return 新建查询参数字节数组；调用者必须使用 XClassDelete 释放，未设置或 self 为空时返回 NULL。
  */
 XByteArray* XNetworkRequestFactory_queryParameters(const XNetworkRequestFactory* self);
 /**
@@ -249,14 +247,14 @@ XHttpRequest_Priority XNetworkRequestFactory_priority(const XNetworkRequestFacto
 /**
  * - @brief 按基础 URL 创建请求。
  * - @param self 请求工厂；不能为 NULL。
- * - @return 新建 HTTP 请求；调用者必须使用 XHttpRequest_delete_base 释放，基础 URL 未设置或创建失败返回 NULL。
+ * - @return 新建 HTTP 请求；调用者必须使用 XClassDelete 释放，基础 URL 未设置或创建失败返回 NULL。
  */
 XHttpRequest* XNetworkRequestFactory_createRequest(const XNetworkRequestFactory* self);
 /**
  * - @brief 按相对或绝对路径创建请求。
  * - @param self 请求工厂；不能为 NULL。
  * - @param path 路径 UTF-8 文本；借用且不能为 NULL，相对路径基于基础 URL 解析。
- * - @return 新建 HTTP 请求；调用者必须使用 XHttpRequest_delete_base 释放，参数无效或创建失败返回 NULL。
+ * - @return 新建 HTTP 请求；调用者必须使用 XClassDelete 释放，参数无效或创建失败返回 NULL。
  */
 XHttpRequest* XNetworkRequestFactory_createRequest_path(const XNetworkRequestFactory* self,
                                                         const char* path);
@@ -265,7 +263,7 @@ XHttpRequest* XNetworkRequestFactory_createRequest_path(const XNetworkRequestFac
  * - @param self 请求工厂；不能为 NULL。
  * - @param path 路径 UTF-8 文本；借用且不能为 NULL，相对路径基于基础 URL 解析。
  * - @param query 原始查询参数；借用，可为 NULL 且不含问号，非 NULL 时覆盖工厂默认查询参数。
- * - @return 新建 HTTP 请求；调用者必须使用 XHttpRequest_delete_base 释放，参数无效或创建失败返回 NULL。
+ * - @return 新建 HTTP 请求；调用者必须使用 XClassDelete 释放，参数无效或创建失败返回 NULL。
  */
 XHttpRequest* XNetworkRequestFactory_createRequest_path_query(const XNetworkRequestFactory* self,
                                                               const char* path,
@@ -284,7 +282,7 @@ bool XNetworkRequestFactory_setAttribute(XNetworkRequestFactory* self, int code,
  * - @brief 获取请求模板属性副本。
  * - @param self 请求工厂；可为 NULL。
  * - @param code 属性编号。
- * - @return 新建属性值；调用者必须使用 XVariant_delete_base 释放，未设置、参数无效或拷贝失败返回 NULL。
+ * - @return 新建属性值；调用者必须使用 XClassDelete 释放，未设置、参数无效或拷贝失败返回 NULL。
  */
 XVariant* XNetworkRequestFactory_attribute(const XNetworkRequestFactory* self, int code);
 /**

@@ -955,16 +955,16 @@ static void VX_dockWidget_deinit(XDockWidget* self)
 {
     if (!self) return;
     if (self->m_widget) {
-        XWidget_delete_base(self->m_widget);
+        XClassDelete(self->m_widget);
         self->m_widget = NULL;
     }
     if (self->m_title) {
-        XString_delete_base(self->m_title);
+        XClassDelete(self->m_title);
         self->m_title = NULL;
     }
     if (self->m_toggleAction) {
         /* 切换动作归面板所有（对标 Qt toggleViewAction 归 dock 所有）。 */
-        XAction_delete_base(self->m_toggleAction);
+        XClassDelete(self->m_toggleAction);
         self->m_toggleAction = NULL;
     }
     {

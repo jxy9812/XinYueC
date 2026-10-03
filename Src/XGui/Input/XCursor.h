@@ -78,27 +78,27 @@ typedef struct XCursor
 /**
  * @brief      初始化默认 XCursor（对标 QCursor() 默认构造，ArrowCursor）。
  * @param      self 待初始化的对象指针；生命周期结束时必须成对调用
- *             XCursor_deinit_base。
+ *             XClassDeinit。
  */
 void XCursor_init(XCursor* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建默认 XCursor。
- * @return     新对象指针；失败返回 NULL，调用方用 XCursor_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 #define XCursor_create() XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 /**
  * @brief      使用指定内存类型在堆上创建默认 XCursor。
  * @param      memory 对象内存类型。
- * @return     新对象指针；失败返回 NULL，调用方用 XCursor_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 XCursor* XCursor_create_ex(XMemoryType memory);
 
 /**
  * @brief      以指定形状创建 XCursor（对标 QCursor(Qt::CursorShape)）。
  * @param      shape 内置光标形状。
- * @return     新对象指针；分配失败返回 NULL，调用方用 XCursor_delete_base 释放。
+ * @return     新对象指针；分配失败返回 NULL，调用方用 XClassDelete 释放。
  */
 XCursor* XCursor_create_shape(XCursorShape shape);
 
@@ -109,7 +109,7 @@ XCursor* XCursor_create_shape(XCursorShape shape);
  * @param      mask 光标掩码；可为 NULL。
  * @param      hotX 热点 X；-1 表示中心。
  * @param      hotY 热点 Y；-1 表示中心。
- * @return     新对象指针；分配失败返回 NULL，调用方用 XCursor_delete_base 释放。
+ * @return     新对象指针；分配失败返回 NULL，调用方用 XClassDelete 释放。
  */
 XCursor* XCursor_create_bitmap(const struct XBitmap* bitmap,
                                const struct XBitmap* mask,
@@ -121,15 +121,13 @@ XCursor* XCursor_create_bitmap(const struct XBitmap* bitmap,
  * @param      pixmap 光标像素图；可为 NULL。
  * @param      hotX 热点 X；-1 表示中心。
  * @param      hotY 热点 Y；-1 表示中心。
- * @return     新对象指针；分配失败返回 NULL，调用方用 XCursor_delete_base 释放。
+ * @return     新对象指针；分配失败返回 NULL，调用方用 XClassDelete 释放。
  */
 XCursor* XCursor_create_pixmap(const struct XPixmap* pixmap,
                                int hotX, int hotY);
 
 /** @brief 通过 XClass 虚表释放 XCursor 资源（栈/外部存储对象使用）。 */
-#define XCursor_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XCursor 对象。 */
-#define XCursor_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      返回光标形状（对标 QCursor::shape）。

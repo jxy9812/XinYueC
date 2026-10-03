@@ -49,8 +49,6 @@ XHttpServerRouterRule* XHttpServerRouterRule_create_ex(XMemoryType memory,  cons
                                                     uint32_t methods,
                                                     XHttpServer_RouteHandler handler,
                                                     void* context);
-#define XHttpServerRouterRule_deinit_base XClass_deinit_base
-#define XHttpServerRouterRule_delete_base XClass_delete_base
 /**
  * - @brief 获取路径模式。
  * - @param self 路由规则；可为 NULL。

@@ -423,8 +423,6 @@ void XTextControl_init_3(XTextControl* self, XTextDocument* doc);
 
 #define XTextControl_create() XTextControl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 XTextControl* XTextControl_create_ex(XMemoryType memory);
-#define XTextControl_deinit_base(self) XObject_deinit_base((XObject*)(self))
-#define XTextControl_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========================================================================== */
 /*                     文档与光标（对标 public API）                          */
@@ -547,7 +545,7 @@ XRect XTextControl_selectionRectAt(const XTextControl* self, int position, int a
 XRect XTextControl_selectionRect(const XTextControl* self);
 /**
  * @brief      返回坐标 pos 处锚点 href（对标 anchorAt；空串 = 无链接）。
- * @return     堆上新建 XString*，调用方 XString_delete_base 释放。
+ * @return     堆上新建 XString*，调用方 XClassDelete 释放。
  */
 XString* XTextControl_anchorAt(const XTextControl* self, const XPoint* pos);
 /**
@@ -650,7 +648,7 @@ void XTextControl_setPalette(XTextControl* self, const XPalette* pal);
  */
 void XTextControl_setFont(XTextControl* self, const XFont* font);
 /**
- * @brief      读取绘制字体（深拷贝到 *out；配合 XFont_deinit_base 释放）。
+ * @brief      读取绘制字体（深拷贝到 *out；配合 XClassDeinit 释放）。
  */
 void XTextControl_font(const XTextControl* self, XFont* out);
 

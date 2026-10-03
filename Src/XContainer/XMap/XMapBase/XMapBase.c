@@ -124,7 +124,7 @@ size_t XMapBase_removeIf_base(XMapBase* this_map, XMapBase_predicate pred, void*
                 ++removed;
         }
     }
-    XVector_delete_base(keys);
+    XClassDelete(keys);
     return removed;
 }
 

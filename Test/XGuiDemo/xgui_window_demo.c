@@ -638,7 +638,7 @@ static void demo_set_widget_default_font(XWidget* widget)
     XFont_init(&font);
     demo_apply_default_font(&font);
     XWidget_setFont(widget, &font);
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
 }
 #endif /* XWIDGET_ON */
 
@@ -691,7 +691,7 @@ static void demo_draw_label(XPainter* painter, int x, int y, int width,
         XFont_setFamily(&labelFont,
                         family ? family : XGUI_DEMO_DEFAULT_FONT_FAMILY);
         XWidget_setFont((XWidget*)&label, &labelFont);
-        XFont_deinit_base(&labelFont);
+        XClassDeinit(&labelFont);
     }
     XLabel_setText_2(&label, text);
     XLabel_setTextPixelSize(&label, pixelSize);
@@ -702,7 +702,7 @@ static void demo_draw_label(XPainter* painter, int x, int y, int width,
         XLabel_drawContents(&label, painter);
         XPainter_restore(painter);
     }
-    XLabel_deinit_base(&label);
+    XClassDeinit(&label);
 }
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
@@ -768,7 +768,7 @@ static void demo_performance_init(DemoWin* self)
 static void demo_performance_deinit(DemoWin* self)
 {
     if (!self) return;
-    XPerformanceOverlay_deinit_base(&self->m_performanceOverlay);
+    XClassDeinit(&self->m_performanceOverlay);
 }
 
 /** @brief 判断窗口客户区坐标是否命中性能悬浮层。 */
@@ -816,7 +816,7 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
     XFont_init(&painterFont);
     demo_apply_default_font(&painterFont);
     XPainter_setFont(painter, &painterFont);
-    XFont_deinit_base(&painterFont);
+    XClassDeinit(&painterFont);
 
     demo_fill_rect(painter, 0, 0, w, h, 0xfff4f6f8u);       /* 窗口背景 */
     demo_fill_rect(painter, 0, demo_sysbarH(self), w, 40, 0xff1f4e79u); /* 标题栏基底 */
@@ -840,7 +840,7 @@ static bool demo_updateStaticScene(DemoWin* self, int w, int h)
         XImage_height(&self->m_staticScene) == h)
         return true;
     if (self->m_staticScene.m_data)
-        XImage_deinit_base(&self->m_staticScene);
+        XClassDeinit(&self->m_staticScene);
     XImage_init_ex(&self->m_staticScene, w, h, XImageFormat_ARGB32);
     if (XImage_isNull(&self->m_staticScene)) return false;
     XPainter_init(&painter, NULL);
@@ -1482,13 +1482,13 @@ static bool demo_framePumpBody(void* userData)
                         if (!XImage_save_2(&shotImage, demo->m_screenshotPath,
                                            "PNG", 95))
                             XPrintf("XGuiWindowDemo: 截图保存失败\n");
-                        XImage_deinit_base(&shotImage);
+                        XClassDeinit(&shotImage);
                         demo_stopTimers(demo);
                         demo->m_closed = true;
                         XGuiApplication_quit();
                         return false;
                     }
-                    XImage_deinit_base(&shotImage);
+                    XClassDeinit(&shotImage);
                     /* readback 失败：不保存未填充图像，落到下方
                        XWidget_paintImage 分支兜底保存。 */
                     XPrintf("XGuiWindowDemo: GPU 读回失败，回退后备图像\n");
@@ -3795,7 +3795,7 @@ static DemoWin* DemoWin_create(void)
             XPieSeries_append_2(pie, "C", 50);
             /* 饼图与折线共用坐标系会互相遮挡：饼图保留但默认从 demo
                主视图分离（第一版只演示折线/柱状/散点/面积/样条）。 */
-            XPieSeries_delete_base(pie);
+            XClassDelete(pie);
         }
         {
             XBarSeries* bar = XBarSeries_create();
@@ -4298,7 +4298,7 @@ int xgui_demo_main(int argc, char* argv[])
     /* 1.5) --apitest：控件 API 全量测试（无头，不进窗口流程）。 */
     if (apiTestSuite) {
         int rc = demo_apitest_run(app, apiTestFamily);
-        XGuiApplication_delete_base(app);
+        XClassDelete(app);
         return rc;
     }
 
@@ -4345,7 +4345,7 @@ int xgui_demo_main(int argc, char* argv[])
         /* 判空守卫前置：创建失败即收口退出（后续 win-> 字段写入
            不容 NULL 解引用；守卫体必须 return，否则落空继续走）。 */
         XPrintf("XGuiWindowDemo: DemoWin_create 失败\n");
-        XGuiApplication_delete_base(app);
+        XClassDelete(app);
         return 1;
     }
 #if XWIDGET_ON
@@ -4371,7 +4371,7 @@ int xgui_demo_main(int argc, char* argv[])
         XString* title = XString_create_utf8(
             "XinYueC 控件可视化测试");
         XWidget_setWindowTitle(&win->m_base, title);
-        XString_delete_base((XClass*)title);
+        XClassDelete((XClass*)title);
     }
 /* fbdev 默认与桌面统一：窗口按设计尺寸浮动（不再默认全屏铺满——
  * 用户 2026-09-28 指出与桌面行为不统一；窗口外区域由平台首帧整段
@@ -4524,73 +4524,73 @@ int xgui_demo_main(int argc, char* argv[])
     /* 4) 清理：窗口销毁自动拆除原生窗口；应用单例回收集成层。 */
     demo_stopTimers(win);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_deinit_base((XLabel*)&win->m_statusLabel);
-    XLabel_deinit_base(&win->m_titleLabel);
+    XClassDeinit((XLabel*)&win->m_statusLabel);
+    XClassDeinit(&win->m_titleLabel);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton_deinit_base(&win->m_button);
+    XClassDeinit(&win->m_button);
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON
-    XCommandLinkButton_deinit_base(&win->m_commandLink);
+    XClassDeinit(&win->m_commandLink);
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON && XMENU_ON
     /* 先解绑工具按钮（断开与默认动作/菜单的连接），再释放菜单与动作。 */
-    XToolButton_deinit_base(&win->m_toolButton);
-    XMenu_deinit_base(&win->m_toolMenu);
-    XAction_deinit_base(&win->m_toolAction);
+    XClassDeinit(&win->m_toolButton);
+    XClassDeinit(&win->m_toolMenu);
+    XClassDeinit(&win->m_toolAction);
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_deinit_base(&win->m_linkLabel);
+    XClassDeinit(&win->m_linkLabel);
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON
-    XCheckBox_deinit_base(&win->m_checkBox);
+    XClassDeinit(&win->m_checkBox);
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON
-    XRadioButton_deinit_base(&win->m_radioA);
-    XRadioButton_deinit_base(&win->m_radioB);
+    XClassDeinit(&win->m_radioA);
+    XClassDeinit(&win->m_radioB);
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel_deinit_base(&win->m_choiceLabel);
+    XClassDeinit(&win->m_choiceLabel);
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #if XPUSHBUTTON_ON
-    XPushButton_deinit_base(&win->m_stackPrevButton);
-    XPushButton_deinit_base(&win->m_stackNextButton);
+    XClassDeinit(&win->m_stackPrevButton);
+    XClassDeinit(&win->m_stackNextButton);
 #endif
-    XLabel_deinit_base(&win->m_stackPageOne);
-    XLabel_deinit_base(&win->m_stackPageTwo);
-    XStackedLayout_deinit_base(&win->m_stackLayoutInner);
+    XClassDeinit(&win->m_stackPageOne);
+    XClassDeinit(&win->m_stackPageTwo);
+    XClassDeinit(&win->m_stackLayoutInner);
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    XWidget_deinit_base(&win->m_pageStacked);
-    XWidget_deinit_base(&win->m_pageChoices);
+    XClassDeinit(&win->m_pageStacked);
+    XClassDeinit(&win->m_pageChoices);
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
-    XWidget_deinit_base(&win->m_inputStatus);
-    XWidget_deinit_base((XWidget*)&win->m_progressBar);
-    XWidget_deinit_base((XWidget*)&win->m_slider);
-    XWidget_deinit_base((XWidget*)&win->m_spinBox);
-    XWidget_deinit_base((XWidget*)&win->m_lineEdit);
-    XWidget_deinit_base((XWidget*)&win->m_groupBox);
+    XClassDeinit(&win->m_inputStatus);
+    XClassDeinit((XWidget*)&win->m_progressBar);
+    XClassDeinit((XWidget*)&win->m_slider);
+    XClassDeinit((XWidget*)&win->m_spinBox);
+    XClassDeinit((XWidget*)&win->m_lineEdit);
+    XClassDeinit((XWidget*)&win->m_groupBox);
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    XWidget_deinit_base(&win->m_pageInputs);
-    XWidget_deinit_base(&win->m_pageTabs);
+    XClassDeinit(&win->m_pageInputs);
+    XClassDeinit(&win->m_pageTabs);
 #endif
-    XWidget_deinit_base(&win->m_pageButtons);
-    XStackedLayout_deinit_base(&win->m_stackLayout);
+    XClassDeinit(&win->m_pageButtons);
+    XClassDeinit(&win->m_stackLayout);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON && XBUTTONGROUP_ON
     /* 导航互斥组为无父 XObject，不随 win 级联析构——先于成员按钮断开
        桥接并回收（同 m_btnGroup 口径：按钮侧连接先断，次序安全）。 */
-    XButtonGroup_deinit_base(&win->m_navGroup);
-    XButtonGroup_deinit_base(&win->m_navCatGroup);
+    XClassDeinit(&win->m_navGroup);
+    XClassDeinit(&win->m_navCatGroup);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     {
         int nav;
         for (nav = 0; nav < 13; ++nav) /* 2026-10-03: 13 钮随图表演示页扩列。 */
-            XPushButton_deinit_base(&win->m_pageNav[nav]);
+            XClassDeinit(&win->m_pageNav[nav]);
     }
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
@@ -4600,25 +4600,25 @@ int xgui_demo_main(int argc, char* argv[])
     {
         int cat;
         for (cat = 0; cat < 7; ++cat)
-            XPushButton_deinit_base(&win->m_navCatBtns[cat]);
-        XPushButton_deinit_base(&win->m_navCollapseBtn);
-        XPushButton_deinit_base(&win->m_navDockBtn);
-        XLabel_deinit_base(&win->m_navTitle);
+            XClassDeinit(&win->m_navCatBtns[cat]);
+        XClassDeinit(&win->m_navCollapseBtn);
+        XClassDeinit(&win->m_navDockBtn);
+        XClassDeinit(&win->m_navTitle);
     }
 #endif
 #if XCHARTS_ON
-    XWidget_deinit_base(&win->m_pageChart);
+    XClassDeinit(&win->m_pageChart);
 #endif
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_deinit(win);
 #endif
 #if XGUI_DEMO_STATIC_SCENE_CACHE_ON
-    XImage_deinit_base(&win->m_staticScene);
+    XClassDeinit(&win->m_staticScene);
 #endif
 #if XWIDGET_ON && XKEYBOARD_ON
     /* 键盘页已迁移到应用默认面板单例（XGuiApplication 拥有）：面板弹
        出即挂本顶层窗为宿主。win 先于 app 析构——级联删除会把应用拥有
-       的单例连带删掉，随后 XGuiApplication_delete_base 对
+       的单例连带删掉，随后 XClassDelete 对
        m_virtualKeyboard 二次删除（悬垂崩溃）。win 析构前显式收层并摘
        挂，面板归还顶层交还应用（virtualKeyboard 在
        XVIRTUALKEYBOARD_ON=0 级联关闭时返回 NULL，自然空操作）。 */
@@ -4641,18 +4641,18 @@ int xgui_demo_main(int argc, char* argv[])
        无父顶层弹窗——win 级联只回收菜单栏本体，触及不到它们；窗口
        销毁前显式释放（菜单内部动作随 VXMenu_deinit 级联回收）。 */
     if (win->m_fileMenu)
-        XMenu_delete_base(win->m_fileMenu);
+        XClassDelete(win->m_fileMenu);
     if (win->m_editMenu)
-        XMenu_delete_base(win->m_editMenu);
+        XClassDelete(win->m_editMenu);
 #endif
 #if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON && XLAYOUT_STACKED_ON
     /* 页十五：按钮组为无父 XObject，不随 win 级联析构——deinit 回收
        内部向量与堆桥接；按钮成员此刻仍存活，析构先断开按钮侧连接再
        同步删桥，顺序安全。 */
-    XButtonGroup_deinit_base(&win->m_btnGroup);
+    XClassDeinit(&win->m_btnGroup);
 #endif
-    XWidget_delete_base((XClass*)win);
-    XGuiApplication_delete_base(app);
+    XClassDelete((XClass*)win);
+    XClassDelete(app);
     XPrintf("XGuiWindowDemo: 已退出\n");
     return eventLoopResult;
 }

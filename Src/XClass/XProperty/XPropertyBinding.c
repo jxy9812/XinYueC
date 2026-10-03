@@ -148,8 +148,8 @@ void XPropertyBinding_unref(XPropertyBinding* self)
         self->m_propertyData = NULL;
     }
     XBinding_detachDependencies(self);
-    XPropertyBindingError_deinit_base((XClass*)&self->m_error);
-    XVariant_deinit_base((XClass*)&self->m_result);
+    XClassDeinit((XClass*)&self->m_error);
+    XClassDeinit((XClass*)&self->m_result);
     XFree_System(self);
 }
 
@@ -243,8 +243,8 @@ void XBinding_evaluate(XPropertyBinding* binding)
     bool ok = true;
     if (binding->m_eval)
         ok = binding->m_eval(binding->m_evalUser, &result);
-    XMove((XClass*)&binding->m_result, (XClass*)&result);
-    XVariant_deinit_base((XClass*)&result);
+    XClassMove((XClass*)&binding->m_result, (XClass*)&result);
+    XClassDeinit((XClass*)&result);
 
     binding->m_evaluating = false;
     XBinding_popEval(prevTop);
@@ -280,7 +280,7 @@ static void VXPropertyBindingError_deinit(XPropertyBindingError* obj)
     if (!obj) return;
     if (obj->m_description)
     {
-        XString_delete_base((XClass*)obj->m_description);
+        XClassDelete((XClass*)obj->m_description);
         obj->m_description = NULL;
     }
     XClass_Deinit_Parent(XClass, (XClass*)obj);
@@ -293,7 +293,7 @@ static void VXPropertyBindingError_copy(XPropertyBindingError* dest, const XProp
         XPropertyBindingError_init(dest);
     if (dest->m_description)
     {
-        XString_delete_base((XClass*)dest->m_description);
+        XClassDelete((XClass*)dest->m_description);
         dest->m_description = NULL;
     }
     dest->m_type = src->m_type;
@@ -307,7 +307,7 @@ static void VXPropertyBindingError_move(XPropertyBindingError* dest, XPropertyBi
         XPropertyBindingError_init(dest);
     if (dest->m_description)
     {
-        XString_delete_base((XClass*)dest->m_description);
+        XClassDelete((XClass*)dest->m_description);
         dest->m_description = NULL;
     }
     dest->m_type = src->m_type;
@@ -385,7 +385,7 @@ XPropertyBindingError* XPropertyBindingError_create_copy(const XPropertyBindingE
     if (!other) return NULL;
     XPropertyBindingError* self = XPropertyBindingError_create();
     if (!self) return NULL;
-    XCopy((XClass*)self, (const XClass*)other);
+    XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -394,7 +394,7 @@ void XPropertyBindingError_clear(XPropertyBindingError* self)
     if (!self) return;
     if (self->m_description)
     {
-        XString_delete_base((XClass*)self->m_description);
+        XClassDelete((XClass*)self->m_description);
         self->m_description = NULL;
     }
     self->m_type = XPropertyBindingError_NoError;

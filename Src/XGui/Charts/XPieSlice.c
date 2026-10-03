@@ -91,7 +91,7 @@ void XPieSlice_init_ex_2(XPieSlice* self, const char* label, double value)
         if (!tmp) return;
     }
     XPieSlice_init_ex(self, tmp, value);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 XPieSlice* XPieSlice_create_ex(XMemoryType memory, const XString* label,
@@ -114,7 +114,7 @@ XPieSlice* XPieSlice_create_ex_2(XMemoryType memory, const char* label,
         if (!tmp) return NULL;
     }
     self = XPieSlice_create_ex(memory, tmp, value);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
     return self;
 }
 
@@ -122,11 +122,11 @@ static void VXSlice_deinit(XPieSlice* self)
 {
     if (!self) return;
     if (self->m_label) {
-        XString_delete_base(self->m_label);
+        XClassDelete(self->m_label);
         self->m_label = NULL;
     }
     if (self->m_labelFontFamily) {
-        XString_delete_base(self->m_labelFontFamily);
+        XClassDelete(self->m_labelFontFamily);
         self->m_labelFontFamily = NULL;
     }
     XClass_Deinit_Parent(XObject, (XObject*)self);
@@ -157,8 +157,8 @@ static void VXSlice_move(XPieSlice* self, XPieSlice* other)
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XPieSlice_init(self);
-    if (self->m_label) XString_delete_base(self->m_label);
-    if (self->m_labelFontFamily) XString_delete_base(self->m_labelFontFamily);
+    if (self->m_label) XClassDelete(self->m_label);
+    if (self->m_labelFontFamily) XClassDelete(self->m_labelFontFamily);
     /* 结构体赋值转移全部字段；other 重置为全新默认对象。 */
     *self = *other;
     XMemset(other, 0, sizeof(XPieSlice));
@@ -187,7 +187,7 @@ void XPieSlice_setLabel_2(XPieSlice* self, const char* label)
         if (!tmp) return;
     }
     XPieSlice_setLabel(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XPieSlice_label(const XPieSlice* self)
@@ -545,7 +545,7 @@ void XPieSlice_setLabelFont_2(XPieSlice* self, const char* family,
         if (!tmp) return;
     }
     XPieSlice_setLabelFont(self, tmp, pointSize);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XPieSlice_labelFont(const XPieSlice* self)

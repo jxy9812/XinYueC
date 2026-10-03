@@ -55,14 +55,14 @@ static void XListSLinkedCreateTest(void)
 			XListSLinked_size_base(li), XListSLinked_capacity_base(li),
 			XListSLinked_isEmpty_base(li) ? "是" : "否");
 		XPrintf("  typeSize=%zu\n", XListSLinked_typeSize_base(li));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* li = XListSLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), false);
 		XContainerSetCompare(li, int_compare);
 		XPrintf("create_ex(int,cow=false): size=%zu, typeSize=%zu\n",
 			XListSLinked_size_base(li), XListSLinked_typeSize_base(li));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked li;
@@ -73,14 +73,14 @@ static void XListSLinkedCreateTest(void)
 		int val = 42;
 		XListSLinked_push_back_base(&li, &val);
 		XPrintf("  插入42后: size=%zu\n", XListSLinked_size_base(&li));
-		XListSLinked_deinit_base(&li);
+		XClassDeinit(&li);
 	}
 	{
 		int arr[] = { 1, 2, 3 };
 		XListSLinked* src = XListSLinkedMakeInt(arr, 3);
 		XListSLinked* copy = XListSLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), true);
 		XContainerSetCompare(copy, int_compare);
-		XCopy(copy, src);
+		XClassCopy(copy, src);
 		XPrintf("copy_base: copy.size=%zu, src.size=%zu\n",
 			XListSLinked_size_base(copy), XListSLinked_size_base(src));
 		XListSLinkedPrintInt(copy, "  copy: ");
@@ -88,21 +88,21 @@ static void XListSLinkedCreateTest(void)
 		XListSLinked_push_back_base(src, &val);
 		XPrintf("  修改src后: copy.size=%zu, src.size=%zu\n",
 			XListSLinked_size_base(copy), XListSLinked_size_base(src));
-		XListSLinked_delete_base(src);
-		XListSLinked_delete_base(copy);
+		XClassDelete(src);
+		XClassDelete(copy);
 	}
 	{
 		int arr[] = { 10, 20, 30 };
 		XListSLinked* src = XListSLinkedMakeInt(arr, 3);
 		XListSLinked* moved = XListSLinked_Create(int);
 		XContainerSetCompare(moved, int_compare);
-		XMove(moved, src);
+		XClassMove(moved, src);
 		XPrintf("move_base: moved.size=%zu, src.isEmpty=%s\n",
 			XListSLinked_size_base(moved),
 			XListSLinked_isEmpty_base(src) ? "是" : "否");
 		XListSLinkedPrintInt(moved, "  moved: ");
-		XListSLinked_delete_base(moved);
-		XListSLinked_delete_base(src);
+		XClassDelete(moved);
+		XClassDelete(src);
 	}
 	{
 		XPrintf("maxSize=%zu\n", XListSLinked_maxSize_base());
@@ -125,7 +125,7 @@ static void XListSLinkedInsertTest(void)
 		XListSLinked_Push_Front_Base(li, int, c);
 		XListSLinkedPrintInt(li, "push_front 10,20,30: ");
 		XPrintf("  size=%zu (期望:3)\n", XListSLinked_size_base(li));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* li = XListSLinked_Create(int);
@@ -133,7 +133,7 @@ static void XListSLinkedInsertTest(void)
 		int* p = XMalloc_System(sizeof(int)); *p = 99;
 		XListSLinked_push_front_move_base(li, p);
 		XListSLinkedPrintInt(li, "push_front_move(99): ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* li = XListSLinked_Create(int);
@@ -143,7 +143,7 @@ static void XListSLinkedInsertTest(void)
 		int v2 = 3;
 		XListSLinked_prepend_base(li, &v2);
 		XListSLinkedPrintInt(li, "prepend 5,3: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 
 	/* --- push_back / append --- */
@@ -156,7 +156,7 @@ static void XListSLinkedInsertTest(void)
 		XListSLinked_Push_Back_Base(li, int, c);
 		XListSLinkedPrintInt(li, "push_back 1,2,3: ");
 		XPrintf("  size=%zu (期望:3)\n", XListSLinked_size_base(li));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* li = XListSLinked_Create(int);
@@ -164,7 +164,7 @@ static void XListSLinkedInsertTest(void)
 		int* p = XMalloc_System(sizeof(int)); *p = 88;
 		XListSLinked_push_back_move_base(li, p);
 		XListSLinkedPrintInt(li, "push_back_move(88): ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* li = XListSLinked_Create(int);
@@ -173,7 +173,7 @@ static void XListSLinkedInsertTest(void)
 		XListSLinked_append_base(li, &a);
 		XListSLinked_append_base(li, &b);
 		XListSLinkedPrintInt(li, "append 100,200: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 
 	/* --- insert_base --- */
@@ -187,7 +187,7 @@ static void XListSLinkedInsertTest(void)
 		int insertVal = 3;
 		XListSLinked_insert_base(li, it.node, &insertVal);
 		XListSLinkedPrintInt(li, "insert(3)在5之前: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* li = XListSLinked_Create(int);
@@ -200,7 +200,7 @@ static void XListSLinkedInsertTest(void)
 		XListSLinked_find_base(li, &findVal, &it);
 		XListSLinked_insert_move_base(li, it.node, p);
 		XListSLinkedPrintInt(li, "insert_move(999)在10之前: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 
 	/* --- insert_array --- */
@@ -215,7 +215,7 @@ static void XListSLinkedInsertTest(void)
 		size_t n = XListSLinked_insert_array_base(li, it.node, ins, 3);
 		XPrintf("  insert_array插入%zu个\n", n);
 		XListSLinkedPrintInt(li, "  结果: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 
 	/* --- push_front_node / push_back_node --- */
@@ -229,7 +229,7 @@ static void XListSLinkedInsertTest(void)
 		XListSNode_Data(node, int) = 99;
 		XListSLinked_push_front_node_base(li, (XListBaseNode*)node);
 		XListSLinkedPrintInt(li, "push_front_node(99): ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* li = XListSLinked_Create(int);
@@ -240,7 +240,7 @@ static void XListSLinkedInsertTest(void)
 		XListSNode_Data(node, int) = 88;
 		XListSLinked_push_back_node_base(li, (XListBaseNode*)node);
 		XListSLinkedPrintInt(li, "push_back_node(88): ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 
 	XPrintf("\n");
@@ -260,7 +260,7 @@ static void XListSLinkedRemoveTest(void)
 		XListSLinked_pop_back_base(li);
 		XListSLinkedPrintInt(li, "pop_back后: ");
 		XPrintf("  size=%zu (期望:3)\n", XListSLinked_size_base(li));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5 };
@@ -269,7 +269,7 @@ static void XListSLinkedRemoveTest(void)
 		XListSLinkedPrintInt(li, "removeFirst: ");
 		XListSLinked_removeLast_base(li);
 		XListSLinkedPrintInt(li, "removeLast: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 10, 20, 30, 20, 40 };
@@ -280,7 +280,7 @@ static void XListSLinkedRemoveTest(void)
 		XListSLinkedPrintInt(li, "  删除首个20后: ");
 		XListSLinked_Remove_Base(li, int, 20);
 		XListSLinkedPrintInt(li, "  Remove_Base(20)后: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5 };
@@ -292,7 +292,7 @@ static void XListSLinkedRemoveTest(void)
 		XListBase_iterator next;
 		XListSLinked_erase_base(li, &it, &next);
 		XListSLinkedPrintInt(li, "erase(3): ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5 };
@@ -301,7 +301,7 @@ static void XListSLinkedRemoveTest(void)
 		XPrintf("clear: isEmpty=%s, size=%zu\n",
 			XListSLinked_isEmpty_base(li) ? "是" : "否",
 			XListSLinked_size_base(li));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 2, 4, 2, 5 };
@@ -311,7 +311,7 @@ static void XListSLinkedRemoveTest(void)
 		size_t r = XListSLinked_removeAll_base(li, &rm);
 		XPrintf("removeAll(2): 移除%zu个 (期望:3)\n", r);
 		XListSLinkedPrintInt(li, "  结果: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 2, 4 };
@@ -323,7 +323,7 @@ static void XListSLinkedRemoveTest(void)
 		rm = 999;
 		XPrintf("removeOne(999): %s (期望:否)\n",
 			XListSLinked_removeOne_base(li, &rm) ? "是" : "否");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5, 6, 7, 8 };
@@ -332,7 +332,7 @@ static void XListSLinkedRemoveTest(void)
 		size_t r = XListSLinked_removeIf_base(li, XListSLinkedRemoveEven, NULL);
 		XPrintf("removeIf(偶数): 移除%zu个 (期望:4)\n", r);
 		XListSLinkedPrintInt(li, "  结果: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 }
@@ -350,7 +350,7 @@ static void XListSLinkedAccessTest(void)
 		XPrintf("Front_Base=%d, Back_Base=%d\n",
 			XListSLinked_Front_Base(li, int),
 			XListSLinked_Back_Base(li, int));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 10, 20, 30, 40, 50 };
@@ -363,7 +363,7 @@ static void XListSLinkedAccessTest(void)
 			XPrintf("  找到值: %d (期望:30)\n", XListSNode_Data(it.node, int));
 		XPrintf("find(999): %s (期望:否)\n",
 			XListSLinked_find_base(li, &f2, &it) ? "是" : "否");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
         int __v20 = 20; int __v999 = 999;
@@ -391,7 +391,7 @@ static void XListSLinkedAccessTest(void)
 			XPrintf("  位置: node.data=%d (期望:20)\n", XListSNode_Data(it.node, int));
 		XPrintf("lastIndexOf(999,6): %s (期望:否)\n",
 			XListSLinked_lastIndexOf_base(li, &n, 6, &it) ? "是" : "否");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
         int __v1 = 1; int __v5 = 5; int __v999 = 999;
@@ -405,7 +405,7 @@ static void XListSLinkedAccessTest(void)
 			XListSLinked_EndsWith_Base(li, &__v5) ? "是" : "否");
 		XPrintf("EndsWith_Base(999): %s (期望:否)\n",
 			XListSLinked_EndsWith_Base(li, &__v999) ? "是" : "否");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 1, 2, 3 };
@@ -415,7 +415,7 @@ static void XListSLinkedAccessTest(void)
 			XListSLinked_count_base(li),
 			XListSLinked_length_base(li));
 		XPrintf("capacity=%zu\n", XListSLinked_capacity_base(li));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* empty = XListSLinked_Create(int);
@@ -423,7 +423,7 @@ static void XListSLinkedAccessTest(void)
 		XPrintf("空链表: front=%s, back=%s\n",
 			XListSLinked_front_base(empty) ? "非空" : "空",
 			XListSLinked_back_base(empty) ? "非空" : "空");
-		XListSLinked_delete_base(empty);
+		XClassDelete(empty);
 	}
 	XPrintf("\n");
 }
@@ -443,7 +443,7 @@ static void XListSLinkedTakeTest(void)
 		p = (int*)XListSLinked_takeLast_base(li);
 		if (p) { XPrintf("takeLast=%d (期望:50)\n", *p); XFree_System(p); }
 		XListSLinkedPrintInt(li, "  takeLast后: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* empty = XListSLinked_Create(int);
@@ -451,7 +451,7 @@ static void XListSLinkedTakeTest(void)
 		XPrintf("空: takeFirst=%s, takeLast=%s\n",
 			XListSLinked_takeFirst_base(empty) ? "非空" : "空",
 			XListSLinked_takeLast_base(empty) ? "非空" : "空");
-		XListSLinked_delete_base(empty);
+		XClassDelete(empty);
 	}
 	XPrintf("\n");
 }
@@ -471,9 +471,9 @@ static void XListSLinkedCompareTest(void)
 			XListSLinked_equals_base(v1, v2) ? "是" : "否");
 		XPrintf("v1==v3(equals): %s (期望:否)\n",
 			XListSLinked_equals_base(v1, v3) ? "是" : "否");
-		XListSLinked_delete_base(v1);
-		XListSLinked_delete_base(v2);
-		XListSLinked_delete_base(v3);
+		XClassDelete(v1);
+		XClassDelete(v2);
+		XClassDelete(v3);
 	}
 	{
 		int a1[] = { 3, 2, 1 };
@@ -485,8 +485,8 @@ static void XListSLinkedCompareTest(void)
 		XListSLinkedPrintInt(v2, "swap后v2: ");
 		XPrintf("v1.size=%zu, v2.size=%zu\n",
 			XListSLinked_size_base(v1), XListSLinked_size_base(v2));
-		XListSLinked_delete_base(v1);
-		XListSLinked_delete_base(v2);
+		XClassDelete(v1);
+		XClassDelete(v2);
 	}
 	{
 		int arr[] = { 5, 2, 8, 1, 9, 3 };
@@ -496,7 +496,7 @@ static void XListSLinkedCompareTest(void)
 		XListSLinkedPrintInt(li, "升序后: ");
 		XListSLinked_sort_base(li, XSORT_DESC);
 		XListSLinkedPrintInt(li, "降序后: ");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 }
@@ -511,7 +511,7 @@ static void XListSLinkedIteratorTest(void)
 		XPrintf("正向遍历(iterator_for_each): ");
 		XListSLinked_iterator_for_each(li, XListSLinkedForEachInt, NULL);
 		XPrintf("\n");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		int arr[] = { 10, 20, 30, 40, 50 };
@@ -522,7 +522,7 @@ static void XListSLinkedIteratorTest(void)
 			XPrintf("%d ", XListSNode_Data(it.node, int));
 		}
 		XPrintf("\n");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
 		XListSLinked* li = XListSLinked_Create(int);
@@ -541,7 +541,7 @@ static void XListSLinkedIteratorTest(void)
 			XListSLinked_iterator_isEnd(&it) ? "是" : "否");
 		XPrintf("iterator_data=%s\n",
 			XListSLinked_iterator_data(&it) ? "非空" : "空");
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	XPrintf("\n");
 }
@@ -567,7 +567,7 @@ static void XListSLinkedSafetyTest(void)
 			XListSLinked_removeAll_base(li, &val));
 		XPrintf("空链表: removeIf=%zu\n",
 			XListSLinked_removeIf_base(li, XListSLinkedRemoveEven, NULL));
-		XListSLinked_delete_base(li);
+		XClassDelete(li);
 	}
 	{
         int __v1 = 1;
@@ -618,12 +618,12 @@ static void XListSLinkedSafetyTest(void)
 		XContainerSetCompare(other, double_compare);
 		double dv = 3.14;
 		XListSLinked_push_back_base(other, &dv);
-		XCopy(li, other);
+		XClassCopy(li, other);
 		XPrintf("类型不一致: copy后li.size未变=%s, push_back类型不一致=%s（均应否）\n",
 			XListSLinked_size_base(li) == 3 ? "是" : "否",
 			XListSLinked_push_back_base(li, &dv) ? "是" : "否");
-		XListSLinked_delete_base(li);
-		XListSLinked_delete_base(other);
+		XClassDelete(li);
+		XClassDelete(other);
 	}
 	XPrintf("\n");
 }

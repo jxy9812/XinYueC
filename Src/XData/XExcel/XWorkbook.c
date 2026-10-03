@@ -57,24 +57,24 @@ void XWorkbook_delete(XWorkbook* self)
             }
         }
     }
-    if (self->m_sheets) XVector_delete_base(self->m_sheets);
+    if (self->m_sheets) XClassDelete(self->m_sheets);
     if (self->m_sharedStrings) XSharedStrings_delete(self->m_sharedStrings);
     if (self->m_styles) XStyles_delete(self->m_styles);
     if (self->m_theme) { XTheme_delete(self->m_theme); }
-    if (self->m_mediaFiles) XVector_delete_base(self->m_mediaFiles);
-    if (self->m_chartFiles) XVector_delete_base(self->m_chartFiles);
+    if (self->m_mediaFiles) XClassDelete(self->m_mediaFiles);
+    if (self->m_chartFiles) XClassDelete(self->m_chartFiles);
     /* 释放定义名称 */
     if (self->m_defineNames) {
         for (size_t i = 0; i < XVector_size_base(self->m_defineNames); ++i) {
             XWorkbook_DefineName* dn = (XWorkbook_DefineName*)XVector_at_base(self->m_defineNames, i);
-            if (dn->m_name) XString_delete_base(dn->m_name);
-            if (dn->m_formula) XString_delete_base(dn->m_formula);
-            if (dn->m_comment) XString_delete_base(dn->m_comment);
-            if (dn->m_scope) XString_delete_base(dn->m_scope);
+            if (dn->m_name) XClassDelete(dn->m_name);
+            if (dn->m_formula) XClassDelete(dn->m_formula);
+            if (dn->m_comment) XClassDelete(dn->m_comment);
+            if (dn->m_scope) XClassDelete(dn->m_scope);
         }
-        XVector_delete_base(self->m_defineNames);
+        XClassDelete(self->m_defineNames);
     }
-    if (self->m_defaultDateFormat) XString_delete_base(self->m_defaultDateFormat);
+    if (self->m_defaultDateFormat) XClassDelete(self->m_defaultDateFormat);
     XAbstractOOXmlFile_deinit(&self->m_base);
     XFree_System(self);
 }
@@ -109,7 +109,7 @@ static XString* workbook_default_sheet_name(const XWorkbook* self)
         XString* candidate = XString_create_fmt_utf8("Sheet%d", suffix);
         if (!candidate) return NULL;
         if (!workbook_sheet_name_exists(self, candidate, NULL)) return candidate;
-        XString_delete_base(candidate);
+        XClassDelete(candidate);
     }
     return NULL;
 }
@@ -124,12 +124,12 @@ static XString* workbook_copy_sheet_name(const XWorkbook* self, const XString* s
         XString* base = sourceName ? XString_left(sourceName, baseLength)
                                    : XString_create_utf8("Sheet");
         XString* candidate = base ? XString_create_copy(base) : NULL;
-        if (base) XString_delete_base(base);
+        if (base) XClassDelete(base);
         if (!candidate) return NULL;
         XString_append_utf8(candidate, suffixText);
         if (XUtility_isValidSheetName(candidate) &&
             !workbook_sheet_name_exists(self, candidate, NULL)) return candidate;
-        XString_delete_base(candidate);
+        XClassDelete(candidate);
     }
     return NULL;
 }
@@ -147,7 +147,7 @@ XAbstractSheet* XWorkbook_addSheet(XWorkbook* self, const XString* name, XAbstra
     }
     if (!useName || !XUtility_isValidSheetName(useName) ||
         workbook_sheet_name_exists(self, useName, NULL)) {
-        if (tempName) XString_delete_base(tempName);
+        if (tempName) XClassDelete(tempName);
         return NULL;
     }
     if (type == XAbstractSheet_ST_ChartSheet) {
@@ -157,7 +157,7 @@ XAbstractSheet* XWorkbook_addSheet(XWorkbook* self, const XString* name, XAbstra
         XWorksheet* ws = XWorksheet_create(useName, self->m_nextSheetId, self, XAbstractOOXmlFile_F_NewFromScratch);
         sheet = (XAbstractSheet*)ws;
     }
-    if (tempName) XString_delete_base(tempName);
+    if (tempName) XClassDelete(tempName);
     if (!sheet) return NULL;
     sheet->m_sheetType = type;
     if (!XVector_push_back_2(self->m_sheets, &sheet, 1)) {
@@ -223,7 +223,7 @@ bool XWorkbook_copySheet(XWorkbook* self, int index, const XString* newName)
     }
     if (!useName || !XUtility_isValidSheetName(useName) ||
         workbook_sheet_name_exists(self, useName, NULL)) {
-        if (tempName) XString_delete_base(tempName);
+        if (tempName) XClassDelete(tempName);
         return false;
     }
     int newId = self->m_nextSheetId;
@@ -240,7 +240,7 @@ bool XWorkbook_copySheet(XWorkbook* self, int index, const XString* newName)
     } else {
         newSheet = (XAbstractSheet*)XWorksheet_copy((XWorksheet*)src, useName, newId);
     }
-    if (tempName) XString_delete_base(tempName);
+    if (tempName) XClassDelete(tempName);
     if (!newSheet || !XVector_push_back_2(self->m_sheets, &newSheet, 1)) {
         if (newSheet) {
             if (newSheet->m_sheetType == XAbstractSheet_ST_ChartSheet)
@@ -306,10 +306,10 @@ bool XWorkbook_defineName(XWorkbook* self, const XString* name, const XString* f
     if (scope) { dn.m_scope = XString_create_copy(scope); }
     if (!dn.m_name || !dn.m_formula || (comment && !dn.m_comment) ||
         (scope && !dn.m_scope) || !XVector_push_back_2(self->m_defineNames, &dn, 1)) {
-        if (dn.m_name) XString_delete_base(dn.m_name);
-        if (dn.m_formula) XString_delete_base(dn.m_formula);
-        if (dn.m_comment) XString_delete_base(dn.m_comment);
-        if (dn.m_scope) XString_delete_base(dn.m_scope);
+        if (dn.m_name) XClassDelete(dn.m_name);
+        if (dn.m_formula) XClassDelete(dn.m_formula);
+        if (dn.m_comment) XClassDelete(dn.m_comment);
+        if (dn.m_scope) XClassDelete(dn.m_scope);
         return false;
     }
     return true;
@@ -466,12 +466,12 @@ static const XString* workbookAttribute(const XXmlStreamAttributes* attributes, 
     if (!attributes || !name) return NULL;
     XString_Init_Utf8(attributeName, name);
     const XString* value = XXmlStreamAttributes_value_ex(attributes, NULL, attributeName);
-    XString_deinit_base(attributeName);
+    XClassDeinit(attributeName);
     if (!value) {
         /* OOXML workbook 的关系属性使用限定名 r:id。 */
         XString_Init_Utf8(qualifiedName, "r:id");
         value = XXmlStreamAttributes_value(attributes, qualifiedName);
-        XString_deinit_base(qualifiedName);
+        XClassDeinit(qualifiedName);
     }
     return value;
 }
@@ -502,10 +502,10 @@ static void workbookClearDefinedNames(XWorkbook* self)
         size_t index = XVector_size_base(self->m_defineNames) - 1;
         XWorkbook_DefineName* name = (XWorkbook_DefineName*)XVector_at_base(self->m_defineNames, index);
         if (name) {
-            if (name->m_name) XString_delete_base(name->m_name);
-            if (name->m_formula) XString_delete_base(name->m_formula);
-            if (name->m_comment) XString_delete_base(name->m_comment);
-            if (name->m_scope) XString_delete_base(name->m_scope);
+            if (name->m_name) XClassDelete(name->m_name);
+            if (name->m_formula) XClassDelete(name->m_formula);
+            if (name->m_comment) XClassDelete(name->m_comment);
+            if (name->m_scope) XClassDelete(name->m_scope);
         }
         XVector_pop_back_base(self->m_defineNames);
     }
@@ -603,7 +603,7 @@ bool XWorkbook_saveToXmlData(const XWorkbook* self, uint8_t** outData, size_t* o
         *outLen = XByteArray_size_base(buf);
         (*outData)[*outLen] = '\0';
     }
-    XByteArray_delete_base(buf);
+    XClassDelete(buf);
     return *outData != NULL;
 }
 
@@ -615,14 +615,14 @@ bool XWorkbook_saveToXmlFile(XWorkbook* self, const XString* filePath)
     
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         XFree_System(data);
         return false;
     }
     bool result = XIODevice_write_1((XIODevice*)file, (const char*)data,
         (int64_t)len) == (int64_t)len;
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     XFree_System(data);
     return result;
 }
@@ -633,8 +633,8 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
     XByteArray* xml = XByteArray_create_with_data((const char*)data, len);
     XXmlStreamReader* reader = XXmlStreamReader_create();
     if (!xml || !reader) {
-        if (xml) XByteArray_delete_base(xml);
-        if (reader) XXmlStreamReader_delete_base(reader);
+        if (xml) XClassDelete(xml);
+        if (reader) XClassDelete(reader);
         return false;
     }
 
@@ -691,17 +691,17 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
             const XString* formula = XXmlStreamReader_readElementText(reader,
                 XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
             if (name && formula) XWorkbook_defineName(self, name, formula, comment, scope);
-            if (name) XString_delete_base(name);
-            if (comment) XString_delete_base(comment);
-            if (scope) XString_delete_base(scope);
+            if (name) XClassDelete(name);
+            if (comment) XClassDelete(comment);
+            if (scope) XClassDelete(scope);
         }
     }
 
     bool ok = !XXmlStreamReader_hasError(reader) && XWorkbook_sheetCount(self) > 0;
     if (self->m_activeSheetIndex < 0 || self->m_activeSheetIndex >= XWorkbook_sheetCount(self))
         self->m_activeSheetIndex = 0;
-    XXmlStreamReader_delete_base(reader);
-    XByteArray_delete_base(xml);
+    XClassDelete(reader);
+    XClassDelete(xml);
     return ok;
 }
 
@@ -710,14 +710,14 @@ bool XWorkbook_loadFromXmlFile(XWorkbook* self, const XString* filePath)
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2(filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* data = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     bool result = data && XWorkbook_loadFromXmlData(self, XByteArray_data(data), XByteArray_size_base(data));
-    if (data) XByteArray_delete_base(data);
+    if (data) XClassDelete(data);
     return result;
 }
 
@@ -727,6 +727,6 @@ XAbstractSheet* XWorkbook_addSheet_utf8(XWorkbook* self, const char* name, XAbst
 {
     XString* s = name ? XString_create_utf8(name) : NULL;
     XAbstractSheet* result = XWorkbook_addSheet(self, s, type);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }

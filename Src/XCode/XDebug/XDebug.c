@@ -32,7 +32,7 @@ XDebug* XDebug_create_with_location_(const char* file, const char* function, int
 void XDebug_delete_(XDebug* debug) {
     if (!debug) return;
 
-    XVector_deinit_base(&debug->buffer);
+    XClassDeinit(&debug->buffer);
     XFree_System(debug);
 }
 

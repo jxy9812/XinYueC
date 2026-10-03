@@ -49,19 +49,6 @@ XVtable* XVirtualKeyboardDictionary_class_init(void);
 
 /* ==================== 生命周期（所有权边界） ==================== */
 
-/**
- * @brief      通过 XClass 虚表反初始化（栈/外部存储对象使用）。
- * @details    构造私有（仅 DictionaryManager 创建，创建入口落
- *             DictionaryManager 保护头），归属方在自身 TU 内释放，
- *             故释放接口必须在公开头声明。
- */
-#define XVirtualKeyboardDictionary_deinit_base(self) \
-    XClass_deinit_base((XClass*)(self))
-/**
- * @brief      删除堆上对象（归属方释放自有词典用；释放后指针失效）。
- */
-#define XVirtualKeyboardDictionary_delete_base(self) \
-    XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      返回词典名（对标 name；创建时确定，只读）。

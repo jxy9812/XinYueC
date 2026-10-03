@@ -126,7 +126,7 @@ static void xxml_dom_string_assign_utf8(XString** target, const char* source)
 static void xxml_dom_string_delete(XString** value)
 {
     if (value && *value) {
-        XString_delete_base(*value);
+        XClassDelete(*value);
         *value = NULL;
     }
 }
@@ -375,11 +375,11 @@ static void xxml_dom_set_qualified_name(XDomNodePrivate* node,
         XString* local = XString_create_utf8(colon + 1);
         if (prefix) {
             xxml_dom_string_assign(&node->m_prefix, prefix);
-            XString_delete_base(prefix);
+            XClassDelete(prefix);
         }
         if (local) {
             xxml_dom_string_assign(&node->m_localName, local);
-            XString_delete_base(local);
+            XClassDelete(local);
         }
     }
 }
@@ -454,18 +454,18 @@ static XString* xxml_dom_fixed_name(const XString* name, bool namespaces, bool* 
             XString_append_char(local, ch);
             first = false;
         } else if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
-            XString_delete_base(local);
+            XClassDelete(local);
             return NULL;
         }
     }
     if (XString_isEmpty_base(local)) {
-        XString_delete_base(local);
+        XClassDelete(local);
         return NULL;
     }
 
     XString* result = XString_create();
     if (!result) {
-        XString_delete_base(local);
+        XClassDelete(local);
         return NULL;
     }
     if (namespaces && prefixLength > 0) {
@@ -473,7 +473,7 @@ static XString* xxml_dom_fixed_name(const XString* name, bool namespaces, bool* 
         XString_append_char(result, XChar_from(':'));
     }
     XString_append(result, local);
-    XString_delete_base(local);
+    XClassDelete(local);
     if (ok) *ok = !XString_isEmpty_base(result);
     return result;
 }
@@ -482,7 +482,7 @@ static bool xxml_dom_valid_name(const XString* name)
 {
     bool ok = false;
     XString* fixed = xxml_dom_fixed_name(name, false, &ok);
-    XString_delete_base(fixed);
+    XClassDelete(fixed);
     return ok;
 }
 
@@ -961,7 +961,7 @@ XVtable* XDomImplementation_class_init(void)
         if (!other) return NULL; \
         Type* self = Type##_create(); \
         if (!self) return NULL; \
-        XCopy(self, other); \
+        XClassCopy(self, other); \
         return self; \
     } \
     Type* Type##_create_move(Type* other) \
@@ -969,16 +969,8 @@ XVtable* XDomImplementation_class_init(void)
         if (!other) return NULL; \
         Type* self = Type##_create(); \
         if (!self) return NULL; \
-        XMove(self, other); \
+        XClassMove(self, other); \
         return self; \
-    } \
-    void Type##_deinit_base(Type* self) \
-    { \
-        if (self) XClass_deinit_base((XClass*)self); \
-    } \
-    void Type##_delete_base(Type* self) \
-    { \
-        if (self) XClass_delete_base((XClass*)self); \
     }
 
 XDOM_DEFINE_LIFECYCLE(XDomNode)
@@ -1021,7 +1013,7 @@ XDomImplementation* XDomImplementation_create_copy(const XDomImplementation* oth
     if (!other || XClassIsVtableNull((const XClass*)other)) return NULL;
     XDomImplementation* self = XDomImplementation_create();
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -1030,18 +1022,8 @@ XDomImplementation* XDomImplementation_create_move(XDomImplementation* other)
     if (!other || XClassIsVtableNull((XClass*)other)) return NULL;
     XDomImplementation* self = XDomImplementation_create();
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
-}
-
-void XDomImplementation_deinit_base(XDomImplementation* self)
-{
-    if (self) XClass_deinit_base((XClass*)self);
-}
-
-void XDomImplementation_delete_base(XDomImplementation* self)
-{
-    if (self) XClass_delete_base((XClass*)self);
 }
 
 /* QDomDocument 默认构造后是 null；首次工厂调用或 setContent 时再分配实现。 */
@@ -1067,7 +1049,7 @@ XDomDocument* XDomDocument_create_copy(const XDomDocument* other)
     if (!other || XClassIsVtableNull((const XClass*)other)) return NULL;
     XDomDocument* self = XDomDocument_create();
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -1076,18 +1058,8 @@ XDomDocument* XDomDocument_create_move(XDomDocument* other)
     if (!other || XClassIsVtableNull((XClass*)other)) return NULL;
     XDomDocument* self = XDomDocument_create();
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
-}
-
-void XDomDocument_deinit_base(XDomDocument* self)
-{
-    if (self) XClass_deinit_base((XClass*)self);
-}
-
-void XDomDocument_delete_base(XDomDocument* self)
-{
-    if (self) XClass_delete_base((XClass*)self);
 }
 
 static void xxml_dom_assign_new_handle(XDomNodePrivate** target,
@@ -1273,7 +1245,7 @@ static XString* xxml_dom_fixed_value(const XString* value, XDomNodeType type, bo
         }
         if (valid) XString_append_char(result, ch);
         else if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
-            XString_delete_base(result);
+            XClassDelete(result);
             return NULL;
         }
     }
@@ -1289,7 +1261,7 @@ static XString* xxml_dom_fixed_value(const XString* value, XDomNodeType type, bo
                                                       XChar_CaseSensitive);
             if (position < 0) break;
             if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
-                XString_delete_base(result);
+                XClassDelete(result);
                 return NULL;
             }
             XString_remove_base(result, (size_t)position, forbiddenLength);
@@ -1418,14 +1390,14 @@ static XString* xxml_dom_fixed_public_id(const XString* value, bool* ok)
     for (size_t i = 0; i < length; ++i) {
         if (xxml_dom_public_id_char(chars[i])) XString_append_char(result, chars[i]);
         else if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
-            XString_delete_base(result);
+            XClassDelete(result);
             return NULL;
         }
     }
     if (XString_indexOf_utf8(result, "'", 0, XChar_CaseSensitive) >= 0 &&
         XString_indexOf_utf8(result, "\"", 0, XChar_CaseSensitive) >= 0) {
         if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode) {
-            XString_delete_base(result);
+            XClassDelete(result);
             return NULL;
         }
         XString_replace_utf8(result, "'", "", XChar_CaseSensitive);
@@ -1442,7 +1414,7 @@ static XString* xxml_dom_fixed_system_id(const XString* value, bool* ok)
     if (g_xxml_dom_invalid_data_policy == XDom_ReturnNullNode &&
         XString_indexOf_utf8(result, "'", 0, XChar_CaseSensitive) >= 0 &&
         XString_indexOf_utf8(result, "\"", 0, XChar_CaseSensitive) >= 0) {
-        XString_delete_base(result);
+        XClassDelete(result);
         return NULL;
     }
     if (g_xxml_dom_invalid_data_policy == XDom_DropInvalidChars &&
@@ -1500,7 +1472,7 @@ XDomNode* XDomNode_replaceChild(XDomNode* self, const XDomNode* newChild,
     XDomNode* result = xxml_dom_wrap_node(old);
     if (!xxml_dom_detach_from_parent(old) || !xxml_dom_insert_child(parent, child, index)) {
         if (!old->m_parent) xxml_dom_insert_child(parent, old, index);
-        XDomNode_delete_base(result);
+        XClassDelete(result);
         return xxml_dom_wrap_node(NULL);
     }
     return result;
@@ -1514,7 +1486,7 @@ XDomNode* XDomNode_removeChild(XDomNode* self, const XDomNode* oldChild)
         return xxml_dom_wrap_node(NULL);
     XDomNode* result = xxml_dom_wrap_node(child);
     if (!xxml_dom_detach_from_parent(child)) {
-        XDomNode_delete_base(result);
+        XClassDelete(result);
         return xxml_dom_wrap_node(NULL);
     }
     xxml_dom_node_invalidate_text_cache(parent);
@@ -1594,8 +1566,8 @@ bool XDomNode_isSupported_utf8(const XDomNode* self, const char* feature,
     XString* featureString = XString_create_utf8(feature);
     XString* versionString = XString_create_utf8(version);
     bool result = XDomNode_isSupported(self, featureString, versionString);
-    XString_delete_base(featureString);
-    XString_delete_base(versionString);
+    XClassDelete(featureString);
+    XClassDelete(versionString);
     return result;
 }
 
@@ -1718,7 +1690,7 @@ void XDomNode_setNodeValue_utf8(XDomNode* self, const char* value)
 {
     XString* text = XString_create_utf8(value);
     XDomNode_setNodeValue(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
 }
 
 const XString* XDomNode_prefix(const XDomNode* self)
@@ -1741,7 +1713,7 @@ void XDomNode_setPrefix_utf8(XDomNode* self, const char* prefix)
 {
     XString* text = XString_create_utf8(prefix);
     XDomNode_setPrefix(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
 }
 
 XDomNode* XDomNode_namedItem(const XDomNode* self, const XString* name)
@@ -1758,7 +1730,7 @@ XDomNode* XDomNode_namedItem_utf8(const XDomNode* self, const char* name)
 {
     XString* text = XString_create_utf8(name);
     XDomNode* result = XDomNode_namedItem(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -1856,7 +1828,7 @@ XDomElement* XDomNode_firstChildElement_utf8(const XDomNode* self, const char* t
     XString* tag = XString_create_utf8(tagName);
     XString* ns = XString_create_utf8(namespaceURI);
     XDomElement* result = XDomNode_firstChildElement(self, tag, ns);
-    XString_delete_base(tag); XString_delete_base(ns);
+    XClassDelete(tag); XClassDelete(ns);
     return result;
 }
 
@@ -1872,7 +1844,7 @@ XDomElement* XDomNode_lastChildElement_utf8(const XDomNode* self, const char* ta
     XString* tag = XString_create_utf8(tagName);
     XString* ns = XString_create_utf8(namespaceURI);
     XDomElement* result = XDomNode_lastChildElement(self, tag, ns);
-    XString_delete_base(tag); XString_delete_base(ns);
+    XClassDelete(tag); XClassDelete(ns);
     return result;
 }
 
@@ -1883,7 +1855,7 @@ XDomElement* XDomNode_previousSiblingElement_utf8(const XDomNode* self,
     XString* tag = XString_create_utf8(tagName);
     XString* ns = XString_create_utf8(namespaceURI);
     XDomElement* result = XDomNode_previousSiblingElement(self, tag, ns);
-    XString_delete_base(tag); XString_delete_base(ns);
+    XClassDelete(tag); XClassDelete(ns);
     return result;
 }
 
@@ -1918,7 +1890,7 @@ XDomElement* XDomNode_nextSiblingElement_utf8(const XDomNode* self,
     XString* tag = XString_create_utf8(tagName);
     XString* ns = XString_create_utf8(namespaceURI);
     XDomElement* result = XDomNode_nextSiblingElement(self, tag, ns);
-    XString_delete_base(tag); XString_delete_base(ns);
+    XClassDelete(tag); XClassDelete(ns);
     return result;
 }
 
@@ -1949,7 +1921,7 @@ bool XDomNode_save(const XDomNode* self, XIODevice* device, int indent,
     size_t length = text ? XString_toUtf8_length(text) : 0;
     int64_t written = (utf8 || length == 0) ? XIODevice_write_1(
         device, utf8 ? utf8 : "", (int64_t)length) : -1;
-    XString_delete_base(text);
+    XClassDelete(text);
     return written == (int64_t)length;
 }
 
@@ -2054,7 +2026,7 @@ XDomNode* XDomNamedNodeMap_namedItem_utf8(const XDomNamedNodeMap* self, const ch
 {
     XString* text = XString_create_utf8(name);
     XDomNode* result = XDomNamedNodeMap_namedItem(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2150,7 +2122,7 @@ XDomNode* XDomNamedNodeMap_removeNamedItem_utf8(XDomNamedNodeMap* self, const ch
 {
     XString* text = XString_create_utf8(name);
     XDomNode* result = XDomNamedNodeMap_removeNamedItem(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2173,7 +2145,7 @@ XDomNode* XDomNamedNodeMap_namedItemNS_utf8(const XDomNamedNodeMap* self,
     XString* ns = XString_create_utf8(namespaceURI);
     XString* local = XString_create_utf8(localName);
     XDomNode* result = XDomNamedNodeMap_namedItemNS(self, ns, local);
-    XString_delete_base(ns); XString_delete_base(local);
+    XClassDelete(ns); XClassDelete(local);
     return result;
 }
 
@@ -2223,7 +2195,7 @@ bool XDomNamedNodeMap_contains_utf8(const XDomNamedNodeMap* self, const char* na
 {
     XString* text = XString_create_utf8(name);
     bool result = xxml_dom_map_find_name(xxml_dom_handle_impl(self), text) >= 0;
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2270,12 +2242,12 @@ static XDomElement* xxml_dom_document_new_element(XDomNodePrivate* document,
     bool ok = false;
     XString* fixedName = xxml_dom_fixed_name(qualifiedName, namespaceURI != NULL, &ok);
     if (!document || !ok) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return xxml_dom_wrap_element(NULL);
     }
     XDomNodePrivate* node = xxml_dom_create_node_for_document(document, XDom_ElementNode);
     if (!node) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return xxml_dom_wrap_element(NULL);
     }
     if (namespaceURI) xxml_dom_set_qualified_name(node, namespaceURI, fixedName);
@@ -2283,7 +2255,7 @@ static XDomElement* xxml_dom_document_new_element(XDomNodePrivate* document,
     node->m_ownerDocument = document;
     XDomElement* result = xxml_dom_wrap_element(node);
     xxml_dom_node_release(node);
-    XString_delete_base(fixedName);
+    XClassDelete(fixedName);
     return result;
 }
 
@@ -2294,12 +2266,12 @@ static XDomAttr* xxml_dom_document_new_attribute(XDomNodePrivate* document,
     bool ok = false;
     XString* fixedName = xxml_dom_fixed_name(qualifiedName, namespaceURI != NULL, &ok);
     if (!document || !ok) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return xxml_dom_wrap_attr(NULL);
     }
     XDomNodePrivate* node = xxml_dom_create_node_for_document(document, XDom_AttributeNode);
     if (!node) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return xxml_dom_wrap_attr(NULL);
     }
     if (namespaceURI) xxml_dom_set_qualified_name(node, namespaceURI, fixedName);
@@ -2307,7 +2279,7 @@ static XDomAttr* xxml_dom_document_new_attribute(XDomNodePrivate* document,
     node->m_ownerDocument = document;
     XDomAttr* result = xxml_dom_wrap_attr(node);
     xxml_dom_node_release(node);
-    XString_delete_base(fixedName);
+    XClassDelete(fixedName);
     return result;
 }
 
@@ -2319,17 +2291,17 @@ static XDomNodePrivate* xxml_dom_document_new_value_node(XDomNodePrivate* docume
     bool ok = false;
     XString* fixedValue = xxml_dom_fixed_value(value, type, &ok);
     if (!ok) {
-        XString_delete_base(fixedValue);
+        XClassDelete(fixedValue);
         return NULL;
     }
     XDomNodePrivate* node = xxml_dom_create_node_for_document(document, type);
     if (!node) {
-        XString_delete_base(fixedValue);
+        XClassDelete(fixedValue);
         return NULL;
     }
     xxml_dom_set_default_creation_value(node, fixedValue);
     node->m_ownerDocument = document;
-    XString_delete_base(fixedValue);
+    XClassDelete(fixedValue);
     return node;
 }
 
@@ -2346,7 +2318,7 @@ XDomDocument* XDomDocument_createName_utf8(const char* name)
 {
     XString* text = XString_create_utf8(name);
     XDomDocument* result = XDomDocument_createName(text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2411,7 +2383,7 @@ XDomElement* XDomDocument_createElement_utf8(XDomDocument* self, const char* tag
 {
     XString* text = XString_create_utf8(tagName);
     XDomElement* result = XDomDocument_createElement(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2438,7 +2410,7 @@ XDomText* XDomDocument_createTextNode_utf8(XDomDocument* self, const char* data)
 {
     XString* text = XString_create_utf8(data);
     XDomText* result = XDomDocument_createTextNode(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2455,7 +2427,7 @@ XDomComment* XDomDocument_createComment_utf8(XDomDocument* self, const char* dat
 {
     XString* text = XString_create_utf8(data);
     XDomComment* result = XDomDocument_createComment(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2472,7 +2444,7 @@ XDomCDATASection* XDomDocument_createCDATASection_utf8(XDomDocument* self, const
 {
     XString* text = XString_create_utf8(data);
     XDomCDATASection* result = XDomDocument_createCDATASection(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2484,19 +2456,19 @@ XDomProcessingInstruction* XDomDocument_createProcessingInstruction(XDomDocument
     bool ok = false;
     XString* fixedTarget = xxml_dom_fixed_name(target, false, &ok);
     if (!document || !ok) {
-        XString_delete_base(fixedTarget);
+        XClassDelete(fixedTarget);
         return xxml_dom_wrap_pi(NULL);
     }
     XDomNodePrivate* node = xxml_dom_document_new_value_node(document,
                                                                  XDom_ProcessingInstructionNode, data);
     if (!node) {
-        XString_delete_base(fixedTarget);
+        XClassDelete(fixedTarget);
         return xxml_dom_wrap_pi(NULL);
     }
     xxml_dom_string_assign(&node->m_name, fixedTarget);
     XDomProcessingInstruction* result = xxml_dom_wrap_pi(node);
     xxml_dom_node_release(node);
-    XString_delete_base(fixedTarget);
+    XClassDelete(fixedTarget);
     return result;
 }
 
@@ -2507,7 +2479,7 @@ XDomProcessingInstruction* XDomDocument_createProcessingInstruction_utf8(XDomDoc
     XString* targetString = XString_create_utf8(target);
     XString* dataString = XString_create_utf8(data);
     XDomProcessingInstruction* result = XDomDocument_createProcessingInstruction(self, targetString, dataString);
-    XString_delete_base(targetString); XString_delete_base(dataString);
+    XClassDelete(targetString); XClassDelete(dataString);
     return result;
 }
 
@@ -2520,7 +2492,7 @@ XDomAttr* XDomDocument_createAttribute_utf8(XDomDocument* self, const char* name
 {
     XString* text = XString_create_utf8(name);
     XDomAttr* result = XDomDocument_createAttribute(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2530,19 +2502,19 @@ XDomEntityReference* XDomDocument_createEntityReference(XDomDocument* self, cons
     bool ok = false;
     XString* fixedName = xxml_dom_fixed_name(name, false, &ok);
     if (!document || !ok) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return xxml_dom_wrap_entity_reference(NULL);
     }
     XDomNodePrivate* node = xxml_dom_document_new_value_node(document,
                                                                  XDom_EntityReferenceNode, NULL);
     if (!node) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return xxml_dom_wrap_entity_reference(NULL);
     }
     xxml_dom_string_assign(&node->m_name, fixedName);
     XDomEntityReference* result = xxml_dom_wrap_entity_reference(node);
     xxml_dom_node_release(node);
-    XString_delete_base(fixedName);
+    XClassDelete(fixedName);
     return result;
 }
 
@@ -2550,7 +2522,7 @@ XDomEntityReference* XDomDocument_createEntityReference_utf8(XDomDocument* self,
 {
     XString* text = XString_create_utf8(name);
     XDomEntityReference* result = XDomDocument_createEntityReference(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2573,7 +2545,7 @@ XDomNodeList* XDomDocument_elementsByTagName_utf8(const XDomDocument* self, cons
 {
     XString* text = XString_create_utf8(tagName);
     XDomNodeList* result = XDomDocument_elementsByTagName(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2610,7 +2582,7 @@ XDomElement* XDomDocument_createElementNS_utf8(XDomDocument* self, const char* n
     XString* ns = XString_create_utf8(namespaceURI);
     XString* name = XString_create_utf8(qualifiedName);
     XDomElement* result = XDomDocument_createElementNS(self, ns, name);
-    XString_delete_base(ns); XString_delete_base(name);
+    XClassDelete(ns); XClassDelete(name);
     return result;
 }
 
@@ -2626,7 +2598,7 @@ XDomAttr* XDomDocument_createAttributeNS_utf8(XDomDocument* self, const char* na
     XString* ns = XString_create_utf8(namespaceURI);
     XString* name = XString_create_utf8(qualifiedName);
     XDomAttr* result = XDomDocument_createAttributeNS(self, ns, name);
-    XString_delete_base(ns); XString_delete_base(name);
+    XClassDelete(ns); XClassDelete(name);
     return result;
 }
 
@@ -2642,7 +2614,7 @@ XDomNodeList* XDomDocument_elementsByTagNameNS_utf8(const XDomDocument* self, co
     XString* ns = XString_create_utf8(namespaceURI);
     XString* local = XString_create_utf8(localName);
     XDomNodeList* result = XDomDocument_elementsByTagNameNS(self, ns, local);
-    XString_delete_base(ns); XString_delete_base(local);
+    XClassDelete(ns); XClassDelete(local);
     return result;
 }
 
@@ -2658,7 +2630,7 @@ XDomElement* XDomDocument_elementById_utf8(const XDomDocument* self, const char*
 {
     XString* text = XString_create_utf8(id);
     XDomElement* result = XDomDocument_elementById(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2744,7 +2716,7 @@ void XDomElement_setTagName_utf8(XDomElement* self, const char* name)
 {
     XString* text = XString_create_utf8(name);
     XDomElement_setTagName(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
 }
 
 const XString* XDomElement_attribute(const XDomElement* self, const XString* name,
@@ -2775,7 +2747,7 @@ const XString* XDomElement_attribute_utf8(const XDomElement* self, const char* n
         }
         if (stable == defaultString || !stable) stable = xxml_dom_empty_string();
     }
-    XString_delete_base(nameString); XString_delete_base(defaultString);
+    XClassDelete(nameString); XClassDelete(defaultString);
     return stable;
 }
 
@@ -2787,14 +2759,14 @@ static void xxml_dom_element_set_attribute(XDomElement* self, const XString* nam
     bool ok = false;
     XString* fixedName = xxml_dom_fixed_name(qualifiedName, byNamespace, &ok);
     if (!element || !ok) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return;
     }
     XDomNodePrivate* document = xxml_dom_document_for_node(element);
     XDomNodePrivate* attr = xxml_dom_create_node_for_document(document ? document : element,
                                                                   XDom_AttributeNode);
     if (!attr) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return;
     }
     if (byNamespace) xxml_dom_set_qualified_name(attr, namespaceURI, fixedName);
@@ -2803,7 +2775,7 @@ static void xxml_dom_element_set_attribute(XDomElement* self, const XString* nam
     attr->m_specified = true;
     xxml_dom_attach_attribute(element, attr, byNamespace);
     xxml_dom_node_release(attr);
-    XString_delete_base(fixedName);
+    XClassDelete(fixedName);
 }
 
 void XDomElement_setAttribute(XDomElement* self, const XString* name, const XString* value)
@@ -2816,7 +2788,7 @@ void XDomElement_setAttribute_utf8(XDomElement* self, const char* name, const ch
     XString* nameString = XString_create_utf8(name);
     XString* valueString = XString_create_utf8(value);
     XDomElement_setAttribute(self, nameString, valueString);
-    XString_delete_base(nameString); XString_delete_base(valueString);
+    XClassDelete(nameString); XClassDelete(valueString);
 }
 
 static void xxml_dom_element_set_attribute_number(XDomElement* self, const XString* name,
@@ -2829,7 +2801,7 @@ static void xxml_dom_element_set_attribute_number(XDomElement* self, const XStri
     va_end(args);
     XString* value = XString_create_utf8(buffer);
     XDomElement_setAttribute(self, name, value);
-    XString_delete_base(value);
+    XClassDelete(value);
 }
 
 void XDomElement_setAttribute_int(XDomElement* self, const XString* name, int value)
@@ -2861,7 +2833,7 @@ void XDomElement_removeAttribute_utf8(XDomElement* self, const char* name)
 {
     XString* text = XString_create_utf8(name);
     XDomElement_removeAttribute(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
 }
 
 XDomAttr* XDomElement_attributeNode(const XDomElement* self, const XString* name)
@@ -2875,7 +2847,7 @@ XDomAttr* XDomElement_attributeNode_utf8(const XDomElement* self, const char* na
 {
     XString* text = XString_create_utf8(name);
     XDomAttr* result = XDomElement_attributeNode(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2889,7 +2861,7 @@ static XDomAttr* xxml_dom_element_set_attribute_node(XDomElement* self,
                               xxml_dom_attribute_index(element, attr->m_name);
     XDomAttr* replaced = xxml_dom_wrap_attr(index >= 0 ? element->m_attributes[index] : NULL);
     if (!xxml_dom_attach_attribute(element, attr, byNamespace)) {
-        XDomAttr_delete_base(replaced);
+        XClassDelete(replaced);
         return xxml_dom_wrap_attr(NULL);
     }
     return replaced;
@@ -2920,7 +2892,7 @@ bool XDomElement_hasAttribute_utf8(const XDomElement* self, const char* name)
 {
     XString* text = XString_create_utf8(name);
     bool result = XDomElement_hasAttribute(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -2952,7 +2924,7 @@ const XString* XDomElement_attributeNS_utf8(const XDomElement* self, const char*
         }
         if (stable == defaultText || !stable) stable = xxml_dom_empty_string();
     }
-    XString_delete_base(ns); XString_delete_base(local); XString_delete_base(defaultText);
+    XClassDelete(ns); XClassDelete(local); XClassDelete(defaultText);
     return stable;
 }
 
@@ -2967,7 +2939,7 @@ void XDomElement_setAttributeNS_utf8(XDomElement* self, const char* namespaceURI
     XString* name = XString_create_utf8(qualifiedName);
     XString* text = XString_create_utf8(value);
     XDomElement_setAttributeNS(self, ns, name, text);
-    XString_delete_base(ns); XString_delete_base(name); XString_delete_base(text);
+    XClassDelete(ns); XClassDelete(name); XClassDelete(text);
 }
 
 static void xxml_dom_element_set_attribute_ns_number(XDomElement* self,
@@ -2982,7 +2954,7 @@ static void xxml_dom_element_set_attribute_ns_number(XDomElement* self,
     va_end(args);
     XString* value = XString_create_utf8(buffer);
     XDomElement_setAttributeNS(self, namespaceURI, name, value);
-    XString_delete_base(value);
+    XClassDelete(value);
 }
 
 void XDomElement_setAttributeNS_int(XDomElement* self, const XString* namespaceURI,
@@ -3020,7 +2992,7 @@ void XDomElement_removeAttributeNS_utf8(XDomElement* self, const char* namespace
     XString* ns = XString_create_utf8(namespaceURI);
     XString* local = XString_create_utf8(localName);
     XDomElement_removeAttributeNS(self, ns, local);
-    XString_delete_base(ns); XString_delete_base(local);
+    XClassDelete(ns); XClassDelete(local);
 }
 
 XDomAttr* XDomElement_attributeNodeNS(const XDomElement* self, const XString* namespaceURI,
@@ -3045,7 +3017,7 @@ XDomNodeList* XDomElement_elementsByTagName_utf8(const XDomElement* self, const 
 {
     XString* text = XString_create_utf8(tagName);
     XDomNodeList* result = XDomElement_elementsByTagName(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }
 
@@ -3118,7 +3090,7 @@ void XDomAttr_setValue_utf8(XDomAttr* self, const char* value)
 {
     XString* text = XString_create_utf8(value);
     XDomAttr_setValue(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
 }
 
 /* ==================== XML 序列化 ==================== */
@@ -3176,7 +3148,7 @@ static bool xxml_dom_element_has_namespace_decl(const XDomNodePrivate* element,
             if (qualified) {
                 XString_insert_utf8(qualified, 0, "xmlns:");
                 bool equal = XString_equals(name, qualified, XChar_CaseSensitive);
-                XString_delete_base(qualified);
+                XClassDelete(qualified);
                 if (equal) return true;
             }
         }
@@ -3516,7 +3488,7 @@ void XDomCharacterData_appendData_utf8(XDomCharacterData* self, const char* valu
 {
     XString* text = XString_create_utf8(value);
     XDomCharacterData_appendData(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
 }
 
 void XDomCharacterData_insertData(XDomCharacterData* self, uint64_t offset,
@@ -3583,7 +3555,7 @@ void XDomCharacterData_setData_utf8(XDomCharacterData* self, const char* value)
 {
     XString* text = XString_create_utf8(value);
     XDomCharacterData_setData(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
 }
 
 XDomText* XDomText_splitText(XDomText* self, int offset)
@@ -3601,11 +3573,11 @@ XDomText* XDomText_splitText(XDomText* self, int offset)
     XDomNodePrivate* newNode = xxml_dom_create_node_for_document(
         xxml_dom_document_for_node(node), XDom_TextNode);
     if (!newNode) {
-        XString_delete_base(suffix);
+        XClassDelete(suffix);
         return xxml_dom_wrap_text(NULL);
     }
     xxml_dom_string_assign(&newNode->m_value, suffix);
-    XString_delete_base(suffix);
+    XClassDelete(suffix);
     int index = xxml_dom_child_index(node->m_parent, node);
     if (!xxml_dom_insert_child(node->m_parent, newNode, index + 1)) {
         xxml_dom_node_release(newNode);
@@ -3714,7 +3686,7 @@ void XDomProcessingInstruction_setData_utf8(XDomProcessingInstruction* self, con
 {
     XString* text = XString_create_utf8(value);
     XDomProcessingInstruction_setData(self, text);
-    XString_delete_base(text);
+    XClassDelete(text);
 }
 
 /* ==================== QDomImplementation 与类型转换 ==================== */
@@ -3734,8 +3706,8 @@ bool XDomImplementation_hasFeature_utf8(const XDomImplementation* self,
     XString* featureString = XString_create_utf8(feature);
     XString* versionString = XString_create_utf8(version);
     bool result = XDomImplementation_hasFeature(self, featureString, versionString);
-    XString_delete_base(featureString);
-    XString_delete_base(versionString);
+    XClassDelete(featureString);
+    XClassDelete(versionString);
     return result;
 }
 
@@ -3747,7 +3719,7 @@ XDomDocumentType* XDomImplementation_createDocumentType(const XDomImplementation
     bool ok = false;
     XString* fixedName = xxml_dom_fixed_name(qualifiedName, true, &ok);
     if (!xxml_dom_implementation_is_valid(self) || !ok) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return xxml_dom_wrap_doctype(NULL);
     }
     bool publicOk = false;
@@ -3755,16 +3727,16 @@ XDomDocumentType* XDomImplementation_createDocumentType(const XDomImplementation
     XString* fixedPublicId = xxml_dom_fixed_public_id(publicId, &publicOk);
     XString* fixedSystemId = xxml_dom_fixed_system_id(systemId, &systemOk);
     if (!publicOk || !systemOk) {
-        XString_delete_base(fixedName);
-        XString_delete_base(fixedPublicId);
-        XString_delete_base(fixedSystemId);
+        XClassDelete(fixedName);
+        XClassDelete(fixedPublicId);
+        XClassDelete(fixedSystemId);
         return xxml_dom_wrap_doctype(NULL);
     }
     XDomNodePrivate* doctype = xxml_dom_node_new(XDom_DocumentTypeNode);
     if (!doctype) {
-        XString_delete_base(fixedName);
-        XString_delete_base(fixedPublicId);
-        XString_delete_base(fixedSystemId);
+        XClassDelete(fixedName);
+        XClassDelete(fixedPublicId);
+        XClassDelete(fixedSystemId);
         return xxml_dom_wrap_doctype(NULL);
     }
     xxml_dom_set_plain_name(doctype, fixedName);
@@ -3779,9 +3751,9 @@ XDomDocumentType* XDomImplementation_createDocumentType(const XDomImplementation
     }
     XDomDocumentType* result = xxml_dom_wrap_doctype(doctype);
     xxml_dom_node_release(doctype);
-    XString_delete_base(fixedName);
-    XString_delete_base(fixedPublicId);
-    XString_delete_base(fixedSystemId);
+    XClassDelete(fixedName);
+    XClassDelete(fixedPublicId);
+    XClassDelete(fixedSystemId);
     return result;
 }
 
@@ -3795,9 +3767,9 @@ XDomDocumentType* XDomImplementation_createDocumentType_utf8(const XDomImplement
     XString* systemText = systemId ? XString_create_utf8(systemId) : NULL;
     XDomDocumentType* result = XDomImplementation_createDocumentType(self, name, publicText,
                                                                        systemText);
-    XString_delete_base(name);
-    XString_delete_base(publicText);
-    XString_delete_base(systemText);
+    XClassDelete(name);
+    XClassDelete(publicText);
+    XClassDelete(systemText);
     return result;
 }
 
@@ -3810,14 +3782,14 @@ XDomDocument* XDomImplementation_createDocument(const XDomImplementation* self,
     bool nameOk = false;
     XString* fixedName = xxml_dom_fixed_name(qualifiedName, namespaceURI != NULL, &nameOk);
     if (!nameOk) {
-        XString_delete_base(fixedName);
+        XClassDelete(fixedName);
         return NULL;
     }
     XDomDocument* result = XDomDocument_create();
     XDomNodePrivate* document = xxml_dom_document_ensure_impl(result);
     if (!document) {
-        XString_delete_base(fixedName);
-        XDomDocument_delete_base(result);
+        XClassDelete(fixedName);
+        XClassDelete(result);
         return NULL;
     }
 
@@ -3830,8 +3802,8 @@ XDomDocument* XDomImplementation_createDocument(const XDomImplementation* self,
         }
         if (!type || !xxml_dom_insert_child(document, type, -1)) {
             if (type) xxml_dom_node_release(type);
-            XString_delete_base(fixedName);
-            XDomDocument_delete_base(result);
+            XClassDelete(fixedName);
+            XClassDelete(result);
             return NULL;
         }
         xxml_dom_node_release(type);
@@ -3840,20 +3812,20 @@ XDomDocument* XDomImplementation_createDocument(const XDomImplementation* self,
     XDomNodePrivate* root = xxml_dom_create_node_for_document(document, XDom_ElementNode);
     if (!root) {
         if (root) xxml_dom_node_release(root);
-        XString_delete_base(fixedName);
-        XDomDocument_delete_base(result);
+        XClassDelete(fixedName);
+        XClassDelete(result);
         return NULL;
     }
     if (namespaceURI) xxml_dom_set_qualified_name(root, namespaceURI, fixedName);
     else xxml_dom_set_plain_name(root, fixedName);
     if (!xxml_dom_insert_child(document, root, -1)) {
         xxml_dom_node_release(root);
-        XString_delete_base(fixedName);
-        XDomDocument_delete_base(result);
+        XClassDelete(fixedName);
+        XClassDelete(result);
         return NULL;
     }
     xxml_dom_node_release(root);
-    XString_delete_base(fixedName);
+    XClassDelete(fixedName);
     return result;
 }
 
@@ -3865,8 +3837,8 @@ XDomDocument* XDomImplementation_createDocument_utf8(const XDomImplementation* s
     XString* namespaceText = namespaceURI ? XString_create_utf8(namespaceURI) : NULL;
     XString* name = XString_create_utf8(qualifiedName);
     XDomDocument* result = XDomImplementation_createDocument(self, namespaceText, name, doctype);
-    XString_delete_base(namespaceText);
-    XString_delete_base(name);
+    XClassDelete(namespaceText);
+    XClassDelete(name);
     return result;
 }
 
@@ -4029,7 +4001,7 @@ static void xxml_dom_extract_internal_subset(XDomNodePrivate* doctype, const XSt
                                                        (size_t)(end - begin - 1));
     if (subset) {
         xxml_dom_string_assign(&doctype->m_internalSubset, subset);
-        XString_delete_base(subset);
+        XClassDelete(subset);
     }
 }
 
@@ -4159,7 +4131,7 @@ static XDomNodePrivate* xxml_dom_parse_element(XDomNodePrivate* document,
                 xxml_dom_attach_attribute(element, attribute, false);
                 xxml_dom_node_release(attribute);
             }
-            XString_delete_base(name);
+            XClassDelete(name);
         }
     }
     if (!xxml_dom_insert_child(parent, element, -1)) {
@@ -4198,7 +4170,7 @@ static void xxml_dom_capture_document_info(XDomNodePrivate* document,
 /**
  * @brief      构造 Qt QDomDocument 使用的 XML 声明处理指令数据。
  * @param      reader 已定位在 StartDocument 的 XML 读取器；只借用。
- * @return     新分配的处理指令数据；调用者使用 XString_delete_base 释放，失败返回 NULL。
+ * @return     新分配的处理指令数据；调用者使用 XClassDelete 释放，失败返回 NULL。
  * @note       属性使用单引号，且仅在输入声明中出现 standalone 时写出 standalone='no'。
  */
 static XString* xxml_dom_xml_declaration_data(const XXmlStreamReader* reader)
@@ -4263,7 +4235,7 @@ static XDomParseResult xxml_dom_set_content_from_reader(XDomNodePrivate* documen
             if (declaration) {
                 XString* target = XString_create_utf8("xml");
                 xxml_dom_set_plain_name(declaration, target);
-                XString_delete_base(target);
+                XClassDelete(target);
                 declaration->m_line = XXmlStreamReader_lineNumber(reader);
                 declaration->m_column = XXmlStreamReader_columnNumber(reader);
                 if (!xxml_dom_insert_child(document, declaration, 0))
@@ -4271,7 +4243,7 @@ static XDomParseResult xxml_dom_set_content_from_reader(XDomNodePrivate* documen
                 else
                     xxml_dom_node_release(declaration);
             }
-            XString_delete_base(declarationData);
+            XClassDelete(declarationData);
         } else if (token == XXmlStream_DTD) {
             if (foundDtd) {
                 /* Qt 的 QDomParser 只允许一个文档类型声明。 */
@@ -4355,7 +4327,7 @@ XDomParseResult XDomDocument_setContent_result(XDomDocument* self,
     }
     XXmlStreamReader_addData(reader, data);
     result = xxml_dom_set_content_from_reader(document, reader, options);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     return result;
 }
 
@@ -4364,7 +4336,7 @@ XDomParseResult XDomDocument_setContent_utf8_result(XDomDocument* self,
 {
     XByteArray* bytes = XByteArray_create_utf8(data ? data : "");
     XDomParseResult result = XDomDocument_setContent_result(self, bytes, options);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     return result;
 }
 
@@ -4387,7 +4359,7 @@ XDomParseResult XDomDocument_setContent_string_result(XDomDocument* self,
     /* 直接使用 UTF-16 输入重载，匹配 Qt QString setContent 路径。 */
     XXmlStreamReader_addData_string(reader, data);
     result = xxml_dom_set_content_from_reader(document, reader, options);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     return result;
 }
 
@@ -4414,7 +4386,7 @@ XDomParseResult XDomDocument_setContent_device_result(XDomDocument* self,
     }
     XXmlStreamReader_setDevice(reader, device);
     result = xxml_dom_set_content_from_reader(document, reader, options);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     return result;
 }
 
@@ -4450,7 +4422,7 @@ bool XDomDocument_setContent_utf8(XDomDocument* self, const char* data, unsigned
     XByteArray* bytes = XByteArray_create_utf8(data ? data : "");
     bool success = XDomDocument_setContent(self, bytes, options, errorMessage,
                                            errorLine, errorColumn);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     return success;
 }
 
@@ -4496,6 +4468,6 @@ XByteArray* XDomDocument_toByteArray(const XDomDocument* self, int indent)
 {
     XString* text = XDomDocument_toString(self, indent);
     XByteArray* result = XByteArray_create_utf8(text ? XString_toUtf8(text) : "");
-    XString_delete_base(text);
+    XClassDelete(text);
     return result;
 }

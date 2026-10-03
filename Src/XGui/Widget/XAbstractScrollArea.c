@@ -315,15 +315,15 @@ static void VX_asa_deinit(XAbstractScrollArea* self)
 {
     if (!self) return;
     if (self->m_viewport) {
-        XWidget_delete_base((XWidget*)self->m_viewport);
+        XClassDelete((XWidget*)self->m_viewport);
         self->m_viewport = NULL;
     }
     if (self->m_vScrollBar) {
-        XWidget_delete_base((XWidget*)self->m_vScrollBar);
+        XClassDelete((XWidget*)self->m_vScrollBar);
         self->m_vScrollBar = NULL;
     }
     if (self->m_hScrollBar) {
-        XWidget_delete_base((XWidget*)self->m_hScrollBar);
+        XClassDelete((XWidget*)self->m_hScrollBar);
         self->m_hScrollBar = NULL;
     }
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
@@ -462,7 +462,7 @@ void XAbstractScrollArea_setVerticalScrollBar(XAbstractScrollArea* self,
     if (self->m_vScrollBar == scrollbar) return;
     if (self->m_vScrollBar) {
         xasa_disconnectBar(self, self->m_vScrollBar, false);
-        XWidget_delete_base((XWidget*)self->m_vScrollBar);
+        XClassDelete((XWidget*)self->m_vScrollBar);
     }
     self->m_vScrollBar = scrollbar;
     if (scrollbar) {
@@ -481,7 +481,7 @@ void XAbstractScrollArea_setHorizontalScrollBar(XAbstractScrollArea* self,
     if (self->m_hScrollBar == scrollbar) return;
     if (self->m_hScrollBar) {
         xasa_disconnectBar(self, self->m_hScrollBar, true);
-        XWidget_delete_base((XWidget*)self->m_hScrollBar);
+        XClassDelete((XWidget*)self->m_hScrollBar);
     }
     self->m_hScrollBar = scrollbar;
     if (scrollbar) {

@@ -293,7 +293,7 @@ typedef struct XWNPendingEntry
                                             改由 present 与内容同批执行。 */
     bool m_hasPendingGeom;             /**< 有挂起几何待 present 批内落地。 */
     XRect m_pendingGeom;               /**< 挂起待落地几何（钳边后【物理】
-                                            口径，与 XMoveResizeWindow 实参
+                                            口径，与 XClassMoveResizeWindow 实参
                                             逐字段一致：强制 dpr>1 时在
                                             setGeometry 记账处已出框换算，
                                             dpr==1.0f 即逻辑直通同旧值）。 */
@@ -872,7 +872,7 @@ static bool xpwn_handleDragSelectionRequest(const X11_XEvent* ev)
                             (int)strlen(utf8));
             response.property = property;
         }
-        XString_delete_base((XClass*)value);
+        XClassDelete((XClass*)value);
     }
     XSendEvent(g_xpwnDisplay, request->requestor, False, 0,
                (X11_XEvent*)&response);
@@ -1213,7 +1213,7 @@ static void xpwn_imeFocus(Window xwin, bool focusIn)
 
 /** @brief RandR 扩展事件基址；-1 表示扩展不可用（未编译/查询失败）。 */
 static int g_xpwnRrEventBase = -1;
-/** @brief 平台创建并登记的屏幕对象表（拥有，经 XScreen_delete_base 释放）。 */
+/** @brief 平台创建并登记的屏幕对象表（拥有，经 XClassDelete 释放）。 */
 static XScreen* g_xpwnScreens[XPWN_MAX_SCREENS];
 /** @brief 已登记屏幕数量。 */
 static int g_xpwnScreenCount;
@@ -1494,9 +1494,9 @@ static void xpwn_screenRemove(XScreen* screen)
             XWindow_setScreen(window, NULL); /* 无屏可迁，回退主屏语义。 */
         }
     }
-    if (windows) XVector_delete_base((XClass*)windows);
+    if (windows) XClassDelete((XClass*)windows);
     /* 3) 平台层持有所有权，负责释放。 */
-    XScreen_delete_base((XClass*)screen);
+    XClassDelete((XClass*)screen);
 }
 
 /**
@@ -1634,7 +1634,7 @@ static void xpwn_screensEnumerate(bool refresh)
                                 matched[g_xpwnScreenCount] = true;
                                 g_xpwnScreens[g_xpwnScreenCount++] = screen;
                             } else {
-                                XScreen_delete_base(screen);
+                                XClassDelete(screen);
                             }
                         }
                     }
@@ -1652,7 +1652,7 @@ static void xpwn_screensEnumerate(bool refresh)
                     if (XWindowSystemInterface_handleScreenAdded(screen)) {
                         g_xpwnScreens[g_xpwnScreenCount++] = screen;
                     } else {
-                        XScreen_delete_base(screen);
+                        XClassDelete(screen);
                     }
                 }
                 if (monitorName) xpwn_xFree(monitorName);
@@ -1694,7 +1694,7 @@ static void xpwn_screensEnumerate(bool refresh)
             if (XWindowSystemInterface_handleScreenAdded(screen)) {
                 g_xpwnScreens[g_xpwnScreenCount++] = screen;
             } else {
-                XScreen_delete_base(screen);
+                XClassDelete(screen);
             }
         }
     }
@@ -1916,7 +1916,7 @@ static unsigned char* xpwn_cursorBitmapBits(const XBitmap* bmp, int* outW,
     h = XImage_height(&img);
     if ((fmt != XImageFormat_Mono && fmt != XImageFormat_MonoLSB) ||
         w <= 0 || h <= 0) {
-        XImage_deinit_base(&img);
+        XClassDeinit(&img);
         return NULL;
     }
     lineBytes = (w + 7) / 8;
@@ -1924,7 +1924,7 @@ static unsigned char* xpwn_cursorBitmapBits(const XBitmap* bmp, int* outW,
     packed = (unsigned char*)XMemory_malloc((size_t)lineBytes * (size_t)h,
                                             XCLASS_DEFAULT_MEMORY_TYPE);
     if (!packed) {
-        XImage_deinit_base(&img);
+        XClassDeinit(&img);
         return NULL;
     }
     for (row = 0; row < h; ++row) {
@@ -1933,7 +1933,7 @@ static unsigned char* xpwn_cursorBitmapBits(const XBitmap* bmp, int* outW,
         int col;
         if (!src || stride < lineBytes) {
             XFree_System(packed);
-            XImage_deinit_base(&img);
+            XClassDeinit(&img);
             return NULL;
         }
         if (fmt == XImageFormat_MonoLSB) {
@@ -1952,7 +1952,7 @@ static unsigned char* xpwn_cursorBitmapBits(const XBitmap* bmp, int* outW,
             }
         }
     }
-    XImage_deinit_base(&img);
+    XClassDeinit(&img);
     *outW = w;
     *outH = h;
     return packed;
@@ -2066,13 +2066,13 @@ static Cursor xpwn_cursorAcquirePixmapCursor(const XCursor* cursor)
     XImage_init(&img);
     XPixmap_toImage(pix, &img);
     if (!XImage_convertToFormatInPlace(&img, XImageFormat_ARGB32, 0)) {
-        XImage_deinit_base(&img);
+        XClassDeinit(&img);
         return None;
     }
     w = XImage_width(&img);
     h = XImage_height(&img);
     if (w <= 0 || h <= 0) {
-        XImage_deinit_base(&img);
+        XClassDeinit(&img);
         return None;
     }
     lineBytes = (w + 7) / 8;
@@ -2108,7 +2108,7 @@ static Cursor xpwn_cursorAcquirePixmapCursor(const XCursor* cursor)
     }
     XFree_System(srcBits);
     XFree_System(maskBits);
-    XImage_deinit_base(&img);
+    XClassDeinit(&img);
     return cur;
 }
 
@@ -3298,7 +3298,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                resizeEvent→重排在本次派发内完成。 */
             XWindowSystemInterface_handleGeometryChange(entry->m_window, &client);
             if (posChanged) {
-                /* 外部移动（无 WM 时 XMoveWindow 直达，WM 场景拖动标题
+                /* 外部移动（无 WM 时 XClassMoveWindow 直达，WM 场景拖动标题
                    栏同理）：窗口级 moveEvent 此前只有控件层经
                    applyWindowGeometry 的间接联动，XWindow 子类的
                    moveEvent 虚槽从不触发（对标 Qt：QXcbWindow 把
@@ -3320,7 +3320,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                 if (moveEvent) {
                     XGuiApplication_sendSpontaneousEvent(
                         (XObject*)entry->m_window, (XEvent*)moveEvent);
-                    XEvent_delete_base((XClass*)moveEvent);
+                    XClassDelete((XClass*)moveEvent);
                 }
             }
             if (sizeChanged) {
@@ -3393,7 +3393,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             if (focusEvent) {
                 XGuiApplication_sendSpontaneousEvent((XObject*)entry->m_window,
                                                      (XEvent*)focusEvent);
-                XEvent_delete_base((XClass*)focusEvent);
+                XClassDelete((XClass*)focusEvent);
                 delivered = true;
             }
         }
@@ -5009,7 +5009,7 @@ bool XPlatformNativeWindow_create(XWindow* window)
     attr.border_pixel = 0u;
     attr.colormap = g_xpwnColormap;
     /* 位重力 NorthWest：改尺寸时服务器保留旧内容，扩区只按背景像素补
-     * 新条带——默认 ForgetGravity 下每步 XMoveResizeWindow 服务器把
+     * 新条带——默认 ForgetGravity 下每步 XClassMoveResizeWindow 服务器把
      * 整窗按 background_pixel=0 重铺，是拖拽黑闪的服务器侧源头；与
      * present 批内落窗配合（挂起几何与整窗内容同一请求批生效），把
      * 「ConfigureWindow 已处理、PutImage 流式落地中」的微秒级窗口内的
@@ -5278,7 +5278,7 @@ bool XPlatformNativeWindow_create(XWindow* window)
     /* 初始标题同步（公共层 createHandle 后也会再同步，这里是兜底）。 */
     title = XWindow_title(window);
     xpwn_applyTitle(xwin, title);
-    if (title) XString_delete_base((XClass*)title);
+    if (title) XClassDelete((XClass*)title);
     /* 初始装饰提示（对标 Qt xcb：创建时即按 flags 写 _MOTIF_WM_HINTS；
        默认窗口无提示位 → DECOR_ALL + FUNC_ALL，与 WM 默认装饰等价）。
        此后的提示位变化经 setWindowFlags 重写。 */
@@ -5417,7 +5417,7 @@ void XPlatformNativeWindow_destroy(XWindow* window)
 static void xpwn_applyPendingGeometry(XWNPendingEntry* entry)
 {
     if (!entry->m_hasPendingGeom) return;
-    XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
+    XClassMoveResizeWindow(g_xpwnDisplay, entry->m_win,
                       entry->m_pendingGeom.x, entry->m_pendingGeom.y,
                       (unsigned)entry->m_pendingGeom.width,
                       (unsigned)entry->m_pendingGeom.height);
@@ -5472,7 +5472,7 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     if (entry->m_deferGeometry) {
         /* 拖拽改尺寸手势期：只记账不落窗，几何由 present 与整窗内容同批
            落地（根因见 deferGeometry 注）。挂起值存钳边后【物理】口径，
-           与立即路 XMoveResizeWindow 实参逐字段一致（见 m_pendingGeom
+           与立即路 XClassMoveResizeWindow 实参逐字段一致（见 m_pendingGeom
            注）；挂起期内重复 setGeometry 以最新值为准（覆盖式），
            present 消费后清标记。 */
         entry->m_pendingGeom.x = nativeGeom.x;
@@ -5484,7 +5484,7 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     }
     /* 立即路径作废可能残留的挂起几何（解挂后的即时几何已覆盖其语义）。 */
     entry->m_hasPendingGeom = false;
-    XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
+    XClassMoveResizeWindow(g_xpwnDisplay, entry->m_win,
                       nativeGeom.x, nativeGeom.y,
                       (unsigned)nativeGeom.width,
                       (unsigned)nativeGeom.height);
@@ -6170,7 +6170,7 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     if (!source) return NULL;
     XImage_init_ex(&image, width, height, XImageFormat_ARGB32_Premultiplied);
     if (XImage_isNull(&image)) {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         XDestroyImage(source);
         return NULL;
     }
@@ -6192,13 +6192,13 @@ XPixmap* XPlatformNativeWindow_grabWindow(XWindowId window,
     XPixmap_init_image(&captured, &image, 0);
     result = XPixmap_create();
     if (!result) {
-        XPixmap_deinit_base(&captured);
-        XImage_deinit_base(&image);
+        XClassDeinit(&captured);
+        XClassDeinit(&image);
         return NULL;
     }
-    XMove(result, &captured);
-    XPixmap_deinit_base(&captured);
-    XImage_deinit_base(&image);
+    XClassMove(result, &captured);
+    XClassDeinit(&captured);
+    XClassDeinit(&image);
     return result;
 }
 

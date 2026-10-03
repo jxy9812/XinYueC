@@ -64,8 +64,6 @@ void XTextBrowser_init(XTextBrowser* self, XWidget* parent, XWidgetFlags flags);
  * @brief      按指定内存类型创建控件实例。
  */
 XTextBrowser* XTextBrowser_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XTextBrowser_deinit_base(self) XTextEdit_deinit_base((XTextEdit*)(self))
-#define XTextBrowser_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      设置浏览源 URL（对标 setSource）。
@@ -201,7 +199,7 @@ void XTextBrowser_setSearchPaths(XTextBrowser* self, const XStringList* paths);
 /**
  * @brief      获取资源搜索路径列表（对标 searchPaths）。
  * @return     返回新建的深拷贝 XStringList*，由调用方以
- *             XStringList_delete_base 释放；内部为空时返回新建空列表。
+ *             XClassDelete 释放；内部为空时返回新建空列表。
  */
 XStringList* XTextBrowser_searchPaths(const XTextBrowser* self);
 
@@ -225,7 +223,7 @@ XRect XTextBrowser_cursorRect(const XTextBrowser* self);
  *             命中（块高随字体度量、块宽实测、按对齐定位）；片段无锚点
  *             或未命中返回 0 长度字符串对象。
  * @note       返回值为堆上新建的 XString*（空串对象或锚点文本），由
- *             调用方以 XString_delete_base 释放；内存分配失败返回 NULL。
+ *             调用方以 XClassDelete 释放；内存分配失败返回 NULL。
  * @param      self 目标控件指针；可为 NULL。
  * @param      pos 控件局部坐标点；可为 NULL。
  * @return     堆上新建的 XString*；语义见 @note。

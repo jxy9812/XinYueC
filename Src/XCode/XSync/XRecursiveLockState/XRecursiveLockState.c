@@ -17,7 +17,7 @@ void XRecursiveLockState_init()
 	if (global_locks_map)return;
 	global_lock = XReadWriteLock_create(XLock_Spin);
 	global_locks_map = XHashMap_Create(XReadWriteLock*, XHashMap, uintptr_t_compare);
-	XContainerSetDataDeinitMethod(global_locks_map, XHashMap_deinit_base);
+	XContainerSetDataDeinitMethod(global_locks_map, XClass_deinit_base);
 }
 
 // ========== 获取状态函数 ==========

@@ -20,9 +20,28 @@
 #include <errno.h>
 #include <string.h>
 
-XVARIANT_TYPE_OPS_DEFINE(XJsonDocument, sizeof(XJsonDocument), XJsonDocument_copy,
-	XJsonDocument_move, XJsonDocument_clear, XJsonDocument_deinit,
+static void VJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src);
+static void VJsonDocument_move(XJsonDocument* doc, XJsonDocument* src);
+static void VJsonDocument_deinit(XJsonDocument* document);
+
+XVARIANT_TYPE_OPS_DEFINE(XJsonDocument, sizeof(XJsonDocument), XClass_copy_base,
+	XClass_move_base, XJsonDocument_clear, XClass_deinit_base,
 	NULL, "XJsonDocument");
+
+XVtable* XJsonDocument_class_init(void)
+{
+	static XVtable* s_xjsonDocument_vtable = NULL;
+	static bool s_xjsonDocument_inited = false;
+	if (s_xjsonDocument_inited && s_xjsonDocument_vtable) return s_xjsonDocument_vtable;
+	XVtable_init(s_xjsonDocument_vtable = XVtable_create());
+	XVTABLE_SET_NAME(s_xjsonDocument_vtable, "XJsonDocument");
+	XVtable_append_vtable(s_xjsonDocument_vtable, XClass_class_init());
+	XVTABLE_OVERLOAD(s_xjsonDocument_vtable, EXClass_Copy, VJsonDocument_copy);
+	XVTABLE_OVERLOAD(s_xjsonDocument_vtable, EXClass_Move, VJsonDocument_move);
+	XVTABLE_OVERLOAD(s_xjsonDocument_vtable, EXClass_Deinit, VJsonDocument_deinit);
+	s_xjsonDocument_inited = true;
+	return s_xjsonDocument_vtable;
+}
 typedef struct JsonParser
 {
     const char* data;
@@ -100,7 +119,7 @@ XJsonDocument* XJsonDocument_create_copy(XJsonDocument* copy)
 {
     XJsonDocument* doc = XJsonDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (doc && copy)
-        XJsonDocument_copy(doc, copy);
+        XClassCopy(doc, copy);
     return doc;
 }
 
@@ -108,7 +127,7 @@ XJsonDocument* XJsonDocument_create_move(XJsonDocument* move)
 {
     XJsonDocument* doc = XJsonDocument_create_ex(XJsonDocument_memory_type(move));
     if (doc && move)
-        XJsonDocument_move(doc, move);
+        XClassMove(doc, move);
     return doc;
 }
 
@@ -164,24 +183,14 @@ void XJsonDocument_init(XJsonDocument* document)
     if (document == NULL)
         return;
 	XClass_init(&document->m_class);
+    XClassGetVtable(document) = XJsonDocument_class_init();
     XJsonValue_init(&document->root, XJsonValue_Invalid);
 }
 
-void XJsonDocument_deinit(XJsonDocument* document)
+static void VJsonDocument_deinit(XJsonDocument* document)
 {
     if (!document) return;
     XJsonValue_deinit(&document->root);
-}
-
-void XJsonDocument_delete(XJsonDocument* document)
-{
-	XMemory* memory;
-    if (!document)
-        return;
-	memory = Class_Memory(document);
-    XJsonDocument_deinit(document);
-	if (Class_IsHeap(document) && memory && memory->free)
-		memory->free(document);
 }
 
 void XJsonDocument_clear(XJsonDocument* document)
@@ -192,7 +201,7 @@ void XJsonDocument_clear(XJsonDocument* document)
     }
 }
 
-void XJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src)
+static void VJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src)
 {
     if (doc == NULL || src == NULL)
         return;
@@ -201,7 +210,7 @@ void XJsonDocument_copy(XJsonDocument* doc, const XJsonDocument* src)
     XJsonValue_copy(&doc->root, &src->root);
 }
 
-void XJsonDocument_move(XJsonDocument* doc, XJsonDocument* src)
+static void VJsonDocument_move(XJsonDocument* doc, XJsonDocument* src)
 {
     if (doc == NULL || src == NULL)
         return;
@@ -335,7 +344,7 @@ XJsonDocument* XJsonDocument_fromString_ex(const XString* json, XJsonParseError*
     if (!bytes)
         return NULL;
     doc = XJsonDocument_fromJson_ex(bytes, error);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     return doc;
 }
 
@@ -349,7 +358,7 @@ XString* XJsonDocument_toString(const XJsonDocument* document, XJsonDocumentForm
     str = XString_create();
     if (str)
         XString_append_with_length_utf8(str, XContainerDataAddr(json), XByteArray_size_base(json));
-    XByteArray_delete_base(json);
+    XClassDelete(json);
     return str;
 }
 
@@ -413,14 +422,14 @@ XJsonDocument* XJsonDocument_fromJson_ex(const XByteArray* json, XJsonParseError
             XJsonValue_delete(root);
         if (parser.ptr != parser.end)
             Json_set_error(&parser, XJsonParseError_GarbageAtEnd);
-        XStack_delete_base(stack);
+        XClassDelete(stack);
         return NULL;
     }
     document = XJsonDocument_create();
     if (document)
         XJsonDocument_setRoot_move(document, root);
     XJsonValue_delete(root);
-    XStack_delete_base(stack);
+    XClassDelete(stack);
     return document;
 }
 
@@ -435,13 +444,13 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
     // 创建栈管理嵌套深度（存储int类型的深度值）
     XStack* stack = XStack_create(sizeof(int));
     if (!stack) {
-        XByteArray_delete_base(output);
+        XClassDelete(output);
         return NULL;
     }
     XStack_Push_Base(stack, int,0);
 
     if (document->root.type == XJsonValue_Invalid) {
-        XStack_delete_base(stack);
+        XClassDelete(stack);
         return output;
     }
 
@@ -460,7 +469,7 @@ XByteArray* XJsonDocument_toJson(const XJsonDocument* document, XJsonDocumentFor
     if (format == XJsonDocument_Indented && XContainerSize(output) > 0)
         XByteArray_push_back_1(output, '\n');
     // 清理资源
-    XStack_delete_base(stack);
+    XClassDelete(stack);
     return output;
 }
 
@@ -474,12 +483,12 @@ XJsonDocument* XJsonDocument_fromBson_document(const XByteArray* bson)
     XJsonObject* object= XBsonDocument_toJsonObject(doc);
     if (object == NULL)
     {
-        XBsonDocument_delete_base(doc);
+        XClassDelete(doc);
         return NULL;
     }
     XJsonDocument* jsonDoc = XJsonDocument_create_object_move(object);
-    XJsonObject_delete_base(object);
-    XBsonDocument_delete_base(doc);
+    XClassDelete(object);
+    XClassDelete(doc);
     return jsonDoc;
 }
 
@@ -493,12 +502,12 @@ XJsonDocument* XJsonDocument_fromBson_array(const XByteArray* bson)
     XJsonArray* jsonArr = XBsonArray_toJsonArray(array);
     if (jsonArr == NULL)
     {
-        XBsonArray_delete_base(array);
+        XClassDelete(array);
         return NULL;
     }
     XJsonDocument* jsonDoc = XJsonDocument_create_array_move(jsonArr);
-    XJsonArray_delete_base(jsonArr);
-    XBsonArray_delete_base(array);
+    XClassDelete(jsonArr);
+    XClassDelete(array);
     return jsonDoc;
 }
 
@@ -513,7 +522,7 @@ XByteArray* XJsonDocument_toBson(const XJsonDocument* document)
        if (bsonDoc)
        {
            bytes = XBsonDocument_toBson(bsonDoc);
-           XBsonDocument_delete_base(bsonDoc);
+           XClassDelete(bsonDoc);
        }
     }
     else if (XJsonDocument_isArray(document))
@@ -522,7 +531,7 @@ XByteArray* XJsonDocument_toBson(const XJsonDocument* document)
         if (bsonArr)
         {
             bytes = XBsonArray_toBson(bsonArr);
-            XBsonArray_delete_base(bsonArr);
+            XClassDelete(bsonArr);
         }
     }
     return bytes;
@@ -540,7 +549,7 @@ XVariant* XJsonDocument_toVariant(const XJsonDocument* doc)
             return NULL;
         {
             XVariant* variant = XVariant_create_map_move(map);
-            XMap_delete_base((XClass*)map);
+            XClassDelete((XClass*)map);
             return variant;
         }
     }
@@ -550,7 +559,7 @@ XVariant* XJsonDocument_toVariant(const XJsonDocument* doc)
             return NULL;
         {
             XVariant* variant = XVariant_create_list_move(list);
-            XClass_delete_base((XClass*)list);
+            XClassDelete((XClass*)list);
             return variant;
         }
     }
@@ -576,12 +585,12 @@ XJsonDocument* XJsonDocument_fromVariant(const XVariant* variant)
     case XVariantType_List:
         array = XJsonArray_fromVariantList(XVariant_toList_ref(variant));
         document = array ? XJsonDocument_create_array_move(array) : NULL;
-        if (array) XJsonArray_delete_base(array);
+        if (array) XClassDelete(array);
         return document;
     case XVariantType_Map:
         object = XJsonObject_fromVariantMap(XVariant_toMap_ref(variant));
         document = object ? XJsonDocument_create_object_move(object) : NULL;
-        if (object) XJsonObject_delete_base(object);
+        if (object) XClassDelete(object);
         return document;
     case XVariantType_JsonDocument:
         return XJsonDocument_create_copy(XVariant_toJsonDocument_ref(variant));
@@ -631,7 +640,7 @@ static bool XJsonDocument_prepareVariant(XVariant* variant)
     if (variant->m_type != XVariantType_JsonDocument ||
         !variant->m_data || variant->m_dataSize != sizeof(XJsonDocument)) {
         if (variant->m_data)
-            XVariant_deinit_base(variant);
+            XClassDeinit(variant);
         variant->m_data = XMalloc_System(sizeof(XJsonDocument));
         if (!variant->m_data)
             return false;
@@ -645,13 +654,13 @@ static bool XJsonDocument_prepareVariant(XVariant* variant)
 void XJsonDocument_setVariant(XVariant* variant, const XJsonDocument* document)
 {
     if (document && XJsonDocument_prepareVariant(variant))
-        XJsonDocument_copy((XJsonDocument*)variant->m_data, document);
+        XClassCopy(variant->m_data, document);
 }
 
 void XJsonDocument_setVariant_move(XVariant* variant, XJsonDocument* document)
 {
     if (document && XJsonDocument_prepareVariant(variant))
-        XJsonDocument_move((XJsonDocument*)variant->m_data, document);
+        XClassMove(variant->m_data, document);
 }
 
 void XJsonDocument_setVariant_ref(XVariant* variant, XJsonDocument* document)
@@ -764,7 +773,7 @@ void XJsonObject_toByteArray(const XJsonObject* object, XJsonDocumentFormat form
     }
 
     // 释放键列表
-    XVector_delete_base(keys);
+    XClassDelete(keys);
 
     // 恢复深度
     XStack_pop_base(stack);
@@ -998,8 +1007,8 @@ static XString* Json_parse_string(JsonParser* parser)
     bytes = XByteArray_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, false);
     string = XString_create();
     if (!bytes || !string) {
-        if (bytes) XByteArray_delete_base(bytes);
-        if (string) XString_delete_base(string);
+        if (bytes) XClassDelete(bytes);
+        if (string) XClassDelete(string);
         return NULL;
     }
     while (parser->ptr < parser->end) {
@@ -1007,7 +1016,7 @@ static XString* Json_parse_string(JsonParser* parser)
         if (c == '"') {
             if (!Json_flush_string_bytes(string, bytes))
                 goto string_error;
-            XByteArray_delete_base(bytes);
+            XClassDelete(bytes);
             return string;
         }
         if (c < 0x20) {
@@ -1109,8 +1118,8 @@ static XString* Json_parse_string(JsonParser* parser)
     if (parser->ptr >= parser->end && (!parser->error || parser->error->error == XJsonParseError_NoError))
         Json_set_error(parser, XJsonParseError_UnterminatedString);
 string_error:
-    XByteArray_delete_base(bytes);
-    XString_delete_base(string);
+    XClassDelete(bytes);
+    XClassDelete(string);
     return NULL;
 }
 
@@ -1199,7 +1208,7 @@ static XJsonValue* Json_parse_value(JsonParser* parser)
         if (!string) return NULL;
         value = XJsonValue_create_null();
         if (value) XJsonValue_setString_move(value, string);
-        XString_delete_base(string);
+        XClassDelete(string);
         return value;
     case 't':
         if (parser->end - parser->ptr >= 4 && memcmp(parser->ptr, "true", 4) == 0) {
@@ -1297,7 +1306,7 @@ static XJsonValue* Json_parse_object(JsonParser* parser)
             goto object_error;
         }
         XJsonValue_delete(value);
-        XString_delete_base(key);
+        XClassDelete(key);
         ((ParseContext*)XStack_top_base(parser->stack))->currentKey = NULL;
         Json_skip_whitespace(parser);
         if (parser->ptr < parser->end && *parser->ptr == '}') goto object_done;
@@ -1326,18 +1335,18 @@ object_done:
     ++parser->ptr;
     value = XJsonValue_create_null();
     if (value) XJsonValue_setObject_move(value, object);
-    XJsonObject_delete_base(object);
+    XClassDelete(object);
     return value;
 object_error:
     if (parser->stack && XStack_size_base(parser->stack) > 0) {
         ParseContext* top = XStack_top_base(parser->stack);
         if (top && top->currentKey) {
-            XString_delete_base(top->currentKey);
+            XClassDelete(top->currentKey);
             top->currentKey = NULL;
         }
         XStack_pop_base(parser->stack);
     }
-    XJsonObject_delete_base(object);
+    XClassDelete(object);
 fail_depth:
     --parser->depth;
     return NULL;
@@ -1414,12 +1423,12 @@ array_done:
     ++parser->ptr;
     value = XJsonValue_create_null();
     if (value) XJsonValue_setArray_move(value, array);
-    XJsonArray_delete_base(array);
+    XClassDelete(array);
     return value;
 array_error:
     if (parser->stack && XStack_size_base(parser->stack) > 0)
         XStack_pop_base(parser->stack);
-    XJsonArray_delete_base(array);
+    XClassDelete(array);
 fail_depth:
     --parser->depth;
     return NULL;
@@ -1478,13 +1487,13 @@ XString* Json_parse_string(const char** ptr, const char* end)
     }
 
     if (*ptr >= end || **ptr != '"') {
-        XString_delete_base(str); // 未闭合的字符串
+        XClassDelete(str); // 未闭合的字符串
         return NULL;
     }
     (*ptr)++; // 跳过结尾引号
     if (!XByteArray_isEmpty_base(buff))
         XString_append_with_length_utf8(str, XContainerDataPtr(buff), XContainerSize(buff));
-    XByteArray_delete_base(buff);
+    XClassDelete(buff);
     return str;
 }
 
@@ -1584,7 +1593,7 @@ XJsonValue* Json_parse_value(const char** ptr, const char* end, XStack* stack)
         if (!str) return NULL;
         XJsonValue* val = XJsonValue_create_null();
         XJsonValue_setString_move(val, str);
-        XString_delete_base(str);
+        XClassDelete(str);
         return val;
     }
     case 't':
@@ -1645,7 +1654,7 @@ XJsonValue* Json_parse_object(const char** ptr, const char* end, XStack* stack)
             XStack_pop_base(stack); // 弹出上下文
             XJsonValue* value= XJsonValue_create_null();
             XJsonValue_setObject_move(value, obj); // 转移所有权
-            XJsonObject_delete_base(obj);
+            XClassDelete(obj);
             return value;
         }
 
@@ -1658,7 +1667,7 @@ XJsonValue* Json_parse_object(const char** ptr, const char* end, XStack* stack)
 
             *ptr = Json_skip_whitespace(*ptr, end);
             if (*ptr >= end || **ptr != ':') {
-                XString_delete_base(key);
+                XClassDelete(key);
                 goto error;
             }
             (*ptr)++; // 跳过':'
@@ -1666,7 +1675,7 @@ XJsonValue* Json_parse_object(const char** ptr, const char* end, XStack* stack)
 
             // 更新栈顶上下文的当前键
             ParseContext* top = XStack_top_base(stack);
-            if (top->currentKey) XString_delete_base(top->currentKey);
+            if (top->currentKey) XClassDelete(top->currentKey);
             top->currentKey = key;
             expect_key = false;
         }
@@ -1684,7 +1693,7 @@ XJsonValue* Json_parse_object(const char** ptr, const char* end, XStack* stack)
 
             XJsonObject_insert_move_base(obj, top->currentKey, value);
             XJsonValue_delete(value);
-            XString_delete_base(top->currentKey);
+            XClassDelete(top->currentKey);
             top->currentKey = NULL;
 
             *ptr = Json_skip_whitespace(*ptr, end);
@@ -1699,7 +1708,7 @@ XJsonValue* Json_parse_object(const char** ptr, const char* end, XStack* stack)
     }
 
 error:
-    XJsonObject_delete_base(obj);
+    XClassDelete(obj);
     return NULL;
 }
 
@@ -1728,7 +1737,7 @@ XJsonValue* Json_parse_array(const char** ptr, const char* end, XStack* stack)
             XStack_pop_base(stack); // 弹出上下文
             XJsonValue* value = XJsonValue_create_null();
             XJsonValue_setArray_move(value, arr); // 转移所有权
-            XJsonArray_delete_base(arr);
+            XClassDelete(arr);
             return value;
         }
 
@@ -1754,7 +1763,7 @@ XJsonValue* Json_parse_array(const char** ptr, const char* end, XStack* stack)
     }
 
 error:
-    XJsonArray_delete_base(arr);
+    XClassDelete(arr);
     return NULL;
 }
 #endif

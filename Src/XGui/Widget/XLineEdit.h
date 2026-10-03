@@ -190,8 +190,6 @@ XVtable* XLineEdit_class_init(void);
 void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags);
 #define XLineEdit_create(parent, flags) XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XLineEdit* XLineEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XLineEdit_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XLineEdit_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 父类 XWidget API 宏转发（对齐库内 XRadioButton 惯例） ==================== */
 

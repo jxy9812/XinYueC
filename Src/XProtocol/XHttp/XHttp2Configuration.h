@@ -53,25 +53,23 @@ XVtable* XHttp2Configuration_class_init(void);
 void XHttp2Configuration_init(XHttp2Configuration* self);
 /**
  * - @brief 创建 HTTP/2 配置对象。
- * - @return 新建配置对象；调用者必须使用 XHttp2Configuration_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建配置对象；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XHttp2Configuration* XHttp2Configuration_create_ex(XMemoryType memory);
 /**
  * - @brief 深拷贝创建 HTTP/2 配置对象。
  * - @param other 源配置对象；借用且不能为 NULL。
- * - @return 新建配置对象；调用者必须使用 XHttp2Configuration_delete_base 释放，参数无效或分配失败返回 NULL。
+ * - @return 新建配置对象；调用者必须使用 XClassDelete 释放，参数无效或分配失败返回 NULL。
  */
 XHttp2Configuration* XHttp2Configuration_create_copy(const XHttp2Configuration* other);
 /**
  * - @brief 移动创建 HTTP/2 配置对象。
  * - @param other 源配置对象；借用且不能为 NULL，成功后恢复为已初始化的默认状态。
- * - @return 新建配置对象；调用者必须使用 XHttp2Configuration_delete_base 释放，参数无效或分配失败返回 NULL。
+ * - @return 新建配置对象；调用者必须使用 XClassDelete 释放，参数无效或分配失败返回 NULL。
  */
 XHttp2Configuration* XHttp2Configuration_create_move(XHttp2Configuration* other);
 
 /** @brief 配置生命周期和值语义入口。 */
-#define XHttp2Configuration_deinit_base XClass_deinit_base
-#define XHttp2Configuration_delete_base XClass_delete_base
 
 /**
  * - @brief 设置 server push 开关。

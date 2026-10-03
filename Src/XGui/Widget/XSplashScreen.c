@@ -23,7 +23,7 @@
 static void xsp2_str_args_del(XVarList* list)
 {
     XVarList_args_1(list, XString*, val);
-    if (val) XString_delete_base((XClass*)val);
+    if (val) XClassDelete((XClass*)val);
 }
 
 static void xsp2_emitMessageChanged(XSplashScreen* self, const char* text)
@@ -35,7 +35,7 @@ static void xsp2_emitMessageChanged(XSplashScreen* self, const char* text)
     if (!value) return;
     args = XVarList_Create(XVar(XString*, value));
     if (!args) {
-        XString_delete_base((XClass*)value);
+        XClassDelete((XClass*)value);
         return;
     }
     if (((XObject*)self)->m_signalSlot) {
@@ -85,7 +85,7 @@ static void VX_splash_paintEvent(XWidget* self, XEvent* event)
         XPainter_setFont(&painter, &font);
         XPainter_drawText(&painter, 8, h - 12,
                           XString_toUtf8(sp->m_message), sp->m_color);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
     }
     XPainter_deinit(&painter);
 }
@@ -102,7 +102,7 @@ static void VXSplashScreen_deinit(XSplashScreen* self)
 {
     if (!self) return;
     if (self->m_message) {
-        XString_delete_base(self->m_message);
+        XClassDelete(self->m_message);
         self->m_message = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -151,7 +151,7 @@ void XSplashScreen_setPixmap(XSplashScreen* self, const XPixmap* pixmap)
     XSize size;
     if (!self) return;
     if (self->m_pixmap) {
-        XPixmap_delete_base(self->m_pixmap);
+        XClassDelete(self->m_pixmap);
         self->m_pixmap = NULL;
     }
     if (pixmap) {
@@ -242,7 +242,7 @@ void* XSplashScreen_messageChanged_signal(XSplashScreen* self,
                                args, xsp2_str_args_del, NULL,
                                XEVENT_PRIORITY_NORMAL);
         } else if (value) {
-            XString_delete_base((XClass*)value);
+            XClassDelete((XClass*)value);
         }
     }
     return (void*)(size_t)XSplashScreen_messageChanged_signal;

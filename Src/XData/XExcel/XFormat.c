@@ -141,7 +141,7 @@ static void setPropertyString(XFormat* self, int propertyId, const char* value)
             if (pair)
             {
                 intptr_t oldPtr = pairIntptrValue(pair);
-                if (oldPtr) XString_delete_base((XString*)oldPtr);
+                if (oldPtr) XClassDelete((XString*)oldPtr);
             }
         }
     }
@@ -178,7 +178,7 @@ static void freeStringProperties(XFormat* self)
             if (pair)
             {
                 intptr_t ptr = pairIntptrValue(pair);
-                if (ptr) XString_delete_base((XString*)ptr);
+                if (ptr) XClassDelete((XString*)ptr);
             }
         }
     }
@@ -262,7 +262,7 @@ void XFormat_delete(XFormat* self)
         if (self->m_properties)
         {
             freeStringProperties(self);
-            XMap_delete_base(self->m_properties);
+            XClassDelete(self->m_properties);
         }
         XFree_System(self);
     }
@@ -716,7 +716,7 @@ void XFormat_mergeFormat(XFormat* self, const XFormat* modifier)
                     XPair* existingPair = XMap_iterator_data(&existing);
                     intptr_t existingPtr = pairIntptrValue(existingPair);
                     if (existingPtr) {
-                        XString_delete_base((XString*)existingPtr);
+                        XClassDelete((XString*)existingPtr);
                     }
                 }
                 intptr_t oldPtr = val;  /* BUG FIX: 之前是 (intptr_t)val 多余 */
@@ -779,7 +779,7 @@ void XFormat_clearProperty(XFormat* self, int propertyId)
             if (pair)
             {
                 intptr_t ptr = pairIntptrValue(pair);
-                if (ptr) XString_delete_base((XString*)ptr);
+                if (ptr) XClassDelete((XString*)ptr);
             }
         }
     }

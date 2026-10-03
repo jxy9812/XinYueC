@@ -91,8 +91,6 @@ void XItemDelegate_init(XItemDelegate* self);
 XItemDelegate* XItemDelegate_create_ex(XMemoryType memory);
 #define XItemDelegate_create() \
     XItemDelegate_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-#define XItemDelegate_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XItemDelegate_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 编辑器生命周期（查表分派入口） ==================== */
 

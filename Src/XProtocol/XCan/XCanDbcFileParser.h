@@ -58,7 +58,7 @@ extern "C" {
  *     XCanFrameProcessor_setUniqueIdDescription(&frameProcessor, &uidDesc);
  *     XCanFrameProcessor_setMessageDescriptions(&frameProcessor, messages);
  *
- *     XVector_delete_base(messages);
+ *     XClassDelete(messages);
  *     XCanFrameProcessor_deinit(&frameProcessor);
  * }
  *
@@ -66,7 +66,7 @@ extern "C" {
  * if (XCanDbcFileParser_error(&parser) != XCanDbcFileParser_Error_None) {
  *     XString* err = XCanDbcFileParser_errorString(&parser);
  *     // 处理错误...
- *     XString_delete_base(err);
+ *     XClassDelete(err);
  * }
  *
  * XCanDbcFileParser_deinit(&parser);

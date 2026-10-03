@@ -131,8 +131,8 @@ int main(void)
         XImage_pixel(&image, 10, 8) != 0xff20a040u || textPixels <= 0)
         ok = 0;
     XPainter_deinit(&painter);
-    XImage_deinit_base(&tile);
-    XImage_deinit_base(&image);
+    XClassDeinit(&tile);
+    XClassDeinit(&image);
 
     /* ===== 字形图集：命中零上传、覆盖度可换色复用、满时重置 ===== */
     if (backend == XPainterRasterBackend_Gpu)
@@ -323,7 +323,7 @@ int main(void)
                     ok = 0;
                 }
                 XPainter_deinit(&polyPainter);
-                XImage_deinit_base(&polyFrame);
+                XClassDeinit(&polyFrame);
             }
 #endif /* XPAINTER_PATH_ON && XPAINTER_RENDERHINT_ON */
             /* 画线/描边 GPU 快速路径：轴对齐线与 drawRect 边框零降级、
@@ -460,9 +460,9 @@ int main(void)
                     }
                 }
                 XPainter_deinit(&linePainter);
-                XImage_deinit_base(&lineFrame);
+                XClassDeinit(&lineFrame);
             }
-            XImage_deinit_base(&frame);
+            XClassDeinit(&frame);
             XGpuRenderBackend_destroy(session);
             fprintf(stderr, "gpu-test: atlas done\n");
         }

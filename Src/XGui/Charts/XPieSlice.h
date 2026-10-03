@@ -93,10 +93,8 @@ XPieSlice* XPieSlice_create_ex_2(XMemoryType memory, const char* label,
     XPieSlice_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, label, value)
 
 /** @brief 析构入口（查表分派父类析构）。 */
-#define XPieSlice_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /** @brief 删除堆上切片对象（查表分派析构并释放内存）。 */
-#define XPieSlice_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 属性（对标 QPieSlice 公共 API） ==================== */
 

@@ -81,8 +81,6 @@ XScrollBar* XScrollBar_create_ex(XMemoryType memory, XWidget* parent,
  */
 XScrollBar* XScrollBar_create_ex_2(XMemoryType memory, int orientation,
                                    XWidget* parent, XWidgetFlags flags);
-#define XScrollBar_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XScrollBar_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 右键标准菜单（对标 contextMenuEvent 菜单条目） ==================== */
 

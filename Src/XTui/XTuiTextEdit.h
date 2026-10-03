@@ -52,7 +52,6 @@ void XTuiTextEdit_init(XTuiTextEdit* edit);
 /** @brief 在堆上创建控件对象。 */
 XTuiTextEdit* XTuiTextEdit_create_ex(XMemoryType memory);
 
-#define XTuiTextEdit_delete_base XClass_delete_base /**< 释放堆对象。 */
 
 /** @brief 设置文本（深拷贝 UTF-8）。 */
 void XTuiTextEdit_setText(XTuiTextEdit* edit, const char* text);

@@ -59,7 +59,7 @@ XSqlField* XSqlField_create_ex(XMemoryType memory, const XString* fieldName, int
 static void xsql_field_assign_string(XString** target, const XString* source)
 {
     if (*target) {
-        XString_delete_base(*target);
+        XClassDelete(*target);
         *target = NULL;
     }
     if (source) *target = XString_create_copy(source);
@@ -68,12 +68,12 @@ static void xsql_field_assign_string(XString** target, const XString* source)
 static void VXSqlField_deinit(XSqlField* field)
 {
     if (!field) return;
-    if (field->m_name) XString_delete_base(field->m_name);
-    if (field->m_tableName) XString_delete_base(field->m_tableName);
+    if (field->m_name) XClassDelete(field->m_name);
+    if (field->m_tableName) XClassDelete(field->m_tableName);
     field->m_name = NULL;
     field->m_tableName = NULL;
-    XVariant_deinit_base(&field->m_value);
-    XVariant_deinit_base(&field->m_defaultValue);
+    XClassDeinit(&field->m_value);
+    XClassDeinit(&field->m_defaultValue);
     XClass_Deinit_Parent(XClass, field);
 }
 
@@ -83,9 +83,9 @@ static void VXSqlField_copy(XSqlField* dest, const XSqlField* src)
     if (XClassIsVtableNull(dest)) XSqlField_init(dest);
     xsql_field_assign_string(&dest->m_name, src->m_name);
     xsql_field_assign_string(&dest->m_tableName, src->m_tableName);
-    if (XVariant_isValid(&src->m_value)) XCopy(&dest->m_value, &src->m_value);
+    if (XVariant_isValid(&src->m_value)) XClassCopy(&dest->m_value, &src->m_value);
     else XVariant_setValue_null(&dest->m_value);
-    if (XVariant_isValid(&src->m_defaultValue)) XCopy(&dest->m_defaultValue, &src->m_defaultValue);
+    if (XVariant_isValid(&src->m_defaultValue)) XClassCopy(&dest->m_defaultValue, &src->m_defaultValue);
     else XVariant_setValue_null(&dest->m_defaultValue);
     dest->m_metaType = src->m_metaType;
     dest->m_sqlType = src->m_sqlType;
@@ -101,14 +101,14 @@ static void VXSqlField_move(XSqlField* dest, XSqlField* src)
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XSqlField_init(dest);
-    if (dest->m_name) XString_delete_base(dest->m_name);
-    if (dest->m_tableName) XString_delete_base(dest->m_tableName);
-    XVariant_deinit_base(&dest->m_value);
-    XVariant_deinit_base(&dest->m_defaultValue);
+    if (dest->m_name) XClassDelete(dest->m_name);
+    if (dest->m_tableName) XClassDelete(dest->m_tableName);
+    XClassDeinit(&dest->m_value);
+    XClassDeinit(&dest->m_defaultValue);
     dest->m_name = src->m_name;
     dest->m_tableName = src->m_tableName;
-    XMove(&dest->m_value, &src->m_value);
-    XMove(&dest->m_defaultValue, &src->m_defaultValue);
+    XClassMove(&dest->m_value, &src->m_value);
+    XClassMove(&dest->m_defaultValue, &src->m_defaultValue);
     dest->m_metaType = src->m_metaType;
     dest->m_sqlType = src->m_sqlType;
     dest->m_requiredStatus = src->m_requiredStatus;
@@ -127,7 +127,7 @@ XSqlField* XSqlField_create_copy(const XSqlField* other)
 {
     if (!other) return NULL;
     XSqlField* field = XSqlField_create();
-    if (field) XCopy(field, other);
+    if (field) XClassCopy(field, other);
     return field;
 }
 
@@ -135,7 +135,7 @@ XSqlField* XSqlField_create_move(XSqlField* other)
 {
     if (!other) return NULL;
     XSqlField* field = XSqlField_create();
-    if (field) XMove(field, other);
+    if (field) XClassMove(field, other);
     return field;
 }
 
@@ -144,15 +144,15 @@ void XSqlField_swap(XSqlField* left, XSqlField* right)
     if (!left || !right || left == right) return;
     XSqlField* temp = XSqlField_create_move(left);
     if (!temp) return;
-    XMove(left, right);
-    XMove(right, temp);
-    XSqlField_delete_base(temp);
+    XClassMove(left, right);
+    XClassMove(right, temp);
+    XClassDelete(temp);
 }
 
 void XSqlField_setValue(XSqlField* field, const XVariant* value)
 {
     if (!field || field->m_readOnly) return;
-    if (value) XCopy(&field->m_value, value);
+    if (value) XClassCopy(&field->m_value, value);
     else XVariant_setValue_null(&field->m_value);
 }
 
@@ -182,7 +182,7 @@ void XSqlField_setLength(XSqlField* field, int length) { if (field) field->m_len
 int XSqlField_length(const XSqlField* field) { return field ? field->m_length : -1; }
 void XSqlField_setPrecision(XSqlField* field, int precision) { if (field) field->m_precision = precision; }
 int XSqlField_precision(const XSqlField* field) { return field ? field->m_precision : -1; }
-void XSqlField_setDefaultValue(XSqlField* field, const XVariant* value) { if (!field) return; if (value) XCopy(&field->m_defaultValue, value); else XVariant_setValue_null(&field->m_defaultValue); }
+void XSqlField_setDefaultValue(XSqlField* field, const XVariant* value) { if (!field) return; if (value) XClassCopy(&field->m_defaultValue, value); else XVariant_setValue_null(&field->m_defaultValue); }
 XVariant* XSqlField_defaultValue(const XSqlField* field) { return field ? XVariant_create_copy(&field->m_defaultValue) : XVariant_create_null(); }
 void XSqlField_setGenerated(XSqlField* field, bool generated) { if (field) field->m_generated = generated; }
 bool XSqlField_isGenerated(const XSqlField* field) { return field && field->m_generated; }

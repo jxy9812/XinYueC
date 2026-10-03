@@ -298,7 +298,7 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
                     XStyle_drawControl(style, XStyleCE_MenuBarItem, &mi,
                                        &painter, self);
                     x += mi.m_rect.width;
-                XFont_deinit_base(&font);
+                XClassDeinit(&font);
                 }
             }
         }
@@ -331,7 +331,7 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
                 } else {
                     x += 12;
                 }
-            XFont_deinit_base(&font);
+            XClassDeinit(&font);
             }
         }
     }
@@ -364,17 +364,17 @@ static void VX_menuBar_deinit(XMenuBar* self)
             /* 仅销毁菜单栏创建并拥有的动作；insertAction 注入的借用
              * 动作归调用方，析构时只摘除不释放。 */
             if (item && *item && xmb_ownedAt(self, i))
-                XAction_delete_base(*item);
+                XClassDelete(*item);
         }
-        XVector_delete_base(self->m_actions);
+        XClassDelete(self->m_actions);
         self->m_actions = NULL;
     }
     if (self->m_menus) {
-        XVector_delete_base(self->m_menus);
+        XClassDelete(self->m_menus);
         self->m_menus = NULL;
     }
     if (self->m_actionOwned) {
-        XVector_delete_base((XClass*)self->m_actionOwned);
+        XClassDelete((XClass*)self->m_actionOwned);
         self->m_actionOwned = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -504,7 +504,7 @@ XAction* XMenuBar_addMenu(XMenuBar* self, XMenu* menu)
         XAction_setText(action, title);
     bridge = xmb_bridgeCreate(self, menu, action);
     if (!bridge) {
-        XAction_delete_base(action);
+        XClassDelete(action);
         return NULL;
     }
     XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
@@ -537,7 +537,7 @@ XMenu* XMenuBar_addMenu_2(XMenuBar* self, const char* utf8Title)
     if (!menu) return NULL;
     action = XMenuBar_addMenu(self, menu);
     if (!action) {
-        XMenu_delete_base(menu);
+        XClassDelete(menu);
         return NULL;
     }
     return menu;
@@ -603,7 +603,7 @@ XAction* XMenuBar_insertMenu(XMenuBar* self, XAction* before, XMenu* menu)
         XAction_setText(action, title);
     bridge = xmb_bridgeCreate(self, menu, action);
     if (!bridge) {
-        XAction_delete_base(action);
+        XClassDelete(action);
         return NULL;
     }
     XObject_connect_1((XObject*)action, XSignal(XAction_triggered_signal),
@@ -704,7 +704,7 @@ void XMenuBar_clear(XMenuBar* self)
                 (XAction**)XVector_at_base(self->m_actions, i);
             /* 仅销毁菜单栏拥有的动作；借用动作仅随容器摘除。 */
             if (item && *item && xmb_ownedAt(self, i))
-                XAction_delete_base(*item);
+                XClassDelete(*item);
         }
         XVector_clear_base((XContainer*)self->m_actions);
     }
@@ -789,7 +789,7 @@ static int xmenubar_itemWidth(const XMenuBar* bar, const XAction* action)
         int w;
         font = XWidget_font((XWidget*)bar);
         w = XPainter_textWidth(&font, XString_toUtf8(text)) + 16;
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
         return w;
     }
     return 60;

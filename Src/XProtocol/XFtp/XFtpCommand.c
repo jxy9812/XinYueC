@@ -16,7 +16,7 @@ static void VXFtpCommand_deinit(XFtpCommand* cmd)
 {
     if (!cmd) return;
     if (cmd->m_rawCmd) {
-        XClass_delete_base((XClass*)cmd->m_rawCmd);
+        XClassDelete((XClass*)cmd->m_rawCmd);
         cmd->m_rawCmd = NULL;
     }
     if (cmd->m_rawCmds) {
@@ -24,11 +24,11 @@ static void VXFtpCommand_deinit(XFtpCommand* cmd)
             char* s = *(char**)XVector_at_base(cmd->m_rawCmds, i);
             if (s) XFree(s, XMEMORY_TYPE_SYSTEM);
         }
-        XClass_delete_base((XClass*)cmd->m_rawCmds);
+        XClassDelete((XClass*)cmd->m_rawCmds);
         cmd->m_rawCmds = NULL;
     }
     if (cmd->m_data) {
-        XClass_delete_base((XClass*)cmd->m_data);
+        XClassDelete((XClass*)cmd->m_data);
         cmd->m_data = NULL;
     }
     cmd->m_device = NULL;
@@ -65,7 +65,7 @@ XFtpCommand* XFtpCommand_create_ex(XMemoryType memory, int id, XFtpCommand_Type 
     cmd->m_rawCmd = XString_create();
     cmd->m_rawCmds = XVector_Create(const char*);
     if (!cmd->m_rawCmd || !cmd->m_rawCmds) {
-        XFtpCommand_delete(cmd);
+        XClassDelete(cmd);
         return NULL;
     }
     cmd->m_data = NULL;
@@ -73,12 +73,6 @@ XFtpCommand* XFtpCommand_create_ex(XMemoryType memory, int id, XFtpCommand_Type 
     cmd->m_openMode = 0;
     cmd->m_restOffset = 0;
     return cmd;
-}
-
-void XFtpCommand_delete(XFtpCommand* cmd)
-{
-    if (!cmd) return;
-    XClass_delete_base((XClass*)cmd);
 }
 
 void XFtpCommand_addRawArg(XFtpCommand* cmd, const char* arg)

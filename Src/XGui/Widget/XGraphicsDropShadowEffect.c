@@ -98,7 +98,7 @@ static XImage* xgraphicsdropshadow_makeShadow(
     if (!XImage_reinit_ex(shadow, ctx->m_destRect.width,
                           ctx->m_destRect.height,
                           XImageFormat_ARGB32_Premultiplied)) {
-        XImage_delete_base(shadow);
+        XClassDelete(shadow);
         return NULL;
     }
     XImage_fillRect(shadow, NULL, 0u);
@@ -108,12 +108,12 @@ static XImage* xgraphicsdropshadow_makeShadow(
     srcBits = (uint32_t*)(void*)XImage_bits(ctx->m_source);
     dstBits = (uint32_t*)(void*)XImage_bits(shadow);
     if (!srcBits || !dstBits || stridePixels <= 0) {
-        XImage_delete_base(shadow);
+        XClassDelete(shadow);
         return NULL;
     }
     dstStride = XImage_bytesPerLine(shadow) / 4;
     if (dstStride < ctx->m_destRect.width) {
-        XImage_delete_base(shadow);
+        XClassDelete(shadow);
         return NULL;
     }
     /* 投影像素 = 源 alpha 形状 × 预乘投影颜色（对标 Qt 用源 alpha 以
@@ -180,7 +180,7 @@ static void VXGraphicsDropShadowEffect_draw(XGraphicsEffect* base,
         XPainter_end(&painter);
     }
     XPainter_deinit(&painter);
-    XImage_delete_base(shadow);
+    XClassDelete(shadow);
 }
 
 /* ==================== 类与实例生命周期 ==================== */

@@ -117,8 +117,6 @@ XPerformanceOverlay* XPerformanceOverlay_create_ex(XMemoryType memory,
                                                     XWidgetFlags flags);
 
 /** @brief 通过 XClass 入口反初始化/删除/复制/移动性能悬浮层。 */
-#define XPerformanceOverlay_deinit_base(self)  XClass_deinit_base((XClass*)(self))
-#define XPerformanceOverlay_delete_base(self)  XClass_delete_base((XClass*)(self))
 
 /* 几何 API 属于 XWidget，悬浮层只提供类型安全的继承宏，不重复声明函数。 */
 #define XPerformanceOverlay_geometry(self)  XWidget_geometry((const XWidget*)&((self)->m_base))

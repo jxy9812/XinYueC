@@ -136,7 +136,7 @@ static XIcon* XGuiApplication_cloneIcon(const XIcon* icon)
     if (!icon) return NULL;
     copy = XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XCopy(copy, icon);
+    XClassCopy(copy, icon);
     return copy;
 }
 
@@ -197,7 +197,7 @@ static XCursor* XGuiApplication_cloneCursor(const XCursor* cursor)
     XCursor* copy = XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
     if (cursor)
-        XCopy(copy, cursor);
+        XClassCopy(copy, cursor);
     return copy;
 }
 #endif /* XCURSOR_ON */
@@ -347,7 +347,7 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
         previousIsHeap = Class_IsHeap(app);
         reinitialize = true;
         /* 派生的 XApplication 也通过当前 vtable 完整清理自己的尾部。 */
-        XClass_deinit_base((XClass*)app);
+        XClassDeinit((XClass*)app);
     }
 
     /* 先清空 GUI 尾部字段，再由基类初始化统一清零 XGuiApplication 中的
@@ -419,37 +419,37 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
         return;
 
     /* 释放 GUI 尾部拥有的堆资源；借用指针（窗口/焦点/模态）只清空不释放。 */
-    if (app->m_displayName) { XString_delete_base(app->m_displayName); app->m_displayName = NULL; }
-    if (app->m_desktopFileName) { XString_delete_base(app->m_desktopFileName); app->m_desktopFileName = NULL; }
-    if (app->m_platformName) { XString_delete_base(app->m_platformName); app->m_platformName = NULL; }
-    if (app->m_sessionId) { XString_delete_base(app->m_sessionId); app->m_sessionId = NULL; }
-    if (app->m_sessionKey) { XString_delete_base(app->m_sessionKey); app->m_sessionKey = NULL; }
-    if (app->m_windowIcon) { XIcon_delete_base(app->m_windowIcon); app->m_windowIcon = NULL; }
-    if (app->m_font) { XFont_delete_base(app->m_font); app->m_font = NULL; }
+    if (app->m_displayName) { XClassDelete(app->m_displayName); app->m_displayName = NULL; }
+    if (app->m_desktopFileName) { XClassDelete(app->m_desktopFileName); app->m_desktopFileName = NULL; }
+    if (app->m_platformName) { XClassDelete(app->m_platformName); app->m_platformName = NULL; }
+    if (app->m_sessionId) { XClassDelete(app->m_sessionId); app->m_sessionId = NULL; }
+    if (app->m_sessionKey) { XClassDelete(app->m_sessionKey); app->m_sessionKey = NULL; }
+    if (app->m_windowIcon) { XClassDelete(app->m_windowIcon); app->m_windowIcon = NULL; }
+    if (app->m_font) { XClassDelete(app->m_font); app->m_font = NULL; }
     if (app->m_overrideStack) {
 #if XCURSOR_ON
         n = XVector_size_base((const XContainer*)app->m_overrideStack);
         for (i = 0; i < n; ++i) {
             XCursor** p = (XCursor**)XVector_at_base(app->m_overrideStack, (int64_t)i);
-            if (p && *p) XCursor_delete_base(*p);
+            if (p && *p) XClassDelete(*p);
         }
 #else
         (void)i; (void)n;
 #endif /* XCURSOR_ON */
-        XVector_delete_base((XClass*)app->m_overrideStack);
+        XClassDelete((XClass*)app->m_overrideStack);
         app->m_overrideStack = NULL;
     }
 #if XVIRTUALKEYBOARD_ON
     /* 虚拟键盘默认面板先于窗口注册表释放：其桥接窗口登记在 m_windows
        内，析构经 removeWindow 摘除，容器释放后再删会访问已释放向量。 */
     if (app->m_virtualKeyboard) {
-        XVirtualKeyboard_delete_base(app->m_virtualKeyboard);
+        XClassDelete(app->m_virtualKeyboard);
         app->m_virtualKeyboard = NULL;
     }
 #endif /* XVIRTUALKEYBOARD_ON */
     if (app->m_windows) {
         /* 窗口对象由调用方拥有，这里只释放注册表容器。 */
-        XVector_delete_base((XClass*)app->m_windows);
+        XClassDelete((XClass*)app->m_windows);
         app->m_windows = NULL;
     }
     app->m_focusWindow = NULL;
@@ -473,13 +473,13 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
             if (bound && XClassGetVtable(bound) ==
                              XVirtualKeyboardPlatformInputContext_class_init()) {
                 XPlatformInputContext_setInputMethod(bound, NULL);
-                XVirtualKeyboardPlatformInputContext_delete_base(
+                XClassDelete(
                     (XVirtualKeyboardPlatformInputContext*)bound);
             }
         }
 #endif /* XVIRTUALKEYBOARD_ON */
 #endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
-        XInputMethod_delete_base(app->m_inputMethod);
+        XClassDelete(app->m_inputMethod);
         app->m_inputMethod = NULL;
     }
 #endif /* XINPUTMETHOD_ON */
@@ -489,19 +489,19 @@ static void VXGuiApplication_deinit(XGuiApplication* app)
         app->m_nativeEventPump = NULL;
     }
     if (app->m_platformIntegration) {
-        XPlatformIntegration_delete_base(app->m_platformIntegration);
+        XClassDelete(app->m_platformIntegration);
         app->m_platformIntegration = NULL;
     }
 #endif /* XPLATFORMINTEGRATION_ON */
 #if XSTYLEHINTS_ON
     if (app->m_styleHints) {
-        XStyleHints_delete_base(app->m_styleHints);
+        XClassDelete(app->m_styleHints);
         app->m_styleHints = NULL;
     }
 #endif /* XSTYLEHINTS_ON */
 #if XCLIPBOARD_ON
     if (app->m_clipboard) {
-        XClipboard_delete_base(app->m_clipboard);
+        XClassDelete(app->m_clipboard);
         app->m_clipboard = NULL;
     }
 #endif /* XCLIPBOARD_ON */
@@ -594,7 +594,7 @@ void XGuiApplication_setApplicationDisplayName(const XString* name)
         replacement = XGuiApplication_cloneString(name);
         if (!replacement) return;
     }
-    if (app->m_displayName) { XString_delete_base(app->m_displayName); app->m_displayName = NULL; }
+    if (app->m_displayName) { XClassDelete(app->m_displayName); app->m_displayName = NULL; }
     app->m_displayName = replacement;
     if (changed) XGuiApplication_applicationDisplayNameChanged_signal(app);
 }
@@ -607,7 +607,7 @@ void XGuiApplication_setApplicationDisplayName_2(const char* name)
         if (!tmp) return;
     }
     XGuiApplication_setApplicationDisplayName(tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XGuiApplication_applicationDisplayName(void)
@@ -627,7 +627,7 @@ void XGuiApplication_setDesktopFileName(const XString* name)
     if (!app) return;
     replacement = XGuiApplication_cloneString(name);
     if (name && !replacement) return;
-    if (app->m_desktopFileName) { XString_delete_base(app->m_desktopFileName); app->m_desktopFileName = NULL; }
+    if (app->m_desktopFileName) { XClassDelete(app->m_desktopFileName); app->m_desktopFileName = NULL; }
     app->m_desktopFileName = replacement;
 }
 
@@ -639,7 +639,7 @@ void XGuiApplication_setDesktopFileName_2(const char* name)
         if (!tmp) return;
     }
     XGuiApplication_setDesktopFileName(tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XGuiApplication_desktopFileName(void)
@@ -679,7 +679,7 @@ XVector* XGuiApplication_allWindows(void)
     for (size_t i = 0; i < XVector_size_base((const XContainer*)app->m_windows); ++i) {
         XWindow* w = XVector_At_Base(app->m_windows, (int64_t)i, XWindow*);
         if (w && !XVector_push_back_1_base(out, &w)) {
-            XVector_delete_base((XClass*)out);
+            XClassDelete((XClass*)out);
             return NULL;
         }
     }
@@ -698,7 +698,7 @@ XVector* XGuiApplication_topLevelWindows(void)
         if (!w) continue;
         if (XWindow_parent(w, XWindowAncestor_ExcludeTransients) == NULL &&
             !XVector_push_back_1_base(out, &w)) {
-            XVector_delete_base((XClass*)out);
+            XClassDelete((XClass*)out);
             return NULL;
         }
     }
@@ -862,7 +862,7 @@ void XGuiApplication_setWindowIcon(const XIcon* icon)
     if (!app) return;
     replacement = XGuiApplication_cloneIcon(icon);
     if (icon && !replacement) return;
-    if (app->m_windowIcon) XIcon_delete_base(app->m_windowIcon);
+    if (app->m_windowIcon) XClassDelete(app->m_windowIcon);
     app->m_windowIcon = replacement;
 }
 
@@ -979,7 +979,7 @@ static void guiApp_screenDotsPerInchChangedSlot(XObject* sender, XVarList* args)
         XWindow_setDevicePixelRatio_internal(win, dpr);
         XWindow_requestUpdate(win);
     }
-    XVector_delete_base((XClass*)windows);
+    XClassDelete((XClass*)windows);
 }
 
 XScreen* XGuiApplication_primaryScreen(void)
@@ -1005,7 +1005,7 @@ XScreen* XGuiApplication_screenAt(const XPoint* pos)
         XRect r = XScreen_geometry(s);
         if (XRect_contains(&r, pos->x, pos->y)) { hit = s; break; }
     }
-    XVector_delete_base((XClass*)list);
+    XClassDelete((XClass*)list);
     return hit;
 }
 
@@ -1020,7 +1020,7 @@ float XGuiApplication_devicePixelRatio(void)
         float ratio = XScreen_devicePixelRatio(screen);
         if (ratio > maximum) maximum = ratio;
     }
-    XVector_delete_base((XClass*)screens);
+    XClassDelete((XClass*)screens);
     return maximum;
 }
 
@@ -1064,7 +1064,7 @@ void XGuiApplication_screenRemoved(XScreen* screen)
         XVector* screens = XScreen_screens();
         if (screens && XVector_size_base((const XContainer*)screens) > 0)
             newPrimary = XVector_At_Base(screens, 0, XScreen*);
-        if (screens) XVector_delete_base((XClass*)screens);
+        if (screens) XClassDelete((XClass*)screens);
         XScreen_setPrimary(newPrimary);
         XGuiApplication_primaryScreenChanged_signal(app, newPrimary);
     }
@@ -1103,7 +1103,7 @@ void XGuiApplication_setOverrideCursor(const XCursor* cursor)
     copy = XGuiApplication_cloneCursor(cursor);
     if (!copy) return;
     if (!XVector_push_back_1_base(app->m_overrideStack, &copy))
-        XCursor_delete_base(copy);
+        XClassDelete(copy);
 }
 
 void XGuiApplication_changeOverrideCursor(const XCursor* cursor)
@@ -1119,7 +1119,7 @@ void XGuiApplication_changeOverrideCursor(const XCursor* cursor)
     }
     copy = XGuiApplication_cloneCursor(cursor);
     if (!copy) return;
-    XCursor_delete_base(XVector_At_Base(app->m_overrideStack, (int64_t)(n - 1), XCursor*));
+    XClassDelete(XVector_At_Base(app->m_overrideStack, (int64_t)(n - 1), XCursor*));
     XVector_At_Base(app->m_overrideStack, (int64_t)(n - 1), XCursor*) = copy;
 }
 
@@ -1130,7 +1130,7 @@ void XGuiApplication_restoreOverrideCursor(void)
     if (!app || !app->m_overrideStack) return;
     n = XVector_size_base((const XContainer*)app->m_overrideStack);
     if (n == 0) return;
-    XCursor_delete_base(XVector_At_Base(app->m_overrideStack, (int64_t)(n - 1), XCursor*));
+    XClassDelete(XVector_At_Base(app->m_overrideStack, (int64_t)(n - 1), XCursor*));
     XVector_remove_base(app->m_overrideStack, (int64_t)(n - 1), 1);
 }
 #endif /* XCURSOR_ON */
@@ -1146,9 +1146,9 @@ void XGuiApplication_setFont(const XFont* font)
         replacement = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                       NULL, -1, -1, false);
         if (!replacement) return;
-        XCopy(replacement, font);
+        XClassCopy(replacement, font);
     }
-    if (app->m_font) XFont_delete_base(app->m_font);
+    if (app->m_font) XClassDelete(app->m_font);
     app->m_font = replacement;
     XGuiApplication_fontChanged_signal(app, replacement);
 }
@@ -1160,7 +1160,7 @@ XFont* XGuiApplication_font(void)
     if (!app || !app->m_font) return NULL;
     copy = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, -1, -1, false);
     if (!copy) return NULL;
-    XCopy(copy, app->m_font);
+    XClassCopy(copy, app->m_font);
     return copy;
 }
 
@@ -1203,7 +1203,7 @@ static void XGuiApplication_broadcastTopLevelPaletteChanged(void)
 #if XWIDGET_ON
     XWidget_invalidateAllRetainedLayers();
 #endif
-    XVector_delete_base((XClass*)topLevel);
+    XClassDelete((XClass*)topLevel);
 #endif /* XAPPLICATION_ON && XWIDGET_ON */
 }
 
@@ -1754,15 +1754,15 @@ void XGuiApplication_setSessionState(bool restored, bool saving,
     if (key) {
         replacementKey = XString_create_copy(key);
         if (!replacementKey) {
-            if (replacementId) XString_delete_base(replacementId);
+            if (replacementId) XClassDelete(replacementId);
             return;
         }
     }
 
     app->m_isSessionRestored = restored;
     app->m_isSavingSession = saving;
-    if (app->m_sessionId) { XString_delete_base(app->m_sessionId); app->m_sessionId = NULL; }
-    if (app->m_sessionKey) { XString_delete_base(app->m_sessionKey); app->m_sessionKey = NULL; }
+    if (app->m_sessionId) { XClassDelete(app->m_sessionId); app->m_sessionId = NULL; }
+    if (app->m_sessionKey) { XClassDelete(app->m_sessionKey); app->m_sessionKey = NULL; }
     app->m_sessionId = replacementId;
     app->m_sessionKey = replacementKey;
 }
@@ -1778,11 +1778,11 @@ void XGuiApplication_setSessionState_2(bool restored, bool saving,
     }
     if (key) {
         tmpKey = XString_create_utf8(key);
-        if (!tmpKey) { if (tmpId) XString_delete_base(tmpId); return; }
+        if (!tmpKey) { if (tmpId) XClassDelete(tmpId); return; }
     }
     XGuiApplication_setSessionState(restored, saving, tmpId, tmpKey);
-    if (tmpKey) XString_delete_base(tmpKey);
-    if (tmpId) XString_delete_base(tmpId);
+    if (tmpKey) XClassDelete(tmpKey);
+    if (tmpId) XClassDelete(tmpId);
 }
 
 /* ==================== 同步 ==================== */

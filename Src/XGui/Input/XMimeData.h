@@ -57,13 +57,13 @@ XVtable* XMimeData_class_init(void);
 
 /**
  * @brief      初始化空 XMimeData（无任何格式）。
- * @param      self 待初始化对象；必须与 XMimeData_deinit_base 成对调用。
+ * @param      self 待初始化对象；必须与 XClassDeinit 成对调用。
  */
 void XMimeData_init(XMimeData* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建空 XMimeData。
- * @return     新对象指针；失败返回 NULL，调用方用 XMimeData_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 #define XMimeData_create() XMimeData_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
@@ -75,9 +75,7 @@ void XMimeData_init(XMimeData* self);
 XMimeData* XMimeData_create_ex(XMemoryType memory);
 
 /** @brief 通过 XClass 虚表释放 XMimeData 资源（栈/外部存储对象使用）。 */
-#define XMimeData_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XMimeData 对象。 */
-#define XMimeData_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      清空全部数据（对标 QMimeData::clear）。
@@ -115,7 +113,7 @@ void XMimeData_setUrls(XMimeData* self, const XStringList* urls);
  *             （XClipboard 图像派生推送等）改走 hasImage/imageData 等
  *             内部查询，不依赖 formats() 列出内部类型。
  * @return     新建的 XStringList，按内置格式优先、自定义格式在后的顺序；
- *             调用方用 XStringList_delete_base 释放。
+ *             调用方用 XClassDelete 释放。
  */
 XStringList* XMimeData_formats(const XMimeData* self);
 
@@ -127,7 +125,7 @@ bool XMimeData_hasText(const XMimeData* self);
 /**
  * @brief      读取纯文本（对标 QMimeData::text）。
  * @return     新建 XString 堆拷贝（UTF-8），无文本时返回 NULL；
- *             调用方用 XString_delete_base 释放。
+ *             调用方用 XClassDelete 释放。
  */
 XString* XMimeData_text(const XMimeData* self);
 
@@ -182,7 +180,7 @@ bool XMimeData_hasImage(const XMimeData* self);
 /**
  * @brief      读取图像（对标 QMimeData::imageData）。
  * @details    返回的 XImage 与内部共享引用计数的像素数据（copy_base 语义），
- *             调用方用 XImage_delete_base 释放。
+ *             调用方用 XClassDelete 释放。
  * @return     新建 XImage 对象；无图像时返回 NULL。
  */
 XImage* XMimeData_imageData(const XMimeData* self);
@@ -229,7 +227,7 @@ void XMimeData_setData_bytes(XMimeData* self, const char* format,
  * @param      self   目标对象；可为 NULL。
  * @param      format UTF-8 编码的 MIME 类型名；可为 NULL。
  * @return     新建 XString 堆拷贝（保留原始字节）；无该格式时返回 NULL，
- *             调用方用 XString_delete_base 释放。
+ *             调用方用 XClassDelete 释放。
  * @note       XString 通道面向文本格式（text/uri-list、text/html 等）；
  *             二进制格式请改用 XMimeData_data_bytes 取字节精确副本
  *             （XString 的 UTF-8 转换不保二进制透明）。
@@ -245,7 +243,7 @@ XString* XMimeData_data(const XMimeData* self, const char* format);
  * @param      self   目标对象；可为 NULL。
  * @param      format UTF-8 编码的 MIME 类型名；可为 NULL。
  * @return     新建 XByteArray 堆拷贝；无该格式时返回 NULL，
- *             调用方用 XByteArray_delete_base 释放。
+ *             调用方用 XClassDelete 释放。
  */
 XByteArray* XMimeData_data_bytes(const XMimeData* self, const char* format);
 

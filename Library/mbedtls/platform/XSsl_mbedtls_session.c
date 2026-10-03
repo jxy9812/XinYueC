@@ -358,11 +358,11 @@ bool XSsl_sessionAddCrlPath(XSslSession* s, const char* path)
         const char* fileName = filePath ? XString_toUtf8(filePath) : NULL;
         if (fileName && mbedtls_x509_crl_parse_file(&s->crl_chain, fileName) == 0)
             ++loaded;
-        if (filePath) XString_delete_base(filePath);
+        if (filePath) XClassDelete(filePath);
     }
-    if (entries) XStringList_delete_base(entries);
-    if (directory) XDir_delete_base(directory);
-    if (directoryPath) XString_delete_base(directoryPath);
+    if (entries) XClassDelete(entries);
+    if (directory) XClassDelete(directory);
+    if (directoryPath) XClassDelete(directoryPath);
     if (loaded == 0) return false;
     s->crl_inited = true;
     mbedtls_ssl_conf_ca_chain(&s->conf, &s->ca_chain, &s->crl_chain);

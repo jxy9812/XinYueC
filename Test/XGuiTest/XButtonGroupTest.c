@@ -115,10 +115,10 @@ bool XButtonGroupTest_runAll(void)
               "移除后成员数 2");
     bg_expect(XButtonGroup_checkedId(group) == -1, "移除选中项后 checkedId -1");
 
-    XButtonGroup_delete_base(group);
-    XCheckBox_delete_base(b0);
-    XCheckBox_delete_base(b1);
-    XCheckBox_delete_base(b2);
+    XClassDelete(group);
+    XClassDelete(b0);
+    XClassDelete(b1);
+    XClassDelete(b2);
 
     {
         int failures = bg_failures;

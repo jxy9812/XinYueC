@@ -60,7 +60,7 @@ void XSqlRelation_init_2(XSqlRelation* relation, const XString* tableName,
                          const XString* indexColumn, const XString* displayColumn);
 /**
  * @brief 创建空关系对象。
- * @return 新关系对象，调用者必须使用 XSqlRelation_delete_base 释放；失败返回 NULL。
+ * @return 新关系对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlRelation* XSqlRelation_create_ex(XMemoryType memory);
 /**
@@ -68,7 +68,7 @@ XSqlRelation* XSqlRelation_create_ex(XMemoryType memory);
  * @param tableName 被引用表名；借用。
  * @param indexColumn 被引用索引列；借用。
  * @param displayColumn 被引用显示列；借用。
- * @return 新关系对象，调用者必须使用 XSqlRelation_delete_base 释放；失败返回 NULL。
+ * @return 新关系对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlRelation* XSqlRelation_create_utf8(const char* tableName, const char* indexColumn, const char* displayColumn);
 /**
@@ -76,25 +76,23 @@ XSqlRelation* XSqlRelation_create_utf8(const char* tableName, const char* indexC
  * @param tableName 被引用表名；借用，可为 NULL。
  * @param indexColumn 被引用键列；借用，可为 NULL。
  * @param displayColumn 显示列；借用，可为 NULL。
- * @return 新关系对象所有权；调用者使用 XSqlRelation_delete_base 释放，失败返回 NULL。
+ * @return 新关系对象所有权；调用者使用 XClassDelete 释放，失败返回 NULL。
  */
 XSqlRelation* XSqlRelation_create_2(const XString* tableName, const XString* indexColumn, const XString* displayColumn);
 /**
  * @brief 深拷贝创建关系对象。
  * @param other 源关系；借用，不能为 NULL。
- * @return 新关系对象，调用者必须使用 XSqlRelation_delete_base 释放；失败返回 NULL。
+ * @return 新关系对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlRelation* XSqlRelation_create_copy(const XSqlRelation* other);
 /**
  * @brief 移动创建关系对象。
  * @param other 源关系；不能为 NULL，成功后资源被移出。
- * @return 新关系对象，调用者必须使用 XSqlRelation_delete_base 释放；失败返回 NULL。
+ * @return 新关系对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlRelation* XSqlRelation_create_move(XSqlRelation* other);
 /** @brief 调用 XClass 析构入口释放关系对象持有的三个名称。 */
-#define XSqlRelation_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlRelation_create 系列函数返回的关系对象。 */
-#define XSqlRelation_delete_base XClass_delete_base
 /**
  * @brief 交换两个关系对象内容。
  * @param left 左关系；不能为 NULL。
@@ -132,19 +130,19 @@ void XSqlRelation_setDisplayColumn(XSqlRelation* relation, const XString* displa
 /**
  * @brief 获取关系表名副本。
  * @param relation 关系对象；NULL 返回空字符串对象。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlRelation_tableName(const XSqlRelation* relation);
 /**
  * @brief 获取关联索引列副本。
  * @param relation 关系对象；NULL 返回空字符串对象。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlRelation_indexColumn(const XSqlRelation* relation);
 /**
  * @brief 获取显示列副本。
  * @param relation 关系对象；NULL 返回空字符串对象。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlRelation_displayColumn(const XSqlRelation* relation);
 /**

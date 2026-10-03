@@ -20,8 +20,8 @@
 static void VXAccessible_deinit(XAccessible* self)
 {
     if (!self) return;
-    if (self->m_name) XString_delete_base((XClass*)self->m_name);
-    if (self->m_description) XString_delete_base((XClass*)self->m_description);
+    if (self->m_name) XClassDelete((XClass*)self->m_name);
+    if (self->m_description) XClassDelete((XClass*)self->m_description);
     self->m_name = NULL;
     self->m_description = NULL;
     self->m_window = NULL;
@@ -147,7 +147,7 @@ XString* XAccessible_name(const XAccessible* self)
 void XAccessible_setName(XAccessible* self, const XString* name)
 {
     if (!self) return;
-    if (self->m_name) XString_delete_base((XClass*)self->m_name);
+    if (self->m_name) XClassDelete((XClass*)self->m_name);
     self->m_name = name ? XString_create_copy(name) : NULL;
 }
 XString* XAccessible_description(const XAccessible* self)
@@ -167,7 +167,7 @@ XString* XAccessible_description(const XAccessible* self)
 void XAccessible_setDescription(XAccessible* self, const XString* description)
 {
     if (!self) return;
-    if (self->m_description) XString_delete_base((XClass*)self->m_description);
+    if (self->m_description) XClassDelete((XClass*)self->m_description);
     self->m_description = description ? XString_create_copy(description) : NULL;
 }
 XWindow* XAccessible_window(const XAccessible* self)
@@ -208,11 +208,11 @@ static bool XAccessible_isWidgetWindow(const XWindow* window)
     for (i = 0; i < XVector_size_base((const XContainer*)widgets); ++i) {
         XWidget* widget = XVector_At_Base(widgets, (int64_t)i, XWidget*);
         if (widget && XWidget_nativeWindow(widget) == window) {
-            XVector_delete_base((XClass*)widgets);
+            XClassDelete((XClass*)widgets);
             return true;
         }
     }
-    XVector_delete_base((XClass*)widgets);
+    XClassDelete((XClass*)widgets);
     return false;
 }
 #else
@@ -246,7 +246,7 @@ size_t XAccessible_childCount(const XAccessible* self)
             XWindow* window = XVector_At_Base(windows, (int64_t)i, XWindow*);
             if (window && !XAccessible_isWidgetWindow(window)) ++count;
         }
-        XVector_delete_base((XClass*)windows);
+        XClassDelete((XClass*)windows);
     }
  #else
     (void)windows;
@@ -255,7 +255,7 @@ size_t XAccessible_childCount(const XAccessible* self)
     widgets = XApplication_topLevelWidgets();
     if (widgets) {
         count += XVector_size_base((const XContainer*)widgets);
-        XVector_delete_base((XClass*)widgets);
+        XClassDelete((XClass*)widgets);
     }
 #else
     (void)widgets;
@@ -294,12 +294,12 @@ XAccessible* XAccessible_childAtIndex(const XAccessible* self, size_t index)
             if (window && !XAccessible_isWidgetWindow(window)) {
                 if (index-- == 0) {
                     result = (XAccessible*)XWindow_accessibleRoot(window);
-                    XVector_delete_base((XClass*)windows);
+                    XClassDelete((XClass*)windows);
                     return result;
                 }
             }
         }
-        XVector_delete_base((XClass*)windows);
+        XClassDelete((XClass*)windows);
     }
  #else
     (void)windows;
@@ -311,7 +311,7 @@ XAccessible* XAccessible_childAtIndex(const XAccessible* self, size_t index)
         XWidget* widget = XVector_At_Base(widgets, (int64_t)index, XWidget*);
         result = widget ? widget->m_accessible : NULL;
     }
-    XVector_delete_base((XClass*)widgets);
+    XClassDelete((XClass*)widgets);
 #else
     (void)widgets;
 #endif

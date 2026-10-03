@@ -183,7 +183,7 @@ static bool xhttp_manager_request_bool_attribute(const XHttpRequest* request,
     if (value && XVariant_type(value) == XVariantType_Bool)
         result = XVariant_toBool(value);
     if (value)
-        XClass_delete_base((XClass*)value);
+        XClassDelete((XClass*)value);
     return result;
 }
 
@@ -256,7 +256,7 @@ static bool xhttp_manager_parse_authentication_challenge(const XByteArray* chall
     result = (realmEnd == realmBegin || realm) &&
              XHttpAuthenticator_setChallenge(authenticator, method, realm);
     if (realm)
-        XClass_delete_base((XClass*)realm);
+        XClassDelete((XClass*)realm);
     return result;
 }
 
@@ -318,11 +318,11 @@ static bool xhttp_manager_authentication_challenge_supported(
     result = nonce && xhttp_manager_digest_algorithm(algorithmName, &algorithm, &session) &&
              xhttp_manager_qop_allows_auth(qop);
     if (qop)
-        XClass_delete_base((XClass*)qop);
+        XClassDelete((XClass*)qop);
     if (algorithmName)
-        XClass_delete_base((XClass*)algorithmName);
+        XClassDelete((XClass*)algorithmName);
     if (nonce)
-        XClass_delete_base((XClass*)nonce);
+        XClassDelete((XClass*)nonce);
     return result;
 }
 
@@ -339,7 +339,7 @@ static XByteArray* xhttp_manager_select_authentication_challenge(const XHttpRepl
     name = XByteArray_create_utf8(proxy ? "proxy-authenticate" : "www-authenticate");
     values = name ? XHttpHeaders_values(XHttpReply_headers_const(reply), name) : NULL;
     if (name)
-        XClass_delete_base((XClass*)name);
+        XClassDelete((XClass*)name);
     if (!values)
         return NULL;
     for (size_t i = 0; i < XContainer_size_base((const XContainer*)values); ++i) {
@@ -353,12 +353,12 @@ static XByteArray* xhttp_manager_select_authentication_challenge(const XHttpRepl
             XByteArray* replacement = XByteArray_create_copy(*slot);
             if (!replacement) {
                 if (selected)
-                    XClass_delete_base((XClass*)selected);
+                    XClassDelete((XClass*)selected);
                 XHttpHeaders_values_free(values);
                 return NULL;
             }
             if (selected)
-                XClass_delete_base((XClass*)selected);
+                XClassDelete((XClass*)selected);
             selected = replacement;
             selectedPriority = priority;
             if (selectedPriority == 3)
@@ -403,8 +403,8 @@ static bool xhttp_manager_apply_basic_authentication(XHttpRequest* request,
         proxy ? "Proxy-Authorization" : "Authorization", value);
 done:
     if (value) XFree_System(value);
-    if (encoded) XClass_delete_base((XClass*)encoded);
-    if (credentials) XClass_delete_base((XClass*)credentials);
+    if (encoded) XClassDelete((XClass*)encoded);
+    if (credentials) XClassDelete((XClass*)credentials);
     return result;
 }
 
@@ -455,7 +455,7 @@ static XByteArray* xhttp_manager_authentication_parameter(const XByteArray* chal
             if (data[end] == '\\' && end + 1 < size)
                 ++end;
             if (!XByteArray_push_back_2((XVector*)result, data + end, 1)) {
-                XClass_delete_base((XClass*)result);
+                XClassDelete((XClass*)result);
                 return NULL;
             }
         }
@@ -480,8 +480,8 @@ static XByteArray* xhttp_manager_hash_hex(const XByteArray* value,
     size = XContainer_size_base((const XContainer*)digest);
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base((XVector*)result, size * 2)) {
-        if (result) XClass_delete_base((XClass*)result);
-        XClass_delete_base((XClass*)digest);
+        if (result) XClassDelete((XClass*)result);
+        XClassDelete((XClass*)digest);
         return NULL;
     }
     for (size_t i = 0; i < size; ++i) {
@@ -489,7 +489,7 @@ static XByteArray* xhttp_manager_hash_hex(const XByteArray* value,
         XByteArray_data(result)[i * 2] = (uint8_t)hex[valueByte >> 4];
         XByteArray_data(result)[i * 2 + 1] = (uint8_t)hex[valueByte & 0x0f];
     }
-    XClass_delete_base((XClass*)digest);
+    XClassDelete((XClass*)digest);
     return result;
 }
 
@@ -549,7 +549,7 @@ static XByteArray* xhttp_manager_request_digest_uri(const XHttpRequest* request)
           XByteArray_append_utf8(result, "/")) ||
         (querySize && (!XByteArray_append_utf8(result, "?") ||
                        !XByteArray_push_back_2((XVector*)result, queryData, querySize)))) {
-        if (result) XClass_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     return result;
@@ -613,7 +613,7 @@ static XByteArray* xhttp_manager_bytes_to_hex(const uint8_t* data, size_t size)
         return NULL;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base((XVector*)result, size * 2)) {
-        if (result) XClass_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     for (size_t i = 0; i < size; ++i) {
@@ -713,14 +713,14 @@ static bool xhttp_manager_apply_digest_authentication(XHttpRequest* request,
             !xhttp_manager_append_literal(sessionInput, ":") ||
             !XByteArray_push_back_2((XVector*)sessionInput, XByteArray_constData(cnonce),
                                     XContainer_size_base((const XContainer*)cnonce))) {
-            if (sessionInput) XClass_delete_base((XClass*)sessionInput);
+            if (sessionInput) XClassDelete((XClass*)sessionInput);
             goto done;
         }
         replacement = xhttp_manager_hash_hex(sessionInput, algorithm);
-        XClass_delete_base((XClass*)sessionInput);
+        XClassDelete((XClass*)sessionInput);
         if (!replacement)
             goto done;
-        XClass_delete_base((XClass*)ha1);
+        XClassDelete((XClass*)ha1);
         ha1 = replacement;
     }
     ha2 = xhttp_manager_hash_hex(ha2Input, algorithm);
@@ -786,19 +786,19 @@ static bool xhttp_manager_apply_digest_authentication(XHttpRequest* request,
         proxy ? "Proxy-Authorization" : "Authorization", rawHeader);
 done:
     if (rawHeader) XFree_System(rawHeader);
-    if (header) XClass_delete_base((XClass*)header);
-    if (cnonce) XClass_delete_base((XClass*)cnonce);
-    if (response) XClass_delete_base((XClass*)response);
-    if (responseInput) XClass_delete_base((XClass*)responseInput);
-    if (ha2) XClass_delete_base((XClass*)ha2);
-    if (ha2Input) XClass_delete_base((XClass*)ha2Input);
-    if (ha1) XClass_delete_base((XClass*)ha1);
-    if (ha1Input) XClass_delete_base((XClass*)ha1Input);
-    if (uri) XClass_delete_base((XClass*)uri);
-    if (qop) XClass_delete_base((XClass*)qop);
-    if (algorithmName) XClass_delete_base((XClass*)algorithmName);
-    if (opaque) XClass_delete_base((XClass*)opaque);
-    if (nonce) XClass_delete_base((XClass*)nonce);
+    if (header) XClassDelete((XClass*)header);
+    if (cnonce) XClassDelete((XClass*)cnonce);
+    if (response) XClassDelete((XClass*)response);
+    if (responseInput) XClassDelete((XClass*)responseInput);
+    if (ha2) XClassDelete((XClass*)ha2);
+    if (ha2Input) XClassDelete((XClass*)ha2Input);
+    if (ha1) XClassDelete((XClass*)ha1);
+    if (ha1Input) XClassDelete((XClass*)ha1Input);
+    if (uri) XClassDelete((XClass*)uri);
+    if (qop) XClassDelete((XClass*)qop);
+    if (algorithmName) XClassDelete((XClass*)algorithmName);
+    if (opaque) XClassDelete((XClass*)opaque);
+    if (nonce) XClassDelete((XClass*)nonce);
     return result;
 }
 
@@ -875,15 +875,15 @@ static XByteArray* xhttp_manager_ntlm_utf16le(const XByteArray* value, bool uppe
     length = XString_length_base((const XContainer*)(converted ? converted : text));
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base((XVector*)result, length * 2)) {
-        if (result) XClass_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         result = NULL;
         goto done;
     }
     for (size_t i = 0; i < length; ++i)
         xhttp_manager_ntlm_write_le16(XByteArray_data(result) + i * 2, units[i]);
 done:
-    if (converted) XClass_delete_base((XClass*)converted);
-    if (text) XClass_delete_base((XClass*)text);
+    if (converted) XClassDelete((XClass*)converted);
+    if (text) XClassDelete((XClass*)text);
     return result;
 }
 
@@ -897,7 +897,7 @@ static XByteArray* xhttp_manager_ntlm_oem_to_utf16le(const XByteArray* value)
         return NULL;
     result = XByteArray_create();
     if (!result || !XByteArray_resize_base((XVector*)result, inputSize * 2)) {
-        if (result) XClass_delete_base((XClass*)result);
+        if (result) XClassDelete((XClass*)result);
         return NULL;
     }
     for (size_t i = 0; i < inputSize; ++i)
@@ -937,8 +937,8 @@ static bool xhttp_manager_ntlm_split_user(const XByteArray* input, XByteArray** 
         *domainSpecified = atForm;
     }
     if (!*user || !*domain) {
-        if (*user) XClass_delete_base((XClass*)*user);
-        if (*domain) XClass_delete_base((XClass*)*domain);
+        if (*user) XClassDelete((XClass*)*user);
+        if (*domain) XClassDelete((XClass*)*domain);
         *user = NULL;
         *domain = NULL;
         return false;
@@ -981,7 +981,7 @@ static XByteArray* xhttp_manager_ntlm_decode_base64_token(const XByteArray* toke
         return NULL;
     input = XByteArray_create_with_data((const char*)data, size);
     result = input ? XByteArray_fromBase64(input) : NULL;
-    if (input) XClass_delete_base((XClass*)input);
+    if (input) XClassDelete((XClass*)input);
     return result;
 }
 
@@ -1038,7 +1038,7 @@ static bool xhttp_manager_ntlm_set_header(XHttpRequest* request, const XByteArra
         proxy ? "Proxy-Authorization" : "Authorization", header);
 done:
     if (header) XFree_System(header);
-    if (encoded) XClass_delete_base((XClass*)encoded);
+    if (encoded) XClassDelete((XClass*)encoded);
     return result;
 }
 
@@ -1047,7 +1047,7 @@ static XByteArray* xhttp_manager_ntlm_type1_message(void)
     XByteArray* message = XByteArray_create();
     uint8_t* data;
     if (!message || !XByteArray_resize_base((XVector*)message, 32)) {
-        if (message) XClass_delete_base((XClass*)message);
+        if (message) XClassDelete((XClass*)message);
         return NULL;
     }
     data = XByteArray_data(message);
@@ -1251,30 +1251,30 @@ done:
     memset(clientChallenge, 0, sizeof(clientChallenge));
     memset(timestamp, 0, sizeof(timestamp));
     if (!result && message) {
-        XClass_delete_base((XClass*)message);
+        XClassDelete((XClass*)message);
         message = NULL;
     }
-    if (lmProof) XClass_delete_base((XClass*)lmProof);
-    if (lmInput) XClass_delete_base((XClass*)lmInput);
-    if (lmResponse) XClass_delete_base((XClass*)lmResponse);
-    if (ntResponse) XClass_delete_base((XClass*)ntResponse);
-    if (ntProof) XClass_delete_base((XClass*)ntProof);
-    if (ntInput) XClass_delete_base((XClass*)ntInput);
-    if (blob) XClass_delete_base((XClass*)blob);
-    if (v2Hash) XClass_delete_base((XClass*)v2Hash);
-    if (v2Input) XClass_delete_base((XClass*)v2Input);
-    if (ntHash) XClass_delete_base((XClass*)ntHash);
-    if (domainWire) XClass_delete_base((XClass*)domainWire);
-    if (userWire) XClass_delete_base((XClass*)userWire);
-    if (domainUtf16) XClass_delete_base((XClass*)domainUtf16);
-    if (passwordUtf16) XClass_delete_base((XClass*)passwordUtf16);
-    if (upperUserUtf16) XClass_delete_base((XClass*)upperUserUtf16);
-    if (userUtf16) XClass_delete_base((XClass*)userUtf16);
-    if (providedDomain) XClass_delete_base((XClass*)providedDomain);
-    if (user) XClass_delete_base((XClass*)user);
-    if (targetInfo) XClass_delete_base((XClass*)targetInfo);
-    if (targetNameUtf16) XClass_delete_base((XClass*)targetNameUtf16);
-    if (targetNameWire) XClass_delete_base((XClass*)targetNameWire);
+    if (lmProof) XClassDelete((XClass*)lmProof);
+    if (lmInput) XClassDelete((XClass*)lmInput);
+    if (lmResponse) XClassDelete((XClass*)lmResponse);
+    if (ntResponse) XClassDelete((XClass*)ntResponse);
+    if (ntProof) XClassDelete((XClass*)ntProof);
+    if (ntInput) XClassDelete((XClass*)ntInput);
+    if (blob) XClassDelete((XClass*)blob);
+    if (v2Hash) XClassDelete((XClass*)v2Hash);
+    if (v2Input) XClassDelete((XClass*)v2Input);
+    if (ntHash) XClassDelete((XClass*)ntHash);
+    if (domainWire) XClassDelete((XClass*)domainWire);
+    if (userWire) XClassDelete((XClass*)userWire);
+    if (domainUtf16) XClassDelete((XClass*)domainUtf16);
+    if (passwordUtf16) XClassDelete((XClass*)passwordUtf16);
+    if (upperUserUtf16) XClassDelete((XClass*)upperUserUtf16);
+    if (userUtf16) XClassDelete((XClass*)userUtf16);
+    if (providedDomain) XClassDelete((XClass*)providedDomain);
+    if (user) XClassDelete((XClass*)user);
+    if (targetInfo) XClassDelete((XClass*)targetInfo);
+    if (targetNameUtf16) XClassDelete((XClass*)targetNameUtf16);
+    if (targetNameWire) XClassDelete((XClass*)targetNameWire);
     return message;
 }
 
@@ -1299,9 +1299,9 @@ static bool xhttp_manager_apply_ntlm_authentication(XHttpRequest* request,
     }
     result = message && xhttp_manager_ntlm_set_header(request, message, proxy);
 done:
-    if (message) XClass_delete_base((XClass*)message);
-    if (type2) XClass_delete_base((XClass*)type2);
-    if (token) XClass_delete_base((XClass*)token);
+    if (message) XClassDelete((XClass*)message);
+    if (type2) XClassDelete((XClass*)type2);
+    if (token) XClassDelete((XClass*)token);
     return result;
 }
 
@@ -1347,9 +1347,9 @@ static void xhttp_manager_release_protocols(XVector* protocols)
     for (size_t i = 0; i < XContainer_size_base((const XContainer*)protocols); ++i) {
         XByteArray** slot = (XByteArray**)XVector_at_base(protocols, (int64_t)i);
         if (slot && *slot)
-            XClass_delete_base((XClass*)*slot);
+            XClassDelete((XClass*)*slot);
     }
-    XVector_delete_base((XContainer*)protocols);
+    XClassDelete((XContainer*)protocols);
 }
 
 static XVector* xhttp_manager_create_alpn_protocols(bool includeHttp2)
@@ -1360,8 +1360,8 @@ static XVector* xhttp_manager_create_alpn_protocols(bool includeHttp2)
     if (!protocols || (includeHttp2 && !h2) || !http11 ||
         (includeHttp2 && !XVector_push_back_1_base(protocols, &h2)) ||
         !XVector_push_back_1_base(protocols, &http11)) {
-        if (h2) XClass_delete_base((XClass*)h2);
-        if (http11) XClass_delete_base((XClass*)http11);
+        if (h2) XClassDelete((XClass*)h2);
+        if (http11) XClassDelete((XClass*)http11);
         xhttp_manager_release_protocols(protocols);
         return NULL;
     }
@@ -1378,7 +1378,7 @@ static XByteArray* xhttp_manager_h2c_settings_value(const XHttp2Configuration* c
     size_t consumed = 0;
     if (!session || (configuration &&
         !XHttp2ClientSession_setConfiguration(session, configuration))) {
-        if (session) XClass_delete_base((XClass*)session);
+        if (session) XClassDelete((XClass*)session);
         return NULL;
     }
     start = XHttp2ClientSession_start(session);
@@ -1401,10 +1401,10 @@ static XByteArray* xhttp_manager_h2c_settings_value(const XHttp2Configuration* c
         }
         XByteArray_resize_base((XVector*)encoded, size);
     }
-    if (payload) XClass_delete_base((XClass*)payload);
-    if (settings) XClass_delete_base((XClass*)settings);
-    if (start) XClass_delete_base((XClass*)start);
-    XClass_delete_base((XClass*)session);
+    if (payload) XClassDelete((XClass*)payload);
+    if (settings) XClassDelete((XClass*)settings);
+    if (start) XClassDelete((XClass*)start);
+    XClassDelete((XClass*)session);
     return encoded;
 }
 
@@ -1444,9 +1444,9 @@ static bool xhttp_manager_prepare_h2c_upgrade(XHttpRequest* request)
     if (!settings || !connectionValue || !settingsValue) {
         if (settingsValue) XFree_System(settingsValue);
         if (connectionValue) XFree_System(connectionValue);
-        if (previous) XClass_delete_base((XClass*)previous);
-        if (previousName) XClass_delete_base((XClass*)previousName);
-        if (settings) XClass_delete_base((XClass*)settings);
+        if (previous) XClassDelete((XClass*)previous);
+        if (previousName) XClassDelete((XClass*)previousName);
+        if (settings) XClassDelete((XClass*)settings);
         return false;
     }
     if (previousSize) {
@@ -1464,9 +1464,9 @@ static bool xhttp_manager_prepare_h2c_upgrade(XHttpRequest* request)
              XHttpRequest_setRawHeader(request, "HTTP2-Settings", settingsValue);
     XFree_System(settingsValue);
     XFree_System(connectionValue);
-    if (previous) XClass_delete_base((XClass*)previous);
-    if (previousName) XClass_delete_base((XClass*)previousName);
-    XClass_delete_base((XClass*)settings);
+    if (previous) XClassDelete((XClass*)previous);
+    if (previousName) XClassDelete((XClass*)previousName);
+    XClassDelete((XClass*)settings);
     return result;
 }
 
@@ -1531,9 +1531,9 @@ static XString* xhttp_manager_hsts_store_path(const XNetworkAccessManager* manag
     fileName = XString_create_utf8("hsts.xhs");
     directory = directoryText ? XDir_create_2(directoryText) : NULL;
     result = directory && fileName ? XDir_filePath(directory, fileName) : NULL;
-    if (directory) XClass_delete_base((XClass*)directory);
-    if (fileName) XClass_delete_base((XClass*)fileName);
-    if (directoryText) XClass_delete_base((XClass*)directoryText);
+    if (directory) XClassDelete((XClass*)directory);
+    if (fileName) XClassDelete((XClass*)fileName);
+    if (directoryText) XClassDelete((XClass*)directoryText);
     return result;
 }
 
@@ -1578,12 +1578,12 @@ static void xhttp_manager_hsts_store_save(const XNetworkAccessManager* manager)
         XFile_close_base(file);
     }
 done:
-    if (file) XClass_delete_base((XClass*)file);
-    if (path) XClass_delete_base((XClass*)path);
-    if (data) XClass_delete_base((XClass*)data);
-    if (dot) XClass_delete_base((XClass*)dot);
-    if (directory) XClass_delete_base((XClass*)directory);
-    if (directoryText) XClass_delete_base((XClass*)directoryText);
+    if (file) XClassDelete((XClass*)file);
+    if (path) XClassDelete((XClass*)path);
+    if (data) XClassDelete((XClass*)data);
+    if (dot) XClassDelete((XClass*)dot);
+    if (directory) XClassDelete((XClass*)directory);
+    if (directoryText) XClassDelete((XClass*)directoryText);
 }
 
 static void xhttp_manager_hsts_store_load(XNetworkAccessManager* manager)
@@ -1621,22 +1621,22 @@ static void xhttp_manager_hsts_store_load(XNetworkAccessManager* manager)
         offset += hostLength;
         if (!host || !xhttp_manager_hsts_read_u64(data, &offset, &expiry) ||
             !xhttp_manager_hsts_read_u32(data, &offset, &flags)) {
-            if (host) XClass_delete_base((XClass*)host);
+            if (host) XClassDelete((XClass*)host);
             break;
         }
         policy = XHstsPolicy_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, host, (int64_t)expiry,
                                        flags ? XHstsPolicy_IncludeSubDomains : 0);
         if (policy) {
             xhttp_manager_hsts_insert(manager, policy);
-            XClass_delete_base((XClass*)policy);
+            XClassDelete((XClass*)policy);
         }
-        XClass_delete_base((XClass*)host);
+        XClassDelete((XClass*)host);
     }
 done_data:
-    if (data) XClass_delete_base((XClass*)data);
+    if (data) XClassDelete((XClass*)data);
 done:
-    if (file) XClass_delete_base((XClass*)file);
-    if (path) XClass_delete_base((XClass*)path);
+    if (file) XClassDelete((XClass*)file);
+    if (path) XClassDelete((XClass*)path);
 }
 
 static void xhttp_manager_apply_cookie_header(XNetworkAccessManager* manager, XHttpRequest* request)
@@ -1651,7 +1651,7 @@ static void xhttp_manager_apply_cookie_header(XNetworkAccessManager* manager, XH
     if (!name)
         return;
     hasCookie = XHttpHeaders_contains(XHttpRequest_headers_const(request), name);
-    XClass_delete_base((XClass*)name);
+    XClassDelete((XClass*)name);
     if (hasCookie)
         return;
     url = XHttpRequest_url_const(request);
@@ -1660,10 +1660,10 @@ static void xhttp_manager_apply_cookie_header(XNetworkAccessManager* manager, XH
         name = XByteArray_create_utf8("Cookie");
         if (name) {
             XHttpHeaders_replaceOrAppend(XHttpRequest_headers(request), name, value);
-            XClass_delete_base((XClass*)name);
+            XClassDelete((XClass*)name);
         }
     }
-    if (value) XClass_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 static bool xhttp_manager_hsts_host_equal(const XHstsPolicy* policy, const XByteArray* host)
@@ -1713,7 +1713,7 @@ static bool xhttp_manager_hsts_remove_host(XNetworkAccessManager* manager, const
     for (size_t i = XContainer_size_base((const XContainer*)manager->m_hstsPolicies); i > 0; --i) {
         XHstsPolicy** policy = (XHstsPolicy**)XVector_at_base(manager->m_hstsPolicies, (int64_t)(i - 1));
         if (policy && *policy && xhttp_manager_hsts_host_equal(*policy, host)) {
-            XClass_delete_base((XClass*)*policy);
+            XClassDelete((XClass*)*policy);
             XVector_remove_base(manager->m_hstsPolicies, (int64_t)(i - 1), 1);
             removed = true;
         }
@@ -1736,7 +1736,7 @@ static bool xhttp_manager_hsts_insert(XNetworkAccessManager* manager, const XHst
     copy = XHstsPolicy_create_copy(policy);
     if (!copy || !XVector_push_back_1_base(manager->m_hstsPolicies, &copy)) {
         if (copy)
-            XClass_delete_base((XClass*)copy);
+            XClassDelete((XClass*)copy);
         return false;
     }
     return true;
@@ -1787,7 +1787,7 @@ static bool xhttp_manager_hsts_requires_https(const XNetworkAccessManager* manag
             break;
         }
     }
-    XClass_delete_base((XClass*)host);
+    XClassDelete((XClass*)host);
     return result;
 }
 
@@ -1805,8 +1805,8 @@ static bool xhttp_manager_apply_hsts(XNetworkAccessManager* manager, XHttpReques
     newUrl = XUrl_create_copy(oldUrl);
     scheme = XString_create_utf8("https");
     if (!newUrl || !scheme) {
-        if (newUrl) XClass_delete_base((XClass*)newUrl);
-        if (scheme) XClass_delete_base((XClass*)scheme);
+        if (newUrl) XClassDelete((XClass*)newUrl);
+        if (scheme) XClassDelete((XClass*)scheme);
         return false;
     }
     XUrl_setScheme(newUrl, scheme);
@@ -1814,12 +1814,12 @@ static bool xhttp_manager_apply_hsts(XNetworkAccessManager* manager, XHttpReques
     if (port == 80)
         XUrl_setPort(newUrl, 443);
     if (!XHttpRequest_setUrl(request, newUrl)) {
-        XClass_delete_base((XClass*)newUrl);
-        XClass_delete_base((XClass*)scheme);
+        XClassDelete((XClass*)newUrl);
+        XClassDelete((XClass*)scheme);
         return false;
     }
-    XClass_delete_base((XClass*)newUrl);
-    XClass_delete_base((XClass*)scheme);
+    XClassDelete((XClass*)newUrl);
+    XClassDelete((XClass*)scheme);
     return true;
 }
 
@@ -1862,7 +1862,7 @@ static bool xhttp_manager_hsts_parse_max_age(const XByteArray* value,
                 found = true;
             }
         }
-        XClass_delete_base((XClass*)token);
+        XClassDelete((XClass*)token);
     }
     XByteArray_split_free(parts);
     return found;
@@ -1885,12 +1885,12 @@ static void xhttp_manager_process_hsts_response(XNetworkAccessManager* manager, 
         return;
     name = XByteArray_create_utf8("strict-transport-security");
     value = name ? XHttpHeaders_value(XHttpReply_headers_const(reply), name) : NULL;
-    if (name) XClass_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
     request = XHttpReply_request_const(reply);
     url = request ? XHttpRequest_url_const(request) : NULL;
     if (!value || !xhttp_manager_hsts_parse_max_age(value, &maxAge, &includeSubDomains) ||
         !xhttp_manager_hsts_host_from_url(url, &host)) {
-        if (value) XClass_delete_base((XClass*)value);
+        if (value) XClassDelete((XClass*)value);
         return;
     }
     now = XDateTime_currentDateTimeUtc();
@@ -1905,10 +1905,10 @@ static void xhttp_manager_process_hsts_response(XNetworkAccessManager* manager, 
     if (policy) {
         xhttp_manager_hsts_insert(manager, policy);
         xhttp_manager_hsts_store_save(manager);
-        XClass_delete_base((XClass*)policy);
+        XClassDelete((XClass*)policy);
     }
-    XClass_delete_base((XClass*)host);
-    XClass_delete_base((XClass*)value);
+    XClassDelete((XClass*)host);
+    XClassDelete((XClass*)value);
 }
 
 static XHttpTransaction* xhttp_manager_transaction_at(const XNetworkAccessManager* self, size_t index)
@@ -1959,13 +1959,13 @@ static void xhttp_manager_reset_http2(XHttpTransaction* tx)
     if (!tx)
         return;
     if (tx->m_http2Session)
-        XClass_delete_base((XClass*)tx->m_http2Session);
+        XClassDelete((XClass*)tx->m_http2Session);
     if (tx->m_http2Decoder)
-        XClass_delete_base((XClass*)tx->m_http2Decoder);
+        XClassDelete((XClass*)tx->m_http2Decoder);
     if (tx->m_http2Input)
-        XClass_delete_base((XClass*)tx->m_http2Input);
+        XClassDelete((XClass*)tx->m_http2Input);
     if (tx->m_http2HeaderBlock)
-        XClass_delete_base((XClass*)tx->m_http2HeaderBlock);
+        XClassDelete((XClass*)tx->m_http2HeaderBlock);
     tx->m_http2Session = NULL;
     tx->m_http2Decoder = NULL;
     tx->m_http2Input = NULL;
@@ -2008,8 +2008,8 @@ static bool xhttp_manager_send_http2_frame(XHttpTransaction* tx, uint8_t type,
     frame = XHttp2Frame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, flags, streamId, payload);
     wire = frame ? XHttp2Frame_toByteArray(frame) : NULL;
     if (!frame || !wire) {
-        if (wire) XClass_delete_base((XClass*)wire);
-        if (frame) XClass_delete_base((XClass*)frame);
+        if (wire) XClassDelete((XClass*)wire);
+        if (frame) XClassDelete((XClass*)frame);
         return false;
     }
     size = XContainer_size_base((const XContainer*)wire);
@@ -2018,14 +2018,14 @@ static bool xhttp_manager_send_http2_frame(XHttpTransaction* tx, uint8_t type,
             (const char*)XByteArray_constData(wire) + offset,
             (int64_t)(size - offset));
         if (written <= 0) {
-            XClass_delete_base((XClass*)wire);
-            XClass_delete_base((XClass*)frame);
+            XClassDelete((XClass*)wire);
+            XClassDelete((XClass*)frame);
             return false;
         }
         offset += (size_t)written;
     }
-    XClass_delete_base((XClass*)wire);
-    XClass_delete_base((XClass*)frame);
+    XClassDelete((XClass*)wire);
+    XClassDelete((XClass*)frame);
     return true;
 }
 
@@ -2042,7 +2042,7 @@ static bool xhttp_manager_send_http2_u32_frame(XHttpTransaction* tx, uint8_t typ
     payload = XByteArray_create_with_data((const char*)bytes, sizeof(bytes));
     result = payload && xhttp_manager_send_http2_frame(tx, type, 0, streamId, payload);
     if (payload)
-        XClass_delete_base((XClass*)payload);
+        XClassDelete((XClass*)payload);
     return result;
 }
 
@@ -2064,7 +2064,7 @@ static bool xhttp_manager_send_http2_goaway(XHttpTransaction* tx, uint32_t error
     payload = XByteArray_create_with_data((const char*)bytes, sizeof(bytes));
     result = payload && xhttp_manager_send_http2_frame(tx, XHttp2Frame_GoAway, 0, 0, payload);
     if (payload)
-        XClass_delete_base((XClass*)payload);
+        XClassDelete((XClass*)payload);
     if (result)
         tx->m_http2GoAwaySent = true;
     return result;
@@ -2121,7 +2121,7 @@ static bool xhttp_manager_finish_http2_headers(XHttpTransaction* tx)
             tx->m_http2ResponseHeadersReceived = true;
     }
     if (headers)
-        XClass_delete_base((XClass*)headers);
+        XClassDelete((XClass*)headers);
     XByteArray_clear_base((XContainer*)tx->m_http2HeaderBlock);
     tx->m_http2HeadersActive = false;
     tx->m_http2PushPromiseActive = false;
@@ -2161,7 +2161,7 @@ static bool xhttp_manager_send_window_update(XHttpTransaction* tx,
     result = payload && xhttp_manager_send_http2_frame(tx,
         XHttp2Frame_WindowUpdate, 0, streamId, payload);
     if (payload)
-        XClass_delete_base((XClass*)payload);
+        XClassDelete((XClass*)payload);
     return result;
 }
 
@@ -2440,14 +2440,14 @@ static void xhttp_manager_transaction_destroy(XHttpTransaction* tx)
     xhttp_manager_disconnect(tx);
     if (tx->m_socket) {
         XAbstractSocket_abort(tx->m_socket);
-        XClass_delete_base((XClass*)tx->m_socket);
+        XClassDelete((XClass*)tx->m_socket);
         tx->m_socket = NULL;
     }
     xhttp_manager_reset_http2(tx);
     if (tx->m_requestWire)
-        XClass_delete_base((XClass*)tx->m_requestWire);
+        XClassDelete((XClass*)tx->m_requestWire);
     if (tx->m_ntlmAuthenticator)
-        XClass_delete_base((XClass*)tx->m_ntlmAuthenticator);
+        XClassDelete((XClass*)tx->m_ntlmAuthenticator);
     XFree_System(tx);
 }
 
@@ -2519,7 +2519,7 @@ static bool xhttp_manager_send_http2_pending(XHttpTransaction* tx)
         remaining = total - tx->m_writeOffset;
         frame = XHttp2Frame_fromBytes(wire + tx->m_writeOffset, remaining, &consumed);
         if (!frame || consumed == 0) {
-            if (frame) XClass_delete_base((XClass*)frame);
+            if (frame) XClassDelete((XClass*)frame);
             return false;
         }
         if (XHttp2Frame_type(frame) == XHttp2Frame_Data &&
@@ -2538,17 +2538,17 @@ static bool xhttp_manager_send_http2_pending(XHttpTransaction* tx)
             XByteArray* encoded;
             uint8_t flags = 0;
             if (dataOffset > payloadSize) {
-                XClass_delete_base((XClass*)frame);
+                XClassDelete((XClass*)frame);
                 return false;
             }
             if (dataOffset == payloadSize) {
                 tx->m_writeOffset += consumed;
                 tx->m_http2FramePayloadOffset = 0;
-                XClass_delete_base((XClass*)frame);
+                XClassDelete((XClass*)frame);
                 continue;
             }
             if (allowed <= 0) {
-                XClass_delete_base((XClass*)frame);
+                XClassDelete((XClass*)frame);
                 return true;
             }
             chunk = payloadSize - dataOffset;
@@ -2568,10 +2568,10 @@ static bool xhttp_manager_send_http2_pending(XHttpTransaction* tx)
             if (!part || !outgoing || !encoded ||
                 !xhttp_manager_write_bytes(tx, XByteArray_constData(encoded),
                                             XContainer_size_base((const XContainer*)encoded))) {
-                if (encoded) XClass_delete_base((XClass*)encoded);
-                if (outgoing) XClass_delete_base((XClass*)outgoing);
-                if (part) XClass_delete_base((XClass*)part);
-                XClass_delete_base((XClass*)frame);
+                if (encoded) XClassDelete((XClass*)encoded);
+                if (outgoing) XClassDelete((XClass*)outgoing);
+                if (part) XClassDelete((XClass*)part);
+                XClassDelete((XClass*)frame);
                 return false;
             }
             tx->m_http2SessionSendWindow -= (int64_t)chunk;
@@ -2581,19 +2581,19 @@ static bool xhttp_manager_send_http2_pending(XHttpTransaction* tx)
                 tx->m_writeOffset += consumed;
                 tx->m_http2FramePayloadOffset = 0;
             }
-            XClass_delete_base((XClass*)encoded);
-            XClass_delete_base((XClass*)outgoing);
-            XClass_delete_base((XClass*)part);
-            XClass_delete_base((XClass*)frame);
+            XClassDelete((XClass*)encoded);
+            XClassDelete((XClass*)outgoing);
+            XClassDelete((XClass*)part);
+            XClassDelete((XClass*)frame);
             if (chunk < payloadSize - dataOffset)
                 return true;
         } else {
             if (!xhttp_manager_write_bytes(tx, wire + tx->m_writeOffset, consumed)) {
-                XClass_delete_base((XClass*)frame);
+                XClassDelete((XClass*)frame);
                 return false;
             }
             tx->m_writeOffset += consumed;
-            XClass_delete_base((XClass*)frame);
+            XClassDelete((XClass*)frame);
         }
     }
     tx->m_requestSent = true;
@@ -2641,16 +2641,16 @@ static bool xhttp_manager_feed_http2(XHttpTransaction* tx,
             break;
         frame = XHttp2Frame_fromBytes(bytes + offset, remaining, &consumed);
         if (!frame || consumed == 0) {
-            if (frame) XClass_delete_base((XClass*)frame);
+            if (frame) XClassDelete((XClass*)frame);
             XHttpReply_setError(tx->m_reply, XHttpReply_ProtocolInvalidOperationError,
                                 "HTTP/2 响应帧无法解码");
             return false;
         }
         if (!xhttp_manager_process_http2_frame(tx, frame)) {
-            XClass_delete_base((XClass*)frame);
+            XClassDelete((XClass*)frame);
             return false;
         }
-        XClass_delete_base((XClass*)frame);
+        XClassDelete((XClass*)frame);
         offset += consumed;
         if (XHttpReply_isFinished(tx->m_reply))
             break;
@@ -2675,8 +2675,8 @@ static bool xhttp_manager_reply_is_h2c_upgrade(const XHttpReply* reply)
     size = value ? XContainer_size_base((const XContainer*)value) : 0;
     result = bytes && size == 3 && tolower(bytes[0]) == 'h' &&
              tolower(bytes[1]) == '2' && tolower(bytes[2]) == 'c';
-    if (value) XClass_delete_base((XClass*)value);
-    if (name) XClass_delete_base((XClass*)name);
+    if (value) XClassDelete((XClass*)value);
+    if (name) XClassDelete((XClass*)name);
     return result;
 }
 
@@ -2699,7 +2699,7 @@ static void xhttp_manager_read_available(XHttpTransaction* tx)
             XByteArray_constData(bytes), size) :
             (size == 0 || XHttpReply_feed(reply, XByteArray_constData(bytes), size));
         if (!ok) {
-            XClass_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             return;
         }
         if (!tx->m_http2 && tx->m_h2cUpgradeRequested &&
@@ -2722,7 +2722,7 @@ static void xhttp_manager_read_available(XHttpTransaction* tx)
             if (reset)
                 tx->m_completionPosted = false;
             upgraded = reset && xhttp_manager_promote_h2c_upgrade(tx);
-            XClass_delete_base((XClass*)bytes);
+            XClassDelete((XClass*)bytes);
             if (!upgraded) {
                 XHttpReply_setError(reply, XHttpReply_ProtocolInvalidOperationError,
                                     "h2c 升级后的 HTTP/2 初始化失败");
@@ -2741,10 +2741,10 @@ static void xhttp_manager_read_available(XHttpTransaction* tx)
                     xhttp_manager_shared_http2_dispatch(connection);
             }
             if (remaining)
-                XClass_delete_base((XClass*)remaining);
+                XClassDelete((XClass*)remaining);
             return;
         }
-        XClass_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         xhttp_manager_handle_reply_state(tx);
         /* 401/407 和重定向会在同步回调中关闭旧套接字并创建新连接。 */
         if (tx->m_socket != socket)
@@ -2794,7 +2794,7 @@ static bool xhttp_manager_start_socket(XHttpTransaction* tx)
                 xhttp_manager_request_allows_http2(XHttpReply_request_const(tx->m_reply)));
             if (!alpnProtocols || !XSslSocket_setAllowedNextProtocols(socket, alpnProtocols)) {
                 xhttp_manager_release_protocols(alpnProtocols);
-                XClass_delete_base((XClass*)peerName);
+                XClassDelete((XClass*)peerName);
                 return false;
             }
             xhttp_manager_release_protocols(alpnProtocols);
@@ -2824,7 +2824,7 @@ static bool xhttp_manager_start_socket(XHttpTransaction* tx)
         if (tx->m_manager->m_proxy)
             XAbstractSocket_setProxy(tx->m_socket, tx->m_manager->m_proxy);
         XSslSocket_connectToHostEncrypted(socket, peerName, port);
-        XClass_delete_base((XClass*)peerName);
+        XClassDelete((XClass*)peerName);
     } else {
         XTcpSocket* socket = XTcpSocket_create();
         if (!socket)
@@ -2925,11 +2925,11 @@ static void xhttp_manager_authentication_cache_entry_delete(
     if (!entry)
         return;
     if (entry->m_origin)
-        XClass_delete_base((XClass*)entry->m_origin);
+        XClassDelete((XClass*)entry->m_origin);
     if (entry->m_realm)
-        XClass_delete_base((XClass*)entry->m_realm);
+        XClassDelete((XClass*)entry->m_realm);
     if (entry->m_authenticator)
-        XClass_delete_base((XClass*)entry->m_authenticator);
+        XClassDelete((XClass*)entry->m_authenticator);
     XFree_System(entry);
 }
 
@@ -2988,7 +2988,7 @@ static XByteArray* xhttp_manager_authentication_origin(const XHttpTransaction* t
         !XByteArray_append_utf8(result, "://") || !XByteArray_append_utf8(result, hostText) ||
         !XByteArray_push_back_2((XVector*)result, portText, (size_t)portLength)) {
         if (result)
-            XClass_delete_base((XClass*)result);
+            XClassDelete((XClass*)result);
         return NULL;
     }
     XByteArray_toLower(result);
@@ -3005,7 +3005,7 @@ static bool xhttp_manager_authentication_reuse_allowed(const XHttpRequest* reque
     if (attribute && XVariant_type(attribute) == XVariantType_Bool)
         result = XVariant_toBool(attribute);
     if (attribute)
-        XClass_delete_base((XClass*)attribute);
+        XClassDelete((XClass*)attribute);
     return result;
 }
 
@@ -3198,11 +3198,11 @@ static void xhttp_manager_shared_http2_destroy(XHttp2SharedConnection* connectio
     if (connection->m_errorOccurred) XObject_disconnect_2(connection->m_errorOccurred);
     if (connection->m_socket) {
         XAbstractSocket_abort(connection->m_socket);
-        XClass_delete_base((XClass*)connection->m_socket);
+        XClassDelete((XClass*)connection->m_socket);
     }
-    if (connection->m_protocol) XClass_delete_base((XClass*)connection->m_protocol);
-    if (connection->m_transactions) XVector_delete_base((XClass*)connection->m_transactions);
-    if (connection->m_host) XClass_delete_base((XClass*)connection->m_host);
+    if (connection->m_protocol) XClassDelete((XClass*)connection->m_protocol);
+    if (connection->m_transactions) XClassDelete((XClass*)connection->m_transactions);
+    if (connection->m_host) XClassDelete((XClass*)connection->m_host);
     XFree_System(connection);
 }
 
@@ -3216,7 +3216,7 @@ static void xhttp_manager_mark_http2_used(XHttpTransaction* tx)
         return;
     XHttpRequest_setAttribute(tx->m_reply->m_request,
                               XHttpRequest_Http2WasUsedAttribute, used);
-    XClass_delete_base((XClass*)used);
+    XClassDelete((XClass*)used);
 }
 
 static bool xhttp_manager_shared_http2_attach(XHttp2SharedConnection* connection,
@@ -3269,7 +3269,7 @@ static bool xhttp_manager_shared_http2_flush(XHttp2SharedConnection* connection)
     result = XContainer_size_base((const XContainer*)bytes) == 0 ||
              xhttp_manager_write_socket_bytes(connection->m_socket,
                  XByteArray_constData(bytes), XContainer_size_base((const XContainer*)bytes));
-    XClass_delete_base((XClass*)bytes);
+    XClassDelete((XClass*)bytes);
     return result;
 }
 
@@ -3318,7 +3318,7 @@ static void xhttp_manager_shared_http2_read_available(XHttp2SharedConnection* co
         size = XContainer_size_base((const XContainer*)bytes);
         ok = size == 0 || XHttp2Connection_feed(connection->m_protocol,
                                                   XByteArray_constData(bytes), size);
-        XClass_delete_base((XClass*)bytes);
+        XClassDelete((XClass*)bytes);
         if (!ok) {
             xhttp_manager_shared_http2_fail(connection,
                                             XHttpReply_ProtocolInvalidOperationError,
@@ -3475,7 +3475,7 @@ static bool xhttp_manager_prepare_authentication(XHttpTransaction* tx,
         if (!replacement)
             goto done;
         if (tx->m_ntlmAuthenticator)
-            XClass_delete_base((XClass*)tx->m_ntlmAuthenticator);
+            XClassDelete((XClass*)tx->m_ntlmAuthenticator);
         tx->m_ntlmAuthenticator = replacement;
         tx->m_ntlmProxy = proxy;
     }
@@ -3489,10 +3489,10 @@ static bool xhttp_manager_prepare_authentication(XHttpTransaction* tx,
     request = NULL;
     result = true;
 done:
-    if (request) XClass_delete_base((XClass*)request);
-    if (origin) XClass_delete_base((XClass*)origin);
-    if (authenticator) XClass_delete_base((XClass*)authenticator);
-    if (challenge) XClass_delete_base((XClass*)challenge);
+    if (request) XClassDelete((XClass*)request);
+    if (origin) XClassDelete((XClass*)origin);
+    if (authenticator) XClassDelete((XClass*)authenticator);
+    if (challenge) XClassDelete((XClass*)challenge);
     return result;
 }
 
@@ -3531,7 +3531,7 @@ static bool xhttp_manager_retry_http2_authentication(XHttpTransaction* tx)
     }
     result = true;
 done:
-    if (request) XClass_delete_base((XClass*)request);
+    if (request) XClassDelete((XClass*)request);
     return result;
 }
 
@@ -3553,7 +3553,7 @@ static bool xhttp_manager_retry_authentication(XHttpTransaction* tx)
     if (!XHttpReply_resetForRequest(tx->m_reply, request))
         goto failed;
     if (tx->m_requestWire)
-        XClass_delete_base((XClass*)tx->m_requestWire);
+        XClassDelete((XClass*)tx->m_requestWire);
     tx->m_requestWire = wire;
     wire = NULL;
     tx->m_writeOffset = 0;
@@ -3563,13 +3563,13 @@ static bool xhttp_manager_retry_authentication(XHttpTransaction* tx)
         XHttpReply_setError(tx->m_reply, XHttpReply_UnknownNetworkError,
                             "认证后的 HTTP 请求重连失败");
     }
-    XClass_delete_base((XClass*)request);
+    XClassDelete((XClass*)request);
     return true;
 failed:
     if (wire)
-        XClass_delete_base((XClass*)wire);
+        XClassDelete((XClass*)wire);
     if (request)
-        XClass_delete_base((XClass*)request);
+        XClassDelete((XClass*)request);
     return false;
 }
 
@@ -3674,20 +3674,20 @@ static bool xhttp_manager_try_redirect(XHttpTransaction* tx)
     policy = oldRequest ? XHttpRequest_redirectPolicy(oldRequest) : tx->m_manager->m_redirectPolicy;
     target = XHttpReply_redirectTarget(reply);
     if (!xhttp_manager_redirect_allowed(oldRequest, target, policy)) {
-        if (target) XClass_delete_base((XClass*)target);
+        if (target) XClassDelete((XClass*)target);
         return false;
     }
     maximum = oldRequest ? XHttpRequest_maximumRedirectsAllowed(oldRequest) : -1;
     if (maximum < 0)
         maximum = 50;
     if (tx->m_redirectCount >= maximum) {
-        XClass_delete_base((XClass*)target);
+        XClassDelete((XClass*)target);
         return false;
     }
     nextRequest = XHttpRequest_create_copy(oldRequest);
     if (!nextRequest || !XHttpRequest_setUrl(nextRequest, target)) {
-        if (nextRequest) XClass_delete_base((XClass*)nextRequest);
-        XClass_delete_base((XClass*)target);
+        if (nextRequest) XClassDelete((XClass*)nextRequest);
+        XClassDelete((XClass*)target);
         return false;
     }
     if (status == 303 || ((status == 301 || status == 302) &&
@@ -3698,20 +3698,20 @@ static bool xhttp_manager_try_redirect(XHttpTransaction* tx)
     xhttp_manager_apply_cookie_header(tx->m_manager, nextRequest);
     nextWire = XHttpRequest_toHttp1(nextRequest, true);
     if (!nextWire) {
-        XClass_delete_base((XClass*)nextRequest);
-        XClass_delete_base((XClass*)target);
+        XClassDelete((XClass*)nextRequest);
+        XClassDelete((XClass*)target);
         return false;
     }
     XHttpReply_redirected_signal(reply, target);
     xhttp_manager_close_socket(tx);
     if (!XHttpReply_resetForRequest(reply, nextRequest)) {
-        XClass_delete_base((XClass*)nextWire);
-        XClass_delete_base((XClass*)nextRequest);
-        XClass_delete_base((XClass*)target);
+        XClassDelete((XClass*)nextWire);
+        XClassDelete((XClass*)nextRequest);
+        XClassDelete((XClass*)target);
         return false;
     }
     if (tx->m_requestWire)
-        XClass_delete_base((XClass*)tx->m_requestWire);
+        XClassDelete((XClass*)tx->m_requestWire);
     tx->m_requestWire = nextWire;
     tx->m_writeOffset = 0;
     tx->m_requestSent = false;
@@ -3719,11 +3719,11 @@ static bool xhttp_manager_try_redirect(XHttpTransaction* tx)
     tx->m_authenticationAttempts = 0;
     tx->m_authenticationCacheUsed = false;
     if (tx->m_ntlmAuthenticator) {
-        XClass_delete_base((XClass*)tx->m_ntlmAuthenticator);
+        XClassDelete((XClass*)tx->m_ntlmAuthenticator);
         tx->m_ntlmAuthenticator = NULL;
     }
-    XClass_delete_base((XClass*)nextRequest);
-    XClass_delete_base((XClass*)target);
+    XClassDelete((XClass*)nextRequest);
+    XClassDelete((XClass*)target);
     if (!xhttp_manager_start_socket(tx))
         XHttpReply_setError(reply, XHttpReply_UnknownNetworkError, "重定向目标连接失败");
     return true;
@@ -3767,7 +3767,7 @@ static bool xhttp_manager_start_http2(XHttpTransaction* tx)
     session = XHttp2ClientSession_create();
     if (session && configuration &&
         !XHttp2ClientSession_setConfiguration(session, configuration)) {
-        XClass_delete_base((XClass*)session);
+        XClassDelete((XClass*)session);
         session = NULL;
     }
     wire = session ? XHttp2ClientSession_encodeRequest(session, request, &streamId) : NULL;
@@ -3775,15 +3775,15 @@ static bool xhttp_manager_start_http2(XHttpTransaction* tx)
     input = decoder ? XByteArray_create() : NULL;
     headerBlock = input ? XByteArray_create() : NULL;
     if (!session || !wire || !decoder || !input || !headerBlock || streamId == 0) {
-        if (headerBlock) XClass_delete_base((XClass*)headerBlock);
-        if (input) XClass_delete_base((XClass*)input);
-        if (decoder) XClass_delete_base((XClass*)decoder);
-        if (wire) XClass_delete_base((XClass*)wire);
-        if (session) XClass_delete_base((XClass*)session);
+        if (headerBlock) XClassDelete((XClass*)headerBlock);
+        if (input) XClassDelete((XClass*)input);
+        if (decoder) XClassDelete((XClass*)decoder);
+        if (wire) XClassDelete((XClass*)wire);
+        if (session) XClassDelete((XClass*)session);
         return false;
     }
     if (tx->m_requestWire)
-        XClass_delete_base((XClass*)tx->m_requestWire);
+        XClassDelete((XClass*)tx->m_requestWire);
     xhttp_manager_reset_http2(tx);
     tx->m_requestWire = wire;
     tx->m_http2Session = session;
@@ -3810,7 +3810,7 @@ static bool xhttp_manager_start_http2(XHttpTransaction* tx)
         if (used) {
             XHttpRequest_setAttribute(tx->m_reply->m_request,
                                       XHttpRequest_Http2WasUsedAttribute, used);
-            XClass_delete_base((XClass*)used);
+            XClassDelete((XClass*)used);
         }
     }
     return true;
@@ -3828,7 +3828,7 @@ static void xhttp_manager_socket_encrypted(XObject* receiver, XVarList* args)
             XContainer_size_base((const XContainer*)negotiated) == 2 &&
             memcmp(XByteArray_constData(negotiated), "h2", 2) == 0);
         if (negotiated)
-            XClass_delete_base((XClass*)negotiated);
+            XClassDelete((XClass*)negotiated);
         if (isHttp2) {
             if (!xhttp_manager_promote_http2(tx))
                 XHttpReply_setError(tx->m_reply,
@@ -3914,7 +3914,7 @@ static void xhttp_manager_socket_error(XObject* receiver, XVarList* args)
         xhttp_manager_shared_http2_fail(connection,
                                         xhttp_manager_map_socket_error(socketError), text);
         if (errorString)
-            XClass_delete_base((XClass*)errorString);
+            XClassDelete((XClass*)errorString);
         return;
     }
     tx = xhttp_manager_find_socket(manager, sender);
@@ -3923,7 +3923,7 @@ static void xhttp_manager_socket_error(XObject* receiver, XVarList* args)
         const char* text = errorString ? XString_toUtf8(errorString) : NULL;
         XHttpReply_setError(tx->m_reply, xhttp_manager_map_socket_error(socketError), text);
         if (errorString)
-            XClass_delete_base((XClass*)errorString);
+            XClassDelete((XClass*)errorString);
     }
 }
 
@@ -3952,7 +3952,7 @@ static void xhttp_manager_reply_finished(XObject* receiver, XVarList* args)
                 XNetworkDiskCache_insert(manager->m_cache, metadata, XHttpReply_body_const(reply));
             }
             if (metadata)
-                XClass_delete_base((XClass*)metadata);
+                XClassDelete((XClass*)metadata);
         }
     }
     if (!tx->m_redirectFinished && xhttp_manager_schedule_redirect_event(tx))
@@ -4147,7 +4147,7 @@ XNetworkAccessManager* XNetworkAccessManager_create_ex(XMemoryType memory)
     if (!self->m_transactions || !self->m_http2Connections || !self->m_cookieJar ||
         !self->m_authenticationCache || !self->m_hstsPolicies ||
         !self->m_hstsStoreDirectory) {
-        XNetworkAccessManager_deinit_base((XClass*)self);
+        XClassDeinit((XClass*)self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -4175,22 +4175,22 @@ static void VXNetworkAccessManager_deinit(XNetworkAccessManager* self)
         xhttp_manager_shared_http2_destroy(connection);
     }
     if (self->m_transactions)
-        XClass_delete_base((XClass*)self->m_transactions);
+        XClassDelete((XClass*)self->m_transactions);
     if (self->m_http2Connections)
-        XClass_delete_base((XClass*)self->m_http2Connections);
+        XClassDelete((XClass*)self->m_http2Connections);
     if (self->m_proxy)
-        XClass_delete_base((XClass*)self->m_proxy);
+        XClassDelete((XClass*)self->m_proxy);
     if (self->m_cookieJar)
-        XClass_delete_base((XClass*)self->m_cookieJar);
+        XClassDelete((XClass*)self->m_cookieJar);
     if (self->m_cache)
-        XClass_delete_base((XClass*)self->m_cache);
+        XClassDelete((XClass*)self->m_cache);
     xhttp_manager_authentication_cache_clear(self);
     if (self->m_authenticationCache)
-        XClass_delete_base((XClass*)self->m_authenticationCache);
+        XClassDelete((XClass*)self->m_authenticationCache);
     if (self->m_hstsPolicies)
         XHstsPolicy_list_free(self->m_hstsPolicies);
     if (self->m_hstsStoreDirectory)
-        XClass_delete_base((XClass*)self->m_hstsStoreDirectory);
+        XClassDelete((XClass*)self->m_hstsStoreDirectory);
     if (self->m_sslCaCertificate)
         XSsl_certificateDestroy(self->m_sslCaCertificate);
     self->m_transactions = NULL;
@@ -4236,7 +4236,7 @@ static XHttpReply* xhttp_manager_send(XNetworkAccessManager* self,
         XHttpRequest_setMethod(requestCopy, XHttpRequest_Delete);
     else if (operation == XNetworkAccessManager_CustomOperation) {
         if (!customMethod || !XHttpRequest_setCustomMethod_bytes(requestCopy, customMethod)) {
-            XClass_delete_base((XClass*)requestCopy);
+            XClassDelete((XClass*)requestCopy);
             return NULL;
         }
     }
@@ -4244,11 +4244,11 @@ static XHttpReply* xhttp_manager_send(XNetworkAccessManager* self,
         self->m_redirectPolicy != XHttpRequest_ManualRedirectPolicy)
         XHttpRequest_setRedirectPolicy(requestCopy, self->m_redirectPolicy);
     if (!xhttp_manager_apply_hsts(self, requestCopy)) {
-        XClass_delete_base((XClass*)requestCopy);
+        XClassDelete((XClass*)requestCopy);
         return NULL;
     }
     if (body && !XHttpRequest_setBody(requestCopy, body)) {
-        XClass_delete_base((XClass*)requestCopy);
+        XClassDelete((XClass*)requestCopy);
         return NULL;
     }
     timeout = XHttpRequest_transferTimeout(requestCopy);
@@ -4258,25 +4258,25 @@ static XHttpReply* xhttp_manager_send(XNetworkAccessManager* self,
     h2cUpgrade = xhttp_manager_request_should_h2c_upgrade(requestCopy) &&
                  !xhttp_manager_find_reusable_http2(self, requestCopy);
     if (h2cUpgrade && !xhttp_manager_prepare_h2c_upgrade(requestCopy)) {
-        XClass_delete_base((XClass*)requestCopy);
+        XClassDelete((XClass*)requestCopy);
         return NULL;
     }
     reply = XHttpReply_create(requestCopy);
     if (!reply) {
-        XClass_delete_base((XClass*)requestCopy);
+        XClassDelete((XClass*)requestCopy);
         return NULL;
     }
     XHttpReply_setDeferAuthentication(reply, true);
     wire = XHttpRequest_toHttp1(requestCopy, true);
-    XClass_delete_base((XClass*)requestCopy);
+    XClassDelete((XClass*)requestCopy);
     if (!wire) {
-        XClass_delete_base((XClass*)reply);
+        XClassDelete((XClass*)reply);
         return NULL;
     }
     tx = (XHttpTransaction*)XMalloc_System(sizeof(XHttpTransaction));
     if (!tx) {
-        XClass_delete_base((XClass*)wire);
-        XClass_delete_base((XClass*)reply);
+        XClassDelete((XClass*)wire);
+        XClassDelete((XClass*)reply);
         return NULL;
     }
     memset(tx, 0, sizeof(*tx));
@@ -4290,7 +4290,7 @@ static XHttpReply* xhttp_manager_send(XNetworkAccessManager* self,
         xhttp_manager_reply_finished, XConnectionType_Direct);
     if (!tx->m_replyFinished || !XVector_push_back_1_base(self->m_transactions, &tx)) {
         xhttp_manager_transaction_destroy(tx);
-        XClass_delete_base((XClass*)reply);
+        XClassDelete((XClass*)reply);
         return NULL;
     }
     if (timeout > 0)
@@ -4305,7 +4305,7 @@ static XHttpReply* xhttp_manager_send(XNetworkAccessManager* self,
     if (!xhttp_manager_start_socket(tx)) {
         xhttp_manager_remove_transaction(self, tx);
         xhttp_manager_transaction_destroy(tx);
-        XClass_delete_base((XClass*)reply);
+        XClassDelete((XClass*)reply);
         return NULL;
     }
     return reply;
@@ -4351,25 +4351,25 @@ XHttpReply* XNetworkAccessManager_postMultipart(XNetworkAccessManager* self,
     requestCopy = XHttpRequest_create_copy(request);
     contentTypeName = XByteArray_create_utf8("Content-Type");
     if (!body || !contentType || !requestCopy || !contentTypeName) {
-        if (body) XClass_delete_base((XClass*)body);
-        if (contentType) XClass_delete_base((XClass*)contentType);
-        if (requestCopy) XClass_delete_base((XClass*)requestCopy);
-        if (contentTypeName) XClass_delete_base((XClass*)contentTypeName);
+        if (body) XClassDelete((XClass*)body);
+        if (contentType) XClassDelete((XClass*)contentType);
+        if (requestCopy) XClassDelete((XClass*)requestCopy);
+        if (contentTypeName) XClassDelete((XClass*)contentTypeName);
         return NULL;
     }
     if (!XHttpHeaders_contains(XHttpRequest_headers_const(requestCopy), contentTypeName) &&
         !XHttpHeaders_replaceOrAppend(XHttpRequest_headers(requestCopy), contentTypeName, contentType)) {
-        XClass_delete_base((XClass*)body);
-        XClass_delete_base((XClass*)contentType);
-        XClass_delete_base((XClass*)requestCopy);
-        XClass_delete_base((XClass*)contentTypeName);
+        XClassDelete((XClass*)body);
+        XClassDelete((XClass*)contentType);
+        XClassDelete((XClass*)requestCopy);
+        XClassDelete((XClass*)contentTypeName);
         return NULL;
     }
     reply = xhttp_manager_send(self, XNetworkAccessManager_PostOperation, requestCopy, body, NULL);
-    XClass_delete_base((XClass*)body);
-    XClass_delete_base((XClass*)contentType);
-    XClass_delete_base((XClass*)requestCopy);
-    XClass_delete_base((XClass*)contentTypeName);
+    XClassDelete((XClass*)body);
+    XClassDelete((XClass*)contentType);
+    XClassDelete((XClass*)requestCopy);
+    XClassDelete((XClass*)contentTypeName);
     return reply;
 }
 
@@ -4454,15 +4454,20 @@ const XSslCertificate* XNetworkAccessManager_sslCaCertificate_const(
 
 bool XNetworkAccessManager_setProxy(XNetworkAccessManager* self, const XNetworkProxy* proxy)
 {
-    XNetworkProxy* replacement = proxy ? XNetworkProxy_copy(proxy) : NULL;
-    if (proxy && !replacement)
-        return false;
+    XNetworkProxy* replacement = NULL;
+    if (proxy)
+    {
+        replacement = XNetworkProxy_create();
+        if (!replacement)
+            return false;
+        XClassCopy(replacement, proxy);
+    }
     if (self && self->m_proxy)
-        XClass_delete_base((XClass*)self->m_proxy);
+        XClassDelete((XClass*)self->m_proxy);
     if (self)
         self->m_proxy = replacement;
     else if (replacement)
-        XClass_delete_base((XClass*)replacement);
+        XClassDelete((XClass*)replacement);
     return self != NULL;
 }
 
@@ -4476,7 +4481,7 @@ bool XNetworkAccessManager_setCookieJar(XNetworkAccessManager* self, XNetworkCoo
     if (!self || self->m_cookieJar == cookieJar)
         return self != NULL;
     if (self->m_cookieJar)
-        XClass_delete_base((XClass*)self->m_cookieJar);
+        XClassDelete((XClass*)self->m_cookieJar);
     self->m_cookieJar = cookieJar;
     return true;
 }
@@ -4491,7 +4496,7 @@ bool XNetworkAccessManager_setCache(XNetworkAccessManager* self, XNetworkDiskCac
     if (!self || self->m_cache == cache)
         return self != NULL;
     if (self->m_cache)
-        XClass_delete_base((XClass*)self->m_cache);
+        XClassDelete((XClass*)self->m_cache);
     self->m_cache = cache;
     return true;
 }
@@ -4536,7 +4541,7 @@ bool XNetworkAccessManager_enableStrictTransportSecurityStore(XNetworkAccessMana
     if (!replacement)
         return false;
     if (self->m_hstsStoreDirectory)
-        XClass_delete_base((XClass*)self->m_hstsStoreDirectory);
+        XClassDelete((XClass*)self->m_hstsStoreDirectory);
     self->m_hstsStoreDirectory = replacement;
     self->m_hstsStoreEnabled = enabled;
     if (enabled)
@@ -4579,7 +4584,7 @@ XVector* XNetworkAccessManager_strictTransportSecurityHosts(const XNetworkAccess
         copy = XHstsPolicy_create_copy(*policy);
         if (!copy || !XVector_push_back_1_base(result, &copy)) {
             if (copy)
-                XClass_delete_base((XClass*)copy);
+                XClassDelete((XClass*)copy);
             XHstsPolicy_list_free(result);
             return NULL;
         }

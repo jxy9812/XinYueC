@@ -142,14 +142,12 @@ bool XStack_resize(XStack* this_stack, size_t new_capacity);
 * @param this_stack 栈实例指针
 * @note 宏定义，释放元素数据，不释放栈实例内存
 */
-#define XStack_deinit_base       XStackBase_deinit_base
 
 /**
 * @brief 删除栈（释放内部资源及实例本身）
 * @param this_stack 栈实例指针
 * @note 宏定义，释放所有资源（包括栈实例内存）
 */
-#define XStack_delete_base       XStackBase_delete_base
 
 /**
 * @brief 清空栈（删除所有元素，保留容量）

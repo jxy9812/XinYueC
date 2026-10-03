@@ -103,7 +103,7 @@ XVtable* XHttp2Connection_class_init(void);
 void XHttp2Connection_init(XHttp2Connection* self);
 /**
  * - @brief 创建默认 HTTP/2 客户端连接。
- * - @return 新建客户端连接；调用者必须使用 XHttp2Connection_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建客户端连接；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 /**
  * - @brief 创建并复制指定 HTTP/2 配置的客户端连接。
@@ -111,8 +111,6 @@ void XHttp2Connection_init(XHttp2Connection* self);
  * - @return 新连接；调用者必须释放；内存不足返回 NULL。
  */
 XHttp2Connection* XHttp2Connection_create_ex(XMemoryType memory, const XHttp2Configuration* configuration);
-#define XHttp2Connection_deinit_base XClass_deinit_base
-#define XHttp2Connection_delete_base XClass_delete_base
 
 /**
  * - @brief 将一个请求加入连接并分配客户端奇数流。

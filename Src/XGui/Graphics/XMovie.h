@@ -105,7 +105,7 @@ void XMovie_init_file_2(XMovie* self, const char* fileName, const char* format);
 /**
  * @brief 创建空堆对象。
  * @param memory 对象使用的内存类型。
- * @return 新对象指针；失败时返回 NULL，调用方使用 XMovie_delete_base 释放。
+ * @return 新对象指针；失败时返回 NULL，调用方使用 XClassDelete 释放。
  */
 XMovie* XMovie_create_ex(XMemoryType memory);
 /**
@@ -150,13 +150,11 @@ XMovie* XMovie_create_file_ex_2(XMemoryType memory, const char* fileName, const 
  * @param self 待释放的对象指针。
  */
 /** @brief 通过 XClass 虚表释放动画资源。 @param self 待释放的动画对象指针。 */
-#define XMovie_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /**
  * @brief 删除堆对象；栈对象只能调用 deinit_base。
  * @param self 待删除的堆对象指针。
  */
 /** @brief 删除堆上的动画对象。 @param self 待删除的动画对象指针。 */
-#define XMovie_delete_base(self) XClass_delete_base((XClass*)(self))
 /** @brief 深拷贝 XMovie；目标未初始化时会先初始化，源对象为空时不执行。 */
 /** @brief 移动 XMovie；目标未初始化时会先初始化，源对象移动后为空。 */
 /** @brief 通过虚表执行深拷贝。 */

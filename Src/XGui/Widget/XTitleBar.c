@@ -153,7 +153,7 @@ static void VXTitleBar_paintEvent(XWidget* self, XEvent* event)
                               &painter, self);
     XPainter_end(&painter);
     XPainter_deinit(&painter);
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
     /* 首帧装饰补拍（原 XWindowDecoration.c draw 尾注迁入）：真机实测首
      * 帧条带只有底色、字形（文本/图标）缺席，交互触发的重绘即自愈、
      * 时间不自愈、偶发首帧即齐（惰性初始化竞态）。按钮字形已改图元直

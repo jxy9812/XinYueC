@@ -68,8 +68,6 @@ void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags);
  * @return 返回对象指针；无效时返回 NULL。
  */
 XDialog* XDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XDialog_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XDialog_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief      启动模态对话框事件循环（对标 QDialog::exec）。

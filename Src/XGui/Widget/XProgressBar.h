@@ -123,9 +123,7 @@ void XProgressBar_init(XProgressBar* self, XWidget* parent, XWidgetFlags flags);
 XProgressBar* XProgressBar_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
 /** @brief 反初始化（宏复用基类 XWidget 的 deinit 入口）。 */
-#define XProgressBar_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
 /** @brief 释放堆对象（宏复用基类 XWidget 的 delete 入口）。 */
-#define XProgressBar_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 父类 XWidget API 宏转发（对齐库内 XRadioButton 惯例） ==================== */
 
@@ -160,7 +158,7 @@ XProgressBar* XProgressBar_create_ex(XMemoryType memory, XWidget* parent, XWidge
 #define XProgressBar_setWindowFlags(self, flags) XWidget_setWindowFlags((XWidget*)(self), (flags))
 #define XProgressBar_updateGeometry(self) XWidget_updateGeometry((XWidget*)(self))
 
-/* 拷贝/移动统一使用 XCopy(dst, src) / XMove(dst, src)（XClass.h 定义，
+/* 拷贝/移动统一使用 XClassCopy(dst, src) / XClassMove(dst, src)（XClass.h 定义，
  * 经 VXProgressBar_copy/move 虚槽多态执行；不再提供 *_copy_base/
  * *_move_base 别名宏）。 */
 

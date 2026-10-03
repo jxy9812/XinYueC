@@ -115,9 +115,9 @@ bool XDeviceNetworkTest_runAll(void)
         XUdpSocket_writeDatagram(&highLevelSender, packet, (int64_t)strlen(packet), &address,
                                   XAbstractSocket_localPort(&highLevelReceiver.base)) != (int64_t)strlen(packet))
         goto cleanup;
-    XClass_deinit_base((XClass*)&highLevelSender);
+    XClassDeinit((XClass*)&highLevelSender);
     highLevelSenderInitialized = false;
-    XClass_deinit_base((XClass*)&highLevelReceiver);
+    XClassDeinit((XClass*)&highLevelReceiver);
     highLevelReceiverInitialized = false;
 #endif
     XVariant_setValue_int(&value, 0);
@@ -171,7 +171,7 @@ bool XDeviceNetworkTest_runAll(void)
     XTcpServer_close(&server);
     if (XTcpServer_isListening(&server))
         goto cleanup;
-    XClass_deinit_base((XClass*)&server);
+    XClassDeinit((XClass*)&server);
     serverInitialized = false;
 #endif
 
@@ -180,17 +180,17 @@ bool XDeviceNetworkTest_runAll(void)
 cleanup:
     if (pollResult) XVarList_delete(pollResult);
 #if XNETWORK_UDPSOCKET_ON
-    if (highLevelSenderInitialized) XClass_deinit_base((XClass*)&highLevelSender);
-    if (highLevelReceiverInitialized) XClass_deinit_base((XClass*)&highLevelReceiver);
+    if (highLevelSenderInitialized) XClassDeinit((XClass*)&highLevelSender);
+    if (highLevelReceiverInitialized) XClassDeinit((XClass*)&highLevelReceiver);
 #endif
 #if XNETWORK_TCPSERVER_ON
-    if (serverInitialized) XClass_deinit_base((XClass*)&server);
+    if (serverInitialized) XClassDeinit((XClass*)&server);
 #endif
     if (senderFd != XFD_INVALID) XDevice_close(senderFd);
     if (fd != XFD_INVALID) XDevice_close(fd);
-    if (loopback) XClass_delete_base((XClass*)loopback);
-    XVariant_deinit_base((XClass*)&value);
-    XHostAddress_deinit_base((XClass*)&address);
+    if (loopback) XClassDelete((XClass*)loopback);
+    XClassDeinit((XClass*)&value);
+    XClassDeinit((XClass*)&address);
     puts(ok ? "XDeviceNetwork test: PASS" : "XDeviceNetwork test: FAIL");
     return ok;
 #endif

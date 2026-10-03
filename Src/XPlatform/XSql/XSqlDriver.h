@@ -82,14 +82,12 @@ void XSqlDriver_init(XSqlDriver* driver, XSqlDriverType driverType, XSqlDbmsType
  * @brief 创建抽象驱动对象。
  * @param driverType 驱动实现类型。
  * @param dbmsType 实际数据库类型。
- * @return 新驱动对象，调用者必须使用 XSqlDriver_delete_base 释放；失败返回 NULL。
+ * @return 新驱动对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlDriver* XSqlDriver_create_ex(XMemoryType memory,  XSqlDriverType driverType, XSqlDbmsType dbmsType);
 
 /** @brief 调用 XClass 析构入口释放驱动对象及其最近错误。 */
-#define XSqlDriver_deinit_base XClass_deinit_base
 /** @brief 释放由具体驱动创建函数返回的驱动对象。 */
-#define XSqlDriver_delete_base XClass_delete_base
 
 /**
  * @brief 获取驱动实现类型。
@@ -118,7 +116,7 @@ bool XSqlDriver_isOpenError(const XSqlDriver* driver);
 /**
  * @brief 获取最近一次错误的副本。
  * @param driver 驱动对象；NULL 返回未知错误对象。
- * @return 新错误对象，调用者必须使用 XSqlError_delete_base 释放。
+ * @return 新错误对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlError* XSqlDriver_lastError(const XSqlDriver* driver);
 /**
@@ -143,21 +141,21 @@ bool XSqlDriver_rollbackTransaction_base(XSqlDriver* driver);
  * @brief 获取数据库表名列表。
  * @param driver 驱动对象；不能为 NULL。
  * @param type 表类型过滤标志，可按位组合。
- * @return 新字符串列表，调用者必须使用 XStringList_delete_base 释放。
+ * @return 新字符串列表，调用者必须使用 XClassDelete 释放。
  */
 XStringList* XSqlDriver_tables_base(const XSqlDriver* driver, XSqlTableType type);
 /**
  * @brief 获取表的主键索引。
  * @param driver 驱动对象；不能为 NULL。
  * @param tableName 表名；借用，函数调用期间有效。
- * @return 新索引对象，调用者必须使用 XSqlIndex_delete_base 释放。
+ * @return 新索引对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlIndex* XSqlDriver_primaryIndex_base(const XSqlDriver* driver, const XString* tableName);
 /**
  * @brief 获取表字段记录描述。
  * @param driver 驱动对象；不能为 NULL。
  * @param tableName 表名；借用，函数调用期间有效。
- * @return 新记录对象，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录对象，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlDriver_record_base(const XSqlDriver* driver, const XString* tableName);
 /**
@@ -165,7 +163,7 @@ XSqlRecord* XSqlDriver_record_base(const XSqlDriver* driver, const XString* tabl
  * @param driver 驱动对象；不能为 NULL。
  * @param field 字段描述；借用，可为 NULL。
  * @param trimStrings 是否去除字符串首尾空白。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlDriver_formatValue_base(const XSqlDriver* driver, const XSqlField* field, bool trimStrings);
 /**
@@ -173,7 +171,7 @@ XString* XSqlDriver_formatValue_base(const XSqlDriver* driver, const XSqlField* 
  * @param driver 驱动对象；不能为 NULL。
  * @param identifier 待转义标识符；借用。
  * @param type 标识符类型。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlDriver_escapeIdentifier_base(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type);
 /**
@@ -183,7 +181,7 @@ XString* XSqlDriver_escapeIdentifier_base(const XSqlDriver* driver, const XStrin
  * @param tableName 目标表名；借用。
  * @param record 字段记录；借用，可为 NULL。
  * @param preparedStatement 是否生成预处理占位符。
- * @return 新 SQL 字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新 SQL 字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlDriver_sqlStatement_base(const XSqlDriver* driver, XSqlStatementType type,
                                       const XString* tableName, const XSqlRecord* record, bool preparedStatement);
@@ -209,7 +207,7 @@ void XSqlDriver_close_base(XSqlDriver* driver);
 /**
  * @brief 创建结果抽象对象。
  * @param driver 驱动对象；不能为 NULL。
- * @return 新结果对象，调用者必须使用 XSqlResult_delete_base 释放；失败返回 NULL。
+ * @return 新结果对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlResult* XSqlDriver_createResult_base(const XSqlDriver* driver);
 /**
@@ -242,7 +240,7 @@ bool XSqlDriver_unsubscribeFromNotification_base(XSqlDriver* driver, const XStri
 /**
  * @brief 获取当前通知订阅名称。
  * @param driver 驱动对象；不能为 NULL。
- * @return 新字符串列表，调用者必须使用 XStringList_delete_base 释放。
+ * @return 新字符串列表，调用者必须使用 XClassDelete 释放。
  */
 XStringList* XSqlDriver_subscribedToNotifications_base(const XSqlDriver* driver);
 /**
@@ -258,7 +256,7 @@ bool XSqlDriver_isIdentifierEscaped_base(const XSqlDriver* driver, const XString
  * @param driver 驱动对象；不能为 NULL。
  * @param identifier 标识符；借用。
  * @param type 标识符类型。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlDriver_stripDelimiters_base(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type);
 /**

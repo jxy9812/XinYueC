@@ -82,14 +82,14 @@ static void VXPlcDevice_deinit(XPlcDevice* dev)
 
     // 释放错误字符串
     if (dev->m_errorString) {
-        XString_delete_base((XClass*)dev->m_errorString);
+        XClassDelete((XClass*)dev->m_errorString);
         dev->m_errorString = NULL;
     }
 
     // 释放参数数组
     for (int i = 0; i < XPlcDevice_ParameterCount; i++) {
         if (dev->m_params[i]) {
-            XVariant_delete_base((XClass*)dev->m_params[i]);
+            XClassDelete((XClass*)dev->m_params[i]);
             dev->m_params[i] = NULL;
         }
     }
@@ -127,7 +127,7 @@ void XPlcDevice_setConnectionParameter(XPlcDevice* dev, XPlcDevice_ConnectionPar
 
     //移动
     if (dev->m_params[parameter]) {
-        XCopy(dev->m_params[parameter], value);
+        XClassCopy(dev->m_params[parameter], value);
     }
     else
     {
@@ -144,7 +144,7 @@ void XPlcDevice_setConnectionParameter_move(XPlcDevice* dev, XPlcDevice_Connecti
 
     //移动
     if (dev->m_params[parameter]) {
-        XMove(dev->m_params[parameter], value);
+        XClassMove(dev->m_params[parameter], value);
     }
     else
     {
@@ -159,7 +159,7 @@ void XPlcDevice_setConnectionParameter_ref(XPlcDevice* dev, XPlcDevice_Connectio
         return;
     }
     if (dev->m_params[parameter]) {
-        XVariant_delete_base((XClass*)dev->m_params[parameter]);
+        XClassDelete((XClass*)dev->m_params[parameter]);
     }
     // 设置新值（引用）
     dev->m_params[parameter] = value;
@@ -236,7 +236,7 @@ void XPlcDevice_setError(XPlcDevice* dev, XPlcDevice_Error error, const char* er
 
     // 释放旧错误字符串
     if (dev->m_errorString) {
-        XString_delete_base((XClass*)dev->m_errorString);
+        XClassDelete((XClass*)dev->m_errorString);
         dev->m_errorString = NULL;
     }
 

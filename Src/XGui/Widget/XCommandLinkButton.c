@@ -109,7 +109,7 @@ static XSize commandlink_computeSizeHint(const XCommandLinkButton* self)
     lineHeight = XPainter_textHeight(&font);
     titleWidth = XPainter_textWidth(&font, title[0] ? title : "XXXX");
     descWidth = XPainter_textWidth(&font, desc);
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
 
     w = COMMANDLINK_MARGIN * 2 + iconSize.width + COMMANDLINK_ICON_SPACING;
     if (titleWidth > w - COMMANDLINK_MARGIN * 2 - COMMANDLINK_ARROW_WIDTH)
@@ -161,7 +161,7 @@ void XCommandLinkButton_setDescription(XCommandLinkButton* self,
     if (!copy)
         return;
     if (self->m_description)
-        XString_delete_base((XClass*)self->m_description);
+        XClassDelete((XClass*)self->m_description);
     self->m_description = copy;
     commandlink_refreshSizeHint(self);
     XWidget_updateGeometry((XWidget*)self);
@@ -179,7 +179,7 @@ void XCommandLinkButton_setDescription_2(XCommandLinkButton* self,
     if (!text)
         return;
     XCommandLinkButton_setDescription(self, text);
-    XString_delete_base((XClass*)text);
+    XClassDelete((XClass*)text);
 }
 
 /* ==================== 尺寸（对标 QCommandLinkButton sizeHint/minimumSizeHint） ==================== */
@@ -360,7 +360,7 @@ xcl_style_label:
                 &(XRect){arrowX, arrowY + k, rowW, 1}, arrowColor);
         }
     }
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
     XPainter_restore(painter);
 }
 
@@ -422,7 +422,7 @@ static void VXCommandLinkButton_copy(XCommandLinkButton* self,
                   void(*)(XPushButton*, const XPushButton*))(
                       (XPushButton*)self, (const XPushButton*)other);
     if (self->m_description) {
-        XString_delete_base((XClass*)self->m_description);
+        XClassDelete((XClass*)self->m_description);
         self->m_description = NULL;
     }
     self->m_description =
@@ -439,7 +439,7 @@ static void VXCommandLinkButton_move(XCommandLinkButton* self,
                   void(*)(XPushButton*, XPushButton*))(
                       (XPushButton*)self, (XPushButton*)other);
     if (self->m_description) {
-        XString_delete_base((XClass*)self->m_description);
+        XClassDelete((XClass*)self->m_description);
         self->m_description = NULL;
     }
     self->m_description = other->m_description;
@@ -450,7 +450,7 @@ static void VXCommandLinkButton_deinit(XCommandLinkButton* self)
 {
     if (!self) return;
     if (self->m_description) {
-        XString_delete_base((XClass*)self->m_description);
+        XClassDelete((XClass*)self->m_description);
         self->m_description = NULL;
     }
     XClass_Deinit_Parent(XPushButton, (XPushButton*)self);

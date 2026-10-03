@@ -475,15 +475,15 @@ static void VX_mdiSubWindow_deinit(XMdiSubWindow* self)
 {
     if (!self) return;
     if (self->m_widget) {
-        XWidget_delete_base(self->m_widget);
+        XClassDelete(self->m_widget);
         self->m_widget = NULL;
     }
     if (self->m_title) {
-        XString_delete_base(self->m_title);
+        XClassDelete(self->m_title);
         self->m_title = NULL;
     }
     if (self->m_systemMenu) {
-        XClass_delete_base((XClass*)self->m_systemMenu);
+        XClassDelete((XClass*)self->m_systemMenu);
         self->m_systemMenu = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -774,9 +774,9 @@ static void VX_mdiArea_deinit(XMdiArea* self)
             XMdiSubWindow** sw =
                 (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
             if (sw && *sw)
-                XClass_delete_base((XClass*)*sw);
+                XClassDelete((XClass*)*sw);
         }
-        XVector_delete_base(self->m_subWindows);
+        XClassDelete(self->m_subWindows);
         self->m_subWindows = NULL;
     }
     XClass_Deinit_Parent(XAbstractScrollArea, (XAbstractScrollArea*)self);
@@ -1116,7 +1116,7 @@ void XMdiSubWindow_setSystemMenu(XMdiSubWindow* self, XMenu* systemMenu)
     if (!self) return;
     if (self->m_systemMenu == systemMenu) return;
     if (self->m_systemMenu)
-        XClass_delete_base((XClass*)self->m_systemMenu);
+        XClassDelete((XClass*)self->m_systemMenu);
     self->m_systemMenu = systemMenu;
 }
 

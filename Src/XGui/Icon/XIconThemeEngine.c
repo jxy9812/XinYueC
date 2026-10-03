@@ -154,9 +154,9 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
         XIconStyleHelper_apply(mode, &pixmap, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XMove(&pixmap, &styled);
+            XClassMove(&pixmap, &styled);
         }
-        XPixmap_deinit_base(&styled);
+        XClassDeinit(&styled);
         if (XPixmap_width(&pixmap) != drawRect->width ||
             XPixmap_height(&pixmap) != drawRect->height) {
             XPixmap_scaled(&pixmap, drawRect->width, drawRect->height,
@@ -180,10 +180,10 @@ static void VXIconThemeEngine_paint(const XIconThemeEngine* self,
         target->m_drawImage(target, &image, drawRect->x, drawRect->y);
 #endif
         if (saved && target->m_restore) target->m_restore(target);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
     }
-    XPixmap_deinit_base(&scaled);
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&scaled);
+    XClassDeinit(&pixmap);
 }
 
 static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
@@ -253,7 +253,7 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
             }
         }
     }
-    XVector_deinit_base((XClass*)&available);
+    XClassDeinit((XClass*)&available);
     /* QIconLoaderEngine::entryForSize() matches the smaller edge of the
        requested rectangle; fixed/threshold entries never exceed it. */
     XPixmap_init(&pixmap);
@@ -282,7 +282,7 @@ static void VXIconThemeEngine_actualSize(const XIconThemeEngine* self,
             out->height = source;
         }
     }
-    XPixmap_deinit_base(&pixmap);
+    XClassDeinit(&pixmap);
 }
 
 static void VXIconThemeEngine_pixmap(const XIconThemeEngine* self,
@@ -390,7 +390,7 @@ static bool VXIconThemeEngine_read(XIconThemeEngine* self, XIODevice* device)
     /* Qt NullCode represents a null QString. */
     if (byteLength == UINT32_MAX) {
         if (self->m_iconName)
-            XString_delete_base((XClass*)self->m_iconName);
+            XClassDelete((XClass*)self->m_iconName);
         self->m_iconName = NULL;
         return true;
     }
@@ -424,7 +424,7 @@ static bool VXIconThemeEngine_read(XIconThemeEngine* self, XIODevice* device)
         }
         name = XString_create();
         if (name && !XString_setUtf16(name, utf16, unitCount)) {
-            XString_delete_base((XClass*)name);
+            XClassDelete((XClass*)name);
             name = NULL;
         }
         XFree_System(raw);
@@ -432,7 +432,7 @@ static bool VXIconThemeEngine_read(XIconThemeEngine* self, XIODevice* device)
         if (!name) return false;
     }
     if (self->m_iconName)
-        XString_delete_base((XClass*)self->m_iconName);
+        XClassDelete((XClass*)self->m_iconName);
     self->m_iconName = name;
     return true;
 }
@@ -555,9 +555,9 @@ static void VXIconThemeEngine_scaledPixmap(const XIconThemeEngine* self,
         XIconStyleHelper_apply(mode, out, &styled);
         if (!XPixmap_isNull(&styled))
         {
-            XMove(out, &styled);
+            XClassMove(out, &styled);
         }
-        XPixmap_deinit_base(&styled);
+        XClassDeinit(&styled);
         {
             float calculated = themeEngine_pixmapDevicePixelRatio(
                 ratio, size->width, size->height, XPixmap_width(out),
@@ -597,7 +597,7 @@ static void VXIconThemeEngine_deinit(XIconThemeEngine* self)
 {
     if (!self) return;
     if (self->m_iconName) {
-        XString_delete_base((XClass*)self->m_iconName);
+        XClassDelete((XClass*)self->m_iconName);
         self->m_iconName = NULL;
     }
     XClass_Deinit_Parent(XIconEngine, (XIconEngine*)self);
@@ -612,7 +612,7 @@ static void VXIconThemeEngine_copy(XIconThemeEngine* self,
                   void(*)(XIconEngine*, const XIconEngine*))(
         (XIconEngine*)self, (const XIconEngine*)other);
     if (self->m_iconName) {
-        XString_delete_base((XClass*)self->m_iconName);
+        XClassDelete((XClass*)self->m_iconName);
         self->m_iconName = NULL;
     }
     self->m_iconName = other->m_iconName
@@ -628,7 +628,7 @@ static void VXIconThemeEngine_move(XIconThemeEngine* self,
                   void(*)(XIconEngine*, XIconEngine*))(
         (XIconEngine*)self, (XIconEngine*)other);
     if (self->m_iconName) {
-        XString_delete_base((XClass*)self->m_iconName);
+        XClassDelete((XClass*)self->m_iconName);
         self->m_iconName = NULL;
     }
     self->m_iconName = other->m_iconName;
@@ -678,7 +678,7 @@ XIconThemeEngine* XIconThemeEngine_create_2_ex(XMemoryType memory,
     XIconThemeEngine* result;
     XString* name = iconName ? XString_create_utf8(iconName) : NULL;
     result = XIconThemeEngine_create_ex(memory, name);
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
     return result;
 }
 
@@ -695,5 +695,5 @@ void XIconThemeEngine_init_2(XIconThemeEngine* self, const char* iconName)
 {
     XString* name = iconName ? XString_create_utf8(iconName) : NULL;
     XIconThemeEngine_init(self, name);
-    if (name) XString_delete_base((XClass*)name);
+    if (name) XClassDelete((XClass*)name);
 }

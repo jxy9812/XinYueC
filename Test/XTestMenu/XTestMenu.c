@@ -111,7 +111,7 @@ bool XTestMenu_removeAction(XTestMenu* menu, XAction* action)
 	if (index == -1)
 		return false;
 	XVector_remove_base(data->actions, index,1);
-	XAction_delete_base(action);
+	XClassDelete(action);
 	return true;
 }
 
@@ -224,9 +224,9 @@ void XTestMenuData_delete(XTestMenuData* data)
 		size_t i;
 		for (i = 0; i < XVector_size_base(data->actions); ++i) {
 			XAction* action = *(XAction**)XVector_at_base(data->actions, (int64_t)i);
-			if (action) XAction_delete_base(action);
+			if (action) XClassDelete(action);
 		}
-		XVector_delete_base(data->actions);
+		XClassDelete(data->actions);
 	}
 	/* XTestMenuData 存放在 XHTreeNode 的内嵌数据区，不是独立堆对象。 */
 }

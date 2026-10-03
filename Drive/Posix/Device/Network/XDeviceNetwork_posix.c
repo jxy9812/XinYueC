@@ -485,7 +485,7 @@ static void syncSocketEndpoints(XDeviceNetworkContext* priv)
         XAbstractSocket_setPeerAddress(socket, &endpoint);
         XAbstractSocket_setPeerPort(socket, port);
     }
-    XHostAddress_deinit_base(&endpoint);
+    XClassDeinit(&endpoint);
 }
 
 /* =========================================================================
@@ -682,7 +682,7 @@ void XDeviceNetwork_deleteContext(XDeviceNetworkContext* priv)
         p->socket = -1;
     }
 
-    XHostAddress_deinit_base(&p->pendingPeerAddr);
+    XClassDeinit(&p->pendingPeerAddr);
     XFree_System(p);
 }
 
@@ -1540,7 +1540,7 @@ struct XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterf
                     XHostAddress_setAddressIPv6(&mask, (const uint8_t*)&sin6->sin6_addr);
                 }
                 XNetworkAddressEntry_setNetmask(&entry, &mask);
-                XHostAddress_deinit_base(&mask);
+                XClassDeinit(&mask);
             }
 
             /* 广播地址 */
@@ -1552,12 +1552,12 @@ struct XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterf
                     XHostAddress_setAddressIPv4(&bcast, ntohl(sin->sin_addr.s_addr));
                 }
                 XNetworkAddressEntry_setBroadcast(&entry, &bcast);
-                XHostAddress_deinit_base(&bcast);
+                XClassDeinit(&bcast);
             }
 
             XVector_push_back_move_1_base(iface->addressEntries, &entry);
-            XNetworkAddressEntry_deinit_base(&entry);
-            XHostAddress_deinit_base(&addr);
+            XClassDeinit(&entry);
+            XClassDeinit(&addr);
         }
         cur = cur->ifa_next;
     }
@@ -1743,7 +1743,7 @@ bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outPr
             XString* host = XString_create_utf8(proxyHost);
             XNetworkProxy_setHostName(outProxy, host);
             XNetworkProxy_setPort(outProxy, proxyPort);
-            XString_delete_base(host);
+            XClassDelete(host);
             return true;
         }
     }
@@ -1887,7 +1887,7 @@ XVector* XDeviceNetwork_lookupName(const XString* name)
     }
     XContainerSetDataMoveMethod(vec, XClass_move_base);
     XContainerSetDataCopyMethod(vec, XClass_copy_base);
-    XContainerSetDataDeinitMethod(vec, XHostAddress_deinit_base);
+    XContainerSetDataDeinitMethod(vec, XClass_deinit_base);
 
     XHostAddress addr;
     XHostAddress_init(&addr);

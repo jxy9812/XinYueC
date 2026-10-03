@@ -168,7 +168,7 @@ void XRegularExpressionMatchIterator_init(XRegularExpressionMatchIterator* itera
 
 /**
  * @brief 创建空正则表达式对象。
- * @return 成功返回堆对象指针，调用者必须使用 XRegularExpression_delete_base 释放；失败返回 NULL。
+ * @return 成功返回堆对象指针，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XRegularExpression* XRegularExpression_create_ex(XMemoryType memory);
 /**
@@ -194,7 +194,7 @@ XRegularExpression* XRegularExpression_create_utf8(const char* pattern,
 
 /**
  * @brief 创建空匹配结果对象。
- * @return 成功返回堆对象指针，调用者必须使用 XRegularExpressionMatch_delete_base 释放；失败返回 NULL。
+ * @return 成功返回堆对象指针，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XRegularExpressionMatch* XRegularExpressionMatch_create_ex(XMemoryType memory);
 /**
@@ -212,7 +212,7 @@ XRegularExpressionMatch* XRegularExpressionMatch_create_move(XRegularExpressionM
 
 /**
  * @brief 创建空全局匹配迭代器。
- * @return 成功返回堆对象指针，调用者必须使用 XRegularExpressionMatchIterator_delete_base 释放；失败返回 NULL。
+ * @return 成功返回堆对象指针，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_ex(XMemoryType memory);
 /**
@@ -227,18 +227,6 @@ XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_copy(con
  * @return 成功返回新堆对象，调用者负责释放；失败返回 NULL，源对象不变。
  */
 XRegularExpressionMatchIterator* XRegularExpressionMatchIterator_create_move(XRegularExpressionMatchIterator* other);
-
-/**
- * @brief 三个正则类的基础生命周期操作宏。
- * @details 宏统一转发到 XClass 虚函数，支持正确调用派生类的 deinit、copy 和 move 重载。
- * @note delete_base 仅用于堆对象；栈对象只调用对应的 deinit_base。
- */
-#define XRegularExpression_deinit_base XClass_deinit_base
-#define XRegularExpression_delete_base XClass_delete_base
-#define XRegularExpressionMatch_deinit_base XClass_deinit_base
-#define XRegularExpressionMatch_delete_base XClass_delete_base
-#define XRegularExpressionMatchIterator_deinit_base XClass_deinit_base
-#define XRegularExpressionMatchIterator_delete_base XClass_delete_base
 
 /* ============================== QRegularExpression 对齐 API ============================== */
 
@@ -363,7 +351,7 @@ int32_t XRegularExpression_compare(const void* left, const void* right);
  * @param offset 匹配起始 UTF-16 code unit 偏移；负数从主题末尾反向计算。
  * @param matchType 匹配方式。
  * @param matchOptions 匹配选项组合。
- * @return 新创建的匹配结果，调用者负责使用 XRegularExpressionMatch_delete_base 释放；分配失败返回 NULL。
+ * @return 新创建的匹配结果，调用者负责使用 XClassDelete 释放；分配失败返回 NULL。
  */
 XRegularExpressionMatch* XRegularExpression_match(const XRegularExpression* expression,
                                                     const XString* subject,
@@ -406,7 +394,7 @@ XRegularExpressionMatch* XRegularExpression_match_utf8(const XRegularExpression*
  * @param offset 第一次匹配起始 UTF-16 code unit 偏移。
  * @param matchType 每次匹配使用的匹配方式。
  * @param matchOptions 每次匹配使用的选项组合。
- * @return 新创建的迭代器，调用者负责使用 XRegularExpressionMatchIterator_delete_base 释放；失败返回 NULL。
+ * @return 新创建的迭代器，调用者负责使用 XClassDelete 释放；失败返回 NULL。
  */
 XRegularExpressionMatchIterator* XRegularExpression_globalMatch(const XRegularExpression* expression,
                                                                   const XString* subject,

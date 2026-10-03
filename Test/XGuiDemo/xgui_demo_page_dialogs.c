@@ -425,7 +425,7 @@ static XMessageBox* dlgpg_ensureMsgBox(DlgPgMsgKind kind)
     {
         XString* windowTitle = XString_create_utf8(title);
         XWidget_setWindowTitle((XWidget*)box, windowTitle);
-        if (windowTitle) XString_delete_base((XClass*)windowTitle);
+        if (windowTitle) XClassDelete((XClass*)windowTitle);
     }
     XMessageBox_setText(box, text);
     XMessageBox_setIcon(box, icon);
@@ -527,7 +527,7 @@ static void dlgpg_inputTrigger(XObject* sender, XVarList* args)
              ok ? "确认" : "取消", shown);
     dlgpg_status(buf);
     if (text)
-        XString_delete_base((XClass*)text); /* 返回副本归调用方释放。 */
+        XClassDelete((XClass*)text); /* 返回副本归调用方释放。 */
 }
 #endif /* DLGPG_INPUT_ON */
 
@@ -555,7 +555,7 @@ static void dlgpg_fileTrigger(XObject* sender, XVarList* args)
              "文件对话框：选中=\"%s\"，过滤器下标=%d", shown, filterIndex);
     dlgpg_status(buf);
     if (file)
-        XString_delete_base((XClass*)file); /* 返回副本归调用方释放。 */
+        XClassDelete((XClass*)file); /* 返回副本归调用方释放。 */
 }
 #endif /* DLGPG_FILE_ON */
 
@@ -579,7 +579,7 @@ static void dlgpg_dirTrigger(XObject* sender, XVarList* args)
     snprintf(buf, sizeof(buf), "目录对话框：选中=\"%s\"", shown);
     dlgpg_status(buf);
     if (dir)
-        XString_delete_base((XClass*)dir);
+        XClassDelete((XClass*)dir);
 }
 #endif /* DLGPG_FILE_ON */
 
@@ -622,7 +622,7 @@ static XProgressDialog* dlgpg_ensureProgress(void)
     text = XString_create_utf8("模拟任务进度");
     if (text) {
         XProgressDialog_setLabelText(progress, text);
-        XString_delete_base((XClass*)text);
+        XClassDelete((XClass*)text);
     }
     /* 进度对话框实例无内嵌 UI（库内现状）：demo 自配百分比标签。 */
     s_dlgpg.m_progressLabel = XLabel_create((XWidget*)progress, 0);
@@ -886,7 +886,7 @@ XWidget* demo_page_dialogs_build(XWidget* parent,
             return NULL;
         content = XWidget_create((XWidget*)scroll, 0);
         if (!content) {
-            XScrollArea_delete_base((XScrollArea*)scroll);
+            XClassDelete((XScrollArea*)scroll);
             return NULL;
         }
         /* 内容定尺 = 行区自然高度（14 + 10 行*50 + 底部余量），比
@@ -1031,10 +1031,10 @@ int demo_page_dialogs_autotest(XWidget* page)
             DLGPG_EXPECT(XDialog_result(&box->m_base) == 0 &&
                          s_dlgpg.m_rejectedCount == 1,
                          "消息框 reject 结果码与 rejected 计数");
-            XMessageBox_delete_base(box); /* 堆对象即测即毁防泄漏。 */
+            XClassDelete(box); /* 堆对象即测即毁防泄漏。 */
         }
         if (boxTitle)
-            XString_delete_base((XClass*)boxTitle);
+            XClassDelete((XClass*)boxTitle);
     }
 
     /* ---- 1b. 对话框 Enter 键派发（§8.0g14 锁定）：open 非阻塞显示
@@ -1066,7 +1066,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             DLGPG_EXPECT(keyEvent != NULL, "Return 键事件构造成功");
             if (keyEvent) {
                 XObject_event_base((XObject*)box, (XEvent*)keyEvent);
-                XEvent_delete_base((XEvent*)keyEvent);
+                XClassDelete((XEvent*)keyEvent);
             }
             DLGPG_EXPECT(!XWidget_isVisible((XWidget*)box) &&
                          XDialog_result(&box->m_base) ==
@@ -1074,7 +1074,7 @@ int demo_page_dialogs_autotest(XWidget* page)
                          s_dlgpg.m_acceptedCount == acceptedBefore + 1,
                          "Return 直发命中默认按钮，result 回填 Ok 位值");
             XWidget_clearFocus((XWidget*)box);
-            XMessageBox_delete_base(box);
+            XClassDelete(box);
         }
     }
 
@@ -1157,7 +1157,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             XDialog_reject(&input->m_base);
             DLGPG_EXPECT(XDialog_result(&input->m_base) == 0,
                          "输入对话框 reject 结果码");
-            XInputDialog_delete_base(input);
+            XClassDelete(input);
         }
     }
 #endif /* DLGPG_INPUT_ON */
@@ -1176,7 +1176,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             XFileDialog_setAcceptMode(file, XFileDialog_AcceptOpen);
             if (filter) {
                 XFileDialog_setNameFilter(file, filter);
-                XString_delete_base((XClass*)filter); /* setter 深拷贝。 */
+                XClassDelete((XClass*)filter); /* setter 深拷贝。 */
             }
             DLGPG_EXPECT(XFileDialog_fileMode(file) ==
                          XFileDialog_ExistingFile,
@@ -1195,38 +1195,38 @@ int demo_page_dialogs_autotest(XWidget* page)
                              strcmp(XString_toUtf8(probe),
                                     "Images (*.png *.jpg)") == 0,
                              "文件对话框过滤器内容回读");
-                XStringList_delete_base((XClass*)filters);
+                XClassDelete((XClass*)filters);
                 filters = NULL;
             }
             probe = XString_create_utf8("demo.txt");
             if (probe) {
                 XFileDialog_selectFile(file, probe);
-                XString_delete_base((XClass*)probe);
+                XClassDelete((XClass*)probe);
             }
             probe = XFileDialog_selectedFile(file); /* 副本归调用方。 */
             DLGPG_EXPECT(probe != NULL &&
                          strcmp(XString_toUtf8(probe), "demo.txt") == 0,
                          "文件对话框 selectedFile 回读");
             if (probe)
-                XString_delete_base((XClass*)probe);
+                XClassDelete((XClass*)probe);
             probe = XString_create_utf8(".");
             if (probe) {
                 XFileDialog_setDirectory(file, probe);
-                XString_delete_base((XClass*)probe);
+                XClassDelete((XClass*)probe);
             }
             probe = XFileDialog_directory(file); /* 副本归调用方。 */
             DLGPG_EXPECT(probe != NULL &&
                          strcmp(XString_toUtf8(probe), ".") == 0,
                          "文件对话框 directory 回读");
             if (probe)
-                XString_delete_base((XClass*)probe);
+                XClassDelete((XClass*)probe);
             XDialog_accept(&file->m_base);
             DLGPG_EXPECT(XDialog_result(&file->m_base) == 1,
                          "文件对话框 accept 结果码");
             XDialog_reject(&file->m_base);
             DLGPG_EXPECT(XDialog_result(&file->m_base) == 0,
                          "文件对话框 reject 结果码");
-            XFileDialog_delete_base(file);
+            XClassDelete(file);
         }
     }
 #endif /* DLGPG_FILE_ON */
@@ -1274,7 +1274,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             XDialog_reject(&color->m_base);
             DLGPG_EXPECT(XDialog_result(&color->m_base) == 0,
                          "颜色对话框 reject 结果码");
-            XColorDialog_delete_base(color);
+            XClassDelete(color);
         }
     }
 #endif /* DLGPG_COLOR_ON */
@@ -1315,7 +1315,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             DLGPG_EXPECT(XProgressDialog_value(progress) == 0 &&
                          !XProgressDialog_wasCanceled(progress),
                          "进度对话框达最大值 autoReset 复位");
-            XProgressDialog_delete_base(progress);
+            XClassDelete(progress);
         }
     }
 #endif /* DLGPG_PROGRESS_ON */
@@ -1367,7 +1367,7 @@ int demo_page_dialogs_autotest(XWidget* page)
             DLGPG_EXPECT(XDialog_result(dialog) == 0 &&
                          s_dlgpg.m_rejectedCount >= 1,
                          "自定义对话框 reject 路径结果码与计数");
-            XDialog_delete_base(dialog); /* 按钮盒随父子链级联释放。 */
+            XClassDelete(dialog); /* 按钮盒随父子链级联释放。 */
         }
     }
 #endif /* DLGPG_CUSTOM_ON */

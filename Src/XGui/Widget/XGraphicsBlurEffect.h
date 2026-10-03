@@ -60,10 +60,6 @@ void XGraphicsBlurEffect_init(XGraphicsBlurEffect* self);
  * @return     新对象指针；失败返回 NULL。
  */
 XGraphicsBlurEffect* XGraphicsBlurEffect_create_ex(XMemoryType memory);
-#define XGraphicsBlurEffect_deinit_base(self) \
-    XGraphicsEffect_deinit_base((XGraphicsEffect*)(self))
-#define XGraphicsBlurEffect_delete_base(self) \
-    XGraphicsEffect_delete_base((XGraphicsEffect*)(self))
 
 /**
  * @brief      获取模糊半径（对标 QGraphicsBlurEffect::blurRadius）。

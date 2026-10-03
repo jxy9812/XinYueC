@@ -56,7 +56,7 @@ XVtable* XHttpPart_class_init(void);
 
 /**
  * - @brief 创建空 MIME 部件。
- * - @return 新部件；调用者必须使用 XHttpPart_delete_base 释放，失败返回 NULL。
+ * - @return 新部件；调用者必须使用 XClassDelete 释放，失败返回 NULL。
  */
 XHttpPart* XHttpPart_create_ex(XMemoryType memory);
 
@@ -84,8 +84,6 @@ void XHttpPart_init(XHttpPart* self);
  * - @brief 反初始化、删除和复制入口。
  * - @details 删除函数释放部件拥有的头和 body，不释放借用的 bodyDevice。
  */
-#define XHttpPart_deinit_base XClass_deinit_base
-#define XHttpPart_delete_base XClass_delete_base
 
 /**
  * - @brief 设置原始 MIME 头。
@@ -194,7 +192,7 @@ XVtable* XHttpMultiPart_class_init(void);
 
 /**
  * - @brief 创建 MixedType multipart。
- * - @return 新对象；调用者必须使用 XHttpMultiPart_delete_base 释放。
+ * - @return 新对象；调用者必须使用 XClassDelete 释放。
  */
 XHttpMultiPart* XHttpMultiPart_create_ex(XMemoryType memory, XHttpMultiPart_ContentType type);
 
@@ -216,8 +214,6 @@ void XHttpMultiPart_init(XHttpMultiPart* self, XHttpMultiPart_ContentType type);
  * - @brief 反初始化和删除入口。
  * - @details 删除函数释放所有已追加部件、boundary 和对象本身。
  */
-#define XHttpMultiPart_deinit_base XClass_deinit_base
-#define XHttpMultiPart_delete_base XClass_delete_base
 #define XHttpMultiPart_deleteLater XObject_deleteLater
 
 /**

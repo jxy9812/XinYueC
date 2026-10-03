@@ -64,7 +64,7 @@ XVtable* XListSLinked_class_init();
 * @brief 创建单链表实例
 * @param typeSize 单个元素的类型大小（字节数）
 * @return 新创建的单链表实例指针，失败返回NULL
-* @note 内部会分配内存并初始化链表，需通过XListSLinked_delete_base释放
+* @note 内部会分配内存并初始化链表，需通过XClassDelete释放
 */
 XListSLinked* XListSLinked_create_ex(XMemoryType memory, size_t typeSize, bool useCow);
 #define XListSLinked_create(typeSize) \
@@ -302,13 +302,11 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize, bool useCow);
 * @param this_list 链表实例指针
 * @note 释放链表内部资源（节点和数据），保留链表实例本身内存，内部调用XListBase实现
 */
-#define XListSLinked_deinit_base			        XListBase_deinit_base	
 /**
 * @brief 删除链表实例
 * @param this_list 链表实例指针
 * @note 先反初始化链表释放内部资源，再释放链表实例本身内存，内部调用XListBase实现
 */
-#define XListSLinked_delete_base			        XListBase_delete_base	
 /**
 * @brief 清空链表所有元素
 * @param this_list 链表实例指针

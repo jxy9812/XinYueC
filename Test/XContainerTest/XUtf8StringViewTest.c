@@ -349,13 +349,13 @@ static void XUtf8StringViewTest_ToString(void)
     XUtf8StringView v = XUtf8StringView_create_cstr("Hello");
     XString* s = XUtf8StringView_toString(&v);
     XPrintf("  toString(): size=%zu (期望 5)\n", XString_length_base(s));
-    XString_delete_base(s);
+    XClassDelete(s);
 
     {
         XUtf8StringView nv = XUtf8StringView_create();
         XString* ns = XUtf8StringView_toString(&nv);
         XPrintf("  toString(null view): isNull=%d (期望 1)\n", ns ? XString_isNull(ns) : 1);
-        XString_delete_base(ns);
+        XClassDelete(ns);
     }
 
     XPrintf("\n");

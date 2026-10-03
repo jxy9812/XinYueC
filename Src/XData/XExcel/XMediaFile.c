@@ -12,12 +12,12 @@
 
 static void delete_string(XString* value)
 {
-    if (value) XString_delete_base(value);
+    if (value) XClassDelete(value);
 }
 
 static void delete_contents(XByteArray* value)
 {
-    if (value) XByteArray_delete_base(value);
+    if (value) XClassDelete(value);
 }
 
 XMediaFile* XMediaFile_create(const XString* fileName)
@@ -114,13 +114,13 @@ void XMediaFile_hashKey(const XMediaFile* self, uint8_t** outKey, size_t* outLen
     size_t digestSize = digest ? XByteArray_size_base(digest) : 0;
     uint8_t* key = digestSize > 0 ? (uint8_t*)XMalloc_System(digestSize) : NULL;
     if (!key) {
-        if (digest) XByteArray_delete_base(digest);
+        if (digest) XClassDelete(digest);
         *outKey = NULL;
         *outLen = 0;
         return;
     }
     memcpy(key, XByteArray_data(digest), digestSize);
-    XByteArray_delete_base(digest);
+    XClassDelete(digest);
     *outKey = key;
     *outLen = digestSize;
 }

@@ -235,7 +235,7 @@ Memory/API continuation update (2026-07-27):
   file driver. The obsolete `XStrdup` declaration and implementation were
   removed from `XString.h/.c`.
 - `XGeometry.c` region storage now uses `XRealloc_System()` and
-  `XFree_System()`. `XClass_delete_base()` still honors custom `FreeMethod`
+  `XFree_System()`. `XClassDelete()` still honors custom `FreeMethod`
   callbacks, but no longer contains a native `free()` call.
 - The embedded xxHash allocation hooks now use `XMalloc_Hybrid()` and
   `XFree_Hybrid()`; no native allocation calls remain in actual `Src` code.

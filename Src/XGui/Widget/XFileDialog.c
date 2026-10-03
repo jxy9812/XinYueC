@@ -71,7 +71,7 @@ static void xff_sortViewUninstall(void);
 static void xfiledialog_freeString(XString** slot)
 {
     if (slot && *slot) {
-        XString_delete_base((XClass*)*slot);
+        XClassDelete((XClass*)*slot);
         *slot = NULL;
     }
 }
@@ -88,7 +88,7 @@ static void xfiledialog_stringSignal_del(XVarList* list)
 {
     XVarList_args_1(list, XString*, text);
     if (text)
-        XString_delete_base((XClass*)text);
+        XClassDelete((XClass*)text);
 }
 
 /** @brief 列表信号参数释放回调：释放列表内拷贝的 XStringList。 */
@@ -96,7 +96,7 @@ static void xfiledialog_listSignal_del(XVarList* list)
 {
     XVarList_args_1(list, XStringList*, files);
     if (files)
-        XStringList_delete_base((XClass*)files);
+        XClassDelete((XClass*)files);
 }
 
 /** @brief 发射携带 XString* 深拷贝的信号；无接收者时释放参数列表。 */
@@ -111,7 +111,7 @@ static void xfiledialog_emitString(XFileDialog* self, size_t signal,
     if (!copy) return;
     args = XVarList_Create(XVar(XString*, copy));
     if (!args) {
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return;
     }
     if (self && ((XObject*)self)->m_signalSlot) {
@@ -137,7 +137,7 @@ static void xfiledialog_emitList(XFileDialog* self, size_t signal,
     if (!copy) return;
     args = XVarList_Create(XVar(XStringList*, copy));
     if (!args) {
-        XStringList_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return;
     }
     if (self && ((XObject*)self)->m_signalSlot) {
@@ -163,30 +163,30 @@ static void VXFileDialog_deinit(XFileDialog* self)
     for (i = 0; i < 5; ++i)
         xfiledialog_freeString(&self->m_labelTexts[i]);
     if (self->m_nameFilters) {
-        XStringList_delete_base((XClass*)self->m_nameFilters);
+        XClassDelete((XClass*)self->m_nameFilters);
         self->m_nameFilters = NULL;
     }
     if (self->m_selectedFiles) {
-        XStringList_delete_base((XClass*)self->m_selectedFiles);
+        XClassDelete((XClass*)self->m_selectedFiles);
         self->m_selectedFiles = NULL;
     }
     xfiledialog_freeString(&self->m_directoryUrl);
     xfiledialog_freeString(&self->m_filter);
     xfiledialog_freeString(&self->m_selectedMimeTypeFilter);
     if (self->m_mimeTypeFilters) {
-        XStringList_delete_base((XClass*)self->m_mimeTypeFilters);
+        XClassDelete((XClass*)self->m_mimeTypeFilters);
         self->m_mimeTypeFilters = NULL;
     }
     if (self->m_history) {
-        XStringList_delete_base((XClass*)self->m_history);
+        XClassDelete((XClass*)self->m_history);
         self->m_history = NULL;
     }
     if (self->m_sidebarUrls) {
-        XStringList_delete_base((XClass*)self->m_sidebarUrls);
+        XClassDelete((XClass*)self->m_sidebarUrls);
         self->m_sidebarUrls = NULL;
     }
     if (self->m_supportedSchemes) {
-        XStringList_delete_base((XClass*)self->m_supportedSchemes);
+        XClassDelete((XClass*)self->m_supportedSchemes);
         self->m_supportedSchemes = NULL;
     }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
@@ -292,7 +292,7 @@ void XFileDialog_setNameFilter(XFileDialog* self, const XString* filter)
                     if (item) {
                         XStringList_push_back_move_base(self->m_nameFilters,
                                                         item);
-                        XString_delete_base((XClass*)item);
+                        XClassDelete((XClass*)item);
                     }
                 }
             }
@@ -327,7 +327,7 @@ void XFileDialog_setNameFilters(XFileDialog* self, const XStringList* filters)
         XString* copy = item ? XString_create_copy(item) : XString_create();
         if (copy) {
             XStringList_push_back_move_base(self->m_nameFilters, copy);
-            XString_delete_base((XClass*)copy);
+            XClassDelete((XClass*)copy);
             copy = NULL;
         }
     }
@@ -353,7 +353,7 @@ XStringList* XFileDialog_nameFilters(const XFileDialog* self)
             XString* copy = XString_create_copy(item);
             if (copy) {
                 XStringList_push_back_move_base(out, copy);
-                XString_delete_base((XClass*)copy);
+                XClassDelete((XClass*)copy);
                 copy = NULL;
             }
         }
@@ -397,7 +397,7 @@ void XFileDialog_selectFile(XFileDialog* self, const XString* filename)
     copy = XString_create_copy(filename);
     if (copy) {
         XStringList_push_back_move_base(self->m_selectedFiles, copy);
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         copy = NULL;
     }
 }
@@ -419,7 +419,7 @@ XStringList* XFileDialog_selectedFiles(const XFileDialog* self)
             XString* copy = XString_create_copy(item);
             if (copy) {
                 XStringList_push_back_move_base(out, copy);
-                XString_delete_base((XClass*)copy);
+                XClassDelete((XClass*)copy);
                 copy = NULL;
             }
         }
@@ -510,7 +510,7 @@ static void xff_setName(XObject* obj, const char* name)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, name);
     XObject_setObjectName(obj, &tmp);
-    XClass_deinit_base((XClass*)&tmp);
+    XClassDeinit((XClass*)&tmp);
 }
 
 /* 子控件 objectName 常量（对标 Qt 对话框私有子对象命名；槽内经
@@ -555,7 +555,7 @@ static XWidget* xff_childByName(XDialog* dlg, const char* name)
     XString_assign_utf8(&tmp, name);
     w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
                                     XFindDirectChildrenOnly);
-    XClass_deinit_base((XClass*)&tmp);
+    XClassDeinit((XClass*)&tmp);
     return w;
 }
 
@@ -1034,7 +1034,7 @@ static bool xff_dirUsable(const XString* dirStr)
     if (!dirStr) return false;
     XDir_init_2(&probe, dirStr);
     ok = XDir_exists_1(&probe);
-    XDir_deinit_base((XClass*)&probe);
+    XClassDeinit((XClass*)&probe);
     return ok;
 }
 
@@ -1054,7 +1054,7 @@ static XString* xff_homeDir(void)
         hs = XString_create_utf8(candidates[i]);
         if (!hs) continue;
         if (xff_dirUsable(hs)) return hs;
-        XString_delete_base((XClass*)hs);
+        XClassDelete((XClass*)hs);
     }
     return NULL;
 }
@@ -1087,14 +1087,14 @@ static XString* xff_typeTextOf(XFileInfo* info)
     suffix = XFileInfo_completeSuffix(info);
     s = suffix ? XString_toUtf8(suffix) : NULL;
     if (!s || !s[0]) {
-        if (suffix) XString_delete_base((XClass*)suffix);
+        if (suffix) XClassDelete((XClass*)suffix);
         return XString_create_utf8("文件");
     }
     for (i = 0; s[i] && i + 1 < sizeof(upper); ++i)
         upper[i] = (s[i] >= 'a' && s[i] <= 'z')
             ? (char)(s[i] - 'a' + 'A') : s[i];
     upper[i] = '\0';
-    XString_delete_base((XClass*)suffix);
+    XClassDelete((XClass*)suffix);
     return XString_create_fmt_utf8("%s 文件", upper);
 }
 
@@ -1110,7 +1110,7 @@ static void xff_appendInfoRow(XStringList* names, XStringList* sizes,
     nm = XFileInfo_fileName(info);
     if (nm) {
         XStringList_push_back_utf8(names, XString_toUtf8(nm));
-        XString_delete_base((XClass*)nm);
+        XClassDelete((XClass*)nm);
     }
     if (sizes) {
         if (XFileInfo_isDir(info))
@@ -1128,7 +1128,7 @@ static void xff_appendInfoRow(XStringList* names, XStringList* sizes,
         tp = xff_typeTextOf(info);
         if (tp) {
             XStringList_push_back_utf8(types, XString_toUtf8(tp));
-            XString_delete_base((XClass*)tp);
+            XClassDelete((XClass*)tp);
         }
     }
 }
@@ -1171,7 +1171,7 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
     if (!*outDirs || !*outFiles) return;
     dir = dirStr ? XDir_create_2(dirStr) : NULL;
     if (dir && !XDir_exists_1(dir)) {
-        XDir_delete_base((XClass*)dir);
+        XClassDelete((XClass*)dir);
         dir = NULL;
     }
     if (!dir) {
@@ -1182,9 +1182,9 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
         XString* home = xff_homeDir();
         if (home) {
             dir = XDir_create_2(home);
-            XString_delete_base((XClass*)home);
+            XClassDelete((XClass*)home);
             if (dir && !XDir_exists_1(dir)) {
-                XDir_delete_base((XClass*)dir);
+                XClassDelete((XClass*)dir);
                 dir = NULL;
             }
         }
@@ -1231,7 +1231,7 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
                               outTypes ? *outTypes : NULL, info);
             if (rawSizes) rawSizes[rawN++] = XFileInfo_size(info);
         }
-        XVector_delete_base(di);
+        XClassDelete(di);
     }
     if (fi) {
         n = XVector_size_base(fi);
@@ -1241,7 +1241,7 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
                               outTypes ? *outTypes : NULL, info);
             if (rawSizes) rawSizes[rawN++] = XFileInfo_size(info);
         }
-        XVector_delete_base(fi);
+        XClassDelete(fi);
     }
     /* 显示序映射按当前排序态产出（NULL=恒等序）；nd/nf 取两表行数。 */
     {
@@ -1268,7 +1268,7 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
         }
     }
     if (rawSizes) XFree_System(rawSizes);
-    XDir_delete_base((XClass*)dir);
+    XClassDelete((XClass*)dir);
 }
 
 /** @brief 拼接目录与名称为路径（'/' 分隔；对标 QDir::filePath 简化）。
@@ -1337,8 +1337,8 @@ static XString* xff_parentOfDepth(const XString* dir, int depth)
                                              XString_toUtf8(cwd),
                                              (int)end, s);
             parent = xff_parentOfDepth(joined, depth + 1);
-            XString_delete_base((XClass*)joined);
-            XString_delete_base((XClass*)cwd);
+            XClassDelete((XClass*)joined);
+            XClassDelete((XClass*)cwd);
             return parent;
         }
         return XString_create_utf8("/");
@@ -1379,8 +1379,8 @@ static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
     *outNames = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     *outPaths = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!*outNames || !*outPaths) {
-        if (*outNames) XStringList_delete_base((XClass*)*outNames);
-        if (*outPaths) XStringList_delete_base((XClass*)*outPaths);
+        if (*outNames) XClassDelete((XClass*)*outNames);
+        if (*outPaths) XClassDelete((XClass*)*outPaths);
         *outNames = NULL;
         *outPaths = NULL;
         return;
@@ -1397,8 +1397,8 @@ static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
         }
         XStringList_push_back_utf8(*outNames, "此电脑");
         XStringList_push_back_utf8(*outPaths, pcRoot ? XString_toUtf8(pcRoot) : "/");
-        if (pcRoot) XString_delete_base((XClass*)pcRoot);
-        if (cwd) XString_delete_base((XClass*)cwd);
+        if (pcRoot) XClassDelete((XClass*)pcRoot);
+        if (cwd) XClassDelete((XClass*)cwd);
     }
     homeStr = xff_homeDir();
     home = homeStr ? XString_toUtf8(homeStr) : NULL;
@@ -1419,17 +1419,17 @@ static void xff_navEntries(XStringList** outNames, XStringList** outPaths)
                 if (XDir_mkpath(&mk, candCopy)) {
                     /* 创建成功：保持显示。 */
                 }
-                XDir_deinit_base((XClass*)&mk);
-                XString_delete_base((XClass*)candCopy);
+                XClassDeinit((XClass*)&mk);
+                XClassDelete((XClass*)candCopy);
             }
         }
         if (xff_dirUsable(cand)) {
             XStringList_push_back_utf8(*outNames, kNames[i]);
             XStringList_push_back_utf8(*outPaths, XString_toUtf8(cand));
         }
-        XString_delete_base((XClass*)cand);
+        XClassDelete((XClass*)cand);
     }
-    XString_delete_base((XClass*)homeStr);
+    XClassDelete((XClass*)homeStr);
 }
 
 /* ---------- 导航窗格高亮同步（交互猎获③） ----------
@@ -1484,8 +1484,8 @@ static void xff_syncNavSelection(XFileDialog* dlg)
     if (!dirUtf8) return;
     xff_navEntries(&names, &paths);
     if (!names || !paths) {
-        if (names) XStringList_delete_base((XClass*)names);
-        if (paths) XStringList_delete_base((XClass*)paths);
+        if (names) XClassDelete((XClass*)names);
+        if (paths) XClassDelete((XClass*)paths);
         return;
     }
     n = XStringList_size_base((const XContainer*)paths);
@@ -1497,8 +1497,8 @@ static void xff_syncNavSelection(XFileDialog* dlg)
             break;
         }
     }
-    XStringList_delete_base((XClass*)names);
-    XStringList_delete_base((XClass*)paths);
+    XClassDelete((XClass*)names);
+    XClassDelete((XClass*)paths);
     if (match >= 0) {
         XAbstractItemView_setCurrentIndex((XAbstractItemView*)nav,
                                           match, 0);
@@ -1641,12 +1641,12 @@ static void xff_refresh(XFileDialog* dlg)
                ? true : false;
     xff_listDir(dlg->m_directory, patterns, dirsOnly, &dirs, &files,
                 &sizes, &types, &orderD, &orderF);
-    XStringList_delete_base((XClass*)patterns);
+    XClassDelete((XClass*)patterns);
     if (!dirs || !files || !sizes || !types) {
-        if (dirs) XStringList_delete_base((XClass*)dirs);
-        if (files) XStringList_delete_base((XClass*)files);
-        if (sizes) XStringList_delete_base((XClass*)sizes);
-        if (types) XStringList_delete_base((XClass*)types);
+        if (dirs) XClassDelete((XClass*)dirs);
+        if (files) XClassDelete((XClass*)files);
+        if (sizes) XClassDelete((XClass*)sizes);
+        if (types) XClassDelete((XClass*)types);
         if (orderD) XFree_System(orderD);
         if (orderF) XFree_System(orderF);
         return;
@@ -1680,10 +1680,10 @@ static void xff_refresh(XFileDialog* dlg)
     }
     if (orderD) XFree_System(orderD);
     if (orderF) XFree_System(orderF);
-    XStringList_delete_base((XClass*)dirs);
-    XStringList_delete_base((XClass*)files);
-    XStringList_delete_base((XClass*)sizes);
-    XStringList_delete_base((XClass*)types);
+    XClassDelete((XClass*)dirs);
+    XClassDelete((XClass*)files);
+    XClassDelete((XClass*)sizes);
+    XClassDelete((XClass*)types);
     /* 填充完成即同步滚动状态（D 路根修：可滚性与滚动条按需出现不再
      * 依赖下一帧 paint；换目录滚动值回顶见 xff_syncViewScroll）。 */
     xff_syncViewScroll(view);
@@ -1729,9 +1729,9 @@ static XString* xff_absPath(const XString* p)
     if (!p) return NULL;
     XDir_init_2(&d, p);
     abs = XDir_absolutePath(&d);
-    XDir_deinit_base((XClass*)&d);
+    XClassDeinit((XClass*)&d);
     if (abs && (!XString_toUtf8(abs) || !XString_toUtf8(abs)[0])) {
-        XString_delete_base((XClass*)abs);
+        XClassDelete((XClass*)abs);
         return NULL;
     }
     return abs;
@@ -1791,8 +1791,8 @@ static void xff_cdEx(XFileDialog* dlg, const XString* path, bool pushHist)
         if (st)
             XStringList_push_back_utf8(st, XString_toUtf8(prev));
     }
-    if (prev) XString_delete_base((XClass*)prev);
-    if (prevAbs) XString_delete_base((XClass*)prevAbs);
+    if (prev) XClassDelete((XClass*)prev);
+    if (prevAbs) XClassDelete((XClass*)prevAbs);
     XFileDialog_directoryEntered_signal(dlg, path);
     /* 目录模式底部「文件夹:」只读框回填新当前目录名（Win10 口径：
      * 换目录后底部随动，点选残留名不跨目录携带）。 */
@@ -1820,7 +1820,7 @@ static void xff_upClicked(XObject* receiver, XVarList* args)
     up = xff_parentOf(dlg->m_directory);
     if (!up) return;
     xff_cd(dlg, up);
-    XString_delete_base((XClass*)up);
+    XClassDelete((XClass*)up);
 }
 
 /** @brief 「←」后退槽：弹栈回上一目录（W10b-1，对标 Qt QFileDialog
@@ -1858,7 +1858,7 @@ static void xff_backClicked(XObject* receiver, XVarList* args)
         XStringList_pop_back_base(st);
         if (target) {
             xff_cdEx(dlg, target, false);
-            XString_delete_base((XClass*)target);
+            XClassDelete((XClass*)target);
         }
     }
     xff_updateBackButton(dlg);
@@ -1880,8 +1880,8 @@ static void xff_navClicked(XObject* receiver, XVarList* args)
     if (row < 0) return;
     xff_navEntries(&names, &paths);
     if (!names || !paths) {
-        if (names) XStringList_delete_base((XClass*)names);
-        if (paths) XStringList_delete_base((XClass*)paths);
+        if (names) XClassDelete((XClass*)names);
+        if (paths) XClassDelete((XClass*)paths);
         return;
     }
     if (row < (int)XStringList_size_base((const XContainer*)paths)) {
@@ -1889,8 +1889,8 @@ static void xff_navClicked(XObject* receiver, XVarList* args)
             (XString*)(void*)XStringList_at_base((const XVector*)paths, row);
         if (item) xff_cd(dlg, item);
     }
-    XStringList_delete_base((XClass*)names);
-    XStringList_delete_base((XClass*)paths);
+    XClassDelete((XClass*)names);
+    XClassDelete((XClass*)paths);
 }
 
 /** @brief 文件列表行激活公共体：行 0 回上级；目录行进入；文件行置入
@@ -1942,12 +1942,12 @@ static void xff_viewRowActivated(XFileDialog* dlg, int row)
     /* sizes/types 一并请求：类型列显示序映射键取自类型平行表。 */
     xff_listDir(dlg->m_directory, patterns, dirsOnly, &dirs, &files,
                 &sizes, &types, &orderD, &orderF);
-    XStringList_delete_base((XClass*)patterns);
+    XClassDelete((XClass*)patterns);
     if (!dirs || !files) {
-        if (dirs) XStringList_delete_base((XClass*)dirs);
-        if (files) XStringList_delete_base((XClass*)files);
-        if (sizes) XStringList_delete_base((XClass*)sizes);
-        if (types) XStringList_delete_base((XClass*)types);
+        if (dirs) XClassDelete((XClass*)dirs);
+        if (files) XClassDelete((XClass*)files);
+        if (sizes) XClassDelete((XClass*)sizes);
+        if (types) XClassDelete((XClass*)types);
         if (orderD) XFree_System(orderD);
         if (orderF) XFree_System(orderF);
         return;
@@ -1956,7 +1956,7 @@ static void xff_viewRowActivated(XFileDialog* dlg, int row)
         XString* up = xff_parentOf(dlg->m_directory);
         if (up) {
             xff_cd(dlg, up);
-            XString_delete_base((XClass*)up);
+            XClassDelete((XClass*)up);
         }
         /* 回上级分支与 else 分支同持 orderD/orderF 显示序映射，补齐配对释放。 */
         if (orderD) XFree_System(orderD);
@@ -1974,9 +1974,9 @@ static void xff_viewRowActivated(XFileDialog* dlg, int row)
                                             XString_toUtf8(item));
                 if (sub) {
                     xff_cd(dlg, sub);
-                    XString_delete_base((XClass*)sub);
+                    XClassDelete((XClass*)sub);
                 }
-                XString_delete_base((XClass*)item);
+                XClassDelete((XClass*)item);
             }
         } else {
             XString* item = xff_nthAccepted(files, row - 1 - ndAcc,
@@ -1988,16 +1988,16 @@ static void xff_viewRowActivated(XFileDialog* dlg, int row)
                     XLineEdit_setText(nameEdit, XString_toUtf8(item));
                 /* 文件双击即确认（对标 QFileDialog 双击文件 accept）。 */
                 xff_acceptSlot((XObject*)dlg, NULL);
-                XString_delete_base((XClass*)item);
+                XClassDelete((XClass*)item);
             }
         }
         if (orderD) XFree_System(orderD);
         if (orderF) XFree_System(orderF);
     }
-    XStringList_delete_base((XClass*)dirs);
-    XStringList_delete_base((XClass*)files);
-    if (sizes) XStringList_delete_base((XClass*)sizes);
-    if (types) XStringList_delete_base((XClass*)types);
+    XClassDelete((XClass*)dirs);
+    XClassDelete((XClass*)files);
+    if (sizes) XClassDelete((XClass*)sizes);
+    if (types) XClassDelete((XClass*)types);
 }
 
 /** @brief 基类单击时间戳锚点：基类按压路径在同一栈内先发 clicked
@@ -2055,7 +2055,7 @@ static void xff_echoTreeRow(XFileDialog* dlg, int row)
             XString* full = xff_joinPath(dlg->m_directory, name);
             if (full) {
                 XLineEdit_setText(nameEdit, XString_toUtf8(full));
-                XString_delete_base((XClass*)full);
+                XClassDelete((XClass*)full);
             }
         }
     }
@@ -2109,7 +2109,7 @@ static void xff_dirActivated(XObject* receiver, XVarList* args)
             XString* p = XString_create_utf8(path);
             if (p) {
                 xff_cd(dlg, p);
-                XString_delete_base((XClass*)p);
+                XClassDelete((XClass*)p);
             }
         }
     }
@@ -2132,7 +2132,7 @@ static void xff_filterActivated(XObject* receiver, XVarList* args)
             if (f) {
                 XFileDialog_selectNameFilter(dlg, f);
                 XFileDialog_filterSelected_signal(dlg, f);
-                XString_delete_base((XClass*)f);
+                XClassDelete((XClass*)f);
             }
         }
     }
@@ -2223,7 +2223,7 @@ static void xff_applySortIndicator(XTreeWidget* view)
     }
     XTreeWidget_setHeaderLabels(view, labels, 3);
     for (c = 0; c < 3; ++c) {
-        if (bufs[c]) XString_delete_base((XClass*)bufs[c]);
+        if (bufs[c]) XClassDelete((XClass*)bufs[c]);
     }
 }
 
@@ -2299,7 +2299,7 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
                 if (xff_dirUsable(sel))
                     chosen = sel;
                 else
-                    XString_delete_base((XClass*)sel);
+                    XClassDelete((XClass*)sel);
             }
         }
         if (!chosen && dlg->m_directory)
@@ -2309,7 +2309,7 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
              * 模式载荷为选定目录）。 */
             XFileDialog_selectFile(dlg, chosen);
             XFileDialog_fileSelected_signal(dlg, chosen);
-            XString_delete_base((XClass*)chosen);
+            XClassDelete((XClass*)chosen);
         }
         XDialog_accept(&dlg->m_base);
         return;
@@ -2335,7 +2335,7 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
             path = xff_joinPath(dlg->m_directory,
                                 withSuffix ? XString_toUtf8(withSuffix)
                                            : name);
-            if (withSuffix) XString_delete_base((XClass*)withSuffix);
+            if (withSuffix) XClassDelete((XClass*)withSuffix);
         } else {
             path = xff_joinPath(dlg->m_directory, name);
         }
@@ -2344,7 +2344,7 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
                 XStringList_clear_base((XContainer*)dlg->m_selectedFiles);
             XFileDialog_selectFile(dlg, path);
             XFileDialog_fileSelected_signal(dlg, path);
-            XString_delete_base((XClass*)path);
+            XClassDelete((XClass*)path);
         }
     }
     XDialog_accept(&dlg->m_base);
@@ -2412,7 +2412,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XString* cwd = XDir_currentPath();
         if (cwd) {
             XFileDialog_setDirectory(dlg, cwd);
-            XString_delete_base((XClass*)cwd);
+            XClassDelete((XClass*)cwd);
         }
     }
     /* 起始目录不可枚举（不存在/不可读，含 currentPath 失败为空）时
@@ -2422,7 +2422,7 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XString* home = xff_homeDir();
         if (home) {
             XFileDialog_setDirectory(dlg, home);
-            XString_delete_base((XClass*)home);
+            XClassDelete((XClass*)home);
         }
     }
     /* 起始目录同样绝对化（demo 便捷路径 "."：首屏地址栏/底部回显/
@@ -2431,13 +2431,13 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
         XString* abs0 = xff_absPath(dlg->m_directory);
         if (abs0) {
             XFileDialog_setDirectory(dlg, abs0);
-            XString_delete_base((XClass*)abs0);
+            XClassDelete((XClass*)abs0);
         }
     }
     ls->root = XBoxLayout_create(XBoxLayoutDirection_TopToBottom,
                                  (XWidget*)dlg);
     if (!ls->root) {
-        XFileDialog_delete_base((XClass*)dlg);
+        XClassDelete((XClass*)dlg);
         return NULL;
     }
     /* Win10 观感：面板白底 + 输入白底（控件级 palette 覆写，见
@@ -2578,8 +2578,8 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
                                 navModel, (int)i, 0, XString_toUtf8(nm));
                     }
                 }
-                if (navNames) XStringList_delete_base((XClass*)navNames);
-                if (navPaths) XStringList_delete_base((XClass*)navPaths);
+                if (navNames) XClassDelete((XClass*)navNames);
+                if (navPaths) XClassDelete((XClass*)navPaths);
             }
             XWidget_setVisible((XWidget*)nav, true);
         }
@@ -2883,14 +2883,14 @@ static void xff_teardown(XFileDialog* dlg, XFFLayouts* ls)
 #if XFILE_ON && XDIR_ON
     xff_sortViewUninstall();
 #endif
-    if (ls->root) XLayout_delete_base((XLayout*)ls->root);
-    if (ls->navRow) XLayout_delete_base((XLayout*)ls->navRow);
-    if (ls->bodyRow) XLayout_delete_base((XLayout*)ls->bodyRow);
-    if (ls->filterRow) XLayout_delete_base((XLayout*)ls->filterRow);
-    if (ls->nameRow) XLayout_delete_base((XLayout*)ls->nameRow);
-    if (ls->bar) XLayout_delete_base((XLayout*)ls->bar);
-    if (dlg) XFileDialog_delete_base((XClass*)dlg);
-    if (ls->navModel) XAbstractItemModel_delete_base((XClass*)ls->navModel);
+    if (ls->root) XClassDelete((XLayout*)ls->root);
+    if (ls->navRow) XClassDelete((XLayout*)ls->navRow);
+    if (ls->bodyRow) XClassDelete((XLayout*)ls->bodyRow);
+    if (ls->filterRow) XClassDelete((XLayout*)ls->filterRow);
+    if (ls->nameRow) XClassDelete((XLayout*)ls->nameRow);
+    if (ls->bar) XClassDelete((XLayout*)ls->bar);
+    if (dlg) XClassDelete((XClass*)dlg);
+    if (ls->navModel) XClassDelete((XClass*)ls->navModel);
     xff_browsingStateReset();
 }
 
@@ -3022,7 +3022,7 @@ XString* XFileDialog_getOpenFileName(XWidget* parent, const XString* caption,
         dlg = xfiledialog_tempSetup(parent, caption, dir, filter, 0);
         if (!dlg) return XString_create();
         result = XString_create();
-        XFileDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return result;
     }
 }
@@ -3056,7 +3056,7 @@ XStringList* XFileDialog_getOpenFileNames(XWidget* parent,
             xfiledialog_tempSetup(parent, caption, dir, filter, 0);
         XStringList* result =
             XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-        if (dlg) XFileDialog_delete_base(dlg);
+        if (dlg) XClassDelete(dlg);
         return result;
     }
 }
@@ -3100,7 +3100,7 @@ XString* XFileDialog_getSaveFileName(XWidget* parent, const XString* caption,
             XDir probe;
             XDir_init_2(&probe, dir);
             dirIsPath = XDir_exists_1(&probe);
-            XDir_deinit_base((XClass*)&probe);
+            XClassDeinit((XClass*)&probe);
             if (!dirIsPath) {
                 /* 非现存目录：按“父目录 + 预填文件名”拆分（对标 Qt
                  * getSaveFileName 传入完整文件路径的行为）。 */
@@ -3124,8 +3124,8 @@ XString* XFileDialog_getSaveFileName(XWidget* parent, const XString* caption,
         if (selectedFilterIndex)
             *selectedFilterIndex = xff_selectedFilterIndex(dlg);
         result = accepted ? xff_firstSelected(dlg) : XString_create();
-        if (startDir) XString_delete_base((XClass*)startDir);
-        if (prefill) XString_delete_base((XClass*)prefill);
+        if (startDir) XClassDelete((XClass*)startDir);
+        if (prefill) XClassDelete((XClass*)prefill);
         xff_teardown(dlg, &ls);
         return result;
 #else
@@ -3140,7 +3140,7 @@ XString* XFileDialog_getSaveFileName(XWidget* parent, const XString* caption,
         if (!dlg) return XString_create();
         if (dlg) XFileDialog_setAcceptMode(dlg, XFileDialog_AcceptSave);
         result = XString_create();
-        XFileDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return result;
     }
 }
@@ -3185,7 +3185,7 @@ XString* XFileDialog_getExistingDirectory(XWidget* parent,
                 /* 已选中：直接采用。 */
             } else {
                 /* 无选中/空串/分配失败统一重造回落值。 */
-                if (result) XString_delete_base((XClass*)result);
+                if (result) XClassDelete((XClass*)result);
                 result = dlg->m_directory
                     ? xfiledialog_dupString(dlg->m_directory)
                     : XString_create();
@@ -3206,7 +3206,7 @@ XString* XFileDialog_getExistingDirectory(XWidget* parent,
                                     (XFileDialogOptions)XFileDialog_ShowDirsOnly);
         if (!dlg) return XString_create();
         result = XString_create();
-        XFileDialog_delete_base(dlg);
+        XClassDelete(dlg);
         return result;
     }
 }
@@ -3316,12 +3316,12 @@ static XByteArray* xff_readAllBytes(const XString* path)
     file = XFile_create_2(path);
     if (!file) return NULL;
     if (!XFile_open_2(file, XIODevice_ReadOnly, 0)) {
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
         return NULL;
     }
     bytes = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     return bytes;
 }
 
@@ -3342,7 +3342,7 @@ static void xff_splitSaveHint(const XString* hint, XString** outDir,
     if (!hint || !(utf = XString_toUtf8(hint)) || !utf[0]) return;
     XDir_init_2(&probe, hint);
     isDir = XDir_exists_1(&probe);
-    XDir_deinit_base((XClass*)&probe);
+    XClassDeinit((XClass*)&probe);
     if (isDir) {
         *outDir = xfiledialog_dupString(hint);
         return;
@@ -3372,8 +3372,8 @@ void XFileDialog_getOpenFileContent(const XString* nameFilter,
         XByteArray* bytes = selected ? xff_readAllBytes(selected) : NULL;
         if (bytes)
             ready(userData, selected, bytes);
-        if (selected) XString_delete_base((XClass*)selected);
-        if (bytes) XByteArray_delete_base((XClass*)bytes);
+        if (selected) XClassDelete((XClass*)selected);
+        if (bytes) XClassDelete((XClass*)bytes);
         xff_teardown(dlg, &ls);
 #endif
     }
@@ -3408,8 +3408,8 @@ void XFileDialog_saveFileContent(const XByteArray* content,
                                  XFileDialog_AcceptSave,
                                  prefill ? XString_toUtf8(prefill) : NULL,
                                  &dlg, &ls);
-        if (startDir) XString_delete_base((XClass*)startDir);
-        if (prefill) XString_delete_base((XClass*)prefill);
+        if (startDir) XClassDelete((XClass*)startDir);
+        if (prefill) XClassDelete((XClass*)prefill);
         /* 首个选中路径须在 teardown 前取（析构后 m_selectedFiles 失效）。 */
         target = accepted ? xff_firstSelected(dlg) : NULL;
         xff_teardown(dlg, &ls);
@@ -3424,9 +3424,9 @@ void XFileDialog_saveFileContent(const XByteArray* content,
                     XIODevice_write_2((XIODevice*)file, content);
                     XIODevice_close_base((XIODevice*)file);
                 }
-                XClass_delete_base((XClass*)file);
+                XClassDelete((XClass*)file);
             }
-            XString_delete_base((XClass*)target);
+            XClassDelete((XClass*)target);
         }
 #endif
     }
@@ -3561,7 +3561,7 @@ void XFileDialog_setMimeTypeFilters(XFileDialog* self,
 {
     if (!self) return;
     if (self->m_mimeTypeFilters)
-        XStringList_delete_base((XClass*)self->m_mimeTypeFilters);
+        XClassDelete((XClass*)self->m_mimeTypeFilters);
     self->m_mimeTypeFilters = filters
         ? XStringList_create_copy(filters) : NULL;
 }
@@ -3591,7 +3591,7 @@ void XFileDialog_setHistory(XFileDialog* self, const XStringList* history)
 {
     if (!self) return;
     if (self->m_history)
-        XStringList_delete_base((XClass*)self->m_history);
+        XClassDelete((XClass*)self->m_history);
     self->m_history = history
         ? XStringList_create_copy(history) : NULL;
 }
@@ -3607,7 +3607,7 @@ void XFileDialog_setSidebarUrls(XFileDialog* self, const XStringList* urls)
 {
     if (!self) return;
     if (self->m_sidebarUrls)
-        XStringList_delete_base((XClass*)self->m_sidebarUrls);
+        XClassDelete((XClass*)self->m_sidebarUrls);
     self->m_sidebarUrls = urls
         ? XStringList_create_copy(urls) : NULL;
 }
@@ -3624,7 +3624,7 @@ void XFileDialog_setSupportedSchemes(XFileDialog* self,
 {
     if (!self) return;
     if (self->m_supportedSchemes)
-        XStringList_delete_base((XClass*)self->m_supportedSchemes);
+        XClassDelete((XClass*)self->m_supportedSchemes);
     self->m_supportedSchemes = schemes
         ? XStringList_create_copy(schemes) : NULL;
 }
@@ -3676,12 +3676,12 @@ static void xfiledialog_setOpaqueRecord(XFileDialog* self,
         if (v) {
             /* setProperty 成功后所有权转移给对象；失败则自回滚防泄漏。 */
             if (!XObject_setProperty((XObject*)self, &key, v))
-                XVariant_delete_base(v);
+                XClassDelete(v);
         }
     } else {
         XObject_removeProperty((XObject*)self, &key);
     }
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
 }
 
 /** @brief 读回一条不透明借用登记；未登记返回 NULL。 */
@@ -3696,7 +3696,7 @@ static void* xfiledialog_opaqueRecord(const XFileDialog* self,
     XString_assign_utf8(&key, keyUtf8);
     v = XObject_property((const XObject*)self, &key);
     if (v) out = XVariant_toPtr(v);
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
     return out;
 }
 

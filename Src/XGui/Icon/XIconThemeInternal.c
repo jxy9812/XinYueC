@@ -109,10 +109,10 @@ static bool theme_loadFile(const char* path, XPixmap* out)
     ok = XPixmap_load_2(&candidate, path, NULL, 0) &&
          !XPixmap_isNull(&candidate);
     if (ok && out) {
-        XMove(out, &candidate);
-        XPixmap_deinit_base(&candidate);
+        XClassMove(out, &candidate);
+        XClassDeinit(&candidate);
     } else {
-        XPixmap_deinit_base(&candidate);
+        XClassDeinit(&candidate);
     }
     return ok;
 }
@@ -127,7 +127,7 @@ static bool theme_fileExists(const char* path)
     fileName = XString_create_utf8(path);
     if (!fileName) return false;
     exists = XFileInfo_exists_static(fileName);
-    XString_delete_base((XClass*)fileName);
+    XClassDelete((XClass*)fileName);
     return exists;
 }
 
@@ -275,8 +275,8 @@ static int64_t theme_fileModified(const char* path, bool* exists)
     modified = present ? XFileInfo_lastModified(info) : XDateTime_create();
     stamp = present ? XDateTime_toSecsSinceEpoch(&modified) : 0;
     if (exists) *exists = present;
-    if (info) XFileInfo_delete_base((XClass*)info);
-    if (fileName) XString_delete_base((XClass*)fileName);
+    if (info) XClassDelete((XClass*)info);
+    if (fileName) XClassDelete((XClass*)fileName);
     return stamp;
 }
 
@@ -437,9 +437,9 @@ static int theme_cacheDirState(const char* root, const char* theme,
     }
     result = 0;
 done:
-    if (bytes) XByteArray_delete_base((XClass*)bytes);
-    if (cacheFile) XClass_delete_base((XClass*)cacheFile);
-    if (cacheName) XString_delete_base((XClass*)cacheName);
+    if (bytes) XClassDelete((XClass*)bytes);
+    if (cacheFile) XClassDelete((XClass*)cacheFile);
+    if (cacheName) XClassDelete((XClass*)cacheName);
     return result;
 }
 
@@ -624,7 +624,7 @@ static void theme_splitComma(const char* value, XStringList* out)
                 if (item) {
                     if (!XString_isEmpty_base((const XContainer*)item))
                         XStringList_push_back_move_base((XVector*)out, item);
-                    XString_delete_base((XClass*)item);
+                    XClassDelete((XClass*)item);
                 }
             }
             if (*p == '\0') break;
@@ -649,7 +649,7 @@ static void theme_stringListClear(XStringList* list)
         XString* item = (XString*)XStringList_at_base(
             (XVector*)list, (int64_t)i);
         if (item)
-            XString_deinit_base((XClass*)item);
+            XClassDeinit((XClass*)item);
     }
     XContainerSize((XContainer*)list) = 0;
 }
@@ -664,7 +664,7 @@ static void theme_stringListDelete(XStringList* list)
 {
     if (!list) return;
     theme_stringListClear(list);
-    XStringList_delete_base((XClass*)list);
+    XClassDelete((XClass*)list);
 }
 
 static void themeContext_init(ThemeContext* self)
@@ -778,13 +778,13 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
     if (!fileName) return false;
     file = XFile_create_2(fileName);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
-        XString_delete_base((XClass*)fileName);
+        if (file) XClassDelete((XClass*)file);
+        XClassDelete((XClass*)fileName);
         return false;
     }
     bytes = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     file = NULL;
     if (!bytes) goto done;
 
@@ -935,8 +935,8 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
     ok = true;
 done:
     if (text) XFree_Hybrid(text);
-    if (bytes) XByteArray_delete_base((XClass*)bytes);
-    if (fileName) XString_delete_base((XClass*)fileName);
+    if (bytes) XClassDelete((XClass*)bytes);
+    if (fileName) XClassDelete((XClass*)fileName);
     return ok;
 }
 
@@ -1403,14 +1403,14 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
                 found = true;
             }
             if (replace) {
-                XMove(best, &candidate);
-                XPixmap_deinit_base(&candidate);
+                XClassMove(best, &candidate);
+                XClassDeinit(&candidate);
                 *bestDistance = 0;
                 *globalFormatPriority = formatPriority;
                 *bestRootIndex = rootIndex;
                 *bestDirIndex = di;
             } else {
-                XPixmap_deinit_base(&candidate);
+                XClassDeinit(&candidate);
             }
         }
     }
@@ -1448,18 +1448,18 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
                 }
             }
             if (replace) {
-                XMove(best, &candidate);
-                XPixmap_deinit_base(&candidate);
+                XClassMove(best, &candidate);
+                XClassDeinit(&candidate);
                 *bestDistance = distance;
                 *globalFormatPriority = formatPriority;
                 *bestRootIndex = rootIndex;
                 *bestDirIndex = di;
                 found = true;
             } else {
-                XPixmap_deinit_base(&candidate);
+                XClassDeinit(&candidate);
             }
         } else {
-            XPixmap_deinit_base(&candidate);
+            XClassDeinit(&candidate);
         }
     }
     return found;
@@ -1521,7 +1521,7 @@ static XStringList* theme_parentsFor(const ThemeContext* ctx,
             name = XString_toUtf8(trimmed);
             if (name && name[0] && XStrcmp(name, "hicolor") != 0)
                 theme_appendUnique(result, name);
-            XString_delete_base((XClass*)trimmed);
+            XClassDelete((XClass*)trimmed);
         }
     }
     if (fallbackTheme && fallbackTheme[0] &&
@@ -1620,21 +1620,21 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
             XPixmap_init(&candidate);
             if (theme_tryTheme(root, theme, name, target, &candidate,
                                &distance) && distance < bestDistance) {
-                XMove(&best, &candidate);
-                XPixmap_deinit_base(&candidate);
+                XClassMove(&best, &candidate);
+                XClassDeinit(&candidate);
                 bestDistance = distance;
                 local = true;
                 if (distance == 0) break;
             } else {
-                XPixmap_deinit_base(&candidate);
+                XClassDeinit(&candidate);
             }
         }
     }
 
     if (local) {
         if (out)
-            XMove(out, &best);
-        XPixmap_deinit_base(&best);
+            XClassMove(out, &best);
+        XClassDeinit(&best);
         theme_visitPop(visited);
         themeContext_deinit(&ctx);
         return true;
@@ -1678,7 +1678,7 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
         }
     }
 
-    XPixmap_deinit_base(&best);
+    XClassDeinit(&best);
     theme_stringListDelete(parents);
     theme_visitPop(visited);
     themeContext_deinit(&ctx);
@@ -1845,11 +1845,11 @@ static bool theme_scaledToSizeRect(XPixmap* pixmap, int targetWidth,
        保持为 18x13，而不是被拉伸成 18x18。 */
     XPixmap_scaled(pixmap, targetWidth, targetHeight, 1, 0, &scaled);
     if (!XPixmap_isNull(&scaled)) {
-        XMove(pixmap, &scaled);
-        XPixmap_deinit_base(&scaled);
+        XClassMove(pixmap, &scaled);
+        XClassDeinit(&scaled);
         return true;
     }
-    XPixmap_deinit_base(&scaled);
+    XClassDeinit(&scaled);
     return false;
 }
 
@@ -2189,7 +2189,7 @@ static bool theme_collectFallbackSizes(const XStringList* paths,
             if (!theme_fileExists(filePath)) continue;
             XPixmap_init(&pixmap);
             if (!theme_loadFile(filePath, &pixmap)) {
-                XPixmap_deinit_base(&pixmap);
+                XClassDeinit(&pixmap);
                 return false;
             }
             size.width = XPixmap_width(&pixmap);
@@ -2207,7 +2207,7 @@ static bool theme_collectFallbackSizes(const XStringList* paths,
                 }
                 if (!duplicate) XVector_push_back_1_base(out, &size);
             }
-            XPixmap_deinit_base(&pixmap);
+            XClassDeinit(&pixmap);
             /* lookupFallbackIcon() stops at the first existing file. */
             return size.width > 0 && size.height > 0;
         }
@@ -2299,16 +2299,16 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
         if (scaleToSize)
             theme_scaledToSizeRect(&best, outputWidth, outputHeight);
         if (out) {
-            XMove(out, &best);
-            XPixmap_deinit_base(&best);
+            XClassMove(out, &best);
+            XClassDeinit(&best);
         } else {
-            XPixmap_deinit_base(&best);
+            XClassDeinit(&best);
         }
     } else {
-        XPixmap_deinit_base(&best);
+        XClassDeinit(&best);
     }
-    if (themeName) XString_delete_base((XClass*)themeName);
-    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    if (themeName) XClassDelete((XClass*)themeName);
+    if (fallbackThemeName) XClassDelete((XClass*)fallbackThemeName);
     theme_stringListDelete(themePaths);
     theme_stringListDelete(fallbackPaths);
     return found;
@@ -2390,8 +2390,8 @@ bool XIconInternal_availableThemeSizes(const char* name, XVector* out)
         found = theme_collectFallbackSizes(fallbackPaths, name, out);
     }
 
-    if (themeName) XString_delete_base((XClass*)themeName);
-    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    if (themeName) XClassDelete((XClass*)themeName);
+    if (fallbackThemeName) XClassDelete((XClass*)fallbackThemeName);
     theme_stringListDelete(themePaths);
     theme_stringListDelete(fallbackPaths);
     return found;
@@ -2429,8 +2429,8 @@ bool XIconInternal_themeHasScalable(const char* name)
                                       NULL, &visited);
     }
 
-    if (themeName) XString_delete_base((XClass*)themeName);
-    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    if (themeName) XClassDelete((XClass*)themeName);
+    if (fallbackThemeName) XClassDelete((XClass*)fallbackThemeName);
     theme_stringListDelete(themePaths);
     theme_stringListDelete(fallbackPaths);
     return found;
@@ -2509,8 +2509,8 @@ bool XIconInternal_themeUsesScalableEntry(const char* name, int size)
     if (!found)
         found = theme_fallbackSelectedType(fallbackPaths, name, &scalable);
 
-    if (themeName) XString_delete_base((XClass*)themeName);
-    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    if (themeName) XClassDelete((XClass*)themeName);
+    if (fallbackThemeName) XClassDelete((XClass*)fallbackThemeName);
     theme_stringListDelete(themePaths);
     theme_stringListDelete(fallbackPaths);
     return found && scalable;
@@ -2550,8 +2550,8 @@ bool XIconInternal_themeHasIcon(const char* name)
     if (!found)
         found = theme_fallbackEntryExists(fallbackPaths, name);
 
-    if (themeName) XString_delete_base((XClass*)themeName);
-    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    if (themeName) XClassDelete((XClass*)themeName);
+    if (fallbackThemeName) XClassDelete((XClass*)fallbackThemeName);
     theme_stringListDelete(themePaths);
     theme_stringListDelete(fallbackPaths);
     return found;
@@ -2634,8 +2634,8 @@ XString* XIconInternal_resolveThemeIconName(const char* name)
     }
 
 resolve_name_done:
-    if (themeName) XString_delete_base((XClass*)themeName);
-    if (fallbackThemeName) XString_delete_base((XClass*)fallbackThemeName);
+    if (themeName) XClassDelete((XClass*)themeName);
+    if (fallbackThemeName) XClassDelete((XClass*)fallbackThemeName);
     theme_stringListDelete(themePaths);
     theme_stringListDelete(fallbackPaths);
     return result;

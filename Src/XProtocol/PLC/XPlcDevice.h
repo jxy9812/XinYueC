@@ -204,7 +204,7 @@ void XPlcDevice_init(XPlcDevice* dev);
   * XVariant* port = XPlcDevice_connectionParameter(device, XPlcDevice_NetworkPortParameter);
   * if (port) {
   *     int portNum = XVariant_toInt(port);
-  *     XVariant_delete_base(port);
+  *     XClassDelete(port);
   * }
   * @endcode
   */
@@ -284,7 +284,7 @@ XPlcDevice_Error XPlcDevice_error(const XPlcDevice* dev);
 /**
  * @brief 获取设备错误描述字符串（深拷贝）
  * @param dev XPlcDevice实例指针
- * @return 错误描述字符串的副本，调用者负责释放（XString_delete_base）
+ * @return 错误描述字符串的副本，调用者负责释放（XClassDelete）
  * @note 无自定义错误串时返回默认错误描述
  */
 XString* XPlcDevice_errorString(const XPlcDevice* dev);

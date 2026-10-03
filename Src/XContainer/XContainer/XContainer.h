@@ -271,13 +271,11 @@ static inline void XContainer_free(const XContainer* object, void* ptr)
 * @brief 销毁操作的基础实现
 * @details 复用基类XClass的销毁逻辑，作为容器销毁的默认实现
 */
-#define XContainer_deinit_base XClass_deinit_base
 
 /**
 * @brief 内存释放的基础实现
 * @details 复用基类XClass的内存释放逻辑，作为容器内存释放的默认实现
 */
-#define XContainer_delete_base XClass_delete_base
 /**
 * @brief 初始化XContainer的虚函数表
 * @details 为容器基类创建并初始化虚函数表，注册各类虚函数实现

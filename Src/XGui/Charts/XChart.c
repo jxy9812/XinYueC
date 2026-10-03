@@ -449,7 +449,7 @@ XVtable* XChart_class_init(void)
  */
 /* 运行期删除入口：系列结构体延迟到事件循环归还后回收
  * （removeSeries/setPieSeries 可能处于系列自身信号发射帧内）；
- * 析构路径(XChart_deinit)仍走同步版。 */
+ * 析构路径(XClassDeinit)仍走同步版。 */
 static void xchart_deleteSeriesByTypeLater(void* series, XChartSeriesType type)
 {
     if (!series) return;
@@ -461,10 +461,10 @@ static void xchart_deleteSeriesByType(void* series, XChartSeriesType type)
     if (!series) return;
     switch (type) {
     case XChartSeriesType_Line:
-        XLineSeries_delete_base((XLineSeries*)series);
+        XClassDelete((XLineSeries*)series);
         break;
     case XChartSeriesType_Area:
-        XAreaSeries_delete_base((XAreaSeries*)series);
+        XClassDelete((XAreaSeries*)series);
         break;
     case XChartSeriesType_Bar:
     case XChartSeriesType_StackedBar:
@@ -472,16 +472,16 @@ static void xchart_deleteSeriesByType(void* series, XChartSeriesType type)
     case XChartSeriesType_HorizontalBar:
     case XChartSeriesType_HorizontalStackedBar:
     case XChartSeriesType_HorizontalPercentBar:
-        XBarSeries_delete_base((XBarSeries*)series);
+        XClassDelete((XBarSeries*)series);
         break;
     case XChartSeriesType_Pie:
-        XPieSeries_delete_base((XPieSeries*)series);
+        XClassDelete((XPieSeries*)series);
         break;
     case XChartSeriesType_Scatter:
-        XScatterSeries_delete_base((XScatterSeries*)series);
+        XClassDelete((XScatterSeries*)series);
         break;
     case XChartSeriesType_Spline:
-        XSplineSeries_delete_base((XSplineSeries*)series);
+        XClassDelete((XSplineSeries*)series);
         break;
     default:
         break;
@@ -548,41 +548,41 @@ static void VXChart_deinit(XChart* self)
     int i;
     if (!self) return;
     if (self->m_title) {
-        XString_delete_base(self->m_title);
+        XClassDelete(self->m_title);
         self->m_title = NULL;
     }
     if (self->m_titleFamily) {
-        XString_delete_base(self->m_titleFamily);
+        XClassDelete(self->m_titleFamily);
         self->m_titleFamily = NULL;
     }
     if (self->m_locale) {
-        XString_delete_base(self->m_locale);
+        XClassDelete(self->m_locale);
         self->m_locale = NULL;
     }
     for (i = 0; i < self->m_lineCount; ++i)
-        if (self->m_lineSeries[i]) XLineSeries_delete_base(self->m_lineSeries[i]);
-    if (self->m_pieSeries) XPieSeries_delete_base(self->m_pieSeries);
+        if (self->m_lineSeries[i]) XClassDelete(self->m_lineSeries[i]);
+    if (self->m_pieSeries) XClassDelete(self->m_pieSeries);
     for (i = 0; i < self->m_barCount; ++i)
-        if (self->m_barSeries[i]) XBarSeries_delete_base(self->m_barSeries[i]);
+        if (self->m_barSeries[i]) XClassDelete(self->m_barSeries[i]);
     for (i = 0; i < self->m_scatterCount; ++i)
-        if (self->m_scatterSeries[i]) XScatterSeries_delete_base(self->m_scatterSeries[i]);
+        if (self->m_scatterSeries[i]) XClassDelete(self->m_scatterSeries[i]);
     for (i = 0; i < self->m_areaCount; ++i)
-        if (self->m_areaSeries[i]) XAreaSeries_delete_base(self->m_areaSeries[i]);
+        if (self->m_areaSeries[i]) XClassDelete(self->m_areaSeries[i]);
     for (i = 0; i < self->m_splineCount; ++i)
-        if (self->m_splineSeries[i]) XSplineSeries_delete_base(self->m_splineSeries[i]);
+        if (self->m_splineSeries[i]) XClassDelete(self->m_splineSeries[i]);
     /* 泛型注册表兜底：登记在册却未进类型化数组的序列（容量静默拒绝、
        BoxPlot/Candlestick 等无类型化槽的类型）随图表析构补释放；
        多态 XClass_delete_base 不依赖注册类型，已释放过的不重复释放。 */
     for (i = 0; i < self->m_seriesCount; ++i) {
         if (self->m_series[i] &&
             !xchart_seriesInTypedArrays(self, self->m_series[i])) {
-            XClass_delete_base((XClass*)self->m_series[i]);
+            XClassDelete((XClass*)self->m_series[i]);
         }
         self->m_series[i] = NULL;
     }
     self->m_seriesCount = 0;
-    if (self->m_axisX) { XValueAxis_deinit_base(self->m_axisX); XFree_System(self->m_axisX); }
-    if (self->m_axisY) { XValueAxis_deinit_base(self->m_axisY); XFree_System(self->m_axisY); }
+    if (self->m_axisX) { XValueAxis_deinit_impl(self->m_axisX); XFree_System(self->m_axisX); }
+    if (self->m_axisY) { XValueAxis_deinit_impl(self->m_axisY); XFree_System(self->m_axisY); }
     if (self->m_zoomStack) XFree_System(self->m_zoomStack);
     self->m_lineCount = 0;
     self->m_barCount = 0;
@@ -598,19 +598,13 @@ static void VXChart_deinit(XChart* self)
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
-void XChart_deinit(XChart* self)
-{
-    if (!self) return;
-    XChart_deinit_base(self);
-}
-
 static void VXChart_copy(XChart* self, const XChart* other)
 {
     if (!self || !other || self == other) return;
     /* 序列与缩放栈不可复制（Qt 同语义：QChart 禁用拷贝构造）。
-       vtable 为空的裸对象上 XChart_deinit 自会优雅返回，init 只跑一次——
+       vtable 为空的裸对象上 XClassDeinit 自会优雅返回，init 只跑一次——
        双重 init 会把首次分配整体清零失联。 */
-    XChart_deinit(self);
+    XClassDeinit(self);
     XChart_init(self);
     XChart_setTitle(self, XChart_title(other));
     self->m_legendVisible = other->m_legendVisible;
@@ -682,7 +676,7 @@ void XChart_setTitle_2(XChart* self, const char* title)
         if (!tmp) return;
     }
     XChart_setTitle(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XChart_title(const XChart* self)
@@ -923,14 +917,14 @@ XChartSeriesType XChart_seriesTypeAt(const XChart* self, int index)
 void XChart_setAxisX(XChart* self, XValueAxis* axis)
 {
     if (!self || !axis || axis == self->m_axisX) return;
-    if (self->m_axisX) { XValueAxis_deinit_base(self->m_axisX); XFree_System(self->m_axisX); }
+    if (self->m_axisX) { XValueAxis_deinit_impl(self->m_axisX); XFree_System(self->m_axisX); }
     self->m_axisX = axis;
 }
 
 void XChart_setAxisY(XChart* self, XValueAxis* axis)
 {
     if (!self || !axis || axis == self->m_axisY) return;
-    if (self->m_axisY) { XValueAxis_deinit_base(self->m_axisY); XFree_System(self->m_axisY); }
+    if (self->m_axisY) { XValueAxis_deinit_impl(self->m_axisY); XFree_System(self->m_axisY); }
     self->m_axisY = axis;
 }
 
@@ -1242,7 +1236,7 @@ void XChart_setTitleFont_2(XChart* self, const char* family, int pixelSize)
         if (!tmp) return;
     }
     XChart_setTitleFont(self, tmp, pixelSize);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XChart_titleFontFamily(const XChart* self)
@@ -1507,7 +1501,7 @@ void XChart_setLocale_2(XChart* self, const char* locale)
         if (!tmp) return;
     }
     XChart_setLocale(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XChart_locale(const XChart* self)

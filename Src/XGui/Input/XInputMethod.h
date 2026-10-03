@@ -156,13 +156,13 @@ XVtable* XInputMethod_class_init(void);
  * @brief      初始化默认状态的 XInputMethod。
  * @details    默认输入项变换为单位矩阵、输入项矩形为零矩形、未绑定平台
  *             输入上下文。
- * @param      self 待初始化对象；必须与 XInputMethod_deinit_base 成对调用。
+ * @param      self 待初始化对象；必须与 XClassDeinit 成对调用。
  */
 void XInputMethod_init(XInputMethod* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建 XInputMethod。
- * @return     新对象指针；失败返回 NULL，调用方用 XInputMethod_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 #define XInputMethod_create() XInputMethod_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
@@ -174,9 +174,7 @@ void XInputMethod_init(XInputMethod* self);
 XInputMethod* XInputMethod_create_ex(XMemoryType memory);
 
 /** @brief 通过 XClass 虚表释放 XInputMethod 资源（栈/外部存储对象使用）。 */
-#define XInputMethod_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XInputMethod 对象。 */
-#define XInputMethod_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 平台上下文绑定（网络层） ==================== */
 
@@ -305,7 +303,7 @@ bool XInputMethod_isAnimating(const XInputMethod* self);
 /**
  * @brief      当前输入区域语言（对标 QInputMethod::locale）。
  * @return     新建 XString（IETF 语言标签，默认 "C"）；调用方用
- *             XString_delete_base 释放。
+ *             XClassDelete 释放。
  */
 XString* XInputMethod_locale(const XInputMethod* self);
 

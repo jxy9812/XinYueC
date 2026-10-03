@@ -91,7 +91,7 @@ static void VXSqlDriver_deinit(XSqlDriver* driver)
 {
     if (!driver) return;
     if (driver->m_open) XSqlDriver_close_base(driver);
-    XSqlError_deinit_base(&driver->m_lastError);
+    XClassDeinit(&driver->m_lastError);
     XClass_Deinit_Parent(XObject, driver);
 }
 
@@ -232,7 +232,7 @@ static XString* VXSqlDriver_formatValue(const XSqlDriver* driver, const XSqlFiel
                 ? XTime_isValid(XVariant_toTime_ref(value))
                 : XDateTime_isValid(XVariant_toDateTime_ref(value));
         if (!valid) {
-            if (value) XVariant_delete_base(value);
+            if (value) XClassDelete(value);
             return XString_create_utf8("NULL");
         }
     }
@@ -240,8 +240,8 @@ static XString* VXSqlDriver_formatValue(const XSqlDriver* driver, const XSqlFiel
     bool blob = valueType == XVariantType_ByteArray;
     if (blob && !XSqlDriver_hasFeature_base(driver, XSqlDriverFeature_Blob)) {
         XString* raw = XVariant_toString(value);
-        if (text) XString_delete_base(text);
-        if (value) XVariant_delete_base(value);
+        if (text) XClassDelete(text);
+        if (value) XClassDelete(value);
         return raw;
     }
     bool quote = value && (XVariant_type(value) == XVariantType_String
@@ -250,19 +250,19 @@ static XString* VXSqlDriver_formatValue(const XSqlDriver* driver, const XSqlFiel
         || XVariant_type(value) == XVariantType_Time
         || XVariant_type(value) == XVariantType_DateTime);
     if (blob) {
-        if (value) XVariant_delete_base(value);
+        if (value) XClassDelete(value);
         return text;
     }
     XString* result = XString_create();
     if (text && trimStrings && valueType == XVariantType_String) {
         XString* trimmed = xsql_driver_trim_right(text);
-        if (trimmed) { XString_delete_base(text); text = trimmed; }
+        if (trimmed) { XClassDelete(text); text = trimmed; }
     }
     if (quote) XString_append_utf8(result, "'");
     if (text) { if (quote) XString_replace_utf8(text, "'", "''", XChar_CaseSensitive); XString_append(result, text); }
     if (quote) XString_append_utf8(result, "'");
-    if (text) XString_delete_base(text);
-    if (value) XVariant_delete_base(value);
+    if (text) XClassDelete(text);
+    if (value) XClassDelete(value);
     return result;
 }
 static XString* VXSqlDriver_escapeIdentifier(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type)
@@ -275,7 +275,7 @@ static XString* VXSqlDriver_sqlStatement(const XSqlDriver* driver, XSqlStatement
     if (!tableName) return XString_create();
     XString* table = XSqlDriver_escapeIdentifier_base(driver, tableName, XSqlIdentifierType_TableName);
     XString* sql = XString_create();
-    if (!table || !sql) { if (table) XString_delete_base(table); if (sql) XString_delete_base(sql); return NULL; }
+    if (!table || !sql) { if (table) XClassDelete(table); if (sql) XClassDelete(sql); return NULL; }
     if (type == XSqlStatementType_WhereStatement) {
         int bound = 0;
         for (int i = 0; record && i < XSqlRecord_count(record); ++i) {
@@ -301,11 +301,11 @@ static XString* VXSqlDriver_sqlStatement(const XSqlDriver* driver, XSqlStatement
                 value = XSqlDriver_formatValue_base(driver, field, false);
                 XString_append_utf8(sql, " = ");
                 if (value) XString_append(sql, value);
-                if (value) XString_delete_base(value);
+                if (value) XClassDelete(value);
             }
-            if (escaped) XString_delete_base(escaped);
-            if (name) XString_delete_base(name);
-            if (field) XSqlField_delete_base(field);
+            if (escaped) XClassDelete(escaped);
+            if (name) XClassDelete(name);
+            if (field) XClassDelete(field);
         }
         if (!bound) XString_clear_base(sql);
     } else if (type == XSqlStatementType_SelectStatement) {
@@ -318,8 +318,8 @@ static XString* VXSqlDriver_sqlStatement(const XSqlDriver* driver, XSqlStatement
             escaped = XSqlDriver_escapeIdentifier_base(driver, name, XSqlIdentifierType_FieldName);
             if (selected++) XString_append_utf8(sql, ", ");
             if (escaped) XString_append(sql, escaped);
-            if (escaped) XString_delete_base(escaped);
-            if (name) XString_delete_base(name);
+            if (escaped) XClassDelete(escaped);
+            if (name) XClassDelete(name);
         }
         if (selected) {
             XString* fields = XString_create_copy(sql);
@@ -327,7 +327,7 @@ static XString* VXSqlDriver_sqlStatement(const XSqlDriver* driver, XSqlStatement
             XString_append_utf8(sql, "SELECT ");
             if (fields) {
                 XString_append(sql, fields);
-                XString_delete_base(fields);
+                XClassDelete(fields);
             }
             XString_append_utf8(sql, " FROM ");
             XString_append(sql, table);
@@ -337,17 +337,17 @@ static XString* VXSqlDriver_sqlStatement(const XSqlDriver* driver, XSqlStatement
     else if (type == XSqlStatementType_InsertStatement) {
         XString_append_utf8(sql, "INSERT INTO "); XString_append(sql, table); XString_append_utf8(sql, " (");
         int bound = 0;
-        for (int i = 0; record && i < XSqlRecord_count(record); ++i) if (XSqlRecord_isGenerated(record, i)) { XString* n = XSqlRecord_fieldName(record, i); XString* e = XSqlDriver_escapeIdentifier_base(driver, n, XSqlIdentifierType_FieldName); if (bound++) XString_append_utf8(sql, ", "); if (e) XString_append(sql, e); if (e) XString_delete_base(e); if (n) XString_delete_base(n); }
-        if (!bound) { XString_clear_base(sql); XString_delete_base(table); return sql; }
+        for (int i = 0; record && i < XSqlRecord_count(record); ++i) if (XSqlRecord_isGenerated(record, i)) { XString* n = XSqlRecord_fieldName(record, i); XString* e = XSqlDriver_escapeIdentifier_base(driver, n, XSqlIdentifierType_FieldName); if (bound++) XString_append_utf8(sql, ", "); if (e) XString_append(sql, e); if (e) XClassDelete(e); if (n) XClassDelete(n); }
+        if (!bound) { XString_clear_base(sql); XClassDelete(table); return sql; }
         XString_append_utf8(sql, ") VALUES ("); bound = 0;
-        for (int i = 0; record && i < XSqlRecord_count(record); ++i) if (XSqlRecord_isGenerated(record, i)) { if (bound++) XString_append_utf8(sql, ", "); if (preparedStatement) XString_append_utf8(sql, "?"); else { XSqlField* f = XSqlRecord_field(record, i); XString* v = VXSqlDriver_formatValue(driver, f, false); if (v) XString_append(sql, v); if (v) XString_delete_base(v); if (f) XSqlField_delete_base(f); } }
+        for (int i = 0; record && i < XSqlRecord_count(record); ++i) if (XSqlRecord_isGenerated(record, i)) { if (bound++) XString_append_utf8(sql, ", "); if (preparedStatement) XString_append_utf8(sql, "?"); else { XSqlField* f = XSqlRecord_field(record, i); XString* v = VXSqlDriver_formatValue(driver, f, false); if (v) XString_append(sql, v); if (v) XClassDelete(v); if (f) XClassDelete(f); } }
         XString_append_utf8(sql, ")");
     } else if (type == XSqlStatementType_UpdateStatement) {
         XString_append_utf8(sql, "UPDATE "); XString_append(sql, table); XString_append_utf8(sql, " SET "); int bound = 0;
-        for (int i = 0; record && i < XSqlRecord_count(record); ++i) if (XSqlRecord_isGenerated(record, i)) { XString* n = XSqlRecord_fieldName(record, i); XString* e = XSqlDriver_escapeIdentifier_base(driver, n, XSqlIdentifierType_FieldName); XSqlField* f = XSqlRecord_field(record, i); if (bound++) XString_append_utf8(sql, ", "); if (e) XString_append(sql, e); if (preparedStatement) XString_append_utf8(sql, "=?"); else { XString* v = XSqlDriver_formatValue_base(driver, f, false); XString_append_utf8(sql, "="); if (v) XString_append(sql, v); if (v) XString_delete_base(v); } if (f) XSqlField_delete_base(f); if (e) XString_delete_base(e); if (n) XString_delete_base(n); }
+        for (int i = 0; record && i < XSqlRecord_count(record); ++i) if (XSqlRecord_isGenerated(record, i)) { XString* n = XSqlRecord_fieldName(record, i); XString* e = XSqlDriver_escapeIdentifier_base(driver, n, XSqlIdentifierType_FieldName); XSqlField* f = XSqlRecord_field(record, i); if (bound++) XString_append_utf8(sql, ", "); if (e) XString_append(sql, e); if (preparedStatement) XString_append_utf8(sql, "=?"); else { XString* v = XSqlDriver_formatValue_base(driver, f, false); XString_append_utf8(sql, "="); if (v) XString_append(sql, v); if (v) XClassDelete(v); } if (f) XClassDelete(f); if (e) XClassDelete(e); if (n) XClassDelete(n); }
         if (!bound) XString_clear_base(sql);
     }
-    XString_delete_base(table);
+    XClassDelete(table);
     return sql;
 }
 static void* VXSqlDriver_handle(const XSqlDriver* driver) { (void)driver; return NULL; }
@@ -359,7 +359,7 @@ static bool VXSqlDriver_open(XSqlDriver* driver, const XString* database, const 
     (void)database; (void)user; (void)password; (void)host; (void)port; (void)options;
     if (!driver) return false;
     XSqlError* error = XSqlError_create_utf8("No SQL driver implementation is registered", NULL, XSqlErrorType_ConnectionError, NULL);
-    if (error) { XSqlDriver_setLastError(driver, error); XSqlError_delete_base(error); }
+    if (error) { XSqlDriver_setLastError(driver, error); XClassDelete(error); }
     driver->m_open = false; driver->m_openError = true; return false;
 }
 static bool VXSqlDriver_subscribe(XSqlDriver* driver, const XString* name) { (void)driver; (void)name; return false; }
@@ -371,7 +371,7 @@ static bool VXSqlDriver_cancelQuery(XSqlDriver* driver) { (void)driver; return f
 static int VXSqlDriver_maximumIdentifierLength(const XSqlDriver* driver, XSqlIdentifierType type) { (void)driver; (void)type; return INT_MAX; }
 static void VXSqlDriver_setOpen(XSqlDriver* driver, bool open) { if (driver) driver->m_open = open; }
 static void VXSqlDriver_setOpenError(XSqlDriver* driver, bool error) { if (driver) { driver->m_openError = error; if (error) driver->m_open = false; } }
-static void VXSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error) { if (driver && error) XCopy(&driver->m_lastError, error); }
+static void VXSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error) { if (driver && error) XClassCopy(&driver->m_lastError, error); }
 
 void* XSqlDriver_notification_signal(XSqlDriver* driver, const XString* name,
                                      XSqlNotificationSource source,

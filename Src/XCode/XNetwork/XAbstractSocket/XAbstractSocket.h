@@ -9,8 +9,8 @@
 //   - 信号函数以 _signal 结尾，返回自身地址，支持 XSignal() 宏
 //   - 参数传递策略：
 //       • 0 参数：data = NULL
-//       • 1 非指针参数：XVariant + XVariant_delete_base
-//       • ≥2 参数：XVariantList + XVariantList_delete_base
+//       • 1 非指针参数：XVariant + XClassDelete
+//       • ≥2 参数：XVariantList + XClassDelete
 //   - 使用 PIMPL 隐藏实现细节
 
 #ifndef XABSTRACTSOCKET_H
@@ -494,7 +494,7 @@ void XAbstractSocket_setSocketError(XAbstractSocket* sock, XAbstractSocket_Socke
  * @brief 初始化一个已分配的 XAbstractSocket 结构体。
  * @param sock 指向未初始化的 XAbstractSocket 实例（必须非 NULL）
  * @param type 套接字类型（如 TcpSocket）
- * @note 调用后可通过 XAbstractSocket_delete_base() 安全析构
+ * @note 调用后可通过 XClassDelete() 安全析构
  * @warning 不要对已初始化的实例重复调用
  */
 void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type);

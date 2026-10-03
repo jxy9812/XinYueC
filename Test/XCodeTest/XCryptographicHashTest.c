@@ -73,7 +73,7 @@ static void test_md5(void)
             XPrintf("Test %d (\"%s\"): ", i + 1, inputs[i][0] ? inputs[i] : "(empty)");
             print_hash_hex("", hash, 16);
             XPrintf("Expected: %s\n", expected[i]);
-            XByteArray_delete_base(result);
+            XClassDelete(result);
         }
     }
 }
@@ -102,7 +102,7 @@ static void test_sha1(void)
             XPrintf("Test %d: ", i + 1);
             print_hash_hex("SHA1", hash, 20);
             XPrintf("Expected: %s\n", expected[i]);
-            XByteArray_delete_base(result);
+            XClassDelete(result);
         }
     }
 }
@@ -130,7 +130,7 @@ static void test_sha256(void)
             XPrintf("Test %d (\"%s\"):\n", i + 1, inputs[i][0] ? inputs[i] : "(empty)");
             print_hash_hex("SHA256", hash, 32);
             XPrintf("Expected: %s\n", expected[i]);
-            XByteArray_delete_base(result);
+            XClassDelete(result);
         }
     }
 }
@@ -158,7 +158,7 @@ static void test_sha512(void)
             XPrintf("Test %d (\"%s\"):\n", i + 1, inputs[i][0] ? inputs[i] : "(empty)");
             print_hash_hex("SHA512", hash, 64);
             XPrintf("Expected: %s\n", expected[i]);
-            XByteArray_delete_base(result);
+            XClassDelete(result);
         }
     }
 }
@@ -174,7 +174,7 @@ static void test_sha3(void)
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("SHA3-256(\"abc\")", hash, 32);
         XPrintf("Expected: 3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532\n");
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
     
     // SHA3-512 测试
@@ -182,7 +182,7 @@ static void test_sha3(void)
     if (result) {
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("SHA3-512(\"abc\")", hash, 64);
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
     
     // 空字符串测试
@@ -191,7 +191,7 @@ static void test_sha3(void)
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("SHA3-256(\"\")", hash, 32);
         XPrintf("Expected: a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a\n");
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
 }
 
@@ -206,7 +206,7 @@ static void test_keccak(void)
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("Keccak-256(\"abc\")", hash, 32);
         XPrintf("Expected: 4e03657aea45a94fc7d47ba826c8d667c0d1e6e33a64a036ec44f58fa12d6c45\n");
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
     
     // Keccak-512 测试
@@ -214,7 +214,7 @@ static void test_keccak(void)
     if (result) {
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("Keccak-512(\"abc\")", hash, 64);
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
 }
 
@@ -230,7 +230,7 @@ static void test_blake2b(void)
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("Blake2b-256(\"abc\")", hash, 32);
         XPrintf("Expected: bddd813c634239723171ef3fee98579b94964e3bb1cb3e427262c8c068d52319\n");
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
     
     // Blake2b-512
@@ -238,7 +238,7 @@ static void test_blake2b(void)
     if (result) {
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("Blake2b-512(\"abc\")", hash, 64);
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
 }
 
@@ -253,7 +253,7 @@ static void test_blake2s(void)
     if (result) {
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("Blake2s-256(\"abc\")", hash, 32);
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
     
     // Blake2s-128
@@ -261,7 +261,7 @@ static void test_blake2s(void)
     if (result) {
         const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
         print_hash_hex("Blake2s-128(\"abc\")", hash, 16);
-        XByteArray_delete_base(result);
+        XClassDelete(result);
     }
 }
 
@@ -280,7 +280,7 @@ static void test_incremental_hashing(void)
             const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
             print_hash_hex("SHA256(\"Hello, World!\")", hash, 32);
             XPrintf("Expected: dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f\n");
-            XByteArray_delete_base(result);
+            XClassDelete(result);
         }
         
         // 测试 reset
@@ -290,7 +290,7 @@ static void test_incremental_hashing(void)
         if (result) {
             const uint8_t* hash = (const uint8_t*)XByteArray_data(result);
             print_hash_hex("SHA256(\"New data\")", hash, 32);
-            XByteArray_delete_base(result);
+            XClassDelete(result);
         }
         
         XCryptographicHash_delete(ctx);
@@ -356,7 +356,7 @@ static void test_fast_hashes(void)
     assert(function && function(input, 3) == expectedXxHash64);
     assert(digest && XByteArray_size_base(digest) == 8 &&
            read_u64_le((const uint8_t*)XByteArray_data(digest)) == expectedXxHash64);
-    XByteArray_delete_base(digest);
+    XClassDelete(digest);
 
     assert(XCryptographicHash_value(input, 3, XCryptographicHash_Fnv1a_64) ==
            expectedFnv1a64);
@@ -383,7 +383,7 @@ static void test_fast_hashes(void)
             assert(read_u64_le((const uint8_t*)XByteArray_data(fastDigest)) ==
                    value);
         }
-        XByteArray_delete_base(fastDigest);
+        XClassDelete(fastDigest);
     }
     assert(XCryptographicHash_hash(input, 3, XCryptographicHash_SipHash24) == NULL);
 
@@ -433,8 +433,8 @@ static void test_copy_move(void)
         }
     }
     
-    if (result1) XByteArray_delete_base(result1);
-    if (result2) XByteArray_delete_base(result2);
+    if (result1) XClassDelete(result1);
+    if (result2) XClassDelete(result2);
     
     // 测试移动 - 使用栈对象
     XCryptographicHash moved;

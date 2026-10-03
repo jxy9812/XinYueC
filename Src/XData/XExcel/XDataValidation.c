@@ -43,14 +43,14 @@ static void assign_optional_string(XString** target, const XString* value)
 {
     if (!target) return;
     if (!value) {
-        if (*target) XString_delete_base(*target);
+        if (*target) XClassDelete(*target);
         *target = NULL;
         return;
     }
 
     XString* copy = XString_create_copy(value);
     if (!copy) return;
-    if (*target) XString_delete_base(*target);
+    if (*target) XClassDelete(*target);
     *target = copy;
 }
 
@@ -133,14 +133,14 @@ XDataValidation* XDataValidation_copy(const XDataValidation* other)
 void XDataValidation_delete(XDataValidation* self)
 {
     if (!self) return;
-    if (self->m_formula1) { XString_delete_base(self->m_formula1);  }
-    if (self->m_formula2) { XString_delete_base(self->m_formula2);  }
-    if (self->m_errorMessage) { XString_delete_base(self->m_errorMessage);  }
-    if (self->m_errorMessageTitle) { XString_delete_base(self->m_errorMessageTitle); }
-    if (self->m_promptMessage) { XString_delete_base(self->m_promptMessage); }
-    if (self->m_promptMessageTitle) { XString_delete_base(self->m_promptMessageTitle);  }
+    if (self->m_formula1) { XClassDelete(self->m_formula1);  }
+    if (self->m_formula2) { XClassDelete(self->m_formula2);  }
+    if (self->m_errorMessage) { XClassDelete(self->m_errorMessage);  }
+    if (self->m_errorMessageTitle) { XClassDelete(self->m_errorMessageTitle); }
+    if (self->m_promptMessage) { XClassDelete(self->m_promptMessage); }
+    if (self->m_promptMessageTitle) { XClassDelete(self->m_promptMessageTitle);  }
     if (self->m_ranges) {
-        XVector_delete_base(self->m_ranges);
+        XClassDelete(self->m_ranges);
     }
     XFree_System(self);
 }

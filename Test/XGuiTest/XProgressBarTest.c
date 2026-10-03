@@ -116,7 +116,7 @@ bool XProgressBarTest_runAll(void)
     xp_expect(strcmp(text, "50%") == 0, "resetFormat 后文本为百分比");
 
 
-    XProgressBar_delete_base(bar);
+    XClassDelete(bar);
 
     {
         int failures = xp_failures;

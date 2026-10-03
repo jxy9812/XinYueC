@@ -35,9 +35,7 @@ void XFontBitmapFace_initFile(XFontBitmapFace* self);
 XVtable* XFontBitmapFace_class_init(void);
 
 /** @brief 通过 XClass 虚表反初始化点阵 face。 */
-#define XFontBitmapFace_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 通过 XClass 虚表删除堆上的点阵 face。 */
-#define XFontBitmapFace_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief 注册一个点阵 provider，并接入 XFontFace 解析表。 */
 bool XFontBitmapFace_registerProvider(const XFontBitmapProvider* provider);

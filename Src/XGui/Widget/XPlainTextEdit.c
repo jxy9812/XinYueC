@@ -765,7 +765,7 @@ static void xpe_syncControlFont(XPlainTextEdit* self)
     if (!self || !self->m_control) return;
     font = XWidget_font((XWidget*)self);
     XTextControl_setFont(self->m_control, &font);
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
 }
 
 /**
@@ -1143,7 +1143,7 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
         XString_toUtf8(edit->m_placeholder)[0] != 0) {
         XFont font = XWidget_font(self);
         XPainter_setFont(&painter, &font);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
         XPainter_drawText(&painter, 4, 14,
                           XString_toUtf8(edit->m_placeholder), placeholder);
     }
@@ -1254,7 +1254,7 @@ static void VX_plainTextEdit_deinit(XPlainTextEdit* self)
     xpe_autoScrollStop(self);
     if (self->m_control) {
         /* 行存储/撤销栈/文档镜像/锚点等所有权在控制器，随其销毁。 */
-        XClass_delete_base((XClass*)self->m_control);
+        XClassDelete((XClass*)self->m_control);
         self->m_control = NULL;
     }
     if (self->m_lines) {
@@ -1264,28 +1264,28 @@ static void VX_plainTextEdit_deinit(XPlainTextEdit* self)
             char** item = (char**)XVector_at_base(self->m_lines, i);
             if (item && *item) XFree_System(*item);
         }
-        XVector_delete_base(self->m_lines);
+        XClassDelete(self->m_lines);
         self->m_lines = NULL;
     }
     if (self->m_undoStack) {
-        XVector_delete_base(self->m_undoStack);
+        XClassDelete(self->m_undoStack);
         self->m_undoStack = NULL;
     }
     if (self->m_redoStack) {
-        XVector_delete_base(self->m_redoStack);
+        XClassDelete(self->m_redoStack);
         self->m_redoStack = NULL;
     }
     if (self->m_placeholder) {
-        XString_delete_base(self->m_placeholder);
+        XClassDelete(self->m_placeholder);
         self->m_placeholder = NULL;
     }
     if (self->m_documentTitle) {
-        XString_delete_base(self->m_documentTitle);
+        XClassDelete(self->m_documentTitle);
         self->m_documentTitle = NULL;
     }
     if (self->m_extraSelCache) {
         /* 条目为纯值结构，无堆内成员，整体销毁即可。 */
-        XVector_delete_base(self->m_extraSelCache);
+        XClassDelete(self->m_extraSelCache);
         self->m_extraSelCache = NULL;
     }
     XClass_Deinit_Parent(XAbstractScrollArea, (XAbstractScrollArea*)self);
@@ -1364,7 +1364,7 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
         /* setFont 深拷贝字体（含 m_family/m_styleName），壳的深拷贝副本
            用完即释放。 */
         XTextControl_setFont(self->m_control, &font);
-        XFont_deinit_base((XClass*)&font);
+        XClassDeinit((XClass*)&font);
         /* 换行开关/断行规则下发控制器（折行行为由控制器承载）。 */
         XTextControl_setLineWrapMode(self->m_control, self->m_wrapMode);
         XTextControl_setWordWrapMode(self->m_control, self->m_wordWrapMode);
@@ -2077,7 +2077,7 @@ static void xpe_zoomApply(XPlainTextEdit* self, int delta)
     XFont_setPixelSize(&font, px);
     XWidget_setFont((XWidget*)self, &font);
     XTextControl_setFont(self->m_control, &font);
-    XFont_deinit_base((XClass*)&font);
+    XClassDeinit((XClass*)&font);
 }
 
 void XPlainTextEdit_zoomIn(XPlainTextEdit* self, int range)

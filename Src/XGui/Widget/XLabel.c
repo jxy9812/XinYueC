@@ -362,7 +362,7 @@ static bool label_byteToControlPoint(const XLabel* self, int byte,
                                 ctl->m_lines[line].data ?
                                     ctl->m_lines[line].data : "",
                                 0, col);
-    XClass_deinit_base((XClass*)&font); /* 显式转换：与本文件既有告警口径解耦 */
+    XClassDeinit((XClass*)&font); /* 显式转换：与本文件既有告警口径解耦 */
     if (x < 0) x = 0;
     out->x = x;
     out->y = line * (ctl->m_lineHeight > 0 ? ctl->m_lineHeight : 1);
@@ -511,7 +511,7 @@ static int label_pixelSize(const XLabel* self)
     info.m_rowBytes = 1;
     (void)label_faceBitmapInfo(&f, &info);
     px = XFont_bitmapPixelSize(&f, info.m_height);
-    XFont_deinit_base(&f);
+    XClassDeinit(&f);
     return px;
 }
 
@@ -531,7 +531,7 @@ static XFontBitmapInfo label_bitmapInfo(const XLabel* self)
         return info;
     f = XWidget_font((XWidget*)self);
     (void)label_faceBitmapInfo(&f, &info);
-    XFont_deinit_base(&f);
+    XClassDeinit(&f);
     return info;
 }
 
@@ -550,7 +550,7 @@ static float label_scale(const XLabel* self)
     (void)label_faceBitmapInfo(&f, &info);
     sc = (float)(XFont_pixelSize(&f) > 0 ? XFont_pixelSize(&f) : info.m_height) /
          (float)(info.m_height > 0 ? info.m_height : 1);
-    XFont_deinit_base(&f);
+    XClassDeinit(&f);
     return sc;
 }
 
@@ -615,7 +615,7 @@ static void label_linkSignal_del(XVarList* list)
 {
     XVarList_args_1(list, XString*, link);
     if (link)
-        XString_delete_base((XClass*)link);
+        XClassDelete((XClass*)link);
 }
 
 /** @brief 发射携带 XString* 的链接信号；无接收者时释放参数列表。 */
@@ -628,7 +628,7 @@ static void label_emitLinkSignal(XLabel* self, size_t signal,
     if (!copy) return;
     args = XVarList_Create(XVar(XString*, copy));
     if (!args) {
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return;
     }
     if (self && ((XObject*)self)->m_signalSlot)
@@ -648,7 +648,7 @@ static void label_emitHoverLeave(XLabel* self)
     empty = XString_create();
     if (!empty) return;
     label_emitLinkSignal(self, (size_t)XLabel_linkHovered_signal, empty);
-    XString_delete_base((XClass*)empty);
+    XClassDelete((XClass*)empty);
 }
 
 /**
@@ -669,7 +669,7 @@ static void label_linkHoveredForward(XObject* receiver, XVarList* args)
         XCursor cursor;
         if (s) {
             XLabel_linkHovered_signal(label, s);
-            XString_delete_base((XClass*)s);
+            XClassDelete((XClass*)s);
         }
         XCursor_init(&cursor);
         XCursor_setShape(&cursor, XCursor_PointingHand);
@@ -698,7 +698,7 @@ static void label_connectTextControl(XLabel* self)
  * @brief      控制器字体去堆家族（规避 XTextControl_size 的已知缺陷）。
  * @details    缺口登记（XTextControl.c:3499-3506，本次不得改动控制器）：
  *             XTextControl_size 以 XMemcpy 浅拷贝 m_font 后调用
- *             XFont_deinit_base，VXFont_deinit 会 delete 控制器自有
+ *             XClassDeinit，VXFont_deinit 会 delete 控制器自有
  *             m_family（堆 XString），致使控制器 m_font.family 悬垂，
  *             随后的 ensureCursorVisible→cursorRectAt 读族名即崩溃
  *             （setPlainText/setHtml/clear 内部必经，见回归测试
@@ -846,7 +846,7 @@ static void label_closeLink(XString* display, XLabelLinkRange** links,
     XLabelLinkRange* arr;
     int end;
     if (!href || !*href || *linkStart < 0) {
-        if (href && *href) { XString_delete_base((XClass*)*href); *href = NULL; }
+        if (href && *href) { XClassDelete((XClass*)*href); *href = NULL; }
         if (linkStart) *linkStart = -1;
         return;
     }
@@ -867,7 +867,7 @@ static void label_closeLink(XString* display, XLabelLinkRange** links,
             ++(*count);
         }
     }
-    if (*href) { XString_delete_base((XClass*)*href); *href = NULL; }
+    if (*href) { XClassDelete((XClass*)*href); *href = NULL; }
     *linkStart = -1;
 }
 
@@ -926,7 +926,7 @@ static void label_parseHtml(XLabel* self, const char* utf8)
         }
     }
     label_closeLink(display, &links, &linkCount, &linkCap, &linkStart, &href);
-    if (self->m_displayText) XString_delete_base((XClass*)self->m_displayText);
+    if (self->m_displayText) XClassDelete((XClass*)self->m_displayText);
     if (self->m_links) label_freeLinks(self);
     self->m_displayText = display;
     self->m_links = links;
@@ -1014,7 +1014,7 @@ static void label_parseMarkdown(XLabel* self, const char* utf8)
         }
     }
     label_closeLink(display, &links, &linkCount, &linkCap, &linkStart, &href);
-    if (self->m_displayText) XString_delete_base((XClass*)self->m_displayText);
+    if (self->m_displayText) XClassDelete((XClass*)self->m_displayText);
     if (self->m_links) label_freeLinks(self);
     self->m_displayText = display;
     self->m_links = links;
@@ -1062,10 +1062,10 @@ static void label_clearContents(XLabel* self)
     if (self->m_displayText) XString_assign_utf8(self->m_displayText, "");
     label_freeLinks(self);
     if (self->m_picture) {
-        XPicture_delete_base(self->m_picture);
+        XClassDelete(self->m_picture);
         self->m_picture = NULL;
     }
-    XPixmap_deinit_base(&self->m_pixmap);
+    XClassDeinit(&self->m_pixmap);
     self->m_movie = NULL;
     self->m_isTextLabel = false;
     self->m_pressedLink = -1;
@@ -1088,7 +1088,7 @@ void label_freeLinks(XLabel* self)
     if (self->m_links) {
         for (i = 0; i < self->m_linkCount; ++i) {
             if (self->m_links[i].m_href)
-                XString_delete_base((XClass*)self->m_links[i].m_href);
+                XClassDelete((XClass*)self->m_links[i].m_href);
         }
         XMemory_free(self->m_links, XMEMORY_TYPE_MULTIPOOL);
         self->m_links = NULL;
@@ -1319,8 +1319,8 @@ static void label_textBlockSize(const XLabel* self, int layoutWidth,
     {
         XFont font = XWidget_font((XWidget*)self);
         n = label_layout(utf8, layoutWidth, wrap, &font, &lines);
-        XFont_deinit_base(&font);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
+        XClassDeinit(&font);
     }
     for (i = 0; i < n; ++i)
         if (lines[i].m_width > w) w = lines[i].m_width;
@@ -1367,7 +1367,7 @@ static XSize label_sizeForWidth(const XLabel* self, int w)
             br.width = XPixmap_width(&pm);
             br.height = XPixmap_height(&pm);
         }
-        XPixmap_deinit_base(&pm);
+        XClassDeinit(&pm);
 #endif /* XMOVIE_ON */
     } else if (self->m_isTextLabel) {
         m = self->m_indent;
@@ -1458,8 +1458,8 @@ static void label_computeLayout(const XLabel* self, const XRect* cr,
                                         self->m_wordWrap ? availWidth : -1,
                                         self->m_wordWrap, &font,
                                         &out->m_lines);
-        XFont_deinit_base(&font);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
+        XClassDeinit(&font);
     }
     textH = out->m_lineCount * label_lineHeight(self);
     out->m_rect.x = cr->x;
@@ -1584,8 +1584,8 @@ static void label_drawTextContent(XLabel* self, XPainter* painter,
     {
         XFont font = XWidget_font((XWidget*)self);
         XPainter_setFont(painter, &font);
-        XFont_deinit_base(&font);
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
+        XClassDeinit(&font);
     }
     utf16pos = 0;
     for (i = 0; i < layout.m_lineCount; ++i) {
@@ -1668,10 +1668,10 @@ static int label_hitLinkAt(const XLabel* self, const XPoint* pos)
                 byteAt += glyphLen;
                 ++glyphIndex;
             }
-            /* R-72 根因：XFont_deinit_base 曾错放循环体内，首次迭代即析构
+            /* R-72 根因：XClassDeinit 曾错放循环体内，首次迭代即析构
                深拷贝字体，后续字形退回默认字库度量使命中位置漂移；
                现移出循环，仅在度量全程结束后析构一次。 */
-            XFont_deinit_base(&font);
+            XClassDeinit(&font);
         }
     }
     byte = layout.m_lines[lineIndex].m_start;
@@ -1798,7 +1798,7 @@ static int label_posToUtf16(const XLabel* self, const XPoint* pos)
         }
         /* R-72 同款根因：deinit 曾错放循环体内，首迭代后字体即被析构、
            后续字形按默认字库度量漂移；移出循环仅析构一次。 */
-        XFont_deinit_base(&font);
+        XClassDeinit(&font);
         if (glyphIndex > lineGlyphs) glyphIndex = lineGlyphs;
     }
     byte = layout.m_lines[lineIndex].m_start;
@@ -1923,8 +1923,8 @@ static void label_drawPixmap(XLabel* self, XPainter* painter,
         XPixmap_scaled(pm, cr->width, cr->height, 0, 0, &scaledPm);
         XPixmap_toImage(&scaledPm, &image);
         XPainter_drawImage(painter, &image, cr->x, cr->y);
-        XImage_deinit_base(&image);
-        XPixmap_deinit_base(&scaledPm);
+        XClassDeinit(&image);
+        XClassDeinit(&scaledPm);
         return;
     }
     x = cr->x;
@@ -1941,7 +1941,7 @@ static void label_drawPixmap(XLabel* self, XPainter* painter,
     XImage_init(&image);
     XPixmap_toImage(pm, &image);
     XPainter_drawImage(painter, &image, x, y);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 /** @brief 在客户区绘制像素图/绘图记录/影片/文本（对标 QLabel::paintEvent 内容部分）。 */
@@ -1962,7 +1962,7 @@ static void label_drawContent(XLabel* self, XPainter* painter)
         XMovie_currentPixmap(self->m_movie, &pm);
         if (!XPixmap_isNull(&pm))
             label_drawPixmap(self, painter, &pm, &cr);
-        XPixmap_deinit_base(&pm);
+        XClassDeinit(&pm);
     } else
 #endif /* XMOVIE_ON */
     if (!XPixmap_isNull(&self->m_pixmap)) {
@@ -2437,11 +2437,11 @@ static void VXLabel_copy(XLabel* self, const XLabel* other)
                   void(*)(XFrame*, const XFrame*))((XFrame*)self,
                                                    (const XFrame*)other);
     /* 释放目标已有的标签级资源 */
-    if (self->m_text) { XString_delete_base((XClass*)self->m_text); self->m_text = NULL; }
-    if (self->m_displayText) { XString_delete_base((XClass*)self->m_displayText); self->m_displayText = NULL; }
+    if (self->m_text) { XClassDelete((XClass*)self->m_text); self->m_text = NULL; }
+    if (self->m_displayText) { XClassDelete((XClass*)self->m_displayText); self->m_displayText = NULL; }
     label_freeLinks(self);
     if (self->m_picture) {
-        XPicture_delete_base(self->m_picture);
+        XClassDelete(self->m_picture);
         self->m_picture = NULL;
     }
     XPixmap_init(&self->m_pixmap);
@@ -2465,7 +2465,7 @@ static void VXLabel_copy(XLabel* self, const XLabel* other)
     if (other->m_picture)
         self->m_picture = XPicture_create_copy(other->m_picture,
                                                XCLASS_DEFAULT_MEMORY_TYPE);
-    XCopy(&self->m_pixmap, &other->m_pixmap);
+    XClassCopy(&self->m_pixmap, &other->m_pixmap);
     self->m_movie = other->m_movie;
     self->m_buddy = other->m_buddy;
     if (other->m_linkCount > 0) {
@@ -2505,11 +2505,11 @@ static void VXLabel_move(XLabel* self, XLabel* other)
     XClass_Parent(XFrame, EXClass_Move,
                   void(*)(XFrame*, XFrame*))((XFrame*)self, (XFrame*)other);
     /* 释放目标已有标签级资源 */
-    if (self->m_text) { XString_delete_base((XClass*)self->m_text); self->m_text = NULL; }
-    if (self->m_displayText) { XString_delete_base((XClass*)self->m_displayText); self->m_displayText = NULL; }
+    if (self->m_text) { XClassDelete((XClass*)self->m_text); self->m_text = NULL; }
+    if (self->m_displayText) { XClassDelete((XClass*)self->m_displayText); self->m_displayText = NULL; }
     label_freeLinks(self);
     if (self->m_picture) {
-        XPicture_delete_base(self->m_picture);
+        XClassDelete(self->m_picture);
         self->m_picture = NULL;
     }
     /* 转移资源 */
@@ -2530,7 +2530,7 @@ static void VXLabel_move(XLabel* self, XLabel* other)
     self->m_resourceProvider = other->m_resourceProvider;
     self->m_resourceProviderUserData = other->m_resourceProviderUserData;
     self->m_picture = other->m_picture; other->m_picture = NULL;
-    XMove(&self->m_pixmap, &other->m_pixmap);
+    XClassMove(&self->m_pixmap, &other->m_pixmap);
     XPixmap_init(&other->m_pixmap); /* 源像素图保留有效 vtable，可安全析构 */
     self->m_movie = other->m_movie; other->m_movie = NULL;
     self->m_buddy = other->m_buddy; other->m_buddy = NULL;
@@ -2544,7 +2544,7 @@ static void VXLabel_move(XLabel* self, XLabel* other)
         XObject_disconnect_1((XObject*)self->m_textControl,
                              LABEL_LINKHOVERED_SIGNAL_ID,
                              (XObject*)self, label_linkHoveredForward);
-        XTextControl_delete_base(self->m_textControl);
+        XClassDelete(self->m_textControl);
         self->m_textControl = NULL;
     }
     self->m_textControl = other->m_textControl; other->m_textControl = NULL;
@@ -2566,10 +2566,10 @@ static void VXLabel_deinit(XLabel* self)
 {
     if (!self) return;
     label_clearContents(self);
-    if (self->m_text) { XString_delete_base((XClass*)self->m_text); self->m_text = NULL; }
-    if (self->m_displayText) { XString_delete_base((XClass*)self->m_displayText); self->m_displayText = NULL; }
+    if (self->m_text) { XClassDelete((XClass*)self->m_text); self->m_text = NULL; }
+    if (self->m_displayText) { XClassDelete((XClass*)self->m_displayText); self->m_displayText = NULL; }
     if (self->m_textControl) {
-        XTextControl_delete_base(self->m_textControl);
+        XClassDelete(self->m_textControl);
         self->m_textControl = NULL;
     }
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
@@ -2707,7 +2707,7 @@ void XLabel_setText(XLabel* self, const XString* text)
     if (!copy) return;
     label_clearContents(self);
     XString_assign(self->m_text, copy);
-    XString_delete_base((XClass*)copy);
+    XClassDelete((XClass*)copy);
     self->m_isTextLabel = true;
     if (self->m_textFormat == XLabelTextFormat_AutoText) {
         t = XString_toUtf8(self->m_text);
@@ -2728,7 +2728,7 @@ void XLabel_setText_2(XLabel* self, const char* utf8)
     s = XString_create_utf8(utf8 ? utf8 : "");
     if (!s) return;
     XLabel_setText(self, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
 }
 
 XLabelTextFormat XLabel_textFormat(const XLabel* self)
@@ -2763,7 +2763,7 @@ void XLabel_setNum(XLabel* self, int num)
     if (!s) return;
     XString_setNum_int(s, num, 10);
     XLabel_setText(self, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
 }
 
 void XLabel_setNum_2(XLabel* self, double num)
@@ -2774,7 +2774,7 @@ void XLabel_setNum_2(XLabel* self, double num)
     if (!s) return;
     XString_setNum_double(s, num, 'g', 6);
     XLabel_setText(self, s);
-    XString_delete_base((XClass*)s);
+    XClassDelete((XClass*)s);
 }
 
 void XLabel_clear(XLabel* self)
@@ -2792,7 +2792,7 @@ XPixmap XLabel_pixmap(const XLabel* self)
     XMemset(&out, 0, sizeof(out)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     XPixmap_init(&out);
     if (self)
-        XCopy(&out, &self->m_pixmap);
+        XClassCopy(&out, &self->m_pixmap);
     return out;
 }
 
@@ -2803,7 +2803,7 @@ void XLabel_setPixmap(XLabel* self, const XPixmap* pixmap)
         return; /* 同一共享数据：无操作 */
     label_clearContents(self);
     if (pixmap && !XPixmap_isNull(pixmap))
-        XCopy(&self->m_pixmap, pixmap);
+        XClassCopy(&self->m_pixmap, pixmap);
     label_updateLabel(self);
 }
 
@@ -2931,11 +2931,11 @@ void XLabel_setTextPixelSize(XLabel* self, int pixelHeight)
     if (pixelHeight <= 0) pixelHeight = label_bitmapInfo(self).m_height;
     /* 写入基类 XFont.pixelSize，再经 XWidget_setFont 统一刷新 */
     XFont_init(&font);
-    XCopy(&font, &source);
-    XFont_deinit_base(&source);
+    XClassCopy(&font, &source);
+    XClassDeinit(&source);
     XFont_setPixelSize(&font, pixelHeight);
     XWidget_setFont((XWidget*)self, &font);
-    XFont_deinit_base(&font);
+    XClassDeinit(&font);
 }
 
 bool XLabel_hasScaledContents(const XLabel* self)

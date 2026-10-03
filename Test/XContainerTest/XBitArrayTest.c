@@ -24,7 +24,7 @@ static void XBitArrayTest_Basic(void)
     XBitArray_toggleBit(a, 0);
     XPrintf("  toggleBit(0) -> bit[0]=%d (期望 0)\n", XBitArray_getBit(a, 0));
 
-    XBitArray_delete_base(a);
+    XClassDelete(a);
 }
 
 /* ==================== Qt 命名对齐 ==================== */
@@ -44,7 +44,7 @@ static void XBitArrayTest_QtAliases(void)
     const char* raw = XBitArray_bits(a);
     XPrintf("  bits ptr=%s\n", raw ? "OK" : "NULL");
 
-    XBitArray_delete_base(a);
+    XClassDelete(a);
 }
 
 /* ==================== Qt 新 API ==================== */
@@ -74,7 +74,7 @@ static void XBitArrayTest_QtNewApis(void)
     XPrintf("  equals(a,b) = %d (期望 1)\n", XBitArray_equals(a, b));
     XBitArray_toggleBit(b, 0);
     XPrintf("  after toggle b[0], equals = %d (期望 0)\n", XBitArray_equals(a, b));
-    XBitArray_delete_base(b);
+    XClassDelete(b);
 
     // and/or/xor
     XBitArray* x = XBitArray_create(8);
@@ -97,13 +97,13 @@ static void XBitArrayTest_QtNewApis(void)
     XBitArray_invert_inplace(nx);
     XPrintf("  ~~x equals x = %d (期望 1)\n", XBitArray_equals(nx, x));
 
-    XBitArray_delete_base(x);
-    XBitArray_delete_base(y);
-    XBitArray_delete_base(xy_and);
-    XBitArray_delete_base(xy_or);
-    XBitArray_delete_base(xy_xor);
-    XBitArray_delete_base(nx);
-    XBitArray_delete_base(a);
+    XClassDelete(x);
+    XClassDelete(y);
+    XClassDelete(xy_and);
+    XClassDelete(xy_or);
+    XClassDelete(xy_xor);
+    XClassDelete(nx);
+    XClassDelete(a);
 }
 
 /* ==================== 压力测试 ==================== */
@@ -123,7 +123,7 @@ static void XBitArrayTest_Stress(void)
     XBitArray_truncate(a, 100);
     XPrintf("  truncate(100) -> size=%zu (期望 100)\n", XBitArray_size_base(a));
 
-    XBitArray_delete_base(a);
+    XClassDelete(a);
 }
 
 /* ==================== 主入口 ==================== */

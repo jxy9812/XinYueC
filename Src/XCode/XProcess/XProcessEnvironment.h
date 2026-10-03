@@ -185,7 +185,7 @@ bool XProcessEnvironment_remove(XProcessEnvironment* self, const XString* name);
  * @param name UTF-8 变量名；调用期间借用，必须非空且不含等号。
  * @param defaultValue 未找到时复制返回的默认值；可为 NULL，按空字符串处理。
  * @return 新建 XString；未找到或参数非法时返回 defaultValue 的副本，
- *         分配失败返回 NULL。调用方必须使用 XString_delete_base 释放。
+ *         分配失败返回 NULL。调用方必须使用 XClassDelete 释放。
  */
 XString* XProcessEnvironment_value_utf8(const XProcessEnvironment* self,
                                          const char* name,

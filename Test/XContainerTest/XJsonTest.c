@@ -55,26 +55,26 @@ void XJsonObjectTest()
 			XPrintf_2(key);
 			printf("\n");
 		}
-		XVector_delete_base(keys);*/
+		XClassDelete(keys);*/
 
 		//printf("\n\n\n\n\n\n");
 		XJsonDocument* doc = XJsonDocument_create_object(object);
 		XByteArray* json = XJsonDocument_toJson(doc, XJsonDocument_Indented);
-		XJsonDocument_delete(doc);
+		XClassDelete(doc);
 		XPrintf_3(XByteArray_data(json));
 		XPrintf_3("\n开始从json文本转json对象\n");
 		doc = XJsonDocument_fromJson(json);
-		XByteArray_delete_base(json);
+		XClassDelete(json);
 
 		XString* str = XJsonDocument_toString(doc, XJsonDocument_Indented);
 		XPrintf_2(str);
 		XPrintf("\n");
-		XString_delete_base(str);
-		XJsonDocument_delete(doc);
+		XClassDelete(str);
+		XClassDelete(doc);
 
-		XJsonArray_delete_base(array);
+		XClassDelete(array);
 		XJsonValue_delete(value);
-		XJsonObject_delete_base(object);
+		XClassDelete(object);
 	}
 	//XCoreApplication_quit();
 }
@@ -116,9 +116,9 @@ void XJsonArrayTest()
 		XString* str = XJsonArray_toString(array, XJsonDocument_Indented);
 		XPrintf_2(str);
 		XPrintf("\n");
-		XString_delete_base(str);
+		XClassDelete(str);
 
-		XJsonArray_delete_base(array);
+		XClassDelete(array);
 		XJsonValue_delete(value);
 	}
 	//XCoreApplication_quit();

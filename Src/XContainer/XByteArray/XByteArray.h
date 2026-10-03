@@ -420,13 +420,11 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData);
 * @brief 复用XVector的接口，反初始化数组（释放内部资源，保留实例本身）
 * @param array 目标XByteArray实例指针
 */
-#define XByteArray_deinit_base						XVector_deinit_base
 
 /**
 * @brief 复用XVector的接口，销毁数组并释放所有内存
 * @param array 目标XByteArray实例指针（可NULL，NULL时不操作）
 */
-#define XByteArray_delete_base						XVector_delete_base
 
 
 

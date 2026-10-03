@@ -106,7 +106,7 @@ static void VXAbstractItemModel_deinit(XAbstractItemModel* self)
     for (r = 0; r < self->m_rows; ++r) {
         if (!self->m_cells || !self->m_cells[r]) continue;
         for (c = 0; c < self->m_cols; ++c) {
-            if (self->m_cells[r][c]) XString_delete_base(self->m_cells[r][c]);
+            if (self->m_cells[r][c]) XClassDelete(self->m_cells[r][c]);
             self->m_cells[r][c] = NULL;
         }
         if (self->m_cells[r]) XFree_System(self->m_cells[r]);
@@ -117,7 +117,7 @@ static void VXAbstractItemModel_deinit(XAbstractItemModel* self)
     }
     for (c = 0; c < self->m_cols; ++c) {
         if (self->m_hHeader && self->m_hHeader[c]) {
-            XString_delete_base(self->m_hHeader[c]);
+            XClassDelete(self->m_hHeader[c]);
             self->m_hHeader[c] = NULL;
         }
     }
@@ -127,7 +127,7 @@ static void VXAbstractItemModel_deinit(XAbstractItemModel* self)
     }
     for (r = 0; r < self->m_rows; ++r) {
         if (self->m_vHeader && self->m_vHeader[r]) {
-            XString_delete_base(self->m_vHeader[r]);
+            XClassDelete(self->m_vHeader[r]);
             self->m_vHeader[r] = NULL;
         }
     }
@@ -273,7 +273,7 @@ void XAbstractItemModel_setDimension(XAbstractItemModel* self,
         int c;
         for (c = cols; c < oldCols; ++c) {
             if (self->m_cells[r] && self->m_cells[r][c]) {
-                XString_delete_base(self->m_cells[r][c]);
+                XClassDelete(self->m_cells[r][c]);
                 self->m_cells[r][c] = NULL;
             }
         }
@@ -282,7 +282,7 @@ void XAbstractItemModel_setDimension(XAbstractItemModel* self,
         int c;
         if (!self->m_cells[r]) continue;
         for (c = 0; c < oldCols; ++c) {
-            if (self->m_cells[r][c]) XString_delete_base(self->m_cells[r][c]);
+            if (self->m_cells[r][c]) XClassDelete(self->m_cells[r][c]);
         }
         XFree_System(self->m_cells[r]);
         self->m_cells[r] = NULL;
@@ -292,13 +292,13 @@ void XAbstractItemModel_setDimension(XAbstractItemModel* self,
        否则指针随旧数组一并丢失。 */
     for (c = cols; c < oldCols; ++c) {
         if (self->m_hHeader && self->m_hHeader[c]) {
-            XString_delete_base(self->m_hHeader[c]);
+            XClassDelete(self->m_hHeader[c]);
             self->m_hHeader[c] = NULL;
         }
     }
     for (r = rows; r < oldRows; ++r) {
         if (self->m_vHeader && self->m_vHeader[r]) {
-            XString_delete_base(self->m_vHeader[r]);
+            XClassDelete(self->m_vHeader[r]);
             self->m_vHeader[r] = NULL;
         }
     }
@@ -374,7 +374,7 @@ bool XAbstractItemModel_setData(XAbstractItemModel* self, int row, int col,
     if (!cells || col < 0 || col >= self->m_cols) return false;
     repl = value ? XString_create_copy(value) : NULL;
     if (value && !repl) return false;
-    if (cells[col]) XString_delete_base(cells[col]);
+    if (cells[col]) XClassDelete(cells[col]);
     cells[col] = repl;
     xaim_emitDataChanged(self, row, col);
     return true;
@@ -390,7 +390,7 @@ bool XAbstractItemModel_setData_2(XAbstractItemModel* self, int row, int col,
         if (!tmp) return false;
     }
     ok = XAbstractItemModel_setData(self, row, col, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
     return ok;
 }
 
@@ -436,7 +436,7 @@ bool XAbstractItemModel_setHeaderData(XAbstractItemModel* self, int section,
     if (section < 0 || section >= count || !arr) return false;
     repl = value ? XString_create_copy(value) : NULL;
     if (value && !repl) return false;
-    if (arr[section]) XString_delete_base(arr[section]);
+    if (arr[section]) XClassDelete(arr[section]);
     arr[section] = repl;
     return true;
 }
@@ -451,7 +451,7 @@ bool XAbstractItemModel_setHeaderData_2(XAbstractItemModel* self, int section,
         if (!tmp) return false;
     }
     ok = XAbstractItemModel_setHeaderData(self, section, orientation, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
     return ok;
 }
 

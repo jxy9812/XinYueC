@@ -116,7 +116,6 @@ void XBitmap_init_pixmap(XBitmap* self, const XPixmap* other);
  * @param self 待释放的对象指针
  */
 /** @brief 通过 XClass 虚表释放位图资源。 @param self 待释放的位图对象指针。 */
-#define XBitmap_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /** @brief 交换两个位图的数据所有权。 */
 void XBitmap_swap(XBitmap* self, XBitmap* other);
@@ -126,7 +125,6 @@ void XBitmap_swap(XBitmap* self, XBitmap* other);
  * @param self 待删除的对象指针
  */
 /** @brief 删除堆上的位图对象。 @param self 待删除的位图对象指针。 */
-#define XBitmap_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ========== 操作方法 ========== */
 

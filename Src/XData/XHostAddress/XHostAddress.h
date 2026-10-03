@@ -72,7 +72,7 @@ void XHostAddress_init(XHostAddress* addr);
 
 /**
  * @brief 创建 null 地址。
- * @return 新分配的 XHostAddress 实例，需调用 XHostAddress_delete() 释放。
+ * @return 新分配的 XHostAddress 实例，需调用 XClassDelete() 释放。
  */
 XHostAddress* XHostAddress_create_ex(XMemoryType memory);
 /**
@@ -110,8 +110,6 @@ XHostAddress* XHostAddress_create_fromIPv6Address(const uint8_t ip[16]);
  */
 XHostAddress* XHostAddress_create_fromSpecial(XHostAddress_SpecialAddress special);
 
-#define XHostAddress_delete_base    XClass_delete_base
-#define XHostAddress_deinit_base    XClass_deinit_base
 
 // ==================== 赋值 ====================
 

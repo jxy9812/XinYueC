@@ -299,7 +299,7 @@ static void XLayout_releaseItems(XLayout* self)
         if (XLayoutItem_layout_base(item))
             ((XLayout*)item)->m_parentLayout = NULL;
         if (item->m_ownedByLayout)
-            XLayoutItem_delete_base(item);
+            XClassDelete(item);
     }
     XFree_System(self->m_items);
     self->m_items = NULL;
@@ -652,7 +652,7 @@ void XLayout_deleteAllItems(XLayout* self)
         XLayoutItem* taken = XLayout_takeAt_base(self, i);
         (void)taken;
         if (owned && item)
-            XLayoutItem_delete_base(item);
+            XClassDelete(item);
     }
     self->m_isDirty = 1;
 }
@@ -990,7 +990,7 @@ XLayoutItem* XLayout_replaceWidget(XLayout* self, XWidget* from,
     XLayoutItem_setAlignment(newItem, XLayoutItem_alignment(item));
     old = XLayout_replaceItemAt_base(self, index, newItem);
     if (!old) {
-        XLayoutItem_delete_base(newItem);
+        XClassDelete(newItem);
         return NULL;
     }
     XLayout_invalidate(self);
@@ -1175,7 +1175,7 @@ void XLayout_addWidget(XLayout* self, XWidget* widget)
         /* 虚路径插入失败（扩容失败）：条目未入列、所有权未随挂接移出，
            由本入口就地释放防孤儿块（网格 ensureCells 失败路径经 takeAt
            移出后计数同样回落至此，一并覆盖）。 */
-        XLayoutItem_delete_base(item);
+        XClassDelete(item);
     }
 }
 

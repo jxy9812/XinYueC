@@ -23,7 +23,7 @@ static bool checkDevicePropertyInt(XFd fd, uint32_t property, int expected)
     XVariant_init(&value, NULL, 0, XVariantType_NULL);
     ok = XDevice_getProperty(fd, (XDeviceProperty)property, &value) &&
          XVariant_toInt(&value) == expected;
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
     return ok;
 }
 
@@ -81,10 +81,10 @@ bool XDeviceSerialPortTest_runAll(void)
     if (!XDevice_setProperty(fd, (XDeviceProperty)XDeviceSerialPortProperty_BaudRate, &value) ||
         !XDevice_getProperty(fd, (XDeviceProperty)XDeviceSerialPortProperty_BaudRate, &value) ||
         XVariant_toInt(&value) != XSerialPort_Baud115200) {
-        XVariant_deinit_base((XClass*)&value);
+        XClassDeinit((XClass*)&value);
         goto cleanup;
     }
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
 
     if (write(master, incoming, sizeof(incoming) - 1) != (ssize_t)(sizeof(incoming) - 1) ||
         XDevice_read(fd, buffer, sizeof(incoming) - 1) != (int64_t)(sizeof(incoming) - 1) ||
@@ -125,12 +125,12 @@ bool XDeviceSerialPortTest_runAll(void)
 
 cleanup_serial:
     if (XSerialPort_isOpen(&serial.base)) XSerialPort_close_base(&serial.base);
-    XClass_deinit_base((XClass*)&serial);
+    XClassDeinit((XClass*)&serial);
 cleanup:
     if (clearArgs) XVarList_delete(clearArgs);
     if (fd != XFD_INVALID) XDevice_close(fd);
     if (slaveFd >= 0) close(slaveFd);
-    if (path) XString_delete_base((XClass*)path);
+    if (path) XClassDelete((XClass*)path);
     if (master >= 0) close(master);
     puts(ok ? "XDeviceSerialPort test: PASS" : "XDeviceSerialPort test: FAIL");
     return ok;

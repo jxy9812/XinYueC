@@ -174,14 +174,14 @@ static bool XWindow_setString(XString** dst, const XString* value)
     XString* copy;
     if (!dst) return false;
     if (!value) {
-        if (*dst) XString_delete_base((XClass*)*dst);
+        if (*dst) XClassDelete((XClass*)*dst);
         *dst = NULL;
         return true;
     }
     copy = XWindow_copyString(value);
     /* 深拷贝失败时保留旧值，避免一次内存分配失败破坏现有状态。 */
     if (!copy) return false;
-    if (*dst) XString_delete_base((XClass*)*dst);
+    if (*dst) XClassDelete((XClass*)*dst);
     *dst = copy;
     return true;
 }
@@ -194,7 +194,7 @@ static XCursor* XWindow_copyCursor(const XCursor* value)
     if (!value) return NULL;
     copy = XCursor_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XCopy(copy, value);
+    XClassCopy(copy, value);
     return copy;
 }
 
@@ -204,14 +204,14 @@ static void XWindow_setCursorInternal(XCursor** dst, const XCursor* value)
     XCursor* copy;
     if (!dst) return;
     if (!value) {
-        if (*dst) XCursor_delete_base((XClass*)*dst);
+        if (*dst) XClassDelete((XClass*)*dst);
         *dst = NULL;
         return;
     }
     copy = XWindow_copyCursor(value);
     /* 新光标创建失败时保留旧光标，调用方仍可继续使用窗口。 */
     if (!copy) return;
-    if (*dst) XCursor_delete_base((XClass*)*dst);
+    if (*dst) XClassDelete((XClass*)*dst);
     *dst = copy;
 }
 
@@ -219,7 +219,7 @@ static void XWindow_setCursorInternal(XCursor** dst, const XCursor* value)
 static void XWindow_clearCursor(XWindowPrivate* data)
 {
     if (data && data->m_cursor) {
-        XCursor_delete_base((XClass*)data->m_cursor);
+        XClassDelete((XClass*)data->m_cursor);
         data->m_cursor = NULL;
     }
 }
@@ -232,7 +232,7 @@ static XIcon* XWindow_copyIcon(const XIcon* value)
     if (!value) return NULL;
     copy = XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XCopy(copy, value);
+    XClassCopy(copy, value);
     return copy;
 }
 
@@ -242,7 +242,7 @@ static void XWindow_setIconInternal(XIcon** dst, const XIcon* value)
     XIcon* copy;
     if (!dst) return;
     if (!value) {
-        if (*dst) XIcon_delete_base(*dst);
+        if (*dst) XClassDelete(*dst);
         *dst = NULL;
         return;
     }
@@ -250,7 +250,7 @@ static void XWindow_setIconInternal(XIcon** dst, const XIcon* value)
     /* 新图标创建失败时保留旧图标，避免失败路径产生可见状态回退。 */
     if (!copy) return;
     /* 内部图标由 create_ex 堆分配，需 delete（deinit+释放结构体）。 */
-    if (*dst) XIcon_delete_base(*dst);
+    if (*dst) XClassDelete(*dst);
     *dst = copy;
 }
 
@@ -339,20 +339,20 @@ static void XWindow_releasePrivateData(XWindow* self, bool keepAccessibleRoot)
 
 #if XACCESSIBLE_ON
     if (!keepAccessibleRoot && data->m_accessibleRoot) {
-        XAccessible_delete_base(data->m_accessibleRoot);
+        XClassDelete(data->m_accessibleRoot);
         data->m_accessibleRoot = NULL;
     }
 #endif /* XACCESSIBLE_ON */
     if (data->m_title) {
-        XString_delete_base((XClass*)data->m_title);
+        XClassDelete((XClass*)data->m_title);
         data->m_title = NULL;
     }
     if (data->m_filePath) {
-        XString_delete_base((XClass*)data->m_filePath);
+        XClassDelete((XClass*)data->m_filePath);
         data->m_filePath = NULL;
     }
     if (data->m_icon) {
-        XIcon_delete_base(data->m_icon);
+        XClassDelete(data->m_icon);
         data->m_icon = NULL;
     }
 #if XCURSOR_ON
@@ -475,7 +475,7 @@ static void XWindow_sendEvent(XWindow* self, XEventType type)
     event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type);
     if (!event) return;
     XCoreApplication_sendEvent((XObject*)self, (XEvent*)event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
 }
 
 /* ==================== 事件默认槽与前向声明 ==================== */
@@ -611,7 +611,7 @@ XWindow* XWindow_create_ex(XMemoryType memory)
        堆创建接口不能把这个不可用对象返回给调用方。虚析构会先收尾
        XObject 的线程/信号资源，再按请求的内存方法释放窗口本体。 */
     if (!self->m_data) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;
@@ -623,7 +623,7 @@ XWindow* XWindow_create_copy(const XWindow* other)
     if (!other) return NULL;
     self = XWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -633,7 +633,7 @@ XWindow* XWindow_create_move(XWindow* other)
     if (!other) return NULL;
     self = XWindow_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -776,11 +776,11 @@ static void VXWindow_copy(XWindow* self, const XWindow* other)
     return;
 
 copy_failed:
-    if (copiedTitle) XString_delete_base((XClass*)copiedTitle);
-    if (copiedFilePath) XString_delete_base((XClass*)copiedFilePath);
-    if (copiedIcon) XIcon_delete_base(copiedIcon);
+    if (copiedTitle) XClassDelete((XClass*)copiedTitle);
+    if (copiedFilePath) XClassDelete((XClass*)copiedFilePath);
+    if (copiedIcon) XClassDelete(copiedIcon);
 #if XCURSOR_ON
-    if (copiedCursor) XCursor_delete_base((XClass*)copiedCursor);
+    if (copiedCursor) XClassDelete((XClass*)copiedCursor);
 #endif
     XRegion_deinit(&copiedMask);
 }
@@ -1188,7 +1188,7 @@ void XWindow_setTitle_2(XWindow* self, const char* title)
     XString* value = title ? XString_create_utf8(title) : NULL;
     if (title && !value) return;
     XWindow_setTitle(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 /* ==================== 透明度与遮罩 ==================== */
@@ -1817,7 +1817,7 @@ void XWindow_setFilePath_2(XWindow* self, const char* filePath)
     XString* value = filePath ? XString_create_utf8(filePath) : NULL;
     if (filePath && !value) return;
     XWindow_setFilePath(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 XString* XWindow_filePath(const XWindow* self)
@@ -2207,7 +2207,7 @@ void XWindow_setVisible(XWindow* self, bool visible)
                     }
                 }
             }
-            XVector_delete_base(tops);
+            XClassDelete(tops);
         }
     }
 #endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
@@ -2278,7 +2278,7 @@ bool XWindow_close(XWindow* self)
     data->m_closing = true;
     XCoreApplication_sendEvent((XObject*)self, (XEvent*)event);
     accepted = XEvent_isAccepted(event);
-    XEvent_delete_base((XEvent*)event);
+    XClassDelete((XEvent*)event);
     data->m_closing = false;
     if (accepted) {
         XWindow_hide(self);

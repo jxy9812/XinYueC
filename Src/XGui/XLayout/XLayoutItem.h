@@ -164,9 +164,7 @@ XVtable* XLayoutItem_class_init(void);
 void XLayoutItem_init(XLayoutItem* self);
 
 /** @brief 通过 XClass 虚表释放条目资源（栈/外部存储对象使用）。 */
-#define XLayoutItem_deinit_base(self)  XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的布局条目对象。 */
-#define XLayoutItem_delete_base(self)  XClass_delete_base((XClass*)(self))
 
 /* ==================== 尺寸协商虚函数调度（对标 QLayoutItem） ==================== */
 

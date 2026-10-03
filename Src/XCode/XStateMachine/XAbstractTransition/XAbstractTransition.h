@@ -59,8 +59,6 @@ XVtable* XAbstractTransition_class_init(void);
  */
 void XAbstractTransition_init(XAbstractTransition* transition, XState* sourceState);
 
-#define XAbstractTransition_delete_base XClass_delete_base
-#define XAbstractTransition_deinit_base XClass_deinit_base
 
 /**
  * @brief 获取转换的源状态。

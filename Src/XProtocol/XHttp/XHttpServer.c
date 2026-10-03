@@ -109,7 +109,7 @@ static bool xhttp_server_append_i32(XByteArray* output, int32_t value)
         return false;
     XByteArray_setNum_i32(number, value, 10);
     result = xhttp_server_append_range(output, number, 0, XByteArray_size_base(number));
-    XClass_delete_base((XClass*)number);
+    XClassDelete((XClass*)number);
     return result;
 }
 
@@ -229,7 +229,7 @@ static void xhttp_server_free_connection(XHttpServerConnection* connection)
         connection->m_readyRead = NULL;
     }
     if (connection->m_input)
-        XClass_delete_base((XClass*)connection->m_input);
+        XClassDelete((XClass*)connection->m_input);
     XFree_System(connection);
 }
 
@@ -309,7 +309,7 @@ static bool xhttp_server_write_response(XHttpServerResponder* responder,
         XIODevice_write_2((XIODevice*)socket, body);
     XIODevice_flush((XIODevice*)socket);
     XAbstractSocket_waitForBytesWritten((XAbstractSocket*)socket, 1000);
-    XClass_delete_base((XClass*)output);
+    XClassDelete((XClass*)output);
     responder->m_sent = true;
     XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)socket);
     return true;
@@ -365,7 +365,7 @@ static bool xhttp_server_send_response_for_request(XHttpServerResponder* respond
     }
     XByteArray_append_utf8(output, "Connection: close\r\n\r\n");
     if (XIODevice_write_2((XIODevice*)socket, output) < 0) {
-        XClass_delete_base((XClass*)output);
+        XClassDelete((XClass*)output);
         return false;
     }
     if (method != XHttpServerRequest_Head &&
@@ -373,7 +373,7 @@ static bool xhttp_server_send_response_for_request(XHttpServerResponder* respond
         XIODevice_write_2((XIODevice*)socket, body);
     XIODevice_flush((XIODevice*)socket);
     XAbstractSocket_waitForBytesWritten((XAbstractSocket*)socket, 1000);
-    XClass_delete_base((XClass*)output);
+    XClassDelete((XClass*)output);
     responder->m_sent = true;
     XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)socket);
     return true;
@@ -454,16 +454,16 @@ static bool xhttp_server_parse_request(XHttpServerConnection* connection)
         value = XByteArray_mid(input, colon + 1,
                                (int64_t)((size_t)lineEnd - 1 - (size_t)colon - 1));
         if (!name || !value || !XHttpHeaders_append(request->m_headers, name, value)) {
-            if (name) XClass_delete_base((XClass*)name);
-            if (value) XClass_delete_base((XClass*)value);
+            if (name) XClassDelete((XClass*)name);
+            if (value) XClassDelete((XClass*)value);
             goto bad_request;
         }
         if (xhttp_server_range_equals_ci(name, 0, XByteArray_size_base(name), "content-length")) {
             bool ok = false;
             int64_t parsed = XByteArray_toLongLong(value, &ok, 10);
             if (!ok || parsed < 0) {
-                XClass_delete_base((XClass*)name);
-                XClass_delete_base((XClass*)value);
+                XClassDelete((XClass*)name);
+                XClassDelete((XClass*)value);
                 goto bad_request;
             }
             bodyLength = (size_t)parsed;
@@ -471,8 +471,8 @@ static bool xhttp_server_parse_request(XHttpServerConnection* connection)
         }
         if (xhttp_server_range_equals_ci(name, 0, XByteArray_size_base(name), "host"))
             host = XByteArray_create_copy(value);
-        XClass_delete_base((XClass*)name);
-        XClass_delete_base((XClass*)value);
+        XClassDelete((XClass*)name);
+        XClassDelete((XClass*)value);
         cursor = (size_t)lineEnd + 1;
     }
     if (hasContentLength && XByteArray_size_base(input) < (size_t)headerEnd + 4 + bodyLength)
@@ -525,30 +525,30 @@ static bool xhttp_server_parse_request(XHttpServerConnection* connection)
             xhttp_server_send_response_for_request(&responder, fallback, request->m_method);
     }
     if (fallback)
-        XClass_delete_base((XClass*)fallback);
-    XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)target);
-    XClass_delete_base((XClass*)host);
-    XClass_delete_base((XClass*)targetString);
-    XClass_delete_base((XClass*)urlString);
+        XClassDelete((XClass*)fallback);
+    XClassDelete((XClass*)request);
+    XClassDelete((XClass*)target);
+    XClassDelete((XClass*)host);
+    XClassDelete((XClass*)targetString);
+    XClassDelete((XClass*)urlString);
     connection->m_handled = true;
     xhttp_server_remove_connection(connection);
     return true;
 
 incomplete_request:
-    if (request) XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)target);
-    XClass_delete_base((XClass*)host);
-    XClass_delete_base((XClass*)targetString);
-    XClass_delete_base((XClass*)urlString);
+    if (request) XClassDelete((XClass*)request);
+    XClassDelete((XClass*)target);
+    XClassDelete((XClass*)host);
+    XClassDelete((XClass*)targetString);
+    XClassDelete((XClass*)urlString);
     return false;
 
 bad_request:
-    if (request) XClass_delete_base((XClass*)request);
-    XClass_delete_base((XClass*)target);
-    XClass_delete_base((XClass*)host);
-    XClass_delete_base((XClass*)targetString);
-    XClass_delete_base((XClass*)urlString);
+    if (request) XClassDelete((XClass*)request);
+    XClassDelete((XClass*)target);
+    XClassDelete((XClass*)host);
+    XClassDelete((XClass*)targetString);
+    XClassDelete((XClass*)urlString);
     fallback = XHttpServerResponse_create_body(NULL, XHttpServerResponse_BadRequest);
     if (fallback) {
         responder.m_server = (XObject*)connection->m_server;
@@ -556,7 +556,7 @@ bad_request:
         responder.m_method = XHttpServerRequest_Get;
         responder.m_sent = false;
         xhttp_server_send_response_for_request(&responder, fallback, XHttpServerRequest_Get);
-        XClass_delete_base((XClass*)fallback);
+        XClassDelete((XClass*)fallback);
     }
     connection->m_handled = true;
     xhttp_server_remove_connection(connection);
@@ -619,9 +619,9 @@ static void xhttp_server_new_connection(XObject* receiver, XVarList* args)
 static void VXHttpServerRequest_deinit(XHttpServerRequest* self)
 {
     if (!self) return;
-    if (self->m_url) XClass_delete_base((XClass*)self->m_url);
-    if (self->m_headers) XClass_delete_base((XClass*)self->m_headers);
-    if (self->m_body) XClass_delete_base((XClass*)self->m_body);
+    if (self->m_url) XClassDelete((XClass*)self->m_url);
+    if (self->m_headers) XClassDelete((XClass*)self->m_headers);
+    if (self->m_body) XClassDelete((XClass*)self->m_body);
     self->m_url = NULL;
     self->m_headers = NULL;
     self->m_body = NULL;
@@ -631,9 +631,9 @@ static void VXHttpServerRequest_deinit(XHttpServerRequest* self)
 static void VXHttpServerResponse_deinit(XHttpServerResponse* self)
 {
     if (!self) return;
-    if (self->m_body) XClass_delete_base((XClass*)self->m_body);
-    if (self->m_mimeType) XClass_delete_base((XClass*)self->m_mimeType);
-    if (self->m_headers) XClass_delete_base((XClass*)self->m_headers);
+    if (self->m_body) XClassDelete((XClass*)self->m_body);
+    if (self->m_mimeType) XClassDelete((XClass*)self->m_mimeType);
+    if (self->m_headers) XClassDelete((XClass*)self->m_headers);
     self->m_body = NULL;
     self->m_mimeType = NULL;
     self->m_headers = NULL;
@@ -651,18 +651,18 @@ static void VXHttpServer_deinit(XHttpServer* self)
                 self->m_connections, (int64_t)i);
             if (slot && *slot) xhttp_server_free_connection(*slot);
         }
-        XClass_delete_base((XClass*)self->m_connections);
+        XClassDelete((XClass*)self->m_connections);
         self->m_connections = NULL;
     }
     if (self->m_tcpServer) {
         XObject_disconnect_1((XObject*)self->m_tcpServer,
             XSignal(XTcpServer_newConnection_signal), (XObject*)self,
             xhttp_server_new_connection);
-        XClass_delete_base((XClass*)self->m_tcpServer);
+        XClassDelete((XClass*)self->m_tcpServer);
         self->m_tcpServer = NULL;
     }
     if (self->m_router) {
-        XClass_delete_base((XClass*)self->m_router);
+        XClassDelete((XClass*)self->m_router);
         self->m_router = NULL;
     }
     XClass_Deinit_Parent(XObject, self);
@@ -741,7 +741,7 @@ XHttpServerResponse* XHttpServerResponse_create_status(XHttpServerResponse_Statu
     self->m_statusCode = status;
     Set_Class_IsHeap(self, true);
     if (!self->m_headers || !self->m_body) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;
@@ -753,7 +753,7 @@ XHttpServerResponse* XHttpServerResponse_create_body(const XByteArray* body,
     XHttpServerResponse* self = XHttpServerResponse_create_status(status);
     if (self && body && !XByteArray_push_back_2(self->m_body,
         XByteArray_data((XByteArray*)body), XByteArray_size_base(body))) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;
@@ -766,7 +766,7 @@ XHttpServerResponse* XHttpServerResponse_create_mime(const XByteArray* mimeType,
     XHttpServerResponse* self = XHttpServerResponse_create_body(body, status);
     if (self && mimeType) self->m_mimeType = XByteArray_create_copy(mimeType);
     if (self && mimeType && !self->m_mimeType) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;
@@ -803,7 +803,7 @@ bool XHttpServerResponse_setHeaders(XHttpServerResponse* self, const XHttpHeader
     if (!self || !headers) return false;
     copy = XHttpHeaders_create_copy(headers);
     if (!copy) return false;
-    if (self->m_headers) XClass_delete_base((XClass*)self->m_headers);
+    if (self->m_headers) XClassDelete((XClass*)self->m_headers);
     self->m_headers = copy;
     return true;
 }
@@ -825,7 +825,7 @@ bool XHttpServerResponder_write(XHttpServerResponder* responder,
     if (!response) return false;
     result = responder ? xhttp_server_send_response_for_request(
         responder, response, responder->m_method) : false;
-    XClass_delete_base((XClass*)response);
+    XClassDelete((XClass*)response);
     return result;
 }
 
@@ -859,7 +859,7 @@ XHttpServer* XHttpServer_create_ex(XMemoryType memory)
     XHttpServer_init(self);
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_tcpServer || !self->m_connections || !self->m_router) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;

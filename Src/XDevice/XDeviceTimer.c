@@ -282,7 +282,7 @@ void XDeviceTimer_releaseDispatcher(XAbstractEventDispatcher* dispatcher)
 {
     if (!dispatcher || !dispatcher->d_ptr || !dispatcher->d_ptr->m_hrtimerGroup)
         return;
-    XClass_delete_base((XClass*)dispatcher->d_ptr->m_hrtimerGroup);
+    XClassDelete((XClass*)dispatcher->d_ptr->m_hrtimerGroup);
     dispatcher->d_ptr->m_hrtimerGroup = NULL;
 }
 
@@ -478,7 +478,7 @@ static bool timerSetVariant(XFd fd, XDeviceTimerProperty property,
     memset(&value, 0, sizeof(value));
     XVariant_init(&value, (void*)data, size, type);
     result = XDevice_setProperty(fd, (XDeviceProperty)property, &value);
-    XVariant_deinit_base((XClass*)&value);
+    XClassDeinit((XClass*)&value);
     return result;
 }
 

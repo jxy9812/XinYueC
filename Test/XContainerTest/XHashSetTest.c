@@ -46,7 +46,7 @@ static void XHashSetTest_Basic(void)
 
     XHashSet_clear_base(set);
     XPrintf("  clear 后 size=%zu\n", XHashSet_size_base(set));
-    XHashSet_delete_base(set);
+    XClassDelete(set);
 }
 
 /* ==================== Qt 命名对齐 ==================== */
@@ -66,9 +66,9 @@ static void XHashSetTest_QtAliases(void)
     XPrintf("  keys.size=%zu values.size=%zu (%s)\n",
         XVector_size_base(keys), XVector_size_base(vals),
         (XVector_size_base(keys)==XVector_size_base(vals)?"OK":"FAIL"));
-    XVector_delete_base(keys);
-    XVector_delete_base(vals);
-    XHashSet_delete_base(set);
+    XClassDelete(keys);
+    XClassDelete(vals);
+    XClassDelete(set);
 }
 
 /* ==================== 压力测试 ==================== */
@@ -122,7 +122,7 @@ static void XHashSetTest_QtNewApis(void)
         cap_before_sq, cap_after_sq,
         (cap_after_sq <= cap_before_sq ? "OK" : "FAIL"));
 
-    XHashSet_delete_base(set);
+    XClassDelete(set);
 }
 
 static void XHashSetTest_Stress(void)
@@ -146,7 +146,7 @@ static void XHashSetTest_Stress(void)
     XHashSet_iterator_for_each(set, CountEach, &cnt);
     XPrintf("  遍历统计=%zu\n", cnt);
 
-    XHashSet_delete_base(set);
+    XClassDelete(set);
 }
 
 /* ==================== 主入口 ==================== */

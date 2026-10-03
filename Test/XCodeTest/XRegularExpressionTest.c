@@ -54,16 +54,16 @@ static bool XRegularExpression_test_create_and_lifecycle(void)
                            XRegularExpressionMatchIterator_isValid(iteratorMove),
                    "iterator lifecycle", "迭代器生命周期失败");
 
-    XRegularExpression_delete_base(moved);
-    XRegularExpression_delete_base(copied);
-    XRegularExpression_delete_base(created);
-    XRegularExpressionMatch_delete_base(matchMove);
-    XRegularExpressionMatch_delete_base(matchCopy);
-    XRegularExpressionMatch_delete_base(match);
-    XRegularExpressionMatchIterator_delete_base(iteratorMove);
-    XRegularExpressionMatchIterator_delete_base(iteratorCopy);
-    XRegularExpressionMatchIterator_delete_base(iterator);
-    XRegularExpression_deinit_base(&expression);
+    XClassDelete(moved);
+    XClassDelete(copied);
+    XClassDelete(created);
+    XClassDelete(matchMove);
+    XClassDelete(matchCopy);
+    XClassDelete(match);
+    XClassDelete(iteratorMove);
+    XClassDelete(iteratorCopy);
+    XClassDelete(iterator);
+    XClassDeinit(&expression);
     XREGEX_TEST_PASS("create/init/copy/move/deinit/delete");
     return true;
 }
@@ -87,7 +87,7 @@ static bool XRegularExpression_test_pattern_and_options(void)
                                           XChar_CaseSensitive),
                    "pattern getter", "模式读取结果错误");
     XRegularExpression_optimize(expression);
-    XString_delete_base(pattern);
+    XClassDelete(pattern);
 
     XRegularExpression_setPattern_utf8(expression, "(?<word>[A-Z]+)");
     XRegularExpression_setPatternOptions(expression, XRegularExpression_NoPatternOption);
@@ -99,8 +99,8 @@ static bool XRegularExpression_test_pattern_and_options(void)
     XREGEX_REQUIRE(groupName && XString_equals_utf8(groupName, "word", XChar_CaseSensitive),
                    "namedCaptureGroups value", "命名捕获名称错误");
 
-    XStringList_delete_base(groups);
-    XRegularExpression_delete_base(expression);
+    XClassDelete(groups);
+    XClassDelete(expression);
     XREGEX_TEST_PASS("pattern/options/captureCount/namedCaptureGroups");
     return true;
 }
@@ -169,18 +169,18 @@ static bool XRegularExpression_test_match_and_capture(void)
     XREGEX_REQUIRE(texts && XStringList_size_base(texts) == 3,
                    "capturedTexts", "捕获文本列表大小错误");
 
-    XString_delete_base(whole);
-    XString_delete_base(word);
-    XString_delete_base(number);
-    XString_delete_base(named);
-    XString_delete_base(namedViewString);
-    XRegularExpression_delete_base(matchExpression);
-    XString_delete_base(capturedViewString);
-    XRegularExpressionMatch_delete_base(viewMatch);
-    XString_delete_base(viewSubjectString);
-    XStringList_delete_base(texts);
-    XRegularExpressionMatch_delete_base(match);
-    XRegularExpression_delete_base(expression);
+    XClassDelete(whole);
+    XClassDelete(word);
+    XClassDelete(number);
+    XClassDelete(named);
+    XClassDelete(namedViewString);
+    XClassDelete(matchExpression);
+    XClassDelete(capturedViewString);
+    XClassDelete(viewMatch);
+    XClassDelete(viewSubjectString);
+    XClassDelete(texts);
+    XClassDelete(match);
+    XClassDelete(expression);
     XREGEX_TEST_PASS("normal match/captures/named captures/offsets");
     return true;
 }
@@ -211,10 +211,10 @@ static bool XRegularExpression_test_match_modes(void)
                            !XRegularExpressionMatch_hasMatch(noRun),
                    "NoMatch", "NoMatch 模式错误");
 
-    XRegularExpressionMatch_delete_base(partial);
-    XRegularExpressionMatch_delete_base(noMatch);
-    XRegularExpressionMatch_delete_base(noRun);
-    XRegularExpression_delete_base(expression);
+    XClassDelete(partial);
+    XClassDelete(noMatch);
+    XClassDelete(noRun);
+    XClassDelete(expression);
     XREGEX_TEST_PASS("normal/partial/NoMatch modes");
     return true;
 }
@@ -235,9 +235,9 @@ static bool XRegularExpression_test_global_match(void)
     XString* firstText = XRegularExpressionMatch_captured(first, 0);
     XREGEX_REQUIRE(firstText && XString_equals_utf8(firstText, "12", XChar_CaseSensitive),
                    "global first", "第一个全局结果错误");
-    XRegularExpressionMatch_delete_base(peek);
-    XRegularExpressionMatch_delete_base(first);
-    XString_delete_base(firstText);
+    XClassDelete(peek);
+    XClassDelete(first);
+    XClassDelete(firstText);
 
     XRegularExpressionMatch* second = XRegularExpressionMatchIterator_next(iterator);
     XString* secondText = second ? XRegularExpressionMatch_captured(second, 0) : NULL;
@@ -264,13 +264,13 @@ static bool XRegularExpression_test_global_match(void)
     XREGEX_REQUIRE(viewIterator && XRegularExpressionMatchIterator_hasNext(viewIterator),
                    "globalMatchView", "UTF-16 视图全局匹配失败");
 
-    XString_delete_base(secondText);
-    XRegularExpressionMatch_delete_base(second);
-    XRegularExpression_delete_base(iteratorExpression);
-    XRegularExpressionMatchIterator_delete_base(viewIterator);
-    XString_delete_base(globalSubject);
-    XRegularExpressionMatchIterator_delete_base(iterator);
-    XRegularExpression_delete_base(expression);
+    XClassDelete(secondText);
+    XClassDelete(second);
+    XClassDelete(iteratorExpression);
+    XClassDelete(viewIterator);
+    XClassDelete(globalSubject);
+    XClassDelete(iterator);
+    XClassDelete(expression);
     XREGEX_TEST_PASS("globalMatch/peekNext/next/end");
     return true;
 }
@@ -290,12 +290,12 @@ static bool XRegularExpression_test_global_edge_cases(void)
         XREGEX_REQUIRE(match && XRegularExpressionMatch_capturedStart(match, 0) == expectedStarts[i] &&
                                XRegularExpressionMatch_capturedEnd(match, 0) == expectedEnds[i],
                        "global empty progression", "空匹配后的同位置非空匹配或偏移错误");
-        XRegularExpressionMatch_delete_base(match);
+        XClassDelete(match);
     }
     XREGEX_REQUIRE(!XRegularExpressionMatchIterator_hasNext(emptyIterator),
                    "global empty end", "空匹配迭代器未正常结束");
-    XRegularExpressionMatchIterator_delete_base(emptyIterator);
-    XRegularExpression_delete_base(emptyAlternation);
+    XClassDelete(emptyIterator);
+    XClassDelete(emptyAlternation);
 
     XRegularExpression* dot = XRegularExpression_create_utf8(".*", 0);
     XRegularExpressionMatchIterator* dotIterator = XRegularExpression_globalMatch_utf8(
@@ -309,13 +309,13 @@ static bool XRegularExpression_test_global_edge_cases(void)
         XREGEX_REQUIRE(match && text && XString_equals_utf8(text, dotTexts[i],
                                                             XChar_CaseSensitive),
                        "global dot progression", "换行空匹配序列与 Qt 不一致");
-        XString_delete_base(text);
-        XRegularExpressionMatch_delete_base(match);
+        XClassDelete(text);
+        XClassDelete(match);
     }
     XREGEX_REQUIRE(!XRegularExpressionMatchIterator_hasNext(dotIterator),
                    "global dot end", "换行空匹配迭代器未结束");
-    XRegularExpressionMatchIterator_delete_base(dotIterator);
-    XRegularExpression_delete_base(dot);
+    XClassDelete(dotIterator);
+    XClassDelete(dot);
 
     XRegularExpression* crlf = XRegularExpression_create_utf8("(*CRLF).*", 0);
     XRegularExpressionMatchIterator* crlfIterator = XRegularExpression_globalMatch_utf8(
@@ -329,13 +329,13 @@ static bool XRegularExpression_test_global_edge_cases(void)
         XREGEX_REQUIRE(match && text && XString_equals_utf8(text, crlfTexts[i],
                                                             XChar_CaseSensitive),
                        "global CRLF progression", "CRLF 空匹配跳过规则错误");
-        XString_delete_base(text);
-        XRegularExpressionMatch_delete_base(match);
+        XClassDelete(text);
+        XClassDelete(match);
     }
     XREGEX_REQUIRE(!XRegularExpressionMatchIterator_hasNext(crlfIterator),
                    "global CRLF end", "CRLF 空匹配迭代器未结束");
-    XRegularExpressionMatchIterator_delete_base(crlfIterator);
-    XRegularExpression_delete_base(crlf);
+    XClassDelete(crlfIterator);
+    XClassDelete(crlf);
 
     XRegularExpression* surrogate = XRegularExpression_create_utf8(
             "[\\x{0000}-\\x{FFFF}]*", 0);
@@ -350,13 +350,13 @@ static bool XRegularExpression_test_global_edge_cases(void)
         XREGEX_REQUIRE(match && text && XString_equals_utf8(text, surrogateTexts[i],
                                                             XChar_CaseSensitive),
                        "global surrogate progression", "代理对没有按 UTF-16 code point 跳过");
-        XString_delete_base(text);
-        XRegularExpressionMatch_delete_base(match);
+        XClassDelete(text);
+        XClassDelete(match);
     }
     XREGEX_REQUIRE(!XRegularExpressionMatchIterator_hasNext(surrogateIterator),
                    "global surrogate end", "代理对迭代器未结束");
-    XRegularExpressionMatchIterator_delete_base(surrogateIterator);
-    XRegularExpression_delete_base(surrogate);
+    XClassDelete(surrogateIterator);
+    XClassDelete(surrogate);
 
     XRegularExpression* lookbehind = XRegularExpression_create_utf8("\\bstring\\b", 0);
     XRegularExpressionMatch* partial = XRegularExpression_match_utf8(
@@ -375,11 +375,11 @@ static bool XRegularExpression_test_global_edge_cases(void)
     XREGEX_REQUIRE(empty && emptySubject && emptyCaptured && XString_isEmpty_base(emptyCaptured),
                    "empty captured view", "空主题的空捕获视图访问失败");
 
-    XString_delete_base(emptyCaptured);
-    XRegularExpressionMatch_delete_base(emptySubject);
-    XRegularExpression_delete_base(empty);
-    XRegularExpressionMatch_delete_base(partial);
-    XRegularExpression_delete_base(lookbehind);
+    XClassDelete(emptyCaptured);
+    XClassDelete(emptySubject);
+    XClassDelete(empty);
+    XClassDelete(partial);
+    XClassDelete(lookbehind);
     XREGEX_TEST_PASS("global empty/CRLF/surrogate/partial boundary cases");
     return true;
 }
@@ -429,19 +429,19 @@ static bool XRegularExpression_test_swap(void)
                                                                XChar_CaseSensitive),
                    "swap iterator", "迭代器交换结果错误");
 
-    XString_delete_base(swappedIteratorText);
-    XRegularExpressionMatch_delete_base(swappedIteratorMatch);
-    XRegularExpressionMatchIterator_delete_base(firstIterator);
-    XRegularExpressionMatchIterator_delete_base(secondIterator);
-    XRegularExpression_delete_base(first);
-    XRegularExpression_delete_base(second);
-    XString_delete_base(swappedMatchText);
-    XRegularExpressionMatch_delete_base(leftMatch);
-    XRegularExpressionMatch_delete_base(rightMatch);
-    XString_delete_base(leftPattern);
-    XString_delete_base(rightPattern);
-    XRegularExpression_delete_base(left);
-    XRegularExpression_delete_base(right);
+    XClassDelete(swappedIteratorText);
+    XClassDelete(swappedIteratorMatch);
+    XClassDelete(firstIterator);
+    XClassDelete(secondIterator);
+    XClassDelete(first);
+    XClassDelete(second);
+    XClassDelete(swappedMatchText);
+    XClassDelete(leftMatch);
+    XClassDelete(rightMatch);
+    XClassDelete(leftPattern);
+    XClassDelete(rightPattern);
+    XClassDelete(left);
+    XClassDelete(right);
     XREGEX_TEST_PASS("regular expression/match/iterator swap");
     return true;
 }
@@ -463,7 +463,7 @@ static void XRegularExpression_thread_reader(XThread* thread, XVarList* varList)
             XAtomic_fetch_add_int32(&g_regularExpressionThreadFailures, 1,
                                     XAtomic_MemoryOrder_Relaxed);
         }
-        if (match) XRegularExpressionMatch_delete_base(match);
+        if (match) XClassDelete(match);
     }
 }
 
@@ -482,15 +482,15 @@ static bool XRegularExpression_test_thread_safe_readers(void)
     }
     for (size_t i = 0; i < started; ++i) {
         XThread_wait(threads[i], 10000);
-        XClass_delete_base((XClass*)threads[i]);
+        XClassDelete((XClass*)threads[i]);
     }
     for (size_t i = started; i < 4; ++i) {
-        if (threads[i]) XClass_delete_base((XClass*)threads[i]);
+        if (threads[i]) XClassDelete((XClass*)threads[i]);
     }
     g_regularExpressionThreadExpression = NULL;
     int32_t failures = XAtomic_load_int32(&g_regularExpressionThreadFailures,
                                           XAtomic_MemoryOrder_Relaxed);
-    XRegularExpression_delete_base(expression);
+    XClassDelete(expression);
     XREGEX_REQUIRE(started == 4 && failures == 0, "thread safe readers",
                    "只读并发匹配失败");
     XREGEX_TEST_PASS("XMutex 保护的并发只读匹配");
@@ -574,24 +574,24 @@ static bool XRegularExpression_test_conversion(void)
                            XRegularExpressionValidator_Invalid && position == 1,
                    "validator invalid", "校验器无效状态错误");
 
-    XRegularExpressionMatch_delete_base(match);
-    XRegularExpression_delete_base(regex);
-    XRegularExpression_delete_base(fromWildcard);
-    XRegularExpression_delete_base(validatorGetter);
-    XRegularExpressionValidator_delete_base(validatorMove);
-    XRegularExpressionValidator_delete_base(validatorCopy);
-    XRegularExpressionValidator_delete_base(validator);
-    XRegularExpression_delete_base(validatorExpression);
-    XString_delete_base(acceptableInput);
-    XString_delete_base(convertedView);
-    XString_delete_base(converted);
-    XString_delete_base(convertedBackslash);
-    XString_delete_base(backslashWildcard);
-    XString_delete_base(anchored);
-    XString_delete_base(escapedView);
-    XString_delete_base(wildcard);
-    XString_delete_base(escaped);
-    XString_delete_base(literal);
+    XClassDelete(match);
+    XClassDelete(regex);
+    XClassDelete(fromWildcard);
+    XClassDelete(validatorGetter);
+    XClassDelete(validatorMove);
+    XClassDelete(validatorCopy);
+    XClassDelete(validator);
+    XClassDelete(validatorExpression);
+    XClassDelete(acceptableInput);
+    XClassDelete(convertedView);
+    XClassDelete(converted);
+    XClassDelete(convertedBackslash);
+    XClassDelete(backslashWildcard);
+    XClassDelete(anchored);
+    XClassDelete(escapedView);
+    XClassDelete(wildcard);
+    XClassDelete(escaped);
+    XClassDelete(literal);
     XREGEX_TEST_PASS("escape/wildcard/anchored/validator");
     return true;
 }
@@ -610,8 +610,8 @@ static bool XRegularExpression_test_invalid_and_null(void)
                            XRegularExpressionMatchIterator_hasNext(NULL) == false,
                    "NULL safety", "NULL 安全行为错误");
 
-    XString_delete_base(error);
-    XRegularExpression_delete_base(invalid);
+    XClassDelete(error);
+    XClassDelete(invalid);
     XREGEX_TEST_PASS("invalid pattern/error/NULL safety");
     return true;
 }
@@ -747,37 +747,37 @@ static bool XRegularExpression_test_string_consumers(void)
     XStringList* viewSplit = XStringView_split_regularExpression(&view, comma, true);
     XREGEX_REQUIRE(viewSplit != NULL, "string view regex split", "字符串视图正则分割失败");
 
-    XString_delete_base(viewText);
-    XStringList_delete_base(invalidSplit);
-    XRegularExpression_delete_base(invalidSeparator);
-    XRegularExpression_delete_base(absent);
-    XRegularExpressionMatch_delete_base(preservedMatch);
-    XStringList_delete_base(viewSplit);
-    XString_delete_base(insensitiveSection);
-    XString_delete_base(insensitiveSectionText);
-    XRegularExpression_delete_base(insensitiveComma);
-    XString_delete_base(sectionSkipEmpty);
-    XString_delete_base(sectionEmptyText);
-    XString_delete_base(sectionWithSeparators);
-    XString_delete_base(section);
-    XString_delete_base(sectionText);
-    XString_delete_base(removed);
-    XRegularExpression_delete_base(wholeWordDigit);
-    XStringList_delete_base(filtered);
-    XStringList_delete_base(list);
-    XStringList_delete_base(split);
-    XRegularExpression_delete_base(comma);
-    XString_delete_base(csv);
-    XString_delete_base(emptyText);
-    XRegularExpression_delete_base(emptyExpression);
-    XString_delete_base(overlapText);
-    XRegularExpression_delete_base(overlap);
-    XString_delete_base(numberedReplacement);
-    XRegularExpression_delete_base(numbered);
-    XString_delete_base(numberedText);
-    XString_delete_base(replacement);
-    XRegularExpression_delete_base(digit);
-    XString_delete_base(text);
+    XClassDelete(viewText);
+    XClassDelete(invalidSplit);
+    XClassDelete(invalidSeparator);
+    XClassDelete(absent);
+    XClassDelete(preservedMatch);
+    XClassDelete(viewSplit);
+    XClassDelete(insensitiveSection);
+    XClassDelete(insensitiveSectionText);
+    XClassDelete(insensitiveComma);
+    XClassDelete(sectionSkipEmpty);
+    XClassDelete(sectionEmptyText);
+    XClassDelete(sectionWithSeparators);
+    XClassDelete(section);
+    XClassDelete(sectionText);
+    XClassDelete(removed);
+    XClassDelete(wholeWordDigit);
+    XClassDelete(filtered);
+    XClassDelete(list);
+    XClassDelete(split);
+    XClassDelete(comma);
+    XClassDelete(csv);
+    XClassDelete(emptyText);
+    XClassDelete(emptyExpression);
+    XClassDelete(overlapText);
+    XClassDelete(overlap);
+    XClassDelete(numberedReplacement);
+    XClassDelete(numbered);
+    XClassDelete(numberedText);
+    XClassDelete(replacement);
+    XClassDelete(digit);
+    XClassDelete(text);
     XREGEX_TEST_PASS("XString/XStringList 正则消费者");
     return true;
 }
@@ -803,7 +803,7 @@ static bool XRegularExpression_test_hash_map(void)
     XREGEX_REQUIRE(map != NULL, "regular expression hash map", "正则哈希映射创建失败");
     XMapBaseSetKeyCopyMethod(map, XClass_copy_base);
     XMapBaseSetKeyMoveMethod(map, XClass_move_base);
-    XMapBaseSetKeyDeinitMethod(map, XRegularExpression_deinit_base);
+    XMapBaseSetKeyDeinitMethod(map, XClass_deinit_base);
     int value = 68;
     XREGEX_REQUIRE(XHashMap_insert_base(map, expression, &value),
                    "regular expression hash insert", "正则哈希键插入失败");
@@ -813,10 +813,10 @@ static bool XRegularExpression_test_hash_map(void)
     XREGEX_REQUIRE(XHashMap_remove_base(map, equivalent) && XHashMap_size_base(map) == 0,
                    "regular expression hash remove", "正则哈希键删除失败");
 
-    XHashMap_delete_base(map);
-    XRegularExpression_delete_base(different);
-    XRegularExpression_delete_base(equivalent);
-    XRegularExpression_delete_base(expression);
+    XClassDelete(map);
+    XClassDelete(different);
+    XClassDelete(equivalent);
+    XClassDelete(expression);
     XREGEX_TEST_PASS("XHashMap 正则键哈希/比较/生命周期");
     return true;
 }

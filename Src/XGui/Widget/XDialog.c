@@ -514,7 +514,7 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
             {
                 /* 左侧窗口图标位（可选 16px，Win10 小图标）：无图标
                  * 时标题左移补位。XWidget_windowIcon 返回共享副本，
-                 * 用毕 XIcon_deinit_base（契约同 XWidget_font）。 */
+                 * 用毕 XClassDeinit（契约同 XWidget_font）。 */
                 XIcon icon = XWidget_windowIcon(self);
                 int textX = o.x + 8;
                 if (!XIcon_isNull(&icon)) {
@@ -524,7 +524,7 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
                                 XIconMode_Normal, XIconState_Off);
                     textX = o.x + 8 + XDLG_TB_ICON_EXTENT + 8;
                 }
-                XIcon_deinit_base(&icon);
+                XClassDeinit(&icon);
                 if (w >= XDLG_TB_CLOSE_EXTENT + 8) {
                     /* 右端 [×] 关闭钮 24x24：右缘让出 1px 边框列、上
                      * 缘 2px 呼吸位（与 xdlg_closeButtonHit 同一几何）。
@@ -583,7 +583,7 @@ static void VXDialog_paintEvent(XWidget* self, XEvent* event)
                                           XColor_rgba(&textColor));
 #endif
                     }
-                    XFont_deinit_base(&font);
+                    XClassDeinit(&font);
                 }
             }
         }
@@ -751,7 +751,7 @@ static bool xdlg_focusNextPrevChild(XDialog* self, bool next)
     xdlg_collectTabCandidates((XObject*)self, list);
     count = (int)XVector_size_base((const XContainer*)list);
     if (count == 0) {
-        XVector_delete_base((XClass*)list);
+        XClassDelete((XClass*)list);
         return false;
     }
     current = XWidget_appFocusWidget();
@@ -771,7 +771,7 @@ static bool xdlg_focusNextPrevChild(XDialog* self, bool next)
         target = XVector_At_Base(list, (int64_t)((idx + step) % count),
                                  XWidget*);
     }
-    XVector_delete_base((XClass*)list);
+    XClassDelete((XClass*)list);
     if (!target || target == current) return false;
     XWidget_setFocusReason(target, next ? XFocusReason_Tab
                                         : XFocusReason_Backtab);

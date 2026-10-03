@@ -178,7 +178,7 @@ XTreeWidgetItem* XTreeWidgetItem_create_2(const char* text,
         if (!tmp) return NULL;
     }
     item = XTreeWidgetItem_create(tmp, parent);
-    if (tmp) XString_delete_base((XClass*)tmp);
+    if (tmp) XClassDelete((XClass*)tmp);
     return item;
 }
 
@@ -201,12 +201,12 @@ static void xtwitem_freeSubtree(XTreeWidgetItem* item)
         }
     }
     if (item->children) XFree_System(item->children);
-    if (item->text) XString_delete_base((XClass*)item->text);
+    if (item->text) XClassDelete((XClass*)item->text);
     if (item->extraTexts) {
         int eci;
         for (eci = 0; eci < item->extraTextCapacity; ++eci)
             if (item->extraTexts[eci])
-                XString_delete_base((XClass*)item->extraTexts[eci]);
+                XClassDelete((XClass*)item->extraTexts[eci]);
         XFree_System(item->extraTexts);
         item->extraTexts = NULL;
     }
@@ -252,7 +252,7 @@ void XTreeWidgetItem_setText_2(XTreeWidgetItem* item, const char* text)
         if (!tmp) return;
     }
     XTreeWidgetItem_setText(item, tmp);
-    if (tmp) XString_delete_base((XClass*)tmp);
+    if (tmp) XClassDelete((XClass*)tmp);
 }
 
 const XString* XTreeWidgetItem_textAt(const XTreeWidgetItem* item,
@@ -336,7 +336,7 @@ void XTreeWidgetItem_setTextAt_2(XTreeWidgetItem* item, int column,
         if (!tmp) return;
     }
     XTreeWidgetItem_setTextAt(item, column, tmp);
-    if (tmp) XString_delete_base((XClass*)tmp);
+    if (tmp) XClassDelete((XClass*)tmp);
 }
 
 int XTreeWidgetItem_checkState(const XTreeWidgetItem* item)
@@ -915,7 +915,7 @@ static void VXTreeWidget_deinit(XTreeWidget* self)
     if (self->m_headerLabels) {
         for (i = 0; i < self->m_headerCapacity; ++i) {
             if (self->m_headerLabels[i])
-                XString_delete_base((XClass*)(self->m_headerLabels[i]));
+                XClassDelete((XClass*)(self->m_headerLabels[i]));
         }
         XFree_System(self->m_headerLabels);
     }
@@ -929,7 +929,7 @@ static void VXTreeWidget_deinit(XTreeWidget* self)
        信号连接（ASan 实测：已 delete_base 的树仍留成组间接残留，
        xtw_bridgeSync→XAbstractItemModel_setDimension 链）。 */
     if (self->m_bridgeModel) {
-        XAbstractItemModel_delete_base((XClass*)(self->m_bridgeModel));
+        XClassDelete((XClass*)(self->m_bridgeModel));
         self->m_bridgeModel = NULL;
     }
     XClass_Deinit_Parent(XTreeView, (XTreeView*)self);

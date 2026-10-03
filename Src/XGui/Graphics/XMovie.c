@@ -61,8 +61,8 @@ static bool XMovie_isInitializedObject(const XMovie* self)
 static void XMovie_clearCurrent(XMoviePrivate* data)
 {
     if (!data) return;
-    XImage_deinit_base(&data->m_currentImage);
-    XPixmap_deinit_base(&data->m_currentPixmap);
+    XClassDeinit(&data->m_currentImage);
+    XClassDeinit(&data->m_currentPixmap);
     XMemset(&data->m_frameRect, 0, sizeof(data->m_frameRect));
     data->m_currentFrame = -1;
 }
@@ -104,13 +104,13 @@ static void XMovie_clearPrivate(XMoviePrivate* data)
 {
     if (!data) return;
     if (data->m_reader) {
-        XClass_delete_base((XClass*)data->m_reader);
+        XClassDelete((XClass*)data->m_reader);
         data->m_reader = NULL;
     }
     XMovie_clearCurrent(data);
-    if (data->m_fileName) XString_delete_base((XClass*)data->m_fileName);
-    if (data->m_format) XString_delete_base((XClass*)data->m_format);
-    if (data->m_errorString) XString_delete_base((XClass*)data->m_errorString);
+    if (data->m_fileName) XClassDelete((XClass*)data->m_fileName);
+    if (data->m_format) XClassDelete((XClass*)data->m_format);
+    if (data->m_errorString) XClassDelete((XClass*)data->m_errorString);
     data->m_fileName = NULL;
     data->m_format = NULL;
     data->m_errorString = NULL;
@@ -143,7 +143,7 @@ static void XMovie_captureReaderError(XMovie* self)
     if (!self || !(data = self->m_data) || !data->m_reader) return;
     message = XImageReader_errorString(data->m_reader);
     XMovie_setError(self, XImageReader_error(data->m_reader), message);
-    if (message) XString_delete_base((XClass*)message);
+    if (message) XClassDelete((XClass*)message);
 }
 
 static void XMovie_setState(XMovie* self, XMovieState state)
@@ -221,11 +221,11 @@ static bool XMovie_loadFrame(XMovie* self, int frameNumber, bool emitSignals)
     XImage_init(&image);
     if (!XImageReader_read(data->m_reader, &image)) {
         XMovie_captureReaderError(self);
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return false;
     }
     oldRect = data->m_frameRect;
-    XMove(&data->m_currentImage, &image);
+    XClassMove(&data->m_currentImage, &image);
     XPixmap_fromImage(&data->m_currentImage, 0, &data->m_currentPixmap);
     XImage_rect(&data->m_currentImage, &data->m_frameRect);
     data->m_currentFrame = frameNumber;
@@ -286,7 +286,7 @@ void XMovie_init(XMovie* self)
     {
         memory = Class_Memory(self);
         isHeap = Class_IsHeap(self);
-        XMovie_deinit_base(self);
+        XClassDeinit(self);
     }
     XMemset(self, 0, sizeof(XMovie));
     XObject_init((XObject*)self);
@@ -329,7 +329,7 @@ void XMovie_init_device_2(XMovie* self, XIODevice* device, const char* format)
 {
     XString* value = format ? XString_create_utf8(format) : NULL;
     XMovie_init_device(self, device, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 void XMovie_init_file(XMovie* self, const XString* fileName, const XString* format)
@@ -345,8 +345,8 @@ void XMovie_init_file_2(XMovie* self, const char* fileName, const char* format)
     XString* file = fileName ? XString_create_utf8(fileName) : NULL;
     XString* type = format ? XString_create_utf8(format) : NULL;
     XMovie_init_file(self, file, type);
-    if (file) XString_delete_base((XClass*)file);
-    if (type) XString_delete_base((XClass*)type);
+    if (file) XClassDelete((XClass*)file);
+    if (type) XClassDelete((XClass*)type);
 }
 
 XMovie* XMovie_create_device_ex(XMemoryType memory, XIODevice* device,
@@ -365,7 +365,7 @@ XMovie* XMovie_create_device_ex_2(XMemoryType memory, XIODevice* device,
 {
     XString* value = format ? XString_create_utf8(format) : NULL;
     XMovie* self = XMovie_create_device_ex(memory, device, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return self;
 }
 
@@ -386,8 +386,8 @@ XMovie* XMovie_create_file_ex_2(XMemoryType memory, const char* fileName,
     XString* file = fileName ? XString_create_utf8(fileName) : NULL;
     XString* type = format ? XString_create_utf8(format) : NULL;
     XMovie* self = XMovie_create_file_ex(memory, file, type);
-    if (file) XString_delete_base((XClass*)file);
-    if (type) XString_delete_base((XClass*)type);
+    if (file) XClassDelete((XClass*)file);
+    if (type) XClassDelete((XClass*)type);
     return self;
 }
 
@@ -411,8 +411,8 @@ static void VXMovie_copy(XMovie* self, const XMovie* other)
     XMovie_clearPrivate(self->m_data);
     XMemset(self->m_data, 0, sizeof(XMoviePrivate));
     self->m_data->m_reader = XMovie_cloneReader(source->m_reader);
-    XCopy(&self->m_data->m_currentImage, &source->m_currentImage);
-    XCopy(&self->m_data->m_currentPixmap, &source->m_currentPixmap);
+    XClassCopy(&self->m_data->m_currentImage, &source->m_currentImage);
+    XClassCopy(&self->m_data->m_currentPixmap, &source->m_currentPixmap);
     self->m_data->m_backgroundColor = source->m_backgroundColor;
     self->m_data->m_frameRect = source->m_frameRect;
     self->m_data->m_scaledSize = source->m_scaledSize;
@@ -469,7 +469,7 @@ XStringList* XMovie_supportedFormats(void)
     int64_t count;
     int64_t i;
     if (!result) {
-        if (all) XStringList_delete_base((XClass*)all);
+        if (all) XClassDelete((XClass*)all);
         return NULL;
     }
     if (!all) return result;
@@ -480,7 +480,7 @@ XStringList* XMovie_supportedFormats(void)
         if (format && utf8 && XMovie_formatSupportsAnimation(format))
             XStringList_push_back_utf8(result, utf8);
     }
-    XStringList_delete_base((XClass*)all);
+    XClassDelete((XClass*)all);
     XStringList_sort(result, XChar_CaseSensitive);
     XStringList_removeDuplicates(result);
     return result;
@@ -490,7 +490,7 @@ void XMovie_setDevice(XMovie* self, XIODevice* device)
 {
     if (!self || !self->m_data || !self->m_data->m_reader) return;
     XMovie_stop(self);
-    if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
+    if (self->m_data->m_fileName) XClassDelete((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = NULL;
     XImageReader_setDevice(self->m_data->m_reader, device);
     XMovie_resetPlayback(self->m_data);
@@ -509,7 +509,7 @@ void XMovie_setFileName(XMovie* self, const XString* fileName)
     if (!self || !self->m_data || !self->m_data->m_reader) return;
     XMovie_stop(self);
     copy = fileName ? XString_create_copy(fileName) : NULL;
-    if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
+    if (self->m_data->m_fileName) XClassDelete((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = copy;
     XImageReader_setFileName(self->m_data->m_reader, fileName);
     XMovie_resetPlayback(self->m_data);
@@ -520,7 +520,7 @@ void XMovie_setFileName_2(XMovie* self, const char* fileName)
 {
     XString* value = fileName ? XString_create_utf8(fileName) : NULL;
     XMovie_setFileName(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 XString* XMovie_fileName(const XMovie* self)
@@ -538,7 +538,7 @@ void XMovie_setFormat(XMovie* self, const XString* format)
     XString* copy;
     if (!self || !self->m_data || !self->m_data->m_reader) return;
     copy = format ? XString_create_copy(format) : NULL;
-    if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
+    if (self->m_data->m_format) XClassDelete((XClass*)self->m_data->m_format);
     self->m_data->m_format = copy;
     XImageReader_setFormat(self->m_data->m_reader, format);
 }
@@ -546,7 +546,7 @@ void XMovie_setFormat_2(XMovie* self, const char* format)
 {
     XString* value = format ? XString_create_utf8(format) : NULL;
     XMovie_setFormat(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 XString* XMovie_format(const XMovie* self)
 {
@@ -579,7 +579,7 @@ void XMovie_currentImage(const XMovie* self, XImage* out)
 {
     if (!out) return;
     if (self && self->m_data)
-        XCopy(out, &self->m_data->m_currentImage);
+        XClassCopy(out, &self->m_data->m_currentImage);
     else
         XImage_init(out);
 }
@@ -587,7 +587,7 @@ void XMovie_currentPixmap(const XMovie* self, XPixmap* out)
 {
     if (!out) return;
     if (self && self->m_data)
-        XCopy(out, &self->m_data->m_currentPixmap);
+        XClassCopy(out, &self->m_data->m_currentPixmap);
     else
         XPixmap_init(out);
 }

@@ -561,7 +561,7 @@ static bool parse_attribute_value(XXmlStreamReaderPrivate* d,
         const char* value = XString_toUtf8(&raw);
         ok = value ? expand_entity_value(d, value, out, 0) : true;
     }
-    XString_deinit_base(&raw);
+    XClassDeinit(&raw);
     return ok;
 }
 
@@ -569,9 +569,9 @@ static void clear_default_attributes(XXmlStreamReaderPrivate* d)
 {
     if (!d || !d->m_defaultAttributes) return;
     for (int i = 0; i < d->m_defaultAttributeCount; ++i) {
-        XString_delete_base(d->m_defaultAttributes[i].m_elementName);
-        XString_delete_base(d->m_defaultAttributes[i].m_attributeName);
-        XString_delete_base(d->m_defaultAttributes[i].m_value);
+        XClassDelete(d->m_defaultAttributes[i].m_elementName);
+        XClassDelete(d->m_defaultAttributes[i].m_attributeName);
+        XClassDelete(d->m_defaultAttributes[i].m_value);
         memset(&d->m_defaultAttributes[i], 0, sizeof(XmlDefaultAttribute));
     }
     d->m_defaultAttributeCount = 0;
@@ -609,9 +609,9 @@ static bool append_default_attribute(XXmlStreamReaderPrivate* d,
     item->m_value = XString_create_copy(value);
     item->m_required = required;
     if (!item->m_elementName || !item->m_attributeName || !item->m_value) {
-        XString_delete_base(item->m_elementName);
-        XString_delete_base(item->m_attributeName);
-        XString_delete_base(item->m_value);
+        XClassDelete(item->m_elementName);
+        XClassDelete(item->m_attributeName);
+        XClassDelete(item->m_value);
         memset(item, 0, sizeof(*item));
         return false;
     }
@@ -655,22 +655,22 @@ static bool parse_xml_declaration(XXmlStreamReaderPrivate* d, const char** ptr, 
         XString_init(&attrName);
         XString_init(&attrValue);
         if (!parse_name(ptr, end, &attrName)) {
-            XString_deinit_base(&attrName);
-            XString_deinit_base(&attrValue);
+            XClassDeinit(&attrName);
+            XClassDeinit(&attrValue);
             return false;
         }
         const char* name = XString_toUtf8(&attrName);
         *ptr = skip_whitespace(*ptr, end);
         if (*ptr >= end || **ptr != '=') {
-            XString_deinit_base(&attrName);
-            XString_deinit_base(&attrValue);
+            XClassDeinit(&attrName);
+            XClassDeinit(&attrValue);
             return false;
         }
         ++(*ptr);
         *ptr = skip_whitespace(*ptr, end);
         if (!parse_quoted_string(ptr, end, &attrValue)) {
-            XString_deinit_base(&attrName);
-            XString_deinit_base(&attrValue);
+            XClassDeinit(&attrName);
+            XClassDeinit(&attrValue);
             return false;
         }
         const char* value = XString_toUtf8(&attrValue);
@@ -726,8 +726,8 @@ static bool parse_xml_declaration(XXmlStreamReaderPrivate* d, const char** ptr, 
         } else {
             valid = false;
         }
-        XString_deinit_base(&attrName);
-        XString_deinit_base(&attrValue);
+        XClassDeinit(&attrName);
+        XClassDeinit(&attrValue);
         if (!valid) return false;
         const char* afterValue = *ptr;
         if (*ptr < end && **ptr != '?' &&
@@ -845,20 +845,20 @@ static bool parse_cdata(XXmlStreamReaderPrivate* d, const char** ptr, const char
 static void free_notation_entry(XXmlStreamNotationDeclaration* entry)
 {
     if (!entry) return;
-    if (entry->m_name) XString_delete_base(entry->m_name);
-    if (entry->m_systemId) XString_delete_base(entry->m_systemId);
-    if (entry->m_publicId) XString_delete_base(entry->m_publicId);
+    if (entry->m_name) XClassDelete(entry->m_name);
+    if (entry->m_systemId) XClassDelete(entry->m_systemId);
+    if (entry->m_publicId) XClassDelete(entry->m_publicId);
     memset(entry, 0, sizeof(*entry));
 }
 
 static void free_entity_entry(XXmlStreamEntityDeclaration* entry)
 {
     if (!entry) return;
-    if (entry->m_name) XString_delete_base(entry->m_name);
-    if (entry->m_notationName) XString_delete_base(entry->m_notationName);
-    if (entry->m_systemId) XString_delete_base(entry->m_systemId);
-    if (entry->m_publicId) XString_delete_base(entry->m_publicId);
-    if (entry->m_value) XString_delete_base(entry->m_value);
+    if (entry->m_name) XClassDelete(entry->m_name);
+    if (entry->m_notationName) XClassDelete(entry->m_notationName);
+    if (entry->m_systemId) XClassDelete(entry->m_systemId);
+    if (entry->m_publicId) XClassDelete(entry->m_publicId);
+    if (entry->m_value) XClassDelete(entry->m_value);
     memset(entry, 0, sizeof(*entry));
 }
 
@@ -1009,7 +1009,7 @@ static bool parse_dtd_subset(XXmlStreamReaderPrivate* d, const char* start, cons
                 ok = parse_name(&q, declEnd, &attributeName);
                 q = skip_whitespace(q, declEnd);
                 if (!ok || q >= declEnd) {
-                    XString_deinit_base(&attributeName);
+                    XClassDeinit(&attributeName);
                     break;
                 }
                 if (*q == '(') {
@@ -1024,7 +1024,7 @@ static bool parse_dtd_subset(XXmlStreamReaderPrivate* d, const char* start, cons
                     XString typeName;
                     XString_init(&typeName);
                     ok = parse_name(&q, declEnd, &typeName);
-                    XString_deinit_base(&typeName);
+                    XClassDeinit(&typeName);
                 }
                 q = skip_whitespace(q, declEnd);
                 bool required = false;
@@ -1055,11 +1055,11 @@ static bool parse_dtd_subset(XXmlStreamReaderPrivate* d, const char* start, cons
                 if (ok && hasValue)
                     ok = append_default_attribute(d, &elementName, &attributeName,
                                                   &defaultValue, required);
-                XString_deinit_base(&defaultValue);
-                XString_deinit_base(&attributeName);
+                XClassDeinit(&defaultValue);
+                XClassDeinit(&attributeName);
                 q = skip_whitespace(q, declEnd);
             }
-            XString_deinit_base(&elementName);
+            XClassDeinit(&elementName);
             if (!ok) return false;
             p = declEnd + 1;
             continue;
@@ -1118,9 +1118,9 @@ static bool parse_dtd_subset(XXmlStreamReaderPrivate* d, const char* start, cons
                 ok = false;
             }
         }
-        XString_deinit_base(&name); XString_deinit_base(&keyword);
-        XString_deinit_base(&first); XString_deinit_base(&second);
-        XString_deinit_base(&notationName);
+        XClassDeinit(&name); XClassDeinit(&keyword);
+        XClassDeinit(&first); XClassDeinit(&second);
+        XClassDeinit(&notationName);
         if (!ok) return false;
         p = declEnd + 1;
     }
@@ -1188,8 +1188,8 @@ static void clear_namespace_declarations(XXmlStreamReaderPrivate* d)
     for (int i = 0; i < d->m_namespaceDeclarationCount; i++)
     {
         XmlNamespaceDeclaration* decl = &d->m_namespaceDeclarations[i];
-        if (decl->m_prefix) XString_delete_base(decl->m_prefix);
-        if (decl->m_namespaceUri) XString_delete_base(decl->m_namespaceUri);
+        if (decl->m_prefix) XClassDelete(decl->m_prefix);
+        if (decl->m_namespaceUri) XClassDelete(decl->m_namespaceUri);
         decl->m_prefix = NULL;
         decl->m_namespaceUri = NULL;
     }
@@ -1218,8 +1218,8 @@ static bool append_namespace(XmlNamespaceDeclaration** declarations, int* count,
     declaration->m_prefix = XString_create_utf8(prefix ? prefix : "");
     declaration->m_namespaceUri = XString_create_utf8(namespaceUri ? namespaceUri : "");
     if (!declaration->m_prefix || !declaration->m_namespaceUri) {
-        if (declaration->m_prefix) XString_delete_base(declaration->m_prefix);
-        if (declaration->m_namespaceUri) XString_delete_base(declaration->m_namespaceUri);
+        if (declaration->m_prefix) XClassDelete(declaration->m_prefix);
+        if (declaration->m_namespaceUri) XClassDelete(declaration->m_namespaceUri);
         memset(declaration, 0, sizeof(*declaration));
         return false;
     }
@@ -1234,8 +1234,8 @@ static void truncate_namespace_bindings(XXmlStreamReaderPrivate* d, int count)
     while (d->m_namespaceBindingCount > count) {
         XmlNamespaceDeclaration* declaration =
             &d->m_namespaceBindings[d->m_namespaceBindingCount - 1];
-        if (declaration->m_prefix) XString_delete_base(declaration->m_prefix);
-        if (declaration->m_namespaceUri) XString_delete_base(declaration->m_namespaceUri);
+        if (declaration->m_prefix) XClassDelete(declaration->m_prefix);
+        if (declaration->m_namespaceUri) XClassDelete(declaration->m_namespaceUri);
         memset(declaration, 0, sizeof(*declaration));
         d->m_namespaceBindingCount--;
     }
@@ -1295,8 +1295,8 @@ static bool parse_namespace_declaration(XXmlStreamReaderPrivate* d, const XStrin
                           &d->m_namespaceBindingCapacity, prefix, value)) {
         XmlNamespaceDeclaration* declaration =
             &d->m_namespaceDeclarations[--d->m_namespaceDeclarationCount];
-        XString_delete_base(declaration->m_prefix);
-        XString_delete_base(declaration->m_namespaceUri);
+        XClassDelete(declaration->m_prefix);
+        XClassDelete(declaration->m_namespaceUri);
         memset(declaration, 0, sizeof(*declaration));
         return false;
     }
@@ -1388,12 +1388,12 @@ static bool parse_attributes(XXmlStreamReaderPrivate* d, const char** ptr, const
         XString* localString = XString_create_utf8(localName);
         XXmlStreamAttribute* attribute = XXmlStreamAttribute_create_ex(
             namespaceString, localString, &rawAttributes[i].m_value);
-        if (namespaceString) XString_delete_base(namespaceString);
-        if (localString) XString_delete_base(localString);
+        if (namespaceString) XClassDelete(namespaceString);
+        if (localString) XClassDelete(localString);
         if (!attribute) goto cleanup;
-        if (attribute->m_qualifiedName) XString_delete_base(attribute->m_qualifiedName);
+        if (attribute->m_qualifiedName) XClassDelete(attribute->m_qualifiedName);
         attribute->m_qualifiedName = XString_create_copy(&rawAttributes[i].m_name);
-        if (attribute->m_prefix) XString_delete_base(attribute->m_prefix);
+        if (attribute->m_prefix) XClassDelete(attribute->m_prefix);
         attribute->m_prefix = XString_create_utf8(colon ? prefix : "");
         if (!attribute->m_qualifiedName || !attribute->m_prefix) {
             XXmlStreamAttribute_delete(attribute);
@@ -1429,8 +1429,8 @@ static bool parse_attributes(XXmlStreamReaderPrivate* d, const char** ptr, const
 
 cleanup:
     for (int i = 0; i < rawCount; ++i) {
-        XString_deinit_base(&rawAttributes[i].m_name);
-        XString_deinit_base(&rawAttributes[i].m_value);
+        XClassDeinit(&rawAttributes[i].m_name);
+        XClassDeinit(&rawAttributes[i].m_value);
     }
     XFree_System(rawAttributes);
     return ok;
@@ -1455,7 +1455,7 @@ static bool parse_start_element(XXmlStreamReaderPrivate* d, const char** ptr, co
     XString_init(&tagName);
     if (!parse_name(ptr, end, &tagName))
     {
-        XString_deinit_base(&tagName);
+        XClassDeinit(&tagName);
         return false;
     }
     const char* name_utf8 = XString_toUtf8(&tagName);
@@ -1474,7 +1474,7 @@ static bool parse_start_element(XXmlStreamReaderPrivate* d, const char** ptr, co
         XString_assign_utf8(d->m_qualifiedName, name_utf8);
         XString_clear_base(d->m_prefix);
     }
-    XString_deinit_base(&tagName);
+    XClassDeinit(&tagName);
     /* 清除上一元素的属性 */
     if (d->m_attributes) {
         XXmlStreamAttributes_delete(d->m_attributes);
@@ -1509,7 +1509,7 @@ static bool parse_start_element(XXmlStreamReaderPrivate* d, const char** ptr, co
             XString_init(&expanded);
             const char* rawValue = XString_toUtf8(item->m_value);
             if (!rawValue || !expand_entity_value(d, rawValue, &expanded, 0)) {
-                XString_deinit_base(&expanded);
+                XClassDeinit(&expanded);
                 truncate_namespace_bindings(d, namespaceBindingCountBefore);
                 return false;
             }
@@ -1518,7 +1518,7 @@ static bool parse_start_element(XXmlStreamReaderPrivate* d, const char** ptr, co
                 XXmlStreamAttribute* added = d->m_attributes->m_items[d->m_attributes->m_count - 1];
                 if (added) added->m_isDefault = true;
             }
-            XString_deinit_base(&expanded);
+            XClassDeinit(&expanded);
         }
     }
     /* 检查空元素 */
@@ -1561,10 +1561,10 @@ static bool parse_start_element(XXmlStreamReaderPrivate* d, const char** ptr, co
         tag->m_namespaceUri = XString_create_copy(d->m_namespaceUri);
         tag->m_namespaceBindingCountBefore = namespaceBindingCountBefore;
         if (!tag->m_name || !tag->m_qualifiedName || !tag->m_prefix || !tag->m_namespaceUri) {
-            if (tag->m_name) XString_delete_base(tag->m_name);
-            if (tag->m_qualifiedName) XString_delete_base(tag->m_qualifiedName);
-            if (tag->m_prefix) XString_delete_base(tag->m_prefix);
-            if (tag->m_namespaceUri) XString_delete_base(tag->m_namespaceUri);
+            if (tag->m_name) XClassDelete(tag->m_name);
+            if (tag->m_qualifiedName) XClassDelete(tag->m_qualifiedName);
+            if (tag->m_prefix) XClassDelete(tag->m_prefix);
+            if (tag->m_namespaceUri) XClassDelete(tag->m_namespaceUri);
             memset(tag, 0, sizeof(*tag));
             truncate_namespace_bindings(d, namespaceBindingCountBefore);
             return false;
@@ -1592,7 +1592,7 @@ static bool parse_end_element(XXmlStreamReaderPrivate* d, const char** ptr, cons
     XString_init(&tagName);
     if (!parse_name(ptr, end, &tagName))
     {
-        XString_deinit_base(&tagName);
+        XClassDeinit(&tagName);
         return false;
     }
     *ptr = skip_whitespace(*ptr, end);
@@ -1613,16 +1613,16 @@ static bool parse_end_element(XXmlStreamReaderPrivate* d, const char** ptr, cons
                 XString_assign_utf8(d->m_namespaceUri, XString_toUtf8(tag->m_namespaceUri));
                 int namespaceBindingCountBefore = tag->m_namespaceBindingCountBefore;
                 /* 释放标签 */
-                XString_delete_base(tag->m_name);
-                XString_delete_base(tag->m_qualifiedName);
-                XString_delete_base(tag->m_prefix);
-                XString_delete_base(tag->m_namespaceUri);
+                XClassDelete(tag->m_name);
+                XClassDelete(tag->m_qualifiedName);
+                XClassDelete(tag->m_prefix);
+                XClassDelete(tag->m_namespaceUri);
                 memset(tag, 0, sizeof(XmlTag));
                 d->m_tagStackSize--;
                 truncate_namespace_bindings(d, namespaceBindingCountBefore);
                 if (d->m_tagStackSize == 0) d->m_finishedRootElement = true;
                 d->m_type = XXmlStream_EndElement;
-                XString_deinit_base(&tagName);
+                XClassDeinit(&tagName);
                 return true;
             }
             else
@@ -1631,17 +1631,17 @@ static bool parse_end_element(XXmlStreamReaderPrivate* d, const char** ptr, cons
                 d->m_type = XXmlStream_EndElement;
                 /* 即使不匹配也返回 true（已读到 >），让 readNext 设置错误 */
                 XString_assign_utf8(d->m_name, name_utf8 ? name_utf8 : "");
-                XString_deinit_base(&tagName);
+                XClassDeinit(&tagName);
                 return false;  /* 触发 readNext 设置错误 */
             }
         }
         /* 没有标签栈 —— 报告 PrematureEndOfDocumentError */
         d->m_type = XXmlStream_EndElement;
         XString_assign_utf8(d->m_name, XString_toUtf8(&tagName));
-        XString_deinit_base(&tagName);
+        XClassDeinit(&tagName);
         return false;
     }
-    XString_deinit_base(&tagName);
+    XClassDeinit(&tagName);
     return false;
 }
 
@@ -1894,8 +1894,8 @@ static bool parse_entity_reference(XXmlStreamReaderPrivate* d, const char** ptr,
                     XString_init(&expanded);
                     const char* replacementUtf8 = XString_toUtf8(replacement);
                     if (!replacementUtf8 || !expand_entity_value(d, replacementUtf8, &expanded, 0)) {
-                        XString_deinit_base(&expanded);
-                        XString_deinit_base(&entityName);
+                        XClassDeinit(&expanded);
+                        XClassDeinit(&entityName);
                         return false;
                     }
                     size_t expandedLength = strlen(XString_toUtf8(&expanded));
@@ -1906,12 +1906,12 @@ static bool parse_entity_reference(XXmlStreamReaderPrivate* d, const char** ptr,
                         addedLength > (size_t)d->m_entityExpansionLimit) {
                         set_error(d, XXmlStream_NotWellFormedError,
                                   "实体扩展超过限制。");
-                        XString_deinit_base(&expanded);
-                        XString_deinit_base(&entityName);
+                        XClassDeinit(&expanded);
+                        XClassDeinit(&entityName);
                         return false;
                     }
                     if (d->m_text) XString_append(d->m_text, &expanded);
-                    XString_deinit_base(&expanded);
+                    XClassDeinit(&expanded);
                     d->m_type = XXmlStream_Characters;
                 } else {
                     XString_assign_utf8(d->m_name, entity_utf8);
@@ -1919,10 +1919,10 @@ static bool parse_entity_reference(XXmlStreamReaderPrivate* d, const char** ptr,
                 }
             }
         }
-        XString_deinit_base(&entityName);
+        XClassDeinit(&entityName);
         return true;
     }
-    XString_deinit_base(&entityName);
+    XClassDeinit(&entityName);
     return false;
 }
 /**
@@ -2187,21 +2187,21 @@ static void private_init(XXmlStreamReaderPrivate* d)
 static void private_deinit(XXmlStreamReaderPrivate* d)
 {
     if (!d) return;
-    if (d->m_name) XString_delete_base(d->m_name);
-    if (d->m_qualifiedName) XString_delete_base(d->m_qualifiedName);
-    if (d->m_prefix) XString_delete_base(d->m_prefix);
-    if (d->m_namespaceUri) XString_delete_base(d->m_namespaceUri);
-    if (d->m_text) XString_delete_base(d->m_text);
-    if (d->m_documentVersion) XString_delete_base(d->m_documentVersion);
-    if (d->m_documentEncoding) XString_delete_base(d->m_documentEncoding);
-    if (d->m_dtdName) XString_delete_base(d->m_dtdName);
-    if (d->m_dtdPublicId) XString_delete_base(d->m_dtdPublicId);
-    if (d->m_dtdSystemId) XString_delete_base(d->m_dtdSystemId);
-    if (d->m_processingInstructionTarget) XString_delete_base(d->m_processingInstructionTarget);
-    if (d->m_processingInstructionData) XString_delete_base(d->m_processingInstructionData);
-    if (d->m_errorString) XString_delete_base(d->m_errorString);
-    if (d->m_buffer) XString_delete_base(d->m_buffer);
-    if (d->m_ownedData) XByteArray_delete_base(d->m_ownedData);
+    if (d->m_name) XClassDelete(d->m_name);
+    if (d->m_qualifiedName) XClassDelete(d->m_qualifiedName);
+    if (d->m_prefix) XClassDelete(d->m_prefix);
+    if (d->m_namespaceUri) XClassDelete(d->m_namespaceUri);
+    if (d->m_text) XClassDelete(d->m_text);
+    if (d->m_documentVersion) XClassDelete(d->m_documentVersion);
+    if (d->m_documentEncoding) XClassDelete(d->m_documentEncoding);
+    if (d->m_dtdName) XClassDelete(d->m_dtdName);
+    if (d->m_dtdPublicId) XClassDelete(d->m_dtdPublicId);
+    if (d->m_dtdSystemId) XClassDelete(d->m_dtdSystemId);
+    if (d->m_processingInstructionTarget) XClassDelete(d->m_processingInstructionTarget);
+    if (d->m_processingInstructionData) XClassDelete(d->m_processingInstructionData);
+    if (d->m_errorString) XClassDelete(d->m_errorString);
+    if (d->m_buffer) XClassDelete(d->m_buffer);
+    if (d->m_ownedData) XClassDelete(d->m_ownedData);
     if (d->m_attributes) {
         XXmlStreamAttributes_delete(d->m_attributes);
         d->m_attributes = NULL;
@@ -2223,8 +2223,8 @@ static void private_deinit(XXmlStreamReaderPrivate* d)
     {
         for (int i = 0; i < d->m_extraNamespaceDeclarationCount; i++)
         {
-            if (d->m_extraNamespaceDeclarations[i].m_prefix) XString_delete_base(d->m_extraNamespaceDeclarations[i].m_prefix);
-            if (d->m_extraNamespaceDeclarations[i].m_namespaceUri) XString_delete_base(d->m_extraNamespaceDeclarations[i].m_namespaceUri);
+            if (d->m_extraNamespaceDeclarations[i].m_prefix) XClassDelete(d->m_extraNamespaceDeclarations[i].m_prefix);
+            if (d->m_extraNamespaceDeclarations[i].m_namespaceUri) XClassDelete(d->m_extraNamespaceDeclarations[i].m_namespaceUri);
         }
         XFree_System(d->m_extraNamespaceDeclarations);
         d->m_extraNamespaceDeclarations = NULL;
@@ -2249,10 +2249,10 @@ static void private_deinit(XXmlStreamReaderPrivate* d)
     {
         for (int i = 0; i < d->m_tagStackSize; i++)
         {
-            if (d->m_tagStack[i].m_name) XString_delete_base(d->m_tagStack[i].m_name);
-            if (d->m_tagStack[i].m_qualifiedName) XString_delete_base(d->m_tagStack[i].m_qualifiedName);
-            if (d->m_tagStack[i].m_prefix) XString_delete_base(d->m_tagStack[i].m_prefix);
-            if (d->m_tagStack[i].m_namespaceUri) XString_delete_base(d->m_tagStack[i].m_namespaceUri);
+            if (d->m_tagStack[i].m_name) XClassDelete(d->m_tagStack[i].m_name);
+            if (d->m_tagStack[i].m_qualifiedName) XClassDelete(d->m_tagStack[i].m_qualifiedName);
+            if (d->m_tagStack[i].m_prefix) XClassDelete(d->m_tagStack[i].m_prefix);
+            if (d->m_tagStack[i].m_namespaceUri) XClassDelete(d->m_tagStack[i].m_namespaceUri);
         }
         XFree_System(d->m_tagStack);
         d->m_tagStack = NULL;
@@ -2398,7 +2398,7 @@ static bool reencode_existing_single_byte(XXmlStreamReaderPrivate* d, bool ascii
         ok = XByteArray_push_back_2(d->m_ownedData, XByteArray_data(normalized),
                                     XByteArray_size_base(normalized));
     }
-    XByteArray_delete_base(normalized);
+    XClassDelete(normalized);
     if (!ok) return false;
     d->m_data = (const char*)XByteArray_data(d->m_ownedData);
     d->m_dataLength = XByteArray_size_base(d->m_ownedData);
@@ -2423,7 +2423,7 @@ static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t
         if (!XByteArray_push_back_2(combined, d->m_pendingInput,
                                     d->m_pendingInputLength) ||
             !XByteArray_push_back_2(combined, data, length)) {
-            XByteArray_delete_base(combined);
+            XClassDelete(combined);
             return false;
         }
         d->m_pendingInputLength = 0;
@@ -2434,7 +2434,7 @@ static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t
         if (inputLength < 4) {
             memcpy(d->m_pendingInput, inputData, inputLength);
             d->m_pendingInputLength = inputLength;
-            XByteArray_delete_base(combined);
+            XClassDelete(combined);
             return true;
         }
         d->m_inputEncoding = XML_INPUT_UTF8;
@@ -2550,8 +2550,8 @@ static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t
     if (ok && XByteArray_size_base(normalized) > 0)
         ok = XByteArray_push_back_2(d->m_ownedData, XByteArray_data(normalized),
                                     XByteArray_size_base(normalized));
-    XByteArray_delete_base(normalized);
-    XByteArray_delete_base(combined);
+    XClassDelete(normalized);
+    XClassDelete(combined);
     if (!ok) {
         set_error(d, XXmlStream_NotWellFormedError, "输入编码或 XML 字符无效。");
         return false;
@@ -2600,7 +2600,7 @@ static bool read_more_from_device(XXmlStreamReaderPrivate* d)
     size_t size = XByteArray_size_base(input);
     bool appended = size > 0 && append_input_data(
         d, (const char*)XByteArray_data(input), size);
-    XByteArray_delete_base(input);
+    XClassDelete(input);
     d->m_isDataFromDevice = true;
     return appended;
 }
@@ -2636,10 +2636,10 @@ int XXmlStreamReader_readNext(XXmlStreamReader* self)
         {
             XmlTag* tag = &d->m_tagStack[d->m_tagStackSize - 1];
             int namespaceBindingCountBefore = tag->m_namespaceBindingCountBefore;
-            XString_delete_base(tag->m_name);
-            XString_delete_base(tag->m_qualifiedName);
-            XString_delete_base(tag->m_prefix);
-            XString_delete_base(tag->m_namespaceUri);
+            XClassDelete(tag->m_name);
+            XClassDelete(tag->m_qualifiedName);
+            XClassDelete(tag->m_prefix);
+            XClassDelete(tag->m_namespaceUri);
             memset(tag, 0, sizeof(XmlTag));
                 d->m_tagStackSize--;
                 truncate_namespace_bindings(d, namespaceBindingCountBefore);
@@ -2931,9 +2931,9 @@ static void private_copy(XXmlStreamReader* destObject,
                     XXmlStreamAttribute* newAttr = XXmlStreamAttribute_create_ex(
                         srcAttr->m_namespaceUri, srcAttr->m_name, srcAttr->m_value);
                     if (newAttr && srcAttr->m_qualifiedName) {
-                        if (newAttr->m_qualifiedName) XString_delete_base(newAttr->m_qualifiedName);
+                        if (newAttr->m_qualifiedName) XClassDelete(newAttr->m_qualifiedName);
                         newAttr->m_qualifiedName = XString_create_copy(srcAttr->m_qualifiedName);
-                        if (newAttr->m_prefix) XString_delete_base(newAttr->m_prefix);
+                        if (newAttr->m_prefix) XClassDelete(newAttr->m_prefix);
                         newAttr->m_prefix = srcAttr->m_prefix
                             ? XString_create_copy(srcAttr->m_prefix) : XString_create();
                         newAttr->m_isDefault = srcAttr->m_isDefault;
@@ -3291,7 +3291,7 @@ XXmlStreamReader* XXmlStreamReader_create_copy(const XXmlStreamReader* other)
     if (!other) return NULL;
     XXmlStreamReader* self = XXmlStreamReader_create();
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -3300,7 +3300,7 @@ XXmlStreamReader* XXmlStreamReader_create_move(XXmlStreamReader* other)
     if (!other) return NULL;
     XXmlStreamReader* self = XXmlStreamReader_create();
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -3718,11 +3718,11 @@ XXmlStreamAttribute* XXmlStreamAttribute_create_ex(const XString* namespaceUri, 
 void XXmlStreamAttribute_delete(XXmlStreamAttribute* self)
 {
     if (!self) return;
-    if (self->m_namespaceUri) XString_delete_base(self->m_namespaceUri);
-    if (self->m_name) XString_delete_base(self->m_name);
-    if (self->m_qualifiedName) XString_delete_base(self->m_qualifiedName);
-    if (self->m_prefix) XString_delete_base(self->m_prefix);
-    if (self->m_value) XString_delete_base(self->m_value);
+    if (self->m_namespaceUri) XClassDelete(self->m_namespaceUri);
+    if (self->m_name) XClassDelete(self->m_name);
+    if (self->m_qualifiedName) XClassDelete(self->m_qualifiedName);
+    if (self->m_prefix) XClassDelete(self->m_prefix);
+    if (self->m_value) XClassDelete(self->m_value);
     XFree_System(self);
 }
 
@@ -3954,9 +3954,9 @@ void XXmlStreamAttributes_append_utf8(XXmlStreamAttributes* self, const char* na
     XString* nm = XString_create_utf8(name);
     XString* val = value ? XString_create_utf8(value) : NULL;
     XXmlStreamAttributes_append(self, ns, nm, val);
-    if (ns) XString_delete_base(ns);
-    if (nm) XString_delete_base(nm);
-    if (val) XString_delete_base(val);
+    if (ns) XClassDelete(ns);
+    if (nm) XClassDelete(nm);
+    if (val) XClassDelete(val);
 }
 
 void XXmlStreamAttributes_append_ex_utf8(XXmlStreamAttributes* self, const char* qualifiedName, const char* value)
@@ -3965,8 +3965,8 @@ void XXmlStreamAttributes_append_ex_utf8(XXmlStreamAttributes* self, const char*
     XString* qn = XString_create_utf8(qualifiedName);
     XString* val = value ? XString_create_utf8(value) : NULL;
     XXmlStreamAttributes_append_ex(self, qn, val);
-    if (qn) XString_delete_base(qn);
-    if (val) XString_delete_base(val);
+    if (qn) XClassDelete(qn);
+    if (val) XClassDelete(val);
 }
 
 bool XXmlStreamAttributes_appendAttribute(XXmlStreamAttributes* self,
@@ -4043,8 +4043,8 @@ XXmlStreamNamespaceDeclaration* XXmlStreamNamespaceDeclaration_create(const XStr
 void XXmlStreamNamespaceDeclaration_delete(XXmlStreamNamespaceDeclaration* self)
 {
     if (!self) return;
-    if (self->m_prefix) XString_delete_base(self->m_prefix);
-    if (self->m_namespaceUri) XString_delete_base(self->m_namespaceUri);
+    if (self->m_prefix) XClassDelete(self->m_prefix);
+    if (self->m_namespaceUri) XClassDelete(self->m_namespaceUri);
     XFree_System(self);
 }
 
@@ -4172,8 +4172,8 @@ static void xxml_stream_namespace_declaration_clear_private(
     XXmlStreamNamespaceDeclaration* declaration)
 {
     if (!declaration) return;
-    XString_delete_base(declaration->m_prefix);
-    XString_delete_base(declaration->m_namespaceUri);
+    XClassDelete(declaration->m_prefix);
+    XClassDelete(declaration->m_namespaceUri);
     declaration->m_prefix = NULL;
     declaration->m_namespaceUri = NULL;
 }
@@ -4256,13 +4256,13 @@ bool XXmlStreamNamespaceDeclarations_insert(XXmlStreamNamespaceDeclarations* sel
         XString_create_copy(declaration->m_namespaceUri) : NULL;
     if ((declaration->m_prefix && !prefix) ||
         (declaration->m_namespaceUri && !namespaceUri)) {
-        XString_delete_base(prefix);
-        XString_delete_base(namespaceUri);
+        XClassDelete(prefix);
+        XClassDelete(namespaceUri);
         return false;
     }
     if (!xxml_stream_namespace_declarations_reserve(self, self->m_count + 1)) {
-        XString_delete_base(prefix);
-        XString_delete_base(namespaceUri);
+        XClassDelete(prefix);
+        XClassDelete(namespaceUri);
         return false;
     }
     if (index < self->m_count) {
@@ -4501,9 +4501,9 @@ void XXmlStreamNotationDeclaration_init(XXmlStreamNotationDeclaration* self)
 void XXmlStreamNotationDeclaration_delete(XXmlStreamNotationDeclaration* self)
 {
     if (!self) return;
-    if (self->m_name) { XString_delete_base(self->m_name); }
-    if (self->m_systemId) { XString_delete_base(self->m_systemId); }
-    if (self->m_publicId) { XString_delete_base(self->m_publicId); }
+    if (self->m_name) { XClassDelete(self->m_name); }
+    if (self->m_systemId) { XClassDelete(self->m_systemId); }
+    if (self->m_publicId) { XClassDelete(self->m_publicId); }
     XFree_System(self);
 }
 
@@ -4560,11 +4560,11 @@ void XXmlStreamEntityDeclaration_init(XXmlStreamEntityDeclaration* self)
 void XXmlStreamEntityDeclaration_delete(XXmlStreamEntityDeclaration* self)
 {
     if (!self) return;
-    if (self->m_name) { XString_delete_base(self->m_name); }
-    if (self->m_notationName) { XString_delete_base(self->m_notationName); }
-    if (self->m_systemId) { XString_delete_base(self->m_systemId); }
-    if (self->m_publicId) { XString_delete_base(self->m_publicId); }
-    if (self->m_value) { XString_delete_base(self->m_value); }
+    if (self->m_name) { XClassDelete(self->m_name); }
+    if (self->m_notationName) { XClassDelete(self->m_notationName); }
+    if (self->m_systemId) { XClassDelete(self->m_systemId); }
+    if (self->m_publicId) { XClassDelete(self->m_publicId); }
+    if (self->m_value) { XClassDelete(self->m_value); }
     XFree_System(self);
 }
 
@@ -4626,9 +4626,9 @@ void XXmlStreamNotationDeclarations_delete(XXmlStreamNotationDeclarations* self)
     if (!self) return;
     if (self->m_declarations) {
         for (size_t i = 0; i < self->m_count; i++) {
-            if (self->m_declarations[i].m_name) { XString_delete_base(self->m_declarations[i].m_name); }
-            if (self->m_declarations[i].m_systemId) { XString_delete_base(self->m_declarations[i].m_systemId); }
-            if (self->m_declarations[i].m_publicId) { XString_delete_base(self->m_declarations[i].m_publicId); }
+            if (self->m_declarations[i].m_name) { XClassDelete(self->m_declarations[i].m_name); }
+            if (self->m_declarations[i].m_systemId) { XClassDelete(self->m_declarations[i].m_systemId); }
+            if (self->m_declarations[i].m_publicId) { XClassDelete(self->m_declarations[i].m_publicId); }
         }
         XFree_System(self->m_declarations);
     }
@@ -4671,9 +4671,9 @@ const XXmlStreamNotationDeclaration* XXmlStreamNotationDeclarations_at(const XXm
 static void xxml_stream_notation_clear_private(XXmlStreamNotationDeclaration* declaration)
 {
     if (!declaration) return;
-    XString_delete_base(declaration->m_name);
-    XString_delete_base(declaration->m_systemId);
-    XString_delete_base(declaration->m_publicId);
+    XClassDelete(declaration->m_name);
+    XClassDelete(declaration->m_systemId);
+    XClassDelete(declaration->m_publicId);
     memset(declaration, 0, sizeof(*declaration));
 }
 
@@ -4714,11 +4714,11 @@ bool XXmlStreamNotationDeclarations_insert(XXmlStreamNotationDeclarations* self,
     XString* publicId = declaration->m_publicId ? XString_create_copy(declaration->m_publicId) : NULL;
     if ((declaration->m_name && !name) || (declaration->m_systemId && !systemId) ||
         (declaration->m_publicId && !publicId)) {
-        XString_delete_base(name); XString_delete_base(systemId); XString_delete_base(publicId);
+        XClassDelete(name); XClassDelete(systemId); XClassDelete(publicId);
         return false;
     }
     if (!xxml_stream_notation_reserve(self, self->m_count + 1)) {
-        XString_delete_base(name); XString_delete_base(systemId); XString_delete_base(publicId);
+        XClassDelete(name); XClassDelete(systemId); XClassDelete(publicId);
         return false;
     }
     if (index < self->m_count) {
@@ -4766,11 +4766,11 @@ void XXmlStreamEntityDeclarations_delete(XXmlStreamEntityDeclarations* self)
     if (!self) return;
     if (self->m_declarations) {
         for (size_t i = 0; i < self->m_count; i++) {
-            if (self->m_declarations[i].m_name) { XString_delete_base(self->m_declarations[i].m_name); }
-            if (self->m_declarations[i].m_notationName) { XString_delete_base(self->m_declarations[i].m_notationName); }
-            if (self->m_declarations[i].m_systemId) { XString_delete_base(self->m_declarations[i].m_systemId); }
-            if (self->m_declarations[i].m_publicId) { XString_delete_base(self->m_declarations[i].m_publicId); }
-            if (self->m_declarations[i].m_value) { XString_delete_base(self->m_declarations[i].m_value); }
+            if (self->m_declarations[i].m_name) { XClassDelete(self->m_declarations[i].m_name); }
+            if (self->m_declarations[i].m_notationName) { XClassDelete(self->m_declarations[i].m_notationName); }
+            if (self->m_declarations[i].m_systemId) { XClassDelete(self->m_declarations[i].m_systemId); }
+            if (self->m_declarations[i].m_publicId) { XClassDelete(self->m_declarations[i].m_publicId); }
+            if (self->m_declarations[i].m_value) { XClassDelete(self->m_declarations[i].m_value); }
         }
         XFree_System(self->m_declarations);
     }
@@ -4813,11 +4813,11 @@ const XXmlStreamEntityDeclaration* XXmlStreamEntityDeclarations_at(const XXmlStr
 static void xxml_stream_entity_clear_private(XXmlStreamEntityDeclaration* declaration)
 {
     if (!declaration) return;
-    XString_delete_base(declaration->m_name);
-    XString_delete_base(declaration->m_notationName);
-    XString_delete_base(declaration->m_systemId);
-    XString_delete_base(declaration->m_publicId);
-    XString_delete_base(declaration->m_value);
+    XClassDelete(declaration->m_name);
+    XClassDelete(declaration->m_notationName);
+    XClassDelete(declaration->m_systemId);
+    XClassDelete(declaration->m_publicId);
+    XClassDelete(declaration->m_value);
     memset(declaration, 0, sizeof(*declaration));
 }
 
@@ -4861,13 +4861,13 @@ bool XXmlStreamEntityDeclarations_insert(XXmlStreamEntityDeclarations* self,
     if ((declaration->m_name && !name) || (declaration->m_notationName && !notationName) ||
         (declaration->m_systemId && !systemId) || (declaration->m_publicId && !publicId) ||
         (declaration->m_value && !value)) {
-        XString_delete_base(name); XString_delete_base(notationName);
-        XString_delete_base(systemId); XString_delete_base(publicId); XString_delete_base(value);
+        XClassDelete(name); XClassDelete(notationName);
+        XClassDelete(systemId); XClassDelete(publicId); XClassDelete(value);
         return false;
     }
     if (!xxml_stream_entity_reserve(self, self->m_count + 1)) {
-        XString_delete_base(name); XString_delete_base(notationName);
-        XString_delete_base(systemId); XString_delete_base(publicId); XString_delete_base(value);
+        XClassDelete(name); XClassDelete(notationName);
+        XClassDelete(systemId); XClassDelete(publicId); XClassDelete(value);
         return false;
     }
     if (index < self->m_count) {
@@ -4946,20 +4946,18 @@ XXmlStreamEntityResolver* XXmlStreamEntityResolver_create(void)
 {
     XXmlStreamEntityResolver* self = (XXmlStreamEntityResolver*)XClass_Malloc(XXmlStreamEntityResolver);
     if (!self) return NULL;
-    memset(self, 0, sizeof(XXmlStreamEntityResolver));
     XXmlStreamEntityResolver_init(self);
+    Set_Class_IsHeap(self, true);
     return self;
 }
 
 void XXmlStreamEntityResolver_init(XXmlStreamEntityResolver* self)
 {
     if (!self) return;
-    memset(self, 0, sizeof(XXmlStreamEntityResolver));
-}
-
-void XXmlStreamEntityResolver_delete(XXmlStreamEntityResolver* self)
-{
-    XFree_System(self);
+    XClass_init(&self->m_class);
+    self->m_userData = NULL;
+    self->m_resolveEntityCallback = NULL;
+    self->m_resolveUndeclaredEntityCallback = NULL;
 }
 
 const XString* XXmlStreamEntityResolver_resolveEntity(XXmlStreamEntityResolver* self,

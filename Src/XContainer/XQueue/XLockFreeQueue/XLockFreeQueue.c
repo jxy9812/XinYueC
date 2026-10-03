@@ -23,28 +23,6 @@ static void VXClass_deinit(XLockFreeQueue* this_queue);
 static void XLockFreeQueue_init_with_memory(XLockFreeQueue* this_queue,
     size_t typeSize, size_t count, XMemoryType memoryType);
 
-static void* XLockFreeQueue_aligned_malloc(size_t size, size_t alignment,
-    XMemory* memory)
-{
-    if (!memory || !memory->malloc || alignment == 0)
-        return NULL;
-    void* raw = memory->malloc(size + alignment - 1 + sizeof(void*));
-    if (!raw)
-        return NULL;
-    uintptr_t address = ALIGN_UP((uintptr_t)raw + sizeof(void*), alignment);
-    ((void**)address)[-1] = raw;
-    return (void*)address;
-}
-
-static void XLockFreeQueue_aligned_free(void* ptr, XMemory* memory)
-{
-    if (!ptr)
-        return;
-    void* raw = ((void**)ptr)[-1];
-    if (memory && memory->free)
-        memory->free(raw);
-}
-
 XVtable* XLockFreeQueue_class_init()
 {
     XVTABLE_INIT_DEFAULT_SIZE(XLOCKFREEQUEUE_VTABLE_SIZE)
@@ -68,21 +46,18 @@ XLockFreeQueue* XLockFreeQueue_create_ex(XMemoryType memory, size_t typeSize, si
 {
     if (ISNULL(typeSize, "") || ISNULL(count, ""))
         return NULL;
-    XMemory* memoryMethod = XMemory_method(memory);
-    XLockFreeQueue* this_queue = XLockFreeQueue_aligned_malloc(
-        sizeof(XLockFreeQueue), CACHE_LINE_SIZE, memoryMethod);
+    /* 堆对象必须用与 XClassDelete 配对的普通路径分配（XMemory_malloc 按
+       memory 类型分发，XClass_delete_base 以同一方法表 free）。原先的
+       CACHE_LINE 对齐分配把裸基址藏在指针前一槽，唯一识破该布局的
+       XLockFreeQueue_delete_base/aligned_free 已随别名清理删除，继续对齐
+       分配会使所有 XClassDelete 调用点 free 对齐指针而非基址（堆破坏，
+       含 lwIP sys_mbox_free 生产路径），故回归普通分配，正确性优先。 */
+    XLockFreeQueue* this_queue = (XLockFreeQueue*)XMemory_malloc(
+        sizeof(XLockFreeQueue), memory);
     if (!this_queue) return NULL;
     XLockFreeQueue_init_with_memory(this_queue, typeSize, count, memory);
     Set_Class_IsHeap(this_queue, true);
     return this_queue;
-}
-
-void XLockFreeQueue_delete_base(XLockFreeQueue* this_queue)
-{
-    if (!this_queue) return;
-    XMemory* memory = Class_Memory(this_queue);
-    XClass_deinit_base((XClass*)this_queue);
-    XLockFreeQueue_aligned_free(this_queue, memory);
 }
 
 void XLockFreeQueue_init(XLockFreeQueue* this_queue, size_t typeSize, size_t count)

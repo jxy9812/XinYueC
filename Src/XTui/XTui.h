@@ -77,7 +77,6 @@ void XTui_init(XTui* tui);
 /** @brief 在堆上创建 TUI 会话对象。 */
 XTui* XTui_create_ex(XMemoryType memory);
 
-#define XTui_delete_base XClass_delete_base /**< 释放堆对象。 */
 
 /* ==================== 装配 ==================== */
 

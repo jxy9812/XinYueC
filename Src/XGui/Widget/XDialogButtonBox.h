@@ -120,7 +120,6 @@ void XDialogButtonBox_init(XDialogButtonBox* self, XWidget* parent,
 XDialogButtonBox* XDialogButtonBox_create_ex(XMemoryType memory,
                                              XWidget* parent,
                                              XWidgetFlags flags);
-#define XDialogButtonBox_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 方向与布局 ==================== */
 

@@ -41,7 +41,7 @@ static void VXIconEngine_pixmap(const XIconEngine* self, const XSize* size,
     XImage_init_ex(&image, size->width, size->height,
                    XImageFormat_ARGB32_Premultiplied);
     if (XImage_isNull(&image)) {
-        XImage_deinit_base(&image);
+        XClassDeinit(&image);
         return;
     }
     XPainter_init(&painter, NULL);
@@ -56,11 +56,11 @@ static void VXIconEngine_pixmap(const XIconEngine* self, const XSize* size,
         /* pixmap_base() 已经清空调用方输出；先在临时像素图中接管图像，
            再移动到输出，避免 XPixmap_init_image() 对输出进行第二次 reset。 */
         XPixmap_init_image(&generated, &image, 0);
-        XMove(out, &generated);
-        XPixmap_deinit_base(&generated);
+        XClassMove(out, &generated);
+        XClassDeinit(&generated);
     }
     XPainter_deinit(&painter);
-    XImage_deinit_base(&image);
+    XClassDeinit(&image);
 }
 
 static void VXIconEngine_addPixmap(XIconEngine* self, const XPixmap* pixmap,

@@ -47,7 +47,7 @@ static XVector* BinaryTreeTraversingToXVector_Preorder(struct XTreeNode* this_ro
 			XStack_push_base(stack, &LChild);
 		XVector_push_back_1_base(vector, &currentNode);
 	}
-	XStack_delete_base(stack);
+	XClassDelete(stack);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -79,7 +79,7 @@ static XVector* BinaryTreeTraversingToXVector_Inorder(struct XTreeNode* this_roo
 			XStack_pop_base(stack);
 		}
 	}
-	XStack_delete_base(stack);
+	XClassDelete(stack);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);
@@ -114,9 +114,9 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XTreeNode* this_r
 		if (RChild != NULL)
 			XStack_push_base(stack, &RChild);
 	}
-	XStack_delete_base(stack);
+	XClassDelete(stack);
 	XStackCopyXVector(stackTraversing, vector);
-	XStack_delete_base(stackTraversing);
+	XClassDelete(stackTraversing);
 	return vector;
 #else
 	IS_ON_DEBUG(XStack_ON);

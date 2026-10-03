@@ -146,7 +146,7 @@ static uint16_t XThreadPool_getMaxThreadCount(const XThreadPool* pool)
     //        // 执行预留任务
     //        XRunnable_run_base(runnable);
     //        if (XRunnable_autoDelete(runnable)) {
-    //            XRunnable_delete_base(runnable);
+    //            XClassDelete(runnable);
     //        }
     //        continue;
     //    }
@@ -158,7 +158,7 @@ static uint16_t XThreadPool_getMaxThreadCount(const XThreadPool* pool)
     //        XRunnable_run_base(runnable);
     //        if (XRunnable_autoDelete(runnable))
     //        {
-    //            XRunnable_delete_base(runnable);
+    //            XClassDelete(runnable);
     //        }
     //        continue;
     //    }
@@ -240,7 +240,7 @@ static uint16_t XThreadPool_getMaxThreadCount(const XThreadPool* pool)
             XRunnable_run_base(runnable);
             if (XRunnable_autoDelete(runnable)) 
             {
-                XRunnable_delete_base(runnable);
+                XClassDelete(runnable);
             }
             continue;
         }
@@ -586,7 +586,7 @@ void XThreadPool_clear(XThreadPool* pool)
         if (XQueueBase_receive_base(&pool->m_waitQueue, &task)) {
             // 如果任务设置了 autoDelete，需要手动删除
             if (XRunnable_autoDelete(task.runnable)) {
-                XRunnable_delete_base(task.runnable);
+                XClassDelete(task.runnable);
             }
         }
     }
@@ -595,7 +595,7 @@ void XThreadPool_clear(XThreadPool* pool)
         XRunnable* runnable;
         if (XQueueBase_receive_base(&pool->m_reservedQueue, &runnable)) {
             if (XRunnable_autoDelete(runnable)) {
-                XRunnable_delete_base(runnable);
+                XClassDelete(runnable);
             }
         }
     }
@@ -623,7 +623,7 @@ bool XThreadPool_tryTake(XThreadPool* pool, XRunnable* runnable)
     if (removed > 0) {
         // 如果任务设置了 autoDelete，需要手动删除
         if (XRunnable_autoDelete(runnable)) {
-            XRunnable_delete_base(runnable);
+            XClassDelete(runnable);
         }
 
         // 如果队列变空且没有活跃线程，唤醒等待完成的线程
@@ -680,9 +680,9 @@ void VXThreadPool_deinit(XThreadPool* pool)
     XCoreApplication_sendPostedEvents(NULL,XEVENT_TYPE_DEFERRED_DELETE);
     //
     // 清理资源
-    XClass_deinit_base(&pool->m_waitQueue);
-    XClass_deinit_base(&pool->m_reservedQueue);
-    XVector_deinit_base(&pool->m_threadGroup);
+    XClassDeinit(&pool->m_waitQueue);
+    XClassDeinit(&pool->m_reservedQueue);
+    XClassDeinit(&pool->m_threadGroup);
 
     if (pool->m_mutex) {
         XMutex_delete(pool->m_mutex);

@@ -41,7 +41,7 @@ static uint32_t xsavefile_tempCounter = 0;  /* 唯一名辅助序号 */
 void XSaveFile_setTempDir_static(const XString* dir)
 {
     if (xsavefile_tempDir) {
-        XString_delete_base((XClass*)xsavefile_tempDir);
+        XClassDelete((XClass*)xsavefile_tempDir);
         xsavefile_tempDir = NULL;
     }
     if (dir) xsavefile_tempDir = XString_create_utf8(XString_toUtf8(dir));
@@ -81,16 +81,16 @@ XString* XSaveFile_uniqueTempPath_static(const XString* prefix)
             XString_init(&tail);
             XString_setNum_uLong(&tail, stamp, 16);
             XString_append(path, &tail);
-            XString_deinit_base((XClass*)&tail);
+            XClassDeinit((XClass*)&tail);
         }
         if (!XDeviceFile_exists(path)) {
             found = true;
         } else {
-            XString_delete_base((XClass*)path);
+            XClassDelete((XClass*)path);
             path = NULL;
         }
     }
-    XString_delete_base((XClass*)dir);
+    XClassDelete((XClass*)dir);
     return found ? path : NULL;
 }
 
@@ -99,14 +99,14 @@ bool XSaveFile_openUniqueTemp(XSaveFile* file, const XString* prefix)
     XString* path = XSaveFile_uniqueTempPath_static(prefix);
     bool result = false;
     if (!file || !path) {
-        if (path) XString_delete_base((XClass*)path);
+        if (path) XClassDelete((XClass*)path);
         return false;
     }
     /* 唯一名设为目标名 → 既有 open 流程在其旁生成 ".XXXXXX" 工作临时
        文件；从不 commit → deinit 自动删除（tmpfile 的用后即焚语义）。 */
     XSaveFile_setFileName(file, path);
     result = XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly);
-    XString_delete_base((XClass*)path);
+    XClassDelete((XClass*)path);
     return result;
 }
 
@@ -167,7 +167,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         if (!file->m_tempFileName) return false;
         
         if (!XSaveFile_generateTempFileName(file->m_fileName, file->m_tempFileName)) {
-            XString_delete_base(file->m_tempFileName);
+            XClassDelete(file->m_tempFileName);
             file->m_tempFileName = NULL;
             return false;
         }
@@ -181,7 +181,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         XFd fd = xsavefile_open_file(file->m_tempFileName, fsMode, &error);
         
         if (fd < 0) {
-            XString_delete_base(file->m_tempFileName);
+            XClassDelete(file->m_tempFileName);
             file->m_tempFileName = NULL;
             return false;
         }
@@ -215,7 +215,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         if (!file->m_tempFileName) return false;
         
         if (!XSaveFile_generateTempFileName(file->m_fileName, file->m_tempFileName)) {
-            XString_delete_base(file->m_tempFileName);
+            XClassDelete(file->m_tempFileName);
             file->m_tempFileName = NULL;
             return false;
         }
@@ -224,7 +224,7 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
         fd = xsavefile_open_file(file->m_tempFileName, fsMode, &error);
         
         if (fd < 0) {
-            XString_delete_base(file->m_tempFileName);
+            XClassDelete(file->m_tempFileName);
             file->m_tempFileName = NULL;
             return false;
         }
@@ -285,11 +285,11 @@ static void VXSaveFile_deinit(XSaveFile* file)
     
     // 释放字符串
     if (file->m_fileName) {
-        XString_delete_base(file->m_fileName);
+        XClassDelete(file->m_fileName);
         file->m_fileName = NULL;
     }
     if (file->m_tempFileName) {
-        XString_delete_base(file->m_tempFileName);
+        XClassDelete(file->m_tempFileName);
         file->m_tempFileName = NULL;
     }
     
@@ -356,11 +356,6 @@ void XSaveFile_init_2(XSaveFile* file, const XString* name)
     if (file && name) XSaveFile_setFileName(file, name);
 }
 
-void XSaveFile_deinit_base(XSaveFile* file)
-{
-    VXSaveFile_deinit(file);
-}
-
 /* ============================================================================
  * 文件名操作
  * ============================================================================ */
@@ -370,7 +365,7 @@ void XSaveFile_setFileName(XSaveFile* file, const XString* name)
     if (!file || !name) return;
     if (XIODevice_fd(&file->m_parent.m_parent) >= 0) return;  // 文件已打开，不能修改
     
-    if (file->m_fileName) XString_delete_base(file->m_fileName);
+    if (file->m_fileName) XClassDelete(file->m_fileName);
     file->m_fileName = XString_create_copy(name);
 }
 
@@ -386,7 +381,7 @@ bool XSaveFile_commit(XSaveFile* file)
     if (file->m_committed || file->m_canceled) {
         if (file->m_useTempFile && file->m_tempFileName) {
             XDeviceFile_removePermanent(file->m_tempFileName);
-            XString_delete_base(file->m_tempFileName);
+            XClassDelete(file->m_tempFileName);
             file->m_tempFileName = NULL;
         }
         return false;
@@ -396,7 +391,7 @@ bool XSaveFile_commit(XSaveFile* file)
     if (file->m_writeError) {
         if (file->m_useTempFile && file->m_tempFileName) {
             XDeviceFile_removePermanent(file->m_tempFileName);
-            XString_delete_base(file->m_tempFileName);
+            XClassDelete(file->m_tempFileName);
             file->m_tempFileName = NULL;
         }
         file->m_parent.m_error = XFileDevice_WriteError;
@@ -439,7 +434,7 @@ bool XSaveFile_commit(XSaveFile* file)
     
     // 清理临时文件名
     if (file->m_tempFileName) {
-        XString_delete_base(file->m_tempFileName);
+        XClassDelete(file->m_tempFileName);
         file->m_tempFileName = NULL;
     }
     

@@ -8,11 +8,11 @@
  *             最旧，淘汰自链尾开始）：
  *             - 字节成本按 XImageFormat_bytesPerLine(w, format) * h +
  *               条目簿记估算；单条目超预算整体拒绝；预算不足或条目池满
- *               时从链尾淘汰直至放得下，淘汰条目经 XImage_deinit_base
+ *               时从链尾淘汰直至放得下，淘汰条目经 XClassDeinit
  *               释放共享位图数据；
  *             - 键为 path '\n' format（format NULL 记空串），总长超
  *               XIMAGECACHE_KEY_MAX 直接不缓存；
- *             - 命中出参经 XCopy 浅共享缓存条目（XImage 为引用计数的
+ *             - 命中出参经 XClassCopy 浅共享缓存条目（XImage 为引用计数的
  *               COW 对象，调用方写入会自动分离，不污染缓存），禁止
  *               深拷贝；命中同时把条目提升到链头；
  *             - XIMAGECACHE_MAX_BYTES=0（默认）时全部操作经 #if 门控
@@ -125,7 +125,7 @@ static void pushFront(XImageCacheEntry* entry)
 }
 
 /**
- * @brief      销毁条目：移出链表 + XImage_deinit_base 释放共享位图数据。
+ * @brief      销毁条目：移出链表 + XClassDeinit 释放共享位图数据。
  * @note       引用计数归零时像素内存随之释放；他人持有的浅共享副本不受
  *             影响（COW 保证其继续可用）。
  */
@@ -134,7 +134,7 @@ static void destroyEntry(XImageCacheEntry* entry)
     unlinkEntry(entry);
     g_totalBytes -= entry->m_bytes;
     g_entryCount--;
-    XImage_deinit_base(&entry->m_image);
+    XClassDeinit(&entry->m_image);
     entry->m_inUse = false;
     entry->m_key[0] = '\0';
     entry->m_bytes = 0;
@@ -173,9 +173,9 @@ bool XImageCache_lookup(const char* path, const char* format, XImage* out)
     if (buildKey(path, format, key) < 0) return false;
     entry = findEntry(key);
     if (!entry) return false;
-    /* 浅共享出参：XCopy 走虚表拷贝，仅对缓存条目位图引用计数 +1
+    /* 浅共享出参：XClassCopy 走虚表拷贝，仅对缓存条目位图引用计数 +1
      * （XImage.c VXImage_copy），不复制像素，调用方写入经 COW 分离。 */
-    if (out) XCopy(out, &entry->m_image);
+    if (out) XClassCopy(out, &entry->m_image);
     /* 命中即提升为最近使用：移到链头。 */
     if (g_lruHead != entry)
     {
@@ -208,9 +208,9 @@ void XImageCache_insert(const char* path, const char* format,
     slot = acquireFreeSlot();
     if (!slot) return;  /* 防御性兜底：池全空仍无槽位属配置异常 */
     XMemcpy(slot->m_key, key, XStrlen(key) + 1);
-    /* 条目槽已清零；XCopy 走虚表完成首次 init 并取得共享数据引用，
+    /* 条目槽已清零；XClassCopy 走虚表完成首次 init 并取得共享数据引用，
      * 调用方之后可随意处置自己的副本（解引用由引用计数守护）。 */
-    XCopy(&slot->m_image, image);
+    XClassCopy(&slot->m_image, image);
     slot->m_bytes = cost;
     slot->m_inUse = true;
     pushFront(slot);

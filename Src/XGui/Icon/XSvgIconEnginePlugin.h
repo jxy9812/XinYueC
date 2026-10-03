@@ -30,8 +30,6 @@ typedef struct XSvgIconEnginePlugin
 XVtable* XSvgIconEnginePlugin_class_init(void);
 /** @brief 创建 SVG 图标引擎插件（完成后须注册到插件注册表）。 */
 XSvgIconEnginePlugin* XSvgIconEnginePlugin_create(void);
-#define XSvgIconEnginePlugin_delete_base(self) XClass_delete_base((XClass*)(self))
-#define XSvgIconEnginePlugin_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 
 #ifdef __cplusplus

@@ -92,7 +92,7 @@ static void XVkdm_deinit(XVirtualKeyboardDictionaryManager* self)
     if (priv) {
         for (i = 0; i < priv->m_dictCount; ++i) {
             if (priv->m_dicts[i].m_dict) {
-                XVirtualKeyboardDictionary_delete_base(
+                XClassDelete(
                     priv->m_dicts[i].m_dict);
                 priv->m_dicts[i].m_dict = NULL;
             }
@@ -184,7 +184,7 @@ bool XVirtualKeyboardDictionaryManager_removeDictionary(
         }
     }
     if (index < 0) return false;
-    XVirtualKeyboardDictionary_delete_base(priv->m_dicts[index].m_dict);
+    XClassDelete(priv->m_dicts[index].m_dict);
     for (i = index; i + 1 < priv->m_dictCount; ++i)
         priv->m_dicts[i] = priv->m_dicts[i + 1];
     --priv->m_dictCount;

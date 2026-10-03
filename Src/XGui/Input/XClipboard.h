@@ -74,13 +74,13 @@ XVtable* XClipboard_class_init(void);
 
 /**
  * @brief      初始化空 XClipboard（三种模式均无数据）。
- * @param      self 待初始化对象；必须与 XClipboard_deinit_base 成对调用。
+ * @param      self 待初始化对象；必须与 XClassDeinit 成对调用。
  */
 void XClipboard_init(XClipboard* self);
 
 /**
  * @brief      使用默认内存类型在堆上创建空 XClipboard。
- * @return     新对象指针；失败返回 NULL，调用方用 XClipboard_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，调用方用 XClassDelete 释放。
  */
 #define XClipboard_create() XClipboard_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
@@ -92,9 +92,7 @@ void XClipboard_init(XClipboard* self);
 XClipboard* XClipboard_create_ex(XMemoryType memory);
 
 /** @brief 通过 XClass 虚表释放 XClipboard 资源（栈/外部存储对象使用）。 */
-#define XClipboard_deinit_base(self) XClass_deinit_base((XClass*)(self))
 /** @brief 删除堆上的 XClipboard 对象。 */
-#define XClipboard_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 模式能力与所有权（对标 QClipboard） ==================== */
 
@@ -136,7 +134,7 @@ void XClipboard_clear(XClipboard* self, XClipboardMode mode);
  * @brief      读取指定模式下的纯文本（对标 QClipboard::text(Mode)）。
  * @return     新建 XString 堆拷贝（UTF-8），该模式无文本时返回 NULL；
  *             空文本返回非 NULL 的空 XString（以 toUtf8_length==0 区分）。
- *             调用方用 XString_delete_base 释放。
+ *             调用方用 XClassDelete 释放。
  */
 XString* XClipboard_text(XClipboard* self, XClipboardMode mode);
 
@@ -276,7 +274,7 @@ void XClipboard_setMimeData(XClipboard* self, XMimeData* data, XClipboardMode mo
 /**
  * @brief      读取指定模式下的图像（对标 QClipboard::image）。
  * @return     新建 XImage（与内部共享引用计数像素），该模式无图像时返回
- *             NULL；调用方用 XImage_delete_base 释放。
+ *             NULL；调用方用 XClassDelete 释放。
  */
 XImage* XClipboard_image(const XClipboard* self, XClipboardMode mode);
 
@@ -296,7 +294,7 @@ void XClipboard_setImage(XClipboard* self, const XImage* image, XClipboardMode m
 /**
  * @brief      读取指定模式下的像素图（对标 QClipboard::pixmap）。
  * @return     新建 XPixmap（像素数据由图像转换），无图像时返回 NULL；
- *             调用方用 XPixmap_delete_base 释放。
+ *             调用方用 XClassDelete 释放。
  */
 XPixmap* XClipboard_pixmap(const XClipboard* self, XClipboardMode mode);
 

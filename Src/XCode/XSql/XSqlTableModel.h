@@ -63,14 +63,12 @@ void XSqlTableModel_init(XSqlTableModel* model, const XSqlDatabase* database);
 /**
  * @brief 创建表模型。
  * @param database 数据库连接；创建时复制连接句柄，可为 NULL。
- * @return 新模型，调用者必须使用 XSqlTableModel_delete_base 释放；失败返回 NULL。
+ * @return 新模型，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlTableModel* XSqlTableModel_create_ex(XMemoryType memory,  const XSqlDatabase* database);
 
 /** @brief 调用 XClass 析构入口释放表模型的行缓存和连接句柄。 */
-#define XSqlTableModel_deinit_base XClass_deinit_base
 /** @brief 释放由 XSqlTableModel_create 返回的表模型对象。 */
-#define XSqlTableModel_delete_base XClass_delete_base
 
 /**
  * @brief 设置表名。
@@ -89,7 +87,7 @@ void XSqlTableModel_setTable(XSqlTableModel* model, const XString* tableName);
 /**
  * @brief 获取表名副本。
  * @param model 表模型；NULL 返回空字符串对象。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlTableModel_tableName(const XSqlTableModel* model);
 /**
@@ -103,14 +101,14 @@ XSqlItemFlags XSqlTableModel_flags(const XSqlTableModel* model, int row, int col
 /**
  * @brief 获取当前模型记录副本。
  * @param model 表模型；NULL 返回空记录。
- * @return 新记录，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlTableModel_record_current(const XSqlTableModel* model);
 /**
  * @brief 获取指定行记录副本。
  * @param model 表模型；NULL 返回空记录。
  * @param row 行号，从 0 开始。
- * @return 新记录，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlTableModel_record(const XSqlTableModel* model, int row);
 /**
@@ -119,7 +117,7 @@ XSqlRecord* XSqlTableModel_record(const XSqlTableModel* model, int row);
  * @param row 行号，从 0 开始。
  * @param column 列号，从 0 开始。
  * @param role 数据角色。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlTableModel_data(const XSqlTableModel* model, int row, int column, XSqlItemDataRole role);
 /**
@@ -146,7 +144,7 @@ bool XSqlTableModel_clearItemData(XSqlTableModel* model, int row, int column);
  * @param section 表头索引，从 0 开始。
  * @param orientation 水平或垂直方向。
  * @param role 数据角色。
- * @return 新值对象，调用者必须使用 XVariant_delete_base 释放。
+ * @return 新值对象，调用者必须使用 XClassDelete 释放。
  */
 XVariant* XSqlTableModel_headerData(const XSqlTableModel* model, int section, XSqlOrientation orientation, XSqlItemDataRole role);
 /**
@@ -184,13 +182,13 @@ XSqlTableEditStrategy XSqlTableModel_editStrategy(const XSqlTableModel* model);
 /**
  * @brief 获取主键索引副本。
  * @param model 表模型；NULL 返回空索引。
- * @return 新索引，调用者必须使用 XSqlIndex_delete_base 释放。
+ * @return 新索引，调用者必须使用 XClassDelete 释放。
  */
 XSqlIndex* XSqlTableModel_primaryKey(const XSqlTableModel* model);
 /**
  * @brief 获取数据库连接副本。
  * @param model 表模型；NULL 返回空连接。
- * @return 新连接句柄，调用者必须使用 XSqlDatabase_delete_base 释放。
+ * @return 新连接句柄，调用者必须使用 XClassDelete 释放。
  */
 XSqlDatabase* XSqlTableModel_database(const XSqlTableModel* model);
 /**
@@ -226,7 +224,7 @@ void XSqlTableModel_setSort(XSqlTableModel* model, int column, XSqlSortOrder ord
 /**
  * @brief 获取过滤表达式副本。
  * @param model 表模型；NULL 返回空字符串。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlTableModel_filter(const XSqlTableModel* model);
 /**
@@ -359,13 +357,13 @@ bool XSqlTableModel_deleteRowFromTable(XSqlTableModel* model, int row);
 /**
  * @brief 生成排序子句。
  * @param model 表模型；NULL 返回空字符串对象。
- * @return 新字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlTableModel_orderByClause(const XSqlTableModel* model);
 /**
  * @brief 生成当前表查询语句。
  * @param model 表模型；NULL 或未设置表名时返回空字符串对象。
- * @return 新 SQL 字符串，调用者必须使用 XString_delete_base 释放。
+ * @return 新 SQL 字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XSqlTableModel_selectStatement(const XSqlTableModel* model);
 /**
@@ -379,7 +377,7 @@ void XSqlTableModel_setPrimaryKey(XSqlTableModel* model, const XSqlIndex* key);
  * @brief 提取指定行的主键字段副本。
  * @param model 表模型；NULL 返回空记录。
  * @param row 行号，从 0 开始。
- * @return 新记录，调用者必须使用 XSqlRecord_delete_base 释放。
+ * @return 新记录，调用者必须使用 XClassDelete 释放。
  */
 XSqlRecord* XSqlTableModel_primaryValues(const XSqlTableModel* model, int row);
 

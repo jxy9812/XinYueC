@@ -16,7 +16,7 @@ static void VXHttpServerRouterRule_deinit(XHttpServerRouterRule* self)
     if (!self)
         return;
     if (self->m_pathPattern)
-        XClass_delete_base((XClass*)self->m_pathPattern);
+        XClassDelete((XClass*)self->m_pathPattern);
     self->m_pathPattern = NULL;
     self->m_handler = NULL;
     self->m_context = NULL;
@@ -82,7 +82,7 @@ XHttpServerRouterRule* XHttpServerRouterRule_create_ex(XMemoryType memory, const
     self->m_context = context;
     Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_pathPattern) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;

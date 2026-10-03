@@ -30,20 +30,20 @@ static void VXWizardPage_deinit(XWizardPage* self)
     int i;
     if (!self) return;
     if (self->m_title) {
-        XString_delete_base(self->m_title);
+        XClassDelete(self->m_title);
         self->m_title = NULL;
     }
     if (self->m_subTitle) {
-        XString_delete_base(self->m_subTitle);
+        XClassDelete(self->m_subTitle);
         self->m_subTitle = NULL;
     }
     if (self->m_pixmap) {
-        XString_delete_base(self->m_pixmap);
+        XClassDelete(self->m_pixmap);
         self->m_pixmap = NULL;
     }
     for (i = 0; i < XWizardButton_NStandardButtons; ++i) {
         if (self->m_buttonTexts[i]) {
-            XString_delete_base(self->m_buttonTexts[i]);
+            XClassDelete(self->m_buttonTexts[i]);
             self->m_buttonTexts[i] = NULL;
         }
     }
@@ -256,7 +256,7 @@ void XWizardPage_setButtonText(XWizardPage* self, XWizardButton which,
     if (!self || which < 0 || which >= XWizardButton_NStandardButtons) return;
     if (!utf8) {
         if (self->m_buttonTexts[which]) {
-            XString_delete_base(self->m_buttonTexts[which]);
+            XClassDelete(self->m_buttonTexts[which]);
             self->m_buttonTexts[which] = NULL;
         }
         return;
@@ -312,7 +312,7 @@ void XWizardPage_setPixmap_2(XWizardPage* self, int which, const char* utf8)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, utf8);
     XWizardPage_setPixmap(self, which, &tmp);
-    XString_deinit_base(&tmp);
+    XClassDeinit(&tmp);
 }
 
 const XString* XWizardPage_pixmap(const XWizardPage* self, int which)
@@ -719,7 +719,7 @@ static void VX_wizard_deinit(XWizard* self)
        循环内），全部按钮文本为 NULL 时会漏释放；现提到循环外统一清理。 */
     for (bi = 0; bi < XWizardButton_NStandardButtons; ++bi) {
         if (self->m_buttonTexts[bi]) {
-            XString_delete_base(self->m_buttonTexts[bi]);
+            XClassDelete(self->m_buttonTexts[bi]);
             self->m_buttonTexts[bi] = NULL;
         }
     }
@@ -727,16 +727,16 @@ static void VX_wizard_deinit(XWizard* self)
         int fi;
         for (fi = 0; fi < self->m_fieldCount; ++fi) {
             if (self->m_fields[fi].name)
-                XString_delete_base(self->m_fields[fi].name);
+                XClassDelete(self->m_fields[fi].name);
             if (self->m_fields[fi].value)
-                XString_delete_base(self->m_fields[fi].value);
+                XClassDelete(self->m_fields[fi].value);
             self->m_fields[fi].name = NULL;
             self->m_fields[fi].value = NULL;
         }
         self->m_fieldCount = 0;
     }
     if (self->m_pixmap) {
-        XString_delete_base(self->m_pixmap);
+        XClassDelete(self->m_pixmap);
         self->m_pixmap = NULL;
     }
     {
@@ -744,7 +744,7 @@ static void VX_wizard_deinit(XWizard* self)
         int di;
         for (di = 0; di < self->m_defaultPropCount; ++di) {
             if (self->m_defaultProps[di].name)
-                XString_delete_base(self->m_defaultProps[di].name);
+                XClassDelete(self->m_defaultProps[di].name);
             self->m_defaultProps[di].name = NULL;
             self->m_defaultProps[di].value = NULL;
         }
@@ -1409,7 +1409,7 @@ void XWizard_setPixmap_2(XWizard* self, int which, const char* path)
         if (!tmp) return;
     }
     XWizard_setPixmap(self, which, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XWizard_pixmap(const XWizard* self, int which)
@@ -1440,7 +1440,7 @@ const char* XWizard_field_2(const XWizard* self, const char* name)
     if (!tmp) return NULL;
     v = XWizard_field(self, tmp);
     out = v ? XString_toUtf8(v) : NULL;
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return out;
 }
 
@@ -1477,11 +1477,11 @@ void XWizard_setField_2(XWizard* self, const char* name, const char* value)
     }
     if (value) {
         tv = XString_create_utf8(value);
-        if (!tv) { if (tn) XString_delete_base(tn); return; }
+        if (!tv) { if (tn) XClassDelete(tn); return; }
     }
     XWizard_setField(self, tn, tv);
-    if (tv) XString_delete_base(tv);
-    if (tn) XString_delete_base(tn);
+    if (tv) XClassDelete(tv);
+    if (tn) XClassDelete(tn);
 }
 
 void XWizard_setSideWidget(XWizard* self, XWidget* widget)

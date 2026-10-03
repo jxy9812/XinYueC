@@ -577,7 +577,7 @@ void XDeviceFile_legacyClose(XFd fd)
             if (mapping->mapHandle && mapping->mapHandle != INVALID_HANDLE_VALUE)
                 CloseHandle(mapping->mapHandle);
             XCoreApplication_removePostedEvents((XObject*)&mapping->m_object, 0);
-            XClass_deinit_base((XClass*)&mapping->m_object);
+            XClassDeinit((XClass*)&mapping->m_object);
             XFree_System(mapping);
         }
     } else {
@@ -964,7 +964,7 @@ bool XDeviceFile_mkdir(const XString* path, bool recursive)
                 }
                 XFree_System(wpath);
             }
-            if (partialPath) XString_delete_base((XClass*)partialPath);
+            if (partialPath) XClassDelete((XClass*)partialPath);
             *p = '\\';
         }
         p++;
@@ -1025,7 +1025,7 @@ void* XDeviceDir_platformOpen(const XString* path)
     XString_append_utf8(searchPathStr, "\\*");
     
     wchar_t* wpath = XStringToWidePath(searchPathStr);
-    XString_delete_base((XClass*)searchPathStr);
+    XClassDelete((XClass*)searchPathStr);
     if (!wpath) return NULL;
     
     struct DirIteratorData* iter = (struct DirIteratorData*)XMalloc_System(sizeof(struct DirIteratorData));
@@ -1719,7 +1719,7 @@ fail:
     }
     if (hMap) CloseHandle(hMap);
     if (mapping) {
-        XClass_deinit_base((XClass*)&mapping->m_object);
+        XClassDeinit((XClass*)&mapping->m_object);
         XFree_System(mapping);
     }
     XFree_System(wname);
@@ -1857,7 +1857,7 @@ bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userDa
             XString* path = XString_create_utf8(drivePath);
             if (!path) return false;
             bool cont = callback(path, userData);
-            XString_delete_base((XClass*)path);
+            XClassDelete((XClass*)path);
             if (!cont) return false;
         }
     }

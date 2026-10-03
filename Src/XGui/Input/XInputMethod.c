@@ -121,10 +121,10 @@ static XRectF xinput_queryRect(const XInputMethod* self,
     if (!self || !self->m_data) return zero;
     value = XInputMethod_queryFocusObject(query, NULL);
     if (!xinput_variantRect(value, &rect)) {
-        if (value) XVariant_delete_base((XClass*)value);
+        if (value) XClassDelete((XClass*)value);
         return zero;
     }
-    XVariant_delete_base((XClass*)value);
+    XClassDelete((XClass*)value);
     return xinput_mapRect(&self->m_data->m_inputItemTransform, &rect);
 }
 
@@ -387,7 +387,7 @@ void XInputMethod_update(XInputMethod* self, XInputMethodQueries queries)
         XPlatformInputContext_setInputMethodAccepted(
             self->m_data->m_context, enabled && XVariant_toBool(enabled));
 #endif /* XPLATFORMINPUTCTX_ON */
-        if (enabled) XVariant_delete_base((XClass*)enabled);
+        if (enabled) XClassDelete((XClass*)enabled);
     }
 #if XPLATFORMINPUTCTX_ON
     if (self->m_data->m_context)

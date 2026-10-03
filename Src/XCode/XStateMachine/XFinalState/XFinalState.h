@@ -45,8 +45,6 @@ void XFinalState_init(XFinalState* state);
  */
 void XFinalState_init_ex(XFinalState* state, XState* parent);
 
-#define XFinalState_delete_base XAbstractState_delete_base
-#define XFinalState_deinit_base XAbstractState_deinit_base
 
 #ifdef __cplusplus
 }

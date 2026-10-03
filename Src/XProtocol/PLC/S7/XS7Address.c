@@ -401,7 +401,7 @@ bool XS7Address_isValid(const XS7Address* addr)
 /**
  * @brief 地址转回字符串（诊断用，头契约见 XS7Address.h）
  * @param addr 地址结构（非NULL，须通过 isValid 校验）
- * @return 新建的规范形式 XString（调用者负责 XString_delete_base）；
+ * @return 新建的规范形式 XString（调用者负责 XClassDelete）；
  *         addr 为 NULL / 校验失败 / 类型组合非法时返回 NULL
  * @note 规范形式与解析语法可往返：如 D10(Word) → "DB10.DBW0"、
  *       VD20 → "DB1.DBD20"（V 线码同 DB，输出 DB 形式）、

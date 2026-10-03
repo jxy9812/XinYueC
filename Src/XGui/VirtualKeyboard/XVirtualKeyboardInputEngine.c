@@ -159,7 +159,7 @@ static void XVke_deinit(XVirtualKeyboardInputEngine* self)
         }
         xvke_stopRepeat(self);
         if (priv->m_wordCandidateListModel) {
-            XVirtualKeyboardSelectionListModel_delete_base(
+            XClassDelete(
                 priv->m_wordCandidateListModel);
             priv->m_wordCandidateListModel = NULL;
         }

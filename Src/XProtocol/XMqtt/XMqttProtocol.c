@@ -155,7 +155,7 @@ static XByteArray* mqtt_make_packet(uint8_t header, const XByteArray* payload)
     if (!packet || !mqtt_append_u8(packet, header) ||
         !mqtt_append_varint(packet, (uint32_t)size) ||
         !mqtt_append(packet, payload ? XByteArray_constData((XByteArray*)payload) : NULL, size)) {
-        if (packet) XByteArray_delete_base(packet);
+        if (packet) XClassDelete(packet);
         return NULL;
     }
     return packet;
@@ -170,13 +170,13 @@ static bool mqtt_write_packet(XMqttClient* client, uint8_t header, const XByteAr
     if (client->m_serverConnectionProperties &&
         XMqttServerConnectionProperties_isValid(client->m_serverConnectionProperties) &&
         size > client->m_serverConnectionProperties->m_base.m_maximumPacketSize) {
-        XByteArray_delete_base(packet);
+        XClassDelete(packet);
         return false;
     }
     int64_t written = XIODevice_write_1((XIODevice*)client->m_transport,
                                         (const char*)XByteArray_constData(packet),
                                         (int64_t)size);
-    XByteArray_delete_base(packet);
+    XClassDelete(packet);
     return written == (int64_t)size;
 }
 
@@ -268,14 +268,14 @@ static bool mqtt_add_user_property(XMqttUserProperties** properties,
     XMqttStringPair pair;
     XMqttStringPair_init(&pair, XString_toUtf8(name), XString_toUtf8(value));
     bool result = XVector_push_back_1_base((XVector*)*properties, &pair);
-    XMqttStringPair_deinit_base(&pair);
+    XClassDeinit(&pair);
     return result;
 }
 
 static void mqtt_subscription_entry_deinit(XMqttSubscriptionEntry* entry)
 {
     if (entry && entry->wireTopic) {
-        XMqttTopicFilter_delete_base(entry->wireTopic);
+        XClassDelete(entry->wireTopic);
         entry->wireTopic = NULL;
     }
 }
@@ -283,7 +283,7 @@ static void mqtt_subscription_entry_deinit(XMqttSubscriptionEntry* entry)
 static void mqtt_alias_entry_deinit(XMqttTopicAliasEntry* entry)
 {
     if (entry && entry->topic) {
-        XString_delete_base(entry->topic);
+        XClassDelete(entry->topic);
         entry->topic = NULL;
     }
 }
@@ -317,12 +317,12 @@ XMqttClientPrivate* XMqttClientPrivate_create(void)
 void XMqttClientPrivate_delete(XMqttClientPrivate* priv)
 {
     if (!priv) return;
-    if (priv->input) XByteArray_delete_base(priv->input);
-    if (priv->subscriptions) XVector_delete_base(priv->subscriptions);
-    if (priv->pendingPublishes) XVector_delete_base(priv->pendingPublishes);
-    if (priv->incomingQos2) XVector_delete_base(priv->incomingQos2);
-    if (priv->receiveAliases) XVector_delete_base(priv->receiveAliases);
-    if (priv->publishAliases) XVector_delete_base(priv->publishAliases);
+    if (priv->input) XClassDelete(priv->input);
+    if (priv->subscriptions) XClassDelete(priv->subscriptions);
+    if (priv->pendingPublishes) XClassDelete(priv->pendingPublishes);
+    if (priv->incomingQos2) XClassDelete(priv->incomingQos2);
+    if (priv->receiveAliases) XClassDelete(priv->receiveAliases);
+    if (priv->publishAliases) XClassDelete(priv->publishAliases);
     XFree_System(priv);
 }
 
@@ -413,13 +413,13 @@ static bool mqtt_alias_set(XVector* aliases, uint16_t alias, const XString* topi
 {
     XMqttTopicAliasEntry* entry = mqtt_alias_by_id(aliases, alias);
     if (entry) {
-        if (entry->topic) XString_delete_base(entry->topic);
+        if (entry->topic) XClassDelete(entry->topic);
         entry->topic = XString_create_copy(topic);
         return entry->topic != NULL;
     }
     XMqttTopicAliasEntry value = {alias, XString_create_copy(topic)};
     if (!value.topic || !XVector_push_back_1_base(aliases, &value)) {
-        if (value.topic) XString_delete_base(value.topic);
+        if (value.topic) XClassDelete(value.topic);
         return false;
     }
     return true;
@@ -469,7 +469,7 @@ static bool mqtt_append_connection_properties(XByteArray* output,
                                              prop->m_authenticationData);
     }
     if (ok) ok = mqtt_append_property_block(output, properties);
-    XByteArray_delete_base(properties);
+    XClassDelete(properties);
     return ok;
 }
 
@@ -501,7 +501,7 @@ static bool mqtt_append_will_properties(XByteArray* output,
         if (ok) ok = mqtt_append_user_properties(properties, prop->m_userProperties);
     }
     if (ok) ok = mqtt_append_property_block(output, properties);
-    XByteArray_delete_base(properties);
+    XClassDelete(properties);
     return ok;
 }
 
@@ -547,7 +547,7 @@ static bool mqtt_append_publish_properties(XByteArray* output,
         ok = mqtt_append_property_string(properties, MQTT_PROP_CONTENT_TYPE,
                                          prop->m_contentType);
     if (ok) ok = mqtt_append_property_block(output, properties);
-    XByteArray_delete_base(properties);
+    XClassDelete(properties);
     return ok;
 }
 
@@ -561,8 +561,8 @@ bool XMqttProtocol_sendConnect(XMqttClient* client)
     XString* protocol = XString_create_utf8(mqtt31 ? "MQIsdp" : "MQTT");
     bool hasWill = mqtt_string_present(client->m_willTopic);
     if (client->m_willQoS > 2 || (!hasWill && client->m_willRetain)) {
-        if (protocol) XString_delete_base(protocol);
-        XByteArray_delete_base(payload);
+        if (protocol) XClassDelete(protocol);
+        XClassDelete(payload);
         return false;
     }
     uint8_t flags = client->m_cleanSession ? 0x02U : 0;
@@ -586,9 +586,9 @@ bool XMqttProtocol_sendConnect(XMqttClient* client)
              mqtt_append_binary(payload, client->m_willMessage);
     if (ok && (flags & 0x80U)) ok = mqtt_append_string(payload, client->m_username);
     if (ok && (flags & 0x40U)) ok = mqtt_append_string(payload, client->m_password);
-    if (protocol) XString_delete_base(protocol);
+    if (protocol) XClassDelete(protocol);
     if (ok) ok = mqtt_write_packet(client, MQTT_CONNECT, payload);
-    XByteArray_delete_base(payload);
+    XClassDelete(payload);
     client->m_private->connectPacketSent = ok;
     if (!ok) XMqttProtocol_fail(client, XMqttClient_TransportInvalid);
     return ok;
@@ -631,7 +631,7 @@ XMqttSubscription* XMqttProtocol_subscribe(XMqttClient* client,
     XMqttTopicFilter* wireTopic = subscription ? XMqttTopicFilter_create_copy(topic) : NULL;
     if (!subscription || !wireTopic) {
         if (subscription) XMqttSubscription_deleteLater(subscription);
-        if (wireTopic) XMqttTopicFilter_delete_base(wireTopic);
+        if (wireTopic) XClassDelete(wireTopic);
         goto failed;
     }
     XMqttSubscription_setClient(subscription, client);
@@ -645,11 +645,11 @@ XMqttSubscription* XMqttProtocol_subscribe(XMqttClient* client,
             subscription->m_sharedSubscriptionName = shareName;
             shareName = NULL;
             if (filterStart && subscription->m_topic) {
-                XMqttTopicFilter_delete_base(subscription->m_topic);
+                XClassDelete(subscription->m_topic);
                 subscription->m_topic = XMqttTopicFilter_create(filterStart + 1);
             }
         }
-        if (shareName) XString_delete_base(shareName);
+        if (shareName) XClassDelete(shareName);
     }
     XMqttSubscription_setState(subscription, XMqttSubscription_SubscriptionPending);
     XMqttSubscriptionEntry entry = {identifier, wireTopic, subscription, false};
@@ -660,12 +660,12 @@ XMqttSubscription* XMqttProtocol_subscribe(XMqttClient* client,
         mqtt_subscription_entry_deinit(&entry);
         goto failed;
     }
-    XByteArray_delete_base(prop);
-    XByteArray_delete_base(payload);
+    XClassDelete(prop);
+    XClassDelete(payload);
     return subscription;
 failed:
-    if (prop) XByteArray_delete_base(prop);
-    if (payload) XByteArray_delete_base(payload);
+    if (prop) XClassDelete(prop);
+    if (payload) XClassDelete(payload);
     return NULL;
 }
 
@@ -700,8 +700,8 @@ bool XMqttProtocol_unsubscribe(XMqttClient* client,
         XMqttSubscription_setState(entry->subscription,
                                    XMqttSubscription_UnsubscriptionPending);
     }
-    if (prop) XByteArray_delete_base(prop);
-    if (payload) XByteArray_delete_base(payload);
+    if (prop) XClassDelete(prop);
+    if (payload) XClassDelete(payload);
     return ok;
 }
 
@@ -742,7 +742,7 @@ int32_t XMqttProtocol_publish(XMqttClient* client,
     if (!payload) return -1;
     XString* empty = omitTopic ? XString_create_utf8("") : NULL;
     bool ok = mqtt_append_string(payload, omitTopic ? empty : topic->m_name);
-    if (empty) XString_delete_base(empty);
+    if (empty) XClassDelete(empty);
     if (ok && qos) ok = mqtt_append_u16(payload, identifier);
     if (ok && client->m_protocolVersion == XMqttClient_MQTT_5_0)
         ok = mqtt_append_publish_properties(payload, properties, alias);
@@ -755,7 +755,7 @@ int32_t XMqttProtocol_publish(XMqttClient* client,
     fixed.bits.retain = retain ? 1U : 0U;
     uint8_t header = fixed.byte;
     if (ok) ok = mqtt_write_packet(client, header, payload);
-    XByteArray_delete_base(payload);
+    XClassDelete(payload);
     if (!ok) return -1;
     if (!qos) {
         XMqttClient_messageSent_signal(client, 0);
@@ -807,8 +807,8 @@ bool XMqttProtocol_authenticate(XMqttClient* client,
     if (ok) ok = mqtt_append_user_properties(prop, properties->m_userProperties);
     if (ok) ok = mqtt_append_property_block(payload, prop) &&
                  mqtt_write_packet(client, MQTT_AUTH, payload);
-    if (prop) XByteArray_delete_base(prop);
-    if (payload) XByteArray_delete_base(payload);
+    if (prop) XClassDelete(prop);
+    if (payload) XClassDelete(payload);
     return ok;
 }
 
@@ -827,13 +827,13 @@ static XMqttClient_Error mqtt_connack_error(uint8_t reason)
 
 static void mqtt_replace_string(XString** target, XString* value)
 {
-    if (*target) XString_delete_base(*target);
+    if (*target) XClassDelete(*target);
     *target = value;
 }
 
 static void mqtt_replace_binary(XByteArray** target, XByteArray* value)
 {
-    if (*target) XByteArray_delete_base(*target);
+    if (*target) XClassDelete(*target);
     *target = value;
 }
 
@@ -891,8 +891,8 @@ static bool mqtt_parse_connack_properties(XMqttClient* client, XMqttReader* read
             XString* name = mqtt_read_string(reader);
             XString* value = mqtt_read_string(reader);
             bool ok = mqtt_add_user_property(&prop->m_base.m_userProperties, name, value);
-            if (name) XString_delete_base(name);
-            if (value) XString_delete_base(value);
+            if (name) XClassDelete(name);
+            if (value) XClassDelete(value);
             if (!ok) reader->ok = false;
             prop->m_availableProperties |= XMqttServerConnectionProperties_UserProperty;
             break;
@@ -976,8 +976,8 @@ static bool mqtt_parse_publish_properties(XMqttReader* reader,
             XString* name = mqtt_read_string(reader);
             XString* value = mqtt_read_string(reader);
             bool ok = mqtt_add_user_property(&prop->m_userProperties, name, value);
-            if (name) XString_delete_base(name);
-            if (value) XString_delete_base(value);
+            if (name) XClassDelete(name);
+            if (value) XClassDelete(value);
             if (!ok) reader->ok = false;
             prop->m_availableProperties |= XMqttPublishProperties_UserProperty;
             break;
@@ -1016,8 +1016,8 @@ static bool mqtt_parse_reason_properties(XMqttReader* reader, XString** reason,
             XString* name = mqtt_read_string(reader);
             XString* value = mqtt_read_string(reader);
             bool ok = mqtt_add_user_property(userProperties, name, value);
-            if (name) XString_delete_base(name);
-            if (value) XString_delete_base(value);
+            if (name) XClassDelete(name);
+            if (value) XClassDelete(value);
             if (!ok) reader->ok = false;
         } else {
             reader->ok = false;
@@ -1035,7 +1035,7 @@ static bool mqtt_send_ack(XMqttClient* client, uint8_t type, uint16_t identifier
     if (ok && client->m_protocolVersion == XMqttClient_MQTT_5_0 && reason)
         ok = mqtt_append_u8(payload, reason) && mqtt_append_u8(payload, 0);
     if (ok) ok = mqtt_write_packet(client, type, payload);
-    if (payload) XByteArray_delete_base(payload);
+    if (payload) XClassDelete(payload);
     return ok;
 }
 
@@ -1060,7 +1060,7 @@ static void mqtt_handle_connack(XMqttClient* client, XMqttReader* reader)
     if (client->m_protocolVersion != XMqttClient_MQTT_5_0 &&
         reader->pos != reader->size) { reader->ok = false; return; }
     if (client->m_serverConnectionProperties)
-        XMqttServerConnectionProperties_delete_base(client->m_serverConnectionProperties);
+        XClassDelete(client->m_serverConnectionProperties);
     client->m_serverConnectionProperties = XMqttServerConnectionProperties_create();
     if (!client->m_serverConnectionProperties) { reader->ok = false; return; }
     client->m_serverConnectionProperties->m_valid = true;
@@ -1115,7 +1115,7 @@ static void mqtt_handle_suback(XMqttClient* client, XMqttReader* reader, bool un
         XMqttSubscription* sub = entry->subscription;
         sub->m_reasonCode = code;
         mqtt_replace_string(&sub->m_reason, reason); reason = NULL;
-        if (sub->m_userProperties) XMqttUserProperties_delete_base(sub->m_userProperties);
+        if (sub->m_userProperties) XClassDelete(sub->m_userProperties);
         sub->m_userProperties = users; users = NULL;
         if (unsubscribe) {
             XMqttSubscription_setState(sub, code < 0x80 ? XMqttSubscription_Unsubscribed
@@ -1132,8 +1132,8 @@ static void mqtt_handle_suback(XMqttClient* client, XMqttReader* reader, bool un
         break;
     }
 cleanup:
-    if (reason) XString_delete_base(reason);
-    if (users) XMqttUserProperties_delete_base(users);
+    if (reason) XClassDelete(reason);
+    if (users) XClassDelete(users);
 }
 
 static bool mqtt_incoming_qos2_seen(XMqttClient* client, uint16_t identifier)
@@ -1190,7 +1190,7 @@ static void mqtt_handle_publish(XMqttClient* client, uint8_t header, XMqttReader
     }
     XMqttTopicName* topicName = reader->ok ? XMqttTopicName_create(XString_toUtf8(topic)) : NULL;
     if (!topicName || !XMqttTopicName_isValid(topicName)) {
-        if (topicName) XMqttTopicName_delete_base(topicName);
+        if (topicName) XClassDelete(topicName);
         reader->ok = false; goto cleanup;
     }
     bool duplicateQos2 = qos == 2 && mqtt_incoming_qos2_seen(client, identifier);
@@ -1198,25 +1198,25 @@ static void mqtt_handle_publish(XMqttClient* client, uint8_t header, XMqttReader
         XMqttMessage* message = XMqttMessage_create_full(
             XString_toUtf8(topic), reader->data + reader->pos, reader->size - reader->pos,
             identifier, qos, fixed.bits.dup != 0, fixed.bits.retain != 0);
-        if (!message) { XMqttTopicName_delete_base(topicName); reader->ok = false; goto cleanup; }
+        if (!message) { XClassDelete(topicName); reader->ok = false; goto cleanup; }
         if (message->m_publishProperties)
-            XMqttPublishProperties_delete_base(message->m_publishProperties);
+            XClassDelete(message->m_publishProperties);
         message->m_publishProperties = prop; prop = NULL;
         mqtt_emit_incoming(client, message);
         if (identifier)
             XMqttClient_messageStatusChanged_signal(client, identifier,
                                                     XMqtt_MessageStatus_Published, NULL);
-        XMqttMessage_delete_base(message);
+        XClassDelete(message);
         if (qos == 2 && !XVector_push_back_1_base(client->m_private->incomingQos2,
                                                   &identifier)) reader->ok = false;
     }
-    XMqttTopicName_delete_base(topicName);
+    XClassDelete(topicName);
     reader->pos = reader->size;
     if (reader->ok && qos == 1) mqtt_send_ack(client, MQTT_PUBACK, identifier, 0);
     if (reader->ok && qos == 2) mqtt_send_ack(client, MQTT_PUBREC, identifier, 0);
 cleanup:
-    if (topic) XString_delete_base(topic);
-    if (prop) XMqttPublishProperties_delete_base(prop);
+    if (topic) XClassDelete(topic);
+    if (prop) XClassDelete(prop);
 }
 
 static void mqtt_handle_publish_ack(XMqttClient* client, uint8_t type, XMqttReader* reader)
@@ -1234,7 +1234,7 @@ static void mqtt_handle_publish_ack(XMqttClient* client, uint8_t type, XMqttRead
         reader->ok = false;
     if (reader->pos != reader->size) reader->ok = false;
     int64_t index = mqtt_pending_publish_index(client, identifier);
-    if (index < 0) { XMqttMessageStatusProperties_delete_base(prop); return; }
+    if (index < 0) { XClassDelete(prop); return; }
     XMqttPendingPublish* pending = (XMqttPendingPublish*)XVector_at_base(
         client->m_private->pendingPublishes, index);
     if (type == MQTT_PUBREC && pending->qos == 2) {
@@ -1254,7 +1254,7 @@ static void mqtt_handle_publish_ack(XMqttClient* client, uint8_t type, XMqttRead
     } else {
         reader->ok = false;
     }
-    XMqttMessageStatusProperties_delete_base(prop);
+    XClassDelete(prop);
 }
 
 static void mqtt_handle_pubrel(XMqttClient* client, XMqttReader* reader)
@@ -1299,8 +1299,8 @@ static void mqtt_handle_auth(XMqttClient* client, XMqttReader* reader)
                 XString* name = mqtt_read_string(reader);
                 XString* value = mqtt_read_string(reader);
                 bool ok = mqtt_add_user_property(&prop->m_userProperties, name, value);
-                if (name) XString_delete_base(name);
-                if (value) XString_delete_base(value);
+                if (name) XClassDelete(name);
+                if (value) XClassDelete(value);
                 if (!ok) reader->ok = false;
             } else reader->ok = false;
         }
@@ -1311,7 +1311,7 @@ static void mqtt_handle_auth(XMqttClient* client, XMqttReader* reader)
     else
         XMqttClient_authenticationFinished_signal(client, prop);
 cleanup:
-    XMqttAuthenticationProperties_delete_base(prop);
+    XClassDelete(prop);
 }
 
 static void mqtt_process_packet(XMqttClient* client, uint8_t header,

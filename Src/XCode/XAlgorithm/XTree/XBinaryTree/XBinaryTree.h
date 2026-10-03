@@ -135,7 +135,7 @@ XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes);
  * @param args 传递给 method 的上下文参数。
  * @param memory 节点释放所使用的内存管理器。
  */
-#define XBTree_delete(this_root,method,args,memory)		XTree_delete_base(this_root,XBTreeNode_delete,method,args,memory)
+#define XBTree_delete(this_root,method,args,memory)		XTree_delete(this_root,XBTreeNode_delete,method,args,memory)
 
 #ifdef __cplusplus
 }

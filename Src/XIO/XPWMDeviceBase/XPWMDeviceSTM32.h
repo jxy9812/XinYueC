@@ -61,7 +61,6 @@ void XPWMDeviceSTM32_init(XPWMDeviceSTM32* pwm);
 //#define XPWMDeviceSTM32_open_base					XPWMDeviceBase_open_base
 #define XPWMDeviceSTM32_close_base					XPWMDeviceBase_close_base
 #define XPWMDeviceSTM32_setDevice_base   			XPWMDeviceBase_setDevice_base
-#define XPWMDeviceSTM32_delete_base					XPWMDeviceBase_delete_base
 #define XPWMDeviceSTM32_poll_base					XPWMDeviceBase_poll_base
 #ifdef __cplusplus
 }

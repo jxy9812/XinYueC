@@ -76,16 +76,9 @@ XVtable* XFtpCommand_class_init(void);
  * @brief 创建 FTP 命令对象。
  * @param[in] id       调用方分配的命令 ID
  * @param[in] cmdType  命令类型
- * @return 新对象；分配失败返回 NULL。调用方负责 XFtpCommand_delete。
+ * @return 新对象；分配失败返回 NULL。调用方负责 XClassDelete。
  */
 XFtpCommand* XFtpCommand_create_ex(XMemoryType memory,  int id, XFtpCommand_Type cmdType);
-
-/**
- * @brief 销毁 FTP 命令对象及其参数/上传缓冲。
- * @param[in] cmd 命令对象；NULL 安全
- * @note m_device 指向的外部设备不由此函数释放。
- */
-void XFtpCommand_delete(XFtpCommand* cmd);
 
 /**
  * @brief 添加一个命令参数。

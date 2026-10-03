@@ -26,11 +26,11 @@ void XCanSignalDescription_init(XCanSignalDescription* sig)
 void XCanSignalDescription_deinit(XCanSignalDescription* sig)
 {
     if (!sig) return;
-    if (sig->m_name) { XString_delete_base(sig->m_name); sig->m_name = NULL; }
-    if (sig->m_physicalUnit) { XString_delete_base(sig->m_physicalUnit); sig->m_physicalUnit = NULL; }
-    if (sig->m_receiver) { XString_delete_base(sig->m_receiver); sig->m_receiver = NULL; }
-    if (sig->m_comment) { XString_delete_base(sig->m_comment); sig->m_comment = NULL; }
-    if (sig->m_multiplexSignals) { XMap_delete_base(sig->m_multiplexSignals); sig->m_multiplexSignals = NULL; }
+    if (sig->m_name) { XClassDelete(sig->m_name); sig->m_name = NULL; }
+    if (sig->m_physicalUnit) { XClassDelete(sig->m_physicalUnit); sig->m_physicalUnit = NULL; }
+    if (sig->m_receiver) { XClassDelete(sig->m_receiver); sig->m_receiver = NULL; }
+    if (sig->m_comment) { XClassDelete(sig->m_comment); sig->m_comment = NULL; }
+    if (sig->m_multiplexSignals) { XClassDelete(sig->m_multiplexSignals); sig->m_multiplexSignals = NULL; }
 }
 
 void XCanSignalDescription_copy(XCanSignalDescription* dest, const XCanSignalDescription* src)
@@ -102,7 +102,7 @@ XString* XCanSignalDescription_name(const XCanSignalDescription* sig)
 void XCanSignalDescription_setName(XCanSignalDescription* sig, const char* name)
 {
     if (!sig) return;
-    if (sig->m_name) { XString_delete_base(sig->m_name); sig->m_name = NULL; }
+    if (sig->m_name) { XClassDelete(sig->m_name); sig->m_name = NULL; }
     if (name) sig->m_name = XString_create_utf8(name);
 }
 
@@ -115,7 +115,7 @@ XString* XCanSignalDescription_physicalUnit(const XCanSignalDescription* sig)
 void XCanSignalDescription_setPhysicalUnit(XCanSignalDescription* sig, const char* unit)
 {
     if (!sig) return;
-    if (sig->m_physicalUnit) { XString_delete_base(sig->m_physicalUnit); sig->m_physicalUnit = NULL; }
+    if (sig->m_physicalUnit) { XClassDelete(sig->m_physicalUnit); sig->m_physicalUnit = NULL; }
     if (unit) sig->m_physicalUnit = XString_create_utf8(unit);
 }
 
@@ -128,7 +128,7 @@ XString* XCanSignalDescription_receiver(const XCanSignalDescription* sig)
 void XCanSignalDescription_setReceiver(XCanSignalDescription* sig, const char* receiver)
 {
     if (!sig) return;
-    if (sig->m_receiver) { XString_delete_base(sig->m_receiver); sig->m_receiver = NULL; }
+    if (sig->m_receiver) { XClassDelete(sig->m_receiver); sig->m_receiver = NULL; }
     if (receiver) sig->m_receiver = XString_create_utf8(receiver);
 }
 
@@ -141,7 +141,7 @@ XString* XCanSignalDescription_comment(const XCanSignalDescription* sig)
 void XCanSignalDescription_setComment(XCanSignalDescription* sig, const char* text)
 {
     if (!sig) return;
-    if (sig->m_comment) { XString_delete_base(sig->m_comment); sig->m_comment = NULL; }
+    if (sig->m_comment) { XClassDelete(sig->m_comment); sig->m_comment = NULL; }
     if (text) sig->m_comment = XString_create_utf8(text);
 }
 
@@ -275,7 +275,7 @@ void XCanSignalDescription_setMultiplexSignals(XCanSignalDescription* sig, const
 {
     if (!sig) return;
     if (sig->m_multiplexSignals) {
-        XMap_delete_base(sig->m_multiplexSignals);
+        XClassDelete(sig->m_multiplexSignals);
         sig->m_multiplexSignals = NULL;
     }
     if (multiplexorSignals)
@@ -301,7 +301,7 @@ void XCanSignalDescription_addMultiplexSignal(XCanSignalDescription* sig,
     memset(&range, 0, sizeof(range));
     XMapBase_insert_base((XMapBase*)sig->m_multiplexSignals, &key, &range);
 
-    XClass_deinit_base((XClass*)&key);
+    XClassDeinit((XClass*)&key);
 }
 
 void XCanSignalDescription_addMultiplexSignal_value(XCanSignalDescription* sig,
@@ -325,7 +325,7 @@ void XCanSignalDescription_addMultiplexSignal_value(XCanSignalDescription* sig,
     range.m_maximum = XVariant_create_copy(value);
     XMapBase_insert_base((XMapBase*)sig->m_multiplexSignals, &key, &range);
 
-    XClass_deinit_base((XClass*)&key);
+    XClassDeinit((XClass*)&key);
 }
 
 #endif /* XCAN_DBC_ON */

@@ -171,7 +171,7 @@ XImageCodecFormat XImageCodec_formatFromName_2(const char* format)
     value = XString_create_utf8(format);
     if (!value) return XImageCodecFormat_Unknown;
     result = XImageCodec_formatFromName(value);
-    XString_delete_base((XClass*)value);
+    XClassDelete((XClass*)value);
     return result;
 }
 
@@ -674,7 +674,7 @@ void XImageCodecAnimation_delete(XImageCodecAnimation* animation)
     if (!animation) return;
     if (animation->frames) {
         for (int i = 0; i < animation->frameCount; ++i)
-            XImage_deinit_base(&animation->frames[i].image);
+            XClassDeinit(&animation->frames[i].image);
         XFree_System(animation->frames);
     }
     XFree_System(animation);

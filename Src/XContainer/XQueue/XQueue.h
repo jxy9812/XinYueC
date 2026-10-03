@@ -102,14 +102,12 @@ XQueue* XQueue_create_ex(XMemoryType memory,  size_t typeSize);
 // ------------------------------ 容器管理（继承自XQueueBase/XContainer） ------------------------------
 /**
 * @brief 反初始化容器（继承自基类）
-* @note 复用XQueueBase的XQueueBase_deinit_base，释放资源但不销毁实例本身
+* @note 复用XQueueBase的XClassDeinit，释放资源但不销毁实例本身
 */
-#define XQueue_deinit_base				XQueueBase_deinit_base
 /**
 * @brief 删除容器实例（继承自基类）
-* @note 复用XQueueBase的XQueueBase_delete_base，释放资源并销毁实例
+* @note 复用XQueueBase的XClassDelete，释放资源并销毁实例
 */
-#define XQueue_delete_base				XQueueBase_delete_base
 /**
 * @brief 清空容器元素（继承自基类）
 * @note 复用XQueueBase的XQueueBase_clear_base，删除所有元素但保留队列结构

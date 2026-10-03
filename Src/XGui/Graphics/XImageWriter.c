@@ -82,7 +82,7 @@ static XStringList* XImageWriter_supportedFormats(void)
                     !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
-            XStringList_delete_base((XClass*)plugin);
+            XClassDelete((XClass*)plugin);
         }
     }
 #endif
@@ -124,7 +124,7 @@ typedef struct XImageWriterPrivate
 static void XImageWriter_releaseHandler(XImageWriterPrivate* data)
 {
     if (!data) return;
-    if (data->m_handler) XImageIOHandler_delete_base(data->m_handler);
+    if (data->m_handler) XClassDelete(data->m_handler);
     data->m_handler = NULL;
 }
 
@@ -134,7 +134,7 @@ static void XImageWriter_releaseOwnedDevice(XImageWriterPrivate* data)
     if (!data || !(owned = data->m_fileDevice)) return;
     if (XIODevice_isOpen(owned)) XIODevice_close_base(owned);
     if (data->m_device == owned) data->m_device = NULL;
-    XClass_delete_base((XClass*)owned);
+    XClassDelete((XClass*)owned);
     data->m_fileDevice = NULL;
 }
 
@@ -234,7 +234,7 @@ static XImageIOHandler* XImageWriter_ensureHandler(XImageWriter* self)
     if (!XContainer_isEmpty_base((const XContainer*)format)) {
         if (data->m_device) {
             data->m_handler = XImagePluginRegistry_createWriteHandler(data->m_device, format);
-            XString_delete_base((XClass*)format);
+            XClassDelete((XClass*)format);
             return data->m_handler;
         }
         if (data->m_fileName) {
@@ -243,13 +243,13 @@ static XImageIOHandler* XImageWriter_ensureHandler(XImageWriter* self)
                 XIODevice_open_base(file, XIODevice_WriteOnly | XIODevice_Truncate | XIODevice_Create)) {
                 data->m_handler = XImagePluginRegistry_createWriteHandler(file, format);
                 if (data->m_handler) {
-                    XString_delete_base((XClass*)format);
+                    XClassDelete((XClass*)format);
                     return data->m_handler;
                 }
             } else if (file && XIODevice_isOpen(file)) {
                 data->m_handler = XImagePluginRegistry_createWriteHandler(file, format);
                 if (data->m_handler) {
-                    XString_delete_base((XClass*)format);
+                    XClassDelete((XClass*)format);
                     return data->m_handler;
                 }
             }
@@ -261,11 +261,11 @@ static XImageIOHandler* XImageWriter_ensureHandler(XImageWriter* self)
         if (!data->m_handler && !data->m_fileName)
             data->m_handler = XImagePluginRegistry_createWriteHandler(NULL, format);
         if (data->m_handler) {
-            XString_delete_base((XClass*)format);
+            XClassDelete((XClass*)format);
             return data->m_handler;
         }
     }
-    XString_delete_base((XClass*)format);
+    XClassDelete((XClass*)format);
 #else
     (void)self;
     (void)format;
@@ -350,7 +350,7 @@ static bool XImageWriter_builtinSupportsOption(const XImageWriter* self,
             break;
         }
     }
-    if (resolvedFormat) XString_delete_base((XClass*)resolvedFormat);
+    if (resolvedFormat) XClassDelete((XClass*)resolvedFormat);
     return supported;
 #else
     (void)self;
@@ -415,7 +415,7 @@ static void XImageWriter_applyHandlerSettings(XImageIOHandler* handler,
 static void XImageWriter_setError(XImageWriter* self, XImageWriterError error, const char* message)
 {
     if (!self || !self->m_data) return;
-    if (self->m_data->m_errorString) XString_delete_base((XClass*)self->m_data->m_errorString);
+    if (self->m_data->m_errorString) XClassDelete((XClass*)self->m_data->m_errorString);
     self->m_data->m_errorString = NULL;
     self->m_data->m_error = error;
     if (message)
@@ -434,7 +434,7 @@ static bool XImageWriter_isSupportedFormat(const char* format)
     {
         XString* value = XString_create_utf8(format);
         bool supported = value && XImagePluginRegistry_supportsWriteFormat(value);
-        if (value) XString_delete_base((XClass*)value);
+        if (value) XClassDelete((XClass*)value);
         if (supported) return true;
     }
 #endif
@@ -470,7 +470,7 @@ static bool XImageWriter_applyTransformation(const XImage* image,
        output operation. */
     XImage_init(out);
     if (transformation == XImageIOHandlerTransformation_None) {
-        XCopy(out, image);
+        XClassCopy(out, image);
         return !XImage_isNull(out);
     }
     sourceWidth = XImage_width(image);
@@ -519,7 +519,7 @@ static bool XImageWriter_applyTransformation(const XImage* image,
                 sourceY = x;
                 break;
             default:
-                XImage_deinit_base(out);
+                XClassDeinit(out);
                 return false;
             }
             XImage_setPixel(out, x, y, XImage_pixel(image, sourceX, sourceY));
@@ -551,11 +551,11 @@ static void VXImageWriter_deinit(XImageWriter* self)
     {
         XImageWriter_releaseTransientState(self->m_data);
         XImageWriter_releaseOwnedDevice(self->m_data);
-        if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
-        if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
-        if (self->m_data->m_description) XString_delete_base((XClass*)self->m_data->m_description);
-        if (self->m_data->m_subType) XString_delete_base((XClass*)self->m_data->m_subType);
-        if (self->m_data->m_errorString) XString_delete_base((XClass*)self->m_data->m_errorString);
+        if (self->m_data->m_fileName) XClassDelete((XClass*)self->m_data->m_fileName);
+        if (self->m_data->m_format) XClassDelete((XClass*)self->m_data->m_format);
+        if (self->m_data->m_description) XClassDelete((XClass*)self->m_data->m_description);
+        if (self->m_data->m_subType) XClassDelete((XClass*)self->m_data->m_subType);
+        if (self->m_data->m_errorString) XClassDelete((XClass*)self->m_data->m_errorString);
         XFree_System(self->m_data);
         self->m_data = NULL;
     }
@@ -616,7 +616,7 @@ void XImageWriter_init_device_2(XImageWriter* self, XIODevice* device, const cha
 {
     XString* formatString = format ? XString_create_utf8(format) : NULL;
     XImageWriter_init_device(self, device, formatString);
-    if (formatString) XString_delete_base((XClass*)formatString);
+    if (formatString) XClassDelete((XClass*)formatString);
 }
 
 void XImageWriter_init_file(XImageWriter* self, const XString* fileName, const XString* format)
@@ -638,8 +638,8 @@ void XImageWriter_init_file_2(XImageWriter* self, const char* fileName, const ch
     XString* fileNameString = fileName ? XString_create_utf8(fileName) : NULL;
     XString* formatString = format ? XString_create_utf8(format) : NULL;
     XImageWriter_init_file(self, fileNameString, formatString);
-    if (fileNameString) XString_delete_base((XClass*)fileNameString);
-    if (formatString) XString_delete_base((XClass*)formatString);
+    if (fileNameString) XClassDelete((XClass*)fileNameString);
+    if (formatString) XClassDelete((XClass*)formatString);
 }
 
 void XImageWriter_setFormat(XImageWriter* self, const XString* format)
@@ -649,7 +649,7 @@ void XImageWriter_setFormat(XImageWriter* self, const XString* format)
     /* format 可能来自 format_const()，不能先释放旧成员再复制。 */
     copy = format ? XString_create_copy(format) : NULL;
     if (format && !copy) return;
-    if (self->m_data->m_format) XString_delete_base((XClass*)self->m_data->m_format);
+    if (self->m_data->m_format) XClassDelete((XClass*)self->m_data->m_format);
     self->m_data->m_format = copy;
 }
 
@@ -657,7 +657,7 @@ void XImageWriter_setFormat_2(XImageWriter* self, const char* format)
 {
     XString* value = format ? XString_create_utf8(format) : NULL;
     XImageWriter_setFormat(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 const XString* XImageWriter_format_const(const XImageWriter* self)
@@ -678,7 +678,7 @@ void XImageWriter_setDevice(XImageWriter* self, XIODevice* device)
     XImageWriter_releaseTransientState(self->m_data);
     XImageWriter_releaseOwnedDevice(self->m_data);
     self->m_data->m_device = device;
-    if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
+    if (self->m_data->m_fileName) XClassDelete((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = NULL;
 }
 
@@ -696,7 +696,7 @@ void XImageWriter_setFileName(XImageWriter* self, const XString* fileName)
     if (fileName && !copy) return;
     XImageWriter_releaseTransientState(self->m_data);
     XImageWriter_releaseOwnedDevice(self->m_data);
-    if (self->m_data->m_fileName) XString_delete_base((XClass*)self->m_data->m_fileName);
+    if (self->m_data->m_fileName) XClassDelete((XClass*)self->m_data->m_fileName);
     self->m_data->m_fileName = copy;
     self->m_data->m_device = XImageWriter_ensureOwnedDevice(self->m_data);
 }
@@ -705,7 +705,7 @@ void XImageWriter_setFileName_2(XImageWriter* self, const char* fileName)
 {
     XString* value = fileName ? XString_create_utf8(fileName) : NULL;
     XImageWriter_setFileName(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 const XString* XImageWriter_fileName_const(const XImageWriter* self)
@@ -740,7 +740,7 @@ int XImageWriter_compression(const XImageWriter* self)
 void XImageWriter_setSubType(XImageWriter* self, const XString* type)
 {
     if (!self || !self->m_data) return;
-    if (self->m_data->m_subType) XString_delete_base((XClass*)self->m_data->m_subType);
+    if (self->m_data->m_subType) XClassDelete((XClass*)self->m_data->m_subType);
     self->m_data->m_subType = type ? XString_create_copy(type) : NULL;
 }
 
@@ -748,7 +748,7 @@ void XImageWriter_setSubType_2(XImageWriter* self, const char* type)
 {
     XString* value = type ? XString_create_utf8(type) : NULL;
     XImageWriter_setSubType(self, value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
 }
 
 const XString* XImageWriter_subType_const(const XImageWriter* self)
@@ -815,8 +815,8 @@ void XImageWriter_setText(XImageWriter* self, const XString* key, const XString*
     normalizedKey = XString_simplified(key);
     normalizedText = XString_simplified(text);
     if (!normalizedKey || !normalizedText) {
-        if (normalizedKey) XString_delete_base((XClass*)normalizedKey);
-        if (normalizedText) XString_delete_base((XClass*)normalizedText);
+        if (normalizedKey) XClassDelete((XClass*)normalizedKey);
+        if (normalizedText) XClassDelete((XClass*)normalizedText);
         return;
     }
     description = self->m_data->m_description
@@ -830,13 +830,13 @@ void XImageWriter_setText(XImageWriter* self, const XString* key, const XString*
     if (ok) ok = XString_append(description, normalizedText);
     if (ok) {
         if (self->m_data->m_description)
-            XString_delete_base((XClass*)self->m_data->m_description);
+            XClassDelete((XClass*)self->m_data->m_description);
         self->m_data->m_description = description;
         description = NULL;
     }
-    if (description) XString_delete_base((XClass*)description);
-    XString_delete_base((XClass*)normalizedKey);
-    XString_delete_base((XClass*)normalizedText);
+    if (description) XClassDelete((XClass*)description);
+    XClassDelete((XClass*)normalizedKey);
+    XClassDelete((XClass*)normalizedText);
 }
 
 void XImageWriter_setText_2(XImageWriter* self, const char* key, const char* text)
@@ -844,8 +844,8 @@ void XImageWriter_setText_2(XImageWriter* self, const char* key, const char* tex
     XString* keyString = key ? XString_create_utf8(key) : NULL;
     XString* textString = text ? XString_create_utf8(text) : NULL;
     XImageWriter_setText(self, keyString, textString);
-    if (keyString) XString_delete_base((XClass*)keyString);
-    if (textString) XString_delete_base((XClass*)textString);
+    if (keyString) XClassDelete((XClass*)keyString);
+    if (textString) XClassDelete((XClass*)textString);
 }
 
 bool XImageWriter_canWrite(const XImageWriter* self)
@@ -975,7 +975,7 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
         if (wrote && self->m_data->m_fileDevice)
             (void)XIODevice_flush(self->m_data->m_fileDevice);
         if (wrote) {
-            if (transformedInitialized) XImage_deinit_base(&transformed);
+            if (transformedInitialized) XClassDeinit(&transformed);
             return true;
         }
         /* Qt QImageWriter::write() returns immediately when the selected
@@ -983,7 +983,7 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
            that fallback would duplicate output and could silently switch
            formats after a plugin has already accepted the request. */
         if (handlerAttempted) {
-            if (transformedInitialized) XImage_deinit_base(&transformed);
+            if (transformedInitialized) XClassDeinit(&transformed);
             /* Qt returns directly from handler->write() here and does not
                replace imageWriterError/errorString (qimagewriter.cpp:683-684).
                Preserve the previously observable status for repeated writes. */
@@ -1062,7 +1062,7 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
 #else
         bool ok = false;
 #endif
-        if (bytes) XByteArray_delete_base((XClass*)bytes);
+        if (bytes) XClassDelete((XClass*)bytes);
         if (!ok)
             XImageWriter_setError(self, XImageWriterError_DeviceError,
                                   "Image could not be written to the device");
@@ -1077,7 +1077,7 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
                 source, self->m_data->m_quality, self->m_data->m_compression,
                 self->m_data->m_gamma, self->m_data->m_description, bytes);
             fileOk = encoded && XImageWriter_writeDevice(self->m_data->m_device, bytes);
-            if (bytes) XByteArray_delete_base((XClass*)bytes);
+            if (bytes) XClassDelete((XClass*)bytes);
         } else
 #endif
             fileOk = XImage_save_2(source, XString_toUtf8(self->m_data->m_fileName),
@@ -1090,8 +1090,8 @@ bool XImageWriter_write(XImageWriter* self, const XImage* image)
     /* QImageWriter::write() does not clear a previous error on success; the
        initial Unknown error string therefore remains observable until a new
        failure replaces it. */
-    if (transformedInitialized) XImage_deinit_base(&transformed);
-    if (resolvedFormat) XString_delete_base((XClass*)resolvedFormat);
+    if (transformedInitialized) XClassDeinit(&transformed);
+    if (resolvedFormat) XClassDelete((XClass*)resolvedFormat);
     return wrote;
 }
 
@@ -1157,7 +1157,7 @@ XStringList* XImageWriter_supportedMimeTypes()
                     !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
-            XStringList_delete_base((XClass*)plugin);
+            XClassDelete((XClass*)plugin);
         }
     }
 #endif
@@ -1203,7 +1203,7 @@ XStringList* XImageWriter_imageFormatsForMimeType(const XString* mimeType)
                     !XStringList_contains_utf8(result, value, XChar_CaseSensitive))
                     XStringList_push_back_utf8(result, value);
             }
-            XStringList_delete_base((XClass*)plugin);
+            XClassDelete((XClass*)plugin);
         }
     }
 #endif
@@ -1214,6 +1214,6 @@ XStringList* XImageWriter_imageFormatsForMimeType_2(const char* mimeType)
 {
     XString* value = mimeType ? XString_create_utf8(mimeType) : NULL;
     XStringList* result = XImageWriter_imageFormatsForMimeType(value);
-    if (value) XString_delete_base((XClass*)value);
+    if (value) XClassDelete((XClass*)value);
     return result;
 }

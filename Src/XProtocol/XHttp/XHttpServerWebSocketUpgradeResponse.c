@@ -17,7 +17,7 @@ static void VXHttpServerWebSocketUpgradeResponse_deinit(
     if (!self)
         return;
     if (self->m_denyMessage)
-        XClass_delete_base((XClass*)self->m_denyMessage);
+        XClassDelete((XClass*)self->m_denyMessage);
     self->m_denyMessage = NULL;
     XClass_Deinit_Parent(XClass, (XClass*)self);
 }
@@ -37,7 +37,7 @@ static void VXHttpServerWebSocketUpgradeResponse_copy(
         XClassSetVtable(dest, XHttpServerWebSocketUpgradeResponse);
     }
     if (dest->m_denyMessage)
-        XClass_delete_base((XClass*)dest->m_denyMessage);
+        XClassDelete((XClass*)dest->m_denyMessage);
     dest->m_type = src->m_type;
     dest->m_denyStatus = src->m_denyStatus;
     dest->m_denyMessage = message;
@@ -73,7 +73,7 @@ xhttp_server_websocket_upgrade_response_create(
     self->m_denyMessage = message ? XByteArray_create_copy(message) : XByteArray_create();
     Set_Class_IsHeap(self, true);
     if (!self->m_denyMessage) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     return self;

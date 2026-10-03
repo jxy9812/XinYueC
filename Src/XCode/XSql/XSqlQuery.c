@@ -17,7 +17,7 @@ static void xsql_query_clear_error(XSqlResult* result)
     empty = XSqlError_create(NULL, NULL, XSqlErrorType_NoError, NULL);
     if (!empty) return;
     XSqlResult_setLastError_base(result, empty);
-    XSqlError_delete_base(empty);
+    XClassDelete(empty);
 }
 
 XVtable* XSqlQuery_class_init(void)
@@ -78,7 +78,7 @@ XSqlQuery* XSqlQuery_create_result(XSqlResult* result)
 static void VXSqlQuery_deinit(XSqlQuery* query)
 {
     if (!query) return;
-    if (query->m_ownsResult && query->m_result) XSqlResult_delete_base(query->m_result);
+    if (query->m_ownsResult && query->m_result) XClassDelete(query->m_result);
     query->m_result = NULL;
     query->m_ownsResult = false;
     XClass_Deinit_Parent(XClass, query);
@@ -88,7 +88,7 @@ static void VXSqlQuery_copy(XSqlQuery* dest, const XSqlQuery* src)
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XSqlQuery_init(dest);
-    if (dest->m_ownsResult && dest->m_result) XSqlResult_delete_base(dest->m_result);
+    if (dest->m_ownsResult && dest->m_result) XClassDelete(dest->m_result);
     dest->m_result = NULL;
     dest->m_ownsResult = false;
     if (src->m_result) {
@@ -96,7 +96,7 @@ static void VXSqlQuery_copy(XSqlQuery* dest, const XSqlQuery* src)
             ? XSqlDriver_createResult_base(src->m_result->m_driver)
             : XSqlResult_create(NULL);
         if (dest->m_result) {
-            XCopy(dest->m_result, src->m_result);
+            XClassCopy(dest->m_result, src->m_result);
             dest->m_ownsResult = true;
         }
     }
@@ -106,29 +106,29 @@ static void VXSqlQuery_move(XSqlQuery* dest, XSqlQuery* src)
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) XSqlQuery_init(dest);
-    if (dest->m_ownsResult && dest->m_result) XSqlResult_delete_base(dest->m_result);
+    if (dest->m_ownsResult && dest->m_result) XClassDelete(dest->m_result);
     dest->m_result = src->m_result;
     dest->m_ownsResult = src->m_ownsResult;
     src->m_result = NULL;
     src->m_ownsResult = false;
 }
 
-XSqlQuery* XSqlQuery_create_copy(const XSqlQuery* other) { if (!other) return NULL; XSqlQuery* result = XSqlQuery_create(); if (result) XCopy(result, other); return result; }
-XSqlQuery* XSqlQuery_create_move(XSqlQuery* other) { if (!other) return NULL; XSqlQuery* result = XSqlQuery_create(); if (result) XMove(result, other); return result; }
+XSqlQuery* XSqlQuery_create_copy(const XSqlQuery* other) { if (!other) return NULL; XSqlQuery* result = XSqlQuery_create(); if (result) XClassCopy(result, other); return result; }
+XSqlQuery* XSqlQuery_create_move(XSqlQuery* other) { if (!other) return NULL; XSqlQuery* result = XSqlQuery_create(); if (result) XClassMove(result, other); return result; }
 void XSqlQuery_swap(XSqlQuery* left, XSqlQuery* right)
 {
     if (!left || !right || left == right) return;
     XSqlQuery* temp = XSqlQuery_create_move(left);
     if (!temp) return;
-    XMove(left, right);
-    XMove(right, temp);
-    XSqlQuery_delete_base(temp);
+    XClassMove(left, right);
+    XClassMove(right, temp);
+    XClassDelete(temp);
 }
 bool XSqlQuery_isValid(const XSqlQuery* query) { return query && query->m_result && XSqlResult_isValid(query->m_result); }
 bool XSqlQuery_isActive(const XSqlQuery* query) { return query && query->m_result && XSqlResult_isActive(query->m_result); }
 bool XSqlQuery_isNull(const XSqlQuery* query, int field) { return !query || !query->m_result || !XSqlResult_isActive(query->m_result) || !XSqlResult_isValid(query->m_result) || field < 0 || XSqlResult_isNull_base(query->m_result, field); }
-bool XSqlQuery_isNull_utf8(const XSqlQuery* query, const char* name) { XSqlRecord* record = XSqlQuery_record(query); int index = XSqlRecord_indexOf_utf8(record, name); bool result = XSqlQuery_isNull(query, index); XSqlRecord_delete_base(record); return result; }
-bool XSqlQuery_isNull_2(const XSqlQuery* query, const XString* name) { XSqlRecord* record = XSqlQuery_record(query); int index = XSqlRecord_indexOf(record, name); bool result = XSqlQuery_isNull(query, index); XSqlRecord_delete_base(record); return result; }
+bool XSqlQuery_isNull_utf8(const XSqlQuery* query, const char* name) { XSqlRecord* record = XSqlQuery_record(query); int index = XSqlRecord_indexOf_utf8(record, name); bool result = XSqlQuery_isNull(query, index); XClassDelete(record); return result; }
+bool XSqlQuery_isNull_2(const XSqlQuery* query, const XString* name) { XSqlRecord* record = XSqlQuery_record(query); int index = XSqlRecord_indexOf(record, name); bool result = XSqlQuery_isNull(query, index); XClassDelete(record); return result; }
 int XSqlQuery_at(const XSqlQuery* query) { return query && query->m_result ? XSqlResult_at(query->m_result) : XSqlLocation_BeforeFirstRow; }
 XString* XSqlQuery_lastQuery(const XSqlQuery* query) { return query && query->m_result ? XSqlResult_lastQuery(query->m_result) : XString_create(); }
 int XSqlQuery_numRowsAffected(const XSqlQuery* query) { return query && query->m_result && XSqlResult_isActive(query->m_result) ? XSqlResult_numRowsAffected_base(query->m_result) : -1; }
@@ -151,7 +151,7 @@ XSqlRecord* XSqlQuery_record(const XSqlQuery* query)
     for (field = 0; field < XSqlRecord_count(record); ++field) {
         XVariant* value = XSqlQuery_value(query, field);
         XSqlRecord_setValue(record, field, value);
-        if (value) XVariant_delete_base(value);
+        if (value) XClassDelete(value);
     }
     return record;
 }
@@ -168,13 +168,13 @@ bool XSqlQuery_exec_query(XSqlQuery* query, const XString* sql)
     xsql_query_clear_error(query->m_result);
     result = XSqlResult_reset_base(query->m_result, sql);
     XSqlResult_setQuery_base(query->m_result, trimmed ? trimmed : sql);
-    if (trimmed) XString_delete_base(trimmed);
+    if (trimmed) XClassDelete(trimmed);
     return result;
 }
-bool XSqlQuery_exec_utf8(XSqlQuery* query, const char* sql) { XString* text = sql ? XString_create_utf8(sql) : NULL; bool result = XSqlQuery_exec_query(query, text); if (text) XString_delete_base(text); return result; }
+bool XSqlQuery_exec_utf8(XSqlQuery* query, const char* sql) { XString* text = sql ? XString_create_utf8(sql) : NULL; bool result = XSqlQuery_exec_query(query, text); if (text) XClassDelete(text); return result; }
 XVariant* XSqlQuery_value(const XSqlQuery* query, int field) { return query && query->m_result && XSqlResult_isActive(query->m_result) && XSqlResult_isValid(query->m_result) && field >= 0 ? XSqlResult_data_base(query->m_result, field) : XVariant_create_null(); }
-XVariant* XSqlQuery_value_utf8(const XSqlQuery* query, const char* name) { XSqlRecord* record = XSqlQuery_record(query); int index = XSqlRecord_indexOf_utf8(record, name); XVariant* result = XSqlQuery_value(query, index); XSqlRecord_delete_base(record); return result; }
-XVariant* XSqlQuery_value_2(const XSqlQuery* query, const XString* name) { XSqlRecord* record = XSqlQuery_record(query); int index = XSqlRecord_indexOf(record, name); XVariant* result = XSqlQuery_value(query, index); XSqlRecord_delete_base(record); return result; }
+XVariant* XSqlQuery_value_utf8(const XSqlQuery* query, const char* name) { XSqlRecord* record = XSqlQuery_record(query); int index = XSqlRecord_indexOf_utf8(record, name); XVariant* result = XSqlQuery_value(query, index); XClassDelete(record); return result; }
+XVariant* XSqlQuery_value_2(const XSqlQuery* query, const XString* name) { XSqlRecord* record = XSqlQuery_record(query); int index = XSqlRecord_indexOf(record, name); XVariant* result = XSqlQuery_value(query, index); XClassDelete(record); return result; }
 void XSqlQuery_setNumericalPrecisionPolicy(XSqlQuery* query, XSqlNumericalPrecisionPolicy policy) { if (query && query->m_result) XSqlResult_setNumericalPrecisionPolicy_base(query->m_result, policy); }
 XSqlNumericalPrecisionPolicy XSqlQuery_numericalPrecisionPolicy(const XSqlQuery* query) { return query && query->m_result ? XSqlResult_numericalPrecisionPolicy(query->m_result) : XSqlNumericalPrecisionPolicy_HighPrecision; }
 void XSqlQuery_setPositionalBindingEnabled(XSqlQuery* query, bool enable) { if (query && query->m_result) XSqlResult_setPositionalBindingEnabled(query->m_result, enable); }
@@ -278,7 +278,7 @@ bool XSqlQuery_prepare(XSqlQuery* query, const XString* sql)
     xsql_query_clear_error(query->m_result);
     return XSqlResult_savePrepare_base(query->m_result, sql);
 }
-bool XSqlQuery_prepare_utf8(XSqlQuery* query, const char* sql) { XString* text = sql ? XString_create_utf8(sql) : NULL; bool result = XSqlQuery_prepare(query, text); if (text) XString_delete_base(text); return result; }
+bool XSqlQuery_prepare_utf8(XSqlQuery* query, const char* sql) { XString* text = sql ? XString_create_utf8(sql) : NULL; bool result = XSqlQuery_prepare(query, text); if (text) XClassDelete(text); return result; }
 void XSqlQuery_bindValue_utf8(XSqlQuery* query, const char* placeholder, const XVariant* value, XSqlParamType type) { if (query && query->m_result) XSqlResult_bindValue_utf8_base(query->m_result, placeholder, value, type); }
 void XSqlQuery_bindValue_2(XSqlQuery* query, const XString* placeholder, const XVariant* value, XSqlParamType type) { if (query && query->m_result) XSqlResult_bindValue_2_base(query->m_result, placeholder, value, type); }
 void XSqlQuery_bindValue(XSqlQuery* query, int position, const XVariant* value, XSqlParamType type) { if (query && query->m_result) XSqlResult_bindValue_base(query->m_result, position, value, type); }

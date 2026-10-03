@@ -237,16 +237,6 @@ bool XLockFreeList_pop_and_move_front(XLockFreeList* this_list, void* pvOutData)
 */
 #define XLockFreeList_sort_base                    XListBase_sort_base
 /**
-* @brief 反初始化链表（基础版本）
-* @note 继承自XListBase的反初始化操作，释放资源但不释放链表本身
-*/
-#define XLockFreeList_deinit_base                  XListBase_deinit_base
-/**
-* @brief 删除链表（基础版本）
-* @note 继承自XListBase的删除操作，释放资源并销毁链表实例
-*/
-void XLockFreeList_delete_base(XLockFreeList* this_list);
-/**
 * @brief 清空链表（基础版本）
 * @note 继承自XListBase的清空操作，删除所有元素但保留链表结构
 */

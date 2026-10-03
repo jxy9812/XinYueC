@@ -166,7 +166,7 @@ void XCompleter_init(XCompleter* self, XObject* parent);
  * @brief      使用默认内存类型创建补全对象（对标 QCompleter(parent)）。
  * @param      parent 父对象借用指针；可为 NULL。
  * @return     新建的已初始化对象指针；失败返回 NULL。成功后必须
- *             XCompleter_delete_base 释放。
+ *             XClassDelete 释放。
  */
 #define XCompleter_create(parent) \
     XCompleter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent))
@@ -184,8 +184,6 @@ XCompleter* XCompleter_create_2_ex(XMemoryType memory,
                                    XAbstractItemModel* model,
                                    XObject* parent);
 
-#define XCompleter_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XCompleter_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 模型与属性（对标 QCompleter） ==================== */
 
@@ -243,7 +241,7 @@ void XCompleter_setCompletionPrefix_2(XCompleter* self, const char* utf8);
  * @brief      查询补全前缀的拷贝（对标 QCompleter::completionPrefix）。
  * @param      self 目标补全对象；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；self 为 NULL 或空前缀返回 NULL。
+ *             XClassDelete；self 为 NULL 或空前缀返回 NULL。
  */
 XString* XCompleter_completionPrefix(const XCompleter* self);
 
@@ -417,7 +415,7 @@ void XCompleter_hidePopup(XCompleter* self);
  * @brief      查询当前补全文本的拷贝（对标 QCompleter::currentCompletion）。
  * @param      self 目标补全对象；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；无命中或 self 为 NULL 返回 NULL。
+ *             XClassDelete；无命中或 self 为 NULL 返回 NULL。
  */
 XString* XCompleter_currentCompletion(const XCompleter* self);
 
@@ -490,7 +488,7 @@ XAbstractItemModel* XCompleter_completionModel(const XCompleter* self);
  * @param      self 目标补全对象；可为 NULL。
  * @param      row 源模型行号（0 基）。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；self/模型/单元格无效或 row 越界返回
+ *             XClassDelete；self/模型/单元格无效或 row 越界返回
  *             NULL。
  */
 XString* XCompleter_pathFromIndex(const XCompleter* self, int row);
@@ -500,7 +498,7 @@ XString* XCompleter_pathFromIndex(const XCompleter* self, int row);
  * @details    按 POSIX 分隔符 '/' 拆分：最后一个 '/' 之前的全部字节为
  *             目录（不含分隔符），之后为文件名；无 '/' 时目录为空串、
  *             文件名为整个路径；以 '/' 结尾时文件名为空串。两个输出均为
- *             新建 XString，调用方拥有并负责 XString_delete_base。
+ *             新建 XString，调用方拥有并负责 XClassDelete。
  *             @note 签名差异：Qt 返回 QStringList（逐级匹配段，且文件
  *             系统模型下按本机分隔符拆分）；XGui 无 QFileSystemModel，
  *             改为 (目录, 文件名) 双输出参数形式，仅识别 '/'。

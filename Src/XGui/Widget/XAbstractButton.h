@@ -121,8 +121,8 @@ XVtable* XAbstractButton_class_init(void);
  * @param      flags 窗口标志；可传 0 表示普通 Widget 类型。
  * @return     无返回值；self 不满足初始化前提时调用方不得继续使用对象。
  * @note       init 不分配 self，也不负责释放 parent；初始化后的对象应使用
- *             XAbstractButton_deinit_base，堆对象应使用
- *             XAbstractButton_delete_base。
+ *             XClassDeinit，堆对象应使用
+ *             XClassDelete。
  */
 void XAbstractButton_init(XAbstractButton* self, XWidget* parent,
                           XWidgetFlags flags);
@@ -132,7 +132,7 @@ void XAbstractButton_init(XAbstractButton* self, XWidget* parent,
  * @param      parent 父控件借用指针；可为 NULL，宏不取得其所有权。
  * @param      flags 窗口标志；可传 0 表示普通 Widget 类型。
  * @return     新建的已初始化对象指针；分配失败返回 NULL。成功返回的对象
- *             由调用方拥有，必须使用 XAbstractButton_delete_base 释放。
+ *             由调用方拥有，必须使用 XClassDelete 释放。
  */
 #define XAbstractButton_create(parent, flags)  XAbstractButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 
@@ -143,7 +143,7 @@ void XAbstractButton_init(XAbstractButton* self, XWidget* parent,
  * @param      flags 窗口标志；可传 0 表示普通 Widget 类型。
  * @return     新建的已初始化对象指针；分配或初始化失败返回 NULL。成功
  *             返回的堆对象由调用方拥有，必须使用
- *             XAbstractButton_delete_base 释放。
+ *             XClassDelete 释放。
  */
 XAbstractButton* XAbstractButton_create_ex(XMemoryType memory,
                                            XWidget* parent,
@@ -153,20 +153,18 @@ XAbstractButton* XAbstractButton_create_ex(XMemoryType memory,
  * @brief      通过当前 XClass 虚表释放按钮对象所拥有的资源。
  * @param      self 已初始化的栈对象或外部存储对象；可为 NULL，NULL 时不执行操作。
  * @return     无返回值；函数不会释放 self 指向的存储空间，堆对象必须使用
- *             XAbstractButton_delete_base。
+ *             XClassDelete。
  * @note       调用后 self 不再是可用的已初始化对象；不得重复调用，也不得
  *             在未初始化存储上调用。
  */
-#define XAbstractButton_deinit_base(self)  XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      释放按钮对象资源并按对象所有权删除其存储空间。
  * @param      self 由 XAbstractButton_create 或 XAbstractButton_create_ex
  *             返回的堆对象；可为 NULL，NULL 时不执行操作。
  * @return     无返回值；堆对象会先执行虚表析构，再由创建时的内存方法释放；
- *             栈对象不应使用此宏，栈对象请使用 XAbstractButton_deinit_base。
+ *             栈对象不应使用此宏，栈对象请使用 XClassDeinit。
  */
-#define XAbstractButton_delete_base(self)  XClass_delete_base((XClass*)(self))
 
 /* ==================== 文本与图标（对标 QAbstractButton） ==================== */
 
@@ -208,7 +206,7 @@ void XAbstractButton_setText_2(XAbstractButton* self, const char* utf8);
  * @param      self 按钮对象的借用指针；可为 NULL。
  * @return     按 XIcon 值语义返回的图标副本；self 为 NULL 或无图标时返回
  *             已初始化的空 XIcon。返回值由调用方拥有，使用完成后必须
- *             调用 XIcon_deinit_base 释放其内部资源。
+ *             调用 XClassDeinit 释放其内部资源。
  */
 XIcon XAbstractButton_icon(const XAbstractButton* self);
 

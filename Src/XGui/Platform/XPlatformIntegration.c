@@ -93,7 +93,7 @@ static XIcon* integration_cloneIcon(const XIcon* icon)
     if (!icon) return NULL;
     copy = XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (!copy) return NULL;
-    XCopy(copy, icon);
+    XClassCopy(copy, icon);
     return copy;
 }
 
@@ -109,29 +109,29 @@ static void VXPlatformIntegration_deinit(XPlatformIntegration* self)
             for (i = 0; i < n; ++i) {
                 XPlatformWindow** p = (XPlatformWindow**)XVector_at_base(
                         self->m_data->m_platformWindows, (int64_t)i);
-                if (p && *p) XPlatformWindow_delete_base(*p);
+                if (p && *p) XClassDelete(*p);
             }
-            XVector_delete_base((XClass*)self->m_data->m_platformWindows);
+            XClassDelete((XClass*)self->m_data->m_platformWindows);
             self->m_data->m_platformWindows = NULL;
         }
 #if XPLATFORMINPUTCTX_ON
         if (self->m_data->m_inputContext) {
-            XPlatformInputContext_delete_base(self->m_data->m_inputContext);
+            XClassDelete(self->m_data->m_inputContext);
             self->m_data->m_inputContext = NULL;
         }
 #endif /* XPLATFORMINPUTCTX_ON */
         if (self->m_data->m_nativeInterface) {
-            XPlatformNativeInterface_delete_base(self->m_data->m_nativeInterface);
+            XClassDelete(self->m_data->m_nativeInterface);
             self->m_data->m_nativeInterface = NULL;
         }
 #if XWINDOW_ON && XACCESSIBLE_ON
         if (self->m_data->m_accessibility) {
-            XPlatformAccessibility_delete_base(self->m_data->m_accessibility);
+            XClassDelete(self->m_data->m_accessibility);
             self->m_data->m_accessibility = NULL;
         }
 #endif
         if (self->m_data->m_themeName) {
-            XString_delete_base(self->m_data->m_themeName);
+            XClassDelete(self->m_data->m_themeName);
             self->m_data->m_themeName = NULL;
         }
         if (self->m_data->m_fontDatabase) {
@@ -151,7 +151,7 @@ static void VXPlatformIntegration_deinit(XPlatformIntegration* self)
             self->m_data->m_drag = NULL;
         }
         if (self->m_data->m_applicationIcon) {
-            XIcon_delete_base(self->m_data->m_applicationIcon);
+            XClassDelete(self->m_data->m_applicationIcon);
             self->m_data->m_applicationIcon = NULL;
         }
         XFree_System(self->m_data);
@@ -278,7 +278,7 @@ XPlatformWindow* XPlatformIntegration_createPlatformWindow(
     if (!pw) return NULL;
     if (!XVector_push_back_1_base(self->m_data->m_platformWindows, &pw)) {
         /* 登记失败容器不接管：就地释放防无主块（对象+私有块+属性表）。 */
-        XPlatformWindow_delete_base(pw);
+        XClassDelete(pw);
         return NULL;
     }
 #if XWINDOW_ON
@@ -326,14 +326,14 @@ XPlatformWindow* XPlatformIntegration_createForeignWindow(
     if (!pw) return NULL;
     if (!XVector_push_back_1_base(self->m_data->m_platformWindows, &pw)) {
         /* 登记失败容器不接管：就地释放防无主块。 */
-        XPlatformWindow_delete_base(pw);
+        XClassDelete(pw);
         return NULL;
     }
     if (!XWindow_attachForeignHandle(window, nativeHandle)) {
         n = XVector_size_base((const XContainer*)self->m_data->m_platformWindows);
         if (n > 0)
             XVector_remove_base(self->m_data->m_platformWindows, (int64_t)n - 1, 1);
-        XPlatformWindow_delete_base(pw);
+        XClassDelete(pw);
         return NULL;
     }
     XPlatformWindow_setForeign(pw, true);
@@ -776,7 +776,7 @@ void XPlatformIntegration_setApplicationIcon(XPlatformIntegration* self,
     if (!self || !self->m_data) return;
     copy = integration_cloneIcon(icon);
     if (self->m_data->m_applicationIcon) {
-        XIcon_delete_base(self->m_data->m_applicationIcon);
+        XClassDelete(self->m_data->m_applicationIcon);
         self->m_data->m_applicationIcon = NULL;
     }
     self->m_data->m_applicationIcon = copy;

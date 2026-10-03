@@ -87,8 +87,6 @@ XSplitter* XSplitter_create_ex(XMemoryType memory, XWidget* parent,
  */
 XSplitter* XSplitter_create_ex_2(XMemoryType memory, int orientation,
                                  XWidget* parent, XWidgetFlags flags);
-#define XSplitter_deinit_base(self) XFrame_deinit_base((XFrame*)(self))
-#define XSplitter_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 页面管理 ==================== */
 

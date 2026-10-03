@@ -47,15 +47,15 @@ XPlatformTheme* XPlatformTheme_create_ex_2(XMemoryType memory, const char* name)
         if (!tmp) return NULL;
     }
     self = XPlatformTheme_create_ex(memory, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
     return self;
 }
 
 void XPlatformTheme_destroy(XPlatformTheme* self)
 {
     if (!self) return;
-    if (self->m_name) XString_delete_base(self->m_name);
-    XFont_deinit_base(&self->m_font);
+    if (self->m_name) XClassDelete(self->m_name);
+    XClassDeinit(&self->m_font);
     XFree_System(self);
 }
 const XString* XPlatformTheme_name(const XPlatformTheme* self)
@@ -73,15 +73,15 @@ XFont XPlatformTheme_font(const XPlatformTheme* self)
     XFont out;
     XFont_init(&out);
     if (!self) return out;
-    XCopy(&out, &self->m_font);
+    XClassCopy(&out, &self->m_font);
     return out;
 }
 void XPlatformTheme_setFont(XPlatformTheme* self, const XFont* font)
 {
     if (!self || !font) return;
-    XFont_deinit_base(&self->m_font);
+    XClassDeinit(&self->m_font);
     XFont_init(&self->m_font);
-    XCopy(&self->m_font, font);
+    XClassCopy(&self->m_font, font);
 }
 int64_t XPlatformTheme_themeHint(const XPlatformTheme* self, int hint)
 {

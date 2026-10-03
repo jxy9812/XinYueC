@@ -50,15 +50,13 @@ void XBsonArray_init(XBsonArray* array);
 */
 #define XBsonArray_rcopy_base						XVector_rcopy_base
 /**
-* @brief 反初始化操作，映射到XVector_deinit_base（释放内部资源，不释放实例本身）
+* @brief 反初始化操作，映射到XClassDeinit（释放内部资源，不释放实例本身）
 * @param array XBsonArray实例指针
 */
-#define XBsonArray_deinit_base						XVector_deinit_base	
 /**
-* @brief 销毁操作，映射到XVector_delete_base（释放内部资源及实例本身）
+* @brief 销毁操作，映射到XClassDelete（释放内部资源及实例本身）
 * @param array XBsonArray实例指针
 */
-#define XBsonArray_delete_base						XVector_delete_base	
 /**
 * @brief 清空操作，映射到XVector_clear_base（移除所有元素，保留容量）
 * @param array XBsonArray实例指针

@@ -124,7 +124,7 @@ void XHttpReply_init(XHttpReply* self, const XHttpRequest* request);
 /**
  * - @brief 创建响应对象。
  * - @param request 请求对象；借用，创建时深拷贝，可为 NULL。
- * - @return 新对象，调用者必须使用 XHttpReply_delete_base 释放；失败返回 NULL。
+ * - @return 新对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XHttpReply* XHttpReply_create_ex(XMemoryType memory,  const XHttpRequest* request);
 
@@ -132,15 +132,13 @@ XHttpReply* XHttpReply_create_ex(XMemoryType memory,  const XHttpRequest* reques
  * - @brief 反初始化、删除和延迟删除入口。
  * - @details 删除函数会释放响应对象及其拥有的全部成员；延迟删除由 XObject 事件系统处理。
  */
-#define XHttpReply_deinit_base XClass_deinit_base
-#define XHttpReply_delete_base XClass_delete_base
 #define XHttpReply_deleteLater XObject_deleteLater
 #define XHttpReply_deinitLater XObject_deinitLater
 
 /**
  * - @brief 获取原始请求副本。
  * - @param self 响应对象；NULL 时返回 NULL。
- * - @return 新建请求副本，调用者必须使用 XHttpRequest_delete_base 释放。
+ * - @return 新建请求副本，调用者必须使用 XClassDelete 释放。
  */
 XHttpRequest* XHttpReply_request(const XHttpReply* self);
 
@@ -174,7 +172,7 @@ int XHttpReply_statusCode(const XHttpReply* self);
 /**
  * - @brief 获取响应 URL 副本。
  * - @param self HTTP 响应对象；可为 NULL。
- * - @return 新建响应 URL；调用者必须使用 XUrl_delete_base 释放，self 或请求 URL 为空时返回 NULL。
+ * - @return 新建响应 URL；调用者必须使用 XClassDelete 释放，self 或请求 URL 为空时返回 NULL。
  */
 XUrl* XHttpReply_url(const XHttpReply* self);
 /**
@@ -188,7 +186,7 @@ bool XHttpReply_hasRawHeader(const XHttpReply* self, const XByteArray* name);
  * - @brief 获取首个同名原始响应头值副本。
  * - @param self HTTP 响应对象；可为 NULL。
  * - @param name 响应头名称；借用且不能为 NULL，比较忽略 ASCII 大小写。
- * - @return 新建响应头值；调用者必须使用 XByteArray_delete_base 释放，未找到或参数无效返回 NULL。
+ * - @return 新建响应头值；调用者必须使用 XClassDelete 释放，未找到或参数无效返回 NULL。
  */
 XByteArray* XHttpReply_rawHeader(const XHttpReply* self, const XByteArray* name);
 /**
@@ -200,14 +198,14 @@ XVector* XHttpReply_rawHeaderList(const XHttpReply* self);
 /**
  * - @brief 获取响应头深拷贝。
  * - @param self HTTP 响应对象；可为 NULL。
- * - @return 新建响应头对象；调用者必须使用 XHttpHeaders_delete_base 释放，self 为空或拷贝失败返回 NULL。
+ * - @return 新建响应头对象；调用者必须使用 XClassDelete 释放，self 为空或拷贝失败返回 NULL。
  */
 XHttpHeaders* XHttpReply_headers(const XHttpReply* self);
 /**
  * - @brief 获取已知响应头值副本。
  * - @param self HTTP 响应对象；可为 NULL。
  * - @param header 已知响应头枚举；使用 XHttpHeaders_WellKnownHeader 的合法值。
- * - @return 新建响应头值；调用者必须使用 XByteArray_delete_base 释放，未找到、参数无效或拷贝失败返回 NULL。
+ * - @return 新建响应头值；调用者必须使用 XClassDelete 释放，未找到、参数无效或拷贝失败返回 NULL。
  */
 XByteArray* XHttpReply_headerKnown(const XHttpReply* self,
                                    XHttpHeaders_WellKnownHeader header);
@@ -215,7 +213,7 @@ XByteArray* XHttpReply_headerKnown(const XHttpReply* self,
 /**
  * - @brief 获取原因短语副本。
  * - @param self 响应对象；NULL 时返回 NULL。
- * - @return 新建字节数组，调用者必须使用 XByteArray_delete_base 释放。
+ * - @return 新建字节数组，调用者必须使用 XClassDelete 释放。
  */
 XByteArray* XHttpReply_reasonPhrase(const XHttpReply* self);
 
@@ -243,7 +241,7 @@ XHttpReply_NetworkError XHttpReply_error(const XHttpReply* self);
 /**
  * - @brief 获取错误描述副本。
  * - @param self 响应对象；NULL 时返回 NULL。
- * - @return 新建字符串，调用者必须使用 XString_delete_base 释放。
+ * - @return 新建字符串，调用者必须使用 XClassDelete 释放。
  */
 XString* XHttpReply_errorString(const XHttpReply* self);
 
@@ -306,7 +304,7 @@ bool XHttpReply_emitFinished(XHttpReply* self);
 /**
  * - @brief 获取 Location 重定向目标。
  * - @param self 响应对象；NULL 或没有合法 Location 时返回 NULL。
- * - @return 新建 URL，调用者必须使用 XUrl_delete_base 释放。
+ * - @return 新建 URL，调用者必须使用 XClassDelete 释放。
  */
 XUrl* XHttpReply_redirectTarget(const XHttpReply* self);
 

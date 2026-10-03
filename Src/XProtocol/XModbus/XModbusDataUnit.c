@@ -55,7 +55,7 @@ static XContainer* XModbusDataUnit_copyContainer(XModbusRegisterType type, const
 		XVector* copy = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XContainerTypeSize(container), false);
 		if (!copy) return NULL;
 		if (!XVector_resize_base(copy, count)) {
-			XVector_delete_base(copy);
+			XClassDelete(copy);
 			return NULL;
 		}
 		if (count > 0)
@@ -85,7 +85,7 @@ XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit)
 	if (!unit) return NULL;
 	XModbusDataUnit* newUnit = XModbusDataUnit_create();
 	if (!newUnit) return NULL;
-	XCopy(newUnit,unit);
+	XClassCopy(newUnit,unit);
 	return newUnit;
 }
 
@@ -94,7 +94,7 @@ XModbusDataUnit* XModbusDataUnit_create_move(const XModbusDataUnit* unit)
 	if (!unit) return NULL;
 	XModbusDataUnit* newUnit = XModbusDataUnit_create();
 	if (!newUnit) return NULL;
-	XMove(newUnit, unit);
+	XClassMove(newUnit, unit);
 	return newUnit;
 }
 
@@ -148,7 +148,7 @@ void XModbusDataUnit_setRegisterType(XModbusDataUnit* unit, XModbusRegisterType 
 		// 释放旧容器
 		if (unit->m_data) {
 			count = XContainerSize(unit->m_data);
-			XContainer_delete_base(unit->m_data);
+			XClassDelete(unit->m_data);
 		}
 		// 创建新容器
 		unit->m_data = XModbusDataUnit_createContainer(type, count);
@@ -295,7 +295,7 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits)
 		return false;
 	
 	if (unit->m_bitArray) {
-		XContainer_delete_base(unit->m_data);
+		XClassDelete(unit->m_data);
 	}
 	unit->m_bitArray = XBitArray_create_copy(bits);
 	//unit->m_valueCount = XBitArray_size_base(bits);
@@ -309,7 +309,7 @@ XModbusDataUnitMap* XModbusDataUnitMap_create()
 	{
 		XContainerSetDataCopyMethod(map, XClass_copy_base);
 		XContainerSetDataMoveMethod(map, XClass_move_base);
-		XContainerSetDataDeinitMethod(map, XModbusDataUnit_deinit_base);
+		XContainerSetDataDeinitMethod(map, XClass_deinit_base);
 	}
 	return map;
 }
@@ -327,7 +327,7 @@ void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src)
 	} else {
 		// 目标已初始化，先清理再移动
 		if (unit->m_data) {
-			XContainer_delete_base(unit->m_data);
+			XClassDelete(unit->m_data);
 		}
 		unit->m_type = src->m_type;
 		unit->m_startAddress = src->m_startAddress;
@@ -353,7 +353,7 @@ void VXModbusDataUnit_copy(XModbusDataUnit* unit, const XModbusDataUnit* src)
 	
 	// 先清理旧容器
 	if (unit->m_data) {
-		XContainer_delete_base(unit->m_data);
+		XClassDelete(unit->m_data);
 	}
 	
 	// 复制基本字段
@@ -371,7 +371,7 @@ void VXModbusDataUnit_deinit(XModbusDataUnit* unit)
 	
 	// 释放数据容器（使用父类删除函数）
 	if (unit->m_data) {
-		XContainer_delete_base(unit->m_data);
+		XClassDelete(unit->m_data);
 		unit->m_data = NULL;
 	}
 	

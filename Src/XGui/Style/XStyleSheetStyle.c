@@ -1169,7 +1169,7 @@ static const XCssStyleSheet* xsss_sourceSheet(XStyleSheetStyle* self,
         bool wasInUse = e->m_inUse;
         if (wasInUse) {
             self->m_cacheValid = false; /* 渲染缓存可能指进被替换条目。 */
-            XString_delete_base((XClass*)e->m_text);
+            XClassDelete((XClass*)e->m_text);
             XCssStyleSheet_clear(&e->m_sheet);
         } else {
             ++self->m_sourceCount;
@@ -1197,7 +1197,7 @@ static void xsss_sourceCacheClear(XStyleSheetStyle* self)
     for (i = 0; i < self->m_sourceCapacity; ++i) {
         XStyleSheetStyleSource* e = &self->m_sources[i];
         if (e->m_inUse) {
-            XString_delete_base((XClass*)e->m_text);
+            XClassDelete((XClass*)e->m_text);
             XCssStyleSheet_clear(&e->m_sheet);
             e->m_inUse = false;
         }
@@ -1794,7 +1794,7 @@ static void xsss_applyFont(XStyleSheetStyle* self, const XObject* obj,
         XFont probe;
         XFont_init(&probe);
         if (font.m_family != probe.m_family)
-            XString_delete_base((XClass*)font.m_family);
+            XClassDelete((XClass*)font.m_family);
     }
 }
 
@@ -2560,7 +2560,7 @@ static void VXStyleSheetStyle_deinit(XStyleSheetStyle* self)
     xsss_sourceCacheClear(self); /* 控件源解析缓存（含其拥有的字符串）。 */
     XCssStyleSheet_clear(&self->m_sheet);
     if (self->m_sourceOwned && self->m_source) {
-        XStyle_delete_base(self->m_source);
+        XClassDelete(self->m_source);
         self->m_source = NULL;
         self->m_sourceOwned = false;
     }
@@ -2600,7 +2600,7 @@ void XStyleSheetStyle_setSourceStyle_move(XStyleSheetStyle* self, XStyle* source
 {
     if (!self) return;
     if (self->m_sourceOwned && self->m_source && self->m_source != source)
-        XStyle_delete_base(self->m_source);
+        XClassDelete(self->m_source);
     self->m_source = source;
     self->m_sourceOwned = (source != NULL);
     /* 对标 QStyleSheetStyle：被包装样式即代理样式（QStyle::proxy）。 */
@@ -4076,7 +4076,7 @@ static void xg3_drawImagePiece(XPainter* painter, const XImage* img,
         src.height = sh;
         XImage_copyRect(img, &src, &piece);
         XPainter_drawImage(painter, &piece, dx, dy);
-        XImage_deinit_base(&piece);
+        XClassDeinit(&piece);
     }
 #endif /* XPAINTER_IMAGE_RECT_ON */
 }

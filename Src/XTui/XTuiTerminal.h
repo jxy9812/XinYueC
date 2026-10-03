@@ -56,7 +56,6 @@ void XTuiTerminal_init(XTuiTerminal* terminal);
 /** @brief 在堆上创建终端对象。 */
 XTuiTerminal* XTuiTerminal_create_ex(XMemoryType memory);
 
-#define XTuiTerminal_delete_base XClass_delete_base /**< 释放堆对象。 */
 
 /**
  * @brief 注册输出回调。

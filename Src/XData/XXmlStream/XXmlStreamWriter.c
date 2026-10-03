@@ -220,8 +220,8 @@ static void clear_namespace_bindings(XXmlStreamWriter* self)
     if (!self) return;
     XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
     for (int i = 0; bindings && i < self->m_namespaceBindingCount; ++i) {
-        XString_delete_base(bindings[i].m_prefix);
-        XString_delete_base(bindings[i].m_namespaceUri);
+        XClassDelete(bindings[i].m_prefix);
+        XClassDelete(bindings[i].m_namespaceUri);
         bindings[i].m_prefix = NULL;
         bindings[i].m_namespaceUri = NULL;
     }
@@ -254,8 +254,8 @@ static bool append_namespace_binding(XXmlStreamWriter* self, const char* prefix,
     binding->m_prefix = XString_create_utf8(prefix);
     binding->m_namespaceUri = XString_create_utf8(namespaceUri);
     if (!binding->m_prefix || !binding->m_namespaceUri) {
-        XString_delete_base(binding->m_prefix);
-        XString_delete_base(binding->m_namespaceUri);
+        XClassDelete(binding->m_prefix);
+        XClassDelete(binding->m_namespaceUri);
         binding->m_prefix = NULL;
         binding->m_namespaceUri = NULL;
         return false;
@@ -294,8 +294,8 @@ static void restore_namespace_scope(XXmlStreamWriter* self, int scopeStart)
     XmlWriterNamespaceBinding* bindings = writer_namespace_bindings(self);
     while (self->m_namespaceBindingCount > scopeStart) {
         XmlWriterNamespaceBinding* binding = &bindings[self->m_namespaceBindingCount - 1];
-        XString_delete_base(binding->m_prefix);
-        XString_delete_base(binding->m_namespaceUri);
+        XClassDelete(binding->m_prefix);
+        XClassDelete(binding->m_namespaceUri);
         binding->m_prefix = NULL;
         binding->m_namespaceUri = NULL;
         --self->m_namespaceBindingCount;
@@ -339,7 +339,7 @@ static void pop_element_state(XXmlStreamWriter* self)
     restore_namespace_scope(self, scopeStart);
     if (self->m_elementNameStackSize > 0) {
         --self->m_elementNameStackSize;
-        XString_delete_base(self->m_elementNameStack[self->m_elementNameStackSize]);
+        XClassDelete(self->m_elementNameStack[self->m_elementNameStackSize]);
         self->m_elementNameStack[self->m_elementNameStackSize] = NULL;
     }
     --self->m_elementStack;
@@ -361,7 +361,7 @@ static void VXXmlStreamWriter_deinit(XXmlStreamWriter* obj)
     if (obj->m_elementNameStack) {
         for (int i = 0; i < obj->m_elementNameStackSize; i++) {
             if (obj->m_elementNameStack[i]) {
-                XString_delete_base(obj->m_elementNameStack[i]);
+                XClassDelete(obj->m_elementNameStack[i]);
                 obj->m_elementNameStack[i] = NULL;
             }
         }
@@ -373,13 +373,13 @@ static void VXXmlStreamWriter_deinit(XXmlStreamWriter* obj)
 
     /* ========== 释放输出缓冲区 ========== */
     if (obj->m_buffer) {
-        XByteArray_delete_base(obj->m_buffer);
+        XClassDelete(obj->m_buffer);
         obj->m_buffer = NULL;
     }
     
     /* ========== 释放设备字符串 ========== */
     if (obj->m_deviceString) {
-        XString_delete_base(obj->m_deviceString);
+        XClassDelete(obj->m_deviceString);
         obj->m_deviceString = NULL;
     }
     clear_namespace_bindings(obj);
@@ -408,17 +408,17 @@ static void VXXmlStreamWriter_copy(XXmlStreamWriter* obj, const XXmlStreamWriter
     if (obj->m_elementNameStack) {
         for (int i = 0; i < obj->m_elementNameStackSize; i++) {
             if (obj->m_elementNameStack[i]) {
-                XString_delete_base(obj->m_elementNameStack[i]);
+                XClassDelete(obj->m_elementNameStack[i]);
                 obj->m_elementNameStack[i] = NULL;
             }
         }
         XFree_System(obj->m_elementNameStack);
     }
     if (obj->m_buffer) {
-        XByteArray_delete_base(obj->m_buffer);
+        XClassDelete(obj->m_buffer);
     }
     if (obj->m_deviceString) {
-        XString_delete_base(obj->m_deviceString);
+        XClassDelete(obj->m_deviceString);
     }
     clear_namespace_bindings(obj);
 
@@ -506,17 +506,17 @@ static void VXXmlStreamWriter_move(XXmlStreamWriter* obj, XXmlStreamWriter* src)
     if (obj->m_elementNameStack) {
         for (int i = 0; i < obj->m_elementNameStackSize; i++) {
             if (obj->m_elementNameStack[i]) {
-                XString_delete_base(obj->m_elementNameStack[i]);
+                XClassDelete(obj->m_elementNameStack[i]);
                 obj->m_elementNameStack[i] = NULL;
             }
         }
         XFree_System(obj->m_elementNameStack);
     }
     if (obj->m_buffer) {
-        XByteArray_delete_base(obj->m_buffer);
+        XClassDelete(obj->m_buffer);
     }
     if (obj->m_deviceString) {
-        XString_delete_base(obj->m_deviceString);
+        XClassDelete(obj->m_deviceString);
     }
     clear_namespace_bindings(obj);
 
@@ -756,12 +756,12 @@ static void write_start_element_impl(XXmlStreamWriter* self, const char* namespa
         if (!XString_append_utf8(&qualifiedName, namespaceUri) ||
             !XString_append_utf8(&qualifiedName, ":") ||
             !XString_append_utf8(&qualifiedName, name)) {
-            XString_deinit_base(&qualifiedName);
+            XClassDeinit(&qualifiedName);
             self->m_hasError = true;
             return;
         }
     } else if (!XString_append_utf8(&qualifiedName, name)) {
-        XString_deinit_base(&qualifiedName);
+        XClassDeinit(&qualifiedName);
         self->m_hasError = true;
         return;
     }
@@ -769,7 +769,7 @@ static void write_start_element_impl(XXmlStreamWriter* self, const char* namespa
     close_start_element(self, false);
     const char* qualifiedUtf8 = XString_toUtf8(&qualifiedName);
     if (!qualifiedUtf8 || !push_element_state(self, qualifiedUtf8)) {
-        XString_deinit_base(&qualifiedName);
+        XClassDeinit(&qualifiedName);
         self->m_hasError = true;
         return;
     }
@@ -813,7 +813,7 @@ static void write_start_element_impl(XXmlStreamWriter* self, const char* namespa
     self->m_inStartElement = true;
     self->m_pendingEmptyElement = false;
     self->m_elementStack++;
-    XString_deinit_base(&qualifiedName);
+    XClassDeinit(&qualifiedName);
 }
 
 /**
@@ -932,7 +932,7 @@ XXmlStreamWriter* XXmlStreamWriter_create_copy(const XXmlStreamWriter* other)
     if (!other) return NULL;
     XXmlStreamWriter* self = XXmlStreamWriter_create();
     if (!self) return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -941,7 +941,7 @@ XXmlStreamWriter* XXmlStreamWriter_create_move(XXmlStreamWriter* other)
     if (!other) return NULL;
     XXmlStreamWriter* self = XXmlStreamWriter_create();
     if (!self) return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 
@@ -998,7 +998,7 @@ void XXmlStreamWriter_init(XXmlStreamWriter* self)
     /* 创建设备字符串缓存。 */
     self->m_deviceString = XString_create();
     if (!self->m_deviceString) {
-        XByteArray_delete_base(self->m_buffer);
+        XClassDelete(self->m_buffer);
         self->m_buffer = NULL;
         self->m_hasError = true;
         return;
@@ -1359,7 +1359,7 @@ void XXmlStreamWriter_writeEndElement(XXmlStreamWriter* self)
         ? self->m_namespaceScopeStack[self->m_elementStack] : 0);
     if (self->m_elementNameStackSize > 0) {
         --self->m_elementNameStackSize;
-        XString_delete_base(self->m_elementNameStack[self->m_elementNameStackSize]);
+        XClassDelete(self->m_elementNameStack[self->m_elementNameStackSize]);
         self->m_elementNameStack[self->m_elementNameStackSize] = NULL;
     }
 }

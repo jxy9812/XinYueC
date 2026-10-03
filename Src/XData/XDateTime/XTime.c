@@ -269,7 +269,7 @@ void XTime_setVariant(XVariant* variant, const XTime* time)
     if (variant->m_type != XVariantType_Time || !variant->m_data ||
         variant->m_dataSize != sizeof(XTime)) {
         if (variant->m_data)
-            XVariant_deinit_base(variant);
+            XClassDeinit(variant);
         variant->m_data = XMalloc_System(sizeof(XTime));
         if (!variant->m_data)
             return;

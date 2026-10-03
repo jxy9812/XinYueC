@@ -121,7 +121,7 @@ static unsigned char* xssl_read_file_all(const char* path, size_t* olen) {
     options.m_openMode = XIODevice_ReadOnly;
     options.m_target = xn;
     XFd fd = XDevice_open(XDeviceType_File, &options, &error);
-    XString_delete_base((XClass*)xn);
+    XClassDelete((XClass*)xn);
     if (fd == XFD_INVALID) return NULL;
     XFileStat stat;
     if (!xssl_file_stat(fd, &stat) || stat.size <= 0) {
@@ -261,7 +261,7 @@ cleanup:
     psa_reset_key_attributes(&attributes);
     mbedtls_pk_free(&pk);
     if (keyBuffer) XFree_System(keyBuffer);
-    if (output) XClass_delete_base((XClass*)output);
+    if (output) XClassDelete(output);
     return ok;
 }
 

@@ -114,7 +114,7 @@ static void VXPieSeries_deinit(XPieSeries* self)
     if (!self) return;
     /* m_name/m_visible 由 XAbstractSeries 基类析构处理。 */
     for (i = 0; i < self->m_count; ++i)
-        if (self->m_slices[i]) XPieSlice_delete_base(self->m_slices[i]);
+        if (self->m_slices[i]) XClassDelete(self->m_slices[i]);
     if (self->m_slices) XFree_System(self->m_slices);
     self->m_slices = NULL;
     self->m_count = 0;
@@ -167,7 +167,7 @@ static void VXPieSeries_move(XPieSeries* self, XPieSeries* other)
     {
         int i;
         for (i = 0; i < self->m_count; ++i)
-            if (self->m_slices[i]) XPieSlice_delete_base(self->m_slices[i]);
+            if (self->m_slices[i]) XClassDelete(self->m_slices[i]);
         if (self->m_slices) XFree_System(self->m_slices);
         self->m_slices = NULL;
         self->m_count = 0;
@@ -231,7 +231,7 @@ XPieSlice* XPieSeries_append(XPieSeries* self, const XString* label, double valu
     slice = XPieSlice_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, label, value);
     if (!slice) return NULL;
     if (!XPieSeries_appendSlice(self, slice)) {
-        XPieSlice_delete_base(slice);
+        XClassDelete(slice);
         return NULL;
     }
     return slice;
@@ -244,7 +244,7 @@ XPieSlice* XPieSeries_append_2(XPieSeries* self, const char* label, double value
     tmp = XString_create_utf8(label);
     if (!tmp) return NULL;
     slice = XPieSeries_append(self, tmp, value);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
     return slice;
 }
 
@@ -297,7 +297,7 @@ void XPieSeries_clear(XPieSeries* self)
     int i;
     if (!self) return;
     for (i = 0; i < self->m_count; ++i)
-        if (self->m_slices[i]) XPieSlice_delete_base(self->m_slices[i]);
+        if (self->m_slices[i]) XClassDelete(self->m_slices[i]);
     self->m_count = 0;
     xpieseries_emit0(self, (size_t)XPieSeries_countChanged_signal);
     xpieseries_emit0(self, (size_t)XPieSeries_sumChanged_signal);

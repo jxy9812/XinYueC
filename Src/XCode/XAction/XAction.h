@@ -142,7 +142,7 @@ XVtable* XAction_class_init(void);
  * @param      self 待初始化的可写对象存储；不可为 NULL，且必须尚未初始化。
  * @return     无返回值；self 不满足初始化前提时调用方不得继续使用对象。
  * @note       init 不分配 self；初始化后的栈/外部存储对象应使用
- *             XAction_deinit_base，堆对象应使用 XAction_delete_base。
+ *             XClassDeinit，堆对象应使用 XClassDelete。
  */
 void XAction_init(XAction* self);
 
@@ -163,7 +163,7 @@ void XAction_init_2(XAction* self, XObject* parent, const char* utf8Text);
  * @brief      使用默认内存类型创建并初始化动作对象（对标 QAction 默认
  *             构造）。
  * @return     新建的已初始化对象指针；分配失败返回 NULL。成功返回的
- *             对象由调用方拥有，必须使用 XAction_delete_base 释放。
+ *             对象由调用方拥有，必须使用 XClassDelete 释放。
  */
 XAction* XAction_create(void);
 
@@ -173,7 +173,7 @@ XAction* XAction_create(void);
  * @param      parent 父对象借用指针；可为 NULL，函数不取得其所有权。
  * @param      utf8Text 初始文本；按 UTF-8 解码，可为 NULL 表示空文本。
  * @return     新建的已初始化对象指针；分配或初始化失败返回 NULL。成功
- *             返回的堆对象由调用方拥有，必须使用 XAction_delete_base
+ *             返回的堆对象由调用方拥有，必须使用 XClassDelete
  *             释放。
  */
 XAction* XAction_create_ex(XMemoryType memory, XObject* parent,
@@ -184,7 +184,7 @@ XAction* XAction_create_ex(XMemoryType memory, XObject* parent,
  * @param      other 源动作对象借用指针；不可为 NULL。
  * @return     新建的已初始化对象指针；分配失败或 other 为 NULL 时返回
  *             NULL。成功返回的堆对象由调用方拥有，必须使用
- *             XAction_delete_base 释放。
+ *             XClassDelete 释放。
  * @note       只复制属性字段，不复制信号连接与父子关系（XObject 基类
  *             无拷贝语义）。
  */
@@ -196,7 +196,7 @@ XAction* XAction_create_copy(const XAction* other);
  *             复位为默认值，仍可由创建者按分配方式释放。
  * @return     新建的已初始化对象指针；分配失败或 other 为 NULL 时返回
  *             NULL。成功返回的堆对象由调用方拥有，必须使用
- *             XAction_delete_base 释放。
+ *             XClassDelete 释放。
  */
 XAction* XAction_create_move(XAction* other);
 
@@ -205,20 +205,18 @@ XAction* XAction_create_move(XAction* other);
  * @param      self 已初始化的栈对象或外部存储对象；可为 NULL，NULL 时
  *             不执行操作。
  * @return     无返回值；函数不会释放 self 指向的存储空间，堆对象必须
- *             使用 XAction_delete_base。
+ *             使用 XClassDelete。
  */
-#define XAction_deinit_base(self)  XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief      释放动作对象资源并按对象所有权删除其存储空间。
  * @param      self 由 XAction_create 系列返回的堆对象；可为 NULL，NULL
  *             时不执行操作。
  * @return     无返回值；堆对象会先执行虚表析构，再由创建时的内存方法
- *             释放；栈对象不应使用此宏，栈对象请使用 XAction_deinit_base。
+ *             释放；栈对象不应使用此宏，栈对象请使用 XClassDeinit。
  */
-#define XAction_delete_base(self)  XClass_delete_base((XClass*)(self))
 
-/* 复制/移动统一使用全局 XCopy/XMove（经虚表分派到 VXAction_copy/
+/* 复制/移动统一使用全局 XClassCopy/XClassMove（经虚表分派到 VXAction_copy/
  * VXAction_move），本类不再单独声明 *_copy_base/*_move_base 宏。 */
 
 /* ==================== 文本族属性（对标 QAction） ==================== */
@@ -227,7 +225,7 @@ XAction* XAction_create_move(XAction* other);
  * @brief      获取动作主文本的拷贝（对标 QAction::text）。
  * @param      self 动作对象的借用指针；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；self 为 NULL 或未设置文本时返回 NULL。
+ *             XClassDelete；self 为 NULL 或未设置文本时返回 NULL。
  */
 XString* XAction_text(const XAction* self);
 
@@ -268,7 +266,7 @@ void XAction_setText_2(XAction* self, const char* utf8);
  * @brief      获取图标文本的拷贝（对标 QAction::iconText）。
  * @param      self 动作对象的借用指针；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；self 为 NULL 或未设置时返回 NULL。
+ *             XClassDelete；self 为 NULL 或未设置时返回 NULL。
  */
 XString* XAction_iconText(const XAction* self);
 
@@ -300,7 +298,7 @@ void XAction_setIconText_2(XAction* self, const char* utf8);
  * @brief      获取工具提示的拷贝（对标 QAction::toolTip）。
  * @param      self 动作对象的借用指针；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；self 为 NULL 或未设置时返回 NULL。
+ *             XClassDelete；self 为 NULL 或未设置时返回 NULL。
  */
 XString* XAction_toolTip(const XAction* self);
 
@@ -333,7 +331,7 @@ void XAction_setToolTip_2(XAction* self, const char* utf8);
  *             以路径字符串承载，故 icon() 返回路径文本）。
  * @param      self 动作对象的借用指针；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；self 为 NULL 或未设置时返回 NULL。
+ *             XClassDelete；self 为 NULL 或未设置时返回 NULL。
  */
 XString* XAction_icon(const XAction* self);
 
@@ -365,7 +363,7 @@ void XAction_setIcon_2(XAction* self, const char* utf8);
  * @brief      获取状态栏提示的拷贝（对标 QAction::statusTip）。
  * @param      self 动作对象的借用指针；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；self 为 NULL 或未设置时返回 NULL。
+ *             XClassDelete；self 为 NULL 或未设置时返回 NULL。
  */
 XString* XAction_statusTip(const XAction* self);
 
@@ -397,7 +395,7 @@ void XAction_setStatusTip_2(XAction* self, const char* utf8);
  * @brief      获取 What's This 帮助文本的拷贝（对标 QAction::whatsThis）。
  * @param      self 动作对象的借用指针；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；self 为 NULL 或未设置时返回 NULL。
+ *             XClassDelete；self 为 NULL 或未设置时返回 NULL。
  */
 XString* XAction_whatsThis(const XAction* self);
 

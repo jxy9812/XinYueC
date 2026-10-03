@@ -770,7 +770,7 @@ static int containers_tabbar(void)
         XAPI_EXPECT(copied != NULL &&
                         strcmp(xapi_u8(copied), "阿尔法") == 0,
                     "XTabBar tabText(XString) 返回副本");
-        if (copied) XString_delete_base((XClass*)copied);
+        if (copied) XClassDelete((XClass*)copied);
     }
     XAPI_EXPECT(XTabBar_tabText(&bar2, 9) == NULL &&
                     strcmp(xapi_cstr(XTabBar_tabText_2(&bar2, 9)), "") == 0,
@@ -816,7 +816,7 @@ static int containers_tabbar(void)
                 "XTabBar setTabButton(NULL) 清除角按钮");
     /* 栈对象按头文件契约用 deinit_base 收尾（槽位已置 NULL、无其他
      * 引用，直接 deinit 无悬垂）。 */
-    XAbstractButton_deinit_base(&corner);
+    XClassDeinit(&corner);
 #endif
     XTabBar_setTabVisible(&bar2, 0, false);
     XAPI_EXPECT(!XTabBar_isTabVisible(&bar2, 0),
@@ -884,9 +884,9 @@ static int containers_tabbar(void)
     XAPI_EXPECT(XTabBar_shape(NULL) == 0 && !XTabBar_autoHide(NULL),
                 "XTabBar NULL 查询 shape/autoHide 返回默认值");
 
-    XTabBar_deinit_base(&bar2);
-    XTabBar_deinit_base(&bar3);
-    XTabBar_deinit_base(&bar);
+    XClassDeinit(&bar2);
+    XClassDeinit(&bar3);
+    XClassDeinit(&bar);
     return failures;
 }
 
@@ -917,12 +917,12 @@ static int containers_tabwidget(void)
     pageB = XWidget_create(NULL, 0);
     corner = XWidget_create(NULL, 0);
     if (!page1 || !page2 || !page3 || !pageA || !pageB || !corner) {
-        if (page1) XWidget_delete_base((XClass*)page1);
-        if (page2) XWidget_delete_base((XClass*)page2);
-        if (page3) XWidget_delete_base((XClass*)page3);
-        if (pageA) XWidget_delete_base((XClass*)pageA);
-        if (pageB) XWidget_delete_base((XClass*)pageB);
-        if (corner) XWidget_delete_base((XClass*)corner);
+        if (page1) XClassDelete((XClass*)page1);
+        if (page2) XClassDelete((XClass*)page2);
+        if (page3) XClassDelete((XClass*)page3);
+        if (pageA) XClassDelete((XClass*)pageA);
+        if (pageB) XClassDelete((XClass*)pageB);
+        if (corner) XClassDelete((XClass*)corner);
         return 0;
     }
 
@@ -1098,7 +1098,7 @@ static int containers_tabwidget(void)
     XTabWidget_setWidget(&tw2, pageB);
     XAPI_EXPECT(XTabWidget_widget(&tw2, 0) == pageB,
                 "XTabWidget setWidget 同指针幂等忽略");
-    XWidget_delete_base((XClass*)pageA); /* 已归还，调用方释放。 */
+    XClassDelete((XClass*)pageA); /* 已归还，调用方释放。 */
     pageA = NULL;
 
     /* ================================================================
@@ -1124,8 +1124,8 @@ static int containers_tabwidget(void)
     page3 = NULL;
     pageB = NULL;
 
-    XTabWidget_deinit_base(&tw2); /* pageB 归 tw2 页容器管理，随级联释放。 */
-    XTabWidget_deinit_base(&tw);
+    XClassDeinit(&tw2); /* pageB 归 tw2 页容器管理，随级联释放。 */
+    XClassDeinit(&tw);
     /* corner 已被 setCornerWidget reparent 为本控件子部件，随容器析构
      * 级联释放（Qt setCornerWidget 同语义："All widgets set here will
      * be deleted by the tab widget when it is destroyed unless you
@@ -1155,10 +1155,10 @@ static int containers_stacked(void)
     w3 = XWidget_create(NULL, 0);
     outsider = XWidget_create(NULL, 0);
     if (!w1 || !w2 || !w3 || !outsider) {
-        if (w1) XWidget_delete_base((XClass*)w1);
-        if (w2) XWidget_delete_base((XClass*)w2);
-        if (w3) XWidget_delete_base((XClass*)w3);
-        if (outsider) XWidget_delete_base((XClass*)outsider);
+        if (w1) XClassDelete((XClass*)w1);
+        if (w2) XClassDelete((XClass*)w2);
+        if (w3) XClassDelete((XClass*)w3);
+        if (outsider) XClassDelete((XClass*)outsider);
         return 0;
     }
 
@@ -1246,9 +1246,9 @@ static int containers_stacked(void)
     XAPI_EXPECT(XStackedWidget_count(&sw) == 2,
                 "XStackedWidget removeWidget 非本容器页面为无操作");
 
-    XStackedWidget_deinit_base(&sw); /* w1/w3 仍挂布局，随级联释放。 */
-    XWidget_delete_base((XClass*)w2);
-    XWidget_delete_base((XClass*)outsider);
+    XClassDeinit(&sw); /* w1/w3 仍挂布局，随级联释放。 */
+    XClassDelete((XClass*)w2);
+    XClassDelete((XClass*)outsider);
     return failures;
 }
 
@@ -1296,7 +1296,7 @@ static int containers_splitter(void)
         XSplitter_init_2(&vsp, 2, NULL, 0);
         XAPI_EXPECT(XSplitter_orientation(&vsp) == 2,
                     "XSplitter init_2(垂直) 带方向构造往返");
-        XSplitter_deinit_base(&vsp);
+        XClassDeinit(&vsp);
     }
 
     /* ================================================================
@@ -1422,8 +1422,8 @@ static int containers_splitter(void)
     XByteArray_append_utf8(&garbage, "XYZ");
     XAPI_EXPECT(!XSplitter_restoreState(&sp, &garbage),
                 "XSplitter restoreState 损坏快照返回 false（Qt 同）");
-    XByteArray_deinit_base(&garbage);
-    if (saved) XByteArray_delete_base((XClass*)saved);
+    XClassDeinit(&garbage);
+    if (saved) XClassDelete((XClass*)saved);
 #endif /* XBYTEARRAY_ON */
     /* splitterMoved 信号发射点为分隔条拖动；内部把手拖动交互路径为
      * 预留项（头文件 @note），无头环境不硬断言发射，仅验证信号标识。 */
@@ -1439,8 +1439,8 @@ static int containers_splitter(void)
                     XSplitter_widget(NULL, 0) == NULL,
                 "XSplitter NULL 查询 orientation/widget 返回默认值");
 
-    XSplitter_deinit_base(&sp); /* w1/w3 仍为子控件，随级联析构。 */
-    XWidget_deinit_base(&w2);   /* 被替换归还的栈上控件自行析构。 */
+    XClassDeinit(&sp); /* w1/w3 仍为子控件，随级联析构。 */
+    XClassDeinit(&w2);   /* 被替换归还的栈上控件自行析构。 */
     return failures;
 }
 
@@ -1543,8 +1543,8 @@ static int containers_scrollarea(void)
     XAPI_EXPECT(XScrollArea_takeWidget(&area) == NULL,
                 "XScrollArea 无内容时 takeWidget 返回 NULL（边界）");
 
-    XScrollArea_deinit_base(&area);
-    XWidget_delete_base((XClass*)content);
+    XClassDeinit(&area);
+    XClassDelete((XClass*)content);
     return failures;
 }
 
@@ -1688,7 +1688,7 @@ static int containers_scrollbar(void)
         XMenu* menu = XScrollBar_createStandardContextMenu(&sb);
         XAPI_EXPECT(menu != NULL,
                     "XScrollBar createStandardContextMenu 返回菜单（Qt 对标）");
-        if (menu) XMenu_delete_base((XClass*)menu);
+        if (menu) XClassDelete((XClass*)menu);
         XAPI_EXPECT(XScrollBar_createStandardContextMenu(NULL) == NULL,
                     "XScrollBar createStandardContextMenu(NULL) 返回 NULL");
     }
@@ -1704,8 +1704,8 @@ static int containers_scrollbar(void)
                     !XScrollBar_isSliderDown(NULL),
                 "XScrollBar NULL 查询方向/按下态返回默认值");
 
-    XScrollBar_deinit_base(&hsb);
-    XScrollBar_deinit_base(&sb);
+    XClassDeinit(&hsb);
+    XClassDeinit(&sb);
     return failures;
 }
 
@@ -1876,7 +1876,7 @@ static int containers_abstractscrollarea(void)
                     XAbstractScrollArea_cornerWidget(NULL) == NULL,
                 "XAbstractScrollArea NULL 查询返回 NULL");
 
-    XAbstractScrollArea_deinit_base(&area); /* newVBar/newViewport 归其管理。 */
+    XClassDeinit(&area); /* newVBar/newViewport 归其管理。 */
     return failures;
 }
 
@@ -2031,14 +2031,14 @@ static int containers_toolbox(void)
                     XToolBox_currentWidget(&tb3) == wb,
                 "XToolBox 移除当前条目后激活后继条目（Qt 同）");
 
-    XToolBox_deinit_base(&tb3); /* wb/wc 仍为子控件随级联释放；wa 已摘链由调用方释放。 */
-    XToolBox_deinit_base(&tb2); /* 空箱析构；wOnly 已摘链由调用方释放。 */
-    XToolBox_deinit_base(&tb);  /* w1/w2 仍为子控件随级联释放；w3 已摘链由调用方释放。 */
+    XClassDeinit(&tb3); /* wb/wc 仍为子控件随级联释放；wa 已摘链由调用方释放。 */
+    XClassDeinit(&tb2); /* 空箱析构；wOnly 已摘链由调用方释放。 */
+    XClassDeinit(&tb);  /* w1/w2 仍为子控件随级联释放；w3 已摘链由调用方释放。 */
     /* w3/wOnly/wa 已被 removeItem 摘父链归还调用方（不销毁），此处显式
      * 释放；VXWidget_deinit 会自动从应用顶层注册表摘除悬垂项。 */
-    XWidget_delete_base((XClass*)w3);
-    XWidget_delete_base((XClass*)wOnly);
-    XWidget_delete_base((XClass*)wa);
+    XClassDelete((XClass*)w3);
+    XClassDelete((XClass*)wOnly);
+    XClassDelete((XClass*)wa);
     return failures;
 }
 
@@ -2271,9 +2271,9 @@ static int containers_mdi(void)
                 "XMdiSubWindow setSystemMenu 替换旧菜单（旧菜单释放）");
     XMdiSubWindow_setSystemMenu(&solo, NULL); /* menu2 随清除释放。 */
 #endif /* XMENU_ON */
-    XMdiSubWindow_deinit_base(&solo);
+    XClassDeinit(&solo);
 
-    XMdiArea_deinit_base(&area);
+    XClassDeinit(&area);
     return failures;
 }
 
@@ -2331,12 +2331,12 @@ static int containers_dock(void)
     XAPI_EXPECT(XDockWidget_widget(&dock) == w2 &&
                     XWidget_parentWidget(w1) == NULL,
                 "XDockWidget setWidget 替换后旧控件归还调用方（Qt 同）");
-    XWidget_delete_base((XClass*)w1);
+    XClassDelete((XClass*)w1);
     XDockWidget_setWidget(&dock, NULL);
     XAPI_EXPECT(XDockWidget_widget(&dock) == NULL &&
                     XWidget_parentWidget(w2) == NULL,
                 "XDockWidget setWidget(NULL) 摘除当前内容（Qt 同）");
-    XWidget_delete_base((XClass*)w2);
+    XClassDelete((XClass*)w2);
 
     /* ================================================================
      * C. 特性与允许区域（featuresChanged/allowedAreasChanged 真发射）。
@@ -2401,7 +2401,7 @@ static int containers_dock(void)
         XString* text = XAction_text(action);
         XAPI_EXPECT(text != NULL && strcmp(xapi_u8(text), "面板甲") == 0,
                     "XDockWidget 切换动作文本=面板标题（Qt 同）");
-        if (text) XString_delete_base((XClass*)text);
+        if (text) XClassDelete((XClass*)text);
     }
     XAction_trigger(action);
     XAPI_EXPECT(!XWidget_isHidden((XWidget*)&dock),
@@ -2421,11 +2421,11 @@ static int containers_dock(void)
                     XDockWidget_features(NULL) == 0,
                 "XDockWidget NULL 查询返回默认值");
 
-    XDockWidget_deinit_base(&dock);
+    XClassDeinit(&dock);
     /* 栈上 titleBar 已被 setTitleBarWidget(NULL) 摘父链归还（不随 dock
      * 级联），按头文件契约显式 deinit_base 收尾（VXWidget_deinit 自动
      * 从顶层注册表摘项，单独 deinit 无 double-free）。 */
-    XWidget_deinit_base(&titleBar);
+    XClassDeinit(&titleBar);
     return failures;
 }
 
@@ -2537,7 +2537,7 @@ static int containers_mainwindow(void)
     XMainWindow_removeToolBar(&mw, tb3);
     XAPI_EXPECT(XMainWindow_toolBarArea(&mw, tb3) == 0,
                 "XMainWindow removeToolBar 后区域查询归 0（不销毁对象）");
-    if (tb3) XWidget_delete_base((XClass*)tb3);
+    if (tb3) XClassDelete((XClass*)tb3);
     tb3 = NULL;
 #endif /* XTOOLBAR_ON && XACTION_ON && XTOOLBUTTON_ON */
     ctb_mwReset();
@@ -2657,9 +2657,9 @@ static int containers_mainwindow(void)
         XString* junk = XString_create_utf8("junk-state");
         XAPI_EXPECT(junk && !XMainWindow_restoreState(&mw, junk),
                     "XMainWindow restoreState 损坏快照返回 false（Qt 同）");
-        if (junk) XString_delete_base((XClass*)junk);
+        if (junk) XClassDelete((XClass*)junk);
     }
-    if (state) XString_delete_base((XClass*)state);
+    if (state) XClassDelete((XClass*)state);
     state = NULL;
 
     /* ================================================================
@@ -2720,7 +2720,7 @@ static int containers_mainwindow(void)
         XMainWindow_setMenuBar(&mw, NULL);
         XAPI_EXPECT(XMainWindow_menuWidget(&mw) == NULL,
                     "XMainWindow setMenuBar(NULL) 清空菜单栏位置");
-        if (extBar) XWidget_delete_base((XClass*)extBar);
+        if (extBar) XClassDelete((XClass*)extBar);
 #endif /* XMENUBAR_ON && XMENU_ON */
     }
 #endif /* XMENUBAR_ON */
@@ -2737,11 +2737,11 @@ static int containers_mainwindow(void)
         XMenu* popup = XMainWindow_createPopupMenu(&mw);
         XAPI_EXPECT(popup != NULL,
                     "XMainWindow createPopupMenu 返回空菜单（本库口径）");
-        if (popup) XMenu_delete_base((XClass*)popup);
+        if (popup) XClassDelete((XClass*)popup);
     }
 #endif /* XMENU_ON */
 
-    XMainWindow_deinit_base(&mw); /* dock1/2/3 随父子链级联析构。 */
+    XClassDeinit(&mw); /* dock1/2/3 随父子链级联析构。 */
     return failures;
 }
 

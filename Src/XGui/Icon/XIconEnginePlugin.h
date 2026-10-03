@@ -49,14 +49,12 @@ void XIconEnginePlugin_init(XIconEnginePlugin* self);
  * @param self 待释放的插件指针。
  */
 /** @brief 通过 XClass 虚表释放插件资源。 @param self 待释放的插件指针。 */
-#define XIconEnginePlugin_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief 删除堆上分配的插件实例。
  * @param self 待删除的插件指针。
  */
 /** @brief 删除堆上的图标引擎插件。 @param self 待删除的插件指针。 */
-#define XIconEnginePlugin_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief 通过 XString 文件名创建图标引擎。

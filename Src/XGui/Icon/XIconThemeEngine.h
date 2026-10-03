@@ -74,13 +74,11 @@ void XIconThemeEngine_init_2(XIconThemeEngine* self, const char* iconName);
  * @brief 通过 XClass 虚表释放主题图标引擎资源。
  * @param self 待释放的主题图标引擎指针。
  */
-#define XIconThemeEngine_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief 删除堆上分配的主题图标引擎实例。
  * @param self 待删除的主题图标引擎指针。
  */
-#define XIconThemeEngine_delete_base(self) XClass_delete_base((XClass*)(self))
 
 #ifdef __cplusplus
 }

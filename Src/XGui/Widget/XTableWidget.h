@@ -121,7 +121,6 @@ XTableWidget* XTableWidget_create_ex(XMemoryType memory, XWidget* parent,
  * @param self 目标表格控件指针。
  * @return 无返回值。
  */
-#define XTableWidget_delete_base(self) XTableView_delete_base((XTableView*)(self))
 
 /* ===== 尺寸（对标 QTableWidget 行列 API） ===== */
 
@@ -425,7 +424,7 @@ void XTableWidget_setVerticalHeaderItem(XTableWidget* self, int row,
 /**
  * @brief 取出水平表头文本（对标 takeHorizontalHeaderItem）。
  *
- *        所有权转移：返回的 XString 由调用方以 XString_delete_base
+ *        所有权转移：返回的 XString 由调用方以 XClassDelete
  *        释放，表格不再持有；取出后该列表头文本置空。
  *
  * @param self   目标表格控件指针。
@@ -437,7 +436,7 @@ XString* XTableWidget_takeHorizontalHeaderItem(XTableWidget* self, int column);
 /**
  * @brief 取出垂直表头文本（对标 takeVerticalHeaderItem）。
  *
- *        所有权转移：返回的 XString 由调用方以 XString_delete_base
+ *        所有权转移：返回的 XString 由调用方以 XClassDelete
  *        释放，表格不再持有；取出后该行表头文本置空。
  *
  * @param self 目标表格控件指针。
@@ -629,7 +628,7 @@ void XTableWidget_clearSpans(XTableWidget* self);
  * @param self   目标表格控件指针。
  * @param row    行号。
  * @param column 列号。
- * @return 被取出的文本对象（调用方以 XString_delete_base 释放）；
+ * @return 被取出的文本对象（调用方以 XClassDelete 释放）；
  *         越界或单元格无文本返回 NULL（不发射信号、不同步模型）。
  */
 XString* XTableWidget_takeItem(XTableWidget* self, int row, int column);
@@ -700,7 +699,7 @@ void XTableWidget_editItem(XTableWidget* self, int row, int column);
  *
  * @param self 目标表格控件指针。
  * @param row  行号（越界或 self 为 NULL 返回 NULL）。
- * @return 新建 XString*（堆上文本副本，由调用方以 XString_delete_base
+ * @return 新建 XString*（堆上文本副本，由调用方以 XClassDelete
  *         释放）；该行无文本时返回空串对象。
  * @note 平铺表格的“行文本”取该行首列（列 0）单元格文本；按任意列
  *       查询单元格请用 text/item 族。内存归属：返回对象归调用方所有。
@@ -716,9 +715,9 @@ XString* XTableWidget_itemFromIndex(const XTableWidget* self, int row);
  * @param self 目标表格控件指针。
  * @param text 待搜索文本（UTF-8）；NULL 按空串处理。
  * @return 新建 XVector*（元素为 int 行号值拷贝，无字符串所有权；由
- *         调用方以 XVector_delete_base 释放）；无命中返回空容器；
+ *         调用方以 XClassDelete 释放）；无命中返回空容器；
  *         self 为 NULL 或容器分配失败返回 NULL。
- * @note 内存归属：返回容器归调用方所有（务必 XVector_delete_base
+ * @note 内存归属：返回容器归调用方所有（务必 XClassDelete
  *       释放）；需要子串匹配/精确模式开关与 (行,列) 双坐标输出的
  *       逐格搜索请用 findItems。
  */

@@ -70,18 +70,18 @@ void XDrawingAnchor_setPicture(XDrawingAnchor* self, const XString* imagePath) {
     if (!mimeType) return;
     XFile* file = XFile_create_2((XString*)imagePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return;
     }
     XByteArray* bytes = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (bytes) {
         XString_Init_Utf8(mime, mimeType);
         XDrawingAnchor_setPictureFromData(self, (const uint8_t*)XByteArray_data(bytes),
                                           XByteArray_size_base((XContainer*)bytes), mime);
-        XString_deinit_base(mime);
-        XByteArray_delete_base(bytes);
+        XClassDeinit(mime);
+        XClassDelete(bytes);
     }
 }
 
@@ -91,7 +91,7 @@ bool XDrawingAnchor_setPictureFromData(XDrawingAnchor* self, const uint8_t* data
     if (!mime_details(mimeType, &suffix)) return false;
     XString_Init_Utf8(suffixString, suffix);
     XMediaFile* media = XMediaFile_create_data(data, len, suffixString, mimeType);
-    XString_deinit_base(suffixString);
+    XClassDeinit(suffixString);
     if (!media || XMediaFile_contentsSize(media) != len) {
         if (media) XMediaFile_delete(media);
         return false;
@@ -168,7 +168,7 @@ static int attribute_int(const XXmlStreamAttributes* attributes, const char* nam
     XString_Init_Utf8(key, name);
     const XString* value = XXmlStreamAttributes_value_ex(attributes, NULL, key);
     int result = value ? XString_toInt(value, NULL, 10) : fallback;
-    XString_deinit_base(key);
+    XClassDeinit(key);
     return result;
 }
 

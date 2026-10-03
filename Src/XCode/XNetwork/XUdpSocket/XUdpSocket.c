@@ -150,7 +150,7 @@ XNetworkDatagram* XUdpSocket_receiveDatagram(XUdpSocket* sock, int64_t maxSize)
     if (data) {
         XByteArray_push_back_2(data, buffer, bytesRead);
         XNetworkDatagram_setData(dgram, data);
-        XByteArray_delete_base(data);
+        XClassDelete(data);
     }
     
     /* 设置发送者信息 */

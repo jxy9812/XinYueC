@@ -356,17 +356,17 @@ static bool xlogin_load(XConsoleShell* shell,
     path = XString_create_utf8(xlogin_path(shell));
     if (!path) return false;
     if (!XDeviceFile_stat(path, &stat) || !stat.exists) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return true;
     }
     *exists = true;
     if (!stat.isFile || stat.size < 0 ||
         (uint64_t)stat.size > XCONSOLE_SHELL_LOGIN_CONFIG_MAX_BYTES) {
-        XString_delete_base(path);
+        XClassDelete(path);
         return false;
     }
     fd = xlogin_open_file(path, XDeviceFile_ReadOnly, &error);
-    XString_delete_base(path);
+    XClassDelete(path);
     if (fd == XFD_INVALID) return false;
     while (readSize < (size_t)stat.size) {
         int64_t got = XDeviceFile_read(fd, buffer + readSize,
@@ -381,14 +381,14 @@ static bool xlogin_load(XConsoleShell* shell,
     buffer[readSize] = '\0';
     text = XString_create_with_length_utf8(buffer, readSize);
     document = text ? XJsonDocument_fromString(text) : NULL;
-    if (text) XString_delete_base(text);
+    if (text) XClassDelete(text);
     root = document ? XJsonDocument_object(document) : NULL;
     usersValue = root ? XJsonObject_value_keyUtf8(root, "users") : NULL;
     users = usersValue ? XJsonValue_toArray(usersValue) : NULL;
     if (!document || !root || !users ||
         XJsonArray_size_base(users) > XCONSOLE_SHELL_LOGIN_USER_CAPACITY) {
         if (usersValue) XJsonValue_delete(usersValue);
-        if (document) XJsonDocument_delete(document);
+        if (document) XClassDelete(document);
         return false;
     }
     for (i = 0; i < XJsonArray_size_base(users); ++i) {
@@ -396,13 +396,13 @@ static bool xlogin_load(XConsoleShell* shell,
         const XJsonObject* object = value ? XJsonValue_toObject(value) : NULL;
         if (!object || !xlogin_read_record(object, &records[*count])) {
             XJsonValue_delete(usersValue);
-            XJsonDocument_delete(document);
+            XClassDelete(document);
             return false;
         }
         ++*count;
     }
     XJsonValue_delete(usersValue);
-    XJsonDocument_delete(document);
+    XClassDelete(document);
     return true;
 }
 
@@ -444,8 +444,8 @@ static bool xlogin_save(XConsoleShell* shell,
             !XJsonObject_insert_keyUtf8_utf8(object, "salt", salt) ||
             !XJsonObject_insert_keyUtf8_utf8(object, "hash", digest) ||
             !XJsonObject_insert_keyUtf8_bool(object, "locked", records[i].locked)) {
-            if (groups) XJsonArray_delete_base(groups);
-            if (object) XJsonObject_delete_base(object);
+            if (groups) XClassDelete(groups);
+            if (object) XClassDelete(object);
             goto cleanup;
         }
         for (j = 0; j < records[i].groupCount; ++j) {
@@ -454,20 +454,20 @@ static bool xlogin_save(XConsoleShell* shell,
             item.data.integer = records[i].groups[j];
             if (!XJsonArray_append_base(groups, &item)) {
                 XJsonValue_deinit(&item);
-                XJsonArray_delete_base(groups);
-                XJsonObject_delete_base(object);
+                XClassDelete(groups);
+                XClassDelete(object);
                 goto cleanup;
             }
             XJsonValue_deinit(&item);
         }
         if (!XJsonObject_insert_keyUtf8_array(object, "groups", groups)) {
-            XJsonArray_delete_base(groups);
-            XJsonObject_delete_base(object);
+            XClassDelete(groups);
+            XClassDelete(object);
             goto cleanup;
         }
-        XJsonArray_delete_base(groups);
+        XClassDelete(groups);
         value = XJsonValue_create_object(object);
-        XJsonObject_delete_base(object);
+        XClassDelete(object);
         if (!value || !XJsonArray_append_base(users, value)) {
             if (value) XJsonValue_delete(value);
             goto cleanup;
@@ -502,11 +502,11 @@ static bool xlogin_save(XConsoleShell* shell,
     ok = true;
 cleanup:
     if (fd != XFD_INVALID) XDeviceFile_close(fd);
-    if (path) XString_delete_base(path);
-    if (text) XString_delete_base(text);
-    if (document) XJsonDocument_delete(document);
-    if (users) XJsonArray_delete_base(users);
-    if (root) XJsonObject_delete_base(root);
+    if (path) XClassDelete(path);
+    if (text) XClassDelete(text);
+    if (document) XClassDelete(document);
+    if (users) XClassDelete(users);
+    if (root) XClassDelete(root);
     return ok;
 }
 

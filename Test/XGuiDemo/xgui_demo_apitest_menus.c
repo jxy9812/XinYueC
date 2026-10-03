@@ -560,7 +560,7 @@ int xapi_menus_run(void)
                         strcmp(xapi_u8(XMenu_title_const(&m2)),
                                "标题菜单") == 0,
                         "Menu init_2 标题=标题菜单");
-            XMenu_deinit_base(&m2);
+            XClassDeinit(&m2);
 
             /* ---- title/setTitle 往返（QMenu::setTitle/title） ---- */
             XMenu_setTitle_2(m, "菜单标题");
@@ -568,7 +568,7 @@ int xapi_menus_run(void)
             XAPI_EXPECT(strTmp && strcmp(xapi_u8(strTmp),
                                          "菜单标题") == 0,
                         "Menu setTitle_2 后 title 拷贝往返=菜单标题");
-            if (strTmp) XString_delete_base((XClass*)strTmp);
+            if (strTmp) XClassDelete((XClass*)strTmp);
 
             /* ---- addAction 族（QMenu::addAction(text)） ---- */
             a1 = XMenu_addAction_2(m, "打开");
@@ -582,7 +582,7 @@ int xapi_menus_run(void)
                         "Menu addAction_2 动作文本=打开");
             strTmp = XString_create_utf8("另存");
             a2 = XMenu_addAction(m, strTmp);
-            XString_delete_base((XClass*)strTmp);
+            XClassDelete((XClass*)strTmp);
             XAPI_EXPECT(a2 != NULL &&
                         menus_actionIndex(XMenu_actions(m), a2) == 1,
                         "Menu addAction(XString) 追加到下标 1");
@@ -708,7 +708,7 @@ int xapi_menus_run(void)
             /* ---- setTitle XString 主版本（QMenu::setTitle(Qstring)） ---- */
             strTmp = XString_create_utf8("串标题");
             XMenu_setTitle(m, strTmp);
-            XString_delete_base((XClass*)strTmp);
+            XClassDelete((XClass*)strTmp);
             XAPI_EXPECT(XMenu_title_const(m) &&
                         strcmp(xapi_u8(XMenu_title_const(m)),
                                "串标题") == 0,
@@ -739,7 +739,7 @@ int xapi_menus_run(void)
                         "Menu setIcon_2 往返=menu.png");
             strTmp = XString_create_utf8("alt.png");
             XMenu_setIcon(m, strTmp);
-            XString_delete_base((XClass*)strTmp);
+            XClassDelete((XClass*)strTmp);
             XAPI_EXPECT(XMenu_icon(m) &&
                         strcmp(xapi_u8(XMenu_icon(m)),
                                "alt.png") == 0,
@@ -795,7 +795,7 @@ int xapi_menus_run(void)
             hint = XMenu_sizeHint(&m3);
             XAPI_EXPECT(hint.height == 0,
                         "Menu 空菜单 sizeHint 高度=0");
-            XMenu_deinit_base(&m3);
+            XClassDeinit(&m3);
 
             /* ---- 信号：triggered 经动作触发真实转发
              *      （QMenu::triggered(action)） ---- */
@@ -827,8 +827,8 @@ int xapi_menus_run(void)
                         "Menu title(NULL)=NULL");
             XMenu_clear(NULL); /* NULL 无操作不崩溃（契约口径）。 */
 
-            XAction_delete_base(outsider);
-            XMenu_delete_base(m); /* 级联释放 sub1/sub2（子控件登记）。 */
+            XClassDelete(outsider);
+            XClassDelete(m); /* 级联释放 sub1/sub2（子控件登记）。 */
         }
 #endif /* XMENU_ON */
 
@@ -965,11 +965,11 @@ int xapi_menus_run(void)
             XMenuBar_removeAction(bar, view);
             XAPI_EXPECT(XMenuBar_activeAction(bar) == NULL,
                         "MenuBar 移除激活动作后 activeAction=NULL");
-            XAction_delete_base(view); /* 所有权已归还调用方。 */
+            XClassDelete(view); /* 所有权已归还调用方。 */
             XMenuBar_removeAction(bar, help);
             XAPI_EXPECT(XMenuBar_actionCount(bar) == 5,
                         "MenuBar removeAction(帮助) 后动作数=5");
-            XAction_delete_base(help); /* 头文件口径：移除后归调用方销毁。 */
+            XClassDelete(help); /* 头文件口径：移除后归调用方销毁。 */
 
             /* ---- setDefaultUp / setNativeMenuBar（存储位） ---- */
             XMenuBar_setDefaultUp(bar, true);
@@ -1039,9 +1039,9 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XMenuBar_actionCount(bar) == 0,
                         "MenuBar clear 后动作数=0");
 
-            XMenu_delete_base(menu1);
-            XMenu_delete_base(menu2);
-            XMenu_delete_base(menu3); /* 菜单归调用方（头文件口径）。 */
+            XClassDelete(menu1);
+            XClassDelete(menu2);
+            XClassDelete(menu3); /* 菜单归调用方（头文件口径）。 */
         }
 #endif /* XWIDGET_ON && XMENU_ON && XMENUBAR_ON */
 
@@ -1557,7 +1557,7 @@ int xapi_menus_run(void)
             XAction_setMenu(&a, NULL);
             XAPI_EXPECT(XAction_menu(&a) == NULL,
                         "Action setMenu(NULL) 解除关联");
-            XMenu_delete_base(sub);
+            XClassDelete(sub);
 #endif
 
             /* ---- priority/menuRole/separator/开关位往返 ---- */
@@ -1583,8 +1583,8 @@ int xapi_menus_run(void)
                         strcmp(xapi_u8(XAction_text_const(&a2)),
                                "退出") == 0,
                         "Action init_2 初始文本=退出");
-            XAction_deinit_base(&a2);
-            XAction_deinit_base(&a);
+            XClassDeinit(&a2);
+            XClassDeinit(&a);
         }
 #endif /* XACTION_ON */
 
@@ -1621,19 +1621,19 @@ int xapi_menus_run(void)
             XAPI_EXPECT(members &&
                         XVector_size_base((const XContainer*)members) == 2,
                         "ActionGroup addAction×2 成员数=2");
-            if (members) XVector_delete_base((XClass*)members);
+            if (members) XClassDelete((XClass*)members);
             XActionGroup_addAction(grp, a1);
             members = XActionGroup_actions(grp);
             XAPI_EXPECT(members &&
                         XVector_size_base((const XContainer*)members) == 2,
                         "ActionGroup 重复 addAction 忽略（Qt 口径）");
-            if (members) XVector_delete_base((XClass*)members);
+            if (members) XClassDelete((XClass*)members);
             XActionGroup_addAction(grp, NULL);
             members = XActionGroup_actions(grp);
             XAPI_EXPECT(members &&
                         XVector_size_base((const XContainer*)members) == 2,
                         "ActionGroup addAction(NULL) 忽略");
-            if (members) XVector_delete_base((XClass*)members);
+            if (members) XClassDelete((XClass*)members);
 
             /* ---- 选中与互斥（QActionGroup::checkedAction/exclusive） ---- */
             XAction_setCheckable(a1, true);
@@ -1692,14 +1692,14 @@ int xapi_menus_run(void)
             XAPI_EXPECT(members &&
                         XVector_size_base((const XContainer*)members) == 2,
                         "ActionGroup removeAction 后成员数=2");
-            if (members) XVector_delete_base((XClass*)members);
+            if (members) XClassDelete((XClass*)members);
             XAPI_EXPECT(XAction_isEnabled(a3),
                         "ActionGroup 移除不销毁动作对象（借用语义）");
             XActionGroup_setCheckedAction(grp, a3);
             XAPI_EXPECT(XActionGroup_checkedAction(grp) != a3,
                         "ActionGroup 非成员 setCheckedAction 为无操作");
 
-            XActionGroup_delete_base(grp);
+            XClassDelete(grp);
         }
 #endif /* XACTION_ON */
 
@@ -1726,7 +1726,7 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XShortcut_context(&sc) ==
                             XShortcutContext_WindowShortcut,
                         "Shortcut 默认 context=WindowShortcut（Qt 默认）");
-            XShortcut_deinit_base(&sc);
+            XClassDeinit(&sc);
 
             wFocus = XWidget_create(root, 0);
 
@@ -1764,7 +1764,7 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XShortcut_key(scF1) == 0,
                         "Shortcut setKey(0) 清除键码");
             XShortcut_setKey(scF1, (int)XKey_F1);
-            XShortcut_delete_base(scF1); /* delete 自动注销（头文件口径）。 */
+            XClassDelete(scF1); /* delete 自动注销（头文件口径）。 */
             XAPI_EXPECT(XShortcut_match((int)XKey_F1,
                                         XShortcutContext_ApplicationShortcut,
                                         NULL) == NULL,
@@ -1810,7 +1810,7 @@ int xapi_menus_run(void)
             wt = XShortcut_whatsThis(scF2);
             XAPI_EXPECT(wt && strcmp(xapi_u8(wt), "快捷键说明") == 0,
                         "Shortcut setWhatsThis_2 往返");
-            if (wt) XString_delete_base((XClass*)wt);
+            if (wt) XClassDelete((XClass*)wt);
             XShortcut_setWhatsThis(scF2, NULL);
             XAPI_EXPECT(XShortcut_whatsThis(scF2) == NULL,
                         "Shortcut setWhatsThis(NULL) 清除");
@@ -1862,16 +1862,16 @@ int xapi_menus_run(void)
             txt = XToolTip_text();
             XAPI_EXPECT(txt && strcmp(xapi_u8(txt), "提示文本") == 0,
                         "ToolTip text 往返=提示文本");
-            if (txt) XString_delete_base((XClass*)txt);
+            if (txt) XClassDelete((XClass*)txt);
 
             /* ---- showText XString 主版本 ---- */
             txt = XString_create_utf8("再提示");
             XToolTip_showText(0, 0, txt, w, NULL, -1);
-            XString_delete_base((XClass*)txt);
+            XClassDelete((XClass*)txt);
             txt = XToolTip_text();
             XAPI_EXPECT(txt && strcmp(xapi_u8(txt), "再提示") == 0,
                         "ToolTip showText(XString) 覆盖文本");
-            if (txt) XString_delete_base((XClass*)txt);
+            if (txt) XClassDelete((XClass*)txt);
 
             /* ---- 空文本等价 hideText（QToolTip 实现口径） ---- */
             XToolTip_showText(0, 0, NULL, w, NULL, -1);
@@ -1896,12 +1896,12 @@ int xapi_menus_run(void)
             txt = XToolTip_text();
             if (txt) {
                 XString_assign_utf8(txt, "调用方改写");
-                XString_delete_base((XClass*)txt);
+                XClassDelete((XClass*)txt);
             }
             txt = XToolTip_text();
             XAPI_EXPECT(txt && strcmp(xapi_u8(txt), "原文") == 0,
                         "ToolTip text 返回独立副本（改写副本不改内部）");
-            if (txt) XString_delete_base((XClass*)txt);
+            if (txt) XClassDelete((XClass*)txt);
             XToolTip_hideText();
 
             /* ---- font/setFont（QToolTip::font/setFont） ---- */
@@ -1911,14 +1911,14 @@ int xapi_menus_run(void)
             got = XToolTip_font();
             XAPI_EXPECT(XFont_pixelSize(&got) == 17,
                         "ToolTip setFont(17px) 后 font 往返");
-            XFont_deinit_base((XClass*)&got);
-            XFont_deinit_base((XClass*)&f);
+            XClassDeinit((XClass*)&got);
+            XClassDeinit((XClass*)&f);
             XToolTip_setFont(NULL); /* 实现：NULL 忽略（头文件称恢复默认
                                        ——偏差记 notes），字体保持不变。 */
             got = XToolTip_font();
             XAPI_EXPECT(XFont_pixelSize(&got) == 17,
                         "ToolTip setFont(NULL) 忽略保持原字体（实现口径）");
-            XFont_deinit_base((XClass*)&got);
+            XClassDeinit((XClass*)&got);
 
 #if XPALETTE_ON
             /* ---- palette/setPalette（QToolTip::palette/setPalette） ---- */
@@ -1970,7 +1970,7 @@ int xapi_menus_run(void)
                         "ErrorMessage 默认 doneShown=true（允许展示）");
             XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(&em2)), "") == 0,
                         "ErrorMessage 默认当前消息=空串");
-            XClass_deinit_base((XClass*)&em2);
+            XClassDeinit((XClass*)&em2);
             XAPI_EXPECT(strcmp(xapi_cstr(XErrorMessage_currentMessage(NULL)), "") == 0,
                         "ErrorMessage currentMessage(NULL)=空串（契约）");
 
@@ -2163,7 +2163,7 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XWidget_isVisibleTo((XWidget*)&ff, root) &&
                         !XWidget_isHidden((XWidget*)&ff),
                         "FocusFrame setVisible(true) 显式开启（isVisibleTo）");
-            XFocusFrame_deinit_base(&ff);
+            XClassDeinit(&ff);
 
             /* ---- 堆创建（含无父创建的未 show 边界） ---- */
             ffh = XFocusFrame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
@@ -2176,7 +2176,7 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XWidget_rect((XWidget*)ffh).width == 40 &&
                         XWidget_rect((XWidget*)ffh).height == 20,
                         "FocusFrame rect 几何与 setter 一致");
-            XFocusFrame_delete_base(ffh);
+            XClassDelete(ffh);
         }
 #endif /* XWIDGET_ON && XFOCUSFRAME_ON */
 
@@ -2237,7 +2237,7 @@ int xapi_menus_run(void)
             XWidget_setEnabled((XWidget*)&sg, true);
             XAPI_EXPECT(XWidget_isEnabled((XWidget*)&sg),
                         "SizeGrip setEnabled(true) 状态开启");
-            XSizeGrip_deinit_base(&sg);
+            XClassDeinit(&sg);
 
             sgh = XSizeGrip_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, root);
             XAPI_EXPECT(sgh != NULL && XWidget_parentWidget((XWidget*)sgh) ==
@@ -2249,8 +2249,8 @@ int xapi_menus_run(void)
             sgh2 = XSizeGrip_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL);
             XAPI_EXPECT(sgh2 != NULL,
                         "SizeGrip 无父堆创建成功（未 show 边界）");
-            XSizeGrip_delete_base(sgh);
-            XSizeGrip_delete_base(sgh2);
+            XClassDelete(sgh);
+            XClassDelete(sgh2);
         }
 #endif /* XWIDGET_ON && XSIZEGRIP_ON */
 
@@ -2270,7 +2270,7 @@ int xapi_menus_run(void)
             XRubberBand_init(&rb, XRubberBandShape_Line, root);
             XAPI_EXPECT(XRubberBand_shape(&rb) == XRubberBandShape_Line,
                         "RubberBand init(Line) 后 shape=Line");
-            XRubberBand_deinit_base(&rb);
+            XClassDeinit(&rb);
             XRubberBand_init(&rb, XRubberBandShape_Rectangle, root);
             XAPI_EXPECT(XRubberBand_shape(&rb) ==
                             XRubberBandShape_Rectangle,
@@ -2309,7 +2309,7 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XWidget_isVisibleTo((XWidget*)&rb, root) &&
                         !XWidget_isHidden((XWidget*)&rb),
                         "RubberBand setVisible(true) 显式开启（isVisibleTo）");
-            XRubberBand_deinit_base(&rb);
+            XClassDeinit(&rb);
 
             /* ---- 堆创建两种形状（含无父创建边界） ---- */
             rbh = XRubberBand_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
@@ -2331,13 +2331,13 @@ int xapi_menus_run(void)
                         "RubberBand 无父堆创建 Rectangle 形状");
             XAPI_EXPECT(XWidget_parentWidget((XWidget*)rbh2) == NULL,
                         "RubberBand 无父创建时父级=NULL（顶层语义）");
-            XRubberBand_delete_base(rbh);
-            XRubberBand_delete_base(rbh2);
+            XClassDelete(rbh);
+            XClassDelete(rbh2);
         }
 #endif /* XWIDGET_ON && XRUBBERBAND_ON */
 
         /* 全部小节完成：根控件级联析构（子控件/动作/快捷键注销）。 */
-        XWidget_delete_base(root);
+        XClassDelete(root);
     }
 #endif /* XWIDGET_ON */
 

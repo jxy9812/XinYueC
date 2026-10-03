@@ -24,20 +24,20 @@ static void XStringCreateTest(void)
 		XString* s = XString_create();
 		XPrintStr("create(): ", s);
 		XPrintf("  isEmpty=%s, length=%zu\n", XString_isEmpty_base(s) ? "是" : "否", XString_length_base(s));
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// create_utf8
 	{
 		XString* s = XString_create_utf8("你好世界");
 		XPrintStr("create_utf8('你好世界'): ", s);
 		XPrintf("  size=%zu\n", XString_size(s));
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// create_utf8(NULL)
 	{
 		XString* s = XString_create_utf8(NULL);
 		XPrintf("create_utf8(NULL)=%s (期望:非空空字符串)\n", s ? (XString_isEmpty_base(s) ? "空" : "非空") : "NULL");
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// create_copy / create_move
 	{
@@ -47,57 +47,57 @@ static void XStringCreateTest(void)
 		XPrintStr("create_copy: ", copy);
 		XPrintStr("create_move后src: ", src);
 		XPrintf("  move后src.isEmpty=%s\n", XString_isEmpty_base(src) ? "是" : "否");
-		XString_delete_base(copy);
-		XString_delete_base(moved);
-		XString_delete_base(src);
+		XClassDelete(copy);
+		XClassDelete(moved);
+		XClassDelete(src);
 	}
 	// create_fmt_utf8
 	{
 		XString* s = XString_create_fmt_utf8("val=%d, str=%s", 42, "hello");
 		XPrintStr("create_fmt_utf8: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// create_with_length_utf8
 	{
 		XString* s = XString_create_with_length_utf8("abcdef", 3);
 		XPrintStr("create_with_length_utf8('abcdef',3): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// create_utf16
 	{
 		uint16_t u16[] = { 'H', 'i', 0 };
 		XString* s = XString_create_utf16(u16);
 		XPrintStr("create_utf16: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// create_gbk / latin1 / utf32 / local
 	{
 		XString* s = XString_create_gbk("gbk测试");
 		XPrintStr("create_gbk: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_latin1("Latin1");
 		XPrintStr("create_latin1: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	{
 		uint32_t u32[] = { 'A', 'B', 'C', 0 };
 		XString* s = XString_create_utf32(u32);
 		XPrintStr("create_utf32: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_local("local");
 		XPrintStr("create_local: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// init
 	{
 		XString str;
 		XString_init(&str);
 		XPrintf("init: isEmpty=%s\n", XString_isEmpty_base(&str) ? "是" : "否");
-		XString_deinit_base(&str);
+		XClassDeinit(&str);
 	}
 	XPrintf("\n");
 }
@@ -123,7 +123,7 @@ static void XStringCapacityTest(void)
 		XString_maxSize(), XString_isNull(s) ? "是" : "否",
 		XString_isValidUtf16(s) ? "是" : "否",
 		XString_isRightToLeft(s) ? "是" : "否");
-	XString_delete_base(s);
+	XClassDelete(s);
 	XPrintf("\n");
 }
 
@@ -148,9 +148,9 @@ static void XStringAccessTest(void)
 		XString* e = XString_create();
 		XChar c = XString_at(e, 0);
 		XPrintf("空串at(0): code=%d\n", XChar_unicode(c));
-		XString_delete_base(e);
+		XClassDelete(e);
 	}
-	XString_delete_base(s);
+	XClassDelete(s);
 	XPrintf("\n");
 }
 
@@ -162,7 +162,7 @@ static void XStringAppendPrependInsertTest(void)
 		XString* s = XString_create_utf8("Hello");
 		XString* tmp = XString_create_utf8(" World");
 		XString_append(s, tmp);
-		XString_delete_base(tmp);
+		XClassDelete(tmp);
 		XPrintStr("append: ", s);
 		XString_append_utf8(s, " !");
 		XPrintStr("append_utf8: ", s);
@@ -170,27 +170,27 @@ static void XStringAppendPrependInsertTest(void)
 		XPrintStr("append_char: ", s);
 		XString_append_with_length_utf8(s, "extra", 3);
 		XPrintStr("append_with_length(3): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_utf8("World");
 		XString* tmp = XString_create_utf8("Hello ");
 		XString_prepend(s, tmp);
-		XString_delete_base(tmp);
+		XClassDelete(tmp);
 		XPrintStr("prepend: ", s);
 		XString_prepend_utf8(s, "!! ");
 		XPrintStr("prepend_utf8: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_utf8("你好");
 		XString* tmp = XString_create_utf8("非常");
 		XString_insert(s, 1, tmp);
-		XString_delete_base(tmp);
+		XClassDelete(tmp);
 		XPrintStr("insert(1,'非常'): ", s);
 		XString_insert_utf8(s, 2, "的");
 		XPrintStr("insert_utf8(2,'的'): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// push_front / push_back / pop_front / pop_back
 	{
@@ -201,7 +201,7 @@ static void XStringAppendPrependInsertTest(void)
 		XString_pop_front_base(s);
 		XString_pop_back_base(s);
 		XPrintStr("pop_front+pop_back: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -216,21 +216,21 @@ static void XStringRemoveTest(void)
 		XPrintStr("remove(2,4): ", s);
 		XString_erase_base(s, NULL, NULL);
 		XPrintStr("erase(头到尾): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// remove_char
 	{
 		XString* s = XString_create_utf8("axbxcxd");
 		XString_remove_char(s, XChar_from('x'), XChar_CaseSensitive);
 		XPrintStr("remove_char('x'): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// removeAt (别名)
 	{
 		XString* s = XString_create_utf8("ABCDE");
 		XString_remove(s, 1, 2);
 		XPrintStr("remove(1,2): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -244,19 +244,19 @@ static void XStringReplaceTest(void)
 		XString* from1 = XString_create_utf8("World");
 		XString* to1 = XString_create_utf8("XinYueC");
 		XString_replace(s, from1, to1, XChar_CaseSensitive);
-		XString_delete_base(from1);
-		XString_delete_base(to1);
+		XClassDelete(from1);
+		XClassDelete(to1);
 		XPrintStr("replace('World'->'XinYueC'): ", s);
 		XString_replace_utf8(s, "Hello", "Hi", XChar_CaseSensitive);
 		XPrintStr("replace_utf8('Hello'->'Hi'): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// replace_char
 	{
 		XString* s = XString_create_utf8("a-b-c-d");
 		XString_replace_char(s, XChar_from('-'), XChar_from('/'), XChar_CaseSensitive);
 		XPrintStr("replace_char('-','/'): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// replace(大小写不敏感)
 	{
@@ -264,10 +264,10 @@ static void XStringReplaceTest(void)
 		XString* from2 = XString_create_utf8("abc");
 		XString* to2 = XString_create_utf8("XYZ");
 		XString_replace(s, from2, to2, XChar_CaseInsensitive);
-		XString_delete_base(from2);
-		XString_delete_base(to2);
+		XClassDelete(from2);
+		XClassDelete(to2);
 		XPrintStr("replace(abc->XYZ,ci): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -290,7 +290,7 @@ static void XStringFindCompareTest(void)
 		XString* pat2 = XString_create_utf8("xyz");
 		idx = XString_indexOf(s, pat2, 0, XChar_CaseSensitive);
 		XPrintf("indexOf('xyz')=%lld (期望-1)\n", (long long)idx);
-		XString_delete_base(pat2);
+		XClassDelete(pat2);
 		// indexOf_utf8 / lastIndexOf_utf8
 		idx = XString_indexOf_utf8(s, "abc", 0, XChar_CaseSensitive);
 		XPrintf("indexOf_utf8('abc')=%lld\n", (long long)idx);
@@ -301,8 +301,8 @@ static void XStringFindCompareTest(void)
 		XPrintf("contains('abc')=%s, contains('xyz')=%s\n",
 			XString_contains(s, pat3, XChar_CaseSensitive) ? "是" : "否",
 			XString_contains(s, pat4, XChar_CaseSensitive) ? "是" : "否");
-		XString_delete_base(pat3);
-		XString_delete_base(pat4);
+		XClassDelete(pat3);
+		XClassDelete(pat4);
 		XPrintf("contains_utf8('abc')=%s, contains_utf8('xyz')=%s\n",
 			XString_contains_utf8(s, "abc", XChar_CaseSensitive) ? "是" : "否",
 			XString_contains_utf8(s, "xyz", XChar_CaseSensitive) ? "是" : "否");
@@ -314,8 +314,8 @@ static void XStringFindCompareTest(void)
 		XPrintf("contains_char('a')=%s, contains_char('z')=%s\n",
 			XString_contains_char(s, XChar_from('a'), XChar_CaseSensitive) ? "是" : "否",
 			XString_contains_char(s, XChar_from('z'), XChar_CaseSensitive) ? "是" : "否");
-		XString_delete_base(pat);
-		XString_delete_base(s);
+		XClassDelete(pat);
+		XClassDelete(s);
 	}
 	// startsWith / endsWith
 	{
@@ -334,11 +334,11 @@ static void XStringFindCompareTest(void)
 			XString_endsWith(s, suf2, XChar_CaseSensitive) ? "是" : "否");
 		XPrintf("endsWith_utf8('World')=%s\n",
 			XString_endsWith_utf8(s, "World", XChar_CaseSensitive) ? "是" : "否");
-		XString_delete_base(pre);
-		XString_delete_base(pre2);
-		XString_delete_base(suf);
-		XString_delete_base(suf2);
-		XString_delete_base(s);
+		XClassDelete(pre);
+		XClassDelete(pre2);
+		XClassDelete(suf);
+		XClassDelete(suf2);
+		XClassDelete(s);
 	}
 	// isLower / isUpper / compare / equals / localeAwareCompare / XLess
 	{
@@ -356,8 +356,8 @@ static void XStringFindCompareTest(void)
 		XPrintf("localeAwareCompare(a,b)=%d, XLess=%s\n",
 			XString_localeAwareCompare(a, b),
 			XLess_XString(a, b) ? "真" : "假");
-		XString_delete_base(a);
-		XString_delete_base(b);
+		XClassDelete(a);
+		XClassDelete(b);
 	}
 	/* 有效空字符串允许尚未分配字符缓冲区，比较不得解引用空数据指针。 */
 	{
@@ -366,8 +366,8 @@ static void XStringFindCompareTest(void)
 		bool equals = firstEmpty && secondEmpty &&
 			XString_equals(firstEmpty, secondEmpty, XChar_CaseSensitive);
 		XPrintf("两个未分配缓冲区的空字符串相等=%s\n", equals ? "通过" : "失败");
-		XString_delete_base(firstEmpty);
-		XString_delete_base(secondEmpty);
+		XClassDelete(firstEmpty);
+		XClassDelete(secondEmpty);
 	}
 	{
 		XString* s = XString_create_utf8("Hello");
@@ -375,8 +375,8 @@ static void XStringFindCompareTest(void)
 		XPrintf("startsWith(ci)=%s, endsWith(ci)=%s\n",
 			XString_startsWith(s, t, XChar_CaseSensitive) ? "是" : "否",
 			XString_endsWith(s, t, XChar_CaseSensitive) ? "是" : "否");
-		XString_delete_base(s);
-		XString_delete_base(t);
+		XClassDelete(s);
+		XClassDelete(t);
 	}
 	XPrintf("\n");
 }
@@ -402,7 +402,7 @@ static void XStringConvertTest(void)
 		const char* loc = XString_toLocal(s);
 		size_t locl = XString_toLocal_length(s);
 		XPrintf("toLocal: len=%zu\n", locl);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// toLower / toUpper / toCaseFolded
 	{
@@ -413,18 +413,18 @@ static void XStringConvertTest(void)
 		XPrintStr("toUpper: ", up);
 		XString* cf = XString_toCaseFolded(s);
 		XPrintStr("toCaseFolded: ", cf);
-		XString_delete_base(lo);
-		XString_delete_base(up);
-		XString_delete_base(cf);
-		XString_delete_base(s);
+		XClassDelete(lo);
+		XClassDelete(up);
+		XClassDelete(cf);
+		XClassDelete(s);
 	}
 	// toHtmlEscaped
 	{
 		XString* s = XString_create_utf8("<tag> & \"quote\"");
 		XString* h = XString_toHtmlEscaped(s);
 		XPrintStr("toHtmlEscaped: ", h);
-		XString_delete_base(h);
-		XString_delete_base(s);
+		XClassDelete(h);
+		XClassDelete(s);
 	}
 	// simplified / trimmed
 	{
@@ -433,9 +433,9 @@ static void XStringConvertTest(void)
 		XPrintStr("simplified: ", sim);
 		XString* tri = XString_trimmed(s);
 		XPrintStr("trimmed: ", tri);
-		XString_delete_base(sim);
-		XString_delete_base(tri);
-		XString_delete_base(s);
+		XClassDelete(sim);
+		XClassDelete(tri);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -459,7 +459,7 @@ static void XStringNumTest(void)
 		XString_assign_utf8(s, "3.14159");
 		XPrintf("toFloat=%.6f, toDouble=%.6lf\n",
 			(double)XString_toFloat(s, &ok), XString_toDouble(s, &ok));
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// setNum
 	{
@@ -482,28 +482,28 @@ static void XStringNumTest(void)
 		XPrintStr("setNum_double(pi): ", s);
 		XString_setNum_short(s, (short)-7, 10);
 		XPrintStr("setNum_short(-7): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// number (static)
 	{
 		XString* n = XString_number_llong(255, 16);
 		XPrintStr("number_llong(255,16): ", n);
-		XString_delete_base(n);
+		XClassDelete(n);
 		n = XString_number_ullong(1024ULL, 10);
 		XPrintStr("number_ullong(1024): ", n);
-		XString_delete_base(n);
+		XClassDelete(n);
 		n = XString_number_double(3.1415, 'f', 3);
 		XPrintStr("number_double(3.1415,3): ", n);
-		XString_delete_base(n);
+		XClassDelete(n);
 	}
 	// number宏别名
 	{
 		XString* n = XString_number_int(42, 10);
 		XPrintStr("number_int(42): ", n);
-		XString_delete_base(n);
+		XClassDelete(n);
 		n = XString_number_uint(42u, 10);
 		XPrintStr("number_uint(42): ", n);
-		XString_delete_base(n);
+		XClassDelete(n);
 	}
 	XPrintf("\n");
 }
@@ -516,29 +516,29 @@ static void XStringSubstringTest(void)
 		XString* s = XString_create_utf8("0123456789");
 		XString* l = XString_left(s, 4);
 		XPrintStr("left(4): ", l);
-		XString_delete_base(l);
+		XClassDelete(l);
 		XString* r = XString_right(s, 4);
 		XPrintStr("right(4): ", r);
-		XString_delete_base(r);
+		XClassDelete(r);
 		XString* m = XString_mid(s, 3, 4);
 		XPrintStr("mid(3,4): ", m);
-		XString_delete_base(m);
+		XClassDelete(m);
 		XString* f = XString_first(s, 5);
 		XPrintStr("first(5): ", f);
-		XString_delete_base(f);
+		XClassDelete(f);
 		XString* lst = XString_last(s, 5);
 		XPrintStr("last(5): ", lst);
-		XString_delete_base(lst);
+		XClassDelete(lst);
 		XString* sl = XString_sliced(s, 3);
 		XPrintStr("sliced(3): ", sl);
-		XString_delete_base(sl);
+		XClassDelete(sl);
 		XString* sl2 = XString_sliced_2(s, 3, 3);
 		XPrintStr("sliced(3,3): ", sl2);
-		XString_delete_base(sl2);
+		XClassDelete(sl2);
 		XString* ch = XString_chopped(s, 4);
 		XPrintStr("chopped(4): ", ch);
-		XString_delete_base(ch);
-		XString_delete_base(s);
+		XClassDelete(ch);
+		XClassDelete(s);
 	}
 	// slice (原地修改)
 	{
@@ -548,7 +548,7 @@ static void XStringSubstringTest(void)
 		XString_assign_utf8(s, "0123456789");
 		XString_slice_2(s, 2, 5);
 		XPrintStr("slice(2,5): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -568,16 +568,16 @@ static void XStringInplaceTest(void)
 		XPrintStr("resize_fill(8,'_'): ", s);
 		XString* swp = XString_create_utf8("SWAPPED");
 		XString_swap(s, swp);
-		XString_delete_base(swp);
+		XClassDelete(swp);
 		XPrintStr("swap后: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// truncate
 	{
 		XString* s = XString_create_utf8("保留前面");
 		XString_truncate(s, 2);
 		XPrintStr("truncate(2): ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -592,9 +592,9 @@ static void XStringSplitJoinTest(void)
 		if (list)
 		{
 			XPrintf("split size=%zu\n", XStringList_size_base(list));
-			XStringList_delete_base(list);
+			XClassDelete(list);
 		}
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// split_limit
 	{
@@ -603,16 +603,16 @@ static void XStringSplitJoinTest(void)
 		if (list)
 		{
 			XPrintf("split_limit_utf8(3): size=%zu\n", XStringList_size_base(list));
-			XStringList_delete_base(list);
+			XClassDelete(list);
 		}
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// count / repeated
 	{
 		XString* s = XString_create_utf8("ababab");
 		XString* pat = XString_create_utf8("ab");
 		size_t c = XString_count(s, pat, XChar_CaseSensitive);
-		XString_delete_base(pat);
+		XClassDelete(pat);
 		XPrintf("count('ab')=%zu (期望3)\n", c);
 		c = XString_count_utf8(s, "ab", XChar_CaseSensitive);
 		XPrintf("count_utf8('ab')=%zu (期望3)\n", c);
@@ -620,8 +620,8 @@ static void XStringSplitJoinTest(void)
 		XPrintf("count_char('a')=%zu (期望3)\n", c);
 		XString* r = XString_repeated(s, 2);
 		XPrintStr("repeated(2): ", r);
-		XString_delete_base(r);
-		XString_delete_base(s);
+		XClassDelete(r);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -635,78 +635,78 @@ static void XStringQtAdvancedTest(void)
 		XString* s = XString_create_utf8("a|b|c|d|e");
 		XString* sep = XString_create_utf8("|");
 		XString* sec = XString_section(s, sep, 1, 3, 0);
-		XString_delete_base(sep);
+		XClassDelete(sep);
 		XPrintStr("section(pipe,1,3): ", sec);
-		XString_delete_base(sec);
+		XClassDelete(sec);
 		sec = XString_section_utf8(s, "|", 0, 0, 0);
 		XPrintStr("section_utf8(pipe,0,0): ", sec);
-		XString_delete_base(sec);
+		XClassDelete(sec);
 		sec = XString_section_char(s, XChar_from('|'), 2, 4, 0);
 		XPrintStr("section_char(pipe,2,4): ", sec);
-		XString_delete_base(sec);
-		XString_delete_base(s);
+		XClassDelete(sec);
+		XClassDelete(s);
 	}
 	// arg
 	{
 		XString* s = XString_create_utf8("%1 and %2");
 		XString* argVal = XString_create_utf8("Hello");
 		XString* r = XString_arg(s, argVal, 0, XChar_from(' '));
-		XString_delete_base(argVal);
+		XClassDelete(argVal);
 		XPrintStr("arg('Hello'): ", r);
-		XString_delete_base(r);
-		XString_delete_base(s);
+		XClassDelete(r);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_utf8("%1");
 		XString* r = XString_arg_utf8(s, "World", 0, XChar_from(' '));
 		XPrintStr("arg_utf8('World'): ", r);
-		XString_delete_base(r);
-		XString_delete_base(s);
+		XClassDelete(r);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_utf8("%1");
 		XString* r = XString_arg_char(s, XChar_from('A'), 0, XChar_from(' '));
 		XPrintStr("arg_char('A'): ", r);
-		XString_delete_base(r);
-		XString_delete_base(s);
+		XClassDelete(r);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_utf8("%1");
 		XString* r = XString_arg_llong(s, 42, 0, 10, XChar_from(' '));
 		XPrintStr("arg_llong(42): ", r);
-		XString_delete_base(r);
-		XString_delete_base(s);
+		XClassDelete(r);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_utf8("%1");
 		XString* r = XString_arg_ullong(s, 99ULL, 0, 10, XChar_from(' '));
 		XPrintStr("arg_ullong(99): ", r);
-		XString_delete_base(r);
-		XString_delete_base(s);
+		XClassDelete(r);
+		XClassDelete(s);
 	}
 	{
 		XString* s = XString_create_utf8("%1");
 		XString* r = XString_arg_double(s, 3.14, 0, 'f', 2, XChar_from(' '));
 		XPrintStr("arg_double(3.14): ", r);
-		XString_delete_base(r);
-		XString_delete_base(s);
+		XClassDelete(r);
+		XClassDelete(s);
 	}
 	// leftJustified / rightJustified
 	{
 		XString* s = XString_create_utf8("abc");
 		XString* r = XString_leftJustified(s, 10, XChar_from('-'), true);
 		XPrintStr("leftJustified(abc,10,-,true): ", r);
-		XString_delete_base(r);
+		XClassDelete(r);
 		r = XString_rightJustified(s, 10, XChar_from('-'), true);
 		XPrintStr("rightJustified(abc,10,-,true): ", r);
-		XString_delete_base(r);
+		XClassDelete(r);
 		r = XString_leftJustified(s, 3, XChar_from('-'), true);
 		XPrintStr("leftJustified(abc,3): ", r);
-		XString_delete_base(r);
+		XClassDelete(r);
 		r = XString_leftJustified(s, 3, XChar_from('-'), false);
 		XPrintStr("leftJustified(abc,3,false): ", r);
-		XString_delete_base(r);
-		XString_delete_base(s);
+		XClassDelete(r);
+		XClassDelete(s);
 	}
 	// setUnicode / setUtf16
 	{
@@ -717,7 +717,7 @@ static void XStringQtAdvancedTest(void)
 		uint16_t u16[] = { 'O', 'K', 0 };
 		XString_setUtf16(s, u16, 2);
 		XPrintStr("setUtf16: ", s);
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -737,8 +737,8 @@ static void XStringAssignTest(void)
 		XPrintStr("assign_with_length(5): ", s);
 		XString_assign_fmt_utf8(s, "格式%d", 42);
 		XPrintStr("assign_fmt: ", s);
-		XString_delete_base(s);
-		XString_delete_base(src);
+		XClassDelete(s);
+		XClassDelete(src);
 	}
 	// 复制 / 移动
 	{
@@ -748,16 +748,16 @@ static void XStringAssignTest(void)
 		XString_append_utf8(a, " appended");
 		XPrintStr("修改a后: ", a);
 		XPrintStr("b不变: ", b);
-		XString_delete_base(a);
-		XString_delete_base(b);
+		XClassDelete(a);
+		XClassDelete(b);
 	}
 	{
 		XString* a = XString_create_utf8("将被移动");
 		XString* b = XString_create_move(a);
 		XPrintStr("移动后b: ", b);
 		XPrintf("移动后a.isEmpty=%s\n", XString_isEmpty_base(a) ? "是" : "否");
-		XString_delete_base(a);
-		XString_delete_base(b);
+		XClassDelete(a);
+		XClassDelete(b);
 	}
 	XPrintf("\n");
 }
@@ -792,7 +792,7 @@ static void XStringIteratorTest(void)
 			}
 		}
 		XPrintf("\n");
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	// 空串迭代
 	{
@@ -803,7 +803,7 @@ static void XStringIteratorTest(void)
 			XPrintf("空串迭代器: begin=end? %s\n",
 				XString_iterator_equality(&b, &e) ? "是" : "否");
 		}
-		XString_delete_base(s);
+		XClassDelete(s);
 	}
 	XPrintf("\n");
 }
@@ -815,7 +815,7 @@ static void XStringSafetyTest(void)
 	{
 		XString* t = XString_create_utf8(NULL);
 		XPrintf("create_utf8(NULL)=%s\n", t ? "非空" : "空");
-		XString_delete_base(t);
+		XClassDelete(t);
 	}
 	XString_at(NULL, 0);
 	XPrintf("at(NULL)=不崩溃\n");
@@ -833,22 +833,22 @@ static void XStringSafetyTest(void)
 	{
 		XString* t = XString_split(NULL, ",", XChar_CaseSensitive);
 		XPrintf("split(NULL)=%s\n", t ? "非空" : "空");
-		XStringList_delete_base(t);
+		XClassDelete(t);
 	}
 	{
 		XString* t = XString_sliced(NULL, 0);
 		XPrintf("sliced(NULL)=%s\n", t ? "非空" : "空");
-		XString_delete_base(t);
+		XClassDelete(t);
 	}
 	{
 		XString* t = XString_section(NULL, NULL, 0, 0, 0);
 		XPrintf("section(NULL)=%s\n", t ? "非空" : "空");
-		XString_delete_base(t);
+		XClassDelete(t);
 	}
 	{
 		XString* t = XString_arg(NULL, NULL, 0, XChar_from(' '));
 		XPrintf("arg(NULL)=%s\n", t ? "非空" : "空");
-		XString_delete_base(t);
+		XClassDelete(t);
 	}
 	{
 		XString* t1 = XString_leftJustified(NULL, 5, XChar_from('.'), false);
@@ -856,8 +856,8 @@ static void XStringSafetyTest(void)
 		XPrintf("leftJustified(NULL)=%s, rightJustified(NULL)=%s\n",
 			t1 ? "非空" : "空",
 			t2 ? "非空" : "空");
-		XString_delete_base(t1);
-		XString_delete_base(t2);
+		XClassDelete(t1);
+		XClassDelete(t2);
 	}
 	{
 		XString* t1 = XString_toLower(NULL);
@@ -865,8 +865,8 @@ static void XStringSafetyTest(void)
 		XPrintf("toLower(NULL)=%s, toUpper(NULL)=%s\n",
 			t1 ? "非空" : "空",
 			t2 ? "非空" : "空");
-		XString_delete_base(t1);
-		XString_delete_base(t2);
+		XClassDelete(t1);
+		XClassDelete(t2);
 	}
 	{
 		XString* t1 = XString_trimmed(NULL);
@@ -874,14 +874,14 @@ static void XStringSafetyTest(void)
 		XPrintf("trimmed(NULL)=%s, simplified(NULL)=%s\n",
 			t1 ? "非空" : "空",
 			t2 ? "非空" : "空");
-		XString_delete_base(t1);
-		XString_delete_base(t2);
+		XClassDelete(t1);
+		XClassDelete(t2);
 	}
 	XString_reserve(NULL, 10);
 	XPrintf("reserve(NULL)=无崩溃\n");
 	XString_resize(NULL, 5);
 	XPrintf("resize(NULL)=无崩溃\n");
-	XString_delete_base(NULL);
+	XClassDelete(NULL);
 	XPrintf("delete_base(NULL)=无崩溃\n");
 	XPrintf("\n");
 }
@@ -916,7 +916,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (l && XString_length_base(l) == (size_t)lv.m_size);
         XPrintf("  left(5) 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", l ? XString_length_base(l) : 0, (long long)lv.m_size);
-        XString_delete_base(l);
+        XClassDelete(l);
     }
     /* ---- right 委托验证 ---- */
     {
@@ -925,7 +925,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (r && XString_length_base(r) == (size_t)rv.m_size);
         XPrintf("  right(6) 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", r ? XString_length_base(r) : 0, (long long)rv.m_size);
-        XString_delete_base(r);
+        XClassDelete(r);
     }
     /* ---- mid 委托验证 ---- */
     {
@@ -934,7 +934,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (m && XString_length_base(m) == (size_t)mv.m_size);
         XPrintf("  mid(2,5) 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", m ? XString_length_base(m) : 0, (long long)mv.m_size);
-        XString_delete_base(m);
+        XClassDelete(m);
     }
     /* ---- sliced 委托验证 ---- */
     {
@@ -943,7 +943,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (s && XString_length_base(s) == (size_t)sv.m_size);
         XPrintf("  sliced(2) 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", s ? XString_length_base(s) : 0, (long long)sv.m_size);
-        XString_delete_base(s);
+        XClassDelete(s);
     }
     /* ---- first 委托验证 ---- */
     {
@@ -952,7 +952,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (f && XString_length_base(f) == (size_t)fv.m_size);
         XPrintf("  first(5) 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", f ? XString_length_base(f) : 0, (long long)fv.m_size);
-        XString_delete_base(f);
+        XClassDelete(f);
     }
     /* ---- last 委托验证 ---- */
     {
@@ -961,7 +961,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (l && XString_length_base(l) == (size_t)lv.m_size);
         XPrintf("  last(6) 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", l ? XString_length_base(l) : 0, (long long)lv.m_size);
-        XString_delete_base(l);
+        XClassDelete(l);
     }
     /* ---- chopped 委托验证 ---- */
     {
@@ -970,7 +970,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (c && XString_length_base(c) == (size_t)cv.m_size);
         XPrintf("  chopped(3) 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", c ? XString_length_base(c) : 0, (long long)cv.m_size);
-        XString_delete_base(c);
+        XClassDelete(c);
     }
     /* ---- trimmed 委托验证 ---- */
     {
@@ -979,7 +979,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (t && XString_length_base(t) == (size_t)tv.m_size);
         XPrintf("  trimmed() 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", t ? XString_length_base(t) : 0, (long long)tv.m_size);
-        XString_delete_base(t);
+        XClassDelete(t);
     }
     /* ---- trimmed(empty) 委托验证 ---- */
     {
@@ -988,7 +988,7 @@ static void XStringViewDelegationTest(void)
         bool ok = (t && XString_length_base(t) == (size_t)tv.m_size);
         XPrintf("  trimmed(empty) 委托验证: %s (size=%zu, 期望 %lld)\n",
             ok ? "通过" : "失败", t ? XString_length_base(t) : 0, (long long)tv.m_size);
-        XString_delete_base(t);
+        XClassDelete(t);
     }
     /* ---- compare 委托验证 ---- */
     {
@@ -1026,7 +1026,7 @@ static void XStringViewDelegationTest(void)
         bool sw_ref = XStringView_startsWith(&refView, &pv, 1);
         XPrintf("  startsWith('  He') 委托验证: %s (got %d, 期望 %d)\n",
             sw == sw_ref ? "通过" : "失败", sw, sw_ref);
-        XString_delete_base(prefix);
+        XClassDelete(prefix);
     }
     /* ---- endsWith 委托验证 ---- */
     {
@@ -1036,7 +1036,7 @@ static void XStringViewDelegationTest(void)
         bool ew_ref = XStringView_endsWith(&refView, &suv, 1);
         XPrintf("  endsWith('!  ') 委托验证: %s (got %d, 期望 %d)\n",
             ew == ew_ref ? "通过" : "失败", ew, ew_ref);
-        XString_delete_base(suffix);
+        XClassDelete(suffix);
     }
     /* ---- count 委托验证 ---- */
     {
@@ -1184,15 +1184,15 @@ static void XStringViewDelegationTest(void)
     }
 
     /* 清理 */
-    XString_delete_base(str);
-    XString_delete_base(empty);
-    XString_delete_base(num);
-    XString_delete_base(hex);
-    XString_delete_base(fp);
-    XString_delete_base(a);
-    XString_delete_base(b);
-    XString_delete_base(search);
-    XString_delete_base(sub);
+    XClassDelete(str);
+    XClassDelete(empty);
+    XClassDelete(num);
+    XClassDelete(hex);
+    XClassDelete(fp);
+    XClassDelete(a);
+    XClassDelete(b);
+    XClassDelete(search);
+    XClassDelete(sub);
 }
 
 

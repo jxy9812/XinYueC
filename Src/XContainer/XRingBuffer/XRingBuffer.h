@@ -168,14 +168,12 @@ const void* XRingBuffer_peekReadPtr(XRingBuffer* buffer, size_t* size);
  * @details 通过虚函数调用释放容器对象占用的资源（不包括对象本身），支持多态。
  * @param Object XContainer实例指针
  */
-#define XRingBuffer_deinit_base             XContainer_deinit_base
 
 /**
  * @brief 容器对象删除的基础实现
  * @details 通过虚函数调用释放容器对象本身及其占用的所有资源，支持多态。
  * @param Object XContainer实例指针
  */
-#define XRingBuffer_delete_base             XContainer_delete_base
 
 /**
  * @brief 清空容器内容的基础实现

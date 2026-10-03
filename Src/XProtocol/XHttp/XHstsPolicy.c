@@ -16,7 +16,7 @@
 static void xhsts_release_host(XHstsPolicy* self)
 {
     if (self && self->m_host) {
-        XClass_delete_base((XClass*)self->m_host);
+        XClassDelete((XClass*)self->m_host);
         self->m_host = NULL;
     }
 }
@@ -93,7 +93,7 @@ XHstsPolicy* XHstsPolicy_create_ex(XMemoryType memory, const XByteArray* host,
     XHstsPolicy_init(self);
     if (!self->m_host || !XHstsPolicy_setHost(self, host) ||
         (flags & ~XHstsPolicy_IncludeSubDomains) != 0) {
-        XClass_delete_base((XClass*)self);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     self->m_expiryMSecs = expiryMSecs;
@@ -109,7 +109,7 @@ XHstsPolicy* XHstsPolicy_create_copy(const XHstsPolicy* other)
         return NULL;
     self = XHstsPolicy_create();
     if (self)
-        XCopy((XClass*)self, (const XClass*)other);
+        XClassCopy((XClass*)self, (const XClass*)other);
     return self;
 }
 
@@ -120,7 +120,7 @@ XHstsPolicy* XHstsPolicy_create_move(XHstsPolicy* other)
         return NULL;
     self = XHstsPolicy_create();
     if (self)
-        XMove((XClass*)self, (XClass*)other);
+        XClassMove((XClass*)self, (XClass*)other);
     return self;
 }
 
@@ -227,9 +227,9 @@ void XHstsPolicy_list_free(XVector* policies)
     for (size_t i = 0; i < XContainer_size_base((const XContainer*)policies); ++i) {
         XHstsPolicy** policy = (XHstsPolicy**)XVector_at_base(policies, (int64_t)i);
         if (policy && *policy)
-            XClass_delete_base((XClass*)*policy);
+            XClassDelete((XClass*)*policy);
     }
-    XClass_delete_base((XClass*)policies);
+    XClassDelete((XClass*)policies);
 }
 #endif // XHTTP_ON
 #endif /* XPROTOCOL_ON */

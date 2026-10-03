@@ -155,7 +155,7 @@ static void xdb_bridgeDestroyDeferred(XDBBridge* bridge, bool deferred)
     if (deferred)
         XObject_deleteLater((XObject*)bridge);
     else
-        XClass_delete_base((XClass*)bridge);
+        XClassDelete((XClass*)bridge);
 }
 
 /* ==================== 内部排布（WinLayout 角色序 + 右对齐/居中横排） ==================== */
@@ -328,19 +328,19 @@ static void VX_dialogButtonBox_deinit(XDialogButtonBox* self)
         xdb_bridgeDestroyDeferred(bp ? *bp : NULL, false);
     }
     if (self->m_bridges) {
-        XVector_delete_base(self->m_bridges);
+        XClassDelete(self->m_bridges);
         self->m_bridges = NULL;
     }
     if (self->m_buttons) {
-        XVector_delete_base(self->m_buttons);
+        XClassDelete(self->m_buttons);
         self->m_buttons = NULL;
     }
     if (self->m_roles) {
-        XVector_delete_base(self->m_roles);
+        XClassDelete(self->m_roles);
         self->m_roles = NULL;
     }
     if (self->m_standards) {
-        XVector_delete_base(self->m_standards);
+        XClassDelete(self->m_standards);
         self->m_standards = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);
@@ -467,7 +467,7 @@ XPushButton* XDialogButtonBox_addButton_3(
     {
         XDBBridge* bridge = xdb_bridgeCreate(self, (XAbstractButton*)button);
         if (!bridge) {
-            XPushButton_delete_base(button);
+            XClassDelete(button);
             return NULL;
         }
         XVector_push_back_1_base(self->m_buttons, &button);

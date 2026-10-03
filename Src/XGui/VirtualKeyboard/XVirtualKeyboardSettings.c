@@ -69,7 +69,7 @@ static void xvks_setString(XVirtualKeyboardSettings* self, XString** slot,
         XStrcmp(XString_toUtf8(*slot), XString_toUtf8(value)) == 0)
         return;
     if (*slot) {
-        XString_delete_base(*slot);
+        XClassDelete(*slot);
         *slot = NULL;
     }
     *slot = value ? XString_create_copy(value) : NULL;
@@ -95,13 +95,13 @@ static void XVks_deinit(XVirtualKeyboardSettings* self)
     if (!self) return;
     priv = xvks_priv(self);
     if (priv) {
-        if (priv->m_styleName) XString_delete_base(priv->m_styleName);
-        if (priv->m_locale) XString_delete_base(priv->m_locale);
-        if (priv->m_layoutPath) XString_delete_base(priv->m_layoutPath);
-        if (priv->m_userDataPath) XString_delete_base(priv->m_userDataPath);
+        if (priv->m_styleName) XClassDelete(priv->m_styleName);
+        if (priv->m_locale) XClassDelete(priv->m_locale);
+        if (priv->m_layoutPath) XClassDelete(priv->m_layoutPath);
+        if (priv->m_userDataPath) XClassDelete(priv->m_userDataPath);
         for (i = 0; i < priv->m_activeLocaleCount; ++i) {
             if (priv->m_activeLocales[i])
-                XString_delete_base(priv->m_activeLocales[i]);
+                XClassDelete(priv->m_activeLocales[i]);
         }
         XFree_System(priv);
         self->m_data = NULL;
@@ -176,7 +176,7 @@ void XVirtualKeyboardSettings_setStyleName_2(XVirtualKeyboardSettings* self,
 {
     XString* tmp = styleName ? XString_create_utf8(styleName) : NULL;
     XVirtualKeyboardSettings_setStyleName(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 XString* XVirtualKeyboardSettings_locale(const XVirtualKeyboardSettings* self)
@@ -200,7 +200,7 @@ void XVirtualKeyboardSettings_setLocale_2(XVirtualKeyboardSettings* self,
 {
     XString* tmp = locale ? XString_create_utf8(locale) : NULL;
     XVirtualKeyboardSettings_setLocale(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 XString* XVirtualKeyboardSettings_layoutPath(
@@ -226,7 +226,7 @@ void XVirtualKeyboardSettings_setLayoutPath_2(
 {
     XString* tmp = layoutPath ? XString_create_utf8(layoutPath) : NULL;
     XVirtualKeyboardSettings_setLayoutPath(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 XString* XVirtualKeyboardSettings_userDataPath(
@@ -252,7 +252,7 @@ void XVirtualKeyboardSettings_setUserDataPath_2(
 {
     XString* tmp = userDataPath ? XString_create_utf8(userDataPath) : NULL;
     XVirtualKeyboardSettings_setUserDataPath(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 /* ==================== 区域列表 ==================== */
@@ -311,7 +311,7 @@ bool XVirtualKeyboardSettings_setActiveLocales(
     }
     for (i = 0; i < priv->m_activeLocaleCount; ++i) {
         if (priv->m_activeLocales[i])
-            XString_delete_base(priv->m_activeLocales[i]);
+            XClassDelete(priv->m_activeLocales[i]);
         priv->m_activeLocales[i] = NULL;
     }
     for (i = 0; locales && i < count; ++i) {

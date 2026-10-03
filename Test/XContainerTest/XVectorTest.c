@@ -44,13 +44,13 @@ static void XVectorCreateTest(void)
 		XPrintf("XVector_Create(int): size=%zu, capacity=%zu, isEmpty=%s\n",
 			XVector_size_base(v), XVector_capacity_base(v),
 			XVector_isEmpty_base(v) ? "是" : "否");
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	{
 		XVector* v = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), false);
 		XPrintf("create_ex(int,cow=false): size=%zu, typeSize=%zu\n",
 			XVector_size_base(v), XVector_typeSize_base(v));
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5 };
@@ -61,8 +61,8 @@ static void XVectorCreateTest(void)
 		XVector_Push_Back_Base(src, int, 99);
 		XPrintf("  修改源后: equals=%s (期望:否)\n",
 			XVector_equals(src, copy) ? "是" : "否");
-		XVector_delete_base(src);
-		XVector_delete_base(copy);
+		XClassDelete(src);
+		XClassDelete(copy);
 	}
 	{
 		int arr[] = { 10, 20, 30 };
@@ -72,15 +72,15 @@ static void XVectorCreateTest(void)
 			XVector_size_base(moved),
 			XVector_isEmpty_base(src) ? "是" : "否");
 		XVectorPrintInt(moved, "  moved: ");
-		XVector_delete_base(moved);
-		XVector_delete_base(src);
+		XClassDelete(moved);
+		XClassDelete(src);
 	}
 	{
 		XVector v;
 		XVector_init(&v, sizeof(int), true);
 		XPrintf("init: size=%zu, isEmpty=%s\n",
 			XVector_size_base(&v), XVector_isEmpty_base(&v) ? "是" : "否");
-		XVector_deinit_base(&v);
+		XClassDeinit(&v);
 	}
 	XPrintf("\n");
 }
@@ -115,7 +115,7 @@ static void XVectorCapacityTest(void)
 	XPrintf("shrink_to_fit: capacity=%zu\n", XVector_capacity_base(v));
 	XPrintf("别名: size=%zu, count_base=%zu, length_base=%zu\n",
 		XVector_size(v), XVector_count_base(v), XVector_length_base(v));
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -148,12 +148,12 @@ static void XVectorAccessTest(void)
 	{
 		XVector* f = XVector_first(v, 3);
 		XVectorPrintInt(f, "first(3): ");
-		XVector_delete_base(f);
+		XClassDelete(f);
 	}
 	{
 		XVector* l = XVector_last(v, 2);
 		XVectorPrintInt(l, "last(2): ");
-		XVector_delete_base(l);
+		XClassDelete(l);
 	}
 	int* d = (int*)XVector_data(v);
 	const int* cd = (const int*)XVector_constData(v);
@@ -164,9 +164,9 @@ static void XVectorAccessTest(void)
 			XVector_front_base(empty) ? "非空" : "空",
 			XVector_back_base(empty) ? "非空" : "空",
 			XVector_at_base(empty, 0) ? "非空" : "空");
-		XVector_delete_base(empty);
+		XClassDelete(empty);
 	}
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -187,21 +187,21 @@ static void XVectorFrontOpsTest(void)
 		XVector* v2 = XVectorMakeInt(a, 2);
 		XVector_push_front_3(v, v2);
 		XVectorPrintInt(v, "push_front_3({7,8}): ");
-		XVector_delete_base(v2);
+		XClassDelete(v2);
 	}
 	{
 		int a[] = { 100 };
 		XVector* v3 = XVectorMakeInt(a, 1);
 		XVector_push_front_move_3(v, v3);
 		XVectorPrintInt(v, "push_front_move_3({100}): ");
-		XVector_delete_base(v3);
+		XClassDelete(v3);
 	}
 	int prep[] = { 5, 6 };
 	XVector_prepend_2(v, prep, 2);
 	XVectorPrintInt(v, "prepend_2({5,6}): ");
 	XVector_pop_front_base(v);
 	XVectorPrintInt(v, "pop_front: ");
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -222,7 +222,7 @@ static void XVectorBackOpsTest(void)
 		XVector* v3 = XVectorMakeInt(a, 2);
 		XVector_push_back_3(v, v3);
 		XVectorPrintInt(v, "push_back_3({8,9}): ");
-		XVector_delete_base(v3);
+		XClassDelete(v3);
 	}
 	int* p = XMalloc_System(sizeof(int)); *p = 10;
 	XVector_push_back_move_1_base(v, p);
@@ -235,7 +235,7 @@ static void XVectorBackOpsTest(void)
 	XVectorPrintInt(v, "append_2({14,15}): ");
 	XVector_pop_back_base(v);
 	XVectorPrintInt(v, "pop_back: ");
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -259,7 +259,7 @@ static void XVectorInsertTest(void)
 		XVector* v2 = XVectorMakeInt(a, 3);
 		XVector_insert_3(v, 6, v2);
 		XVectorPrintInt(v, "insert_3(6,{6,7,8}): ");
-		XVector_delete_base(v2);
+		XClassDelete(v2);
 	}
 	int* p = XMalloc_System(sizeof(int) * 2); p[0] = 100; p[1] = 101;
 	XVector_insert_move_1_base(v, 0, p, 2);
@@ -267,7 +267,7 @@ static void XVectorInsertTest(void)
 	int* p2 = XMalloc_System(sizeof(int)); *p2 = 102;
 	XVector_insert_move_2(v, 0, p2);
 	XVectorPrintInt(v, "insert_move_2(0,102): ");
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -293,7 +293,7 @@ static void XVectorRemoveTest(void)
 		XVector_pop_front_base(v);
 		XVector_pop_back_base(v);
 		XVectorPrintInt(v, "pop_front+pop_back: ");
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
@@ -301,7 +301,7 @@ static void XVectorRemoveTest(void)
 		size_t r = XVector_removeIf(v, XVectorRemoveEven, NULL);
 		XPrintf("removeIf(偶数): 移除%zu个\n", r);
 		XVectorPrintInt(v, "  结果: ");
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	{
 		int arr[] = { 1, 2, 3, 2, 4, 2, 5 };
@@ -315,7 +315,7 @@ static void XVectorRemoveTest(void)
 				XVector_iterator_add(v, &it);
 		}
 		XVectorPrintInt(v, "erase(所有2): ");
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	{
 		int arr[] = { 1, 2, 3, 4, 5 };
@@ -324,7 +324,7 @@ static void XVectorRemoveTest(void)
 		XPrintf("clear: isEmpty=%s, size=%zu\n",
 			XVector_isEmpty_base(v) ? "是" : "否",
 			XVector_size_base(v));
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	XPrintf("\n");
 }
@@ -356,9 +356,9 @@ static void XVectorTakeTest(void)
 			XVector_takeAt(empty, 0) ? "非空" : "空",
 			XVector_takeFirst(empty) ? "非空" : "空",
 			XVector_takeLast(empty) ? "非空" : "空");
-		XVector_delete_base(empty);
+		XClassDelete(empty);
 	}
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -376,7 +376,7 @@ static void XVectorReplaceTest(void)
 		XVector* v2 = XVectorMakeInt(a, 2);
 		XVector_replace_2(v, 0, v2);
 		XVectorPrintInt(v, "replace_2(0,{100,200}): ");
-		XVector_delete_base(v2);
+		XClassDelete(v2);
 	}
 	int* p = XMalloc_System(sizeof(int)); *p = 300;
 	XVector_replace_move_1(v, 3, p);
@@ -384,7 +384,7 @@ static void XVectorReplaceTest(void)
 	int av = 888;
 	XVector_replace(v, 1, &av);
 	XVectorPrintInt(v, "XVector_replace(1,888): ");
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -398,7 +398,7 @@ static void XVectorSortFindTest(void)
 		XVectorPrintInt(v, "升序: ");
 		XVector_sort_base(v, XSORT_DESC);
 		XVectorPrintInt(v, "降序: ");
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	{
 		int arr[] = { 10, 20, 30, 20, 40, 20, 50 };
@@ -425,7 +425,7 @@ static void XVectorSortFindTest(void)
 		XPrintf("count_value(20)=%zu, count_value(999)=%zu\n",
 			XVector_count_value(v, &f), XVector_count_value(v, &n));
 		XPrintf("XVector_count(20)=%zu\n", XVector_count(v, &f));
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	XPrintf("\n");
 }
@@ -451,10 +451,10 @@ static void XVectorCompareTest(void)
 		XVector_greaterEqual(v1, v2) ? "是" : "否");
 	XPrintf("v1<=v2: lessEqual=%s\n",
 		XVector_lessEqual(v1, v2) ? "是" : "否");
-	XVector_delete_base(v1);
-	XVector_delete_base(v2);
-	XVector_delete_base(v3);
-	XVector_delete_base(v4);
+	XClassDelete(v1);
+	XClassDelete(v2);
+	XClassDelete(v3);
+	XClassDelete(v4);
 	XPrintf("\n");
 }
 
@@ -477,8 +477,8 @@ static void XVectorCowTest(void)
 	XPrintf("NULL: isSharedWith(v,NULL)=%s, isDetached(NULL)=%s\n",
 		XVector_isSharedWith(v, NULL) ? "是" : "否",
 		XVector_isDetached(NULL) ? "是" : "否");
-	XVector_delete_base(v);
-	XVector_delete_base(copy);
+	XClassDelete(v);
+	XClassDelete(copy);
 	XPrintf("\n");
 }
 
@@ -489,29 +489,29 @@ static void XVectorSliceTest(void)
 	XVector* v = XVectorMakeInt(arr, 10);
 	{
 		XVector* m = XVector_mid(v, 2, 4);
-		XVectorPrintInt(m, "mid(2,4): "); XVector_delete_base(m);
+		XVectorPrintInt(m, "mid(2,4): "); XClassDelete(m);
 	}
 	{
 		XVector* m = XVector_mid(v, 5, -1);
-		XVectorPrintInt(m, "mid(5,-1): "); XVector_delete_base(m);
+		XVectorPrintInt(m, "mid(5,-1): "); XClassDelete(m);
 	}
 	{
 		XVector* f = XVector_first(v, 3);
-		XVectorPrintInt(f, "first(3): "); XVector_delete_base(f);
+		XVectorPrintInt(f, "first(3): "); XClassDelete(f);
 	}
 	{
 		XVector* l = XVector_last(v, 3);
-		XVectorPrintInt(l, "last(3): "); XVector_delete_base(l);
+		XVectorPrintInt(l, "last(3): "); XClassDelete(l);
 	}
 	{
 		XVector* s = XVector_sliced_1(v, 7);
-		XVectorPrintInt(s, "sliced(7): "); XVector_delete_base(s);
+		XVectorPrintInt(s, "sliced(7): "); XClassDelete(s);
 	}
 	{
 		XVector* s = XVector_sliced_2(v, 3, 3);
-		XVectorPrintInt(s, "sliced(3,3): "); XVector_delete_base(s);
+		XVectorPrintInt(s, "sliced(3,3): "); XClassDelete(s);
 	}
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -525,7 +525,7 @@ static void XVectorMoveSwapTest(void)
 		XVectorPrintInt(v, "move(0,3): ");
 		XVector_move(v, 4, 1);
 		XVectorPrintInt(v, "move(4,1): ");
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	{
 		int arr[] = { 10, 20, 30, 40, 50 };
@@ -534,7 +534,7 @@ static void XVectorMoveSwapTest(void)
 		XVectorPrintInt(v, "swapItemsAt(0,4): ");
 		XVector_swapItemsAt(v, 1, 3);
 		XVectorPrintInt(v, "swapItemsAt(1,3): ");
-		XVector_delete_base(v);
+		XClassDelete(v);
 	}
 	{
 		int a1[] = { 1, 2, 3 };
@@ -546,8 +546,8 @@ static void XVectorMoveSwapTest(void)
 		XVectorPrintInt(v2, "swap后v2: ");
 		XPrintf("v1.size=%zu, v2.size=%zu\n",
 			XVector_size_base(v1), XVector_size_base(v2));
-		XVector_delete_base(v1);
-		XVector_delete_base(v2);
+		XClassDelete(v1);
+		XClassDelete(v2);
 	}
 	XPrintf("\n");
 }
@@ -563,7 +563,7 @@ static void XVectorFillTest(void)
 	int val2 = 77;
 	XVector_assign(v, &val2, 3);
 	XVectorPrintInt(v, "assign(77,3): ");
-	XVector_delete_base(v);
+	XClassDelete(v);
 	XPrintf("\n");
 }
 
@@ -594,8 +594,8 @@ static void XVectorSafetyTest(void)
 		XPrintf("insert_3(类型不一致)=%s, insert_move_3(类型不一致)=%s（均应否）\n",
 			XVector_insert_3(v, 0, dbl) ? "是" : "否",
 			XVector_insert_move_3(v, 0, dbl) ? "是" : "否");
-		XVector_delete_base(v);
-		XVector_delete_base(dbl);
+		XClassDelete(v);
+		XClassDelete(dbl);
 	}
 	{
 		int arr[] = { 1, 2, 3 };
@@ -605,8 +605,8 @@ static void XVectorSafetyTest(void)
 		XPrintf("push_front_3(类型不一致)=%s, push_back_3(类型不一致)=%s（均应否）\n",
 			XVector_push_front_3(v, dbl) ? "是" : "否",
 			XVector_push_back_3(v, dbl) ? "是" : "否");
-		XVector_delete_base(v);
-		XVector_delete_base(dbl);
+		XClassDelete(v);
+		XClassDelete(dbl);
 	}
 	XPrintf("\n");
 }

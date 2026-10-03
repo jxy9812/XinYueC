@@ -41,7 +41,7 @@ void XMqttTopicNameTest(void)
                 XPrintf("  [失败] create + name_const 期望 sensor/temperature\n");
                 fail++;
             }
-            XMqttTopicName_delete_base(tn);
+            XClassDelete(tn);
         } else {
             XPrintf("  [失败] create 返回 NULL\n");
             fail++;
@@ -60,7 +60,7 @@ void XMqttTopicNameTest(void)
                 XPrintf("  [失败] create(NULL) 名称应为空字符串值\n");
                 fail++;
             }
-            XMqttTopicName_delete_base(tn);
+            XClassDelete(tn);
         } else {
             XPrintf("  [失败] create(NULL) 返回 NULL\n");
             fail++;
@@ -79,7 +79,7 @@ void XMqttTopicNameTest(void)
             XPrintf("  [失败] setName 期望 new/topic\n");
             fail++;
         }
-        XMqttTopicName_delete_base(tn);
+        XClassDelete(tn);
     }
 
     /* ---------- 4. isValid ---------- */
@@ -112,9 +112,9 @@ void XMqttTopicNameTest(void)
             fail++;
         }
 
-        XMqttTopicName_delete_base(valid);
-        XMqttTopicName_delete_base(invalid);
-        XMqttTopicName_delete_base(empty);
+        XClassDelete(valid);
+        XClassDelete(invalid);
+        XClassDelete(empty);
     }
 
     /* ---------- 5. levelCount ---------- */
@@ -136,9 +136,9 @@ void XMqttTopicNameTest(void)
         if (c3 == 0) { XPrintf("  [通过] levelCount NULL 返回 0\n"); pass++; }
         else { XPrintf("  [失败] levelCount NULL 期望 0, 实际 %d\n", c3); fail++; }
 
-        XMqttTopicName_delete_base(tn1);
-        XMqttTopicName_delete_base(tn2);
-        XMqttTopicName_delete_base(tn3);
+        XClassDelete(tn1);
+        XClassDelete(tn2);
+        XClassDelete(tn3);
     }
 
     /* ---------- 6. levels ---------- */
@@ -165,12 +165,12 @@ void XMqttTopicNameTest(void)
                 XPrintf("  [失败] levels 数量期望 3, 实际 %zu\n", count);
                 fail++;
             }
-            XVector_delete_base(levels);
+            XClassDelete(levels);
         } else {
             XPrintf("  [失败] levels 返回 NULL\n");
             fail++;
         }
-        XMqttTopicName_delete_base(tn);
+        XClassDelete(tn);
     }
 
     /* ---------- 7. equal ---------- */
@@ -188,9 +188,9 @@ void XMqttTopicNameTest(void)
         if (!XMqttTopicName_equal(a, NULL)) { XPrintf("  [通过] equal NULL 参数正确\n"); pass++; }
         else { XPrintf("  [失败] equal NULL 应返回 false\n"); fail++; }
 
-        XMqttTopicName_delete_base(a);
-        XMqttTopicName_delete_base(b);
-        XMqttTopicName_delete_base(c);
+        XClassDelete(a);
+        XClassDelete(b);
+        XClassDelete(c);
     }
 
     /* ---------- 8. less ---------- */
@@ -204,8 +204,8 @@ void XMqttTopicNameTest(void)
         if (!XMqttTopicName_less(b, a)) { XPrintf("  [通过] less 'b' > 'a' 正确\n"); pass++; }
         else { XPrintf("  [失败] less 'b' < 'a' 应返回 false\n"); fail++; }
 
-        XMqttTopicName_delete_base(a);
-        XMqttTopicName_delete_base(b);
+        XClassDelete(a);
+        XClassDelete(b);
     }
 
     /* ---------- 9. hash ---------- */
@@ -221,7 +221,7 @@ void XMqttTopicNameTest(void)
         if (h3 != h1) { XPrintf("  [通过] hash 不同 seed 产生不同值\n"); pass++; }
         else { XPrintf("  [失败] hash 不同 seed 应不同\n"); fail++; }
 
-        XMqttTopicName_delete_base(tn);
+        XClassDelete(tn);
     }
 
     /* ---------- 10. name 深拷贝 ---------- */
@@ -235,8 +235,8 @@ void XMqttTopicNameTest(void)
             XPrintf("  [失败] name 深拷贝失败\n");
             fail++;
         }
-        if (nameCopy) XString_delete_base(nameCopy);
-        XMqttTopicName_delete_base(tn);
+        if (nameCopy) XClassDelete(nameCopy);
+        XClassDelete(tn);
     }
 
     /* ---------- 11. create_copy ---------- */
@@ -250,8 +250,8 @@ void XMqttTopicNameTest(void)
             XPrintf("  [失败] create_copy 失败\n");
             fail++;
         }
-        XMqttTopicName_delete_base(orig);
-        XMqttTopicName_delete_base(copy);
+        XClassDelete(orig);
+        XClassDelete(copy);
     }
 
     XPrintf("========== XMqttTopicName 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
@@ -278,7 +278,7 @@ void XMqttTopicFilterTest(void)
                 XPrintf("  [失败] create + filter_const 失败\n");
                 fail++;
             }
-            XMqttTopicFilter_delete_base(tf);
+            XClassDelete(tf);
         } else {
             XPrintf("  [失败] create 返回 NULL\n");
             fail++;
@@ -297,7 +297,7 @@ void XMqttTopicFilterTest(void)
             XPrintf("  [失败] setFilter 失败\n");
             fail++;
         }
-        XMqttTopicFilter_delete_base(tf);
+        XClassDelete(tf);
     }
 
     /* ---------- 3. isValid ---------- */
@@ -323,11 +323,11 @@ void XMqttTopicFilterTest(void)
         if (!XMqttTopicFilter_isValid(empty)) { XPrintf("  [通过] isValid 空字符串检测正确\n"); pass++; }
         else { XPrintf("  [失败] isValid 空字符串应返回 false\n"); fail++; }
 
-        XMqttTopicFilter_delete_base(valid1);
-        XMqttTopicFilter_delete_base(valid2);
-        XMqttTopicFilter_delete_base(invalid1);
-        XMqttTopicFilter_delete_base(invalid2);
-        XMqttTopicFilter_delete_base(empty);
+        XClassDelete(valid1);
+        XClassDelete(valid2);
+        XClassDelete(invalid1);
+        XClassDelete(invalid2);
+        XClassDelete(empty);
     }
 
     /* ---------- 4. match 通配符 + ---------- */
@@ -349,10 +349,10 @@ void XMqttTopicFilterTest(void)
             XPrintf("  [通过] match '+' 不匹配 humidity\n"); pass++;
         } else { XPrintf("  [失败] match '+' 不应匹配 humidity\n"); fail++; }
 
-        XMqttTopicFilter_delete_base(filter);
-        XMqttTopicName_delete_base(name1);
-        XMqttTopicName_delete_base(name2);
-        XMqttTopicName_delete_base(name3);
+        XClassDelete(filter);
+        XClassDelete(name1);
+        XClassDelete(name2);
+        XClassDelete(name3);
     }
 
     /* ---------- 5. match 通配符 # ---------- */
@@ -374,10 +374,10 @@ void XMqttTopicFilterTest(void)
             XPrintf("  [通过] match '#' 不匹配 other\n"); pass++;
         } else { XPrintf("  [失败] match '#' 不应匹配 other\n"); fail++; }
 
-        XMqttTopicFilter_delete_base(filter);
-        XMqttTopicName_delete_base(name1);
-        XMqttTopicName_delete_base(name2);
-        XMqttTopicName_delete_base(name3);
+        XClassDelete(filter);
+        XClassDelete(name1);
+        XClassDelete(name2);
+        XClassDelete(name3);
     }
 
     /* ---------- 6. match 精确匹配 ---------- */
@@ -394,9 +394,9 @@ void XMqttTopicFilterTest(void)
             XPrintf("  [通过] match 不匹配子层级正确\n"); pass++;
         } else { XPrintf("  [失败] match 不应匹配子层级\n"); fail++; }
 
-        XMqttTopicFilter_delete_base(filter);
-        XMqttTopicName_delete_base(name);
-        XMqttTopicName_delete_base(name2);
+        XClassDelete(filter);
+        XClassDelete(name);
+        XClassDelete(name2);
     }
 
     /* ---------- 7. match $ 主题不匹配通配符 ---------- */
@@ -408,8 +408,8 @@ void XMqttTopicFilterTest(void)
             XPrintf("  [通过] match $ 主题不匹配通配符正确\n"); pass++;
         } else { XPrintf("  [失败] match $ 主题不应匹配通配符\n"); fail++; }
 
-        XMqttTopicFilter_delete_base(filter);
-        XMqttTopicName_delete_base(name);
+        XClassDelete(filter);
+        XClassDelete(name);
     }
 
     /* ---------- 8. sharedSubscriptionName ---------- */
@@ -421,14 +421,14 @@ void XMqttTopicFilterTest(void)
         if (name && XString_equals_utf8(name, "group1", XChar_CaseSensitive)) {
             XPrintf("  [通过] sharedSubscriptionName 提取正确\n"); pass++;
         } else { XPrintf("  [失败] sharedSubscriptionName 期望 group1\n"); fail++; }
-        if (name) XString_delete_base(name);
+        if (name) XClassDelete(name);
 
         XString* name2 = XMqttTopicFilter_sharedSubscriptionName(normal);
         if (name2 == NULL) { XPrintf("  [通过] sharedSubscriptionName 非共享返回 NULL\n"); pass++; }
-        else { XPrintf("  [失败] sharedSubscriptionName 非共享应返回 NULL\n"); fail++; XString_delete_base(name2); }
+        else { XPrintf("  [失败] sharedSubscriptionName 非共享应返回 NULL\n"); fail++; XClassDelete(name2); }
 
-        XMqttTopicFilter_delete_base(shared);
-        XMqttTopicFilter_delete_base(normal);
+        XClassDelete(shared);
+        XClassDelete(normal);
     }
 
     /* ---------- 9. equal / less / hash ---------- */
@@ -450,9 +450,9 @@ void XMqttTopicFilterTest(void)
         if (h != 0) { XPrintf("  [通过] hash 正确\n"); pass++; }
         else { XPrintf("  [失败] hash 不应为 0\n"); fail++; }
 
-        XMqttTopicFilter_delete_base(a);
-        XMqttTopicFilter_delete_base(b);
-        XMqttTopicFilter_delete_base(c);
+        XClassDelete(a);
+        XClassDelete(b);
+        XClassDelete(c);
     }
 
     /* ---------- 10. create_copy ---------- */
@@ -462,8 +462,8 @@ void XMqttTopicFilterTest(void)
         if (copy && XMqttTopicFilter_equal(orig, copy)) {
             XPrintf("  [通过] create_copy 正确\n"); pass++;
         } else { XPrintf("  [失败] create_copy 失败\n"); fail++; }
-        XMqttTopicFilter_delete_base(orig);
-        XMqttTopicFilter_delete_base(copy);
+        XClassDelete(orig);
+        XClassDelete(copy);
     }
 
     XPrintf("========== XMqttTopicFilter 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
@@ -489,7 +489,7 @@ void XMqttStringPairTest(void)
                 XString_equals_utf8(value, "value1", XChar_CaseSensitive)) {
                 XPrintf("  [通过] create + name/value_const 正确\n"); pass++;
             } else { XPrintf("  [失败] create 属性不正确\n"); fail++; }
-            XMqttStringPair_delete_base(pair);
+            XClassDelete(pair);
         } else { XPrintf("  [失败] create 返回 NULL\n"); fail++; }
     }
 
@@ -505,9 +505,9 @@ void XMqttStringPairTest(void)
             XString_equals_utf8(value, "newv", XChar_CaseSensitive)) {
             XPrintf("  [通过] setName/setValue 正确\n"); pass++;
         } else { XPrintf("  [失败] setName/setValue 失败\n"); fail++; }
-        if (name) XString_delete_base(name);
-        if (value) XString_delete_base(value);
-        XMqttStringPair_delete_base(pair);
+        if (name) XClassDelete(name);
+        if (value) XClassDelete(value);
+        XClassDelete(pair);
     }
 
     /* ---------- 3. equal ---------- */
@@ -522,9 +522,9 @@ void XMqttStringPairTest(void)
         if (!XMqttStringPair_equal(a, c)) { XPrintf("  [通过] equal 不同值正确\n"); pass++; }
         else { XPrintf("  [失败] equal 应返回 false\n"); fail++; }
 
-        XMqttStringPair_delete_base(a);
-        XMqttStringPair_delete_base(b);
-        XMqttStringPair_delete_base(c);
+        XClassDelete(a);
+        XClassDelete(b);
+        XClassDelete(c);
     }
 
     XPrintf("========== XMqttStringPair 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
@@ -550,8 +550,8 @@ void XMqttUserPropertiesTest(void)
             XVector_push_back_1_base(props, &pair1);
             XVector_push_back_1_base(props, &pair2);
             /* 容器已拥有深拷贝副本，释放原栈对象 */
-            XMqttStringPair_deinit_base(&pair1);
-            XMqttStringPair_deinit_base(&pair2);
+            XClassDeinit(&pair1);
+            XClassDeinit(&pair2);
 
             size_t sz = XVector_size(props);
             if (sz == 2) {
@@ -564,7 +564,7 @@ void XMqttUserPropertiesTest(void)
                 } else { XPrintf("  [失败] UserProperties 内容不正确\n"); fail++; }
             } else { XPrintf("  [失败] UserProperties size 期望 2, 实际 %zu\n", sz); fail++; }
 
-            XVector_delete_base(props);
+            XClassDelete(props);
         } else { XPrintf("  [失败] UserProperties_create 返回 NULL\n"); fail++; }
     }
 
@@ -590,7 +590,7 @@ void XMqttMessageTest(void)
                 !XMqttMessage_retain(msg)) {
                 XPrintf("  [通过] create 空消息默认值正确\n"); pass++;
             } else { XPrintf("  [失败] create 空消息默认值不正确\n"); fail++; }
-            XMqttMessage_delete_base(msg);
+            XClassDelete(msg);
         } else { XPrintf("  [失败] create 返回 NULL\n"); fail++; }
     }
 
@@ -609,7 +609,7 @@ void XMqttMessageTest(void)
             if (ok) {
                 XPrintf("  [通过] create_full 属性正确\n"); pass++;
             } else { XPrintf("  [失败] create_full 属性不正确\n"); fail++; }
-            XMqttMessage_delete_base(msg);
+            XClassDelete(msg);
         } else { XPrintf("  [失败] create_full 返回 NULL\n"); fail++; }
     }
 
@@ -621,8 +621,8 @@ void XMqttMessageTest(void)
         if (copy && XMqttMessage_equal(orig, copy)) {
             XPrintf("  [通过] create_copy 深拷贝正确\n"); pass++;
         } else { XPrintf("  [失败] create_copy 失败\n"); fail++; }
-        XMqttMessage_delete_base(orig);
-        XMqttMessage_delete_base(copy);
+        XClassDelete(orig);
+        XClassDelete(copy);
     }
 
     /* ---------- 4. payload 深拷贝 ---------- */
@@ -633,8 +633,8 @@ void XMqttMessageTest(void)
         if (pl && XByteArray_size_base(pl) == 7) {
             XPrintf("  [通过] payload 深拷贝正确\n"); pass++;
         } else { XPrintf("  [失败] payload 深拷贝失败\n"); fail++; }
-        if (pl) XByteArray_delete_base(pl);
-        XMqttMessage_delete_base(msg);
+        if (pl) XClassDelete(pl);
+        XClassDelete(msg);
     }
 
     /* ---------- 5. topic 深拷贝 ---------- */
@@ -646,9 +646,9 @@ void XMqttMessageTest(void)
             if (name && XString_equals_utf8(name, "topic/deep", XChar_CaseSensitive)) {
                 XPrintf("  [通过] topic 深拷贝正确\n"); pass++;
             } else { XPrintf("  [失败] topic 深拷贝内容不正确\n"); fail++; }
-            XMqttTopicName_delete_base(topic);
+            XClassDelete(topic);
         } else { XPrintf("  [失败] topic 深拷贝返回 NULL\n"); fail++; }
-        XMqttMessage_delete_base(msg);
+        XClassDelete(msg);
     }
 
     /* ---------- 6. equal 不同消息 ---------- */
@@ -658,8 +658,8 @@ void XMqttMessageTest(void)
         if (!XMqttMessage_equal(a, b)) {
             XPrintf("  [通过] equal 不同 id 返回 false\n"); pass++;
         } else { XPrintf("  [失败] equal 不同 id 应返回 false\n"); fail++; }
-        XMqttMessage_delete_base(a);
-        XMqttMessage_delete_base(b);
+        XClassDelete(a);
+        XClassDelete(b);
     }
 
     XPrintf("========== XMqttMessage 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
@@ -681,7 +681,7 @@ void XMqttPublishPropertiesTest(void)
             if (XMqttPublishProperties_availableProperties(prop) == 0) {
                 XPrintf("  [通过] create 默认 availableProperties 为 0\n"); pass++;
             } else { XPrintf("  [失败] create 默认 availableProperties 应为 0\n"); fail++; }
-            XMqttPublishProperties_delete_base(prop);
+            XClassDelete(prop);
         } else { XPrintf("  [失败] create 返回 NULL\n"); fail++; }
     }
 
@@ -715,7 +715,7 @@ void XMqttPublishPropertiesTest(void)
         if (ok) { XPrintf("  [通过] set/get 多个属性正确\n"); pass++; }
         else { XPrintf("  [失败] set/get 属性不正确\n"); fail++; }
 
-        XMqttPublishProperties_delete_base(prop);
+        XClassDelete(prop);
     }
 
     /* ---------- 3. 深拷贝 ---------- */
@@ -727,9 +727,9 @@ void XMqttPublishPropertiesTest(void)
             if (XMqttPublishProperties_payloadFormatIndicator(copy) == XMqtt_PayloadFormatIndicator_UTF8Encoded) {
                 XPrintf("  [通过] create_copy 正确\n"); pass++;
             } else { XPrintf("  [失败] create_copy 属性不一致\n"); fail++; }
-            XMqttPublishProperties_delete_base(copy);
+            XClassDelete(copy);
         } else { XPrintf("  [失败] create_copy 返回 NULL\n"); fail++; }
-        XMqttPublishProperties_delete_base(orig);
+        XClassDelete(orig);
     }
 
     XPrintf("========== XMqttPublishProperties 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
@@ -751,7 +751,7 @@ void XMqttMessageStatusPropertiesTest(void)
                 XMqttMessageStatusProperties_reason_const(prop) == NULL) {
                 XPrintf("  [通过] create 默认值正确\n"); pass++;
             } else { XPrintf("  [失败] create 默认值不正确\n"); fail++; }
-            XMqttMessageStatusProperties_delete_base(prop);
+            XClassDelete(prop);
         } else { XPrintf("  [失败] create 返回 NULL\n"); fail++; }
     }
 
@@ -788,10 +788,10 @@ void XMqttConnectionPropertiesTest(void)
             XMqttLastWillProperties* copy = XMqttLastWillProperties_create_copy(lw);
             if (copy && XMqttLastWillProperties_willDelayInterval(copy) == 60) {
                 XPrintf("  [通过] LastWillProperties create_copy 正确\n"); pass++;
-                XMqttLastWillProperties_delete_base(copy);
+                XClassDelete(copy);
             } else { XPrintf("  [失败] LastWillProperties create_copy 失败\n"); fail++; }
 
-            XMqttLastWillProperties_delete_base(lw);
+            XClassDelete(lw);
         } else { XPrintf("  [失败] LastWillProperties_create 返回 NULL\n"); fail++; }
     }
 
@@ -815,7 +815,7 @@ void XMqttConnectionPropertiesTest(void)
                 XPrintf("  [通过] ConnectionProperties set/get 正确\n"); pass++;
             } else { XPrintf("  [失败] ConnectionProperties set/get 不正确\n"); fail++; }
 
-            XMqttConnectionProperties_delete_base(cp);
+            XClassDelete(cp);
         } else { XPrintf("  [失败] ConnectionProperties_create 返回 NULL\n"); fail++; }
     }
 
@@ -827,7 +827,7 @@ void XMqttConnectionPropertiesTest(void)
                 XPrintf("  [通过] ServerConnectionProperties 默认无效\n"); pass++;
             } else { XPrintf("  [失败] ServerConnectionProperties 默认应无效\n"); fail++; }
 
-            XMqttServerConnectionProperties_delete_base(sp);
+            XClassDelete(sp);
         } else { XPrintf("  [失败] ServerConnectionProperties_create 返回 NULL\n"); fail++; }
     }
 
@@ -858,10 +858,10 @@ void XMqttSubscriptionPropertiesTest(void)
             XMqttSubscriptionProperties* copy = XMqttSubscriptionProperties_create_copy(sp);
             if (copy && XMqttSubscriptionProperties_subscriptionIdentifier(copy) == 12345) {
                 XPrintf("  [通过] SubscriptionProperties create_copy 正确\n"); pass++;
-                XMqttSubscriptionProperties_delete_base(copy);
+                XClassDelete(copy);
             } else { XPrintf("  [失败] SubscriptionProperties create_copy 失败\n"); fail++; }
 
-            XMqttSubscriptionProperties_delete_base(sp);
+            XClassDelete(sp);
         } else { XPrintf("  [失败] SubscriptionProperties_create 返回 NULL\n"); fail++; }
     }
 
@@ -872,9 +872,9 @@ void XMqttSubscriptionPropertiesTest(void)
             XMqttUnsubscriptionProperties* copy = XMqttUnsubscriptionProperties_create_copy(up);
             if (copy) {
                 XPrintf("  [通过] UnsubscriptionProperties create_copy 正确\n"); pass++;
-                XMqttUnsubscriptionProperties_delete_base(copy);
+                XClassDelete(copy);
             } else { XPrintf("  [失败] UnsubscriptionProperties create_copy 失败\n"); fail++; }
-            XMqttUnsubscriptionProperties_delete_base(up);
+            XClassDelete(up);
         } else { XPrintf("  [失败] UnsubscriptionProperties_create 返回 NULL\n"); fail++; }
     }
 
@@ -914,10 +914,10 @@ void XMqttAuthenticationPropertiesTest(void)
                 if (cm && XString_equals_utf8(cm, "SCRAM-SHA-256", XChar_CaseSensitive)) {
                     XPrintf("  [通过] AuthenticationProperties create_copy 正确\n"); pass++;
                 } else { XPrintf("  [失败] AuthenticationProperties create_copy 内容不一致\n"); fail++; }
-                XMqttAuthenticationProperties_delete_base(copy);
+                XClassDelete(copy);
             } else { XPrintf("  [失败] AuthenticationProperties create_copy 返回 NULL\n"); fail++; }
 
-            XMqttAuthenticationProperties_delete_base(ap);
+            XClassDelete(ap);
         } else { XPrintf("  [失败] AuthenticationProperties_create 返回 NULL\n"); fail++; }
     }
 
@@ -950,7 +950,7 @@ void XMqttSubscriptionTest(void)
 
             XMqttSubscription_deleteLater(sub);
         } else { XPrintf("  [失败] create 返回 NULL\n"); fail++; }
-        XMqttTopicFilter_delete_base(filter);
+        XClassDelete(filter);
     }
 
     /* ---------- 2. setState 和状态变更信号 ---------- */
@@ -969,7 +969,7 @@ void XMqttSubscriptionTest(void)
         } else { XPrintf("  [失败] setQos 不正确\n"); fail++; }
 
         XMqttSubscription_deleteLater(sub);
-        XMqttTopicFilter_delete_base(filter);
+        XClassDelete(filter);
     }
 
     /* ---------- 3. unsubscribe_base ---------- */
@@ -982,7 +982,7 @@ void XMqttSubscriptionTest(void)
             XPrintf("  [通过] 无关联客户端时 unsubscribe_base 保持状态\n"); pass++;
         } else { XPrintf("  [失败] 无关联客户端时不应伪造取消成功\n"); fail++; }
         XMqttSubscription_deleteLater(sub);
-        XMqttTopicFilter_delete_base(filter);
+        XClassDelete(filter);
     }
 
     /* ---------- 4. topic 深拷贝 ---------- */
@@ -993,9 +993,9 @@ void XMqttSubscriptionTest(void)
         if (topicCopy && XMqttTopicFilter_equal(topicCopy, filter)) {
             XPrintf("  [通过] topic 深拷贝正确\n"); pass++;
         } else { XPrintf("  [失败] topic 深拷贝不正确\n"); fail++; }
-        if (topicCopy) XMqttTopicFilter_delete_base(topicCopy);
+        if (topicCopy) XClassDelete(topicCopy);
         XMqttSubscription_deleteLater(sub);
-        XMqttTopicFilter_delete_base(filter);
+        XClassDelete(filter);
     }
 
     XPrintf("========== XMqttSubscription 测试完成: %d 通过, %d 失败 ==========\n", pass, fail);
@@ -1145,7 +1145,7 @@ void XMqttClientTest(void)
         XMqttClient_unsubscribe(client, filter); // 不应崩溃
         XPrintf("  [通过] unsubscribe 未连接时安全调用\n"); pass++;
 
-        XMqttTopicFilter_delete_base(filter);
+        XClassDelete(filter);
         XMqttClient_deleteLater(client);
     }
 
@@ -1158,7 +1158,7 @@ void XMqttClientTest(void)
         if (id == -1) {
             XPrintf("  [通过] publish 默认实现返回 -1（未连接）\n"); pass++;
         } else { XPrintf("  [失败] publish 未连接时应返回 -1\n"); fail++; }
-        XMqttTopicName_delete_base(topic);
+        XClassDelete(topic);
         XMqttClient_deleteLater(client);
     }
 
@@ -1200,7 +1200,7 @@ void XMqttClientTest(void)
         if (got && XMqttConnectionProperties_sessionExpiryInterval(got) == 7200) {
             XPrintf("  [通过] setConnectionProperties 正确\n"); pass++;
         } else { XPrintf("  [失败] setConnectionProperties 不正确\n"); fail++; }
-        XMqttConnectionProperties_delete_base(cp);
+        XClassDelete(cp);
         XMqttClient_deleteLater(client);
     }
 
@@ -1214,7 +1214,7 @@ void XMqttClientTest(void)
         if (got && XMqttLastWillProperties_willDelayInterval(got) == 300) {
             XPrintf("  [通过] setLastWillProperties 正确\n"); pass++;
         } else { XPrintf("  [失败] setLastWillProperties 不正确\n"); fail++; }
-        XMqttLastWillProperties_delete_base(lw);
+        XClassDelete(lw);
         XMqttClient_deleteLater(client);
     }
 
@@ -1354,7 +1354,7 @@ bool XMqttDataLayoutTest_run(void)
                     if (!msg || XMqttMessage_qos(msg) != (uint8_t)qos ||
                         XMqttMessage_duplicate(msg) != (dup != 0) ||
                         XMqttMessage_retain(msg) != (retain != 0)) bad++;
-                    if (msg) XMqttMessage_delete_base(msg);
+                    if (msg) XClassDelete(msg);
                 }
         if (!bad) {
             XPrintf("  [通过] XMqttMessage qos/dup/retain 位域往返一致\n"); pass++;
@@ -1414,7 +1414,7 @@ bool XMqttDataLayoutTest_run(void)
             XPrintf("  [失败] XMqttSubscription 位域往返存在错误\n"); fail++;
         }
         if (sub) XMqttSubscription_deleteLater(sub);
-        if (filter) XMqttTopicFilter_delete_base(filter);
+        if (filter) XClassDelete(filter);
     }
 
     /* ---------- 5. XMqttServer 位域往返 ---------- */
@@ -1441,7 +1441,7 @@ bool XMqttDataLayoutTest_run(void)
         } else {
             XPrintf("  [失败] XMqttServer 位域往返存在错误\n"); fail++;
         }
-        if (server) XClass_delete_base((XClass*)server);
+        if (server) XClassDelete((XClass*)server);
     }
 
     /* ---------- 6. XMqttConnectionProperties 位域往返 ---------- */
@@ -1464,7 +1464,7 @@ bool XMqttDataLayoutTest_run(void)
         } else {
             XPrintf("  [失败] XMqttConnectionProperties 位域往返存在错误\n"); fail++;
         }
-        if (cp) XMqttConnectionProperties_delete_base(cp);
+        if (cp) XClassDelete(cp);
     }
 
     /* ---------- 7. XMqttServerConnectionProperties 位域往返 ---------- */
@@ -1497,7 +1497,7 @@ bool XMqttDataLayoutTest_run(void)
         } else {
             XPrintf("  [失败] XMqttServerConnectionProperties 位域往返存在错误\n"); fail++;
         }
-        if (sp) XMqttServerConnectionProperties_delete_base(sp);
+        if (sp) XClassDelete(sp);
     }
 
     XPrintf("========== XMqtt 位域/联合体数据结构测试完成: %d 通过, %d 失败 ==========\n",

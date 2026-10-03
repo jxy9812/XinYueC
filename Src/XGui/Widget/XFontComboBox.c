@@ -252,11 +252,11 @@ static void xfcb_populate(XFontComboBox* self)
             XString** name = (XString**)XVector_at_base(families, i);
             if (name && *name) {
                 XComboBox_addItem(self, *name);
-                XString_delete_base(*name);
+                XClassDelete(*name);
                 *name = NULL;
             }
         }
-        XVector_delete_base(families);
+        XClassDelete(families);
         families = NULL;
     }
     XPlatformFontDatabase_destroy(db);
@@ -290,7 +290,7 @@ static void VXFontComboBox_copy(XFontComboBox* self,
     self->m_filters = other->m_filters;
     self->m_writingSystem = other->m_writingSystem;
     /* 显示字体值承载：经 XFont 多态拷贝深复制族名/样式字符串。 */
-    XCopy(&self->m_displayFont, &other->m_displayFont);
+    XClassCopy(&self->m_displayFont, &other->m_displayFont);
     /* 样例文本表深拷贝（键与文本均复制所有权）。 */
     xfcb_fontSampleFree(self);
     xfcb_systemSampleFree(self);
@@ -318,7 +318,7 @@ static void VXFontComboBox_move(XFontComboBox* self, XFontComboBox* other)
     self->m_filters = other->m_filters;
     self->m_writingSystem = other->m_writingSystem;
     /* 显示字体：转移族名/样式字符串所有权（源由 XFont_move 归默认值）。 */
-    XMove(&self->m_displayFont, &other->m_displayFont);
+    XClassMove(&self->m_displayFont, &other->m_displayFont);
     /* 样例文本表：整体转移所有权。 */
     xfcb_fontSampleFree(self);
     self->m_fontSamples = other->m_fontSamples;
@@ -345,7 +345,7 @@ static void VXFontComboBox_deinit(XFontComboBox* self)
     if (!self) return;
     xfcb_fontSampleFree(self);
     xfcb_systemSampleFree(self);
-    XClass_deinit_base((XClass*)&self->m_displayFont);
+    XClassDeinit((XClass*)&self->m_displayFont);
     self->m_filters = (int)XFontComboBoxFilter_AllFonts;
     self->m_writingSystem = (int)XFontComboBoxWritingSystem_Any;
     XClass_Deinit_Parent(XComboBox, (XComboBox*)self);
@@ -460,8 +460,8 @@ void XFontComboBox_setDisplayFont(XFontComboBox* self, const XFont* font)
     /* 同 XWidget_setFont 的值承载方案：临时字体深拷贝后移入状态字段
      * （XFont_move 转移族名/样式字符串所有权并归默认源）。 */
     XFont_init(&temp);
-    XCopy(&temp, font);
-    XMove(&self->m_displayFont, &temp);
+    XClassCopy(&temp, font);
+    XClassMove(&self->m_displayFont, &temp);
     /* 状态承载：字形预览/委托绘制未建，仅保存供后续批次读取；
      * 不改当前条目、不发 currentFontChanged（与 setCurrentFont 分工）。 */
 }
@@ -473,7 +473,7 @@ XFont XFontComboBox_displayFont(const XFontComboBox* self)
     XFont font;
     XFont_init(&font);
     if (self)
-        XCopy(&font, &self->m_displayFont);
+        XClassCopy(&font, &self->m_displayFont);
     return font;
 }
 

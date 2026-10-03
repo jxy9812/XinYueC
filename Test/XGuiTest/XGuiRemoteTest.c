@@ -632,8 +632,8 @@ static void xr_test_frameReader(void)
             xr_expect(XGuiRemoteLoopbackDevice_bufferedBytes(peer) == 9,
                       "对端可见 9 字节");
         }
-        if (dev) XClass_delete_base((XClass*)dev);
-        if (peer) XClass_delete_base((XClass*)peer);
+        if (dev) XClassDelete((XClass*)dev);
+        if (peer) XClassDelete((XClass*)peer);
     }
 }
 
@@ -1177,12 +1177,12 @@ static void xr_test_loopbackDevice(void)
     xr_expect(n == 0, "对端关闭后写恒 0");
 
     /* 任意一端 delete 安全; 末删者释放共享块(对端不悬垂)。 */
-    XClass_delete_base((XClass*)a);
+    XClassDelete((XClass*)a);
     xr_expect(!XGuiRemoteLoopbackDevice_peerAlive(peer),
               "单端 delete 后对端视角存活 false");
     n = XIODevice_read_1((XIODevice*)peer, buf, (int64_t)sizeof(buf));
     xr_expect(n == 0, "对端 delete 后读 EOF");
-    XClass_delete_base((XClass*)peer);
+    XClassDelete((XClass*)peer);
 }
 
 /* ==================== (c) 回环端到端（零网络） ==================== */
@@ -1360,7 +1360,7 @@ static bool xr_e2e_setup(XrE2e* e, size_t ringBytes, int w, int h,
                 XPixmap_init_image(&e->noisePm[i], img, 0);
             }
         }
-        if (img) XImage_delete_base(img);
+        if (img) XClassDelete(img);
         XLabel_setPixmap(e->noise, &e->noisePm[0]);
         XWidget_show((XWidget*)e->noise);
     }
@@ -1420,12 +1420,12 @@ static bool xr_e2e_setup(XrE2e* e, size_t ringBytes, int w, int h,
 static void xr_e2e_teardown(XrE2e* e)
 {
     int i;
-    if (e->client) XGuiClient_delete_base(e->client);
-    if (e->server) XGuiServer_delete_base(e->server);
-    if (e->devA) XClass_delete_base((XClass*)e->devA);
-    if (e->devB) XClass_delete_base((XClass*)e->devB);
-    for (i = 0; i < 2; ++i) XPixmap_deinit_base(&e->noisePm[i]);
-    if (e->top) XWidget_delete_base(e->top);
+    if (e->client) XClassDelete(e->client);
+    if (e->server) XClassDelete(e->server);
+    if (e->devA) XClassDelete((XClass*)e->devA);
+    if (e->devB) XClassDelete((XClass*)e->devB);
+    for (i = 0; i < 2; ++i) XClassDeinit(&e->noisePm[i]);
+    if (e->top) XClassDelete(e->top);
     if (xr_cur == e) xr_cur = NULL;
     memset(e, 0, sizeof(*e));
 }
@@ -1503,7 +1503,7 @@ static void xr_sendMouse(XGuiClient* client, XEventType type,
     if (!me) return;
     XMouseEvent_setButtons(me, buttons);
     XObject_event_base((XObject*)client, (XEvent*)me);
-    XEvent_delete_base((XEvent*)me);
+    XClassDelete((XEvent*)me);
 }
 
 /** @brief 基线端到端: 握手→FB_META→全量→像素抽样→点击→越界→BYE。
@@ -1592,8 +1592,8 @@ static void xr_test_e2eBasic(void)
         xr_expect(xr_pixel(cliSnap, 40, 40) == 0xFFd93025u,
                   "客户端 backbuffer 色块 A = 源设定色");
     }
-    if (svcSnap) XImage_delete_base(svcSnap);
-    if (cliSnap) XImage_delete_base(cliSnap);
+    if (svcSnap) XClassDelete(svcSnap);
+    if (cliSnap) XClassDelete(cliSnap);
     xr_expect(xr_cliErrors == 0, "画面阶段客户端零错误");
 
     /* 4) 注入 INPUT_POINTER: 本地合成 press/release 命中客户端 → 转发远端
@@ -1730,8 +1730,8 @@ static void xr_test_e2eProfileHotSwitch(void)
             }
         }
     }
-    if (svcSnap) XImage_delete_base(svcSnap);
-    if (cliSnap) XImage_delete_base(cliSnap);
+    if (svcSnap) XClassDelete(svcSnap);
+    if (cliSnap) XClassDelete(cliSnap);
 
     /* 4) 会话存活: 换档不断链、零错误。 */
     xr_expect(XGuiClient_state(e.client) == XGUI_REMOTE_STATE_STREAMING,
@@ -1807,7 +1807,7 @@ static void xr_test_e2eSlowConsumer(void)
         if (cliSnap) {
             xr_expect(xr_pixel(cliSnap, 160, 180) == 0xFF104080u,
                       "慢链路末态像素 = 变更后源设定色(顶层底色采样点)");
-            XImage_delete_base(cliSnap);
+            XClassDelete(cliSnap);
         }
     }
     XGuiClient_disconnectFromServer(e.client);
@@ -1988,7 +1988,7 @@ static void xr_sendWidgetMouse(XWidget* widget, XEventType type,
     if (!me) return;
     XMouseEvent_setButtons(me, buttons);
     XObject_event_base((XObject*)widget, (XEvent*)me);
-    XEvent_delete_base((XEvent*)me);
+    XClassDelete((XEvent*)me);
 }
 
 /** @brief 条上零转发断言的发送字节上界: 健康会话 200ms 窗口至多 1 帧
@@ -2117,7 +2117,7 @@ static void xr_test_sessionBar(void)
                   "悬浮条: 断开后工具条自动隐藏");
     }
 
-    XRemoteSessionBar_delete_base(bar);
+    XClassDelete(bar);
     /* 诊断落 stderr(套件惯例): 供 runner/联调确认悬浮条 e2e 真实跑过。 */
     fprintf(stderr, "[XR-BAR] session-bar e2e done: fwdDelta=%llu clickDelta=%d "
                     "meta=%d srvDisc=%d\n",

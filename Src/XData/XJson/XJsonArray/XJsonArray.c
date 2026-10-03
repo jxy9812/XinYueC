@@ -14,7 +14,7 @@ int32_t XJsonArray_compare(const XJsonArray* lhs, const XJsonArray* rhs)
 }
 
 XVARIANT_TYPE_OPS_DEFINE(XJsonArray, sizeof(XJsonArray), XClass_copy_base,
-	XClass_move_base, XJsonArray_clear_base, XJsonArray_deinit_base,
+	XClass_move_base, XJsonArray_clear_base, XClass_deinit_base,
 	XJsonArray_compare, "XJsonArray");
 
 XJsonArray* XJsonArray_create_ex(XMemoryType memory)
@@ -31,7 +31,7 @@ XJsonArray* XJsonArray_create_copy(XJsonArray* copy)
 {
     XJsonArray* array = XJsonArray_create();
     if (array&& copy)
-        XCopy(array,copy);
+        XClassCopy(array,copy);
     return array;
 }
 
@@ -39,7 +39,7 @@ XJsonArray* XJsonArray_create_move(XJsonArray* move)
 {
     XJsonArray* array = XJsonArray_create();
     if (array && move)
-        XMove(array, move);
+        XClassMove(array, move);
     return array;
 }
 
@@ -66,7 +66,7 @@ XString* XJsonArray_toString(const XJsonArray* array, XJsonDocumentFormat format
     //恢复防止释放 XJsonArray
     doc->root.data.array = NULL;
     doc->root.type = XJsonValue_Invalid;
-    XJsonDocument_delete(doc);
+    XClassDelete(doc);
     return str;
 }
 XVariantList* XJsonArray_toVariantList(const XJsonArray* arr)
@@ -83,7 +83,7 @@ XVariantList* XJsonArray_toVariantList(const XJsonArray* arr)
         value = XVector_iterator_data(&it);
         var=XJsonValue_toVariant(value);
         XVariantList_push_back_move_base(list,var);
-        XVariant_delete_base(var);
+        XClassDelete(var);
     }
     return list;
 }
@@ -96,7 +96,7 @@ XVariantList* XJsonArray_toVariantList_move(XJsonArray* arr)
         return NULL;
     XVector_detach((XVector*)arr);
     if (!XVector_isDetached((const XVector*)arr)) {
-        XVariantList_delete_base(list);
+        XClassDelete(list);
         return NULL;
     }
     XJsonValue* value = NULL;
@@ -106,7 +106,7 @@ XVariantList* XJsonArray_toVariantList_move(XJsonArray* arr)
         value = XVector_iterator_data(&it);
         var = XJsonValue_toVariant_move(value);
         XVariantList_push_back_move_base(list, var);
-        XVariant_delete_base(var);
+        XClassDelete(var);
     }
     return list;
 }
@@ -116,7 +116,7 @@ XVariant* XJsonArray_toVariant(const XJsonArray* arr)
         return NULL;
     XVariant* var = XVariant_create(NULL, sizeof(XJsonArray), XVariantType_JsonArray);
     XJsonArray_init(var->m_data);
-    XCopy(var->m_data, arr);
+    XClassCopy(var->m_data, arr);
     return var;
 }
 XVariant* XJsonArray_toVariant_move(XJsonArray* arr)
@@ -125,7 +125,7 @@ XVariant* XJsonArray_toVariant_move(XJsonArray* arr)
         return NULL;
     XVariant* var = XVariant_create(NULL, sizeof(XJsonArray), XVariantType_JsonArray);
     XJsonArray_init(var->m_data);
-    XMove(var->m_data, arr);
+    XClassMove(var->m_data, arr);
     return var;
 }
 XVariant* XJsonArray_toVariant_ref(XJsonArray* arr)
@@ -157,7 +157,7 @@ static bool XJsonArray_prepareVariant(XVariant* variant)
     if (variant->m_type != XVariantType_JsonArray ||
         !variant->m_data || variant->m_dataSize != sizeof(XJsonArray)) {
         if (variant->m_data)
-            XVariant_deinit_base(variant);
+            XClassDeinit(variant);
         variant->m_data = XMalloc_System(sizeof(XJsonArray));
         if (!variant->m_data)
             return false;
@@ -171,13 +171,13 @@ static bool XJsonArray_prepareVariant(XVariant* variant)
 void XJsonArray_setVariant(XVariant* variant, const XJsonArray* array)
 {
     if (array && XJsonArray_prepareVariant(variant))
-        XCopy((XJsonArray*)variant->m_data, array);
+        XClassCopy((XJsonArray*)variant->m_data, array);
 }
 
 void XJsonArray_setVariant_move(XVariant* variant, XJsonArray* array)
 {
     if (array && XJsonArray_prepareVariant(variant))
-        XMove((XJsonArray*)variant->m_data, array);
+        XClassMove((XJsonArray*)variant->m_data, array);
 }
 
 void XJsonArray_setVariant_ref(XVariant* variant, XJsonArray* array)
@@ -315,7 +315,7 @@ XJsonArray* XJsonArray_fromStringList(const XStringList* list)
         XJsonValue* value = string ? XJsonValue_create_string(string) : NULL;
         if (!value || !XJsonArray_append_move_base(array, value)) {
             if (value) XJsonValue_delete(value);
-            XJsonArray_delete_base(array);
+            XClassDelete(array);
             return NULL;
         }
         XJsonValue_delete(value);
@@ -337,7 +337,7 @@ XJsonArray* XJsonArray_fromVariantList(const XVariantList* list)
         XJsonValue* value = XJsonValue_fromVariant(variant);
         if (!value || !XJsonArray_append_move_base(array, value)) {
             if (value) XJsonValue_delete(value);
-            XJsonArray_delete_base(array);
+            XClassDelete(array);
             return NULL;
         }
         XJsonValue_delete(value);

@@ -161,8 +161,6 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags);
  * @return 返回对象指针；无效时返回 NULL。
  */
 XComboBox* XComboBox_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XComboBox_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XComboBox_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== 项管理（对标 QComboBox public API） ==================== */
 
@@ -409,7 +407,7 @@ void* XComboBox_itemDelegate(const XComboBox* self);
  * @param      self 目标控件；NULL 返回 NULL。
  * @param      query 查询类别（Qt::InputMethodQuery 数值）。
  * @return     新建 XString*（空文本也返回对象）；调用方负责
- *             XString_delete_base 释放。
+ *             XClassDelete 释放。
  */
 XString* XComboBox_inputMethodQuery(XComboBox* self, int query);
 /** @brief XCombo盒current索引（对标 Qt 同名接口）。

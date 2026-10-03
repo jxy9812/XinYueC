@@ -50,12 +50,10 @@ void XJsonArray_init(XJsonArray* array);
 * @brief 基于XVector的反初始化基础操作
 * @details 调用XVector的反初始化接口，释放内部元素资源但保留数组实例
 */
-#define XJsonArray_deinit_base						XVector_deinit_base	
 /**
 * @brief 基于XVector的销毁基础操作
 * @details 调用XVector的销毁接口，释放内部元素资源及数组实例本身
 */
-#define XJsonArray_delete_base						XVector_delete_base	
 /**
 * @brief 基于XVector的清空基础操作
 * @details 调用XVector的清空接口，移除所有元素并释放其资源，保留数组容量

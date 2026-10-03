@@ -310,11 +310,11 @@ static void VXAbstractItemView_deinit(XAbstractItemView* self)
     self->m_editCol = -1;
     /* 默认委托为视图拥有的独立对象（无父对象）：显式析构。 */
     if (self->m_defaultDelegate) {
-        XItemDelegate_delete_base(self->m_defaultDelegate);
+        XClassDelete(self->m_defaultDelegate);
         self->m_defaultDelegate = NULL;
     }
     if (self->m_selectionModel) {
-        XItemSelectionModel_delete_base(self->m_selectionModel);
+        XClassDelete(self->m_selectionModel);
         self->m_selectionModel = NULL;
     }
     XClass_Deinit_Parent(XAbstractScrollArea, (XAbstractScrollArea*)self);
@@ -1487,7 +1487,7 @@ void XAbstractItemView_setSelectionModel(XAbstractItemView* self,
 {
     if (!self) return;
     if (self->m_selectionModel && self->m_selectionModel != selectionModel)
-        XItemSelectionModel_delete_base(self->m_selectionModel);
+        XClassDelete(self->m_selectionModel);
     self->m_selectionModel = selectionModel;
     if (!self->m_selectionModel)
         self->m_selectionModel = XItemSelectionModel_create();

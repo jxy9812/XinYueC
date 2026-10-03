@@ -35,12 +35,10 @@ void XRestAccessManager_init(XRestAccessManager* self, XNetworkAccessManager* ma
 /**
  * - @brief 创建 REST 访问管理器。
  * - @param manager 底层网络访问管理器；借用，可为 NULL，必须在 REST 管理器使用期间保持有效。
- * - @return 新建 REST 管理器；调用者必须使用 XRestAccessManager_delete_base 释放，分配失败返回 NULL。
+ * - @return 新建 REST 管理器；调用者必须使用 XClassDelete 释放，分配失败返回 NULL。
  */
 XRestAccessManager* XRestAccessManager_create_ex(XMemoryType memory,  XNetworkAccessManager* manager);
 
-#define XRestAccessManager_deinit_base XClass_deinit_base
-#define XRestAccessManager_delete_base XClass_delete_base
 #define XRestAccessManager_deleteLater XObject_deleteLater
 
 /**
@@ -53,21 +51,21 @@ XNetworkAccessManager* XRestAccessManager_networkAccessManager(const XRestAccess
  * - @brief 发送 DELETE 请求。
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_deleteResource(XRestAccessManager* self, const XHttpRequest* request);
 /**
  * - @brief 发送 HEAD 请求。
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_head(XRestAccessManager* self, const XHttpRequest* request);
 /**
  * - @brief 发送 GET 请求。
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_get(XRestAccessManager* self, const XHttpRequest* request);
 /**
@@ -75,7 +73,7 @@ XHttpReply* XRestAccessManager_get(XRestAccessManager* self, const XHttpRequest*
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param body 请求 body；借用，可为 NULL，发送前由底层复制。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_getWithData(XRestAccessManager* self, const XHttpRequest* request,
                                            const XByteArray* body);
@@ -84,7 +82,7 @@ XHttpReply* XRestAccessManager_getWithData(XRestAccessManager* self, const XHttp
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param body 请求 body；借用，可为 NULL，发送前由底层复制。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_post(XRestAccessManager* self, const XHttpRequest* request,
                                     const XByteArray* body);
@@ -93,7 +91,7 @@ XHttpReply* XRestAccessManager_post(XRestAccessManager* self, const XHttpRequest
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param json JSON 文档；借用且不能为 NULL，发送前序列化并设置 application/json。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_postJson(XRestAccessManager* self, const XHttpRequest* request,
                                         const XJsonDocument* json);
@@ -102,7 +100,7 @@ XHttpReply* XRestAccessManager_postJson(XRestAccessManager* self, const XHttpReq
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param body 请求 body；借用，可为 NULL，发送前由底层复制。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_put(XRestAccessManager* self, const XHttpRequest* request,
                                    const XByteArray* body);
@@ -111,7 +109,7 @@ XHttpReply* XRestAccessManager_put(XRestAccessManager* self, const XHttpRequest*
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param json JSON 文档；借用且不能为 NULL，发送前序列化并设置 application/json。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_putJson(XRestAccessManager* self, const XHttpRequest* request,
                                        const XJsonDocument* json);
@@ -120,7 +118,7 @@ XHttpReply* XRestAccessManager_putJson(XRestAccessManager* self, const XHttpRequ
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param body 请求 body；借用，可为 NULL，发送前由底层复制。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_patch(XRestAccessManager* self, const XHttpRequest* request,
                                      const XByteArray* body);
@@ -129,7 +127,7 @@ XHttpReply* XRestAccessManager_patch(XRestAccessManager* self, const XHttpReques
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param json JSON 文档；借用且不能为 NULL，发送前序列化并设置 application/json。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_patchJson(XRestAccessManager* self, const XHttpRequest* request,
                                          const XJsonDocument* json);
@@ -138,7 +136,7 @@ XHttpReply* XRestAccessManager_patchJson(XRestAccessManager* self, const XHttpRe
  * - @param self REST 管理器；不能为 NULL。
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param multipart multipart 内容；借用且不能为 NULL，发送前由底层编码。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_postMultipart(XRestAccessManager* self, const XHttpRequest* request,
                                              const XHttpMultiPart* multipart);
@@ -148,7 +146,7 @@ XHttpReply* XRestAccessManager_postMultipart(XRestAccessManager* self, const XHt
  * - @param request 请求对象；借用且不能为 NULL，调用期间必须保持有效。
  * - @param method 自定义方法名；借用且不能为 NULL，必须是合法 HTTP 方法字节序列。
  * - @param body 请求 body；借用，可为 NULL，发送前由底层复制。
- * - @return 新建 HTTP 响应；调用者必须使用 XHttpReply_delete_base 释放，参数无效或发送失败返回 NULL。
+ * - @return 新建 HTTP 响应；调用者必须使用 XClassDelete 释放，参数无效或发送失败返回 NULL。
  */
 XHttpReply* XRestAccessManager_sendCustomRequest(XRestAccessManager* self,
                                                  const XHttpRequest* request,
@@ -158,7 +156,7 @@ XHttpReply* XRestAccessManager_sendCustomRequest(XRestAccessManager* self,
  * - @brief 将 HTTP 响应包装为 REST 响应。
  * - @param self REST 管理器；可为 NULL，当前参数仅用于保持 API 对齐。
  * - @param reply HTTP 响应；借用且不能为 NULL，必须在包装使用期间保持有效。
- * - @return 新建 REST 响应包装；调用者必须使用 XRestReply_delete_base 释放，参数无效或分配失败返回 NULL。
+ * - @return 新建 REST 响应包装；调用者必须使用 XClassDelete 释放，参数无效或分配失败返回 NULL。
  */
 XRestReply* XRestAccessManager_wrapReply(const XRestAccessManager* self, XHttpReply* reply);
 

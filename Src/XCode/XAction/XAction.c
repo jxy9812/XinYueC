@@ -73,12 +73,12 @@ static bool xaction_replaceString(XString** field, const XString* value)
     if (!copy)
         return false;
     if (current && XString_equals(current, copy, XChar_CaseSensitive)) {
-        XString_delete_base((XClass*)copy);
+        XClassDelete((XClass*)copy);
         return false;
     }
     *field = copy;
     if (current)
-        XString_delete_base((XClass*)current);
+        XClassDelete((XClass*)current);
     return true;
 }
 
@@ -112,7 +112,7 @@ static XString* xaction_copyString(const XString* field)
         if (!str)                                                             \
             return;                                                           \
         XAction_set##Name(self, str);                                         \
-        XString_delete_base((XClass*)str);                                    \
+        XClassDelete((XClass*)str);                                    \
     }
 
 XACTION_DEFINE_TEXT_SET(Text, m_text)
@@ -388,7 +388,7 @@ void XAction_setData(XAction* self, XVariant* data)
     if (!self || self->m_data == data)
         return;
     if (self->m_data)
-        XVariant_delete_base(self->m_data);
+        XClassDelete(self->m_data);
     self->m_data = data;
     xaction_sendChanged(self);
 }
@@ -530,27 +530,27 @@ static void xaction_freeStrings(XAction* self)
     if (!self)
         return;
     if (self->m_text) {
-        XString_delete_base((XClass*)self->m_text);
+        XClassDelete((XClass*)self->m_text);
         self->m_text = NULL;
     }
     if (self->m_iconText) {
-        XString_delete_base((XClass*)self->m_iconText);
+        XClassDelete((XClass*)self->m_iconText);
         self->m_iconText = NULL;
     }
     if (self->m_iconPath) {
-        XString_delete_base((XClass*)self->m_iconPath);
+        XClassDelete((XClass*)self->m_iconPath);
         self->m_iconPath = NULL;
     }
     if (self->m_toolTip) {
-        XString_delete_base((XClass*)self->m_toolTip);
+        XClassDelete((XClass*)self->m_toolTip);
         self->m_toolTip = NULL;
     }
     if (self->m_statusTip) {
-        XString_delete_base((XClass*)self->m_statusTip);
+        XClassDelete((XClass*)self->m_statusTip);
         self->m_statusTip = NULL;
     }
     if (self->m_whatsThis) {
-        XString_delete_base((XClass*)self->m_whatsThis);
+        XClassDelete((XClass*)self->m_whatsThis);
         self->m_whatsThis = NULL;
     }
 }
@@ -560,7 +560,7 @@ static void xaction_freeData(XAction* self)
     if (!self)
         return;
     if (self->m_data) {
-        XVariant_delete_base(self->m_data);
+        XClassDelete(self->m_data);
         self->m_data = NULL;
     }
 }
@@ -727,7 +727,7 @@ XAction* XAction_create_copy(const XAction* other)
     self = XAction_create();
     if (!self)
         return NULL;
-    XCopy(self, other);
+    XClassCopy(self, other);
     return self;
 }
 
@@ -740,7 +740,7 @@ XAction* XAction_create_move(XAction* other)
     self = XAction_create();
     if (!self)
         return NULL;
-    XMove(self, other);
+    XClassMove(self, other);
     return self;
 }
 

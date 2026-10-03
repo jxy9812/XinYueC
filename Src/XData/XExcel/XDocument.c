@@ -31,29 +31,29 @@ static void addDefault_cstr(XContentTypes* ct, const char* key, const char* valu
     XString* k = XString_create_utf8(key);
     XString* v = XString_create_utf8(value);
     XContentTypes_addDefault(ct, k, v);
-    XString_delete_base(k);
-    XString_delete_base(v);
+    XClassDelete(k);
+    XClassDelete(v);
 }
 static void addOverride_cstr(XContentTypes* ct, const char* key, const char* value) {
     XString* k = XString_create_utf8(key);
     XString* v = XString_create_utf8(value);
     XContentTypes_addOverride(ct, k, v);
-    XString_delete_base(k);
-    XString_delete_base(v);
+    XClassDelete(k);
+    XClassDelete(v);
 }
 static void addDocRel_cstr(XRelationships* rels, const char* type, const char* target) {
     XString* t = XString_create_utf8(type);
     XString* tg = XString_create_utf8(target);
     XRelationships_addDocumentRelationship(rels, t, tg);
-    XString_delete_base(t);
-    XString_delete_base(tg);
+    XClassDelete(t);
+    XClassDelete(tg);
 }
 static void addPkgRel_cstr(XRelationships* rels, const char* type, const char* target) {
     XString* t = XString_create_utf8(type);
     XString* tg = XString_create_utf8(target);
     XRelationships_addPackageRelationship(rels, t, tg);
-    XString_delete_base(t);
-    XString_delete_base(tg);
+    XClassDelete(t);
+    XClassDelete(tg);
 }
 static void addWorksheetRel_cstr(XRelationships* rels, const char* type,
                                  const char* target, const char* targetMode) {
@@ -61,14 +61,14 @@ static void addWorksheetRel_cstr(XRelationships* rels, const char* type,
     XString* tg = XString_create_utf8(target);
     XString* mode = targetMode ? XString_create_utf8(targetMode) : NULL;
     XRelationships_addWorksheetRelationship(rels, t, tg, mode);
-    if (t) XString_delete_base(t);
-    if (tg) XString_delete_base(tg);
-    if (mode) XString_delete_base(mode);
+    if (t) XClassDelete(t);
+    if (tg) XClassDelete(tg);
+    if (mode) XClassDelete(mode);
 }
 static bool zipAddFile_cstr(XZipWriter* zip, const char* path, const uint8_t* data, size_t size) {
     XString* p = XString_create_utf8(path);
     bool result = p && XZipWriter_addFile(zip, p, data, size);
-    if (p) XString_delete_base(p);
+    if (p) XClassDelete(p);
     return result;
 }
 
@@ -221,7 +221,7 @@ static bool saveWorksheetDrawing(XZipWriter* zip, const XWorksheet* ws,
     snprintf(drawingPath, sizeof(drawingPath), "xl/drawings/drawing%d.xml", drawingIndex);
     if (ok) ok = zipAddFile_cstr(zip, drawingPath, XByteArray_data(drawing),
         XByteArray_size_base((XContainer*)drawing));
-    XByteArray_delete_base(drawing);
+    XClassDelete(drawing);
 
     uint8_t* relData = NULL;
     size_t relLen = 0;
@@ -232,7 +232,7 @@ static bool saveWorksheetDrawing(XZipWriter* zip, const XWorksheet* ws,
         XFree_System(relData);
     } else if (ok) ok = false;
     XRelationships_clear(&drawingRels);
-    if (drawingRels.m_relationships) XVector_delete_base(drawingRels.m_relationships);
+    if (drawingRels.m_relationships) XClassDelete(drawingRels.m_relationships);
     return ok;
 }
 
@@ -276,7 +276,7 @@ static bool saveChartsheetDrawing(XZipWriter* zip, const XChartsheet* chartsheet
     snprintf(path, sizeof(path), "xl/drawings/drawing%d.xml", drawingIndex);
     ok = zipAddFile_cstr(zip, path, XByteArray_data(drawing),
         XByteArray_size_base((XContainer*)drawing));
-    XByteArray_delete_base(drawing);
+    XClassDelete(drawing);
     if (!ok) return false;
 
     XRelationships relations;
@@ -295,7 +295,7 @@ static bool saveChartsheetDrawing(XZipWriter* zip, const XChartsheet* chartsheet
     }
     if (relationData) XFree_System(relationData);
     XRelationships_clear(&relations);
-    if (relations.m_relationships) XVector_delete_base(relations.m_relationships);
+    if (relations.m_relationships) XClassDelete(relations.m_relationships);
     return ok;
 }
 
@@ -325,21 +325,21 @@ XDocument* XDocument_create(void)
         XString_Init_Utf8(name, "creator");
         XString_Init_Utf8(value, "XinYueC");
         XDocPropsCore_setProperty(self->m_docPropsCore, name, value);
-        XString_deinit_base(name);
-        XString_deinit_base(value);
+        XClassDeinit(name);
+        XClassDeinit(value);
     }
     if (self->m_docPropsApp) {
         XString_Init_Utf8(name, "Application");
         XString_Init_Utf8(value, "XinYueC");
         XDocPropsApp_setProperty(self->m_docPropsApp, name, value);
-        XString_deinit_base(name);
-        XString_deinit_base(value);
+        XClassDeinit(name);
+        XClassDeinit(value);
     }
     /* 默认添加一个工作表 */
     if (self->m_workbook) {
         XString* sheet1Name = XString_create_utf8("Sheet1");
         XWorkbook_addSheet(self->m_workbook, sheet1Name, XAbstractSheet_ST_WorkSheet);
-        XString_delete_base(sheet1Name);
+        XClassDelete(sheet1Name);
     }
     return self;
 }
@@ -363,8 +363,8 @@ void XDocument_delete(XDocument* self)
     if (self->m_workbook) XWorkbook_delete(self->m_workbook);
     if (self->m_docPropsApp) { XDocPropsApp_delete(self->m_docPropsApp); }
     if (self->m_docPropsCore) { XDocPropsCore_delete(self->m_docPropsCore); }
-    if (self->m_filePath) XString_delete_base(self->m_filePath);
-    if (self->m_packageData) XByteArray_delete_base(self->m_packageData);
+    if (self->m_filePath) XClassDelete(self->m_filePath);
+    if (self->m_packageData) XClassDelete(self->m_packageData);
     XFree_System(self);
 }
 
@@ -724,17 +724,17 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
             snprintf(partName, sizeof(partName), "xl/chartsheets/sheet%d.xml", i + 1);
             XString_Init_Utf8(name, partName);
             XContentTypes_addChartsheetName(contentTypes, name);
-            XString_deinit_base(name);
+            XClassDeinit(name);
             snprintf(partName, sizeof(partName), "xl/drawings/drawing%d.xml", i + 1);
             XString_Init_Utf8(drawingName, partName);
             XContentTypes_addDrawingName(contentTypes, drawingName);
-            XString_deinit_base(drawingName);
+            XClassDeinit(drawingName);
             if (((XChartsheet*)sheet)->m_chart) XContentTypes_addChartName(contentTypes, NULL);
         } else {
             snprintf(partName, sizeof(partName), "xl/worksheets/sheet%d.xml", i + 1);
             XString_Init_Utf8(name, partName);
             XContentTypes_addWorksheetName(contentTypes, name);
-            XString_deinit_base(name);
+            XClassDeinit(name);
             XWorksheet* worksheet = (XWorksheet*)sheet;
             size_t chartCount = worksheet->m_chartFiles
                 ? XVector_size_base((XContainer*)worksheet->m_chartFiles) : 0;
@@ -742,7 +742,7 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
                 snprintf(partName, sizeof(partName), "xl/drawings/drawing%d.xml", i + 1);
                 XString_Init_Utf8(drawingName, partName);
                 XContentTypes_addDrawingName(contentTypes, drawingName);
-                XString_deinit_base(drawingName);
+                XClassDeinit(drawingName);
             }
             for (size_t j = 0; j < chartCount; ++j)
                 XContentTypes_addChartName(contentTypes, NULL);
@@ -801,7 +801,7 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
         XRelationships_saveToXmlData(&rootRels, &relData, &relLen) &&
         zipAddFile_cstr(zip, "_rels/.rels", relData, relLen);
     if (relData) XFree_System(relData);
-    /* 手动清理，不释放栈变量 */ XRelationships_clear(&rootRels); if (rootRels.m_relationships) { XVector_delete_base(rootRels.m_relationships); rootRels.m_relationships = NULL; }
+    /* 手动清理，不释放栈变量 */ XRelationships_clear(&rootRels); if (rootRels.m_relationships) { XClassDelete(rootRels.m_relationships); rootRels.m_relationships = NULL; }
     if (!partOk) return false;
     
     /* ========== 创建 xl/_rels/workbook.xml.rels ========== */
@@ -833,8 +833,8 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
         XString_Init_Utf8(type, relationType);
         XString_Init_Utf8(target, sheetPath);
         XRelationships_addDocumentRelationship(&workbookRels, type, target);
-        XString_deinit_base(type);
-        XString_deinit_base(target);
+        XClassDeinit(type);
+        XClassDeinit(target);
         /* 将本次分配的 rId 写回 XAbstractSheet.m_rid */
         XAbstractSheet_setRid(sheet, XRelationships_lastAssignedRidFor(&workbookRels));
     }
@@ -847,7 +847,7 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
         XRelationships_saveToXmlData(&workbookRels, &relData, &relLen) &&
         zipAddFile_cstr(zip, "xl/_rels/workbook.xml.rels", relData, relLen);
     if (relData) XFree_System(relData);
-    /* 手动清理，不释放栈变量 */ XRelationships_clear(&workbookRels); if (workbookRels.m_relationships) { XVector_delete_base(workbookRels.m_relationships); workbookRels.m_relationships = NULL; }
+    /* 手动清理，不释放栈变量 */ XRelationships_clear(&workbookRels); if (workbookRels.m_relationships) { XClassDelete(workbookRels.m_relationships); workbookRels.m_relationships = NULL; }
     if (!partOk) return false;
     
     /* ========== 写入 xl/workbook.xml ========== */
@@ -939,11 +939,11 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
             XFree_System(relData);
             if (!relationOk) {
                 XRelationships_clear(&wsRels);
-                if (wsRels.m_relationships) XVector_delete_base(wsRels.m_relationships);
+                if (wsRels.m_relationships) XClassDelete(wsRels.m_relationships);
                 return false;
             }
         }
-        /* 手动清理，不释放栈变量 */ XRelationships_clear(&wsRels); if (wsRels.m_relationships) { XVector_delete_base(wsRels.m_relationships); wsRels.m_relationships = NULL; }
+        /* 手动清理，不释放栈变量 */ XRelationships_clear(&wsRels); if (wsRels.m_relationships) { XClassDelete(wsRels.m_relationships); wsRels.m_relationships = NULL; }
         if (!relationSerialized) return false;
         if (ws) {
             if (!saveWorksheetDrawing(zip, ws, i + 1, &nextImageIndex, &nextChartIndex))
@@ -1013,7 +1013,7 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
     partOk = zipAddFile_cstr(zip, "xl/theme/theme1.xml",
         (const uint8_t*)XByteArray_data(themeBuf),
         XByteArray_size_base((XContainer*)themeBuf));
-    XByteArray_delete_base(themeBuf);
+    XClassDelete(themeBuf);
     if (!partOk) return false;
     }
     
@@ -1040,12 +1040,12 @@ static bool documentSaveToZip(const XDocument* self, XZipWriter* zip) {
     if (worksheetCount > 0) {
         XString_Init_Utf8(worksheetHeading, "Worksheets");
         XDocPropsApp_addHeadingPair(appProperties, worksheetHeading, worksheetCount);
-        XString_deinit_base(worksheetHeading);
+        XClassDeinit(worksheetHeading);
     }
     if (chartsheetCount > 0) {
         XString_Init_Utf8(chartHeading, "Charts");
         XDocPropsApp_addHeadingPair(appProperties, chartHeading, chartsheetCount);
-        XString_deinit_base(chartHeading);
+        XClassDeinit(chartHeading);
     }
     for (int pass = 0; pass < 2; ++pass) {
         for (int i = 0; i < sheetCount; ++i) {
@@ -1107,7 +1107,7 @@ static XByteArray* zipFileDataUtf8(const XZipReader* zip, const char* path)
     XString* pathString = XString_create_utf8(path);
     if (!pathString) return NULL;
     XByteArray* result = XZipReader_fileData(zip, pathString);
-    XString_delete_base(pathString);
+    XClassDelete(pathString);
     return result;
 }
 
@@ -1118,12 +1118,12 @@ static XString* sheetPathFromReader(const XZipReader* zip, const XAbstractSheet*
     if (!relXml) return NULL;
     XRelationships* relationships = XRelationships_create();
     if (!relationships) {
-        XByteArray_delete_base(relXml);
+        XClassDelete(relXml);
         return NULL;
     }
     bool loaded = XRelationships_loadFromXmlData(relationships, XByteArray_data(relXml),
         XByteArray_size_base(relXml));
-    XByteArray_delete_base(relXml);
+    XClassDelete(relXml);
     if (!loaded) {
         XRelationships_delete(relationships);
         return NULL;
@@ -1131,7 +1131,7 @@ static XString* sheetPathFromReader(const XZipReader* zip, const XAbstractSheet*
 
     XString* rid = XString_create_fmt_utf8("rId%d", sheet->m_rid);
     XlsxRelationship* relationship = XRelationships_getRelationshipById(relationships, rid);
-    XString_delete_base(rid);
+    XClassDelete(rid);
     XString* result = NULL;
     if (relationship && relationship->m_target) {
         const char* target = XString_toUtf8(relationship->m_target);
@@ -1157,7 +1157,7 @@ static bool alignWorkbookSheetTypesFromRelationships(XWorkbook* workbook,
     XRelationships* relationships = XRelationships_create();
     bool ok = relationships && XRelationships_loadFromXmlData(relationships,
         XByteArray_data(xml), XByteArray_size_base((XContainer*)xml));
-    XByteArray_delete_base(xml);
+    XClassDelete(xml);
     if (!ok) {
         if (relationships) XRelationships_delete(relationships);
         return false;
@@ -1169,7 +1169,7 @@ static bool alignWorkbookSheetTypesFromRelationships(XWorkbook* workbook,
         XString* rid = XString_create_fmt_utf8("rId%d", oldSheet->m_rid);
         XlsxRelationship* relationship = rid
             ? XRelationships_getRelationshipById(relationships, rid) : NULL;
-        if (rid) XString_delete_base(rid);
+        if (rid) XClassDelete(rid);
         bool isChartsheet = relationship && relationship->m_type &&
             XString_endsWith_utf8(relationship->m_type, "chartsheet", XChar_CaseSensitive);
         XAbstractSheet_SheetType expected = isChartsheet
@@ -1202,7 +1202,7 @@ static bool loadSharedStringsFromReader(const XZipReader* zip, XStringList* list
     if (!xml) return true;
     bool result = XReadSax_loadSharedStringsXml(XByteArray_data(xml),
         XByteArray_size_base(xml), list);
-    XByteArray_delete_base(xml);
+    XClassDelete(xml);
     return result;
 }
 
@@ -1251,7 +1251,7 @@ static bool append_loaded_image(XWorksheet* worksheet, int row, int column,
     if (!worksheet || row <= 0 || column <= 0 || !data || size == 0 || !mime) return false;
     XString_Init_Utf8(mimeString, mime);
     XMediaFile* media = XMediaFile_create_data(data, size, suffix, mimeString);
-    XString_deinit_base(mimeString);
+    XClassDeinit(mimeString);
     if (!media) return false;
     XWorksheet_ImagePosition position = { row, column };
     if (!XVector_push_back_2(worksheet->m_mediaFiles, &media, 1)) {
@@ -1284,7 +1284,7 @@ static XRelationships* loadPartRelationships(const XZipReader* zip, const XStrin
     XRelationships* relationships = XRelationships_create();
     bool ok = relationships && XRelationships_loadFromXmlData(relationships,
         XByteArray_data(xml), XByteArray_size_base((XContainer*)xml));
-    XByteArray_delete_base(xml);
+    XClassDelete(xml);
     if (!ok) {
         if (relationships) XRelationships_delete(relationships);
         return NULL;
@@ -1297,20 +1297,20 @@ static XString* resolvePartTarget(const XString* sourcePart, const XString* targ
     const char* source = sourcePart ? XString_toUtf8(sourcePart) : NULL;
     XString* relative = target ? XString_create_copy(target) : NULL;
     if (!source || !relative || XString_size_base(relative) == 0) {
-        if (relative) XString_delete_base(relative);
+        if (relative) XClassDelete(relative);
         return NULL;
     }
     const char* relativeText = XString_toUtf8(relative);
     if (XString_startsWith_utf8(relative, "/", XChar_CaseSensitive)) {
         XString* result = XString_create_utf8(relativeText + 1);
-        XString_delete_base(relative);
+        XClassDelete(relative);
         return result;
     }
     const char* slash = strrchr(source, '/');
     size_t directoryLength = slash ? (size_t)(slash - source) : 0;
     char directory[512];
     if (directoryLength >= sizeof(directory)) {
-        XString_delete_base(relative);
+        XClassDelete(relative);
         return NULL;
     }
     memcpy(directory, source, directoryLength);
@@ -1320,13 +1320,13 @@ static XString* resolvePartTarget(const XString* sourcePart, const XString* targ
         if (parent) *parent = '\0';
         else directory[0] = '\0';
         if (!XString_slice(relative, 3)) {
-            XString_delete_base(relative);
+            XClassDelete(relative);
             return NULL;
         }
     }
     while (XString_startsWith_utf8(relative, "./", XChar_CaseSensitive)) {
         if (!XString_slice(relative, 2)) {
-            XString_delete_base(relative);
+            XClassDelete(relative);
             return NULL;
         }
     }
@@ -1334,7 +1334,7 @@ static XString* resolvePartTarget(const XString* sourcePart, const XString* targ
     char result[1024];
     if (directory[0]) snprintf(result, sizeof(result), "%s/%s", directory, relativeText ? relativeText : "");
     else snprintf(result, sizeof(result), "%s", relativeText ? relativeText : "");
-    XString_delete_base(relative);
+    XClassDelete(relative);
     return XString_create_utf8(result);
 }
 
@@ -1347,7 +1347,7 @@ static XString* relatedPartPath(const XZipReader* zip, const XString* sourcePart
     int count = 0;
     XlsxRelationship** matches = XRelationships_documentRelationships(
         relationships, type, &count);
-    XString_deinit_base(type);
+    XClassDeinit(type);
     XString* result = count > 0 && matches[0] && matches[0]->m_target
         ? resolvePartTarget(sourcePart, matches[0]->m_target) : NULL;
     if (matches) XFree_System(matches);
@@ -1363,23 +1363,23 @@ static bool loadChartsheetFromReader(const XZipReader* zip, XChartsheet* chartsh
     if (!sheetXml) return false;
     bool ok = XChartsheet_loadFromXmlData(chartsheet, XByteArray_data(sheetXml),
         XByteArray_size_base((XContainer*)sheetXml));
-    XByteArray_delete_base(sheetXml);
+    XClassDelete(sheetXml);
     if (!ok) return false;
     XString* drawingPath = relatedPartPath(zip, sheetPath, "drawing");
     if (!drawingPath) return false;
     XByteArray* drawingXml = XZipReader_fileData(zip, drawingPath);
     XString* chartPath = drawingXml ? relatedPartPath(zip, drawingPath, "chart") : NULL;
-    if (drawingXml) XByteArray_delete_base(drawingXml);
-    XString_delete_base(drawingPath);
+    if (drawingXml) XClassDelete(drawingXml);
+    XClassDelete(drawingPath);
     if (!chartPath) return false;
     XByteArray* chartXml = XZipReader_fileData(zip, chartPath);
-    XString_delete_base(chartPath);
+    XClassDelete(chartPath);
     if (!chartXml) return false;
     XExcelChart* chart = XExcelChart_create(&chartsheet->m_base,
         XAbstractOOXmlFile_F_LoadFromExists);
     ok = chart && XExcelChart_loadFromXmlData(chart, XByteArray_data(chartXml),
         XByteArray_size_base((XContainer*)chartXml));
-    XByteArray_delete_base(chartXml);
+    XClassDelete(chartXml);
     if (!ok) {
         if (chart) XExcelChart_delete(chart);
         return false;
@@ -1434,27 +1434,27 @@ static bool loadWorksheetImagesFromReader(const XZipReader* zip, XWorksheet* wor
     if (!drawingXml) return true;
     XByteArray* relationshipsXml = zipFileDataUtf8(zip, relationshipsPath);
     if (!relationshipsXml) {
-        XByteArray_delete_base(drawingXml);
+        XClassDelete(drawingXml);
         return false;
     }
     XRelationships* relationships = XRelationships_create();
     bool ok = relationships && XRelationships_loadFromXmlData(relationships,
         XByteArray_data(relationshipsXml), XByteArray_size_base((XContainer*)relationshipsXml));
-    XByteArray_delete_base(relationshipsXml);
+    XClassDelete(relationshipsXml);
     if (!ok) {
         if (relationships) XRelationships_delete(relationships);
-        XByteArray_delete_base(drawingXml);
+        XClassDelete(drawingXml);
         return false;
     }
 
     XXmlStreamReader* reader = XXmlStreamReader_create();
     if (!reader) {
         XRelationships_delete(relationships);
-        XByteArray_delete_base(drawingXml);
+        XClassDelete(drawingXml);
         return false;
     }
     XXmlStreamReader_addData(reader, drawingXml);
-    XByteArray_delete_base(drawingXml);
+    XClassDelete(drawingXml);
     int row = 0;
     int column = 0;
     while (!XXmlStreamReader_atEnd(reader)) {
@@ -1477,7 +1477,7 @@ static bool loadWorksheetImagesFromReader(const XZipReader* zip, XWorksheet* wor
             XString_Init_Utf8(embedName, "r:embed");
             const XString* rid = XXmlStreamAttributes_value(
                 XXmlStreamReader_attributes(reader), embedName);
-            XString_deinit_base(embedName);
+            XClassDeinit(embedName);
             XlsxRelationship* relationship = rid
                 ? XRelationships_getRelationshipById(relationships, rid) : NULL;
             const char* target = relationship && relationship->m_target
@@ -1496,18 +1496,18 @@ static bool loadWorksheetImagesFromReader(const XZipReader* zip, XWorksheet* wor
             XString* suffix = dot ? XString_create_utf8(dot + 1) : NULL;
             if (!mediaData || !dot || !suffix || !append_loaded_image(worksheet, row, column,
                     XByteArray_data(mediaData), XByteArray_size_base((XContainer*)mediaData), suffix)) {
-                if (suffix) XString_delete_base(suffix);
-                if (mediaData) XByteArray_delete_base(mediaData);
+                if (suffix) XClassDelete(suffix);
+                if (mediaData) XClassDelete(mediaData);
                 ok = false;
                 break;
             }
-            XString_delete_base(suffix);
-            XByteArray_delete_base(mediaData);
+            XClassDelete(suffix);
+            XClassDelete(mediaData);
         } else if (XString_equals_utf8(name, "chart", XChar_CaseSensitive)) {
             XString_Init_Utf8(idName, "r:id");
             const XString* rid = XXmlStreamAttributes_value(
                 XXmlStreamReader_attributes(reader), idName);
-            XString_deinit_base(idName);
+            XClassDeinit(idName);
             XlsxRelationship* relationship = rid
                 ? XRelationships_getRelationshipById(relationships, rid) : NULL;
             const char* target = relationship && relationship->m_target
@@ -1527,7 +1527,7 @@ static bool loadWorksheetImagesFromReader(const XZipReader* zip, XWorksheet* wor
             if (!chart || !XExcelChart_loadFromXmlData(chart, XByteArray_data(chartData),
                     XByteArray_size_base((XContainer*)chartData))) {
                 if (chart) XExcelChart_delete(chart);
-                if (chartData) XByteArray_delete_base(chartData);
+                if (chartData) XClassDelete(chartData);
                 ok = false;
                 break;
             }
@@ -1535,15 +1535,15 @@ static bool loadWorksheetImagesFromReader(const XZipReader* zip, XWorksheet* wor
                 XExcelChart_setPosition(chart, row, column, 0, 0);
             if (!XVector_push_back_2(worksheet->m_chartFiles, &chart, 1)) {
                 XExcelChart_delete(chart);
-                XByteArray_delete_base(chartData);
+                XClassDelete(chartData);
                 ok = false;
                 break;
             }
-            XByteArray_delete_base(chartData);
+            XClassDelete(chartData);
         }
     }
     if (XXmlStreamReader_hasError(reader)) ok = false;
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     XRelationships_delete(relationships);
     return ok;
 }
@@ -1555,41 +1555,41 @@ static bool documentLoadFromReader(XDocument* self, XZipReader* zip)
     if (!workbookXml) return false;
     bool result = XWorkbook_loadFromXmlData(self->m_workbook, XByteArray_data(workbookXml),
         XByteArray_size_base(workbookXml));
-    XByteArray_delete_base(workbookXml);
+    XClassDelete(workbookXml);
     if (!result || !alignWorkbookSheetTypesFromRelationships(self->m_workbook, zip)) return false;
 
     XByteArray* coreXml = zipFileDataUtf8(zip, "docProps/core.xml");
     if (coreXml) {
         result = XDocPropsCore_loadFromXmlData(self->m_docPropsCore,
             XByteArray_data(coreXml), XByteArray_size_base((XContainer*)coreXml));
-        XByteArray_delete_base(coreXml);
+        XClassDelete(coreXml);
         if (!result) return false;
     }
     XByteArray* appXml = zipFileDataUtf8(zip, "docProps/app.xml");
     if (appXml) {
         result = XDocPropsApp_loadFromXmlData(self->m_docPropsApp,
             XByteArray_data(appXml), XByteArray_size_base((XContainer*)appXml));
-        XByteArray_delete_base(appXml);
+        XClassDelete(appXml);
         if (!result) return false;
     }
     XByteArray* stylesXml = zipFileDataUtf8(zip, "xl/styles.xml");
     if (stylesXml) {
         result = XStyles_loadFromXmlData(self->m_workbook->m_styles,
             XByteArray_data(stylesXml), XByteArray_size_base((XContainer*)stylesXml));
-        XByteArray_delete_base(stylesXml);
+        XClassDelete(stylesXml);
         if (!result) return false;
     }
     XByteArray* themeXml = zipFileDataUtf8(zip, "xl/theme/theme1.xml");
     if (themeXml) {
         result = XTheme_loadFromXmlData(self->m_workbook->m_theme,
             XByteArray_data(themeXml), XByteArray_size_base((XContainer*)themeXml));
-        XByteArray_delete_base(themeXml);
+        XClassDelete(themeXml);
         if (!result) return false;
     }
 
     XStringList* sharedStrings = XStringList_create();
     if (!sharedStrings || !loadSharedStringsFromReader(zip, sharedStrings)) {
-        if (sharedStrings) XStringList_delete_base(sharedStrings);
+        if (sharedStrings) XClassDelete(sharedStrings);
         return false;
     }
 
@@ -1601,26 +1601,26 @@ static bool documentLoadFromReader(XDocument* self, XZipReader* zip)
         if (!sheetPath) { result = false; break; }
         if (sheet->m_sheetType == XAbstractSheet_ST_ChartSheet) {
             bool chartResult = loadChartsheetFromReader(zip, (XChartsheet*)sheet, sheetPath);
-            XString_delete_base(sheetPath);
+            XClassDelete(sheetPath);
             if (!chartResult) { result = false; break; }
             continue;
         }
         XByteArray* sheetXml = XZipReader_fileData(zip, sheetPath);
-        if (!sheetXml) { XString_delete_base(sheetPath); result = false; break; }
+        if (!sheetXml) { XClassDelete(sheetPath); result = false; break; }
         XWorksheet* worksheet = (XWorksheet*)sheet;
         bool sheetResult = XWorksheet_loadFromXmlData(worksheet, XByteArray_data(sheetXml),
             XByteArray_size_base((XContainer*)sheetXml));
-        XByteArray_delete_base(sheetXml);
+        XClassDelete(sheetXml);
         if (!sheetResult || !resolveWorksheetSharedStrings(worksheet, sharedStrings) ||
             !resolveWorksheetHyperlinks(zip, worksheet, sheetPath) ||
             !loadWorksheetImagesFromReader(zip, worksheet, i)) {
-            XString_delete_base(sheetPath);
+            XClassDelete(sheetPath);
             result = false;
             break;
         }
-        XString_delete_base(sheetPath);
+        XClassDelete(sheetPath);
     }
-    XStringList_delete_base(sharedStrings);
+    XClassDelete(sharedStrings);
     if (!result) return false;
     self->m_isLoaded = true;
     self->m_isModified = false;
@@ -1632,7 +1632,7 @@ static void parse_sheet_names_from_zip(const char* zipPath, SheetNameList* out)
     out->count = 0;
     XString* zipPathStr = XString_create_utf8(zipPath);
     XZipReader* zip = XZipReader_create(zipPathStr);
-    XString_delete_base(zipPathStr);
+    XClassDelete(zipPathStr);
     if (!zip) { XPrintf("[LOAD_DBG] XZipReader_create failed\n"); return; }
 
     /* 调试：列出 ZIP 中所有文件 */
@@ -1650,7 +1650,7 @@ static void parse_sheet_names_from_zip(const char* zipPath, SheetNameList* out)
 
     XString* wbPathStr = XString_create_utf8("xl/workbook.xml");
     XByteArray* wbXml = XZipReader_fileData(zip, wbPathStr);
-    XString_delete_base(wbPathStr);
+    XClassDelete(wbPathStr);
     XZipReader_delete(zip);
     if (!wbXml) { XPrintf("[LOAD_DBG] workbook.xml not found in zip\n"); return; }
 
@@ -1683,7 +1683,7 @@ static void parse_sheet_names_from_zip(const char* zipPath, SheetNameList* out)
             sp++;
         }
     }
-    XByteArray_delete_base(wbXml);
+    XClassDelete(wbXml);
 }
 
 bool XDocument_load(XDocument* self) {
@@ -1701,7 +1701,7 @@ static char* find_sheet_path_in_zip(const char* zipPath, const XString* sheetNam
     if (!zipPath) return NULL;
     XString* zipPathStr = XString_create_utf8(zipPath);
     XZipReader* zip = XZipReader_create(zipPathStr);
-    XString_delete_base(zipPathStr);
+    XClassDelete(zipPathStr);
     if (!zip) return NULL;
 
     /* 读取 workbook.xml.rels 获取 rId -> path */
@@ -1712,7 +1712,7 @@ static char* find_sheet_path_in_zip(const char* zipPath, const XString* sheetNam
 
     XString* relsPathStr = XString_create_utf8("xl/_rels/workbook.xml.rels");
     XByteArray* relXml = XZipReader_fileData(zip, relsPathStr);
-    XString_delete_base(relsPathStr);
+    XClassDelete(relsPathStr);
     if (relXml) {
         char* relStr = (char*)XByteArray_data(relXml);
         size_t relLen = XByteArray_size_base(relXml);
@@ -1756,13 +1756,13 @@ static char* find_sheet_path_in_zip(const char* zipPath, const XString* sheetNam
                 rp++;
             }
         }
-        XByteArray_delete_base(relXml);
+        XClassDelete(relXml);
     }
 
     /* 读取 workbook.xml 找 sheet */
     XString* wbPathStr = XString_create_utf8("xl/workbook.xml");
     XByteArray* wbXml = XZipReader_fileData(zip, wbPathStr);
-    XString_delete_base(wbPathStr);
+    XClassDelete(wbPathStr);
     XZipReader_delete(zip);
     if (!wbXml) return NULL;
 
@@ -1813,14 +1813,14 @@ static char* find_sheet_path_in_zip(const char* zipPath, const XString* sheetNam
                             }
                         }
                     }
-                    if (tmpRidStr) XString_delete_base(tmpRidStr);
+                    if (tmpRidStr) XClassDelete(tmpRidStr);
                 }
             }
         }
         sp++; currentIdx++;
     }
 
-    XByteArray_delete_base(wbXml);
+    XClassDelete(wbXml);
     return result;
 }
 
@@ -1840,7 +1840,7 @@ bool XDocument_readSheetSax(XDocument* self, const XString* sheetName,
     /* 查找 sheet path */
     char* sheetPath = find_sheet_path_in_zip(zipPath, sheetName, -1);
     if (!sheetPath) {
-        XStringList_delete_base(sharedStrings);
+        XClassDelete(sharedStrings);
         return false;
     }
 
@@ -1848,7 +1848,7 @@ bool XDocument_readSheetSax(XDocument* self, const XString* sheetName,
     bool ok = XReadSax_readSheetFromZip(zipPath, sheetPath, sharedStrings, opt, onCell, userData);
 
     /* 释放共享字符串 - XStringList 的值类型 deinit 由 delete_base 自动处理 */
-    XStringList_delete_base(sharedStrings);
+    XClassDelete(sharedStrings);
     XFree_System(sheetPath);
     (void)self;  /* suppress unused warning */
     return ok;
@@ -1867,14 +1867,14 @@ bool XDocument_readSheetSaxByIndex(XDocument* self, int sheetIndex,
 
     char* sheetPath = find_sheet_path_in_zip(zipPath, NULL, sheetIndex);
     if (!sheetPath) {
-        XStringList_delete_base(sharedStrings);
+        XClassDelete(sharedStrings);
         return false;
     }
 
     bool ok = XReadSax_readSheetFromZip(zipPath, sheetPath, sharedStrings, opt, onCell, userData);
 
     /* 释放共享字符串 - XStringList 的值类型 deinit 由 delete_base 自动处理 */
-    XStringList_delete_base(sharedStrings);
+    XClassDelete(sharedStrings);
     XFree_System(sheetPath);
     return ok;
 }
@@ -1938,7 +1938,7 @@ bool XDocument_saveAsCsv(const XDocument* self, const XString* csvFileName)
     /* 打开文件 */
     XFile* csvFile = XFile_create_2((XString*)csvFileName);
     if (!csvFile || !XIODevice_open_base((XIODevice*)csvFile, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        if (csvFile) XClass_delete_base((XClass*)csvFile);
+        if (csvFile) XClassDelete((XClass*)csvFile);
         for (int r = 0; r < maxRow; r++) {
             if (matrix[r]) {
                 for (int c = 0; c < maxCol; c++) {
@@ -1955,7 +1955,7 @@ bool XDocument_saveAsCsv(const XDocument* self, const XString* csvFileName)
     XByteArray* csvBuf = XByteArray_create();
     if (!csvBuf) {
         XIODevice_close_base((XIODevice*)csvFile);
-        XClass_delete_base((XClass*)csvFile);
+        XClassDelete((XClass*)csvFile);
         for (int r = 0; r < maxRow; ++r) {
             for (int c = 0; c < maxCol; ++c) if (matrix[r][c]) XFree_System(matrix[r][c]);
             XFree_System(matrix[r]);
@@ -1996,9 +1996,9 @@ bool XDocument_saveAsCsv(const XDocument* self, const XString* csvFileName)
     int64_t csvLength = (int64_t)XByteArray_size_base((XContainer*)csvBuf);
     bool result = XIODevice_write_1((XIODevice*)csvFile,
         (const char*)XByteArray_data(csvBuf), csvLength) == csvLength;
-    XByteArray_delete_base(csvBuf);
+    XClassDelete(csvBuf);
     XIODevice_close_base((XIODevice*)csvFile);
-    XClass_delete_base((XClass*)csvFile);
+    XClassDelete((XClass*)csvFile);
     XFree_System(matrix);
     (void)self;  /* suppress unused */
     return result;
@@ -2132,8 +2132,8 @@ bool XDocument_copyStyle(const XString* fromPath, const XString* toPath)
     XString* toPathStr = XString_create_copy(toPath);
     XString* tempPathStr = XString_create();
     if (!toPathStr || !tempPathStr || !XSaveFile_generateTempFileName(toPathStr, tempPathStr)) {
-        if (toPathStr) XString_delete_base(toPathStr);
-        if (tempPathStr) XString_delete_base(tempPathStr);
+        if (toPathStr) XClassDelete(toPathStr);
+        if (tempPathStr) XClassDelete(tempPathStr);
         XZipReader_delete(fromZip);
         XZipReader_delete(toZip);
         return false;
@@ -2143,8 +2143,8 @@ bool XDocument_copyStyle(const XString* fromPath, const XString* toPath)
         XZipReader_delete(fromZip); 
         XZipReader_delete(toZip); 
         XFile_remove_static(tempPathStr);
-        XString_delete_base(toPathStr);
-        XString_delete_base(tempPathStr);
+        XClassDelete(toPathStr);
+        XClassDelete(tempPathStr);
         return false; 
     }
 
@@ -2218,7 +2218,7 @@ bool XDocument_copyStyle(const XString* fromPath, const XString* toPath)
                 const uint8_t* d = XByteArray_data(origData);
                 size_t dlen = XByteArray_size_base(origData);
                 XZipWriter_addFile(tempZip, *ppPath, d, dlen);
-                XByteArray_delete_base(origData);
+                XClassDelete(origData);
             } else {
                 /* 如果目标文件中没有，使用空数据 */
                 XZipWriter_addFile(tempZip, *ppPath, (const uint8_t*)"", 0);
@@ -2227,8 +2227,8 @@ bool XDocument_copyStyle(const XString* fromPath, const XString* toPath)
     }
 
 cleanup:
-    if (fromPaths) XStringList_delete_base(fromPaths);
-    if (toPaths) XStringList_delete_base(toPaths);
+    if (fromPaths) XClassDelete(fromPaths);
+    if (toPaths) XClassDelete(toPaths);
     XZipWriter_delete(tempZip);
     XZipReader_delete(fromZip);
     XZipReader_delete(toZip);
@@ -2240,8 +2240,8 @@ cleanup:
         XFile_remove_static(tempPathStr);
     }
 
-    XString_delete_base(toPathStr);
-    XString_delete_base(tempPathStr);
+    XClassDelete(toPathStr);
+    XClassDelete(tempPathStr);
     return ok;
 }
 
@@ -2286,19 +2286,19 @@ bool XDocument_changeImage(XDocument* self, int imageIndex, const XString* newIm
     } else if (XString_equals_utf8(extStr, "png", XChar_CaseInsensitive)) {
         mimeType = "image/png";
     }
-    XString_delete_base(extStr);
+    XClassDelete(extStr);
 
     /* 读取新图片文件 */
     XFile* imgFile = XFile_create_2((XString*)newImagePath);
     if (!imgFile || !XIODevice_open_base((XIODevice*)imgFile, XIODevice_ReadOnly)) {
-        if (imgFile) XClass_delete_base((XClass*)imgFile);
+        if (imgFile) XClassDelete((XClass*)imgFile);
         return false;
     }
     XByteArray* imgData = XIODevice_readAll_3((XIODevice*)imgFile);
     XIODevice_close_base((XIODevice*)imgFile);
-    XClass_delete_base((XClass*)imgFile);
+    XClassDelete((XClass*)imgFile);
     if (!imgData || XByteArray_size_base(imgData) == 0) {
-        if (imgData) XByteArray_delete_base(imgData);
+        if (imgData) XClassDelete(imgData);
         return false;
     }
     uint8_t* imageData = XByteArray_data(imgData);
@@ -2309,12 +2309,12 @@ bool XDocument_changeImage(XDocument* self, int imageIndex, const XString* newIm
         XString* extXStr = XString_create_utf8(ext);
         XString* mimeXStr = XString_create_utf8(mimeType);
         XMediaFile_set(mediaFile, imageData, fileSize, extXStr, mimeXStr);
-        XString_delete_base(extXStr);
-        XString_delete_base(mimeXStr);
+        XClassDelete(extXStr);
+        XClassDelete(mimeXStr);
     }
     XMediaFile_setFileName(mediaFile, newImagePath);
 
-    XByteArray_delete_base(imgData);
+    XClassDelete(imgData);
     self->m_isModified = true;
     return true;
 }
@@ -2334,7 +2334,7 @@ XDocument* XDocument_createFromDevice(struct XIODevice* device)
     XByteArray* package = XIODevice_readAll_3(device);
     if (openedHere) XIODevice_close_base(device);
     if (!package || XByteArray_size_base(package) == 0) {
-        if (package) XByteArray_delete_base(package);
+        if (package) XClassDelete(package);
         return NULL;
     }
 
@@ -2343,7 +2343,7 @@ XDocument* XDocument_createFromDevice(struct XIODevice* device)
     if (!self || !documentLoadFromReader(self, zip)) {
         if (self) XDocument_delete(self);
         if (zip) XZipReader_delete(zip);
-        XByteArray_delete_base(package);
+        XClassDelete(package);
         return NULL;
     }
     self->m_packageData = package;
@@ -2371,15 +2371,15 @@ void XDocument_setDocumentProperty_utf8(XDocument* self, const char* name, const
     XString* n = name ? XString_create_utf8(name) : NULL;
     XString* p = property ? XString_create_utf8(property) : NULL;
     XDocument_setDocumentProperty(self, n, p);
-    if (n) XString_delete_base(n);
-    if (p) XString_delete_base(p);
+    if (n) XClassDelete(n);
+    if (p) XClassDelete(p);
 }
 
 bool XDocument_addSheet_utf8(XDocument* self, const char* name, XAbstractSheet_SheetType type)
 {
     XString* s = name ? XString_create_utf8(name) : NULL;
     bool result = XDocument_addSheet(self, s, type);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }
 
@@ -2387,7 +2387,7 @@ bool XDocument_selectSheet_utf8(XDocument* self, const char* name)
 {
     XString* s = name ? XString_create_utf8(name) : NULL;
     bool result = XDocument_selectSheet(self, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }
 
@@ -2396,8 +2396,8 @@ bool XDocument_renameSheet_utf8(XDocument* self, const char* oldName, const char
     XString* o = oldName ? XString_create_utf8(oldName) : NULL;
     XString* n = newName ? XString_create_utf8(newName) : NULL;
     bool result = XDocument_renameSheet(self, o, n);
-    if (o) XString_delete_base(o);
-    if (n) XString_delete_base(n);
+    if (o) XClassDelete(o);
+    if (n) XClassDelete(n);
     return result;
 }
 
@@ -2405,7 +2405,7 @@ bool XDocument_deleteSheet_utf8(XDocument* self, const char* name)
 {
     XString* s = name ? XString_create_utf8(name) : NULL;
     bool result = XDocument_deleteSheet(self, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }
 
@@ -2416,10 +2416,10 @@ bool XDocument_defineName_utf8(XDocument* self, const char* name, const char* fo
     XString* c = comment ? XString_create_utf8(comment) : NULL;
     XString* s = scope ? XString_create_utf8(scope) : NULL;
     bool result = XDocument_defineName(self, n, f, c, s);
-    if (n) XString_delete_base(n);
-    if (f) XString_delete_base(f);
-    if (c) XString_delete_base(c);
-    if (s) XString_delete_base(s);
+    if (n) XClassDelete(n);
+    if (f) XClassDelete(f);
+    if (c) XClassDelete(c);
+    if (s) XClassDelete(s);
     return result;
 }
 
@@ -2427,7 +2427,7 @@ bool XDocument_saveAs_utf8(const XDocument* self, const char* xlsxName)
 {
     XString* s = xlsxName ? XString_create_utf8(xlsxName) : NULL;
     bool result = XDocument_saveAs(self, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }
 
@@ -2435,7 +2435,7 @@ int XDocument_insertImage_utf8(XDocument* self, int row, int col, const char* im
 {
     XString* s = imagePath ? XString_create_utf8(imagePath) : NULL;
     int result = XDocument_insertImage(self, row, col, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }
 
@@ -2443,6 +2443,6 @@ const XString* XDocument_documentProperty_utf8(const XDocument* self, const char
 {
     XString* s = name ? XString_create_utf8(name) : NULL;
     const XString* result = XDocument_documentProperty(self, s);
-    if (s) XString_delete_base(s);
+    if (s) XClassDelete(s);
     return result;
 }

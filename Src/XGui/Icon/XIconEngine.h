@@ -91,13 +91,11 @@ void XIconEngine_init(XIconEngine* self);
  * @brief 释放图标引擎实例资源的基类调度接口。
  * @param self 待释放的图标引擎指针。
  */
-#define XIconEngine_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /**
  * @brief 删除堆上分配的图标引擎实例。
  * @param self 待删除的图标引擎指针。
  */
-#define XIconEngine_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief 绘制图标。
@@ -156,7 +154,7 @@ void XIconEngine_addFile_base(XIconEngine* self, const XString* fileName,
 /**
  * @brief 获取引擎的缓存键。
  * @param self 图标引擎指针。
- * @return 新建的引擎键字符串；调用方使用 XString_delete_base() 释放。
+ * @return 新建的引擎键字符串；调用方使用 XClassDelete() 释放。
  */
 XString* XIconEngine_key_base(const XIconEngine* self);
 
@@ -196,7 +194,7 @@ void XIconEngine_availableSizes_base(const XIconEngine* self, XIconMode mode,
 /**
  * @brief 获取图标名称。
  * @param self 图标引擎指针。
- * @return 新建的图标名称字符串；调用方使用 XString_delete_base() 释放。
+ * @return 新建的图标名称字符串；调用方使用 XClassDelete() 释放。
  */
 XString* XIconEngine_iconName_base(const XIconEngine* self);
 

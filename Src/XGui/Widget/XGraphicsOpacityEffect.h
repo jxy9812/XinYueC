@@ -56,10 +56,6 @@ void XGraphicsOpacityEffect_init(XGraphicsOpacityEffect* self);
  * @return     新对象指针；失败返回 NULL。
  */
 XGraphicsOpacityEffect* XGraphicsOpacityEffect_create_ex(XMemoryType memory);
-#define XGraphicsOpacityEffect_deinit_base(self) \
-    XGraphicsEffect_deinit_base((XGraphicsEffect*)(self))
-#define XGraphicsOpacityEffect_delete_base(self) \
-    XGraphicsEffect_delete_base((XGraphicsEffect*)(self))
 
 /**
  * @brief      获取不透明度（对标 QGraphicsOpacityEffect::opacity）。

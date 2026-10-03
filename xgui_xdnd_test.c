@@ -74,11 +74,11 @@ static void xdnd_dropEvent(XWindow* self, XEvent* event)
     probe->dropPosition = XDropEvent_position(drop);
     if (mime) {
         strncpy(probe->mime, XString_toUtf8(mime), sizeof(probe->mime) - 1u);
-        XString_delete_base((XClass*)mime);
+        XClassDelete((XClass*)mime);
     }
     if (data) {
         strncpy(probe->data, XString_toUtf8(data), sizeof(probe->data) - 1u);
-        XString_delete_base((XClass*)data);
+        XClassDelete((XClass*)data);
     }
     XEvent_accept(event);
 }
@@ -327,9 +327,9 @@ done_source:
     XDestroyWindow(sourceDisplay, source);
     XCloseDisplay(sourceDisplay);
 done_target:
-    if (target) XWindow_delete_base((XClass*)target);
+    if (target) XClassDelete((XClass*)target);
 done_app:
-    XGuiApplication_delete_base(app);
+    XClassDelete(app);
     return result;
 }
 

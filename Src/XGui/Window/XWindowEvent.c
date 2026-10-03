@@ -8,6 +8,13 @@
  *               的释放路径，仅重载 Clone 克隆基类字段；
  *             - 带 XRegion 的事件（Expose/Paint）重载 Deinit 释放内部区域，
  *               重载 Clone 深拷贝区域，保证事件队列/副本生命周期独立。
+ *             内存分配器口径（全部事件类统一）：事件本体、克隆件与内部
+ *             动态成员（XTouchEvent 的 m_points 触点数组等）一律沿对象
+ *             自身保存的内存分配器族（Class_Memory，create_ex 的 memory
+ *             参数决定）分配、释放与记账（Class_Memory(copy) 继承源事件
+ *             的方法表），不直接调用 XMalloc_System/XFree_System 等固定
+ *             系统分配函数，也不再硬编码 XCLASS_DEFAULT_MEMORY_TYPE——
+ *             事件在内存池，其全部附属内存都留在同一分配器族内配对。
  *             本文件不依赖任何平台 API，嵌入式可用。
  * @note       模块总开关 XWINDOWEVENT_ON 定义于 XGuiConfig.h；置 0 时
  *             本文件实现体整体裁剪。
@@ -48,7 +55,10 @@ static void xevent_clone_base(XEvent* dst, const XEvent* src)
 
 static XEvent* VXResizeEvent_clone(const XResizeEvent* event)
 {
-    XResizeEvent* copy = XClass_Malloc(XResizeEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账：源在内存池，
+       副本也留内存池，不再硬编码 XClass_Malloc 的系统堆默认值。 */
+    XResizeEvent* copy =
+        (XResizeEvent*)Class_Memory(event)->malloc(sizeof(XResizeEvent));
     if (!copy) return NULL;
     XClassSetVtable(copy, XResizeEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
@@ -56,7 +66,7 @@ static XEvent* VXResizeEvent_clone(const XResizeEvent* event)
     copy->m_oldSize = event->m_oldSize;
     copy->m_normalSize = event->m_normalSize;
     copy->m_normalOldSize = event->m_normalOldSize;
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
@@ -71,14 +81,16 @@ static void VXExposeEvent_deinit(XExposeEvent* self)
 
 static XEvent* VXExposeEvent_clone(const XExposeEvent* event)
 {
-    XExposeEvent* copy = XClass_Malloc(XExposeEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+    XExposeEvent* copy =
+        (XExposeEvent*)Class_Memory(event)->malloc(sizeof(XExposeEvent));
     if (!copy) return NULL;
     XClassSetVtable(copy, XExposeEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
     /* 区域为动态资源：初始化后深拷贝，保证副本 deinit 不误释放源。 */
     XRegion_init(&copy->m_region);
     XRegion_copy(&event->m_region, &copy->m_region);
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
@@ -103,7 +115,10 @@ static void VXPaintEvent_deinit(XPaintEvent* self)
             XPaintEvent* stale = (XPaintEvent*)old;
             if (!stale->m_regionBorrowed)
                 XRegion_deinit(&stale->m_region);
-            XMemory_free((void*)old, XCLASS_DEFAULT_MEMORY_TYPE);
+            /* 沿被顶者自身保存的内存分配器族释放：createRecycled 允许
+               调用方指定内存类型，两次调用类型可能不同，按各自记账释放
+               才能配对（原先固定按默认类型释放是错配隐患）。 */
+            Class_Memory(stale)->free((void*)old);
         }
         return;
     }
@@ -114,7 +129,9 @@ static void VXPaintEvent_deinit(XPaintEvent* self)
 
 static XEvent* VXPaintEvent_clone(const XPaintEvent* event)
 {
-    XPaintEvent* copy = XClass_Malloc(XPaintEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+    XPaintEvent* copy =
+        (XPaintEvent*)Class_Memory(event)->malloc(sizeof(XPaintEvent));
     if (!copy) return NULL;
     XClassSetVtable(copy, XPaintEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
@@ -123,52 +140,60 @@ static XEvent* VXPaintEvent_clone(const XPaintEvent* event)
     copy->m_rect = event->m_rect; /* 值类型，显式复制。 */
     copy->m_regionBorrowed = false; /* 副本拥有深拷贝区域。 */
     copy->m_pooled = false;         /* 副本是真堆对象，deinit 正常释放。 */
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
 static XEvent* VXCloseEvent_clone(const XCloseEvent* event)
 {
-    XCloseEvent* copy = XClass_Malloc(XCloseEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+    XCloseEvent* copy =
+        (XCloseEvent*)Class_Memory(event)->malloc(sizeof(XCloseEvent));
     if (!copy) return NULL;
     XClassSetVtable(copy, XCloseEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
 static XEvent* VXShowEvent_clone(const XShowEvent* event)
 {
-    XShowEvent* copy = XClass_Malloc(XShowEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+    XShowEvent* copy =
+        (XShowEvent*)Class_Memory(event)->malloc(sizeof(XShowEvent));
     if (!copy) return NULL;
     XClassSetVtable(copy, XShowEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
 static XEvent* VXHideEvent_clone(const XHideEvent* event)
 {
-    XHideEvent* copy = XClass_Malloc(XHideEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+    XHideEvent* copy =
+        (XHideEvent*)Class_Memory(event)->malloc(sizeof(XHideEvent));
     if (!copy) return NULL;
     XClassSetVtable(copy, XHideEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
 
 static XEvent* VXFocusEvent_clone(const XFocusEvent* event)
 {
-    XFocusEvent* copy = XClass_Malloc(XFocusEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+    XFocusEvent* copy =
+        (XFocusEvent*)Class_Memory(event)->malloc(sizeof(XFocusEvent));
     if (!copy) return NULL;
     XClassSetVtable(copy, XFocusEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
     copy->m_reason = event->m_reason;
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
@@ -176,8 +201,8 @@ static XEvent* VXFocusEvent_clone(const XFocusEvent* event)
 static void VXInputMethodEvent_deinit(XInputMethodEvent* self)
 {
     if (!self) return;
-    if (self->m_preeditString) XString_delete_base((XClass*)self->m_preeditString);
-    if (self->m_commitString) XString_delete_base((XClass*)self->m_commitString);
+    if (self->m_preeditString) XClassDelete((XClass*)self->m_preeditString);
+    if (self->m_commitString) XClassDelete((XClass*)self->m_commitString);
     self->m_preeditString = NULL;
     self->m_commitString = NULL;
     XClass_Deinit_Parent(XEvent, (XEvent*)self);
@@ -187,14 +212,16 @@ static XEvent* VXInputMethodEvent_clone(const XInputMethodEvent* event)
 {
     XInputMethodEvent* copy;
     if (!event) return NULL;
-    copy = XClass_Malloc(XInputMethodEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+    copy = (XInputMethodEvent*)Class_Memory(event)->malloc(
+        sizeof(XInputMethodEvent));
     if (!copy) return NULL;
     XInputMethodEvent_init(copy, event->m_preeditString, event->m_commitString,
                            event->m_replacementStart,
                            event->m_replacementLength,
                            event->m_cursorPosition,
                            event->m_anchorPosition);
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
@@ -202,8 +229,8 @@ static XEvent* VXInputMethodEvent_clone(const XInputMethodEvent* event)
 static void VXDropEvent_deinit(XDropEvent* self)
 {
     if (!self) return;
-    if (self->m_mimeType) XString_delete_base((XClass*)self->m_mimeType);
-    if (self->m_data) XString_delete_base((XClass*)self->m_data);
+    if (self->m_mimeType) XClassDelete((XClass*)self->m_mimeType);
+    if (self->m_data) XClassDelete((XClass*)self->m_data);
     self->m_mimeType = NULL;
     self->m_data = NULL;
     XClass_Deinit_Parent(XEvent, (XEvent*)self);
@@ -213,14 +240,15 @@ static XEvent* VXDropEvent_clone(const XDropEvent* event)
 {
     XDropEvent* copy;
     if (!event) return NULL;
-    copy = XClass_Malloc(XDropEvent);
+    /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
+    copy = (XDropEvent*)Class_Memory(event)->malloc(sizeof(XDropEvent));
     if (!copy) return NULL;
     XDropEvent_init(copy, event->m_class.type, &event->m_position,
                     &event->m_globalPosition, event->m_mimeType,
                     event->m_data);
     copy->m_dropAction = event->m_dropAction;
     copy->m_possibleActions = event->m_possibleActions;
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
@@ -718,15 +746,17 @@ static void VXWheelEvent_copy(XWheelEvent* dest, const XWheelEvent* src)
     dest->m_modifiers = src->m_modifiers;
 }
 
-/** @brief XWheelEvent 的 Clone 实现：分配 + 继承虚表 + 经 Copy 虚槽深拷贝。 */
+/** @brief XWheelEvent 的 Clone 实现：分配 + 继承虚表 + 经 Copy 虚槽深拷贝。
+ *  @note 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
 static XEvent* VXWheelEvent_clone(const XWheelEvent* event)
 {
-    XWheelEvent* copy = XClass_Malloc(XWheelEvent);
+    XWheelEvent* copy =
+        (XWheelEvent*)Class_Memory(event)->malloc(sizeof(XWheelEvent));
     if (!copy) return NULL;
     XClassGetVtable(copy) = XClassGetVtable(event);
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
-    XCopy((XClass*)copy, (const XClass*)event);
+    XClassCopy((XClass*)copy, (const XClass*)event);
     return (XEvent*)copy;
 }
 
@@ -861,15 +891,17 @@ static void VXEnterEvent_copy(XEnterEvent* dest, const XEnterEvent* src)
     dest->m_scenePosition = src->m_scenePosition;
 }
 
-/** @brief XEnterEvent 的 Clone 实现：分配 + 继承虚表 + 经 Copy 虚槽深拷贝。 */
+/** @brief XEnterEvent 的 Clone 实现：分配 + 继承虚表 + 经 Copy 虚槽深拷贝。
+ *  @note 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
 static XEvent* VXEnterEvent_clone(const XEnterEvent* event)
 {
-    XEnterEvent* copy = XClass_Malloc(XEnterEvent);
+    XEnterEvent* copy =
+        (XEnterEvent*)Class_Memory(event)->malloc(sizeof(XEnterEvent));
     if (!copy) return NULL;
     XClassGetVtable(copy) = XClassGetVtable(event);
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
+    Class_Memory(copy) = Class_Memory(event);
     Set_Class_IsHeap(copy, true);
-    XCopy((XClass*)copy, (const XClass*)event);
+    XClassCopy((XClass*)copy, (const XClass*)event);
     return (XEvent*)copy;
 }
 
@@ -1037,7 +1069,10 @@ static void VXTouchEvent_deinit(XTouchEvent* self)
     if (!self) return;
     if (self->m_points)
     {
-        XFree_System(self->m_points);
+        /* 触点数组沿事件自身保存的内存分配器族释放：分配时用的是
+           Class_Memory(self)->malloc，释放必须配对同一方法表，
+           不能固定走 XFree_System（事件可能来自内存池）。 */
+        Class_Memory(self)->free(self->m_points);
         self->m_points = NULL;
     }
     self->m_pointCount = 0;
@@ -1046,23 +1081,27 @@ static void VXTouchEvent_deinit(XTouchEvent* self)
 
 static XEvent* VXTouchEvent_clone(const XTouchEvent* event)
 {
-    XTouchEvent* copy = XClass_Malloc(XTouchEvent);
+    /* 克隆件整体沿源事件自身保存的内存分配器族分配与记账：本体、
+       触点数组与 Class_Memory 记账三者在同一分配器族内配对，
+       源在内存池，副本连同触点数组也留内存池。 */
+    XTouchEvent* copy =
+        (XTouchEvent*)Class_Memory(event)->malloc(sizeof(XTouchEvent));
     if (!copy) return NULL;
     XClassSetVtable(copy, XTouchEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
+    Class_Memory(copy) = Class_Memory(event);
     copy->m_points = NULL;
     copy->m_pointCount = 0;
     if (event->m_points && event->m_pointCount > 0)
     {
         size_t bytes = (size_t)event->m_pointCount * sizeof(XTouchPoint);
-        copy->m_points = (XTouchPoint*)XMalloc_System(bytes);
+        copy->m_points = (XTouchPoint*)Class_Memory(copy)->malloc(bytes);
         if (copy->m_points)
         {
             XMemcpy(copy->m_points, event->m_points, bytes);
             copy->m_pointCount = event->m_pointCount;
         }
     }
-    Set_Class_Memory(copy, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
 }
@@ -1132,11 +1171,16 @@ void XTouchEvent_setPoints(XTouchEvent* event,
     if (!event || !points || count <= 0) return;
     if (event->m_points)
     {
-        XFree_System(event->m_points);
+        /* 旧数组沿事件自身保存的内存分配器族释放，与新分配配对。 */
+        Class_Memory(event)->free(event->m_points);
         event->m_points = NULL;
     }
+    /* 触点数组沿事件自身保存的内存分配器族分配：事件由 create_ex 以
+       指定内存类型创建时（如 MULTIPOOL），触点数组留在同一分配器族，
+       deinit/clone/setPoints 的释放与再分配自动配对，不再固定系统堆。 */
     event->m_points =
-        (XTouchPoint*)XMalloc_System((size_t)count * sizeof(XTouchPoint));
+        (XTouchPoint*)Class_Memory(event)->malloc(
+            (size_t)count * sizeof(XTouchPoint));
     if (!event->m_points) return;
     XMemcpy(event->m_points, points, (size_t)count * sizeof(XTouchPoint));
     event->m_pointCount = count;

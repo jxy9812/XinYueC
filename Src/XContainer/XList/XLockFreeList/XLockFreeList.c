@@ -58,28 +58,6 @@ static size_t VXList_removeIf(XLockFreeList* this_list, bool (*predicate)(const 
 static void XLockFreeList_init_with_memory(XLockFreeList* this_list,
     size_t typeSize, XMemoryType memoryType);
 
-static void* XLockFreeList_aligned_malloc(size_t size, size_t alignment,
-    XMemory* memory)
-{
-    if (!memory || !memory->malloc || alignment == 0)
-        return NULL;
-    void* raw = memory->malloc(size + alignment - 1 + sizeof(void*));
-    if (!raw)
-        return NULL;
-    uintptr_t address = ALIGN_UP((uintptr_t)raw + sizeof(void*), alignment);
-    ((void**)address)[-1] = raw;
-    return (void*)address;
-}
-
-static void XLockFreeList_aligned_free(void* ptr, XMemory* memory)
-{
-    if (!ptr)
-        return;
-    void* raw = ((void**)ptr)[-1];
-    if (memory && memory->free)
-        memory->free(raw);
-}
-
 /* =========================================================================
  *  Hazard Pointer 子系统（本文件内部使用）
  * ========================================================================= */
@@ -959,21 +937,18 @@ static void VXListAtomic_deinit(XLockFreeList* this_list)
 XLockFreeList* XLockFreeList_create_ex(XMemoryType memory, size_t typeSize)
 {
     if (typeSize == 0) return NULL;
-    XMemory* memoryMethod = XMemory_method(memory);
-    XLockFreeList* this_list = (XLockFreeList*)XLockFreeList_aligned_malloc(
-        sizeof(XLockFreeList), CACHE_LINE_SIZE, memoryMethod);
+    /* 堆对象必须用与 XClassDelete 配对的普通路径分配（XMemory_malloc 按
+       memory 类型分发，XClass_delete_base 以同一方法表 free）。原先的
+       CACHE_LINE 对齐分配把裸基址藏在指针前一槽，唯一识破该布局的
+       XLockFreeList_delete_base/aligned_free 已随别名清理删除，继续对齐
+       分配会使所有 XClassDelete 调用点 free 对齐指针而非基址（堆破坏），
+       故回归普通分配，正确性优先于缓存行对齐微优化。 */
+    XLockFreeList* this_list = (XLockFreeList*)XMemory_malloc(
+        sizeof(XLockFreeList), memory);
     if (this_list == NULL) return NULL;
     XLockFreeList_init_with_memory(this_list, typeSize, memory);
     Set_Class_IsHeap(this_list, true);
     return this_list;
-}
-
-void XLockFreeList_delete_base(XLockFreeList* this_list)
-{
-    if (!this_list) return;
-    XMemory* memory = Class_Memory(this_list);
-    XClass_deinit_base((XClass*)this_list);
-    XLockFreeList_aligned_free(this_list, memory);
 }
 
 void XLockFreeList_init(XLockFreeList* this_list, size_t typeSize)

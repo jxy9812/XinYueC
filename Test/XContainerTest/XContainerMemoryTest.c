@@ -64,32 +64,32 @@ static void XContainerMemory_checkVectorSemantics(void)
 
     XVector target;
     XVector_init(&target, sizeof(int), false);
-    XCopy(&target, source);
+    XClassCopy(&target, source);
     XContainerMemory_check("Vector 非COW copy目标池", (XClass*)&target,
         XCLASS_DEFAULT_MEMORY_TYPE);
-    XVector_deinit_base(&target);
+    XClassDeinit(&target);
 
     XVector* cowSource = XVector_create_ex(XMEMORY_TYPE_MULTIPOOL, sizeof(int), true);
     XVector_push_back_1_base(cowSource, &value);
     XVector cowTarget;
     XVector_init(&cowTarget, sizeof(int), true);
     Set_Class_Memory(&cowTarget, XMEMORY_TYPE_MULTIPOOL);
-    XCopy(&cowTarget, cowSource);
+    XClassCopy(&cowTarget, cowSource);
     XContainerMemory_check("Vector COW 同池copy", (XClass*)&cowTarget,
         XMEMORY_TYPE_MULTIPOOL);
-    XVector_deinit_base(&cowTarget);
+    XClassDeinit(&cowTarget);
 
     XVector differentPoolTarget;
     XVector_init(&differentPoolTarget, sizeof(int), true);
-    XCopy(&differentPoolTarget, cowSource);
+    XClassCopy(&differentPoolTarget, cowSource);
     bool rejected = XVector_size_base(&differentPoolTarget) == 0;
     if (rejected)
         g_memory_test_passed++;
     else
         g_memory_test_failed++;
     XPrintf("  Vector COW 跨池copy拒绝    %s\n", rejected ? "通过" : "失败");
-    XVector_deinit_base(&differentPoolTarget);
-    XVector_delete_base(cowSource);
+    XClassDeinit(&differentPoolTarget);
+    XClassDelete(cowSource);
 
     XVector* moveSource = XVector_create_ex(XMEMORY_TYPE_MULTIPOOL,
         sizeof(int), false);
@@ -97,7 +97,7 @@ static void XContainerMemory_checkVectorSemantics(void)
     XVector moveTarget;
     XVector_init(&moveTarget, sizeof(int), false);
     Set_Class_Memory(&moveTarget, XMEMORY_TYPE_MULTIPOOL);
-    XMove(&moveTarget, moveSource);
+    XClassMove(&moveTarget, moveSource);
     bool moved = XVector_size_base(&moveTarget) == 1 &&
         XVector_size_base(moveSource) == 0 &&
         Class_Memory(&moveTarget) == XMemory_method(XMEMORY_TYPE_MULTIPOOL);
@@ -106,8 +106,8 @@ static void XContainerMemory_checkVectorSemantics(void)
     else
         g_memory_test_failed++;
     XPrintf("  Vector 同池move             %s\n", moved ? "通过" : "失败");
-    XVector_deinit_base(&moveTarget);
-    XVector_delete_base(moveSource);
+    XClassDeinit(&moveTarget);
+    XClassDelete(moveSource);
 }
 
 static void XContainerMemory_checkMapSemantics(void)
@@ -120,17 +120,17 @@ static void XContainerMemory_checkMapSemantics(void)
 
     XMap target;
     XMap_init(&target, sizeof(int), sizeof(int), int_compare, true);
-    XCopy(&target, source);
+    XClassCopy(&target, source);
     bool rejected = XMap_size_base(&target) == 0;
     if (rejected)
         g_memory_test_passed++;
     else
         g_memory_test_failed++;
     XPrintf("  Map COW 跨池copy拒绝        %s\n", rejected ? "通过" : "失败");
-    XMap_deinit_base(&target);
+    XClassDeinit(&target);
 
     Set_Class_Memory(&target, XMEMORY_TYPE_MULTIPOOL);
-    XCopy(&target, source);
+    XClassCopy(&target, source);
     bool copied = XMap_size_base(&target) == 1 &&
         Class_Memory(&target) == XMemory_method(XMEMORY_TYPE_MULTIPOOL);
     if (copied)
@@ -138,8 +138,8 @@ static void XContainerMemory_checkMapSemantics(void)
     else
         g_memory_test_failed++;
     XPrintf("  Map COW 同池copy            %s\n", copied ? "通过" : "失败");
-    XMap_deinit_base(&target);
-    XMap_delete_base(source);
+    XClassDeinit(&target);
+    XClassDelete(source);
 }
 
 static void XContainerMemory_checkMultiPoolLimit(void)
@@ -172,7 +172,7 @@ static void XContainerMemory_checkMultiPoolLimit(void)
     else
         g_memory_test_failed++;
     XPrintf("  MULTIPOOL 600字节容器失败 %s\n", multiRejected ? "通过" : "失败");
-    XVector_delete_base(multiVector);
+    XClassDelete(multiVector);
 
     XVector* hybridVector = XVector_create_ex(XMEMORY_TYPE_HYBRID,
         sizeof(bytes), false);
@@ -183,7 +183,7 @@ static void XContainerMemory_checkMultiPoolLimit(void)
     else
         g_memory_test_failed++;
     XPrintf("  HYBRID 600字节容器回退    %s\n", hybridAccepted ? "通过" : "失败");
-    XVector_delete_base(hybridVector);
+    XClassDelete(hybridVector);
 }
 
 static void XContainerMemoryPoolTest(void)
@@ -201,104 +201,104 @@ static void XContainerMemoryPoolTest(void)
         XVector* vector = XVector_create_ex(pool, sizeof(int), false);
         XVector_push_back_1_base(vector, &value);
         XContainerMemory_check("Vector", (XClass*)vector, pool);
-        XVector_delete_base(vector);
+        XClassDelete(vector);
 
         XListDLinked* dlist = XListDLinked_create_ex(pool, sizeof(int), false);
         XListDLinked_push_back_base(dlist, &value);
         XContainerMemory_check("ListDLinked", (XClass*)dlist, pool);
-        XListDLinked_delete_base(dlist);
+        XClassDelete(dlist);
 
         XListSLinked* slist = XListSLinked_create_ex(pool, sizeof(int), false);
         XListSLinked_push_back_base(slist, &value);
         XContainerMemory_check("ListSLinked", (XClass*)slist, pool);
-        XListSLinked_delete_base(slist);
+        XClassDelete(slist);
 
         XLockFreeList* lfl = XLockFreeList_create_ex(pool, sizeof(int));
         XLockFreeList_push_back_base(lfl, &value);
         XContainerMemory_check("LockFreeList", (XClass*)lfl, pool);
-        XLockFreeList_delete_base(lfl);
+        XClassDelete(lfl);
 
         XStack* stack = XStack_create_ex(pool, sizeof(int));
         XStack_push_base(stack, &value);
         XContainerMemory_check("Stack", (XClass*)stack, pool);
-        XStack_delete_base(stack);
+        XClassDelete(stack);
 
         XLockFreeStack* lfs = XLockFreeStack_create_ex(pool, sizeof(int), 8);
         XLockFreeStack_push_base(lfs, &value);
         XContainerMemory_check("LockFreeStack", (XClass*)lfs, pool);
-        XLockFreeStack_delete_base(lfs);
+        XClassDelete(lfs);
 
         XQueue* queue = XQueue_create_ex(pool, sizeof(int));
         XQueue_push_base(queue, &value);
         XContainerMemory_check("Queue", (XClass*)queue, pool);
-        XQueue_delete_base(queue);
+        XClassDelete(queue);
 
         XCircularQueue* circular = XCircularQueue_create_ex(pool, sizeof(int), 4);
         XCircularQueue_push_base(circular, &value);
         XContainerMemory_check("CircularQueue", (XClass*)circular, pool);
-        XCircularQueue_delete_base(circular);
+        XClassDelete(circular);
 
         XLockFreeQueue* lfq = XLockFreeQueue_create_ex(pool, sizeof(int), 8);
         XLockFreeQueue_push_base(lfq, &value);
         XContainerMemory_check("LockFreeQueue", (XClass*)lfq, pool);
-        XLockFreeQueue_delete_base(lfq);
+        XClassDelete(lfq);
 
         XPriorityQueue* priority = XPriorityQueue_create_ex(pool, sizeof(int),
             int_compare, XSORT_ASC);
         XPriorityQueue_push_base(priority, &value);
         XContainerMemory_check("PriorityQueue", (XClass*)priority, pool);
-        XPriorityQueue_delete_base(priority);
+        XClassDelete(priority);
 
         XMap* map = XMap_create_ex(pool, sizeof(int), sizeof(int), int_compare, false);
         XMap_insert_base(map, &value, &value);
         XContainerMemory_check("Map", (XClass*)map, pool);
-        XMap_delete_base(map);
+        XClassDelete(map);
 
         XHashMap* hashMap = XHashMap_create_ex(pool, sizeof(int), sizeof(int),
             XCryptographicHash_function(XCryptographicHash_XxHash64), int_compare, false);
         XHashMap_insert_base(hashMap, &value, &value);
         XContainerMemory_check("HashMap", (XClass*)hashMap, pool);
-        XHashMap_delete_base(hashMap);
+        XClassDelete(hashMap);
 
         XSet* set = XSet_create_ex(pool, sizeof(int), int_compare, false);
         XSet_insert_base(set, &value);
         XContainerMemory_check("Set", (XClass*)set, pool);
-        XSet_delete_base(set);
+        XClassDelete(set);
 
         XHashSet* hashSet = XHashSet_create_ex(pool, sizeof(int),
             XCryptographicHash_function(XCryptographicHash_XxHash64), int_compare, false);
         XHashSet_insert_base(hashSet, &value);
         XContainerMemory_check("HashSet", (XClass*)hashSet, pool);
-        XHashSet_delete_base(hashSet);
+        XClassDelete(hashSet);
 
         XStringList* stringList = XStringList_create_ex(pool);
         XStringList_push_back_utf8(stringList, "pool");
         XContainerMemory_check("StringList", (XClass*)stringList, pool);
-        XStringList_delete_base(stringList);
+        XClassDelete(stringList);
 
         XVariantList* variantList = XVariantList_create_ex(pool);
         XContainerMemory_check("VariantList", (XClass*)variantList, pool);
-        XVariantList_delete_base(variantList);
+        XClassDelete(variantList);
 
         XByteArray* byteArray = XByteArray_create_ex(pool, false);
         XByteArray_push_back_1(byteArray, (uint8_t)value);
         XContainerMemory_check("ByteArray", (XClass*)byteArray, pool);
-        XByteArray_delete_base(byteArray);
+        XClassDelete(byteArray);
 
         XBitArray* bitArray = XBitArray_create_ex(pool, 8, false);
         XBitArray_setBit(bitArray, 1, true);
         XContainerMemory_check("BitArray", (XClass*)bitArray, pool);
-        XBitArray_delete_base(bitArray);
+        XClassDelete(bitArray);
 
         XRingChunk* chunk = XRingChunk_create_ex(pool, 8);
         XRingChunk_write(chunk, &value, sizeof(value));
         XContainerMemory_check("RingChunk", (XClass*)chunk, pool);
-        XRingChunk_delete_base(chunk);
+        XClassDelete(chunk);
 
         XRingBuffer* buffer = XRingBuffer_create_ex(pool, 8);
         XRingBuffer_write(buffer, &value, sizeof(value));
         XContainerMemory_check("RingBuffer", (XClass*)buffer, pool);
-        XRingBuffer_delete_base(buffer);
+        XClassDelete(buffer);
     }
 
     XContainerMemory_checkVectorSemantics();

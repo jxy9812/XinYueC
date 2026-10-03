@@ -210,7 +210,7 @@ static bool XPair_prepareVariant(XVariant* variant, const XPair* pair)
 		target->m_firstTypeSize != pair->m_firstTypeSize ||
 		target->m_secondTypeSize != pair->m_secondTypeSize) {
 		if (variant->m_data)
-			XVariant_deinit_base(variant);
+			XClassDeinit(variant);
 		variant->m_data = XMalloc_System(size);
 		if (!variant->m_data)
 			return false;

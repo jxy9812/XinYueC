@@ -50,8 +50,6 @@ XVtable* XTabWidget_class_init(void);
 void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags);
 #define XTabWidget_create(parent, flags) XTabWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XTabWidget* XTabWidget_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
-#define XTabWidget_deinit_base(self) XWidget_deinit_base((XWidget*)(self))
-#define XTabWidget_delete_base(self) XWidget_delete_base((XWidget*)(self))
 
 /* ==================== API（对标 QTabWidget public API 子集） ==================== */
 

@@ -91,10 +91,10 @@ bool XStackedWidgetTest_runAll(void)
     sw_expect(sw_widgetRemoved == 1, "widgetRemoved 发射一次");
     sw_expect(XStackedWidget_count(stack) == 2, "移除后页数 2");
 
-    XStackedWidget_delete_base(stack);
+    XClassDelete(stack);
     /* page0/page2 已随 stack 析构（addWidget 后所有权归容器）；
        page1 经 removeWidget 归还调用方，仍由测试销毁。 */
-    XLabel_delete_base(page1);
+    XClassDelete(page1);
 
     {
         int failures = sw_failures;

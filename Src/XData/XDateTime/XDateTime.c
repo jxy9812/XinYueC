@@ -51,7 +51,7 @@ void XDateTime_setVariant(XVariant* variant, const XDateTime* datetime)
     if (variant->m_type != XVariantType_DateTime || !variant->m_data ||
         variant->m_dataSize != sizeof(XDateTime)) {
         if (variant->m_data)
-            XVariant_deinit_base(variant);
+            XClassDeinit(variant);
         variant->m_data = XMalloc_System(sizeof(XDateTime));
         if (!variant->m_data)
             return;
@@ -243,7 +243,7 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
     // --- 优化：在循环外创建一次临时 XString ---
     XString* temp_num_str = XString_create();
     if (!temp_num_str) {
-        XString_delete_base(result);
+        XClassDelete(result);
         return NULL;
     }
     int year = XDate_year(&datetime->m_date);
@@ -359,7 +359,7 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
     }
 
     // --- 优化：在函数末尾统一销毁临时对象 ---
-    XString_delete_base(temp_num_str);
+    XClassDelete(temp_num_str);
     // -------------------------------------------
 
     return result;

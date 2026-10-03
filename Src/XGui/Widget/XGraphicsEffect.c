@@ -409,7 +409,7 @@ bool XGraphicsEffect_drawWidget(XGraphicsEffect* self, XWidget* widget,
     if (!dest) return false;
     if (!XImage_reinit_ex(dest, destRect.width, destRect.height,
                           XImageFormat_ARGB32_Premultiplied)) {
-        XImage_delete_base(dest);
+        XClassDelete(dest);
         return false;
     }
     /* 与 XWidget_grab 快照同语义：输出画布从全透明开始，Draw 实现负责
@@ -464,7 +464,7 @@ bool XGraphicsEffect_drawWidget(XGraphicsEffect* self, XWidget* widget,
         XPainter_end(&painter);
     }
     XPainter_deinit(&painter);
-    XImage_delete_base(dest);
+    XClassDelete(dest);
     return true;
 }
 

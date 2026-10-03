@@ -128,7 +128,7 @@ static char** xpp_build_envp(const XProcess* self)
     count = XStringList_size_base(list);
     result = (char**)XCalloc_System(count + 1, sizeof(char*));
     if (!result) {
-        XStringList_delete_base(list);
+        XClassDelete(list);
         return NULL;
     }
     for (i = 0; i < count; ++i) {
@@ -136,11 +136,11 @@ static char** xpp_build_envp(const XProcess* self)
         result[i] = XStrdup(item ? XString_toUtf8(item) : "");
         if (!result[i]) {
             xpp_free_string_array(result);
-            XStringList_delete_base(list);
+            XClassDelete(list);
             return NULL;
         }
     }
-    XStringList_delete_base(list);
+    XClassDelete(list);
     return result;
 }
 
@@ -183,7 +183,7 @@ static int xpp_open_null(bool write)
     int fd;
     if (!nullDevice) return -1;
     fd = xpp_open_redirect(nullDevice, write, false);
-    XString_delete_base(nullDevice);
+    XClassDelete(nullDevice);
     return fd;
 }
 
@@ -195,9 +195,9 @@ static void xpp_dispose_backend(XProcessPosixBackend* backend)
     xpp_close_fd(&backend->stdoutFd);
     xpp_close_fd(&backend->stderrFd);
     xpp_close_fd(&backend->startupFd);
-    if (backend->stdoutBuffer) XRingBuffer_delete_base(backend->stdoutBuffer);
-    if (backend->stderrBuffer) XRingBuffer_delete_base(backend->stderrBuffer);
-    if (backend->stdinBuffer) XRingBuffer_delete_base(backend->stdinBuffer);
+    if (backend->stdoutBuffer) XClassDelete(backend->stdoutBuffer);
+    if (backend->stderrBuffer) XClassDelete(backend->stderrBuffer);
+    if (backend->stdinBuffer) XClassDelete(backend->stdinBuffer);
     XFree_System(backend);
 }
 
@@ -947,7 +947,7 @@ bool XProcess_backend_startDetached(const XString* program,
         result = XProcess_backend_start(temporary, XIODevice_NotOpen, true);
         if (result && pidOut) *pidOut = temporary->m_processId;
     }
-    XProcess_delete_base(temporary);
+    XClassDelete(temporary);
     return result;
 }
 
@@ -981,8 +981,8 @@ XProcessEnvironment* XProcessEnvironment_platform_systemEnvironment(void)
             if (name && value) {
                 (void)XProcessEnvironment_insert(result, name, value);
             }
-            if (name) XString_delete_base(name);
-            if (value) XString_delete_base(value);
+            if (name) XClassDelete(name);
+            if (value) XClassDelete(value);
         }
     }
     return result;

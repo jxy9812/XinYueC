@@ -58,8 +58,6 @@ void XToolBox_init(XToolBox* self, XWidget* parent, XWidgetFlags flags);
 #define XToolBox_create(parent, flags) XToolBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 XToolBox* XToolBox_create_ex(XMemoryType memory, XWidget* parent,
                              XWidgetFlags flags);
-#define XToolBox_deinit_base(self) XFrame_deinit_base((XFrame*)(self))
-#define XToolBox_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 页面管理（对标 QToolBox public API） ==================== */
 

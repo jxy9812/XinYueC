@@ -31,7 +31,7 @@ XMqttAuthenticationProperties* XMqttAuthenticationProperties_create_copy(const X
 {
     if (!other) return NULL;
     XMqttAuthenticationProperties* p = XMqttAuthenticationProperties_create();
-    if (p) XCopy(p, other);
+    if (p) XClassCopy(p, other);
     return p;
 }
 
@@ -46,10 +46,10 @@ void XMqttAuthenticationProperties_init(XMqttAuthenticationProperties* prop)
 static void VAP_deinit(XMqttAuthenticationProperties* prop)
 {
     if (!prop) return;
-    if (prop->m_authenticationMethod) { XString_delete_base(prop->m_authenticationMethod); prop->m_authenticationMethod = NULL; }
-    if (prop->m_authenticationData) { XByteArray_delete_base(prop->m_authenticationData); prop->m_authenticationData = NULL; }
-    if (prop->m_reason) { XString_delete_base(prop->m_reason); prop->m_reason = NULL; }
-    if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); prop->m_userProperties = NULL; }
+    if (prop->m_authenticationMethod) { XClassDelete(prop->m_authenticationMethod); prop->m_authenticationMethod = NULL; }
+    if (prop->m_authenticationData) { XClassDelete(prop->m_authenticationData); prop->m_authenticationData = NULL; }
+    if (prop->m_reason) { XClassDelete(prop->m_reason); prop->m_reason = NULL; }
+    if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); prop->m_userProperties = NULL; }
     XClass_Deinit_Parent(XClass, prop);
 }
 
@@ -60,10 +60,10 @@ static void VAP_copy(XMqttAuthenticationProperties* dest, const XMqttAuthenticat
     if (XClassIsVtableNull(dest))
         XMqttAuthenticationProperties_init(dest);
     else {
-        if (dest->m_authenticationMethod) XString_delete_base(dest->m_authenticationMethod);
-        if (dest->m_authenticationData) XByteArray_delete_base(dest->m_authenticationData);
-        if (dest->m_reason) XString_delete_base(dest->m_reason);
-        if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+        if (dest->m_authenticationMethod) XClassDelete(dest->m_authenticationMethod);
+        if (dest->m_authenticationData) XClassDelete(dest->m_authenticationData);
+        if (dest->m_reason) XClassDelete(dest->m_reason);
+        if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
         dest->m_authenticationMethod = NULL; dest->m_authenticationData = NULL;
         dest->m_reason = NULL; dest->m_userProperties = NULL;
     }
@@ -79,10 +79,10 @@ static void VAP_move(XMqttAuthenticationProperties* dest, XMqttAuthenticationPro
     if (dest == src) return;
     if (XClassIsVtableNull(dest))
         XMqttAuthenticationProperties_init(dest);
-    if (dest->m_authenticationMethod) XString_delete_base(dest->m_authenticationMethod);
-    if (dest->m_authenticationData) XByteArray_delete_base(dest->m_authenticationData);
-    if (dest->m_reason) XString_delete_base(dest->m_reason);
-    if (dest->m_userProperties) XMqttUserProperties_delete_base(dest->m_userProperties);
+    if (dest->m_authenticationMethod) XClassDelete(dest->m_authenticationMethod);
+    if (dest->m_authenticationData) XClassDelete(dest->m_authenticationData);
+    if (dest->m_reason) XClassDelete(dest->m_reason);
+    if (dest->m_userProperties) XClassDelete(dest->m_userProperties);
     dest->m_authenticationMethod = src->m_authenticationMethod;
     dest->m_authenticationData = src->m_authenticationData;
     dest->m_reason = src->m_reason;
@@ -93,16 +93,16 @@ static void VAP_move(XMqttAuthenticationProperties* dest, XMqttAuthenticationPro
 
 const XString* XMqttAuthenticationProperties_authenticationMethod_const(const XMqttAuthenticationProperties* prop) { return prop ? prop->m_authenticationMethod : NULL; }
 XString* XMqttAuthenticationProperties_authenticationMethod(const XMqttAuthenticationProperties* prop) { if (!prop || !prop->m_authenticationMethod) return NULL; return XString_create_copy(prop->m_authenticationMethod); }
-void XMqttAuthenticationProperties_setAuthenticationMethod(XMqttAuthenticationProperties* prop, const char* method) { if (prop) { if (prop->m_authenticationMethod) { XString_delete_base(prop->m_authenticationMethod); } prop->m_authenticationMethod = method ? XString_create_utf8(method) : NULL; } }
+void XMqttAuthenticationProperties_setAuthenticationMethod(XMqttAuthenticationProperties* prop, const char* method) { if (prop) { if (prop->m_authenticationMethod) { XClassDelete(prop->m_authenticationMethod); } prop->m_authenticationMethod = method ? XString_create_utf8(method) : NULL; } }
 const XByteArray* XMqttAuthenticationProperties_authenticationData_const(const XMqttAuthenticationProperties* prop) { return prop ? prop->m_authenticationData : NULL; }
 XByteArray* XMqttAuthenticationProperties_authenticationData(const XMqttAuthenticationProperties* prop) { if (!prop || !prop->m_authenticationData) return NULL; return XByteArray_create_copy(prop->m_authenticationData); }
-void XMqttAuthenticationProperties_setAuthenticationData(XMqttAuthenticationProperties* prop, const uint8_t* data, size_t len) { if (prop) { if (prop->m_authenticationData) { XByteArray_delete_base(prop->m_authenticationData); } prop->m_authenticationData = (data && len) ? XByteArray_create_with_data((const char*)data, len) : NULL; } }
+void XMqttAuthenticationProperties_setAuthenticationData(XMqttAuthenticationProperties* prop, const uint8_t* data, size_t len) { if (prop) { if (prop->m_authenticationData) { XClassDelete(prop->m_authenticationData); } prop->m_authenticationData = (data && len) ? XByteArray_create_with_data((const char*)data, len) : NULL; } }
 const XString* XMqttAuthenticationProperties_reason_const(const XMqttAuthenticationProperties* prop) { return prop ? prop->m_reason : NULL; }
 XString* XMqttAuthenticationProperties_reason(const XMqttAuthenticationProperties* prop) { if (!prop || !prop->m_reason) return NULL; return XString_create_copy(prop->m_reason); }
-void XMqttAuthenticationProperties_setReason(XMqttAuthenticationProperties* prop, const char* r) { if (prop) { if (prop->m_reason) { XString_delete_base(prop->m_reason); } prop->m_reason = r ? XString_create_utf8(r) : NULL; } }
+void XMqttAuthenticationProperties_setReason(XMqttAuthenticationProperties* prop, const char* r) { if (prop) { if (prop->m_reason) { XClassDelete(prop->m_reason); } prop->m_reason = r ? XString_create_utf8(r) : NULL; } }
 const XMqttUserProperties* XMqttAuthenticationProperties_userProperties_const(const XMqttAuthenticationProperties* prop) { return prop ? prop->m_userProperties : NULL; }
 XMqttUserProperties* XMqttAuthenticationProperties_userProperties(const XMqttAuthenticationProperties* prop) { if (!prop || !prop->m_userProperties) return NULL; return (XMqttUserProperties*)XVector_create_copy((XVector*)prop->m_userProperties); }
-void XMqttAuthenticationProperties_setUserProperties(XMqttAuthenticationProperties* prop, const XMqttUserProperties* user) { if (prop) { if (prop->m_userProperties) { XMqttUserProperties_delete_base(prop->m_userProperties); } prop->m_userProperties = user ? (XMqttUserProperties*)XVector_create_copy((XVector*)user) : NULL; } }
+void XMqttAuthenticationProperties_setUserProperties(XMqttAuthenticationProperties* prop, const XMqttUserProperties* user) { if (prop) { if (prop->m_userProperties) { XClassDelete(prop->m_userProperties); } prop->m_userProperties = user ? (XMqttUserProperties*)XVector_create_copy((XVector*)user) : NULL; } }
 
 #endif /* XMQTT_PROPERTIES_ON */
 #endif /* XMQTT_ON */

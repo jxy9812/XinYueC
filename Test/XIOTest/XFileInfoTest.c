@@ -25,7 +25,7 @@ void XFileInfoTest_print_datetime(const char* label, XDateTime* dt) {
     if (dt && XDateTime_isValid(dt)) {
         XString* dtStr = XDateTime_toString_iso(dt);
         XPrintf_2(dtStr);
-        XString_delete_base(dtStr);
+        XClassDelete(dtStr);
     } else {
         XPrintf_3("(无效)");
     }
@@ -47,7 +47,7 @@ void XFileInfoTest()
             const char* content = "Hello, XFileInfo!\nThis is a test file.\n";
             XByteArray* writeData = XByteArray_create_utf8(content);
             XIODevice_write_2((XIODevice*)testFile, writeData);
-            XByteArray_delete_base(writeData);
+            XClassDelete(writeData);
             XIODevice_close_base((XIODevice*)testFile);
         }
         XFile_deleteLater(testFile);
@@ -64,17 +64,17 @@ void XFileInfoTest()
         
         XString* absPath = XFileInfo_absoluteFilePath(info1);
         XFileInfoTest_print_xstring("绝对路径", absPath);
-        XString_delete_base(absPath);
+        XClassDelete(absPath);
 
         XString* fileName = XFileInfo_fileName(info1);
         XFileInfoTest_print_xstring("文件名", fileName);
-        XString_delete_base(fileName);
+        XClassDelete(fileName);
 
         XString* basePath = XFileInfo_path(info1);
         XFileInfoTest_print_xstring("所在目录", basePath);
-        XString_delete_base(basePath);
+        XClassDelete(basePath);
 
-        XFileInfo_delete_base(info1);
+        XClassDelete(info1);
     }
 
     // ====== 3. 文件名解析 ======
@@ -84,17 +84,17 @@ void XFileInfoTest()
     if (info2) {
         XString* baseName = XFileInfo_baseName(info2);
         XFileInfoTest_print_xstring("基本名称", baseName);
-        XString_delete_base(baseName);
+        XClassDelete(baseName);
 
         XString* suffix = XFileInfo_suffix(info2);
         XFileInfoTest_print_xstring("后缀", suffix);
-        XString_delete_base(suffix);
+        XClassDelete(suffix);
 
         XString* completeBaseName = XFileInfo_completeBaseName(info2);
         XFileInfoTest_print_xstring("完整基本名称", completeBaseName);
-        XString_delete_base(completeBaseName);
+        XClassDelete(completeBaseName);
 
-        XFileInfo_delete_base(info2);
+        XClassDelete(info2);
     }
 
     // ====== 4. 文件类型检查 ======
@@ -109,7 +109,7 @@ void XFileInfoTest()
         XPrintf("是隐藏文件: %s\n", XFileInfo_isHidden(info3) ? "是" : "否");
         XPrintf("是根目录: %s\n", XFileInfo_isRoot(info3) ? "是" : "否");
 
-        XFileInfo_delete_base(info3);
+        XClassDelete(info3);
     }
 
     // ====== 5. 文件属性 ======
@@ -124,7 +124,7 @@ void XFileInfoTest()
         XPrintf("可写: %s\n", XFileInfo_isWritable(info4) ? "是" : "否");
         XPrintf("可执行: %s\n", XFileInfo_isExecutable(info4) ? "是" : "否");
 
-        XFileInfo_delete_base(info4);
+        XClassDelete(info4);
     }
 
     // ====== 6. 时间信息 ======
@@ -141,7 +141,7 @@ void XFileInfoTest()
         XDateTime readTime = XFileInfo_lastRead(info5);
         XFileInfoTest_print_datetime("访问时间", &readTime);
 
-        XFileInfo_delete_base(info5);
+        XClassDelete(info5);
     }
 
     // ====== 7. 路径类型检查 ======
@@ -152,7 +152,7 @@ void XFileInfoTest()
         XPrintf("是绝对路径: %s\n", XFileInfo_isAbsolute(info6) ? "是" : "否");
         XPrintf("是相对路径: %s\n", XFileInfo_isRelative(info6) ? "是" : "否");
 
-        XFileInfo_delete_base(info6);
+        XClassDelete(info6);
     }
 
     // 检查绝对路径
@@ -160,9 +160,9 @@ void XFileInfoTest()
     XFileInfo* absInfo = XFileInfo_create_2(absTestPath);
     if (absInfo) {
         XPrintf("\"/usr/local\" 是绝对路径: %s\n", XFileInfo_isAbsolute(absInfo) ? "是" : "否");
-        XFileInfo_delete_base(absInfo);
+        XClassDelete(absInfo);
     }
-    XString_delete_base(absTestPath);
+    XClassDelete(absTestPath);
 
     // ====== 8. 目录信息 ======
     XPrintf_3("\n========== 8. 目录信息 ==========\n");
@@ -175,9 +175,9 @@ void XFileInfoTest()
         XPrintf("  是目录: %s\n", XFileInfo_isDir(dirInfo) ? "是" : "否");
         XPrintf("  是文件: %s\n", XFileInfo_isFile(dirInfo) ? "是" : "否");
 
-        XFileInfo_delete_base(dirInfo);
+        XClassDelete(dirInfo);
     }
-    XString_delete_base(dotPath);
+    XClassDelete(dotPath);
 
     // ====== 9. 清理测试文件 ======
     XPrintf_3("\n========== 9. 清理测试文件 ==========\n");
@@ -185,7 +185,7 @@ void XFileInfoTest()
     bool removed = XFile_remove_static(testFileName);
     XPrintf("删除测试文件: %s\n", removed ? "成功" : "失败");
 
-    XString_delete_base(testFileName);
+    XClassDelete(testFileName);
 
     XPrintf_3("\n=== XFileInfo 测试完成 ===\n");
 }

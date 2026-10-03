@@ -70,10 +70,10 @@ void XStyles_delete(XStyles* self)
     for (size_t i = 0; i < sizeof(vectors) / sizeof(vectors[0]); ++i) {
         if (!vectors[i]) continue;
         delete_format_vector(vectors[i]);
-        XVector_delete_base(vectors[i]);
+        XClassDelete(vectors[i]);
     }
     if (self->m_customNumFmtIdMap) {
-        XMap_delete_base(self->m_customNumFmtIdMap);
+        XClassDelete(self->m_customNumFmtIdMap);
     }
     XAbstractOOXmlFile_deinit(&self->m_base);
     XFree_System(self);
@@ -498,7 +498,7 @@ bool XStyles_saveToXmlData(const XStyles* self, uint8_t** outData, size_t* outLe
             *outLen = size;
         }
     }
-    XXmlStreamWriter_delete_base(writer);
+    XClassDelete(writer);
     return *outData != NULL;
 }
 
@@ -514,7 +514,7 @@ bool XStyles_saveToXmlFile(XStyles* self, const XString* filePath)
         XIODevice_write_1((XIODevice*)file, (const char*)data, (int64_t)len) == (int64_t)len;
     if (file) {
         if (XIODevice_isOpen((XIODevice*)file)) XIODevice_close_base((XIODevice*)file);
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
     }
     XFree_System(data);
     return ok;
@@ -526,7 +526,7 @@ static const XString* attribute(const XXmlStreamReader* reader, const char* name
     XString_init(&key);
     XString_assign_utf8(&key, name);
     const XString* value = XXmlStreamAttributes_value(XXmlStreamReader_attributes(reader), &key);
-    XString_deinit_base(&key);
+    XClassDeinit(&key);
     return value;
 }
 
@@ -590,9 +590,9 @@ static void clear_num_formats(XVector* formats)
     size_t count = XVector_size_base((XContainer*)formats);
     for (size_t i = 0; i < count; ++i) {
         ParsedNumFmt* format = (ParsedNumFmt*)XVector_at_base(formats, i);
-        if (format && format->m_code) XString_delete_base(format->m_code);
+        if (format && format->m_code) XClassDelete(format->m_code);
     }
-    XVector_delete_base(formats);
+    XClassDelete(formats);
 }
 
 bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len)
@@ -602,13 +602,13 @@ bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len)
     XXmlStreamReader* reader = XXmlStreamReader_create();
     XVector* numFormats = XVector_create(sizeof(ParsedNumFmt));
     if (!bytes || !reader || !numFormats) {
-        if (bytes) XByteArray_delete_base(bytes);
-        if (reader) XXmlStreamReader_delete_base(reader);
-        if (numFormats) XVector_delete_base(numFormats);
+        if (bytes) XClassDelete(bytes);
+        if (reader) XClassDelete(reader);
+        if (numFormats) XClassDelete(numFormats);
         return false;
     }
     XXmlStreamReader_addData(reader, bytes);
-    XByteArray_delete_base(bytes);
+    XClassDelete(bytes);
     delete_format_vector(self->m_fontsList);
     delete_format_vector(self->m_fillsList);
     delete_format_vector(self->m_bordersList);
@@ -770,7 +770,7 @@ bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len)
     }
     if (current) XFormat_delete(current);
     bool ok = rootSeen && !XXmlStreamReader_hasError(reader);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     clear_num_formats(numFormats);
     if (ok && XVector_size_base((XContainer*)self->m_xfFormatsList) == 0) {
         ok = append_format_copy(self->m_xfFormatsList, NULL);
@@ -784,15 +784,15 @@ bool XStyles_loadFromXmlFile(XStyles* self, const XString* filePath)
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* data = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     if (!data) return false;
     bool ok = XStyles_loadFromXmlData(self, XByteArray_data(data),
         XByteArray_size_base((XContainer*)data));
-    XByteArray_delete_base(data);
+    XClassDelete(data);
     return ok;
 }

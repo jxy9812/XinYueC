@@ -45,10 +45,8 @@ XFusionStyle* XFusionStyle_create_ex(XMemoryType memory);
 #define XFusionStyle_create() XFusionStyle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 /** @brief 析构入口（查表分派父类析构）。 */
-#define XFusionStyle_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /** @brief 删除堆上样式（查表分派析构并释放内存）。 */
-#define XFusionStyle_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /**
  * @brief 安装 Fusion 为全局默认样式（替换旧默认样式）。

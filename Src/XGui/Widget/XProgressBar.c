@@ -458,7 +458,7 @@ static void VXProgressBar_move(XProgressBar* self, XProgressBar* other)
     self->m_textVisible = other->m_textVisible;
     self->m_textDirection = other->m_textDirection;
     self->m_alignment = other->m_alignment;
-    if (self->m_format) XString_delete_base(self->m_format);
+    if (self->m_format) XClassDelete(self->m_format);
     self->m_format = other->m_format;
     other->m_format = XString_create_utf8("%p%");
     other->m_min = 0;
@@ -478,7 +478,7 @@ static void VXProgressBar_deinit(XProgressBar* self)
 {
     if (!self) return;
     if (self->m_format) {
-        XString_delete_base(self->m_format);
+        XClassDelete(self->m_format);
         self->m_format = NULL;
     }
     XClass_Deinit_Parent(XWidget, (XWidget*)self);

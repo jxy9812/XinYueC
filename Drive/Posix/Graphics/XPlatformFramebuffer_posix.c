@@ -466,7 +466,7 @@ static bool g_xpdfbScreenDone = false; /**< 仅 handleScreenAdded 成功后置�
  *          - logicalDpi 永不回填（保持缺省 96；fbdev 无偏好源，物理
  *            放大由 dpr 单独承载——§0.2 归一化铁律下 scaleDpi 恒 96）。
  *          所有权：handleScreenAdded 返回 false（无应用单例/注册表失
- *          败）即 XScreen_delete_base 回收、不置守卫——非安卓重试保留
+ *          败）即 XClassDelete 回收、不置守卫——非安卓重试保留
  *          模式（fbdev 单屏参数静态，重建零成本，不占所有权灰色态）；
  *          应用单例未就绪时不创建对象直接返回（调用方须在 GUI 单例
  *          就绪后调用，见宏注释）。重复调用幂等（done 守卫）。
@@ -489,7 +489,7 @@ static void xpdfb_ensureScreenRegistered(void)
     {
         /* 登记失败：无人接管，必须回收（所有权契约，WSI handleScreen
          * Added @details）。不置守卫，下轮调用重建重试。 */
-        XScreen_delete_base(g_xpdfbScreen);
+        XClassDelete(g_xpdfbScreen);
         g_xpdfbScreen = NULL;
         return;
     }

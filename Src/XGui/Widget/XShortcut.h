@@ -108,7 +108,7 @@ void XShortcut_init(XShortcut* self, XObject* parent);
  * @brief      使用默认内存类型创建快捷键对象。
  * @param      parent 父对象借用指针；可为 NULL。
  * @return     新建的已初始化对象指针；失败返回 NULL。成功后必须
- *             XShortcut_delete_base 释放。
+ *             XClassDelete 释放。
  */
 #define XShortcut_create(parent) \
     XShortcut_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent))
@@ -125,8 +125,6 @@ XShortcut* XShortcut_create_ex(XMemoryType memory, XObject* parent);
 XShortcut* XShortcut_create_2_ex(XMemoryType memory, int key,
                                  XObject* parent);
 
-#define XShortcut_deinit_base(self) XClass_deinit_base((XClass*)(self))
-#define XShortcut_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /* ==================== 属性（对标 QShortcut） ==================== */
 
@@ -211,7 +209,7 @@ void XShortcut_setWhatsThis_2(XShortcut* self, const char* utf8);
  * @brief      查询 What's This 帮助文本的拷贝（对标 QShortcut::whatsThis）。
  * @param      self 目标快捷键对象；可为 NULL。
  * @return     新建的 XString 拷贝，由调用方拥有，使用后必须
- *             XString_delete_base；未设置或 self 为 NULL 返回 NULL。
+ *             XClassDelete；未设置或 self 为 NULL 返回 NULL。
  */
 XString* XShortcut_whatsThis(const XShortcut* self);
 

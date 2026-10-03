@@ -51,15 +51,15 @@ static void xtb2_itemDestroy(XToolBoxItem* item)
 {
     if (!item) return;
     if (item->text) {
-        XString_delete_base(item->text);
+        XClassDelete(item->text);
         item->text = NULL;
     }
     if (item->icon) {
-        XString_delete_base(item->icon);
+        XClassDelete(item->icon);
         item->icon = NULL;
     }
     if (item->tooltip) {
-        XString_delete_base(item->tooltip);
+        XClassDelete(item->tooltip);
         item->tooltip = NULL;
     }
     XFree_System(item);
@@ -357,7 +357,7 @@ static void VX_toolBox_deinit(XToolBox* self)
                 (XToolBoxItem**)XVector_at_base(self->m_items, i);
             xtb2_itemDestroy(item ? *item : NULL);
         }
-        XVector_delete_base(self->m_items);
+        XClassDelete(self->m_items);
         self->m_items = NULL;
     }
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
@@ -544,14 +544,14 @@ void XToolBox_setItemIcon(XToolBox* self, int index, const XString* path)
     if (!item || !*item) return;
     if (!path) {
         if ((*item)->icon) {
-            XString_delete_base((*item)->icon);
+            XClassDelete((*item)->icon);
             (*item)->icon = NULL;
         }
     } else {
         XString* copy = XString_create_copy(path);
         if (!copy) return;
         if ((*item)->icon)
-            XString_delete_base((*item)->icon);
+            XClassDelete((*item)->icon);
         (*item)->icon = copy;
     }
     XWidget_update((XWidget*)self);
@@ -567,7 +567,7 @@ void XToolBox_setItemIcon_2(XToolBox* self, int index, const char* utf8)
     tmp = XString_create_utf8(utf8);
     if (!tmp) return;
     XToolBox_setItemIcon(self, index, tmp);
-    XString_delete_base(tmp);
+    XClassDelete(tmp);
 }
 
 const XString* XToolBox_itemIcon(const XToolBox* self, int index)
@@ -591,14 +591,14 @@ void XToolBox_setItemToolTip(XToolBox* self, int index, const XString* tip)
     if (!item || !*item) return;
     if (!tip) {
         if ((*item)->tooltip) {
-            XString_delete_base((*item)->tooltip);
+            XClassDelete((*item)->tooltip);
             (*item)->tooltip = NULL;
         }
     } else {
         copy = XString_create_copy(tip);
         if (!copy) return;
         if ((*item)->tooltip)
-            XString_delete_base((*item)->tooltip);
+            XClassDelete((*item)->tooltip);
         (*item)->tooltip = copy;
     }
 }
@@ -613,7 +613,7 @@ void XToolBox_setItemToolTip_2(XToolBox* self, int index, const char* utf8)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, utf8);
     XToolBox_setItemToolTip(self, index, &tmp);
-    XString_deinit_base(&tmp);
+    XClassDeinit(&tmp);
 }
 
 const XString* XToolBox_itemToolTip(const XToolBox* self, int index)

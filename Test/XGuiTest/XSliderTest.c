@@ -11,7 +11,7 @@
  *             Down/Left/PageUp/PageDown/Home/End 与 invertedControls
  *             翻转）、滚轮步进（120=1 步、余数累积、invertedControls
  *             翻转）、刻度 API、鼠标交互（handle 拖动/凹槽跳转/释放
- *             提交）、拷贝/移动（XCopy/XMove）。
+ *             提交）、拷贝/移动（XClassCopy/XClassMove）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XSliderTest.h"
@@ -477,30 +477,30 @@ bool XSliderTest_runAll(void)
         sl_expect(XAbstractSlider_value(mb) == 53, "释放提交位置到值");
         XAbstractSlider_setTracking(mb, true);
 
-        XSlider_delete_base(ms);
-        XWidget_delete_base(host);
+        XClassDelete(ms);
+        XClassDelete(host);
     }
 
-    /* 15. 拷贝/移动（XCopy/XMove 多态分派）。 */
+    /* 15. 拷贝/移动（XClassCopy/XClassMove 多态分派）。 */
     {
         XSlider* c = XSlider_create(NULL, 0);
         XAbstractSlider_setValue((XAbstractSlider*)c, 42);
         XSlider_setTickPosition(c, (int)XSliderTickPosition_TicksBothSides);
         XSlider_setTickInterval(c, 7);
-        XCopy(s, c);
-        sl_expect(XAbstractSlider_value(base) == 42, "XCopy 复制值");
+        XClassCopy(s, c);
+        sl_expect(XAbstractSlider_value(base) == 42, "XClassCopy 复制值");
         sl_expect(XSlider_tickPosition(s) ==
-                  (int)XSliderTickPosition_TicksBothSides, "XCopy 复制刻度位置");
-        sl_expect(XSlider_tickInterval(s) == 7, "XCopy 复制刻度间隔");
+                  (int)XSliderTickPosition_TicksBothSides, "XClassCopy 复制刻度位置");
+        sl_expect(XSlider_tickInterval(s) == 7, "XClassCopy 复制刻度间隔");
         XAbstractSlider_setValue((XAbstractSlider*)c, 77);
-        XMove(s, c);
-        sl_expect(XAbstractSlider_value(base) == 77, "XMove 转移值");
+        XClassMove(s, c);
+        sl_expect(XAbstractSlider_value(base) == 77, "XClassMove 转移值");
         sl_expect(XAbstractSlider_value((XAbstractSlider*)c) == 0,
-                  "XMove 源对象归默认值");
-        XSlider_delete_base(c);
+                  "XClassMove 源对象归默认值");
+        XClassDelete(c);
     }
 
-    XSlider_delete_base(s);
+    XClassDelete(s);
 
     {
         int failures = sl_failures;

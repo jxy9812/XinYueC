@@ -133,8 +133,6 @@ XUrl* XUrl_create_ex(XMemoryType memory, const XString* urlString, XUrl_ParsingM
 void XUrl_init(XUrl* self);
 
 
-#define  XUrl_deinit_base          XClass_deinit_base
-#define  XUrl_delete_base          XClass_delete_base
 
 /* ========== 设置 URL ========== */
 

@@ -164,7 +164,7 @@ void XBarSet_init_ex_2(XBarSet* self, const char* label)
         if (!tmp) return;
     }
     XBarSet_init_ex(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 XBarSet* XBarSet_create_ex(XMemoryType memory, const XString* label)
@@ -185,7 +185,7 @@ XBarSet* XBarSet_create_ex_2(XMemoryType memory, const char* label)
         if (!tmp) return NULL;
     }
     self = XBarSet_create_ex(memory, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
     return self;
 }
 
@@ -193,11 +193,11 @@ static void VXBarSet_deinit(XBarSet* self)
 {
     if (!self) return;
     if (self->m_label) {
-        XString_delete_base(self->m_label);
+        XClassDelete(self->m_label);
         self->m_label = NULL;
     }
     if (self->m_labelFontFamily) {
-        XString_delete_base(self->m_labelFontFamily);
+        XClassDelete(self->m_labelFontFamily);
         self->m_labelFontFamily = NULL;
     }
     if (self->m_values) {
@@ -296,7 +296,7 @@ void XBarSet_setLabel_2(XBarSet* self, const char* label)
         if (!tmp) return;
     }
     XBarSet_setLabel(self, tmp);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XBarSet_label(const XBarSet* self)
@@ -537,7 +537,7 @@ void XBarSet_setLabelFont_2(XBarSet* self, const char* family, int pointSize)
         if (!tmp) return;
     }
     XBarSet_setLabelFont(self, tmp, pointSize);
-    if (tmp) XString_delete_base(tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 const XString* XBarSet_labelFont(const XBarSet* self)

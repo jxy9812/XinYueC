@@ -82,14 +82,14 @@ static void VXModbusDevice_deinit(XModbusDevice* dev)
 
     // 释放错误字符串
     if (dev->m_errorString) {
-        XString_delete_base(dev->m_errorString);
+        XClassDelete(dev->m_errorString);
         dev->m_errorString = NULL;
     }
 
     // 释放参数数组
     for (int i = 0; i < XModbusDevice_ParameterCount; i++) {
         if (dev->m_params[i]) {
-            XVariant_delete_base(dev->m_params[i]);
+            XClassDelete(dev->m_params[i]);
             dev->m_params[i] = NULL;
         }
     }
@@ -127,7 +127,7 @@ void XModbusDevice_setConnectionParameter(XModbusDevice* dev, XModbusDevice_Conn
 
     //移动
     if (dev->m_params[parameter]) {
-        XCopy(dev->m_params[parameter], value);
+        XClassCopy(dev->m_params[parameter], value);
     }
     else
     {
@@ -144,7 +144,7 @@ void XModbusDevice_setConnectionParameter_move(XModbusDevice* dev, XModbusDevice
 
     //移动
     if (dev->m_params[parameter]) {
-        XMove(dev->m_params[parameter], value);
+        XClassMove(dev->m_params[parameter], value);
     }
     else
     {
@@ -159,7 +159,7 @@ void XModbusDevice_setConnectionParameter_ref(XModbusDevice* dev, XModbusDevice_
         return;
     }
     if (dev->m_params[parameter]) {
-        XVariant_delete_base(dev->m_params[parameter]);
+        XClassDelete(dev->m_params[parameter]);
     }
     // 设置新值（复制）
     dev->m_params[parameter] = value;
@@ -238,7 +238,7 @@ void XModbusDevice_setError(XModbusDevice* dev, XModbusDevice_Error error, const
 
     // 释放旧错误字符串
     if (dev->m_errorString) {
-        XString_delete_base(dev->m_errorString);
+        XClassDelete(dev->m_errorString);
         dev->m_errorString = NULL;
     }
 

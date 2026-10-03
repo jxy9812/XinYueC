@@ -30,7 +30,7 @@ void XDrawing_delete(XDrawing* self) {
             XDrawingAnchor** pp = (XDrawingAnchor**)XVector_at_base(self->m_anchors, i);
             if (pp && *pp) XDrawingAnchor_delete(*pp);
         }
-        XVector_delete_base(self->m_anchors);
+        XClassDelete(self->m_anchors);
     }
     XAbstractOOXmlFile_deinit(&self->m_base);
     XFree_System(self);
@@ -71,7 +71,7 @@ bool XDrawing_saveToXmlData(const XDrawing* self, uint8_t** data, size_t* length
             *length = byteLength;
         }
     }
-    XXmlStreamWriter_delete_base(writer);
+    XClassDelete(writer);
     return result;
 }
 
@@ -86,14 +86,14 @@ bool XDrawing_saveToXmlFile(XDrawing* self, const XString* filePath) {
     if (!file) { XFree_System(xml); return false; }
 
     if (!XIODevice_open_base((XIODevice*)file, XIODevice_WriteOnly | XIODevice_Truncate)) {
-        XClass_delete_base((XClass*)file);
+        XClassDelete((XClass*)file);
         XFree_System(xml);
         return false;
     }
     bool result = length == 0 || XIODevice_write_1((XIODevice*)file,
         (const char*)xml, (int64_t)length) == (int64_t)length;
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     XFree_System(xml);
     return result;
 }
@@ -102,13 +102,13 @@ bool XDrawing_loadFromXmlData(XDrawing* self, const uint8_t* data, size_t length
     if (!self || !self->m_anchors || !data || length == 0) return false;
     XByteArray* xmlData = XByteArray_create();
     if (!xmlData || !XByteArray_push_back_2(xmlData, data, length)) {
-        if (xmlData) XByteArray_delete_base(xmlData);
+        if (xmlData) XClassDelete(xmlData);
         return false;
     }
     XXmlStreamReader* reader = XXmlStreamReader_create();
-    if (!reader) { XByteArray_delete_base(xmlData); return false; }
+    if (!reader) { XClassDelete(xmlData); return false; }
     XXmlStreamReader_addData(reader, xmlData);
-    XByteArray_delete_base(xmlData);
+    XClassDelete(xmlData);
 
     for (size_t i = 0; i < XVector_size_base(self->m_anchors); ++i) {
         XDrawingAnchor* anchor = *(XDrawingAnchor**)XVector_at_base(self->m_anchors, i);
@@ -137,7 +137,7 @@ bool XDrawing_loadFromXmlData(XDrawing* self, const uint8_t* data, size_t length
         }
     }
     bool ok = !XXmlStreamReader_hasError(reader);
-    XXmlStreamReader_delete_base(reader);
+    XClassDelete(reader);
     return ok;
 }
 
@@ -145,14 +145,14 @@ bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath) {
     if (!self || !filePath) return false;
     XFile* file = XFile_create_2((XString*)filePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
     XByteArray* xmlData = XIODevice_readAll_3((XIODevice*)file);
     XIODevice_close_base((XIODevice*)file);
-    XClass_delete_base((XClass*)file);
+    XClassDelete((XClass*)file);
     bool result = xmlData && XDrawing_loadFromXmlData(self, XByteArray_data(xmlData),
         XByteArray_size_base((XContainer*)xmlData));
-    if (xmlData) XByteArray_delete_base(xmlData);
+    if (xmlData) XClassDelete(xmlData);
     return result;
 }

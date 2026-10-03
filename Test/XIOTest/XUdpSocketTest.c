@@ -54,10 +54,10 @@ static void onReadyRead(XObject* sender, XVarList* args)
                    senderPort);
             XPrintf("[UDP] 数据: %s\n", buffer);
             
-            XString_delete_base(addrStr);
+            XClassDelete(addrStr);
         }
         
-        XHostAddress_deinit_base(&senderAddr);
+        XClassDeinit(&senderAddr);
         XFree_System(buffer);
     }
 }
@@ -99,10 +99,10 @@ static void onReadyReadDatagram(XObject* sender, XVarList* args)
         // 发送回复
         XUdpSocket_writeDatagram_3(sock, reply);
         
-        XByteArray_delete_base(replyData);
-        XNetworkDatagram_delete_base(reply);
-        XString_delete_base(addrStr);
-        XNetworkDatagram_delete_base(dgram);
+        XClassDelete(replyData);
+        XClassDelete(reply);
+        XClassDelete(addrStr);
+        XClassDelete(dgram);
     }
 }
 
@@ -129,12 +129,12 @@ static void XUdpSocketBasicTest(void)
     
     if (!XUdpSocket_bind_base(g_udpServer, &serverAddr, 8888, XAbstractSocket_DefaultForPlatform)) {
         XPrintf("[错误] 绑定UDP服务器到8888端口失败\n");
-        XHostAddress_deinit_base(&serverAddr);
+        XClassDeinit(&serverAddr);
         XUdpSocket_abort(g_udpServer);
         XUdpSocket_deleteLater(g_udpServer);
         return;
     }
-    XHostAddress_deinit_base(&serverAddr);
+    XClassDeinit(&serverAddr);
     
     XPrintf("[UDP服务器] 已绑定到8888端口\n");
     
@@ -196,7 +196,7 @@ static void XUdpSocketBasicTest(void)
     }
     
     // 等待并处理事件
-    XHostAddress_deinit_base(&destAddr);
+    XClassDeinit(&destAddr);
     XPrintf("\n[信息] 处理事件2秒...\n");
     for (int i = 0; i < 20; i++) {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
@@ -234,12 +234,12 @@ static void XUdpSocketBroadcastTest(void)
     
     if (!XUdpSocket_bind_base(receiver, &anyAddr, 9999, XAbstractSocket_DefaultForPlatform)) {
         XPrintf("[错误] 绑定接收端失败\n");
-        XHostAddress_deinit_base(&anyAddr);
+        XClassDeinit(&anyAddr);
         XUdpSocket_abort(receiver);
         XUdpSocket_deleteLater(receiver);
         return;
     }
-    XHostAddress_deinit_base(&anyAddr);
+    XClassDeinit(&anyAddr);
     
     XPrintf("[UDP接收端] 监听端口9999\n");
     XObject_connect_2(receiver, XSignal(XIODevice_readyRead_signal), onReadyRead);
@@ -259,7 +259,7 @@ static void XUdpSocketBroadcastTest(void)
     // 启用广播选项
     XVariant* broadcastEnabled = XVariant_create_bool(true);
     XUdpSocket_setSocketOption_base(sender, XAbstractSocket_BroadcastOption, broadcastEnabled);
-    XVariant_delete_base(broadcastEnabled);
+    XClassDelete(broadcastEnabled);
     
     // 设置广播地址
     XHostAddress broadcastAddr;
@@ -271,7 +271,7 @@ static void XUdpSocketBroadcastTest(void)
     XPrintf("[UDP发送端] 广播: %s\n", msg);
     
     int64_t sent = XUdpSocket_writeDatagram(sender, msg, strlen(msg), &broadcastAddr, 9999);
-    XHostAddress_deinit_base(&broadcastAddr);
+    XClassDeinit(&broadcastAddr);
     XPrintf("[UDP发送端] 已发送 %lld 字节到广播地址\n", (long long)sent);
     
     // 处理事件
@@ -316,12 +316,12 @@ static void XUdpSocketMulticastTest(void)
     if (!XUdpSocket_bind_base(multicastReceiver, &anyAddr, multicastPort, 
                               XAbstractSocket_ShareAddress)) {
         XPrintf("[错误] 绑定多播接收端失败\n");
-        XHostAddress_deinit_base(&anyAddr);
+        XClassDeinit(&anyAddr);
         XUdpSocket_abort(multicastReceiver);
         XUdpSocket_deleteLater(multicastReceiver);
         return;
     }
-    XHostAddress_deinit_base(&anyAddr);
+    XClassDeinit(&anyAddr);
     
     XPrintf("[多播接收端] 已绑定到端口 %u\n", multicastPort);
     
@@ -334,7 +334,7 @@ static void XUdpSocketMulticastTest(void)
         XPrintf("[多播接收端] 已加入多播组 %s\n", multicastGroup);
     } else {
         XPrintf("[错误] 加入多播组失败\n");
-        XHostAddress_deinit_base(&groupAddr);
+        XClassDeinit(&groupAddr);
         XUdpSocket_abort(multicastReceiver);
         XUdpSocket_deleteLater(multicastReceiver);
         return;
@@ -348,7 +348,7 @@ static void XUdpSocketMulticastTest(void)
     if (!multicastSender) {
         XPrintf("[错误] 创建多播发送端失败\n");
         XUdpSocket_leaveMulticastGroup(multicastReceiver, &groupAddr);
-        XHostAddress_deinit_base(&groupAddr);
+        XClassDeinit(&groupAddr);
         XUdpSocket_abort(multicastReceiver);
         XUdpSocket_deleteLater(multicastReceiver);
         return;
@@ -361,7 +361,7 @@ static void XUdpSocketMulticastTest(void)
     XAbstractSocket_SocketOption opt = XAbstractSocket_MulticastTtlOption;
     XVariant* ttlValue = XVariant_create_int(1);  // TTL = 1 (本地网络)
     XUdpSocket_setSocketOption_base(multicastSender, opt, ttlValue);
-    XVariant_delete_base(ttlValue);
+    XClassDelete(ttlValue);
     
     XPrintf("[多播发送端] 准备发送到 %s:%u\n", multicastGroup, multicastPort);
     
@@ -381,7 +381,7 @@ static void XUdpSocketMulticastTest(void)
     
     // 离开多播组
     XUdpSocket_leaveMulticastGroup(multicastReceiver, &groupAddr);
-    XHostAddress_deinit_base(&groupAddr);
+    XClassDeinit(&groupAddr);
     XPrintf("[多播接收端] 已离开多播组\n");
     
     // 清理
@@ -490,7 +490,7 @@ static void XUdpSocketClientTest(void)
     }
     
     // 清理
-    XHostAddress_deinit_base(&serverAddr);
+    XClassDeinit(&serverAddr);
     XUdpSocket_abort(client);
     XUdpSocket_deleteLater(client);
     

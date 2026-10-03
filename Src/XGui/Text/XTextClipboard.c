@@ -65,7 +65,7 @@ void XTextClipboard_setText(const char* text)
             XString* str = XString_create_utf8(text);
             if (str) {
                 XClipboard_setText(cb, str, XClipboardMode_Clipboard);
-                XString_delete_base((XClass*)str);
+                XClassDelete((XClass*)str);
             }
             return;
         }
@@ -92,7 +92,7 @@ const char* XTextClipboard_getText(void)
                 const char* utf8 = XString_toUtf8(str);
                 size_t len = XString_toUtf8_length(str);
                 const char* cached = xtextclipboard_store(utf8, len);
-                XString_delete_base((XClass*)str);
+                XClassDelete((XClass*)str);
                 if (cached) return cached;
                 return ""; /* 扩容失败（OOM）退化为空串。 */
             }

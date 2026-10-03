@@ -37,7 +37,7 @@ static bool xprocess_set_string(XString** target, const XString* value)
 {
     XString* copy = value ? XString_create_copy(value) : XString_create();
     if (!copy) return false;
-    if (*target) XString_delete_base((XString*)*target);
+    if (*target) XClassDelete((XString*)*target);
     *target = copy;
     return true;
 }
@@ -64,7 +64,7 @@ static bool xprocess_insert_environment_entry(XProcessEnvironment* environment,
     name = XString_create_with_length_utf8(entry, (size_t)(equal - entry));
     if (!name) return false;
     result = XProcessEnvironment_insert_utf8(environment, XString_toUtf8(name), equal + 1);
-    XString_delete_base(name);
+    XClassDelete(name);
     return result;
 }
 
@@ -143,7 +143,7 @@ XProcess* XProcess_create_ex(XMemoryType memory)
     if (!self->m_program || !self->m_arguments || !self->m_workingDirectory ||
         !self->m_standardInputFile || !self->m_standardOutputFile ||
         !self->m_standardErrorFile || !self->m_errorString) {
-        XProcess_deinit_base(self);
+        XClassDeinit(self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
@@ -166,13 +166,13 @@ static void VXProcess_deinit(XObject* object)
         XProcess_waitForFinished(self, -1);
     }
     XProcess_backend_deinit(self);
-    if (self->m_program) XString_delete_base((XString*)self->m_program);
-    if (self->m_arguments) XStringList_delete_base((XStringList*)self->m_arguments);
-    if (self->m_workingDirectory) XString_delete_base((XString*)self->m_workingDirectory);
-    if (self->m_standardInputFile) XString_delete_base((XString*)self->m_standardInputFile);
-    if (self->m_standardOutputFile) XString_delete_base((XString*)self->m_standardOutputFile);
-    if (self->m_standardErrorFile) XString_delete_base((XString*)self->m_standardErrorFile);
-    if (self->m_errorString) XString_delete_base((XString*)self->m_errorString);
+    if (self->m_program) XClassDelete((XString*)self->m_program);
+    if (self->m_arguments) XClassDelete((XStringList*)self->m_arguments);
+    if (self->m_workingDirectory) XClassDelete((XString*)self->m_workingDirectory);
+    if (self->m_standardInputFile) XClassDelete((XString*)self->m_standardInputFile);
+    if (self->m_standardOutputFile) XClassDelete((XString*)self->m_standardOutputFile);
+    if (self->m_standardErrorFile) XClassDelete((XString*)self->m_standardErrorFile);
+    if (self->m_errorString) XClassDelete((XString*)self->m_errorString);
     XProcessEnvironment_deinit(&self->m_environment);
     XClass_Deinit_Parent(XIODevice, (XIODevice*)self);
 }
@@ -192,7 +192,7 @@ bool XProcess_setProgram_utf8(XProcess* self, const char* program)
     value = XString_create_utf8(program);
     if (!value) return false;
     result = XProcess_setProgram(self, value);
-    XString_delete_base(value);
+    XClassDelete(value);
     return result;
 }
 
@@ -214,7 +214,7 @@ bool XProcess_setArguments(XProcess* self, const XStringList* arguments)
         return false;
     copy = XStringList_create_copy(arguments);
     if (!copy) return false;
-    if (self->m_arguments) XStringList_delete_base(self->m_arguments);
+    if (self->m_arguments) XClassDelete(self->m_arguments);
     self->m_arguments = copy;
     return true;
 }
@@ -230,7 +230,7 @@ bool XProcess_setArguments_utf8(XProcess* self, const char* const* arguments, si
     if (!list) return false;
     for (i = 0; i < count; ++i) XStringList_push_back_utf8(list, arguments[i] ? arguments[i] : "");
     result = XProcess_setArguments(self, list);
-    XStringList_delete_base(list);
+    XClassDelete(list);
     return result;
 }
 
@@ -306,7 +306,7 @@ bool XProcess_setStandardInputFile_utf8(XProcess* self, const char* fileName)
     bool result;
     if (!value) return false;
     result = XProcess_setStandardInputFile(self, value);
-    XString_delete_base(value);
+    XClassDelete(value);
     return result;
 }
 
@@ -333,7 +333,7 @@ bool XProcess_setStandardOutputFile_utf8(XProcess* self, const char* fileName, b
     bool result;
     if (!value) return false;
     result = XProcess_setStandardOutputFile(self, value, append);
-    XString_delete_base(value);
+    XClassDelete(value);
     return result;
 }
 
@@ -360,7 +360,7 @@ bool XProcess_setStandardErrorFile_utf8(XProcess* self, const char* fileName, bo
     bool result;
     if (!value) return false;
     result = XProcess_setStandardErrorFile(self, value, append);
-    XString_delete_base(value);
+    XClassDelete(value);
     return result;
 }
 
@@ -404,7 +404,7 @@ bool XProcess_setWorkingDirectory_utf8(XProcess* self, const char* directory)
     bool result;
     if (!value) return false;
     result = XProcess_setWorkingDirectory(self, value);
-    XString_delete_base(value);
+    XClassDelete(value);
     return result;
 }
 
@@ -555,7 +555,7 @@ bool XProcess_start_utf8(XProcess* self, const char* program,
     result = XProcess_setProgram(self, p) &&
              XProcess_setArguments_utf8(self, arguments, count) &&
              XProcess_start_2(self, mode);
-    XString_delete_base(p);
+    XClassDelete(p);
     return result;
 }
 
@@ -569,23 +569,23 @@ bool XProcess_startCommand(XProcess* self, const XString* command, XIODeviceBase
     if (!self || !command) return false;
     args = XProcess_splitCommand_static(command);
     if (!args || XStringList_size_base(args) == 0) {
-        if (args) XStringList_delete_base(args);
+        if (args) XClassDelete(args);
         return false;
     }
     program = XString_create_copy(XStringList_at_base(args, 0));
     rest = XStringList_create();
     if (!program || !rest) {
-        if (program) XString_delete_base(program);
-        if (rest) XStringList_delete_base(rest);
-        XStringList_delete_base(args);
+        if (program) XClassDelete(program);
+        if (rest) XClassDelete(rest);
+        XClassDelete(args);
         return false;
     }
     for (i = 1; i < XStringList_size_base(args); ++i)
         XStringList_push_back_base(rest, XStringList_at_base(args, i));
     result = XProcess_start(self, program, rest, mode);
-    XString_delete_base(program);
-    XStringList_delete_base(rest);
-    XStringList_delete_base(args);
+    XClassDelete(program);
+    XClassDelete(rest);
+    XClassDelete(args);
     return result;
 }
 
@@ -634,7 +634,7 @@ bool XProcess_startDetached_static(const XString* program,
         actualArguments = emptyArguments;
     }
     result = XProcess_backend_startDetached(program, actualArguments, workingDirectory, pid);
-    if (emptyArguments) XStringList_delete_base(emptyArguments);
+    if (emptyArguments) XClassDelete(emptyArguments);
     return result;
 #endif
 }
@@ -790,15 +790,15 @@ int XProcess_execute_static(const XString* program, const XStringList* arguments
     XProcess* self = XProcess_create();
     int result;
     if (!self || !XProcess_start(self, program, arguments, XIODevice_ReadWrite)) {
-        if (self) XProcess_delete_base(self);
+        if (self) XClassDelete(self);
         return -2;
     }
     if (!XProcess_waitForFinished(self, -1)) {
-        XProcess_delete_base(self);
+        XClassDelete(self);
         return -2;
     }
     result = self->m_exitStatus == XProcessExitStatus_CrashExit ? -1 : self->m_exitCode;
-    XProcess_delete_base(self);
+    XClassDelete(self);
     return result;
 #endif
 }
@@ -829,8 +829,8 @@ XStringList* XProcess_splitCommand_static(const XString* command)
     result = XStringList_create();
     token = XString_create();
     if (!result || !token) {
-        if (result) XStringList_delete_base(result);
-        if (token) XString_delete_base(token);
+        if (result) XClassDelete(result);
+        if (token) XClassDelete(token);
         return NULL;
     }
     for (i = 0; text && text[i]; ++i) {
@@ -858,7 +858,7 @@ XStringList* XProcess_splitCommand_static(const XString* command)
         }
     }
     if (!XString_isEmpty_base(token)) XStringList_push_back_base(result, token);
-    XString_delete_base(token);
+    XClassDelete(token);
     return result;
 }
 

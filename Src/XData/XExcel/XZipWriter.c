@@ -132,7 +132,7 @@ void XZipWriter_delete(XZipWriter* self) {
     if (!self) return;
     if (!self->m_closeAttempted && (self->m_fileName || self->m_zipHandle))
         XZipWriter_close(self);
-    if (self->m_fileName) XString_delete_base(self->m_fileName);
+    if (self->m_fileName) XClassDelete(self->m_fileName);
     if (self->m_entries) {
         size_t count = XVector_size_base(self->m_entries);
         for (size_t i = 0; i < count; i++) {
@@ -141,7 +141,7 @@ void XZipWriter_delete(XZipWriter* self) {
             if (entry->m_data) XFree_System(entry->m_data);
             if (entry->m_compressed) XFree_System(entry->m_compressed);
         }
-        XVector_delete_base(self->m_entries);
+        XClassDelete(self->m_entries);
     }
     XFree_System(self);
 }
@@ -235,12 +235,12 @@ bool XZipWriter_close(XZipWriter* self) {
     }
     if (!XIODevice_isOpen(device)) {
         if (!XIODevice_open_base(device, XIODevice_WriteOnly | XIODevice_Truncate)) {
-            if (file) XClass_delete_base((XClass*)file);
+            if (file) XClassDelete((XClass*)file);
             return false;
         }
         openedHere = true;
     } else if (!XIODevice_isWritable(device)) {
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
 
@@ -250,7 +250,7 @@ bool XZipWriter_close(XZipWriter* self) {
     uint32_t* offsets = (uint32_t*)XMalloc_System(sizeof(uint32_t) * (entry_count ? entry_count : 1));
     if (!offsets) {
         if (openedHere) XIODevice_close_base(device);
-        if (file) XClass_delete_base((XClass*)file);
+        if (file) XClassDelete((XClass*)file);
         return false;
     }
 
@@ -343,18 +343,18 @@ bool XZipWriter_close(XZipWriter* self) {
 
     XFree_System(offsets);
     if (openedHere) XIODevice_close_base(device);
-    if (file) XClass_delete_base((XClass*)file);
+    if (file) XClassDelete((XClass*)file);
     self->m_closed = true;
     return true;
 
 write_failed:
     XFree_System(offsets);
     if (openedHere) XIODevice_close_base(device);
-    if (file) XClass_delete_base((XClass*)file);
+    if (file) XClassDelete((XClass*)file);
     return false;
 
 open_failed:
     if (openedHere) XIODevice_close_base(device);
-    if (file) XClass_delete_base((XClass*)file);
+    if (file) XClassDelete((XClass*)file);
     return false;
 }

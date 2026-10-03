@@ -45,10 +45,8 @@ XBarSeries* XBarSeries_create_ex(XMemoryType memory);
 #define XBarSeries_create() XBarSeries_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 /** @brief 析构入口（查表分派父类析构）。 */
-#define XBarSeries_deinit_base(self) XClass_deinit_base((XClass*)(self))
 
 /** @brief 删除堆上序列（查表分派析构并释放内存）。 */
-#define XBarSeries_delete_base(self) XClass_delete_base((XClass*)(self))
 
 /** @brief 设置柱色。 @param self 目标序列指针。 @param color ARGB。 @return 无返回值。 */
 void XBarSeries_setColor(XBarSeries* self, uint32_t color);
