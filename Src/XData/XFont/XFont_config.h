@@ -73,7 +73,8 @@
 
 /** @brief 是否启用轮廓字形灰度图（alpha map）缓存。
  *  @details 路径缓存只省去字库解码与路径搭建；逐帧的轮廓拉直、
- *           4x4 抗锯齿覆盖率和逐像素混合仍是文本页的主要开销。
+ *           8x8 抗锯齿覆盖率（见 XFONT_TEXT_CONTRAST_GAMMA_X10 处
+ *           说明）和逐像素混合仍是文本页的主要开销。
  *           灰度图缓存把光栅化结果按（字库、码点、字号）整块复用，
  *           对齐 Qt QFontEngine 的 glyph alpha map 缓存语义。 */
 #ifndef XFONT_GLYPH_ALPHA_CACHE_ON
@@ -89,6 +90,27 @@
  *          防止超大字号一次性占用过多内存。 */
 #ifndef XFONT_GLYPH_ALPHA_CACHE_MAX_PIXELS
 #define XFONT_GLYPH_ALPHA_CACHE_MAX_PIXELS 16384
+#endif
+
+/**
+ * @brief 文本覆盖率对比曲线 γ（×10 整数档）；默认 32 即 γ=3.2。
+ * @details 灰度 AA 的小字号中文笔画半覆盖像素占比高、直写 255 少，
+ *          视觉上笔画浓淡不均、整体发灰发虚（对照 GDI/ClearType 同
+ *          字号近黑）。文本混合端（XPainter painterGlyphAlphaBlend）
+ *          把覆盖率经曲线 out = 255·(cov/255)^(10/本宏值) 加浓后再
+ *          合成：32=γ3.2（当前档；γ2.6 档定量确证触达但 6x 下仍几
+ *          不可辨，且暗段杠杆饱和——γ2.8/3.0 对 cov128 终值仅 -3/-7，
+ *          故按 c=160 终值 42→35（≈系统近黑目标带）一步上调）、
+ *          26=γ2.6、22=γ2.2、18=γ1.8（保守档）、10=γ1.0
+ *          恒等回退（逐位恢复未加曲线的行为）。内核 5 份 glyphMaskSpan
+ *          （rgb32/gray8/rgb565/rgb555/rgb888）持同曲线独立副本常量
+ *          *_GLYPH_COVERAGE_GAMMA（刻意不共享本宏以保证独立回退），
+ *          调档须六处同步同值。曲线只作用于混合端，灰度图缓存仍存
+ *          原始 coverage，缓存键不受影响；0/255 两端恒等，实心区与
+ *          跳过/直写快捷路径语义不变。
+ */
+#ifndef XFONT_TEXT_CONTRAST_GAMMA_X10
+#define XFONT_TEXT_CONTRAST_GAMMA_X10 32
 #endif
 
 /**

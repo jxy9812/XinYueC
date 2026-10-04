@@ -30,6 +30,7 @@
  ******************************************************************************/
 #include "XRenderKernel.h"
 #include <stddef.h> /* size_t */
+#include <math.h>   /* pow：字形覆盖率 γ LUT 的惰性一次性构建 */
 
 #if XPAINTER_ON && (XRENDERKERNEL_RGB888_ON || XRENDERKERNEL_BGR888_ON)
 
@@ -120,6 +121,44 @@ static void bgr888_overPixel3(uint8_t* p, uint32_t srcPrem)
                       ((srcPrem >> 8) & 0xffu) + rgb24_mul255(dg, invA),
                       (srcPrem & 0xffu) + rgb24_mul255(db, invA));
     }
+}
+
+/* ========== 字形覆盖率 γ=3.2 LUT（rgb888_/bgr888_glyphMaskSpan 共用） ==== */
+
+/* 本文件本地常量：与 XPainter.c 直写分支（painterGlyphAlphaBlend）的
+ * 覆盖率提亮式同式同值（γ=3.2，pow(v/255,1/γ)），但刻意不引用对方
+ * 的新宏，保证内核侧与直写侧两条改动可独立回退。 */
+#define RGB24_GLYPH_COVERAGE_GAMMA 3.2
+
+/** 256 项覆盖率提升表：lut[v] = round(255*(v/255)^(1/γ))；端点保持
+ *  （0→0、255→255）。惰性一次性填充（首次字形绘制时构建，写入值
+ *  幂等）。 */
+static uint8_t g_rgb24_glyphCoverageLut[256];
+static int g_rgb24_glyphCoverageLutReady = 0;
+
+/**
+ * @brief 线性字形覆盖率 → γ=3.2 提升覆盖率（查 256 项 LUT）。
+ * @note  小字号灰度字形按线性 coverage 混合落在 γ≈2.2 的显示域上
+ *        观感发灰发虚、笔画浓淡不均；按 pow(v/255,1/3.2) 提升中低段
+ *        覆盖率后笔画趋近近黑、整行浓淡均匀（系统 ClearType 同域）。
+ *        24 位目标经本内核的文本与直写分支共用同一条曲线，两类目标
+ *        观感一致。0→0 保住 coverage==0 跳过语义、255→255 保住
+ *        全覆盖直写语义，调用方分支结构不变。
+ */
+static unsigned rgb24_glyphCoverage(unsigned coverage)
+{
+    if (g_rgb24_glyphCoverageLutReady == 0)
+    {
+        int i;
+        for (i = 0; i < 256; ++i)
+        {
+            g_rgb24_glyphCoverageLut[i] =
+                (uint8_t)(pow((double)i / 255.0,
+                              1.0 / RGB24_GLYPH_COVERAGE_GAMMA) * 255.0 + 0.5);
+        }
+        g_rgb24_glyphCoverageLutReady = 1;
+    }
+    return g_rgb24_glyphCoverageLut[coverage];
 }
 
 /* ========== RGB888 内核表六个成员 ========== */
@@ -233,6 +272,8 @@ static void rgb888_blendSpan(uint8_t* dstRow, int dstX,
  *        调制用 rgb24_mul255，与 painter 文本回退路径
  *        painterGlyphAlphaBlend 的覆盖率缩放同口径；调制后经
  *        rgb888_overPixel3 落盘（源不透明/全透明快捷分支在其内部）。
+ *        coverage 读取经 rgb24_glyphCoverage 的 γ=3.2 LUT 提亮
+ *        （0→0、255→255 端点保持），与直写分支同曲线。
  */
 static void rgb888_glyphMaskSpan(uint8_t* rowBytes, int x, int count,
                                  const uint8_t* mask, uint32_t colorPrem)
@@ -241,7 +282,7 @@ static void rgb888_glyphMaskSpan(uint8_t* rowBytes, int x, int count,
     int i;
     for (i = 0; i < count; ++i)
     {
-        unsigned coverage = mask[i];
+        unsigned coverage = rgb24_glyphCoverage(mask[i]);
         uint32_t modulated;
         if (coverage == 0u) continue;
         if (coverage >= 255u)
@@ -374,7 +415,9 @@ static void bgr888_blendSpan(uint8_t* dstRow, int dstX,
 /**
  * @brief 字形灰度 mask 混合到 BGR888 目标行。
  * @note  调制口径同 rgb888_glyphMaskSpan（painterGlyphAlphaBlend 同
- *        源），合成经 bgr888_overPixel3。
+ *        源），合成经 bgr888_overPixel3；coverage 读取经
+ *        rgb24_glyphCoverage 的 γ=3.2 LUT 提亮（0→0、255→255 端点
+ *        保持），与直写分支同曲线。
  */
 static void bgr888_glyphMaskSpan(uint8_t* rowBytes, int x, int count,
                                  const uint8_t* mask, uint32_t colorPrem)
@@ -383,7 +426,7 @@ static void bgr888_glyphMaskSpan(uint8_t* rowBytes, int x, int count,
     int i;
     for (i = 0; i < count; ++i)
     {
-        unsigned coverage = mask[i];
+        unsigned coverage = rgb24_glyphCoverage(mask[i]);
         uint32_t modulated;
         if (coverage == 0u) continue;
         if (coverage >= 255u)

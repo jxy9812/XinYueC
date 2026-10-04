@@ -10807,11 +10807,49 @@ static bool painterGlyphAlphaCacheStore(PainterGlyphAlphaCacheEntry* slot,
 
 #endif /* XFONT_GLYPH_ALPHA_CACHE_ON && ... && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
 
+/* ========== 文本覆盖率对比曲线（γ 校正 LUT，text-contrast-gamma） ========== */
+/* 小字号中文灰度 AA 笔画半覆盖像素偏多、直写 255 少，视觉上笔画浓淡
+   不均、整体发灰发虚。混合端按 γ 曲线加浓覆盖率后再合成：
+   out = 255·(cov/255)^(10/XFONT_TEXT_CONTRAST_GAMMA_X10)，默认 32 即
+   γ=3.2（γ2.6 档定量确证触达但 6x 仍几不可辨，暗段饱和故一步上调；
+   内核 5 份 *_GLYPH_COVERAGE_GAMMA 独立副本须同步同值）；
+   设 10 为 γ=1.0 恒等回退（逐位恢复原行为）。
+   曲线只作用于混合端：灰度图缓存仍存原始 coverage，缓存键
+   (face,cp,scaleKey|italic) 语义不变；0/255 两端恒等，覆盖 0 的跳过
+   与 255 的直写快捷路径语义不变。LUT 惰性初始化一次（首帧文本绘制
+   时构建 256 项，进程内不重建；subdiv 等编译期常量无跨版本污染）。 */
+static uint8_t g_textContrastLut[256];
+static bool g_textContrastLutReady = false;
+
+static const uint8_t* painterTextContrastLut(void)
+{
+    if (!g_textContrastLutReady)
+    {
+        int c;
+        for (c = 0; c < 256; ++c)
+        {
+            double unit = (double)c / 255.0;
+            g_textContrastLut[c] = (uint8_t)(
+                255.0 * pow(unit, 10.0 / (double)XFONT_TEXT_CONTRAST_GAMMA_X10) +
+                0.5);
+        }
+        /* 两端显式钉死恒等（公式本身已给出 0/255，此处保证不受 libm
+           舍入影响）：0 继续走跳过快捷路径、255 继续走直写快捷路径。 */
+        g_textContrastLut[0] = 0;
+        g_textContrastLut[255] = 255;
+        g_textContrastLutReady = true;
+    }
+    return g_textContrastLut;
+}
+
 /**
  * @brief      灰度位图按覆盖率混合到当前绘制表面。
  * @details    与旧逐帧路径逐像素等价：coverage 0 跳过、255 直写 ink、
  *             中间值按覆盖率缩放 ink 的 alpha 后经 putPixel 走裁剪/
  *             合成/边界判定。唯一差异是 0 覆盖像素不再调用 putPixel。
+ *             text-contrast-gamma：中间值先经覆盖率对比曲线 LUT
+ *             （XFONT_TEXT_CONTRAST_GAMMA_X10，默认 γ=3.2，10=恒等）
+ *             加浓再合成，直写与 fallback 两条路径同口径。
  */
 static void painterGlyphAlphaBlend(XPainter* painter, const uint8_t* alpha,
                                    int left, int top, int width, int height,
@@ -10819,6 +10857,9 @@ static void painterGlyphAlphaBlend(XPainter* painter, const uint8_t* alpha,
 {
     int i;
     int column;
+    /* 覆盖率对比曲线 LUT（惰性初始化一次，取指针开销可忽略）：
+       直写分支与 fallback 分支的 coverage 读取统一查表。 */
+    const uint8_t* contrastLut = painterTextContrastLut();
     /* 预乘 ARGB32 目标 + SourceOver + 无图案画刷时整块直写内存：
        预先求交裁剪盒得到有效区域，逐行按覆盖率混合（Qt raster 的
        blendColor with alpha map 同构）。逐像素 putPixel 每次重复做
@@ -10895,7 +10936,7 @@ static void painterGlyphAlphaBlend(XPainter* painter, const uint8_t* alpha,
                 int x;
                 for (x = x0; x < x1; ++x)
                 {
-                    unsigned coverage = row[x - left];
+                    unsigned coverage = contrastLut[row[x - left]];
                     unsigned pa;
                     unsigned spR2;
                     unsigned spG2;
@@ -11071,7 +11112,7 @@ fallback:
         int py = top + i;
         for (column = 0; column < width; ++column)
         {
-            unsigned coverage = row[column];
+            unsigned coverage = contrastLut[row[column]];
             uint32_t pixel;
             if (coverage == 0u) continue;
             if (coverage >= 255u) pixel = ink;
@@ -11090,7 +11131,9 @@ fallback:
 /**
  * @brief      outline 字形的软件抗锯齿光栅（TextAntialiasing 驱动）。
  * @details    与 GPU 图集路径共用 `painterGlyphContoursAlphaCoverage`
- *             灰度光栅器（4x4 面积子采样），软/GPU 字形逐像素一致；
+ *             灰度光栅器（文本软件路径 8x8 面积子采样，GPU 图集路径
+ *             仍 4x4；8 子采样平滑覆盖率量化台阶，配合混合端
+ *             XFONT_TEXT_CONTRAST_GAMMA_X10 对比曲线加浓笔画）；
  *             每像素按覆盖率经 putPixel 混合（putPixel 内处理裁剪、
  *             合成模式与边界）。仅支持单位/纯平移变换（与 GPU 条件
  *             一致）；其它变换返回 false 由调用方回退既有 fillPath。
@@ -11250,7 +11293,7 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     XMemset(alpha, 0, (size_t)width * (size_t)height);
     ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
                                            -(float)left, -(float)top,
-                                           alpha, width, height, 4,
+                                           alpha, width, height, 8,
                                            /* 字形轮廓维持 OddEven 既有口径
                                               （字形反走样基线不随本次填充
                                               规则修复变化）。 */
