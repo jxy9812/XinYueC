@@ -165,6 +165,13 @@ file(GLOB_RECURSE XGUI_API_TEST_FILE "Test/XGuiApiTest/*.c" )
 if(XGUI_API_TEST_FILE)
     list(REMOVE_ITEM TEST_FILE ${XGUI_API_TEST_FILE})
 endif()
+# xgui_font_scan_tool 同理：自带 main 的独立离屏字库巡检工具（
+# xgui_font_scan_tool 目标，接线见 XGuiGpu_Test 前注释），与主程序
+# main.c 双 main 冲突，必须从 Test/*.c glob 列表剔除。
+file(GLOB_RECURSE XGUI_FONT_SCAN_TOOL_FILE "Test/XGuiTest/xgui_font_scan_tool.c" )
+if(XGUI_FONT_SCAN_TOOL_FILE)
+    list(REMOVE_ITEM TEST_FILE ${XGUI_FONT_SCAN_TOOL_FILE})
+endif()
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # android_main.c 是 demo APK 的 NativeActivity 壳接线（引用 demo 入口
 # xgui_window_demo_main，定义 ANativeActivity_onCreate），归 xguidemo
@@ -635,6 +642,21 @@ if(XGUI_ON AND ANDROID)
     )
     target_link_libraries(xguidemo ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
     target_link_libraries(xguidemo android log)
+endif()
+
+# ==================== XGui 字库离屏巡检工具 ====================
+# 全字库离屏扫描（ASCII + GB2312 汉字，16px 轮廓 XFont -> 32x32 内存
+# XImage，走与窗口后备缓冲一致的 XPainterDevice_Image SW-AA 字形管线）：
+# 三道判据（零墨/墨量塌陷/横画叠带）筛坏字，产出 out/scan_bad_1.txt 与
+# out/scan_bad/*.png 样图；退出码 = min(坏字数, 250)。仅新增文件与目标，
+# 不触碰现有源码逻辑。仅桌面可执行（无窗口依赖，任何平台均可构建）。
+add_executable(xgui_font_scan_tool
+    "./Test/XGuiTest/xgui_font_scan_tool.c"
+)
+if(UNIX)
+    target_link_libraries(xgui_font_scan_tool ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(xgui_font_scan_tool ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== XGui GPU 阶段 1 冒烟测试 ====================

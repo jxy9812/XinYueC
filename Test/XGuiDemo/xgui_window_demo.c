@@ -3032,9 +3032,16 @@ static DemoWin* DemoWin_create(void)
     demo_performance_init(self);
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    /* 顶部标题栏文本（深蓝背景由静态场景绘制，白字覆盖其上）。 */
+    /* 顶部标题栏文本（深蓝背景由静态场景绘制，白字覆盖其上）。
+       Bold：合成粗体样张——标题是界面里最合适加粗的层级。 */
     XLabel_init(&self->m_titleLabel, &self->m_base, 0);
     demo_set_widget_default_font((XWidget*)&self->m_titleLabel);
+    {
+        XFont titleFont = XWidget_font((XWidget*)&self->m_titleLabel);
+        XFont_setBold(&titleFont, true);
+        XWidget_setFont((XWidget*)&self->m_titleLabel, &titleFont);
+        XClassDeinit(&titleFont);
+    }
     XLabel_setText_2(&self->m_titleLabel, "XGui 控件演示");
     XLabel_setTextPixelSize(&self->m_titleLabel, 18);
     XLabel_setAlignment(&self->m_titleLabel,
@@ -3209,6 +3216,13 @@ static DemoWin* DemoWin_create(void)
     XCommandLinkButton_init(&self->m_commandLink,
                             (XWidget*)&self->m_pageButtons, 0);
     demo_set_widget_default_font((XWidget*)&self->m_commandLink);
+    /* Bold 样张：命令链接主标题加粗、描述保持常规——同屏粗/常规对照。 */
+    {
+        XFont linkFont = XWidget_font((XWidget*)&self->m_commandLink);
+        XFont_setBold(&linkFont, true);
+        XWidget_setFont((XWidget*)&self->m_commandLink, &linkFont);
+        XClassDeinit(&linkFont);
+    }
     XCommandLinkButton_setText_2(&self->m_commandLink,
                                  "命令链接按钮");
     XCommandLinkButton_setDescription_2(&self->m_commandLink,

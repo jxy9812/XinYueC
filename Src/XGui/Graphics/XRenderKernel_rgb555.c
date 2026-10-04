@@ -102,7 +102,7 @@ static uint16_t rgb555_overPixel(uint16_t dstPixel, uint32_t srcPrem)
 /* 本文件本地常量：与 XPainter.c 直写分支（painterGlyphAlphaBlend）的
  * 覆盖率提亮式同式同值（γ=3.2，pow(v/255,1/γ)），但刻意不引用对方
  * 的新宏，保证内核侧与直写侧两条改动可独立回退。 */
-#define RGB555_GLYPH_COVERAGE_GAMMA 3.2
+#define RGB555_GLYPH_COVERAGE_GAMMA 1.4
 
 /** 256 项覆盖率提升表：lut[v] = round(255*(v/255)^(1/γ))；端点保持
  *  （0→0、255→255）。惰性一次性填充（首次字形绘制时构建，写入值

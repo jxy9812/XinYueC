@@ -10262,6 +10262,9 @@ typedef struct PainterOutlinePathSink
     float m_scale;
     float m_shear;          /**< §8.0g11 斜体合成倾斜系数（0=关；对标
                                  Qt 合成斜体 shear，右倾约 1/5 字高）。 */
+    bool m_gridFit;         /* 网格对齐旋钮（XFONT_TEXT_GRIDFIT）：笔点
+                               原点与非曲线端点吸附到整像素；控制点保持
+                               亚像素。每个实例化点都必须显式赋值。 */
 } PainterOutlinePathSink;
 
 static float painterOutlineX(const PainterOutlinePathSink* sink, float x)
@@ -10280,6 +10283,20 @@ static float painterOutlineShearX(const PainterOutlinePathSink* sink,
     return base + sink->m_shear * (sink->m_baselineY - screenY);
 }
 
+/* XFONT_TEXT_GRIDFIT 辅助：X 吸附到光栅化器的像素网格。扫描光栅化器
+   把像素列 n 视作 [n-0.5, n+0.5)，实芯列需要半整数边缘：吸附到
+   round(v-0.5)+0.5。合成斜体 shear 激活时跳过（每行 shear 偏移量
+   保持由行坐标取值，而非自身被圆整）。m_gridFit=false 时逐位恒等。
+   Y 对齐在 painterOutlineGridFitStrokesY()：对成品路径运行，把每条
+   横画的上下两边配对吸附，使笔画宽度在圆整后存活（见其注释）。 */
+static float painterOutlineSnapX(const PainterOutlinePathSink* sink,
+                                 float v)
+{
+    return (sink->m_gridFit && sink->m_shear == 0.0f)
+               ? roundf(v - 0.5f) + 0.5f
+               : v;
+}
+
 static float painterOutlineY(const PainterOutlinePathSink* sink, float y)
 {
     return sink->m_baselineY - y * sink->m_scale;
@@ -10292,7 +10309,9 @@ static bool painterOutlineMoveTo(void* userData, float x, float y)
     if (!sink || !sink->m_path) return false;
     sy = painterOutlineY(sink, y);
     return XPainterPath_moveTo(sink->m_path,
-                               painterOutlineShearX(sink, x, sy), sy);
+                               painterOutlineSnapX(
+                                   sink, painterOutlineShearX(sink, x, sy)),
+                               sy);
 }
 
 static bool painterOutlineLineTo(void* userData, float x, float y)
@@ -10302,7 +10321,9 @@ static bool painterOutlineLineTo(void* userData, float x, float y)
     if (!sink || !sink->m_path) return false;
     sy = painterOutlineY(sink, y);
     return XPainterPath_lineTo(sink->m_path,
-                               painterOutlineShearX(sink, x, sy), sy);
+                               painterOutlineSnapX(
+                                   sink, painterOutlineShearX(sink, x, sy)),
+                               sy);
 }
 
 static bool painterOutlineQuadTo(void* userData, float cx, float cy,
@@ -10312,11 +10333,14 @@ static bool painterOutlineQuadTo(void* userData, float cx, float cy,
     float scy;
     float sy;
     if (!sink || !sink->m_path) return false;
+    /* Control point stays fractional; only the on-curve endpoint snaps. */
     scy = painterOutlineY(sink, cy);
     sy = painterOutlineY(sink, y);
     return XPainterPath_quadTo(sink->m_path,
                                painterOutlineShearX(sink, cx, scy), scy,
-                               painterOutlineShearX(sink, x, sy), sy);
+                               painterOutlineSnapX(
+                                   sink, painterOutlineShearX(sink, x, sy)),
+                               sy);
 }
 
 static bool painterOutlineCubicTo(void* userData, float c1x, float c1y,
@@ -10327,13 +10351,16 @@ static bool painterOutlineCubicTo(void* userData, float c1x, float c1y,
     float sc2y;
     float sy;
     if (!sink || !sink->m_path) return false;
+    /* Both control points stay fractional; only the endpoint snaps. */
     sc1y = painterOutlineY(sink, c1y);
     sc2y = painterOutlineY(sink, c2y);
     sy = painterOutlineY(sink, y);
     return XPainterPath_cubicTo(sink->m_path,
                                 painterOutlineShearX(sink, c1x, sc1y), sc1y,
                                 painterOutlineShearX(sink, c2x, sc2y), sc2y,
-                                painterOutlineShearX(sink, x, sy), sy);
+                                painterOutlineSnapX(
+                                    sink, painterOutlineShearX(sink, x, sy)),
+                                sy);
 }
 
 static bool painterOutlineClose(void* userData)
@@ -10359,12 +10386,15 @@ static void painterOutlinePathReset(XPainterPath* path)
  * @details    缓存开启与关闭的构建路径共用本函数；缓存条目以 (0,0) 为
  *             原点保存用户空间路径，GPU 字形光栅也复用同一构建入口。
  */
+/* gridFit: XFONT_TEXT_GRIDFIT grid snapping for the SW AA text path only.
+   Every other caller (outline path cache build, GPU glyph raster) must
+   pass false so cached/stored geometry stays bitwise unchanged. */
 static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
                                     uint32_t codepoint, float scale,
                                     float originX, float baselineY,
                                     XPainterPath* path,
                                     XFontOutlineGlyphMetrics* metrics,
-                                    float shear)
+                                    float shear, bool gridFit)
 {
     PainterOutlinePathSink context;
     XFontOutlineSink sink;
@@ -10377,6 +10407,7 @@ static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
     context.m_baselineY = baselineY;
     context.m_scale = scale;
     context.m_shear = shear;
+    context.m_gridFit = gridFit;
     XMemset(&sink, 0, sizeof(sink));
     sink.userData = &context;
     sink.moveTo = painterOutlineMoveTo;
@@ -10438,11 +10469,29 @@ static uint32_t painterOutlineScaleKey(float scale)
 /* §8.0g11：italic 折进缓存键最高位（scaleKey 上限 0xfffffffe，最高位
    恒空）——outline 路径缓存与 alpha 缓存共用，斜体/正体字形自动隔离，
    缓存结构零改动。 */
-static uint32_t painterOutlineCacheKey(float scale, bool italic)
+/* bit30 镜像 SW 文本网格对齐旋钮（XFONT_TEXT_GRIDFIT）：只有 SW AA
+   alpha 位图缓存传入该旋钮，翻动旋钮等效该缓存冷启动；outline 路径
+   缓存恒以 gridFit=false 构建。守卫保证 scaleKey 数值位到达 bit30
+   （scale >= 16384px）时不再置位；bit31 保留给斜体。
+   bit28-27 携带合成粗体档位（0=关，1=半粗，2=粗），不同字重的
+   coverage 位图永不混缓存。 */
+static uint32_t painterOutlineCacheKey(float scale, bool italic,
+                                       bool gridFit, int boldTier)
 {
     uint32_t key = painterOutlineScaleKey(scale);
+    if (key != 0u && key < 0x40000000u && gridFit) key |= 0x40000000u;
+    if (key != 0u && (boldTier & 3u) != 0u)
+        key |= (uint32_t)(boldTier & 3u) << 27;
     if (key != 0u && italic) key |= 0x80000000u;
     return key;
+}
+
+/** @brief 字重 → 合成粗体档位（0=不粗体）。 */
+static int painterBoldTierForWeight(int weight)
+{
+    if (weight >= XFont_Bold) return 2;
+    if (weight >= XFont_DemiBold) return 1;
+    return 0;
 }
 
 static PainterOutlinePathCacheEntry* painterOutlineCacheFind(
@@ -10488,17 +10537,23 @@ static PainterOutlinePathCacheEntry* painterOutlineCacheLoad(
     PainterOutlinePathCacheEntry* entry;
     XPainterPath path;
     XFontOutlineGlyphMetrics metrics;
+    /* gridFit=false, boldTier=0: path cache keys stay bitwise identical
+       to legacy (bold works on the coverage bitmap, not the path). */
     uint32_t scaleKey = painterOutlineCacheKey(scale, font &&
-                                               XFont_italic(font));
+                                               XFont_italic(font),
+                                               false, 0);
     if (!face || !face->m_family || !face->m_family[0] || scaleKey == 0u)
         return NULL;
     entry = painterOutlineCacheFind(face, codepoint, scaleKey);
     if (entry) return entry;
+    /* gridFit=false: cache entries stay rooted at (0,0) unsnapped, so the
+       path cache content and key bits are identical to legacy builds. */
     if (!painterOutlineBuildPath(face, font, codepoint, scale, 0.0f, 0.0f,
                                  &path, &metrics,
                                  font && XFont_italic(font)
                                      ? XPAINTER_SYNTHETIC_ITALIC_SHEAR
-                                     : 0.0f))
+                                     : 0.0f,
+                                 false))
         return NULL;
     entry = painterOutlineCacheSlot();
     if (!entry)
@@ -11141,6 +11196,342 @@ fallback:
  *             笔点为原点）；小数平移改变亚像素覆盖率，逐帧光栅。
  * @return     true 已绘制；false 不支持（调用方回退）。
  */
+/* XFONT_TEXT_GRIDFIT v2：横画等宽保持对齐。v1 对每个非曲线端点独立
+   取整，同一条细横画的上下两边可能各自圆整后拉宽（2px 虚胖）、塌到
+   同一扫描线（笔画消失）或骑在两行之间（永久半覆盖灰带）。此处收集
+   成品路径的近平横 LineTo 边、按 Y 排序、奇偶配对（扫描线奇偶性使
+   嵌套带连续成对）；每对联合吸附，笔画保持 max(1, round(w)) 行整行
+   实芯——不塌行、无灰带。其余非曲线点吸附到网格；曲线控制点保持
+   亚像素。定长边表溢出时退化为逐点取整。 */
+#define PAINTER_OUTLINE_HEDGE_MAX 96
+typedef struct PainterOutlineHEdge
+{
+    int m_startIndex; /**< 承载线段起点的元素下标 */
+    int m_endIndex;   /**< 承载线段终点的元素下标 */
+    int m_ctrlIndex1; /**< 第一控制点元素下标，或 -1 */
+    int m_ctrlIndex2; /**< 第二控制点元素下标，或 -1 */
+    int m_contour;    /**< 轮廓 id（MoveTo 序号），供绕向判定 */
+    float m_y;        /**< 边的原始中线 Y */
+    float m_x0;       /**< 原始起点 X（重叠判定用） */
+    float m_x1;       /**< 原始终点 X（重叠判定用） */
+    float m_dx;       /**< 原始终点-起点 X 符号 */
+} PainterOutlineHEdge;
+
+#define PAINTER_OUTLINE_FLAT_TOL 2.0f
+#define PAINTER_OUTLINE_CONTOUR_MAX 64
+
+/* 返回 true 表示至少一个轮廓命中密度守卫（其几何把横画排得比吸附
+   网格能承载的更密）；合成粗体膨胀用该返回值降档，防止密排叠带
+   字形被焊死。 */
+static bool painterOutlineGridFitStrokesY(XPainterPath* path)
+{
+    PainterOutlineHEdge edges[PAINTER_OUTLINE_HEDGE_MAX];
+    int edgeCount = 0;
+    int droppedEdges = 0;
+    int i;
+    int j;
+    float prevX = 0.0f;
+    float prevY = 0.0f;
+    float areas[PAINTER_OUTLINE_CONTOUR_MAX];
+    int contour = -1;
+    bool denseHit = false;
+    if (!path || path->m_elementCount <= 0 || !path->m_elements) return false;
+    for (i = 0; i < PAINTER_OUTLINE_CONTOUR_MAX; ++i) areas[i] = 0.0f;
+    /* pass 1：收集近平横边（直线 + 被拉平的曲线——XFO 把平直笔画
+       编码为 tame 三次曲线）；同时累加各轮廓的鞋带面积供绕向判定 */
+    for (i = 0; i < path->m_elementCount; ++i)
+    {
+        XPainterPathElement* e = &path->m_elements[i];
+        float ex;
+        float ey;
+        int isCurve = 0;
+        if (e->m_type == XPainterPathElement_CurveToData) continue;
+        if (e->m_type == XPainterPathElement_MoveTo)
+        {
+            ++contour;
+            prevX = e->m_x1;
+            prevY = e->m_y1;
+            continue;
+        }
+        ex = e->m_x1;
+        ey = e->m_y1;
+        if (e->m_type == XPainterPathElement_CurveTo &&
+            i + 2 < path->m_elementCount &&
+            path->m_elements[i + 1].m_type ==
+                XPainterPathElement_CurveToData &&
+            path->m_elements[i + 2].m_type ==
+                XPainterPathElement_CurveToData)
+        {
+            /* 鞋带项必须用线段真实终点：CurveTo 的 e->m_y1 是控制点 1，
+               而 XFO 把平直笔画编码为 tame 曲线——累加控制点使曲线密集
+               轮廓的绕向面积符号不稳（令 U+4EE4 翻转过），开/关角色
+               互换导致栈配对整体休眠。 */
+            ex = path->m_elements[i + 2].m_x1;
+            ey = path->m_elements[i + 2].m_y1;
+            isCurve = 1;
+        }
+        if (contour >= 0 && contour < PAINTER_OUTLINE_CONTOUR_MAX)
+            areas[contour] += prevX * ey - ex * prevY;
+        if (e->m_type == XPainterPathElement_LineTo)
+        {
+            if (fabsf(ey - prevY) <= 0.35f &&
+                fabsf(ex - prevX) >= 0.5f)
+            {
+                if (edgeCount < PAINTER_OUTLINE_HEDGE_MAX)
+                {
+                    edges[edgeCount].m_startIndex = i - 1;
+                    edges[edgeCount].m_endIndex = i;
+                    edges[edgeCount].m_ctrlIndex1 = -1;
+                    edges[edgeCount].m_ctrlIndex2 = -1;
+                    edges[edgeCount].m_contour = contour;
+                    edges[edgeCount].m_y = (prevY + ey) * 0.5f;
+                    edges[edgeCount].m_x0 = prevX;
+                    edges[edgeCount].m_x1 = ex;
+                    edges[edgeCount].m_dx = ex - prevX;
+                    ++edgeCount;
+                }
+                else
+                {
+                    ++droppedEdges;
+                }
+            }
+        }
+        else if (isCurve)
+        {
+            float midY = (prevY + ey) * 0.5f;
+            if (fabsf(ey - prevY) <= 0.35f &&
+                fabsf(e->m_y1 - midY) <= PAINTER_OUTLINE_FLAT_TOL &&
+                fabsf(path->m_elements[i + 1].m_y1 - midY) <=
+                    PAINTER_OUTLINE_FLAT_TOL &&
+                fabsf(ex - prevX) >= 0.5f)
+            {
+                if (edgeCount < PAINTER_OUTLINE_HEDGE_MAX)
+                {
+                    edges[edgeCount].m_startIndex = i - 1;
+                    edges[edgeCount].m_endIndex = i + 2;
+                    edges[edgeCount].m_ctrlIndex1 = i;
+                    edges[edgeCount].m_ctrlIndex2 = i + 1;
+                    edges[edgeCount].m_contour = contour;
+                    edges[edgeCount].m_y = midY;
+                    edges[edgeCount].m_x0 = prevX;
+                    edges[edgeCount].m_x1 = ex;
+                    edges[edgeCount].m_dx = ex - prevX;
+                    ++edgeCount;
+                }
+                else
+                {
+                    ++droppedEdges;
+                }
+            }
+        }
+        prevX = ex;
+        prevY = ey;
+        if (isCurve) i += 2;
+    }
+    /* pass 2：构建扫描事件。带顶（墨在下）= 开带，带底（墨在上）=
+       关带；边的墨侧由所在轮廓的绕向决定。 */
+    int evEdge[PAINTER_OUTLINE_HEDGE_MAX];
+    float evY[PAINTER_OUTLINE_HEDGE_MAX];
+    int evClose[PAINTER_OUTLINE_HEDGE_MAX];
+    int evCount = 0;
+    for (i = 0; i < edgeCount; ++i)
+    {
+        int c = edges[i].m_contour;
+        float w = 0.0f;
+        bool inkBelow;
+        if (c >= 0 && c < PAINTER_OUTLINE_CONTOUR_MAX) w = areas[c];
+        inkBelow = (w > 0.0f) == (edges[i].m_dx > 0.0f);
+        if (evCount >= PAINTER_OUTLINE_HEDGE_MAX)
+        {
+            ++droppedEdges;
+            continue;
+        }
+        evEdge[evCount] = i;
+        evY[evCount] = edges[i].m_y;
+        evClose[evCount] = inkBelow ? 0 : 1; /* 0 = 开带，1 = 关带 */
+        ++evCount;
+    }
+    /* 按（Y，关带先于开带）排序事件 */
+    for (i = 1; i < evCount; ++i)
+    {
+        int te = evEdge[i];
+        float ty = evY[i];
+        int tc = evClose[i];
+        j = i - 1;
+        while (j >= 0 && (evY[j] > ty ||
+                          (evY[j] == ty && evClose[j] < tc)))
+        {
+            evEdge[j + 1] = evEdge[j];
+            evY[j + 1] = evY[j];
+            evClose[j + 1] = evClose[j];
+            --j;
+        }
+        evEdge[j + 1] = te;
+        evY[j + 1] = ty;
+        evClose[j + 1] = tc;
+    }
+    /* 密度守卫（跨轮廓）：横画排得比 ~1.3px 更密（矗式叠带：0.5px 带 +
+       0.5px 间隙）的轮廓无法在 1px 网格上吸附而不焊接——任何逐带策略
+       都装不下 1px 周期里的 2px 周期。整体跳过这些轮廓，交由 8x8 面积
+       采样输出设计亚像素灰阶。 */
+    int stack[PAINTER_OUTLINE_HEDGE_MAX];
+    int stackTop = 0;
+    int contourSkip[PAINTER_OUTLINE_CONTOUR_MAX];
+    /* 每轮廓记录上一条已吸附带的带底，做间隙保护：密排字的横带相距
+       ~1px，各带中线独立取整时会互相蠕变靠拢 */
+    float lastBottom[PAINTER_OUTLINE_CONTOUR_MAX];
+    for (i = 0; i < PAINTER_OUTLINE_CONTOUR_MAX; ++i)
+    {
+        contourSkip[i] = 0;
+        lastBottom[i] = -1e9f;
+    }
+    for (i = 1; i < evCount; ++i)
+    {
+        /* 跨轮廓密度守卫：堆叠内横（演的由：三条 1.4px 横带相距 0.9px
+           且分属三个独立轮廓）比吸附网格能承载的更密，且每条带各属一个
+           轮廓——只查同轮廓相邻边永远不触发。相邻事件过密时把两侧轮廓
+           都标记跳过，整叠保持设计亚像素几何。 */
+        int cA = edges[evEdge[i - 1]].m_contour;
+        int cB = edges[evEdge[i]].m_contour;
+        if (cA >= 0 && cA < PAINTER_OUTLINE_CONTOUR_MAX &&
+            evY[i] - evY[i - 1] < 1.3f)
+        {
+            if (cA < PAINTER_OUTLINE_CONTOUR_MAX) contourSkip[cA] = 1;
+            if (cB >= 0 && cB < PAINTER_OUTLINE_CONTOUR_MAX)
+                contourSkip[cB] = 1;
+            denseHit = true;
+        }
+    }
+    /* pass 3：栈扫描——每次关带弹出最近开放的带顶（LIFO = 最近带，
+       任意嵌套都正确），配对因此不可能跨带。每对把两端（端点与控制
+       点）按同一 delta 平移，保持微拱笔形的同时落到 max(1, round(w))
+       行整行实芯。像素行 n 覆盖 [n-0.5, n+0.5)，带边缘落在半整数。 */
+    for (i = 0; i < evCount; ++i)
+    {
+        int cT;
+        if (contourSkip[edges[evEdge[i]].m_contour]) continue;
+        cT = edges[evEdge[i]].m_contour;
+        (void)cT;
+            if (evClose[i] == 0)
+            {
+                if (stackTop < PAINTER_OUTLINE_HEDGE_MAX)
+                    stack[stackTop++] = evEdge[i];
+                continue;
+            }
+            if (stackTop > 0)
+            {
+                int t = stack[--stackTop];
+                int b = evEdge[i];
+                int c = edges[t].m_contour;
+                float prevBottom = (c >= 0 && c < PAINTER_OUTLINE_CONTOUR_MAX)
+                                       ? lastBottom[c]
+                                       : -1e9f;
+                float overlap =
+                    (edges[t].m_x1 < edges[b].m_x1 ? edges[t].m_x1
+                                                   : edges[b].m_x1) -
+                    (edges[t].m_x0 > edges[b].m_x0 ? edges[t].m_x0
+                                                   : edges[b].m_x0);
+                float width;
+                float mid;
+                float loSnapped;
+                float delta;
+                /* 跨轮廓守卫。横画的两条边必属同一闭合轮廓；LIFO 栈会
+                   交错轮廓（山 0x5C71：底横的顶边弹出了邻轮廓的竖笔底
+                   边，宽度被撑到 2px 并焊死上方间隙）。弹出的边来自另
+                   一轮廓即丢弃该配对：两边落入 pass5 逐点取整。 */
+                if (c != edges[b].m_contour) continue;
+                /* V/U 形笔画部件在两个轮廓间共享顶点 y：绕向把一侧判为
+                   带顶、另一侧判为带底且高度几乎相同，LIFO 弹栈会把它们
+                   配成"带"——实际是同一条斜笔自折叠（令的下半）。真横带
+                   的两条边 x 有重叠；顶点对没有。拒绝顶点对——两边落入
+                   pass5 逐点取整（斜笔本就无需压平/拉宽）。 */
+                if (overlap <= 0.5f) continue;
+                /* 上述 skip 检查基于排序相邻性；密集轮廓被整体跳过，幸存
+                   的配对必属稀疏轮廓 */
+                if (c >= 0 && c < PAINTER_OUTLINE_CONTOUR_MAX &&
+                    contourSkip[c])
+                    continue;
+                width = roundf(edges[b].m_y - edges[t].m_y);
+                mid = (edges[t].m_y + edges[b].m_y) * 0.5f;
+                if (width < 1.0f) width = 1.0f;
+                loSnapped = roundf(mid - width * 0.5f) - 0.5f;
+                /* 同轮廓上一条带的间隙保护：[loSnapped, loSnapped+width]
+                   不得侵入 (prevBottom, prevBottom + 1)——开放间隙须保持
+                   ≥ 1px，会侵入则向下偏移。 */
+                if (loSnapped < prevBottom + 1.0f &&
+                    loSnapped > prevBottom - 0.5f)
+                    loSnapped = prevBottom + 1.0f;
+                delta = (loSnapped + width * 0.5f) - mid;
+                if (c >= 0 && c < PAINTER_OUTLINE_CONTOUR_MAX)
+                    lastBottom[c] = loSnapped + width;
+                path->m_elements[edges[t].m_startIndex].m_y1 += delta;
+                path->m_elements[edges[t].m_endIndex].m_y1 += delta;
+                path->m_elements[edges[b].m_startIndex].m_y1 += delta;
+                path->m_elements[edges[b].m_endIndex].m_y1 += delta;
+                if (edges[t].m_ctrlIndex1 >= 0)
+                    path->m_elements[edges[t].m_ctrlIndex1].m_y1 += delta;
+                if (edges[t].m_ctrlIndex2 >= 0)
+                    path->m_elements[edges[t].m_ctrlIndex2].m_y1 += delta;
+                if (edges[b].m_ctrlIndex1 >= 0)
+                    path->m_elements[edges[b].m_ctrlIndex1].m_y1 += delta;
+                if (edges[b].m_ctrlIndex2 >= 0)
+                    path->m_elements[edges[b].m_ctrlIndex2].m_y1 += delta;
+            }
+            /* 空栈时的关带事件落入 pass5 逐点取整 */
+        }
+    /* pass 4：近平竖直平坦曲线拍直到一条整列，竖笔边缘不再拖半像素灰尾 */
+    for (i = 1; i < path->m_elementCount; ++i)
+    {
+        XPainterPathElement* e = &path->m_elements[i];
+        if (e->m_type == XPainterPathElement_CurveTo &&
+            i + 2 < path->m_elementCount &&
+            path->m_elements[i + 1].m_type ==
+                XPainterPathElement_CurveToData &&
+            path->m_elements[i + 2].m_type ==
+                XPainterPathElement_CurveToData)
+        {
+            XPainterPathElement* prev = &path->m_elements[i - 1];
+            XPainterPathElement* end = &path->m_elements[i + 2];
+            float midX = (prev->m_x1 + end->m_x1) * 0.5f;
+            if (fabsf(end->m_x1 - prev->m_x1) <= 0.35f &&
+                fabsf(e->m_x1 - midX) <= PAINTER_OUTLINE_FLAT_TOL &&
+                fabsf(path->m_elements[i + 1].m_x1 - midX) <=
+                    PAINTER_OUTLINE_FLAT_TOL &&
+                fabsf(end->m_y1 - prev->m_y1) >= 0.5f)
+            {
+                float col = roundf(midX - 0.5f) + 0.5f;
+                prev->m_x1 = col;
+                end->m_x1 = col;
+                e->m_x1 = col;
+                path->m_elements[i + 1].m_x1 = col;
+            }
+        }
+    }
+    /* pass 5：其余非曲线点吸附到半整数跨度网格（像素行 n 覆盖
+       [n-0.5, n+0.5)）；已配对带本就在该网格上，重复取整为恒等。
+       pass3 标记的密集轮廓保持原始 y：其设计几何把 0.5px 笔画排进
+       1px 网格装不下的亚像素周期，此处取整会把笔画带塌到共享行
+       （矗 U+77D7 焊接）。面积采样按设计输出灰阶替代。 */
+    {
+        int elementContour = -1;
+        for (i = 0; i < path->m_elementCount; ++i)
+        {
+            XPainterPathElement* e = &path->m_elements[i];
+            if (e->m_type == XPainterPathElement_MoveTo) ++elementContour;
+            if (e->m_type == XPainterPathElement_CurveToData) continue;
+            if (elementContour >= 0 &&
+                elementContour < PAINTER_OUTLINE_CONTOUR_MAX &&
+                contourSkip[elementContour])
+                continue;
+            e->m_y1 = roundf(e->m_y1 - 0.5f) + 0.5f;
+        }
+    }
+    if (droppedEdges > 0) denseHit = true;
+    for (i = 0; i < PAINTER_OUTLINE_CONTOUR_MAX; ++i)
+        if (contourSkip[i]) denseHit = true;
+    return denseHit;
+}
+
 static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                                               int baselineY, uint32_t cp,
                                               uint32_t color, float scale,
@@ -11159,6 +11550,8 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     float maxY = 0.0f;
     float translateX = 0.0f;
     float translateY = 0.0f;
+    float penX;
+    float penY;
     bool haveBounds = false;
     bool identity;
     int left;
@@ -11169,6 +11562,23 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     int i;
     uint8_t* alpha = NULL;
     bool ok = false;
+    /* Runtime escape hatch for XFONT_TEXT_GRIDFIT: XGUI_TEXT_GRIDFIT=0
+       forces alignment off, =1 forces it on, unset follows the compile
+       macro. The glyph alpha cache key carries the gridfit bit, so
+       toggling between renders cannot cross-contaminate cached
+       bitmaps. Lives in the SW AA glyph path only. */
+    static int gridfitOverride = -1;
+    bool gridfit;
+    int boldTier;
+    bool outlineDenseGlyph = false;
+    if (gridfitOverride < 0)
+    {
+        const char* v = XSystem_environment("XGUI_TEXT_GRIDFIT");
+        gridfitOverride = (v && v[0] == '0' && v[1] == '\0') ? 0 : 1;
+    }
+    gridfit = (XFONT_TEXT_GRIDFIT != 0) && gridfitOverride != 0;
+    boldTier = painterBoldTierForWeight(
+        XFont_weight(&painter->m_state.m_font));
     if (!painter || painter->m_deviceKind != XPainterDevice_Image ||
         !painter->m_image || !(scale > 0.0f) || !isfinite(scale))
         return false;
@@ -11190,7 +11600,10 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                           translateY == (float)ty);
         const XFontFace* face = XFont_face(&painter->m_state.m_font);
         uint32_t scaleKey = painterOutlineCacheKey(
-            scale, XFont_italic(&painter->m_state.m_font));
+            scale, XFont_italic(&painter->m_state.m_font),
+            gridfit,
+            painterBoldTierForWeight(
+                XFont_weight(&painter->m_state.m_font)));
         PainterGlyphAlphaCacheEntry* entry =
             cacheable ? painterGlyphAlphaCacheFind(face, cp, scaleKey) : NULL;
         if (entry)
@@ -11206,14 +11619,26 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
         }
     }
 #endif /* XFONT_GLYPH_ALPHA_CACHE_ON && ... && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
+    /* XFONT_TEXT_GRIDFIT: snap the pen origin to whole device pixels so
+       the sink-level endpoint snapping aligns strokes to the pixel grid.
+       No-op for integer pens; fractional-translation frames (which never
+       hit the bitmap cache above) are the ones that benefit. This is the
+       only call site that opts in - the GPU and path-cache builds always
+       pass gridFit=false. */
+    penX = gridfit ? roundf((float)x + translateX)
+                   : (float)x + translateX;
+    penY = gridfit ? roundf((float)baselineY + translateY)
+                   : (float)baselineY + translateY;
     if (!painterOutlineBuildPath(
             XFont_face(&painter->m_state.m_font), &painter->m_state.m_font,
-            cp, scale, (float)x + translateX,
-            (float)baselineY + translateY, &path, &metrics,
+            cp, scale, penX, penY, &path, &metrics,
             XFont_italic(&painter->m_state.m_font)
-                ? XPAINTER_SYNTHETIC_ITALIC_SHEAR : 0.0f))
+                ? XPAINTER_SYNTHETIC_ITALIC_SHEAR : 0.0f,
+            gridfit))
         return false;
     if (outMetrics) *outMetrics = metrics;
+    if (gridfit)
+        outlineDenseGlyph = painterOutlineGridFitStrokesY(&path);
     ok = painterPathBuildContours(&path, 0.0f, 0.0f, &contours,
                                   &contourCount, &contourCapacity);
     XPainterPath_deinit(&path);
@@ -11264,7 +11689,10 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                 painterGlyphAlphaCacheStore(
                     slot, XFont_face(&painter->m_state.m_font), cp,
                     painterOutlineCacheKey(
-                        scale, XFont_italic(&painter->m_state.m_font)),
+                        scale, XFont_italic(&painter->m_state.m_font),
+                        gridfit,
+                        painterBoldTierForWeight(
+                            XFont_weight(&painter->m_state.m_font))),
                     &metrics,
                     0, 0, 1, 1, &blank);
             }
@@ -11299,6 +11727,105 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                                               规则修复变化）。 */
                                            XPainterFillRule_OddEven);
     painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
+    if (ok && gridfit)
+    {
+        /* XFONT_TEXT_GRIDFIT diagonal-stroke reinforcement. At 16px a
+           slanted stroke (撇/捺/提/钩) is 1-1.5 design px wide, so its
+           per-row coverage sits mid-scale and every pixel renders as
+           ~50% gray - the "muddy diagonals" the user sees. An interior
+           pixel of a diagonal has its vertical neighbours covered too,
+           while a true AA boundary pixel borders empty rows. For every
+           mid-coverage pixel whose two vertical neighbours are both
+           >= half coverage, lift the pixel: the stroke body reads
+           solid while the outer AA boundary keeps its smooth ramp.
+           Horizontal/vertical strokes are already snapped solid by
+           painterOutlineGridFitStrokesY and keep coverage >= 255, so
+           they are untouched by the mid-scale gate. */
+        int prow;
+        for (prow = 1; prow < height - 1; ++prow)
+        {
+            uint8_t* rowUp = alpha + (size_t)(prow - 1) * (size_t)width;
+            uint8_t* rowMid = alpha + (size_t)prow * (size_t)width;
+            uint8_t* rowDown = alpha + (size_t)(prow + 1) * (size_t)width;
+            int pcol;
+            for (pcol = 0; pcol < width; ++pcol)
+            {
+                unsigned mid = rowMid[pcol];
+                unsigned lifted;
+                if (mid < 64u || mid >= 208u) continue;
+                if (rowUp[pcol] < 128u || rowDown[pcol] < 128u) continue;
+                lifted = mid * 2u;
+                if (lifted > 240u) lifted = 240u;
+                rowMid[pcol] = (uint8_t)lifted;
+            }
+        }
+    }
+    if (ok && boldTier > 0)
+    {
+        /* 合成粗体 = b1588cd5 时代的文本对比曲线：粗体字重走激进
+           gamma-3.2 覆盖率曲线（用户目测认可"这就是粗体该有的浓度"），
+           常规字重保持 gamma-1.4。纯逐像素曲线，无膨胀——宽度来自
+           加浓后的 AA 肩部被读作笔画本体，间隙保持设计距离，密集
+           字形无法焊接。一张 256 项 LUT，对所有文字统一施加。 */
+        uint8_t* scratch =
+            (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
+        if (scratch)
+        {
+            int tier = boldTier;
+            int round_;
+            int prow;
+            int pcol;
+            /* 小字形（标点：* , ; ? { 与 CJK 部首）几乎没有内部间隙，
+               膨胀会把它们焊成黑团。以墨密度预判焊接：统计位图内覆盖
+               ≥1/2 的像素，占比超 45%（团块：* , ; ? { 亻 彑）的字形
+               无法承受膨胀——钳到仅提底。常规汉字在此字号下远低于
+               35%。 */
+            {
+                unsigned inkCount = 0;
+                unsigned total = (unsigned)width * (unsigned)height;
+                int inkW = metrics.xMax - metrics.xMin;
+                int inkH = metrics.yMax - metrics.yMin;
+                for (prow = 0; prow < height; ++prow)
+                {
+                    uint8_t* row = alpha + (size_t)prow * (size_t)width;
+                    for (pcol = 0; pcol < width; ++pcol)
+                        if (row[pcol] >= 128u) ++inkCount;
+                }
+                if (inkCount * 100u > total * 45u) tier = 0;
+                if ((inkW < 6 || inkH < 6) && tier > 0) tier = 1;
+            }
+            if (outlineDenseGlyph) tier = (tier > 1) ? 1 : 0;
+            /* 合成粗体 = b1588cd5 时代的文本对比曲线：粗体字重走激进
+               gamma-3.2 覆盖率曲线（用户目测认可"这就是粗体该有的浓
+               度"），常规字重保持 gamma-1.4。纯逐像素曲线，无膨胀——
+               宽度来自加浓后的 AA 肩部被读作笔画本体，间隙保持设计
+               距离，密集字形无法焊接。一张 256 项 LUT，对所有文字
+               统一施加。 */
+            {
+                static uint8_t boldLut[256];
+                static int boldLutReady = 0;
+                if (!boldLutReady)
+                {
+                    for (pcol = 0; pcol < 256; ++pcol)
+                    {
+                        double v = pow((double)pcol / 255.0,
+                                       10.0 / 32.0); /* gamma 3.2 */
+                        unsigned lifted = (unsigned)(v * 255.0 + 0.5);
+                        boldLut[pcol] =
+                            (uint8_t)((lifted > 255u) ? 255u : lifted);
+                    }
+                    boldLutReady = 1;
+                }
+                for (prow = 0; prow < height; ++prow)
+                {
+                    uint8_t* row = alpha + (size_t)prow * (size_t)width;
+                    for (pcol = 0; pcol < width; ++pcol)
+                        row[pcol] = boldLut[row[pcol]];
+                }
+            }
+            XFree_System(scratch);
+        }
+    }
     if (ok)
     {
         uint32_t ink = painterApplyOpacity(color, painter->m_state.m_opacity);
@@ -11323,7 +11850,10 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                 painterGlyphAlphaCacheStore(
                     slot, face, cp,
                     painterOutlineCacheKey(
-                        scale, XFont_italic(&painter->m_state.m_font)),
+                        scale, XFont_italic(&painter->m_state.m_font),
+                        gridfit,
+                        painterBoldTierForWeight(
+                            XFont_weight(&painter->m_state.m_font))),
                     &metrics, left - (x + tx), top - (baselineY + ty),
                     width, height, alpha);
             }
@@ -11429,6 +11959,10 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
     context.m_originX = (float)x;
     context.m_baselineY = (float)baselineY;
     context.m_scale = scale;
+    /* Legacy fallback branch: grid-fit (XFONT_TEXT_GRIDFIT) is a SW-AA-only
+       knob. With m_gridFit=false the sink snap helpers short-circuit and
+       never read m_shear on this path. */
+    context.m_gridFit = false;
     XMemset(&sink, 0, sizeof(sink));
     sink.userData = &context;
     sink.moveTo = painterOutlineMoveTo;
@@ -13426,11 +13960,15 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
 #endif /* XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
     if (!glyphPath)
     {
+        /* GPU glyph raster keeps bitwise identical geometry: grid-fit
+           (XFONT_TEXT_GRIDFIT) is a SW-AA text-only knob, always false
+           on this build path (as in the path cache build). */
         if (!painterOutlineBuildPath(face, &self->m_state.m_font, cp, scale,
                                      0.0f, 0.0f, &localPath, &metrics,
                                      italicShear
                                          ? XPAINTER_SYNTHETIC_ITALIC_SHEAR
-                                         : 0.0f))
+                                         : 0.0f,
+                                     false))
             return false;
         glyphPath = &localPath;
         localPathValid = true;

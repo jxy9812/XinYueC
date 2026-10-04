@@ -110,7 +110,28 @@
  *          跳过/直写快捷路径语义不变。
  */
 #ifndef XFONT_TEXT_CONTRAST_GAMMA_X10
-#define XFONT_TEXT_CONTRAST_GAMMA_X10 32
+#define XFONT_TEXT_CONTRAST_GAMMA_X10 14
+#endif
+
+/**
+ * @brief SW text glyph grid-fit (XPainter software AA outline text only);
+ *        default 1 (on), 0 restores the previous bitwise behavior.
+ * @details 1 = snap the pen origin and the on-curve endpoints of the glyph
+ *          outline to whole device pixels while building the path for
+ *          painterDrawOutlineGlyphSoftwareAA. Curve control points are
+ *          untouched; with synthetic italic only y snaps so the per-row
+ *          shear offset keeps its fractional sourcing. This removes the
+ *          subpixel phase lottery that splits hairline strokes across two
+ *          pixel rows/columns with half-coverage gray tails. 0 = every new
+ *          branch collapses to an identity expression (bitwise legacy).
+ *          Scope: the SW AA text path in XPainter only - GPU glyph atlas,
+ *          bitmap fonts and the generic fillPath are not affected, and the
+ *          outline path cache always builds unsnapped. The SW glyph alpha
+ *          bitmap cache folds the knob into cache key bit30, so flipping
+ *          the knob is equivalent to a cold cache for that cache.
+ */
+#ifndef XFONT_TEXT_GRIDFIT
+#define XFONT_TEXT_GRIDFIT 1
 #endif
 
 /**
