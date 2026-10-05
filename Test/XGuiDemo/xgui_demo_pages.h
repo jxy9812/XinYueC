@@ -116,10 +116,28 @@ int demo_page_remote_client_autotest(XWidget* page);
  *   - XGUI_KB_DUMP=1       向 stdout 打 XKB-GEO 前缀几何行（控件矩
  *                          形/键位矩形/ctrl/候选带矩形），供脚本与布
  *                          局公式双簿比对。
+ *   - XGUI_KB_LAYOUT=t9|english|pinyin
+ *                          切换布局款型（拼音九键/英文全键/拼音全键；
+ *                          IME 启用且停 User1 槽位时随行落 TextLower
+ *                          让款型主表可见）；
+ *   - XGUI_KB_PANEL=selector|edit|float
+ *                          直点对应工具栏图标（键盘选择面板/文字编辑
+ *                          面板/紧凑悬浮小键盘；真实 menuBarHit→图标
+ *                          激活路径），并打 XKB-GEO panel 证据行。
  *  调用点=主文件窗口几何定版之后、事件循环之前（弹出几何一次到位，
  *  不依赖定时器边沿）。
  */
 void demo_page_keyboard_headless_hook(void);
+
+/**
+ * @brief      无头截图覆盖目标（--screenshot 捕获对象重定向查询）。
+ * @details    紧凑悬浮态（XGUI_KB_PANEL=float）下键盘是独立顶层 Popup，
+ *             不在主窗 paintImage 内——返回键盘控件指针让主文件截取其
+ *             自身后备图像（尺寸=紧凑矩形）；其余状态返回 NULL（按主
+ *             窗口径截图）。无键盘实例/钩子裁剪时恒 NULL。
+ * @return     截图目标控件借用指针；NULL=按主窗口径。
+ */
+XWidget* demo_page_keyboard_screenshot_target(void);
 
 #ifdef __cplusplus
 }

@@ -70,12 +70,6 @@ void XPlatformAccessibilityDriver_notify(void* nativeState,
     (void)event;
     if (!XPlatformAccessibilityDriver_isActive(nativeState) || !accessible)
         return;
-    /* 无监听者短路（2026-10-05）：UiaClientsAreListening 为 FALSE 时
-       raise 的通知事件无任何接收方，每次都只是 UiaHostProviderFromHwnd
-       + UiaRaiseAutomationEvent 的纯 COM 往返——拖动悬停每条 move、停
-       靠重排每控件一次的无谓开销。与已链接的 UiaHostProviderFromHwnd
-       同库（uiautomationcore）；有屏幕阅读器（监听者在线）时行为不变。 */
-    if (!UiaClientsAreListening()) return;
     window = XAccessible_window(accessible);
     if (!window) return;
     hwnd = (HWND)(uintptr_t)XWindow_winId(window);

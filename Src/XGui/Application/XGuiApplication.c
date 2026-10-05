@@ -1562,8 +1562,20 @@ XVirtualKeyboard* XGuiApplication_virtualKeyboard(void)
     }
     return app->m_virtualKeyboard;
 }
+
+XVirtualKeyboard* XGuiApplication_virtualKeyboardPeek(void)
+{
+    XGuiApplication* app = XGuiApplication_instance();
+    if (!app) return NULL;
+    return app->m_virtualKeyboard; /* 缺席不创建（与 virtualKeyboard 唯一分野）。 */
+}
 #else /* !XVIRTUALKEYBOARD_ON */
 XVirtualKeyboard* XGuiApplication_virtualKeyboard(void)
+{
+    return NULL;
+}
+
+XVirtualKeyboard* XGuiApplication_virtualKeyboardPeek(void)
 {
     return NULL;
 }
@@ -1590,6 +1602,21 @@ void XGuiApplication_virtualKeyboardNotifyPress(XWidget* hit)
     if (kb) XVirtualKeyboard_notifyPress(kb, hit);
 #else /* !XVIRTUALKEYBOARD_DESKTOP_ON */
     (void)hit; /* 非桌面形态：无自动弹收（与守护同停），空实现。 */
+#endif /* XVIRTUALKEYBOARD_DESKTOP_ON */
+}
+
+bool XGuiApplication_virtualKeyboardNotifyKey(int key,
+                                              XKeyboardModifiers modifiers)
+{
+#if XVIRTUALKEYBOARD_DESKTOP_ON
+    /* 转发到默认面板单例（peek：单例缺席不创建——无键盘会话零开销）。 */
+    XVirtualKeyboard* kb = XGuiApplication_virtualKeyboardPeek();
+    if (!kb) return false;
+    return XVirtualKeyboard_notifyKey(kb, key, modifiers);
+#else /* !XVIRTUALKEYBOARD_DESKTOP_ON */
+    (void)key;
+    (void)modifiers;
+    return false;
 #endif /* XVIRTUALKEYBOARD_DESKTOP_ON */
 }
 

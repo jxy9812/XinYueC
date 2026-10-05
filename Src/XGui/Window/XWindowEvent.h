@@ -774,59 +774,107 @@ typedef struct XTouchPoint
 #define XTOUCHPOINT_STATE_STATIONARY 2
 #define XTOUCHPOINT_STATE_RELEASED   3
 
-/** @brief 触摸事件对象（方案 B 多点：尾部追加触点列表）。
+/** @brief 触摸手势种类（XGui 扩展；框架手势状态机统一判定后，经
+ *         XEVENT_TYPE_TOUCH_DRAG 类型的 XTouchEvent 携带下发，控件经
+ *         XWidget 的 TouchDragEvent 虚槽接收，接受与否由控件自定）。
+ * @details 判定与下发时机（详见 XWidget.c 主点触摸手势状态机）：
+ *          - LongPress：长按间隔到（定时器/惰性兜底），先问控件，接受
+ *            则框架不再合成右键 press（CONTEXT_MENU 归控件自管）；
+ *          - DragBegin：主点位移越过拖动阈值，先问控件，接受则本序列
+ *            转为左键按住拖动仿真（合成 press 续持 + MOUSE_MOVE 随行 +
+ *            END/取消 RELEASE 收口，等效真实鼠标左键拖拽），无人接受
+ *            回落合成滚轮（滚动语义，历史行为）；
+ *          - DoubleTap：双击布防序列 tap 收口，先问控件，接受则框架
+ *            不再合成 DBL_CLICK+RELEASE；
+ *          - Tap：普通 tap 收口通知（配对 release 已随行合成，仅告知，
+ *            接受状态不改变合成行为）。
+ *          手势事件 m_position/m_globalPosition=判定基准（序列起点），
+ *          无触点列表（m_points=NULL）。 */
+typedef enum XTouchGestureKind
+{
+    XTouchGesture_None = 0,        /**< 非手势（普通触摸帧，type=TOUCH_*）。 */
+    XTouchGesture_Tap = 1,         /**< 单击收口通知（release 已随行合成）。 */
+    XTouchGesture_DoubleTap = 2,   /**< 双击判定（接受则免合成 DBL_CLICK）。 */
+    XTouchGesture_LongPress = 3,   /**< 长按判定（接受则免合成右键序列）。 */
+    XTouchGesture_DragBegin = 4    /**< 按住拖动判定（接受则转左键拖动仿真）。 */
+} XTouchGestureKind;
+
+/** @brief 触摸事件对象（方案 B 多点：尾部柔性数组内联触点列表）。
  * @note m_position/m_globalPosition 保留为主点（points[0]）兼容视图；
- *       旧读代码继续读主点字段。m_points 由事件拥有（deinit 释放，
- *       clone 深拷贝）；旧 init/create 造 1 点列表，多点经
- *       XTouchEvent_setPoints 注入。
- * @note 内存分配器口径：m_points 及克隆件整体一律沿事件对象自身保存的
- *       内存分配器族（Class_Memory，由 create_ex 的 memory 参数决定）
- *       分配与释放，不使用固定系统分配器——事件在内存池，触点数组与
- *       副本也留内存池；释放/再分配自动与分配配对（deinit/clone/
- *       setPoints 三处统一）。 */
+ *       旧读代码继续读主点字段。
+ * @note 单块分配口径（柔性数组）：触点列表内联在事件对象尾部，创建时
+ *       一次性分配（sizeof(结构)+容量*sizeof(XTouchPoint)），无第二次
+ *       malloc；m_pointCapacity=创建容量（定容不可扩），m_pointCount=
+ *       实际点数。m_pointCount==0 表示旧单点负载形态（无列表，主点字
+ *       段承载，读方回退主点）——语义等价改造前 m_points==NULL；
+ *       setPoints 仅做「容量内整表覆写」（count>m_pointCapacity 防御性
+ *       忽略），clone/deinit 均单块配对，不再二次分配。m_gesture 仅
+ *       XEVENT_TYPE_TOUCH_DRAG 手势事件携带（XTouchGestureKind；普通
+ *       触摸帧恒 None）。
+ * @note 内存分配器口径：事件本体连柔性数组一律沿对象自身保存的内存分
+ *       配器族（Class_Memory，由 create_ex 的 memory 参数决定）单块分
+ *       配与释放（deinit/clone 同块配对）。 */
 typedef struct XTouchEvent
 {
     XEvent m_class;          /**< 继承 XEvent；必须为第一个成员。 */
     XPoint m_position;       /**< 主点局部坐标（=points[0]）。 */
     XPoint m_globalPosition; /**< 主点屏幕坐标（=points[0]）。 */
-    int    m_pointCount;     /**< 触点数量（列表长度，>=1）。 */
-    XTouchPoint* m_points;   /**< 触点列表（事件拥有；NULL=未分配）。 */
+    int    m_pointCount;     /**< 实际触点数量（0=单点遗留形态，主点字段
+                                   承载；>0=柔性数组内有效点数）。 */
+    int    m_pointCapacity;  /**< 柔性数组容量（创建时定容；0=无柔性空间，
+                                   外部存储/无列表事件；setPoints 上界）。 */
+    int    m_gesture;        /**< 手势种类（XTouchGestureKind；默认 None）。 */
+    XTouchPoint m_points[];  /**< 柔性数组（C99）：触点列表内联在本对象
+                                   尾部同一分配块内；容量=m_pointCapacity，
+                                   实际=m_pointCount，经 XTouchEvent_points
+                                   读取（count==0 返回 NULL）。 */
 } XTouchEvent;
 
-/** @brief 创建触摸事件。
+/** @brief 创建触摸事件（单块分配：本体+柔性数组触点区一次 malloc）。
  * @param memory 内存类型。
  * @param type 事件类型；XEVENT_TYPE_TOUCH_BEGIN/UPDATE/END。
  * @param position 首个触点局部坐标；可为 NULL。
  * @param globalPosition 首个触点屏幕坐标；可为 NULL。
- * @param pointCount 触点数量。
+ * @param capacity 柔性数组容量（定容；0=不内联列表，主点字段承载单点）。
  * @return 新事件对象；分配失败返回 NULL。
- */
+ * @note 创建后 m_pointCount==0（列表未填充），多点经
+ *       XTouchEvent_setPoints 整表覆写（count<=capacity）。 */
 XTouchEvent* XTouchEvent_create_ex(XMemoryType memory, XEventType type,
                                    const XPoint* position,
                                    const XPoint* globalPosition,
-                                   int pointCount);
+                                   int capacity);
 #define XTouchEvent_create(...) XTouchEvent_create_ex(XMEMORY_TYPE_MULTIPOOL, __VA_ARGS__)
-/** @brief 初始化调用者提供的触摸事件存储（参数语义同 create_ex）。 */
+/** @brief 初始化调用者提供的触摸事件存储（外部存储无柔性数组空间：
+ *         m_pointCapacity 恒 0、m_pointCount 恒 0，主点字段承载单点）。
+ *         capacity 参数保留兼容旧调用点（仅主点语义）。 */
 void XTouchEvent_init(XTouchEvent* event, XEventType type,
                       const XPoint* position, const XPoint* globalPosition,
-                      int pointCount);
+                      int capacity);
 /** @brief 获取首个触点局部坐标。 */
 XPoint XTouchEvent_position(const XTouchEvent* event);
 /** @brief 获取首个触点屏幕坐标。 */
 XPoint XTouchEvent_globalPosition(const XTouchEvent* event);
-/** @brief 获取触点数量。 */
+/** @brief 获取实际触点数量（0=单点遗留形态，主点字段承载）。 */
 int XTouchEvent_pointCount(const XTouchEvent* event);
-/** @brief 读取触点列表（只读借用；事件拥有，长度=m_pointCount）。
+/** @brief 读取触点列表（只读借用，指向对象尾部柔性数组；长度=
+ *         m_pointCount）。
  * @param event 目标事件。
- * @return 触点数组指针；未分配返回 NULL（单点场景读主点字段即可）。 */
+ * @return 触点数组指针；m_pointCount==0（单点遗留形态）返回 NULL。 */
 const XTouchPoint* XTouchEvent_points(const XTouchEvent* event);
-/** @brief 注入多点触点列表（方案 B；深拷贝，事件接管副本）。
- * @param event 目标事件；不可为 NULL。
+/** @brief 整表覆写触点列表（柔性数组容量内原地拷贝，零额外分配）。
+ * @param event 目标事件；不可为 NULL（须经 create_ex 以 capacity>=count
+ *        创建——外部存储容量 0，本调用防御性忽略）。
  * @param points 触点数组（借用）；不可为 NULL。
- * @param count 触点数量（>=1）。
- * @note 覆盖既有列表（先释放）；主点字段同步为 points[0]。 */
+ * @param count 触点数量（<= 创建容量；超容量防御性忽略——一次性分配
+ *        不可扩容）。
+ * @note 覆写后 m_pointCount=count；主点字段同步为 points[0]。 */
 void XTouchEvent_setPoints(XTouchEvent* event,
                            const XTouchPoint* points, int count);
+/** @brief 设置手势种类（XTouchGestureKind；仅 XEVENT_TYPE_TOUCH_DRAG
+ *         手势事件由框架手势状态机填充）。 */
+void XTouchEvent_setGesture(XTouchEvent* event, int gesture);
+/** @brief 获取手势种类（XTouchGestureKind；普通触摸帧恒 None）。 */
+int XTouchEvent_gesture(const XTouchEvent* event);
 
 /* ========================================================================== */
 /*        XTabletEvent 数位板事件（对标 QTabletEvent 最小负载）                */

@@ -157,6 +157,25 @@ static void kbd_clickButton(XVirtualKeyboard* kb, int idx)
     XObject_event_base((XObject*)kb, (XEvent*)&me);
 }
 
+/** @brief 直点工具栏图标（菜单条第 slot 等分格中心——与绘制/命中同
+ *         一居中公式，格心恒在图标热区内；press+release 走真实
+ *         menuBarHit→图标激活路径，无头注入不直写私有状态）。 */
+static void kbd_clickBarSlot(XVirtualKeyboard* kb, int slot)
+{
+    XMouseEvent me;
+    XPoint pos;
+    XRect bar = kb->m_menuBarRect;
+    if (slot < 0 || slot > 3 || bar.width <= 0 || bar.height <= 0) return;
+    pos.x = bar.x + bar.width * (2 * slot + 1) / 8;
+    pos.y = bar.y + bar.height / 2;
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                     XMouseButton_LeftButton, 0, pos);
+    XObject_event_base((XObject*)kb, (XEvent*)&me);
+    XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                     XMouseButton_LeftButton, 0, pos);
+    XObject_event_base((XObject*)kb, (XEvent*)&me);
+}
+
 /* ==================== 组串/候选读取垫片（双世界随迁） ================ */
 
 #if XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON
@@ -370,21 +389,30 @@ static void kbd_pressHold(XVirtualKeyboard* kb, int idx)
     XWidget_update((XWidget*)kb);
 }
 
+/** @brief 弹出证据行（widget/band 两行）：弹层挂接态的最小 stdout 凭
+ *         证——FAILED 行无条件打印，成功侧证据同权（外部探针门禁仅设
+ *         XGUI_KB_AUTOSHOW 不设 DUMP，缺这两行会把弹出成功误判为未恢
+ *         复）。widget 行用几何（父相对原点+尺寸，与截图同一坐标系），
+ *         不用 XWidget_rect——那返回 m_contentsRect（控件自身局部，恒
+ *         y=0），脚本像素取样按「widget 原点+键矩形偏移」走查会整体
+ *         错位。 */
+static void kbd_dumpGeometryBrief(XVirtualKeyboard* kb)
+{
+    XRect band = kb->m_imeBandRect;
+    XPrintf("XKB-GEO widget x=%d y=%d w=%d h=%d\n",
+            XWidget_x((XWidget*)kb), XWidget_y((XWidget*)kb),
+            XWidget_width((XWidget*)kb), XWidget_height((XWidget*)kb));
+    XPrintf("XKB-GEO band x=%d y=%d w=%d h=%d\n", band.x, band.y,
+            band.width, band.height);
+}
+
 /** @brief 打印布局几何（XKB-GEO 前缀行；供脚本与 xkb_rebuildLayout
  *         边界式公式双簿比对——布局漂移在像素采样前即被截获）。 */
 static void kbd_dumpGeometry(XVirtualKeyboard* kb)
 {
     uint32_t i;
     int rows = 0;
-    XRect band = kb->m_imeBandRect;
-    /* widget 行用几何（父相对原点+尺寸，与截图同一坐标系），不用
-       XWidget_rect——那返回 m_contentsRect（控件自身局部，恒 y=0），
-       脚本像素取样按「widget 原点+键矩形偏移」走查会整体错位。 */
-    XPrintf("XKB-GEO widget x=%d y=%d w=%d h=%d\n",
-            XWidget_x((XWidget*)kb), XWidget_y((XWidget*)kb),
-            XWidget_width((XWidget*)kb), XWidget_height((XWidget*)kb));
-    XPrintf("XKB-GEO band x=%d y=%d w=%d h=%d\n", band.x, band.y,
-            band.width, band.height);
+    kbd_dumpGeometryBrief(kb);
     for (i = 0; i < XVirtualKeyboard_buttonCount(kb); ++i) {
         const XRect* kr = &kb->m_keyRects[i];
         if (rows == 0 || kr->y != kb->m_keyRects[i - 1].y) ++rows;
@@ -395,6 +423,60 @@ static void kbd_dumpGeometry(XVirtualKeyboard* kb)
     }
     XPrintf("XKB-GEO rows=%d buttons=%u\n", rows,
             (unsigned)XVirtualKeyboard_buttonCount(kb));
+    /* 状态行（外部探针按行前缀解析）：popped=弹层挂接态、ime=拼音插件
+       装载镜像、chinese=引擎输入模式是否 Pinyin（面板中文态判据同源）、
+       composing=组串非空（kbd_composeText 垫片）、h=控件当前高——组串
+       收缩态即候选带一条高（需求③证据行）、phys=物理键盘组串会话标
+       记（需求②③输入源判据：仅外置键盘输入收缩/收层，屏幕键输入全
+       量面板）。 */
+    {
+        int chinese = 0;
+        int composing = 0;
+        int phys = 0;
+        int cand = 0;
+        int pageCount = 1;
+#if XVIRTUALKEYBOARD_ON
+        {
+            const XVirtualKeyboardInputContext* ctx =
+                XVirtualKeyboardInputContext_instance();
+            XVirtualKeyboardInputEngine* eng =
+                XVirtualKeyboardInputContext_inputEngine(ctx);
+            chinese = (eng && XVirtualKeyboardInputEngine_inputMode(eng) ==
+                                (int)XVirtualKeyboardInputEngineInputMode_Pinyin)
+                          ? 1
+                          : 0;
+        }
+        phys = kb->m_physKeyActive ? 1 : 0;
+#endif
+#if XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON
+        composing = kbd_composeText(kb)[0] != '\0';
+#endif
+#if XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON
+        {
+            const XVirtualKeyboardInputContext* ctx2 =
+                XVirtualKeyboardInputContext_instance();
+            XVirtualKeyboardInputEngine* eng2 =
+                XVirtualKeyboardInputContext_inputEngine(ctx2);
+            XVirtualKeyboardSelectionListModel* mdl = eng2
+                ? XVirtualKeyboardInputEngine_wordCandidateListModel(eng2)
+                : NULL;
+            cand = mdl ? (int)XVirtualKeyboardSelectionListModel_count(mdl)
+                       : 0;
+        }
+        {
+            int pageSize = kb->m_candidatePageSize > 0
+                               ? kb->m_candidatePageSize
+                               : 1;
+            pageCount = (cand + pageSize - 1) / pageSize;
+            if (pageCount < 1) pageCount = 1;
+        }
+#endif
+        XPrintf("XKB-GEO state popped=%d ime=%d chinese=%d composing=%d "
+                "phys=%d h=%d cand=%d pg=%d/%d\n",
+                kb->m_popped ? 1 : 0, kb->m_imeEnabled ? 1 : 0, chinese,
+                composing, phys, XWidget_height((XWidget*)kb), cand,
+                kb->m_candidatePage + 1, pageCount);
+    }
 }
 
 void demo_page_keyboard_headless_hook(void)
@@ -435,23 +517,125 @@ void demo_page_keyboard_headless_hook(void)
         XVirtualKeyboard_setMode(s_kbd.keyboard, XKeyboardMode_User1);
         XVirtualKeyboard_setImeChinese(s_kbd.keyboard, true);
     }
-    /* 组串注入：逐字符直点同名字符键（与真机点键同一事件路径）。 */
+    /* 款型注入（视觉验收补充无头路径：九键/英文全键此前仅
+     * setLayoutKind 可达）：t9=拼音九键、english=英文全键、其余值=回
+     * 拼音全键。置于 CHINESE/COMPOSE/PHYSKEY 之前使「CHINESE+LAYOUT+
+     * COMPOSE」可组合（九键表先装、组串/多击注入才点得到组键——
+     * COMPOSE 与 PHYSKEY 早于 LAYOUT 时注入落在旧表上为 no-op）；
+     * 切款后镜像键盘选择面板的落位口径——IME 启用且停 User1 槽位
+     * （build 默认落点）时随行落 TextLower，款型主表即刻可见。 */
+    env = XSystem_environment("XGUI_KB_LAYOUT");
+    if (env && env[0]) {
+        XKeyboardLayoutKind kind = XKeyboardLayout_PinyinFull;
+        if (strcmp(env, "t9") == 0)
+            kind = XKeyboardLayout_PinyinT9;
+        else if (strcmp(env, "english") == 0)
+            kind = XKeyboardLayout_EnglishFull;
+        XVirtualKeyboard_setLayoutKind(s_kbd.keyboard, kind);
+#if XVIRTUALKEYBOARD_ON
+        if (s_kbd.keyboard->m_imeEnabled &&
+            s_kbd.keyboard->m_mode == XKeyboardMode_User1)
+            XVirtualKeyboard_setMode(s_kbd.keyboard,
+                                     XKeyboardMode_TextLower);
+#endif
+    }
+    /* 组串注入：逐字符直点同名字符键（与真机点键同一事件路径）；九键
+       组键标签为多字母（"ABC"…），单字符未命中且为 '2'..'9' 时按数字
+       组口径换算组标签重试——九键多击注入（6444=拼 mi）同路径可达。 */
     env = XSystem_environment("XGUI_KB_COMPOSE");
     if (env && env[0]) {
         int i;
         for (i = 0; env[i]; ++i) {
             char label[2];
+            int idx;
             label[0] = env[i];
             label[1] = '\0';
-            kbd_clickButton(s_kbd.keyboard,
-                            kbd_findButton(s_kbd.keyboard, label));
+            idx = kbd_findButton(s_kbd.keyboard, label);
+            if (idx < 0 && env[i] >= '2' && env[i] <= '9') {
+                static const char* const kGroups[8] = {
+                    "ABC", "DEF", "GHI", "JKL",
+                    "MNO", "PQRS", "TUV", "WXYZ"
+                };
+                idx = kbd_findButton(s_kbd.keyboard,
+                                     kGroups[env[i] - '2']);
+            }
+            kbd_clickButton(s_kbd.keyboard, idx);
         }
     }
+    /* 候选带翻页注入（真实命中路径）：BANDPAGE=next/prev → 组串带右
+       端 ">" / "<" 热区中心注入鼠标 press+release——menuBarHit→
+       BandHit→翻页/消费链与真机点按同路径（热区常量 24/2 与
+       XVirtualKeyboard.c 布局口径对齐，改值需同步）。 */
+    env = XSystem_environment("XGUI_KB_BANDPAGE");
+    if (env && env[0] && s_kbd.keyboard->m_imeBandRect.height > 0) {
+        XMouseEvent me;
+        XPoint pos;
+        pos.x = s_kbd.keyboard->m_imeBandRect.x +
+                s_kbd.keyboard->m_imeBandRect.width - 2 - 24 / 2;
+        if (strcmp(env, "prev") == 0) pos.x -= 2 * 24;
+        pos.y = s_kbd.keyboard->m_imeBandRect.y +
+                s_kbd.keyboard->m_imeBandRect.height / 2;
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton, 0, pos);
+        XObject_event_base((XObject*)s_kbd.keyboard, (XEvent*)&me);
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                         XMouseButton_LeftButton, 0, pos);
+        XObject_event_base((XObject*)s_kbd.keyboard, (XEvent*)&me);
+    }
 #endif /* XKEYBOARD_IME_ON && XVIRTUALKEYBOARD_ON */
+    /* 物理按键注入（真路径验收）：逐字符经应用层入口
+       XGuiApplication_virtualKeyboardNotifyKey——XWidget_dispatchKeyEvent
+       调用的物理按键转化层入口，与真机按键同链（组串进字/数字选候选/
+       英文直落+自动收层语义全由此承载，需求①②③联动证据）。键映射
+       口径：小写=ASCII 本值、大写=ASCII+Shift、数字=ASCII 本值、空格=
+       XKey_Space，其余字符不在口径内跳过。置于 CHINESE/COMPOSE 之后可
+       组合（CHINESE=1+PHYSKEY=ni2：物理键进组串 ni→2 提交上屏）。 */
+    env = XSystem_environment("XGUI_KB_PHYSKEY");
+    if (env && env[0]) {
+        int i;
+        for (i = 0; env[i]; ++i) {
+            int key;
+            XKeyboardModifiers mods = XKeyboardModifier_NoModifier;
+            char c = env[i];
+            if (c >= 'a' && c <= 'z') {
+                key = (int)c;
+            } else if (c >= 'A' && c <= 'Z') {
+                key = (int)c;
+                mods = XKeyboardModifier_ShiftModifier;
+            } else if (c >= '0' && c <= '9') {
+                key = (int)c;
+            } else if (c == ' ') {
+                key = XKey_Space;
+            } else {
+                continue; /* 口径外字符（符号等）不注入。 */
+            }
+            XGuiApplication_virtualKeyboardNotifyKey(key, mods);
+        }
+        XPrintf("XKB-GEO phys text=%s\n", XLineEdit_text(s_kbd.editor));
+    }
     /* 按下保持（不注入释放：按压态/气泡稳定成帧）。 */
     env = XSystem_environment("XGUI_KB_PRESS_LABEL");
     if (env && env[0])
         kbd_pressHold(s_kbd.keyboard, kbd_findButton(s_kbd.keyboard, env));
+    /* 工具栏面板/悬浮注入（视觉验收补充无头路径：选择面板/文字编辑
+     * 面板/紧凑悬浮此前仅工具栏图标可达）：selector=键盘选择面板、
+     * edit=文字编辑面板、float=紧凑悬浮小键盘——均直点对应工具栏图
+     * 标（真实 menuBarHit→图标激活路径，不直写私有状态）；紧凑态转独
+     * 立顶层 Popup 落宿主右下角，XKB-GEO widget 行即其全局坐标（截图
+     * 定位用），panel 证据行供脚本断言注入生效。 */
+    env = XSystem_environment("XGUI_KB_PANEL");
+    if (env && env[0]) {
+        if (strcmp(env, "selector") == 0)
+            kbd_clickBarSlot(s_kbd.keyboard, 1);
+        else if (strcmp(env, "edit") == 0)
+            kbd_clickBarSlot(s_kbd.keyboard, 2);
+        else if (strcmp(env, "float") == 0)
+            kbd_clickBarSlot(s_kbd.keyboard, 0);
+        XPrintf("XKB-GEO panel selector=%d edit=%d compact=%d\n",
+                s_kbd.keyboard->m_layoutSelectorOpen ? 1 : 0,
+                s_kbd.keyboard->m_editPanelOpen ? 1 : 0,
+                s_kbd.keyboard->m_compactFloat ? 1 : 0);
+    }
     if (kbd_envFlag("XGUI_KB_CLOSE")) {
         XVirtualKeyboard_closePopup(s_kbd.keyboard);
         /* closePopup 已改为无条件隐藏（pre-show 收层同样补置
@@ -462,8 +646,24 @@ void demo_page_keyboard_headless_hook(void)
            closePopup 完成。 */
         XWidget_setVisible((XWidget*)s_kbd.keyboard, false);
     }
+    /* 证据行门控：DUMP=1 走全量键位几何（style_check 双簿比对与像素
+       取样坐标系）；仅 AUTOSHOW（外部探针门禁形态）也有 widget/band
+       弹出证据行。收层场景（CLOSE 且未设 DUMP）不印——证据行描述
+       弹层挂接态，m_popped 已复位即无证据可呈（DUMP=1 全量快照照印
+       契约不变，closed 场景像素走查依赖之）。 */
     if (kbd_envFlag("XGUI_KB_DUMP"))
         kbd_dumpGeometry(s_kbd.keyboard);
+    else if (s_kbd.keyboard->m_popped)
+        kbd_dumpGeometryBrief(s_kbd.keyboard);
+}
+
+XWidget* demo_page_keyboard_screenshot_target(void)
+{
+    /* 紧凑悬浮态：键盘=独立顶层 Popup，不在主窗 paintImage 内——返回
+       键盘自身让主文件截其背后图像（尺寸=紧凑矩形）；其余状态 NULL
+       （主窗口径）。 */
+    if (!s_kbd.keyboard || !s_kbd.keyboard->m_compactFloat) return NULL;
+    return (XWidget*)s_kbd.keyboard;
 }
 
 #else /* !(XWIDGET_ON && XKEYBOARD_ON && XLINEEDIT_ON) */
@@ -471,6 +671,11 @@ void demo_page_keyboard_headless_hook(void)
 void demo_page_keyboard_headless_hook(void)
 {
     /* 开关关闭降级：零操作（页面 build 亦返回 NULL，钩子无实例）。 */
+}
+
+XWidget* demo_page_keyboard_screenshot_target(void)
+{
+    return NULL; /* 开关关闭降级：无键盘实例。 */
 }
 
 #endif /* XWIDGET_ON && XKEYBOARD_ON && XLINEEDIT_ON */

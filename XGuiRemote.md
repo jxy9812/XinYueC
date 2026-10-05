@@ -334,7 +334,7 @@ INPUT_* 消息在 GUI 线程帧泵中解码后立即注入(全部为同步自发
 
 ### 6.7 headless 模式(需求 8)
 
-**决策: 不新增任何平台后端, 复用既有"无窗口系统"纯软件路径。** 依据(全部实读): `XPlatformNativeWindow` 的 Unsupported 存根 `isAvailable` 恒 false(`Drive/Unsupported/Graphics/XPlatformNativeWindow_unsupported.c:35`〔调研〕)→ XWindow 回落自增虚拟 WId 的纯软件行为〔调研〕; 后备存储主体在公共层(`XPlatformBackingStore.c`), software 后端 `Drive/Software/Graphics/XPlatformBackingStore_software.c` 钩子全 no-op 且其头注明确 present 回调即收帧点〔调研〕。因此:
+**决策: 不新增任何平台后端, 复用既有"无窗口系统"纯软件路径。** 依据(全部实读): `XPlatformNativeWindow` 的 Unsupported 存根 `isAvailable` 恒 false(`Drive/Unsupported/Graphics/XPlatformNativeWindow_unsupported.c:35`〔调研〕)→ XWindow 回落自增虚拟 WId 的纯软件行为〔调研〕; 后备存储主体在公共层(`XPlatformBackingStore.c`), software 后端（XPLATFORMBACKINGSTORE_SOFTWARE_ON=1 时的 `Drive/Unsupported/Graphics/XPlatformBackingStore_unsupported.c` 软件形态；原独立文件 XPlatformBackingStore_software.c 已并入该文件）钩子全 no-op 且其头注明确 present 回调即收帧点〔调研〕。因此:
 
 - 无屏设备上: 不初始化真实显示后端, 应用照常创建控件树; 顶层控件的后备存储仍走公共层软件双缓冲, present 回调照常触发(Windows 无 DC 时也仅触发回调的语义, `XPlatformBackingStore.h:150-152` 头注明文), XGuiServer host 该顶层即得虚拟帧缓冲画面。
 - "只开 XGuiServer 不开任何本地窗口": 应用创建的服务窗口本就不上屏(平台存根), 唯一消费者就是远程会话; 需要窗口不被本地窗口管理器感知时, 不调用平台 setVisible(存根上本为 no-op)。

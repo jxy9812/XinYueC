@@ -9,6 +9,8 @@ install(FILES ${TEST_HDRS} DESTINATION "XCXinYueTest/include")
 #安装测试源文件
 install(FILES ${TEST_FILE} DESTINATION "XCXinYueTest")
 
+# 裸机分支无动态库目标，相关属性/安装整体跳过
+if(NOT XINYUE_EMBEDDED)
 set_target_properties(${EXPORT_NAME} PROPERTIES
     OUTPUT_NAME ${EXPORT_NAME}
     VERSION ${PROJECT_VERSION}
@@ -23,6 +25,7 @@ set_target_properties(${EXPORT_NAME} PROPERTIES
         ARCHIVE DESTINATION lib
         LIBRARY DESTINATION lib
  )
+endif() # NOT XINYUE_EMBEDDED
 
 # 安装静态库（仅安装，不导出）
 install(TARGETS ${EXPORT_NAME}S
@@ -31,8 +34,9 @@ install(TARGETS ${EXPORT_NAME}S
         LIBRARY DESTINATION lib
  )
 
-# 安装静态链接的可执行程序（XGUI_ON=0 裁剪构建时目标被排除，随同跳过）
-if(XGUI_ON)
+# 安装静态链接的可执行程序（XGUI_ON=0 裁剪构建与 FreeRTOS/嵌入式分支时
+# 目标被排除，随同跳过）
+if(XGUI_ON AND NOT XINYUE_EMBEDDED)
 install(TARGETS ${EXPORT_NAME}_Static
         RUNTIME DESTINATION bin
 )
@@ -43,13 +47,16 @@ install(TARGETS ${EXPORT_NAME}_Dynamic
 )
 endif() # XGUI_ON
 
-# 生成 xxxTargets.cmake文件
+# 生成 xxxTargets.cmake文件（导出集由动态库 install(TARGETS ... EXPORT)
+# 注册，嵌入式分支无动态库目标，随同跳过）
+if(NOT XINYUE_EMBEDDED)
 install(
 	EXPORT ${EXPORT_NAME}Targets
 	DESTINATION lib/cmake/${EXPORT_NAME}
     FILE ${EXPORT_NAME}Targets.cmake
     #NAMESPACE ${EXPORT_NAME}::
 )
+endif() # NOT XINYUE_EMBEDDED
 #======================生成 xxxConfig.cmake===============================
 # 该变量会通过xxxConfig.cmake.in用于在生成的xxxConfig.cmake中
 set(INCLUDE_DIRS Src/include)

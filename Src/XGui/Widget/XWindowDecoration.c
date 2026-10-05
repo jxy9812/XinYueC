@@ -26,7 +26,6 @@
 #include "XPlatformTheme.h"
 #include "XPlatformNativeWindow.h" /* 拖拽平台指针抓取：指针出窗仍持续投递 MOVE（软件重路由的出窗盲区兜底） */
 #include "XDateTime.h" /* 交互限帧计时：单调毫秒（时间源约束同 XWidget.c present 限频） */
-#include "XDockWidget.h" /* 浮动停靠面板顺路钩：标题条拖拽衔接宿主落点预览与松手落位 */
 #include "XTitleBar.h"
 #include "XTitleBar_Protected.h"
 #if XGUI_ON && XPLATFORM_FBDEV_ON
@@ -87,9 +86,6 @@ typedef struct XWindowDecorationState
     int m_armed;           /**< 按住中的按钮子控件位（XStyleSC_TitleBar*；0 无）。 */
     int m_hot;             /**< 悬停中的按钮子控件位（0 无）。 */
     bool m_dragging;       /**< 标题栏拖拽移动进行中。 */
-    bool m_nativeMoving;   /**< 系统移动循环接管中（WM_ENTERSIZEMOVE 置
-                                位）：OS 以指针节奏挪窗，应用层 applyMove
-                                停用，仅顺路衔接宿主落点预览。 */
     XPoint m_dragLast;     /**< 拖拽上一采样点（全局坐标；窗口自身移动
                                 不改变全局系，增量才不自指）。 */
     bool m_resizing;       /**< 边缘改尺寸进行中。 */
@@ -136,56 +132,6 @@ static XWidget* xwd_topForWindow(const XWindow* win)
         if (g_xwdStates[i].m_window == win) return g_xwdStates[i].m_top;
     }
     return NULL;
-}
-
-/** @brief 系统移动循环交接总闸（XGUI_DOCK_SYSMOVE，默认开；"0"=关闭，
- *         CSD 拖动留在应用层循环）。static 缓存，进程内只读一次环境
- *         变量（同 XGUI_DOCK_TRACE 惯用法）。 */
-static bool xwd_sysMoveEnabled(void)
-{
-    static int cached = -1;
-    if (cached < 0) {
-        const char* env = XSystem_environment("XGUI_DOCK_SYSMOVE");
-        cached = !(env && *env && env[0] == '0' && env[1] == 0) ? 1 : 0;
-    }
-    return cached != 0;
-}
-
-/** @brief 会话收尾所用的两个后置定义辅助（定义见拖拽收尾节）。 */
-static void xwd_clearOutsideWindow(XWindowDecorationState* st);
-static void xwd_platformGrab(XWindowDecorationState* st, bool grab);
-
-void XWindowDecoration_systemMoveSession(XWindow* window, int phase,
-                                         const XPoint* clientPos)
-{
-    XWidget* top = xwd_topForWindow(window);
-    XWindowDecorationState* st;
-    if (!top) return;
-    st = xwd_stateFor(top);
-    if (!st) return;
-    if (phase == 0) {
-        /* 进入系统循环：应用层拖拽跟随停用（OS 直接挪窗）。 */
-        st->m_nativeMoving = true;
-        return;
-    }
-    st->m_nativeMoving = false;
-    if (!st->m_dragging) return;
-    /* 循环退出收尾（对标应用层 RELEASE 臂：先解抓取再触发宿主落位；
-     * 落位可能销毁本顶层，其后不得再触碰 top/st）。 */
-    st->m_dragging = false;
-    XWidget_releaseMouse(top);
-    xwd_platformGrab(st, false);
-    xwd_clearOutsideWindow(st);
-    if (phase == 1 && clientPos) {
-        XPoint g = XWidget_mapToGlobal(top, clientPos);
-        XDockWidget_decoStripDragDrop(top, &g);
-    } else {
-        /* ESC 取消：不落位，仅收指示器（远点 → 无落点 → hoverDrop 隐藏）。 */
-        XPoint farAway;
-        farAway.x = -100000;
-        farAway.y = -100000;
-        XDockWidget_decoStripDragMove(top, &farAway);
-    }
 }
 
 /** @brief 查状态，缺失时登记新项；分配失败返回 NULL。 */
@@ -1155,6 +1101,25 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
     barH = xwd_stripHeight(st); /* 条控件实际高度（自定义条可异高）。 */
     if (barH <= 0) return false;
     switch (XEvent_type(event)) {
+    case XEVENT_TYPE_TOUCH_DRAG: {
+        const XTouchEvent* drag = (const XTouchEvent*)event;
+        /* 触摸按住拖动手势判定（DragBegin）：起点落在条内空白→接受认领，
+         * 框架转左键按住拖动仿真（press 续持+MOVE 随行），本装饰既有的
+         * 标题拖拽状态机（PRESS 已起拖+显式抓取）直接驱动移窗；用户按钮
+         * 上放行（交按钮树）；最大化/全屏禁拖（对标桌面，同 PRESS 臂）。
+         * 判定域=手势序列起点（touch 侧保证），越阈指尖滑出条区不误判。
+         * 其余手势种类（Tap/DoubleTap/LongPress 通知）不认领。 */
+        if (XTouchEvent_gesture(drag) != (int)XTouchGesture_DragBegin)
+            return false;
+        pos = drag->m_position;
+        if (pos.y < 0 || pos.y >= barH) return false;
+        if (xwd_isBarChild(st, XWidget_childAt(top, &pos))) return false;
+        if (XWindow_windowState(st->m_window) == XWindowState_Maximized ||
+            XWindow_windowState(st->m_window) == XWindowState_FullScreen)
+            return false;
+        XEvent_accept(event);
+        return true;
+    }
     case XEVENT_TYPE_WHEEL: {
         XWheelEvent* wheel = (XWheelEvent*)event;
         /* 输入三分流（条带内先 childAt）：命中条控件子控件（用户按钮
@@ -1291,16 +1256,6 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                     /* 节流戳不清零，同改尺寸臂（幻触免役）。 */
                     XWidget_grabMouse(top);
                         xwd_platformGrab(st, true);
-                    /* 系统移动循环交接（XGUI_DOCK_SYSMOVE，默认开；Qt
-                     * startSystemMove 同款）：OS 以指针节奏直接挪窗——
-                     * 应用层逐移动 SetWindowPos 在远程显示栈上呈 15-20Hz
-                     * 离散步进（实测停手追赶 16ms 节流 772ms/33ms 139ms），
-                     * 原生循环走 DWM 普通窗口拖动路径。WM_ENTERSIZEMOVE
-                     * 置 m_nativeMoving 停用 applyMove、只留落点预览；
-                     * 退出/ESC 经 systemMoveSession 收尾落位。投递失败
-                     * 留在本应用层循环（既有路径，含限帧与尾帧必达）。 */
-                    if (xwd_sysMoveEnabled())
-                        XPlatformNativeWindow_startSystemMove(st->m_window);
                 }
                 XEvent_accept(event);
                 return true;
@@ -1361,15 +1316,10 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
         }
 #endif
         if (st->m_dragging) {
-            XPoint rg = XMouseEvent_globalPosition(mouse);
             st->m_dragging = false;
             XWidget_releaseMouse(top);
             xwd_platformGrab(st, false);
             xwd_clearOutsideWindow(st);
-            /* 浮动停靠面板松手落位（无落点保持浮动；对标拖拽会话的
-             * finishDrop 收尾）。此调用可能重父化并销毁本顶层窗口——
-             * 其后不得再触碰 top/st。 */
-            XDockWidget_decoStripDragDrop(top, &rg);
             XEvent_accept(event);
             return true;
         }
@@ -1423,14 +1373,6 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
             XEvent_accept(event);
             return true;
         }
-        if (st->m_nativeMoving) {
-            /* 系统移动循环接管中：OS 以指针节奏直接挪窗（应用层
-             * applyMove 停用），仅顺路衔接宿主落点预览（幂等门在内）。 */
-            XPoint g = XMouseEvent_globalPosition(mouse);
-            XDockWidget_decoStripDragMove(top, &g);
-            XEvent_accept(event);
-            return true;
-        }
         if (st->m_dragging) {
             XPoint g = XMouseEvent_globalPosition(mouse);
 #if XGUI_RESIZE_REPAINT_MAX_FPS > 0
@@ -1452,10 +1394,6 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                 }
                 st->m_dragLast = g;
             }
-            /* 浮动停靠面板顺路衔接宿主落点预览（XDockWidget_decoStripDragMove
-             * 内部类型/浮动态/总闸三重守卫，非面板顶层一次 vtable 比对零开销；
-             * 区域与几何幂等门在 hoverDrop 内部）。 */
-            XDockWidget_decoStripDragMove(top, &g);
             XEvent_accept(event);
             return true;
         }

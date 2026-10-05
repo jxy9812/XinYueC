@@ -236,6 +236,10 @@ typedef enum
     XEVENT_TYPE_PARENT_WINDOW_ABOUT_TO_CHANGE = 225,           // 父窗口即将变更
     XEVENT_TYPE_PARENT_WINDOW_CHANGE = 226,                    // 父窗口变更
 
+    // Touch gesture（XGui 扩展：触摸手势统一通道；单击/双击/长按通知 +
+    // 按住拖动判定，见 XTouchDragEvent）
+    XEVENT_TYPE_TOUCH_DRAG = 228,                              // 触摸手势事件
+
     // Reserved for Qt Jambi
     // 512: MetaCall
     // 513: DeleteOnMainThread

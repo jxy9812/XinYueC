@@ -66,21 +66,6 @@ extern "C" {
 bool XWindowDecoration_activeFor(const XWidget* top);
 
 /**
- * @brief      系统模态移动循环会话通知（startSystemMove 交接回框架）。
- * @details    平台层经 XWindowSystemInterface_handleSystemMove 转发：
- *             phase 0=进入（应用层拖拽跟随停用，OS 以指针节奏直接挪窗）；
- *             1=正常退出（拖拽收尾——顶层为浮动停靠面板时按 clientPos
- *             落位，对标拖拽会话 finishDrop）；2=取消退出（循环内 ESC，
- *             仅收尾不落位）。由装饰注册表按窗口反查顶层；非装饰顶层
- *             安全 no-op。XGUI_DOCK_SYSMOVE=0 时会话不再建立。
- * @param      window    移动中的窗口；可为 NULL（no-op）。
- * @param      phase     0=进入；1=正常退出；2=取消退出。
- * @param      clientPos 退出时指针在窗口客户区的逻辑坐标（phase 0 可 NULL）。
- */
-void XWindowDecoration_systemMoveSession(XWindow* window, int phase,
-                                         const XPoint* clientPos);
-
-/**
  * @brief      返回装饰保留边距（标题条计入顶部，其余为零）。
  * @details    条高取被装饰顶层挂载的标题条控件实际高度；条控件尚未
  *             承载（布局期预测）时回退 XTitleBar_defaultHeight，保证

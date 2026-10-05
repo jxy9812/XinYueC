@@ -44,8 +44,14 @@
  * Module:  library/net_sockets.c
  *
  * This module provides networking routines.
+ *
+ * 裸机（XINYUE_EMBEDDED，FreeRTOS/ARM-GCC 交叉分支）无 POSIX/Windows socket
+ * 层，net_sockets.c 一并不编译（XinYueC 的网络 BIO 一直由 XSsl 桥接
+ * XAbstractSocket 提供，见 Library/mbedtls/platform/XSsl_mbedtls.c）。
  */
+#if !defined(XINYUE_EMBEDDED)
 #define MBEDTLS_NET_C
+#endif
 
 /**
  * \def MBEDTLS_TIMING_ALT

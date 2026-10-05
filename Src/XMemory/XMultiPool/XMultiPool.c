@@ -1,5 +1,6 @@
 ﻿#include "XMultiPool.h"
 #include "XMemory.h"
+#include "XMemory_config.h"
 #include "XMutex.h"
 #include <string.h>
 
@@ -301,11 +302,13 @@ static void XMultiPool_initGlobal(void) {
     XMULTIPOOL_STATIC_INIT(global_pool, 5);
     XMultiPool_enable_power_of_two_mode(global_pool, 32, 2);
 
-    XMultiPool_add_pool(global_pool, XFixedPool_create(32,  256));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(64,  256));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(128, 256));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(256, 128));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(512, 64));
+    /* 全局池块数可配置（桌面默认 256/256/256；嵌入式经编译选项缩小，
+     * 否则小容量 FreeRTOS 堆在首个 XCoreApplication 初始化即耗尽）。 */
+    XMultiPool_add_pool(global_pool, XFixedPool_create(32,  XMP_GLOBAL_C32));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(64,  XMP_GLOBAL_C64));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(128, XMP_GLOBAL_C128));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(256, XMP_GLOBAL_C256));
+    XMultiPool_add_pool(global_pool, XFixedPool_create(512, XMP_GLOBAL_C512));
     //XMultiPool_add_pool(global_pool, XFixedPool_create(1024, 32));
     //XMultiPool_add_pool(global_pool, XFixedPool_create(2048, 32));
     //XMultiPool_add_pool(global_pool, XFixedPool_create(4096, 16));

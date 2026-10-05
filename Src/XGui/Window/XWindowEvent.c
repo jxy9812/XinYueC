@@ -1062,45 +1062,48 @@ XPoint XMoveEvent_oldPosition(const XMoveEvent* event)
     return event ? event->m_oldPosition : (XPoint){0, 0};
 }
 
-/* ==================== XTouchEvent（Task 2.13） ==================== */
+/* ==================== XTouchEvent（Task 2.13；柔性数组单块分配） ==================== */
+
+/** @brief 触点容量字节数（柔性数组尾部区；容量钳负防回绕）。 */
+#define XTOUCH_EVENT_POINTS_BYTES(capacity) \
+    ((size_t)(capacity) > 0 \
+         ? (size_t)(capacity) * sizeof(XTouchPoint) \
+         : (size_t)0)
 
 static void VXTouchEvent_deinit(XTouchEvent* self)
 {
     if (!self) return;
-    if (self->m_points)
-    {
-        /* 触点数组沿事件自身保存的内存分配器族释放：分配时用的是
-           Class_Memory(self)->malloc，释放必须配对同一方法表，
-           不能固定走 XFree_System（事件可能来自内存池）。 */
-        Class_Memory(self)->free(self->m_points);
-        self->m_points = NULL;
-    }
+    /* 柔性数组单块分配：触点列表内联在事件本体尾部同一分配块，无
+       二次释放；只清计数（本体释放随 XClass_Delete 单块配对）。 */
     self->m_pointCount = 0;
+    self->m_pointCapacity = 0;
     XClass_Deinit_Parent(XEvent, (XEvent*)self);
 }
 
 static XEvent* VXTouchEvent_clone(const XTouchEvent* event)
 {
-    /* 克隆件整体沿源事件自身保存的内存分配器族分配与记账：本体、
-       触点数组与 Class_Memory 记账三者在同一分配器族内配对，
-       源在内存池，副本连同触点数组也留内存池。 */
-    XTouchEvent* copy =
-        (XTouchEvent*)Class_Memory(event)->malloc(sizeof(XTouchEvent));
+    /* 克隆件单块分配（本体+柔性数组同块），沿源事件自身保存的内存
+       分配器族分配与记账：源在内存池，副本连同触点区也留内存池；
+       一次 malloc 替代改造前的「本体+列表」两次。 */
+    XTouchEvent* copy;
+    size_t bytes;
+    if (!event) return NULL;
+    bytes = sizeof(XTouchEvent) +
+            XTOUCH_EVENT_POINTS_BYTES(event->m_pointCapacity);
+    copy = (XTouchEvent*)Class_Memory(event)->malloc(bytes);
     if (!copy) return NULL;
     XClassSetVtable(copy, XTouchEvent);
     xevent_clone_base((XEvent*)copy, (const XEvent*)event);
     Class_Memory(copy) = Class_Memory(event);
-    copy->m_points = NULL;
-    copy->m_pointCount = 0;
-    if (event->m_points && event->m_pointCount > 0)
+    copy->m_position = event->m_position;
+    copy->m_globalPosition = event->m_globalPosition;
+    copy->m_pointCount = event->m_pointCount;
+    copy->m_pointCapacity = event->m_pointCapacity;
+    copy->m_gesture = event->m_gesture;
+    if (event->m_pointCount > 0 && event->m_pointCapacity > 0)
     {
-        size_t bytes = (size_t)event->m_pointCount * sizeof(XTouchPoint);
-        copy->m_points = (XTouchPoint*)Class_Memory(copy)->malloc(bytes);
-        if (copy->m_points)
-        {
-            XMemcpy(copy->m_points, event->m_points, bytes);
-            copy->m_pointCount = event->m_pointCount;
-        }
+        XMemcpy(copy->m_points, event->m_points,
+                (size_t)event->m_pointCount * sizeof(XTouchPoint));
     }
     Set_Class_IsHeap(copy, true);
     return (XEvent*)copy;
@@ -1118,19 +1121,29 @@ XVtable* XTouchEvent_class_init(void)
 XTouchEvent* XTouchEvent_create_ex(XMemoryType memory, XEventType type,
                                    const XPoint* position,
                                    const XPoint* globalPosition,
-                                   int pointCount)
+                                   int capacity)
 {
-    XTouchEvent* event = XMemory_malloc(sizeof(XTouchEvent), memory);
+    XTouchEvent* event;
+    size_t bytes;
+    if (capacity < 0) capacity = 0;
+    bytes = sizeof(XTouchEvent) + XTOUCH_EVENT_POINTS_BYTES(capacity);
+    event = (XTouchEvent*)XMemory_malloc(bytes, memory);
     if (!event) return NULL;
-    XTouchEvent_init(event, type, position, globalPosition, pointCount);
+    XTouchEvent_init(event, type, position, globalPosition, capacity);
     Set_Class_Memory(event, memory);
     Set_Class_IsHeap(event, true);
+    if (capacity > 0) {
+        /* 柔性数组区清零（XEvent_init 只清基类段；未填充前读方以
+           m_pointCount==0 门禁，清零保底确定性）。 */
+        XMemset(event->m_points, 0, XTOUCH_EVENT_POINTS_BYTES(capacity));
+        event->m_pointCapacity = capacity;
+    }
     return event;
 }
 
 void XTouchEvent_init(XTouchEvent* event, XEventType type,
                       const XPoint* position, const XPoint* globalPosition,
-                      int pointCount)
+                      int capacity)
 {
     if (!event) return;
     XEvent_init((XEvent*)event, type);
@@ -1139,10 +1152,12 @@ void XTouchEvent_init(XTouchEvent* event, XEventType type,
     event->m_class.pointer_event = true;
     if (position) event->m_position = *position;
     if (globalPosition) event->m_globalPosition = *globalPosition;
-    event->m_pointCount = pointCount > 0 ? pointCount : 1;
-    /* 方案 B：默认不分配列表（主点字段承载单点语义）；多点经
-       XTouchEvent_setPoints 注入。 */
-    event->m_points = NULL;
+    /* 实际点数恒 0（列表待填充）：m_pointCount==0=单点遗留形态，读方
+       回退主点字段——语义等价改造前 m_points==NULL。capacity 由
+       create_ex 在单块分配后回填（外部存储无柔性空间，恒 0）。 */
+    event->m_pointCount = 0;
+    event->m_pointCapacity = 0;
+    event->m_gesture = XTouchGesture_None;
 }
 
 XPoint XTouchEvent_position(const XTouchEvent* event)
@@ -1162,31 +1177,33 @@ int XTouchEvent_pointCount(const XTouchEvent* event)
 
 const XTouchPoint* XTouchEvent_points(const XTouchEvent* event)
 {
-    return event ? event->m_points : NULL;
+    if (!event || event->m_pointCount <= 0 || event->m_pointCapacity <= 0)
+        return NULL;
+    return event->m_points;
 }
 
 void XTouchEvent_setPoints(XTouchEvent* event,
                            const XTouchPoint* points, int count)
 {
     if (!event || !points || count <= 0) return;
-    if (event->m_points)
-    {
-        /* 旧数组沿事件自身保存的内存分配器族释放，与新分配配对。 */
-        Class_Memory(event)->free(event->m_points);
-        event->m_points = NULL;
-    }
-    /* 触点数组沿事件自身保存的内存分配器族分配：事件由 create_ex 以
-       指定内存类型创建时（如 MULTIPOOL），触点数组留在同一分配器族，
-       deinit/clone/setPoints 的释放与再分配自动配对，不再固定系统堆。 */
-    event->m_points =
-        (XTouchPoint*)Class_Memory(event)->malloc(
-            (size_t)count * sizeof(XTouchPoint));
-    if (!event->m_points) return;
+    /* 柔性数组容量内原地覆写（一次性分配不可扩容）：超容量防御性
+       忽略，不部分写入（半表状态比整表拒绝更难排查）。 */
+    if (count > event->m_pointCapacity) return;
     XMemcpy(event->m_points, points, (size_t)count * sizeof(XTouchPoint));
     event->m_pointCount = count;
     /* 主点字段同步为 points[0]（兼容视图，对标 Qt6 单点事件语义）。 */
     event->m_position = points[0].m_position;
     event->m_globalPosition = points[0].m_globalPosition;
+}
+
+void XTouchEvent_setGesture(XTouchEvent* event, int gesture)
+{
+    if (event) event->m_gesture = gesture;
+}
+
+int XTouchEvent_gesture(const XTouchEvent* event)
+{
+    return event ? event->m_gesture : XTouchGesture_None;
 }
 
 /* ==================== XTabletEvent（Task 2.13） ==================== */

@@ -172,8 +172,6 @@
 #endif
 #if ADV_MAINWIN_ON
 #include "XMainWindow.h"
-#include "XMainWindow_Protected.h"
-#include "XWindowDecoration.h"
 #include "XDockWidget.h"
 #include "XMenu.h"
 #include "XMenuBar.h"
@@ -1405,68 +1403,6 @@ int demo_page_advanced_autotest(XWidget* page)
                        (XWidget*)leftContent,
                        "XDockWidget 内容控件 getter 一致");
             XClassDelete(win); /* 级联销毁菜单/停靠/标签 */
-        }
-    }
-#endif /* ADV_MAINWIN_ON */
-
-    /* ---- 7b. 落点指示器几何：以「装饰条边距+菜单栏」下沿为基准（预览
-     * 框不得覆盖菜单栏行——用户实测预览含菜单栏带而实际停靠在其下，
-     * 2026-10-05；与 xmw_layout 的 fm 让位口径逐字段对齐）。 ---- */
-#if ADV_MAINWIN_ON
-    {
-        XMainWindow* win = XMainWindow_create(NULL, 0);
-        ADV_EXPECT(win != NULL, "落点几何：主窗口创建");
-        if (win) {
-            XWidget* menuBar = XMainWindow_menuBar(win);
-            XMenu* menuFile = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                              (XWidget*)win, "文件(&F)");
-            XDockWidget* dockLeft = XDockWidget_create_ex(
-                XCLASS_DEFAULT_MEMORY_TYPE, "停靠-左", (XWidget*)win, 0);
-            XMargins fm;
-            XPoint local;
-            XPoint probe;
-            XRect geo;
-            int expTop;
-            int expH;
-            XWidget_setGeometry((XWidget*)win, 8, 8, 600, 400);
-            XWidget_setVisible((XWidget*)win, true);
-            if (menuBar && menuFile)
-                XMenuBar_addMenu((XMenuBar*)menuBar, menuFile);
-            if (dockLeft) {
-                XLabel* c = XLabel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                             (XWidget*)dockLeft, 0);
-                XDockWidget_setWidget(dockLeft, (XWidget*)c);
-                XMainWindow_addDockWidget(win, XDockWidgetArea_Left,
-                                          (XWidget*)dockLeft);
-            }
-            fm = XWindowDecoration_marginsFor((XWidget*)win);
-            expTop = fm.top + 22; /* xmw_menuHeight() */
-            expH = 400 - expTop - fm.bottom > 0
-                       ? 400 - expTop - fm.bottom : 0;
-            /* 左带探针：本地 (50,200)（横外 1/3、纵中部）折算全局。 */
-            local.x = 50;
-            local.y = 200;
-            probe = XWidget_mapToGlobal((XWidget*)win, &local);
-            XMainWindow_hoverDrop(win, (XWidget*)dockLeft, &probe);
-            ADV_EXPECT(win->m_dropIndicator != NULL,
-                       "落点几何：左带 hoverDrop 生成指示器");
-            if (win->m_dropIndicator) {
-                geo = XWidget_geometry(win->m_dropIndicator);
-                ADV_EXPECT(geo.x == fm.left && geo.y == expTop &&
-                           geo.height == expH,
-                           "落点几何：左带指示器以装饰条+菜单栏下沿为基准");
-            }
-            /* 顶带探针：本地 (300,60)（横中带、纵上 1/3）。 */
-            local.x = 300;
-            local.y = 60;
-            probe = XWidget_mapToGlobal((XWidget*)win, &local);
-            XMainWindow_hoverDrop(win, (XWidget*)dockLeft, &probe);
-            if (win->m_dropIndicator) {
-                geo = XWidget_geometry(win->m_dropIndicator);
-                ADV_EXPECT(geo.y == expTop,
-                           "落点几何：顶带指示器顶边不越菜单栏");
-            }
-            XClassDelete(win);
         }
     }
 #endif /* ADV_MAINWIN_ON */

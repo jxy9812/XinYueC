@@ -13,6 +13,7 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XSystem.h"
+#include "XWindowEvent.h" /* 触摸手势事件（TouchDragEvent 槽判定认领） */
 
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
 
@@ -20,6 +21,7 @@ static bool performanceOverlay_drawContent(XWidget* widget,
                                            XPainter* painter,
                                            void* userData);
 static void VXPerformanceOverlay_paintEvent(XWidget* self, XEvent* event);
+static void VXPerformanceOverlay_touchDragEvent(XWidget* self, XEvent* event);
 
 /** @brief 网络行文本（默认逐行拼装与格式模板共用）。 */
 static size_t performanceOverlay_netText(const XPerformanceOverlay* self,
@@ -406,6 +408,25 @@ committed:
     }
 }
 
+/** @brief 触摸手势槽：按住拖动（DragBegin）判定认领——本悬浮层可移
+ *         （movable 且未钉死）即接受，框架转左键按住拖动仿真（press 续
+ *         持+MOVE 随行+RELEASE 收口），宿主既有的鼠标拖移管线
+ *         （beginDrag/dragTo/endDrag）原样驱动；其余手势种类不认领
+ *         （tap 等维持合成鼠标语义）。 */
+static void VXPerformanceOverlay_touchDragEvent(XWidget* self, XEvent* event)
+{
+    XPerformanceOverlay* overlay = (XPerformanceOverlay*)self;
+    if (!overlay || !event ||
+        XEvent_type(event) != XEVENT_TYPE_TOUCH_DRAG)
+        return;
+    if (XTouchEvent_gesture((const XTouchEvent*)event) !=
+        (int)XTouchGesture_DragBegin)
+        return;
+    if (!overlay->m_movable || overlay->m_fixed)
+        return; /* 不可移/钉死：不认领（不构成滚动面的宿主区域回落滚轮）。 */
+    XEvent_accept(event);
+}
+
 static void VXPerformanceOverlay_copy(XPerformanceOverlay* self,
                                       const XPerformanceOverlay* other)
 {
@@ -557,6 +578,8 @@ XVtable* XPerformanceOverlay_class_init(void)
        入口最后绘制，保证悬浮层永远在最上层。 */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
                              VXPerformanceOverlay_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_TouchDragEvent,
+                             VXPerformanceOverlay_touchDragEvent);
     return XVTABLE_DEFAULT;
 }
 

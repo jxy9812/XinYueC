@@ -13,6 +13,16 @@
  *               默认回落小写映射），键位宽度为每行独立归一化的相对单
  *               位（每行按自身单位总数铺满行宽，对标 lv_buttonmatrix）；
  *               setMap 是接入其它字符集/输入法布局的唯一官方途径；
+ *             - 布局款型（Sogou 改版一阶段，XGui 扩展）：layoutKind=
+ *               PinyinFull（默认，搜狗全键 4 行 35 键）/PinyinT9（九键
+ *               4 行 21 键）/EnglishFull（与 PinyinFull 同几何、固定英
+ *               文态）三层独立于 XKeyboardMode——款型主表装载进
+ *               TextLower/TextUpper 双槽位（setLayoutKind 时覆盖装
+ *               载，此后 setMap 仍可按槽位覆写），Special/Number/
+ *               User1..4/Digits/Dialpad 槽位与 hints 自动切换机制完
+ *               全不动（现状可恢复承诺）；PinyinFull/EnglishFull 主表
+ *               shift 键为布局层三态展示（小写→大写一次性→锁定，大写
+ *               态换装大写键帽表）；
  *             - 输出：setTextArea 绑定输出目标（借用；仅存指针，不改
  *               焦点/组），按键经合成 XKeyEvent（与真实输入同路径，可
  *               获编辑框校验/掩码/撤销全套语义）或公开插入 API 直写；
@@ -34,6 +44,52 @@
  *               位等稳态巡检仍依赖轮询）；
  *             - 气泡 popover：非浮层、绘制期实现（按压中的 POPOVER 键
  *               文本在键位上方一倍键高处绘制）；
+ *             - 菜单条（Sogou 改版二阶段，XGui 扩展）：键区上方常驻一
+ *               条菜单条（条高=既有组串带预留通道 contentH/(rows+1)，
+ *               所有布局与模式一致预留，原气泡带预留通道并入本条）；拼
+ *               音中文态且组串非空（preedit 非空）时渲染为既有拼音候
+ *               选带（「正在输入的字母和匹配到的中文」替换菜单，矩形=
+ *               条矩形），否则渲染为四图标工具栏（悬浮切换/键盘选择/
+ *               文字编辑/收起，四等分对标搜狗；收起=closePopup 直连，
+ *               文字编辑/悬浮切换为桩）；
+ *             - 键盘选择面板（Sogou 改版三阶段，XGui 扩展）：点工具栏
+ *               「键盘选择」图标，面板内部自绘选择面板覆盖键区（非独
+ *               立窗口）：拼音全键/拼音九键/英文全键三行、当前项打勾
+ *               （勾线绘制），点选项=setLayoutKind 并关闭（IME 启用且
+ *               停 User1 槽位时随行落 TextLower 让款型主表可见），点
+ *               面板外/再点图标=关闭；面板绘制风格与键面一致；
+ *             - 文字编辑面板（Sogou 改版三阶段收尾，XGui 扩展）：点工
+ *               具栏「文字编辑」图标进入面板本地自绘编辑面板（标题行
+ *               「文字编辑」+右端返回箭头；主区大块白底 上/左/开始选
+ *               择/右/下 + 底行 Home/全选/End；右列 退格/复制/剪切/
+ *               粘贴）：方向/Home/End 合成方向键到绑定目标（选择态携
+ *               带 ShiftModifier）、「开始选择」切换面板本地选择态
+ *               （按下视觉保持）、全选=Ctrl+A、⌫=退格；复制/剪切/粘
+ *               贴=目标控件公开 API 优先（XLineEdit/XPlainTextEdit/
+ *               XTextEdit vtable 识别直调），未识别目标回落合成 Ctrl+
+ *               C/X/V；无绑定目标时动作键画禁用态（灰字）。返回（标
+ *               题行箭头或再点工具栏图标）回原布局，进入/退出不影响
+ *               弹层状态与目标绑定；与键盘选择面板互斥开合；
+ *             - 紧凑悬浮态（Sogou 改版四阶段，XGui 扩展）：工具栏「悬
+ *               浮切换」图标在停靠态与紧凑悬浮态间切换——进入=键盘原
+ *               位转独立顶层 Popup（复用悬浮形态转换路径 setParent
+ *               (NULL,0)+setWindowFlags(Popup)），尺寸=宽 min(宿主宽
+ *               45%,420)、高按同比例缩放（保持 行数+工具栏 宽高比），
+ *               落位宿主右下角；退出=回宿主底部全宽停靠（既有内嵌几
+ *               何）。本态为第三形态（compactFloat，与 m_floating/
+ *               setHostWindow 悬浮锚语义正交）：xkb_reposition 宿主几
+ *               何跟随被 m_compactFloat 守卫跳过（不抢几何，用户可拖
+ *               移）；拖移=按住工具栏空白（图标盒之外）拖移窗口（按
+ *               下记全局锚点偏移、move 求 delta 移窗、压在图标上不打
+ *               启拖动）；守护 tick 顶层 raise 维护继续生效；closePopup
+ *               与 popup() 全部复位（popup 重评估形态）；
+ *             - 九键路由（Sogou 改版三阶段，XVK∧IME 门控）：T9 款型
+ *               且中文态时数字组键（ABC/DEF/…/WXYZ）接引擎九键数字
+ *               通道（feedT9Digit）、分词=feedDigitSeparator、重输=
+ *               engine reset；组串显示=数字串（composingText 直显口
+ *               径，候选带复用），候选/上屏/退格走既有组串链；0 键与
+ *               左列标点直写；EnglishFull 固定英文态（字母恒直写，中
+ *               /EN 键按压收敛回英文）；
  *             - 信号：ready（确认键，对标 LV_EVENT_READY）/cancel（关
  *               闭/收起键，对标 LV_EVENT_CANCEL）/buttonActivated（任
  *               意按钮激活，对标按钮矩阵 VALUE_CHANGED，参数为按钮 id）；
@@ -82,6 +138,11 @@ extern "C" {
 
 /** @brief 当前布局按钮数上限（超出的 setMap 整体拒绝）。 */
 #define XKEYBOARD_MAX_BUTTONS 64
+
+/* 键帽/候选等键盘文字的等比缩放系数：labelPx = 键行高×35%（钳
+ * [9,48]）。35% 由 800×600 缺省标定（键行高≈46px → 16px，与历史
+ * 恒定字号一致）；键盘放大时文字同等放大（等比例缩放需求）。 */
+#define XKB_LABEL_PX_PER_KEYH_PERCENT 35
 /** @brief 无选中/无按下按钮（对标 LV_BUTTONMATRIX_BUTTON_NONE）。 */
 #define XKEYBOARD_BUTTON_NONE 0xFFFFFFFFu
 /** @brief 模式槽位总数（4 内置 + 4 用户；VK 合成布局落 8..9 独立计）。
@@ -171,6 +232,26 @@ typedef enum XKeyboardButtonCtrl
                                   XKEYBOARD_CTRL_CHECKED /**< 控制键标志组合。 */
 } XKeyboardButtonCtrl;
 
+/**
+ * @brief      布局款型（Sogou 改版一阶段；对标安卓搜狗输入法全键/九键）。
+ * @details    款型层独立于 XKeyboardMode：款型主表经 setLayoutKind 装
+ *             载进 TextLower/TextUpper 双槽位（PinyinFull/EnglishFull
+ *             大小写各一表，T9 双槽位同装一表），Special/Number/
+ *             User1..4/Digits/Dialpad 槽位与 hints 自动切换机制不受影
+ *             响（既有模式机制保持不变）。默认 PinyinFull。
+ */
+typedef enum XKeyboardLayoutKind
+{
+    XKeyboardLayout_PinyinFull = 0, /**< 拼音全键（搜狗对标；4 行 35 键，
+                                         行4 含中/EN 与搜索键）。 */
+    XKeyboardLayout_PinyinT9,       /**< 拼音九键（搜狗对标；4 行 21 键，
+                                         左列标点直插+主区 3x4；分词/重
+                                         输/数字键引擎接线后续阶段）。 */
+    XKeyboardLayout_EnglishFull     /**< 英文全键（与 PinyinFull 同几何
+                                         共表；固定英文态——字母不进 IME
+                                         组串、候选带不预留）。 */
+} XKeyboardLayoutKind;
+
 /* ==================== 控制键标签（UTF-8 常量） ==================== */
 
 /** @brief 退格键标签（字库无 ⌫ 字形，键位文案全部用文本）。 */
@@ -201,6 +282,32 @@ typedef enum XKeyboardButtonCtrl
 #define XKEYBOARD_LBL_SPECIAL "1#"
 /** @brief 中/EN 切换键标签（拼音 IME 布局专用；XKEYBOARD_IME_ON）。 */
 #define XKEYBOARD_LBL_IME "\xE4\xB8\xAD/EN"                         /* 中/EN */
+/** @brief 布局款型 shift 键标签（PinyinFull/EnglishFull 行 3；字库无
+ *         ⇧ 字形，键位文案全部用文本，同退格键口径）。三态循环：小写→
+ *         大写（一次性，字母键入后自动回落）→锁定（键面 CHECKED 高
+ *         亮）→小写。 */
+#define XKEYBOARD_LBL_SHIFT "Shift"
+/** @brief 符号切换键标签（PinyinFull/T9 行 4；切既有 Special 模式）。 */
+#define XKEYBOARD_LBL_SYMBOL "\xE7\xAC\xA6"                         /* 符 */
+/** @brief 数字切换键标签（PinyinFull/T9 行 4；切既有 Number 模式，
+ *         数字键走数字盘，主表不再含数字行）。 */
+#define XKEYBOARD_LBL_NUMBERS "123"
+/** @brief 搜索键标签（PinyinFull/T9 行 4 末键；与换行/确认同语义——
+ *         合成 XKey_Return，closeOnReturn 分支同享）。 */
+#define XKEYBOARD_LBL_SEARCH "\xE6\x90\x9C\xE7\xB4\xA2"             /* 搜索 */
+/** @brief 中文句号键标签（PinyinFull 行 4 与 T9 标点列共用；多字节
+ *         UTF-8 经写入链直插）。 */
+#define XKEYBOARD_LBL_CJK_PERIOD "\xE3\x80\x82"                     /* 。 */
+/** @brief T9 标点列全角逗号标签（左列直插标点）。 */
+#define XKEYBOARD_LBL_T9_COMMA "\xEF\xBC\x8C"                       /* ， */
+/** @brief T9 标点列全角问号标签（左列直插标点）。 */
+#define XKEYBOARD_LBL_T9_QMARK "\xEF\xBC\x9F"                       /* ？ */
+/** @brief T9 标点列全角叹号标签（左列直插标点）。 */
+#define XKEYBOARD_LBL_T9_EXMARK "\xEF\xBC\x81"                      /* ！ */
+/** @brief T9 分词键标签（引擎接线后续阶段；本阶段激活原地消费）。 */
+#define XKEYBOARD_LBL_T9_SEG "\xE5\x88\x86\xE8\xAF\x8D"             /* 分词 */
+/** @brief T9 重输键标签（引擎接线后续阶段；本阶段激活原地消费）。 */
+#define XKEYBOARD_LBL_T9_RETYPE "\xE9\x87\x8D\xE8\xBE\x93"          /* 重输 */
 
 /* ==================== 类定义 ==================== */
 XCLASS_DEFINE_BEGING(XVirtualKeyboard)
@@ -211,13 +318,23 @@ XCLASS_DEFINE_EXTEND_END(XVirtualKeyboard, XWidget)
  * @details    字段含义：
  *             - m_target：输出目标编辑框（借用；可为 NULL）；
  *             - m_mode/m_popovers/m_autoPopup：布局模式、气泡开关、自
- *               动弹出开关（XGui 扩展）；
+ *               动弹出开关（XGui 扩展）；m_layoutKind/m_shiftState：
+ *               布局款型与款型 shift 展示态（Sogou 改版一阶段扩展）；
  *             - m_popped：弹层可见状态；
  *             - m_maps[9]/m_ctrls[9]：各模式文本/控制字槽位（借用指
  *               针，0..3 内置、4..7 用户默认回落小写表、末位 NULL）；
  *             - m_keyRects[64]/m_keyCtrls[64]/m_keyCount：当前布局的
  *               键位矩形、生效控制字（popovers=0 时剥 POPOVER 位）与
  *               按钮数（换行分隔符不计数）；
+ *             - m_menuBarRect/m_pressedTool：键盘顶部菜单条矩形（常驻
+ *               预留）与按下中工具栏槽位（Sogou 改版二阶段扩展）；
+ *             - m_layoutSelectorOpen：键盘选择面板开合（Sogou 改版三
+ *               阶段扩展，面板本地 UI 状态）；
+ *             - m_editPanelOpen/m_editSelArmed：文字编辑面板开合与选
+ *               择态（Sogou 改版三阶段收尾扩展，面板本地 UI 状态）；
+ *             - m_compactFloat/m_compactDrag/m_dragOffX/m_dragOffY：紧
+ *               凑悬浮态、拖移进行中与拖移锚点偏移（Sogou 改版四阶段
+ *               扩展）；
  *             - m_selectedKey：最后激活按钮；m_pressedKey/m_pressArmed：
  *               按下中按钮与触发武装位（滑动出键取消、回滑恢复）；
  *             - m_repeatTimer/m_guardTimer：长按重复与守护轮询定时器
@@ -232,9 +349,11 @@ XCLASS_DEFINE_EXTEND_END(XVirtualKeyboard, XWidget)
  *               控）：内嵌候选带矩形（控件局部坐标，h==0=无带）与拼
  *               音插件装载镜像（true=engine 已装 Pinyin 插件，默认
  *               false；状态机本体在插件，面板零直连）；
- *             - m_commitConn/m_keyEventConn（XVIRTUALKEYBOARD_ON）：
- *               context commitRequested/keyEventRequested 落地契约连
- *               接句柄（setTextArea/popup 连接、closePopup 断开）；
+ *             - m_commitConn/m_keyEventConn/m_preeditConn
+ *               （XVIRTUALKEYBOARD_ON）：context commitRequested/
+ *               keyEventRequested/preeditTextChanged 连接句柄
+ *               （setTextArea/popup 连接、closePopup 断开；preedit
+ *               一路承载组串态停靠几何收缩事件源）；
  *             - m_prevFocus（XVIRTUALKEYBOARD_ON）：守护边沿判定的上
  *               一 tick 焦点采样（dismissFix：去 m_target 化）；
  *             - m_candidatePage/m_candidatePageSize
@@ -247,6 +366,26 @@ typedef struct XVirtualKeyboard
     XWidget m_base;                    /**< 基类成员；必须是第一个。 */
     XWidget* m_target;                 /**< 输出目标编辑框（借用；NULL=未绑定）。 */
     XKeyboardMode m_mode;              /**< 当前布局模式。 */
+    XKeyboardLayoutKind m_layoutKind;  /**< 布局款型（默认 PinyinFull；
+                                            主表装载进文本双槽位，见
+                                            setLayoutKind）。 */
+    int m_shiftState;                  /**< 布局层 shift 展示态（款型主
+                                            表专用；0=小写、1=大写一次
+                                            性、2=锁定，见
+                                            XKEYBOARD_LBL_SHIFT）。 */
+    bool m_imeChineseSaved;            /**< 中英态跨款型保存（进英文全键
+                                            时快照、回拼音全键/九键时恢
+                                            复，见 setLayoutKind——否则
+                                            英文款型上点 中/EN 收敛回英
+                                            文后切回中文款型仍残 English
+                                            态，拼音键盘打字无组串无候
+                                            选）。 */
+    char m_t9TapDigit;                 /**< 九键英文多击当前数字组（'2'..'9'；
+                                            0=无活动循环，见
+                                            xkb_t9EnglishKey）。 */
+    int m_t9TapIdx;                    /**< 九键英文多击组内循环位次。 */
+    XTimerId m_t9TapTimer;             /**< 九键英文多击确认定时器（超时
+                                            闭合循环；非周期）。 */
     bool m_popovers;                   /**< 按压放大气泡开关。 */
     bool m_autoPopup;                  /**< 自动弹出开关（XGui 扩展，默认 true）。 */
     bool m_popped;                     /**< 弹层可见状态。 */
@@ -259,8 +398,51 @@ typedef struct XVirtualKeyboard
                                         重建落表；buttonText 读此而非模式
                                         槽位——shift 逻辑态不重建布局）。 */
     uint32_t m_keyCount;               /**< 当前布局按钮数（换行分隔符不计数）。 */
+    XRect m_menuBarRect;               /**< 键盘顶部菜单条矩形（控件局部坐
+                                            标；键区上方常驻预留，条高=
+                                            contentH/(rows+1)，height==0
+                                            =未布局）。组串态=候选带矩形
+                                            （候选替换菜单），空闲态=图标
+                                            工具栏（四等分：悬浮切换/键
+                                            盘选择/文字编辑/收起）。 */
     uint32_t m_selectedKey;            /**< 最后激活按钮；无则 XKEYBOARD_BUTTON_NONE。 */
     uint32_t m_pressedKey;             /**< 按下中按钮；无则 XKEYBOARD_BUTTON_NONE。 */
+    int m_pressedTool;                 /**< 按下中工具栏槽位（0..3，按压武
+                                            装释放触发；-1=无）。 */
+    bool m_layoutSelectorOpen;         /**< 键盘选择面板开合（Sogou 改版
+                                            三阶段；面板内部自绘覆盖键区，
+                                            开启期面板外点击一律关闭并消
+                                            费；随 closePopup/隐藏复位）。 */
+    bool m_editPanelOpen;              /**< 文字编辑面板开合（Sogou 改版
+                                            三阶段收尾；覆盖键区，与键盘
+                                            选择面板互斥；随 closePopup/
+                                            隐藏复位）。 */
+    bool m_editSelArmed;               /**< 文字编辑面板选择态（「开始选
+                                            择」切换；方向/Home/End 合成
+                                            键携带 ShiftModifier；面板关
+                                            闭复位）。 */
+    bool m_compactFloat;               /**< 紧凑悬浮态（第三形态；工具栏
+                                            「悬浮切换」切换；独立顶层
+                                            Popup 宽 min(宿主宽45%,420)
+                                            高同比例、宿主右下角；守卫
+                                            xkb_reposition 几何跟随跳过；
+                                            closePopup/popup 复位）。 */
+    bool m_compactDrag;                /**< 紧凑态拖移进行中（按住工具栏
+                                            空白启动；move 求 delta 移窗；
+                                            release 结束）。 */
+    bool m_physKeyActive;              /**< 物理键盘组串会话（需求②③输入
+                                            源判据，2026-10-04 用户澄清：
+                                            「英文态直落收层/中文态收缩
+                                            只留候选带」仅限外置键盘输入
+                                            ，屏幕键盘输入无此要求）——
+                                            notifyKey 中文路由消费置位、
+                                            组串结束（preedit 空）/收层/
+                                            重弹复位；屏幕键组串永不收缩
+                                            不收层。 */
+    int m_dragOffX;                    /**< 拖移锚点偏移（按下时全局锚-
+                                            窗口左上 x）。 */
+    int m_dragOffY;                    /**< 拖移锚点偏移（按下时全局锚-
+                                            窗口左上 y）。 */
     XTimerId m_repeatTimer;            /**< 长按重复定时器（XTIMER_INVALID_ID=未启动）。 */
     XTimerId m_guardTimer;             /**< 守护轮询定时器（XTIMER_INVALID_ID=未启动）。 */
     XWidget* m_host;                   /**< 弹层宿主顶层窗口（借用；NULL=未挂载）。 */
@@ -310,13 +492,19 @@ typedef struct XVirtualKeyboard
                                             XVK=0 时仍承载 WA14 边沿化）。 */
 #if XVIRTUALKEYBOARD_ON
     XRect m_imeBandRect;               /**< 拼音候选带矩形（控件局部坐标；
-                                            height==0 表示无带）。 */
+                                            height==0 表示无带）。Sogou 改
+                                            版二阶段起组串态时=菜单条矩形
+                                            （候选带替换菜单渲染在条内），
+                                            空闲态归零（条渲染工具栏）。 */
     bool m_imeEnabled;                 /**< 拼音插件装载镜像（true=engine
                                             已装 Pinyin 插件；默认 false）。 */
     XConnection* m_commitConn;         /**< commitRequested 落地契约连接
                                             （借用；NULL=未连接）。 */
     XConnection* m_keyEventConn;       /**< keyEventRequested 落地契约连接
                                             （借用；NULL=未连接）。 */
+    XConnection* m_preeditConn;        /**< preeditTextChanged 组串收缩连
+                                            接（借用；NULL=未连接）——
+                                            组串态停靠几何翻转事件源。 */
     int m_candidatePage;               /**< 候选带当前页（面板本地，0 基）。 */
     int m_candidatePageSize;           /**< 候选带页容量（面板本地，[1,9]）。 */
 #endif
@@ -408,6 +596,32 @@ void XVirtualKeyboard_setMode(XVirtualKeyboard* self, XKeyboardMode mode);
  * @return     当前模式；self 为 NULL 返回 TextLower。
  */
 XKeyboardMode XVirtualKeyboard_mode(const XVirtualKeyboard* self);
+/**
+ * @brief      设置布局款型并装载款型主表（Sogou 改版一阶段；XGui 扩展）。
+ * @details    款型层独立于 XKeyboardMode：装载动作只覆写 TextLower/
+ *             TextUpper 双槽位（PinyinFull/EnglishFull 装搜狗全键大小
+ *             写双表——EnglishFull 与 PinyinFull 同几何共表，固定英文
+ *             态由组串路由/候选带判据的款型分支承载；PinyinT9 双槽位
+ *             同装九键表），Special/Number/User1..4/Digits/Dialpad 槽
+ *             位与 hints 自动切换机制完全不动（既有模式机制保持不变，
+ *             现状可恢复）。装载后：shift 展示态复位、TextUpper 读数
+ *             归位 TextLower、组串草稿弃置（engine reset）、重建键位。
+ *             当前处于 Special/Number/User1 等其它模式时模式保持、仅
+ *             换表（回到文本模式即见新款型主表）；此后 setMap 仍可按
+ *             槽位覆写（后设者胜，至下次款型切换再被覆盖）。款型相同
+ *             直接返回；越界款型拒绝。
+ * @param      self 目标键盘；可为 NULL。
+ * @param      kind 目标款型（XKeyboardLayoutKind）。
+ * @return     无返回值。
+ */
+void XVirtualKeyboard_setLayoutKind(XVirtualKeyboard* self,
+                                    XKeyboardLayoutKind kind);
+/**
+ * @brief      查询布局款型（Sogou 改版一阶段；XGui 扩展）。
+ * @param      self 键盘对象借用指针；可为 NULL。
+ * @return     当前款型；self 为 NULL 返回 PinyinFull。
+ */
+XKeyboardLayoutKind XVirtualKeyboard_layoutKind(const XVirtualKeyboard* self);
 /**
  * @brief      启停按压放大气泡（对标 lv_keyboard_set_popovers）。
  * @details    状态不变直接返回；否则重建生效控制字表（popovers=0 剥
@@ -650,6 +864,23 @@ bool XVirtualKeyboard_autoPopup(const XVirtualKeyboard* self);
  * @return     无返回值。
  */
 void XVirtualKeyboard_notifyPress(XVirtualKeyboard* self, XWidget* hit);
+
+/**
+ * @brief      物理按键转发（XGui 扩展；屏幕键盘弹出时的按键转化层）。
+ * @details    分派入口（XWidget_dispatchKeyEvent）在按键进焦点控件之前
+ *             调用：面板未弹恒 false（零开销透传）；面板弹出时——组串
+ *             中数字 1..9=选对应编号候选（与候选 chip 编号角标同源映
+ *             射，全量下标=页基×页容量+位序）；字母/空格/退格/回车转
+ *             虚键喂引擎（拼音组串态进组串链，与点按屏幕键同路径）；
+ *             引擎未消费（英文态打字等）返回 false 放行按键照常进编
+ *             辑框。返回 true 表示按键已被键盘转化层消费，分派终止。
+ * @param      self 键盘对象；NULL 返回 false。
+ * @param      key  键值（XKey_*；ASCII 字母为小写/大写码位）。
+ * @param      modifiers 修饰键（Shift 决定大写直写或组串小写归一）。
+ * @return     按键已消费返回 true；放行返回 false。
+ */
+bool XVirtualKeyboard_notifyKey(XVirtualKeyboard* self, int key,
+                                XKeyboardModifiers modifiers);
 
 /* ==================== 拼音输入（XGui 扩展，XVIRTUALKEYBOARD_ON 门控；
  *                       薄委托引擎/插件） ==================== */

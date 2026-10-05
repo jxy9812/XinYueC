@@ -117,6 +117,12 @@ endif()
 
 # 2) X.509 + TLS（顶层 library）
 file(GLOB MBEDTLS_TLS_SRCS "library/*.c")
+# 裸机（XINYUE_EMBEDDED）：无 POSIX/Windows socket 层，net_sockets.c 整体
+# 裁剪（MBEDTLS_NET_C 已在 mbedtls_config.h 同步关闭）；TLS 核心 BIO 由
+# XSsl 桥接 XAbstractSocket 提供，不经过 mbedtls_net_*。
+if(XINYUE_EMBEDDED)
+    list(FILTER MBEDTLS_TLS_SRCS EXCLUDE REGEX "/net_sockets\\.c$")
+endif()
 
 # 3) 后量子密码（可选，默认关）
 if(MBEDTLS_ENABLE_PQCP)
@@ -211,10 +217,6 @@ if(MBEDTLS_USE_XCRYPTOGRAPHIC_KEY_WRAP)
     target_compile_definitions(mbedtls PRIVATE MBEDTLS_USE_XCRYPTOGRAPHIC_KEY_WRAP=1)
 endif()
 
-# Windows(MSVC): mbedtls_platform_get_entropy() 调用 BCryptGenRandom（需 bcrypt.lib）。
-# 已开启 MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG，TLS/PSA 运行时随机数走 XRandomGenerator；
-# 但 platform_util.c 仍被编译并链接，故 Windows 上必须链接 bcrypt 解析符号。
-# Linux 用 getrandom()/urandom，无需额外库。
-if(WIN32)
-    target_link_libraries(mbedtls PUBLIC bcrypt)
-endif()
+# Windows(MSVC)：内建熵源已全平台停用（统一走 XRandomGenerator 桥接，
+# 见 psa/crypto_config.h 的 MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG 说明），
+# platform_util.c 的 BCryptGenRandom 代码不再参与编译，无需 bcrypt。

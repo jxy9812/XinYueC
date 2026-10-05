@@ -200,9 +200,13 @@ static void xmemory_system_free(void* ptr)
 static XMemory global_Memory[] = { {xmemory_system_malloc,xmemory_system_free,xmemory_system_realloc,xmemory_system_calloc},{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
 #elif defined(__FreeRTOS__)
 #include"FreeRTOS.h"
-static XMemory global_Memory = { { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
+/* 与桌面分支同构的三槽位数组：[0]=FreeRTOS 堆（pvPortMalloc/vPortFree，
+ * heap_1~5 五选一提供实现），[1]=XMultiPool，[2]=混合策略。 */
+static XMemory global_Memory[] = { { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
 #else//裸机环境
-static XMemory global_Memory = { { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
+/* 同为三槽位数组；[0] 为空实现——无 RTOS 堆时系统级分配不可用，
+ * 固件需接入 XMultiPool/自定义后端（按槽位类型选择）。 */
+static XMemory global_Memory[] = { { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
 #endif
 
 /* 记账/清账已内嵌于槽位表函数本体（上方 xmemory_system_* 系列）——

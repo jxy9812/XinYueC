@@ -691,6 +691,18 @@ XInputMethod* XGuiApplication_inputMethod(void);
 XVirtualKeyboard* XGuiApplication_virtualKeyboard(void);
 
 /**
+ * @brief      探查虚拟键盘默认面板单例（不创建；XGui 扩展）。
+ * @details    与 virtualKeyboard() 同一实例，区别仅在缺席语义：单例尚未
+ *             惰性创建时返回 NULL 而非触发创建——适用于「面板在场才需要
+ *             处理」的旁路场景（宿主 chrome 重排收尾对已弹出面板同步
+ *             抬层先例），避免无键盘会话被查询行为副作用创建面板与守护
+ *             轮询。弹层状态查询用 XVirtualKeyboard_popupVisible。
+ * @return     XVirtualKeyboard* 借用指针；单例缺席（未创建）、
+ *             XVIRTUALKEYBOARD_ON=0 或未初始化应用返回 NULL。
+ */
+XVirtualKeyboard* XGuiApplication_virtualKeyboardPeek(void);
+
+/**
  * @brief      设置虚拟键盘总开关（XGui 扩展；Qt 无直接等价物，diverge）。
  * @details    默认 true。置 false 的生效契约由消费方接线：键盘守护停止
  *             自动弹出、已弹出面板收起、engine 吞掉虚键、commitRequested
@@ -725,6 +737,22 @@ bool XGuiApplication_virtualKeyboardEnabled(void);
  * @return     无返回值。
  */
 void XGuiApplication_virtualKeyboardNotifyPress(XWidget* hit);
+
+/**
+ * @brief      物理按键转发到虚拟键盘（XGui 扩展；按键转化层入口）。
+ * @details    分派入口（XWidget_dispatchKeyEvent，对标 Qt 输入法拦截按
+ *             键语义）在按键进焦点控件之前调用：默认面板单例弹出且组
+ *             串中时——数字 1..9 选对应编号候选、字母/空格/退格/回车
+ *             进组串链（与点按屏幕键同路径）；未消费（英文态打字/面板
+ *             未弹/单例缺席）返回 false 放行，按键照常进焦点控件。转
+ *             发门控：XVIRTUALKEYBOARD_DESKTOP_ON=0 恒 false（非桌面
+ *             形态无转化层）；XVIRTUALKEYBOARD_ON=0 级联压 0。
+ * @param      key 键值（XKey_*）。
+ * @param      modifiers 修饰键。
+ * @return     按键已被键盘转化层消费返回 true（分派终止）；放行 false。
+ */
+bool XGuiApplication_virtualKeyboardNotifyKey(int key,
+                                              XKeyboardModifiers modifiers);
 
 /* ==================== 平台接口（对标 QGuiApplication::platformNativeInterface 等） ==================== */
 

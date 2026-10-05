@@ -103,7 +103,12 @@ void XTextDocument_init(XTextDocument* self)
     XClassSetVtable(self, XTextDocument);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    self->m_capacity = 16;
+#ifndef XTEXTDOCUMENT_INIT_CAPACITY
+#define XTEXTDOCUMENT_INIT_CAPACITY 16
+#endif
+    /* 撤销/重做块表初始容量：桌面默认 16；嵌入式可经编译选项缩小
+     * （XTextDocument 每文档 XTDBlock*sizeof 的常驻开销随之下降）。 */
+    self->m_capacity = XTEXTDOCUMENT_INIT_CAPACITY;
     self->m_blocks = (XTDBlock*)XMalloc_System(
         sizeof(XTDBlock) * (size_t)self->m_capacity);
     if (self->m_blocks) XMemset(self->m_blocks, 0,

@@ -90,14 +90,10 @@ typedef struct XMainWindow
     bool m_inTabSync;            /**< 页签条同步重入保护：xmw_layout 回填
                                   *   current 下标时置位，抑制 currentChanged
                                   *   槽递归重排。 */
-    bool m_layoutBusy;           /**< 停靠重排合帧进行中：xmw_layoutFlush
-                                  *   主体（dockGroupSync+xmw_layout）执行
-                                  *   期间置位，嵌套重排请求只挂
-                                  *   m_layoutPending 不再递归（回嵌松手
-                                  *   一轮 ≥4 次全量重排的合帧收口）。 */
-    bool m_layoutPending;        /**< 合帧期挂起的重排请求：主体/显隐循环
-                                  *   出口消费一次（显隐终态首轮真实重排
-                                  *   即收敛，重跑内不再置位）。 */
+    bool m_inGroupSync;          /**< 标签组同步重入保护：dockGroupSync 修改
+                                  *   面板可见性触发 show/hide 事件 → 回触
+                                  *   updateDockLayout → 递归 dockGroupSync，
+                                  *   防止递归破坏停靠状态。 */
     int m_leftDockWidth;         /**< 左侧停靠列宽度（像素；默认 160，
                                   *   可经 resizeDocks 横向调整）。 */
     int m_rightDockWidth;        /**< 右侧停靠列宽度（像素；默认 160，

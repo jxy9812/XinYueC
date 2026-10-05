@@ -32,6 +32,8 @@
 #define IME_ENTRY_COUNT ((uint16_t)(sizeof(k_imeEntries) / sizeof(k_imeEntries[0])))
 /** @brief 音节缓冲长度（最长音节 6 字母 zhuang/chuang/shuang + NUL）。 */
 #define IME_SYLLABLE_BUF 7
+/** @brief 最长音节字母数（与 XPinyinEngine.c 同口径的缓冲长度派生）。 */
+#define IME_SYLLABLE_LEN_MAX (IME_SYLLABLE_BUF - 1)
 
 /* ==================== 音节表（字典序） ==================== */
 
@@ -1352,6 +1354,192 @@ bool XPinyinTable_hasSyllablePrefix(const char* prefix)
         return false;
     }
     return imeSyllableStartsWith(k_imeSyllables[lower], prefix);
+}
+
+/* ==================== 九键（T9）数字组查询 ==================== */
+
+/* 九键数字组界（下标 = 数字 - '2'）：每组字母为 ASCII 连续区间，
+ * 首尾字母即窗口比较界（2=abc..9=wxyz，与 XPinyinTable.h 口径一致）。 */
+static const char imeT9RangeLo[8] = { 'a', 'd', 'g', 'j', 'm', 'p', 't', 'w' };
+static const char imeT9RangeHi[8] = { 'c', 'f', 'i', 'l', 'o', 's', 'v', 'z' };
+
+/**
+ * @brief      数字字符 → 组内字母区间（首/尾字母）。
+ * @param      digit 目标数字字符。
+ * @param      lo 输出组首字母；不为 NULL。
+ * @param      hi 输出组尾字母；不为 NULL。
+ * @return     '2'..'9' 返回 true；其他返回 false。
+ */
+static bool imeT9Range(char digit, char* lo, char* hi)
+{
+    if ((digit < '2') || (digit > '9'))
+    {
+        return false;
+    }
+    *lo = imeT9RangeLo[digit - '2'];
+    *hi = imeT9RangeHi[digit - '2'];
+    return true;
+}
+
+/**
+ * @brief      音节前 len 个字母是否逐位落在数字模式对应组内。
+ * @details    音节短于 len 时判 false（前缀形态由调用方先用长度守卫
+ *             放行「音节长 >= len」）；逐位组界校验即剪枝本体。
+ * @param      syllable 音节串借用指针；不为 NULL。
+ * @param      digits 数字模式串借用指针；不为 NULL。
+ * @param      len 模式长度；1..6。
+ * @return     逐位命中返回 true；否则 false。
+ */
+static bool imeT9MatchPrefix(const char* syllable, const char* digits, int len)
+{
+    int i;
+
+    for (i = 0; i < len; ++i)
+    {
+        char lo;
+        char hi;
+
+        if (syllable[i] == '\0')
+        {
+            return false;
+        }
+        if (!imeT9Range(digits[i], &lo, &hi))
+        {
+            return false;
+        }
+        if ((syllable[i] < lo) || (syllable[i] > hi))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief      音节与 len 字节模式串的截断字典序比较。
+ * @details    音节按前 min(len,音节长) 字节参与比较（音节更短判更小，
+ *             等长逐字节比）。窗口推进用它对组尾界串截断比较：首 len
+ *             字节恰等于界串的长音节（如界 "ze" 与音节 "zen"）截断相
+ *             等仍留在窗内，其后缀字节交由逐位校验裁决，不漏窗。
+ * @param      syllable 音节串借用指针；不为 NULL。
+ * @param      pattern 界串借用指针；不为 NULL（len 字节有效）。
+ * @param      len 比较字节数；1..6。
+ * @return     音节截断 < 界串返回负数；相等返回 0；大于返回正数。
+ */
+static int imeT9TruncCompare(const char* syllable, const char* pattern, int len)
+{
+    int i;
+
+    for (i = 0; i < len; ++i)
+    {
+        if (syllable[i] == '\0')
+        {
+            return -1;
+        }
+        if (syllable[i] != pattern[i])
+        {
+            return (int)(uint8_t)syllable[i] - (int)(uint8_t)pattern[i];
+        }
+    }
+    return 0;
+}
+
+/**
+ * @brief      九键数字模式窗口扫描（两公开查询的唯一实现体）。
+ * @details    窗口 = 「首 len 字节逐位落在对应数字组内」的音节集合：
+ *             模式首/尾字母组界拼出窗首串 lo/窗尾界串 hi，音节表字典
+ *             序有序，故自 imeSyllableLowerBound(lo) 起推进、对 hi 截
+ *             断比较越界即停；窗内逐条按 exact 模式（长度恰等）或前缀
+ *             形态校验后收集。窗宽由数字组宽度（3~4 字母）与表内落点
+ *             自然约束（实测单模式最大 6 条），远小于全表扫描——即任
+ *             务书「逐字母增量剪枝」的落点。
+ * @param      digits 数字模式串借用指针；不为 NULL。
+ * @param      len 模式长度；1..6。
+ * @param      exact 1=长度恰等（枚举形态）；0=前缀形态（音节可更长）。
+ * @param      outIds 收集缓冲借用指针；可为 NULL（只计数）。
+ * @param      maxIds 收集缓冲容量（outIds 为 NULL 时忽略）。
+ * @return     命中音节数（写出条数 <= min(命中数, maxIds)）。
+ */
+static int imeT9ScanWindow(const char* digits, int len, int exact,
+                           uint16_t* outIds, int maxIds)
+{
+    char lo[IME_SYLLABLE_BUF];
+    char hi[IME_SYLLABLE_BUF];
+    uint16_t id;
+    int count = 0;
+    int i;
+
+    if ((!digits) || (len < 1) || (len > IME_SYLLABLE_LEN_MAX))
+    {
+        return 0;
+    }
+    for (i = 0; i < len; ++i)
+    {
+        char loCh;
+        char hiCh;
+
+        if (!imeT9Range(digits[i], &loCh, &hiCh))
+        {
+            return 0;
+        }
+        lo[i] = loCh;
+        hi[i] = hiCh;
+    }
+    lo[len] = '\0';
+    hi[len] = '\0';
+    /* 窗首：下界二分（首个 >= 组首界串的音节）；窗内推进到组尾界串
+       截断比较越界即停（截断相等仍在窗内，见 imeT9TruncCompare）。 */
+    id = imeSyllableLowerBound(lo);
+    while (id < IME_SYLLABLE_COUNT)
+    {
+        const char* syllable = k_imeSyllables[id];
+
+        if (imeT9TruncCompare(syllable, hi, len) > 0)
+        {
+            break;
+        }
+        if (imeT9MatchPrefix(syllable, digits, len))
+        {
+            int sylLen = 0;
+
+            while (syllable[sylLen] != '\0')
+                ++sylLen;
+            if ((!exact) || (sylLen == len))
+            {
+                if ((outIds != NULL) && (count < maxIds))
+                {
+                    outIds[count] = id;
+                }
+                ++count;
+            }
+        }
+        ++id;
+    }
+    return count;
+}
+
+int XPinyinTable_digitsSyllables(const char* digits, int len,
+                                 uint16_t* outIds, int maxIds)
+{
+    if (maxIds < 0)
+    {
+        maxIds = 0;
+    }
+    return imeT9ScanWindow(digits, len, 1, outIds, maxIds);
+}
+
+bool XPinyinTable_hasSyllableDigitsPrefix(const char* digits, int len)
+{
+    if (!digits)
+    {
+        return false;
+    }
+    if (len == 0)
+    {
+        return true; /* 空模式恒真（切分起点/整串恰完语义），镜像
+                        XPinyinTable_hasSyllablePrefix("")。 */
+    }
+    return imeT9ScanWindow(digits, len, 0, NULL, 0) > 0;
 }
 
 #endif /* XKEYBOARD_IME_ON */

@@ -240,13 +240,15 @@
 /** @brief XTcpServer 内建 SSH Server 开关；使用 mbedTLS(PSA) 实现精简 SSH 传输。
  *  与 Telnet Server 互相独立，可单独或同时开启。 */
 #ifndef XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON
-#define XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON 1
+/* 级联主开关：XCONSOLE_SHELL_ON=0（嵌入式裁剪）时后端随之关闭。 */
+#define XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON XCONSOLE_SHELL_ON
 #define XCONSOLE_SHELL_XSSHSERVER_BACKEND_DEFAULT_ON 1
 #endif
 
 /** @brief XTcpServer 内建 Telnet Server 开关；与 SSH Server 互相独立。 */
 #ifndef XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON
-#define XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON 1
+/* 级联主开关：XCONSOLE_SHELL_ON=0（嵌入式裁剪）时后端随之关闭。 */
+#define XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON XCONSOLE_SHELL_ON
 #endif
 
 /** @brief SSH Server 默认监听端口；产品调用 XTcpServer_listen 时可覆盖。 */

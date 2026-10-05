@@ -1496,7 +1496,11 @@ static bool demo_framePumpBody(void* userData)
             }
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
             {
-                XImage* device = XWidget_paintImage(&demo->m_base);
+                /* 无头截图覆盖目标（键盘页紧凑悬浮态：独立顶层 Popup
+                   不在主窗 paintImage 内——截键盘自身背后图像）。 */
+                XWidget* shotTarget = demo_page_keyboard_screenshot_target();
+                XImage* device = shotTarget ? XWidget_paintImage(shotTarget)
+                                            : XWidget_paintImage(&demo->m_base);
                 if (device) {
                     XPrintf("XGuiWindowDemo: 保存截图到 %s\n",
                             demo->m_screenshotPath);
@@ -1551,19 +1555,15 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
         return;
     }
     if (timerId == self->m_overlayTimer) {
+        {
+            extern volatile unsigned long g_overlayTimerFires;
+            ++g_overlayTimerFires;
+        }
         /* 空闲闸门下的悬浮层自刷新（XGUI_DEMO_IDLE_OVERLAY_MS=250ms，
            4Hz，对标 Qt 指标浮层低频心跳）：demo_repaint 在静态场景
            干净时只投递悬浮层自身 210x70 小区域；文本统计窗口同为
            250ms（XGUI_PERFORMANCE_OVERLAY_UPDATE_MS），指标更新与
            重绘节奏一致。XGUI_DEMO_IDLE_GATE=0 时本定时器不启动。 */
-        /* 拖拽期暂停心跳（2026-10-05）：鼠标抓取进行中（停靠面板拖动
-           等）跳过本轮自刷新——FULL 渲染模式下小区域 update 会被放大
-           为整窗重绘+提交，每秒一次的心跳打断足以污染拖动帧节奏；松
-           开后下一周期自动恢复。 */
-        if (XWidget_mouseGrabber() != NULL) {
-            XEvent_accept((XEvent*)event);
-            return;
-        }
         demo_repaint(self);
         XEvent_accept((XEvent*)event);
         return;
@@ -1819,6 +1819,17 @@ static void demo_navUpdatePanel(DemoWin* self)
         (XAbstractButton*)&self->m_navCatBtns[self->m_navCategory], true);
     self->m_staticSceneDirty = true;
     demo_repaint(self);
+    /* 导航 chrome 的 raise（resize 拖拽经 resizeEvent 逐帧进入本函数）
+       会把弹出的屏幕键盘压回自己之下——子控件浮层形态的 Z 序只有弹出
+       时刻一次 raise，绘制按子控件向量序，异步守护 tick（200ms）只救
+       得了拖动结束、帧内必被下一次 chrome raise 再压回。收尾对已弹出
+       面板同步抬回（帧内最后一步），使「chrome 低于输入面板」在每一
+       帧成立。peek 不惰性创建单例：键盘从未启用的会话零开销。 */
+    {
+        XVirtualKeyboard* kb = XGuiApplication_virtualKeyboardPeek();
+        if (kb && XVirtualKeyboard_popupVisible(kb))
+            XWidget_raise((XWidget*)kb);
+    }
 }
 
 /** @brief 分割条回调：查询受控尺寸（左右=面板宽，上下=面板高）。 */
@@ -2133,8 +2144,10 @@ static void demo_layout_content(DemoWin* self)
         demo_page_advanced_adapt(self->m_extPages[2]);
     if (self->m_extPages[3])
         demo_page_effects_adapt(self->m_extPages[3]);
+#if defined(XGUI_REMOTE_ON) && XGUI_REMOTE_ON
     if (self->m_extPages[6])
         demo_page_remote_client_adapt(self->m_extPages[6]);
+#endif
 }
 
 /** @brief 切换主内容页面：更新堆叠布局当前页、重新分配几何并更新状态栏。 */
@@ -2903,6 +2916,12 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
                             ? "true" : "false");
                 demo_repaint(demo);
             } else if (XMouseEvent_button(mouse) == XMouseButton_LeftButton) {
+                /* 拖动起点提层（2026-10-05 用户口径：拖到导航区被分割
+                 * 条/菜单按钮遮挡）：性能浮层升至内容兄弟末位，盖过分
+                 * 隔条/导航面板等布局期自抬层。屏幕键盘为独立顶层
+                 * Popup，天然恒在所有子控件（含浮层）之上——层级口径
+                 * 「主窗内容 < 性能浮层 < 屏幕键盘」自动成立。 */
+                XWidget_raise((XWidget*)&demo->m_performanceOverlay);
                 (void)XPerformanceOverlay_beginDrag(
                     &demo->m_performanceOverlay, position.x, position.y);
             }
@@ -2978,38 +2997,23 @@ static void VDemoWin_wheelEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief EnterEvent：打印进入坐标（局部+全局）。 */
-/** @brief EnterEvent：打印进入坐标（局部+全局）。
- *  @details 默认关闭（XGUI_DEMO_INPUT_TRACE=1 开启）：拖拽/悬停期指针
- *           在装饰条与内容间反复穿越，ENTER/LEAVE 逐条 printf+fflush 到
- *           控制台在远程会话上是可感知的开销与刷屏噪音（2026-10-05）。 */
-static bool demo_inputTrace(void)
-{
-    static int cached = -1;
-    if (cached < 0) {
-        const char* env = XSystem_environment("XGUI_DEMO_INPUT_TRACE");
-        cached = env && *env && !(env[0] == '0' && env[1] == 0) ? 1 : 0;
-    }
-    return cached != 0;
-}
-
 static void VDemoWin_enterEvent(XWidget* self, XEvent* event)
 {
     XEnterEvent* enter = (XEnterEvent*)event;
     XPoint global;
     (void)self;
-    if (!enter || !demo_inputTrace()) return;
+    if (!enter) return;
     global = XEnterEvent_globalPosition(enter);
     demo_log("XGuiWindowDemo: enter pos=(%d,%d) global=(%d,%d)\n",
              (int)XEnterEvent_position(enter).x, (int)XEnterEvent_position(enter).y,
              (int)global.x, (int)global.y);
 }
 
-/** @brief LeaveEvent：打印离开通知（门控同 enter，见 demo_inputTrace）。 */
+/** @brief LeaveEvent：打印离开通知。 */
 static void VDemoWin_leaveEvent(XWidget* self, XEvent* event)
 {
     (void)self;
     (void)event;
-    if (!demo_inputTrace()) return;
     demo_log("XGuiWindowDemo: leave\n");
 }
 /** @brief 演示窗口类虚表初始化。 */
@@ -3096,13 +3100,24 @@ static DemoWin* DemoWin_create(void)
      * 析构）；裁剪配置下 build 返回 NULL 则跳过注册。 ---- */
     {
         int exti;
+#if XINYUE_EMBEDDED
+        /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
+         * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
+         * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
+        XWidget* (*const kExtBuilders[7])(XWidget*, DemoPageStatusFn, void*) = {
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL
+        };
+#else
         XWidget* (*const kExtBuilders[7])(XWidget*, DemoPageStatusFn, void*) = {
             demo_page_views_build, demo_page_dialogs_build,
             demo_page_advanced_build, demo_page_effects_build,
             demo_page_keyboard_build, demo_page_remote_server_build,
             demo_page_remote_client_build /* 2026-10-02 追加第 7 扩展页。 */
         };
+#endif
         for (exti = 0; exti < 7; ++exti) {
+            if (!kExtBuilders[exti])
+                continue;
             self->m_extPages[exti] =
                 kExtBuilders[exti]((XWidget*)&self->m_base,
                                    demo_ext_page_status, self);
@@ -3977,11 +3992,25 @@ static DemoWin* DemoWin_create(void)
     return self;
 }
 
+volatile unsigned long g_overlayTimerFires;
 /* ==================== 主函数 ==================== */
+
+/* --apitest 无头测试套件开关：宿主回归用；嵌入式固件置 0 连同 9 个
+ * xgui_demo_apitest_*.c 一并裁掉（约 150KB ROM + 20KB 静态视图缓存）。 */
+#ifndef XGUI_DEMO_APITEST_ON
+#define XGUI_DEMO_APITEST_ON 1
+#endif
+
+#if XGUI_DEMO_APITEST_ON
+#define XGUI_DEMO_APITEST_DECL(fn) fn
+#else
+#define XGUI_DEMO_APITEST_DECL(fn) 0
+#endif
 
 /** @brief 控件 API 全量测试调度（--apitest）：逐族运行 xgui_demo_apitest.h
  *         契约的 9 个测试族，汇总失败数（任一失败退出码 1）。无头运行，
  *         不创建演示窗口；族内事件经 XObject_event_base 直发。 */
+#if XGUI_DEMO_APITEST_ON
 static int demo_apitest_run(XGuiApplication* app, const char* onlyFamily)
 {
     struct {
@@ -4014,7 +4043,7 @@ static int demo_apitest_run(XGuiApplication* app, const char* onlyFamily)
             total == 0 ? "ALL PASS" : "HAS FAILURES");
     return total == 0 ? 0 : 1;
 }
-
+#endif /* XGUI_DEMO_APITEST_ON */
 /* GL 驱动 PBO 滞后通道的场景自适应查询（薄包装：有鼠标抓取=交互序列
  * 中，返回非 0 让驱动回同步直读；XWidget_mouseGrabber 返回指针）。 */
 static int demo_pointerGrabQuery(void)
@@ -4069,12 +4098,27 @@ static int demo_log(const char* fmt, ...)
 #endif
 
 /* 安卓 APK 壳（Drive/Android/android_main.c）经 xgui_window_demo_main
- * 复用同一 main 逻辑；桌面/嵌入式仍导出标准 main。 */
+ * 复用同一 main 逻辑；嵌入式固件保留 xgui_demo_main 原名（由板级任务
+ * 调用，main 属启动文件）；桌面仍导出标准 main。 */
 #ifdef __ANDROID__
 #define xgui_demo_main xgui_window_demo_main
+#elif defined(XINYUE_EMBEDDED)
+/* 板级固件经 xgui_demo_main(0, NULL) 调用（见 Drive/STM32/ShenzhouF407）。 */
 #else
 #define xgui_demo_main main
 #endif
+
+/* 平台后置钩子：窗口 show 之后、事件循环之前调用一次。嵌入式板级
+ * （Drive/STM32/ShenzhouF407/app/board_xgui_glue.c）以强符号覆盖，
+ * 在此挂后备存储 present 上屏回调与触摸轮询泵；宿主平台走弱空实现。 */
+void xgui_demo_platformPostShow(XWidget* topLevel);
+#if defined(__GNUC__)
+__attribute__((weak))
+#endif
+void xgui_demo_platformPostShow(XWidget* topLevel)
+{
+    (void)topLevel;
+}
 
 int xgui_demo_main(int argc, char* argv[])
 {
@@ -4326,18 +4370,32 @@ int xgui_demo_main(int argc, char* argv[])
 #endif
 
     /* 1) 初始化 XGuiApplication（进程内单例）。 */
+    {
+        /* [mem] 堆水印插桩属固件战役（__FreeRTOS__ 由 CMakeLists 嵌入式
+         * 分支全局定义）：桌面目标不编 FreeRTOS 堆符号，无守卫直呼会
+         * 造成 XGuiWindowDemo_Test 链接 LNK2019。 */
+#if defined(__FreeRTOS__)
+        extern size_t xPortGetFreeHeapSize(void);
+        XPrintf("[mem] before app: free=%u\n",
+                (unsigned)xPortGetFreeHeapSize());
+#endif
+    }
     app = XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, argc, argv);
     if (!app) {
         XPrintf("XGuiWindowDemo: XGuiApplication_create_ex 失败\n");
         return 1;
     }
 
+#if XGUI_DEMO_APITEST_ON
     /* 1.5) --apitest：控件 API 全量测试（无头，不进窗口流程）。 */
     if (apiTestSuite) {
         int rc = demo_apitest_run(app, apiTestFamily);
         XClassDelete(app);
         return rc;
     }
+#else
+    (void)apiTestSuite; (void)apiTestFamily;
+#endif
 
 #if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
     /* 面板几何变量（注册后 probe 赋值）；0=非 fbdev/不可用，窗口走
@@ -4422,6 +4480,12 @@ int xgui_demo_main(int argc, char* argv[])
     else
 #endif
     XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);
+#if defined(XINYUE_PANEL_WIDTH) && defined(XINYUE_PANEL_HEIGHT)
+    /* 嵌入式单屏：窗口全屏铺满面板（板级 present 回调直写 GRAM，
+     * 面板尺寸经编译定义注入，见 Drive/STM32/ShenzhouF407）。 */
+    XWidget_setGeometry(&win->m_base, 0, 0, XINYUE_PANEL_WIDTH,
+                        XINYUE_PANEL_HEIGHT);
+#endif
     /* 键盘页无头截图钩子（Tools/VirtualKeyboard/style_check.py；环境变量缺省时
        零操作）：几何定版后、事件循环前同步弹出——守护轮询 200ms 在
        --screenshot 3 帧内到不了，钩子不依赖定时器边沿。 */
@@ -4492,6 +4556,15 @@ int xgui_demo_main(int argc, char* argv[])
         XPlatformBackingStore_fillPanelRects(bands, 4, 0xEF7Du);
     }
 #endif
+    {
+        /* [mem] 同上：固件战役插桩，桌面分支裁剪。 */
+#if defined(__FreeRTOS__)
+        extern size_t xPortGetFreeHeapSize(void);
+        XPrintf("[mem] after pages: free=%u\n",
+                (unsigned)xPortGetFreeHeapSize());
+#endif
+    }
+    xgui_demo_platformPostShow(&win->m_base);
     XPrintf("XGuiWindowDemo: 屏幕尺寸=%.0fx%.0f\n",
            (double)XWidget_width(&win->m_base),
            (double)XWidget_height(&win->m_base));
@@ -4543,12 +4616,16 @@ int xgui_demo_main(int argc, char* argv[])
            场景干净时只投递悬浮层 210x70 小区域，文本经 XLabel 自身
            update 闭环。XGUI_DEMO_IDLE_GATE=0 时不启动（旧口径随帧
            刷新，行为与回退前逐位一致）。 */
+        XPrintf("XGuiWindowDemo: idleGate=%d overlay_on=%d\n",
+                (int)g_idleGate, (int)XGUI_PERFORMANCE_OVERLAY_ON);
         if (g_idleGate) {
             win->m_overlayTimer = XObject_startTimer_ms(
                 (XObject*)win, (uint64_t)XGUI_DEMO_IDLE_OVERLAY_MS,
                 XTimerType_CoarseTimer);
             if (win->m_overlayTimer == XTIMER_INVALID_ID)
                 XPrintf("XGuiWindowDemo: 悬浮层降频定时器创建失败\n");
+            else
+                XPrintf("XGuiWindowDemo: 悬浮层定时器已创建\n");
         }
 #endif
         if (eventLoopResult == 0)

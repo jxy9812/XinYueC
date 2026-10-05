@@ -10,6 +10,7 @@
 #include "XObject.h"
 #include "XEvent.h"
 #include "XVarList.h"
+#include "XVector.h" /* xkb_zIndex 栈序断言（XObject_children 遍历）。 */
 #include "XMemory.h"
 #include <stdio.h>
 #include <string.h>
@@ -23,6 +24,9 @@
 #if XLINEEDIT_ON
 #include "XLineEdit.h"
 #endif /* XLINEEDIT_ON */
+#if XPLAINTEXTEDIT_ON
+#include "XPlainTextEdit.h" /* ⑤e 文字编辑面板全选粘贴替换承载控件。 */
+#endif /* XPLAINTEXTEDIT_ON */
 #if XVIRTUALKEYBOARD_ON
 /* 虚拟键盘框架（Src/XGui/VirtualKeyboard，设计 apiMapping#1-5/7）：
  * 门控未定义时（框架落地前）整段编译出，既有用例保持原样全绿；框架
@@ -404,6 +408,25 @@ static void xkb_pumpGuardTick(XVirtualKeyboard* kb)
     XObject_event_base((XObject*)kb, (XEvent*)&te);
 }
 
+/** @brief 子控件在父 children 向量中的栈序索引（越大越后绘制/越靠
+ *         上，XWidget_raise 即搬到末位；非父控件子级返回 -1）。 */
+static int64_t xkb_zIndex(const XWidget* parent, const XWidget* w)
+{
+    const XVector* kids;
+    size_t i;
+    size_t n;
+    if (!parent || !w) return -1;
+    kids = XObject_children((XObject*)parent);
+    if (!kids) return -1;
+    n = XVector_size_base((const XContainer*)kids);
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(kids, (int64_t)i);
+        if (child && child->is_widget && (XWidget*)child == w)
+            return (int64_t)i;
+    }
+    return -1;
+}
+
 /** @brief 顶层桥注入一次完整点击（PRESS+RELEASE 同点，经
  *         XWidget_dispatchPointerEvent 真实派发链）。必须成对：键盘面
  *         板 mousePress 即 grabMouse（XVirtualKeyboard.c VXKeyboard_
@@ -477,19 +500,22 @@ bool XKeyboardTest_runAll(void)
     xkb_cancelCount = 0;
     xkb_activatedCount = 0;
 
-    /* 1. 默认状态（mode=TextLower / popovers=false / autoPopup=true /
-     *    USER_1..4 槽位回落小写表 / 布局 40 键）。 */
+    /* 1. 默认状态（mode=TextLower / layoutKind=PinyinFull /
+     *    popovers=false / autoPopup=true / USER_1..4 槽位回落小写表 /
+     *    款型主表（搜狗全键）35 键）。 */
     xkb_expect(XVirtualKeyboard_mode(kb) == XKeyboardMode_TextLower, "默认小写模式");
+    xkb_expect(XVirtualKeyboard_layoutKind(kb) == XKeyboardLayout_PinyinFull,
+               "默认款型 PinyinFull");
     xkb_expect(!XVirtualKeyboard_popovers(kb), "默认关气泡");
     xkb_expect(XVirtualKeyboard_autoPopup(kb), "默认开自动弹出");
     xkb_expect(!XVirtualKeyboard_popupVisible(kb), "默认弹层不可见");
     xkb_expect(XVirtualKeyboard_textArea(kb) == NULL, "默认未绑定目标");
-    xkb_expect(XVirtualKeyboard_buttonCount(kb) == 40, "小写布局 40 键");
+    xkb_expect(XVirtualKeyboard_buttonCount(kb) == 35, "搜狗全键布局 35 键");
     xkb_expect(XVirtualKeyboard_selectedButton(kb) == XKEYBOARD_BUTTON_NONE,
                "默认无选中按钮");
     xkb_expect(XVirtualKeyboard_buttonText(kb, 0) != NULL &&
-               strcmp(XVirtualKeyboard_buttonText(kb, 0), "1#") == 0,
-               "按钮 0 为 1# 切换键");
+               strcmp(XVirtualKeyboard_buttonText(kb, 0), "q") == 0,
+               "按钮 0 为 q 字符键");
     XVirtualKeyboard_setMode(kb, XKeyboardMode_User1);
     xkb_expect(XVirtualKeyboard_buttonCount(kb) == 40 &&
                strcmp(XVirtualKeyboard_buttonText(kb, 0), "1#") == 0,
@@ -497,9 +523,10 @@ bool XKeyboardTest_runAll(void)
     XVirtualKeyboard_setMode(kb, XKeyboardMode_TextLower);
 
     /* 1.2 多行布局不变式（rowStart 差一回归锁）：经公开几何断言——
-     * 40 键分 4 行、各行键数 12/11/12/5、各行首键标签依次为
-     * 1#/ABC/_/收起（rowStart[r] 为第 r 行首键索引的几何投影；原缺陷
-     * 下中间行起点漏登、末行起点为栈垃圾，行分组与键数必然错乱）。 */
+     * 款型主表（搜狗全键）35 键分 4 行、各行键数 10/9/9/7、各行首键
+     * 标签依次为 q/a/Shift/符（rowStart[r] 为第 r 行首键索引的几何投
+     * 影；原缺陷下中间行起点漏登、末行起点为栈垃圾，行分组与键数必
+     * 然错乱）。 */
     {
         uint32_t i;
         int rows = 0;
@@ -517,23 +544,71 @@ bool XKeyboardTest_runAll(void)
                 ++rowKeyCount[rows - 1];
             }
         }
-        xkb_expect(rows == 4, "小写布局 4 行");
-        xkb_expect(rows == 4 && rowKeyCount[0] == 12 &&
-                       rowKeyCount[1] == 11 && rowKeyCount[2] == 12 &&
-                       rowKeyCount[3] == 5,
-                   "各行键数 12/11/12/5（rowStart 不变式）");
+        xkb_expect(rows == 4, "搜狗全键布局 4 行");
+        xkb_expect(rows == 4 && rowKeyCount[0] == 10 &&
+                       rowKeyCount[1] == 9 && rowKeyCount[2] == 9 &&
+                       rowKeyCount[3] == 7,
+                   "各行键数 10/9/9/7（rowStart 不变式）");
         xkb_expect(rowBegin[0] == 0, "行 0 从按钮 0 起");
         rowLabel = XVirtualKeyboard_buttonText(kb, (uint32_t)rowBegin[1]);
-        xkb_expect(rows == 4 && rowLabel &&
-                       strcmp(rowLabel, XKEYBOARD_LBL_UPPER) == 0,
-                   "行 1 首键为 ABC（rowStart[1] 落在换行符之后）");
+        xkb_expect(rows == 4 && rowLabel && strcmp(rowLabel, "a") == 0,
+                   "行 1 首键为 a（rowStart[1] 落在换行符之后）");
         rowLabel = XVirtualKeyboard_buttonText(kb, (uint32_t)rowBegin[2]);
-        xkb_expect(rows == 4 && rowLabel && strcmp(rowLabel, "_") == 0,
-                   "行 2 首键为 _");
+        xkb_expect(rows == 4 && rowLabel &&
+                       strcmp(rowLabel, XKEYBOARD_LBL_SHIFT) == 0,
+                   "行 2 首键为 Shift");
         rowLabel = XVirtualKeyboard_buttonText(kb, (uint32_t)rowBegin[3]);
         xkb_expect(rows == 4 && rowLabel &&
-                       strcmp(rowLabel, XKEYBOARD_LBL_DISMISS) == 0,
-                   "行 3 首键为收起键（rowStart[3] 显式登记非栈垃圾）");
+                       strcmp(rowLabel, XKEYBOARD_LBL_SYMBOL) == 0,
+                   "行 3 首键为符键（rowStart[3] 显式登记非栈垃圾）");
+    }
+
+    /* 1.7 布局款型三态切换（Sogou 改版一阶段）：setLayoutKind 后
+     * buttonCount 与关键标签正确；EnglishFull 与 PinyinFull 同几何共
+     * 表；T9 九键静态表落表落标签（分词/重输为未接线标签，引擎接线
+     * 后续阶段）；旧「收起/<- ->/换行」行确已从款型主表删除。 */
+    {
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_PinyinT9);
+        xkb_expect(XVirtualKeyboard_layoutKind(kb) ==
+                       XKeyboardLayout_PinyinT9,
+                   "setLayoutKind(T9) 生效");
+        xkb_expect(XVirtualKeyboard_buttonCount(kb) == 21, "九键布局 21 键");
+        xkb_expect(xkb_findButton(kb, XKEYBOARD_LBL_T9_SEG) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_T9_RETYPE) >= 0 &&
+                       xkb_findButton(kb, "ABC") >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_T9_COMMA) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_T9_QMARK) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_T9_EXMARK) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_SEARCH) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_SYMBOL) >= 0,
+                   "九键关键标签齐全（分词/重输/ABC/，/？/！/搜索/符）");
+        xkb_expect(xkb_findButton(kb, "q") < 0 && xkb_findButton(kb, "a") < 0,
+                   "九键不含全键字母键帽");
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_EnglishFull);
+        xkb_expect(XVirtualKeyboard_layoutKind(kb) ==
+                       XKeyboardLayout_EnglishFull,
+                   "setLayoutKind(EnglishFull) 生效");
+        xkb_expect(XVirtualKeyboard_buttonCount(kb) == 35 &&
+                       xkb_findButton(kb, "q") >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_SEARCH) >= 0,
+                   "EnglishFull 与 PinyinFull 同几何 35 键（q/搜索在位）");
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_PinyinFull);
+        xkb_expect(XVirtualKeyboard_layoutKind(kb) ==
+                       XKeyboardLayout_PinyinFull,
+                   "setLayoutKind(PinyinFull) 生效");
+        xkb_expect(XVirtualKeyboard_buttonCount(kb) == 35 &&
+                       xkb_findButton(kb, "q") >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_SHIFT) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_SYMBOL) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_NUMBERS) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_CJK_PERIOD) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_IME) >= 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_SEARCH) >= 0,
+                   "PinyinFull 35 键与行4 功能键（Shift/符/123/。/中EN/搜索）");
+        xkb_expect(xkb_findButton(kb, XKEYBOARD_LBL_DISMISS) < 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_LEFT) < 0 &&
+                       xkb_findButton(kb, XKEYBOARD_LBL_NEWLINE) < 0,
+                   "款型主表不含 收起/<-/换行 键（旧行删除）");
     }
 
     /* 1.5 信号计数连接（经纯 ID getter；后续按键断言依赖计数，须在
@@ -607,7 +682,7 @@ bool XKeyboardTest_runAll(void)
     XVirtualKeyboard_setGeometry(kb, 0, 0, 400, 160);
 
     /* 4.5 键位几何回归锁（demo 真机误触连锁的根因）：行内矩形无缝衔
-     * 接、首键宽=单位占比（LOWER 行 0 单位总数 52，1# 占 5/52）——
+     * 接、首键宽=单位占比（款型主表行 0 单位总数 10，q 占 1/10）——
      * 宽度公式若把像素偏移当单位累加会逐键乘 contentW/total 爆炸，
      * 此处以公开矩形锁死。 */
     {
@@ -621,8 +696,47 @@ bool XKeyboardTest_runAll(void)
         }
         xkb_expect(seam == 0, "行内键位矩形无缝衔接（宽度累加不变式）");
         xkb_expect(kb->m_keyRects[0].width ==
-                       5 * (XVirtualKeyboard_width(kb) - 4) / 52,
-                   "首键宽=单位占比（1# 占行宽 5/52）");
+                       (XVirtualKeyboard_width(kb) - 4) / 10,
+                   "首键宽=单位占比（q 占行宽 1/10）");
+    }
+
+    /* 4.6 键面文字字号恒定回归锁（字号随行高缩放通道已根除）：原
+     * xkb_syncLabelPixelSize 按几何逐帧推导像素字号（宿主缩放→键盘
+     * 几何缩放→字号缩放），使键盘文字与非键盘区恒定字号文字同屏浓淡
+     * 不一、且停靠/悬浮/缩放间漂移——现像素字号恒为构造默认 -1，绘制
+     * 期由 painter pointSize→px 回退统一到全局恒定字号（与全局其余
+     * 文字同浓淡口径）。400x160/400x360 两档几何重建后均不得被写值。
+     * Sogou 改版二阶段起键区上方常驻菜单条（条高=contentH/(rows+1)），
+     * 400x160 contentH=156→条高 31→rowH=31；400x360 contentH=356→
+     * 条高 71→rowH=71（几何锚点保留，行高不再影响字号）。 */
+    xkb_expect(XFont_pixelSize(&((XWidget*)kb)->m_font) == -1,
+               "400x160 四行含菜单条 rowH=31 → 字号仍构造默认 -1");
+    XVirtualKeyboard_setGeometry(kb, 0, 0, 400, 360);
+    xkb_expect(XFont_pixelSize(&((XWidget*)kb)->m_font) == -1,
+               "400x360 四行含菜单条 rowH=71 → 字号仍 -1（放大不跟随）");
+    XVirtualKeyboard_setGeometry(kb, 0, 0, 400, 160);
+    xkb_expect(XFont_pixelSize(&((XWidget*)kb)->m_font) == -1,
+               "缩回 400x160 字号仍 -1（缩小不跟随）");
+
+    /* 4.7 键盘顶部菜单条几何回归锁（Sogou 改版二阶段）：条矩形=内容区
+     * 顶行（x=2/y=2/w=宽-4/高=contentH/(rows+1)），所有布局与模式一致
+     * 预留（IME 关闭同样在场=图标工具栏模态，候选带矩形归零）；键区起
+     * 点=条底；四等分热区格宽 ≥ 键宽/4（规格口径）。 */
+    {
+        int contentH = XVirtualKeyboard_height(kb) - 4;
+        int barH = contentH / (4 + 1); /* 款型主表 4 行（1.2 段锁定）。 */
+        xkb_expect(kb->m_menuBarRect.x == 2 && kb->m_menuBarRect.y == 2 &&
+                       kb->m_menuBarRect.width ==
+                           XVirtualKeyboard_width(kb) - 4 &&
+                       kb->m_menuBarRect.height == barH,
+                   "400x160 菜单条矩形={2,2,396,31}（条高=contentH/5 常驻预留）");
+        xkb_expect(kb->m_imeBandRect.height == 0,
+                   "IME 关闭：候选带矩形归零（条=图标工具栏模态）");
+        xkb_expect(kb->m_keyRects[0].y == 2 + barH,
+                   "键区起点=菜单条底（条占既有组串带预留通道）");
+        xkb_expect(kb->m_menuBarRect.width / 4 >=
+                       kb->m_keyRects[0].width / 4,
+                   "工具栏热区格宽 ≥ 键宽/4（四等分对标搜狗）");
     }
 #if XLINEEDIT_ON
     {
@@ -659,32 +773,53 @@ bool XKeyboardTest_runAll(void)
                    "小写 qwe 依次写入");
         xkb_expect(xkb_activatedCount >= 4, "buttonActivated 随键计数");
 
-        /* 退格/光标键（合成 XKeyEvent 到目标编辑框）。 */
+        /* 退格/光标键（合成 XKeyEvent 到目标编辑框）。光标键不在款型
+         * 主表（旧「收起/<- ->/换行」行已删）——Special 既有表承载。 */
         {
             int bsIdx = xkb_findButton(kb, XKEYBOARD_LBL_BACKSPACE);
-            int leftIdx = xkb_findButton(kb, XKEYBOARD_LBL_LEFT);
-            int rightIdx = xkb_findButton(kb, XKEYBOARD_LBL_RIGHT);
             xkb_clickAt(kb, bsIdx, false);
             xkb_expect(strcmp(XLineEdit_text(edit), "Qqw") == 0,
                        "退格删除末字符");
-            xkb_clickAt(kb, leftIdx, false);
-            xkb_expect(XLineEdit_cursorPosition(edit) == 2,
-                       "左移键光标到 2");
-            xkb_clickAt(kb, rightIdx, false);
-            xkb_expect(XLineEdit_cursorPosition(edit) == 3,
-                       "右移键光标回末尾");
+            XVirtualKeyboard_setMode(kb, XKeyboardMode_Special);
+            {
+                int leftIdx = xkb_findButton(kb, XKEYBOARD_LBL_LEFT);
+                int rightIdx = xkb_findButton(kb, XKEYBOARD_LBL_RIGHT);
+                xkb_expect(leftIdx >= 0 && rightIdx >= 0,
+                           "Special 布局可定位光标键");
+                xkb_clickAt(kb, leftIdx, false);
+                xkb_expect(XLineEdit_cursorPosition(edit) == 2,
+                           "左移键光标到 2");
+                xkb_clickAt(kb, rightIdx, false);
+                xkb_expect(XLineEdit_cursorPosition(edit) == 3,
+                           "右移键光标回末尾");
+            }
+            XVirtualKeyboard_setMode(kb, XKeyboardMode_TextLower);
         }
 
-        /* 换行键 → returnPressed 信号计数。 */
+        /* 搜索键（款型主表行 4 固定键；FLAGS 释放触发）：与换行同语
+         * 义合成 XKey_Return → returnPressed 信号计数。 */
+        {
+            int searchIdx = xkb_findButton(kb, XKEYBOARD_LBL_SEARCH);
+            xkb_expect(searchIdx >= 0, "全键布局可定位搜索键");
+            xkb_clickAt(kb, searchIdx, true);
+            xkb_expect(xkb_returnPressedCount == 1,
+                       "搜索键合成 Return（returnPressed 信号）");
+        }
+
+        /* 换行键（User1 既有回落表承载——款型主表不含换行键）→
+         * returnPressed 计数递增。 */
+        XVirtualKeyboard_setMode(kb, XKeyboardMode_User1);
         {
             int nlIdx = xkb_findButton(kb, XKEYBOARD_LBL_NEWLINE);
+            xkb_expect(nlIdx >= 0, "User1 回落表可定位换行键");
             xkb_clickAt(kb, nlIdx, false);
-            xkb_expect(xkb_returnPressedCount == 1,
+            xkb_expect(xkb_returnPressedCount == 2,
                        "换行键触发 returnPressed 信号");
         }
 
         /* 确认键 → ready 信号；确认不自动收层（确认键为 FLAGS 组合含
-         * CLICK_TRIG：释放触发，合成事件须按压+释放成对）。
+         * CLICK_TRIG：释放触发，合成事件须按压+释放成对）。确认键同
+         * 样只在 User1 既有回落表（款型主表行 4 以搜索键替代）。
          * 弹层状态断言用 m_popped 弹出态标志（popup 置位、仅收层路径
          * 复位）：无头回归环境编辑框为未 show 顶层，有效可见性
          * （popupVisible=XWidget_isVisible）恒假（探针实测 popped=1/
@@ -720,13 +855,17 @@ bool XKeyboardTest_runAll(void)
                        "cancel 后弹层可见即自动收层");
         }
 
-        /* CLICK_TRIG 释放触发：1# 键（FLAGS 含 CLICK_TRIG）按下不切、
-         * 释放才切 Special；滑动出键取消（按住移出后释放不触发）。 */
+        /* CLICK_TRIG 释放触发：符 键（款型主表行 4 控制键，FLAGS 含
+         * CLICK_TRIG）按下不切、释放才切 Special；滑动出键取消（按住
+         * 移出后释放不触发）。 */
         {
-            int spIdx = xkb_findButton(kb, XKEYBOARD_LBL_SPECIAL);
+            int spIdx;
             XMouseEvent me;
             XPoint pos;
             XPoint outPos;
+            XVirtualKeyboard_setMode(kb, XKeyboardMode_TextLower);
+            spIdx = xkb_findButton(kb, XKEYBOARD_LBL_SYMBOL);
+            xkb_expect(spIdx >= 0, "全键布局可定位符键");
             xkb_expect(XVirtualKeyboard_mode(kb) == XKeyboardMode_TextLower,
                        "前置：文本小写模式");
             pos.x = kb->m_keyRects[spIdx].x +
@@ -811,14 +950,173 @@ bool XKeyboardTest_runAll(void)
         xkb_expect(XVirtualKeyboard_textArea(kb) == NULL,
                    "目标销毁后 m_target 自动解绑");
     }
+
+#if XLINEEDIT_ON && XPLAINTEXTEDIT_ON
+    /* ---- ⑤e 文字编辑面板（Sogou 改版三阶段收尾）：进/出状态机（图
+       标开合/返回箭头/与弹层解耦）+ 方向键移动 XLineEdit 光标 + 选择
+       态方向键携带 Shift + 全选后粘贴替换（XPlainTextEdit 承载）+
+       ⌫ 退格。面板几何按 xkb_editPanelLayout 同源边界算式复算（主区
+       3 列 4 行边界累进/右列 1/4 宽/标题行高=面板高/6）。 ---- */
+    {
+        XVirtualKeyboard* kb6 = XVirtualKeyboard_create(NULL, 0);
+        XLineEdit* edit6 = XLineEdit_create(NULL, 0);
+        XPlainTextEdit* pte = XPlainTextEdit_create(NULL, 0);
+        XPoint pos;
+        XMouseEvent me;
+        int barH;
+        int panelY;
+        int panelH;
+        int titleH;
+        int gridY;
+        int gridH;
+        int panelW;
+        int rightW;
+        int mainW;
+        int editX;
+        XVirtualKeyboard_setGeometry(kb6, 0, 0, 400, 160);
+        xkb_expect(!kb6->m_editPanelOpen && !kb6->m_editSelArmed,
+                   "⑤e 前置：编辑面板默认关且非选择态");
+        barH = kb6->m_menuBarRect.height;
+        panelW = kb6->m_menuBarRect.width;
+        /* 工具栏「文字编辑」图标（第 3 等分中线）按+放垫片。 */
+#define XKB_T_EDITICON()                                                   \
+    do                                                                     \
+    {                                                                      \
+        pos.x = kb6->m_menuBarRect.x + panelW * 5 / 8;                     \
+        pos.y = kb6->m_menuBarRect.y + barH / 2;                           \
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,              \
+                         XMouseButton_LeftButton, 0, pos);                 \
+        XObject_event_base((XObject*)kb6, (XEvent*)&me);                   \
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,            \
+                         XMouseButton_LeftButton, 0, pos);                 \
+        XObject_event_base((XObject*)kb6, (XEvent*)&me);                   \
+    } while (0)
+        /* 主区列/行中心（与 xkb_editPanelLayout 边界累进同源）。 */
+#define XKB_T_CX(col)                                                      \
+    (2 + mainW * (col) / 3 +                                               \
+     (mainW * ((col) + 1) / 3 - mainW * (col) / 3) / 2)
+#define XKB_T_CY(row)                                                      \
+    (gridY + gridH * (row) / 4 +                                           \
+     (gridH * ((row) + 1) / 4 - gridH * (row) / 4) / 2)
+#define XKB_T_EDIT(px, py)                                                 \
+    do                                                                     \
+    {                                                                      \
+        pos.x = (px);                                                      \
+        pos.y = (py);                                                      \
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,              \
+                         XMouseButton_LeftButton, 0, pos);                 \
+        XObject_event_base((XObject*)kb6, (XEvent*)&me);                   \
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,            \
+                         XMouseButton_LeftButton, 0, pos);                 \
+        XObject_event_base((XObject*)kb6, (XEvent*)&me);                   \
+    } while (0)
+        /* 1) 进/出状态机：图标开→再点图标关（返回路径之二）。 */
+        XKB_T_EDITICON();
+        xkb_expect(kb6->m_editPanelOpen, "文字编辑图标进入编辑面板");
+        XKB_T_EDITICON();
+        xkb_expect(!kb6->m_editPanelOpen, "再点文字编辑图标返回原布局");
+        xkb_expect(XVirtualKeyboard_buttonCount(kb6) == 35 &&
+                       XVirtualKeyboard_mode(kb6) == XKeyboardMode_TextLower,
+                   "返回后原布局不变");
+        /* 弹层态进入/退出：弹层与绑定不受影响（edit6 撑 400x300 使弹
+           层钳位落在 400x150，面板几何非退化）。 */
+        XWidget_setGeometry((XWidget*)edit6, 0, 0, 400, 300);
+        XVirtualKeyboard_popup(kb6, (XWidget*)edit6);
+        xkb_expect(XVirtualKeyboard_popupVisible(kb6) &&
+                       XVirtualKeyboard_textArea(kb6) == (XWidget*)edit6,
+                   "⑤e 前置：弹层弹出且绑定 edit6");
+        barH = kb6->m_menuBarRect.height;
+        panelW = kb6->m_menuBarRect.width;
+        panelY = 2 + barH;
+        panelH = XVirtualKeyboard_height(kb6) - 4 - panelY;
+        titleH = panelH / 6;
+        gridY = panelY + titleH;
+        gridH = panelH - titleH;
+        rightW = panelW / 4;
+        mainW = panelW - rightW;
+        editX = 2 + panelW - rightW + rightW / 2; /* 右列键中心 x。 */
+        XKB_T_EDITICON();
+        xkb_expect(kb6->m_editPanelOpen &&
+                           XVirtualKeyboard_popupVisible(kb6) &&
+                           XVirtualKeyboard_textArea(kb6) == (XWidget*)edit6,
+                   "弹层态进入编辑面板：弹层与绑定不动");
+        /* 2) 方向键移动光标（press 直触发）。 */
+        XLineEdit_clear(edit6);
+        XLineEdit_insert(edit6, "abc");
+        xkb_expect(XLineEdit_cursorPosition(edit6) == 3,
+                   "⑤e 前置：插入后光标在末尾");
+        XKB_T_EDIT(XKB_T_CX(0), XKB_T_CY(1)); /* ← */
+        xkb_expect(XLineEdit_cursorPosition(edit6) == 2, "← 移动光标到 2");
+        XKB_T_EDIT(XKB_T_CX(0), XKB_T_CY(1)); /* ← */
+        xkb_expect(XLineEdit_cursorPosition(edit6) == 1, "← 移动光标到 1");
+        XKB_T_EDIT(XKB_T_CX(0), XKB_T_CY(3)); /* Home */
+        xkb_expect(XLineEdit_cursorPosition(edit6) == 0, "Home 光标到 0");
+        XKB_T_EDIT(XKB_T_CX(2), XKB_T_CY(3)); /* End */
+        xkb_expect(XLineEdit_cursorPosition(edit6) == 3, "End 光标回末尾");
+        /* 3) 选择态：方向键携带 Shift（产生选区）。 */
+        XKB_T_EDIT(XKB_T_CX(1), XKB_T_CY(1)); /* 开始选择 */
+        xkb_expect(kb6->m_editSelArmed, "开始选择切换选择态");
+        XKB_T_EDIT(XKB_T_CX(0), XKB_T_CY(1)); /* Shift+← */
+        xkb_expect(kb6->m_editSelArmed &&
+                       XLineEdit_cursorPosition(edit6) == 2 &&
+                       XLineEdit_hasSelectedText(edit6),
+                   "选择态 ← 带 Shift：产生选区");
+        XKB_T_EDIT(XKB_T_CX(1), XKB_T_CY(1)); /* 再点：退出选择态 */
+        xkb_expect(!kb6->m_editSelArmed, "开始选择再点退出选择态");
+        XKB_T_EDIT(XKB_T_CX(2), XKB_T_CY(1)); /* →（无 Shift） */
+        xkb_expect(XLineEdit_cursorPosition(edit6) == 3 &&
+                       !XLineEdit_hasSelectedText(edit6),
+                   "退出选择态 → 收拢选区到末尾");
+        /* 4) 全选后粘贴替换（XPlainTextEdit 承载；剪贴板内容=edit6 的
+           "abc"——公开 API 复制注入）。 */
+        XLineEdit_selectAll(edit6);
+        XLineEdit_copy(edit6);
+        XVirtualKeyboard_setTextArea(kb6, (XWidget*)pte);
+        XPlainTextEdit_clear(pte);
+        XPlainTextEdit_insertPlainText(pte, "hello");
+        XKB_T_EDIT(XKB_T_CX(1), XKB_T_CY(3)); /* 全选=Ctrl+A */
+        XKB_T_EDIT(editX, XKB_T_CY(3));       /* 粘贴 */
+        {
+            char* plain = XPlainTextEdit_toPlainText(pte);
+            xkb_expect(plain && strcmp(plain, "abc") == 0,
+                       "全选后粘贴替换（Ctrl+A+粘贴 API）");
+            if (plain) XFree_System(plain);
+        }
+        /* ⌫ 退格。 */
+        XPlainTextEdit_clear(pte);
+        XPlainTextEdit_insertPlainText(pte, "xy");
+        XKB_T_EDIT(editX, XKB_T_CY(0)); /* ⌫ */
+        {
+            char* plain = XPlainTextEdit_toPlainText(pte);
+            xkb_expect(plain && strcmp(plain, "x") == 0, "⌫ 退格删除末字符");
+            if (plain) XFree_System(plain);
+        }
+        /* 5) 返回箭头（标题行右端方形中心）。 */
+        XKB_T_EDIT(2 + panelW - titleH + titleH / 2, panelY + titleH / 2);
+        xkb_expect(!kb6->m_editPanelOpen && !kb6->m_editSelArmed,
+                   "返回箭头退出编辑面板");
+        xkb_expect(XVirtualKeyboard_popupVisible(kb6) &&
+                       XVirtualKeyboard_textArea(kb6) == (XWidget*)pte,
+                   "返回后弹层与绑定不动");
+#undef XKB_T_EDIT
+#undef XKB_T_EDITICON
+#undef XKB_T_CX
+#undef XKB_T_CY
+        XVirtualKeyboard_setTextArea(kb6, NULL);
+        XVirtualKeyboard_closePopup(kb6);
+        XClassDelete(pte);
+        XClassDelete(edit6);
+        XClassDelete(kb6);
+    }
+#endif /* XLINEEDIT_ON && XPLAINTEXTEDIT_ON */
 #else
     /* 无编辑控件适配时仅验证键盘核心（布局/切换/控制字）。 */
     {
-        int spIdx = xkb_findButton(kb, XKEYBOARD_LBL_SPECIAL);
+        int spIdx = xkb_findButton(kb, XKEYBOARD_LBL_SYMBOL);
         xkb_expect(XVirtualKeyboard_handleButton(kb, (uint32_t)spIdx),
-                   "handleButton 识别 1# 切换键");
+                   "handleButton 识别符切换键");
         xkb_expect(XVirtualKeyboard_mode(kb) == XKeyboardMode_Special,
-                   "1# 切到特殊符号模式");
+                   "符 切到特殊符号模式");
         XVirtualKeyboard_setMode(kb, XKeyboardMode_TextLower);
     }
     /* 裁剪分支未用垫片（防 -Wunused 告警）。 */
@@ -1149,12 +1447,382 @@ bool XKeyboardTest_runAll(void)
         xkb_expect(kb2->m_imeBandRect.y + kb2->m_imeBandRect.height <=
                        kb2->m_keyRects[0].y,
                    "候选带在键区上方（无交叠）");
+        /* 款型候选带判据泛化（Sogou 改版一阶段）：PinyinT9 中文态同
+         * 样预留组串带（候选内容后续阶段接）；EnglishFull 固定英文态
+         * 不预留；回 PinyinFull 拼音表激活带恢复（User1 拼音表仍在
+         * 位，判据=款型∧拼音表激活∧中文态）。 */
+        XVirtualKeyboard_setLayoutKind(kb2, XKeyboardLayout_PinyinT9);
+        xkb_expect(XVirtualKeyboard_layoutKind(kb2) ==
+                           XKeyboardLayout_PinyinT9 &&
+                       kb2->m_imeBandRect.height > 0,
+                   "T9 款型中文态预留候选带");
+        XVirtualKeyboard_setLayoutKind(kb2, XKeyboardLayout_EnglishFull);
+        xkb_expect(kb2->m_imeBandRect.height == 0,
+                   "EnglishFull 固定英文态不预留候选带");
+        XVirtualKeyboard_setLayoutKind(kb2, XKeyboardLayout_PinyinFull);
+        xkb_expect(kb2->m_imeBandRect.height > 0,
+                   "回 PinyinFull 拼音表激活候选带恢复");
         xkb_expect(XVirtualKeyboard_setImeEnabled(kb2, false) &&
                        !XVirtualKeyboard_imeEnabled(kb2),
                    "setImeEnabled(false) 生效");
         xkb_expect(kb2->m_imeBandRect.height == 0, "关闭后候选带归零");
         xkb_expect(XVirtualKeyboard_buttonCount(kb2) == 44,
                    "User1 槽位仍为拼音表（槽位占用约定，不恢复原表）");
+
+        /* ---- ⑤b 键盘顶部菜单条（Sogou 改版二阶段）：双模渲染与工具
+           栏命中。空闲态=图标工具栏（收起槽位=closePopup 直连→
+           popupVisible=false；按压武装释放触发）；组串态=候选带替换菜
+           单（条矩形=候选带矩形，条内点击被候选带消费不再触发收起）。
+           edit3 撑 400x300 使弹层钳位落在 400x150（kbH=hostH/2），条
+           高非退化。 ---- */
+        {
+            XVirtualKeyboard* kb3 = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* edit3 = XLineEdit_create(NULL, 0);
+            XPoint pos;
+            XMouseEvent me;
+            XVirtualKeyboard_setGeometry(kb3, 0, 0, 400, 200);
+            xkb_expect(kb3->m_menuBarRect.height > 0,
+                       "菜单条常驻预留（IME 未启用同样在场）");
+            XWidget_setGeometry((XWidget*)edit3, 0, 0, 400, 300);
+            XVirtualKeyboard_popup(kb3, (XWidget*)edit3);
+            xkb_expect(XVirtualKeyboard_popupVisible(kb3),
+                       "⑤b 前置：弹层弹出");
+            xkb_expect(kb3->m_menuBarRect.height > 0 &&
+                           kb3->m_menuBarRect.y + kb3->m_menuBarRect.height <=
+                               kb3->m_keyRects[0].y,
+                       "⑤b 前置：弹层态菜单条在键区上方");
+            /* 空闲态=图标工具栏：收起槽位（第 4 等分中线）按压武装、
+               释放触发 closePopup 直连。 */
+            pos.x = kb3->m_menuBarRect.x + kb3->m_menuBarRect.width * 7 / 8;
+            pos.y = kb3->m_menuBarRect.y + kb3->m_menuBarRect.height / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb3, (XEvent*)&me);
+            xkb_expect(kb3->m_pressedTool == 3 &&
+                           XVirtualKeyboard_popupVisible(kb3),
+                       "工具栏按压武装（收起槽位）且按压不触发（释放触发）");
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb3, (XEvent*)&me);
+            xkb_expect(kb3->m_pressedTool < 0 &&
+                           !XVirtualKeyboard_popupVisible(kb3),
+                       "工具栏收起槽位命中收起弹层（popupVisible=false）");
+            /* 组串态=候选带替换菜单：条矩形=候选带矩形；同一点位被候
+               选带消费（带内空白吞点击），工具栏收起不再触发。 */
+            xkb_expect(XVirtualKeyboard_setImeEnabled(kb3, true),
+                       "⑤b 前置：IME 启用");
+            XVirtualKeyboard_popup(kb3, (XWidget*)edit3);
+            xkb_expect(XVirtualKeyboard_popupVisible(kb3),
+                       "⑤b 前置：重弹");
+            XVirtualKeyboardInputContext_setPreeditText_2(
+                XVirtualKeyboardInputContext_instance(), "ni");
+            xkb_expect(kb3->m_imeBandRect.height > 0 &&
+                           kb3->m_imeBandRect.x == kb3->m_menuBarRect.x &&
+                           kb3->m_imeBandRect.y == kb3->m_menuBarRect.y &&
+                           kb3->m_imeBandRect.width ==
+                               kb3->m_menuBarRect.width &&
+                           kb3->m_imeBandRect.height ==
+                               kb3->m_menuBarRect.height,
+                       "组串态：条矩形=候选带矩形（候选替换菜单）");
+            pos.x = kb3->m_menuBarRect.x + kb3->m_menuBarRect.width * 7 / 8;
+            pos.y = kb3->m_menuBarRect.y + kb3->m_menuBarRect.height / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb3, (XEvent*)&me);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb3, (XEvent*)&me);
+            xkb_expect(XVirtualKeyboard_popupVisible(kb3) &&
+                           kb3->m_pressedTool < 0,
+                       "组串态条内点击由候选带消费（工具栏不触发收起）");
+            XVirtualKeyboardInputContext_clear(
+                XVirtualKeyboardInputContext_instance());
+            XVirtualKeyboard_closePopup(kb3);
+            XVirtualKeyboard_setTextArea(kb3, NULL);
+            XClassDelete(edit3);
+            XClassDelete(kb3);
+        }
+
+        /* ---- ⑤c 键盘选择面板（Sogou 改版三阶段）：工具栏「键盘选择」
+           图标（第 2 等分）开合 + 三行点选 setLayoutKind 并关闭 + 面板
+           外/再点图标关闭。面板几何=菜单条下方键区三等分行（与
+           xkb_layoutSelectorLayout 同源边界算式复算坐标）。 ---- */
+        {
+            XVirtualKeyboard* kb4 = XVirtualKeyboard_create(NULL, 0);
+            XPoint pos;
+            XMouseEvent me;
+            int barH;
+            int panelH;
+            XVirtualKeyboard_setGeometry(kb4, 0, 0, 400, 200);
+            xkb_expect(!kb4->m_layoutSelectorOpen,
+                       "⑤c 前置：选择面板默认关闭");
+            barH = kb4->m_menuBarRect.height;
+            panelH = XVirtualKeyboard_height(kb4) - 4 - (2 + barH);
+            /* 图标点击垫片：第 2 等分中线（键盘选择槽位）按+放。 */
+#define XKB_T_SELICON()                                                    \
+    do                                                                     \
+    {                                                                      \
+        pos.x = kb4->m_menuBarRect.x + kb4->m_menuBarRect.width * 3 / 8;   \
+        pos.y = kb4->m_menuBarRect.y + barH / 2;                           \
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,              \
+                         XMouseButton_LeftButton, 0, pos);                 \
+        XObject_event_base((XObject*)kb4, (XEvent*)&me);                   \
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,            \
+                         XMouseButton_LeftButton, 0, pos);                 \
+        XObject_event_base((XObject*)kb4, (XEvent*)&me);                   \
+    } while (0)
+            XKB_T_SELICON();
+            xkb_expect(kb4->m_layoutSelectorOpen, "键盘选择图标打开面板");
+            XKB_T_SELICON();
+            xkb_expect(!kb4->m_layoutSelectorOpen, "再点图标关闭面板");
+            /* 行 1（拼音九键）点选：setLayoutKind 并关闭。行中心 y=
+               面板 y + panelH*i/3 + 行高/2（边界累进行几何中线）。 */
+            XKB_T_SELICON();
+            xkb_expect(kb4->m_layoutSelectorOpen, "⑤c 前置：面板再开");
+            pos.x = kb4->m_menuBarRect.x + kb4->m_menuBarRect.width / 2;
+            pos.y = 2 + barH + panelH / 3 +
+                    (panelH * 2 / 3 - panelH / 3) / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            xkb_expect(!kb4->m_layoutSelectorOpen &&
+                           XVirtualKeyboard_layoutKind(kb4) ==
+                               XKeyboardLayout_PinyinT9 &&
+                           XVirtualKeyboard_buttonCount(kb4) == 21,
+                       "点选拼音九键行：setLayoutKind 并关闭");
+            /* 行 2（英文全键）→ 行 0（拼音全键）往返。 */
+            XKB_T_SELICON();
+            pos.y = 2 + barH + panelH * 2 / 3 + (panelH - panelH * 2 / 3) / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            xkb_expect(!kb4->m_layoutSelectorOpen &&
+                           XVirtualKeyboard_layoutKind(kb4) ==
+                               XKeyboardLayout_EnglishFull &&
+                           XVirtualKeyboard_buttonCount(kb4) == 35,
+                       "点选英文全键行：setLayoutKind 并关闭");
+            XKB_T_SELICON();
+            pos.y = 2 + barH + (panelH / 3) / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            xkb_expect(!kb4->m_layoutSelectorOpen &&
+                           XVirtualKeyboard_layoutKind(kb4) ==
+                               XKeyboardLayout_PinyinFull &&
+                           XVirtualKeyboard_buttonCount(kb4) == 35,
+                       "点选拼音全键行：setLayoutKind 并关闭");
+            /* 面板外点击（键区上方菜单条空白=第 1 等分悬浮槽位）关闭。 */
+            XKB_T_SELICON();
+            xkb_expect(kb4->m_layoutSelectorOpen, "⑤c 前置：面板三开");
+            pos.x = kb4->m_menuBarRect.x + kb4->m_menuBarRect.width / 8;
+            pos.y = kb4->m_menuBarRect.y + barH / 2;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kb4, (XEvent*)&me);
+            xkb_expect(!kb4->m_layoutSelectorOpen &&
+                           XVirtualKeyboard_layoutKind(kb4) ==
+                               XKeyboardLayout_PinyinFull,
+                       "点面板外：关闭且款型不变");
+#undef XKB_T_SELICON
+            XClassDelete(kb4);
+        }
+
+#if XKEYBOARD_IME_ON
+        /* ---- ⑤d 九键路由 + EnglishFull 固定英文（Sogou 改版三阶段
+         *     + 2026-10-04 多击字母循环改版）：T9 款型中文态数字组键=
+         *     同键快速单击组内字母循环——首击落组首字母、连击组串退格
+         *     换下一循环位次（同栈连击窗口必然存活，真机=800ms 内连
+         *     点），字母经既有字母通道进组串与全键同源精确匹配候选；
+         *     空格首选上屏；退格删末位字母；分词字母通道下幂等消费、
+         *     重输复位；0 键/左列标点直写；EnglishFull 字母直写不进组
+         *     串、中/EN 键固定英文。 ---- */
+        {
+            XVirtualKeyboard* kb5 = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* edit5 = XLineEdit_create(NULL, 0);
+            XVirtualKeyboardSelectionListModel* model5 =
+                XVirtualKeyboardInputEngine_wordCandidateListModel(
+                    XVirtualKeyboardInputContext_inputEngine(
+                        XVirtualKeyboardInputContext_instance()));
+            XVirtualKeyboard_setGeometry(kb5, 0, 0, 400, 200);
+            xkb_expect(XVirtualKeyboard_setImeEnabled(kb5, true),
+                       "⑤d 前置：IME 启用");
+            /* 面板选择路径落款型后（IME 会话形态随行落 TextLower 让款
+               型主表可见），九键表 21 键在位即路由 armed（中文态默认）。 */
+            XVirtualKeyboard_setLayoutKind(kb5, XKeyboardLayout_PinyinT9);
+            XVirtualKeyboard_setMode(kb5, XKeyboardMode_TextLower);
+            xkb_expect(XVirtualKeyboard_buttonCount(kb5) == 21 &&
+                           XVirtualKeyboard_imeChinese(kb5),
+                       "⑤d 前置：九键表可见且中文态");
+            xkb_expect(xkb_findButton(kb5, "ABC") >= 0 &&
+                           xkb_findButton(kb5, "WXYZ") >= 0 &&
+                           xkb_findButton(kb5, XKEYBOARD_LBL_T9_SEG) >= 0 &&
+                           xkb_findButton(kb5, XKEYBOARD_LBL_T9_RETYPE) >= 0,
+                       "⑤d 前置：数字组/分词/重输键在位");
+            XVirtualKeyboard_setTextArea(kb5, (XWidget*)edit5);
+            /* ABC 首击=组首字母 a；同键连击 b→c→a 循环（换位次=组串
+               退格删上一字母再落新字母）。 */
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "ABC"), false);
+            xkb_expect(strcmp(xkb_imeBuffer(kb5), "a") == 0 &&
+                           XVirtualKeyboardSelectionListModel_count(model5) >
+                               0,
+                       "九键 ABC 首击组首字母 a 进组串（候选非空）");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "ABC"), false);
+            xkb_expect(strcmp(xkb_imeBuffer(kb5), "b") == 0,
+                       "九键 ABC 快速单击切换 b（组串退格换位次）");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "ABC"), false);
+            xkb_expect(strcmp(xkb_imeBuffer(kb5), "c") == 0,
+                       "九键 ABC 快速单击切换 c");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "ABC"), false);
+            xkb_expect(strcmp(xkb_imeBuffer(kb5), "a") == 0,
+                       "九键 ABC 快速单击循环回 a（位次模组容量）");
+            /* 退格删末位字母：组串候选清空，多击态随组串结束复位。 */
+            xkb_clickAt(kb5,
+                        (uint32_t)xkb_findButton(kb5, XKEYBOARD_LBL_BACKSPACE),
+                        false);
+            xkb_expect(xkb_imeBuffer(kb5)[0] == '\0' &&
+                           XVirtualKeyboardSelectionListModel_count(model5) ==
+                               0,
+                       "九键退格删末位字母：组串候选清空");
+            /* 拼「ni」：MNO m→n、GHI g→h→i（换键落组首追加、同键连击
+               循环到位）——首候选=你（字母通道与全键同源）。 */
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "MNO"), false);
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "MNO"), false);
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "GHI"), false);
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "GHI"), false);
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "GHI"), false);
+            xkb_expect(strcmp(xkb_imeBuffer(kb5), "ni") == 0 &&
+                           XVirtualKeyboardSelectionListModel_count(model5) >
+                               0,
+                       "九键多击拼 ni：组串 ni 候选非空");
+            {
+                XVariant* v0 = model5
+                                   ? XVirtualKeyboardSelectionListModel_dataAt(
+                                         model5, 0,
+                                         (int)
+                                             XVirtualKeyboardSelectionListModelRole_Display)
+                                   : NULL;
+                const XString* s0 = v0 ? XVariant_toString_const(v0) : NULL;
+                xkb_expect(s0 && XString_toUtf8(s0) &&
+                               strcmp(XString_toUtf8(s0), "\xE4\xBD\xA0") == 0,
+                           "九键 ni 首候选=你（与全键同源）");
+                if (v0) XClassDelete((XClass*)v0);
+            }
+            xkb_expect(kb5->m_imeBandRect.height > 0 &&
+                           kb5->m_imeBandRect.x == kb5->m_menuBarRect.x &&
+                           kb5->m_imeBandRect.width ==
+                               kb5->m_menuBarRect.width,
+                       "九键组串态：候选带复用条矩形");
+            /* 空格：首选上屏（你），组串/候选清空。 */
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, " "), false);
+            xkb_expect(strcmp(XLineEdit_text(edit5), "\xE4\xBD\xA0") == 0,
+                       "九键空格提交首候选（你）");
+            xkb_expect(xkb_imeBuffer(kb5)[0] == '\0' &&
+                           XVirtualKeyboardSelectionListModel_count(model5) ==
+                               0,
+                       "九键提交后组串候选清空");
+            /* 分词键：字母通道下幂等消费（组串不变不写框）；重输=复位。 */
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "MNO"), false);
+            xkb_clickAt(kb5,
+                        (uint32_t)xkb_findButton(kb5, XKEYBOARD_LBL_T9_SEG),
+                        false);
+            xkb_expect(strcmp(xkb_imeBuffer(kb5), "m") == 0,
+                       "分词键字母通道幂等消费（组串不变）");
+            xkb_clickAt(
+                kb5,
+                (uint32_t)xkb_findButton(kb5, XKEYBOARD_LBL_T9_RETYPE), false);
+            xkb_expect(xkb_imeBuffer(kb5)[0] == '\0' &&
+                           XVirtualKeyboardSelectionListModel_count(model5) ==
+                               0 &&
+                           strcmp(XLineEdit_text(edit5), "\xE4\xBD\xA0") == 0,
+                       "重输复位组串候选（编辑框不动）");
+            /* 0 键与左列标点直写（路由不拦截）。 */
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "0"), false);
+            xkb_clickAt(kb5,
+                        (uint32_t)xkb_findButton(kb5, XKEYBOARD_LBL_T9_COMMA),
+                        false);
+            xkb_expect(strcmp(XLineEdit_text(edit5),
+                              "\xE4\xBD\xA0" "0\xEF\xBC\x8C") == 0,
+                       "九键 0 键与左列标点直写编辑框");
+            /* EnglishFull 固定英文：字母直写不进组串；中/EN 键按压收敛
+               回英文。 */
+            XVirtualKeyboard_setLayoutKind(kb5, XKeyboardLayout_EnglishFull);
+            xkb_expect(XVirtualKeyboard_buttonCount(kb5) == 35,
+                       "⑤d 前置：英文全键表可见");
+            xkb_expect(XVirtualKeyboard_setImeChinese(kb5, true),
+                       "⑤d 前置：程序化回中文（引擎态）");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "w"), false);
+            xkb_expect(strcmp(XLineEdit_text(edit5),
+                              "\xE4\xBD\xA0" "0\xEF\xBC\x8Cw") == 0 &&
+                           xkb_imeBuffer(kb5)[0] == '\0',
+                       "EnglishFull 字母直写不进组串（引擎中文态同）");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, XKEYBOARD_LBL_IME),
+                        true);
+            xkb_expect(!XVirtualKeyboard_imeChinese(kb5),
+                       "EnglishFull 中/EN 键固定英文");
+            /* 全键款型主表组串（选择面板落 TextLower 形态，评审①回归
+               锁）：判据与九键对齐——款型==PinyinFull 且中文态即路由/
+               预留（不再要求槽位表==引擎拼音表），款型主表字母进组串、
+               候选带出现、空格首选上屏。 */
+            XVirtualKeyboard_setLayoutKind(kb5, XKeyboardLayout_PinyinFull);
+            xkb_expect(XVirtualKeyboard_buttonCount(kb5) == 35,
+                       "⑤d 前置：回全键款型主表（35 键）");
+            xkb_expect(XVirtualKeyboard_setImeChinese(kb5, true),
+                       "⑤d 前置：回中文态");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "n"), false);
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, "i"), false);
+            xkb_expect(strcmp(xkb_imeBuffer(kb5), "ni") == 0,
+                       "全键款型主表字母进组串（ni，引擎表缺席形态）");
+            xkb_expect(kb5->m_imeBandRect.height > 0 &&
+                           kb5->m_imeBandRect.x == kb5->m_menuBarRect.x &&
+                           kb5->m_imeBandRect.width ==
+                               kb5->m_menuBarRect.width,
+                       "全键款型主表组串态候选带复用条矩形");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, " "), false);
+            xkb_expect(strcmp(XLineEdit_text(edit5),
+                              "\xE4\xBD\xA0" "0\xEF\xBC\x8C"
+                              "w\xE4\xBD\xA0") == 0,
+                       "全键款型主表空格首选上屏（你）");
+            /* 中文态标点随中英切换（2026-10-04 用户需求）：中文态
+               "," 落全角 "，"（"." 键标签即全角 "。" 直写）；切英文
+               态两者落回半角 "," "."。 */
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, ","), false);
+            xkb_clickAt(kb5,
+                        (uint32_t)xkb_findButton(kb5,
+                                                XKEYBOARD_LBL_CJK_PERIOD),
+                        false);
+            xkb_expect(strcmp(XLineEdit_text(edit5),
+                              "\xE4\xBD\xA0" "0\xEF\xBC\x8C"
+                              "w\xE4\xBD\xA0"
+                              "\xEF\xBC\x8C\xE3\x80\x82") == 0,
+                       "全键中文态标点落全角（，。）");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5,
+                                                     XKEYBOARD_LBL_IME),
+                        true);
+            xkb_expect(!XVirtualKeyboard_imeChinese(kb5),
+                       "⑤d 前置：中/EN 切回英文态");
+            xkb_clickAt(kb5, (uint32_t)xkb_findButton(kb5, ","), false);
+            xkb_expect(strcmp(XLineEdit_text(edit5),
+                              "\xE4\xBD\xA0" "0\xEF\xBC\x8C"
+                              "w\xE4\xBD\xA0"
+                              "\xEF\xBC\x8C\xE3\x80\x82,") == 0,
+                       "全键英文态标点落半角（,）");
+            XVirtualKeyboard_setTextArea(kb5, NULL);
+            XClassDelete(edit5);
+            XClassDelete(kb5);
+        }
+#endif /* XKEYBOARD_IME_ON */
 
         XVirtualKeyboard_setTextArea(kb2, NULL);
         XClassDelete(edit2);
@@ -1826,6 +2494,233 @@ bool XKeyboardTest_runAll(void)
             XClassDelete(kg);
         }
 
+        /* ---- ⑦.1c 子控件浮层 Z 序不变式（主窗缩放 bury 回归锁，
+         *     demo 导航面板/分割条 resize 重排 raise 同型）：弹出后兄
+         *     弟 raise 会把键盘压到自己之下（弹出时刻 raise 只有一
+         *     次），守护 tick 幂等抬回（已在顶层 raise 内部早退零副作
+         *     用）；鼠标抓取者非键盘在场（completer 下拉等内容浮层可
+         *     见期）让位不争层，抓取归还后下一 tick 恢复。 ---- */
+        {
+            XVirtualKeyboard* kz = XVirtualKeyboard_create(NULL, 0);
+            XWidget* win = XWidget_create(NULL, 0);
+            XLineEdit* ed = XLineEdit_create(win, 0);
+            XWidget* chrome = XWidget_create(win, 0);
+            XWidget_setGeometry(win, 0, 0, 400, 300);
+            XWidget_setGeometry((XWidget*)ed, 20, 20, 200, 28);
+            XWidget_setGeometry(chrome, 0, 240, 400, 60);
+            XWidget_show(win);
+            XWidget_show((XWidget*)ed);
+            XWidget_show(chrome);
+            XWidget_setFocus((XWidget*)ed);
+            xkb_pumpGuardTick(kz);
+            xkb_expect(kz->m_popped &&
+                           XWidget_parentWidget((XWidget*)kz) == win,
+                       "⑦.1c 前置：弹出且为子控件浮层挂宿主顶层");
+
+            /* chrome 后 raise 压过键盘（demo resize 重排同型）。 */
+            XWidget_raise(chrome);
+            xkb_expect(xkb_zIndex(win, (XWidget*)kz) <
+                           xkb_zIndex(win, chrome),
+                       "⑦.1c 前置：兄弟 raise 后键盘被压到下方");
+            xkb_pumpGuardTick(kz);
+            xkb_expect(xkb_zIndex(win, (XWidget*)kz) >
+                           xkb_zIndex(win, chrome),
+                       "守护 tick 抬回被 chrome 压住的键盘（Z 序不变式）");
+            xkb_pumpGuardTick(kz);
+            xkb_expect(xkb_zIndex(win, (XWidget*)kz) >
+                           xkb_zIndex(win, chrome),
+                       "已在顶层再泵 tick 幂等（无 churn 翻转）");
+
+            /* 抓取者在场让位（completer 下拉同型：可见期持鼠标抓取、
+             * 后显示者压过键盘是既有语义，守护不争层）。 */
+            XWidget_raise(chrome);
+            XWidget_grabMouse(chrome);
+            xkb_pumpGuardTick(kz);
+            xkb_expect(xkb_zIndex(win, (XWidget*)kz) <
+                           xkb_zIndex(win, chrome),
+                       "抓取者非键盘在场：守护让位不争层");
+            XWidget_releaseMouse(chrome);
+            xkb_pumpGuardTick(kz);
+            xkb_expect(xkb_zIndex(win, (XWidget*)kz) >
+                           xkb_zIndex(win, chrome),
+                       "抓取归还后下一 tick 恢复顶层");
+
+            XVirtualKeyboard_closePopup(kz);
+            XVirtualKeyboard_setParent(kz, NULL, 0);
+            XClassDelete(win);
+            XClassDelete(kz);
+        }
+
+        /* ---- ⑦.8 紧凑悬浮态（Sogou 改版四阶段，工具栏「悬浮切换」；
+         *     第三形态 compactFloat）：进/出几何（宽 min(宿主宽45%,420)
+         *     高同比例、宿主右下角）+ 几何守卫（宿主 resize 期间
+         *     reposition 不覆盖紧凑矩形）+ 合成鼠标拖动改窗位（工具栏
+         *     空白启动、图标不启动）+ 退出恢复停靠 + closePopup 复位。
+         *     面板工具栏为按压武装释放触发，图标热区=格内居中图标盒
+         *     （与 xkb_menuBarPaint 绘制盒同源公式复算坐标）。 ---- */
+        {
+            XVirtualKeyboard* kf = XVirtualKeyboard_create(NULL, 0);
+            XWidget* win = XWidget_create(NULL, 0);
+            XLineEdit* ed = XLineEdit_create(win, 0);
+            XPoint pos;
+            XMouseEvent me;
+            int barH;
+            int barW;
+            int box;
+            int cellW;
+            int iconX0;
+            int iconY;
+            int dockedH;
+            XWidget_setGeometry(win, 0, 0, 400, 300);
+            XWidget_setGeometry((XWidget*)ed, 20, 20, 200, 28);
+            XWidget_show(win);
+            XWidget_show((XWidget*)ed);
+            XVirtualKeyboard_popup(kf, (XWidget*)ed);
+            xkb_expect(kf->m_popped && !kf->m_compactFloat &&
+                           XWidget_parentWidget((XWidget*)kf) == win,
+                       "⑦.8 前置：停靠态弹出（子控件浮层）");
+            /* 工具栏图标按+放垫片（坐标=键盘本地）。 */
+#define XKB_T_FKEY(px, py)                                                 \
+    do                                                                     \
+    {                                                                      \
+        pos.x = (short)(px);                                               \
+        pos.y = (short)(py);                                               \
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,              \
+                         XMouseButton_LeftButton, 0, pos);                 \
+        XObject_event_base((XObject*)kf, (XEvent*)&me);                    \
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,            \
+                         XMouseButton_LeftButton, 0, pos);                 \
+        XObject_event_base((XObject*)kf, (XEvent*)&me);                    \
+    } while (0)
+            /* 链路自证：停靠态宿主 resize → 几何信号链 reposition 跟随
+               （win32 Direct 同步），证明信号链在跳、后守卫非空转。 */
+            XWidget_setGeometry(win, 0, 0, 500, 360);
+            xkb_expect(XVirtualKeyboard_width(kf) == 500 &&
+                           XVirtualKeyboard_height(kf) == 180,
+                       "⑦.8 前置：停靠态宿主 resize 几何跟随（链路活）");
+            /* 进紧凑：悬浮切换图标（cell0 图标盒中心，停靠态条几何）。 */
+            dockedH = XVirtualKeyboard_height(kf);
+            barH = kf->m_menuBarRect.height;
+            barW = kf->m_menuBarRect.width;
+            box = barH - 6;
+            if (box < 8) box = 8;
+            if (box > 26) box = 26;
+            cellW = barW / 4;
+            iconX0 = kf->m_menuBarRect.x + (cellW - box) / 2;
+            iconY = kf->m_menuBarRect.y + (barH - box) / 2;
+            XKB_T_FKEY(iconX0, iconY);
+            xkb_expect(kf->m_compactFloat &&
+                           XWidget_parentWidget((XWidget*)kf) == NULL &&
+                           XWidget_isWindow((XWidget*)kf) &&
+                           (XWidget_windowFlags((XWidget*)kf) &
+                            (XWidgetFlags)XWindowType_TypeMask) ==
+                               (XWidgetFlags)XWindowType_Popup,
+                       "悬浮切换：转独立顶层 Popup 紧凑态");
+            xkb_expect(XVirtualKeyboard_width(kf) == 500 * 45 / 100 &&
+                           XVirtualKeyboard_height(kf) ==
+                               dockedH * (500 * 45 / 100) / 500 &&
+                           XWidget_x((XWidget*)kf) ==
+                               500 - 500 * 45 / 100 &&
+                           XWidget_y((XWidget*)kf) == 360 - dockedH *
+                               (500 * 45 / 100) / 500,
+                       "紧凑几何：宽 min(宿主宽45%,420) 高同比例宿主右下");
+            /* 几何守卫：宿主 resize 期间 reposition 不覆盖紧凑矩形。 */
+            XWidget_setGeometry(win, 0, 0, 640, 480);
+            xkb_expect(kf->m_compactFloat &&
+                           XWidget_x((XWidget*)kf) == 275 &&
+                           XWidget_y((XWidget*)kf) == 279 &&
+                           XVirtualKeyboard_width(kf) == 225 &&
+                           XVirtualKeyboard_height(kf) == 81,
+                       "几何守卫：宿主 resize 不覆盖紧凑矩形");
+            /* 拖移：按住工具栏空白（cell0 图标盒左侧余白；紧凑条几何
+               重读：225x81 → 条高=77/5=15）→ move 求 delta 移窗（move
+               局部位=按下点位+光标位移，锚点偏移=按下局部位）→
+               release 结束。 */
+            barH = kf->m_menuBarRect.height;
+            barW = kf->m_menuBarRect.width;
+            box = barH - 6;
+            if (box < 8) box = 8;
+            if (box > 26) box = 26;
+            cellW = barW / 4;
+            iconX0 = kf->m_menuBarRect.x + (cellW - box) / 2;
+            iconY = kf->m_menuBarRect.y + (barH - box) / 2;
+            pos.x = (short)(kf->m_menuBarRect.x + 3);
+            pos.y = (short)(kf->m_menuBarRect.y + barH / 2);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kf, (XEvent*)&me);
+            xkb_expect(kf->m_compactDrag && kf->m_pressedTool < 0,
+                       "工具栏空白按下启动拖移（不武装图标）");
+            pos.x = (short)(kf->m_menuBarRect.x + 33);
+            pos.y = (short)(kf->m_menuBarRect.y + barH / 2 - 20);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kf, (XEvent*)&me);
+            xkb_expect(XWidget_x((XWidget*)kf) == 305 &&
+                           XWidget_y((XWidget*)kf) == 259,
+                       "拖移 move：窗口随 delta 移动（+30,-20）");
+            /* 光标再 +40,-10（累计 +70,-30）：局部位=上次局部位+位移。 */
+            pos.x = (short)(kf->m_menuBarRect.x + 43);
+            pos.y = (short)(kf->m_menuBarRect.y + barH / 2 - 10);
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kf, (XEvent*)&me);
+            xkb_expect(XWidget_x((XWidget*)kf) == 345 &&
+                           XWidget_y((XWidget*)kf) == 249,
+                       "拖移 move 增量跟随（累计 +70,-30）");
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                             XMouseButton_LeftButton, 0, pos);
+            XObject_event_base((XObject*)kf, (XEvent*)&me);
+            xkb_expect(!kf->m_compactDrag, "拖移 release 结束");
+            /* 压在图标上不启动拖动（键盘选择图标按压武装）；滑动到键
+               区释放不触发（面板不开）。 */
+            {
+                int iconX1 = kf->m_menuBarRect.x + cellW + (cellW - box) / 2;
+                pos.x = (short)iconX1;
+                pos.y = (short)iconY;
+                XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                                 XMouseButton_LeftButton, 0, pos);
+                XObject_event_base((XObject*)kf, (XEvent*)&me);
+                xkb_expect(kf->m_pressedTool == 1 && !kf->m_compactDrag,
+                           "压在图标上：按压武装不启动拖动");
+                pos.x = (short)100;
+                pos.y = (short)60;
+                XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                                 XMouseButton_LeftButton, 0, pos);
+                XObject_event_base((XObject*)kf, (XEvent*)&me);
+                xkb_expect(kf->m_pressedTool < 0 &&
+                               !kf->m_layoutSelectorOpen,
+                           "图标按压滑动出格释放不触发");
+            }
+            /* 退出恢复停靠：悬浮切换图标再点。 */
+            XKB_T_FKEY(iconX0, iconY);
+            xkb_expect(!kf->m_compactFloat &&
+                           XWidget_parentWidget((XWidget*)kf) == win &&
+                           XWidget_x((XWidget*)kf) == 0 &&
+                           XWidget_y((XWidget*)kf) == 240 &&
+                           XVirtualKeyboard_width(kf) == 640 &&
+                           XVirtualKeyboard_height(kf) == 240,
+                       "退出紧凑：回宿主底部全宽停靠（既有内嵌几何）");
+            /* closePopup 复位：再进紧凑→closePopup→全部复位；重弹回停
+               靠形态。 */
+            XKB_T_FKEY(iconX0, iconY);
+            xkb_expect(kf->m_compactFloat, "⑦.8 前置：再进紧凑态");
+            XVirtualKeyboard_closePopup(kf);
+            xkb_expect(!kf->m_compactFloat && !kf->m_compactDrag &&
+                           !XVirtualKeyboard_popupVisible(kf),
+                       "closePopup 紧凑态全部复位");
+            XVirtualKeyboard_popup(kf, (XWidget*)ed);
+            xkb_expect(XVirtualKeyboard_popupVisible(kf) &&
+                           !kf->m_compactFloat &&
+                           XWidget_parentWidget((XWidget*)kf) == win,
+                       "复位后重弹回停靠形态");
+#undef XKB_T_FKEY
+            XVirtualKeyboard_closePopup(kf);
+            XVirtualKeyboard_setParent(kf, NULL, 0);
+            XClassDelete(win);
+            XClassDelete(kf);
+        }
+
         /* ---- ⑦.1b 按下位置驱动（自动弹收主判据，标准触摸 UX；
          *     dismissFix「同框 retap 不重弹」契约作废定版）：经
          *     XWindowSystemInterface_handleMouseEvent 走真实顶层桥→
@@ -1936,6 +2831,239 @@ bool XKeyboardTest_runAll(void)
             XClassDelete(win);
         }
 
+        /* ---- ⑦.1d 物理按键转发（按键转化层，2026-10-04 用户反馈根
+         *     修锁；对标 Qt 输入法拦截按键语义）：面板弹出且组串中时，
+         *     数字 1..9=选对应编号候选（编号角标同源映射）、字母/空格/
+         *     退格进组串链——按键不再直达焦点编辑框；英文态/面板未弹
+         *     放行（按键照常进编辑框）。 ---- */
+        {
+            XVirtualKeyboard* kd = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* ed7 = XLineEdit_create(NULL, 0);
+            XVirtualKeyboard_setGeometry(kd, 0, 0, 400, 200);
+            xkb_expect(XVirtualKeyboard_setImeEnabled(kd, true),
+                       "⑦.1d 前置：IME 启用");
+            XVirtualKeyboard_setLayoutKind(kd, XKeyboardLayout_PinyinFull);
+            XVirtualKeyboard_setImeChinese(kd, true);
+            XVirtualKeyboard_setTextArea(kd, (XWidget*)ed7);
+            XVirtualKeyboard_popup(kd, (XWidget*)ed7);
+            xkb_expect(kd->m_popped, "⑦.1d 前置：绑定目标并弹出");
+            /* 面板未弹时放行（先验证透传再进组串态）。 */
+            XVirtualKeyboard_closePopup(kd);
+            xkb_expect(!XVirtualKeyboard_notifyKey(kd, 'n',
+                                                   XKeyboardModifier_NoModifier),
+                       "面板未弹：notifyKey 放行（零拦截）");
+            XVirtualKeyboard_popup(kd, (XWidget*)ed7);
+            /* n i 进组串（与点按屏幕键同路径；编辑框不受影响）。 */
+            xkb_expect(XVirtualKeyboard_notifyKey(kd, 'n',
+                                                  XKeyboardModifier_NoModifier) &&
+                           XVirtualKeyboard_notifyKey(kd, 'I',
+                                                      XKeyboardModifier_ShiftModifier),
+                       "⑦.1d：字母键进组串（Shift 大写归一小写）");
+            xkb_expect(strcmp(xkb_imeBuffer(kd), "ni") == 0,
+                       "组串显示 ni（物理键被键盘转化）");
+            xkb_expect(strcmp(XLineEdit_text(ed7), "") == 0,
+                       "组串中按键不直达编辑框（转化层拦截）");
+            /* 数字 2=选第 2 号候选（编号角标同源；页 0 首选你）。 */
+            xkb_expect(XVirtualKeyboard_notifyKey(kd, '2',
+                                                  XKeyboardModifier_NoModifier),
+                       "⑦.1d：组串中数字 2 选 2 号候选（拦截）");
+            xkb_expect(xkb_imeBuffer(kd)[0] == '\0',
+                       "选候选后组串清空");
+            xkb_expect(strcmp(XLineEdit_text(ed7), "\xE6\xB3\xA5") == 0,
+                       "2 号候选（泥）上屏编辑框");
+            /* 英文态放行：notifyKey 返回 false（按键交还分派链照常进
+             * 编辑框——直达行为由 XWidget_dispatchKeyEvent 的放行分支
+             * 承载，notifyKey 本身不写编辑框）。 */
+            XVirtualKeyboard_setImeChinese(kd, false);
+            xkb_expect(!XVirtualKeyboard_notifyKey(kd, 'x',
+                                                   XKeyboardModifier_NoModifier),
+                       "英文态：notifyKey 放行（返回 false）");
+            XVirtualKeyboard_closePopup(kd);
+            XVirtualKeyboard_setParent(kd, NULL, 0);
+            XClassDelete((XClass*)ed7);
+            XClassDelete(kd);
+        }
+
+        /* ---- ⑦.1e 英文态物理输入直落编辑框并自动收层（2026-10-04 用
+         *     户需求②「有键盘输入的时候，如果是英文状态直接输入，收起
+         *     屏幕键盘」）：英文态物理可打印键（字母/数字/空格）未被引
+         *     擎消费即放行，放行前 closePopup 收层（置 m_userCollapsed
+         *     闩锁——守护不原地重弹，下次点编辑框由 notifyPress 清锁再
+         *     弹）；中文态（组串中/无组串数字）一律不误收，Backspace/
+         *     Enter/符号/F 键不触发。 ---- */
+        {
+            XVirtualKeyboard* ke = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* ed8 = XLineEdit_create(NULL, 0);
+            XVirtualKeyboard_setGeometry(ke, 0, 0, 400, 200);
+            xkb_expect(XVirtualKeyboard_setImeEnabled(ke, true),
+                       "⑦.1e 前置：IME 启用");
+            XVirtualKeyboard_setLayoutKind(ke, XKeyboardLayout_PinyinFull);
+            XVirtualKeyboard_setTextArea(ke, (XWidget*)ed8);
+            XVirtualKeyboard_popup(ke, (XWidget*)ed8);
+            xkb_expect(ke->m_popped, "⑦.1e 前置：绑定目标并弹出");
+            XVirtualKeyboard_setImeChinese(ke, false); /* 切英文态。 */
+            /* a) 英文态字母：放行（返回 false）且收层。 */
+            xkb_expect(!XVirtualKeyboard_notifyKey(ke, 'x',
+                                                   XKeyboardModifier_NoModifier),
+                       "⑦.1e a：英文态字母 notifyKey 放行（返回 false）");
+            xkb_expect(!ke->m_popped,
+                       "⑦.1e a：英文态字母物理输入即收层（m_popped 复位）");
+            /* b) 重弹后中文态无组串：数字放行且不误收。 */
+            XVirtualKeyboard_popup(ke, (XWidget*)ed8);
+            xkb_expect(ke->m_popped, "⑦.1e b 前置：重新弹出");
+            XVirtualKeyboard_setImeChinese(ke, true);
+            xkb_expect(!XVirtualKeyboard_notifyKey(ke, '2',
+                                                   XKeyboardModifier_NoModifier),
+                       "⑦.1e b：中文态无组串数字放行（返回 false）");
+            xkb_expect(ke->m_popped,
+                       "⑦.1e b：中文态数字不误收（m_popped 保持）");
+            /* c) 组串语义不回退：字母进组串（消费→true）、组串中数字选
+             *    候选（拦截→true）均不收层（⑦.1d 既有断言同链复验）。 */
+            xkb_expect(XVirtualKeyboard_notifyKey(ke, 'n',
+                                                  XKeyboardModifier_NoModifier) &&
+                           XVirtualKeyboard_notifyKey(ke, 'i',
+                                                      XKeyboardModifier_NoModifier),
+                       "⑦.1e c：中文态字母进组串（消费拦截）");
+            xkb_expect(ke->m_popped,
+                       "⑦.1e c：组串字母消费路径不收层");
+            xkb_expect(XVirtualKeyboard_notifyKey(ke, '2',
+                                                  XKeyboardModifier_NoModifier),
+                       "⑦.1e c：组串中数字 2 选候选（拦截）");
+            xkb_expect(ke->m_popped && xkb_imeBuffer(ke)[0] == '\0',
+                       "⑦.1e c：选候选后不收层且组串清空");
+            /* d) 评审修复锁：Ctrl/Alt/Meta 组合键=快捷键语义（转化层在
+             *    快捷键匹配之前），不进组串链不触发收层；EnglishFull 固
+             *    定英文态——引擎态被款型切换刻意保留（中文态快照口径）
+             *    时物理字母与屏键同口径直写，不进组串链、不误收层。 */
+            xkb_expect(!XVirtualKeyboard_notifyKey(
+                           ke, 'C', XKeyboardModifier_ControlModifier) &&
+                           xkb_imeBuffer(ke)[0] == '\0' && ke->m_popped,
+                       "⑦.1e d：Ctrl+字母放行快捷键（不进组串不收层）");
+            XVirtualKeyboard_setLayoutKind(ke, XKeyboardLayout_EnglishFull);
+            {
+                /* 口径：断言「本键未新增写入」而非「编辑框全局为空」—
+                 * c) 选候选提交的候选文本保留在框内；直呼 notifyKey 本
+                 * 身不写框，写框发生在派发放行侧（dispatchKeyEvent）。 */
+                const char* textBefore = XLineEdit_text(ed8);
+                xkb_expect(!XVirtualKeyboard_notifyKey(ke, 'x',
+                                                       XKeyboardModifier_NoModifier) &&
+                               ke->m_popped &&
+                               strcmp(XLineEdit_text(ed8), textBefore) == 0,
+                           "⑦.1e d：EnglishFull 引擎中文态字母不进组串不收层");
+            }
+            XVirtualKeyboard_setLayoutKind(ke, XKeyboardLayout_PinyinFull);
+            XVirtualKeyboard_closePopup(ke);
+            XVirtualKeyboard_setParent(ke, NULL, 0);
+            XClassDelete((XClass*)ed8);
+            XClassDelete(ke);
+        }
+
+        /* ---- ⑦.1f 组串态停靠面板收缩为候选带一条（2026-10-04 用户需
+         *     求③「中文状态先进屏幕键盘转化显示中文，只显示第一行，
+         *         屏幕按键都可以隐藏」）：组串开始停靠面板收缩为顶部候
+         *     选带一条（键区越出收缩边界被裁剪）、组串结束（候选提交）
+         *     恢复全量；closePopup 重弹全量。带高按宿主全量几何推
+         *     （rebuildLayout 收缩态 contentH 走 m_popupHeight 口径），
+         *     带矩形在位即防反馈自缩的锁定断言。 ---- */
+        {
+            XVirtualKeyboard* kf = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* ed9 = XLineEdit_create(NULL, 0);
+            int hFull;
+            XVirtualKeyboard_setGeometry(kf, 0, 0, 400, 200);
+            xkb_expect(XVirtualKeyboard_setImeEnabled(kf, true),
+                       "⑦.1f 前置：IME 启用");
+            XVirtualKeyboard_setLayoutKind(kf, XKeyboardLayout_PinyinFull);
+            XVirtualKeyboard_setImeChinese(kf, true);
+            XVirtualKeyboard_setTextArea(kf, (XWidget*)ed9);
+            XVirtualKeyboard_popup(kf, (XWidget*)ed9);
+            xkb_expect(kf->m_popped, "⑦.1f 前置：绑定目标并弹出");
+            hFull = XWidget_height((XWidget*)kf);
+            xkb_expect(hFull > 0, "⑦.1f 前置：全量高度非退化");
+            /* 组串开始：面板收缩为候选带一条。 */
+            xkb_expect(XVirtualKeyboard_notifyKey(kf, 'n',
+                                                  XKeyboardModifier_NoModifier),
+                       "⑦.1f 前置：字母进组串（消费拦截）");
+            xkb_expect(XWidget_height((XWidget*)kf) < hFull / 2,
+                       "⑦.1f：组串态面板收缩为候选带一条（<全量一半）");
+            xkb_expect(kf->m_imeBandRect.height > 0,
+                       "⑦.1f：收缩态候选带高在位（全量口径不自缩）");
+            xkb_expect(kf->m_popped,
+                       "⑦.1f：收缩态弹层挂接保持");
+            /* 组串继续键入：维持收缩（判据逐键重评估、几何短路零抖动）。 */
+            xkb_expect(XVirtualKeyboard_notifyKey(kf, 'i',
+                                                  XKeyboardModifier_NoModifier),
+                       "⑦.1f 前置：组串继续 ni");
+            xkb_expect(XWidget_height((XWidget*)kf) < hFull / 2,
+                       "⑦.1f：组串继续键入维持收缩");
+            /* 组串结束（数字选候选提交）：恢复全量。 */
+            xkb_expect(XVirtualKeyboard_notifyKey(kf, '2',
+                                                  XKeyboardModifier_NoModifier),
+                       "⑦.1f 前置：数字 2 选候选（拦截）");
+            xkb_expect(XWidget_height((XWidget*)kf) == hFull,
+                       "⑦.1f：候选提交后恢复全量高度");
+            /* closePopup 重弹：全量（收层清 m_popped 判据即翻 false）。 */
+            XVirtualKeyboard_closePopup(kf);
+            XVirtualKeyboard_popup(kf, (XWidget*)ed9);
+            xkb_expect(kf->m_popped &&
+                           XWidget_height((XWidget*)kf) == hFull,
+                       "⑦.1f：closePopup 重弹恢复全量");
+            XVirtualKeyboard_closePopup(kf);
+            XVirtualKeyboard_setParent(kf, NULL, 0);
+            XClassDelete((XClass*)ed9);
+            XClassDelete(kf);
+        }
+
+        /* ---- ⑦.1g 输入源判据（2026-10-04 用户澄清：需求②③仅限外
+         *     置键盘输入，屏幕键盘输入无此要求）：屏幕键组串面板保持
+         *     全量（缩成一条键区消失即无法继续点字——用户实测回归）、
+         *     不收层；物理键接管才收缩；组串结束（候选提交）标记复位
+         *     后屏幕键再组串仍全量。 ---- */
+        {
+            XVirtualKeyboard* kg = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* ed10 = XLineEdit_create(NULL, 0);
+            int nIdx;
+            int hFullG;
+            XVirtualKeyboard_setGeometry(kg, 0, 0, 400, 200);
+            xkb_expect(XVirtualKeyboard_setImeEnabled(kg, true),
+                       "⑦.1g 前置：IME 启用");
+            XVirtualKeyboard_setLayoutKind(kg, XKeyboardLayout_PinyinFull);
+            XVirtualKeyboard_setImeChinese(kg, true);
+            XVirtualKeyboard_setTextArea(kg, (XWidget*)ed10);
+            XVirtualKeyboard_popup(kg, (XWidget*)ed10);
+            xkb_expect(kg->m_popped, "⑦.1g 前置：绑定目标并弹出");
+            hFullG = XWidget_height((XWidget*)kg);
+            xkb_expect(hFullG > 0, "⑦.1g 前置：全量高度非退化");
+            /* 屏幕键点按组串（与真机点键同一事件路径）：不收缩不收层。 */
+            nIdx = xkb_findButton(kg, "n");
+            xkb_expect(nIdx >= 0, "⑦.1g 前置：找到 n 键");
+            xkb_clickAt(kg, nIdx, false);
+            xkb_expect(xkb_imeBuffer(kg)[0] != '\0',
+                       "⑦.1g 前置：屏幕键进组串");
+            xkb_expect(XWidget_height((XWidget*)kg) == hFullG,
+                       "⑦.1g：屏幕键组串面板保持全量（不收缩）");
+            xkb_expect(kg->m_popped,
+                       "⑦.1g：屏幕键组串不收层（按键仍在可继续点字）");
+            /* 物理键接管：组串会话标记置位，收缩生效（首键即收缩）。 */
+            xkb_expect(XVirtualKeyboard_notifyKey(kg, 'i',
+                                                  XKeyboardModifier_NoModifier),
+                       "⑦.1g 前置：物理键续组串");
+            xkb_expect(XWidget_height((XWidget*)kg) < hFullG / 2,
+                       "⑦.1g：物理键组串收缩为候选带一条");
+            /* 组串结束（候选提交）：标记复位，屏幕键再组串仍全量。 */
+            xkb_expect(XVirtualKeyboard_notifyKey(kg, '2',
+                                                  XKeyboardModifier_NoModifier),
+                       "⑦.1g 前置：数字 2 选候选提交");
+            xkb_expect(XWidget_height((XWidget*)kg) == hFullG,
+                       "⑦.1g：提交后恢复全量（标记随组串清空复位）");
+            xkb_clickAt(kg, nIdx, false);
+            xkb_expect(XWidget_height((XWidget*)kg) == hFullG,
+                       "⑦.1g：复位后屏幕键组串不再收缩");
+            XVirtualKeyboard_closePopup(kg);
+            XVirtualKeyboard_setParent(kg, NULL, 0);
+            XClassDelete((XClass*)ed10);
+            XClassDelete(kg);
+        }
+
         /* ---- ⑦.2 hints→布局映射表驱动（Keyboard.qml:42-49 优先级；
          *     键盘消费照 Qt VK 子集：布局 5 位 + LatinOnly 组锁 main）。
          *     numbers=既有 17 键数字布局（Number 模式，:415-430 锁扩
@@ -1954,17 +3082,17 @@ bool XKeyboardTest_runAll(void)
                 const char* what;
                 const char* modeWhat;
             } kHintsTable[] = {
-                { (XInputMethodHints)0, 40, (int)XKeyboardMode_TextLower,
-                  "无 hints→main 40 键（缺省回落 main）",
+                { (XInputMethodHints)0, 35, (int)XKeyboardMode_TextLower,
+                  "无 hints→main 35 键（缺省回落 main=款型主表）",
                   "无 hints→TextLower 模式" },
-                { XInputMethodHint_LatinOnly, 40, (int)XKeyboardMode_TextLower,
-                  "LatinOnly→main 40 键（Latin 锁定）",
+                { XInputMethodHint_LatinOnly, 35, (int)XKeyboardMode_TextLower,
+                  "LatinOnly→main 35 键（Latin 锁定）",
                   "LatinOnly→Latin 锁定（TextLower）" },
-                { XInputMethodHint_EmailCharactersOnly, 40,
+                { XInputMethodHint_EmailCharactersOnly, 35,
                   (int)XKeyboardMode_TextLower,
                   "EmailCharactersOnly→main（LatinOnly 组同锁）",
                   "EmailCharactersOnly→Latin 锁定" },
-                { XInputMethodHint_UrlCharactersOnly, 40,
+                { XInputMethodHint_UrlCharactersOnly, 35,
                   (int)XKeyboardMode_TextLower,
                   "UrlCharactersOnly→main（LatinOnly 组同锁）",
                   "UrlCharactersOnly→Latin 锁定" },
@@ -2075,10 +3203,15 @@ bool XKeyboardTest_runAll(void)
                                ctx) &&
                            !XVirtualKeyboardInputContext_isUppercase(ctx),
                        "shift 三读数默认全 false");
+            /* 上下文 shift（toggleShift）机制以 User1 既有回落表承载：
+             * 款型主表 shift 为布局层三态展示键（⑦.3b），ABC 键帽只在
+             * 旧内置表；popup 对 User1 模式按既有「User1 保持」口径不
+             * 重放 hints，ABC 下标跨 popup 稳定。 */
+            XVirtualKeyboard_setMode(ks, XKeyboardMode_User1);
             XWidget_setFocus((XWidget*)es);
             XVirtualKeyboard_popup(ks, (XWidget*)es);
             abcIdx = xkb_findButton(ks, XKEYBOARD_LBL_UPPER);
-            xkb_expect(abcIdx >= 0, "主布局可定位 ABC（shift）键");
+            xkb_expect(abcIdx >= 0, "User1 回落表可定位 ABC（shift）键");
             /* 前置清态：popup 可能触发 autoCapitalize（空串首位置自动
              * 大写，shifthandler autoCapitalize 口径）——先单击回小写
              * 再进入确定性序列。 */
@@ -2128,6 +3261,63 @@ bool XKeyboardTest_runAll(void)
             XVirtualKeyboard_setParent(ks, NULL, 0);
             XClassDelete(es);
             XClassDelete(ks);
+        }
+
+        /* ---- ⑦.3b 布局款型 shift（PinyinFull 主表 Shift 键三态展示，
+         *     Sogou 改版一阶段）：单击=大写一次性（大写键帽换装 rebuild，
+         *     字母键入后自动回落小写）、再击=锁定（Shift 键 CHECKED 高
+         *     亮、持续大写不回落）、三击=回小写。直呼 setTextArea 不经
+         *     popup（躲 autoCapitalize 干扰，独占断言布局层展示态）。
+         *     ---- */
+        {
+            XVirtualKeyboard* k3 = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* e3 = XLineEdit_create(NULL, 0);
+            int shIdx;
+            int qIdx;
+            XVirtualKeyboard_setGeometry(k3, 0, 0, 400, 160);
+            XVirtualKeyboard_setTextArea(k3, (XWidget*)e3);
+            shIdx = xkb_findButton(k3, XKEYBOARD_LBL_SHIFT);
+            xkb_expect(shIdx >= 0, "款型主表可定位 Shift 键");
+            /* 单击：大写键帽换装 + TextUpper 读数。 */
+            xkb_clickAt(k3, shIdx, true);
+            xkb_expect(XVirtualKeyboard_mode(k3) == XKeyboardMode_TextUpper,
+                       "款型 shift 单击切大写键帽（TextUpper 读数）");
+            qIdx = xkb_findButton(k3, "Q");
+            xkb_expect(qIdx >= 0 && xkb_findButton(k3, "q") < 0,
+                       "大写态键帽显示大写字母");
+            xkb_clickAt(k3, qIdx, false);
+            xkb_expect(strcmp(XLineEdit_text(e3), "Q") == 0,
+                       "大写一次性态键入 q 输出 Q");
+            xkb_expect(XVirtualKeyboard_mode(k3) == XKeyboardMode_TextLower &&
+                           xkb_findButton(k3, "q") >= 0,
+                       "字母键入后一次性大写自动回落小写键帽");
+            /* 再击两下进锁定：CHECKED 高亮 + 持续大写不回落。 */
+            xkb_clickAt(k3, shIdx, true);
+            xkb_clickAt(k3, shIdx, true);
+            xkb_expect(XVirtualKeyboard_mode(k3) == XKeyboardMode_TextUpper,
+                       "款型 shift 小写双击进锁定态");
+            {
+                int shIdx2 = xkb_findButton(k3, XKEYBOARD_LBL_SHIFT);
+                xkb_expect(shIdx2 >= 0 &&
+                               ((int)XVirtualKeyboard_buttonCtrl(
+                                    k3, (uint32_t)shIdx2) &
+                                (int)XKEYBOARD_CTRL_CHECKED) != 0,
+                           "锁定态 Shift 键 CHECKED 高亮");
+                qIdx = xkb_findButton(k3, "W");
+                xkb_clickAt(k3, qIdx, false);
+            }
+            xkb_expect(strcmp(XLineEdit_text(e3), "QW") == 0,
+                       "锁定态键入 w 输出 W");
+            xkb_expect(XVirtualKeyboard_mode(k3) == XKeyboardMode_TextUpper,
+                       "锁定态字母键入不回落");
+            /* 三击：回小写键帽。 */
+            xkb_clickAt(k3, shIdx, true);
+            xkb_expect(XVirtualKeyboard_mode(k3) == XKeyboardMode_TextLower &&
+                           xkb_findButton(k3, "q") >= 0,
+                       "三击 shift 回小写键帽");
+            XVirtualKeyboard_setTextArea(k3, NULL);
+            XClassDelete(e3);
+            XClassDelete(k3);
         }
 
         /* ---- ⑦.4 长按重复（重复从面板 400/100ms 移入 engine
@@ -2183,6 +3373,52 @@ bool XKeyboardTest_runAll(void)
             XClassDelete(kr);
         }
 
+        /* ---- ⑦.4b 控制键禁长按重复（2026-10-04 用户实测：中/EN 键
+         *     按住略超 600ms 起振即重复触发=切过去又切回来闪烁，多次
+         *     才能按中）：中/EN 长按 700ms 只翻一次（首态取反、重复
+         *     被禁），释放不二次触发（默认按下触发链无释放激活）。
+         *     退格长按连删不受影响（⑦.4 既有锁）。 ---- */
+        {
+            XVirtualKeyboard* kc = XVirtualKeyboard_create(NULL, 0);
+            XLineEdit* ec = XLineEdit_create(NULL, 0);
+            int enIdx;
+            int64_t t0;
+            XVirtualKeyboard_setGeometry(kc, 0, 0, 400, 160);
+            xkb_expect(XVirtualKeyboard_setImeEnabled(kc, true),
+                       "⑦.4b 前置：IME 启用");
+            XVirtualKeyboard_setLayoutKind(kc, XKeyboardLayout_PinyinFull);
+            XVirtualKeyboard_setMode(kc, XKeyboardMode_TextLower);
+            enIdx = xkb_findButton(kc, XKEYBOARD_LBL_IME);
+            xkb_expect(enIdx >= 0 && XVirtualKeyboard_imeChinese(kc),
+                       "⑦.4b 前置：中/EN 键在位且中文态");
+            XVirtualKeyboard_setTextArea(kc, (XWidget*)ec);
+            XVirtualKeyboard_popup(kc, (XWidget*)ec);
+            /* 中/EN 为释放触发键（CLICK_TRIG）：按下仅武装不翻态；长
+               按 700ms（> 600ms 起振）控制键禁复=不翻态；释放恰翻一
+               次；再按再翻（单发切换，无闪烁）。 */
+            xkb_clickAt(kc, enIdx, false);
+            xkb_expect(XVirtualKeyboard_imeChinese(kc),
+                       "⑦.4b：按下仅武装不翻态（释放触发键）");
+            t0 = XDateTime_currentMSecsSinceEpoch();
+            xkb_waitMsSince(t0, 700);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+            xkb_expect(XVirtualKeyboard_imeChinese(kc),
+                       "⑦.4b：长按 700ms 不重复触发（控制键禁复）");
+            xkb_clickAtReleaseOnly(kc, enIdx);
+            XGuiApplication_processEvents(XEventLoop_AllEvents);
+            xkb_expect(!XVirtualKeyboard_imeChinese(kc),
+                       "⑦.4b：释放恰翻一次（英文态）");
+            /* 再按一次：回中文（每次点按恰翻一次）。 */
+            xkb_clickAt(kc, enIdx, false);
+            xkb_clickAtReleaseOnly(kc, enIdx);
+            xkb_expect(XVirtualKeyboard_imeChinese(kc),
+                       "⑦.4b：二次点按回中文（单发切换）");
+            XVirtualKeyboard_closePopup(kc);
+            XVirtualKeyboard_setParent(kc, NULL, 0);
+            XClassDelete(ec);
+            XClassDelete(kc);
+        }
+
         /* ---- ⑦.5 altKeys 长按弹层（alternativeKeys 数据 + 长按
          *     500ms 顶部气泡条；repeat 键不配 altKeys）：550ms ∈
          *     [500,600) 安全窗——弹层已起而重复未振，两种键帽配置
@@ -2216,16 +3452,18 @@ bool XKeyboardTest_runAll(void)
 
         /* ---- ⑦.6 closeOnReturn（Settings 生效子集）：非 MultiLine
          *     回车收面板；MultiLine 不收；默认 false 保持既有「回车
-         *     不收层」口径（换行键链 :543-549 保持）。 ---- */
+         *     不收层」口径。承载键=搜索键（款型主表行 4；与换行同语
+         *     义合流进同一回车分支，换行键本身由 ⑤ 段与 User1 回落表
+         *     覆盖）。 ---- */
         {
             XVirtualKeyboard* kc = XVirtualKeyboard_create(NULL, 0);
             XLineEdit* ec = XLineEdit_create(NULL, 0);
-            int nlIdx;
+            int searchIdx;
             XVirtualKeyboard_setGeometry(kc, 0, 0, 400, 160);
-            nlIdx = xkb_findButton(kc, XKEYBOARD_LBL_NEWLINE);
-            xkb_expect(nlIdx >= 0, "主布局可定位换行键");
+            searchIdx = xkb_findButton(kc, XKEYBOARD_LBL_SEARCH);
+            xkb_expect(searchIdx >= 0, "主布局可定位搜索键");
             XVirtualKeyboard_popup(kc, (XWidget*)ec);
-            xkb_clickAt(kc, nlIdx, true);
+            xkb_clickAt(kc, searchIdx, true);
             xkb_expect(kc->m_popped,
                        "默认 closeOnReturn=false：回车不收层（既有口径）");
             XVirtualKeyboard_closePopup(kc);
@@ -2234,13 +3472,13 @@ bool XKeyboardTest_runAll(void)
             /* 无头环境合成点击命中依赖宿主几何（0 布局宿主链下键盘有
              * 效可见性/键矩形不可靠）：回车键激活改走 handleButton 单
              * 点（与 closeOnReturn 语义断言无关几何）。 */
-            XVirtualKeyboard_handleButton(kc, (uint32_t)nlIdx);
+            XVirtualKeyboard_handleButton(kc, (uint32_t)searchIdx);
             xkb_expect(!kc->m_popped,
                        "closeOnReturn=true：非 MultiLine 回车收面板");
             XWidget_setInputMethodHints((XWidget*)ec,
                                         XInputMethodHint_MultiLine);
             XVirtualKeyboard_popup(kc, (XWidget*)ec);
-            XVirtualKeyboard_handleButton(kc, (uint32_t)nlIdx);
+            XVirtualKeyboard_handleButton(kc, (uint32_t)searchIdx);
             xkb_expect(kc->m_popped,
                        "closeOnReturn=true：MultiLine 回车不收");
             XVirtualKeyboardSettings_setCloseOnReturn(settings, false);
@@ -2291,6 +3529,54 @@ bool XKeyboardTest_runAll(void)
             XClassDelete(eu);
             XClassDelete(ku);
         }
+    }
+#endif /* XVIRTUALKEYBOARD_ON */
+
+#if XVIRTUALKEYBOARD_ON
+    /* ⑧ 中英态跨英文款型保存/恢复（Sogou 改版实测缺陷根修锁；置于套
+     * 件末尾——setImeEnabled(false) 按槽位占用约定不恢复 User1 槽位
+     * （仍持引擎拼音表），先于写入链运行会置换 换行/确认 的触发时序
+     * 语义）：英文全键上点 中/EN 收敛回英文后，切回拼音全键/九键必须
+     * 恢复进英文款型前的中英态——否则拼音键盘打字母直落字面量、无组
+     * 串无候选（用户视角「中文键盘无法输入中文」）。 */
+    {
+        int imeIdx;
+        XVirtualKeyboard* kb8 = XVirtualKeyboard_create(NULL, 0);
+        XVirtualKeyboard* kb = kb8; /* 块内遮蔽：断言体复用 kb 名。 */
+        XVirtualKeyboard_setImeEnabled(kb, true);
+        xkb_expect(XVirtualKeyboard_setImeChinese(kb, true), "⑧ 前置：进中文态");
+        /* 中文 → 英文全键 → 回拼音全键：中文态保持。 */
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_EnglishFull);
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_PinyinFull);
+        xkb_expect(XVirtualKeyboard_imeChinese(kb),
+                   "英文款型往返后中文态保持（无 中/EN 干预）");
+        /* 中文 → 英文全键 → 点 中/EN（收敛回英文）→ 回拼音全键：恢复
+         * 中文态（缺陷主路径）。 */
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_EnglishFull);
+        imeIdx = xkb_findButton(kb, XKEYBOARD_LBL_IME);
+        xkb_expect(imeIdx >= 0, "⑧ 前置：英文款型含 中/EN 键");
+        if (imeIdx >= 0)
+            XVirtualKeyboard_handleButton(kb, (uint32_t)imeIdx);
+        xkb_expect(!XVirtualKeyboard_imeChinese(kb),
+                   "英文款型 中/EN 收敛回英文（既有口径）");
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_PinyinFull);
+        xkb_expect(XVirtualKeyboard_imeChinese(kb),
+                   "回拼音款型恢复进英文款型前的中文态（缺陷主路径锁）");
+        /* 英文态 → 英文全键 → 回拼音全键：英文态保持（不误翻中文）。 */
+        XVirtualKeyboard_setImeChinese(kb, false);
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_EnglishFull);
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_PinyinFull);
+        xkb_expect(!XVirtualKeyboard_imeChinese(kb),
+                   "英文态往返保持英文（恢复不误翻）");
+        /* 中文态下切九键（中文款型互切）：态原样保持。 */
+        XVirtualKeyboard_setImeChinese(kb, true);
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_PinyinT9);
+        XVirtualKeyboard_setLayoutKind(kb, XKeyboardLayout_PinyinFull);
+        xkb_expect(XVirtualKeyboard_imeChinese(kb),
+                   "中文款型互切中英态原样保持");
+        XVirtualKeyboard_setImeEnabled(kb, false);
+        XVirtualKeyboard_setParent(kb, NULL, 0);
+        XClassDelete(kb);
     }
 #endif /* XVIRTUALKEYBOARD_ON */
 

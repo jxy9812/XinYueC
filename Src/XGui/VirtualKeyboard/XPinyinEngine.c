@@ -23,6 +23,19 @@
  *               XPinyinEngine_map/XPinyinEngine_ctrlMap 取用，供
  *               XVirtualKeyboard_setImeEnabled 装入 User1 槽位（setMap 借用
  *               生命周期契约由静态存储满足）。
+ *             - 九键（T9）数字通道：feedT9Digit 以数字组口径扩组串
+ *               （2=abc..9=wxyz），接受判据 INV-T9 镜像 INV2（∃k：前
+ *               k 位数字恰切为『逐位字母都落在对应数字组内』的音节序
+ *               列且余部存在以其数字模式开头的音节；音节枚举经
+ *               XPinyinTable_digitsSyllables 字典序窗口扫描——数字组
+ *               首尾界串定窗、窗内逐位校验，即逐字母增量剪枝）；「分
+ *               词」键 feedDigitSeparator 固化当前边界（首路读法音节
+ *               序列入 m_t9FixedIds，其后数字另起新音节）；候选装配与
+ *               字母通道同汇点 imeAssembleCandidates（词组+首路单字，
+ *               与全键同源）；T9 态 composingText 返回数字串（键盘候
+ *               选带直显），退格删末位数字、提交链/选候选/翻页全部
+ *               复用。字母/数字双通道互斥：字母键压过数字通道切回全
+ *               键组串，数字键在字母组串中冻结。
  * @note       本文件无库外依赖：字符串长度/比较用 XStringUtils 的
  *             XStrlen/XStrcmp（不引入 string.h 白名单外接口）；词组
  *             头 XPinyinPhrase.h 是库内头，仅按
@@ -307,58 +320,61 @@ static void imeAppendPhraseRegion(XPinyinEngine* self,
 #endif /* XKEYBOARD_IME_PHRASE_ON */
 
 /**
- * @brief      按组串刷新候选借用区间并回页 0（组串变化唯一汇点）。
- * @details    装配规则：①词组段——路径枚举逐路 find，按路序并集、
- *             UTF-8 字节去重；②单字段——仅首路（主读法）各音节
- *             XPinyinTable_find 区间顺序拼接，相邻相同区间合并
- *             （同音节相邻时 find 返回的指针与长度相同则跳过，避免同
- *             字 chip 重复刷屏）；③词组在前单字垫后、各自组内频序；
- *             ④候选总数=区间条数和（上界 8×9 + 15×21=387，uint16 充
- *             裕）。无可达切分（纯前缀，如 "z"）时零路径零候选——不
- *             猜测。
+ * @brief      候选借用区间装配公共汇点（字母/九键数字双通道共用）。
+ * @details    装配规则：①词组段——路径逐路 find，按路序并集、UTF-8
+ *             字节去重；②单字段——allPaths=false 仅首路（主读法）各
+ *             音节 XPinyinTable_find 区间顺序拼接（字母通道口径，回归
+ *             锁定），allPaths=true 遍历全部路径的音节区间按路序拼接
+ *             （九键数字通道口径：数字组歧义 26=an/ao/bo/co 只取首路
+ *             会把其余读法的候选整段丢弃——实测九键 26 仅 5 条、翻页
+ *             键灰置无效）；两种口径均相邻相同区间合并（同音节相邻时
+ *             find 返回的指针与长度相同则跳过，避免同字 chip 重复刷
+ *             屏）；③词组在前单字垫后、各自组内频序；④候选总数=区
+ *             间条数和（上界 8×9 + 15×21=387，uint16 充裕）。零路径
+ *             （无可达切分，如字母 "z" 或九键 "9"）零候选——不猜测。
+ *             路径枚举（字母通道 imeEnumPathsDfs / 数字通道
+ *             imeT9EnumPathsDfs）由调用方先行完成。
  * @param      self 状态机指针；不为 NULL。
+ * @param      paths 枚举好的切分路径集合借用指针；不为 NULL。
+ * @param      allPaths 单字段是否遍历全部路径（false=仅首路，字母通
+ *             道口径；true=多路并集，九键数字通道口径）。
  * @return     无。
  */
-static void imeRefreshCandidates(XPinyinEngine* self)
+static void imeAssembleCandidates(XPinyinEngine* self,
+                                  const XkbImePathSet* paths, bool allPaths)
 {
-    XkbImePathSet paths;
-    uint16_t acc[XKEYBOARD_IME_BUFFER_CAP];
     int regionCount = 0;
     int32_t total = 0;
-    int len = 0;
     int i;
-#if XKEYBOARD_IME_PHRASE_ON
+    int pathCount = allPaths ? paths->m_count : (paths->m_count > 0 ? 1 : 0);
     int p;
-#endif
-    while (self->m_buffer[len] != '\0')
-        ++len;
-    paths.m_count = 0;
-    if (len > 0)
-        imeEnumPathsDfs(&paths, self->m_buffer, len, 0, acc, 0);
     self->m_regionCount = 0;
     self->m_candidateCount = 0;
 #if XKEYBOARD_IME_PHRASE_ON
     if (XPinyinPhrase_isReady())
     {
-        for (p = 0; p < paths.m_count; ++p)
+        for (p = 0; p < paths->m_count; ++p)
         {
             const XPinyinPhraseEntry* begin = NULL;
             uint16_t n = 0;
-            if (XPinyinPhrase_find(paths.m_ids[p], paths.m_len[p],
+            if (XPinyinPhrase_find(paths->m_ids[p], paths->m_len[p],
                                         &begin, &n))
                 imeAppendPhraseRegion(self, begin, n, &regionCount, &total);
         }
     }
 #endif
-    /* 单字段：仅首路（主读法）各音节；相邻相同区间合并。 */
-    if (paths.m_count > 0)
+    /* 单字段：allPaths=false 仅首路（主读法，字母通道口径）；true 遍
+     * 历全部路径按路序拼接（九键数字通道口径）。相邻相同区间合并。 */
+    for (p = 0; p < pathCount; ++p)
     {
         const XPinyinTableEntry* prevBegin = NULL;
         uint16_t prevCount = 0;
-        for (i = 0; i < paths.m_len[0]; ++i)
+        if (regionCount >= XKEYBOARD_IME_REGION_MAX)
+            break; /* 防御闸：丢尾不越界写（构造不可达）。 */
+        for (i = 0; i < paths->m_len[p]; ++i)
         {
             const char* syl =
-                XPinyinTable_syllableAt(paths.m_ids[0][i]);
+                XPinyinTable_syllableAt(paths->m_ids[p][i]);
             const XPinyinTableEntry* begin = NULL;
             uint16_t n = 0;
             if (!syl || !XPinyinTable_find(syl, &begin, &n))
@@ -379,6 +395,218 @@ static void imeRefreshCandidates(XPinyinEngine* self)
     self->m_regionCount = (uint16_t)regionCount;
     self->m_candidateCount = (uint16_t)total;
     self->m_page = 0;
+}
+
+/**
+ * @brief      按字母组串刷新候选借用区间并回页 0（字母通道组串变化汇
+ *             点）。
+ * @details    最长音节优先 DFS 枚举组串切分路径（上限
+ *             XKEYBOARD_IME_PATH_MAX=8 路）后交公共装配汇点
+ *             imeAssembleCandidates（词组+首路单字两段式规则见彼处）。
+ * @param      self 状态机指针；不为 NULL。
+ * @return     无。
+ */
+static void imeRefreshCandidates(XPinyinEngine* self)
+{
+    XkbImePathSet paths;
+    uint16_t acc[XKEYBOARD_IME_BUFFER_CAP];
+    int len = 0;
+    while (self->m_buffer[len] != '\0')
+        ++len;
+    paths.m_count = 0;
+    if (len > 0)
+        imeEnumPathsDfs(&paths, self->m_buffer, len, 0, acc, 0);
+    imeAssembleCandidates(self, &paths, false); /* 字母通道：首路口径。 */
+}
+
+/* ==================== 内部函数：九键（T9）数字通道 ==================== */
+
+/** @brief 单模式音节枚举缓冲容量（数字组宽 3~4 的表内落点实测最大 6
+ *         条/模式，取 2 的幂裕量；到达即截断写出，返回值仍为完整命中
+ *         数）。 */
+#define IME_T9_MATCH_CAP 16
+
+/**
+ * @brief      固化边界位置（固化音节序列覆盖的数字位数）。
+ * @details    由固化音节 id 序列派生（每音节位数=其字母数），不单设
+ *             冗余字段，杜绝双记数失同步；id 来自音节表反查恒合法，
+ *             查无（防御）按 0 位跳过。
+ * @param      self 状态机借用指针；不为 NULL。
+ * @return     固化边界位置（[0, 数字组串长]）。
+ */
+static int imeT9FixedLen(const XPinyinEngine* self)
+{
+    int len = 0;
+    int i;
+    for (i = 0; i < (int)self->m_t9FixedCount; ++i)
+    {
+        const char* syl = XPinyinTable_syllableAt(self->m_t9FixedIds[i]);
+        if (syl)
+        {
+            int n = 0;
+            while (syl[n] != '\0')
+                ++n;
+            len += n;
+        }
+    }
+    return len;
+}
+
+/**
+ * @brief      九键数字串是否可接受（INV-T9 判据，数字通道唯一合法门）。
+ * @details    镜像字母通道 INV2：自固化边界 from 起 ∃k∈[from,L]——
+ *             reachable[k]（前 k 位可恰切为『逐位字母落在对应数字组
+ *             内』的完整音节序列；段长上限=最长音节 6）∧ 余部存在以
+ *             其数字模式开头的音节（XPinyinTable_hasSyllableDigitsPrefix；
+ *             k=L 项=整串恰完，空模式恒真）。段内音节存在性经
+ *             XPinyinTable_digitsSyllables 计数查询（字典序窗口扫描，
+ *             即逐字母增量剪枝的落点）。
+ * @param      digits 数字串借用指针（NUL 结尾）；不为 NULL。
+ * @param      len 数字串长度。
+ * @param      from 固化边界起点（前缀已恰切分）。
+ * @return     可接受返回 true；否则 false。
+ */
+static bool imeT9Acceptable(const char* digits, int len, int from)
+{
+    bool reachable[XKEYBOARD_IME_BUFFER_CAP + 1];
+    int k;
+    int j;
+    if (len > XKEYBOARD_IME_BUFFER_CAP)
+        return false;
+    if (from < 0 || from > len)
+        return false; /* 防御：固化边界越界（调用序保证不达）。 */
+    for (k = 0; k <= len; ++k)
+        reachable[k] = false;
+    reachable[from] = true;
+    for (k = from + 1; k <= len; ++k)
+    {
+        int low = k - IME_SYLLABLE_LEN_MAX;
+        if (low < from)
+            low = from;
+        for (j = low; j < k; ++j)
+        {
+            if (reachable[j] &&
+                XPinyinTable_digitsSyllables(digits + j, k - j, NULL, 0) > 0)
+            {
+                reachable[k] = true;
+                break;
+            }
+        }
+    }
+    for (k = from; k <= len; ++k)
+    {
+        if (reachable[k] &&
+            XPinyinTable_hasSyllableDigitsPrefix(digits + k, len - k))
+            return true;
+    }
+    return false;
+}
+
+/**
+ * @brief      T9 切分路径枚举 DFS（最长音节优先；同长按音节 id 序）。
+ * @details    与字母通道 imeEnumPathsDfs 同构，差异仅在段内音节来源：
+ *             数字模式（数字组界窗扫描）可命中多条音节，逐条递归。路
+ *             数达上限即停止收集（文档化防御截断，与全键同口径）。
+ * @param      set 路径集合指针；不为 NULL。
+ * @param      digits 数字串借用指针；不为 NULL。
+ * @param      len 数字串长度。
+ * @param      pos 当前位置（固化边界起）。
+ * @param      acc 当前路径 id 累积缓冲（调用方栈上提供；固化前缀已
+ *             预填，深度=固化音节数起步）。
+ * @param      depth 当前路径深度。
+ * @return     无（路数达上限即停止收集）。
+ */
+static void imeT9EnumPathsDfs(XkbImePathSet* set, const char* digits, int len,
+                              int pos, uint16_t* acc, int depth)
+{
+    int maxLen;
+    int l;
+    if (set->m_count >= XKEYBOARD_IME_PATH_MAX)
+        return;
+    if (pos == len)
+    {
+        /* 记录完整一路（深度<=组串容量；词组查询键超 4 音节由
+           XPinyinPhrase_find 长度守卫恒 miss，不影响装配）。 */
+        int i;
+        for (i = 0; i < depth; ++i)
+            set->m_ids[set->m_count][i] = acc[i];
+        set->m_len[set->m_count] = (uint8_t)depth;
+        ++set->m_count;
+        return;
+    }
+    maxLen = len - pos;
+    if (maxLen > IME_SYLLABLE_LEN_MAX)
+        maxLen = IME_SYLLABLE_LEN_MAX;
+    for (l = maxLen; l >= 1; --l)
+    {
+        uint16_t hits[IME_T9_MATCH_CAP];
+        int n = XPinyinTable_digitsSyllables(digits + pos, l, hits,
+                                             IME_T9_MATCH_CAP);
+        int h;
+        for (h = 0; h < n; ++h)
+        {
+            acc[depth] = hits[h];
+            imeT9EnumPathsDfs(set, digits, len, pos + l, acc, depth + 1);
+            if (set->m_count >= XKEYBOARD_IME_PATH_MAX)
+                return;
+        }
+    }
+}
+
+/**
+ * @brief      按数字组串刷新候选借用区间并回页 0（数字通道组串变化汇
+ *             点）。
+ * @details    固化前缀音节直入路径累积，自固化边界起枚举后缀切分路径
+ *             （≤8 路）后交公共装配汇点 imeAssembleCandidates（词组+
+ *             首路单字，与全键同源）。全串已固化（纯尾）时 pos==len
+ *             即记完整一路，候选收敛于固化读法。
+ * @param      self 状态机指针；不为 NULL。
+ * @return     无。
+ */
+static void imeT9RefreshCandidates(XPinyinEngine* self)
+{
+    XkbImePathSet paths;
+    uint16_t acc[XKEYBOARD_IME_BUFFER_CAP];
+    int len = 0;
+    int i;
+    while (self->m_digits[len] != '\0')
+        ++len;
+    paths.m_count = 0;
+    for (i = 0; i < (int)self->m_t9FixedCount; ++i)
+        acc[i] = self->m_t9FixedIds[i];
+    if (len > 0)
+        imeT9EnumPathsDfs(&paths, self->m_digits, len, imeT9FixedLen(self),
+                          acc, (int)self->m_t9FixedCount);
+    imeAssembleCandidates(self, &paths, true); /* 数字通道：多路并集。 */
+}
+
+/**
+ * @brief      清九键数字通道（数字组串+固化边界；不动字母通道）。
+ * @param      self 状态机指针；不为 NULL。
+ * @return     无。
+ */
+static void imeT9Clear(XPinyinEngine* self)
+{
+    self->m_digits[0] = '\0';
+    self->m_t9FixedCount = 0;
+}
+
+/**
+ * @brief      数字组串删尾至 newLen 位并收缩固化边界。
+ * @details    固化音节按「数字覆盖不越过 newLen」整体保留：被截断的
+ *             尾部固化音节整个退出固化序列（残位不再是完整读法）。
+ *             INV-T9 对删尾保持（论证同字母通道退格前缀闭包：可达位
+ *             置不受删尾影响、数字模式前缀性对缩短保持；固化音节退出
+ *             后其自身即余下前缀的恰切分）。
+ * @param      self 状态机指针；不为 NULL。
+ * @param      newLen 删尾后位数（0..组串容量）。
+ * @return     无。
+ */
+static void imeT9Truncate(XPinyinEngine* self, int newLen)
+{
+    self->m_digits[newLen] = '\0';
+    while ((self->m_t9FixedCount > 0) && (imeT9FixedLen(self) > newLen))
+        --self->m_t9FixedCount;
 }
 
 /**
@@ -452,6 +680,7 @@ void XPinyinEngine_init(XPinyinEngine* self)
     if (!self) return;
     self->m_buffer[0] = '\0';
     self->m_commit[0] = '\0';
+    imeT9Clear(self);
     self->m_chinese = true;
     self->m_regionCount = 0;
     self->m_candidateCount = 0;
@@ -463,6 +692,7 @@ void XPinyinEngine_resetComposition(XPinyinEngine* self)
 {
     if (!self) return;
     self->m_buffer[0] = '\0';
+    imeT9Clear(self); /* 字母/数字双通道统一复位汇点。 */
     self->m_regionCount = 0;
     self->m_candidateCount = 0;
     self->m_page = 0;
@@ -482,12 +712,17 @@ void XPinyinEngine_setChinese(XPinyinEngine* self, bool chinese)
 
 bool XPinyinEngine_isComposing(const XPinyinEngine* self)
 {
-    return (self && self->m_buffer[0] != '\0');
+    return (self && (self->m_buffer[0] != '\0' ||
+                     self->m_digits[0] != '\0'));
 }
 
 const char* XPinyinEngine_composingText(const XPinyinEngine* self)
 {
-    if (!self || self->m_buffer[0] == '\0') return "";
+    if (!self) return "";
+    /* 九键数字通道活跃：组串显示口径=数字串（键盘候选带直显，
+     * xvkpy_sync 组串镜像链路零改动接线）。 */
+    if (self->m_digits[0] != '\0') return self->m_digits;
+    if (self->m_buffer[0] == '\0') return "";
     return self->m_buffer;
 }
 
@@ -554,6 +789,9 @@ XPinyinEngineFeed XPinyinEngine_feedLetter(XPinyinEngine* self, char letter)
 
     if (!self || !self->m_chinese) return XPinyinEngineFeed_Ignored;
     if (letter < 'a' || letter > 'z') return XPinyinEngineFeed_Ignored;
+    if (self->m_digits[0] != '\0')
+        imeT9Clear(self); /* 字母键压过九键数字通道：切回全键组串
+                             （双通道互斥；数字组串与固化边界一并弃）。 */
     len = (int32_t)XStrlen(self->m_buffer);
     if (len >= XKEYBOARD_IME_BUFFER_CAP) return XPinyinEngineFeed_Consumed;
     for (cut = 0; cut < len; ++cut)
@@ -596,10 +834,36 @@ XPinyinEngineFeed XPinyinEngine_feedLetter(XPinyinEngine* self, char letter)
     return XPinyinEngineFeed_Consumed;
 }
 
+XPinyinEngineFeed XPinyinEngine_feedLetterRaw(XPinyinEngine* self,
+                                              char letter)
+{
+    int32_t len;
+    if (!self || !self->m_chinese) return XPinyinEngineFeed_Ignored;
+    if (letter < 'a' || letter > 'z') return XPinyinEngineFeed_Ignored;
+    if (self->m_digits[0] != '\0')
+        imeT9Clear(self); /* 字母键压过九键数字通道（互斥同 feedLetter）。 */
+    len = (int32_t)XStrlen(self->m_buffer);
+    if (len >= XKEYBOARD_IME_BUFFER_CAP) return XPinyinEngineFeed_Consumed;
+    /* 无条件入组串（不过 INV2 截断）：多击中间态（"ng"/"nh" 等非音节
+       前缀）是必经路径而非错字；候选按可达读法刷新，无可达=0 条。 */
+    self->m_buffer[len] = letter;
+    self->m_buffer[len + 1] = '\0';
+    imeRefreshCandidates(self);
+    return XPinyinEngineFeed_Consumed;
+}
+
 XPinyinEngineFeed XPinyinEngine_feedBackspace(XPinyinEngine* self)
 {
     int32_t len;
     if (!self || !self->m_chinese) return XPinyinEngineFeed_Ignored;
+    /* 九键数字通道优先：删末位数字并收缩固化边界。 */
+    len = (int32_t)XStrlen(self->m_digits);
+    if (len > 0)
+    {
+        imeT9Truncate(self, (int)len - 1);
+        imeT9RefreshCandidates(self);
+        return XPinyinEngineFeed_Consumed;
+    }
     len = (int32_t)XStrlen(self->m_buffer);
     if (len == 0) return XPinyinEngineFeed_Ignored; /* 透传编辑框退格。 */
     self->m_buffer[len - 1] = '\0';
@@ -613,19 +877,23 @@ XPinyinEngineFeed XPinyinEngine_feedCommitFirst(XPinyinEngine* self)
 {
     const char* text;
     if (!self || !self->m_chinese) return XPinyinEngineFeed_Ignored;
-    if (self->m_buffer[0] == '\0') return XPinyinEngineFeed_Ignored;
+    if (!XPinyinEngine_isComposing(self)) return XPinyinEngineFeed_Ignored;
     text = self->m_candidateCount > 0 ? imeCandidateText(self, 0) : NULL;
     if (text)
         return imeCommit(self, text);
-    /* 无候选组串：空格与回车同义（提交原字母串）。 */
-    return imeCommit(self, self->m_buffer);
+    /* 无候选组串：空格与回车同义（提交原组串——字母/数字通道取活跃
+     * 者；九键提交数字串本身，与全键提交原字母串同口径的确定性出
+     * 口）。 */
+    return imeCommit(self, self->m_digits[0] != '\0' ? self->m_digits
+                                                     : self->m_buffer);
 }
 
 XPinyinEngineFeed XPinyinEngine_feedCommitRaw(XPinyinEngine* self)
 {
     if (!self || !self->m_chinese) return XPinyinEngineFeed_Ignored;
-    if (self->m_buffer[0] == '\0') return XPinyinEngineFeed_Ignored;
-    return imeCommit(self, self->m_buffer);
+    if (!XPinyinEngine_isComposing(self)) return XPinyinEngineFeed_Ignored;
+    return imeCommit(self, self->m_digits[0] != '\0' ? self->m_digits
+                                                     : self->m_buffer);
 }
 
 XPinyinEngineFeed XPinyinEngine_feedDigit(XPinyinEngine* self, int digit)
@@ -635,13 +903,77 @@ XPinyinEngineFeed XPinyinEngine_feedDigit(XPinyinEngine* self, int digit)
     if (!self || !self->m_chinese) return XPinyinEngineFeed_Ignored;
     if (digit < 1 || digit > IME_PAGE_SIZE_MAX)
         return XPinyinEngineFeed_Ignored;
-    if (self->m_buffer[0] == '\0') return XPinyinEngineFeed_Ignored;
+    /* 字母/数字任一通道组串中即可选候选（九键态经同一分页/区间链）。 */
+    if (!XPinyinEngine_isComposing(self)) return XPinyinEngineFeed_Ignored;
     index = self->m_page * self->m_pageSize + (digit - 1);
     if (index >= (int32_t)self->m_candidateCount)
         return XPinyinEngineFeed_Consumed; /* 越界/无候选吞掉。 */
     text = imeCandidateText(self, index);
     if (!text) return XPinyinEngineFeed_Consumed;
     return imeCommit(self, text);
+}
+
+bool XPinyinEngine_feedT9Digit(XPinyinEngine* self, char digit)
+{
+    char candidate[XKEYBOARD_IME_BUFFER_CAP + 2];
+    int32_t len;
+    int32_t i;
+
+    if (!self || !self->m_chinese) return false; /* EN 态冻结（直写）。 */
+    if (digit < '2' || digit > '9') return false; /* 非法数字（'0'/'1'
+                                                     由键盘侧走选候选链）。 */
+    if (self->m_buffer[0] != '\0') return false; /* 字母通道持有组串：
+                                                    互斥冻结。 */
+    len = (int32_t)XStrlen(self->m_digits);
+    if (len >= XKEYBOARD_IME_BUFFER_CAP) return false; /* 组串上限 15。 */
+    for (i = 0; i < len; ++i)
+        candidate[i] = self->m_digits[i];
+    candidate[len] = digit;
+    candidate[len + 1] = '\0';
+    if (!imeT9Acceptable(candidate, (int)len + 1, imeT9FixedLen(self)))
+        return false; /* 无可达读法：拒绝不吞不改态（INV-T9 门）。 */
+    self->m_digits[len] = digit;
+    self->m_digits[len + 1] = '\0';
+    imeT9RefreshCandidates(self);
+    return true;
+}
+
+const char* XPinyinEngine_digitComposition(const XPinyinEngine* self)
+{
+    if (!self || self->m_digits[0] == '\0') return "";
+    return self->m_digits;
+}
+
+bool XPinyinEngine_feedDigitSeparator(XPinyinEngine* self)
+{
+    XkbImePathSet paths;
+    uint16_t acc[XKEYBOARD_IME_BUFFER_CAP];
+    int len = 0;
+    int from;
+    int i;
+
+    if (!self || !self->m_chinese) return false;
+    if (self->m_digits[0] == '\0') return false; /* 无组串无可固化。 */
+    while (self->m_digits[len] != '\0')
+        ++len;
+    from = imeT9FixedLen(self);
+    if (from >= len)
+        return from == len; /* 边界已在串尾：幂等成功（>len 防御态按
+                               失败，调用序保证不达）。 */
+    paths.m_count = 0;
+    for (i = 0; i < (int)self->m_t9FixedCount; ++i)
+        acc[i] = self->m_t9FixedIds[i];
+    imeT9EnumPathsDfs(&paths, self->m_digits, len, from, acc,
+                      (int)self->m_t9FixedCount);
+    if (paths.m_count == 0)
+        return false; /* 纯前缀态：全串无恰切分，无边界可固化。 */
+    /* 增量固化：已固化前缀保持（重复分词不重排既有读法），尾段取首
+       路（主读法）新音节。 */
+    for (i = (int)self->m_t9FixedCount; i < (int)paths.m_len[0]; ++i)
+        self->m_t9FixedIds[i] = paths.m_ids[0][i];
+    self->m_t9FixedCount = paths.m_len[0];
+    imeT9RefreshCandidates(self);
+    return true;
 }
 
 XPinyinEngineFeed XPinyinEngine_feedCandidate(XPinyinEngine* self,

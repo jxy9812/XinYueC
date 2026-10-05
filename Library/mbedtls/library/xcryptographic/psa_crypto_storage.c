@@ -20,8 +20,12 @@
 #if defined(MBEDTLS_PSA_ITS_FILE_C)
 #include "psa_crypto_its.h"
 #else /* Native ITS implementation */
-#include "psa/error.h"
-#include "psa/internal_trusted_storage.h"
+/* 统一持久化路径：仓库自有 ITS→XFile 桥接（psa_its_xfile.c）。
+ * 原 #include "psa/error.h" 为坏引用——该头在本 mbedtls 树中不存在，
+ * PSA 状态码由 psa/crypto.h（crypto_values.h）提供；此分支此前在
+ * 任何平台上都未参与编译，故坏引用一直未暴露。 */
+#include "psa/crypto.h"
+#include "psa_its_xin.h"
 #endif
 
 #include "mbedtls/platform.h"

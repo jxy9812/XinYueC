@@ -170,6 +170,8 @@ static XByteArray* bmp_make(size_t total, uint32_t offset, uint32_t dib,
 #if XWIDGET_ON && XKEYBOARD_ON
 #include "XKeyboardTest.h"
 #endif /* XWIDGET_ON && XKEYBOARD_ON */
+#include "XPinyinT9Test.h" /* 九键（T9）消歧测试：TU 内部自门控
+                             * XKEYBOARD_IME_ON（关时 runAll 恒真 stub）。 */
 #if XWIDGET_ON && XPUSHBUTTON_ON
 #include "XPushButton.h"
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON */
@@ -6051,6 +6053,8 @@ static void test_painter_text_antialiasing_contract(void)
     int intermediatePixels = 0;
     int row;
     int col;
+    int bitsMatch;
+    uint32_t referenceBits[40 * 32];
 
     memset(&image, 0, sizeof(image));
     XImage_init_ex(&image, 32, 40, XImageFormat_ARGB32);
@@ -6105,18 +6109,60 @@ static void test_painter_text_antialiasing_contract(void)
                 glyphDsc.adv_w == XFONT8X16_WIDTH * 16u,
                 "8x16 provider exposes the registered CJK glyph metrics");
 
-    /* 分数平移使目标像素真实跨过 A 的左侧黑白边界；覆盖率来自
-       局部几何覆盖，不来自全局距离平滑。 */
+    /* 分数平移吸附（XFONT_TEXT_GRIDFIT，与轮廓字 SW-AA 路径的
+     * penX=roundf 就近取整同口径）：亚像素平移按就近取整落桶——
+     * 0.4px 与整数 0 同桶、0.5px 归入 +1px 桶，同桶渲染逐位一致，
+     * 亚相位不再改变覆盖率（原「跨边界像素呈中间覆盖」锁的是吸附前
+     * 的相位彩票：同一字形不同落点浓淡随位置漂移，正是根修要消除
+     * 的表征）。 */
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_resetTransform(&painter);
+    XPainter_translate(&painter, 1.0f, 0.0f);
+    expect_true(XPainter_drawText(&painter, 0, 26, "A", 0xff000000u),
+                "integer +1px translated scaled text draws");
+    for (row = 0; row < 40; ++row)
+        for (col = 0; col < 32; ++col)
+            referenceBits[row * 32 + col] = XImage_pixel(&image, col, row);
     XImage_fillRect(&image, NULL, 0xffffffffu);
     XPainter_resetTransform(&painter);
     XPainter_translate(&painter, 0.5f, 0.0f);
     expect_true(XPainter_drawText(&painter, 0, 26, "A", 0xff000000u),
                 "fractionally translated scaled text draws");
-    expect_true(XImage_pixel(&image, 4, 0) != 0xff000000u &&
-                XImage_pixel(&image, 4, 0) != 0xffffffffu,
-                "cross-boundary text pixel has intermediate coverage");
+    bitsMatch = 1;
+    for (row = 0; row < 40 && bitsMatch; ++row)
+        for (col = 0; col < 32; ++col)
+            if (XImage_pixel(&image, col, row) !=
+                referenceBits[row * 32 + col])
+            {
+                bitsMatch = 0;
+                break;
+            }
+    expect_true(bitsMatch,
+                "0.5px translate snaps into the +1px grid bucket");
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_resetTransform(&painter);
+    XPainter_drawText(&painter, 0, 26, "A", 0xff000000u);
+    for (row = 0; row < 40; ++row)
+        for (col = 0; col < 32; ++col)
+            referenceBits[row * 32 + col] = XImage_pixel(&image, col, row);
+    XImage_fillRect(&image, NULL, 0xffffffffu);
+    XPainter_resetTransform(&painter);
+    XPainter_translate(&painter, 0.4f, 0.0f);
+    expect_true(XPainter_drawText(&painter, 0, 26, "A", 0xff000000u),
+                "sub-pixel translated scaled text draws");
+    bitsMatch = 1;
+    for (row = 0; row < 40 && bitsMatch; ++row)
+        for (col = 0; col < 32; ++col)
+            if (XImage_pixel(&image, col, row) !=
+                referenceBits[row * 32 + col])
+            {
+                bitsMatch = 0;
+                break;
+            }
+    expect_true(bitsMatch,
+                "0.4px translate snaps into the 0px grid bucket");
     /* 像素 3 位于 A 中部横杠的连续黑色内部，作为“内部保持不透明”
-       的稳定探针；边界像素 4 则验证了分数平移的面积覆盖。 */
+       的稳定探针；边界像素相位则由上方同桶逐位比对锁定。 */
     expect_true(XImage_pixel(&image, 3, 16) == 0xff000000u,
                 "cross-boundary text keeps the stroke interior opaque");
 
@@ -21652,11 +21698,8 @@ static void test_backingstore_shared_software_core(void)
         gpbs, gui_app_probe_backingStoreCorePresent, NULL);
     XPlatformBackingStore_flush(gpbs, NULL, &region, NULL);
     /* 外层一次 + 回调内重入一次；重入调用不破坏外层回调收到的区域。
-       Windows FULL 自 2026-10-05 起与 DIRECT/PARTIAL 同口径收到调用方
-       脏区矩形（默认按脏区提交，XGUI_FLUSH_FULLCOMMIT=1 逃生门才整屏）；
-       非 Windows FULL 恒整屏提交，回调收到整屏矩形。 */
-#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL && \
-    !defined(_WIN32)
+       FULL 模式回调收到整屏矩形；DIRECT/PARTIAL 收到脏区矩形。 */
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
     expect_true(g_backingStoreCorePresentCount == 2 &&
                 g_backingStoreCorePresentRect.width == 3 &&
                 g_backingStoreCorePresentRect.height == 4,
@@ -21670,8 +21713,7 @@ static void test_backingstore_shared_software_core(void)
     XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
     XRegion_deinit(&region);
 
-    /* ---- D. FULL 模式小脏区提交区裁决（2026-10-05）：Windows 默认按
-       调用方脏区提交（1x1 矩形），非 Windows FULL 恒整屏（3x4）。 ---- */
+    /* ---- D. FULL 模式：小脏区仍整屏提交 ---- */
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
     XRect_init(&dirty1, 0, 0, 1, 1);
     XRegion_init(&region);
@@ -21681,17 +21723,10 @@ static void test_backingstore_shared_software_core(void)
     XPlatformBackingStore_setPresentCallback(
         gpbs, gui_app_probe_backingStoreCorePresent, NULL);
     XPlatformBackingStore_flush(gpbs, NULL, &region, NULL);
-#if !defined(_WIN32)
     expect_true(g_backingStoreCorePresentCount == 1 &&
                 g_backingStoreCorePresentRect.width == 3 &&
                 g_backingStoreCorePresentRect.height == 4,
                 "共享核心：FULL 模式 flush 小脏区仍整屏提交");
-#else
-    expect_true(g_backingStoreCorePresentCount == 1 &&
-                g_backingStoreCorePresentRect.width == 1 &&
-                g_backingStoreCorePresentRect.height == 1,
-                "共享核心：FULL 模式 flush 小脏区按脏区提交");
-#endif
     XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
     g_backingStoreCorePresentReentered = 0;
     XRegion_deinit(&region);
@@ -22038,11 +22073,16 @@ static void test_window_event_task213_contract(void)
         XTouchEvent* te = XTouchEvent_create(
             XEVENT_TYPE_TOUCH_BEGIN, &(XPoint){ 7, 8 },
             &(XPoint){ 70, 80 }, 2);
+        /* 柔性数组单块分配契约：创建=定容（capacity=2），实际点数恒 0
+           （列表待 setPoints 覆写），points() 返回 NULL——主点字段承载
+           单点（单点遗留形态，语义等价旧 m_points==NULL）。 */
         expect_true(te != NULL &&
                         XTouchEvent_position(te).x == 7 &&
                         XTouchEvent_globalPosition(te).y == 80 &&
-                        XTouchEvent_pointCount(te) == 2,
-                    "t213: touch 最小负载");
+                        XTouchEvent_pointCount(te) == 0 &&
+                        te->m_pointCapacity == 2 &&
+                        XTouchEvent_points(te) == NULL,
+                    "t213: touch 最小负载（定容创建+单点形态）");
         if (te) XClassDelete((XClass*)te);
     }
     {
@@ -34797,6 +34837,7 @@ static void test_xgui_widgets(void)
     expect_true(XButtonGroupTest_runAll(), "XButtonGroup 控件功能");
 #if XWIDGET_ON && XKEYBOARD_ON
     expect_true(XKeyboardTest_runAll(), "XKeyboard 控件功能");
+    expect_true(XPinyinT9Test_runAll(), "XPinyinT9 九键消歧组串与候选");
 #endif /* XWIDGET_ON && XKEYBOARD_ON */
     test_statusbar_contract();
     test_menubar_contract();

@@ -22,9 +22,10 @@
  *               beginPaint()/endPaint()/setStaticContents()/
  *               staticContents()/hasStaticContents() 与 Qt 语义一致。
  *             公共实现/头文件不包含任何平台 API 头；平台差异全部隔离在
- *             Drive/Posix/Graphics、Drive/windows/Graphics、
- *             Drive/Software/Graphics（可复用软件模板）与
- *             Drive/Unsupported/Graphics 中，确保嵌入式可裁剪、可链接。
+ *             Drive/Posix/Graphics、Drive/windows/Graphics 与
+ *             Drive/Unsupported/Graphics（含按 XPLATFORMBACKINGSTORE_
+ *             SOFTWARE_ON 分流的可复用软件后端）中，确保嵌入式可裁剪、
+ *             可链接。
  * @note       模块开关 XBACKINGSTORE_ON 与 XPLATFORMBACKINGSTORE_ON 定义于
  *             XGuiConfig.h；任一处 0 时本契约整体裁剪，XBackingStore
  *             公共类不可用。

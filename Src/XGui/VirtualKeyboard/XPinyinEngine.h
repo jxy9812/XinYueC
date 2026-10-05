@@ -137,6 +137,19 @@ typedef struct XPinyinEngine
                                         字节 + NUL，2/3 字词组与 15 字
                                         母原串全完整；下次 feed/reset
                                         前有效）。 */
+    char m_digits[XKEYBOARD_IME_BUFFER_CAP + 1]; /**< 九键（T9）数字组
+                                        串缓冲（最长 15 数字 + NUL；
+                                        '2'..'9'，与字母组串互斥双通
+                                        道——数字通道活跃时 m_buffer
+                                        必空，反之亦然；INV-T9：恒为
+                                        『固化音节序列 + T9 可达后缀』
+                                        ，见 feedT9Digit）。 */
+    uint16_t m_t9FixedIds[XKEYBOARD_IME_BUFFER_CAP]; /**< 分词键固化的
+                                        音节 id 序列（feedDigitSeparator
+                                        逐次累积；数字组串删尾时整体
+                                        收缩）。 */
+    uint16_t m_t9FixedCount;       /**< 固化音节数（<= 组串容量；
+                                        m_t9FixedLen 由其派生）。 */
     bool m_chinese;                /**< 中文态（false=EN 直写）。 */
     XPinyinEngineRegion m_regions[XKEYBOARD_IME_REGION_MAX]; /**< 候选
                                         借用区间描述符数组（词组路 +
@@ -162,7 +175,9 @@ void XPinyinEngine_init(XPinyinEngine* self);
  * @brief      清组串/候选/页（保留中文态与页容量）。
  * @details    组串生命周期挂点：中/EN 切换、键盘换绑目标/收层/隐藏/
  *             切换模式、IME 启停时由键盘侧调用。同时释放全部词组借用
- *             区间——是 XPinyinPhrase_unload/reload 的调用前置。
+ *             区间——是 XPinyinPhrase_unload/reload 的调用前置。九键
+ *             数字组串（m_digits/固化边界）一并清零——字母/数字双通
+ *             道的统一复位汇点。
  * @param      self 状态机指针；NULL 无操作。
  * @return     无。
  */
@@ -184,14 +199,18 @@ bool XPinyinEngine_isChinese(const XPinyinEngine* self);
 void XPinyinEngine_setChinese(XPinyinEngine* self, bool chinese);
 
 /**
- * @brief      查询是否组串中（中文态且组串非空）。
+ * @brief      查询是否组串中（中文态且字母/数字任一组串非空）。
  * @param      self 状态机借用指针；NULL 返回 false。
  * @return     组串非空返回 true；IDLE 或 self 为 NULL 返回 false。
  */
 bool XPinyinEngine_isComposing(const XPinyinEngine* self);
 
 /**
- * @brief      查询组串文本（ASCII 小写字母串）。
+ * @brief      查询组串文本（字母通道=ASCII 小写字母串；九键数字通道
+ *             =数字串直显口径）。
+ * @details    九键（T9）态返回数字组串（如 "942"）——键盘候选带
+ *             preedit 直显数字串即经本访问器（xvkpy_sync 组串镜像链
+ *             路零改动接线）；字母通道行为不变。
  * @param      self 状态机借用指针。
  * @return     组串借用指针（内部缓冲，下次 feed/reset 前有效；不得释
  *             放或修改）；非组串或 self 为 NULL 返回空串。
@@ -233,10 +252,30 @@ int32_t XPinyinEngine_pageSize(const XPinyinEngine* self);
 XPinyinEngineFeed XPinyinEngine_feedLetter(XPinyinEngine* self, char letter);
 
 /**
- * @brief      喂入退格（删组串末字母）。
+ * @brief      喂入原始字母（九键多击通道；不过 INV2 截断）。
+ * @details    与 feedLetter 同门控（中文态/'a'..'z'/容量 15），区别仅
+ *             在非法读法语义：多击中间态（如 n 后落 g 组出 "ng"）不
+ *             是用户错字而是必经路径——无条件入组串，候选按可达读法
+ *             刷新（无可达读法=0 条，拼到合法前缀自然出现；对标功能
+ *             机多击：中间态无候选不吞键）。九键数字通道持有组串时先
+ *             清数字通道（双通道互斥同 feedLetter）。
  * @param      self 状态机指针；NULL 返回 Ignored。
- * @return     Consumed（删了组串字母，键盘拦截不透传）；空组串/EN 态
- *             返回 Ignored（键盘透传编辑框退格）。
+ * @param      letter 目标字母；仅接受 'a'..'z'（其他返回 Ignored）。
+ * @return     Consumed（字母已入组串/吞掉）；EN 态或非法输入返回
+ *             Ignored。
+ */
+XPinyinEngineFeed XPinyinEngine_feedLetterRaw(XPinyinEngine* self,
+                                              char letter);
+
+/**
+ * @brief      喂入退格（删组串末位：九键数字通道删末位数字、字母通
+ *             道删末字母）。
+ * @details    九键数字组串非空时删末位数字并整体收缩分词固化边界（固
+ *             化音节被截断即整个退出固化序列，余部回 T9 可达后缀）；
+ *             数字组串空时回落字母通道原语义。
+ * @param      self 状态机指针；NULL 返回 Ignored。
+ * @return     Consumed（删了组串位，键盘拦截不透传）；双通道组串皆
+ *             空/EN 态返回 Ignored（键盘透传编辑框退格）。
  */
 XPinyinEngineFeed XPinyinEngine_feedBackspace(XPinyinEngine* self);
 
@@ -264,6 +303,56 @@ XPinyinEngineFeed XPinyinEngine_feedCommitRaw(XPinyinEngine* self);
  *             IDLE/EN 态返回 Ignored（放行为普通数字）。
  */
 XPinyinEngineFeed XPinyinEngine_feedDigit(XPinyinEngine* self, int digit);
+
+/**
+ * @brief      喂入一个九键数字键（'2'..'9' 扩展数字组组串）——九键
+ *             （T9）消歧输入的唯一组串入口。
+ * @details    数字组口径 2=abc 3=def 4=ghi 5=jkl 6=mno 7=pqrs 8=tuv
+ *             9=wxyz。接受判据（INV-T9，镜像字母通道 INV2）：新数字串
+ *             自固化边界起 ∃k——前 k 位可恰切为「逐位字母都落在对应
+ *             数字组内」的合法音节序列，且余部存在以其数字模式开头的
+ *             音节；接受后按既有两段式（词组+首路单字）刷新候选。拒绝
+ *             （无可达读法/组串已满 15/字母通道持有组串）不吞不改态。
+ *             组串显示：T9 态 composingText 返回数字串（键盘直显）。
+ * @note       命名说明：本函数即任务书契约的
+ *             「bool XPinyinEngine_feedDigit(XPinyinEngine*, char)」，
+ *             因既有全键数字选候选 API 已占用同名同参异型签名
+ *             （feedDigit(XPinyinEngine*, int)，XVirtualKeyboardPinyin
+ *             InputMethod 消费中，不可改名）按 C 无重载约束顺延为
+ *             feedT9Digit——签名与语义与契约逐字一致，仅函数名多
+ *             T9 限定；键盘侧九键路由接本函数。
+ * @param      self 状态机指针；NULL 返回 false。
+ * @param      digit 目标数字字符；仅接受 '2'..'9'（'0'/'1' 及其他返
+ *             回 false，'1' 由键盘侧改走既有 feedDigit 选候选链）。
+ * @return     接受并已刷新候选返回 true；EN 态冻结（非中文态）、字母
+ *             组串活跃（互斥冻结）、数字非法、组串满 15 或无可达读法
+ *             返回 false（状态不变）。
+ */
+bool XPinyinEngine_feedT9Digit(XPinyinEngine* self, char digit);
+
+/**
+ * @brief      查询九键数字组串（ASCII 数字串，如 "942"）。
+ * @param      self 状态机借用指针。
+ * @return     数字组串借用指针（内部缓冲，下次 feed/reset 前有效；不
+ *             得释放或修改）；数字通道无组串或 self 为 NULL 返回空串。
+ */
+const char* XPinyinEngine_digitComposition(const XPinyinEngine* self);
+
+/**
+ * @brief      喂入「分词」键：固化当前音节边界（九键歧义切分的确定性
+ *             出口）。
+ * @details    将当前数字组串整体固化为一串完整音节（按首路=主读法取
+ *             音节序列；已固化前缀保持不动、只增量固化尾段），其后数
+ *             字从新音节起组串。此前全串必须可恰切分为完整音节序列
+ *             （纯前缀态无边界可固化），否则状态不变。幂等：边界已在
+ *             当前串尾时重复按下仍返回 true。固化后候选按固化读法
+ *             收敛（例："94"+分词+"26" → xi|an 读法命中词组「西安」，
+ *             而无分词 "9426" 首路为 4 字母单音节 xian）。
+ * @param      self 状态机指针；NULL 返回 false。
+ * @return     边界已固化（含幂等命中）返回 true；EN 态冻结、数字组串
+ *             空或全串无可恰切分（纯前缀态）返回 false（状态不变）。
+ */
+bool XPinyinEngine_feedDigitSeparator(XPinyinEngine* self);
 
 /**
  * @brief      点选候选（全量 0 基下标）。

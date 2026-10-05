@@ -174,8 +174,15 @@
  * \def MBEDTLS_FS_IO
  *
  * Enable functions that use the filesystem.
+ *
+ * 裸机（XINYUE_EMBEDDED）无 stdio 文件系统：FS_IO 关闭（x509_crt_parse_path/
+ * parse_file 等 dirent/fopen 系全部裁剪），证书/密钥一律走内存解析；
+ * PSA ITS 的持久化与平台解耦——统一走 psa_its_xfile.c（XFile 桥接），
+ * 见下方 PSA_ITS_FILE_C 处说明。
  */
+#if !defined(XINYUE_EMBEDDED)
 #define MBEDTLS_FS_IO
+#endif
 
 /**
  * \def MBEDTLS_HAVE_TIME
@@ -292,7 +299,11 @@
 //#define MBEDTLS_PLATFORM_VSNPRINTF_ALT
 //#define MBEDTLS_PLATFORM_NV_SEED_ALT
 //#define MBEDTLS_PLATFORM_SETUP_TEARDOWN_ALT
-//#define MBEDTLS_PLATFORM_MS_TIME_ALT
+/* 统一毫秒时钟：全平台走替换实现——Library/mbedtls/platform/
+ * mbedtls_ms_time_xin.c 桥接 XDateTime_currentMSecsSinceEpoch()（桌面/
+ * 裸机同一入口，平台差异收敛在 XDateTime 内），platform_util.c 的
+ * Unix/Windows 内建实现不再参与编译。 */
+#define MBEDTLS_PLATFORM_MS_TIME_ALT
 
 /**
  * Uncomment the macro to let Mbed TLS use your alternate implementation of
@@ -1135,8 +1146,14 @@
  *   Builds with no random generator are not officially supported yet, except
  *   client-only builds (#MBEDTLS_PSA_CRYPTO_CLIENT enabled and
  *   #MBEDTLS_PSA_CRYPTO_C disabled).
- */
-#define MBEDTLS_PSA_BUILTIN_GET_ENTROPY
+ *
+ * 统一随机源：全平台启用 EXTERNAL_RNG——回调
+ * mbedtls_psa_external_get_random() 已在 Library/mbedtls/platform/
+ * XSsl_mbedtls.c 桥接到 XRandomGenerator_fillSecure()（库内跨平台
+ * API，平台差异收敛在 Drive/<平台> 后端），并停用内建熵源
+ * （getrandom//dev/urandom/BCryptGenRandom 等各平台自调 API 全部
+ * 退出编译，连带免除 Windows 的 bcrypt 链接）。 */
+#define MBEDTLS_PSA_CRYPTO_EXTERNAL_RNG
 
 /** \def MBEDTLS_PSA_CRYPTO_BUILTIN_KEYS
  *
@@ -1291,8 +1308,11 @@
  * Module:  core/psa_its_file.c
  *
  * Requires: MBEDTLS_FS_IO
+ * （统一持久化路径：ITS_FILE_C 全平台关闭，改用仓库自有原生 ITS
+ *   实现——psa_its_xfile.c 经 XFile 统一桥接，桌面与裸机同一代码路径，
+ *   见 Library/mbedtls/platform/psa_its_xin.h。）
  */
-#define MBEDTLS_PSA_ITS_FILE_C
+/* #define MBEDTLS_PSA_ITS_FILE_C */
 
 /**
  * \def MBEDTLS_PSA_KEY_STORE_DYNAMIC

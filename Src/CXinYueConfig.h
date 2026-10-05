@@ -151,7 +151,9 @@ extern "C" {
 /* ========================================================================== */
 /** @brief XConsoleShell 模块总开关；置 0 时裁剪整个 Shell 公共 API 和所有子功能。 */
 #ifndef XCONSOLE_SHELL_ON
+#ifndef XCONSOLE_SHELL_ON
 #define XCONSOLE_SHELL_ON 1
+#endif
 #endif
 #include"XConsoleShellConfig.h"
 

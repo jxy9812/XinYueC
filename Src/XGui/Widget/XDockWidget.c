@@ -21,47 +21,25 @@
 /* 拖动跟随节流与调试跟踪共用的毫秒时钟。 */
 #include "XDateTime.h"
 
-/* 拖动表示约定（DRAGFULLWINDOWS 查询）。 */
-#include "XPlatformNativeWindow.h"
-
 /* ==================== 调试跟踪（XGUI_DOCK_TRACE，问题关闭后移除） ==================== */
 
-#include <stdio.h>
-#include "XSystem.h"
-
 #if XGUI_DOCK_TRACE
-/* 编译期强制开启（诊断构建预设）：宏体无条件生效。 */
-#define XDW_TRACE_ON() 1
-#else
-/* 运行期环境变量门控（默认关，2026-10-05）：static 缓存一次读取结果。
- * 节流丢弃、幂等门前等高频分支不再逐条 3×printf+fflush 同步刷 stdout。 */
-static bool xdw_traceEnabled(void)
-{
-    static int cached = -1;
-    if (cached < 0) {
-        const char* env = XSystem_environment("XGUI_DOCK_TRACE");
-        cached = env && *env && !(env[0] == '0' && env[1] == 0) ? 1 : 0;
-    }
-    return cached != 0;
-}
-#define XDW_TRACE_ON() xdw_traceEnabled()
-#endif
-
+#include <stdio.h>
 /* 拖放链路逐事件跟踪：毫秒时间戳 + 函数名 + 关键决策值，行末即刷。
  * 移动事件逐条记录——两次跟踪行的时间差即事件环真实节奏，用于定位
  * "停靠操作卡顿数秒"类问题（时间戳断崖 = 冻结窗口）。 */
 #define XDW_TRACE(...)                                                    \
     do {                                                                  \
-        if (XDW_TRACE_ON()) {                                             \
-            int64_t xdwTraceMs = XDateTime_currentMSecsSinceEpoch();      \
-            printf("[DOCK %lld.%03lld %s] ",                              \
-                   (long long)(xdwTraceMs / 1000),                        \
-                   (long long)(xdwTraceMs % 1000), __func__);             \
-            printf(__VA_ARGS__);                                          \
-            printf("\n");                                                 \
-            fflush(stdout);                                               \
-        }                                                                 \
+        int64_t xdwTraceMs = XDateTime_currentMSecsSinceEpoch();          \
+        printf("[DOCK %lld.%03lld %s] ", (long long)(xdwTraceMs / 1000),  \
+               (long long)(xdwTraceMs % 1000), __func__);                 \
+        printf(__VA_ARGS__);                                              \
+        printf("\n");                                                     \
+        fflush(stdout);                                                   \
     } while (0)
+#else
+#define XDW_TRACE(...) do {} while (0)
+#endif
 
 /* ==================== 内部常量 ==================== */
 
@@ -92,36 +70,6 @@ static bool xdw_traceEnabled(void)
  *         对标 Qt 鼠标事件压缩：拖动跟随为绝对定位，中间高频移动
  *         事件只需取最新一条落位。 */
 static int64_t xdw_lastFollowMs;
-
-/** @brief 拖动跟随最小间隔（毫秒）：每次放行的跟随=真实 SetWindowPos
- *         +主窗揭出条带重绘/上屏，在慢显示栈（RDP/OrayIdd 逐帧捕获
- *         上传）上 16ms（≤60Hz）会让呈现链持续饱和、窗口视觉拖在光
- *         标后（实测扫动期屏幕逐采样连续 1 万级帧差、松手后仍追赶
- *         ~200ms）。默认 33ms（30Hz，与远程桌面拖动惯例一致），间隔
- *         结束后的下一条移动以最新位置跟上，落点精度不变。
- *         XGUI_DOCK_FOLLOW_MS 环境变量可覆盖（1-200 合法值）。 */
-static int xdw_followIntervalMs(void)
-{
-    static int cached = -1;
-    if (cached < 0)
-    {
-        const char* value = XSystem_environment("XGUI_DOCK_FOLLOW_MS");
-        cached = 33;
-        if (value && *value)
-        {
-            int parsed = 0;
-            const char* p = value;
-            while (*p >= '0' && *p <= '9')
-            {
-                parsed = parsed * 10 + (*p - '0');
-                ++p;
-            }
-            if (parsed > 0 && parsed <= 200 && *p == 0)
-                cached = parsed;
-        }
-    }
-    return cached;
-}
 
 /** @brief 宿主销毁槽前向声明（定义见保护接口一节；deinit 先用到）。 */
 static void xdw_hostDestroyedSlot(XObject* receiver, XVarList* args);
@@ -273,10 +221,7 @@ static void xdw_announceVisible(XDockWidget* dock, bool visible)
     if (dock->m_announcedVisible == visible) return;
     dock->m_announcedVisible = visible;
     xdw_emitBool(dock, (size_t)XDockWidget_visibilityChanged_signal, visible);
-    /* setFloatingImpl 过渡期（setParent 强制 hide/show 的幽灵中间态）
-     * 抑制宿主回链重排：信号与 setChecked 照常发射，重排由实现体尾部
-     * 的统一调用点承接（2026-10-05 回嵌重排合帧）。 */
-    if (dock->m_host && !dock->m_layoutTransition)
+    if (dock->m_host)
         XMainWindow_updateDockLayout((XMainWindow*)dock->m_host);
 }
 
@@ -814,15 +759,14 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
          * 拖动跟随是绝对定位，高频移动（真实游戏鼠标 1kHz、远端批量
          * 注入）逐条 SetWindowPos+重绘+呈现会把呈现链路压出秒级停顿
          * （OrayIdd+AMD 栈实测 2.4-5.5s 断崖，见 XDW_TRACE 时间线）。
-         * 距上次跟随不足间隔（xdw_followIntervalMs，默认 33ms）直接
-         * 丢弃本条中间位置——下一条移动以最新位置跟上，松开前的最后
-         * 一条永远精确落位。 */
+         * 距上次跟随 <16ms 直接丢弃本条中间位置——下一条移动以最新
+         * 位置跟上，松开前的最后一条永远精确落位。 */
         {
             int64_t nowMs = XDateTime_currentMSecsSinceEpoch();
-            if (nowMs - xdw_lastFollowMs < xdw_followIntervalMs() &&
+            if (nowMs - xdw_lastFollowMs < 16 &&
                 nowMs >= xdw_lastFollowMs) {
-                /* 节流丢弃分支不打日志（2026-10-05）：被丢弃的中间位置
-                 * 每条都刷一行会淹没真实节奏，跟踪价值为零。 */
+                XDW_TRACE("move skip (throttled) global=(%d,%d)",
+                          g.x, g.y);
                 XEvent_accept(event);
                 return;
             }
@@ -852,14 +796,8 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
             dock->m_dragOffset.x = g.x - XWidget_x(self);
             dock->m_dragOffset.y = g.y - XWidget_y(self);
         }
-        /* 整窗跟随或轮廓跟随（系统 DRAGFULLWINDOWS 约定，进程内缓存）：
-         * 轮廓语义下拖动期不挪真窗——落点网格指示器照常显示、松手一次
-         * 到位。整窗实况逐移动 SetWindowPos 在远程/慢显示栈上呈 15-20Hz
-         * 离散步进（"拖动卡顿"主感；系统对普通窗口拖动的约定即轮廓）。 */
-        if (XPlatformNativeWindow_dragFullWindows()) {
-            XWidget_move(self, g.x - dock->m_dragOffset.x,
-                         g.y - dock->m_dragOffset.y);
-        }
+        XWidget_move(self, g.x - dock->m_dragOffset.x,
+                     g.y - dock->m_dragOffset.y);
         XDW_TRACE("move global=(%d,%d) win=(%d,%d)", g.x, g.y,
                   XWidget_x(self), XWidget_y(self));
         if (dock->m_floating && dock->m_host && !dock->m_ctrlDrag) {
@@ -928,13 +866,6 @@ static void VX_dockWidget_mouseReleaseEvent(XWidget* self, XEvent* event)
         XDW_TRACE("release: finishDrop global=(%d,%d)", g.x, g.y);
         area = XMainWindow_finishDrop((XMainWindow*)dock->m_host, self, &g);
         XDW_TRACE("release: finishDrop area=%d", area);
-        if (area == (int)XDockWidgetArea_NoDockWidgetArea &&
-            !XPlatformNativeWindow_dragFullWindows()) {
-            /* 轮廓语义：空白处松手，面板一次跳到松手点（拖动期真窗未
-             * 动；单次 move 非热路径，无步进流）。 */
-            XWidget_move(self, g.x - dock->m_dragOffset.x,
-                         g.y - dock->m_dragOffset.y);
-        }
         (void)area;
     }
     /* 拖动状态复位（对标 Qt 拖动结束销毁 DragState：ctrlDrag=false，
@@ -1194,11 +1125,6 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
     if (!self || self->m_floating == floating) return;
     XDW_TRACE("setFloating %d (undocked=%d)", floating ? 1 : 0,
               useUndockedGeometry ? 1 : 0);
-    /* 过渡期置位（2026-10-05 回嵌重排合帧）：下方 setParent 强制 hide、
-     * show 与组同步逐成员显隐产生的 announce 不再各自经宿主回链触发
-     * 全量重排；实现体尾部的统一 updateDockLayout 调用前清除（实现体
-     * 早退守卫之后无其它 return，标志必然成对复位）。 */
-    self->m_layoutTransition = true;
     selfw = (XWidget*)self;
     host = self->m_host;
     /* 注意：不设「无宿主即早退」守卫——浮动态翻转与 topLevelChanged
@@ -1278,9 +1204,6 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
             if (wasVisible) XWidget_show(selfw);
         }
     }
-    /* 过渡期清除（早退守卫之后无其它 return，成对复位）：终态重排由
-     * 这一次统一调用承接（其内部为 xmw_layoutFlush 合帧入口）。 */
-    self->m_layoutTransition = false;
     if (host)
         XMainWindow_updateDockLayout((XMainWindow*)host);
     XDW_TRACE("setFloating done -> %d", self->m_floating ? 1 : 0);
@@ -1478,58 +1401,17 @@ void* XDockWidget_dockLocationChanged_signal(XDockWidget* self, int area)
     return (void*)(size_t)XDockWidget_dockLocationChanged_signal;
 }
 
-/* ==================== 装饰条拖动顺路钩（CSD 标题条 ↔ 停靠落位衔接） ==================== */
 
-/** @brief 装饰条松手落位总闸（XGUI_DOCK_STRIP_DROP，默认开；"0"=关闭，
- *         恢复「标题条拖动只挪窗不接停靠」旧语义）。static 缓存，进程内
- *         只读一次环境变量（同 XGUI_DOCK_TRACE 惯用法）。 */
-static bool xdw_stripDropEnabled(void)
-{
-    static int cached = -1;
-    if (cached < 0) {
-        const char* env = XSystem_environment("XGUI_DOCK_STRIP_DROP");
-        cached = !(env && *env && env[0] == '0' && env[1] == 0) ? 1 : 0;
-    }
-    return cached != 0;
-}
 
-/** @brief 顶层控件 → 浮动停靠面板（带宿主）安全判别：vtable 精确比对
- *         XDockWidget_class_init（派生类不识别，安全回退 false）；
- *         非浮动态/无宿主（未 addDockWidget 登记）一律不衔接。 */
-static XDockWidget* xdw_floatingDockForTop(XWidget* top)
-{
-    XVtable* vtable;
-    XDockWidget* dock;
-    if (!top) return NULL;
-    vtable = XClassGetVtable((XObject*)top);
-    if (!vtable || vtable != XDockWidget_class_init()) return NULL;
-    dock = (XDockWidget*)top;
-    if (!dock->m_floating || !dock->m_host) return NULL;
-    return dock;
-}
 
-bool XDockWidget_decoStripDragMove(XWidget* top, const XPoint* globalPos)
-{
-    XDockWidget* dock = xdw_floatingDockForTop(top);
-    if (!dock || !globalPos || dock->m_ctrlDrag || !xdw_stripDropEnabled())
-        return false;
-    /* 拖动中衔接宿主落点预览（与拖拽会话同口径；区域/几何幂等门在
-     * hoverDrop 内部，非落点区域零工作）。 */
-    XMainWindow_hoverDrop((XMainWindow*)dock->m_host, (XWidget*)dock,
-                          globalPos);
-    return true;
-}
 
-bool XDockWidget_decoStripDragDrop(XWidget* top, const XPoint* globalPos)
-{
-    XDockWidget* dock = xdw_floatingDockForTop(top);
-    if (!dock || !globalPos || dock->m_ctrlDrag || !xdw_stripDropEnabled())
-        return false;
-    /* 松手落位：finishDrop 内部自判落点区域（无落点=保持浮动，幂等）；
-     * 可能重父化并销毁本顶层窗口——调用方其后不得再触碰 top。 */
-    XMainWindow_finishDrop((XMainWindow*)dock->m_host, (XWidget*)dock,
-                           globalPos);
-    return true;
-}
+
+
+
+
+
+
+
+
 
 #endif /* XWIDGET_ON && XDOCKWIDGET_ON */

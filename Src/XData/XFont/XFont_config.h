@@ -66,12 +66,9 @@
 #define XFONT_OUTLINE_CACHE_ON 1
 #endif
 
-/** @brief 轮廓路径缓存项数量；设为 0 或关闭开关可裁剪缓存。
- *  @details 24→256（2026-10-05）：α 缓存键含字号等 scaleKey，多窗多字
- *           号工作集易超限，溢出字形每次全窗重绘都重走「解码→路径→
- *           gridfit→采样」全额链，路径缓存是第二级放大器。 */
+/** @brief 轮廓路径缓存项数量；设为 0 或关闭开关可裁剪缓存。 */
 #ifndef XFONT_OUTLINE_CACHE_ENTRIES
-#define XFONT_OUTLINE_CACHE_ENTRIES 256
+#define XFONT_OUTLINE_CACHE_ENTRIES 24
 #endif
 
 /** @brief 是否启用轮廓字形灰度图（alpha map）缓存。
@@ -84,17 +81,9 @@
 #define XFONT_GLYPH_ALPHA_CACHE_ON 1
 #endif
 
-/** @brief 轮廓灰度图缓存项数量；设为 0 或关闭开关可裁剪缓存。
- *  @details 256→2048（2026-10-05）：全进程单份线性 LRU，多窗多字号工
- *           作集易超限，溢出字形逐帧重走「解码→路径→gridfit→8×8 采
- *           样→XMalloc」全额链。内存硬上限 = 2048×
- *           XFONT_GLYPH_ALPHA_CACHE_MAX_PIXELS(16384)B = 32MiB（全部条
- *           目触顶才触达）；典型 12-16px 字形每项数百字节，工作集增量
- *           远低于 1MiB。已知代价：哈希索引未命中的回退线性扫描随容
- *           量 8× 变慢（XPainter.c painterGlyphAlphaCacheFind），稳态
- *           哈希命中路径不受影响，作为扩容收益的接受成本。 */
+/** @brief 轮廓灰度图缓存项数量；设为 0 或关闭开关可裁剪缓存。 */
 #ifndef XFONT_GLYPH_ALPHA_CACHE_ENTRIES
-#define XFONT_GLYPH_ALPHA_CACHE_ENTRIES 2048
+#define XFONT_GLYPH_ALPHA_CACHE_ENTRIES 256
 #endif
 
 /** @brief 单个灰度图缓存项的像素上限（宽*高）；超过则只绘制不缓存，

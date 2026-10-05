@@ -31,7 +31,6 @@
    XWidget.c 不在本修复改动面内（N5-2 硬约束），仅经公共头引用。 */
 #include "XWidget.h"
 #include "XWidget_Protected.h"
-#include "XWindowDecoration.h"
 #endif /* XWIDGET_ON */
 
 /** @brief 当前同步派发中的触摸事件时间戳（毫秒）；仅 handleTouchEvent(_ex)
@@ -725,18 +724,6 @@ bool XWindowSystemInterface_handleMouseEvent_ex(XWindow* window, XEventType type
     return true;
 }
 
-void XWindowSystemInterface_handleSystemMove(XWindow* window, int phase,
-                                             const XPoint* clientPos)
-{
-    /* 系统移动循环会话桥：转发给窗口装饰层（顶层由装饰注册表按窗口
-     * 反查；锚/命中皆不依赖，循环期间抓取态变化不影响投递）。 */
-#if XWIDGET_ON
-    XWindowDecoration_systemMoveSession(window, phase, clientPos);
-#else
-    (void)window; (void)phase; (void)clientPos;
-#endif
-}
-
 bool XWindowSystemInterface_handleWheelEvent(XWindow* window,
                                              XMouseButton buttons,
                                              XKeyboardModifiers modifiers,
@@ -813,11 +800,11 @@ bool XWindowSystemInterface_handleTouchPoints_ex(XWindow* window,
          type != XEVENT_TYPE_TOUCH_CANCEL))
         return false;
     g_touchTimestamp = timestamp;
-    /* 先建 1 点事件（旧 init 签名，主点取 points[0]），再注入完整列
-       表（深拷贝+主点同步在 setPoints 内完成）。 */
+    /* 按帧容量单块创建（柔性数组定容），setPoints 容量内原地整表覆写
+       （零二次分配）；主点字段取 points[0] 并由 setPoints 再同步。 */
     event = XTouchEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type,
                                   &points[0].m_position,
-                                  &points[0].m_globalPosition, 1);
+                                  &points[0].m_globalPosition, count);
     if (!event) {
         g_touchTimestamp = 0;
         return false;

@@ -106,21 +106,33 @@ static XTouchPoint tp_point(int32_t id, int x, int y, int state)
 /* ==================== 第 4 节：主点手势状态机回归 ==================== */
 
 /* 手势计数 sink：正式 XCLASS 子类（继承 XWidget），覆写鼠标按下/释放/
- * 双击/上下文菜单/滚轮虚槽计数。触摸事件保持基类默认忽略——手势状态机
- * 只驱动未被接受的触摸序列（接受即走控件抓取，不合成）。鼠标按下/释放/
- * 双击有意不 accept（对标 Qt 未处理路径；右键按下未被接受时框架才自动
- * 合成 CONTEXT_MENU）；contextMenu/wheel 记录后 accept。 */
+ * 双击/上下文菜单/滚轮/触摸手势虚槽计数。触摸事件保持基类默认忽略——手势
+ * 状态机只驱动未被接受的触摸序列（接受即走控件抓取，不合成）。鼠标按下/
+ * 释放/双击有意不 accept（对标 Qt 未处理路径；右键按下未被接受时框架才
+ * 自动合成 CONTEXT_MENU）；contextMenu/wheel 记录后 accept。TouchDrag
+ * 手势槽记录各手势种类到达次数，认领开关（m_claimDrag/Long/Double，默认
+ * 关=历史语义）控制是否 accept——用例据此覆盖「控件认领」新语义。 */
 typedef struct TpGestureSink
 {
     XWidget m_base;      /**< 基类成员；必须为第一个。 */
     int m_press;         /**< 左键 mousePress 次数。 */
     int m_rightPress;    /**< 右键 mousePress 次数（长按诊断）。 */
     int m_release;       /**< mouseRelease 次数（左右键合计）。 */
+    int m_move;          /**< mouseMove 次数（左键拖动仿真诊断）。 */
     int m_dblClick;      /**< mouseDoubleClick 次数。 */
     int m_contextMenu;   /**< contextMenu 次数。 */
     int m_wheel;         /**< wheel 次数。 */
     int m_lastAngleY;    /**< 最近一次滚轮 angleDelta.y。 */
     int m_lastPhase;     /**< 最近一次滚轮 phase（XWheelEventPhase）。 */
+    int m_lastReleaseX;  /**< 最近一次 release 位置（左键拖收口域诊断）。 */
+    int m_lastReleaseY;
+    int m_gestureTap;    /**< TouchDrag: Tap 通知次数。 */
+    int m_gestureDouble; /**< TouchDrag: DoubleTap 判定次数。 */
+    int m_gestureLong;   /**< TouchDrag: LongPress 判定次数。 */
+    int m_gestureDrag;   /**< TouchDrag: DragBegin 判定次数。 */
+    bool m_claimDrag;    /**< DragBegin 认领开关（true=接受→左键拖仿真）。 */
+    bool m_claimLong;    /**< LongPress 认领开关（true=接受→免右键合成）。 */
+    bool m_claimDouble;  /**< DoubleTap 认领开关（true=接受→免 DBL 合成）。 */
 } TpGestureSink;
 
 XCLASS_DEFINE_BEGING(TpGestureSink)
@@ -139,8 +151,17 @@ static void TpGestureSink_mousePress(XWidget* self, XEvent* event)
 
 static void TpGestureSink_mouseRelease(XWidget* self, XEvent* event)
 {
+    TpGestureSink* sink = (TpGestureSink*)self;
     if (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
-    ++((TpGestureSink*)self)->m_release;
+    ++sink->m_release;
+    sink->m_lastReleaseX = ((const XMouseEvent*)event)->m_position.x;
+    sink->m_lastReleaseY = ((const XMouseEvent*)event)->m_position.y;
+}
+
+static void TpGestureSink_mouseMove(XWidget* self, XEvent* event)
+{
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) return;
+    ++((TpGestureSink*)self)->m_move;
 }
 
 static void TpGestureSink_mouseDoubleClick(XWidget* self, XEvent* event)
@@ -166,15 +187,44 @@ static void TpGestureSink_wheel(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+static void TpGestureSink_touchDrag(XWidget* self, XEvent* event)
+{
+    TpGestureSink* sink = (TpGestureSink*)self;
+    const XTouchEvent* drag;
+    if (XEvent_type(event) != XEVENT_TYPE_TOUCH_DRAG) return;
+    drag = (const XTouchEvent*)event;
+    switch (XTouchEvent_gesture(drag)) {
+    case XTouchGesture_Tap:
+        ++sink->m_gestureTap; /* 通知型：接受与否均不改变合成行为。 */
+        break;
+    case XTouchGesture_DoubleTap:
+        ++sink->m_gestureDouble;
+        if (sink->m_claimDouble) XEvent_accept(event);
+        break;
+    case XTouchGesture_LongPress:
+        ++sink->m_gestureLong;
+        if (sink->m_claimLong) XEvent_accept(event);
+        break;
+    case XTouchGesture_DragBegin:
+        ++sink->m_gestureDrag;
+        if (sink->m_claimDrag) XEvent_accept(event);
+        break;
+    default:
+        break;
+    }
+}
+
 XVtable* TpGestureSink_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(TpGestureSink)
     XVTABLE_INHERIT_XCLASS(XWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, TpGestureSink_mousePress);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, TpGestureSink_mouseRelease);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, TpGestureSink_mouseMove);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, TpGestureSink_mouseDoubleClick);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent, TpGestureSink_contextMenu);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, TpGestureSink_wheel);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_TouchDragEvent, TpGestureSink_touchDrag);
     return XVTABLE_DEFAULT;
 }
 
@@ -277,10 +327,11 @@ int XTouchMultiPointTest_run(void)
     tp_expect(sinkB.m_end == 1 && sinkA.m_end == 1, "双触点 END 各达各控件");
 
     /* 2. 多点单事件负载：事件携带两点，主点字段=points[0]（B1 语义：
-       控件层派发按主点；多点并行派发随 B2 平台聚合落地）。 */
+       控件层派发按主点；多点并行派发随 B2 平台聚合落地）。柔性数组
+       单块分配：按容量创建 + setPoints 容量内原地覆写（超容量忽略）。 */
     {
         XTouchEvent* ev = XTouchEvent_create_ex(
-            XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_TOUCH_BEGIN, NULL, NULL, 1);
+            XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_TOUCH_BEGIN, NULL, NULL, 2);
         XTouchPoint two[2];
         two[0] = tp_point(3, 100, 100, XTOUCHPOINT_STATE_PRESSED);
         two[1] = tp_point(4, 300, 100, XTOUCHPOINT_STATE_PRESSED);
@@ -294,20 +345,28 @@ int XTouchMultiPointTest_run(void)
         XClassDelete((XEvent*)ev);
     }
 
-    /* 3. XTouchEvent 生命周期：setPoints/points/clone/deinit 无泄漏。 */
+    /* 3. XTouchEvent 生命周期：单块分配（本体+柔性数组同块）+ 容量
+       门禁（超容量 setPoints 防御性忽略）+ clone/deinit 无泄漏。 */
     {
         XTouchEvent* ev = XTouchEvent_create_ex(
-            XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_TOUCH_BEGIN, NULL, NULL, 1);
+            XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_TOUCH_BEGIN, NULL, NULL, 2);
         XTouchPoint two[2];
+        XTouchPoint three[3];
         const XTouchPoint* rd;
         XEvent* copy;
         two[0] = tp_point(9, 10, 20, XTOUCHPOINT_STATE_PRESSED);
         two[1] = tp_point(10, 30, 40, XTOUCHPOINT_STATE_PRESSED);
+        three[0] = tp_point(11, 1, 1, XTOUCHPOINT_STATE_PRESSED);
+        three[1] = tp_point(12, 2, 2, XTOUCHPOINT_STATE_PRESSED);
+        three[2] = tp_point(13, 3, 3, XTOUCHPOINT_STATE_PRESSED);
         tp_expect(ev != NULL, "事件创建成功");
+        XTouchEvent_setPoints(ev, three, 3);
+        tp_expect(ev->m_pointCount == 0,
+                  "超容量 setPoints 防御性忽略（一次性分配不可扩容）");
         XTouchEvent_setPoints(ev, two, 2);
         rd = XTouchEvent_points(ev);
         tp_expect(rd != NULL && ev->m_pointCount == 2 &&
-                  rd[1].m_id == 10, "setPoints 深拷贝+读取一致");
+                  rd[1].m_id == 10, "setPoints 原地覆写+读取一致");
         tp_expect(ev->m_position.x == 10 && ev->m_position.y == 20,
                   "主点字段同步为 points[0]");
         copy = XEvent_clone_base((XEvent*)ev);
@@ -319,7 +378,7 @@ int XTouchMultiPointTest_run(void)
             tp_expect(rd2 != NULL &&
                       ((const XTouchEvent*)copy)->m_pointCount == 2 &&
                       rd2[0].m_id == 9,
-                      "clone 深拷贝触点列表");
+                      "clone 深拷贝触点列表（同块柔性数组）");
                 XClassDelete(copy);
             }
         XClassDelete((XEvent*)ev);
@@ -347,6 +406,8 @@ int XTouchMultiPointTest_run(void)
                        XTOUCHPOINT_STATE_RELEASED, 1050);
         tp_expect(gs.m_press == 1 && gs.m_release == 1,
                   "4.1 tap：press@BEGIN 且 release@END");
+        tp_expect(gs.m_gestureTap == 1,
+                  "4.1 tap：TouchDrag Tap 收口通知到达");
         /* 组间 CANCEL：清手势单序列状态（序列已收口，此处应为空操作）。 */
         tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 5, 100, 100,
                        XTOUCHPOINT_STATE_RELEASED, 1060);
@@ -393,12 +454,100 @@ int XTouchMultiPointTest_run(void)
                        XTOUCHPOINT_STATE_UPDATED, 1900);
         tp_expect(gs.m_contextMenu == 1 && gs.m_rightPress == 1,
                   "4.4 long-press：右键按下自动弹 CONTEXT_MENU");
+        tp_expect(gs.m_gestureLong == 1,
+                  "4.4 long-press：LongPress 判定通知到达（未认领）");
         tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 5, 200, 200,
                        XTOUCHPOINT_STATE_RELEASED, 1950);
         tp_expect(gs.m_press == 3 && gs.m_release == 3 && gs.m_dblClick == 1,
                   "4.4 long-press：左键序列远偏移关断、END 不再合成");
         tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 5, 200, 200,
                        XTOUCHPOINT_STATE_RELEASED, 1960);
+        tp_expect(gs.m_gestureDrag == 1,
+                  "4.4 复核：4.3 转拖 DragBegin 判定通知到达（未认领）");
+
+        /* 4.5 按住拖动=左键拖动仿真（DragBegin 认领）：控件接受判定→
+         *    挂着的 press 续持，MOVE 随行，END 按当前位置 RELEASE 收口
+         *    （等效真实鼠标左键拖拽；全程无滚轮、不构成 tap）。 */
+        {
+            TpGestureSink gs2;
+            memset(&gs2, 0, sizeof(gs2));
+            XWidget_init(&gs2.m_base, &top, 0);
+            XClassGetVtable(&gs2.m_base) = TpGestureSink_class_init();
+            XWidget_setGeometry(&gs2.m_base, 0, 0, 400, 300);
+            gs2.m_claimDrag = true;
+            XWidget_show(&gs2.m_base);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 7, 100, 100,
+                           XTOUCHPOINT_STATE_PRESSED, 5000);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 7, 100, 140,
+                           XTOUCHPOINT_STATE_UPDATED, 5050);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 7, 100, 180,
+                           XTOUCHPOINT_STATE_UPDATED, 5100);
+            tp_expect(gs2.m_gestureDrag == 1,
+                      "4.5 drag-claim：DragBegin 判定到达且仅一次");
+            tp_expect(gs2.m_press == 1 && gs2.m_move == 2 && gs2.m_wheel == 0,
+                      "4.5 drag-claim：press 续持+MOVE 随行，零滚轮");
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 7, 100, 180,
+                           XTOUCHPOINT_STATE_RELEASED, 5150);
+            tp_expect(gs2.m_release == 1 &&
+                      gs2.m_lastReleaseX == 100 && gs2.m_lastReleaseY == 180,
+                      "4.5 drag-claim：END 按当前位置 RELEASE 收口");
+            XClassDeinit(&gs2.m_base);
+        }
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 7, 5, 5,
+                       XTOUCHPOINT_STATE_RELEASED, 5160);
+
+        /* 4.6 长折认领：控件接受 LongPress 判定→右键序列免合成（右键/
+         *    CONTEXT_MENU 均为零），左键序列照旧远偏移关断。 */
+        {
+            TpGestureSink gs3;
+            memset(&gs3, 0, sizeof(gs3));
+            XWidget_init(&gs3.m_base, &top, 0);
+            XClassGetVtable(&gs3.m_base) = TpGestureSink_class_init();
+            XWidget_setGeometry(&gs3.m_base, 0, 0, 400, 300);
+            gs3.m_claimLong = true;
+            XWidget_show(&gs3.m_base);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 8, 200, 200,
+                           XTOUCHPOINT_STATE_PRESSED, 6000);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 8, 200, 200,
+                           XTOUCHPOINT_STATE_UPDATED, 6900);
+            tp_expect(gs3.m_gestureLong == 1 && gs3.m_rightPress == 0 &&
+                      gs3.m_contextMenu == 0,
+                      "4.6 long-claim：LongPress 认领后免右键/免菜单");
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 8, 200, 200,
+                           XTOUCHPOINT_STATE_RELEASED, 6950);
+            tp_expect(gs3.m_press == 1 && gs3.m_release == 0,
+                      "4.6 long-claim：仅 BEGIN 压合成（远偏移释放不落靶、END 零合成）");
+            XClassDeinit(&gs3.m_base);
+        }
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 8, 5, 5,
+                       XTOUCHPOINT_STATE_RELEASED, 6960);
+
+        /* 4.7 双折认领：控件接受 DoubleTap 判定→DBL_CLICK+RELEASE 免合成
+         *    （控件自管双击语义），布防序列本就不合成 press。 */
+        {
+            TpGestureSink gs4;
+            memset(&gs4, 0, sizeof(gs4));
+            XWidget_init(&gs4.m_base, &top, 0);
+            XClassGetVtable(&gs4.m_base) = TpGestureSink_class_init();
+            XWidget_setGeometry(&gs4.m_base, 0, 0, 400, 300);
+            gs4.m_claimDouble = true;
+            XWidget_show(&gs4.m_base);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 9, 150, 150,
+                           XTOUCHPOINT_STATE_PRESSED, 7000);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 9, 150, 150,
+                           XTOUCHPOINT_STATE_RELEASED, 7050);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 9, 150, 150,
+                           XTOUCHPOINT_STATE_PRESSED, 7100);
+            tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 9, 150, 150,
+                           XTOUCHPOINT_STATE_RELEASED, 7150);
+            tp_expect(gs4.m_gestureDouble == 1 && gs4.m_dblClick == 0,
+                      "4.7 double-claim：DoubleTap 认领后免 DBL_CLICK 合成");
+            tp_expect(gs4.m_press == 1 && gs4.m_release == 1,
+                      "4.7 double-claim：首段 tap 正常、布防序列零合成");
+            XClassDeinit(&gs4.m_base);
+        }
+        tp_gestureStep(xw, XEVENT_TYPE_TOUCH_CANCEL, 9, 5, 5,
+                       XTOUCHPOINT_STATE_RELEASED, 7160);
 
         XClassDeinit(&gs.m_base);
     }

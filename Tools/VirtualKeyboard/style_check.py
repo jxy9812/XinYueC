@@ -450,14 +450,18 @@ def static_checks(lvgl_src, dpi, known_deltas):
         ("代码区残留：%s" % (hits_palette_code[:5],))
     check("static.clearance", "旧调色板字面量代码区清零",
           not hits_palette_code, detail)
-    # 运行时 0xFFxxxxxx 字面量全部出自 XKB_LVGL_*（按 define 原文字面量放行）
+    # 运行时 0xFFxxxxxx 字面量全部出自 XKB_LVGL_*/XKB_ACCENT_*（按
+    # define 原文字面量放行；ACCENT=搜狗强调色命名常量，Sogou 改版一
+    # 阶段引入，含逐通道派生注释——命名即出处，非杂散）。
     allowed = {m.group(1).upper()
                for m in re.finditer(
-                   r"#define\s+XKB_LVGL_[A-Z_]+\s+(0x[0-9A-Fa-f]{6,8})u?",
+                   r"#define\s+XKB_(?:LVGL|ACCENT)[A-Z_]*\s+"
+                   r"(0x[0-9A-Fa-f]{6,8})u?",
                    code)}
     stray = sorted({m.upper() for m in re.findall(r"0x[0-9A-Fa-f]{8}", code)
                     if m.upper() not in allowed})
-    check("static.clearance", "XVirtualKeyboard.c 0xFFxxxxxx 全部出自 XKB_LVGL_*",
+    check("static.clearance",
+          "XVirtualKeyboard.c 0xFFxxxxxx 全部出自 XKB_LVGL_*/XKB_ACCENT_*",
           not stray,
           ("杂散字面量：%s" % (stray,)) if stray else "0 杂散")
     return spec, proj
@@ -588,12 +592,16 @@ def recompute_rects(widget, band, keys):
     才加 widget x/y。返回 (expect{i:(x,y,w,h)}, row_info)。
     """
     ww, wh = widget[2], widget[3]
-    band_h = band[3] if band and band[3] > 0 else 0
     content_x, content_y = 2, 2
     content_w, content_h = ww - 4, wh - 4
     row_y = sorted({k["rect"][1] for k in keys})
     n_rows = len(row_y)
-    row_h = (content_h - band_h) // n_rows
+    # 菜单条常驻预留（Sogou 二阶段，xkb_rebuildLayout 同式）：条高=
+    # contentH/(rows+1)，所有布局/模式一致预留、键区 y 自 contentY+条高
+    # 起。与中文态无关——dump 的 band 行是 m_imeBandRect（仅中文态镜像
+    # 条矩形），英文态 band=0 而键区仍偏移，不可作预留依据。
+    reserve = content_h // (n_rows + 1)
+    row_h = (content_h - reserve) // n_rows
     by_index = {k["i"]: k for k in keys}
     expect = {}
     row_info = []
@@ -603,7 +611,7 @@ def recompute_rects(widget, band, keys):
         if total <= 0:
             total = 1
         x = content_x
-        ey = content_y + band_h + ri * row_h
+        ey = content_y + reserve + ri * row_h
         row_info.append((ri, ey, row_h, total))
         for i in idxs:
             unit = max(by_index[i]["ctrl"] & 0xF, 1)
@@ -631,9 +639,9 @@ def geometry_checks(widget, band, keys, rows):
           "%d 键全部一致（内容区 2px 内缩 + unit*contentW/total 边界式）"
           % len(keys))
     rh = {r[2] for r in row_info}
-    check("geometry", "行高=(contentH-bandH)//rows 整除口径", len(rh) == 1,
-          "rowH=%s rows=%d bandH=%d"
-          % (sorted(rh), len(row_info), band[3] if band else 0))
+    check("geometry", "行高=(contentH-条高)//rows 整除口径（条高=常驻预留 contentH/(rows+1)）",
+          len(rh) == 1,
+          "rowH=%s rows=%d" % (sorted(rh), len(row_info)))
     gaps = set()
     by_row = {}
     for k in keys:
@@ -851,7 +859,12 @@ def px_band(png, widget, band, C, compose_filled):
               % (hx(blue_best[0]) if blue_best[0] else "-",
                  blue_best[1]))
         # 候选 chip 文字簇（chips 区=compose 右缘到翻页区左缘；compose 宽
-        # 上限=带宽/3，从 comp_x+带宽/3 起扫描必落在 chips 区内）
+        # 上限=带宽/3，从 comp_x+带宽/3 起扫描必落在 chips 区内）。
+        # 字库口径：默认家族 XFontOutlineCommon 为外挂轮廓字库
+        # （XFONT_EXTERNAL_OUTLINE_FONT_DIR 相对 cwd 解析 + exe 目录旁
+        # 兜底），字库文件须随 exe 部署（bin/*/XFontOutlineCommon.xfo），
+        # 缺文件时回退 8x16 小字集、候选汉字画不出（词簇断言即 FAIL——
+        # 该 FAIL 是部署缺失信号，不吞）。
         zone_x0 = comp_x + bw // 3 + 8
         zone_w = (right - 3 * cell - 4) - zone_x0
         cnt, best = png.scan_dark((zone_x0, comp_y, zone_w, inner_h))
@@ -937,10 +950,17 @@ def px_closed(png, widget, C, ref_png):
         return
     palette = [C["scr"], C["card"], C["pressed_face"], C["grey"],
                C["disabled"], C["primary_muted"]]
+    # HUD 排除区（页面自带 FPS/CPU 面板，右下角锚定）：其静态灰字
+    # （#7F8182 系）恰落键盘 DISABLED 色板 ±2 内，FPS 两帧同值时被误判
+    # 残板（实测 3 点 (699,531)/(687,555)/(729,567)）——残板语义=键盘
+    # 内容物残留，页面 HUD 与键盘无关，整段排除。
+    hud_x0, hud_y0 = png.w - 160, png.h - 105
     bad = []
     residue = []
     for yy in range(max(y0, 0), min(y0 + h, png.h), 3):
         for xx in range(max(x0, 0), min(x0 + w, png.w), 3):
+            if xx >= hud_x0 and yy >= hud_y0:
+                continue
             p = png.get(xx, yy)
             if dist(p, ref_png.get(xx, yy)) > 2:
                 bad.append((xx, yy, hx(p), hx(ref_png.get(xx, yy))))
@@ -965,8 +985,13 @@ SCENARIOS = [
     ("band", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_CHINESE": "1",
               "XGUI_KB_DUMP": "1"}, "中文态候选带（空组串）"),
     ("compose", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_CHINESE": "1",
-                 "XGUI_KB_COMPOSE": "ni", "XGUI_KB_DUMP": "1"},
-     "组串 ni + 候选 chip"),
+                 "XGUI_KB_PHYSKEY": "ni", "XGUI_KB_DUMP": "1"},
+     "组串 ni + 候选 chip（物理键注入）"),
+    # compose 注入口径（需求③收缩态适配）：组串首字符落地即触发面板收缩
+    # （XKB-GEO widget h=带高+4），XGUI_KB_COMPOSE 的逐字符点屏键注入第二
+    # 字符起命中坐标越出收缩控件被丢弃（组串停在单字符、候选 0、页码格
+    # 不渲染）；XGUI_KB_PHYSKEY 经应用层入口 XGuiApplication_
+    # virtualKeyboardNotifyKey 与真机物理按键同链，不受收缩几何影响。
     ("pressed", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_PRESS_LABEL": "q",
                  "XGUI_KB_DUMP": "1"}, "按住 q（拼音布局无气泡）"),
     ("bubble", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_MODE": "textlower",
@@ -974,6 +999,21 @@ SCENARIOS = [
      "TextLower+popovers 按住 q（气泡放大）"),
     ("closed", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_CLOSE": "1",
                 "XGUI_KB_DUMP": "1"}, "closePopup 收层残板检查"),
+    ("t9", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_LAYOUT": "t9",
+            "XGUI_KB_DUMP": "1"}, "拼音九键款型（T9 21 键表，英文态）"),
+    ("t9zh", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_LAYOUT": "t9",
+              "XGUI_KB_CHINESE": "1", "XGUI_KB_DUMP": "1"},
+     "拼音九键中文态（组串带预留/工具栏渲染）"),
+    ("english", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_LAYOUT": "english",
+                 "XGUI_KB_DUMP": "1"}, "英文全键款型（与全键共表同几何）"),
+    ("selector", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_PANEL": "selector",
+                  "XGUI_KB_DUMP": "1"}, "键盘选择面板打开态（三行勾选）"),
+    ("editpanel", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_PANEL": "edit",
+                   "XGUI_KB_DUMP": "1"},
+     "文字编辑面板（标题行+方向区+右列）"),
+    ("compact", {"XGUI_KB_AUTOSHOW": "1", "XGUI_KB_PANEL": "float",
+                 "XGUI_KB_DUMP": "1"},
+     "紧凑悬浮小键盘（独立顶层 Popup 宿主右下角）"),
 ]
 
 # 像素期望色（项目口径常量；与静态断言的现算值同源——PRIMARY_MUTED/
@@ -1085,8 +1125,11 @@ def run_dynamic(args, shot_dir, keep_png):
         px_corners(png, widget, keys, COLORS)
         px_seams(png, widget, keys, COLORS)
     if "band" in results:
-        png, widget, band, keys, rows = results["band"]
-        px_band(png, widget, band, COLORS, compose_filled=False)
+        # 空组串渲染图标工具栏（Sogou 二阶段：组串态才由候选带替换菜单；
+        # dump 的 band 行=中文态常驻条矩形，非候选带内容物），候选带像素
+        # 断言由 compose 场景（物理键注入组串 ni）承载。
+        skip("pixel.band", "候选带检查（band 场景）",
+             "空组串=图标工具栏渲染（非候选带），断言由 compose 场景承载")
     if "compose" in results:
         png, widget, band, keys, rows = results["compose"]
         px_band(png, widget, band, COLORS, compose_filled=True)

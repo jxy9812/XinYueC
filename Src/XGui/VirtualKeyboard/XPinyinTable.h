@@ -152,6 +152,49 @@ bool XPinyinTable_find(const char* syllable,
  */
 bool XPinyinTable_hasSyllablePrefix(const char* prefix);
 
+/* ==================== 九键（T9）数字组查询 ==================== */
+
+/* 九键数字组口径：2=abc 3=def 4=ghi 5=jkl 6=mno 7=pqrs 8=tuv 9=wxyz
+ * （各数字对应字母为 ASCII 连续区间，供窗口扫描直接比界）。供
+ * XPinyinEngine 九键消歧状态机（feedT9Digit 通道）做逐字母增量剪枝：
+ * 数字模式串的每一段（最长 6 字母=最长音节 zhuang/chuang/shuang）经
+ * 下方查询枚举「长度恰等且逐位字母落在对应数字组内」的音节 id 列表
+ * ——实现为音节表字典序窗口扫描（下界二分定窗首，窗内逐条截断比较+
+ * 逐位组界校验），不做全表线性扫。数字组为通用电话键盘口径，与
+ * XPinyinEngine.h 的 T9 语义共用。 */
+
+/**
+ * @brief      九键数字模式音节枚举（长度恰等 + 逐位数字组匹配）。
+ * @details    枚举「字母数恰为 len 且第 i 个字母落在 digits[i] 数字组
+ *             内」的全部音节，按音节 id 升序（字典序）写入 outIds；
+ *             实现为下界二分定窗 + 窗内截断字典序推进，单次开销与窗
+ *             宽（数字组宽度 3~4 的笛卡尔积在表内的实际落点数，实测
+ *             全表单模式最大 6 条）同阶，远小于全表扫描。
+ * @param      digits 数字模式串借用指针（'2'..'9'；NULL 返回 0）。
+ * @param      len 模式长度（1..6=最长音节；越界返回 0）。
+ * @param      outIds 调用方提供存储空间；可为 NULL（此时只计数不写
+ *             出，供存在性判定做零拷贝计数）。
+ * @param      maxIds outIds 容量（outIds 为 NULL 时忽略）；命中数超
+ *             容量时只截断写出、返回值仍为完整命中数。
+ * @return     命中音节数（>=0）；参数非法返回 0。
+ */
+int XPinyinTable_digitsSyllables(const char* digits, int len,
+                                 uint16_t* outIds, int maxIds);
+
+/**
+ * @brief      判断是否存在数字串以其数字模式开头的音节（九键前缀原语）。
+ * @details    九键状态机切分 DP 的段间前缀原语（与全键
+ *             XPinyinTable_hasSyllablePrefix 同位）：存在音节其数字串
+ *             以 digits[0..len) 开头即真（音节可比模式长，如模式 "93"
+ *             命中 zen 的数字串 936）。实现为同一窗口扫描的前缀形态
+ *             （不要求长度恰等）。
+ * @param      digits 数字模式串借用指针（'2'..'9'；NULL 返回 false）。
+ * @param      len 模式长度；0 返回 true（任何非空音节表下恒真，对应
+ *             切分起点/整串恰完语义）；含 '2'..'9' 外字符返回 false。
+ * @return     存在返回 true；否则 false。
+ */
+bool XPinyinTable_hasSyllableDigitsPrefix(const char* digits, int len);
+
 #endif /* XKEYBOARD_IME_ON */
 
 #ifdef __cplusplus

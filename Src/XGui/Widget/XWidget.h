@@ -453,7 +453,9 @@ typedef void (*XWidgetEventSlot)(XWidget* self, XEvent* event);
  *          hideEvent / changeEvent / touchEvent / tabletEvent，末尾的
  *          InputMethodQuery 对标
  *          QWidget::inputMethodQuery 虚函数（仅 XINPUTMETHOD_ON 时启用槽位，
- *          类初始化按同一条件注册默认实现，各编译配置下槽位序号自洽）。 */
+ *          类初始化按同一条件注册默认实现，各编译配置下槽位序号自洽）；
+ *          最末追加的 TouchDragEvent 为 XGui 扩展槽（无 Qt 对标，触摸手势
+ *          统一通知/判定通道），恒注册。 */
 XCLASS_DEFINE_BEGING(XWidget)
 XCLASS_DEFINE_ENUM(XWidget, PaintEvent) = XCLASS_VTABLE_GET_SIZE(XObject),
 XCLASS_DEFINE_ENUM(XWidget, ResizeEvent),
@@ -484,6 +486,10 @@ XCLASS_DEFINE_ENUM(XWidget, HideEvent),
 #if XINPUTMETHOD_ON
     XCLASS_DEFINE_ENUM(XWidget, InputMethodQuery),
 #endif /* XINPUTMETHOD_ON */
+    XCLASS_DEFINE_ENUM(XWidget, TouchDragEvent), /**< 触摸手势槽（XGui 扩展：
+                                      XEVENT_TYPE_TOUCH_DRAG 分派；单击/双击/
+                                      长按通知 + 按住拖动判定，默认忽略→沿父
+                                      链传播，接受=控件认领该手势）。 */
     XCLASS_DEFINE_END(XWidget)
 
 /**

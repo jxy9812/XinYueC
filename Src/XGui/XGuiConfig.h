@@ -128,10 +128,11 @@
 #ifndef XPLATFORMBACKINGSTORE_ON
 #define XPLATFORMBACKINGSTORE_ON 1
 #endif
-/* 可复用软件后备存储模板开关（对标 Drive/Unsupported 存根的全功能替代）：
- * 置 1 时在非 Linux/Windows 平台编译 Drive/Software/Graphics/
- * XPlatformBackingStore_software.c，提供完整软件缓冲 + present 回调，
- * 新平台只需登记显示驱动回调即可上屏；置 0 时保持 Unsupported 空后端。 */
+/* 可复用软件后备存储模板开关（已在 Drive/Unsupported/Graphics/
+ * XPlatformBackingStore_unsupported.c 内按本宏分流）：置 1 时非 Linux/
+ * Windows 平台 Driver_create 返回 true，提供完整软件缓冲 + present 回调，
+ * 新平台只需登记显示驱动回调即可上屏；置 0 时 Driver_create 返回 false，
+ * 保持空后端安全降级。 */
 #ifndef XPLATFORMBACKINGSTORE_SOFTWARE_ON
 #define XPLATFORMBACKINGSTORE_SOFTWARE_ON 0
 #endif
@@ -1212,13 +1213,10 @@
 #include "Graphics/XImageCodec/XImageCodec_config.h"
 
 /* ==================== 调试跟踪（临时；问题关闭后移除） ==================== */
-/* 停靠拖放链路跟踪：XMainWindow/XDockWidget 关键决策点向 stdout 打一行
- * [DOCK] 日志（带 fflush）。2026-10-05 起编译期默认 0（零开销，与本节
- * 既有口径对齐），改为运行期环境变量门控：需要跟踪时启动被测进程前
- * set XGUI_DOCK_TRACE=1（诊断/harness 脚本负责设置）；编译期置 1 仍可
- * 无条件强制（诊断构建预设）。 */
+/* 停靠拖放链路跟踪：置 1 时 XMainWindow/XDockWidget 关键决策点向 stdout
+ * 打一行 [DOCK] 日志（带 fflush）。默认 0（零开销）。 */
 #ifndef XGUI_DOCK_TRACE
-#define XGUI_DOCK_TRACE 0
+#define XGUI_DOCK_TRACE 1
 #endif
 
 #endif /* XGUICONFIG_H */

@@ -29,7 +29,6 @@
 #include "XImage.h"
 #include "XImageFormat.h"
 #include "XMemory.h"
-#include "XSystem.h"
 /* 显示驱动契约（消费点见下方 xpbs_surfaceFormat / 平台 Driver_present）：
  * 契约头不含任何平台 API 头，公共层只经 ops 表消费；XPLATFORM_FBDEV_ON=0
  * 时本头整体为空、新消费代码同步裁剪（零新增 ABI 面，桌面零回归）。 */
@@ -796,24 +795,6 @@ bool XPlatformBackingStore_toImage(XPlatformBackingStore* self, XImage* out)
 
 /* ==================== 绘制流程 ==================== */
 
-#if defined(_WIN32) && \
-    XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
-/** @brief Windows FULL 整屏提交逃生门（XGUI_FLUSH_FULLCOMMIT=1 生效）。
- *  默认按调用方脏区提交（见 flush 内注释），置任意非 "0" 值恢复逐帧
- *  整屏上传旧路径。static 缓存，进程内只读一次环境变量（同
- *  XGUI_FLUSH_FULLFALLBACK / XGPU_PRESENT_MICRO 惯用法）。 */
-static bool xpbs_flush_full_commit_requested(void)
-{
-    static int requested = -1;
-    if (requested < 0)
-    {
-        const char* value = XSystem_environment("XGUI_FLUSH_FULLCOMMIT");
-        requested = (value && *value && !(value[0] == '0' && value[1] == 0)) ? 1 : 0;
-    }
-    return requested != 0;
-}
-#endif
-
 void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
                                  const XRegion* region, const XPoint* offset)
 {
@@ -843,24 +824,13 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self, XWindow* window,
         if (full.width > 0 && full.height > 0)
             XRegion_addRect(&self->m_flushRegion, &full);
     }
-    /* FULL 提交区裁决（Windows 桌面定版）：默认保留上方按调用方脏区
-     * 裁剪的结果——DIB 为持久整帧、win32 Driver 本就按 region 同步脏行
-     * 再逐矩形 blit，帧上传量与窗口面积解耦；逐帧整屏上传（800x600≈
-     * 1.9MB/帧）在慢显示栈（RDP/OrayIdd）上是拖拽卡顿「断崖」主腿
-     * （与 XWidget.c GPU 腿 XGPU_DIRTY_READBACK 同族问题，软件 FULL 腿
-     * 2026-10-05 收口）。XGUI_FLUSH_FULLCOMMIT=1 逃生门恢复整屏提交
-     * （诊断对拍用）；非 Windows 平台保持整屏提交原语义。 */
+    /* FULL 始终提交整屏。 */
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
-#if defined(_WIN32)
-    if (xpbs_flush_full_commit_requested())
-#endif
-    {
-        XRegion_clear(&self->m_flushRegion);
-        full.x = 0; full.y = 0;
-        full.width = XImage_width(image); full.height = XImage_height(image);
-        if (full.width > 0 && full.height > 0)
-            XRegion_addRect(&self->m_flushRegion, &full);
-    }
+    XRegion_clear(&self->m_flushRegion);
+    full.x = 0; full.y = 0;
+    full.width = XImage_width(image); full.height = XImage_height(image);
+    if (full.width > 0 && full.height > 0)
+        XRegion_addRect(&self->m_flushRegion, &full);
 #endif
     if (!XRegion_isEmpty(&self->m_flushRegion)) {
         /* DIRECT/PARTIAL：提交前把脏区同步到另一帧缓冲，保证下一帧只重绘

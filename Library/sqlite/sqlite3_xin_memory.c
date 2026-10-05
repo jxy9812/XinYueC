@@ -6,6 +6,7 @@
 #include <stddef.h>
 
 int XSqliteVfs_register(void);
+int XSqliteMutex_install(void);
 
 typedef union XSqliteAllocationHeader {
     struct {
@@ -85,6 +86,13 @@ int XSqliteMemory_initialize(void)
 
     if (state == 1) return SQLITE_OK;
     if (state == -1) return SQLITE_ERROR;
+    /* 互斥层统一桥接（XMutex，全平台）必须先于 sqlite3_initialize：
+     * SQLITE_MUTEX_APPDEF 下内核不再自带 pthread/Win32 互斥。 */
+    result = XSqliteMutex_install();
+    if (result != SQLITE_OK) {
+        state = -1;
+        return result;
+    }
     result = sqlite3_config(SQLITE_CONFIG_MALLOC, &methods);
     if (result != SQLITE_OK && result != SQLITE_MISUSE) {
         state = -1;

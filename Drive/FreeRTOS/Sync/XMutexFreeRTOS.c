@@ -1,8 +1,9 @@
 ﻿#ifdef __FreeRTOS__
+#include "FreeRTOS.h"
+#include "semphr.h"  // FreeRTOS semaphore API（须位于 FreeRTOS.h 之后）
 #include "XMutex.h"
 #include "XThread.h" // For XThread_currentThreadId(), which should map to xTaskGetCurrentTaskHandle()
 #include <string.h>
-#include "semphr.h"  // FreeRTOS semaphore API
 #if XSYNC_ON
 #if XMUTEX_ON
 

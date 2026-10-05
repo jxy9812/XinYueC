@@ -61,6 +61,14 @@ static uint32_t commandlink_color(const XCommandLinkButton* self,
     if (!self) return 0xFF000000u;
     palette = XWidget_palette((const XWidget*)self);
     color = XPalette_color(&palette, group, role);
+    /* 显式护栏（取证结论A-2，值不变）：调色板未设该角色时返回 Invalid
+     * 色，XColor_rgba(Invalid) 按无效存储（alpha=65535、分量全 0）换算
+     * 恒得 0xFF000000 不透明黑（XColor.c XColor_rgba 尾注）。此前该契
+     * 约是隐式的——未来某调用方接入不含 PlaceholderText 的裸调色板
+     * （如基类 standardPalette）时描述行会静默变黑而无人察觉。写成显
+     * 式分支逐位等价，回退语义集中一处可审计。 */
+    if (!XColor_isValid(&color))
+        return 0xFF000000u;
     return XColor_rgba(&color);
 #else
     (void)self;
