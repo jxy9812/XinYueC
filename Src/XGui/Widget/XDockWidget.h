@@ -93,6 +93,11 @@ typedef struct XDockWidget
                               *   比较判定是否真实拖动，过滤原地单击误
                               *   触发落位）。 */
     bool m_announcedVisible; /**< 上次广播 visibilityChanged 的值（去重）。 */
+    bool m_layoutTransition; /**< setFloatingImpl 过渡期标志：setParent 强
+                              *   制 hide/show 的幽灵中间态期间置位，抑制
+                              *   announceVisible 的宿主回链重排（回嵌一
+                              *   轮的显隐幽灵轮不再各自触发全量重排），
+                              *   统一重排调用点前清除。 */
     XRect m_undockedGeometry; /**< 最近一次浮动态几何（全局坐标，对标
                               *   QDockWidgetPrivate::undockedGeometry，
                               *   qdockwidget_p.h:88；重新 setFloating(true)
@@ -112,6 +117,28 @@ void XDockWidget_init(XDockWidget* self, const char* utf8Title,
 XDockWidget* XDockWidget_create_ex(XMemoryType memory,
                                    const char* utf8Title,
                                    XWidget* parent, XWidgetFlags flags);
+
+/** @brief      装饰条拖动移动顺路钩：顶层为浮动停靠面板时衔接宿主落点
+ *              预览（XWindowDecoration 标题条拖拽循环每步调用）。
+ * @details     CSD 标题条拖动此前只挪窗不接停靠——拖浮动面板到主窗口
+ *              找位全程无落点指示、松手必浮着。本钩让该循环与拖拽会话
+ *              同口径：hoverDrop 幂等门在内部，非面板顶层类型不符零开销。
+ *              XGUI_DOCK_STRIP_DROP=0 关闭（默认开）。
+ * @param      top 装饰条所属顶层控件（借用）。
+ * @param      globalPos 本步移动的全局坐标。
+ * @return      顶层是浮动停靠面板且已衔接返回 true；否则 false。
+ */
+bool XDockWidget_decoStripDragMove(XWidget* top, const XPoint* globalPos);
+
+/** @brief      装饰条拖动松手钩：顶层为浮动停靠面板时按当前落点落位
+ *              （对标拖拽会话的 finishDrop 收尾；无落点保持浮动）。
+ * @details     可能重父化并销毁本顶层窗口——调用方其后不得再触碰 top。
+ *              XGUI_DOCK_STRIP_DROP=0 关闭（默认开）。
+ * @param      top 装饰条所属顶层控件（借用）。
+ * @param      globalPos 松手点全局坐标。
+ * @return      顶层是浮动停靠面板且已处理返回 true；否则 false。
+ */
+bool XDockWidget_decoStripDragDrop(XWidget* top, const XPoint* globalPos);
 
 /** @brief X停靠控件set控件（对标 Qt 同名接口）。
  * @details 对标 Qt setWidget 的替换语义：首次设置装入内容并立即摆到

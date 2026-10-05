@@ -1556,6 +1556,14 @@ static void VDemoWin_timerEvent(XObject* object, XTimerEvent* event)
            干净时只投递悬浮层自身 210x70 小区域；文本统计窗口同为
            250ms（XGUI_PERFORMANCE_OVERLAY_UPDATE_MS），指标更新与
            重绘节奏一致。XGUI_DEMO_IDLE_GATE=0 时本定时器不启动。 */
+        /* 拖拽期暂停心跳（2026-10-05）：鼠标抓取进行中（停靠面板拖动
+           等）跳过本轮自刷新——FULL 渲染模式下小区域 update 会被放大
+           为整窗重绘+提交，每秒一次的心跳打断足以污染拖动帧节奏；松
+           开后下一周期自动恢复。 */
+        if (XWidget_mouseGrabber() != NULL) {
+            XEvent_accept((XEvent*)event);
+            return;
+        }
         demo_repaint(self);
         XEvent_accept((XEvent*)event);
         return;
@@ -2970,23 +2978,38 @@ static void VDemoWin_wheelEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief EnterEvent：打印进入坐标（局部+全局）。 */
+/** @brief EnterEvent：打印进入坐标（局部+全局）。
+ *  @details 默认关闭（XGUI_DEMO_INPUT_TRACE=1 开启）：拖拽/悬停期指针
+ *           在装饰条与内容间反复穿越，ENTER/LEAVE 逐条 printf+fflush 到
+ *           控制台在远程会话上是可感知的开销与刷屏噪音（2026-10-05）。 */
+static bool demo_inputTrace(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char* env = XSystem_environment("XGUI_DEMO_INPUT_TRACE");
+        cached = env && *env && !(env[0] == '0' && env[1] == 0) ? 1 : 0;
+    }
+    return cached != 0;
+}
+
 static void VDemoWin_enterEvent(XWidget* self, XEvent* event)
 {
     XEnterEvent* enter = (XEnterEvent*)event;
     XPoint global;
     (void)self;
-    if (!enter) return;
+    if (!enter || !demo_inputTrace()) return;
     global = XEnterEvent_globalPosition(enter);
     demo_log("XGuiWindowDemo: enter pos=(%d,%d) global=(%d,%d)\n",
              (int)XEnterEvent_position(enter).x, (int)XEnterEvent_position(enter).y,
              (int)global.x, (int)global.y);
 }
 
-/** @brief LeaveEvent：打印离开通知。 */
+/** @brief LeaveEvent：打印离开通知（门控同 enter，见 demo_inputTrace）。 */
 static void VDemoWin_leaveEvent(XWidget* self, XEvent* event)
 {
     (void)self;
     (void)event;
+    if (!demo_inputTrace()) return;
     demo_log("XGuiWindowDemo: leave\n");
 }
 /** @brief 演示窗口类虚表初始化。 */

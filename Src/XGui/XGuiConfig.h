@@ -1212,10 +1212,13 @@
 #include "Graphics/XImageCodec/XImageCodec_config.h"
 
 /* ==================== 调试跟踪（临时；问题关闭后移除） ==================== */
-/* 停靠拖放链路跟踪：置 1 时 XMainWindow/XDockWidget 关键决策点向 stdout
- * 打一行 [DOCK] 日志（带 fflush）。默认 0（零开销）。 */
+/* 停靠拖放链路跟踪：XMainWindow/XDockWidget 关键决策点向 stdout 打一行
+ * [DOCK] 日志（带 fflush）。2026-10-05 起编译期默认 0（零开销，与本节
+ * 既有口径对齐），改为运行期环境变量门控：需要跟踪时启动被测进程前
+ * set XGUI_DOCK_TRACE=1（诊断/harness 脚本负责设置）；编译期置 1 仍可
+ * 无条件强制（诊断构建预设）。 */
 #ifndef XGUI_DOCK_TRACE
-#define XGUI_DOCK_TRACE 1
+#define XGUI_DOCK_TRACE 0
 #endif
 
 #endif /* XGUICONFIG_H */

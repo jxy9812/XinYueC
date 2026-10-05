@@ -2812,8 +2812,31 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
          * 提交；否则高频局部 update 只能补回悬浮层等脏区，留下黑底。
          * 这对应 QWidgetWindow 收到 expose 后重建可见窗口内容的边界。 */
         XRegion_init(&region);
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
+#if XWINDOWEVENT_ON
+        /* FULL 限绘（2026-10-05 拖动/悬停冻结治理）：暴露事件不再恒升级
+         * 顶层全矩形——桌面 FULL 的持久单 DIB 已保存全部历史像素，win32
+         * WM_PAINT 按 rcPaint 条带折算注入的暴露区域（拖动每步主窗被浮
+         * 窗揭出的细带）只需补回该条带 ∪ 当前脏区快照；并集为空（首显/
+         * 重新暴露，服务器端像素不可靠的场景）才回退整窗。事件内部区域
+         * 借用不深拷贝（同 PAINT 分支口径，flush 对 region 只读）。
+         * PARTIAL/fbdev DIRECT 保持恒整窗注入逐字节不变：fbdev 弹层暴
+         * 露恢复链（XWindow_setVisible 的相交顶层注入）依赖整窗重绘。 */
+        XRegion_united(&((XExposeEvent*)event)->m_region, &top->m_dirty,
+                       &region);
+        if (XRegion_isEmpty(&region))
+        {
+            rect = XWidget_rect(top);
+            XRegion_addRect(&region, &rect);
+        }
+#else
         rect = XWidget_rect(top);
         XRegion_addRect(&region, &rect);
+#endif /* XWINDOWEVENT_ON */
+#else
+        rect = XWidget_rect(top);
+        XRegion_addRect(&region, &rect);
+#endif /* FULL */
         XWidget_flushBackingStore(top, &region);
         XRegion_deinit(&region);
         XEvent_accept(event);
@@ -8127,8 +8150,46 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     XRegion_init(&whole);
  #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
     {
-        contents = top->m_contentsRect;
-        XRegion_addRect(&whole, &contents);
+        /* FULL 限绘（2026-10-05）：恒定 contentsRect 整窗改为「传入
+           region ∪ m_dirty」的包围盒单矩形限绘，两者皆空（首显/resize）
+           才回退整窗——FULL 的持久单 DIB 上绘制面无需覆盖整窗，恒整窗
+           paintTree 是拖动/悬停期重复大工作的乘数（与 #else 腿 P0-4
+           脏区限绘同口径，含包围盒单矩形纪律）。XGUI_FLUSH_FULLFALLBACK=1
+           恢复恒整窗（诊断逃生门，沿用 #else 腿先例）。提交腿（平台层
+           FULL 恒清 flushRegion + 整 DIB blit）本批不动：本限绘只消除
+           全树重绘乘数，每帧整窗 GDI 上传仍在。 */
+        static int fullFallback = -1;
+        XRect bb;
+        XRect dirtyBb;
+        int haveRect = 0;
+        if (fullFallback < 0)
+        {
+            const char* ff = XSystem_environment("XGUI_FLUSH_FULLFALLBACK");
+            fullFallback = ff && *ff && !(ff[0] == '0' && ff[1] == 0) ? 1 : 0;
+        }
+        if (region && region->count > 0)
+        {
+            XRegion_boundingRect(region, &bb);
+            haveRect = 1;
+        }
+        if (top->m_dirty.count > 0)
+        {
+            XRegion_boundingRect(&top->m_dirty, &dirtyBb);
+            if (haveRect) bb = XRect_united(&bb, &dirtyBb);
+            else bb = dirtyBb;
+            haveRect = 1;
+        }
+        if (haveRect && !fullFallback &&
+            bb.width > 0 && bb.height > 0)
+        {
+            XRegion_clear(&whole);
+            XRegion_addRect(&whole, &bb);
+        }
+        else
+        {
+            contents = top->m_contentsRect;
+            XRegion_addRect(&whole, &contents);
+        }
     }
  #else
     if (region && region->count > 0)

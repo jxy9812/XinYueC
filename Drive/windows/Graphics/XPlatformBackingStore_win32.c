@@ -14,7 +14,8 @@
  *               像素转换；
  *             - present：先把脏矩形对应的 XImage 行同步进 DIB，再把每块
  *               脏区经 BitBlt(SRCCOPY) 从内存 DC 合成到目标窗口 DC
- *               （FULL 模式经 SetDIBitsToDevice 整屏上传）；dpr>1 时
+ *               （FULL 模式同口径按脏区提交，整屏帧=单整屏矩形）；
+ *               dpr>1 时
  *               同位点改用拉伸原语 StretchBlt/StretchDIBits（目标矩形
  *               ×dpr 放大——BitBlt/SetDIBitsToDevice 仅 1:1，present
  *               唯一放大点，四 blit 位点由 xpbs_win32_blitRectScaled
@@ -337,9 +338,7 @@ static void xpbs_win32_presentRegion(struct XWin32BackingStoreNative* state,
                                      float scale)
 {
     HDC winDC;
-#if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_FULL
     int i;
-#endif
     (void)full;
     if (!state || !state->m_memDC || !region || region->count <= 0) return;
     if (!hwnd || !IsWindow(hwnd)) return;
@@ -357,17 +356,17 @@ static void xpbs_win32_presentRegion(struct XWin32BackingStoreNative* state,
                                       true, scale);
     }
 #else
-    /* FULL 的语义是每次提交整屏：即使脏区很小也整帧上传。 */
-    {
-        if (state->m_width > 0 && state->m_height > 0 && state->m_dibBits) {
-            XRect rect;
-            rect.x = 0;
-            rect.y = 0;
-            rect.width = state->m_width;
-            rect.height = state->m_height;
-            xpbs_win32_blitRectScaled(winDC, &rect, state->m_dibBits,
-                                      false, scale);
-        }
+    /* FULL 与 PARTIAL 同口径按脏矩形提交：Driver_present 已按 region 把
+       脏行同步进 DIB（syncDirtyRect），这里逐矩形 memDC BitBlt 上屏，
+       帧上传量与窗口面积解耦——region 由公共层 flush 裁决（默认=调用方
+       脏区；XGUI_FLUSH_FULLCOMMIT=1 时=整屏单矩形，等价整帧一次 blit）。
+       逐帧整屏 SetDIBitsToDevice 在慢显示栈（RDP/OrayIdd）上是拖拽卡顿
+       「断崖」的主腿（2026-10-05 收口）。 */
+    for (i = 0; i < region->count; ++i) {
+        const XRect* rect = &region->rects[i];
+        if (rect->width > 0 && rect->height > 0)
+            xpbs_win32_blitRectScaled(winDC, rect, (void*)state->m_memDC,
+                                      true, scale);
     }
 #endif
     if (!xpbs_present_micro_requested()) ReleaseDC(hwnd, winDC);

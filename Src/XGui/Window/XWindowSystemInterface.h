@@ -347,6 +347,20 @@ bool XWindowSystemInterface_handleMouseEvent_ex(XWindow* window, XEventType type
                                                 uint32_t timestamp);
 
 /**
+ * @brief      系统模态移动循环会话通知（startSystemMove 交接回框架）。
+ * @details    平台层进入/退出 SC_MOVE 系统移动循环时调用：phase 0=进入
+ *             （装饰层停用应用层拖拽跟随，OS 直接挪窗）；1=正常退出
+ *             （按 clientPos 收尾——浮动停靠面板松手落位）；2=取消退出
+ *             （循环内 ESC，仅收尾不落位）。由窗口装饰注册表按窗口反查
+ *             顶层，非装饰顶层安全 no-op。
+ * @param      window    移动中的窗口；可为 NULL（no-op）。
+ * @param      phase     0=进入；1=正常退出；2=取消退出。
+ * @param      clientPos 退出时指针在窗口客户区的逻辑坐标（phase 0 可 NULL）。
+ */
+void XWindowSystemInterface_handleSystemMove(XWindow* window, int phase,
+                                             const XPoint* clientPos);
+
+/**
  * @brief      注入滚轮事件（对标 QWindowSystemInterface::handleWheelEvent）。
  * @details    平台滚轮滚动时调用；构造 XWheelEvent（携带局部坐标、角度增量
  *             angleDelta、按下按键与修饰键）并自发投递。角度增量遵循 Qt

@@ -1378,12 +1378,11 @@ void XWindow_setWindowStates(XWindow* self, XWindowStates states)
     XWindowState before;
     XWindowState after;
     if (!self || !(data = self->m_data)) return;
-    /* Qt 6.8：WindowActive 位不可写，清除并忽略。 */
-    if (states & XWindowState_Active) {
+    /* Qt 6.8：WindowActive 位不可写，清除并忽略（合同语义而非错误，
+     * 不打日志——激活链路高频途经此处，逐条 XError 在慢控制台上是
+     * 可感知的开销与噪音，2026-10-05 去除）。 */
+    if (states & XWindowState_Active)
         states &= (XWindowStates)~XWindowState_Active;
-        /* 复用一个既有告警通道：错误日志。 */
-        XERROR_PRINTF("XWindow::setWindowStates: ignore WindowActive\n");
-    }
     before = XWindow_effectiveState(data);
     data->m_windowStates = states;
     after = XWindow_effectiveState(data);

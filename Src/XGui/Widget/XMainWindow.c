@@ -14,22 +14,41 @@
 
 /* ==================== 调试跟踪（XGUI_DOCK_TRACE，问题关闭后移除） ==================== */
 
-#if XGUI_DOCK_TRACE
 #include <stdio.h>
 #include "XDateTime.h"
+#include "XSystem.h"
+
+#if XGUI_DOCK_TRACE
+/* 编译期强制开启（诊断构建预设）：宏体无条件生效。 */
+#define XMW_TRACE_ON() 1
+#else
+/* 运行期环境变量门控，与 XDockWidget.c 的 xdw_traceEnabled 同口径
+ * （static 缓存，默认关，2026-10-05）。 */
+static bool xmw_traceEnabled(void)
+{
+    static int cached = -1;
+    if (cached < 0) {
+        const char* env = XSystem_environment("XGUI_DOCK_TRACE");
+        cached = env && *env && !(env[0] == '0' && env[1] == 0) ? 1 : 0;
+    }
+    return cached != 0;
+}
+#define XMW_TRACE_ON() xmw_traceEnabled()
+#endif
+
 /* 与 XDockWidget.c 的 XDW_TRACE 同口径（毫秒时间戳 + 函数名 + 即刷）。 */
 #define XMW_TRACE(...)                                                    \
     do {                                                                  \
-        int64_t xmwTraceMs = XDateTime_currentMSecsSinceEpoch();          \
-        printf("[DOCK %lld.%03lld %s] ", (long long)(xmwTraceMs / 1000),  \
-               (long long)(xmwTraceMs % 1000), __func__);                 \
-        printf(__VA_ARGS__);                                              \
-        printf("\n");                                                     \
-        fflush(stdout);                                                   \
+        if (XMW_TRACE_ON()) {                                             \
+            int64_t xmwTraceMs = XDateTime_currentMSecsSinceEpoch();      \
+            printf("[DOCK %lld.%03lld %s] ",                              \
+                   (long long)(xmwTraceMs / 1000),                        \
+                   (long long)(xmwTraceMs % 1000), __func__);             \
+            printf(__VA_ARGS__);                                          \
+            printf("\n");                                                 \
+            fflush(stdout);                                               \
+        }                                                                 \
     } while (0)
-#else
-#define XMW_TRACE(...) do {} while (0)
-#endif
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
@@ -350,6 +369,7 @@ static void xmw_layoutDockRow(XMainWindow* self, int area, int y, int rowH,
 
 static void xmw_dockGroupSync(XMainWindow* self);
 static void xmw_layout(XMainWindow* self);
+static void xmw_layoutFlush(XMainWindow* self);
 
 /** @brief      页签条 currentChanged 转发槽（connect_2 槽首参=发送者）。
  *  @details    由页签条上溯宿主主窗口，按页签条在 m_dockTabBars 中的
@@ -1068,6 +1088,7 @@ static void xmw_dockGroupSync(XMainWindow* self)
 {
     int64_t g;
     int64_t gn;
+    bool outerBusy;
     if (!self || !self->m_dockTabGroups) return;
     /* 浮动成员脱离编组（对标 Qt unplug：成员拖出浮动即离开标签组）。
      * 摘除会改变组下标并可能解散组（组向量被删），必须先快照成员、
@@ -1140,10 +1161,28 @@ static void xmw_dockGroupSync(XMainWindow* self)
         }
         if (!active && n > 0)
             active = XVector_At_Base(group, 0, XDockWidget*);
+        /* 显隐循环合帧（2026-10-05）：busy 包围 + 同值短路。逐成员
+         * setVisible 的 show/hide 事件会经 xdw_announceVisible 宿主回链
+         * 递归 updateDockLayout——旧实现组内每个翻转成员各触发一轮完整
+         * 重排（tabify 编组逐成员递归的来源）。busy 期间嵌套请求只挂
+         * m_layoutPending；显隐同值短路省掉原生映射往返与 announce。 */
+        outerBusy = self->m_layoutBusy;
+        self->m_layoutBusy = true;
         for (i = 0; i < n; ++i) {
             XDockWidget* d = XVector_At_Base(group, i, XDockWidget*);
             if (!d) continue;
+            if (XWidget_isHidden((XWidget*)d) == (d != active))
+                continue; /* 显隐同值：目标态已就位，跳过 */
             XWidget_setVisible((XWidget*)d, d == active);
+        }
+        self->m_layoutBusy = outerBusy;
+        /* 循环出口消费 pending：直接调用路径（removeDockWidget 等）不经
+         * updateDockLayout，挂起请求必须就地消费一次；合帧主体内
+         * （outerBusy）主体尾随的 xmw_layout 紧随本循环即终态重排，
+         * pending 就地清掉即可，避免一轮空转重跑。 */
+        if (self->m_layoutPending) {
+            self->m_layoutPending = false;
+            if (!outerBusy) xmw_layoutFlush(self);
         }
     }
 }
@@ -1167,7 +1206,7 @@ void XMainWindow_addDockWidget(XMainWindow* self, int area,
         *(int*)XVector_at_base(self->m_dockAreas, existing) = areaVal;
         XWidget_setParent(dock, (XWidget*)self, 0);
         XWidget_show(dock);
-        xmw_layout(self);
+        xmw_layoutFlush(self); /* 合帧入口：嵌套/连续重排收口（2026-10-05） */
         return;
     }
     XWidget_setParent(dock, (XWidget*)self, 0);
@@ -1176,7 +1215,7 @@ void XMainWindow_addDockWidget(XMainWindow* self, int area,
     if (self->m_dockHeights)
         XVector_push_back_1_base(self->m_dockHeights, &heightVal);
     XWidget_show(dock);
-    xmw_layout(self);
+    xmw_layoutFlush(self); /* 合帧入口：嵌套/连续重排收口（2026-10-05） */
 }
 
 void XMainWindow_removeDockWidget(XMainWindow* self, XWidget* dock)
@@ -1282,7 +1321,7 @@ void XMainWindow_tabifyDockWidget(XMainWindow* self, XDockWidget* first,
     /* 激活 second：记入 m_activeTabifiedDock 并真发射信号。 */
     XMainWindow_tabifiedDockWidgetActivated_signal(self, (XWidget*)second);
     xmw_dockGroupSync(self);
-    xmw_layout(self);
+    xmw_layoutFlush(self); /* 合帧入口：嵌套/连续重排收口（2026-10-05） */
 }
 
 const XVector* XMainWindow_tabifiedDockWidgets(const XMainWindow* self,
@@ -1406,17 +1445,48 @@ int XMainWindow_dockOptions(const XMainWindow* self)
     return self ? self->m_dockOptions : 0;
 }
 
-void XMainWindow_updateDockLayout(XMainWindow* self)
+/**
+ * @brief      停靠重排合帧入口（updateDockLayout 的实现体）。
+ * @details    回嵌松手一轮会经 setParent 强制 hide → show →
+ *             setFloatingImpl → addDockWidget/tabify 连续触发多次重排，
+ *             每轮都是 dockGroupSync+xmw_layout 全量重排，且组同步逐成
+ *             员 setVisible 的显隐 announce 会经宿主回链递归重入。本入
+ *             口把嵌套/连续请求合帧：busy 期间只挂 pending；主体跑完后
+ *             按显式深度上限（4）重跑挂起请求——显隐终态在第一轮真实
+ *             重排即收敛，重跑内不再置位，上限只是防御性断路（不依赖
+ *             隐式递归论证）。
+ * @param      self 目标主窗口；可为 NULL，NULL 时不执行操作。
+ */
+static void xmw_layoutFlush(XMainWindow* self)
 {
-    /* 保护接口（见 XMainWindow_Protected.h）：停靠面板浮动/显隐变化时
-     * 经宿主回链回触重排（对标 QDockWidget 触发
-     * QMainWindowLayout::update 的私有路径）。重排幂等，重复调用安全。 */
+    int depth = 0;
     if (!self) return;
+    if (self->m_layoutBusy) {
+        self->m_layoutPending = true;
+        return;
+    }
+    self->m_layoutBusy = true;
     /* 先同步标签组（浮动成员脱离编组、组余员恢复显示），再重排——
      * 否则拖出成员仍挂在旧组里被"仅活动面板可见"隐藏（实测：中央
      * tab 化后拖出其一，另一块面板凭空消失）。 */
     xmw_dockGroupSync(self);
     xmw_layout(self);
+    self->m_layoutBusy = false;
+    while (self->m_layoutPending && ++depth < 4) {
+        self->m_layoutPending = false;
+        xmw_dockGroupSync(self);
+        xmw_layout(self);
+    }
+}
+
+void XMainWindow_updateDockLayout(XMainWindow* self)
+{
+    /* 保护接口（见 XMainWindow_Protected.h）：停靠面板浮动/显隐变化时
+     * 经宿主回链回触重排（对标 QDockWidget 触发
+     * QMainWindowLayout::update 的私有路径）。重排幂等，重复调用安全。
+     * （2026-10-05）实现体改走 xmw_layoutFlush 合帧入口：嵌套/连续重
+     * 排请求只跑一次真实终态布局。 */
+    xmw_layoutFlush(self);
 }
 
 /* ==================== 拖放落点（对标 QMainWindowLayout hover/plug） ==================== */
@@ -1439,15 +1509,25 @@ static void xmw_dockAreaRect(const XMainWindow* self, XRect* out)
     int h;
     int top;
     int bottom;
+    int left;
+    int width;
     int64_t i;
     int64_t n;
+    XMargins fm;
     if (!out) return;
     w = self ? XWidget_width((const XWidget*)self) : 0;
     h = self ? XWidget_height((const XWidget*)self) : 0;
     XRect_init(out, 0, 0, w, h);
     if (!self || w <= 0 || h <= 0) return;
-    top = 0;
-    bottom = 0;
+    /* 与 xmw_layout 同一让位口径：CSD 框架条边距 + 菜单栏/工具栏/状态
+     * 栏。此前漏算装饰条边距——预览框/落点整体上移一个装饰条高度，盖
+     * 住菜单栏行（用户实测 2026-10-05：预览含菜单栏带而实际停靠在其
+     * 下）。有状态栏时其覆盖底边距带（同布局 bottom=sh 口径）。 */
+    fm = XWindowDecoration_marginsFor((XWidget*)self);
+    top = fm.top;
+    bottom = fm.bottom;
+    left = fm.left;
+    width = w - fm.left - fm.right > 0 ? w - fm.left - fm.right : 0;
     if (self->m_menuBar && XWidget_isVisible(self->m_menuBar))
         top += xmw_menuHeight();
     if (self->m_toolBars) {
@@ -1459,8 +1539,12 @@ static void xmw_dockAreaRect(const XMainWindow* self, XRect* out)
     }
     if (self->m_statusBar && XWidget_isVisible(self->m_statusBar))
         bottom = XWidget_height(self->m_statusBar);
-    if (top + bottom > h) return; /* 预留超出客户区：保持全空（0 高） */
-    XRect_init(out, 0, top, w, h - top - bottom);
+    if (top + bottom > h) {
+        /* 预留超出客户区：保持全空（0 高，与注释既有意图一致）。 */
+        XRect_init(out, 0, 0, 0, 0);
+        return;
+    }
+    XRect_init(out, left, top, width, h - top - bottom);
 }
 
 /**
@@ -1617,9 +1701,17 @@ int XMainWindow_hoverDrop(XMainWindow* self, XWidget* dock,
 #endif
         if (!self->m_dropIndicator) return area;
     }
-    XWidget_setGeometryRect(self->m_dropIndicator, &r);
-    XWidget_show(self->m_dropIndicator);
-    XWidget_raise(self->m_dropIndicator);
+    /* raise 仅在指示器首次显示时执行：raise 是同步 SetWindowPos 往返
+     * （远程栈实测 ~90ms 一发，正好是拖动悬停期 WM_NULL 泵间隙尖峰），
+     * 幂等门只拦「同区域」，区域间切换（左→中央→右…）每次都付一遍；
+     * 拖拽会话期间无第三方改 Z 序，首次置顶即足够。 */
+    {
+        bool newlyShown = !XWidget_isVisible(self->m_dropIndicator);
+        XWidget_setGeometryRect(self->m_dropIndicator, &r);
+        XWidget_show(self->m_dropIndicator);
+        if (newlyShown)
+            XWidget_raise(self->m_dropIndicator);
+    }
     self->m_dropAreaShown = area;
     return area;
 }

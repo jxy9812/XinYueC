@@ -167,6 +167,12 @@ typedef struct XWNPendingEntry
     WNDPROC m_oldProc;   /**< 外部窗口子类化前的过程；内部窗口为 NULL。 */
     HCURSOR m_hcursor;   /**< 框架侧生效光标（LoadCursorW 共享句柄，不销毁）。 */
     bool m_cursorSet;    /**< 框架是否已接管窗口光标（WM_SETCURSOR 分流键）。 */
+    bool m_sysMoveActive;/**< startSystemMove 已投递、系统模态移动循环
+                              会话进行中（WM_ENTERSIZEMOVE/EXITSIZEMOVE
+                              会话锚；仅由本标志放行，普通窗口原生
+                              改尺寸/移动循环不受影响）。 */
+    bool m_sysMoveCancel;/**< 循环内收到 VK_ESCAPE（EXITSIZEMOVE 时取消
+                              落位，对标 Qt startSystemMove Esc 语义）。 */
 #if XSCREEN_ON
     XScreen* m_screen;   /**< 后端侧指派屏簿记（非 dpr 缓存——dpr 单源仍是
                               XWindow_devicePixelRatio）；NULL=尚未指派。
@@ -1726,6 +1732,8 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                 if (msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN) {
                     /* bit30 由系统在按住键期间标记自动重复节奏。 */
                     autoRepeat = (lParam & 0x40000000L) != 0;
+                    if (entry->m_sysMoveActive && wParam == VK_ESCAPE)
+                        entry->m_sysMoveCancel = true;
                     XWindowSystemInterface_handleKeyEvent(
                         entry->m_window, XEVENT_TYPE_KEY_PRESS,
                         key, modifiers, autoRepeat);
@@ -1738,6 +1746,29 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         }
         return 0;
     }
+
+    /* ============ 系统移动循环会话（startSystemMove 的 CSD 拖动交接） ============ */
+    /* SC_MOVE 模态循环期间 OS 以指针节奏直接挪窗（不经应用层 applyMove）；
+       ENTER/EXIT 仅在 m_sysMoveActive（本侧 startSystemMove 已投递）时
+       构成会话，普通窗口的原生移动/改尺寸循环不受影响。 */
+    case WM_ENTERSIZEMOVE:
+        if (entry && entry->m_sysMoveActive && entry->m_window) {
+            XWindowSystemInterface_handleSystemMove(entry->m_window, 0, NULL);
+        }
+        break;
+    case WM_EXITSIZEMOVE:
+        if (entry && entry->m_sysMoveActive && entry->m_window) {
+            /* GetMessagePos 返回值即消息 lParam 同构的屏幕坐标（最后一条
+             * 消息=循环退出前的指针位置）。 */
+            XPoint position;
+            entry->m_sysMoveActive = false;
+            xpwn_mousePosToLogical(hwnd, (LPARAM)GetMessagePos(), true,
+                                   &position, NULL);
+            XWindowSystemInterface_handleSystemMove(
+                entry->m_window, entry->m_sysMoveCancel ? 2 : 1, &position);
+            entry->m_sysMoveCancel = false;
+        }
+        break;
 
     /* ============ 鼠标按键（含系统双击，对标 Qt 键鼠消息翻译） ============ */
     /* ============ 非客户区左键：Tool 窗标题条转译为控件事件 ============ */
@@ -3791,6 +3822,40 @@ bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title)
     if (!entry || !entry->m_hwnd) return false;
     xpwn_applyTitle(entry->m_hwnd, title);
     return true;
+}
+
+bool XPlatformNativeWindow_startSystemMove(XWindow* window)
+{
+    XWNPendingEntry* entry;
+    if (!window) return false;
+    if (!xpwn_ensureInstance()) return false;
+    entry = xpwn_findByXWindow(window);
+    if (!entry || !entry->m_hwnd || !IsWindow(entry->m_hwnd)) return false;
+    if (!entry->m_visible) return false;
+    entry->m_sysMoveActive = true;
+    entry->m_sysMoveCancel = false;
+    /* SC_MOVE|HTCAPTION（GTK/Qt CSD 拖动同款手法）：DefWindowProc 进入
+     * 系统模态移动循环，OS 以指针节奏直接挪窗并享受 DWM/远程栈的普通
+     * 窗口拖动优化路径；左键释放或 ESC 退出循环（EXIT 会话回框架收尾，
+     * ESC 经 WM_KEYDOWN 标记取消落位）。投递失败回退应用层拖拽循环。 */
+    if (!PostMessageW(entry->m_hwnd, WM_SYSCOMMAND, SC_MOVE | HTCAPTION, 0)) {
+        entry->m_sysMoveActive = false;
+        return false;
+    }
+    return true;
+}
+
+bool XPlatformNativeWindow_dragFullWindows(void)
+{
+    /* SPI_GETDRAGFULLWINDOWS（0x26）：false=经典轮廓拖动约定。进程内
+     * 缓存——拖拽热路径逐次查询是纯开销，运行中改系统设置需重启生效。 */
+    static int cached = -1;
+    if (cached < 0) {
+        BOOL value = FALSE;
+        SystemParametersInfoW(SPI_GETDRAGFULLWINDOWS, 0, &value, 0);
+        cached = value ? 1 : 0;
+    }
+    return cached != 0;
 }
 
 bool XPlatformNativeWindow_setSizeHints(XWindow* window)

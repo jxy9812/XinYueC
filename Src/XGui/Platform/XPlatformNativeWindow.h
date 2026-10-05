@@ -209,6 +209,30 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags);
 bool XPlatformNativeWindow_setTitle(XWindow* window, const XString* title);
 
 /**
+ * @brief      请求进入系统模态移动循环（对标 Qt QPlatformWindow::
+ *             startSystemMove）。
+ * @details    CSD 标题条拖动交接：投递 SC_MOVE|HTCAPTION 后由 OS 以指针
+ *             节奏直接挪窗（DWM/远程显示栈的普通窗口拖动优化路径），
+ *             应用层不再逐移动 SetWindowPos。会话经 WM_ENTERSIZEMOVE/
+ *             WM_EXITSIZEMOVE 回框架（XWindowSystemInterface_handleSystemMove），
+ *             ESC 取消由平台层标记。仅 win32 后端实现；其余平台或窗口
+ *             未映射/投递失败返回 false（调用方回退应用层拖拽循环）。
+ * @param      window 目标窗口；可为 NULL。
+ * @return     已投递返回 true；否则 false。
+ */
+bool XPlatformNativeWindow_startSystemMove(XWindow* window);
+
+/**
+ * @brief      查询系统「拖动时显示窗口内容」设置（SPI_GETDRAGFULLWINDOWS）。
+ * @details    false=Windows 经典轮廓拖动语义（拖动期只显示轻量表示、
+ *             松手内容到位）——远程/慢显示栈上整窗实况跟随是可感知的
+ *             步进卡顿来源，拖拽交互应遵此约定。结果进程内缓存；非
+ *             win32 平台恒 true（无此约定，保持整窗跟随语义）。
+ * @return     true=整窗内容跟随；false=轮廓拖动约定。
+ */
+bool XPlatformNativeWindow_dragFullWindows(void);
+
+/**
  * @brief      把窗口最小/最大尺寸同步为原生 WM 尺寸约束。
  * @details    X11 写 WM_NORMAL_HINTS 的 PMinSize|PMaxSize（连同
  *             USPosition|USSize 一起重写，对标 QXcbWindow::applySizeHints）

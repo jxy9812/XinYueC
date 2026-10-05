@@ -21652,8 +21652,11 @@ static void test_backingstore_shared_software_core(void)
         gpbs, gui_app_probe_backingStoreCorePresent, NULL);
     XPlatformBackingStore_flush(gpbs, NULL, &region, NULL);
     /* 外层一次 + 回调内重入一次；重入调用不破坏外层回调收到的区域。
-       FULL 模式回调收到整屏矩形；DIRECT/PARTIAL 收到脏区矩形。 */
-#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
+       Windows FULL 自 2026-10-05 起与 DIRECT/PARTIAL 同口径收到调用方
+       脏区矩形（默认按脏区提交，XGUI_FLUSH_FULLCOMMIT=1 逃生门才整屏）；
+       非 Windows FULL 恒整屏提交，回调收到整屏矩形。 */
+#if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL && \
+    !defined(_WIN32)
     expect_true(g_backingStoreCorePresentCount == 2 &&
                 g_backingStoreCorePresentRect.width == 3 &&
                 g_backingStoreCorePresentRect.height == 4,
@@ -21667,7 +21670,8 @@ static void test_backingstore_shared_software_core(void)
     XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
     XRegion_deinit(&region);
 
-    /* ---- D. FULL 模式：小脏区仍整屏提交 ---- */
+    /* ---- D. FULL 模式小脏区提交区裁决（2026-10-05）：Windows 默认按
+       调用方脏区提交（1x1 矩形），非 Windows FULL 恒整屏（3x4）。 ---- */
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
     XRect_init(&dirty1, 0, 0, 1, 1);
     XRegion_init(&region);
@@ -21677,10 +21681,17 @@ static void test_backingstore_shared_software_core(void)
     XPlatformBackingStore_setPresentCallback(
         gpbs, gui_app_probe_backingStoreCorePresent, NULL);
     XPlatformBackingStore_flush(gpbs, NULL, &region, NULL);
+#if !defined(_WIN32)
     expect_true(g_backingStoreCorePresentCount == 1 &&
                 g_backingStoreCorePresentRect.width == 3 &&
                 g_backingStoreCorePresentRect.height == 4,
                 "共享核心：FULL 模式 flush 小脏区仍整屏提交");
+#else
+    expect_true(g_backingStoreCorePresentCount == 1 &&
+                g_backingStoreCorePresentRect.width == 1 &&
+                g_backingStoreCorePresentRect.height == 1,
+                "共享核心：FULL 模式 flush 小脏区按脏区提交");
+#endif
     XPlatformBackingStore_setPresentCallback(gpbs, NULL, NULL);
     g_backingStoreCorePresentReentered = 0;
     XRegion_deinit(&region);

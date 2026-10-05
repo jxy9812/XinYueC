@@ -31,6 +31,7 @@
    XWidget.c 不在本修复改动面内（N5-2 硬约束），仅经公共头引用。 */
 #include "XWidget.h"
 #include "XWidget_Protected.h"
+#include "XWindowDecoration.h"
 #endif /* XWIDGET_ON */
 
 /** @brief 当前同步派发中的触摸事件时间戳（毫秒）；仅 handleTouchEvent(_ex)
@@ -722,6 +723,18 @@ bool XWindowSystemInterface_handleMouseEvent_ex(XWindow* window, XEventType type
     XGuiApplication_sendSpontaneousEvent((XObject*)window, (XEvent*)event);
     XClassDelete((XEvent*)event);
     return true;
+}
+
+void XWindowSystemInterface_handleSystemMove(XWindow* window, int phase,
+                                             const XPoint* clientPos)
+{
+    /* 系统移动循环会话桥：转发给窗口装饰层（顶层由装饰注册表按窗口
+     * 反查；锚/命中皆不依赖，循环期间抓取态变化不影响投递）。 */
+#if XWIDGET_ON
+    XWindowDecoration_systemMoveSession(window, phase, clientPos);
+#else
+    (void)window; (void)phase; (void)clientPos;
+#endif
 }
 
 bool XWindowSystemInterface_handleWheelEvent(XWindow* window,
