@@ -302,7 +302,7 @@ typedef struct XWNPendingEntry
                                             改由 present 与内容同批执行。 */
     bool m_hasPendingGeom;             /**< 有挂起几何待 present 批内落地。 */
     XRect m_pendingGeom;               /**< 挂起待落地几何（钳边后【物理】
-                                            口径，与 XClassMoveResizeWindow 实参
+                                            口径，与 XMoveResizeWindow 实参
                                             逐字段一致：强制 dpr>1 时在
                                             setGeometry 记账处已出框换算，
                                             dpr==1.0f 即逻辑直通同旧值）。 */
@@ -1006,6 +1006,24 @@ static bool xpwn_imeWanted(void)
     return true;
 }
 
+/** @brief      进程退出钩子：释放 IME 前端自有两串（atexit 注册于
+ *              xpwn_imeInit 首次分配前）。
+ *  @details    [memhunt F5 修复 2026-10-06] LSan 证据: 无 XMODIFIERS
+ *              环境下 XGuiDialogMove_Test 优雅退出泄漏 17B/1obj
+ *              （CreateInputContext 应答密钥 realloc 块 :1098 与 IC 路径
+ *              strdup :1077，进程级一次性）；标准口径
+ *              XMODIFIERS=@im=none 不触发 xpwn_imeInit，本钩子空转。
+ *              须用 libc free（strdup/realloc 配对），不可用 XFree 宏
+ *              （XMemory 池别名，分配器不配对）。DBus 连接为
+ *              dbus_bus_get 共享引用，进程退出由库自收，不在此动。 */
+static void xpwn_imeDeinit(void)
+{
+    free(g_xpwnImeKeybuf);
+    g_xpwnImeKeybuf = NULL;
+    free(g_xpwnImeIcPath);
+    g_xpwnImeIcPath = NULL;
+}
+
 /**
  * @brief      初始化 fcitx5 DBus 输入法（进程一次）。
  * @details    连接 session 总线 -> CreateInputContext(程序名,桌面) ->
@@ -1072,6 +1090,13 @@ static void xpwn_imeInit(void)
     /* 应答：(o ay) —— IC 路径 + 密钥字节数组。 */
     dbus_message_iter_init(reply, &iter);
     if (dbus_message_iter_get_arg_type(&iter) == DBUS_TYPE_OBJECT_PATH) {
+        /* [memhunt F5 修复 2026-10-06] 首次分配前挂退出钩子（进程级
+         * 一次；本函数总线失败时可重入，静态位防重复注册）。 */
+        static bool s_imeAtexitHooked = false;
+        if (!s_imeAtexitHooked) {
+            atexit(xpwn_imeDeinit);
+            s_imeAtexitHooked = true;
+        }
         const char* path = NULL;
         dbus_message_iter_get_basic(&iter, &path);
         g_xpwnImeIcPath = strdup(path ? path : "");
@@ -3336,7 +3361,7 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                resizeEvent→重排在本次派发内完成。 */
             XWindowSystemInterface_handleGeometryChange(entry->m_window, &client);
             if (posChanged) {
-                /* 外部移动（无 WM 时 XClassMoveWindow 直达，WM 场景拖动标题
+                /* 外部移动（无 WM 时 XMoveWindow 直达，WM 场景拖动标题
                    栏同理）：窗口级 moveEvent 此前只有控件层经
                    applyWindowGeometry 的间接联动，XWindow 子类的
                    moveEvent 虚槽从不触发（对标 Qt：QXcbWindow 把
@@ -5047,7 +5072,7 @@ bool XPlatformNativeWindow_create(XWindow* window)
     attr.border_pixel = 0u;
     attr.colormap = g_xpwnColormap;
     /* 位重力 NorthWest：改尺寸时服务器保留旧内容，扩区只按背景像素补
-     * 新条带——默认 ForgetGravity 下每步 XClassMoveResizeWindow 服务器把
+     * 新条带——默认 ForgetGravity 下每步 XMoveResizeWindow 服务器把
      * 整窗按 background_pixel=0 重铺，是拖拽黑闪的服务器侧源头；与
      * present 批内落窗配合（挂起几何与整窗内容同一请求批生效），把
      * 「ConfigureWindow 已处理、PutImage 流式落地中」的微秒级窗口内的
@@ -5455,7 +5480,7 @@ void XPlatformNativeWindow_destroy(XWindow* window)
 static void xpwn_applyPendingGeometry(XWNPendingEntry* entry)
 {
     if (!entry->m_hasPendingGeom) return;
-    XClassMoveResizeWindow(g_xpwnDisplay, entry->m_win,
+    XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
                       entry->m_pendingGeom.x, entry->m_pendingGeom.y,
                       (unsigned)entry->m_pendingGeom.width,
                       (unsigned)entry->m_pendingGeom.height);
@@ -5510,7 +5535,7 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     if (entry->m_deferGeometry) {
         /* 拖拽改尺寸手势期：只记账不落窗，几何由 present 与整窗内容同批
            落地（根因见 deferGeometry 注）。挂起值存钳边后【物理】口径，
-           与立即路 XClassMoveResizeWindow 实参逐字段一致（见 m_pendingGeom
+           与立即路 XMoveResizeWindow 实参逐字段一致（见 m_pendingGeom
            注）；挂起期内重复 setGeometry 以最新值为准（覆盖式），
            present 消费后清标记。 */
         entry->m_pendingGeom.x = nativeGeom.x;
@@ -5522,7 +5547,7 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     }
     /* 立即路径作废可能残留的挂起几何（解挂后的即时几何已覆盖其语义）。 */
     entry->m_hasPendingGeom = false;
-    XClassMoveResizeWindow(g_xpwnDisplay, entry->m_win,
+    XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
                       nativeGeom.x, nativeGeom.y,
                       (unsigned)nativeGeom.width,
                       (unsigned)nativeGeom.height);
@@ -6785,6 +6810,26 @@ bool XPlatformScreen_queryOrigin(int* outX, int* outY)
     (void)outX;
     (void)outY;
     return false;
+}
+
+/* ==================== 系统移动交接/拖动显示约定（16306d93 posix 补齐）==== */
+
+bool XPlatformNativeWindow_startSystemMove(XWindow* window)
+{
+    /* posix/X11 无系统模态移动循环可交接（SC_MOVE 为 win32 专属手法；
+     * X11 的 _NET_WM_MOVERESIZE 需 WM 支持且无 WM 场景不可用），按头
+     * 文件契约返回 false——调用方（XWindowDecoration/XDockWidget 拖动
+     * 入口）回退应用层拖拽循环。 */
+    (void)window;
+    return false;
+}
+
+bool XPlatformNativeWindow_dragFullWindows(void)
+{
+    /* 非 win32 平台无 SPI_GETDRAGFULLWINDOWS「轮廓拖动」系统约定，按
+     * 头文件契约恒 true——保持整窗内容跟随语义（fbdev/X11 远程与直接
+     * 展示场景本就要求实况跟随）。 */
+    return true;
 }
 
 #endif /* defined(__linux__) && defined(XINYUE_C_HAS_X11) */

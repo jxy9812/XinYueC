@@ -941,8 +941,13 @@ int main(int argc, char** argv)
     SCAN_MKDIR(outDir);
     SCAN_MKDIR(badDir);
     /* Reference mode renders the design geometry: kill grid-fit before
-       the first glyph render caches XPainter's one-shot override. */
+       the first glyph render caches XPainter's one-shot override.
+       （_putenv 为 MSVC 专属，posix 走 setenv——2026-10-05 可移植修。） */
+#if defined(_WIN32)
     if (refMode) _putenv("XGUI_TEXT_GRIDFIT=0");
+#else
+    if (refMode) setenv("XGUI_TEXT_GRIDFIT", "0", 1);
+#endif
 
     scanBuildCodepoints();
     fprintf(stderr, "font-scan: codepoints=%d path=%s unmappedGbkSlots=%d\n",

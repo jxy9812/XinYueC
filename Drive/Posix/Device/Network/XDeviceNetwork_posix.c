@@ -32,6 +32,12 @@
 /* ====== POSIX 系统头文件 ====== */
 #include <stdio.h>
 #include <stdlib.h>
+#include <dirent.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include <net/route.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 #include <limits.h>
 #include <string.h>
 #include <unistd.h>
@@ -1918,15 +1924,353 @@ XString* XDeviceNetwork_localHostName(void)
 
 bool XDeviceNetwork_interfaceConfigSupported(void)
 {
+    /* [2026-10-06] DHCP(udhcpc)与静态(ioctl+route+resolv.conf)应用侧
+     * 已实装; IPv6 静态走 rtnetlink。应用会短暂中断该网卡。 */
+    return true;
+}
+
+/* [2026-10-06 参数不全根修] POSIX 配置查询实装: 此前恒 false, 网络设置页
+ * 在全部非 Windows 平台永远走降级三行展示(状态/类型/IPv4/MAC), 掩码/
+ * 网关/DNS/DHCP 全缺(用户「获取的参数不全」实证)。数据源(嵌入式可移植):
+ * getifaddrs=地址/掩码/Up, /proc/net/route=IPv4 网关, /proc/net/if_inet6=
+ * IPv6 地址+前缀, /proc/net/ipv6_route=IPv6 默认网关, /etc/resolv.conf=
+ * DNS 前两条, /var/run/udhcpc.<if>.pid 存在=DHCP 启用( BusyBox 惯例)。 */
+static bool xdevnet_read_proc_gateways4(const char* ifname, uint32_t* hostGw)
+{
+    FILE* f = fopen("/proc/net/route", "r");
+    char line[256];
+    bool ok = false;
+    if (!f) return false;
+    while (fgets(line, sizeof(line), f)) {
+        char iface[IFNAMSIZ];
+        char dest[16];
+        char gwHex[16];
+        unsigned v;
+        if (sscanf(line, "%15s %15s %15s", iface, dest, gwHex) != 3)
+            continue;
+        if (strcmp(iface, ifname) != 0 || strcmp(dest, "00000000") != 0)
+            continue;
+        if (sscanf(gwHex, "%x", &v) != 1 || v == 0) continue;
+        /* /proc 值=网序地址的 LE 读数, ntohl 还原为主序。 */
+        *hostGw = ntohl((in_addr_t)v);
+        ok = true;
+        break;
+    }
+    fclose(f);
+    return ok;
+}
+
+static bool xdevnet_parse_hex_ipv6(const char* hex32, uint8_t out[16])
+{
+    uint8_t bytes[16];
+    int i;
+    char buf[3];
+    for (i = 0; i < 16; ++i) {
+        buf[0] = hex32[i * 2];
+        buf[1] = hex32[i * 2 + 1];
+        buf[2] = '\0';
+        if (buf[0] == '\0') return false;
+        bytes[i] = (uint8_t)strtoul(buf, NULL, 16);
+    }
+    memcpy(out, bytes, 16);
+    return true;
+}
+
+/** @brief [2026-10-06 对齐 win32] 从常见 DHCP 租约痕迹里找服务器地址。
+ *  @details 依次探测(命中即回):
+ *    ① /run/systemd/netif/leases/<ifIndex>  SERVER_ADDRESS=a.b.c.d
+ *    ② /var/lib/dhcp/dhclient.<if>.leases 与 /var/lib/dhclient/*.leases
+ *       的 option dhcp-server-identifier <ip>;
+ *    ③ /var/run/udhcpc.<if>.info  server=<ip>(部分 BusyBox 定制脚本)。
+ *  @return true 时 serverHost=主序地址。 */
+/** @brief [2026-10-06] udhcpc 守护进程在跑?(嵌入式无 pid 文件时的
+ *  DHCP 判定信号: 扫 /proc 数字目录 cmdline 含 "udhcpc" 即真, 有界)。 */
+static bool xdevnet_udhcpcRunning(void)
+{
+    static const int kMaxProcs = 1024;
+    DIR* dir = opendir("/proc");
+    struct dirent* de;
+    int scanned = 0;
+    if (!dir) return false;
+    while ((de = readdir(dir)) != NULL && scanned < kMaxProcs) {
+        char path[64];
+        char cmd[128];
+        FILE* f;
+        int fd = -1;
+        size_t n;
+        int allDigits = 1;
+        const char* p;
+        for (p = de->d_name; *p; ++p)
+            if (*p < '0' || *p > '9') { allDigits = 0; break; }
+        if (!allDigits) continue;
+        ++scanned;
+        snprintf(path, sizeof(path), "/proc/%s/cmdline", de->d_name);
+        f = fopen(path, "r");
+        if (!f) continue;
+        n = fread(cmd, 1, sizeof(cmd) - 1, f);
+        fclose(f);
+        cmd[n] = '\0';
+        if (strstr(cmd, "udhcpc")) {
+            closedir(dir);
+            return true;
+        }
+    }
+    closedir(dir);
+    return false;
+}
+
+static bool xdevnet_find_dhcp_server(uint32_t ifIndex, const char* ifname,
+                                     uint32_t* serverHost)
+{
+    char path[160];
+    char line[256];
+    char ip[64];
+    FILE* f;
+
+    /* ① systemd-networkd 租约。 */
+    snprintf(path, sizeof(path),
+             "/run/systemd/netif/leases/%u", ifIndex);
+    f = fopen(path, "r");
+    if (f) {
+        while (fgets(line, sizeof(line), f)) {
+            if (strncmp(line, "SERVER_ADDRESS=", 15) == 0) {
+                if (sscanf(line + 15, " %63s", ip) == 1) {
+                    struct in_addr a4;
+                    if (inet_pton(AF_INET, ip, &a4) == 1) {
+                        *serverHost = ntohl(a4.s_addr);
+                        fclose(f);
+                        return true;
+                    }
+                }
+            }
+        }
+        fclose(f);
+    }
+
+    /* ② dhclient 租约(server-identifier, 取文件内最后一次)。 */
+    {
+        static const char* kDhclient[] = {
+            "/var/lib/dhcp/dhclient.%s.leases",
+            "/var/lib/dhclient/dhclient-%s.leases",
+            "/var/lib/dhclient/dhclient.%s.leases"
+        };
+        size_t k;
+        for (k = 0; k < sizeof(kDhclient) / sizeof(kDhclient[0]); ++k) {
+            snprintf(path, sizeof(path), kDhclient[k], ifname);
+            f = fopen(path, "r");
+            if (!f) continue;
+            while (fgets(line, sizeof(line), f)) {
+                char* p = strstr(line, "dhcp-server-identifier");
+                if (p && sscanf(p, "%*[^0-9]%63s", ip) == 1) {
+                    struct in_addr a4;
+                    if (inet_pton(AF_INET, ip, &a4) == 1)
+                        *serverHost = ntohl(a4.s_addr);
+                }
+            }
+            fclose(f);
+            if (*serverHost) return true;
+        }
+    }
+
+    /* ③ BusyBox udhcpc 定制 info。 */
+    snprintf(path, sizeof(path), "/var/run/udhcpc.%s.info", ifname);
+    f = fopen(path, "r");
+    if (f) {
+        while (fgets(line, sizeof(line), f)) {
+            if (strncmp(line, "server=", 7) == 0) {
+                if (sscanf(line + 7, " %63s", ip) == 1) {
+                    struct in_addr a4;
+                    if (inet_pton(AF_INET, ip, &a4) == 1) {
+                        *serverHost = ntohl(a4.s_addr);
+                        fclose(f);
+                        return true;
+                    }
+                }
+            }
+        }
+        fclose(f);
+    }
     return false;
 }
 
 bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
                                          XDeviceNetworkInterfaceConfig* outConfig)
 {
-    (void)ifIndex;
-    if (outConfig) memset(outConfig, 0, sizeof(*outConfig));
-    return false;
+    struct ifaddrs* list = NULL;
+    struct ifaddrs* it;
+    char ifname[IFNAMSIZ] = {0};
+    bool found = false;
+    bool haveV6 = false;
+    char dns1[80] = {0};
+    char dns2[80] = {0};
+    uint32_t gwHost = 0;
+    char path[96];
+    FILE* f;
+
+    if (!outConfig || ifIndex == 0) return false;
+    memset(outConfig, 0, sizeof(*outConfig));
+    /* memset 会清掉内嵌 XHostAddress 的 vtable——逐址 init 恢复
+     * (vtable 缺失时 setAddress 全部静默无效, 查询恒空)。 */
+    XHostAddress_init(&outConfig->ipv4Address);
+    XHostAddress_init(&outConfig->ipv4Netmask);
+    XHostAddress_init(&outConfig->ipv4Gateway);
+    XHostAddress_init(&outConfig->ipv6Address);
+    XHostAddress_init(&outConfig->ipv6Gateway);
+    XHostAddress_init(&outConfig->dhcpServer);
+    XHostAddress_init(&outConfig->dnsPrimary);
+    XHostAddress_init(&outConfig->dnsSecondary);
+
+    /* 1) getifaddrs: 按 ifIndex 定位 → 名称/Up/IPv4 地址+掩码/IPv6 地址。 */
+    if (getifaddrs(&list) != 0) return false;
+    for (it = list; it; it = it->ifa_next) {
+        unsigned idx;
+        if (!it->ifa_name || !it->ifa_addr) continue;
+        idx = if_nametoindex(it->ifa_name);
+        if (idx != ifIndex) continue;
+        if (!found) {
+            found = true;
+            strncpy(ifname, it->ifa_name, IFNAMSIZ - 1);
+        }
+        if (it->ifa_flags & IFF_UP) outConfig->operUp = true;
+        if (it->ifa_addr->sa_family == AF_INET &&
+            XHostAddress_isNull(&outConfig->ipv4Address)) {
+            struct sockaddr_in* sin = (struct sockaddr_in*)it->ifa_addr;
+            XHostAddress_setAddressIPv4(&outConfig->ipv4Address,
+                                        ntohl(sin->sin_addr.s_addr));
+            if (it->ifa_netmask &&
+                it->ifa_netmask->sa_family == AF_INET) {
+                struct sockaddr_in* m = (struct sockaddr_in*)it->ifa_netmask;
+                XHostAddress_setAddressIPv4(&outConfig->ipv4Netmask,
+                                            ntohl(m->sin_addr.s_addr));
+            }
+        }
+        if (it->ifa_addr->sa_family == AF_INET6 &&
+            !haveV6) {
+            struct sockaddr_in6* s6 = (struct sockaddr_in6*)it->ifa_addr;
+            const uint8_t* b = (const uint8_t*)&s6->sin6_addr;
+            bool linkLocal = (b[0] == 0xFE && (b[1] & 0xC0) == 0x80);
+            /* 地址预填优先全局单播; 仅链路本地时也接受(首见即录)。 */
+            if (!haveV6) {
+                XHostAddress_setAddressIPv6(&outConfig->ipv6Address, b);
+                haveV6 = true;
+            }
+            (void)linkLocal;
+        }
+    }
+    freeifaddrs(list);
+    if (!found) return false;
+    outConfig->friendlyName = XString_create_utf8(ifname);
+
+    /* 2) IPv4 默认网关。 */
+    if (xdevnet_read_proc_gateways4(ifname, &gwHost))
+        XHostAddress_setAddressIPv4(&outConfig->ipv4Gateway, gwHost);
+
+    /* 3) IPv6 地址前缀 + 默认网关(/proc/net/if_inet6 + ipv6_route)。
+     *    前缀取自与 getifaddrs 选定地址逐字节相同的那一行。 */
+    f = fopen("/proc/net/if_inet6", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            char hex[40];
+            int prefix = 0;
+            char dev[IFNAMSIZ];
+            uint8_t b6[16];
+            if (sscanf(line, "%39s %*x %x %*x %*x %15s",
+                       hex, &prefix, dev) != 3)
+                continue;
+            if (strcmp(dev, ifname) != 0) continue;
+            if (!xdevnet_parse_hex_ipv6(hex, b6)) continue;
+            if (XHostAddress_isNull(&outConfig->ipv6Address)) {
+                XHostAddress_setAddressIPv6(&outConfig->ipv6Address, b6);
+                outConfig->ipv6PrefixLength = prefix;
+            } else {
+                uint8_t cur[16];
+                XHostAddress_toIPv6Address(&outConfig->ipv6Address, cur);
+                if (memcmp(cur, b6, 16) == 0)
+                    outConfig->ipv6PrefixLength = prefix;
+            }
+        }
+        fclose(f);
+    }
+    f = fopen("/proc/net/ipv6_route", "r");
+    if (f) {
+        char line[512];
+        while (fgets(line, sizeof(line), f)) {
+            char dest[40];
+            char dplen[4];
+            char nexthop[40];
+            char dev[IFNAMSIZ];
+            if (sscanf(line, "%39s %3s %*39s %*3s %39s %*x %*x %*x %*x %15s",
+                       dest, dplen, nexthop, dev) >= 4 &&
+                strcmp(dest, "00000000000000000000000000000000") == 0 &&
+                strcmp(dplen, "00") == 0 &&
+                strcmp(dev, ifname) == 0) {
+                uint8_t b6[16];
+                if (xdevnet_parse_hex_ipv6(nexthop, b6) &&
+                    XHostAddress_isNull(&outConfig->ipv6Gateway)) {
+                    bool zero = false;
+                    int k;
+                    for (k = 0; k < 16; ++k)
+                        if (b6[k]) { zero = true; break; }
+                    if (zero)
+                        XHostAddress_setAddressIPv6(
+                            &outConfig->ipv6Gateway, b6);
+                }
+                break;
+            }
+        }
+        fclose(f);
+    }
+    /* 4) DNS: /etc/resolv.conf nameserver 前两条(支持 v4/v6)。 */
+    f = fopen("/etc/resolv.conf", "r");
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            char ns[80];
+            if (strncmp(line, "nameserver", 10) != 0) continue;
+            if (sscanf(line + 10, " %79s", ns) != 1) continue;
+            if (!dns1[0]) snprintf(dns1, sizeof(dns1), "%s", ns);
+            else if (!dns2[0]) { snprintf(dns2, sizeof(dns2), "%s", ns); break; }
+        }
+        fclose(f);
+    }
+    if (dns1[0]) {
+        struct in_addr a4;
+        uint8_t b6[16];
+        if (inet_pton(AF_INET, dns1, &a4) == 1)
+            XHostAddress_setAddressIPv4(&outConfig->dnsPrimary,
+                                        ntohl(a4.s_addr));
+        else if (inet_pton(AF_INET6, dns1, b6) == 1)
+            XHostAddress_setAddressIPv6(&outConfig->dnsPrimary, b6);
+    }
+    if (dns2[0]) {
+        struct in_addr a4;
+        uint8_t b6[16];
+        if (inet_pton(AF_INET, dns2, &a4) == 1)
+            XHostAddress_setAddressIPv4(&outConfig->dnsSecondary,
+                                        ntohl(a4.s_addr));
+        else if (inet_pton(AF_INET6, dns2, b6) == 1)
+            XHostAddress_setAddressIPv6(&outConfig->dnsSecondary, b6);
+    }
+
+    /* 5) DHCP: pid 文件(BusyBox)或租约痕迹(对齐 win32 的 dhcpServer);
+     *    均无时以 udhcpc 守护进程在跑为信号(嵌入式常见无 pid 文件)。 */
+    snprintf(path, sizeof(path), "/var/run/udhcpc.%s.pid", ifname);
+    outConfig->dhcpEnabled = (access(path, F_OK) == 0);
+    if (!outConfig->dhcpEnabled) {
+        snprintf(path, sizeof(path), "/var/run/udhcpcd-%s.pid", ifname);
+        outConfig->dhcpEnabled = (access(path, F_OK) == 0);
+    }
+    if (!outConfig->dhcpEnabled)
+        outConfig->dhcpEnabled = xdevnet_udhcpcRunning();
+    {
+        uint32_t serverHost = 0;
+        if (xdevnet_find_dhcp_server(ifIndex, ifname, &serverHost)) {
+            outConfig->dhcpEnabled = true; /* 有租约=自动获取。 */
+            XHostAddress_setAddressIPv4(&outConfig->dhcpServer, serverHost);
+        }
+    }
+    return true;
 }
 
 void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config)
@@ -1944,10 +2288,195 @@ void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config)
     memset(config, 0, sizeof(*config));
 }
 
+/* ==================== [2026-10-06] 配置应用侧实装 ====================
+ *  DHCP=拉起 /sbin/udhcpc(-b 后台续约, default.script 落地址/路由/
+ *  resolv.conf); 静态=ioctl(SIOCSIFADDR/NETMASK/FLAGS)+SIOCADDRT/DELRT
+ *  +重写 /etc/resolv.conf。切换前先杀旧 udhcpc(pid 文件+/proc 兜底)。 */
+
+static bool xdevnet_ifnameFromIndex(uint32_t ifIndex, char* name, size_t cap)
+{
+    return if_indextoname(ifIndex, name) != NULL && cap > 0;
+}
+
+static void xdevnet_killDhcp(const char* ifname)
+{
+    char path[96];
+    FILE* f;
+    char buf[32];
+    long pid;
+    long victims[8];
+    int victimCount = 0;
+    DIR* dir;
+    struct dirent* de;
+    int scanned = 0;
+    int i;
+
+    snprintf(path, sizeof(path), "/var/run/udhcpc.%s.pid", ifname);
+    f = fopen(path, "r");
+    if (f) {
+        if (fgets(buf, sizeof(buf), f)) {
+            pid = strtol(buf, NULL, 10);
+            if (pid > 1 && victimCount < 8)
+                victims[victimCount++] = pid;
+        }
+        fclose(f);
+        unlink(path);
+    }
+    dir = opendir("/proc");
+    if (dir) {
+        while ((de = readdir(dir)) != NULL && scanned < 1024) {
+            char cmdpath[64];
+            char cmd[128];
+            FILE* cf;
+            size_t n;
+            int allDigits = 1;
+            const char* q;
+            long cand;
+            for (q = de->d_name; *q; ++q)
+                if (*q < '0' || *q > '9') { allDigits = 0; break; }
+            if (!allDigits) continue;
+            ++scanned;
+            cand = strtol(de->d_name, NULL, 10);
+            if (cand <= 1) continue;
+            snprintf(cmdpath, sizeof(cmdpath), "/proc/%s/cmdline",
+                     de->d_name);
+            cf = fopen(cmdpath, "r");
+            if (!cf) continue;
+            n = fread(cmd, 1, sizeof(cmd) - 1, cf);
+            fclose(cf);
+            cmd[n] = '\0';
+            if (strstr(cmd, "udhcpc") &&
+                (!ifname[0] || strstr(cmd, ifname))) {
+                bool dup = false;
+                for (i = 0; i < victimCount; ++i)
+                    if (victims[i] == cand) { dup = true; break; }
+                if (!dup && victimCount < 8)
+                    victims[victimCount++] = cand;
+            }
+        }
+        closedir(dir);
+    }
+    for (i = 0; i < victimCount; ++i)
+        kill((pid_t)victims[i], SIGTERM);
+    {
+        struct timespec ts = { 0, 300 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+    }
+    for (i = 0; i < victimCount; ++i)
+        kill((pid_t)victims[i], SIGKILL);
+}
+
+static bool xdevnet_udhcpcPath(char* out, size_t cap)
+{
+    static const char* kPaths[] = {
+        "/sbin/udhcpc", "/usr/sbin/udhcpc", "/bin/udhcpc", "/usr/bin/udhcpc"
+    };
+    size_t k;
+    for (k = 0; k < sizeof(kPaths) / sizeof(kPaths[0]); ++k)
+        if (access(kPaths[k], X_OK) == 0) {
+            snprintf(out, cap, "%s", kPaths[k]);
+            return true;
+        }
+    return false;
+}
+
 bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex)
 {
-    (void)ifIndex;
-    return false;
+    char ifname[IFNAMSIZ] = {0};
+    char udhcpcPath[64];
+    char pidPath[96];
+    pid_t pid;
+    int status;
+    if (!xdevnet_ifnameFromIndex(ifIndex, ifname, sizeof(ifname)))
+        return false;
+    if (!xdevnet_udhcpcPath(udhcpcPath, sizeof(udhcpcPath)))
+        return false; /* 板上无 DHCP 客户端。 */
+    xdevnet_killDhcp(ifname);
+    pid = fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        setsid();
+        freopen("/dev/null", "w", stdout);
+        freopen("/dev/null", "w", stderr);
+        freopen("/dev/null", "r", stdin);
+        snprintf(pidPath, sizeof(pidPath),
+                 "/var/run/udhcpc.%s.pid", ifname);
+        execl(udhcpcPath, "udhcpc", "-i", ifname, "-b", "-p", pidPath,
+              (char*)NULL);
+        _exit(127);
+    }
+    /* 首进程在 -b 下拿到租约后台化后即退, 即时收割防僵尸。 */
+    waitpid(pid, &status, 0);
+    return true;
+}
+
+static bool xdevnet_ifreqAddr(const char* ifname, unsigned long req,
+                              struct in_addr* in)
+{
+    struct ifreq ifr;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    int rc;
+    if (sock < 0) return false;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+    ((struct sockaddr_in*)&ifr.ifr_addr)->sin_family = AF_INET;
+    if (req == SIOCSIFADDR || req == SIOCSIFNETMASK)
+        ((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr = *in;
+    rc = ioctl(sock, req, &ifr);
+    if (req == SIOCGIFFLAGS || rc == 0)
+        memcpy(in, &((struct sockaddr_in*)&ifr.ifr_addr)->sin_addr,
+               sizeof(*in));
+    close(sock);
+    return rc == 0;
+}
+
+static bool xdevnet_ifUp(const char* ifname)
+{
+    struct ifreq ifr;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) return false;
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+    if (ioctl(sock, SIOCGIFFLAGS, &ifr) == 0) {
+        ifr.ifr_flags |= IFF_UP | IFF_RUNNING;
+        ioctl(sock, SIOCSIFFLAGS, &ifr);
+    }
+    close(sock);
+    return true;
+}
+
+static bool xdevnet_routeDefault(uint32_t gwHost, const char* ifname,
+                                 bool add)
+{
+    struct rtentry rt;
+    struct sockaddr_in* sin;
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    int rc;
+    if (sock < 0 || gwHost == 0) { if (sock >= 0) close(sock); return false; }
+    memset(&rt, 0, sizeof(rt));
+    sin = (struct sockaddr_in*)&rt.rt_gateway;
+    sin->sin_family = AF_INET;
+    sin->sin_addr.s_addr = htonl(gwHost);
+    sin = (struct sockaddr_in*)&rt.rt_dst;
+    sin->sin_family = AF_INET;
+    sin = (struct sockaddr_in*)&rt.rt_genmask;
+    sin->sin_family = AF_INET;
+    rt.rt_flags = RTF_UP | RTF_GATEWAY;
+    rt.rt_dev = (char*)ifname;
+    rc = ioctl(sock, add ? SIOCADDRT : SIOCDELRT, &rt);
+    close(sock);
+    return rc == 0;
+}
+
+static void xdevnet_writeResolv(const char* dns1, const char* dns2)
+{
+    FILE* f;
+    if ((!dns1 || !dns1[0]) && (!dns2 || !dns2[0])) return;
+    f = fopen("/etc/resolv.conf", "w");
+    if (!f) return;
+    if (dns1 && dns1[0]) fprintf(f, "nameserver %s\n", dns1);
+    if (dns2 && dns2[0]) fprintf(f, "nameserver %s\n", dns2);
+    fclose(f);
 }
 
 bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address,
@@ -1956,9 +2485,78 @@ bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address
                                        const char* dnsPrimary,
                                        const char* dnsSecondary)
 {
-    (void)ifIndex; (void)ipv4Address; (void)ipv4Netmask;
-    (void)ipv4Gateway; (void)dnsPrimary; (void)dnsSecondary;
-    return false;
+    char ifname[IFNAMSIZ] = {0};
+    struct in_addr in;
+    uint32_t oldGw = 0;
+    in_addr_t parsed;
+    if (!xdevnet_ifnameFromIndex(ifIndex, ifname, sizeof(ifname)))
+        return false;
+    if (!ipv4Address || (parsed = inet_addr(ipv4Address)) == INADDR_NONE)
+        return false;
+    xdevnet_killDhcp(ifname); /* 静态切换前先停 DHCP 客户端。 */
+    in.s_addr = parsed;
+    if (!xdevnet_ifreqAddr(ifname, SIOCSIFADDR, &in)) return false;
+    if (ipv4Netmask && inet_addr(ipv4Netmask) != INADDR_NONE) {
+        in.s_addr = inet_addr(ipv4Netmask);
+        (void)xdevnet_ifreqAddr(ifname, SIOCSIFNETMASK, &in);
+    }
+    (void)xdevnet_ifUp(ifname);
+    /* 旧默认路由摘除再挂新网关(重复挂同一网关=幂等错误可忽略)。 */
+    {
+        uint32_t probe = 0;
+        if (xdevnet_read_proc_gateways4(ifname, &probe)) {
+            oldGw = probe;
+            (void)xdevnet_routeDefault(oldGw, ifname, false);
+        }
+    }
+    if (ipv4Gateway && inet_addr(ipv4Gateway) != INADDR_NONE) {
+        in.s_addr = inet_addr(ipv4Gateway);
+        (void)xdevnet_routeDefault(ntohl(in.s_addr), ifname, true);
+    }
+    xdevnet_writeResolv(dnsPrimary, dnsSecondary);
+    return true;
+}
+
+/* ---- [2026-10-06] IPv6 静态配置: v6 地址/网关必须走 rtnetlink
+ * (SIOCSIFADDR 对 v6 不支持前缀指定)。 ---- */
+static int xdevnet_nl_talk(struct nlmsghdr* nlh)
+{
+    int sock = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
+    struct sockaddr_nl addr;
+    char buf[512];
+    ssize_t n;
+    int err = -1;
+    if (sock < 0) return -1;
+    memset(&addr, 0, sizeof(addr));
+    addr.nl_family = AF_NETLINK;
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        close(sock);
+        return -1;
+    }
+    if (sendto(sock, nlh, nlh->nlmsg_len, 0,
+               (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(sock);
+        return -1;
+    }
+    while ((n = recv(sock, buf, sizeof(buf), 0)) > 0) {
+        struct nlmsghdr* h = (struct nlmsghdr*)buf;
+        while (n >= (ssize_t)sizeof(*h)) {
+            if (h->nlmsg_len > (unsigned)n || h->nlmsg_len < sizeof(*h))
+                break;
+            if (h->nlmsg_type == NLMSG_ERROR) {
+                struct nlmsgerr* e = (struct nlmsgerr*)NLMSG_DATA(h);
+                err = (h->nlmsg_len >= sizeof(*h) + sizeof(*e)) ? e->error : -1;
+                /* EEXIST=已配置, 视为成功(幂等)。 */
+                close(sock);
+                return (err == 0 || err == -EEXIST) ? 0 : -1;
+            }
+            if (h->nlmsg_type == NLMSG_DONE) { close(sock); return 0; }
+            n -= NLMSG_ALIGN(h->nlmsg_len);
+            h = (struct nlmsghdr*)((char*)h + NLMSG_ALIGN(h->nlmsg_len));
+        }
+    }
+    close(sock);
+    return err;
 }
 
 bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
@@ -1966,8 +2564,76 @@ bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
                                            int prefixLength,
                                            const char* ipv6Gateway)
 {
-    (void)ifIndex; (void)ipv6Address; (void)prefixLength; (void)ipv6Gateway;
-    return false;
+    uint8_t addr6[16];
+    uint8_t gw6[16];
+    char reqBuf[512];
+    struct nlmsghdr* nlh;
+    struct ifaddrmsg* ifa;
+    struct rtmsg* rtm;
+    struct rtattr* rta;
+    int nlLen;
+    bool haveGw = false;
+    if (!ipv6Address ||
+        inet_pton(AF_INET6, ipv6Address, addr6) != 1)
+        return false;
+    if (prefixLength < 0 || prefixLength > 128) prefixLength = 64;
+    haveGw = (ipv6Gateway && ipv6Gateway[0] &&
+              inet_pton(AF_INET6, ipv6Gateway, gw6) == 1);
+
+    /* 地址: RTM_NEWADDR(IFA_LOCAL+IFA_ADDRESS, prefix)。 */
+    memset(reqBuf, 0, sizeof(reqBuf));
+    nlh = (struct nlmsghdr*)reqBuf;
+    nlh->nlmsg_type = RTM_NEWADDR;
+    nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE;
+    ifa = (struct ifaddrmsg*)NLMSG_DATA(nlh);
+    ifa->ifa_family = AF_INET6;
+    ifa->ifa_prefixlen = (unsigned char)prefixLength;
+    ifa->ifa_index = ifIndex;
+    ifa->ifa_scope = 0;
+    nlLen = NLMSG_LENGTH(sizeof(*ifa));
+    rta = (struct rtattr*)((char*)nlh + NLMSG_ALIGN(nlLen));
+    rta->rta_type = IFA_LOCAL;
+    rta->rta_len = RTA_LENGTH(16);
+    memcpy(RTA_DATA(rta), addr6, 16);
+    nlLen = NLMSG_ALIGN(nlLen) + RTA_ALIGN(rta->rta_len);
+    rta = (struct rtattr*)((char*)nlh + NLMSG_ALIGN(nlLen));
+    rta->rta_type = IFA_ADDRESS;
+    rta->rta_len = RTA_LENGTH(16);
+    memcpy(RTA_DATA(rta), addr6, 16);
+    nlLen = NLMSG_ALIGN(nlLen) + RTA_ALIGN(rta->rta_len);
+    nlh->nlmsg_len = nlLen;
+    if (xdevnet_nl_talk(nlh) != 0) return false;
+
+    /* 网关: RTM_NEWROUTE 默认路由(dst=/0, RTA_GATEWAY)。 */
+    if (haveGw) {
+        memset(reqBuf, 0, sizeof(reqBuf));
+        nlh = (struct nlmsghdr*)reqBuf;
+        nlh->nlmsg_type = RTM_NEWROUTE;
+        nlh->nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE |
+                           NLM_F_REPLACE;
+        rtm = (struct rtmsg*)NLMSG_DATA(nlh);
+        rtm->rtm_family = AF_INET6;
+        rtm->rtm_dst_len = 0;
+        rtm->rtm_src_len = 0;
+        rtm->rtm_table = RT_TABLE_MAIN;
+        rtm->rtm_protocol = RTPROT_STATIC;
+        rtm->rtm_scope = RT_SCOPE_UNIVERSE;
+        rtm->rtm_type = RTN_UNICAST;
+        nlLen = NLMSG_LENGTH(sizeof(*rtm));
+        rta = (struct rtattr*)((char*)nlh + NLMSG_ALIGN(nlLen));
+        rta->rta_type = RTA_GATEWAY;
+        rta->rta_len = RTA_LENGTH(16);
+        memcpy(RTA_DATA(rta), gw6, 16);
+        nlLen = NLMSG_ALIGN(nlLen) + RTA_ALIGN(rta->rta_len);
+        rta = (struct rtattr*)((char*)nlh + NLMSG_ALIGN(nlLen));
+        rta->rta_type = RTA_DST;
+        rta->rta_len = RTA_LENGTH(16);
+        memset(RTA_DATA(rta), 0, 16);
+        nlLen = NLMSG_ALIGN(nlLen) + RTA_ALIGN(rta->rta_len);
+        nlh->nlmsg_len = nlLen;
+        if (xdevnet_nl_talk(nlh) != 0) return false;
+    }
+    return true;
 }
 
 #endif /* XNETWORK_USE_PLATFORM_API && POSIX */

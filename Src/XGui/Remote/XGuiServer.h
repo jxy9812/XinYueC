@@ -163,6 +163,60 @@ void XGuiServer_clearPassword(XGuiServer* self);
 /** @brief 是否已设口令。 */
 bool XGuiServer_hasPassword(const XGuiServer* self);
 
+/* ==================== 访问口令(加法式运行期扩展, 实现主体
+ * ==================== XGuiRemoteAuth.c, 用户裁定语义 2026-10-04) ======== */
+/**
+ * @note    本节为认证的**加法式运行期扩展**: 不改动上方既有声明与语义
+ *          (setAuthMethod/setPassword 双旋钮口径不变, 含 §6.8
+ *          "SHA256+无口令 listen 拒绝"契约)。新 API 以口令为单旋钮:
+ *            - 未设口令 = 匿名可连(默认行为, 完全向后兼容);
+ *            - 已设口令 = 此后接入的**新会话**必须通过 SHA-256 挑战应答
+ *              认证(nonce 每连接随机, 防重放; 口令明文禁止过网/入日志);
+ *            - 对已有会话无影响(设口令后存量会话不断; 清口令即回匿名);
+ *            - 认证与 TLS 正交(开不开 TLS 口令语义不变; TLS 开时挑战
+ *              仍走, 防应用层裸奔)。
+ */
+
+/**
+ * @brief      设置访问口令并启用挑战应答(运行期即时生效于新会话)。
+ * @details    内部即刻计算 SHA-256 存储, 原文不留存; 认证方法旋钮随之
+ *             置 SHA256_CHALLENGE。已有会话不断线。空串等价
+ *             clearAccessPassword。
+ * @return     true 已设置; false 参数非法/哈希失败。
+ */
+bool XGuiServer_setAccessPassword(XGuiServer* self, const char* passwordUtf8);
+
+/**
+ * @brief      查询访问口令状态(掩码形态, 不明文回吐)。
+ * @param      maskedOutUtf8 掩码输出缓冲; 可为 NULL(仅查询是否已设)。
+ *             已设时写入定长掩码 "********"(不泄露真实长度), 未设写入
+ *             空串。
+ * @param      cap 缓冲容量(maskedOutUtf8 非 NULL 时须 >0)。
+ * @return     是否已设口令。
+ */
+bool XGuiServer_accessPassword(const XGuiServer* self, char* maskedOutUtf8,
+                               size_t cap);
+
+/** @brief 清除访问口令并回匿名模式(运行期即时生效于新会话; 已有会话
+ *         不断线)。 */
+void XGuiServer_clearAccessPassword(XGuiServer* self);
+
+/**
+ * @brief  设置单连接认证失败断链上限(默认 1=错 1 次即断, 历史口径;
+ *         设 N>1 时单连接内前 N-1 次错误回 AUTH_RESULT(0) 可重答,
+ *         第 N 次错误 AUTH_RESULT(0)+BYE(AUTH_FAILED) 断链)。
+ */
+void XGuiServer_setAuthFailureLimit(XGuiServer* self, int maxFailures);
+
+/** @brief 当前单连接认证失败断链上限。 */
+int XGuiServer_authFailureLimit(const XGuiServer* self);
+
+/**
+ * @brief  会话认证形态(接入会话的握手结论)。
+ * @return 1=经挑战应答认证准入; 0=匿名接入; -1=会话不存在。
+ */
+int XGuiServer_sessionAuthState(const XGuiServer* self, int sessionId);
+
 /* ==================== TLS 策略(加法式运行期扩展) ==================== */
 /**
  * @note    本节为运行期 TLS 策略的**加法式扩展**(原契约仅有环境变量
@@ -224,6 +278,29 @@ void XGuiServer_setAllowClientProfile(XGuiServer* self, bool allow);
 
 /** @brief 当前档位 id(自定义档返回 CUSTOM)。 */
 XGuiRemoteProfileId XGuiServer_profileId(const XGuiServer* self);
+
+/* ==================== UDP 低延迟旁路通道(2026-10-04 加法式扩展) ==================== */
+/**
+ * @note    本节为 UDP 旁路通道的运行期策略扩展(设计稿
+ *          out/mcgs-campaign/udp-design.md): TCP 会话锚不变, UDP 仅承载
+ *          FB_UPDATE 帧 tile(S→C, 最新帧优先丢旧不追)与 INPUT_*(C→S,
+ *          序号+NACK 可靠有序)。默认开启: 双端能力位协商门控, 老客户端
+ *          (不宣告 CAP_UDP)行为逐字节不变。绑定端口=TCP 端口+1 起顺延
+ *          试绑, 全占用静默纯 TCP。
+ */
+
+/**
+ * @brief      设置 UDP 通道开关(默认开)。监听中改动即时生效:
+ *             开=按当前 TCP 端口顺延试绑(既有 UDP 请求会话重新获 OFFER);
+ *             关=停用通道, 激活会话静默回落 TCP(会话不断)。
+ */
+void XGuiServer_setUdpEnabled(XGuiServer* self, bool enabled);
+
+/** @brief UDP 通道是否启用(用户策略, 未必已绑定)。 */
+bool XGuiServer_udpEnabled(const XGuiServer* self);
+
+/** @brief UDP 通道实际绑定端口(未绑定返回 0)。 */
+uint16_t XGuiServer_udpPort(const XGuiServer* self);
 
 /* ==================== 会话控制 ==================== */
 

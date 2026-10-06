@@ -311,6 +311,44 @@ void XAbstractNetIoRing_pollLwip(void);
 
 #endif /* XAbstractNetIoRing_ON */
 
+#include <stdint.h> /* 探针 API 用 uint64_t(置于环开关门控之外)。 */
+
+/* ==================== 事件循环唤醒延迟探针（诊断, env 门控） ====================
+ * env XGUI_REMOTE_WAKE_PROF=1 时启用；未开启时全部恒 0/空操作，热路径零开销。
+ * 置于环开关门控之外：消息层调用点无需随 XAbstractNetIoRing_ON 裁剪
+ * （环关闭时无打点发生, 查询恒 0, 调用方据此跳过采样）。
+ * 用途：环层在读完成（recv 执行 / io_uring CQE 回收，res>0）时刻按 fd 登记
+ * 时间戳，消息层（XGuiServer/XGuiClient/XGuiRemoteUdpChannel）据此测量
+ * 「socket 数据到达 → 解析并派发」的逐消息事件循环响应延迟，每 5s 汇总
+ * P50/P95 输出 [wake] 行（设计稿 out/mcgs-campaign/udp-design.md
+ * 「事件循环唤醒延迟」章节；历史前科：RECV 唤醒节拍 ~183ms 恒定延迟）。 */
+
+/**
+ * @brief 探针时钟（单调 µs）。
+ * @note  探针专用单调时钟：全部探针打点/查询统一经此取时，同进程内差值恒确，
+ *        不受墙钟跳变影响（业务时间源仍走 XDateTime 口径，此处为诊断例外）。
+ */
+uint64_t XAbstractNetIoRing_profNowUs(void);
+
+/**
+ * @brief 环层读完成打点（fd 最近一次 >0 字节读完成的时刻）。
+ * @param fd XFileDescriptor 统一标识符（环内 ctx->fd）。
+ * @note  仅 posix 环 processOneCompletion（双引擎共用漏斗）在 res>0 且
+ *        Socket 读方向（eventMask=XSocketAct_Read）完成时调用；内部经
+ *        XFd_get(fd)->object 解析属主对象为键（注意: XFd id 是池索引,
+ *        与平台原生 fd 数值无关——调用方禁以原生 fd 查询）。
+ *        表满/未知 fd/无属主静默忽略。
+ */
+void XAbstractNetIoRing_profMarkRecv(int fd);
+
+/**
+ * @brief 消息层查询：属主对象最近一次读完成时刻。
+ * @param ownerObj 套接字属主对象指针（XObject*; 即 XFd 表 desc->object,
+ *                 TCP=XTcpSocket 或 XSslSocket 设备、UDP=XUdpSocket 对象）。
+ * @return 单调 µs 时间戳；探针未开/无记录返回 0（调用方据此跳过采样）。
+ */
+uint64_t XAbstractNetIoRing_profLastRecvUs(const void* ownerObj);
+
 #ifdef __cplusplus
 }
 #endif

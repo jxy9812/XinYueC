@@ -15,7 +15,7 @@
 | 3 | 画面增量刷新: 只传变化的矩形区域 | §3.6 FB_UPDATE, §6.3 伤害收集, §6.4 tile 编码 |
 | 4 | 可选压缩算法 | §3.5 编解码协商, §5 编码与压缩 |
 | 5 | 协议栈类(帧协议/会话层); SSL 为可选加密项之一 | §3 协议规范, §4.3 TLS |
-| 6 | 性能模式 / 资源模式两种预设 + 自动模式预留, 运行时可切换 | §5.2 两档参数表, §5.3 档位切换 |
+| 6 | 性能 / 资源 / 低延迟三档预设 + 自动模式预留, 运行时可切换 | §5.2 档位参数表, §5.3 档位切换 |
 | 7 | 服务器与现有 GUI 窗口共存镜像, 双向交互 | §6.2 共存模式, §6.6 输入注入, §7.4 输入转发 |
 | 8 | 只开 XGuiServer 不开本地窗口(headless 虚拟帧缓冲) | §6.7 headless 模式 |
 | 9 | XGuiClient 输入转发口径(控件原生捕获直接转发; 键盘焦点门控; 按下抓取; 无本地虚拟外设控件; 远端自绘光标/IME) | §7.4 输入转发(逐条落实) |
@@ -119,7 +119,7 @@ XGuiRemoteLoopback.h ──▶ XIODevice.h(嵌首成员, 需完整定义), Proto
 | 4 | AUTH_RESPONSE | C→S | u16+bytes 应答(32B) |
 | 5 | AUTH_RESULT | S→C | u8 ok, u16+bytes 文本 |
 | 6 | FB_META | S→C | u16 宽, u16 高, u8 线上格式, u16 tileW, u16 tileH, u8 档位 id, u16+bytes 窗口标题 |
-| 7 | FB_REQUEST | C→S | u8 模式(0=续增量, 1=全量刷新), u16 x/y/w/h(预留 0=整幅) |
+| 7 | FB_REQUEST | C→S | u8 模式(0=续增量/视口通告, 1=全量刷新), u16 x/y/w/h(视口区域, 0=整幅/未通告; §3.6) |
 | 8 | FB_UPDATE | S→C | u32 序号, u16 tile 数, u8 线上格式, u8 保留; 后随 N 个 tile 记录(§3.6) |
 | 9 | FB_ACK | C→S(预留 V2 流控) | u32 确认序号, u32 接收窗口字节 |
 | 10 | INPUT_KEY | C→S | u8 动作(1按下/2释放), u32 XKey 码位, u32 修饰掩码, u32 扫描码, u32 时间戳 |
@@ -140,7 +140,7 @@ XGuiRemoteLoopback.h ──▶ XIODevice.h(嵌首成员, 需完整定义), Proto
 
 ### 3.5 能力协商与版本
 
-- HELLO/HELLO_ACK 携带 u32 能力位: `CAP_ZLIB`(编译含 zlib 编解码)、`CAP_RGB565`、`CAP_TOUCH`、`CAP_IME`、`CAP_TLS`、`CAP_PROFILE_SET`、`CAP_FB_ACK`。双方能力按位与取交集。
+- HELLO/HELLO_ACK 携带 u32 能力位: `CAP_ZLIB`(编译含 zlib 编解码)、`CAP_RGB565`、`CAP_TOUCH`、`CAP_IME`、`CAP_TLS`、`CAP_PROFILE_SET`、`CAP_FB_ACK`、`CAP_LATENCY`(bit8, latency 档协商)、`CAP_FB_REQUEST`(bit9, 2026-10-05 加法式: 客户端仅在能力交集含本位时才发 FB_REQUEST——老服务端永不会收到, 向后兼容不变; 合并裁决: 原 bit8 与 CAP_LATENCY 双占, 后应用优先, 迁 bit9)。双方能力按位与取交集。
 - 版本协商: 取 `min(双方版本)`; 任一方低于自身可支持的最小版本 → 发 BYE(原因=版本不匹配)后断开。
 - 认证法协商: 客户端在 HELLO 提建议值, 服务端在 HELLO_ACK 定值(可降级为 NONE)。
 
@@ -153,6 +153,18 @@ XGuiRemoteLoopback.h ──▶ XIODevice.h(嵌首成员, 需完整定义), Proto
 - 像素为行主序、无行填充、按 FB_META 宣告的线上格式(ARGB32 或 RGB565); codec 见 §5.1。帧泵交付的 FB_UPDATE 负载已剥离 5 字节传输帧头, 负载内**首条 tile 的起始偏移 = `XGUI_REMOTE_FB_UPDATE_HEADER_BYTES` = 8**(帧级头 u32 sequence + u16 tileCount + u8 format + u8 flags)。
 - **增量语义**: 服务器只对"脏 tile 网格中发生变化的 tile"出记录; tile 尺寸由 FB_META 宣告(档位决定, §5.2)。客户端解码后把 tile 矩形并入本地损伤区 → `XWidget_updateRegion` 增量重绘。全量刷新 = FB_REQUEST(mode=1) 触发的整幅 tile 序列。
 - FB_UPDATE 序号单调递增(回绕允许); V1 不做确认重传(有损链路靠 TCP/TLS 自身可靠性), FB_ACK 为 V2 流控预留。
+
+#### 3.6.1 FB_REQUEST 全量刷新与视口通告(2026-10-05 方案③④)
+
+- **首帧全量(方案③)**: 客户端在本连接首个 FB_META 到达后, 能力交集含 `CAP_FB_REQUEST` 时自动发 FB_REQUEST(mode=1, 搭车视口字段)——根修「接入后静态画面无 tile/黑块」; **发过即止**(后续靠脏 tile 增量), 重连=新连接自然重发; 档位热切换的重发 FB_META 不再触发(服务端换档代际自含全量语义)。UDP 断流恢复路径的补救 FB_REQUEST 同受能力位门控。
+- **[perf9 路2 根修 2026-10-05] 全量刷新的影子完备性**: ① FLUSH 限绘(RENDER_MODE=1 DIRECT/限绘 FAMILY)下服务端影子只按「flush 区域」累积, 从未(重)呈现的区域影子缺区——FB_REQUEST 全量刷新曾把缺区编成黑 tile 下发; 且首采集门控原以「PAINT 单槽去重」投递式 repaint 兜底, 小区域 PAINT 排队时整窗 update 被吞, 首采集=局部包围盒。修法: `xgs_enterStreaming` 与 FB_REQUEST(mode=1) 受限频通过后, 服务端在泵线程 `updateRect(整窗矩形, 含 CSD 标题栏条带)+repaint` **同步整窗重绘**, present 包装回调本调用栈内即采集整幅, 与排队事件解耦。
+- **[perf9 路2 根修 2026-10-05] 换档影子转换被二次初始化抹黑**: 同尺寸换档 `xgs_sessionReallocShadowLocked` 的逐行转换分支产出新缓冲后, fall-through 的 `XImage_reinit_ex`(语义=换新分配+零化)把转换成果整体抹黑——换档全量刷新编码全零影子=客户端整幅黑, 静态屏不愈合(真机 performance↔resource 热切换黑屏根因)。修法: 转换成功置 convertedOk 跳过二次 reinit。配套: 编码线程认领门控新增 `metaPending`(FB_META 未发出前不认领, 堵「新格式 tile 先于 META 到达被客户端格式守卫整帧丢弃」窗口)。
+- **[perf9 路2 任务4] 客户端未交付占位视觉**: backbuffer 重建底色深灰 `RGB(38,38,38)`(env `XGUI_REMOTE_TILE_PLACEHOLDER`, 缺省开, `=0` 回退纯黑)替代零值黑; 可选「正在接收画面…」提示(env `XGUI_REMOTE_CLIENT_HINT`, 缺省关, META 后首 tile 到达前绘)。换页同尺寸不重建 backbuffer=旧帧保持至新 tile 覆盖(双缓冲语义既有实现)。**[perf9 路2 扩 2026-10-05 晚]** FIT 信箱底色(上屏黑底铺色)同随占位门——真机 round1 定谳信箱黑边 ~48% 面积为「大面黑」观感主要构成, 占位开时信箱=深灰、关时=历史纯黑。设计稿 `out/perf9/placeholder-design.md`; 回归 `XGuiMirrorFidelity_Test`(fbdev 诊断构建)。
+- **[perf9 路2 停摆根修 2026-10-05 晚] 全量标志吞没=静态屏永久停摆**: 编码线程三处分配失败路径(影子未就绪/线程缓冲 ensureBuf 失败/编码批 workBuf 失败)与换档 `xgs_pumpApplySwitch` 的 realloc 失败, 原实现都把已消费的 `allTilesDirty` 吞掉——performance 档线程缓冲 ~2.3MB+ARGB32 影子 ~1.9MB 在真机内存临界(MemAvailable ~3.9MB)下分配失败即「首帧怠速交付停摆」(真机 round1 定谳: performance×UDP/TCP 停在 80/475、0.01fps、XGC_FF full 四会话 0 完成)。修法: `full` 消费后在失败路径恢复标志+睡眠限速, 自愈重试。配套**状态序根修**: `xgs_enterStreaming` 先置 `state=STREAMING`+先发 FB_META 再同步整窗重绘——present 包装回调只对 STREAMING 会话采集, 原序(先 repaint 后置态)首采集恒不落地, 交付被押后到 FB_REQUEST; FB_REQUEST 不达即静态屏永无首帧。真机复核(ceb32daa): performance×UDP FB_REQUEST 全量 475/475 tile 361-376ms(两跑), 热切换 resource↔performance 会话存活、交互唤醒交付正常, 停摆绝迹。
+- **服务端限频(设计稿一句话)**: mode=1 全量请求在服务端按会话 1s 限频——窗口内重复请求合并为一轮全量, 防节拍外请求风暴; 全量交付节拍另由 maxFps 认领门控压在 30fps 节拍内(perf8 第 4 轮, 原 15), 双层限速。
+- **首帧根修配套**: 会话建影子缓冲时置的全量标志曾让首轮全量编码一份从未被采集过的影子(全零=黑块), 静态屏(fbdev 空闲不呈现)下即首帧停滞根因。现: 服务端在进入流送态时记 `needFirstCapture` 并强制宿主整幅重绘一次(present 包装回调即刻采集真实画面), 编码线程在首次真实采集落地前暂停认领——全量交付恒为真像素。
+- **视口通告(方案④)**: FB_REQUEST(mode=0, (w,h)≠0) 为纯视口通告(无刷新动作, 老服务端对 mode=0 本就零操作, 线上兼容): (x,y,w,h) 为客户端可见裁剪窗(远端画面坐标, 1:1 模式由控件矩形逐级与祖先矩形求交得出, 250ms 节流变化才发); FIT 全可见→(0,0,0,0)=未通告。
+- **tile 交付优先级(方案④)**: 服务端编码线程每轮认领后按「视口内 tile 先行 → 组内距上次交付变化量(伤害覆盖字节, 采集侧逐 rect∩tile 累计, 认领即清零)降序 → tile 序号稳定」重排发送次序。变化量键说明: 真像素差需留前帧副本(A33 内存不可承), 伤害覆盖字节为零内存代理且与「变化大先看见」目标单调一致。重排只影响本轮已认领 tile 的发送次序, 不改帧序号/拆帧预算/队列 FIFO——UDP 最新帧优先(seq 去重)语义不受影响。**[perf9 路2 根修 2026-10-05]** 重排实现为「阶排列」(order 排列遍历 槽/坐标/键三元组)——原实现就地排序 idx/chg/vp 三组元数据而 workBuf 槽保持认领序, 编码循环 槽 i 配坐标 i' **像素与坐标系统性错配**(乱序 mosaic, 真机 performance 档「白块碎片/叠影」直接来源; 离屏 XGuiMirrorFidelity_Test 回环实证, 关 XGUI_REMOTE_TILE_PRIORITY 即恢复)。旋钮: `XGUI_REMOTE_TILE_PRIORITY=0` 关闭(回 grid 扫描序); 探针 `XGUI_REMOTE_FIRSTFRAME_PROF=1`(S: XGS_FF 行 / C: XGC_FF 行, 交付前可关); A/B 旋钮 `XGUI_REMOTE_FB_REQUEST_OFF=1`、`XGUI_CLIENT_VIEW_MODE=1to1`(测量/专项诊断用)。
 
 ### 3.7 握手时序
 
@@ -180,7 +192,15 @@ C                                   S
 ### 3.8 认证
 
 - `XGUI_REMOTE_AUTH_NONE`(0): 无认证, 仅用于可信网络。
-- `XGUI_REMOTE_AUTH_SHA256_CHALLENGE`(1): 服务端只存口令的 SHA-256(经仓内 `XCryptographicHash` SHA-2 家族, `Src/XCode/.../XCryptographicHash.h:27-46`〔调研〕; nonce 取自 `XRandomGenerator`, `XRandomGenerator.h:43-71`〔调研〕)。握手: `response = SHA256(storedHash || nonce)`; 服务端同式重算比对。
+- `XGUI_REMOTE_AUTH_SHA256_CHALLENGE`(1): 服务端只存口令的 SHA-256(经仓内 `XCryptographicHash` SHA-2 家族, `Src/XCode/.../XCryptographicHash.h:27-46`〔调研〕; nonce 取自 `XRandomGenerator`, `XRandomGenerator.h:43-71`〔调研〕)。握手: `response = SHA256(storedHash || nonce)`; 服务端同式重算比对(常量时间, `XGuiRemoteAuth.c`)。
+- **访问口令单旋钮语义(2026-10-04 用户裁定, `XGuiRemoteAuth.h/.c` 实现主体)**:
+  - 服务器**未设口令 = 匿名可连**(默认行为, 完全向后兼容);
+  - 服务器**已设口令 = 此后接入的新会话必须通过挑战应答认证**; nonce 每连接随机(`XRandomGenerator_fillSecure`), 防重放; 口令明文禁止过网、禁止入日志; 服务端仅存口令 SHA-256, 原文不留存;
+  - 错口令拒绝; 单连接失败达上限断链, 上限经 `XGuiServer_setAuthFailureLimit` 可配置(默认 1=错 1 次即断; N>1 时前 N-1 次错误回 `AUTH_RESULT(ok=0)` 可重答, 第 N 次断链);
+  - 口令运行期经公开 C API 设置/清除: `XGuiServer_setAccessPassword`(设口令即启用挑战) / `XGuiServer_accessPassword`(掩码查询, 不明文回吐) / `XGuiServer_clearAccessPassword`(清除即回匿名); **对已有会话无影响**(设口令后存量会话不断, 新会话须认证);
+  - 客户端对称 API: `XGuiClient_setAccessPassword` / `XGuiClient_clearAccessPassword`; 连接流程自动适配——服务端 HELLO_ACK 选定挑战才走认证, 选定 NONE 直连; 服务端要求认证而客户端无口令 → 快速失败断链(BYE/AUTH_FAILED), 不发送必错应答;
+  - **认证与 TLS 正交**(开不开 TLS 口令语义不变; TLS 开时挑战仍走, 防应用层裸奔);
+  - 遗留 API(`setAuthMethod`/`setPassword`)语义不变(方法+口令双旋钮, 含 §6.8 listen 拒绝契约)。
 - **强度如实注记**: 该方案防口令明文过网与重放(nonce 单次), 但**不提供服务器身份验证、无信道绑定**, 暴力字典在哈希泄露时可行; 这是"无 TLS 环境下的紧凑方案"而非强安全。真实安全选项 = TLS 档(§4.3), 二者可叠加。
 
 ### 3.9 光标与 IME 的协议边界(需求 9 落实)
@@ -239,27 +259,64 @@ C                                   S
 
 tile 去重: `XGuiRemoteCodec_tileHash` = FNV-1a 32 位(编码线程自实现, 3 行, 零依赖); 编码前先比对上一轮同格 tile 哈希, 相同则跳过(伤害归并后的二次保险)。
 
-### 5.2 两档参数表(冻结于 `XGuiRemoteProfile`)
+**编码热循环 NEON 加速(perf9 路4, 2026-10-05)**: RLE 游标扫描热点(px_eq 等值比较/脏游标扫描/按行字面量冲刷)以 intrinsic 显式向量化(`XGuiRemoteCodecNeon.h`, 内部头)。armel 交叉构建(Linaro GCC 7.3.1, 默认 `-march=armv7-a -mfloat-abi=softfp -mfpu=vfp`)实测整 TU 零向量指令; `-mfpu=neon` 下 gcc7 自动向量化只命中 convertPixels 两循环, RLE 热点全部 "control flow in loop" 拒绝——故 intrinsic 显式批比(8/4 单元一批, `vceq`+掩码压缩+`ctz` 首异定位)。三条红线: ①输出逐字节等价——rle_bench NEON 版(verify/perf9, 实现逐字提取防漂移)96 组合成模式(bpp2/4×8 尺寸含 1×1/奇宽×6 内容模式)+1824 真机 tile **0 mismatch**(A33 真机执行自证, out/perf9/neon-bench.txt); ②未初始化安全——NEON 批按行内余量夹取只读行内字节, 尾块(<8/4 单元)/零长度/封顶退出全回标量单步; ③编译开关——CMake `XGUI_REMOTE_NEON`(ARM 交叉目标默认开, `-DXGUI_REMOTE_NEON=0` 关回)仅对 XGuiRemoteCodec.c 追加 `-mfpu=neon`, ABI 恒 softfp 不变, 桌面/无 NEON 产物整头裁空恒标量。A33 真机跑分(RGB565 32×32 真机帧): **vs round5 标量 1.51~1.65×**(page608 整页 18.6→11.3ms), vs round4 5.5~6.0×; 贪婪语义/封顶 129/字面量 ≤128 与 §5.4 冻结格式逐字节一致。
 
-| 参数 | performance(性能模式) | resource(资源/嵌入式模式) |
-|------|----------------------|---------------------------|
-| 线上像素格式 | ARGB32(4B/px) | RGB565(2B/px, 内存减半) |
-| 首选编码 | ZLIB level 1(快, 无则 RLE) | RLE(或低内存 zlib level 1) |
-| tile 尺寸 | 128×128(大批量少头开销) | 32×32(小缓冲、细粒度增量) |
-| 推送帧率上限 | 60 fps | 15 fps |
-| 影子帧缓冲格式 | ARGB32 | RGB565(直接按 565 收帧, 再省一半) |
-| 编码队列字节预算 | 2 MiB | 256 KiB |
-| GUI 每圈写出预算 | 256 KiB | 32 KiB |
-| 鼠标移动合并窗口 | 0 ms(直传) | 30 ms(移动事件合并, 按下/释放永不合并) |
-| PING 间隔 / 超时 | 5 s / 15 s | 10 s / 30 s |
+### 5.2 档位参数表(冻结于 `XGuiRemoteProfile`)
 
-`XGuiRemoteProfile_initPerformance / _initResource / _initAuto` 三个预设填充函数 + `_sanitize` 夹取 + `_isValid` 校验, 全部冻结在 `XGuiRemoteProto.h`。
+| 参数 | performance(性能模式) | resource(资源/嵌入式模式) | latency(低延迟模式, 2026-10-05 加法式) |
+|------|----------------------|---------------------------|----------------------------------------|
+| 线上像素格式 | ARGB32(4B/px) | RGB565(2B/px, 内存减半) | RGB565(2B/px) |
+| 首选编码 | ZLIB level 1(快, 无则 RLE) | RLE(或低内存 zlib level 1) | **RAW 直拷**(免编码尖峰; 慢链路安全阀见下) |
+| tile 尺寸 | 128×128(大批量少头开销) | 32×32(小缓冲、细粒度增量) | **64×60**(raw 记录 7692B ≤ UDP 数据报帽 8000B; 600 高=10 整行, 800/1024 双几何零行裁切) |
+| 推送帧率上限 | 60 fps | **30 fps**([perf8 第 4 轮 2026-10-05] 15→30: 稳态端到端 P50 三轮钉死 114ms, 最大段=认领门控等待(15fps 平均 33ms/最坏 66ms); 30fps 压到 16.7/33ms, 预期稳态 P50 ~81ms。代价: 编码/发送频率翻倍——稳态小变化批 p50 ~1.2ms, 每秒增量 <2% 单核; 队列 256KB 突发丢批概率上升, 全量刷新兜底) | **60 fps** |
+| 影子帧缓冲格式 | ARGB32 | RGB565(直接按 565 收帧, 再省一半) | RGB565(直收直拷) |
+| 编码队列字节预算 | 2 MiB | 256 KiB | **2 MiB**(≈1.5 整页 raw 批水位, 上限非预分配, 反压即最新帧优先丢旧批) |
+| GUI 每圈写出预算 | 256 KiB | 32 KiB | **128 KiB**(≈100M 链路 10ms/圈, 界住 GUI 线程写出发停顿) |
+| 鼠标移动合并窗口 | 0 ms(直传) | 30 ms(移动事件合并, 按下/释放永不合并) | 0 ms(直传) |
+| PING 间隔 / 超时 | 5 s / 15 s | 10 s / 30 s | 5 s / 15 s |
+
+`XGuiRemoteProfile_initPerformance / _initResource / _initAuto / _initLatency` 四个预设填充函数 + `_sanitize` 夹取 + `_isValid` 校验, 全部冻结在 `XGuiRemoteProto.h`。
+
+**latency 档混合回退(慢链路安全阀)**: env `XGUI_REMOTE_LATENCY_RLE_FALLBACK_PCT`
+(未设=缺省 **40**[perf8 第 3 轮起, 2026-10-05]; 显式 0=关闭恒 RAW; 1..100=认领批脏
+tile 占网格总数百分位达到阈值时该批改走 RLE——tile 记录自带 codec 字节, 客户端逐
+tile 解码, 协议支持同帧混装)。缺省 40 的依据(真机 perf8 第 3 轮实测, 原"缺省关闭"
+口径作废): 纯 RAW 页切突发 = ~150 个 8KB UDP 数据报背靠背, 真机链路收侧缓冲溢出
+丢报 → 丢帧 tile 成洞, 只能靠 3s 静默兜底全量刷新愈合——整页交付 +42%(1774 vs
+1250ms)、镜像碎片化、兜底循环反复冲高队列与 RSS(round2 OOM 33MB 同族)。脏占比
+≥40%(页切/全量刷新)转 RLE 后线载 1.2MB→~100KB(ratio 0.056-0.081)且不成突发,
+无损; 小/中脏占比(<40%, 交互常态)仍 RAW 直拷保低延迟。慢链路可再调高(60~80=
+更早回退)。数据 out/perf8/round3/(镜像碎片样张 clt_mirror_nav.png)、设计稿
+out/perf8/latency-profile-design.md。
+
+**latency 档逐 tile 动态 raw/RLE(perf9 路5, 2026-10-05)**: env
+`XGUI_REMOTE_LATENCY_TILE_PICK`(未设/1=缺省开; 0=回退恒 RAW[批回退同阈值时=现行为])。
+批级回退**未触发**(批仍 RAW)时, 认领批内**每个 tile** 先 RLE 编码, 产物 ≥ raw 尺寸
+(不可压内容)即该 tile 改发 RAW——逐 tile 取 min(RAW, RLE); 批级已转 RLE 的页切/全量批
+维持原整批 RLE 语义(反 UDP 突发第一道闸不动)。记录级 codec 字节本就逐 tile(协议支持
+同帧混装), 客户端逐 tile 解码, 全程 in-band——FB_META(tile 仍 64×60)/CAP_LATENCY
+协商零改动, 老 peer 兼容。动机: 32×30 细网格已被 round2 A/B 否决(宽扁脏区补垫反增
+线载 +20%), 而稳态小变化 1 个字 tile 也背 7.7KB raw 线载; 逐 tile 二选一恒 ≤ 任一
+单策略线载。回环实测(480×320, 12 次换色整窗刺激, 批回退显式 0 隔离对照): 线载
+2156KB(RAW 恒)→107KB(pick), **≈20×**; 编码代价 srv-enc p50 448µs→1515µs(≈+1.1ms/批,
+A33 外推 +3~4ms/批, 换页批本就批级 RLE 无新增)。设计稿 out/perf9/latency-tile-design.md §3。
 
 ### 5.3 档位切换与自动模式
 
 - 档位 = 纯参数结构 + 预设, **运行时可切换**: 服务端 `XGuiServer_setProfileId/_setProfile`(对既有会话在帧边界生效, 换档即广播 FB_META 新 tile/格式参数, 客户端 FB_REQUEST 全量跟随); 客户端经 PROFILE_SET 请求(受服务端 `setAllowClientProfile` 策略门控, 应答 PROFILE_RESULT)。
 - 换档协议约束: 线上格式或 tile 尺寸变化必须伴随 FB_META 且此后 FB_UPDATE 按新参数编码; 客户端收到 FB_META 即重建本地缓冲。
+- **向后兼容(latency 档, 2026-10-05)**: 档位 id 是 dec 层**封闭枚举**
+  (XGuiRemoteTest 冻结断言 "档位 id 非法 dec 拒绝"), 老 peer 收到不识的档 id =
+  协议错误断链——纯靠"未知档回退"不可行。故 latency 档的兼容机制是**能力位协商**:
+  新增 `XGUI_REMOTE_CAP_LATENCY`(bit8), 双端各自在 HELLO/HELLO_ACK 宣告; 服务端
+  对未宣告该位的会话**逐会话降级 resource 预设**(xgs_handleHello 会话夹取, 同
+  RGB565/ZLIB 夹取先例; 运行期切档路径 xgs_applyServerProfile 同守), FB_META 宣告
+  resource, 老客户端正常建流; PROFILE_SET(latency) 来自未宣告 peer 时拒绝并回显
+  当前档(PROFILE_RESULT 可解析, 会话不断)。新客户端 FB_META 收到未知档 id(dec
+  层未来放行时)回退 resource 预设(消费端兜底冻结)。取 id=4 而非 3: 冻结断言以
+  0x03 作非法样本。
 - **自动模式**: `XGuiRemoteProfileId_Auto=2` 仅预留——`_initAuto` 当前等价 resource 预设; `CAP_PROFILE_SET` 协商通过后 V2 可基于 RTT/队列水位在运行期自动调档。接口与协议位已冻结, 行为 V1 不实现(文档明示)。
+- **编码帧率自适应降档(perf9 路4, 2026-10-05)**: 服务端编码线程认领门控上限取 `min(档位 maxFps, 阶梯值)`, 阶梯由纯函数状态机驱动(`XGuiRemoteAdapt.h`, 状态编码线程私有零锁)。触发= 单轮(认领→扫描→编码→入队)耗时超预算 **或** 队列高水位(>半容量/背压标志), 连续 2 轮即沿阶梯下行一步; 恢复= 连续 8 轮耗时低于半预算且距上次移动 ≥1s(非对称迟滞防抖动); 阶梯= 原速→半速→15fps 地板(由会话档位派生, 恒不高于档位——resource 15fps 档天然平阶梯零影响, 60fps 档即 60→30→15)。预算派生= 1000/当前阶梯 fps(60→16.7ms/30→33.3/15→66.7)。**换档并集**: PROFILE_SET/能力协商致档位变化即重置阶梯到步 0; 纯服务端认领节流、无线上语义变化, 老 peer 完全兼容。背景: performance 档(A33 单轮倾倒 29.21ms > 16.7ms 预算)交付崩塌 0.05fps——硬钉高帧率在慢端只积压+丢批, 主动降档把同一份编码时间摊进更长节拍, 交付反而连续。env: `XGUI_REMOTE_ADAPT_FPS=0` 关(恒档位门控, 历史行为); `XGUI_REMOTE_ADAPT_BUDGET_MS` 预算显式覆盖(缺省 0=派生); 探针 `XGUI_REMOTE_ADAPT_PROF=1`(阶梯移动单行 stderr: `XGS_ADAPT t= base= step= fps=a->b roundMs= qHigh= q=cap`)。回环量化(out/perf9/verify/adapt-quant-*.log): budget=1ms 强制超预算, 阶梯实测 60→30→15 下行(XGS_ADAPT 两行), 认领率 63.5/s→16.3/s、交付 45.1→12.8fps 非停摆; 单元 27 断言(阶梯映射/迟滞/换档重置, XGuiRemoteAdapt_Test 独立可执行, Xvfb 直跑口径)。
 
 ### 5.4 RLE 线上格式(冻结, 供互操作实现)
 
@@ -298,7 +355,12 @@ tile 去重: `XGuiRemoteCodec_tileHash` = FNV-1a 32 位(编码线程自实现, 3
 
 ### 6.4 tile 编码流水
 
-编码线程每轮: **maxFps 认领门控**(冻结执行点): 距上次认领不足 1000/maxFps 毫秒则本轮不认领——脏位保留、伤害零丢失仅延后, 资源档 15fps / 性能档 60fps 上限由此落实(框架限频闸默认不限, 见 §6.2, 不可依赖); 门控通过后加锁 → 从影子缓冲**逐 tile 认领**(把脏 tile 像素拷进线程私有工作缓冲, 16~64KB 级 memcpy, 微秒级临界区)→ 清脏位 → 解锁; 然后无锁编码(tileHash 比对 → 转格式 → RLE/zlib)→ 编码结果推入**有界队列**(档位 encodeQueueBytes; 队列满则丢弃最旧整批并记 `sessionError`, 保证有界内存)。
+**[perf9 路3 输入驱动认领门 2026-10-05]**: 门控升级为输入驱动——近 `XGUI_REMOTE_GATE_ACTIVE_MS`(缺省 500)毫秒内有远端输入注入则**豁免**立即认领(打掉门控等待主犯, 回环 srv-lat p50 30ms→0.11ms); 无输入自交互档位(30/60fps 联动, `XGUI_REMOTE_GATE_BOOST_FPS`)按 ×2 指数衰减回基础帧率, 静默期 CPU 不高于原静态门控; `XGUI_REMOTE_GATE_OFF=1` 一键回退, `XGUI_REMOTE_GATE_TRACE=1` 逐认领可观测。**[交付修复路 2026-10-06 溢出封顶]**: 衰减状态原样 ×2 无上界, GATE_TRACE 实证普通交互会话 156 次评估达 ≈2^62、再一次 ×2 即 int64 溢出(UB, 交互越密翻倍越快)——已在一处 `×2` 后钳回 baseMs, eff 输出逐位不变(本就 min(state, base)), 状态从此有界 ∈ [boostMs, baseMs]。同批: 编码线程内部按发送序劈两半双 worker 并行(`XGUI_REMOTE_ENC_WORKERS`, 缺省 2; 小批 `XGUI_REMOTE_ENC_SPLIT_MIN`=16 以下恒单核), 归并重放拆帧 fold 与单核**逐字节等价**(`XGUI_REMOTE_ENC_PARANOID=1` 每轮自比硬断言; 线载字节配对一致实证)。设计稿与数据: out/perf9/gate-design.md、out/perf9/gate/。
+
+**[交付修复路 空闲 scratch 裁剪 2026-10-06]**: 编码线程兆级线程私有 scratch(workBuf/encBuf/encBufB/batchBuf/outA/B.stream, resource ~1MB / performance ~2.6MB)原为会话期常驻——测量定谳 performance×TCP 空闲内存谷值 5008kB 距历史临界 3908kB 仅 1.1MB。现 workBuf **按本轮脏 tile 数配额**(扫描前数脏位; 槽区发送序紧凑排布, 与满格配额逐位等价), 且距上次「大认领」耐久 `XGUI_REMOTE_BUF_TRIM_IDLE_MS`(缺省 5000, **0=禁用回退**)即在无伤害暂停分支免锁释放全部 scratch。tile 哈希去重态保留→零客户端可见变化; 涓流认领重配只花 KB 级。
+**[第二轮死码修正 2026-10-06]**: 标准镜像会话实测(GATE_TRACE bufbusy 序列+buftrim=0+RSS 13s 恒平)定谳 FPS HUD(悬浮层 180×87px=6×3 tile)每 1.8s 恰产 18 tile 涓流 ≥ 初版阈值 16 → 大认领基准被永久刷新、裁剪成死码; 修正为**整页级认领口径**: 阈值 16→40(高于全部已知常驻涓流 HUD 18/秒时钟 6/滑杆点击 6-18, 对齐整页切换 35-475 下界), 且 env `XGUI_REMOTE_TRIM_ACTIVE_TILES`(缺省 40)可调。初版 +276KB 复原实证成立于 6 tile(<16)涓流上下文, 与本定谳不矛盾。
+
+#### 编码线程每轮: 编码线程每轮: **maxFps 认领门控**(冻结执行点): 距上次认领不足 1000/maxFps 毫秒则本轮不认领——脏位保留、伤害零丢失仅延后, 资源档 30fps(perf8 第 4 轮, 原 15) / 性能档 60fps 上限由此落实(框架限频闸默认不限, 见 §6.2, 不可依赖); 门控通过后加锁 → 从影子缓冲**逐 tile 认领**(把脏 tile 像素拷进线程私有工作缓冲, 16~64KB 级 memcpy, 微秒级临界区)→ 清脏位 → 解锁; 然后无锁编码(tileHash 比对 → 转格式 → RLE/zlib)→ 编码结果推入**有界队列**(档位 encodeQueueBytes; 队列满则丢弃最旧整批并记 `sessionError`, 保证有界内存)。
 
 **发送侧(GUI 线程 poll 回调, 帧尾待写缓冲状态机, 冻结)**: 每圈先按 txBudgetBytes 用 `XIODevice_write_1` 直写续传帧尾待写缓冲余量(非阻塞 fd 的短写是背压而非链路错误——`XAbstractSocket.c:631-635` WriteData 直写 fd 无缓冲, `XIODevice.c:283-303` write_1 原样透传, 均实读核实); 待写缓冲清空后从编码队列取整批组装 FB_UPDATE, 执行**拆帧纪律**: 单帧 tile 载荷合计不超过 txBudgetBytes(单个超过预算的 RAW 大 tile 独立成帧), 协议硬帽 `XGUI_REMOTE_MAX_FRAME_BYTES`(16MiB)只作解析侧防线, 发送侧不产生接近该帽的单帧; `XGuiRemoteProto_writeFrame` 返回已接受字节数(≥0, 可为部分写), 未写出余量存入帧尾待写缓冲留待下圈。待写缓冲存在期间队列水位照常反压编码线程(暂停认领)。回环传输侧由全有全无写语义(§4.5)保证整帧重试不乱流。多会话互不影响: 每会话独立影子缓冲、独立编码线程、独立队列与待写缓冲。
 
@@ -344,6 +406,8 @@ INPUT_* 消息在 GUI 线程帧泵中解码后立即注入(全部为同步自发
 
 `setAuthMethod(NONE / SHA256_CHALLENGE)` + `setPassword`(内部即刻哈希, 原文不留存); TLS 档下服务端 accept 后经 XSslSocket_startServerEncryption 升级(§4.3)。策略: 方法=SHA256_CHALLENGE 但未设口令 → listen 时报错拒绝。
 
+访问口令(§3.8 单旋钮语义, 2026-10-04 加法式扩展): `setAccessPassword` / `accessPassword`(掩码) / `clearAccessPassword` 运行期即时生效于**新会话**, 存量会话不断; 未设口令=匿名可连。会话认证形态经 `XGuiServer_sessionAuthState(server, sessionId)` 查询(1=已认证 / 0=匿名 / -1=会话不存在)。实现主体在 `Src/XGui/Remote/XGuiRemoteAuth.c`(server/client 只留挂接, 降低合并冲突面)。
+
 ---
 
 ## 7. 客户端设计(XGuiClient)
@@ -358,6 +422,11 @@ INPUT_* 消息在 GUI 线程帧泵中解码后立即注入(全部为同步自发
 - FB_UPDATE 解码: 逐 tile `XGuiRemoteCodec_decodeTile` 直写 backbuffer(带 stride), tile 矩形并入损伤 `XRegion`(`Src/XData/XGeometry.h:255` 结构, `:497-584` API)→ `XWidget_updateRegion`(`XWidget.h:1832`)→ 走既有 PAINT 闭环增量上屏。
 - `paintEvent` 虚槽内 `XPainter_drawImage`(`XPainter.h:831`, 最近邻采样)把 backbuffer 整幅/脏区绘出。
 - FB_META(尺寸变化)→ 重建 backbuffer + `setFixedSize` 语义(控件采用远端尺寸; 可选 `ScaleFit` 档用最近邻缩放适配父容器, V1 默认 1:1)。
+
+- **[perf9 路5 2026-10-05] 呈现三改**(全部 env 可回退, 缺省开):
+  1. **首伤即现**: FB_UPDATE 批解码完成且当前无待上屏损伤(=突发/稳态首块)时立即就地 present, 不等泵圈合并窗——首现延迟从「静默 6ms/上限 20ms」(泵 8ms 粒度实测 8~11ms)砍到 µs 级; 突发后续帧仍由泵圈按窗合并。env `XGUI_REMOTE_PRESENT_IMMEDIATE=0` 回退。
+  2. **合并窗自适应**: 最近转发输入(<500ms)判交互期, 窗取基值一半(下限 1ms); 静止期原基值。env `XGUI_REMOTE_PRESENT_QUIET_MS`/`XGUI_REMOTE_PRESENT_MAX_MS` 覆盖静止期基值(缺省 6/20), `XGUI_REMOTE_PRESENT_ACTIVE_MS` 调交互窗宽(0=关自适应)。
+  3. **FIT 增量缩放缓存**: 缓存已缩视图帧(恒 ARGB32, RGB16 源按 XImage_expand5/6 位复制展开), present 时只对损伤矩形增量重缩放(±1px 护栏, 只多不少), paint 走 `XPainter_drawImage` 行级快车道 1:1 直绘——替代原「每 paint 整幅信箱逐像素逆映射」(painterRaster_drawImageRect 与损伤无关)。像素正确性: 离屏断言(env `XGUI_REMOTE_FIT_SCALE_SELFTEST=1`) 增量==全量==painter 全量路径逐字节(ARGB32/RGB16 双格式); 采样式与 painter 逐位同式。失效重建: FB_META 重建/变换变化/尺寸变化。回环实测(480×320 源, 830×700 视图): cli-blit p50 22.0ms→0.17ms; cli-merg p50 8.0ms→1µs。env `XGUI_REMOTE_FIT_CACHE=0` 整体回退旧全量路径(内存受限设备可关, 省 ~2.4MB 级缓存); 分配失败/非常规格式自动落旧路径。设计稿 out/perf9/latency-tile-design.md。
 
 ### 7.3 连接与重连
 
@@ -450,3 +519,73 @@ INPUT_* 消息在 GUI 线程帧泵中解码后立即注入(全部为同步自发
 | 8 | poll 回调挂点路径写错(多写了一层子目录) | low | **采纳**: 修正为 `Src/XCode/XEvent/XAbstractEventDispatcher.h`(find 全仓唯一, 本次实跑确认) | 本文档 §4.4 |
 | 9 | §7.4 残留"u16 编码前不裁剪/溢出回绕"与 §3.2 i16 饱和口径自相矛盾 | low | **采纳**: 删除 u16/回绕残留句, 统一为"i16 有符号编码, ±32767 饱和, 远端注入前裁剪到窗口边界" | 本文档 §7.4 |
 | 10 | 消息内未知枚举值的错误路径未冻结 | low | **采纳**: 冻结双轨口径——封闭枚举(format/codec/action/mode/method/profileId)值域严格校验, 非法值 dec 返回 false 按协议错误断链; 开放字段(flags/保留位/BYE reason/ERROR code)不校验、透传或归化, 为前向兼容留空间 | XGuiRemoteProto.h dec 统一约定注释; 本文档 §3.4 |
+
+---
+
+## 13. 诊断探针(2026-10-05 perf8 战役增补, 全部 env 门控, 关闭零成本)
+
+### 13.1 事件循环唤醒探针 XGUI_REMOTE_WAKE_PROF=1
+环层读完成打点 → 消息层测「socket 数据到达→解析派发」逐消息延迟, 每 5s 输出
+`[wake][标签]` 摘要行(环层 [wake][ring] + 端点 [wake][srv-kern]/[wake][cli-kern]/
+[wake][cli-tcp]/[wake][cli-udp])。落点: XAbstractNetIoRing.c 探针节 +
+XGuiRemoteUdpChannel.c 收侧。
+
+### 13.2 fb→镜像腿分段探针 XGUI_REMOTE_STAGE_PROF=1
+逐段打点, 每 5s 每标签一行 `[stage][标签] n=.. p50=..us p95=..us max=..us
+[bytes=.. avg=..]`(stderr; pump 回调驱动落盘)。分段口径:
+
+| 标签 | 段 | 字节列口径 |
+|------|----|-----------|
+| srv-cap | 呈现回调采集拷贝(锁内) | 采集写影线格式字节 |
+| srv-lat | 采集端→编码线程认领(maxFps 门控+唤醒+扫描) | — |
+| srv-scan | 锁内脏扫描+tile 拷出(lat 子段) | — |
+| srv-enc | 认领→批次入队(哈希去重+RLE+拆帧组批) | 编码输出批字节 |
+| srv-q | 入队→泵发送始 | — |
+| srv-send | 发送调用时长 | 发出帧线载字节 |
+| srv-in2fb | 远端输入注入→呈现回调端(设备本地单钟) | — |
+| cli-dec | 单帧 FB_UPDATE 解码(帧头+逐 tile) | 收侧线载字节(与 srv-send 对账) |
+| cli-merg | 首块损伤到达→present 调用(µs 单调戳; perf9 路5 起含首伤即现路径, 即「首现延迟」口径) | — |
+| cli-paint | 上屏触发→paintEvent 派发 | — |
+| cli-blit | paintEvent 绘制(黑底填充+FIT 缩放 blit) | — |
+
+跨线程段(srv-lat/srv-q)以单调钟戳经队列节点/会话字段传递; 跨机器段不做减法。
+paintEvent 之后的框架 flush 上屏走 XGPU_W_FRAME_PROF=1 的 [wprof] 行。
+字节数聚合 API: `XGuiRemoteUdp_stageProfBytes(tag, n)`(XGuiRemoteUdpChannel.h)。
+回环实测账本样例见战役数据 out/perf8/ledger.md; 编码基准源码
+verify/round5/rle_bench_main.c(+rle_impl.h 旧/新实现对偶), 运行结果归档
+out/perf8/rle_bench_desktop_*.txt。
+
+---
+
+## 14. 构建卫生(交叉/诊断构建纪律, 2026-10-05 路 D 收口; 合并改号 13→14)
+
+- **诊断/交叉构建一律私有输出目录，严禁写仓库 `bin/`**（历史事故：armel 产物覆盖桌面 x86 门禁二进制 `./bin/XGuiRegression_Test`）。
+- **configure 期硬门（CMakeLists.txt，本版新增）**：`CMAKE_CROSSCOMPILING`（armel 等 toolchain 配置）下 `CMAKE_RUNTIME_OUTPUT_DIRECTORY` 经 REALPATH 解析后等于本仓库 `bin/` 即 `FATAL_ERROR`，错误信息给出私有目录正确姿势（`-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=/tmp/armel-out`）。三例实测：交叉+指向仓库 bin=拒绝(exit 1)；交叉+私有目录=放行；非交叉=不受影响。
+- **部署回滚锚（out/perf8/deploy_mcgs.sh）**：替换前 `cp APP APP.bak`（.bak=上一可用版本）；启动后三验（进程+TCP 46300+UDP 绑定）不过自动回滚 .bak。禁无锚覆盖。
+- armel 构建定版五开关（RENDER_MODE=1/BUFFER_COUNT=2/RGB16=ON/FBDEV=ON/FBINPUT=ON）与部署动作序列见现网战役任务书；本节为防呆纪律的单一归档点。
+
+---
+
+## 15. 拖动快照 blit 与镜像帧同步(2026-10-06 拖动流畅性战役增补)
+
+- **主树改动**（主窗口拖动卡顿根治，Qt4 QWS `QScreen::blit` 同款语义）：装饰拖拽
+  移动（`XWindowDecoration` xwd_applyMove）在 fbdev 直写面板上默认启用快照
+  blit——拖动开始把窗口像素自后备缓冲已合成内容快照进窗口大小离屏 buffer，
+  每步「条带归位（复用 blitPanelRects/fill 家族）+ 窗口快照整块直写 fb 可见
+  面（`XPlatformBackingStore_blitSnapshotPanelRects`，带弹层遮挡剔除）+ 收窄
+  cacheSync + pan 收敛」，旁路整窗 flush（软件双缓冲互同步/差带账本重搬/翻页
+  全免）；拖动结束立即释放快照并经 `XWidget_update` 真实整窗 PAINT 落定（差
+  带账本补齐后台缓冲、恢复轮换写，红线不动：setPresentCallback 挂点、
+  requestPanelClear 一次性语义）。env 门控 `XGUI_DRAG_SNAPSHOT_BLIT`（默认开，
+  =0 回退旧路径逐位旧行为）；`XGUI_GESTURE_PROF=1` 输出每手势分相一行
+  （`[xgesture] drag mode=... steps=... snap=...`）。
+- **镜像帧同步契约**：快照路径绕过 flush，但每步经
+  `XPlatformBackingStore_notifyPresentRegion`（公共层新出口，内部即既有
+  present 回调；登记机制零改动）以与 flush 完全同形的区域/offset 通知——
+  xgs_presentWrapper 采集链对快照拖动帧的可见性与旧路径逐位一致，§6.2
+  host/采集/编码流水零改动。
+- **mcgs A33 实测**（800×600 主窗、xinj2 标题条走廊、213 步/臂）：无镜像
+  legacy 11.94ms/步 vs snapshot 11.68ms/步（本板 cacheSync=板级占位 no-op，
+  fb 直写 ~1.13MB/步≈97MB/s 为共同硬底，即 Qt4 QWS 同硬件 10-15ms/步口径）；
+  镜像 1 会话时每步 ~31ms 由采集+编码 CPU 竞争主导，两模式持平。判据与
+  边界归档 out/perf9/dialog-verify-checklist.md（D1-D8）。

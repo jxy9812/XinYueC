@@ -392,6 +392,10 @@ static void test_app_path_pid(void)
     const XString* filePath = XCoreApplication_applicationFilePath();
     XPrintf("  应用路径: %s\n", filePath ? XString_toUtf8(filePath) : "NULL");
 
+    /* 契约: 两查询均返回堆串调用者释放（ASan 巡检修复同步）。 */
+    if (dirPath) XClassDelete((XClass*)dirPath);
+    if (filePath) XClassDelete((XClass*)filePath);
+
     int64_t pid = XCoreApplication_applicationPid();
     XPrintf("  进程 PID: %ld\n", (long)pid);
     assert(pid > 0);

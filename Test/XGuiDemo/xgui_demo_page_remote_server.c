@@ -11,7 +11,11 @@
  *              - 端口（编辑框）/ 档位 performance|resource（下拉）/ TLS 开关
  *                / 证书路径 / 私钥路径 / 认证方式与口令（全量 UI 可改）；
  *              - 「应用配置」按钮 + 待生效提示行（显式生效时机反馈）；
- *              - 会话状态区（监听中 :端口 / 会话数 / 最近事件 / 最近错误）；
+ *              - 「设口令」/「清口令」按钮（2026-10-04 访问口令加法式:
+ *                运行期即时生效——设后新会话须挑战应答认证, 清后回匿名,
+ *                存量会话不断; 见 XGuiRemote.md §3.8/§6.8）；
+ *              - 会话状态区（监听中 :端口 / 会话数 / 逐会话认证形态
+ *                匿名|已认证 / 最近事件 / 最近错误）；
  *              - RemotePing 计数按钮（联调断言辅助，见下）。
  *
  *             生效时机（显式，严禁静默不生效）：
@@ -82,27 +86,58 @@
  *           maxAddrs 个; 一个都没有时 buf 收 "none"。 */
 static void rs_collectLocalIPv4(char* buf, int cap, int maxAddrs)
 {
-    XVector* addrs = XNetworkInterface_allAddresses();
+    /* [2026-10-06 修] 改走 allInterfaces 接口迭代: 纯地址扁向量不带接口
+     * 名, usb0 OTG 出厂虚拟口(200.200.201.1)会混进服务地址且排前——
+     * 用户实测地址行显示「200.200.20」碎片。按接口名过滤 usb* 前缀,
+     * eth0 等实网口优先。 */
+    XVector* interfaces = XNetworkInterface_allInterfaces();
     int count = 0;
     if (!buf || cap <= 0) return;
     buf[0] = '\0';
-    if (addrs) {
-        size_t i;
-        size_t n = XVector_size_base(addrs);
-        for (i = 0; i < n && count < maxAddrs; ++i) {
-            XHostAddress* a = (XHostAddress*)XVector_at_base(addrs, (int64_t)i);
-            XString* s;
-            if (!a || a->isNull || a->protocol != XHostAddress_IPv4Protocol)
+    if (interfaces) {
+        size_t i, j, ifaceCount, entryCount;
+        ifaceCount = XVector_size_base(interfaces);
+        for (i = 0; i < ifaceCount && count < maxAddrs; ++i) {
+            XNetworkInterface* iface = (XNetworkInterface*)XVector_at_base(interfaces, (int64_t)i);
+            XString* ifName;
+            const char* ifUtf8;
+            XVector* entries;
+            if (!iface) continue;
+            ifName = XNetworkInterface_name(iface); /* 拥有副本，逐路径回收。 */
+            ifUtf8 = ifName ? XString_toUtf8(ifName) : 0;
+            /* [memhunt F1 复验归因 2026-10-06] LSan 实证: --autotest 优雅退出
+             * 7 桶 Direct 192B/2objs + 其 Indirect（XString_toUtf8 缓存等
+             * 46obj）全根于此副本未释放（7 次枚举×2 接口）——本函数 15:30
+             * 重写引入，晚于 14:42 基线日志，非库内 move 语义问题。 */
+            if (ifUtf8 && strncmp(ifUtf8, "usb", 3) == 0) {
+                if (ifName) XClassDelete(ifName);
+                continue; /* OTG 出厂口。 */
+            }
+            entries = iface->addressEntries;
+            if (!entries) {
+                if (ifName) XClassDelete(ifName);
                 continue;
-            if (XHostAddress_isLoopback(a)) continue; /* 非回环口径。 */
-            s = XHostAddress_toString(a);
-            if (!s) continue;
-            if (buf[0]) strncat(buf, ",", (size_t)cap - strlen(buf) - 1);
-            strncat(buf, XString_toUtf8(s), (size_t)cap - strlen(buf) - 1);
-            XClassDelete(s);
-            ++count;
+            }
+            entryCount = XVector_size_base(entries);
+            for (j = 0; j < entryCount && count < maxAddrs; ++j) {
+                XNetworkAddressEntry* entry = (XNetworkAddressEntry*)XVector_at_base(entries, (int64_t)j);
+                XHostAddress addr;
+                XString* s;
+                if (!entry) continue;
+                addr = entry->ip;
+                if (addr.isNull || addr.protocol != XHostAddress_IPv4Protocol)
+                    continue;
+                if (XHostAddress_isLoopback(&addr)) continue; /* 非回环口径。 */
+                s = XHostAddress_toString(&addr);
+                if (!s) continue;
+                if (buf[0]) strncat(buf, ",", (size_t)cap - strlen(buf) - 1);
+                strncat(buf, XString_toUtf8(s), (size_t)cap - strlen(buf) - 1);
+                XClassDelete(s);
+                ++count;
+            }
+            if (ifName) XClassDelete(ifName); /* [memhunt] 副本即焚（toUtf8 缓存随之回收）。 */
         }
-        XClassDelete(addrs);
+        XClassDelete(interfaces);
     }
     if (count == 0)
         snprintf(buf, (size_t)cap, "none");
@@ -139,12 +174,16 @@ static struct
     /* ---- 配置区控件 ---- */
     XCheckBox* m_srvToggle;   /**< 远程服务开关（启动/停止）。 */
     XLineEdit* m_portEdit;    /**< 监听端口（可编辑）。 */
-    XComboBox* m_profileCombo;/**< 档位 performance|resource。 */
+    XComboBox* m_profileCombo;/**< 档位 performance|resource|latency。 */
     XCheckBox* m_tlsCheck;    /**< TLS 开关。 */
+    XCheckBox* m_udpCheck;    /**< UDP 低延迟旁路开关(2026-10-04 加法式;
+                                   *   运行期可切, 会话不断)。 */
     XLineEdit* m_certEdit;    /**< 证书路径。 */
     XLineEdit* m_keyEdit;     /**< 私钥路径。 */
     XComboBox* m_authCombo;   /**< 认证：0=无 1=SHA256 挑战应答。 */
     XLineEdit* m_passwordEdit;/**< 认证口令（密码回显）。 */
+    XPushButton* m_setPwdBtn; /**< 设口令（2026-10-04: 运行期即时生效）。 */
+    XPushButton* m_clearPwdBtn;/**< 清口令（2026-10-04: 运行期回匿名）。 */
     XPushButton* m_applyBtn;  /**< 应用配置（监听中=重启监听生效）。 */
 
     /* ---- 反馈区控件 ---- */
@@ -153,6 +192,16 @@ static struct
                                *   2026-10-02 增强）。 */
     XLabel*    m_pendingLabel;/**< 待生效提示行。 */
     XLabel*    m_sessionLabel;/**< 会话状态多行（监听/会话数/事件/错误）。 */
+
+    /* ---- 行标签（2026-10-06 响应式重排: 原建后即弃无法随根宽挪位,
+     *   纳入成员后 rs_adaptLayout 全控件重排可达）。 ---- */
+    XLabel*    m_capPort;    /**< 「端口」行标签。 */
+    XLabel*    m_capProfile; /**< 「档位」行标签。 */
+    XLabel*    m_capCert;    /**< 「证书」行标签。 */
+    XLabel*    m_capKey;     /**< 「私钥」行标签。 */
+    XLabel*    m_capAuth;    /**< 「认证」行标签。 */
+    XLabel*    m_capPwd;     /**< 「口令」行标签。 */
+    XLabel*    m_capEcho;    /**< 「回显」行标签。 */
 
     /* ---- 输入回显（联调断言辅助; 2026-10-02 增强） ---- */
     XLineEdit* m_echoEdit;    /**< 输入回显框: 每次内容变化同步窗口标题,
@@ -168,11 +217,19 @@ static struct
     XGuiServer* m_server;     /**< 服务对象（父挂主窗口顶层; 惰性 host）。 */
     XWidget*    m_topLevel;   /**< 主窗口顶层（借用; build 时的 parent）。 */
     int         m_sessions;   /**< 最近一次信号刷新的会话数。 */
+    int         m_liveIds[16];/**< 在册会话 id（信号登记; 会话认证状态
+                                   显示取数用; 2026-10-04 加法式）。 */
+    int         m_liveCount;  /**< m_liveIds 有效个数。 */
     char        m_lastEvent[96];  /**< 最近事件文本。 */
     char        m_lastError[96];  /**< 最近错误文本。 */
+    int         m_sessionLines;   /**< 会话状态块行数(refresh 统计 '\n';
+                                     *   0=未知按 4 行——响应式定高依据,
+                                     *   监听态 9 行/停止态 4 行)。 */
 } s_rs;
 
 /* ==================== 内部辅助 ==================== */
+
+static void rs_adaptLayout(void); /* 前向: 会话块行数变化即重排(2026-10-06)。 */
 
 /** @brief 向主窗口状态栏反馈并登记最近文本（autotest 断言用）。 */
 static void rs_report(const char* text)
@@ -194,13 +251,18 @@ static int rs_portFromEdit(void)
 static XGuiRemoteProfileId rs_profileFromCombo(void)
 {
     int idx = s_rs.m_profileCombo ? XComboBox_currentIndex(s_rs.m_profileCombo) : 0;
-    return idx == 1 ? XGUI_REMOTE_PROFILE_RESOURCE
-                    : XGUI_REMOTE_PROFILE_PERFORMANCE;
+    if (idx == 1) return XGUI_REMOTE_PROFILE_RESOURCE;
+    if (idx == 2) return XGUI_REMOTE_PROFILE_LATENCY;
+    return XGUI_REMOTE_PROFILE_PERFORMANCE;
 }
 
 static const char* rs_profileName(XGuiRemoteProfileId id)
 {
-    return id == XGUI_REMOTE_PROFILE_RESOURCE ? "resource" : "performance";
+    switch (id) {
+    case XGUI_REMOTE_PROFILE_RESOURCE: return "resource";
+    case XGUI_REMOTE_PROFILE_LATENCY:  return "latency";
+    default:                           return "performance";
+    }
 }
 
 /** @brief 认证组合框当前值 → 认证方法。 */
@@ -216,12 +278,49 @@ static const char* rs_authName(XGuiRemoteAuthMethod m)
     return m == XGUI_REMOTE_AUTH_SHA256_CHALLENGE ? "sha256" : "none";
 }
 
+/** @brief 会话认证状态串（2026-10-04 加法式: 逐在册会话标注 匿名/已认证）。 */
+static void rs_buildAuthStateText(char* buf, int cap)
+{
+    int i;
+    int n = 0;
+    buf[0] = '\0';
+    if (s_rs.m_liveCount <= 0) {
+        snprintf(buf, (size_t)cap, "会话认证: (无会话)");
+        return;
+    }
+    n += snprintf(buf + n, (size_t)(cap - n), "会话认证:");
+    for (i = 0; i < s_rs.m_liveCount && n < cap - 16; ++i) {
+        int st = XGuiServer_sessionAuthState(s_rs.m_server, s_rs.m_liveIds[i]);
+        n += snprintf(buf + n, (size_t)(cap - n), " #%d=%s",
+                      s_rs.m_liveIds[i],
+                      st == 1 ? "\xE8\xAE\xA4\xE8\xAF\x81" /* 认证 */
+                              : "\xE5\x8C\xBF\xE5\x90\x8D"); /* 匿名 */
+    }
+}
+
+/** @brief UDP 旁路状态短文本（回填 buf; 2026-10-04 加法式）。 */
+static void rs_udpStatusText(char* buf, int cap)
+{
+    if (!buf || cap <= 0) return;
+    if (!s_rs.m_server || !XGuiServer_udpEnabled(s_rs.m_server))
+        snprintf(buf, (size_t)cap, "关");
+    else if (XGuiServer_udpPort(s_rs.m_server))
+        snprintf(buf, (size_t)cap, "开(通道 :%u)",
+                 (unsigned)XGuiServer_udpPort(s_rs.m_server));
+    else
+        snprintf(buf, (size_t)cap, "开(通道未绑定)");
+}
+
 /** @brief 会话状态多行区整体刷新（监听/会话数/事件/错误/待生效）。 */
 static void rs_refreshSessionLabel(void)
 {
     char buf[512];
+    char authTxt[192];
+    char udpText[48];
     XGuiServer* srv = s_rs.m_server;
     if (!s_rs.m_sessionLabel) return;
+    rs_buildAuthStateText(authTxt, (int)sizeof(authTxt));
+    rs_udpStatusText(udpText, (int)sizeof(udpText));
     if (!srv) {
         snprintf(buf, sizeof(buf),
                  "服务状态: 未创建\n会话数: 0\n最近事件: %s\n最近错误: %s",
@@ -231,7 +330,8 @@ static void rs_refreshSessionLabel(void)
         snprintf(buf, sizeof(buf),
                  "服务状态: 监听中 :%u\n会话数: %d\n"
                  "TLS: %s | 证书: %s\n认证: %s | 口令: %s\n"
-                 "档位: %s\n最近事件: %s\n最近错误: %s",
+                 "%s\n"
+                 "档位: %s\nUDP: %s\n最近事件: %s\n最近错误: %s",
                  (unsigned)XGuiServer_serverPort(srv),
                  XGuiServer_sessionCount(srv),
                  XGuiServer_tlsEnabled(srv) ? "开" : "关",
@@ -239,7 +339,9 @@ static void rs_refreshSessionLabel(void)
                                              : "(未设)",
                  rs_authName(XGuiServer_authMethod(srv)),
                  XGuiServer_hasPassword(srv) ? "已设" : "未设",
+                 authTxt,
                  rs_profileName(XGuiServer_profileId(srv)),
+                 udpText,
                  s_rs.m_lastEvent, s_rs.m_lastError);
     }
     else {
@@ -247,6 +349,18 @@ static void rs_refreshSessionLabel(void)
                  "服务状态: 已停止\n会话数: %d\n最近事件: %s\n最近错误: %s",
                  XGuiServer_sessionCount(srv),
                  s_rs.m_lastEvent, s_rs.m_lastError);
+    }
+    {
+        const char* p;
+        int lines = 1;
+        for (p = buf; *p; ++p)
+            if (*p == '\n') ++lines;
+        if (lines != s_rs.m_sessionLines) {
+            /* 行数变化(未创建 4/停止 4/监听 9): 高度是响应式定死的,
+             * 不重排则多出行整行裁掉(用户截图「档位」行半裁实证)。 */
+            s_rs.m_sessionLines = lines;
+            rs_adaptLayout();
+        }
     }
     XLabel_setText_2(s_rs.m_sessionLabel, buf);
 }
@@ -307,6 +421,23 @@ static void rs_refreshStateLabel(void)
     XLabel_setText_2(s_rs.m_stateLabel, buf);
 }
 
+/** @brief 服务地址行位置自适应（2026-10-06 改: 底部整幅行随根高锚底）。
+ *  @details 摆位=(12, rootH-36, rootW-24, 24): 默认根 600x432 时即
+ *           (12,396), 与 [2026-10-06 修] 定版的底部整幅行重合; 根高
+ *           变化时始终贴底缘 12px, 会话状态多行区在其上方伸展。
+ *           宽度=rootW-24, 窗口足够宽时 2+ IP 一行放下。根宽未知
+ *           （构建期未布局）时保持现几何。rs_refreshAddrLabel 与
+ *           rs_adaptLayout 双路触发, 幂等可频繁调。 */
+static void rs_adaptAddrLabelWidth(void)
+{
+    int rootW, rootH;
+    if (!s_rs.m_addrLabel || !s_rs.m_root) return;
+    rootW = XWidget_width(s_rs.m_root);
+    rootH = XWidget_height(s_rs.m_root);
+    if (rootW <= 40 || rootH <= 40) return;
+    XWidget_setGeometry((XWidget*)s_rs.m_addrLabel,
+                        12, rootH - 36, rootW - 24, 24);
+}
 /** @brief 服务地址行刷新（2026-10-02 增强: 「服务地址: <本机IP>:<端口>」）。
  *  @details 本机 IP 走仓内现有 XNetworkInterface API（getifaddrs 封装）;
  *           多地址时全部列出供选择; 端口或地址变更时重调（端口取编辑
@@ -317,12 +448,155 @@ static void rs_refreshAddrLabel(void)
     char buf[384];
     int port;
     if (!s_rs.m_addrLabel) return;
+    rs_adaptAddrLabelWidth(); /* 宽度先随当前根宽自适应, 再按新宽折行排版。 */
     port = (s_rs.m_server && XGuiServer_isListening(s_rs.m_server))
                ? (int)XGuiServer_serverPort(s_rs.m_server)
                : rs_portFromEdit();
     rs_collectLocalIPv4(addrs, (int)sizeof(addrs), 4);
     snprintf(buf, sizeof(buf), "服务地址: %s:%d", addrs, port);
     XLabel_setText_2(s_rs.m_addrLabel, buf);
+}
+
+/** @brief 页面全控件响应式重排（2026-10-06: 用户「拉伸放大窗口后好多
+ *  空位置」根修——页面原为 600 宽设计稿定死坐标, 宽窗右侧/下方全空）。
+ *  @details 口径: 行标签与左列字段 x 固定, 每行末字段拉伸贴右缘
+ *           (rootW-8 收口); 证书/私钥、认证/口令两对行以 mid 对半分;
+ *           按钮右锚; 行距随根高均布拉伸（只放不压, k>=基稿）, 会话
+ *           状态多行区自然高 88 恰贴底部地址行上方, 拉宽/拉高只伸展
+ *           不留白。宽度下限钳 40 防负, mid 下限 170 保两对行不交叠。
+ *           幂等可频繁调。 */
+static void rs_adaptLayout(void)
+{
+    int w, h, right, mid, addrY, sessTop, sessH;
+    int k1000, y40, y72, y104, y132, y160, y200, y238;
+    int sessNeed;
+    if (!s_rs.m_ready || !s_rs.m_root) return;
+    w = XWidget_width(s_rs.m_root);
+    h = XWidget_height(s_rs.m_root);
+    if (w <= 40 || h <= 40) return;
+    right = w - 8;
+    mid = 12 + (right - 116 - 12) / 2;
+    if (mid < 170) mid = 170;
+    addrY = h - 36;
+
+    /* 纵向均布（2026-10-06 补: 用户「拉大窗口后好多空位置」含纵轴——
+     * 行距随根高拉伸, 余量摊进行距而非池在页尾; 会话状态区按实际行数
+     * 定高(22px/行, refresh 统计 '\n'; 监听态 9 行=198px——曾按 4 行
+     * 88px 定高把 UDP/最近事件/最近错误三行整行裁掉, 用户截图实证)。
+     * k>=1000 只放不压: 窗口比基稿矮时保持原行距, 靠会话区高度钳底。
+     * 基稿锚点 8..274 对应 k=1000。 */
+    sessNeed = 22 * (s_rs.m_sessionLines > 0 ? s_rs.m_sessionLines : 4) + 10;
+    sessTop = addrY - 10 - sessNeed;
+    if (sessTop < 274) sessTop = 274;
+    k1000 = ((sessTop - 8) * 1000) / (274 - 8);
+    if (k1000 < 1000) k1000 = 1000;
+    y40  = 8 + 32 * k1000 / 1000;
+    y72  = 8 + 64 * k1000 / 1000;
+    y104 = 8 + 96 * k1000 / 1000;
+    y132 = 8 + 124 * k1000 / 1000;
+    y160 = 8 + 152 * k1000 / 1000;
+    y200 = 8 + 192 * k1000 / 1000;
+    y238 = 8 + 230 * k1000 / 1000;
+
+    /* 顶部: 标题固定, 状态标签右锚（顶行不参与纵stretch）。 */
+    if (s_rs.m_stateLabel)
+        XWidget_setGeometry((XWidget*)s_rs.m_stateLabel,
+                            right - 104, 10, 104, 22);
+
+    /* 启用开关行: 待生效提示右锚。 */
+    if (s_rs.m_srvToggle)
+        XWidget_setGeometry((XWidget*)s_rs.m_srvToggle, 12, y40, 200, 24);
+    if (s_rs.m_pendingLabel)
+        XWidget_setGeometry((XWidget*)s_rs.m_pendingLabel,
+                            right - 112, y40, 112, 22);
+
+    /* 端口行: 端口段定宽, 档位下拉拉伸贴右缘。 */
+    if (s_rs.m_portEdit)
+        XWidget_setGeometry((XWidget*)s_rs.m_portEdit, 56, y72, 90, 24);
+    if (s_rs.m_capPort)
+        XWidget_setGeometry((XWidget*)s_rs.m_capPort, 12, y72 + 2, 40, 22);
+    if (s_rs.m_capProfile)
+        XWidget_setGeometry((XWidget*)s_rs.m_capProfile,
+                            170, y72 + 2, 40, 22);
+    if (s_rs.m_profileCombo)
+        XWidget_setGeometry((XWidget*)s_rs.m_profileCombo,
+                            214, y72, (right - 214) > 40 ? right - 214 : 40, 24);
+
+    /* TLS/UDP 行: UDP 开关吃掉行内剩余宽。 */
+    if (s_rs.m_tlsCheck)
+        XWidget_setGeometry((XWidget*)s_rs.m_tlsCheck, 12, y104, 220, 24);
+    if (s_rs.m_udpCheck)
+        XWidget_setGeometry((XWidget*)s_rs.m_udpCheck,
+                            240, y104, (right - 240) > 40 ? right - 240 : 40, 24);
+
+    /* 证书/私钥行: mid 对半。 */
+    if (s_rs.m_capCert)
+        XWidget_setGeometry((XWidget*)s_rs.m_capCert, 12, y132 + 2, 40, 22);
+    if (s_rs.m_certEdit)
+        XWidget_setGeometry((XWidget*)s_rs.m_certEdit,
+                            56, y132, (mid - 72) > 40 ? mid - 72 : 40, 24);
+    if (s_rs.m_capKey)
+        XWidget_setGeometry((XWidget*)s_rs.m_capKey, mid, y132 + 2, 40, 22);
+    if (s_rs.m_keyEdit)
+        XWidget_setGeometry((XWidget*)s_rs.m_keyEdit,
+                            mid + 44, y132,
+                            (right - mid - 44) > 40 ? right - mid - 44 : 40, 24);
+
+    /* 认证/口令行: 同 mid 对半, 口令框止于应用按钮左 12px。 */
+    if (s_rs.m_capAuth)
+        XWidget_setGeometry((XWidget*)s_rs.m_capAuth, 12, y160 + 2, 40, 22);
+    if (s_rs.m_authCombo)
+        XWidget_setGeometry((XWidget*)s_rs.m_authCombo,
+                            56, y160, (mid - 72) > 40 ? mid - 72 : 40, 24);
+    if (s_rs.m_capPwd)
+        XWidget_setGeometry((XWidget*)s_rs.m_capPwd, mid, y160 + 2, 40, 22);
+    if (s_rs.m_passwordEdit)
+        XWidget_setGeometry((XWidget*)s_rs.m_passwordEdit,
+                            mid + 44, y160,
+                            (right - 116 - mid - 44) > 40
+                                ? right - 116 - mid - 44 : 40, 24);
+    if (s_rs.m_applyBtn)
+        XWidget_setGeometry((XWidget*)s_rs.m_applyBtn,
+                            right - 104, y160, 104, 28);
+
+    /* RemotePing 行: 计数标签拉伸。 */
+    if (s_rs.m_pingBtn)
+        XWidget_setGeometry((XWidget*)s_rs.m_pingBtn, 12, y200, 180, 30);
+    if (s_rs.m_pingLabel)
+        XWidget_setGeometry((XWidget*)s_rs.m_pingLabel,
+                            204, y200 + 4,
+                            (right - 204) > 40 ? right - 204 : 40, 22);
+
+    /* 回显行: 回显框止于设口令按钮左 12px, 双按钮右锚。 */
+    if (s_rs.m_capEcho)
+        XWidget_setGeometry((XWidget*)s_rs.m_capEcho, 12, y238 + 2, 40, 22);
+    if (s_rs.m_echoEdit)
+        XWidget_setGeometry((XWidget*)s_rs.m_echoEdit,
+                            56, y238,
+                            (right - 232 - 56) > 40 ? right - 232 - 56 : 40, 24);
+    if (s_rs.m_setPwdBtn)
+        XWidget_setGeometry((XWidget*)s_rs.m_setPwdBtn,
+                            right - 220, y238, 104, 28);
+    if (s_rs.m_clearPwdBtn)
+        XWidget_setGeometry((XWidget*)s_rs.m_clearPwdBtn,
+                            right - 104, y238, 104, 28);
+
+    /* 会话状态多行区: 恰贴地址行上方, 宽随根。 */
+    if (s_rs.m_sessionLabel)
+    {
+        sessH = addrY - 10 - sessTop;
+        if (sessH < 40) sessH = 40;
+        XWidget_setGeometry((XWidget*)s_rs.m_sessionLabel,
+                            12, sessTop, w - 24, sessH);
+    }
+
+    /* 服务地址行: 贴底整幅（几何唯一来源=rs_adaptAddrLabelWidth）。 */
+    rs_adaptAddrLabelWidth();
+}
+
+void demo_page_remote_server_adaptWidth(void)
+{
+    rs_adaptLayout();
 }
 
 /** @brief 输入回显 → 窗口标题同步（2026-10-02 增强: 联调断言辅助）。
@@ -413,6 +687,13 @@ static bool rs_startListening(void)
             "auth=%s\n", (unsigned)XGuiServer_serverPort(srv),
             XGuiServer_tlsEnabled(srv) ? "on" : "off",
             rs_authName(XGuiServer_authMethod(srv)));
+    /* [2026-10-06 修] 状态/地址标签刷新收口在本函数: 自启路径(CLI 预置
+     * →本函数直调, 不经开关槽)此前 listening 成功后不刷标签——右上
+     * 「已停止」+地址行停留旧值, 与会话块「监听中」自相矛盾(用户实测)。
+     * 所有调用方(开关槽/自启)从此一致生效。 */
+    rs_refreshStateLabel();
+    rs_refreshAddrLabel();
+    rs_refreshSessionLabel(); /* 会话块同步(自启路径此前停留「已停止」)。 */
     return true;
 }
 
@@ -487,6 +768,21 @@ static void rs_profileSlot(XObject* sender, XVarList* args)
     rs_refreshSessionLabel();
 }
 
+/** @brief UDP 旁路开关 toggled：运行期即切（会话不断, 静默降级语义）。 */
+static void rs_udpSlot(XObject* sender, XVarList* args)
+{
+    char buf[128];
+    (void)sender; (void)args;
+    if (!s_rs.m_ready || !s_rs.m_server || s_rs.m_updating) return;
+    XGuiServer_setUdpEnabled(s_rs.m_server,
+        XAbstractButton_isChecked((const XAbstractButton*)s_rs.m_udpCheck));
+    snprintf(buf, sizeof(buf), "UDP 旁路: %s (端口 %u, 会话不断)",
+             XGuiServer_udpEnabled(s_rs.m_server) ? "开" : "关",
+             (unsigned)XGuiServer_udpPort(s_rs.m_server));
+    rs_report(buf);
+    rs_refreshSessionLabel();
+}
+
 /** @brief 「应用配置」clicked：监听中=重启监听生效; 未监听=预检暂存。 */
 static void rs_applySlot(XObject* sender, XVarList* args)
 {
@@ -537,6 +833,63 @@ static void rs_pingSlot(XObject* sender, XVarList* args)
     rs_report(buf);
 }
 
+/** @brief 「设口令」clicked（2026-10-04 访问口令加法式扩展）: 运行期
+ *         即时生效——新会话须认证, 存量会话不断; 联动认证组合框回显。 */
+static void rs_setPwdSlot(XObject* sender, XVarList* args)
+{
+    const char* pwd;
+    (void)sender; (void)args;
+    if (!s_rs.m_ready || !s_rs.m_server) return;
+    pwd = s_rs.m_passwordEdit ? XLineEdit_text(s_rs.m_passwordEdit) : "";
+    if (!pwd[0]) {
+        rs_report("设口令失败: 口令为空(清口令用「清口令」)");
+        return;
+    }
+    if (!XGuiServer_setAccessPassword(s_rs.m_server, pwd)) {
+        rs_report("设口令失败(参数非法/哈希失败)");
+        return;
+    }
+    if (s_rs.m_authCombo) XComboBox_setCurrentIndex(s_rs.m_authCombo, 1);
+    rs_report("口令已设(即时生效: 新会话须认证, 存量会话不断)");
+    rs_refreshStateLabel();
+    rs_refreshPendingLabel();
+    rs_refreshSessionLabel();
+}
+
+/** @brief 「清口令」clicked: 运行期回匿名模式——新会话免认证, 存量
+ *         会话不断; 联动口令编辑框与认证组合框回显。 */
+static void rs_clearPwdSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    if (!s_rs.m_ready || !s_rs.m_server) return;
+    XGuiServer_clearAccessPassword(s_rs.m_server);
+    if (s_rs.m_passwordEdit) XLineEdit_setText(s_rs.m_passwordEdit, "");
+    if (s_rs.m_authCombo) XComboBox_setCurrentIndex(s_rs.m_authCombo, 0);
+    rs_report("口令已清(即时生效: 回匿名模式, 新会话免认证)");
+    rs_refreshStateLabel();
+    rs_refreshPendingLabel();
+    rs_refreshSessionLabel();
+}
+
+/** @brief 在册会话 id 登记/摘除（会话认证状态显示取数; 容量 16 恒够:
+ *         服务端默认 maxSessions=4）。 */
+static void rs_trackSessionId(int sid, bool add)
+{
+    int i;
+    int j = 0;
+    if (add) {
+        for (i = 0; i < s_rs.m_liveCount; ++i)
+            if (s_rs.m_liveIds[i] == sid) return; /* 已在册。 */
+        if (s_rs.m_liveCount < (int)(sizeof(s_rs.m_liveIds) /
+                                     sizeof(s_rs.m_liveIds[0])))
+            s_rs.m_liveIds[s_rs.m_liveCount++] = sid;
+        return;
+    }
+    for (i = 0; i < s_rs.m_liveCount; ++i)
+        if (s_rs.m_liveIds[i] != sid) s_rs.m_liveIds[j++] = s_rs.m_liveIds[i];
+    s_rs.m_liveCount = j;
+}
+
 /** @brief 信号: 会话接入。 */
 static void rs_onClientConnected(XObject* sender, XVarList* args)
 {
@@ -546,6 +899,7 @@ static void rs_onClientConnected(XObject* sender, XVarList* args)
         snprintf(s_rs.m_lastEvent, sizeof(s_rs.m_lastEvent),
                  "会话 #%d 已接入", sid);
         ++s_rs.m_sessions;
+        rs_trackSessionId(sid, true);
         rs_report(s_rs.m_lastEvent);
     }
     rs_refreshSessionLabel();
@@ -560,6 +914,7 @@ static void rs_onClientDisconnected(XObject* sender, XVarList* args)
         snprintf(s_rs.m_lastEvent, sizeof(s_rs.m_lastEvent),
                  "会话 #%d 断开(reason=%d)", sid, reason);
         if (s_rs.m_sessions > 0) --s_rs.m_sessions;
+        rs_trackSessionId(sid, false);
         rs_report(s_rs.m_lastEvent);
     }
     rs_refreshSessionLabel();
@@ -634,7 +989,20 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     /* ---- 服务地址行（2026-10-02 增强: 「服务地址: <本机IP>:<端口>」;
      *     2026-10-03 目验收口: 行宽按 rootW-8-480=112 会在「192.16」处
      *     截断, 右列 y72 无邻位冲突, 行原点收至 x=160 挪出 424px 宽,
-     *     800x600(导航展开根宽 600)与更窄窗口均完整可见。 ---- */
+     *     800x600(导航展开根宽 600)与更窄窗口均完整可见;
+     *     2026-10-04 多 IP 自适应宽度（用户裁定「用布局自动调整宽度,
+     *     窗口足够宽时一行放下全部」）: 枚举逗号连接 2+ IP 后定宽必
+ *     右缘裁切——宽度改运行期随根宽伸缩（rs_adaptAddrLabelWidth:
+ *     rootW-8-360, 下限 80）, 刷新与主窗 resizeEvent 双路触发;
+ *     纵向向上扩成 (360,40,?,56) 折行区（40..72 段 x<480 无邻位,
+ *     底缘 96 不触 y=104 的 TLS/UDP 行）, wordWrap 窄窗折行兜底,
+ *     底对齐使单行时视觉仍锚在端口/档位行。容量口径（目验实测
+ *     默认字号行高 ~22px）: 56px 高容纳 2 行——默认 800 窗
+ *     (232px 宽) 2 行=464px ≥ 2 IP 全文 ~390px, 窗口更宽则一行
+ *     放下更多; 极窄窗（下限 80px 宽）长地址尾部仍裁切, 与页面
+ *     「更窄窗口随列宽裁切」既有口径一致。已知角: 折行首行
+ *     (y52..74) 与待生效提示 (480,40,112,22) 在 x≥480 段有 ~10px
+ *     叠带, 仅「2+ IP 且配置待生效」并发时可能出现, 瞬态可接受。 ---- */
     s_rs.m_addrLabel = XLabel_create(s_rs.m_root, 0);
     if (!s_rs.m_addrLabel) return s_rs.m_root;
     XLabel_setText_2(s_rs.m_addrLabel, "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x9C\xB0"
@@ -643,7 +1011,10 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
      * 首版收口把地址行挪到 (160,72) 与档位下拉框矩形相交（目验二轮
      * 实证叠印），改贴行内空段，右缘 592=rootW-8 恰收口。 */
     XWidget_setGeometry((XWidget*)s_rs.m_addrLabel,
-                        360, 72, 232, 24);
+                        360, 40, 232, 56); /* 初值; 首次刷新即自适应。 */
+    XLabel_setWordWrap(s_rs.m_addrLabel, true);
+    XLabel_setAlignment(s_rs.m_addrLabel,
+                        XAlignment_Left | XAlignment_Bottom);
     XWidget_show((XWidget*)s_rs.m_addrLabel);
 
     /* ---- 远程服务开关（启动/停止主控） ---- */
@@ -669,7 +1040,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     XWidget_show((XWidget*)s_rs.m_pendingLabel);
 
     /* ---- 端口 / 档位 ---- */
-    rs_buildLabelAt("\xE7\xAB\xAF\xE5\x8F\xA3", 12, 74, 40, NULL); /* 端口 */
+    rs_buildLabelAt("\xE7\xAB\xAF\xE5\x8F\xA3", 12, 74, 40, &s_rs.m_capPort); /* 端口 */
     s_rs.m_portEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_portEdit) return s_rs.m_root;
     XLineEdit_setText(s_rs.m_portEdit, "46000");
@@ -682,11 +1053,12 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_portEdit);
 
-    rs_buildLabelAt("\xE6\xA1\xA3\xE4\xBD\x8D", 170, 74, 40, NULL); /* 档位 */
+    rs_buildLabelAt("\xE6\xA1\xA3\xE4\xBD\x8D", 170, 74, 40, &s_rs.m_capProfile); /* 档位 */
     s_rs.m_profileCombo = XComboBox_create(s_rs.m_root, 0);
     if (!s_rs.m_profileCombo) return s_rs.m_root;
     XComboBox_addItem_2(s_rs.m_profileCombo, "performance");
     XComboBox_addItem_2(s_rs.m_profileCombo, "resource");
+    XComboBox_addItem_2(s_rs.m_profileCombo, "latency");
     XComboBox_setCurrentIndex(s_rs.m_profileCombo, 0);
     XWidget_setGeometry((XWidget*)s_rs.m_profileCombo, 214, 72, 134, 24);
     XObject_connect_2((XObject*)s_rs.m_profileCombo,
@@ -707,7 +1079,20 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_tlsCheck);
 
-    rs_buildLabelAt("\xE8\xAF\x81\xE4\xB9\xA6", 12, 134, 40, NULL); /* 证书 */
+    /* ---- UDP 低延迟旁路开关(2026-10-04 加法式; 默认开, 运行期可切) ---- */
+    s_rs.m_udpCheck = XCheckBox_create(s_rs.m_root, 0);
+    if (!s_rs.m_udpCheck) return s_rs.m_root;
+    XAbstractButton_setText_2((XAbstractButton*)s_rs.m_udpCheck,
+                              "UDP \xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF"
+                              "\x9F\xE9\x80\x9A\xE9\x81\x93");
+                              /* UDP 低延迟通道 */
+    XAbstractButton_setChecked((XAbstractButton*)s_rs.m_udpCheck, true);
+    XWidget_setGeometry((XWidget*)s_rs.m_udpCheck, 240, 104, 240, 24);
+    XObject_connect_2((XObject*)s_rs.m_udpCheck,
+                      XSignal(XAbstractButton_toggled_signal), rs_udpSlot);
+    XWidget_show((XWidget*)s_rs.m_udpCheck);
+
+    rs_buildLabelAt("\xE8\xAF\x81\xE4\xB9\xA6", 12, 134, 40, &s_rs.m_capCert); /* 证书 */
     s_rs.m_certEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_certEdit) return s_rs.m_root;
     XWidget_setGeometry((XWidget*)s_rs.m_certEdit, 56, 132, 292, 24);
@@ -716,7 +1101,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_certEdit);
 
-    rs_buildLabelAt("\xE7\xA7\x81\xE9\x92\xA5", 356, 134, 40, NULL); /* 私钥 */
+    rs_buildLabelAt("\xE7\xA7\x81\xE9\x92\xA5", 356, 134, 40, &s_rs.m_capKey); /* 私钥 */
     s_rs.m_keyEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_keyEdit) return s_rs.m_root;
     XWidget_setGeometry((XWidget*)s_rs.m_keyEdit, 400, 132, 184, 24);
@@ -726,7 +1111,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     XWidget_show((XWidget*)s_rs.m_keyEdit);
 
     /* ---- 认证方式 + 口令 ---- */
-    rs_buildLabelAt("\xE8\xAE\xA4\xE8\xAF\x81", 12, 164, 40, NULL); /* 认证 */
+    rs_buildLabelAt("\xE8\xAE\xA4\xE8\xAF\x81", 12, 164, 40, &s_rs.m_capAuth); /* 认证 */
     s_rs.m_authCombo = XComboBox_create(s_rs.m_root, 0);
     if (!s_rs.m_authCombo) return s_rs.m_root;
     XComboBox_addItem_2(s_rs.m_authCombo, "none");
@@ -738,7 +1123,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_authCombo);
 
-    rs_buildLabelAt("\xE5\x8F\xA3\xE4\xBB\xA4", 220, 164, 40, NULL); /* 口令 */
+    rs_buildLabelAt("\xE5\x8F\xA3\xE4\xBB\xA4", 220, 164, 40, &s_rs.m_capPwd); /* 口令 */
     s_rs.m_passwordEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_passwordEdit) return s_rs.m_root;
     XLineEdit_setEchoMode(s_rs.m_passwordEdit, XLineEditEchoMode_Password);
@@ -781,7 +1166,7 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     /* ---- 输入回显（联调断言辅助; 2026-10-02 增强）: 每次内容变化同步
      *     主窗口标题——客户端窗口标题随 FB_META 跟随, 供键盘往返用
      *     字符串断言。 ---- */
-    rs_buildLabelAt("\xE5\x9B\x9E\xE6\x98\xBE", 12, 242, 40, NULL); /* 回显 */
+    rs_buildLabelAt("\xE5\x9B\x9E\xE6\x98\xBE", 12, 242, 40, &s_rs.m_capEcho); /* 回显 */
     s_rs.m_echoEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_echoEdit) return s_rs.m_root;
     XWidget_setGeometry((XWidget*)s_rs.m_echoEdit, 56, 240, 300, 24);
@@ -789,6 +1174,28 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       XSignal(XLineEdit_textChanged_signal),
                       rs_echoChangedSlot);
     XWidget_show((XWidget*)s_rs.m_echoEdit);
+
+    /* ---- 设口令/清口令（2026-10-04 访问口令加法式扩展: 运行期即时
+     *     生效于新会话, 存量会话不断; 与「应用配置」监听期路径并存,
+     *     监听期 §6.8 契约(sha256+无口令 listen 拒绝)不变。 ---- */
+    s_rs.m_setPwdBtn = XPushButton_create(s_rs.m_root, 0);
+    if (!s_rs.m_setPwdBtn) return s_rs.m_root;
+    XPushButton_setText_2(s_rs.m_setPwdBtn,
+                          "\xE8\xAE\xBE\xE5\x8F\xA3\xE4\xBB\xA4"); /* 设口令 */
+    XWidget_setGeometry((XWidget*)s_rs.m_setPwdBtn, 364, 238, 104, 28);
+    XObject_connect_2((XObject*)s_rs.m_setPwdBtn,
+                      XSignal(XAbstractButton_clicked_signal), rs_setPwdSlot);
+    XWidget_show((XWidget*)s_rs.m_setPwdBtn);
+
+    s_rs.m_clearPwdBtn = XPushButton_create(s_rs.m_root, 0);
+    if (!s_rs.m_clearPwdBtn) return s_rs.m_root;
+    XPushButton_setText_2(s_rs.m_clearPwdBtn,
+                          "\xE6\xB8\x85\xE5\x8F\xA3\xE4\xBB\xA4"); /* 清口令 */
+    XWidget_setGeometry((XWidget*)s_rs.m_clearPwdBtn, 476, 238, 104, 28);
+    XObject_connect_2((XObject*)s_rs.m_clearPwdBtn,
+                      XSignal(XAbstractButton_clicked_signal),
+                      rs_clearPwdSlot);
+    XWidget_show((XWidget*)s_rs.m_clearPwdBtn);
 
     /* ---- 会话状态多行区（2026-10-03 收口: 宽随行右缘=584 收窄。 ---- */
     s_rs.m_sessionLabel = XLabel_create(s_rs.m_root, 0);
@@ -822,6 +1229,9 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
          * 走不通; 与 XGuiRemoteTest 悬浮条切档用例同口径放行
          * (2026-10-03 互联复验修复, 归因: 演示页配置遗漏)。 */
         XGuiServer_setAllowClientProfile(s_rs.m_server, true);
+        /* UDP 旁路策略同步(默认开; listen 时绑定通道, 设计稿 §3)。 */
+        XGuiServer_setUdpEnabled(s_rs.m_server,
+            XAbstractButton_isChecked((const XAbstractButton*)s_rs.m_udpCheck));
     }
 
     /* ---- CLI 初始默认值预置（UI 主控; 仅摆界面状态, 不在此监听——
@@ -835,6 +1245,8 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     }
     if (s_rsCli.profile && strcmp(s_rsCli.profile, "resource") == 0)
         XComboBox_setCurrentIndex(s_rs.m_profileCombo, 1);
+    else if (s_rsCli.profile && strcmp(s_rsCli.profile, "latency") == 0)
+        XComboBox_setCurrentIndex(s_rs.m_profileCombo, 2);
     if (s_rsCli.tls)
         XAbstractButton_setChecked((XAbstractButton*)s_rs.m_tlsCheck, true);
     if (s_rsCli.cert && s_rsCli.cert[0])
@@ -920,9 +1332,34 @@ int demo_page_remote_server_autotest(XWidget* page)
     RS_EXPECT(s_rs.m_srvToggle && s_rs.m_portEdit && s_rs.m_profileCombo &&
               s_rs.m_tlsCheck && s_rs.m_certEdit && s_rs.m_keyEdit &&
               s_rs.m_authCombo && s_rs.m_passwordEdit && s_rs.m_applyBtn &&
+              s_rs.m_setPwdBtn && s_rs.m_clearPwdBtn &&
               s_rs.m_pingBtn && s_rs.m_pingLabel && s_rs.m_sessionLabel &&
               s_rs.m_addrLabel && s_rs.m_echoEdit,
               "远程窗口页: 配置/反馈控件全部登记");
+
+    /* ---- 访问口令运行期 API（2026-10-04 加法式）: 设/清即时生效 +
+     *     掩码查询不明文回吐 ---- */
+    {
+        char masked[32];
+        RS_EXPECT(!XGuiServer_accessPassword(s_rs.m_server, masked,
+                                            sizeof(masked)) &&
+                  masked[0] == '\0',
+                  "远程窗口页: 初始未设访问口令");
+        RS_EXPECT(XGuiServer_setAccessPassword(s_rs.m_server, "autotest-pw"),
+                  "远程窗口页: setAccessPassword 即时设口令");
+        RS_EXPECT(XGuiServer_accessPassword(s_rs.m_server, masked,
+                                            sizeof(masked)) &&
+                  strcmp(masked, "********") == 0,
+                  "远程窗口页: accessPassword 返回已设+掩码形态");
+        RS_EXPECT(XGuiServer_authMethod(s_rs.m_server) ==
+                      XGUI_REMOTE_AUTH_SHA256_CHALLENGE,
+                  "远程窗口页: 设口令联动挑战应答方法");
+        XGuiServer_clearAccessPassword(s_rs.m_server);
+        RS_EXPECT(!XGuiServer_accessPassword(s_rs.m_server, NULL, 0) &&
+                  XGuiServer_authMethod(s_rs.m_server) ==
+                      XGUI_REMOTE_AUTH_NONE,
+                  "远程窗口页: clearAccessPassword 清口令回匿名模式");
+    }
 
     /* ---- 服务地址行（2026-10-02 增强）: 显示含端口且非空 ---- */
     {

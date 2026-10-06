@@ -58,6 +58,7 @@
 #endif /* XCURSOR_ON */
 #if XGUI_ON && XPLATFORM_FBDEV_ON
 #include "XPlatformDisplayDriver.h"
+#include "XPlatformBackingStore.h" /* fbdev hide 余部铺桌面底色（关闭残影根修） */
 #include "XWindowSystemInterface.h"
 #include "XGeometry.h"
 #endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
@@ -2171,7 +2172,10 @@ void XWindow_setVisible(XWindow* self, bool visible)
         if (tops)
         {
             XRect hiddenRect = XWindow_geometry(self);
+            XWindow* restored = NULL;
+            XRect restoredRect;
             size_t wi;
+            XRect_init(&restoredRect, 0, 0, 0, 0);
             for (wi = XVector_size_base(tops); wi > 0; --wi)
             {
                 XWindow* under =
@@ -2203,9 +2207,51 @@ void XWindow_setVisible(XWindow* self, bool visible)
                         XWindowSystemInterface_handleExposeEvent(under,
                                                                  &expose);
                         XRegion_deinit(&expose);
+                        restored = under;
+                        restoredRect = underRect;
                         break; /* 只有最上层相交层需要恢复。 */
                     }
                 }
+            }
+            /* 余部铺桌面底色（2026-10-04 关闭残影根修）：隐藏矩形超出
+             * 恢复层几何的部分（对话框拖出父窗/不与任何可见层相交）
+             * 没有任何层拥有，不补填则上一内容永久残留画面（真机拖动
+             * 对话框后关闭，悬出部分残留实证）。底色与 XWindowDecoration
+             * XWD_DESKTOP_PIXEL 同一约定（0xEF7D）。 */
+            if (restored)
+            {
+                XRect bands[4];
+                int bn = 0;
+                if (hiddenRect.x < restoredRect.x)
+                    XRect_init(&bands[bn++], hiddenRect.x, hiddenRect.y,
+                               restoredRect.x - hiddenRect.x,
+                               hiddenRect.height);
+                if (hiddenRect.x + hiddenRect.width >
+                    restoredRect.x + restoredRect.width)
+                    XRect_init(&bands[bn++],
+                               restoredRect.x + restoredRect.width,
+                               hiddenRect.y,
+                               hiddenRect.x + hiddenRect.width -
+                               (restoredRect.x + restoredRect.width),
+                               hiddenRect.height);
+                if (hiddenRect.y < restoredRect.y)
+                    XRect_init(&bands[bn++], hiddenRect.x, hiddenRect.y,
+                               hiddenRect.width,
+                               restoredRect.y - hiddenRect.y);
+                if (hiddenRect.y + hiddenRect.height >
+                    restoredRect.y + restoredRect.height)
+                    XRect_init(&bands[bn++], hiddenRect.x,
+                               restoredRect.y + restoredRect.height,
+                               hiddenRect.width,
+                               hiddenRect.y + hiddenRect.height -
+                               (restoredRect.y + restoredRect.height));
+                if (bn > 0)
+                    XPlatformBackingStore_fillPanelRects(bands, bn, 0xEF7Du);
+            }
+            else
+            {
+                /* 不与任何可见层相交：整块都是裸露面板。 */
+                XPlatformBackingStore_fillPanelRects(&hiddenRect, 1, 0xEF7Du);
             }
             XClassDelete(tops);
         }

@@ -13,6 +13,14 @@
 #include "XFileDescriptor.h"
 #include "XDevice.h"
 #include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <time.h>
+#endif
+
 
 
 
@@ -405,4 +413,87 @@ XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void) {
 }
 #endif
 
+
 #endif /* XAbstractNetIoRing_ON */
+
+/* ================================================================
+ * 事件循环唤醒延迟探针（诊断, env XGUI_REMOTE_WAKE_PROF 门控）
+ *
+ * 逐 fd 登记最近一次读完成时刻；消息层经 profLastRecvUs 查询并与派发
+ * 完成时刻作差, 得逐消息「数据到达→派发」响应延迟。探针未开时全程
+ * 零写入零查询成本（g_profOn 缓存 getenv, 每进程仅探测一次）。
+ * 置于环开关门控(XAbstractNetIoRing_ON)之外：环关闭时无打点发生,
+ * 查询恒 0, 调用方(XGuiServer/XGuiClient/XGuiRemoteUdpChannel, 不随
+ * 环开关裁剪)仍可安全链接。
+ * ================================================================ */
+#define XNETIORING_PROF_FD_SLOTS 64
+typedef struct XNetIoRingProfSlot {
+    const void* owner;   /**< 套接字属主对象(XFd 表 desc->object; NULL 空槽)。 */
+    uint64_t lastRecvUs; /**< 最近一次 >0 字节读完成时刻（单调 µs）。 */
+} XNetIoRingProfSlot;
+static XNetIoRingProfSlot g_profSlots[XNETIORING_PROF_FD_SLOTS];
+static int g_profOn = -1; /* -1=未探测环境变量。 */
+
+/** @brief 探针开关（env 探测一次并缓存）。 */
+static int xnetioring_profEnabled(void) {
+    if (g_profOn < 0) {
+        const char* env = getenv("XGUI_REMOTE_WAKE_PROF");
+        g_profOn = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return g_profOn;
+}
+
+uint64_t XAbstractNetIoRing_profNowUs(void) {
+#ifdef _WIN32
+    LARGE_INTEGER freq;
+    LARGE_INTEGER counter;
+    freq.QuadPart = 0;
+    QueryPerformanceCounter(&counter);
+    QueryPerformanceFrequency(&freq);
+    if (freq.QuadPart == 0) return 0;
+    return (uint64_t)(counter.QuadPart * 1000000LL / freq.QuadPart);
+#else
+    struct timespec ts;
+    ts.tv_sec = 0;
+    ts.tv_nsec = 0;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (uint64_t)ts.tv_sec * 1000000ULL +
+           (uint64_t)ts.tv_nsec / 1000ULL;
+#endif
+}
+
+void XAbstractNetIoRing_profMarkRecv(int fd) {
+    int i;
+    XFileDescriptor* desc;
+    const void* owner;
+    if (!xnetioring_profEnabled() || fd < 0) return;
+    /* 键=属主对象指针(XFd 表 desc->object): 消息层持有的是设备/套接字
+     * 对象指针, XFd id 是池索引与原生 fd 无关, 不宜外泄作查询键。 */
+    desc = XFd_get(fd);
+    owner = desc ? desc->object : NULL;
+    if (!owner) return;
+    for (i = 0; i < XNETIORING_PROF_FD_SLOTS; ++i) {
+        if (g_profSlots[i].owner == owner) {
+            g_profSlots[i].lastRecvUs = XAbstractNetIoRing_profNowUs();
+            return;
+        }
+    }
+    /* 未登记对象：占首个空槽（槽不主动回收——探针为诊断设施, 对象销毁后
+     * 残留键不再匹配新查询; 64 槽对本模块并发套接字规模充分）。 */
+    for (i = 0; i < XNETIORING_PROF_FD_SLOTS; ++i) {
+        if (!g_profSlots[i].owner) {
+            g_profSlots[i].owner = owner;
+            g_profSlots[i].lastRecvUs = XAbstractNetIoRing_profNowUs();
+            return;
+        }
+    }
+}
+
+uint64_t XAbstractNetIoRing_profLastRecvUs(const void* ownerObj) {
+    int i;
+    if (!xnetioring_profEnabled() || !ownerObj) return 0;
+    for (i = 0; i < XNETIORING_PROF_FD_SLOTS; ++i)
+        if (g_profSlots[i].owner == ownerObj)
+            return g_profSlots[i].lastRecvUs;
+    return 0;
+}

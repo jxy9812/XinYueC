@@ -170,6 +170,57 @@ void XWindowDecoration_notifyAppearanceChanged(XWidget* top);
  */
 bool XWindowDecoration_gestureActive(void);
 
+/**
+ * @brief      查询顶层窗口是否处于最小化卷起态（Shade：只剩标题条）。
+ * @details    卷起态下窗口内容不可见，宿主挂靠的悬浮件（性能悬浮窗等）
+ *             应随内容隐藏，防止重锚钳位后覆盖标题条（真机用户实测
+ *             2026-10-06）。未装饰/无状态/桌面原生窗恒 false。
+ * @param      top 顶层控件；可为 NULL。
+ * @return     卷起态返回 true。
+ */
+bool XWindowDecoration_isShaded(const XWidget* top);
+
+/**
+ * @brief      进程内「拖动快照 blit」落地步累计（诊断自证用）。
+ * @details    快照直写 fb 可见面每成功一步加一，恒单调不回退。消费方=
+ *             离屏回归（XGuiDialogMoveTest 断言快照路径真实生效，防门
+ *             控/条件失配静默回落旧路径的假绿）与真机诊断（env
+ *             XGUI_GESTURE_PROF 报告的 snap 计数同源）。快照模式关闭
+ *             （XGUI_DRAG_SNAPSHOT_BLIT=0）或环境不满足时恒不增长。
+ * @return     累计步数。
+ */
+int XWindowDecoration_dragSnapshotStepCount(void);
+
+/**
+ * @brief      fbdev 面板矩形探测（无 WM 单屏语义；非 fbdev 环境恒 false）。
+ * @details    显示驱动在位时输出整面板矩形（0,0,面板宽,面板高）并返回
+ *             true——语义与装饰内部 xwd_panelRect(NULL,·) 一致（桌面 WM
+ *             环境无驱动、XScreen 回退需窗口上下文，此处恒 false）。消费
+ *             方=自绘拖移的顶层窗口（屏幕键盘紧凑悬浮拖移等）：拖动走廊
+ *             按面板钳边，与 xwd_applyMove 同口径。
+ * @param      outPanel 输出面板矩形；可 NULL（仅作环境探测）。
+ * @return     fbdev 显示驱动在位返回 true。
+ */
+bool XWindowDecoration_fbdevPanelRect(XRect* outPanel);
+
+/**
+ * @brief      顶层窗口从 oldG 让出到 newG 的暴露条带按归属归位还原。
+ * @details    装饰拖拽移动（xwd_applyMove）同款机制的公共出口，供非装饰
+ *             拖移路径（屏幕键盘紧凑悬浮拖移等）复用：条带与各可见顶层
+ *             几何的交集自各归属顶层的后备缓冲直搬两缓冲（Z 序低→高遍
+ *             历，高层覆写），裸露面板余部填桌面底色。fbdev 无 WM 环境
+ *             专用语义——blit/fill 在非 fbdev 平台为 no-op，调用方应以
+ *             XWindowDecoration_fbdevPanelRect 为门。绝不逐帧注入 expose
+ *             （EXPOSE 处理恒整窗重合成，高频拖拽烧穿单核）。
+ * @param      oldG 移动前窗口几何（全局/面板坐标）。
+ * @param      newG 移动后窗口几何（须先落几何再调用，条带还原以「本窗
+ *             已离开旧位」为前提）。
+ * @param      selfWindow 移动中的顶层窗口（归属遍历时剔除自身）；可 NULL。
+ */
+void XWindowDecoration_restoreExposeStrips(const XRect* oldG,
+                                           const XRect* newG,
+                                           XWindow* selfWindow);
+
 #endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */
 
 #ifdef __cplusplus

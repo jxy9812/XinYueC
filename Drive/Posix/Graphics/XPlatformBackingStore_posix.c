@@ -250,6 +250,17 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
     if (!ops->probe(&info) || !info.m_frameBuffer ||
         info.m_stride == 0 || info.m_width < 1 || info.m_height < 1)
         return false;
+    /* 【memhunt fbdev 通道 2026-10-06】位深一致性守卫：直写语义=后备图
+     * 像格式即面板扫描格式。驱动替身/缺陷驱动 negotiate 恒认可时，协
+     * 商位深与 probe 报告 m_bitsPerPixel 失配会让行宽按失配像深计算、
+     * 寻址按驱动行距（16bpp 口径）——行重叠+越界直写（ASan 实证：替
+     * 身认 32bpp 后备，写穿 16bpp 双缓冲 RAM 面板末行，global-buffer-
+     * overflow，XGuiDialogMove_Test 桌面缺省 RGB32 构建首帧即爆）。位
+     * 深失配一律回落 X11/软件路径；真驱动 negotiate 只认本位深格式，
+     * 守卫恒过（零回归）。 */
+    if (info.m_bitsPerPixel > 0 &&
+        (int)info.m_bitsPerPixel != XImageFormat_bitDepth(panel))
+        return false;
     pixelBytes = (size_t)((XImageFormat_bitDepth(panel) + 7) / 8);
     if (pixelBytes == 0) return false;
     srcBase = XImage_constBits(image);
@@ -372,19 +383,32 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
         else
         {
             bool coversPanel = false;
-            for (i = 0; i < region->count; ++i)
+            /* 整屏快转判定加 occluderCount==0 门槛（拖动白块战役
+             * 2026-10-05 离屏测试实证第二缺陷）：遮挡剔除在位时，整帧
+             * present 只写未遮挡条带、弹层矩形行带不落笔——此时跳过差
+             * 带同步，等于把「写入缓冲弹层矩形=陈旧内容」直接翻上屏
+             * （弹层矩形整片回跳陈旧内容，无后续补绘则长留）。快转
+             * 「脏区已盖整屏→同步可跳」的前提只在真写满整屏（无剔除）
+             * 时成立；有弹层在位时照走账本同步。 */
+            if (occluderCount == 0)
             {
-                const XRect* rect = &region->rects[i];
-                if (!rect || rect->width <= 0 || rect->height <= 0) continue;
-                if (rect->x <= off->x && rect->y <= off->y &&
-                    rect->x + rect->width >= off->x + XImage_width(image) &&
-                    rect->y + rect->height >= off->y + XImage_height(image) &&
-                    off->x <= 0 && off->y <= 0 &&
-                    XImage_width(image) >= info.m_width &&
-                    XImage_height(image) >= info.m_height)
+                for (i = 0; i < region->count; ++i)
                 {
-                    coversPanel = true;
-                    break;
+                    const XRect* rect = &region->rects[i];
+                    if (!rect || rect->width <= 0 || rect->height <= 0)
+                        continue;
+                    if (rect->x <= off->x && rect->y <= off->y &&
+                        rect->x + rect->width >=
+                            off->x + XImage_width(image) &&
+                        rect->y + rect->height >=
+                            off->y + XImage_height(image) &&
+                        off->x <= 0 && off->y <= 0 &&
+                        XImage_width(image) >= info.m_width &&
+                        XImage_height(image) >= info.m_height)
+                    {
+                        coversPanel = true;
+                        break;
+                    }
                 }
             }
             /* 差带账本在位且本帧未盖整屏：把缺失矩形逐条搬入写入缓冲
@@ -399,7 +423,15 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
                  * 分相 post 相 31.6~34.6ms 的主项之一）。按弹层遮挡切
                  * 分同款工作集做「账本 \ 本帧写区」矩形差分，只把真正
                  * 缺失的余料搬入写入缓冲；工作集溢出降级为按账本原矩
-                 * 形整块搬（退回旧行为，绝不欠同步）。 */
+                 * 形整块搬（退回旧行为，绝不欠同步）。
+                 * 遮挡剔除在位（occluderCount>0）时差分不安全（拖动白
+                 * 块战役 2026-10-05 离屏全帧断言实证）：写区差分按剔除
+                 * 前矩形扣账，而实际落笔是剔除后条带——弹层矩形被差
+                 * 分扣掉却不被写，翻页即回跳陈旧内容（主窗整帧直提后
+                 * 弹层矩形 2832px 回跳父窗内容实证）。有剔除在位一律
+                 * 按账本原矩形整块搬（同溢出降级路径）：弹层行带必同
+                 * 步，冗余只限账本行带面积（写区即将覆盖的部分白搬一
+                 * 遍，上限=上一帧脏区）。 */
                 XRect fbWrite[XPBS_OCCL_WORK_MAX];
                 XRect subWork[XPBS_OCCL_WORK_MAX];
                 XRect subNext[XPBS_OCCL_WORK_MAX];
@@ -409,7 +441,7 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
                 int subCount = 0;
                 int wi;
                 int fi;
-                bool subTruncated = false;
+                bool subTruncated = occluderCount > 0;
                 /* 本帧写区 → fb 像素坐标（与下方账本更新同一裁剪链：
                  * 图像范围 ∩ 面板范围），供差分求交。 */
                 for (i = 0; i < region->count &&
@@ -591,7 +623,10 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
         if (wx0 < off->x) wx0 = off->x;
         if (wy0 < off->y) wy0 = off->y;
         if (wx1 > off->x + XImage_width(image))  wx1 = off->x + XImage_width(image);
-        if (wy1 > off->x + XImage_height(image)) wy1 = off->y + XImage_height(image);
+        /* 【memhunt fbdev 通道 2026-10-06】原图像底界钳制误用 off->x 作
+         * y 基线（off->x>off->y 时漏钳：图像底缘脏矩形源读越界 +
+         * 面板界以下落笔，与 450/452、771/773 两处同式对齐）。 */
+        if (wy1 > off->y + XImage_height(image)) wy1 = off->y + XImage_height(image);
         /* 面板范围约束：fb 像素坐标 = 窗口全局位置(origin) + 窗口坐标
          * （主窗口恒在原点；弹层等非原点顶层窗口落到其实际屏幕位置）。
          * 双缓冲面板的可见高度被驱动钳到 yres——后台缓冲在
@@ -909,6 +944,423 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
 #else
     (void)rects; (void)count; (void)nativePixel;
 #endif
+}
+
+void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
+                                          const XRect* rects, int count,
+                                          const XPoint* origin)
+{
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    /* 让位条带归位还原（拖动对话框白块根修 2026-10-05）：fillPanelRects
+     * 的「内容来自另一顶层后备缓冲」孪生版。无 WM 的 fbdev 弹层拖动
+     * 让出的条带住着父窗内容，逐帧路径既不能 requestPanelClear（整屏
+     * 频闪前科）也不能无条件填桌面底色（洗掉父窗=真机白块），更不能
+     * 逐帧给归属顶层注入整窗 expose（EXPOSE 处理恒整窗重合成，60 档
+     * 拖拽烧穿 A33 单核）——把归属顶层的既有合成结果按条带直搬两缓
+     * 冲，语义=窗口系统「移开遮挡即露出下层内容」。契约与 fillPanel
+     * Rects 完全同款：同步双缓冲直写（写入即见）、不碰差带账本与翻
+     * 页状态、无 pan、无 cacheSync（同 fill 口径）；格式守卫与 present
+     * 直写同款（源图像格式==面板扫描格式，否则 no-op 维持旧行为）。 */
+    const XPlatformDisplayDriverOps* ops;
+    XPlatformDisplayInfo info;
+    XImageFormat panel = XImageFormat_Invalid;
+    XImage* image;
+    const uint8_t* srcBase;
+    size_t pixelBytes;
+    int imgBpl;
+    int imgW;
+    int imgH;
+    int i;
+    if (!src || !rects || count <= 0 || !origin) return;
+    ops = XPlatformDisplayDriver_active();
+    if (!ops || !ops->probe || !ops->probe(&info) || !info.m_frameBuffer ||
+        info.m_stride == 0 || info.m_width < 1 || info.m_height < 1)
+        return;
+    image = XPlatformBackingStore_paintDevice(src);
+    if (!image || !image->m_data) return;
+    if (!ops->formatNegotiate(XImage_format(image), &panel) ||
+        panel != XImage_format(image))
+        return;
+    pixelBytes = (size_t)((XImageFormat_bitDepth(panel) + 7) / 8);
+    if (pixelBytes == 0) return;
+    srcBase = XImage_constBits(image);
+    imgBpl = XImage_bytesPerLine(image);
+    imgW = XImage_width(image);
+    imgH = XImage_height(image);
+    if (!srcBase || imgBpl <= 0) return;
+    for (i = 0; i < count; ++i)
+    {
+        const XRect* r = &rects[i];
+        /* 双向钳制：先图像范围（图像坐标=矩形-origin），再面板范围；
+         * 源指针按钳后坐标现算（origin 可为负=窗口悬出面板）。 */
+        int sx0 = r->x - origin->x;
+        int sy0 = r->y - origin->y;
+        int sx1 = sx0 + r->width;
+        int sy1 = sy0 + r->height;
+        int x0;
+        int y0;
+        int x1;
+        int y1;
+        int y;
+        size_t rowBytes;
+        const uint8_t* s;
+        uint8_t* d0;
+        if (!r || r->width <= 0 || r->height <= 0) continue;
+        if (sx0 < 0) sx0 = 0;
+        if (sy0 < 0) sy0 = 0;
+        if (sx1 > imgW) sx1 = imgW;
+        if (sy1 > imgH) sy1 = imgH;
+        x0 = sx0 + origin->x;
+        y0 = sy0 + origin->y;
+        x1 = sx1 + origin->x;
+        y1 = sy1 + origin->y;
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > info.m_width) x1 = info.m_width;
+        if (y1 > info.m_height) y1 = info.m_height;
+        if (x1 <= x0 || y1 <= y0) continue;
+        s = srcBase + (int64_t)(y0 - origin->y) * imgBpl +
+            (int64_t)(x0 - origin->x) * (int64_t)pixelBytes;
+        rowBytes = (size_t)(x1 - x0) * pixelBytes;
+        d0 = (uint8_t*)info.m_frameBuffer + (size_t)y0 * info.m_stride +
+             (size_t)x0 * pixelBytes;
+        for (y = y0; y < y1; ++y)
+        {
+            XMemcpy(d0, s, rowBytes);
+            s += imgBpl;
+            d0 += info.m_stride;
+        }
+        /* 双缓冲面板：同内容同步进后台缓冲，翻页不失步（fill 同款）。 */
+        if (info.m_doubleBuffered)
+        {
+            s = srcBase + (int64_t)(y0 - origin->y) * imgBpl +
+                (int64_t)(x0 - origin->x) * (int64_t)pixelBytes;
+            d0 = (uint8_t*)info.m_frameBuffer +
+                 (size_t)(info.m_height + y0) * info.m_stride +
+                 (size_t)x0 * pixelBytes;
+            for (y = y0; y < y1; ++y)
+            {
+                XMemcpy(d0, s, rowBytes);
+                s += imgBpl;
+                d0 += info.m_stride;
+            }
+        }
+    }
+#else
+    (void)src; (void)rects; (void)count; (void)origin;
+#endif
+}
+
+bool XPlatformBackingStore_blitSnapshotPanelRects(const XImage* snapshot,
+                                                  const XRect* rects,
+                                                  int count,
+                                                  const XPoint* origin,
+                                                  const XWindow* selfWindow)
+{
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    const XPlatformDisplayDriverOps* ops;
+    XPlatformDisplayInfo info;
+    XImageFormat panel = XImageFormat_Invalid;
+    const uint8_t* srcBase;
+    size_t pixelBytes;
+    int imgBpl;
+    int imgW;
+    int imgH;
+    int i;
+    int visIndex;
+    int occluderCount;
+    XRect occluders[XPBS_OCCLUDER_MAX];
+    size_t syncLo = 0;
+    size_t syncHi = 0;
+    bool syncAny = false;
+    if (!snapshot || !snapshot->m_data || !rects || count <= 0 || !origin)
+        return false;
+    ops = XPlatformDisplayDriver_active();
+    if (!ops || !ops->probe || !ops->probe(&info) || !info.m_frameBuffer ||
+        info.m_stride == 0 || info.m_width < 1 || info.m_height < 1)
+        return false;
+    /* 格式守卫与 blitPanelRects/present 直写同款：源格式==面板扫描格式。 */
+    if (!ops->formatNegotiate(XImage_format(snapshot), &panel) ||
+        panel != XImage_format(snapshot))
+        return false;
+    /* 首帧 present 前可见缓冲未定（写索引尚未经 pan 轮换确立）：
+     * 拒绝直写，调用方回落既有 flush 提交路径。 */
+    if (info.m_doubleBuffered && g_xpbsFbFirstPresent)
+        return false;
+    pixelBytes = (size_t)((XImageFormat_bitDepth(panel) + 7) / 8);
+    if (pixelBytes == 0) return false;
+    srcBase = XImage_constBits(snapshot);
+    imgBpl = XImage_bytesPerLine(snapshot);
+    imgW = XImage_width(snapshot);
+    imgH = XImage_height(snapshot);
+    if (!srcBase || imgBpl <= 0) return false;
+    /* 目标=当前可见缓冲（与轮换写语义互补，见函数头注）：写索引恒指向
+     * 下一次 present 的写入缓冲，故可见面=写索引^1（pan 成功翻转换号、
+     * pan 失败不换号，两种演化下不变式均成立）；单缓冲面板恒 0 号。 */
+    visIndex = info.m_doubleBuffered ? (g_xpbsFbWriteIndex ^ 1) : 0;
+    /* 弹层遮挡剔除收集：与 present 直写同款（登记序在本窗之后的可见
+     * 顶层=更高层）。拖动窗口扫过高层弹层时被覆盖行带不落笔，弹层像
+     * 素不被窗口快照洗掉（present 遮挡剔除语义的快照版对齐）。 */
+    occluderCount = 0;
+    if (selfWindow)
+    {
+        XVector* tops = XGuiApplication_topLevelWindows();
+        if (tops)
+        {
+            int selfIndex = -1;
+            size_t topCount = XVector_size_base(tops);
+            size_t ti;
+            for (ti = 0; ti < topCount; ++ti)
+            {
+                if (*(XWindow* const*)XVector_at_base(tops,
+                                                      (int64_t)ti) ==
+                    selfWindow)
+                {
+                    selfIndex = (int)ti;
+                    break;
+                }
+            }
+            for (ti = (size_t)(selfIndex + 1);
+                 selfIndex >= 0 && ti < topCount; ++ti)
+            {
+                XWindow* above =
+                    *(XWindow**)XVector_at_base(tops, (int64_t)ti);
+                XRect g;
+                int gx1;
+                int gy1;
+                if (!above || !XWindow_isVisible(above)) continue;
+                g = XWindow_geometry(above);
+                gx1 = g.x + g.width;
+                gy1 = g.y + g.height;
+                if (g.x < 0) { g.width += g.x; g.x = 0; }
+                if (g.y < 0) { g.height += g.y; g.y = 0; }
+                if (gx1 > info.m_width) gx1 = info.m_width;
+                if (gy1 > info.m_height) gy1 = info.m_height;
+                if (gx1 <= g.x || gy1 <= g.y) continue;
+                if (occluderCount < XPBS_OCCLUDER_MAX)
+                {
+                    occluders[occluderCount].x = g.x;
+                    occluders[occluderCount].y = g.y;
+                    occluders[occluderCount].width = gx1 - g.x;
+                    occluders[occluderCount].height = gy1 - g.y;
+                    ++occluderCount;
+                }
+            }
+            XClassDelete(tops);
+        }
+    }
+    for (i = 0; i < count; ++i)
+    {
+        const XRect* r = &rects[i];
+        /* 双向钳制：先图像范围（图像坐标=矩形-origin），再面板范围；
+         * 与 blitPanelRects 同款。 */
+        int sx0 = r->x - origin->x;
+        int sy0 = r->y - origin->y;
+        int sx1 = sx0 + r->width;
+        int sy1 = sy0 + r->height;
+        int x0;
+        int y0;
+        int x1;
+        int y1;
+        size_t rowBytes;
+        if (!r || r->width <= 0 || r->height <= 0) continue;
+        if (sx0 < 0) sx0 = 0;
+        if (sy0 < 0) sy0 = 0;
+        if (sx1 > imgW) sx1 = imgW;
+        if (sy1 > imgH) sy1 = imgH;
+        x0 = sx0 + origin->x;
+        y0 = sy0 + origin->y;
+        x1 = sx1 + origin->x;
+        y1 = sy1 + origin->y;
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > info.m_width) x1 = info.m_width;
+        if (y1 > info.m_height) y1 = info.m_height;
+        if (x1 <= x0 || y1 <= y0) continue;
+        if (occluderCount > 0)
+        {
+            /* 遮挡切分：在面板坐标系按各高层弹层矩形把本矩形切为周边
+             * 条带，仅未被遮挡的条带落笔（与 present 同款工作集与溢出
+             * 降级——溢出按原矩形整块直搬，绝不丢帧）。 */
+            XRect full;
+            XRect work[XPBS_OCCL_WORK_MAX];
+            int wn = 1;
+            int oi;
+            bool truncated = false;
+            int bi;
+            full.x = x0;
+            full.y = y0;
+            full.width = x1 - x0;
+            full.height = y1 - y0;
+            work[0] = full;
+            for (oi = 0; oi < occluderCount && !truncated; ++oi)
+            {
+                XRect next[XPBS_OCCL_WORK_MAX];
+                int nn = 0;
+                int wi;
+                const XRect* o = &occluders[oi];
+                for (wi = 0; wi < wn; ++wi)
+                {
+                    const XRect* w = &work[wi];
+                    int rx1 = w->x + w->width;
+                    int ry1 = w->y + w->height;
+                    int ix0 = w->x > o->x ? w->x : o->x;
+                    int iy0 = w->y > o->y ? w->y : o->y;
+                    int ix1 = rx1 < o->x + o->width ? rx1
+                                                    : o->x + o->width;
+                    int iy1 = ry1 < o->y + o->height ? ry1
+                                                     : o->y + o->height;
+                    if (ix1 <= ix0 || iy1 <= iy0)
+                    {
+                        /* 不相交：整段保留。 */
+                        if (nn < XPBS_OCCL_WORK_MAX) next[nn++] = *w;
+                        else truncated = true;
+                        continue;
+                    }
+                    /* 相交：保留上下左右四条带（均不含遮挡矩形）。 */
+                    if (iy0 > w->y)
+                    {
+                        if (nn < XPBS_OCCL_WORK_MAX)
+                        {
+                            next[nn].x = w->x; next[nn].y = w->y;
+                            next[nn].width = w->width;
+                            next[nn].height = iy0 - w->y;
+                            ++nn;
+                        }
+                        else truncated = true;
+                    }
+                    if (iy1 < ry1)
+                    {
+                        if (nn < XPBS_OCCL_WORK_MAX)
+                        {
+                            next[nn].x = w->x; next[nn].y = iy1;
+                            next[nn].width = w->width;
+                            next[nn].height = ry1 - iy1;
+                            ++nn;
+                        }
+                        else truncated = true;
+                    }
+                    if (ix0 > w->x)
+                    {
+                        if (nn < XPBS_OCCL_WORK_MAX)
+                        {
+                            next[nn].x = w->x; next[nn].y = iy0;
+                            next[nn].width = ix0 - w->x;
+                            next[nn].height = iy1 - iy0;
+                            ++nn;
+                        }
+                        else truncated = true;
+                    }
+                    if (ix1 < rx1)
+                    {
+                        if (nn < XPBS_OCCL_WORK_MAX)
+                        {
+                            next[nn].x = ix1; next[nn].y = iy0;
+                            next[nn].width = rx1 - ix1;
+                            next[nn].height = iy1 - iy0;
+                            ++nn;
+                        }
+                        else truncated = true;
+                    }
+                }
+                if (!truncated)
+                {
+                    int ci;
+                    for (ci = 0; ci < nn; ++ci) work[ci] = next[ci];
+                    wn = nn;
+                }
+            }
+            /* 截断降级只搬原矩形一块（band=full）；正常路径逐条带搬。 */
+            for (bi = 0; bi < (truncated ? 1 : wn); ++bi)
+            {
+                const XRect* band = truncated ? &full : &work[bi];
+                const uint8_t* s;
+                uint8_t* d;
+                int y;
+                if (!truncated &&
+                    (band->width <= 0 || band->height <= 0))
+                    continue;
+                s = srcBase +
+                    (int64_t)(band->y - origin->y) * imgBpl +
+                    (int64_t)(band->x - origin->x) * (int64_t)pixelBytes;
+                rowBytes = (size_t)band->width * pixelBytes;
+                d = (uint8_t*)info.m_frameBuffer +
+                    (size_t)(visIndex * info.m_height + band->y) *
+                        info.m_stride +
+                    (size_t)band->x * pixelBytes;
+                for (y = band->y; y < band->y + band->height; ++y)
+                {
+                    XMemcpy(d, s, rowBytes);
+                    s += imgBpl;
+                    d += info.m_stride;
+                }
+                {
+                    size_t lo = (size_t)(visIndex * info.m_height +
+                                         band->y) * info.m_stride +
+                                (size_t)band->x * pixelBytes;
+                    size_t hi = (size_t)(visIndex * info.m_height +
+                                         band->y + band->height - 1) *
+                                    info.m_stride +
+                                (size_t)(band->x + band->width) *
+                                    pixelBytes;
+                    if (!syncAny || lo < syncLo) syncLo = lo;
+                    if (!syncAny || hi > syncHi) syncHi = hi;
+                    syncAny = true;
+                }
+            }
+            continue;
+        }
+        {
+            /* 无遮挡剔除：整矩形直搬（blitPanelRects 行拷贝同款寻址）。 */
+            const uint8_t* s;
+            uint8_t* d;
+            int y;
+            s = srcBase + (int64_t)(y0 - origin->y) * imgBpl +
+                (int64_t)(x0 - origin->x) * (int64_t)pixelBytes;
+            rowBytes = (size_t)(x1 - x0) * pixelBytes;
+            d = (uint8_t*)info.m_frameBuffer +
+                (size_t)(visIndex * info.m_height + y0) * info.m_stride +
+                (size_t)x0 * pixelBytes;
+            for (y = y0; y < y1; ++y)
+            {
+                XMemcpy(d, s, rowBytes);
+                s += imgBpl;
+                d += info.m_stride;
+            }
+            {
+                size_t lo = (size_t)(visIndex * info.m_height + y0) *
+                                info.m_stride +
+                            (size_t)x0 * pixelBytes;
+                size_t hi = (size_t)(visIndex * info.m_height + y1 - 1) *
+                                info.m_stride +
+                            (size_t)x1 * pixelBytes;
+                if (!syncAny || lo < syncLo) syncLo = lo;
+                if (!syncAny || hi > syncHi) syncHi = hi;
+                syncAny = true;
+            }
+        }
+    }
+    /* DMA scanout 前 cache clean——行带收窄版（只覆盖本次快照落笔范围，
+     * 与 present 直写的收窄口径一致）。 */
+    if (syncAny)
+        xpbs_cacheSyncRangeWarnOnce(ops,
+                                    (uint8_t*)info.m_frameBuffer + syncLo,
+                                    syncHi - syncLo);
+    /* 翻页收敛提交：pan 到刚写入的可见缓冲（同号 pan 多数驱动对未变化
+     * yoffset 早退不等待）。不翻转换写索引、不触碰差带账本——另一缓冲
+     * 的欠账由拖动结束的真实整窗 PAINT→flush→present 差带同步补齐。
+     * pan 失败不回滚（可见性不变式不依赖本调用，见 visIndex 注）。 */
+    ops->pan(visIndex);
+    return true;
+#else
+    /* 非 fbdev 构建：no-op，调用方回落既有 flush 提交路径。 */
+    (void)snapshot;
+    (void)rects;
+    (void)count;
+    (void)origin;
+    (void)selfWindow;
+    return false;
+#endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
 }
 
 /** @brief 取顶层窗口的全局位置作为 fb 落笔原点（主窗口恒 (0,0)）。

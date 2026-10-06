@@ -447,19 +447,52 @@ static bool xpbs_bufferSizeValid(const XSize* size, size_t bufferSize)
                          : bufferSize >= required;
 }
 
+/* [2026-10-06] 全局 present 通知单槽（经 setter/thunk 读写, GUI 线程）。 */
+static XPlatformBackingStorePresentFn g_xpbsAnyPresent;
+static void* g_xpbsAnyPresentData;
+
+/** @brief 全局通知登记 thunk（公开 setter 落点, 避免声明顺序前向）。 */
+void xpbs_setGlobalPresentCallbackThunk(
+        XPlatformBackingStorePresentFn callback, void* userData)
+{
+    g_xpbsAnyPresent = callback;
+    g_xpbsAnyPresentData = userData;
+}
+
 /** @brief 调用 present 回调并隔离回调期间的区域生命周期（防重入）。 */
 static void xpbs_invokePresent(XPlatformBackingStore* self,
                                const XRegion* region,
                                const XPoint* offset)
 {
     XRegion callbackRegion;
-    if (!self || !self->m_present || !region || XRegion_isEmpty(region))
-        return;
+    /* [2026-10-06] 全局 present 通知单槽（任意存储 flush 后触发, 与
+     * 每存储回调互相独立——弹层存储没有每存储登记也需通知远端合成）。 */
+    if (!self || !region || XRegion_isEmpty(region)) return;
     XRegion_init(&callbackRegion);
     XRegion_copy(region, &callbackRegion);
     if (callbackRegion.count == region->count)
-        self->m_present(self->m_userData, self, &callbackRegion, offset);
+    {
+        if (self->m_present)
+            self->m_present(self->m_userData, self, &callbackRegion, offset);
+        if (g_xpbsAnyPresent)
+            g_xpbsAnyPresent(g_xpbsAnyPresentData, self,
+                             &callbackRegion, offset);
+    }
     XRegion_deinit(&callbackRegion);
+}
+
+void XPlatformBackingStore_notifyPresentRegion(XPlatformBackingStore* self,
+                                               const XRegion* region,
+                                               const XPoint* offset)
+{
+    XPoint zero;
+    /* 与 flush 同口径：offset 缺省按零点处理（回调契约要求非 NULL）。 */
+    if (!offset)
+    {
+        XPoint_init(&zero, 0, 0);
+        offset = &zero;
+    }
+    xpbs_invokePresent(self, region, offset);
 }
 
 size_t XPlatformBackingStore_requiredBufferSize(const XSize* size)
@@ -1597,6 +1630,13 @@ void XPlatformBackingStore_setPresentCallback(
     if (!self) return;
     self->m_present = callback;
     self->m_userData = userData;
+}
+
+void XPlatformBackingStore_setGlobalPresentCallback(
+        XPlatformBackingStorePresentFn callback, void* userData)
+{
+    g_xpbsAnyPresent = callback;
+    g_xpbsAnyPresentData = userData;
 }
 
 void XPlatformBackingStore_setNativeTargetWindow(

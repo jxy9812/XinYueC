@@ -45,10 +45,22 @@ static bool socketGetBoolProperty(const XAbstractSocket* socket, XDeviceProperty
 {
     XVariant result;
     if (!socket || !value || socketDeviceFd(socket) == XFD_INVALID) return false;
+    /* 桶规约: 必须走 XVariant_init(建 vtable)+setValue_null(经 XClassDeinit
+     * 释放值槽)。旧 memset+XVariant_clear 组合只清内容不释放——ASan 实测
+     * 每次 getProperty 泄漏值槽堆块(远程会话统计采样随时长无上限增长)。
+     * 【真机修复 2026-10-04】init 前必须 memset: XVariant_init 对传入结构
+     * 自带「旧 m_data 防御性释放」(XVariant.c:88-92), 未初始化栈对象该字段
+     * 为栈残影——armel Release(-O3) 热栈槽残留陈旧非空指针, init 内直接
+     * XFree_System(垃圾指针) → glibc "free(): invalid pointer" 启动即崩
+     * (Debug 栈区恰逢全零故不现形; 真机复验: 5 处补 memset 后干净监听)。 */
     memset(&result, 0, sizeof(result));
-    if (!XDevice_getProperty(socketDeviceFd(socket), property, &result)) return false;
+    XVariant_init(&result, NULL, 0, XVariantType_NULL);
+    if (!XDevice_getProperty(socketDeviceFd(socket), property, &result)) {
+        XVariant_setValue_null(&result);
+        return false;
+    }
     *value = XVariant_toBool(&result);
-    XVariant_clear(&result);
+    XVariant_setValue_null(&result);
     return true;
 }
 
@@ -56,10 +68,14 @@ static bool socketGetSizeProperty(const XAbstractSocket* socket, XDeviceProperty
 {
     XVariant result;
     if (!socket || !value || socketDeviceFd(socket) == XFD_INVALID) return false;
-    memset(&result, 0, sizeof(result));
-    if (!XDevice_getProperty(socketDeviceFd(socket), property, &result)) return false;
+    memset(&result, 0, sizeof(result)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
+    XVariant_init(&result, NULL, 0, XVariantType_NULL);
+    if (!XDevice_getProperty(socketDeviceFd(socket), property, &result)) {
+        XVariant_setValue_null(&result);
+        return false;
+    }
     *value = XVariant_toSize_t(&result);
-    XVariant_clear(&result);
+    XVariant_setValue_null(&result);
     return true;
 }
 
@@ -737,7 +753,21 @@ static int64_t VXAbstractSocket_skipData(XAbstractSocket* self, int64_t maxSize)
 
 static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
 {
-    if (!self || socketDeviceFd(self) == XFD_INVALID) return false;
+    if (!self) return false;
+    /* [memhunt F2 根修 2026-10-06] fd 失效不可拦截 DeferredDelete：
+     * abort/close 后 fd=XFD_INVALID，旧代码此行把投递到本 socket 的
+     * XEVENT_TYPE_DEFERRED_DELETE 一并 return false 吞掉——XObject_event
+     * 的 DeferredDelete 分支（XClassDelete(receiver)）永不执行，
+     * deleteLater 永不兑现，会话设备树（4KB 通道 ring buffer+设备私有，
+     * XIODevicePrivate.c:58/:121）整体泄漏。LSan 实证：单轮「连接→对端
+     * 消失→优雅退出」SUMMARY 55008B/138，设备树全 Indirect、[DD-handler]
+     * 对 socket 对象零兑现；派发门控(shouldDeliver)已判 "->1 放行"后
+     * 事件仍消失，断点即本行。修后仅放行 DD（与 Qt QObject::event 对
+     * DeferredDelete 的处理同构），SOCK_ACT/SOCK_CLOSE 等其余事件维持
+     * fd 失效挡护（行为不变，改动最小化）。 */
+    if (socketDeviceFd(self) == XFD_INVALID &&
+        e->type != XEVENT_TYPE_DEFERRED_DELETE)
+        return false;
 
     if (e->type == XEVENT_TYPE_SOCK_ACT) {
         XEventSockAct* sockAct = (XEventSockAct*)e;
@@ -895,13 +925,15 @@ static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* add
     if (socketOpenDevice(self, &options, &error) == XFD_INVALID) {
         return false;
     }
-    memset(&value, 0, sizeof(value));
+    memset(&value, 0, sizeof(value)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
+    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* 桶规约: 见 socketGetBoolProperty。 */
     if (!XDevice_getProperty(socketDeviceFd(self), (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
+        XVariant_setValue_null(&value);
         socketCloseDevice(self);
         return false;
     }
     actualPort = (uint16_t)XVariant_toInt(&value);
-    XVariant_clear(&value);
+    XVariant_setValue_null(&value);
     XAbstractSocket_setLocalAddress(self, address);
     XAbstractSocket_setLocalPort(self, actualPort);  // 使用实际端口
     XAbstractSocket_setSocketState(self, XAbstractSocket_BoundState);
@@ -1004,9 +1036,17 @@ static intptr_t VXAbstractSocket_SocketDescriptor(const XAbstractSocket* self)
 {
     XVariant value;
     if (!self || socketDeviceFd(self) == XFD_INVALID) return -1;
-    memset(&value, 0, sizeof(value));
-    if (!XDevice_getProperty(socketDeviceFd(self), XDeviceProperty_NativeHandle, &value)) return -1;
-    return (intptr_t)XVariant_toPtr(&value);
+    memset(&value, 0, sizeof(value)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
+    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* 桶规约: 见 socketGetBoolProperty。 */
+    if (!XDevice_getProperty(socketDeviceFd(self), XDeviceProperty_NativeHandle, &value)) {
+        XVariant_setValue_null(&value);
+        return -1;
+    }
+    {
+        intptr_t handle = (intptr_t)XVariant_toPtr(&value);
+        XVariant_setValue_null(&value);
+        return handle;
+    }
 }
 
 static bool VXAbstractSocket_SetSocketDescriptor(XAbstractSocket* self, intptr_t socketDescriptor, XAbstractSocket_SocketState state, XIODeviceBaseMode openMode)
@@ -1074,11 +1114,12 @@ static void VXAbstractSocket_SetReadBufferSize(XAbstractSocket* self, int64_t si
     if (!self) return;
     self->readBufferSize = size;
     if (socketDeviceFd(self) == XFD_INVALID) return;
-    memset(&value, 0, sizeof(value));
+    memset(&value, 0, sizeof(value)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
+    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* 桶规约: 见 socketGetBoolProperty。 */
     XVariant_setValue_int64(&value, size);
     (void)XDevice_setProperty(socketDeviceFd(self),
                               (XDeviceProperty)XDeviceNetworkProperty_ReadBufferSize, &value);
-    XVariant_clear(&value);
+    XVariant_setValue_null(&value);
 }
 
 static bool VXAbstractSocket_WaitForConnected(XAbstractSocket* self, int msecs)

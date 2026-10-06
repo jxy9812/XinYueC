@@ -68,16 +68,19 @@
 #define XRB_STATS_MS 500u
 /** @brief 按下-释放位移阈值(小于该值判点击展开, 否则判拖动)。 */
 #define XRB_DRAG_THRESHOLD 4
-/** @brief 条面板填充(ARGB32_Premultiplied: a=0x90 深底)。 */
-#define XRB_PANEL_COLOR 0x90181820u
-/** @brief 条面板边框色。 */
-#define XRB_PANEL_BORDER 0xFF555564u
+/** @brief 条面板填充(ARGB32_Premultiplied)。2026-10-05 二改 a=0xE8 深底→
+ *         0xF0 浅底不透明+深色文字：用户实测深底叠在黑镜像上「全是黑
+ *         的看不清」，改浅色面板任意远端内容上都可读；悬浮球无文字
+ *         维持 a=0x80 装饰性半透明。 */
+#define XRB_PANEL_COLOR 0xF0ECECEAu
+/** @brief 条面板边框色（浅底配中灰）。 */
+#define XRB_PANEL_BORDER 0xFF8A8A96u
 /** @brief 悬浮球填充(a=0x80 半透明)。 */
 #define XRB_BALL_COLOR 0x80202028u
 /** @brief 悬浮球边框色。 */
 #define XRB_BALL_BORDER 0xFF6A6A78u
-/** @brief 面板文字色。 */
-#define XRB_TEXT_COLOR 0xFFF0F0F5u
+/** @brief 面板文字色（浅底配深字，2026-10-05 随面板改浅同步）。 */
+#define XRB_TEXT_COLOR 0xFF1A1A22u
 
 /* ==================== 私有实现块 ==================== */
 

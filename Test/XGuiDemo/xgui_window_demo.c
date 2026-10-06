@@ -22,6 +22,7 @@
  ******************************************************************************/
 #include <stdio.h>
 #include <stdarg.h> /* demo_log：va_list 转发 vprintf（诊断行立即落盘）。 */
+#include <malloc.h> /* mallopt(内存驻留治理) */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -32,6 +33,7 @@
 #include "XAbstractEventDispatcher.h"
 #include "XDateTime.h"
 #include "XSystem.h" /* XSystem_environment：环境变量唯一入口。 */
+#include "XMemory.h" /* [perf8r3 临时内存探针] XMemory_statistics_2。 */
 #include "XCoreApplication.h" /* demo 缺省字库经 exe 目录解析外挂轮廓字库。 */
 #include "XGuiApplication.h"
 #if XWIDGET_ON && XKEYBOARD_ON
@@ -617,14 +619,19 @@ static void demo_apply_default_font(XFont* font)
     {
         const XString* exeDir = XCoreApplication_applicationDirPath();
         char fontPath[XFONT_EXTERNAL_FONT_PATH_MAX];
+        /* 契约: applicationDirPath 返回堆串调用者释放(ASan 实测每控件
+         * 一次泄漏, 47 控件/轮)。setFamily 深拷贝路径串, 两路都先释放。 */
         if (exeDir &&
             snprintf(fontPath, sizeof(fontPath),
                      "%s/../Library/XFont/XFontOutlineCommon.xfo",
                      XString_toUtf8(exeDir)) > 0 &&
             strlen(fontPath) < sizeof(fontPath)) {
             XFont_setFamily(font, fontPath); /* setFamily 深拷贝（XFont.c XFont_setFamily）。 */
+            XClassDelete((XClass*)exeDir);
             return;
         }
+        if (exeDir)
+            XClassDelete((XClass*)exeDir);
         XFont_setFamily(font, XGUI_DEMO_DEFAULT_FONT_FAMILY);
     }
 #endif /* XFONT_BUILTIN_OUTLINE_ON */
@@ -723,6 +730,16 @@ static void demo_performance_anchorBottomRight(DemoWin* self)
     int x;
     int y;
     if (!self) return;
+    /* [2026-10-06] 最小化卷起态(Shade: 窗口只剩标题条)悬浮层随内容
+       隐藏——卷起后窗口高=条高, 右下重锚钳到 y=0 会盖住标题条(真机
+       用户实测「最小化后性能悬浮窗盖住标题栏」); 展开即恢复。 */
+    if (XWindowDecoration_isShaded((XWidget*)&self->m_base)) {
+        if (XWidget_isVisible((XWidget*)&self->m_performanceOverlay))
+            XWidget_hide((XWidget*)&self->m_performanceOverlay);
+        return;
+    }
+    if (!XWidget_isVisible((XWidget*)&self->m_performanceOverlay))
+        XWidget_show((XWidget*)&self->m_performanceOverlay);
     /* 悬浮窗设置页已显式预设位置：用户定位优先，挂起自动重锚
        （预设回右下/复位经 demo_main_overlay_applyPreset 恢复）。 */
     if (self->m_overlayPinned) return;
@@ -1374,6 +1391,17 @@ static bool demo_framePump(void* userData)
 {
     static bool inTick = false;
     bool result;
+    /* [perf8r3 临时内存探针] XGUI_REMOTE_BENCH_TRACE=1 时每 5s 打一行
+     * SYSTEM 存活/峰值字节(区分真泄漏 vs 分配器碎片), 收尾前回退。 */
+    {
+        static int s_memCnt = 0;
+        if (XSystem_environment("XGUI_REMOTE_BENCH_TRACE") &&
+            ++s_memCnt % 250 == 0) {
+            XMemoryStatistics st = XMemory_statistics_2(XMEMORY_TYPE_SYSTEM);
+            XPrintf("MEMPROF t=%ds sys=%zu peak=%zu\n", s_memCnt / 50,
+                    st.systemBytes, st.systemPeakBytes);
+        }
+    }
     if (inTick) return false;
     inTick = true;
     result = demo_framePumpBody(userData);
@@ -2280,6 +2308,13 @@ static void demo_layout_content(DemoWin* self)
         demo_page_network_adapt(self->m_extPages[8]);
     if (self->m_extPages[9])
         demo_page_overlay_settings_adapt(self->m_extPages[9]);
+    /* 远程服务器页（2026-10-06 补入统一漏斗）：此前只在 resizeEvent
+     * 单独调用，切页路径漏跑——XStackedLayout StackOne 只给当前页
+     * 分配几何，resize 落在别的页时本页根保持陈旧尺寸，adapt 算出
+     * 全页错位（用户实测：服务地址行 95px 窄条悬页中）。本函数先
+     * 重贴堆叠几何（上方 setGeometry_base）再跑 adapt，切页/resize/
+     * startup/停靠全路径根尺寸都新鲜。 */
+    demo_page_remote_server_adaptWidth();
 }
 
 /** @brief 切换主内容页面：更新堆叠布局当前页、重新分配几何并更新状态栏。 */
@@ -2980,6 +3015,8 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     demo_layout_content(self);
+    /* 远程窗口页 adapt 已并入 demo_layout_content 尾部统一漏斗
+       （2026-10-06: 切页路径也要跑, resizeEvent 不再单独补调）。 */
 #endif
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     if (XPerformanceOverlay_isFixed(&demo->m_performanceOverlay)) {
@@ -4403,6 +4440,20 @@ int xgui_demo_main(int argc, char* argv[])
      * _IONBF 全无缓冲：每个 XPrintf 即写即达，harness 探针行不再依赖
      * flush 运气（本行即 2165 注释所述问题的最终收口）。 */
     setvbuf(stdout, NULL, _IONBF, 1024);
+    /* 【内存驻留治理 2026-10-06】glibc 阈值调优: 换页/拖动/编码每步 churn
+     * 1-3MB 分配释放(静态场景重建+tile 差带+镜像编码), 缺省阈值下 glibc
+     * 把释放块滞留主堆不还系统——A33(56MB 无 swap)实测导航点击 RSS
+     * +125MB 不回落直至 OOM(用户实测吃满)。mmap 阈值 128KB=大块走
+     * mmap/munmap 即时归还; trim 阈值同步收紧。仅影响本进程。 */
+    mallopt(M_TRIM_THRESHOLD, 128 * 1024);
+    mallopt(M_MMAP_THRESHOLD, 128 * 1024);
+    {
+        /* 虚拟键盘面板开关(联调口; XPWN_VK=none/0 关——远程注入聚焦编辑框
+         * 时面板会遮挡页面, 对齐平台层 XPWN_IME 环境约定纪律)。 */
+        const char* vk = XSystem_environment("XPWN_VK");
+        if (vk && (strcmp(vk, "none") == 0 || strcmp(vk, "0") == 0))
+            XGuiApplication_setVirtualKeyboardEnabled(false);
+    }
 #ifdef _WIN32
     /* 挂起缓解③（wave7 六波实锤：满管道内核级无限阻塞，冻结栈
      * NtWriteFile←WriteFile←fflush←demo_log——diag/wave7/pipe/）：

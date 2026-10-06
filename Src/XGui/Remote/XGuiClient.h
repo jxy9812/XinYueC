@@ -149,6 +149,20 @@ XGuiRemoteSessionState XGuiClient_state(const XGuiClient* self);
 /** @brief 设置口令(明文仅驻留至认证完成; SHA256_CHALLENGE 应答用)。 */
 void XGuiClient_setPassword(XGuiClient* self, const char* passwordUtf8);
 
+/* ---- 访问口令(2026-10-04 加法式扩展, 实现主体 XGuiRemoteAuth.c) ---- */
+/**
+ * @brief      设置访问口令(与 setPassword 同语义的对称命名; 明文仅驻留
+ *             至认证完成即焚)。
+ * @details    连接流程自动适配: 服务端 HELLO_ACK 选定挑战应答才走认证,
+ *             选定 NONE 则直连(本端口令仅为应答备料, 不改变协商)。
+ *             服务端要求认证而本端口令为空时, 客户端快速失败断链
+ *             (BYE AUTH_FAILED / ERR AUTH), 不发送必错应答。
+ */
+void XGuiClient_setAccessPassword(XGuiClient* self, const char* passwordUtf8);
+
+/** @brief 清除访问口令(零化缓冲; 之后连接按匿名适配)。 */
+void XGuiClient_clearAccessPassword(XGuiClient* self);
+
 /**
  * @brief      请求切换档位(需求 6: 运行时切换; 需服务端允许)。
  * @details    异步: 结果以远端 FB_META(参数生效)或会话维持原档为准。
@@ -207,6 +221,68 @@ void XGuiClient_setForwardTouch(XGuiClient* self, bool enabled);
  */
 void XGuiClient_sendTouchFrame(XGuiClient* self,
                                const XGuiRemoteMsgInputTouch* msg);
+
+/* ==================== 视图适配缩放(2026-10-04 加法式补充) ==================== */
+
+/** @brief 视图适配模式(对标向日葵/浏览器远程协助「适配窗口」)。 */
+typedef enum XGuiClientViewFitMode {
+    XGUI_CLIENT_VIEW_FIT = 0, /**< 适配缩放(默认): contain 信箱式——
+                               *   scale=min(视图宽/远端宽, 视图高/远端高),
+                               *   居中留黑边; 控件保持宿主给定几何不再
+                               *   setFixedSize(远端尺寸)。 */
+    XGUI_CLIENT_VIEW_1TO1 = 1 /**< 1:1 原尺寸(V1 历史行为): FB_META 后
+                               *   setFixedSize(远端尺寸), 像素级直绘;
+                               *   视图小于远端时溢出裁剪(无滚动)。 */
+} XGuiClientViewFitMode;
+
+/**
+ * @brief      设置视图适配模式(默认 FIT)。
+ * @details    切换即时生效: FIT→1:1 恢复 setFixedSize(远端尺寸)+直绘;
+ *             1:1→FIT 按当前控件几何重算缩放(宿主如需恢复视图区尺寸,
+ *             自行 resize 后本控件经 resize 事件重算)。两种模式切换均
+ *             整控件置脏重绘, 不残留旧帧。无会话时亦可调用(连接后按
+ *             当前模式生效)。
+ */
+void XGuiClient_setViewFitMode(XGuiClient* self, XGuiClientViewFitMode mode);
+
+/** @brief 读取当前视图适配模式。 */
+XGuiClientViewFitMode XGuiClient_viewFitMode(const XGuiClient* self);
+
+/**
+ * @brief      读回当前视图变换(测试/宿主布局用)。
+ * @param      scale   输出缩放系数(FIT=contain 比例, 1:1=1.0)。
+ * @param      offsetX 输出信箱左偏移(控件局部; 1:1=0)。
+ * @param      offsetY 输出信箱上偏移(控件局部; 1:1=0)。
+ * @return     true=有画面几何可读(已收 FB_META 且控件尺寸有效);
+ *             false=未就绪(输出全 0)。
+ * @note       输入逆映射契约: 控件局部点 (vx,vy) 对应远端像素
+ *             ((vx-offsetX)/scale, (vy-offsetY)/scale)——客户端全部
+ *             指针/滚轮/触摸转发已按此式换算(§7.4「看到的点=点到的点」)。
+ */
+bool XGuiClient_viewTransform(const XGuiClient* self, float* scale,
+                              int* offsetX, int* offsetY);
+/* ==================== UDP 低延迟旁路通道(2026-10-04 加法式扩展) ==================== */
+/**
+ * @note    本节为 UDP 旁路通道的运行期策略扩展(设计稿
+ *          out/mcgs-campaign/udp-design.md): TCP 会话锚不变; UDP 承载
+ *          FB_UPDATE 帧(S→C, 最新帧优先)与 INPUT_*(C→S, 序号+NACK 可靠
+ *          有序)。默认开: 服务端未宣告 CAP_UDP(老服务器)时自动纯 TCP,
+ *          行为逐字节不变。
+ */
+
+/**
+ * @brief      设置 UDP 通道开关(默认开; 运行期可切)。
+ * @details    开: 会话中对端支持时发 UDP_MODE(1) 请求建链/重建;
+ *             关: 发 UDP_MODE(0) 静默退回 TCP(会话不断)。
+ */
+void XGuiClient_setUdpEnabled(XGuiClient* self, bool enabled);
+
+/** @brief UDP 数据面是否激活(帧+输入当前走 UDP)。 */
+bool XGuiClient_udpActive(const XGuiClient* self);
+
+/** @brief UDP 通道状态(XGuiRemoteUdpState, 见 XGuiRemoteUdpChannel.h;
+ *         显示/断言口径)。 */
+int XGuiClient_udpState(const XGuiClient* self);
 
 /* ==================== 信号(GUI 线程发射) ==================== */
 

@@ -19,9 +19,12 @@ int XJsonQtAlignmentTest(void);
 int XSqlTest_run(void);
 /** @brief 执行 Data 模块中可非交互判定的本地全量回归测试。 */
 bool XDataTest_runAll(void);
+/** @brief 执行 XVariant 生命周期/未清零栈结构防呆专项测试。 @return 成功返回 0，失败返回非 0。 */
+int XVariantTest_run(void);
 #if DEMOTEST
 	void XTestMenu_XJsonQtAlignmentTest(XTestMenu* root);
 	void XTestMenu_XDataTest(XTestMenu* root);
+	void XTestMenu_XVariantTest(XTestMenu* root);
 #endif // DEMOTEST
 
 #ifdef __cplusplus

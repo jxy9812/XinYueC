@@ -68,6 +68,7 @@ static XrDemoRole g_role = XR_DEMO_ROLE_NONE;
 static uint16_t g_port = XR_DEMO_DEFAULT_PORT;
 static const char* g_host = "127.0.0.1";
 static bool g_tls = false;
+static bool g_udp = true;               /* --udp 0|1: UDP 旁路开关(默认开)。 */
 static XGuiRemoteProfileId g_profile = XGUI_REMOTE_PROFILE_PERFORMANCE;
 static int64_t g_autoQuitSec = 0;       /* --auto-quit N: N 秒后干净退出
                                           * (联调矩阵 BYE 断链口径; 0=不限)。 */
@@ -86,6 +87,12 @@ static XGuiClient* g_client = NULL;
 static XLabel* g_cliStatus = NULL;
 static XHandle g_statsPoll = NULL;  /* statistics 周期输出 poll 句柄(拥有登记)。 */
 static int64_t g_lastStatsMs = 0;   /* 上次输出时刻(2s 节流)。 */
+static XHandle g_hostPoll = NULL;   /* host 首帧重试 poll 句柄(2026-10-04:
+                                     *   窗口 show 后后备存储要经首个 PAINT
+                                     *   才就绪, 启动序列内直呼 host 必失败
+                                     *   —— 对齐 WindowDemo 首帧 autostart
+                                     *   口径的逐帧重试, 成功即注销)。 */
+static int g_hostTries = 0;         /* host 重试计数(上限 ~10s)。 */
 
 static const int XR_COLOR_COUNT = 4;
 static const int XR_COLORS[4][3] = {
@@ -116,6 +123,7 @@ static const char* xr_profileName(XGuiRemoteProfileId id)
     switch (id) {
     case XGUI_REMOTE_PROFILE_PERFORMANCE: return "performance";
     case XGUI_REMOTE_PROFILE_RESOURCE: return "resource";
+    case XGUI_REMOTE_PROFILE_LATENCY: return "latency";
     case XGUI_REMOTE_PROFILE_AUTO: return "auto(V1=resource)";
     default: return "custom";
     }
@@ -123,8 +131,12 @@ static const char* xr_profileName(XGuiRemoteProfileId id)
 
 static XGuiRemoteProfileId xr_nextProfile(XGuiRemoteProfileId id)
 {
-    return id == XGUI_REMOTE_PROFILE_PERFORMANCE ? XGUI_REMOTE_PROFILE_RESOURCE
-                                                 : XGUI_REMOTE_PROFILE_PERFORMANCE;
+    /* 三档轮换(2026-10-05 latency 加法式): performance→resource→latency→… */
+    if (id == XGUI_REMOTE_PROFILE_PERFORMANCE)
+        return XGUI_REMOTE_PROFILE_RESOURCE;
+    if (id == XGUI_REMOTE_PROFILE_RESOURCE)
+        return XGUI_REMOTE_PROFILE_LATENCY;
+    return XGUI_REMOTE_PROFILE_PERFORMANCE;
 }
 
 /* ==================== 服务端角色 ==================== */
@@ -231,6 +243,36 @@ static void srv_onSessionEnd(XObject* sender, XVarList* args)
     }
 }
 
+/* host 逐帧重试(首帧后备存储就绪即成功; 对齐 WindowDemo autostart 口径)。 */
+static void srv_hostPoll(void* user)
+{
+    (void)user;
+    if (!g_server || !g_win) return;
+    if (XGuiServer_hostedWidget(g_server)) {
+        if (g_hostPoll) {
+            XAbstractEventDispatcher_removePollCallback(g_hostPoll);
+            g_hostPoll = NULL;
+        }
+        return;
+    }
+    if (++g_hostTries > 600) { /* ~10s(60fps 口径): 如实放弃。 */
+        XPrintf("XGuiRemoteDemo: XGuiServer_host 重试超时(后备存储未就绪)\n");
+        if (g_hostPoll) {
+            XAbstractEventDispatcher_removePollCallback(g_hostPoll);
+            g_hostPoll = NULL;
+        }
+        return;
+    }
+    if (XGuiServer_host(g_server, g_win)) {
+        XPrintf("XGuiRemoteDemo: XGuiServer_host 成功(第 %d 帧)\n",
+                g_hostTries);
+        if (g_hostPoll) {
+            XAbstractEventDispatcher_removePollCallback(g_hostPoll);
+            g_hostPoll = NULL;
+        }
+    }
+}
+
 static int xr_runServer(void)
 {
     XGuiApplication* app;
@@ -317,14 +359,17 @@ static int xr_runServer(void)
     }
     XWidget_show(g_win);
 
-    /* 远程服务: 镜像本窗口 + TCP 监听。 */
+    /* 远程服务: 镜像本窗口(host 逐帧重试, 首帧后备存储就绪后生效) +
+     * TCP 监听(2026-10-04 根修: show 后同步直呼 host 在无 WM Xvfb 下
+     * 必失败——后备存储要经首个 PAINT 才存在)。 */
     g_server = XGuiServer_create(NULL);
-    if (!g_server || !XGuiServer_host(g_server, g_win)) {
-        XPrintf("XGuiRemoteDemo: XGuiServer_host 失败(需顶层+后备存储)\n");
+    if (!g_server) {
+        XPrintf("XGuiRemoteDemo: XGuiServer_create 失败\n");
         rc = 1;
     }
     else {
         XGuiServer_setProfileId(g_server, g_profile);
+        XGuiServer_setUdpEnabled(g_server, g_udp); /* UDP 旁路(默认开)。 */
         XObject_connect_2((XObject*)g_server,
                           XSignal(XGuiServer_clientConnected_signal),
                           srv_onSession);
@@ -337,13 +382,19 @@ static int xr_runServer(void)
         }
         else {
             actualPort = XGuiServer_serverPort(g_server);
-            XPrintf("XGuiRemoteDemo: 服务端就绪 port=%u profile=%s tls=%s\n",
+            XPrintf("XGuiRemoteDemo: 服务端就绪 port=%u profile=%s tls=%s "
+                    "udp=%s\n",
                     (unsigned)actualPort, xr_profileName(g_profile),
-                    g_tls ? "on" : "off");
+                    g_tls ? "on" : "off",
+                    XGuiServer_udpPort(g_server)
+                        ? "on" : "off");
         }
     }
 
     if (rc == 0) {
+        /* host 逐帧重试登记(首帧后备存储就绪后生效; 2026-10-04 根修)。 */
+        g_hostPoll = XAbstractEventDispatcher_addPollCallback(srv_hostPoll,
+                                                              NULL);
         XGuiApplication_exec();
         XPrintf("XGuiRemoteDemo: 服务端退出\n");
     }
@@ -416,6 +467,17 @@ static void cli_onMeta(XObject* sender, XVarList* args)
     cli_refreshStatus("画面元信息更新");
 }
 
+/* UDP 开关点击: 运行期切换数据面(对端经 UDP_MODE 协商跟随; 会话不断)。 */
+static void cli_onUdpClicked(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    if (!g_client) return;
+    g_udp = !g_udp;
+    XGuiClient_setUdpEnabled(g_client, g_udp);
+    XPrintf("XGuiRemoteDemo: udp toggled -> %s (state=%d)\n",
+            g_udp ? "on" : "off", XGuiClient_udpState(g_client));
+}
+
 static void cli_onProfileClicked(XObject* sender, XVarList* args)
 {
     (void)sender;
@@ -450,13 +512,14 @@ static void cli_statsPoll(void* user)
     XGuiClient_statistics(g_client, &st);
     XGuiClient_remoteSize(g_client, &rsz);
     XPrintf("XGuiRemoteDemo: stats state=%d frames=%u tiles=%u "
-            "fps=%u.%02u rx=%llu tx=%llu rtt=%ums remote=%ux%u profile=%s\n",
+            "fps=%u.%02u rx=%llu tx=%llu rtt=%ums remote=%ux%u profile=%s "
+            "udp=%d\n",
             (int)XGuiClient_state(g_client), st.updateCount, st.tileCount,
             st.fpsMilli / 100u, st.fpsMilli % 100u,
             (unsigned long long)st.bytesReceived,
             (unsigned long long)st.bytesSent, (unsigned)st.rttMs,
             (unsigned)rsz.width, (unsigned)rsz.height,
-            xr_profileName(g_profile));
+            xr_profileName(g_profile), XGuiClient_udpState(g_client));
 }
 
 static int xr_runClient(void)
@@ -483,9 +546,17 @@ static int xr_runClient(void)
      * (y=376/412)叠在镜像上(E2E 实测遮挡镜像文本)。 */
     XWidget_resize(win, 830, 700);
 
+    {
+        /* 虚拟键盘面板开关(联调口; XPWN_VK=none/0 关——XTEST 键入不落
+         * 面板, 对齐平台层 XPWN_IME 环境约定纪律)。 */
+        const char* vk = XSystem_environment("XPWN_VK");
+        if (vk && (strcmp(vk, "none") == 0 || strcmp(vk, "0") == 0))
+            XGuiApplication_setVirtualKeyboardEnabled(false);
+    }
     g_client = XGuiClient_create(win, 0);
     XWidget_setGeometry((XWidget*)g_client, 8, 8, 544, 360);
     XGuiClient_setAutoReconnect(g_client, true, 1000); /* 演示断线重连。 */
+    XGuiClient_setUdpEnabled(g_client, g_udp); /* UDP 旁路(默认开)。 */
 
     profileBtn = XPushButton_create(win, 0);
     XWidget_setGeometry(profileBtn, 8, 616, 132, 30);
@@ -494,6 +565,18 @@ static int xr_runClient(void)
                       XSignal(XAbstractButton_clicked_signal),
                       cli_onProfileClicked);
     XWidget_show(profileBtn);
+
+    /* UDP 旁路运行期开关(2026-10-04): 联调 TCP<->UDP 切换与回退演示。 */
+    {
+        XPushButton* udpBtn = XPushButton_create(win, 0);
+        XWidget_setGeometry(udpBtn, 148, 616, 132, 30);
+        XPushButton_setText_2((XPushButton*)udpBtn, "UDP å¼å³");
+        /* UDP 开关 */
+        XObject_connect_2((XObject*)udpBtn,
+                          XSignal(XAbstractButton_clicked_signal),
+                          cli_onUdpClicked);
+        XWidget_show(udpBtn);
+    }
 
     g_cliStatus = XLabel_create(win, 0);
     XWidget_setGeometry((XWidget*)g_cliStatus, 8, 652, 814, 44);
@@ -556,7 +639,8 @@ static void xr_printUsage(void)
             "  XGuiRemoteDemo_Test --server [--port N] "
             "[--profile performance|resource] [--tls]\n"
             "  XGuiRemoteDemo_Test --client [--host H] [--port N] "
-            "[--profile performance|resource] [--tls] [--auto-quit N]\n"
+            "[--profile performance|resource] [--tls] [--auto-quit N] "
+            "[--udp 0|1]\n"
             "默认: --server 角色, 端口 %u, performance 档\n",
             (unsigned)XR_DEMO_DEFAULT_PORT);
 }
@@ -586,11 +670,16 @@ int main(int argc, char** argv)
             ++i;
             if (strcmp(argv[i], "resource") == 0)
                 g_profile = XGUI_REMOTE_PROFILE_RESOURCE;
+            else if (strcmp(argv[i], "latency") == 0)
+                g_profile = XGUI_REMOTE_PROFILE_LATENCY;
             else
                 g_profile = XGUI_REMOTE_PROFILE_PERFORMANCE;
         }
         else if (strcmp(a, "--tls") == 0) {
             g_tls = true;
+        }
+        else if (strcmp(a, "--udp") == 0 && i + 1 < argc) {
+            g_udp = atoi(argv[++i]) != 0; /* 0=纯 TCP 对照; 1=UDP 旁路(默认)。 */
         }
         else if (strcmp(a, "--auto-quit") == 0 && i + 1 < argc) {
             /* N 秒后请求退出事件循环(0/缺省=不限); main 收尾统一走

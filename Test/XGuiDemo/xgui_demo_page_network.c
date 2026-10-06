@@ -18,7 +18,13 @@
  *                （Windows=IP Helper + netsh 通路，需管理员权限；切换
  *                会短暂中断该网卡）；
  *              - 非法输入（IP/掩码格式）在页面层拒应用，不触平台通路；
- *                平台不支持（非 Windows 后端）时应用按钮如实反馈。
+ *                平台不支持（非 Windows 后端）时应用按钮如实反馈；
+ *              - 非 Windows 降级路径与配置查询路径同构：信息区固定三行
+ *                （状态/类型 + IPv4 + MAC），IPv6 全列表经专用 IPv6 行
+ *                折叠/展开承载（多地址不再内联长行，避免溢出窗口被裁）；
+ *                信息区高度随回填行数自适应，下游行距整体联动；
+ *              - 操作提示随 XNetworkInterface_configSupported 平台化
+ *                （有通路=netsh 下发说明；无通路=仅展示与校验）。
  *
  *             autotest 口径：全程非阻塞，绝不真实下发配置（只走非法
  *             输入拒应用门控与枚举/回填断言），避免污染测试机网络。
@@ -79,6 +85,7 @@ static struct
 
     /* ---- 信息展示区 ---- */
     XLabel*    m_infoLabel;    /**< 多行配置信息区（模式/IPv4/DNS/DHCP/MAC）。 */
+    int        m_infoLines;    /**< 信息区当前行数（relayout 据此自适应高度）。 */
     XLabel*    m_v6Label;      /**< IPv6 地址区（折叠=一行，展开=逐行全列表）。 */
     XCheckBox* m_v6ExpandCheck;/**< 「展开全部 IPv6 / 收起」开关。 */
 
@@ -265,7 +272,14 @@ static int net_collectLinkInfo(int ifIndex, char* mac, size_t macCap,
     return 0;
 }
 
-/** @brief 接口对象回退信息（平台不支持配置查询时的降级展示）。 */
+/** @brief IPv6 地址区文本随折叠/展开态刷新（缓存文本见 s_net，定义在后）。 */
+static void net_updateV6Label(void);
+
+/** @brief 接口对象回退信息（平台不支持配置查询时的降级展示）。
+ *  @details 与配置查询路径同构：信息区只展示 状态/类型 + IPv4 + MAC 三行，
+ *           IPv6 全列表写入折叠/展开缓存由专用 IPv6 行承载——不再把多地址
+ *           拼进信息区单行（长行会溢出窗口右缘被裁剪，且下方 IPv6 区恒显
+ *           「-」与上方矛盾）。 */
 static void net_fillInfoFromInterface(int ifIndex)
 {
     XVector* interfaces = XNetworkInterface_allInterfaces();
@@ -279,23 +293,17 @@ static void net_fillInfoFromInterface(int ifIndex)
             (XNetworkInterface*)XVector_at_base(interfaces, i);
         XVector* entries;
         size_t j;
-        char info[512];
+        char info[384];
         char ipv4[96];
-        char ipv6[224];
         const XString* mac;
         if (!iface || XNetworkInterface_index(iface) != ifIndex) continue;
         found = true;
         mac = XNetworkInterface_hardwareAddress_const(iface);
         entries = XNetworkInterface_addressEntries(iface);
-        snprintf(info, sizeof(info),
-                 "\xE7\x8A\xB6\xE6\x80\x81: %s  "
-                 "\xE7\xB1\xBB\xE5\x9E\x8B: %s\n",
-                 /* 状态: / 类型: */
-                 XNetworkInterface_isUp(iface)
-                     ? "Up" : "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5",
-                 net_typeName(XNetworkInterface_type(iface)));
         ipv4[0] = '\0';
-        ipv6[0] = '\0';
+        s_net.m_v6All[0] = '\0';
+        s_net.m_v6First[0] = '\0';
+        s_net.m_v6Count = 0;
         for (j = 0; entries && j < XVector_size_base(entries); ++j) {
             XNetworkAddressEntry* entry =
                 (XNetworkAddressEntry*)XVector_at_base(entries, j);
@@ -304,9 +312,14 @@ static void net_fillInfoFromInterface(int ifIndex)
             ipText = XHostAddress_toString(&entry->ip);
             if (!ipText) continue;
             if (entry->ip.protocol == XHostAddress_IPv6Protocol) {
-                size_t len = strlen(ipv6);
-                snprintf(ipv6 + len, sizeof(ipv6) - len, "%s%s",
-                         (len > 0) ? "  " : "", XString_toUtf8(ipText));
+                size_t len = strlen(s_net.m_v6All);
+                if (s_net.m_v6Count == 0)
+                    snprintf(s_net.m_v6First, sizeof(s_net.m_v6First),
+                             "%s", XString_toUtf8(ipText));
+                snprintf(s_net.m_v6All + len, sizeof(s_net.m_v6All) - len,
+                         "%s%s", (len > 0) ? "\n" : "",
+                         XString_toUtf8(ipText));
+                ++s_net.m_v6Count;
             } else {
                 size_t len = strlen(ipv4);
                 snprintf(ipv4 + len, sizeof(ipv4) - len, "%s%s",
@@ -314,19 +327,24 @@ static void net_fillInfoFromInterface(int ifIndex)
             }
             XClassDelete(ipText);
         }
-        {
-            size_t len = strlen(info);
-            snprintf(info + len, sizeof(info) - len,
-                     "IPv4: %s\nIPv6: %s\nMAC: %s",
-                     ipv4[0] ? ipv4 : "-",
-                     ipv6[0] ? ipv6 : "-",
-                     (mac && XString_toUtf8(mac) && XString_toUtf8(mac)[0])
-                         ? XString_toUtf8(mac) : "-");
-        }
+        snprintf(info, sizeof(info),
+                 "\xE7\x8A\xB6\xE6\x80\x81: %s  "
+                 "\xE7\xB1\xBB\xE5\x9E\x8B: %s\n"
+                 "IPv4: %s\n"
+                 "MAC: %s",
+                 /* 状态: / 类型: */
+                 XNetworkInterface_isUp(iface)
+                     ? "Up" : "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5",
+                 net_typeName(XNetworkInterface_type(iface)),
+                 ipv4[0] ? ipv4 : "-",
+                 (mac && XString_toUtf8(mac) && XString_toUtf8(mac)[0])
+                     ? XString_toUtf8(mac) : "-");
+        s_net.m_infoLines = 3;
         if (s_net.m_infoLabel)
             XLabel_setText_2(s_net.m_infoLabel, info);
     }
     XClassDelete(interfaces);
+    net_updateV6Label();
 }
 
 /** @brief 查询当前选中网卡并回填信息区/模式/编辑框（定义在本段尾）。 */
@@ -354,14 +372,19 @@ static void net_updateV6Label(void)
 
 /** @brief 按 v6 展开态重排页面（折叠=编辑视图；展开=全列表让位视图）。
  *  @details 展开时信息区/编辑区整体隐藏，全列表占内容区（每行一个地
- *           址）；窗口过矮按行高截断显示（计数仍完整可见于收起行）。 */
+ *           址）；窗口过矮按行高截断显示（计数仍完整可见于收起行）。
+ *           信息区高度随实际行数自适应（回现行数驱动），模式行/字段区
+ *           整体随信息区下缘联动，避免固定 5 行高在小行数平台留大空档。 */
 static void net_relayout(void)
 {
     XWidget* root = s_net.m_root;
     int rootW;
     int rootH;
-    int y;
     int i;
+    int infoH;
+    int yV6;
+    int yMode;
+    int yField;
     if (!root) return;
     rootW = XWidget_width(root);
     rootH = XWidget_height(root);
@@ -369,35 +392,40 @@ static void net_relayout(void)
     if (s_net.m_statusLabel)
         XWidget_setGeometry(s_net.m_statusLabel, 12, rootH - 22,
                             rootW - 24, 22);
+    /* 信息区行高 16px + 上下 8px 余量；未回填按设计稿 5 行兜底。 */
+    infoH = (s_net.m_infoLines > 0) ? s_net.m_infoLines * 16 + 8 : 104;
+    yV6 = 80 + infoH + 4;  /* IPv6 行基线（信息区下缘 +4px）。 */
+    yMode = yV6 + 32;      /* 模式行基线。 */
+    yField = yMode + 42;   /* 静态字段起始基线。 */
     if (!s_net.m_v6Expanded && rootW >= 700) {
         /* ---- 折叠·宽版：信息区一行 v6 + 双列编辑区（IPv4 左 / IPv6 右） ---- */
         if (s_net.m_infoLabel) {
-            XWidget_setGeometry(s_net.m_infoLabel, 12, 80, rootW - 24, 104);
+            XWidget_setGeometry(s_net.m_infoLabel, 12, 80, rootW - 24, infoH);
             XWidget_show((XWidget*)s_net.m_infoLabel);
         }
         if (s_net.m_v6Label)
-            XWidget_setGeometry(s_net.m_v6Label, 12, 188, rootW - 24, 20);
+            XWidget_setGeometry(s_net.m_v6Label, 12, yV6, rootW - 24, 20);
         if (s_net.m_v6ExpandCheck)
             XWidget_setGeometry((XWidget*)s_net.m_v6ExpandCheck,
-                                rootW - 176, 186, 164, 22);
+                                rootW - 176, yV6 - 2, 164, 22);
         /* 模式行：IPv4 左 / IPv6 右，两枚开关互不联动。 */
         if (s_net.m_capV4Mode)
-            XWidget_setGeometry((XWidget*)s_net.m_capV4Mode, 12, 224, 80, 22);
+            XWidget_setGeometry((XWidget*)s_net.m_capV4Mode, 12, yMode + 4, 80, 22);
         if (s_net.m_v4ModeCombo)
-            XWidget_setGeometry((XWidget*)s_net.m_v4ModeCombo, 96, 222, 150, 26);
+            XWidget_setGeometry((XWidget*)s_net.m_v4ModeCombo, 96, yMode + 2, 150, 26);
         if (s_net.m_applyBtn)
-            XWidget_setGeometry((XWidget*)s_net.m_applyBtn, 254, 220, 110, 30);
+            XWidget_setGeometry((XWidget*)s_net.m_applyBtn, 254, yMode, 110, 30);
         if (s_net.m_capV6Mode)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Mode, 420, 224, 80, 22);
+            XWidget_setGeometry((XWidget*)s_net.m_capV6Mode, 420, yMode + 4, 80, 22);
         if (s_net.m_v6ModeCombo)
-            XWidget_setGeometry((XWidget*)s_net.m_v6ModeCombo, 504, 222, 140, 26);
+            XWidget_setGeometry((XWidget*)s_net.m_v6ModeCombo, 504, yMode + 2, 140, 26);
         if (s_net.m_applyV6Btn)
-            XWidget_setGeometry((XWidget*)s_net.m_applyV6Btn, 652, 220, 110, 30);
+            XWidget_setGeometry((XWidget*)s_net.m_applyV6Btn, 652, yMode, 110, 30);
         /* 左列：IPv4 静态五件。 */
-        y = 262;
         for (i = 0; i < 5; ++i) {
             XLabel** cap = &s_net.m_capIp;
             XLineEdit** edit = &s_net.m_ipEdit;
+            int y = yField + i * 26;
             if (i == 1) { cap = &s_net.m_capMask; edit = &s_net.m_maskEdit; }
             else if (i == 2) { cap = &s_net.m_capGw; edit = &s_net.m_gwEdit; }
             else if (i == 3) { cap = &s_net.m_capDns1; edit = &s_net.m_dns1Edit; }
@@ -406,21 +434,20 @@ static void net_relayout(void)
                 XWidget_setGeometry((XWidget*)*cap, 12, y + 2, 80, 20);
             if (*edit)
                 XWidget_setGeometry((XWidget*)*edit, 96, y, 300, 22);
-            y += 26;
         }
         /* 右列：IPv6 静态三件（地址 / 前缀 / 网关）。 */
         if (s_net.m_capV6Addr)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Addr, 420, 264, 100, 20);
+            XWidget_setGeometry((XWidget*)s_net.m_capV6Addr, 420, yField + 2, 100, 20);
         if (s_net.m_v6AddrEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6AddrEdit, 524, 262, 264, 24);
+            XWidget_setGeometry((XWidget*)s_net.m_v6AddrEdit, 524, yField, 264, 24);
         if (s_net.m_capV6Prefix)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Prefix, 420, 294, 36, 20);
+            XWidget_setGeometry((XWidget*)s_net.m_capV6Prefix, 420, yField + 32, 36, 20);
         if (s_net.m_v6PrefixEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6PrefixEdit, 460, 292, 64, 24);
+            XWidget_setGeometry((XWidget*)s_net.m_v6PrefixEdit, 460, yField + 30, 64, 24);
         if (s_net.m_capV6Gw)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Gw, 420, 324, 60, 20);
+            XWidget_setGeometry((XWidget*)s_net.m_capV6Gw, 420, yField + 62, 60, 20);
         if (s_net.m_v6GwEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6GwEdit, 484, 322, 304, 24);
+            XWidget_setGeometry((XWidget*)s_net.m_v6GwEdit, 484, yField + 60, 304, 24);
         /* 双列整体显形（从展开态返回时恢复）。 */
         if (s_net.m_capV4Mode) XWidget_show((XWidget*)s_net.m_capV4Mode);
         if (s_net.m_v4ModeCombo) XWidget_show((XWidget*)s_net.m_v4ModeCombo);
@@ -450,33 +477,33 @@ static void net_relayout(void)
                                 rootW - 24, 20);
         net_updateV6Label();
     } else if (!s_net.m_v6Expanded) {
-        /* ---- 折叠·窄版（rootW<700，如导航面板展开占位）：模式行堆叠，
+        /* ---- 折叠·窄版（rootW<700，如导航面板展开占位）：模式行堆叠,
          * IPv4/IPv6 字段纵排（前缀与网关同行），窄根不裁列。 ---- */
         if (s_net.m_infoLabel) {
-            XWidget_setGeometry(s_net.m_infoLabel, 12, 80, rootW - 24, 104);
+            XWidget_setGeometry(s_net.m_infoLabel, 12, 80, rootW - 24, infoH);
             XWidget_show((XWidget*)s_net.m_infoLabel);
         }
         if (s_net.m_v6Label)
-            XWidget_setGeometry(s_net.m_v6Label, 12, 188, rootW - 24, 20);
+            XWidget_setGeometry(s_net.m_v6Label, 12, yV6, rootW - 24, 20);
         if (s_net.m_v6ExpandCheck)
             XWidget_setGeometry((XWidget*)s_net.m_v6ExpandCheck,
-                                rootW - 176, 186, 164, 22);
+                                rootW - 176, yV6 - 2, 164, 22);
         if (s_net.m_capV4Mode)
-            XWidget_setGeometry((XWidget*)s_net.m_capV4Mode, 12, 224, 80, 22);
+            XWidget_setGeometry((XWidget*)s_net.m_capV4Mode, 12, yMode + 4, 80, 22);
         if (s_net.m_v4ModeCombo)
-            XWidget_setGeometry((XWidget*)s_net.m_v4ModeCombo, 96, 222, 130, 26);
+            XWidget_setGeometry((XWidget*)s_net.m_v4ModeCombo, 96, yMode + 2, 130, 26);
         if (s_net.m_applyBtn)
-            XWidget_setGeometry((XWidget*)s_net.m_applyBtn, 232, 220, 100, 30);
+            XWidget_setGeometry((XWidget*)s_net.m_applyBtn, 232, yMode, 100, 30);
         if (s_net.m_capV6Mode)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Mode, 12, 254, 80, 22);
+            XWidget_setGeometry((XWidget*)s_net.m_capV6Mode, 12, yMode + 34, 80, 22);
         if (s_net.m_v6ModeCombo)
-            XWidget_setGeometry((XWidget*)s_net.m_v6ModeCombo, 96, 252, 130, 26);
+            XWidget_setGeometry((XWidget*)s_net.m_v6ModeCombo, 96, yMode + 32, 130, 26);
         if (s_net.m_applyV6Btn)
-            XWidget_setGeometry((XWidget*)s_net.m_applyV6Btn, 232, 250, 100, 30);
-        y = 292;
+            XWidget_setGeometry((XWidget*)s_net.m_applyV6Btn, 232, yMode + 30, 100, 30);
         for (i = 0; i < 5; ++i) {
             XLabel** cap = &s_net.m_capIp;
             XLineEdit** edit = &s_net.m_ipEdit;
+            int y = yMode + 72 + i * 24;
             if (i == 1) { cap = &s_net.m_capMask; edit = &s_net.m_maskEdit; }
             else if (i == 2) { cap = &s_net.m_capGw; edit = &s_net.m_gwEdit; }
             else if (i == 3) { cap = &s_net.m_capDns1; edit = &s_net.m_dns1Edit; }
@@ -485,21 +512,21 @@ static void net_relayout(void)
                 XWidget_setGeometry((XWidget*)*cap, 12, y + 2, 80, 20);
             if (*edit)
                 XWidget_setGeometry((XWidget*)*edit, 96, y, rootW - 120, 22);
-            y += 24;
         }
+        /* IPv6 静态三件紧随 IPv4 五件之后（原固定 398 与 DNS 末行重叠）。 */
         if (s_net.m_capV6Addr)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Addr, 12, 400, 100, 20);
+            XWidget_setGeometry((XWidget*)s_net.m_capV6Addr, 12, yMode + 198, 100, 20);
         if (s_net.m_v6AddrEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6AddrEdit, 116, 398,
+            XWidget_setGeometry((XWidget*)s_net.m_v6AddrEdit, 116, yMode + 196,
                                 rootW - 140, 24);
         if (s_net.m_capV6Prefix)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Prefix, 12, 428, 36, 20);
+            XWidget_setGeometry((XWidget*)s_net.m_capV6Prefix, 12, yMode + 228, 36, 20);
         if (s_net.m_v6PrefixEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6PrefixEdit, 52, 426, 64, 24);
+            XWidget_setGeometry((XWidget*)s_net.m_v6PrefixEdit, 52, yMode + 226, 64, 24);
         if (s_net.m_capV6Gw)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Gw, 140, 428, 60, 20);
+            XWidget_setGeometry((XWidget*)s_net.m_capV6Gw, 140, yMode + 228, 60, 20);
         if (s_net.m_v6GwEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6GwEdit, 204, 426,
+            XWidget_setGeometry((XWidget*)s_net.m_v6GwEdit, 204, yMode + 226,
                                 rootW - 228, 24);
         if (s_net.m_capV4Mode) XWidget_show((XWidget*)s_net.m_capV4Mode);
         if (s_net.m_v4ModeCombo) XWidget_show((XWidget*)s_net.m_v4ModeCombo);
@@ -535,6 +562,7 @@ static void net_relayout(void)
         int shown = s_net.m_v6Count > 0 ? s_net.m_v6Count : 1;
         char list[1500];
         if (shown > maxLines) shown = maxLines > 0 ? maxLines : 1;
+        if (shown < 2) shown = 2; /* 单地址也保持两行列表视区（观感一致）。 */
         /* 列表文本按显示行数截断（逐行取 m_v6All 前缀）。 */
         {
             const char* p = s_net.m_v6All;
@@ -635,16 +663,11 @@ static void net_applyV6Slot(XObject* receiver, XVarList* args)
         return;
     }
     ifIndex = s_net.m_ifIndex[slot];
-    if (!XNetworkInterface_configSupported()) {
-        net_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8"
-                   "\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\xBD\x91\xE5\x8D\xA1"
-                   "\xE9\x85\x8D\xE7\xBD\xAE", NULL); /* 当前平台不支持网卡配置 */
-        return;
-    }
     addr = s_net.m_v6AddrEdit ? XLineEdit_text(s_net.m_v6AddrEdit) : "";
     prefixText = s_net.m_v6PrefixEdit ? XLineEdit_text(s_net.m_v6PrefixEdit) : "";
     gw = s_net.m_v6GwEdit ? XLineEdit_text(s_net.m_v6GwEdit) : "";
     prefix = atoi(prefixText && prefixText[0] ? prefixText : "64");
+    /* 输入校验先于平台能力门（同 IPv4 侧口径）。 */
     if (!XHostAddress_isIPv6Address(addr)) {
         net_report("IPv6 \xE5\x9C\xB0\xE5\x9D\x80\xE9\x9D\x9E\xE6\xB3\x95"
                    "\xEF\xBC\x8C\xE6\x8B\x92\xE7\xBB\x9D\xE5\xBA\x94"
@@ -663,6 +686,12 @@ static void net_applyV6Slot(XObject* receiver, XVarList* args)
                    "\xE7\x94\xA8", NULL); /* IPv6 网关非法，拒绝应用 */
         return;
     }
+    if (!XNetworkInterface_configSupported()) {
+        net_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8"
+                   "\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\xBD\x91\xE5\x8D\xA1"
+                   "\xE9\x85\x8D\xE7\xBD\xAE", NULL); /* 当前平台不支持网卡配置 */
+        return;
+    }
     ok = XNetworkInterface_setStaticIpv6(ifIndex, addr, prefix,
                                          (gw && gw[0]) ? gw : NULL);
     net_report(ok ? "\xE5\xB7\xB2\xE8\xBF\xBD\xE5\x8A\xA0\xE9\x9D\x99\xE6"
@@ -674,6 +703,31 @@ static void net_applyV6Slot(XObject* receiver, XVarList* args)
                NULL); /* 已追加静态 IPv6 地址 / 应用失败（需管理员权限？） */
     if (ok)
         net_refreshSelection();
+}
+
+/** @brief 操作提示随平台能力切换：有配置通路=netsh 下发说明；
+ *         无通路=如实告知仅展示与校验，避免误导操作预期。 */
+static void net_updateHint(void)
+{
+    if (!s_net.m_hintLabel) return;
+    if (XNetworkInterface_configSupported())
+        XLabel_setText_2(s_net.m_hintLabel,
+                         "\xE5\xBA\x94\xE7\x94\xA8\xE7\xBB\x8F\xE7\xB3\xBB"
+                         "\xE7\xBB\x9F netsh \xE9\x80\x9A\xE8\xB7\xAF"
+                         "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
+                         "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x89"
+                         "\xEF\xBC\x9B\xE5\x88\x87\xE6\x8D\xA2\xE4\xBC\x9A"
+                         "\xE7\x9F\xAD\xE6\x9A\x82\xE4\xB8\xAD\xE6\x96\xAD"
+                         "\xE8\xAF\xA5\xE7\xBD\x91\xE5\x8D\xA1");
+                         /* 应用经系统 netsh 通路（需管理员权限）；切换会短暂中断该网卡 */
+    else
+        XLabel_setText_2(s_net.m_hintLabel,
+                         "\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0"
+                         "\xE6\x9C\xAA\xE6\x8E\xA5\xE9\x85\x8D\xE7\xBD\xAE"
+                         "\xE9\x80\x9A\xE8\xB7\xAF\xEF\xBC\x8C\xE6\x9C\xAC"
+                         "\xE9\xA1\xB5\xE4\xBB\x85\xE5\xB1\x95\xE7\xA4\xBA"
+                         "\xE4\xB8\x8E\xE6\xA0\xA1\xE9\xAA\x8C");
+                         /* 当前平台未接配置通路，本页仅展示与校验 */
 }
 
 /** @brief 查询当前选中网卡并回填信息区/模式/编辑框。 */
@@ -704,6 +758,8 @@ static void net_refreshSelection(void)
         XClassDelete(config);
         /* 平台不支持配置查询（非 Windows 后端）：降级展示接口自身信息。 */
         net_fillInfoFromInterface(s_net.m_ifIndex[slot]);
+        net_updateHint();
+        net_relayout();
         return;
     }
     net_addrText(&config->m_ipv4Address, ip, sizeof(ip));
@@ -738,6 +794,7 @@ static void net_refreshSelection(void)
                      ? "\xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7\xE5\x8F\x96"
                      : "\xE9\x9D\x99\xE6\x80\x81", /* 自动获取/静态 */
                  mac);
+        s_net.m_infoLines = 5;
         XLabel_setText_2(s_net.m_infoLabel, info);
     }
     if (s_net.m_v4ModeCombo)
@@ -803,6 +860,8 @@ static void net_refreshSelection(void)
         }
     }
     XClassDelete(config);
+    net_updateHint();
+    net_relayout();
     net_updateV6Label();
 }
 
@@ -920,23 +979,10 @@ static void net_applySlot(XObject* receiver, XVarList* args)
         return;
     }
     ifIndex = s_net.m_ifIndex[slot];
-    if (!XNetworkInterface_configSupported()) {
-        net_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8"
-                   "\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\xBD\x91\xE5\x8D\xA1"
-                   "\xE9\x85\x8D\xE7\xBD\xAE", NULL); /* 当前平台不支持网卡配置 */
-        return;
-    }
     mode = s_net.m_v4ModeCombo ? XComboBox_currentIndex(s_net.m_v4ModeCombo) : 0;
-    if (mode == 0) {
-        ok = XNetworkInterface_setDhcpMode(ifIndex);
-        net_report(ok ? "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE4\xB8\xBA "
-                        "DHCP \xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7\xE5\x8F\x96"
-                      : "\xE5\xBA\x94\xE7\x94\xA8\xE5\xA4\xB1\xE8\xB4\xA5"
-                        "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
-                        "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x9F"
-                        "\xEF\xBC\x89",
-                   NULL); /* 已切换为 DHCP 自动获取 / 应用失败（需管理员权限？） */
-    } else {
+    /* 输入校验先于平台能力门：非法输入在页面层拒应用（平台不支持时
+     * 也一样能给出「非法」反馈，而非被能力门抢先吞掉）。 */
+    if (mode != 0) {
         ip = s_net.m_ipEdit ? XLineEdit_text(s_net.m_ipEdit) : "";
         mask = s_net.m_maskEdit ? XLineEdit_text(s_net.m_maskEdit) : "";
         gw = s_net.m_gwEdit ? XLineEdit_text(s_net.m_gwEdit) : "";
@@ -974,6 +1020,23 @@ static void net_applySlot(XObject* receiver, XVarList* args)
                        "\x94\xE7\x94\xA8", NULL); /* 备用 DNS 非法，拒绝应用 */
             return;
         }
+    }
+    if (!XNetworkInterface_configSupported()) {
+        net_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8"
+                   "\x8D\xE6\x94\xAF\xE6\x8C\x81\xE7\xBD\x91\xE5\x8D\xA1"
+                   "\xE9\x85\x8D\xE7\xBD\xAE", NULL); /* 当前平台不支持网卡配置 */
+        return;
+    }
+    if (mode == 0) {
+        ok = XNetworkInterface_setDhcpMode(ifIndex);
+        net_report(ok ? "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE4\xB8\xBA "
+                        "DHCP \xE8\x87\xAA\xE5\x8A\xA8\xE8\x8E\xB7\xE5\x8F\x96"
+                      : "\xE5\xBA\x94\xE7\x94\xA8\xE5\xA4\xB1\xE8\xB4\xA5"
+                        "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
+                        "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x9F"
+                        "\xEF\xBC\x89",
+                   NULL); /* 已切换为 DHCP 自动获取 / 应用失败（需管理员权限？） */
+    } else {
         ok = XNetworkInterface_setStaticMode(ifIndex, ip, mask,
                                              (gw && gw[0]) ? gw : NULL,
                                              (dns1 && dns1[0]) ? dns1 : NULL,
@@ -1213,21 +1276,13 @@ XWidget* demo_page_network_build(XWidget* parent,
     }
     net_setV6EditsEnabled(false); /* IPv6 模式初始=自动获取（右列置灰）。 */
 
-    /* ---- 提示 + 状态行（adapt 钉底） ---- */
+    /* ---- 提示 + 状态行（adapt 钉底；提示语按平台配置能力动态回填） ---- */
     s_net.m_hintLabel = XLabel_create(s_net.m_root, 0);
     if (s_net.m_hintLabel) {
-        XLabel_setText_2(s_net.m_hintLabel,
-                         "\xE5\xBA\x94\xE7\x94\xA8\xE7\xBB\x8F\xE7\xB3\xBB"
-                         "\xE7\xBB\x9F netsh \xE9\x80\x9A\xE8\xB7\xAF"
-                         "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
-                         "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x89"
-                         "\xEF\xBC\x9B\xE5\x88\x87\xE6\x8D\xA2\xE4\xBC\x9A"
-                         "\xE7\x9F\xAD\xE6\x9A\x82\xE4\xB8\xAD\xE6\x96\xAD"
-                         "\xE8\xAF\xA5\xE7\xBD\x91\xE5\x8D\xA1");
-                         /* 应用经系统 netsh 通路（需管理员权限）；切换会短暂中断该网卡 */
         XLabel_setTextPixelSize(s_net.m_hintLabel, 12);
         XWidget_setGeometry((XWidget*)s_net.m_hintLabel, 12, 452, 660, 20);
         XWidget_show((XWidget*)s_net.m_hintLabel);
+        net_updateHint();
     }
     s_net.m_statusLabel = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_statusLabel) return s_net.m_root;
@@ -1361,8 +1416,9 @@ int demo_page_network_autotest(XWidget* page)
                s_net.m_v6AddrEdit && s_net.m_v6PrefixEdit &&
                s_net.m_v6GwEdit && s_net.m_applyV6Btn,
                "网络设置页: IPv6 编辑/展示控件全部登记");
-    NET_EXPECT(s_net.m_v6Count >= 1 &&
-                   XWidget_height(s_net.m_v6Label) <= 30,
+    /* 行数=0(平台无 IPv6, 如部分嵌入式内核)时显示「IPv6: -」同样
+     * 占一行——断言只看折叠态高度, 不强制必须有 v6 地址。 */
+    NET_EXPECT(XWidget_height(s_net.m_v6Label) <= 30,
                "网络设置页: IPv6 折叠态单行显示");
     XAbstractButton_setChecked((XAbstractButton*)s_net.m_v6ExpandCheck,
                                true);

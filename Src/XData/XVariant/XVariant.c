@@ -79,16 +79,24 @@ void XVariant_init(XVariant* var, void* data, size_t dataSize, int type)
 {
 	if (var == NULL)
 		return;
-	/* 1) 初始化基类虚函数表 */
-	XClass_init(var);
-	XClassGetVtable(var) = XVariant_class_init();
-	/* 2) 调整 type/data 之前先把旧的 m_data 释放（避免泄漏） */
-	if (var->m_data && var->m_dataSize > 0)
+	/* 0) 库层防呆（根修未清零栈结构误 free）：仅当本结构已是本类初始化对象
+	 *    （vtable 精确等于 XVariant 虚表）时，旧 m_data 才属于本类托管、可安全释放；
+	 *    未清零栈结构（XVariant_Init 宏声明的裸栈变量等）vtable/m_data 均为栈垃圾，
+	 *    先整体清零，杜绝下方防御性释放路径对陈旧 m_data 的误 free。
+	 *    语义不变：已初始化对象重复 init 仍先释放旧数据（防泄漏契约保持）。 */
+	if (XClassGetVtable(var) != XVariant_class_init())
+	{
+		memset(var, 0, sizeof(XVariant));
+	}
+	else if (var->m_data && var->m_dataSize > 0)
 	{
 		XFree_System(var->m_data);
 		var->m_data = NULL;
 		var->m_dataSize = 0;
 	}
+	/* 1) 初始化基类虚函数表 */
+	XClass_init(var);
+	XClassGetVtable(var) = XVariant_class_init();
 	if (dataSize > 0)
 	{
 		var->m_data = XMalloc_System(dataSize);

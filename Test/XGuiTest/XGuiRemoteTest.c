@@ -288,6 +288,25 @@ static void xr_test_messagesRoundtrip(void)
                   o.mode == 1 && o.x == 0 && o.w == 0,
                   "FB_REQUEST 逐字段相等");
     }
+    { /* 7b FB_REQUEST 视口通告(2026-10-05 方案③④加法式语义; 线上布局
+       * 不变, mode=0+rect 老服务端本就零操作)。 */
+        XGuiRemoteMsgFbRequest m, o;
+        memset(&m, 0, sizeof(m));
+        m.mode = 0; /* 视口通告=无刷新动作。 */
+        m.x = 16;
+        m.y = 32;
+        m.w = 504;
+        m.h = 458;
+        n = XGuiRemoteProto_encFbRequest(buf, sizeof(buf), &m);
+        xr_expect(n == 9, "FB_REQUEST 视口通告编码 9 字节");
+        xr_expect(XGuiRemoteProto_decFbRequest(buf, n, &o) &&
+                  o.mode == 0 && o.x == 16 && o.y == 32 &&
+                  o.w == 504 && o.h == 458,
+                  "FB_REQUEST mode=0+视口逐字段相等");
+        xr_expect((XGUI_REMOTE_CAP_FB_REQUEST & 0xFFu) == 0 &&
+                  XGUI_REMOTE_CAP_FB_REQUEST != XGUI_REMOTE_CAP_UDP,
+                  "CAP_FB_REQUEST 能力位加法式不与既有位冲突");
+    }
     { /* 8 FB_UPDATE 帧级头 + tile 记录（encFbUpdate 恒 8 字节头）。 */
         XGuiRemoteMsgFbUpdate h, ho;
         XGuiRemoteMsgFbTile t, to;
@@ -988,6 +1007,78 @@ static void xr_test_rleVectors(void)
                       "128 全异单元最坏字面量在预算内");
             XFree_System(bigBuf);
         }
+    }
+
+    /* 7) 跨行重复(2026-10-04 行游标编码器加测): 3 宽×2 高, 行主序线性流
+     *    A B C C C D —— 重复段从行 0 末单元跨到行 1(单元流跨行连续)。
+     *    贪婪: [lit A B][rep C×3][lit D] = [0x01][AB][0x81][C][0x00][D]。 */
+    {
+        static const uint16_t xs[6] = {0x0A0A, 0x0B0B, 0x0C0C,
+                                       0x0C0C, 0x0C0C, 0x0D0D};
+        uint16_t xd[6];
+        n = XGuiRemoteCodec_encodeTile((const uint8_t*)xs, 6,
+                                       XGUI_REMOTE_PF_RGB565, 3, 2,
+                                       XGUI_REMOTE_PF_RGB565,
+                                       XGUI_REMOTE_CODEC_RLE, 1, enc,
+                                       sizeof(enc));
+        xr_expect(n == (1 + 4) + (1 + 2) + (1 + 2) && enc[0] == 0x01 &&
+                      enc[5] == 0x81 && enc[8] == 0x00,
+                  "RLE 跨行重复段向量(单元流跨行连续)");
+        memset(xd, 0, sizeof(xd));
+        r = XGuiRemoteCodec_decodeTile(enc, (size_t)n, XGUI_REMOTE_CODEC_RLE,
+                                       XGUI_REMOTE_PF_RGB565, (uint8_t*)xd, 12,
+                                       XGUI_REMOTE_PF_RGB565, 3, 2);
+        xr_expect(r == 0 && memcmp(xd, xs, sizeof(xs)) == 0,
+                  "RLE 跨行重复解码回环");
+    }
+
+    /* 8) 跨行字面量 + stride 填充跳过: 3 宽×2 高 stride=10(行尾 4B 填充),
+     *    6 全异单元字面量段跨行 —— 字面量按行分块复制, 填充不上网。 */
+    {
+        static const uint16_t xf[6] = {0x0102, 0x0304, 0x0506,
+                                       0x0708, 0x090A, 0x0B0C};
+        uint16_t fd[6];
+        n = XGuiRemoteCodec_encodeTile((const uint8_t*)xf, 10,
+                                       XGUI_REMOTE_PF_RGB565, 3, 2,
+                                       XGUI_REMOTE_PF_RGB565,
+                                       XGUI_REMOTE_CODEC_RLE, 1, enc,
+                                       sizeof(enc));
+        xr_expect(n == 1 + 12 && enc[0] == 0x05 &&
+                      memcmp(enc + 1, xf, 12) == 0,
+                  "RLE 跨行字面量向量(stride 填充跳过)");
+        memset(fd, 0, sizeof(fd));
+        r = XGuiRemoteCodec_decodeTile(enc, (size_t)n, XGUI_REMOTE_CODEC_RLE,
+                                       XGUI_REMOTE_PF_RGB565, (uint8_t*)fd, 12,
+                                       XGUI_REMOTE_PF_RGB565, 3, 2);
+        xr_expect(r == 0 && memcmp(fd, xf, sizeof(xf)) == 0,
+                  "RLE 跨行字面量解码回环");
+    }
+
+    /* 9) 重复段封顶 129 + 行回绕: 2 宽×65 高(130 单元)全同值 →
+     *    [0xFF][u](129 次) + [0x00][u](1 次) = 6 字节。 */
+    {
+        static uint16_t flat[130]; /* 零初始化后全量填充。 */
+        uint16_t fd2[130];
+        size_t k;
+        for (k = 0; k < 130u; ++k) {
+            flat[k] = 0xFEEB;
+        }
+        n = XGuiRemoteCodec_encodeTile((const uint8_t*)flat, 4,
+                                       XGUI_REMOTE_PF_RGB565, 2, 65,
+                                       XGUI_REMOTE_PF_RGB565,
+                                       XGUI_REMOTE_CODEC_RLE, 1, enc,
+                                       sizeof(enc));
+        xr_expect(n == 6 && enc[0] == 0xFF && enc[1] == 0xEB &&
+                      enc[2] == 0xFE && enc[3] == 0x00 && enc[4] == 0xEB &&
+                      enc[5] == 0xFE,
+                  "RLE 重复段 129 封顶向量(余量转字面量)");
+        memset(fd2, 0, sizeof(fd2));
+        r = XGuiRemoteCodec_decodeTile(enc, (size_t)n, XGUI_REMOTE_CODEC_RLE,
+                                       XGUI_REMOTE_PF_RGB565, (uint8_t*)fd2,
+                                       sizeof(fd2), XGUI_REMOTE_PF_RGB565, 2,
+                                       65);
+        xr_expect(r == 0 && fd2[0] == 0xFEEB && fd2[129] == 0xFEEB,
+                  "RLE 129 封顶解码回环");
     }
 }
 

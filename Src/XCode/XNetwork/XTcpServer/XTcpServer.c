@@ -313,14 +313,20 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	XClassDeinit(&server->serverAddress);
 	XClassCopy(&server->serverAddress, &listenAddr);
 	XClassDeinit(&listenAddr);
+	/* 桶规约(与 XAbstractSocket socketGetBoolProperty 同款): memset+XVariant_init
+	 * 建 vtable, 收尾 XVariant_setValue_null 经 XClassDeinit 释放值槽。
+	 * 旧 memset+XVariant_clear 组合只清内容不释放——ASan 实测每次 listen
+	 * 泄漏 4B int 值槽(XVariant.c:443 XMalloc_System)。 */
 	memset(&value, 0, sizeof(value));
+	XVariant_init(&value, NULL, 0, XVariantType_NULL);
 	if (!XDevice_getProperty(server->m_deviceFd, (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
+		XVariant_setValue_null(&value);
 		XDevice_close(server->m_deviceFd);
 		server->m_deviceFd = XFD_INVALID;
 		return false;
 	}
 	server->serverPort = (uint16_t)XVariant_toInt(&value);
-	XVariant_clear(&value);
+	XVariant_setValue_null(&value);
 	server->listening = true;
 	server->pauseAccepting = false;
 
@@ -403,9 +409,19 @@ intptr_t XTcpServer_socketDescriptor(const XTcpServer* server)
 {
 	XVariant value;
 	if (!server || server->m_deviceFd == XFD_INVALID) return -1;
+	/* 桶规约: init 建 vtable + setValue_null 释放值槽(旧代码无任何收尾,
+	 * NativeHandle ptr 值槽每次调用泄漏 8B)。 */
 	memset(&value, 0, sizeof(value));
-	if (!XDevice_getProperty(server->m_deviceFd, XDeviceProperty_NativeHandle, &value)) return -1;
-	return (intptr_t)XVariant_toPtr(&value);
+	XVariant_init(&value, NULL, 0, XVariantType_NULL);
+	if (!XDevice_getProperty(server->m_deviceFd, XDeviceProperty_NativeHandle, &value)) {
+		XVariant_setValue_null(&value);
+		return -1;
+	}
+	{
+		intptr_t descriptor = (intptr_t)XVariant_toPtr(&value);
+		XVariant_setValue_null(&value);
+		return descriptor;
+	}
 }
 
 bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescriptor)
@@ -430,13 +446,16 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 	options.m_owner = server;
 	server->m_deviceFd = XDevice_open(XDeviceType_Socket, &options.m_base, &error);
 	if (server->m_deviceFd == XFD_INVALID) return false;
+	/* 桶规约: init 建 vtable + setValue_null 释放值槽(同 XTcpServer_listen)。 */
 	memset(&value, 0, sizeof(value));
+	XVariant_init(&value, NULL, 0, XVariantType_NULL);
 	if (!XDevice_getProperty(server->m_deviceFd, (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
+		XVariant_setValue_null(&value);
 		XTcpServer_close(server);
 		return false;
 	}
 	server->serverPort = (uint16_t)XVariant_toInt(&value);
-	XVariant_clear(&value);
+	XVariant_setValue_null(&value);
 	server->listening = true;
 	if (!xtcpserver_control(server, XDeviceNetworkCommand_ContinueAccept, NULL, NULL)) {
 		XTcpServer_close(server);

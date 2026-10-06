@@ -32,7 +32,7 @@ typedef struct DemoRemoteClientCliOptions
     bool        enabled;   /**< --remote-client：预置「自动连接」。 */
     const char* host;      /**< --remote-host H（NULL/空=127.0.0.1）。 */
     int         port;      /**< --remote-port N（<=0 用页面默认 46000）。 */
-    const char* profile;   /**< --remote-profile performance|resource（NULL=performance）。 */
+    const char* profile;   /**< --remote-profile performance|resource|latency（NULL=performance）。 */
     bool        tls;       /**< --remote-tls：初始 TLS 开。 */
     const char* password;  /**< --remote-password PW（NULL/空=未设）。 */
     const char* auth;      /**< --remote-auth none|sha256（NULL=none）。 */

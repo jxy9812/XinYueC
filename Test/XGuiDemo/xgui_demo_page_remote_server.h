@@ -31,7 +31,7 @@ typedef struct DemoRemoteServerCliOptions
 {
     bool        enabled;   /**< --remote-server：预置「启用远程服务器」开。 */
     int         port;      /**< --remote-port N：初始端口（<=0 用页面默认 46000）。 */
-    const char* profile;   /**< --remote-profile performance|resource（NULL=performance）。 */
+    const char* profile;   /**< --remote-profile performance|resource|latency（NULL=performance）。 */
     bool        tls;       /**< --remote-tls：初始 TLS 开。 */
     const char* cert;      /**< --remote-cert PATH：初始证书路径（NULL/空=未设）。 */
     const char* key;       /**< --remote-key PATH：初始私钥路径（NULL/空=未设）。 */
@@ -52,6 +52,11 @@ void demo_page_remote_server_autostart(void);
  *         未启用远程服务时零操作。须在主窗口析构前调用）。 */
 void demo_page_remote_server_shutdown(void);
 
+/** @brief 主窗尺寸变化联动：服务地址行宽度按当前根宽自适应
+ *         （2026-10-04 多 IP 修——窗口足够宽时 2+ IP 一行放下全部,
+ *         窄窗 wordWrap 折行兜底; 幂等可频繁调）。 */
+void demo_page_remote_server_adaptWidth(void);
+
 #else /* !XGUI_REMOTE_ON：裁剪配置下全部零操作（契约符号常在）。 */
 
 typedef struct DemoRemoteServerCliOptions
@@ -69,6 +74,7 @@ typedef struct DemoRemoteServerCliOptions
 #define demo_page_remote_server_cliDefaults(opts) ((void)(opts))
 #define demo_page_remote_server_autostart()       ((void)0)
 #define demo_page_remote_server_shutdown()        ((void)0)
+#define demo_page_remote_server_adaptWidth()      ((void)0)
 
 #endif /* XGUI_REMOTE_ON */
 

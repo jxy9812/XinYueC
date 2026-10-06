@@ -18,7 +18,10 @@
  *                本地控件; 断开后把视图复位为宿主尺寸, 占位文本
  *                （「未连接远端服务器」）在视图区可见;
  *              - 控制列（页内 x=516..768）: IP/端口/连接/断开/档位/TLS/
- *                认证/口令/「模拟触摸」/实时统计, 全部本地可达;
+ *                认证/口令/「模拟触摸」/实时统计, 全部本地可达; 口令经
+ *                XGuiClient_setAccessPassword/clearAccessPassword 接入
+ *                连接流程（2026-10-04 访问口令: 空输入=显式清除, 连接
+ *                自动适配服务端挑战要求, 要求认证而无口令快速失败）;
  *              - 悬浮会话工具条（XRemoteSessionBar, 页根子控件吸附视图
  *                区顶部居中）: 连接期浮现, 断开即隐藏——「连上后怎么
  *                退出」的 UI 入口（断开不杀进程不退出应用）; 展开态
@@ -116,14 +119,19 @@ static struct
     XWidget*         m_root;        /**< 页面根控件（契约返回值；堆对象）。 */
     DemoPageStatusFn m_status;      /**< 主窗口状态栏反馈回调（借用）。 */
     void*            m_user;        /**< 回调上下文（主窗口指针，借用）。 */
+    bool             m_shuttingDown; /**< 退出收尾中: 标签树已析构, 状态只留
+                                       静态副本不再回写(ASan 实测断链信号在
+                                       标签析构后仍回写, 每次泄漏重建串 96B)。 */
     char             m_lastStatus[160]; /**< 最近一次反馈文本（自测断言用）。 */
     bool             m_ready;       /**< build 已完成且控件指针有效。 */
 
     /* ---- 配置区控件 ---- */
     XLineEdit* m_hostEdit;    /**< 远端 IP（默认 127.0.0.1）。 */
     XLineEdit* m_portEdit;    /**< 远端端口（默认 46000）。 */
-    XComboBox* m_profileCombo;/**< 档位 performance|resource。 */
+    XComboBox* m_profileCombo;/**< 档位 performance|resource|latency。 */
     XCheckBox* m_tlsCheck;    /**< TLS 开关。 */
+    XCheckBox* m_udpCheck;    /**< UDP 低延迟旁路开关(2026-10-04 加法式;
+                                   *   运行期可切)。 */
     XComboBox* m_authCombo;   /**< 认证：0=无 1=SHA256 挑战应答。 */
     XLineEdit* m_passwordEdit;/**< 认证口令（密码回显）。 */
     XPushButton* m_connectBtn;   /**< 连接按钮。 */
@@ -162,6 +170,9 @@ static struct
      *      bench_latency.sh 读 PING RTT 序列。零 UI 影响, 未启用时
      *      不建定时器） ---- */
     XTimer*    m_benchTimer;  /**< 采样定时器（启用基准时拥有）。 */
+    XTimer*    m_statsTimer;  /**< 统计/UDP 状态刷新定时器(2026-10-04 加法式:
+                                   *   UDP 建链/回退状态无事件驱动刷新口,
+                                   *   1s 周期轻刷统计区)。 */
 } s_rc;
 
 /* 分割条回调前置声明（定义在 adapt 段；装配点在其之前使用）。 */
@@ -178,6 +189,16 @@ static void rc_splitToggle(void* owner);
  *           bytes 增量=有对端帧到达(PONG/FB_UPDATE), 避免空转刷屏。
  *           供 build/xgui-remote-live/bench_latency.sh 归档协议 RTT
  *           序列。仅演示进程 stderr 诊断流, 不触任何 UI 控件。 */
+/** @brief 实时统计多行区整体刷新前置声明(定时回调先行引用)。 */
+static void rc_refreshStatsLabel(void);
+
+/** @brief 统计/UDP 状态刷新定时回调(2026-10-04): 1s 轻刷统计区。 */
+static void rc_statsTimerCb(void* userData, XTimerData* timer)
+{
+    (void)userData; (void)timer;
+    rc_refreshStatsLabel();
+}
+
 static void rc_benchStatsCb(void* userData, XTimerData* timer)
 {
     static uint64_t s_lastBytes;
@@ -200,6 +221,10 @@ static void rc_report(const char* text)
 {
     if (!text) return;
     snprintf(s_rc.m_lastStatus, sizeof(s_rc.m_lastStatus), "%s", text);
+    /* 退出收尾期不再回写标签: 断链信号在标签析构后仍会到达, 回写会在
+     * 已析构标签上重建显示串(ASan 实测每次泄漏 96B/1obj)——静态副本
+     * m_lastStatus 已留档, 活体运行期回写不受影响。 */
+    if (s_rc.m_shuttingDown) return;
     if (s_rc.m_status)
         s_rc.m_status(s_rc.m_user, text);
 }
@@ -208,8 +233,9 @@ static void rc_report(const char* text)
 static XGuiRemoteProfileId rc_profileFromCombo(void)
 {
     int idx = s_rc.m_profileCombo ? XComboBox_currentIndex(s_rc.m_profileCombo) : 0;
-    return idx == 1 ? XGUI_REMOTE_PROFILE_RESOURCE
-                    : XGUI_REMOTE_PROFILE_PERFORMANCE;
+    if (idx == 1) return XGUI_REMOTE_PROFILE_RESOURCE;
+    if (idx == 2) return XGUI_REMOTE_PROFILE_LATENCY;
+    return XGUI_REMOTE_PROFILE_PERFORMANCE;
 }
 
 static const char* rc_profileName(XGuiRemoteProfileId id)
@@ -217,6 +243,7 @@ static const char* rc_profileName(XGuiRemoteProfileId id)
     switch (id) {
     case XGUI_REMOTE_PROFILE_PERFORMANCE: return "performance";
     case XGUI_REMOTE_PROFILE_RESOURCE:    return "resource";
+    case XGUI_REMOTE_PROFILE_LATENCY:     return "latency";
     case XGUI_REMOTE_PROFILE_AUTO:        return "auto";
     default:                              return "custom";
     }
@@ -242,6 +269,17 @@ static const char* rc_stateName(XGuiRemoteSessionState st)
     }
 }
 
+/** @brief UDP 旁路状态短名(2026-10-04 加法式; 显示/回退口径)。 */
+static const char* rc_udpStateName(int state)
+{
+    switch (state) {
+    case XGUI_REMOTE_UDP_STATE_TRYING:   return "协商中";
+    case XGUI_REMOTE_UDP_STATE_ACTIVE:   return "激活(低延迟)";
+    case XGUI_REMOTE_UDP_STATE_FALLBACK: return "已回退TCP";
+    default:                             return "关";
+    }
+}
+
 /** @brief 实时统计多行区整体刷新（状态/远端尺寸/帧数/RTT/重连次数）。 */
 static void rc_refreshStatsLabel(void)
 {
@@ -257,11 +295,12 @@ static void rc_refreshStatsLabel(void)
         XGuiClient_statisticsExtended(cli, &st);
         XGuiClient_remoteSize(cli, &rsz);
         snprintf(buf, sizeof(buf),
-                 "状态: %s\n远端画面: %ux%u | 档位: %s\n"
+                 "状态: %s | UDP: %s\n远端画面: %ux%u | 档位: %s\n"
                  "帧数: %u | tile: %u | 实际刷新率: %u.%02u fps\n"
                  "RTT: %u ms | 收: %llu B | 发: %llu B\n"
                  "重连次数: %u",
                  rc_stateName(XGuiClient_state(cli)),
+                 rc_udpStateName(XGuiClient_udpState(cli)),
                  (unsigned)rsz.width, (unsigned)rsz.height,
                  rc_profileName(s_rc.m_profile),
                  st.updateCount, st.tileCount,
@@ -272,6 +311,23 @@ static void rc_refreshStatsLabel(void)
                  st.reconnectCount);
     }
     XLabel_setText_2(s_rc.m_statsLabel, buf);
+}
+
+/** @brief UDP 旁路开关 toggled：运行期即切(UDP_MODE 协商, 会话不断)。 */
+static void rc_udpSlot(XObject* sender, XVarList* args)
+{
+    char buf[128];
+    (void)sender; (void)args;
+    if (!s_rc.m_ready) return;
+    if (s_rc.m_client) {
+        XGuiClient_setUdpEnabled(s_rc.m_client,
+            XAbstractButton_isChecked((const XAbstractButton*)s_rc.m_udpCheck));
+        snprintf(buf, sizeof(buf), "UDP 旁路: %s",
+                 XAbstractButton_isChecked((const XAbstractButton*)s_rc.m_udpCheck)
+                     ? "开(协商中/激活)" : "关(纯 TCP)");
+        if (s_rc.m_status) s_rc.m_status(s_rc.m_user, buf);
+    }
+    rc_refreshStatsLabel();
 }
 
 /** @brief 连接状态单行刷新。 */
@@ -292,10 +348,15 @@ static void rc_applyConfigToClient(void)
 {
     XGuiClient* cli = s_rc.m_client;
     if (!cli) return;
-    /* 认证: 口令仅驻留至认证完成（冻结头注）; SHA256 未设口令由服务端
-     * listen 侧拒绝（连接后 AUTH_RESULT 如实呈现, 无 UI 侧静默）。 */
-    if (s_rc.m_passwordEdit && XLineEdit_text(s_rc.m_passwordEdit)[0])
-        XGuiClient_setPassword(cli, XLineEdit_text(s_rc.m_passwordEdit));
+    /* 认证(2026-10-04 访问口令加法式): 非空即设访问口令, 空即显式清除
+     * （修复: 旧口径空输入不触 setPassword, 上一连接的口令残留至重连）。
+     * 连接流程自动适配: 服务端 HELLO_ACK 选定挑战应答才走认证, 选定
+     * NONE 直连; 服务端要求认证而本端无口令 → 客户端快速失败断链。 */
+    if (!s_rc.m_passwordEdit) return;
+    if (XLineEdit_text(s_rc.m_passwordEdit)[0])
+        XGuiClient_setAccessPassword(cli, XLineEdit_text(s_rc.m_passwordEdit));
+    else
+        XGuiClient_clearAccessPassword(cli);
 }
 
 /* ==================== 槽 ==================== */
@@ -477,11 +538,12 @@ static void rc_onDisconnected(XObject* sender, XVarList* args)
             rc_report(buf);
         }
     }
-    /* RS-d 改造: 断开即回「未连接」视图态——把 1:1 固定尺寸（FB_META
-     * 后 800x600）复位为视图区宿主尺寸, 占位文本（「未连接远端
-     * 服务器」, XGuiClient 占位绘制）落回可视区; 悬浮条隐藏由工具条
-     * 自身 disconnected 槽完成（悬浮条自管理可见性）。重连达成后
-     * FB_META 再次 setFixedSize(1:1), 悬浮条随 connected 信号复现。 */
+    /* RS-d 改造: 断开即回「未连接」视图态——控件尺寸复位为视图区宿主
+     * 尺寸, 占位文本（「未连接远端服务器」, XGuiClient 占位绘制）落回
+     * 可视区; 悬浮条隐藏由工具条自身 disconnected 槽完成（悬浮条自管
+     * 理可见性）。重连达成后悬浮条随 connected 信号复现; 画面几何由
+     * 视图适配模式决定（默认 FIT: 控件保持宿主几何、信箱缩放;
+     * 1:1: FB_META 后 setFixedSize(远端尺寸), 2026-10-04）。 */
     if (s_rc.m_client && s_rc.m_viewHost)
         XWidget_setFixedSize((XWidget*)s_rc.m_client,
                              XWidget_width(s_rc.m_viewHost),
@@ -615,6 +677,7 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     if (!s_rc.m_profileCombo) return s_rc.m_root;
     XComboBox_addItem_2(s_rc.m_profileCombo, "performance");
     XComboBox_addItem_2(s_rc.m_profileCombo, "resource");
+    XComboBox_addItem_2(s_rc.m_profileCombo, "latency");
     XComboBox_setCurrentIndex(s_rc.m_profileCombo, 0);
     XWidget_setGeometry((XWidget*)s_rc.m_profileCombo, RC_COL_X + 32, 170,
                         124, 24);
@@ -627,11 +690,25 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     if (!s_rc.m_tlsCheck) return s_rc.m_root;
     XAbstractButton_setText_2((XAbstractButton*)s_rc.m_tlsCheck,
                               "TLS \xE5\x8A\xA0\xE5\xAF\x86"); /* TLS 加密 */
-    XWidget_setGeometry((XWidget*)s_rc.m_tlsCheck, RC_COL_X, 202, 160, 24);
+    XWidget_setGeometry((XWidget*)s_rc.m_tlsCheck, RC_COL_X, 202, 96, 24);
     XObject_connect_2((XObject*)s_rc.m_tlsCheck,
                       XSignal(XAbstractButton_toggled_signal),
                       rc_configChangedSlot);
     XWidget_show((XWidget*)s_rc.m_tlsCheck);
+
+    /* ---- UDP 低延迟旁路开关(2026-10-04 加法式; 默认开, 运行期可切;
+     *     与 TLS 同排右段, 不叠印) ---- */
+    s_rc.m_udpCheck = XCheckBox_create(s_rc.m_root, 0);
+    if (!s_rc.m_udpCheck) return s_rc.m_root;
+    XAbstractButton_setText_2((XAbstractButton*)s_rc.m_udpCheck,
+                              "UDP \xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF"
+                              "\x9F");
+                              /* UDP 低延迟 */
+    XAbstractButton_setChecked((XAbstractButton*)s_rc.m_udpCheck, true);
+    XWidget_setGeometry((XWidget*)s_rc.m_udpCheck, RC_COL_X + 100, 202, 152, 24);
+    XObject_connect_2((XObject*)s_rc.m_udpCheck,
+                      XSignal(XAbstractButton_toggled_signal), rc_udpSlot);
+    XWidget_show((XWidget*)s_rc.m_udpCheck);
 
     /* ---- 认证方式 + 口令（与服务器页对等选项） ---- */
     rc_buildLabelAt("\xE8\xAE\xA4\xE8\xAF\x81", RC_COL_X, 234, 40, &s_rc.m_capAuth); /* 认证 */
@@ -693,8 +770,9 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     XWidget_show((XWidget*)s_rc.m_statsLabel);
 
     /* ---- 客户端对象: 父挂视图区宿主（RS-d 改造; 对象树级联析构兜底）。
-     *     初始=宿主尺寸 → 占位文本充满视图区; FB_META 后客户端自身
-     *     setFixedSize(远端尺寸) 1:1, 超出部分被宿主矩形裁剪。 ---- */
+     *     初始=宿主尺寸 → 占位文本充满视图区。默认 FIT 模式下 FB_META
+     *     不再改几何: 远端画面按 contain 信箱缩放进本视图区(2026-10-04
+     *     视图适配缩放); 1:1 模式才恢复 setFixedSize(远端尺寸) 旧口径。 ---- */
     s_rc.m_client = XGuiClient_create(s_rc.m_viewHost, 0);
     if (s_rc.m_client) {
         XWidget_setGeometry((XWidget*)s_rc.m_client, 0, 0,
@@ -755,6 +833,8 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     }
     if (s_rcCli.profile && strcmp(s_rcCli.profile, "resource") == 0)
         XComboBox_setCurrentIndex(s_rc.m_profileCombo, 1);
+    else if (s_rcCli.profile && strcmp(s_rcCli.profile, "latency") == 0)
+        XComboBox_setCurrentIndex(s_rc.m_profileCombo, 2);
     if (s_rcCli.tls)
         XAbstractButton_setChecked((XAbstractButton*)s_rc.m_tlsCheck, true);
     if (s_rcCli.auth && strcmp(s_rcCli.auth, "sha256") == 0)
@@ -766,6 +846,16 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     s_rc.m_ready = true;
     rc_refreshStateLabel();
     rc_refreshStatsLabel();
+
+    /* ---- 统计/UDP 状态刷新定时器(2026-10-04 加法式): UDP 建链/回退无
+     *      事件刷新口, 1s 周期轻刷统计区(未连接时空转近零成本)。 ---- */
+    s_rc.m_statsTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (s_rc.m_statsTimer) {
+        XTimer_setInterval(s_rc.m_statsTimer, 1000);
+        XTimer_setTimerCallback(s_rc.m_statsTimer, rc_statsTimerCb);
+        XTimer_setUserData(s_rc.m_statsTimer, NULL);
+        XTimer_start_base(s_rc.m_statsTimer);
+    }
 
     /* ---- 基准采样定时器（XGUI_REMOTE_BENCH_STATS=1 才建; 延迟基准
      *      专用, 常规演示零开销）。 ---- */
@@ -914,7 +1004,15 @@ void demo_page_remote_client_adapt(XWidget* page)
         XWidget_setGeometry((XWidget*)s_rc.m_profileCombo, colX + 32, 266,
                             colW - 32, 26);
     if (s_rc.m_tlsCheck)
-        XWidget_setGeometry((XWidget*)s_rc.m_tlsCheck, colX, 298, 160, 24);
+        XWidget_setGeometry((XWidget*)s_rc.m_tlsCheck, colX, 298, 96, 24);
+    /* UDP 低延迟旁路开关随列重排（2026-10-04 修: 此前只有 build 装配
+     * 几何 (RC_COL_X+100,202)——RC_COL_X=516 在默认 600 根宽下已越出
+     * 页面, 重排后列内同位又是端口编辑框, 双重叠印/不可见（用户实测
+     * 「没加进布局」）。与 TLS 同排右段; TLS 宽回装配同款 96; 列宽拖
+     * 至 200 下限时本开关文本轻微裁切, 与页面窄列裁切口径一致。 */
+    if (s_rc.m_udpCheck)
+        XWidget_setGeometry((XWidget*)s_rc.m_udpCheck, colX + 104, 298,
+                            colW - 104, 24);
     if (s_rc.m_authCombo)
         XWidget_setGeometry((XWidget*)s_rc.m_authCombo, colX + 32, 328,
                             colW - 32, 26);
@@ -937,9 +1035,13 @@ void demo_page_remote_client_adapt(XWidget* page)
         DemoSplitter_setState(s_rc.m_split, 1, s_rc.m_colCollapsed);
         XWidget_show(s_rc.m_split);
     }
-    /* 未连接时镜像占位撑满视图区（连接后 FB_META 由客户端自定尺寸）。 */
+    /* 镜像几何: 未连接=占位撑满视图区; 已连接 FIT 模式同样撑满——
+     * FIT 信箱变换按控件现尺寸重算, 若连接后不再随视图区缩放, 拉伸
+     * 窗口时镜像停在连接时刻尺寸、右侧留白(用户实测 2026-10-06);
+     * 1:1 模式保持 FB_META 定径(setFixedSize 远端尺寸)不动。 */
     if (s_rc.m_client &&
-        XGuiClient_state(s_rc.m_client) == XGUI_REMOTE_STATE_DISCONNECTED)
+        (XGuiClient_state(s_rc.m_client) == XGUI_REMOTE_STATE_DISCONNECTED ||
+         XGuiClient_viewFitMode(s_rc.m_client) == XGUI_CLIENT_VIEW_FIT))
         XWidget_setGeometry((XWidget*)s_rc.m_client, 0, 0, hostW, hostH);
     /* 悬浮会话条跟随视图矩形（RS-d 附着语义）。 */
     if (s_rc.m_sessionBar) {
@@ -971,6 +1073,7 @@ void demo_page_remote_client_autostart(void)
 void demo_page_remote_client_shutdown(void)
 {
     if (!s_rc.m_client) return;
+    s_rc.m_shuttingDown = true; /* 断链信号将到达, 此后状态只留静态副本。 */
     /* 悬浮条先解绑（信号连接持有本页/客户端借用, 随后客户端
      * deleteLater——先断链防析构窗口期悬垂回调, 2026-10-03）。 */
     if (s_rc.m_sessionBar)

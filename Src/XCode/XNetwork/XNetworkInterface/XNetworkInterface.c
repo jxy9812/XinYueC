@@ -105,34 +105,45 @@ static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInter
 static void VXNetworkInterface_move(XNetworkInterface* dest, XNetworkInterface* src)
 {
     if (!dest || !src) return;
-    
+
     // 检查目标对象是否已初始化，如果未初始化则先初始化
     if (XClassIsVtableNull(dest))
         XNetworkInterface_init(dest);
-    
-    XSwap(dest, src,sizeof(XNetworkInterface));
 
-    //// 移动所有字段
-    //dest->name = src->name;
-    //dest->humanReadableName = src->humanReadableName;
-    //dest->hardwareAddress = src->hardwareAddress;
-    //dest->index = src->index;
-    //dest->mtu = src->mtu;
-    //dest->flags = src->flags;
-    //dest->type = src->type;
-    //dest->addressEntries = src->addressEntries;
-    //dest->isValid = src->isValid;
-    //
-    //// 清空源对象
-    //src->name = NULL;
-    //src->humanReadableName = NULL;
-    //src->hardwareAddress = NULL;
-    //src->addressEntries = NULL;
-    //src->index = 0;
-    //src->mtu = 0;
-    //src->flags = 0;
-    //src->type = XNetworkInterface_Unknown;
-    //src->isValid = false;
+    /* [memhunt F1 修复 2026-10-06] payload-only move，禁用 XSwap 整块交换。
+     * LSan 证据（XGuiWindowDemo --autotest 优雅退出 / 远程窗口页 62 调枚举）:
+     * XNetworkInterface_create_ex:157 分配的接口对象本体(≈80B/接口)每次枚举
+     * 全漏(160B/2objs，62 调=124obj/9920B)。根因: XSwap 连 XClass 头一起
+     * 字节交换，push 进向量(allInterfaces:301)后原堆块的 is_heap/内存类型
+     * 被向量槽位旧内容顶掉，调用侧 XClassDelete(iface)(:302、
+     * rs_collectLocalIPv4 等)按 XClass.h:207「非堆对象仅反初始化不释放」
+     * 规约失去释放资格 → 每接口每调漏本体。改为仅搬移载荷字段并把 src
+     * 诸指针置 NULL: src 恢复为"空壳堆对象"，XClassDelete 走
+     * VXNetworkInterface_deinit(空载析构)后正常 free 本体；载荷所有权随
+     * 向量槽位，由向量析构(XClass_deinit_base)统一释放。 */
+    VXNetworkInterface_deinit(dest); /* dest 旧载荷先释放(含 init 预建的 addressEntries 空向量)，防覆盖泄漏。 */
+
+    // 移动所有字段
+    dest->name = src->name;
+    dest->humanReadableName = src->humanReadableName;
+    dest->hardwareAddress = src->hardwareAddress;
+    dest->addressEntries = src->addressEntries;
+    dest->index = src->index;
+    dest->mtu = src->mtu;
+    dest->flags = src->flags;
+    dest->type = src->type;
+    dest->isValid = src->isValid;
+
+    // 清空源对象(指针置 NULL: XClassDelete(src) 时 deinit 空载，堆块正常释放)
+    src->name = NULL;
+    src->humanReadableName = NULL;
+    src->hardwareAddress = NULL;
+    src->addressEntries = NULL;
+    src->index = 0;
+    src->mtu = 0;
+    src->flags = 0;
+    src->type = XNetworkInterface_Unknown;
+    src->isValid = false;
 }
 
 // ==================== 构造函数 ====================

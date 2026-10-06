@@ -21,13 +21,21 @@
 #include "XStyleOption.h"
 #include "XScreen.h"
 #include "XPlatformBackingStore.h"
+#include "XImage.h" /* 拖动快照离屏图像（窗口本地全幅；XImage_reinit_ex 复用分配） */
 #include "XWindow_Protected.h"
 #include "XCursor.h" /* 边缘改尺寸悬停光标：标准形状经 XWidget_setCursor 生效链 */
 #include "XPlatformTheme.h"
 #include "XPlatformNativeWindow.h" /* 拖拽平台指针抓取：指针出窗仍持续投递 MOVE（软件重路由的出窗盲区兜底） */
-#include "XDateTime.h" /* 交互限帧计时：单调毫秒（时间源约束同 XWidget.c present 限频） */
+#include "XDateTime.h" /* 交互限帧计时：单调毫秒（时间源约束同 XWidget.c present 限频）；[gesture] 分相探针同源 */
 #include "XTitleBar.h"
 #include "XTitleBar_Protected.h"
+#include "XGuiConfig.h" /* XGUIAPPLICATION_ON 开关必须先于 XGuiApplication.h 生效——否则其声明块被整体裁掉、函数按隐式声明返回 int（64 位指针截断，2026-10-04 实证；注意不可放入 FBDEV 条件块，X11 侧同样要可见） */
+#include "XGuiApplication.h" /* clearOutsideWindow 扣除其他可见顶层：Z 序枚举 */
+#include "XApplication.h" /* restoreExposeStrips 窗口→顶层控件反查（XApplication_topLevelWidgets） */
+#include "XBackingStore.h" /* restoreExposeStrips：XBackingStore_handle 取平台后备存储 */
+#include "XWindowSystemInterface.h" /* 被占顶层暴露重绘注入 */
+#include <stdio.h> /* [gesture] 分相探针 stderr 报告（探针关零输出） */
+#include <stdlib.h> /* XGUI_DRAG_SNAPSHOT_BLIT / XGUI_GESTURE_PROF env 门控 */
 #if XGUI_ON && XPLATFORM_FBDEV_ON
 #include "XPlatformDisplayDriver.h"
 #endif
@@ -104,12 +112,23 @@ typedef struct XWindowDecorationState
     int m_edgeCursor;      /**< 装饰侧边缘光标当前形状键（XCursorShape+1；
                                 0=未接管，与 Arrow(0) 区分；ensureState 的
                                 XMemset 清零即未接管）。 */
+    XImage m_dragSnap;     /**< 拖动快照图像（窗口本地全幅；拖动开始时自
+                                后备缓冲已合成内容整幅拷入，每步整块 blit
+                                进 fb 可见面，拖动结束立即释放。快照模式
+                                未启用时保持未初始化空壳）。 */
+    bool m_dragSnapActive; /**< 拖动快照 blit 模式进行中（快照已取且平台
+                                原语可用；false=本手势走既有 flush 路径）。 */
 } XWindowDecorationState;
 
 /** @brief 装饰状态注册表（懒扩容；容量以 2 的幂增长）。 */
 static XWindowDecorationState* g_xwdStates = NULL;
 static int g_xwdCount = 0;
 static int g_xwdCapacity = 0;
+
+/** @brief 进程内快照 blit 拖动步累计（诊断/离屏测试自证快照路径真实
+ *  生效用；恒单调，成功直写一步加一，降级步不计）。定义前移至文件头：
+ *  XWindowDecoration_dragSnapshotStepCount 访问器位于手势态查询区。 */
+static int g_xwdDragSnapStepCount = 0;
 
 /* ==================== 内部辅助：注册表 ==================== */
 
@@ -168,6 +187,24 @@ bool XWindowDecoration_gestureActive(void)
             return true;
     }
     return false;
+}
+/** @brief      查询顶层窗口是否处于最小化卷起态（Shade：只剩标题条）。
+ *  @details    [2026-10-06] 供宿主悬浮件（如性能悬浮窗）在卷起时随内容
+ *              隐藏——卷起后窗口只剩条高，右下角重锚被钳到 y=0 的悬浮件
+ *              会盖住标题条（真机用户实测）。未装饰/无状态/桌面原生窗
+ *              (iconify 语义, 不做卷起)一律返回 false。
+ * @param      top 顶层控件；可为 NULL。
+ * @return     卷起态返回 true。
+ */
+bool XWindowDecoration_isShaded(const XWidget* top)
+{
+    const XWindowDecorationState* st = xwd_stateFor(top);
+    return st ? st->m_shaded : false;
+}
+
+int XWindowDecoration_dragSnapshotStepCount(void)
+{
+    return g_xwdDragSnapStepCount;
 }
 
 /* ==================== 内部辅助：判定与度量 ==================== */
@@ -472,13 +509,232 @@ static int xwd_exposeStrips(const XRect* oldG, const XRect* newG,
     return n;
 }
 
-/** @brief 拖拽/改尺寸结束的兜底清扫：窗口外全部面板区域填黑两缓冲
- *  （逐帧差带只覆盖增量；松手一次清干净=桌面 WM 每次几何变化整屏重铺）。 */
+/** @brief fbdev 直写面板判定：显示驱动已注册且探测成功（框架即合成器
+ *  的无 WM 环境）。桌面（无驱动注册）为 false——条带恢复整体不启用，
+ *  行为与旧实现逐位一致（fill 在桌面本就 no-op，WM 自管重铺）。 */
+static bool xwd_fbdevPanelDirect(void)
+{
+    XRect panel;
+    return xwd_panelRect(NULL, &panel);
+}
+
+/** @brief 把 work[0..wn) 逐矩形扣除 cut（上下左右四条带切分，与
+ *  xwd_clearOutsideWindow 同款切分语义），结果回写 work 并返回新条数。
+ *  容量不足返回 -1（调用方降级，work 内容不再可信）；cap 上限 12。 */
+static int xwd_rectListSubtract(XRect* work, int wn, int cap,
+                                const XRect* cut)
+{
+    XRect next[12];
+    int nn = 0;
+    int i;
+    int cutR = cut->x + cut->width;
+    int cutB = cut->y + cut->height;
+    for (i = 0; i < wn; ++i)
+    {
+        const XRect* r = &work[i];
+        int rR = r->x + r->width;
+        int rB = r->y + r->height;
+        int ix0 = r->x > cut->x ? r->x : cut->x;
+        int iy0 = r->y > cut->y ? r->y : cut->y;
+        int ix1 = cutR < rR ? cutR : rR;
+        int iy1 = cutB < rB ? cutB : rB;
+        if (ix1 <= ix0 || iy1 <= iy0)
+        {
+            /* 不相交：整段保留。 */
+            if (nn >= cap) return -1;
+            next[nn++] = *r;
+            continue;
+        }
+        /* 相交：保留上下左右四条带（均不含扣除矩形）。 */
+        if (iy0 > r->y)
+        {
+            if (nn >= cap) return -1;
+            XRect_init(&next[nn], r->x, r->y, r->width, iy0 - r->y);
+            ++nn;
+        }
+        if (iy1 < rB)
+        {
+            if (nn >= cap) return -1;
+            XRect_init(&next[nn], r->x, iy1, r->width, rB - iy1);
+            ++nn;
+        }
+        if (ix0 > r->x)
+        {
+            if (nn >= cap) return -1;
+            XRect_init(&next[nn], r->x, iy0, ix0 - r->x, iy1 - iy0);
+            ++nn;
+        }
+        if (ix1 < rR)
+        {
+            if (nn >= cap) return -1;
+            XRect_init(&next[nn], ix1, iy0, rR - ix1, iy1 - iy0);
+            ++nn;
+        }
+    }
+    XMemcpy(work, next, (size_t)nn * sizeof(XRect));
+    return nn;
+}
+
+/** @brief 拖拽移动/改尺寸让位条带归位还原（拖动对话框白块根修
+ *  2026-10-05）：本窗从 oldG 让出到 newG 的条带按「谁住着还谁」还原
+ *  ——条带与其他可见顶层几何的交集自各归属顶层的后备缓冲直搬两缓冲
+ *  （Z 序低→高遍历，高层覆写，与 present 遮挡剔除同 Z 约定），裸露
+ *  面板余部（真桌面暴露）维持旧实现填桌面底色。
+ *  @details 旧实现无条件把让位条带填桌面底色：弹层拖动场景条带住着
+ *  父窗内容，每步被洗成桌面色（真机白块，松手 clearOutsideWindow 的
+ *  扣除+整窗 expose 才擦平）。归属顶层还原不走 present/翻页（blit
+ *  PanelRects 与 fill 同款双缓冲直写），单步仍只一次本窗整窗直提、
+ *  无翻页等待；也不逐帧注入 expose（EXPOSE 处理恒整窗重合成，60 档
+ *  拖拽烧穿 A33 单核）。源未合成（归属顶层无后备图像）退回整窗
+ *  expose 兜底（罕见：可见但从未画过的顶层）；桌面无 fbdev 显示驱动
+ *  时整体短路（调用方分流），X11 行为不变。工作集（12 槽）溢出降
+ *  级：不填余部、已处理归属保留（绝不洗其他窗），残带留待松手清扫
+ *  自愈。 */
+static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
+                                    XWindow* self)
+{
+    XRect strips[4];
+    XRect hits[12];
+    XRect work[12];
+    int wn = 0;
+    int i;
+    int n;
+    bool truncated = false;
+    XVector* tops;
+    if (!oldG || !newG || !self) return;
+    n = xwd_exposeStrips(oldG, newG, strips);
+    for (i = 0; i < n && wn < 12; ++i) work[wn++] = strips[i];
+    tops = XGuiApplication_topLevelWindows();
+    if (tops)
+    {
+        size_t ti;
+        size_t topCount = XVector_size_base(tops);
+        for (ti = 0; ti < topCount && !truncated; ++ti)
+        {
+            XWindow* other = *(XWindow**)XVector_at_base(tops, (int64_t)ti);
+            XRect og;
+            int hitCount = 0;
+            int wi;
+            if (!other || other == self || !XWindow_isVisible(other))
+                continue;
+            og = XWindow_geometry(other);
+            /* 收集本顶层与余部条带的交集（面板坐标）。 */
+            for (wi = 0; wi < wn && hitCount < 12; ++wi)
+            {
+                const XRect* r = &work[wi];
+                int ix0 = r->x > og.x ? r->x : og.x;
+                int iy0 = r->y > og.y ? r->y : og.y;
+                int ix1 = r->x + r->width < og.x + og.width
+                              ? r->x + r->width : og.x + og.width;
+                int iy1 = r->y + r->height < og.y + og.height
+                              ? r->y + r->height : og.y + og.height;
+                if (ix1 > ix0 && iy1 > iy0)
+                {
+                    XRect_init(&hits[hitCount], ix0, iy0, ix1 - ix0,
+                               iy1 - iy0);
+                    ++hitCount;
+                }
+            }
+            if (hitCount > 0)
+            {
+                /* 归位还原：自归属顶层后备缓冲直搬（图像坐标=条带-窗
+                 * 全局原点，与 present fbOrigin 同口径）。 */
+                /* 桥接窗口→归属顶层控件直查（虚表同一性）：此前经
+                 * XApplication_topLevelWidgets 反查，在仅创建
+                 * XGuiApplication（XApplication 基层未初始化，g_xapp
+                 * 空）的进程恒不命中——让位条带归位每次都退化为整窗
+                 * expose 兜底（EXPOSE 处理恒整窗重合成，逐帧拖拽烧穿
+                 * A33 单核；真机 demo 与离屏测试 2026-10-06 同链实证，
+                 * 对话框/标题栏/键盘拖拽三路同缺陷）。 */
+                XWidget* ownerTop = XWidget_widgetForWindow(other);
+                {
+                    XBackingStore* bs =
+                        ownerTop ? XWidget_backingStore(ownerTop) : NULL;
+                    XPlatformBackingStore* pbs =
+                        bs ? XBackingStore_handle(bs) : NULL;
+                    XImage* img =
+                        pbs ? XPlatformBackingStore_paintDevice(pbs) : NULL;
+                    if (pbs && img)
+                    {
+                        XPoint origin;
+                        XPoint_init(&origin, og.x, og.y);
+                        XPlatformBackingStore_blitPanelRects(pbs, hits,
+                                                             hitCount,
+                                                             &origin);
+                    }
+                    else
+                    {
+                        /* 兜底：源未合成，整窗 expose 让归属顶层自绘
+                         * （present 遮挡剔除保证更高层不被覆盖）。 */
+                        XRegion expose;
+                        XRect local;
+                        XRegion_init(&expose);
+                        XRect_init(&local, 0, 0, og.width, og.height);
+                        XRegion_addRect(&expose, &local);
+                        XWindowSystemInterface_handleExposeEvent(other,
+                                                                 &expose);
+                        XRegion_deinit(&expose);
+                    }
+                }
+            }
+            /* 从余部扣除本顶层矩形（后续归属与桌面余部不再含它）。 */
+            {
+                int sub = xwd_rectListSubtract(work, wn, 12, &og);
+                if (sub < 0)
+                {
+                    truncated = true;
+                    break;
+                }
+                wn = sub;
+            }
+        }
+        XClassDelete(tops);
+    }
+    /* 裸露面板余部=真桌面暴露：维持旧实现填桌面底色两缓冲。截断降级
+     * 不填色（绝不洗其他窗），已处理归属的还原已落地，残带留待松手
+     * clearOutsideWindow 清扫自愈。 */
+    if (!truncated)
+        XPlatformBackingStore_fillPanelRects(work, wn, XWD_DESKTOP_PIXEL);
+}
+
+bool XWindowDecoration_fbdevPanelRect(XRect* outPanel)
+{
+    XRect panel;
+    /* 与装饰内部 xwd_panelRect(NULL,·) 同语义：仅 fbdev 显示驱动在位时
+     * 成立（桌面 WM 环境 XScreen 回退需窗口上下文，NULL 恒 false）。 */
+    if (!xwd_panelRect(NULL, &panel)) return false;
+    if (outPanel) *outPanel = panel;
+    return true;
+}
+
+void XWindowDecoration_restoreExposeStrips(const XRect* oldG,
+                                           const XRect* newG,
+                                           XWindow* selfWindow)
+{
+    /* 让位条带按归属归位还原（装饰拖拽同款机制；消费方=非装饰拖移路径
+     * 屏幕键盘紧凑悬浮拖移）。调用契约见头注：先落几何后调用。 */
+    xwd_restoreExposeStrips(oldG, newG, selfWindow);
+}
+
+/** @brief 拖拽/改尺寸结束的兜底清扫：窗口外全部面板区域填桌面底色
+ *  两缓冲（逐帧差带只覆盖增量；松手一次清干净=桌面 WM 每次几何变化
+ *  整屏重铺）。
+ *  2026-10-04 增「扣除其他可见顶层」：本窗之外的面积里还住着父窗/
+ *  其他弹层（拖动对话框场景 panel\对话框 含主窗全区），整片直填会把
+ *  它们洗成桌面底色（真机拖动对话框全屏白屏实证）。改为逐顶层矩形
+ *  扣除：裸露面板余部填底色，被占部分注入 expose 由归属顶层自行
+ *  重绘（expose 处理=整窗直提，一次即可）。工作集溢出降级为「不填
+ *  色、已见顶层走 expose」，绝不洗别的窗。 */
 static void xwd_clearOutsideWindow(XWindowDecorationState* st)
 {
     XRect panel;
     XRect g;
     XRect bands[4];
+    XRect work[12];
+    int wn = 0;
+    int i;
+    bool truncated = false;
+    XVector* tops;
     if (!xwd_panelRect(st, &panel)) return;
     g = XWidget_geometry(st->m_top);
     XRect_init(&bands[0], panel.x, panel.y, g.x - panel.x, panel.height);
@@ -487,7 +743,310 @@ static void xwd_clearOutsideWindow(XWindowDecorationState* st)
     XRect_init(&bands[2], g.x, panel.y, g.width, g.y - panel.y);
     XRect_init(&bands[3], g.x, g.y + g.height, g.width,
                panel.y + panel.height - (g.y + g.height));
-    XPlatformBackingStore_fillPanelRects(bands, 4, XWD_DESKTOP_PIXEL);
+    for (i = 0; i < 4; ++i)
+    {
+        if (bands[i].width > 0 && bands[i].height > 0 && wn < 12)
+            work[wn++] = bands[i];
+    }
+    tops = XGuiApplication_topLevelWindows();
+    if (tops)
+    {
+        size_t ti;
+        size_t topCount = XVector_size_base(tops);
+        for (ti = 0; ti < topCount && !truncated; ++ti)
+        {
+            XWindow* other = *(XWindow**)XVector_at_base(tops, (int64_t)ti);
+            XRect og;
+            int oi;
+            bool anyHit = false;
+            if (!other || other == st->m_window || !XWindow_isVisible(other))
+                continue;
+            og = XWindow_geometry(other);
+            /* 扣除：work 各矩形 \ 本顶层矩形（上下左右四条带切分）。 */
+            for (oi = 0; oi < wn && !truncated; ++oi)
+            {
+                XRect next[12];
+                int nn = 0;
+                const XRect* r = &work[oi];
+                int rx1 = r->x + r->width;
+                int ry1 = r->y + r->height;
+                int ix0 = r->x > og.x ? r->x : og.x;
+                int iy0 = r->y > og.y ? r->y : og.y;
+                int ix1 = rx1 < og.x + og.width ? rx1 : og.x + og.width;
+                int iy1 = ry1 < og.y + og.height ? ry1 : og.y + og.height;
+                if (ix1 <= ix0 || iy1 <= iy0)
+                {
+                    /* 不相交：整段保留。 */
+                    if (nn < 12) next[nn++] = *r;
+                    else truncated = true;
+                }
+                else
+                {
+                    anyHit = true;
+                    if (iy0 > r->y)
+                    {
+                        if (nn < 12)
+                        {
+                            XRect_init(&next[nn], r->x, r->y, r->width,
+                                       iy0 - r->y);
+                            ++nn;
+                        }
+                        else truncated = true;
+                    }
+                    if (iy1 < ry1)
+                    {
+                        if (nn < 12)
+                        {
+                            XRect_init(&next[nn], r->x, iy1, r->width,
+                                       ry1 - iy1);
+                            ++nn;
+                        }
+                        else truncated = true;
+                    }
+                    if (ix0 > r->x)
+                    {
+                        if (nn < 12)
+                        {
+                            XRect_init(&next[nn], r->x, iy0, ix0 - r->x,
+                                       iy1 - iy0);
+                            ++nn;
+                        }
+                        else truncated = true;
+                    }
+                    if (ix1 < rx1)
+                    {
+                        if (nn < 12)
+                        {
+                            XRect_init(&next[nn], ix1, iy0, rx1 - ix1,
+                                       iy1 - iy0);
+                            ++nn;
+                        }
+                        else truncated = true;
+                    }
+                }
+                if (!truncated)
+                {
+                    int ci;
+                    for (ci = 0; ci < nn; ++ci) work[ci] = next[ci];
+                    wn = nn;
+                }
+            }
+            /* 被本顶层占据的部分交还它自己重绘（expose 处理恒整窗
+             * 直提，一次即可；present 遮挡剔除保证更高层不被覆盖）。 */
+            if (anyHit && !truncated)
+            {
+                XRegion expose;
+                XRect local;
+                XRegion_init(&expose);
+                XRect_init(&local, 0, 0, og.width, og.height);
+                XRegion_addRect(&expose, &local);
+                XWindowSystemInterface_handleExposeEvent(other, &expose);
+                XRegion_deinit(&expose);
+            }
+        }
+        XClassDelete(tops);
+    }
+    /* 截断降级不填色（绝不洗其他窗）：被占顶层已 expose 重绘，裸露
+     * 面板余部留待后续帧差带自愈。 */
+    if (!truncated)
+        XPlatformBackingStore_fillPanelRects(work, wn, XWD_DESKTOP_PIXEL);
+}
+
+/* ==================== 拖动快照 blit 模式（Qt4 QWS 同款语义） ==================== */
+
+/** @brief [gesture] 分相探针累计（env XGUI_GESTURE_PROF 门控，关闭恒
+ *  零成本：开关静态缓存，结构体只在 begin 时触碰）。 */
+typedef struct XwdGestureProf
+{
+    bool m_active;       /**< 手势探针进行中（begin 置位，report 清零）。 */
+    bool m_snapshot;     /**< 本手势启用快照 blit 模式。 */
+    int m_steps;         /**< 落地步数（增量非零的 applyMove）。 */
+    int m_snapSteps;     /**< 其中快照直写步数（拒绝降级步归 legacy）。 */
+    int m_geomMs;        /**< 几何相累计（setGeometry+条重钉）。 */
+    int m_stripMs;       /**< 条带相累计（归属还原/桌面填色）。 */
+    int m_submitMs;      /**< 提交相累计（快照 blit 或整窗 flush）。 */
+    int m_totalMs;       /**< 步耗时累计。 */
+    int m_minMs;         /**< 单步最小耗时。 */
+    int m_maxMs;         /**< 单步最大耗时。 */
+} XwdGestureProf;
+static XwdGestureProf g_xwdProf;
+
+/** @brief XGUI_DRAG_SNAPSHOT_BLIT env 门控（每次手势开始现读：A/B 对照
+ *  可在拖动间隙 setenv 生效，手势内不翻转）。默认开；值恰为 "0" 时回退
+ *  既有 flush 路径。 */
+static bool xwd_dragSnapshotEnvOn(void)
+{
+    const char* env = getenv("XGUI_DRAG_SNAPSHOT_BLIT");
+    return !(env && env[0] == '0' && env[1] == '\0');
+}
+
+/** @brief XGUI_GESTURE_PROF env 门控（开关静态缓存：运行期不改）。 */
+static bool xwd_gestureProfOn(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("XGUI_GESTURE_PROF") ? 1 : 0;
+    return on != 0;
+}
+
+/** @brief 手势探针开工（上一次报告残留不续账：整体清零）。 */
+static void xwd_gestureProfBegin(bool snapshotMode)
+{
+    if (!xwd_gestureProfOn()) return;
+    XMemset(&g_xwdProf, 0, sizeof(g_xwdProf));
+    g_xwdProf.m_active = true;
+    g_xwdProf.m_snapshot = snapshotMode;
+}
+
+/** @brief 记一步分相（探针关零成本：调用方已在 prof 分支内取好戳）。 */
+static void xwd_gestureProfStep(bool prof, bool snapshot, int geomMs,
+                                int stripMs, int submitMs, int totalMs)
+{
+    if (!prof) return;
+    ++g_xwdProf.m_steps;
+    if (snapshot) ++g_xwdProf.m_snapSteps;
+    g_xwdProf.m_geomMs += geomMs;
+    g_xwdProf.m_stripMs += stripMs;
+    g_xwdProf.m_submitMs += submitMs;
+    g_xwdProf.m_totalMs += totalMs;
+    if (g_xwdProf.m_steps == 1 || totalMs < g_xwdProf.m_minMs)
+        g_xwdProf.m_minMs = totalMs;
+    if (totalMs > g_xwdProf.m_maxMs) g_xwdProf.m_maxMs = totalMs;
+}
+
+/** @brief 手势探针收工报告（stderr 一行；无落地步不输出）。 */
+static void xwd_gestureProfReport(void)
+{
+    if (!g_xwdProf.m_active) return;
+    g_xwdProf.m_active = false;
+    if (g_xwdProf.m_steps <= 0) return;
+    fprintf(stderr,
+            "[xgesture] drag mode=%s steps=%d snap=%d total=%dms "
+            "avg=%.1fms min=%dms max=%dms | geom avg=%.2fms "
+            "strips avg=%.2fms submit avg=%.2fms\n",
+            g_xwdProf.m_snapshot ? "snapshot" : "legacy",
+            g_xwdProf.m_steps, g_xwdProf.m_snapSteps,
+            g_xwdProf.m_totalMs,
+            (double)g_xwdProf.m_totalMs / (double)g_xwdProf.m_steps,
+            g_xwdProf.m_minMs, g_xwdProf.m_maxMs,
+            (double)g_xwdProf.m_geomMs / (double)g_xwdProf.m_steps,
+            (double)g_xwdProf.m_stripMs / (double)g_xwdProf.m_steps,
+            (double)g_xwdProf.m_submitMs / (double)g_xwdProf.m_steps);
+}
+
+/** @brief 拖动快照预备（PRESS 臂拖拽认领时调用）：满足条件时把窗口
+ *  当前像素自后备缓冲已合成内容整幅拷入窗口大小离屏快照。
+ *  @details 快照源=后备缓冲 paintDevice 图像而非 fb 本体：DIRECT 路径
+ *  上一帧 flush 的提交源即本图像，与 fb 可见像素同源同值；比读 fb 免去
+ *  高层弹层像素污染（弹层只改 fb 不改本窗后备缓冲）。启用条件（任一
+ *  不满足即整手势回退既有 flush 路径，逐位旧行为）：env
+ *  XGUI_DRAG_SNAPSHOT_BLIT 非 "0"（默认开）；fbdev 直写面板（框架即
+ *  合成器；桌面 WM 环境零参与）；后备存储/绘制图像在；快照格式与面板
+ *  扫描格式协商一致（直写零转换）；快照离屏分配成功（A33 内存紧张，
+ *  失败即回退=红线）。PRESS 时条带重绘（requestActivate 触发）已在
+ *  repaintRegion 同步语义下落进后备缓冲，快照不会捕到旧条带色。 */
+static void xwd_dragSnapshotBegin(XWindowDecorationState* st)
+{
+    XWidget* top;
+    XBackingStore* bs;
+    XPlatformBackingStore* pbs;
+    XImage* img;
+    XImageFormat fmt;
+    int w;
+    int h;
+    int y;
+    int srcBpl;
+    int dstBpl;
+    size_t pixelBytes;
+    size_t rowBytes;
+    const uint8_t* s;
+    uint8_t* d;
+    st->m_dragSnapActive = false;
+    if (!st || !st->m_window || !st->m_top) return;
+    if (!xwd_dragSnapshotEnvOn()) return;
+    if (!xwd_fbdevPanelDirect()) return; /* 桌面 WM 环境：整手势旧路径。 */
+    top = st->m_top;
+    bs = XWidget_backingStore(top);
+    pbs = bs ? XBackingStore_handle(bs) : NULL;
+    img = pbs ? XPlatformBackingStore_paintDevice(pbs) : NULL;
+    if (!img || !img->m_data || XImage_isNull(img)) return;
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    {
+        /* 显示驱动在位 + 快照格式可直写（与 present 直写同款协商）；
+         * 任一不满足整手势回退旧路径。 */
+        const XPlatformDisplayDriverOps* ops;
+        XPlatformDisplayInfo info;
+        XImageFormat panel = XImageFormat_Invalid;
+        ops = XPlatformDisplayDriver_active();
+        if (!ops || !ops->probe || !ops->probe(&info)) return;
+        fmt = XImage_format(img);
+        if (!ops->formatNegotiate(fmt, &panel) || panel != fmt) return;
+    }
+#else
+    return; /* 非 fbdev 构建不可达（上方 fbdevPanelDirect 已短路）。 */
+#endif
+    w = XImage_width(img);
+    h = XImage_height(img);
+    if (w <= 0 || h <= 0) return;
+    /* 快照分配失败=整手势回退旧路径（A33 内存紧张红线）。 */
+    if (!XImage_reinit_ex(&st->m_dragSnap, w, h, fmt)) return;
+    srcBpl = XImage_bytesPerLine(img);
+    dstBpl = XImage_bytesPerLine(&st->m_dragSnap);
+    pixelBytes = (size_t)((XImageFormat_bitDepth(fmt) + 7) / 8);
+    rowBytes = (size_t)w * pixelBytes;
+    s = XImage_constBits(img);
+    d = XImage_bits(&st->m_dragSnap);
+    if (!s || !d || srcBpl <= 0 || dstBpl <= 0)
+    {
+        XClassDeinit(&st->m_dragSnap);
+        XMemset(&st->m_dragSnap, 0, sizeof(st->m_dragSnap));
+        return;
+    }
+    for (y = 0; y < h; ++y)
+        XMemcpy(d + (size_t)y * (size_t)dstBpl, s + (size_t)y * (size_t)srcBpl,
+                rowBytes);
+    st->m_dragSnapActive = true;
+}
+
+/** @brief 拖动结束：快照释放 + 结算（settle）+ 探针报告。
+ *  @details settle=true 时经 XWidget_update 挂整窗脏区——下一事件循环
+ *  周期 PAINT→paintTree 整窗重绘→flush→present（差带账本把拖动期写入
+ *  可见面的行带补进后台缓冲并恢复轮换翻页），即「拖动结束必须真实落
+ *  定」红线；纯移动内容零变化，结算帧与快照帧逐像素同值，无闪变。
+ *  settle=false 用于残手势清理（PRESS 重臂）与宿主注销（窗口将亡，
+ *  无可结算）：fb 在快照模式下逐步保持正确，无需补偿。快照无论路径
+ *  立即释放（A33 内存红线）。 */
+static void xwd_dragSnapshotEnd(XWindowDecorationState* st, bool settle)
+{
+    if (!st) return;
+    if (st->m_dragSnapActive)
+    {
+        st->m_dragSnapActive = false;
+        /* 真实落定=同步【整窗】重绘（2026-10-06 键盘拖移战役根修）：
+         * 原为 XWidget_update（异步 PAINT，区域=m_dirty 快照）——手势
+         * 期 m_dirty 残留按压条带矩形时，落定 present 只盖标题条，内
+         * 容区欠账留给「另一缓冲恰好还住着拖动前完整帧」的运气（旧路
+         * 每步归属 expose 翻缓冲+往返回到原点恰好掩盖；归属反查根修
+         * 后翻停了，离屏 DM 测试 release sweep 即现半窗残缺）。repaint
+         * 同步整窗 flush，把「快照 blit 只写可见面、另一缓冲欠账由落
+         * 定整窗差带同步补齐」的契约真正落死。 */
+        if (settle && st->m_top) XWidget_repaint(st->m_top);
+        XClassDeinit(&st->m_dragSnap);
+        XMemset(&st->m_dragSnap, 0, sizeof(st->m_dragSnap));
+    }
+    xwd_gestureProfReport();
+}
+
+/** @brief 拖动手势开工（PRESS 臂）：探针开工 + 快照预备。 */
+static void xwd_dragGestureBegin(XWindowDecorationState* st)
+{
+    xwd_dragSnapshotBegin(st);
+    xwd_gestureProfBegin(st ? st->m_dragSnapActive : false);
+}
+
+/** @brief 拖动手势收工：快照释放 + （可选）真实落定 + 探针报告。 */
+static void xwd_dragGestureEnd(XWindowDecorationState* st, bool settle)
+{
+    xwd_dragSnapshotEnd(st, settle);
 }
 
 /** @brief 平台指针抓取开关（仅原生窗；fbdev 无原生窗 no-op）。
@@ -515,6 +1074,8 @@ static void xwd_endInteractions(XWindowDecorationState* st)
     }
     if (st->m_resizing)
         XPlatformNativeWindow_deferGeometry(st->m_window, false);
+    if (st->m_dragging)
+        xwd_dragGestureEnd(st, true); /* 快照释放+真实落定+探针报告。 */
     st->m_dragging = false;
     st->m_resizing = false;
     st->m_armed = 0;
@@ -619,7 +1180,13 @@ static void xwd_minimizeAction(XWindowDecorationState* st)
 /** @brief 拖拽移动：按增量平移窗口并钳到面板内；暴露差带先填两缓冲
  *  （逐帧路径禁 requestPanelClear——整屏 memset 含可见缓冲会整体频闪，
  *  真机 2026-09-28 实测教训）；末尾不经 paintTree 重新合成，把既有后
- *  备缓冲整窗直提（纯移动免重绘，见函数尾注）。 */
+ *  备缓冲整窗直提（纯移动免重绘，见函数尾注）。
+ *  快照 blit 模式（XGUI_DRAG_SNAPSHOT_BLIT 默认开）：差带账本重搬/软件
+ *  双缓冲互同步/整窗 flush 全部旁路——拖动开始时已快照窗口像素，每步
+ *  只做「条带归位 + 窗口快照整块直写 fb 可见面 + 收窄 cacheSync + pan
+ *  收敛」（Qt4 QWS moveWindow→blit 同款语义），cacheSync 只碰窗口一块
+ *  矩形；镜像帧同步经 notifyPresentRegion 与旧 flush 同形通知。拖动结
+ *  束由 xwd_dragSnapshotEnd 真实整窗 PAINT 落定并恢复轮换写。 */
 static void xwd_applyMove(XWindowDecorationState* st, int dx, int dy)
 {
     XWidget* top = st->m_top;
@@ -633,6 +1200,16 @@ static void xwd_applyMove(XWindowDecorationState* st, int dx, int dy)
     int nx;
     int ny;
     int stripCount;
+    /* [gesture] 分相戳（探针关恒 0 开销：xwd_gestureProfOn 静态缓存）。 */
+    bool prof = xwd_gestureProfOn();
+    int64_t tGeom0 = 0;
+    int64_t tSub0 = 0;
+    int geomMs = 0;
+    int stripMs = 0;
+    int submitMs = 0;
+    int totalMs = 0;
+    bool snapBlit = false;
+    if (prof) tGeom0 = XDateTime_currentMSecsSinceEpoch();
     if (!dx && !dy) return;
     nx = g.x + dx;
     ny = g.y + dy;
@@ -647,11 +1224,72 @@ static void xwd_applyMove(XWindowDecorationState* st, int dx, int dy)
     if (nx == g.x && ny == g.y) return;
     XRect_init(&newG, nx, ny, g.width, g.height);
     stripCount = xwd_exposeStrips(&g, &newG, exposed);
-    if (stripCount > 0)
-        XPlatformBackingStore_fillPanelRects(exposed, stripCount,
-                                       XWD_DESKTOP_PIXEL);
+    /* 先落几何再还原条带（拖动对话框白块根修 2026-10-05，原顺序为
+     * 「先填桌面色后移窗」）：归属顶层的条带还原与 expose 兜底都以
+     * 「本窗已离开旧位」为前提——present 遮挡剔除按现几何收集弹层矩
+     * 形，移动前直提会被旧位弹层矩形整条剔空（等于没还原）。 */
     XWidget_setGeometry(top, nx, ny, g.width, g.height);
     xwd_pinBarGeometry(st); /* 纯移动不改宿主宽，重钉同值幂等零开销。 */
+    if (prof) geomMs = (int)(XDateTime_currentMSecsSinceEpoch() - tGeom0);
+    tGeom0 = XDateTime_currentMSecsSinceEpoch();
+    if (stripCount > 0)
+    {
+        if (xwd_fbdevPanelDirect()) /* fbdev 无 WM：条带按归属归位。 */
+            xwd_restoreExposeStrips(&g, &newG, st->m_window);
+        else /* 桌面 WM 环境：旧实现口径（fill 桌面本就 no-op）。 */
+            XPlatformBackingStore_fillPanelRects(exposed, stripCount,
+                                           XWD_DESKTOP_PIXEL);
+    }
+    if (prof)
+    {
+        stripMs = (int)(XDateTime_currentMSecsSinceEpoch() - tGeom0);
+        tSub0 = XDateTime_currentMSecsSinceEpoch();
+    }
+    /* 快照 blit 步：窗口快照整块直写 fb 可见面（含弹层遮挡剔除），
+     * 零 flush/零账本/零重绘；直写被拒（驱动/格式/首帧前异常）时落
+     * 入下方既有 flush 路径，本步按 legacy 计。 */
+    if (st->m_dragSnapActive)
+    {
+        XBackingStore* snapStore;
+        XPlatformBackingStore* snapPbs;
+        XPoint origin;
+        bool ok;
+        XPoint_init(&origin, newG.x, newG.y);
+        ok = XPlatformBackingStore_blitSnapshotPanelRects(
+            &st->m_dragSnap, &newG, 1, &origin, st->m_window);
+        if (ok)
+        {
+            ++g_xwdDragSnapStepCount;
+            snapBlit = true;
+            /* 镜像帧同步：与旧 flush 路径同形区域通知（窗口坐标全幅、
+             * offset 零点）。未挂镜像会话时回调内部即刻短路，开销为
+             * 一次区域深拷贝。 */
+            snapStore = XWidget_backingStore(top);
+            snapPbs = snapStore ? XBackingStore_handle(snapStore) : NULL;
+            if (snapPbs)
+            {
+                XRegion_init(&region);
+                XRect_init(&whole, 0, 0, g.width, g.height);
+                XRegion_addRect(&region, &whole);
+                XPlatformBackingStore_notifyPresentRegion(snapPbs, &region,
+                                                          NULL);
+                XRegion_deinit(&region);
+            }
+        }
+        if (prof)
+        {
+            submitMs = (int)(XDateTime_currentMSecsSinceEpoch() - tSub0);
+            if (ok)
+            {
+                totalMs = geomMs + stripMs + submitMs;
+                xwd_gestureProfStep(prof, true, geomMs, stripMs, submitMs,
+                                    totalMs);
+            }
+            /* 直写拒绝：不在此记步，落入下方 flush 路径统一记一次。 */
+        }
+        if (ok) return;
+        submitMs = 0; /* 直写拒绝：本步提交相归 flush 重计。 */
+    }
     /* 纯移动免重绘：拖拽只改位置不改内容，后备缓冲仍是上一帧的合法合
      * 成结果——不再 paintTree 逐事件同步整窗重绘，直接把既有内容整窗
      * 重提交（对标 Qt 移动窗口不走 repaint 的合成语义）。直提按提交时
@@ -677,6 +1315,13 @@ static void xwd_applyMove(XWindowDecorationState* st, int dx, int dy)
 #endif /* 平台后备存储裁剪时直提不可用，落下方保底。 */
     {
         XWidget_update(top);
+    }
+    if (prof)
+    {
+        submitMs += (int)(XDateTime_currentMSecsSinceEpoch() - tSub0);
+        totalMs = geomMs + stripMs + submitMs;
+        xwd_gestureProfStep(prof, snapBlit, geomMs, stripMs, submitMs,
+                            totalMs);
     }
 }
 
@@ -736,11 +1381,18 @@ static void xwd_applyResize(XWindowDecorationState* st, int dx, int dy)
         newG.x == g.x && newG.y == g.y)
         return;
     stripCount = xwd_exposeStrips(&g, &newG, exposed);
-    if (stripCount > 0)
-        XPlatformBackingStore_fillPanelRects(exposed, stripCount,
-                                       XWD_DESKTOP_PIXEL);
+    /* 先落几何再还原条带：同 xwd_applyMove 的顺序论证（归属顶层还原
+     * 与 expose 兜底都要求本窗已离开旧位，遮挡剔除按现几何收集）。 */
     XWidget_setGeometry(top, newG.x, newG.y, newG.width, newG.height);
     xwd_pinBarGeometry(st); /* 宿主宽变化→条宽同步重钉（挂点核实见该函数注）。 */
+    if (stripCount > 0)
+    {
+        if (xwd_fbdevPanelDirect()) /* fbdev 无 WM：条带按归属归位。 */
+            xwd_restoreExposeStrips(&g, &newG, st->m_window);
+        else /* 桌面 WM 环境：旧实现口径（fill 桌面本就 no-op）。 */
+            XPlatformBackingStore_fillPanelRects(exposed, stripCount,
+                                           XWD_DESKTOP_PIXEL);
+    }
     /* resizeEvent 已随 setGeometry 派发；W/N 向钳制后尺寸未变的纯位移
        无 resizeEvent，显式补一帧保底。位置/尺寸变化经 update 合帧——
        同一事件循环周期内多步缩放只挂脏区并投递一次 PAINT（对标 Qt
@@ -1149,12 +1801,14 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
         if (XMouseEvent_button(mouse) == XMouseButton_LeftButton) {
             int sc;
             /* 新按压=新手势：先清上一手势残留（松开事件在注入/裁剪边
-             * 界偶发丢失时，m_resizing/m_dragging 卡真会吞掉后续全部
-             * 标题拖拽而改尺寸假活——真机第二轮工作流实测）。 */
+               界偶发丢失时，m_resizing/m_dragging 卡真会吞掉后续全部
+               标题拖拽而改尺寸假活——真机第二轮工作流实测）。 */
             if (st->m_dragging || st->m_resizing) {
                 st->m_dragging = false;
                 st->m_resizing = false;
                 XPlatformNativeWindow_deferGeometry(st->m_window, false);
+                xwd_dragGestureEnd(st, false); /* 残手势快照释放（fb 已
+                                                * 逐步收敛，无需结算）。 */
                 XWidget_releaseMouse(top);
                 xwd_platformGrab(st, false);
             }
@@ -1253,6 +1907,8 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                         XWindowState_FullScreen) {
                     st->m_dragging = true;
                     st->m_dragLast = XMouseEvent_globalPosition(mouse);
+                    xwd_dragGestureBegin(st); /* 探针开工+快照预备（条件
+                                               * 不满足整手势走旧路径）。 */
                     /* 节流戳不清零，同改尺寸臂（幻触免役）。 */
                     XWidget_grabMouse(top);
                         xwd_platformGrab(st, true);
@@ -1320,6 +1976,10 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
             XWidget_releaseMouse(top);
             xwd_platformGrab(st, false);
             xwd_clearOutsideWindow(st);
+            /* 快照释放 + 真实落定（红线）：整窗 PAINT→paintTree→flush→
+               present 收尾——差带账本把拖动期直写可见面的行带补进后台
+               缓冲并恢复轮换翻页，条带清扫与快照帧在结算帧收口。 */
+            xwd_dragGestureEnd(st, true);
             XEvent_accept(event);
             return true;
         }
@@ -1463,6 +2123,9 @@ void XWindowDecoration_notifyWindowDestroyed(XWindow* win)
              * 新条。自定义条为借用，条所有权归创建方，此处只随状态丢弃
              * 借用指针。 */
             xwd_dropDefaultBar(&g_xwdStates[i]);
+            /* 拖动快照随宿主注销释放（若手势中被销毁）：快照模式未启用
+             * 时零开销，探针一并收口。 */
+            xwd_dragGestureEnd(&g_xwdStates[i], false);
             /* 尾交换摘除（注册表无序，O(1) 删除）。 */
             g_xwdStates[i] = g_xwdStates[g_xwdCount - 1];
             --g_xwdCount;
@@ -1482,6 +2145,8 @@ void XWindowDecoration_notifyTopDestroyed(XWidget* top)
                同 notifyWindowDestroyed——子树析构随后撤销挂起事件，无
                双重释放；借用自定义条只随状态丢弃指针。 */
             xwd_dropDefaultBar(&g_xwdStates[i]);
+            /* 拖动快照随顶层消亡释放（快照模式未启用时零开销）。 */
+            xwd_dragGestureEnd(&g_xwdStates[i], false);
             /* 尾交换摘除（注册表无序，O(1) 删除）。 */
             g_xwdStates[i] = g_xwdStates[g_xwdCount - 1];
             --g_xwdCount;

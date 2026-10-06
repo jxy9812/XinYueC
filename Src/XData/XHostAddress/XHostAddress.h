@@ -188,7 +188,9 @@ const char* XHostAddress_scopeId(const XHostAddress* addr);
 /**
  * @brief 转为字符串表示（malloc，需 free）。
  * @param addr 地址
- * @return 动态分配的字符串（如 "192.168.1.1" 或 "::1%eth0"），失败返回 NULL
+ * @return 动态分配的字符串；IPv4 为点分十进制（"192.168.1.1"），IPv6 为
+ *         RFC 5952 压缩小写形式（如 "fe80::1"、映射地址 "::ffff:192.168.1.1"，
+ *         均可经 setAddress/isIPv6Address 无损回解析），失败返回 NULL
  */
 XString* XHostAddress_toString(const XHostAddress* addr);
 

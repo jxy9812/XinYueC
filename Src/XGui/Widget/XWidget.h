@@ -1858,6 +1858,17 @@ XRegion XWidget_visibleRegion(const XWidget* self);
 XBackingStore* XWidget_backingStore(const XWidget* self);
 
 /**
+ * @brief      顶层桥接窗口→归属顶层控件反查。
+ * @details    虚表同一性判定（仅 XWidgetWindow 桥接窗口有归属）；基类
+ *             XWindow/非桥接窗口/悬垂借用一律 NULL。不依赖 XApplication
+ *             顶层控件注册表——仅创建 XGuiApplication（未初始化
+ *             XApplication 基层）的进程里该注册表恒空。
+ * @param      window 桥接窗口指针；可 NULL。
+ * @return     归属顶层控件（借用指针）；无归属返回 NULL。
+ */
+XWidget* XWidget_widgetForWindow(const XWindow* window);
+
+/**
  * @brief      滚动控件内容（对标 QWidget::scroll(int dx, int dy)）。
  * @details    对标 Qt 6.8 语义：把控件可视内容向右平移 dx、向下平移 dy
  *             （负值反向），并把滚动露出/受影响的区域调度重绘。Qt 的

@@ -322,6 +322,19 @@ void XPlatformBackingStore_setPresentCallback(
         XPlatformBackingStorePresentFn callback, void* userData);
 
 /**
+ * @brief      登记全局 present 通知（平台契约扩展，公共 XBackingStore 不暴露）。
+ * @details    [2026-10-06] 任意后备存储 flush 提交后触发（含全部顶层窗口
+ *             的弹层/对话框存储），与每存储 m_present 互相独立、在其后
+ *             调用。单槽：重复调用覆盖旧登记；传 NULL 取消。消费方=
+ *             XGuiRemote 服务端（弹层合成进会话影子——弹窗是独立顶层，
+ *             宿主存储从不包含其像素）。
+ * @param      callback 全局回调地址（借用）；可为 NULL 取消。
+ * @param      userData 回调用户数据（借用）；可为 NULL。
+ */
+void XPlatformBackingStore_setGlobalPresentCallback(
+        XPlatformBackingStorePresentFn callback, void* userData);
+
+/**
  * @brief      登记调用方提供的原始帧缓冲。
  * @details    buffer1/buffer2 只在后备存储使用期间借用，平台不会释放或
  *             扩容它们。bufferSize 是每块缓冲的字节容量；当前 XGui 控件
@@ -421,6 +434,84 @@ void XPlatformBackingStore_requestPanelClear(void);
  */
 void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
                                           uint32_t nativePixel);
+
+/**
+ * @brief      立即把源后备缓冲的已合成内容按面板坐标矩形直搬进面板
+ *             两缓冲（fbdev 高频几何变化路径专用，「让位条带归位还
+ *             原」，拖动对话框白块根修 2026-10-05）。
+ * @details    与 fillPanelRects 的差异：填充源不是单一色，而是另一
+ *             顶层窗口后备缓冲的已合成内容——无 WM 的 fbdev 没有合
+ *             成器重铺、也不会给被让位窗口自发补绘，弹层（对话框）
+ *             拖动让出的条带往往住着父窗内容，把归属顶层的既有合成
+ *             结果直接搬回两缓冲，等价窗口系统「移开遮挡即露出下层
+ *             内容」的语义。与 fillPanelRects 同款契约：同步写入可
+ *             见与后台两缓冲（双缓冲不失步）、不清其余显示内容、无
+ *             黑屏中间态、不触碰差带账本与翻页状态、无 pan（两缓冲
+ *             同内容，写入即见；调用方后续提交照常）、无 cacheSync
+ *             （与 fillPanelRects 同口径）。仅支持源图像格式与面板
+ *             扫描格式一致的直写面板（与 present 直写同款协商）；
+ *             其余情况 no-op。桌面平台 no-op。
+ * @param      src 源后备存储（其 paintDevice 图像为搬运源）；可 NULL。
+ * @param      rects 面板坐标矩形数组（可 NULL/count<=0）。
+ * @param      count 矩形数。
+ * @param      origin 源窗口全局（面板）原点：图像坐标 = 矩形坐标 -
+ *             origin（与 present 直写 fbOrigin 同口径；主窗口恒
+ *             (0,0)）。
+ */
+void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
+                                          const XRect* rects, int count,
+                                          const XPoint* origin);
+
+/**
+ * @brief      把快照图像按面板坐标矩形直搬进 fb 当前可见缓冲（fbdev
+ *             拖动快照 blit 专用，「Qt4 QWS 拖动零重绘纯 blit」语义）。
+ * @details    与 blitPanelRects 的三处刻意差异（拖动快照模式 2026-10-06）：
+ *             - 只写当前可见缓冲（双缓冲轮换的^1 号；单缓冲面板恒 0
+ *               号），不做两缓冲同步——拖动每步只碰窗口+条带两块矩形，
+ *               不为轮换写补齐整窗差带（差带账本重搬正是旧拖动路径
+ *               20-40ms/步的主项之一）；另一缓冲的欠账由拖动结束的
+ *               真实整窗 PAINT→flush→present 差带同步一次补齐；
+ *             - 写完即按实际写入范围收窄 cacheSync，再 pan 到可见缓冲
+ *               收敛（目标即当前可见面，多数驱动对未变化 yoffset 早退
+ *               不等待）——不轮换写索引、不翻页、不触碰差带账本；
+ *             - 带弹层遮挡剔除（登记序在 selfWindow 之后的可见顶层，
+ *               与 present 直写同 Z 约定）：拖动窗口扫过高层弹层时，
+ *               被弹层覆盖的行带不落笔，弹层像素不被窗口快照洗掉；
+ *               工作集溢出降级为按原矩形整块直搬（与 present 同口径）。
+ *             其余契约与 blitPanelRects 同款：仅支持快照格式与面板扫描
+ *             格式一致的直写面板；面板外行带裁剪；origin 为窗口全局
+ *             （面板）原点，图像坐标 = 矩形坐标 - origin。首帧 present
+ *             尚未发生（可见缓冲未定）时拒绝并返回 false，调用方回落
+ *             既有 flush 路径；非 fbdev 平台恒返回 false（no-op）。
+ * @param      snapshot   快照图像（窗口本地全幅；借用来用即还）。
+ * @param      rects      面板坐标矩形数组（可 NULL/count<=0）。
+ * @param      count      矩形数。
+ * @param      origin     窗口全局（面板）原点。
+ * @param      selfWindow 拖动中的顶层窗口（遮挡剔除 Z 序基准；可 NULL
+ *                        表示不做遮挡剔除）。
+ * @return     true=已直写并提交（cacheSync+pan 完成）；false=未触碰 fb
+ *             （调用方回落既有 flush 提交路径）。
+ */
+bool XPlatformBackingStore_blitSnapshotPanelRects(const XImage* snapshot,
+                                                  const XRect* rects,
+                                                  int count,
+                                                  const XPoint* origin,
+                                                  const XWindow* selfWindow);
+
+/**
+ * @brief      以既有 present 回调口径补发一次区域通知（不提交任何
+ *             像素）。拖动快照 blit 等绕过 flush 的直写路径用它在
+ *             每步落笔后保持镜像采集帧同步（区域形状与 flush 完全
+ *             一致：窗口坐标脏区 + 缓冲偏移；offset 可 NULL 按零点）。
+ *             回调未登记或区域为空时 no-op；本调用不改变 present 回
+ *             调登记机制本身（setPresentCallback 挂点不动）。
+ * @param      self   平台后备存储；可 NULL。
+ * @param      region 窗口坐标区域；可 NULL（no-op）。
+ * @param      offset 缓冲相对窗口的偏移；可 NULL 按零点处理。
+ */
+void XPlatformBackingStore_notifyPresentRegion(XPlatformBackingStore* self,
+                                               const XRegion* region,
+                                               const XPoint* offset);
 
 /**
  * @brief      查询平台后端的可直接绘制缓冲（零拷贝 present）。

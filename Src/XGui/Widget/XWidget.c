@@ -1960,6 +1960,17 @@ static bool XWidget_synthesizeMouseFromTouch(XWidget* top, XEventType type,
                                   (XKeyboardModifiers)XKeyboardModifier_NoModifier,
                                   *topLocal);
     if (!mouse) return false;
+    /* 全局坐标补全（2026-10-04 拖动对话框白屏/冻结根修）：合成事件此前
+     * 只带顶层局部坐标、globalPosition 恒 (0,0)——fbdev 装饰拖拽按
+     * globalPosition 差分 applyMove，锚点与增量全零 ⇒ 对话框冻结且松手
+     * 清扫把面板\对话框整片洗成桌面底色（真机实证）。此处按 fbinput
+     * 同一口径补 global = 顶层窗口全局原点 + 顶层局部坐标。 */
+    {
+        XPoint synthGlobal;
+        synthGlobal.x = top->m_windowRect.x + topLocal->x;
+        synthGlobal.y = top->m_windowRect.y + topLocal->y;
+        XMouseEvent_setGlobalPosition(mouse, &synthGlobal);
+    }
     XMouseEvent_setButtons(mouse, buttons);
     XMouseEvent_setSynthesized(mouse, true); /* 合成来源标志。 */
     /* 触摸时间戳透传：合成鼠标事件继承源触摸序列时间（对标 Qt 合成
@@ -2417,26 +2428,37 @@ static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
                                                  topLocal);
             return;
         }
-        /* 转拖：撤长按表；DragBegin 手势先问控件（判定基准=序列起点）——
-         * 接受=左键按住拖动仿真（挂着的 press 续持，MOVE 随行至收口）；
-         * 无人接受=滚轮滚动（挂着的左键 press 以远偏移释放关闭，防止后续
-         * 滚轮序列仍处于左键按压态），累积器自序列起点重新计。 */
+        /* 转拖：撤长按表。两代守卫并集（2026-10-05 合并裁定）：按下链
+         * 上已有鼠标抓取者（窗口装饰拖动/滑杆等拖拽语义控件已
+         * grabMouse）=「拖」不是「滚」，保持 touch→mouse 仿真（UPDATE
+         * 随行、END 同位收口）——远偏移 RELEASE 会在拖动中途触发装饰
+         * 松手清扫，把面板\本窗（含父窗区域）整片洗成桌面底色（真机
+         * 拖动对话框全屏白屏实证 2026-10-04）；无抓取者先问 DragBegin
+         * 手势（判定基准=序列起点）：接受=左键按住拖动仿真（挂着的
+         * press 续持，MOVE 随行至收口）；无人接受=滚轮滚动（挂着的左
+         * 键 press 以远偏移释放关闭，防止后续滚轮序列仍处于左键按压
+         * 态），累积器自序列起点重新计。 */
         g_touchGesture.m_dragging = true;
         xwidget_touchGestureKillTimer();
         if (g_touchGesture.m_synthPressSent) {
-            XPoint beginPos;
-            beginPos.x = (short)g_touchGesture.m_beginX;
-            beginPos.y = (short)g_touchGesture.m_beginY;
-            if (xwidget_touchGestureNotify(top, XTouchGesture_DragBegin,
-                                           &beginPos, globalPos)) {
-                g_touchGesture.m_leftDrag = true;
+            if (XWidget_mouseGrabber() != NULL) {
+                /* 抓取者在位：本序列归抓取者（保持仿真，见上注）。 */
             } else {
-                XPoint farPos = xwidget_gestureFarPoint(g_touchGesture.m_beginX,
-                                                        g_touchGesture.m_beginY);
-                XWidget_synthesizeMouseFromTouch(top,
-                    XEVENT_TYPE_MOUSE_BUTTON_RELEASE, XMouseButton_LeftButton,
-                    XMouseButton_NoButton, &farPos);
-                g_touchGesture.m_synthPressSent = false;
+                XPoint beginPos;
+                beginPos.x = (short)g_touchGesture.m_beginX;
+                beginPos.y = (short)g_touchGesture.m_beginY;
+                if (xwidget_touchGestureNotify(top, XTouchGesture_DragBegin,
+                                               &beginPos, globalPos)) {
+                    g_touchGesture.m_leftDrag = true;
+                } else {
+                    XPoint farPos = xwidget_gestureFarPoint(
+                        g_touchGesture.m_beginX, g_touchGesture.m_beginY);
+                    XWidget_synthesizeMouseFromTouch(top,
+                        XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                        XMouseButton_LeftButton, XMouseButton_NoButton,
+                        &farPos);
+                    g_touchGesture.m_synthPressSent = false;
+                }
             }
         }
         if (!g_touchGesture.m_leftDrag) {
@@ -2457,6 +2479,17 @@ static void xwidget_touchGestureUpdate(XWidget* top, const XTouchEvent* te,
                                              XMouseButton_NoButton,
                                              XMouseButton_LeftButton,
                                              topLocal);
+        return;
+    }
+    if (g_touchGesture.m_synthPressSent && g_touchGesture.m_dragging) {
+        /* 抓取拖拽模式：MOVE 随真实位置行走（窗口跟手，对标旧版触摸
+         * 仿真语义），并保持主点位置基准连续。 */
+        XWidget_synthesizeMouseFromTouch(top, XEVENT_TYPE_MOUSE_MOVE,
+                                         XMouseButton_NoButton,
+                                         XMouseButton_LeftButton,
+                                         topLocal);
+        g_touchGesture.m_lastX = topLocal->x;
+        g_touchGesture.m_lastY = topLocal->y;
         return;
     }
     /* 累积本帧位移（增量基准=上次主点位置）并发整格滚轮。 */
@@ -8265,6 +8298,12 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     }
     top = self->m_isWindow ? (XWidget*)self : XWidget_topLevel(self);
     if (!top || !top->m_isWindow) return;
+    /* 可见性闸门（2026-10-04 关闭残影根修）：隐藏前入队的 PAINT 在
+     * hide→主窗恢复之后才被处理时，本 flush 会把陈旧内容重新 blit 到
+     * 已恢复的画面上（真机拖动对话框后关闭，标题条带残留实证）。隐藏
+     * 窗口的 flush 无展示语义直接丢弃；重新 show 时 setVisible→整窗
+     * update 会重新入队 PAINT，不丢首帧。 */
+    if (!top->m_visible) return;
     if (!top->m_windowHandle)
         XWidget_createWindow(top);
     store = top->m_backingStore;

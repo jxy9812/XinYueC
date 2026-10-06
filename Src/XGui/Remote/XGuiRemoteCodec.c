@@ -16,6 +16,8 @@
 #include <string.h>
 #include <limits.h>
 #include "XMemory.h" /* XMalloc_System/XFree_System, 仓库统一分配口 */
+#include "XGuiRemoteCodecNeon.h" /* [perf9 路4] RLE 游标扫描 NEON 内核
+                                  * (无 NEON 产物整头裁空, 恒标量)。 */
 
 #if XGUI_REMOTE_ZLIB_ON
 #include "zlib.h" /* 先例: Src/XData/XExcel/XZipReader.c:6, compress2/uncompress */
@@ -248,15 +250,23 @@ static void xrc_rle_put(XrcRleSink* s, const uint8_t* bytes, size_t n)
     s->pos += n;
 }
 
-/** @brief 线上行主序(带 stride)取第 idx 个单元的地址。 */
-static const uint8_t* xrc_wire_unit(const uint8_t* wire, int stride, int w,
-                                    size_t idx, int bpp)
+/** @brief 像素单元等值(bpp 2/4 展开比较, 其余 memcmp 兜底; 替代逐单元
+ *         memcmp 调用——mcgs round4 实测 RLE 编码 475 tile ~69ms 主热点)。 */
+static bool xrc_px_eq(const uint8_t* a, const uint8_t* b, int bpp)
 {
-    return wire + (size_t)(idx / (size_t)w) * (size_t)(unsigned int)stride +
-           (idx % (size_t)w) * (size_t)(unsigned int)bpp;
+    if (bpp == 2) {
+        return a[0] == b[0] && a[1] == b[1];
+    }
+    if (bpp == 4) {
+        return a[0] == b[0] && a[1] == b[1] &&
+               a[2] == b[2] && a[3] == b[3];
+    }
+    return memcmp(a, b, (size_t)bpp) == 0;
 }
 
-/** @brief 冲刷一段待定字面量[start, start+count), 补控制字节后逐单元原样输出。 */
+/** @brief 冲刷一段待定字面量[start, start+count), 补控制字节后按行分块
+ *        原样输出(单元流=行主序, 行间 stride 填充不参与; 与旧逐单元
+ *        xrc_wire_unit 寻址逐字节同输出, 仅去掉每单元 div/mod+调用)。 */
 static void xrc_rle_flush_literals(XrcRleSink* s, const uint8_t* wire, int stride,
                                    int w, int bpp, size_t start, size_t count)
 {
@@ -265,9 +275,24 @@ static void xrc_rle_flush_literals(XrcRleSink* s, const uint8_t* wire, int strid
     }
     uint8_t ctrl = (uint8_t)(count - 1u); /* c<0x80: 字面量段 c+1 单元。 */
     xrc_rle_put(s, &ctrl, 1u);
-    for (size_t k = 0; k < count; ++k) {
-        xrc_rle_put(s, xrc_wire_unit(wire, stride, w, start + k, bpp),
-                    (size_t)(unsigned int)bpp);
+    {
+        size_t row = start / (size_t)(unsigned int)w;
+        size_t col = start % (size_t)(unsigned int)w;
+        while (count > 0 && !s->overflow) {
+            const uint8_t* p = wire +
+                row * (size_t)(unsigned int)stride + col * (size_t)(unsigned int)bpp;
+            size_t chunk = (size_t)(unsigned int)w - col;
+            if (chunk > count) {
+                chunk = count;
+            }
+            xrc_rle_put(s, p, chunk * (size_t)(unsigned int)bpp);
+            col += chunk;
+            if (col == (size_t)(unsigned int)w) {
+                col = 0;
+                ++row;
+            }
+            count -= chunk;
+        }
     }
 }
 
@@ -285,13 +310,93 @@ static int xrc_rle_encode(const uint8_t* wire, int wireStride,
     size_t litStart  = 0; /* 待定字面量段起始单元下标。 */
     size_t litCount  = 0; /* 待定字面量段单元数(<=127 常态)。 */
     size_t i = 0;
+    /* 行游标直走(2026-10-04 mcgs round5): 旧实现对每个单元做
+     * div/mod 寻址 + 逐像素 memcmp 调用(475 tile 实测 ~69ms)。行游标
+     * 版地址经 (row,col) 增量推进+跨行整跳, 像素等值走 xrc_px_eq 展开
+     * 比较; 贪婪语义(≥3 重复段封顶 129/字面量段 ≤128/控制字节编码)
+     * 与单元流(行主序、跨行连续)逐字节保持一致。 */
+    size_t row = 0;
+    size_t col = 0;
+    const uint8_t* cur = wire; /* 单元 i 的地址(与 (row,col) 同步)。 */
+
     while (i < unitCount) {
-        const uint8_t* u = xrc_wire_unit(wire, wireStride, w, i, bpp);
+        const uint8_t* u = cur;
         size_t run = 1; /* 自 i 起的重复长度, 封顶 129(重复段上限)。 */
-        while (run < 129u && i + run < unitCount &&
-               memcmp(xrc_wire_unit(wire, wireStride, w, i + run, bpp),
-                      u, (size_t)(unsigned int)bpp) == 0) {
+        const uint8_t* scan = cur;
+        size_t srow = row;
+        size_t scol = col;
+        while (run < 129u && i + run < unitCount) {
+            /* 候选单元 = i+run(自"上次已比单元 i+run-1"进一格), 与标量
+             * 路径同一推进算式; 循环不变量: 进入循环体时 scan/(srow,scol)
+             * = 单元 i+run-1, 退出时 = 单元 i+run(封顶/到尾退出允许悬空
+             * 至 tile 末尾后一格——不 dereference, 外层随即退出)。 */
+            size_t ncol = scol + 1;
+            size_t nrow = srow;
+            const uint8_t* cand;
+            size_t maxAdd;
+            if (ncol == (size_t)(unsigned int)w) {
+                ncol = 0;
+                ++nrow;
+            }
+            cand = (ncol != 0)
+                       ? scan + (size_t)(unsigned int)bpp
+                       : wire + nrow * (size_t)(unsigned int)wireStride;
+            maxAdd = 129u - run;
+            if (maxAdd > unitCount - i - run) {
+                maxAdd = unitCount - i - run; /* 到尾夹取。 */
+            }
+            if (maxAdd > (size_t)(unsigned int)w - ncol) {
+                /* 行内连续段夹取: NEON 批只比当前行内单元——跨行
+                 * stride 跳变不连续, 行尾/尾块/封顶全部回标量单步
+                 * 路径(未初始化安全红线: 批读不越过行尾字节)。 */
+                maxAdd = (size_t)(unsigned int)w - ncol;
+            }
+#if XRC_NEON_ON
+            if (maxAdd >= ((bpp == 2) ? 8u : (bpp == 4 ? 4u : 129u))) {
+                size_t add = xrc_neon_run_count(cand, u, bpp, maxAdd);
+                run += add;
+                if (add < maxAdd) {
+                    /* 批内首异: 游标停首个异值单元(= i+run), 同标量
+                     * break 口径(下述出口分支判"异值退出"不再进格)。 */
+                    scan = cand + add * (size_t)(unsigned int)bpp;
+                    srow = nrow;
+                    scol = ncol + add;
+                    break;
+                }
+                /* 整批等值: 游标停"末已比等值单元"(= i+run-1, 必在本行
+                 * 内——add ≤ 行内余量), 与标量路径出口约定一致; 封顶/
+                 * 到尾交给下方统一"再进一格"对齐, 行尾则换行续比。 */
+                scan = cand + (add - 1u) * (size_t)(unsigned int)bpp;
+                srow = nrow;
+                scol = ncol + add - 1u;
+                continue;
+            }
+#endif
+            scan = cand;
+            srow = nrow;
+            scol = ncol;
+            if (!xrc_px_eq(scan, u, bpp)) {
+                break; /* scan 已停在首个异值单元(= i+run, 游标即对)。 */
+            }
             ++run;
+        }
+        if (run < 129u && i + run < unitCount) {
+            /* 异值退出: scan= i+run。 */
+        } else {
+            /* 封顶/到尾退出: scan 停在末等值单元(i+run-1), 再进一格对齐
+             * i+run(越过 tile 末尾的悬空地址不会被解引用——外层随即
+             * 因 i==unitCount 退出)。 */
+            size_t ncol = scol + 1;
+            size_t nrow = srow;
+            if (ncol == (size_t)(unsigned int)w) {
+                ncol = 0;
+                ++nrow;
+            }
+            scan = (ncol != 0)
+                       ? scan + (size_t)(unsigned int)bpp
+                       : wire + nrow * (size_t)(unsigned int)wireStride;
+            srow = nrow;
+            scol = ncol;
         }
         if (run >= 3u) {
             /* 贪婪: >=3 单元重复用重复段(c-0x80+2 次), 先冲刷字面量。 */
@@ -313,6 +418,9 @@ static int xrc_rle_encode(const uint8_t* wire, int wireStride,
             }
         }
         i += run;
+        cur = scan;
+        row = srow;
+        col = scol;
     }
     xrc_rle_flush_literals(&s, wire, wireStride, w, bpp, litStart, litCount);
     if (s.overflow) {

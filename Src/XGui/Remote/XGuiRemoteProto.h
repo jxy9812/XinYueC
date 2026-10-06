@@ -116,7 +116,15 @@ typedef enum XGuiRemoteMsgType {
     XGUI_REMOTE_MSG_PING            = 17, /**< 双向 保活探测 */
     XGUI_REMOTE_MSG_PONG            = 18, /**< 双向 保活回显 */
     XGUI_REMOTE_MSG_BYE             = 19, /**< 双向 优雅断开 */
-    XGUI_REMOTE_MSG_ERROR           = 20  /**< 双向 错误通告 */
+    XGUI_REMOTE_MSG_ERROR           = 20, /**< 双向 错误通告 */
+    /* ---- UDP 通道协商(2026-10-04 加法式扩展, 编号顺延冻结表) ----
+     * 兼容纪律(冻结): 仅当能力交集含 XGUI_REMOTE_CAP_UDP 时才允许发出;
+     * 老对端(不宣告该位)永不会收到以下类型, 向后兼容不受影响。 */
+    XGUI_REMOTE_MSG_UDP_OFFER       = 21, /**< S→C UDP 通道报价(端口/token) */
+    XGUI_REMOTE_MSG_UDP_BIND        = 22, /**< C→S 绑定请求(token+本地UDP口) */
+    XGUI_REMOTE_MSG_UDP_RESULT      = 23, /**< S→C 建链结果(是否激活) */
+    XGUI_REMOTE_MSG_UDP_MODE        = 24  /**< C→S 运行期模式请求(0=退回TCP
+                                                1=请求建链/重建) */
 } XGuiRemoteMsgType;
 
 /**
@@ -153,6 +161,14 @@ typedef enum XGuiRemoteProfileId {
     XGUI_REMOTE_PROFILE_PERFORMANCE = 0,
     XGUI_REMOTE_PROFILE_RESOURCE    = 1,
     XGUI_REMOTE_PROFILE_AUTO        = 2,  /**< V2 预留: V1 行为等价 RESOURCE */
+    XGUI_REMOTE_PROFILE_LATENCY     = 4,  /**< 低延迟档(2026-10-05 加法式):
+                                               RGB565/RAW 直拷/64×60/60fps。
+                                               取 4 而非 3: XGuiRemoteTest 冻结
+                                               断言以 0x03 作"非法档 id"样本
+                                               (dec 闭集校验), 3 会撞线;
+                                               老 peer(不识 4) 经 CAP_LATENCY
+                                               能力位逐会话降级 resource,
+                                               见 XGuiServer.c 会话夹取。 */
     XGUI_REMOTE_PROFILE_CUSTOM      = 0xFF
 } XGuiRemoteProfileId;
 
@@ -166,6 +182,17 @@ typedef enum XGuiRemoteSessionState {
     XGUI_REMOTE_STATE_AUTHENTICATING = 3,
     XGUI_REMOTE_STATE_STREAMING      = 4
 } XGuiRemoteSessionState;
+
+/**
+ * @brief UDP 旁路通道状态(2026-10-04 加法式; XGuiClient_udpState 输出与
+ *        demo 页显示/断言口径)。
+ */
+typedef enum XGuiRemoteUdpState {
+    XGUI_REMOTE_UDP_STATE_OFF      = 0, /**< 未启用/未建链(纯 TCP)。 */
+    XGUI_REMOTE_UDP_STATE_TRYING   = 1, /**< 套接字就绪, 协商在途。 */
+    XGUI_REMOTE_UDP_STATE_ACTIVE   = 2, /**< 激活: 帧+输入走 UDP。 */
+    XGUI_REMOTE_UDP_STATE_FALLBACK = 3  /**< 曾激活后静默降级(可重建)。 */
+} XGuiRemoteUdpState;
 
 /**
  * @brief 断开原因(BYE 消息)。
@@ -204,6 +231,24 @@ typedef enum XGuiRemoteError {
 #define XGUI_REMOTE_CAP_TLS         (1u << 4) /**< 传输层为 TLS */
 #define XGUI_REMOTE_CAP_PROFILE_SET (1u << 5) /**< 支持运行期档位切换 */
 #define XGUI_REMOTE_CAP_FB_ACK      (1u << 6) /**< 支持 FB_ACK 流控(V2 预留) */
+#define XGUI_REMOTE_CAP_UDP         (1u << 7) /**< 支持 UDP 低延迟旁路通道
+                                                   (2026-10-04 加法式; 仅双方
+                                                   宣告时才启用 21..24 协商
+                                                   消息, 老对端行为不变) */
+#define XGUI_REMOTE_CAP_LATENCY     (1u << 8) /**< 支持 latency 档 id=3
+                                                   (2026-10-05 加法式; dec 层
+                                                   档位 id 封闭校验是冻结契约,
+                                                   未宣告 peer 收到 id=3 必
+                                                   断链——服务端据此对未宣告
+                                                   会话逐会话降级 resource,
+                                                   见 XGuiServer.c 会话夹取) */
+#define XGUI_REMOTE_CAP_FB_REQUEST  (1u << 9) /**< 支持 FB_REQUEST(2026-10-05
+                                                   加法式; 客户端仅在能力交集
+                                                   含本位时才发送——老服务端
+                                                   永不会收到, 向后兼容不变。
+                                                   合并裁决: 原 bit8 与
+                                                   CAP_LATENCY 双占, 按后应用
+                                                   优先迁至 bit9) */
 /** @} */
 
 /** @name 输入子动作枚举值(INPUT_* 消息内 u8) */
@@ -377,6 +422,10 @@ void XGuiRemoteProfile_initPerformance(XGuiRemoteProfile* out);
 void XGuiRemoteProfile_initResource(XGuiRemoteProfile* out);
 /** @brief 自动模式预设(V2 预留; V1 行为等价 resource 预设)。 */
 void XGuiRemoteProfile_initAuto(XGuiRemoteProfile* out);
+/** @brief 低延迟模式预设(RGB565/RAW 直拷/64×60 tile/60fps/2MB 队列;
+ *         2026-10-05 加法式, 参数依据 out/perf8/latency-profile-design.md
+ *         §1-§3: 免 RLE 编码尖峰, 64×60 保 raw tile 记录过 UDP 8000B 帽)。 */
+void XGuiRemoteProfile_initLatency(XGuiRemoteProfile* out);
 /**
  * @brief      把档位各字段夹取到合法范围(越界取边界值; 非法枚举回退
  *             线上 ARGB32/编码 RLE)。入库/上网前必须调用。
@@ -439,10 +488,15 @@ typedef struct XGuiRemoteMsgFbMeta {
     char     title[XGUI_REMOTE_MAX_NAME_BYTES];
 } XGuiRemoteMsgFbMeta;
 
-/** @brief FB_REQUEST。 */
+/** @brief FB_REQUEST。
+ *  @details mode=1 全量刷新(服务端 1s 限频合并, 交付节拍仍由 maxFps 门控);
+ *           mode=0 视口通告(无刷新动作)——(w,h)≠0 时 (x,y,w,h) 为客户端
+ *           可见视口(远端画面坐标, 1:1 模式), 服务端据此做 tile 优先级;
+ *           (0,0,0,0)=整幅/未通告(FIT 模式恒此形态)。线上布局不变
+ *           (2026-10-05 语义加法式启用, 老服务端对 mode=0 本就零操作)。 */
 typedef struct XGuiRemoteMsgFbRequest {
-    uint8_t  mode;                            /**< 0=续增量, 1=全量刷新。 */
-    uint16_t x, y, w, h;                      /**< 区域(预留, 0=整幅)。 */
+    uint8_t  mode;                            /**< 0=续增量/视口通告, 1=全量刷新。 */
+    uint16_t x, y, w, h;                      /**< 视口区域(0=整幅/未通告)。 */
 } XGuiRemoteMsgFbRequest;
 
 /** @brief FB_UPDATE 帧级头(其后随 tileCount 个 tile 记录)。 */
@@ -545,6 +599,34 @@ typedef struct XGuiRemoteMsgProfileResult {
 typedef struct XGuiRemoteMsgPing {
     uint64_t timestampMs;
 } XGuiRemoteMsgPing;
+
+/* ==================== UDP 通道协商消息(2026-10-04 加法式) ==================== */
+/* 兼容纪律(冻结): 仅能力交集含 XGUI_REMOTE_CAP_UDP 时收发; 老对端不可达。
+ * 线上布局全部定长小端, 经 enc 与 dec 系列显式序列化(严禁结构体整块上网)。 */
+
+/** @brief UDP_OFFER(S→C): 服务端 UDP 通道报价。 */
+typedef struct XGuiRemoteMsgUdpOffer {
+    uint16_t udpPort;        /**< 服务端 UDP 端口(TCP 端口+1 起顺延)。 */
+    uint32_t sessionToken;   /**< 会话级随机凭据(逐数据报头校验)。 */
+    uint16_t maxPayloadBytes;/**< 单数据报负载上限(本实现恒 8000)。 */
+} XGuiRemoteMsgUdpOffer;
+
+/** @brief UDP_BIND(C→S): 客户端绑定请求(数据报源地址在 RECV 路径不可得,
+ *         回送地址 = TCP 对端 IP + 本消息自报端口; 设计稿 §1 缺陷 2)。 */
+typedef struct XGuiRemoteMsgUdpBind {
+    uint32_t sessionToken;   /**< 回显 OFFER 的 token。 */
+    uint16_t clientUdpPort;  /**< 客户端本地 UDP 端口。 */
+} XGuiRemoteMsgUdpBind;
+
+/** @brief UDP_RESULT(S→C): 建链/退回结果。 */
+typedef struct XGuiRemoteMsgUdpResult {
+    uint8_t active;          /**< 1=UDP 已激活(帧+输入走 UDP); 0=维持 TCP。 */
+} XGuiRemoteMsgUdpResult;
+
+/** @brief UDP_MODE(C→S): 运行期模式请求。 */
+typedef struct XGuiRemoteMsgUdpMode {
+    uint8_t mode;            /**< 0=退回 TCP; 1=请求建链/重建。 */
+} XGuiRemoteMsgUdpMode;
 
 /** @brief BYE。 */
 typedef struct XGuiRemoteMsgBye {
@@ -676,6 +758,28 @@ bool XGuiRemoteProto_decProfileResult(const uint8_t* payload, size_t len,
 size_t XGuiRemoteProto_encPing(uint8_t* out, size_t cap, uint64_t timestampMs);
 bool XGuiRemoteProto_decPing(const uint8_t* payload, size_t len,
                              uint64_t* timestampMsOut);
+
+/* ---- UDP 通道协商(enc/dec, 2026-10-04 加法式; 兼容纪律见消息结构注) ---- */
+
+size_t XGuiRemoteProto_encUdpOffer(uint8_t* out, size_t cap,
+                                   const XGuiRemoteMsgUdpOffer* msg);
+bool XGuiRemoteProto_decUdpOffer(const uint8_t* payload, size_t len,
+                                 XGuiRemoteMsgUdpOffer* out);
+
+size_t XGuiRemoteProto_encUdpBind(uint8_t* out, size_t cap,
+                                  const XGuiRemoteMsgUdpBind* msg);
+bool XGuiRemoteProto_decUdpBind(const uint8_t* payload, size_t len,
+                                XGuiRemoteMsgUdpBind* out);
+
+size_t XGuiRemoteProto_encUdpResult(uint8_t* out, size_t cap,
+                                    const XGuiRemoteMsgUdpResult* msg);
+bool XGuiRemoteProto_decUdpResult(const uint8_t* payload, size_t len,
+                                  XGuiRemoteMsgUdpResult* out);
+
+size_t XGuiRemoteProto_encUdpMode(uint8_t* out, size_t cap,
+                                  const XGuiRemoteMsgUdpMode* msg);
+bool XGuiRemoteProto_decUdpMode(const uint8_t* payload, size_t len,
+                                XGuiRemoteMsgUdpMode* out);
 
 size_t XGuiRemoteProto_encBye(uint8_t* out, size_t cap,
                               const XGuiRemoteMsgBye* msg);

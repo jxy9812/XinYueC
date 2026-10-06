@@ -306,9 +306,21 @@ void XGuiRemoteProfile_initPerformance(XGuiRemoteProfile* out)
 
 void XGuiRemoteProfile_initResource(XGuiRemoteProfile* out)
 {
-    /* XGuiRemote.md §5.2 资源模式: RGB565/RLE/32×32/15fps/小缓冲。 */
+    /* XGuiRemote.md §5.2 资源模式: RGB565/RLE/32×32/30fps/小缓冲。
+     * [perf8 第 4 轮门控调整 2026-10-05] 认领门控 15fps→30fps:
+     * - 依据: 真机三轮(perf8 round1-3)稳态小变化端到端 P50 钉死 114ms,
+     *   分段账本最大可动段=认领门控等待(15fps 周期 66.7ms, 平均 33ms、
+     *   最坏 66ms; 测量结论"达标需门控策略参数调整而非编码优化",
+     *   stage: srv-enc p50 796~1244µs 非瓶颈); 30fps 把平均等待压到
+     *   16.7ms/最坏 33ms, 稳态端到端预期 114→~81ms。
+     * - 代价核算: maxFps 只门控认领/编码/发送(采集随 GUI 呈现照走),
+     *   稳态小变化批编码 p50 ~1.2ms → 每秒增量 ≈ +6~18ms CPU(单核
+     *   <2%); 线载 RLE 小批翻倍仍 ≪ 100M 链路; 队列 256KB(≈3 整页
+     *   RLE 批)在 30fps 突发下丢批概率上升——丢批=丢 tile 到下次变化
+     *   (全量刷新兜底), 真机 A/B 需盯镜像完整性;
+     * - 回退: 本函数 maxFps 参改回 15 即复原设计初版。 */
     profileInit(out, XGUI_REMOTE_PF_RGB565, XGUI_REMOTE_CODEC_RLE, 1,
-                32, 32, 15,
+                32, 32, 30,
                 256u * 1024u, 32u * 1024u,
                 30u, 10000u, 30000u);
 }
@@ -317,6 +329,27 @@ void XGuiRemoteProfile_initAuto(XGuiRemoteProfile* out)
 {
     /* V2 预留: V1 行为等价 resource 预设(XGuiRemote.md §5.3)。 */
     XGuiRemoteProfile_initResource(out);
+}
+
+void XGuiRemoteProfile_initLatency(XGuiRemoteProfile* out)
+{
+    /* 低延迟档(2026-10-05): RGB565/RAW 直拷/64×60/60fps。
+     * - RAW 免 RLE 编码尖峰(A33 实测 RLE ~69ms/整页 vs raw memcpy 级);
+     * - 64×60: raw tile 记录 12+64*60*2=7692B ≤ UDP 数据报帽 8000B
+     *   (64×64=8204B 会整帧回落 TCP), 600 高=10 整行双几何零行裁切;
+     * - 队列 2MB ≈ 1.5 整页 raw 批水位(A33 内存紧张, 上限非预分配,
+     *   反压即最新帧优先丢旧批); tx 128KB ≈ 100M 链路 ~10ms/泵圈,
+     *   界住 GUI 线程单圈写出发停顿; 鼠标 0ms=直传;
+     * - ping 5000/15000 与 performance 同(比 resource 快判死链)。
+     * - [perf8 第 2 轮 A/B 否决记录 2026-10-05] 曾试 32×30(记录 1932B):
+     *   回环同刺激实测批均 9148B vs 64×60 的 7648B(+20%)——本 UI 脏区
+     *   多为宽扁形状(FPS 叠层文字行/按钮条), 细网格按 2~4 tile 补垫
+     *   反增线载, 突发期 srv-q 尖峰也更差(11.5ms vs 4.3ms); 64×60 定版
+     *   维持。数据 out/perf8/round2/。 */
+    profileInit(out, XGUI_REMOTE_PF_RGB565, XGUI_REMOTE_CODEC_RAW, 1,
+                64, 60, 60,
+                2u * 1024u * 1024u, 128u * 1024u,
+                0u, 5000u, 15000u);
 }
 
 void XGuiRemoteProfile_sanitize(XGuiRemoteProfile* profile)
@@ -540,6 +573,7 @@ static bool profileIdValid(uint8_t id)
     return id == XGUI_REMOTE_PROFILE_PERFORMANCE ||
            id == XGUI_REMOTE_PROFILE_RESOURCE ||
            id == XGUI_REMOTE_PROFILE_AUTO ||
+           id == XGUI_REMOTE_PROFILE_LATENCY || /* 低延迟档(2026-10-05)。 */
            id == XGUI_REMOTE_PROFILE_CUSTOM;
 }
 
@@ -1135,6 +1169,91 @@ bool XGuiRemoteProto_decPing(const uint8_t* payload, size_t len,
     uint64_t ts;
     if (!decU64(&c, &ts)) return false;
     if (timestampMsOut) *timestampMsOut = ts;
+    return c.off == c.len;
+}
+
+/* ==================== UDP 通道协商(2026-10-04 加法式) ==================== */
+/* 仅能力交集含 XGUI_REMOTE_CAP_UDP 时收发; 线上布局定长小端。 */
+
+/* UDP_OFFER: [u16 udpPort][u32 sessionToken][u16 maxPayloadBytes] = 8B */
+size_t XGuiRemoteProto_encUdpOffer(uint8_t* out, size_t cap,
+                                   const XGuiRemoteMsgUdpOffer* msg)
+{
+    if (!out || !msg || cap < 8) return 0;
+    XGuiRemoteProto_putU16(out, msg->udpPort);
+    XGuiRemoteProto_putU32(out + 2, msg->sessionToken);
+    XGuiRemoteProto_putU16(out + 6, msg->maxPayloadBytes);
+    return 8;
+}
+
+bool XGuiRemoteProto_decUdpOffer(const uint8_t* payload, size_t len,
+                                 XGuiRemoteMsgUdpOffer* out)
+{
+    if (!payload || !out) return false;
+    memset(out, 0, sizeof(*out));
+    DecCursor c = { payload, len, 0 };
+    if (!decU16(&c, &out->udpPort)) return false;
+    if (!decU32(&c, &out->sessionToken)) return false;
+    if (!decU16(&c, &out->maxPayloadBytes)) return false;
+    return c.off == c.len;
+}
+
+/* UDP_BIND: [u32 sessionToken][u16 clientUdpPort] = 6B */
+size_t XGuiRemoteProto_encUdpBind(uint8_t* out, size_t cap,
+                                  const XGuiRemoteMsgUdpBind* msg)
+{
+    if (!out || !msg || cap < 6) return 0;
+    XGuiRemoteProto_putU32(out, msg->sessionToken);
+    XGuiRemoteProto_putU16(out + 4, msg->clientUdpPort);
+    return 6;
+}
+
+bool XGuiRemoteProto_decUdpBind(const uint8_t* payload, size_t len,
+                                XGuiRemoteMsgUdpBind* out)
+{
+    if (!payload || !out) return false;
+    memset(out, 0, sizeof(*out));
+    DecCursor c = { payload, len, 0 };
+    if (!decU32(&c, &out->sessionToken)) return false;
+    if (!decU16(&c, &out->clientUdpPort)) return false;
+    return c.off == c.len;
+}
+
+/* UDP_RESULT: [u8 active] = 1B */
+size_t XGuiRemoteProto_encUdpResult(uint8_t* out, size_t cap,
+                                    const XGuiRemoteMsgUdpResult* msg)
+{
+    if (!out || !msg || cap < 1) return 0;
+    out[0] = msg->active;
+    return 1;
+}
+
+bool XGuiRemoteProto_decUdpResult(const uint8_t* payload, size_t len,
+                                  XGuiRemoteMsgUdpResult* out)
+{
+    if (!payload || !out) return false;
+    memset(out, 0, sizeof(*out));
+    DecCursor c = { payload, len, 0 };
+    if (!decU8(&c, &out->active)) return false;
+    return c.off == c.len;
+}
+
+/* UDP_MODE: [u8 mode] = 1B */
+size_t XGuiRemoteProto_encUdpMode(uint8_t* out, size_t cap,
+                                  const XGuiRemoteMsgUdpMode* msg)
+{
+    if (!out || !msg || cap < 1) return 0;
+    out[0] = msg->mode;
+    return 1;
+}
+
+bool XGuiRemoteProto_decUdpMode(const uint8_t* payload, size_t len,
+                                XGuiRemoteMsgUdpMode* out)
+{
+    if (!payload || !out) return false;
+    memset(out, 0, sizeof(*out));
+    DecCursor c = { payload, len, 0 };
+    if (!decU8(&c, &out->mode)) return false;
     return c.off == c.len;
 }
 

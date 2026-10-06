@@ -609,5 +609,25 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
     (void)nativePixel;
 }
 
+/* Drag-snapshot blit for the window-decoration drag path (2026-10-06).
+ * fbdev-only semantics (writes the visible fb buffer directly); on Windows
+ * the window system re-covers exposed regions and drags flush through the
+ * normal per-rect BitBlt path, so this stays a no-op returning false
+ * (callers fall back to the regular flush) -- link stub, same policy as
+ * the posix implementation's non-fbdev branch. */
+bool XPlatformBackingStore_blitSnapshotPanelRects(const XImage* snapshot,
+                                                  const XRect* rects,
+                                                  int count,
+                                                  const XPoint* origin,
+                                                  const XWindow* selfWindow)
+{
+    (void)snapshot;
+    (void)rects;
+    (void)count;
+    (void)origin;
+    (void)selfWindow;
+    return false;
+}
+
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && defined(_WIN32) */
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON */

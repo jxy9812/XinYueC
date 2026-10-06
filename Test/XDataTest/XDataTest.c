@@ -14,13 +14,15 @@ bool XDataTest_runAll(void)
 {
     bool json = XJsonQtAlignmentTest() == 0;
     bool sql = XSqlTest_run() == 0;
+    bool variant = XVariantTest_run() == 0;
     bool dom = XDomTest_runAll();
     bool reader = XXmlStreamReaderTest_runAll();
     bool writer = XXmlStreamWriterTest_runAll();
     bool excel = XExcelExtendedTest_runAll();
-    bool result = json && sql && dom && reader && writer && excel;
-    XPrintf("XData 全量自动化测试: JSON=%s SQL=%s DOM=%s Reader=%s Writer=%s Excel=%s => %s\n",
+    bool result = json && sql && variant && dom && reader && writer && excel;
+    XPrintf("XData 全量自动化测试: JSON=%s SQL=%s Variant=%s DOM=%s Reader=%s Writer=%s Excel=%s => %s\n",
             json ? "通过" : "失败", sql ? "通过" : "失败",
+            variant ? "通过" : "失败",
             dom ? "通过" : "失败", reader ? "通过" : "失败",
             writer ? "通过" : "失败", excel ? "通过" : "失败",
             result ? "通过" : "失败");
@@ -68,4 +70,5 @@ void XTestMenu_XDataTest(XTestMenu* root)
 	XTestMenu_XExcelTest(menu);
 	XTestMenu_XDomTest(menu);
 	XTestMenu_XSqlTest(menu);
+	XTestMenu_XVariantTest(menu);
 }

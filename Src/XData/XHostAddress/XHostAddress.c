@@ -1,5 +1,4 @@
 ﻿// XHostAddress.c
-#include "XStringUtils.h"  /* strtok 直出改经可重入分词器（外部依赖约束） */
 #include "XHostAddress.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -19,7 +18,7 @@ static bool parseIPv4(const char* src, uint32_t* out) {
     return true;
 }
 
-// ==================== IPv6 解析（支持 :: 格式）====================
+// ==================== IPv6 解析（支持 :: 压缩与 ::ffff:a.b.c.d 尾部）====================
 
 static bool parseIPv6(const char* src, uint8_t dst[16]) {
     if (!src || !dst) return false;
@@ -27,8 +26,8 @@ static bool parseIPv6(const char* src, uint8_t dst[16]) {
 
     char buf[64];
     size_t len = strlen(src);
-    if (len >= sizeof(buf)) return false;
-    strcpy(buf, src);
+    if (len == 0 || len >= sizeof(buf)) return false;
+    memcpy(buf, src, len + 1);
 
     // Strip scope ID (e.g., %eth0)
     char* percent = strchr(buf, '%');
@@ -41,43 +40,73 @@ static bool parseIPv6(const char* src, uint8_t dst[16]) {
         char* end = strchr(s, ']');
         if (end) *end = '\0';
     }
+    if (!s[0]) return false;
 
-    // Handle common shortcuts
-    if (strcmp(s, "::1") == 0) {
-        dst[15] = 1;
-        return true;
-    }
-    if (strcmp(s, "::") == 0) {
-        return true;
+    // 点分四段尾部（::ffff:1.2.3.4 / 64:ff9b::192.0.2.33）：原地改写为两个
+    // 十六进制组（"1.2.3.4"→"102:304"，长度只缩不增），交给常规扫描，
+    // 避免在 "::" 第二个冒号处截断留下悬挂冒号。
+    char* lastColon = strrchr(s, ':');
+    if (lastColon && strchr(lastColon, '.')) {
+        uint32_t v4 = 0;
+        if (!parseIPv4(lastColon + 1, &v4)) return false;
+        snprintf(lastColon + 1, sizeof(buf) - (size_t)(lastColon + 1 - buf),
+                 "%x:%x", (unsigned)((v4 >> 16) & 0xFFFF),
+                 (unsigned)(v4 & 0xFFFF));
     }
 
-    // Parse segments
+    // Parse segments（单遍扫描；"::" 至多出现一次）
     int parts[8] = { 0 };
     int count = 0;
-    char temp[64];
-    strcpy(temp, s);
-    char* savePtr = NULL;
-    char* token = XStrtokReentrant(temp, ":", &savePtr);
-    while (token && count < 8) {
-        if (strlen(token) == 0) {
-            break; // "::" encountered
+    int gap = -1;
+    const char* p = s;
+    while (*p) {
+        if (p[0] == ':') { /* 段首冒号：只允许 "::" 压缩记号 */
+            if (p[1] != ':') return false;
+            if (gap >= 0) return false;
+            gap = count;
+            p += 2;
+            if (!*p) break; /* 尾部 "::" */
+            if (*p == ':') return false; /* ":::" 非法 */
+            continue;
         }
-        char* endptr;
-        unsigned long val = strtoul(token, &endptr, 16);
-        if (*endptr != '\0' || val > 0xFFFF) return false;
-        parts[count++] = (int)val;
-        token = XStrtokReentrant(NULL, ":", &savePtr);
+        {
+            char* endptr;
+            unsigned long val = strtoul(p, &endptr, 16);
+            if (endptr == p || val > 0xFFFF) return false;
+            if (count >= 8) return false;
+            parts[count++] = (int)val;
+            p = endptr;
+            if (!*p) break;
+            if (*p != ':') return false; /* 组后跟非法字符 */
+            ++p;
+            if (!*p) return false; /* 结尾悬挂单冒号 */
+            if (*p == ':') { /* "组::组" 中部压缩记号 */
+                if (gap >= 0) return false;
+                gap = count;
+                ++p;
+                if (!*p) break; /* 尾部 "::" */
+                if (*p == ':') return false;
+            }
+        }
     }
 
-    if (count == 8) {
-        for (int i = 0; i < 8; i++) {
-            dst[i * 2] = (parts[i] >> 8) & 0xFF;
-            dst[i * 2 + 1] = parts[i] & 0xFF;
-        }
-        return true;
+    if (gap >= 0) {
+        if (count >= 8) return false; /* "::" 必须至少压缩一组零 */
+        int zeros = 8 - count;
+        int i;
+        for (i = 7; i >= gap + zeros; --i)
+            parts[i] = parts[i - zeros];
+        for (i = gap; i < gap + zeros; ++i)
+            parts[i] = 0;
+    } else if (count != 8) {
+        return false;
     }
 
-    return false;
+    for (int i = 0; i < 8; i++) {
+        dst[i * 2] = (parts[i] >> 8) & 0xFF;
+        dst[i * 2 + 1] = parts[i] & 0xFF;
+    }
+    return true;
 }
 
 // ==================== 地址分类 ====================
@@ -335,10 +364,63 @@ const char* XHostAddress_scopeId(const XHostAddress* addr) {
     return "";
 }
 
+// ==================== IPv6 文本化（RFC 5952 压缩，与 Qt 对齐）====================
+
+static int formatIPv6(const uint8_t ip6[16], char* out, size_t cap) {
+    static const uint8_t v4MappedPrefix[10] = { 0 };
+    uint16_t groups[8];
+    int bestStart = -1;
+    int bestLen = 0;
+    int off = 0;
+    int i;
+    bool skipSep = false;
+
+    /* IPv4 映射（::ffff:a.b.c.d）按 RFC 5952 §5 用点分四段呈现 */
+    if (memcmp(ip6, v4MappedPrefix, 10) == 0 &&
+        ip6[10] == 0xFF && ip6[11] == 0xFF) {
+        return snprintf(out, cap, "::ffff:%u.%u.%u.%u",
+                        ip6[12], ip6[13], ip6[14], ip6[15]);
+    }
+
+    for (i = 0; i < 8; ++i)
+        groups[i] = (uint16_t)((ip6[i * 2] << 8) | ip6[i * 2 + 1]);
+
+    /* 最长零组连串（≥2 才压缩；并列取最左，同 RFC 5952 §4.2.2/§4.2.3） */
+    i = 0;
+    while (i < 8) {
+        if (groups[i] == 0) {
+            int j = i;
+            while (j < 8 && groups[j] == 0) ++j;
+            if (j - i > bestLen) {
+                bestLen = j - i;
+                bestStart = i;
+            }
+            i = j;
+        } else {
+            ++i;
+        }
+    }
+
+    for (i = 0; i < 8 && off < (int)cap;) {
+        if (bestLen >= 2 && i == bestStart) {
+            off += snprintf(out + off, cap - (size_t)off, "::");
+            i += bestLen;
+            skipSep = true; /* "::" 已带两侧冒号，下一组不再加分隔 */
+            continue;
+        }
+        off += snprintf(out + off, cap - (size_t)off, "%s%x",
+                        (i > 0 && !skipSep) ? ":" : "", groups[i]);
+        skipSep = false;
+        ++i;
+    }
+    if (off <= 0 || off >= (int)cap) return 0;
+    return off;
+}
+
 XString* XHostAddress_toString(const XHostAddress* addr) {
     if (!addr || addr->isNull) return NULL;
 
-    char buffer[128];
+    char buffer[64];
     int len = 0;
 
     if (addr->protocol == XHostAddress_IPv4Protocol) {
@@ -346,15 +428,10 @@ XString* XHostAddress_toString(const XHostAddress* addr) {
             (addr->ip4 >> 24) & 0xFF, (addr->ip4 >> 16) & 0xFF,
             (addr->ip4 >> 8) & 0xFF, addr->ip4 & 0xFF);
     } else if (addr->protocol == XHostAddress_IPv6Protocol) {
-        len = snprintf(buffer, sizeof(buffer),
-            "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
-            addr->ip6[0], addr->ip6[1], addr->ip6[2], addr->ip6[3],
-            addr->ip6[4], addr->ip6[5], addr->ip6[6], addr->ip6[7],
-            addr->ip6[8], addr->ip6[9], addr->ip6[10], addr->ip6[11],
-            addr->ip6[12], addr->ip6[13], addr->ip6[14], addr->ip6[15]);
+        len = formatIPv6(addr->ip6, buffer, sizeof(buffer));
     }
 
-    if (len <= 0) return NULL;
+    if (len <= 0 || len >= (int)sizeof(buffer)) return NULL;
     return XString_create_with_length_utf8(buffer, len);
 }
 

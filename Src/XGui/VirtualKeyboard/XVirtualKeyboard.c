@@ -111,7 +111,11 @@
  *               守护 tick 顶层 raise 维护继续生效；拖移=按住工具栏空
  *               白（xkb_menuBarIconHot 图标盒之外）拖窗（按下记全局锚
  *               点偏移、move 求 delta 移窗、release 结束，压在图标上
- *               不启动拖动）；closePopup/popup 全部复位。
+ *               不启动拖动）；closePopup/popup 全部复位。2026-10-06
+ *               拖移步接入 fbdev 免重绘移窗（xwd_applyMove 同款：面板
+ *               钳边+让位条带归位+既有后备缓冲整窗直搬两缓冲）——真机
+ *               缺陷=移窗后旧位无人还原（残影）+依赖零散整窗 PAINT 补
+ *               画新位（A33 FPS 5.9），见 xkb_compactDragMovePresent。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
@@ -149,6 +153,15 @@
 #endif
 #if XKEYBOARD_IME_PHRASE_ON
 #include "XPinyinPhrase.h" /* 词组库懒加载（setImeEnabled(true)）。 */
+#endif
+#include "XWindowDecoration.h" /* 紧凑拖移 fbdev 移窗三件套：面板探测/
+                               * 让位条带归位（xwd_applyMove 同款机制公共
+                               * 出口，拖动残影根修 2026-10-06）。 */
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
+#include "XBackingStore.h"
+#include "XPlatformBackingStore.h" /* 紧凑拖移免重绘直搬：纯移动内容零
+                                   * 变化，把既有后备缓冲整窗直写两缓冲
+                                   * （零 flush 零翻页，A33 拖动 FPS 根修）。 */
 #endif
 #if XVIRTUALKEYBOARD_ON
 #include "XVirtualKeyboardInputContext.h"
@@ -4177,6 +4190,50 @@ static void VXKeyboard_mousePressEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/** @brief 紧凑悬浮拖移步的 fbdev 免重绘移窗（拖动残影+FPS 5.9 根修
+ *         2026-10-06）。
+ *  @details 调用前提：新几何已落地（条带归位以「本窗已离开旧位」为前
+ *           提，xwd_applyMove 同序）。两步——①让位条带按归属归位还原
+ *           （XWindowDecoration_restoreExposeStrips：条带与其他可见顶
+ *           层的交集自各归属后备缓冲直搬两缓冲，真桌面余部填桌面底色；
+ *           旧实现无此步，旧位键盘像素长期残留=真机残影）；②本窗既有
+ *           后备缓冲整窗直写两缓冲（纯移动内容零变化，后备缓冲仍是上
+ *           一帧合法合成结果——零重绘零 flush 零翻页，拖动每步成本从
+ *           全键盘软件重绘+整窗提交（A33 实测 FPS 5.9）降到一次 memcpy；
+ *           两缓冲同内容，HUD 等并发 present 的中途翻页也不失步，差带
+ *           账本语义不变，松手 update 的真实 PAINT 照常收敛）。后备缺
+ *           位（未首绘等罕见态）退化为整窗 update（旧行为，慢但无残
+ *           影）。已知边界：直写无遮挡剔除，键盘扫过更高层弹层（性能
+ *           悬浮窗）矩形时该矩形被键盘内容盖写 ≤ 一个悬浮窗重绘周期
+ *           （250ms 档）自愈。 */
+static void xkb_compactDragMovePresent(XVirtualKeyboard* self,
+                                       const XRect* oldG, const XRect* newG)
+{
+    XWindow* win;
+    if (!self || !oldG || !newG) return;
+    win = (XWindow*)XWidget_windowHandle((XWidget*)self);
+    if (!win) return;
+    XWindowDecoration_restoreExposeStrips(oldG, newG, win);
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
+    {
+        XBackingStore* bs = XWidget_backingStore((XWidget*)self);
+        XPlatformBackingStore* pbs = bs ? XBackingStore_handle(bs) : NULL;
+        XImage* img = pbs ? XPlatformBackingStore_paintDevice(pbs) : NULL;
+        if (pbs && img && !XImage_isNull(img))
+        {
+            XRect whole;
+            XPoint origin;
+            XRect_init(&whole, newG->x, newG->y, newG->width, newG->height);
+            XPoint_init(&origin, newG->x, newG->y);
+            XPlatformBackingStore_blitPanelRects(pbs, &whole, 1, &origin);
+            return;
+        }
+    }
+#endif
+    /* 罕见退化（后备缺位/裁剪构建）：整窗 update 让常规管线补画。 */
+    XWidget_update((XWidget*)self);
+}
+
 /** @brief 鼠标移动：按住滑动出键取消武装不触发、回滑恢复（BM.c:446-506
  *         语义）；仅在按下序列内生效。工具栏按住滑动出条同语义（取消
  *         武装，回条不恢复——工具栏为释放触发单发语义）。 */
@@ -4192,12 +4249,33 @@ static void VXKeyboard_mouseMoveEvent(XWidget* self, XEvent* event)
     pos = XMouseEvent_position(me);
     if (kb->m_compactDrag) {
         /* 紧凑悬浮拖移：move 求 delta 移窗（全局=窗口左上+本地，锚点
-           偏移恒定→窗口随指移动；几何跟随守卫期 reposition 不参与）。 */
+           偏移恒定→窗口随指移动；几何跟随守卫期 reposition 不参与）。
+           fbdev 无 WM：几何落地后让位条带归位+既有后备缓冲整窗直搬
+           （免重绘移窗，拖动残影+FPS 5.9 根修 2026-10-06），面板钳边
+           同 xwd_applyMove；桌面 WM 环境维持纯 setGeometry（重铺归窗
+           口系统）。 */
         XPoint g = XWidget_mapToGlobal((XWidget*)self, &pos);
-        XRect r;
-        XRect_init(&r, g.x - kb->m_dragOffX, g.y - kb->m_dragOffY,
-                   XWidget_width(self), XWidget_height(self));
-        XWidget_setGeometryRect((XWidget*)self, &r);
+        XRect oldG;
+        XRect newG;
+        XRect panel;
+        int nx;
+        int ny;
+        oldG = XWidget_geometry(self);
+        nx = g.x - kb->m_dragOffX;
+        ny = g.y - kb->m_dragOffY;
+        if (XWindowDecoration_fbdevPanelRect(&panel)) {
+            if (nx < panel.x) nx = panel.x;
+            if (ny < panel.y) ny = panel.y;
+            if (nx + oldG.width > panel.x + panel.width)
+                nx = panel.x + panel.width - oldG.width;
+            if (ny + oldG.height > panel.y + panel.height)
+                ny = panel.y + panel.height - oldG.height;
+        }
+        if (nx != oldG.x || ny != oldG.y) {
+            XRect_init(&newG, nx, ny, oldG.width, oldG.height);
+            XWidget_setGeometryRect(self, &newG);
+            xkb_compactDragMovePresent(kb, &oldG, &newG);
+        }
         XEvent_accept(event);
         return;
     }
@@ -4279,10 +4357,13 @@ static void VXKeyboard_mouseReleaseEvent(XWidget* self, XEvent* event)
     me = (XMouseEvent*)event;
     pos = XMouseEvent_position(me);
     if (kb->m_compactDrag) {
-        /* 紧凑悬浮拖移收尾：结束拖移态并归还抓取（窗位已在 move 落定）。 */
+        /* 紧凑悬浮拖移收尾：结束拖移态并归还抓取（窗位已在 move 落
+           定）；落定=同步整窗重绘（repaint）——拖移步免重绘直搬只保
+           证可见面，真实整窗 PAINT 把两缓冲欠账一次结清（xwd 落定同
+           款契约，异步 update 的区域=m_dirty 快照不可靠）。 */
         kb->m_compactDrag = false;
         if (XWidget_mouseGrabber() == self) XWidget_releaseMouse(self);
-        XWidget_update(self);
+        XWidget_repaint(self);
         XEvent_accept(event);
         return;
     }

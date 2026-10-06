@@ -41,6 +41,7 @@
 #include "XSocketDescriptor.h"
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <errno.h>
 #include <poll.h>
 #include <unistd.h>
@@ -110,6 +111,90 @@ typedef enum XNetIoRingMode {
  * 将一条完成结果（res + user_data 上下文）转换为 CQ 条目或直接
  * 投递定时器事件。pollPlatform（非阻塞批量）和 waitForEvents
  * （阻塞单条）共用。对应 Win32 的 processOneCompletion。 */
+
+/* ================================================================
+ * [wake] 事件循环唤醒延迟探针（诊断, env XGUI_REMOTE_WAKE_PROF 门控）
+ *
+ * 三段打点（设计稿 out/mcgs-campaign/udp-design.md「事件循环唤醒延迟」）：
+ *   ① 阻塞原语进入 → fd 就绪唤醒返回（内核唤醒+syscall 延迟）；
+ *   ② fd 就绪唤醒 → 首条读完成回收（环内完成处理延迟）；
+ *   ③ 读完成 → 消息解析派发（消息层, 经 XAbstractNetIoRing_profMarkRecv/
+ *      profLastRecvUs 与 XGuiServer/XGuiClient 协同, 见 [wake][srv/cli] 行）。
+ * 每 5s 汇总一行 [wake][ring]（stderr, P50/P95, 防日志洪水）。探针未开时
+ * 全部路径零成本（on 缓存 getenv, 每进程探测一次）。
+ * ================================================================ */
+#define XNET_WAKE_PROF_SAMPLES 256
+#define XNET_WAKE_PROF_WIN_US  5000000ULL
+typedef struct XNetWakeSampleSet {
+    uint32_t v[XNET_WAKE_PROF_SAMPLES]; /* 样本(µs; 满后滚动覆盖)。 */
+    int      n;
+} XNetWakeSampleSet;
+static struct XNetWakeProfState {
+    uint64_t wakeUs;         /* fd 就绪唤醒时刻(0=无待采样)。 */
+    uint64_t winStartUs;     /* 5s 汇总窗口起点。 */
+    uint32_t fdWakes;        /* fd 就绪唤醒次数。 */
+    uint32_t timeoutRounds;  /* 超时醒圈数(定时器节拍兜底证据)。 */
+    XNetWakeSampleSet enterWake; /* ①进入阻塞→fd 就绪唤醒。 */
+    XNetWakeSampleSet wakeCqe;   /* ②唤醒→首条读完成。 */
+} xnet_wakeProf;
+/* -1=未探测 env(静态零初始化≠已禁用, 探测一次后 0/1 定版)。 */
+static int xnet_wakeProfOn = -1;
+
+/** @brief 探针开关(env 探测一次)。 */
+static int xnet_wakeProfEnabled(void) {
+    if (xnet_wakeProfOn < 0) {
+        const char* env = getenv("XGUI_REMOTE_WAKE_PROF");
+        xnet_wakeProfOn = (env && env[0] && env[0] != '0') ? 1 : 0;
+    }
+    return xnet_wakeProfOn;
+}
+
+/** @brief 样本入集(满后滚动覆盖; 诊断用途)。 */
+static void xnet_wakeProfPush(XNetWakeSampleSet* set, uint32_t us) {
+    set->v[(set->n < XNET_WAKE_PROF_SAMPLES)
+               ? set->n
+               : (set->n % XNET_WAKE_PROF_SAMPLES)] = us;
+    ++set->n;
+}
+
+static int xnet_wakeProfCmpU32(const void* a, const void* b) {
+    uint32_t x = *(const uint32_t*)a, y = *(const uint32_t*)b;
+    return (x < y) ? -1 : ((x > y) ? 1 : 0);
+}
+
+/** @brief 取百分位(µs; 集内排序副本)。 */
+static uint32_t xnet_wakeProfPct(const XNetWakeSampleSet* set, int pctX100) {
+    uint32_t buf[XNET_WAKE_PROF_SAMPLES];
+    int n = set->n;
+    int idx;
+    if (n <= 0) return 0;
+    if (n > XNET_WAKE_PROF_SAMPLES) n = XNET_WAKE_PROF_SAMPLES;
+    memcpy(buf, set->v, (size_t)n * sizeof(uint32_t));
+    qsort(buf, (size_t)n, sizeof(uint32_t), xnet_wakeProfCmpU32);
+    idx = (n * pctX100) / 10000;
+    if (idx >= n) idx = n - 1;
+    return buf[idx];
+}
+
+/** @brief 5s 窗口汇总输出并复位。 */
+static void xnet_wakeProfFlush(const char* mode, uint64_t nowUs) {
+    fprintf(stderr,
+            "[wake][ring] mode=%s fdWakes=%u enterToWakeUs p50=%u p95=%u "
+            "wakeToCqeUs p50=%u p95=%u timeoutRounds=%u\n",
+            mode, xnet_wakeProf.fdWakes,
+            xnet_wakeProfPct(&xnet_wakeProf.enterWake, 5000),
+            xnet_wakeProfPct(&xnet_wakeProf.enterWake, 9500),
+            xnet_wakeProfPct(&xnet_wakeProf.wakeCqe, 5000),
+            xnet_wakeProfPct(&xnet_wakeProf.wakeCqe, 9500),
+            xnet_wakeProf.timeoutRounds);
+    xnet_wakeProf.wakeUs = 0;
+    xnet_wakeProf.winStartUs = nowUs;
+    xnet_wakeProf.fdWakes = 0;
+    xnet_wakeProf.timeoutRounds = 0;
+    xnet_wakeProf.enterWake.n = 0;
+    xnet_wakeProf.wakeCqe.n = 0;
+}
+
 static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
                                  void* userData) {
     XEventContext* ctx = (XEventContext*)(uintptr_t)userData;
@@ -117,6 +202,19 @@ static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
     if (!ctx) return;
 
     ctx->result = res;
+    /* [wake] 探针: 套接字读完成打点(方向以 eventMask 区分, SEND 完成不
+     * 污染到达时戳) + 「唤醒→首条读完成」段采样。 */
+    if (xnet_wakeProfEnabled() && res > 0 &&
+        ctx->type == XEventContextType_Type_Socket &&
+        ctx->eventMask == XSocketAct_Read) {
+        XAbstractNetIoRing_profMarkRecv(ctx->fd);
+        if (xnet_wakeProf.wakeUs) {
+            xnet_wakeProfPush(&xnet_wakeProf.wakeCqe,
+                              (uint32_t)(XAbstractNetIoRing_profNowUs() -
+                                         xnet_wakeProf.wakeUs));
+            xnet_wakeProf.wakeUs = 0;
+        }
+    }
     if (ctx->type == XEventContextType_Type_Timer) {
         /* 定时器完成：直接投递定时器事件到应用层 */
         XFd timerFd = ctx->fd;
@@ -671,6 +769,18 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
         nfds_t count = 0;
         if (posix->m_ringFd < 0) return;
 
+        /* [wake] 5s 汇总窗口到点即输出(探针开启时)。 */
+        if (xnet_wakeProfEnabled()) {
+            uint64_t nowUs = XAbstractNetIoRing_profNowUs();
+            if (!xnet_wakeProf.winStartUs)
+                xnet_wakeProf.winStartUs = nowUs;
+            else if (nowUs - xnet_wakeProf.winStartUs >= XNET_WAKE_PROF_WIN_US) {
+                const char* profMode = "epoll";
+                if (posix->m_mode == XNET_MODE_IOURING) profMode = "io_uring";
+                xnet_wakeProfFlush(profMode, nowUs);
+            }
+        }
+
         VXNetIoRingPosix_pollPlatform(self);
         if (ioPeekCqe(posix) != NULL) return;
 
@@ -680,9 +790,24 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
 
         {
             int result;
+            uint64_t enterUs = xnet_wakeProfEnabled()
+                                   ? XAbstractNetIoRing_profNowUs() : 0;
             do {
                 result = poll(fds, count, timeoutMs);
             } while (result < 0 && errno == EINTR);
+            /* [wake] 段①: fd 就绪唤醒(仅 ring fd, 纯 eventfd 唤醒不计);
+             * 超时醒计一轮(定时器节拍兜底证据)。 */
+            if (enterUs) {
+                if (result > 0 && (fds[0].revents & POLLIN)) {
+                    xnet_wakeProf.wakeUs = XAbstractNetIoRing_profNowUs();
+                    xnet_wakeProfPush(&xnet_wakeProf.enterWake,
+                                      (uint32_t)(xnet_wakeProf.wakeUs -
+                                                 enterUs));
+                    ++xnet_wakeProf.fdWakes;
+                } else if (result == 0) {
+                    ++xnet_wakeProf.timeoutRounds;
+                }
+            }
             if (result > 0 && count > 1 && (fds[1].revents & POLLIN)) {
                 uint64_t value;
                 while (read(posix->m_wakeFd, &value, sizeof(value)) < 0 &&
@@ -694,15 +819,43 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
     }
 #endif
 #if XNET_BUILD_EPOLL
+    /* [wake] 5s 汇总窗口到点即输出(探针开启时)。 */
+    if (xnet_wakeProfEnabled()) {
+        uint64_t nowUs = XAbstractNetIoRing_profNowUs();
+        if (!xnet_wakeProf.winStartUs)
+            xnet_wakeProf.winStartUs = nowUs;
+        else if (nowUs - xnet_wakeProf.winStartUs >= XNET_WAKE_PROF_WIN_US)
+            xnet_wakeProfFlush("epoll", nowUs);
+    }
     epPollPlatform(posix, self); /* 先非阻塞一轮（可能在等待前已有完成） */
     {
         struct epoll_event events[XNET_EPOLL_MAX_EVENTS];
         int n;
         int i;
+        uint64_t enterUs = xnet_wakeProfEnabled()
+                               ? XAbstractNetIoRing_profNowUs() : 0;
         do {
             n = epoll_wait(posix->m_epollFd, events, XNET_EPOLL_MAX_EVENTS,
                            timeoutMs);
         } while (n < 0 && errno == EINTR);
+        /* [wake] 段①: 网络 fd 就绪唤醒(wakeFd 纯唤醒不计); 超时醒计一轮。 */
+        if (enterUs) {
+            bool netReady = false;
+            for (i = 0; i < n; ++i) {
+                if (events[i].data.fd != posix->m_wakeFd) {
+                    netReady = true;
+                    break;
+                }
+            }
+            if (netReady) {
+                xnet_wakeProf.wakeUs = XAbstractNetIoRing_profNowUs();
+                xnet_wakeProfPush(&xnet_wakeProf.enterWake,
+                                  (uint32_t)(xnet_wakeProf.wakeUs - enterUs));
+                ++xnet_wakeProf.fdWakes;
+            } else if (n == 0) {
+                ++xnet_wakeProf.timeoutRounds;
+            }
+        }
         for (i = 0; i < n; ++i) {
             int fd = events[i].data.fd;
             if (fd == posix->m_wakeFd) {

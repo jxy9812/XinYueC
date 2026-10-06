@@ -14,6 +14,9 @@
 #include "XMemory.h"
 #include <stdio.h>
 #include <string.h>
+#ifndef _WIN32
+#include <unistd.h> /* xkb_pumpMs 的 usleep（⑦.8 几何跟随时序适配）。 */
+#endif
 #if XKEYBOARD_IME_ON
 #include "XPinyinEngine.h"
 #include "XPinyinTable.h"
@@ -88,6 +91,46 @@ static void xkb_expect(bool cond, const char* what)
         fprintf(stderr, "[XKB-FAIL] %s\n", what ? what : "");
         ++xkb_failures;
     }
+}
+/** @brief 泵事件 ms 毫秒（非 win32；⑦.8 几何跟随时序适配）。
+ *  @details 非 win32 平台宿主几何跟随为 Queued+30ms 合流单发定时器
+ *           （XVirtualKeyboard.c XKB_GEOM_CONN_TYPE 平台分野，2026-10-03
+ *           拖动感官裁定：键盘重绘有意滞后主窗一拍，防「键盘跑出父窗
+ *           口」）；win32 为 Direct 同步（模态拖拽循环内唯一存活通道），
+ *           无需泵。门禁（Xvfb/X11）断言前泵事件让跟随到位，语义对
+ *           两平台等价：win32 空转即回。 */
+static void xkb_pumpMs(int ms)
+{
+#ifndef _WIN32
+    int waited = 0;
+    while (waited < ms) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        usleep(5000);
+        waited += 5;
+    }
+#else
+    (void)ms;
+#endif
+}
+
+/** @brief 泵事件等待键盘几何到位 wantW×wantH（⑦.8 链路自证前等待）。
+ *  @details 上限 400ms 防挂死：跟随永不到位按超时返回，后续断言照常
+ *           失败——「停靠态宿主 resize 几何跟随（链路活）」的自证语义
+ *           保留，只是把「同步读」改为「异步到位后读」（非 win32 契约）。 */
+static void xkb_waitGeometry(XVirtualKeyboard* kb, int wantW, int wantH)
+{
+#ifndef _WIN32
+    int waited = 0;
+    while (waited < 400 &&
+           !(XVirtualKeyboard_width(kb) == wantW &&
+             XVirtualKeyboard_height(kb) == wantH)) {
+        XCoreApplication_processEvents(XEventLoop_AllEvents);
+        usleep(5000);
+        waited += 5;
+    }
+#else
+    (void)kb; (void)wantW; (void)wantH;
+#endif
 }
 
 /** @brief 按标签找按钮索引（未找到返回 -1）。 */
@@ -2593,8 +2636,11 @@ bool XKeyboardTest_runAll(void)
         XObject_event_base((XObject*)kf, (XEvent*)&me);                    \
     } while (0)
             /* 链路自证：停靠态宿主 resize → 几何信号链 reposition 跟随
-               （win32 Direct 同步），证明信号链在跳、后守卫非空转。 */
+               （win32 Direct 同步；非 win32 Queued+30ms 合流，先泵至
+               到位再断言——见 xkb_waitGeometry 注），证明信号链在跳、
+               后守卫非空转。 */
             XWidget_setGeometry(win, 0, 0, 500, 360);
+            xkb_waitGeometry(kf, 500, 180);
             xkb_expect(XVirtualKeyboard_width(kf) == 500 &&
                            XVirtualKeyboard_height(kf) == 180,
                        "⑦.8 前置：停靠态宿主 resize 几何跟随（链路活）");
@@ -2624,8 +2670,11 @@ bool XKeyboardTest_runAll(void)
                            XWidget_y((XWidget*)kf) == 360 - dockedH *
                                (500 * 45 / 100) / 500,
                        "紧凑几何：宽 min(宿主宽45%,420) 高同比例宿主右下");
-            /* 几何守卫：宿主 resize 期间 reposition 不覆盖紧凑矩形。 */
+            /* 几何守卫：宿主 resize 期间 reposition 不覆盖紧凑矩形。
+               先泵一拍（40ms>30ms 合流周期）让 Queued 几何槽+定时器真
+               走完，守卫在「reposition 真被调用」前提下受检，非空转。 */
             XWidget_setGeometry(win, 0, 0, 640, 480);
+            xkb_pumpMs(40);
             xkb_expect(kf->m_compactFloat &&
                            XWidget_x((XWidget*)kf) == 275 &&
                            XWidget_y((XWidget*)kf) == 279 &&

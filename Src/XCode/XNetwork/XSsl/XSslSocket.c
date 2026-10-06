@@ -116,10 +116,17 @@ static bool xssl_getSocketBool(const XAbstractSocket* socket, XDeviceProperty pr
 {
     XVariant result;
     if (!socket || !value || socket->m_deviceFd == XFD_INVALID) return false;
+    /* 桶规约(与 XAbstractSocket socketGetBoolProperty 同款): memset+XVariant_init
+     * 建 vtable, 收尾 setValue_null 经 XClassDeinit 释放值槽。
+     * 旧 memset+XVariant_clear 只清内容不释放——值槽堆块每次调用泄漏。 */
     memset(&result, 0, sizeof(result));
-    if (!XDevice_getProperty(socket->m_deviceFd, property, &result)) return false;
+    XVariant_init(&result, NULL, 0, XVariantType_NULL);
+    if (!XDevice_getProperty(socket->m_deviceFd, property, &result)) {
+        XVariant_setValue_null(&result);
+        return false;
+    }
     *value = XVariant_toBool(&result);
-    XVariant_clear(&result);
+    XVariant_setValue_null(&result);
     return true;
 }
 
@@ -128,10 +135,12 @@ static size_t xssl_getSocketSize(const XAbstractSocket* socket, XDeviceProperty 
     XVariant result;
     size_t value = 0;
     if (!socket || socket->m_deviceFd == XFD_INVALID) return 0;
+    /* 桶规约: 同 xssl_getSocketBool。 */
     memset(&result, 0, sizeof(result));
+    XVariant_init(&result, NULL, 0, XVariantType_NULL);
     if (XDevice_getProperty(socket->m_deviceFd, property, &result))
         value = XVariant_toSize_t(&result);
-    XVariant_clear(&result);
+    XVariant_setValue_null(&result);
     return value;
 }
 

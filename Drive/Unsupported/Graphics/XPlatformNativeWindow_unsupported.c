@@ -202,6 +202,27 @@ void* XPlatformNativeWindow_nativeConnection(
     return NULL;
 }
 
+/* ==================== 系统移动交接/拖动显示约定（16306d93 兜底补齐） ====
+ * XWindowDecoration.c / XDockWidget.c 的拖动入口无平台守卫地引用这两个
+ * 契约点（fbdev 嵌入式构建同样编入），X11/Win32 真实实现分别位于
+ * Drive/Posix 与 Drive/windows 的 XPlatformNativeWindow_*.c；本桩若不
+ * 提供回退定义，无 X11 的 armel fbdev 构建在链接期报 undefined
+ * reference。契约口径与 posix X11 段一致：
+ * startSystemMove——无系统模态移动循环可交接，返回 false 让调用方回退
+ * 应用层拖拽循环；
+ * dragFullWindows——无 SPI_GETDRAGFULLWINDOWS「轮廓拖动」系统约定，恒
+ * true 保持整窗内容跟随语义（fbdev 远程与直接展示场景本就要求实况跟随）。 */
+bool XPlatformNativeWindow_startSystemMove(XWindow* window)
+{
+    (void)window;
+    return false;
+}
+
+bool XPlatformNativeWindow_dragFullWindows(void)
+{
+    return true;
+}
+
 /* ==================== 剪贴板后端安装（无平台后端：no-op） ====================
  * 无窗口系统即无跨进程 Selection/Clipboard 互通：安装退化为空操作，
  * XClipboard 保持纯进程内行为。契约声明见 XPlatformNativeWindow.h，

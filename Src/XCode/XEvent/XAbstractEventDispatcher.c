@@ -731,6 +731,14 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
             int64_t remainMs = (ns <= 0) ? 0 : (ns + 999999) / 1000000;
             /* 远期定时器封顶，防止超出 int 及各等待后端的毫秒范围 */
             if (remainMs > 999999999) remainMs = 999999999;
+            /* 双时钟轴归一根修时误删「截止→等待」赋值（d01b3ca2 只留护栏
+             * 与残留 remainMs 死存储）：timeoutMs 恒 -1 → 一律落到下方
+             * 20ms 心跳——有定时器也按心跳节拍醒圈，阻塞等待被钳回心跳
+             * 量化（2026-10-04 mcgs round1 wake 探针实证：两端环层
+             * timeoutRounds ~230/5s、srv-udp 派发 p50=15.8ms≈一圈、
+             * cli-udp 突发 p95≈25ms≈一圈）。恢复赋值：有定时器时严格按
+             * 最近截止等待，无定时器仍走 20ms 心跳兜底。 */
+            timeoutMs = (int)remainMs;
             /* 忙轮护栏：TO=0 表示按轴换算截止已到，但后端（全局时间轮的
              * 刻度消费）兑现存在延迟窗口——此时若以 0 超时 poll 会退化成
              * 每秒十万次的空转轮（实测占满半核）。钳到 1ms（= 时间轮自身
@@ -744,6 +752,14 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
          * 要么 I/O/投递事件就绪，要么定时器到期由下一轮开头的
          * XDeviceTimer_process 兑现并重设截止，因此不引入忙等。 */
         if (timeoutMs < 0) timeoutMs = 20;
+        /* 轮询回调节奏兜底（2026-10-04 mcgs 战役 round2）：poll 回调链
+         * （fbdev 触摸 xpfi_pump/串口/USB/远程帧泵 poll 口）不经 fd 就绪
+         * 唤醒，只在事件循环圈边界执行——若按远期定时器截止长阻塞，
+         * 回调会被饿到下个定时器到期（慢定时器页面触摸延迟可劣化到秒
+         * 级，替掉被误删赋值期间 20ms 心跳事实上的回调节拍）。截止等待
+         * 保留（≤20ms 的近截止按截止醒，远程会话 8ms 泵兜底定时器因此
+         * 生效），超 20ms 一律钳回心跳，维持既有回调最坏一圈节拍。 */
+        if (timeoutMs > 20) timeoutMs = 20;
 
         if (XAbstractEventDispatcher_isMainThread(self))
         {
