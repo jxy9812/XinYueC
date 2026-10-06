@@ -40,6 +40,8 @@
 #include <iphlpapi.h>
 #include <icmpapi.h>
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include "XNetIoRingWin32.h"
 
 #pragma comment(lib, "ws2_32.lib")
@@ -76,6 +78,10 @@ int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle socketHandle,
 
 #ifndef IP_ADAPTER_ADDRESS_SKIP_AS_SOURCE
 #define IP_ADAPTER_ADDRESS_SKIP_AS_SOURCE 0x0080
+#endif
+
+#ifndef GAA_FLAG_INCLUDE_GATEWAYS
+#define GAA_FLAG_INCLUDE_GATEWAYS 0x0040 /* 旧 SDK 兜底：GAA 默认不返回网关。 */
 #endif
 static PIP_ADAPTER_ADDRESSES current = 0;
 
@@ -1570,6 +1576,370 @@ void XDeviceNetwork_enumInterfacesEnd(XDeviceNetworkInterfaceIterator iter)
     /* 重置静态变量 */
     //extern PIP_ADAPTER_ADDRESSES current;
     current = NULL;
+}
+
+/* =========================================================================
+ * 网卡配置（DHCP / 静态 IP）
+ * =========================================================================
+ * 查询走 IP Helper（GetAdaptersAddresses 单遍遍历按 IfIndex 命中）；
+ * 设置经 netsh（interface ip 上下文）——Windows 官方脚本化配置通路，
+ * 以 CREATE_NO_WINDOW 子进程执行并按退出码判定；需要管理员权限。
+ */
+
+/** @brief UTF-16 → UTF-8 堆拷贝（XMalloc_System 分配；失败返回 NULL）。 */
+static wchar_t* netIfDupWide(const char* utf8)
+{
+    int chars;
+    wchar_t* wide;
+    if (!utf8) utf8 = "";
+    chars = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    if (chars <= 0) return NULL;
+    wide = (wchar_t*)XMalloc_System((size_t)chars * sizeof(wchar_t));
+    if (!wide) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide, chars) <= 0) {
+        XFree_System(wide);
+        return NULL;
+    }
+    return wide;
+}
+
+/** @brief 单遍枚举所有适配器并按 IfIndex 命中（GAA 缓冲由调用方释放）。 */
+static PIP_ADAPTER_ADDRESSES netIfFindAdapter(uint32_t ifIndex,
+                                              PIP_ADAPTER_ADDRESSES* buffer)
+{
+    ULONG size = 0;
+    ULONG rc;
+    PIP_ADAPTER_ADDRESSES head;
+    *buffer = NULL;
+    /* INCLUDE_GATEWAYS 必带：GAA 默认不返回 FirstGatewayAddress（网关
+       恒空的实测根因）；INCLUDE_PREFIX 供前缀掩码展开。 */
+    GetAdaptersAddresses(AF_UNSPEC,
+                         GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS,
+                         NULL, NULL, &size);
+    if (size == 0) return NULL;
+    head = (PIP_ADAPTER_ADDRESSES)XMalloc_System(size);
+    if (!head) return NULL;
+    rc = GetAdaptersAddresses(AF_UNSPEC,
+                              GAA_FLAG_INCLUDE_PREFIX |
+                                  GAA_FLAG_INCLUDE_GATEWAYS,
+                              NULL, head, &size);
+    if (rc != ERROR_SUCCESS) {
+        XFree_System(head);
+        return NULL;
+    }
+    *buffer = head;
+    {
+        PIP_ADAPTER_ADDRESSES a;
+        for (a = head; a; a = a->Next)
+            if ((uint32_t)a->IfIndex == ifIndex) return a;
+    }
+    return NULL;
+}
+
+/** @brief 以隐藏窗口执行一条 netsh 命令行（UTF-8 参数），按退出码判定。 */
+static bool netIfRunNetsh(const char* argumentsUtf8)
+{
+    wchar_t* args = netIfDupWide(argumentsUtf8);
+    wchar_t commandLine[2048];
+    STARTUPINFOW startup;
+    PROCESS_INFORMATION process;
+    bool ok = false;
+    if (!args) return false;
+    _snwprintf(commandLine,
+               sizeof(commandLine) / sizeof(commandLine[0]) - 1,
+               L"netsh.exe %s", args);
+    commandLine[sizeof(commandLine) / sizeof(commandLine[0]) - 1] = L'\0';
+    XFree_System(args);
+    memset(&startup, 0, sizeof(startup));
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESHOWWINDOW;
+    startup.wShowWindow = SW_HIDE;
+    memset(&process, 0, sizeof(process));
+    if (!CreateProcessW(NULL, commandLine, NULL, NULL, FALSE,
+                        CREATE_NO_WINDOW, NULL, NULL, &startup, &process))
+        return false;
+    /* 等待应用完成（地址切换通常秒级；超时按失败收口，进程随之遗弃）。 */
+    if (WaitForSingleObject(process.hProcess, 15000) == WAIT_OBJECT_0) {
+        DWORD exitCode = 1;
+        if (GetExitCodeProcess(process.hProcess, &exitCode) &&
+            exitCode == 0)
+            ok = true;
+    }
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return ok;
+}
+
+/** @brief netsh name= 参数消毒：剔除内嵌双引号，防拆参数。 */
+static wchar_t* netIfSanitizeName(const wchar_t* name)
+{
+    size_t i;
+    size_t j = 0;
+    size_t count;
+    wchar_t* out;
+    if (!name) return NULL;
+    count = wcslen(name);
+    out = (wchar_t*)XMalloc_System((count + 1) * sizeof(wchar_t));
+    if (!out) return NULL;
+    for (i = 0; i < count; ++i)
+        if (name[i] != L'"') out[j++] = name[i];
+    out[j] = L'\0';
+    return out;
+}
+
+/** @brief 按 ifIndex 组装 `name="<连接名>"` 片段；失败返回 NULL。 */
+static wchar_t* netIfNameArgument(uint32_t ifIndex)
+{
+    PIP_ADAPTER_ADDRESSES buffer = NULL;
+    PIP_ADAPTER_ADDRESSES adapter = netIfFindAdapter(ifIndex, &buffer);
+    wchar_t* quoted = NULL;
+    wchar_t* safe;
+    if (!adapter) return NULL;
+    safe = netIfSanitizeName(adapter->FriendlyName);
+    XFree_System(buffer);
+    if (!safe) return NULL;
+    quoted = (wchar_t*)XMalloc_System(
+        (wcslen(safe) + 16) * sizeof(wchar_t));
+    if (quoted)
+        _snwprintf(quoted, wcslen(safe) + 15, L"name=\"%s\"", safe);
+    XFree_System(safe);
+    return quoted;
+}
+
+bool XDeviceNetwork_interfaceConfigSupported(void)
+{
+    return true;
+}
+
+bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
+                                         XDeviceNetworkInterfaceConfig* outConfig)
+{
+    PIP_ADAPTER_ADDRESSES buffer = NULL;
+    PIP_ADAPTER_ADDRESSES adapter;
+    PIP_ADAPTER_UNICAST_ADDRESS unicast;
+    PIP_ADAPTER_GATEWAY_ADDRESS gateway;
+    PIP_ADAPTER_DNS_SERVER_ADDRESS dns;
+    int dnsCount = 0;
+    bool haveV4Gw = false;
+    bool haveV6Gw = false;
+    if (!outConfig) return false;
+    memset(outConfig, 0, sizeof(*outConfig));
+    XHostAddress_init(&outConfig->ipv4Address);
+    XHostAddress_init(&outConfig->ipv4Netmask);
+    XHostAddress_init(&outConfig->ipv4Gateway);
+    XHostAddress_init(&outConfig->ipv6Address);
+    XHostAddress_init(&outConfig->ipv6Gateway);
+    XHostAddress_init(&outConfig->dhcpServer);
+    XHostAddress_init(&outConfig->dnsPrimary);
+    XHostAddress_init(&outConfig->dnsSecondary);
+    adapter = netIfFindAdapter(ifIndex, &buffer);
+    if (!adapter) return false;
+    outConfig->dhcpEnabled =
+        (adapter->Flags & IP_ADAPTER_DHCP_ENABLED) != 0;
+    outConfig->operUp = (adapter->OperStatus == IfOperStatusUp);
+    outConfig->friendlyName = XString_create_utf16(adapter->FriendlyName);
+    /* 首个 IPv4 单播地址 + 前缀展开的掩码（主机字节序入 XHostAddress）。 */
+    for (unicast = adapter->FirstUnicastAddress; unicast;
+         unicast = unicast->Next) {
+        if (unicast->Address.lpSockaddr &&
+            unicast->Address.lpSockaddr->sa_family == AF_INET) {
+            uint32_t prefix = unicast->OnLinkPrefixLength;
+            uint32_t maskHost;
+            if (prefix > 32) prefix = 32;
+            sa2addr((struct sockaddr_storage*)unicast->Address.lpSockaddr,
+                    &outConfig->ipv4Address, NULL);
+            maskHost = (prefix == 0)
+                ? 0u : (prefix >= 32)
+                    ? 0xFFFFFFFFu : (0xFFFFFFFFu << (32 - prefix));
+            XHostAddress_setAddressIPv4(&outConfig->ipv4Netmask, maskHost);
+            break;
+        }
+    }
+    /* 首个 IPv6 单播地址 + 前缀长度（预填用；页内全列表另经接口枚举）。 */
+    for (unicast = adapter->FirstUnicastAddress; unicast;
+         unicast = unicast->Next) {
+        if (unicast->Address.lpSockaddr &&
+            unicast->Address.lpSockaddr->sa_family == AF_INET6) {
+            int prefix = unicast->OnLinkPrefixLength;
+            if (prefix < 0) prefix = 0;
+            if (prefix > 128) prefix = 128;
+            sa2addr((struct sockaddr_storage*)unicast->Address.lpSockaddr,
+                    &outConfig->ipv6Address, NULL);
+            outConfig->ipv6PrefixLength = prefix;
+            break;
+        }
+    }
+    /* 首个 IPv4 / IPv6 默认网关。 */
+    for (gateway = adapter->FirstGatewayAddress; gateway;
+         gateway = gateway->Next) {
+        if (!gateway->Address.lpSockaddr) continue;
+        if (!haveV4Gw &&
+            gateway->Address.lpSockaddr->sa_family == AF_INET) {
+            sa2addr((struct sockaddr_storage*)gateway->Address.lpSockaddr,
+                    &outConfig->ipv4Gateway, NULL);
+            haveV4Gw = true;
+        } else if (!haveV6Gw &&
+                   gateway->Address.lpSockaddr->sa_family == AF_INET6) {
+            sa2addr((struct sockaddr_storage*)gateway->Address.lpSockaddr,
+                    &outConfig->ipv6Gateway, NULL);
+            haveV6Gw = true;
+        }
+        if (haveV4Gw && haveV6Gw)
+            break;
+    }
+    /* DHCP 服务器（GAA 结构不含该字段，经 GetAdaptersInfo 按接口索引
+       补齐；未启用 DHCP 或服务器为 0.0.0.0 时保持 null 地址）。 */
+    {
+        PIP_ADAPTER_INFO infoList = NULL;
+        ULONG infoSize = 0;
+        PIP_ADAPTER_INFO info;
+        GetAdaptersInfo(NULL, &infoSize);
+        if (infoSize > 0) {
+            infoList = (PIP_ADAPTER_INFO)XMalloc_System(infoSize);
+            if (infoList &&
+                GetAdaptersInfo(infoList, &infoSize) == ERROR_SUCCESS) {
+                for (info = infoList; info; info = info->Next) {
+                    if ((uint32_t)info->Index == ifIndex &&
+                        info->DhcpEnabled &&
+                        info->DhcpServer.IpAddress.String[0] &&
+                        strcmp(info->DhcpServer.IpAddress.String,
+                               "0.0.0.0") != 0) {
+                        XHostAddress_setAddressIPv4(
+                            &outConfig->dhcpServer,
+                            ntohl(inet_addr(
+                                info->DhcpServer.IpAddress.String)));
+                        break;
+                    }
+                }
+            }
+            if (infoList) XFree_System(infoList);
+        }
+    }
+    /* 前 2 个 IPv4 DNS。 */
+    for (dns = adapter->FirstDnsServerAddress; dns && dnsCount < 2;
+         dns = dns->Next) {
+        if (!dns->Address.lpSockaddr ||
+            dns->Address.lpSockaddr->sa_family != AF_INET)
+            continue;
+        sa2addr((struct sockaddr_storage*)dns->Address.lpSockaddr,
+                dnsCount == 0 ? &outConfig->dnsPrimary
+                              : &outConfig->dnsSecondary,
+                NULL);
+        ++dnsCount;
+    }
+    XFree_System(buffer);
+    return true;
+}
+
+void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config)
+{
+    if (!config) return;
+    if (config->friendlyName) XClassDelete(config->friendlyName);
+    XClassDeinit(&config->ipv4Address);
+    XClassDeinit(&config->ipv4Netmask);
+    XClassDeinit(&config->ipv4Gateway);
+    XClassDeinit(&config->ipv6Address);
+    XClassDeinit(&config->ipv6Gateway);
+    XClassDeinit(&config->dhcpServer);
+    XClassDeinit(&config->dnsPrimary);
+    XClassDeinit(&config->dnsSecondary);
+    memset(config, 0, sizeof(*config));
+}
+
+bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex)
+{
+    wchar_t* name = netIfNameArgument(ifIndex);
+    char command[1024];
+    char nameUtf8[256];
+    int written;
+    if (!name) return false;
+    written = WideCharToMultiByte(CP_UTF8, 0, name, -1,
+                                  nameUtf8, sizeof(nameUtf8), NULL, NULL);
+    XFree_System(name);
+    if (written <= 0) return false;
+    _snprintf(command, sizeof(command) - 1,
+              "interface ip set address %s source=dhcp", nameUtf8);
+    if (!netIfRunNetsh(command)) return false;
+    _snprintf(command, sizeof(command) - 1,
+              "interface ip set dnsservers %s source=dhcp", nameUtf8);
+    return netIfRunNetsh(command);
+}
+
+bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address,
+                                       const char* ipv4Netmask,
+                                       const char* ipv4Gateway,
+                                       const char* dnsPrimary,
+                                       const char* dnsSecondary)
+{
+    wchar_t* name;
+    char command[1024];
+    char nameUtf8[256];
+    int written;
+    if (!ipv4Address || !ipv4Address[0] || !ipv4Netmask || !ipv4Netmask[0])
+        return false;
+    name = netIfNameArgument(ifIndex);
+    if (!name) return false;
+    written = WideCharToMultiByte(CP_UTF8, 0, name, -1,
+                                  nameUtf8, sizeof(nameUtf8), NULL, NULL);
+    XFree_System(name);
+    if (written <= 0) return false;
+    /* 地址 + 掩码 + 网关（空网关以 none 占位，netsh 语义=不设网关）。 */
+    _snprintf(command, sizeof(command) - 1,
+              "interface ip set address %s static %s %s %s",
+              nameUtf8, ipv4Address, ipv4Netmask,
+              (ipv4Gateway && ipv4Gateway[0]) ? ipv4Gateway : "none");
+    if (!netIfRunNetsh(command)) return false;
+    /* DNS：主/备/清空三态。 */
+    if (dnsPrimary && dnsPrimary[0]) {
+        _snprintf(command, sizeof(command) - 1,
+                  "interface ip set dnsservers %s static %s primary",
+                  nameUtf8, dnsPrimary);
+        if (!netIfRunNetsh(command)) return false;
+        if (dnsSecondary && dnsSecondary[0]) {
+            _snprintf(command, sizeof(command) - 1,
+                      "interface ip add dnsservers %s %s index=2",
+                      nameUtf8, dnsSecondary);
+            return netIfRunNetsh(command);
+        }
+        return true;
+    }
+    _snprintf(command, sizeof(command) - 1,
+              "interface ip set dnsservers %s source=static addr=none",
+              nameUtf8);
+    return netIfRunNetsh(command);
+}
+
+bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
+                                           const char* ipv6Address,
+                                           int prefixLength,
+                                           const char* ipv6Gateway)
+{
+    wchar_t* name;
+    char command[1200];
+    char nameUtf8[256];
+    int written;
+    if (!ipv6Address || !ipv6Address[0] ||
+        prefixLength < 0 || prefixLength > 128)
+        return false;
+    name = netIfNameArgument(ifIndex);
+    if (!name) return false;
+    written = WideCharToMultiByte(CP_UTF8, 0, name, -1,
+                                  nameUtf8, sizeof(nameUtf8), NULL, NULL);
+    XFree_System(name);
+    if (written <= 0) return false;
+    /* 追加静态地址（ipv6 无 set address；已存在时 netsh 报错→按失败
+     * 上报）。不影响既有 SLAAC/临时地址。 */
+    _snprintf(command, sizeof(command) - 1,
+              "interface ipv6 add address %s %s/%d",
+              nameUtf8, ipv6Address, prefixLength);
+    if (!netIfRunNetsh(command)) return false;
+    if (ipv6Gateway && ipv6Gateway[0]) {
+        _snprintf(command, sizeof(command) - 1,
+                  "interface ipv6 add route ::/0 %s %s",
+                  nameUtf8, ipv6Gateway);
+        return netIfRunNetsh(command);
+    }
+    return true;
 }
 
 /* =========================================================================

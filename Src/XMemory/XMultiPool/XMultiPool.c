@@ -4,6 +4,8 @@
 #include "XMutex.h"
 #include <string.h>
 
+#if XMEMORY_MULTIPOOL_ON
+
 /* ============================================================================
  * 内部常量
  * ============================================================================ */
@@ -300,7 +302,9 @@ static bool global_pool_inited = false;
 static void XMultiPool_initGlobal(void) {
     if (global_pool_inited) return;
     XMULTIPOOL_STATIC_INIT(global_pool, 5);
-    XMultiPool_enable_power_of_two_mode(global_pool, 32, 2);
+    XMultiPool_enable_power_of_two_mode(global_pool,
+                                        XMP_GLOBAL_INITIAL_SIZE,
+                                        XMP_GLOBAL_GROWTH_MULTIPLIER);
 
     /* 全局池块数可配置（桌面默认 256/256/256；嵌入式经编译选项缩小，
      * 否则小容量 FreeRTOS 堆在首个 XCoreApplication 初始化即耗尽）。 */
@@ -368,3 +372,10 @@ const XFixedPool* XMultiPool_subPoolAt(const XMultiPool* mp, size_t index) {
     if (!mp || index >= mp->sub_pool_count || !mp->sub_pools) return NULL;
     return mp->sub_pools[index];
 }
+
+#else /* XMEMORY_MULTIPOOL_ON == 0 */
+
+/* 裁剪后的空编译单元，避免 ISO C 对空翻译单元的移植性疑虑 */
+typedef int xmultipool_trimmed_unused_t;
+
+#endif /* XMEMORY_MULTIPOOL_ON */

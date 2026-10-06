@@ -291,6 +291,104 @@ bool XNetworkInterface_isPointToPoint(const XNetworkInterface* iface);
  */
 bool XNetworkInterface_canMulticast(const XNetworkInterface* iface);
 
+// ==================== 网卡配置（DHCP / 静态 IP） ====================
+// 对标「系统网络设置」场景：按接口索引查询与切换 DHCP/静态配置。
+// 能力来自平台后端（见 XDeviceNetwork.h 网卡配置节）：Windows 经
+// IP Helper + netsh（需管理员权限）；其余平台当前不支持，下面的
+// configSupported 恒 false、查询/设置返回 false。
+// 地址字段复用值语义的 XHostAddress（isNull()=无此项），连接名为 XString。
+
+XCLASS_DEFINE_BEGING(XNetworkInterfaceConfig)
+XCLASS_DEFINE_EXTEND_END(XNetworkInterfaceConfig, XClass)
+
+/**
+ * @brief 网卡 IPv4 配置快照。
+ *
+ * 查询结果对象：地址为值语义 XHostAddress（isNull()=无该项），
+ * 连接名为 XString*（无该项为 NULL）。创建/析构走 XClass 体系
+ * （XNetworkInterfaceConfig_create / XClassDelete）。
+ */
+typedef struct XNetworkInterfaceConfig {
+    XClass m_class;             ///< 基类（必须位于第一成员）
+    XString* m_friendlyName;    ///< 连接名（如 "以太网"；netsh name= 口径）；NULL=无
+    XHostAddress m_ipv4Address; ///< 首个 IPv4 单播地址；isNull()=无
+    XHostAddress m_ipv4Netmask; ///< 该地址的子网掩码；isNull()=无
+    XHostAddress m_ipv4Gateway; ///< 首个 IPv4 默认网关；isNull()=无
+    XHostAddress m_ipv6Address; ///< 首个 IPv6 单播地址（预填用）；isNull()=无
+    XHostAddress m_ipv6Gateway; ///< 首个 IPv6 默认网关；isNull()=无
+    XHostAddress m_dhcpServer;  ///< DHCP 服务器地址；isNull()=无
+    XHostAddress m_dnsPrimary;  ///< 首选 DNS；isNull()=无
+    XHostAddress m_dnsSecondary;///< 备用 DNS；isNull()=无
+    int m_ifIndex;              ///< 接口索引（查询入参回显）
+    int m_ipv6PrefixLength;     ///< m_ipv6Address 的前缀长度（0..128）；无 IPv6 为 0
+    bool m_dhcpEnabled;         ///< true=DHCP 自动获取，false=静态配置
+    bool m_operUp;              ///< 接口管理状态 Up
+} XNetworkInterfaceConfig;
+
+/** @brief 初始化已分配的配置快照对象（地址置 null、连接名置 NULL）。 */
+void XNetworkInterfaceConfig_init(XNetworkInterfaceConfig* config);
+
+/** @brief 创建配置快照对象；调用方 XClassDelete 释放。 */
+XNetworkInterfaceConfig* XNetworkInterfaceConfig_create_ex(XMemoryType memory);
+
+/** @brief 初始化虚函数表（deinit/copy/move 全套值语义）。 */
+XVtable* XNetworkInterfaceConfig_class_init(void);
+
+/**
+ * @brief 查询平台是否具备网卡配置能力。
+ * @return 具备返回 true（当前仅 Windows 后端）；其余平台 false。
+ */
+bool XNetworkInterface_configSupported(void);
+
+/**
+ * @brief 按接口索引查询当前 IPv4 配置快照（填充调用方创建的对象）。
+ * @param ifIndex 接口索引（与 XNetworkInterface_index 同源）
+ * @param outConfig 输出对象；须已经 init/create，不能为 NULL。
+ *                  成功时整对象被新结果覆盖；失败时内容不变。
+ * @return 成功返回 true；索引不存在或平台不支持返回 false
+ */
+bool XNetworkInterface_queryConfig(int ifIndex,
+                                   XNetworkInterfaceConfig* outConfig);
+
+/**
+ * @brief 将网卡切回 DHCP 自动获取（地址与 DNS 一并交还自动管理）。
+ * @param ifIndex 接口索引
+ * @return 平台受理返回 true；不支持/找不到接口/权限不足返回 false
+ */
+bool XNetworkInterface_setDhcpMode(int ifIndex);
+
+/**
+ * @brief 将网卡切换为静态 IPv4 配置并应用。
+ * @param ifIndex 接口索引
+ * @param ipv4Address 静态 IP（点分十进制字面量），非空
+ * @param ipv4Netmask 子网掩码（点分十进制字面量），非空
+ * @param ipv4Gateway 默认网关；NULL/空=不设网关
+ * @param dnsPrimary 首选 DNS；NULL/空=清空 DNS
+ * @param dnsSecondary 备用 DNS；仅 dnsPrimary 非空时生效
+ * @return 平台受理返回 true；参数非法/不支持/权限不足返回 false
+ * @note 应用会短暂中断该网卡连接；Windows 需以管理员身份运行。
+ */
+bool XNetworkInterface_setStaticMode(int ifIndex, const char* ipv4Address,
+                                     const char* ipv4Netmask,
+                                     const char* ipv4Gateway,
+                                     const char* dnsPrimary,
+                                     const char* dnsSecondary);
+
+/**
+ * @brief 为网卡追加一个静态 IPv6 地址（可带网关）。
+ * @param ifIndex 接口索引
+ * @param ipv6Address IPv6 字面量（不含 %zone），非空
+ * @param prefixLength 前缀长度（0..128）
+ * @param ipv6Gateway IPv6 默认网关；NULL/空=不设（lwIP 后端由 RA 管理，
+ *                    该参数被忽略）
+ * @return 平台受理返回 true；参数非法/不支持/权限不足返回 false
+ * @note Windows=netsh interface ipv6（需管理员权限）；不影响既有
+ *       SLAAC/临时地址；地址已存在时按失败上报。
+ */
+bool XNetworkInterface_setStaticIpv6(int ifIndex, const char* ipv6Address,
+                                     int prefixLength,
+                                     const char* ipv6Gateway);
+
 // ==================== 交换操作 ====================
 
 /**
@@ -311,5 +409,7 @@ void XNetworkInterface_swap(XNetworkInterface* iface1, XNetworkInterface* iface2
 /* XClass create API default-memory wrappers. */
 #undef XNetworkInterface_create
 #define XNetworkInterface_create() XNetworkInterface_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+#undef XNetworkInterfaceConfig_create
+#define XNetworkInterfaceConfig_create() XNetworkInterfaceConfig_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 
 #endif // XNETWORKINTERFACE_H

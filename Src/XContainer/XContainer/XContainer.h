@@ -97,7 +97,7 @@ static inline XMemory* XContainer_memory(const XContainer* object)
 static inline XMemoryType XContainer_memory_type(const XContainer* object)
 {
     XMemory* memory = XContainer_memory(object);
-    for (int type = XMEMORY_TYPE_SYSTEM; type <= XMEMORY_TYPE_HYBRID; ++type)
+    for (int type = XMEMORY_TYPE_SYSTEM; type < XMEMORY_TYPE_COUNT; ++type)
     {
         if (memory == XMemory_method((XMemoryType)type))
             return (XMemoryType)type;

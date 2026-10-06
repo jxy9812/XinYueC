@@ -30,9 +30,14 @@ XinYueC内存管理模块提供了灵活的内存管理机制，支持系统内�
 
 | 类型 | 说明 |
 |------|------|
-| `XMEMORY_TYPE_SYSTEM` | 使用系统malloc/free |
+| `XMEMORY_TYPE_SYSTEM` | 使用系统malloc/free（裸机自动回落全局可变池） |
 | `XMEMORY_TYPE_MULTIPOOL` | 使用XMultiPool内存池 |
 | `XMEMORY_TYPE_HYBRID` | 组合模式：小内存用内存池，大内存用系统 |
+| `XMEMORY_TYPE_VARIABLEPOOL` | 使用XVariablePool（TLSF可变池，嵌入式默认后端） |
+
+各内存池可用 `XMemory_config.h` 的裁剪开关整体裁剪（详见文末
+[XMemory_config.h 配置宏](#xmemory_configh-配置宏)），被裁掉的槽位按
+回落链自动换装，调用方代码无需改动。
 
 ---
 
@@ -168,6 +173,15 @@ void* XMalloc_Hybrid(size_t size);
 void XFree_Hybrid(void* ptr);
 void* XRealloc_Hybrid(void* ptr, size_t size);
 void* XCalloc_Hybrid(size_t count, size_t size);
+```
+
+### 可变池函数
+
+```c
+void* XMalloc_VariablePool(size_t size);
+void XFree_VariablePool(void* ptr);
+void* XRealloc_VariablePool(void* ptr, size_t size);
+void* XCalloc_VariablePool(size_t count, size_t size);
 ```
 
 ### 自定义内存管理器
@@ -878,6 +892,31 @@ bool valid = XVariablePool_check(&pool);
 `XVariablePool_check` 会遍历物理块链并校验前后块大小、魔数和统计值，适合
 测试、长时间压力运行和故障现场诊断，不应放在实时分配路径中。
 
+### 全局 TLSF 池
+
+`XVariablePool` 提供与 `XMultiPool` 全局池对等的零配置便捷 API，并作为
+`XMEMORY_TYPE_VARIABLEPOOL` 槽位的后端接入 XMemory 分发：
+
+```c
+XVariablePool* pool = XVariablePool_global();      // 惰性初始化
+void* ptr = XVariablePool_global_malloc(137);
+void* zeroed = XVariablePool_global_calloc(4, 64);
+ptr = XVariablePool_global_realloc(ptr, 1024);
+XVariablePool_global_free(ptr);
+if (XVariablePool_global_isInited()) { /* 只读统计，不触发创建 */ }
+```
+
+arena 来源随平台自动取舍（`XVP_GLOBAL_ARENA_BYTES` 可覆盖）：
+
+- **桌面/FreeRTOS**：首次使用时经系统堆（malloc/pvPortMalloc）创建，
+  未使用不占内存；
+- **裸机**：`.bss` 静态 arena，零堆依赖——因此裸机上
+  `XMEMORY_TYPE_SYSTEM` 系统槽默认回落到全局可变池，`XMalloc_System`/
+  `XNew` 开箱即用。
+
+多线程保护由 `XVP_GLOBAL_THREADSAFE` 控制（默认有 OS 开、裸机关），
+内部使用 `XAtomic` 自旋锁。
+
 ## 字节序处理
 
 XMemory模块提供了跨平台的字节序转换功能。
@@ -995,10 +1034,41 @@ XMemory_write_data(output, XBYTE_ORDER_BIG_ENDIAN, (uint8_t*)&outValue, sizeof(o
 
 | 内存类型 | 适用场景 | 性能 | 特点 |
 |---------|---------|------|------|
-| `XMEMORY_TYPE_SYSTEM` | 通用场景 | 一般 | 灵活，无大小限制 |
+| `XMEMORY_TYPE_SYSTEM` | 通用场景 | 一般 | 灵活，无大小限制；裸机自动回落全局可变池 |
 | `XMEMORY_TYPE_MULTIPOOL` | 频繁分配释放 | 高 | O(1)分配，固定块大小 |
-| `XVariablePool` | 任意大小、嵌入式 arena | 高 | TLSF 分级，支持分裂和相邻块合并 |
+| `XMEMORY_TYPE_VARIABLEPOOL` | 任意大小、嵌入式 arena | 高 | TLSF 分级，支持分裂和相邻块合并 |
 | `XMEMORY_TYPE_HYBRID` | 混合场景 | 中 | 小块用池，大块用系统 |
+
+### XMemory_config.h 配置宏
+
+全部宏可用工程 `-D` 或 CMake `add_compile_definitions` 覆盖（#ifndef 包裹，
+显式传入优先；平台判定沿用 `XPLATFORM_DESKTOP`）。
+
+**内存池裁剪开关**（裁掉的池整个编译单元变空，分发槽位按回落链换装）：
+
+| 宏 | 默认 | 说明 |
+|----|------|------|
+| `XMEMORY_VARIABLEPOOL_ON` | 1 | XVariablePool 总开关；置 0 时 VARIABLEPOOL 槽位回落系统槽 |
+| `XMEMORY_MULTIPOOL_ON` | 1 | XMultiPool 总开关；置 0 时 MULTIPOOL 槽位回落可变池（可用时），否则回落系统槽 |
+| `XMEMORY_FIXEDPOOL_ON` | 跟随 `XMEMORY_MULTIPOOL_ON` | XFixedPool 总开关；单独使用可显式置 1（多级池开而本开关为 0 时 `#error`） |
+| `XMEMORY_HYBRID_ON` | 1 | HYBRID 槽位开关；置 0 回落系统槽 |
+| `XMEMORY_HYBRID_THRESHOLD` | 256 | HYBRID 小块阈值（字节） |
+
+**全局多级池（XMultiPool global）参数**：
+
+| 宏 | 桌面默认 | 嵌入式默认 | 说明 |
+|----|---------|-----------|------|
+| `XMP_GLOBAL_INITIAL_SIZE` | 32 | 32 | 倍数模式首档块大小 |
+| `XMP_GLOBAL_GROWTH_MULTIPLIER` | 2 | 2 | 倍数模式增长倍数 |
+| `XMP_GLOBAL_C32` … `XMP_GLOBAL_C512` | 256/256/256/128/64 | 16/8/4/2/1 | 各档块数 |
+
+**全局可变池（XVariablePool global）参数**：
+
+| 宏 | 默认 | 说明 |
+|----|------|------|
+| `XVP_GLOBAL_ARENA_BYTES` | 桌面 256KB / FreeRTOS 32KB / 裸机 16KB | arena 字节数（桌面/FreeRTOS 经系统堆创建，裸机 .bss 静态） |
+| `XVP_GLOBAL_ALIGNMENT` | 0（=sizeof(void*)） | 用户数据对齐，须为 2 的幂 |
+| `XVP_GLOBAL_THREADSAFE` | 有 OS 1 / 裸机 0 | 全局池 XAtomic 自旋锁保护 |
 
 ### 内存池性能特点
 
@@ -1084,3 +1154,14 @@ XFixedPool会自动对内存块进行对齐，对齐大小通常为：
 | `XMultiPool_malloc()` | 分配内存 |
 | `XMultiPool_free()` | 释放内存 |
 | `XMultiPool_global()` | 获取全局池 |
+
+#### XVariablePool全局池操作
+
+| 函数 | 说明 |
+|------|------|
+| `XVariablePool_global()` | 获取全局 TLSF 池（惰性初始化） |
+| `XVariablePool_global_malloc()` | 全局池分配 |
+| `XVariablePool_global_calloc()` | 全局池零初始化分配 |
+| `XVariablePool_global_realloc()` | 全局池重分配 |
+| `XVariablePool_global_free()` | 释放到全局池 |
+| `XVariablePool_global_isInited()` | 查询是否已完成惰性初始化 |

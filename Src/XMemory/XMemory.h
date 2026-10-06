@@ -7,6 +7,7 @@ extern "C" {
 #include<stdbool.h>
 #include<stdint.h>
 #include"CXinYueConfig.h"
+#include"XVariablePool.h"
 //全局默认的内存方法
 
 /**
@@ -62,12 +63,18 @@ typedef enum {
 	XBIT_ORDER_DEFAULT          ///< 默认使用XBIT_ORDER_LSB_FIRST
 } XBitOrder;
 /**
- * @brief 内存池类型枚举
- */
+* @brief 内存池类型枚举
+* @note 枚举值同时是 XMemory.c 内 global_Memory[] 槽位表的索引；新增类型
+*       时须同步扩表，并把 XMEMORY_TYPE_COUNT 保持为最后一个成员。
+*       各池可用 XMemory_config.h 的裁剪开关整体裁剪，被裁掉的槽位按
+*       回落链自动换装（可变池→系统槽），调用方代码无需改动。
+*/
 typedef enum {
-	XMEMORY_TYPE_SYSTEM,        ///< 使用系统 malloc/free
+	XMEMORY_TYPE_SYSTEM,        ///< 使用系统 malloc/free（裸机默认回落全局可变池）
 	XMEMORY_TYPE_MULTIPOOL,    ///< 使用 XMultiPool
-	XMEMORY_TYPE_HYBRID         ///< 组合模式：小内存用 XMultiPool，大内存用系统
+	XMEMORY_TYPE_HYBRID,        ///< 组合模式：小内存用 XMultiPool，大内存用系统
+	XMEMORY_TYPE_VARIABLEPOOL,  ///< 使用 XVariablePool（TLSF 可变池，嵌入式默认后端）
+	XMEMORY_TYPE_COUNT          ///< 槽位总数（仅作上界哨兵，不是有效类型）
 } XMemoryType;
 /**
 * @brief 设置全局内存管理方法
@@ -159,6 +166,7 @@ bool XMemory_realloc_isNULL(XMemoryType type);
 void* XMalloc_System(size_t size);
 void* XMalloc_MultiPool(size_t size);
 void* XMalloc_Hybrid(size_t size);
+void* XMalloc_VariablePool(size_t size);
 
 /**
 * @brief 使用系统内存方法申请满足指定对齐要求的内存
@@ -176,6 +184,7 @@ void XAlignedFree_System(void* ptr);
 void XFree_System(void* ptr);
 void XFree_MultiPool(void* ptr);
 void XFree_Hybrid(void* ptr);
+void XFree_VariablePool(void* ptr);
 /**
 * @brief 内存重分配函数（调用全局配置的reallocate方法）
 * @param ptr 原内存块指针
@@ -186,6 +195,7 @@ void XFree_Hybrid(void* ptr);
 void* XRealloc_System(void* ptr, size_t size);
 void* XRealloc_MultiPool(void* ptr, size_t size);
 void* XRealloc_Hybrid(void* ptr, size_t size);
+void* XRealloc_VariablePool(void* ptr, size_t size);
 /**
 * @brief 零初始化内存分配函数（调用全局配置的callocZero方法）
 * @param count 元素数量
@@ -196,6 +206,7 @@ void* XRealloc_Hybrid(void* ptr, size_t size);
 void* XCalloc_System(size_t count, size_t size);
 void* XCalloc_MultiPool(size_t count, size_t size);
 void* XCalloc_Hybrid(size_t count, size_t size);
+void* XCalloc_VariablePool(size_t count, size_t size);
 
 /* ========================================================================
  * 全局内存统计
@@ -250,13 +261,14 @@ bool XMemory_statisticsEnabled(void);
 /**
 * @brief 读取指定内存类型的统计快照。
 * @param type 内存类型；XMEMORY_TYPE_SYSTEM 只含系统分配器（堆）口径，
-*             XMEMORY_TYPE_MULTIPOOL 只含内存池口径，
-*             XMEMORY_TYPE_HYBRID 为两路合计（混合模式的系统侧分配与
-*             SYSTEM 类型共享同一计数，无法按来源拆分）。
+*             XMEMORY_TYPE_MULTIPOOL 只含多级池口径，
+*             XMEMORY_TYPE_VARIABLEPOOL 只含全局 TLSF 池口径，
+*             XMEMORY_TYPE_HYBRID 为系统+多级池两路合计（混合模式的系统侧
+*             分配与 SYSTEM 类型共享同一计数，无法按来源拆分）。
 * @return 对应类型的统计快照；未涉及的口径字段为 0，type 越界或宏裁剪时
 *         各字段恒为 0。
 * @note 池的后备缓冲经系统堆分配，计入 SYSTEM 类型的 systemBytes，不随
-*       MULTIPOOL 类型返回；百分比基准同样只取 poolTotalBytes>0 的类型。
+*       池类型返回；百分比基准同样只取 poolTotalBytes>0 的类型。
 */
 XMemoryStatistics XMemory_statistics(XMemoryType type);
 

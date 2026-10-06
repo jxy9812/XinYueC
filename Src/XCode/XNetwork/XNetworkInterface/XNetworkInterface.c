@@ -435,11 +435,188 @@ bool XNetworkInterface_canMulticast(const XNetworkInterface* iface)
 void XNetworkInterface_swap(XNetworkInterface* iface1, XNetworkInterface* iface2)
 {
     if (!iface1 || !iface2) return;
-    
+
     XNetworkInterface temp;
     memcpy(&temp, iface1, sizeof(XNetworkInterface));
     memcpy(iface1, iface2, sizeof(XNetworkInterface));
     memcpy(iface2, &temp, sizeof(XNetworkInterface));
+}
+
+// ==================== 网卡配置（DHCP / 静态 IP） ====================
+// XNetworkInterfaceConfig 值语义类 + 设备层查询/设置转接；平台能力与
+// 安全语义见 XDeviceNetwork.h「网卡配置」节。
+
+static void VXNetworkInterfaceConfig_deinit(XNetworkInterfaceConfig* config);
+static void VXNetworkInterfaceConfig_copy(XNetworkInterfaceConfig* dest,
+                                          const XNetworkInterfaceConfig* src);
+static void VXNetworkInterfaceConfig_move(XNetworkInterfaceConfig* dest,
+                                          XNetworkInterfaceConfig* src);
+
+XVtable* XNetworkInterfaceConfig_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XNetworkInterfaceConfig)
+        XVTABLE_INHERIT_XCLASS(XClass);
+        XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXNetworkInterfaceConfig_deinit);
+        XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXNetworkInterfaceConfig_copy);
+        XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXNetworkInterfaceConfig_move);
+        XCLASS_SHOW_SIZE_DEFAULT(XNetworkInterfaceConfig);
+        return XVTABLE_DEFAULT;
+}
+
+static void VXNetworkInterfaceConfig_deinit(XNetworkInterfaceConfig* config)
+{
+    if (!config) return;
+    if (config->m_friendlyName) {
+        XClassDelete(config->m_friendlyName);
+        config->m_friendlyName = NULL;
+    }
+    XClassDeinit(&config->m_ipv4Address);
+    XClassDeinit(&config->m_ipv4Netmask);
+    XClassDeinit(&config->m_ipv4Gateway);
+    XClassDeinit(&config->m_ipv6Address);
+    XClassDeinit(&config->m_ipv6Gateway);
+    XClassDeinit(&config->m_dhcpServer);
+    XClassDeinit(&config->m_dnsPrimary);
+    XClassDeinit(&config->m_dnsSecondary);
+}
+
+static void VXNetworkInterfaceConfig_copy(XNetworkInterfaceConfig* dest,
+                                          const XNetworkInterfaceConfig* src)
+{
+    if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XNetworkInterfaceConfig_init(dest);
+    if (src->m_friendlyName) {
+        if (dest->m_friendlyName)
+            XClassCopy(dest->m_friendlyName, src->m_friendlyName);
+        else
+            dest->m_friendlyName = XString_create_copy(src->m_friendlyName);
+    }
+    XClassCopy(&dest->m_ipv4Address, &src->m_ipv4Address);
+    XClassCopy(&dest->m_ipv4Netmask, &src->m_ipv4Netmask);
+    XClassCopy(&dest->m_ipv4Gateway, &src->m_ipv4Gateway);
+    XClassCopy(&dest->m_ipv6Address, &src->m_ipv6Address);
+    XClassCopy(&dest->m_ipv6Gateway, &src->m_ipv6Gateway);
+    XClassCopy(&dest->m_dhcpServer, &src->m_dhcpServer);
+    XClassCopy(&dest->m_dnsPrimary, &src->m_dnsPrimary);
+    XClassCopy(&dest->m_dnsSecondary, &src->m_dnsSecondary);
+    dest->m_ifIndex = src->m_ifIndex;
+    dest->m_ipv6PrefixLength = src->m_ipv6PrefixLength;
+    dest->m_dhcpEnabled = src->m_dhcpEnabled;
+    dest->m_operUp = src->m_operUp;
+}
+
+static void VXNetworkInterfaceConfig_move(XNetworkInterfaceConfig* dest,
+                                          XNetworkInterfaceConfig* src)
+{
+    if (!dest || !src) return;
+    if (XClassIsVtableNull(dest))
+        XNetworkInterfaceConfig_init(dest);
+    XSwap(dest, src, sizeof(XNetworkInterfaceConfig));
+}
+
+void XNetworkInterfaceConfig_init(XNetworkInterfaceConfig* config)
+{
+    if (!config) return;
+    memset(((XClass*)config) + 1, 0,
+           sizeof(XNetworkInterfaceConfig) - sizeof(XClass));
+    XClass_init((XClass*)config);
+    XClassGetVtable(config) = XNetworkInterfaceConfig_class_init();
+    XHostAddress_init(&config->m_ipv4Address);
+    XHostAddress_init(&config->m_ipv4Netmask);
+    XHostAddress_init(&config->m_ipv4Gateway);
+    XHostAddress_init(&config->m_ipv6Address);
+    XHostAddress_init(&config->m_ipv6Gateway);
+    XHostAddress_init(&config->m_dhcpServer);
+    XHostAddress_init(&config->m_dnsPrimary);
+    XHostAddress_init(&config->m_dnsSecondary);
+    config->m_ifIndex = 0;
+    config->m_ipv6PrefixLength = 0;
+    config->m_dhcpEnabled = false;
+    config->m_operUp = false;
+}
+
+XNetworkInterfaceConfig* XNetworkInterfaceConfig_create_ex(XMemoryType memory)
+{
+    XNetworkInterfaceConfig* config =
+        (XNetworkInterfaceConfig*)XMemory_malloc(
+            sizeof(XNetworkInterfaceConfig), memory);
+    if (!config) return NULL;
+    XNetworkInterfaceConfig_init(config);
+    Set_Class_Memory(config, memory); Set_Class_IsHeap(config, true);
+    return config;
+}
+
+/** @brief 用设备层查询结果整体覆盖业务层快照（旧内容先释放；全拷贝语义，
+ *         设备层结果随后由调用方 freeInterfaceConfig 统一释放）。 */
+static void XNI_assignDeviceConfig(XNetworkInterfaceConfig* dest,
+                                   const XDeviceNetworkInterfaceConfig* src)
+{
+    VXNetworkInterfaceConfig_deinit(dest);
+    if (src->friendlyName)
+        dest->m_friendlyName = XString_create_copy(src->friendlyName);
+    XClassCopy(&dest->m_ipv4Address, &src->ipv4Address);
+    XClassCopy(&dest->m_ipv4Netmask, &src->ipv4Netmask);
+    XClassCopy(&dest->m_ipv4Gateway, &src->ipv4Gateway);
+    XClassCopy(&dest->m_ipv6Address, &src->ipv6Address);
+    XClassCopy(&dest->m_ipv6Gateway, &src->ipv6Gateway);
+    XClassCopy(&dest->m_dhcpServer, &src->dhcpServer);
+    XClassCopy(&dest->m_dnsPrimary, &src->dnsPrimary);
+    XClassCopy(&dest->m_dnsSecondary, &src->dnsSecondary);
+    dest->m_dhcpEnabled = src->dhcpEnabled;
+    dest->m_operUp = src->operUp;
+    dest->m_ipv6PrefixLength = src->ipv6PrefixLength;
+}
+
+bool XNetworkInterface_configSupported(void)
+{
+    return XDeviceNetwork_interfaceConfigSupported();
+}
+
+bool XNetworkInterface_queryConfig(int ifIndex,
+                                   XNetworkInterfaceConfig* outConfig)
+{
+    XDeviceNetworkInterfaceConfig device;
+    bool ok;
+    if (!outConfig || ifIndex < 0) return false;
+    if (XClassIsVtableNull(outConfig))
+        XNetworkInterfaceConfig_init(outConfig);
+    memset(&device, 0, sizeof(device));
+    ok = XDeviceNetwork_queryInterfaceConfig((uint32_t)ifIndex, &device);
+    if (!ok) return false;
+    XNI_assignDeviceConfig(outConfig, &device);
+    XDeviceNetwork_freeInterfaceConfig(&device);
+    outConfig->m_ifIndex = ifIndex;
+    return true;
+}
+
+bool XNetworkInterface_setDhcpMode(int ifIndex)
+{
+    if (ifIndex < 0) return false;
+    return XDeviceNetwork_setInterfaceDhcp((uint32_t)ifIndex);
+}
+
+bool XNetworkInterface_setStaticMode(int ifIndex, const char* ipv4Address,
+                                     const char* ipv4Netmask,
+                                     const char* ipv4Gateway,
+                                     const char* dnsPrimary,
+                                     const char* dnsSecondary)
+{
+    if (ifIndex < 0) return false;
+    return XDeviceNetwork_setInterfaceStatic((uint32_t)ifIndex,
+                                             ipv4Address, ipv4Netmask,
+                                             ipv4Gateway, dnsPrimary,
+                                             dnsSecondary);
+}
+
+bool XNetworkInterface_setStaticIpv6(int ifIndex, const char* ipv6Address,
+                                     int prefixLength,
+                                     const char* ipv6Gateway)
+{
+    if (ifIndex < 0) return false;
+    return XDeviceNetwork_setInterfaceStaticIpv6((uint32_t)ifIndex,
+                                                 ipv6Address, prefixLength,
+                                                 ipv6Gateway);
 }
 #endif // XNETWORK_INTERFACE_ON
 #endif /* XNETWORK_ON */

@@ -1599,6 +1599,253 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
 
 void XDeviceNetwork_enumInterfacesEnd(XDeviceNetworkInterfaceIterator iter) { if (iter) XFree_System(iter); }
 
+/* ================================================================
+ * 网卡配置（DHCP / 静态 IP）
+ *
+ * lwIP Raw API 直配（无 netsh/无系统权限概念）：
+ *   - 查询：netif 的 ip_addr/netmask/gw + struct dhcp 服务器 +
+ *     dns_getserver，全部经核心锁读取；
+ *   - 静态：netif_set_addr + dns_setserver（dhcp 会话在跑先停）；
+ *   - DHCP：dhcp_stop + dhcp_start（lwIP 自动清零地址并经 DHCP
+ *     重取，DNS 随租约更新，先清本 地静态 DNS 交还自动管理）。
+ * 接口定位约定：ifIndex == netif->num（上方 enumInterfacesNext
+ * 填 XNetworkInterface_index 的同一来源）。
+ * ================================================================ */
+
+/** 按 netif->num 查找网卡（须持核心锁调用）。 */
+static struct netif* lwipConfig_findNetif(uint32_t ifIndex) {
+    struct netif* n;
+    for (n = netif_list; n; n = n->next) {
+        if ((uint32_t)n->num == ifIndex) return n;
+    }
+    return NULL;
+}
+
+/** 点分 IPv4 字面量 → ip4_addr（空/非法返回 false）。 */
+static bool lwipConfig_parseIpv4(const char* text, ip4_addr_t* out) {
+    if (!text || !text[0]) return false;
+    return ip4addr_aton(text, out) == 1;
+}
+
+bool XDeviceNetwork_interfaceConfigSupported(void) {
+    /* 静态配置恒可；DHCP 能力取决于 LWIP_DHCP 编译（setDhcp 如实返回
+     * false），supported 只表达「配置能力存在」。 */
+    return true;
+}
+
+bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
+                                         XDeviceNetworkInterfaceConfig* outConfig) {
+    struct netif* nif;
+    XNetLwipCoreLock prot;
+    bool ok = false;
+
+    if (!outConfig) return false;
+    memset(outConfig, 0, sizeof(*outConfig));
+    XHostAddress_init(&outConfig->ipv4Address);
+    XHostAddress_init(&outConfig->ipv4Netmask);
+    XHostAddress_init(&outConfig->ipv4Gateway);
+    XHostAddress_init(&outConfig->ipv6Address);
+    XHostAddress_init(&outConfig->ipv6Gateway);
+    XHostAddress_init(&outConfig->dhcpServer);
+    XHostAddress_init(&outConfig->dnsPrimary);
+    XHostAddress_init(&outConfig->dnsSecondary);
+
+    XDeviceNetwork_ensureInit();
+    prot = XNET_LWIP_LOCK();
+    nif = lwipConfig_findNetif(ifIndex);
+    if (nif) {
+        char nameBuf[8];
+        snprintf(nameBuf, sizeof(nameBuf), "%c%c%d",
+                 nif->name[0], nif->name[1], nif->num);
+        outConfig->friendlyName = XString_create_utf8(nameBuf);
+        outConfig->operUp = (nif->flags & NETIF_FLAG_UP) != 0;
+        if (!ip_addr_isany(&nif->ip_addr)) {
+            XHostAddress_setAddressIPv4(&outConfig->ipv4Address,
+                lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&nif->ip_addr))));
+            XHostAddress_setAddressIPv4(&outConfig->ipv4Netmask,
+                lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&nif->netmask))));
+        }
+        if (!ip_addr_isany(&nif->gw)) {
+            XHostAddress_setAddressIPv4(&outConfig->ipv4Gateway,
+                lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&nif->gw))));
+        }
+#if LWIP_IPV6
+        /* 首个 VALID 态 IPv6（预填用；lwIP 不存静态前缀，按 64 记）。 */
+        {
+            s8_t i6;
+            for (i6 = 0; i6 < LWIP_IPV6_NUM_ADDRESSES; ++i6) {
+                if (netif_ip6_addr_state(nif, i6) & IP6_ADDR_VALID) {
+                    XHostAddress_setAddressIPv6(&outConfig->ipv6Address,
+                        (const uint8_t*)netif_ip6_addr(nif, i6));
+                    outConfig->ipv6PrefixLength = 64;
+                    break;
+                }
+            }
+        }
+#endif
+#if LWIP_DHCP
+        /* dhcp_start 过即视作 DHCP 模式（含等待租约中）。lwIP 2.2 netif
+         * 无内嵌 dhcp 指针，经 client-data 索引取（netif_dhcp_data 宏）。 */
+        {
+            struct dhcp* dhcp = netif_dhcp_data(nif);
+            outConfig->dhcpEnabled = (dhcp != NULL);
+            if (dhcp && !ip_addr_isany(&dhcp->server_ip_addr)) {
+                XHostAddress_setAddressIPv4(&outConfig->dhcpServer,
+                    lwip_ntohl(ip4_addr_get_u32(
+                        ip_2_ip4(&dhcp->server_ip_addr))));
+            }
+        }
+#endif
+#if LWIP_DNS
+        {
+            const ip_addr_t* d0 = dns_getserver(0);
+            const ip_addr_t* d1 = dns_getserver(1);
+            if (d0 && !ip_addr_isany(d0))
+                ip_to_addr(d0, &outConfig->dnsPrimary);
+            if (d1 && !ip_addr_isany(d1))
+                ip_to_addr(d1, &outConfig->dnsSecondary);
+        }
+#endif
+        ok = true;
+    }
+    XNET_LWIP_UNLOCK(prot);
+    return ok;
+}
+
+void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config) {
+    if (!config) return;
+    if (config->friendlyName) XClassDelete(config->friendlyName);
+    XClassDeinit(&config->ipv4Address);
+    XClassDeinit(&config->ipv4Netmask);
+    XClassDeinit(&config->ipv4Gateway);
+    XClassDeinit(&config->ipv6Address);
+    XClassDeinit(&config->ipv6Gateway);
+    XClassDeinit(&config->dhcpServer);
+    XClassDeinit(&config->dnsPrimary);
+    XClassDeinit(&config->dnsSecondary);
+    memset(config, 0, sizeof(*config));
+}
+
+bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex) {
+#if LWIP_DHCP
+    struct netif* nif;
+    XNetLwipCoreLock prot;
+    bool ok = false;
+
+    XDeviceNetwork_ensureInit();
+    prot = XNET_LWIP_LOCK();
+    nif = lwipConfig_findNetif(ifIndex);
+    if (nif) {
+        /* 停旧会话（静态/DHCP 皆收口）→ dhcp_start 内部清零地址并经
+         * DHCP 重取；本地静态 DNS 一并清空交还自动管理（租约到达后
+         * lwIP 会以 DHCP 下发的 DNS 覆盖）。 */
+        dhcp_stop(nif);
+#if LWIP_DNS
+        dns_setserver(0, NULL);
+        dns_setserver(1, NULL);
+#endif
+        ok = (dhcp_start(nif) == ERR_OK);
+    }
+    XNET_LWIP_UNLOCK(prot);
+    return ok;
+#else
+    (void)ifIndex;
+    return false; /* lwIP 未编译 DHCP 模块 */
+#endif
+}
+
+bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
+                                           const char* ipv6Address,
+                                           int prefixLength,
+                                           const char* ipv6Gateway) {
+#if LWIP_IPV6
+    ip6_addr_t a6;
+    struct netif* nif;
+    s8_t idx = -1;
+    XNetLwipCoreLock prot;
+    bool ok = false;
+
+    if (!ipv6Address || !ipv6Address[0] ||
+        prefixLength < 0 || prefixLength > 128)
+        return false;
+    if (!ip6addr_aton(ipv6Address, &a6)) return false;
+    /* lwIP 默认路由由 RA 管理，静态 IPv6 网关不支持（参数忽略，公共头
+     * 注释如实记录）；前缀长度 lwIP 不按地址存储，仅校验范围。 */
+    (void)prefixLength;
+    (void)ipv6Gateway;
+
+    XDeviceNetwork_ensureInit();
+    prot = XNET_LWIP_LOCK();
+    nif = lwipConfig_findNetif(ifIndex);
+    if (nif) {
+        if (netif_add_ip6_address(nif, &a6, &idx) == ERR_OK &&
+            idx >= 0) {
+            netif_ip6_addr_set_state(nif, idx, IP6_ADDR_VALID);
+            ok = true;
+        }
+    }
+    XNET_LWIP_UNLOCK(prot);
+    return ok;
+#else
+    (void)ifIndex; (void)ipv6Address; (void)prefixLength; (void)ipv6Gateway;
+    return false; /* lwIP 未编译 IPv6 */
+#endif
+}
+
+bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address,
+                                       const char* ipv4Netmask,
+                                       const char* ipv4Gateway,
+                                       const char* dnsPrimary,
+                                       const char* dnsSecondary) {
+    ip4_addr_t ip4;
+    ip4_addr_t mask4;
+    ip4_addr_t gw4;
+    ip4_addr_t dns4;
+    ip_addr_t dnsA;
+    struct netif* nif;
+    XNetLwipCoreLock prot;
+    bool hasGw;
+    bool hasDns1;
+    bool hasDns2;
+    bool ok = false;
+
+    if (!lwipConfig_parseIpv4(ipv4Address, &ip4) ||
+        !lwipConfig_parseIpv4(ipv4Netmask, &mask4))
+        return false;
+    hasGw = (ipv4Gateway && ipv4Gateway[0]);
+    if (hasGw && !lwipConfig_parseIpv4(ipv4Gateway, &gw4)) return false;
+    hasDns1 = (dnsPrimary && dnsPrimary[0]);
+    if (hasDns1 && !lwipConfig_parseIpv4(dnsPrimary, &dns4)) return false;
+    hasDns2 = (dnsSecondary && dnsSecondary[0]);
+
+    XDeviceNetwork_ensureInit();
+    prot = XNET_LWIP_LOCK();
+    nif = lwipConfig_findNetif(ifIndex);
+    if (nif) {
+        /* DHCP 会话在跑先停（netif_set_addr 与 DHCP 续租互踩）。本 lwIP
+         * 衍生版 netif_set_addr 直收 ip4_addr（非上游的 ip_addr_t）。 */
+#if LWIP_DHCP
+        dhcp_stop(nif);
+#endif
+        netif_set_addr(nif, &ip4, &mask4, hasGw ? &gw4 : NULL);
+#if LWIP_DNS
+        if (hasDns1) ip_addr_copy_from_ip4(dnsA, dns4);
+        dns_setserver(0, hasDns1 ? &dnsA : NULL);
+        if (hasDns2) {
+            if (lwipConfig_parseIpv4(dnsSecondary, &dns4)) {
+                ip_addr_copy_from_ip4(dnsA, dns4);
+                dns_setserver(1, &dnsA);
+            }
+        } else {
+            dns_setserver(1, NULL);
+        }
+#endif
+        ok = true;
+    }
+    XNET_LWIP_UNLOCK(prot);
+    return ok;
+}
+
 bool XDeviceNetwork_multicastGroup(XDeviceNetworkSocketHandle sock, bool join, const XHostAddress* group, uint32_t ifIdx) {
     (void)sock; (void)join; (void)group; (void)ifIdx; return false;
 }

@@ -1,13 +1,16 @@
 ﻿#include"XMemory.h"
 #include"XMultiPool.h"
 #include"XAtomic.h"
+#include"XMemory_config.h"
 #include<string.h>
-// ============ 新增：组合内存池的内部函数 ============
-#define HYBRID_THRESHOLD (256) // 小于等于此阈值使用 XMultiPool，大于则使用系统 malloc
+// ============ 组合内存池（HYBRID）内部函数 ============
+// 小于等于阈值走 MULTIPOOL 槽位（池被裁剪时按回落链自动换装），大于走系统堆
+#if XMEMORY_HYBRID_ON
 static void* hybrid_calloc(size_t count, size_t size);
 static void* hybrid_realloc(void* ptr, size_t size);
 static void hybrid_free(void* ptr);
 static void* hybrid_malloc(size_t size);
+#endif
 
 /* ============================================================================
  * 全局内存统计（分发层按类型记账 + 池聚合）
@@ -82,21 +85,38 @@ XMemoryStatistics XMemory_statistics_2(XMemoryType type)
 {
 	XMemoryStatistics stats;
 	XMemset(&stats, 0, sizeof(stats));
-	if (type < XMEMORY_TYPE_SYSTEM || type > XMEMORY_TYPE_HYBRID)
+	if (type < XMEMORY_TYPE_SYSTEM || type >= XMEMORY_TYPE_COUNT)
 		return stats;
 #if XMEMORY_STAT_TRACK_SYSTEM
-	if (type != XMEMORY_TYPE_MULTIPOOL) {
+	if (type == XMEMORY_TYPE_SYSTEM || type == XMEMORY_TYPE_HYBRID) {
 		stats.systemBytes = XAtomic_load_size_t(&xmemory_stat_systemBytes, XAtomic_MemoryOrder_Relaxed);
 		stats.systemPeakBytes = XAtomic_load_size_t(&xmemory_stat_systemPeak, XAtomic_MemoryOrder_Relaxed);
 	}
 #endif
 	/* 池未惰性创建时不触发创建，避免统计读取自身改变内存布局 */
-	if (type != XMEMORY_TYPE_SYSTEM && XMultiPool_global_isInited()) {
+#if XMEMORY_MULTIPOOL_ON
+	if ((type == XMEMORY_TYPE_MULTIPOOL || type == XMEMORY_TYPE_HYBRID) &&
+	    XMultiPool_global_isInited()) {
 		XMultiPool* pool = XMultiPool_global();
 		stats.poolTotalBytes = XMultiPool_totalSize(pool);
 		stats.poolUsedBytes = stats.poolTotalBytes - XMultiPool_freeSize(pool);
 	}
+#endif
+#if XMEMORY_VARIABLEPOOL_ON
+	if (type == XMEMORY_TYPE_VARIABLEPOOL && XVariablePool_global_isInited()) {
+		XVariablePool* pool = XVariablePool_global();
+		stats.poolTotalBytes = XVariablePool_totalSize(pool);
+		stats.poolUsedBytes = stats.poolTotalBytes - XVariablePool_freeSize(pool);
+	}
+#endif
 	return stats;
+}
+
+/* 与 _2 同口径：使能开关只门控记账，快照读取不受 XMemory_setStatisticsEnabled
+   影响；此前统计开启分支缺失本符号（仅 OFF 分支有定义），此处补齐。 */
+XMemoryStatistics XMemory_statistics(XMemoryType type)
+{
+	return XMemory_statistics_2(type);
 }
 
 #else /* XMEMORY_STATISTICS_ON == 0 */
@@ -195,19 +215,63 @@ static void xmemory_system_free(void* ptr)
 	free(ptr);
 }
 
+/* ============================================================================
+ * 分发槽位表（global_Memory[type]，索引即 XMemoryType 枚举值）
+ * 各槽位入口由 XMemory_config.h 裁剪开关决定：被裁掉的池按回落链换装
+ * （可变池→系统槽），保证表内无空函数指针。唯一例外：裸机且可变池也被
+ * 裁时系统槽无堆可用（malloc/free 为 NULL），需固件经 XMemory_setMethod
+ * 接入自定义后端。
+ * ============================================================================ */
 #if defined(_WIN32) || defined(__linux__) || defined(__APPLE__) || defined(__BSD__)
 #include<stdlib.h>
-static XMemory global_Memory[] = { {xmemory_system_malloc,xmemory_system_free,xmemory_system_realloc,xmemory_system_calloc},{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
+/* 桌面：系统槽 = libc malloc 族（统计包装版） */
+#define XMEMORY_SLOT_SYSTEM {xmemory_system_malloc,xmemory_system_free,xmemory_system_realloc,xmemory_system_calloc}
 #elif defined(__FreeRTOS__)
 #include"FreeRTOS.h"
-/* 与桌面分支同构的三槽位数组：[0]=FreeRTOS 堆（pvPortMalloc/vPortFree，
- * heap_1~5 五选一提供实现），[1]=XMultiPool，[2]=混合策略。 */
-static XMemory global_Memory[] = { { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
+/* FreeRTOS：系统槽 = RTOS 堆（pvPortMalloc/vPortFree，heap_1~5 五选一提供实现） */
+#define XMEMORY_SLOT_SYSTEM { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc }
 #else//裸机环境
-/* 同为三槽位数组；[0] 为空实现——无 RTOS 堆时系统级分配不可用，
- * 固件需接入 XMultiPool/自定义后端（按槽位类型选择）。 */
-static XMemory global_Memory[] = { { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc },{XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc},{hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc} };
+#if XMEMORY_VARIABLEPOOL_ON
+/* 裸机：无 RTOS 堆，系统槽默认接入全局可变池（.bss 静态 arena，零堆依赖），
+ * XMalloc_System/XNew 等既有调用开箱即用；仍可经 XMemory_setMethod 换装
+ * 自定义后端。 */
+#define XMEMORY_SLOT_SYSTEM {XVariablePool_global_malloc,XVariablePool_global_free,XVariablePool_global_realloc,XVariablePool_global_calloc}
+#else
+/* 裸机且可变池被裁：系统级分配不可用，固件需经 XMemory_setMethod 接入
+ * 自定义后端（按槽位类型选择）。 */
+#define XMEMORY_SLOT_SYSTEM { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc }
 #endif
+#endif
+
+/* MULTIPOOL 槽位：XMultiPool → 裁剪时回落全局可变池 → 再回落系统槽 */
+#if XMEMORY_MULTIPOOL_ON
+#define XMEMORY_SLOT_MULTIPOOL {XMultiPool_global_malloc,XMultiPool_global_free,XMultiPool_global_realloc,XMultiPool_global_calloc}
+#elif XMEMORY_VARIABLEPOOL_ON
+#define XMEMORY_SLOT_MULTIPOOL {XVariablePool_global_malloc,XVariablePool_global_free,XVariablePool_global_realloc,XVariablePool_global_calloc}
+#else
+#define XMEMORY_SLOT_MULTIPOOL XMEMORY_SLOT_SYSTEM
+#endif
+
+/* VARIABLEPOOL 槽位：全局 TLSF 池 → 裁剪时回落系统槽 */
+#if XMEMORY_VARIABLEPOOL_ON
+#define XMEMORY_SLOT_VARIABLEPOOL {XVariablePool_global_malloc,XVariablePool_global_free,XVariablePool_global_realloc,XVariablePool_global_calloc}
+#else
+#define XMEMORY_SLOT_VARIABLEPOOL XMEMORY_SLOT_SYSTEM
+#endif
+
+/* HYBRID 槽位：混合分派 → 裁剪时回落系统槽 */
+#if XMEMORY_HYBRID_ON
+#define XMEMORY_SLOT_HYBRID {hybrid_malloc,hybrid_free,hybrid_realloc,hybrid_calloc}
+#else
+#define XMEMORY_SLOT_HYBRID XMEMORY_SLOT_SYSTEM
+#endif
+
+static XMemory global_Memory[] = {
+	XMEMORY_SLOT_SYSTEM,         /* [0] XMEMORY_TYPE_SYSTEM      */
+	XMEMORY_SLOT_MULTIPOOL,      /* [1] XMEMORY_TYPE_MULTIPOOL   */
+	XMEMORY_SLOT_HYBRID,         /* [2] XMEMORY_TYPE_HYBRID      */
+	XMEMORY_SLOT_VARIABLEPOOL    /* [3] XMEMORY_TYPE_VARIABLEPOOL */
+};
 
 /* 记账/清账已内嵌于槽位表函数本体（上方 xmemory_system_* 系列）——
  * 封装层保持纯直通：若此处再挂钩子，与表函数内嵌账本叠加即双重记账/
@@ -241,6 +305,10 @@ void* XMalloc_MultiPool(size_t size)
 void* XMalloc_Hybrid(size_t size)
 {
 	return XMemory_malloc(size, XMEMORY_TYPE_HYBRID);
+}
+void* XMalloc_VariablePool(size_t size)
+{
+	return XMemory_malloc(size, XMEMORY_TYPE_VARIABLEPOOL);
 }
 void* XAlignedMalloc_System(size_t size, size_t alignment)
 {
@@ -279,6 +347,10 @@ void XFree_Hybrid(void* ptr)
 {
 	XFree(ptr, XMEMORY_TYPE_HYBRID);
 }
+void XFree_VariablePool(void* ptr)
+{
+	XFree(ptr, XMEMORY_TYPE_VARIABLEPOOL);
+}
 void* XRealloc_System(void* ptr, size_t size)
 {
 	return XMemory_realloc(ptr, size, XMEMORY_TYPE_SYSTEM);
@@ -291,6 +363,10 @@ void* XRealloc_Hybrid(void* ptr, size_t size)
 {
 	return XMemory_realloc(ptr, size, XMEMORY_TYPE_HYBRID);
 }
+void* XRealloc_VariablePool(void* ptr, size_t size)
+{
+	return XMemory_realloc(ptr, size, XMEMORY_TYPE_VARIABLEPOOL);
+}
 void* XCalloc_System(size_t count, size_t size)
 {
 	return XMemory_calloc(count, size, XMEMORY_TYPE_SYSTEM);
@@ -302,6 +378,10 @@ void* XCalloc_MultiPool(size_t count, size_t size)
 void* XCalloc_Hybrid(size_t count, size_t size)
 {
 	return  XMemory_calloc(count, size, XMEMORY_TYPE_HYBRID);
+}
+void* XCalloc_VariablePool(size_t count, size_t size)
+{
+	return  XMemory_calloc(count, size, XMEMORY_TYPE_VARIABLEPOOL);
 }
 void XMemory_setMethod(const XMemory* method, XMemoryType type)
 {
@@ -441,9 +521,10 @@ void* XMemory_calloc_isMalloc(size_t count, size_t size, XMemoryType type)
 	return ptr;
 }
 
+#if XMEMORY_HYBRID_ON
 static void* hybrid_malloc(size_t size) {
-	if (size <= HYBRID_THRESHOLD) {
-		return XMalloc_MultiPool(size);
+	if (size <= XMEMORY_HYBRID_THRESHOLD) {
+		return XMemory_malloc(size, XMEMORY_TYPE_MULTIPOOL);
 	}
 	else {
 		return XMalloc_System(size);
@@ -454,14 +535,24 @@ static void hybrid_free(void* ptr)
 {
 	if (ptr == NULL) return;
 
+#if XMEMORY_MULTIPOOL_ON
 	// 利用 XMultiPool_is_from_pool 来判断指针来源
 	// 注意: 这里传入了全局池实例
 	if (XMultiPool_is_from_pool(XMultiPool_global(), ptr)) {
 		XFree_MultiPool(ptr);
+		return;
 	}
-	else {
-		XFree_System(ptr);
+#endif
+#if XMEMORY_VARIABLEPOOL_ON
+	// MULTIPOOL 槽位被裁时小块可能来自全局可变池；不触发惰性创建——
+	// 池未初始化则不可能是其块
+	if (XVariablePool_global_isInited() &&
+	    XVariablePool_is_from_pool(XVariablePool_global(), ptr)) {
+		XFree_VariablePool(ptr);
+		return;
 	}
+#endif
+	XFree_System(ptr);
 }
 
 static void* hybrid_realloc(void* ptr, size_t size)
@@ -474,31 +565,55 @@ static void* hybrid_realloc(void* ptr, size_t size)
 		return NULL;
 	}
 
-	XMultiPool* global_pool = XMultiPool_global();
-	bool is_from_multipool = XMultiPool_is_from_pool(global_pool, ptr);
-
-	if (is_from_multipool) {
-		if (size <= HYBRID_THRESHOLD) {
-			// 原块和新块都适合 XMultiPool
-			return XMultiPool_global_realloc(ptr, size);
-		}
-		else {
-			// 原块来自 XMultiPool，但新块太大，需要迁移到系统堆
-			void* new_ptr = XMalloc_System(size);
-			if (new_ptr != NULL) {
-				// --- 关键修改：使用新的公开 API XMultiPool_get_size ---
-				size_t old_user_size = XMultiPool_getMaxUserSize(global_pool, ptr);
-				memcpy(new_ptr, ptr, (old_user_size < size) ? old_user_size : size);
-				XFree_MultiPool(ptr);
+#if XMEMORY_MULTIPOOL_ON
+	{
+		XMultiPool* global_pool = XMultiPool_global();
+		if (XMultiPool_is_from_pool(global_pool, ptr)) {
+			if (size <= XMEMORY_HYBRID_THRESHOLD) {
+				// 原块和新块都适合 XMultiPool
+				return XMultiPool_global_realloc(ptr, size);
 			}
-			return new_ptr;
+			else {
+				// 原块来自 XMultiPool，但新块太大，需要迁移到系统堆
+				void* new_ptr = XMalloc_System(size);
+				if (new_ptr != NULL) {
+					// 使用公开 API XMultiPool_getMaxUserSize 回查原块可用大小
+					size_t old_user_size = XMultiPool_getMaxUserSize(global_pool, ptr);
+					memcpy(new_ptr, ptr, (old_user_size < size) ? old_user_size : size);
+					XFree_MultiPool(ptr);
+				}
+				return new_ptr;
+			}
 		}
 	}
-	else {
+#endif
+#if XMEMORY_VARIABLEPOOL_ON
+	{
+		// 原块可能来自全局可变池（MULTIPOOL 槽位回落或 VARIABLEPOOL 直配）
+		XVariablePool* global_pool = XVariablePool_global_isInited() ? XVariablePool_global() : NULL;
+		if (global_pool && XVariablePool_is_from_pool(global_pool, ptr)) {
+			if (size <= XMEMORY_HYBRID_THRESHOLD) {
+				// 原块和新块都留在可变池
+				return XVariablePool_global_realloc(ptr, size);
+			}
+			else {
+				// 原块来自可变池，但新块太大，需要迁移到系统堆
+				void* new_ptr = XMalloc_System(size);
+				if (new_ptr != NULL) {
+					size_t old_user_size = XVariablePool_getMaxUserSize(global_pool, ptr);
+					memcpy(new_ptr, ptr, (old_user_size < size) ? old_user_size : size);
+					XFree_VariablePool(ptr);
+				}
+				return new_ptr;
+			}
+		}
+	}
+#endif
+	{
 		// 原块来自系统堆
-		if (size <= HYBRID_THRESHOLD) {
-			// 分配一个 XMultiPool 块并复制数据
-			void* new_ptr = XMalloc_MultiPool(size);
+		if (size <= XMEMORY_HYBRID_THRESHOLD) {
+			// 分配一个池块并复制数据
+			void* new_ptr = XMemory_malloc(size, XMEMORY_TYPE_MULTIPOOL);
 			if (new_ptr != NULL) {
 				// 对于系统堆的指针，无法知道确切大小，这是一个已知限制。
 				memcpy(new_ptr, ptr, size);
@@ -518,10 +633,11 @@ static void* hybrid_calloc(size_t count, size_t size) {
 	if (count > SIZE_MAX / size) return NULL; // 防止溢出
 
 	size_t total_size = count * size;
-	if (total_size <= HYBRID_THRESHOLD) {
-		return XCalloc_MultiPool(count, size);
+	if (total_size <= XMEMORY_HYBRID_THRESHOLD) {
+		return XMemory_calloc(count, size, XMEMORY_TYPE_MULTIPOOL);
 	}
 	else {
 		return XCalloc_System(count, size);
 	}
 }
+#endif /* XMEMORY_HYBRID_ON */

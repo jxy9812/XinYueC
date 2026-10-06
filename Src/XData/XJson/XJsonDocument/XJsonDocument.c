@@ -96,7 +96,7 @@ static void XJsonValue_toByteArray(const XJsonValue* value, XJsonDocumentFormat 
 static XMemoryType XJsonDocument_memory_type(const XJsonDocument* document)
 {
     XMemory* memory = document ? Class_Memory(document) : NULL;
-    for (int type = XMEMORY_TYPE_SYSTEM; type <= XMEMORY_TYPE_HYBRID; ++type)
+    for (int type = XMEMORY_TYPE_SYSTEM; type < XMEMORY_TYPE_COUNT; ++type)
     {
         if (memory == XMemory_method((XMemoryType)type))
             return (XMemoryType)type;

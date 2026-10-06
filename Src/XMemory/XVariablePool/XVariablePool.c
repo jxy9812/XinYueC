@@ -2,6 +2,8 @@
 #include "XMemory.h"
 #include <string.h>
 
+#if XMEMORY_VARIABLEPOOL_ON
+
 #define XVARIABLEPOOL_BLOCK_ALLOCATED ((size_t)1u)
 #define XVARIABLEPOOL_BLOCK_SIZE_MASK (~(size_t)1u)
 #define XVARIABLEPOOL_BLOCK_MAGIC UINT32_C(0x58565042)
@@ -936,3 +938,137 @@ bool XVariablePool_check(const XVariablePool* pool)
     XVariablePool_unlock_pool((XVariablePool*)pool);
     return valid;
 }
+
+/* ============================================================================
+ * 全局 TLSF 池（XMemory 第四槽位后端，惰性初始化）
+ * ============================================================================ */
+
+static XVariablePool* xvariablepool_global_pool = NULL;
+static bool xvariablepool_global_inited = false;
+
+#if XPLATFORM_BAREMETAL
+/* 裸机静态 arena：.bss 常驻（XVP_GLOBAL_ARENA_BYTES 字节），零堆依赖 */
+XVARIABLEPOOL_DEFINE(xvariablepool_global, XVP_GLOBAL_ARENA_BYTES);
+#endif
+
+#if XVP_GLOBAL_THREADSAFE
+static XAtomic_size_t xvariablepool_global_spin = { 0 };
+
+static void xvariablepool_global_lock(void* context)
+{
+    (void)context;
+    while (XAtomic_exchange_size_t(&xvariablepool_global_spin, 1u,
+                                   XAtomic_MemoryOrder_Acquire)) {
+        /* 自旋等待持锁方释放（TLSF 临界区短，无让步必要） */
+    }
+}
+
+static void xvariablepool_global_unlock(void* context)
+{
+    (void)context;
+    XAtomic_store_size_t(&xvariablepool_global_spin, 0u, XAtomic_MemoryOrder_Release);
+}
+#endif
+
+static bool xvariablepool_global_ensure(void)
+{
+    bool ok;
+
+    if (xvariablepool_global_inited)
+        return xvariablepool_global_pool != NULL;
+#if XVP_GLOBAL_THREADSAFE
+    xvariablepool_global_lock(NULL);
+    if (xvariablepool_global_inited) {
+        xvariablepool_global_unlock(NULL);
+        return xvariablepool_global_pool != NULL;
+    }
+#endif
+#if XPLATFORM_BAREMETAL
+    /* 裸机：arena 为 .bss 静态缓冲区，零堆依赖；XVARIABLEPOOL_DEFINE 的
+       静态结构同时提供池对象与 backing buffer。 */
+    {
+#if XVP_GLOBAL_THREADSAFE
+        ok = XVariablePool_init_ex(&xvariablepool_global_data.pool,
+                                   xvariablepool_global_data.buffer,
+                                   sizeof(xvariablepool_global_data.buffer),
+                                   XVP_GLOBAL_ALIGNMENT,
+                                   xvariablepool_global_lock,
+                                   xvariablepool_global_unlock,
+                                   NULL);
+#else
+        ok = XVariablePool_init(&xvariablepool_global_data.pool,
+                                xvariablepool_global_data.buffer,
+                                sizeof(xvariablepool_global_data.buffer),
+                                XVP_GLOBAL_ALIGNMENT);
+#endif
+        if (ok)
+            xvariablepool_global = &xvariablepool_global_data.pool;
+        xvariablepool_global_pool = ok ? &xvariablepool_global_data.pool : NULL;
+    }
+#else
+    /* 桌面/FreeRTOS：arena 经系统堆（malloc/pvPortMalloc）惰性创建，
+       未使用不占内存。 */
+    xvariablepool_global_pool = XVariablePool_create(XVP_GLOBAL_ARENA_BYTES,
+                                                     XVP_GLOBAL_ALIGNMENT);
+#if XVP_GLOBAL_THREADSAFE
+    if (xvariablepool_global_pool)
+        XVariablePool_setLockMethod(xvariablepool_global_pool,
+                                    xvariablepool_global_lock,
+                                    xvariablepool_global_unlock,
+                                    NULL);
+#endif
+    ok = xvariablepool_global_pool != NULL;
+#endif
+    /* 初始化失败（arena 参数配置过小/系统堆不足）同样视为已尝试，
+       与 XMultiPool 全局池口径一致：本次运行内不再反复重试。 */
+    xvariablepool_global_inited = true;
+#if XVP_GLOBAL_THREADSAFE
+    xvariablepool_global_unlock(NULL);
+#endif
+    return ok;
+}
+
+XVariablePool* XVariablePool_global(void)
+{
+    return xvariablepool_global_ensure() ? xvariablepool_global_pool : NULL;
+}
+
+void* XVariablePool_global_malloc(size_t size)
+{
+    if (!xvariablepool_global_ensure())
+        return NULL;
+    return XVariablePool_malloc(xvariablepool_global_pool, size);
+}
+
+void* XVariablePool_global_calloc(size_t count, size_t size)
+{
+    if (!xvariablepool_global_ensure())
+        return NULL;
+    return XVariablePool_calloc(xvariablepool_global_pool, count, size);
+}
+
+void* XVariablePool_global_realloc(void* ptr, size_t size)
+{
+    if (!xvariablepool_global_ensure())
+        return NULL;
+    return XVariablePool_realloc(xvariablepool_global_pool, ptr, size);
+}
+
+void XVariablePool_global_free(void* ptr)
+{
+    if (!xvariablepool_global_inited)
+        return;
+    XVariablePool_free(xvariablepool_global_pool, ptr);
+}
+
+bool XVariablePool_global_isInited(void)
+{
+    return xvariablepool_global_inited;
+}
+
+#else /* XMEMORY_VARIABLEPOOL_ON == 0 */
+
+/* 裁剪后的空编译单元，避免 ISO C 对空翻译单元的移植性疑虑 */
+typedef int xvariablepool_trimmed_unused_t;
+
+#endif /* XMEMORY_VARIABLEPOOL_ON */

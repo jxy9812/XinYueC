@@ -33,10 +33,16 @@
  *   void* ptr = XMultiPool_global_malloc(100);
  *   XMultiPool_global_free(ptr);
  * @endcode
+ *
+ * 裁剪：XMEMORY_MULTIPOOL_ON=0（XMemory_config.h）时整个 API 编译裁剪，
+ * XMemory 的 MULTIPOOL 槽位按回落链自动换装（可变池→系统槽）。
  */
 
 #ifndef XMULTIPOOL_H
 #define XMULTIPOOL_H
+
+#include "XMemory_config.h"
+#if XMEMORY_MULTIPOOL_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -342,5 +348,7 @@ bool XMultiPool_global_isInited(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XMEMORY_MULTIPOOL_ON */
 
 #endif /* XMULTIPOOL_H */

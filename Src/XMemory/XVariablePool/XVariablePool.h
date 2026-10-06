@@ -9,6 +9,9 @@
 #ifndef XVARIABLEPOOL_H
 #define XVARIABLEPOOL_H
 
+#include "XMemory_config.h"
+#if XMEMORY_VARIABLEPOOL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -295,8 +298,62 @@ size_t XVariablePool_freeBlockCount(const XVariablePool* pool);
  */
 bool XVariablePool_check(const XVariablePool* pool);
 
+/* ============================================================================
+ * 全局 TLSF 池便捷 API（零配置，惰性初始化；XMemory 第四槽位后端）
+ * ============================================================================ */
+
+/**
+ * @brief      获取全局 TLSF 内存池实例。
+ * @return     全局池指针；首次调用自动初始化，失败返回 NULL。
+ * @note       桌面/FreeRTOS 的 arena 首次使用时经系统堆（malloc/pvPortMalloc）
+ *             创建；裸机为 .bss 静态 arena，零堆依赖。池由库管理，调用方不得
+ *             删除或反初始化返回指针。多线程保护由 XVP_GLOBAL_THREADSAFE 决定
+ *             （默认有 OS 开、裸机关），全局池内部使用 XAtomic 自旋锁。
+ */
+XVariablePool* XVariablePool_global(void);
+
+/**
+ * @brief 从全局 TLSF 池分配内存（零配置便捷版）。
+ * @param size 请求的字节数。
+ * @return 成功返回指针，失败返回 NULL。
+ */
+void* XVariablePool_global_malloc(size_t size);
+
+/**
+ * @brief 从全局 TLSF 池分配并清零内存。
+ * @param count 元素数量。
+ * @param size 每个元素的字节数。
+ * @return 成功返回已清零指针，失败返回 NULL。
+ */
+void* XVariablePool_global_calloc(size_t count, size_t size);
+
+/**
+ * @brief 调整全局 TLSF 池中已分配内存块的大小。
+ * @param ptr 原指针；NULL 等同于 malloc。
+ * @param size 新的字节数；0 等同于 free 并返回 NULL。
+ * @return 成功返回原指针或新指针，失败返回 NULL 且原块保持不变。
+ */
+void* XVariablePool_global_realloc(void* ptr, size_t size);
+
+/**
+ * @brief      释放由全局 TLSF 池分配的内存。
+ * @param      ptr 由全局池返回的指针；可为 NULL。
+ * @return     无。
+ */
+void XVariablePool_global_free(void* ptr);
+
+/**
+ * @brief      查询全局 TLSF 池是否已完成惰性初始化。
+ * @return     已初始化返回 true；尚未使用过全局池返回 false。
+ * @note       供统计聚合等只读场景使用：false 时读取全局池统计无需也不应
+ *             触发 XVariablePool_global 的惰性创建。
+ */
+bool XVariablePool_global_isInited(void);
+
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XMEMORY_VARIABLEPOOL_ON */
 
 #endif /* XVARIABLEPOOL_H */

@@ -218,6 +218,100 @@ XString* XDeviceNetwork_localHostName(void);
 XVector* XDeviceNetwork_lookupName(const XString* name);
 
 /* =========================================================================
+ * 二点五、网卡配置（DHCP / 静态 IP）
+ * =========================================================================
+ * 面向「网络设置」类系统界面的网卡配置抽象：查询与设置均以接口索引
+ * （XNetworkInterface index / GetAdaptersAddresses IfIndex 同源）定位网卡。
+ * Windows 后端经 IP Helper 查询 + netsh 应用（需管理员权限）；其余平台
+ * 当前后端未实现，XDeviceNetwork_interfaceConfigSupported 返回 false，
+ * 查询/设置返回 false（不崩溃、不静默成功）。
+ */
+
+/**
+ * @brief 网卡 IPv4 配置查询结果。
+ * @details 连接名为 XString*（无对应项为 NULL）；地址字段为值语义的
+ *          XHostAddress（isNull()=无此项）。整组字符串由
+ *          XDeviceNetwork_freeInterfaceConfig 统一释放，调用方不得
+ *          部分释放或长期借用。
+ */
+typedef struct XDeviceNetworkInterfaceConfig {
+    bool dhcpEnabled;        /**< true=DHCP 自动获取，false=手工（静态）配置。 */
+    bool operUp;             /**< 接口管理状态 Up（可收发）。 */
+    XString* friendlyName;   /**< 连接名（netsh 的 name= 口径），如 "以太网"。 */
+    XHostAddress ipv4Address;  /**< 首个 IPv4 单播地址；isNull()=无。 */
+    XHostAddress ipv4Netmask;  /**< 该地址的子网掩码；isNull()=无。 */
+    XHostAddress ipv4Gateway;  /**< 首个 IPv4 默认网关；isNull()=无。 */
+    XHostAddress ipv6Address;  /**< 首个 IPv6 单播地址（预填用）；isNull()=无。 */
+    XHostAddress ipv6Gateway;  /**< 首个 IPv6 默认网关；isNull()=无（lwIP 后端恒无）。 */
+    XHostAddress dhcpServer;   /**< DHCP 服务器地址；isNull()=无。 */
+    XHostAddress dnsPrimary;   /**< 首选 DNS；isNull()=无。 */
+    XHostAddress dnsSecondary; /**< 备用 DNS；isNull()=无。 */
+    int ipv6PrefixLength;    /**< ipv6Address 的前缀长度（0..128）；无 IPv6 为 0。 */
+} XDeviceNetworkInterfaceConfig;
+
+/**
+ * @brief 查询当前平台后端是否具备网卡配置能力。
+ * @return 具备（查询+设置已实现）返回 true；其余平台返回 false。
+ */
+bool XDeviceNetwork_interfaceConfigSupported(void);
+
+/**
+ * @brief 按接口索引查询网卡当前 IPv4 配置。
+ * @param ifIndex 接口索引（与 XNetworkInterface index 同源）。
+ * @param outConfig 输出结果；成功时由本函数填充，失败时内容不变。不能为 NULL。
+ * @return 成功返回 true；参数无效、索引不存在或平台不支持返回 false。
+ */
+bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
+                                         XDeviceNetworkInterfaceConfig* outConfig);
+
+/**
+ * @brief 释放 queryInterfaceConfig 填充的整组字符串。
+ * @param config 之前查询得到的配置；NULL 安全；释放后字段全部置 NULL。
+ */
+void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config);
+
+/**
+ * @brief 将网卡切回 DHCP 自动获取（地址与 DNS 一并交还自动管理）。
+ * @param ifIndex 接口索引。
+ * @return 平台已受理返回 true；不支持、找不到接口或应用失败返回 false。
+ * @note Windows 走 netsh，需要管理员权限；失败时通常是权限不足。
+ */
+bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex);
+
+/**
+ * @brief 将网卡切换为静态 IPv4 配置并应用参数。
+ * @param ifIndex 接口索引。
+ * @param ipv4Address 静态 IP（点分十进制）；不能为 NULL/空。
+ * @param ipv4Netmask 子网掩码（点分十进制）；不能为 NULL/空。
+ * @param ipv4Gateway 默认网关；NULL/空表示不设网关。
+ * @param dnsPrimary 首选 DNS；NULL/空表示不设 DNS。
+ * @param dnsSecondary 备用 DNS；仅 dnsPrimary 非空时生效。
+ * @return 平台已受理返回 true；参数非法、不支持或应用失败返回 false。
+ * @note Windows 走 netsh，需要管理员权限；切换会短暂中断该网卡连接。
+ */
+bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address,
+                                       const char* ipv4Netmask,
+                                       const char* ipv4Gateway,
+                                       const char* dnsPrimary,
+                                       const char* dnsSecondary);
+
+/**
+ * @brief 为网卡追加一个静态 IPv6 地址（前缀长度随地址写入）。
+ * @param ifIndex 接口索引。
+ * @param ipv6Address IPv6 字面量（不含 %zone）；不能为 NULL/空。
+ * @param prefixLength 前缀长度（0..128）。
+ * @param ipv6Gateway IPv6 默认网关；NULL/空表示不设（lwIP 后端默认路由
+ *                    由 RA 管理，该参数被忽略）。
+ * @return 平台已受理返回 true；参数非法、不支持或应用失败返回 false。
+ * @note Windows=netsh interface ipv6 add address / add route（需管理员
+ *       权限；地址已存在时报失败）；不影响既有 SLAAC/临时地址。
+ */
+bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
+                                           const char* ipv6Address,
+                                           int prefixLength,
+                                           const char* ipv6Gateway);
+
+/* =========================================================================
  * 三、网络设备打开上下文（由 XFd 持有）
  * ========================================================================= */
 

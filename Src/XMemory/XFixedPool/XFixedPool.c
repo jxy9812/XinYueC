@@ -3,6 +3,9 @@
 #include "XMemory.h"
 #include <stdlib.h>
 #include <string.h>
+
+#if XMEMORY_FIXEDPOOL_ON
+
 #ifndef ALIGN_UP
 #define ALIGN_UP(size, align) (((size) + (align) - 1) & ~((align) - 1))
 #endif
@@ -351,3 +354,10 @@ size_t XFixedPool_totalSize(const XFixedPool* pool) {
     }
     return pool->num_blocks * pool->user_block_size;
 }
+
+#else /* XMEMORY_FIXEDPOOL_ON == 0 */
+
+/* 裁剪后的空编译单元，避免 ISO C 对空翻译单元的移植性疑虑 */
+typedef int xfixedpool_trimmed_unused_t;
+
+#endif /* XMEMORY_FIXEDPOOL_ON */

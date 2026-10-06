@@ -425,15 +425,16 @@ int XTouchMultiPointTest_run(void)
                        XTOUCHPOINT_STATE_RELEASED, 1260);
 
         /* 4.3 拖动=滚轮：dy=80 超阈值→转拖（左键 press 以远偏移释放，
-         *    释放不落回命中靶）；UPDATE 合成 ScrollBegin 滚轮（angleDelta.y
-         *    取反<0，整格 -120）；END 补 ScrollEnd 收口。 */
+         *    释放不落回命中靶）；UPDATE 合成 ScrollBegin 滚轮（跟手口径：
+         *    手指下滑 accY>0 → angleDelta.y>0，整格 +120）；END 补
+         *    ScrollEnd 收口。 */
         tp_gestureStep(xw, XEVENT_TYPE_TOUCH_BEGIN, 5, 100, 100,
                        XTOUCHPOINT_STATE_PRESSED, 1000);
         tp_gestureStep(xw, XEVENT_TYPE_TOUCH_UPDATE, 5, 100, 180,
                        XTOUCHPOINT_STATE_UPDATED, 1100);
-        tp_expect(gs.m_wheel >= 1 && gs.m_lastAngleY < 0 &&
+        tp_expect(gs.m_wheel >= 1 && gs.m_lastAngleY > 0 &&
                   gs.m_lastPhase == XWheelEventPhase_ScrollBegin,
-                  "4.3 drag→wheel：ScrollBegin 且 angleDelta.y<0");
+                  "4.3 drag→wheel：ScrollBegin 且 angleDelta.y>0（下滑跟手）");
         tp_expect(gs.m_press == 2 && gs.m_release == 2,
                   "4.3 drag：press 随 BEGIN 合成、转换远偏移释放不落回靶");
         tp_gestureStep(xw, XEVENT_TYPE_TOUCH_END, 5, 100, 180,

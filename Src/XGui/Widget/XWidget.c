@@ -2261,17 +2261,20 @@ static void xwidget_touchGestureLazyLongPress(XWidget* top)
  *         角度）。非收口按「|角度|>=120 才发、发整格数、余数保留」节流；
  *         finalEnd 发 phase=ScrollEnd 收口事件（余数角度随事件下发，
  *         不足一格消费方按 0 步滚动自动吞掉，无害）。主导轴：横向角度
- *         绝对值更大只填 x，否则只填 y。angleDelta.y 取反（手指下滑
- *         显示下方内容，对标 XScrollArea wheelEvent 的
- *         value=当前值-steps*60 口径）、angleDelta.x 不取反；
- *         source=SynthesizedByQt、buttons/modifiers=0、position=主点
- *         top-local、global=主点 global。 */
+ *         绝对值更大只填 x，否则只填 y。移动端跟手口径（手指方向=
+ *         内容移动方向，对标安卓）：accY 为屏幕系 dy（y 向下为正），
+ *         手指下滑 accY>0 → angleDelta.y=+2*accY 为正 → 消费端
+ *         value=当前值-steps*60 减小=滚向内容开头=内容随手下移；
+ *         angleDelta.x 预取反——消费端横向 delta 取反（Qt
+ *         scrollByDelta 口径），合成端再取反恰好抵消，手指右滑=
+ *         内容右移；source=SynthesizedByQt、buttons/modifiers=0、
+ *         position=主点 top-local、global=主点 global。 */
 static void xwidget_touchGestureEmitWheel(XWidget* top, bool finalEnd,
                                           const XPoint* topLocal,
                                           const XPoint* globalPos)
 {
-    int angleX = g_touchGesture.m_accX * 2;    /* 横向不取反。 */
-    int angleY = -(g_touchGesture.m_accY * 2); /* 纵向取反（见上注）。 */
+    int angleX = -(g_touchGesture.m_accX * 2); /* 横向预取反（抵消费端取反=跟手）。 */
+    int angleY = g_touchGesture.m_accY * 2;    /* 纵向不取反（下滑=正角度=滚向开头）。 */
     int axAbs = angleX >= 0 ? angleX : -angleX;
     int ayAbs = angleY >= 0 ? angleY : -angleY;
     int n;
@@ -2290,11 +2293,11 @@ static void xwidget_touchGestureEmitWheel(XWidget* top, bool finalEnd,
     } else if (axAbs > ayAbs) {
         n = angleX / 120;                 /* C 整除向零截断=整格数。 */
         angle.x = n * 120;
-        g_touchGesture.m_accX -= n * 60;  /* 余数保留（px 域，n*120/2）。 */
+        g_touchGesture.m_accX += n * 60;  /* 余数保留（px 域，consumed px=-n*60）。 */
     } else {
         n = angleY / 120;
         angle.y = n * 120;
-        g_touchGesture.m_accY += n * 60;  /* 纵向带符号，余数同域保留。 */
+        g_touchGesture.m_accY -= n * 60;  /* 余数保留（px 域，consumed px=+n*60）。 */
     }
     wheel = XWheelEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                   XEVENT_TYPE_WHEEL, topLocal, globalPos,

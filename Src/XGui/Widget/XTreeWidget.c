@@ -1986,8 +1986,6 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
         /* 滚动范围维护 + 偏移平移（此前滚动条值变化不触发重绘）。
          * 表头带计入内容高度（对标 QHeaderView 占位视口顶部，
          * headerHidden 时为 0）。 */
-        XScrollBar* vbar = XAbstractScrollArea_verticalScrollBar(
-            (XAbstractScrollArea*)&tw->m_base.m_base);
         int headerOffset = xtw_headerOffset(tw);
         int rows = 0;
         int i2;
@@ -1995,30 +1993,20 @@ static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event)
             rows += (tw->m_topItems[i2] && xtw_isExpanded(tw, i2))
                         ? xtw_subtreeRows(tw->m_topItems[i2])
                         : 1;
-        {
-            /* 对标 Qt QAbstractScrollArea 滚动条按需呈现：内容尺寸经
-             * setContentSize 上报后由 xasa_updateScrollBars 统一驱动
-             * AsNeeded 可见性与范围（此前仅 setRange——范围有计算而
-             * 滚动条从不显示；内容溢出被控件边缘硬裁）。showV 翻转
-             * 发生在 resize 之后时布局器不再重跑，这里补一次滚动条
-             * 几何（同 VX_asa_resizeEvent 的右缘 16px 带口径；
-             * setGeometry 同值早退，稳态重绘零开销）。 */
-            XAbstractScrollArea* area =
-                (XAbstractScrollArea*)&tw->m_base.m_base;
-            int contentH = headerOffset + rows * xtw_effectiveRowHeight(tw);
-            XAbstractScrollArea_setContentSize(area, r.width, contentH);
-            if (vbar && XWidget_isVisible((XWidget*)vbar)) {
-                bool showH = area->m_hPolicy !=
-                                 XScrollBarPolicy_AlwaysOff &&
-                             (area->m_hPolicy ==
-                                  XScrollBarPolicy_AlwaysOn ||
-                              area->m_contentWidth > r.width);
-                XRect barRect;
-                XRect_init(&barRect, r.width - XTW_SBW, 0, XTW_SBW,
-                           showH ? h - XTW_SBW : h);
-                XWidget_setGeometryRect((XWidget*)vbar, &barRect);
-            }
-        }
+        /* 对标 Qt QAbstractScrollArea 滚动条按需呈现：内容尺寸经
+         * setContentSize 上报后由 xasa_updateScrollBars 统一驱动
+         * AsNeeded 可见性与范围，并经 xasa_layout 无条件重排滚动条
+         * 几何（视口宽口径）。绘制段不得再补滚动条几何：本函数曾在
+         * setContentSize 后按控件全宽口径（m_contentWidth > r.width）
+         * 重设竖条矩形，与 xasa_layout 的视口宽口径（m_contentWidth >
+         * 视口宽）在竖条显形时判定相反，竖条高度每帧在 h 与 h-16 间
+         * 乒乓——每次 setGeometry 变更把新旧并集记入顶层脏账本，且
+         * 记账发生在扣减之后、当帧无法消费，flush 尾部「残留重投
+         * PAINT」自续成 ~124FPS 的空刷循环（画面终态恒定、单核占满，
+         * 2026-10-06 条目视图页实测取证）。 */
+        XAbstractScrollArea_setContentSize(
+            (XAbstractScrollArea*)&tw->m_base.m_base, r.width,
+            headerOffset + rows * xtw_effectiveRowHeight(tw));
         /* 表头带绘制于视口顶部（不随内容滚动；headerHidden 时不占位）。 */
         if (headerOffset > 0) xtw_drawHeader(tw, &painter, r.width);
         offY = xtw_scrollOffsetY(tw);

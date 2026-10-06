@@ -12,7 +12,13 @@
  * 主要特性:
  * - 可配置的内存块对齐，优化 CPU 缓存性能并避免 false sharing。
  * - 零外部依赖（除了XAtomic 原子库）。
+ *
+ * 裁剪：XMEMORY_FIXEDPOOL_ON=0（XMemory_config.h，默认跟随
+ * XMEMORY_MULTIPOOL_ON）时整个 API 编译裁剪。
  */
+#include "XMemory_config.h"
+#if XMEMORY_FIXEDPOOL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -245,5 +251,7 @@ size_t XFixedPool_totalSize(const XFixedPool* pool);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XMEMORY_FIXEDPOOL_ON */
 
 #endif // XFIXEDPOOL_H

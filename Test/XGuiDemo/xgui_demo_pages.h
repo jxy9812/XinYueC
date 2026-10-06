@@ -98,6 +98,54 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
  *         控件装配/预置/门控）。 */
 int demo_page_remote_client_autotest(XWidget* page);
 
+/** @brief 构建网络设置页（系统设置：枚举所有网卡/查看 IPv4 配置/
+ *         DHCP↔静态模式切换/静态 IP·掩码·网关·DNS 应用）。
+ *         枚举走 XNetworkInterface；应用走 XNetworkInterface_set*Mode
+ *         （Windows=netsh 通路，需管理员权限；其余平台返回 NULL 或
+ *         应用时如实提示不支持，主文件跳过注册或禁用）。 */
+XWidget* demo_page_network_build(XWidget* parent,
+                                 DemoPageStatusFn status, void* user);
+
+/** @brief 网络设置页自测（非阻塞；绝不真实下发配置——只断言枚举/
+ *         填充/非法输入拒应用门控）。 */
+int demo_page_network_autotest(XWidget* page);
+
+/** @brief 网络设置页自适应重排（信息区伸缩 + 状态行贴底；同上契约）。 */
+void demo_page_network_adapt(XWidget* page);
+
+/** @brief 构建悬浮窗设置页（系统设置：性能悬浮层显示数据行/内存行
+ *         显示与来源/九宫格预设位置/固定与拖动/字号/自适应尺寸，
+ *         改动即时生效）。XGUI_PERFORMANCE_OVERLAY_ON=0 或控件裁剪
+ *         时返回 NULL，主文件跳过注册。 */
+XWidget* demo_page_overlay_settings_build(XWidget* parent,
+                                          DemoPageStatusFn status, void* user);
+
+/** @brief 悬浮窗设置页自测（非阻塞；逐项切换并断言悬浮层 getter，
+ *         结束恢复默认）。 */
+int demo_page_overlay_settings_autotest(XWidget* page);
+
+/** @brief 悬浮窗设置页自适应重排（说明/状态行贴底；同上契约）。 */
+void demo_page_overlay_settings_adapt(XWidget* page);
+
+/**
+ * @brief 主窗口性能悬浮层访问器（悬浮窗设置页专用；主文件实现）。
+ * @param user build 回调透传的主窗口指针（DemoWin*）。
+ * @return 性能悬浮层控件借用指针；XGUI_PERFORMANCE_OVERLAY_ON=0 或
+ *         未初始化时 NULL。返回 void* 避免本头引入悬浮层头文件。
+ */
+void* demo_main_overlay(void* user);
+
+/**
+ * @brief 主窗口性能悬浮层九宫格预设位置（悬浮窗设置页专用；主文件实现）。
+ * @param user build 回调透传的主窗口指针（DemoWin*）。
+ * @param preset XPerformanceOverlayPosition 枚举值（0..8；传 int 免引入
+ *               悬浮层头文件）。
+ * @details 主文件据此挂起/恢复「resize 自动重锚右下角」行为：preset
+ *          为 BottomRight 恢复自动重锚，其余预设挂起（用户显式定位
+ *          优先，窗口缩放不抢位置）。
+ */
+void demo_main_overlay_applyPreset(void* user, int preset);
+
 /** @brief 键盘页无头截图钩子（Tools/VirtualKeyboard/style_check.py 风格自动化专用；
  *         其余页面无此契约）。环境变量全部缺省时零操作、零开销：
  *   - XGUI_KB_AUTOSHOW=1   聚焦默认编辑框并 XVirtualKeyboard_popup 弹出键盘

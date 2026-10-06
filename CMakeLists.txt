@@ -725,6 +725,8 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_effects.c"
     "./Test/XGuiDemo/xgui_demo_page_remote_server.c"
     "./Test/XGuiDemo/xgui_demo_page_remote_client.c"
+    "./Test/XGuiDemo/xgui_demo_page_network.c"
+    "./Test/XGuiDemo/xgui_demo_page_overlay_settings.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
     "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
     "./Test/XGuiDemo/xgui_demo_apitest_input.c"

@@ -1908,4 +1908,66 @@ XString* XDeviceNetwork_localHostName(void)
     return XString_create_utf8(hostname);
 }
 
+/* =========================================================================
+ * 网卡配置（DHCP / 静态 IP）——POSIX 后端暂不支持
+ * =========================================================================
+ * Linux 侧可持久化配置由 NetworkManager/netplan/systemd-networkd 等发行
+ * 版组件管辖，无统一系统调用通路；在框架内私改易与系统网络管理冲突，
+ * 故本后端如实声明不支持（查询/设置返回 false，能力探测返回 false）。
+ */
+
+bool XDeviceNetwork_interfaceConfigSupported(void)
+{
+    return false;
+}
+
+bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
+                                         XDeviceNetworkInterfaceConfig* outConfig)
+{
+    (void)ifIndex;
+    if (outConfig) memset(outConfig, 0, sizeof(*outConfig));
+    return false;
+}
+
+void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config)
+{
+    if (!config) return;
+    if (config->friendlyName) XClassDelete(config->friendlyName);
+    XClassDeinit(&config->ipv4Address);
+    XClassDeinit(&config->ipv4Netmask);
+    XClassDeinit(&config->ipv4Gateway);
+    XClassDeinit(&config->ipv6Address);
+    XClassDeinit(&config->ipv6Gateway);
+    XClassDeinit(&config->dhcpServer);
+    XClassDeinit(&config->dnsPrimary);
+    XClassDeinit(&config->dnsSecondary);
+    memset(config, 0, sizeof(*config));
+}
+
+bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex)
+{
+    (void)ifIndex;
+    return false;
+}
+
+bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address,
+                                       const char* ipv4Netmask,
+                                       const char* ipv4Gateway,
+                                       const char* dnsPrimary,
+                                       const char* dnsSecondary)
+{
+    (void)ifIndex; (void)ipv4Address; (void)ipv4Netmask;
+    (void)ipv4Gateway; (void)dnsPrimary; (void)dnsSecondary;
+    return false;
+}
+
+bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
+                                           const char* ipv6Address,
+                                           int prefixLength,
+                                           const char* ipv6Gateway)
+{
+    (void)ifIndex; (void)ipv6Address; (void)prefixLength; (void)ipv6Gateway;
+    return false;
+}
+
 #endif /* XNETWORK_USE_PLATFORM_API && POSIX */

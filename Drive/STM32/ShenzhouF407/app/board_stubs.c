@@ -330,6 +330,61 @@ void XDeviceNetwork_enumInterfacesEnd(XDeviceNetworkInterfaceIterator iter)
     (void)iter;
 }
 
+/* ---------------- XDeviceNetwork 网卡配置（无承载系统网络栈：不支持） ------- */
+bool XDeviceNetwork_interfaceConfigSupported(void)
+{
+    return false;
+}
+
+bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
+                                         XDeviceNetworkInterfaceConfig* outConfig)
+{
+    (void)ifIndex;
+    if (outConfig) memset(outConfig, 0, sizeof(*outConfig));
+    return false;
+}
+
+void XDeviceNetwork_freeInterfaceConfig(XDeviceNetworkInterfaceConfig* config)
+{
+    if (!config) return;
+    if (config->friendlyName) XClassDelete(config->friendlyName);
+    XClassDeinit(&config->ipv4Address);
+    XClassDeinit(&config->ipv4Netmask);
+    XClassDeinit(&config->ipv4Gateway);
+    XClassDeinit(&config->ipv6Address);
+    XClassDeinit(&config->ipv6Gateway);
+    XClassDeinit(&config->dhcpServer);
+    XClassDeinit(&config->dnsPrimary);
+    XClassDeinit(&config->dnsSecondary);
+    memset(config, 0, sizeof(*config));
+}
+
+bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex)
+{
+    (void)ifIndex;
+    return false;
+}
+
+bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address,
+                                       const char* ipv4Netmask,
+                                       const char* ipv4Gateway,
+                                       const char* dnsPrimary,
+                                       const char* dnsSecondary)
+{
+    (void)ifIndex; (void)ipv4Address; (void)ipv4Netmask;
+    (void)ipv4Gateway; (void)dnsPrimary; (void)dnsSecondary;
+    return false;
+}
+
+bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
+                                           const char* ipv6Address,
+                                           int prefixLength,
+                                           const char* ipv6Gateway)
+{
+    (void)ifIndex; (void)ipv6Address; (void)prefixLength; (void)ipv6Gateway;
+    return false;
+}
+
 int XDeviceNetwork_gssapiAuth(const XString* serviceName,
                               const XByteArray* inputToken,
                               XByteArray* outputToken, void** context)
