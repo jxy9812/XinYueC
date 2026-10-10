@@ -13,6 +13,7 @@
 #include "XVirtualKeyboardAbstractInputMethod_Protected.h"
 #include "XVirtualKeyboardSelectionListModel_Protected.h"
 #include "XVirtualKeyboardInputContext.h"
+#include "XVirtualKeyboardInputContext_Protected.h" /* instanceEngine（防 C4013 隐式声明）。 */
 #include "XVirtualKeyboardSettings.h"
 #include "XStringUtils.h"
 #include "XMemory.h"

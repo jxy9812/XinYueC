@@ -40,6 +40,7 @@
 #include "XAbstractItemModel.h"
 #include "XAlignment.h"
 #include "XWindowEvent.h" /* XWheelEvent（滚轮步进注入）。 */
+#include "XListWidget.h" /* XListWidget_count（防 C4013 隐式声明）。 */
 #endif
 
 #if XWIDGET_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON

@@ -22,7 +22,9 @@
  ******************************************************************************/
 #include <stdio.h>
 #include <stdarg.h> /* demo_log：va_list 转发 vprintf（诊断行立即落盘）。 */
-#include <malloc.h> /* mallopt(内存驻留治理) */
+#if defined(__GLIBC__) /* mallopt(内存驻留治理)——glibc 专有, MSVC 无此 API。 */
+#include <malloc.h>
+#endif
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -51,6 +53,9 @@
 #include "xgui_demo_page_remote_client.h" /* 远程客户端页 CLI 预置/autostart/shutdown(2026-10-02)。 */
 #include "xgui_demo_apitest.h"
 #include "XWindowDecoration.h" /* 框架级系统标题栏：布局让位边距查询 */
+#include "XWindowSystemInterface.h" /* 鼠标/触摸注入 _ex 接口（防 C4013 隐式声明）。 */
+#include "XFusionStyle.h" /* XFusionStyle_installDefault（防 C4013 隐式声明）。 */
+#include "XStyle.h" /* XStyle_installStyleSheet（防 C4013 隐式声明）。 */
 #if XPLATFORMINTEGRATION_ON && XGPU_ON
 #include "XGpuRenderBackend.h"
 #endif
@@ -394,7 +399,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[15]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create）。 */
+    XPushButton     m_pageNav[16]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；2026-10-08 二维码页扩列 16）。 */
 #endif
 #if XBUTTONGROUP_ON
     XButtonGroup    m_navGroup;    /**< 页面钮互斥组：当前页按钮保持选中高亮（主题 :checked 态）。 */
@@ -423,7 +428,7 @@ typedef struct DemoWin
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
     XWidget         m_pageTabs;    /**< 页面 4：容器与窗口演示容器。 */
     XWidget         m_pageChart;   /**< 页面 12：图表演示容器（自选项卡页打散独立）。 */
-    XWidget*        m_extPages[10]; /**< 页面 5~14：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构）。 */
+    XWidget*        m_extPages[11]; /**< 页面 5~15：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构）。 */
 #endif
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
@@ -1339,18 +1344,19 @@ static const char* demo_page_name(int index);
  *          =页 12（图表演示，内置页无 autotest 契约）恒 NULL 跳过。 */
 static void demo_ext_pages_autotest(DemoWin* demo)
 {
-    int (*const kTests[10])(XWidget*) = {
+    int (*const kTests[11])(XWidget*) = {
         demo_page_views_autotest, demo_page_dialogs_autotest,
         demo_page_advanced_autotest, demo_page_effects_autotest,
         demo_page_keyboard_autotest, demo_page_remote_server_autotest,
         demo_page_remote_client_autotest, /* 2026-10-02 追加第 7 扩展页。 */
         NULL, /* 页 12（图表演示）内置页占位。 */
         demo_page_network_autotest, /* 2026-10-06 网络设置页。 */
-        demo_page_overlay_settings_autotest /* 2026-10-06 悬浮窗设置页。 */
+        demo_page_overlay_settings_autotest, /* 2026-10-06 悬浮窗设置页。 */
+        demo_page_qrcode_autotest /* 2026-10-08 二维码演示页。 */
     };
     int total = 0;
     int exti;
-    for (exti = 0; exti < 10; ++exti) {
+    for (exti = 0; exti < 11; ++exti) {
         int failures;
         if (!demo->m_extPages[exti] || !kTests[exti])
             continue; /* 页面模块被裁剪/无契约，跳过 */
@@ -1649,7 +1655,7 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[15] = {
+    static const char* const kNames[16] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
@@ -1664,9 +1670,10 @@ static const char* demo_page_name(int index)
         "\xE8\xBF\x9C\xE7\xA8\x8B\xE5\xAE\xA2\xE6\x88\xB7\xE7\xAB\xAF",  /* 远程客户端 */
         "\xE5\x9B\xBE\xE8\xA1\xA8\xE6\xBC\x94\xE7\xA4\xBA",  /* 图表演示(2026-10-03 打散独立) */
         "\xE7\xBD\x91\xE7\xBB\x9C\xE8\xAE\xBE\xE7\xBD\xAE",  /* 网络设置(2026-10-06 系统设置) */
-        "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE\xE7\xBD\xAE" /* 悬浮窗设置(2026-10-06 系统设置) */
+        "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE\xE7\xBD\xAE", /* 悬浮窗设置(2026-10-06 系统设置) */
+        "\xE4\xBA\x8C\xE7\xBB\xB4\xE7\xA0\x81\xE6\xBC\x94\xE7\xA4\xBA"  /* 二维码演示(2026-10-08 控件类) */
     };
-    if (index < 0 || index > 14)
+    if (index < 0 || index > 15)
         return kNames[0];
     return kNames[index];
 }
@@ -1685,7 +1692,7 @@ static const char* demo_page_name(int index)
 #define DEMO_NAV_TB_MAX  320   /**< 上下停靠面板高上限（换行页面钮自动抬高至此）。 */
 #define DEMO_NAV_STRIP_W 8     /**< 收起贴边分割条细条厚。 */
 #define DEMO_NAV_CAT_N   3     /**< 一级分类数（=kNavGroups 项数）。 */
-#define DEMO_NAV_PAGE_N  15    /**< 页面数。 */
+#define DEMO_NAV_PAGE_N  16    /**< 页面数。 */
 #define DEMO_NAV_HEAD_N  5     /**< 单分类最多子分组标题数（标签池容量）。 */
 #define DEMO_NAV_PAGE_H    24  /**< 页面钮高（竖版）。 */
 #define DEMO_NAV_PAGE_PITCH 26 /**< 页面钮行距（竖版）。 */
@@ -1714,7 +1721,8 @@ static const DemoNavItem kNavControlsItems[] = {
     { "\xE9\xAB\x98\xE7\xBA\xA7\xE6\x8E\xA7\xE4\xBB\xB6", 7 },             /* 高级控件 */
     { "\xE5\x9B\xBE\xE5\xBD\xA2\xE4\xB8\x8E\xE5\x9B\xBE\xE8\xA1\xA8", -1 },/* 图形与图表 */
     { "\xE5\x9B\xBE\xE5\xBD\xA2\xE6\x95\x88\xE6\x9E\x9C", 8 },             /* 图形效果 */
-    { "\xE5\x9B\xBE\xE8\xA1\xA8\xE6\xBC\x94\xE7\xA4\xBA", 12 }             /* 图表演示 */
+    { "\xE5\x9B\xBE\xE8\xA1\xA8\xE6\xBC\x94\xE7\xA4\xBA", 12 },            /* 图表演示 */
+    { "\xE4\xBA\x8C\xE7\xBB\xB4\xE7\xA0\x81\xE6\xBC\x94\xE7\xA4\xBA", 15 } /* 二维码演示(2026-10-08) */
 };
 
 /** @brief 系统设置类条目（2026-10-06 新增二级设置页）。 */
@@ -2308,6 +2316,8 @@ static void demo_layout_content(DemoWin* self)
         demo_page_network_adapt(self->m_extPages[8]);
     if (self->m_extPages[9])
         demo_page_overlay_settings_adapt(self->m_extPages[9]);
+    if (self->m_extPages[10])
+        demo_page_qrcode_adapt(self->m_extPages[10]); /* 2026-10-08 二维码页。 */
     /* 远程服务器页（2026-10-06 补入统一漏斗）：此前只在 resizeEvent
      * 单独调用，切页路径漏跑——XStackedLayout StackOne 只给当前页
      * 分配几何，resize 落在别的页时本页根保持陈旧尺寸，adapt 算出
@@ -2341,7 +2351,7 @@ static void demo_switchPage(DemoWin* self, int index)
     }
 #endif
     if (index < 0) index = 0;
-    if (index > 14) index = 14; /* 2026-10-06: 第 13/14 页(网络/悬浮窗设置)入列。 */
+    if (index > 15) index = 15; /* 2026-10-08: 第 15 页(二维码演示)入列。 */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 导航面板手风琴随页展开所在分类（程序化切页 --page/autotest 与
@@ -2592,6 +2602,13 @@ static void demo_nav14Slot(XObject* receiver, XVarList* args)
 {
     (void)args;
     demo_switchPage((DemoWin*)receiver, 14);
+}
+
+/** @brief 页面 15（二维码演示）导航槽（2026-10-08 控件类入列）。 */
+static void demo_nav15Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 15);
 }
 
 /** @brief 扩展页状态回调：转发到主窗状态栏（xgui_demo_pages.h 契约适配）。 */
@@ -3355,25 +3372,24 @@ static DemoWin* DemoWin_create(void)
      * 下标 7=页 12（图表演示，内置页）恒 NULL 占位。 ---- */
     {
         int exti;
+        XWidget* (*const kExtBuilders[11])(XWidget*, DemoPageStatusFn, void*) = {
 #if XINYUE_EMBEDDED
-        /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
-         * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
-         * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
-        XWidget* (*const kExtBuilders[10])(XWidget*, DemoPageStatusFn, void*) = {
-            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
-        };
+            /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
+             * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
+             * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 #else
-        XWidget* (*const kExtBuilders[10])(XWidget*, DemoPageStatusFn, void*) = {
             demo_page_views_build, demo_page_dialogs_build,
             demo_page_advanced_build, demo_page_effects_build,
             demo_page_keyboard_build, demo_page_remote_server_build,
             demo_page_remote_client_build, /* 2026-10-02 追加第 7 扩展页。 */
             NULL, /* 页 12（图表演示）内置页占位。 */
             demo_page_network_build, /* 2026-10-06 网络设置页（系统设置）。 */
-            demo_page_overlay_settings_build /* 2026-10-06 悬浮窗设置页（系统设置）。 */
-        };
+            demo_page_overlay_settings_build, /* 2026-10-06 悬浮窗设置页。 */
+            demo_page_qrcode_build /* 2026-10-08 二维码演示页（控件类）。 */
 #endif
-        for (exti = 0; exti < 10; ++exti) {
+        };
+        for (exti = 0; exti < 11; ++exti) {
 #if XCHARTS_ON
             if (exti == 7) {
                 /* 页 12（图表演示）内置页在此占位入栈：保证「堆叠下标=
@@ -3436,13 +3452,14 @@ static DemoWin* DemoWin_create(void)
                       XConnectionType_Direct);
     XWidget_show(&self->m_navCollapseBtn);
     {
-        static void (*const kNavSlots[15])(XObject*, XVarList*) = {
+        static void (*const kNavSlots[16])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
             demo_nav4Slot, demo_nav5Slot, demo_nav6Slot, demo_nav7Slot,
             demo_nav8Slot, demo_nav9Slot, demo_nav10Slot, demo_nav11Slot,
             demo_nav12Slot, /* 2026-10-03 图表演示入列。 */
             demo_nav13Slot, /* 2026-10-06 网络设置入列。 */
-            demo_nav14Slot  /* 2026-10-06 悬浮窗设置入列。 */
+            demo_nav14Slot, /* 2026-10-06 悬浮窗设置入列。 */
+            demo_nav15Slot  /* 2026-10-08 二维码演示入列。 */
         };
         int i;
 #if XBUTTONGROUP_ON
@@ -4445,8 +4462,10 @@ int xgui_demo_main(int argc, char* argv[])
      * 把释放块滞留主堆不还系统——A33(56MB 无 swap)实测导航点击 RSS
      * +125MB 不回落直至 OOM(用户实测吃满)。mmap 阈值 128KB=大块走
      * mmap/munmap 即时归还; trim 阈值同步收紧。仅影响本进程。 */
+#if defined(__GLIBC__)
     mallopt(M_TRIM_THRESHOLD, 128 * 1024);
     mallopt(M_MMAP_THRESHOLD, 128 * 1024);
+#endif
     {
         /* 虚拟键盘面板开关(联调口; XPWN_VK=none/0 关——远程注入聚焦编辑框
          * 时面板会遮挡页面, 对齐平台层 XPWN_IME 环境约定纪律)。 */
@@ -4775,7 +4794,7 @@ int xgui_demo_main(int argc, char* argv[])
     if (win->m_extPages[0] || win->m_extPages[1] ||
         win->m_extPages[2] || win->m_extPages[3] || win->m_extPages[4] ||
         win->m_extPages[5] || win->m_extPages[6] || win->m_extPages[7] ||
-        win->m_extPages[8] || win->m_extPages[9])
+        win->m_extPages[8] || win->m_extPages[9] || win->m_extPages[10])
         XWidget_setGeometry(&win->m_base, 40, 40, 1000, 700); /* 15 页导航/扩展页与网络设置双列布局需要 */
     else
 #endif
@@ -5003,7 +5022,7 @@ int xgui_demo_main(int argc, char* argv[])
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     {
         int nav;
-        for (nav = 0; nav < 15; ++nav) /* 2026-10-06: 15 钮随系统设置两页扩列。 */
+        for (nav = 0; nav < 16; ++nav) /* 2026-10-08: 16 钮随二维码页扩列。 */
             XClassDeinit(&win->m_pageNav[nav]);
     }
 #endif

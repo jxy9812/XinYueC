@@ -1,5 +1,6 @@
 ﻿#include"XBinaryTree.h"
 #include"XStack.h"
+#include"XAlgorithm.h" /* XStackCopyXVector（防 C4013 隐式声明，64 位指针截断）。 */
 size_t XBTreeNode_typeSize()
 {
 	return sizeof(XBTreeNode) + sizeof(struct XTreeNode*) *2;

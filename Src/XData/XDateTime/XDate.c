@@ -4,6 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+
+/* 前向声明：days_in_month 定义在本文件下方（防 C4013 隐式声明）。 */
+int days_in_month(int year, int month);
 /**
  * @brief （内部使用）获取儒略日数值。
  * @param date XDate 对象指针。

@@ -10,6 +10,7 @@
 #include "XVirtualKeyboardObserver.h"
 #include "XVirtualKeyboardObserver_Protected.h"
 #include "XStringUtils.h"
+#include "XString.h" /* XString_toVariant_utf8（防 C4013 隐式声明）。 */
 #include "XMemory.h"
 
 /** @brief 进程单例指针。 */

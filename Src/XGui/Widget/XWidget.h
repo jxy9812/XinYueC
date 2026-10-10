@@ -1231,6 +1231,9 @@ bool XWidget_close(XWidget* self);
 const XString* XWidget_windowTitle(const XWidget* self);
 /** @brief 设置窗口标题（对标 QWidget::setWindowTitle；顶层同步到桥接窗口）。 */
 void XWidget_setWindowTitle(XWidget* self, const XString* title);
+/** @brief 设置窗口标题（UTF-8 便捷重载；2026-10-08 补声明——此前仅在
+ *         XWidget.c 定义，MSVC 下调用处触发 C4013 隐式声明）。 */
+void XWidget_setWindowTitle_2(XWidget* self, const char* utf8);
 /** @brief 查询窗口图标文本（对标已废弃的 QWidget::windowIconText）。 */
 const XString* XWidget_windowIconText(const XWidget* self);
 /** @brief 设置窗口图标文本（对标已废弃的 QWidget::setWindowIconText；仅存储不推送）。 */

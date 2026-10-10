@@ -609,6 +609,21 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
     (void)nativePixel;
 }
 
+/* Composite-content blit into the panel double buffers (2026-10-05, fbdev
+ * "让位条带归位还原" path). fbdev-only semantics; on Windows the window
+ * system re-covers exposed regions and the per-rect BitBlt flush is already
+ * atomic, so this stays a no-op (same policy as fillPanelRects above) --
+ * link stub, the posix commit only implemented the fbdev side. */
+void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
+                                          const XRect* rects, int count,
+                                          const XPoint* origin)
+{
+    (void)src;
+    (void)rects;
+    (void)count;
+    (void)origin;
+}
+
 /* Drag-snapshot blit for the window-decoration drag path (2026-10-06).
  * fbdev-only semantics (writes the visible fb buffer directly); on Windows
  * the window system re-covers exposed regions and drags flush through the

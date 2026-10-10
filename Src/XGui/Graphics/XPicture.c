@@ -13,6 +13,7 @@
 #include "XPaintDevice.h"
 #include "XIODevice.h"
 #include "XByteArray.h"
+#include <string.h> /* memchr（库内无封装，标准头；防 C4013）。 */
 #include "XFile.h"
 #include "XAtomic.h"
 #include "XClass.h"

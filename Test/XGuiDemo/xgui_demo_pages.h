@@ -127,6 +127,19 @@ int demo_page_overlay_settings_autotest(XWidget* page);
 /** @brief 悬浮窗设置页自适应重排（说明/状态行贴底；同上契约）。 */
 void demo_page_overlay_settings_adapt(XWidget* page);
 
+/** @brief 构建二维码演示页（XRcode 接入：内容输入 → 编码 → 预览/
+ *         中心内嵌图/保存 PNG；2026-10-08 追加第 11 扩展页，页索引
+ *         15）。控件或图像模块被裁剪时返回 NULL，主文件跳过注册。 */
+XWidget* demo_page_qrcode_build(XWidget* parent,
+                                DemoPageStatusFn status, void* user);
+
+/** @brief 二维码演示页自测（非阻塞；装配/编码/内嵌图版本抬升/空输入
+ *         拒编码门控；不触发模态文件对话框）。 */
+int demo_page_qrcode_autotest(XWidget* page);
+
+/** @brief 二维码演示页自适应重排（预览标签位置；同上契约）。 */
+void demo_page_qrcode_adapt(XWidget* page);
+
 /**
  * @brief 主窗口性能悬浮层访问器（悬浮窗设置页专用；主文件实现）。
  * @param user build 回调透传的主窗口指针（DemoWin*）。

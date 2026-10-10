@@ -162,7 +162,7 @@ size_t XReadWriteLock_typetSize(XLock_Type type)
 void XReadWriteLock_init(XReadWriteLock* rwlock, XLock_Type type)
 {
     if (!rwlock)return;
-	memset(rwlock, 0, XReadWriteLock_typetSize(type));
+	XMemset(rwlock, 0, XReadWriteLock_typetSize(type));
 	//rwlock->type = type;
 
 	if (type == XLock_Spin)

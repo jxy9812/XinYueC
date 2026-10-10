@@ -26,6 +26,7 @@
 #include "zlib.h"
 #include <limits.h>
 #include <math.h>
+#include <string.h> /* memchr/strcspn（库内无封装，标准头；防 C4013）。 */
 
 #if XIMAGECODEC_ON
 #if XIMAGECODEC_SVG_ON

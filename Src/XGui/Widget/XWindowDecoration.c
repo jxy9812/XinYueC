@@ -308,10 +308,17 @@ static void xwd_dropDefaultBar(XWindowDecorationState* st)
     st->m_defaultBar = NULL;
 }
 
-/** @brief 无窗口管理器环境的面板矩形（fbdev 显示驱动探测；屏幕兜底）。 */
+/** @brief fbdev 单屏面板矩形（无窗口管理器环境）；桌面环境恒返回 false。
+ *
+ *  2026-10-10：拖动边界钳制改为对齐 Windows 原生行为——原生窗口可拖到
+ *  屏幕外任意位置（只剩一条边也能拖），不设边界。此前这里对桌面环境也
+ *  返回单屏矩形钳制，窗口跨不过屏边界；改成跨屏并集后能跨屏了，但仍
+ *  限制在并集内，与原生仍有差异。故桌面路径（XSCREEN_ON）直接返回
+ *  false 不再钳制，位置完全由鼠标驱动。
+ *  仅 fbdev 保留钳制：单块物理帧缓冲没有「屏幕之外」的概念，窗口被拖出
+ *  就是真的看不见也够不着，必须拦。 */
 static bool xwd_panelRect(const XWindowDecorationState* st, XRect* out)
 {
-    XRect g;
 #if XGUI_ON && XPLATFORM_FBDEV_ON
     const XPlatformDisplayDriverOps* ops = XPlatformDisplayDriver_active();
     XPlatformDisplayInfo info;
@@ -321,21 +328,8 @@ static bool xwd_panelRect(const XWindowDecorationState* st, XRect* out)
         return true;
     }
 #endif /* XGUI_ON && XPLATFORM_FBDEV_ON */
-#if XSCREEN_ON
-    {
-        XScreen* screen = st ? XWindow_screen(st->m_window) : NULL;
-        if (screen) {
-            g = XScreen_geometry(screen);
-            if (g.width > 0 && g.height > 0) {
-                *out = g;
-                return true;
-            }
-        }
-    }
-#else
     (void)st;
-    (void)g;
-#endif
+    (void)out;
     return false;
 }
 
@@ -1896,22 +1890,64 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                 }
             }
             /* 条内空白区：开始拖拽移动（须显式抓取鼠标——框架对 MOVE
-               逐事件重命中，斜向拖出条区即断流，真机教训；最大化/全
-               屏禁拖，对标桌面）。增量锚取全局坐标：窗口本地系会随窗
-               口自身移动而平移，按本地增量拖拽自指减半（Xvfb 目验实
-               测 +200 指针只走 +100，dx_k=d−dx_{k−1} 交替归零）。 */
+               逐事件重命中，斜向拖出条区即断流，真机教训）。增量锚取全
+               局坐标：窗口本地系会随窗口自身移动而平移，按本地增量拖
+               拽自指减半（Xvfb 目验实测 +200 指针只走 +100，dx_k=d−
+               dx_{k−1} 交替归零）。
+               2026-10-10 最大化改为「还原并跟随拖动」（对标原生）：
+               Windows 下按住最大化窗口标题栏拖动，会把窗口还原到指针
+               下并随鼠标移动。此前本处对最大化/全屏一律禁拖（注释写
+               「对标桌面」），而 Windows 实际会先发还原——事件被吞但
+               还原已发生，视觉上就成了「窗口突然还原、且不跟手」的错
+               位感（用户实测）。现按原生语义：最大化时按下即还原，并以
+               *还原后* 的几何续接拖拽；全屏无标题栏可拖，维持禁拖。 */
             if (pos.y >= 0 && pos.y < barH) {
-                if (XWindow_windowState(st->m_window) !=
-                        XWindowState_Maximized &&
-                    XWindow_windowState(st->m_window) !=
-                        XWindowState_FullScreen) {
+                XWindowState wsNow = XWindow_windowState(st->m_window);
+                bool wasMax = (wsNow == XWindowState_Maximized);
+                if (wsNow != XWindowState_Maximized &&
+                    wsNow != XWindowState_FullScreen) {
                     st->m_dragging = true;
                     st->m_dragLast = XMouseEvent_globalPosition(mouse);
                     xwd_dragGestureBegin(st); /* 探针开工+快照预备（条件
                                                * 不满足整手势走旧路径）。 */
                     /* 节流戳不清零，同改尺寸臂（幻触免役）。 */
                     XWidget_grabMouse(top);
-                        xwd_platformGrab(st, true);
+                    xwd_platformGrab(st, true);
+                }
+                else if (wasMax) {
+                    /* 最大化：先还原，再让「抓取点」续接在指针下（原生
+                     * 语义），抓取点按比例映射而非直接复用。
+                     *
+                     * pos 是**最大化时**的窗口内坐标，横向最大到屏幕宽
+                     * （如 2752）；还原后窗口只有原先的普通宽度（如
+                     * 1250）。直接拿 pos 当还原后窗口内的偏移，量纲不匹
+                     * 配——窗口被甩到右上角（用户实测）。原生做法是保持
+                     * 抓取点的**相对位置**：按下时在标题栏的哪个比例处，
+                     * 还原后就落在还原后标题栏的同一比例处。故：
+                     *   ratio = pos.x / 最大化宽度        （0..1）
+                     *   目标局部 x = ratio × 还原后宽度
+                     *   增量 dx = now.x − (post.x + ratio×post.width)
+                     * 纵向同理（条高通常不变，按比例无碍；仍用同一公式
+                     * 保持一致）。 */
+                    XRect pre = XWidget_geometry(top);
+                    int preW = pre.width > 0 ? pre.width : 1;
+                    int preH = pre.height > 0 ? pre.height : 1;
+                    XWidget_showNormal(top);
+                    xwd_pinBarGeometry(st);
+                    st->m_dragging = true;
+                    xwd_dragGestureBegin(st); /* 须在还原后：探针基准取普通态几何 */
+                    XWidget_grabMouse(top);
+                    xwd_platformGrab(st, true);
+                    {
+                        XPoint now = XMouseEvent_globalPosition(mouse);
+                        XRect post = XWidget_geometry(top);
+                        int rx = (preW > 0) ? (pos.x * post.width) / preW : pos.x;
+                        int ry = (preH > 0) ? (pos.y * post.height) / preH : pos.y;
+                        int dx = now.x - (post.x + rx);
+                        int dy = now.y - (post.y + ry);
+                        if (dx || dy) xwd_applyMove(st, dx, dy);
+                        st->m_dragLast = now;
+                    }
                 }
                 XEvent_accept(event);
                 return true;

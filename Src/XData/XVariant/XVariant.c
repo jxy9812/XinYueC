@@ -2,6 +2,7 @@
 #include "XMemory.h"
 #include "XClass.h"
 #include "XString.h"
+#include "XAlgorithm.h" /* XSwap（防 C4013 隐式声明）。 */
 #include <string.h>
 #include <stdlib.h>
 

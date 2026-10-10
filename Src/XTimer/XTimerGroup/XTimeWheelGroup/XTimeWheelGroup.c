@@ -5,6 +5,7 @@
 #include"XThreadData.h"
 #include"XCoreApplication.h"
 #include"XDateTime.h"
+#include"XIODevice.h" /* XIODevice_class_init（防 C4013 隐式声明，指针截断）。 */
 #include<string.h>
 // 单个时间轮结构
 typedef struct XTimeWheel {

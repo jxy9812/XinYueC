@@ -4,6 +4,7 @@
 
 #include "XNetworkDatagram.h"
 #include "XMemory.h"
+#include "XString.h" /* XString_toUtf8（防 C4013 隐式声明，64 位指针截断）。 */
 #include <string.h>
 #if XNETWORK_ON
 #if XNETWORK_DATAGRAM_ON

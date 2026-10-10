@@ -213,7 +213,7 @@ XWidget* DemoSplitter_create_ex(int memoryType, XWidget* parent, int edge,
     DemoSplitter* sp = (DemoSplitter*)XMemory_malloc(sizeof(DemoSplitter),
                                                      memoryType);
     if (!sp) return NULL;
-    memset(sp, 0, sizeof(*sp));
+    XMemset(sp, 0, sizeof(*sp));
     XWidget_init(&sp->m_base, parent, 0);
     XClassSetVtable(sp, DemoSplitter);
     Set_Class_Memory(sp, memoryType);

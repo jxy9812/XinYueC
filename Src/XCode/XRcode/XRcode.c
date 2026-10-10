@@ -131,22 +131,53 @@ typedef struct {
     unsigned short data_code_count;
     unsigned short align_point_count;
     unsigned short align_point[6];
-    unsigned short rsec_block;
-    unsigned short rsec_block_code_count;
-    unsigned short rsec_block_data_count;
+    unsigned short rsec_block;             /* RS 块数 */
+    unsigned short rsec_ec_count;          /* 每块纠错码字数（块内等长） */
+    unsigned short rsec_block_data_count;  /* 长块数据码字数 */
+    unsigned short rsec_block_short;       /* 短块数（0=全部等长；标准要求短块排在块序前列） */
+    unsigned short rsec_block_short_data;  /* 短块数据码字数 */
 } qrcode_info_t;
 
-static const qrcode_info_t m_qrcode_info[] = {
-    {0},
-    {1,  26,  19, 0, {0},   1,  26,  19},
-    {2,  44,  34, 1, {18},  1,  44,  34},
-    {3,  70,  55, 1, {22},  1,  70,  55},
-    {4, 100,  80, 1, {26},  1, 100,  80},
-    {5, 134, 108, 1, {30},  1, 134, 108},
-    {6, 172, 136, 1, {34},  2,  86,  68},
-    {7, 196, 156, 2, {22,38},2,  98,  78},
-    {8, 242, 194, 2, {24,42},2, 121,  97},
-    {9, 292, 232, 2, {26,46},2, 146, 116}
+/* 纠错等级参数表（ISO 18004 分块结构；0=L 1=M 2=Q 3=H，M/Q 暂未内置）。
+ * L：约 7% 可恢复冗余；H：约 30%——中心内嵌图（logo）场景必须用 H，
+ * 否则预留空白吃掉的模块超出 L 的纠错能力，真机不可识（2026-10-08
+ * 用户手机实测）。H 级 v5/v7/v8/v9 为不等长分块（短块在前）。 */
+#define XRCODE_LEVEL_L 0
+#define XRCODE_LEVEL_M 1
+#define XRCODE_LEVEL_Q 2
+#define XRCODE_LEVEL_H 3
+
+static const qrcode_info_t m_qrcode_info[4][10] = {
+    /* [0] = L 级（历史缺省，全部等长分块） */
+    {
+        {0},
+        {1,  26,  19, 0, {0},     1,  7, 19, 0, 0},
+        {2,  44,  34, 1, {18},    1, 10, 34, 0, 0},
+        {3,  70,  55, 1, {22},    1, 15, 55, 0, 0},
+        {4, 100,  80, 1, {26},    1, 20, 80, 0, 0},
+        {5, 134, 108, 1, {30},    1, 26, 108, 0, 0},
+        {6, 172, 136, 1, {34},    2, 18, 68, 0, 0},
+        {7, 196, 156, 2, {22,38}, 2, 20, 78, 0, 0},
+        {8, 242, 194, 2, {24,42}, 2, 24, 97, 0, 0},
+        {9, 292, 232, 2, {26,46}, 2, 30, 116, 0, 0}
+    },
+    /* [1] = M 级（未内置） */
+    { {0},{0},{0},{0},{0},{0},{0},{0},{0},{0} },
+    /* [2] = Q 级（未内置） */
+    { {0},{0},{0},{0},{0},{0},{0},{0},{0},{0} },
+    /* [3] = H 级（内嵌图场景；v5+ 不等长分块，短块在前） */
+    {
+        {0},
+        {1,  26,   9, 0, {0},     1, 17,  9, 0, 0},
+        {2,  44,  16, 1, {18},    1, 28, 16, 0, 0},
+        {3,  70,  26, 1, {22},    2, 22, 13, 0, 0},
+        {4, 100,  36, 1, {26},    4, 16,  9, 0, 0},
+        {5, 134,  46, 1, {30},    4, 22, 12, 2, 11},
+        {6, 172,  60, 1, {34},    4, 28, 15, 0, 0},
+        {7, 196,  66, 2, {22,38}, 6, 26, 14, 4, 13},
+        {8, 242,  86, 2, {24,42}, 6, 26, 15, 2, 14},
+        {9, 292, 100, 2, {26,46}, 8, 24, 13, 4, 12}
+    }
 };
 
 struct XRcode {
@@ -156,13 +187,15 @@ struct XRcode {
     XByteArray matrix;
     int size;
     int version;
+    int level;                    /* 本次编码的纠错等级（0=L 3=H） */
+    const qrcode_info_t* m_info;  /* 本次编码使用的等级/版本参数行 */
 };
 
 static int  set_encode_data(XRcode* qr, const XByteArray* data);
 static int  set_data_code(XRcode* qr, int index, int data, int size);
-static int  check_version(int version, int bits_count, int reserved_blank);
-static int  set_padding_byte(XRcode* qr, int version, int data_bits_count);
-static int  set_code_word(XRcode* qr, int version, int data_code_count);
+static int  check_version(int version, int bits_count, int reserved_blank, int level);
+static int  set_padding_byte(XRcode* qr, int data_bits_count);
+static int  set_code_word(XRcode* qr);
 static void format_qrcode_data(XRcode* qr, int version, int code_word_count, int reserved_blank);
 static void set_function_patterns(XRcode* qr, int version);
 static void set_postion_pattern(XRcode* qr, int x, int y);
@@ -206,52 +239,79 @@ void XRcode_delete(XRcode* qr) {
     XFree_System(qr);
 }
 
-/* 检查指定版本是否满足数据容量和预留空白限制 */
-static int check_version(int version, int bits_count, int reserved_blank) {
-    if (version < 1 || version > 9) return 0;
-    int data_capacity = m_qrcode_info[version].data_code_count * 8;
+/* 检查指定版本是否满足数据容量和预留空白限制（按纠错等级取参数行）。
+ * 预留空白占版面上限：L 级 15%（约 7% 冗余的一半），H 级 30%——
+ * H 的 30% 冗余足以吃下中心留白，这正是内嵌图必须走 H 的原因。 */
+static int check_version(int version, int bits_count, int reserved_blank,
+                         int level) {
+    const qrcode_info_t* info;
+    int data_capacity;
+    int total_modules;
+    double blank_ratio;
+    if (version < 1 || version > 9 || level < 0 || level > 3) return 0;
+    info = &m_qrcode_info[level][version];
+    if (info->version == 0) return 0; /* 该等级未内置 */
+    data_capacity = info->data_code_count * 8;
     if (bits_count > data_capacity) return 0;
     if (reserved_blank == 0) return 1;
-    int total_modules = (version * 4 + 17) * (version * 4 + 17);
-    int max_blank_modules = (int)(total_modules * 0.15); // M级纠错约15%
-    return (reserved_blank * reserved_blank <= max_blank_modules);
+    total_modules = (version * 4 + 17) * (version * 4 + 17);
+    blank_ratio = (level == XRCODE_LEVEL_H) ? 0.30 : 0.15;
+    return (reserved_blank * reserved_blank <=
+            (int)(total_modules * blank_ratio));
 }
 
 /* 自动选择最小合适版本 */
-static int get_auto_version(int bits_count, int reserved_blank) {
+static int get_auto_version(int bits_count, int reserved_blank, int level) {
     for (int v = 1; v <= 9; ++v) {
-        if (check_version(v, bits_count, reserved_blank))
+        if (check_version(v, bits_count, reserved_blank, level))
             return v;
     }
     return 0;
 }
 
-bool XRcode_encode(XRcode* qr, const XByteArray* data, int reserved_blank, int version) {
+bool XRcode_encode_ex(XRcode* qr, const XByteArray* data, int reserved_blank,
+                      int version, int level) {
+    int data_bits_count;
+    int final_version;
     if (!qr || !data || XByteArray_isEmpty_base(data)) return false;
     if (reserved_blank < 0) reserved_blank = 0;
     if (version < 0 || version > 9) return false;
+    if (level < 0 || level > 3) return false;
+    if (m_qrcode_info[level][version > 0 ? version : 1].version == 0)
+        return false; /* M/Q 暂未内置 */
+    qr->level = level;
 
-    int data_bits_count = set_encode_data(qr, data);
+    data_bits_count = set_encode_data(qr, data);
     if (data_bits_count == 0) return false;
 
-    int final_version = version;
+    final_version = version;
     if (final_version == 0) {
-        final_version = get_auto_version(data_bits_count, reserved_blank);
+        final_version = get_auto_version(data_bits_count, reserved_blank, level);
     }
     else {
-        if (!check_version(final_version, data_bits_count, reserved_blank))
+        if (!check_version(final_version, data_bits_count, reserved_blank, level))
             return false;
     }
     if (final_version == 0) return false;
 
-    int data_code_count = set_padding_byte(qr, final_version, data_bits_count);
-    int code_word_count = set_code_word(qr, final_version, data_code_count);
-    format_qrcode_data(qr, final_version, code_word_count, reserved_blank);
+    qr->m_info = &m_qrcode_info[level][final_version];
+    set_padding_byte(qr, data_bits_count);
+    set_code_word(qr);
+    format_qrcode_data(qr, final_version, qr->m_info->code_word_count,
+                       reserved_blank);
     return true;
+}
+
+bool XRcode_encode(XRcode* qr, const XByteArray* data, int reserved_blank, int version) {
+    return XRcode_encode_ex(qr, data, reserved_blank, version, XRCODE_LEVEL_L);
 }
 
 int XRcode_size(const XRcode* qr) { return qr ? qr->size : 0; }
 const XByteArray* XRcode_matrix(const XRcode* qr) { return qr ? &qr->matrix : NULL; }
+const XByteArray* XRcode_codeWord(const XRcode* qr)
+{ return qr ? &qr->code_word : NULL; }
+int XRcode_codeWordCount(const XRcode* qr)
+{ return (qr && qr->m_info) ? qr->m_info->code_word_count : 0; }
 
 void XRcode_print_matrix(const XRcode* qr) {
     if (!qr || qr->size == 0) return;
@@ -287,8 +347,8 @@ static int set_data_code(XRcode* qr, int index, int data, int size) {
     return index + size;
 }
 
-static int set_padding_byte(XRcode* qr, int version, int data_bits_count) {
-    int data_code_count = m_qrcode_info[version].data_code_count;
+static int set_padding_byte(XRcode* qr, int data_bits_count) {
+    int data_code_count = qr->m_info->data_code_count;
     unsigned char padding = 0xEC;
     unsigned char* buf = XByteArray_data(&qr->data_code);
     for (int i = (data_bits_count + 7) / 8; i < data_code_count; ++i) {
@@ -298,34 +358,54 @@ static int set_padding_byte(XRcode* qr, int version, int data_bits_count) {
     return data_code_count;
 }
 
-static int set_code_word(XRcode* qr, int version, int data_code_count) {
-    const qrcode_info_t* info = &m_qrcode_info[version];
+/* 码字交织：数据列优先取（短块先耗尽，标准要求短块排在块序前列），
+ * 纠错码字接在全部数据码字之后同样列优先。此前只支持等长分块，
+ * H 级 v5/v7/v8/v9 的不等长分块（如 v5-H=2×11+2×12）依赖本泛化。 */
+static int set_code_word(XRcode* qr) {
+    const qrcode_info_t* info = qr->m_info;
     int code_word_count = info->code_word_count;
     int cw_block_count = info->rsec_block;
-    int cw_block_total = cw_block_count;
-    int cw_data_count = info->rsec_block_data_count;
-    int cw_rscode_count = info->rsec_block_code_count - cw_data_count;
+    int cw_ec_count = info->rsec_ec_count;
+    int cw_data_long = info->rsec_block_data_count;
+    int cw_data_short = info->rsec_block_short ? info->rsec_block_short_data
+                                               : cw_data_long;
+    int cw_short_blocks = info->rsec_block_short;
     unsigned char* code_buf = XByteArray_data(&qr->code_word);
     unsigned char* data_buf = XByteArray_data(&qr->data_code);
-    memset(code_buf, 0, code_word_count);
+    int data_total = info->data_code_count;
     int cw_data_index = 0;
-    int cw_block_index = 0;
-    for (int i = 0; i < cw_block_count; ++i) {
-        for (int j = 0; j < cw_data_count; ++j)
-            code_buf[(cw_block_total * j) + cw_block_index] = data_buf[cw_data_index++];
-        cw_block_index++;
+    int cw_out_index = 0;
+    int off[9];
+    int i;
+    int j;
+    int b;
+    memset(code_buf, 0, code_word_count);
+    /* 各块数据在 data_buf 中的源偏移（块间顺序拼接） */
+    off[0] = 0;
+    for (b = 1; b < cw_block_count; ++b)
+        off[b] = off[b - 1] + ((b - 1 < cw_short_blocks) ? cw_data_short
+                                                         : cw_data_long);
+    /* 数据交织：列优先取码字，短块先耗尽（此前误写成顺序拼接，
+       多块版本数据全部错位——2026-10-08 修）。 */
+    for (j = 0; j < cw_data_long; ++j) {
+        for (b = 0; b < cw_block_count; ++b) {
+            int len = (b < cw_short_blocks) ? cw_data_short : cw_data_long;
+            if (j < len)
+                code_buf[cw_out_index++] = data_buf[off[b] + j];
+        }
     }
     cw_data_index = 0;
-    cw_block_index = 0;
-    for (int i = 0; i < cw_block_count; ++i) {
-        memcpy(XByteArray_data(&qr->rsec_code), &data_buf[cw_data_index], cw_data_count);
-        rs_encode_block(&qr->rsec_code, cw_data_count, cw_rscode_count);
-        unsigned char* rsec_buf = XByteArray_data(&qr->rsec_code);
-        for (int j = 0; j < cw_rscode_count; ++j)
-            code_buf[data_code_count + (cw_block_total * j) + cw_block_index] = rsec_buf[j];
-        cw_data_index += cw_data_count;
-        cw_block_index++;
+    for (i = 0; i < cw_block_count; ++i) {
+        int len = (i < cw_short_blocks) ? cw_data_short : cw_data_long;
+        unsigned char* rsec_buf;
+        memcpy(XByteArray_data(&qr->rsec_code), &data_buf[cw_data_index], len);
+        rs_encode_block(&qr->rsec_code, len, cw_ec_count);
+        rsec_buf = XByteArray_data(&qr->rsec_code);
+        for (j = 0; j < cw_ec_count; ++j)
+            code_buf[data_total + (j * cw_block_count) + i] = rsec_buf[j];
+        cw_data_index += len;
     }
+    (void)cw_out_index;
     return code_word_count;
 }
 
@@ -347,7 +427,6 @@ static void format_qrcode_data(XRcode* qr, int version, int code_word_count, int
             matrix_set(qr, x, y, (val & 0x11) ? 1 : 0);
         }
     }
-
     /* 清空预留空白区域 */
     if (reserved_blank > 0 && reserved_blank <= size) {
         int cx = size / 2;
@@ -370,11 +449,21 @@ static void format_qrcode_data(XRcode* qr, int version, int code_word_count, int
 
 static void set_function_patterns(XRcode* qr, int version) {
     int size = qr->size;
+    /* 表已升级为 [等级][版本] 二维——版本几何（校正点等）与等级无关，
+       统一走本次编码的参数行（2026-10-08 修：残留一维索引会取到错误
+       等级的表行，校正图案丢失且保留区错乱）。 */
+    const qrcode_info_t* info = qr->m_info;
+    (void)version;
     set_postion_pattern(qr, 0, 0);
     set_postion_pattern(qr, size - 7, 0);
     set_postion_pattern(qr, 0, size - 7);
     set_separator_pattern(qr);
-    const qrcode_info_t* info = &m_qrcode_info[version];
+    /* 定时图案先画：校正图案中心 (c,6)/(6,c) 正落在定时行/列上，若定时
+       图案后画，会把 5x5 校正图案的中间一行/列改写成交替模块，校正图案
+       被划坏——扫码器据此拒识（2026-10-09 实测 v5+ 每版必少两处）。 */
+    set_timing_pattern(qr);
+    /* 校正图案后画即可完整覆盖定时行/列上那两处（中心不在定位图案
+       占位内的都会画，见 set_alignment_pattern 的跳过条件）。 */
     for (int i = 0; i < info->align_point_count; ++i) {
         int center = info->align_point[i];
         set_alignment_pattern(qr, center, 6);
@@ -382,7 +471,6 @@ static void set_function_patterns(XRcode* qr, int version) {
         for (int j = 0; j < info->align_point_count; ++j)
             set_alignment_pattern(qr, center, info->align_point[j]);
     }
-    set_timing_pattern(qr);
     set_version_info(qr, version);
 }
 
@@ -415,7 +503,21 @@ static void set_separator_pattern(XRcode* qr) {
 
 static void set_alignment_pattern(XRcode* qr, int x, int y) {
     const unsigned char pattern[] = { 0x1F,0x11,0x15,0x11,0x1F };
-    if (matrix_get(qr, x, y) & 0x20) return;
+    /* 仅当中心落在三个定位图案（含分隔符）的 8x8 占位内才跳过——那三处
+     * 本就不该画校正图案（ISO 18004 表 E.1：与定位图案重叠的中心省略）。
+     * 2026-10-09 修：旧守卫是「中心格已被标记保留就跳过」，而校正图案
+     * 中心 (c,6)/(6,c) 正压在定时图案上，定时图案先画就把它标了保留，
+     * 于是 (c,6)、(6,c) 两处校正图案被整体漏画——v5+ 每版必少两处，
+     * 扫码器找不到完整校正图案即拒识（2026-10-09 实测 v5-H 不可识）。
+     * 跳过条件按 ISO 18004 表 E.1：只有与三个定位图案**中心**重合的
+     * 中心才省略，即 (6,6)、(6,size-7)、(size-7,6) 三处——注意判定
+     * 用的是中心坐标本身，不能用「落在 8x8 占位块内」，否则 (c,6)
+     * 这类 y=6、x 较大的合法中心会被误判成在右上定位图案内而漏画。 */
+    int size = qr->size;
+    if ((x == 6 && y == 6) ||
+        (x == 6 && y == size - 7) ||
+        (x == size - 7 && y == 6))
+        return;
     x -= 2; y -= 2;
     for (int i = 0; i < 5; ++i)
         for (int j = 0; j < 5; ++j)
@@ -431,15 +533,49 @@ static void set_timing_pattern(XRcode* qr) {
     }
 }
 
-static void set_version_info(XRcode* qr, int version) { (void)qr; (void)version; }
+/* 版本信息块（仅 v7~v9，18 位 = 6 位版本号 + 12 位 BCH(0x1F25)）：
+ * 两份拷贝分列右上/左下定位图案内侧。此前为空桩——v7+ 的版本信息区
+ * 未绘制也未标记保留，数据之字形直接把码字写进这些位置，解码器版本
+ * BCH 校验失败且数据流错位，v7+ 全部不可识（2026-10-08 cv2 实测根因）。 */
+static void set_version_info(XRcode* qr, int version) {
+    int size = qr->size;
+    int rem = version;
+    int bits;
+    int i;
+    if (version < 7) return;
+    for (i = 0; i < 12; ++i)
+        rem = (rem << 1) ^ ((rem >> 11) * 0x1F25);
+    bits = (version << 12) | (rem & 0xFFF);
+    for (i = 0; i < 18; ++i) {
+        int bit = (bits >> i) & 1;
+        int val = bit ? 0x30 : 0x20;
+        matrix_set(qr, size - 11 + i % 3, i / 3, val); /* 右上块 */
+        matrix_set(qr, i / 3, size - 11 + i % 3, val); /* 左下块 */
+    }
+}
 
+/* 数据码字之字形摆放（ISO 18004 8.7.3）。
+ * 2026-10-09 根修：此前「两列一组、组内同向」的成对走位是错的——它把
+ * 同一组两列都按同一方向扫，与规范的蛇形次序不一致，导致码字写到了
+ * 错误模块上。表现是矩阵结构（定位/定时/校正/格式位）全部正确、
+ * 码本经自检也自洽，但任何扫码器都读不出内容（cv2 能定位四角却解不出
+ * 文本，手机同样扫不出）。根因用一条已被 cv2 正确解码的历史 PNG 作
+ * oracle 反查确认：按下面的对角走位 + 该 PNG 自称的 mask3，能逐位
+ * 还原出 byte 模式的正确码字（42 76 87 47…，即 'https://...' 开头）；
+ * 换成成对走位则还原为乱码。
+ * 走位用 x/kx 与 y/ky 双游标：每次 x 前进一格并反向，当 x 反向时 y 沿
+ * ky 走一格；y 越界即翻转 ky 并令 x 退回两格（跳过时序列 x==6 再退一格），
+ * 这正是规范 8.7.3 的 2×2 模块蛇形步进。 */
 static void set_code_word_pattern(XRcode* qr, int code_word_count) {
     int size = qr->size;
-    int x = size, y = size - 1;
-    int kx = 1, ky = 1;
     unsigned char* code_buf = XByteArray_data(&qr->code_word);
+    int x = size;
+    int y = size - 1;
+    int kx = 1;
+    int ky = 1;
     for (int i = 0; i < code_word_count; ++i) {
         for (int j = 0; j < 8; ++j) {
+            /* 沿蛇形步进，直到落在一个非保留（数据）模块上。 */
             while (1) {
                 x += kx;
                 kx = -kx;
@@ -455,7 +591,8 @@ static void set_code_word_pattern(XRcode* qr, int code_word_count) {
                 if (!(matrix_get(qr, x, y) & 0x20))
                     break;
             }
-            matrix_set(qr, x, y, (code_buf[i] & (1 << (7 - j))) ? 0x02 : 0x00);
+            matrix_set(qr, x, y,
+                (code_buf[i] & (1 << (7 - j))) ? 0x02 : 0x00);
         }
     }
 }
@@ -485,7 +622,7 @@ static void set_masking_pattern(XRcode* qr, int masking) {
                 case 1: mask = (y % 2 == 0); break;
                 case 2: mask = (x % 3 == 0); break;
                 case 3: mask = ((x + y) % 3 == 0); break;
-                case 4: mask = (((x / 2) + (y / 3)) % 2 == 0); break;
+                case 4: mask = ((y / 2) + (x / 3)) % 2 == 0; break;
                 case 5: mask = (((x * y) % 2) + ((x * y) % 3) == 0); break;
                 case 6: mask = ((((x * y) % 2) + ((x * y) % 3)) % 2 == 0); break;
                 default:mask = ((((x * y) % 3) + ((x + y) % 2)) % 2 == 0); break;
@@ -500,13 +637,35 @@ static void set_masking_pattern(XRcode* qr, int masking) {
 
 static void set_format_info(XRcode* qr, int masking) {
     int size = qr->size;
-    int bits = (0x08 + masking) << 10;
+    /* 格式信息 5 位 = 纠错等级(2) << 3 | 掩码(3)。等级编码按 ISO 18004：
+     * M=00, L=01, H=10, Q=11。此处此前把等级写死成 0x08（即 L），H 级
+     * 内嵌图码对外谎报 L——解码器按 L 的分块/容量去解，必然失败，
+     * 表现为「库内自检全过但所有扫码器都读不出」（2026-10-09 根因）。
+     * m_level_bits 按「库内 level 序号」索引（XRCODE_LEVEL_L/M/Q/H =
+     * 0/1/2/3），值即该等级在格式位里的 2 位编码。 */
+    static const unsigned char m_level_bits[4] = { 1, 0, 3, 2 }; /* L M Q H */
+    int lvl = qr->level;
+    if (lvl < 0 || lvl > 3) lvl = 0;
+    int bits = ((m_level_bits[lvl] << 3) + masking) << 10;
     int data = bits;
-    for (int i = 0; i < 5; ++i)
-        if (data & (1 << (14 - i)))
-            data ^= (0x0537 << (4 - i));
+    /* BCH(15,5) 逐位多项式除法（生成式 0x537）。2026-10-08 修：旧循环
+     * 只消最高 5 位（i<5 且移位量 4-i），对掩码 3/7（中间位为 1 的输
+     * 入）余数错误——标准表 L/3=111010010011110、L/7=110100101011101
+     * 与旧输出不符。逐位除法对任意输入正确。 */
+    for (int i = 14; i >= 10; --i)
+        if (data & (1 << i))
+            data ^= (0x0537 << (i - 10));
     bits = data + bits;
     bits ^= 0x5412;
+    /* 环绕左上定位图案的一段（matrix_set(x=col, y=row) 约定）。
+     * 规范（ISO 18004 图 25 / nayuki drawFormatBits）：bits0~5 竖排
+     * 在 col 8 的 rows 0..5；bit6=(col8,row7)；bit7=(col8,row8)；
+     * bit8=(col7,row8)；bits9~14 横排在 row 8 的 cols 0..5。
+     * 2026-10-09 修：此前把 bits0~5 写成 row8/cols0..5、bits9~14
+     * 写成 col8/rows5..0——两段整体转置，位序全错，BCH 校验必败，
+     * cv2 与手机一律拒识。CHK2 只读数据位故一直 0 mismatch 掩盖了
+     * 此错（用 cv2.QRCodeEncoder 黄金矩阵逐位比对才定位到）。
+     * 已用 cv2 黄金矩阵（'A'→v1，L/mask0=0x77C4）双向验证本布局。 */
     for (int i = 0; i <= 5; ++i)
         matrix_set(qr, 8, i, (bits & (1 << i)) ? 0x30 : 0x20);
     matrix_set(qr, 8, 7, (bits & (1 << 6)) ? 0x30 : 0x20);
@@ -514,6 +673,7 @@ static void set_format_info(XRcode* qr, int masking) {
     matrix_set(qr, 7, 8, (bits & (1 << 8)) ? 0x30 : 0x20);
     for (int i = 9; i <= 14; ++i)
         matrix_set(qr, 14 - i, 8, (bits & (1 << i)) ? 0x30 : 0x20);
+    /* 右上/左下复制段（原坐标正确，保留） */
     for (int i = 0; i <= 7; ++i)
         matrix_set(qr, size - 1 - i, 8, (bits & (1 << i)) ? 0x30 : 0x20);
     matrix_set(qr, 8, size - 8, 0x30);

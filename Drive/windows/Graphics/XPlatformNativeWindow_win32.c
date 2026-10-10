@@ -1592,13 +1592,24 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
     {
         /* CSD 无边框窗（WS_POPUP）最大化默认盖住任务栏：Win32 只对带
          * WS_CAPTION 的窗口按工作区最大化。对标 QWindowsWindow::get-
-         * SizeHints，把最大化尺寸/位置钳制到最近显示器工作区，其余
-         * 字段（最小/最大追踪尺寸等）仍走默认过程。entry 可为空
+         * SizeHints，把最大化尺寸钳制到最近显示器工作区，其余字段
+         * （最小/最大追踪尺寸等）仍走默认过程。entry 可为空
          * （WM_GETMINMAXINFO 先于 WM_NCCREATE 到达，用户数据尚未登
          * 记），空窗直接交默认过程。
          * 【R8 口径审计】MonitorFromWindow/rcWork/MINMAXINFO 两侧同为
          * 物理像素口径（PMv2）或同为虚拟化口径（未感知），坐标系一致，
-         * 无需 ÷dpr。 */
+         * 无需 ÷dpr。
+         *
+         * 2026-10-10 只钳尺寸、不钳位置：本消息在最大化**过程中**会多次
+         * 到达（Windows 先按自身逻辑搬移窗口、落定后再问一次尺寸）。此
+         * 前连 ptMaxPosition 一并覆写，第二次询问时窗口已被搬到上一轮指
+         * 定的位置，MonitorFromWindow 据此选到另一块屏，ptMaxPosition 再
+         * 指向那块屏——窗口被放到错误的屏；跨屏时尤其明显（用户实测：拖
+         * 到副屏一半后最大化，窗口消失）。
+         * 位置交回默认过程：DefWindowProc 已按「窗口当前所在屏」填好
+         * ptMaxPosition，与原生非 CSD 窗口一致，正是期望行为。我们只额
+         * 外做一件事——把尺寸压到工作区，消除 WS_POPUP 盖住任务栏的
+         * 问题（位置-尺寸自洽：工作区原点与整屏原点相同时两者等价）。 */
         if (entry && entry->m_window &&
             XWindow_isCsdFrameSuppressed(entry->m_window)) {
             HMONITOR monitor;
@@ -1607,9 +1618,10 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             info.cbSize = sizeof(info);
             monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
             if (monitor && GetMonitorInfoW(monitor, &info) && mmi) {
+                /* 取默认过程填好的 ptMaxPosition（位置交系统决定），
+                 * 仅覆盖尺寸：WS_POPUP 默认是整屏（含任务栏），换成
+                 * 工作区。 */
                 DefWindowProcW(hwnd, msg, wParam, lParam);
-                mmi->ptMaxPosition.x = info.rcWork.left;
-                mmi->ptMaxPosition.y = info.rcWork.top;
                 mmi->ptMaxSize.x = info.rcWork.right - info.rcWork.left;
                 mmi->ptMaxSize.y = info.rcWork.bottom - info.rcWork.top;
                 return 0;

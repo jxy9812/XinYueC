@@ -10,6 +10,7 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+#include "XVector.h" /* XVector_Create/size_base（防 C4013 隐式声明，64 位指针截断）。 */
 
 #include "XAlgorithm.h"
 #if XABSTRACTBUTTON_ON && XBUTTONGROUP_ON

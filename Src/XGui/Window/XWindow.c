@@ -35,6 +35,7 @@
 
 #include "XAlgorithm.h"
 #include "XWindow_Protected.h"
+#include "XWidget_Protected.h" /* XWidget_appFocusWidget（防 C4013 隐式声明，指针截断）。 */
 #include "XAccessible.h"
 #if XACCESSIBLE_ON
 #include "XPlatformAccessibility.h"

@@ -7,6 +7,7 @@
 #include "XCoreApplication.h"
 #include "XFileDescriptor.h"
 #include "XDateTime.h"
+#include "XRingBuffer.h" /* XRingBuffer_available（防 C4013 隐式声明）。 */
 #include <string.h>
 #include <assert.h>
 

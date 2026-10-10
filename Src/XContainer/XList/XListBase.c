@@ -121,7 +121,7 @@ void* XListBase_takeFirst_base(XListBase* this_list)
 	size_t typeSize = XListBase_typeSize_base(this_list);
 	void* result = XMalloc_System(typeSize);
 	if (!result) return NULL;
-	memcpy(result, frontData, typeSize);
+	XMemcpy(result, frontData, typeSize);
 	XListBase_pop_front_base(this_list);
 	return result;
 }
@@ -135,7 +135,7 @@ void* XListBase_takeLast_base(XListBase* this_list)
 	size_t typeSize = XListBase_typeSize_base(this_list);
 	void* result = XMalloc_System(typeSize);
 	if (!result) return NULL;
-	memcpy(result, backData, typeSize);
+	XMemcpy(result, backData, typeSize);
 	XListBase_pop_back_base(this_list);
 	return result;
 }
