@@ -152,18 +152,8 @@ static void iv_paintColor(XWidget* w, int r, int g, int b)
 
 /** @brief 事件收敛条件: 客户端 tile 计数 300ms 无增长。 */
 static uint32_t iv_tilesLast = 0;
-static bool iv_tilesSettled(void* ud)
-{
-    XGuiRemoteStats st;
-    (void)ud;
-    if (!iv_cur || !XGuiClient_isRemoteAlive(iv_cur->client)) return false;
-    XGuiClient_statistics(iv_cur->client, &st);
-    if (st.tileCount != iv_tilesLast) {
-        iv_tilesLast = st.tileCount;
-        return false;
-    }
-    return true;
-}
+/* [死码清理] iv_tilesSettled 已删除：全仓无调用点（见审计清单）。
+ */
 
 static bool iv_streaming(void* ud) { (void)ud;
     return iv_cur && XGuiClient_isRemoteAlive(iv_cur->client); }

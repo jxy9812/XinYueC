@@ -18,13 +18,8 @@ static bool is_digit(char c) {
 }
 
 // 内部辅助函数：计算10的n次方（整数）
-static uint64_t pow10_uint(uint32_t n) {
-    uint64_t result = 1;
-    for (uint32_t i = 0; i < n; i++) {
-        result *= 10;
-    }
-    return result;
-}
+/* [死码清理] pow10_uint 已删除：全仓无调用点（见审计清单）。
+ */
 
 // 内部辅助函数：计算10的n次方（浮点数）
 static double pow10_double(int n) {

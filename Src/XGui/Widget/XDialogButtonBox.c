@@ -484,19 +484,8 @@ XPushButton* XDialogButtonBox_addButton_3(
     return button;
 }
 
-static int xdb_bridgeIndexOf(XDialogButtonBox* self, XDBBridge* bridge)
-{
-    int64_t i;
-    int64_t n;
-    if (!self || !self->m_bridges) return -1;
-    n = XVector_size_base((const XContainer*)self->m_bridges);
-    for (i = 0; i < n; ++i) {
-        XDBBridge** bp =
-            (XDBBridge**)XVector_at_base(self->m_bridges, i);
-        if (bp && *bp == bridge) return (int)i;
-    }
-    return -1;
-}
+/* [死码清理] xdb_bridgeIndexOf 已删除：全仓无调用点（见审计清单）。
+ */
 
 void XDialogButtonBox_removeButton(XDialogButtonBox* self,
                                    XAbstractButton* button)

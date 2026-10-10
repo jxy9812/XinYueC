@@ -35,6 +35,9 @@ static bool VXTreeView_visualRect(const XAbstractItemView* view, int row,
                                   int col, XRect* out);
 static void VXTreeView_copy(XTreeView* self, const XTreeView* other);
 static void VXTreeView_move(XTreeView* self, XTreeView* other);
+static void VXTreeView_keyPressEvent(XWidget* self, XEvent* event);
+static void VXTreeView_mousePressEvent(XWidget* self, XEvent* event);
+static void VXTreeView_mouseDoubleClickEvent(XWidget* self, XEvent* event);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -182,8 +185,8 @@ static void xtv_refreshRowStates(XTreeView* self)
 { xtv_syncRowStates(self, xtv_modelRows(self)); }
 
 /** @brief 列状态表与模型列数同步入口（列数=模型列数）。 */
-static void xtv_refreshColumnStates(XTreeView* self)
-{ xtv_syncColumnStates(self, xtv_modelCols(self)); }
+/* [死码清理] xtv_refreshColumnStates 已删除：全仓无调用点（见审计清单）。
+ */
 
 /** @brief 计算表头占用的视口顶部偏移（隐藏表头为 0）。
  * @param self 目标视图。
@@ -262,6 +265,14 @@ XVtable* XTreeView_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_IndexAt, VXTreeView_indexAt);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
                              VXTreeView_visualRect);
+    /* [交互补全 2026-10-07] 键盘/指示器/双击展开收拢（对标 QTreeView
+     * qtreeview.cpp：Key_Plus/Minus/Asterisk、moveCursor 左右收展、
+     * mouseDoubleClickEvent expandsOnDoubleClick 与指示器命中展开）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXTreeView_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VXTreeView_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
+                             VXTreeView_mouseDoubleClickEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -1044,6 +1055,161 @@ static uint32_t xtv_color(const XTreeView* self, XPaletteColorRole role)
     (void)self; (void)role;
     return 0xFF000000u;
 #endif
+}
+
+/* ==================== 交互展开/收拢（[交互补全 2026-10-07]） ====================
+   对标 Qt QTreeView：Left 于展开行收拢/Right 于折叠行展开（无折叠可做
+   回退列横移，qtreeview.cpp moveCursor）；Plus/Minus 展开收拢当前行、
+   Asterisk 递归展开（平铺模型下 expandRecursively 收敛为 expandAll，
+   见 XTreeView_expandRecursively 注）；指示器命中切换（按下路径）；
+   双击按 m_expandsOnDoubleClick 切换（指示器区已由按下处理，避免二次
+   翻转）。注意：当前 XAbstractItemModel 为扁平行模型，展开/收拢仅驱动
+   m_expanded 状态与 expanded/collapsed 信号（自绘子类可消费），视觉
+   嵌套需层级模型能力，属模型侧后续扩展。 */
+
+/** @brief 指示器命中区判定（与 paintEvent 展开控件列同源几何：
+ *         cx=indent+4，命中取 cx±4）。 */
+static bool xtvw_indicatorHit(const XTreeView* self, int row, const XPoint* pos)
+{
+    int indent;
+    int cx;
+    if (!self || row < 0 || !pos) return false;
+    if (!self->m_rootIsDecorated || !self->m_itemsExpandable) return false;
+    if (row >= xtv_modelRows(self)) return false;
+    indent = (self->m_indentation > 0) ? self->m_indentation : 0;
+    cx = indent + 4;
+    return pos->x >= cx - 4 && pos->x <= cx + 4;
+}
+
+static void VXTreeView_keyPressEvent(XWidget* self, XEvent* event)
+{
+    XTreeView* tv = (XTreeView*)self;
+    int key;
+    int current;
+    int currentCol;
+    int cols;
+    if (!tv || !event || XEvent_type(event) != XEVENT_TYPE_KEY_PRESS) {
+        XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    key = XKeyEvent_key((XKeyEvent*)event);
+    current = tv->m_base.m_currentRow;
+    currentCol = tv->m_base.m_currentColumn;
+    cols = xtv_modelCols(tv);
+    switch (key) {
+    case XKey_Left:
+        if (current >= 0 && current < xtv_modelRows(tv) &&
+            XTreeView_isExpanded(tv, current)) {
+            XTreeView_collapse(tv, current); /* 展开行收拢。 */
+            XWidget_update(self);
+        } else if (currentCol > 0) {
+            XAbstractItemView_setCurrentIndex(&tv->m_base, current,
+                                              currentCol - 1);
+            XWidget_update(self);
+        } else {
+            XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                          void (*)(XWidget*, XEvent*))(self, event);
+        }
+        return;
+    case XKey_Right:
+        if (current >= 0 && current < xtv_modelRows(tv) &&
+            !XTreeView_isExpanded(tv, current)) {
+            XTreeView_expand(tv, current); /* 折叠行展开。 */
+            XWidget_update(self);
+        } else if (currentCol + 1 < cols) {
+            XAbstractItemView_setCurrentIndex(&tv->m_base, current,
+                                              currentCol + 1);
+            XWidget_update(self);
+        } else {
+            XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                          void (*)(XWidget*, XEvent*))(self, event);
+        }
+        return;
+    case XKey_Plus:
+        if (current >= 0 && current < xtv_modelRows(tv))
+            XTreeView_expand(tv, current);
+        XWidget_update(self);
+        return;
+    case XKey_Minus:
+        if (current >= 0 && current < xtv_modelRows(tv))
+            XTreeView_collapse(tv, current);
+        XWidget_update(self);
+        return;
+    case XKey_Asterisk:
+        if (current >= 0 && current < xtv_modelRows(tv))
+            XTreeView_expandRecursively(tv, current);
+        XWidget_update(self);
+        return;
+    default:
+        XClass_Parent(XWidget, EXWidget_KeyPressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+}
+
+static void VXTreeView_mousePressEvent(XWidget* self, XEvent* event)
+{
+    XTreeView* tv = (XTreeView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int row;
+    int col;
+    if (!tv || !event) return;
+    me = (XMouseEvent*)event;
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS ||
+        XMouseEvent_button(me) != XMouseButton_LeftButton) {
+        XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    pos = XMouseEvent_position(me);
+    row = -1;
+    col = -1;
+    if (!XAbstractItemView_indexAt_base(&tv->m_base, pos.x, pos.y,
+                                        &row, &col) || row < 0) {
+        XClass_Parent(XWidget, EXWidget_MousePressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    if (xtvw_indicatorHit(tv, row, &pos)) {
+        /* 指示器命中：切换展开并消费（对标 QTreeView 指示器分支）。 */
+        XTreeView_setExpanded(tv, row, !XTreeView_isExpanded(tv, row));
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
+    XWidget_mousePressEvent_base(self, event);
+}
+
+static void VXTreeView_mouseDoubleClickEvent(XWidget* self, XEvent* event)
+{
+    XTreeView* tv = (XTreeView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int row;
+    int col;
+    if (!tv || !event) return;
+    me = (XMouseEvent*)event;
+    if (XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK ||
+        XMouseEvent_button(me) != XMouseButton_LeftButton) {
+        XClass_Parent(XWidget, EXWidget_MouseDoubleClickEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    pos = XMouseEvent_position(me);
+    row = -1;
+    col = -1;
+    if (tv->m_expandsOnDoubleClick && tv->m_itemsExpandable &&
+        XAbstractItemView_indexAt_base(&tv->m_base, pos.x, pos.y,
+                                       &row, &col) && row >= 0 &&
+        !xtvw_indicatorHit(tv, row, &pos)) {
+        XTreeView_setExpanded(tv, row, !XTreeView_isExpanded(tv, row));
+        XWidget_update(self);
+        XEvent_accept(event);
+        return;
+    }
+    XWidget_mouseDoubleClickEvent_base(self, event);
 }
 
 static void VXTreeView_paintEvent(XWidget* self, XEvent* event)

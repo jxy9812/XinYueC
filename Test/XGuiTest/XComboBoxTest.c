@@ -20,11 +20,8 @@ static void cb_indexChangedSlot(void* sender, XVarList* args)
     (void)sender;
     ++cb_indexChangedCount;
 }
-static void cb_activatedSlot(void* sender, XVarList* args)
-{
-    (void)sender;
-    ++cb_activatedCount;
-}
+/* [死码清理] cb_activatedSlot 已删除：全仓无调用点（见审计清单）。
+ */
 
 bool XComboBoxTest_runAll(void)
 {

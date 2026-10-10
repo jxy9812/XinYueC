@@ -40,15 +40,8 @@ static void CHECK(bool cond, const char* msg) {
     }
 }
 
-static void XFileTest_print_xstring(const char* label, const XString* str) {
-    XPrintf("%s: ", label);
-    if (str) {
-        XPrintf_2(str);
-    } else {
-        XPrintf_3("(NULL)");
-    }
-    XPrintf_3("\n");
-}
+/* [死码清理] XFileTest_print_xstring 已删除：全仓无调用点（见审计清单）。
+ */
 
 /* ============================================================================
  * 1. 构造与析构

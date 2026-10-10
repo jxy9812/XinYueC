@@ -1338,7 +1338,6 @@ static void server_route_message(XMqttServer* server, XMqttServerClient* source,
                                  uint8_t qos, bool retain);
 
 /* 前置声明：遗嘱发布 */
-static void server_publish_will(XMqttServer* server, XMqttServerClient* client);
 
 /* ==================== 连接管理 ==================== */
 
@@ -2079,14 +2078,8 @@ static void server_publish_will_direct(XMqttServer* server, const XString* topic
 /**
  * @brief 发布一条客户端遗嘱（异常断开时调用）。
  */
-static void server_publish_will(XMqttServer* server, XMqttServerClient* client)
-{
-    if (!server || !client || !client->willTopic || !client->willMessage) return;
-    server_publish_will_direct(server, client->willTopic, client->willMessage,
-                               client->willQoS, client->willRetain,
-                               client->willProperties);
-}
-
+/* [死码清理] server_publish_will 已删除：全仓无调用点（见审计清单）。
+ */
 /**
  * @brief 取消指定 clientId 的延迟遗嘱。
  */

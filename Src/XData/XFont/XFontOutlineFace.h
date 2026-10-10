@@ -21,15 +21,14 @@ typedef struct XFontOutlineFace
 {
     XFontFace m_class;              /**< XFontFace 基类成员，必须位于第一位。 */
     XFontOutlineProvider m_provider; /**< 轮廓 provider 的值拷贝。 */
-    bool m_file;                    /**< 是否使用外挂文件后端。 */
+    bool m_ft;                      /**< 是否使用 FT 文件后端（XFontFt 家族槽）。
+                                         [已移除] 原 m_file 位（外挂 XFO1 文件
+                                         后端）随自研轮廓字实现删除，2026-10-07。 */
 } XFontOutlineFace;
 
 /** @brief 初始化轮廓 face；provider 指针成员只保存借用引用。 */
 void XFontOutlineFace_init(XFontOutlineFace* self,
                            const XFontOutlineProvider* provider);
-
-/** @brief 初始化用于外挂 XFO1 文件解析的轮廓 face。 */
-void XFontOutlineFace_initFile(XFontOutlineFace* self);
 
 /** @brief 初始化轮廓 face 类虚函数表。 */
 XVtable* XFontOutlineFace_class_init(void);
@@ -40,8 +39,8 @@ XVtable* XFontOutlineFace_class_init(void);
 /** @brief 注册一个轮廓 provider，并接入 XFontFace 解析表。 */
 bool XFontOutlineFace_registerProvider(const XFontOutlineProvider* provider);
 
-/** @brief 返回外挂文件 face；对象由模块静态持有。 */
-const XFontFace* XFontOutlineFace_fileFace(void);
+/* [已移除 2026-10-07] XFontOutlineFace_initFile / XFontOutlineFace_fileFace：
+ * XFO1 外挂轮廓文件后端随自研轮廓字实现整体删除。 */
 
 #ifdef __cplusplus
 }

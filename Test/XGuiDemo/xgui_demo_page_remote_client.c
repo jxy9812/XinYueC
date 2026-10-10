@@ -412,13 +412,20 @@ static void rc_connectSlot(XObject* sender, XVarList* args)
     rc_refreshStatsLabel();
 }
 
-/** @brief 「断开」clicked：显式断链（BYE(NORMAL), 不触发自动重连）。 */
+/** @brief 「断开」clicked：显式断链（BYE(NORMAL), 不触发自动重连）。
+ *  @details 无条件调 disconnectFromServer（用户裁定：断开=断干净所有
+ *           连接并停止自动重试）——即使状态已是 DISCONNECTED 也要调：
+ *           断线退避期（重连定时器 armed、wantConnect=true）点断开时
+ *           旧守卫走「未连接」短路，什么都不清，armed 的重连定时器到
+ *           点即重连，表现为「断了还在自动重连」（真屏远程客户端页实
+ *           测）。disconnectFromServer 幂等，重复调用无副作用。 */
 static void rc_disconnectSlot(XObject* sender, XVarList* args)
 {
     (void)sender; (void)args;
     if (!s_rc.m_ready || !s_rc.m_client) return;
     if (XGuiClient_state(s_rc.m_client) == XGUI_REMOTE_STATE_DISCONNECTED) {
-        rc_report("未连接");
+        XGuiClient_disconnectFromServer(s_rc.m_client);
+        rc_report("已断开(取消自动重试)");
     }
     else {
         XGuiClient_disconnectFromServer(s_rc.m_client);

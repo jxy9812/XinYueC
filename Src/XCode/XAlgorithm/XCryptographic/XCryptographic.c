@@ -4983,11 +4983,8 @@ static void xcryptographic_p521_point_base(XCryptographic_EcPoint521* point)
     point->infinity = false;
 }
 
-static void xcryptographic_p256_point_copy(XCryptographic_EcPoint* dst,
-                                                const XCryptographic_EcPoint* src)
-{
-    *dst = *src;
-}
+/* [死码清理] xcryptographic_p256_point_copy 已删除：全仓无调用点（见审计清单）。
+ */
 
 static void xcryptographic_p256_double(XCryptographic_EcPoint* out,
                                             const XCryptographic_EcPoint* in,
@@ -10074,19 +10071,8 @@ static size_t xcbig_byte_len(const XCryptographic_BigInt *a)
     return (bits + 7) / 8;
 }
 
-static size_t xcder_write_uint32(uint8_t *p, size_t pos, uint32_t v)
-{
-    size_t n = 0;
-    uint8_t tmp[4];
-    size_t i;
-    while (v) {
-        tmp[n++] = (uint8_t)(v & 0xff);
-        v >>= 8;
-    }
-    if (n == 0) tmp[n++] = 0;
-    for (i = 0; i < n; ++i) p[pos + i] = tmp[n - 1 - i];
-    return pos + n;
-}
+/* [死码清理] xcder_write_uint32 已删除：全仓无调用点（见审计清单）。
+ */
 
 static size_t xcder_length_size(size_t len)
 {

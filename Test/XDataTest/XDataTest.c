@@ -6,6 +6,7 @@
 #include"XDomTest.h"
 #include"XSqlTest.h"
 #include"XExcelExtendedTest.h"
+#include"XFontFtTest.h"
 #include"XTestMenu.h"
 #include"XAction.h"
 #include"XPrintf.h"
@@ -19,12 +20,15 @@ bool XDataTest_runAll(void)
     bool reader = XXmlStreamReaderTest_runAll();
     bool writer = XXmlStreamWriterTest_runAll();
     bool excel = XExcelExtendedTest_runAll();
-    bool result = json && sql && variant && dom && reader && writer && excel;
-    XPrintf("XData 全量自动化测试: JSON=%s SQL=%s Variant=%s DOM=%s Reader=%s Writer=%s Excel=%s => %s\n",
+    bool fontft = XFontFtTest_run() == 0;
+    bool result = json && sql && variant && dom && reader && writer && excel &&
+                  fontft;
+    XPrintf("XData 全量自动化测试: JSON=%s SQL=%s Variant=%s DOM=%s Reader=%s Writer=%s Excel=%s FontFt=%s => %s\n",
             json ? "通过" : "失败", sql ? "通过" : "失败",
             variant ? "通过" : "失败",
             dom ? "通过" : "失败", reader ? "通过" : "失败",
             writer ? "通过" : "失败", excel ? "通过" : "失败",
+            fontft ? "通过" : "失败",
             result ? "通过" : "失败");
     return result;
 }
@@ -71,4 +75,5 @@ void XTestMenu_XDataTest(XTestMenu* root)
 	XTestMenu_XDomTest(menu);
 	XTestMenu_XSqlTest(menu);
 	XTestMenu_XVariantTest(menu);
+	XTestMenu_XFontFtTest(menu);
 }

@@ -119,11 +119,10 @@ endif()
 # Android：开启显示驱动契约（XPlatformDisplayDriver.h 整体受
 # XPLATFORM_FBDEV_ON 门控）。安卓 NativeActivity 是与 fbdev 同构的
 # 单屏直写模型，XPlatformWindowAndroid.c 经该契约报告 surface 能力。
-# 同时把轮廓字库（GB2312 汉字全集，约 3MiB）编入目标：安卓无
-# ../Library/XFont 外挂目录，XFontOutlineFace 的外挂文件加载不可达，
-# 内嵌是项目文档标注的免文件系统部署路径（XFont_config.h）。
+# （[已移除 2026-10-07] 原 XFONT_BUILTIN_OUTLINE_ON=1 内嵌轮廓字库
+# 定义：自研 XFO1 字库数据已删，轮廓字统一走 FT 外挂文件 + 位图回退。）
 if(ANDROID)
-    add_compile_definitions(XPLATFORM_FBDEV_ON=1 XFONT_BUILTIN_OUTLINE_ON=1)
+    add_compile_definitions(XPLATFORM_FBDEV_ON=1)
 endif()
 # 强制 DPI（XGUI_FORCE_DPI，XGuiConfig.h 有 #ifndef 兜底 0）：命令行
 # -DXGUI_FORCE_DPI=2.0 调试缩放链/小屏放大画面。CMake -D 只建变量不自动
@@ -212,6 +211,15 @@ file(GLOB_RECURSE XGUI_FONT_SCAN_TOOL_FILE "Test/XGuiTest/xgui_font_scan_tool.c"
 if(XGUI_FONT_SCAN_TOOL_FILE)
     list(REMOVE_ITEM TEST_FILE ${XGUI_FONT_SCAN_TOOL_FILE})
 endif()
+# xgui_glyph_coverage_diff_tool 同理：自带 main 的 P2.5 门禁独立工具
+# （SW/GPU 两消费点字形覆盖图逐像素 diff + provider 新旧槽位逐位对照，
+# xgui_glyph_coverage_diff_tool 目标，见 XGuiGpu_Test 前接线），与
+# main.c 双 main 冲突，必须从 Test/*.c glob 列表剔除。
+file(GLOB_RECURSE XGUI_COVDIFF_TOOL_FILE
+    "Test/XGuiTest/xgui_glyph_coverage_diff_tool.c" )
+if(XGUI_COVDIFF_TOOL_FILE)
+    list(REMOVE_ITEM TEST_FILE ${XGUI_COVDIFF_TOOL_FILE})
+endif()
 # XGuiRemoteAuthTest 同理：自带 main 的访问口令认证矩阵测试（
 # XGuiRemoteAuth_Test 目标，见 XGuiRegression_Test 后接线），不得卷入主程序。
 file(GLOB_RECURSE XGUI_REMOTE_AUTH_TEST_FILE "Test/XGuiTest/XGuiRemoteAuthTest.c" )
@@ -239,6 +247,17 @@ list(REMOVE_ITEM TEST_FILE
 # 卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGuiRemoteAdaptTest.c")
+# XGuiKeyboardDragTest 同理：自带 main 的键盘紧凑拖动专项测试（
+# XGuiKeyboardDrag_Test 目标，1eb98412 键盘紧凑拖动战役新增；当时漏加
+# 本剔除致 XinYueC_Static/Dynamic 与 main.c 重复定义 main、all 目标
+# 链接失败），不得卷入主程序。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGuiKeyboardDragTest.c")
+# bold_ab_tool 同理：自带 main 的粗体真字体 A/B 离屏验证（xgui_font_bold_ab
+# 目标，2026-10-08 字重变体战役新增；本次漏加本剔除致 all 目标再次断链
+# ——同一坑第二次踩， TEST_FILE 剔除三查已写入构建协议），不得卷入主程序。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/bold_ab_tool.c")
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
 # portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
@@ -447,6 +466,26 @@ add_subdirectory(Library/tinyusb)
 # ==================== SQLite（源码方式集成）====================
 # SQLite 作为可替换的源码组件编译，适配器不依赖系统 libsqlite3。
 add_subdirectory(Library/sqlite)
+
+# ==================== FreeType（字体光栅化库，最小集合）====================
+# 以子目录静态库方式集成，详见 Library/freetype/CMakeLists.txt
+add_subdirectory(Library/freetype)
+
+# 轮廓字 FT 模块（XFONT_FT_ON，见 XFont_config.h）的包含前置：
+# 根工程经 fontconfig 检测把 -I/usr/include/freetype2（系统 FreeType，
+# 本机 26.2.20 与捆绑 2.13 不同源）目录级注入，而目录级 include 先于
+# target 传播 include 命中——不前置的话 XPainter.c/XFontFt.c 的
+# <ft2build.h> 会吃到系统头、链的却是捆绑 .a（跨版本混编）。构建目录在
+# 前：生成的最小 ftmodule.h（只注册 smooth 渲染器）必须先于捆绑全量
+# ftmodule.h 命中，否则未编译字体驱动的模块声明落成链接缺符号。
+include_directories(BEFORE
+    "${CMAKE_BINARY_DIR}/Library/freetype/include"
+    "${CMAKE_SOURCE_DIR}/Library/freetype/include")
+
+# 链接 FreeType 静态库（接线方式同 zlib：静态库 PRIVATE 依赖经
+# LINK_ONLY 传给最终可执行文件）
+target_link_libraries(${EXPORT_NAME}S PRIVATE freetype)
+target_link_libraries(${EXPORT_NAME} PRIVATE freetype)
 
 # 链接 mbedTLS 静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE mbedtls)
@@ -832,10 +871,20 @@ endif()
 add_executable(xgui_font_scan_tool
     "./Test/XGuiTest/xgui_font_scan_tool.c"
 )
+# 粗体真字体 A/B 离屏验证（2026-10-08）：Normal vs Bold 字重同句渲染
+# PPM，验证字重变体槽（XFontFt_ensureFamilyWeighted）命中 -Bold 文件。
+add_executable(xgui_font_bold_ab
+    "./Test/XGuiTest/bold_ab_tool.c"
+)
 if(UNIX)
     target_link_libraries(xgui_font_scan_tool ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(xgui_font_scan_tool ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+if(UNIX)
+    target_link_libraries(xgui_font_bold_ab ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(xgui_font_bold_ab ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== XGui GPU 阶段 1 冒烟测试 ====================
@@ -850,6 +899,22 @@ endif()
 add_test(NAME XGuiGpu COMMAND XGuiGpu_Test)
 set_tests_properties(XGuiGpu PROPERTIES
     ENVIRONMENT "XGUI_RENDER_BACKEND=gpu;ASAN_OPTIONS=detect_leaks=0:halt_on_error=1")
+
+# ==================== 阶段二 P2.5 字形覆盖图逐像素 diff 工具 ====================
+# 自带 main 的独立离屏工具（仿 xgui_font_scan_tool 口径，无窗口依赖）：
+# A 段 provider 旧/新槽位逐位对照（改动前 vs 改动后）；
+# B 段 SW 与 GPU 两消费点真实渲染逐像素 diff（字形光栅化两挂点——
+# XFONT_FT_RASTER 双档门已移除，两挂点恒走 FT smooth 光栅化器）；
+# 全部录音流与像素折叠成 FNV-1a digest——对改动前基线与改动后两次
+# 运行做 digest 逐字节比对即换点逐位一致性证据（设计 §8 P2.5 门禁）。
+add_executable(xgui_glyph_coverage_diff_tool
+    "./Test/XGuiTest/xgui_glyph_coverage_diff_tool.c"
+)
+if(UNIX)
+    target_link_libraries(xgui_glyph_coverage_diff_tool ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(xgui_glyph_coverage_diff_tool ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
 
 #安装
 include(CMake_Install.cmake)

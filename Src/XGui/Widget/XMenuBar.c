@@ -94,15 +94,8 @@ static void xmb_insertOwnedFlag(XMenuBar* self, int index, bool owned)
         XVector_insert_1_base(self->m_actionOwned, index, &owned, 1);
 }
 
-static XMenu* xmb_menuForAction(const XMenuBar* self, const XAction* action)
-{
-    int index;
-    XMenu** menu;
-    index = xmb_actionIndex(self, action);
-    if (index < 0 || !self->m_menus) return NULL;
-    menu = (XMenu**)XVector_at_base(self->m_menus, index);
-    return menu ? *menu : NULL;
-}
+/* [死码清理] xmb_menuForAction 已删除：全仓无调用点（见审计清单）。
+ */
 
 /** @brief 发射带动作参数的信号。 */
 static void xmb_emitAction(XMenuBar* self, size_t signal, XAction* action)

@@ -271,13 +271,11 @@
 #if XGUIAPPLICATION_ON && XWIDGET_ON && XWINDOW_ON && XBACKINGSTORE_ON && \
     XPLATFORMINTEGRATION_ON && XPLATFORMNATIVEWINDOW_ON
 
-/* The demo follows the scalable built-in face whenever it is compiled in.
-   A clipped embedded build keeps the existing bitmap fallback. */
-#if XFONT_BUILTIN_OUTLINE_ON
-#define XGUI_DEMO_DEFAULT_FONT_FAMILY "XFontOutlineCommon"
-#else
+/* Demo 默认家族随库缺省配置（XFONT_DEFAULT_FAMILY）。
+   [已移除 2026-10-07] 原 XFONT_BUILTIN_OUTLINE_ON 内嵌字库分叉随自研
+   XFO1 字库删除——轮廓字统一走 FT 外挂文件解析，缺文件由 XFont_face
+   回退位图。 */
 #define XGUI_DEMO_DEFAULT_FONT_FAMILY XFONT_DEFAULT_FAMILY
-#endif
 
 /* Desktop demo 默认缓存静态控件场景；资源受限目标可显式设为 0。
  * 【昆仑通态 A33 fbdev 定版 = 0（09-28）】：静态场景缓存依赖
@@ -413,6 +411,10 @@ typedef struct DemoWin
     XPushButton     m_navCollapseBtn;/**< 收起/展开钮：收起后贴边成细条。 */
     XPushButton     m_navCatBtns[3]; /**< 一级分类钮（控件/系统设置/远程；手风琴）。 */
     XLabel          m_navHeadLabels[5]; /**< 子分组标题标签池（控件类内「按钮/输入/…」，竖版展开时启用）。 */
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    XScrollArea     m_navScroll;     /**< 竖版内容滚动容器（AsNeeded：内容超高才出垂直滚动条）。 */
+    XWidget*        m_navContent;    /**< 滚动内容载体（分类钮/标题/页面钮的公共父，竖版挂它、横版回挂面板）。 */
+#endif
     int             m_navDock;       /**< 停靠边 0=左 1=右 2=上 3=下（默认左）。 */
     bool            m_navCollapsed;  /**< 收起贴边态（细条=分割条本身）。 */
     int             m_navCategory;   /**< 当前展开分类（kNavGroups 下标）。 */
@@ -600,35 +602,36 @@ static int demo_utf8_chars(const char* text)
     return count;
 }
 
-/** @brief 将 demo 使用的 XFont 默认家族设置为当前可用的内置字库。
- * @details 桌面（XFONT_BUILTIN_OUTLINE_ON=0）默认家族 "XFontOutlineCommon"
- *          是普通名——引擎按 XFONT_EXTERNAL_OUTLINE_FONT_DIR（默认
- *          "../Library/XFont"，相对进程 cwd）枚举外挂 .xfo/.inc（XFont.c
- *          XFont_outlinePathBuild）。demo 常从 bin-release/bin-* 目录起跑，
- *          cwd 恰为仓库子目录时 "../Library/XFont" 失配 → 负缓存 → 全链
- *          回落 XFont8x16 点阵，GB2312 常用字大面积豆腐（2026-10-01 美学
- *          评审第 1 轮实证）。此处改经 XCoreApplication_applicationDirPath
- *          拼 exe 相对绝对路径 "<exeDir>/../Library/XFont/XFontOutlineCommon.xfo"
- *          ——绝对路径走候选枚举 idx 0（XFont_outlinePathBuild direct 分支），
- *          与起跑 cwd 无关；文件缺失时由 XFont_face 回落链兜底
- *          （XFontFace.c XFont_face：外挂轮廓/点阵皆失配 → 注册链首位
- *          位图 provider = XFont8x16），语义同旧默认链不劣化。
- *          内嵌轮廓字库构建（Android）仍走 provider 家族名直配。 */
+/** @brief 将 demo 使用的 XFont 默认家族设置为当前可用的轮廓字库。
+ * @details 默认家族 "XFontOutlineCommon" 是普通名——FT 为唯一轮廓字
+ *          实现（[已移除 2026-10-07] 原 XFO1 外挂链），引擎按
+ *          XFONT_EXTERNAL_FT_FONT_DIR（默认 "../Library/XFont"，相对
+ *          进程 cwd）补探 .ttf/.otf/.ttc（XFontFt.c 候选迭代）。demo
+ *          常从 bin-release/bin-* 目录起跑，cwd 恰为仓库子目录时
+ *          "../Library/XFont" 失配 → 全链探测落空。此处改经
+ *          XCoreApplication_applicationDirPath 拼 exe 相对绝对路径
+ *          "<exeDir>/../Library/XFont/XFontOutlineCommon"——绝对路径
+ *          走候选枚举 direct 分支（无后缀补探三后缀），与起跑 cwd
+ *          无关；文件缺失时由 XFont_face 回退链兜底（FT 探测失败发
+ *          一行 stderr 警告 → 注册链首位位图 provider = XFont8x16），
+ *          不崩溃。 */
 static void demo_apply_default_font(XFont* font)
 {
     if (!font)
         return;
-#if XFONT_BUILTIN_OUTLINE_ON
-    XFont_setFamily(font, XGUI_DEMO_DEFAULT_FONT_FAMILY);
-#else
     {
         const XString* exeDir = XCoreApplication_applicationDirPath();
         char fontPath[XFONT_EXTERNAL_FONT_PATH_MAX];
         /* 契约: applicationDirPath 返回堆串调用者释放(ASan 实测每控件
-         * 一次泄漏, 47 控件/轮)。setFamily 深拷贝路径串, 两路都先释放。 */
+         * 一次泄漏, 47 控件/轮)。setFamily 深拷贝路径串, 两路都先释放。
+         * 家族串取无后缀形态：<exeDir>/../Library/XFont/XFontOutlineCommon
+         * ——FT 链直连无后缀补 .ttf/.otf/.ttc 命中同目录对应文件
+         * （[已移除] 原 XFO1 链同串补 .xfo），与起跑 cwd 无关；FT 探测
+         * 失配时由 XFont_face 回退链兜底（一行 stderr 警告 → 注册链
+         * 首位位图 XFont8x16）。 */
         if (exeDir &&
             snprintf(fontPath, sizeof(fontPath),
-                     "%s/../Library/XFont/XFontOutlineCommon.xfo",
+                     "%s/../Library/XFont/XFontOutlineCommon",
                      XString_toUtf8(exeDir)) > 0 &&
             strlen(fontPath) < sizeof(fontPath)) {
             XFont_setFamily(font, fontPath); /* setFamily 深拷贝（XFont.c XFont_setFamily）。 */
@@ -639,7 +642,6 @@ static void demo_apply_default_font(XFont* font)
             XClassDelete((XClass*)exeDir);
         XFont_setFamily(font, XGUI_DEMO_DEFAULT_FONT_FAMILY);
     }
-#endif /* XFONT_BUILTIN_OUTLINE_ON */
 }
 
 #if XWIDGET_ON
@@ -681,43 +683,8 @@ static void demo_draw_checker(XPainter* painter, int x0, int y0,
 }
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-/**
- * @brief 在窗口后备缓冲中绘制一个可见的 XLabel 测试场景。
- * @param painter 已绑定后备缓冲的绘制器。
- * @param x 标签在窗口客户区中的横坐标。
- * @param y 标签在窗口客户区中的纵坐标。
- * @param width 标签可用宽度。
- * @param height 标签可用高度。
- * @param text 要显示的 UTF-8 文本。
- * @param pixelSize 标签文字像素高度，16 为原始点阵字号，32 为两倍放大。
- * @param family 字库 family；NULL 使用 demo 当前默认字库。
+/* [死码清理] demo_draw_label 已删除：全仓无调用点（审计清单）。
  */
-static void demo_draw_label(XPainter* painter, int x, int y, int width,
-                            int height, const char* text, int pixelSize,
-                            const char* family)
-{
-    XLabel label;
-    if (!painter || width <= 0 || height <= 0) return;
-    memset(&label, 0, sizeof(label));
-    XLabel_init(&label, NULL, 0);
-    {
-        XFont labelFont = XWidget_font((XWidget*)&label);
-        XFont_setFamily(&labelFont,
-                        family ? family : XGUI_DEMO_DEFAULT_FONT_FAMILY);
-        XWidget_setFont((XWidget*)&label, &labelFont);
-        XClassDeinit(&labelFont);
-    }
-    XLabel_setText_2(&label, text);
-    XLabel_setTextPixelSize(&label, pixelSize);
-    XLabel_setAlignment(&label, XAlignment_Left | XAlignment_Top);
-    XWidget_resize((XWidget*)&label, width, height);
-    if (XPainter_save(painter)) {
-        XPainter_translate(painter, (float)x, (float)y);
-        XLabel_drawContents(&label, painter);
-        XPainter_restore(painter);
-    }
-    XClassDeinit(&label);
-}
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
 /* ==================== 性能悬浮层 ==================== */
@@ -1838,6 +1805,9 @@ static void demo_navUpdatePanel(DemoWin* self)
     if (self->m_navCollapsed) {
         /* 收起：面板整隐，贴边 8px 分割条细条=展开把手（单击复原）。 */
         XWidget_hide(&self->m_navPanel);
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+        XWidget_hide((XWidget*)&self->m_navScroll);
+#endif
         if (self->m_navDock == 0)
             XWidget_setGeometry(self->m_navSplit, 0, top, 8, h - top - 26);
         else if (self->m_navDock == 1)
@@ -1854,8 +1824,13 @@ static void demo_navUpdatePanel(DemoWin* self)
         XWidget_show(&self->m_navPanel);
         if (self->m_navDock <= 1) {
             /* 竖版展开：标题行 + 纵列一级分类钮 + 活动分类条目展开
-             * （页面钮缩进 16px；子分组标题行更窄更淡，仅分组提示）。 */
+             * （页面钮缩进 16px；子分组标题行更窄更淡，仅分组提示）。
+             * 标题行以下整体装滚动容器（2026-10-11）：内容超高时垂直
+             * 条 AsNeeded 自动出现；分类钮/子分组标题/页面钮的父随态
+             * 切换——竖版挂 content（滚动坐标域），横版回挂面板。 */
             int head;
+            int scrollTop = 30; /* 标题行高（title 5..27 + 间隙）。 */
+            int scrollH = ph - scrollTop;
             XWidget_setGeometry(&self->m_navTitle, 8, 5, 60, 22);
             XWidget_show(&self->m_navTitle);
             XPushButton_setText_2(&self->m_navDockBtn,
@@ -1866,7 +1841,17 @@ static void demo_navUpdatePanel(DemoWin* self)
                                   "\xE6\x94\xB6\xE8\xB5\xB7"); /* 收起 */
             XWidget_setGeometry(&self->m_navCollapseBtn, pw - 52, 5, 44, 22);
             XWidget_show(&self->m_navCollapseBtn);
-            y = 32;
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+            if (scrollH < 1) scrollH = 1;
+            XWidget_setGeometry((XWidget*)&self->m_navScroll, 0, scrollTop,
+                                pw, scrollH);
+            XWidget_show((XWidget*)&self->m_navScroll);
+            XWidget_raise((XWidget*)&self->m_navScroll);
+            /* 布局前先按竖版父域（content）排版：先回挂再量高。 */
+            XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[0],
+                                   self->m_navContent);
+#endif
+            y = 0; /* y 从此为 content 域坐标（滚动容器内容高）。 */
             head = 0;
             for (i = 0; i < DEMO_NAV_CAT_N; ++i) {
                 int p;
@@ -1896,6 +1881,21 @@ static void demo_navUpdatePanel(DemoWin* self)
                     y += DEMO_NAV_PAGE_PITCH;
                 }
             }
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+            /* content 高=内容总高（超出视口即出滚动条）；页钮 reparent
+               一次到位（分类钮已在上文回挂，页钮/标题在此统一挂）。 */
+            for (i = 0; i < DEMO_NAV_PAGE_N; ++i) {
+                if (XWidget_parentWidget((XWidget*)&self->m_pageNav[i]) !=
+                    self->m_navContent)
+                    XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
+                                           self->m_navContent);
+            }
+            for (i = 0; i < DEMO_NAV_HEAD_N; ++i) {
+                XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
+                                       self->m_navContent);
+            }
+            XWidget_resize(self->m_navContent, pw, y > 1 ? y : 1);
+#endif
             /* 池内未用到的标题标签隐藏（分类切换后残留防串行）。 */
             for (i = head; i < DEMO_NAV_HEAD_N; ++i)
                 XWidget_hide((XWidget*)&self->m_navHeadLabels[i]);
@@ -1906,11 +1906,23 @@ static void demo_navUpdatePanel(DemoWin* self)
         } else {
             /* 横版展开：标题行 + 一级分类钮一行 + 活动分类页面钮换行
              * 铺放（子分组标题省略——横版条带纵向空间有限；换行数已在
-             * 函数头部预算并抬高面板高）。 */
+             * 函数头部预算并抬高面板高）。滚动容器不参与（2026-10-11）：
+             * 隐藏并令子控件回挂面板。 */
             int bw = (pw - 16) / DEMO_NAV_CAT_N;
             int p;
             int x;
             int row;
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+            XWidget_hide((XWidget*)&self->m_navScroll);
+            XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[0],
+                                   &self->m_navPanel);
+            for (i = 0; i < DEMO_NAV_PAGE_N; ++i)
+                XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
+                                       &self->m_navPanel);
+            for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
+                XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
+                                       &self->m_navPanel);
+#endif
             if (bw > 120) bw = 120;
             if (bw < 56) bw = 56;
             XWidget_setGeometry(&self->m_navTitle, 8, 4, 60, 22);
@@ -3326,6 +3338,29 @@ static DemoWin* DemoWin_create(void)
     self->m_autoQuitTimer = XTIMER_INVALID_ID;
     self->m_lcdTimer = XTIMER_INVALID_ID;
     self->m_overlayTimer = XTIMER_INVALID_ID;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    /* 底部状态栏文本（深灰背景由静态场景绘制，白字覆盖其上）。
+       【提前到扩展页 build 之前（2026-10-11 XError 根修）】：扩展页
+       build（kExtBuilders 循环，QR 页尾部 qr_generate→qr_set_status→
+       demo_set_status）会对 m_statusLabel 调 XLabel_setText_2——此前
+       init 在数千行之后，写入的是 memset 全零的未初始化对象，
+       label_clearContents 里 XClassDeinit(&m_pixmap) 读 vtable NULL
+       触发 XClass_deinit_base 参数告警（每次启动一行，2026-10-08
+       二维码页引入）。几何/缩进/对齐字段与原处一致；稍后的可见性
+       调整与 show 不受提前影响（show 原处保留）。 */
+    DemoStatusLabel_init(&self->m_statusLabel, &self->m_base, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_statusLabel);
+    XLabel_setText_2((XLabel*)&self->m_statusLabel, "就绪");
+    XLabel_setTextPixelSize((XLabel*)&self->m_statusLabel, 14);
+    XLabel_setAlignment((XLabel*)&self->m_statusLabel,
+                        XAlignment_Left | XAlignment_VCenter);
+    /* 水平缩进用 indent（16px）：margin 是四边统一的内边距，26px 高的
+     * 状态条减去上下各 16 后内容区高度为负，VCenter 会把文字压出底边。 */
+    XLabel_setIndent((XLabel*)&self->m_statusLabel, 16);
+    XWidget_setForegroundRole((XWidget*)&self->m_statusLabel,
+                              XPaletteColorRole_HighlightedText);
+    XWidget_setGeometry((XWidget*)&self->m_statusLabel, 0, 334, 520, 26);
+#endif
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_init(self);
 #endif
@@ -3430,6 +3465,25 @@ static DemoWin* DemoWin_create(void)
     XButtonGroup_setExclusive(&self->m_navCatGroup, true);
 #endif
     XWidget_init(&self->m_navPanel, &self->m_base, 0);
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+    /* 竖版导航内容滚动容器（2026-10-11）：标题行以下整体装进
+       XScrollArea，垂直条 AsNeeded——分类展开导致内容超高（矮窗/
+       拖窄）时自动出现，全部可见时隐藏。横版（上下停靠）不参与
+       滚动：条带已有换行+面板抬高逻辑，滚动容器届时隐藏、子控件
+       回挂面板。content 容器无背景无边框，仅作几何锚定父。 */
+    XScrollArea_init(&self->m_navScroll, &self->m_navPanel, 0);
+    XAbstractScrollArea_setVerticalScrollBarPolicy(
+        (XAbstractScrollArea*)&self->m_navScroll,
+        (int)XScrollBarPolicy_AsNeeded);
+    XAbstractScrollArea_setHorizontalScrollBarPolicy(
+        (XAbstractScrollArea*)&self->m_navScroll,
+        (int)XScrollBarPolicy_AlwaysOff);
+    self->m_navContent = XWidget_create((XWidget*)&self->m_navScroll, 0);
+    XScrollArea_setWidget(&self->m_navScroll, self->m_navContent);
+    XScrollArea_setWidgetResizable(&self->m_navScroll, false);
+    XFrame_setFrameStyle((XFrame*)&self->m_navScroll,
+                         (int)(XFrameShape_NoFrame | XFrameShadow_Plain));
+#endif
     XLabel_init(&self->m_navTitle, &self->m_navPanel, 0);
     demo_set_widget_default_font((XWidget*)&self->m_navTitle);
     XLabel_setText_2(&self->m_navTitle, "\xE5\xAF\xBC\xE8\x88\xAA"); /* 导航 */
@@ -4255,19 +4309,8 @@ static DemoWin* DemoWin_create(void)
     XWidget_lower((XWidget*)&self->m_inputStatus);
 #endif /* 容器与窗口页签节（XTabWidget 门） */
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    /* 底部状态栏文本（深灰背景由静态场景绘制，白字覆盖其上）。 */
-    DemoStatusLabel_init(&self->m_statusLabel, &self->m_base, 0);
-    demo_set_widget_default_font((XWidget*)&self->m_statusLabel);
-    XLabel_setText_2((XLabel*)&self->m_statusLabel, "就绪");
-    XLabel_setTextPixelSize((XLabel*)&self->m_statusLabel, 14);
-    XLabel_setAlignment((XLabel*)&self->m_statusLabel,
-                        XAlignment_Left | XAlignment_VCenter);
-    /* 水平缩进用 indent（16px）：margin 是四边统一的内边距，26px 高的
-     * 状态条减去上下各 16 后内容区高度为负，VCenter 会把文字压出底边。 */
-    XLabel_setIndent((XLabel*)&self->m_statusLabel, 16);
-    XWidget_setForegroundRole((XWidget*)&self->m_statusLabel,
-                              XPaletteColorRole_HighlightedText);
-    XWidget_setGeometry((XWidget*)&self->m_statusLabel, 0, 334, 520, 26);
+    /* 底部状态栏 init 已提前到 DemoWin_create 头部（扩展页 build 之前，
+       2026-10-11 XError 根修）；此处只保留 show 语义（原处）。 */
     XWidget_show((XWidget*)&self->m_statusLabel);
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
@@ -4795,7 +4838,27 @@ int xgui_demo_main(int argc, char* argv[])
         win->m_extPages[2] || win->m_extPages[3] || win->m_extPages[4] ||
         win->m_extPages[5] || win->m_extPages[6] || win->m_extPages[7] ||
         win->m_extPages[8] || win->m_extPages[9] || win->m_extPages[10])
-        XWidget_setGeometry(&win->m_base, 40, 40, 1000, 700); /* 15 页导航/扩展页与网络设置双列布局需要 */
+        {
+            /* 15 页导航/扩展页（含二维码页）与网络设置双列布局需要
+               1000x700；无头一致性采集（XGUI_DEMO_WINDOW_SIZE=
+               1000x600）可对齐面板尺寸，使桌面参考与设备窗口同几何、
+               逐像素可比。 */
+            int baseW = 1000;
+            int baseH = 700;
+            const char* winSz = XSystem_environment("XGUI_DEMO_WINDOW_SIZE");
+            if (winSz && winSz[0])
+            {
+                int envW = 0;
+                int envH = 0;
+                if (sscanf(winSz, "%dx%d", &envW, &envH) == 2 &&
+                    envW >= 320 && envH >= 240 && envW <= 4096 && envH <= 4096)
+                {
+                    baseW = envW;
+                    baseH = envH;
+                }
+            }
+            XWidget_setGeometry(&win->m_base, 40, 40, baseW, baseH);
+        }
     else
 #endif
     XWidget_setGeometry(&win->m_base, 60, 60, 520, 360);

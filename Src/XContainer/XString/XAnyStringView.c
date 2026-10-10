@@ -147,39 +147,9 @@ static uint32_t utf8_to_codepoint(const char* data, int64_t* pos, int64_t size)
     return cp;
 }
 
-/**
-* @brief 比较两个字符（ASCII 范围，支持大小写敏感性）
-*/
-static bool char_equal(char a, char b, int cs)
-{
-    if (cs == 1)
-        return a == b;
-    if (a >= 'A' && a <= 'Z') a += 32;
-    if (b >= 'A' && b <= 'Z') b += 32;
-    return a == b;
-}
-
-/**
-* @brief 比较两个 XChar（支持大小写敏感性）
-*/
-static bool xchar_equal(XChar a, XChar b, int cs)
-{
-    if (cs == 1)
-        return a == b;
-    if (a >= 'A' && a <= 'Z') a += 32;
-    if (b >= 'A' && b <= 'Z') b += 32;
-    return a == b;
-}
-
-/**
-* @brief 将 char 转小写
-*/
-static char char_to_lower(char ch)
-{
-    if (ch >= 'A' && ch <= 'Z')
-        return (char)(ch + 32);
-    return ch;
-}
+/* [死码清理] char_equal/xchar_equal/char_to_lower 已删除：与
+ * XUtf8StringView.c/XLatin1StringView.c 活本同体而本文件零调用
+ *（xchar_to_lower 为本文件唯一活本，保留）（审计清单）。 */
 
 /**
 * @brief 将 XChar 转小写

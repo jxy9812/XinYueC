@@ -190,7 +190,7 @@ static void ac_type(const char* ascii)
 
 static void ac_left(void) { ac_key(XKey_Left); }
 static void ac_right(void) { ac_key(XKey_Right); }
-static void ac_home(void) { ac_key(XKey_Home); }
+/* [死码清理] ac_home 已删除：全仓无调用点（审计清单） */
 static void ac_end(void) { ac_key(XKey_End); }
 static void ac_backspace(void) { XLineControl_backspace(&ac_ctl); }
 static void ac_del(void) { XLineControl_del(&ac_ctl); }

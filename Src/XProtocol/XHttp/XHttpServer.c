@@ -250,70 +250,8 @@ static void xhttp_server_remove_connection(XHttpServerConnection* connection)
     }
 }
 
-static bool xhttp_server_write_response(XHttpServerResponder* responder,
-                                        const XHttpServerResponse* response)
-{
-    XTcpSocket* socket;
-    XByteArray* output;
-    XHttpServerResponse_StatusCode status;
-    const XByteArray* body;
-    const XByteArray* mime;
-    size_t i;
-    bool hasLength = false;
-    bool hasType = false;
-    bool writeBody;
-    if (!responder || !response || responder->m_sent || !responder->m_socket)
-        return false;
-    socket = (XTcpSocket*)responder->m_socket;
-    output = XByteArray_create();
-    if (!output)
-        return false;
-    status = response->m_statusCode;
-    body = response->m_body;
-    mime = response->m_mimeType;
-    XByteArray_append_utf8(output, "HTTP/1.1 ");
-    xhttp_server_append_i32(output, (int32_t)status);
-    XByteArray_append_utf8(output, " ");
-    XByteArray_append_utf8(output, xhttp_server_reason(status));
-    XByteArray_append_utf8(output, "\r\n");
-    for (i = 0; i < XHttpHeaders_size(response->m_headers); ++i) {
-        const XByteArray* name = XHttpHeaders_nameAt_const(response->m_headers, i);
-        const XByteArray* value = XHttpHeaders_valueAt_const(response->m_headers, i);
-        if (!name || !value)
-            continue;
-        if (xhttp_server_range_equals_ci(name, 0, XByteArray_size_base(name), "content-length"))
-            hasLength = true;
-        if (xhttp_server_range_equals_ci(name, 0, XByteArray_size_base(name), "content-type"))
-            hasType = true;
-        xhttp_server_append_range(output, name, 0, XByteArray_size_base(name));
-        XByteArray_append_utf8(output, ": ");
-        xhttp_server_append_range(output, value, 0, XByteArray_size_base(value));
-        XByteArray_append_utf8(output, "\r\n");
-    }
-    if (!hasType && mime && XByteArray_size_base(mime) > 0) {
-        XByteArray_append_utf8(output, "Content-Type: ");
-        xhttp_server_append_range(output, mime, 0, XByteArray_size_base(mime));
-        XByteArray_append_utf8(output, "\r\n");
-    }
-    if (!hasLength) {
-        XByteArray_append_utf8(output, "Content-Length: ");
-        xhttp_server_append_i32(output, (int32_t)(body ? XByteArray_size_base(body) : 0));
-        XByteArray_append_utf8(output, "\r\n");
-    }
-    XByteArray_append_utf8(output, "Connection: close\r\n\r\n");
-    writeBody = !xhttp_server_status_has_no_body(status) &&
-                responder->m_method != XHttpServerRequest_Head;
-    if (XIODevice_write_2((XIODevice*)socket, output) < 0)
-        writeBody = false;
-    if (writeBody && body && XByteArray_size_base(body) > 0)
-        XIODevice_write_2((XIODevice*)socket, body);
-    XIODevice_flush((XIODevice*)socket);
-    XAbstractSocket_waitForBytesWritten((XAbstractSocket*)socket, 1000);
-    XClassDelete((XClass*)output);
-    responder->m_sent = true;
-    XAbstractSocket_disconnectFromHost_base((XAbstractSocket*)socket);
-    return true;
-}
+/* [死码清理] xhttp_server_write_response 已删除：全仓无调用点（见审计清单）。
+ */
 
 /* 发送响应前单独处理 HEAD，避免把请求方法塞入公共响应对象。 */
 static bool xhttp_server_send_response_for_request(XHttpServerResponder* responder,

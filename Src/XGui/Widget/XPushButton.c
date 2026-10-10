@@ -148,12 +148,23 @@ static XSize pushbutton_computeSizeHint(const XPushButton* self)
             h = XPainter_textHeight(&font);
     }
     XClassDeinit(&font);
-    if (self->m_menu)
-        w += 12; /* PM_MenuButtonIndicator */
-    w += 6 + 4; /* PM_ButtonMargin + PM_DefaultFrameWidth * 2 */
-    h += 6 + 4;
-    XSize_init(&out, w, h);
-    return out;
+    /* [sizeHint 收口 2026-10-07] 边距/指示器改走风格：与绘制路径同经
+     * XStyle（含样式表切换一致性），删除硬编码 +12/+6+4（Fusion
+     * DefaultFrameWidth=1 时 Qt 语义应 +8，旧硬编码恒 +10 差 2px）。 */
+    {
+        XStyleOption opt;
+        XSize content;
+        XSize size;
+        XStyleOption_init(&opt, XStyleCT_PushButton);
+        if (self->m_menu)
+            w += XStyle_pixelMetric(XStyle_defaultStyle(),
+                                    XStylePM_MenuButtonIndicator, &opt);
+        XSize_init(&content, w, h);
+        size = XStyle_sizeFromContents(XStyle_defaultStyle(),
+                                       XStyleCT_PushButton, &opt, content);
+        XSize_init(&out, size.width, size.height);
+        return out;
+    }
 }
 
 /** @brief 刷新基类 XWidget 的 sizeHint/minimumSizeHint 存储位。 */

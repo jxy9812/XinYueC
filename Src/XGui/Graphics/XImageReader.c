@@ -219,10 +219,8 @@ static bool XImageReader_mimeEquals(const char* mimeType, const char* expected)
     return mimeType && expected && XStrcmp(mimeType, expected) == 0;
 }
 
-static bool XImageReader_mimeIsBmp(const char* mimeType)
-{
-    return XImageReader_mimeEquals(mimeType, "image/bmp");
-}
+/* [死码清理] XImageReader_mimeIsBmp 已删除：全仓无调用点（见审计清单）。
+ */
 
 static const char* XImageReader_detectSignature(const unsigned char* data, size_t size)
 {
@@ -524,16 +522,11 @@ static uint32_t XImageReader_readLe32(const unsigned char* data)
            ((uint32_t)data[2] << 16) | ((uint32_t)data[3] << 24);
 }
 
-static uint16_t XImageReader_readLe16(const unsigned char* data)
-{
-    return (uint16_t)data[0] | ((uint16_t)data[1] << 8);
-}
+/* [死码清理] XImageReader_readLe16 已删除：全仓无调用点（见审计清单）。
+ */
 
-static uint32_t XImageReader_readBe32(const unsigned char* data)
-{
-    return ((uint32_t)data[0] << 24) | ((uint32_t)data[1] << 16) |
-           ((uint32_t)data[2] << 8) | data[3];
-}
+/* [死码清理] XImageReader_readBe32 已删除：全仓无调用点（见审计清单）。
+ */
 
 static bool XImageReader_probeBmpSize(const unsigned char* data, size_t size,
                                       int* width, int* height)

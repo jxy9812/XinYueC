@@ -219,7 +219,8 @@ static bool decode_utf8_codepoint(const char* ptr, const char* end,
                                   uint32_t* codepoint, size_t* length);
 static bool is_xml_char(uint32_t codepoint);
 static bool is_valid_utf8_xml(const char* data, size_t length);
-static bool append_codepoint_utf8(XString* output, uint32_t codepoint);
+/* [死码清理] append_codepoint_utf8/find_default_attribute 已删除：
+ * 全仓无调用点（审计清单）。 */
 static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t length);
 static void clear_default_attributes(XXmlStreamReaderPrivate* d);
 static bool append_default_attribute(XXmlStreamReaderPrivate* d,
@@ -227,8 +228,6 @@ static bool append_default_attribute(XXmlStreamReaderPrivate* d,
                                      const XString* attributeName,
                                      const XString* value,
                                      bool required);
-static const XmlDefaultAttribute* find_default_attribute(
-    const XXmlStreamReaderPrivate* d, const char* elementName, const char* attributeName);
 
 /** @brief 解析 XML 声明（<?xml ... ?>） */
 static bool parse_xml_declaration(XXmlStreamReaderPrivate* d, const char** ptr, const char* end);
@@ -435,32 +434,6 @@ static bool encoding_name_matches_input(const XXmlStreamReaderPrivate* d, const 
            (declared == XML_INPUT_LATIN1 || declared == XML_INPUT_ASCII);
 }
 
-static bool append_codepoint_utf8(XString* output, uint32_t codepoint)
-{
-    if (!output || !is_xml_char(codepoint)) return false;
-    char utf8[4];
-    size_t length = 0;
-    if (codepoint <= 0x7fU) {
-        utf8[0] = (char)codepoint;
-        length = 1;
-    } else if (codepoint <= 0x7ffU) {
-        utf8[0] = (char)(0xc0U | (codepoint >> 6));
-        utf8[1] = (char)(0x80U | (codepoint & 0x3fU));
-        length = 2;
-    } else if (codepoint <= 0xffffU) {
-        utf8[0] = (char)(0xe0U | (codepoint >> 12));
-        utf8[1] = (char)(0x80U | ((codepoint >> 6) & 0x3fU));
-        utf8[2] = (char)(0x80U | (codepoint & 0x3fU));
-        length = 3;
-    } else {
-        utf8[0] = (char)(0xf0U | (codepoint >> 18));
-        utf8[1] = (char)(0x80U | ((codepoint >> 12) & 0x3fU));
-        utf8[2] = (char)(0x80U | ((codepoint >> 6) & 0x3fU));
-        utf8[3] = (char)(0x80U | (codepoint & 0x3fU));
-        length = 4;
-    }
-    return XString_append_with_length_utf8(output, utf8, length);
-}
 
 /**
  * @brief      检查字符是否为 XML 名称起始字符
@@ -619,19 +592,6 @@ static bool append_default_attribute(XXmlStreamReaderPrivate* d,
     return true;
 }
 
-static const XmlDefaultAttribute* find_default_attribute(
-    const XXmlStreamReaderPrivate* d, const char* elementName, const char* attributeName)
-{
-    if (!d || !elementName || !attributeName) return NULL;
-    for (int i = 0; i < d->m_defaultAttributeCount; ++i) {
-        const XmlDefaultAttribute* item = &d->m_defaultAttributes[i];
-        const char* element = XString_toUtf8(item->m_elementName);
-        const char* attribute = XString_toUtf8(item->m_attributeName);
-        if (element && attribute && strcmp(element, elementName) == 0 &&
-            strcmp(attribute, attributeName) == 0) return item;
-    }
-    return NULL;
-}
 /**
  * @brief      解析 XML 声明（<?xml ... ?>）
  * @param d    解析器私有数据

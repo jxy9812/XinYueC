@@ -8,7 +8,10 @@
 #include "XFontFace_Protected.h"
 #include "XFontBitmapFace.h"
 #include "XFontOutlineFace.h"
+#include "XFontFt.h"
 #include <string.h>
+#include <stdio.h>
+#include <math.h>
 
 enum
 {
@@ -19,6 +22,8 @@ enum
 static XFontFace* g_faces[XFONT_FACE_REGISTRY_CAPACITY];
 static size_t g_faceCount;
 static bool g_builtinProvidersInitialized;
+/* FT 探测失败的一次性 stderr 警告旗标（进程期只告警一次，见 XFont_face）。 */
+static bool g_ftProbeFailedWarned;
 
 /* Built-in faces are linked according to XFont_config.h and registered on the
    first face lookup, keeping startup cost out of applications that do not use
@@ -67,6 +72,20 @@ static bool VXFontFace_loadOutlineGlyph(const XFontFace* self,
     return false;
 }
 
+/* 新槽默认实现（§1.2）：无字号载体的 face 一律转发既有 LoadOutlineGlyph
+   槽位（scale 丢弃）——点阵/纯 provider 等既有 face 零改动，行为逐位
+   不变；scale 合法性已在包装函数校验。 */
+static bool VXFontFace_loadOutlineGlyphScaled(const XFontFace* self,
+                                              const XFont* font, float scale,
+                                              uint32_t codepoint,
+                                              XFontOutlineGlyphMetrics* metrics,
+                                              const XFontOutlineSink* sink)
+{
+    (void)scale;
+    return XFontFace_loadOutlineGlyph_base(self, font, codepoint, metrics,
+                                           sink);
+}
+
 static int VXFontFace_bitmapGlyphRowBytes(const XFontFace* self,
                                           const XFont* font,
                                           const XFontGlyphDsc* dsc, int bpp)
@@ -91,7 +110,8 @@ XVtable* XFontFace_class_init(void)
         (void*)VXFontFace_info,
         (void*)VXFontFace_loadBitmapGlyph,
         (void*)VXFontFace_loadOutlineGlyph,
-        (void*)VXFontFace_bitmapGlyphRowBytes
+        (void*)VXFontFace_bitmapGlyphRowBytes,
+        (void*)VXFontFace_loadOutlineGlyphScaled
     };
     XVTABLE_INIT_DEFAULT(XFontFace)
     XVTABLE_INHERIT_XCLASS(XClass);
@@ -159,32 +179,12 @@ static const XFontFace* XFontFace_first(XFontFaceKind kind)
     return NULL;
 }
 
-static bool XFontFace_hasXfoSuffix(const char* family)
-{
-    size_t length;
-    if (!family)
-        return false;
-    length = strlen(family);
-    if (length < 4u || family[length - 4u] != '.')
-        return false;
-    /* .xfo（二进制）与 .inc（十六进制 C 数组文本）同为 XFO1 载体。 */
-    return ((family[length - 3u] == 'x' || family[length - 3u] == 'X') &&
-                (family[length - 2u] == 'f' || family[length - 2u] == 'F') &&
-                (family[length - 1u] == 'o' || family[length - 1u] == 'O')) ||
-           ((family[length - 3u] == 'i' || family[length - 3u] == 'I') &&
-                (family[length - 2u] == 'n' || family[length - 2u] == 'N') &&
-                (family[length - 1u] == 'c' || family[length - 1u] == 'C'));
-}
-
 const XFontFace* XFont_face(const XFont* font)
 {
     const char* family = font ? XFont_family(font) : XFONT_DEFAULT_FAMILY;
     const XFontFace* bitmap;
     const XFontFace* outline;
     XFontBitmapInfo bitmapFileInfo;
-    XFontOutlineInfo outlineFileInfo;
-    bool hasBitmapFile;
-    bool hasOutlineFile;
     int strategy = font ? XFont_styleStrategy(font) : XFont_PreferDefault;
     bool forceOutline = (strategy & XFont_ForceOutline) != 0;
     bool preferOutline = forceOutline ||
@@ -209,19 +209,31 @@ const XFontFace* XFont_face(const XFont* font)
 
     /* A path or an unknown family can be resolved by the file backends. */
     memset(&bitmapFileInfo, 0, sizeof(bitmapFileInfo));
-    memset(&outlineFileInfo, 0, sizeof(outlineFileInfo));
-    hasBitmapFile = XFontBitmapFace_fileInfo(font, &bitmapFileInfo);
-    hasOutlineFile = XFontOutlineFace_fileInfo(font, &outlineFileInfo);
-    if (hasOutlineFile &&
-        (preferOutline || XFontFace_hasXfoSuffix(family) ||
-         !hasBitmapFile))
-        return XFontOutlineFace_fileFace();
+#if XFONT_FT_FACE_ON
+    /* FT 是唯一轮廓字实现（自研 XFO1 链已移除）：先探 .ttf/.otf/.ttc。
+       命中即返回家族槽静态 face——其 m_ft 位使两槽位分发均走 XFontFt。 */
+    {
+        XFontOutlineInfo outlineFileInfo;
+        memset(&outlineFileInfo, 0, sizeof(outlineFileInfo));
+        if (XFontFt_fileInfo(font, &outlineFileInfo))
+            return XFontFt_fileFace(family);
+    }
+    /* FT 探测失败（缺文件/魔数不符/解析锁存/家族槽满/init 失败）：
+       落位图回退，进程期只发一行 stderr 警告（XFont_face 位于逐字形
+       热路径，逐次告警会刷屏；缺文件可重探，文件落盘后自动转正）。 */
+    if (!g_ftProbeFailedWarned)
+    {
+        g_ftProbeFailedWarned = true;
+        fprintf(stderr,
+                "XFont: FT outline font resolve failed for family '%s' "
+                "(missing or corrupt file?), falling back to bitmap\n",
+                family);
+    }
+#endif
     if (forceOutline)
         return NULL;
-    if (hasBitmapFile)
+    if (XFontBitmapFace_fileInfo(font, &bitmapFileInfo))
         return XFontBitmapFace_fileFace();
-    if (hasOutlineFile)
-        return XFontOutlineFace_fileFace();
     return XFontFace_first(preferOutline ? XFontFace_Outline :
                            XFontFace_Bitmap);
 }
@@ -264,6 +276,23 @@ bool XFontFace_loadOutlineGlyph_base(const XFontFace* self, const XFont* font,
         bool(*)(const XFontFace*, const XFont*, uint32_t,
                 XFontOutlineGlyphMetrics*, const XFontOutlineSink*))
         (self, font, codepoint, metrics, sink);
+}
+
+bool XFontFace_loadOutlineGlyphScaled_base(const XFontFace* self,
+                                           const XFont* font, float scale,
+                                           uint32_t codepoint,
+                                           XFontOutlineGlyphMetrics* metrics,
+                                           const XFontOutlineSink* sink)
+{
+    /* scale = target_px/unitsPerEm（§1.2）：<=0 或非有限视为非法直接判负
+       （合法域由 painter 既有整数目标字号保证，此处兜底防误用）。 */
+    if (!self || !XClassGetVtable(self) || !(scale > 0.0f) ||
+        !isfinite((double)scale))
+        return false;
+    return XClassGetVirtualFunc(self, EXFontFace_LoadOutlineGlyphScaled,
+        bool(*)(const XFontFace*, const XFont*, float, uint32_t,
+                XFontOutlineGlyphMetrics*, const XFontOutlineSink*))
+        (self, font, scale, codepoint, metrics, sink);
 }
 
 int XFontFace_bitmapGlyphRowBytes_base(const XFontFace* self,

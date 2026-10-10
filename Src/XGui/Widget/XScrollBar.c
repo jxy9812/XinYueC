@@ -272,6 +272,10 @@ static void VX_scrollBar_mousePressEvent(XWidget* self, XEvent* event)
         sb->m_activeIsAdd = 0;
         XAbstractSlider_triggerAction((XAbstractSlider*)sb,
             XAbstractSliderSliderAction_SingleStepSub);
+        /* [长按连发 2026-10-07] 对标 QAbstractSlider::setRepeatAction
+         * （initialDelay 500ms → 每 50ms 连发，qscrollbar.cpp 同口径）。 */
+        XAbstractSlider_setRepeatAction((XAbstractSlider*)sb,
+            XAbstractSliderSliderAction_SingleStepSub, 500, 50);
         XWidget_update(self);
         XEvent_accept(event);
         return;
@@ -281,6 +285,8 @@ static void VX_scrollBar_mousePressEvent(XWidget* self, XEvent* event)
         sb->m_activeIsAdd = 1;
         XAbstractSlider_triggerAction((XAbstractSlider*)sb,
             XAbstractSliderSliderAction_SingleStepAdd);
+        XAbstractSlider_setRepeatAction((XAbstractSlider*)sb,
+            XAbstractSliderSliderAction_SingleStepAdd, 500, 50);
         XWidget_update(self);
         XEvent_accept(event);
         return;
@@ -298,9 +304,12 @@ static void VX_scrollBar_mousePressEvent(XWidget* self, XEvent* event)
         XWidget_grabMouse((XWidget*)sb);
     } else {
         /* 轨道翻页：按下点在滑块之前 → 向回翻页；之后 → 向前翻页。 */
-        XAbstractSlider_triggerAction((XAbstractSlider*)sb,
+        XAbstractSliderSliderAction page =
             pos < handlePos ? XAbstractSliderSliderAction_PageStepSub
-                            : XAbstractSliderSliderAction_PageStepAdd);
+                            : XAbstractSliderSliderAction_PageStepAdd;
+        XAbstractSlider_triggerAction((XAbstractSlider*)sb, page);
+        /* [长按连发] 轨道按住持续翻页（同 Qt 按压连发口径）。 */
+        XAbstractSlider_setRepeatAction((XAbstractSlider*)sb, page, 500, 50);
     }
     XEvent_accept(event);
 }
@@ -342,6 +351,10 @@ static void VX_scrollBar_mouseReleaseEvent(XWidget* self, XEvent* event)
         XAbstractSlider_setSliderDown((XAbstractSlider*)sb, false);
         XWidget_releaseMouse((XWidget*)sb);
     }
+    /* [长按连发] 释放收闸（对标 qscrollbar 释放 stopRepeatAction）。 */
+    if (XMouseEvent_button(me) == XMouseButton_LeftButton)
+        XAbstractSlider_setRepeatAction((XAbstractSlider*)sb,
+            XAbstractSliderSliderAction_NoAction, 0, 0);
     XEvent_accept(event);
 }
 

@@ -262,6 +262,9 @@ static bool xpdfb_formatNegotiate(XImageFormat preferred,
     return preferred == panel;
 }
 
+static bool xpdfb_cacheSync(XPlatformDisplayCacheMode mode, void* address,
+                            size_t length);
+
 static bool xpdfb_pan(int bufferIndex)
 {
     if (!g_xpdfbDeviceReady || g_xpdfbFd < 0) return false;
@@ -277,7 +280,39 @@ static bool xpdfb_pan(int bufferIndex)
     if (ioctl(g_xpdfbFd, FBIOPAN_VSYNC, &g_xpdfbVar) == 0)
         return true;
 #endif
-    return ioctl(g_xpdfbFd, FBIOPAN_DISPLAY, &g_xpdfbVar) == 0;
+    if (ioctl(g_xpdfbFd, FBIOPAN_DISPLAY, &g_xpdfbVar) == 0)
+    {
+        /* 翻页静默吞没自愈（2026-10-08 昆仑通态 A33 真屏「缺笔画」根修）：
+         * sun4i-drmdrmfb 的 legacy FBIOPAN_DISPLAY 会更新 var.yoffset
+         * 软件态却不搬硬件扫描out——跨重启残留 yoffset=600 时，提交侧
+         * 轮换写 0 号缓冲、硬件恒扫 1 号（上一轮运行的陈旧帧），面板
+         * 永久显示旧画面而 fb0 回读「一切正常」，消费端无从察觉。ioctl
+         * 成功后回读 var 校验：yoffset 未落到请求值即把目标缓冲整段
+         * 搬入硬件可见区（半帧 memcpy，仅故障路径付出；正常面板零
+         * 开销）。校验读回的 yoffset 同步进软件态，保证后续 pan(0/1)
+         * 的目标计算以硬件真实可见区为基准。 */
+        struct fb_var_screeninfo chk = g_xpdfbVar;
+        if (ioctl(g_xpdfbFd, FBIOGET_VSCREENINFO, &chk) == 0 &&
+            chk.yoffset != g_xpdfbVar.yoffset)
+        {
+            size_t half = g_xpdfbInfo.m_frameBufferSize / 2;
+            size_t src = (size_t)bufferIndex * half;
+            /* 可见区字节偏移 = 硬件 yoffset × 行距（stride 已含像素宽与
+             * 对齐；yoffset 单位是行）。 */
+            size_t dst = (size_t)chk.yoffset * g_xpdfbInfo.m_stride;
+            if (dst + half <= g_xpdfbInfo.m_frameBufferSize)
+            {
+                memcpy((uint8_t*)g_xpdfbInfo.m_frameBuffer + dst,
+                       (uint8_t*)g_xpdfbInfo.m_frameBuffer + src, half);
+                xpdfb_cacheSync(XPlatformDisplayCache_Clean,
+                                (uint8_t*)g_xpdfbInfo.m_frameBuffer + dst,
+                                half);
+            }
+            g_xpdfbVar.yoffset = chk.yoffset;
+        }
+        return true;
+    }
+    return false;
 }
 
 static bool xpdfb_cacheSync(XPlatformDisplayCacheMode mode, void* address,

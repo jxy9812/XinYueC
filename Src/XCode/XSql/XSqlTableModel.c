@@ -149,16 +149,8 @@ static bool xsql_table_reserve_removed(XSqlTableModel* model, size_t wanted)
     return true;
 }
 
-static bool xsql_table_append_removed(XSqlTableModel* model, const XSqlRecord* record)
-{
-    XSqlRecord* copy;
-    if (!model || !record || !xsql_table_reserve_removed(model, model->m_removedCount + 1))
-        return false;
-    copy = XSqlRecord_create_copy(record);
-    if (!copy) return false;
-    model->m_removedRows[model->m_removedCount++] = copy;
-    return true;
-}
+/* [死码清理] xsql_table_append_removed 已删除：全仓无调用点（见审计清单）。
+ */
 
 static void xsql_table_clear_original(XSqlTableModel* model, int row)
 {

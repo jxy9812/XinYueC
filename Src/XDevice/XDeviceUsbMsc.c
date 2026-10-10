@@ -58,11 +58,8 @@ static void xmscStoreBe32(uint8_t* p, uint32_t value)
     p[3] = (uint8_t)value;
 }
 
-static void xmscStoreBe64(uint8_t* p, uint64_t value)
-{
-    size_t i;
-    for (i = 0; i < 8; ++i) p[7 - i] = (uint8_t)(value >> (i * 8));
-}
+/* [死码清理] xmscStoreBe64 已删除：全仓无调用点（见审计清单）。
+ */
 
 static bool xmscTransfer(XFd fd, XDeviceUsbEndpointAddress endpoint,
                          void* data, size_t length, int32_t timeoutMs)

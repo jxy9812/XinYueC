@@ -104,14 +104,10 @@ CMakeLists 的 Linux 分支 `find_library(NAMES vulkan)` 直接拾取。
 
 ## font/ — 字体管线模块
 
-| 脚本 | 说明 |
-|---|---|
-| `xfont_compile.py` | TTF/OTF → XFO1 紧凑轮廓格式（离线 fontTools，运行时无 TTF 解析器） |
-| `xfont_merge_gb2312.py` | 向内置 CJK 字体增量补 GB2312 汉字（6763 字，不重生成已有字形） |
-| `xfont_pack_outline_common.py` | 把内置 Latin+Cjk 两个分体 XFO1 合并为外挂加载单文件 |
-
-三脚本同目录互相 import，依赖 `fontTools`（`pip install fonttools`）。
-**用户在途工作**，用法见各脚本头注释。
+[已移除 2026-10-07] xfont_compile.py / xfont_merge_gb2312.py /
+xfont_pack_outline_common.py 三脚本随 XFO1 自研轮廓字格式整体删除
+（FT 为唯一轮廓字实现，TTF/OTF/TTC 由 FreeType 直接解析，无需离线
+转换管线）。
 
 ## ime/ — 拼音词库管线
 

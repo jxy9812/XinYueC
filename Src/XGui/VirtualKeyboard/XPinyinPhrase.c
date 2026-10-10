@@ -513,7 +513,8 @@ static void imePhraseSort(XPinyinPhraseEntry* entries, int32_t count)
 
 /* XIPB 布局常量（全小端；编译器 Tools/VirtualKeyboard/ime_phrases_compile.py 同构
  * 产出；头 24B + 条目 16B 定长，全文件经逐字节访问器拼装、不假设宿主
- * 端序——XFontOutline_Xfo.c 的 xfo16/xfo32 先例，win32 与大端 MCU 双端
+ * 端序——同款先例为字体模块的字节访问器写法（XFontOutline_Xfo.c 的
+ * xfo16/xfo32，该文件已随 XFO1 实现移除），win32 与大端 MCU 双端
  * 成立）。 */
 
 /** @brief 文件头字节数（magic4+u16+u16+u32*4）。 */

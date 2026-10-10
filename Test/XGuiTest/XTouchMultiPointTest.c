@@ -67,28 +67,11 @@ XVtable* TpSink_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
-static void tp_sinkTouchEvent(XWidget* self, XEvent* event)
-{
-    TpSink* sink = (TpSink*)self;
-    const XTouchEvent* te = (const XTouchEvent*)event;
-    const XTouchPoint* pts;
-    XEventType type = XEvent_type(event);
-    if (type != XEVENT_TYPE_TOUCH_BEGIN && type != XEVENT_TYPE_TOUCH_UPDATE &&
-        type != XEVENT_TYPE_TOUCH_END && type != XEVENT_TYPE_TOUCH_CANCEL)
-        return;
-    pts = XTouchEvent_points(te);
-    if (type == XEVENT_TYPE_TOUCH_BEGIN) ++sink->m_begin;
-    else if (type == XEVENT_TYPE_TOUCH_UPDATE) ++sink->m_update;
-    else ++sink->m_end;
-    sink->m_lastId = (pts && te->m_pointCount > 0) ? pts[0].m_id : -1;
-    XEvent_accept(event);
-}
+/* [死码清理] tp_sinkTouchEvent 已删除：全仓无调用点（见审计清单）。
+ */
 
-static XWidget* tp_sinkParent(const XTouchEvent* te)
-{
-    (void)te;
-    return NULL;
-}
+/* [死码清理] tp_sinkParent 已删除：全仓无调用点（见审计清单）。
+ */
 
 /** @brief 构造单触点（id/坐标/状态）。 */
 static XTouchPoint tp_point(int32_t id, int x, int y, int state)

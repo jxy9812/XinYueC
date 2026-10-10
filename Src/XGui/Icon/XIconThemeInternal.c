@@ -1853,10 +1853,8 @@ static bool theme_scaledToSizeRect(XPixmap* pixmap, int targetWidth,
     return false;
 }
 
-static bool theme_scaledToSize(XPixmap* pixmap, int target)
-{
-    return theme_scaledToSizeRect(pixmap, target, target);
-}
+/* [死码清理] theme_scaledToSize 已删除：全仓无调用点（见审计清单）。
+ */
 
 static bool theme_dirHasIcon(const char* root, const char* theme,
                              const char* dir, const char* name)

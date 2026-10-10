@@ -63,19 +63,8 @@ static bool xsb_removeFrom(XVector* vec, XWidget* widget)
     return false;
 }
 
-static void xsb_destroyVector(XVector* vec)
-{
-    int64_t i;
-    int64_t n;
-    if (!vec) return;
-    n = XVector_size_base((const XContainer*)vec);
-    for (i = 0; i < n; ++i) {
-        XStatusBarItem** item =
-            (XStatusBarItem**)XVector_at_base(vec, i);
-        xsb_itemDestroy(item ? *item : NULL);
-    }
-    XClassDelete(vec);
-}
+/* [死码清理] xsb_destroyVector 已删除：全仓无调用点（见审计清单）。
+ */
 
 /** @brief sizegrip 角位条带宽度（对标 QStyle::PM_SizeGripSize 的 16px
  *         简化；QStatusBar::reformat 把 d->resizer 以 addWidget 压入

@@ -304,3 +304,53 @@ partial/broken（日间清单）：#40 焦点链落隐藏页钮（根因=XWidget
 ## 证据档案
 
 台账（逐轮明细）：同目录 issues_ledger.md；轮换状态：state.md；本轮证据 /tmp/r7v/ /tmp/r8v/(165 文件) /tmp/r9v/ /tmp/r10v/ /tmp/asan_attack/（含 stress_completer.sh、profile_run.sh 差分脚本）。
+
+---
+
+# 字体 FreeType 全链战役 + 夜间五路并发（2026-10-07 22:39 ~ 2026-10-08 02:06）
+
+## 总览
+- **字体**：自研 XFO1 轮廓字全链替换为 FreeType 2.13.3 唯一实现（阶段一借光栅化器→阶段二 ttf/otf 直读 provider→清理遍删除自研），缺省 ft2，子集 Noto（GB2312 3.5MB）上屏
+- **夜战五路并发**：33 条发现全修复（Qt 对齐×3/ASan 泄漏/冗余清查，86 文件），全量门（含 XinYueC_Static/Dynamic）+回归门绿，独立快照构建绿，ASan 复扫零新增
+- **闭环**：终版 md5 5623ba27 上屏（pid 6837，备份链四级），同套验证真屏重跑通过，idle CPU 23%→8.9%（HUD 口径三连降）
+- **git**：零提交（用户裁定暂不提交，全部产出在工作树）
+
+## 字体链四阶段明细
+| 阶段 | 内容 | 验证 |
+|---|---|---|
+| 阶段一 | XFONT_FT_RASTER 借 FT smooth 光栅化器（Library/freetype 2.13.3 落库） | 双门绿+A/B 浓淡持平+真屏 |
+| 阶段二 | XFontFt provider（ttf/otf/ttc 直读+家族槽+autohint+LoadOutlineGlyphScaled 虚槽） | 双门绿+A/B 44 对 |
+| 清理遍 | 删自研 11 文件+改 25（XFO1/XFontOutlineCommon/双档宏/legacy 模式） | all 全量门+回归门+ASan 零泄漏 |
+| 修复轮 | P0=家族 Face 常驻+Set_Char_Size（648 次交错 3.6s→0.028s，真窗 240s→0.3s）；小字 hint 分档 px<13 免 hint（丢笔归零） | 双门绿+复验报告+复核 pass |
+
+## 夜战五路明细（33 条）
+- 发现分布：文本字体链 8 / 控件样式族 8 / ASan 泄漏 4 / 冗余死代码 8 / 绘制事件管线 5
+- 修复实例：XFontFt 行度量 OS/2 typo 档（对齐 qfontengine）；XGuiServer 会话退出三处定洩（26B/会话漂移根修）；XWidget XRegion 释放；冗余死代码清除
+- 对齐修正：XGraphicsOpacityEffect 缺省 1.0→0.7（对标 qgraphicseffect_p.h:183 构造；测试断言+头注释已同步）
+
+## 对抗复扫轮（独立验证）
+- 回归第三遍复跑：稳（PASS=14/FAIL=0，三轮一致仅 ASLR 指针差）
+- 性能基准：**208.3fps 中位（较 185.2 基线 +12.5%）**，均值全优于 5.4ms；冷启动 221~258ms
+- ASan 字体链对抗：px=1/px=64/随机 500 码点/同字 1000 次重渲/provider 容错——七场景零 ASan 错误
+- 屏上巡检：CPU 11.9% 均值（≤12.3% 基线）、dmesg 静默 28h、帧完整
+- 发现并修正：不透明度缺省对齐的测试断言与头注释未随改（已主线程修复，apitest 回到存量 3 条）
+
+## 设备终态
+- 5623ba27 留屏 pid 6837（--remote-server 46300）；soak 12.3% 稳定、MemAvailable 11.8~12.4MB、dmesg 零新增
+- 回退链：.ft0legacy/.phase1ft/.ft2exp/.preclean 四级全在
+
+## 遗留清单
+1. 键盘两案：API 3+AT 3 存量（1eb98412 带入）+ XKB 紧凑/拖移 -O2 竞态——待用户裁定另立战役
+2. γ 目验：屏上即 Noto 真渲染（当前 14/3.2），等用户目测裁定
+3. 巡检门 ft2 形态阈值重标定（A/B 遗留-3）：px16/30 两档 E 判据按 XFO1 形态标定已不适配
+4. 设备 MemAvailable 盯防：-10~14% 波动（历史波动带内，当前实例 RSS 18.4MB 历史最轻）
+5. 提交：等用户授权，建议分批（阶段一/阶段二+清理/夜战三笔）
+6. 设备旧 .xfo/.xfo.bak 残留文件清理（无实害）
+
+## 对抗复扫轮 + 交互维度轮（2026-10-08 01:20 ~ 02:45）
+| 轮 | 内容 | 结果 |
+|---|---|---|
+| 对抗复扫 | 回归三跑/API-AT 记账/性能基准/ASan 字体链对抗/设备巡检 | 四过一盯防；性能基准 208.3fps（+12.5%）；不透明度缺省回归已修复 |
+| 交互维度 | 键盘拖动/对话框拖动/镜像保真/远程自适应/autotest 第四遍 | 五路全过或如实 skipped；键盘拖动当前树重编 2/2 PASS 零差异 |
+| 基建发现 | build/ 树 10-07 21:52 重配置丢 XPLATFORM_FBDEV_ON→三个 FBDEV 专属测试目标脱离门禁覆盖 | 晨间建议：常设 FBDEV trio 专树纳入夜巡 |
+| 补记（04:40）：设备内存盯防项已解除——根因=/tmp tmpfs 囤积 9.6MB 陈旧 .raw 抓帧（历次战役残留），清除后 MemAvailable 7.0→16.6MB；纪律强化=抓帧即取即删；整机重启建议降级为可选。

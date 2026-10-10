@@ -176,9 +176,27 @@ static void VXAbstractSlider_keyPressEvent(XWidget* self, XEvent* event)
     }
 }
 
-/** @brief 定时器事件：转发父类（长按自动重复的 timer 为后续扩展项）。 */
+/** @brief 定时器事件：长按重复到期触发并按 repeatTime 重启连发
+ *         （对标 qabstractslider duplicateControl）；其余转发父类。 */
 static void VXAbstractSlider_timerEvent(XObject* self, XTimerEvent* event)
 {
+    XAbstractSlider* slider = (XAbstractSlider*)self;
+    if (slider && event &&
+        XTimerEvent_timerId(event) == slider->m_repeatTimerId &&
+        slider->m_repeatAction != XAbstractSliderSliderAction_NoAction) {
+        XAbstractSlider_triggerAction(
+            slider, (XAbstractSliderSliderAction)slider->m_repeatAction);
+        if (slider->m_repeatTimerId != XTIMER_INVALID_ID) {
+            XObject_killTimer(self, slider->m_repeatTimerId);
+            slider->m_repeatTimerId = XTIMER_INVALID_ID;
+        }
+        if (slider->m_repeatActionTime > 0) {
+            slider->m_repeatTimerId = XObject_startTimer_ms(
+                self, (uint64_t)slider->m_repeatActionTime,
+                XTimerType_CoarseTimer);
+        }
+        return;
+    }
     if (self && event) {
         XClass_Parent(XObject, EXObject_TimerEvent,
                       void(*)(XObject*, XTimerEvent*))(self, event);
@@ -228,6 +246,11 @@ static void VXAbstractSlider_changeEvent(XWidget* self, XEvent* event)
     XAbstractSlider* slider = (XAbstractSlider*)self;
     XEventType type = event ? XEvent_type(event) : XEVENT_TYPE_NONE;
     if (type == XEVENT_TYPE_ENABLED_CHANGE && !XWidget_isEnabled(self)) {
+        /* [长按连发] 禁用时同步停掉重复定时器。 */
+        if (slider->m_repeatTimerId != XTIMER_INVALID_ID) {
+            XObject_killTimer((XObject*)slider, slider->m_repeatTimerId);
+            slider->m_repeatTimerId = XTIMER_INVALID_ID;
+        }
         slider->m_repeatAction = XAbstractSliderSliderAction_NoAction;
         XAbstractSlider_setSliderDown(slider, false);
     }
@@ -404,6 +427,7 @@ void XAbstractSlider_init(XAbstractSlider* self, XWidget* parent,
     self->m_repeatActionTime = 0;
     self->m_wheelDeltaRemainder = 0;
     self->m_blockTracking = false;
+    self->m_repeatTimerId = XTIMER_INVALID_ID; /* [长按连发]。 */
 }
 
 XAbstractSlider* XAbstractSlider_create_ex(XMemoryType memory,
@@ -679,6 +703,18 @@ void XAbstractSlider_setRepeatAction(XAbstractSlider* self, int action,
     } else {
         self->m_repeatActionThreshold = thresholdTime;
         self->m_repeatActionTime = repeatTime;
+    }
+    /* [长按连发 2026-10-07] 定时器落地（对标 QAbstractSlider
+     * setRepeatAction：threshold 到期触发一次后按 repeatTime 连发；
+     * NoAction 收闸）。 */
+    if (self->m_repeatTimerId != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_repeatTimerId);
+        self->m_repeatTimerId = XTIMER_INVALID_ID;
+    }
+    if (action != XAbstractSliderSliderAction_NoAction) {
+        self->m_repeatTimerId = XObject_startTimer_ms(
+            (XObject*)self, (uint64_t)(thresholdTime > 0 ? thresholdTime : 0),
+            XTimerType_CoarseTimer);
     }
 }
 

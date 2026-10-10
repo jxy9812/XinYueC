@@ -47,7 +47,7 @@
 
 /* ==================== 内部布局 ==================== */
 
-static int xmw_statusHeight(void) { return 24; }
+/* [死码清理] xmw_statusHeight 已删除：全仓无调用点（见审计清单） */
 static int xmw_menuHeight(void) { return 22; }
 
 /**

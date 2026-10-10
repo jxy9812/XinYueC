@@ -37,25 +37,11 @@ static const char* errorToString(XCanBusDevice_Error err)
 }
 
 // =============== 配置条目辅助函数 ===============
-static void configEntryDeinit(void* entry)
-{
-    XCanBusDevice_ConfigEntry* e = (XCanBusDevice_ConfigEntry*)entry;
-    if (e->m_value) {
-        XClassDelete((XVariant*)e->m_value);
-        e->m_value = NULL;
-    }
-}
+/* [死码清理] configEntryDeinit 已删除：全仓无调用点（见审计清单）。
+ */
 
-static void configEntryCopy(void* dest, const void* src)
-{
-    const XCanBusDevice_ConfigEntry* s = (const XCanBusDevice_ConfigEntry*)src;
-    XCanBusDevice_ConfigEntry* d = (XCanBusDevice_ConfigEntry*)dest;
-    d->m_key = s->m_key;
-    if (s->m_value)
-        d->m_value = XVariant_create_copy((const XVariant*)s->m_value);
-    else
-        d->m_value = NULL;
-}
+/* [死码清理] configEntryCopy 已删除：全仓无调用点（见审计清单）。
+ */
 
 // =============== 类初始化 ===============
 XVtable* XCanBusDevice_class_init()

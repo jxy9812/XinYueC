@@ -418,6 +418,7 @@ static bool xfs_parse_octal(const char* text, XFilePermissions* permissions)
     return true;
 }
 
+#if XCONSOLE_SHELL_FS_TOUCH_ON
 static int xfs_touch(XConsoleShell* shell, XConsoleShellSession* session,
                      int argc, const char* const* argv, void* userData)
 {
@@ -469,7 +470,9 @@ static int xfs_touch(XConsoleShell* shell, XConsoleShellSession* session,
     }
     return XConsoleResult_Ok;
 }
+#endif /* XCONSOLE_SHELL_FS_TOUCH_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_CHMOD_ON
 static bool xfs_chmod_symbolic(const char* text, XFilePermissions current,
                                 bool canExecute, XFilePermissions* result)
 {
@@ -533,7 +536,9 @@ static bool xfs_chmod_symbolic(const char* text, XFilePermissions current,
     *result = perms;
     return true;
 }
+#endif /* XCONSOLE_SHELL_FS_CHMOD_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_CHMOD_ON
 static int xfs_chmod(XConsoleShell* shell, XConsoleShellSession* session,
                      int argc, const char* const* argv, void* userData)
 {
@@ -576,6 +581,7 @@ static int xfs_chmod(XConsoleShell* shell, XConsoleShellSession* session,
     }
     return XConsoleResult_Ok;
 }
+#endif /* XCONSOLE_SHELL_FS_CHMOD_ON（随注册项裁剪；[死码清理]） */
 
 static int xfs_readlink(XConsoleShell* shell, XConsoleShellSession* session,
                         int argc, const char* const* argv, void* userData)
@@ -650,6 +656,7 @@ static int xfs_realpath(XConsoleShell* shell, XConsoleShellSession* session,
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
 
+#if XCONSOLE_SHELL_FS_TRUNCATE_ON
 static int xfs_truncate(XConsoleShell* shell, XConsoleShellSession* session,
                         int argc, const char* const* argv, void* userData)
 {
@@ -707,6 +714,7 @@ static int xfs_truncate(XConsoleShell* shell, XConsoleShellSession* session,
     }
     return XConsoleResult_Ok;
 }
+#endif /* XCONSOLE_SHELL_FS_TRUNCATE_ON（随注册项裁剪；[死码清理]） */
 
 static int xfs_df(XConsoleShell* shell, XConsoleShellSession* session,
                   int argc, const char* const* argv, void* userData)
@@ -1718,6 +1726,7 @@ static int xfs_stat(XConsoleShell* shell, XConsoleShellSession* session,
     return XConsoleResult_Ok;
 }
 
+#if XCONSOLE_SHELL_FS_RM_ON
 static int xfs_remove(XConsoleShell* shell, XConsoleShellSession* session,
                       int argc, const char* const* argv, void* userData)
 {
@@ -1774,7 +1783,9 @@ static int xfs_remove(XConsoleShell* shell, XConsoleShellSession* session,
     if (!ok && force) return XConsoleResult_Ok;
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
+#endif /* XCONSOLE_SHELL_FS_RM_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_MKDIR_ON
 static int xfs_mkdir(XConsoleShell* shell, XConsoleShellSession* session,
                      int argc, const char* const* argv, void* userData)
 {
@@ -1803,7 +1814,9 @@ static int xfs_mkdir(XConsoleShell* shell, XConsoleShellSession* session,
     if (pathCount == 0) return XConsoleResult_InvalidArgument;
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
+#endif /* XCONSOLE_SHELL_FS_MKDIR_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_RMDIR_ON
 static int xfs_rmdir(XConsoleShell* shell, XConsoleShellSession* session,
                      int argc, const char* const* argv, void* userData)
 {
@@ -1846,7 +1859,9 @@ static int xfs_rmdir(XConsoleShell* shell, XConsoleShellSession* session,
     if (pathCount == 0) return XConsoleResult_InvalidArgument;
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
+#endif /* XCONSOLE_SHELL_FS_RMDIR_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_CP_ON
 static bool xfs_copy_recursive(const XString* source, const XString* target)
 {
     XFileStat stat;
@@ -1887,7 +1902,9 @@ static bool xfs_copy_recursive(const XString* source, const XString* target)
     if (childTarget) XClassDelete(childTarget);
     return ok;
 }
+#endif /* XCONSOLE_SHELL_FS_CP_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_CP_ON
 static int xfs_copy(XConsoleShell* shell, XConsoleShellSession* session,
                     int argc, const char* const* argv, void* userData)
 {
@@ -1970,7 +1987,9 @@ static int xfs_copy(XConsoleShell* shell, XConsoleShellSession* session,
     XClassDelete(target);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
+#endif /* XCONSOLE_SHELL_FS_CP_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_MV_ON
 static int xfs_move(XConsoleShell* shell, XConsoleShellSession* session,
                     int argc, const char* const* argv, void* userData)
 {
@@ -2029,7 +2048,9 @@ static int xfs_move(XConsoleShell* shell, XConsoleShellSession* session,
     XClassDelete(target);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
+#endif /* XCONSOLE_SHELL_FS_MV_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_WRITE_ON
 static int xfs_write_file(XConsoleShell* shell, XConsoleShellSession* session,
                           int argc, const char* const* argv, void* userData)
 {
@@ -2057,7 +2078,9 @@ static int xfs_write_file(XConsoleShell* shell, XConsoleShellSession* session,
     XDeviceFile_close(fd);
     return ok ? XConsoleResult_Ok : XConsoleResult_IoError;
 }
+#endif /* XCONSOLE_SHELL_FS_WRITE_ON（随注册项裁剪；[死码清理]） */
 
+#if XCONSOLE_SHELL_FS_LINK_ON
 static int xfs_link(XConsoleShell* shell, XConsoleShellSession* session,
                     int argc, const char* const* argv, void* userData)
 {
@@ -2077,6 +2100,7 @@ static int xfs_link(XConsoleShell* shell, XConsoleShellSession* session,
     XClassDelete(link);
     return ok ? XConsoleResult_Ok : XConsoleResult_Failed;
 }
+#endif /* XCONSOLE_SHELL_FS_LINK_ON（随注册项裁剪；[死码清理]） */
 
 #if XCONSOLE_SHELL_FS_LN_ON
 /* POSIX ln 语义通过 XDeviceFile_link 统一支持符号/硬链接。 */

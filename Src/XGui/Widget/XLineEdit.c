@@ -202,26 +202,8 @@ static int xlineedit_displayWidth(const XFont* font, const char* display,
  *         imHints 调整，qlineedit.cpp:551-556）：Password/NoEcho 置
  *         HiddenText；非 Normal 置 NoAutoUppercase/NoPredictiveText/
  *         SensitiveData。 */
-static XInputMethodHints xlineedit_echoImHints(XInputMethodHints hints,
-                                               int echoMode)
-{
-    bool hidden = (echoMode == (int)XLineEditEchoMode_Password ||
-                   echoMode == (int)XLineEditEchoMode_NoEcho);
-    bool plain = (echoMode == (int)XLineEditEchoMode_Normal);
-    if (hidden)
-        hints |= (XInputMethodHints)XInputMethodHint_HiddenText;
-    else
-        hints &= ~(XInputMethodHints)XInputMethodHint_HiddenText;
-    if (!plain)
-        hints |= (XInputMethodHints)(XInputMethodHint_NoAutoUppercase |
-                                     XInputMethodHint_NoPredictiveText |
-                                     XInputMethodHint_SensitiveData);
-    else
-        hints &= ~(XInputMethodHints)(XInputMethodHint_NoAutoUppercase |
-                                      XInputMethodHint_NoPredictiveText |
-                                      XInputMethodHint_SensitiveData);
-    return hints;
-}
+/* [死码清理] xlineedit_echoImHints 已删除：全仓无调用点（见审计清单）。
+ */
 
 /** @brief 发射 const char* 参数信号（textChanged/textEdited）。 */
 static void xlineedit_emitTextSignal(XLineEdit* self, size_t signal)

@@ -3,3 +3,5 @@
 #  - Mesa/GLX 驱动上下文与字体相关缓存（libGLX_mesa 随库加载保留）
 leak:*libfontconfig.so.*
 leak:*libGLX_mesa.so.*
+#  - FreeType 进程期单例（阶段二 ft2：FT_Library 懒初始化后全工程零 FT_Done_FreeType——XFontFt.c §2.2 红线）
+leak:FT_Init_FreeType

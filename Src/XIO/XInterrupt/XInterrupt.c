@@ -24,10 +24,8 @@ static void List_Handler(void** data, uint16_t index)
 		node = node->next;
 	}
 }
-static const _Bool XEquality_XInterrupt(const void* LPrevValue, const void* LNextValue)
-{
-	return (((XInterruptNode*)LPrevValue)->callback == ((XInterruptNode*)LNextValue)->callback) && (((XInterruptNode*)LPrevValue)->userData == ((XInterruptNode*)LNextValue)->userData);
-}
+/* [死码清理] XEquality_XInterrupt 已删除：等值钩子挂接行注释后改用
+   XContainerSetCompare(XInterrupt_compare) 同语义收口，本函数成孤儿。 */
 static int32_t XInterrupt_compare(const void* LPrevValue, const void* LNextValue)
 {
 	if((((XInterruptNode*)LPrevValue)->callback == ((XInterruptNode*)LNextValue)->callback) && (((XInterruptNode*)LPrevValue)->userData == ((XInterruptNode*)LNextValue)->userData))

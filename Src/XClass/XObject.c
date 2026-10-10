@@ -14,7 +14,6 @@
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
-static void VXObject_poll(XObject* object);
 static void VXObject_deinit(XObject* object);
 static bool VXObject_event(XObject* self, XEvent* e);
 static bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event);
@@ -24,8 +23,8 @@ XVtable* XObject_class_init()
 	XVTABLE_INIT_DEFAULT(XObject)
 	//继承类
 	XVTABLE_INHERIT_XCLASS(XClass);
-	void* table[] = { 
-		/*VXObject_poll,*/VXObject_event ,VXObject_eventFilter,
+	void* table[] = {
+		VXObject_event ,VXObject_eventFilter,
 	NULL,NULL,NULL,NULL,VXObject_timerEvent };
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 	//重载
@@ -568,9 +567,9 @@ void XObject_objectNameChanged_signal(XObject* object, const XString* objectName
 	}
 }
 
-void VXObject_poll(XObject* object)
-{
-}
+/* [死码清理] VXObject_poll 已删除：XObject 虚表槽位从 Event 起编排，
+ * 无 Poll 槽（历史各处 EXObject_Poll 挂接行皆为注释），空函数体成
+ * 永久孤儿。 */
 
 void VXObject_deinit(XObject* object)
 {

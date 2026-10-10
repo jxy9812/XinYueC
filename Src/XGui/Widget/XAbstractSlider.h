@@ -135,6 +135,10 @@ typedef struct XAbstractSlider
     int  m_repeatActionTime;         /**< 长按重复间隔（毫秒；timer 后续扩展）。 */
     int  m_wheelDeltaRemainder;      /**< 内部：滚轮角度累积余数。 */
     bool m_blockTracking;            /**< 内部：triggerAction 期间禁止位置→值递归。 */
+    XTimerId m_repeatTimerId;        /**< 内部：长按重复定时器（[长按连发
+                                          2026-10-07] 到期先按阈值→重启为
+                                          重复间隔连发，对标 QAbstractSlider
+                                          repeat 档；NoAction 时 INVALID）。 */
 } XAbstractSlider;
 
 /* ==================== 生命周期 ==================== */

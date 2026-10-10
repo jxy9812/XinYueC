@@ -484,14 +484,8 @@ XVariant* XPlatformNativeInterface_windowProperty_default_2(
 
 
 /** @brief 发射信号并管理参数列表生命周期（与 XGuiApplication/XWindow 相同模式）。 */
-static void platformNativeInterface_emit(XPlatformNativeInterface* self,
-                                         size_t signal, XVarList* args)
-{
-    if (self && ((XObject*)self)->m_signalSlot)
-        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
-                           XEVENT_PRIORITY_NORMAL);
-    else if (args) XVarList_delete(args);
-}
+/* [死码清理] platformNativeInterface_emit 已删除：全仓无调用点（见审计清单）。
+ */
 
 void XPlatformNativeInterface_setWindowProperty(
         XPlatformNativeInterface* self, XPlatformWindow* platformWindow,

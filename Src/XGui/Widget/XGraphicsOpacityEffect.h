@@ -5,7 +5,8 @@
  * @details    继承 XGraphicsEffect，把源快照以设定不透明度绘入输出画布
  *             （对标 Qt draw() 中 p->setOpacity 后绘制源）：透明画布上
  *             的 source-over 合成等价于预乘 ARGB 各通道按 opacity 线性
- *             缩放。默认 opacity=1.0（对标 Qt 默认值）。
+ *             缩放。默认 opacity=0.7（对标 Qt qgraphicseffect_p.h 构造
+ *             缺省，Qt 6.8.3 源码实证）。
  * @note       模块总开关 XWIDGET_ON 有效（效果由 XWidget 承载）。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -32,7 +33,7 @@ XCLASS_DEFINE_EXTEND_END(XGraphicsOpacityEffect, XGraphicsEffect)
 typedef struct XGraphicsOpacityEffect
 {
     XGraphicsEffect m_base; /**< 基类成员；必须是第一个。 */
-    float m_opacity;        /**< 不透明度 0~1（对标 opacity；默认 1.0）。 */
+    float m_opacity;        /**< 不透明度 0~1（对标 opacity；Qt 缺省 0.7）。 */
 } XGraphicsOpacityEffect;
 
 /**
@@ -43,7 +44,7 @@ XVtable* XGraphicsOpacityEffect_class_init(void);
 
 /**
  * @brief      初始化 XGraphicsOpacityEffect（对标 QGraphicsOpacityEffect
- *             构造；opacity 默认 1.0）。
+ *             构造；opacity 默认 0.7）。
  * @param      self 目标对象指针；不可为 NULL。
  * @return     无返回值。
  */

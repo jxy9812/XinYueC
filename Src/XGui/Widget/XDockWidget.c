@@ -166,22 +166,8 @@ static bool xdw_closeHit(const XDockWidget* dock, const XPoint* pos)
  *         上一格；Floatable 时两种状态都显示，点击切换停靠/浮动）。
  *         垂直命中区与关闭钮同口径转置（对标 qcommonstyle.cpp:3095-3111
  *         close 占右缘、float 占其左一格的转置几何）。 */
-static bool xdw_floatHit(const XDockWidget* dock, const XPoint* pos)
-{
-    int w;
-    int h;
-    if (!dock || !pos) return false;
-    if (xdw_nativeDeco(dock)) return false; /* 原生装饰：按钮归原生标题 */
-    if (xdw_vertical(dock)) {
-        h = XWidget_height((XWidget*)dock);
-        return pos->x >= 0 && pos->x < XDW_TITLE_H &&
-               pos->y >= h - XDW_CLOSE_BOX * 2 &&
-               pos->y < h - XDW_CLOSE_BOX;
-    }
-    w = XWidget_width((XWidget*)dock);
-    return pos->y >= 0 && pos->y < XDW_TITLE_H &&
-           pos->x >= w - XDW_CLOSE_BOX * 2 && pos->x < w - XDW_CLOSE_BOX;
-}
+/* [死码清理] xdw_floatHit 已删除：全仓无调用点（见审计清单）。
+ */
 
 /**
  * @brief      判断局部坐标是否落在标题条内。

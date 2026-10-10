@@ -25,8 +25,9 @@
 #define TEST_PASS(msg) XPrintf("  [通过] %s\n", msg)
 #define TEST_FAIL(msg) XPrintf("  [失败] %s (第%d行)\n", msg, __LINE__)
 
-static int g_passCount = 0;
-static int g_failCount = 0;
+/* [死码清理] g_passCount/g_failCount 已删除：本测试为菜单驱动、无 main
+ * 汇总点，两计数器全程零读写（审计清单）；逐用例结果由宏内 XPrintf
+ * 直接输出。 */
 
 // ==================== 辅助函数 ====================
 

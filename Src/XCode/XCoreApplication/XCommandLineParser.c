@@ -37,16 +37,8 @@ static void free_option_values_value(void* data)
     if (p && *p) XClassDelete(*p);
 }
 
-static int stringHash(const void* key)
-{
-    const char* s = *(const char**)key;
-    if (!s) return 0;
-    unsigned long hash = 5381;
-    int c;
-    while ((c = *s++))
-        hash = ((hash << 5) + hash) + (unsigned char)c;
-    return (int)(hash & 0x7FFFFFFF);
-}
+/* [死码清理] stringHash 已删除：全仓无调用点（见审计清单）。
+ */
 
 static int stringCompare(const void* a, const void* b)
 {

@@ -987,7 +987,6 @@ static const char* xcs_elideText(char* buf, int bufCap, const char* text,
 {
     int fullW;
     int len;
-    int i;
     const char* ell = "\xe2\x80\xa6"; /* U+2026 HORIZONTAL ELLIPSIS */
     int ellW;
     if (!text || !text[0] || maxW <= 0) return text;
@@ -995,14 +994,24 @@ static const char* xcs_elideText(char* buf, int bufCap, const char* text,
     if (fullW <= maxW) return text;
     len = (int)XStrlen(text);
     if (len >= bufCap) len = bufCap - 1;
+    /* [码点边界 2026-10-07] 逐码点推进（XTextUtf8_seqLen 钳位序列长
+       度），刀口只落码点边界——旧实现逐字节测宽/切割：多字节 CJK 每
+       字节被按 0xFFFD 计宽（过早省略 ~1/3 容量），cut=i+1 可落在
+       UTF-8 序列中间腰斩出乱码字节。与 dock 标题省略（本文件
+       XTextUtf8_seqLen 同款）及 Qt elide 按 grapheme 边界步进对齐。 */
     if (mode == 0) { /* 无省略模式：截断不加点 */
         int w = 0;
         int cut = 0;
-        for (i = 0; i < len; ++i) {
-            int cw = XPainter_textWidthRange(font, text, i, i + 1);
+        int i = 0;
+        while (i < len) {
+            int seq = XTextUtf8_seqLen(text + i, len - i);
+            int cw;
+            if (seq <= 0 || i + seq > len) break;
+            cw = XPainter_textWidthRange(font, text, i, i + seq);
             if (w + cw > maxW) break;
             w += cw;
-            cut = i + 1;
+            i += seq;
+            cut = i;
         }
         XMemcpy(buf, text, (size_t)cut);
         buf[cut] = '\0';
@@ -1010,14 +1019,20 @@ static const char* xcs_elideText(char* buf, int bufCap, const char* text,
     }
     ellW = XPainter_textWidth(font, ell);
     if (ellW > maxW) { buf[0] = '\0'; return buf; }
-    if (mode == 2) { /* 左省略：保留尾部 */
+    if (mode == 2) { /* 左省略：保留尾部（回退只在序列首字节落刀） */
         int w = ellW;
         int start = len;
-        for (i = len - 1; i >= 0; --i) {
-            int cw = XPainter_textWidthRange(font, text, i, i + 1);
+        int i = len;
+        while (i > 0) {
+            int s = i - 1;
+            int cw;
+            while (s > 0 && ((unsigned char)text[s] & 0xC0) == 0x80)
+                --s;
+            cw = XPainter_textWidthRange(font, text, s, i);
             if (w + cw > maxW) break;
             w += cw;
-            start = i;
+            start = s;
+            i = s;
         }
         buf[0] = '\0';
         XStrncat(buf, ell, (size_t)bufCap - 1);
@@ -1027,11 +1042,16 @@ static const char* xcs_elideText(char* buf, int bufCap, const char* text,
     if (mode == 1) { /* 右省略：保留头部 */
         int w = ellW;
         int cut = 0;
-        for (i = 0; i < len; ++i) {
-            int cw = XPainter_textWidthRange(font, text, i, i + 1);
+        int i = 0;
+        while (i < len) {
+            int seq = XTextUtf8_seqLen(text + i, len - i);
+            int cw;
+            if (seq <= 0 || i + seq > len) break;
+            cw = XPainter_textWidthRange(font, text, i, i + seq);
             if (w + cw > maxW) break;
             w += cw;
-            cut = i + 1;
+            i += seq;
+            cut = i;
         }
         XMemcpy(buf, text, (size_t)cut);
         buf[cut] = '\0';
@@ -1044,18 +1064,29 @@ static const char* xcs_elideText(char* buf, int bufCap, const char* text,
         int head = 0;
         int tail = len;
         int half = (maxW - ellW) / 2;
-        for (i = 0; i < len; ++i) {
-            int cw = XPainter_textWidthRange(font, text, i, i + 1);
+        int i = 0;
+        while (i < len) {
+            int seq = XTextUtf8_seqLen(text + i, len - i);
+            int cw;
+            if (seq <= 0 || i + seq > len) break;
+            cw = XPainter_textWidthRange(font, text, i, i + seq);
             if (w + cw > half) break;
             w += cw;
-            head = i + 1;
+            i += seq;
+            head = i;
         }
         w = ellW;
-        for (i = len - 1; i > head; --i) {
-            int cw = XPainter_textWidthRange(font, text, i - 1, i);
+        i = len;
+        while (i > head) {
+            int s2 = i - 1;
+            int cw;
+            while (s2 > head && ((unsigned char)text[s2] & 0xC0) == 0x80)
+                --s2;
+            cw = XPainter_textWidthRange(font, text, s2, i);
             if (w + cw > half) break;
             w += cw;
-            tail = i - 1;
+            tail = s2;
+            i = s2;
         }
         XMemcpy(buf, text, (size_t)head);
         buf[head] = '\0';

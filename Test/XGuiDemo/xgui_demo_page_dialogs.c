@@ -53,6 +53,7 @@
 #include "XColorDialog.h"
 #include "XProgressDialog.h"
 #include "XScrollArea.h"
+#include "XPainter.h"
 #include "xgui_demo_pages.h"
 
 /* 整文件可能全空时保证非空翻译单元的哨兵。 */
@@ -132,6 +133,7 @@ typedef struct DlgPgUi
 #endif
 #if DLGPG_LABELS_ON
     XLabel* m_note[DLGPG_ROW_COUNT];     /* 每行说明标签（模态/非阻塞口径）。 */
+    int m_noteTextW;                     /* 最长说明文案实测宽度+余量（字体度量自适应列宽）。 */
 #endif
 
 #if DLGPG_MSGBOX_ON
@@ -201,12 +203,20 @@ static void dlgpg_scrollRelayout(XScrollArea* scroll)
         contentW = 1;
     XWidget_resize(content, contentW, DLGPG_PAGE_HEIGHT + 40);
 #if DLGPG_LABELS_ON
-    /* 说明列收窄 224：宽根缩至让位右缘，窄根恢复常量口径。 */
+    /* 说明列收窄 224：宽根缩至让位右缘，窄根恢复常量口径。
+       字体度量自适应：ft2 直读字体（Noto）字形宽于旧内置字库，常量
+       列宽会截断文案（真屏对话框页实证）——实测宽度超出时按实测
+       加宽（上限=页右缘），文本完整性优先于 HUD 让位收窄。 */
     {
         int i;
         int noteW = DLGPG_NOTE_WIDTH;
         if (rootW >= DLGPG_HUD_YIELD_MIN_ROOT)
             noteW = DLGPG_NOTE_WIDTH - DLGPG_HUD_YIELD_WIDTH;
+        if (s_dlgpg.m_noteTextW > noteW) {
+            noteW = s_dlgpg.m_noteTextW;
+            if (noteW > DLGPG_PAGE_WIDTH - DLGPG_NOTE_X)
+                noteW = DLGPG_PAGE_WIDTH - DLGPG_NOTE_X;
+        }
         if (noteW < 1)
             noteW = 1;
         for (i = 0; i < DLGPG_ROW_COUNT; ++i) {
@@ -843,12 +853,22 @@ static void dlgpg_addRow(int row, const char* btnText,
     if (noteText) {
         XLabel* note = XLabel_create(s_dlgpg.m_root, 0);
         if (note) {
+            XFont noteFont;
             XLabel_setText_2(note, noteText);
             XLabel_setAlignment(note, XAlignment_Left | XAlignment_VCenter);
             XWidget_setGeometry((XWidget*)note, DLGPG_NOTE_X, y,
                                 DLGPG_NOTE_WIDTH, DLGPG_BTN_HEIGHT);
             XWidget_show((XWidget*)note);
             s_dlgpg.m_note[row] = note;
+            /* 字体度量自适应：ft2 直读字体的字形宽于旧内置字库，常量
+               列宽会截断文案（真屏对话框页实证）。按标签自身字体实测
+               最长文案宽度，relayout 时列宽取「常量口径/实测」较大者。 */
+            noteFont = XWidget_font((XWidget*)note);
+            {
+                int textW = XPainter_textWidth(&noteFont, noteText) + 8;
+                if (textW > s_dlgpg.m_noteTextW)
+                    s_dlgpg.m_noteTextW = textW;
+            }
         }
     }
 #else

@@ -521,7 +521,6 @@ static int  xlc_prevCursorPosition(const XLineControl* self, int pos);
 static int  xlc_mapTextToLayout(const XLineControl* self, int textPos);
 static int  xlc_layoutCursorToX(const XLineControl* self, int layoutPos);
 static char* xlc_strdupRange(const char* s, int n);
-static void xlc_emitInt(XLineControl* self, size_t signal, int value);
 static void xlc_emitInt2(XLineControl* self, size_t signal, int a, int b);
 static void xlc_emitVoid(XLineControl* self, size_t signal);
 static void xlc_emitText(XLineControl* self, size_t signal, const char* text);
@@ -2056,17 +2055,8 @@ static void xlc_emitVoid(XLineControl* self, size_t signal)
 }
 
 /** @brief 发射 int 单参信号。 */
-static void xlc_emitInt(XLineControl* self, size_t signal, int value)
-{
-    XVarList* arguments;
-    if (!self || signal == 0) return;
-    if (!((XObject*)self)->m_signalSlot) return;
-    arguments = XVarList_Create(XVar(int, value));
-    if (!arguments) return;
-    XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
-                       XEVENT_PRIORITY_NORMAL);
-}
-
+/* [死码清理] xlc_emitInt 已删除：全仓无调用点（见审计清单）。
+ */
 /** @brief 发射 (int,int) 双参信号。 */
 static void xlc_emitInt2(XLineControl* self, size_t signal, int a, int b)
 {

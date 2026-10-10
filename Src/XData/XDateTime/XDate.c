@@ -21,8 +21,7 @@ int64_t XDate_toJulianDay(const XDate* date);
  */
 XDate XDate_fromJulianDay(int64_t jd);
 
-// 儒略日转换常量
-static const int64_t JD_EPOCH_OFFSET = 1721426LL; // 1 Jan 1 AD in Julian calendar
+/* [死码清理] JD_EPOCH_OFFSET 已删除：全文件无引用（审计清单）。 */
 
 // 辅助函数：判断闰年
 static bool is_leap_year(int year) {
@@ -213,23 +212,8 @@ int64_t XDate_daysTo(const XDate* from, const XDate* to) {
 }
 
 // 格式化辅助函数
-static void format_date_component(XString* str, int value, int width, char fill) {
-    XString_resize(str, width);
-    char* buf = (char*)XString_data(str);
-    for (int i = 0; i < width; i++) {
-        buf[i] = fill;
-    }
-    int pos = width - 1;
-    if (value == 0) {
-        buf[pos] = '0';
-    }
-    else {
-        while (value > 0 && pos >= 0) {
-            buf[pos--] = '0' + (value % 10);
-            value /= 10;
-        }
-    }
-}
+/* [死码清理] format_date_component 已删除：全仓无调用点（见审计清单）。
+ */
 
 XString* XDate_toString_format(const XDate* date, const char* format) {
     if (XDate_isNull(date) || !format) return NULL;

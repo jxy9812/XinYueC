@@ -730,6 +730,32 @@ void XMenu_popup(XMenu* self, const XPoint* pos)
     XRect_init(&rect, p.x, p.y,
                hint.width > 0 ? hint.width : 120,
                hint.height > 0 ? hint.height : 20);
+    /* [屏幕钳制 2026-10-07] 对标 Qt QMenu::popup 的 adjustToDesktop 段
+     * （qmenu.cpp：size boundedTo 屏幕尺寸，随后依屏幕边界回钳 x/y）：
+     * 先按锚点所在屏可用区收敛宽高，再把 x/y 钳回屏内——屏幕边缘的
+     * 菜单/子菜单不再溢出屏幕，超屏高的菜单收缩到可用区高（滚动
+     * 降级留作后续扩展项）。 */
+    {
+        XScreen* screen = XGuiApplication_screenAt(&p);
+        XRect avail;
+        if (!screen)
+            screen = XGuiApplication_primaryScreen();
+        if (screen)
+        {
+            avail = XScreen_availableGeometry(screen);
+            if (rect.width > avail.width) rect.width = avail.width;
+            if (rect.height > avail.height) rect.height = avail.height;
+            if (rect.x + rect.width > avail.x + avail.width)
+                rect.x = avail.x + avail.width - rect.width;
+            if (rect.y + rect.height > avail.y + avail.height)
+            {
+                rect.y = avail.y + avail.height - rect.height;
+                if (rect.y < avail.y) rect.y = avail.y;
+            }
+            if (rect.x < avail.x) rect.x = avail.x;
+            if (rect.y < avail.y) rect.y = avail.y;
+        }
+    }
     xmenu_emitVoid(self, (size_t)XMenu_aboutToShow_signal);
     XWidget_setGeometryRect((XWidget*)self, &rect);
     XWidget_show((XWidget*)self);

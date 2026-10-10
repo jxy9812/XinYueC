@@ -118,11 +118,8 @@ static const XString* getPropertyXString(const XFormat* self, int propertyId)
     return NULL;
 }
 
-static const char* getPropertyString(const XFormat* self, int propertyId)
-{
-    const XString* s = getPropertyXString(self, propertyId);
-    return s ? XString_toUtf8(s) : "";
-}
+/* [死码清理] getPropertyString 已删除：全仓无调用点（见审计清单）。
+ */
 
 static void setPropertyString(XFormat* self, int propertyId, const char* value)
 {

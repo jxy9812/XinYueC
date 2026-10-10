@@ -60,19 +60,8 @@ static void xcompleter_emitIntSignal(XCompleter* self, size_t signal,
 }
 
 /** @brief 发射带 (int,int) 双参数的信号。 */
-static void xcompleter_emitInt2Signal(XCompleter* self, size_t signal,
-                                      int row, int col)
-{
-    XVarList* args =
-        XVarList_Create(XVar(int, row), XVar(int, col));
-    if (!args) return;
-    if (self && ((XObject*)self)->m_signalSlot) {
-        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
-                           XEVENT_PRIORITY_NORMAL);
-    } else {
-        XVarList_delete(args);
-    }
-}
+/* [死码清理] xcompleter_emitInt2Signal 已删除：全仓无调用点（见审计清单）。
+ */
 
 /** @brief 释放并替换拥有的 XString 槽位（src 为 NULL 时清空）。 */
 static void xcompleter_replaceString(XString** slot, const XString* src)

@@ -115,13 +115,8 @@ static void xxml_dom_string_assign(XString** target, const XString* source)
     else XString_clear_base(*target);
 }
 
-static void xxml_dom_string_assign_utf8(XString** target, const char* source)
-{
-    if (!target) return;
-    if (!*target) *target = XString_create();
-    if (!*target) return;
-    XString_assign_utf8(*target, source ? source : "");
-}
+/* [死码清理] xxml_dom_string_assign_utf8 已删除：全仓无调用点（见审计清单）。
+ */
 
 static void xxml_dom_string_delete(XString** value)
 {
@@ -478,13 +473,8 @@ static XString* xxml_dom_fixed_name(const XString* name, bool namespaces, bool* 
     return result;
 }
 
-static bool xxml_dom_valid_name(const XString* name)
-{
-    bool ok = false;
-    XString* fixed = xxml_dom_fixed_name(name, false, &ok);
-    XClassDelete(fixed);
-    return ok;
-}
+/* [死码清理] xxml_dom_valid_name 已删除：全仓无调用点（见审计清单）。
+ */
 
 static XDomNodePrivate* xxml_dom_collection_new(int kind)
 {
@@ -1079,10 +1069,8 @@ static XDomNode* xxml_dom_wrap_node(XDomNodePrivate* node)
     return result;
 }
 
-static XDomNode* xxml_dom_wrap_node_as_node(XDomNodePrivate* node)
-{
-    return xxml_dom_wrap_node(node);
-}
+/* [死码清理] xxml_dom_wrap_node_as_node 已删除：全仓无调用点（见审计清单）。
+ */
 
 static XDomElement* xxml_dom_wrap_element(XDomNodePrivate* node)
 {
@@ -1294,10 +1282,8 @@ static bool xxml_dom_node_is_character_data_payload(const XDomNodePrivate* node)
                     node->m_type == XDom_CommentNode);
 }
 
-static XDomContext* xxml_dom_context_for_node(XDomNodePrivate* node)
-{
-    return node ? node->m_context : NULL;
-}
+/* [死码清理] xxml_dom_context_for_node 已删除：全仓无调用点（见审计清单）。
+ */
 
 static int xxml_dom_child_index(const XDomNodePrivate* parent,
                                 const XDomNodePrivate* child)

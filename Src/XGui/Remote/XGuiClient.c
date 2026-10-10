@@ -3550,8 +3550,17 @@ void XGuiClient_disconnectFromServer(XGuiClient* self)
     XGuiClientPrivate* d;
     if (!self || !self->m_d) return;
     d = (XGuiClientPrivate*)self->m_d;
-    d->m_wantConnect = false; /* 用户主动断开: 不自动重连(冻结头注)。 */
+    /* [2026-10-08 用户裁定: 断开=断干净] 幂等分支也要清自动重连状态:
+     * 断线退避期（重连定时器 armed、wantConnect=true、state 已回
+     * DISCONNECTED）点断开时, 旧实现直接 return, armed 的重连定时器
+     * 到点即重连——表现为「断了还在自动重试」(真屏远程客户端页实测)。
+     * 此处统一 wantConnect=false + 停定时器 + 清退避计数, 再走拆除。 */
+    d->m_wantConnect = false;
     if (d->m_reconnectTimer) XTimer_stop_base(d->m_reconnectTimer);
+    d->m_reconnectAttempts = 0;
+    if (d->m_dev == NULL && d->m_state == XGUI_REMOTE_STATE_DISCONNECTED) {
+        return; /* 已拆除, 幂等(重连状态已在上方清理)。 */
+    }
     xgc_teardown(self, XGUI_REMOTE_BYE_NORMAL, XGUI_REMOTE_ERR_NONE,
                  true, false);
 }

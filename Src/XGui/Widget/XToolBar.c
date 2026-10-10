@@ -88,17 +88,8 @@ static void xtb_emitVoid(XToolBar* bar, size_t signal, int orientation)
  * @param      signal 信号标识。
  * @return     无返回值。
  */
-static void xtb_emitSignalVoid(XToolBar* bar, size_t signal)
-{
-    XVarList* arguments = XVarList_create(0);
-    if (!arguments) return;
-    if (bar && ((XObject*)bar)->m_signalSlot) {
-        XObject_emitSignal((XObject*)bar, signal, arguments, NULL, NULL,
-                           XEVENT_PRIORITY_NORMAL);
-    } else {
-        XVarList_delete(arguments);
-    }
-}
+/* [死码清理] xtb_emitSignalVoid 已删除：全仓无调用点（见审计清单）。
+ */
 
 /**
  * @brief      发射 bool 载荷信号（visibilityChanged(bool) 等）。

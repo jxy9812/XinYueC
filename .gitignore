@@ -477,3 +477,22 @@ bin-fb/
 bin-armel/
 bld-fb/
 bld-armel/
+
+# 字体大文件不入库（部署件，见 docs 部署说明；ttc 全量禁上屏）
+Library/XFont/XFontOutlineCommon.ttc
+Library/XFont/XFontOutlineCommon.otf
+Library/XFont/XFontOutlineCommon-Bold.otf
+Library/XFont/*.xfo
+Library/XFont/*.inc
+
+# FreeType 第三方源码树：源码入库（add_subdirectory 依赖工程定制版
+# CMakeLists 最小模块集 + ftoption 定制，克隆即可构建）；只排构建残留
+# 与 include 生成物（CMake 在构建目录另生成最小 ftmodule.h，仓库内的
+# 这份是上游全量注册表，同样不入库以绝「改错文件」歧义）。
+Library/freetype/CMakeFiles/
+Library/freetype/cmake_install.cmake
+Library/freetype/Makefile
+Library/freetype/include/freetype/config/ftmodule.h
+Library/freetype/include/ft2build.h
+Library/freetype/docs/
+Library/freetype/builds/

@@ -112,13 +112,7 @@ static char* spinbox_strdup(const char* text)
     return XStrdup(text ? text : "");
 }
 
-static void spinbox_strfree(char** ptext)
-{
-    if (ptext && *ptext) {
-        XFree_System(*ptext);
-        *ptext = NULL;
-    }
-}
+/* [死码清理] spinbox_strfree 已删除：本文件无调用点（审计清单）。 */
 
 /** @brief 发射 int 参数信号（valueChanged）。 */
 static void spinbox_emitInt(XSpinBox* self, size_t signal, int value)

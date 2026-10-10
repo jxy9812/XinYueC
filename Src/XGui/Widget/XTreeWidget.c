@@ -25,8 +25,8 @@
 
 static void VXTreeWidget_deinit(XTreeWidget* self);
 static void VXTreeWidget_paintEvent(XWidget* self, XEvent* event);
-static void VXTreeWidget_scrollContentsBy(XAbstractScrollArea* area, int dx,
-                                          int dy);
+/* [死码清理] VXTreeWidget_scrollContentsBy 前向声明已删除：虚表挂接点
+ * 注释、函数体全仓无调用点（审计清单）。 */
 
 /** @brief 读取垂直滚动偏移（视口原点在内容坐标中的 y）。 */
 static int xtw_scrollOffsetY(const XTreeWidget* self)
@@ -1657,8 +1657,9 @@ static int xtw_utf8SeqLen(const char* s)
  *         在序列中腰斩出替换乱字）。省略号视觉以 ASCII "..." 三点
  *         承载：Qt 原字为 U+2026 HORIZONTAL ELLIPSIS，但本库内置
  *         字体族均无该字形（XFont16x16 点阵 cmap 仅覆盖 32..126 与
- *         19968.. 两段；XFontOutlineCommon Latin/CJK 码点表亦无
- *         0x2026，缺字退化为单点残形——活体实测见 W10 复验），故以
+ *         19968.. 两段；当年实测旧 XFontOutlineCommon Latin/CJK 码点表
+ *         亦无 0x2026——该 XFO1 内置字库已于 2026-10-07 移除，现役
+ *         FT 外挂字体视部署字体而定，缺字仍退化为单点残形），故以
  *         全字体覆盖的 "..." 同义呈现（视觉同 Qt 的三点省略号）。
  *         宽内原样返回入参；超宽返回栈缓冲内「前缀+...」（宽内放
  *         不下三点时退化为纯前缀硬截，同样不越界）。 */

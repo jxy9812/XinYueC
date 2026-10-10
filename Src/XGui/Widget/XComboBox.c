@@ -43,6 +43,7 @@
 #include "XWindow.h"
 #include "XCoreApplication.h"
 #include "XGuiApplication.h"
+#include "XScreen.h" /* availableGeometry（弹层屏幕适配）。 */
 #include "XColor.h"
 
 /* 弹出列表几何常量 */
@@ -412,6 +413,53 @@ static void VXComboBox_deinit(XComboBox* self)
 
 /** @brief 键盘：Up/Down/Home/End 改当前项（对标 QComboBox 键盘导航；
  *  可编辑模式下焦点在内嵌编辑框，本路径仅服务非编辑焦点）。 */
+static void xcombo_emitActivatedPair(XComboBox* self, int index);
+
+/* [滚轮换项 2026-10-07] 非编辑态且弹层未开时，按滚轮角度从当前项向上/
+   下找下一个可用项（跳过禁用项由条目模型无禁用位而退化为相邻项直达），
+   setCurrentIndex 后走既有 xcombo_emitActivatedPair；事件 accept。 */
+static void VXComboBox_wheelEvent(XWidget* self, XEvent* event)
+{
+    XComboBox* cb = (XComboBox*)self;
+    XWheelEvent* we;
+    XPoint delta;
+    int dy;
+    int steps;
+    int index;
+    int count;
+    if (!cb || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
+    if (cb->m_popupVisible || cb->m_editable) {
+        XClass_Parent(XWidget, EXWidget_WheelEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    count = XComboBox_count(cb);
+    if (count <= 0) {
+        XEvent_accept(event);
+        return;
+    }
+    we = (XWheelEvent*)event;
+    delta = XWheelEvent_angleDelta(we);
+    dy = (delta.y != 0) ? delta.y : delta.x;
+    steps = (dy > 0) ? -1 : ((dy < 0) ? 1 : 0); /* 上滚=前一项（同 Qt）。 */
+    if (steps == 0) {
+        XEvent_accept(event);
+        return;
+    }
+    index = XComboBox_currentIndex(cb);
+    if (index < 0) index = 0;
+    else {
+        index += steps;
+        if (index < 0) index = 0;
+        if (index > count - 1) index = count - 1;
+    }
+    if (index != XComboBox_currentIndex(cb)) {
+        XComboBox_setCurrentIndex(cb, index);
+        xcombo_emitActivatedPair(cb, index);
+    }
+    XEvent_accept(event);
+}
+
 static void VXComboBox_keyPressEvent(XWidget* self, XEvent* event)
 {
     XComboBox* combo = (XComboBox*)self;
@@ -452,6 +500,10 @@ XVtable* XComboBox_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXComboBox_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXComboBox_changeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXComboBox_keyPressEvent);
+    /* [滚轮换项 2026-10-07] 对标 QComboBox::wheelEvent（弹层未开且非
+     * 编辑态时按 angleDelta 移动当前项并发射 activated；SH_ComboBox_
+     * AllowWheelScrolling 在 QCommonStyle 缺省 true）。 */
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VXComboBox_wheelEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXComboBox_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXComboBox_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXComboBox_move);
@@ -555,9 +607,14 @@ int XComboBox_sizeAdjustPolicy(const XComboBox* self)
     return self ? self->m_sizeAdjustPolicy
                 : XComboBoxSizeAdjustPolicy_AdjustToContents;
 }
+static void xcombo_updateSizeHint(XComboBox* self);
+
 void XComboBox_setSizeAdjustPolicy(XComboBox* self, int policy)
 {
-    if (self && policy >= 0 && policy <= 2) self->m_sizeAdjustPolicy = policy;
+    if (self && policy >= 0 && policy <= 2) {
+        self->m_sizeAdjustPolicy = policy;
+        xcombo_updateSizeHint(self); /* [sizeHint] 策略参与几何后随刷新。 */
+    }
 }
 int XComboBox_minimumContentsLength(const XComboBox* self)
 {
@@ -565,7 +622,10 @@ int XComboBox_minimumContentsLength(const XComboBox* self)
 }
 void XComboBox_setMinimumContentsLength(XComboBox* self, int characters)
 {
-    if (self && characters >= 0) self->m_minimumContentsLength = characters;
+    if (self && characters >= 0) {
+        self->m_minimumContentsLength = characters;
+        xcombo_updateSizeHint(self); /* [sizeHint]。 */
+    }
 }
 XString* XComboBox_placeholderText(const XComboBox* self)
 {
@@ -694,6 +754,52 @@ static void xcombo_emitActivatedPair(XComboBox* self, int index)
                     (size_t)XComboBox_textActivated_signal(
                         self, XComboBox_itemText_2(self, index)),
                     XComboBox_itemText_2(self, index));
+}
+
+/* ==================== 内容尺寸提示（[sizeHint 2026-10-07]） ====================
+   对标 QComboBox::sizeHint（qcombobox.cpp:2518）：逐项字体测宽取最大值
+   （AdjustToMinimumContentsLengthWithIcon 档按 minimumContentsLength 字
+   符宽与最长项取大），拼按钮/边距后经风格 sizeFromContents(CT_ComboBox)
+   收口；m_sizeAdjustPolicy/m_minimumContentsLength 自此参与几何（此前为
+   纯存储）。AddItem/RemoveItem/SetItemText/策略变更处经
+   xcombo_updateSizeHint 刷新存储位。 */
+
+/** @brief 计算内容尺寸提示并刷新 XWidget_sizeHint 存储位。 */
+static void xcombo_updateSizeHint(XComboBox* self)
+{
+    XSize hint;
+    XStyleOption opt;
+    const XFont* font;
+    int maxW = 0;
+    int i;
+    int charsW;
+    if (!self) return;
+    font = &((XWidget*)self)->m_font;
+    for (i = 0; i < self->m_itemCount; ++i) {
+        const char* text = self->m_items[i] ? XString_toUtf8(self->m_items[i])
+                                            : NULL;
+        int w = text ? XPainter_textWidth(font, text) : 0;
+        if (w > maxW) maxW = w;
+    }
+    charsW = 0;
+    if (self->m_sizeAdjustPolicy ==
+            XComboBoxSizeAdjustPolicy_AdjustToMinimumContentsLengthWithIcon &&
+        self->m_minimumContentsLength > 0) {
+        char probe[2] = { 'M', '\0' };
+        int mw = XPainter_textWidth(font, probe);
+        charsW = mw * self->m_minimumContentsLength;
+        if (charsW > maxW) maxW = charsW;
+    }
+    XStyleOption_init(&opt, XStyleCT_ComboBox);
+    opt.m_rect.width = maxW + XCOMBOBOX_BUTTON_W + 8; /* 文本+按钮+余量。 */
+    opt.m_rect.height = XCOMBOBOX_ITEM_H;
+    {
+        XSize content;
+        XSize_init(&content, maxW, XCOMBOBOX_ITEM_H);
+        hint = XStyle_sizeFromContents(XStyle_defaultStyle(),
+                                       XStyleCT_ComboBox, &opt, content);
+    }
+    XWidget_setSizeHint((XWidget*)self, &hint);
 }
 
 /** @brief 结算插入策略（对标 QComboBoxPrivate::returnPressed 主体）。
@@ -1771,10 +1877,12 @@ void XComboBox_addItem(XComboBox* self, const XString* text)
 {
     /* 对标 Qt addItem：追加到尾部。 */
     XComboBox_insertItem(self, self ? self->m_itemCount : 0, text);
+    xcombo_updateSizeHint(self); /* [sizeHint] 随内容刷新。 */
 }
 void XComboBox_addItem_2(XComboBox* self, const char* text)
 {
     XComboBox_insertItem_2(self, self ? self->m_itemCount : 0, text);
+    xcombo_updateSizeHint(self); /* [sizeHint] 随内容刷新。 */
 }
 
 void XComboBox_addItems(XComboBox* self, const XStringList* texts)
@@ -1816,6 +1924,7 @@ void XComboBox_removeItem(XComboBox* self, int index)
     if (self->m_currentIndex >= self->m_itemCount)
         self->m_currentIndex = self->m_itemCount - 1;
     XWidget_update((XWidget*)self);
+    xcombo_updateSizeHint(self); /* [sizeHint] 随内容刷新。 */
 }
 
 void XComboBox_setItemText(XComboBox* self, int index, const XString* text)
@@ -1828,6 +1937,7 @@ void XComboBox_setItemText_2(XComboBox* self, int index, const char* text)
 {
     if (!self || !text || index < 0 || index >= self->m_itemCount) return;
     XString_assign_utf8(self->m_items[index], text);
+    xcombo_updateSizeHint(self); /* [sizeHint] 文本宽变化随刷新。 */
     XWidget_update((XWidget*)self);
 }
 
@@ -1849,6 +1959,7 @@ void XComboBox_clear(XComboBox* self)
     self->m_itemCount = 0;
     self->m_currentIndex = -1;
     XWidget_update((XWidget*)self);
+    xcombo_updateSizeHint(self); /* [sizeHint] 清空随刷新。 */
 }
 
 /* ==================== 弹出与选择 ==================== */
@@ -1865,13 +1976,23 @@ static void xcombo_clearRowHidden(XComboBox* self)
         XListView_setRowHidden(self->m_popupView, i, false);
 }
 
-/** @brief 依据行数重设弹层几何（组合框正下方，宽同组合框）。 */
+/** @brief 依据行数重设弹层几何（组合框正下方，宽同组合框）。
+ *  [屏幕适配 2026-10-07] 对标 Qt QComboBox::showPopup 的屏幕可用区判定
+ *  （qcombobox.cpp：先取弹层锚点所在屏 availableGeometry，下方空间不足
+ *  翻到组合框上方并把高度收缩到较大一侧）：下方剩余空间不足所需高度时
+ *  改定位到组合框上方；高度钳到 min(所需高, max(下方空间, 上方空间))；
+ *  x/y 钳进可用区。靠屏底的组合框弹出后条目不再溢出屏幕不可选。 */
 static void xcombo_popupReposition(XComboBox* self, int rows)
 {
     XListView* view;
     XPoint origin;
     XPoint g;
     XRect r;
+    int wantH;
+    XScreen* screen;
+    XRect avail;
+    int belowSpace;
+    int aboveSpace;
     if (!self || !self->m_popupView) return;
     view = self->m_popupView;
     XWidget_setWindowFlags((XWidget*)view, (XWidgetFlags)XWindowType_Popup);
@@ -1879,9 +2000,38 @@ static void xcombo_popupReposition(XComboBox* self, int rows)
     origin.y = XWidget_height((XWidget*)self);
     g = XWidget_mapToGlobal((XWidget*)self, &origin);
     XListView_setRowHeight(view, XCOMBOBOX_ITEM_H);
+    wantH = rows * XCOMBOBOX_ITEM_H + 2;
+    screen = XGuiApplication_screenAt(&g);
+    if (!screen)
+        screen = XGuiApplication_primaryScreen();
+    if (screen)
+    {
+        avail = XScreen_availableGeometry(screen);
+        belowSpace = avail.y + avail.height - g.y;
+        aboveSpace = g.y - XWidget_height((XWidget*)self) - avail.y;
+        /* 高度收缩：优先下方；下方不足且上方更宽裕则翻到上方。 */
+        if (wantH > belowSpace)
+        {
+            if (aboveSpace > belowSpace)
+            {
+                int fitH = wantH;
+                if (fitH > aboveSpace) fitH = aboveSpace;
+                if (fitH < XCOMBOBOX_ITEM_H + 2) fitH = XCOMBOBOX_ITEM_H + 2;
+                g.y = g.y - XWidget_height((XWidget*)self) - fitH;
+                wantH = fitH;
+            }
+            else if (belowSpace >= XCOMBOBOX_ITEM_H + 2)
+            {
+                wantH = belowSpace;
+            }
+            /* 上下都放不下一行：保持下方原位（交由窗口裁剪，同旧口径）。 */
+        }
+        if (g.x < avail.x) g.x = avail.x;
+        if (g.y < avail.y) g.y = avail.y;
+    }
     XRect_init(&r, g.x, g.y,
                XWidget_width((XWidget*)self),
-               rows * XCOMBOBOX_ITEM_H + 2);
+               wantH);
     XWidget_setGeometryRect((XWidget*)view, &r);
     /* 独立顶层窗口无宿主帧泵：补全过滤态改尺寸后主动补一帧
        （show 路径由 xcombo_popupShow 负责首帧）。 */

@@ -338,32 +338,8 @@ static uint64_t hash_len_24(const uint8_t* s, uint64_t mul)
 }
 
 // 处理更长数据
-static uint64_t hash_len_32(const uint8_t* s, uint64_t mul)
-{
-    uint64_t a = ((uint64_t)s[0]) | (((uint64_t)s[1]) << 8) |
-        (((uint64_t)s[2]) << 16) | (((uint64_t)s[3]) << 24) |
-        (((uint64_t)s[4]) << 32) | (((uint64_t)s[5]) << 40) |
-        (((uint64_t)s[6]) << 48) | (((uint64_t)s[7]) << 56);
-    uint64_t b = ((uint64_t)s[8]) | (((uint64_t)s[9]) << 8) |
-        (((uint64_t)s[10]) << 16) | (((uint64_t)s[11]) << 24) |
-        (((uint64_t)s[12]) << 32) | (((uint64_t)s[13]) << 40) |
-        (((uint64_t)s[14]) << 48) | (((uint64_t)s[15]) << 56);
-    uint64_t c = ((uint64_t)s[16]) | (((uint64_t)s[17]) << 8) |
-        (((uint64_t)s[18]) << 16) | (((uint64_t)s[19]) << 24) |
-        (((uint64_t)s[20]) << 32) | (((uint64_t)s[21]) << 40) |
-        (((uint64_t)s[22]) << 48) | (((uint64_t)s[23]) << 56);
-    uint64_t d = ((uint64_t)s[24]) | (((uint64_t)s[25]) << 8) |
-        (((uint64_t)s[26]) << 16) | (((uint64_t)s[27]) << 24) |
-        (((uint64_t)s[28]) << 32) | (((uint64_t)s[29]) << 40) |
-        (((uint64_t)s[30]) << 48) | (((uint64_t)s[31]) << 56);
-
-    uint64_t e = b * mul;
-    uint64_t f = c * mul;
-    uint64_t g = d * mul;
-    uint64_t h = a * mul;
-
-    return hash_len_16_2(h + e, g + f);
-}
+/* [死码清理] hash_len_32 已删除：全仓无调用点（见审计清单）。
+ */
 
 // CityHash64 完整版
 static uint64_t xcryptographic_hash_cityhash64(const void* key, size_t  len)
@@ -1116,19 +1092,8 @@ static void spooky_short(const void* message, size_t length, uint64_t* hash1, ui
     *hash2 = hash;
 }
 
-static void spooky_end_partial(uint64_t* state, uint64_t data, int lane, int length) {
-    uint64_t temp = 0;
-    switch (length) {
-    case 7: temp ^= (uint64_t)((data >> 48) & 0xFF) << 56;
-    case 6: temp ^= (uint64_t)((data >> 40) & 0xFF) << 48;
-    case 5: temp ^= (uint64_t)((data >> 32) & 0xFF) << 40;
-    case 4: temp ^= (uint64_t)((data >> 24) & 0xFF) << 32;
-    case 3: temp ^= (uint64_t)((data >> 16) & 0xFF) << 24;
-    case 2: temp ^= (uint64_t)((data >> 8) & 0xFF) << 16;
-    case 1: temp ^= (uint64_t)(data & 0xFF) << 8;
-    }
-    state[lane] ^= temp;
-}
+/* [死码清理] spooky_end_partial 已删除：全仓无调用点（见审计清单）。
+ */
 
 static void spooky_end(const void* message, size_t length, uint64_t* state) {
     const uint8_t* data = (const uint8_t*)message;

@@ -44,10 +44,8 @@ static bool XBsonValue_isKnownType(XBsonType type)
 	}
 }
 
-static bool XBsonValue_hasString(const XBsonValue* value)
-{
-	return value && value->data.str;
-}
+/* [死码清理] XBsonValue_hasString 已删除：全仓无调用点（见审计清单）。
+ */
 
 static bool XBsonValue_appendBytes(XByteArray* output, const void* data,
 	                                   size_t size)

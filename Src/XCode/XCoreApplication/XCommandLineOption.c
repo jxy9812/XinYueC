@@ -6,14 +6,8 @@
 
 /* ==================== XCommandLineOption 实现（对标 QCommandLineOption） ==================== */
 
-static char* xStrDup(const char* str)
-{
-    if (!str) return NULL;
-    size_t len = strlen(str) + 1;
-    char* copy = XMalloc_System(len);
-    if (copy) memcpy(copy, str, len);
-    return copy;
-}
+/* [死码清理] xStrDup 已删除：与 XCommandLineParser.c 活本同体而本文件
+ * 零调用（审计清单）。 */
 
 XCommandLineOption* XCommandLineOption_create(const char* name)
 {

@@ -68,6 +68,21 @@
  *             Output: out/scan_bad_1.txt ("U+XXXX <letter>" per bad glyph),
  *             out/scan_bad/U+XXXX.png (ink bbox + 2px margin crop),
  *             stdout summary.  Exit code = min(bad, 250).
+ *
+ *             Provider mode ([collapsed 2026-10-07]): the xfo1/ft2/both
+ *             tri-mode is gone with the XFO1 implementation -- FreeType
+ *             (XFontFt) is the only outline provider, so the scan always
+ *             exercises the FT chain and the legacy output names
+ *             (scan_bad_1.txt, scan_bad/, scan_ref.txt) apply unchanged.
+ *             --family=<name|path> (or env SCAN_FONT_FAMILY) feeds that
+ *             family to XFont_create_ex -- the desktop gate passes the
+ *             fc-match-resolved system Noto path (design §7.1: direct-path
+ *             family, file never enters the repo); a missing font file
+ *             falls back to the registered bitmap face with a one-line
+ *             library warning.  --max=N caps the scan set after the
+ *             codepoint list is built (fast smoke; a criterion-D table
+ *             must be rebuilt at the same cap or the count check disarms
+ *             D).
  * @note       The output root resolves to <exe dir>/../out so the tool can
  *             be launched from any working directory.  U+0020 (space) is
  *             rendered-counted but exempt from judging (structurally blank).
@@ -87,9 +102,13 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <direct.h>
+#include <process.h> /* _spawnv: --provider=both child runs */
 #define SCAN_MKDIR(p) _mkdir(p)
 #else
 #include <sys/stat.h>
+#include <unistd.h>  /* fork/execv/_exit: --provider=both child runs */
+#include <sys/wait.h>
+#include <errno.h>
 #define SCAN_MKDIR(p) mkdir(p, 0777)
 #endif
 
@@ -159,6 +178,14 @@ static int      g_boldMode = 0;   /* 1 = judging the bold pipeline        */
    'D' = dashed fade-out auxiliary rule (read by main right after a
    scanJudgeBitmap call that returned 'E' for the dual-count report). */
 static int      g_eSource = 0;
+
+/* Provider mode ([collapsed 2026-10-07]): the AMBIENT/XFO1/FT2/BOTH
+   four-state machine is gone with the XFO1 implementation -- FT is the
+   only outline provider, no env pin and no child orchestration needed.
+   [Removed] g_provider / SCAN_PROVIDER_* / scanRunProviderChildren /
+   scanReportProviderDiff / scanProviderTag. */
+static char      g_family[SCAN_PATH_MAX]; /* --family=/SCAN_FONT_FAMILY    */
+static int       g_maxCps   = SCAN_CP_MAX; /* --max=N scan-set cap         */
 
 static bool scanAddCp(uint32_t cp)
 {
@@ -526,8 +553,8 @@ static int scanCountBands(const XImage* img, int minX, int maxX)
  * @brief True when the loaded face actually contains a glyph for cp.
  * @details Metrics-only cmap probe: XFontFace_loadOutlineGlyph_base with a
  *          NULL sink returns the glyph metrics without building a path
- *          (XFontOutline_Xfo_loadGlyph fails directly for codepoints absent
- *          from the face cmap).  Used to skip GBK slots whose system
+ *          (providers fail directly for codepoints absent from the face
+ *          cmap).  Used to skip GBK slots whose system
  *          codepage maps them to codepoints the outline face does not
  *          cover (e.g. U+E810-E814) instead of misreporting them as
  *          criterion-A blanks.
@@ -715,6 +742,11 @@ static bool scanSaveBadPng(const XImage* img, uint32_t cp,
  *        which made criterion C unreachable while still reporting bad=0).
  * @return number of failed self-checks (0 = all criteria armed).
  */
+static void scanHistEmit(const char* line)
+{
+    fprintf(stderr, "%s\n", line);
+}
+
 static int scanCriteriaSelfTest(void)
 {
     XImage img;
@@ -870,6 +902,25 @@ static void scanResolveOutDir(char* buf, size_t cap)
     snprintf(buf, cap, "out");
 }
 
+/* ==================== Output paths ====================
+   [Collapsed 2026-10-07] 原 provider 三档基础设施
+   （scanProviderTag/scanCountBadList/scanReportProviderDiff/
+   scanRunProviderChildren——--provider=xfo1|ft2|both 双跑+差分）随 XFO1
+   实现删除：FT 为唯一轮廓 provider，输出恒用 legacy 名（无 _ft2 后缀），
+   单进程单档，不再 pin env、不再 spawn 子进程。 */
+
+/* [死码清理] scanBadListPath 已删除：全仓无调用点（见审计清单）。
+ */
+
+static void scanRefPath(char* buf, size_t cap, const char* outDir,
+                        const char* tag)
+{
+    if (g_px == SCAN_FONT_PIXELS)
+        snprintf(buf, cap, "%s/scan_ref%s.txt", outDir, tag);
+    else
+        snprintf(buf, cap, "%s/scan_ref%s_px%d.txt", outDir, tag, g_px);
+}
+
 int main(int argc, char** argv)
 {
     XFont* font;
@@ -905,6 +956,18 @@ int main(int argc, char** argv)
     {
         if (strcmp(argv[argi], "--ref") == 0) refMode = 1;
         else if (strcmp(argv[argi], "--bold") == 0) boldMode = 1;
+        /* [Collapsed 2026-10-07] 原 --provider=xfo1|ft2|both 解析分支随
+           XFO1 实现删除：FT 为唯一轮廓 provider，该旗标不再有意义
+           （传入时被本轮循环静默忽略，与其它未知旗标同待遇）。 */
+        else if (strncmp(argv[argi], "--family=", 9) == 0)
+            snprintf(g_family, sizeof(g_family), "%s", argv[argi] + 9);
+        else if (strncmp(argv[argi], "--max=", 6) == 0)
+        {
+            int n = atoi(argv[argi] + 6);
+            if (n < 1) n = 1;
+            if (n > SCAN_CP_MAX) n = SCAN_CP_MAX;
+            g_maxCps = n;
+        }
         else if (strncmp(argv[argi], "--px=", 5) == 0)
         {
             int px = atoi(argv[argi] + 5);
@@ -928,15 +991,16 @@ int main(int argc, char** argv)
     scanResolveOutDir(outDir, sizeof(outDir));
     if (g_px == SCAN_FONT_PIXELS)
     {
-        /* legacy names: the 16px gates and existing tooling key on them */
+        /* legacy names: the 16px gates and existing tooling key on them
+           (single provider since the XFO1 removal -- no _ft2 suffix). */
         snprintf(badDir, sizeof(badDir), "%s/scan_bad", outDir);
         snprintf(listPath, sizeof(listPath), "%s/scan_bad_1.txt", outDir);
     }
     else
     {
         snprintf(badDir, sizeof(badDir), "%s/scan_bad_px%d", outDir, g_px);
-        snprintf(listPath, sizeof(listPath), "%s/scan_bad_px%d.txt", outDir,
-                 g_px);
+        snprintf(listPath, sizeof(listPath), "%s/scan_bad_px%d.txt",
+                 outDir, g_px);
     }
     SCAN_MKDIR(outDir);
     SCAN_MKDIR(badDir);
@@ -948,14 +1012,36 @@ int main(int argc, char** argv)
 #else
     if (refMode) setenv("XGUI_TEXT_GRIDFIT", "0", 1);
 #endif
+    /* [Collapsed 2026-10-07] 原 XFONT_PROVIDER pin 块随 env 分档删除：
+       FT 为唯一轮廓 provider，无需 pin。 */
 
     scanBuildCodepoints();
+    /* --max smoke cap: applied AFTER the list is built -- every downstream
+       consumer (scan loop, ref-table count check, summaries) keys on
+       g_cpCount, so one cap keeps them consistent.  A criterion-D ref
+       table must be rebuilt at the same --max (count mismatch disarms D). */
+    if (g_maxCps < g_cpCount)
+    {
+        fprintf(stderr, "font-scan: --max=%d caps the scan set (%d -> %d)\n",
+                g_maxCps, g_cpCount, g_maxCps);
+        g_cpCount = g_maxCps;
+    }
     fprintf(stderr, "font-scan: codepoints=%d path=%s unmappedGbkSlots=%d\n",
             g_cpCount,
             g_gbkPath ? "GBK(XChar_fromGbkStream)" : "direct-unicode-fallback",
             g_unmapped);
 
-    font = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, -1, -1, false);
+    /* Family override (P2.6 §7.3 desktop leg): --family wins over the
+       SCAN_FONT_FAMILY env; the fc-match-resolved system Noto path is fed
+       as a direct-path family (design §7.1, file never enters the repo). */
+    if (!g_family[0])
+    {
+        const char* envFamily = getenv("SCAN_FONT_FAMILY");
+        if (envFamily && envFamily[0])
+            snprintf(g_family, sizeof(g_family), "%s", envFamily);
+    }
+    font = XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                           g_family[0] ? g_family : NULL, -1, -1, false);
     if (!font)
     {
         fprintf(stderr, "font-scan: XFont_create_ex failed\n");
@@ -1004,11 +1090,7 @@ int main(int argc, char** argv)
     if (refMode)
     {
         char refPath[SCAN_PATH_MAX];
-        if (g_px == SCAN_FONT_PIXELS)
-            snprintf(refPath, sizeof(refPath), "%s/scan_ref.txt", outDir);
-        else
-            snprintf(refPath, sizeof(refPath), "%s/scan_ref_px%d.txt",
-                     outDir, g_px);
+        scanRefPath(refPath, sizeof(refPath), outDir, "");
         refFile = fopen(refPath, "w");
         if (!refFile)
         {
@@ -1019,11 +1101,7 @@ int main(int argc, char** argv)
     else
     {
         char refPath[SCAN_PATH_MAX];
-        if (g_px == SCAN_FONT_PIXELS)
-            snprintf(refPath, sizeof(refPath), "%s/scan_ref.txt", outDir);
-        else
-            snprintf(refPath, sizeof(refPath), "%s/scan_ref_px%d.txt",
-                     outDir, g_px);
+        scanRefPath(refPath, sizeof(refPath), outDir, "");
         refFile = fopen(refPath, "r");
         if (refFile)
         {
@@ -1213,10 +1291,34 @@ int main(int argc, char** argv)
     printf("\n");
 
     exitCode = (badCount < 250) ? badCount : 250;
+    if (scanned == 0)
+    {
+        /* Vacuous-pass guard (2026-10-07): a run that judged nothing
+           (e.g. a .ttf path family whose file is missing falls through
+           to the bitmap fallback face, whose outline cmap probe answers
+           false for every codepoint) must not report a green gate. */
+        fprintf(stderr, "font-scan: no glyph judged (scanned=0) - "
+                        "vacuous pass rejected\n");
+        exitCode = 3;
+    }
     {
         int selfTest = scanCriteriaSelfTest();
         printf("font-scan: criteria self-test failures=%d\n", selfTest);
         if (selfTest > 0 && exitCode == 0) exitCode = 250;
+    }
+    {
+        long c = 0, b = 0, p = 0;
+        XFontFt_memStat(&c, &b, &p);
+        fprintf(stderr, "FT-mem: allocCount=%ld allocBytes=%ld peakLive~=%ld\n",
+                c, b, p);
+        {
+            long tc = 0, tb = 0, ts = 0, tl = 0;
+            XFontFt_memStatSplit(&tc, &tb, &ts, &tl);
+            fprintf(stderr, "FT-mem: temp(FT_Load_Glyph scratch) count=%ld "
+                            "bytes=%ld small<=256B=%ld largeBytes=%ld\n",
+                    tc, tb, ts, tl);
+        }
+        XFontFt_histReport(&scanHistEmit);
     }
     return exitCode;
 }

@@ -1040,10 +1040,11 @@ int xapi_core_run(void)
         XAPI_EXPECT(XClassGetVtable(opacity) != XGraphicsEffect_class_init(),
                     "派生效果与基类类型可区分");
 
-        /* ---- XGraphicsOpacityEffect：默认 1.0、钳制 [0,1]（对标
-         *      QGraphicsOpacityEffect）。 ---- */
-        XAPI_EXPECT(XGraphicsOpacityEffect_opacity(opacity) == 1.0f,
-                    "不透明度默认 1.0（Qt 默认）");
+        /* ---- XGraphicsOpacityEffect：缺省 0.7、钳制 [0,1]（对标
+         *      QGraphicsOpacityEffect 构造 opacity(0.7)，Qt 6.8.3
+         *      qgraphicseffect_p.h:183）。 ---- */
+        XAPI_EXPECT(XGraphicsOpacityEffect_opacity(opacity) == 0.7f,
+                    "不透明度缺省 0.7（Qt 构造缺省）");
         XGraphicsOpacityEffect_setOpacity(opacity, 0.3f);
         XAPI_EXPECT(XGraphicsOpacityEffect_opacity(opacity) == 0.3f,
                     "setOpacity(0.3) 往返");

@@ -151,31 +151,8 @@ static bool XFS_isDirectoryPath(const char* path)
  * @param offset  文件偏移（-1 表示使用当前位置）
  * @return 完成字节数，< 0 表示错误
  */
-static int64_t ioUringSyncIO(int fd, uint8_t opcode, void* buf, uint64_t len, int64_t offset) {
-    XNetIoRingPosix* ring = (XNetIoRingPosix*)XAbstractNetIoRing_global();
-    if (!ring || fd < 0) return -1;
-
-    struct io_uring_sqe* sqe = XNetIoRingPosix_getSqe(ring);
-    if (!sqe) return -1;
-
-    /* 使用栈上的 XEventContext 作为完成标识 */
-    XEventContext ctx;
-    memset(&ctx, 0, sizeof(ctx));
-    ctx.type = XEventContextType_Type_File;
-
-    memset(sqe, 0, sizeof(*sqe));
-    sqe->opcode = opcode;
-    sqe->fd = fd;
-    sqe->addr = (uint64_t)(uintptr_t)buf;
-    sqe->len = (unsigned)len;
-    if (offset >= 0) sqe->off = (uint64_t)offset;
-    sqe->user_data = (uint64_t)(uintptr_t)&ctx;
-
-    XNetIoRingPosix_submitSqe(ring, 1);
-
-    /* 同步等待匹配的完成条目 */
-    return (int64_t)XNetIoRingPosix_waitCqe(ring, (uint64_t)(uintptr_t)&ctx);
-}
+/* [死码清理] ioUringSyncIO 已删除：全仓无调用点（见审计清单）。
+ */
 
 #endif /* __linux__ */
 

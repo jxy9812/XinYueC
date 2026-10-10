@@ -74,9 +74,14 @@
 /**
  * @brief HYBRID 混合模式小块阈值（字节）：小于等于该值的申请走
  *        MULTIPOOL 槽位（随之裁剪回落），大于则走系统堆。
+ *        2026-10-11 裁定 256→512：XFontFt 临时块实测分布 257-512B
+ *        占临时流量 59.6%（6857 字 GBK 全扫描，直方图脚手架），上抬
+ *        后临时分配入池覆盖率 20%→80.1%；并发活集峰值仅 5 块，桌面
+ *        512 档 64 块/嵌入式 8 块均覆盖。512=全局池最大档，513B-1K
+ *        的 20% 需另加 1K 档才能入池（扩展点 XMultiPool_initGlobal）。
  */
 #ifndef XMEMORY_HYBRID_THRESHOLD
-#define XMEMORY_HYBRID_THRESHOLD 256
+#define XMEMORY_HYBRID_THRESHOLD 512
 #endif
 
 /* ============================================================================
@@ -135,9 +140,12 @@
 /** @brief 全局池 512B 档块数。 */
 #ifndef XMP_GLOBAL_C512
 #if XPLATFORM_DESKTOP
-#define XMP_GLOBAL_C512 64
+#define XMP_GLOBAL_C512 128
 #else
-#define XMP_GLOBAL_C512 1
+/* 2026-10-11 阈值 256→512 配套：FT 临时块 257-512B 段并发活集峰值
+ * 实测 5（6857 字 GBK 全扫描），单块必耗尽（池耗尽=硬失败 NULL→字形
+ * 丢弃），扩到 8 留一倍余量；+7 块×~520B ≈ +3.6KB。 */
+#define XMP_GLOBAL_C512 8
 #endif
 #endif
 

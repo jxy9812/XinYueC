@@ -32,17 +32,8 @@ static int hexCharToInt(char c)
  * @param c    字符
  * @return     保留字符返回 true
  */
-static bool isReservedChar(char c)
-{
-    switch (c) {
-        case ':': case '/': case '?': case '#': case '[': case ']':
-        case '@': case '!': case '$': case '&': case '(': case ')':
-        case '*': case '+': case ',': case ';': case '=':
-            return true;
-        default:
-            return false;
-    }
-}
+/* [死码清理] isReservedChar 已删除：全仓无调用点（见审计清单）。
+ */
 
 /**
  * @brief      判断字符是否为 URL 非保留字符（可不用编码）

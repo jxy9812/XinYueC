@@ -36,7 +36,6 @@
 #define XDIAL_HANDLE_LEN    8
 
 /* ==================== 前向声明 ==================== */
-static void VXSliderBase_dialStub(void);
 static void VXDial_paintEvent(XWidget* self, XEvent* event);
 static void VXDial_mousePressEvent(XWidget* self, XEvent* event);
 static void VXDial_mouseMoveEvent(XWidget* self, XEvent* event);
@@ -455,7 +454,7 @@ static void XDial_move(XDial* self, XDial* other)
 }
 
 /** @brief 基类桩（占位避免空翻译单元告警）。 */
-static void VXSliderBase_dialStub(void) {}
+/* [死码清理] VXSliderBase_dialStub 已删除：全仓无调用点（见审计清单） */
 
 /* ==================== 生命周期 ==================== */
 

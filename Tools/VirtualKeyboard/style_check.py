@@ -860,9 +860,10 @@ def px_band(png, widget, band, C, compose_filled):
                  blue_best[1]))
         # 候选 chip 文字簇（chips 区=compose 右缘到翻页区左缘；compose 宽
         # 上限=带宽/3，从 comp_x+带宽/3 起扫描必落在 chips 区内）。
-        # 字库口径：默认家族 XFontOutlineCommon 为外挂轮廓字库
-        # （XFONT_EXTERNAL_OUTLINE_FONT_DIR 相对 cwd 解析 + exe 目录旁
-        # 兜底），字库文件须随 exe 部署（bin/*/XFontOutlineCommon.xfo），
+        # 字库口径：默认家族 XFontOutlineCommon 经 FT 外挂链解析
+        # （XFONT_EXTERNAL_FT_FONT_DIR 相对 cwd 解析 + exe 目录旁兜底，
+        # 2026-10-07 起 FT 为唯一轮廓字实现，原 XFO1 .xfo 通道已删），
+        # 字库文件须随 exe 部署（如 bin/*/XFontOutlineCommon.ttc），
         # 缺文件时回退 8x16 小字集、候选汉字画不出（词簇断言即 FAIL——
         # 该 FAIL 是部署缺失信号，不吞）。
         zone_x0 = comp_x + bw // 3 + 8

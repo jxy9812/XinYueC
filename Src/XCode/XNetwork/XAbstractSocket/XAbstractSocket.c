@@ -142,7 +142,6 @@ static int64_t VXAbstractSocket_writeData(XAbstractSocket* self, const char* dat
 static bool VXAbstractSocket_isSequential(const XAbstractSocket* self);
 //static int64_t XAbstractSocket_bytesAvailable_base(const XAbstractSocket* self);
 //static int64_t XAbstractSocket_bytesToWrite_base(const XAbstractSocket* self);
-static bool VXAbstractSocket_canReadLine(const XAbstractSocket* self);
 static bool VXAbstractSocket_waitForReadyRead(XAbstractSocket* self, int msecs);
 static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msecs);
 static bool VXAbstractSocket_atEnd(XAbstractSocket* self);
@@ -657,12 +656,10 @@ static bool VXAbstractSocket_isSequential(const XAbstractSocket* self)
 }
 
 
-static bool VXAbstractSocket_canReadLine(const XAbstractSocket* self)
-{
-    // 通用实现：检查缓冲区是否有完整行
-    if (!self || !self->base.m_d) return false;
-    return XIODevicePrivate_canReadLineFromBuffer(self->base.m_d);
-}
+/* [死码清理] VXAbstractSocket_canReadLine 已删除：与基类缺省
+ * VXIODevice_canReadLine（XIODevice_virtual.c:173，同为
+ * XIODevicePrivate_canReadLineFromBuffer）逐字同体，挂接行注释后成
+ * 孤儿；基类经虚表分派已覆盖 socket 语义，无需第二份。 */
 
 static bool VXAbstractSocket_waitForReadyRead(XAbstractSocket* self, int msecs)
 {

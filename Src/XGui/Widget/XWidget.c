@@ -215,6 +215,11 @@ static XWidget* g_focusWidget = NULL;
 
 /** @brief 模块静态鼠标抓取控件（对标 QApplication::mouseGrabber；控件抓取期间事件直投）。 */
 static XWidget* g_mouseGrabWidget = NULL;
+/** @brief Qt buttonDown 等价物（[隐式抓取 2026-10-07] 对标 qwidgetwindow
+ *  .cpp:645 初按置 qt_button_down + qapplication.cpp pickMouseReceiver 把
+ *  带按键的 MOVE/RELEASE 路由回按压控件）：按住期间拖出控件后 MOVE/
+ *  RELEASE 仍投按压靶（重映射局部坐标），松开全部按键清除。 */
+static XWidget* g_buttonDownWidget = NULL;
 /** @brief 模块静态触摸隐式抓取表（对标 Qt 6.8 per-point 隐式抓取契约：
  *         qapplication.cpp:3791 activateImplicitTouchGrab 把 target 记于
  *         触点、:3824 非 Pressed 逐点取各自 target——同一序列各触点可各
@@ -705,6 +710,8 @@ static void XWidget_setExplicitVisibleRecursive(XWidget* self, bool visible,
                 XWidget_clearFocusBase(self, XFocusReason_Other);
             if (g_mouseGrabWidget == self)
                 g_mouseGrabWidget = NULL;
+            if (g_buttonDownWidget == self)
+                g_buttonDownWidget = NULL; /* 隐式抓取随隐藏摘除。 */
             /* 隐藏路径全表遍历摘除该控件全部触点抓取表项（per-id 表）。 */
             xwidget_touchGrabRemoveWidget(self);
             if (g_keyboardGrabWidget == self)
@@ -1589,6 +1596,115 @@ static void XWidget_eventSetPosition(XEvent* event, const XPoint* pos)
 }
 
 /** @brief 从目标控件开始沿父链向顶层投递指针事件（位置逐级换算）。 */
+/* ==================== 拖放定靶（[拖放定靶 2026-10-07]） ====================
+   对标 Qt QWidgetWindow::findDnDTarget（qwidgetwindow.cpp:921）：childAt
+   后沿父链找 acceptDrops 控件，找不到无人接收；handleDragMoveEvent 靶
+   变化时先向旧靶发 DRAG_LEAVE、再向新靶发 DRAG_ENTER；handleDropEvent
+   只投已登记靶。局部坐标按靶逐接收者换算（accumulateOffset 同口径）。
+   此前四类事件恒投顶层：子控件 setAcceptDrops(true) 永远收不到拖放。 */
+static XWidget* g_dndTargetWidget = NULL; /**< 当前拖放靶（跨事件序列）。 */
+
+/** @brief 拖放事件位置定靶：childAt → 沿父链找 m_acceptDrops。 */
+static XWidget* xwidget_findDndTarget(XWidget* top, const XPoint* pos)
+{
+    XWidget* hit = XWidget_childAt(top, pos);
+    if (!hit) hit = top;
+    while (hit && !hit->m_acceptDrops)
+        hit = XWidget_parentWidget(hit);
+    return hit; /* NULL=无人接受（Qt findDnDTarget 同语义）。 */
+}
+
+/** @brief 以给定类型克隆拖放事件（mime/data 借用源事件只读）。 */
+static XDropEvent* xwidget_cloneDndEvent(const XDropEvent* src, int type,
+                                         const XPoint* localPos)
+{
+    return XDropEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, localPos,
+                                &src->m_globalPosition, src->m_mimeType,
+                                src->m_data);
+}
+
+static bool XWidget_dispatchDragDropEvent(XWidget* top, XEvent* event)
+{
+    XDropEvent* de = (XDropEvent*)event;
+    XEventType type = XEvent_type(event);
+    XWidget* target = NULL;
+    if (!top || !event) return false;
+    if (type != XEVENT_TYPE_DRAG_LEAVE) {
+        XPoint pos = de->m_position;
+        target = xwidget_findDndTarget(top, &pos);
+    }
+    if (type == XEVENT_TYPE_DROP) {
+        /* DROP 只投已登记靶（未登记=序列外散落 DROP，不投递）。 */
+        bool accepted = false;
+        if (g_dndTargetWidget) {
+            XPoint off = XWidget_accumulateOffset(g_dndTargetWidget);
+            XPoint local;
+            local.x = de->m_position.x - off.x;
+            local.y = de->m_position.y - off.y;
+            de->m_position = local;
+            XWidget_sendEvent(g_dndTargetWidget, event);
+            accepted = XEvent_isAccepted(event);
+        }
+        g_dndTargetWidget = NULL; /* 序列终止。 */
+        return accepted;
+    }
+    if (type == XEVENT_TYPE_DRAG_LEAVE) {
+        if (g_dndTargetWidget) {
+            XPoint off = XWidget_accumulateOffset(g_dndTargetWidget);
+            XPoint local;
+            XDropEvent* leave;
+            local.x = de->m_position.x - off.x;
+            local.y = de->m_position.y - off.y;
+            leave = xwidget_cloneDndEvent(de, XEVENT_TYPE_DRAG_LEAVE, &local);
+            if (leave) {
+                XEvent_accept((XEvent*)leave);
+                XWidget_sendEvent(g_dndTargetWidget, (XEvent*)leave);
+                XClassDelete((XEvent*)leave);
+            }
+        }
+        g_dndTargetWidget = NULL;
+        return true;
+    }
+    /* ENTER/MOVE：靶变化先旧靶 LEAVE，再新靶 ENTER（MOVE 原事件转投）。 */
+    if (target != g_dndTargetWidget) {
+        if (g_dndTargetWidget) {
+            XPoint off = XWidget_accumulateOffset(g_dndTargetWidget);
+            XPoint local;
+            XDropEvent* leave;
+            local.x = de->m_position.x - off.x;
+            local.y = de->m_position.y - off.y;
+            leave = xwidget_cloneDndEvent(de, XEVENT_TYPE_DRAG_LEAVE, &local);
+            if (leave) {
+                XEvent_accept((XEvent*)leave);
+                XWidget_sendEvent(g_dndTargetWidget, (XEvent*)leave);
+                XClassDelete((XEvent*)leave);
+            }
+        }
+        g_dndTargetWidget = target;
+        if (target) {
+            XPoint off = XWidget_accumulateOffset(target);
+            XPoint local;
+            XDropEvent* enter;
+            local.x = de->m_position.x - off.x;
+            local.y = de->m_position.y - off.y;
+            enter = xwidget_cloneDndEvent(de, XEVENT_TYPE_DRAG_ENTER, &local);
+            if (enter) {
+                XEvent_ignore((XEvent*)enter); /* 由接受者显式接受。 */
+                XWidget_sendEvent(target, (XEvent*)enter);
+                XClassDelete((XEvent*)enter);
+            }
+        }
+    }
+    if (target) {
+        XPoint off = XWidget_accumulateOffset(target);
+        de->m_position.x -= off.x;
+        de->m_position.y -= off.y;
+        XWidget_sendEvent(target, event);
+        return XEvent_isAccepted(event);
+    }
+    return false;
+}
+
 static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
 {
     XWidget* target;
@@ -1645,14 +1761,38 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
         /* 鼠标抓取：直接投递抓取控件，不再按命中测试分派（对标 QWidget grabMouse）。 */
         target = g_mouseGrabWidget;
     } else {
-        target = XWidget_childAt(top, &pos);
-        if (!target) {
-            const XRegion* topMask = top ? &top->m_mask : NULL;
-            /* 顶层自身有遮罩且点不在遮罩内时不再回退到顶层（对该点不派发）。 */
-            if (!topMask || topMask->count <= 0 ||
-                XRegion_contains(topMask, pos.x, pos.y))
-                target = top;
+        /* [隐式抓取 2026-10-07] Qt buttonDown 语义：按住任一按键期间的
+         * MOUSE_MOVE 与 RELEASE 一律改投按压靶（qt_button_down），拖出
+         * 控件后按钮不再卡下压态、RELEASE 不丢失；全部按键松开时在投
+         * 递后清除（下方）。显式 grabMouse 优先级仍高于本隐式抓取。
+         * 触摸合成的鼠标事件不参与（Qt 同口径：合成事件已带 per-point
+         * 隐式抓取，混入 buttonDown 会破坏多点 per-id 路由）。 */
+        if (g_buttonDownWidget && !((const XMouseEvent*)event)->m_synthesized &&
+            (XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE ||
+             XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE)) {
+            target = g_buttonDownWidget;
+        } else {
+            target = XWidget_childAt(top, &pos);
+            if (!target) {
+                const XRegion* topMask = top ? &top->m_mask : NULL;
+                /* 顶层自身有遮罩且点不在遮罩内时不再回退到顶层（对该点不派发）。 */
+                if (!topMask || topMask->count <= 0 ||
+                    XRegion_contains(topMask, pos.x, pos.y))
+                    target = top;
+            }
         }
+    }
+    if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS) {
+        /* 初按登记按压靶（g_buttonDownWidget=qt_button_down；合成事件
+         * 不登记，见上）。 */
+        if (!((const XMouseEvent*)event)->m_synthesized)
+            g_buttonDownWidget = target;
+    } else if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE &&
+               g_buttonDownWidget &&
+               ((const XMouseEvent*)event)->m_buttons == XMouseButton_NoButton) {
+        /* 全部按键松开：先收闸再投递（target 局部变量已持按压靶，
+         * 投递循环不受清除影响）。 */
+        g_buttonDownWidget = NULL;
     }
     /* 按下位置驱动虚拟键盘（标准触摸 UX；XGui 扩展经 XGuiApplication
      * 转发，本核心对键盘类型零依赖）：指针 PRESS 命中受支持编辑框→键
@@ -1666,6 +1806,23 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     if (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS)
         XGuiApplication_virtualKeyboardNotifyPress(target);
 #endif
+    /* [集中移焦 2026-10-07] 对标 Qt giveFocusAccordingToFocusPolicy
+     * （qapplication.cpp:3661：Press/DblClick 按 ClickFocus 位、Wheel 按
+     * WheelFocus 位，先于事件送达）：命中靶策略含点击焦点位时以
+     * Mouse 原因移焦。NoFocus 不动；各类内既有移焦调用语义保持
+     * （setFocus 同靶幂等，不产生行为差）。 */
+    if (target &&
+        (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS ||
+         XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK)) {
+        XWidgetFocusPolicy policy = XWidget_focusPolicy(target);
+        if ((policy & XWidgetFocusPolicy_ClickFocus) != 0)
+            XWidget_setFocusReason(target, XFocusReason_Mouse);
+    } else if (target && XEvent_type(event) == XEVENT_TYPE_WHEEL) {
+        XWidgetFocusPolicy policy = XWidget_focusPolicy(target);
+        if ((policy & XWidgetFocusPolicy_WheelFocus) ==
+            XWidgetFocusPolicy_WheelFocus)
+            XWidget_setFocusReason(target, XFocusReason_Mouse);
+    }
     w = target;
     while (w) {
         XPoint off = XWidget_accumulateOffset(w);
@@ -3074,8 +3231,7 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
     case XEVENT_TYPE_DRAG_MOVE:
     case XEVENT_TYPE_DRAG_LEAVE:
     case XEVENT_TYPE_DROP:
-        XWidget_sendEvent(top, event);
-        return XEvent_isAccepted(event);
+        return XWidget_dispatchDragDropEvent(top, event);
     case XEVENT_TYPE_CLOSE:
         XWidget_sendEvent(top, event);
         return XEvent_isAccepted(event);
@@ -3577,12 +3733,9 @@ static void VXWidget_deinit(XWidget* self)
 #endif /* XCURSOR_ON */
     XClassDeinit(&self->m_font);
     XClassDeinit(&self->m_icon);
-    XRegion_deinit(&self->m_dirty);
-    XRegion_deinit(&self->m_staticContents);
     XWidget_freeContentCache(self);
     /* 保留层登记节点持有本控件借用指针，析构必须先摘除再释放缓存。 */
     xwidget_retainedDisable(self);
-    XRegion_deinit(&self->m_mask);
 #if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON
     if (self->m_backingStore) {
         XClassDelete(self->m_backingStore);
@@ -3605,6 +3758,14 @@ static void VXWidget_deinit(XWidget* self)
     }
 #endif /* XGUI_CUSTOM_TITLEBAR_ON */
     XClass_Deinit_Parent(XObject, (XObject*)self);
+    /* [泄漏修复] 脏区/静态内容/蒙版区域的后释放必须晚于 destroyed 信号：
+     * 父链析构会发射 destroyed，槽内（如键盘 closePopup、工具按钮
+     * actionDestroyed）触发的 XWidget_update 会向已析构的顶层 m_dirty
+     * 重新 region_reserve 出新缓冲；若区域先于此释放，这些缓冲将无人
+     * 回收（ASan 实测每次 64B 定洩）。放在父链析构之后可兜底回收。 */
+    XRegion_deinit(&self->m_dirty);
+    XRegion_deinit(&self->m_staticContents);
+    XRegion_deinit(&self->m_mask);
 }
 
 /** @brief 深拷贝控件布局与外观字段；不复制 XObject 基类/父链/窗口句柄/后备存储。 */

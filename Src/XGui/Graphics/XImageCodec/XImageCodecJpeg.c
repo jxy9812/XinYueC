@@ -394,29 +394,8 @@ static void jpegForwardDct(const float samples[64], float f[64])
 }
 
 /* 逆 DCT：F → 8x8 样本（+128 电平搬移，输出行优先）。 */
-static void jpegInverseDct(const float f[64], uint8_t out[64])
-{
-    float tmp[8][8];
-    float res[8][8];
-    for (int x = 0; x < 8; ++x) {
-        for (int v = 0; v < 8; ++v) {
-            float s = 0.0f;
-            for (int u = 0; u < 8; ++u)
-                s += jpegDctBase[u][x] * f[u * 8 + v];
-            tmp[x][v] = s;
-        }
-    }
-    for (int y = 0; y < 8; ++y) {
-        for (int x = 0; x < 8; ++x) {
-            float s = 0.0f;
-            for (int v = 0; v < 8; ++v)
-                s += jpegDctBase[v][y] * tmp[x][v];
-            res[y][x] = s;
-        }
-    }
-    for (int i = 0; i < 64; ++i)
-        out[i] = jpegClamp255(jpegRound(res[i / 8][i % 8] + 128.0f));
-}
+/* [死码清理] jpegInverseDct 已删除：全仓无调用点（见审计清单）。
+ */
 
 /* 解码框架（支持基线/渐进/12 位/算术/CMYK）                                */
 /* ====================================================================== */

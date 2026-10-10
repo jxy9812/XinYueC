@@ -1214,9 +1214,10 @@
 
 /* ==================== 调试跟踪（临时；问题关闭后移除） ==================== */
 /* 停靠拖放链路跟踪：置 1 时 XMainWindow/XDockWidget 关键决策点向 stdout
- * 打一行 [DOCK] 日志（带 fflush）。默认 0（零开销）。 */
+ * 打一行 [DOCK] 日志（带 fflush）。默认 0（零开销）；需复现时以
+ * -DXGUI_DOCK_TRACE=1 翻案，勿改此缺省。 */
 #ifndef XGUI_DOCK_TRACE
-#define XGUI_DOCK_TRACE 1
+#define XGUI_DOCK_TRACE 0
 #endif
 
 #endif /* XGUICONFIG_H */

@@ -98,56 +98,94 @@ static void xasa_disconnectBar(XAbstractScrollArea* self, XScrollBar* bar,
 /** @brief 视口/滚动条几何排布前置声明（显隐联动重排用）。 */
 static void xasa_layout(XAbstractScrollArea* self);
 
-/** @brief 依据策略与内容尺寸更新滚动条可见性与范围。 */
+/** @brief 依据策略与内容尺寸更新滚动条可见性与范围。
+ *         pageStep/range 一律取「排布后视口终值」：此前按排布前视口
+ *         尺寸写入，xasa_layout 收尾才把视口缩掉滚动条宽度，状态比
+ *         几何滞后一拍——收敛依赖后续恰好再有一次本调用，脏区驱动、
+ *         重绘停止得早的平台会把陈旧把手长度永久留在屏上（真机取证
+ *         2026-10-08 条目视图页：树竖把手 105px = 槽114×130/(10+130)，
+ *         桌面多收敛一轮才得 92px = 114×114/140，其余逐像素全同）。
+ *         显隐旗先按当前视口口径判定（与 xasa_layout 同式），再以
+ *         「控件全尺寸 − 对侧条宽」解析推导排布后视口终值，同一调用
+ *         内几何与状态必然自洽；若 layout 实际改动了视口几何（AsNeeded
+ *         显隐翻转改变对侧判定口径），最多整算第二遍取不动点（定长
+ *         两遍、无递归）。 */
 static void xasa_updateScrollBars(XAbstractScrollArea* self)
 {
-    int vw;
-    int vh;
-    bool showV;
-    bool showH;
-    int range;
-    if (!self || !self->m_viewport) return;
-    vw = XWidget_width(self->m_viewport);
-    vh = XWidget_height(self->m_viewport);
-    /* 对标 Qt QAbstractScrollArea：翻页步进 = 视口尺寸（横向/纵向各自），
-     * 与 setRange 同步维护。此前从不 setPageStep——pageStep 恒默认 10，
-     * 轨道点击一次只跳 10px（翻页形同虚设），把手长按
-     * 槽×page/(range+page) 折算成 10/(range+10) 严重失真可滚比例
-     * （参照 XTextEdit.c:813 setPageStep(viewH) 正确示范）。隐藏分支
-     * 也同样设置：range=0 时把手折算占满全槽，无显示副作用。 */
-    XScrollBar_setPageStep(self->m_vScrollBar, vh > 0 ? vh : 1);
-    XScrollBar_setPageStep(self->m_hScrollBar, vw > 0 ? vw : 1);
-    showV = self->m_vPolicy != XScrollBarPolicy_AlwaysOff;
-    showH = self->m_hPolicy != XScrollBarPolicy_AlwaysOff;
-    if (self->m_vPolicy == XScrollBarPolicy_AsNeeded)
-        showV = self->m_contentHeight > vh;
-    if (self->m_hPolicy == XScrollBarPolicy_AsNeeded)
-        showH = self->m_contentWidth > vw;
-    XWidget_setVisible((XWidget*)self->m_vScrollBar, showV);
-    XWidget_setVisible((XWidget*)self->m_hScrollBar, showH);
-    if (showV) {
-        range = self->m_contentHeight > vh ? self->m_contentHeight - vh : 0;
-        XScrollBar_setRange(self->m_vScrollBar, 0, range);
+    int pass;
+    for (pass = 0; pass < 2; ++pass)
+    {
+        int vw;
+        int vh;
+        int w;
+        int h;
+        int sbw = 16;
+        int finalVw;
+        int finalVh;
+        int oldVw;
+        int oldVh;
+        bool showV;
+        bool showH;
+        int range;
+        if (!self || !self->m_viewport) return;
+        w = XWidget_width((XWidget*)self);
+        h = XWidget_height((XWidget*)self);
+        vw = XWidget_width(self->m_viewport);
+        vh = XWidget_height(self->m_viewport);
+        oldVw = vw;
+        oldVh = vh;
+        /* 显隐判定与 xasa_layout 同口径（vw/vh=视口尺寸）：
+         * 两处分裂时条会「显示却不排布」。 */
+        showV = self->m_vPolicy != XScrollBarPolicy_AlwaysOff &&
+                (self->m_vPolicy == XScrollBarPolicy_AlwaysOn ||
+                 self->m_contentHeight > vh);
+        showH = self->m_hPolicy != XScrollBarPolicy_AlwaysOff &&
+                (self->m_hPolicy == XScrollBarPolicy_AlwaysOn ||
+                 self->m_contentWidth > vw);
+        /* 排布后视口终值：与 xasa_layout 的视口矩形同式推导（竖条显形
+         * 扣宽、横条显形扣高）。翻页步进 = 视口尺寸（对标 Qt
+         * QAbstractScrollArea，参照 XTextEdit.c:813 setPageStep(viewH)
+         * 正确示范）；隐藏分支同样设置：range=0 时把手折算占满全槽，
+         * 无显示副作用。 */
+        finalVw = showV ? w - sbw : w;
+        finalVh = showH ? h - sbw : h;
+        if (finalVw < 0) finalVw = 0;
+        if (finalVh < 0) finalVh = 0;
+        XScrollBar_setPageStep(self->m_vScrollBar, finalVh > 0 ? finalVh : 1);
+        XScrollBar_setPageStep(self->m_hScrollBar, finalVw > 0 ? finalVw : 1);
+        XWidget_setVisible((XWidget*)self->m_vScrollBar, showV);
+        XWidget_setVisible((XWidget*)self->m_hScrollBar, showH);
+        if (showV) {
+            range = self->m_contentHeight > finalVh
+                        ? self->m_contentHeight - finalVh
+                        : 0;
+            XScrollBar_setRange(self->m_vScrollBar, 0, range);
+        }
+        else {
+            /* 隐藏时同步清零范围：内容未超出视口时 value 恒为 0，滚轮与
+               编程接口都不能滚动（对标 Qt 滚动条 max=0 的不可滚语义）。 */
+            XScrollBar_setRange(self->m_vScrollBar, 0, 0);
+        }
+        if (showH) {
+            range = self->m_contentWidth > finalVw
+                        ? self->m_contentWidth - finalVw
+                        : 0;
+            XScrollBar_setRange(self->m_hScrollBar, 0, range);
+        }
+        else {
+            XScrollBar_setRange(self->m_hScrollBar, 0, 0);
+        }
+        /* 对标 Qt updateScrollBars 的 layout 联动（qabstractscrollarea.cpp
+         * 每次范围/显隐更新即 updateGeometries）：无条件全量重排。仅靠
+         * 显隐翻转触发不够——条显隐恒真而控件几何早已变化时（如容器
+         * resize 前 AsNeeded 已显示的条），几何会永久滞留旧值（实测水平
+         * 条滞留 (0,84,200,16) 挂在内容区中部）。xasa_layout 幂等且不回调
+         * 本函数，无递归。 */
+        xasa_layout(self);
+        if (XWidget_width(self->m_viewport) == oldVw &&
+            XWidget_height(self->m_viewport) == oldVh)
+            break; /* 视口几何未再变化：pageStep/range 已与终态自洽 */
     }
-    else {
-        /* 隐藏时同步清零范围：内容未超出视口时 value 恒为 0，滚轮与
-           编程接口都不能滚动（对标 Qt 滚动条 max=0 的不可滚语义）。 */
-        XScrollBar_setRange(self->m_vScrollBar, 0, 0);
-    }
-    if (showH) {
-        range = self->m_contentWidth > vw ? self->m_contentWidth - vw : 0;
-        XScrollBar_setRange(self->m_hScrollBar, 0, range);
-    }
-    else {
-        XScrollBar_setRange(self->m_hScrollBar, 0, 0);
-    }
-    /* 对标 Qt updateScrollBars 的 layout 联动（qabstractscrollarea.cpp
-     * 每次范围/显隐更新即 updateGeometries）：无条件全量重排。仅靠
-     * 显隐翻转触发不够——条显隐恒真而控件几何早已变化时（如容器
-     * resize 前 AsNeeded 已显示的条），几何会永久滞留旧值（实测水平
-     * 条滞留 (0,84,200,16) 挂在内容区中部）。xasa_layout 幂等且不回调
-     * 本函数，无递归。 */
-    xasa_layout(self);
 }
 
 /* ==================== 事件处理 ==================== */
@@ -311,23 +349,8 @@ void XAbstractScrollArea_resizeEvent_base(XAbstractScrollArea* self)
 
 /* ==================== 生命周期与虚表 ==================== */
 
-static void VX_asa_deinit(XAbstractScrollArea* self)
-{
-    if (!self) return;
-    if (self->m_viewport) {
-        XClassDelete((XWidget*)self->m_viewport);
-        self->m_viewport = NULL;
-    }
-    if (self->m_vScrollBar) {
-        XClassDelete((XWidget*)self->m_vScrollBar);
-        self->m_vScrollBar = NULL;
-    }
-    if (self->m_hScrollBar) {
-        XClassDelete((XWidget*)self->m_hScrollBar);
-        self->m_hScrollBar = NULL;
-    }
-    XClass_Deinit_Parent(XFrame, (XFrame*)self);
-}
+/* [死码清理] VX_asa_deinit 已删除：全仓无调用点（见审计清单）。
+ */
 
 XVtable* XAbstractScrollArea_class_init(void)
 {

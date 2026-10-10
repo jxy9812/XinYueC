@@ -156,6 +156,20 @@ static void VXGraphicsDropShadowEffect_draw(XGraphicsEffect* base,
     XPainter painter;
     if (!self || !ctx || !ctx->m_source || !ctx->m_dest) return;
     if (XImage_isNull(ctx->m_dest)) return;
+    /* [零投影短路 2026-10-07] 对标 Qt qgraphicseffect.cpp:1017：blurRadius
+     * <=0 且 offset 为零时跳过投影层直接绘源——固定 3x3 模糊会把半透明
+     * 源边缘晕出着色边。 */
+    if (self->m_blurRadius <= 0.0f &&
+        self->m_offset.x == 0.0f && self->m_offset.y == 0.0f) {
+        XPainter_init(&painter, NULL);
+        if (XPainter_begin_image(&painter, ctx->m_dest)) {
+            XPainter_drawImage(&painter, ctx->m_source,
+                               -ctx->m_destRect.x, -ctx->m_destRect.y);
+            XPainter_end(&painter);
+        }
+        XPainter_deinit(&painter);
+        return;
+    }
     /* 1. 着色投影层（含偏移，画布坐标对齐）。 */
     shadow = xgraphicsdropshadow_makeShadow(self, ctx);
     if (!shadow) return;

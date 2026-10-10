@@ -184,18 +184,8 @@ static size_t stream_input_len_u8(const uint8_t* data, size_t input_size)
     return input_size;
 }
 
-static size_t stream_input_len_char(const char* data, size_t input_size)
-{
-    if (input_size == 0) {
-        size_t len = 0;
-        while (data[len] != '\0') len++;
-        return len;
-    }
-    for (size_t i = 0; i < input_size; i++) {
-        if (data[i] == '\0') return i;
-    }
-    return input_size;
-}
+/* [死码清理] stream_input_len_char 已删除：全仓无调用点（见审计清单）。
+ */
 
 /* ========================================================================== */
 /*                          构造与创建函数                                       */

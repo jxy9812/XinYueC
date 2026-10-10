@@ -46,6 +46,22 @@
 #endif /* XPAINTER_ON */
 #include <math.h>
 #include <limits.h>
+#if XFONT_FT_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON
+/* FreeType 模块接入（门 XFONT_FT_ON = XFONT_FT_FACE_ON，见 XFont_config.h；
+ * XFONT_FT_RASTER 双档门已随自研扫描线字形光栅化器移除——字形 8 位
+ * alpha 覆盖图由捆绑 FreeType（Library/freetype，最小模块集合见其
+ * CMakeLists.txt）经 FT_Outline_Render DIRECT+AA 模式产出，普通矢量
+ * 路径填充仍走自研覆盖光栅化器）。XFontFt.h 声明共享 FT_Library 单例
+ * 访问器 XFontFt_library()（所有权与初始化失败锁存都收敛在 XFontFt，
+ * painter 只改引用、绝不 FT_Done）。CMakeLists 侧已把捆绑包含目录
+ * 前置（系统 fontconfig 的 freetype2 路径在后），<ft2build.h> 命中
+ * 捆绑头而非系统头。 */
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#include FT_IMAGE_H
+#include FT_OUTLINE_H
+#include "XFontFt.h"
+#endif /* XFONT_FT_ON && XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
 
 /* ========== 文本绘制工具前向声明（drawTextRect 使用，定义在文件末尾文本段） ========== */
 typedef struct PainterBitmapFontTable
@@ -59,10 +75,14 @@ typedef struct PainterBitmapFontTable
     int m_unitsPerEm;
 } PainterBitmapFontTable;
 static PainterBitmapFontTable painterBitmapFont(const XFont* font);
-static float painterBitmapScaleForFont(const XFont* font);
 static float painterBitmapScaleForTable(const XFont* font,
                                         const PainterBitmapFontTable* table);
 static uint32_t painter8x16DecodeNext(const char** p);
+/* 删除线/上划线条（drawText/drawTextRect 双路共用；定义在文本段）。 */
+static void painterDrawStrikeOverline(XPainter* self, int x, int advance,
+                                      int baselineY, uint32_t color,
+                                      const PainterBitmapFontTable* table,
+                                      float scale);
 static void painter8x16DrawGlyphScaled(XPainter* painter, int x,
                                        int baselineY, uint32_t color,
                                        const unsigned char* glyph, float scale,
@@ -468,7 +488,8 @@ static XGpuRenderBackend* g_xgpuRenderSession = NULL;
 static bool g_xgpuRenderProbeFailed = false;
 static bool g_xgpuRenderAtExitRegistered = false;
 static bool g_xgpuRenderSessionInUse = false;
-static int g_xgpuRenderMode = -1; /* 0=software/default, 1=GPU. */
+/* [死码清理] g_xgpuRenderMode 随唯一读者 painterGpuRequested 一并删除
+ * （后端选择由 XGpuRenderBackend_requested 读取同一环境变量，勿双份）。 */
 
 /* ========== 局部提交批量化（直通重构方向 A 首步；2026-09-24 脏区化） ========== */
 /* 连续「无快速路径」命令共享一张全帧透明暂存画布：批内各命令由软件
@@ -703,18 +724,10 @@ static void xgpu_batch_canvas_clear_rows(void)
  *         begin_image 的嵌套复用分支同样整幅清零：旧行为每 painter
  *         begin 都开新帧都清，keep-open 后每 painter begin（复用）
  *         也清——清零节拍与旧行为逐点对齐，防线不弱化。画布未 init
- *         （纯快速路径页）时零开销直返。 */
-static void xgpu_batch_canvas_clear_all(void)
-{
-    if (!g_gpuBatchCanvasInited) return;
-    XImage_fillRect(&g_gpuBatchCanvas, NULL, 0u);
-    g_gpuBatchCanvasTransparent = true;
-    g_gpuBatchHasDirty = false;
-    g_gpuBatchDirty.x = 0;
-    g_gpuBatchDirty.y = 0;
-    g_gpuBatchDirty.width = 0;
-    g_gpuBatchDirty.height = 0;
-}
+ *         （纯快速路径页）时零开销直返。
+ *  @note  [死码清理] 独立包装函数 xgpu_batch_canvas_clear_all 无人
+ *         调用（清零调用点均内联展开于 begin_image 分支），已删除；
+ *         上述清零节拍契约由 begin_image 各分支直接兑现。 */
 
 /** @brief XGPU_CANVAS_BEGIN_CLEAR 环境开关（严格 "1"=恢复 begin 段
  *         整幅清零安全网；默认关——清洁职责在冲刷点 ±8px 外扩清）。 */
@@ -863,24 +876,6 @@ static void painterGpuBatchFlush(void)
     }
 }
 
-static bool painterGpuTextEquals(const char* value, const char* expected)
-{
-    unsigned char a;
-    unsigned char b;
-    if (!value || !expected) return false;
-    while (*value && *expected)
-    {
-        a = (unsigned char)*value++;
-        b = (unsigned char)*expected++;
-        if (a >= (unsigned char)'A' && a <= (unsigned char)'Z')
-            a = (unsigned char)(a + ('a' - 'A'));
-        if (b >= (unsigned char)'A' && b <= (unsigned char)'Z')
-            b = (unsigned char)(b + ('a' - 'A'));
-        if (a != b) return false;
-    }
-    return *value == '\0' && *expected == '\0';
-}
-
 /**
  * @brief 读取「GPU 命令级同步读回」契约开关（XGUI_GPU_SYNC，"0"=关）。
  * @details 开启时 GPU 快速路径全部让位 legacy 局部提交并逐命令读回，
@@ -929,28 +924,9 @@ static bool painterGpuFastPathExtRequested(void)
     return requested != 0;
 }
 
-/**
- * @brief 读取 GPU 运行时选择。
- * @details 软件后端是默认值；设置 XGUI_RENDER_BACKEND=gpu（或
- *          XGPU_BACKEND=opengl/1）才启用阶段 1 GPU。这样嵌入式产品只需
- *          保持环境变量未设置即可继续使用软件光栅，同时保留运行时切换
- *          和显式禁用路径，不增加第二个编译开关。
- */
-static bool painterGpuRequested(void)
-{
-    const char* value;
-    if (g_xgpuRenderMode >= 0) return g_xgpuRenderMode != 0;
-    value = XSystem_environment("XGUI_RENDER_BACKEND");
-    if (!value || !*value) value = XSystem_environment("XGPU_BACKEND");
-    g_xgpuRenderMode =
-        painterGpuTextEquals(value, "gpu") ||
-        painterGpuTextEquals(value, "opengl") ||
-        painterGpuTextEquals(value, "vulkan") ||
-        painterGpuTextEquals(value, "1") ||
-        painterGpuTextEquals(value, "true") ||
-        painterGpuTextEquals(value, "on") ? 1 : 0;
-    return g_xgpuRenderMode != 0;
-}
+/* [死码清理] painterGpuRequested 及其私有助手 painterGpuTextEquals 均无
+ * 调用点（GPU 运行时选择由 XGpuRenderBackend.c:409 读取同一组环境变量
+ * XGUI_RENDER_BACKEND/XGPU_BACKEND），整组删除避免双份口径。 */
 
 static void painterGpuSessionDestroyAtExit(void)
 {
@@ -2405,8 +2381,9 @@ static bool painterSpanPixelRange(float left, float right,
     return *outFirst <= *outLast;
 }
 
-/* 移位半像素约定（像素 px 覆盖 [px-0.5, px+0.5)）的像素范围：字形灰度
-   光栅器的子采样点位于 px-0.5+(i+0.5)/subdiv，与 painterSpanPixelRange
+/* 移位半像素约定（像素 px 覆盖 [px-0.5, px+0.5)）的像素范围：覆盖
+   光栅器（painterGlyphContoursAlphaCoverage，路径填充/裁剪掩码用）的
+   子采样点位于 px-0.5+(i+0.5)/subdiv，与 painterSpanPixelRange
    的中心约定差半像素——右端若按中心约定取整，末端含大量覆盖的像素列
    会被整列丢弃（细笔画在特定字号下消失，如 14px"件"竖笔）。右端放宽
    一像素；多出的列由逐子采样精确测试过滤（0 覆盖像素跳过），只多测
@@ -6855,8 +6832,9 @@ static bool painterFillPolygonShape(XPainter* self, int n,
 #if XPAINTER_PATH_ON
 /**
  * @brief      抗锯齿几何填充：设备坐标子路径 → 灰度覆盖图 → 混合/上屏。
- * @details    与字形灰度共用 `painterGlyphContoursAlphaCoverage`（4x4
- *             面积子采样，subdiv=1 时为二值覆盖）。软件路径逐像素经
+ * @details    与裁剪掩码/GPU 渐变路径共用 `painterGlyphContoursAlphaCoverage`
+ *             （4x4 面积子采样，subdiv=1 时为二值覆盖；原字形灰度分支
+ *             已改走 FreeType smooth 光栅化器）。软件路径逐像素经
  *             putPixel 混合（裁剪/合成模式由既有路径处理）；GPU 会话
  *             活动时经 `XGpuRenderBackend_drawAlphaBitmap` 提交到 FBO
  *             ——修复 GPU 激活期间 fillPath/polygon 直写 m_image 导致
@@ -7481,30 +7459,6 @@ fail:
 }
 
 #if XPAINTER_PATH_ON
-/**
- * @brief      把已展平的路径子路径光栅化为 8 位 alpha 覆盖图。
- * @details    与 painterFillPathContours 的设备分支使用同一扫描线求交、
- *             排序与奇偶成对填充算法，保证 GPU 字形覆盖与软件 fillPath
- *             输出一致；span 覆盖像素写 255，其余保持 0（二值覆盖）。
- *             该函数只写调用方提供的缓冲，不触碰任何绘制器状态，因此
- *             可在 GPU 会话活动期间安全使用。
- * @param      contours 已展平子路径数组（fill/stroke 复合填充同源数据）。
- * @param      contourCount 子路径数量。
- * @param      offsetX/offsetY 路径坐标到 alpha 图坐标的平移量。
- * @param      alpha 目标缓冲（width*height 字节，由调用方分配并清零）。
- * @return     成功返回 true；参数非法或内存分配失败返回 false。
- */
-static bool painterGlyphContoursAlpha(const PainterPathFillContour* contours,
-                                      int contourCount,
-                                      float offsetX, float offsetY,
-                                      uint8_t* alpha, int width, int height)
-{
-    return painterGlyphContoursAlphaCoverage(contours, contourCount,
-                                             offsetX, offsetY, alpha,
-                                             width, height, 1,
-                                             XPainterFillRule_OddEven);
-}
-
 /**
  * @brief      路径覆盖光栅化：二值（subdiv=1）或 NxN 面积子采样灰度。
  * @details    每个像素划分 subdiv x subdiv 个子采样点；对每条子扫描线
@@ -10364,12 +10318,6 @@ static float painterBitmapScaleForTable(const XFont* font,
                                        ? table->m_height : 1);
 }
 
-static float painterBitmapScaleForFont(const XFont* font)
-{
-    PainterBitmapFontTable table = painterBitmapFont(font);
-    return painterBitmapScaleForTable(font, &table);
-}
-
 /* 缺字形 ASCII 代理（统一字体回退链的最后一环）：内置 XFontOutlineCommon
    仅覆盖 ASCII + GB2312 汉字全集（符号区未收录），全角标点/破折号/箭头等
    此前表现是 M 宽空白占位不画（advance 有、墨迹无）。本表把常用缺字形
@@ -10439,11 +10387,6 @@ typedef struct PainterOutlinePathSink
                                亚像素。每个实例化点都必须显式赋值。 */
 } PainterOutlinePathSink;
 
-static float painterOutlineX(const PainterOutlinePathSink* sink, float x)
-{
-    return sink->m_originX + x * sink->m_scale;
-}
-
 /* §8.0g11：shear 变换在 outline 坐标（y 向上为正的字体空间）应用——
    x' = x + shear*(y-fontAscent 参考线) 等价于屏幕坐标 x' = x + shear*
    (baselineY - y_screen)；此处用屏幕 Y 一次性算偏移最直观。 */
@@ -10499,17 +10442,62 @@ static bool painterOutlineMoveTo(void* userData, float x, float y)
     return ok;
 }
 
+static bool painterPathAppendElt(XPainterPath* self,
+                                 XPainterPathElementType type, float x1,
+                                 float y1, float x2, float y2, float x3,
+                                 float y3);
+
 static bool painterOutlineLineTo(void* userData, float x, float y)
 {
     PainterOutlinePathSink* sink = (PainterOutlinePathSink*)userData;
     float sy;
     float sx;
+    float snappedX;
+    float lastX;
+    float lastY;
     bool ok;
     if (!sink || !sink->m_path) return false;
     sy = painterOutlineY(sink, y);
     sx = painterOutlineShearX(sink, x, sy);
-    ok = XPainterPath_lineTo(sink->m_path,
-                             painterOutlineSnapX(sink, sx), sy);
+    snappedX = painterOutlineSnapX(sink, sx);
+    /* 网格对齐零长段保留（2026-10-08 真屏 12px「即」右卩蒸发根修）：
+       sub-1px 竖笔两缘独立 X 吸附后撞同一半整列（设计 [13.008,13.896]
+       → [13.5,13.5]），公共 lineTo 的同点守卫把第二条缘静默吞掉——
+       塌缩竖笔修复遍（pass6）因此只见单点内缘簇，把竖笔修成斜墙而
+       蒸发（XGUI_TEXT_GRIDFIT=0 对照竖笔存活）。design x 互异（>=0.3px
+       聚类阈）时该点是修复遍必需的对侧缘证据：绕过同点守卫直接追加
+       零长元素（coverage 面积恒 0，不影响任何无 gridfit 消费路径；
+       stash 使修复遍能取回完整两簇，恢复竖直右缘）。 */
+    lastX = (sink->m_path->m_elementCount > 0)
+                ? sink->m_path->m_elements[sink->m_path->m_elementCount - 1]
+                      .m_x1
+                : 0.0f;
+    lastY = (sink->m_path->m_elementCount > 0)
+                ? sink->m_path->m_elements[sink->m_path->m_elementCount - 1]
+                      .m_y1
+                : 0.0f;
+    static int zeroLenKeeper = -1;
+    if (zeroLenKeeper < 0)
+    {
+        const char* zv = XSystem_environment("XGUI_PASS6_ZEROLEN");
+        zeroLenKeeper = (zv && zv[0] == '0' && zv[1] == '\0') ? 0 : 1;
+    }
+    if (zeroLenKeeper &&
+        sink->m_gridFit && sink->m_shear == 0.0f &&
+        sink->m_path->m_elementCount > 0 &&
+        snappedX == lastX && sy == lastY &&
+        fabsf(sx - (sink->m_path->m_elements[sink->m_path->m_elementCount - 1].m_x2)) >= 0.3f)
+    {
+        ok = painterPathAppendElt(sink->m_path,
+                                  XPainterPathElement_LineTo,
+                                  snappedX, sy, 0.0f, 0.0f, 0.0f, 0.0f);
+        if (!ok) return false;
+        sink->m_path->m_currentX = snappedX;
+        sink->m_path->m_currentY = sy;
+        painterOutlineStashDesignX(sink->m_path, sx);
+        return true;
+    }
+    ok = XPainterPath_lineTo(sink->m_path, snappedX, sy);
     if (ok && sink->m_gridFit && sink->m_shear == 0.0f)
         painterOutlineStashDesignX(sink->m_path, sx);
     return ok;
@@ -10613,8 +10601,11 @@ static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
     sink.cubicTo = painterOutlineCubicTo;
     sink.close = painterOutlineClose;
     XMemset(metrics, 0, sizeof(*metrics));
-    if (!XFontFace_loadOutlineGlyph_base(face, font, codepoint, metrics,
-                                         &sink))
+    /* P2.5 换点（§8）：经带字号载体的新槽 LoadOutlineGlyphScaled_base
+       加载——FT（唯一轮廓实现）由家族槽按 px 闭合公式供 hinted 轮廓
+       （度量/绘制同源）；无字号载体的 face 默认实现转发旧槽。 */
+    if (!XFontFace_loadOutlineGlyphScaled_base(face, font, scale, codepoint,
+                                               metrics, &sink))
     {
         /* 缺字形代理回退：原码点字库未收录时改画 ASCII 代理字形（见
            painterGlyphProxyCodepoint 注）；代理亦未收录才按缺字形失败
@@ -10628,8 +10619,8 @@ static bool painterOutlineBuildPath(const XFontFace* face, const XFont* font,
         XPainterPath_deinit(path);
         XPainterPath_init(path);
         XMemset(metrics, 0, sizeof(*metrics));
-        if (!XFontFace_loadOutlineGlyph_base(face, font, proxy, metrics,
-                                             &sink))
+        if (!XFontFace_loadOutlineGlyphScaled_base(face, font, scale, proxy,
+                                                   metrics, &sink))
         {
             XPainterPath_deinit(path);
             return false;
@@ -10890,15 +10881,16 @@ static int painterOutlineGlyphAdvance(const XFont* font, uint32_t cp,
     int cached;
     if (painterGlyphAdvanceCacheGet(face, cp, scaleKey, &cached))
         return cached;
-    if (!(XFontFace_loadOutlineGlyph_base(face, font, cp, &metrics, NULL) &&
+    if (!(XFontFace_loadOutlineGlyphScaled_base(face, font, scale, cp,
+                                                &metrics, NULL) &&
           metrics.advance > 0))
     {
         /* 缺字形：先试 ASCII 代理字形步进（同绘制回退口径），代理亦
            失败清零按 M 宽空白占位（既有口径）。缓存按原码点记。 */
         uint32_t proxy = painterGlyphProxyCodepoint(cp);
         if (proxy == cp ||
-            !XFontFace_loadOutlineGlyph_base(face, font, proxy, &metrics,
-                                             NULL))
+            !XFontFace_loadOutlineGlyphScaled_base(face, font, scale, proxy,
+                                                   &metrics, NULL))
             XMemset(&metrics, 0, sizeof(metrics));
     }
     if (metrics.advance > 0)
@@ -10939,6 +10931,16 @@ typedef struct PainterGlyphAlphaCacheEntry
     int m_top;    /**< 位图左上角相对基线 y 的偏移（像素）。 */
     int m_width;
     int m_height;
+    int m_originX; /**< 存入时的笔点绝对 x（x+translateX）。同一
+                       (face,cp,scaleKey) 在不同笔点产出的覆盖位图
+                       并不逐位相同：拟合/吸附链的浮点阈值以绝对
+                       坐标求值，基线量级不同会在 roundf/0.35 邻界
+                       上翻向（2026-10-09 页 0「与」双实例实证：
+                       (310,213) 实例横带齐整、(84,317) 实例同键
+                       却出弧形衰减行）。键不含笔点时后存者毒化
+                       先存者——命中方显示他实例字形（页 0 差异簇
+                       根因）。故笔点必须入键。 */
+    int m_originY;
     uint8_t* m_alpha; /**< width*height 覆盖率，堆分配。 */
     bool m_valid;
 } PainterGlyphAlphaCacheEntry;
@@ -10953,7 +10955,8 @@ static uint32_t g_glyphAlphaCacheStamp;
 static uint16_t g_glyphAlphaIndex[1024];
 
 static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
-    const XFontFace* face, uint32_t codepoint, uint32_t scaleKey)
+    const XFontFace* face, uint32_t codepoint, uint32_t scaleKey,
+    int originX, int originY)
 {
     uint32_t bucket;
     int i;
@@ -10968,7 +10971,8 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
             &g_glyphAlphaCache[g_glyphAlphaIndex[bucket] - 1u];
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
-            entry->m_scaleKey == scaleKey)
+            entry->m_scaleKey == scaleKey &&
+            entry->m_originX == originX && entry->m_originY == originY)
         {
             entry->m_stamp = ++g_glyphAlphaCacheStamp;
             return entry;
@@ -10979,7 +10983,8 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
         PainterGlyphAlphaCacheEntry* entry = &g_glyphAlphaCache[i];
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
-            entry->m_scaleKey == scaleKey)
+            entry->m_scaleKey == scaleKey &&
+            entry->m_originX == originX && entry->m_originY == originY)
         {
             entry->m_stamp = ++g_glyphAlphaCacheStamp;
             g_glyphAlphaIndex[bucket] = (uint16_t)(i + 1);
@@ -11019,6 +11024,7 @@ static bool painterGlyphAlphaCacheStore(PainterGlyphAlphaCacheEntry* slot,
                                         uint32_t codepoint, uint32_t scaleKey,
                                         const XFontOutlineGlyphMetrics*
                                             metrics,
+                                        int originX, int originY,
                                         int left, int top, int width,
                                         int height, const uint8_t* alpha)
 {
@@ -11043,6 +11049,8 @@ static bool painterGlyphAlphaCacheStore(PainterGlyphAlphaCacheEntry* slot,
     slot->m_scaleKey = scaleKey;
     slot->m_stamp = ++g_glyphAlphaCacheStamp;
     slot->m_metrics = *metrics;
+    slot->m_originX = originX;
+    slot->m_originY = originY;
     slot->m_left = left;
     slot->m_top = top;
     slot->m_width = width;
@@ -11359,9 +11367,10 @@ fallback:
 
 /**
  * @brief      outline 字形的软件抗锯齿光栅（TextAntialiasing 驱动）。
- * @details    与 GPU 图集路径共用 `painterGlyphContoursAlphaCoverage`
- *             灰度光栅器（文本软件路径 8x8 面积子采样，GPU 图集路径
- *             仍 4x4；8 子采样平滑覆盖率量化台阶，配合混合端
+ * @details    字形覆盖图统一经 `painterGlyphFtCoverage`（FreeType
+ *             smooth 光栅化器，唯一字形光栅化器——原与 GPU 图集路径
+ *             共用的自研面积子采样扫描线分支已随 XFONT_FT_RASTER 门
+ *             移除；GPU 图集路径同一产出），配合混合端
  *             XFONT_TEXT_CONTRAST_GAMMA_X10 对比曲线加浓笔画）；
  *             每像素按覆盖率经 putPixel 混合（putPixel 内处理裁剪、
  *             合成模式与边界）。仅支持单位/纯平移变换（与 GPU 条件
@@ -11454,7 +11463,18 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
             areas[contour] += prevX * ey - ex * prevY;
         if (e->m_type == XPainterPathElement_LineTo)
         {
-            if (fabsf(ey - prevY) <= 0.35f &&
+            if (XSystem_environment("XGUI_GRIDFIT_DEBUG") &&
+                prevY > 200.0f && prevY < 260.0f &&
+                prevX > 280.0f && prevX < 380.0f)
+                fprintf(stderr, "GFDBG-LL dy=%.9f dx=%.4f y=%.6f x=%.4f\n",
+                        ey - prevY, ex - prevX, (prevY + ey) * 0.5f, prevX);
+            /* 近平横门槛 0.35→0.7（2026-10-10「确」口底横蒸发根修）：
+               设计高 0.35~0.7px 的横带（口底横 dy≈0.7）此前被本门槛
+               拒收、落 pass5 独立取整——两缘横跨取整边界时塌进同一行
+               （零高蒸发、口不闭口，GRIDFIT=0 对照完整）。放宽后进
+               pass3 整带配对，带高 round(0.7)=1 保持。浅斜边会被轻微
+               拉平——笔画存活优先。 */
+            if (fabsf(ey - prevY) <= 0.7f &&
                 fabsf(ex - prevX) >= 0.5f)
             {
                 if (edgeCount < PAINTER_OUTLINE_HEDGE_MAX)
@@ -11479,6 +11499,15 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
         else if (isCurve)
         {
             float midY = (prevY + ey) * 0.5f;
+            if (XSystem_environment("XGUI_GRIDFIT_DEBUG") &&
+                prevY > 200.0f && prevY < 260.0f &&
+                prevX > 280.0f && prevX < 380.0f)
+                fprintf(stderr,
+                        "GFDBG-CV dy=%.9f dx=%.4f midY=%.6f x=%.4f "
+                        "c1dy=%.4f c2dy=%.4f\n",
+                        ey - prevY, ex - prevX, midY, prevX,
+                        e->m_y1 - midY,
+                        path->m_elements[i + 1].m_y1 - midY);
             if (fabsf(ey - prevY) <= 0.35f &&
                 fabsf(e->m_y1 - midY) <= PAINTER_OUTLINE_FLAT_TOL &&
                 fabsf(path->m_elements[i + 1].m_y1 - midY) <=
@@ -11672,6 +11701,16 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
                     loSnapped > prevBottom - 0.5f)
                     loSnapped = prevBottom + 1.0f;
                 delta = (loSnapped + width * 0.5f) - mid;
+                /* 平移上限守卫（2026-10-10「确」口底横蒸发根修）：同轮
+                   廓 LIFO 配对会把「口底横」这类与相邻笔画缘线序交错的
+                   短横配到错误的带上，delta 把整条带搬离原位 >1px。
+                   合法横带的 mid 本就贴近半整线、|delta| <= ~0.6（峨/帢
+                   实测 0.53/0.57）；超限即判错误配对，两边落 pass5 逐
+                   点取整（宁灰勿焊同政策）。 */
+                if (delta > 0.6f || delta < -0.6f)
+                {
+                    continue;
+                }
                 if (c >= 0 && c < PAINTER_OUTLINE_CONTOUR_MAX)
                     lastBottom[c] = loSnapped + width;
                 path->m_elements[edges[t].m_startIndex].m_y1 += delta;
@@ -11778,19 +11817,229 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
                     elemHold[k] = 1;
             }
         }
+        /* 短横带塌缩守卫（锚点域版，2026-10-10「确」口底横蒸发根修）：
+           设计高 0.35~1.0px 的横带两缘若为曲线端点（hinting 把平直横
+           编成 tame 曲线），相邻 LineTo 判据抓不到（「确」口底横左半
+           C→C 端点对 354.06/354.62 → pass5 独立取整同塌 354.5、零高
+           蒸发）。预扫锚点序列（MoveTo/LineTo/CurveTo 端点），相邻锚
+           点 round 后同 y 且设计 |dy|∈(0.05,1.0) → 按设计上下序错开
+           ±0.5。 */
+        {
+            float *snapY2 = (float *)XMalloc_System(
+                (size_t)path->m_elementCount * sizeof(float));
+            float ax2[1024];
+            float ay2[1024];
+            int ai2[1024];
+            int aC2[1024];
+            int an2 = 0;
+            int cc2 = -1;
+            if (snapY2)
+            {
+                for (i = 0; i < path->m_elementCount; ++i)
+                {
+                    XPainterPathElement* e = &path->m_elements[i];
+                    snapY2[i] = roundf(e->m_y1 - 0.5f) + 0.5f;
+                }
+                for (i = 0; i < path->m_elementCount && an2 < 1024; ++i)
+                {
+                    XPainterPathElement* e = &path->m_elements[i];
+                    if (e->m_type == XPainterPathElement_MoveTo) ++cc2;
+                    if (e->m_type == XPainterPathElement_CurveToData)
+                    {
+                        if (i + 1 >= path->m_elementCount ||
+                            path->m_elements[i + 1].m_type !=
+                                XPainterPathElement_CurveToData)
+                        {
+                            ax2[an2] = e->m_x1; ay2[an2] = e->m_y1;
+                            ai2[an2] = i; aC2[an2] = cc2; ++an2;
+                        }
+                        continue;
+                    }
+                    if (e->m_type == XPainterPathElement_CurveTo) continue;
+                    ax2[an2] = e->m_x1; ay2[an2] = e->m_y1;
+                    ai2[an2] = i; aC2[an2] = cc2; ++an2;
+                }
+                for (i = 1; i < an2; ++i)
+                {
+                    float dy = ay2[i] - ay2[i - 1];
+                    int iA = ai2[i - 1];
+                    int iB = ai2[i];
+                    if (aC2[i] != aC2[i - 1]) continue;
+                    if (snapY2[i] != snapY2[i - 1]) continue;
+                    if (dy > -1.0f && dy < 1.0f &&
+                        (dy > 0.05f || dy < -0.05f))
+                    {
+                        if (dy > 0.0f)
+                        {
+                            snapY2[iA] = snapY2[iA] - 0.5f;
+                            snapY2[iB] = snapY2[iB] + 0.5f;
+                        }
+                        else
+                        {
+                            snapY2[iB] = snapY2[iB] - 0.5f;
+                            snapY2[iA] = snapY2[iA] + 0.5f;
+                        }
+                    }
+                }
+            }
+            for (i = 0; i < path->m_elementCount; ++i)
+            {
+                XPainterPathElement* e = &path->m_elements[i];
+                if (e->m_type == XPainterPathElement_MoveTo) ++elementContour;
+                if (e->m_type == XPainterPathElement_CurveToData) continue;
+                if (elementContour >= 0 &&
+                    elementContour < PAINTER_OUTLINE_CONTOUR_MAX &&
+                    contourSkip[elementContour])
+                    continue;
+                if (elemHold && elemHold[i]) continue;
+                e->m_y1 = snapY2 ? snapY2[i]
+                                : (roundf(e->m_y1 - 0.5f) + 0.5f);
+            }
+            if (snapY2) XFree_System(snapY2);
+        }
+        /* 短横带塌缩守卫（2026-10-10「确」口底横蒸发根修）：设计高
+           0.35~1.0px 的横带两条缘不满足 pass3 的 |dy|<=0.35 近平横
+           门槛、落入本遍独立取整——roundf(y-0.5)+0.5 会把横跨取整边
+           界的两缘塌进同一行（口底横两缘 353.2/353.9 → 同塌 353.5，
+           零高蒸发，GRIDFIT=0 对照完整）。预扫路径序相邻端点对：取整
+           后等 y 且设计非零高（|dy|>0.05）的直线段两端，按设计上下
+           序强制错开成相邻两行（上缘 -0.5、下缘 +0.5），保持 >=1px
+           带高；其余端点照旧独立取整。与 pass3 的分工：pass3 管
+           近平横（dy<=0.35）的整带吸附，本守卫管 0.35~1.0px 中高带
+           的塌缩。 */
+        {
+            float *snapY = (float *)XMalloc_System(
+                (size_t)path->m_elementCount * sizeof(float));
+            if (snapY)
+            {
+                for (i = 0; i < path->m_elementCount; ++i)
+                {
+                    XPainterPathElement* e = &path->m_elements[i];
+                    snapY[i] = roundf(e->m_y1 - 0.5f) + 0.5f;
+                }
+                for (i = 1; i < path->m_elementCount; ++i)
+                {
+                    XPainterPathElement* pe = &path->m_elements[i - 1];
+                    XPainterPathElement* e = &path->m_elements[i];
+                    if (e->m_type == XPainterPathElement_CurveToData ||
+                        pe->m_type == XPainterPathElement_CurveToData)
+                        continue;
+                    if (pe->m_type != XPainterPathElement_LineTo &&
+                        e->m_type != XPainterPathElement_LineTo)
+                        continue;
+                    float a = pe->m_y1;
+                    float b = e->m_y1;
+                    float ra = snapY[i - 1];
+                    float rb = snapY[i];
+                    float dy = b - a;
+                    if (ra == rb && (dy > 0.05f || dy < -0.05f) &&
+                        dy > -1.0f && dy < 1.0f)
+                    {
+                        if (dy > 0.0f)
+                        {
+                            snapY[i - 1] = ra - 0.5f;
+                            snapY[i] = rb + 0.5f;
+                        }
+                        else
+                        {
+                            snapY[i] = rb - 0.5f;
+                            snapY[i - 1] = ra + 0.5f;
+                        }
+                    }
+                }
+            }
+            for (i = 0; i < path->m_elementCount; ++i)
+            {
+                XPainterPathElement* e = &path->m_elements[i];
+                if (e->m_type == XPainterPathElement_MoveTo) ++elementContour;
+                if (e->m_type == XPainterPathElement_CurveToData) continue;
+                if (elementContour >= 0 &&
+                    elementContour < PAINTER_OUTLINE_CONTOUR_MAX &&
+                    contourSkip[elementContour])
+                    continue;
+                if (elemHold && elemHold[i]) continue;
+                e->m_y1 = snapY ? snapY[i]
+                                : (roundf(e->m_y1 - 0.5f) + 0.5f);
+            }
+            if (snapY) XFree_System(snapY);
+        }
+        if (elemHold) XFree_System(elemHold);
+    }
+    /* pass 5.5：同列邻盒共享边对齐（2026-10-10「确」口竖断裂根修，
+       服务模式 700 几何 fbsnap 实证）。autohint 关闭后的原生 hinting
+       轮廓把「确」的口拆成 4 个独立闭合小盒（左右壁各一盒、上下部
+       各一盒），pass5 独立取整后相邻两盒的共享边错位（上盒底
+       347.5 / 下盒顶 348.0），0.47px 真缝 + 0.5px 边线错位在面板上
+       呈现为竖笔断 1-2 行（口不闭口）。修复：pass5 后扫描各轮廓的
+       包围盒，若两轮廓垂直相邻（缝 <1.2px）且左壁（或右壁）x 对齐
+       （差 <0.6px），把下轮廓整体平移使其顶边贴齐上轮廓底边——共
+       享边重合后竖笔连续。仅平移整轮廓（不改带宽），底横带随动但
+       保持 1px 高。 */
+    {
+        float bxMin[PAINTER_OUTLINE_CONTOUR_MAX];
+        float bxMax[PAINTER_OUTLINE_CONTOUR_MAX];
+        float byMin[PAINTER_OUTLINE_CONTOUR_MAX];
+        float byMax[PAINTER_OUTLINE_CONTOUR_MAX];
+        int bxValid[PAINTER_OUTLINE_CONTOUR_MAX];
+        int ci2 = -1;
+        int a;
+        int i2;
+        for (i = 0; i < PAINTER_OUTLINE_CONTOUR_MAX; ++i)
+            bxValid[i] = 0;
         for (i = 0; i < path->m_elementCount; ++i)
         {
             XPainterPathElement* e = &path->m_elements[i];
-            if (e->m_type == XPainterPathElement_MoveTo) ++elementContour;
+            if (e->m_type == XPainterPathElement_MoveTo) ++ci2;
+            if (ci2 < 0 || ci2 >= PAINTER_OUTLINE_CONTOUR_MAX) continue;
             if (e->m_type == XPainterPathElement_CurveToData) continue;
-            if (elementContour >= 0 &&
-                elementContour < PAINTER_OUTLINE_CONTOUR_MAX &&
-                contourSkip[elementContour])
-                continue;
-            if (elemHold && elemHold[i]) continue;
-            e->m_y1 = roundf(e->m_y1 - 0.5f) + 0.5f;
+            if (!bxValid[ci2])
+            {
+                bxMin[ci2] = bxMax[ci2] = e->m_x1;
+                byMin[ci2] = byMax[ci2] = e->m_y1;
+                bxValid[ci2] = 1;
+            }
+            else
+            {
+                if (e->m_x1 < bxMin[ci2]) bxMin[ci2] = e->m_x1;
+                if (e->m_x1 > bxMax[ci2]) bxMax[ci2] = e->m_x1;
+                if (e->m_y1 < byMin[ci2]) byMin[ci2] = e->m_y1;
+                if (e->m_y1 > byMax[ci2]) byMax[ci2] = e->m_y1;
+            }
         }
-        if (elemHold) XFree_System(elemHold);
+        for (a = 0; a < PAINTER_OUTLINE_CONTOUR_MAX; ++a)
+        {
+            if (!bxValid[a]) continue;
+            for (i2 = a + 1; i2 < PAINTER_OUTLINE_CONTOUR_MAX; ++i2)
+            {
+                float shift;
+                if (!bxValid[i2]) continue;
+                /* 垂直相邻：下盒顶 - 上盒底 ∈ (0, 1.2px) */
+                if (byMin[i2] - byMax[a] <= 0.01f ||
+                    byMin[i2] - byMax[a] >= 1.2f)
+                    continue;
+                /* 左壁对齐或右壁对齐（差 <0.6px） */
+                if (fabsf(bxMin[i2] - bxMin[a]) >= 0.6f &&
+                    fabsf(bxMax[i2] - bxMax[a]) >= 0.6f)
+                    continue; /* 左右壁都不对齐：非同列邻盒 */
+                shift = byMax[a] - byMin[i2]; /* 上移至贴齐 */
+                if (shift <= 0.01f || shift >= 1.2f) continue;
+                /* 平移下轮廓所有端点 */
+                {
+                    int cc = -1;
+                    for (i = 0; i < path->m_elementCount; ++i)
+                    {
+                        XPainterPathElement* e = &path->m_elements[i];
+                        if (e->m_type == XPainterPathElement_MoveTo) ++cc;
+                        if (cc != i2) continue;
+                        if (e->m_type == XPainterPathElement_CurveToData)
+                            continue;
+                        e->m_y1 -= shift;
+                    }
+                }
+                byMax[i2] -= shift;
+                byMin[i2] -= shift;
+            }
+        }
     }
     /* pass 6：塌缩竖笔修复（设计忠实，2026-10-05 全字库巡检峨 U+5CE8/
        帢 U+5E62/幭 U+5E3C 整笔消失根修）。sink 逐点 X 取整会把宽 <1px
@@ -11832,6 +12081,8 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
             float designs[8];
             float centers[8];
             float edges[8];
+            float spanLo[8];
+            float spanHi[8];
             float prevEdge = -1.0e9f;
             float colX;
             int clusterCount = 0;
@@ -11882,13 +12133,42 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
                 }
                 designs[a3 + 1] = dv;
             }
+            /* 聚类真去重（2026-10-08「即」右卩墙修复）：同缘多端点的
+               stash 值重复（两缘各 2 端点 {13.016,13.016,13.891,13.891}），
+               旧 centers 写法每点占一槽、重复值合并填同值——重复 center
+               槽成空巢（归簇 argmin 并列全落低 index），span 判据遇空巢
+               (hi-lo = -2e9) 必 broken，整组保守跳过 = 零宽墙永不修复
+               （峨/帢/幭当年每缘单端点无重复值，未触发）。改为真聚类：
+               只有偏离前一 center >0.3px 才新增簇，clusterCount 收缩到
+               互异簇数；designs[] 仍全量，归簇 argmin 不受影响。 */
             centers[0] = designs[0];
-            for (a = 1; a < clusterCount; ++a)
             {
-                if (designs[a] - centers[a - 1] > 0.3f)
-                    centers[a] = designs[a];
+                static int clusterDedup = -1;
+                int uniqueCount = 1;
+                if (clusterDedup < 0)
+                {
+                    const char* cv = XSystem_environment("XGUI_PASS6_ZEROLEN");
+                    clusterDedup = (cv && cv[0] == '0' && cv[1] == '\0') ? 0 : 1;
+                }
+                if (!clusterDedup)
+                {
+                    for (a = 1; a < clusterCount; ++a)
+                    {
+                        if (designs[a] - centers[a - 1] > 0.3f)
+                            centers[a] = designs[a];
+                        else
+                            centers[a] = centers[a - 1];
+                    }
+                }
                 else
-                    centers[a] = centers[a - 1];
+                {
+                    for (a = 1; a < clusterCount; ++a)
+                    {
+                        if (designs[a] - centers[uniqueCount - 1] > 0.3f)
+                            centers[uniqueCount++] = designs[a];
+                    }
+                    clusterCount = uniqueCount;
+                }
             }
             /* 簇 y 跨度重叠判据（W/w 拉丁折线防误修）：真塌缩墙的设
                计簇要么一簇跨全墙高（峨 U+5CE8 山部墙：一簇 {9.09} 两
@@ -11905,8 +12185,6 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
                兜底：其 0.75px 阈值低于 W/w 实测位移的事后测量口径
                （0.53/0.57px），只会错杀真墙的大相位推移。 */
             {
-                float spanLo[8];
-                float spanHi[8];
                 for (a = 0; a < clusterCount; ++a)
                 {
                     spanLo[a] = 1.0e9f;
@@ -11950,11 +12228,25 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
                 }
                 if (broken) continue;
             }
-            /* 贪心分配互异半整列边：最近优先、单调不交叉。 */
+            /* 贪心分配互异半整列边：最近优先、单调不交叉。
+               同缘噪声豁免（2026-10-09 页 0「收」丩竖断裂根修）：同一
+               条缘线的多个端点因曲线端设计 x 散布（±0.3px）被 0.3 聚类
+               撕成多簇（「收」丩左壁外缘 4 端点散布 131.17..131.73 撕成
+               2 簇），round 后同落一列——贪心若按「墙双缘」强推互异
+               （prev+1），第二簇被拽到相邻列与内缘撞列，环形自交蒸发
+               （fitted 实证左壁 131.5/80.5→131.5/88.11 变
+               132.5/80.5→132.5/88.5）。判据=冲突两簇的设计中心差：
+               >=0.8px 是真墙双缘（峨 9.09/9.97=0.88、「即」
+               13.016/13.891=0.875——掰开产出 1px 笔画）；<0.8px 是同缘
+               噪声（c2 131.17/131.73=0.56），两簇同列延续（零长段在
+               even-odd 下面积 0 无害，缘线不断）。 */
             for (a = 0; a < clusterCount; ++a)
             {
                 float de = roundf(centers[a] - 0.5f) + 0.5f;
-                if (de <= prevEdge + 0.5f) de = prevEdge + 1.0f;
+                if (de <= prevEdge + 0.5f)
+                    de = (centers[a] - centers[a - 1] >= 0.8f)
+                             ? prevEdge + 1.0f
+                             : prevEdge;
                 edges[a] = de;
                 prevEdge = de;
             }
@@ -11990,11 +12282,331 @@ static bool painterOutlineGridFitStrokesY(XPainterPath* path)
             }
         }
     }
+    /* pass 7：autohint 零高横段展开（2026-10-10「确」口底横蒸发根修）。
+       FT autohint（LIGHT+FORCE_AUTOHINT，>=13px 档）把 1px 横带的
+       两条缘塌成同 y 折返段（「确」口底横：built 即为
+       (425.62,353.5)→(427.27,353.5) 单线、无下缘——GRIDFIT=0 原生
+       hinting 轮廓对照双缘分离完整），even-odd 下零面积=口不闭口。
+       特征：同轮廓相邻两端点 |dy|<0.01、|dx|∈[1,4]、y 恰在半整线
+       （autohint 网格特征）。展开=两点 y 各 ±0.5，使 even-odd 在
+       [y-0.5,y+0.5] 覆盖一次。仅展开 1~4px 短段（长横带 autohint 不
+       塌缩），全字库巡检把守。 */
+    {
+        /* 锚点序列：每元素的"有效端点"（MoveTo/LineTo=自身 m_x1,y1；
+           CurveTo 端点在第二个 CurveToData）。相邻锚点构成几何边——
+           含曲线段（autohint 把平直横编成 tame 曲线，「确」口底横
+           左半即 C→C 端点对，朴素相邻元素判定被 CurveToData 阻断）。 */
+        float ax[512];
+        float ay[512];
+        int ai[512];
+        int aCont[512];
+        int an = 0;
+        int contourA = -1;
+        for (i = 0; i < path->m_elementCount && an < 512; ++i)
+        {
+            XPainterPathElement* e = &path->m_elements[i];
+            if (e->m_type == XPainterPathElement_MoveTo) ++contourA;
+            if (e->m_type == XPainterPathElement_CurveToData)
+            {
+                if (i + 1 >= path->m_elementCount ||
+                    path->m_elements[i + 1].m_type !=
+                        XPainterPathElement_CurveToData)
+                {
+                    ax[an] = e->m_x1; ay[an] = e->m_y1;
+                    ai[an] = i; aCont[an] = contourA; ++an;
+                }
+                continue;
+            }
+            if (e->m_type == XPainterPathElement_CurveTo) continue;
+            ax[an] = e->m_x1; ay[an] = e->m_y1;
+            ai[an] = i; aCont[an] = contourA; ++an;
+        }
+        for (i = 1; i < an; ++i)
+        {
+            float py1 = ay[i - 1];
+            float py2 = ay[i];
+            float dx = ax[i] - ax[i - 1];
+            int iA = ai[i - 1];
+            int iB = ai[i];
+            if (aCont[i] != aCont[i - 1]) continue;
+            if (fabsf(py2 - py1) >= 0.01f) continue;
+            if (py1 != roundf(py1 - 0.5f) + 0.5f) continue;
+            if (dx < 1.0f || dx > 4.0f) continue;
+            path->m_elements[iA].m_y1 = py1 - 0.5f;
+            path->m_elements[iB].m_y1 = py2 + 0.5f;
+        }
+    }
+    if (droppedEdges > 0) denseHit = true;
     if (droppedEdges > 0) denseHit = true;
     for (i = 0; i < PAINTER_OUTLINE_CONTOUR_MAX; ++i)
         if (contourSkip[i]) denseHit = true;
     return denseHit;
 }
+
+#if XFONT_FT_ON
+/* ========== FreeType smooth 字形光栅化（字形覆盖图唯一光栅化器） ==========
+ * [已移除 2026-10-07] XFONT_FT_RASTER 双档门与旧自研面积子采样扫描线
+ * 字形分支——按"FT 唯一轮廓字实现"裁定删除；字形 SW-AA 与 GPU 图集两处
+ * 缓存未命中光栅化点只走本块。普通矢量路径填充不受影响，仍走
+ * painterGlyphContoursAlphaCoverage。
+ * 只换「XPainterPath → 8 位 alpha 覆盖图」这一段的光栅化器：成品路径
+ * 经既有 painterPathBuildContours 展平后的顶点（网格对齐/斜切/展平
+ * 口径全部不变）转 26.6 定点 FT_Outline（×64，饱和钳位，全部直线段
+ * on 点），FT_Outline_Render DIRECT+AA 模式由捆绑 ftgrays 扫描覆盖
+ * 率，gray_spans 回调直写既有覆盖缓冲（清零语义不变，这里只写覆盖
+ * span）。填充规则 FT_OUTLINE_EVEN_ODD_FILL 与原扫描线同口径
+ * （外轮廓+counter 内洞）。 */
+
+/** @brief 进程级 FT_Library 的 painter 侧引用（P2.5 上移：单例本体、
+ *         懒初始化与失败永久锁存都收敛在 XFontFt_library()，§2.2——
+ *         初始化一次的成本口径不变；严禁逐字形初始化。XGui 文本绘制
+ *         为单 UI 线程模型，与既有静态字形/路径缓存同口径，不加锁）。
+ *         红线：库上挂着 XFontFt 家族槽 FT_Face，任何失败分支都不得
+ *         FT_Done_FreeType（全工程零调用点，§2.2/§6）。 */
+static FT_Library g_painterFtLibrary = NULL;
+/** @brief 朝向自检通过；此后不再探测（库初始化成功与否由 XFontFt 锁存）。 */
+static bool g_painterFtReady = false;
+/** @brief 引库/自检失败即永久置位，后续字形整路回退旧扫描线。 */
+static bool g_painterFtFailed = false;
+
+/** @brief 浮点 → 26.6 定点（×64），带饱和钳位。
+ *  @details FT_Pos 为 signed long；覆盖缓冲坐标本有界，仍钳进 ±2^31
+ *           （26.6 安全带）防极端值/NaN 溢出（NaN 按下界处理）。四舍
+ *           五入取最近整格点。 */
+static FT_Pos painterFtPos26_6(float v)
+{
+    double d = (double)v * 64.0;
+    if (!(d > -2147483648.0)) return (FT_Pos)-2147483648L;
+    if (d > 2147483647.0) return (FT_Pos)2147483647L;
+    return (FT_Pos)floor(d + 0.5);
+}
+
+/** @brief gray_spans 回调的直写目标描述。 */
+typedef struct PainterFtSpanSink
+{
+    uint8_t* m_alpha;  /**< 覆盖缓冲（调用方已清零）。 */
+    int m_width;       /**< 缓冲宽（像素）。 */
+    int m_height;      /**< 缓冲高（像素）。 */
+    bool m_binary;     /**< 非 AA 口径：覆盖≥128 记 255，否则留 0。 */
+} PainterFtSpanSink;
+
+/** @brief FT span 直写覆盖缓冲。
+ *  @details ftgrays 的 raster 行号沿 FT y-up 约定（clip 盒第 0 行是
+ *           底行），覆盖缓冲行 0 是顶行，故行号翻转。span 内覆盖值
+ *           恒定，逐 span 常量填充；0 不写（保持调用方清零语义）。 */
+static void painterFtGraySpans(int y, int count, const FT_Span* spans,
+                               void* user)
+{
+    PainterFtSpanSink* sink = (PainterFtSpanSink*)user;
+    int row;
+    int i;
+    if (!sink || !sink->m_alpha) return;
+    row = sink->m_height - 1 - y;
+    if (row < 0 || row >= sink->m_height) return;
+    for (i = 0; i < count; ++i)
+    {
+        int x = (int)spans[i].x;
+        int len = (int)spans[i].len;
+        uint8_t value;
+        uint8_t* line;
+        if (x < 0)
+        {
+            len += x;
+            x = 0;
+        }
+        if (x >= sink->m_width || len <= 0) continue;
+        if (len > sink->m_width - x) len = sink->m_width - x;
+        if (len <= 0) continue;
+        value = sink->m_binary
+                    ? (spans[i].coverage >= 128u ? 255u : 0u)
+                    : spans[i].coverage;
+        if (value == 0u) continue;
+        line = sink->m_alpha + (size_t)row * (size_t)sink->m_width + x;
+        XMemset(line, value, (size_t)len);
+    }
+}
+
+/** @brief 已展平轮廓 → FT_Outline → DIRECT+AA 光栅化直写 alpha。
+ *  @return FT 渲染成功返回 true；FT 未就绪/参数非法/渲染失败返回
+ *          false（调用方回退旧扫描线，重清零后重光栅化）。 */
+static bool painterFtCoverageRender(
+    const PainterPathFillContour* contours, int contourCount, float offsetX,
+    float offsetY, uint8_t* alpha, int width, int height, bool binary)
+{
+    PainterFtSpanSink sink;
+    FT_Outline outline;
+    FT_Raster_Params params;
+    FT_Vector* points = NULL;
+    unsigned char* tags = NULL;
+    unsigned short* ftContours = NULL;
+    int totalPoints = 0;
+    int usedContours = 0;
+    int pointIndex = 0;
+    int c;
+    int i;
+    int ftError;
+    /* 门用 library 而非 ready 标志：ready 在朝向自检通过后才置位，而
+     * 自检本身也要走本函数——用 ready 当门会让自检恒失败（首字形起
+     * 整路静默回退旧扫描线）。library 在自检前已由 XFontFt_library()
+     * 引好（P2.5 单例上移，§2.2）。 */
+    if (!g_painterFtLibrary || !contours || contourCount <= 0 || !alpha ||
+        width <= 0 || height <= 0)
+        return false;
+    for (c = 0; c < contourCount; ++c)
+        if (contours[c].m_count > 0 && contours[c].m_xs && contours[c].m_ys)
+            totalPoints += contours[c].m_count;
+    /* FT_Outline 的 n_points/n_contours 为 16 位；越界回退旧扫描线。 */
+    if (totalPoints <= 0 || totalPoints > 65535)
+        return false;
+    points = (FT_Vector*)XMalloc_System((size_t)totalPoints *
+                                        sizeof(*points));
+    tags = (unsigned char*)XMalloc_System((size_t)totalPoints);
+    ftContours = (unsigned short*)XMalloc_System(
+        (size_t)contourCount * sizeof(*ftContours));
+    if (!points || !tags || !ftContours)
+    {
+        if (points) XFree_System(points);
+        if (tags) XFree_System(tags);
+        if (ftContours) XFree_System(ftContours);
+        return false;
+    }
+    for (c = 0; c < contourCount; ++c)
+    {
+        const PainterPathFillContour* contour = &contours[c];
+        if (contour->m_count <= 0 || !contour->m_xs || !contour->m_ys)
+            continue; /* 空轮廓跳过（端点索引随实有顶点重排）。 */
+        ftContours[usedContours++] =
+            (unsigned short)(pointIndex + contour->m_count - 1);
+        for (i = 0; i < contour->m_count; ++i)
+        {
+            /* 覆盖缓冲坐标沿用覆盖光栅器（painterGlyphContoursAlpha-
+             * Coverage，路径填充侧）的「整数=像素中心」口径：像素
+             * i 的中心帧区间是 [i-0.5, i+0.5)。FT raster 单元 j 覆盖
+             * [64j,64j+64)，故 x 平移 +0.5 对齐单元；y 镜像取
+             * (height-0.5-by)，使缓冲行 r ↔ FT 单元 height-1-r（y-up
+             * ↔ 行 0=顶）。网格对齐笔画（边沿落在 N+0.5）由此落成整
+             * 行实覆盖，而不是被半覆盖稀释。 */
+            points[pointIndex].x =
+                painterFtPos26_6(contour->m_xs[i] + offsetX + 0.5f);
+            points[pointIndex].y =
+                painterFtPos26_6((float)height - 0.5f -
+                                 (contour->m_ys[i] + offsetY));
+            tags[pointIndex] = FT_CURVE_TAG_ON; /* 全直线段 on 点。 */
+            ++pointIndex;
+        }
+    }
+    XMemset(&outline, 0, sizeof(outline));
+    outline.n_contours = (unsigned short)usedContours;
+    outline.n_points = (unsigned short)pointIndex;
+    outline.points = points;
+    outline.tags = tags;
+    outline.contours = ftContours;
+    /* 与原自研扫描线同口径：奇偶填充（counter 内洞靠内外轮廓在同一条
+     * 扫描线上共同参与奇偶配对；even-odd 与轮廓绕向无关，翻转 y 后
+     * 绕向反转不影响结果）。 */
+    outline.flags = FT_OUTLINE_EVEN_ODD_FILL;
+    sink.m_alpha = alpha;
+    sink.m_width = width;
+    sink.m_height = height;
+    sink.m_binary = binary;
+    XMemset(&params, 0, sizeof(params));
+    params.source = &outline;
+    /* CLIP 标志必须带上：FT_Outline_Render 在 DIRECT 且无 CLIP 时会用
+     * 轮廓 CBox 预设 clip_box（ftoutln.c），盖掉下面显式给的盒。 */
+    params.flags = FT_RASTER_FLAG_DIRECT | FT_RASTER_FLAG_AA |
+                   FT_RASTER_FLAG_CLIP;
+    params.gray_spans = painterFtGraySpans;
+    params.user = &sink;
+    /* DIRECT 模式下 ftgrays 直接把 clip_box 当 raster 单元界（整数像
+     * 素单位，非 26.6），span 行列号相对该盒——恰好就是缓冲坐标系。
+     * 不设则 cbox 为空、零输出，必须给。 */
+    params.clip_box.xMin = 0;
+    params.clip_box.yMin = 0;
+    params.clip_box.xMax = width;
+    params.clip_box.yMax = height;
+    ftError = FT_Outline_Render(g_painterFtLibrary, &outline, &params);
+    XFree_System(points);
+    XFree_System(tags);
+    XFree_System(ftContours);
+    return ftError == 0;
+}
+
+/** @brief 朝向像素验证：已知几何（中心帧 [0.5,2.5)² 方块，恰为 4x3
+ *         缓冲的行 1/2、列 1/2 四个整像素）走同一条转换+光栅化管线，
+ *         覆盖必须恰好落在缓冲行 1/2 的列 1/2——同时证明 y-up→图像行
+ *         翻转与 +0.5 中心帧平移正确（镜像或平移缺失/重复都会落位
+ *         不同）。失败即禁用 FT 路径整路回退，绝不带病出倒置字形。 */
+static bool painterFtOrientationProbe(void)
+{
+    PainterPathFillContour contour;
+    float xs[4] = { 0.5f, 2.5f, 2.5f, 0.5f };
+    float ys[4] = { 0.5f, 0.5f, 2.5f, 2.5f };
+    uint8_t alpha[12]; /* 4x3，毒化填充：期望外必须保持原值。 */
+    contour.m_xs = xs;
+    contour.m_ys = ys;
+    contour.m_count = 4;
+    contour.m_closed = true;
+    XMemset(alpha, 0xAA, sizeof(alpha));
+    if (!painterFtCoverageRender(&contour, 1, 0.0f, 0.0f, alpha, 4, 3,
+                                 false))
+        return false;
+    /* 期望：行 1/2 的列 1/2 满覆盖；行 0 与列 0/3 保持 0xAA。 */
+    return alpha[5] != 0u && alpha[6] != 0u &&
+           alpha[9] != 0u && alpha[10] != 0u &&
+           alpha[0] == 0xAAu && alpha[1] == 0xAAu &&
+           alpha[2] == 0xAAu && alpha[3] == 0xAAu &&
+           alpha[4] == 0xAAu && alpha[7] == 0xAAu &&
+           alpha[8] == 0xAAu && alpha[11] == 0xAAu;
+}
+
+/** @brief 引共享 FT 库单例 + 朝向自检；失败永久回退（不重复尝试）。
+ *  @details P2.5（§2.2）：库所有权上移 XFontFt——懒初始化与失败永久
+ *           锁存都在 XFontFt_library() 内（初始化失败恒返回 NULL 永不
+ *           重试），painter 只改引用共享句柄。自检失败只置 painter
+ *           局部锁存、FT 光栅整路回退旧扫描线；库与其上的 XFontFt 家
+ *           族槽 FT_Face 原样存活——共享化后在自检失败分支 FT_Done_
+ *           FreeType 会令全部家族槽 face 悬空（UAF），阶段一独占期的
+ *           Done 分支就此废除（全工程零调用点，§6 门禁）。 */
+static bool painterGlyphFtEnsure(void)
+{
+    if (g_painterFtReady) return true;
+    if (g_painterFtFailed) return false;
+    g_painterFtLibrary = XFontFt_library();
+    if (!g_painterFtLibrary)
+    {
+        /* 引库失败（XFontFt 已锁存，永不重试）：只置 painter 局部锁存。 */
+        g_painterFtFailed = true;
+        return false;
+    }
+    if (!painterFtOrientationProbe())
+    {
+        /* §2.2 UAF 红线：只置锁存回退旧扫描线，绝不 FT_Done_FreeType、
+         * 不动共享库句柄（库非 painter 所有，且家族槽 face 挂在其上）。 */
+        g_painterFtFailed = true;
+        return false;
+    }
+    g_painterFtReady = true;
+    return true;
+}
+
+/** @brief 字形覆盖图统一入口（两个缓存未命中光栅化点共用）。
+ *  @details FT 是字形覆盖图的唯一光栅化器（旧扫描线回退分支已随
+ *           XFONT_FT_RASTER 门移除）；库未就绪/朝向自检失败/渲染失败
+ *           一律返回 false——调用方按绘制失败处理（family 槽 face 本就
+ *           挂在同一 FT 库单例上，库不可用时轮廓 face 亦无从解析，
+ *           本入口实际不可达失败仅剩防御语义）。binary=true 对应非
+ *           AA 文本的二值口径（GPU 非 AA 文本），≥128 记 255。 */
+static bool painterGlyphFtCoverage(const PainterPathFillContour* contours,
+                                   int contourCount, float offsetX,
+                                   float offsetY, uint8_t* alpha,
+                                   int width, int height, bool binary)
+{
+    if (!painterGlyphFtEnsure())
+        return false;
+    return painterFtCoverageRender(contours, contourCount, offsetX, offsetY,
+                                   alpha, width, height, binary);
+}
+#endif /* XFONT_FT_ON */
 
 static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                                               int baselineY, uint32_t cp,
@@ -12035,12 +12647,36 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
     bool gridfit;
     int boldTier;
     bool outlineDenseGlyph = false;
+    const XFontFace* outlineFace = NULL; /* 真 Bold 判定用 face（12278 取）。 */
     if (gridfitOverride < 0)
     {
         const char* v = XSystem_environment("XGUI_TEXT_GRIDFIT");
         gridfitOverride = (v && v[0] == '0' && v[1] == '\0') ? 0 : 1;
     }
     gridfit = (XFONT_TEXT_GRIDFIT != 0) && gridfitOverride != 0;
+    /* 中字号档免网格对齐（2026-10-10「确」口不闭口终版根修）：13~19px
+       的按钮/正文文字在 GRIDFIT 下反复出现口不闭口类结构损伤（底横
+       蒸发、竖笔断裂——本日四轮像素级取证），而 GRIDFIT=0 对照位图
+       逐次完整。网格对齐的收益（锐度）在此档不敌结构损伤；20px 以上
+       笔画充裕不受影响。设备/桌面双端一致。 */
+    if (gridfit)
+    {
+        const XFontFace* gfFace = XFont_face(&painter->m_state.m_font);
+        XFontFaceInfo gfInfo;
+        if (gfFace &&
+            XFontFace_info_base(gfFace, &painter->m_state.m_font,
+                                &gfInfo) &&
+            gfInfo.m_kind == XFontFace_Outline &&
+            gfInfo.m_outline.unitsPerEm > 0)
+        {
+            double gfPx = (double)scale *
+                (double)gfInfo.m_outline.unitsPerEm;
+            if (gfPx < 20.0)  /* 13~19px 结构损伤档 + <=12px 小字同害
+                                 （hint 行「动/即/时」右部断笔实证）：
+                                 20px 以下全部免网格 */
+                gridfit = false;
+        }
+    }
     boldTier = painterBoldTierForWeight(
         XFont_weight(&painter->m_state.m_font));
     if (!painter || painter->m_deviceKind != XPainterDevice_Image ||
@@ -12063,16 +12699,42 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                          (translateX == (float)tx &&
                           translateY == (float)ty);
         const XFontFace* face = XFont_face(&painter->m_state.m_font);
+        /* 真 Bold 字体文件命中（XFontFt 字重变体槽，2026-10-08）：字形
+           骨架已是 Bold，跳过合成加浓防双重加粗——boldTier 归零（缓存
+           键随之不带档位，真 Bold 字形与常规字形共用缓存条目即正确：
+           同一 face 同一字形只有一种呈现）。 */
+        outlineFace = face;
+        if (boldTier > 0 && face)
+        {
+            XFontFaceInfo faceInfoBold;
+            if (XFontFace_info_base(face, &painter->m_state.m_font,
+                                    &faceInfoBold) &&
+                faceInfoBold.m_kind == XFontFace_Outline &&
+                faceInfoBold.m_outline.m_ftRealBold)
+            {
+                boldTier = 0;
+            }
+        }
         uint32_t scaleKey = painterOutlineCacheKey(
             scale, XFont_italic(&painter->m_state.m_font),
             gridfit,
-            painterBoldTierForWeight(
-                XFont_weight(&painter->m_state.m_font)));
+            boldTier);
         PainterGlyphAlphaCacheEntry* entry =
-            cacheable ? painterGlyphAlphaCacheFind(face, cp, scaleKey) : NULL;
+            cacheable ? painterGlyphAlphaCacheFind(face, cp, scaleKey,
+                                                   x + tx, baselineY + ty)
+                      : NULL;
         if (entry)
         {
             if (outMetrics) *outMetrics = entry->m_metrics;
+            if (cp == 0x4E0E && XSystem_environment("XGUI_GRIDFIT_DEBUG"))
+                fprintf(stderr,
+                        "GFDBG-CACHEHIT base=%d x=%d left=%d top=%d "
+                        "w=%d h=%d scaleKey=%u ink=%08x\n",
+                        baselineY, x, entry->m_left, entry->m_top,
+                        entry->m_width, entry->m_height,
+                        (unsigned)scaleKey,
+                        (unsigned)painterApplyOpacity(
+                            color, painter->m_state.m_opacity));
             painterGlyphAlphaBlend(painter, entry->m_alpha,
                                    x + tx + entry->m_left,
                                    baselineY + ty + entry->m_top,
@@ -12212,10 +12874,10 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                     slot, XFont_face(&painter->m_state.m_font), cp,
                     painterOutlineCacheKey(
                         scale, XFont_italic(&painter->m_state.m_font),
-                        gridfit,
-                        painterBoldTierForWeight(
-                            XFont_weight(&painter->m_state.m_font))),
-                    &metrics,
+                        gridfit, boldTier), /* 真 Bold 归零后的 tier，
+                                               与查找键同口径（2026-10-09
+                                               存取不对称修复）。 */
+                    &metrics, x + tx, baselineY + ty,
                     0, 0, 1, 1, &blank);
             }
         }
@@ -12241,13 +12903,14 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
         return false;
     }
     XMemset(alpha, 0, (size_t)width * (size_t)height);
-    ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
-                                           -(float)left, -(float)top,
-                                           alpha, width, height, 8,
-                                           /* 字形轮廓维持 OddEven 既有口径
-                                              （字形反走样基线不随本次填充
-                                              规则修复变化）。 */
-                                           XPainterFillRule_OddEven);
+    /* 缓存未命中才到达此处；FreeType smooth 光栅化器产出同一 8 位覆盖
+       图（binary=false 即 AA 灰度口径）。FT 是唯一字形光栅化器——
+       旧扫描线回退分支已随 XFONT_FT_RASTER 门移除，失败按绘制失败
+       处理（不写出半成品覆盖）。 */
+    ok = painterGlyphFtCoverage(contours, contourCount, -(float)left,
+                                -(float)top, alpha, width, height, false);
+    if (!ok && XSystem_environment("XGUI_GRIDFIT_DEBUG"))
+        fprintf(stderr, "GFDBG-FTFAIL cp=U+%04X\n", (unsigned)cp);
     painterPathFillContoursFree(&contours, &contourCount, &contourCapacity);
     if (ok && gridfit)
     {
@@ -12372,14 +13035,19 @@ static bool painterDrawOutlineGlyphSoftwareAA(XPainter* painter, int x,
                     slot, face, cp,
                     painterOutlineCacheKey(
                         scale, XFont_italic(&painter->m_state.m_font),
-                        gridfit,
-                        painterBoldTierForWeight(
-                            XFont_weight(&painter->m_state.m_font))),
-                    &metrics, left - (x + tx), top - (baselineY + ty),
+                        gridfit, boldTier), /* 与查找键同口径。 */
+                    &metrics, x + tx, baselineY + ty,
+                    left - (x + tx), top - (baselineY + ty),
                     width, height, alpha);
             }
         }
 #endif /* XFONT_GLYPH_ALPHA_CACHE_ON && ... && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
+        if (cp == 0x4E0E && XSystem_environment("XGUI_GRIDFIT_DEBUG"))
+            fprintf(stderr,
+                    "GFDBG-SWBLEND base=%d pen=%d left=%d top=%d w=%d "
+                    "h=%d gridfit=%d tier=%d dense=%d\n",
+                    baselineY, x, left, top, width, height, (int)gridfit,
+                    boldTier, (int)outlineDenseGlyph);
         painterGlyphAlphaBlend(painter, alpha, left, top, width, height,
                                ink);
     }
@@ -12410,6 +13078,9 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
         painterDrawOutlineGlyphSoftwareAA(painter, x, baselineY, cp, color,
                                           scale, outMetrics))
         return true;
+    if (XSystem_environment("XGUI_GRIDFIT_DEBUG"))
+        fprintf(stderr, "GFDBG-FALLBACK cp=U+%04X x=%d base=%d\n",
+                (unsigned)cp, x, baselineY);
     face = XFont_face(&painter->m_state.m_font);
 #if XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0
     /* The cache stores user-space paths rooted at (0, 0).  Only use it for
@@ -12467,6 +13138,8 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
             painter->m_state.m_brushColor = savedBrushColor;
         }
 #endif /* XPAINTER_BRUSH_ON */
+        if (cp == 0x4E0E && XSystem_environment("XGUI_GRIDFIT_DEBUG"))
+            fprintf(stderr, "GFDBG-OLDCACHE base=%d x=%d\n", baselineY, x);
         return ok;
     }
 #endif /* XFONT_OUTLINE_CACHE_ON && XFONT_OUTLINE_CACHE_ENTRIES > 0 */
@@ -12491,9 +13164,13 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
     sink.quadTo = painterOutlineQuadTo;
     sink.cubicTo = painterOutlineCubicTo;
     sink.close = painterOutlineClose;
-    ok = XFontFace_loadOutlineGlyph_base(
+    /* P2.5 换点（§8）：本分支在 TextAntialiasing 关/非 Image 记录器
+       后端/轮廓缓存关闭时是主绘制路径，函数自带 scale 形参——FT 档
+       必须同供 hinted 轮廓，否则与缓存路径渲染不一致（静默退化为
+       scale=1.0 无 hint 轮廓）。无字号载体的 face 默认实现转发旧槽。 */
+    ok = XFontFace_loadOutlineGlyphScaled_base(
         XFont_face(&painter->m_state.m_font), &painter->m_state.m_font,
-        cp, &metrics, &sink);
+        scale, cp, &metrics, &sink);
     if (!ok)
     {
         /* 缺字形代理回退（同 painterOutlineBuildPath 口径）：清空半途
@@ -12509,9 +13186,9 @@ static bool painterDrawOutlineGlyph(XPainter* painter, int x, int baselineY,
                 XPainterPath_init(path);
             }
             XMemset(&metrics, 0, sizeof(metrics));
-            ok = XFontFace_loadOutlineGlyph_base(
+            ok = XFontFace_loadOutlineGlyphScaled_base(
                 XFont_face(&painter->m_state.m_font),
-                &painter->m_state.m_font, proxy, &metrics, &sink);
+                &painter->m_state.m_font, scale, proxy, &metrics, &sink);
         }
     }
     if (outMetrics) *outMetrics = metrics;
@@ -12582,9 +13259,42 @@ static int painter8x16GlyphAdvance(const XFontGlyphDsc* dsc,
     return painter8x16Metric(table ? table->m_width : 0, scale);
 }
 
-static int painterCodepointAdvance(const XFont* font,
-                                   const PainterBitmapFontTable* table,
-                                   float scale, uint32_t cp)
+/** @brief [字距接线 2026-10-07] Qt 口径的字距附加量：letterSpacing
+ *         逐字形附加（百分比档按本字形步进的比例增量，100=不变；
+ *         绝对档按像素值），wordSpacing 仅空格字形后附加像素值。
+ *         缺省（标志未置/值为 0/100）零附加，存量行为零扰动。
+ *         kerning 暂无 kern 表应用点（见 XFont.h m_kerning 注）。 */
+static int painterFontExtraAdvance(const XFont* font, int baseAdvance,
+                                   uint32_t cp)
+{
+    int extra = 0;
+    if (!font || cp < 0x20u)
+        return 0;
+    if (font->m_letterSpacing)
+    {
+        if (font->m_letterSpacingType == XFont_AbsoluteSpacing)
+        {
+            float v = font->m_letterSpacingValue;
+            extra += (int)(v + (v >= 0.0f ? 0.5f : -0.5f));
+        }
+        else if (font->m_letterSpacingValue != 100.0f)
+        {
+            extra += (int)((float)baseAdvance *
+                           (font->m_letterSpacingValue - 100.0f) / 100.0f +
+                           0.5f);
+        }
+    }
+    if (cp == (uint32_t)' ' && font->m_wordSpacing)
+    {
+        float v = font->m_wordSpacingValue;
+        extra += (int)(v + (v >= 0.0f ? 0.5f : -0.5f));
+    }
+    return extra;
+}
+
+static int painterCodepointAdvanceBase(const XFont* font,
+                                       const PainterBitmapFontTable* table,
+                                       float scale, uint32_t cp)
 {
 #if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
     if (table && table->m_bpp == 0)
@@ -12621,6 +13331,15 @@ static int painterCodepointAdvance(const XFont* font,
     painterGlyphAdvanceCachePut(face, cp, scaleKey, cached);
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     return cached;
+}
+
+/** @brief 步进 + 字距附加（度量/断行/绘制三路共用的唯一入口口径）。 */
+static int painterCodepointAdvance(const XFont* font,
+                                   const PainterBitmapFontTable* table,
+                                   float scale, uint32_t cp)
+{
+    int base = painterCodepointAdvanceBase(font, table, scale, cp);
+    return base + painterFontExtraAdvance(font, base, cp);
 }
 
 static bool painterLoadGlyph(const XFont* font, uint32_t cp,
@@ -13145,11 +13864,17 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
                               ? xpainter_prof_now_ns() : 0;
         /* 下划线/删除线/上划线：GPU 文本快速路径（painterGpuDrawText）
            只画字形、不渲染装饰线（对称于 QFont 语义）；带装饰的文本
-           一律走软件光栅局部提交，保证三后端一致（Phase 3.2 GPU 回归
-           [C1-FAIL] QSS 下划线修复）。 */
+           一律走软件光栅局部提交——软件循环按字体标志补画三线
+           （painterDrawStrikeOverline），保证三后端一致（Phase 3.2 GPU
+           回归 [C1-FAIL] QSS 下划线修复）。 */
         bool hasDecoration = XFont_underline(&self->m_state.m_font) ||
                              XFont_strikeOut(&self->m_state.m_font) ||
                              XFont_overline(&self->m_state.m_font);
+        /* [字距闭合] GPU 快路径不施加 letterSpacing/wordSpacing；带字距
+         * 的字体同样改走软件局部提交，保证与度量口径一致。 */
+        hasDecoration = hasDecoration ||
+                        self->m_state.m_font.m_letterSpacing ||
+                        self->m_state.m_font.m_wordSpacing;
         if (!hasDecoration &&
             painterGpuDrawText(self, x, baselineY, utf8, color))
         {
@@ -13226,6 +13951,7 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
 #if XFONT_OUTLINE_ON && XPAINTER_PATH_ON
             if (table.m_bpp == 0)
             {
+                int xBefore = x;
                 XFontOutlineGlyphMetrics metrics;
                 bool drawn;
                 XMemset(&metrics, 0, sizeof(metrics));
@@ -13238,6 +13964,13 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
                 else
                     x += painterOutlineGlyphAdvance(&self->m_state.m_font, cp,
                                                     &table, scale);
+                x += painterFontExtraAdvance(&self->m_state.m_font,
+                                             x - xBefore, cp); /* 字距。 */
+                /* [装饰修复] 软件循环按字体标志补画删除线/上划线
+                 *（下划线在 painterDrawCodepoint 内），此前 GPU/软件两路
+                 * 经 drawText 时三线均被静默丢弃。 */
+                painterDrawStrikeOverline(self, xBefore, x - xBefore,
+                                          baselineY, color, &table, scale);
                 continue;
             }
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
@@ -13251,7 +13984,15 @@ bool XPainter_drawText(XPainter* self, int x, int baselineY,
                     continue;
                 painter8x16DrawGlyphScaled(self, x, baselineY, color,
                                            glyphData, scale, &glyphTable, &dsc);
-                x += painter8x16GlyphAdvance(&dsc, &table, scale);
+                {
+                    int xBefore = x;
+                    x += painter8x16GlyphAdvance(&dsc, &table, scale);
+                    x += painterFontExtraAdvance(&self->m_state.m_font,
+                                                 x - xBefore, cp); /* 字距。 */
+                    painterDrawStrikeOverline(self, xBefore, x - xBefore,
+                                              baselineY, color, &table,
+                                              scale);
+                }
             }
             if (cp < 0x20u) continue;
         }
@@ -13309,13 +14050,16 @@ int XPainter_textGlyphAscent(const XFont* font)
     float scale = painterBitmapScaleForTable(font, &table);
     if (table.m_bpp == 0) {
         /* outline 表：查询代表字形（'A'）的盒参数，与绘制定位公式
-           （baselineY - (box_h + ofs_y)*scale）同源。 */
+           （baselineY - (box_h + ofs_y)*scale）同源。P2.5 换点（§8）：
+           scale 在手且绘制定位在 FT 档用 hinted 几何，盒查询须经新槽
+           与绘制同源（无字号载体的 face 默认实现转发旧槽）。 */
         const XFontFace* face = XFont_face(font);
         XFontOutlineGlyphMetrics metrics;
         XMemset(&metrics, 0, sizeof(metrics));
         if (face &&
-            XFontFace_loadOutlineGlyph_base(face, font, (uint32_t)'A',
-                                            &metrics, NULL)) {
+            XFontFace_loadOutlineGlyphScaled_base(face, font, scale,
+                                                  (uint32_t)'A', &metrics,
+                                                  NULL)) {
             int top = metrics.yMax;
             return top > 0 ? painter8x16Edge(top, scale) : 0;
         }
@@ -14587,13 +15331,13 @@ static bool painterGpuDrawOutlineGlyph(XPainter* self, int x, int baselineY,
             return false;
         }
         XMemset(alpha, 0, (size_t)width * (size_t)height);
-        ok = painterGlyphContoursAlphaCoverage(contours, contourCount,
-                                               -(float)left, -(float)top,
-                                               alpha, width, height,
-                                               glyphAntialias ? 4 : 1,
-                                               /* 字形轮廓维持 OddEven 既有
-                                                  口径（同软件字形路径）。 */
-                                               XPainterFillRule_OddEven);
+        /* GPU 图集未命中的 CPU 光栅点同走 smooth 光栅化器；非 AA 文本
+           （glyphAntialias=false）保持二值口径（键 flags bit0 语义
+           不变，≥128 记 255）。FT 是唯一字形光栅化器——旧扫描线回退
+           分支已随 XFONT_FT_RASTER 门移除。 */
+        ok = painterGlyphFtCoverage(contours, contourCount,
+                                    -(float)left, -(float)top,
+                                    alpha, width, height, !glyphAntialias);
         if (!ok)
         {
             XFree_System(alpha);
@@ -16459,7 +17203,11 @@ static bool painterCodepointIsRTL(uint32_t cp)
            (cp >= 0x10800u && cp <= 0x10fffu);
 }
 
-/** @brief 在 UTF-8 文本中寻找首个强 RTL 码点。 */
+/** @brief first-strong 方向判定（对标 Qt QString::isRightToLeft 的
+ *         QtPrivate::isRightToLeft：按序扫描，首个强方向字符定全局——
+ *         先遇强 L 返回 false，先遇强 R/AL 返回 true，扫完维持 LTR
+ *         缺省。旧实现「含任一强 RTL 即 RTL」使前 L 后 R 的混合文本
+ *         对齐侧与 Qt 相反）。 */
 static bool painterTextHasRTL(const char* utf8)
 {
     const char* p = utf8;
@@ -16472,6 +17220,15 @@ static bool painterTextHasRTL(const char* utf8)
             break;
         if (painterCodepointIsRTL(cp))
             return true;
+        /* 强 LTR：Latin/Cyrillic/Greek/Armenian 常用区——先遇即判 LTR。 */
+        if ((cp >= 0x0041u && cp <= 0x005Au) ||
+            (cp >= 0x0061u && cp <= 0x007Au) ||
+            (cp >= 0x00C0u && cp <= 0x024Fu) ||
+            (cp >= 0x0370u && cp <= 0x04FFu) ||
+            (cp >= 0x0531u && cp <= 0x058Fu) ||
+            (cp >= 0x1E00u && cp <= 0x1FFFu) ||
+            (cp >= 0x2C60u && cp <= 0x2C7Fu))
+            return false;
     }
     return false;
 }
@@ -16526,6 +17283,107 @@ static int painterTextLinePixelWidth(const XFont* font,
     return width;
 }
 
+/** @brief [像素断行 2026-10-07] 超宽断行：词边界回退（行尾空白不进本行、
+ *         下一行跳过空格串——Qt WordWrap 缺省不含行尾空格）或硬断
+ *         （WrapAnywhere/强制两端对齐/无空格可退）。当前字形经
+ *         *p = charStart 留待下一行重新处理；行首单字形即超宽的防呆
+ *         由调用方 lineStart < charStart 判据保证。
+ *  @return false=行缓冲扩容失败（OOM，零副作用，调用方回滚）。 */
+static bool xpainterWrapBreakLine(XPainter* self,
+                                  const PainterBitmapFontTable* table,
+                                  float scale, int charW,
+                                  bool expandTabs, int mnemonicMode,
+                                  PainterTextLine** lines,
+                                  PainterTextLine* stackLines, int* lineCap,
+                                  int* lineCount, const char** lineStart,
+                                  const char** p, const char* charStart,
+                                  int* curWidth, int* curCount, int* col,
+                                  bool wrap, bool wrapAnywhere)
+{
+    const char* start = *lineStart;
+    if (wrap && !wrapAnywhere)
+    {
+        const char* q = start;
+        const char* nonSpaceEnd = NULL;
+        const char* afterSpaces = NULL;
+        while (q < charStart)
+        {
+            uint32_t cc = painter8x16DecodeNext(&q);
+            if (cc == 0u)
+                break;
+            if (cc == ' ')
+                afterSpaces = q;
+            else
+                nonSpaceEnd = q;
+        }
+        if (nonSpaceEnd && nonSpaceEnd > start)
+        {
+            const char* newStart = afterSpaces ? afterSpaces : nonSpaceEnd;
+            if (!painterTextLinesEnsure(lines, stackLines, lineCap,
+                                        *lineCount + 1))
+                return false;
+            (*lines)[*lineCount].m_start = start;
+            (*lines)[*lineCount].m_end = nonSpaceEnd;
+            (*lines)[*lineCount].m_charCount =
+                painterCountChars(start, nonSpaceEnd);
+            ++(*lineCount);
+            *lineStart = newStart;
+            *p = charStart; /* 当前字形留待下一行处理 */
+            *curWidth = painterTextLinePixelWidth(&self->m_state.m_font,
+                                                  table, scale, newStart,
+                                                  charStart, charW,
+                                                  expandTabs, mnemonicMode);
+            *curCount = painterCountChars(newStart, charStart);
+            *col = *curCount;
+            return true;
+        }
+    }
+    if (!painterTextLinesEnsure(lines, stackLines, lineCap, *lineCount + 1))
+        return false;
+    (*lines)[*lineCount].m_start = start;
+    (*lines)[*lineCount].m_end = charStart;
+    (*lines)[*lineCount].m_charCount = painterCountChars(start, charStart);
+    ++(*lineCount);
+    *lineStart = charStart;
+    *p = charStart;
+    *curWidth = 0;
+    *curCount = 0;
+    *col = 0;
+    return true;
+}
+
+/** @brief 画删除线/上划线条（对标 Qt drawTextItemDecoration 的
+ *         StrikeOut/OverLine 三线之一；下划线已在本函数同点实现）。
+ *         条覆盖本字形区间 [x, x+advance)——推进前调用，宽=真实
+ *         步进；y 位置随基线与字高推算，与 Qt 装饰线同口径。 */
+static void painterDrawStrikeOverline(XPainter* self, int x, int advance,
+                                      int baselineY, uint32_t color,
+                                      const PainterBitmapFontTable* table,
+                                      float scale)
+{
+    int ascent = painter8x16Metric(table ? table->m_ascent : 0, scale);
+    if (advance <= 0)
+        return;
+    if (XFont_strikeOut(&self->m_state.m_font))
+    {
+        XRect sr;
+        sr.x = x;
+        sr.y = baselineY - ascent / 2;
+        sr.width = advance;
+        sr.height = painter8x16Metric(1, scale);
+        XPainter_fillRect(self, &sr, color);
+    }
+    if (XFont_overline(&self->m_state.m_font))
+    {
+        XRect orr;
+        orr.x = x;
+        orr.y = baselineY - ascent;
+        orr.width = advance;
+        orr.height = painter8x16Metric(1, scale);
+        XPainter_fillRect(self, &orr, color);
+    }
+}
+
 /** @brief 绘制一个字形（control 仅占位不画），underline 时画下划线。 */
 static int painterDrawCodepoint(XPainter* self,
                                  const PainterBitmapFontTable* table,
@@ -16566,7 +17424,11 @@ static int painterDrawCodepoint(XPainter* self,
                     r.height = painter8x16Metric(1, scale);
                     XPainter_fillRect(self, &r, color);
                 }
-                return advance;
+                painterDrawStrikeOverline(self, x, advance, baselineY,
+                                          color, table, scale);
+                return advance +
+                       painterFontExtraAdvance(&self->m_state.m_font,
+                                               advance, cp);
             }
             /* GPU 字形失败：合并已画内容并整帧降级后继续软件补画本字形。 */
             painterGpuFallback(self);
@@ -16587,7 +17449,10 @@ static int painterDrawCodepoint(XPainter* self,
             r.height = painter8x16Metric(1, scale);
             XPainter_fillRect(self, &r, color);
         }
-        return advance;
+        painterDrawStrikeOverline(self, x, advance, baselineY, color,
+                                  table, scale);
+        return advance + painterFontExtraAdvance(&self->m_state.m_font,
+                                                 advance, cp);
     }
 #endif /* XFONT_OUTLINE_ON && XPAINTER_PATH_ON */
     unsigned char glyphData[XFONT_BITMAP_MAX_HEIGHT *
@@ -16611,7 +17476,13 @@ static int painterDrawCodepoint(XPainter* self,
         r.height = painter8x16Metric(1, scale);
         XPainter_fillRect(self, &r, color);
     }
-    return painter8x16GlyphAdvance(&dsc, table, scale);
+    {
+        int advance = painter8x16GlyphAdvance(&dsc, table, scale);
+        painterDrawStrikeOverline(self, x, advance, baselineY, color,
+                                  table, scale);
+        return advance + painterFontExtraAdvance(&self->m_state.m_font,
+                                                 advance, cp);
+    }
 }
 
 /** @brief 用当前字体绘制一段 UTF-8 运行段（仅单行，不做换行）。 */
@@ -16696,29 +17567,14 @@ static void painterDrawTextRun(XPainter* self,
             x += spaceBonus + (spaceDrawn < spaceRem ? 1 : 0);
             ++spaceDrawn;
         }
+        /* 删除线/上划线改在 painterDrawCodepoint 内与 underline 同点
+         * 绘制（推进前 x、真实 advance；[几何修复 2026-10-07] 原先在
+         * 推进后画、宽取表 'M' 宽，每条错位一个字形且末字形后多一条
+         * 出界条）。 */
         x += painterDrawCodepoint(self, table, scale, x, baselineY,
                                   cp, color,
                                   XFont_underline(&self->m_state.m_font),
                                   outlinePath);
-        /* 删除线/上划线（对标 QFont::strikeOut/overline，按字形推进绘制）。 */
-        if (XFont_strikeOut(&self->m_state.m_font)) {
-            XRect sr;
-            sr.x = x;
-            sr.y = baselineY - painter8x16Metric(table ? table->m_ascent : 0,
-                                                scale) / 2;
-            sr.width = painter8x16Metric(table ? table->m_width : 0, scale);
-            sr.height = painter8x16Metric(1, scale);
-            XPainter_fillRect(self, &sr, color);
-        }
-        if (XFont_overline(&self->m_state.m_font)) {
-            XRect orr;
-            orr.x = x;
-            orr.y = baselineY - painter8x16Metric(table ? table->m_ascent : 0,
-                                                 scale);
-            orr.width = painter8x16Metric(table ? table->m_width : 0, scale);
-            orr.height = painter8x16Metric(1, scale);
-            XPainter_fillRect(self, &orr, color);
-        }
         ++col;
         p = next;
     }
@@ -16730,7 +17586,8 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     PainterBitmapFontTable table;
     float scale;
     int charW;
-    int maxChars;
+    int curWidth; /* 当前行像素宽（与 painterTextLinePixelWidth 同口径） */
+    int col;      /* 当前行列号（制表位推进用） */
     int lineCap;
     PainterTextLine stackLines[64];
     PainterTextLine* lines = stackLines;
@@ -16783,17 +17640,9 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     wrapAnywhere = (flags & XPAINTER_TEXT_WRAP_ANYWHERE) != 0u;
     /* Qt 只有显式启用 WordWrap/WrapAnywhere（或强制两端对齐）时才
        将布局宽度传给 QTextLayout；普通 drawTextRect 保持单行并交给
-       默认裁剪处理溢出文本。 */
-    if (wrap || wrapAnywhere ||
-        (flags & XPAINTER_TEXT_JUSTIFICATION_FORCED) != 0u)
-    {
-        maxChars = rect->width / charW;
-        if (maxChars < 1) maxChars = 1;
-    }
-    else
-    {
-        maxChars = INT_MAX;
-    }
+       默认裁剪处理溢出文本。[像素断行 2026-10-07] 断行判据从
+       『字符数×'M'宽』改为逐字形像素步进累计（比例轮廓字体平均步进
+       ≠'M' 宽，旧口径系统性提前断行/溢出截字）。 */
     singleLine = (flags & XPAINTER_TEXT_SINGLE_LINE) != 0u;
     isRTL = false;
     if ((flags & XPAINTER_TEXT_FORCE_RIGHT_TO_LEFT) != 0u)
@@ -16839,12 +17688,16 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
     lineStart = utf8;
     p = utf8;
     curCount = 0;
+    curWidth = 0;
+    col = 0;
     /* 行缓冲动态容量（对标 Qt：QTextLayout 行数无固定上限）：行数超过
        栈缓冲时经 painterTextLinesEnsure 扩容，不再静默丢弃。 */
     while (*p != '\0')
     {
         const char* charStart = p;
         uint32_t cp = painter8x16DecodeNext(&p);
+        int step;
+        bool breakable;
         if (cp == 0u)
             break;
         if (cp == '\n')
@@ -16864,48 +17717,65 @@ bool XPainter_drawTextRect(XPainter* self, const XRect* rect, uint32_t flags,
             ++lineCount;
             lineStart = p;
             curCount = 0;
+            curWidth = 0;
+            col = 0;
             continue;
         }
-        ++curCount;
-        if (curCount >= maxChars && !singleLine &&
-            (wrap || wrapAnywhere ||
-             (flags & XPAINTER_TEXT_JUSTIFICATION_FORCED) != 0u))
+        /* 逐字形像素步进（与 painterTextLinePixelWidth 同口径：
+           助记键对 '&x' 计一步、制表符按 8 列制表位展开）。 */
+        if (mnemonicMode != 0 && cp == '&')
         {
-            if (wrap && !wrapAnywhere)
+            uint32_t fc = (*p != '\0') ? painter8x16DecodeNext(&p) : 0u;
+            step = painterCodepointAdvance(&self->m_state.m_font, &table,
+                                           scale, fc);
+            ++col;
+            ++curCount; /* 转义对记一个字形位 */
+            breakable = fc != 0u && fc != ' ';
+            if (breakable && curWidth + step > rect->width && !singleLine &&
+                (wrap || wrapAnywhere ||
+                 (flags & XPAINTER_TEXT_JUSTIFICATION_FORCED) != 0u) &&
+                lineStart < charStart)
             {
-                const char* q = lineStart;
-                const char* spaceEnd = NULL;
-                while (q < p)
-                {
-                    const char* cs = q;
-                    uint32_t cc = painter8x16DecodeNext(&q);
-                    if (cc == ' ') spaceEnd = q;
-                }
-                if (spaceEnd)
-                {
-                    if (!painterTextLinesEnsure(&lines, stackLines, &lineCap,
-                                                lineCount + 1))
-                        goto textLayoutOOM;
-                    lines[lineCount].m_start = lineStart;
-                    lines[lineCount].m_end = spaceEnd;
-                    lines[lineCount].m_charCount =
-                        painterCountChars(lineStart, spaceEnd);
-                    ++lineCount;
-                    lineStart = spaceEnd;
-                    curCount = painterCountChars(lineStart, p);
-                    continue;
-                }
+                /* 超宽断行（见下方主分支同款回退/硬断逻辑）。 */
+                if (!xpainterWrapBreakLine(self, &table, scale,
+                                           charW, expandTabs, mnemonicMode,
+                                           &lines, stackLines, &lineCap,
+                                           &lineCount, &lineStart, &p,
+                                           charStart, &curWidth, &curCount,
+                                           &col, wrap, wrapAnywhere))
+                    goto textLayoutOOM;
             }
-            if (!painterTextLinesEnsure(&lines, stackLines, &lineCap,
-                                        lineCount + 1))
-                goto textLayoutOOM;
-            lines[lineCount].m_start = lineStart;
-            lines[lineCount].m_end = p;
-            lines[lineCount].m_charCount = curCount;
-            ++lineCount;
-            lineStart = p;
-            curCount = 0;
+            curWidth += step;
+            continue;
         }
+        if (expandTabs && cp == '\t')
+        {
+            int adv = 8 - (col % 8);
+            step = adv * charW;
+            col += adv;
+        }
+        else
+        {
+            step = painterCodepointAdvance(&self->m_state.m_font, &table,
+                                           scale, cp);
+            ++col;
+        }
+        ++curCount;
+        breakable = cp != ' ';
+        if (breakable && curWidth + step > rect->width && !singleLine &&
+            (wrap || wrapAnywhere ||
+             (flags & XPAINTER_TEXT_JUSTIFICATION_FORCED) != 0u) &&
+            lineStart < charStart)
+        {
+            if (!xpainterWrapBreakLine(self, &table, scale,
+                                       charW, expandTabs, mnemonicMode,
+                                       &lines, stackLines, &lineCap,
+                                       &lineCount, &lineStart, &p,
+                                       charStart, &curWidth, &curCount,
+                                       &col, wrap, wrapAnywhere))
+                goto textLayoutOOM;
+        }
+        curWidth += step;
     }
     if (lineStart < p)
     {
@@ -17236,11 +18106,31 @@ void XPainter_boundingRect(XPainter* self, const XRect* rect, int flags,
     int y = 0;
     int rw = 0;
     int rh = 0;
+    const char* lp;
+    int lineCount = 0;
     if (!out) return;
     XRect_init(out, 0, 0, 0, 0);
     if (!self) return;
-    w = XPainter_textWidth(&self->m_state.m_font, utf8 ? utf8 : "");
-    h = XPainter_textHeight(&self->m_state.m_font);
+    /* [多行口径 2026-10-07] 对标 Qt qt_format_text 的 brect：'\n' 无条件
+     * 分行，宽=各行 naturalTextWidth 最大值，高=行数×行距。（WordWrap
+     * 的按像素换行维度暂未在此实现——boundingRect 当前无消费者，
+     * 带 WordWrap 标志时按 '\n' 分行口径返回，见函数尾注。） */
+    w = 0;
+    lp = utf8 ? utf8 : "";
+    while (*lp != '\0')
+    {
+        int lw = XPainter_textWidth(&self->m_state.m_font, lp);
+        if (lw > w)
+            w = lw;
+        ++lineCount;
+        while (*lp != '\0' && *lp != '\n')
+            ++lp;
+        if (*lp == '\n')
+            ++lp;
+    }
+    if (lineCount == 0)
+        lineCount = 1; /* 空文本：单行空串占一行 */
+    h = XPainter_textHeight(&self->m_state.m_font) * lineCount;
     if (rect)
     {
         rw = rect->width;

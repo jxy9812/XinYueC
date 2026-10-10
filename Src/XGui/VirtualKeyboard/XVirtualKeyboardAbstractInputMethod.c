@@ -153,15 +153,8 @@ static void XVkIm_clearInputMode(XVirtualKeyboardAbstractInputMethod* self)
 /* ==================== 信号发射（同步；无连接时释放参数表） ==================== */
 
 /** @brief 发射信号并管理参数表生命周期（XInputMethod.c xinput_emit 同型）。 */
-static void xvkim_emit(XVirtualKeyboardAbstractInputMethod* self,
-                       size_t signal, XVarList* args)
-{
-    if (self && ((XObject*)self)->m_signalSlot)
-        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
-                           XEVENT_PRIORITY_NORMAL);
-    else if (args)
-        XVarList_delete(args);
-}
+/* [死码清理] xvkim_emit 已删除：全仓无调用点（见审计清单）。
+ */
 
 /* ==================== 生命周期 ==================== */
 

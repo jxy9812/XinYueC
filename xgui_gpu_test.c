@@ -96,7 +96,8 @@ int main(void)
     XPainter_setOpacity(&painter, 1.0f);
     if (!XPainter_drawImage(&painter, &tile, 10, 8)) ok = 0;
     fprintf(stderr, "gpu-test: image done\n");
-    /* 默认字体为 outline（XFontOutlineCommon）：GPU 会话下不得整帧降级。 */
+    /* 默认字体为 outline（默认家族 XFontOutlineCommon，经 FT 外挂链
+       解析）：GPU 会话下不得整帧降级。 */
     if (!XPainter_drawText(&painter, 1, 24, "Ag", 0xffffffffu)) ok = 0;
     fprintf(stderr, "gpu-test: text done backend=%d\n",
             (int)XPainter_rasterBackend(&painter));

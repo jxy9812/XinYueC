@@ -1627,64 +1627,8 @@ static bool documentLoadFromReader(XDocument* self, XZipReader* zip)
     return true;
 }
 
-static void parse_sheet_names_from_zip(const char* zipPath, SheetNameList* out)
-{
-    out->count = 0;
-    XString* zipPathStr = XString_create_utf8(zipPath);
-    XZipReader* zip = XZipReader_create(zipPathStr);
-    XClassDelete(zipPathStr);
-    if (!zip) { XPrintf("[LOAD_DBG] XZipReader_create failed\n"); return; }
-
-    /* 调试：列出 ZIP 中所有文件 */
-    XStringList* paths = XZipReader_filePaths(zip);
-    if (paths) {
-        size_t pc = XStringList_size_base(paths);
-        XPrintf("[LOAD_DBG] zip contains %zu files:\n", pc);
-        for (size_t pi = 0; pi < pc && pi < 20; pi++) {
-            XString* p = (XString*)XStringList_at_base(paths, pi);
-            if (p) XPrintf("[LOAD_DBG]   [%zu] %s\n", pi, XString_toUtf8(p));
-        }
-    } else {
-        XPrintf("[LOAD_DBG] filePaths returned NULL\n");
-    }
-
-    XString* wbPathStr = XString_create_utf8("xl/workbook.xml");
-    XByteArray* wbXml = XZipReader_fileData(zip, wbPathStr);
-    XClassDelete(wbPathStr);
-    XZipReader_delete(zip);
-    if (!wbXml) { XPrintf("[LOAD_DBG] workbook.xml not found in zip\n"); return; }
-
-    char* xml = (char*)XByteArray_data(wbXml);
-    size_t xmlLen = XByteArray_size_base(wbXml);
-    XPrintf("[LOAD_DBG] workbook.xml len=%zu content=%.200s\n", xmlLen, xml ? xml : "NULL");
-    if (xml && xmlLen > 0) {
-        /*
-         * XByteArray 内部缓冲可能没有为 '\0' 预留空间，直接写 xml[xmlLen]
-         * 会越界破坏相邻堆内存。临时扩容 1 字节写入 '\0'，处理完再恢复。
-         */
-        XByteArray_resize_base(wbXml, xmlLen + 1);
-        xml = (char*)XByteArray_data(wbXml);
-        xml[xmlLen] = '\0';
-        const char* sp = xml;
-        while ((sp = strstr(sp, "<sheet ")) != NULL && out->count < 64) {
-            const char* nameS = strstr(sp, "name=\"");
-            if (nameS) {
-                nameS += 6;
-                const char* nameE = strchr(nameS, '"');
-                if (nameE && nameE > nameS) {
-                    size_t nl = (size_t)(nameE - nameS);
-                    if (nl < 256) {
-                        memcpy(out->names[out->count], nameS, nl);
-                        out->names[out->count][nl] = '\0';
-                        out->count++;
-                    }
-                }
-            }
-            sp++;
-        }
-    }
-    XClassDelete(wbXml);
-}
+/* [死码清理] parse_sheet_names_from_zip 已删除：全仓无调用点（见审计清单）。
+ */
 
 bool XDocument_load(XDocument* self) {
     if (!self || !self->m_filePath || XString_size_base(self->m_filePath) == 0) return false;

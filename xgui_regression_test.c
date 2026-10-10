@@ -475,108 +475,13 @@ static void test_painter_outline_font(void)
                 ++colored;
     expect_true(colored > 0, "outline path reaches raster image");
 
-#if XFONT_BUILTIN_OUTLINE_ON
-    {
-        XFont commonFont;
-        XFontOutlineInfo commonInfo;
-        XFontOutlineGlyphMetrics commonMetrics;
-        XFont_init(&commonFont);
-        XFont_setFamily(&commonFont, "XFontOutlineCommon");
-        XFont_setPixelSize(&commonFont, 20);
-        expect_true(test_font_outline_info(&commonFont, &commonInfo) &&
-                        commonInfo.unitsPerEm == 1000 &&
-                        commonInfo.ascent == 1160,
-                    "内置常用汉字轮廓字库提供度量");
-        expect_true(test_font_outline_load(&commonFont, 0x4E2Du,
-                                           &commonMetrics, NULL) &&
-                        commonMetrics.advance > 0,
-                    "内置常用汉字轮廓字库读取汉字");
-        expect_true(test_font_outline_load(&commonFont, 0x4F60u,
-                                           &commonMetrics, NULL) &&
-                        commonMetrics.advance > 0,
-                    "内置轮廓字库包含常用字");
-        XImage_fillRect(&image, NULL, 0xffffffffu);
-        colored = 0;
-        XPainter_setFont(&painter, &commonFont);
-        expect_true(XPainter_drawText(&painter, 2, 24,
-                                      "\xE4\xB8\xAD\xE6\x96\x87",
-                                      0xff0080ffu),
-                                      "内置中文轮廓字形完成栅格化");
-        for (row = 0; row < 32; ++row)
-            for (col = 0; col < 32; ++col)
-                if (XImage_pixel(&image, col, row) != 0xffffffffu)
-                    ++colored;
-        expect_true(colored > 0, "内置中文轮廓字形实际写入像素");
-        XClassDeinit(&commonFont);
-    }
-#endif /* XFONT_BUILTIN_OUTLINE_ON */
+    /* [已移除 2026-10-07] 原 #if XFONT_BUILTIN_OUTLINE_ON 内置
+       XFontOutlineCommon（GB2312 全集 XFO1 数据）用例与
+       #if XFONT_OUTLINE_FILE_ON 的 XFO1 外挂文件链（.xfo/.inc fixture）
+       用例随自研轮廓字实现整体删除：FT 为唯一轮廓字实现，缺字库回退
+       位图+一行警告。轮廓字形供货回归由 XFontFtTest 与
+       xgui_font_scan_tool 覆盖。 */
 
-#if XFONT_OUTLINE_FILE_ON && XIMAGECODEC_ON
-    {
-        /* Minimal XFO1 triangle fixture: one cmap entry, one glyph, four
-           commands. It exercises the same file path used by PC deployments. */
-        static const uint8_t xfo[] = {
-            'X','F','O','1', 1,0, 0,0, 0xe8,0x03, 0x20,0x03, 0xc8,0x00, 0,0,
-            1,0, 1,0, 36,0,0,0, 44,0,0,0, 64,0,0,0, 16,0,0,0,
-            0x41,0,0,0, 0,0, 0,0,
-            0xe8,0x03,0,0, 100,0, 0,0, 0x84,0x03, 0x20,0x03,
-            0,0,0,0, 4,0, 0,0,
-            0, 100,0, 0,0, 1, 0x90,1, 0x20,3,
-            1, 0x90,1, 0xe0,0xfc, 4
-        };
-        const char* fileName = "xgui_outline_test.xfo";
-        XFont fileFont;
-        XFontOutlineInfo fileInfo;
-        XFontOutlineGlyphMetrics fileMetrics;
-        expect_true(test_write_binary_file(fileName, xfo, sizeof(xfo), true),
-                    "XFO1 fixture writes");
-        XFont_init(&fileFont);
-        XFont_setFamily(&fileFont, fileName);
-        expect_true(test_font_outline_info(&fileFont, &fileInfo) &&
-                        fileInfo.unitsPerEm == 1000,
-                    "XFO1 file header parses");
-        expect_true(test_font_outline_load(&fileFont, (uint32_t)'A',
-                                           &fileMetrics, NULL) &&
-                        fileMetrics.advance == 1000 && fileMetrics.yMax == 800,
-                    "XFO1 file glyph parses");
-        XClassDeinit(&fileFont);
-        remove(fileName);
-
-        /* .inc 文本变体：同一 XFO1 固件以生成器的十六进制 C 数组文本
-           形态落盘，走外挂 .inc 解析链加载，结果须与 .xfo 完全一致。 */
-        {
-            const char* incName = "xgui_outline_test.inc";
-            char incText[6 * sizeof(xfo) + 8];
-            size_t incLen = 0;
-            size_t k;
-            XFont incFont;
-            for (k = 0; k < sizeof(xfo); ++k)
-            {
-                int w = snprintf(incText + incLen, sizeof(incText) - incLen,
-                                 "0x%02X, ", xfo[k]);
-                expect_true(w > 0 && (size_t)w < sizeof(incText) - incLen,
-                            "XFO1 .inc 文本生成");
-                incLen += (size_t)w;
-            }
-            expect_true(test_write_binary_file(incName,
-                                               (const uint8_t*)incText,
-                                               incLen, true),
-                        "XFO1 .inc fixture writes");
-            XFont_init(&incFont);
-            XFont_setFamily(&incFont, incName);
-            expect_true(test_font_outline_info(&incFont, &fileInfo) &&
-                            fileInfo.unitsPerEm == 1000,
-                        "XFO1 .inc header parses");
-            expect_true(test_font_outline_load(&incFont, (uint32_t)'A',
-                                               &fileMetrics, NULL) &&
-                            fileMetrics.advance == 1000 &&
-                            fileMetrics.yMax == 800,
-                        "XFO1 .inc glyph parses");
-            XClassDeinit(&incFont);
-            remove(incName);
-        }
-    }
-#endif /* XFONT_OUTLINE_FILE_ON && XIMAGECODEC_ON */
 
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -29497,6 +29402,9 @@ static void w1_renderPE(XStyle* style, XWidget* w, int pe, int rx, int ry,
     XStyleOption opt;
     if (!style || !w || !image) return;
     XWidget_resize(w, cw, ch);
+    /* [泄漏修复] 上一轮 init_ex 的位图缓冲先反初始化再清零，否则指针被
+     * memset 抹掉必漏（vtable 空时 deinit 幂等，首次调用安全）。 */
+    XClassDeinit((XClass*)image);
     memset(image, 0, sizeof(*image));
     XImage_init_ex(image, cw, ch, XImageFormat_ARGB32);
     XImage_fill(image, 0xFF101010u);
@@ -29522,6 +29430,8 @@ static void w1_renderText(XStyle* style, XWidget* w, const char* text,
     XStyleOption opt;
     if (!style || !w || !image) return;
     XWidget_resize(w, 60, 24);
+    /* [泄漏修复] 同 w1_renderPE：先释放上一轮位图再清零重初始化。 */
+    XClassDeinit((XClass*)image);
     memset(image, 0, sizeof(*image));
     XImage_init_ex(image, 60, 24, XImageFormat_ARGB32);
     XImage_fill(image, 0xFF101010u);
@@ -36564,8 +36474,11 @@ static void test_dialog_r1_defect_locks(void)
             }
 #endif /* XVIRTUALKEYBOARD_ON */
             /* 布局不随对话框析构释放（xid_buildDialog 所有权注释同款）：
-             * show 后删除，根布局顺带释放按钮行子布局条目。 */
+             * show 后删除，根布局顺带释放按钮行子布局条目。addLayout 为
+             * 借用语义（XBoxLayout.h 契约：不转移所有权），按钮行子布局
+             * 对象自身须在此手动删除，否则成批漏删其子树。 */
             XClassDelete((XLayout*)root);
+            XClassDelete((XClass*)barLayout); /* [泄漏修复] 借用手删。 */
             XClassDelete(dlg);
 #if XVIRTUALKEYBOARD_ON
             /* 裁定本体锁的防悬宕半边（同一 xkbProbe 实例）：对话框删除

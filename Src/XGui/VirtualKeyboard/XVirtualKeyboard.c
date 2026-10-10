@@ -542,7 +542,6 @@ static void xkb_bindTargetDestroyed(XVirtualKeyboard* self, XWidget* newTarget);
 static void xkb_bindHostDestroyed(XVirtualKeyboard* self, XWidget* newHost);
 static void xkb_hostGeomSlot(XObject* receiver, XVarList* args);
 static void xkb_bindGeometrySignals(XVirtualKeyboard* self, bool bind);
-static void xkb_stopRepeat(XVirtualKeyboard* self);
 static void xkb_stopGuard(XVirtualKeyboard* self);
 #if XVIRTUALKEYBOARD_ON
 static bool xkb_routeKey(XVirtualKeyboard* self, const char* text);
@@ -3448,13 +3447,8 @@ static bool xkb_activateButton(XVirtualKeyboard* self, uint32_t buttonId)
 /* ==================== 定时器（长按重复 + 守护轮询） ==================== */
 
 /** @brief 停止长按重复定时器（幂等）。 */
-static void xkb_stopRepeat(XVirtualKeyboard* self)
-{
-    if (!self || self->m_repeatTimer == XTIMER_INVALID_ID) return;
-    XObject_killTimer((XObject*)self, self->m_repeatTimer);
-    self->m_repeatTimer = XTIMER_INVALID_ID;
-}
-
+/* [死码清理] xkb_stopRepeat 已删除：全仓无调用点（见审计清单）。
+ */
 /** @brief 按下可重复键时启动长按计时（先 400ms 起振；先停旧计时再判
  *         NO_REPEAT，避免前一按键的挂起计时串键）。 */
 static void xkb_startRepeat(XVirtualKeyboard* self)

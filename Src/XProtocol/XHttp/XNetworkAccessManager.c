@@ -3750,71 +3750,8 @@ static void xhttp_manager_socket_connected(XObject* receiver, XVarList* args)
         XHttpReply_setError(tx->m_reply, XHttpReply_UnknownNetworkError, "HTTP 请求发送失败");
 }
 
-static bool xhttp_manager_start_http2(XHttpTransaction* tx)
-{
-    const XHttpRequest* request;
-    const XHttp2Configuration* configuration;
-    XHttp2ClientSession* session;
-    XHttp2HeaderDecoder* decoder;
-    XByteArray* wire;
-    XByteArray* input;
-    XByteArray* headerBlock;
-    uint32_t streamId = 0;
-    if (!tx || !tx->m_reply || tx->m_http2)
-        return false;
-    request = XHttpReply_request_const(tx->m_reply);
-    configuration = request ? XHttpRequest_http2Configuration_const(request) : NULL;
-    session = XHttp2ClientSession_create();
-    if (session && configuration &&
-        !XHttp2ClientSession_setConfiguration(session, configuration)) {
-        XClassDelete((XClass*)session);
-        session = NULL;
-    }
-    wire = session ? XHttp2ClientSession_encodeRequest(session, request, &streamId) : NULL;
-    decoder = wire ? XHttp2HeaderDecoder_create() : NULL;
-    input = decoder ? XByteArray_create() : NULL;
-    headerBlock = input ? XByteArray_create() : NULL;
-    if (!session || !wire || !decoder || !input || !headerBlock || streamId == 0) {
-        if (headerBlock) XClassDelete((XClass*)headerBlock);
-        if (input) XClassDelete((XClass*)input);
-        if (decoder) XClassDelete((XClass*)decoder);
-        if (wire) XClassDelete((XClass*)wire);
-        if (session) XClassDelete((XClass*)session);
-        return false;
-    }
-    if (tx->m_requestWire)
-        XClassDelete((XClass*)tx->m_requestWire);
-    xhttp_manager_reset_http2(tx);
-    tx->m_requestWire = wire;
-    tx->m_http2Session = session;
-    tx->m_http2Decoder = decoder;
-    tx->m_http2Input = input;
-    tx->m_http2HeaderBlock = headerBlock;
-    tx->m_http2StreamId = streamId;
-    tx->m_http2 = true;
-    tx->m_http2SessionRecvTarget = configuration ?
-        XHttp2Configuration_sessionReceiveWindowSize(configuration) : 65535;
-    tx->m_http2StreamRecvTarget = configuration ?
-        XHttp2Configuration_streamReceiveWindowSize(configuration) : 65535;
-    tx->m_http2SessionRecvWindow = tx->m_http2SessionRecvTarget;
-    tx->m_http2StreamRecvWindow = tx->m_http2StreamRecvTarget;
-    tx->m_http2SessionSendWindow = 65535;
-    tx->m_http2StreamSendWindow = 65535;
-    tx->m_http2PeerInitialWindowSize = 65535;
-    tx->m_http2PeerMaxFrameSize = XHttp2Configuration_MinFrameSize;
-    tx->m_http2SettingsAckPending = true;
-    tx->m_writeOffset = 0;
-    tx->m_requestSent = false;
-    {
-        XVariant* used = XVariant_create_bool(true);
-        if (used) {
-            XHttpRequest_setAttribute(tx->m_reply->m_request,
-                                      XHttpRequest_Http2WasUsedAttribute, used);
-            XClassDelete((XClass*)used);
-        }
-    }
-    return true;
-}
+/* [死码清理] xhttp_manager_start_http2 已删除：全仓无调用点（见审计清单）。
+ */
 
 static void xhttp_manager_socket_encrypted(XObject* receiver, XVarList* args)
 {

@@ -12,18 +12,8 @@ static void VXXYSeries_copy(XXYSeries* self, const XXYSeries* other);
 static void VXXYSeries_move(XXYSeries* self, XXYSeries* other);
 
 /** @brief 发射双 double 载荷信号。 */
-static void xxy_emitXY(XXYSeries* self, size_t signal, double x, double y)
-{
-    double vx = x;
-    double vy = y;
-    XVarList* args = XVarList_Create(XVar(double, vx), XVar(double, vy));
-    if (!args) return;
-    if (self && ((XObject*)self)->m_signalSlot)
-        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
-                           XEVENT_PRIORITY_NORMAL);
-    else
-        XVarList_delete(args);
-}
+/* [死码清理] xxy_emitXY 已删除：全仓无调用点（见审计清单）。
+ */
 
 /** @brief 发射单 int 载荷信号。 */
 static void xxy_emitIndex(XXYSeries* self, size_t signal, int index)

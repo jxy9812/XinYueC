@@ -120,12 +120,8 @@ int XTime_msecsTo(const XTime* from, const XTime* to) {
 }
 
 // 格式化辅助函数
-static void format_time_component(XString* str, int value, int width) {
-    XString_resize(str, width);
-    char* buf = (char*)XString_data(str);
-    buf[0] = '0' + (value / 10);
-    buf[1] = '0' + (value % 10);
-}
+/* [死码清理] format_time_component 已删除：全仓无调用点（见审计清单）。
+ */
 
 XString* XTime_toString_format(const XTime* time, const char* format) {
     if (XTime_isNull(time) || !format) return NULL;

@@ -603,10 +603,8 @@ static int label_ascent(const XLabel* self)
 }
 
 /** @brief 缩放后基线以下高度（= 3 x scale）。 */
-static int label_descent(const XLabel* self)
-{
-    return label_scaledMetric(self, label_bitmapInfo(self).m_descent);
-}
+/* [死码清理] label_descent 已删除：全仓无调用点（见审计清单）。
+ */
 
 /* ==================== 信号发射（复用 XObject 信号机制） ==================== */
 

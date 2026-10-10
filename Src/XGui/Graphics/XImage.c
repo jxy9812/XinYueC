@@ -297,13 +297,8 @@ static void XImageData_markDirty(XImageData* d)
     }
 }
 
-static void XImageData_clearText(XImageData* d)
-{
-    if (!d) return;
-    XStringList_clear_base((XContainer*)&d->m_textKeys);
-    XStringList_clear_base((XContainer*)&d->m_textValues);
-    XString_clear_base((XContainer*)&d->m_textAll);
-}
+/* [死码清理] XImageData_clearText 已删除：全仓无调用点（见审计清单）。
+ */
 
 static void XImageData_clearTextAll(XImageData* d)
 {

@@ -63,7 +63,10 @@ void XGraphicsOpacityEffect_init(XGraphicsOpacityEffect* self)
     XClassSetVtable(self, XGraphicsOpacityEffect);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    self->m_opacity = 1.0f;
+    /* [缺省对齐 2026-10-07] 对标 Qt 6.8.3 qgraphicseffect_p.h:183 构造
+     * opacity(0.7)：「挂接即 70% 半透明呈现」；原 1.0 缺省使挂接无
+     * 视觉效果、且 setOpacity 前 setOpacityEnabled 才生效的语义失真。 */
+    self->m_opacity = 0.7f;
 }
 
 XGraphicsOpacityEffect* XGraphicsOpacityEffect_create_ex(XMemoryType memory)

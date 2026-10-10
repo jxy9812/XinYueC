@@ -456,37 +456,8 @@ static void xchart_deleteSeriesByTypeLater(void* series, XChartSeriesType type)
     XObject_deleteLater((XObject*)series);
 }
 
-static void xchart_deleteSeriesByType(void* series, XChartSeriesType type)
-{
-    if (!series) return;
-    switch (type) {
-    case XChartSeriesType_Line:
-        XClassDelete((XLineSeries*)series);
-        break;
-    case XChartSeriesType_Area:
-        XClassDelete((XAreaSeries*)series);
-        break;
-    case XChartSeriesType_Bar:
-    case XChartSeriesType_StackedBar:
-    case XChartSeriesType_PercentBar:
-    case XChartSeriesType_HorizontalBar:
-    case XChartSeriesType_HorizontalStackedBar:
-    case XChartSeriesType_HorizontalPercentBar:
-        XClassDelete((XBarSeries*)series);
-        break;
-    case XChartSeriesType_Pie:
-        XClassDelete((XPieSeries*)series);
-        break;
-    case XChartSeriesType_Scatter:
-        XClassDelete((XScatterSeries*)series);
-        break;
-    case XChartSeriesType_Spline:
-        XClassDelete((XSplineSeries*)series);
-        break;
-    default:
-        break;
-    }
-}
+/* [死码清理] xchart_deleteSeriesByType 已删除：全仓无调用点（见审计清单）。
+ */
 
 void XChart_init(XChart* self)
 {

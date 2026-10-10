@@ -199,7 +199,6 @@ static void VX_splitter_resizeEvent(XWidget* self, XEvent* event)
     xsp_layout((XSplitter*)self);
 }
 
-static void VX_splitBar_paintEvent(XWidget* self, XEvent* event);
 
 /** @brief index 之后是否还存在参与布局的页（对标 Qt 把手数量 =
  *  非隐藏页数-1：最后一页之后没有把手）。隐藏口径与 xsp_contentLen/
@@ -310,12 +309,8 @@ static void VX_splitter_paintEvent(XWidget* self, XEvent* event)
     XPainter_deinit(&painter);
 }
 
-static void VX_splitBar_paintEvent(XWidget* self, XEvent* event)
-{
-    (void)self;
-    (void)event;
-}
-
+/* [死码清理] VX_splitBar_paintEvent 已删除：全仓无调用点（见审计清单）。
+ */
 /* ---- 拖动状态（XSplitter.h 为契约头不扩字段）：按压偏移经对象动态
  * 属性承载（同 XMenu 悬停弹出记账的定式，XObject_setProperty）；
  * 把手索引用既有 m_dragIndex 字段（此前为死状态，见台账 #60）。 ---- */

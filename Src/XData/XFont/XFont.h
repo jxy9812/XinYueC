@@ -161,7 +161,9 @@ typedef struct XFont
     uint32_t m_strikeOut       : 1; /**< 是否有删除线 */
     uint32_t m_overline        : 1; /**< 是否有上划线 */
     uint32_t m_fixedPitch      : 1; /**< 是否等宽字体 */
-    uint32_t m_kerning         : 1; /**< 是否启用字距调整 */
+    uint32_t m_kerning         : 1; /**< 是否启用字距调整（缺省 1 同 Qt；
+                                         注意：当前实现无 kern 表应用点，
+                                         本位暂无效，见 XFont_kerning） */
     uint32_t m_capitalization  : 3; /**< 大小写（XFont_Capitalization） */
     uint32_t m_letterSpacing   : 1; /**< 是否有字母间距 */
     uint32_t m_wordSpacing     : 1; /**< 是否有单词间距 */
@@ -249,8 +251,9 @@ const char* XFont_family(const XFont* self);
  * @param family 字体家族名称（例如 "XFont8x16" 使用已注册字库）；若名称未注册，
  *               则按 XFONT_EXTERNAL_FONT_DIR/<family>.bin 查找外挂点阵字库；
  *               也可传入外挂字库完整路径（可带或不带 ".bin" 后缀）。轮廓
- *               字库使用同一属性传入 .xfo 路径或家族名，并按
- *               XFONT_EXTERNAL_OUTLINE_FONT_DIR/<family>.xfo 查找。
+ *               字库（FT 唯一实现）按 XFONT_EXTERNAL_FT_FONT_DIR/
+ *               <family>.{ttf,otf,ttc} 查找（XFontFt.c 候选迭代）；原
+ *               XFO1 .xfo/.inc 外挂通道已于 2026-10-07 移除。
  */
 void XFont_setFamily(XFont* self, const char* family);
 

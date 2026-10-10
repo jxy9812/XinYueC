@@ -102,6 +102,9 @@ typedef struct XFontOutlineInfo
     int ascent;
     int descent;
     int lineGap;
+    bool m_ftRealBold; /**< FT 槽为真 Bold 字体文件（字重变体命中）；
+                        *   painter 据此跳过合成粗体加浓，防双重加粗。
+                        *   非 FT 后端恒 false（保持合成档行为）。 */
 } XFontOutlineInfo;
 
 /** @brief 单个轮廓字形的度量，y 坐标以基线为零且向上为正。 */
@@ -138,7 +141,8 @@ typedef struct XFontOutlineProvider
     void* m_userData;
 } XFontOutlineProvider;
 
-/** @brief XFO1 轮廓命令 opcode。坐标均使用相对前一点的 int16 delta。 */
+/** @brief 轮廓命令 opcode（历史上为 XFO1 格式定义；XFO1 已移除，
+ *         保留作 FT_Outline_Decompose 等后端共用的回调语义）。 */
 typedef enum XFontOutlineCommandType
 {
     XFontOutline_MoveTo = 0,
@@ -148,14 +152,9 @@ typedef enum XFontOutlineCommandType
     XFontOutline_Close = 4
 } XFontOutlineCommandType;
 
-/**
- * @brief XFO1 版本 1 文件布局说明。
- * @details 文件使用小端序，头部固定 36 字节，依次包含 magic、版本、
- *          flags、unitsPerEm、ascent、descent、lineGap、cmapCount、
- *          glyphCount，以及 cmap/glyph/command 的偏移和命令区长度。
- *          cmap 项为 codepoint、glyphId 和保留字段；glyph 项为 advance、
- *          四个边界、命令相对偏移、命令数和保留字段。命令数据不含颜色。
- */
+/* [已移除 2026-10-07] XFO1 版本 1 文件布局说明：自研轮廓字格式随其
+ * 解析链（XFontOutline_Xfo.c、XFont.c 外挂装载）整体删除，FT 为唯一
+ * 轮廓字实现。 */
 
 /** @brief 字库后端种类。 */
 typedef enum XFontFaceKind
@@ -179,6 +178,8 @@ XCLASS_DEFINE_ENUM(XFontFace, Info) = XCLASS_VTABLE_GET_SIZE(XClass),
 XCLASS_DEFINE_ENUM(XFontFace, LoadBitmapGlyph),
 XCLASS_DEFINE_ENUM(XFontFace, LoadOutlineGlyph),
 XCLASS_DEFINE_ENUM(XFontFace, BitmapGlyphRowBytes),
+/* 追加在表尾：既有槽位索引不变，全部既有 face 行为逐位不受扰（§1.2）。 */
+XCLASS_DEFINE_ENUM(XFontFace, LoadOutlineGlyphScaled),
 XCLASS_DEFINE_END(XFontFace)
 
 /** @brief 字库后端抽象基类；m_class 必须是第一个成员。 */
@@ -229,6 +230,20 @@ bool XFontFace_loadOutlineGlyph_base(const XFontFace* self, const XFont* font,
                                      uint32_t codepoint,
                                      XFontOutlineGlyphMetrics* metrics,
                                      const XFontOutlineSink* sink);
+
+/**
+ * @brief 调用 face 的"按目标字号缩放"轮廓字形虚函数（阶段二 §1.2 新槽）。
+ * @param scale painter 既有语义的 float（=target_px/unitsPerEm），
+ *              是字号唯一载体；<=0 或非有限视为非法，直接判负。
+ *              默认实现（未重载该槽位的 face）转发既有
+ *              LoadOutlineGlyph 槽位（scale 丢弃），无字号载体的
+ *              既有 face（点阵、纯 provider）行为逐位不变。
+ */
+bool XFontFace_loadOutlineGlyphScaled_base(const XFontFace* self,
+                                           const XFont* font, float scale,
+                                           uint32_t codepoint,
+                                           XFontOutlineGlyphMetrics* metrics,
+                                           const XFontOutlineSink* sink);
 
 /** @brief 调用 face 的点阵行跨度虚函数。 */
 int XFontFace_bitmapGlyphRowBytes_base(const XFontFace* self,

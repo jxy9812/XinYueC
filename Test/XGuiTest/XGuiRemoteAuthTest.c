@@ -332,21 +332,12 @@ static void ta_teardown(TaTopo* t)
 }
 
 /* ---- 等待条件 ---- */
-static bool ta_condCliConn0(void* ud)
-{
-    TaTopo* t = (TaTopo*)ud;
-    return t->cliConn[0] > 0;
-}
-static bool ta_condCliDisc0(void* ud)
-{
-    TaTopo* t = (TaTopo*)ud;
-    return t->cliDisc[0] > 0;
-}
-static bool ta_condSrvErr(void* ud)
-{
-    TaTopo* t = (TaTopo*)ud;
-    return t->srvErr > 0;
-}
+/* [死码清理] ta_condCliConn0 已删除：全仓无调用点（见审计清单）。
+ */
+/* [死码清理] ta_condCliDisc0 已删除：全仓无调用点（见审计清单）。
+ */
+/* [死码清理] ta_condSrvErr 已删除：全仓无调用点（见审计清单）。
+ */
 
 /* ==================== 裸协议探针(回环 B 端手工说话) ====================
  *  @note 服务端跨连接复用(同会话矩阵定式): 每连接只轮换回环对与

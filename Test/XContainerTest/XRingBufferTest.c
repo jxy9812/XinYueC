@@ -6,12 +6,8 @@
 #include"XCoreApplication.h"
 #include"XPrintf.h"
 #include <assert.h>
-static void print_buffer_status(const char* msg, const XRingBuffer* buffer) {
-	XPrintf("\n--- %s ---\n", msg);
-	XPrintf("Total Size (available): %zu\n", XRingBuffer_available(buffer));
-	XPrintf("Current Read Chunk Index: %zu\n", buffer->m_currentReadChunk);
-	XPrintf("Current Write Chunk Index: %zu\n", buffer->m_currentWriteChunk);
-}
+/* [死码清理] print_buffer_status 已删除：全仓无调用点（见审计清单）。
+ */
 
 void XRingBufferTest()
 {

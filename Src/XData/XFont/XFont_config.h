@@ -46,21 +46,6 @@
 #define XFONT_MAX_OUTLINE_PROVIDERS 4
 #endif
 
-/** @brief 单个 XFO1 字形允许的最大命令数；用于限制损坏文件的内存/CPU开销。 */
-#ifndef XFONT_OUTLINE_MAX_COMMANDS
-#define XFONT_OUTLINE_MAX_COMMANDS 2048
-#endif
-
-/** @brief 是否编译 XFO1 二次贝塞尔命令支持。 */
-#ifndef XFONT_OUTLINE_QUADRATIC_ON
-#define XFONT_OUTLINE_QUADRATIC_ON 1
-#endif
-
-/** @brief 是否编译 XFO1 三次贝塞尔命令支持。 */
-#ifndef XFONT_OUTLINE_CUBIC_ON
-#define XFONT_OUTLINE_CUBIC_ON 1
-#endif
-
 /** @brief 是否启用轮廓字形路径缓存；缓存按字库、码点和字号复用。 */
 #ifndef XFONT_OUTLINE_CACHE_ON
 #define XFONT_OUTLINE_CACHE_ON 1
@@ -110,7 +95,7 @@
  *          跳过/直写快捷路径语义不变。
  */
 #ifndef XFONT_TEXT_CONTRAST_GAMMA_X10
-#define XFONT_TEXT_CONTRAST_GAMMA_X10 14
+#define XFONT_TEXT_CONTRAST_GAMMA_X10 18
 #endif
 
 /**
@@ -134,27 +119,9 @@
 #define XFONT_TEXT_GRIDFIT 1
 #endif
 
-/**
- * @brief 是否把 XFontOutlineCommon 轮廓字库数据编译进目标。
- * @details 该开关同时控制 ASCII/标点和 GB2312 汉字全集（6763 字）两个
- *          数据块；数据约 3.0 MiB。默认关闭：字库经
- *          XFONT_EXTERNAL_OUTLINE_FONT_DIR 下的 .inc/.xfo 外挂文件加载
- *          （见 XFontOutlineFace_fileInfo），免文件系统部署或希望字库
- *          随固件走时以 -DXFONT_BUILTIN_OUTLINE_ON=1 编入。
- */
-#ifndef XFONT_BUILTIN_OUTLINE_ON
-#define XFONT_BUILTIN_OUTLINE_ON 0
-#endif
-
+/* XFONT_OUTLINE_ON=0 时联动关闭轮廓缓存（XFO1 相关宏已于 2026-10-07
+ * 随自研轮廓字实现整体移除，联动表相应收窄）。 */
 #if !XFONT_OUTLINE_ON
-#undef XFONT_BUILTIN_OUTLINE_ON
-#define XFONT_BUILTIN_OUTLINE_ON 0
-#undef XFONT_OUTLINE_FILE_ON
-#define XFONT_OUTLINE_FILE_ON 0
-#undef XFONT_OUTLINE_QUADRATIC_ON
-#define XFONT_OUTLINE_QUADRATIC_ON 0
-#undef XFONT_OUTLINE_CUBIC_ON
-#define XFONT_OUTLINE_CUBIC_ON 0
 #undef XFONT_OUTLINE_CACHE_ON
 #define XFONT_OUTLINE_CACHE_ON 0
 #undef XFONT_GLYPH_ALPHA_CACHE_ON
@@ -197,21 +164,55 @@
 #define XFONT_LVGL9_FILE_ON 0
 #endif
 
+/* [已移除 2026-10-07] XFONT_OUTLINE_FILE_ON（XFO1 外挂轮廓字库文件
+ * 总门）随自研轮廓字实现整体删除；外挂字体文件通道由 XFONT_FT_FACE_ON
+ * 承接。 */
+
 /**
- * @brief 是否启用 XFO1 外挂轮廓字库文件。
- * @details 该功能依赖 XFile，并受 XFONT_OUTLINE_ON 总开关约束。
+ * @brief FT 文件后端模块（XFontFt.c 的 face 部分）。
+ * @details 1（默认）时提供外挂 .ttf/.otf/.ttc 解析、家族槽与 FT_Library
+ *          共享单例（XFontFt.h）。FT 是唯一的轮廓字实现（自研 XFO1
+ *          实现已于 2026-10-07 按裁定整体移除），XFont_face 解析先探
+ *          FT 文件、失败落位图回退。XFONT_OUTLINE_ON=0 或
+ *          XFONT_FILE_ON=0 时强制 0（联动写法照上方轮廓缓存联动；
+ *          本块必须位于 XFONT_OUTLINE_ON/XFONT_FILE_ON 定义之后，#if 中
+ *          未定义标识符按 0 求值，前置会恒判 0）。
  */
-#ifndef XFONT_OUTLINE_FILE_ON
+#ifndef XFONT_FT_FACE_ON
 #if XFONT_OUTLINE_ON && XFONT_FILE_ON
-#define XFONT_OUTLINE_FILE_ON 1
+#define XFONT_FT_FACE_ON 1
 #else
-#define XFONT_OUTLINE_FILE_ON 0
+#define XFONT_FT_FACE_ON 0
 #endif
 #endif
 #if !XFONT_OUTLINE_ON || !XFONT_FILE_ON
-#undef XFONT_OUTLINE_FILE_ON
-#define XFONT_OUTLINE_FILE_ON 0
+#undef XFONT_FT_FACE_ON
+#define XFONT_FT_FACE_ON 0
 #endif
+
+/** @brief FT 模块总门（派生宏 = FT face 后端；XFONT_FT_RASTER 已随
+ *         自研扫描线字形光栅化器移除，两宏合一）。 */
+#ifndef XFONT_FT_ON
+#define XFONT_FT_ON XFONT_FT_FACE_ON
+#endif
+
+/* [已移除] XFONT_PROVIDER / XFONT_PROVIDER_DEFAULT_FT2（2026-10-07）：
+ * 运行期 env XFONT_PROVIDER 选边（ft2/xfo1 双档）随 XFO1 实现删除——
+ * FT 成为唯一轮廓字实现，不再有第二档可选。 */
+
+/** @brief FT 家族槽容量；家族槽只增不复用（face 指针永稳），
+ *         进程期 UI 家族数典型 <=3，嵌入式可缩。 */
+#ifndef XFONT_FT_MAX_FAMILIES
+#define XFONT_FT_MAX_FAMILIES 4
+#endif
+
+/* [已废除] XFONT_FT_SIZES_PER_FAMILY：原每家族 (px26_6, autohint) 字号
+ * LRU 容量。遗留-1（P0，2026-10-07）重构删除该 LRU——多字号交错负载下
+ * 每次逐出/换入都对整文件 FT_New_Memory_Face 重析（19.5MB CFF TTC 实测
+ * 交错 5.64ms/字形 = 分块 0.18ms 的 31 倍，out/xfont_ft_p0fix/），现模型
+ * 为 family→face+当前字号：同家族进程期一次 FT_New_Memory_Face，字号
+ * 切换一律 FT_Set_Char_Size（XFontFt.c 家族槽节注释）。诊断构建传的
+ * -DXFONT_FT_SIZES_PER_FAMILY=* 成无害无引用宏。 */
 
 /**
  * @brief 外挂 LVGL 二进制字库目录。
@@ -224,9 +225,15 @@
 #define XFONT_EXTERNAL_FONT_DIR "../Library/XFont"
 #endif
 
-/** @brief XFO1 外挂轮廓字库目录；默认与点阵字库目录相同。 */
-#ifndef XFONT_EXTERNAL_OUTLINE_FONT_DIR
-#define XFONT_EXTERNAL_OUTLINE_FONT_DIR XFONT_EXTERNAL_FONT_DIR
+/**
+ * @brief FT 外挂字体目录（.ttf/.otf/.ttc）。
+ * @details 缺省别名 XFONT_EXTERNAL_FONT_DIR，沿用外挂目录惯例；
+ *          嵌入式可独立覆盖（如真机部署 NotoSansCJK .ttc 的挂载目录）。
+ *          （XFO1 专属目录宏 XFONT_EXTERNAL_OUTLINE_FONT_DIR 已随其
+ *          解析链移除，2026-10-07。）
+ */
+#ifndef XFONT_EXTERNAL_FT_FONT_DIR
+#define XFONT_EXTERNAL_FT_FONT_DIR XFONT_EXTERNAL_FONT_DIR
 #endif
 
 /** @brief 外挂字库完整路径的最大长度（含结尾的 NUL）。 */
@@ -235,21 +242,11 @@
 #endif
 
 /**
- * @brief 外挂轮廓字库常驻缓存条目数（按家族名缓存已读入并解析为
- *        XFO1 二进制的整文件字节）。负结果（缺文件）同样入缓，
- *        避免 XFont_face 对未注册家族每帧重复 open 探测。
- */
-#ifndef XFONT_OUTLINE_FILE_CACHE_MAX
-#define XFONT_OUTLINE_FILE_CACHE_MAX 4
-#endif
-
-/**
  * @brief 新建 XFont 未指定家族时使用的默认字体家族名称。
- * @details 默认使用轮廓字库 XFontOutlineCommon（含 ASCII/标点与 GB2312
- *          汉字全集，文本渲染默认支持中文）；XFont8x16 点阵仅在轮廓
- *          字库不可用时作为回退。该名称未注册为 provider 时经外挂文件
- *          解析（XFONT_EXTERNAL_OUTLINE_FONT_DIR 下同名 .xfo/.inc，
- *          再兑底 exe 目录），也可配置为其它已注册 provider 名称。
+ * @details 默认 "XFontOutlineCommon"（历史名，沿用至今）：未注册为
+ *          provider 时经 FT 外挂链解析（XFONT_EXTERNAL_FT_FONT_DIR 下
+ *          同名 .ttf/.otf/.ttc，再兑底 exe 目录，见 XFontFt.c 候选
+ *          迭代）；文件缺失时回退位图字库（XFont8x16），不崩溃。
  */
 #ifndef XFONT_DEFAULT_FAMILY
 #if XFONT_OUTLINE_ON

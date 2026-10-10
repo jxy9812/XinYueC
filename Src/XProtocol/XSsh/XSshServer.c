@@ -973,10 +973,8 @@ static void xssh_bn_zero(XSshBn* a)
     if (a) memset(a, 0, sizeof(*a));
 }
 
-static void xssh_bn_copy(XSshBn* dst, const XSshBn* src)
-{
-    if (dst && src) memcpy(dst, src, sizeof(*dst));
-}
+/* [死码清理] xssh_bn_copy 已删除：全仓无调用点（见审计清单）。
+ */
 
 static void xssh_bn_set_u32(XSshBn* a, uint32_t v)
 {
@@ -1064,36 +1062,11 @@ static void xssh_bn_sub_raw(XSshBn* out, const XSshBn* a, const XSshBn* b)
     }
 }
 
-static void xssh_bn_add_mod(XSshBn* out, const XSshBn* a, const XSshBn* b,
-                            const XSshBn* mod)
-{
-    XSshBn temp;
-    uint32_t carry;
-    if (!out || !a || !b || !mod) return;
-    carry = xssh_bn_add_raw(&temp, a, b);
-    if (carry) {
-        XSshBn correction, zero;
-        xssh_bn_zero(&zero);
-        xssh_bn_sub_raw(&correction, &zero, mod);
-        (void)xssh_bn_add_raw(&temp, &temp, &correction);
-    } else if (xssh_bn_cmp(&temp, mod) >= 0) {
-        xssh_bn_sub_raw(&temp, &temp, mod);
-    }
-    *out = temp;
-}
+/* [死码清理] xssh_bn_add_mod 已删除：全仓无调用点（见审计清单）。
+ */
 
-static void xssh_bn_sub_mod(XSshBn* out, const XSshBn* a, const XSshBn* b,
-                            const XSshBn* mod)
-{
-    if (!out || !a || !b || !mod) return;
-    if (xssh_bn_cmp(a, b) >= 0) {
-        xssh_bn_sub_raw(out, a, b);
-    } else {
-        XSshBn temp;
-        xssh_bn_sub_raw(&temp, mod, b);
-        xssh_bn_add_raw(out, a, &temp);
-    }
-}
+/* [死码清理] xssh_bn_sub_mod 已删除：全仓无调用点（见审计清单）。
+ */
 
 /* Montgomery 乘法：out = a*b*R^{-1} mod m */
 static void xssh_bn_mont_mul(XSshBn* out, const XSshBn* a, const XSshBn* b,

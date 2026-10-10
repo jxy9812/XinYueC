@@ -2317,26 +2317,8 @@ static bool xvkl_begin_render_pass(XGpuRenderDriverSession* self)
  * @param      image 渲染目标图像。
  * @return     无。
  */
-static void xvkl_transition_color_for_draw(VkCommandBuffer cmd, VkImage image)
-{
-    VkImageMemoryBarrier barrier;
-    XMemset(&barrier, 0, sizeof(barrier));
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                            VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    barrier.image = image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
-                         NULL, 0, NULL, 1, &barrier);
-}
+/* [死码清理] xvkl_transition_color_for_draw 已删除：全仓无调用点（见审计清单）。
+ */
 
 /**
  * @brief      读取 acquire 超时 XGPU_VK_ACQUIRE_TIMEOUT_MS（默认 0）。

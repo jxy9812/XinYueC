@@ -2722,6 +2722,11 @@ static void xgs_workerMain(XThread* thread, XVarList* arguments)
     if (outB.tileLen) XFree_System(outB.tileLen);
     if (outB.pendIdx) XFree_System(outB.pendIdx);
     if (outB.pendHash) XFree_System(outB.pendHash);
+    /* [泄漏修复] worker 退出补清三处定洩: 发送序排列与两路逐 tile
+     * 编码器(空闲裁剪只盖 orderBuf 的稳态路径, 退出路径此前漏)。 */
+    if (orderBuf) XFree_System(orderBuf);
+    if (outA.tileCodec) XFree_System(outA.tileCodec);
+    if (outB.tileCodec) XFree_System(outB.tileCodec);
 }
 
 /* ==================== 握手与帧派发(GUI 线程) ==================== */

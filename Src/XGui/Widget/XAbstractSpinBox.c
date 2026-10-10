@@ -186,20 +186,8 @@ static void spinbox_forwardEditingFinished(XObject* sender, XVarList* args)
             self, (size_t)XAbstractSpinBox_editingFinished_signal(self));
 }
 
-/** @brief 复制字符串到自管缓冲（NULL 输入按空串）。 */
-static char* spinbox_strdup(const char* text)
-{
-    return XStrdup(text ? text : "");
-}
-
-/** @brief 释放自管字符串并置 NULL。 */
-static void spinbox_strfree(char** ptext)
-{
-    if (ptext && *ptext) {
-        XFree_System(*ptext);
-        *ptext = NULL;
-    }
-}
+/* [死码清理] spinbox_strdup/spinbox_strfree 已删除：与 XSpinBox.c 活本
+ * 同体而本文件零调用（审计清单）。 */
 
 /* ==================== 虚槽实现 ==================== */
 

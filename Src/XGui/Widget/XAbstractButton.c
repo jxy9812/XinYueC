@@ -12,6 +12,9 @@
 #include "XAbstractButton_Protected.h"
 #include "XButtonGroup.h"
 #include "XWidget_Protected.h"
+#if XWINDOW_ON && XACCESSIBLE_ON
+#include "XPlatformAccessibility.h" /* [无障碍补全] StateChanged 通知。 */
+#endif
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XVector.h"
@@ -498,6 +501,12 @@ void XAbstractButton_setChecked(XAbstractButton* self, bool checked)
     if (checked)
         abstractbutton_uncheckAutoExclusiveSiblings(self);
     XAbstractButton_toggled_signal(self, checked);
+#if XWINDOW_ON && XACCESSIBLE_ON
+    /* [无障碍补全 2026-10-07] 对标 QAccessibleStateChangeEvent（Qt 每次
+     * setChecked 后通知选中态变更）；通道由 m_active 门控幂等。 */
+    XPlatformAccessibility_notifyWidget(XAccessibleEvent_StateChanged,
+                                        (XWidget*)self);
+#endif
 }
 
 void XAbstractButton_toggle(XAbstractButton* self)
