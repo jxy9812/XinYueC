@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XPlainTextEdit.c
  * @brief      多行纯文本编辑控件壳实现（对标 Qt 6.8 QPlainTextEdit 全部
  *             公共 API；编辑能力面迁入 XTextControl 私有文本控制器）。
@@ -501,7 +501,11 @@ static void xpe_rebuildLinesMirror(XPlainTextEdit* self)
         if (!line) break;
         XMemcpy(line, src + start, end);
         line[end] = 0;
-        XVector_push_back_1_base(self->m_lines, &line);
+        /* 入容器失败（扩容/分离分配失败）时容器未接管元素：就地释放。 */
+        if (!XVector_push_back_1_base(self->m_lines, &line)) {
+            XFree_System(line);
+            break;
+        }
         if (!nl) break;
         start += end + 1;
     }
@@ -811,7 +815,7 @@ static void xpe_forwardMouseEvent(XPlainTextEdit* self, XEvent* event)
 }
 
 /** @brief 鼠标按下：聚焦并把点击坐标换算后交控制器定位/选区。 */
-static void VX_plainTextEdit_mousePressEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_mousePressEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     if (!edit || !event ||
@@ -824,7 +828,7 @@ static void VX_plainTextEdit_mousePressEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 鼠标移动：拖选扩展交控制器；按住拖选时维护边缘自动滚动。 */
-static void VX_plainTextEdit_mouseMoveEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     XMouseEvent* me;
@@ -839,7 +843,7 @@ static void VX_plainTextEdit_mouseMoveEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 鼠标释放：停止边缘自动滚动并把收尾交控制器。 */
-static void VX_plainTextEdit_mouseReleaseEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     if (!edit || !event ||
@@ -850,7 +854,7 @@ static void VX_plainTextEdit_mouseReleaseEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 鼠标双击：双击选词/三击判定起表交控制器。 */
-static void VX_plainTextEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     if (!edit || !event ||
@@ -861,7 +865,7 @@ static void VX_plainTextEdit_mouseDoubleClickEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 焦点进出：转发控制器（光标可见性/闪烁/指示选区清理）并重绘。 */
-static void VX_plainTextEdit_focusEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_focusEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     if (!edit || !event) return;
@@ -874,7 +878,7 @@ static void VX_plainTextEdit_focusEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 输入法事件：提交/组合文本交控制器（只读壳级门禁保留）。 */
-static void VX_plainTextEdit_inputMethodEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_inputMethodEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     if (!edit || !event ||
@@ -945,7 +949,7 @@ static XVariant* xpe_inputMethodQueryBase(const XWidget* self,
  *             控制器缺席或无对应查询项时回落基类默认复刻；查询本身
  *             不修改控件状态。
  */
-static XVariant* VX_plainTextEdit_inputMethodQuery(const XWidget* self,
+static XVariant* VXPlainTextEdit_inputMethodQuery(const XWidget* self,
                                                    XInputMethodQuery query)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
@@ -1001,7 +1005,7 @@ static XVariant* VX_plainTextEdit_inputMethodQuery(const XWidget* self,
 #if XMENU_ON
 /** @brief 右键菜单事件：弹出标准编辑菜单（菜单数据源为控制器
  *         createStandardContextMenu；弹出/DeleteOnClose 编排保留壳）。 */
-static void VX_plainTextEdit_contextMenuEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_contextMenuEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     XContextMenuEvent* ctx;
@@ -1027,7 +1031,7 @@ static void VX_plainTextEdit_contextMenuEvent(XWidget* self, XEvent* event)
  *             Shift 扩展、Ctrl 编辑族、编辑原语）。无修饰 Backspace/
  *             Delete 先经壳级码点粒度补偿（控制器该两分支为字节粒度）。
  */
-static void VX_plainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     XKeyEvent* ke;
@@ -1067,7 +1071,7 @@ static void VX_plainTextEdit_keyPressEvent(XWidget* self, XEvent* event)
 
 /** @brief 绘制：壳画背景/凹陷边框/占位文本，正文/选区/光标/IME 下划线
  *         由控制器 XTextControl_draw 在内容坐标绘制（translate 互逆）。 */
-static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_paintEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     XPainter painter;
@@ -1168,7 +1172,7 @@ static void VX_plainTextEdit_paintEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 定时器：拖选边缘自动滚动步进（其余交父类链处理）。 */
-static void VX_plainTextEdit_timerEvent(XObject* object, XTimerEvent* event)
+static void VXPlainTextEdit_timerEvent(XObject* object, XTimerEvent* event)
 {
     XPlainTextEdit* self = (XPlainTextEdit*)object;
     if (!self || !event) return;
@@ -1183,7 +1187,7 @@ static void VX_plainTextEdit_timerEvent(XObject* object, XTimerEvent* event)
 
 /** @brief 尺寸变化：父类完成视口/滚动条几何联动后重发折行宽度
  *         （对标 Qt WidgetWidth 模式 resize → 文档 textWidth 重设）。 */
-static void VX_plainTextEdit_resizeEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_resizeEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     XClass_Parent(XAbstractScrollArea, EXWidget_ResizeEvent,
@@ -1196,7 +1200,7 @@ static void VX_plainTextEdit_resizeEvent(XWidget* self, XEvent* event)
  *         此前继承基类 VX_asa_wheelEvent 的 stepBy(steps*3)：符号与
  *         Qt scrollByDelta 相反且单步缺省 1px，下滚零位移。setValue
  *         内部钳位，valueChanged → scrollContentsBy → 重绘链既有。 */
-static void VX_plainTextEdit_wheelEvent(XWidget* self, XEvent* event)
+static void VXPlainTextEdit_wheelEvent(XWidget* self, XEvent* event)
 {
     XPlainTextEdit* edit = (XPlainTextEdit*)self;
     XAbstractScrollArea* base;
@@ -1232,7 +1236,7 @@ static void VX_plainTextEdit_wheelEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-static void VX_plainTextEdit_scrollContentsBy(XAbstractScrollArea* self, int dx, int dy)
+static void VXPlainTextEdit_scrollContentsBy(XAbstractScrollArea* self, int dx, int dy)
 {
     XPlainTextEdit* edit;
     XRect r;
@@ -1246,7 +1250,7 @@ static void VX_plainTextEdit_scrollContentsBy(XAbstractScrollArea* self, int dx,
     }
 }
 
-static void VX_plainTextEdit_deinit(XPlainTextEdit* self)
+static void VXPlainTextEdit_deinit(XPlainTextEdit* self)
 {
     int64_t i;
     int64_t n;
@@ -1295,26 +1299,26 @@ XVtable* XPlainTextEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XPlainTextEdit)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VX_plainTextEdit_keyPressEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_plainTextEdit_paintEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_plainTextEdit_mousePressEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VX_plainTextEdit_mouseReleaseEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VX_plainTextEdit_mouseDoubleClickEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VX_plainTextEdit_mouseMoveEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VX_plainTextEdit_focusEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VX_plainTextEdit_focusEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VX_plainTextEdit_inputMethodEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXPlainTextEdit_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXPlainTextEdit_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXPlainTextEdit_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXPlainTextEdit_mouseReleaseEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent, VXPlainTextEdit_mouseDoubleClickEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXPlainTextEdit_mouseMoveEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VXPlainTextEdit_focusEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VXPlainTextEdit_focusEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodEvent, VXPlainTextEdit_inputMethodEvent);
 #if XINPUTMETHOD_ON
     /* 输入法查询虚槽：委托控制器真实状态（对标 QPlainTextEdit::
        inputMethodQuery 转发文档控制层；基类兜底只回居中假矩形）。 */
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery, VX_plainTextEdit_inputMethodQuery);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_InputMethodQuery, VXPlainTextEdit_inputMethodQuery);
 #endif /* XINPUTMETHOD_ON */
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent, VX_plainTextEdit_contextMenuEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_plainTextEdit_timerEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VX_plainTextEdit_resizeEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VX_plainTextEdit_wheelEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy, VX_plainTextEdit_scrollContentsBy);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_plainTextEdit_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent, VXPlainTextEdit_contextMenuEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXPlainTextEdit_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXPlainTextEdit_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent, VXPlainTextEdit_wheelEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy, VXPlainTextEdit_scrollContentsBy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPlainTextEdit_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -1347,7 +1351,9 @@ void XPlainTextEdit_init(XPlainTextEdit* self, XWidget* parent, XWidgetFlags fla
         char* empty = (char*)XMalloc_System(1);
         if (empty) {
             empty[0] = '\0';
-            XVector_push_back_1_base(self->m_lines, &empty);
+            /* 入容器失败时容器未接管元素：就地释放防泄漏。 */
+            if (!XVector_push_back_1_base(self->m_lines, &empty))
+                XFree_System(empty);
         }
     }
     /* 私有文本控制器：init 创建（deinit 销毁），承载行模型/光标选区/

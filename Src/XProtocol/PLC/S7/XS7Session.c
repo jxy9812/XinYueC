@@ -7,8 +7,8 @@
 #include "XS7Tpkt.h"
 #include "XS7Cotp.h"
 #include "XS7Pdu.h"
-#include "XMemory.h"
 #include <string.h>
+#include "XMemory.h"
 
 /* ==========================================================================
  * S7 会话状态机实现
@@ -25,6 +25,24 @@
 
 // =============== 虚函数前置声明 ===============
 static void VX7Session_deinit(XS7Session* session);
+
+// =============== 析构 ===============
+static void VX7Session_deinit(XS7Session* session)
+{
+    if (!session) return;
+
+    if (session->m_buffer) {
+        XClassDelete(session->m_buffer);
+        session->m_buffer = NULL;
+    }
+    if (session->m_frame) {
+        XClassDelete(session->m_frame);
+        session->m_frame = NULL;
+    }
+    session->m_pendingEvent = XS7SessionEv_None;
+
+    XClass_Deinit_Parent(XObject, session);
+}
 
 // =============== 内部辅助 ===============
 
@@ -172,24 +190,6 @@ void XS7Session_init(XS7Session* session)
     session->m_pendingEvent = XS7SessionEv_None;
     session->m_buffer = XByteArray_create();
     session->m_frame = XByteArray_create();
-}
-
-// =============== 析构 ===============
-static void VX7Session_deinit(XS7Session* session)
-{
-    if (!session) return;
-
-    if (session->m_buffer) {
-        XClassDelete(session->m_buffer);
-        session->m_buffer = NULL;
-    }
-    if (session->m_frame) {
-        XClassDelete(session->m_frame);
-        session->m_frame = NULL;
-    }
-    session->m_pendingEvent = XS7SessionEv_None;
-
-    XClass_Deinit_Parent(XObject, session);
 }
 
 // =============== 会话 API ===============

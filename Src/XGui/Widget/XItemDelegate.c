@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XItemDelegate.c
  * @brief      XItemDelegate 条目委托实现（编辑器四虚槽默认路径 + 内嵌行
  *             文本编辑器 + commitData/closeEditor 信号）。
@@ -284,7 +284,8 @@ XWidget* XItemDelegate_createEditor(XItemDelegate* self,
                                     int row, int col)
 {
     XItemDelegate_CreateEditorFunc fn;
-    if (!self) return NULL;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return NULL;
     fn = (XItemDelegate_CreateEditorFunc)XVtableGetFunc(
         XClassGetVtable(self), EXItemDelegate_CreateEditor, void*);
     if (!fn) return NULL;
@@ -295,7 +296,8 @@ void XItemDelegate_setEditorData(XItemDelegate* self, XWidget* editor,
                                  XAbstractItemView* view, int row, int col)
 {
     XItemDelegate_SetEditorDataFunc fn;
-    if (!self) return;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return;
     fn = (XItemDelegate_SetEditorDataFunc)XVtableGetFunc(
         XClassGetVtable(self), EXItemDelegate_SetEditorData, void*);
     if (!fn) return;
@@ -306,7 +308,8 @@ void XItemDelegate_setModelData(XItemDelegate* self, XWidget* editor,
                                 XAbstractItemView* view, int row, int col)
 {
     XItemDelegate_SetModelDataFunc fn;
-    if (!self) return;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return;
     fn = (XItemDelegate_SetModelDataFunc)XVtableGetFunc(
         XClassGetVtable(self), EXItemDelegate_SetModelData, void*);
     if (!fn) return;
@@ -317,7 +320,8 @@ void XItemDelegate_updateEditorGeometry(XItemDelegate* self, XWidget* editor,
                                         const XRect* cellRect)
 {
     XItemDelegate_UpdateEditorGeometryFunc fn;
-    if (!self) return;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+        return;
     fn = (XItemDelegate_UpdateEditorGeometryFunc)XVtableGetFunc(
         XClassGetVtable(self), EXItemDelegate_UpdateEditorGeometry, void*);
     if (!fn) return;

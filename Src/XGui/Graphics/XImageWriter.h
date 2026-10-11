@@ -1,6 +1,8 @@
 ﻿/******************************************************************************
  * @file       XImageWriter.h
  * @brief      XImageWriter 图像写入器类（对标 Qt 6.8 QImageWriter）
+ * @details    实现只依赖 XinYueC 抽象层，不直接调用 Win32、POSIX、Qt
+ *             或其他平台 API；文件与设备访问统一经 XIODevice 抽象。
  * @author     XinYueC 团队
  * @note       提供将图像写入文件或设备的功能，支持格式选择、质量设置等
  ******************************************************************************/
@@ -44,9 +46,15 @@ typedef enum XImageWriterError
  */
 typedef struct XImageWriter
 {
-    XClass                m_class;   /**< 继承的基类成员 */
-    XImageWriterPrivate*   m_data;    /**< 私有数据指针 */
+    XClass                m_class;   /**< 第一个成员，由 XClass 管理，禁止手工修改。 */
+    XImageWriterPrivate*   m_data;    /**< 私有数据指针，由写入器拥有，仅供实现使用。 */
 }XImageWriter;
+
+/**
+ * @brief      初始化 XImageWriter 类的虚函数表
+ * @return     指向初始化完成的 XVtable 的指针
+ */
+XVtable* XImageWriter_class_init(void);
 
 /**
  * @brief      在堆上创建 XImageWriter 实例
@@ -81,16 +89,6 @@ void XImageWriter_init_file(XImageWriter* self, const XString* fileName, const X
 
 /** @brief 使用 UTF-8 文件名和格式初始化写入器的兼容重载。 */
 void XImageWriter_init_file_2(XImageWriter* self, const char* fileName, const char* format);
-
-/**
- * @brief      释放 XImageWriter 资源
- * @param self 待释放的 XImageWriter 对象指针
- */
-/**
- * @brief      虚函数调度：释放
- * @param self 待释放的对象指针
- */
-/** @brief 删除堆上的图像写入器。 @param self 待写入器指针。 */
 
 /* ========== 格式设置 ========== */
 

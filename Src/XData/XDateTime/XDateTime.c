@@ -3,9 +3,8 @@
 #include "XVariantTypeOps.h"
 #include "XVariant.h"
 #include "XChar.h"
+#include "XStringUtils.h"   /* XStrlen/XStrchr/XSscanf：库内字符串原语（外部依赖约束） */
 #include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
 
 void XDateTime_clear(XDateTime* datetime)
 {
@@ -16,8 +15,8 @@ int32_t XDateTime_compare(const XDateTime* lhs, const XDateTime* rhs)
 {
     int32_t result;
     if (!lhs || !rhs) return XCompare_Other;
-    result = int64_t_compare(&lhs->m_date.m_jd, &rhs->m_date.m_jd);
-    return result ? result : int_compare(&lhs->m_time.m_msecs,
+    result = Xint64_t_compare(&lhs->m_date.m_jd, &rhs->m_date.m_jd);
+    return result ? result : Xint_compare(&lhs->m_time.m_msecs,
                                          &rhs->m_time.m_msecs);
 }
 
@@ -253,7 +252,7 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
     int minute = XTime_minute(&datetime->m_time);
     int second = XTime_second(&datetime->m_time);
 
-    size_t len = strlen(format);
+    size_t len = XStrlen(format);
     for (size_t i = 0; i < len; i++) {
         if (format[i] == 'y') {
             int count = 0;
@@ -341,7 +340,7 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
             XString_setNum_int(temp_num_str, second, 10);
            
             XString_append(result, temp_num_str);
-            //XPrintf_2(result);
+            //XPrintf_string(result);
             // -----------------------
 
             i = j - 1;
@@ -352,9 +351,9 @@ XString* XDateTime_toString_format(const XDateTime* datetime, const char* format
             //XString_push_back_base(result, ch);
             XString_append_char(result, ch);
         }
-     /*   XPrintf_2(temp_num_str);
+     /*   XPrintf_string(temp_num_str);
         XPrintf("\n");
-        XPrintf_2(result);
+        XPrintf_string(result);
           XPrintf("\n");*/
     }
 
@@ -383,14 +382,14 @@ XDateTime XDateTime_fromString_iso(const char* str) {
     int fractionValue = 0;
     int digits = 0;
     if (!str) return XDateTime_create();
-    separator = strchr(str, ' ');
-    if (!separator) separator = strchr(str, 'T');
-    if (!separator || sscanf(str, "%d-%d-%d%c%d:%d:%d", &year, &month, &day,
-                             &separatorChar, &hour, &minute, &second) != 7
+    separator = XStrchr(str, ' ');
+    if (!separator) separator = XStrchr(str, 'T');
+    if (!separator || XSscanf(str, "%d-%d-%d%c%d:%d:%d", &year, &month, &day,
+                              &separatorChar, &hour, &minute, &second) != 7
         || (separatorChar != ' ' && separatorChar != 'T'))
         return XDateTime_create();
     XDate date = XDate_create_date(year, month, day);
-    fraction = strchr(separator, '.');
+    fraction = XStrchr(separator, '.');
     if (fraction) {
         ++fraction;
         while (XChar_isDigit_2((uint32_t)(unsigned char)fraction[digits]) && digits < 6) {

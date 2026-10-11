@@ -1,4 +1,10 @@
-﻿#ifndef XSTATEMACHINE_H
+﻿/**
+ * @file       XStateMachine.h
+ * @brief      分层有限状态机公开 API。
+ * @details    对齐 Qt 6.8 QStateMachine；实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XSTATEMACHINE_H
 #define XSTATEMACHINE_H
 
 #ifdef __cplusplus
@@ -56,13 +62,6 @@ XCLASS_DEFINE_EXTEND_END(XStateMachine_SignalEvent, XEvent)
 XCLASS_DEFINE_BEGING(XStateMachine_WrappedEvent)
 XCLASS_DEFINE_EXTEND_END(XStateMachine_WrappedEvent, XEvent)
 
-/** @brief 延迟事件的内部记录。 */
-typedef struct XStateMachine_DelayedEvent {
-    int m_id;              ///< 对外返回的延迟事件编号。
-    XTimerId m_timerId;    ///< XObject 定时器编号；零延迟时为 XTIMER_INVALID_ID。
-    XEvent* m_event;       ///< 到期后进入外部队列的事件。
-} XStateMachine_DelayedEvent;
-
 XCLASS_DEFINE_BEGING(XStateMachine)
 XCLASS_DEFINE_ENUM(XStateMachine, BeginSelectTransitions) = XCLASS_VTABLE_GET_SIZE(XState),
 XCLASS_DEFINE_ENUM(XStateMachine, EndSelectTransitions),
@@ -84,7 +83,7 @@ typedef struct XStateMachine {
     XAbstractState* m_pendingErrorState;          ///< 下一 microstep 需要进入的错误状态。
     XStateMachine_PrivateState m_state;           ///< 生命周期状态。
     XStateMachine_Error m_error;                  ///< 最近一次状态图错误。
-    const char* m_errorString;                    ///< 最近一次错误的静态描述。
+    XString* m_errorString;                       ///< 最近一次错误的描述（XString 主版本，由状态机拥有）；NULL 表示无错误。
     int m_nextDelayedEventId;                     ///< 下一个延迟事件编号。
     bool m_processing;                            ///< 当前是否正在执行 macrostep。
     bool m_processingScheduled;                   ///< 是否已投递处理事件。
@@ -145,9 +144,17 @@ bool XStateMachine_removeState(XStateMachine* machine, XAbstractState* state);
  */
 XStateMachine_Error XStateMachine_error(const XStateMachine* machine);
 /**
- * @brief 获取最近一次状态图错误描述。
+ * @brief 获取最近一次状态图错误描述（XString 主版本，借用内部对象）。
  * @param machine 状态机实例。
- * @return 静态只读错误描述；无错误或 machine 为 NULL 时返回 NULL。
+ * @return 状态机内部拥有的错误描述 XString；无错误或 machine 为 NULL 时返回 NULL。
+ * @warning 返回值随 clearError、下次 setError 和状态机析构失效，调用者不得释放或修改。
+ */
+const XString* XStateMachine_errorString_const(const XStateMachine* machine);
+/**
+ * @brief 获取最近一次状态图错误描述的 UTF-8 兼容文本。
+ * @param machine 状态机实例。
+ * @return 兼容视图：文本来自内部 XString 的 UTF-8 转换缓存，不作为核心存储，
+ *         随 clearError、下次 setError 或状态机析构失效；无错误或 machine 为 NULL 时返回 NULL。
  */
 const char* XStateMachine_errorString(const XStateMachine* machine);
 /**
@@ -218,32 +225,19 @@ bool XStateMachine_cancelDelayedEvent(XStateMachine* machine, int id);
  */
 const XVector* XStateMachine_configuration_const(const XStateMachine* machine);
 
-/**
- * @brief 调用转换选择开始钩子。
- * @param machine 正在选择转换的状态机。
- * @param event 当前待匹配事件。
- * @note 通过 EXStateMachine_BeginSelectTransitions 调度派生实现。
- */
-void XStateMachine_beginSelectTransitions_base(XStateMachine* machine, XEvent* event);
-/**
- * @brief 调用转换选择结束钩子。
- * @param machine 已完成转换选择的状态机。
- * @param event 当前待匹配事件。
- */
-void XStateMachine_endSelectTransitions_base(XStateMachine* machine, XEvent* event);
-/**
- * @brief 调用 microstep 开始钩子。
- * @param machine 即将执行 microstep 的状态机。
- * @param event 触发本次 microstep 的事件。
- */
-void XStateMachine_beginMicrostep_base(XStateMachine* machine, XEvent* event);
-/**
- * @brief 调用 microstep 结束钩子。
- * @param machine 已完成 microstep 的状态机。
- * @param event 触发本次 microstep 的事件。
- */
-void XStateMachine_endMicrostep_base(XStateMachine* machine, XEvent* event);
+/* XStateMachine 的 *_base 子类重载调度入口已迁至 XStateMachine_Protected.h，使用者须显式 include。 */
 
+/**
+ * @brief 初始化 XStateMachine_SignalEvent 虚函数表。
+ * @return XStateMachine_SignalEvent 的共享虚函数表。
+ */
+XVtable* XStateMachine_SignalEvent_class_init(void);
+/**
+ * @brief 初始化信号事件（栈对象）。
+ * @param event 调用者提供的未初始化存储。
+ * @note 事件类型取状态机模块注册的信号事件类型；模块尚未初始化时为 XEVENT_TYPE_NONE。
+ */
+void XStateMachine_SignalEvent_init(XStateMachine_SignalEvent* event);
 /**
  * @brief 创建信号事件，并复制参数列表 data 区域中的值。
  * @param sender 原始信号发送者，不转移所有权。

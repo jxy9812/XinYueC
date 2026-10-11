@@ -125,9 +125,10 @@ static void VXMimeData_copy(XMimeData* self, const XMimeData* other)
             dstEntry->m_data   = srcEntry->m_data   ? XByteArray_create_copy(srcEntry->m_data) : NULL;
             if (!target->m_custom)
                 target->m_custom = XVector_Create(XMimeCustomEntry*);
-            if (target->m_custom) {
-                XVector_Push_Back_Base(target->m_custom, XMimeCustomEntry*, dstEntry);
-            } else {
+            /* push 底层失败(OOM)时元素不入容器: 条目及其深拷贝字段
+             * 就地释放——不入容器即无属主, 不清即逐条泄漏。 */
+            if (!target->m_custom ||
+                !XVector_push_back_1_base(target->m_custom, &dstEntry)) {
                 if (dstEntry->m_format) XClassDelete(dstEntry->m_format);
                 if (dstEntry->m_data)   XClassDelete((XClass*)dstEntry->m_data);
                 XFree_System(dstEntry);
@@ -501,13 +502,15 @@ void XMimeData_setData_bytes(XMimeData* self, const char* format,
     entry->m_data   = blob;
     if (!self->m_data->m_custom)
         self->m_data->m_custom = XVector_Create(XMimeCustomEntry*);
-    if (!self->m_data->m_custom) {
+    /* push 底层失败(OOM)时元素不入容器: entry+fmt+blob 三层分配全部
+     * 就地释放——不入容器即无属主, 不清即泄漏。 */
+    if (!self->m_data->m_custom ||
+        !XVector_push_back_1_base(self->m_data->m_custom, &entry)) {
         if (entry->m_format) XClassDelete(entry->m_format);
         if (entry->m_data)   XClassDelete((XClass*)entry->m_data);
         XFree_System(entry);
         return;
     }
-    XVector_Push_Back_Base(self->m_data->m_custom, XMimeCustomEntry*, entry);
 }
 
 void XMimeData_setData(XMimeData* self, const char* format, const XString* data)

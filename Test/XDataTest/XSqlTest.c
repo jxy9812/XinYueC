@@ -37,7 +37,7 @@ static bool XSqlTest_run_sqlite(void);
 static bool XSqlTest_run_value_api(const XSqlDatabase* database);
 #if XTHREAD_ON
 static void XSqlTest_thread_affinity_probe(XThread* thread, XVarList* list);
-static XAtomic_bool g_sqlThreadAffinityOk = { false };
+static XAtomic_Bool g_sqlThreadAffinityOk = { false };
 #endif // XTHREAD_ON
 
 XCLASS_DEFINE_BEGING(XSqlTestResult)
@@ -323,11 +323,11 @@ int XSqlTest_run(void)
     if (builtinDrivers) XClassDelete(builtinDrivers);
     if (!builtinDriversOk) return 1;
     XSqlDriverCreator* creator = XSqlDriverCreator_create(XSqlTest_createDriver);
-    if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_Custom, &creator->m_parent)) {
+    if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_Custom, &creator->m_class)) {
         if (creator) XClassDelete(creator);
         return 1;
     }
-    XSqlDatabase* database = XSqlDatabase_addDatabase(XSqlDriverType_Custom, "xsql-test");
+    XSqlDatabase* database = XSqlDatabase_addDatabase_2(XSqlDriverType_Custom, "xsql-test");
     if (!database) return 2;
     if (!XSqlDatabase_open(database)) { XClassDelete(database); return 2; }
     XSqlQuery* query = XSqlDatabase_exec_utf8(database, "  SELECT id, text FROM test  ");
@@ -342,7 +342,7 @@ int XSqlTest_run(void)
     XSqlResult_setActive_base(XSqlQuery_result(query), true);
     if (!validPositionOk) {
         XClassDelete(query);
-        XSqlDatabase_removeDatabase("xsql-test");
+        XSqlDatabase_removeDatabase_2("xsql-test");
         XClassDelete(database);
         return 3;
     }
@@ -436,7 +436,7 @@ int XSqlTest_run(void)
     if (queryModel) XClassDelete(queryModel);
     bool valueApiOk = XSqlTest_run_value_api(database);
     XClassDelete(query);
-    XSqlDatabase_removeDatabase("xsql-test");
+    XSqlDatabase_removeDatabase_2("xsql-test");
     XClassDelete(database);
     if (!valuesOk || !modelOk || !valueApiOk) {
         return 4;
@@ -449,7 +449,7 @@ int XSqlTest_run(void)
 
 static bool XSqlTest_run_sqlite(void)
 {
-    XSqlDatabase* database = XSqlDatabase_addDatabase(XSqlDriverType_Sqlite, "xsql-sqlite");
+    XSqlDatabase* database = XSqlDatabase_addDatabase_2(XSqlDriverType_Sqlite, "xsql-sqlite");
     XSqlDatabase* openedDatabase = NULL;
     XSqlQuery* query = NULL;
     XString* databaseName = XString_create_utf8("xsql-test.sqlite");
@@ -487,7 +487,7 @@ static bool XSqlTest_run_sqlite(void)
     ok = ok && XSqlDatabase_open(database);
     XPrintf("SQLite 打开数据库：%s\n", ok ? "通过" : "失败");
     if (ok) {
-        openedDatabase = XSqlDatabase_database("xsql-sqlite", true);
+        openedDatabase = XSqlDatabase_database_2("xsql-sqlite", true);
         ok = openedDatabase && XSqlDatabase_isOpen(openedDatabase);
         if (openedDatabase) {
             XClassDelete(openedDatabase);
@@ -780,7 +780,7 @@ static bool XSqlTest_run_sqlite(void)
         && metadataField && XSqlField_typeId(metadataField) < 0
         && primaryIndex && XSqlRecord_count(&primaryIndex->m_parent) == 1
         && peopleName && connectionName
-        && XSqlDatabase_contains_2(connectionName);
+        && XSqlDatabase_contains(connectionName);
     XPrintf("SQLite 元数据：%s\n", ok ? "通过" : "失败");
 
     if (ok) {
@@ -835,7 +835,7 @@ static bool XSqlTest_run_sqlite(void)
         if (tableModel) XSqlTableModel_setTable(tableModel, peopleName);
         tableSelect = tableModel && XSqlTableModel_select(tableModel)
             && XSqlTableModel_rowCount(tableModel) == 2
-            && nameField && XSqlTableModel_fieldIndex_2(tableModel, nameField) == 1;
+            && nameField && XSqlTableModel_fieldIndex(tableModel, nameField) == 1;
         filterText = XString_create_utf8("name <> ''");
         XSqlTableModel_setFilter(tableModel, filterText);
         XSqlTableModel_setFilter(tableModel, NULL);
@@ -1053,7 +1053,7 @@ static bool XSqlTest_run_sqlite(void)
     XClassDelete(databaseName);
     XClassDelete(walName);
     XClassDelete(shmName);
-    XSqlDatabase_removeDatabase("xsql-sqlite");
+    XSqlDatabase_removeDatabase_2("xsql-sqlite");
     if (database) XClassDelete(database);
     XPrintf("SQLite XFile 文件抽象：%s\n", ok ? "通过" : "失败");
     return ok;
@@ -1065,7 +1065,7 @@ static void XSqlTest_thread_affinity_probe(XThread* thread, XVarList* list)
     bool result;
     (void)thread;
     XVarList_args_1(list, XSqlDatabase*, database);
-    result = XSqlDatabase_database("xsql-sqlite", false) == NULL
+    result = XSqlDatabase_database_2("xsql-sqlite", false) == NULL
         && XSqlDatabase_exec_utf8(database, "SELECT 1") == NULL
         && XSqlDatabase_driver(database) == NULL;
     XAtomic_store_bool(&g_sqlThreadAffinityOk, result, XAtomic_MemoryOrder_Release);

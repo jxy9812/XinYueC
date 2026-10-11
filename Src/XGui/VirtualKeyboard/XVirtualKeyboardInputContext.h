@@ -161,8 +161,18 @@ int XVirtualKeyboardInputContext_preeditTextAttributes(
  *             replaceFrom/replaceLength 本轮无行内渲染面，登记后忽略
  *             （scopeOut）。变化时发 preeditTextChanged。
  * @param      self 上下文对象；可为 NULL。
- * @param      text 组串文本（UTF-8 借用；NULL 等价清空，函数不取得所
- *             有权）。
+ * @param      text 组串文本（借用，函数不取得所有权）；NULL 等价清
+ *             空。
+ * @return     无返回值；self 为 NULL 时保持原状态。
+ */
+void XVirtualKeyboardInputContext_setPreeditText(
+        XVirtualKeyboardInputContext* self, const XString* text);
+/**
+ * @brief      设置组串文本（UTF-8 转发版本；对标 setPreeditText）。
+ * @details    仅创建临时 XString 并转发到 setPreeditText。
+ * @param      self 上下文对象；可为 NULL。
+ * @param      text 组串文本，按 UTF-8 解码（借用，只在调用期间有
+ *             效）；NULL 等价清空，函数不取得所有权。
  * @return     无返回值；self 为 NULL 时保持原状态。
  */
 void XVirtualKeyboardInputContext_setPreeditText_2(
@@ -307,11 +317,24 @@ void XVirtualKeyboardInputContext_commit(
         XVirtualKeyboardInputContext* self);
 
 /**
- * @brief      提交指定文本（对标 commit(text, replaceFrom,
- *             replaceLength)）。
+ * @brief      提交指定文本（XString 主版本；对标 commit(text,
+ *             replaceFrom, replaceLength)）。
  * @details    【commit 落地契约】经公共信号 commitRequested(text) 由
  *             已持 m_target 的默认面板执行既有写入链；replaceFrom/
  *             replaceLength 无选区替换基建，登记后忽略（scopeOut）。
+ * @param      self 上下文对象；可为 NULL。
+ * @param      text 提交文本（借用，函数不取得所有权；NULL 或空串按
+ *             无操作处理）。
+ * @return     无返回值；self 为 NULL 或无面板连接时文本丢弃。
+ */
+void XVirtualKeyboardInputContext_commitText(
+        XVirtualKeyboardInputContext* self, const XString* text);
+
+/**
+ * @brief      提交指定文本（UTF-8 转发版本；对标 commit(text,
+ *             replaceFrom, replaceLength)）。
+ * @details    仅创建临时 XString 并转发到 commitText；commit 落地契约
+ *             同主版本（经公共信号 commitRequested(text) 落地）。
  * @param      self 上下文对象；可为 NULL。
  * @param      text 提交文本（UTF-8 借用，函数不取得所有权；NULL 按
  *             空串处理）。

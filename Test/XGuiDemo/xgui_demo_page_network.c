@@ -249,9 +249,9 @@ static int net_collectLinkInfo(int ifIndex, char* mac, size_t macCap,
             XNetworkAddressEntry* entry =
                 (XNetworkAddressEntry*)XVector_at_base(entries, j);
             XString* text;
-            if (!entry || entry->ip.protocol != XHostAddress_IPv6Protocol)
+            if (!entry || entry->m_ip.protocol != XHostAddress_IPv6Protocol)
                 continue;
-            text = XHostAddress_toString(&entry->ip);
+            text = XHostAddress_toString(&entry->m_ip);
             if (!text) continue;
             if (total == 0 && first) {
                 const char* utf8 = XString_toUtf8(text);
@@ -309,9 +309,9 @@ static void net_fillInfoFromInterface(int ifIndex)
                 (XNetworkAddressEntry*)XVector_at_base(entries, j);
             XString* ipText;
             if (!entry) continue;
-            ipText = XHostAddress_toString(&entry->ip);
+            ipText = XHostAddress_toString(&entry->m_ip);
             if (!ipText) continue;
-            if (entry->ip.protocol == XHostAddress_IPv6Protocol) {
+            if (entry->m_ip.protocol == XHostAddress_IPv6Protocol) {
                 size_t len = strlen(s_net.m_v6All);
                 if (s_net.m_v6Count == 0)
                     snprintf(s_net.m_v6First, sizeof(s_net.m_v6First),
@@ -894,7 +894,7 @@ static void net_refreshAdapters(void)
             (XNetworkInterface*)XVector_at_base(interfaces, i);
         const XString* label;
         const char* text;
-        if (!iface || !iface->isValid) continue;
+        if (!iface || !iface->m_isValid) continue;
         label = XNetworkInterface_humanReadableName_const(iface);
         if (!label || !XString_size(label))
             label = XNetworkInterface_name_const(iface);

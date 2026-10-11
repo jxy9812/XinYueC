@@ -80,115 +80,38 @@ typedef struct XVimJumpState XVimJumpState;
  *          m_cursorLine/m_cursorColumn 分别表示光标行（0 起）和光标所在
  *          显示列（按 UTF-8 字符数计）。m_wantSave/m_wantQuit 等标志由
  *          控件在冒号命令执行后设置，调用方在处理完保存/退出后调用
- *          XTuiVim_ackAction 清除。
+ *          XTuiVim_ackAction 清除。成员按对齐要求分组排列（指针/整数/
+ *          字符缓冲/标志位域）以消除填充空洞；相邻布尔标志合并为 1 位
+ *          位域。成员排列属内部实现，禁止依赖成员顺序、偏移量，禁止
+ *          对本结构体整体做 memcpy 或序列化。
  */
 typedef struct XTuiVim
 {
     XTuiWidget m_widget;        /**< 基类控件，第一个成员，由 XTuiWidget 管理。 */
+
+    /* ---- 指针成员集中前置（8 字节对齐，消除与 int/char 交错的对齐空洞） ---- */
     char**     m_lines;         /**< 文本行数组；动态分配，由本对象释放。 */
-    int        m_lineCount;     /**< 有效行数。 */
-    int        m_linesCapacity; /**< 行数组容量。 */
-    int        m_cursorLine;    /**< 光标行（0 起）。 */
-    int        m_cursorColumn;  /**< 光标列（UTF-8 字符数）。 */
-    int        m_topLine;       /**< 垂直滚动偏移（首个可见行的行号）。 */
-    bool       m_insertMode;    /**< 是否处于插入模式。 */
-    bool       m_replaceMode;   /**< 是否处于替换模式（R）。 */
-    bool       m_commandMode;   /**< 是否正在输入冒号命令（: 后内容）。 */
-#if XTUI_VIM_SEARCH_ON
-    bool       m_searchMode;    /**< 是否正在输入搜索（/ 或 ? 后内容）。 */
-    bool       m_searchBackward;/**< 当前搜索是否为反向（?）。 */
-    bool       m_searchHighlight;/**< 是否显示搜索匹配高亮（:set hlsearch）。 */
-#endif
-#if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
-    bool       m_substituteConfirm; /**< 是否处于 :s///c 逐项确认状态。 */
-    bool       m_substituteGlobal;  /**< 确认替换是否处理同一行的全部匹配。 */
-    bool       m_substituteIgnoreCase; /**< 确认替换是否忽略大小写。 */
-    int        m_substituteFirstLine; /**< 确认替换范围首行。 */
-    int        m_substituteLastLine;  /**< 确认替换范围末行。 */
-    int        m_substituteLine;      /**< 当前确认候选所在行。 */
-    int        m_substituteColumn;    /**< 当前确认候选起始列。 */
-    int        m_substituteEndColumn; /**< 当前确认候选结束列。 */
-    int        m_substituteNextColumn;/**< 当前行下次匹配的起始列。 */
-    char       m_substitutePattern[XTUI_VIM_CMD_MAX + 1]; /**< 确认替换模式。 */
-    char       m_substituteReplacement[XTUI_VIM_CMD_MAX + 1]; /**< 确认替换文本。 */
-#endif
-    bool       m_modified;      /**< 缓冲相对磁盘是否已修改。 */
-    char       m_command[XTUI_VIM_CMD_MAX + 1];   /**< 冒号命令缓冲（不含 ':'）。 */
-    int        m_commandLen;    /**< 冒号命令缓冲字节长度。 */
 #if XTUI_VIM_HISTORY_ON
     XVimCommandHistoryState* m_commandHistoryState; /**< 冒号命令历史；首次执行命令时按需创建。 */
 #endif
 #if XTUI_VIM_SEARCH_ON
-    char       m_search[XTUI_VIM_CMD_MAX + 1];    /**< 搜索缓冲（不含 '/' 或 '?'）。 */
-    int        m_searchLen;     /**< 搜索缓冲字节长度。 */
-    char       m_lastSearch[XTUI_VIM_CMD_MAX + 1];/**< 上次执行的搜索串。 */
-    int        m_lastSearchLen; /**< 上次搜索串长度。 */
 #if XTUI_VIM_HISTORY_ON
     XVimSearchHistoryState* m_searchHistoryState; /**< 搜索历史；首次完成搜索时按需创建。 */
 #endif
 #endif
-    char       m_insertBuf[XTUI_VIM_LINE_MAX + 1];/**< 插入模式当前待回车行缓冲。 */
-    int        m_insertLen;     /**< 插入缓冲字节长度。 */
-    int        m_insertCursor;  /**< 插入缓冲光标列（UTF-8 字符数）。 */
-    char       m_status[XTUI_VIM_STATUS_MAX + 1]; /**< 状态栏文本。 */
     char*      m_path;          /**< 目标文件路径；动态分配，由本对象释放。 */
 #if XTUI_VIM_UNDO_REDO_ON
     XVimSnapshot* m_undoStack;  /**< 撤销快照栈；动态分配。 */
-    int        m_undoLen;       /**< 撤销栈有效快照数。 */
-    int        m_undoCap;       /**< 撤销栈容量。 */
     XVimSnapshot* m_redoStack;  /**< 重做快照栈；动态分配。 */
-    int        m_redoLen;       /**< 重做栈有效快照数。 */
-    int        m_redoCap;       /**< 重做栈容量。 */
 #endif
 #if XTUI_VIM_YANK_PASTE_ON
     char**     m_regLines;      /**< 无名寄存器文本行；动态分配。 */
-    int        m_regCount;      /**< 寄存器有效行数。 */
-    bool       m_regLineWise;   /**< 寄存器内容是否为行方式（粘贴在行间）。 */
 #endif
 #if XTUI_VIM_REGISTER_ON
     XVimRegisterState* m_registerState; /**< a-z/0-9 寄存器表；首次使用命名或编号寄存器时按需创建。 */
-    char       m_activeRegister; /**< 下一条操作指定的寄存器；0 为无名。 */
-    bool       m_appendRegister; /**< 大写寄存器名表示追加写入。 */
 #endif
 #if XTUI_VIM_MACRO_ON
     XVimMacroState* m_macroState; /**< a-z 宏内容；首次录制宏时按需创建。 */
-    bool       m_macroRecording; /**< 是否正在录制宏。 */
-    bool       m_macroPlaying; /**< 是否正在回放宏。 */
-    char       m_macroRegister; /**< 当前录制寄存器。 */
-    char       m_lastMacro; /**< `@@` 使用的寄存器。 */
-#endif
-    bool       m_wantSave;      /**< 请求保存（:w）。 */
-    bool       m_wantQuit;      /**< 请求退出（:q/:q!）。 */
-    bool       m_wantSaveQuit;  /**< 请求保存并退出（:wq/:x）。 */
-#if XTUI_VIM_MULTIBUFFER_ON
-    bool       m_wantEdit;      /**< 请求打开另一个缓冲（:edit/:e）。 */
-    bool       m_wantBufferNext;/**< 请求切换至下一缓冲（:bnext/:bn）。 */
-    bool       m_wantBufferPrev;/**< 请求切换至上一缓冲（:bprevious/:bp）。 */
-    bool       m_wantBufferList;/**< 请求列出当前缓冲（:buffers/:ls）。 */
-    int        m_wantBufferIndex; /**< 请求切换的 1 起始缓冲号；0 表示未指定。 */
-    bool       m_wantForce;     /**< 当前 edit 请求是否带 !。 */
-    bool       m_wantWritePath; /**< 请求按 actionPath 写出当前缓冲（:w path）。 */
-    bool       m_wantSaveAs;    /**< 请求写出并将当前缓冲路径改为 actionPath（:saveas）。 */
-    bool       m_wantWriteAll;  /**< 请求写出所有已修改缓冲（:wa/:wall）。 */
-    bool       m_wantQuitAll;   /**< 请求关闭全部缓冲（:qa/:qall）。 */
-    bool       m_wantBufferClose; /**< 请求关闭当前缓冲（:bd）。 */
-    char       m_actionPath[XTUI_VIM_LINE_MAX + 1]; /**< :edit 的目标路径。 */
-#endif
-    char       m_pendingOperator; /**< 命令模式待组合操作符（'d'/'c'/'y' 或 '\0'）。 */
-    char       m_pendingNormal;   /**< 命令模式待组合键（dd 的第二个 d、f/t 的等待字符）。 */
-    int        m_count;         /**< 普通模式计数前缀（0 表示无）。 */
-    int        m_opStartLine;   /**< 操作符起始行（d/c/y 的起点）。 */
-    int        m_opStartColumn; /**< 操作符起始列。 */
-#if XTUI_VIM_VISUAL_ON
-    bool       m_visualMode;    /**< 是否处于可视模式。 */
-    bool       m_visualLineWise;/**< 可视模式是否为行方式（V）。 */
-    bool       m_visualBlock;   /**< 可视模式是否为块方式（Ctrl-V）。 */
-    int        m_visualStartLine;   /**< 可视起始行。 */
-    int        m_visualStartColumn; /**< 可视起始列。 */
-    bool       m_blockInsertMode; /**< 可视块 I/A/c 结束后是否向所有选中行插入。 */
-    int        m_blockInsertFirstLine; /**< 块插入首行。 */
-    int        m_blockInsertLastLine; /**< 块插入末行。 */
-    int        m_blockInsertColumn; /**< 块插入原始列。 */
 #endif
 #if XTUI_VIM_MARK_ON
     XVimMarkState* m_markState; /**< a-z 本地标记；首次设置标记时按需创建。 */
@@ -196,15 +119,140 @@ typedef struct XTuiVim
 #if XTUI_VIM_JUMPLIST_ON
     XVimJumpState* m_jumpState; /**< 跳转列表；首次记录跳转位置时按需创建。 */
 #endif
+
+    /* ---- int 成员集中排布（消除 bool/char 打断产生的对齐空洞） ---- */
+    int        m_lineCount;     /**< 有效行数。 */
+    int        m_linesCapacity; /**< 行数组容量。 */
+    int        m_cursorLine;    /**< 光标行（0 起）。 */
+    int        m_cursorColumn;  /**< 光标列（UTF-8 字符数）。 */
+    int        m_topLine;       /**< 垂直滚动偏移（首个可见行的行号）。 */
+#if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
+    int        m_substituteFirstLine; /**< 确认替换范围首行。 */
+    int        m_substituteLastLine;  /**< 确认替换范围末行。 */
+    int        m_substituteLine;      /**< 当前确认候选所在行。 */
+    int        m_substituteColumn;    /**< 当前确认候选起始列。 */
+    int        m_substituteEndColumn; /**< 当前确认候选结束列。 */
+    int        m_substituteNextColumn;/**< 当前行下次匹配的起始列。 */
+#endif
+    int        m_commandLen;    /**< 冒号命令缓冲字节长度。 */
+#if XTUI_VIM_SEARCH_ON
+    int        m_searchLen;     /**< 搜索缓冲字节长度。 */
+    int        m_lastSearchLen; /**< 上次搜索串长度。 */
+#endif
+    int        m_insertLen;     /**< 插入缓冲字节长度。 */
+    int        m_insertCursor;  /**< 插入缓冲光标列（UTF-8 字符数）。 */
+#if XTUI_VIM_UNDO_REDO_ON
+    int        m_undoLen;       /**< 撤销栈有效快照数。 */
+    int        m_undoCap;       /**< 撤销栈容量。 */
+    int        m_redoLen;       /**< 重做栈有效快照数。 */
+    int        m_redoCap;       /**< 重做栈容量。 */
+#endif
+#if XTUI_VIM_YANK_PASTE_ON
+    int        m_regCount;      /**< 寄存器有效行数。 */
+#endif
+#if XTUI_VIM_MULTIBUFFER_ON
+    int        m_wantBufferIndex; /**< 请求切换的 1 起始缓冲号；0 表示未指定。 */
+#endif
+    int        m_count;         /**< 普通模式计数前缀（0 表示无）。 */
+    int        m_opStartLine;   /**< 操作符起始行（d/c/y 的起点）。 */
+    int        m_opStartColumn; /**< 操作符起始列。 */
+#if XTUI_VIM_VISUAL_ON
+    int        m_visualStartLine;   /**< 可视起始行。 */
+    int        m_visualStartColumn; /**< 可视起始列。 */
+    int        m_blockInsertFirstLine; /**< 块插入首行。 */
+    int        m_blockInsertLastLine; /**< 块插入末行。 */
+    int        m_blockInsertColumn; /**< 块插入原始列。 */
+#endif
 #if XTUI_VIM_ADVANCED_MOTION_ON
-    char       m_findChar;      /**< 上次 f/F/t/T 查找的字符。 */
-    bool       m_findBackward;  /**< 上次查找是否为反向（F/T）。 */
-    bool       m_findTill;      /**< 上次查找是否为止于字符前（t/T）。 */
-    char       m_lastRepeat[XTUI_VIM_CMD_MAX + 1]; /**< 上次可重复操作的编码。 */
     int        m_lastRepeatLen; /**< 上次可重复操作长度。 */
+#endif
+
+    /* ---- char 缓冲数组（1 字节对齐，连续排布无填充） ---- */
+#if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
+    char       m_substitutePattern[XTUI_VIM_CMD_MAX + 1]; /**< 确认替换模式。 */
+    char       m_substituteReplacement[XTUI_VIM_CMD_MAX + 1]; /**< 确认替换文本。 */
+#endif
+    char       m_command[XTUI_VIM_CMD_MAX + 1];   /**< 冒号命令缓冲（不含 ':'）。 */
+#if XTUI_VIM_SEARCH_ON
+    char       m_search[XTUI_VIM_CMD_MAX + 1];    /**< 搜索缓冲（不含 '/' 或 '?'）。 */
+    char       m_lastSearch[XTUI_VIM_CMD_MAX + 1];/**< 上次执行的搜索串。 */
+#endif
+    char       m_insertBuf[XTUI_VIM_LINE_MAX + 1];/**< 插入模式当前待回车行缓冲。 */
+    char       m_status[XTUI_VIM_STATUS_MAX + 1]; /**< 状态栏文本。 */
+#if XTUI_VIM_MULTIBUFFER_ON
+    char       m_actionPath[XTUI_VIM_LINE_MAX + 1]; /**< :edit 的目标路径。 */
+#endif
+#if XTUI_VIM_ADVANCED_MOTION_ON
+    char       m_lastRepeat[XTUI_VIM_CMD_MAX + 1]; /**< 上次可重复操作的编码。 */
     char       m_insertRepeatPrefix[8]; /**< 插入前置操作编码（如 s:/cw:）。 */
 #endif
-    bool       m_showLineNumbers; /**< 是否显示行号（:set nu/nonu）。 */
+
+    /* ---- 单 char 成员集中 ---- */
+#if XTUI_VIM_REGISTER_ON
+    char       m_activeRegister; /**< 下一条操作指定的寄存器；0 为无名。 */
+#endif
+#if XTUI_VIM_MACRO_ON
+    char       m_macroRegister; /**< 当前录制寄存器。 */
+    char       m_lastMacro; /**< `@@` 使用的寄存器。 */
+#endif
+    char       m_pendingOperator; /**< 命令模式待组合操作符（'d'/'c'/'y' 或 '\0'）。 */
+    char       m_pendingNormal;   /**< 命令模式待组合键（dd 的第二个 d、f/t 的等待字符）。 */
+#if XTUI_VIM_ADVANCED_MOTION_ON
+    char       m_findChar;      /**< 上次 f/F/t/T 查找的字符。 */
+#endif
+
+    /* ---- bool 标志合并为 1 位位域：全部标志已核查无取址/sizeof/自增使用，
+         赋值均为 bool 表达式，写入非 0 值按 C99 语义归一为 1 ---- */
+    bool       m_insertMode : 1;    /**< 是否处于插入模式。 */
+    bool       m_replaceMode : 1;   /**< 是否处于替换模式（R）。 */
+    bool       m_commandMode : 1;   /**< 是否正在输入冒号命令（: 后内容）。 */
+#if XTUI_VIM_SEARCH_ON
+    bool       m_searchMode : 1;    /**< 是否正在输入搜索（/ 或 ? 后内容）。 */
+    bool       m_searchBackward : 1;/**< 当前搜索是否为反向（?）。 */
+    bool       m_searchHighlight : 1;/**< 是否显示搜索匹配高亮（:set hlsearch）。 */
+#endif
+#if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
+    bool       m_substituteConfirm : 1; /**< 是否处于 :s///c 逐项确认状态。 */
+    bool       m_substituteGlobal : 1;  /**< 确认替换是否处理同一行的全部匹配。 */
+    bool       m_substituteIgnoreCase : 1; /**< 确认替换是否忽略大小写。 */
+#endif
+    bool       m_modified : 1;      /**< 缓冲相对磁盘是否已修改。 */
+#if XTUI_VIM_YANK_PASTE_ON
+    bool       m_regLineWise : 1;   /**< 寄存器内容是否为行方式（粘贴在行间）。 */
+#endif
+#if XTUI_VIM_REGISTER_ON
+    bool       m_appendRegister : 1; /**< 大写寄存器名表示追加写入。 */
+#endif
+#if XTUI_VIM_MACRO_ON
+    bool       m_macroRecording : 1; /**< 是否正在录制宏。 */
+    bool       m_macroPlaying : 1; /**< 是否正在回放宏。 */
+#endif
+    bool       m_wantSave : 1;      /**< 请求保存（:w）。 */
+    bool       m_wantQuit : 1;      /**< 请求退出（:q/:q!）。 */
+    bool       m_wantSaveQuit : 1;  /**< 请求保存并退出（:wq/:x）。 */
+#if XTUI_VIM_MULTIBUFFER_ON
+    bool       m_wantEdit : 1;      /**< 请求打开另一个缓冲（:edit/:e）。 */
+    bool       m_wantBufferNext : 1;/**< 请求切换至下一缓冲（:bnext/:bn）。 */
+    bool       m_wantBufferPrev : 1;/**< 请求切换至上一缓冲（:bprevious/:bp）。 */
+    bool       m_wantBufferList : 1;/**< 请求列出当前缓冲（:buffers/:ls）。 */
+    bool       m_wantForce : 1;     /**< 当前 edit 请求是否带 !。 */
+    bool       m_wantWritePath : 1; /**< 请求按 actionPath 写出当前缓冲（:w path）。 */
+    bool       m_wantSaveAs : 1;    /**< 请求写出并将当前缓冲路径改为 actionPath（:saveas）。 */
+    bool       m_wantWriteAll : 1;  /**< 请求写出所有已修改缓冲（:wa/:wall）。 */
+    bool       m_wantQuitAll : 1;   /**< 请求关闭全部缓冲（:qa/:qall）。 */
+    bool       m_wantBufferClose : 1; /**< 请求关闭当前缓冲（:bd）。 */
+#endif
+#if XTUI_VIM_VISUAL_ON
+    bool       m_visualMode : 1;    /**< 是否处于可视模式。 */
+    bool       m_visualLineWise : 1;/**< 可视模式是否为行方式（V）。 */
+    bool       m_visualBlock : 1;   /**< 可视模式是否为块方式（Ctrl-V）。 */
+    bool       m_blockInsertMode : 1; /**< 可视块 I/A/c 结束后是否向所有选中行插入。 */
+#endif
+#if XTUI_VIM_ADVANCED_MOTION_ON
+    bool       m_findBackward : 1;  /**< 上次查找是否为反向（F/T）。 */
+    bool       m_findTill : 1;      /**< 上次查找是否为止于字符前（t/T）。 */
+#endif
+    bool       m_showLineNumbers : 1; /**< 是否显示行号（:set nu/nonu）。 */
 } XTuiVim;
 
 /** @brief 初始化 XTuiVim 类虚函数表。 */

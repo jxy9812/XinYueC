@@ -15,6 +15,7 @@ extern "C" {
 
 /**
  * @brief 创建 SQLite 源码驱动。
+ * @param memory 内存类型。
  * @return 新驱动对象，调用者取得所有权并必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlDriver* XSqliteDriver_create_ex(XMemoryType memory);

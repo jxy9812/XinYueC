@@ -134,7 +134,7 @@ void XMqttTcpServer_init(XMqttTcpServer* server)
                           mqtt_tcp_on_new_connection,
                           XConnectionType_Auto);
     }
-    server->m_connectedClients = XMap_Create(XTcpSocket*, uint8_t, uintptr_t_compare);
+    server->m_connectedClients = XMap_Create(XTcpSocket*, uint8_t, Xuintptr_t_compare);
 }
 
 /* ==================== TCP 服务器控制 ==================== */

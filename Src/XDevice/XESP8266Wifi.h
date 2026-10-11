@@ -117,25 +117,24 @@ typedef struct
  * @details 继承自 XATComm，复用 AT 指令通信引擎（m_io、m_responseBuffer、m_timeoutId）。
  *          本类仅管理 WiFi 特有状态和多连接数组。
  */
-typedef struct XESP8266Wifi 
+typedef struct XESP8266Wifi
 {
     XATComm m_base;                       /**< XATComm 基类，必须是第一个成员。 */
-    
-    XESP8266WifiStatus m_wifiStatus;      /**< WiFi 连接状态缓存。 */
-    XESP8266WifiMode m_wifiMode;          /**< 工作模式缓存。 */
-    bool m_transparentMode;               /**< 透传模式标志。 */
-    bool m_multiConnMode;                 /**< 多连接模式标志（AT+CIPMUX=1）。 */
-    
+
     XString* m_ssid;                      /**< WiFi 名称缓存，由对象拥有。 */
     XString* m_password;                  /**< WiFi 密码缓存，由对象拥有。 */
+    XESP8266WifiStatus m_wifiStatus;      /**< WiFi 连接状态缓存。 */
+    XESP8266WifiMode m_wifiMode;          /**< 工作模式缓存。 */
     XHostAddress m_localIP;               /**< 本地 IP 地址缓存。 */
     XHostAddress m_netmask;             ///< 子网掩码
     XHostAddress m_gateway;             ///< 网关
     int m_pendingConnId;                  /**< 等待结果的连接 ID。 */
     XESP8266WifiStatus m_pendingStatus;   /**< 等待的连接结果状态。 */
-    
+
     XESP8266ConnInfo m_connections[XESP8266_MAX_CONNS];  /**< 固定大小的连接数组。 */
     int m_activeConnCount;                /**< 当前活跃连接数。 */
+    bool m_transparentMode;               /**< 透传模式标志。 */
+    bool m_multiConnMode;                 /**< 多连接模式标志（AT+CIPMUX=1）。 */
 } XESP8266Wifi;
 /** @brief 初始化 ESP8266 WiFi 类虚函数表。 @return 共享虚函数表，失败返回 NULL。 */
 XVtable* XESP8266Wifi_class_init(void);

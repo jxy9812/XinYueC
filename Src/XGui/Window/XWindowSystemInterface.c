@@ -76,7 +76,7 @@ static XWidget* g_hoverEnterTop = NULL;
  *         后续移动合成器即可解析换靶。窗口域反向注册表仍不可用：
  *         XApplication 顶层表依赖子类 XApplication 才置位的 g_xapp
  *         （XApplication.c:89），基类 XGuiApplication 用法下恒空。 */
-static XWidget* xwsi_hoverTopForWindow(XWindow* window)
+static XWidget* XWindowSystemInterface_hoverTopForWindow(XWindow* window)
 {
     XWidget* anchors[3];
     int i;
@@ -100,7 +100,7 @@ static XWidget* xwsi_hoverTopForWindow(XWindow* window)
 }
 
 /** @brief 子树内按指针身份查找（只解引用在册活树的结点，用于验活）。 */
-static bool xwsi_hoverSubtreeHas(XWidget* root, const XWidget* widget)
+static bool XWindowSystemInterface_hoverSubtreeHas(XWidget* root, const XWidget* widget)
 {
     const XVector* children;
     size_t n;
@@ -112,8 +112,8 @@ static bool xwsi_hoverSubtreeHas(XWidget* root, const XWidget* widget)
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base((const XVector*)children,
                                                      (int64_t)i);
-        if (child && child->is_widget &&
-            xwsi_hoverSubtreeHas((XWidget*)child, widget))
+        if (child && child->m_is_widget &&
+            XWindowSystemInterface_hoverSubtreeHas((XWidget*)child, widget))
             return true;
     }
     return false;
@@ -126,7 +126,7 @@ static bool xwsi_hoverSubtreeHas(XWidget* root, const XWidget* widget)
  *         VXWidget_deinit 析构链自清位（XWidget.c，与三锚自清理同纪律），
  *         登记非空即活对象，UAF 防护由清位纪律承担。若仍保守判死，纯
  *         悬停冷会话的登记会在首次移动即被清掉，合成器永不点火。 */
-static bool xwsi_hoverTargetAlive(XWidget* widget)
+static bool XWindowSystemInterface_hoverTargetAlive(XWidget* widget)
 {
     XWidget* anchors[3];
     int i;
@@ -137,7 +137,7 @@ static bool xwsi_hoverTargetAlive(XWidget* widget)
     for (i = 0; i < 3; ++i) {
         if (anchors[i] &&
             XWidget_topLevelWidget(anchors[i]) == g_hoverEnterTop)
-            return xwsi_hoverSubtreeHas(g_hoverEnterTop, widget);
+            return XWindowSystemInterface_hoverSubtreeHas(g_hoverEnterTop, widget);
     }
     return true;
 }
@@ -145,7 +145,7 @@ static bool xwsi_hoverTargetAlive(XWidget* widget)
 /** @brief 靶控件局部坐标：顶层局部 pos 减去 target 相对顶层的累计窗口
  *         矩形偏移（与 XWidget_dispatchPointerEvent 逐接收者换算、
  *         XWidget_accumulateOffset 求和口径一致；顶层自身不计入）。 */
-static XPoint xwsi_hoverLocalPos(const XWidget* target,
+static XPoint XWindowSystemInterface_hoverLocalPos(const XWidget* target,
                                  const XPoint* topLocalPos)
 {
     XPoint out;
@@ -169,7 +169,7 @@ static XPoint xwsi_hoverLocalPos(const XWidget* target,
  *         childAt 的 WA_WState_Hidden 跳过承担；禁用与鼠标穿透不入靶
  *         对应桥接实投传播循环的同名跳过位（首个非透明可用接收者才
  *         收到事件）。 */
-static XWidget* xwsi_hoverPickTarget(XWidget* top, const XPoint* pos)
+static XWidget* XWindowSystemInterface_hoverPickTarget(XWidget* top, const XPoint* pos)
 {
     XWidget* target;
     const XRegion* topMask;
@@ -189,12 +189,12 @@ static XWidget* xwsi_hoverPickTarget(XWidget* top, const XPoint* pos)
 }
 
 /** @brief 向单个控件投递 ENTER（局部坐标按该控件相对顶层偏移换算）。 */
-static void xwsi_hoverSendEnter(XWidget* w, const XPoint* topLocalPos,
+static void XWindowSystemInterface_hoverSendEnter(XWidget* w, const XPoint* topLocalPos,
                                 const XPoint* globalPos)
 {
     XEnterEvent* event;
     XPoint local;
-    local = xwsi_hoverLocalPos(w, topLocalPos);
+    local = XWindowSystemInterface_hoverLocalPos(w, topLocalPos);
     event = XEnterEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                   XEVENT_TYPE_ENTER, &local, globalPos);
     if (!event) return;
@@ -210,7 +210,7 @@ static void xwsi_hoverSendEnter(XWidget* w, const XPoint* topLocalPos,
  *         的第一个（不含）之下逆序补齐到 enter——从父容器移入子控件
  *         时子控件必获 ENTER。跨顶层树（互不为祖先）则两条链各自整链
  *         投递。enter==leave 直接返回；任一为 NULL 则对应链整链投递。 */
-static void xwsi_hoverDispatchEnterLeave(XWidget* enter, XWidget* leave,
+static void XWindowSystemInterface_hoverDispatchEnterLeave(XWidget* enter, XWidget* leave,
                                          const XPoint* topLocalPos,
                                          const XPoint* globalPos)
 {
@@ -225,13 +225,14 @@ static void xwsi_hoverDispatchEnterLeave(XWidget* enter, XWidget* leave,
         for (w = leave; w && !XWidget_isAncestorOf(w, enter);
              w = XWidget_parentWidget(w))
             XCoreApplication_sendEvent((XObject*)w, &leaveEvent);
+        XClassDeinit(&leaveEvent);   /* 栈事件与 XEvent_init 成对收尾 */
     }
     if (enter) {
         for (w = enter; w && !XWidget_isAncestorOf(w, leave) && depth < 64;
              w = XWidget_parentWidget(w))
             chain[depth++] = w;
         for (i = depth - 1; i >= 0; --i)
-            xwsi_hoverSendEnter(chain[i], topLocalPos, globalPos);
+            XWindowSystemInterface_hoverSendEnter(chain[i], topLocalPos, globalPos);
     }
 }
 
@@ -244,7 +245,7 @@ static void xwsi_hoverDispatchEnterLeave(XWidget* enter, XWidget* leave,
  *         （抓取期间移动一律以抓取控件为靶，跨顶层时坐标经全局换算，
  *         与 XWidget_dispatchPointerEvent 的抓取分支同口径）；③常规
  *         childAt 命中。 */
-static void xwsi_hoverSynthesizeMouseMove(XWindow* window,
+static void XWindowSystemInterface_hoverSynthesizeMouseMove(XWindow* window,
                                           const XPoint* position,
                                           const XPoint* globalPosition)
 {
@@ -260,12 +261,12 @@ static void xwsi_hoverSynthesizeMouseMove(XWindow* window,
     XPoint_init(&enterLocal, 0, 0);
     leave = g_hoverEnterWidget;
     /* 析构验活：失放靶视同无靶（只清状态，不向失放对象投递）。 */
-    if (leave && !xwsi_hoverTargetAlive(leave)) {
+    if (leave && !XWindowSystemInterface_hoverTargetAlive(leave)) {
         g_hoverEnterWidget = NULL;
         g_hoverEnterTop = NULL;
         leave = NULL;
     }
-    top = xwsi_hoverTopForWindow(window);
+    top = XWindowSystemInterface_hoverTopForWindow(window);
     if (top) {
         /* ① 应用模态门（先于抓取重路由，与桥拦截同序）。 */
         {
@@ -276,7 +277,7 @@ static void xwsi_hoverSynthesizeMouseMove(XWindow* window,
                 bool popupTop = topWin &&
                                 XWindow_type(topWin) == XWindowType_Popup;
                 if (modalTop && modalTop != top && !popupTop) {
-                    xwsi_hoverDispatchEnterLeave(NULL, leave, NULL, NULL);
+                    XWindowSystemInterface_hoverDispatchEnterLeave(NULL, leave, NULL, NULL);
                     g_hoverEnterWidget = NULL;
                     g_hoverEnterTop = NULL;
                     return;
@@ -299,17 +300,17 @@ static void xwsi_hoverSynthesizeMouseMove(XWindow* window,
                 enter = grabber;
             } else {
                 topLocal = *position;
-                enter = xwsi_hoverPickTarget(top, &topLocal);
+                enter = XWindowSystemInterface_hoverPickTarget(top, &topLocal);
             }
         }
-        enterLocal = xwsi_hoverLocalPos(enter, &topLocal);
+        enterLocal = XWindowSystemInterface_hoverLocalPos(enter, &topLocal);
     }
 
     if (enter == leave) return;
     /* 先置状态再投递：ENTER/LEAVE 槽内可能同步再入（如槽内开弹层）。 */
     g_hoverEnterWidget = enter;
     g_hoverEnterTop = enter ? XWidget_topLevelWidget(enter) : NULL;
-    xwsi_hoverDispatchEnterLeave(enter, leave,
+    XWindowSystemInterface_hoverDispatchEnterLeave(enter, leave,
                                  enter ? &enterLocal : NULL, global);
 }
 
@@ -709,9 +710,9 @@ bool XWindowSystemInterface_handleMouseEvent_ex(XWindow* window, XEventType type
     if (!window) return false;
 #if XWIDGET_ON
     /* 指针移动派发路径：按新旧靶控件合成 ENTER/LEAVE（控件级悬停
-       根修 N5-2，见文件头 xwsi_hoverSynthesizeMouseMove 注释）。 */
+       根修 N5-2，见文件头 XWindowSystemInterface_hoverSynthesizeMouseMove 注释）。 */
     if (type == XEVENT_TYPE_MOUSE_MOVE)
-        xwsi_hoverSynthesizeMouseMove(window, &position, globalPosition);
+        XWindowSystemInterface_hoverSynthesizeMouseMove(window, &position, globalPosition);
 #endif /* XWIDGET_ON */
     event = XMouseEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, type, button,
                                   modifiers, position);
@@ -849,13 +850,13 @@ void XWindowSystemInterface_handleEnterEvent(XWindow* window,
     if (!window) return;
 #if XWIDGET_ON
     /* 悬停合成器同步：原生窗边界 ENTER 的实投靶由桥接命中测试决定
-       （首个非透明可用接收者），与 xwsi_hoverPickTarget 同口径。预置
+       （首个非透明可用接收者），与 XWindowSystemInterface_hoverPickTarget 同口径。预置
        登记靶后，窗内首次移动若靶未变则零合成，避免对同一靶重复投递
        ENTER（位与 enterEvent 槽均幂等，重复亦无害，此处省之）。 */
     {
-        XWidget* top = xwsi_hoverTopForWindow(window);
+        XWidget* top = XWindowSystemInterface_hoverTopForWindow(window);
         if (top && !XWidget_mouseGrabber()) {
-            g_hoverEnterWidget = xwsi_hoverPickTarget(top, &position);
+            g_hoverEnterWidget = XWindowSystemInterface_hoverPickTarget(top, &position);
             g_hoverEnterTop = g_hoverEnterWidget
                 ? XWidget_topLevelWidget(g_hoverEnterWidget) : NULL;
         }
@@ -881,6 +882,7 @@ void XWindowSystemInterface_handleLeaveEvent(XWindow* window)
 #endif /* XWIDGET_ON */
     XEvent_init(&event, XEVENT_TYPE_LEAVE);
     XGuiApplication_sendSpontaneousEvent((XObject*)window, &event);
+    XClassDeinit(&event);   /* 栈事件与 XEvent_init 成对收尾 */
 }
 
 void XWindowSystemInterface_flushWindowSystemEvents(XEventLoopProcessEventsFlags flags)

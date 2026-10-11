@@ -1,6 +1,6 @@
 ﻿#include"XFind.h"
 #include"XContainer.h"
-void* XBinarySearch(void* values, size_t n, size_t TypeSize, XCompare compare, void* findVal)
+void* XFind_binarySearch(void* values, size_t n, size_t TypeSize, XCompare compare, void* findVal)
 {
 	if (values == NULL || n == 0 || TypeSize == 0 || compare == NULL || findVal == NULL)
 		return NULL;

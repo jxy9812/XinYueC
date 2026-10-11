@@ -4,7 +4,18 @@
 #if XByteArray_ON
 #include "XString.h"
 #include "XByteArrayView.h"
+#include "XBase64.h"
+#include "XStringUtils.h" /* strlen 直出改经 XStrlen（外部依赖约束） */
 #include <string.h>
+
+/* 第三方压缩库编译开关（第三方库集成规范：仅当启用对应库时才编译压缩解压实现；
+ * 缺省值沿用仓库内 XGUI_REMOTE_ZLIB_ON 的登记做法置 1，工程配置可覆盖） */
+#ifndef XByteArray_USE_ZLIB
+#define XByteArray_USE_ZLIB 1
+#endif
+#if XByteArray_USE_ZLIB
+#include "zlib.h"
+#endif
 
 XVARIANT_TYPE_OPS_DEFINE(XByteArray, sizeof(XByteArray), XClass_copy_base,
 	XClass_move_base, XByteArray_clear_base, XClass_deinit_base,
@@ -148,7 +159,7 @@ XByteArray* XByteArray_create_ex(XMemoryType memory, bool useCow)
 XByteArray* XByteArray_create_with_data(const char* data,size_t size)
 {
 	XByteArray* array=XByteArray_create();
-	if (!array)return;
+	if (!array)return NULL;
 	//if (size != 0)
 	//{
 	//	XVector_resize_base(array, size);
@@ -170,6 +181,8 @@ XByteArray* XByteArray_create_copy(const XByteArray* other)
 	if (other == NULL)
 		return NULL;
 	XByteArray* v = XByteArray_create_ex(XContainer_memory_type((const XContainer*)other), true);
+	if (v == NULL)
+		return NULL;
 	XClassCopy(v, other);
 	return v;
 }
@@ -179,6 +192,8 @@ XByteArray* XByteArray_create_move(XByteArray* other)
 	if (other == NULL)
 		return NULL;
 	XByteArray* v = XByteArray_create_ex(XContainer_memory_type((const XContainer*)other), true);
+	if (v == NULL)
+		return NULL;
 	XClassMove(v, other);
 	return v;
 }
@@ -188,7 +203,7 @@ void XByteArray_init(XByteArray* array, bool useCow)
 	if (array == NULL)
 		return;
 	XVector_init((XVector*)array, sizeof(uint8_t), useCow);
-	XContainerSetCompare(array, uint8_t_compare);
+	XContainerSetCompare(array, Xuint8_t_compare);
 }
 
 bool XByteArray_push_front_1(XByteArray* array, const uint8_t byte)
@@ -215,7 +230,7 @@ bool XByteArray_append_utf8(XByteArray* array, const char* utf8)
 {
 	if (array == NULL || utf8 == NULL)
 		return false;
-	size_t len = strlen(utf8);
+	size_t len = XStrlen(utf8);
 	if (len == 0)
 		return false;
 	return XByteArray_push_back_2(array,utf8,len);
@@ -239,11 +254,23 @@ XByteArray* XByteArray_to16HexUtf8(XByteArray* array)
 	if (array == NULL || XByteArray_isEmpty_base(array))
 		return NULL;
 	XByteArray* bytes = XByteArray_create();
-	uint8_t temp[6];
+	if (bytes == NULL)
+		return NULL;
+	const char* hex = "0123456789ABCDEF";
+	uint8_t temp[4];
 	for (size_t i = 0; i < XByteArray_size_base(array); i++)
 	{
-		sprintf(temp,"%02X ", XByteArray_at_base(array, i));
-		XByteArray_push_back_2(bytes,temp,3);
+		uint8_t byte = XByteArray_at_base(array, i);
+		/* 手工十六进制格式化（外部依赖约束：不经 stdio） */
+		temp[0] = (uint8_t)hex[(byte >> 4) & 0xF];
+		temp[1] = (uint8_t)hex[byte & 0xF];
+		temp[2] = ' ';
+		temp[3] = 0;
+		if (!XByteArray_push_back_2(bytes,temp,3))
+		{
+			XClassDelete(bytes);
+			return NULL;
+		}
 	}
 	XByteArray_back_base(bytes) = 0;
 	return bytes;
@@ -253,16 +280,21 @@ XString* XByteArray_to16HexString(XByteArray* array)
 	if (array == NULL || XByteArray_isEmpty_base(array))
 		return NULL;
 	XString* str = XString_create();
-	uint8_t temp[6];
+	const char* hex = "0123456789ABCDEF";
+	uint8_t temp[4];
 	for (size_t i = 0; i < XByteArray_size_base(array); i++)
 	{
-		sprintf(temp, "%02X ", XByteArray_at_base(array, i));
+		uint8_t byte = XByteArray_at_base(array, i);
+		/* 手工十六进制格式化（外部依赖约束：不经 stdio） */
+		temp[0] = (uint8_t)hex[(byte >> 4) & 0xF];
+		temp[1] = (uint8_t)hex[byte & 0xF];
+		temp[2] = ' ';
+		temp[3] = 0;
 		XString_append_with_length_utf8(str, temp,3);
 	}
 	return str;
 }
 
-#include"XBase64.h"
 XByteArray* XByteArray_toBase64(XByteArray* array)
 {
 	if (array == NULL || XByteArray_isEmpty_base(array))
@@ -298,9 +330,9 @@ XByteArray* XByteArray_fromBase64(XByteArray* base64)
 	return data;
 }
 
-#include"zlib.h"
 XByteArray* XByteArray_toCompress(XByteArray* sData)
 {
+#if XByteArray_USE_ZLIB
 	if (sData == NULL)
 		return NULL;
 
@@ -335,9 +367,14 @@ XByteArray* XByteArray_toCompress(XByteArray* sData)
 	// 调整实际大小
 	XContainerSize(compressed) = output_len;
 	return compressed;
+#else
+	(void)sData;
+	return NULL; /* 未启用 zlib（XByteArray_USE_ZLIB=0），压缩能力不可用 */
+#endif
 }
 XByteArray* XByteArray_toDecompress(XByteArray* sData)
 {
+#if XByteArray_USE_ZLIB
 	if (sData == NULL || XByteArray_isEmpty_base(sData))
 		return NULL;
 
@@ -348,9 +385,13 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 	// 初始解压缓冲区大小（设为输入大小的4倍，可根据实际情况调整）
 	uLongf output_len = input_len * 4;
 	XByteArray* decompressed = XByteArray_create();
-	XByteArray_resize_base(decompressed, output_len);
 	if (decompressed == NULL)
 		return NULL;
+	if (!XByteArray_resize_base(decompressed, output_len))
+	{
+		XClassDelete(decompressed);
+		return NULL;
+	}
 
 	int ret;
 	const int max_attempts = 10; // 最大尝试次数，避免无限循环
@@ -392,6 +433,10 @@ XByteArray* XByteArray_toDecompress(XByteArray* sData)
 	// 超过最大尝试次数
 	XClassDelete(decompressed);
 	return NULL;
+#else
+	(void)sData;
+	return NULL; /* 未启用 zlib（XByteArray_USE_ZLIB=0），解压能力不可用 */
+#endif
 }
 
 uint8_t* XByteArray_data(XByteArray* other)
@@ -473,10 +518,8 @@ XByteArray* XByteArray_mid(const XByteArray* array, int64_t pos, int64_t n)
 
 
 /* ============================== Qt 6.8 命名对齐 (重量项): 实现 ============================== */
-
-#include <stdlib.h>
-#include <stdio.h>
-#include <ctype.h>
+/* 说明：标准库依赖仅保留 <string.h> 裸内存原语；stdlib/stdio/ctype 均已移除——
+ *       stdlib/ctype 全文件未使用，格式化改由手工转换与库内 XString 承担（外部依赖约束）。 */
 
 /* ---- replace ---- */
 size_t XByteArray_replace(XByteArray* array,
@@ -519,7 +562,13 @@ XVector* XByteArray_split(const XByteArray* array, uint8_t sep)
             if (i > start) {
                 XByteArray_push_back_2(piece, (const char*)(d + start), i - start);
             }
-            XVector_push_back_1_base(parts, &piece);
+            if (!XVector_push_back_1_base(parts, &piece))
+            {
+                /* 入容器失败：piece 无人接管，须连同已收集结果一并释放 */
+                XClassDelete(piece);
+                XByteArray_split_free(parts);
+                return NULL;
+            }
             start = i + 1;
         }
     }
@@ -538,7 +587,7 @@ void XByteArray_split_free(XVector* parts)
 }
 
 /* ---- trimmed / simplified ---- */
-static int xba_is_space(uint8_t c) {
+static int XByteArray_is_space(uint8_t c) {
     return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
 }
 
@@ -561,10 +610,10 @@ XByteArray* XByteArray_simplified(const XByteArray* array)
     size_t n = XByteArray_size_base((XByteArray*)array);
     const uint8_t* d = XByteArray_data((XByteArray*)array);
     size_t i = 0;
-    while (i < n && xba_is_space(d[i])) ++i;
+    while (i < n && XByteArray_is_space(d[i])) ++i;
     bool prevSpace = false;
     for (; i < n; ++i) {
-        if (xba_is_space(d[i])) {
+        if (XByteArray_is_space(d[i])) {
             prevSpace = true;
         } else {
             if (prevSpace) {
@@ -630,27 +679,23 @@ XByteArray* XByteArray_setNum_i64(XByteArray* array, int64_t value, int base)
     XByteArray_clear_base(array);
     if (base < 2 || base > 36) base = 10;
     char buf[80];
-    if (base == 10) {
-        snprintf(buf, sizeof(buf), "%lld", (long long)value);
-    } else {
-        /* 手动按 base 转换 */
-        char tmp[80]; int idx = 0;
-        uint64_t uv;
-        bool neg = false;
-        if (value < 0) { neg = true; uv = (uint64_t)(-(value + 1)) + 1; }
-        else           { uv = (uint64_t)value; }
-        if (uv == 0) tmp[idx++] = '0';
-        while (uv > 0) {
-            int r = (int)(uv % (uint64_t)base);
-            tmp[idx++] = (char)(r < 10 ? ('0' + r) : ('a' + r - 10));
-            uv /= (uint64_t)base;
-        }
-        int p = 0;
-        if (neg) buf[p++] = '-';
-        while (idx > 0) buf[p++] = tmp[--idx];
-        buf[p] = 0;
+    /* 手动按 base 转换（十进制输出与 %lld 一致；格式化不经 stdio，见外部依赖约束） */
+    char tmp[80]; int idx = 0;
+    uint64_t uv;
+    bool neg = false;
+    if (value < 0) { neg = true; uv = (uint64_t)(-(value + 1)) + 1; }
+    else           { uv = (uint64_t)value; }
+    if (uv == 0) tmp[idx++] = '0';
+    while (uv > 0) {
+        int r = (int)(uv % (uint64_t)base);
+        tmp[idx++] = (char)(r < 10 ? ('0' + r) : ('a' + r - 10));
+        uv /= (uint64_t)base;
     }
-    XByteArray_push_back_2(array, buf, strlen(buf));
+    int p = 0;
+    if (neg) buf[p++] = '-';
+    while (idx > 0) buf[p++] = tmp[--idx];
+    buf[p] = 0;
+    XByteArray_push_back_2(array, buf, (size_t)p);
     return array;
 }
 
@@ -664,17 +709,33 @@ XByteArray* XByteArray_setNum_double(XByteArray* array, double value, char fmt, 
     if (!array) return NULL;
     XByteArray_clear_base(array);
     if (prec < 0) prec = 6;
-    char pattern[16];
     char f = (fmt == 'e' || fmt == 'E' || fmt == 'f' || fmt == 'F' || fmt == 'g' || fmt == 'G') ? fmt : 'g';
-    snprintf(pattern, sizeof(pattern), "%%.%d%c", prec, f);
-    char buf[64];
-    snprintf(buf, sizeof(buf), pattern, value);
-    XByteArray_push_back_2(array, buf, strlen(buf));
+    /* 手工构造 "%.<prec><f>" 格式串，实际格式化交由库内 XString（外部依赖约束：不经 stdio） */
+    char pattern[16];
+    int n = 0;
+    pattern[n++] = '%';
+    pattern[n++] = '.';
+    if (prec == 0) {
+        pattern[n++] = '0';
+    } else {
+        char digits[12]; int m = 0; /* int 最多 10 位数字，12 防御性冗余 */
+        int pv = prec;
+        while (pv > 0) { digits[m++] = (char)('0' + (pv % 10)); pv /= 10; }
+        while (m > 0) pattern[n++] = digits[--m];
+    }
+    pattern[n++] = f;
+    pattern[n] = 0;
+    XString_Init_Fmt_Utf8(num, pattern, value);
+    const char* utf8 = XString_toUtf8(num);
+    size_t len = XString_toUtf8_length(num);
+    if (utf8 && len > 0)
+        XByteArray_push_back_2(array, utf8, len);
+    XClassDeinit(num);
     return array;
 }
 
 /* ---- toPercentEncoding / fromPercentEncoding ---- */
-static int xba_hexval(uint8_t c) {
+static int XByteArray_hexval(uint8_t c) {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
     if (c >= 'A' && c <= 'F') return c - 'A' + 10;
@@ -711,8 +772,8 @@ XByteArray* XByteArray_fromPercentEncoding(const XByteArray* array)
     for (size_t i = 0; i < n; ) {
         uint8_t c = d[i];
         if (c == '%' && i + 2 < n) {
-            int hi = xba_hexval(d[i+1]);
-            int lo = xba_hexval(d[i+2]);
+            int hi = XByteArray_hexval(d[i+1]);
+            int lo = XByteArray_hexval(d[i+2]);
             if (hi >= 0 && lo >= 0) {
                 uint8_t b = (uint8_t)((hi << 4) | lo);
                 XByteArray_push_back_1(out, b);

@@ -10,9 +10,8 @@
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_I2C_ON
 
 #include "XConsoleShellI2c.h"
+#include "XStringUtils.h"
 #include "XUtf8StringView.h"
-#include <stdio.h>
-#include <string.h>
 
 #define XCS_I2C_HAS_COMMANDS (XCONSOLE_SHELL_I2C_LIST_ON || XCONSOLE_SHELL_I2C_OPEN_ON || \
                               XCONSOLE_SHELL_I2C_CLOSE_ON || XCONSOLE_SHELL_I2C_INFO_ON || \
@@ -63,7 +62,7 @@ static bool xci_apply_optional_address_mode(XI2cTarget* target, int argc,
     if (!target || !argv || optionIndex < 0 || argc < optionIndex ||
         argc > optionIndex + 1) return false;
     if (argc == optionIndex + 1) {
-        if (strcmp(argv[optionIndex], "--ten-bit") != 0) return false;
+        if (XStrcmp(argv[optionIndex], "--ten-bit") != 0) return false;
         target->m_addressMode = XI2cAddressMode_TenBit;
     }
     return xci_target_is_valid(target);
@@ -74,7 +73,7 @@ static bool xci_parse_hex(const char* text, uint8_t* data, size_t capacity, size
     size_t i;
     size_t size;
     if (!text || !data || !length) return false;
-    size = strlen(text);
+    size = XStrlen(text);
     if (size == 0u || (size & 1u) != 0u || size / 2u > capacity) return false;
     for (i = 0u; i < size / 2u; ++i) {
         unsigned value = 0u;
@@ -136,7 +135,7 @@ static XConsoleResult xci_write_error(XConsoleShell* shell, const char* operatio
 {
     char line[160];
     XI2cError error = bus ? XI2c_lastError(bus) : XI2cError_Unknown;
-    int written = snprintf(line, sizeof(line), "i2c: %s: %s (本机错误=%d)\n",
+    int written = XSnprintf(line, sizeof(line), "i2c: %s: %s (本机错误=%d)\n",
                            operation ? operation : "操作", XI2c_errorString(error),
                            bus ? (int)XI2c_nativeError(bus) : 0);
     if (written < 0 || (size_t)written >= sizeof(line) || !XConsoleShell_writeUtf8(shell, line))
@@ -155,7 +154,7 @@ static XConsoleResult xci_denied(XConsoleShell* shell)
 static XConsoleResult xci_missing(XConsoleShell* shell, const char* operation)
 {
     char line[96];
-    int written = snprintf(line, sizeof(line), "i2c: %s: 目标未打开\n",
+    int written = XSnprintf(line, sizeof(line), "i2c: %s: 目标未打开\n",
                            operation ? operation : "操作");
     return written > 0 && (size_t)written < sizeof(line) && XConsoleShell_writeUtf8(shell, line)
                ? XConsoleResult_InvalidArgument : XConsoleResult_IoError;
@@ -203,7 +202,7 @@ static int xci_list(XConsoleShell* shell, XConsoleShellSession* session,
         if (!slot->m_bus || !XI2c_getConfig(slot->m_bus, &config) ||
             !xci_authorized(shell, session, &config.m_target,
                             XConsoleShellI2cOperation_List, false)) continue;
-        written = snprintf(line, sizeof(line), "%5u 0x%03x %-4s %-6s %7u\n",
+        written = XSnprintf(line, sizeof(line), "%5u 0x%03x %-4s %-6s %7u\n",
                            config.m_target.m_controller, config.m_target.m_address,
                            config.m_target.m_addressMode == XI2cAddressMode_TenBit ? "10b" : "7b",
                            XI2c_isOpen(slot->m_bus) ? "open" : "close", config.m_frequencyHz);
@@ -229,12 +228,12 @@ static int xci_open(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_InvalidArgument;
     for (i = 2; i < argc; ++i) {
         uint32_t value;
-        if (strcmp(argv[i], "--speed") == 0) {
+        if (XStrcmp(argv[i], "--speed") == 0) {
             if (i + 1 >= argc || !xci_parse_u32(argv[i + 1], &value) || value == 0u)
                 return XConsoleResult_InvalidArgument;
             config.m_frequencyHz = value;
             ++i;
-        } else if (strcmp(argv[i], "--ten-bit") == 0) {
+        } else if (XStrcmp(argv[i], "--ten-bit") == 0) {
             config.m_target.m_addressMode = XI2cAddressMode_TenBit;
         } else {
             return XConsoleResult_InvalidArgument;
@@ -287,7 +286,7 @@ static int xci_info(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_InvalidArgument;
     slot = xci_find_slot(shell, &target); if (!slot) return xci_missing(shell, "查询配置");
     if (!XI2c_getConfig(slot->m_bus, &config)) return xci_write_error(shell, "查询配置", slot->m_bus);
-    written = snprintf(line, sizeof(line), "ctrl=%u addr=0x%03x mode=%s state=%s speed=%u features=0x%08x error=%s\n",
+    written = XSnprintf(line, sizeof(line), "ctrl=%u addr=0x%03x mode=%s state=%s speed=%u features=0x%08x error=%s\n",
                        config.m_target.m_controller, config.m_target.m_address,
                        config.m_target.m_addressMode == XI2cAddressMode_TenBit ? "10bit" : "7bit",
                        XI2c_isOpen(slot->m_bus) ? "open" : "closed", config.m_frequencyHz,
@@ -299,9 +298,9 @@ static int xci_info(XConsoleShell* shell, XConsoleShellSession* session,
 static XConsoleResult xci_print_bytes(XConsoleShell* shell, const char* prefix, const uint8_t* data, size_t length)
 {
     char line[3u * XCONSOLE_SHELL_I2C_MAX_TRANSFER + 64u]; size_t i; int written;
-    written = snprintf(line, sizeof(line), "%s", prefix); if (written < 0 || (size_t)written >= sizeof(line)) return XConsoleResult_IoError;
+    written = XSnprintf(line, sizeof(line), "%s", prefix); if (written < 0 || (size_t)written >= sizeof(line)) return XConsoleResult_IoError;
     for (i = 0u; i < length; ++i) {
-        int n = snprintf(line + (size_t)written, sizeof(line) - (size_t)written, "%s%02x", i ? " " : "", data[i]);
+        int n = XSnprintf(line + (size_t)written, sizeof(line) - (size_t)written, "%s%02x", i ? " " : "", data[i]);
         if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
             return XConsoleResult_IoError;
         written += n;

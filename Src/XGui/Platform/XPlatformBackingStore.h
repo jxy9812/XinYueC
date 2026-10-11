@@ -124,11 +124,19 @@ XImage* XPlatformBackingStore_paintDevice(XPlatformBackingStore* self);
  *             窗口坐标脏区；其它模式只返回一次整幅窗口区域。成功后
  *             paintDevice() 指向当前 tile，调用方绘制完成后必须调用
  *             XPlatformBackingStore_flushTile()。
+ * @param      self 目标句柄；可为 NULL。
+ * @param      tileRect 输出当前 tile 的窗口坐标矩形；不能为 NULL。
+ * @return     取到待绘制 tile 返回 true；无更多 tile、未 beginPaint 或
+ *             入参非法返回 false。
  */
 bool XPlatformBackingStore_nextTile(XPlatformBackingStore* self,
                                      XRect* tileRect);
 
-/** @brief 查询当前 tile 在窗口坐标中的原点；未开始 tile 时返回 (0,0)。 */
+/**
+ * @brief      查询当前 tile 在窗口坐标中的原点；未开始 tile 时返回 (0,0)。
+ * @param      self 目标句柄；可为 NULL。
+ * @return     当前 tile 原点副本；未开始 tile 或入参非法返回 (0,0)。
+ */
 XPoint XPlatformBackingStore_paintOrigin(
         const XPlatformBackingStore* self);
 
@@ -162,9 +170,13 @@ void XPlatformBackingStore_flush(XPlatformBackingStore* self,
                                  const XPoint* offset);
 /**
  * @brief      提交当前 tile buffer 到窗口。
- * @param      tileRect 当前 tile 在窗口坐标中的完整矩形；不能为空。
- * @note       PARTIAL 模式下源图像坐标从 (0,0) 开始，平台提交目标从
+ * @details    PARTIAL 模式下源图像坐标从 (0,0) 开始，平台提交目标从
  *             tileRect 的窗口坐标开始；提交完成后可复用下一片 buffer。
+ * @param      self     目标句柄；可为 NULL。
+ * @param      window   目标窗口借用指针；为 NULL 时用绑定窗口。
+ * @param      tileRect 当前 tile 在窗口坐标中的完整矩形；不能为空。
+ * @param      offset   缓冲相对窗口偏移；可为 NULL 按零点处理。
+ * @return     无。入参非法时不执行任何提交。
  */
 void XPlatformBackingStore_flushTile(XPlatformBackingStore* self,
                                      XWindow* window,
@@ -351,11 +363,15 @@ bool XPlatformBackingStore_setBuffers(XPlatformBackingStore* self,
                                        void* buffer1, void* buffer2,
                                        size_t bufferSize);
 
-/** @brief 计算指定尺寸所需的单块整屏缓冲字节数。
- *  @note  格式为当前后备表面格式：默认编译期选择（ARGB32 预乘，RGB16
- *         选择器置 1 时为 RGB16/565）；有活动显示驱动时为协商出的面板
- *         扫描格式（见 XPlatformDisplayDriver.h 消费链），故面板 565
- *         时容量减半。 */
+/**
+ * @brief      计算指定尺寸所需的单块整屏缓冲字节数。
+ * @details    格式为当前后备表面格式：默认编译期选择（ARGB32 预乘，RGB16
+ *             选择器置 1 时为 RGB16/565）；有活动显示驱动时为协商出的面板
+ *             扫描格式（见 XPlatformDisplayDriver.h 消费链），故面板 565
+ *             时容量减半。
+ * @param      size 目标尺寸；不能为 NULL，宽高须 > 0。
+ * @return     所需字节数；尺寸无效或溢出时返回 0。
+ */
 size_t XPlatformBackingStore_requiredBufferSize(const XSize* size);
 
 /**
@@ -390,13 +406,21 @@ XImageFormat XPlatformBackingStore_surfaceFormat(void);
  */
 bool XPlatformBackingStoreDriver_create(void** outState, XWindow* window);
 
-/** @brief 释放平台提交状态（create 成功返回的 nativeState；可 NULL/重复安全）。 */
+/**
+ * @brief      释放平台提交状态（create 成功返回的 nativeState）。
+ * @param      nativeState Driver_create 输出的平台提交状态；可为 NULL，
+ *             重复释放安全。
+ * @return     无。
+ */
 void XPlatformBackingStoreDriver_destroy(void* nativeState);
 
 /**
  * @brief      登记原生目标窗口（对标 setNativeTargetWindow）。
  * @details    Win32 后端把它视为 HWND，flush 时作为 BitBlt 目标；其它
  *             平台仅记录借用指针。nativeWindow 为 NULL 表示清除。
+ * @param      nativeState 平台提交状态。
+ * @param      nativeWindow 原生窗口句柄（借用）；可为 NULL 清除登记。
+ * @return     无。
  */
 void XPlatformBackingStoreDriver_setNativeTarget(void* nativeState,
                                                  void* nativeWindow);
@@ -404,8 +428,12 @@ void XPlatformBackingStoreDriver_setNativeTarget(void* nativeState,
 /**
  * @brief      通知平台缓冲尺寸已重建（resize 后调用）。
  * @details    Win32 后端按新尺寸重建 DIB/内存 DC；软件/Posix 后端 no-op。
- * @param      width/height 当前缓冲尺寸（PARTIAL 模式为 tile 缓冲尺寸）；
- *             非正尺寸表示缓冲已清空。
+ * @param      nativeState 平台提交状态。
+ * @param      width 当前缓冲宽度（PARTIAL 模式为 tile 缓冲尺寸）；非正
+ *             表示缓冲已清空。
+ * @param      height 当前缓冲高度（PARTIAL 模式为 tile 缓冲尺寸）；非正
+ *             表示缓冲已清空。
+ * @return     无。
  */
 void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
                                                 int width, int height);
@@ -527,7 +555,8 @@ void XPlatformBackingStore_notifyPresentRegion(XPlatformBackingStore* self,
  *             Qt QBackingStore：缓冲为逻辑尺寸，缩放归平台层），故本
  *             契约签名不承载缩放参数，演进须独立批次。
  * @param      nativeState 平台提交状态。
- * @param      width/height 期望的缓冲尺寸（后端按此创建）。
+ * @param      width 期望的缓冲宽度（后端按此创建）。
+ * @param      height 期望的缓冲高度（后端按此创建）。
  * @param      outStride   输出每行字节数（32bpp 时通常为 width*4）。
  * @return     可绘制内存指针；不支持/失败返回 NULL。
  */
@@ -556,6 +585,12 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
  * @brief      提交当前 tile buffer（flushTile 用）。
  * @details    tile 的源图像坐标始终从 (0,0) 起，offset 即 tile 原点；
  *             平台后端经 XPlatformNativeWindow_present 或等效路径上屏。
+ * @param      nativeState 平台提交状态。
+ * @param      window 目标窗口借用指针；可为 NULL（纯离屏）。
+ * @param      image 当前 tile 软件帧缓冲。
+ * @param      region 脏区集合（窗口坐标，非空）。
+ * @param      offset 缓冲相对窗口的偏移（tile 原点）；可为 NULL 按零点处理。
+ * @return     无。入参非法时不执行任何提交。
  */
 void XPlatformBackingStoreDriver_presentTile(void* nativeState,
                                              XWindow* window,

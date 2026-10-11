@@ -7,16 +7,18 @@
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #if XPLATFORMINTEGRATION_ON
-struct XPlatformServices { bool m_available; };
+struct XPlatformServices { XMemoryType m_memory; bool m_available; };
 XPlatformServices* XPlatformServices_create_ex(XMemoryType memory)
 {
     XPlatformServices* self = (XPlatformServices*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
     XMemset(self, 0, sizeof(*self));
+    self->m_memory = memory; /* 记录分配器族: destroy 按同族配对释放。 */
     self->m_available = XPlatformServicesDriver_isAvailable();
     return self;
 }
-void XPlatformServices_destroy(XPlatformServices* self) { if (self) XFree_System(self); }
+void XPlatformServices_destroy(XPlatformServices* self)
+{ if (self) XMemory_free(self, self->m_memory); }
 bool XPlatformServices_isAvailable(const XPlatformServices* self)
 { return self && self->m_available; }
 bool XPlatformServices_openUrl(XPlatformServices* self, const XString* url)

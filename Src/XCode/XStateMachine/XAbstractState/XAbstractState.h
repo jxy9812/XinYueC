@@ -34,9 +34,9 @@ XCLASS_DEFINE_END(XAbstractState)
 typedef struct XAbstractState {
     XObject m_class;                  ///< 继承 XObject，必须位于结构体第一位。
     XAbstractState_Kind m_kind;       ///< 状态节点种类。
+    bool m_active;                    ///< 当前是否位于状态机活动配置中。
     XState* m_parentState;            ///< 父状态，顶层状态的父状态为状态机根节点。
     XStateMachine* m_machine;         ///< 所属状态机，未加入状态图时为 NULL。
-    bool m_active;                    ///< 当前是否位于状态机活动配置中。
 } XAbstractState;
 
 /**

@@ -67,7 +67,7 @@ void XEvent_init(XEvent* event,XEventType type)
 	memset(((XClass*)event) + 1, 0, sizeof(XEvent) - sizeof(XClass));
 	XClass_init(event);
 	XClassSetVtable(event, XEvent);
-	event->type = type;
+	event->m_type = type;
 }
 
 static void  XEventFunc_deinit(XEventFunc* ev)
@@ -136,7 +136,7 @@ XVtable* XMetaCallEvent_class_init()
 	XCLASS_SHOW_SIZE_DEFAULT(XMetaCallEvent);
 	return XVTABLE_DEFAULT;
 }
-XMetaCallEvent* XMetaCallEvent_create_ex(XMemoryType memory, XObject* sender,XSlotFunc1 func, size_t signal_id, XVarList* argList,XAtomic_int32_t* ref_count,XSemaphore* sem)
+XMetaCallEvent* XMetaCallEvent_create_ex(XMemoryType memory, XObject* sender,XSlotFunc1 func, size_t signal_id, XVarList* argList,XAtomic_Int32* ref_count,XSemaphore* sem)
 {
 	XMetaCallEvent* event = XMemory_malloc(sizeof(XMetaCallEvent), memory);
 	//XPrintf("XMetaCallEvent:%p 创建\n", event);
@@ -177,7 +177,7 @@ void XMetaCallEvent_handler(XMetaCallEvent* event, XObject* receiver)
 
 void XEvent_accept(XEvent* event)
 {
-	if (event) event->accepted = true;
+	if (event) event->m_accepted = true;
 }
 
 XEvent* XEvent_clone_base(const XEvent * event)
@@ -189,27 +189,27 @@ XEvent* XEvent_clone_base(const XEvent * event)
 
 void XEvent_ignore(XEvent* event)
 {
-	if (event) event->accepted = false;
+	if (event) event->m_accepted = false;
 }
 
 bool XEvent_isAccepted(const XEvent * event)
 {
-	return event ? event->accepted : false;
+	return event ? event->m_accepted : false;
 }
 
 bool XEvent_isInputEvent(const XEvent* event)
 {
-	return event ? event->input_event : false;
+	return event ? event->m_input_event : false;
 }
 
 bool XEvent_isPointerEvent(const XEvent* event)
 {
-	return event ? event->pointer_event : false;
+	return event ? event->m_pointer_event : false;
 }
 
 bool XEvent_isSinglePointEvent(const XEvent* event)
 {
-	return event ? event->single_point_event : false;
+	return event ? event->m_single_point_event : false;
 }
 
 void XEvent_setAccepted_base(XEvent* event, bool accepted)
@@ -221,12 +221,12 @@ void XEvent_setAccepted_base(XEvent* event, bool accepted)
 
 bool XEvent_spontaneous(const XEvent * event)
 {
-	return event ? event->spontaneous : false;
+	return event ? event->m_spontaneous : false;
 }
 
 XEventType XEvent_type(const XEvent* event)
 {
-	return event ? event->type : XEVENT_TYPE_NONE;
+	return event ? event->m_type : XEVENT_TYPE_NONE;
 }
 
 XKeyEvent* XKeyEvent_create_ex(XMemoryType memory, XEventType type, int key, XKeyboardModifiers modifiers)
@@ -245,7 +245,7 @@ void XKeyEvent_init(XKeyEvent* event, XEventType type, int key, XKeyboardModifie
 		return;
 	XEvent_init((XEvent*)event, type);
 	XClassGetVtable(event) = XKeyEvent_class_init();
-	event->m_class.input_event = true;
+	event->m_class.m_input_event = true;
 	event->m_key = key;
 	event->m_modifiers = modifiers;
 	event->m_autoRepeat = false;
@@ -312,9 +312,9 @@ void XMouseEvent_init(XMouseEvent* event, XEventType type, XMouseButton button,
 		return;
 	XEvent_init((XEvent*)event, type);
 	XClassGetVtable(event) = XMouseEvent_class_init();
-	event->m_class.input_event = true;
-	event->m_class.pointer_event = true;
-	event->m_class.single_point_event = true;
+	event->m_class.m_input_event = true;
+	event->m_class.m_pointer_event = true;
+	event->m_class.m_single_point_event = true;
 	event->m_button = button;
 	event->m_buttons = button;
 	event->m_modifiers = modifiers;
@@ -452,12 +452,12 @@ XTimerEvent* XTimerEvent_create_ex(XMemoryType memory, XTimerId id)
 	XEvent_init(event, XEVENT_TYPE_TIMER);
 	event->timerId = id;
 	Set_Class_Memory(event, memory); Set_Class_IsHeap(event, true);
-	//XPrintf("XTimerEvent:%p 创建 type:%d\n", event,event->m_base.type);
+	//XPrintf("XTimerEvent:%p 创建 type:%d\n", event,event->m_base.m_type);
 	return event;
 }
 XTimerId XTimerEvent_timerId(const XTimerEvent* event)
 {
-	return (event && event->m_base.type== XEVENT_TYPE_TIMER) ?
+	return (event && event->m_base.m_type== XEVENT_TYPE_TIMER) ?
 		((XTimerEvent*)event)->timerId : 0;
 }
 
@@ -493,28 +493,28 @@ XChildEvent* XChildEvent_create_ex(XMemoryType memory, XEventType type, XObject*
 bool XChildEvent_added(const XChildEvent* e)
 {
 	XEvent* event = (XEvent*)e;
-	return event && event->type == XEVENT_TYPE_CHILD_ADDED;
+	return event && event->m_type == XEVENT_TYPE_CHILD_ADDED;
 }
 
 XObject* XChildEvent_child(const XChildEvent* e)
 {
 	XEvent* event = (XEvent*)e;
-	return (event && (event->type == XEVENT_TYPE_CHILD_ADDED ||
-		event->type == XEVENT_TYPE_CHILD_POLISHED ||
-		event->type == XEVENT_TYPE_CHILD_REMOVED)) ?
+	return (event && (event->m_type == XEVENT_TYPE_CHILD_ADDED ||
+		event->m_type == XEVENT_TYPE_CHILD_POLISHED ||
+		event->m_type == XEVENT_TYPE_CHILD_REMOVED)) ?
 		((XChildEvent*)event)->child : NULL;
 }
 
 bool XChildEvent_polished(const XChildEvent* e)
 {
 	XEvent* event = (XEvent*)e;
-	return event && event->type == XEVENT_TYPE_CHILD_POLISHED;
+	return event && event->m_type == XEVENT_TYPE_CHILD_POLISHED;
 }
 
 bool XChildEvent_removed(const XChildEvent* e)
 {
 	XEvent* event = (XEvent*)e;
-	return event && event->type == XEVENT_TYPE_CHILD_REMOVED;
+	return event && event->m_type == XEVENT_TYPE_CHILD_REMOVED;
 }
 
 void XChildEvent_handler(XChildEvent* event, XObject* receiver)
@@ -547,7 +547,7 @@ XDynamicPropertyChangeEvent* XDynamicPropertyChangeEvent_create_ex(XMemoryType m
 
 const char* XDynamicPropertyChangeEvent_propertyName(const XEvent* event)
 {
-	if (event && event->type == XEVENT_TYPE_DYNAMIC_PROPERTY_CHANGE) {
+	if (event && event->m_type == XEVENT_TYPE_DYNAMIC_PROPERTY_CHANGE) {
 		return (const char*)((XDynamicPropertyChangeEvent*)event)->propertyName;
 	}
 	return NULL;
@@ -555,7 +555,7 @@ const char* XDynamicPropertyChangeEvent_propertyName(const XEvent* event)
 
 void VXEvent_default_setAccepted(XEvent* event, bool accepted)
 {
-	if (event) event->accepted = accepted;
+	if (event) event->m_accepted = accepted;
 }
 
 /** @brief XEvent 的 Copy 实现：只复制基类数据区，保持 dest 的类身份。
@@ -597,6 +597,8 @@ static void VXKeyEvent_copy(XKeyEvent* dest, const XKeyEvent* src)
 	dest->m_key = src->m_key;
 	dest->m_modifiers = src->m_modifiers;
 	dest->m_autoRepeat = src->m_autoRepeat;
+	dest->m_nativeScanCode = src->m_nativeScanCode;
+	dest->m_timestamp = src->m_timestamp;
 }
 
 static XEvent* VXKeyEvent_clone(const XKeyEvent* event)
@@ -622,7 +624,9 @@ static void VXMouseEvent_copy(XMouseEvent* dest, const XMouseEvent* src)
 	dest->m_buttons = src->m_buttons;
 	dest->m_modifiers = src->m_modifiers;
 	dest->m_position = src->m_position;
+	dest->m_globalPosition = src->m_globalPosition;
 	dest->m_synthesized = src->m_synthesized;
+	dest->m_timestamp = src->m_timestamp;
 }
 
 static XEvent* VXMouseEvent_clone(const XMouseEvent* event)

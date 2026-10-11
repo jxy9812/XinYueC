@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XLineEdit.h
  * @brief      XLineEdit 单行文本编辑控件（对标 Qt 6.8 QLineEdit 全部公共 API）。
  * @details    功能范围：
@@ -137,7 +137,7 @@ XCLASS_DEFINE_BEGING(XLineEdit)
 XCLASS_DEFINE_EXTEND_END(XLineEdit, XWidget)
 
 /**
- * @brief      XLineEdit 单行编辑控件对象；m_base 必须是第一个成员。
+ * @brief      XLineEdit 单行编辑控件对象；m_class 必须是第一个成员。
  * @details    壳-控制器分工（对标 Qt QLineEdit → QWidgetLineControl）：
  *             编辑逻辑（文本缓冲、光标/选区、撤销栈、回显状态机、输入
  *             掩码、校验、IME、剪贴板、命中测试、键盘分派、补全联动与
@@ -162,7 +162,8 @@ XCLASS_DEFINE_EXTEND_END(XLineEdit, XWidget)
  */
 typedef struct XLineEdit
 {
-    XWidget m_base;                  /**< 基类成员；必须是第一个。 */
+    XWidget m_class;                 /**< 基类成员；必须是第一个，由 XClass 管理，
+                                          禁止手工修改。 */
     XLineControl* m_control;         /**< 编辑控制器（拥有；对标 Qt d->control）。 */
     XString* m_placeholder;         /**< 占位提示（对象拥有）。 */
     int     m_viewOffset;            /**< 水平滚动偏移（像素，滚动钳位留壳）。 */
@@ -186,9 +187,39 @@ typedef struct XLineEdit
 
 /* ==================== 生命周期 ==================== */
 
+/**
+ * @brief      获取 XLineEdit 虚函数表（首次调用时构建单例虚表）。
+ * @details    继承 XWidget 虚表，重载键盘/IME/鼠标/焦点/绘制/变更/
+ *             定时器事件槽与 copy/move/deinit。
+ * @return     虚函数表单例指针（库内部管理，借用；不得释放）。
+ */
 XVtable* XLineEdit_class_init(void);
+/**
+ * @brief      初始化 XLineEdit 单行编辑控件（对标 QLineEdit(parent)
+ *             构造）。
+ * @details    基类部分由 XWidget_init 清零初始化，壳字段逐一赋初值：
+ *             创建私有编辑控制器 XLineControl 与空占位文本；默认绘制
+ *             边框、左对齐、StrongFocus、悬停高亮与输入法接入位开启、
+ *             清除按钮关闭。目标可为未初始化内存，由本函数完成完整
+ *             初始化。
+ * @param      self 目标控件指针；指向一段未初始化的 XLineEdit 存储；
+ *             传入 NULL 时不执行任何操作。
+ * @param      parent 父控件指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     无返回值；控制器分配失败时控件仍完成初始化（编辑功能
+ *             不可用，文本 API 按空文本处理）。
+ */
 void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags);
+/** @brief 创建堆对象便捷宏：以默认内存类型调用 XLineEdit_create_ex。 */
 #define XLineEdit_create(parent, flags) XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
+/**
+ * @brief      创建 XLineEdit 堆对象（对标 QLineEdit(parent) 构造）。
+ * @param      memory 内存分配器类型（XMemoryType）。
+ * @param      parent 父控件指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     新建对象指针（默认状态同 XLineEdit_init；调用方以
+ *             XClassDelete 释放）；分配失败返回 NULL。
+ */
 XLineEdit* XLineEdit_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
 /* ==================== 父类 XWidget API 宏转发（对齐库内 XRadioButton 惯例） ==================== */
@@ -262,16 +293,6 @@ void XLineEdit_setText(XLineEdit* self, const char* text);
  * @return     无返回值。
  */
 void XLineEdit_clear(XLineEdit* self);
-/**
- * @brief      在光标处插入文本（对标 QLineEdit::insert）。
- * @details    替换当前选区；按 maxLength 与 inputMask 过滤；插入成功
- *             视为用户编辑（置 modified、记录撤销、发射 textChanged
- *             与 textEdited）。readOnly 时忽略。被掩码/长度/校验拒绝
- *             时由控制器发射 inputRejected。
- * @param      self 目标编辑框；可为 NULL。
- * @param      utf8 待插入文本（UTF-8）；可为 NULL。
- * @return     无返回值；全部字符被掩码/长度拒绝时不改变文本。
- */
 /**
  * @brief      在光标处插入文本（对标 QLineEdit::insert）。
  * @details    替换当前选区；按 maxLength 与 inputMask 过滤；插入成功
@@ -826,9 +847,6 @@ void* XLineEdit_inputRejected_signal(XLineEdit* self);
 /** @brief 返回当前聚焦的 XLineEdit（全局；供平台层 IME 直投。可 NULL）。 */
 XLineEdit* XLineEdit_focusedLineEdit(void);
 
-#ifdef __cplusplus
-}
-#endif
 #endif /* XWIDGET_ON && XLINEEDIT_ON */
 
 #ifdef __cplusplus

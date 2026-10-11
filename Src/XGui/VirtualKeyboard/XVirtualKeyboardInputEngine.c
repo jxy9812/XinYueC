@@ -37,7 +37,12 @@ typedef struct XvkeLocaleFactory
 typedef struct XVirtualKeyboardInputEnginePrivate
 {
     XVirtualKeyboardInputContext* m_context;  /**< 上下文（借用）。 */
-    XVirtualKeyboardAbstractInputMethod* m_inputMethod; /**< 当前输入法（借用）。 */
+    XVirtualKeyboardAbstractInputMethod* m_inputMethod; /**< 当前输入法
+                                                             （在装实例由引
+                                                             擎析构兜底同步
+                                                             释放；换装旧实
+                                                             例由装配方延迟
+                                                             回收）。 */
     XConnection* m_listsConn;                 /**< 输入法 selectionListsChanged 连接。 */
     XConnection* m_listChangedConn;           /**< 输入法 selectionListChanged 连接。 */
     XConnection* m_activeChangedConn;         /**< 输入法 selectionListActiveItemChanged 连接。 */
@@ -139,7 +144,7 @@ static void xvke_stopRepeat(XVirtualKeyboardInputEngine* self)
     priv->m_repeatTimer = XTIMER_INVALID_ID;
 }
 
-/** @brief 反初始化：断连接、释放模型与私有块后调父类。 */
+/** @brief 反初始化：断连接、释放模型/在装输入法与私有块后调父类。 */
 static void XVke_deinit(XVirtualKeyboardInputEngine* self)
 {
     XVirtualKeyboardInputEnginePrivate* priv;
@@ -163,6 +168,16 @@ static void XVke_deinit(XVirtualKeyboardInputEngine* self)
             XClassDelete(
                 priv->m_wordCandidateListModel);
             priv->m_wordCandidateListModel = NULL;
+        }
+        if (priv->m_inputMethod) {
+            /* 末任在装输入法兜底回收：三个装配点均新建即弃指针、无登
+               记引用；换装路径旧实例已由装配方 deleteLater（面板 TU），
+               无人释放的只剩析构时仍在装的实例——置空后按析构内成员
+               释放规则同步回收，防引擎/上下文析构整体泄漏。 */
+            XVirtualKeyboardAbstractInputMethod* installed =
+                priv->m_inputMethod;
+            priv->m_inputMethod = NULL;
+            XClassDelete(installed);
         }
         XFree_System(priv);
         self->m_data = NULL;
@@ -189,7 +204,7 @@ void XVirtualKeyboardInputEngine_init_ex(XVirtualKeyboardInputEngine* self,
     /* 候选模型引擎持有、创建即有效（Qt 为惰性创建；提前创建使面板可
        无条件取用，装配后经 updateSelectionListModels 置数据源）。 */
     priv->m_wordCandidateListModel =
-        XVirtualKeyboardSelectionListModel_create_engine(
+        XVirtualKeyboardSelectionListModel_create_ex(
             XVirtualKeyboardSelectionListModelType_WordCandidateList);
 }
 
@@ -368,8 +383,8 @@ bool XVirtualKeyboardInputEngine_registerInputMethodFactory_for(
         }
     }
     if (priv->m_factoryCount >= XVIRTUALKEYBOARD_LOCALE_FACTORY_MAX) {
-        XPrintf("[XVirtualKeyboard] registerFactory: 注册表已满 %d\n",
-                (int)XVIRTUALKEYBOARD_LOCALE_FACTORY_MAX);
+        XERROR_PRINTF("[XVirtualKeyboard] registerFactory: 注册表已满 %d\n",
+                      (int)XVIRTUALKEYBOARD_LOCALE_FACTORY_MAX);
         return false;
     }
     XStrncpy(priv->m_factories[priv->m_factoryCount].m_locale, locale,
@@ -603,9 +618,9 @@ bool XVirtualKeyboardInputEngine_setInputMode(
         }
     }
     if (!listed) {
-        XPrintf("[XVirtualKeyboard] setInputMode: 模式 %d 不在当前输入"
-                "模式集内，拒绝\n",
-                (int)inputMode);
+        XERROR_PRINTF("[XVirtualKeyboard] setInputMode: 模式 %d 不在当前输入"
+                      "模式集内，拒绝\n",
+                      (int)inputMode);
         return false;
     }
     if (priv->m_inputMethod) {

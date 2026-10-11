@@ -25,7 +25,7 @@
  */
 typedef struct XPlatformPixmap
 {
-    XAtomic_int32_t  m_refCount;        /**< 引用计数 */
+    XAtomic_Int32  m_refCount;        /**< 引用计数 */
     XImage           m_image;            /**< 内部图像数据 */
     float            m_devicePixelRatio; /**< 设备像素比 */
     bool             m_isQBitmap;        /**< 是否为位图 */

@@ -6,6 +6,7 @@
 #include "XMemory.h"
 #include "XClass.h"
 #include "XVarList.h"
+#include "XVector.h"
 #include "XEvent.h"
 #include "XEventType.h"
 #include "XItemDelegate.h"
@@ -102,32 +103,56 @@ static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
 
 /* ==================== 选择应用（键盘导航/修饰键点击共用） ==================== */
 
-/* 平行表（持久编辑器标记/条目控件指针）使用的内存池类型：与本类堆创建
- * 默认类型一致（XAbstractItemView_create_ex 默认走该类型），分配与释放
- * 使用同一常量保证配对。 */
-#define XAIV_TABLE_MEMORY XCLASS_DEFAULT_MEMORY_TYPE
-
 /* ==================== 悬停差分旁表（entered/viewportEntered 判重） ==================== */
 
-/* 头文件无悬停字段的替代承载：视图 → 上次悬停索引 的单链旁表
+/* 头文件无悬停字段的替代承载：视图 → 上次悬停索引 的旁表
  * （对照 XListWidget m_enteredRow 差分范式，行列成对并含失效态）。
- * 节点仅随首次悬停创建、随视图析构移除（VXAbstractItemView_deinit
- * 为全路径唯一析构入口）与 LeaveEvent 复位，无泄漏与悬垂键。 */
+ * 条目仅随首次悬停插入、随视图析构移除（VXAbstractItemView_deinit
+ * 为全路径唯一析构入口）与 LeaveEvent 复位，无泄漏与悬垂键；
+ * 存储复用库内 XVector（元素为键值结构，非自写链表/裸数组）。 */
 typedef struct XAivHoverEntry
 {
-    struct XAivHoverEntry* m_next;   /**< 链表后继。 */
     const XAbstractItemView* m_view; /**< 键（视图借用指针）。 */
     int m_row;                       /**< 上次悬停行；-1=悬停失效（空白/未知）。 */
     int m_col;                       /**< 上次悬停列；-1=同上。 */
 } XAivHoverEntry;
 
-static XAivHoverEntry* xaiv_hoverEntries = NULL;
+/**
+ * @brief 单格 role 叠加条目。
+ * @note  Qt 以 model data(index, role) 承载各 role；本库模型通路
+ *        （XAbstractItemModel data/setData）无 role 参数仅承载文本，
+ *        非文本 role 由视图基类按 (row,col) 叠加存储（基类扩展，
+ *        XItemDataRole 语义不变）。文本 role（Display/Edit）不经此表，
+ *        直连模型文本通路。条目为 POD（借用指针承载），随 role 表
+ *        XVector 的 resize 补零/搬移。
+ */
+typedef struct XAivRoleEntry
+{
+    int m_checkState;          /**< CheckStateRole（XItemCheckState；-1=未设置）。 */
+    int m_alignment;           /**< TextAlignmentRole（XAlignment 位组合；0=未设置）。 */
+    const XFont* m_font;       /**< FontRole（借用指针；NULL=未设置）。 */
+    const void* m_decoration;  /**< DecorationRole（借用指针；NULL=未设置）。 */
+} XAivRoleEntry;
+
+static XVector xaiv_hoverEntries;
+
+/** @brief 取悬停旁表（文件级静态存储，首次使用时初始化一次）。 */
+static XVector* xaiv_hoverTable(void)
+{
+    if (XClassIsVtableNull(&xaiv_hoverEntries))
+        XVector_init(&xaiv_hoverEntries, sizeof(XAivHoverEntry), false);
+    return &xaiv_hoverEntries;
+}
 
 /** @brief 读视图的上次悬停索引；无记录时保持出参 (-1,-1)。 */
 static void xaiv_hoverGet(const XAbstractItemView* view, int* row, int* col)
 {
-    const XAivHoverEntry* e;
-    for (e = xaiv_hoverEntries; e; e = e->m_next) {
+    XVector* table = xaiv_hoverTable();
+    size_t i;
+    size_t n = XVector_size_base(table);
+    for (i = 0; i < n; ++i) {
+        const XAivHoverEntry* e =
+            (const XAivHoverEntry*)XVector_at_base(table, (int64_t)i);
         if (e->m_view == view) {
             *row = e->m_row;
             *col = e->m_col;
@@ -136,39 +161,42 @@ static void xaiv_hoverGet(const XAbstractItemView* view, int* row, int* col)
     }
 }
 
-/** @brief 写视图的上次悬停索引（无记录则头插建节点；分配失败忽略——
+/** @brief 写视图的上次悬停索引（无记录则尾插建条目；插入失败忽略——
  *         下次判定仍按无记录基准，最多退化为重复发射，不误吞信号）。 */
 static void xaiv_hoverSet(const XAbstractItemView* view, int row, int col)
 {
-    XAivHoverEntry* e;
-    for (e = xaiv_hoverEntries; e; e = e->m_next) {
+    XVector* table = xaiv_hoverTable();
+    XAivHoverEntry entry;
+    size_t i;
+    size_t n = XVector_size_base(table);
+    for (i = 0; i < n; ++i) {
+        XAivHoverEntry* e = (XAivHoverEntry*)XVector_at_base(table,
+                                                             (int64_t)i);
         if (e->m_view == view) {
             e->m_row = row;
             e->m_col = col;
             return;
         }
     }
-    e = (XAivHoverEntry*)XMemory_calloc(1, sizeof(*e), XAIV_TABLE_MEMORY);
-    if (!e) return;
-    e->m_next = xaiv_hoverEntries;
-    e->m_view = view;
-    e->m_row = row;
-    e->m_col = col;
-    xaiv_hoverEntries = e;
+    entry.m_view = view;
+    entry.m_row = row;
+    entry.m_col = col;
+    XVector_push_back_1_base(table, &entry);
 }
 
 /** @brief 移除视图的悬停记录（LeaveEvent 复位与析构路径）。 */
 static void xaiv_hoverRelease(const XAbstractItemView* view)
 {
-    XAivHoverEntry** p = &xaiv_hoverEntries;
-    while (*p) {
-        if ((*p)->m_view == view) {
-            XAivHoverEntry* dead = *p;
-            *p = dead->m_next;
-            XMemory_free(dead, XAIV_TABLE_MEMORY);
+    XVector* table = xaiv_hoverTable();
+    size_t i;
+    size_t n = XVector_size_base(table);
+    for (i = 0; i < n; ++i) {
+        const XAivHoverEntry* e =
+            (const XAivHoverEntry*)XVector_at_base(table, (int64_t)i);
+        if (e->m_view == view) {
+            XVector_removeAt_base(table, (int64_t)i);
             return;
         }
-        p = &(*p)->m_next;
     }
 }
 
@@ -247,16 +275,16 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_horizontalScrollMode =
         XAbstractItemViewScrollMode_ScrollPerItem;
     self->m_itemDelegate = NULL;
-    self->m_persistentFlags = NULL;
+    /* 平行表（持久编辑器标记/条目控件/role 叠加）与行/列级委托表：
+     * 存储一律由库内 XVector 承载（对象拥有，元素 POD，无元素回调）。 */
+    XVector_init(&self->m_persistentFlags, sizeof(bool), false);
     self->m_persistentRows = 0;
     self->m_persistentCols = 0;
-    self->m_indexWidgets = NULL;
+    XVector_init(&self->m_indexWidgets, sizeof(void*), false);
     self->m_indexWidgetRows = 0;
     self->m_indexWidgetCols = 0;
-    self->m_columnDelegates = NULL;
-    self->m_columnDelegateCount = 0;
-    self->m_rowDelegates = NULL;
-    self->m_rowDelegateCount = 0;
+    XVector_init(&self->m_columnDelegates, sizeof(void*), false);
+    XVector_init(&self->m_rowDelegates, sizeof(void*), false);
     /* 编辑闭环会话状态（对标 Qt 视图内部 editor/editorIndex 会话）。 */
     self->m_editor = NULL;
     self->m_editRow = -1;
@@ -265,7 +293,7 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_editClosing = false;
     self->m_itemsEditable = false;
     self->m_defaultDelegate = NULL;
-    self->m_roleTable = NULL;
+    XVector_init(&self->m_roleTable, sizeof(XAivRoleEntry), false);
     self->m_roleRows = 0;
     self->m_roleCols = 0;
     /* 对标 Qt QAbstractScrollArea 构造函数 qabstractscrollarea.cpp:273
@@ -619,53 +647,33 @@ void* XAbstractItemView_itemDelegate(const XAbstractItemView* self)
 
 /* ==================== 行/列级委托（不透明承载） ==================== */
 
-/* 行/列级委托指针表最小容量（首配即预留，之后倍增摊还）。 */
-#define XAIV_DELEGATE_MIN_CAPACITY 8
-
 /**
- * @brief 按需扩容委托指针表使 index 可直接寻址（只增不减，保留旧内容）。
+ * @brief 按需扩容委托指针表使 index 可直接寻址（只增不减；新增槽位由
+ *        XVector resize 补 NULL，保留旧内容）。
  *
- * @param table 表指针的指针（*table 可为 NULL，表示首次分配）。
- * @param count 当前已分配容量（出/入参）。
+ * @param table 委托指针向量。
  * @param index 需可写的下标（需 >=0）。
  * @return 已满足或扩容成功返回 true；参数非法或分配失败返回 false
- *         （失败时不改动旧表与容量）。
+ *         （失败时不改动旧表内容）。
  */
-static bool xaiv_delegateEnsure(void*** table, int* count, int index)
+static bool xaiv_delegateEnsure(XVector* table, int index)
 {
-    void** fresh;
-    int newCount;
-    if (index < *count) return true;
     if (index < 0) return false;
-    newCount = index + 1;
-    if (newCount < XAIV_DELEGATE_MIN_CAPACITY)
-        newCount = XAIV_DELEGATE_MIN_CAPACITY;
-    if (*count > 0 && newCount < *count * 2) newCount = *count * 2;
-    fresh = (void**)XMemory_calloc((size_t)newCount, sizeof(void*),
-                                   XAIV_TABLE_MEMORY);
-    if (!fresh) return false;
-    if (*table) {
-        XMemcpy(fresh, *table, (size_t)*count * sizeof(void*));
-        XMemory_free(*table, XAIV_TABLE_MEMORY);
-    }
-    *table = fresh;
-    *count = newCount;
-    return true;
+    if ((size_t)index < XVector_size_base(table)) return true;
+    return XVector_resize_base(table, (size_t)index + 1);
 }
 
 void XAbstractItemView_setItemDelegateForColumn(XAbstractItemView* self,
                                                 int column, void* delegate)
 {
-    void** table;
+    void** slot;
     if (!self || column < 0) return;
-    table = self->m_columnDelegates;
-    if (!xaiv_delegateEnsure(&table, &self->m_columnDelegateCount, column))
-        return;
-    self->m_columnDelegates = table;
-    if (self->m_columnDelegates[column] == delegate) return;
+    if (!xaiv_delegateEnsure(&self->m_columnDelegates, column)) return;
+    slot = (void**)XVector_at_base(&self->m_columnDelegates, column);
+    if (*slot == delegate) return;
     /* 委托体系未建：仅存指针（借用，不析构、不虚分派）；NULL=清除该列
      * 覆盖回落默认委托。同 Qt 委托变化后刷新视口。 */
-    self->m_columnDelegates[column] = delegate;
+    *slot = delegate;
     XWidget_update((XWidget*)self);
 }
 
@@ -673,22 +681,21 @@ void* XAbstractItemView_itemDelegateForColumn(const XAbstractItemView* self,
                                               int column)
 {
     if (!self || column < 0) return NULL;
-    if (!self->m_columnDelegates || column >= self->m_columnDelegateCount)
+    if ((size_t)column >= XVector_size_base(&self->m_columnDelegates))
         return NULL;
-    return self->m_columnDelegates[column];
+    return *(void**)XVector_at_base(&self->m_columnDelegates, column);
 }
 
 void XAbstractItemView_setItemDelegateForRow(XAbstractItemView* self,
                                              int row, void* delegate)
 {
-    void** table;
+    void** slot;
     if (!self || row < 0) return;
-    table = self->m_rowDelegates;
-    if (!xaiv_delegateEnsure(&table, &self->m_rowDelegateCount, row)) return;
-    self->m_rowDelegates = table;
-    if (self->m_rowDelegates[row] == delegate) return;
+    if (!xaiv_delegateEnsure(&self->m_rowDelegates, row)) return;
+    slot = (void**)XVector_at_base(&self->m_rowDelegates, row);
+    if (*slot == delegate) return;
     /* 行级优先于列级（同 Qt itemDelegate(index) 解析顺序）；当前仅承载。 */
-    self->m_rowDelegates[row] = delegate;
+    *slot = delegate;
     XWidget_update((XWidget*)self);
 }
 
@@ -696,8 +703,8 @@ void* XAbstractItemView_itemDelegateForRow(const XAbstractItemView* self,
                                            int row)
 {
     if (!self || row < 0) return NULL;
-    if (!self->m_rowDelegates || row >= self->m_rowDelegateCount) return NULL;
-    return self->m_rowDelegates[row];
+    if ((size_t)row >= XVector_size_base(&self->m_rowDelegates)) return NULL;
+    return *(void**)XVector_at_base(&self->m_rowDelegates, row);
 }
 
 void* XAbstractItemView_itemDelegateForIndex(const XAbstractItemView* self,
@@ -719,49 +726,45 @@ void* XAbstractItemView_itemDelegateForIndex(const XAbstractItemView* self,
 /**
  * @brief 按需扩容行主序扁平平行表至 rows x cols（只增不减，保留旧内容）。
  *
- *        目标尺寸不大于当前尺寸时为空操作；否则分配零初始化的更大表，
- *        逐元素搬移旧内容（列数变化会改变行距，不能整体搬移）后释放旧表。
+ *        目标尺寸不大于当前尺寸时为空操作；否则经 XVector 扩容（新增
+ *        区域补零），列数变化改变行距时从尾行向前逐元素搬到新行距位置
+ *        （同行槽位整体右移、源槽位必在已写目标槽位之前，原地搬移安全；
+ *        0 行为无位移）。搬移经 XMemmove：单元素源/目标可重叠。
  *
- * @param table 表指针的指针（*table 可为 NULL，表示首次分配）。
- * @param curRows 当前已分配行数（出/入参）。
- * @param curCols 当前已分配列数（出/入参）。
+ * @param table 平行表向量。
+ * @param curRows 当前逻辑行数（出/入参）。
+ * @param curCols 当前逻辑列数（出/入参）。
  * @param rows 目标行数（需 >=1）。
  * @param cols 目标列数（需 >=1）。
  * @param elemSize 单元素字节数。
  * @return 已满足或扩容成功返回 true；参数非法或分配失败返回 false
- *         （失败时不改动旧表与容量）。
+ *         （失败时不改动旧表与逻辑维度）。
  */
-static bool xaiv_tableEnsure(void** table, int* curRows, int* curCols,
+static bool xaiv_tableEnsure(XVector* table, int* curRows, int* curCols,
                              int rows, int cols, size_t elemSize)
 {
-    char* fresh;
+    char* base;
     int newRows;
     int newCols;
-    int r;
-    int c;
+    size_t r;
+    size_t c;
     size_t oldCols;
-    size_t newColsZ;
     if (rows <= *curRows && cols <= *curCols) return true;
     if (rows <= 0 || cols <= 0) return false;
     newRows = rows > *curRows ? rows : *curRows;
     newCols = cols > *curCols ? cols : *curCols;
-    fresh = (char*)XMemory_calloc((size_t)newRows * (size_t)newCols,
-                                  elemSize, XAIV_TABLE_MEMORY);
-    if (!fresh) return false;
-    if (*table) {
+    if (!XVector_resize_base(table, (size_t)newRows * (size_t)newCols))
+        return false;
+    if (*curRows > 0 && *curCols > 0 && newCols != *curCols) {
+        base = (char*)XVector_at_base(table, 0);
         oldCols = (size_t)*curCols;
-        newColsZ = (size_t)newCols;
-        for (r = 0; r < *curRows; ++r) {
-            for (c = 0; c < *curCols; ++c) {
-                XMemcpy(fresh + ((size_t)r * newColsZ + (size_t)c) * elemSize,
-                        (char*)*table +
-                            ((size_t)r * oldCols + (size_t)c) * elemSize,
-                        elemSize);
+        for (r = (size_t)*curRows; r-- > 0; ) {
+            for (c = oldCols; c-- > 0; ) {
+                XMemmove(base + (r * (size_t)newCols + c) * elemSize,
+                         base + (r * oldCols + c) * elemSize, elemSize);
             }
         }
-        XMemory_free(*table, XAIV_TABLE_MEMORY);
     }
-    *table = fresh;
     *curRows = newRows;
     *curCols = newCols;
     return true;
@@ -770,116 +773,79 @@ static bool xaiv_tableEnsure(void** table, int* curRows, int* curCols,
 /** @brief 清空持久编辑器打开标记（内容全部置 false；容量保留复用）。 */
 static void xaiv_persistentResetTable(XAbstractItemView* self)
 {
-    if (self->m_persistentFlags && self->m_persistentRows > 0 &&
-        self->m_persistentCols > 0) {
-        XMemset(self->m_persistentFlags, 0,
-                (size_t)self->m_persistentRows *
-                    (size_t)self->m_persistentCols * sizeof(bool));
+    size_t n = XVector_size_base(&self->m_persistentFlags);
+    if (n > 0) {
+        XMemset(XVector_at_base(&self->m_persistentFlags, 0), 0,
+                n * sizeof(bool));
     }
 }
 
 /** @brief 清空条目控件承载（指针全部置 NULL；容量保留复用）。 */
 static void xaiv_indexWidgetResetTable(XAbstractItemView* self)
 {
-    if (self->m_indexWidgets && self->m_indexWidgetRows > 0 &&
-        self->m_indexWidgetCols > 0) {
-        XMemset(self->m_indexWidgets, 0,
-                (size_t)self->m_indexWidgetRows *
-                    (size_t)self->m_indexWidgetCols * sizeof(void*));
+    size_t n = XVector_size_base(&self->m_indexWidgets);
+    if (n > 0) {
+        XMemset(XVector_at_base(&self->m_indexWidgets, 0), 0,
+                n * sizeof(void*));
     }
 }
 
-/** @brief 释放持久编辑器标记表并归零容量（setModel 行/列变化入口与析构同步）。 */
+/** @brief 释放持久编辑器标记表并归零逻辑维度（setModel 行/列变化入口与析构同步）。 */
 static void xaiv_persistentRelease(XAbstractItemView* self)
 {
-    if (self->m_persistentFlags) {
-        XMemory_free(self->m_persistentFlags, XAIV_TABLE_MEMORY);
-        self->m_persistentFlags = NULL;
-    }
+    XVector_clear_base(&self->m_persistentFlags);
     self->m_persistentRows = 0;
     self->m_persistentCols = 0;
 }
 
-/** @brief 释放条目控件表并归零容量（setModel 行/列变化入口与析构同步）。 */
+/** @brief 释放条目控件表并归零逻辑维度（setModel 行/列变化入口与析构同步）。 */
 static void xaiv_indexWidgetRelease(XAbstractItemView* self)
 {
-    if (self->m_indexWidgets) {
-        XMemory_free(self->m_indexWidgets, XAIV_TABLE_MEMORY);
-        self->m_indexWidgets = NULL;
-    }
+    XVector_clear_base(&self->m_indexWidgets);
     self->m_indexWidgetRows = 0;
     self->m_indexWidgetCols = 0;
 }
 
-/** @brief 释放行/列级委托指针表并归零容量（仅析构同步；行/列级委托
+/** @brief 释放行/列级委托指针表（仅析构同步；行/列级委托
  *         不随 setModel 失效，同 Qt 跨模型保留）。 */
 static void xaiv_delegateRelease(XAbstractItemView* self)
 {
-    if (self->m_columnDelegates) {
-        XMemory_free(self->m_columnDelegates, XAIV_TABLE_MEMORY);
-        self->m_columnDelegates = NULL;
-    }
-    self->m_columnDelegateCount = 0;
-    if (self->m_rowDelegates) {
-        XMemory_free(self->m_rowDelegates, XAIV_TABLE_MEMORY);
-        self->m_rowDelegates = NULL;
-    }
-    self->m_rowDelegateCount = 0;
+    XVector_clear_base(&self->m_columnDelegates);
+    XVector_clear_base(&self->m_rowDelegates);
 }
 
 /* ==================== role 叠加存储（对标 model data(role) 的非文本维度） ==================== */
 
-/**
- * @brief 单格 role 叠加条目。
- * @note  Qt 以 model data(index, role) 承载各 role；本库模型通路
- *        （XAbstractItemModel data/setData）无 role 参数仅承载文本，
- *        非文本 role 由视图基类按 (row,col) 叠加存储（基类扩展，
- *        XItemDataRole 语义不变）。文本 role（Display/Edit）不经此表，
- *        直连模型文本通路。
- */
-typedef struct XAivRoleEntry
-{
-    int m_checkState;          /**< CheckStateRole（XItemCheckState；-1=未设置）。 */
-    int m_alignment;           /**< TextAlignmentRole（XAlignment 位组合；0=未设置）。 */
-    const XFont* m_font;       /**< FontRole（借用指针；NULL=未设置）。 */
-    const void* m_decoration;  /**< DecorationRole（借用指针；NULL=未设置）。 */
-} XAivRoleEntry;
-
-/** @brief 清空 role 叠加存储并释放容量（setModel 行/列变化入口与析构同步）。 */
+/** @brief 清空 role 叠加存储并归零逻辑维度（setModel 行/列变化入口与析构同步）。 */
 static void xaiv_roleRelease(XAbstractItemView* self)
 {
-    if (self->m_roleTable) {
-        XMemory_free(self->m_roleTable, XAIV_TABLE_MEMORY);
-        self->m_roleTable = NULL;
-    }
+    XVector_clear_base(&self->m_roleTable);
     self->m_roleRows = 0;
     self->m_roleCols = 0;
 }
 
-/** @brief 只读定位单格 role 条目（未分配、越界或 self 为空返回 NULL）。 */
+/** @brief 只读定位单格 role 条目（未使用、越界或 self 为空返回 NULL）。 */
 static const XAivRoleEntry* xaiv_roleEntry(const XAbstractItemView* self,
                                            int row, int col)
 {
-    if (!self || !self->m_roleTable || row < 0 || col < 0 ||
+    if (!self || row < 0 || col < 0 ||
         row >= self->m_roleRows || col >= self->m_roleCols)
         return NULL;
-    return (const XAivRoleEntry*)self->m_roleTable +
-        (size_t)row * (size_t)self->m_roleCols + (size_t)col;
+    return (const XAivRoleEntry*)XVector_at_base(
+        &self->m_roleTable, (int64_t)row * self->m_roleCols + col);
 }
 
 /** @brief 定位（按需扩容）单格 role 条目；写入口专用。 */
 static XAivRoleEntry* xaiv_roleEntryForWrite(XAbstractItemView* self,
                                              int row, int col)
 {
-    void* table;
     if (!self || row < 0 || col < 0) return NULL;
-    table = self->m_roleTable;
-    if (!xaiv_tableEnsure(&table, &self->m_roleRows, &self->m_roleCols,
+    if (!xaiv_tableEnsure(&self->m_roleTable, &self->m_roleRows,
+                          &self->m_roleCols,
                           row + 1, col + 1, sizeof(XAivRoleEntry)))
         return NULL;
-    self->m_roleTable = table;
-    return (XAivRoleEntry*)self->m_roleTable +
-        (size_t)row * (size_t)self->m_roleCols + (size_t)col;
+    return (XAivRoleEntry*)XVector_at_base(
+        &self->m_roleTable, (int64_t)row * self->m_roleCols + col);
 }
 
 const char* XAbstractItemView_itemText(const XAbstractItemView* self,
@@ -975,17 +941,14 @@ void XAbstractItemView_setItemDecoration(XAbstractItemView* self, int row,
 void XAbstractItemView_openPersistentEditor(XAbstractItemView* self,
                                             int row, int col)
 {
-    void* table;
     bool* slot;
     if (!self || row < 0 || col < 0) return;
-    table = self->m_persistentFlags;
-    if (!xaiv_tableEnsure(&table, &self->m_persistentRows,
+    if (!xaiv_tableEnsure(&self->m_persistentFlags, &self->m_persistentRows,
                           &self->m_persistentCols,
                           row + 1, col + 1, sizeof(bool)))
         return;
-    self->m_persistentFlags = (bool*)table;
-    slot = self->m_persistentFlags +
-        (size_t)row * (size_t)self->m_persistentCols + (size_t)col;
+    slot = (bool*)XVector_at_base(
+        &self->m_persistentFlags, (int64_t)row * self->m_persistentCols + col);
     if (!*slot) {
         /* 编辑器本体不在范围（简化为"打开标记"），仅标记并请求重绘。 */
         *slot = true;
@@ -998,10 +961,10 @@ void XAbstractItemView_closePersistentEditor(XAbstractItemView* self,
 {
     bool* slot;
     if (!self || row < 0 || col < 0) return;
-    if (!self->m_persistentFlags || row >= self->m_persistentRows ||
-        col >= self->m_persistentCols) return;
-    slot = self->m_persistentFlags +
-        (size_t)row * (size_t)self->m_persistentCols + (size_t)col;
+    if (row >= self->m_persistentRows || col >= self->m_persistentCols)
+        return;
+    slot = (bool*)XVector_at_base(
+        &self->m_persistentFlags, (int64_t)row * self->m_persistentCols + col);
     if (*slot) {
         *slot = false;
         XWidget_update((XWidget*)self);
@@ -1012,26 +975,23 @@ bool XAbstractItemView_isPersistentEditorOpen(const XAbstractItemView* self,
                                               int row, int col)
 {
     if (!self || row < 0 || col < 0) return false;
-    if (!self->m_persistentFlags || row >= self->m_persistentRows ||
-        col >= self->m_persistentCols) return false;
-    return self->m_persistentFlags[
-        (size_t)row * (size_t)self->m_persistentCols + (size_t)col];
+    if (row >= self->m_persistentRows || col >= self->m_persistentCols)
+        return false;
+    return *(const bool*)XVector_at_base(
+        &self->m_persistentFlags, (int64_t)row * self->m_persistentCols + col);
 }
 
 void XAbstractItemView_setIndexWidget(XAbstractItemView* self,
                                       int row, int col, void* widget)
 {
-    void* table;
     void** slot;
     if (!self || row < 0 || col < 0) return;
-    table = self->m_indexWidgets;
-    if (!xaiv_tableEnsure(&table, &self->m_indexWidgetRows,
+    if (!xaiv_tableEnsure(&self->m_indexWidgets, &self->m_indexWidgetRows,
                           &self->m_indexWidgetCols,
                           row + 1, col + 1, sizeof(void*)))
         return;
-    self->m_indexWidgets = (void**)table;
-    slot = self->m_indexWidgets +
-        (size_t)row * (size_t)self->m_indexWidgetCols + (size_t)col;
+    slot = (void**)XVector_at_base(
+        &self->m_indexWidgets, (int64_t)row * self->m_indexWidgetCols + col);
     if (*slot == widget) return;
     /* 不接管所有权：widget 为借用指针（NULL=清除），几何摆放与显示
      * 交给调用方（简化承载）。 */
@@ -1043,10 +1003,10 @@ void* XAbstractItemView_indexWidget(const XAbstractItemView* self,
                                     int row, int col)
 {
     if (!self || row < 0 || col < 0) return NULL;
-    if (!self->m_indexWidgets || row >= self->m_indexWidgetRows ||
-        col >= self->m_indexWidgetCols) return NULL;
-    return self->m_indexWidgets[
-        (size_t)row * (size_t)self->m_indexWidgetCols + (size_t)col];
+    if (row >= self->m_indexWidgetRows || col >= self->m_indexWidgetCols)
+        return NULL;
+    return *(void* const*)XVector_at_base(
+        &self->m_indexWidgets, (int64_t)row * self->m_indexWidgetCols + col);
 }
 
 /* ==================== 键盘与导航 ==================== */

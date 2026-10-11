@@ -1205,7 +1205,7 @@ bool XDomTest_runAll(void)
     return all_pass;
 }
 
-#if DEMOTEST
+#if DEMOTEST_ON
 static void xdom_run_all_wrapper(XVariant* data)
 {
     (void)data;

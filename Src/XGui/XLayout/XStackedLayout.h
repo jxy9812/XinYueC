@@ -46,7 +46,11 @@ typedef struct XStackedLayout
     XStackedLayoutStackingMode m_stackingMode; /**< 当前可见性模式。 */
 } XStackedLayout;
 
-/** @brief 初始化 XStackedLayout 类虚函数表并返回共享表指针。 */
+/**
+ * @brief      初始化 XStackedLayout 类虚函数表并返回共享表指针。
+ * @return     XStackedLayout 类的共享 XVtable 指针（首次调用建表，
+ *             之后返回同一指针，调用方不得释放）。
+ */
 XVtable* XStackedLayout_class_init(void);
 
 /**
@@ -61,9 +65,6 @@ void XStackedLayout_init(XStackedLayout* self);
  * @return 新布局对象；失败返回 NULL，调用方使用 XClassDelete 释放。
  */
 XStackedLayout* XStackedLayout_create(XWidget* parent);
-
-/** @brief 通过 XClass 虚表释放布局资源。 */
-/** @brief 删除堆上的堆叠布局对象。 */
 
 /**
  * @brief 向末尾追加页面控件（对标 QStackedLayout::addWidget）。
@@ -122,8 +123,10 @@ int XStackedLayout_indexOf(const XStackedLayout* self, const XWidget* widget);
 
 /**
  * @brief 移除页面控件（对标 QStackedLayout::removeWidget）。
- * @details 布局放弃条目所有权并隐藏控件（不销毁控件）；移除后
- *          发射 widgetRemoved 信号并维护 currentIndex。
+ * @details 布局移除条目并隐藏控件（不销毁控件）：布局自建条目
+ *          （addWidget/insertWidget 包装）就地释放，经 addItem 传入的
+ *          借用条目释放责任仍在调用方；移除后发射 widgetRemoved 信号
+ *          并维护 currentIndex。
  * @param self 目标布局；可为 NULL。
  * @param widget 页面控件借用指针；可为 NULL。
  */
@@ -172,7 +175,6 @@ void XStackedLayout_setStackingMode(XStackedLayout* self,
  * @param index 新当前页面索引。
  * @return 稳定的信号标识值。
  */
-/** @brief currentChanged 信号地址（占位；本类无 XObject 信号槽，不发射）。 */
 void* XStackedLayout_currentChanged_signal(XStackedLayout* self, int index);
 
 /**
@@ -181,7 +183,6 @@ void* XStackedLayout_currentChanged_signal(XStackedLayout* self, int index);
  * @param index 被移除页面索引。
  * @return 稳定的信号标识值。
  */
-/** @brief widgetRemoved 信号地址（占位；本类无 XObject 信号槽，不发射）。 */
 void* XStackedLayout_widgetRemoved_signal(XStackedLayout* self, int index);
 
 #endif /* XLAYOUT_ON && XLAYOUT_STACKED_ON */

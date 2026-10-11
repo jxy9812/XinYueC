@@ -60,6 +60,7 @@ void XSqlRelation_init_2(XSqlRelation* relation, const XString* tableName,
                          const XString* indexColumn, const XString* displayColumn);
 /**
  * @brief 创建空关系对象。
+ * @param memory 内存类型。
  * @return 新关系对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlRelation* XSqlRelation_create_ex(XMemoryType memory);

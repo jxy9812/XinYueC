@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XTextClipboard.c
  * @brief      XTextClipboard 文本剪贴板往返服务实现。
  * @details    写入/读取路径与 XLineEdit.c、XPlainTextEdit.c 的两套基准
@@ -16,38 +16,47 @@
 
 #include "XMemory.h"
 #include "XStringUtils.h"
+#include "XString.h"
 #if XCLIPBOARD_ON && XGUIAPPLICATION_ON
 #include "XGuiApplication.h"
 #include "XClipboard.h"
-#include "XString.h"
 #endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
 
 /* ==================== 内部静态缓冲 ==================== */
 
-/** @brief 回退存储与取文本缓存共用的内部缓冲；服务生命周期持有。 */
-static char*  s_buffer   = NULL;
-/** @brief s_buffer 的当前容量（字节，含结尾 '\0'）；避免反复扩容。 */
-static size_t s_capacity = 0;
+/** @brief 回退存储与取文本缓存共用的服务自有字符串；服务生命周期持有。 */
+static XString s_text;
+/** @brief s_text 是否已完成初始化（静态零初值不等于已 init）。 */
+static bool s_inited = false;
 
 /**
- * @brief      把指定长度的 UTF-8 内容写入内部静态缓冲（按需扩容）。
+ * @brief      取服务自有字符串的 UTF-8 转换缓存借用指针。
+ * @return     缓存借用指针（'\0' 结尾的 UTF-8）；从未写入、内容为空或
+ *             转换缓存分配失败（OOM）时返回空串 ""。
+ */
+static const char* xtextclipboard_cachedText(void)
+{
+    const char* utf8;
+    if (!s_inited || XString_isEmpty_base(&s_text)) return "";
+    utf8 = XString_toUtf8(&s_text);
+    return utf8 ? utf8 : "";
+}
+
+/**
+ * @brief      把指定长度的 UTF-8 内容写入服务自有 XString（替换旧内容）。
  * @param      src 源内容借用指针；可为 NULL（等价空内容）。
  * @param      len 源内容字节数（不含结尾 '\0'）。
- * @return     成功返回缓冲借用指针；扩容失败返回 NULL（保留旧内容，
- *             与基准实现 realloc 失败回退行为一致）。
+ * @return     成功返回 true；分配/转换失败返回 false（此时 XString 按
+ *             assign 语义保持清空状态，与读取路径 OOM 退化为空串的
+ *             约定一致）。
  */
-static const char* xtextclipboard_store(const char* src, size_t len)
+static bool xtextclipboard_store(const char* src, size_t len)
 {
-    char* updated;
-    if (s_capacity < len + 1) {
-        updated = (char*)XRealloc_System(s_buffer, len + 1);
-        if (!updated) return NULL;
-        s_buffer = updated;
-        s_capacity = len + 1;
+    if (!s_inited) {
+        XString_init(&s_text);
+        s_inited = true;
     }
-    if (len > 0 && src) XMemcpy(s_buffer, src, len);
-    s_buffer[len] = '\0';
-    return s_buffer;
+    return XString_assign_with_length_utf8(&s_text, src ? src : "", len);
 }
 
 /* ==================== 公开接口 ==================== */
@@ -73,7 +82,7 @@ void XTextClipboard_setText(const char* text)
 #endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
     {
         /* 基准路径二：剪贴板不可用时回退内部缓冲（原 m_clipboardText
-           的 XRealloc_System + 拷贝行为）。 */
+           的服务化替代存储）。 */
         (void)xtextclipboard_store(text, XStrlen(text));
     }
 }
@@ -91,9 +100,9 @@ const char* XTextClipboard_getText(void)
             if (str) {
                 const char* utf8 = XString_toUtf8(str);
                 size_t len = XString_toUtf8_length(str);
-                const char* cached = xtextclipboard_store(utf8, len);
+                bool stored = xtextclipboard_store(utf8, len);
                 XClassDelete((XClass*)str);
-                if (cached) return cached;
+                if (stored) return xtextclipboard_cachedText();
                 return ""; /* 扩容失败（OOM）退化为空串。 */
             }
             return ""; /* 剪贴板无文本（基准返回 NULL 的等价形态）。 */
@@ -101,7 +110,7 @@ const char* XTextClipboard_getText(void)
     }
 #endif /* XCLIPBOARD_ON && XGUIAPPLICATION_ON */
     /* 基准路径二：回退内部缓冲；从未写入过返回空串。 */
-    return s_buffer ? s_buffer : "";
+    return xtextclipboard_cachedText();
 }
 
 #endif /* XTEXTCLIPBOARD_ON */

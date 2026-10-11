@@ -319,7 +319,7 @@ XFixedPool是固定大小的内存池，提供O(1)时间复杂度的分配和释
 
 ```c
 typedef struct XFixedPool {
-    XAtomic_size_t free_list_head_packed; // 打包头指针(索引+版本)
+    XAtomic_SizeT free_list_head_packed; // 打包头指针(索引+版本)
     size_t block_size;          // 对齐后的块大小
     size_t user_block_size;     // 用户视角的块大小
     void* raw_memory;           // 数据缓冲区指针

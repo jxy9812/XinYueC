@@ -228,6 +228,16 @@ static void xhttp_server_free_connection(XHttpServerConnection* connection)
         XObject_disconnect_2(connection->m_readyRead);
         connection->m_readyRead = NULL;
     }
+    if (connection->m_socket) {
+        /* 连接收尾必须释放套接字：协议头已声明 Connection: close，本连接
+         * 不会再有事务；否则已接入的 XTcpSocket（对象 + 读写缓冲 + OS 句柄，
+         * 约 10KB/连接）以 tcpServer 子对象身份驻留到服务器析构，长活服务
+         * 每接受一个连接即累积一份。deleteLater 走在途事件之后的队列序回收
+         * （构造侧 XTcpServer.c 同款用法），析构内 socketCloseDevice 关句柄；
+         * 此前响应体已经 XIODevice_write 同步写出，不受影响。 */
+        XObject_deleteLater((XObject*)connection->m_socket);
+        connection->m_socket = NULL;
+    }
     if (connection->m_input)
         XClassDelete((XClass*)connection->m_input);
     XFree_System(connection);
@@ -407,8 +417,15 @@ static bool xhttp_server_parse_request(XHttpServerConnection* connection)
             bodyLength = (size_t)parsed;
             hasContentLength = true;
         }
-        if (xhttp_server_range_equals_ci(name, 0, XByteArray_size_base(name), "host"))
-            host = XByteArray_create_copy(value);
+        if (xhttp_server_range_equals_ci(name, 0, XByteArray_size_base(name), "host")) {
+            /* host 拷贝由本函数持有：重复的 Host 头先释放旧值再覆盖，
+             * 拷贝失败时保留旧值，任何路径都不丢指针。 */
+            XByteArray* hostCopy = XByteArray_create_copy(value);
+            if (hostCopy) {
+                if (host) XClassDelete((XClass*)host);
+                host = hostCopy;
+            }
+        }
         XClassDelete((XClass*)name);
         XClassDelete((XClass*)value);
         cursor = (size_t)lineEnd + 1;

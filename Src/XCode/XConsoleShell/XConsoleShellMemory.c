@@ -14,9 +14,8 @@
 
 #include "XConsoleShellMemory.h"
 #include "XMultiPool.h"
+#include "XStringUtils.h"
 #include <stdint.h>
-#include <stdio.h>
-#include <string.h>
 
 static bool xcs_memory_write_line(XConsoleShell* shell, const char* text)
 {
@@ -55,8 +54,8 @@ static int xcs_memory_pool(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     if (!shell || argc > 1) return XConsoleResult_InvalidArgument;
     if (argc == 1) {
-        if (!argv[0] || (strcmp(argv[0], "-v") != 0 &&
-                         strcmp(argv[0], "--verbose") != 0)) {
+        if (!argv[0] || (XStrcmp(argv[0], "-v") != 0 &&
+                         XStrcmp(argv[0], "--verbose") != 0)) {
             return XConsoleResult_InvalidArgument;
         }
         verbose = true;
@@ -70,10 +69,10 @@ static int xcs_memory_pool(XConsoleShell* shell, XConsoleShellSession* session,
     }
     used = total - freeSize;
     percent = xcs_memory_percent(used, total);
-    if (snprintf(line, sizeof(line), "%-12s %12s %12s %12s %8s",
-                 "池", "总计(字节)", "已用(字节)", "空闲(字节)", "使用率") < 0 ||
+    if (XSnprintf(line, sizeof(line), "%-12s %12s %12s %12s %8s",
+                  "池", "总计(字节)", "已用(字节)", "空闲(字节)", "使用率") < 0 ||
         !xcs_memory_write_line(shell, line)) return XConsoleResult_IoError;
-    if (snprintf(line, sizeof(line), "%-12s %12zu %12zu %12zu %7u%%",
+    if (XSnprintf(line, sizeof(line), "%-12s %12zu %12zu %12zu %7u%%",
                  "XMultiPool", total, used, freeSize, percent) < 0 ||
         !xcs_memory_write_line(shell, line)) return XConsoleResult_IoError;
     if (!verbose) return XConsoleResult_Ok;
@@ -89,7 +88,7 @@ static int xcs_memory_pool(XConsoleShell* shell, XConsoleShellSession* session,
         if (!subPool || subFree > subTotal) return XConsoleResult_Failed;
         subUsed = subTotal - subFree;
         subPercent = xcs_memory_percent(subUsed, subTotal);
-        if (snprintf(line, sizeof(line), "子池[%zu] %15zu %13zu %13zu %7u%%",
+        if (XSnprintf(line, sizeof(line), "子池[%zu] %15zu %13zu %13zu %7u%%",
                      index, subTotal, subUsed, subFree, subPercent) < 0 ||
             !xcs_memory_write_line(shell, line)) return XConsoleResult_IoError;
     }

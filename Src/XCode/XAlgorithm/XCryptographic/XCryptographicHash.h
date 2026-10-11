@@ -364,10 +364,10 @@ XByteArrayView XCryptographicHash_hmacInto(
  */
 typedef struct XCryptographic_HmacOperation {
     XCryptographicHash_Algorithm algorithm;
+    bool active;
+    size_t blockSize;
     XCryptographicHash* inner;
     uint8_t opad[144];
-    size_t blockSize;
-    bool active;
 } XCryptographic_HmacOperation;
 
 /**

@@ -58,8 +58,8 @@ typedef struct XTimer {
     XObject m_class;           // 基类
     uint32_t m_isRun : 1;      // 是否正在运行
     uint32_t m_firstTrigger : 1; // 首次触发标志
+    uint32_t m_type : 2;       // 定时器类型（XTimerType 共3个枚举值，2位足够）
     XTimerData m_timerData;    // 定时器数据
-    XTimerType m_type;         // 定时器类型
 } XTimer;
 ```
 
@@ -707,7 +707,7 @@ XTimeWheelGroup是基于时间轮算法的定时器组实现，适用于毫秒�
 typedef struct XTimeWheelGroup {
     XTimerGroupBase m_class;  // 继承自XTimerGroupBase
     XVector m_timeWheel;      // 多时间轮
-    XAtomic_size_t m_count;   // 正在管理的定时器数量
+    XAtomic_SizeT m_count;   // 正在管理的定时器数量
     XMutex* m_mutex;          // 互斥锁
 } XTimeWheelGroup;
 ```
@@ -855,7 +855,7 @@ typedef struct XHrTimerGroup {
     XTimerGroupBase m_class;    // 继承自XTimerGroupBase
     XRBTreeNode* m_rbtree_root; // 红黑树根节点
     XRBTreeNode* m_min_node;    // 到期时间最小的节点(O(1)查找)
-    XAtomic_size_t m_count;     // 正在管理的定时器数量
+    XAtomic_SizeT m_count;     // 正在管理的定时器数量
     XMutex* m_mutex;            // 互斥锁
 } XHrTimerGroup;
 ```

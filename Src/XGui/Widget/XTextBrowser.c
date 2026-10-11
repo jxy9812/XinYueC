@@ -582,9 +582,12 @@ void* XTextBrowser_sourceChanged_signal(XTextBrowser* self, const char* url)
     if (((XObject*)self)->m_signalSlot)
         XObject_emitSignal((XObject*)self,
                            (size_t)XTextBrowser_sourceChanged_signal, args,
-                           NULL, NULL, XEVENT_PRIORITY_NORMAL);
-    else
+                           xtb_str_args_del, NULL, XEVENT_PRIORITY_NORMAL);
+    else {
+        /* 无连接路径同样须经 argsDel 释放 XString 载荷（防泄漏）。 */
+        XVarList_setArgsDel(args, xtb_str_args_del);
         XVarList_delete(args);
+    }
     return (void*)(size_t)XTextBrowser_sourceChanged_signal;
 }
 

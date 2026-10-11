@@ -340,7 +340,7 @@ static void XActionTest_triggerAndHover(void)
     XVariant* data = XVariant_create_int(42);
 
     XActionTest_connectAll(action);
-    XAction_setData(action, data);
+    XAction_setData_move(action, data);
     XActionTest_resetCounters();
 
     XAction_trigger(action);
@@ -478,11 +478,20 @@ static void XActionTest_data(void)
     XAction* action = XAction_create();
     XVariant* value = XVariant_create_int(7);
 
+    /* 默认拷贝语义：动作保存副本，调用者保留并自行释放原指针。 */
     XAction_setData(action, value);
-    XActionTest_expect(XAction_data(action) == value, "setData 接管指针");
+    XActionTest_expect(XAction_data(action) && XAction_data(action) != value &&
+                       XVariant_toInt(XAction_data(action)) == 7,
+                       "setData 拷贝语义保存副本不接管指针");
+    XClassDelete(value);
 
-    XAction_setData(action, NULL);
-    XActionTest_expect(XAction_data(action) == NULL, "setData(NULL) 清空数据");
+    /* _move 后缀：转移指针所有权（原 setData 行为）。 */
+    value = XVariant_create_int(9);
+    XAction_setData_move(action, value);
+    XActionTest_expect(XAction_data(action) == value, "setData_move 接管指针");
+
+    XAction_setData_move(action, NULL);
+    XActionTest_expect(XAction_data(action) == NULL, "setData_move(NULL) 清空数据");
 
     XClassDelete(action);
 }

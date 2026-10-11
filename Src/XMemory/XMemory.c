@@ -1,8 +1,8 @@
 ﻿#include"XMemory.h"
+#include<string.h>
 #include"XMultiPool.h"
 #include"XAtomic.h"
 #include"XMemory_config.h"
-#include<string.h>
 // ============ 组合内存池（HYBRID）内部函数 ============
 // 小于等于阈值走 MULTIPOOL 槽位（池被裁剪时按回落链自动换装），大于走系统堆
 #if XMEMORY_HYBRID_ON
@@ -43,8 +43,8 @@ static void* hybrid_malloc(size_t size);
 #define XMEMORY_STAT_TRACK_SYSTEM 1
 static bool xmemory_stat_enabled = true;
 /* 静态零初始化等价 XAtomic_init(var, 0)，免去运行期初始化时序问题 */
-static XAtomic_size_t xmemory_stat_systemBytes = { 0 };
-static XAtomic_size_t xmemory_stat_systemPeak = { 0 };
+static XAtomic_SizeT xmemory_stat_systemBytes = { 0 };
+static XAtomic_SizeT xmemory_stat_systemPeak = { 0 };
 
 static void xmemory_stat_updatePeak(void)
 {

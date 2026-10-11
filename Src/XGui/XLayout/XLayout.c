@@ -430,28 +430,28 @@ void XLayout_init(XLayout* self)
 
 void XLayout_addItem_base(XLayout* self, XLayoutItem* item)
 {
-    if (!self || !item) return;
+    if (!self || !item || !XClassGetVtable(self)) return;
     XClassGetVirtualFunc(self, EXLayout_AddItem,
                          void(*)(XLayout*, XLayoutItem*))(self, item);
 }
 
 XLayoutItem* XLayout_itemAt_base(const XLayout* self, int index)
 {
-    if (!self) return NULL;
+    if (!self || !XClassGetVtable(self)) return NULL;
     return XClassGetVirtualFunc(self, EXLayout_ItemAt,
                                 XLayoutItem*(*)(const XLayout*, int))(self, index);
 }
 
 XLayoutItem* XLayout_takeAt_base(XLayout* self, int index)
 {
-    if (!self) return NULL;
+    if (!self || !XClassGetVtable(self)) return NULL;
     return XClassGetVirtualFunc(self, EXLayout_TakeAt,
                                 XLayoutItem*(*)(XLayout*, int))(self, index);
 }
 
 int XLayout_count_base(const XLayout* self)
 {
-    if (!self) return 0;
+    if (!self || !XClassGetVtable(self)) return 0;
     return XClassGetVirtualFunc(self, EXLayout_Count,
                                 int(*)(const XLayout*))(self);
 }
@@ -459,7 +459,7 @@ int XLayout_count_base(const XLayout* self)
 XLayoutItem* XLayout_replaceItemAt_base(XLayout* self, int index,
                                         XLayoutItem* item)
 {
-    if (!self) return NULL;
+    if (!self || !XClassGetVtable(self)) return NULL;
     return XClassGetVirtualFunc(self, EXLayout_ReplaceItemAt,
                                 XLayoutItem*(*)(XLayout*, int, XLayoutItem*))(
         self, index, item);
@@ -575,10 +575,20 @@ XMargins XLayout_layoutMargins(const XLayout* self)
 void XLayout_removeWidget(XLayout* self, XWidget* widget)
 {
     int idx;
+    XLayoutItem* item;
+    bool owned;
     if (!self || !widget) return;
     idx = XLayout_indexOf(self, widget);
-    if (idx >= 0)
-        XLayout_takeAt_base(self, idx);
+    if (idx < 0) return;
+    /* takeAt 会清零 m_ownedByLayout（VXLayout_takeAt），属主必须在取出
+       前判定（与 XLayout_deleteAllItems 同判据）：本入口创建的内部条目
+       （addWidget 包装，owned=1）取出后就地释放，杜绝丢弃句柄造成的
+       泄漏；经 addItem 显式传入的借用条目释放责任仍在调用方。 */
+    item = self->m_items[idx];
+    owned = item && item->m_ownedByLayout;
+    item = XLayout_takeAt_base(self, idx);
+    if (item && owned)
+        XClassDelete(item);
 }
 
 void XLayout_removeItem(XLayout* self, XLayoutItem* item)

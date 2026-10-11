@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XHashMap.h"
 #include"XVector.h"
 #include"XPair.h"
@@ -27,7 +27,7 @@ static void SumValues(void* pvPair, void* args)
 static void XHashMapTest_Basic(void)
 {
     XPrintf("\n[XHashMap][基础] insert/remove/find/value/contains/迭代\n");
-    XHashMap* map = XHashMap_Create(int, int, int_compare);
+    XHashMap* map = XHashMap_Create(int, int, Xint_compare);
 
     int keys[] = { 10, 3, 55, 3, 7, 55, 42, 1 };
     for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); ++i) {
@@ -65,7 +65,7 @@ static void XHashMapTest_Basic(void)
 static void XHashMapTest_QtAliases(void)
 {
     XPrintf("\n[XHashMap][Qt 别名] count/empty/constFind 与 size/isEmpty/find 等价\n");
-    XHashMap* map = XHashMap_Create(int, int, int_compare);
+    XHashMap* map = XHashMap_Create(int, int, Xint_compare);
     for (int i = 0; i < 20; ++i) { int v = i*i; XHashMap_insert_base(map, &i, &v); }
 
     size_t s1 = XHashMap_size_base(map), s2 = XHashMap_count_base(map);
@@ -104,9 +104,9 @@ static bool KeyGT100(const void* pvKey, void* pvValue, void* args)
 static void XHashMapTest_QtNewApis(void)
 {
     XPrintf("\n[XHashMap][Qt 新 API] removeIf/erase_if/reserve/squeeze\n");
-    XHashMap* map = XHashMap_Create(int, int, int_compare);
+    XHashMap* map = XHashMap_Create(int, int, Xint_compare);
 
-    bool r = XHashMap_reserve_base(map, 1000);
+    bool r = XHashMap_reserve(map, 1000);
     XPrintf("  reserve(1000)=%d, capacity=%zu\n", (int)r, XHashMap_capacity_base(map));
 
     for (int i = 0; i < 200; ++i) { int v = i; XHashMap_insert_base(map, &i, &v); }
@@ -121,7 +121,7 @@ static void XHashMapTest_QtNewApis(void)
     XPrintf("  erase_if(val 为奇数) 删除=%zu, 剩余=%zu\n", rem2, XHashMap_size_base(map));
 
     size_t cap_before = XHashMap_capacity_base(map);
-    XHashMap_squeeze_base(map);
+    XHashMap_squeeze(map);
     size_t cap_after = XHashMap_capacity_base(map);
     XPrintf("  squeeze: capacity %zu -> %zu\n", cap_before, cap_after);
 
@@ -132,7 +132,7 @@ static void XHashMapTest_QtNewApis(void)
 static void XHashMapTest_Stress(void)
 {
     XPrintf("\n[XHashMap][压力] 大批量 insert/value/remove\n");
-    XHashMap* map = XHashMap_Create(int, int, int_compare);
+    XHashMap* map = XHashMap_Create(int, int, Xint_compare);
     const int N = 5000;
     for (int i = 0; i < N; ++i) { int v = i * 3; XHashMap_insert_base(map, &i, &v); }
     XPrintf("  插入 %d 后 size=%zu capacity=%zu\n", N,

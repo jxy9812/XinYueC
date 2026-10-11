@@ -7,6 +7,7 @@
 #include "XByteArray.h"
 #include "XString.h"
 #include "XRingBuffer.h" /* XRingBuffer_read/write/available（防 C4013 隐式声明）。 */
+#include "XStringUtils.h"
 #include <string.h>
 #include <stdarg.h>
 #include <assert.h> // for assert
@@ -35,6 +36,128 @@ void XIODevice_init(XIODevice* io)
 	io->m_d = XIODevicePrivate_create(io);
 	io->m_currentReadChannel = XIO_DEFAULT_CHANNEL_ID;
 	io->m_currentWriteChannel = XIO_DEFAULT_CHANNEL_ID;
+}
+
+// —————— 虚函数（_base） ——————
+// 这部分保持不变，因为它只是调用虚函数表
+
+bool XIODevice_atEnd_base(const XIODevice* io)
+{
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
+		return false;
+	return XClassGetVirtualFunc(io, EXIODevice_AtEnd, bool(*)(const XIODevice*))(io);
+}
+
+bool XIODevice_reset_base(XIODevice* self)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return false;
+	return XClassGetVirtualFunc(self, EXIODevice_Reset, bool(*)(XIODevice*))(self);
+}
+
+int64_t XIODevice_bytesAvailable_base(const XIODevice* self)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return 0;
+	return XClassGetVirtualFunc(self, EXIODevice_BytesAvailable, int64_t(*)(const XIODevice*))(self);
+}
+
+int64_t XIODevice_bytesToWrite_base(const XIODevice* self)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return 0;
+	return XClassGetVirtualFunc(self, EXIODevice_BytesToWrite, int64_t(*)(const XIODevice*))(self);
+}
+
+bool XIODevice_canReadLine_base(const XIODevice* self)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return false;
+	return XClassGetVirtualFunc(self, EXIODevice_CanReadLine, bool(*)(const XIODevice*))(self);
+}
+
+bool XIODevice_waitForReadyRead_base(XIODevice* self, int msecs)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return false;
+	return XClassGetVirtualFunc(self, EXIODevice_WaitForReadyRead, bool(*)(XIODevice*, int))(self, msecs);
+}
+
+bool XIODevice_waitForBytesWritten_base(XIODevice* self, int msecs)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return false;
+	return XClassGetVirtualFunc(self, EXIODevice_WaitForBytesWritten, bool(*)(XIODevice*, int))(self, msecs);
+}
+
+int64_t XIODevice_readLineData_base(XIODevice* self, char* data, int64_t maxlen)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return 0;
+	return XClassGetVirtualFunc(self, EXIODevice_ReadLineData, int64_t(*)(XIODevice*, char*, int64_t))(self, data, maxlen);
+}
+
+int64_t XIODevice_skipData_base(XIODevice* self, int64_t maxSize)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return 0;
+	return XClassGetVirtualFunc(self, EXIODevice_SkipData, int64_t(*)(XIODevice*, int64_t))(self, maxSize);
+}
+
+int64_t XIODevice_readData_base(XIODevice* self, char* data, int64_t maxlen)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return 0;
+	return XClassGetVirtualFunc(self, EXIODevice_ReadData, int64_t(*)(XIODevice*, char*, int64_t))(self, data, maxlen);
+}
+
+int64_t XIODevice_writeData_base(XIODevice* self, const char* data, int64_t len)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return 0;
+	return XClassGetVirtualFunc(self, EXIODevice_WriteData, int64_t(*)(XIODevice*, const char*, int64_t))(self, data, len);
+}
+
+bool XIODevice_open_base(XIODevice* io, XIODeviceBaseMode mode)
+{
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
+		return false;
+	return XClassGetVirtualFunc(io, EXIODevice_Open, bool(*)(XIODevice*, XIODeviceBaseMode))(io, mode);
+}
+
+void XIODevice_close_base(XIODevice* io)
+{
+	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
+		return;
+	XClassGetVirtualFunc(io, EXIODevice_Close, void(*)(XIODevice*))(io);
+}
+
+bool XIODevice_isSequential_base(const XIODevice* self)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return false;
+	return XClassGetVirtualFunc(self, EXIODevice_IsSequential, bool(*)(const XIODevice*))(self);
+}
+
+int64_t XIODevice_pos_base(const XIODevice* self)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return 0;
+	return XClassGetVirtualFunc(self, EXIODevice_Pos, int64_t(*)(const XIODevice*))(self);
+}
+
+int64_t XIODevice_size_base(const XIODevice* self)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return 0;
+	return XClassGetVirtualFunc(self, EXIODevice_Size, int64_t(*)(const XIODevice*))(self);
+}
+
+bool XIODevice_seek_base(XIODevice* self, int64_t pos)
+{
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
+		return false;
+	return XClassGetVirtualFunc(self, EXIODevice_Seek, bool(*)(XIODevice*, int64_t))(self, pos);
 }
 
 XFd XIODevice_fd(const XIODevice* io)
@@ -102,7 +225,7 @@ int XIODevice_currentReadChannel(const XIODevice* self) {
 	return self->m_currentReadChannel;
 }
 void XIODevice_setCurrentReadChannel(XIODevice* self, int channelIndex) {
-	if (!self || channelIndex < 0) {
+	if (!self || !self->m_d || channelIndex < 0) {
 		return ;
 	}
 
@@ -124,7 +247,7 @@ int XIODevice_currentWriteChannel(const XIODevice* self) {
 }
 
 void XIODevice_setCurrentWriteChannel(XIODevice* self, int channelIndex) {
-	if (!self || channelIndex < 0) {
+	if (!self || !self->m_d || channelIndex < 0) {
 		return ;
 	}
 
@@ -143,7 +266,7 @@ void XIODevice_setCurrentWriteChannel(XIODevice* self, int channelIndex) {
 
 int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen)
 {
-	if (!self || !data || maxlen <= 0) return -1;
+	if (!self || !self->m_d || !data || maxlen <= 0) return -1;
 	if (!XIODevice_isReadable(self)) return -1;
 
 	XIODevicePrivate* d = self->m_d;
@@ -283,7 +406,7 @@ bool XIODevice_isTransactionStarted(const XIODevice* self) {
 
 int64_t XIODevice_write_1(XIODevice* self, const char* data, int64_t len)
 {
-	if (!self || !data || len <= 0 || !XIODevice_isWritable(self)) {
+	if (!self || !self->m_d || !data || len <= 0 || !XIODevice_isWritable(self)) {
 		return -1;
 	}
 
@@ -311,7 +434,7 @@ int64_t XIODevice_write_1(XIODevice* self, const char* data, int64_t len)
 
 int64_t XIODevice_write_3(XIODevice* self, const char* data) {
 	if (!data) return 0;
-	return XIODevice_write_1(self, data, strlen(data));
+	return XIODevice_write_1(self, data, XStrlen(data));
 }
 
 int64_t XIODevice_write_2(XIODevice* self, const XByteArray* data) {
@@ -321,7 +444,7 @@ int64_t XIODevice_write_2(XIODevice* self, const XByteArray* data) {
 
 bool XIODevice_flush(XIODevice* self)
 {
-	if (!self || !XIODevice_isWritable(self)) {
+	if (!self || !self->m_d || !XIODevice_isWritable(self)) {
 		return false;
 	}
 	// 获取当前写通道ID
@@ -445,128 +568,6 @@ void XIODevice_setErrorString(XIODevice* self, const char* str)
 	if (str) {
 		self->m_d->errorString = XString_create_fmt_utf8(str);
 	}
-}
-
-// —————— 虚函数（_base） ——————
-// 这部分保持不变，因为它只是调用虚函数表
-
-bool XIODevice_atEnd_base(const XIODevice* io)
-{
-	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
-		return false;
-	return XClassGetVirtualFunc(io, EXIODevice_AtEnd, bool(*)(XIODevice*))(io);
-}
-
-bool XIODevice_reset_base(XIODevice* self)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return false;
-	return XClassGetVirtualFunc(self, EXIODevice_Reset, bool(*)(XIODevice*))(self);
-}
-
-int64_t XIODevice_bytesAvailable_base(const XIODevice* self)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return 0;
-	return XClassGetVirtualFunc(self, EXIODevice_BytesAvailable, int64_t(*)(const XIODevice*))(self);
-}
-
-int64_t XIODevice_bytesToWrite_base(const XIODevice* self)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return 0;
-	return XClassGetVirtualFunc(self, EXIODevice_BytesToWrite, int64_t(*)(const XIODevice*))(self);
-}
-
-bool XIODevice_canReadLine_base(const XIODevice* self)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return false;
-	return XClassGetVirtualFunc(self, EXIODevice_CanReadLine, bool(*)(XIODevice*))(self);
-}
-
-bool XIODevice_waitForReadyRead_base(XIODevice* self, int msecs)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return false;
-	return XClassGetVirtualFunc(self, EXIODevice_WaitForReadyRead, bool(*)(XIODevice*, int))(self, msecs);
-}
-
-bool XIODevice_waitForBytesWritten_base(XIODevice* self, int msecs)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return false;
-	return XClassGetVirtualFunc(self, EXIODevice_WaitForBytesWritten, bool(*)(XIODevice*, int))(self, msecs);
-}
-
-int64_t XIODevice_readLineData_base(XIODevice* self, char* data, int64_t maxlen)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return 0;
-	return XClassGetVirtualFunc(self, EXIODevice_ReadLineData, int64_t(*)(XIODevice*, char*, int64_t))(self, data, maxlen);
-}
-
-int64_t XIODevice_skipData_base(XIODevice* self, int64_t maxSize)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return 0;
-	return XClassGetVirtualFunc(self, EXIODevice_SkipData, int64_t(*)(XIODevice*, int64_t))(self, maxSize);
-}
-
-int64_t XIODevice_readData_base(XIODevice* self, char* data, int64_t maxlen)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return 0;
-	return XClassGetVirtualFunc(self, EXIODevice_ReadData, int64_t(*)(XIODevice*, char*, int64_t))(self, data, maxlen);
-}
-
-int64_t XIODevice_writeData_base(XIODevice* self, const char* data, int64_t len)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return 0;
-	return XClassGetVirtualFunc(self, EXIODevice_WriteData, int64_t(*)(XIODevice*, const char*, int64_t))(self, data, len);
-}
-
-bool XIODevice_open_base(XIODevice* io, XIODeviceBaseMode mode)
-{
-	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
-		return false;
-	return XClassGetVirtualFunc(io, EXIODevice_Open, bool(*)(XIODevice*, XIODeviceBaseMode))(io, mode);
-}
-
-void XIODevice_close_base(XIODevice* io)
-{
-	if (ISNULL(io, "") || ISNULL(XClassGetVtable(io), ""))
-		return;
-	XClassGetVirtualFunc(io, EXIODevice_Close, void(*)(XIODevice*))(io);
-}
-
-bool XIODevice_isSequential_base(const XIODevice* self)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return false;
-	return XClassGetVirtualFunc(self, EXIODevice_IsSequential, bool(*)(XIODevice*))(self);
-}
-
-int64_t XIODevice_pos_base(const XIODevice* self)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return 0;
-	return XClassGetVirtualFunc(self, EXIODevice_Pos, int64_t(*)(XIODevice*))(self);
-}
-
-int64_t XIODevice_size_base(const XIODevice* self)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return 0;
-	return XClassGetVirtualFunc(self, EXIODevice_Size, int64_t(*)(XIODevice*))(self);
-}
-
-bool XIODevice_seek_base(XIODevice* self, int64_t pos)
-{
-	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), ""))
-		return false;
-	return XClassGetVirtualFunc(self, EXIODevice_Seek, bool(*)(XIODevice*, int64_t))(self, pos);
 }
 
 // —————— 信号 ——————

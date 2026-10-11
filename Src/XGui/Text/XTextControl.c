@@ -832,6 +832,14 @@ static void xtc_emitInt(XTextControl* self, void* (*signal)(XTextControl*, int),
     }
 }
 
+/** @brief 字符串单参信号载荷删除器（释放发射时的堆拷贝）。 */
+static void xtc_emitString_signal_del(struct XVarList* list)
+{
+    XVarList_args_1(list, char*, copy);
+    if (copy)
+        XFree_System((void*)copy);
+}
+
 /** @brief 字符串单参信号发射（拷贝进 XVarList，随槽调用后释放）。 */
 static void xtc_emitString(XTextControl* self,
                            void* (*signal)(XTextControl*, const char*),
@@ -848,7 +856,8 @@ static void xtc_emitString(XTextControl* self,
         return;
     }
     if (((XObject*)self)->m_signalSlot) {
-        XObject_emitSignal((XObject*)self, (size_t)signal, args, NULL, NULL,
+        XObject_emitSignal((XObject*)self, (size_t)signal, args,
+                           xtc_emitString_signal_del, NULL,
                            XEVENT_PRIORITY_NORMAL);
     } else {
         XVarList_delete(args);

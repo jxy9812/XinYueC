@@ -1,4 +1,13 @@
-﻿#ifndef XCOMMONSTYLE_H
+﻿/**
+ * @file       XCommonStyle.h
+ * @brief      嵌入式公共样式公开 API。
+ * @details    对标 Qt 6.8 QCommonStyle：提供各平台共享的基元/控件绘制
+ *             （边框、按钮面板、复选/单选指示器、箭头、进度条槽与块、
+ *             页签形状等）；XFusionStyle 继承本类并覆盖 Fusion 主题
+ *             细节。实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、
+ *             Qt 或其他平台 API。
+ */
+#ifndef XCOMMONSTYLE_H
 #define XCOMMONSTYLE_H
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +35,10 @@ typedef struct XCommonStyle
     XStyle m_base;   /**< 基类成员；必须是第一个。 */
 } XCommonStyle;
 
+/**
+ * @brief 初始化 XCommonStyle 类的虚函数表。
+ * @return 指向初始化完成的 XVtable 的指针。
+ */
 XVtable* XCommonStyle_class_init(void);
 
 /**
@@ -44,10 +57,6 @@ void XCommonStyle_init(XCommonStyle* self);
  */
 XCommonStyle* XCommonStyle_create_ex(XMemoryType memory);
 #define XCommonStyle_create() XCommonStyle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-
-/** @brief 析构入口（查表分派父类析构）。 */
-
-/** @brief 删除堆上样式（查表分派析构并释放内存）。 */
 
 #endif /* XSTYLE_ON */
 #ifdef __cplusplus

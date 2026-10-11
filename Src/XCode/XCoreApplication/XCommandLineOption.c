@@ -2,14 +2,10 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XStringList.h"
-#include <string.h>
 
 /* ==================== XCommandLineOption 实现（对标 QCommandLineOption） ==================== */
 
-/* [死码清理] xStrDup 已删除：与 XCommandLineParser.c 活本同体而本文件
- * 零调用（审计清单）。 */
-
-XCommandLineOption* XCommandLineOption_create(const char* name)
+XCommandLineOption* XCommandLineOption_create(const XString* name)
 {
     XCommandLineOption* opt = XMalloc_System(sizeof(XCommandLineOption));
     if (!opt) return NULL;
@@ -17,13 +13,21 @@ XCommandLineOption* XCommandLineOption_create(const char* name)
     opt->names = XStringList_create();
     if (!opt->names) { XFree_System(opt); return NULL; }
     if (name) {
-        XStringList_push_back_utf8(opt->names, name);
+        XStringList_push_back_base(opt->names, (void*)name);
     }
 
     opt->description = NULL;
     opt->valueName = NULL;
     opt->defaultValues = XStringList_create();
     opt->flags = 0;
+    return opt;
+}
+
+XCommandLineOption* XCommandLineOption_create_2(const char* name)
+{
+    XString* temp = name ? XString_create_utf8(name) : NULL;
+    XCommandLineOption* opt = XCommandLineOption_create(temp);
+    if (temp) XClassDelete(temp);
     return opt;
 }
 
@@ -54,45 +58,83 @@ XCommandLineOption* XCommandLineOption_createWithNames(const XStringList* names)
     return opt;
 }
 
-XCommandLineOption* XCommandLineOption_createFull(const char* name,
-    const char* description, const char* valueName, const char* defaultValue)
+XCommandLineOption* XCommandLineOption_createFull(const XString* name,
+    const XString* description, const XString* valueName, const XString* defaultValue)
 {
     XCommandLineOption* opt = XCommandLineOption_create(name);
     if (!opt) return NULL;
     if (description) {
-        opt->description = XString_create_utf8(description);
+        opt->description = XString_create_copy(description);
     }
     if (valueName) {
-        opt->valueName = XString_create_utf8(valueName);
+        opt->valueName = XString_create_copy(valueName);
     }
     if (defaultValue) {
-        XStringList_push_back_utf8(opt->defaultValues, defaultValue);
+        XStringList_push_back_base(opt->defaultValues, (void*)defaultValue);
     }
+    return opt;
+}
+
+XCommandLineOption* XCommandLineOption_createFull_2(const char* name, const char* description,
+    const char* valueName, const char* defaultValue)
+{
+    XString* nameStr = name ? XString_create_utf8(name) : NULL;
+    XString* descStr = description ? XString_create_utf8(description) : NULL;
+    XString* valueStr = valueName ? XString_create_utf8(valueName) : NULL;
+    XString* defaultStr = defaultValue ? XString_create_utf8(defaultValue) : NULL;
+    XCommandLineOption* opt = XCommandLineOption_createFull(nameStr, descStr, valueStr, defaultStr);
+    if (nameStr) XClassDelete(nameStr);
+    if (descStr) XClassDelete(descStr);
+    if (valueStr) XClassDelete(valueStr);
+    if (defaultStr) XClassDelete(defaultStr);
     return opt;
 }
 
 XCommandLineOption* XCommandLineOption_createFullWithNames(const XStringList* names,
-    const char* description, const char* valueName, const char* defaultValue)
+    const XString* description, const XString* valueName, const XString* defaultValue)
 {
     XCommandLineOption* opt = XCommandLineOption_createWithNames(names);
     if (!opt) return NULL;
     if (description) {
-        opt->description = XString_create_utf8(description);
+        opt->description = XString_create_copy(description);
     }
     if (valueName) {
-        opt->valueName = XString_create_utf8(valueName);
+        opt->valueName = XString_create_copy(valueName);
     }
     if (defaultValue) {
-        XStringList_push_back_utf8(opt->defaultValues, defaultValue);
+        XStringList_push_back_base(opt->defaultValues, (void*)defaultValue);
     }
     return opt;
 }
 
+XCommandLineOption* XCommandLineOption_createFullWithNames_2(const XStringList* names,
+    const char* description, const char* valueName, const char* defaultValue)
+{
+    XString* descStr = description ? XString_create_utf8(description) : NULL;
+    XString* valueStr = valueName ? XString_create_utf8(valueName) : NULL;
+    XString* defaultStr = defaultValue ? XString_create_utf8(defaultValue) : NULL;
+    XCommandLineOption* opt = XCommandLineOption_createFullWithNames(names, descStr, valueStr, defaultStr);
+    if (descStr) XClassDelete(descStr);
+    if (valueStr) XClassDelete(valueStr);
+    if (defaultStr) XClassDelete(defaultStr);
+    return opt;
+}
 
-void XCommandLineOption_addName(XCommandLineOption* option, const char* name)
+
+void XCommandLineOption_addName(XCommandLineOption* option, const XString* name)
 {
     if (!option || !name) return;
-    XStringList_push_back_utf8(option->names, name);
+    XStringList_push_back_base(option->names, (void*)name);
+}
+
+void XCommandLineOption_addName_2(XCommandLineOption* option, const char* name)
+{
+    XString* temp;
+    if (!option || !name) return;
+    temp = XString_create_utf8(name);
+    if (!temp) return;
+    XCommandLineOption_addName(option, temp);
+    XClassDelete(temp);
 }
 
 void XCommandLineOption_delete(XCommandLineOption* option)
@@ -110,11 +152,18 @@ const XStringList* XCommandLineOption_names(const XCommandLineOption* option)
     return option ? option->names : NULL;
 }
 
-void XCommandLineOption_setValueName(XCommandLineOption* option, const char* name)
+void XCommandLineOption_setValueName(XCommandLineOption* option, const XString* name)
 {
     if (!option) return;
     XClassDelete(option->valueName);
-    option->valueName = name ? XString_create_utf8(name) : NULL;
+    option->valueName = name ? XString_create_copy(name) : NULL;
+}
+
+void XCommandLineOption_setValueName_2(XCommandLineOption* option, const char* name)
+{
+    XString* temp = name ? XString_create_utf8(name) : NULL;
+    XCommandLineOption_setValueName(option, temp);
+    if (temp) XClassDelete(temp);
 }
 
 const char* XCommandLineOption_valueName(const XCommandLineOption* option)
@@ -122,11 +171,18 @@ const char* XCommandLineOption_valueName(const XCommandLineOption* option)
     return (option && option->valueName) ? XString_toUtf8(option->valueName) : NULL;
 }
 
-void XCommandLineOption_setDescription(XCommandLineOption* option, const char* description)
+void XCommandLineOption_setDescription(XCommandLineOption* option, const XString* description)
 {
     if (!option) return;
     XClassDelete(option->description);
-    option->description = description ? XString_create_utf8(description) : NULL;
+    option->description = description ? XString_create_copy(description) : NULL;
+}
+
+void XCommandLineOption_setDescription_2(XCommandLineOption* option, const char* description)
+{
+    XString* temp = description ? XString_create_utf8(description) : NULL;
+    XCommandLineOption_setDescription(option, temp);
+    if (temp) XClassDelete(temp);
 }
 
 const char* XCommandLineOption_description(const XCommandLineOption* option)
@@ -134,13 +190,20 @@ const char* XCommandLineOption_description(const XCommandLineOption* option)
     return (option && option->description) ? XString_toUtf8(option->description) : NULL;
 }
 
-void XCommandLineOption_setDefaultValue(XCommandLineOption* option, const char* value)
+void XCommandLineOption_setDefaultValue(XCommandLineOption* option, const XString* value)
 {
     if (!option) return;
     XStringList_clear_base(option->defaultValues);
     if (value) {
-        XStringList_push_back_utf8(option->defaultValues, value);
+        XStringList_push_back_base(option->defaultValues, (void*)value);
     }
+}
+
+void XCommandLineOption_setDefaultValue_2(XCommandLineOption* option, const char* value)
+{
+    XString* temp = value ? XString_create_utf8(value) : NULL;
+    XCommandLineOption_setDefaultValue(option, temp);
+    if (temp) XClassDelete(temp);
 }
 
 void XCommandLineOption_setDefaultValues(XCommandLineOption* option, const XStringList* values)

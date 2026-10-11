@@ -110,9 +110,6 @@ void XSqlResult_init(XSqlResult* result, const XSqlDriver* driver);
  */
 XSqlResult* XSqlResult_create_ex(XMemoryType memory,  const XSqlDriver* driver);
 
-/** @brief 调用 XClass 析构入口释放查询文本、绑定值和后端结果资源。 */
-/** @brief 释放由 XSqlResult_create 系列函数返回的结果对象。 */
-
 /**
  * @brief 获取当前游标位置。
  * @param result 结果对象；NULL 返回 BeforeFirstRow。

@@ -95,36 +95,8 @@ void XBitmap_init_file_2(XBitmap* self, const char* fileName, const char* format
  */
 void XBitmap_init_pixmap(XBitmap* self, const XPixmap* other);
 
-/**
- * @brief      复制构造函数
- * @param self 目标 XBitmap 对象指针
- * @param other 源 XBitmap 对象指针
- */
-
-/**
- * @brief      释放 XBitmap 资源
- * @param self 待释放的 XBitmap 对象指针
- */
-/**
- * @brief      虚函数调度：拷贝
- * @param dest 目标对象指针
- * @param src  源对象指针
- */
-
-/**
- * @brief      虚函数调度：释放
- * @param self 待释放的对象指针
- */
-/** @brief 通过 XClass 虚表释放位图资源。 @param self 待释放的位图对象指针。 */
-
 /** @brief 交换两个位图的数据所有权。 */
 void XBitmap_swap(XBitmap* self, XBitmap* other);
-
-/**
- * @brief      虚函数调度：删除（释放堆上对象）
- * @param self 待删除的对象指针
- */
-/** @brief 删除堆上的位图对象。 @param self 待删除的位图对象指针。 */
 
 /* ========== 操作方法 ========== */
 

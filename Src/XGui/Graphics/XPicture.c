@@ -526,7 +526,7 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
  */
 typedef struct XPicturePrivate
 {
-    XAtomic_int32_t  m_refCount;    /**< 引用计数 */
+    XAtomic_Int32  m_refCount;    /**< 引用计数 */
     char*            m_data;        /**< 绘图指令数据 */
     uint32_t         m_dataSize;    /**< 数据大小 */
     uint32_t         m_dataCapacity;/**< 数据容量 */

@@ -952,7 +952,7 @@ XVARIABLEPOOL_DEFINE(xvariablepool_global, XVP_GLOBAL_ARENA_BYTES);
 #endif
 
 #if XVP_GLOBAL_THREADSAFE
-static XAtomic_size_t xvariablepool_global_spin = { 0 };
+static XAtomic_SizeT xvariablepool_global_spin = { 0 };
 
 static void xvariablepool_global_lock(void* context)
 {

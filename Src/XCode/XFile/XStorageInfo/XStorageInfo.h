@@ -46,16 +46,16 @@ typedef struct XStorageInfoData {
     int64_t bytesFree;          /**< 空闲空间（字节） */
     int64_t bytesAvailable;     /**< 可用空间（字节） */
     int blockSize;              /**< 块大小（字节） */
-    XString* device;            /**< 设备路径 */
-    XString* fileSystemType;    /**< 文件系统类型 */
-    XString* volumeName;        /**< 卷标名称 */
-    XString* subvolume;         /**< 子卷名称 */
     uint8_t isValid      : 1;   /**< 是否有效 */
     uint8_t isReady      : 1;   /**< 是否就绪 */
     uint8_t isReadOnly   : 1;   /**< 是否只读 */
     uint8_t isRemovable  : 1;   /**< 是否可移动设备 */
     uint8_t isRoot       : 1;   /**< 是否为根卷 */
     uint8_t _reserved    : 3;   /**< 保留位 */
+    XString* device;            /**< 设备路径 */
+    XString* fileSystemType;    /**< 文件系统类型 */
+    XString* volumeName;        /**< 卷标名称 */
+    XString* subvolume;         /**< 子卷名称 */
 } XStorageInfoData;
 
 /**

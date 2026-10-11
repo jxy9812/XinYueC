@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XTextMenu.c
  * @brief      XTextMenu 标准编辑右键菜单构建器实现。
  * @details    菜单结构、条目文案（"撤销(&U)/重做(&R)/剪切(&T)/复制(&C)/

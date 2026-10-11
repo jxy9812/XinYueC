@@ -1,6 +1,8 @@
 ﻿/******************************************************************************
  * @file       XPicture.h
  * @brief      XPicture 绘图指令记录与回放类（对标 Qt 6.8 QPicture）
+ * @details    实现只依赖 XinYueC 抽象层，不直接调用 Win32、POSIX、Qt
+ *             或其他平台 API；指令流为固定小端序，可跨主机架构序列化。
  * @author     XinYueC 团队
  * @note       提供绘图指令的录制和回放功能，支持矢量图形序列化
  ******************************************************************************/
@@ -41,16 +43,16 @@ struct XPainterPath;
 
 typedef enum XPictureOpcode
 {
-    XPictureOpcode_DrawLine = 1,
-    XPictureOpcode_FillRect = 2,
-    XPictureOpcode_DrawImage = 3,
-    XPictureOpcode_Save = 4,
-    XPictureOpcode_Restore = 5,
-    XPictureOpcode_DrawShape = 6,
-    XPictureOpcode_DrawPolyline = 7,
-    XPictureOpcode_DrawPolygon = 8,
-    XPictureOpcode_DrawPoints = 9,
-    XPictureOpcode_DrawPath = 10,
+    XPictureOpcode_DrawLine = 1, /**< 直线段绘制（两浮点端点，16 字节载荷）。 */
+    XPictureOpcode_FillRect = 2, /**< 矩形填充（矩形+ARGB32 颜色，20 字节载荷）。 */
+    XPictureOpcode_DrawImage = 3, /**< 图像绘制（目标矩形与源区域载荷）。 */
+    XPictureOpcode_Save = 4, /**< 保存绘制器状态（无载荷）。 */
+    XPictureOpcode_Restore = 5, /**< 恢复绘制器状态（无载荷）。 */
+    XPictureOpcode_DrawShape = 6, /**< 形状绘制（椭圆/圆弧/扇形/弦/圆角矩形）。 */
+    XPictureOpcode_DrawPolyline = 7, /**< 折线绘制（顶点序列载荷）。 */
+    XPictureOpcode_DrawPolygon = 8, /**< 多边形绘制（闭合顶点序列载荷）。 */
+    XPictureOpcode_DrawPoints = 9, /**< 点集绘制（点序列载荷）。 */
+    XPictureOpcode_DrawPath = 10, /**< 路径绘制（填充/描边由载荷标志控制）。 */
     XPictureOpcode_SetPen = 11, /**< 完整画笔状态（对标 QPicture PdcSetPen）。 */
     XPictureOpcode_SetOpacity = 12, /**< 绘制器不透明度（对标 PdcSetOpacity）。 */
     XPictureOpcode_SetCompositionMode = 13, /**< 合成模式（对标 PdcSetCompositionMode）。 */
@@ -87,8 +89,8 @@ typedef struct XPicturePrivate XPicturePrivate;
  */
 typedef struct XPicture
 {
-    XClass              m_class;   /**< 继承的基类成员 */
-    XPicturePrivate*     m_data;    /**< 私有数据指针 */
+    XClass              m_class;   /**< 第一个成员，由 XClass 管理，禁止手工修改。 */
+    XPicturePrivate*     m_data;    /**< 私有数据指针，由记录对象拥有，仅供实现使用。 */
 }XPicture;
 
 /**
@@ -116,42 +118,8 @@ XPicture* XPicture_create_move(XPicture* other, XMemoryType memory);
  */
 void XPicture_init(XPicture* self, int formatVersion);
 
-/**
- * @brief      复制构造函数
- * @param self 目标 XPicture 对象指针
- * @param other 源 XPicture 对象指针
- */
-
-/**
- * @brief      移动构造函数
- * @param self 目标 XPicture 对象指针
- * @param other 源 XPicture 对象指针（移动后源对象变为空）
- */
-
-/**
- * @brief      释放 XPicture 资源
- * @param self 待释放的 XPicture 对象指针
- */
 /** @brief 交换两个记录对象的数据所有权。 */
 void XPicture_swap(XPicture* self, XPicture* other);
-
-/**
- * @brief      虚函数调度：拷贝
- * @param dest 目标对象指针
- * @param src  源对象指针
- */
-
-/**
- * @brief      虚函数调度：释放
- * @param self 待释放的对象指针
- */
-/** @brief 通过 XClass 虚表释放绘图记录。 @param self 待释放的绘图记录指针。 */
-
-/**
- * @brief      虚函数调度：删除（释放堆上对象）
- * @param self 待删除的对象指针
- */
-/** @brief 删除堆上的绘图记录对象。 @param self 待删除的绘图记录指针。 */
 
 /* ========== 查询方法 ========== */
 

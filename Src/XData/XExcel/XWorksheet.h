@@ -44,18 +44,18 @@ typedef struct XDrawing XDrawing;
 typedef struct XWorksheet_ColumnInfo {
     double m_width;               /**< 列宽 */
     XFormat* m_format;             /**< 列格式 */
-    bool m_hidden;                 /**< 是否隐藏 */
     int m_outlineLevel;            /**< 分组级别 */
-    bool m_collapsed;              /**< 是否折叠 */
+    uint8_t m_hidden : 1;          /**< 是否隐藏 */
+    uint8_t m_collapsed : 1;       /**< 是否折叠 */
 } XWorksheet_ColumnInfo;
 
 /** @brief 行信息结构体 */
 typedef struct XWorksheet_RowInfo {
     double m_height;               /**< 行高 */
     XFormat* m_format;             /**< 行格式 */
-    bool m_hidden;                 /**< 是否隐藏 */
     int m_outlineLevel;            /**< 分组级别 */
-    bool m_collapsed;              /**< 是否折叠 */
+    uint8_t m_hidden : 1;          /**< 是否隐藏 */
+    uint8_t m_collapsed : 1;       /**< 是否折叠 */
 } XWorksheet_RowInfo;
 
 /** @brief 超链接结构体 */
@@ -97,17 +97,17 @@ typedef struct XWorksheet {
     XVector* m_imagePositions;     /**< 图片位置列表 (XWorksheet_ImagePosition)，与 m_mediaFiles 同索引 */
     XVector* m_chartFiles;         /**< 图表文件列表 (XExcelChart*) */
     /* 属性 */
-    bool m_windowProtection;       /**< 窗口保护 */
-    bool m_showFormulas;           /**< 显示公式 */
-    bool m_showGridLines;          /**< 显示网格线 */
-    bool m_showRowColHeaders;      /**< 显示行列标题 */
-    bool m_showZeros;              /**< 显示零值 */
-    bool m_rightToLeft;            /**< 从右到左 */
-    bool m_tabSelected;            /**< 标签选中 */
-    bool m_showRuler;              /**< 显示标尺 */
-    bool m_showOutlineSymbols;     /**< 显示大纲符号 */
-    bool m_showWhiteSpace;         /**< 显示空白 */
     int m_startPage;               /**< 起始页码 */
+    uint8_t m_windowProtection : 1;   /**< 窗口保护 */
+    uint8_t m_showFormulas : 1;       /**< 显示公式 */
+    uint8_t m_showGridLines : 1;      /**< 显示网格线 */
+    uint8_t m_showRowColHeaders : 1;  /**< 显示行列标题 */
+    uint8_t m_showZeros : 1;          /**< 显示零值 */
+    uint8_t m_rightToLeft : 1;        /**< 从右到左 */
+    uint8_t m_tabSelected : 1;        /**< 标签选中 */
+    uint8_t m_showRuler : 1;          /**< 显示标尺 */
+    uint8_t m_showOutlineSymbols : 1; /**< 显示大纲符号 */
+    uint8_t m_showWhiteSpace : 1;     /**< 显示空白 */
     XCellRange m_dimension;        /**< 维度范围 */
     XMap* m_rowSpans;              /**< 行跨度映射 */
 } XWorksheet;

@@ -13,7 +13,7 @@ extern "C" {
 #include "XTestMenu.h"
 #include "XClass.h"
 
-#if DEMOTEST
+#if DEMOTEST_ON
 /**
  * @brief 将 XRegularExpression Qt 6.8 对齐测试菜单添加到测试根菜单。
  * @param root 测试根菜单对象；不能传入 NULL。

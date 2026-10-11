@@ -5,7 +5,7 @@
 
 #include "XCryptographicPrimitiveTest.h"
 
-#if DEMOTEST
+#if DEMOTEST_ON
 
 #include "XAction.h"
 #include "XByteArray.h"
@@ -3251,4 +3251,4 @@ void XTestMenu_XCryptographicPrimitiveTest(XTestMenu* root)
     if (action) XTestMenu_setActionFunction(action, XCryptographicPrimitive_test_all_wrapper);
 }
 
-#endif /* DEMOTEST */
+#endif /* DEMOTEST_ON */

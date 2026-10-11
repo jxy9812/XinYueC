@@ -169,7 +169,7 @@ void XThreadPool_clear(XThreadPool* pool);
  */
 bool XThreadPool_tryTake(XThreadPool* pool, XRunnable* runnable);
 
-Signals
+XSIGNALS
 /**
  * @brief 工作线程创建信号
  * @param pool 线程池对象指针

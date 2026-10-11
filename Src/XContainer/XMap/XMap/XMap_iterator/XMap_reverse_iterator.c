@@ -10,6 +10,8 @@ XMap_reverse_iterator XMap_rbegin(XMap* this_map)
 {
     XMap_reverse_iterator it = { 0 };
     if (!this_map) return it;
+    /* 空 map 时 m_data 为 NULL，直接返回空迭代器 */
+    if (!XContainerDataPtr(this_map)) return it;
     XRBTreeNode* root = *XMap_RootPtr(this_map);
     if (!root) return it;
     XRBTreeNode* current = root;
@@ -51,7 +53,7 @@ void XMap_reverse_iterator_add(XMap* this_map, XMap_reverse_iterator* it)
 
 bool XMap_reverse_iterator_equality(XMap_reverse_iterator* itFirst, XMap_reverse_iterator* itSecond)
 {
-    return itFirst->node == itSecond->node;
+    return (itFirst && itSecond) ? (itFirst->node == itSecond->node) : false;
 }
 
 void XMap_reverse_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args)

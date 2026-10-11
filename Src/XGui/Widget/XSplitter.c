@@ -41,7 +41,7 @@ static XWidget* xsp_childAt(const XSplitter* self, int index)
     if (!children || index >= (int)XVector_size_base((const XContainer*)children))
         return NULL;
     slot = (XObject**)XVector_at_base(children, index);
-    if (!slot || !*slot || !(*slot)->is_widget) return NULL;
+    if (!slot || !*slot || !(*slot)->m_is_widget) return NULL;
     return (XWidget*)*slot;
 }
 

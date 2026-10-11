@@ -50,6 +50,10 @@ extern "C" {
 
 /* ==================== 空白条目对象（对标 QSpacerItem） ==================== */
 
+/** @brief XSpacerItem 不新增虚函数槽位，仅重载 XLayoutItem 槽位。 */
+XCLASS_DEFINE_BEGING(XSpacerItem)
+XCLASS_DEFINE_EXTEND_END(XSpacerItem, XLayoutItem)
+
 /**
  * @brief      XSpacerItem 空白条目对象；m_base 必须是第一个成员。
  * @details    字段含义：

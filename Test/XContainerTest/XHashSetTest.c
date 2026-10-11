@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XHashSet.h"
 #include"XVector.h"
 #include"XCompare.h"
@@ -24,7 +24,7 @@ static void CountEach(void* pvKey, void* args)
 static void XHashSetTest_Basic(void)
 {
     XPrintf("\n[XHashSet][基础] insert/remove/find/contains/迭代\n");
-    XHashSet* set = XHashSet_Create(int, int_compare);
+    XHashSet* set = XHashSet_Create(int, Xint_compare);
 
     int arr[] = { 10, 3, 55, 3, 7, 55, 42, 1 };
     for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); ++i)
@@ -53,7 +53,7 @@ static void XHashSetTest_Basic(void)
 static void XHashSetTest_QtAliases(void)
 {
     XPrintf("\n[XHashSet][Qt 别名] count/empty/values ⇔ size/isEmpty/keys\n");
-    XHashSet* set = XHashSet_Create(int, int_compare);
+    XHashSet* set = XHashSet_Create(int, Xint_compare);
     for (int i = 0; i < 30; ++i) XHashSet_insert_base(set, &i);
 
     size_t s1 = XHashSet_size_base(set), s2 = XHashSet_count_base(set);
@@ -87,7 +87,7 @@ static bool IsOdd(const void* pvKey, void* args)
 static void XHashSetTest_QtNewApis(void)
 {
     XPrintf("\n[XHashSet][Qt 新 API] constFind/removeIf/erase_if/reserve/squeeze\n");
-    XHashSet* set = XHashSet_Create(int, int_compare);
+    XHashSet* set = XHashSet_Create(int, Xint_compare);
 
     // reserve：预分配到 1000 应扩桶
     bool r = XHashSet_reserve_base(set, 1000);
@@ -128,7 +128,7 @@ static void XHashSetTest_QtNewApis(void)
 static void XHashSetTest_Stress(void)
 {
     XPrintf("\n[XHashSet][压力] 大批量 insert/remove/contains/迭代\n");
-    XHashSet* set = XHashSet_Create(int, int_compare);
+    XHashSet* set = XHashSet_Create(int, Xint_compare);
     const int N = 5000;
     for (int i = 0; i < N; ++i) XHashSet_insert_base(set, &i);
     for (int i = 0; i < N; ++i) XHashSet_insert_base(set, &i);

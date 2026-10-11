@@ -1,14 +1,20 @@
 ﻿#ifndef XMODBUSDEVICEIDENTIFICATION_H
 #define XMODBUSDEVICEIDENTIFICATION_H
 
-#include <stdint.h>
-#include <stdbool.h>
-#include "XClass.h"
-#include "XTypes.h" 
+#include "XModbus_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if XPROTOCOL_ON
+#if XMODBUS_ON
+#if XMODBUS_CORE_ON
+
+#include <stdint.h>
+#include <stdbool.h>
+#include "XClass.h"
+#include "XTypes.h"
 
 /**
  * @file XModbusDeviceIdentification.h
@@ -139,7 +145,7 @@ XCLASS_DEFINE_BEGING(XModbusDeviceIdentification)
 XCLASS_DEFINE_EXTEND_END(XModbusDeviceIdentification, XClass)
 
 typedef struct XModbusDeviceIdentification {
-    XClass m_class;                                                         ///< 继承自 XClass
+    XClass m_class;                                                         /**< 第一个成员，由 XClass 管理，禁止手工修改。*/
     XMap* m_objects;                                                        ///< 存储对象ID到数据的映射 (XMap<int, XByteArray>)
     XModbusDeviceIdentification_ConformityLevel m_conformityLevel;          ///< 符合性等级
 } XModbusDeviceIdentification;
@@ -156,7 +162,8 @@ XVtable* XModbusDeviceIdentification_class_init(void);
 
 /**
  * @brief 在堆上创建并初始化一个XModbusDeviceIdentification实例
- * @return 成功返回XModbusDeviceIdentification指针，失败返回NULL
+ * @param memory 内存分配器类型（XMemoryType）
+ * @return 成功返回XModbusDeviceIdentification指针（新对象，调用方负责XClassDelete释放），失败返回NULL
  */
 XModbusDeviceIdentification* XModbusDeviceIdentification_create_ex(XMemoryType memory);
 
@@ -240,6 +247,10 @@ void XModbusDeviceIdentification_setConformityLevel(XModbusDeviceIdentification*
  */
 XModbusDeviceIdentification* XModbusDeviceIdentification_fromByteArray(const uint8_t* data, size_t size);
 
+
+#endif /* XMODBUS_CORE_ON */
+#endif /* XMODBUS_ON */
+#endif /* XPROTOCOL_ON */
 
 #ifdef __cplusplus
 }

@@ -1,0 +1,1365 @@
+﻿/******************************************************************************
+ * @file       xgui_demo_page_update.c
+ * @brief      XGuiWindowDemo「软件更新」页（系统设置：关于→软件更新）。
+ * @details    契约见 xgui_demo_pages.h（demo_page_update_build /
+ *             demo_page_update_autotest / demo_page_update_adapt /
+ *             demo_page_update_shutdown）。
+ *
+ *             页面内容（2026-10-07 随 XUpgrade M2「设置页 UI 接入」新增）：
+ *              - 当前组件版本列表（app/fontres）：经 XUpgradeStoreDir 目录
+ *                后端只读指针文件（pointers/<comp>），引擎未启动也可展示；
+ *              - 手动检查按钮（checkNow）：首次点击懒启动引擎
+ *                （XUpgrade_init 带 autoCheck=false，仅手动检查；安装根取
+ *                系统临时目录下 xgui_demo_update，绝不写 demo 资源/安装
+ *                目录，不影响 demo 启动路径与速度）；
+ *              - 策略显示：最近一次生效策略/灰度判定 + 当前维护窗口与
+ *                强制宽限期（XUpgrade_applyWindow/forcedGraceHours 回显）；
+ *              - 四段进度条（下载/校验/解包/激活）：Progress 事件驱动，
+ *                页面只如实反映 m_phase/m_percent，不做阶段推断；
+ *              - 「重启以完成升级」提示（ReadyNeedRestart 事件）+ 立即
+ *                应用入口（XUpgrade_applyNow）；
+ *              - 回滚故障提示（RolledBack 事件，含 m_detail）；
+ *              - CheckFailed（含灰度未命中的「暂无更新」语义）静默显示于
+ *                状态行——引擎 URL 缺省空串，检查必失败，按契约只在手动
+ *                检查时提示（本页检查均为手动触发）。
+ *
+ *             定位：纯观察者 + 用户决策入口（检查/升级/跳过/应用四钮），
+ *             引擎逻辑零复制（设计文档 XUpgrade.md §12 UI 集成表）。
+ *
+ *             线程模型：XUpgrade listener 在引擎后台线程回调（XUpgrade.h
+ *             契约注明）——本页 listener 只把事件快照压入互斥保护的 8 槽
+ *             环形队列（满则丢最旧，进度类事件保持流动），UI 线程经
+ *             120ms XTimer 泵出并落控件；定时器仅在引擎懒启动成功后开启，
+ *             页面构建路径零引擎调用（版本列表只读两次指针文件，微秒级）。
+ *
+ *             autotest 口径：全程非阻塞、不触网络（不发起检查）；事件
+ *             路径经真实 listener 入队 + 真实泵出回调验证——与引擎线程
+ *             共用同一段队列/落控件代码，仅免去线程时序；引擎懒启动走
+ *             真实 XUpgrade_init（工作区在临时目录，占用时按失败口径）。
+ * @author     XinYueC 团队
+ ******************************************************************************/
+#include <stdio.h>
+#include <string.h>
+#include "XGuiConfig.h"
+#include "XPrintf.h"
+#include "XObject.h"
+#include "XWidget.h"
+#include "XLabel.h"
+#include "XComboBox.h"
+#include "XLineEdit.h"
+#include "XMessageBox.h"
+#include "XDialogButtonBox.h"
+#include "XPushButton.h"
+#include "XProgressBar.h"
+#include "XTimer.h"
+#include "XMutex.h"
+#include "XCoreApplication.h" /* sendPostedEvents：定向冲刷 DeferredDelete */
+#include "XProcess.h"        /* startDetached：重启弹窗「是」分离拉起新实例。 */
+#include "XSystem.h"      /* XSystem_environment: 环境变量唯一入口。 */
+#include "XString.h"      /* 版本列表文本断言（XLabel_text 读法）。 */
+#include "XUpgrade.h"
+#include "XUpgradeManifest.h" /* XUPGRADE_CATALOG_MAX：远程版本下拉容量。 */
+#include "XUpgradeStore.h"    /* 布局常量 + currentVersion 只读查询。 */
+#include "XUpgradeStoreDir.h" /* 目录后端工厂（版本列表只读实例）。 */
+
+/* apply 桩入口（无公共头文件；extern 原型口径同 main.c）：演示页「立即应用」
+ * 在本进程内完成桩的指针切换（测试负载不覆盖运行中自身文件，安全）。 */
+extern int XUpgradeApplyStub_main(int argc, char* argv[]);
+#include "xgui_demo_pages.h"
+
+/*
+ * 控件段宏守卫：引擎依赖 XUPGRADE_ON，页面控件依赖 Label/PushButton/
+ * ProgressBar。任一被裁剪时降级为契约桩（build 返回 NULL、autotest 返回
+ * -1、adapt/shutdown 零操作），主文件可无条件链接。
+ */
+#if XUPGRADE_ON && XWIDGET_ON && XLABEL_ON && XPUSHBUTTON_ON && XPROGRESSBAR_ON
+
+/* ==================== 布局常量 ==================== */
+
+/** @brief 页根装配基线（776x458 内容区设计稿；adapt 钉底两行）。 */
+#define UPD_FIELD_X    116    /**< 版本/策略信息列 x。 */
+#define UPD_BAR_X      76     /**< 进度条列 x。 */
+#define UPD_ROW_PITCH  30     /**< 进度条行距。 */
+#define UPD_URL_Y      148    /**< 服务器地址行 y（策略区与进度条区之间）。 */    /**< 服务器地址行 y（策略区与进度条区之间）。 */
+#define UPD_BAR_Y0     184    /**< 进度条首行 y。 */
+#define UPD_BTN_Y      312    /**< 决策+安装单行 y（检查/跳过/远程版本/安装）。 */
+
+/** @brief 事件队列容量（listener 后台线程生产、UI 泵消费；满丢最旧）。 */
+#define UPD_QUEUE_CAP  8
+/** @brief UI 泵周期（毫秒）：语义事件到控件的典型时延上界。 */
+#define UPD_PUMP_MS    120
+
+/* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
+
+/** @brief 软件更新页内部登记表。 */
+static struct
+{
+    XWidget*         m_root;        /**< 页面根控件（契约返回值；堆对象）。 */
+    DemoPageStatusFn m_status;      /**< 主窗口状态栏反馈回调（借用）。 */
+    void*            m_user;        /**< 回调上下文（主窗口指针，借用）。 */
+    char             m_lastStatus[192]; /**< 最近一次反馈文本（自测断言用）。 */
+    bool             m_ready;       /**< build 已完成且控件指针有效。 */
+
+    /* ---- 展示区 ---- */
+    XLabel*    m_titleLabel;   /**< 页标题。 */
+    XLabel*    m_progVerLabel; /**< 程序版本（XCoreApplication applicationVersion）。 */
+    XLabel*    m_capVersion;   /**< 「当前版本」标题。 */
+    XLabel*    m_versionLabel; /**< 组件版本列表（app/fontres，多行）。 */
+    XLabel*    m_capPolicy;    /**< 「策略」标题。 */
+    XLabel*    m_policyLabel;  /**< 生效策略/灰度/维护窗口/宽限期（多行）。 */
+
+    /* ---- 服务器地址行（引擎启动前可编辑；启动后锁定） ---- */
+    XLabel*    m_urlCap;       /**< 「服务器」标题。 */
+    XLineEdit* m_urlEdit;      /**< 更新服务器 URL 模板（{channel} 占位）。 */
+
+    /* ---- 四段进度条（Progress 事件驱动；下标=XUpgradePhase） ---- */
+    XProgressBar* m_phaseBar[4]; /**< 下载/校验/解包/激活。 */
+    XLabel*       m_phaseCap[4]; /**< 各段标题。 */
+
+    /* ---- 决策按钮行 ---- */
+    XPushButton* m_checkBtn;   /**< 手动检查（checkNow）。 */
+    XPushButton* m_skipBtn;    /**< 跳过此版本（optional 待决策且有版本号时启用）。 */
+    /* 安装入口统一收敛到「安装所选版本」（m_installBtn）：检查后下拉预选
+     * 最新版，升级=装最新、降级=装旧版，无需并排的「立即升级/立即应用」。 */
+
+    /* ---- 多版本选择行（schema 2 目录；安装任意目录版本含降级） ---- */
+    XLabel*      m_remoteCap;  /**< 「远程版本」标题。 */
+    XComboBox*   m_remoteCombo;/**< 远程版本下拉（检查后回填目录条目）。 */
+    XPushButton* m_installBtn; /**< 安装所选版本（installVersion 显式降级/重装）。 */
+
+    /* ---- 提示 + 状态行（adapt 钉底） ---- */
+    XLabel*    m_hintLabel;    /**< 演示口径说明行。 */
+    XLabel*    m_statusLabel;  /**< 事件/结果反馈行。 */
+
+    /* ---- 跨线程事件队列（listener 后台线程 → UI 泵） ---- */
+    XMutex*    m_queueMutex;   /**< 队列互斥（XLock_NonRecursive）。 */
+    XUpgradeEvent m_queue[UPD_QUEUE_CAP]; /**< 环形队列槽。 */
+    int        m_queueHead;    /**< 队头下标。 */
+    int        m_queueCount;   /**< 队列长度。 */
+
+    /* ---- UI 泵定时器（懒启动成功后才 start） ---- */
+    XTimer*    m_pumpTimer;    /**< UI 线程泵（UPD_PUMP_MS 周期）。 */
+    bool       m_engineStarted;/**< 引擎已懒启动（幂等门）。 */
+    bool       m_dialogSuppress; /**< 自测抑制弹窗（autotest 注入 ReadyNeedRestart 时置位防模态挂死）。 */
+
+    /* ---- 最近一次语义事件快照（决策入口启用与策略显示） ---- */
+    XUpgradePolicy m_lastPolicy;    /**< UpdateAvailable 携带的生效策略。 */
+    XUpgradeGrayDecision m_lastGray;/**< UpdateAvailable 携带的灰度判定。 */
+    char       m_lastVersion[XUPGRADE_VERSION_MAX];      /**< 目标版本。 */
+    char       m_lastComponent[XUPGRADE_COMPONENT_ID_MAX]; /**< 目标组件。 */
+    bool       m_available;    /**< optional 待决策（升级/跳过钮启用）。 */
+    bool       m_readyRestart; /**< ReadyNeedRestart 待重启（应用钮启用）。 */
+
+    /* ---- 组件版本缓存（版本列表只读实例回填） ---- */
+    char       m_versionApp[XUPGRADE_VERSION_MAX];
+    char       m_versionFont[XUPGRADE_VERSION_MAX];
+} s_upd;
+
+/* ==================== 内部辅助 ==================== */
+
+/** @brief 向页面状态行与主窗状态栏反馈并登记最近文本（自测断言用）。 */
+static void upd_report(const char* fmt, const char* detail)
+{
+    char buf[192];
+    snprintf(buf, sizeof(buf), fmt, detail ? detail : "");
+    snprintf(s_upd.m_lastStatus, sizeof(s_upd.m_lastStatus), "%s", buf);
+    if (s_upd.m_statusLabel)
+        XLabel_setText_2(s_upd.m_statusLabel, buf);
+    if (s_upd.m_status)
+        s_upd.m_status(s_upd.m_user, buf);
+}
+
+/** @brief 退出清理前向声明（build 重复装配路径先收口上一实例）。 */
+void demo_page_update_shutdown(void);
+
+/** @brief demo 更新工作区安装根：系统临时目录下 xgui_demo_update。
+ *  @details 口径同主文件 demo_autotest_tmpdir：Windows 取 TEMP/TMP，
+ *           其余取 /tmp；全缺省返回 false（引擎保持未启动，页面如实
+ *           反馈）。update/ 工作区与 device.key 均落该根下，与 demo
+ *           资源/安装目录隔离。 */
+static bool upd_demoRoot(char* root, size_t cap)
+{
+    const char* tmp;
+#ifdef _WIN32
+    tmp = XSystem_environment("TEMP");
+    if (!tmp || !tmp[0]) tmp = XSystem_environment("TMP");
+#else
+    tmp = "/tmp";
+#endif
+    if (!tmp || !tmp[0]) return false;
+    return snprintf(root, cap, "%s/xgui_demo_update", tmp) < (int)cap;
+}
+
+/** @brief 引擎状态 → 中文名。 */
+static const char* upd_stateName(XUpgradeState state)
+{
+    switch (state) {
+    case XUpgradeState_Idle:           return "\xE7\xA9\xBA\xE9\x97\xB2";             /* 空闲 */
+    case XUpgradeState_Checking:       return "\xE6\xA3\x80\xE6\x9F\xA5\xE4\xB8\xAD"; /* 检查中 */
+    case XUpgradeState_Downloading:    return "\xE4\xB8\x8B\xE8\xBD\xBD\xE4\xB8\xAD"; /* 下载中 */
+    case XUpgradeState_Verifying:      return "\xE6\xA0\xA1\xE9\xAA\x8C\xE4\xB8\xAD"; /* 校验中 */
+    case XUpgradeState_Staging:        return "\xE8\xA7\xA3\xE5\x8C\x85\xE4\xB8\xAD"; /* 解包中 */
+    case XUpgradeState_Ready:          return "\xE5\xBE\x85\xE5\xBA\x94\xE7\x94\xA8"; /* 待应用 */
+    case XUpgradeState_Applying:       return "\xE5\xBA\x94\xE7\x94\xA8\xE4\xB8\xAD"; /* 应用中 */
+    case XUpgradeState_BootConfirming: return "\xE8\x87\xAA\xE6\xA3\x80\xE4\xB8\xAD"; /* 自检中 */
+    case XUpgradeState_Active:         return "\xE5\xB7\xB2\xE7\x94\x9F\xE6\x95\x88"; /* 已生效 */
+    case XUpgradeState_RolledBack:     return "\xE5\xB7\xB2\xE5\x9B\x9E\xE6\xBB\x9A"; /* 已回滚 */
+    case XUpgradeState_CheckFailed:    return "\xE6\xA3\x80\xE6\x9F\xA5\xE5\xA4\xB1\xE8\xB4\xA5"; /* 检查失败 */
+    case XUpgradeState_DownloadFailed: return "\xE4\xB8\x8B\xE8\xBD\xBD\xE5\xA4\xB1\xE8\xB4\xA5"; /* 下载失败 */
+    default:                           return "?";
+    }
+}
+
+/** @brief 升级策略 → 中文名。 */
+static const char* upd_policyName(XUpgradePolicy policy)
+{
+    switch (policy) {
+    case XUpgradePolicy_Forced:   return "\xE5\xBC\xBA\xE5\x88\xB6";             /* 强制 */
+    case XUpgradePolicy_Optional: return "\xE5\x8F\xAF\xE8\xB7\xB3\xE8\xBF\x87"; /* 可跳过 */
+    case XUpgradePolicy_Silent:   return "\xE9\x9D\x99\xE9\xBB\x98";             /* 静默 */
+    default:                      return "?";
+    }
+}
+
+/** @brief 灰度判定 → 中文名。 */
+static const char* upd_grayName(XUpgradeGrayDecision gray)
+{
+    switch (gray) {
+    case XUpgradeGrayDecision_NotEvaluated: return "\xE6\x9C\xAA\xE5\x88\xA4\xE5\xAE\x9A";     /* 未判定 */
+    case XUpgradeGrayDecision_AllowList:    return "\xE5\x90\x8D\xE5\x8D\x95\xE5\x91\xBD\xE4\xB8\xAD"; /* 名单命中 */
+    case XUpgradeGrayDecision_Hit:          return "\xE5\x91\xBD\xE4\xB8\xAD";                 /* 命中 */
+    case XUpgradeGrayDecision_Miss:         return "\xE6\x9C\xAA\xE5\x91\xBD\xE4\xB8\xAD";     /* 未命中 */
+    case XUpgradeGrayDecision_DenyList:     return "\xE6\x8B\x92\xE7\xBB\x9D\xE5\x90\x8D\xE5\x8D\x95"; /* 拒绝名单 */
+    default:                                return "?";
+    }
+}
+
+/** @brief 进度阶段 → 中文名（下标=XUpgradePhase）。 */
+static const char* upd_phaseName(int phase)
+{
+    switch (phase) {
+    case XUpgradePhase_Download: return "\xE4\xB8\x8B\xE8\xBD\xBD"; /* 下载 */
+    case XUpgradePhase_Verify:   return "\xE6\xA0\xA1\xE9\xAA\x8C"; /* 校验 */
+    case XUpgradePhase_Stage:    return "\xE8\xA7\xA3\xE5\x8C\x85"; /* 解包 */
+    case XUpgradePhase_Activate: return "\xE6\xBF\x80\xE6\xB4\xBB"; /* 激活 */
+    default:                     return "?";
+    }
+}
+
+/** @brief 决策按钮可用性随最近事件快照刷新。 */
+static void upd_refreshButtons(void)
+{
+    if (s_upd.m_skipBtn)
+        XWidget_setEnabled((XWidget*)s_upd.m_skipBtn,
+                           s_upd.m_available && s_upd.m_lastVersion[0]);
+    /* 安装所选版本：目录缓存有远程条目即可用（多版本选择安装，§4 扩展）。 */
+    if (s_upd.m_installBtn)
+        XWidget_setEnabled((XWidget*)s_upd.m_installBtn,
+                           XUpgrade_remoteVersionCount() > 0);
+}
+
+/** @brief 回填远程版本下拉（schema 2 目录缓存；检查完成后调用）。 */
+static void upd_refreshRemoteList(void)
+{
+    uint32_t count;
+    uint32_t i;
+    if (!s_upd.m_remoteCombo) return;
+    XComboBox_clear(s_upd.m_remoteCombo);
+    count = XUpgrade_remoteVersionCount();
+    for (i = 0; i < count && i < XUPGRADE_CATALOG_MAX; ++i) {
+        char ver[32];
+        if (!XUpgrade_remoteVersionAt(i, ver, sizeof(ver))) break;
+        XComboBox_addItem_2(s_upd.m_remoteCombo, ver);
+    }
+    if (count > 0)
+        XComboBox_setCurrentIndex(s_upd.m_remoteCombo, 0);
+    upd_refreshButtons();
+}
+
+/** @brief 四段进度条全部归零（新一轮检查/升级起点的展示复位）。 */
+static void upd_resetBars(void)
+{
+    int i;
+    for (i = 0; i < 4; ++i)
+        if (s_upd.m_phaseBar[i])
+            XProgressBar_reset(s_upd.m_phaseBar[i]);
+}
+
+/** @brief 应用元数据同步：XCoreApplication applicationVersion 跟随引擎激活
+ *  版本（真实产品升级=换二进制，编译期版本随激活版本走；demo 二进制固定，
+ *  故由引擎指针回写模拟，标题行「程序版本」与「当前版本」两处口径一致）。
+ *  指针为空（未安装）时回退出厂版本宏。 */
+static void upd_syncAppVersion(void)
+{
+    const char* ver = s_upd.m_versionApp[0] ? s_upd.m_versionApp
+                                            : XUPGRADE_PRODUCT_VERSION;
+    XString* s = XString_create_utf8(ver);
+    if (s) {
+        XCoreApplication_setApplicationVersion(s);
+        XClassDelete((XClass*)s);
+    }
+}
+
+/** @brief 标题行程序版本标签回填（名称 · 程序版本）。 */
+static void upd_refreshProgVer(void)
+{
+    const XString* appVer = XCoreApplication_applicationVersion();
+    const XString* appName = XCoreApplication_applicationName();
+    const char* verUtf8 = appVer ? XString_toUtf8(appVer) : NULL;
+    const char* nameUtf8 = appName ? XString_toUtf8(appName) : NULL;
+    char progText[128];
+    if (!s_upd.m_progVerLabel) return;
+    if (!verUtf8 || verUtf8[0] == '\0')
+        verUtf8 = XUPGRADE_PRODUCT_VERSION;
+    if (nameUtf8 && nameUtf8[0])
+        snprintf(progText, sizeof(progText),
+                 "%s \xC2\xB7 \xE7\xA8\x8B\xE5\xBA\x8F\xE7\x89\x88\xE6"
+                 "\x9C\xAC: %s", nameUtf8, verUtf8); /* x · 程序版本: y */
+    else
+        snprintf(progText, sizeof(progText),
+                 "\xE7\xA8\x8B\xE5\xBA\x8F\xE7\x89\x88\xE6\x9C\xAC: %s",
+                 verUtf8); /* 程序版本: */
+    XLabel_setText_2(s_upd.m_progVerLabel, progText);
+}
+
+/** @brief 版本列表回填（目录后端只读指针文件；引擎未启动亦可）。 */
+static void upd_refreshVersions(void)
+{
+    static const char fontresId[] = "fontres";
+    char root[1024];
+    XUpgradeStore* store;
+    if (!s_upd.m_versionLabel) return;
+    s_upd.m_versionApp[0] = '\0';
+    s_upd.m_versionFont[0] = '\0';
+    if (upd_demoRoot(root, sizeof(root)) &&
+        (store = XUpgradeStoreDir_create(root)) != NULL) {
+        XUpgradeStore_currentVersion_base(store, "app",
+                                          s_upd.m_versionApp,
+                                          sizeof(s_upd.m_versionApp));
+        XUpgradeStore_currentVersion_base(store, fontresId,
+                                          s_upd.m_versionFont,
+                                          sizeof(s_upd.m_versionFont));
+        XClassDelete((XClass*)store);
+    }
+    {
+        char list[160];
+        char appLine[96];
+        /* app 行携带远程对照（检查到新版本时）：「本地 x / 远程 y」。
+         * 版本对照放本 label——policyLabel 的多行动态文本存在渲染残影
+         * （XLabel 局部重绘家族，2026-10-07 立案），本 label 渲染可靠。 */
+        if (s_upd.m_lastVersion[0] &&
+            (s_upd.m_lastComponent[0] == '\0' ||
+             strcmp(s_upd.m_lastComponent, "app") == 0))
+            snprintf(appLine, sizeof(appLine),
+                     "\xE6\x9C\xAC\xE5\x9C\xB0 %s / \xE8\xBF\x9C\xE7\xA8\x8B %s",
+                     /* 本地 x / 远程 y */
+                     s_upd.m_versionApp[0] ? s_upd.m_versionApp
+                                           : "\xE6\x9C\xAA\xE5\xAE\x89\xE8\xA3\x85",
+                     s_upd.m_lastVersion);
+        else
+            snprintf(appLine, sizeof(appLine), "%s",
+                     s_upd.m_versionApp[0] ? s_upd.m_versionApp
+                                           : "\xE6\x9C\xAA\xE5\xAE\x89\xE8\xA3\x85");
+        snprintf(list, sizeof(list), "app: %s\nfontres: %s",
+                 appLine,
+                 s_upd.m_versionFont[0] ? s_upd.m_versionFont
+                                        : "\xE6\x9C\xAA\xE5\xAE\x89\xE8\xA3\x85"); /* 未安装 */
+        XLabel_setText_2(s_upd.m_versionLabel, list);
+    }
+    /* 应用元数据与激活版本同步（标题行「程序版本」同口径显示）。 */
+    upd_syncAppVersion();
+    upd_refreshProgVer();
+}
+
+/** @brief 策略区回填：最近事件快照 + 引擎侧窗口/宽限期回显。 */
+static void upd_refreshPolicy(void)
+{
+    XUpgradeApplyWindow window;
+    char line[192];
+    if (!s_upd.m_policyLabel) return;
+    window = XUpgrade_applyWindow();
+    if (window.m_enabled)
+        snprintf(line, sizeof(line),
+                 "%02u:%02u-%02u:%02u",
+                 (unsigned)window.m_startHour, (unsigned)window.m_startMinute,
+                 (unsigned)window.m_endHour, (unsigned)window.m_endMinute);
+    else
+        snprintf(line, sizeof(line), "%s",
+                 "\xE5\x85\xB3\xE9\x97\xAD"); /* 关闭 */
+    {
+        char text[256];
+        /* 策略区三行固定口径。本地/远程版本对照放「当前版本」块（多行动态
+         * 文本在 policyLabel 存在渲染残影，XLabel 局部重绘家族，已立案）。 */
+        snprintf(text, sizeof(text),
+                 "\xE7\xAD\x96\xE7\x95\xA5: %s\n"                /* 策略: */
+                 "\xE7\x81\xB0\xE5\xBA\xA6: %s\n"                /* 灰度: */
+                 "\xE7\xBB\xB4\xE6\x8A\xA4\xE7\xAA\x97\xE5\x8F\xA3: %s  " /* 维护窗口: */
+                 "\xE5\xBC\xBA\xE5\x88\xB6\xE5\xAE\xBD\xE9\x99\x90: %u \xE5\xB0\x8F\xE6\x97\xB6", /* 强制宽限: N 小时 */
+                 s_upd.m_lastVersion[0]
+                     ? upd_policyName(s_upd.m_lastPolicy)
+                     : "\xE6\x9C\xAA\xE6\xA3\x80\xE6\x9F\xA5",   /* 未检查 */
+                 upd_grayName(XUpgrade_grayDecision()),
+                 line,
+                 (unsigned)XUpgrade_forcedGraceHours());
+        XLabel_setText_2(s_upd.m_policyLabel, text);
+    }
+}
+
+/* ==================== 引擎懒启动 ==================== */
+
+static void upd_listener(void* userData, const XUpgradeEvent* event);
+
+/** @brief demo 缺省更新服务器 URL（{channel} 占位，引擎按渠道替换）。 */
+static const char UPD_DEFAULT_URL[] = "http://192.168.1.3/xupgrade/{channel}/manifest.json";
+
+/** @brief 解析更新服务器地址：环境变量 XUPGRADE_DEMO_URL 优先（借用到下次
+ *         调用前有效），否则回退 UPD_DEFAULT_URL。
+ *  @return UTF-8 URL 串；outBuf/cap 非法返回 NULL（引擎按 URL 模板无效
+ *          拒绝，页面状态行如实显示）。 */
+static const char* upd_serverUrl(char* outBuf, size_t cap)
+{
+    const char* env = XSystem_environment("XUPGRADE_DEMO_URL");
+    size_t len;
+    if (!outBuf || cap == 0) return NULL;
+    if (env && env[0] != '\0') {
+        len = 0;
+        while (env[len] != '\0') ++len;
+        if (len >= cap) return NULL;
+        memcpy(outBuf, env, len + 1);
+        return outBuf;
+    }
+    return UPD_DEFAULT_URL;
+}
+
+/** @brief 懒启动升级引擎（首次决策入口点击时；幂等）。
+ *  @details autoCheck=false 仅手动检查；安装根=临时目录 xgui_demo_update
+ *           （工作区不落 demo 目录）；URL 取界面输入行当前文本（预填
+ *           XUPGRADE_DEMO_URL 环境变量或缺省部署地址；引擎 URL 在 init
+ *           时固定，启动成功后输入行锁定）。启动成功才开 UI 泵定时器
+ *           （后台线程事件 → 控件）。 */
+/** @brief 真实自替换残留清理：<exe>.old 保身副本。旧进程退出前删除必败
+ *  （Windows 禁删运行中映像，且改名后旧进程仍从 .old 运行），故构建时与
+ *  引擎懒启动时各试一次——旧进程退出后的任意时刻删除即可成功。 */
+static void upd_cleanupOldImage(void)
+{
+    char exePath[XSYSTEM_EXECUTABLE_PATH_MAX];
+    char oldPath[1280];
+    if (!XSystem_executableFilePath(exePath, sizeof(exePath)) ||
+        snprintf(oldPath, sizeof(oldPath), "%s.old", exePath) >=
+            (int)sizeof(oldPath))
+        return;
+    {
+        XString* oldFile = XString_create_utf8(oldPath);
+        if (oldFile) {
+            XFile_remove_static(oldFile);
+            XClassDelete(oldFile);
+        }
+    }
+}
+
+static bool upd_ensureStarted(void)
+{
+    XUpgradeConfig config;
+    char root[1024];
+    char url[512];
+    const char* urlText;
+    size_t urlLen;
+    if (s_upd.m_engineStarted) return true;
+    upd_cleanupOldImage(); /* 上一轮真实升级的保身副本（旧进程已退出） */
+    if (!upd_demoRoot(root, sizeof(root))) {
+        upd_report("\xE5\x8D\x87\xE7\xBA\xA7\xE5\xBC\x95\xE6\x93\x8E\xE6\x9C"
+                   "\xAA\xE5\x90\xAF\xE5\x8A\xA8: \xE6\x97\xA0\xE4\xB8\xB4"
+                   "\xE6\x97\xB6\xE7\x9B\xAE\xE5\xBD\x95", NULL);
+                   /* 升级引擎未启动: 无临时目录 */
+        return false;
+    }
+    /* URL 以界面输入为准：空串按契约"URL 模板无效"由引擎拒绝，状态行如实显示。 */
+    urlText = s_upd.m_urlEdit ? XLineEdit_text(s_upd.m_urlEdit) : NULL;
+    urlLen = urlText ? strlen(urlText) : 0;
+    if (urlLen >= sizeof(url)) urlLen = sizeof(url) - 1u;
+    if (urlLen > 0) {
+        memcpy(url, urlText, urlLen);
+    }
+    url[urlLen] = '\0';
+    XUpgrade_setListener(upd_listener, NULL); /* 可先于 init 注册（契约）。 */
+    memset(&config, 0, sizeof(config));
+    config.m_updateUrl = url;             /* 界面输入行当前值（可含 {channel}）。 */
+    config.m_channel = "stable";
+#ifdef _WIN32
+    config.m_targetOs = "win64";
+#else
+    config.m_targetOs = "linux64";
+#endif
+    config.m_installRoot = root;
+    config.m_checkIntervalHours = 0;      /* 0=不按周期自动检查。 */
+    config.m_autoCheck = false;           /* 懒启动：仅手动检查。 */
+    config.m_applyWindow.m_enabled = false;
+    if (!XUpgrade_init(&config)) {
+        upd_report("\xE5\x8D\x87\xE7\xBA\xA7\xE5\xBC\x95\xE6\x93\x8E\xE5\x88"
+                   "\x9D\xE5\xA7\x8B\xE5\x8C\x96\xE5\xA4\xB1\xE8\xB4\xA5"
+                   "\xEF\xBC\x88\xE5\x8D\xA0\xE7\x94\xA8\xE6\x88\x96\xE6"
+                   "\xA0\xB9\xE4\xB8\x8D\xE5\x8F\xAF\xE7\x94\xA8\xEF\xBC\x89",
+                   NULL); /* 升级引擎初始化失败（占用或根不可用） */
+        return false;
+    }
+    s_upd.m_engineStarted = true;
+    if (s_upd.m_urlEdit) {
+        /* 引擎 URL 在 init 时固定：启动成功后锁定输入行（改地址需重启 demo）。 */
+        XWidget_setEnabled((XWidget*)s_upd.m_urlEdit, false);
+    }
+    if (s_upd.m_pumpTimer) {
+        XTimer_setInterval(s_upd.m_pumpTimer, UPD_PUMP_MS);
+        XTimer_start_base(s_upd.m_pumpTimer);
+    }
+    upd_refreshVersions();
+    upd_refreshPolicy();
+    upd_report("\xE5\x8D\x87\xE7\xBA\xA7\xE5\xBC\x95\xE6\x93\x8E\xE5\xB7"
+               "\xB2\xE5\xB0\xB1\xE7\xBB\xAA\xEF\xBC\x88\xE6\x89\x8B\xE5"
+               "\x8A\xA8\xE6\xA3\x80\xE6\x9F\xA5\xE6\xA8\xA1\xE5\xBC\x8F"
+               "\xEF\xBC\x89", NULL); /* 升级引擎已就绪（手动检查模式） */
+    return true;
+}
+
+/* ==================== 事件队列（listener 生产 / UI 泵消费） ============ */
+
+/** @brief 引擎事件观察者（后台线程上下文）：快照入队后立即返回。
+ *  @details 队列满丢最旧（进度/状态类后到事件更新，保持 UI 流动）；
+ *           回调内不做任何 UI 操作、不调用引擎控制 API（XUpgrade.h 契约）。 */
+static void upd_listener(void* userData, const XUpgradeEvent* event)
+{
+    (void)userData;
+    if (!event || !s_upd.m_queueMutex) return;
+    XMutex_lock(s_upd.m_queueMutex);
+    if (s_upd.m_queueCount >= UPD_QUEUE_CAP) {
+        s_upd.m_queueHead = (s_upd.m_queueHead + 1) % UPD_QUEUE_CAP;
+        --s_upd.m_queueCount;
+    }
+    s_upd.m_queue[(s_upd.m_queueHead + s_upd.m_queueCount) % UPD_QUEUE_CAP] =
+        *event;
+    ++s_upd.m_queueCount;
+    XMutex_unlock(s_upd.m_queueMutex);
+}
+
+static void upd_pumpCb(void* userData, XTimerData* timer);
+static bool upd_applyAndSwitch(void); /* 弹窗「是」分支先于定义调用（前向声明） */
+
+/** @brief 事件 → 控件落地（仅 UI 线程调用；纯观察口径）。 */
+static void upd_applyEvent(const XUpgradeEvent* event)
+{
+    char text[224];
+    switch (event->m_type) {
+    case XUpgradeEventType_UpdateAvailable:
+        /* 新一轮升级起点：快照策略/灰度/版本并复位四段进度条。 */
+        s_upd.m_lastPolicy = event->m_policy;
+        s_upd.m_lastGray = event->m_gray;
+        snprintf(s_upd.m_lastVersion, sizeof(s_upd.m_lastVersion), "%s",
+                 event->m_version);
+        snprintf(s_upd.m_lastComponent, sizeof(s_upd.m_lastComponent), "%s",
+                 event->m_component);
+        s_upd.m_available = (event->m_policy == XUpgradePolicy_Optional);
+        s_upd.m_readyRestart = false;
+        upd_resetBars();
+        upd_refreshButtons();
+        upd_refreshVersions(); /* 版本块刷新出「本地 x / 远程 y」对照。 */
+        upd_refreshRemoteList(); /* 远程版本下拉回填（多版本选择安装）。 */
+        upd_refreshPolicy();
+        snprintf(text, sizeof(text),
+                 "\xE5\x8F\x91\xE7\x8E\xB0\xE6\x96\xB0\xE7\x89\x88\xE6\x9C"
+                 "\xAC: %s\xEF\xBC\x88\xE7\xAD\x96\xE7\x95\xA5: %s\xEF\xBC\x89",
+                 /* 发现新版本: x（策略: y） */
+                 event->m_version, upd_policyName(event->m_policy));
+        upd_report("%s", text);
+        break;
+    case XUpgradeEventType_Progress:
+        /* 四段进度条如实反映 m_phase/m_percent（不做阶段推断）。 */
+        if (event->m_phase >= XUpgradePhase_Download &&
+            event->m_phase <= XUpgradePhase_Activate &&
+            s_upd.m_phaseBar[event->m_phase]) {
+            int percent = event->m_percent;
+            if (percent < 0) percent = 0;
+            if (percent > 100) percent = 100;
+            XProgressBar_setValue(s_upd.m_phaseBar[event->m_phase], percent);
+        }
+        snprintf(text, sizeof(text), "%s %d%%",
+                 upd_phaseName((int)event->m_phase), event->m_percent);
+        upd_report("%s", text);
+        break;
+    case XUpgradeEventType_ReadyNeedRestart:
+        s_upd.m_readyRestart = true;
+        upd_refreshButtons();
+        /* 快照 staged 版本：真实自替换按此定位 versions/app/<ver>/bin/
+         * <自身文件名>（安装所选版本的 staged 版本可与上次公告不同）。 */
+        if (event->m_version[0]) {
+            snprintf(s_upd.m_lastVersion, sizeof(s_upd.m_lastVersion), "%s",
+                     event->m_version);
+            snprintf(s_upd.m_lastComponent, sizeof(s_upd.m_lastComponent),
+                     "%s", event->m_component);
+        }
+        upd_report("%s",
+                   "\xE5\x8D\x87\xE7\xBA\xA7\xE5\xB7\xB2\xE5\xB0\xB1\xE7"
+                   "\xBB\xAA: \xE9\x87\x8D\xE5\x90\xAF\xE4\xBB\xA5\xE5\xAE"
+                   "\x8C\xE6\x88\x90\xE5\x8D\x87\xE7\xBA\xA7");
+                   /* 升级已就绪: 重启以完成升级 */
+        /* 安装完成弹窗：询问是否立即完成升级（重启后运行新版本）。
+         * 自测（dialogSuppress）跳过模态弹窗防挂死。 */
+        if (!s_upd.m_dialogSuppress) {
+            XMessageBox* box = XMessageBox_create(s_upd.m_root, 0);
+            if (box) {
+                int clicked;
+                XMessageBox_setText(box,
+                    "\xE5\x8D\x87\xE7\xBA\xA7\xE5\x8C\x85\xE5\xB7\xB2\xE5"
+                    "\xB0\xB1\xE7\xBB\xAA\xEF\xBC\x8C\xE6\x98\xAF\xE5\x90"
+                    "\xA6\xE7\xAB\x8B\xE5\x8D\xB3\xE5\xAE\x8C\xE6\x88\x90"
+                    "\xE5\x8D\x87\xE7\xBA\xA7\xEF\xBC\x9F"); /* 升级包已就绪，是否立即完成升级？ */
+                XMessageBox_setStandardButtons(box,
+                    XDialogButtonBoxStandard_Yes | XDialogButtonBoxStandard_No);
+                clicked = XMessageBox_exec(box);
+                XClassDelete((XClass*)box);
+                if (clicked & (int)XDialogButtonBoxStandard_Yes) {
+                    /* 是：就地切指针 → 分离拉起新实例 → 退出本进程（新实例
+                     * 启动自检转正，运行新版本）。全程走抽象层（XProcess/
+                     * XCoreApplication/XSystem），页内零平台调用。 */
+                    char exePath[XSYSTEM_EXECUTABLE_PATH_MAX];
+                    char upgradeNote[224];
+                    if (!upd_applyAndSwitch() ||
+                        !XSystem_executableFilePath(exePath, sizeof(exePath)))
+                        break;
+                    {
+                        XString* program = XString_create_utf8(exePath);
+                        if (program) {
+                            XProcess_startDetached_static(program, NULL, NULL, NULL);
+                            XClassDelete(program);
+                        }
+                    }
+                    snprintf(upgradeNote, sizeof(upgradeNote),
+                             "\xE5\xB7\xB2\xE5\x88\x87\xE6\x8D\xA2\xE8\x87\xB3 %s"
+                             "\xEF\xBC\x8C\xE6\xAD\xA3\xE5\x9C\xA8\xE9\x87\x8D"
+                             "\xE5\x90\xAF\xE7\xA8\x8B\xE5\xBA\x8F\xE2\x80\xA6",
+                             /* 已切换至 x，正在重启程序… */
+                             s_upd.m_lastVersion);
+                    upd_report("%s", upgradeNote);
+                    XCoreApplication_quit(); /* 退出本进程；新实例自检转正后运行新版本 */
+                    break;
+                }
+                upd_report("%s",
+                    "\xE5\xB7\xB2\xE9\x80\x89\xE6\x8B\xA9\xE7\xA8\x8D\xE5"
+                    "\x90\x8E\xE5\xAE\x8C\xE6\x88\x90\xEF\xBC\x8C\xE4\xB8"
+                    "\x8B\xE6\xAC\xA1\xE5\x90\xAF\xE5\x8A\xA8\xE6\x97\xB6"
+                    "\xE5\xB0\x86\xE5\x86\x8D\xE6\xAC\xA1\xE8\xAF\xA2\xE9"
+                    "\x97\xAE"); /* 已选择稍后完成，下次启动时将再次询问 */
+            }
+        }
+        break;
+    case XUpgradeEventType_ReadyAutoApply:
+        upd_report("%s",
+                   "\xE6\x8C\x89\xE7\xAD\x96\xE7\x95\xA5\xE8\x87\xAA\xE5"
+                   "\x8A\xA8\xE5\xBA\x94\xE7\x94\xA8\xE5\x8D\x87\xE7\xBA"
+                   "\xA7\xE2\x80\xA6"); /* 按策略自动应用升级… */
+        break;
+    case XUpgradeEventType_RolledBack:
+        s_upd.m_readyRestart = false;
+        upd_refreshButtons();
+        snprintf(text, sizeof(text),
+                 "\xE5\xB7\xB2\xE5\x9B\x9E\xE6\xBB\x9A: %s", /* 已回滚: */
+                 event->m_detail);
+        upd_report("%s", text);
+        break;
+    case XUpgradeEventType_CheckFailed:
+        /* 检查失败/暂无更新（含灰度 Miss/DenyList）：状态行静默显示。
+         * 远程版本下拉照常回填——"客户端已是最新"也允许多版本选择安装。 */
+        upd_refreshRemoteList();
+        if (event->m_detail[0])
+            snprintf(text, sizeof(text),
+                     "\xE6\xA3\x80\xE6\x9F\xA5\xE5\xA4\xB1\xE8\xB4\xA5: %s",
+                     event->m_detail); /* 检查失败: */
+        else
+            snprintf(text, sizeof(text), "%s",
+                     "\xE6\x9A\x82\xE6\x97\xA0\xE6\x9B\xB4\xE6\x96\xB0"); /* 暂无更新 */
+        upd_report("%s", text);
+        upd_refreshPolicy();
+        break;
+    case XUpgradeEventType_StateChanged:
+    default:
+        if (event->m_state == XUpgradeState_Checking)
+            upd_resetBars(); /* 新一轮检查：进度展示复位。 */
+        if (event->m_detail[0])
+            upd_report("%s", event->m_detail); /* 引擎说明优先（如下载失败：partial 已保留供续传）。 */
+        else
+            snprintf(text, sizeof(text),
+                     "\xE5\xBC\x95\xE6\x93\x8E\xE7\x8A\xB6\xE6\x80\x81: %s",
+                     upd_stateName(event->m_state)); /* 引擎状态: */
+        if (!event->m_detail[0]) upd_report("%s", text);
+        break;
+    }
+}
+
+/** @brief UI 泵（120ms 周期）：把队列里的事件逐条落地（UI 线程上下文）。 */
+static void upd_pumpCb(void* userData, XTimerData* timer)
+{
+    (void)userData;
+    (void)timer;
+    if (!s_upd.m_ready || !s_upd.m_queueMutex) return;
+    for (;;) {
+        XUpgradeEvent event;
+        XMutex_lock(s_upd.m_queueMutex);
+        if (s_upd.m_queueCount <= 0) {
+            XMutex_unlock(s_upd.m_queueMutex);
+            break;
+        }
+        event = s_upd.m_queue[s_upd.m_queueHead];
+        s_upd.m_queueHead = (s_upd.m_queueHead + 1) % UPD_QUEUE_CAP;
+        --s_upd.m_queueCount;
+        XMutex_unlock(s_upd.m_queueMutex);
+        upd_applyEvent(&event);
+    }
+}
+
+/* ==================== 信号槽（用户决策入口） ==================== */
+
+/** @brief 手动检查：懒启动引擎 → checkNow（结果经事件异步返回）。 */
+static void upd_checkSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    if (!s_upd.m_ready) return;
+    if (!upd_ensureStarted()) return;
+    if (!XUpgrade_checkNow())
+        upd_report("\xE6\xA3\x80\xE6\x9F\xA5\xE6\x9C\xAA\xE5\x8F\x97\xE7"
+                   "\x90\x86\xEF\xBC\x88\xE5\xBC\x95\xE6\x93\x8E\xE5\xBF"
+                   "\x99\xEF\xBC\x89", NULL); /* 检查未受理（引擎忙） */
+    else
+        upd_report("%s",
+                   "\xE6\xAD\xA3\xE5\x9C\xA8\xE6\xA3\x80\xE6\x9F\xA5\xE6"
+                   "\x9B\xB4\xE6\x96\xB0\xE2\x80\xA6"); /* 正在检查更新… */
+}
+
+/** @brief 跳过此版本（optional 策略待决策入口）。 */
+static void upd_skipSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    if (!s_upd.m_ready) return;
+    if (!upd_ensureStarted()) return;
+    XUpgrade_skipVersion(s_upd.m_lastComponent, s_upd.m_lastVersion);
+    upd_report("\xE5\xB7\xB2\xE8\xB7\xB3\xE8\xBF\x87\xE7\x89\x88\xE6\x9C"
+               "\xAC: %s", s_upd.m_lastVersion); /* 已跳过版本: */
+}
+
+/** @brief 受理应用并完成落位（applyNow + 真实自替换/模拟收口双口径）。
+ *  @details XUpgrade_applyNow 受理后引擎内完成 staged 指针切换（Applying→
+ *           BootConfirming 落盘）。落位分两路：
+ *           ①真实升级——staged 负载含与运行中 exe 同名的条目
+ *           （versions/app/<ver>/bin/<自身文件名>）：自身改名 .old（Windows
+ *           允许改名运行中的 exe、不允许覆盖）→ 复制新 exe 到原路径。调用
+ *           方随后分离拉起「原路径」=真·新版本二进制，编译期版本与激活
+ *           指针天然一致；残留 .old 由新实例启动时清走。
+ *           ②模拟口径（旧 fake 包无 exe 条目，如 1.2.8/1.2.9 演示包）——
+ *           apply 桩直调幂等收口，仅指针切换，不替换文件。
+ *  @return 落位成功（指针已指向新版本）返回 true。 */
+static bool upd_applyAndSwitch(void)
+{
+    char root[1024];
+    char exePath[XSYSTEM_EXECUTABLE_PATH_MAX];
+    char stagedExe[1280];
+    const char* selfName;
+    size_t selfLen;
+    size_t exeLen;
+    if (!XUpgrade_applyNow()) return false;
+    if (!upd_demoRoot(root, sizeof(root))) return false;
+    if (!XSystem_executableFilePath(exePath, sizeof(exePath))) return false;
+    exeLen = strlen(exePath);
+    selfName = exePath + exeLen; /* 取自身文件名 */
+    while (selfName > exePath && *(selfName - 1) != '/' &&
+           *(selfName - 1) != '\\')
+        --selfName;
+    selfLen = exeLen - (size_t)(selfName - exePath);
+    /* staged 同名 exe 条目存在 → 真实自替换；否则模拟口径。 */
+    if (snprintf(stagedExe, sizeof(stagedExe),
+                 "%s/versions/app/%s/bin/%.*s", root, s_upd.m_lastVersion,
+                 (int)selfLen, selfName) < (int)sizeof(stagedExe)) {
+        XString* pProbe = XString_create_utf8(stagedExe);
+        bool realPayload = pProbe && XFileInfo_exists_static(pProbe);
+        if (pProbe) XClassDelete(pProbe);
+        if (realPayload) {
+            char oldPath[1280];
+            XString* p1;
+            XString* p2;
+            if (snprintf(oldPath, sizeof(oldPath), "%s.old", exePath) >=
+                (int)sizeof(oldPath))
+                return false;
+            p1 = XString_create_utf8(oldPath);
+            if (p1) { XFile_remove_static(p1); XClassDelete(p1); } /* 清残留 */
+            p1 = XString_create_utf8(exePath);
+            p2 = XString_create_utf8(oldPath);
+            if (!p1 || !p2 || !XFile_rename_static(p1, p2)) {
+                if (p1) XClassDelete(p1);
+                if (p2) XClassDelete(p2);
+                return false; /* 改名失败（盘/权限）：不替换，走失败上报 */
+            }
+            XClassDelete(p1);
+            XClassDelete(p2);
+            p1 = XString_create_utf8(stagedExe);
+            p2 = XString_create_utf8(exePath);
+            if (!p1 || !p2 || !XFile_copy_static(p1, p2)) {
+                /* 复制失败：回滚改名，保住旧 exe 可继续运行 */
+                if (p1) XClassDelete(p1);
+                if (p2) XClassDelete(p2);
+                p1 = XString_create_utf8(oldPath);
+                p2 = XString_create_utf8(exePath);
+                if (p1 && p2) (void)XFile_rename_static(p1, p2);
+                if (p1) XClassDelete(p1);
+                if (p2) XClassDelete(p2);
+                return false;
+            }
+            XClassDelete(p1);
+            XClassDelete(p2);
+            return true; /* 新 exe 已就位：调用方拉起原路径即真·新版本 */
+        }
+    }
+    {
+        /* 模拟口径：apply 桩直调（fake 包无 exe 条目，仅指针切换）。 */
+        char* fakeArgv[4];
+        int rc;
+        fakeArgv[0] = (char*)"XGuiWindowDemo";
+        fakeArgv[1] = (char*)"--xupgrade-apply";
+        fakeArgv[2] = (char*)"--root";
+        fakeArgv[3] = root;
+        rc = XUpgradeApplyStub_main(4, fakeArgv);
+        return rc == 0;
+    }
+}
+
+/** @brief 安装所选远程版本（schema 2 目录；显式降级/重装，rollback_to 窗口
+ *         仍约束降级深度）。 */
+static void upd_installSelSlot(XObject* receiver, XVarList* args)
+{
+    XString* text;
+    const char* utf8;
+    bool accepted;
+    (void)receiver; (void)args;
+    if (!s_upd.m_ready) return;
+    if (!s_upd.m_remoteCombo) return;
+    if (!upd_ensureStarted()) return;
+    text = XComboBox_currentText(s_upd.m_remoteCombo);
+    if (!text) return;
+    utf8 = XString_toUtf8(text);
+    if (!utf8 || utf8[0] == '\0') { XClassDelete(text); return; }
+    accepted = XUpgrade_installVersion(utf8);
+    XClassDelete(text);
+    upd_report(accepted ? "\xE5\xAE\x89\xE8\xA3\x85\xE5\xB7\xB2\xE5\x8F\x97"
+                          "\xE7\x90\x86\xEF\xBC\x9A\xE5\xAE\x8C\xE6\x88\x90"
+                          "\xE5\x90\x8E\xE5\x9C\xA8\xE3\x80\x8C\xE5\x8D\x87"
+                          "\xE7\xBA\xA7\xE5\x8C\x85\xE5\xB7\xB2\xE5\xB0\xB1"
+                          "\xE7\xBB\xAA\xE3\x80\x8D\xE5\xBC\xB9\xE7\xAA\x97"
+                          "\xE7\xA1\xAE\xE8\xAE\xA4\xE9\x87\x8D\xE5\x90\xAF"
+                        : "\xE5\xAE\x89\xE8\xA3\x85\xE6\x9C\xAA\xE5\x8F\x97"
+                          "\xE7\x90\x86\xEF\xBC\x88\xE7\x89\x88\xE6\x9C\xAC"
+                          "\xE4\xB8\x8D\xE5\x9C\xA8\xE7\x9B\xAE\xE5\xBD\x95"
+                          "\xE6\x88\x96\xE5\xBC\x95\xE6\x93\x8E\xE5\xBF\x99"
+                          "\xEF\xBC\x89",
+               NULL); /* 安装已受理：完成后在「升级包已就绪」弹窗确认重启 / 安装未受理（版本不在目录或引擎忙） */
+}
+
+/* ==================== 装配 ==================== */
+
+XWidget* demo_page_update_build(XWidget* parent,
+                                DemoPageStatusFn status, void* user)
+{
+    static const char* const kPhaseCaps[4] = {
+        "\xE4\xB8\x8B\xE8\xBD\xBD", /* 下载 */
+        "\xE6\xA0\xA1\xE9\xAA\x8C", /* 校验 */
+        "\xE8\xA7\xA3\xE5\x8C\x85", /* 解包 */
+        "\xE6\xBF\x80\xE6\xB4\xBB"  /* 激活 */
+    };
+    int i;
+    /* demo 单实例：重复 build 前先收口上一实例的非控件资源（定时器/
+     * 互斥/引擎无父，不随父链级联析构），再清空登记表。 */
+    demo_page_update_shutdown();
+    memset(&s_upd, 0, sizeof(s_upd));
+    s_upd.m_status = status;
+    s_upd.m_user = user;
+    if (!parent) return (XWidget*)0;
+    s_upd.m_root = XWidget_create(parent, 0);
+    if (!s_upd.m_root) return (XWidget*)0;
+
+    /* ---- 标题 ---- */
+    s_upd.m_titleLabel = XLabel_create(s_upd.m_root, 0);
+    if (!s_upd.m_titleLabel) return s_upd.m_root;
+    XLabel_setText_2(s_upd.m_titleLabel,
+                     "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0");
+                     /* 软件更新 */
+    XLabel_setTextPixelSize(s_upd.m_titleLabel, 15);
+    XWidget_setGeometry((XWidget*)s_upd.m_titleLabel, 12, 8, 300, 24);
+    XWidget_show((XWidget*)s_upd.m_titleLabel);
+
+    /* ---- 程序版本（标题行右侧；XCoreApplication applicationName/
+     *     applicationVersion。版本文本由 upd_refreshVersions 末尾统一
+     *     回填——applicationVersion 跟随引擎激活版本同步，与「当前版本」
+     *     两处口径一致（真实产品升级换二进制即换编译期版本，demo 由引擎
+     *     指针回写模拟）。应用名称仅作展示：升级引擎协议面无名称概念） ---- */
+    s_upd.m_progVerLabel = XLabel_create(s_upd.m_root, 0);
+    if (s_upd.m_progVerLabel) {
+        XLabel_setTextPixelSize(s_upd.m_progVerLabel, 12);
+        XWidget_setGeometry((XWidget*)s_upd.m_progVerLabel, 320, 10, 332, 20);
+        XWidget_show((XWidget*)s_upd.m_progVerLabel);
+    }
+
+    /* ---- 真实自替换残留清理：见 upd_cleanupOldImage（懒启动再试一次） ---- */
+    upd_cleanupOldImage();
+
+    /* ---- 当前组件版本列表（app/fontres；目录后端只读指针文件） ---- */
+    s_upd.m_capVersion = XLabel_create(s_upd.m_root, 0);
+    if (s_upd.m_capVersion) {
+        XLabel_setText_2(s_upd.m_capVersion,
+                         "\xE5\xBD\x93\xE5\x89\x8D\xE7\x89\x88\xE6\x9C\xAC");
+                         /* 当前版本 */
+        XWidget_setGeometry((XWidget*)s_upd.m_capVersion, 12, 44, 96, 22);
+        XWidget_show((XWidget*)s_upd.m_capVersion);
+    }
+    s_upd.m_versionLabel = XLabel_create(s_upd.m_root, 0);
+    if (!s_upd.m_versionLabel) return s_upd.m_root;
+    XLabel_setTextPixelSize(s_upd.m_versionLabel, 13);
+    XLabel_setAlignment(s_upd.m_versionLabel,
+                        XAlignment_Left | XAlignment_Top);
+    XWidget_setGeometry((XWidget*)s_upd.m_versionLabel, UPD_FIELD_X, 42,
+                        640, 40);
+    XWidget_show((XWidget*)s_upd.m_versionLabel);
+
+    /* ---- 策略显示（最近策略/灰度 + 窗口/宽限期回显） ---- */
+    s_upd.m_capPolicy = XLabel_create(s_upd.m_root, 0);
+    if (s_upd.m_capPolicy) {
+        XLabel_setText_2(s_upd.m_capPolicy,
+                         "\xE7\xAD\x96\xE7\x95\xA5"); /* 策略 */
+        XWidget_setGeometry((XWidget*)s_upd.m_capPolicy, 12, 92, 96, 22);
+        XWidget_show((XWidget*)s_upd.m_capPolicy);
+    }
+    s_upd.m_policyLabel = XLabel_create(s_upd.m_root, 0);
+    if (!s_upd.m_policyLabel) return s_upd.m_root;
+    XLabel_setTextPixelSize(s_upd.m_policyLabel, 13);
+    XLabel_setAlignment(s_upd.m_policyLabel,
+                        XAlignment_Left | XAlignment_Top);
+    XWidget_setGeometry((XWidget*)s_upd.m_policyLabel, UPD_FIELD_X, 90,
+                        640, 54);
+    XWidget_show((XWidget*)s_upd.m_policyLabel);
+
+    /* ---- 服务器地址行（引擎启动前可编辑，{channel} 占位） ---- */
+    s_upd.m_urlCap = XLabel_create(s_upd.m_root, 0);
+    if (s_upd.m_urlCap) {
+        XLabel_setText_2(s_upd.m_urlCap,
+                         "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8"); /* 服务器 */
+        XWidget_setGeometry((XWidget*)s_upd.m_urlCap, 12, UPD_URL_Y + 3,
+                            96, 22);
+        XWidget_show((XWidget*)s_upd.m_urlCap);
+    }
+    s_upd.m_urlEdit = XLineEdit_create(s_upd.m_root, 0);
+    if (!s_upd.m_urlEdit) return s_upd.m_root;
+    {
+        char urlDefault[512];
+        const char* initial = upd_serverUrl(urlDefault, sizeof(urlDefault));
+        if (initial) {
+            XLineEdit_setText(s_upd.m_urlEdit, initial);
+        }
+    }
+    XWidget_setGeometry((XWidget*)s_upd.m_urlEdit, UPD_FIELD_X, UPD_URL_Y,
+                        640, 24);
+    XWidget_show((XWidget*)s_upd.m_urlEdit);
+
+    /* ---- 四段进度条（下载/校验/解包/激活；Progress 事件驱动） ---- */
+    for (i = 0; i < 4; ++i) {
+        int y = UPD_BAR_Y0 + i * UPD_ROW_PITCH;
+        s_upd.m_phaseCap[i] = XLabel_create(s_upd.m_root, 0);
+        if (s_upd.m_phaseCap[i]) {
+            XLabel_setText_2(s_upd.m_phaseCap[i], kPhaseCaps[i]);
+            XWidget_setGeometry((XWidget*)s_upd.m_phaseCap[i], 12, y + 3,
+                                56, 20);
+            XWidget_show((XWidget*)s_upd.m_phaseCap[i]);
+        }
+        s_upd.m_phaseBar[i] = XProgressBar_create(s_upd.m_root, 0);
+        if (s_upd.m_phaseBar[i]) {
+            XProgressBar_setRange(s_upd.m_phaseBar[i], 0, 100);
+            XProgressBar_setValue(s_upd.m_phaseBar[i], 0);
+            XProgressBar_setTextVisible(s_upd.m_phaseBar[i], true);
+            XWidget_setGeometry((XWidget*)s_upd.m_phaseBar[i], UPD_BAR_X, y,
+                                680, 22);
+            XWidget_show((XWidget*)s_upd.m_phaseBar[i]);
+        }
+    }
+
+    /* ---- 决策+安装单行（检查/跳过/远程版本/安装所选版本同排；2026-10-08
+     *      用户裁定合并——原两行排布视觉冗余） ---- */
+    s_upd.m_checkBtn = XPushButton_create(s_upd.m_root, 0);
+    if (s_upd.m_checkBtn) {
+        XPushButton_setText_2(s_upd.m_checkBtn,
+                              "\xE6\xA3\x80\xE6\x9F\xA5\xE6\x9B\xB4\xE6"
+                              "\x96\xB0"); /* 检查更新 */
+        XWidget_setGeometry((XWidget*)s_upd.m_checkBtn, 12, UPD_BTN_Y,
+                            104, 30);
+        XObject_connect_2((XObject*)s_upd.m_checkBtn,
+                          XSignal(XAbstractButton_clicked_signal),
+                          upd_checkSlot);
+        XWidget_show((XWidget*)s_upd.m_checkBtn);
+    }
+    s_upd.m_skipBtn = XPushButton_create(s_upd.m_root, 0);
+    if (s_upd.m_skipBtn) {
+        XPushButton_setText_2(s_upd.m_skipBtn,
+                              "\xE8\xB7\xB3\xE8\xBF\x87\xE6\xAD\xA4\xE7"
+                              "\x89\x88\xE6\x9C\xAC"); /* 跳过此版本 */
+        XWidget_setGeometry((XWidget*)s_upd.m_skipBtn, 124, UPD_BTN_Y,
+                            96, 30);
+        XObject_connect_2((XObject*)s_upd.m_skipBtn,
+                          XSignal(XAbstractButton_clicked_signal),
+                          upd_skipSlot);
+        XWidget_setEnabled((XWidget*)s_upd.m_skipBtn, false);
+        XWidget_show((XWidget*)s_upd.m_skipBtn);
+    }
+
+    /* ---- 多版本选择（schema 2 目录；含降级安装）——接在同排右侧 ---- */
+    s_upd.m_remoteCap = XLabel_create(s_upd.m_root, 0);
+    if (s_upd.m_remoteCap) {
+        XLabel_setText_2(s_upd.m_remoteCap,
+                         "\xE8\xBF\x9C\xE7\xA8\x8B\xE7\x89\x88\xE6\x9C"
+                         "\xAC"); /* 远程版本 */
+        XWidget_setGeometry((XWidget*)s_upd.m_remoteCap, 230, UPD_BTN_Y + 5,
+                            64, 20);
+        XWidget_show((XWidget*)s_upd.m_remoteCap);
+    }
+    s_upd.m_remoteCombo = XComboBox_create(s_upd.m_root, 0);
+    if (!s_upd.m_remoteCombo) return s_upd.m_root;
+    XWidget_setGeometry((XWidget*)s_upd.m_remoteCombo, 300,
+                        UPD_BTN_Y + 2, 268, 26);
+    XWidget_show((XWidget*)s_upd.m_remoteCombo);
+    s_upd.m_installBtn = XPushButton_create(s_upd.m_root, 0);
+    if (s_upd.m_installBtn) {
+        XPushButton_setText_2(s_upd.m_installBtn,
+                              "\xE5\xAE\x89\xE8\xA3\x85\xE6\x89\x80\xE9\x80"
+                              "\x89\xE7\x89\x88\xE6\x9C\xAC"); /* 安装所选版本 */
+        XWidget_setGeometry((XWidget*)s_upd.m_installBtn, 578,
+                            UPD_BTN_Y, 128, 30);
+        XObject_connect_2((XObject*)s_upd.m_installBtn,
+                          XSignal(XAbstractButton_clicked_signal),
+                          upd_installSelSlot);
+        XWidget_setEnabled((XWidget*)s_upd.m_installBtn, false);
+        XWidget_show((XWidget*)s_upd.m_installBtn);
+    }
+
+    /* ---- 提示 + 状态行（adapt 钉底；口径固定文案） ---- */
+    s_upd.m_hintLabel = XLabel_create(s_upd.m_root, 0);
+    if (s_upd.m_hintLabel) {
+        XLabel_setTextPixelSize(s_upd.m_hintLabel, 12);
+    XLabel_setText_2(s_upd.m_hintLabel,
+                     "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8\xE5\x9C\xB0"
+                     "\xE5\x9D\x80\xE5\x9C\xA8\xE8\xBE\x93\xE5\x85\xA5"
+                     "\xE8\xA1\x8C\xE8\xAE\xBE\xE7\xBD\xAE\xEF\xBC\x88"
+                     "\xE9\xA6\x96\xE6\xAC\xA1\xE5\x90\xAF\xE5\x8A\xA8"
+                     "\xE5\x90\x8E\xE9\x94\x81\xE5\xAE\x9A\xEF\xBC\x89"
+                     "\xEF\xBC\x9B\xE5\xBC\x95\xE6\x93\x8E\xE6\x87\x92"
+                     "\xE5\x90\xAF\xE5\x8A\xA8\xEF\xBC\x8C\xE5\xB7\xA5"
+                     "\xE4\xBD\x9C\xE5\x8C\xBA\xE5\x9C\xA8\xE7\xB3\xBB"
+                     "\xE7\xBB\x9F\xE4\xB8\xB4\xE6\x97\xB6\xE7\x9B\xAE"
+                     "\xE5\xBD\x95");
+                     /* 服务器地址在输入行设置（首次启动后锁定）；引擎懒启动，工作区在系统临时目录 */
+        XWidget_setGeometry((XWidget*)s_upd.m_hintLabel, 12, 414, 752, 20);
+        XWidget_show((XWidget*)s_upd.m_hintLabel);
+    }
+    s_upd.m_statusLabel = XLabel_create(s_upd.m_root, 0);
+    if (!s_upd.m_statusLabel) return s_upd.m_root;
+    XLabel_setText_2(s_upd.m_statusLabel,
+                     "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
+    XWidget_setGeometry((XWidget*)s_upd.m_statusLabel, 12, 436, 752, 22);
+    XWidget_show((XWidget*)s_upd.m_statusLabel);
+
+    /* ---- 跨线程事件队列 + UI 泵定时器（懒启动成功才 start） ---- */
+    s_upd.m_queueMutex = XMutex_create(XLock_NonRecursive);
+    s_upd.m_pumpTimer = XTimer_create();
+    if (s_upd.m_pumpTimer) {
+        XTimer_setTimerCallback(s_upd.m_pumpTimer, upd_pumpCb);
+        XTimer_setUserData(s_upd.m_pumpTimer, NULL);
+    }
+
+    /* ---- 版本列表与策略区首轮回填（只读指针文件，零引擎调用） ---- */
+    upd_refreshVersions();
+    upd_refreshPolicy();
+
+    s_upd.m_ready = true;
+    return s_upd.m_root;
+}
+
+/* ==================== 自适应重排（xgui_demo_pages.h 契约） ============ */
+
+void demo_page_update_adapt(XWidget* page)
+{
+    int rootW;
+    int rootH;
+    int i;
+    if (!page || page != s_upd.m_root) return;
+    rootW = XWidget_width(page);
+    rootH = XWidget_height(page);
+    if (rootW < 360 || rootH < 300) return; /* 过窄保持装配几何。 */
+    /* 信息列与进度条随根宽收放；提示/状态两行钉底（同网络页契约）。 */
+    if (s_upd.m_progVerLabel)
+        XWidget_setGeometry((XWidget*)s_upd.m_progVerLabel,
+                            rootW - 344, 10, 332, 20);
+    if (s_upd.m_versionLabel)
+        XWidget_setGeometry((XWidget*)s_upd.m_versionLabel, UPD_FIELD_X, 42,
+                            rootW - UPD_FIELD_X - 12, 40);
+    if (s_upd.m_policyLabel)
+        XWidget_setGeometry((XWidget*)s_upd.m_policyLabel, UPD_FIELD_X, 90,
+                            rootW - UPD_FIELD_X - 12, 54);
+    for (i = 0; i < 4; ++i) {
+        int y = UPD_BAR_Y0 + i * UPD_ROW_PITCH;
+        if (s_upd.m_phaseBar[i])
+            XWidget_setGeometry((XWidget*)s_upd.m_phaseBar[i], UPD_BAR_X, y,
+                                rootW - UPD_BAR_X - 12, 22);
+    }
+    /* 服务器地址行与 build 同一常量口径（行 y=UPD_URL_Y，宽随根宽收放）；
+     * 缺此段时 resize 后条回旧位 152 压住 URL 行（2026-10-07 布局遮挡根因）。 */
+    if (s_upd.m_urlCap)
+        XWidget_setGeometry((XWidget*)s_upd.m_urlCap, 12, UPD_URL_Y + 3,
+                            96, 22);
+    if (s_upd.m_urlEdit)
+        XWidget_setGeometry((XWidget*)s_upd.m_urlEdit, UPD_FIELD_X, UPD_URL_Y,
+                            rootW - UPD_FIELD_X - 12, 24);
+    /* 决策+安装单行与 build 同常量口径（固定排布，窄根不重排）。 */
+    if (s_upd.m_remoteCap)
+        XWidget_setGeometry((XWidget*)s_upd.m_remoteCap, 230, UPD_BTN_Y + 5,
+                            64, 20);
+    if (s_upd.m_remoteCombo)
+        XWidget_setGeometry((XWidget*)s_upd.m_remoteCombo, 300,
+                            UPD_BTN_Y + 2, 268, 26);
+    if (s_upd.m_installBtn)
+        XWidget_setGeometry((XWidget*)s_upd.m_installBtn, 578,
+                            UPD_BTN_Y, 128, 30);
+    if (s_upd.m_hintLabel)
+        XWidget_setGeometry((XWidget*)s_upd.m_hintLabel, 12, rootH - 44,
+                            rootW - 24, 20);
+    if (s_upd.m_statusLabel)
+        XWidget_setGeometry((XWidget*)s_upd.m_statusLabel, 12, rootH - 22,
+                            rootW - 24, 22);
+}
+
+/* ==================== 退出清理（xgui_demo_pages.h 契约） ============== */
+
+void demo_page_update_shutdown(void)
+{
+    if (!s_upd.m_ready) return; /* 页面未构建：零操作（含裁剪配置）。 */
+    /* 顺序：先停泵（UI 侧不再消费）→ 停引擎（join 后台线程，listener
+       不再入队）→ 回收队列互斥与定时器。UI 线程调用 deinit 合法（契约
+       只禁回调内调用）。 */
+    if (s_upd.m_pumpTimer) {
+        XTimer_stop_base(s_upd.m_pumpTimer);
+        XObject_deleteLater((XObject*)s_upd.m_pumpTimer);
+        /* 唯一生产调用方（xgui_window_demo）在事件循环退出（exec 返回）
+         * 之后才走到本收口，延迟删除事件此后永不再被投递——此处按接收者
+         * 定向冲刷，立即完成回收；循环期的防御性调用（页面重建）下同样
+         * 安全：sendPostedEvents 按投递次序处理，本对象在途事件先于删除
+         * 事件送达，且只冲刷本对象，不影响其他 deleteLater 的既有时序。 */
+        XCoreApplication_sendPostedEvents((XObject*)s_upd.m_pumpTimer,
+                                          XEVENT_TYPE_DEFERRED_DELETE);
+        s_upd.m_pumpTimer = NULL;
+    }
+    if (s_upd.m_engineStarted)
+        XUpgrade_deinit(); /* 未启动时为空操作（契约）。 */
+    s_upd.m_engineStarted = false;
+    if (s_upd.m_queueMutex) {
+        XMutex_delete(s_upd.m_queueMutex);
+        s_upd.m_queueMutex = NULL;
+    }
+}
+
+/* ==================== autotest ==================== */
+
+int demo_page_update_autotest(XWidget* page)
+{
+    int failures = 0;
+    XUpgradeEvent event;
+    s_upd.m_dialogSuppress = true; /* 注入事件会发 ReadyNeedRestart：抑制模态弹窗防自测挂死 */
+#define UPD_EXPECT(cond, what) \
+    do { if (cond) XPrintf("XGuiAutoTest: [PASS] %s\n", what); \
+         else { XPrintf("XGuiAutoTest: [FAIL] %s\n", what); ++failures; } } while (0)
+#define UPD_INJECT(type_, state_, phase_, percent_, policy_, gray_, ver_) \
+    do { memset(&event, 0, sizeof(event)); \
+         event.m_type = (type_); event.m_state = (state_); \
+         event.m_phase = (phase_); event.m_percent = (percent_); \
+         event.m_policy = (policy_); event.m_gray = (gray_); \
+         snprintf(event.m_version, sizeof(event.m_version), "%s", (ver_)); \
+         upd_listener(NULL, &event); upd_pumpCb(NULL, NULL); } while (0)
+
+    if (!page || !s_upd.m_ready || page != s_upd.m_root)
+        return -1;
+
+    /* ---- 控件登记完整 ---- */
+    UPD_EXPECT(s_upd.m_titleLabel && s_upd.m_progVerLabel &&
+               s_upd.m_versionLabel &&
+               s_upd.m_policyLabel && s_upd.m_phaseBar[0] &&
+               s_upd.m_phaseBar[1] && s_upd.m_phaseBar[2] &&
+               s_upd.m_phaseBar[3] && s_upd.m_checkBtn &&
+               s_upd.m_skipBtn &&
+               s_upd.m_hintLabel && s_upd.m_statusLabel &&
+               s_upd.m_queueMutex && s_upd.m_pumpTimer,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE6\x8E\xA7\xE4\xBB\xB6\xE5\x85\xA8\xE9\x83\xA8\xE7\x99\xBB\xE8\xAE\xB0(\xE5\x90\xAB\xE5\x9B\x9B\xE6\xAE\xB5\xE8\xBF\x9B\xE5\xBA\xA6\xE6\x9D\xA1\xE4\xB8\x8E\xE9\x98\x9F\xE5\x88\x97/\xE6\xB3\xB5)");
+
+    /* ---- 程序版本行：应用名称+版本经 XCoreApplication 接线；版本随引擎
+     *      激活版本同步（指针为空回退出厂宏），两处显示口径一致 ---- */
+    {
+        const char* expectVer = s_upd.m_versionApp[0] ? s_upd.m_versionApp
+                                                      : XUPGRADE_PRODUCT_VERSION;
+        const XString* progText = s_upd.m_progVerLabel
+                                      ? XLabel_text(s_upd.m_progVerLabel)
+                                      : NULL;
+        UPD_EXPECT(progText && XString_toUtf8(progText) &&
+                       strstr(XString_toUtf8(progText), "XGuiWindowDemo") != NULL &&
+                       strstr(XString_toUtf8(progText), expectVer) != NULL,
+                   "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE7\xA8\x8B\xE5\xBA\x8F\xE7\x89\x88\xE6\x9C\xAC\xE8\xA1\x8C\xE5\xB8\xA6\xE5\xBA\x94\xE7\x94\xA8\xE5\x90\x8D\xE7\xA7\xB0\xE4\xB8\x8E\xE6\xBF\x80\xE6\xB4\xBB\xE7\x89\x88\xE6\x9C\xAC");
+                   /* 软件更新页: 程序版本行带应用名称与激活版本 */
+    }
+
+    /* ---- 版本列表回填（组件行齐全；未激活显示「未记录」） ---- */
+    {
+        const XString* versionText =
+            XLabel_text(s_upd.m_versionLabel);
+        UPD_EXPECT(versionText && XString_toUtf8(versionText) &&
+                       strstr(XString_toUtf8(versionText), "app:") != NULL &&
+                       strstr(XString_toUtf8(versionText), "fontres:") != NULL,
+                   "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE7\x89\x88\xE6\x9C\xAC\xE5\x88\x97\xE8\xA1\xA8\xE5\x9B\x9E\xE5\xA1\xAB app/fontres \xE4\xB8\xA4\xE7\xBB\x84\xE4\xBB\xB6\xE8\xA1\x8C");
+    }
+    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == 0 &&
+                   XProgressBar_value(s_upd.m_phaseBar[3]) == 0,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE5\x9B\x9B\xE6\xAE\xB5\xE8\xBF\x9B\xE5\xBA\xA6\xE6\x9D\xA1\xE5\x88\x9D\xE5\xA7\x8B\xE5\xBD\x92\xE9\x9B\xB6");
+
+    /* ---- 决策按钮初始可用性（未检查前仅「检查更新」可用；目录未回填
+     *      「安装所选版本」亦不可用） ---- */
+    UPD_EXPECT(XWidget_isEnabled((XWidget*)s_upd.m_checkBtn) &&
+                   !XWidget_isEnabled((XWidget*)s_upd.m_skipBtn) &&
+                   !XWidget_isEnabled((XWidget*)s_upd.m_installBtn),
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE5\x88\x9D\xE5\xA7\x8B\xE4\xBB\x85\xE6\xA3\x80\xE6\x9F\xA5\xE6\x9B\xB4\xE6\x96\xB0\xE5\x8F\xAF\xE7\x94\xA8");
+
+    /* ---- Progress 事件驱动四段进度条（真实 listener 入队 + 泵出） ---- */
+    UPD_INJECT(XUpgradeEventType_Progress, XUpgradeState_Downloading,
+               XUpgradePhase_Download, 45, XUpgradePolicy_Optional,
+               XUpgradeGrayDecision_NotEvaluated, "");
+    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == 45,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: Progress(\xE4\xB8\x8B\xE8\xBD\xBD,45%) \xE8\x90\xBD\xE7\xAC\xAC\xE4\xB8\x80\xE6\xAE\xB5\xE8\xBF\x9B\xE5\xBA\xA6\xE6\x9D\xA1");
+    UPD_INJECT(XUpgradeEventType_Progress, XUpgradeState_Verifying,
+               XUpgradePhase_Verify, 100, XUpgradePolicy_Optional,
+               XUpgradeGrayDecision_NotEvaluated, "");
+    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[1]) == 100 &&
+                   XProgressBar_value(s_upd.m_phaseBar[2]) == 0,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: Progress(\xE6\xA0\xA1\xE9\xAA\x8C,100%) \xE5\x8F\xAA\xE8\x90\xBD\xE5\xAF\xB9\xE5\xBA\x94\xE6\xAE\xB5(\xE4\xB8\x8D\xE5\x81\x9A\xE9\x98\xB6\xE6\xAE\xB5\xE6\x8E\xA8\xE6\x96\xAD)");
+
+    /* ---- UpdateAvailable(optional)：策略/灰度快照 + 决策钮启用 + 进度复位 ---- */
+    UPD_INJECT(XUpgradeEventType_UpdateAvailable, XUpgradeState_Idle,
+               XUpgradePhase_Download, -1, XUpgradePolicy_Optional,
+               XUpgradeGrayDecision_Hit, "9.9.9");
+    UPD_EXPECT(s_upd.m_available &&
+                   XWidget_isEnabled((XWidget*)s_upd.m_skipBtn),
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: optional \xE7\xAD\x96\xE7\x95\xA5\xE5\xBE\x85\xE5\x86\xB3\xE7\xAD\x96\xE5\x90\xAF\xE7\x94\xA8\xE8\xB7\xB3\xE8\xBF\x87\xE9\x92\xAE");
+    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == 0 &&
+                   XProgressBar_value(s_upd.m_phaseBar[1]) == 0,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE6\x96\xB0\xE7\x89\x88\xE6\x9C\xAC\xE5\x85\xAC\xE5\x91\x8A\xE5\xA4\x8D\xE4\xBD\x8D\xE5\x9B\x9B\xE6\xAE\xB5\xE8\xBF\x9B\xE5\xBA\xA6\xE6\x9D\xA1");
+    UPD_EXPECT(strcmp(s_upd.m_lastVersion, "9.9.9") == 0 &&
+                   s_upd.m_lastPolicy == XUpgradePolicy_Optional &&
+                   s_upd.m_lastGray == XUpgradeGrayDecision_Hit,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE7\xAD\x96\xE7\x95\xA5/\xE7\x81\xB0\xE5\xBA\xA6/\xE7\x89\x88\xE6\x9C\xAC\xE5\xBF\xAB\xE7\x85\xA7\xE9\x9A\x8F\xE4\xBA\x8B\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0");
+
+    /* ---- ReadyNeedRestart：待应用态置位 + 重启提示 ---- */
+    UPD_INJECT(XUpgradeEventType_ReadyNeedRestart, XUpgradeState_Ready,
+               XUpgradePhase_Activate, -1, XUpgradePolicy_Optional,
+               XUpgradeGrayDecision_NotEvaluated, "");
+    UPD_EXPECT(s_upd.m_readyRestart &&
+                   strstr(s_upd.m_lastStatus,
+                          "\xE9\x87\x8D\xE5\x90\xAF") != NULL,
+                   /* 重启 */
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: ReadyNeedRestart \xE7\xBD\xAE\xE5\xBE\x85\xE5\xBA\x94\xE7\x94\xA8\xE6\x80\x81\xE5\xB9\xB6\xE6\x8F\x90\xE7\xA4\xBA\xE9\x87\x8D\xE5\x90\xAF");
+
+    /* ---- RolledBack：故障提示（含回滚语义） ---- */
+    UPD_INJECT(XUpgradeEventType_RolledBack, XUpgradeState_RolledBack,
+               XUpgradePhase_Activate, -1, XUpgradePolicy_Optional,
+               XUpgradeGrayDecision_NotEvaluated, "");
+    UPD_EXPECT(strstr(s_upd.m_lastStatus,
+                      "\xE5\x9B\x9E\xE6\xBB\x9A") != NULL,
+                   /* 回滚 */
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: RolledBack \xE6\x95\x85\xE9\x9A\x9C\xE6\x8F\x90\xE7\xA4\xBA\xE8\x90\xBD\xE7\x8A\xB6\xE6\x80\x81\xE8\xA1\x8C");
+    UPD_EXPECT(!s_upd.m_readyRestart,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE5\x9B\x9E\xE6\xBB\x9A\xE5\x90\x8E\xE5\xBE\x85\xE5\xBA\x94\xE7\x94\xA8\xE6\x80\x81\xE6\x94\xB6\xE5\x8F\xA3");
+
+    /* ---- CheckFailed：状态行静默显示（URL 空检查失败口径） ---- */
+    memset(&event, 0, sizeof(event));
+    event.m_type = XUpgradeEventType_CheckFailed;
+    event.m_state = XUpgradeState_CheckFailed;
+    upd_listener(NULL, &event);
+    upd_pumpCb(NULL, NULL);
+    UPD_EXPECT(strstr(s_upd.m_lastStatus, "\xE6\x9A\x82\xE6\x97\xA0\xE6\x9B\xB4\xE6\x96\xB0") != NULL,
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: CheckFailed \xE6\x97\xA0\xE8\xAF\xB4\xE6\x98\x8E\xE8\x90\xBD\xE3\x80\x8C\xE6\x9A\x82\xE6\x97\xA0\xE6\x9B\xB4\xE6\x96\xB0\xE3\x80\x8D"); /* 暂无更新 */
+    memset(&event, 0, sizeof(event));
+    event.m_type = XUpgradeEventType_CheckFailed;
+    event.m_state = XUpgradeState_CheckFailed;
+    snprintf(event.m_detail, sizeof(event.m_detail), "%s", "url empty");
+    upd_listener(NULL, &event);
+    upd_pumpCb(NULL, NULL);
+    UPD_EXPECT(strstr(s_upd.m_lastStatus,
+                      "\xE6\xA3\x80\xE6\x9F\xA5\xE5\xA4\xB1\xE8\xB4\xA5") !=
+                   NULL,
+                   /* 检查失败 */
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: CheckFailed \xE7\x8A\xB6\xE6\x80\x81\xE8\xA1\x8C\xE9\x9D\x99\xE9\xBB\x98\xE6\x98\xBE\xE7\xA4\xBA");
+
+    /* ---- StateChanged(Checking)：新一轮检查复位进度 ---- */
+    UPD_INJECT(XUpgradeEventType_Progress, XUpgradeState_Downloading,
+               XUpgradePhase_Download, 30, XUpgradePolicy_Optional,
+               XUpgradeGrayDecision_NotEvaluated, "");
+    UPD_INJECT(XUpgradeEventType_StateChanged, XUpgradeState_Checking,
+               XUpgradePhase_Download, -1, XUpgradePolicy_Optional,
+               XUpgradeGrayDecision_NotEvaluated, "");
+    UPD_EXPECT(XProgressBar_value(s_upd.m_phaseBar[0]) == 0 &&
+                   strstr(s_upd.m_lastStatus,
+                          "\xE6\xA3\x80\xE6\x9F\xA5\xE4\xB8\xAD") != NULL,
+                   /* 检查中 */
+               "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE6\x96\xB0\xE4\xB8\x80\xE8\xBD\xAE\xE6\xA3\x80\xE6\x9F\xA5\xE5\xA4\x8D\xE4\xBD\x8D\xE8\xBF\x9B\xE5\xBA\xA6\xE5\xB9\xB6\xE6\x98\xBE\xE7\xA4\xBA\xE5\xBC\x95\xE6\x93\x8E\xE7\x8A\xB6\xE6\x80\x81");
+
+    /* ---- 懒启动真实路径：init 成功即就绪；被占用/根不可用按失败口径
+     *      （不发起检查——检查链路由 XUpgradeE2E_Test 覆盖）。 ---- */
+    {
+        bool started = upd_ensureStarted();
+        UPD_EXPECT(started ||
+                       strstr(s_upd.m_lastStatus,
+                              "\xE5\x88\x9D\xE5\xA7\x8B\xE5\x8C\x96\xE5"
+                              "\xA4\xB1\xE8\xB4\xA5") != NULL,
+                       /* 初始化失败 */
+                   "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5: \xE5\xBC\x95\xE6\x93\x8E\xE6\x87\x92\xE5\x90\xAF\xE5\x8A\xA8\xE6\x94\xB6\xE5\x8F\xA3(\xE5\xB0\xB1\xE7\xBB\xAA\xE6\x88\x96\xE5\xA6\x82\xE5\xAE\x9E\xE5\x8F\x8D\xE9\xA6\x88\xE5\x8D\xA0\xE7\x94\xA8)");
+    }
+
+#undef UPD_INJECT
+#undef UPD_EXPECT
+    /* 抑制标志复位：autotest 后 demo 继续截图/交互流程（不退出），不复位
+     * 会令此后真实 ReadyNeedRestart 的模态弹窗对整个会话失效。 */
+    s_upd.m_dialogSuppress = false;
+    XPrintf("XGuiAutoTest: \xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5 %s\n",
+            failures == 0 ? "PASS" : "FAIL");
+    return failures;
+}
+
+#else /* 裁剪: 契约桩（符号常在, 主文件可无条件链接） */
+
+XWidget* demo_page_update_build(XWidget* parent,
+                                DemoPageStatusFn status, void* user)
+{
+    (void)parent; (void)status; (void)user;
+    XPrintf("XGuiAutoTest: [FAIL] \xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5\xE4\xBE\x9D\xE8\xB5\x96 XUpgrade/\xE6\x8E\xA7\xE4\xBB\xB6\xE8\xA2\xAB\xE8\xA3\x81\xE5\x89\xAA\xEF\xBC\x8C"
+            "\xE6\x97\xA0\xE6\xB3\x95\xE6\x9E\x84\xE5\xBB\xBA\n");
+    return (XWidget*)0;
+}
+
+int demo_page_update_autotest(XWidget* page)
+{
+    (void)page;
+    XPrintf("XGuiAutoTest: [FAIL] \xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0\xE9\xA1\xB5\xE8\xA2\xAB\xE8\xA3\x81\xE5\x89\xAA\xEF\xBC\x8C\xE6\x97\xA0\xE6\xB3\x95\xE8\x87\xAA\xE6\xB5\x8B\n");
+    return -1;
+}
+
+void demo_page_update_adapt(XWidget* page)
+{
+    (void)page;
+}
+
+void demo_page_update_shutdown(void)
+{
+}
+
+#endif /* XUPGRADE_ON && 控件段 */

@@ -689,7 +689,7 @@ int XDir_localeCompare(const char* str1, const char* str2, bool ignoreCase);
  * @param str 要匹配的字符串
  * @return 匹配返回 true，否则返回 false
  */
-bool matchWildcardCaseSensitive(const char* pattern, const char* str);
+bool XDir_matchWildcardCaseSensitive(const char* pattern, const char* str);
 
 #endif // XDIR_ON
 #endif /* XFILE_ON */

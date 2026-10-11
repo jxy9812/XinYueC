@@ -77,7 +77,7 @@ bool XListBase_pop_back_base(XListBase* this_list)
 {
 	if (ISNULL(this_list, "") || ISNULL(XClassGetVtable(this_list), ""))
 		return false;
-	XClassGetVirtualFunc(this_list, EXListBase_Pop_Back, bool(*)(XListBase*))(this_list);
+	return XClassGetVirtualFunc(this_list, EXListBase_Pop_Back, bool(*)(XListBase*))(this_list);
 }
 void XListBase_erase_base(XListBase* this_list,const XListBase_iterator* it, XListBase_iterator* next)
 {
@@ -121,7 +121,13 @@ void* XListBase_takeFirst_base(XListBase* this_list)
 	size_t typeSize = XListBase_typeSize_base(this_list);
 	void* result = XMalloc_System(typeSize);
 	if (!result) return NULL;
-	XMemcpy(result, frontData, typeSize);
+	/* 摘除前元素即将被 pop 反初始化：含所有权的元素必须经移动回调转移资源，
+	 * 字节浅拷贝（memcpy）仅适用于未注册回调的 POD 元素 */
+	XCDataMoveMethod moveMethod = XContainerDataMoveMethod(this_list);
+	if (moveMethod)
+		moveMethod(result, frontData);
+	else
+		memcpy(result, frontData, typeSize);
 	XListBase_pop_front_base(this_list);
 	return result;
 }
@@ -135,7 +141,13 @@ void* XListBase_takeLast_base(XListBase* this_list)
 	size_t typeSize = XListBase_typeSize_base(this_list);
 	void* result = XMalloc_System(typeSize);
 	if (!result) return NULL;
-	XMemcpy(result, backData, typeSize);
+	/* 摘除前元素即将被 pop 反初始化：含所有权的元素必须经移动回调转移资源，
+	 * 字节浅拷贝（memcpy）仅适用于未注册回调的 POD 元素 */
+	XCDataMoveMethod moveMethod = XContainerDataMoveMethod(this_list);
+	if (moveMethod)
+		moveMethod(result, backData);
+	else
+		memcpy(result, backData, typeSize);
 	XListBase_pop_back_base(this_list);
 	return result;
 }
@@ -154,8 +166,6 @@ bool XListBase_removeOne_base(XListBase* this_list, const void* pvData)
 		return false;
 	return XClassGetVirtualFunc(this_list, EXListBase_Remove_One, bool(*)(XListBase*, const void*))(this_list, pvData);
 }
-
-#endif
 
 bool XListBase_contains(const XListBase* this_list, const void* value)
 {
@@ -194,3 +204,5 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
 		return 0;
 	return XClassGetVirtualFunc(this_list, EXListBase_RemoveIf, size_t(*)(XListBase*, bool (*)(const void*, void*), void*))(this_list, predicate, userData);
 }
+
+#endif

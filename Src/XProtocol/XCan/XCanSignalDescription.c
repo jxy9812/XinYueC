@@ -6,6 +6,42 @@
 #include "XMemory.h"
 #include <string.h>
 
+// =============== 多路复用值范围容器回调 ===============
+/* XCanSignalDescription_MultiplexValueRange 内含两个堆上 XVariant 指针，
+ * 作为 m_multiplexSignals 映射的值必须注册 data 拷贝/移动/析构回调，
+ * 否则映射销毁（deinit/clear/覆盖旧键）时两个 XVariant 无任何释放路径。 */
+
+/** @brief 析构回调：释放范围内的两个堆上 XVariant */
+static void xCanMuxValueRange_deinit(void* data)
+{
+    XCanSignalDescription_MultiplexValueRange* range = (XCanSignalDescription_MultiplexValueRange*)data;
+    if (!range) return;
+    if (range->m_minimum) { XClassDelete(range->m_minimum); range->m_minimum = NULL; }
+    if (range->m_maximum) { XClassDelete(range->m_maximum); range->m_maximum = NULL; }
+}
+
+/** @brief 拷贝回调：深拷贝范围内的两个 XVariant（COW 分离时使用） */
+static void xCanMuxValueRange_copy(void* dest, const void* src)
+{
+    XCanSignalDescription_MultiplexValueRange* d = (XCanSignalDescription_MultiplexValueRange*)dest;
+    const XCanSignalDescription_MultiplexValueRange* s = (const XCanSignalDescription_MultiplexValueRange*)src;
+    if (!d || !s) return;
+    d->m_minimum = s->m_minimum ? XVariant_create_copy(s->m_minimum) : NULL;
+    d->m_maximum = s->m_maximum ? XVariant_create_copy(s->m_maximum) : NULL;
+}
+
+/** @brief 移动回调：转移两个 XVariant 的所有权并清空源 */
+static void xCanMuxValueRange_move(void* dest, void* src)
+{
+    XCanSignalDescription_MultiplexValueRange* d = (XCanSignalDescription_MultiplexValueRange*)dest;
+    XCanSignalDescription_MultiplexValueRange* s = (XCanSignalDescription_MultiplexValueRange*)src;
+    if (!d || !s) return;
+    d->m_minimum = s->m_minimum;
+    d->m_maximum = s->m_maximum;
+    s->m_minimum = NULL;
+    s->m_maximum = NULL;
+}
+
 // =============== 初始化与清理 ===============
 
 void XCanSignalDescription_init(XCanSignalDescription* sig)
@@ -260,6 +296,10 @@ XMap* XCanSignalDescription_multiplexSignals(const XCanSignalDescription* sig)
         XMapBaseSetKeyCopyMethod(map, XClass_copy_base);
         XMapBaseSetKeyMoveMethod(map, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(map, XClass_deinit_base);
+        /* 值内含两个堆上 XVariant，注册 data 方法保证销毁/深拷贝语义完整 */
+        XContainerSetDataCopyMethod(map, xCanMuxValueRange_copy);
+        XContainerSetDataMoveMethod(map, xCanMuxValueRange_move);
+        XContainerSetDataDeinitMethod(map, xCanMuxValueRange_deinit);
         return map;
     }
     return XMap_create_copy(sig->m_multiplexSignals);
@@ -291,6 +331,9 @@ void XCanSignalDescription_addMultiplexSignal(XCanSignalDescription* sig,
         XMapBaseSetKeyCopyMethod(sig->m_multiplexSignals, XClass_copy_base);
         XMapBaseSetKeyMoveMethod(sig->m_multiplexSignals, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(sig->m_multiplexSignals, XClass_deinit_base);
+        XContainerSetDataCopyMethod(sig->m_multiplexSignals, xCanMuxValueRange_copy);
+        XContainerSetDataMoveMethod(sig->m_multiplexSignals, xCanMuxValueRange_move);
+        XContainerSetDataDeinitMethod(sig->m_multiplexSignals, xCanMuxValueRange_deinit);
     }
 
     XString key;
@@ -313,6 +356,9 @@ void XCanSignalDescription_addMultiplexSignal_value(XCanSignalDescription* sig,
         XMapBaseSetKeyCopyMethod(sig->m_multiplexSignals, XClass_copy_base);
         XMapBaseSetKeyMoveMethod(sig->m_multiplexSignals, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(sig->m_multiplexSignals, XClass_deinit_base);
+        XContainerSetDataCopyMethod(sig->m_multiplexSignals, xCanMuxValueRange_copy);
+        XContainerSetDataMoveMethod(sig->m_multiplexSignals, xCanMuxValueRange_move);
+        XContainerSetDataDeinitMethod(sig->m_multiplexSignals, xCanMuxValueRange_deinit);
     }
 
     XString key;
@@ -323,7 +369,12 @@ void XCanSignalDescription_addMultiplexSignal_value(XCanSignalDescription* sig,
     memset(&range, 0, sizeof(range));
     range.m_minimum = XVariant_create_copy(value);
     range.m_maximum = XVariant_create_copy(value);
-    XMapBase_insert_base((XMapBase*)sig->m_multiplexSignals, &key, &range);
+    /* 值走移动插入：两个新建 XVariant 的所有权移交 map（若同键已存在，
+       旧条目经析构回调释放），随映射销毁时统一释放，不再泄漏；
+       插入失败且值未被接管时按析构回调清理，已被接管时为空操作 */
+    if (!XMapBase_insert_valueMove_base((XMapBase*)sig->m_multiplexSignals, &key, &range)) {
+        xCanMuxValueRange_deinit(&range);
+    }
 
     XClassDeinit((XClass*)&key);
 }

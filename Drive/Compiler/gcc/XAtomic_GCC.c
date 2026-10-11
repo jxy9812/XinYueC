@@ -24,149 +24,149 @@ static inline int xatomic_to_gcc_memory_order(XAtomic_MemoryOrder order)
 
 // ========== 通用加载/存储操作 ==========
 // Load
-bool XAtomic_load_bool(const XAtomic_bool* var, XAtomic_MemoryOrder order)
+bool XAtomic_load_bool(const XAtomic_Bool* var, XAtomic_MemoryOrder order)
 {
     bool result;
-    __atomic_load(&var->value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_load(&var->m_value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-int32_t XAtomic_load_int32(const XAtomic_int32_t* var, XAtomic_MemoryOrder order)
+int32_t XAtomic_load_int32(const XAtomic_Int32* var, XAtomic_MemoryOrder order)
 {
     int32_t result;
-    __atomic_load(&var->value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_load(&var->m_value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-uint32_t XAtomic_load_uint32(const XAtomic_uint32_t* var, XAtomic_MemoryOrder order)
+uint32_t XAtomic_load_uint32(const XAtomic_Uint32* var, XAtomic_MemoryOrder order)
 {
     uint32_t result;
-    __atomic_load(&var->value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_load(&var->m_value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-int64_t XAtomic_load_int64(const XAtomic_int64_t* var, XAtomic_MemoryOrder order)
+int64_t XAtomic_load_int64(const XAtomic_Int64* var, XAtomic_MemoryOrder order)
 {
     int64_t result;
-    __atomic_load(&var->value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_load(&var->m_value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-uint64_t XAtomic_load_uint64(const XAtomic_uint64_t* var, XAtomic_MemoryOrder order)
+uint64_t XAtomic_load_uint64(const XAtomic_Uint64* var, XAtomic_MemoryOrder order)
 {
     uint64_t result;
-    __atomic_load(&var->value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_load(&var->m_value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
+size_t XAtomic_load_size_t(const XAtomic_SizeT* var, XAtomic_MemoryOrder order)
 {
     size_t result;
-    __atomic_load(&var->value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_load(&var->m_value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-uintptr_t XAtomic_load_uintptr_t(const XAtomic_uintptr_t* var, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_load_uintptr_t(const XAtomic_Uintptr* var, XAtomic_MemoryOrder order)
 {
     uintptr_t result;
-    __atomic_load(&var->value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_load(&var->m_value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
 // Store
-void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+void XAtomic_store_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order)
 {
-    __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
+    __atomic_store(&var->m_value, &value, xatomic_to_gcc_memory_order(order));
 }
 
-void XAtomic_store_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
+    __atomic_store(&var->m_value, &value, xatomic_to_gcc_memory_order(order));
 }
 
-void XAtomic_store_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
+    __atomic_store(&var->m_value, &value, xatomic_to_gcc_memory_order(order));
 }
 
-void XAtomic_store_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
+    __atomic_store(&var->m_value, &value, xatomic_to_gcc_memory_order(order));
 }
 
-void XAtomic_store_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
+    __atomic_store(&var->m_value, &value, xatomic_to_gcc_memory_order(order));
 }
 
-void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
+    __atomic_store(&var->m_value, &value, xatomic_to_gcc_memory_order(order));
 }
 
-void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store(&var->value, &value, xatomic_to_gcc_memory_order(order));
+    __atomic_store(&var->m_value, &value, xatomic_to_gcc_memory_order(order));
 }
 
 // ========== 交换操作 (Exchange) ==========
-bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+bool XAtomic_exchange_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order)
 {
     bool result;
-    __atomic_exchange(&var->value, &value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_exchange(&var->m_value, &value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_exchange_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
     int32_t result;
-    __atomic_exchange(&var->value, &value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_exchange(&var->m_value, &value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-uint32_t XAtomic_exchange_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+uint32_t XAtomic_exchange_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
     uint32_t result;
-    __atomic_exchange(&var->value, &value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_exchange(&var->m_value, &value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-int64_t XAtomic_exchange_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_exchange_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
     int64_t result;
-    __atomic_exchange(&var->value, &value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_exchange(&var->m_value, &value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-uint64_t XAtomic_exchange_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_exchange_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
     uint64_t result;
-    __atomic_exchange(&var->value, &value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_exchange(&var->m_value, &value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_exchange_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
     size_t result;
-    __atomic_exchange(&var->value, &value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_exchange(&var->m_value, &value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
-uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
     uintptr_t result;
-    __atomic_exchange(&var->value, &value, &result, xatomic_to_gcc_memory_order(order));
+    __atomic_exchange(&var->m_value, &value, &result, xatomic_to_gcc_memory_order(order));
     return result;
 }
 
 // ========== 比较交换操作 (Compare Exchange) ==========
 // 注意：GCC 的 __atomic_compare_exchange_n 函数有一个 'weak' 参数。
 // 我们的 API 是 'strong' 版本，所以我们将其设为 false。
-#define DEFINE_CAS_FUNC(type_name, type) \
-bool XAtomic_compare_exchange_strong_##type_name(XAtomic_##type_name* var, type* expected, type desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order) \
+#define DEFINE_CAS_FUNC(func_name, type_name, type) \
+bool XAtomic_compare_exchange_strong_##func_name(XAtomic_##type_name* var, type* expected, type desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order) \
 { \
     return __atomic_compare_exchange_n( \
-        &var->value, \
+        &var->m_value, \
         expected, \
         desired, \
         /* weak = */ false, \
@@ -175,96 +175,96 @@ bool XAtomic_compare_exchange_strong_##type_name(XAtomic_##type_name* var, type*
     ); \
 }
 
-DEFINE_CAS_FUNC(bool, bool)
-DEFINE_CAS_FUNC(int32_t, int32_t)
-DEFINE_CAS_FUNC(uint32_t, uint32_t)
-DEFINE_CAS_FUNC(int64_t, int64_t)
-DEFINE_CAS_FUNC(uint64_t, uint64_t)
-DEFINE_CAS_FUNC(size_t, size_t)
-DEFINE_CAS_FUNC(uintptr_t, uintptr_t)
+DEFINE_CAS_FUNC(bool, Bool, bool)
+DEFINE_CAS_FUNC(int32_t, Int32, int32_t)
+DEFINE_CAS_FUNC(uint32_t, Uint32, uint32_t)
+DEFINE_CAS_FUNC(int64_t, Int64, int64_t)
+DEFINE_CAS_FUNC(uint64_t, Uint64, uint64_t)
+DEFINE_CAS_FUNC(size_t, SizeT, size_t)
+DEFINE_CAS_FUNC(uintptr_t, Uintptr, uintptr_t)
 
 // 头文件中声明的不带 _t 后缀的 CAS 函数（类型名带 _t，但函数名不带）
-bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_int32(XAtomic_Int32* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&var->value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&var->m_value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
 
-bool XAtomic_compare_exchange_strong_uint32(XAtomic_uint32_t* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uint32(XAtomic_Uint32* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&var->value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&var->m_value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
 
-bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_int64(XAtomic_Int64* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&var->value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&var->m_value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
 
-bool XAtomic_compare_exchange_strong_uint64(XAtomic_uint64_t* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uint64(XAtomic_Uint64* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&var->value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&var->m_value, expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
 
 // ========== 加法/减法操作 (Fetch Add/Sub) ==========
 // Fetch Add
-int32_t XAtomic_fetch_add_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_fetch_add_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-uint32_t XAtomic_fetch_add_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+uint32_t XAtomic_fetch_add_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-int64_t XAtomic_fetch_add_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_fetch_add_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-uint64_t XAtomic_fetch_add_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_fetch_add_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-size_t XAtomic_fetch_add_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_fetch_add_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
 // Fetch Sub
-int32_t XAtomic_fetch_sub_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_fetch_sub_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-uint32_t XAtomic_fetch_sub_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+uint32_t XAtomic_fetch_sub_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-int64_t XAtomic_fetch_sub_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_fetch_sub_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-uint64_t XAtomic_fetch_sub_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_fetch_sub_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-size_t XAtomic_fetch_sub_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_fetch_sub_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&var->value, value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&var->m_value, value, xatomic_to_gcc_memory_order(order));
 }
 
-uintptr_t XAtomic_fetch_add_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_fetch_add_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
-    return (uintptr_t)XAtomic_fetch_add_size_t((XAtomic_size_t*)var, (size_t)value, order);
+    return (uintptr_t)XAtomic_fetch_add_size_t((XAtomic_SizeT*)var, (size_t)value, order);
 }
 
-uintptr_t XAtomic_fetch_sub_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_fetch_sub_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
-    return (uintptr_t)XAtomic_fetch_sub_size_t((XAtomic_size_t*)var, (size_t)value, order);
+    return (uintptr_t)XAtomic_fetch_sub_size_t((XAtomic_SizeT*)var, (size_t)value, order);
 }
 
 // ========== 内存屏障 API ==========

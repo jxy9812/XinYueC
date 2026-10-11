@@ -1829,7 +1829,7 @@ bool XXmlStreamReaderTest_runAll(void)
 }
 
 /* ==================== 菜单注册 ==================== */
-#if DEMOTEST
+#if DEMOTEST_ON
 void XTestMenu_XXmlStreamReaderTest(XTestMenu* root)
 {
     XTestMenu* menu = XTestMenu_create("XXmlStreamReaderTest");

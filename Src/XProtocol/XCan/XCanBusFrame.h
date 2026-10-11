@@ -1,22 +1,11 @@
-﻿#ifndef XCANBUSFRAME_H
-#define XCANBUSFRAME_H
-
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include "XByteArray.h"
-#include "XString.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/**
+﻿/**
  * @file XCanBusFrame.h
  * @brief CAN 总线数据帧头文件（对齐 Qt6 QCanBusFrame）
  * @details 定义 CAN 数据帧的完整结构，包括帧 ID、帧类型、负载数据、时间戳、
  *          扩展帧格式、CAN FD 标志、错误标志等。这是一个值类型结构体，
- *          不继承 XClass，直接通过 memcpy 传递。
+ *          不继承 XClass；但成员 m_load 由对象拥有并在 deinit 时释放，
+ *          禁止直接 memcpy 复制本结构体（浅拷贝共享负载指针，析构时双重
+ *          释放），需要副本时请使用 XCanBusFrame_create_copy。
  *
  * @par 功能特性
  * - 支持标准帧（11 位 ID）和扩展帧（29 位 ID）
@@ -45,6 +34,23 @@ extern "C" {
  * XCanBusFrame_deinit(&frame);
  * @endcode
  */
+
+#ifndef XCANBUSFRAME_H
+#define XCANBUSFRAME_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "XCan_config.h"
+
+#if XCAN_FRAME_ON
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "XByteArray.h"
+#include "XString.h"
 
 /******************************************************************************************
  * 常量定义
@@ -144,7 +150,7 @@ typedef struct XCanBusFrame {
 
     uint8_t m_reserved[2];          ///< 保留字节（未来扩展）
 
-    XByteArray* m_load;             ///< 帧负载数据（XByteArray）
+    XByteArray* m_load;             ///< 帧负载数据（XByteArray，由对象拥有并在 deinit 时释放，禁止 memcpy 共享）
     XCanBusFrame_TimeStamp m_stamp; ///< 帧时间戳
 } XCanBusFrame;
 
@@ -426,6 +432,8 @@ int64_t XCanBusFrame_TimeStamp_seconds(XCanBusFrame_TimeStamp ts);
  * @return 微秒数（0-999999）
  */
 int64_t XCanBusFrame_TimeStamp_microSeconds(XCanBusFrame_TimeStamp ts);
+
+#endif /* XCAN_FRAME_ON */
 
 #ifdef __cplusplus
 }

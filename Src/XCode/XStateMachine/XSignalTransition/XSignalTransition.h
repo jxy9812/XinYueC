@@ -1,4 +1,10 @@
-﻿#ifndef XSIGNALTRANSITION_H
+﻿/**
+ * @file       XSignalTransition.h
+ * @brief      信号触发转换公开 API。
+ * @details    对齐 Qt 6.8 QSignalTransition；实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XSIGNALTRANSITION_H
 #define XSIGNALTRANSITION_H
 
 #ifdef __cplusplus

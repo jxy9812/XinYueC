@@ -181,7 +181,7 @@ void XVirtualKeyboardAbstractInputMethod_init(
 
 /**
  * @brief      使用默认内存类型在堆上创建。
- * @return     新对象指针；失败返回 NULL，用 *_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL，用 XClassDelete 释放。
  */
 #define XVirtualKeyboardAbstractInputMethod_create() \
     XVirtualKeyboardAbstractInputMethod_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
@@ -399,6 +399,8 @@ void* XVirtualKeyboardAbstractInputMethod_selectionListActiveItemChanged_signal(
 /**
  * @brief      selectionListsChanged() 信号标识（列表集合变化；引擎监
  *             听并重建候选模型，对标同名信号）。
+ * @param      self 对象借用指针；可为 NULL（被忽略）。
+ * @return     不透明的信号标识；不得解引用或释放。
  */
 void* XVirtualKeyboardAbstractInputMethod_selectionListsChanged_signal(
         XVirtualKeyboardAbstractInputMethod* self);

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XAbstractItemModel.c
  * @brief      XAbstractItemModel 条目模型实现（内存二维模型）。
  * @author     XinYueC 团队
@@ -8,16 +8,59 @@
 #include "XAlgorithm.h"
 #include "XMemory.h"
 #include "XVarList.h"
+#include "XVector.h"
 #include "XEventType.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
 /* ==================== 内部工具 ==================== */
 
-static XString** xaim_getRow(const XAbstractItemModel* self, int row)
+/** @brief 单元格/表头元素深拷贝（XString* 元素的复制回调）。 */
+static void xaim_cellCopy(void* data, const void* sData)
 {
-    return (self && self->m_cells && row >= 0 && row < self->m_rows)
-               ? self->m_cells[row] : NULL;
+    XString* const* src = (XString* const*)sData;
+    *(XString**)data = *src ? XString_create_copy(*src) : NULL;
+}
+
+/** @brief 单元格/表头元素释放（XString* 元素的清理回调）。 */
+static void xaim_cellDeinit(void* data)
+{
+    XString** cell = (XString**)data;
+    if (cell && *cell) {
+        XClassDelete(*cell);
+        *cell = NULL;
+    }
+}
+
+/** @brief 初始化对象拥有的 XString* 元素向量（单元格/表头共用）。 */
+static void xaim_vectorInit(XVector* vec)
+{
+    XVector_init(vec, sizeof(XString*), false);
+    XContainerSetDataCopyMethod(vec, xaim_cellCopy);
+    XContainerSetDataDeinitMethod(vec, xaim_cellDeinit);
+}
+
+/** @brief 定位单元格槽位（行主序；越界或 self 为空返回 NULL）。 */
+static XString** xaim_cellSlot(const XAbstractItemModel* self, int row,
+                               int col)
+{
+    if (!self || row < 0 || row >= self->m_rows ||
+        col < 0 || col >= self->m_cols)
+        return NULL;
+    return (XString**)XVector_at_base(&self->m_cells,
+                                      (int64_t)row * self->m_cols + col);
+}
+
+/** @brief 定位表头槽位（orientation 0=列头 1=行头；越界返回 NULL）。 */
+static XString** xaim_headerSlot(const XAbstractItemModel* self,
+                                 int section, int orientation)
+{
+    const XVector* vec;
+    if (!self) return NULL;
+    vec = (orientation == 0) ? &self->m_hHeader : &self->m_vHeader;
+    if (section < 0 || (size_t)section >= XVector_size_base(vec))
+        return NULL;
+    return (XString**)XVector_at_base(vec, section);
 }
 
 static void xaim_emitDataChanged(XAbstractItemModel* self, int row, int col)
@@ -55,90 +98,17 @@ static void xaim_emitReset(XAbstractItemModel* self)
     }
 }
 
-/* ==================== 容量 ==================== */
-
-static bool xaim_growRows(XAbstractItemModel* self, int needRows)
-{
-    XString*** grown;
-    int newCap;
-    int r;
-    if (needRows <= self->m_capRows) return true;
-    newCap = self->m_capRows > 0 ? self->m_capRows : 4;
-    while (newCap < needRows) newCap *= 2;
-    grown = (XString***)XRealloc_System(self->m_cells,
-                                        sizeof(XString**) * (size_t)newCap);
-    if (!grown) return false;
-    self->m_cells = grown;
-    for (r = self->m_capRows; r < newCap; ++r)
-        self->m_cells[r] = NULL;
-    self->m_capRows = newCap;
-    return true;
-}
-
-static bool xaim_growCols(XAbstractItemModel* self, int row, int needCols)
-{
-    XString** grown;
-    int newCap;
-    int r;
-    int c;
-    if (needCols <= self->m_capCols) return true;
-    newCap = self->m_capCols > 0 ? self->m_capCols : 4;
-    while (newCap < needCols) newCap *= 2;
-    for (r = 0; r < self->m_capRows; ++r) {
-        if (!self->m_cells[r]) continue;
-        grown = (XString**)XRealloc_System(self->m_cells[r],
-                                           sizeof(XString*) * (size_t)newCap);
-        if (!grown) return false;
-        self->m_cells[r] = grown;
-        for (c = self->m_capCols; c < newCap; ++c)
-            self->m_cells[r][c] = NULL;
-    }
-    self->m_capCols = newCap;
-    return true;
-}
-
 /* ==================== 虚函数实现 ==================== */
 
 static void VXAbstractItemModel_deinit(XAbstractItemModel* self)
 {
-    int r, c;
     if (!self) return;
-    for (r = 0; r < self->m_rows; ++r) {
-        if (!self->m_cells || !self->m_cells[r]) continue;
-        for (c = 0; c < self->m_cols; ++c) {
-            if (self->m_cells[r][c]) XClassDelete(self->m_cells[r][c]);
-            self->m_cells[r][c] = NULL;
-        }
-        if (self->m_cells[r]) XFree_System(self->m_cells[r]);
-    }
-    if (self->m_cells) {
-        XFree_System(self->m_cells);
-        self->m_cells = NULL;
-    }
-    for (c = 0; c < self->m_cols; ++c) {
-        if (self->m_hHeader && self->m_hHeader[c]) {
-            XClassDelete(self->m_hHeader[c]);
-            self->m_hHeader[c] = NULL;
-        }
-    }
-    if (self->m_hHeader) {
-        XFree_System(self->m_hHeader);
-        self->m_hHeader = NULL;
-    }
-    for (r = 0; r < self->m_rows; ++r) {
-        if (self->m_vHeader && self->m_vHeader[r]) {
-            XClassDelete(self->m_vHeader[r]);
-            self->m_vHeader[r] = NULL;
-        }
-    }
-    if (self->m_vHeader) {
-        XFree_System(self->m_vHeader);
-        self->m_vHeader = NULL;
-    }
+    /* 元素（XString*）经注册回调逐个释放后回收向量存储。 */
+    XClassDeinit(&self->m_cells);
+    XClassDeinit(&self->m_hHeader);
+    XClassDeinit(&self->m_vHeader);
     self->m_rows = 0;
     self->m_cols = 0;
-    self->m_capRows = 0;
-    self->m_capCols = 0;
     XClass_Deinit_Parent(XObject, (XObject*)self);
 }
 
@@ -158,20 +128,20 @@ static void VXAbstractItemModel_copy(XAbstractItemModel* self,
         XAbstractItemModel_setDimension(self, other->m_rows, other->m_cols);
         for (r = 0; r < other->m_rows; ++r) {
             for (c = 0; c < other->m_cols; ++c) {
-                if (other->m_cells && other->m_cells[r] &&
-                    other->m_cells[r][c]) {
-                    XAbstractItemModel_setData(self, r, c,
-                                               other->m_cells[r][c]);
-                }
+                XString** cell = xaim_cellSlot(other, r, c);
+                if (cell && *cell)
+                    XAbstractItemModel_setData(self, r, c, *cell);
             }
-            if (other->m_vHeader && other->m_vHeader[r])
-                XAbstractItemModel_setHeaderData(
-                    self, r, 1, other->m_vHeader[r]);
+            {
+                XString** head = xaim_headerSlot(other, r, 1);
+                if (head && *head)
+                    XAbstractItemModel_setHeaderData(self, r, 1, *head);
+            }
         }
         for (c = 0; c < other->m_cols; ++c) {
-            if (other->m_hHeader && other->m_hHeader[c])
-                XAbstractItemModel_setHeaderData(
-                    self, c, 0, other->m_hHeader[c]);
+            XString** head = xaim_headerSlot(other, c, 0);
+            if (head && *head)
+                XAbstractItemModel_setHeaderData(self, c, 0, *head);
         }
     }
 }
@@ -185,20 +155,15 @@ static void VXAbstractItemModel_move(XAbstractItemModel* self,
                   void(*)(XObject*, XObject*))((XObject*)self,
                                                (XObject*)other);
     VXAbstractItemModel_deinit(self);
-    self->m_cells = other->m_cells;
+    XAbstractItemModel_init(self);
+    /* 容器整体移动（转移底层存储；other 留为已初始化空容器）。 */
+    XClassMove(&self->m_cells, &other->m_cells);
+    XClassMove(&self->m_hHeader, &other->m_hHeader);
+    XClassMove(&self->m_vHeader, &other->m_vHeader);
     self->m_rows = other->m_rows;
     self->m_cols = other->m_cols;
-    self->m_capRows = other->m_capRows;
-    self->m_capCols = other->m_capCols;
-    self->m_hHeader = other->m_hHeader;
-    self->m_vHeader = other->m_vHeader;
-    other->m_cells = NULL;
     other->m_rows = 0;
     other->m_cols = 0;
-    other->m_capRows = 0;
-    other->m_capCols = 0;
-    other->m_hHeader = NULL;
-    other->m_vHeader = NULL;
 }
 
 /* ==================== 类初始化 ==================== */
@@ -219,6 +184,9 @@ void XAbstractItemModel_init(XAbstractItemModel* self)
     XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XAbstractItemModel);
+    xaim_vectorInit(&self->m_cells);
+    xaim_vectorInit(&self->m_hHeader);
+    xaim_vectorInit(&self->m_vHeader);
 }
 
 XAbstractItemModel* XAbstractItemModel_create_ex(XMemoryType memory)
@@ -243,84 +211,29 @@ int XAbstractItemModel_columnCount(const XAbstractItemModel* self)
 void XAbstractItemModel_setDimension(XAbstractItemModel* self,
                                      int rows, int cols)
 {
+    size_t oldCells;
     int oldRows;
     int oldCols;
-    int r;
-    int c;
     if (!self || rows < 0 || cols < 0) return;
     oldRows = self->m_rows;
     oldCols = self->m_cols;
     if (rows == oldRows && cols == oldCols) return;
-    /* 扩容：先保证容量。行数组一律按列容量整块分配——若按当前列数
-       分配，后续扩列时 growCols 仅处理 needCols>capCols 的情形，按旧
-       窄列数分配的行会以不足容量参与访问（高列号写即堆越界，demo
-       条目视图页模型桥建树确定性崩溃，2026-09-24 根修）。 */
-    if (!xaim_growRows(self, rows)) return;
-    if (!xaim_growCols(self, 0, cols)) return;
-    for (r = 0; r < rows; ++r) {
-        if (!xaim_growCols(self, r, cols)) return;
-        if (!self->m_cells[r]) {
-            size_t rowCap = (size_t)(self->m_capCols > 0
-                                         ? self->m_capCols : 1);
-            self->m_cells[r] = (XString**)XCalloc_System(
-                (size_t)(self->m_capCols > 0 ? self->m_capCols : 1),
-                sizeof(XString*));
-            if (!self->m_cells[r]) return;
-        }
+    oldCells = XVector_size_base(&self->m_cells);
+    /* 单元格：行主序一维向量，尺寸恒等于 rows*cols；缩小区间经元素
+       回调释放被裁剪格，新增区间补 NULL（原扩列错位问题随裸数组一并
+       消除）。表头向量按新维度同步裁剪/补位。任一分配失败即回滚已
+       完成的 resize（保持原维度状态）。 */
+    if (!XVector_resize_base(&self->m_cells,
+                             (size_t)rows * (size_t)cols))
+        return;
+    if (!XVector_resize_base(&self->m_hHeader, (size_t)cols)) {
+        XVector_resize_base(&self->m_cells, oldCells);
+        return;
     }
-    /* 缩容：释放被裁剪的列/行。 */
-    for (r = 0; r < rows && r < oldRows; ++r) {
-        int c;
-        for (c = cols; c < oldCols; ++c) {
-            if (self->m_cells[r] && self->m_cells[r][c]) {
-                XClassDelete(self->m_cells[r][c]);
-                self->m_cells[r][c] = NULL;
-            }
-        }
-    }
-    for (r = rows; r < oldRows; ++r) {
-        int c;
-        if (!self->m_cells[r]) continue;
-        for (c = 0; c < oldCols; ++c) {
-            if (self->m_cells[r][c]) XClassDelete(self->m_cells[r][c]);
-        }
-        XFree_System(self->m_cells[r]);
-        self->m_cells[r] = NULL;
-    }
-    /* 表头数组同步（列头/行头）。表头条目归模型所有，换数组前必须
-       先逐条释放被裁剪区间（[cols,oldCols)/[rows,oldRows)）的旧条目，
-       否则指针随旧数组一并丢失。 */
-    for (c = cols; c < oldCols; ++c) {
-        if (self->m_hHeader && self->m_hHeader[c]) {
-            XClassDelete(self->m_hHeader[c]);
-            self->m_hHeader[c] = NULL;
-        }
-    }
-    for (r = rows; r < oldRows; ++r) {
-        if (self->m_vHeader && self->m_vHeader[r]) {
-            XClassDelete(self->m_vHeader[r]);
-            self->m_vHeader[r] = NULL;
-        }
-    }
-    {
-        XString** newH = NULL;
-        XString** newV = NULL;
-        if (cols > 0) {
-            newH = (XString**)XCalloc_System((size_t)cols, sizeof(XString*));
-            if (!newH) return;
-            for (c = 0; c < cols && c < oldCols; ++c)
-                newH[c] = self->m_hHeader ? self->m_hHeader[c] : NULL;
-        }
-        if (rows > 0) {
-            newV = (XString**)XCalloc_System((size_t)rows, sizeof(XString*));
-            if (!newV) { if (newH) XFree_System(newH); return; }
-            for (r = 0; r < rows && r < oldRows; ++r)
-                newV[r] = self->m_vHeader ? self->m_vHeader[r] : NULL;
-        }
-        if (self->m_hHeader) XFree_System(self->m_hHeader);
-        if (self->m_vHeader) XFree_System(self->m_vHeader);
-        self->m_hHeader = newH;
-        self->m_vHeader = newV;
+    if (!XVector_resize_base(&self->m_vHeader, (size_t)rows)) {
+        XVector_resize_base(&self->m_hHeader, (size_t)oldCols);
+        XVector_resize_base(&self->m_cells, oldCells);
+        return;
     }
     self->m_rows = rows;
     self->m_cols = cols;
@@ -349,11 +262,8 @@ void XAbstractItemModel_setColumnCount(XAbstractItemModel* self, int cols)
 const XString* XAbstractItemModel_data(const XAbstractItemModel* self,
                                        int row, int col)
 {
-    XString** cells;
-    if (!self) return NULL;
-    cells = xaim_getRow(self, row);
-    if (!cells || col < 0 || col >= self->m_cols) return NULL;
-    return cells[col];
+    XString** slot = xaim_cellSlot(self, row, col);
+    return (slot && *slot) ? *slot : NULL;
 }
 
 const char* XAbstractItemModel_data_2(const XAbstractItemModel* self,
@@ -367,15 +277,15 @@ const char* XAbstractItemModel_data_2(const XAbstractItemModel* self,
 bool XAbstractItemModel_setData(XAbstractItemModel* self, int row, int col,
                                 const XString* value)
 {
-    XString** cells;
+    XString** slot;
     XString* repl;
     if (!self) return false;
-    cells = xaim_getRow(self, row);
-    if (!cells || col < 0 || col >= self->m_cols) return false;
+    slot = xaim_cellSlot(self, row, col);
+    if (!slot) return false;
     repl = value ? XString_create_copy(value) : NULL;
     if (value && !repl) return false;
-    if (cells[col]) XClassDelete(cells[col]);
-    cells[col] = repl;
+    if (*slot) XClassDelete(*slot);
+    *slot = repl;
     xaim_emitDataChanged(self, row, col);
     return true;
 }
@@ -399,16 +309,8 @@ bool XAbstractItemModel_setData_2(XAbstractItemModel* self, int row, int col,
 const XString* XAbstractItemModel_headerData(const XAbstractItemModel* self,
                                              int section, int orientation)
 {
-    if (!self) return NULL;
-    if (orientation == 0) { /* 水平列头 */
-        if (section < 0 || section >= self->m_cols || !self->m_hHeader)
-            return NULL;
-        return self->m_hHeader[section];
-    }
-    /* 垂直行头 */
-    if (section < 0 || section >= self->m_rows || !self->m_vHeader)
-        return NULL;
-    return self->m_vHeader[section];
+    XString** slot = xaim_headerSlot(self, section, orientation);
+    return (slot && *slot) ? *slot : NULL;
 }
 
 const char* XAbstractItemModel_headerData_2(const XAbstractItemModel* self,
@@ -422,22 +324,15 @@ const char* XAbstractItemModel_headerData_2(const XAbstractItemModel* self,
 bool XAbstractItemModel_setHeaderData(XAbstractItemModel* self, int section,
                                       int orientation, const XString* value)
 {
-    XString** arr;
+    XString** slot;
     XString* repl;
-    int count;
     if (!self) return false;
-    if (orientation == 0) {
-        arr = self->m_hHeader;
-        count = self->m_cols;
-    } else {
-        arr = self->m_vHeader;
-        count = self->m_rows;
-    }
-    if (section < 0 || section >= count || !arr) return false;
+    slot = xaim_headerSlot(self, section, orientation);
+    if (!slot) return false;
     repl = value ? XString_create_copy(value) : NULL;
     if (value && !repl) return false;
-    if (arr[section]) XClassDelete(arr[section]);
-    arr[section] = repl;
+    if (*slot) XClassDelete(*slot);
+    *slot = repl;
     return true;
 }
 

@@ -42,11 +42,12 @@
 #define XMULTIPOOL_H
 
 #include "XMemory_config.h"
-#if XMEMORY_MULTIPOOL_ON
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if XMEMORY_MULTIPOOL_ON
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -75,7 +76,7 @@ typedef struct XMultiPool {
     size_t       growth_multiplier;   /**< 倍数模式下的增长倍数 */
 
     size_t         total_user_size;   /**< 总用户可用内存大小（字节） */
-    XAtomic_size_t free_user_size;    /**< 当前剩余用户可用内存（原子变量） */
+    XAtomic_SizeT free_user_size;    /**< 当前剩余用户可用内存（原子变量） */
 } XMultiPool;
 
 /* ============================================================================
@@ -345,10 +346,10 @@ void XMultiPool_global_free(void* ptr);
  */
 bool XMultiPool_global_isInited(void);
 
+#endif /* XMEMORY_MULTIPOOL_ON */
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* XMEMORY_MULTIPOOL_ON */
 
 #endif /* XMULTIPOOL_H */

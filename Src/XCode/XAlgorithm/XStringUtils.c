@@ -45,8 +45,8 @@ ConvStatus int64_to_str(int64_t num, char* buf, size_t buf_size) {
     // 处理INT64_MIN特殊情况
     if (num == INT64_MIN) {
         const char* min_str = "-9223372036854775808";
-        if (buf_size <= strlen(min_str)) return CONV_BUFFER_TOO_SMALL;
-        strcpy(buf, min_str);
+        if (buf_size <= XStrlen(min_str)) return CONV_BUFFER_TOO_SMALL;
+        XStrcpy(buf, min_str);
         return CONV_OK;
     }
 
@@ -151,7 +151,7 @@ ConvStatus str_to_int64(const char* str, int64_t* result) {
     if (!is_digit(str[i])) return CONV_INVALID_CHAR;
 
     // 处理INT64_MIN特殊情况
-    if (is_negative && strcmp(str, "-9223372036854775808") == 0) {
+    if (is_negative && XStrcmp(str, "-9223372036854775808") == 0) {
         *result = INT64_MIN;
         return CONV_OK;
     }
@@ -279,18 +279,18 @@ ConvStatus float_to_str(float num, char* buf, size_t buf_size, int precision) {
     // 处理特殊值
     if (isnan(num)) {
         if (buf_size < 4) return CONV_BUFFER_TOO_SMALL;
-        strcpy(buf, "NaN");
+        XStrcpy(buf, "NaN");
         return CONV_OK;
     }
 
     if (isinf(num)) {
         if (num > 0) {
             if (buf_size < 9) return CONV_BUFFER_TOO_SMALL;
-            strcpy(buf, "Infinity");
+            XStrcpy(buf, "Infinity");
         }
         else {
             if (buf_size < 10) return CONV_BUFFER_TOO_SMALL;
-            strcpy(buf, "-Infinity");
+            XStrcpy(buf, "-Infinity");
         }
         return CONV_OK;
     }
@@ -312,7 +312,7 @@ ConvStatus float_to_str(float num, char* buf, size_t buf_size, int precision) {
             *ptr = '\0';
         }
         else {
-            strcpy(buf, "0");
+            XStrcpy(buf, "0");
         }
         return CONV_OK;
     }
@@ -549,18 +549,18 @@ ConvStatus double_to_str(double num, char* buf, size_t buf_size, int precision) 
     // 处理特殊值
     if (isnan(num)) {
         if (buf_size < 4) return CONV_BUFFER_TOO_SMALL;
-        strcpy(buf, "NaN");
+        XStrcpy(buf, "NaN");
         return CONV_OK;
     }
 
     if (isinf(num)) {
         if (num > 0) {
             if (buf_size < 9) return CONV_BUFFER_TOO_SMALL;
-            strcpy(buf, "Infinity");
+            XStrcpy(buf, "Infinity");
         }
         else {
             if (buf_size < 10) return CONV_BUFFER_TOO_SMALL;
-            strcpy(buf, "-Infinity");
+            XStrcpy(buf, "-Infinity");
         }
         return CONV_OK;
     }
@@ -582,7 +582,7 @@ ConvStatus double_to_str(double num, char* buf, size_t buf_size, int precision) 
             *ptr = '\0';
         }
         else {
-            strcpy(buf, "0");
+            XStrcpy(buf, "0");
         }
         return CONV_OK;
     }
@@ -818,15 +818,15 @@ ConvStatus str_to_float(const char* str, float* result) {
     if (str[0] == '\0') return CONV_INVALID_FORMAT;
 
     // 处理特殊值
-    if (strcmp(str, "NaN") == 0) {
+    if (XStrcmp(str, "NaN") == 0) {
         *result = NAN;
         return CONV_OK;
     }
-    if (strcmp(str, "Infinity") == 0) {
+    if (XStrcmp(str, "Infinity") == 0) {
         *result = INFINITY;
         return CONV_OK;
     }
-    if (strcmp(str, "-Infinity") == 0) {
+    if (XStrcmp(str, "-Infinity") == 0) {
         *result = -INFINITY;
         return CONV_OK;
     }
@@ -900,15 +900,15 @@ ConvStatus str_to_double(const char* str, double* result) {
     if (str[0] == '\0') return CONV_INVALID_FORMAT;
 
     // 处理特殊值
-    if (strcmp(str, "NaN") == 0) {
+    if (XStrcmp(str, "NaN") == 0) {
         *result = NAN;
         return CONV_OK;
     }
-    if (strcmp(str, "Infinity") == 0) {
+    if (XStrcmp(str, "Infinity") == 0) {
         *result = INFINITY;
         return CONV_OK;
     }
-    if (strcmp(str, "-Infinity") == 0) {
+    if (XStrcmp(str, "-Infinity") == 0) {
         *result = -INFINITY;
         return CONV_OK;
     }

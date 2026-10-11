@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XCircularQueue.h"
 #include"XTestMenu.h"
 #include"XAction.h"
@@ -13,7 +13,7 @@ static void XCQBasicTest(void)
 {
     XPrintf("===== XCircularQueue 基础 FIFO / Qt 别名 =====\n");
     XCircularQueue* q = XCircularQueue_Create(int, 8);
-    XContainerSetCompare(q, int_compare);
+    XContainerSetCompare(q, Xint_compare);
     for (int i = 0; i < 5; i++) {
         XCircularQueue_Enqueue_Base(q, int, i + 1);
     }
@@ -38,7 +38,7 @@ static void XCQWrapTest(void)
 {
     XPrintf("===== XCircularQueue 环绕(head/tail 回卷) =====\n");
     XCircularQueue* q = XCircularQueue_Create(int, 4);
-    XContainerSetCompare(q, int_compare);
+    XContainerSetCompare(q, Xint_compare);
     /* 关闭自动扩容，制造回卷 */
     XCircularQueue_setAutoExpansion(q, false);
 
@@ -70,7 +70,7 @@ static void XCQAutoExpansionTest(void)
 {
     XPrintf("===== XCircularQueue 自动扩容(1.5×) =====\n");
     XCircularQueue* q = XCircularQueue_Create(int, 4);
-    XContainerSetCompare(q, int_compare);
+    XContainerSetCompare(q, Xint_compare);
     XCircularQueue_setAutoExpansion(q, true);
     for (int i = 0; i < 20; i++) XCircularQueue_Enqueue_Base(q, int, i);
     XPrintf("入队 20 项 count=%zu capacity=%zu\n",
@@ -94,7 +94,7 @@ static void XCQFullTest(void)
 {
     XPrintf("===== XCircularQueue isFull / 满时 push 行为 =====\n");
     XCircularQueue* q = XCircularQueue_Create(int, 3);
-    XContainerSetCompare(q, int_compare);
+    XContainerSetCompare(q, Xint_compare);
     XCircularQueue_setAutoExpansion(q, false);
 
     for (int i = 0; i < 3; i++) XCircularQueue_Enqueue_Base(q, int, i);
@@ -115,7 +115,7 @@ static void XCQRemoveTest(void)
 {
     XPrintf("===== XCircularQueue remove(v,n) =====\n");
     XCircularQueue* q = XCircularQueue_Create(int, 16);
-    XContainerSetCompare(q, int_compare);
+    XContainerSetCompare(q, Xint_compare);
     XCircularQueue_setAutoExpansion(q, true);
     int arr[] = { 5, 3, 5, 1, 5, 2, 5, 4 };
     for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
@@ -139,7 +139,7 @@ static void XCQBulkTest(void)
 {
     XPrintf("===== XCircularQueue 压力(1000 次入/出，capacity=64) =====\n");
     XCircularQueue* q = XCircularQueue_Create(int, 64);
-    XContainerSetCompare(q, int_compare);
+    XContainerSetCompare(q, Xint_compare);
     XCircularQueue_setAutoExpansion(q, false);
 
     size_t pushed = 0, popped = 0, rejected = 0;

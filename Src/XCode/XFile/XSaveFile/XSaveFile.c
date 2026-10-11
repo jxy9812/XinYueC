@@ -37,9 +37,24 @@ bool XSaveFile_generateTempFileName(const XString* targetPath, XString* tempPath
 
 static XString* xsavefile_tempDir = NULL;   /* 模块默认临时目录；NULL=未设置 */
 static uint32_t xsavefile_tempCounter = 0;  /* 唯一名辅助序号 */
+static bool xsavefile_tempDirAtExitRegistered = false;
+
+/* 进程退出兜底释放（对齐 XGpuRenderBackend/XPainter 的 atexit 惯例）：
+ * 模块级静态 XString 无其他释放点，否则堆串驻留至进程结束。 */
+static void xsavefile_tempDir_atexit(void)
+{
+    if (xsavefile_tempDir) {
+        XClassDelete((XClass*)xsavefile_tempDir);
+        xsavefile_tempDir = NULL;
+    }
+}
 
 void XSaveFile_setTempDir_static(const XString* dir)
 {
+    if (!xsavefile_tempDirAtExitRegistered) {
+        if (atexit(xsavefile_tempDir_atexit) == 0)
+            xsavefile_tempDirAtExitRegistered = true;
+    }
     if (xsavefile_tempDir) {
         XClassDelete((XClass*)xsavefile_tempDir);
         xsavefile_tempDir = NULL;
@@ -114,6 +129,35 @@ bool XSaveFile_openUniqueTemp(XSaveFile* file, const XString* prefix)
  * 虚函数实现（重写父类虚函数）
  * ============================================================================ */
 
+/* 关闭当前 fd（deinit/commit 共用的收尾序列）。 */
+static void xsavefile_close_handle(XSaveFile* file)
+{
+    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        XFileDevice_unregisterAsync(&file->m_parent);
+        if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
+            XDeviceFile_close(XIODevice_fd(&file->m_parent.m_parent));
+        }
+        XIODevice_setFd(&file->m_parent.m_parent, XFD_INVALID);
+    }
+}
+
+/* 丢弃未提交的临时文件。必须先关句柄再删：Win32 上 legacyOpen 不带
+ * FILE_SHARE_DELETE（shareMode 仅 FILE_SHARE_READ），DeleteFileW 对仍
+ * 打开的句柄必然共享冲突失败——先删后关会让临时文件滞留磁盘且随后
+ * m_tempFileName 被释放、永远失去重试入口；POSIX unlink 打开中文件不受
+ * 影响。删除失败时保留 m_tempFileName，由 deinit 兜底重试（届时句柄
+ * 必已关闭，Win32 上删除可成功）。 */
+static void xsavefile_discard_temp_file(XSaveFile* file)
+{
+    xsavefile_close_handle(file);
+    if (file->m_useTempFile && file->m_tempFileName && !file->m_committed) {
+        if (XDeviceFile_removePermanent(file->m_tempFileName)) {
+            XClassDelete(file->m_tempFileName);
+            file->m_tempFileName = NULL;
+        }
+    }
+}
+
 static const XString* VXSaveFile_fileName(const XFileDevice* device)
 {
     const XSaveFile* file = (const XSaveFile*)device;
@@ -133,7 +177,14 @@ static bool VXSaveFile_open(XIODevice* device, XIODeviceBaseMode mode)
 {
     XSaveFile* file = (XSaveFile*)device;
     if (!file || !file->m_fileName) return false;
-    
+
+    /* 已处于打开态（含 close 为空操作后的重开）时拒绝重复 open：否则
+     * m_tempFileName/m_fd 被直接覆盖，旧堆串与旧 OS 句柄（含全局 IoRing
+     * 注册）泄漏且不可回收（对齐 QIODevice::open 对已打开设备返回 false）。 */
+    if (file->m_tempFileName || XIODevice_fd(&file->m_parent.m_parent) >= 0) {
+        return false;
+    }
+
     // QSaveFile 只支持 WriteOnly
     if (!(mode & XIODevice_WriteOnly)) {
         return false;
@@ -268,21 +319,11 @@ static int64_t VXSaveFile_writeData(XFileDevice* device, const char* data, int64
 static void VXSaveFile_deinit(XSaveFile* file)
 {
     if (!file) return;
-    
-    // 如果没有 commit，删除临时文件
-    if (file->m_useTempFile && file->m_tempFileName && !file->m_committed) {
-        XDeviceFile_removePermanent(file->m_tempFileName);
-    }
-    
-    // 关闭文件句柄
-    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
-        XFileDevice_unregisterAsync(&file->m_parent);
-        if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
-            XDeviceFile_close(XIODevice_fd(&file->m_parent.m_parent));
-        }
-        XIODevice_setFd(&file->m_parent.m_parent, XFD_INVALID);
-    }
-    
+
+    // 如果没有 commit，删除临时文件（先关句柄再删：Win32 上打开中的
+    // 句柄会使 DeleteFileW 共享冲突失败，见 xsavefile_discard_temp_file）
+    xsavefile_discard_temp_file(file);
+
     // 释放字符串
     if (file->m_fileName) {
         XClassDelete(file->m_fileName);
@@ -292,7 +333,7 @@ static void VXSaveFile_deinit(XSaveFile* file)
         XClassDelete(file->m_tempFileName);
         file->m_tempFileName = NULL;
     }
-    
+
     XClass_Deinit_Parent(XFileDevice, file);
 }
 
@@ -379,65 +420,66 @@ bool XSaveFile_commit(XSaveFile* file)
     
     // 已经提交或取消
     if (file->m_committed || file->m_canceled) {
-        if (file->m_useTempFile && file->m_tempFileName) {
-            XDeviceFile_removePermanent(file->m_tempFileName);
-            XClassDelete(file->m_tempFileName);
-            file->m_tempFileName = NULL;
-        }
+        xsavefile_discard_temp_file(file);
         return false;
     }
-    
+
     // 写入过程中有错误
     if (file->m_writeError) {
-        if (file->m_useTempFile && file->m_tempFileName) {
-            XDeviceFile_removePermanent(file->m_tempFileName);
-            XClassDelete(file->m_tempFileName);
-            file->m_tempFileName = NULL;
-        }
+        xsavefile_discard_temp_file(file);
         file->m_parent.m_error = XFileDevice_WriteError;
         return false;
     }
-    
+
     // 刷新缓冲区
     if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
         XDeviceFile_flush(XIODevice_fd(&file->m_parent.m_parent));
     }
-    
-    // 关闭文件
-    if (XIODevice_fd(&file->m_parent.m_parent) >= 0) {
-        XFileDevice_unregisterAsync(&file->m_parent);
-        if (file->m_parent.m_handleFlags & XFileDevice_AutoCloseHandle) {
-            XDeviceFile_close(XIODevice_fd(&file->m_parent.m_parent));
-        }
-        XIODevice_setFd(&file->m_parent.m_parent, XFD_INVALID);
-    }
-    
+
+    // 关闭文件（先于 rename/remove：Win32 上打开中的句柄会令目标替换
+    // 与临时文件删除共享冲突失败）
+    xsavefile_close_handle(file);
+
     file->m_parent.m_parent.m_openMode = XIODevice_NotOpen;
     file->m_committed = true;
-    
+
     // 直接写入模式（无临时文件）
     if (!file->m_useTempFile) {
         return true;
     }
-    
-    // 重命名临时文件为目标文件
-    bool result = XDeviceFile_rename(file->m_tempFileName, file->m_fileName);
-    
+
+    // 重命名临时文件为目标文件（替换语义：目标已存在时原子覆盖，
+    // XDeviceFile.h §XDeviceFile_renameReplace；commit 由此获得
+    // "任意时刻断电=旧文件或新文件" 的不变式 2 原子性）
+    bool result = XDeviceFile_renameReplace(file->m_tempFileName, file->m_fileName);
+    bool tempGone = result; /* rename 成功=临时文件名已不存在于磁盘 */
+
     if (!result) {
         // 重命名失败，尝试复制后删除
         result = XDeviceFile_copy(file->m_tempFileName, file->m_fileName);
         if (result) {
-            XDeviceFile_removePermanent(file->m_tempFileName);
+            tempGone = XDeviceFile_removePermanent(file->m_tempFileName);
         }
         file->m_parent.m_error = XFileDevice_RenameError;
     }
-    
+
     // 清理临时文件名
     if (file->m_tempFileName) {
-        XClassDelete(file->m_tempFileName);
-        file->m_tempFileName = NULL;
+        if (tempGone) {
+            XClassDelete(file->m_tempFileName);
+            file->m_tempFileName = NULL;
+        } else {
+            /* rename+copy 双败（或 copy 成功但删除失败）时磁盘临时文件
+             * 仍在：保留 m_tempFileName 并回退 m_committed，交由 deinit/
+             * 后续 commit 的丢弃路径兜底删除（句柄已关，Win32 上删除可
+             * 成功）；此处若照旧释放文件名，磁盘文件将成永无清理入口的
+             * 孤儿。置错误态：后续 commit 走丢弃早退，不会把旧临时文件
+             * 重命名到 setFileName 换上的新目标。 */
+            file->m_committed = false;
+            file->m_writeError = true;
+        }
     }
-    
+
     return result;
 }
 

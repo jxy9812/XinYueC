@@ -9,7 +9,7 @@ extern "C" {
 #include "XProcessTest.h"
 #include "XConsoleShellTest.h"
 #include "XConsoleShellBackendTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 void XTestMenu_XCodeTest(XTestMenu* root);
 void XTestMenu_XRcodeTest(XTestMenu* root);
 void XTestMenu_XDebugTest(XTestMenu* root);
@@ -43,7 +43,7 @@ void XTestMenu_XConsoleShellBackendTest(XTestMenu* root);
 void XStateMachineEventTest();
 void XStateMachineSignalTest();
 void XHistoryState_Test();
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

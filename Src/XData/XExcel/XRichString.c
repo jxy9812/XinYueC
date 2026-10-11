@@ -13,7 +13,7 @@
 
 #include <stdio.h>
 
-static void clear_fragments(XRichString* self)
+static void XRichString_clear_fragments(XRichString* self)
 {
     if (!self || !self->m_fragments) return;
     while (XVector_size_base(self->m_fragments) > 0) {
@@ -27,14 +27,14 @@ static void clear_fragments(XRichString* self)
     }
 }
 
-static void clear_plain_text(XRichString* self)
+static void XRichString_clear_plain_text(XRichString* self)
 {
     if (!self || !self->m_plainText) return;
     XClassDelete(self->m_plainText);
     self->m_plainText = NULL;
 }
 
-static void append_html_escaped(XString* output, const XString* text)
+static void XRichString_append_html_escaped(XString* output, const XString* text)
 {
     const char* utf8 = text ? XString_toUtf8(text) : NULL;
     if (!output || !utf8) return;
@@ -54,7 +54,7 @@ static void append_html_escaped(XString* output, const XString* text)
     }
 }
 
-static XString* decode_html_text(const char* text, size_t length)
+static XString* XRichString_decode_html_text(const char* text, size_t length)
 {
     XString* result = XString_create();
     if (!result) return NULL;
@@ -89,11 +89,11 @@ static XString* decode_html_text(const char* text, size_t length)
     return result;
 }
 
-static void add_html_fragment(XRichString* self, const char* text, size_t length,
+static void XRichString_add_html_fragment(XRichString* self, const char* text, size_t length,
                               const XFormat* format)
 {
     if (!self || !text || length == 0) return;
-    XString* decoded = decode_html_text(text, length);
+    XString* decoded = XRichString_decode_html_text(text, length);
     if (!decoded) return;
     if (!XString_isEmpty_base(decoded)) XRichString_addFragment(self, decoded, format);
     XClassDelete(decoded);
@@ -119,8 +119,8 @@ XRichString* XRichString_create_utf8(const XString* text)
 void XRichString_copy(XRichString* self, const XRichString* other)
 {
     if (!self || !other || self == other) return;
-    clear_plain_text(self);
-    clear_fragments(self);
+    XRichString_clear_plain_text(self);
+    XRichString_clear_fragments(self);
     if (other->m_plainText) self->m_plainText = XString_create_copy(other->m_plainText);
     if (other->m_fragments)
     {
@@ -142,10 +142,10 @@ void XRichString_copy(XRichString* self, const XRichString* other)
 void XRichString_delete(XRichString* self)
 {
     if (!self) return;
-    clear_plain_text(self);
+    XRichString_clear_plain_text(self);
     if (self->m_fragments)
     {
-        clear_fragments(self);
+        XRichString_clear_fragments(self);
         XClassDelete(self->m_fragments);
     }
     XFree_System(self);
@@ -229,22 +229,22 @@ XString XRichString_toHtml(const XRichString* self)
                 if (name && XString_size_base(name) > 0)
                 {
                     XString_append_utf8(&result, "font-family:");
-                    append_html_escaped(&result, name);
+                    XRichString_append_html_escaped(&result, name);
                     XString_append_utf8(&result, ";");
                 }
                 XString_append_utf8(&result, "'>");
-                append_html_escaped(&result, frag->m_text);
+                XRichString_append_html_escaped(&result, frag->m_text);
                 XString_append_utf8(&result, "</span>");
             }
             else
             {
-                append_html_escaped(&result, frag->m_text);
+                XRichString_append_html_escaped(&result, frag->m_text);
             }
         }
     }
     else if (self->m_plainText)
     {
-        append_html_escaped(&result, self->m_plainText);
+        XRichString_append_html_escaped(&result, self->m_plainText);
     }
     return result;
 }
@@ -252,8 +252,8 @@ XString XRichString_toHtml(const XRichString* self)
 void XRichString_setHtml(XRichString* self, const XString* text)
 {
     if (!self) return;
-    clear_plain_text(self);
-    clear_fragments(self);
+    XRichString_clear_plain_text(self);
+    XRichString_clear_fragments(self);
     const char* html = text ? XString_toUtf8(text) : NULL;
     if (!html) return;
 
@@ -261,13 +261,13 @@ void XRichString_setHtml(XRichString* self, const XString* text)
     while (*cursor) {
         const char* tag = strchr(cursor, '<');
         if (!tag) {
-            add_html_fragment(self, cursor, strlen(cursor), NULL);
+            XRichString_add_html_fragment(self, cursor, strlen(cursor), NULL);
             break;
         }
-        if (tag > cursor) add_html_fragment(self, cursor, (size_t)(tag - cursor), NULL);
+        if (tag > cursor) XRichString_add_html_fragment(self, cursor, (size_t)(tag - cursor), NULL);
         const char* tagEnd = strchr(tag, '>');
         if (!tagEnd) {
-            add_html_fragment(self, tag, strlen(tag), NULL);
+            XRichString_add_html_fragment(self, tag, strlen(tag), NULL);
             break;
         }
 
@@ -315,7 +315,7 @@ void XRichString_setHtml(XRichString* self, const XString* text)
                                     XString* name = XString_create_with_length_utf8(
                                         family, (size_t)(end - family));
                                     if (name) {
-                                        XString* decodedName = decode_html_text(
+                                        XString* decodedName = XRichString_decode_html_text(
                                             XString_toUtf8(name), strlen(XString_toUtf8(name)));
                                         if (decodedName) {
                                             XFormat_setFontName(format, decodedName);
@@ -328,7 +328,7 @@ void XRichString_setHtml(XRichString* self, const XString* text)
                             XFree_System(style);
                         }
                     }
-                    add_html_fragment(self, tagEnd + 1,
+                    XRichString_add_html_fragment(self, tagEnd + 1,
                         (size_t)(close - tagEnd - 1), format);
                     XFormat_delete(format);
                 }
@@ -386,7 +386,7 @@ void XRichString_addFragment(XRichString* self, const XString* text, const XForm
         if (frag.m_format) XFormat_delete(frag.m_format);
         return;
     }
-    clear_plain_text(self);
+    XRichString_clear_plain_text(self);
 }
 
 const XString* XRichString_fragmentText(const XRichString* self, int index)
@@ -413,7 +413,7 @@ void XRichString_setText(XRichString* self, const XString* text)
     XString* copy = text ? XString_create_copy(text) : XString_create();
     if (!copy) return;
     /* 1) 更新 m_plainText */
-    clear_plain_text(self);
+    XRichString_clear_plain_text(self);
     self->m_plainText = copy;
     /* 2) 同时清空并重写第一个 fragment，对齐 QXlsx::RichString::setText */
     if (!self->m_fragments)
@@ -421,7 +421,7 @@ void XRichString_setText(XRichString* self, const XString* text)
     if (self->m_fragments)
     {
         /* 清空现有 fragments（释放其中的 XString 和 XFormat） */
-        clear_fragments(self);
+        XRichString_clear_fragments(self);
         /* 压入一个空格式的新片段 */
         XRichStringFragment frag;
         memset(&frag, 0, sizeof(frag));

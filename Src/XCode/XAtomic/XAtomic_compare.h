@@ -17,7 +17,7 @@ extern "C" {
  * 3. 如果不相等，则将原子变量的当前值写入`*expected`
  * 原子性保证：整个比较-交换过程不可分割
  */
-bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, bool desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
+bool XAtomic_compare_exchange_strong_bool(XAtomic_Bool* var, bool* expected, bool desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
 
 /**
  * @brief 原子比较交换操作 (CAS) - 针对原子32位有符号整数变量
@@ -33,7 +33,7 @@ bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, boo
  * 3. 如果不相等，则将原子变量的当前值写入`*expected`
  * 原子性保证：整个比较-交换过程不可分割
  */
-bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
+bool XAtomic_compare_exchange_strong_int32(XAtomic_Int32* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
 
 /**
  * @brief 原子比较交换操作 (CAS) - 针对原子32位无符号整数变量
@@ -49,7 +49,7 @@ bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expect
  * 3. 如果不相等，则将原子变量的当前值写入`*expected`
  * 原子性保证：整个比较-交换过程不可分割
  */
-bool XAtomic_compare_exchange_strong_uint32(XAtomic_uint32_t* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
+bool XAtomic_compare_exchange_strong_uint32(XAtomic_Uint32* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
 
 /**
  * @brief 原子比较交换操作 (CAS) - 针对原子64位有符号整数变量
@@ -65,7 +65,7 @@ bool XAtomic_compare_exchange_strong_uint32(XAtomic_uint32_t* var, uint32_t* exp
  * 3. 如果不相等，则将原子变量的当前值写入`*expected`
  * 原子性保证：整个比较-交换过程不可分割
  */
-bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
+bool XAtomic_compare_exchange_strong_int64(XAtomic_Int64* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
 
 /**
  * @brief 原子比较交换操作 (CAS) - 针对原子64位无符号整数变量
@@ -81,7 +81,7 @@ bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expect
  * 3. 如果不相等，则将原子变量的当前值写入`*expected`
  * 原子性保证：整个比较-交换过程不可分割
  */
-bool XAtomic_compare_exchange_strong_uint64(XAtomic_uint64_t* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
+bool XAtomic_compare_exchange_strong_uint64(XAtomic_Uint64* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
 
 /**
  * @brief 原子比较交换操作 (CAS) - 针对原子size_t类型变量
@@ -97,7 +97,7 @@ bool XAtomic_compare_exchange_strong_uint64(XAtomic_uint64_t* var, uint64_t* exp
  * 3. 如果不相等，则将原子变量的当前值写入`*expected`
  * 原子性保证：整个比较-交换过程不可分割
  */
-bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expected, size_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
+bool XAtomic_compare_exchange_strong_size_t(XAtomic_SizeT* var, size_t* expected, size_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
 
 /**
  * @brief 原子比较交换操作 (CAS) - 针对原子指针变量
@@ -113,7 +113,7 @@ bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expecte
  * 3. 如果不相等，则将原子变量的当前值写入`*expected`
  * 原子性保证：整个比较-交换过程不可分割
  */
-bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_uintptr_t* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
+bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_Uintptr* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order);
 
 #ifdef __cplusplus
 }

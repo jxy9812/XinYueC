@@ -113,9 +113,6 @@ void XApplication_init(XApplication* self, int argc, char** argv);
  */
 XApplication* XApplication_create_ex(XMemoryType memory, int argc, char** argv);
 
-/** @brief 通过 XClass 虚表释放 XApplication 资源（栈/外部存储对象使用）。 */
-/** @brief 删除堆上的 XApplication 对象。 */
-
 /**
  * @brief      查询唯一 XApplication 实例（对标 QApplication::instance）。
  * @details    仅当应用以 XApplication_create_ex 创建时返回本类型指针；
@@ -214,23 +211,59 @@ void XApplication_setActivePopupWidget(XWidget* widget);
 
 /* ==================== 全局交互参数（对标 QApplication 遗留静态接口） ==================== */
 
-/** @brief 查询/设置鼠标双击间隔（毫秒；对标 QApplication::doubleClickInterval）。 */
+/** @brief 查询鼠标双击间隔（毫秒；对标 QApplication::doubleClickInterval）。
+ * @return 当前双击间隔毫秒数；XStyleHints 不可用时返回默认值 400。
+ */
 int  XApplication_doubleClickInterval(void);
+/** @brief 设置鼠标双击间隔（毫秒；对标 QApplication::setDoubleClickInterval）。
+ * @param ms 新的双击间隔毫秒数；委托 XStyleHints 保存。
+ * @return 无返回值。XStyleHints 不可用时为空操作。
+ */
 void XApplication_setDoubleClickInterval(int ms);
-/** @brief 查询/设置滚轮滚动行数（对标 QApplication::wheelScrollLines）。 */
+/** @brief 查询滚轮滚动行数（对标 QApplication::wheelScrollLines）。
+ * @return 当前滚轮滚动行数；XStyleHints 不可用时返回默认值 3。
+ */
 int  XApplication_wheelScrollLines(void);
+/** @brief 设置滚轮滚动行数（对标 QApplication::setWheelScrollLines）。
+ * @param lines 新的滚轮滚动行数；委托 XStyleHints 保存。
+ * @return 无返回值。XStyleHints 不可用时为空操作。
+ */
 void XApplication_setWheelScrollLines(int lines);
-/** @brief 查询/设置拖拽启动时间（毫秒；对标 QApplication::startDragTime）。 */
+/** @brief 查询拖拽启动时间（毫秒；对标 QApplication::startDragTime）。
+ * @return 当前拖拽启动时间毫秒数；XStyleHints 不可用时返回默认值 500。
+ */
 int  XApplication_startDragTime(void);
+/** @brief 设置拖拽启动时间（毫秒；对标 QApplication::setStartDragTime）。
+ * @param ms 新的拖拽启动时间毫秒数；委托 XStyleHints 保存。
+ * @return 无返回值。XStyleHints 不可用时为空操作。
+ */
 void XApplication_setStartDragTime(int ms);
-/** @brief 查询/设置拖拽启动距离（像素；对标 QApplication::startDragDistance）。 */
+/** @brief 查询拖拽启动距离（像素；对标 QApplication::startDragDistance）。
+ * @return 当前拖拽启动距离像素数；XStyleHints 不可用时返回默认值 10。
+ */
 int  XApplication_startDragDistance(void);
+/** @brief 设置拖拽启动距离（像素；对标 QApplication::setStartDragDistance）。
+ * @param px 新的拖拽启动距离像素数；委托 XStyleHints 保存。
+ * @return 无返回值。XStyleHints 不可用时为空操作。
+ */
 void XApplication_setStartDragDistance(int px);
-/** @brief 查询/设置光标闪烁时间（毫秒；对标 QApplication::cursorFlashTime）。 */
+/** @brief 查询光标闪烁时间（毫秒；对标 QApplication::cursorFlashTime）。
+ * @return 当前光标闪烁时间毫秒数；XStyleHints 不可用时返回默认值 1000。
+ */
 int  XApplication_cursorFlashTime(void);
+/** @brief 设置光标闪烁时间（毫秒；对标 QApplication::setCursorFlashTime）。
+ * @param ms 新的光标闪烁时间毫秒数；委托 XStyleHints 保存。
+ * @return 无返回值。XStyleHints 不可用时为空操作。
+ */
 void XApplication_setCursorFlashTime(int ms);
-/** @brief 查询/设置键盘输入间隔（毫秒；对标 QApplication::keyboardInputInterval）。 */
+/** @brief 查询键盘输入间隔（毫秒；对标 QApplication::keyboardInputInterval）。
+ * @return 当前键盘输入间隔毫秒数；XStyleHints 不可用时返回默认值 400。
+ */
 int  XApplication_keyboardInputInterval(void);
+/** @brief 设置键盘输入间隔（毫秒；对标 QApplication::setKeyboardInputInterval）。
+ * @param ms 新的键盘输入间隔毫秒数；委托 XStyleHints 保存。
+ * @return 无返回值。XStyleHints 不可用时为空操作。
+ */
 void XApplication_setKeyboardInputInterval(int ms);
 
 /* ==================== Task 1.4：QApplication 应用级 API ==================== */

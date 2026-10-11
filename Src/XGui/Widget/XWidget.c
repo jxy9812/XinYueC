@@ -517,7 +517,7 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
         return false;
     }
     XEvent_setAccepted_base((XEvent*)sub, false);
-    sub->m_class.spontaneous = source->spontaneous;
+    sub->m_class.m_spontaneous = source->m_spontaneous;
     if (!direct) {
         /* 命中路径：按组首点位置 childAt + 父链传播；TouchBegin 被接受
            → 逐点 setGrab(id, receiver)（对标 qapplication.cpp:3791；
@@ -749,7 +749,7 @@ static void XWidget_propagateVisibility(XWidget* self, bool changedFromVisible)
         XWidget* widget;
         bool oldVisible;
         bool newVisible;
-        if (!child || !child->is_widget) continue;
+        if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
         /* 顶层窗口子控件不随父控件可见性传播（对标 showChildren 跳过 isWindow）。 */
         if (widget->m_isWindow) continue;
@@ -1153,7 +1153,7 @@ static void XWidget_propagateEnabled(XWidget* self, bool enabled)
         bool oldEnabled;
         bool newEnabled;
         XEvent event;
-        if (!child || !child->is_widget) continue;
+        if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
         /* 启用父控件时，显式禁用的子控件及其子树保持禁用；父控件
          * 禁用时仍需给所有子控件置 WA_Disabled，保持属性可观察性。 */
@@ -1200,7 +1200,7 @@ static void XWidget_clearUnderMouseRepaintHover(XWidget* self)
     n = children ? XVector_size_base((const XContainer*)children) : 0;
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
-        if (child && child->is_widget)
+        if (child && child->m_is_widget)
             XWidget_clearUnderMouseRepaintHover((XWidget*)child);
     }
 }
@@ -1448,9 +1448,10 @@ void XWidgetSizePolicy_setRetainSizeWhenHidden(XWidgetSizePolicy* self,
 
 XWidgetSizePolicy XWidgetSizePolicy_transposed(const XWidgetSizePolicy* self)
 {
-    XWidgetSizePolicy out = *self;
+    XWidgetSizePolicy out;
     uint8_t tmp;
     if (!self) return XWidgetSizePolicy_create();
+    out = *self;
     tmp = out.m_horizontalPolicy;
     out.m_horizontalPolicy = out.m_verticalPolicy;
     out.m_verticalPolicy = tmp;
@@ -2273,7 +2274,7 @@ XCLASS_DEFINE_EXTEND_END(xwidget_touchTimerHost, XObject)
  *          判据）。宿主为模块级静态存储对象，零堆分配（内存 Soak 门禁
  *          不记账），惰性初始化一次（幂等守卫），创建后
  *          Set_Class_IsHeap 保持 false；无父对象、非 widget
- *          （is_widget=0）、无几何，不进任何控件枚举/命中路径。分发器经
+ *          （m_is_widget=0）、无几何，不进任何控件枚举/命中路径。分发器经
  *          XObject_eventDispatcher 的应用级回退取得（XObject.c:438-446），
  *          无应用环境 startTimer 返回 XTIMER_INVALID_ID 静默不布防（惰性
  *          兜底覆盖，既有口径）。 */
@@ -3430,19 +3431,19 @@ XVtable* XWidget_class_init(void)
 void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
-    /* 根因防护：父指针必须是已初始化的 XWidget（XObject::is_widget=1）。
+    /* 根因防护：父指针必须是已初始化的 XWidget（XObject::m_is_widget=1）。
        裸 XWindow 等非控件对象被调用方强转 XWidget* 当父传入时（如
        XLineEdit_create((XWidget*)XWindow_create(), 0)），其结构体远小于
        XWidget，挂父后 XLineEdit_init 尾部 xlineedit_updateSizeHints →
        XWidget_updateGeometry 沿父链读 parent->m_layout 会越界读到堆残留，
        非零垃圾被当 XLayout* 传入 XLayout_activate 解引用段错误。
        此处把非控件父一律按无父（顶层窗口）处理，杜绝垃圾强转；真实
-       控件父 is_widget 恒为 1（XWidget_init 统一置位），正常路径零变化。 */
-    if (parent && !((const XObject*)parent)->is_widget)
+       控件父 m_is_widget 恒为 1（XWidget_init 统一置位），正常路径零变化。 */
+    if (parent && !((const XObject*)parent)->m_is_widget)
         parent = NULL;
     XMemset(self, 0, sizeof(XWidget));
     XObject_init(&self->m_class);
-    ((XObject*)self)->is_widget = 1;
+    ((XObject*)self)->m_is_widget = 1;
     XClassSetVtable(self, XWidget);
     self->m_windowFlags = flags;
     if (!parent && !(self->m_windowFlags & (XWindowFlags)XWindowType_Window))
@@ -5128,10 +5129,10 @@ XWidget* XWidget_parentWidget(const XWidget* self)
        XObject_setParent((XObject*)widget, 非控件) 后，父链上的
        m_parent 不是 XWidget 布局；此处盲转会按 XWidget* 读
        m_layout/m_visible 等越界字段（悬挂风险）。读前校验
-       is_widget，非控件父一律视同无父控件返回 NULL；正常路径
+       m_is_widget，非控件父一律视同无父控件返回 NULL；正常路径
        （XWidget_init/XWidget_setParent 已归一化）行为零变化。 */
     parent = XObject_parent((XObject*)self);
-    return (parent && parent->is_widget) ? (XWidget*)parent : NULL;
+    return (parent && parent->m_is_widget) ? (XWidget*)parent : NULL;
 }
 
 void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
@@ -5140,10 +5141,10 @@ void XWidget_setParent(XWidget* self, XWidget* parent, XWidgetFlags flags)
     bool parentChanged;
     bool wasWindow;
     if (!self) return;
-    /* 根因防护（同 XWidget_init）：创建后重挂父也必须校验 is_widget，
+    /* 根因防护（同 XWidget_init）：创建后重挂父也必须校验 m_is_widget，
        否则裸 XWindow 等非控件对象经此挂父后，父链遍历仍会把非控件
        结构体按 XWidget* 解引用（越界读 m_layout/m_visible 等）。 */
-    if (parent && !((const XObject*)parent)->is_widget)
+    if (parent && !((const XObject*)parent)->m_is_widget)
         parent = NULL;
     /* QWidget 禁止把控件设置为自身或其后代；C 接口采用安全返回，
      * 避免破坏 XObject 的父子链。 */
@@ -5232,7 +5233,7 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
         XWidget* widget;
         XPoint local;
         XWidget* deep;
-        if (!child || !child->is_widget) continue;
+        if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
         /* 对标 Qt 6.8 QWidgetPrivate::childAtRecursiveHelper：只跳过
          * isHidden()（显式隐藏位 WA_WState_Hidden）与窗口型子控件，
@@ -5326,7 +5327,7 @@ static int64_t XWidget_widgetVectorIndex(const XVector* children,
     n = XVector_size_base((const XContainer*)children);
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
-        if (child && child->is_widget && (XWidget*)child == target)
+        if (child && child->m_is_widget && (XWidget*)child == target)
             return (int64_t)i;
     }
     return -1;
@@ -5341,7 +5342,7 @@ static int64_t XWidget_firstWidgetVectorIndex(const XVector* children)
     n = XVector_size_base((const XContainer*)children);
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
-        if (child && child->is_widget) return (int64_t)i;
+        if (child && child->m_is_widget) return (int64_t)i;
     }
     return -1;
 }
@@ -5355,7 +5356,7 @@ static int64_t XWidget_lastWidgetVectorIndex(const XVector* children)
     n = XVector_size_base((const XContainer*)children);
     for (i = n; i > 0; --i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)(i - 1));
-        if (child && child->is_widget) return (int64_t)(i - 1);
+        if (child && child->m_is_widget) return (int64_t)(i - 1);
     }
     return -1;
 }
@@ -5458,7 +5459,7 @@ XRect XWidget_childrenRect(const XWidget* self)
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
         XWidget* widget;
-        if (!child || !child->is_widget) continue;
+        if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
         if (widget->m_isWindow || !widget->m_visible) continue;
         if (first) {
@@ -5484,7 +5485,7 @@ XRegion XWidget_childrenRegion(const XWidget* self)
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
         XWidget* widget;
-        if (!child || !child->is_widget) continue;
+        if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
         if (widget->m_isWindow || !widget->m_visible) continue;
         XRegion_addRect(&out, &widget->m_windowRect);
@@ -5932,9 +5933,9 @@ XIcon XWidget_windowIcon(const XWidget* self)
        父链向顶层传播解析，命中最近的非空图标；链上全部为空时回落应用
        图标（QGuiApplication::windowIcon），应用也未设置则返回空图标。 */
     w = self;
-    while (w && ((const XObject*)w)->is_widget && XIcon_isNull(&w->m_icon))
+    while (w && ((const XObject*)w)->m_is_widget && XIcon_isNull(&w->m_icon))
         w = (const XWidget*)XObject_parent((XObject*)w);
-    if (w && ((const XObject*)w)->is_widget && !XIcon_isNull(&w->m_icon)) {
+    if (w && ((const XObject*)w)->m_is_widget && !XIcon_isNull(&w->m_icon)) {
         /* XClassCopy 对 XIcon 是共享私有数据（refcount 增量）的浅拷贝；调用方
            用 XClassDeinit 释放本副本即可（契约同 XWidget_font）。 */
         XClassCopy(&out, &w->m_icon);
@@ -6355,7 +6356,7 @@ static bool XWidget_focusChainCandidate(const XWidget* self)
      * 容器（页面/groupBox/XChartView）下的独立控件不受影响。父控件
      * 显示性用同一判据（口径一致，避免双判据分叉）。 */
     parent = XObject_parent((XObject*)self);
-    if (parent && parent->is_widget) {
+    if (parent && parent->m_is_widget) {
         const XWidget* pw = (const XWidget*)parent;
         if (pw->m_enabled &&
             (pw->m_focusPolicy & XWidgetFocusPolicy_TabFocus) != 0 &&
@@ -6381,7 +6382,7 @@ static void XWidget_collectTabFocusable(const XWidget* self, XVector* out)
     n = children ? XVector_size_base((const XContainer*)children) : 0;
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
-        if (child && child->is_widget)
+        if (child && child->m_is_widget)
             XWidget_collectTabFocusable((const XWidget*)child, out);
     }
 }
@@ -6694,7 +6695,7 @@ static void XWidget_propagateLayoutDirection(XWidget* self,
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
         XWidget* widget;
         XEvent event;
-        if (!child || !child->is_widget) continue;
+        if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
         if (widget->m_isWindow ||
             XWidget_attrTest(&widget->m_attributes,
@@ -8097,7 +8098,7 @@ static void XWidget_paintTree(XWidget* widget, const XRegion* region)
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
         XWidget* w;
         XRect childRect;
-        if (!child || !child->is_widget) continue;
+        if (!child || !child->m_is_widget) continue;
         w = (XWidget*)child;
         if (!w->m_visible || !w->m_updatesEnabled) continue;
         /* 原生/弹出子窗口（isWindow）不随父级 paintTree 绘制：它们

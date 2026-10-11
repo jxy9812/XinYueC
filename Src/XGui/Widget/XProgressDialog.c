@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XProgressDialog.c
  * @brief      进度对话框控件实现（对标 Qt 6.8 QProgressDialog 公共 API）。
  * @details    与同名头文件的公共 API 一一对应。setValue 钳位后按 Qt 语义
@@ -399,7 +399,7 @@ static void VXProgressDialog_closeEvent(XWidget* self, XEvent* event)
 {
     XClass_Parent(XDialog, EXWidget_CloseEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
-    if (self && event && event->accepted)
+    if (self && event && event->m_accepted)
         xpd_openCleanup((XProgressDialog*)self);
 }
 

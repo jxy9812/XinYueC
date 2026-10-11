@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XLockFreeList.h"
 #include"XCompare.h"
 #include"XTestMenu.h"
@@ -47,7 +47,7 @@ static void XLockFreeListPushBackArr(XLockFreeList* li, const int* arr, size_t n
 static XLockFreeList* XLockFreeListMakeInt(const int* arr, size_t n)
 {
 	XLockFreeList* li = XLockFreeList_Create(int);
-	XContainerSetCompare(li, int_compare);
+	XContainerSetCompare(li, Xint_compare);
 	XLockFreeListPushBackArr(li, arr, n);
 	return li;
 }
@@ -70,7 +70,7 @@ static void XLockFreeListCreateTest(void)
 	XPrintf("===== 创建与初始化测试 =====\n");
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		XPrintf("XLockFreeList_Create(int): size=%zu, capacity=%zu, isEmpty=%s\n",
 			XLockFreeList_size_base(li),
 			XLockFreeList_capacity_base(li),
@@ -81,7 +81,7 @@ static void XLockFreeListCreateTest(void)
 	}
 	{
 		XLockFreeList* li = XLockFreeList_create(sizeof(double));
-		XContainerSetCompare(li, double_compare);
+		XContainerSetCompare(li, Xdouble_compare);
 		XPrintf("XLockFreeList_create(sizeof(double)): typeSize=%zu (期望:%zu)\n",
 			XLockFreeList_typeSize_base(li), sizeof(double));
 		XClassDelete(li);
@@ -96,7 +96,7 @@ static void XLockFreeListInsertTest(void)
 	XPrintf("===== 插入操作测试 =====\n");
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		for (int i = 1; i <= 5; i++)
 			XLockFreeList_push_front_base(li, &i);
 		XLockFreeListPrintInt(li, "push_front(1..5): ");
@@ -105,7 +105,7 @@ static void XLockFreeListInsertTest(void)
 	}
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		for (int i = 1; i <= 5; i++)
 			XLockFreeList_push_back_base(li, &i);
 		XLockFreeListPrintInt(li, "push_back(1..5): ");
@@ -117,7 +117,7 @@ static void XLockFreeListInsertTest(void)
 	}
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int a = 10, b = 20, c = 30;
 		XLockFreeList_Push_Front_Base(li, int, 1);
 		XLockFreeList_Push_Back_Base(li, int, 999);
@@ -356,7 +356,7 @@ static void XLockFreeListIteratorTest(void)
 	}
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int a = 100;
 		XLockFreeList_push_back_base(li, &a);
 		XLockFreeList_iterator it  = XLockFreeList_begin(li);
@@ -399,7 +399,7 @@ static void XLockFreeListCompareTest(void)
 		int src[] = { 7, 8, 9 };
 		XLockFreeList* s = XLockFreeListMakeInt(src, 3);
 		XLockFreeList* d = XLockFreeList_Create(int);
-		XContainerSetCompare(d, int_compare);
+		XContainerSetCompare(d, Xint_compare);
 		XClassCopy(d, s);
 		XLockFreeListPrintInt(s, "copy后 src: ");
 		XLockFreeListPrintInt(d, "copy后 dst: ");
@@ -411,7 +411,7 @@ static void XLockFreeListCompareTest(void)
 		int src[] = { 11, 22, 33 };
 		XLockFreeList* s = XLockFreeListMakeInt(src, 3);
 		XLockFreeList* d = XLockFreeList_Create(int);
-		XContainerSetCompare(d, int_compare);
+		XContainerSetCompare(d, Xint_compare);
 		XClassMove(d, s);
 		XLockFreeListPrintInt(d, "move后 dst: ");
 		XPrintf("move后 src.isEmpty=%s (期望:是)\n",
@@ -459,7 +459,7 @@ static void XLockFreeListPopAtomicTest(void)
 	}
 	{
 		XLockFreeList* empty = XLockFreeList_Create(int);
-		XContainerSetCompare(empty, int_compare);
+		XContainerSetCompare(empty, Xint_compare);
 		int out = 0;
 		XPrintf("空表 pop_and_copy_front: %s (期望:否)\n",
 			XLockFreeList_pop_and_copy_front(empty, &out) ? "是" : "否");
@@ -477,7 +477,7 @@ static void XLockFreeListSafetyTest(void)
 	XPrintf("===== 边界与安全检查测试 =====\n");
 	{
 		XLockFreeList* li = XLockFreeList_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int val = 1;
 		XPrintf("空表: pop_front=%s, pop_back=%s\n",
 			XLockFreeList_pop_front_base(li) ? "是" : "否",
@@ -527,7 +527,7 @@ static void XLockFreeListSafetyTest(void)
 	{
 		/* 单元素反复 push/pop */
 		XLockFreeList* li = XLockFreeList_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		for (int i = 0; i < 5; i++) {
 			int v = i * 10;
 			XLockFreeList_push_back_base(li, &v);
@@ -547,7 +547,7 @@ static void XLockFreeListSortDemo(void)
 {
 	XPrintf("===== 排序压力/演示 =====\n");
 	XLockFreeList* li = XLockFreeList_Create(int);
-	XContainerSetCompare(li, int_compare);
+	XContainerSetCompare(li, Xint_compare);
 	int size = 20;
 	srand((unsigned int)time(NULL));
 	for (int i = 0; i < size; i++)
@@ -573,10 +573,10 @@ static void XLockFreeListSortDemo(void)
 
 typedef struct XLFLThreadCtx {
 	XLockFreeList*   list;
-	XAtomic_size_t*  produced;   /* 已生产总数 */
-	XAtomic_size_t*  consumed;   /* 已消费总数 */
-	XAtomic_size_t*  finished;   /* 生产者结束计数 */
-	XAtomic_size_t*  threads_finished; /* 所有工作线程结束计数 */
+	XAtomic_SizeT*  produced;   /* 已生产总数 */
+	XAtomic_SizeT*  consumed;   /* 已消费总数 */
+	XAtomic_SizeT*  finished;   /* 生产者结束计数 */
+	XAtomic_SizeT*  threads_finished; /* 所有工作线程结束计数 */
 	int              per_thread; /* 每个生产者的元素数 */
 	int              is_producer;
 	size_t           threads_total;
@@ -654,13 +654,13 @@ static void XLockFreeListConcurrentTest(void)
 {
 	XPrintf("===== 并发多生产/多消费测试 =====\n");
 	XLockFreeList* list = XLockFreeList_Create(int);
-	XContainerSetCompare(list, int_compare);
+	XContainerSetCompare(list, Xint_compare);
 
 	int per = XLFL_TEST_TOTAL / XLFL_PRODUCERS;
-	XAtomic_size_t produced = { 0 };
-	XAtomic_size_t consumed = { 0 };
-	XAtomic_size_t finished = { 0 };
-	XAtomic_size_t threads_finished = { 0 };
+	XAtomic_SizeT produced = { 0 };
+	XAtomic_SizeT consumed = { 0 };
+	XAtomic_SizeT finished = { 0 };
+	XAtomic_SizeT threads_finished = { 0 };
 
 	XLFLThreadCtx pctx = { list, &produced, &consumed, &finished,
 		&threads_finished, per, 1,

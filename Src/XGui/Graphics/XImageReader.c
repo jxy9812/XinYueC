@@ -804,6 +804,8 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self)
     if (!device) {
         XImageReader_setError(self, XImageReaderError_DeviceError,
                               "Invalid device");
+        if (suffixFormat)
+            XClassDelete((XClass*)suffixFormat);
         return NULL;
     }
     if (!XIODevice_isOpen(device)) {
@@ -1510,6 +1512,9 @@ static void XImageReader_applyAutoTransform(
     XImage_transformed(image, &matrix, 0, &rotated);
     if (!XImage_isNull(&rotated)) {
         XClassMove(image, &rotated);
+        /* move 只转移资源：rotated 为本函数自建栈临时对象，成功
+           路径同样按栈对象规则收尾（资源已转出时为空操作）。 */
+        XClassDeinit(&rotated);
     } else
         XClassDeinit(&rotated);
 }
@@ -1855,7 +1860,13 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                self->m_data->m_decideFromContent ? NULL :
                                XString_toUtf8(self->m_data->m_format));
             if (ok)
+            {
                 XClassMove(out, &loaded);
+                /* move 只转移资源：loaded 为本函数自建栈临时对象，
+                   成功路径同样按栈对象规则收尾（资源已转出时为空
+                   操作），与失败路径收尾保持成对。 */
+                XClassDeinit(&loaded);
+            }
             else
                 XClassDeinit(&loaded);
             if (!ok) {
@@ -1883,7 +1894,12 @@ bool XImageReader_read(XImageReader* self, XImage* out)
                                    self->m_data->m_decideFromContent ? NULL :
                                    XString_toUtf8(self->m_data->m_format));
         if (ok)
+        {
             XClassMove(out, &loaded);
+            /* move 只转移资源：loaded 为本函数自建栈临时对象，成功
+               路径同样按栈对象规则收尾（资源已转出时为空操作）。 */
+            XClassDeinit(&loaded);
+        }
         else
             XClassDeinit(&loaded);
         if (bytes) XClassDelete((XClass*)bytes);

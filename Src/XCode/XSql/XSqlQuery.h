@@ -45,6 +45,7 @@ void XSqlQuery_init(XSqlQuery* query);
 void XSqlQuery_init_database(XSqlQuery* query, const XSqlDatabase* database);
 /**
  * @brief 创建空查询。
+ * @param memory 内存类型。
  * @return 新查询对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlQuery* XSqlQuery_create_ex(XMemoryType memory);

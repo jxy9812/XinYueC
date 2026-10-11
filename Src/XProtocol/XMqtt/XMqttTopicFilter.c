@@ -4,6 +4,7 @@
 #if XMQTT_TOPIC_ON
 #include "XMqttTopicFilter.h"
 #include "XMemory.h"
+#include "XStringUtils.h" /* strncmp/strchr 改经 XStrncmp/XStrchr（外部依赖约束：string.h 白名单） */
 #include <string.h>
 
 static void VXMqttTopicFilter_deinit(XMqttTopicFilter* filter);
@@ -88,9 +89,9 @@ XString* XMqttTopicFilter_sharedSubscriptionName(const XMqttTopicFilter* filter)
 {
     if (!filter || !filter->m_filter) return NULL;
     const char* s = XString_toUtf8(filter->m_filter);
-    if (!s || strncmp(s, "$share/", 7) != 0) return NULL;
+    if (!s || XStrncmp(s, "$share/", 7) != 0) return NULL;
     s += 7;
-    const char* slash = strchr(s, '/');
+    const char* slash = XStrchr(s, '/');
     if (!slash) return NULL;
     return XString_create_with_length_utf8(s, (size_t)(slash - s));
 }
@@ -108,17 +109,17 @@ bool XMqttTopicFilter_isValid(const XMqttTopicFilter* filter)
     }
     if (chars == 1) return true;
 
-    const char* h = strchr(s, '#');
+    const char* h = XStrchr(s, '#');
     if (h && (h != s + bytes - 1 || h[-1] != '/')) return false;
 
     const char* p = s;
-    while ((p = strchr(p, '+')) != NULL) {
+    while ((p = XStrchr(p, '+')) != NULL) {
         if ((p > s && p[-1] != '/') || (p[1] != '\0' && p[1] != '/')) return false;
         p++;
     }
 
     if (bytes >= 7 && memcmp(s, "$share/", 7) == 0) {
-        const char* slash = strchr(s + 7, '/');
+        const char* slash = XStrchr(s + 7, '/');
         if (!slash || slash == s + 7) return false;
     }
     return true;

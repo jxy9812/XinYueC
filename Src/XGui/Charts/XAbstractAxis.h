@@ -43,16 +43,23 @@ XCLASS_DEFINE_EXTEND_END(XAbstractAxis, XObject)
 typedef struct XAbstractAxis
 {
     XObject   m_base;            /**< 基类成员；必须是第一个，由 XClass 管理。 */
-    bool      m_visible;         /**< 轴可见（默认 true）。 */
-    bool      m_gridLineVisible; /**< 网格线可见（默认 true）。 */
+
+    /* ---- 8 字节对齐组（对齐分组前移，消除原布局 0x72/0x89/0x9d 空洞；
+     *      成员访问一律按名，无位置初始化/offsetof 依赖） ---- */
+    XString*  m_titleText;       /**< 轴标题（对象拥有）。 */
     double    m_min;             /**< 轴范围下限。 */
     double    m_max;             /**< 轴范围上限。 */
-    bool      m_reverse;         /**< 反转方向（默认 false）。 */
-    XString*  m_titleText;       /**< 轴标题（对象拥有）。 */
+
+    /* ---- 4 字节对齐组 ---- */
     int       m_labelsAngle;     /**< 标签角度（度，默认 0）。 */
-    bool      m_shadesVisible;   /**< 阴影带可见（默认 false）。 */
     uint32_t  m_linePenColor;    /**< 简化线条颜色（ARGB；0=主题色）。 */
     uint32_t  m_labelsBrushColor; /**< 简化标签画刷颜色（ARGB；0=主题色）。 */
+
+    /* ---- 1 字节标志组（尾部填充；保持 bool 不并位域） ---- */
+    bool      m_visible;         /**< 轴可见（默认 true）。 */
+    bool      m_gridLineVisible; /**< 网格线可见（默认 true）。 */
+    bool      m_reverse;         /**< 反转方向（默认 false）。 */
+    bool      m_shadesVisible;   /**< 阴影带可见（默认 false）。 */
 } XAbstractAxis;
 
 /* ==================== 生命周期 ==================== */

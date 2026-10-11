@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XTextUtf8.c
  * @brief      XGui 文本工具共享层：UTF-8 码点边界与序列长度计算实现。
  * @details    语义基准为两套既有实现：XLineEdit.c 的

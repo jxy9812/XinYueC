@@ -13,6 +13,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XSpinBoxTest.h"
+#include "XObject_Protected.h"
 #include "XSpinBox.h"
 #include "XAbstractSpinBox.h"
 #include "XLineEdit.h"

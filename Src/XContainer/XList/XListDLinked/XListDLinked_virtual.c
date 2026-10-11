@@ -56,8 +56,7 @@ static size_t VXList_removeIf(XListDLinked* this_list, bool (*predicate)(const v
 
 XVtable* XListDLinked_class_init()
 {
-    XVTABLE_INIT_DEFAULT_SIZE(XLISTDLINKED_VTABLE_SIZE)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XListDLinked");
+    XVTABLE_INIT_DEFAULT(XListDLinked)
         //继承类
         XVTABLE_INHERIT_XCLASS(XContainer);
 
@@ -136,11 +135,13 @@ static bool VXListDLinkedDetachIfNeeded(XListDLinked* this_list)
         do {
             XListDNode* newNode = XContainer_malloc(this_list, ALIGN_UP(sizeof(XListDNode) + typeSize, sizeof(void*)));
             if (!newNode) {
-                // 释放已创建的节点
+                // 释放已创建的节点（先反初始化已拷贝构造的元素再释放，与 removeNode 约定一致）
                 XListDNode* tmp = newHead;
                 if (tmp) {
                     do {
                         XListDNode* next = tmp->next;
+                        if (XContainerDataDeinitMethod(this_list))
+                            XContainerDataDeinitMethod(this_list)(XListDNode_DataPtr(tmp));
                         XContainer_free(this_list, tmp);
                         tmp = next;
                     } while (tmp != newHead);
@@ -256,15 +257,22 @@ void VXClass_copy(XListDLinked* object, const XListDLinked* src)
             do {
                 XListDNode* newNode = XContainer_malloc(object, ALIGN_UP(sizeof(XListDNode) + typeSize, sizeof(void*)));
                 if (!newNode) {
-                    // 回滚已创建的节点
+                    // 回滚已创建的节点（先析构已构造的元素再释放，与 SLinked 版本一致）
                     if (newHead) {
                         XListDNode* node = newHead;
                         do {
                             XListDNode* next = node->next;
+                            if (XContainerDataDeinitMethod(object))
+                                XContainerDataDeinitMethod(object)(XListDNode_DataPtr(node));
                             XContainer_free(object, node);
                             node = next;
                         } while (node != newHead);
                     }
+                    // 失败回滚：上面 memcpy 已让 object 别名 src 的节点链，
+                    // 必须解除别名并置为空表状态，否则后续 clear/deinit 会双释放源节点
+                    XContainerDataPtr(object) = NULL;
+                    XContainerSize(object) = 0;
+                    XContainerCapacity(object) = 0;
                     return;
                 }
                 if (XContainerDataCopyMethod(object))
@@ -413,6 +421,9 @@ XListDNode* VXList_push_front(XListDLinked* this_list, void* pvData, XCDataCreat
     if (VXListBase_push_front_node(this_list, newNode))
         return newNode;
 
+    /* 插入失败：元素已构造进节点，先反初始化再释放节点 */
+    if (XContainerDataDeinitMethod(this_list))
+        XContainerDataDeinitMethod(this_list)(XListDNode_DataPtr(newNode));
     XContainer_free(this_list, newNode);
     return NULL;
 }
@@ -433,6 +444,9 @@ XListDNode* VXList_push_back(XListDLinked* this_list, void* pvData, XCDataCreatM
     if (VXListBase_push_back_node(this_list, newNode))
         return newNode;
 
+    /* 插入失败：元素已构造进节点，先反初始化再释放节点 */
+    if (XContainerDataDeinitMethod(this_list))
+        XContainerDataDeinitMethod(this_list)(XListDNode_DataPtr(newNode));
     XContainer_free(this_list, newNode);
     return NULL;
 }
@@ -776,6 +790,8 @@ static size_t VXList_remove_all(XListDLinked* this_list, const void* pvData)
 		return 0;
 	if (!ensureSharedData(this_list) || !VXListDLinkedDetachIfNeeded(this_list))
 		return 0;
+	if (XContainerCompare(this_list) == NULL)
+		return 0;//未注册比较函数，不解引用空槽（与 VXList_sort 的前置检查一致）
 	size_t removed = 0;
 	XListDNode** head_ptr = XListDLinked_head_ptr(this_list);
 	XListDNode* head = *head_ptr;
@@ -818,6 +834,8 @@ static bool VXList_remove_one(XListDLinked* this_list, const void* pvData)
 
 static bool VXList_indexOf(const XListDLinked* this_list, const void* findVal, size_t from, XListDLinked_iterator* it)
 {
+	if (XContainerCompare(this_list) == NULL)
+		return false;//未注册比较函数，不解引用空槽（与 VXList_sort 的前置检查一致）
 	XListDLinked_iterator tmpIt = XListDLinked_begin((XListDLinked*)this_list);
 	if (!it) it = &tmpIt;
 	size_t idx = 0;
@@ -835,6 +853,8 @@ static bool VXList_indexOf(const XListDLinked* this_list, const void* findVal, s
 
 static bool VXList_lastIndexOf(const XListDLinked* this_list, const void* findVal, size_t from, XListDLinked_iterator* it)
 {
+	if (XContainerCompare(this_list) == NULL)
+		return false;//未注册比较函数，不解引用空槽（与 VXList_sort 的前置检查一致）
 	bool found = false;
 	XListDLinked_iterator tmpIt = XListDLinked_begin((XListDLinked*)this_list);
 	XListDLinked_iterator lastFound;

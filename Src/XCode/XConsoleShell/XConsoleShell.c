@@ -192,20 +192,20 @@ static bool VXConsoleShell_event(XObject* object, XEvent* event)
     XConsoleShell* self = (XConsoleShell*)object;
     if (!self || !event) return false;
 #if XCONSOLE_SHELL_ASYNC_ON
-    if (event->type == XEVENT_TYPE_SOCK_ACT) {
+    if (event->m_type == XEVENT_TYPE_SOCK_ACT) {
         XEventSockAct* socketEvent = (XEventSockAct*)event;
         XFileDescriptor* descriptor = XFd_get(socketEvent->fd);
         if (descriptor && descriptor->m_type == XFD_TYPE_CONSOLE &&
             descriptor->object == self &&
-            (socketEvent->actType & XSocketAct_Read)) {
+            (socketEvent->actType & XSocketActType_Read)) {
             xcs_async_read_ready(self);
             XEvent_accept(event);
             return true;
         }
     }
 #endif
-    if (event->type == self->m_asyncEventType &&
-        event->type != XEVENT_TYPE_NONE) {
+    if (event->m_type == self->m_asyncEventType &&
+        event->m_type != XEVENT_TYPE_NONE) {
         XAtomic_store_bool(&self->m_asyncInputPosted, false,
                            XAtomic_MemoryOrder_Release);
         xcs_async_read_ready(self);
@@ -2099,6 +2099,12 @@ bool XConsoleShell_closeSession(XConsoleShell* self, XConsoleShellSession* sessi
 {
     if (!self || !session || session == &self->m_session || !xcs_is_session(self, session))
         return false;
+#if XCONSOLE_SHELL_EDITOR_ON
+    /* 会话缓冲即将整体清零，必须先退出其中挂起的 vi/vim：取消编辑器会话（editorTui）
+       对本会话的引用，使重绘与输入回调先于 memset 停止，TUI 不再访问
+       已清零的缓冲；cancel 完成后再整体清零，确保 editorTui 引用不悬空。 */
+    XConsoleShellVi_cancel(self, session);
+#endif
     memset(session, 0, sizeof(*session));
     if (self->m_sessionCount) --self->m_sessionCount;
     return true;
@@ -2293,7 +2299,7 @@ XConsoleResult XConsoleShell_processLine(XConsoleShell* self,
 #endif
 #if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
     /* ping 异步运行期间忽略其他输入，避免命令与定时器冲突。 */
-    if (self->m_ping.active)
+    if (self->m_ping.m_active)
         return XConsoleResult_MoreOutput;
 #endif
 #if XCONSOLE_SHELL_LOGIN_ON

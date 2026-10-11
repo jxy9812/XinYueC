@@ -77,6 +77,42 @@ static void addCurrentMessage(XCanDbcFileParser* parser);
 static void addWarning(XCanDbcFileParser* parser, const char* warning);
 static XCanMessageDescription* findMessageByUid(XCanDbcFileParser* parser, XCanBus_UniqueId uid);
 
+// =============== 多路复用值范围容器回调 ===============
+/* XCanSignalDescription_MultiplexValueRange 内含两个堆上 XVariant 指针，
+ * 作为容器元素时必须注册 data 拷贝/移动/析构回调，否则元素随容器销毁时
+ * 两个 XVariant 无任何释放路径（或浅拷贝后双重释放）。 */
+
+/** @brief 析构回调：释放范围内的两个堆上 XVariant */
+static void xCanMuxValueRange_deinit(void* data)
+{
+    XCanSignalDescription_MultiplexValueRange* range = (XCanSignalDescription_MultiplexValueRange*)data;
+    if (!range) return;
+    if (range->m_minimum) { XClassDelete(range->m_minimum); range->m_minimum = NULL; }
+    if (range->m_maximum) { XClassDelete(range->m_maximum); range->m_maximum = NULL; }
+}
+
+/** @brief 拷贝回调：深拷贝范围内的两个 XVariant */
+static void xCanMuxValueRange_copy(void* dest, const void* src)
+{
+    XCanSignalDescription_MultiplexValueRange* d = (XCanSignalDescription_MultiplexValueRange*)dest;
+    const XCanSignalDescription_MultiplexValueRange* s = (const XCanSignalDescription_MultiplexValueRange*)src;
+    if (!d || !s) return;
+    d->m_minimum = s->m_minimum ? XVariant_create_copy(s->m_minimum) : NULL;
+    d->m_maximum = s->m_maximum ? XVariant_create_copy(s->m_maximum) : NULL;
+}
+
+/** @brief 移动回调：转移两个 XVariant 的所有权并清空源 */
+static void xCanMuxValueRange_move(void* dest, void* src)
+{
+    XCanSignalDescription_MultiplexValueRange* d = (XCanSignalDescription_MultiplexValueRange*)dest;
+    XCanSignalDescription_MultiplexValueRange* s = (XCanSignalDescription_MultiplexValueRange*)src;
+    if (!d || !s) return;
+    d->m_minimum = s->m_minimum;
+    d->m_maximum = s->m_maximum;
+    s->m_minimum = NULL;
+    s->m_maximum = NULL;
+}
+
 // =============== 字符串辅助函数 ===============
 
 /** @brief 去除字符串首尾空白 */
@@ -156,7 +192,7 @@ void XCanDbcFileParser_deinit(XCanDbcFileParser* parser)
         parser->m_warnings = NULL;
     }
     if (parser->m_fileName) {
-        XFree_System(parser->m_fileName);
+        XClassDelete(parser->m_fileName);
         parser->m_fileName = NULL;
     }
 }
@@ -255,11 +291,12 @@ static bool parseFileInternal(XCanDbcFileParser* parser, const char* fileName)
     char* buffer = NULL;
     bool result = false;
 
-    /* 保存文件名 */
+    /* 保存文件名（字符串所有权归对象，按 6.x 规则用 XString* 长期保存） */
     if (parser->m_fileName) {
-        XFree_System(parser->m_fileName);
+        XClassDelete(parser->m_fileName);
+        parser->m_fileName = NULL;
     }
-    parser->m_fileName = XStrdup(fileName);
+    parser->m_fileName = XString_create_utf8(fileName);
 
     if (!nameString) {
         parser->m_error = XCanDbcFileParser_Error_FileReading;
@@ -741,22 +778,31 @@ static bool parseSignal(XCanDbcFileParser* parser, const char* data)
         XCanSignalDescription_MultiplexValueRange muxRange;
         memset(&muxRange, 0, sizeof(muxRange));
 
-        XVariant* minVar = (XVariant*)XMalloc_System(sizeof(XVariant));
-        XVariant* maxVar = (XVariant*)XMalloc_System(sizeof(XVariant));
-        if (minVar && maxVar) {
-            XVariant_init(minVar, NULL, 0, XVariantType_Int);
-            XVariant_init(maxVar, NULL, 0, XVariantType_Int);
-            XVariant_setValue_int(minVar, muxValue);
-            XVariant_setValue_int(maxVar, muxValue);
-            muxRange.m_minimum = minVar;
-            muxRange.m_maximum = maxVar;
+        /* 经 XVariant_create_int 创建（失败返回 NULL，堆释放标记正确）；
+           单个创建失败时释放已成功的另一个，避免部分分配泄漏 */
+        muxRange.m_minimum = XVariant_create_int(muxValue);
+        muxRange.m_maximum = XVariant_create_int(muxValue);
+        if (!muxRange.m_minimum || !muxRange.m_maximum) {
+            if (muxRange.m_minimum) XClassDelete(muxRange.m_minimum);
+            if (muxRange.m_maximum) XClassDelete(muxRange.m_maximum);
+            muxRange.m_minimum = NULL;
+            muxRange.m_maximum = NULL;
         }
 
         XMap* muxSignals = XMap_create(sizeof(XString), sizeof(XCanSignalDescription_MultiplexValueRange), XString_compare);
         XMapBaseSetKeyCopyMethod(muxSignals, XClass_copy_base);
         XMapBaseSetKeyMoveMethod(muxSignals, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(muxSignals, XClass_deinit_base);
-        XMapBase_insert_base((XMapBase*)muxSignals, &dummyKey, &muxRange);
+        /* 值内含两个堆上 XVariant，注册 data 拷贝/移动/析构方法，
+           才能随 map 的深拷贝与销毁正确管理其生命周期 */
+        XContainerSetDataCopyMethod(muxSignals, xCanMuxValueRange_copy);
+        XContainerSetDataMoveMethod(muxSignals, xCanMuxValueRange_move);
+        XContainerSetDataDeinitMethod(muxSignals, xCanMuxValueRange_deinit);
+        /* 值走移动插入：所有权移交 map，无临时副本遗留；
+           插入失败时值可能仍未被接管，统一按析构回调清理（已被接管时为空操作） */
+        if (!XMapBase_insert_valueMove_base((XMapBase*)muxSignals, &dummyKey, &muxRange)) {
+            xCanMuxValueRange_deinit(&muxRange);
+        }
 
         XCanSignalDescription_setMultiplexSignals(&sigDesc, muxSignals);
         XClassDelete(muxSignals);
@@ -933,7 +979,12 @@ static void parseExtendedMux(XCanDbcFileParser* parser, const char* data)
     XCanBus_UniqueId uid = (XCanBus_UniqueId)strtoul(uidStr, NULL, 10);
 
     /* 解析开关值范围列表 */
-    XVector* valueRanges = XVector_create(sizeof(XCanSignalDescription_MultiplexValueRange));
+    /* 元素内含两个堆上 XVariant，注册析构回调，XClassDelete(valueRanges) 时
+     * 逐元素释放。元素按位转移属主且不可克隆共享，须关闭 COW：COW 扩容会
+     * 先 memcpy 旧块再对旧块逐元素析构（XVector VXVectorEnlargeCapacity），
+     * 未注册拷贝回调时新块指针将随之悬垂 */
+    XVector* valueRanges = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XCanSignalDescription_MultiplexValueRange), false);
+    XContainerSetDataDeinitMethod(valueRanges, xCanMuxValueRange_deinit);
 
     char* token = xStrtok(NULL, " ", &savePtr);
     while (token && token[0] != ';') {
@@ -946,31 +997,31 @@ static void parseExtendedMux(XCanDbcFileParser* parser, const char* data)
             int32_t minVal = atoi(token);
             int32_t maxVal = atoi(dashPos + 1);
 
-            XVariant* minVar = (XVariant*)XMalloc_System(sizeof(XVariant));
-            XVariant* maxVar = (XVariant*)XMalloc_System(sizeof(XVariant));
-            if (minVar && maxVar) {
-                XVariant_init(minVar, NULL, 0, XVariantType_Int);
-                XVariant_init(maxVar, NULL, 0, XVariantType_Int);
-                XVariant_setValue_int(minVar, minVal);
-                XVariant_setValue_int(maxVar, maxVal);
-                range.m_minimum = minVar;
-                range.m_maximum = maxVar;
+            /* 经 XVariant_create_int 创建；单个失败时释放已成功的另一个 */
+            range.m_minimum = XVariant_create_int(minVal);
+            range.m_maximum = XVariant_create_int(maxVal);
+            if (!range.m_minimum || !range.m_maximum) {
+                if (range.m_minimum) XClassDelete(range.m_minimum);
+                if (range.m_maximum) XClassDelete(range.m_maximum);
+                range.m_minimum = NULL;
+                range.m_maximum = NULL;
             }
         } else {
             int32_t val = atoi(token);
-            XVariant* minVar = (XVariant*)XMalloc_System(sizeof(XVariant));
-            XVariant* maxVar = (XVariant*)XMalloc_System(sizeof(XVariant));
-            if (minVar && maxVar) {
-                XVariant_init(minVar, NULL, 0, XVariantType_Int);
-                XVariant_init(maxVar, NULL, 0, XVariantType_Int);
-                XVariant_setValue_int(minVar, val);
-                XVariant_setValue_int(maxVar, val);
-                range.m_minimum = minVar;
-                range.m_maximum = maxVar;
+            range.m_minimum = XVariant_create_int(val);
+            range.m_maximum = XVariant_create_int(val);
+            if (!range.m_minimum || !range.m_maximum) {
+                if (range.m_minimum) XClassDelete(range.m_minimum);
+                if (range.m_maximum) XClassDelete(range.m_maximum);
+                range.m_minimum = NULL;
+                range.m_maximum = NULL;
             }
         }
 
-        XVector_push_back_1_base(valueRanges, &range);
+        if (!XVector_push_back_1_base(valueRanges, &range)) {
+            /* 入队失败：向量未接管，就地回收（分配失败路径防泄漏） */
+            xCanMuxValueRange_deinit(&range);
+        }
         token = xStrtok(NULL, " ", &savePtr);
     }
 
@@ -1022,7 +1073,12 @@ static void parseValueDescriptions(XCanDbcFileParser* parser, const char* data)
     /* 初始化值描述映射表（如果需要） */
     if (!parser->m_valueDescriptions) {
         parser->m_valueDescriptions = (XCanDbcFileParser_MessageValueDescriptions*)
-            XMap_create(sizeof(XCanBus_UniqueId), sizeof(XCanDbcFileParser_SignalValueDescriptions), uint32_t_compare);
+            XMap_create(sizeof(XCanBus_UniqueId), sizeof(XCanDbcFileParser_SignalValueDescriptions), Xuint32_t_compare);
+        /* 值是 XMap 结构（信号值描述映射表），注册多态拷贝/移动/析构回调，
+           使插入时按 COW 共享（引用计数+1），否则字节浅拷后源被删除即悬垂 */
+        XContainerSetDataCopyMethod(parser->m_valueDescriptions, XClass_copy_base);
+        XContainerSetDataMoveMethod(parser->m_valueDescriptions, XClass_move_base);
+        XContainerSetDataDeinitMethod(parser->m_valueDescriptions, XClass_deinit_base);
     }
 
     /* 查找或创建信号值描述映射表 */
@@ -1042,6 +1098,11 @@ static void parseValueDescriptions(XCanDbcFileParser* parser, const char* data)
         XMapBaseSetKeyCopyMethod(tmpMap, XClass_copy_base);
         XMapBaseSetKeyMoveMethod(tmpMap, XClass_move_base);
         XMapBaseSetKeyDeinitMethod(tmpMap, XClass_deinit_base);
+        /* 值同样是 XMap 结构，注册多态回调：插入外层 map 时 COW 共享而非字节浅拷，
+           随后 XClassDelete(tmpMap) 仅减引用计数，不会释放外层仍在引用的存储 */
+        XContainerSetDataCopyMethod(tmpMap, XClass_copy_base);
+        XContainerSetDataMoveMethod(tmpMap, XClass_move_base);
+        XContainerSetDataDeinitMethod(tmpMap, XClass_deinit_base);
 
         XCanBus_UniqueId uidKey = uid;
         XMapBase_insert_base((XMapBase*)parser->m_valueDescriptions, &uidKey, tmpMap);
@@ -1083,7 +1144,12 @@ static void parseValueDescriptions(XCanDbcFileParser* parser, const char* data)
             if (!valDesc) {
                 XCanDbcFileParser_ValueDescriptions newValDesc;
                 memset(&newValDesc, 0, sizeof(newValDesc));
-                XMap* tmpValMap = XMap_create(sizeof(uint32_t), sizeof(XString), uint32_t_compare);
+                XMap* tmpValMap = XMap_create(sizeof(uint32_t), sizeof(XString), Xuint32_t_compare);
+                /* 值是 XString，注册多态回调：插入 sigValueDesc 时 COW 共享而非字节浅拷，
+                   XClassDelete(tmpValMap) 仅减引用计数，存入副本不再悬垂 */
+                XContainerSetDataCopyMethod(tmpValMap, XClass_copy_base);
+                XContainerSetDataMoveMethod(tmpValMap, XClass_move_base);
+                XContainerSetDataDeinitMethod(tmpValMap, XClass_deinit_base);
                 XMapBase_insert_base((XMapBase*)sigValueDesc, &sigKey, tmpValMap);
                 XClassDelete(tmpValMap);
 
@@ -1177,13 +1243,21 @@ static void postProcessSignalMultiplexing(XCanDbcFileParser* parser)
                                 (XCanSignalDescription_MultiplexValueRange*)
                                 XMap_value_base(muxSignals, &dummyKey);
                             if (val) {
+                                /* 先取出值的所有权再 remove：map 已注册值析构回调，
+                                   remove 会对旧条目调用析构，直接复用 val 会悬垂 */
+                                XCanSignalDescription_MultiplexValueRange taken = *val;
+                                val->m_minimum = NULL;
+                                val->m_maximum = NULL;
                                 /* 替换为实际的多路复用器名称 */
                                 XMap_remove_base(muxSignals, &dummyKey);
 
                                 XString muxKey;
                                 XString_init(&muxKey);
                                 XString_assign_utf8(&muxKey, XString_toUtf8(multiplexorSignal));
-                                XMapBase_insert_base((XMapBase*)muxSignals, &muxKey, val);
+                                if (!XMapBase_insert_valueMove_base((XMapBase*)muxSignals, &muxKey, &taken)) {
+                                    /* 插入失败且值未被接管时释放，已被接管时为空操作 */
+                                    xCanMuxValueRange_deinit(&taken);
+                                }
                                 XClassDeinit((XClass*)&muxKey);
                             }
 
@@ -1270,7 +1344,7 @@ static void addCurrentMessage(XCanDbcFileParser* parser)
     } else {
         /* 首次添加消息，先创建消息描述映射表 */
         parser->m_messageDescriptions = XMap_create(sizeof(XCanBus_UniqueId),
-            sizeof(XCanMessageDescription), uint32_t_compare);
+            sizeof(XCanMessageDescription), Xuint32_t_compare);
         /* 设置值的深拷贝/移动/析构方法，确保 map 内元素正确管理生命周期 */
         XContainerSetDataCopyMethod(parser->m_messageDescriptions, XCanMessageDescription_copy);
         XContainerSetDataMoveMethod(parser->m_messageDescriptions, XCanMessageDescription_move);
@@ -1309,10 +1383,23 @@ static XCanMessageDescription* findMessageByUid(XCanDbcFileParser* parser, XCanB
 XVector* XCanDbcFileParser_messageDescriptions(const XCanDbcFileParser* parser)
 {
     if (!parser || !parser->m_messageDescriptions) {
-        return XVector_create(sizeof(XCanMessageDescription));
+        XVector* empty = XVector_create(sizeof(XCanMessageDescription));
+        if (empty) {
+            XContainerSetDataCopyMethod(empty, XCanMessageDescription_copy);
+            XContainerSetDataMoveMethod(empty, XCanMessageDescription_move);
+            XContainerSetDataDeinitMethod(empty, XCanMessageDescription_deinit);
+        }
+        return empty;
     }
 
     XVector* result = XVector_create(sizeof(XCanMessageDescription));
+    if (result) {
+        /* 契约承诺返回深拷贝：注册 data 方法使 push_back 深拷贝元素，
+           与解析器 map 内元素不共享任何属主指针 */
+        XContainerSetDataCopyMethod(result, XCanMessageDescription_copy);
+        XContainerSetDataMoveMethod(result, XCanMessageDescription_move);
+        XContainerSetDataDeinitMethod(result, XCanMessageDescription_deinit);
+    }
 
     XMap_iterator it = XMap_begin(parser->m_messageDescriptions);
     while (!XMap_iterator_isEnd(&it)) {
@@ -1334,7 +1421,7 @@ XCanDbcFileParser_MessageValueDescriptions* XCanDbcFileParser_messageValueDescri
 {
     if (!parser || !parser->m_valueDescriptions) {
         return (XCanDbcFileParser_MessageValueDescriptions*)
-            XMap_create(sizeof(XCanBus_UniqueId), sizeof(XCanDbcFileParser_SignalValueDescriptions), uint32_t_compare);
+            XMap_create(sizeof(XCanBus_UniqueId), sizeof(XCanDbcFileParser_SignalValueDescriptions), Xuint32_t_compare);
     }
     return (XCanDbcFileParser_MessageValueDescriptions*)XMap_create_copy(parser->m_valueDescriptions);
 }

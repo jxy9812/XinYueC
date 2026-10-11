@@ -131,9 +131,9 @@ XVtable* XStringList_class_init()
 //	//XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
 //
 //	//重写的函数
-//#if XCLASS_VTABLE_SHOW_SIZE
+//#if XCLASS_VTABLE_SHOW_SIZE_ON
 //	XPrintf("XStringList size:%d\n", XVtable_size(XVTABLE_DEFAULT));
-//#endif // XCLASS_VTABLE_SHOW_SIZE
+//#endif // XCLASS_VTABLE_SHOW_SIZE_ON
 //	return XVTABLE_DEFAULT;
 }
 XStringList* XStringList_create_ex(XMemoryType memory)
@@ -237,7 +237,7 @@ static XRegularExpression* XStringList_exactRegularExpression(
     if (!expression) return NULL;
     XString* pattern = XRegularExpression_pattern(expression);
     if (!pattern) return NULL;
-    XString* anchored = XRegularExpression_anchoredPattern_2(pattern);
+    XString* anchored = XRegularExpression_anchoredPattern(pattern);
     XRegularExpression* result = NULL;
     if (anchored) {
         result = XRegularExpression_create();

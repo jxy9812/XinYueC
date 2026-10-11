@@ -13,6 +13,7 @@ extern "C" {
 #endif
 
 #include "XWidget.h"
+#include "XObject_Protected.h" /* 下方 XWidget_event_base 宏展开为 XObject_event_base（XObject 保护接口） */
 
 #if XPAINTDEVICE_ON
 typedef struct XPaintDevice XPaintDevice; /* 前向声明；完整定义见 XPaintDevice.h。 */

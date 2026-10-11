@@ -14,7 +14,7 @@
 
 const char* XSqlDatabase_defaultConnection = "qt_sql_default_connection";
 
-static XAtomic_uintptr_t g_sqlRegistryMutex = { 0 };
+static XAtomic_Uintptr g_sqlRegistryMutex = { 0 };
 
 static XMutex* xsql_registry_mutex(void)
 {
@@ -87,9 +87,9 @@ void XSqlDriverCreator_init(XSqlDriverCreator* creator, XSqlDriverCreateMethod c
 {
     if (!creator) return;
     memset(creator, 0, sizeof(*creator));
-    XClass_init((XClass*)&creator->m_parent);
-    XClassSetVtable(&creator->m_parent, XSqlDriverCreator);
-    creator->m_parent.m_create = createMethod;
+    XClass_init((XClass*)&creator->m_class);
+    XClassSetVtable(&creator->m_class, XSqlDriverCreator);
+    creator->m_class.m_create = createMethod;
 }
 
 XSqlDriverCreator* XSqlDriverCreator_create_ex(XMemoryType memory, XSqlDriverCreateMethod createMethod)
@@ -235,6 +235,9 @@ static XSqlDatabasePrivate* xsql_database_private_create(XSqlDriver* driver, con
     privateData->m_connectionName = XString_create_utf8(name ? name : XSqlDatabase_defaultConnection);
     privateData->m_driverName = XString_create_utf8(driver ? XSqlDriverType_name(XSqlDriver_driverType(driver)) : "");
     if (!privateData->m_connectionName || !privateData->m_driverName) {
+        /* driver 所有权仍归调用方（见 XSqlDatabase_addDatabase_driver 注释），
+           清空后由 private_delete 只回收私有数据，避免与调用方重复释放。 */
+        privateData->m_driver = NULL;
         xsql_database_private_delete(privateData);
         return NULL;
     }
@@ -373,11 +376,12 @@ static XSqlDriver* xsql_create_driver_type(XSqlDriverType type)
     return result;
 }
 
-XSqlDatabase* XSqlDatabase_addDatabase(XSqlDriverType type, const char* connectionName)
+XSqlDatabase* XSqlDatabase_addDatabase(XSqlDriverType type, const XString* connectionName)
 {
     xsql_register_builtin_drivers();
     XSqlDriver* driver = xsql_create_driver_type(type);
-    return driver ? XSqlDatabase_addDatabase_driver(driver, connectionName) : NULL;
+    const char* name = connectionName ? XString_toUtf8(connectionName) : NULL;
+    return driver ? XSqlDatabase_addDatabase_driver(driver, name) : NULL;
 }
 
 XSqlDatabase* XSqlDatabase_addDatabase_driver(XSqlDriver* driver, const char* connectionName)
@@ -419,13 +423,13 @@ XSqlDatabase* XSqlDatabase_addDatabase_driver(XSqlDriver* driver, const char* co
     return result;
 }
 
-XSqlDatabase* XSqlDatabase_addDatabase_utf8(const char* type, const char* connectionName) { return XSqlDatabase_addDatabase(XSqlDriverType_fromName_utf8(type), connectionName); }
-XSqlDatabase* XSqlDatabase_addDatabase_2(const XString* type, const XString* connectionName) { return XSqlDatabase_addDatabase_utf8(type ? XString_toUtf8(type) : NULL, connectionName ? XString_toUtf8(connectionName) : NULL); }
+XSqlDatabase* XSqlDatabase_addDatabase_utf8(const char* type, const char* connectionName) { return XSqlDatabase_addDatabase_2(XSqlDriverType_fromName_utf8(type), connectionName); }
+XSqlDatabase* XSqlDatabase_addDatabase_2(XSqlDriverType type, const char* connectionName) { XString* name = connectionName ? XString_create_utf8(connectionName) : NULL; XSqlDatabase* result = XSqlDatabase_addDatabase(type, name); if (name) XClassDelete(name); return result; }
 
-XSqlDatabase* XSqlDatabase_database(const char* connectionName, bool open)
+XSqlDatabase* XSqlDatabase_database(const XString* connectionName, bool open)
 {
     XMutex* mutex = xsql_registry_lock();
-    int index = xsql_find_connection_entry(connectionName);
+    int index = xsql_find_connection_entry(connectionName ? XString_toUtf8(connectionName) : NULL);
     if (index < 0) {
         xsql_registry_unlock(mutex);
         return NULL;
@@ -446,12 +450,12 @@ XSqlDatabase* XSqlDatabase_database(const char* connectionName, bool open)
     return result;
 }
 
-XSqlDatabase* XSqlDatabase_cloneDatabase(const XSqlDatabase* other, const char* connectionName)
+XSqlDatabase* XSqlDatabase_cloneDatabase(const XSqlDatabase* other, const XString* connectionName)
 {
     if (!other || !other->m_d || !other->m_d->m_driver || !xsql_database_thread_allowed(other->m_d)) return NULL;
     XSqlDriver* driver = xsql_create_driver_type(XSqlDriver_driverType(other->m_d->m_driver));
     if (!driver) return NULL;
-    XSqlDatabase* result = XSqlDatabase_addDatabase_driver(driver, connectionName);
+    XSqlDatabase* result = XSqlDatabase_addDatabase_driver(driver, connectionName ? XString_toUtf8(connectionName) : NULL);
     if (!result || !result->m_d) return result;
     xsql_database_assign_string(&result->m_d->m_databaseName, other->m_d->m_databaseName);
     xsql_database_assign_string(&result->m_d->m_userName, other->m_d->m_userName);
@@ -464,7 +468,7 @@ XSqlDatabase* XSqlDatabase_cloneDatabase(const XSqlDatabase* other, const char* 
     return result;
 }
 
-XSqlDatabase* XSqlDatabase_cloneDatabase_name(const char* otherConnectionName, const char* connectionName)
+XSqlDatabase* XSqlDatabase_cloneDatabase_name(const XString* otherConnectionName, const XString* connectionName)
 {
     XSqlDatabase* other = XSqlDatabase_database(otherConnectionName, false);
     if (!other) return NULL;
@@ -473,14 +477,14 @@ XSqlDatabase* XSqlDatabase_cloneDatabase_name(const char* otherConnectionName, c
     return result;
 }
 
-XSqlDatabase* XSqlDatabase_cloneDatabase_2(const XSqlDatabase* other, const XString* connectionName) { return XSqlDatabase_cloneDatabase(other, connectionName ? XString_toUtf8(connectionName) : NULL); }
-XSqlDatabase* XSqlDatabase_cloneDatabase_name_2(const XString* otherConnectionName, const XString* connectionName) { return XSqlDatabase_cloneDatabase_name(otherConnectionName ? XString_toUtf8(otherConnectionName) : NULL, connectionName ? XString_toUtf8(connectionName) : NULL); }
-XSqlDatabase* XSqlDatabase_database_2(const XString* connectionName, bool open) { return XSqlDatabase_database(connectionName ? XString_toUtf8(connectionName) : NULL, open); }
+XSqlDatabase* XSqlDatabase_cloneDatabase_2(const XSqlDatabase* other, const char* connectionName) { XString* name = connectionName ? XString_create_utf8(connectionName) : NULL; XSqlDatabase* result = XSqlDatabase_cloneDatabase(other, name); if (name) XClassDelete(name); return result; }
+XSqlDatabase* XSqlDatabase_cloneDatabase_name_2(const char* otherConnectionName, const char* connectionName) { XString* otherName = otherConnectionName ? XString_create_utf8(otherConnectionName) : NULL; XString* name = connectionName ? XString_create_utf8(connectionName) : NULL; XSqlDatabase* result = XSqlDatabase_cloneDatabase_name(otherName, name); if (otherName) XClassDelete(otherName); if (name) XClassDelete(name); return result; }
+XSqlDatabase* XSqlDatabase_database_2(const char* connectionName, bool open) { XString* name = connectionName ? XString_create_utf8(connectionName) : NULL; XSqlDatabase* result = XSqlDatabase_database(name, open); if (name) XClassDelete(name); return result; }
 
-void XSqlDatabase_removeDatabase(const char* connectionName) { XMutex* mutex = xsql_registry_lock(); int index = xsql_find_connection_entry(connectionName); if (index >= 0) xsql_remove_connection_entry((size_t)index); xsql_registry_unlock(mutex); }
-bool XSqlDatabase_contains(const char* connectionName) { XMutex* mutex = xsql_registry_lock(); bool result = xsql_find_connection_entry(connectionName) >= 0; xsql_registry_unlock(mutex); return result; }
-void XSqlDatabase_removeDatabase_2(const XString* connectionName) { XSqlDatabase_removeDatabase(connectionName ? XString_toUtf8(connectionName) : NULL); }
-bool XSqlDatabase_contains_2(const XString* connectionName) { return XSqlDatabase_contains(connectionName ? XString_toUtf8(connectionName) : NULL); }
+void XSqlDatabase_removeDatabase(const XString* connectionName) { XMutex* mutex = xsql_registry_lock(); int index = xsql_find_connection_entry(connectionName ? XString_toUtf8(connectionName) : NULL); if (index >= 0) xsql_remove_connection_entry((size_t)index); xsql_registry_unlock(mutex); }
+bool XSqlDatabase_contains(const XString* connectionName) { XMutex* mutex = xsql_registry_lock(); bool result = xsql_find_connection_entry(connectionName ? XString_toUtf8(connectionName) : NULL) >= 0; xsql_registry_unlock(mutex); return result; }
+void XSqlDatabase_removeDatabase_2(const char* connectionName) { XString* name = connectionName ? XString_create_utf8(connectionName) : NULL; XSqlDatabase_removeDatabase(name); if (name) XClassDelete(name); }
+bool XSqlDatabase_contains_2(const char* connectionName) { XString* name = connectionName ? XString_create_utf8(connectionName) : NULL; bool result = XSqlDatabase_contains(name); if (name) XClassDelete(name); return result; }
 bool XSqlDatabase_registerSqlDriver_2(const XString* name, XSqlDriverCreatorBase* creator) { return XSqlDatabase_registerSqlDriver(name ? XString_toUtf8(name) : NULL, creator); }
 bool XSqlDatabase_isDriverAvailable_2(const XString* name) { return XSqlDatabase_isDriverAvailable(name ? XString_toUtf8(name) : NULL); }
 XStringList* XSqlDatabase_drivers(void) { xsql_register_builtin_drivers(); XMutex* mutex = xsql_registry_lock(); XStringList* result = XStringList_create(); if (result) for (size_t i = 0; i < g_driverEntryCount; ++i) if (g_driverEntries[i].m_name) XStringList_push_back_base(result, g_driverEntries[i].m_name); xsql_registry_unlock(mutex); return result; }

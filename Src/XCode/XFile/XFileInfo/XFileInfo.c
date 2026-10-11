@@ -13,9 +13,10 @@
 static void VXFileInfo_copy(XFileInfo* self, const XFileInfo* other)
 {
     if (!self || !other) return;
+    if (self == other) return;  /* 自拷贝直接返回，避免先释放自身成员再读取已释放内容 */
     if (XClassIsVtableNull(self))
         XFileInfo_init_1(self);
-    
+
     // 拷贝路径
     if (self->m_filePath) {
         XClassDelete(self->m_filePath);
@@ -30,9 +31,10 @@ static void VXFileInfo_copy(XFileInfo* self, const XFileInfo* other)
 static void VXFileInfo_move(XFileInfo* self, XFileInfo* other)
 {
     if (!self || !other) return;
+    if (self == other) return;  /* 自移动直接返回，避免清空自身内容 */
     if (XClassIsVtableNull(self))
         XFileInfo_init_1(self);
-    
+
     // 移动路径
     if (self->m_filePath) {
         XClassDelete(self->m_filePath);
@@ -191,7 +193,13 @@ void XFileInfo_setFile_1(XFileInfo* info, const XString* path)
 void XFileInfo_setFile_2(XFileInfo* info, const XString* dir, const XString* path)
 {
     if (!info) return;
-    
+
+    /* init_3→init_1 会无条件新建 m_filePath 覆盖旧值；对象复用时必须先释放
+     * 旧路径，否则旧 XString 永久泄漏（对照 XFileInfo_setFile_1 先删后赋）。 */
+    if (info->m_filePath) {
+        XClassDelete(info->m_filePath);
+        info->m_filePath = NULL;
+    }
     XFileInfo_init_3(info, dir, path);
     info->m_cacheValid = false;
 }

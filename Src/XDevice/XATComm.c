@@ -1,10 +1,11 @@
 ﻿#include "XATComm.h"
+#include <string.h>
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
 #include "XDateTime.h"
 #include "XVariantList.h"
-#include <string.h>
+#include "XStringUtils.h"
 
 static void VXATComm_processResponse(XATComm* comm);
 static void VXATComm_timerEvent(XObject* self, XTimerEvent* event);
@@ -109,8 +110,8 @@ bool XATComm_sendCommand(XATComm* comm, const char* cmd, int opType, int msecs)
     if (cmd) {
         char atCmd[256];
         snprintf(atCmd, sizeof(atCmd), "%s\r\n", cmd);
-        size_t sent = XIODevice_write_1(comm->m_io, atCmd, strlen(atCmd));
-        if (sent != strlen(atCmd)) {
+        size_t sent = XIODevice_write_1(comm->m_io, atCmd, XStrlen(atCmd));
+        if (sent != XStrlen(atCmd)) {
             XDEBUG_PRINTF("XATComm: send failed: %s", cmd);
             comm->m_currentOp = 0;
             return false;
@@ -207,11 +208,11 @@ void VXATComm_processResponse(XATComm* comm)
     XATComm_response_signal(comm, data);
 
     // 检查 OK / ERROR
-    if (data && strstr(data, "OK")) {
+    if (data && XStrstr(data, "OK")) {
         comm->m_operationResult = 1;
         XATComm_ok_signal(comm);
     }
-    else if (data && strstr(data, "ERROR")) {
+    else if (data && XStrstr(data, "ERROR")) {
         comm->m_operationError = true;
         XATComm_error_signal(comm, data);
     }

@@ -33,16 +33,14 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include "XByteArrayView.h"   ///< 使用项目中真正的XByteArrayView（非拥有型只读视图）
+#include "XCryptographicHash.h"
 
 // =============== 前向声明 ===============
 
 typedef struct XByteArray XByteArray;
 typedef struct XString XString;
 typedef struct XIODevice XIODevice;
-
-#include "XByteArrayView.h"   ///< 使用项目中真正的XByteArrayView（非拥有型只读视图）
-
-#include "XCryptographicHash.h"
 
 /**
  * @brief 根据 RFC 8554 计算 LM-OTS SHA256_N32_W8 公钥候选值。
@@ -404,12 +402,12 @@ typedef enum XCryptographic_XofAlgorithm {
  *       使用完成后调用 XCryptographic_xofAbort 清理。
  */
 typedef struct XCryptographic_XofOperation {
-    XCryptographic_XofAlgorithm algorithm;  ///< 使用的算法
     uint64_t state[25];                     ///< Keccak 状态
     uint8_t block[200];                     ///< 吸收/挤出缓冲区
     size_t rate;                            ///< 当前算法速率（字节）
     size_t blockLen;                        ///< 已吸收的块内字节数
     size_t outputOffset;                    ///< 挤出阶段输出偏移
+    XCryptographic_XofAlgorithm algorithm;  ///< 使用的算法
     uint8_t delimitedSuffix;                ///< SHAKE 分隔符 0x1F
     bool finalized;                         ///< 是否已进入挤出阶段
     bool active;                            ///< 操作是否已初始化
@@ -591,12 +589,12 @@ void XCryptographic_chacha20Abort(XCryptographic_ChaCha20Operation* operation);
  */
 typedef struct XCryptographic_CmacOperation {
     uint8_t roundKeys[240];     ///< AES 轮密钥
-    uint8_t rounds;             ///< 轮数
     uint8_t firstSubkey[16];    ///< K1 子密钥
     uint8_t secondSubkey[16];   ///< K2 子密钥
     uint8_t state[16];          ///< 累计状态
     uint8_t pending[16];        ///< 待处理块缓冲
     size_t pendingSize;         ///< 待处理字节数
+    uint8_t rounds;             ///< 轮数
     bool active;                ///< 是否已初始化
 } XCryptographic_CmacOperation;
 
@@ -658,12 +656,12 @@ void XCryptographic_aesCmacAbort(XCryptographic_CmacOperation* operation);
 typedef struct XCryptographic_CcmStarNoTagOperation {
     uint8_t roundKeys[240];     ///< AES 轮密钥
     uint8_t key[32];            ///< 原始密钥
-    uint8_t keyLen;             ///< 密钥长度
-    uint8_t rounds;             ///< 轮数
     uint8_t counter[16];        ///< 计数器块
     uint8_t stream[16];         ///< 密钥流缓冲
     size_t streamOffset;        ///< 密钥流偏移
     uint32_t blockCounter;      ///< 块计数器
+    uint8_t keyLen;             ///< 密钥长度
+    uint8_t rounds;             ///< 轮数
     bool active;                ///< 是否已初始化
 } XCryptographic_CcmStarNoTagOperation;
 
@@ -710,11 +708,11 @@ typedef enum XCryptographic_AeadAlgorithm {
 
 /** @brief Poly1305 流式状态。 */
 typedef struct XCryptographic_Poly1305 {
-    uint32_t r[4];
-    uint32_t h[5];
-    uint32_t pad[4];
-    uint8_t buffer[16];
-    size_t bufferLen;
+    uint32_t r[4];           ///< 密钥派生的乘数 r（4 个 26 位份额，限制后不变）
+    uint32_t h[5];           ///< 累加器（5 个 26 位份额）
+    uint32_t pad[4];         ///< 密钥派生的加密填充（最终标签相加用）
+    uint8_t buffer[16];      ///< 待处理块缓冲，最多暂存 16 字节
+    size_t bufferLen;        ///< buffer 中暂存的字节数（0~16）
 } XCryptographic_Poly1305;
 
 /**
@@ -723,40 +721,40 @@ typedef struct XCryptographic_Poly1305 {
  *       XCryptographic_aeadAbort 清理。
  */
 typedef struct XCryptographic_AeadOperation {
-    XCryptographic_AeadAlgorithm algorithm;
-    XCryptographic_Key key;
-    XCryptographic_BlockCipherOperation blockCipher;
-    XCryptographic_ChaCha20Operation chacha20;
-    XCryptographic_Poly1305 poly1305;
-    uint8_t nonce[16];
-    size_t nonceLen;
-    size_t tagSize;
-    size_t associatedDataLength;
-    size_t dataLength;
-    size_t expectedAssociatedDataLength;
-    size_t expectedDataLength;
-    uint8_t gcmHashSubkey[16];
-    uint8_t gcmInitialCounter[16];
-    uint8_t gcmCounter[16];
-    uint8_t gcmAuth[16];
-    uint8_t gcmPending[16];
-    size_t gcmPendingLen;
-    uint8_t gcmStream[16];
-    size_t gcmStreamOffset;
-    uint8_t ccmState[16];
-    uint8_t ccmCounter[16];
-    uint8_t ccmStream[16];
-    uint8_t ccmPending[16];
-    size_t ccmPendingLen;
-    size_t ccmStreamOffset;
-    size_t ccmBlockCounter;
-    uint8_t ccmAdPrefix[10];
-    size_t ccmAdPrefixLen;
-    size_t ccmAdPrefixOffset;
-    bool encrypt;
-    bool active;
-    bool lengthsSet;
-    bool associatedDataFinalized;
+    XCryptographic_AeadAlgorithm algorithm;          ///< 使用的 AEAD 算法
+    XCryptographic_Key key;                          ///< 导入的对称密钥
+    XCryptographic_BlockCipherOperation blockCipher; ///< AES/ARIA/Camellia 分组密码子上下文
+    XCryptographic_ChaCha20Operation chacha20;       ///< ChaCha20 流密码子上下文
+    XCryptographic_Poly1305 poly1305;                ///< Poly1305 认证子状态
+    uint8_t nonce[16];                               ///< 当前 nonce/IV，有效长度见 nonceLen
+    size_t nonceLen;                                 ///< nonce 有效字节数（0~16）
+    size_t tagSize;                                  ///< 认证标签长度（字节，CCM 为 4~16）
+    size_t associatedDataLength;                     ///< 已处理的关联数据长度（字节）
+    size_t dataLength;                               ///< 已处理的明文/密文长度（字节）
+    size_t expectedAssociatedDataLength;             ///< 声明的关联数据总长度（字节）
+    size_t expectedDataLength;                       ///< 声明的消息总长度（字节）
+    uint8_t gcmHashSubkey[16];                       ///< GCM 的 GHASH 子密钥 H
+    uint8_t gcmInitialCounter[16];                   ///< GCM 初始计数器块 J0
+    uint8_t gcmCounter[16];                          ///< GCM 当前计数器块
+    uint8_t gcmAuth[16];                             ///< GCM 累计认证标签
+    uint8_t gcmPending[16];                          ///< GCM 未满块缓冲
+    size_t gcmPendingLen;                            ///< gcmPending 中暂存字节数（0~15）
+    uint8_t gcmStream[16];                           ///< GCM 密钥流缓冲
+    size_t gcmStreamOffset;                          ///< gcmStream 已消耗的字节偏移
+    uint8_t ccmState[16];                            ///< CCM 的 CBC-MAC 状态块
+    uint8_t ccmCounter[16];                          ///< CCM 当前计数器块 A_i
+    uint8_t ccmStream[16];                           ///< CCM 密钥流缓冲
+    uint8_t ccmPending[16];                          ///< CCM 未满块缓冲
+    size_t ccmPendingLen;                            ///< ccmPending 中暂存字节数（0~15）
+    size_t ccmStreamOffset;                          ///< ccmStream 已消耗的字节偏移
+    size_t ccmBlockCounter;                          ///< CCM 计数器块序号（从 1 起）
+    uint8_t ccmAdPrefix[10];                         ///< 关联数据长度编码前缀（RFC 3610，最多 10 字节）
+    size_t ccmAdPrefixLen;                           ///< ccmAdPrefix 有效字节数（0/2/6/10）
+    size_t ccmAdPrefixOffset;                        ///< ccmAdPrefix 已写入 MAC 的字节偏移
+    bool encrypt;                                    ///< true 表示加密，false 表示解密
+    bool active;                                     ///< 上下文是否已初始化
+    bool lengthsSet;                                 ///< 是否已声明消息与关联数据总长度
+    bool associatedDataFinalized;                    ///< 关联数据是否已全部处理完毕
 } XCryptographic_AeadOperation;
 
 /**

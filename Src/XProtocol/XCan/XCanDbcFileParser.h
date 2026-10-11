@@ -1,22 +1,4 @@
-﻿#ifndef XCANDBCFILEPARSER_H
-#define XCANDBCFILEPARSER_H
-
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include "XCanCommonDefinitions.h"
-#include "XCanMessageDescription.h"
-#include "XCanUniqueIdDescription.h"
-#include "XString.h"
-#include "XStringList.h"
-#include "XMap.h"
-#include "XVector.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/**
+﻿/**
  * @file XCanDbcFileParser.h
  * @brief CAN DBC 文件解析器头文件（对齐 Qt6 QCanDbcFileParser）
  * @details 提供解析 CAN 数据库（DBC）文件的功能。DBC 文件是 ASCII 文本文件，
@@ -76,6 +58,28 @@ extern "C" {
  * @sa XCanMessageDescription, XCanFrameProcessor
  */
 
+#ifndef XCANDBCFILEPARSER_H
+#define XCANDBCFILEPARSER_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "XCan_config.h"
+
+#if XCAN_DBC_ON
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "XCanCommonDefinitions.h"
+#include "XCanMessageDescription.h"
+#include "XCanUniqueIdDescription.h"
+#include "XString.h"
+#include "XStringList.h"
+#include "XMap.h"
+#include "XVector.h"
+
 /******************************************************************************************
  * 类型别名定义（对齐 Qt6 QCanDbcFileParser 的类型别名）
  ******************************************************************************************/
@@ -100,6 +104,12 @@ typedef XMap XCanDbcFileParser_SignalValueDescriptions;
  *          键为消息唯一 ID（XCanBus_UniqueId），值为该消息的信号值描述映射表
  */
 typedef XMap XCanDbcFileParser_MessageValueDescriptions;
+
+/**
+ * @brief 消息描述映射表：消息唯一 ID -> 消息描述
+ * @details 键为消息唯一 ID（XCanBus_UniqueId），值为对应的 XCanMessageDescription
+ */
+typedef XMap XCanDbcFileParser_MessageDescriptions;
 
 /******************************************************************************************
  * 错误枚举
@@ -126,21 +136,21 @@ typedef enum {
  */
 typedef struct XCanDbcFileParser {
     /* 解析结果 */
-    XMap* m_messageDescriptions;            ///< 消息描述映射表（XMap<XCanBus_UniqueId, XCanMessageDescription>）
+    XCanDbcFileParser_MessageDescriptions* m_messageDescriptions; ///< 消息描述映射表（XCanBus_UniqueId -> XCanMessageDescription，对象拥有）
     XCanDbcFileParser_MessageValueDescriptions* m_valueDescriptions; ///< 值描述映射表
 
     /* 当前解析状态 */
     bool m_isProcessingMessage;             ///< 是否正在处理消息
-    XCanMessageDescription m_currentMessage;///< 当前正在处理的消息描述
     bool m_seenExtraData;                   ///< 是否已看到额外数据
+    XCanDbcFileParser_Error m_error;        ///< 当前错误码
+    XCanMessageDescription m_currentMessage;///< 当前正在处理的消息描述
 
     /* 错误和警告 */
-    XCanDbcFileParser_Error m_error;        ///< 当前错误码
     XString* m_errorString;                 ///< 错误描述字符串
     XStringList* m_warnings;                ///< 警告列表
 
     /* 文件解析状态 */
-    char* m_fileName;                       ///< 当前解析的文件名
+    XString* m_fileName;                    ///< 当前解析的文件名（XString，对象拥有）
     size_t m_lineOffset;                    ///< 行号偏移（多文件解析时使用）
 } XCanDbcFileParser;
 
@@ -248,6 +258,8 @@ XStringList* XCanDbcFileParser_warnings(const XCanDbcFileParser* parser);
  *          对应 Qt6 QCanDbcFileParser::uniqueIdDescription()
  */
 void XCanDbcFileParser_uniqueIdDescription(XCanUniqueIdDescription* out);
+
+#endif /* XCAN_DBC_ON */
 
 #ifdef __cplusplus
 }

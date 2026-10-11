@@ -32,7 +32,7 @@ static void XNetworkAddressEntry_createTest(void)
         XString* ipStr = XHostAddress_toString(XNetworkAddressEntry_ip(entry2));
         if (ipStr) {
             XPrintf("    IP: ");
-            XPrintf_2(ipStr);
+            XPrintf_string(ipStr);
             XPrintf("\n");
             XClassDelete(ipStr);
         }
@@ -78,7 +78,7 @@ static void XNetworkAddressEntry_propertyTest(void)
     XString* ipStr = XHostAddress_toString(XNetworkAddressEntry_ip(entry));
     if (ipStr) {
         XPrintf("  IP: ");
-        XPrintf_2(ipStr);
+        XPrintf_string(ipStr);
         XPrintf("\n");
         XClassDelete(ipStr);
     }
@@ -93,7 +93,7 @@ static void XNetworkAddressEntry_propertyTest(void)
     XString* maskStr = XHostAddress_toString(XNetworkAddressEntry_netmask(entry));
     if (maskStr) {
         XPrintf("  子网掩码: ");
-        XPrintf_2(maskStr);
+        XPrintf_string(maskStr);
         XPrintf("\n");
         XClassDelete(maskStr);
     }
@@ -109,7 +109,7 @@ static void XNetworkAddressEntry_propertyTest(void)
         XString* bcastStr = XHostAddress_toString(XNetworkAddressEntry_broadcast(entry));
         if (bcastStr) {
             XPrintf("  广播地址: ");
-            XPrintf_2(bcastStr);
+            XPrintf_string(bcastStr);
             XPrintf("\n");
             XClassDelete(bcastStr);
         }
@@ -326,9 +326,9 @@ static void XNetworkAddressEntry_swapTest(void)
         XString* str2 = XHostAddress_toString(XNetworkAddressEntry_ip(entry2));
         
         XPrintf("  交换前: entry1=");
-        if (str1) { XPrintf_2(str1); XClassDelete(str1); }
+        if (str1) { XPrintf_string(str1); XClassDelete(str1); }
         XPrintf(", entry2=");
-        if (str2) { XPrintf_2(str2); XClassDelete(str2); }
+        if (str2) { XPrintf_string(str2); XClassDelete(str2); }
         XPrintf("\n");
         
         /* 交换 */
@@ -338,9 +338,9 @@ static void XNetworkAddressEntry_swapTest(void)
         str2 = XHostAddress_toString(XNetworkAddressEntry_ip(entry2));
         
         XPrintf("  交换后: entry1=");
-        if (str1) { XPrintf_2(str1); XClassDelete(str1); }
+        if (str1) { XPrintf_string(str1); XClassDelete(str1); }
         XPrintf(", entry2=");
-        if (str2) { XPrintf_2(str2); XClassDelete(str2); }
+        if (str2) { XPrintf_string(str2); XClassDelete(str2); }
         XPrintf("\n");
     }
     

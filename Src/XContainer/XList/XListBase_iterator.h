@@ -4,7 +4,7 @@
 * @details 定义XListBase容器的迭代器结构，为XListDLinked、XListSLinked等派生类提供统一的迭代器基础
 */
 #include"CXinYueConfig.h"
-#if !defined(XLISTBASE_ITERATOR_ITERATOR_H)
+#if !defined(XLISTBASE_ITERATOR_ITERATOR_H)&& XList_ON
 #define XLISTBASE_ITERATOR_ITERATOR_H
 #ifdef __cplusplus
 extern "C" {

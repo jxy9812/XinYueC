@@ -26,10 +26,10 @@
 #include "XRandomGenerator.h"
 #include "XString.h"
 #include "XCryptographic.h"
+#include "XStringUtils.h" /* strlen 改经 XStrlen；memchr 本地扫描（外部依赖约束：string.h 白名单） */
 #include <limits.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdio.h>
 #ifdef XSSH_DEBUG
 #define XSSH_DBG(...) do { XERROR_PRINTF("[XSSH] " __VA_ARGS__); } while (0)
 #else
@@ -1371,7 +1371,7 @@ static XProtocolResult xssh_handle_kex_ecdh_init(XSshServer* adapter,
         const uint8_t* vc = XSSH_DATA(adapter)->clientVersion;
         size_t vcLen = XSSH_DATA(adapter)->clientVersionLen;
         const uint8_t* vs = (const uint8_t*)XSSH_VERSION;
-        size_t vsLen = strlen(XSSH_VERSION);
+        size_t vsLen = XStrlen(XSSH_VERSION);
         while (vcLen && (vc[vcLen - 1] == '\r' || vc[vcLen - 1] == '\n')) --vcLen;
         while (vsLen && (vs[vsLen - 1] == '\r' || vs[vsLen - 1] == '\n')) --vsLen;
         /* V_C/V_S 按 SSH string 编码（RFC 4253 §8：string V_C、string V_S） */
@@ -1599,7 +1599,7 @@ static bool xssh_send_channel_open_failure(XSshServer* adapter,
     uint8_t payload[160];
     size_t off = 0;
     const char* text = description ? description : "channel open failed";
-    size_t textLen = strlen(text);
+    size_t textLen = XStrlen(text);
     if (textLen > sizeof(payload) - 17) textLen = sizeof(payload) - 17;
     payload[off++] = SSH_MSG_CHANNEL_OPEN_FAILURE;
     xssh_write_u32(payload + off, sender); off += 4;
@@ -2279,7 +2279,9 @@ bool XSshServer_emitPrompt(XSshServer* adapter)
     len = xssh_query_user_name(adapter, name, sizeof(name));
     if (len == 0 || len >= sizeof(name)) {
         const char* def = (const char*)XSSH_DEFAULT_PROMPT_NAME;
-        len = strlen(def);
+        /* XSSH_DEFAULT_PROMPT_NAME 为字符串字面量，长度编译期可得，
+         * 不引入 string.h 白名单外的 strlen（外部依赖约束）。 */
+        len = sizeof(XSSH_DEFAULT_PROMPT_NAME) - 1u;
         if (len >= sizeof(name)) len = sizeof(name) - 1u;
         memcpy(name, def, len);
     }
@@ -2381,8 +2383,17 @@ static XProtocolResult xssh_process_one(XSshServer* adapter)
     if (XSSH_DATA(adapter)->state == XSshState_Version) {
         const uint8_t* nl;
         size_t lineLen;
+        size_t scan;
         if (XSSH_DATA(adapter)->rxLen == 0) return XProtocolResult_Ok;
-        nl = (const uint8_t*)memchr(XSSH_DATA(adapter)->rxBuf, '\n', XSSH_DATA(adapter)->rxLen);
+        /* 库内无 memchr 原语（string.h 白名单仅 memcpy/memset/memmove/memcmp），
+         * 本地扫描定位版本行换行符，避免越白名单依赖（外部依赖约束）。 */
+        nl = NULL;
+        for (scan = 0; scan < XSSH_DATA(adapter)->rxLen; ++scan) {
+            if (XSSH_DATA(adapter)->rxBuf[scan] == (uint8_t)'\n') {
+                nl = XSSH_DATA(adapter)->rxBuf + scan;
+                break;
+            }
+        }
         if (!nl) {
             if (XSSH_DATA(adapter)->rxLen > XSSH_VERSION_MAX) return XProtocolResult_Failed;
             return XProtocolResult_Ok;
@@ -2587,7 +2598,7 @@ bool XSshServer_start(XSshServer* self)
 {
     if (!self || !self->m_device || !self->m_data) return false;
     if (!xssh_generate_host_key(self)) return false;
-    if (!xssh_send_raw(self, (const uint8_t*)XSSH_VERSION, strlen(XSSH_VERSION))) return false;
+    if (!xssh_send_raw(self, (const uint8_t*)XSSH_VERSION, XStrlen(XSSH_VERSION))) return false;
     if (!xssh_send_kexinit(self)) return false;
     if (!xssh_flush(self)) return false;
     return true;

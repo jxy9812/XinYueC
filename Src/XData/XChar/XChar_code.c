@@ -5497,7 +5497,7 @@ static const uint8_t s_uni_to_gbk_table[] = {
  * @param key 要查找的键值
  * @param out_val 输出对应值
  */
-static bool binary_search_code_table(const uint8_t* table, size_t entry_count,
+static bool XChar_binarySearchCodeTable(const uint8_t* table, size_t entry_count,
     uint16_t key, uint16_t* out_val)
 {
     int lo = 0, hi = (int)entry_count - 1;
@@ -5525,7 +5525,7 @@ static bool binary_search_code_table(const uint8_t* table, size_t entry_count,
 /**
  * @brief 通过GBK代码查找Unicode
  */
-static bool code_lookup_by_gbk(uint16_t gbk_code, uint16_t* unicode)
+static bool XChar_lookupByGbk(uint16_t gbk_code, uint16_t* unicode)
 {
     if (gbk_code <= 0x7F) {
         if (unicode) *unicode = gbk_code;
@@ -5535,13 +5535,13 @@ static bool code_lookup_by_gbk(uint16_t gbk_code, uint16_t* unicode)
     if (sizeof(s_gbk_to_uni_table) < 4) {
         return false;
     }
-    return binary_search_code_table(s_gbk_to_uni_table, sizeof(s_gbk_to_uni_table) / 4, gbk_code, unicode);
+    return XChar_binarySearchCodeTable(s_gbk_to_uni_table, sizeof(s_gbk_to_uni_table) / 4, gbk_code, unicode);
 }
 
 /**
  * @brief 通过Unicode查找GBK代码
  */
-static bool code_lookup_by_unicode(uint16_t unicode_code, uint16_t* gbk)
+static bool XChar_lookupByUnicode(uint16_t unicode_code, uint16_t* gbk)
 {
     if (unicode_code <= 0x7F) {
         if (gbk) *gbk = unicode_code;
@@ -5551,14 +5551,14 @@ static bool code_lookup_by_unicode(uint16_t unicode_code, uint16_t* gbk)
     if (sizeof(s_uni_to_gbk_table) < 4) {
         return false;
     }
-    return binary_search_code_table(s_uni_to_gbk_table, sizeof(s_uni_to_gbk_table) / 4, unicode_code, gbk);
+    return XChar_binarySearchCodeTable(s_uni_to_gbk_table, sizeof(s_uni_to_gbk_table) / 4, unicode_code, gbk);
 }
 
 /* ========================================================================== */
 /*                        辅助函数                                            */
 /* ========================================================================== */
 
-static size_t xchar_input_len_char(const char* data, size_t input_size)
+static size_t XChar_inputLenChar(const char* data, size_t input_size)
 {
     if (input_size == 0) {
         size_t len = 0;
@@ -5574,7 +5574,7 @@ static size_t xchar_input_len_char(const char* data, size_t input_size)
     return input_size;
 }
 
-static size_t xchar_input_len(const XChar* data, size_t input_count)
+static size_t XChar_inputLen(const XChar* data, size_t input_count)
 {
     if (input_count == 0) {
         size_t len = 0;
@@ -5598,7 +5598,7 @@ int64_t XCharPlatform_fromGbkStream(const char* gbk, size_t input_size, XChar* o
 {
     size_t actual_len, i;
     if (!gbk) return -1;
-    actual_len = xchar_input_len_char(gbk, input_size);
+    actual_len = XChar_inputLenChar(gbk, input_size);
     if (actual_len == 0) { if (out && max_out > 0) out[0] = 0; return 0; }
 
     if (!out || max_out == 0) {
@@ -5614,7 +5614,7 @@ int64_t XCharPlatform_fromGbkStream(const char* gbk, size_t input_size, XChar* o
                 gbk_code = (uint8_t)gbk[i];
                 i++;
             }
-            if (code_lookup_by_gbk(gbk_code, &unicode)) count++;
+            if (XChar_lookupByGbk(gbk_code, &unicode)) count++;
         }
         return (int64_t)count;
     }
@@ -5632,7 +5632,7 @@ int64_t XCharPlatform_fromGbkStream(const char* gbk, size_t input_size, XChar* o
                 gbk_code = (uint8_t)gbk[i];
                 i++;
             }
-            if (code_lookup_by_gbk(gbk_code, &unicode))
+            if (XChar_lookupByGbk(gbk_code, &unicode))
                 out[out_idx++] = unicode;
             else
                 out[out_idx++] = 0xFFFD;
@@ -5646,7 +5646,7 @@ int64_t XCharPlatform_toGbkStream(const XChar* ch, size_t input_count, char* gbk
 {
     size_t actual_count, i;
     if (!ch) return -1;
-    actual_count = xchar_input_len(ch, input_count);
+    actual_count = XChar_inputLen(ch, input_count);
     if (actual_count == 0) { if (gbk && max_gbk > 0) gbk[0] = '\0'; return 0; }
 
     if (!gbk || max_gbk == 0) {
@@ -5654,7 +5654,7 @@ int64_t XCharPlatform_toGbkStream(const XChar* ch, size_t input_count, char* gbk
         for (i = 0; i < actual_count; i++) {
             uint16_t gbk_code;
             if (ch[i] <= 0x7F) byte_count += 1;
-            else if (code_lookup_by_unicode(ch[i], &gbk_code))
+            else if (XChar_lookupByUnicode(ch[i], &gbk_code))
                 byte_count += (gbk_code > 0xFF) ? 2 : 1;
         }
         return (int64_t)byte_count;
@@ -5666,7 +5666,7 @@ int64_t XCharPlatform_toGbkStream(const XChar* ch, size_t input_count, char* gbk
             uint16_t gbk_code;
             if (ch[i] <= 0x7F) {
                 if (gbk_idx < max_gbk - 1) gbk[gbk_idx++] = (char)ch[i];
-            } else if (code_lookup_by_unicode(ch[i], &gbk_code)) {
+            } else if (XChar_lookupByUnicode(ch[i], &gbk_code)) {
                 if (gbk_code > 0xFF) {
                     if (gbk_idx + 2 < max_gbk) {
                         gbk[gbk_idx++] = (char)((gbk_code >> 8) & 0xFF);
@@ -5687,7 +5687,7 @@ int64_t XCharPlatform_utf8ToGbkStream(const char* utf8_str, size_t input_size, c
     size_t utf8_len; int64_t xchar_count, actual, result;
     XChar* xchars;
     if (!utf8_str) return -1;
-    utf8_len = xchar_input_len_char(utf8_str, input_size);
+    utf8_len = XChar_inputLenChar(utf8_str, input_size);
 
     xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str, utf8_len, NULL, 0);
     if (xchar_count <= 0) return xchar_count;
@@ -5709,7 +5709,7 @@ int64_t XCharPlatform_gbkToUtf8Stream(const char* gbk_str, size_t input_size, ch
     size_t gbk_len; int64_t xchar_count, actual, utf8_len, result;
     XChar* xchars;
     if (!gbk_str) return -1;
-    gbk_len = xchar_input_len_char(gbk_str, input_size);
+    gbk_len = XChar_inputLenChar(gbk_str, input_size);
 
     xchar_count = XCharPlatform_fromGbkStream(gbk_str, gbk_len, NULL, 0);
     if (xchar_count <= 0) return xchar_count;

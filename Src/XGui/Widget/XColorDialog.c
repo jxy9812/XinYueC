@@ -180,7 +180,7 @@ static XWidget* xcd_childByName(XDialog* dlg, const char* name)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, name);
     w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
-                                    XFindDirectChildrenOnly);
+                                    XFindChildOption_DirectChildrenOnly);
     XClassDeinit((XClass*)&tmp);
     return w;
 }

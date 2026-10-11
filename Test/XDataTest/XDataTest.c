@@ -33,7 +33,7 @@ bool XDataTest_runAll(void)
     return result;
 }
 
-#if DEMOTEST
+#if DEMOTEST_ON
 static void xsql_run_wrapper(XVariant* data)
 {
 	(void)data;

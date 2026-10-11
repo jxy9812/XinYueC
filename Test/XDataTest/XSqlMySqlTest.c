@@ -122,8 +122,8 @@ static XString* xmysql_test_category_insert_sql(const XString* category)
 static XSqlDatabase* xmysql_test_open_admin(const char* host, int port,
                                              const char* user, const char* password)
 {
-    XSqlDatabase* database = XSqlDatabase_addDatabase(XSqlDriverType_MySql,
-                                                       "xsql-mysql-admin");
+    XSqlDatabase* database = XSqlDatabase_addDatabase_2(XSqlDriverType_MySql,
+                                                        "xsql-mysql-admin");
     XString* hostText = host ? XString_create_utf8(host) : NULL;
     bool ok = database && hostText;
     if (ok) {
@@ -138,7 +138,7 @@ static XSqlDatabase* xmysql_test_open_admin(const char* host, int port,
             xmysql_test_print_error("管理连接错误", error);
             if (error) XClassDelete(error);
             XSqlDatabase_close(database);
-            XSqlDatabase_removeDatabase("xsql-mysql-admin");
+            XSqlDatabase_removeDatabase_2("xsql-mysql-admin");
             XClassDelete(database);
         }
         return NULL;
@@ -181,7 +181,7 @@ static bool xmysql_test_prepare_temporary_database(const char* host, int port,
         if (query) XClassDelete(query);
     }
     XSqlDatabase_close(admin);
-    XSqlDatabase_removeDatabase("xsql-mysql-admin");
+    XSqlDatabase_removeDatabase_2("xsql-mysql-admin");
     XClassDelete(admin);
     return ok;
 }
@@ -205,7 +205,7 @@ static void xmysql_test_drop_temporary_database(const char* host, int port,
         XClassDelete(query);
     }
     XSqlDatabase_close(admin);
-    XSqlDatabase_removeDatabase("xsql-mysql-admin");
+    XSqlDatabase_removeDatabase_2("xsql-mysql-admin");
     XClassDelete(admin);
 }
 
@@ -236,7 +236,7 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
     if (!pluginAvailable) {
         XPrintf("MySQL：caching_sha2_password RSA 测试：服务器未安装插件，跳过\n");
         XSqlDatabase_close(admin);
-        XSqlDatabase_removeDatabase("xsql-mysql-admin");
+        XSqlDatabase_removeDatabase_2("xsql-mysql-admin");
         XClassDelete(admin);
         return true;
     }
@@ -251,14 +251,14 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
     if (query) XClassDelete(query);
     created = ok;
     XSqlDatabase_close(admin);
-    XSqlDatabase_removeDatabase("xsql-mysql-admin");
+    XSqlDatabase_removeDatabase_2("xsql-mysql-admin");
     XClassDelete(admin);
     if (!created) {
         XPrintf("MySQL：caching_sha2_password RSA 测试账号创建：失败\n");
         return false;
     }
 
-    rsaDatabase = XSqlDatabase_addDatabase(XSqlDriverType_MySql, "xsql-mysql-rsa");
+    rsaDatabase = XSqlDatabase_addDatabase_2(XSqlDriverType_MySql, "xsql-mysql-rsa");
     if (rsaDatabase) {
         hostText = XString_create_utf8(host);
         options = XString_create_utf8("SSL_MODE=disabled");
@@ -289,7 +289,7 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
     }
     if (rsaDatabase) {
         XSqlDatabase_close(rsaDatabase);
-        XSqlDatabase_removeDatabase("xsql-mysql-rsa");
+        XSqlDatabase_removeDatabase_2("xsql-mysql-rsa");
         XClassDelete(rsaDatabase);
     }
 
@@ -300,7 +300,7 @@ static bool xmysql_test_caching_sha2_rsa(const char* host, int port,
         ok = ok && query && XSqlQuery_isActive(query);
         if (query) XClassDelete(query);
         XSqlDatabase_close(admin);
-        XSqlDatabase_removeDatabase("xsql-mysql-admin");
+        XSqlDatabase_removeDatabase_2("xsql-mysql-admin");
         XClassDelete(admin);
     } else {
         ok = false;
@@ -1085,7 +1085,7 @@ bool XSqlMySqlTest_run(void)
     }
     XPrintf("\n开始---------------MySQL/MariaDB 联调测试---------------\n");
     XPrintf("MySQL：服务器 %s:%d，数据库 %s，用户 %s\n", host, xmysql_test_port(), databaseName, user);
-    database = XSqlDatabase_addDatabase(XSqlDriverType_MySql, "xsql-mysql-live");
+    database = XSqlDatabase_addDatabase_2(XSqlDriverType_MySql, "xsql-mysql-live");
     drivers = XSqlDatabase_drivers();
     driver = database ? XSqlDatabase_driver(database) : NULL;
     driverName = database ? XSqlDatabase_driverName(database) : NULL;
@@ -1154,7 +1154,7 @@ cleanup:
         if (sql) { xmysql_test_statement(database, "删除分类表", XString_toUtf8(sql)); XClassDelete(sql); sql = NULL; }
         XSqlDatabase_close(database);
     }
-    XSqlDatabase_removeDatabase("xsql-mysql-live");
+    XSqlDatabase_removeDatabase_2("xsql-mysql-live");
     if (database) XClassDelete(database);
     if (temporaryDatabaseCreated)
         xmysql_test_drop_temporary_database(host, xmysql_test_port(), user, password);

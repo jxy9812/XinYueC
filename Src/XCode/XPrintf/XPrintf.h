@@ -72,7 +72,7 @@ int XPrintf_line(const char* prefix, const char* format, ...);
  * @param str XString 对象指针
  * @return 打印的字符数（参考 printf 返回值）
  */
-int XPrintf_2(const XString* str);
+int XPrintf_string(const XString* str);
 
 /**
  * @brief 打印 UTF-8 编码字符串

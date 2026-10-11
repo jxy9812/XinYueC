@@ -21,6 +21,8 @@ typedef void (*InterruptCallback)(void* data);//中断回调函数
 void XInterrupt_addUSARTxCallback(uint8_t portNum, InterruptCallback callback,void* userData);
 void XInterrupt_removeUSARTxCallback(uint8_t portNum, InterruptCallback callback, void* userData);
 size_t XInterrupt_getUSARTxCallbackSize(uint8_t portNum);
+//销毁串口注册表中所有已分配的回调链表容器（全生命周期收尾入口，平时无需调用）
+void XInterrupt_deinitUSARTxCallbacks(void);
 #endif // 0
 
 //接管定时器中断
@@ -44,6 +46,8 @@ size_t XInterrupt_getUSARTxCallbackSize(uint8_t portNum);
 void XInterrupt_addTIMxCallback(uint8_t portNum, InterruptCallback callback,void* userData);
 void XInterrupt_removeTIMxCallback(uint8_t portNum, InterruptCallback callback,void* userData);
 size_t XInterrupt_getTIMxCallbackSize(uint8_t portNum);
+//销毁定时器注册表中所有已分配的回调链表容器（全生命周期收尾入口，平时无需调用）
+void XInterrupt_deinitTIMxCallbacks(void);
 #endif // 0
 
 #endif // !XInterrupt_H

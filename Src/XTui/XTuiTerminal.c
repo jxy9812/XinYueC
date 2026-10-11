@@ -7,8 +7,8 @@
 
 #if XTUI_ON && XTUI_TERMINAL_ON
 #include <string.h>
-#include <stdio.h>
-#include <stdarg.h>
+#include "XStringUtils.h" /* strlen 直改经 XStrlen、格式化经 XSnprintf（外部依赖约束：
+                             string.h 仅限 mem 原语，禁未登记的 stdio.h） */
 
 /* ==================== 内部工具 ==================== */
 
@@ -17,19 +17,18 @@ static void writeRaw(XTuiTerminal* t, const char* data, int length)
     if (!t || !t->m_write || !data)
         return;
     if (length < 0)
-        length = (int)strlen(data);
+        length = (int)XStrlen(data);
     t->m_write(t->m_userData, data, (size_t)length);
 }
 
-static void writeFmt(XTuiTerminal* t, const char* fmt, ...)
+/* ANSI 序列只格式化整数，库内无 va_list 版格式化入口，固定两参数即可
+   覆盖全部调用点（XSnprintf 为 snprintf 语义，多余参数按 printf 族忽略）。 */
+static void writeFmt(XTuiTerminal* t, const char* fmt, int a, int b)
 {
     if (!t || !t->m_write)
         return;
     char buf[128];
-    va_list ap;
-    va_start(ap, fmt);
-    int n = vsnprintf(buf, sizeof(buf), fmt, ap);
-    va_end(ap);
+    int n = XSnprintf(buf, sizeof(buf), fmt, a, b);
     if (n <= 0)
         return;
     if ((size_t)n >= sizeof(buf))
@@ -166,7 +165,7 @@ bool XTuiTerminal_write(XTuiTerminal* terminal, const char* data, int length)
     if (!terminal || !terminal->m_write || !data)
         return false;
     if (length < 0)
-        length = (int)strlen(data);
+        length = (int)XStrlen(data);
     return terminal->m_write(terminal->m_userData, data, (size_t)length);
 }
 
@@ -193,28 +192,28 @@ void XTuiTerminal_moveUp(XTuiTerminal* terminal, int n)
 {
     if (n <= 0)
         return;
-    writeFmt(terminal, "\x1b[%dA", n);
+    writeFmt(terminal, "\x1b[%dA", n, 0);
 }
 
 void XTuiTerminal_moveDown(XTuiTerminal* terminal, int n)
 {
     if (n <= 0)
         return;
-    writeFmt(terminal, "\x1b[%dB", n);
+    writeFmt(terminal, "\x1b[%dB", n, 0);
 }
 
 void XTuiTerminal_moveRight(XTuiTerminal* terminal, int n)
 {
     if (n <= 0)
         return;
-    writeFmt(terminal, "\x1b[%dC", n);
+    writeFmt(terminal, "\x1b[%dC", n, 0);
 }
 
 void XTuiTerminal_moveLeft(XTuiTerminal* terminal, int n)
 {
     if (n <= 0)
         return;
-    writeFmt(terminal, "\x1b[%dD", n);
+    writeFmt(terminal, "\x1b[%dD", n, 0);
 }
 
 void XTuiTerminal_saveCursor(XTuiTerminal* terminal)
@@ -245,9 +244,9 @@ void XTuiTerminal_setForeground(XTuiTerminal* terminal, XColor color)
     if (index == XTUI_COLOR_DEFAULT_INDEX)
         writeRaw(terminal, "\x1b[39m", -1);
     else if (index >= 8)
-        writeFmt(terminal, "\x1b[%dm", 90 + (index - 8));
+        writeFmt(terminal, "\x1b[%dm", 90 + (index - 8), 0);
     else
-        writeFmt(terminal, "\x1b[%dm", 30 + index);
+        writeFmt(terminal, "\x1b[%dm", 30 + index, 0);
 }
 
 void XTuiTerminal_setBackground(XTuiTerminal* terminal, XColor color)
@@ -258,9 +257,9 @@ void XTuiTerminal_setBackground(XTuiTerminal* terminal, XColor color)
     if (index == XTUI_COLOR_DEFAULT_INDEX)
         writeRaw(terminal, "\x1b[49m", -1);
     else if (index >= 8)
-        writeFmt(terminal, "\x1b[%dm", 100 + (index - 8));
+        writeFmt(terminal, "\x1b[%dm", 100 + (index - 8), 0);
     else
-        writeFmt(terminal, "\x1b[%dm", 40 + index);
+        writeFmt(terminal, "\x1b[%dm", 40 + index, 0);
 }
 
 void XTuiTerminal_setAttributes(XTuiTerminal* terminal, int attrs)

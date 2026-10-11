@@ -129,6 +129,10 @@ XRandomGenerator* XRandomGenerator_createWithSeed(uint32_t seedValue) {
 }
 
 XRandomGenerator* XRandomGenerator_createWithSeeds(const uint32_t* seedBuffer, size_t len) {
+    /* 自防御：seedBuffer 判空，与 seedWithArray 保持一致；空种子回退默认种子 */
+    if (!seedBuffer || len == 0) {
+        return XRandomGenerator_createWithSeed(1);
+    }
     return XRandomGenerator_createWithRange(seedBuffer, seedBuffer + len);
 }
 
@@ -145,7 +149,7 @@ XRandomGenerator* XRandomGenerator_createWithRange(const uint32_t* begin, const 
     return gen;
 }
 
-XRandomGenerator* XRandomGenerator_copy(const XRandomGenerator* other) {
+XRandomGenerator* XRandomGenerator_create_copy(const XRandomGenerator* other) {
     if (!other) {
         return NULL;
     }

@@ -422,7 +422,7 @@ static int xmsg_execReturnCode(const XMessageBox* self,
 
 /* ==================== 事件处理 ==================== */
 
-static void VX_messageBox_resizeEvent(XWidget* self, XEvent* event)
+static void VXMessageBox_resizeEvent(XWidget* self, XEvent* event)
 {
     XMessageBox* box = (XMessageBox*)self;
     (void)event;
@@ -795,7 +795,7 @@ XVtable* XMessageBox_class_init(void)
     XVTABLE_INIT_DEFAULT(XMessageBox)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
-                             VX_messageBox_resizeEvent);
+                             VXMessageBox_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXMessageBox_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              VXMessageBox_keyPressEvent);

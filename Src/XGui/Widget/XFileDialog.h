@@ -88,6 +88,8 @@ typedef enum XFileDialogOption
     XFileDialog_HideNameFilterDetails       = 0x00000020, /**< 隐藏过滤器细节。 */
     XFileDialog_DontUseCustomDirectoryIcons = 0x00000040  /**< 不使用自定义目录图标。 */
 } XFileDialogOption;
+/** @brief 选项位集类型（XFileDialogOption 位按位组合；对标
+ *         QFileDialog::Options）。 */
 typedef uint32_t XFileDialogOptions;
 
 /** @brief 文件对话框视图模式（对标 QFileDialog::ViewMode，数值一致）。 */
@@ -142,6 +144,13 @@ XVtable* XFileDialog_class_init(void);
  * @return     无返回值。
  */
 void XFileDialog_init(XFileDialog* self, XWidget* parent, XWidgetFlags flags);
+/**
+ * @brief      以默认内存类型创建 XFileDialog 堆对象（转发
+ *             XFileDialog_create_ex）。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     新对象指针，调用方拥有，须 XClassDelete；失败返回 NULL。
+ */
 #define XFileDialog_create(parent, flags) XFileDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /**
  * @brief      使用指定内存类型创建 XFileDialog。
@@ -263,59 +272,180 @@ XStringList* XFileDialog_selectedFiles(const XFileDialog* self);
  *             无选中或无效时返回空串。
  */
 XString* XFileDialog_selectedFile(const XFileDialog* self);
-/** @brief 选中文件 URL 列表（对标 selectedUrls；从 selectedFiles 派生）。 */
+/**
+ * @brief      选中文件 URL 列表（对标 selectedUrls；从 selectedFiles 派生）。
+ * @note       URL 以路径字符串承载（与 directoryUrl 同一口径）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XStringList 副本，调用方拥有，须 XClassDelete；
+ *             无效时返回空列表。
+ */
 XStringList* XFileDialog_selectedUrls(const XFileDialog* self);
-/** @brief 设置目录 URL（对标 setDirectoryUrl）。 */
+/**
+ * @brief      设置目录 URL（对标 setDirectoryUrl）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      directory 目录 URL；借用、深拷贝存储；可为 NULL 清空。
+ * @return     无返回值。
+ */
 void XFileDialog_setDirectoryUrl(XFileDialog* self, const XString* directory);
-/** @brief 目录 URL（对标 directoryUrl）。 */
+/**
+ * @brief      获取目录 URL 副本（对标 directoryUrl）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
+ *             未设置时返回空串。
+ */
 XString* XFileDialog_directoryUrl(const XFileDialog* self);
-/** @brief 选中 URL（对标 selectUrl；记录为选中文件）。 */
+/**
+ * @brief      选中 URL（对标 selectUrl；记录为选中文件）。
+ * @param      self 目标对话框；本参数或 url 为 NULL 时忽略。
+ * @param      url 要选中的 URL；借用、深拷贝存储。
+ * @return     无返回值。
+ */
 void XFileDialog_selectUrl(XFileDialog* self, const XString* url);
-/** @brief 设置简单过滤器（对标 setFilter）。 */
+/**
+ * @brief      设置简单过滤器（对标 setFilter）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      filter 过滤器文本；借用、深拷贝存储；可为 NULL 清空。
+ * @return     无返回值。
+ */
 void XFileDialog_setFilter(XFileDialog* self, const XString* filter);
-/** @brief 简单过滤器（对标 filter）。 */
+/**
+ * @brief      获取简单过滤器副本（对标 filter）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
+ *             未设置时返回空串。
+ */
 XString* XFileDialog_filter(const XFileDialog* self);
-/** @brief 设置 MIME 过滤器列表（对标 setMimeTypeFilters）。 */
+/**
+ * @brief      设置 MIME 过滤器列表（对标 setMimeTypeFilters）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      filters MIME 过滤器列表；借用、深拷贝存储；可为 NULL
+ *             清空。
+ * @return     无返回值。
+ */
 void XFileDialog_setMimeTypeFilters(XFileDialog* self,
                                     const XStringList* filters);
-/** @brief MIME 过滤器列表（对标 mimeTypeFilters）。 */
+/**
+ * @brief      获取 MIME 过滤器列表副本（对标 mimeTypeFilters）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XStringList 深拷贝，调用方拥有，须 XClassDelete；
+ *             未设置时返回空列表。
+ */
 XStringList* XFileDialog_mimeTypeFilters(const XFileDialog* self);
-/** @brief 选择 MIME 过滤器（对标 selectMimeTypeFilter）。 */
+/**
+ * @brief      选择 MIME 过滤器（对标 selectMimeTypeFilter）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      filter 要选中的 MIME 过滤器；借用、深拷贝存储；可为 NULL
+ *             清空。
+ * @return     无返回值。
+ */
 void XFileDialog_selectMimeTypeFilter(XFileDialog* self,
                                       const XString* filter);
-/** @brief 当前选中 MIME 过滤器（对标 selectedMimeTypeFilter）。 */
+/**
+ * @brief      获取当前选中 MIME 过滤器副本（对标 selectedMimeTypeFilter）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
+ *             未设置时返回空串。
+ */
 XString* XFileDialog_selectedMimeTypeFilter(const XFileDialog* self);
-/** @brief 设置历史目录列表（对标 setHistory）。 */
+/**
+ * @brief      设置历史目录列表（对标 setHistory）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      history 历史目录列表；借用、深拷贝存储；可为 NULL 清空。
+ * @return     无返回值。
+ */
 void XFileDialog_setHistory(XFileDialog* self, const XStringList* history);
-/** @brief 历史目录列表（对标 history）。 */
+/**
+ * @brief      获取历史目录列表副本（对标 history）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XStringList 深拷贝，调用方拥有，须 XClassDelete；
+ *             未设置时返回空列表。
+ */
 XStringList* XFileDialog_history(const XFileDialog* self);
-/** @brief 设置侧栏 URL 列表（对标 setSidebarUrls）。 */
+/**
+ * @brief      设置侧栏 URL 列表（对标 setSidebarUrls）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      urls 侧栏 URL 列表；借用、深拷贝存储；可为 NULL 清空。
+ * @return     无返回值。
+ */
 void XFileDialog_setSidebarUrls(XFileDialog* self,
                                 const XStringList* urls);
-/** @brief 侧栏 URL 列表（对标 sidebarUrls）。 */
+/**
+ * @brief      获取侧栏 URL 列表副本（对标 sidebarUrls）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XStringList 深拷贝，调用方拥有，须 XClassDelete；
+ *             未设置时返回空列表。
+ */
 XStringList* XFileDialog_sidebarUrls(const XFileDialog* self);
-/** @brief 设置支持协议列表（对标 setSupportedSchemes）。 */
+/**
+ * @brief      设置支持协议列表（对标 setSupportedSchemes）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      schemes 协议列表；借用、深拷贝存储；可为 NULL 清空。
+ * @return     无返回值。
+ */
 void XFileDialog_setSupportedSchemes(XFileDialog* self,
                                      const XStringList* schemes);
-/** @brief 支持协议列表（对标 supportedSchemes）。 */
+/**
+ * @brief      获取支持协议列表副本（对标 supportedSchemes）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     新建的 XStringList 深拷贝，调用方拥有，须 XClassDelete；
+ *             未设置时返回空列表。
+ */
 XStringList* XFileDialog_supportedSchemes(const XFileDialog* self);
-/** @brief 保存对话框状态（对标 saveState；当前输出空字节数组）。
- * @note 状态序列化未实现（已知偏差 Task 2.20）。 */
+/**
+ * @brief      保存对话框状态（对标 saveState；当前输出空字节数组）。
+ * @param      self 目标对话框；可为 NULL。
+ * @param      out 输出字节容器（调用方提供存储）；本函数将其初始化为
+ *             空容器；传入 NULL 时忽略。
+ * @return     无返回值。
+ * @note       状态序列化未实现（已知偏差 Task 2.20）。
+ */
 void XFileDialog_saveState(const XFileDialog* self, XByteArray* out);
-/** @brief 恢复对话框状态（对标 restoreState；当前恒 false）。 */
+/**
+ * @brief      恢复对话框状态（对标 restoreState；当前恒 false）。
+ * @param      self 目标对话框。
+ * @param      state 先前保存的状态数据；当前不读取、不修改。
+ * @return     恒返回 false（状态序列化未实现）。
+ */
 bool XFileDialog_restoreState(XFileDialog* self, const XByteArray* state);
-/** @brief 设置图标提供者（对标 setIconProvider；类型不映射，仅记录）。
- * @note XGui 无 QFileIconProvider 对应物。 */
+/**
+ * @brief      设置图标提供者（对标 setIconProvider；类型不映射，仅记录）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      provider 提供者指针；借用、不取得所有权；可为 NULL。
+ * @return     无返回值。
+ * @note       XGui 无 QFileIconProvider 对应物。
+ */
 void XFileDialog_setIconProvider(XFileDialog* self, void* provider);
-/** @brief 图标提供者（对标 iconProvider；恒 NULL）。 */
+/**
+ * @brief      图标提供者（对标 iconProvider；恒 NULL）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     先前记录的借用指针；未设置返回 NULL。
+ */
 void* XFileDialog_iconProvider(const XFileDialog* self);
-/** @brief 设置条目代理（对标 setItemDelegate；类型不映射，仅记录）。 */
+/**
+ * @brief      设置条目代理（对标 setItemDelegate；类型不映射，仅记录）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      delegate 代理指针；借用、不取得所有权；可为 NULL。
+ * @return     无返回值。
+ */
 void XFileDialog_setItemDelegate(XFileDialog* self, void* delegate);
-/** @brief 条目代理（对标 itemDelegate；恒 NULL）。 */
+/**
+ * @brief      条目代理（对标 itemDelegate；恒 NULL）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     先前记录的借用指针；未设置返回 NULL。
+ */
 void* XFileDialog_itemDelegate(const XFileDialog* self);
-/** @brief 设置代理模型（对标 setProxyModel；类型不映射，仅记录）。 */
+/**
+ * @brief      设置代理模型（对标 setProxyModel；类型不映射，仅记录）。
+ * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
+ * @param      model 模型指针；借用、不取得所有权；可为 NULL。
+ * @return     无返回值。
+ */
 void XFileDialog_setProxyModel(XFileDialog* self, void* model);
-/** @brief 代理模型（对标 proxyModel；恒 NULL）。 */
+/**
+ * @brief      代理模型（对标 proxyModel；恒 NULL）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     先前记录的借用指针；未设置返回 NULL。
+ */
 void* XFileDialog_proxyModel(const XFileDialog* self);
 /**
  * @brief      设置默认后缀（对标 QFileDialog::setDefaultSuffix）。
@@ -725,5 +855,9 @@ void* XFileDialog_directoryUrlEntered_signal(XFileDialog* self,
                                              const XString* directory);
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* XFILEDIALOG_H */

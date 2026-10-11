@@ -19,7 +19,7 @@
 
 #if XWIDGET_ON && XRUBBERBAND_ON
 
-static void XRubberBand_paintEvent(XWidget* self, XEvent* event)
+static void VXRubberBand_paintEvent(XWidget* self, XEvent* event)
 {
     XRubberBand* rb = (XRubberBand*)self;
     XPainter painter;
@@ -95,7 +95,7 @@ XVtable* XRubberBand_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XRubberBand)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, XRubberBand_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXRubberBand_paintEvent);
     return XVTABLE_DEFAULT;
 }
 

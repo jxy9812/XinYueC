@@ -16,6 +16,16 @@ static bool XBsonDocument_keyEquals(const XString* left, const XString* right)
 	return left && right && XString_compare(left, right) == XCompare_Equality;
 }
 
+/* 库内无 memchr 原语（string.h 白名单仅 memcpy/memset/memmove/memcmp），
+   本地扫描检测缓冲区内嵌 NUL，避免越白名单依赖（外部依赖约束）。 */
+static bool XBsonDocument_bufferHasNul(const char* data, size_t length)
+{
+	for (size_t i = 0; i < length; ++i) {
+		if (data[i] == '\0') return true;
+	}
+	return false;
+}
+
 void XBsonElement_init(XBsonElement* element)
 {
 	if (!element) return;
@@ -112,7 +122,7 @@ bool XBsonDocument_append(XBsonDocument* doc, const XString* key,
 	const char* key_utf8 = key ? XString_toUtf8(key) : NULL;
 	size_t key_length = key ? XString_toUtf8_length(key) : 0;
 	if (!doc || !key || !value || !key_utf8 ||
-		memchr(key_utf8, 0, key_length) != NULL)
+		XBsonDocument_bufferHasNul(key_utf8, key_length))
 		return false;
 	XBsonElement element;
 	XBsonElement_init(&element);
@@ -129,7 +139,7 @@ bool XBsonDocument_append_move(XBsonDocument* doc, XString* key,
 	const char* key_utf8 = key ? XString_toUtf8(key) : NULL;
 	size_t key_length = key ? XString_toUtf8_length(key) : 0;
 	if (!doc || !key || !value || !key_utf8 ||
-		memchr(key_utf8, 0, key_length) != NULL)
+		XBsonDocument_bufferHasNul(key_utf8, key_length))
 		return false;
 	XBsonElement element;
 	XBsonElement_init(&element);

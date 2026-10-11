@@ -6,7 +6,7 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include "XTestMenu.h"
 #include"XClass.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 	void XTestMenu_XLibraryTest(XTestMenu* root);
 	//查询算法
 	void XTestMenu_FindTest(XTestMenu* root);
@@ -25,7 +25,7 @@ extern "C" {
 	void cJsonTest();
 	void cJsonXContainerTest();
 	void XBase64Test();
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

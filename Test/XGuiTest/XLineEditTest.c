@@ -1,4 +1,5 @@
 ﻿#include "XLineEditTest.h"
+#include "XObject_Protected.h"
 #include "XLineEdit.h"
 #include "XAction.h"
 #include "XWidget_Protected.h"

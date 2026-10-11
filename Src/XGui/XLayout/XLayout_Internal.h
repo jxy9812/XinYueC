@@ -28,6 +28,10 @@ extern "C" {
 
 /* ==================== 控件条目（对标 Qt QWidgetItem，内部实现） ==================== */
 
+/** @brief 控件条目虚表枚举：不新增槽位，仅重载 XLayoutItem 槽位。 */
+XCLASS_DEFINE_BEGING(XWidgetItem)
+XCLASS_DEFINE_EXTEND_END(XWidgetItem, XLayoutItem)
+
 /**
  * @brief      控件条目对象（内部）。
  * @details    m_base 必须位于第一位；m_widget 为控件借用指针，条目不
@@ -36,7 +40,7 @@ extern "C" {
 typedef struct XWidgetItem
 {
     XLayoutItem m_base;   /**< 基类成员；必须是第一个。 */
-    XWidget* m_widget;    /**< 控件借用指针；不为 NULL。 */
+    XWidget* m_widget;    /**< 控件借用指针；可为 NULL（之后视为空条目）。 */
 } XWidgetItem;
 
 /**

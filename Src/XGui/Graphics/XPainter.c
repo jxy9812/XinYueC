@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XPainter.c
  * @brief      XPainter 绘图器类实现（对标 Qt 6.8 QPainter）
  * @author     XinYueC 团队
@@ -16,6 +16,7 @@
 #include "XSystem.h"
 
 #include "XAlgorithm.h"
+#include "XStringUtils.h" /* XStrtol：环境变量数值解析（对标 strtol，禁用 atoi）。 */
 #include "XPainter.h"
 #include "XMemory.h"
 #include "XDateTime.h"
@@ -378,7 +379,7 @@ static void xpainter_prof_tick(void)
     if (!xpainter_prof_requested()) return;
     if (!g_xpainterProf.m_headerPrinted)
     {
-        fprintf(stderr, "[xpainter-prof] segments=begin/end/clip/route/"
+        XPrintf("[xpainter-prof] segments=begin/end/clip/route/"
                 "batchDraw/flush/text/glyphLoad/atlas (ms 总量 & ms/次；"
                 "text 内含 clip/flush/atlas 子段，求和不互斥)\n");
         g_xpainterProf.m_headerPrinted = true;
@@ -393,7 +394,7 @@ static void xpainter_prof_tick(void)
         ((count) ? (double)(ns) / 1e6 : 0.0)
 #define XPAINTER_PROF_MS_PER(ns, count) \
         ((count) ? (double)(ns) / (double)(count) / 1e6 : 0.0)
-        fprintf(stderr,
+        XPrintf(
                 "[xpainter-prof] %.1fs begin=%u (%.3fms %.4f/次) "
                 "end=%u (%.3fms %.4f/次) clip=%u (%.3fms %.4f/次) "
                 "route=%u (%.3fms %.4f/次) batchDraw=%u (%.3fms %.4f/次) "
@@ -1034,7 +1035,7 @@ static void painterGpuEndFrame(XPainter* self)
     uint64_t profT0;
     if (!self || !self->m_gpuActive) return;
     if (xpainter_quad_prof_on())
-        fprintf(stderr,
+        XPrintf(
                 "[xpainter-quad] axis=%u axisFalse=%u diagExt=%u "
                 "diagExtFalse=%u diagCanvas=%u diagAa=%u\n",
                 g_xpainterQuadProf.m_axisQuad,
@@ -2631,6 +2632,13 @@ static bool painterStatePush(XPainter* self)
                     saved->m_clipPath = NULL;
                 }
                 saved->m_clipPath = slotClipPath;
+#if XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON
+                /* 失败同样要还原槽位自有区域存储：前面对槽位的整体赋值
+                   已把槽位区域浅覆盖为当前状态区域的副本，不还原会让槽
+                   位原 rects 缓冲随 reusableRegion 丢失（泄漏），且
+                   saved 与 m_state 的区域指针别名（释放时双重释放）。 */
+                saved->m_clipRegion = reusableRegion;
+#endif /* XPAINTER_CLIP_ON && XPAINTER_CLIP_REGION_ON */
                 XClassDeinit((XClass*)&saved->m_font);
                 return false;
             }
@@ -7832,10 +7840,25 @@ static bool painterClipMaskEnsure(XPainter* self)
         width = imageWidth - left;
     if (imageHeight > 0 && top + height > imageHeight)
         height = imageHeight - top;
-    if (width <= 0 || height <= 0) return true; /* 与目标不相交：空掩码。 */
-    if ((size_t)width > ((size_t)-1) / (size_t)height) return true;
+    if (width <= 0 || height <= 0)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return true; /* 与目标不相交：空掩码。 */
+    }
+    if ((size_t)width > ((size_t)-1) / (size_t)height)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return true; /* 尺寸溢出守卫：掩码不可分配。 */
+    }
     alpha = (uint8_t*)XMalloc_System((size_t)width * (size_t)height);
-    if (!alpha) return true;
+    if (!alpha)
+    {
+        painterPathFillContoursFree(&contours, &contourCount,
+                                    &contourCapacity);
+        return true;
+    }
     XMemset(alpha, 0, (size_t)width * (size_t)height);
     /* 复用既有 AA 填充的 4x4 面积子采样覆盖光栅化：掩码边界与形状
        AA 同一覆盖率口径。偏移 -(left+0.5)：覆盖光栅器以整数坐标为
@@ -8025,7 +8048,7 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
             p4On2 = v && *v && !(v[0] == '0' && v[1] == 0) ? 1 : 0;
         }
         if (p4On2)
-            fprintf(stderr, "P4[sclip] active=%d imgMatch=%d rect=%d,%d %dx%d\n",
+            XPrintf("P4[sclip] active=%d imgMatch=%d rect=%d,%d %dx%d\n",
                     g_surfaceClipActive ? 1 : 0,
                     (image == g_surfaceClipImage) ? 1 : 0,
                     g_surfaceClipRect.x, g_surfaceClipRect.y,
@@ -8105,7 +8128,7 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                 bpSlowMs = 10;
                 if (bs && *bs)
                 {
-                    int ms = atoi(bs);
+                    int ms = (int)XStrtol(bs, NULL, 10);
                     if (ms < 0) ms = 0;
                     bpSlowMs = (int32_t)ms;
                 }
@@ -8287,7 +8310,7 @@ bool XPainter_begin_image(XPainter* self, XImage* image)
                 bpWin = (int64_t)(bpEnd - bpLastPrint);
                 if (bpWin >= 3000000000LL)
                 {
-                    fprintf(stderr,
+                    XPrintf(
                             "[xp-begin] n=%-6u tot=%10.3fms acq=%9.3fms "
                             "bflush=%8.3fms chain=%10.3fms clear=%8.3fms "
                             "nested=%-5u soft=%-5u fail=%-4u skip=%-5u\n",

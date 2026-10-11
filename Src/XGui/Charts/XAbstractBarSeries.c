@@ -135,41 +135,6 @@ static void xabs_emitStatusIndexSet(XAbstractBarSeries* self, size_t signal,
 
 /* ==================== 类与对象生命周期 ==================== */
 
-XVtable* XAbstractBarSeries_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(XAbstractBarSeries)
-    XVTABLE_INHERIT_XCLASS(XAbstractSeries);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXAbstractBarSeries_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXAbstractBarSeries_copy);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXAbstractBarSeries_move);
-    return XVTABLE_DEFAULT;
-}
-
-void XAbstractBarSeries_init(XAbstractBarSeries* self)
-{
-    if (!self) return;
-    XMemset(self, 0, sizeof(*self));
-    XAbstractSeries_init(&self->m_base);
-    XClassSetVtable(self, XAbstractBarSeries);
-    self->m_barWidth = 0.5;
-    self->m_labelsVisible = false;
-    self->m_labelsFormat = XString_create();
-    self->m_labelsAngle = 0.0;
-    self->m_labelsPosition = XAbstractBarSeries_LabelsCenter;
-    self->m_labelsPrecision = 6;
-}
-
-XAbstractBarSeries* XAbstractBarSeries_create_ex(XMemoryType memory)
-{
-    XAbstractBarSeries* self =
-        (XAbstractBarSeries*)XMemory_malloc(sizeof(*self), memory);
-    if (!self) return NULL;
-    XAbstractBarSeries_init(self);
-    Set_Class_Memory(self, memory);
-    Set_Class_IsHeap(self, true);
-    return self;
-}
-
 static void VXAbstractBarSeries_deinit(XAbstractBarSeries* self)
 {
     int i;
@@ -219,7 +184,12 @@ static void VXAbstractBarSeries_copy(XAbstractBarSeries* self,
             for (si = 0; si < src->m_selectedCount; ++si)
                 XBarSet_selectBar(dup, src->m_selectedBars[si]);
         }
-        XAbstractBarSeries_append(self, dup);
+        /* append 仅在扩容失败时返回 false：此时 dup 未入集合、
+           无人接管，必须就地释放（与 XPieSeries_append 同契约）。 */
+        if (!XAbstractBarSeries_append(self, dup)) {
+            XClassDelete(dup);
+            continue;
+        }
     }
     self->m_barWidth = other->m_barWidth;
     self->m_labelsVisible = other->m_labelsVisible;
@@ -265,6 +235,41 @@ static void VXAbstractBarSeries_move(XAbstractBarSeries* self,
     self->m_labelsPrecision = other->m_labelsPrecision;
     self->m_labelsFormat = other->m_labelsFormat;
     other->m_labelsFormat = XString_create();
+}
+
+XVtable* XAbstractBarSeries_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XAbstractBarSeries)
+    XVTABLE_INHERIT_XCLASS(XAbstractSeries);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXAbstractBarSeries_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXAbstractBarSeries_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXAbstractBarSeries_move);
+    return XVTABLE_DEFAULT;
+}
+
+void XAbstractBarSeries_init(XAbstractBarSeries* self)
+{
+    if (!self) return;
+    XMemset(self, 0, sizeof(*self));
+    XAbstractSeries_init(&self->m_base);
+    XClassSetVtable(self, XAbstractBarSeries);
+    self->m_barWidth = 0.5;
+    self->m_labelsVisible = false;
+    self->m_labelsFormat = XString_create();
+    self->m_labelsAngle = 0.0;
+    self->m_labelsPosition = XAbstractBarSeries_LabelsCenter;
+    self->m_labelsPrecision = 6;
+}
+
+XAbstractBarSeries* XAbstractBarSeries_create_ex(XMemoryType memory)
+{
+    XAbstractBarSeries* self =
+        (XAbstractBarSeries*)XMemory_malloc(sizeof(*self), memory);
+    if (!self) return NULL;
+    XAbstractBarSeries_init(self);
+    Set_Class_Memory(self, memory);
+    Set_Class_IsHeap(self, true);
+    return self;
 }
 
 /* ==================== 内部辅助 ==================== */

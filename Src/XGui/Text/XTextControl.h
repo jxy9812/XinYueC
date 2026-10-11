@@ -279,8 +279,29 @@ typedef struct XTextControl
 {
     XObject m_base;              /**< 继承 XObject（对标 QObject 基类）。 */
 
-    /* ---- 平铺行模型（对标 QTextDocument 内容） ---- */
+    /* ---- 8 字节对齐组：指针 / 定时器 / 值类型大对象（对齐分组前移，
+     *      消除原布局 0xa1/0x141/0x71c 等对齐空洞；成员访问一律按名，
+     *      无位置初始化/offsetof 依赖） ---- */
     XTextControlLine* m_lines;   /**< 行数组（定容缓冲 + 行长，拥有）。 */
+    XTextControlVisualRow* m_visualRows; /**< 可视行数组（拥有；按 (逻辑行,
+                                              起始字节) 单调）。 */
+    XTextControlUndoCommand* m_undoStack; /**< 撤销栈（拥有，堆数组）。 */
+    XTextControlUndoCommand* m_redoStack; /**< 重做栈（拥有，堆数组）。 */
+    XTextControlExtraSelection* m_extraSelections; /**< 额外选择集数组（拥有）。 */
+    XTextControlAnchor* m_anchors; /**< 锚点注册表（拥有）。 */
+    char* m_anchorOnMousePress;  /**< 按下点锚点 href（堆拷贝；激活判定）。 */
+    char* m_highlightedAnchor;   /**< 当前悬停锚点 href（linkHovered 去重）。 */
+    char* m_linkToCopy;          /**< 右键菜单"复制链接"目标。 */
+    char* m_preedit;             /**< 组中文本（堆拷贝；空/NULL = 非 preediting）。 */
+    XTimerId m_cursorBlinkTimer; /**< 光标闪烁定时器（XTIMER_INVALID_ID = 未启动）。 */
+    XTimerId m_tripleClickTimer; /**< 三击判定定时器（XTIMER_INVALID_ID = 未启动）。 */
+    XPalette m_palette;          /**< 调色板（对标 QWidgetTextControl::palette）。 */
+    XFont m_font;                /**< 绘制字体（Qt 由文档默认字体承载）。 */
+#if XTEXTDOCUMENT_ON
+    XTextDocument* m_textDoc;    /**< 内部文档镜像（拥有；document()/setDocument 承载）。 */
+#endif
+
+    /* ---- 平铺行模型（对标 QTextDocument 内容） ---- */
     int m_lineCount;             /**< 当前行数（对标 blockCount）。 */
     int m_lineCap;               /**< 行数组容量。 */
 
@@ -296,96 +317,82 @@ typedef struct XTextControl
     int m_charFormat;            /**< 当前插入字符格式（位值）。 */
     int m_lastCharFormat;        /**< 上次通知的字符格式（currentCharFormatChanged 去重）。 */
 
-    /* ---- 光标显示与焦点 ---- */
-    bool m_cursorOn;             /**< 光标闪灯当前态。 */
-    bool m_cursorVisible;        /**< 光标可见开关（setCursorVisible 承载）。 */
-    bool m_cursorIsFocusIndicator; /**< 光标仅为焦点指示（键盘链接导航）。 */
-    bool m_hasFocus;             /**< 焦点态（FocusIn/FocusOut 事件维护）。 */
-    bool m_isEnabled;            /**< 启用态（EnabledChange 事件维护）。 */
-    XTimerId m_cursorBlinkTimer; /**< 光标闪烁定时器（XTIMER_INVALID_ID = 未启动）。 */
-    XTimerId m_tripleClickTimer; /**< 三击判定定时器（XTIMER_INVALID_ID = 未启动）。 */
+    /* ---- 定时器/三击配套点 ---- */
     XPoint m_tripleClickPoint;   /**< 三击判定基准点。 */
 
     /* ---- 属性族（对标同名 Q_PROPERTY） ---- */
     int m_interactionFlags;      /**< 文本交互标志集（默认 TextEditorInteraction）。 */
-    bool m_overwriteMode;        /**< 覆盖模式。 */
-    bool m_acceptRichText;       /**< 接受富文本粘贴（默认 true）。 */
     int m_cursorWidth;           /**< 光标宽度（px，-1 已解析为风格默认 1）。 */
-    bool m_dragEnabled;          /**< 选区可拖拽（默认 true）。 */
-    bool m_wordSelectionEnabled; /**< 拖选按词选（默认 false）。 */
-    bool m_openExternalLinks;    /**< 链接交由外部打开（默认 false）。 */
-    bool m_ignoreUnusedNavigationEvents; /**< 未消费的导航事件是否忽略。 */
     int m_textWidth;             /**< 首选文本宽度（<= 0 = 未设置；WidgetWidth
                                       换行模式下的折行宽度来源，对标
                                       QTextDocument::textWidth）。 */
 
     /* ---- 软换行布局缓存（对标 QTextDocumentLayout 的可视行布局） ---- */
-    XTextControlVisualRow* m_visualRows; /**< 可视行数组（拥有；按 (逻辑行,
-                                              起始字节) 单调）。 */
     int m_visualCount;           /**< 可视行数（NoWrap 时 == m_lineCount）。 */
     int m_visualCap;             /**< 可视行数组容量。 */
-    bool m_layoutValid;          /**< 布局缓存有效（编辑/字体/宽度/模式变更
-                                      后失效，惰性重建）。 */
     int m_lineWrapMode;          /**< 换行开关（XTextControlLineWrapMode；
                                       默认 WidgetWidth，对标 QPlainTextEdit）。 */
     int m_wordWrapMode;          /**< 断行规则（XTextControlWrapMode；默认
                                       WordWrap，对标 QTextOption::WrapMode）。 */
-    bool m_cursorAtRowStart;     /**< 光标视觉边沿：软断点字节归属下一可视
-                                      行行首（Home 触达，对标 Qt 光标边沿
-                                      跟踪；其余移动恒 false）。 */
 
     /* ---- 鼠标状态机 ---- */
-    bool m_mousePressed;         /**< 按下拖选中（TextSelectableByMouse）。 */
-    bool m_mightStartDrag;       /**< 按在选区内、可能起拖。 */
-    bool m_hadSelectionOnMousePress; /**< 按下时已有选区（链接激活判定）。 */
-    bool m_dragInProgress;       /**< 自发起拖拽进行中（Move 放置删源）。 */
     XPoint m_mousePressPos;      /**< 按下点（起拖距离判定）。 */
     int m_wordSelStart;          /**< 双击词选区起点（-1 = 无）。 */
     int m_wordSelEnd;            /**< 双击词选区终点（-1 = 无）。 */
     int m_blockSelStart;         /**< 三击段选区起点（-1 = 无）。 */
     int m_blockSelEnd;           /**< 三击段选区终点（-1 = 无）。 */
-    char* m_anchorOnMousePress;  /**< 按下点锚点 href（堆拷贝；激活判定）。 */
-    char* m_highlightedAnchor;   /**< 当前悬停锚点 href（linkHovered 去重）。 */
-    char* m_linkToCopy;          /**< 右键菜单"复制链接"目标。 */
 
     /* ---- IME preedit（不入文档，对标 layout preeditArea） ---- */
-    char* m_preedit;             /**< 组中文本（堆拷贝；空/NULL = 非 preediting）。 */
     int m_preeditPos;            /**< preedit 插入点（文档绝对位置）。 */
     int m_preeditCursor;         /**< preedit 内光标偏移（码点内字节）。 */
-    bool m_hideCursor;           /**< IME 要求隐藏光标。 */
 
     /* ---- 撤销/重做（命令差量栈 + 组） ---- */
-    XTextControlUndoCommand* m_undoStack; /**< 撤销栈（拥有，堆数组）。 */
     int m_undoCount;             /**< 撤销栈深度。 */
     int m_undoCap;               /**< 撤销栈容量。 */
-    XTextControlUndoCommand* m_redoStack; /**< 重做栈（拥有，堆数组）。 */
     int m_redoCount;             /**< 重做栈深度。 */
     int m_redoCap;               /**< 重做栈容量。 */
-    bool m_undoEnabled;          /**< 撤销开关（默认 = 可编辑，对标 init）。 */
     int m_editBlockDepth;        /**< 编辑块嵌套深度（begin/endEditBlock）。 */
     int m_groupCounter;          /**< 组号发生器（自 1 递增）。 */
-    bool m_undoAvailable;        /**< 上次通知的 undoAvailable 态。 */
-    bool m_redoAvailable;        /**< 上次通知的 redoAvailable 态。 */
-    bool m_modified;             /**< 修改标志（对标 QTextDocument::modified）。 */
 
     /* ---- 额外选择集 / 锚点注册表 ---- */
-    XTextControlExtraSelection* m_extraSelections; /**< 额外选择集数组（拥有）。 */
     int m_extraSelectionCount;   /**< 额外选择集条目数。 */
     int m_extraSelectionCap;     /**< 额外选择集容量。 */
-    XTextControlAnchor* m_anchors; /**< 锚点注册表（拥有）。 */
     int m_anchorCount;           /**< 锚点条目数。 */
     int m_anchorCap;             /**< 锚点容量。 */
 
     /* ---- 绘制上下文 ---- */
     int m_dndFeedbackPos;        /**< 拖放反馈光标位置（-1 = 无）。 */
-    XPalette m_palette;          /**< 调色板（对标 QWidgetTextControl::palette）。 */
-    XFont m_font;                /**< 绘制字体（Qt 由文档默认字体承载）。 */
     int m_lineHeight;            /**< 行高（像素，setFont 时刷新；默认 16）。 */
     int m_lineAscent;            /**< 行内基线偏移（像素；默认 13）。 */
 
-#if XTEXTDOCUMENT_ON
-    XTextDocument* m_textDoc;    /**< 内部文档镜像（拥有；document()/setDocument 承载）。 */
-#endif
+    /* ---- 标志位域组：原 22 个散布 bool 合并为 1 位位域（全库逐名扫描
+     *      确认均无 & 取址使用，符合"位域不可取址"红线；仅 0/1 赋值与
+     *      布尔判断，语义不变） ---- */
+    uint8_t m_cursorOn : 1;             /**< 光标闪灯当前态。 */
+    uint8_t m_cursorVisible : 1;        /**< 光标可见开关（setCursorVisible 承载）。 */
+    uint8_t m_cursorIsFocusIndicator : 1; /**< 光标仅为焦点指示（键盘链接导航）。 */
+    uint8_t m_hasFocus : 1;             /**< 焦点态（FocusIn/FocusOut 事件维护）。 */
+    uint8_t m_isEnabled : 1;            /**< 启用态（EnabledChange 事件维护）。 */
+    uint8_t m_overwriteMode : 1;        /**< 覆盖模式。 */
+    uint8_t m_acceptRichText : 1;       /**< 接受富文本粘贴（默认 true）。 */
+    uint8_t m_dragEnabled : 1;          /**< 选区可拖拽（默认 true）。 */
+    uint8_t m_wordSelectionEnabled : 1; /**< 拖选按词选（默认 false）。 */
+    uint8_t m_openExternalLinks : 1;    /**< 链接交由外部打开（默认 false）。 */
+    uint8_t m_ignoreUnusedNavigationEvents : 1; /**< 未消费的导航事件是否忽略。 */
+    uint8_t m_layoutValid : 1;          /**< 布局缓存有效（编辑/字体/宽度/模式变更
+                                              后失效，惰性重建）。 */
+    uint8_t m_cursorAtRowStart : 1;     /**< 光标视觉边沿：软断点字节归属下一可视
+                                              行行首（Home 触达，对标 Qt 光标边沿
+                                              跟踪；其余移动恒 false）。 */
+    uint8_t m_mousePressed : 1;         /**< 按下拖选中（TextSelectableByMouse）。 */
+    uint8_t m_mightStartDrag : 1;       /**< 按在选区内、可能起拖。 */
+    uint8_t m_hadSelectionOnMousePress : 1; /**< 按下时已有选区（链接激活判定）。 */
+    uint8_t m_dragInProgress : 1;       /**< 自发起拖拽进行中（Move 放置删源）。 */
+    uint8_t m_hideCursor : 1;           /**< IME 要求隐藏光标。 */
+    uint8_t m_undoEnabled : 1;          /**< 撤销开关（默认 = 可编辑，对标 init）。 */
+    uint8_t m_undoAvailable : 1;        /**< 上次通知的 undoAvailable 态。 */
+    uint8_t m_redoAvailable : 1;        /**< 上次通知的 redoAvailable 态。 */
+    uint8_t m_modified : 1;             /**< 修改标志（对标 QTextDocument::modified）。 */
 } XTextControl;
 
 /* ========================================================================== */

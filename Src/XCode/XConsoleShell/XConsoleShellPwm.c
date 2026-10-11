@@ -12,9 +12,8 @@
     XCONSOLE_SHELL_PWM_ON
 
 #include "XConsoleShellPwm.h"
+#include "XStringUtils.h"
 #include "XUtf8StringView.h"
-#include <stdio.h>
-#include <string.h>
 
 static bool xcsp_parse_u32(const char* text, uint32_t* value)
 {
@@ -44,7 +43,7 @@ static XConsoleShellPwmSlot* xcsp_find_slot(
     for (i = 0; i < XCONSOLE_SHELL_PWM_SLOT_CAPACITY; ++i) {
         XConsoleShellPwmSlot* slot = &shell->m_pwmSlots[i];
         XPwmConfig config = XPWM_CONFIG_INIT;
-        if (slot->pwm && XPwm_getConfig(slot->pwm, &config) &&
+        if (slot->m_pwm && XPwm_getConfig(slot->m_pwm, &config) &&
             config.m_channel.m_controller == channel->m_controller &&
             config.m_channel.m_channel == channel->m_channel)
             return slot;
@@ -57,7 +56,7 @@ static XConsoleShellPwmSlot* xcsp_empty_slot(XConsoleShell* shell)
     size_t i;
     if (!shell) return NULL;
     for (i = 0; i < XCONSOLE_SHELL_PWM_SLOT_CAPACITY; ++i)
-        if (!shell->m_pwmSlots[i].pwm) return &shell->m_pwmSlots[i];
+        if (!shell->m_pwmSlots[i].m_pwm) return &shell->m_pwmSlots[i];
     return NULL;
 }
 
@@ -85,7 +84,7 @@ static XConsoleResult xcsp_error(XConsoleShell* shell, const char* operation,
     char line[160];
     XPwmError error = pwm ? XPwm_lastError(pwm) : XPwmError_Unknown;
     int32_t nativeError = pwm ? XPwm_nativeError(pwm) : 0;
-    int written = snprintf(line, sizeof(line), "pwm: %s: %s (本机错误=%d)\n",
+    int written = XSnprintf(line, sizeof(line), "pwm: %s: %s (本机错误=%d)\n",
                            operation ? operation : "操作",
                            XPwm_errorString(error), (int)nativeError);
     if (written < 0 || (size_t)written >= sizeof(line) ||
@@ -101,7 +100,7 @@ static XConsoleResult xcsp_error(XConsoleShell* shell, const char* operation,
 static XConsoleResult xcsp_missing(XConsoleShell* shell, const char* operation)
 {
     char line[96];
-    int written = snprintf(line, sizeof(line), "pwm: %s: 通道未打开\n",
+    int written = XSnprintf(line, sizeof(line), "pwm: %s: 通道未打开\n",
                            operation ? operation : "操作");
     return written > 0 && (size_t)written < sizeof(line) &&
                    XConsoleShell_writeUtf8(shell, line)
@@ -117,8 +116,8 @@ static XConsoleResult xcsp_denied(XConsoleShell* shell)
 static bool xcsp_parse_polarity(const char* text, XPwmPolarity* polarity)
 {
     if (!text || !polarity) return false;
-    if (strcmp(text, "normal") == 0) *polarity = XPwmPolarity_Normal;
-    else if (strcmp(text, "inverted") == 0) *polarity = XPwmPolarity_Inverted;
+    if (XStrcmp(text, "normal") == 0) *polarity = XPwmPolarity_Normal;
+    else if (XStrcmp(text, "inverted") == 0) *polarity = XPwmPolarity_Inverted;
     else return false;
     return true;
 }
@@ -132,18 +131,18 @@ static bool xcsp_apply_options(XPwmConfig* config, int argc,
     while (i < argc) {
         uint32_t value;
         if (i + 1 >= argc) return false;
-        if (strcmp(argv[i], "--frequency") == 0) {
+        if (XStrcmp(argv[i], "--frequency") == 0) {
             if (!xcsp_parse_u32(argv[i + 1], &value) || value == 0u) return false;
             config->m_frequencyHz = value;
-        } else if (strcmp(argv[i], "--duty") == 0) {
+        } else if (XStrcmp(argv[i], "--duty") == 0) {
             if (!xcsp_parse_u32(argv[i + 1], &value) || value > 10000u) return false;
             config->m_dutyPermille = (uint16_t)value;
-        } else if (strcmp(argv[i], "--polarity") == 0) {
+        } else if (XStrcmp(argv[i], "--polarity") == 0) {
             if (!xcsp_parse_polarity(argv[i + 1], &config->m_polarity)) return false;
-        } else if (strcmp(argv[i], "--enabled") == 0) {
-            if (strcmp(argv[i + 1], "yes") == 0 || strcmp(argv[i + 1], "1") == 0)
+        } else if (XStrcmp(argv[i], "--enabled") == 0) {
+            if (XStrcmp(argv[i + 1], "yes") == 0 || XStrcmp(argv[i + 1], "1") == 0)
                 config->m_initialEnabled = true;
-            else if (strcmp(argv[i + 1], "no") == 0 || strcmp(argv[i + 1], "0") == 0)
+            else if (XStrcmp(argv[i + 1], "no") == 0 || XStrcmp(argv[i + 1], "0") == 0)
                 config->m_initialEnabled = false;
             else return false;
         } else {
@@ -173,15 +172,15 @@ static int xcsp_list(XConsoleShell* shell, XConsoleShellSession* session,
         XPwmConfig config = XPWM_CONFIG_INIT;
         char line[180];
         int written;
-        if (!slot->pwm || !XPwm_getConfig(slot->pwm, &config) ||
+        if (!slot->m_pwm || !XPwm_getConfig(slot->m_pwm, &config) ||
             !xcsp_authorized(shell, session, &config.m_channel,
                              XConsoleShellPwmOperation_List, false))
             continue;
-        written = snprintf(line, sizeof(line), "%5u %5u %-6s %-7s %9u %13u %-9s\n",
+        written = XSnprintf(line, sizeof(line), "%5u %5u %-6s %-7s %9u %13u %-9s\n",
                            config.m_channel.m_controller,
                            config.m_channel.m_channel,
-                           XPwm_isOpen(slot->pwm) ? "open" : "close",
-                           XPwm_isRunning(slot->pwm) ? "yes" : "no",
+                           XPwm_isOpen(slot->m_pwm) ? "open" : "close",
+                           XPwm_isRunning(slot->m_pwm) ? "yes" : "no",
                            (unsigned)config.m_frequencyHz,
                            (unsigned)config.m_dutyPermille,
                            config.m_polarity == XPwmPolarity_Inverted ? "inverted" : "normal");
@@ -229,7 +228,7 @@ static int xcsp_open(XConsoleShell* shell, XConsoleShellSession* session,
         XPwm_delete(pwm);
         return result;
     }
-    slot->pwm = pwm;
+    slot->m_pwm = pwm;
     return XConsoleResult_Ok;
 }
 #endif
@@ -249,8 +248,8 @@ static int xcsp_close(XConsoleShell* shell, XConsoleShellSession* session,
     if (!xcsp_authorized(shell, session, &channel,
                          XConsoleShellPwmOperation_Close, true))
         return xcsp_denied(shell);
-    XPwm_delete(slot->pwm);
-    slot->pwm = NULL;
+    XPwm_delete(slot->m_pwm);
+    slot->m_pwm = NULL;
     return XConsoleResult_Ok;
 }
 #endif
@@ -273,16 +272,16 @@ static int xcsp_info(XConsoleShell* shell, XConsoleShellSession* session,
     if (!xcsp_authorized(shell, session, &channel,
                          XConsoleShellPwmOperation_Info, false))
         return xcsp_denied(shell);
-    if (!XPwm_getConfig(slot->pwm, &config)) return xcsp_error(shell, "查询配置", slot->pwm);
-    written = snprintf(line, sizeof(line),
-                       "pwm %u/%u state=%s running=%s frequency=%u duty-permille=%u polarity=%s features=0x%08x\n",
+    if (!XPwm_getConfig(slot->m_pwm, &config)) return xcsp_error(shell, "查询配置", slot->m_pwm);
+    written = XSnprintf(line, sizeof(line),
+                        "pwm %u/%u state=%s running=%s frequency=%u duty-permille=%u polarity=%s features=0x%08x\n",
                        config.m_channel.m_controller, config.m_channel.m_channel,
-                       XPwm_isOpen(slot->pwm) ? "open" : "close",
-                       XPwm_isRunning(slot->pwm) ? "yes" : "no",
+                       XPwm_isOpen(slot->m_pwm) ? "open" : "close",
+                       XPwm_isRunning(slot->m_pwm) ? "yes" : "no",
                        (unsigned)config.m_frequencyHz,
                        (unsigned)config.m_dutyPermille,
                        config.m_polarity == XPwmPolarity_Inverted ? "inverted" : "normal",
-                       (unsigned)XPwm_features(slot->pwm));
+                       (unsigned)XPwm_features(slot->m_pwm));
     return written > 0 && (size_t)written < sizeof(line) &&
                    XConsoleShell_writeUtf8(shell, line)
                ? XConsoleResult_Ok : XConsoleResult_IoError;
@@ -317,11 +316,11 @@ static int xcsp_configure(XConsoleShell* shell, XConsoleShellSession* session,
     result = xcsp_parse_target(shell, session, argc, argv, &slot, &channel,
                                XConsoleShellPwmOperation_Configure);
     if (result != XConsoleResult_Ok) return result;
-    if (!XPwm_getConfig(slot->pwm, &config) ||
+    if (!XPwm_getConfig(slot->m_pwm, &config) ||
         !xcsp_apply_options(&config, argc, argv, 2))
         return XConsoleResult_InvalidArgument;
-    return XPwm_configure(slot->pwm, &config)
-               ? XConsoleResult_Ok : xcsp_error(shell, "配置", slot->pwm);
+    return XPwm_configure(slot->m_pwm, &config)
+               ? XConsoleResult_Ok : xcsp_error(shell, "配置", slot->m_pwm);
 }
 #endif
 
@@ -337,7 +336,7 @@ static int xcsp_start(XConsoleShell* shell, XConsoleShellSession* session,
     result = xcsp_parse_target(shell, session, argc, argv, &slot, &channel,
                                XConsoleShellPwmOperation_Start);
     if (result != XConsoleResult_Ok) return result;
-    return XPwm_start(slot->pwm) ? XConsoleResult_Ok : xcsp_error(shell, "启动", slot->pwm);
+    return XPwm_start(slot->m_pwm) ? XConsoleResult_Ok : xcsp_error(shell, "启动", slot->m_pwm);
 }
 #endif
 
@@ -353,7 +352,7 @@ static int xcsp_stop(XConsoleShell* shell, XConsoleShellSession* session,
     result = xcsp_parse_target(shell, session, argc, argv, &slot, &channel,
                                XConsoleShellPwmOperation_Stop);
     if (result != XConsoleResult_Ok) return result;
-    return XPwm_stop(slot->pwm) ? XConsoleResult_Ok : xcsp_error(shell, "停止", slot->pwm);
+    return XPwm_stop(slot->m_pwm) ? XConsoleResult_Ok : xcsp_error(shell, "停止", slot->m_pwm);
 }
 #endif
 
@@ -371,8 +370,8 @@ static int xcsp_set_frequency(XConsoleShell* shell, XConsoleShellSession* sessio
     result = xcsp_parse_target(shell, session, argc, argv, &slot, &channel,
                                XConsoleShellPwmOperation_SetFrequency);
     if (result != XConsoleResult_Ok) return result;
-    return XPwm_setFrequency(slot->pwm, value)
-               ? XConsoleResult_Ok : xcsp_error(shell, "设置频率", slot->pwm);
+    return XPwm_setFrequency(slot->m_pwm, value)
+               ? XConsoleResult_Ok : xcsp_error(shell, "设置频率", slot->m_pwm);
 }
 #endif
 
@@ -390,8 +389,8 @@ static int xcsp_set_duty(XConsoleShell* shell, XConsoleShellSession* session,
     result = xcsp_parse_target(shell, session, argc, argv, &slot, &channel,
                                XConsoleShellPwmOperation_SetDuty);
     if (result != XConsoleResult_Ok) return result;
-    return XPwm_setDuty(slot->pwm, (uint16_t)value)
-               ? XConsoleResult_Ok : xcsp_error(shell, "设置占空比", slot->pwm);
+    return XPwm_setDuty(slot->m_pwm, (uint16_t)value)
+               ? XConsoleResult_Ok : xcsp_error(shell, "设置占空比", slot->m_pwm);
 }
 #endif
 
@@ -400,9 +399,9 @@ void XConsoleShellPwm_deinit(XConsoleShell* shell)
     size_t i;
     if (!shell) return;
     for (i = 0; i < XCONSOLE_SHELL_PWM_SLOT_CAPACITY; ++i) {
-        if (shell->m_pwmSlots[i].pwm) {
-            XPwm_delete(shell->m_pwmSlots[i].pwm);
-            shell->m_pwmSlots[i].pwm = NULL;
+        if (shell->m_pwmSlots[i].m_pwm) {
+            XPwm_delete(shell->m_pwmSlots[i].m_pwm);
+            shell->m_pwmSlots[i].m_pwm = NULL;
         }
     }
     shell->m_pwmAuthorize = NULL;

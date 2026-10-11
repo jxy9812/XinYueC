@@ -30,6 +30,7 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XObject_Protected.h"
 
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON
 
@@ -488,7 +489,7 @@ static void xdt_syncPopupValue(XDateTimeEdit* self); /* 弹层随值同步（缺
  *         落点同时驱动弹层随值同步（缺陷 F：弹层开着时物理键入/滚轮/
  *         箭头步进改值后，日历选中页与时间行跟随刷新——信号发射是本
  *         控件全部交互改值路径的汇聚点：xdt_commitTyping/
- *         XDateTimeEdit_stepBy/XDateTimeEdit_interpret 与 setDate/
+ *         VXDateTimeEdit_stepBy/VXDateTimeEdit_interpret 与 setDate/
  *         setTime/setDateTime 公共 API 都经此处）。 */
 static void xdt_emitPartChanged(XDateTimeEdit* self, const XDateTime* old)
 {
@@ -1009,7 +1010,7 @@ static void xdt_stepWrapTimeOfDay(XDateTimeEdit* edit, int64_t deltaMs)
     XDateTime_setMSecsSinceEpoch(&edit->m_dateTime, ms + tod);
 }
 
-static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
+static void VXDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     XDateTime old;
@@ -1101,7 +1102,7 @@ static void XDateTimeEdit_stepBy(XAbstractSpinBox* self, int steps)
     }
 }
 
-static int XDateTimeEdit_stepEnabled(const XAbstractSpinBox* self)
+static int VXDateTimeEdit_stepEnabled(const XAbstractSpinBox* self)
 {
     (void)self;
     return (int)XAbstractSpinBoxStepEnabledFlag_StepUpEnabled |
@@ -1298,7 +1299,7 @@ static bool xdt_parseEditText(const XDateTimeEdit* self, const char* text,
  *         重渲染（对标 correctionMode=CorrectToPreviousValue）；成功
  *         且值变化时刷新显示并发射 dateTimeChanged/dateChanged/
  *         timeChanged。 */
-static void XDateTimeEdit_interpret(XAbstractSpinBox* self)
+static void VXDateTimeEdit_interpret(XAbstractSpinBox* self)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     XLineEdit* line;
@@ -1345,7 +1346,7 @@ static void XDateTimeEdit_interpret(XAbstractSpinBox* self)
  *         截为光标到当前节首/节尾、值不动（P1-6，对标 Qt 行编辑语义，
  *         覆写基类的 min/max 值跳转）；其余按键交基类（Up/Down/
  *         PageUp/PageDown 步进、Return 提交、其余转发内嵌编辑框）。 */
-static void XDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
+static void VXDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     XKeyEvent* ke;
@@ -1519,7 +1520,7 @@ static void XDateTimeEdit_keyPressEvent(XWidget* self, XEvent* event)
  *         后续按键直达分段导航/键入，不再落入行编辑文本光标模式）。
  *         编辑区外（上下按钮条）与非左键不接管，保持既有行为。对标
  *         QDateTimeEdit 点击定段的分段编辑模型。 */
-static void XDateTimeEdit_mousePressEvent(XWidget* self, XEvent* event)
+static void VXDateTimeEdit_mousePressEvent(XWidget* self, XEvent* event)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     XLineEdit* line;
@@ -1684,11 +1685,11 @@ static void xdt_timeRowLiveSlot2(XObject* receiver, XVarList* args);
 static bool VXDateTimeEdit_eventFilter(XObject* self, XObject* watched,
                                        XEvent* event);
 
-static void XDateTimeEdit_paintEvent(XWidget* self, XEvent* event);
-static void XDateTimeEdit_resizeEvent(XWidget* self, XEvent* event);
-static void XDateTimeEdit_hideEvent(XWidget* self, XEvent* event);
-static void XDateTimeEdit_focusInEvent(XWidget* self, XEvent* event);
-static void XDateTimeEdit_timerEvent(XObject* object, XTimerEvent* event);
+static void VXDateTimeEdit_paintEvent(XWidget* self, XEvent* event);
+static void VXDateTimeEdit_resizeEvent(XWidget* self, XEvent* event);
+static void VXDateTimeEdit_hideEvent(XWidget* self, XEvent* event);
+static void VXDateTimeEdit_focusInEvent(XWidget* self, XEvent* event);
+static void VXDateTimeEdit_timerEvent(XObject* object, XTimerEvent* event);
 static void VXDateTimeEdit_clear(XAbstractSpinBox* self);
 static void xdt_syncEditGeometry(XDateTimeEdit* self);
 
@@ -2340,7 +2341,7 @@ static void xdtp_drawTimeRow(XDateTimePopup* popup, XPainter* painter,
 }
 
 /** @brief 时间行按下分派：▲/▼ 复用属主既有分段步进入口（先聚焦该段
- *         再 stepBy(±1)，跨段进位由 XDateTimeEdit_stepBy 的 epoch 换算
+ *         再 stepBy(±1)，跨段进位由 VXDateTimeEdit_stepBy 的 epoch 换算
  *         天然承担，步进后经值变化汇聚点 xdt_syncPopupValue 随动刷新
  *         日历选中页与时间行）；点段值=聚焦该段真实编辑器并全选+显式
  *         弹悬浮数字键盘（定版=真实编辑器方案；值框已被编辑器覆盖，
@@ -2955,7 +2956,7 @@ static void xdt_syncPopupValue(XDateTimeEdit* self)
 
 /** @brief 延迟平台双抓取（1ms 精确定时器，窗口已映射；XComboBox
  *         同款时序——先杀定时器记账再启用鼠标+键盘平台抓取）。 */
-static void XDateTimeEdit_timerEvent(XObject* object, XTimerEvent* event)
+static void VXDateTimeEdit_timerEvent(XObject* object, XTimerEvent* event)
 {
     XDateTimeEdit* self = (XDateTimeEdit*)object;
     XTimerId id;
@@ -2988,7 +2989,7 @@ static void XDateTimeEdit_timerEvent(XObject* object, XTimerEvent* event)
  *         见 xdt_arrowRect）。文本由内嵌行编辑子件自绘。
  *         calendarPopup=false 走默认绘制路径（与未引入本功能前逐像素
  *         一致）。 */
-static void XDateTimeEdit_paintEvent(XWidget* self, XEvent* event)
+static void VXDateTimeEdit_paintEvent(XWidget* self, XEvent* event)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     if (!edit || !event ||
@@ -3079,7 +3080,7 @@ static void XDateTimeEdit_paintEvent(XWidget* self, XEvent* event)
 
 /** @brief 弹层态几何：箭头列之外全归编辑区（SC_ComboBoxEditField 口
  *         径，与绘制同源）；非弹层态交回基类（CC_SpinBox 口径不变）。 */
-static void XDateTimeEdit_resizeEvent(XWidget* self, XEvent* event)
+static void VXDateTimeEdit_resizeEvent(XWidget* self, XEvent* event)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     if (!edit || !event ||
@@ -3095,7 +3096,7 @@ static void XDateTimeEdit_resizeEvent(XWidget* self, XEvent* event)
 
 /** @brief 隐藏事件：控件随页签切换/顶层隐藏而隐藏时收起弹层并解抓
  *         取（对标 Qt 弹层随宿主隐藏关闭），再链基类提交路径。 */
-static void XDateTimeEdit_hideEvent(XWidget* self, XEvent* event)
+static void VXDateTimeEdit_hideEvent(XWidget* self, XEvent* event)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     if (edit && event && XEvent_type(event) == XEVENT_TYPE_HIDE) {
@@ -3115,7 +3116,7 @@ static void XDateTimeEdit_hideEvent(XWidget* self, XEvent* event)
  *         原因（Tab/Shortcut/默认=首段、Backtab=末段）聚焦后整段选中
  *         对应分段——覆写基类「Tab 进入全选文本」的 QAbstractSpinBox
  *         语义（Qt 中该 selectAll 被 QDateTimeEdit 分段选区取代）。 */
-static void XDateTimeEdit_focusInEvent(XWidget* self, XEvent* event)
+static void VXDateTimeEdit_focusInEvent(XWidget* self, XEvent* event)
 {
     XDateTimeEdit* edit = (XDateTimeEdit*)self;
     XFocusReason reason;
@@ -3211,7 +3212,7 @@ static XRect xdt_arrowRect(XDateTimeEdit* edit)
 
 /** @brief 弹层态编辑区几何（SC_ComboBoxEditField 口径，与 combo 绘制
  *         同源——弹层态按 CC_ComboBox 呈现单下箭头，见
- *         XDateTimeEdit_paintEvent 函数头 Qt 6.8.3 对齐说明；行编辑子
+ *         VXDateTimeEdit_paintEvent 函数头 Qt 6.8.3 对齐说明；行编辑子
  *         件落在箭头列之外的编辑区，不盖箭头列。无样式回退右缘留
  *         16px 箭头列）。setCalendarPopup 开关与 resize 共用。 */
 static void xdt_syncEditGeometry(XDateTimeEdit* self)
@@ -3296,32 +3297,32 @@ XVtable* XDateTimeEdit_class_init(void)
     XVTABLE_INIT_DEFAULT(XDateTimeEdit)
     XVTABLE_INHERIT_XCLASS(XAbstractSpinBox);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepBy,
-                             XDateTimeEdit_stepBy);
+                             VXDateTimeEdit_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_StepEnabled,
-                             XDateTimeEdit_stepEnabled);
+                             VXDateTimeEdit_stepEnabled);
     /* P1-5：覆写 Interpret——基类默认空操作导致键入数字既不改值也不
      * 重渲染；覆写后基类 Enter/失焦/隐藏/关闭的 interpretText 分派
      * 路径均把键入文本提交回值（对标 QDateTimeEdit::interpretText）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_Interpret,
-                             XDateTimeEdit_interpret);
+                             VXDateTimeEdit_interpret);
     /* 对标 QDateTimeEdit::clear()=清当前分段（非基类全文本清空）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSpinBox_Clear, VXDateTimeEdit_clear);
     /* 时间行编辑器事件过滤（FocusIn 显式弹数字键盘）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXObject_EventFilter, VXDateTimeEdit_eventFilter);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
-                             XDateTimeEdit_keyPressEvent);
+                             VXDateTimeEdit_keyPressEvent);
     /* F3-②：覆写鼠标按下——点击命中测试定段+整段选中+焦点主权回收
      * （行编辑已设鼠标穿透，点击直达本控件）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
-                             XDateTimeEdit_mousePressEvent);
+                             VXDateTimeEdit_mousePressEvent);
     /* 对标 QDateTimeEdit::focusInEvent 的分段选区语义（Tab 进首段）。 */
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent,
-                             XDateTimeEdit_focusInEvent);
+                             VXDateTimeEdit_focusInEvent);
     /* calendarPopup 弹层接线：弹层态绘制/几何/收层/延迟抓取四虚槽。 */
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, XDateTimeEdit_paintEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, XDateTimeEdit_resizeEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, XDateTimeEdit_hideEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, XDateTimeEdit_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXDateTimeEdit_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VXDateTimeEdit_resizeEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VXDateTimeEdit_hideEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXDateTimeEdit_timerEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDateTimeEdit_deinit);
     return XVTABLE_DEFAULT;
 }
@@ -3416,7 +3417,7 @@ void XDateTimeEdit_init(XDateTimeEdit* self, XWidget* parent,
        apitest 注入同路，不直写行编辑裸拼接）。箭头误触发的另一半在
        弹层路径闭环：箭头命中分支与 xdt_popupShow 尾部对虚拟键盘显式
        closePopup——notifyPress 先于控件 mousePressEvent（同拍先弹后
-       关，面板未出帧即收，无闪现），见 XDateTimeEdit_mousePressEvent
+       关，面板未出帧即收，无闪现），见 VXDateTimeEdit_mousePressEvent
        箭头分支注。年份编辑器是独立 XLineEdit（XCalendarWidget 自带
        WA14+DigitsOnly），不受影响；XDateEdit/XTimeEdit 经共享 init
        继承本两行。 */

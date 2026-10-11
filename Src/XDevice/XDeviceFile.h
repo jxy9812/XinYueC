@@ -244,6 +244,18 @@ static inline bool XDeviceFile_removePermanent(const XString* path) {
 bool XDeviceFile_rename(const XString* oldPath, const XString* newPath);
 
 /**
+ * @brief 将文件重命名到新路径，目标已存在时原子覆盖。
+ * @param oldPath 原路径；借用，不能为 NULL。
+ * @param newPath 新路径；借用，不能为 NULL。
+ * @return 重命名成功返回 true；参数无效或平台调用失败返回 false。
+ * @note 替换语义（Win32=MoveFileExW REPLACE_EXISTING，POSIX=rename(2) 原子
+ *       替换），供 XSaveFile 原子提交等"新内容整体替换旧文件"的持久写使用，
+ *       与 XDeviceFile_rename 的 Qt 不覆盖语义相互独立。POSIX 下同卷替换
+ *       原子；Win32 下同卷替换近似原子（目标被占时失败，不部分写入）。
+ */
+bool XDeviceFile_renameReplace(const XString* oldPath, const XString* newPath);
+
+/**
  * @brief 复制文件到尚不存在的目标路径。
  * @param srcPath 源文件路径；借用，不能为 NULL。
  * @param dstPath 目标文件路径；借用，不能为 NULL。

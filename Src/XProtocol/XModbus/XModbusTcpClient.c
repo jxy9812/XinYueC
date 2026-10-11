@@ -229,9 +229,9 @@ void XModbusTcpClient_init(XModbusTcpClient* client)
     XClassGetVtable(client) = XModbusTcpClient_class_init();
 
     client->m_transactionId = 0;
-    client->m_pendingRequests = XHashMap_Create(uint16_t, XModbusTcpPendingRequest, uint16_t_compare);
+    client->m_pendingRequests = XHashMap_Create(uint16_t, XModbusTcpPendingRequest, Xuint16_t_compare);
     //XContainerSetDataDeinitMethod(client->m_pendingRequests, pendingRequestDeinit);
-    client->m_timerMap = XHashMap_Create(XTimerId, uint16_t, size_t_compare);
+    client->m_timerMap = XHashMap_Create(XTimerId, uint16_t, Xsize_t_compare);
     client->m_receiveBuffer = XByteArray_create();
     client->m_requestData = XByteArray_create();
 }
@@ -418,7 +418,7 @@ static void processReceivedFrame(XModbusTcpClient* client)
     size_t bufLen = XByteArray_size_base(buffer);
 
     //XString* text= XByteArray_to16HexString(buffer);
-    //XPrintf_2(text);
+    //XPrintf_string(text);
     //XPrintf("\n");
     //XClassDelete(text);
 
@@ -531,7 +531,7 @@ static void processReceivedFrame(XModbusTcpClient* client)
                 reply->m_result = XModbusDataUnit_create();
             }
  //            XString* text= XByteArray_to16HexString(response->m_base.m_data);
- //XPrintf_2(text);
+ //XPrintf_string(text);
  //XPrintf("\n");
  //XClassDelete(text);
             bool success = XModbusClient_processResponse_base((XModbusClient*)client, response, reply->m_result);
@@ -555,11 +555,12 @@ static void handleRequestTimeout(XModbusTcpClient* client, uint16_t transactionI
 
     XModbusTcpPendingRequest* pending = (XModbusTcpPendingRequest*)XHashMap_value_base(client->m_pendingRequests, &transactionId);
     if (!pending) return;
-    // 从定时器反向映射中移除
+    // 从定时器反向映射中移除，并注销定时器本身（startTimer_ms 注册的是重复定时器，
+    // 不 kill 会在每个超时周期空触发，直至客户端销毁才被统一注销）
     if (pending->timeoutTimer != XTIMER_INVALID_ID) {
         XHashMap_remove_base(client->m_timerMap, &pending->timeoutTimer);
     }
-    pending->timeoutTimer = XTIMER_INVALID_ID;
+    timeoutTimerStop(client, &pending->timeoutTimer);
 
     // 保存reply指针，避免pending在remove后变成悬空指针
     XModbusReply* reply = pending->reply;

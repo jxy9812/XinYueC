@@ -1,23 +1,4 @@
-﻿#ifndef XS7PDU_H
-#define XS7PDU_H
-
-#include "XPlc_config.h"
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include "XS7Types.h"
-#include "XS7Address.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#if XPROTOCOL_ON
-#if XPLC_ON
-#if XS7_ON
-#if XS7_CORE_ON
-
-/**
+﻿/**
  * @file XS7Pdu.h
  * @brief S7Comm 组包/解包核心（纯函数，无IO无状态）
  * @details 10/12 字节头解析、SetupCommunication 请求/应答、
@@ -32,6 +13,26 @@ extern "C" {
  * - Setup：请求 F0 00 AmQ(BE) AmQ(BE) PduLen(BE)；首期发 AmQ=1、请求 960，
  *   协商结果按结构解析取 min(请求值, 应答值)，不照抄 s-pms "末2字节-28"土办法
  */
+#ifndef XS7PDU_H
+#define XS7PDU_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* 全局配置须先于开关求值（定义 XPROTOCOL_ON 等开关宏） */
+#include "XPlc_config.h"
+
+#if XPROTOCOL_ON
+#if XPLC_ON
+#if XS7_ON
+#if XS7_CORE_ON
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "XS7Types.h"
+#include "XS7Address.h"
 
 /******************************************************************************************
  * 结构体定义

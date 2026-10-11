@@ -421,7 +421,9 @@ XModbusRequest* XModbusRequest_create_move(XModbusRequest* req)
 XModbusRequest* XModbusRequest_create_with_code(XModbusPdu_FunctionCode code)
 {
     XModbusRequest* req = XModbusRequest_create();
-    if (req) XModbusRequest_init_with_code(req, code);
+    // create() 内部已完成完整初始化；重复走 init 链会覆盖 m_data 属主指针，
+    // 泄漏首个 XByteArray，此处只补设功能码（同 XModbusPdu_create_with_code 的单次初始化模式）
+    if (req) req->m_base.m_code = code;
     return req;
 }
 
@@ -461,7 +463,9 @@ XModbusResponse* XModbusResponse_create_move(XModbusResponse* response)
 }
 XModbusResponse* XModbusResponse_create_with_code(XModbusPdu_FunctionCode code) {
     XModbusResponse* resp = XModbusResponse_create();
-    if (resp) XModbusResponse_init_with_code(resp, code);
+    // create() 内部已完成完整初始化；重复走 init 链会覆盖 m_data 属主指针，
+    // 泄漏首个 XByteArray，此处只补设功能码
+    if (resp) resp->m_base.m_code = code;
     return resp;
 }
 
@@ -502,7 +506,15 @@ XModbusExceptionResponse* XModbusExceptionResponse_create_with_function_and_exce
     XModbusPdu_FunctionCode functionCode, XModbusPdu_ExceptionCode exceptionCode) {
     XModbusExceptionResponse* exc = XModbusExceptionResponse_create();
     if (exc) {
-        XModbusExceptionResponse_init_with_function_and_exception(exc, functionCode, exceptionCode);
+        // create() 内部已完成完整初始化；重复走 init 链会覆盖 m_data 属主指针，
+        // 泄漏首个 XByteArray，此处只补设异常功能码与异常码数据
+        // 设置带异常位的功能码
+        XModbusPdu_FunctionCode excCode = (XModbusPdu_FunctionCode)(functionCode | XMODBUS_PDU_EXCEPTION_BYTE);
+        exc->m_base.m_base.m_code = excCode;
+        // 设置异常码为数据
+        uint8_t ec = (uint8_t)exceptionCode;
+        XByteArray_clear_base(exc->m_base.m_base.m_data);
+        XByteArray_push_back_2(exc->m_base.m_base.m_data, &ec, 1);
     }
     return exc;
 }
@@ -551,9 +563,20 @@ void VXModbusPdu_copy(XModbusPdu* pdu, XModbusPdu* src)
 
 void VXModbusPdu_move(XModbusPdu * pdu, XModbusPdu * src)
 {
+    if (!pdu || !src || pdu == src) return;
     if (XClassIsVtableNull(pdu))
         XModbusPdu_init(pdu);
-    XSwap(pdu,src,sizeof(XModbusPdu));
+    // 按约束文档 move 约定：只转移成员资源，虚表、内存方法和堆所有权标记保持不变，
+    // 禁止 XMemory_swap/memcpy 式整对象字节交换（会互换 is_heap 标记，导致栈/堆对象交叉释放）
+    if (pdu->m_data) {
+        XClassDelete(pdu->m_data);
+        pdu->m_data = NULL;
+    }
+    pdu->m_code = src->m_code;
+    pdu->m_data = src->m_data;
+    // 清空源对象（源仍由其创建者按原分配方式释放）
+    src->m_code = XModbusPdu_Invalid;
+    src->m_data = NULL;
 }
 
 // --- 核心接口实现 ---

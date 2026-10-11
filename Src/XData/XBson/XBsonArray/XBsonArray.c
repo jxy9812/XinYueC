@@ -4,8 +4,7 @@
 #include "XVariantTypeOps.h"
 #include "XVariantList.h"
 #include <limits.h>
-#include <stdio.h>
-#include <string.h>
+#include "XStringUtils.h"   /* XSnprintf/XStrcmp：库内格式化与字符串比较（外部依赖约束） */
 
 XVARIANT_TYPE_OPS_DEFINE(XBsonArray, sizeof(XBsonArray), XClass_copy_base,
 	XClass_move_base, XBsonArray_clear_base, XClass_deinit_base,
@@ -114,7 +113,7 @@ XByteArray* XBsonArray_to_bytes(const XBsonArray* array)
 	for (size_t i = 0; i < XBsonArray_size_base(array); ++i) {
 		const XBsonValue* value = XBsonArray_at_base(array, (int64_t)i);
 		char key[32];
-		int length = snprintf(key, sizeof(key), "%zu", i);
+		int length = XSnprintf(key, sizeof(key), "%zu", i);
 		if (length <= 0 || (size_t)length >= sizeof(key) ||
 			!XBsonValue_serialize(value, key, bytes)) {
 			XClassDelete(bytes);
@@ -149,10 +148,10 @@ bool XBsonArray_from_bytes(XBsonArray* array, const uint8_t* data, size_t size)
 		XString* key = NULL;
 		XBsonValue* value = XBsonValue_deserialize(&ptr, end, &key);
 		char expected[32];
-		int expected_length = snprintf(expected, sizeof(expected), "%zu", expected_index);
+		int expected_length = XSnprintf(expected, sizeof(expected), "%zu", expected_index);
 		bool valid_key = value && key && expected_length > 0 &&
 			(size_t)expected_length < sizeof(expected) &&
-			strcmp(XString_toUtf8(key), expected) == 0;
+			XStrcmp(XString_toUtf8(key), expected) == 0;
 		if (!valid_key || !XBsonArray_append_move_base(array, value)) {
 			XClassDelete(key);
 			XBsonValue_delete(value);

@@ -1,4 +1,10 @@
-﻿#ifndef XKEYEVENTTRANSITION_H
+﻿/**
+ * @file       XKeyEventTransition.h
+ * @brief      键盘事件触发转换公开 API。
+ * @details    对齐 Qt 6.8 QKeyEventTransition；实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XKEYEVENTTRANSITION_H
 #define XKEYEVENTTRANSITION_H
 
 #ifdef __cplusplus

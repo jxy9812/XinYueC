@@ -13,7 +13,7 @@
 
 #include "CXinYueConfig.h"
 #include "XConsoleShellInfo.h"
-#include <stdio.h>
+#include "XStringUtils.h"
 
 static bool xcs_info_write_line(XConsoleShell* shell, const char* key,
                                 const char* value)
@@ -21,7 +21,7 @@ static bool xcs_info_write_line(XConsoleShell* shell, const char* key,
     char line[96];
     int written;
     if (!shell || !key || !value) return false;
-    written = snprintf(line, sizeof(line), "%-12s : %s\n", key, value);
+    written = XSnprintf(line, sizeof(line), "%-12s : %s\n", key, value);
     return written > 0 && (size_t)written < sizeof(line) &&
            XConsoleShell_writeUtf8(shell, line);
 }

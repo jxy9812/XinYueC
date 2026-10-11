@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XByteArray.h"
 #include"XByteArrayView.h"
 #include"XTestMenu.h"

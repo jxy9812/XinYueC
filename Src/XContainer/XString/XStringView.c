@@ -12,29 +12,26 @@
 #include "XRegularExpression.h"
 #include "XStringList.h"
 #endif
+#include "XStringUtils.h"      ///< XStrtod 等字符串原语（外部依赖约束：strtod 用库内 API 替代）
 #include <string.h>            ///< memcmp、memchr 等内存操作
-#include <stdlib.h>            ///< strtol、strtoll、strtoul、strtoull、strtod 等数值转换
-#include <wchar.h>             ///< wmemchr 宽字符查找
-#include <stdio.h>
-#include <limits.h>             ///< snprintf 格式化
 
 /* ============================== 内部辅助函数 ============================== */
 
 /**
 * @brief 判断 XChar 是否为空白字符
-* @details 空白字符包括：空格(U+0020)、制表符(U+0009)、换行符(U+000A)、
-*          回车符(U+000D)、垂直制表符(U+000B)、换页符(U+000C)。
+* @details 委托库内 XChar_isSpace（外部依赖约束：字符分类/转换必须使用 XChar）。
 * @param ch 待判断的 XChar 字符
 * @return true 为空白字符，false 为非空白字符
 */
 static bool is_white_space_xchar(XChar ch)
 {
-    return (ch == 0x0020 || ch == 0x0009 || ch == 0x000A ||
-            ch == 0x000D || ch == 0x000B || ch == 0x000C);
+    return XChar_isSpace(ch);
 }
 
 /**
 * @brief 比较两个 XChar 字符（支持大小写敏感性）
+* @details 委托库内 XChar_equals（外部依赖约束：字符分类/转换必须使用 XChar），
+*          大小写折叠覆盖完整 Unicode，不再手写 ASCII 范围处理。
 * @param a 第一个字符
 * @param b 第二个字符
 * @param cs 大小写敏感性（0=不区分，1=区分）
@@ -42,31 +39,24 @@ static bool is_white_space_xchar(XChar ch)
 */
 static bool xchar_equal(XChar a, XChar b, int cs)
 {
-    if (cs == 1) /* XChar_CaseSensitive */
-        return a == b;
-    /* XChar_CaseInsensitive: 统一转小写后比较 */
-    /* 使用 XChar_toLower 如果可用，否则用简单的 ASCII 范围处理 */
-    /* 简单处理 ASCII 范围，完整 Unicode 处理依赖 XChar 库 */
-    if (a >= 'A' && a <= 'Z') a += 32;
-    if (b >= 'A' && b <= 'Z') b += 32;
-    return a == b;
+    return XChar_equals(a, b, (cs == 1) ? XChar_CaseSensitive : XChar_CaseInsensitive);
 }
 
 /**
 * @brief 将 XChar 转小写（辅助函数）
+* @details 委托库内 XChar_toLower（外部依赖约束：字符分类/转换必须使用 XChar）。
 * @param ch 输入字符
 * @return 小写形式
 */
 static XChar xchar_to_lower(XChar ch)
 {
-    if (ch >= 'A' && ch <= 'Z')
-        return (XChar)(ch + 32);
-    return ch;
+    return XChar_toLower(ch);
 }
 
 /**
 * @brief 将 UTF-16 视图转换为 UTF-8 C 字符串（用于数值转换）
-* @details 将视图内容转换为 NULL 终止的 UTF-8 字符串存储在缓冲区中。
+* @details 委托库内 XChar_toUtf8Stream（外部依赖约束：编码转换必须使用 XChar），
+*          内部合并代理对并按标准 UTF-8 编码；缓冲区不足时返回 NULL。
 * @param self 视图指针
 * @param buf 输出缓冲区
 * @param buf_size 缓冲区大小
@@ -77,29 +67,10 @@ static const char* view_to_utf8(const XStringView* self, char* buf, size_t buf_s
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return NULL;
 
-    /* 对于 ASCII 字符可以直接拷贝 */
-    size_t i;
-    size_t out_pos = 0;
-    for (i = 0; i < (size_t)self->m_size && out_pos + 4 < buf_size; i++)
-    {
-        uint32_t cp = self->m_data[i];
-        if (cp <= 0x7F)
-        {
-            buf[out_pos++] = (char)cp;
-        }
-        else if (cp <= 0x7FF)
-        {
-            buf[out_pos++] = (char)(0xC0 | (cp >> 6));
-            buf[out_pos++] = (char)(0x80 | (cp & 0x3F));
-        }
-        else
-        {
-            buf[out_pos++] = (char)(0xE0 | (cp >> 12));
-            buf[out_pos++] = (char)(0x80 | ((cp >> 6) & 0x3F));
-            buf[out_pos++] = (char)(0x80 | (cp & 0x3F));
-        }
-    }
-    buf[out_pos] = '\0';
+    int64_t written = XChar_toUtf8Stream(self->m_data, (size_t)self->m_size,
+                                         (uint8_t*)buf, buf_size);
+    if (written < 0)
+        return NULL;
     return buf;
 }
 
@@ -825,164 +796,111 @@ XString* XStringView_toString(const XStringView* self)
 }
 
 /* ============================== 数值转换 ============================== */
+/* 整数/无符号整数解析统一委托库内 XChar_to* 系列（外部依赖约束：
+ * 数值解析必须使用库内 API）：直接消费视图的 UTF-16 数据，内部含
+ * 进制（2-36）与范围/溢出检查，无需先转码为 UTF-8 C 字符串。 */
 
 short XStringView_toShort(const XStringView* self, bool* ok, int base)
 {
-    char buf[64];
-    const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
+    if (self == NULL || self->m_data == NULL || self->m_size <= 0)
     {
         if (ok) *ok = false;
         return 0;
     }
-    char* endptr = NULL;
-    long val = strtol(str, &endptr, base);
-    if (endptr == str || val < SHRT_MIN || val > SHRT_MAX)
-    {
-        if (ok) *ok = false;
-        return 0;
-    }
-    if (ok) *ok = true;
-    return (short)val;
+    bool parsed = false;
+    short val = XChar_toShort(self->m_data, (size_t)self->m_size, base, &parsed);
+    if (ok) *ok = parsed;
+    return val;
 }
 
 unsigned short XStringView_toUShort(const XStringView* self, bool* ok, int base)
 {
-    char buf[64];
-    const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
+    if (self == NULL || self->m_data == NULL || self->m_size <= 0)
     {
         if (ok) *ok = false;
         return 0;
     }
-    char* endptr = NULL;
-    unsigned long val = strtoul(str, &endptr, base);
-    if (endptr == str || val > USHRT_MAX)
-    {
-        if (ok) *ok = false;
-        return 0;
-    }
-    if (ok) *ok = true;
-    return (unsigned short)val;
+    bool parsed = false;
+    unsigned short val = XChar_toUShort(self->m_data, (size_t)self->m_size, base, &parsed);
+    if (ok) *ok = parsed;
+    return val;
 }
 
 int XStringView_toInt(const XStringView* self, bool* ok, int base)
 {
-    char buf[64];
-    const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
+    if (self == NULL || self->m_data == NULL || self->m_size <= 0)
     {
         if (ok) *ok = false;
         return 0;
     }
-    char* endptr = NULL;
-    long val = strtol(str, &endptr, base);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0;
-    }
-    if (ok) *ok = true;
-    return (int)val;
+    bool parsed = false;
+    int val = XChar_toInt(self->m_data, (size_t)self->m_size, base, &parsed);
+    if (ok) *ok = parsed;
+    return val;
 }
 
 unsigned int XStringView_toUInt(const XStringView* self, bool* ok, int base)
 {
-    char buf[64];
-    const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
+    if (self == NULL || self->m_data == NULL || self->m_size <= 0)
     {
         if (ok) *ok = false;
         return 0;
     }
-    char* endptr = NULL;
-    unsigned long val = strtoul(str, &endptr, base);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0;
-    }
-    if (ok) *ok = true;
-    return (unsigned int)val;
+    bool parsed = false;
+    unsigned int val = XChar_toUInt(self->m_data, (size_t)self->m_size, base, &parsed);
+    if (ok) *ok = parsed;
+    return val;
 }
 
 long XStringView_toLong(const XStringView* self, bool* ok, int base)
 {
-    char buf[64];
-    const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
+    if (self == NULL || self->m_data == NULL || self->m_size <= 0)
     {
         if (ok) *ok = false;
         return 0;
     }
-    char* endptr = NULL;
-    long val = strtol(str, &endptr, base);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0;
-    }
-    if (ok) *ok = true;
+    bool parsed = false;
+    long val = XChar_toLong(self->m_data, (size_t)self->m_size, base, &parsed);
+    if (ok) *ok = parsed;
     return val;
 }
 
 unsigned long XStringView_toULong(const XStringView* self, bool* ok, int base)
 {
-    char buf[64];
-    const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
+    if (self == NULL || self->m_data == NULL || self->m_size <= 0)
     {
         if (ok) *ok = false;
         return 0;
     }
-    char* endptr = NULL;
-    unsigned long val = strtoul(str, &endptr, base);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0;
-    }
-    if (ok) *ok = true;
+    bool parsed = false;
+    unsigned long val = XChar_toULong(self->m_data, (size_t)self->m_size, base, &parsed);
+    if (ok) *ok = parsed;
     return val;
 }
 
 int64_t XStringView_toLongLong(const XStringView* self, bool* ok, int base)
 {
-    char buf[64];
-    const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
+    if (self == NULL || self->m_data == NULL || self->m_size <= 0)
     {
         if (ok) *ok = false;
         return 0;
     }
-    char* endptr = NULL;
-    int64_t val = (int64_t)strtoll(str, &endptr, base);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0;
-    }
-    if (ok) *ok = true;
+    bool parsed = false;
+    int64_t val = (int64_t)XChar_toLongLong(self->m_data, (size_t)self->m_size, base, &parsed);
+    if (ok) *ok = parsed;
     return val;
 }
 
 uint64_t XStringView_toULongLong(const XStringView* self, bool* ok, int base)
 {
-    char buf[64];
-    const char* str = view_to_utf8(self, buf, sizeof(buf));
-    if (str == NULL)
+    if (self == NULL || self->m_data == NULL || self->m_size <= 0)
     {
         if (ok) *ok = false;
         return 0;
     }
-    char* endptr = NULL;
-    uint64_t val = (uint64_t)strtoull(str, &endptr, base);
-    if (endptr == str)
-    {
-        if (ok) *ok = false;
-        return 0;
-    }
-    if (ok) *ok = true;
+    bool parsed = false;
+    uint64_t val = (uint64_t)XChar_toULongLong(self->m_data, (size_t)self->m_size, base, &parsed);
+    if (ok) *ok = parsed;
     return val;
 }
 
@@ -990,14 +908,16 @@ uint64_t XStringView_toULongLong(const XStringView* self, bool* ok, int base)
  * bytearrayToDouble 同语义）：跳过首尾空白后必须整串消费——空串、
  * 纯空白、解析失败或尾随垃圾一律 *ok=false 返回 0。此前仅查
  * endptr==str 的前缀解析会把 "12abc" 判成功，违背自述的 Qt 等价
- * 口径（复扫 R-77 同族 deferred）。注意 view_to_utf8 对超 256 字
- * 节的视图静默截断（预存口径）：截断后的合法长数字仍会成功解析
- * （值有损，与既有行为一致）；截断引入的垃圾尾则被本检查拒绝。 */
+ * 口径（复扫 R-77 同族 deferred）。注意 view_to_utf8 经
+ * XChar_toUtf8Stream 转换，超缓冲容量的视图返回 NULL，按解析失败
+ * 处理（不再静默截断）。解析委托库内 XStrtod（外部依赖约束：
+ * strtod 用库内 API 替代，十进制子集前缀解析并回传 endptr，
+ * 以保留整串消费检查）。 */
 static bool xstringview_parseFull(const char* str, double* value)
 {
     char* endptr = NULL;
     double val;
-    val = strtod(str, &endptr);
+    val = XStrtod(str, &endptr);
     if (endptr == str) return false;
     while (*endptr == ' ' || *endptr == '\t' || *endptr == '\n' ||
            *endptr == '\r' || *endptr == '\f' || *endptr == '\v')

@@ -1,4 +1,10 @@
-﻿#ifndef XSTATE_H
+﻿/**
+ * @file       XState.h
+ * @brief      状态机标准状态公开 API。
+ * @details    对齐 Qt 6.8 QState；实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XSTATE_H
 #define XSTATE_H
 
 #ifdef __cplusplus

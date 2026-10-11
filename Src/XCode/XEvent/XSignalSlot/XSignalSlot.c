@@ -3,6 +3,7 @@
 #include"XHashMap.h"
 #include"XVector.h"
 #include"XObject.h"
+#include"XObject_Protected.h"
 #include"XCoreApplication.h"
 #include"XMutex.h"
 #include"XThread.h"
@@ -11,7 +12,7 @@
 #include"XAtomic.h"
 //全局连接互斥锁:所有信号-槽连接维护(connect/disconnect/deinit/emit)共用同一把锁,
 //消除"发送者锁->接收者锁"的 AB-BA 死锁与析构锁序问题(对标 Qt 全局连接锁)
-static XAtomic_uintptr_t g_connMutex = { 0 };
+static XAtomic_Uintptr g_connMutex = { 0 };
 static XMutex* XSignalSlot_connMutex(void)
 {
 	XMutex* m = (XMutex*)XAtomic_load_uintptr_t(&g_connMutex, XAtomic_MemoryOrder_Acquire);
@@ -36,7 +37,7 @@ static void XConnection_dataDeinit(void* data)
 	if (conn)
 		XFree_System(conn);
 }
-static const bool Equality_Connection(const XConnection* pvPrevValue, const XConnection* pvNextValue)
+static const bool XConnection_equal(const XConnection* pvPrevValue, const XConnection* pvNextValue)
 {
 	return ((pvNextValue->receiver) ? (pvPrevValue->receiver == pvNextValue->receiver) : true) && (pvPrevValue->signal == pvNextValue->signal) && ((pvNextValue->slot_func1) ? (pvPrevValue->slot_func1 == pvNextValue->slot_func1):true);
 }
@@ -56,9 +57,9 @@ void XSignalSlot_init(XSignalSlot* manager, XObject* obj)
 	if (manager == NULL)
 		return;
 	manager->obj = obj;
-	manager->signalMap = XHashMap_Create(size_t, XSignal,size_t_compare);
+	manager->signalMap = XHashMap_Create(size_t, XSignal,Xsize_t_compare);
 	manager->bindSignalList = XVector_Create(XConnection*);
-	XContainerSetCompare(manager->bindSignalList, uintptr_t_compare);
+	XContainerSetCompare(manager->bindSignalList, Xuintptr_t_compare);
 	// 初始化互斥锁
 	manager->mutex = XSignalSlot_connMutex();
 }
@@ -141,9 +142,15 @@ XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* r
 	if (signalObj == NULL)
 	{
 		XSignal insert = {.sender=manager->obj,.type= signal,.connList= XVector_Create(XConnection*)};
-		XContainerSetCompare(insert.connList, uintptr_t_compare);
+		XContainerSetCompare(insert.connList, Xuintptr_t_compare);
 		XContainerSetDataDeinitMethod(insert.connList, XConnection_dataDeinit);
-		XMapBase_insert_base(manager->signalMap, &signal, &insert);
+		if (!XMapBase_insert_base(manager->signalMap, &signal, &insert))
+		{//插入失败(如内存不足):新建的connList无人接管,必须在此释放,否则泄漏
+			if (insert.connList)
+				XClassDelete(insert.connList);
+			XMutex_unlock(manager->mutex);  // 解锁
+			return NULL;
+		}
 		signalObj = XMapBase_value_base(manager->signalMap, &signal);
 	}
 	if (signalObj == NULL)
@@ -155,7 +162,7 @@ XConnection* XSignalSlot_connect1(XSignalSlot* manager,size_t signal, XObject* r
 	XConnection connTemp = {.type=type,.signal= signalObj,.receiver=receiver,.slot_func1=slot_func};
 	for_each_iterator(signalObj->connList, XVector,it)
 	{
-		if (Equality_Connection(*(XConnection**)XVector_iterator_data(&it), &connTemp) && (type & XConnectionType_Unique))
+		if (XConnection_equal(*(XConnection**)XVector_iterator_data(&it), &connTemp) && (type & XConnectionType_Unique))
 		{
 			XMutex_unlock(manager->mutex);  // 解锁
 			return NULL;//重复了
@@ -198,7 +205,7 @@ XConnection* XSignalSlot_connect2(XSignalSlot* manager, size_t signal, XSlotFunc
 }
 //断开并释放连接;通过出参返回通知信息,由调用方在解锁后触发回调,
 //避免子类重载disconnectNotify重入信号槽系统时与非递归锁死锁
-static bool disconnect_conn(XConnection* conn, XObject** outNotifyReceiver, size_t* outNotifySignal)
+static bool XConnection_disconnect(XConnection* conn, XObject** outNotifyReceiver, size_t* outNotifySignal)
 {
 	if (outNotifyReceiver)
 		*outNotifyReceiver = NULL;  // 默认无需通知
@@ -240,11 +247,11 @@ bool XSignalSlot_disconnect1(XSignalSlot* manager, size_t signal, XObject* recei
 	for_each_iterator(signalObj->connList, XVector, it)
 	{
 		XConnection* cur = *(XConnection**)XVector_iterator_data(&it);
-		if (cur && Equality_Connection(cur, &connTemp))
+		if (cur && XConnection_equal(cur, &connTemp))
 		{//找到了
 			XObject* notifyReceiver = NULL;
 			size_t notifySignal = 0;
-			bool is_ok= disconnect_conn(cur, &notifyReceiver, &notifySignal);
+			bool is_ok= XConnection_disconnect(cur, &notifyReceiver, &notifySignal);
 			XMutex_unlock(manager->mutex);  // 解锁
 			if (is_ok && notifyReceiver)
 				XObject_disconnectNotify_base(notifyReceiver, notifySignal);
@@ -263,14 +270,14 @@ bool XSignalSlot_disconnect2(XConnection* conn)
 	XMutex_lock(mutex);  // 全局连接锁
 	XObject* notifyReceiver = NULL;
 	size_t notifySignal = 0;
-	bool is_ok = disconnect_conn(conn, &notifyReceiver, &notifySignal);
+	bool is_ok = XConnection_disconnect(conn, &notifyReceiver, &notifySignal);
 	XMutex_unlock(mutex);
 	if (is_ok && notifyReceiver)
 		XObject_disconnectNotify_base(notifyReceiver, notifySignal);
 	return is_ok;
 }
 //信号发射时，槽函数会立即被调用
-static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_count)
+static void XConnection_directEmit(XConnection* conn, void* args,  XAtomic_Int32* ref_count)
 {
 	if (ref_count)
 		XAtomic_fetch_add_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed);  // 原子加1
@@ -292,7 +299,7 @@ static void Direct_emit(XConnection* conn, void* args,  XAtomic_int32_t* ref_cou
 		XAtomic_fetch_sub_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed);
 }
 //槽函数会在接收者线程的事件循环回归控制时被调用。槽函数在接收者所属线程中执行。
-static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count, int priority)
+static void XConnection_queuedEmit(XConnection* conn, void* args, XAtomic_Int32* ref_count, int priority)
 {
 	if (conn->receiver == NULL)
 		return;
@@ -313,7 +320,7 @@ static void Queued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_coun
 }
 
 //（槽函数在接收者线程执行），区别在于发送信号的线程会阻塞，直到槽函数执行完成后才继续。
-static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count, int priority)
+static void XConnection_blockingQueuedEmit(XConnection* conn, void* args, XAtomic_Int32* ref_count, int priority)
 {
 	if (conn->receiver == NULL)
 		return;
@@ -354,23 +361,23 @@ static void BlockingQueued_emit(XConnection* conn, void* args, XAtomic_int32_t* 
 	XSemaphore_delete(sem);//释放信号量
 }
 //若接收者与发送信号的线程处于同一线程，则使用 Qt::DirectConnection（直接连接）；否则，使用 Qt::QueuedConnection（队列连接）。连接类型会在信号发射时动态确定。
-static void Auto_emit(XConnection* conn, void* args, XAtomic_int32_t* ref_count, int priority)
+static void XConnection_autoEmit(XConnection* conn, void* args, XAtomic_Int32* ref_count, int priority)
 {
 	if (conn->receiver == NULL)
 	{
-		Direct_emit(conn, args, ref_count);
+		XConnection_directEmit(conn, args, ref_count);
 	}
 	else
 	{
 		if (XThread_currentThread() == XObject_thread(conn->receiver))
-			Direct_emit(conn, args, ref_count);
+			XConnection_directEmit(conn, args, ref_count);
 		else
-			Queued_emit(conn, args,ref_count, priority);
+			XConnection_queuedEmit(conn, args,ref_count, priority);
 	}
 }
 
 //释放本emit对参数持有的引用;若为最后引用则释放参数与引用计数
-static void emit_release_ref(XVarList* args, XAtomic_int32_t* ref_count)
+static void XSignalSlot_emitReleaseRef(XVarList* args, XAtomic_Int32* ref_count)
 {
 	if (ref_count && XAtomic_fetch_sub_int32(ref_count, 1, XAtomic_MemoryOrder_Relaxed) == 1)
 	{
@@ -379,7 +386,7 @@ static void emit_release_ref(XVarList* args, XAtomic_int32_t* ref_count)
 		XAtomic_delete(ref_count);
 	}
 }
-static void emit(XSignalSlot* manager, size_t signal, XVarList* args, XAtomic_int32_t* ref_count, int priority)
+static void XSignalSlot_emitLocked(XSignalSlot* manager, size_t signal, XVarList* args, XAtomic_Int32* ref_count, int priority)
 {
 	if (manager == NULL)
 		return;
@@ -391,7 +398,7 @@ static void emit(XSignalSlot* manager, size_t signal, XVarList* args, XAtomic_in
 	if (signalObj == NULL)
 	{
 		XMutex_unlock(manager->mutex);  // 解锁
-		emit_release_ref(args, ref_count);  // 没有连接的信号:释放本emit引用
+		XSignalSlot_emitReleaseRef(args, ref_count);  // 没有连接的信号:释放本emit引用
 		return;
 	}
 	//拷贝连接列表快照,避免在调用槽函数时持锁导致重入死锁(锁为非递归)
@@ -401,7 +408,7 @@ static void emit(XSignalSlot* manager, size_t signal, XVarList* args, XAtomic_in
 	if (snapshot == NULL)
 	{
 		XMutex_unlock(manager->mutex);  // 解锁
-		emit_release_ref(args, ref_count);
+		XSignalSlot_emitReleaseRef(args, ref_count);
 		return;
 	}
 	for_each_iterator(signalObj->connList, XVector, it)
@@ -438,16 +445,16 @@ static void emit(XSignalSlot* manager, size_t signal, XVarList* args, XAtomic_in
 		XConnection* conn = XVector_iterator_data(&it);
 		switch (conn->type & 0x3)  // 屏蔽Unique/SingleShot等标志位,取基础连接类型
 		{
-		case XConnectionType_Auto:Auto_emit(conn, args,ref_count,priority); break;
-		case XConnectionType_Direct:Direct_emit(conn, args,ref_count); break;
-		case XConnectionType_Queued:Queued_emit(conn, args,ref_count,priority); break;
-		case XConnectionType_BlockingQueued:BlockingQueued_emit(conn, args,ref_count, priority); break;
+		case XConnectionType_Auto:XConnection_autoEmit(conn, args,ref_count,priority); break;
+		case XConnectionType_Direct:XConnection_directEmit(conn, args,ref_count); break;
+		case XConnectionType_Queued:XConnection_queuedEmit(conn, args,ref_count,priority); break;
+		case XConnectionType_BlockingQueued:XConnection_blockingQueuedEmit(conn, args,ref_count, priority); break;
 		}
 	}
 	XClassDelete(snapshot);
-	emit_release_ref(args, ref_count);  // 释放本emit引用
+	XSignalSlot_emitReleaseRef(args, ref_count);  // 释放本emit引用
 }
-void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, int priority)
+void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_Int32* ref_count, int priority)
 {
 	if (args)
 		args->argsDel = del;
@@ -461,7 +468,13 @@ void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(
 	}
 	//有参数时必须使用引用计数,以便队列连接能安全共享参数(避免发送方提前释放导致接收者使用悬垂参数)
 	if (args && !ref_count)
-		ref_count = XAtomic_create(int32_t);
+		ref_count = XAtomic_create(Int32);
+	if (args && !ref_count)
+	{
+		//引用计数创建失败:无计数时所有释放路径都不会回收参数,先释放参数再返回防止泄漏
+		XVarList_delete(args);
+		return;
+	}
 
-	emit(manager, signal, args, ref_count, priority);
+	XSignalSlot_emitLocked(manager, signal, args, ref_count, priority);
 }

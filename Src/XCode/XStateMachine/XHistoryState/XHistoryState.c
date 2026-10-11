@@ -51,6 +51,7 @@ void XHistoryState_init_ex(XHistoryState* state, XHistoryState_HistoryType type,
     state->m_defaultTransition = NULL;
     state->m_historyType = type;
     state->m_configuration = XVector_Create(XAbstractState*);
+    XAssert(state->m_configuration, "Memory allocation failed");
 }
 
 XAbstractTransition* XHistoryState_defaultTransition(const XHistoryState* state)

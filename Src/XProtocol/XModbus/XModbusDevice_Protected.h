@@ -1,9 +1,15 @@
 ﻿#ifndef XMODBUSDEVICE_PROTECTED_H
 #define XMODBUSDEVICE_PROTECTED_H
 
+#include "XModbusDevice.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if XPROTOCOL_ON
+#if XMODBUS_ON
+#if XMODBUS_CLIENT_ON
 /******************************************************************************************
  * 受保护接口（供子类使用）
  ******************************************************************************************/
@@ -43,6 +49,11 @@ bool XModbusDevice_open_base(XModbusDevice* dev);
  * @note 通过虚函数表调用，由子类实现具体逻辑
  */
 void XModbusDevice_close_base(XModbusDevice* dev);
+
+#endif /* XMODBUS_CLIENT_ON */
+#endif /* XMODBUS_ON */
+#endif /* XPROTOCOL_ON */
+
 #ifdef __cplusplus
 }
 #endif

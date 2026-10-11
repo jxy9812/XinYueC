@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XGuiRemoteLoopback.c
  * @brief      XGuiRemoteLoopbackDevice 内存回环设备对实现。
  * @details    契约见冻结头 XGuiRemoteLoopback.h, 语义见 XGuiRemote.md §4.5。
@@ -176,7 +176,7 @@ static void loopbackShutdown(XGuiRemoteLoopbackDevice* self)
 /* ==================== 虚函数实现 ==================== */
 
 /** @brief 虚函数: 析构——解绑共享块后走基类 deinit(close/私有块/fd)。 */
-static void VLoopback_deinit(XGuiRemoteLoopbackDevice* self)
+static void VXGuiRemoteLoopbackDevice_deinit(XGuiRemoteLoopbackDevice* self)
 {
     if (!self) return;
     loopbackDetach(self);
@@ -184,14 +184,14 @@ static void VLoopback_deinit(XGuiRemoteLoopbackDevice* self)
 }
 
 /** @brief 虚函数: 顺序设备(恒 true)。 */
-static bool VLoopback_isSequential(const XIODevice* io)
+static bool VXGuiRemoteLoopbackDevice_isSequential(const XIODevice* io)
 {
     (void)io;
     return true;
 }
 
 /** @brief 虚函数: 从本端接收环拷出; 对端不存活=EOF(返回 0)。 */
-static int64_t VLoopback_readData(XIODevice* io, char* data, int64_t maxlen)
+static int64_t VXGuiRemoteLoopbackDevice_readData(XIODevice* io, char* data, int64_t maxlen)
 {
     XGuiRemoteLoopbackDevice* self = (XGuiRemoteLoopbackDevice*)io;
     if (!self || !data || maxlen <= 0) return -1;
@@ -218,7 +218,7 @@ static int64_t VLoopback_readData(XIODevice* io, char* data, int64_t maxlen)
  * @brief 虚函数: 本端写入=入对端接收环。全有全无——对端环剩余空间
  *        不足整块时返回 0(一个字节都不写); 对端不存活/本端已关=恒 0。
  */
-static int64_t VLoopback_writeData(XIODevice* io, const char* data, int64_t len)
+static int64_t VXGuiRemoteLoopbackDevice_writeData(XIODevice* io, const char* data, int64_t len)
 {
     XGuiRemoteLoopbackDevice* self = (XGuiRemoteLoopbackDevice*)io;
     if (!self || !data || len <= 0) return 0;
@@ -247,7 +247,7 @@ static int64_t VLoopback_writeData(XIODevice* io, const char* data, int64_t len)
 }
 
 /** @brief 虚函数: 本端接收环占用; 对端不存活=0(EOF 视图)。 */
-static int64_t VLoopback_bytesAvailable(const XIODevice* io)
+static int64_t VXGuiRemoteLoopbackDevice_bytesAvailable(const XIODevice* io)
 {
     XGuiRemoteLoopbackDevice* self = (XGuiRemoteLoopbackDevice*)io;
     if (!self) return 0;
@@ -265,7 +265,7 @@ static int64_t VLoopback_bytesAvailable(const XIODevice* io)
 }
 
 /** @brief 虚函数: 关闭本端(清空缓冲+置对端 EOF)后走基类 close。 */
-static void VLoopback_close(XIODevice* io)
+static void VXGuiRemoteLoopbackDevice_close(XIODevice* io)
 {
     XGuiRemoteLoopbackDevice* self = (XGuiRemoteLoopbackDevice*)io;
     if (!self) return;
@@ -281,12 +281,12 @@ XVtable* XGuiRemoteLoopbackDevice_class_init(void)
     XVTABLE_INHERIT_XCLASS(XIODevice);
 
     /* 覆写 XIODevice 槽位(照 XFileDevice 模式) */
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VLoopback_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VLoopback_close);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsSequential, VLoopback_isSequential);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, VLoopback_bytesAvailable);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData, VLoopback_readData);
-    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VLoopback_writeData);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXGuiRemoteLoopbackDevice_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXGuiRemoteLoopbackDevice_close);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_IsSequential, VXGuiRemoteLoopbackDevice_isSequential);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_BytesAvailable, VXGuiRemoteLoopbackDevice_bytesAvailable);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData, VXGuiRemoteLoopbackDevice_readData);
+    XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData, VXGuiRemoteLoopbackDevice_writeData);
 
     XCLASS_SHOW_SIZE_DEFAULT(XGuiRemoteLoopbackDevice);
     return XVTABLE_DEFAULT;
@@ -299,11 +299,10 @@ void XGuiRemoteLoopbackDevice_init(XGuiRemoteLoopbackDevice* self,
                                    size_t ringCapacity)
 {
     if (!self) return;
-    if (self->m_d) return; /* 已绑定: 幂等保护 */
+    memset(self, 0, sizeof(*self)); /* 清零内存(标准 init 形态)。 */
 
     /* 基类初始化(内部会把 vtable 设为 XIODevice, 随后覆写为本类)。 */
     XIODevice_init(&self->m_parent);
-    self->m_d = NULL;
     XClassSetVtable(self, XGuiRemoteLoopbackDevice);
 
     XMemoryType memType = XCLASS_DEFAULT_MEMORY_TYPE;
@@ -418,7 +417,7 @@ size_t XGuiRemoteLoopbackDevice_bufferedBytes(
 {
     if (!self) return 0;
     /* 等价 XIODevice_bytesAvailable 视图(对端不存活=0)。 */
-    return (size_t)VLoopback_bytesAvailable((const XIODevice*)self);
+    return (size_t)VXGuiRemoteLoopbackDevice_bytesAvailable((const XIODevice*)self);
 }
 
 void XGuiRemoteLoopbackDevice_shutdown(XGuiRemoteLoopbackDevice* self)

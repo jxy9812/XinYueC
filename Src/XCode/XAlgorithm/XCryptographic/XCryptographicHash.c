@@ -1,5 +1,5 @@
 ﻿#include "XCryptographicHash.h"
-#include "XCryptographicHash_xxhash.h"
+#include "xxhash.h"
 #include "XByteArray.h"
 #include "XIODevice.h"
 #include "XMemory.h"
@@ -241,7 +241,8 @@ static void sipround(uint64_t* v0, uint64_t* v1, uint64_t* v2, uint64_t* v3)
 }
 
 // SipHash-2-4 64位版本   使用SipHash (需要16字节密钥)uint8_t sip_key[16] = { 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 };
-size_t siphash24(const void* key, size_t len, const uint8_t* k)
+/* 文件内部辅助实现，不对外导出（公开 API 为 XCryptographicHash_siphash24）。 */
+static size_t siphash24(const void* key, size_t len, const uint8_t* k)
 {
     uint64_t v0 = 0x736f6d6570736575ULL;
     uint64_t v1 = 0x646f72616e646f6dULL;

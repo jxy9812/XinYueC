@@ -8708,21 +8708,21 @@ typedef int32_t (*XCompare)(const void* lhs, const void* rhs);
 
 | 函数 | 说明 |
 |------|------|
-| `bool_compare` | bool类型比较 |
-| `char_compare` | char类型比较 |
-| `int_compare` | int类型比较 |
-| `long_compare` | long类型比较 |
-| `float_compare` | float类型比较 |
-| `double_compare` | double类型比较 |
-| `int8_t_compare` | int8_t类型比较 |
-| `int16_t_compare` | int16_t类型比较 |
-| `int32_t_compare` | int32_t类型比较 |
-| `int64_t_compare` | int64_t类型比较 |
-| `uint8_t_compare` | uint8_t类型比较 |
-| `uint16_t_compare` | uint16_t类型比较 |
-| `uint32_t_compare` | uint32_t类型比较 |
-| `uint64_t_compare` | uint64_t类型比较 |
-| `size_t_compare` | size_t类型比较 |
+| `Xbool_compare` | bool类型比较 |
+| `Xchar_compare` | char类型比较 |
+| `Xint_compare` | int类型比较 |
+| `Xlong_compare` | long类型比较 |
+| `Xfloat_compare` | float类型比较 |
+| `Xdouble_compare` | double类型比较 |
+| `Xint8_t_compare` | int8_t类型比较 |
+| `Xint16_t_compare` | int16_t类型比较 |
+| `Xint32_t_compare` | int32_t类型比较 |
+| `Xint64_t_compare` | int64_t类型比较 |
+| `Xuint8_t_compare` | uint8_t类型比较 |
+| `Xuint16_t_compare` | uint16_t类型比较 |
+| `Xuint32_t_compare` | uint32_t类型比较 |
+| `Xuint64_t_compare` | uint64_t类型比较 |
+| `Xsize_t_compare` | size_t类型比较 |
 
 ### 定义自定义比较函数
 
@@ -8739,7 +8739,7 @@ XCompare_Come(MyStruct);
 #### 手动实现
 
 ```c
-int32_t MyStruct_compare(const MyStruct* lhs, const MyStruct* rhs) {
+int32_t XMyStruct_compare(const MyStruct* lhs, const MyStruct* rhs) {
     if (lhs->id < rhs->id) return XCompare_Less;
     if (lhs->id > rhs->id) return XCompare_Greater;
     return XCompare_Equality;

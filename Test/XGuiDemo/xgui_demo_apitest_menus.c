@@ -1538,15 +1538,15 @@ int xapi_menus_run(void)
             XAPI_EXPECT(XAction_isVisible(&a) && XAction_isEnabled(&a),
                         "Action 恢复可见后启用随显式值恢复");
 
-            /* ---- data（QAction::data；所有权转移为项目差异） ---- */
+            /* ---- data（QAction::data；转移所有权使用 _move 接口） ---- */
             v = XVariant_create_int32(42);
-            XAction_setData(&a, v);
+            XAction_setData_move(&a, v);
             XAPI_EXPECT(XAction_data(&a) &&
                         XVariant_toInt32(XAction_data(&a)) == 42,
-                        "Action setData(42) 往返（所有权随动作）");
-            XAction_setData(&a, NULL);
+                        "Action setData_move(42) 往返（所有权随动作）");
+            XAction_setData_move(&a, NULL);
             XAPI_EXPECT(XAction_data(&a) == NULL,
-                        "Action setData(NULL) 清空数据");
+                        "Action setData_move(NULL) 清空数据");
 
             /* ---- menu 关联（QAction::setMenu/menu） ---- */
 #if XMENU_ON

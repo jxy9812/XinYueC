@@ -7,6 +7,9 @@
  */
 #include "XMySqlDriver.h"
 
+#include <stdlib.h>
+#include <string.h> /* 仅保留白名单原语 memcpy */
+
 #include "XMemory.h"
 #include "XSqlDatabase.h"
 #include "XSqlField.h"
@@ -15,14 +18,13 @@
 #include "XSqlResult.h"
 #include "XString.h"
 #include "XByteArray.h"
+#include "XVector.h"
 #include "XVariantList.h"
 #include "XDate.h"
 #include "XTime.h"
 #include "XDateTime.h"
-
-#include <ctype.h>
-#include <stdlib.h>
-#include <string.h>
+#include "XChar.h" /* ctype.h 直出改经 XChar（外部依赖约束） */
+#include "XStringUtils.h" /* strcmp/strlen/strchr 直出改经 XStrcmp/XStrlen/XStrchr（外部依赖约束） */
 
 #define XMYSQL_NATIVE_TINY 1u
 #define XMYSQL_NATIVE_SHORT 2u
@@ -43,9 +45,7 @@
 
 typedef struct XMySqlResult {
     XSqlResult m_parent;
-    XVariant*** m_rows;
-    size_t m_rowCount;
-    size_t m_rowCapacity;
+    XVector m_cells;       /**< 行主序连续存放各列 XVariant*，单元格由容器拥有。 */
     int m_columnCount;
     XSqlMySqlResult* m_raw;
     bool m_prepared;
@@ -107,36 +107,60 @@ static XString* VXMySqlDriver_stripDelimiters(const XSqlDriver* driver,
                                               XSqlIdentifierType type);
 static bool VXMySqlDriver_cancelQuery(XSqlDriver* driver);
 
-static void xmysql_clear_rows(XMySqlResult* result)
+/* m_cells 单元格元素回调：容器清空/拷贝/反初始化时对 XVariant* 做深拷贝与释放。 */
+static void xmysql_cell_deinit(XVariant** cell)
 {
-    size_t row;
-    int field;
-    if (!result) return;
-    for (row = 0; row < result->m_rowCount; ++row) {
-        if (!result->m_rows[row]) continue;
-        for (field = 0; field < result->m_columnCount; ++field)
-            if (result->m_rows[row][field]) XClassDelete(result->m_rows[row][field]);
-        XFree_System(result->m_rows[row]);
+    if (cell && *cell) {
+        XClassDelete(*cell);
+        *cell = NULL;
     }
-    if (result->m_rows) XFree_System(result->m_rows);
-    result->m_rows = NULL;
-    result->m_rowCount = 0;
-    result->m_rowCapacity = 0;
 }
 
-static bool xmysql_reserve_rows(XMySqlResult* result, size_t wanted)
+static void xmysql_cell_copy(XVariant** dest, XVariant* const* src)
 {
-    size_t capacity;
-    XVariant*** rows;
-    if (!result) return false;
-    if (wanted <= result->m_rowCapacity) return true;
-    capacity = result->m_rowCapacity ? result->m_rowCapacity * 2 : 8;
-    while (capacity < wanted) capacity *= 2;
-    rows = (XVariant***)XRealloc_System(result->m_rows, capacity * sizeof(*rows));
-    if (!rows) return false;
-    result->m_rows = rows;
-    result->m_rowCapacity = capacity;
-    return true;
+    *dest = (src && *src) ? XVariant_create_copy(*src) : NULL;
+}
+
+static void xmysql_cell_move(XVariant** dest, XVariant** src)
+{
+    if (dest && src) {
+        *dest = *src;
+        *src = NULL;
+    }
+}
+
+/* 初始化单元格容器并注册元素回调（创建与未初始化目标的拷贝/移动共用）。 */
+static void xmysql_init_cells(XMySqlResult* result)
+{
+    if (!result) return;
+    XVector_init(&result->m_cells, sizeof(XVariant*), false);
+    XContainerSetDataDeinitMethod(&result->m_cells, (XCDataDeinitMethod)xmysql_cell_deinit);
+    XContainerSetDataCopyMethod(&result->m_cells, (XCDataCopyMethod)xmysql_cell_copy);
+    XContainerSetDataMoveMethod(&result->m_cells, (XCDataMoveMethod)xmysql_cell_move);
+}
+
+static void xmysql_clear_rows(XMySqlResult* result)
+{
+    if (!result) return;
+    XVector_clear_base(&result->m_cells);
+}
+
+/* 结果集行数：单元格按行主序连续存放，行数 = 单元格数 / 列数。 */
+static size_t xmysql_row_count(const XMySqlResult* result)
+{
+    if (!result || result->m_columnCount <= 0) return 0;
+    return XVector_size_base(&result->m_cells) / (size_t)result->m_columnCount;
+}
+
+/* 按行/列取单元格借用指针，越界返回 NULL。 */
+static XVariant* xmysql_cell_at(const XMySqlResult* result, int row, int field)
+{
+    void* slot;
+    if (!result || row < 0 || field < 0 || result->m_columnCount <= 0) return NULL;
+    slot = XVector_at_base(&result->m_cells,
+                           (int64_t)((size_t)row * (size_t)result->m_columnCount
+                                     + (size_t)field));
+    return slot ? *(XVariant**)slot : NULL;
 }
 
 static void xmysql_release_raw(XMySqlResult* result)
@@ -348,16 +372,16 @@ static bool xmysql_cache_rows(XMySqlResult* result, XSqlMySqlResult* raw,
     size = api->resultSize(raw);
     if (size < 0) return false;
     for (row = 0; row < size; ++row) {
-        XVariant** values;
-        if (!api->resultFetch(raw, row) || !xmysql_reserve_rows(result, result->m_rowCount + 1)) return false;
-        values = (XVariant**)XCalloc_System((size_t)result->m_columnCount, sizeof(*values));
-        if (!values && result->m_columnCount > 0) return false;
-        result->m_rows[result->m_rowCount++] = values;
+        if (!api->resultFetch(raw, row)) return false;
         for (field = 0; field < result->m_columnCount; ++field) {
             const XSqlMySqlField* info = api->resultField(raw, field);
             const XSqlMySqlValue* value = api->resultValue(raw, field);
-            values[field] = xmysql_value_variant(info, value, result->m_parent.m_precisionPolicy);
-            if (!values[field]) return false;
+            XVariant* cell = xmysql_value_variant(info, value,
+                                                  result->m_parent.m_precisionPolicy);
+            if (!cell || !XVector_push_back_1_base(&result->m_cells, &cell)) {
+                if (cell) XClassDelete(cell);
+                return false;
+            }
         }
     }
     return true;
@@ -533,7 +557,7 @@ static bool xmysql_append_escaped_value(XString* query, const XVariant* value,
 
 static bool xmysql_is_name_char(char value)
 {
-    return isalnum((unsigned char)value) || value == '_' || value == '$';
+    return XChar_isLetterOrNumber((XChar)(unsigned char)value) || value == '_' || value == '$';
 }
 
 static int xmysql_find_bound_name(const XSqlResult* result, const char* name, size_t size)
@@ -548,9 +572,9 @@ static int xmysql_find_bound_name(const XSqlResult* result, const char* name, si
         const char* bound = result->m_boundNames[index]
             ? XString_toUtf8(result->m_boundNames[index]) : NULL;
         if (!bound) continue;
-        if (strcmp(bound, buffer) == 0) return (int)index;
+        if (XStrcmp(bound, buffer) == 0) return (int)index;
         if ((bound[0] == ':' || bound[0] == '@' || bound[0] == '$')
-            && strcmp(bound + 1, buffer) == 0) return (int)index;
+            && XStrcmp(bound + 1, buffer) == 0) return (int)index;
     }
     return -1;
 }
@@ -775,32 +799,12 @@ static void xmysql_apply_client_error(XMySqlResult* result, XMySqlDriver* driver
     xmysql_set_result_error(result, error, fallback);
 }
 
-static XVtable* XMySqlResult_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(XMySqlResult)
-    XVTABLE_INHERIT_XCLASS(XSqlResult);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXMySqlResult_copy);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXMySqlResult_move);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMySqlResult_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Data, VXMySqlResult_data);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_IsNull, VXMySqlResult_isNull);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Reset, VXMySqlResult_reset);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Fetch, VXMySqlResult_fetch);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Size, VXMySqlResult_size);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Prepare, VXMySqlResult_prepare);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Exec, VXMySqlResult_exec);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_ExecBatch, VXMySqlResult_execBatch);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_NextResult, VXMySqlResult_nextResult);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_DetachFromResultSet, VXMySqlResult_detachFromResultSet);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Handle, VXMySqlResult_handle);
-    return XVTABLE_DEFAULT;
-}
-
 static XMySqlResult* XMySqlResult_create_ex(XMemoryType memory, const XSqlDriver* driver)
 {
     XMySqlResult* result = XMemory_calloc(1, sizeof(XMySqlResult), memory);
     if (!result) return NULL;
     XSqlResult_init(&result->m_parent, driver);
+    xmysql_init_cells(result);
     if (driver) result->m_parent.m_precisionPolicy = XSqlDriver_numericalPrecisionPolicy(driver);
     XClassSetVtable(result, XMySqlResult);
     Set_Class_Memory(result, memory); Set_Class_IsHeap(result, true);
@@ -816,35 +820,25 @@ static void VXMySqlResult_deinit(XMySqlResult* result)
 {
     if (!result) return;
     xmysql_release_raw(result);
-    xmysql_clear_rows(result);
+    XClassDeinit(&result->m_cells);
     XClass_Deinit_Parent(XSqlResult, result);
 }
 
 static void VXMySqlResult_copy(XMySqlResult* dest, const XMySqlResult* src)
 {
-    size_t row;
-    int field;
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) {
         XSqlResult_init(&dest->m_parent, src->m_parent.m_driver);
         XClassSetVtable(dest, XMySqlResult);
+        xmysql_init_cells(dest);
     }
     xmysql_release_raw(dest);
-    xmysql_clear_rows(dest);
+    XClassCopy(&dest->m_cells, &src->m_cells);
     XClass_Parent(XSqlResult, EXClass_Copy, void(*)(XSqlResult*, const XSqlResult*))
         (&dest->m_parent, &src->m_parent);
     dest->m_columnCount = src->m_columnCount;
     dest->m_prepared = src->m_prepared;
     dest->m_raw = NULL;
-    for (row = 0; row < src->m_rowCount; ++row) {
-        XVariant** values;
-        if (!xmysql_reserve_rows(dest, dest->m_rowCount + 1)) return;
-        values = (XVariant**)XCalloc_System((size_t)dest->m_columnCount, sizeof(*values));
-        if (!values && dest->m_columnCount > 0) return;
-        dest->m_rows[dest->m_rowCount++] = values;
-        for (field = 0; field < dest->m_columnCount; ++field)
-            values[field] = XVariant_create_copy(src->m_rows[row][field]);
-    }
 }
 
 static void VXMySqlResult_move(XMySqlResult* dest, XMySqlResult* src)
@@ -853,20 +847,15 @@ static void VXMySqlResult_move(XMySqlResult* dest, XMySqlResult* src)
     if (XClassIsVtableNull(dest)) {
         XSqlResult_init(&dest->m_parent, src->m_parent.m_driver);
         XClassSetVtable(dest, XMySqlResult);
+        xmysql_init_cells(dest);
     }
     xmysql_release_raw(dest);
-    xmysql_clear_rows(dest);
+    XClassMove(&dest->m_cells, &src->m_cells);
     XClass_Parent(XSqlResult, EXClass_Move, void(*)(XSqlResult*, XSqlResult*))
         (&dest->m_parent, &src->m_parent);
-    dest->m_rows = src->m_rows;
-    dest->m_rowCount = src->m_rowCount;
-    dest->m_rowCapacity = src->m_rowCapacity;
     dest->m_columnCount = src->m_columnCount;
     dest->m_prepared = src->m_prepared;
     dest->m_raw = src->m_raw;
-    src->m_rows = NULL;
-    src->m_rowCount = 0;
-    src->m_rowCapacity = 0;
     src->m_columnCount = 0;
     src->m_prepared = false;
     src->m_raw = NULL;
@@ -875,10 +864,10 @@ static void VXMySqlResult_move(XMySqlResult* dest, XMySqlResult* src)
 static XVariant* VXMySqlResult_data(XSqlResult* base, int field)
 {
     XMySqlResult* result = (XMySqlResult*)base;
-    if (!result || base->m_at < 0 || (size_t)base->m_at >= result->m_rowCount
+    if (!result || base->m_at < 0 || (size_t)base->m_at >= xmysql_row_count(result)
         || field < 0 || field >= result->m_columnCount)
         return XVariant_create_null();
-    return XVariant_create_copy(result->m_rows[base->m_at][field]);
+    return XVariant_create_copy(xmysql_cell_at(result, base->m_at, field));
 }
 
 static bool VXMySqlResult_isNull(XSqlResult* base, int field)
@@ -1109,7 +1098,7 @@ static bool VXMySqlResult_fetch(XSqlResult* base, int index)
         base->m_at = XSqlLocation_BeforeFirstRow;
         return false;
     }
-    if ((size_t)index >= result->m_rowCount) {
+    if ((size_t)index >= xmysql_row_count(result)) {
         if (base) base->m_at = XSqlLocation_AfterLastRow;
         return false;
     }
@@ -1142,6 +1131,27 @@ static void* VXMySqlResult_handle(XSqlResult* base)
     return base ? base->m_handle : NULL;
 }
 
+static XVtable* XMySqlResult_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XMySqlResult)
+    XVTABLE_INHERIT_XCLASS(XSqlResult);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXMySqlResult_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXMySqlResult_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMySqlResult_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Data, VXMySqlResult_data);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_IsNull, VXMySqlResult_isNull);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Reset, VXMySqlResult_reset);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Fetch, VXMySqlResult_fetch);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Size, VXMySqlResult_size);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Prepare, VXMySqlResult_prepare);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Exec, VXMySqlResult_exec);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_ExecBatch, VXMySqlResult_execBatch);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_NextResult, VXMySqlResult_nextResult);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_DetachFromResultSet, VXMySqlResult_detachFromResultSet);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlResult_Handle, VXMySqlResult_handle);
+    return XVTABLE_DEFAULT;
+}
+
 static bool xmysql_exec_simple(XMySqlDriver* driver, const char* sql, XSqlErrorType type,
                                const char* text)
 {
@@ -1149,7 +1159,7 @@ static bool xmysql_exec_simple(XMySqlDriver* driver, const char* sql, XSqlErrorT
     const XSqlMySqlClientApi* api;
     if (!driver || !driver->m_client || !driver->m_api) return false;
     api = driver->m_api;
-    if (!api->execute(driver->m_client, sql, strlen(sql), &raw)) {
+    if (!api->execute(driver->m_client, sql, XStrlen(sql), &raw)) {
         const XSqlMySqlError* source = api->lastError ? api->lastError(driver->m_client) : NULL;
         XSqlError* error;
         XString* driverText = XString_create_utf8(text);
@@ -1192,10 +1202,10 @@ static XString* xmysql_quote_dotted_identifier(const char* text)
     if (!result) return NULL;
     cursor = text ? text : "";
     for (;;) {
-        separator = strchr(cursor, '.');
+        separator = XStrchr(cursor, '.');
         part = xmysql_quote_identifier(cursor,
                                        separator ? (size_t)(separator - cursor)
-                                                 : strlen(cursor));
+                                                 : XStrlen(cursor));
         if (!part || !XString_append(result, part)) goto fail;
         XClassDelete(part);
         part = NULL;
@@ -1232,13 +1242,13 @@ static bool xmysql_ascii_contains(const char* text, const char* token)
     size_t offset;
     size_t index;
     if (!text || !token) return false;
-    textLength = strlen(text);
-    tokenLength = strlen(token);
+    textLength = XStrlen(text);
+    tokenLength = XStrlen(token);
     if (tokenLength == 0 || tokenLength > textLength) return false;
     for (offset = 0; offset + tokenLength <= textLength; ++offset) {
         for (index = 0; index < tokenLength; ++index)
-            if (tolower((unsigned char)text[offset + index])
-                != tolower((unsigned char)token[index])) break;
+            if (XChar_toLower((XChar)(unsigned char)text[offset + index])
+                != XChar_toLower((XChar)(unsigned char)token[index])) break;
         if (index == tokenLength) return true;
     }
     return false;
@@ -1280,13 +1290,13 @@ static void xmysql_apply_type_shape(XSqlField* field, const char* typeName)
     long length;
     long precision;
     if (!field || !typeName) return;
-    open = strchr(typeName, '(');
-    close = open ? strchr(open + 1, ')') : NULL;
+    open = XStrchr(typeName, '(');
+    close = open ? XStrchr(open + 1, ')') : NULL;
     if (!open || !close) return;
     length = strtol(open + 1, &end, 10);
     if (end == open + 1 || length < 0 || end > close) return;
     XSqlField_setLength(field, (int)length);
-    comma = strchr(open + 1, ',');
+    comma = XStrchr(open + 1, ',');
     if (comma && comma < close) {
         precision = strtol(comma + 1, &end, 10);
         if (end != comma + 1 && end <= close && precision >= 0)
@@ -1345,7 +1355,7 @@ static void xmysql_append_table_names(XStringList* list, XSqlResult* query,
         XString* tableName = name ? XVariant_toString(name) : NULL;
         XString* tableType = kind ? XVariant_toString(kind) : NULL;
         const char* tableTypeText = tableType ? XString_toUtf8(tableType) : "";
-        bool isView = strcmp(tableTypeText, "VIEW") == 0;
+        bool isView = XStrcmp(tableTypeText, "VIEW") == 0;
         if (tableName && ((isView && (type & XSqlTableType_Views))
                           || (!isView && (type & XSqlTableType_Tables))))
             XStringList_push_back_base(list, tableName);
@@ -1354,30 +1364,6 @@ static void xmysql_append_table_names(XStringList* list, XSqlResult* query,
         if (name) XClassDelete(name);
         if (kind) XClassDelete(kind);
     }
-}
-
-static XVtable* XMySqlDriver_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(XMySqlDriver)
-    XVTABLE_INHERIT_XCLASS(XSqlDriver);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMySqlDriver_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_BeginTransaction, VXMySqlDriver_beginTransaction);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_CommitTransaction, VXMySqlDriver_commitTransaction);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_RollbackTransaction, VXMySqlDriver_rollbackTransaction);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Tables, VXMySqlDriver_tables);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_PrimaryIndex, VXMySqlDriver_primaryIndex);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Record, VXMySqlDriver_record);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_FormatValue, VXMySqlDriver_formatValue);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_EscapeIdentifier, VXMySqlDriver_escapeIdentifier);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Handle, VXMySqlDriver_handle);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_HasFeature, VXMySqlDriver_hasFeature);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Close, VXMySqlDriver_close);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_CreateResult, VXMySqlDriver_createResult);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Open, VXMySqlDriver_open);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_IsIdentifierEscaped, VXMySqlDriver_isIdentifierEscaped);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_StripDelimiters, VXMySqlDriver_stripDelimiters);
-    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_CancelQuery, VXMySqlDriver_cancelQuery);
-    return XVTABLE_DEFAULT;
 }
 
 XSqlDriver* XMySqlDriver_create_ex(XMemoryType memory)
@@ -1630,7 +1616,7 @@ static XString* VXMySqlDriver_escapeIdentifier(const XSqlDriver* base,
         || VXMySqlDriver_isIdentifierEscaped(base, identifier, type))
         return identifier ? XString_create_copy(identifier) : XString_create();
     text = XString_toUtf8(identifier);
-    if (text && (text[0] == '`' || text[strlen(text) - 1] == '`'))
+    if (text && (text[0] == '`' || text[XStrlen(text) - 1] == '`'))
         return XString_create_copy(identifier);
     result = xmysql_quote_dotted_identifier(text ? text : "");
     return result;
@@ -1684,7 +1670,7 @@ static bool VXMySqlDriver_isIdentifierEscaped(const XSqlDriver* base,
     (void)type;
     if (!identifier) return false;
     text = XString_toUtf8(identifier);
-    length = text ? strlen(text) : 0;
+    length = text ? XStrlen(text) : 0;
     return length > 2 && text[0] == '`' && text[length - 1] == '`';
 }
 
@@ -1698,7 +1684,7 @@ static XString* VXMySqlDriver_stripDelimiters(const XSqlDriver* base,
     (void)type;
     if (!identifier) return XString_create();
     text = XString_toUtf8(identifier);
-    length = text ? strlen(text) : 0;
+    length = text ? XStrlen(text) : 0;
     if (length > 2 && text[0] == '`' && text[length - 1] == '`')
         return XString_create_with_length_utf8(text + 1, length - 2);
     return XString_create_copy(identifier);
@@ -1709,6 +1695,30 @@ static bool VXMySqlDriver_cancelQuery(XSqlDriver* base)
     XMySqlDriver* driver = (XMySqlDriver*)base;
     return driver && driver->m_api && driver->m_api->cancel
         && driver->m_api->cancel(driver->m_client);
+}
+
+static XVtable* XMySqlDriver_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XMySqlDriver)
+    XVTABLE_INHERIT_XCLASS(XSqlDriver);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXMySqlDriver_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_BeginTransaction, VXMySqlDriver_beginTransaction);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_CommitTransaction, VXMySqlDriver_commitTransaction);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_RollbackTransaction, VXMySqlDriver_rollbackTransaction);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Tables, VXMySqlDriver_tables);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_PrimaryIndex, VXMySqlDriver_primaryIndex);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Record, VXMySqlDriver_record);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_FormatValue, VXMySqlDriver_formatValue);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_EscapeIdentifier, VXMySqlDriver_escapeIdentifier);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Handle, VXMySqlDriver_handle);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_HasFeature, VXMySqlDriver_hasFeature);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Close, VXMySqlDriver_close);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_CreateResult, VXMySqlDriver_createResult);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_Open, VXMySqlDriver_open);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_IsIdentifierEscaped, VXMySqlDriver_isIdentifierEscaped);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_StripDelimiters, VXMySqlDriver_stripDelimiters);
+    XVTABLE_OVERLOAD_DEFAULT(EXSqlDriver_CancelQuery, VXMySqlDriver_cancelQuery);
+    return XVTABLE_DEFAULT;
 }
 
 bool XMySqlDriver_setClientApi(const XSqlMySqlClientApi* api)
@@ -1743,7 +1753,7 @@ bool XMySqlDriver_register(void)
     if (creator) return true;
     creator = XSqlDriverCreator_create(XMySqlDriver_create_default);
     if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_MySql,
-                                                         &creator->m_parent)) {
+                                                         &creator->m_class)) {
         if (creator) XClassDelete(creator);
         creator = NULL;
         return false;

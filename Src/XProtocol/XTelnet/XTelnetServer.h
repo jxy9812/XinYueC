@@ -13,6 +13,8 @@
  * @note 使用前必须先调用 setDevice/setHostContext 完成绑定，
  *       协议投入使用前再调用 start 启动状态机。
  *
+ * 实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ *
  * 文件编码：UTF-8 带 BOM，中文注释。
  */
 
@@ -48,7 +50,7 @@ typedef enum XTelnetServerState {
 
 /** @brief Telnet 服务器协议栈。 */
 typedef struct XTelnetServer {
-    XObject m_class;                    /**< 基类 XObject，提供信号槽机制。 */
+    XObject m_class;                    /**< 第一个成员；由 XClass 管理，禁止手工修改。 */
     XIODevice* m_device;                /**< 借用的 XIODevice 字节流设备。 */
     void* m_hostContext;                /**< 借用宿主上下文，供槽函数使用。 */
     XConnection* m_readyRead;           /**< 设备 readyRead 信号连接。 */
@@ -56,11 +58,11 @@ typedef struct XTelnetServer {
     uint8_t m_negotiation;              /**< 等待选项号的协商命令。 */
     /* 输入解析与回显状态；用位域压缩。 */
     struct {
-        uint32_t m_afterCarriageReturn : 1; /**< 用于吞掉 CR 后的 NUL。 */
-        uint32_t m_echoEnabled : 1;         /**< 服务端是否回显普通输入；密码输入时由 Shell 关闭。 */
-        uint32_t m_echoPendingCr : 1;       /**< 已回显 CR，等待吞掉 LF 以避免重复。 */
-        uint32_t m_echoEscape : 2;          /**< 回显转义状态：0 普通、1 ESC、2 CSI/SS3。 */
-        uint32_t m_closed : 1;              /**< 是否已进入关闭状态。 */
+        uint8_t m_afterCarriageReturn : 1; /**< 用于吞掉 CR 后的 NUL。 */
+        uint8_t m_echoEnabled : 1;         /**< 服务端是否回显普通输入；密码输入时由 Shell 关闭。 */
+        uint8_t m_echoPendingCr : 1;       /**< 已回显 CR，等待吞掉 LF 以避免重复。 */
+        uint8_t m_echoEscape : 2;          /**< 回显转义状态：0 普通、1 ESC、2 CSI/SS3。 */
+        uint8_t m_closed : 1;              /**< 是否已进入关闭状态。 */
     };
     /* 查询请求槽结果；同一时刻仅一个查询在途，故用联合压缩，布尔结果用位域。 */
     union {
@@ -82,6 +84,11 @@ XVtable* XTelnetServer_class_init(void);
 void XTelnetServer_init(XTelnetServer* self);
 /** @brief 创建 Telnet 服务器；销毁时使用 XClassDelete 释放。 */
 XTelnetServer* XTelnetServer_create_ex(XMemoryType memory);
+/**
+ * @brief 延迟销毁 Telnet 服务器（对标 Qt deleteLater 语义）。
+ * @note  在信号/回调上下文中必须用 deleteLater 释放，DeferredDelete
+ *        经事件循环回收；同步删除可能命中自身事件/信号发射帧导致 UAF。
+ */
 #define XTelnetServer_deleteLater XObject_deleteLater
 
 /**
@@ -223,17 +230,49 @@ void* XTelnetServer_errorOccurred_signal(XTelnetServer* self, int error);
 
 /* ==================== setter 回填 -> 协议栈 ==================== */
 
-/** @brief 回填 bytesReceived 结果 @param self Telnet 服务器 @param result 处理结果 */
+/**
+ * @brief 回填 bytesReceived 结果。
+ * @param self Telnet 服务器。
+ * @param result bytesReceived 信号槽的处理结果，取 XProtocolResult 枚举值。
+ * @return 无。self 为 NULL 时不执行任何操作。
+ */
 void XTelnetServer_setBytesReceivedResult(XTelnetServer* self, int result);
-/** @brief 回填 isRunning 结果 @param self Telnet 服务器 @param result 是否运行 */
+/**
+ * @brief 回填 isRunning 查询结果。
+ * @param self Telnet 服务器。
+ * @param result 宿主是否处于运行状态。
+ * @return 无。self 为 NULL 时不执行任何操作。
+ */
 void XTelnetServer_setIsRunningResult(XTelnetServer* self, bool result);
-/** @brief 回填 closeRequested 结果 @param self Telnet 服务器 @param result 是否请求关闭 */
+/**
+ * @brief 回填 closeRequested 查询结果。
+ * @param self Telnet 服务器。
+ * @param result 宿主是否请求关闭会话。
+ * @return 无。self 为 NULL 时不执行任何操作。
+ */
 void XTelnetServer_setCloseRequestedResult(XTelnetServer* self, bool result);
-/** @brief 回填 suppressPrompt 结果 @param self Telnet 服务器 @param result 是否抑制提示符 */
+/**
+ * @brief 回填 suppressPrompt 查询结果。
+ * @param self Telnet 服务器。
+ * @param result 是否抑制下一次提示符输出。
+ * @return 无。self 为 NULL 时不执行任何操作。
+ */
 void XTelnetServer_setSuppressPromptResult(XTelnetServer* self, bool result);
-/** @brief 回填 canBackspace 结果 @param self Telnet 服务器 @param result 是否允许退格 */
+/**
+ * @brief 回填 canBackspace 查询结果。
+ * @param self Telnet 服务器。
+ * @param result 当前输入行是否允许退格。
+ * @return 无。self 为 NULL 时不执行任何操作。
+ */
 void XTelnetServer_setCanBackspaceResult(XTelnetServer* self, bool result);
-/** @brief 回填 userName 结果 @param self Telnet 服务器 @param name 用户名；可为 NULL @param len 长度（不含 NUL） */
+/**
+ * @brief 回填 userName 查询结果。
+ * @param self Telnet 服务器。
+ * @param name 用户名文本，按 UTF-8 解码；借用，不取得所有权；可为 NULL。
+ * @param len 字节数（不含 NUL）。
+ * @return 无。self 为 NULL 时不执行任何操作；name 为 NULL 或 len 为 0 时
+ *         清空已保存结果；len 超出内部缓冲容量时截断保存。
+ */
 void XTelnetServer_setUserNameResult(XTelnetServer* self,
                                      const char* name, size_t len);
 

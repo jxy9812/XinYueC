@@ -47,11 +47,11 @@ typedef struct XAdcChannel {
  */
 typedef struct XAdcConfig {
     XAdcChannel m_channel;      /**< 逻辑 ADC 控制器和通道标识。 */
-    uint8_t m_resolutionBits;   /**< 转换分辨率，单位 bit；0 表示后端默认值，最大 32。 */
     uint32_t m_referenceMv;     /**< 参考电压，单位 mV；0 表示使用后端默认值。 */
     uint32_t m_sampleTimeUs;    /**< 单次采样时间，单位 us；0 表示使用后端默认值。 */
-    uint16_t m_oversample;      /**< 过采样次数；0 或 1 表示禁用，大于 1 表示采样次数。 */
     uint32_t m_flags;           /**< 保留配置标志；当前必须为 0，调用者不得修改其含义。 */
+    uint16_t m_oversample;      /**< 过采样次数；0 或 1 表示禁用，大于 1 表示采样次数。 */
+    uint8_t m_resolutionBits;   /**< 转换分辨率，单位 bit；0 表示后端默认值，最大 32。 */
 } XAdcConfig;
 
 /**

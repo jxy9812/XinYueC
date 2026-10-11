@@ -528,13 +528,10 @@ static void picture_save_short_write_device_init(XIODevice* device,
                                                  void** table)
 {
     XVtable* base;
-    size_t i;
     XIODevice_init(device);
     base = XIODevice_class_init();
-    for (i = 0; i < (size_t)XIODevice_VTABLE_SIZE; ++i)
-        table[i] = base->data[i];
     XVtable_init_stack(vtable, table, (size_t)XIODevice_VTABLE_SIZE);
-    vtable->size = base->size;
+    XVtable_append_vtable(vtable, base);
     XClassGetVtable(device) = vtable;
     table[EXIODevice_WriteData] = (void*)picture_save_short_write;
 }
@@ -18608,7 +18605,7 @@ static bool VTestWin_nativeEvent(XWindow* self, XEvent* event)
 static bool VTestWin_event(XWindow* self, XEvent* event)
 {
     bool handled;
-    if (event && event->type == XEVENT_TYPE_TIMER)
+    if (event && event->m_type == XEVENT_TYPE_TIMER)
         ++((TestWin*)self)->fallbackCount;
     handled = XClass_Parent(XWindow, EXObject_Event,
                             bool(*)(XObject*, XEvent*))((XObject*)self, event);
@@ -21717,7 +21714,7 @@ static void test_window_event_payloads(void)
                 "XExposeEvent region 深拷贝负载");
     XRegion_deinit(&got);
     cloneBase = ee ? XEvent_clone_base((const XEvent*)ee) : NULL;
-    expect_true(cloneBase != NULL && ((XExposeEvent*)cloneBase)->m_class.type ==
+    expect_true(cloneBase != NULL && ((XExposeEvent*)cloneBase)->m_class.m_type ==
                 XEVENT_TYPE_EXPOSE, "XExposeEvent 克隆类型");
     cl = (XExposeEvent*)cloneBase;
     clr = cl ? XExposeEvent_region(cl) : reg;
@@ -21788,16 +21785,16 @@ static void test_window_event_payloads(void)
                 "XCloseEvent 默认 accepted（对齐 QEvent）");
     if (ce) {
         XEvent_ignore((XEvent*)ce);
-        expect_true(!XEvent_isAccepted((const XEvent*)ce) && ce->m_class.type ==
+        expect_true(!XEvent_isAccepted((const XEvent*)ce) && ce->m_class.m_type ==
                     XEVENT_TYPE_CLOSE, "XCloseEvent ignore 后拒绝");
         XClassDelete((XClass*)ce);
     }
     se = XShowEvent_create(XEVENT_TYPE_SHOW);
-    expect_true(se != NULL && se->m_class.type == XEVENT_TYPE_SHOW,
+    expect_true(se != NULL && se->m_class.m_type == XEVENT_TYPE_SHOW,
                 "XShowEvent 冒烟");
     if (se) XClassDelete((XClass*)se);
     he = XHideEvent_create(XEVENT_TYPE_HIDE);
-    expect_true(he != NULL && he->m_class.type == XEVENT_TYPE_HIDE,
+    expect_true(he != NULL && he->m_class.m_type == XEVENT_TYPE_HIDE,
                 "XHideEvent 冒烟");
     if (he) XClassDelete((XClass*)he);
 
@@ -21809,7 +21806,7 @@ static void test_window_event_payloads(void)
     if (imeCommit) XClassDelete((XClass*)imeCommit);
     imePreedit = ime ? XInputMethodEvent_preeditString(ime) : NULL;
     imeCommit = ime ? XInputMethodEvent_commitString(ime) : NULL;
-    expect_true(ime != NULL && ime->m_class.type == XEVENT_TYPE_INPUT_METHOD &&
+    expect_true(ime != NULL && ime->m_class.m_type == XEVENT_TYPE_INPUT_METHOD &&
                 imePreedit && imeCommit &&
                 strcmp(XString_toUtf8(imePreedit), "zhong") == 0 &&
                 strcmp(XString_toUtf8(imeCommit), "\xE4\xB8\xAD") == 0 &&
@@ -21857,7 +21854,7 @@ static void test_window_event_payloads(void)
             XKeyboardModifier_ControlModifier | XKeyboardModifier_ShiftModifier);
         XEvent* keClone = ke ? XEvent_clone_base((const XEvent*)ke) : NULL;
         expect_true(keClone != NULL &&
-                    keClone->type == XEVENT_TYPE_KEY_PRESS &&
+                    keClone->m_type == XEVENT_TYPE_KEY_PRESS &&
                     XKeyEvent_key((const XKeyEvent*)keClone) == 65 &&
                     XKeyEvent_modifiers((const XKeyEvent*)keClone) ==
                         (XKeyboardModifier_ControlModifier |
@@ -21871,7 +21868,7 @@ static void test_window_event_payloads(void)
             XKeyboardModifier_ControlModifier, (XPoint){ 3, 7 });
         XEvent* meClone = me ? XEvent_clone_base((const XEvent*)me) : NULL;
         expect_true(meClone != NULL &&
-                    meClone->type == XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
+                    meClone->m_type == XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
                     XMouseEvent_button((const XMouseEvent*)meClone) ==
                         XMouseButton_RightButton &&
                     XMouseEvent_modifiers((const XMouseEvent*)meClone) ==

@@ -1,4 +1,12 @@
-﻿#ifndef XFUSIONSTYLE_H
+﻿/**
+ * @file       XFusionStyle.h
+ * @brief      嵌入式 Fusion 风格公开 API。
+ * @details    对标 Qt 6.8 QFusionStyle（继承 XCommonStyle）：命令按钮
+ *             圆角渐变面板、悬停高亮、按下凹陷、焦点环、复选/单选
+ *             Fusion 指示器、页签渐变等。实现只依赖 XinYueC 抽象层，
+ *             禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XFUSIONSTYLE_H
 #define XFUSIONSTYLE_H
 #ifdef __cplusplus
 extern "C" {
@@ -25,6 +33,10 @@ typedef struct XFusionStyle
     XCommonStyle m_base;  /**< 基类成员；必须是第一个（Qt 6.8 QFusionStyle : QCommonStyle）。 */
 } XFusionStyle;
 
+/**
+ * @brief 初始化 XFusionStyle 类的虚函数表。
+ * @return 指向初始化完成的 XVtable 的指针。
+ */
 XVtable* XFusionStyle_class_init(void);
 
 /**
@@ -43,10 +55,6 @@ void XFusionStyle_init(XFusionStyle* self);
  */
 XFusionStyle* XFusionStyle_create_ex(XMemoryType memory);
 #define XFusionStyle_create() XFusionStyle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-
-/** @brief 析构入口（查表分派父类析构）。 */
-
-/** @brief 删除堆上样式（查表分派析构并释放内存）。 */
 
 /**
  * @brief 安装 Fusion 为全局默认样式（替换旧默认样式）。

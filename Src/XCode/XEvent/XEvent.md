@@ -43,16 +43,16 @@ XEvent是所有事件的基类，定义了事件的公共属性和方法。
 ```c
 typedef struct XEvent {
     XClass m_class;           // 继承自XClass
-    int type;                 // 事件类型代码
-    
+    int m_type;               // 事件类型代码
+
     // 标志位（16 bits）
-    uint16_t reserved : 10;   // 预留扩展
-    uint16_t accepted : 1;    // 是否接受事件
-    uint16_t spontaneous : 1; // 是否为自发事件
-    uint16_t posted : 1;      // 是否来自事件队列
-    uint16_t input_event : 1; // 是否是输入事件
-    uint16_t pointer_event : 1;    // 是否是指针设备事件
-    uint16_t single_point_event : 1; // 是否是单点事件
+    uint16_t m_reserved : 10;   // 预留扩展
+    uint16_t m_accepted : 1;    // 是否接受事件
+    uint16_t m_spontaneous : 1; // 是否为自发事件
+    uint16_t m_posted : 1;      // 是否来自事件队列
+    uint16_t m_input_event : 1; // 是否是输入事件
+    uint16_t m_pointer_event : 1;    // 是否是指针设备事件
+    uint16_t m_single_point_event : 1; // 是否是单点事件
 } XEvent;
 ```
 
@@ -542,7 +542,7 @@ typedef struct XEventMetaCall {
     XObject* sender;        // 发送者对象
     XVarList* argList;      // 函数参数
     XSemaphore* sem;        // 信号量
-    XAtomic_int32_t* ref_count; // 参数引用计数
+    XAtomic_Int32* ref_count; // 参数引用计数
 } XEventMetaCall;
 ```
 
@@ -550,7 +550,7 @@ typedef struct XEventMetaCall {
 
 ```c
 XEventMetaCall* XEventMetaCall_create(XObject* sender, XSlotFunc1 func,
-    XVarList* argList, XAtomic_int32_t* ref_count, XSemaphore* sem)
+    XVarList* argList, XAtomic_Int32* ref_count, XSemaphore* sem)
 ```
 
 创建槽函数调用事件。
@@ -840,8 +840,8 @@ XAbstractEventDispatcher是事件调度器的抽象基类，负责协调事件�
 ```c
 typedef struct XAbstractEventDispatcher {
     XObject m_class;                     // 父类
-    XDispatcherThreadType type;          // 线程类型
-    XAbstractEventDispatcherPrivate* d_ptr; // 私有数据
+    XDispatcherThreadType m_type;        // 线程类型
+    XAbstractEventDispatcherPrivate* m_d_ptr; // 私有数据
 } XAbstractEventDispatcher;
 ```
 
@@ -1100,14 +1100,14 @@ aboutToBlock信号，事件循环即将阻塞时发射。
 
 ### 事件标志位说明
 
-| 标志位               | 说明                         |
-| -------------------- | ---------------------------- |
-| `accepted`           | 事件是否被接受(已处理)       |
-| `spontaneous`        | 是否为自发事件(用户真实触发) |
-| `posted`             | 是否来自事件队列             |
-| `input_event`        | 是否为输入事件               |
-| `pointer_event`      | 是否为指针设备事件           |
-| `single_point_event` | 是否为单点事件               |
+| 标志位                    | 说明                         |
+| ------------------------- | ---------------------------- |
+| `m_accepted`              | 事件是否被接受(已处理)       |
+| `m_spontaneous`           | 是否为自发事件(用户真实触发) |
+| `m_posted`                | 是否来自事件队列             |
+| `m_input_event`           | 是否为输入事件               |
+| `m_pointer_event`         | 是否是指针设备事件           |
+| `m_single_point_event`    | 是否为单点事件               |
 
 ### 用户自定义事件范围
 

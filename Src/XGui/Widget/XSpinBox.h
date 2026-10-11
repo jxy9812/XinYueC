@@ -69,6 +69,7 @@ typedef struct XSpinBox
 
 /* ==================== 生命周期 ==================== */
 
+/** @brief 初始化 XSpinBox 类虚函数表并返回共享表指针。 */
 XVtable* XSpinBox_class_init(void);
 /** @brief XSpin盒init（对标 Qt 同名接口）。
  * @param self 目标控件指针。
@@ -77,6 +78,7 @@ XVtable* XSpinBox_class_init(void);
  * @return 无返回值。
  */
 void XSpinBox_init(XSpinBox* self, XWidget* parent, XWidgetFlags flags);
+/** @brief 使用默认内存类型创建微调框（默认构造；语义同 create_ex）。 */
 #define XSpinBox_create(parent, flags) XSpinBox_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /** @brief XSpin盒createex（对标 Qt 同名接口）。
  * @param memory XMemoryType 参数。
@@ -198,9 +200,9 @@ void* XSpinBox_valueChanged_signal(XSpinBox* self);
 /** @brief textChanged(const char*) 信号标识（编辑框文本变化转发；对标 QSpinBox::textChanged）。 */
 void* XSpinBox_textChanged_signal(XSpinBox* self);
 
+#endif /* XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */
+
 #ifdef __cplusplus
 }
 #endif
-#endif /* XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */
-
 #endif /* XSPINBOX_H */

@@ -1,5 +1,5 @@
 ﻿#include "XLockFreeQueue.h"
-#if XCircularQueue_ON
+#if XLockFreeQueue_ON
 #include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XAlgorithm.h"
 #include"XMemory.h"
@@ -17,9 +17,9 @@ static void VXLockFreeQueue_pop(XLockFreeQueue* this_queue);
 static void* VXLockFreeQueue_top(XLockFreeQueue* this_queue);
 static bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer);
 
-static void VXClass_copy(XLockFreeQueue* object, const XLockFreeQueue* src);
-static void VXClass_move(XLockFreeQueue* object, XLockFreeQueue* src);
-static void VXClass_deinit(XLockFreeQueue* this_queue);
+static void VXLockFreeQueue_copy(XLockFreeQueue* object, const XLockFreeQueue* src);
+static void VXLockFreeQueue_move(XLockFreeQueue* object, XLockFreeQueue* src);
+static void VXLockFreeQueue_deinit(XLockFreeQueue* this_queue);
 static void XLockFreeQueue_init_with_memory(XLockFreeQueue* this_queue,
     size_t typeSize, size_t count, XMemoryType memoryType);
 
@@ -36,9 +36,9 @@ XVtable* XLockFreeQueue_class_init()
     //XVTABLE_OVERLOAD_DEFAULT(EXContainer_IsEmpty, VXLockFreeQueue_isEmpty);
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXLockFreeQueue_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Size, VXLockFreeQueue_size);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXLockFreeQueue_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXLockFreeQueue_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXLockFreeQueue_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XLockFreeQueue);
     return XVTABLE_DEFAULT;
 }
@@ -306,7 +306,7 @@ bool VXLockFreeQueue_receive(XLockFreeQueue* this_queue, void* pvBuffer)
 
     return true;
 }
-void VXClass_copy(XLockFreeQueue* object, const XLockFreeQueue* src)
+void VXLockFreeQueue_copy(XLockFreeQueue* object, const XLockFreeQueue* src)
 {
     if (!object || !src) return;
     if (XClassIsVtableNull(object)) {
@@ -317,8 +317,9 @@ void VXClass_copy(XLockFreeQueue* object, const XLockFreeQueue* src)
     object->m_head = src->m_head;
     object->m_tail = src->m_tail;
 }
-void VXClass_move(XLockFreeQueue* object, XLockFreeQueue* src)
+void VXLockFreeQueue_move(XLockFreeQueue* object, XLockFreeQueue* src)
 {
+    if (!object || !src) return;
     XMemory* source_memory = Class_Memory(src);
     bool target_uninitialized = XClassIsVtableNull(object);
     XMemory* target_memory = target_uninitialized ? NULL : Class_Memory(object);
@@ -331,15 +332,15 @@ void VXClass_move(XLockFreeQueue* object, XLockFreeQueue* src)
     {
         XLockFreeQueue_clear_base(object);
     }
-    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeQueue) - sizeof(XClass));
+    XMemory_swap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeQueue) - sizeof(XClass));
     Class_Memory(object) = source_memory;
     if (!target_uninitialized)
         Class_Memory(src) = target_memory;
 }
-void VXClass_deinit(XLockFreeQueue* this_queue)
+void VXLockFreeQueue_deinit(XLockFreeQueue* this_queue)
 {
     XVtableGetFunc(XVector_class_init(), EXClass_Deinit, void(*)(XVector*))(this_queue);
-    this_queue->m_head.value = 0;
-    this_queue->m_tail.value = 0;
+    this_queue->m_head.m_value = 0;
+    this_queue->m_tail.m_value = 0;
 }
 #endif

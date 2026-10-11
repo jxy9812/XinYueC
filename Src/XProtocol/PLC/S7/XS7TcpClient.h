@@ -1,24 +1,4 @@
-﻿#ifndef XS7TCPCLIENT_H
-#define XS7TCPCLIENT_H
-
-#include "XPlc_config.h"
-#include "XPlcClient.h"
-#include "XS7Types.h"
-#include "XS7Session.h"
-#include "XHashMap.h"
-#include "XQueue.h"
-#include "XByteArray.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#if XPROTOCOL_ON
-#if XPLC_ON
-#if XS7_ON
-#if XS7_CORE_ON
-
-/**
+﻿/**
  * @file XS7TcpClient.h
  * @brief 西门子 S7（ISO-on-TCP）客户端，三层之 TcpClient
  * @details 继承链：XObject → XPlcDevice[Open,Close] → XPlcClient[SendRequest,
@@ -55,6 +35,27 @@ extern "C" {
  *     XObject_deleteLater, XConnectionType_Auto);
  * @endcode
  */
+#ifndef XS7TCPCLIENT_H
+#define XS7TCPCLIENT_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* 全局配置须先于开关求值（定义 XPROTOCOL_ON 等开关宏） */
+#include "XPlc_config.h"
+
+#if XPROTOCOL_ON
+#if XPLC_ON
+#if XS7_ON
+#if XS7_CORE_ON
+
+#include "XPlcClient.h"
+#include "XS7Types.h"
+#include "XS7Session.h"
+#include "XHashMap.h"
+#include "XQueue.h"
+#include "XByteArray.h"
 
 XCLASS_DEFINE_BEGING(XS7TcpClient)
 XCLASS_DEFINE_EXTEND_END(XS7TcpClient, XPlcClient)
@@ -112,6 +113,7 @@ XS7TcpClient* XS7TcpClient_create_ex(XMemoryType memory);
 /**
  * @brief 初始化一个已分配的XS7TcpClient实例
  * @param client 待初始化的客户端指针（非NULL）
+ * @return 无。client 为 NULL 时不执行任何操作
  * @note 调用 XPlcClient_init，创建内部容器，协商长度置兜底 240
  */
 void XS7TcpClient_init(XS7TcpClient* client);

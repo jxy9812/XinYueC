@@ -1,10 +1,16 @@
-﻿#include"CXinYueConfig.h"
+﻿/**
+ * @file       XVariantList.h
+ * @brief      变体列表容器公开 API。
+ * @details    对齐 Qt QVariantList；继承 XVector，存储 XVariant 类型元素，
+ *             提供与 XVariant 的互转接口。实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#include"CXinYueConfig.h"
 #if !defined(XVARIANTLIST_H)&& XVariantList_ON
 #define XVARIANTLIST_H
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <stdio.h>
 #include <stdbool.h>
 #include "XVector.h"
 #include "XVariant.h"
@@ -40,6 +46,7 @@ XVtable* XVariantList_class_init();
 // ------------------------------ 实例创建与初始化 ------------------------------
 /**
 * @brief 创建XVariantList实例
+* @param memory 实例绑定的内存池类型（XMemoryType，如XMEMORY_TYPE_SYSTEM），决定实例内存使用哪族分配器
 * @return 创建成功的XVariantList实例指针，失败返回NULL
 * @note 动态分配内存并调用XVariantList_init完成初始化，初始化为空列表
 */
@@ -65,21 +72,64 @@ XVariantList* XVariantList_create_move(XVariantList* other);
 */
 void XVariantList_init(XVariantList* list);
 
-/** @brief 深复制创建存储 XVariantList 的 XVariant。 */
+/**
+* @brief 深复制创建存储 XVariantList 的 XVariant
+* @param list 源XVariantList实例指针（借用，只读，函数不取得其所有权也不修改它）
+* @return 新创建的XVariant堆对象指针（内部持有list的深拷贝），list为NULL或分配失败返回NULL
+* @note 返回的XVariant需由调用方通过XClassDelete释放；list保持不变
+*/
 XVariant* XVariantList_toVariant(const XVariantList* list);
-/** @brief 移动创建存储 XVariantList 的 XVariant。 */
+/**
+* @brief 移动创建存储 XVariantList 的 XVariant
+* @param list 源XVariantList实例指针（其元素资源被移入新XVariant）
+* @return 新创建的XVariant堆对象指针（内部持有转移而来的资源），list为NULL或分配失败返回NULL
+* @note 返回的XVariant需由调用方通过XClassDelete释放；移动后list变为空状态，list结构体本身仍由调用方管理
+*/
 XVariant* XVariantList_toVariant_move(XVariantList* list);
-/** @brief 将已有 XVariantList 直接交给 XVariant 管理。 */
+/**
+* @brief 将已有 XVariantList 直接交给 XVariant 管理
+* @param list 待移交的XVariantList实例指针（成功后其生命周期由返回的XVariant管理）
+* @return 新创建的XVariant堆对象指针（不拷贝，直接引用list），list为NULL或分配失败返回NULL
+* @note 返回的XVariant需由调用方通过XClassDelete释放；移交后调用方不得再自行释放list
+*/
 XVariant* XVariantList_toVariant_ref(XVariantList* list);
-/** @brief 从 XVariant 深复制取得 XVariantList。 */
+/**
+* @brief 从 XVariant 深复制取得 XVariantList
+* @param var 源XVariant指针（借用，只读）；类型须为XVariantType_List
+* @return 新创建的XVariantList堆对象指针（var内部数据的深拷贝），var为NULL、类型不匹配或分配失败返回NULL
+* @note 返回的XVariantList需由调用方通过XClassDelete释放；var保持不变
+*/
 XVariantList* XVariantList_fromVariant(const XVariant* var);
-/** @brief 从 XVariant 借用取得 XVariantList。 */
+/**
+* @brief 从 XVariant 借用取得 XVariantList
+* @param var 源XVariant指针；类型须为XVariantType_List
+* @return 借用指针，指向var内部存储的XVariantList（不拷贝）；var为NULL、类型不匹配或数据为空返回NULL
+* @note 返回指针归var所有，不得释放；var被重设或销毁后失效
+*/
 XVariantList* XVariantList_fromVariant_ref(const XVariant* var);
-/** @brief 深复制设置 XVariant 的 XVariantList 值。 */
+/**
+* @brief 深复制设置 XVariant 的 XVariantList 值
+* @param var 目标XVariant指针（借用，可修改）；类型将被置为XVariantType_List
+* @param list 源XVariantList实例指针（借用，只读，函数不取得其所有权）
+* @return 无；var或list为NULL时不执行任何操作，var保持不变
+* @note var原持有的数据资源会被释放并替换为list的深拷贝；list保持不变
+*/
 void XVariantList_setVariant(XVariant* var, const XVariantList* list);
-/** @brief 移动设置 XVariant 的 XVariantList 值。 */
+/**
+* @brief 移动设置 XVariant 的 XVariantList 值
+* @param var 目标XVariant指针（借用，可修改）；类型将被置为XVariantType_List
+* @param list 源XVariantList实例指针（其元素资源被移入var）
+* @return 无；var或list为NULL时不执行任何操作
+* @note var原持有的数据资源会被释放并替换为转移而来的资源；移动后list变为空状态，list结构体本身仍由调用方管理
+*/
 void XVariantList_setVariant_move(XVariant* var, XVariantList* list);
-/** @brief 将已有 XVariantList 直接交给 XVariant 管理。 */
+/**
+* @brief 将已有 XVariantList 直接交给 XVariant 管理
+* @param var 目标XVariant指针（借用，可修改）
+* @param list 待移交的XVariantList实例指针（成功后其生命周期由var管理）
+* @return 无；var或list为NULL时不执行任何操作
+* @note 不拷贝，var直接引用list；移交后调用方不得再自行释放list
+*/
 void XVariantList_setVariant_ref(XVariant* var, XVariantList* list);
 
 /* 兼容旧的 XVariant 扩展 API 名称；实际实现归属 XVariantList。 */
@@ -171,14 +221,6 @@ void XVariantList_setVariant_ref(XVariant* var, XVariantList* list);
 */
 #define XVariantList_resize_base		XVector_resize_base
 // ------------------------------ 容器管理 ------------------------------
-/**
-* @brief 反初始化列表（基础版本）
-* @note 基于XVector的接口，释放内部资源但不销毁实例本身
-*/
-/**
-* @brief 删除列表实例（基础版本）
-* @note 基于XVector的接口，释放内部资源并销毁实例
-*/
 /**
 * @brief 清空列表元素（基础版本）
 * @note 基于XVector的接口，删除所有元素但保留列表结构

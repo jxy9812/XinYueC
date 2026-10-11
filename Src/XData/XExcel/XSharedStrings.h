@@ -113,9 +113,7 @@ XRichString* XSharedStrings_getSharedString(XSharedStrings* self, int index);
  * @return 字符串列表向量（XRichString*），调用者不应释放
  */
 XVector* XSharedStrings_getSharedStrings(XSharedStrings* self);
-#ifdef __cplusplus
-}
-#endif
+
 /**
  * @brief  将共享字符串表序列化为 XML 数据
  * @param  self    共享字符串表指针

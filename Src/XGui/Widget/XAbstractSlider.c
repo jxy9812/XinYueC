@@ -728,14 +728,18 @@ int XAbstractSlider_repeatAction(const XAbstractSlider* self)
 
 void XAbstractSlider_stepBy_base(XAbstractSlider* self, int steps)
 {
-    if (!self) return;
+    if (ISNULL(self, "XAbstractSlider") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return;
     XClassGetVirtualFunc(self, EXAbstractSlider_StepBy,
                          void(*)(XAbstractSlider*, int))(self, steps);
 }
 
 void XAbstractSlider_sliderChange_base(XAbstractSlider* self, int change)
 {
-    if (!self) return;
+    if (ISNULL(self, "XAbstractSlider") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return;
     if (!XClassGetVirtualFunc(self, EXAbstractSlider_SliderChange, bool))
         return;
     XClassGetVirtualFunc(self, EXAbstractSlider_SliderChange,
@@ -744,7 +748,9 @@ void XAbstractSlider_sliderChange_base(XAbstractSlider* self, int change)
 
 int XAbstractSlider_stepEnabled_base(XAbstractSlider* self)
 {
-    if (!self) return XAbstractSliderStepEnabledFlag_StepNone;
+    if (ISNULL(self, "XAbstractSlider") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return XAbstractSliderStepEnabledFlag_StepNone;
     if (!XClassGetVirtualFunc(self, EXAbstractSlider_StepEnabled, bool))
         return XAbstractSliderStepEnabledFlag_StepNone;
     return XClassGetVirtualFunc(self, EXAbstractSlider_StepEnabled,

@@ -1,8 +1,6 @@
 ﻿#include"XAlgorithm.h"
 #include"XSort.h"
 #include"XMemory.h"
-#include<stdio.h>
-#include<stdlib.h>
 #include<string.h>
 void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompare compare, XSortOrder order)
 {
@@ -11,6 +9,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 	if (temp == NULL)
 	{
 		XERROR_PRINTF("临时数组失败\n");
+		return;//处理内存分配失败，中止排序
 	}
 	//memset(tmp, 0, n * size);
 	size_t gap = 1;
@@ -55,14 +54,14 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 					cmp = compare(LpOne, LpTwo);
 					if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))//排序比较函数
 					{
-						XSwap(LpOne, begtmp, TypeSize);
+						XMemory_swap(LpOne, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素
 						if (LpOne <= righta)
 							LpOne += TypeSize;
 					}
 					else
 					{
-						XSwap(LpTwo, begtmp, TypeSize);
+						XMemory_swap(LpTwo, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素
 						if (LpTwo <= rightb)
 							LpTwo += TypeSize;
@@ -73,7 +72,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 				{
 					for (; LpTwo <= rightb; LpTwo += TypeSize)
 					{
-						XSwap(LpTwo, begtmp, TypeSize);
+						XMemory_swap(LpTwo, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素
 					}
 				}
@@ -81,7 +80,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 				{
 					for (; LpOne <= righta; LpOne += TypeSize)
 					{
-						XSwap(LpOne, begtmp, TypeSize);
+						XMemory_swap(LpOne, begtmp, TypeSize);
 						begtmp += TypeSize;//指向tmp数组的下一个元素
 					}
 				}
@@ -91,7 +90,7 @@ void XMergeSort(void* LParray, const size_t nSize, const size_t TypeSize, XCompa
 		{
 			for (; LpTwo <= end; LpTwo += TypeSize)
 			{
-				XSwap(LpTwo, begtmp, TypeSize);
+				XMemory_swap(LpTwo, begtmp, TypeSize);
 				begtmp += TypeSize;//指向tmp数组的下一个元素
 			}
 		}

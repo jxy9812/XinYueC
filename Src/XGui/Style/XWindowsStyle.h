@@ -1,4 +1,14 @@
-﻿#ifndef XWINDOWSSTYLE_H
+﻿/**
+ * @file       XWindowsStyle.h
+ * @brief      嵌入式 Windows 风格公开 API。
+ * @details    对标 Qt 6.8 QWindowsStyle : QCommonStyle（继承
+ *             XCommonStyle）：Qt 6 中该层较薄，主要是 polish 应用级钩子
+ *             与少量度量/样式提示覆盖，绘制逻辑继承公共样式；
+ *             XStyleSheetStyle 继承本类（1:1 对齐 QStyleSheetStyle :
+ *             QWindowsStyle 链）。实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XWINDOWSSTYLE_H
 #define XWINDOWSSTYLE_H
 #ifdef __cplusplus
 extern "C" {
@@ -26,6 +36,10 @@ typedef struct XWindowsStyle
     XCommonStyle m_base;  /**< 基类成员；必须是第一个。 */
 } XWindowsStyle;
 
+/**
+ * @brief 初始化 XWindowsStyle 类的虚函数表。
+ * @return 指向初始化完成的 XVtable 的指针。
+ */
 XVtable* XWindowsStyle_class_init(void);
 
 /**
@@ -44,10 +58,6 @@ void XWindowsStyle_init(XWindowsStyle* self);
  */
 XWindowsStyle* XWindowsStyle_create_ex(XMemoryType memory);
 #define XWindowsStyle_create() XWindowsStyle_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-
-/** @brief 析构入口（查表分派父类析构）。 */
-
-/** @brief 删除堆上样式（查表分派析构并释放内存）。 */
 
 /**
  * @brief 查询样式提示（对标 QWindowsStyle::styleHint 子集）。

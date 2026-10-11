@@ -9,9 +9,11 @@
 * @note XAnyStringView 是值类型（不是 XClass/XContainer 派生类），
 *       在栈上分配和传递，不分配堆内存，不涉及虚函数表。
 */
-#include "CXinYueConfig.h"
-#if !defined(XANYSTRINGVIEW_H) && XString_ON
+#if !defined(XANYSTRINGVIEW_H)
 #define XANYSTRINGVIEW_H
+#include "CXinYueConfig.h"
+
+#if XString_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -435,10 +437,11 @@ int XAnyStringView_compare(const XAnyStringView* self, const XAnyStringView* oth
 */
 XString* XAnyStringView_toString(const XAnyStringView* self);
 
-#ifdef __cplusplus
-}
-#endif
 #include "XAnyStringView_iterator.h"    ///< XAnyStringView 正向迭代器
 #include "XAnyStringView_reverse_iterator.h"  ///< XAnyStringView 反向迭代器
 
+#ifdef __cplusplus
+}
+#endif
+#endif // XString_ON
 #endif // !XANYSTRINGVIEW_H

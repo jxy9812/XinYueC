@@ -5,11 +5,10 @@
 
 #include "XNetworkRequestFactory.h"
 
+#include <string.h>
+
 #include "XBase64.h"
 #include "XMemory.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #if XPROTOCOL_ON
 #if XHTTP_ON
 
@@ -270,7 +269,7 @@ static void VXNetworkRequestFactory_move(XNetworkRequestFactory* dest,
     dest->m_priority = src->m_priority;
     src->m_baseUrl = NULL; src->m_commonHeaders = NULL; src->m_bearerToken = NULL;
     src->m_userName = NULL; src->m_password = NULL; src->m_queryParameters = NULL;
-    src->m_attributes = XVector_create(sizeof(XNetworkRequestFactory_AttributeItem));
+    src->m_attributes = XVector_Create(XNetworkRequestFactory_AttributeItem);
     src->m_transferTimeout = 30000; src->m_priority = XHttpRequest_NormalPriority;
 }
 
@@ -294,7 +293,7 @@ void XNetworkRequestFactory_init(XNetworkRequestFactory* self)
     XClass_init((XClass*)self);
     XClassSetVtable(self, XNetworkRequestFactory);
     self->m_commonHeaders = XHttpHeaders_create();
-    self->m_attributes = XVector_create(sizeof(XNetworkRequestFactory_AttributeItem));
+    self->m_attributes = XVector_Create(XNetworkRequestFactory_AttributeItem);
     self->m_transferTimeout = 30000;
     self->m_priority = XHttpRequest_NormalPriority;
 }

@@ -44,20 +44,20 @@ typedef struct XWorkbook_DefineName {
 typedef struct XWorkbook {
     XAbstractOOXmlFile m_base;         /**< 基类 */
     XVector* m_sheets;                 /**< 工作表列表 (XAbstractSheet*) */
-    int m_activeSheetIndex;            /**< 活动工作表索引 */
     XSharedStrings* m_sharedStrings;   /**< 共享字符串表 */
     XStyles* m_styles;                 /**< 样式管理器 */
     XTheme* m_theme;                   /**< 主题 */
     XVector* m_mediaFiles;             /**< 媒体文件列表 (XMediaFile*) */
     XVector* m_chartFiles;             /**< 图表文件列表 (XExcelChart*) */
     XVector* m_defineNames;            /**< 定义名称列表 (XWorkbook_DefineName) */
+    XString* m_defaultDateFormat;      /**< 默认日期格式 */
+    int m_activeSheetIndex;            /**< 活动工作表索引 */
+    int m_nextSheetId;                 /**< 下一个工作表ID */
     bool m_date1904;                   /**< 是否使用1904日期系统 */
     bool m_stringsToNumbers;           /**< 字符串转数字 */
     bool m_stringsToHyperlinks;        /**< 字符串转超链接 */
     bool m_htmlToRichString;           /**< HTML转富文本 */
     bool m_writeDatesAsText;           /**< 日期写入为文本 */
-    XString* m_defaultDateFormat;      /**< 默认日期格式 */
-    int m_nextSheetId;                 /**< 下一个工作表ID */
 } XWorkbook;
 
 /* ========== 创建与初始化 ========== */
@@ -367,9 +367,6 @@ bool XWorkbook_saveToXmlFile(XWorkbook* self, const XString* filePath);
  */
 bool XWorkbook_loadFromXmlFile(XWorkbook* self, const XString* filePath);
 
-#ifdef __cplusplus
-}
-#endif
 /**
  * @brief  将工作簿序列化为 XML 数据
  * @param  self    工作簿指针

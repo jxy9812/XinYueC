@@ -312,6 +312,25 @@ bool VXIODevice_open(XPWMDeviceSTM32 *pwm, XIODeviceBaseMode mode)
 	{
 		// 使能定时器  更新中断
     	TIM_ITConfig(pwm->m_TIMX, TIM_IT_Update, DISABLE);
+		// 反注册共享中断回调：与 open 分支的登记对称，无论 m_updateCallback 是否设置
+		// 都清理，防止注册表残留指向已释放对象的 TIMCallback
+		switch ( pwm->m_portNum)
+		{
+			case 1:XInterrupt_removeTIMxCallback(10,TIMCallback,pwm); break;
+			case 2:XInterrupt_removeTIMxCallback(2,TIMCallback,pwm);break;
+			case 3:XInterrupt_removeTIMxCallback(3,TIMCallback,pwm);break;
+			case 4:XInterrupt_removeTIMxCallback(4,TIMCallback,pwm);break;
+			case 5:XInterrupt_removeTIMxCallback(5,TIMCallback,pwm);break;
+			case 8:XInterrupt_removeTIMxCallback(13,TIMCallback,pwm);break;
+			case 9:XInterrupt_removeTIMxCallback(9,TIMCallback,pwm);break;
+			case 10:XInterrupt_removeTIMxCallback(10,TIMCallback,pwm);break;
+			case 11:XInterrupt_removeTIMxCallback(11,TIMCallback,pwm);break;
+			case 12:XInterrupt_removeTIMxCallback(12,TIMCallback,pwm);break;
+			case 13:XInterrupt_removeTIMxCallback(13,TIMCallback,pwm);break;
+			case 14:XInterrupt_removeTIMxCallback(14,TIMCallback,pwm);break;
+		default:
+			break;
+		}
 	}
  }
  void XPWMDeviceSTM32_setTIM_ITCallback(XPWMDeviceSTM32 *pwm, void (*callback)(void *), void *userData)
@@ -354,8 +373,8 @@ void VXIODevice_close(XPWMDeviceSTM32 *pwm)
  	TIM_Cmd(pwm->m_TIMX, DISABLE); 
  	pwm->m_TIMX = NULL;
  	openTIM[pwm->m_portNum - 1] = NULL;
-	//删除中断回调函数
-	if(pwm->m_updateCallback!=NULL)
+	//删除中断回调函数：无条件反注册，与 open 分支的登记对称（未登记时 remove 为无操作），
+	//防止注册表残留指向已释放对象的 TIMCallback（共享中断线再次触发即调到悬垂指针）
 	{
 			switch ( pwm->m_portNum)
 		{

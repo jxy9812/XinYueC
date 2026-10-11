@@ -16,10 +16,11 @@
 #include "XConsoleShellVi.h"
 #include "XDeviceFile.h"
 #include "XString.h"
+#include "XStringUtils.h"
+#include "XUtf8StringView.h"
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 static XFd xvi_open_file(const XString* path, int mode, int* error)
@@ -104,7 +105,7 @@ static bool xvi_tui_save_buffer(XConsoleShell* shell,
     }
     for (i = 0; i < XTuiVim_lineCount(vim) && ok; ++i) {
         const char* line = XTuiVim_line(vim, i);
-        size_t length = strlen(line ? line : "");
+        size_t length = XStrlen(line ? line : "");
         if (length &&
             XDeviceFile_write(fd, line, (int64_t)length) != (int64_t)length)
             ok = false;
@@ -229,7 +230,7 @@ static bool xvi_tui_open_buffer(XConsoleShell* shell, XConsoleShellSession* sess
         return false;
     }
     for (i = 0; i < tui->bufferCount; ++i) {
-        if (strcmp(XTuiVim_path(tui->buffers[i]), XString_toUtf8(path)) == 0) {
+        if (XStrcmp(XTuiVim_path(tui->buffers[i]), XString_toUtf8(path)) == 0) {
             bool ok = xvi_tui_switch(tui, i);
             XClassDelete(path);
             return ok;
@@ -586,7 +587,7 @@ static bool xvi_make_path(const XConsoleShellSession* session, const char* input
             XClassDelete(raw);
             return false;
         }
-        if (strcmp(value, ".") != 0) {
+        if (XStrcmp(value, ".") != 0) {
             const char* text = XString_toUtf8(raw);
             if (text[0]) {
                 if (!XString_append_utf8(prefix, "/") ||
@@ -681,7 +682,7 @@ static bool xvi_save_lines(XConsoleShell* shell, XConsoleShellSession* session,
     if (fd == XFD_INVALID) return false;
     for (i = 0; i < session->editorLineCount && ok; ++i) {
         const char* line = session->editorLines[i];
-        size_t length = strlen(line);
+        size_t length = XStrlen(line);
         if (length &&
             XDeviceFile_write(fd, line, (int64_t)length) != (int64_t)length)
             ok = false;
@@ -711,11 +712,18 @@ static bool xvi_print_lines(XConsoleShell* shell, XConsoleShellSession* session)
 
 static bool xvi_parse_number(const char* text, size_t* value)
 {
-    char* end = NULL;
-    unsigned long long parsed;
+    XUtf8StringView view;
+    uint64_t parsed;
+    size_t i;
+    bool ok = false;
     if (!text || !text[0] || !value) return false;
-    parsed = strtoull(text, &end, 10);
-    if (!end || *end != '\0') return false;
+    /* 全量数字预扫描：承担原 strtoull 的 end 全消费检查（库内
+       XUtf8StringView_toULongLong 不校验尾部），行号只接受纯十进制数字串。 */
+    for (i = 0u; text[i]; ++i)
+        if (text[i] < '0' || text[i] > '9') return false;
+    view = XUtf8StringView_create_cstr(text);
+    parsed = XUtf8StringView_toULongLong(&view, &ok, 10);
+    if (!ok) return false;
     *value = (size_t)parsed;
     return parsed <= (unsigned long long)SIZE_MAX;
 }
@@ -727,10 +735,10 @@ static bool xvi_enter_insert(XConsoleShell* shell, XConsoleShellSession* session
     if (line > session->editorLineCount) return false;
     session->editorCursorLine = line;
     if (line < session->editorLineCount)
-        session->editorCursorColumn = strlen(session->editorLines[line]);
+        session->editorCursorColumn = XStrlen(session->editorLines[line]);
     else if (session->editorLineCount > 0)
         session->editorCursorColumn =
-            strlen(session->editorLines[session->editorLineCount - 1u]);
+            XStrlen(session->editorLines[session->editorLineCount - 1u]);
     else
         session->editorCursorColumn = 0;
     session->editorInsertMode = true;

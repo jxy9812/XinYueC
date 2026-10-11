@@ -1,5 +1,6 @@
 ﻿#include "XPrintf.h"
 #include "XDebug.h"
+#include "XStringUtils.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -80,7 +81,7 @@ XDebug* XDebug_write_(XDebug* debug, const char* data, size_t len) {
 // 输出字符串
 XDebug* XDebug_puts_(XDebug* debug, const char* str) {
     if (!str) return debug;
-    return XDebug_write_(debug, str, strlen(str));
+    return XDebug_write_(debug, str, XStrlen(str));
 }
 
 // 输出字符

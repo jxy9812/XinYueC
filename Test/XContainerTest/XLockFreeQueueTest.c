@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include<stdint.h>
 #include<time.h>
 #include<stdlib.h>
@@ -101,10 +101,10 @@ static void XLFQBulkTest(void)
 
 typedef struct XLFQCtx {
     XLockFreeQueue*  q;
-    XAtomic_size_t*  produced;
-    XAtomic_size_t*  consumed;
-    XAtomic_size_t*  producers_done;
-    XAtomic_size_t*  threads_finished;
+    XAtomic_SizeT*  produced;
+    XAtomic_SizeT*  consumed;
+    XAtomic_SizeT*  producers_done;
+    XAtomic_SizeT*  threads_finished;
     size_t           threads_total;
 } XLFQCtx;
 
@@ -175,10 +175,10 @@ static void XLFQConcurrentTest(void)
     (void)XEvent_class_init();
     (void)XEventFunc_class_init();
     XLockFreeQueue* q = XLockFreeQueue_Create(int, XLFQ_CAPACITY);
-    XAtomic_size_t produced = { 0 };
-    XAtomic_size_t consumed = { 0 };
-    XAtomic_size_t producers_done = { 0 };
-    XAtomic_size_t threads_finished = { 0 };
+    XAtomic_SizeT produced = { 0 };
+    XAtomic_SizeT consumed = { 0 };
+    XAtomic_SizeT producers_done = { 0 };
+    XAtomic_SizeT threads_finished = { 0 };
     XLFQCtx ctx = { q, &produced, &consumed, &producers_done,
         &threads_finished, (size_t)(XLFQ_PRODUCERS + XLFQ_CONSUMERS) };
     XLFQCtx* pctx = &ctx;

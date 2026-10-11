@@ -59,7 +59,7 @@ void XSocketTest_Baidu()
 		if (address && XVector_count_base(address) > 0) {
 			const XHostAddress* addr = (const XHostAddress*)XVector_at_base(address, 0);
 			XString* ipStr = XHostAddress_toString(addr);
-			XPrintf_2(ipStr);
+			XPrintf_string(ipStr);
 			XPrintf("\n");
 			XClassDelete(ipStr);
 		} else {
@@ -127,7 +127,7 @@ void XSocketTest_BaiduHttps()
 			const XHostAddress* addr = (const XHostAddress*)XVector_at_base(address, 0);
 			XString* ipStr = XHostAddress_toString(addr);
 			XPrintf("[百度HTTPS] DNS: ");
-			XPrintf_2(ipStr);
+			XPrintf_string(ipStr);
 			XPrintf("\n");
 			XClassDelete(ipStr);
 		} else {

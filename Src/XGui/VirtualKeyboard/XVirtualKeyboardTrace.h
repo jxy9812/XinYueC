@@ -45,7 +45,7 @@ XCLASS_DEFINE_EXTEND_END(XVirtualKeyboardTrace, XObject)
  */
 typedef struct XVirtualKeyboardTrace
 {
-    XObject m_class;   /**< 第一个成员，由 XObject 管理。 */
+    XObject m_class;   /**< 第一个成员，由 XClass 管理，禁止手工修改。 */
     void* m_data;      /**< 私有数据块（XVirtualKeyboardTracePrivate*），
                             由对象拥有；仅供实现使用。 */
 } XVirtualKeyboardTrace;

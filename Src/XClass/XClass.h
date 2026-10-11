@@ -1,4 +1,13 @@
-﻿#ifndef XCLASS_H
+﻿/**
+ * @file       XClass.h
+ * @brief      XClass 对象模型公共基类 API。
+ * @details    对齐 Qt 的 QObject 元对象基础设施（QObjectData/QObjectPrivate 的
+ *             C 化最小核心）：提供虚函数表定义/初始化/继承/重载宏，多态拷贝/
+ *             移动/反初始化/删除入口（XClassCopy/XClassMove/XClassDeinit/
+ *             XClassDelete）以及对象内存方法与堆所有权标记。实现只依赖
+ *             XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XCLASS_H
 #define XCLASS_H
 #ifdef __cplusplus
 extern "C" {
@@ -38,7 +47,7 @@ typedef struct XClass
 
 /** @brief 按枚举槽位读取虚函数；调用方必须保证表、槽位和函数类型有效。 */
 #define XVtableGetFunc(Vtable, Offset, Type) \
-	((Type)((((XVtable*)(Vtable))->data)[(Offset)]))
+	((Type)((((XVtable*)(Vtable))->m_data)[(Offset)]))
 /** @brief 取得对象的虚函数表；Object 必须指向 XClass 或其派生对象。 */
 #define XClassGetVtable(Object) (((XClass*)(Object))->m_vtable)
 /** @brief 把对象的虚函数表设置为指定类的共享虚函数表。 */
@@ -98,25 +107,25 @@ bool ArgIsNULL(const void* args, const char* argsName, const char* str,
 do { \
 	XVtable* _xvtable = (Vtable); \
 	if (!_xvtable) break; \
-	if ((Type) >= _xvtable->capacity) { \
+	if ((Type) >= _xvtable->m_capacity) { \
 		XERROR_PRINTF("文件:%s 函数:%s 行号:%d 重载索引超出范围了 索引:%d 容量:%d个\n", \
-			__FILE__, __func__, __LINE__, (Type), _xvtable->capacity); \
+			__FILE__, __func__, __LINE__, (Type), _xvtable->m_capacity); \
 		exit(-1); \
 	} \
 	XVtable_At(_xvtable, (Type)) = (Func); \
-	if ((Type) >= _xvtable->size) \
-		_xvtable->size = (Type) + 1; \
+	if ((Type) >= _xvtable->m_size) \
+		_xvtable->m_size = (Type) + 1; \
 } while (0)
 /** @brief 把函数指针数组追加到虚函数表，并检查静态表容量。 */
 #define XVTABLE_ADD_FUNC_LIST(Vtable, Table) \
 do { \
 	XVtable* _xvtable = (Vtable); \
 	size_t _xvtable_count = sizeof(Table) / sizeof((Table)[0]); \
-	if (_xvtable && _xvtable->isStack && \
-		(_xvtable->size + _xvtable_count > _xvtable->capacity)) { \
+	if (_xvtable && _xvtable->m_isStack && \
+		(_xvtable->m_size + _xvtable_count > _xvtable->m_capacity)) { \
 		XERROR_PRINTF("文件:%s 函数:%s 行号:%d 追加的函数超出最大容量了,超出:%d个\n", \
 			__FILE__, __func__, __LINE__, \
-			(_xvtable->size + _xvtable_count - _xvtable->capacity)); \
+			(_xvtable->m_size + _xvtable_count - _xvtable->m_capacity)); \
 		exit(-1); \
 	} \
 	if (_xvtable) XVtable_append_array(_xvtable, (Table), _xvtable_count); \
@@ -156,10 +165,10 @@ do { \
  * @brief 按配置输出一个类型对应的 size_t 大小值。
  *
  * Type 既用于生成输出标签，也用于表达被统计的类型；Value 可以是虚表槽位数、
- * sizeof 表达式或其他 size_t 表达式。关闭 XCLASS_VTABLE_SHOW_SIZE 时，
+ * sizeof 表达式或其他 size_t 表达式。关闭 XCLASS_VTABLE_SHOW_SIZE_ON 时，
  * Value 不会求值，也不会生成输出代码。
  */
-#if XCLASS_VTABLE_SHOW_SIZE
+#if XCLASS_VTABLE_SHOW_SIZE_ON
 #define XCLASS_SHOW_SIZE(Type, Value) \
 	do { XPrintf(#Type " size:%zu\n", (size_t)(Value)); } while (0)
 #else
@@ -170,7 +179,7 @@ do { \
  * @brief 输出默认虚函数表的槽位数量。
  *
  * Type 用于生成输出标签，并自动统计 XVtable_size(XVTABLE_DEFAULT)，
- * 由 XCLASS_VTABLE_SHOW_SIZE 统一控制，适用于标准 class_init 函数。
+ * 由 XCLASS_VTABLE_SHOW_SIZE_ON 统一控制，适用于标准 class_init 函数。
  */
 #define XCLASS_SHOW_SIZE_DEFAULT(Type) \
 	XCLASS_SHOW_SIZE(Type, XVtable_size(XVTABLE_DEFAULT))

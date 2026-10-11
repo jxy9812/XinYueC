@@ -368,7 +368,7 @@ static void xmw_tabBarCurrentChanged(void* sender, XVarList* args)
     (void)args;
     if (!bar) return;
     host = XWidget_parentWidget((XWidget*)bar);
-    if (!host || !((XObject*)host)->is_widget) return;
+    if (!host || !((XObject*)host)->m_is_widget) return;
     self = (XMainWindow*)host;
     if (!self->m_dockTabBars || !self->m_dockTabGroups) return;
     /* 重入保护：xmw_layout 回填 current 下标引发的信号直接跳过，

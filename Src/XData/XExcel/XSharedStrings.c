@@ -8,7 +8,7 @@
 
 
 /* XMap 键是 XString*，直接复用 XString 的字典序比较。 */
-static int32_t str_compare(const void* lhs, const void* rhs)
+static int32_t XSharedStrings_str_compare(const void* lhs, const void* rhs)
 {
     XString* a = *(XString**)lhs;
     XString* b = *(XString**)rhs;
@@ -18,7 +18,7 @@ static int32_t str_compare(const void* lhs, const void* rhs)
     return XString_compare(a, b);
 }
 
-static void shared_strings_clear(XSharedStrings* self)
+static void XSharedStrings_shared_strings_clear(XSharedStrings* self)
 {
     if (!self) return;
     if (self->m_stringTable) XMap_clear_base(self->m_stringTable);
@@ -32,7 +32,7 @@ static void shared_strings_clear(XSharedStrings* self)
     self->m_stringCount = 0;
 }
 
-static XlsxSharedStringInfo* shared_string_info(XSharedStrings* self,
+static XlsxSharedStringInfo* XSharedStrings_shared_string_info(XSharedStrings* self,
                                                  const XString* string)
 {
     if (!self || !string || !self->m_stringTable) return NULL;
@@ -43,7 +43,7 @@ static XlsxSharedStringInfo* shared_string_info(XSharedStrings* self,
     return pair ? (XlsxSharedStringInfo*)XPair_second(pair) : NULL;
 }
 
-static bool rich_font_formats_equal(const XFormat* left, const XFormat* right)
+static bool XSharedStrings_rich_font_formats_equal(const XFormat* left, const XFormat* right)
 {
     bool leftEmpty = !left || !XFormat_hasFontData(left);
     bool rightEmpty = !right || !XFormat_hasFontData(right);
@@ -61,7 +61,7 @@ static bool rich_font_formats_equal(const XFormat* left, const XFormat* right)
     return equal;
 }
 
-static bool append_loaded_string(XSharedStrings* self, const XRichString* source)
+static bool XSharedStrings_append_loaded_string(XSharedStrings* self, const XRichString* source)
 {
     if (!self || !source || !self->m_stringList) return false;
     XRichString* rich = XRichString_create();
@@ -74,7 +74,7 @@ static bool append_loaded_string(XSharedStrings* self, const XRichString* source
     }
     if (!XRichString_isRichString(rich)) {
         XString* key = (XString*)XRichString_text(rich);
-        XlsxSharedStringInfo* existing = shared_string_info(self, key);
+        XlsxSharedStringInfo* existing = XSharedStrings_shared_string_info(self, key);
         if (existing) {
             existing->m_index = index;
             existing->m_count = 0;
@@ -96,7 +96,7 @@ XSharedStrings* XSharedStrings_create(XAbstractOOXmlFile_CreateFlag flag)
     if (!self) return NULL;
     memset(self, 0, sizeof(XSharedStrings));
     XAbstractOOXmlFile_init(&self->m_base, flag);
-    self->m_stringTable = XMap_create(sizeof(XString*), sizeof(XlsxSharedStringInfo), str_compare);
+    self->m_stringTable = XMap_create(sizeof(XString*), sizeof(XlsxSharedStringInfo), XSharedStrings_str_compare);
     self->m_stringList = XVector_create(sizeof(XRichString*));
     if (!self->m_stringTable || !self->m_stringList) {
         XSharedStrings_delete(self);
@@ -109,7 +109,7 @@ XSharedStrings* XSharedStrings_create(XAbstractOOXmlFile_CreateFlag flag)
 void XSharedStrings_delete(XSharedStrings* self)
 {
     if (!self) return;
-    shared_strings_clear(self);
+    XSharedStrings_shared_strings_clear(self);
     if (self->m_stringTable) XClassDelete(self->m_stringTable);
     if (self->m_stringList)
     {
@@ -138,7 +138,7 @@ bool XSharedStrings_isEmpty(const XSharedStrings* self)
 int XSharedStrings_addSharedString(XSharedStrings* self, const XString* string)
 {
     if (!self || !string) return -1;
-    XlsxSharedStringInfo* existing = shared_string_info(self, string);
+    XlsxSharedStringInfo* existing = XSharedStrings_shared_string_info(self, string);
     if (existing) {
         existing->m_count++;
         self->m_stringCount++;
@@ -181,7 +181,7 @@ int XSharedStrings_addSharedRichString(XSharedStrings* self, const XRichString* 
             bool textEqual = (!leftText && !rightText) ||
                 (leftText && rightText &&
                  XString_compare(leftText, rightText) == XCompare_Equality);
-            bool formatEqual = rich_font_formats_equal(leftFormat, rightFormat);
+            bool formatEqual = XSharedStrings_rich_font_formats_equal(leftFormat, rightFormat);
             if (!textEqual || !formatEqual) { equal = false; break; }
         }
         if (equal) {
@@ -203,7 +203,7 @@ int XSharedStrings_addSharedRichString(XSharedStrings* self, const XRichString* 
 void XSharedStrings_removeSharedString(XSharedStrings* self, const XString* string)
 {
     if (!self || !string) return;
-    XlsxSharedStringInfo* info = shared_string_info(self, string);
+    XlsxSharedStringInfo* info = XSharedStrings_shared_string_info(self, string);
     if (!info) return;
     if (self->m_stringCount > 0) self->m_stringCount--;
     if (--info->m_count <= 0) {
@@ -241,14 +241,14 @@ void XSharedStrings_incRefByStringIndex(XSharedStrings* self, int idx)
     if (!self || idx < 0 || (size_t)idx >= XVector_size_base(self->m_stringList)) return;
     XRichString* rich = *(XRichString**)XVector_at_base(self->m_stringList, idx);
     XlsxSharedStringInfo* info = rich && !XRichString_isRichString(rich)
-        ? shared_string_info(self, XRichString_text(rich)) : NULL;
+        ? XSharedStrings_shared_string_info(self, XRichString_text(rich)) : NULL;
     if (info) info->m_count++;
     self->m_stringCount++;
 }
 
 int XSharedStrings_getSharedStringIndex(XSharedStrings* self, const XString* string)
 {
-    XlsxSharedStringInfo* info = shared_string_info(self, string);
+    XlsxSharedStringInfo* info = XSharedStrings_shared_string_info(self, string);
     return info ? info->m_index : -1;
 }
 
@@ -267,7 +267,7 @@ XVector* XSharedStrings_getSharedStrings(XSharedStrings* self)
 
 /* ========== XML 序列化 ========== */
 
-static void append_xml_escaped(XByteArray* output, const XString* value)
+static void XSharedStrings_append_xml_escaped(XByteArray* output, const XString* value)
 {
     const char* text = value ? XString_toUtf8(value) : NULL;
     if (!output || !text) return;
@@ -284,7 +284,7 @@ static void append_xml_escaped(XByteArray* output, const XString* value)
     }
 }
 
-static void append_rich_properties(XByteArray* output, const XFormat* format)
+static void XSharedStrings_append_rich_properties(XByteArray* output, const XFormat* format)
 {
     if (!output || !format || XFormat_isEmpty(format)) return;
     XByteArray_append_utf8(output, "<rPr>");
@@ -333,7 +333,7 @@ static void append_rich_properties(XByteArray* output, const XFormat* format)
     const XString* name = XFormat_fontName(format);
     if (name && !XString_isEmpty_base(name)) {
         XByteArray_append_utf8(output, "<rFont val=\"");
-        append_xml_escaped(output, name);
+        XSharedStrings_append_xml_escaped(output, name);
         XByteArray_append_utf8(output, "\"/>");
     }
     if (XFormat_hasProperty(format, XFormat_P_Font_Family)) {
@@ -382,7 +382,7 @@ bool XSharedStrings_saveToXmlData(const XSharedStrings* self, uint8_t** outData,
                 if (!text) continue;
                 
                 XByteArray_append_utf8(buf, "<r>");
-                append_rich_properties(buf, XRichString_fragmentFormat(rich, j));
+                XSharedStrings_append_rich_properties(buf, XRichString_fragmentFormat(rich, j));
                 XByteArray_append_utf8(buf, "<t");
                 /* 检查是否需要 xml:space="preserve" */
                 size_t textLength = strlen(text);
@@ -390,7 +390,7 @@ bool XSharedStrings_saveToXmlData(const XSharedStrings* self, uint8_t** outData,
                     XByteArray_append_utf8(buf, " xml:space=\"preserve\"");
                 }
                 XByteArray_append_utf8(buf, ">");
-                append_xml_escaped(buf, textX);
+                XSharedStrings_append_xml_escaped(buf, textX);
                 XByteArray_append_utf8(buf, "</t></r>");
             }
         } else {
@@ -403,7 +403,7 @@ bool XSharedStrings_saveToXmlData(const XSharedStrings* self, uint8_t** outData,
                     XByteArray_append_utf8(buf, " xml:space=\"preserve\"");
                 }
                 XByteArray_append_utf8(buf, ">");
-                append_xml_escaped(buf, textX);
+                XSharedStrings_append_xml_escaped(buf, textX);
                 XByteArray_append_utf8(buf, "</t>");
             }
         }
@@ -449,7 +449,7 @@ bool XSharedStrings_saveToXmlFile(XSharedStrings* self, const XString* filePath)
  * @param reader XXmlStreamReader 指针（需已设置数据）
  * @return    成功返回true
  */
-static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader* reader)
+static bool XSharedStrings_sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader* reader)
 {
     if (!self || !reader) return false;
     bool in_si = false;
@@ -595,7 +595,7 @@ static bool sharedStrings_loadFromReader(XSharedStrings* self, XXmlStreamReader*
                 if (format) { XFormat_delete(format); format = NULL; }
             } else if (XString_equals_utf8(name, "si", XChar_CaseSensitive)) {
                 in_si = false;
-                if (rich && !append_loaded_string(self, rich)) ok = false;
+                if (rich && !XSharedStrings_append_loaded_string(self, rich)) ok = false;
                 XRichString_delete(rich);
                 rich = NULL;
                 XString_clear_base(acc);
@@ -625,12 +625,12 @@ bool XSharedStrings_loadFromXmlData(XSharedStrings* self, const uint8_t* data, s
         if (reader) XClassDelete(reader);
         return false;
     }
-    shared_strings_clear(self);
+    XSharedStrings_shared_strings_clear(self);
     XXmlStreamReader_addData(reader, bytes);
     XClassDelete(bytes);
-    bool ok = sharedStrings_loadFromReader(self, reader);
+    bool ok = XSharedStrings_sharedStrings_loadFromReader(self, reader);
     XClassDelete(reader);
-    if (!ok) shared_strings_clear(self);
+    if (!ok) XSharedStrings_shared_strings_clear(self);
     return ok;
 }
 

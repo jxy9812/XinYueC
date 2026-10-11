@@ -1,8 +1,8 @@
-﻿#ifdef _WIN32
+#ifdef _WIN32
 
-#include "XFileSystem_config.h"  /* 文件系统配置 */
+#include "XFileSystem_config.h"  /* ?????? */
 
-/* 仅在启用平台API模式时编译此文件 */
+/* ??????API???????? */
 #if defined(XFILE_USE_PLATFORM_API)
 
 #include "XDeviceFile.h"
@@ -13,12 +13,12 @@
 #include "XString.h"
 #include "XFileDescriptor.h"  /* XFd_alloc, XFd_free, XFd_handle, XFd_type */
 #include "XAbstractNetIoRing.h"
-#include "XObject.h"          /* 嵌入式 XObject 基类（事件通知接收者） */
-#include "XClass.h"           /* XClass_deinit_base（共享内存段释放） */
-#include "XCoreApplication.h" /* 移除已投递事件（关闭共享内存段） */
-#include "XDateTime.h"        /* 有界等待截止时间 */
-#include <winsock2.h>          /* FD_READ/FD_WRITE 事件掩码 */
-#include "XNetIoRingWin32.h"  /* IOCP 事件上下文与异步读辅助 */
+#include "XObject.h"          /* ??? XObject ??(???????) */
+#include "XClass.h"           /* XClass_deinit_base(???????) */
+#include "XCoreApplication.h" /* ???????(???????) */
+#include "XDateTime.h"        /* ???????? */
+#include <winsock2.h>          /* FD_READ/FD_WRITE ???? */
+#include "XNetIoRingWin32.h"  /* IOCP ??????????? */
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>
@@ -36,7 +36,7 @@
 #include <shobjidl.h>
 #include <objbase.h>
 
-/* 这些函数只服务于 XDeviceFile/XDevice 对旧 XFd 的兼容路径。 */
+/* ???????? XDeviceFile/XDevice ?? XFd ?????? */
 void XDeviceFile_legacyClose(XFd fd);
 int64_t XDeviceFile_legacyRead(XFd fd, void* buffer, int64_t size);
 int64_t XDeviceFile_legacyWrite(XFd fd, const void* data, int64_t size);
@@ -48,34 +48,34 @@ bool XDeviceFile_legacyResize(XFd fd, int64_t size);
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "shell32.lib")
 
-/* 共享内存段的平台私有句柄（挂在 XFileDescriptor.object 上）。
-   段数据由 mapHandle（CreateFileMapping/OpenFileMapping）承载，信令
-   通道由 signalPipe（\\.\pipe\<name>.sig 命名管道）承载，
-   XDeviceFileCommand_Map/Unmap 使用 mapHandle。
-   信令通道的异步接收完全接入库内部事件通知系统（XNetIoRingWin32
-   全局 IOCP 完成端口，与网络套接字/串口的异步读一致）：
-   openSharedMemory 建立信令管道后即关联 IOCP 并提交常驻异步
-   OVERLAPPED ReadFile，完成事件由 waitForEvents（GetQueuedCompletionStatus）
-   处理并写入 m_readResult；XDeviceFile_legacyRead 消费异步接收缓冲，无数据时
-   通过事件环等待完成通知，不做任何轮询。
-   首成员为嵌入式 XObject（事件环分发 CQ 条目时以 desc->object 作为
-   事件接收者），关闭时通过 XClass_deinit_base 完整释放。 */
+/* ????????????(?? XFileDescriptor.object ?)?
+   ???? mapHandle(CreateFileMapping/OpenFileMapping)??,??
+   ??? signalPipe(\\.\pipe\<name>.sig ????)??,
+   XDeviceFileCommand_Map/Unmap ?? mapHandle?
+   ??????????????????????(XNetIoRingWin32
+   ?? IOCP ????,??????/????????):
+   openSharedMemory ?????????? IOCP ???????
+   OVERLAPPED ReadFile,????? waitForEvents(GetQueuedCompletionStatus)
+   ????? m_readResult;XDeviceFile_legacyRead ????????,????
+   ???????????,???????
+   ??????? XObject(????? CQ ???? desc->object ??
+   ?????),????? XClass_deinit_base ????? */
 typedef struct XFileSharedMemoryWin32 {
-    XObject m_object;            /**< 嵌入式 XObject 基类（事件通知接收者，必须为首成员） */
-    XEventContext_IOCP m_read;   /**< 信令通道异步读事件上下文（IOCP OVERLAPPED ReadFile） */
-    uint8_t m_readBuffer[16];    /**< 异步读缓冲区（存放到达的信令字节） */
-    size_t m_rxCount;            /**< 异步接收缓冲内未消费字节数 */
-    size_t m_rxOffset;           /**< 异步接收缓冲已消费偏移 */
-    int64_t m_readResult;        /**< 异步读完成结果（完成回调写入，>=0 字节数，<0 通道错误） */
-    bool m_readPending;          /**< 是否有在途异步读（OVERLAPPED ReadFile 已提交未完成） */
-    bool m_iocpAssociated;       /**< 信令管道是否已关联到当前全局 IOCP */
-    HANDLE mapHandle;            /**< 命名内存映射句柄（CreateFileMapping/OpenFileMapping） */
-    HANDLE signalPipe;           /**< 信令管道句柄（\\.\pipe\<name>.sig） */
-    bool created;                /**< 是否为创建方（创建方负责断开管道实例） */
+    XObject m_object;            /**< ??? XObject ??(???????,??????) */
+    XEventContext_IOCP m_read;   /**< ????????????(IOCP OVERLAPPED ReadFile) */
+    uint8_t m_readBuffer[16];    /**< ??????(?????????) */
+    size_t m_rxCount;            /**< ????????????? */
+    size_t m_rxOffset;           /**< ??????????? */
+    int64_t m_readResult;        /**< ???????(??????,>=0 ???,<0 ????) */
+    bool m_readPending;          /**< ????????(OVERLAPPED ReadFile ??????) */
+    bool m_iocpAssociated;       /**< ?????????????? IOCP */
+    HANDLE mapHandle;            /**< ????????(CreateFileMapping/OpenFileMapping) */
+    HANDLE signalPipe;           /**< ??????(\\.\pipe\<name>.sig) */
+    bool created;                /**< ??????(???????????) */
 } XFileSharedMemoryWin32;
 
-/* 共享内存信令通道异步接收辅助函数（实现在"内存映射"小节）。
-   XDeviceFile_legacyRead / XDeviceFile_legacyClose 在文件前部使用，需要前置声明。 */
+/* ????????????????(???"????"??)?
+   XDeviceFile_legacyRead / XDeviceFile_legacyClose ???????,??????? */
 static int64_t xfs_win32_shmRead(XFd fdx, XFileSharedMemoryWin32* m,
                                  void* buf, int64_t len);
 static void xfs_win32_shm_cancelRead(XFileSharedMemoryWin32* m);
@@ -121,7 +121,7 @@ static void XDeviceFile_notifyConsoleInput(XWin32ConsoleInputState* state)
     if (!ring || !XAbstractNetIoRing_isEnabled(ring)) return;
     memset(&entry, 0, sizeof(entry));
     entry.m_fd = state->fd;
-    entry.m_events = XSocketAct_Read;
+    entry.m_events = XSocketActType_Read;
     entry.m_sourceType = XAbstractNetIoRing_Source_Custom;
     entry.m_fdType = XFD_TYPE_CONSOLE;
     if (XAbstractNetIoRing_pushCompletion(ring, &entry))
@@ -236,7 +236,7 @@ static void XDeviceFile_destroyConsoleInputState(XWin32ConsoleInputState* state)
     XFree_System(state);
 }
 
-/* 重解析点结构体 */
+/* ??????? */
 #pragma pack(push, 1)
 typedef struct _REPARSE_DATA_BUFFER {
     ULONG ReparseTag;
@@ -270,11 +270,11 @@ typedef struct _REPARSE_DATA_BUFFER {
 #endif
 
 /* ============================================================================
- * 内部辅助函数
+ * ??????
  * ============================================================================ */
 
 /**
- * @brief 将 XString 转换为 Windows 宽字符路径
+ * @brief ? XString ??? Windows ?????
  */
 static wchar_t* XStringToWidePath(const XString* path)
 {
@@ -294,7 +294,7 @@ static wchar_t* XStringToWidePath(const XString* path)
 }
 
 /**
- * @brief 将 XString 转换为 UTF-8 字符串指针
+ * @brief ? XString ??? UTF-8 ?????
  */
 static const char* XStringToUtf8(const XString* str)
 {
@@ -303,7 +303,7 @@ static const char* XStringToUtf8(const XString* str)
 }
 
 /**
- * @brief 将 Windows 文件时间转换为 Unix 时间戳
+ * @brief ? Windows ??????? Unix ???
  */
 static int64_t fileTimeToUnixTime(const FILETIME* ft)
 {
@@ -315,7 +315,7 @@ static int64_t fileTimeToUnixTime(const FILETIME* ft)
 }
 
 /**
- * @brief 通过 XFd 获取底层 Windows HANDLE
+ * @brief ?? XFd ???? Windows HANDLE
  */
 static HANDLE XW32_getFile(XFd fd)
 {
@@ -333,7 +333,7 @@ static HANDLE XW32_getFile(XFd fd)
 }
 
 /**
- * @brief 获取文件属性并填充 XFileStat（内部函数，使用UTF-8路径）
+ * @brief ????????? XFileStat(????,??UTF-8??)
  */
 static bool fillFileStatUtf8(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrData, XFileStat* stat)
 {
@@ -341,7 +341,7 @@ static bool fillFileStatUtf8(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrDa
     
     memset(stat, 0, sizeof(XFileStat));
     
-    /* 转换为宽字符 */
+    /* ?????? */
     int len = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
     if (len <= 0) return false;
     
@@ -397,7 +397,7 @@ static bool fillFileStatUtf8(const char* path, WIN32_FILE_ATTRIBUTE_DATA* attrDa
 }
 
 /**
- * @brief 获取文件属性并填充 XFileStat
+ * @brief ????????? XFileStat
  */
 static bool fillFileStat(const XString* path, WIN32_FILE_ATTRIBUTE_DATA* attrData, XFileStat* stat)
 {
@@ -407,7 +407,7 @@ static bool fillFileStat(const XString* path, WIN32_FILE_ATTRIBUTE_DATA* attrDat
 }
 
 /* ============================================================================
- * 核心文件操作
+ * ??????
  * ============================================================================ */
 
 XFd XDeviceFile_legacyOpen(const XString* path, int mode, uint32_t openFlags, int* error)
@@ -464,7 +464,7 @@ XFd XDeviceFile_legacyOpen(const XString* path, int mode, uint32_t openFlags, in
         return XFD_INVALID;
     }
     
-    /* 将 HANDLE 存入 XFileDescriptor 统一 fd 表 */
+    /* ? HANDLE ?? XFileDescriptor ?? fd ? */
     XFd fd = XFd_alloc(XFD_TYPE_FILE, hFile, NULL);
     if (fd == XFD_INVALID) {
         CloseHandle(hFile);
@@ -563,10 +563,10 @@ void XDeviceFile_legacyClose(XFd fd)
         XFd_setObject(fd, NULL);
         XDeviceFile_destroyConsoleInputState(state);
     } else if (descriptor && descriptor->m_type == XFD_TYPE_MAPPING) {
-        /* 共享内存段：先取消并回收在途异步读（避免悬垂 OVERLAPPED 完成包
-           指向已释放的读上下文），再释放信令管道与映射句柄，创建方断开
-           管道实例，最后移除事件环可能已投递到本对象的未处理事件并释放
-           嵌入式 XObject 基类。 */
+        /* ?????:???????????(???? OVERLAPPED ???
+           ??????????),????????????,?????
+           ????,?????????????????????????
+           ??? XObject ??? */
         XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->object;
         if (mapping) {
             xfs_win32_shm_cancelRead(mapping);
@@ -637,8 +637,8 @@ int64_t XDeviceFile_legacyRead(XFd fd, void* buf, int64_t len)
         return (int64_t)count;
     }
 
-    /* 共享内存段：句柄是信令管道，走 IOCP 异步接收 + 库内部事件通知
-       （xfs_win32_shmRead：消费异步缓冲，无数据时事件环等待完成，不轮询）。 */
+    /* ?????:???????,? IOCP ???? + ???????
+       (xfs_win32_shmRead:??????,???????????,???)? */
     if (descriptor->m_type == XFD_TYPE_MAPPING)
         return xfs_win32_shmRead(fd, (XFileSharedMemoryWin32*)descriptor->object,
                                  buf, len);
@@ -646,7 +646,7 @@ int64_t XDeviceFile_legacyRead(XFd fd, void* buf, int64_t len)
     h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE) return -1;
 
-    /* 管道和重定向输入先探测可读量，避免事件线程等待数据。 */
+    /* ??????????????,??????????? */
     if (GetFileType(h) == FILE_TYPE_PIPE) {
         DWORD available = 0;
         if (!PeekNamedPipe(h, NULL, 0, NULL, &available, NULL)) {
@@ -677,7 +677,7 @@ bool XDeviceFile_legacySetStandardInputEcho(XFd fd, bool enabled)
     HANDLE h = XW32_getFile(fd);
     DWORD mode;
 
-    /* 管道和重定向句柄没有控制台回显位，不能伪造成功状态。 */
+    /* ????????????????,????????? */
     if (h == INVALID_HANDLE_VALUE || GetFileType(h) != FILE_TYPE_CHAR) return false;
     if (!GetConsoleMode(h, &mode)) return false;
     if (enabled) {
@@ -694,16 +694,16 @@ int64_t XDeviceFile_legacyWrite(XFd fd, const void* buf, int64_t len)
     HANDLE h;
     if (!descriptor || !buf || len <= 0) return -1;
 
-    /* 共享内存段：句柄是信令管道，WriteFile 发送信令字节。
-       写方向保持同步等待完成（与 POSIX 一致：信令字节极小）。 */
+    /* ?????:???????,WriteFile ???????
+       ???????????(? POSIX ??:??????)? */
     if (descriptor->m_type == XFD_TYPE_MAPPING) {
         XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->object;
         if (!mapping || !mapping->signalPipe
             || mapping->signalPipe == INVALID_HANDLE_VALUE)
             return -1;
-        /* 共享内存信令管道使用 FILE_FLAG_OVERLAPPED 以支持异步读，因此
-           不能再给 WriteFile 传 NULL OVERLAPPED。写操作仍在本调用内等待
-           完成，并通过事件句柄低位禁止把内部写完成投递到 IOCP。 */
+        /* ?????????? FILE_FLAG_OVERLAPPED ??????,??
+           ???? WriteFile ? NULL OVERLAPPED????????????
+           ??,???????????????????? IOCP? */
         {
             int64_t totalWritten = 0;
             while (totalWritten < len) {
@@ -718,7 +718,7 @@ int64_t XDeviceFile_legacyWrite(XFd fd, const void* buf, int64_t len)
                 eventHandle = CreateEventW(NULL, TRUE, FALSE, NULL);
                 if (!eventHandle) return -1;
                 memset(&overlapped, 0, sizeof(overlapped));
-                /* 防止该内部写请求在已关联的 IOCP 上产生无法识别的完成包。 */
+                /* ????????????? IOCP ???????????? */
                 overlapped.hEvent = (HANDLE)((ULONG_PTR)eventHandle | 1u);
                 ok = WriteFile(mapping->signalPipe,
                                (const char*)buf + totalWritten, toWrite,
@@ -771,30 +771,30 @@ bool XDeviceFile_legacyResize(XFd fd, int64_t size)
     HANDLE h = XW32_getFile(fd);
     if (h == INVALID_HANDLE_VALUE || size < 0) return false;
     
-    /* 保存当前位置 */
+    /* ?????? */
     LARGE_INTEGER zero;
     zero.QuadPart = 0;
     LARGE_INTEGER oldPos;
     if (!SetFilePointerEx(h, zero, &oldPos, FILE_CURRENT)) return false;
     
-    /* 定位到目标大小 */
+    /* ??????? */
     LARGE_INTEGER li;
     li.QuadPart = (LONGLONG)size;
     if (!SetFilePointerEx(h, li, NULL, FILE_BEGIN)) return false;
     
     if (!SetEndOfFile(h)) {
-        /* 恢复原位置 */
+        /* ????? */
         SetFilePointerEx(h, oldPos, NULL, FILE_BEGIN);
         return false;
     }
     
-    /* 恢复原位置 */
+    /* ????? */
     SetFilePointerEx(h, oldPos, NULL, FILE_BEGIN);
     return true;
 }
 
 /* ============================================================================
- * 文件属性操作
+ * ??????
  * ============================================================================ */
 
 bool XDeviceFile_stat(const XString* path, XFileStat* stat)
@@ -865,7 +865,7 @@ bool XDeviceFile_remove(const XString* path, XRemoveMode mode, XString* trashPat
             if (trashPath) XString_assign_utf8(trashPath, "");
             return true;
         }
-        /* 回收站不可用时退化为永久删除 */
+        /* ?????????????? */
     }
 
     wchar_t* wpath = XStringToWidePath(path);
@@ -896,7 +896,29 @@ bool XDeviceFile_rename(const XString* oldPath, const XString* newPath)
     BOOL result = MoveFileW(wold, wnew);
     XFree_System(wold);
     XFree_System(wnew);
-    
+
+    return result != 0;
+}
+
+bool XDeviceFile_renameReplace(const XString* oldPath, const XString* newPath)
+{
+    if (!oldPath || !newPath) return false;
+
+    wchar_t* wold = XStringToWidePath(oldPath);
+    wchar_t* wnew = XStringToWidePath(newPath);
+
+    if (!wold || !wnew) {
+        if (wold) XFree_System(wold);
+        if (wnew) XFree_System(wnew);
+        return false;
+    }
+
+    /* ????:??????????(XSaveFile ???????,?
+     * XUpgradeStoreDir.c/XUpgradeEngine.c ?"????"????)? */
+    BOOL result = MoveFileExW(wold, wnew, MOVEFILE_REPLACE_EXISTING);
+    XFree_System(wold);
+    XFree_System(wnew);
+
     return result != 0;
 }
 
@@ -921,7 +943,7 @@ bool XDeviceFile_copy(const XString* srcPath, const XString* dstPath)
 }
 
 /* ============================================================================
- * 目录操作
+ * ????
  * ============================================================================ */
 
 bool XDeviceFile_mkdir(const XString* path, bool recursive)
@@ -939,7 +961,7 @@ bool XDeviceFile_mkdir(const XString* path, bool recursive)
         return result != 0;
     }
     
-    /* 递归创建目录 */
+    /* ?????? */
     char* pathCopy = XStrdup(utf8Path);
     if (!pathCopy) return false;
     
@@ -1019,7 +1041,7 @@ void* XDeviceDir_platformOpen(const XString* path)
 {
     if (!path) return NULL;
     
-    /* 构造搜索通配符路径 "path\*" */
+    /* ????????? "path\*" */
     XString* searchPathStr = XString_create_copy(path);
     if (!searchPathStr) return NULL;
     XString_append_utf8(searchPathStr, "\\*");
@@ -1058,7 +1080,7 @@ bool XDeviceDir_platformRead(void* backendHandle, XDirEntry* entry)
     
     if (!result) return false;
     
-    /* 将宽字符文件名转换为UTF-8并设置到XString */
+    /* ??????????UTF-8????XString */
     char utf8Buf[MAX_PATH];
     WideCharToMultiByte(CP_UTF8, 0, data->findData.cFileName, -1, utf8Buf, MAX_PATH, NULL, NULL);
     if (entry->name) {
@@ -1081,7 +1103,7 @@ void XDeviceDir_platformClose(void* backendHandle)
 }
 
 /* ============================================================================
- * 路径操作
+ * ????
  * ============================================================================ */
 
 bool XDeviceFile_resolvePath(const XString* path, XString* result, XPathStyle style)
@@ -1108,11 +1130,15 @@ bool XDeviceFile_resolvePath(const XString* path, XString* result, XPathStyle st
             if (wpath2) {
                 HANDLE hFile = CreateFileW(wpath2, 0, FILE_SHARE_READ, NULL,
                                             OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+                /* ???? CreateFileW ??:??????,??/????
+                 * ??(???????????,canonical ??????
+                 * ??????????)? */
+                XFree_System(wpath2);
                 if (hFile != INVALID_HANDLE_VALUE) {
                     wchar_t targetPath[MAX_PATH];
                     DWORD len = GetFinalPathNameByHandleW(hFile, targetPath, MAX_PATH, VOLUME_NAME_DOS);
                     CloseHandle(hFile);
-                    
+
                     if (len > 0 && len < MAX_PATH) {
                         char utf8Target[MAX_PATH];
                         WideCharToMultiByte(CP_UTF8, 0, targetPath, -1, utf8Target, MAX_PATH, NULL, NULL);
@@ -1120,7 +1146,6 @@ bool XDeviceFile_resolvePath(const XString* path, XString* result, XPathStyle st
                         return true;
                     }
                 }
-                XFree_System(wpath2);
             }
         }
     }
@@ -1130,7 +1155,7 @@ bool XDeviceFile_resolvePath(const XString* path, XString* result, XPathStyle st
 }
 
 /* ============================================================================
- * 六、特殊路径
+ * ??????
  * ============================================================================ */
 
 bool XDeviceFile_getSpecialPath(XSpecialPath type, XString* path)
@@ -1192,7 +1217,7 @@ bool XDeviceFile_setCurrentPath(const XString* path)
 }
 
 /* ============================================================================
- * 符号链接操作
+ * ??????
  * ============================================================================ */
 
 bool XDeviceFile_link(const XString* targetPath, const XString* linkPath, XLinkType type)
@@ -1251,7 +1276,7 @@ bool XDeviceFile_readLink(const XString* path, XString* target)
 }
 
 /* ============================================================================
- * 权限操作
+ * ????
  * ============================================================================ */
 
 bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permissions)
@@ -1280,33 +1305,33 @@ bool XDeviceFile_setPermissions(const XString* path, XFilePermissions permission
 }
 
 /* ============================================================================
- * 内存映射（3个）- 可选
+ * ????(3?)- ??
  * ============================================================================
  *
- * 共享内存段在 Windows 上由两块组成：
- *   1. 命名内存映射（CreateFileMapping/OpenFileMapping）：存放跨进程数据，
- *      通过 XDeviceFileCommand_Map 建立视图；
- *   2. 命名管道信令通道（\\.\pipe\<共享内存名>.sig）：数据方写完一块数据后
- *      向管道写入 1 个信令字节，对端通过 IOCP + 库内部事件通知异步接收
- *      （OVERLAPPED ReadFile 关联全局完成端口，与网络套接字/串口的异步
- *      读一致），无需轮询共享内存状态字段。
- *      该通道内置于平台实现，不新增任何公共 API。
+ * ?????? Windows ??????:
+ *   1. ??????(CreateFileMapping/OpenFileMapping):???????,
+ *      ?? XDeviceFileCommand_Map ????;
+ *   2. ????????(\\.\pipe\<?????>.sig):??????????
+ *      ????? 1 ?????,???? IOCP + ???????????
+ *      (OVERLAPPED ReadFile ????????,??????/?????
+ *      ???),?????????????
+ *      ??????????,??????? API?
  *
- * XFd 句柄为信令管道句柄，XDeviceFile_legacyRead / XDeviceFile_legacyWrite 直接在
- * 信令通道上收发；object 保存映射句柄，XDeviceFileCommand_Map / XDeviceFile_legacyClose
- * 据此完成视图与释放。
+ * XFd ?????????,XDeviceFile_legacyRead / XDeviceFile_legacyWrite ???
+ * ???????;object ??????,XDeviceFileCommand_Map / XDeviceFile_legacyClose
+ * ??????????
  */
 
-/* 将共享内存段名称整理为合法的信令管道名：
-   仅保留字母数字与 ._-，其余字符替换为 '_'，避免段名中的目录分隔符破坏
-   管道路径。失败（名称超长等）返回 false。 */
+/* ???????????????????:
+   ???????? ._-,??????? '_',?????????????
+   ???????(?????)?? false? */
 static bool xfs_win32_makeSignalPipeName(const char* name, wchar_t* out, size_t outLen)
 {
     static const wchar_t prefix[] = L"\\\\.\\pipe\\";
     size_t i, n, used;
     if (!name || !out || outLen == 0) return false;
     n = strlen(name);
-    if (n > 200) return false; /* 管道名长度限制，预留前缀与后缀 */
+    if (n > 200) return false; /* ???????,??????? */
     used = 0;
     while (prefix[used] != L'\0' && used + 1 < outLen) {
         out[used] = prefix[used];
@@ -1334,44 +1359,44 @@ static bool xfs_win32_makeSignalPipeName(const char* name, wchar_t* out, size_t 
     return true;
 }
 
-/* 信令通道异步读的有界等待片（毫秒）：XDeviceFile_legacyRead 在无信令字节时
-   通过事件环的 waitForEvents 最多阻塞该时长后返回 0，传输层据此检查
-   整体超时；信令到达时事件环立即唤醒，不存在任何轮询。 */
+/* ?????????????(??):XDeviceFile_legacyRead ???????
+   ?????? waitForEvents ?????????? 0,???????
+   ????;????????????,???????? */
 #define XFILE_SHM_SIGNAL_RCVTIMEO_MS 500
 
-/* 关闭时取消异步读后、等待完成事件回收的最多轮询片数
-   （每片 XFILE_SHM_SIGNAL_RCVTIMEO_MS，用于防御平台异常）。 */
+/* ?????????????????????????
+   (?? XFILE_SHM_SIGNAL_RCVTIMEO_MS,????????)? */
 #define XFS_SHM_CANCEL_RECLAIM_TRIES 50
 
 /* ============================================================================
- * 信令通道异步接收（IOCP + 库内部事件通知）
+ * ????????(IOCP + ???????)
  *
- * 读取路径与网络套接字/串口完全一致：openSharedMemory 建立信令管道后
- * 即把管道句柄关联到 XAbstractNetIoRing 全局 IOCP 完成端口，并提交常驻
- * 异步 OVERLAPPED ReadFile；完成事件由事件环的 waitForEvents
- * （GetQueuedCompletionStatus）出队，先经完成回调把结果写入 m_readResult
- * 并清除在途标记；XDeviceFile_legacyRead 消费 m_readBuffer 中的字节，无数据时
- * 通过事件环有界等待完成通知（超时片返回 0 供传输层检查整体截止时间），
- * 整个过程不轮询共享内存状态字段。
+ * ??????????/??????:openSharedMemory ???????
+ * ????????? XAbstractNetIoRing ?? IOCP ????,?????
+ * ?? OVERLAPPED ReadFile;????????? waitForEvents
+ * (GetQueuedCompletionStatus)??,??????????? m_readResult
+ * ???????;XDeviceFile_legacyRead ?? m_readBuffer ????,????
+ * ?????????????(????? 0 ????????????),
+ * ????????????????
  * ============================================================================ */
 
-/* IOCP 完成回调：waitForEvents 从完成端口出队本读完成包后最先调用，
-   context->finishedBytes 已由事件环写入实际传输字节数。本函数把结果
-   记录到 m_readResult 并清除在途标记。返回 false 表示这是内部接收，
-   不再把 CQ 条目分发给应用层对象。 */
+/* IOCP ????:waitForEvents ?????????????????,
+   context->finishedBytes ?????????????????????
+   ??? m_readResult ?????????? false ????????,
+   ??? CQ ??????????? */
 static bool xfs_win32_shmReadCompletion(XEventContext_IOCP* context, void* userData)
 {
     XFileSharedMemoryWin32* m = (XFileSharedMemoryWin32*)userData;
     if (!m) return false;
     m->m_readResult = (int64_t)context->finishedBytes;
     m->m_readPending = false;
-    /* 这是 XDeviceFile_legacyRead 的内部接收，不应再生成一个应用层 socket
-       事件；调用方会在 waitForEvents 返回后直接消费 m_readBuffer。 */
+    /* ?? XDeviceFile_legacyRead ?????,?????????? socket
+       ??;????? waitForEvents ??????? m_readBuffer? */
     return false;
 }
 
-/* 确保信令管道已经绑定到当前全局 IOCP。共享内存可能在事件环创建前
-   打开，因此不能只在 openSharedMemory 中尝试一次绑定。 */
+/* ??????????????? IOCP??????????????
+   ??,?????? openSharedMemory ???????? */
 static bool xfs_win32_shm_associate(XFileSharedMemoryWin32* m)
 {
     XAbstractNetIoRing* ring;
@@ -1388,10 +1413,10 @@ static bool xfs_win32_shm_associate(XFileSharedMemoryWin32* m)
     return true;
 }
 
-/* 提交信令通道异步读（OVERLAPPED ReadFile，提交到全局 IOCP 完成端口）。
-   读入 mapping->m_readBuffer，完成事件由事件环处理并经完成回调写入
-   m_readResult。成功返回 true；无事件环、句柄无效或提交失败返回 false。
-   调用方保证当前无在途读。 */
+/* ?????????(OVERLAPPED ReadFile,????? IOCP ????)?
+   ?? mapping->m_readBuffer,??????????????????
+   m_readResult????? true;???????????????? false?
+   ???????????? */
 static bool xfs_win32_shm_armRead(XFd fdx, XFileSharedMemoryWin32* m)
 {
     XAbstractNetIoRing* ring;
@@ -1424,14 +1449,14 @@ static bool xfs_win32_shm_armRead(XFd fdx, XFileSharedMemoryWin32* m)
     return true;
 }
 
-/* 通过库内部事件环等待信令通道异步读完成（有界等待）：
-   先检查完成回调是否已处理本读（事件环可能已批处理完成事件）；若仍在
-   途，则以 XFILE_SHM_SIGNAL_RCVTIMEO_MS 为总截止时间循环调用事件环
-   waitForEvents（GetQueuedCompletionStatus，信令到达立即唤醒）。
-   注意 waitForEvents 可能因其他事件源（唤醒包、其他上下文完成）提前
-   返回，本函数只认本读上下文 m_readPending 标记的变化，不把无关唤醒
-   误判为超时；总等待片到点仍未完成才返回 false（由调用方按整体截止
-   时间处理）。返回 true 表示本读已完成。 */
+/* ???????????????????(????):
+   ??????????????(?????????????);???
+   ?,?? XFILE_SHM_SIGNAL_RCVTIMEO_MS ?????????????
+   waitForEvents(GetQueuedCompletionStatus,????????)?
+   ?? waitForEvents ????????(???????????)??
+   ??,?????????? m_readPending ?????,??????
+   ?????;????????????? false(?????????
+   ????)??? true ???????? */
 static bool xfs_win32_shm_waitReadable(XFileSharedMemoryWin32* m)
 {
     XAbstractNetIoRing* ring;
@@ -1440,12 +1465,12 @@ static bool xfs_win32_shm_waitReadable(XFileSharedMemoryWin32* m)
 
     if (!m) return false;
     if (!m->m_readPending)
-        return true; /* 完成回调已处理本读（事件环已批处理） */
+        return true; /* ?????????(???????) */
     ring = XAbstractNetIoRing_global();
     if (!ring) return false;
 
-    /* 以本等待片为总截止时间，循环等待本读的完成事件；
-       waitForEvents 每次按剩余时间有界等待，避免无关唤醒导致忙转。 */
+    /* ???????????,???????????;
+       waitForEvents ???????????,??????????? */
     deadline = XDateTime_currentMSecsSinceEpoch() + XFILE_SHM_SIGNAL_RCVTIMEO_MS;
     for (;;) {
         int waitMs;
@@ -1460,9 +1485,9 @@ static bool xfs_win32_shm_waitReadable(XFileSharedMemoryWin32* m)
     return false;
 }
 
-/* 无事件环退化路径的同步阻塞读：对端信令字节到达前在内核等待。
-   使用本函数私有的 OVERLAPPED + 事件句柄完成同步等待；无事件环时
-   句柄未关联完成端口，不会产生重复完成包。 */
+/* ??????????????:???????????????
+   ???????? OVERLAPPED + ??????????;?????
+   ?????????,?????????? */
 static int64_t xfs_win32_shm_blockingRead(XFileSharedMemoryWin32* m,
                                           void* buf, int64_t len)
 {
@@ -1485,17 +1510,17 @@ static int64_t xfs_win32_shm_blockingRead(XFileSharedMemoryWin32* m,
     }
     if (!GetOverlappedResult(m->signalPipe, &ov, &bytesRead, FALSE)) {
         CloseHandle(ev);
-        return -1; /* 通道错误/对端关闭均视为不可用 */
+        return -1; /* ????/?????????? */
     }
     CloseHandle(ev);
     return (int64_t)bytesRead;
 }
 
-/* 取消在途异步读并回收完成事件（XDeviceFile_legacyClose 关闭前调用）：
-   提交 CancelIoEx 后通过事件环有界等待该读的完成包出队（完成回调会
-   清除 m_readPending 并写入结果），确保释放 mapping 前不存在悬垂
-   OVERLAPPED 完成包指向已释放的读上下文（与 POSIX 的 ASYNC_CANCEL
-   回收语义一致）。 */
+/* ??????????????(XDeviceFile_legacyClose ?????):
+   ?? CancelIoEx ??????????????????(?????
+   ?? m_readPending ?????),???? mapping ??????
+   OVERLAPPED ?????????????(? POSIX ? ASYNC_CANCEL
+   ??????)? */
 static void xfs_win32_shm_cancelRead(XFileSharedMemoryWin32* m)
 {
     XAbstractNetIoRing* ring;
@@ -1518,9 +1543,9 @@ static void xfs_win32_shm_cancelRead(XFileSharedMemoryWin32* m)
     m->m_rxOffset = 0;
 }
 
-/* XDeviceFile_legacyRead 的共享内存信令通道实现：
-   优先消费异步接收缓冲；无数据时通过库内部事件环等待完成通知，
-   超时片返回 0（调用方检查整体截止时间），对端关闭/通道错误返回 -1。 */
+/* XDeviceFile_legacyRead ???????????:
+   ??????????;??????????????????,
+   ????? 0(???????????),????/?????? -1? */
 static int64_t xfs_win32_shmRead(XFd fdx, XFileSharedMemoryWin32* m,
                                  void* buf, int64_t len)
 {
@@ -1529,8 +1554,8 @@ static int64_t xfs_win32_shmRead(XFd fdx, XFileSharedMemoryWin32* m,
     if (!m || !m->signalPipe || m->signalPipe == INVALID_HANDLE_VALUE) return -1;
     if (len <= 0) return 0;
 
-    /* 1. 优先消费异步接收缓冲中的字节；缓冲耗尽后立即重新武装下一次
-          异步读，保证信令通道始终有常驻接收请求（与网络套接字一致）。 */
+    /* 1. ??????????????;??????????????
+          ???,???????????????(????????)? */
     if (m->m_rxCount > 0) {
         n = ((size_t)len < m->m_rxCount) ? (size_t)len : m->m_rxCount;
         memcpy(buf, m->m_readBuffer + m->m_rxOffset, n);
@@ -1541,27 +1566,27 @@ static int64_t xfs_win32_shmRead(XFd fdx, XFileSharedMemoryWin32* m,
         return (int64_t)n;
     }
 
-    /* 2. 无事件环（未创建事件调度器）的退化路径：直接在内核阻塞读，
-          不轮询、不设接收超时；正常使用（XCoreApplication 事件循环）
-          下不会走到这里。 */
+    /* 2. ????(????????)?????:????????,
+          ??????????;????(XCoreApplication ????)
+          ???????? */
     {
         XAbstractNetIoRing* ring = XAbstractNetIoRing_global();
         if (!ring || !XAbstractNetIoRing_isEnabled(ring))
             return xfs_win32_shm_blockingRead(m, buf, len);
     }
 
-    /* 3. 确保在途异步读后，通过事件环等待完成通知（不忙轮询）。 */
+    /* 3. ????????,???????????(????)? */
     if (!m->m_readPending) {
         if (!xfs_win32_shm_armRead(fdx, m)) return -1;
     }
     if (!xfs_win32_shm_waitReadable(m))
-        return 0; /* 超时片：由调用方检查整体截止时间 */
+        return 0; /* ???:???????????? */
 
     {
         int64_t res = m->m_readResult;
         m->m_readResult = 0;
         if (res <= 0) {
-            /* 0=对端关闭（EOF），负=通道错误：均视为通道不可用。 */
+            /* 0=????(EOF),?=????:????????? */
             m->m_rxCount = 0;
             m->m_rxOffset = 0;
             return -1;
@@ -1601,7 +1626,7 @@ XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSi
     }
 
     if (create) {
-        /* 页文件背书的命名内存段，供 MySQL 共享内存等服务端创建、客户端按名打开 */
+        /* ???????????,? MySQL ?????????????????? */
         DWORD sizeHigh = (DWORD)((uint64_t)maxSize >> 32);
         DWORD sizeLow = (DWORD)((uint64_t)maxSize & 0xFFFFFFFF);
         hMap = CreateFileMappingW(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE,
@@ -1618,8 +1643,8 @@ XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSi
         }
     }
 
-    /* 信令通道：命名管道。创建方建立管道实例并阻塞等待客户端连接，
-       客户端等待管道可用后连接（与网络套接字 accept/connect 语义一致）。 */
+    /* ????:????????????????????????,
+       ????????????(?????? accept/connect ????)? */
     utf8Name = XString_toUtf8(name);
     if (!utf8Name
         || !xfs_win32_makeSignalPipeName(utf8Name, signalPipeName,
@@ -1637,9 +1662,9 @@ XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSi
             lastError = GetLastError();
             goto fail;
         }
-        /* OVERLAPPED 句柄的 ConnectNamedPipe 必须以 OVERLAPPED 方式执行：
-           提交后等待完成事件；客户端已先行连接（ERROR_PIPE_CONNECTED）
-           同样视为成功（与网络套接字 accept 语义一致）。 */
+        /* OVERLAPPED ??? ConnectNamedPipe ??? OVERLAPPED ????:
+           ?????????;????????(ERROR_PIPE_CONNECTED)
+           ??????(?????? accept ????)? */
         {
             OVERLAPPED ov;
             memset(&ov, 0, sizeof(ov));
@@ -1651,7 +1676,7 @@ XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSi
             if (!ConnectNamedPipe(hPipe, &ov)) {
                 lastError = GetLastError();
                 if (lastError == ERROR_PIPE_CONNECTED) {
-                    lastError = 0; /* 客户端已连接 */
+                    lastError = 0; /* ?????? */
                 } else if (lastError != ERROR_IO_PENDING) {
                     CloseHandle(ov.hEvent);
                     goto fail;
@@ -1686,7 +1711,7 @@ XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSi
         lastError = ERROR_NOT_ENOUGH_MEMORY;
         goto fail;
     }
-    XObject_init(&mapping->m_object); /* 嵌入式基类：事件通知接收者 */
+    XObject_init(&mapping->m_object); /* ?????:??????? */
     mapping->mapHandle = hMap;
     mapping->signalPipe = hPipe;
     mapping->created = create;
@@ -1697,8 +1722,8 @@ XFd XDeviceFile_openSharedMemory(const XString* name, bool create, int64_t maxSi
         goto fail;
     }
 
-    /* 建立信令管道后立即关联 IOCP 完成端口并开启异步接收（库内部
-       事件通知，与网络套接字/串口 open 后异步读语义一致）。 */
+    /* ??????????? IOCP ???????????(???
+       ????,??????/?? open ????????)? */
     {
         XNetIoRingWin32* ring = (XNetIoRingWin32*)XAbstractNetIoRing_global();
         if (ring && hPipe && hPipe != INVALID_HANDLE_VALUE) {
@@ -1752,7 +1777,7 @@ void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags)
     if ((uint64_t)size > (uint64_t)SIZE_MAX - delta) return NULL;
     viewSize = (SIZE_T)((uint64_t)size + delta);
 
-    /* 共享内存段描述符：句柄是信令管道，映射句柄保存在 object。 */
+    /* ????????:???????,??????? object? */
     if (descriptor->m_type == XFD_TYPE_MAPPING) {
         XFileSharedMemoryWin32* mapping = (XFileSharedMemoryWin32*)descriptor->object;
         if (!mapping || !mapping->mapHandle || mapping->mapHandle == INVALID_HANDLE_VALUE)
@@ -1773,12 +1798,12 @@ void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags)
         if (hFile == INVALID_HANDLE_VALUE) return NULL;
 
         DWORD protect = (flags & 0x2) ? PAGE_READWRITE : PAGE_READONLY;
-        /* 最大长度为 0 表示使用文件当前长度，允许视图从任意文件偏移开始。 */
+        /* ????? 0 ??????????,?????????????? */
         HANDLE hMap2 = CreateFileMappingW(hFile, NULL, protect, 0, 0, NULL);
         if (!hMap2) return NULL;
 
-        /* bit0=私有映射 → FILE_MAP_COPY（写时复制，不写回文件）；
-           bit0=共享映射且可写 → FILE_MAP_WRITE（共享可写，对齐 POSIX MAP_SHARED） */
+        /* bit0=???? ? FILE_MAP_COPY(????,?????);
+           bit0=??????? ? FILE_MAP_WRITE(????,?? POSIX MAP_SHARED) */
         if (flags & 0x1)
             access = (flags & 0x2) ? FILE_MAP_COPY : FILE_MAP_READ;
         else
@@ -1809,7 +1834,7 @@ bool XDeviceFile_legacyUnmap(void* addr, int64_t size)
 }
 
 /**
- * @brief 通过文件描述符设置文件时间
+ * @brief ?????????????
  */
 bool XDeviceFile_legacySetFileTime(XFd fd, XFileTime timeType, int64_t timeValue)
 {
@@ -1838,7 +1863,7 @@ bool XDeviceFile_legacySetFileTime(XFd fd, XFileTime timeType, int64_t timeValue
 }
 
 /* ============================================================================
- * 驱动器列表
+ * ?????
  * ============================================================================ */
 
 bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userData)
@@ -1866,7 +1891,7 @@ bool XDeviceFile_enumerateDrives(XDeviceFileDriveCallback callback, void* userDa
 }
 
 /* ============================================================================
- * 存储设备信息
+ * ??????
  * ============================================================================ */
 
 bool XDeviceFile_getStorageInfo(const XString* path, XStorageInfoData* info)
@@ -1879,7 +1904,7 @@ bool XDeviceFile_getStorageInfo(const XString* path, XStorageInfoData* info)
     wchar_t* wpath = XStringToWidePath(path);
     if (!wpath) return false;
     
-    /* 获取磁盘空间信息 */
+    /* ???????? */
     ULARGE_INTEGER freeBytesAvailable, totalBytes, freeBytes;
     if (!GetDiskFreeSpaceExW(wpath, &freeBytesAvailable, &totalBytes, &freeBytes)) {
         XFree_System(wpath);
@@ -1890,29 +1915,29 @@ bool XDeviceFile_getStorageInfo(const XString* path, XStorageInfoData* info)
     info->bytesFree = (int64_t)freeBytes.QuadPart;
     info->bytesAvailable = (int64_t)freeBytesAvailable.QuadPart;
     
-    /* 获取簇大小 */
+    /* ????? */
     DWORD sectorsPerCluster, bytesPerSector, numberOfFreeClusters, totalNumberOfClusters;
     if (GetDiskFreeSpaceW(wpath, &sectorsPerCluster, &bytesPerSector, &numberOfFreeClusters, &totalNumberOfClusters)) {
         info->blockSize = sectorsPerCluster * bytesPerSector;
     } else {
-        info->blockSize = 4096; /* 默认值 */
+        info->blockSize = 4096; /* ??? */
     }
     
-    /* 获取卷信息 */
+    /* ????? */
     wchar_t volumeName[MAX_PATH + 1];
     wchar_t fileSystemName[MAX_PATH + 1];
     DWORD volumeSerialNumber, maximumComponentLength, fileSystemFlags;
     
     if (GetVolumeInformationW(wpath, volumeName, MAX_PATH, &volumeSerialNumber,
                                &maximumComponentLength, &fileSystemFlags, fileSystemName, MAX_PATH)) {
-        /* 设置卷标名称 */
+        /* ?????? */
         if (info->volumeName) {
             char utf8VolumeName[MAX_PATH];
             WideCharToMultiByte(CP_UTF8, 0, volumeName, -1, utf8VolumeName, MAX_PATH, NULL, NULL);
             XString_assign_utf8(info->volumeName, utf8VolumeName);
         }
         
-        /* 设置文件系统类型 */
+        /* ???????? */
         if (info->fileSystemType) {
             char utf8FsType[MAX_PATH];
             WideCharToMultiByte(CP_UTF8, 0, fileSystemName, -1, utf8FsType, MAX_PATH, NULL, NULL);
@@ -1926,7 +1951,7 @@ bool XDeviceFile_getStorageInfo(const XString* path, XStorageInfoData* info)
         info->isReadOnly = false;
     }
     
-    /* 获取设备路径（卷GUID） */
+    /* ??????(?GUID) */
     if (info->device) {
         HANDLE hFile = CreateFileW(wpath, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                    NULL, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, NULL);
@@ -1947,32 +1972,48 @@ bool XDeviceFile_getStorageInfo(const XString* path, XStorageInfoData* info)
         }
     }
     
-    /* 子卷名称（Windows不支持） */
+    /* ????(Windows???) */
     if (info->subvolume) {
         XString_assign_utf8(info->subvolume, "");
     }
     
     info->isValid = true;
     info->isReady = true;
-    info->isRemovable = false; /* 需要额外检测 */
-    
+    /* ?????:GetDriveTypeW ?????(2026-10-08 ??:????
+     * false ??"??????")? */
+    info->isRemovable = GetDriveTypeW(wpath) == DRIVE_REMOVABLE;
+    /* ????:??????????????("C:/" ??????)? */
+    {
+        size_t pathLen = 0;
+        size_t lastSep = 0;
+        int hasSep = 0;
+        while (utf8Path[pathLen]) {
+            if (utf8Path[pathLen] == '/' || utf8Path[pathLen] == '\\') {
+                lastSep = pathLen;
+                hasSep = 1;
+            }
+            ++pathLen;
+        }
+        info->isRoot = hasSep && lastSep + 1 == pathLen;
+    }
+
     XFree_System(wpath);
     return true;
 }
 
 /* ============================================================================
- * 磁盘格式化
+ * ?????
  * ============================================================================ */
 
 /**
- * @brief 格式化磁盘（Windows实现）
+ * @brief ?????(Windows??)
  * 
- * Windows下有几种格式化方式：
- * 1. SHFormatDrive - 显示系统格式化对话框
- * 2. FormatEx (fmifs.dll) - 命令行格式化
- * 3. CreateFile + FSCTL_SET_BOOTSECTOR - 低级格式化
+ * Windows?????????:
+ * 1. SHFormatDrive - ??????????
+ * 2. FormatEx (fmifs.dll) - ??????
+ * 3. CreateFile + FSCTL_SET_BOOTSECTOR - ?????
  * 
- * 这里使用SHFormatDrive，因为它最安全且由系统处理
+ * ????SHFormatDrive,????????????
  */
 bool XDeviceFile_format(const XString* drive,
                         XDeviceFileType fsType,
@@ -1987,7 +2028,7 @@ bool XDeviceFile_format(const XString* drive,
     const char* utf8Drive = XStringToUtf8(drive);
     if (!utf8Drive) return false;
     
-    /* 获取驱动器号 */
+    /* ?????? */
     char driveLetter = 0;
     if (strlen(utf8Drive) >= 2 && utf8Drive[1] == ':') {
         driveLetter = toupper(utf8Drive[0]);
@@ -1996,27 +2037,33 @@ bool XDeviceFile_format(const XString* drive,
         return false;
     }
     
-    /* 使用SHFormatDrive显示格式化对话框 */
-    /* 注意：这需要COM初始化和用户交互 */
+    /* ??SHFormatDrive???????? */
+    /* ??:???COM???????? */
+    /* ?????(S_OK/S_FALSE)????? COM ???????
+     * CoUninitialize;RPC_E_CHANGED_MODE ???????????????
+     * ????????????,?????????????????
+     * (?? XPlatformDrag_win32 ? SUCCEEDED ????)? */
     HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     if (FAILED(hr) && hr != RPC_E_CHANGED_MODE) {
         return false;
     }
+    const bool comInitializedHere = SUCCEEDED(hr);
     
-    /* SHFormatDrive参数 */
-    /* SHFMT_ID == 0xFFFF是当前版本 */
+    /* SHFormatDrive?? */
+    /* SHFMT_ID == 0xFFFF????? */
     /* SHFMT_OPT_FULL = 0, SHFMT_OPT_QUICK = 1 */
     int fmtOptions = (flags & XFileSystemFormat_Quick) ? 1 : 0;
     
-    /* 调用系统格式化对话框 */
+    /* ?????????? */
     DWORD result = SHFormatDrive(NULL, driveLetter - 'A', 0xFFFF, fmtOptions);
+
+    if (comInitializedHere)
+        CoUninitialize();
     
-    CoUninitialize();
-    
-    /* 结果检查 */
+    /* ???? */
     /* SHFMT_OK = 0, SHFMT_ERROR = ... */
     if (result == 0) {
-        /* 如果指定了卷标名称，需要设置 */
+        /* ?????????,???? */
         if (volumeName) {
             wchar_t* wdrive = XStringToWidePath(drive);
             wchar_t* wlabel = XStringToWidePath(volumeName);

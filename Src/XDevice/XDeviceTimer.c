@@ -1,6 +1,7 @@
 #include "XDeviceTimer.h"
 #include "XDeviceTimerPrivate.h"
 #include "XAbstractEventDispatcher.h"
+#include "XAbstractEventDispatcher_Protected.h" /* 解引用 m_d_ptr->m_hrtimerGroup（高精度定时器注册） */
 #include "XCoreApplication.h"
 #include "XDateTime.h"
 #include "XFileDescriptor.h"
@@ -183,7 +184,7 @@ bool XDeviceTimer_schedule(XAbstractEventDispatcher* dispatcher, XTimerData* dat
     uint64_t intervalMs;
     XHandle handle;
 
-    if (!dispatcher || !dispatcher->d_ptr || !data || intervalNs <= 0 ||
+    if (!dispatcher || !dispatcher->m_d_ptr || !data || intervalNs <= 0 ||
         !actualType || !backendHandle || !timerTypeValid(requestedType))
         return false;
     *backendHandle = NULL;
@@ -206,16 +207,16 @@ bool XDeviceTimer_schedule(XAbstractEventDispatcher* dispatcher, XTimerData* dat
         }
     }
 
-    if (!dispatcher->d_ptr->m_hrtimerGroup) {
-        dispatcher->d_ptr->m_hrtimerGroup = XHrTimerGroup_create(1);
-        if (!dispatcher->d_ptr->m_hrtimerGroup) return false;
-        XHrTimerGroup_setHighResTimeFunc((XTimerGroupBase*)dispatcher->d_ptr->m_hrtimerGroup,
+    if (!dispatcher->m_d_ptr->m_hrtimerGroup) {
+        dispatcher->m_d_ptr->m_hrtimerGroup = XHrTimerGroup_create(1);
+        if (!dispatcher->m_d_ptr->m_hrtimerGroup) return false;
+        XHrTimerGroup_setHighResTimeFunc((XTimerGroupBase*)dispatcher->m_d_ptr->m_hrtimerGroup,
             XDateTime_currentNSecsSinceEpoch);
     }
     XTimerData_setTimeout(data, 0);
     XTimerData_setInterval(data, (size_t)intervalNs);
     handle = XHrTimerGroup_addTimerNs_base(
-        (XTimerGroupBase*)dispatcher->d_ptr->m_hrtimerGroup, *data);
+        (XTimerGroupBase*)dispatcher->m_d_ptr->m_hrtimerGroup, *data);
     if (!handle) return false;
     *actualType = XTimerType_PreciseTimer;
     *backendHandle = handle;
@@ -228,8 +229,8 @@ bool XDeviceTimer_cancel(XAbstractEventDispatcher* dispatcher, XTimerType actual
     XTimeWheelGroup* wheel;
     if (!dispatcher || !backendHandle) return false;
     if (actualType == XTimerType_PreciseTimer) {
-        return dispatcher->d_ptr && dispatcher->d_ptr->m_hrtimerGroup &&
-            XHrTimerGroup_removeTimer_base((XTimerGroupBase*)dispatcher->d_ptr->m_hrtimerGroup,
+        return dispatcher->m_d_ptr && dispatcher->m_d_ptr->m_hrtimerGroup &&
+            XHrTimerGroup_removeTimer_base((XTimerGroupBase*)dispatcher->m_d_ptr->m_hrtimerGroup,
                 backendHandle);
     }
     wheel = XDeviceTimer_timeWheel();
@@ -240,14 +241,14 @@ bool XDeviceTimer_cancel(XAbstractEventDispatcher* dispatcher, XTimerType actual
 void XDeviceTimer_process(XAbstractEventDispatcher* dispatcher, bool processGlobalWheel)
 {
     XTimeWheelGroup* wheel;
-    if (!dispatcher || !dispatcher->d_ptr) return;
+    if (!dispatcher || !dispatcher->m_d_ptr) return;
     if (processGlobalWheel) {
         wheel = XDeviceTimer_timeWheel();
         if (wheel && XTimeWheelGroup_count(wheel))
             XTimeWheelGroup_handler_base((XTimerGroupBase*)wheel);
     }
-    if (dispatcher->d_ptr->m_hrtimerGroup)
-        XHrTimerGroup_handler_base((XTimerGroupBase*)dispatcher->d_ptr->m_hrtimerGroup);
+    if (dispatcher->m_d_ptr->m_hrtimerGroup)
+        XHrTimerGroup_handler_base((XTimerGroupBase*)dispatcher->m_d_ptr->m_hrtimerGroup);
 }
 
 /*
@@ -264,9 +265,9 @@ void XDeviceTimer_process(XAbstractEventDispatcher* dispatcher, bool processGlob
 uint64_t XDeviceTimer_nextPreciseDeadline(const XAbstractEventDispatcher* dispatcher)
 {
     uint64_t deadline = UINT64_MAX;
-    if (!dispatcher || !dispatcher->d_ptr) return UINT64_MAX;
-    if (dispatcher->d_ptr->m_hrtimerGroup)
-        deadline = XHrTimerGroup_getNextExpireTime(dispatcher->d_ptr->m_hrtimerGroup);
+    if (!dispatcher || !dispatcher->m_d_ptr) return UINT64_MAX;
+    if (dispatcher->m_d_ptr->m_hrtimerGroup)
+        deadline = XHrTimerGroup_getNextExpireTime(dispatcher->m_d_ptr->m_hrtimerGroup);
     if (XAbstractEventDispatcher_isMainThread((XAbstractEventDispatcher*)dispatcher)
         && XTimeWheelGroup_GlobalExists())
     {
@@ -280,10 +281,10 @@ uint64_t XDeviceTimer_nextPreciseDeadline(const XAbstractEventDispatcher* dispat
 
 void XDeviceTimer_releaseDispatcher(XAbstractEventDispatcher* dispatcher)
 {
-    if (!dispatcher || !dispatcher->d_ptr || !dispatcher->d_ptr->m_hrtimerGroup)
+    if (!dispatcher || !dispatcher->m_d_ptr || !dispatcher->m_d_ptr->m_hrtimerGroup)
         return;
-    XClassDelete((XClass*)dispatcher->d_ptr->m_hrtimerGroup);
-    dispatcher->d_ptr->m_hrtimerGroup = NULL;
+    XClassDelete((XClass*)dispatcher->m_d_ptr->m_hrtimerGroup);
+    dispatcher->m_d_ptr->m_hrtimerGroup = NULL;
 }
 
 static XDeviceContext* VXDeviceTimer_open(XDevice* self,

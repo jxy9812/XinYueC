@@ -1,7 +1,8 @@
 ﻿/**
  * @file       XComboBox.c
  * @brief      XComboBox 下拉组合框控件实现（对标 Qt 6.8 QComboBox）。
- * @details    内部结构：文本项存于 char** 动态数组（每项独立分配）。
+ * @details    内部结构：文本项存于 XString* 对象数组（每项为独立拥有
+ *             的 XString 对象；项数据/图标为平行的 XString* 数组）。
  *             显示区绘制当前项文本 + 下拉箭头按钮；左键点击弹出项
  *             列表（popupVisible 状态内嵌绘制——选中高亮跟随鼠标）；
  *             可编辑模式内嵌 XLineEdit 占满左侧（编辑文本经
@@ -288,18 +289,37 @@ static void VXComboBox_copy(XComboBox* self, const XComboBox* other)
 /** @brief 移动语义：基类移动后转移项数组，源对象归默认值。 */
 static void VXComboBox_move(XComboBox* self, XComboBox* other)
 {
-    int i;
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XComboBox_init(self, NULL, 0);
     XClass_Parent(XWidget, EXClass_Move,
                   void(*)(XWidget*, XWidget*))((XWidget*)self,
                                                (XWidget*)other);
+    /* 移动前必须释放目标原有的拥有条目与数组缓冲：clear 只析构条目
+     * 对象，三个数组缓冲若不释放即被覆盖丢失（参照 VXLayout_move）；
+     * 数据/图标平行数组须与条目数组一同转移，避免容量失配越界。 */
     XComboBox_clear(self);
+    if (self->m_items) {
+        XFree_System(self->m_items);
+        self->m_items = NULL;
+    }
+    if (self->m_itemData) {
+        XFree_System(self->m_itemData);
+        self->m_itemData = NULL;
+    }
+    if (self->m_itemIcons) {
+        XFree_System(self->m_itemIcons);
+        self->m_itemIcons = NULL;
+    }
+    self->m_itemCapacity = 0;
     self->m_items = other->m_items;
+    self->m_itemData = other->m_itemData;
+    self->m_itemIcons = other->m_itemIcons;
     self->m_itemCount = other->m_itemCount;
     self->m_itemCapacity = other->m_itemCapacity;
     self->m_currentIndex = other->m_currentIndex;
     other->m_items = NULL;
+    other->m_itemData = NULL;
+    other->m_itemIcons = NULL;
     other->m_itemCount = 0;
     other->m_itemCapacity = 0;
     other->m_currentIndex = -1;
@@ -330,7 +350,6 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     other->m_sizeAdjustPolicy = XComboBoxSizeAdjustPolicy_AdjustToContents;
     other->m_frame = true;
     /* m_placeholderText 已转移并重建。 */
-    for (i = 0; i < self->m_itemCount; ++i) { (void)0; }
 }
 
 /* ==================== 延迟抓取定时器（参照 XMenu） ==================== */

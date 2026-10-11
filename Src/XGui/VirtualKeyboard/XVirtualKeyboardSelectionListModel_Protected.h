@@ -6,7 +6,7 @@
  *             面但装配点在引擎）；selectionListChanged/
  *             selectionListActiveItemChanged 为数据源信号转发槽（Qt
  *             protected 槽）；dataSourceDestroyed 清数据源。创建入口
- *             create_engine 同样仅引擎 TU（Qt 私有构造口径）。
+ *             create_ex 同样仅引擎 TU（Qt 私有构造口径）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDSELECTIONLISTMODEL_PROTECTED_H
@@ -23,10 +23,10 @@ extern "C" {
 /**
  * @brief      引擎 TU 专用创建入口（Qt 私有构造口径）。
  * @param      type 模型类型。
- * @return     新对象指针；失败返回 NULL。调用方用 *_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL。调用方用 XClassDelete 释放。
  */
 XVirtualKeyboardSelectionListModel*
-XVirtualKeyboardSelectionListModel_create_engine(
+XVirtualKeyboardSelectionListModel_create_ex(
         XVirtualKeyboardSelectionListModelType type);
 
 /**

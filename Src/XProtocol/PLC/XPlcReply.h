@@ -78,10 +78,10 @@ XCLASS_DEFINE_EXTEND_END(XPlcReply, XObject)
   * | m_state | uint8_t | 回复状态（XPlcReply_State） |
   * | m_type | uint8_t | 回复类型（XPlcReply_ReplyType） |
   * | m_error | uint8_t | 最终错误码（XPlcDevice_Error） |
-  * | m_finished | bool | 是否已完成（包含超时/中止） |
-  * | m_errorString | XString* | 错误描述字符串 |
-  * | m_pduRef | uint16_t | 关联的 S7 PDU 引用号（超时/乱序定位） |
-  * | m_result | XVariant* | Common：单值读写结果，对象拥有 |
+ * | m_finished | bool | 是否已完成（包含超时/中止） |
+ * | m_pduRef | uint16_t | 关联的 S7 PDU 引用号（超时/乱序定位） |
+ * | m_errorString | XString* | 错误描述字符串 |
+ * | m_result | XVariant* | Common：单值读写结果，对象拥有 |
   * | m_rawResult | XByteArray* | Common：原始数据块；Raw：完整应答 PDU |
   * | m_request | XByteArray* | 请求回带（地址+类型+值），重试/分片复用 |
   * | m_intermediateErrors | XVector* | 中间错误列表（分片部分失败等） |
@@ -93,9 +93,9 @@ typedef struct XPlcReply
     uint8_t/*XPlcReply_ReplyType*/ m_type;     ///< 回复类型
     uint8_t /*XPlcDevice_Error*/ m_error;      ///< 最终错误码
     bool m_finished;                    ///< 是否已完成（包含超时/中止）
+    uint16_t  m_pduRef;                 ///< 关联的 S7 PDU 引用号（超时/乱序定位）
     XString* m_errorString;             ///< 错误描述字符串
 
-    uint16_t  m_pduRef;                 ///< 关联的 S7 PDU 引用号（超时/乱序定位）
     XVariant* m_result;                 ///< 结构化结果（Common 类型时有效，对象拥有）
     XByteArray* m_rawResult;            ///< 原始负载结果（Common：原始数据块；Raw：完整应答PDU）
     XByteArray* m_request;              ///< 请求回带（重试/分片复用）

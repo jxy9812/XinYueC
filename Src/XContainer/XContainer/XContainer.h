@@ -15,7 +15,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <stdio.h>       ///< 标准输入输出库，用于调试输出等
 #include <stdbool.h>     ///< 布尔类型定义，提供bool、true、false等
 #include "XMemory.h"     ///< 内存管理工具，提供内存分配、释放等函数
 #include "XTypes.h"      ///< 基础数据类型定义，统一跨平台类型（如size_t等）

@@ -19,11 +19,43 @@ static void xcat_emitCount(XCategoryAxis* self, int count)
     }
 }
 
+/* ==================== 类与对象生命周期 ==================== */
+
+static void VXCategoryAxis_deinit(XCategoryAxis* self)
+{
+    int i;
+    if (!self) return;
+    if (self->m_categories) {
+        for (i = 0; i < self->m_count; ++i) {
+            if (self->m_categories[i]) {
+                XClassDelete(self->m_categories[i]);
+                self->m_categories[i] = NULL;
+            }
+        }
+        XFree_System(self->m_categories);
+        self->m_categories = NULL;
+    }
+    self->m_count = 0;
+    self->m_capacity = 0;
+    XClass_Deinit_Parent(XAbstractAxis, &self->m_base);
+}
+
+XVtable* XCategoryAxis_class_init(void)
+{
+    /* 本类为组合式继承且不新增虚槽（头文件未定义虚表枚举）：
+       按父类槽位容量建表，仅重载 EXClass_Deinit 释放类别表。 */
+    XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XAbstractAxis))
+    XVTABLE_INHERIT_XCLASS(XAbstractAxis);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCategoryAxis_deinit);
+    return XVTABLE_DEFAULT;
+}
+
 void XCategoryAxis_init(XCategoryAxis* self)
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
     XAbstractAxis_init(&self->m_base);
+    XClassSetVtable(self, XCategoryAxis);
     self->m_base.m_min = 0.0;
     self->m_base.m_max = 0.0;
 }

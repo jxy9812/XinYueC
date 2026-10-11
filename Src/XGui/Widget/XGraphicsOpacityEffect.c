@@ -9,15 +9,15 @@
  * @author     XinYueC 团队
  */
 
+#include "XGraphicsOpacityEffect.h"
+
 #include "XGuiConfig.h"
 #include "XMemory.h"
-
-#if XWIDGET_ON
-
-#include "XGraphicsOpacityEffect.h"
 #include "XWidget.h"
 #include "XImage.h"
 #include "XPainter.h"
+
+#if XWIDGET_ON
 
 /* ==================== 内部辅助 ==================== */
 

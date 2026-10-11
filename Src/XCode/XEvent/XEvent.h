@@ -1,9 +1,16 @@
-﻿#ifndef XEVENT_H
+﻿/**
+ * @file       XEvent.h
+ * @brief      事件体系公开 API。
+ * @details    定义事件基类 XEvent 与键盘、鼠标、定时器、套接字活动/关闭、
+ *             子对象、延迟删除、动态属性等派生事件类型，对齐 Qt QEvent；
+ *             实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他
+ *             平台 API。
+ */
+#ifndef XEVENT_H
 #define XEVENT_H
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include<stdio.h>
 #include<stdint.h>
 #include<stdbool.h>
 #include"XClass.h"
@@ -24,16 +31,16 @@ XCLASS_DEFINE_END(XEvent)
 //事件基类
 typedef struct XEvent
 {
-    XClass m_class;
-    int type;                     //事件类型代码
+    XClass m_class;                 ///< 第一个成员（事件基类），由 XClass 管理，禁止手工修改
+    int m_type;                     //事件类型代码
     // 标志位（16 bits）
-    uint16_t reserved : 10;//预留未来扩展
-    uint16_t accepted : 1; //接受事件
-    uint16_t spontaneous:1;             // 是否为自发事件(非用户触发)
-    uint16_t posted:1;                    // 1 是否来自事件队列
-    uint16_t input_event : 1;//是否是输入事件（键盘、鼠标、触摸等）
-    uint16_t pointer_event : 1;//是否是指针设备事件（鼠标、触控笔）
-    uint16_t single_point_event : 1;//是否是单点事件（区别于多点触控）
+    uint16_t m_reserved : 10;//预留未来扩展
+    uint16_t m_accepted : 1; //接受事件
+    uint16_t m_spontaneous:1;             // 是否为自发事件(非用户触发)
+    uint16_t m_posted:1;                    // 1 是否来自事件队列
+    uint16_t m_input_event : 1;//是否是输入事件（键盘、鼠标、触摸等）
+    uint16_t m_pointer_event : 1;//是否是指针设备事件（鼠标、触控笔）
+    uint16_t m_single_point_event : 1;//是否是单点事件（区别于多点触控）
 }XEvent;
 XVtable* XEvent_class_init();
 /**
@@ -658,7 +665,7 @@ typedef struct XMetaCallEvent
     XVarList* argList;            // 函数参数
     //void(*del)(XVarList*);        // XVarList释放函数
    XSemaphore* sem;              //信号量
-   XAtomic_int32_t* ref_count;   // 参数引用计数
+   XAtomic_Int32* ref_count;   // 参数引用计数
 }XMetaCallEvent;
 
 /**
@@ -673,7 +680,7 @@ typedef struct XMetaCallEvent
  * @return 新创建的槽函数事件
  */
 XMetaCallEvent* XMetaCallEvent_create_ex(XMemoryType memory,  XObject* sender, XSlotFunc1 func, size_t signal_id,
-    XVarList* argList, XAtomic_int32_t* ref_count, XSemaphore* sem);
+    XVarList* argList, XAtomic_Int32* ref_count, XSemaphore* sem);
 XVtable* XMetaCallEvent_class_init();
 /**
  * @brief 执行槽函数事件的回调

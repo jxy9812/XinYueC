@@ -33,6 +33,16 @@ static void XModbusTcpServer_deinitClientBuffer(void* value)
     }
 }
 
+// 释放断开/被拒绝的客户端socket：XTcpServer_incomingConnection 将其挂为服务器子对象，
+// 只 close 不删除会随断连逐个累积，直到服务器销毁才回收；此处关闭、解除父子关系并延迟销毁
+static void XModbusTcpServer_releaseClientSocket(XTcpSocket* client)
+{
+    if (!client) return;
+    XTcpSocket_close_base((XIODevice*)client);
+    XObject_setParent((XObject*)client, NULL);
+    XObject_deleteLater((XObject*)client);
+}
+
 // =============== 字节序辅助函数 ================
 static inline uint16_t readUint16BE(const uint8_t* data, size_t offset)
 {
@@ -180,7 +190,7 @@ void XModbusTcpServer_init(XModbusTcpServer* server)
     }
 
     // 创建客户端映射
-    server->m_connectedClients = XMap_Create(XTcpSocket*, XByteArray*, uintptr_t_compare);
+    server->m_connectedClients = XMap_Create(XTcpSocket*, XByteArray*, Xuintptr_t_compare);
     if (server->m_connectedClients) {
         XContainerSetDataDeinitMethod(server->m_connectedClients,
             XModbusTcpServer_deinitClientBuffer);
@@ -208,6 +218,9 @@ static void VXModbusTcpServer_deinit(XModbusTcpServer* server)
     }
 
     server->m_observer = NULL;
+
+    // 调用基类析构（释放XModbusServer的m_dataMap/m_options、XModbusDevice层与XObject层资源）
+    XClass_Deinit_Parent(XModbusServer, server);
 }
 
 // =============== Open/Close ================
@@ -302,7 +315,7 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
         // 检查观察器是否允许连接
         if (server->m_observer && server->m_observer->acceptNewConnection) {
             if (!server->m_observer->acceptNewConnection(server->m_observer->context, client)) {
-                XTcpSocket_close_base(client);
+                XModbusTcpServer_releaseClientSocket(client);
                 continue;
             }
         }
@@ -310,7 +323,7 @@ static void XModbusTcpServer_onNewConnection(XObject* receiver, XVarList* args)
         // 创建接收缓冲区
         XByteArray* buffer = XByteArray_create();
         if (!buffer) {
-            XTcpSocket_close_base(client);
+            XModbusTcpServer_releaseClientSocket(client);
             continue;
         }
 
@@ -414,8 +427,10 @@ static void XModbusTcpServer_onClientDisconnected(XObject* receiver, XVarList* a
     // 断开信号连接
     XObject_disconnect_1((XObject*)client, 0, (XObject*)server, NULL);
 
-    // 发射断开信号
+    // 先发射断开信号（观察者仍可见socket），再释放socket；
+    // 处于信号发射链上，必须用延迟删除，避免其他连接方访问已释放内存
     XModbusTcpServer_modbusClientDisconnected_signal(server, client);
+    XModbusTcpServer_releaseClientSocket(client);
 }
 
 // =============== 信号 ================

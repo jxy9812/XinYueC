@@ -1385,6 +1385,13 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
     XClassMove(&self->m_image2, &newImage2);
 #endif
 #endif
+    /* move 后源对象收尾：newImage/newImage2 是本函数创建的栈临时对象，
+       资源已转出，仍需 XClassDeinit 完成生命周期收尾（创建者责任，
+       资源已转出时为空操作）。 */
+    XClassDeinit(&newImage);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    XClassDeinit(&newImage2);
+#endif
     self->m_size.width = w;
     self->m_size.height = h;
     self->m_activeIndex = 0u;

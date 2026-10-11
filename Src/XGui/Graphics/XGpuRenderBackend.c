@@ -22,6 +22,8 @@
 #include "XMemory.h"
 #include "XDateTime.h"
 #include "XThread.h"
+#include "XVector.h"
+#include "XPrintf.h"
 #include <limits.h>
 
 /* ==================== 帧级诊断埋点（XGPU_PROF=1 启用） ==================== */
@@ -86,10 +88,11 @@ static struct XGpuProf
     bool m_driverPrinted;    /**< 驱动类型已打印。 */
 } g_xgpuProf;
 
-/** @brief 当前 µs 时钟。 */
+/** @brief 当前 µs 时钟（单调毫秒源换算；时长/去伪测量走
+ *         XDateTime_currentMSecsSinceEpoch，不受对时/跳变影响）。 */
 static uint64_t xgpu_prof_now_us(void)
 {
-    return (uint64_t)(XDateTime_currentNSecsSinceEpoch() / 1000);
+    return (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000u;
 }
 
 /** @brief beginFrame 时驱动类型一次性打印与 5s 窗口聚合输出。
@@ -103,7 +106,7 @@ static void xgpu_prof_frame_tick(const XGpuRenderBackend* self,
         /* 对齐 XGpuRenderDriverType 枚举序（OpenGL=0, Vulkan=1）。 */
         static const char* const names[] = { "opengl", "vulkan" };
         int type = (int)XGpuRenderBackend_driverType(self);
-        fprintf(stderr, "[xgpu-prof] driver=%s window=%d\n",
+        XPrintf("[xgpu-prof] driver=%s window=%d\n",
                 (type >= 0 && type <= 1) ? names[type] : "?",
                 (int)windowMode);
         g_xgpuProf.m_driverPrinted = true;
@@ -116,7 +119,7 @@ static void xgpu_prof_frame_tick(const XGpuRenderBackend* self,
         {
             double secs = (double)(now - g_xgpuProf.m_windowStartUs) /
                           1e6;
-            fprintf(stderr,
+            XPrintf(
                     "[xgpu-prof] %.1fs frames=%u readback=%u (%.3fms/次) "
                     "drawImage=%u (%.3fms/次) fillRect=%u (%.4fms/次) "
                     "solidQuad=%u (%.4fms/次) glyphQuad=%u (%.4fms/次) "
@@ -198,9 +201,9 @@ struct XGpuRenderBackend
     XGpuRenderDriverSession* m_session;    /**< 驱动会话（由驱动创建/销毁）。 */
     XImage* m_syncTarget;                  /**< SYNC 读回/上传目标（借用，XGUI_GPU_SYNC 调试模式）。 */
 
-    XGpuGlyphAtlasEntry* m_glyphEntries;   /**< 图集条目数组（拥有）。 */
-    int m_glyphEntryCount;
-    int m_glyphEntryCapacity;
+    XVector m_glyphEntries;                /**< 图集条目容器（拥有；元素为
+                                                XGpuGlyphAtlasEntry，容量与
+                                                扩容由 XVector 管理）。 */
     int m_glyphCursorX;              /**< shelf 装箱当前行游标。 */
     int m_glyphCursorY;
     int m_glyphRowHeight;
@@ -366,10 +369,11 @@ static bool xgpu_session_retry_requested(void)
     return requested != 0;
 }
 
-/** @brief 当前 µs 时钟（冷却计时用；与 XGPU_PROF 聚合同源）。 */
+/** @brief 当前 µs 时钟（冷却限流计时用；单调毫秒源换算，与 XGPU_PROF
+ *         聚合同源，不受对时/跳变影响）。 */
 static uint64_t xgpu_session_now_us(void)
 {
-    return (uint64_t)(XDateTime_currentNSecsSinceEpoch() / 1000);
+    return (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000u;
 }
 
 /** @brief 窗口会话累计失败次数与最近失败时刻（冷却/预算用）。 */
@@ -553,7 +557,7 @@ static uint8_t xgpu_mul255_scalar(unsigned a, unsigned b)
 static void xgpu_glyph_atlas_reset(XGpuRenderBackend* self, bool resetCounters)
 {
     if (!self) return;
-    self->m_glyphEntryCount = 0;
+    XVector_clear_base((XContainer*)&self->m_glyphEntries);
     self->m_glyphCursorX = 0;
     self->m_glyphCursorY = 0;
     self->m_glyphRowHeight = 0;
@@ -584,7 +588,8 @@ static bool xgpu_glyph_atlas_alloc(XGpuRenderBackend* self, int width,
         self->m_glyphRowHeight = 0;
     }
     if (self->m_glyphCursorY + height > XGPU_RENDER_GLYPH_ATLAS_SIZE ||
-        self->m_glyphEntryCount >= XGPU_GLYPH_ATLAS_MAX_ENTRIES)
+        XVector_size_base((XContainer*)&self->m_glyphEntries) >=
+            XGPU_GLYPH_ATLAS_MAX_ENTRIES)
         xgpu_glyph_atlas_reset(self, false);
     if (self->m_glyphCursorX + width > XGPU_RENDER_GLYPH_ATLAS_SIZE)
     {
@@ -612,9 +617,13 @@ static const XGpuGlyphAtlasEntry* xgpu_glyph_atlas_find(
     const XGpuRenderBackend* self, uint64_t key, int width, int height)
 {
     int i;
-    for (i = 0; i < self->m_glyphEntryCount; ++i)
+    int count = (int)XVector_size_base(
+        (XContainer*)&self->m_glyphEntries);
+    for (i = 0; i < count; ++i)
     {
-        const XGpuGlyphAtlasEntry* entry = &self->m_glyphEntries[i];
+        const XGpuGlyphAtlasEntry* entry =
+            (const XGpuGlyphAtlasEntry*)XVector_at_base(
+                &self->m_glyphEntries, i);
         if (entry->m_key == key && entry->m_width == width &&
             entry->m_height == height)
             return entry;
@@ -703,10 +712,11 @@ static XGpuRenderDriverSession* xgpu_session_create_with_retry(
     {
         XThread_msleep(XGPU_SESSION_RETRY_DELAY_MS);
         session = driver->sessionCreate(window, width, height);
-        /* 罕见异常路径的常驻一行诊断（不受 XGPU_PROF 门控）：定位
+        /* 罕见异常路径的常驻一行诊断（不受 XGPU_PROF 门控；经
+           XERROR_PRINTF 走 XPrintf 输出栈，外部依赖约束 2.4）：定位
            「瞬态失败 vs 真坏环境」必须留下证据。 */
-        fprintf(stderr,
-                "[xgpu] session retry: %s (window=%p %dx%d)\n",
+        XERROR_PRINTF(
+                "[xgpu] session retry: %s (window=%p %dx%d)",
                 session ? "recovered on 2nd attempt" : "failed twice",
                 (void*)window, width, height);
     }
@@ -730,6 +740,7 @@ static XGpuRenderBackend* xgpu_create_ex(XWindow* window, int width,
     if (!driver || !driver->available) return NULL;
     self = (XGpuRenderBackend*)XCalloc_System(1u, sizeof(*self));
     if (!self) return NULL;
+    XVector_init(&self->m_glyphEntries, sizeof(XGpuGlyphAtlasEntry), true);
     self->m_width = width;
     self->m_height = height;
     self->m_windowMode = window != NULL;
@@ -741,7 +752,13 @@ static XGpuRenderBackend* xgpu_create_ex(XWindow* window, int width,
     {
         /* 有序回退：Vulkan 驱动创建失败 -> OpenGL -> software。 */
         driver = XGpuRenderDriver_procs(XGpuRenderDriver_OpenGL);
-        if (!driver) return NULL;
+        if (!driver)
+        {
+            /* 错误返回路径先清理再返回（self 已分配）。 */
+            XClassDeinit((XClass*)&self->m_glyphEntries);
+            XFree_System(self);
+            return NULL;
+        }
         self->m_driver = driver;
         self->m_driverType = XGpuRenderDriver_OpenGL;
         self->m_session = xgpu_session_create_with_retry(driver, window,
@@ -749,6 +766,7 @@ static XGpuRenderBackend* xgpu_create_ex(XWindow* window, int width,
     }
     if (!self->m_session)
     {
+        XClassDeinit((XClass*)&self->m_glyphEntries);
         XFree_System(self);
         return NULL;
     }
@@ -818,7 +836,7 @@ void XGpuRenderBackend_destroy(XGpuRenderBackend* self)
     if (!self) return;
     if (self->m_driver && self->m_session)
         self->m_driver->sessionDestroy(self->m_session);
-    if (self->m_glyphEntries) XFree_System(self->m_glyphEntries);
+    XClassDeinit((XClass*)&self->m_glyphEntries);
     XFree_System(self);
 }
 
@@ -1065,30 +1083,21 @@ bool XGpuRenderBackend_drawGlyphAlpha(XGpuRenderBackend* self,
         if (!self->m_driver->glyphAtlasUpload(self->m_session, alpha,
                                               width, height, atlasX, atlasY))
             return false;
-        if (self->m_glyphEntryCount >= self->m_glyphEntryCapacity)
         {
-            int newCapacity = self->m_glyphEntryCapacity > 0
-                                  ? self->m_glyphEntryCapacity * 2
-                                  : 256;
-            XGpuGlyphAtlasEntry* entries;
-            if (newCapacity > XGPU_GLYPH_ATLAS_MAX_ENTRIES)
-                newCapacity = XGPU_GLYPH_ATLAS_MAX_ENTRIES;
-            entries = (XGpuGlyphAtlasEntry*)XRealloc_System(
-                self->m_glyphEntries,
-                (size_t)newCapacity * sizeof(*entries));
-            if (!entries) return false;
-            self->m_glyphEntries = entries;
-            self->m_glyphEntryCapacity = newCapacity;
-        }
-        {
-            XGpuGlyphAtlasEntry* stored = &self->m_glyphEntries[self->m_glyphEntryCount];
-            stored->m_key = key;
-            stored->m_width = width;
-            stored->m_height = height;
-            stored->m_x = atlasX;
-            stored->m_y = atlasY;
-            ++self->m_glyphEntryCount;
-            entry = stored;
+            /* 容量与倍增扩容交给 XVector（容器优先，禁手工裸数组扩容）；
+               走 push_back 的倍增扩容路径，与旧容量翻倍口径一致。 */
+            XGpuGlyphAtlasEntry stored;
+            stored.m_key = key;
+            stored.m_width = width;
+            stored.m_height = height;
+            stored.m_x = atlasX;
+            stored.m_y = atlasY;
+            if (!XVector_push_back_1_base(&self->m_glyphEntries, &stored))
+                return false;
+            entry = (const XGpuGlyphAtlasEntry*)XVector_at_base(
+                &self->m_glyphEntries,
+                (int64_t)XVector_size_base(
+                    (XContainer*)&self->m_glyphEntries) - 1);
         }
         ++self->m_glyphUploads;
     }

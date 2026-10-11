@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XString.h"
 #include"XStringList.h"
 #include"XTestMenu.h"
@@ -33,7 +33,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "banana");
 		XStringList_sort(list, XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("sort(大小写敏感,5项) = "); XPrintf_2(joined);
+		XPrintf_3("sort(大小写敏感,5项) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:Apple,Cherry,apple,banana,banana)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -48,7 +48,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "banana");
 		XStringList_sort(list, XChar_CaseInsensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("sort(大小写不敏感,5项) = "); XPrintf_2(joined);
+		XPrintf_3("sort(大小写不敏感,5项) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:Apple,apple,banana,banana,Cherry)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -67,7 +67,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "Only");
 		XStringList_sort(list, XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("sort(单元素) = "); XPrintf_2(joined);
+		XPrintf_3("sort(单元素) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:Only)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -81,7 +81,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "阿明");
 		XStringList_sort(list, XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("sort(中文) = "); XPrintf_2(joined);
+		XPrintf_3("sort(中文) = "); XPrintf_string(joined);
 		XPrintf_3("\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -95,7 +95,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "20");
 		XStringList_sort(list, XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("sort(数字字符串) = "); XPrintf_2(joined);
+		XPrintf_3("sort(数字字符串) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:1,10,2,20)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -117,7 +117,7 @@ void XStringListQtAlignTest()
 		size_t removed = XStringList_removeDuplicates(list);
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf("removeDuplicates: 移除%zu项, 结果=", removed);
-		XPrintf_2(joined); XPrintf_3("  (期望:移除3项, a,b,c)\n");
+		XPrintf_string(joined); XPrintf_3("  (期望:移除3项, a,b,c)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
 	}
@@ -140,7 +140,7 @@ void XStringListQtAlignTest()
 		size_t removed = XStringList_removeDuplicates(list);
 		XString* joined = XStringList_join_utf8(list, ",");
 		XPrintf("removeDuplicates(全相同): 移除%zu项, 结果=", removed);
-		XPrintf_2(joined); XPrintf_3("  (期望:移除2项, x)\n");
+		XPrintf_string(joined); XPrintf_3("  (期望:移除2项, x)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
 	}
@@ -172,7 +172,7 @@ void XStringListQtAlignTest()
 		XString* needle = XString_create_utf8("Hello");
 		XStringList* filtered = XStringList_filter(list, needle, XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(filtered, ",");
-		XPrintf_3("filter(Hello,大小写敏感) = "); XPrintf_2(joined);
+		XPrintf_3("filter(Hello,大小写敏感) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:Hello)\n");
 		XClassDelete(joined);
 		XClassDelete(filtered);
@@ -189,7 +189,7 @@ void XStringListQtAlignTest()
 		XString* needle = XString_create_utf8("Hello");
 		XStringList* filtered = XStringList_filter(list, needle, XChar_CaseInsensitive);
 		XString* joined = XStringList_join_utf8(filtered, ",");
-		XPrintf_3("filter(Hello,大小写不敏感) = "); XPrintf_2(joined);
+		XPrintf_3("filter(Hello,大小写不敏感) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:Hello,HELLO)\n");
 		XClassDelete(joined);
 		XClassDelete(filtered);
@@ -205,7 +205,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "test");
 		XStringList* filtered = XStringList_filter_utf8(list, "test", XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(filtered, ",");
-		XPrintf_3("filter_utf8(test) = "); XPrintf_2(joined);
+		XPrintf_3("filter_utf8(test) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:test)\n");
 		XClassDelete(joined);
 		XClassDelete(filtered);
@@ -258,7 +258,7 @@ void XStringListQtAlignTest()
 		XString* after = XString_create_utf8("Hi");
 		XStringList_replaceInStrings(list, before, after, XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("replaceInStrings(Hello→Hi,敏感) = "); XPrintf_2(joined);
+		XPrintf_3("replaceInStrings(Hello→Hi,敏感) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:Hi World,hello world,HELLO WORLD)\n");
 		XClassDelete(joined);
 		XClassDelete(before);
@@ -273,7 +273,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "HELLO WORLD");
 		XStringList_replaceInStrings_utf8(list, "world", "Earth", XChar_CaseInsensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("replaceInStrings_utf8(world→Earth,不敏感) = "); XPrintf_2(joined);
+		XPrintf_3("replaceInStrings_utf8(world→Earth,不敏感) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:Hello Earth,hello Earth,HELLO Earth)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -285,7 +285,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "def");
 		XStringList_replaceInStrings_utf8(list, "xyz", "yyy", XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("replaceInStrings(无匹配) = "); XPrintf_2(joined);
+		XPrintf_3("replaceInStrings(无匹配) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:abc,def)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -297,7 +297,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "d-e-f");
 		XStringList_replaceInStrings_utf8(list, "-", "_", XChar_CaseSensitive);
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("replaceInStrings(-→_) = "); XPrintf_2(joined);
+		XPrintf_3("replaceInStrings(-→_) = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:a_b_c,d_e_f)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -382,7 +382,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "World");
 		XStringList_push_back_utf8(list, "Test");
 		XString* joined = XStringList_join_utf8(list, ", ");
-		XPrintf_3("join(\", \") = "); XPrintf_2(joined);
+		XPrintf_3("join(\", \") = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:Hello, World, Test)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -394,7 +394,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "B");
 		XStringList_push_back_utf8(list, "C");
 		XString* joined = XStringList_join_utf8(list, "-");
-		XPrintf_3("join(\"-\") = "); XPrintf_2(joined);
+		XPrintf_3("join(\"-\") = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:A-B-C)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -411,7 +411,7 @@ void XStringListQtAlignTest()
 		XStringList_push_front_utf8(list, "A");
 		XStringList_insert_utf8(list, 1, "C");
 		XString* joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("push+insert = "); XPrintf_2(joined);
+		XPrintf_3("push+insert = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:A,C,B)\n");
 		XClassDelete(joined);
 		// size / isEmpty
@@ -429,7 +429,7 @@ void XStringListQtAlignTest()
 		XStringList_pop_back_base(list);
 		XStringList_pop_front_base(list);
 		joined = XStringList_join_utf8(list, ",");
-		XPrintf_3("pop_back+pop_front = "); XPrintf_2(joined);
+		XPrintf_3("pop_back+pop_front = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:C)\n");
 		XClassDelete(joined);
 		XClassDelete(list);
@@ -441,7 +441,7 @@ void XStringListQtAlignTest()
 		XStringList_push_back_utf8(list, "Y");
 		XStringList* copy = XStringList_create_copy(list);
 		XString* joined = XStringList_join_utf8(copy, ",");
-		XPrintf_3("create_copy = "); XPrintf_2(joined);
+		XPrintf_3("create_copy = "); XPrintf_string(joined);
 		XPrintf_3("  (期望:X,Y)\n");
 		XClassDelete(joined);
 		XClassDelete(copy);

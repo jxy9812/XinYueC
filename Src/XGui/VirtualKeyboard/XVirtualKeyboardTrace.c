@@ -11,30 +11,28 @@
 #include "XVirtualKeyboardTrace.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
+#include "XString.h"
+#include "XVector.h"
 
-/** @brief 通道数据（名字 + double 数组，按需扩展）。 */
+/** @brief 通道数据（名字 + double 向量，元素对象均由通道拥有）。 */
 typedef struct XVirtualKeyboardTraceChannel
 {
-    char* m_name;     /**< 通道名（UTF-8，堆分配）。 */
-    double* m_data;   /**< 数据数组（堆分配）。 */
-    int m_count;      /**< 已写数据条数。 */
-    int m_capacity;   /**< 数组容量。 */
+    XString m_name; /**< 通道名（对象拥有）。 */
+    XVector m_data; /**< 数据向量（对象拥有，元素 double，按需扩展）。 */
 } XVirtualKeyboardTraceChannel;
 
 /** @brief 私有数据块。 */
 typedef struct XVirtualKeyboardTracePrivate
 {
-    int m_traceId;                    /**< 轨迹 id（默认 -1，Qt 缺省）。 */
-    XVirtualKeyboardTraceChannel* m_channels; /**< 通道数组。 */
-    int m_channelCount;               /**< 通道数。 */
-    XVirtualKeyboardTracePoint* m_points; /**< 点数组。 */
-    int m_pointCount;                 /**< 点数。 */
-    int m_pointCapacity;              /**< 点数组容量。 */
-    bool m_final;                     /**< 一笔结束。 */
-    bool m_canceled;                  /**< 轨迹作废。 */
-    float m_opacity;                  /**< 透明度 [0,1]，默认 1。 */
-    XTimerId m_hideTimer;             /**< 延时隐藏定时器。 */
-    bool m_hideExpired;               /**< 延时隐藏已到期。 */
+    int m_traceId;          /**< 轨迹 id（默认 -1，Qt 缺省）。 */
+    XVector m_channels;     /**< 通道向量（元素 XVirtualKeyboardTraceChannel，
+                                 带元素拷贝/移动/释放回调）。 */
+    XVector m_points;       /**< 点向量（元素 XVirtualKeyboardTracePoint）。 */
+    bool m_final;           /**< 一笔结束。 */
+    bool m_canceled;        /**< 轨迹作废。 */
+    float m_opacity;        /**< 透明度 [0,1]，默认 1。 */
+    XTimerId m_hideTimer;   /**< 延时隐藏定时器。 */
+    bool m_hideExpired;     /**< 延时隐藏已到期。 */
 } XVirtualKeyboardTracePrivate;
 
 /** @brief 内部取私有块。 */
@@ -56,36 +54,49 @@ static void xvkt_emit(XVirtualKeyboardTrace* self, size_t signal,
         XVarList_delete(args);
 }
 
+/** @brief 通道元素拷贝（通道 XVector 的元素复制回调）。 */
+static void xvkt_channelCopy(void* data, const void* sData)
+{
+    XVirtualKeyboardTraceChannel* dest = (XVirtualKeyboardTraceChannel*)data;
+    const XVirtualKeyboardTraceChannel* src =
+        (const XVirtualKeyboardTraceChannel*)sData;
+    XClassCopy(&dest->m_name, &src->m_name);
+    XClassCopy(&dest->m_data, &src->m_data);
+}
+
+/** @brief 通道元素移动（通道 XVector 扩容/插入搬移的元素回调）。 */
+static void xvkt_channelMove(void* data, const void* sData)
+{
+    XVirtualKeyboardTraceChannel* dest = (XVirtualKeyboardTraceChannel*)data;
+    XVirtualKeyboardTraceChannel* src = (XVirtualKeyboardTraceChannel*)sData;
+    XClassMove(&dest->m_name, &src->m_name);
+    XClassMove(&dest->m_data, &src->m_data);
+}
+
+/** @brief 通道元素释放（通道 XVector 清理/析构的元素回调）。 */
+static void xvkt_channelDeinit(void* data)
+{
+    XVirtualKeyboardTraceChannel* ch = (XVirtualKeyboardTraceChannel*)data;
+    XClassDeinit(&ch->m_name);
+    XClassDeinit(&ch->m_data);
+}
+
 /** @brief 通道查找（名字精确匹配；未找到返回 NULL）。 */
 static XVirtualKeyboardTraceChannel* xvkt_findChannel(
         XVirtualKeyboardTracePrivate* priv, const char* channel)
 {
-    int i;
+    size_t i;
+    size_t n;
     if (!priv || !channel) return NULL;
-    for (i = 0; i < priv->m_channelCount; ++i) {
-        if (priv->m_channels[i].m_name &&
-            XStrcmp(priv->m_channels[i].m_name, channel) == 0)
-            return &priv->m_channels[i];
+    n = XVector_size_base(&priv->m_channels);
+    for (i = 0; i < n; ++i) {
+        XVirtualKeyboardTraceChannel* ch =
+            (XVirtualKeyboardTraceChannel*)XVector_at_base(&priv->m_channels,
+                                                           (int64_t)i);
+        if (XStrcmp(XString_toUtf8(&ch->m_name), channel) == 0)
+            return ch;
     }
     return NULL;
-}
-
-/** @brief 释放全部通道。 */
-static void xvkt_clearChannels(XVirtualKeyboardTracePrivate* priv)
-{
-    int i;
-    if (!priv) return;
-    for (i = 0; i < priv->m_channelCount; ++i) {
-        if (priv->m_channels[i].m_name)
-            XFree_System(priv->m_channels[i].m_name);
-        if (priv->m_channels[i].m_data)
-            XFree_System(priv->m_channels[i].m_data);
-    }
-    if (priv->m_channels) {
-        XFree_System(priv->m_channels);
-        priv->m_channels = NULL;
-    }
-    priv->m_channelCount = 0;
 }
 
 /** @brief 停延时隐藏定时器（幂等）。 */
@@ -138,8 +149,8 @@ static void XVkt_deinit(XVirtualKeyboardTrace* self)
     priv = xvkt_priv(self);
     if (priv) {
         xvkt_stopHide(self);
-        if (priv->m_points) XFree_System(priv->m_points);
-        xvkt_clearChannels(priv);
+        XClassDeinit(&priv->m_points);
+        XClassDeinit(&priv->m_channels);
         XFree_System(priv);
         self->m_data = NULL;
     }
@@ -173,6 +184,12 @@ void XVirtualKeyboardTrace_init(XVirtualKeyboardTrace* self)
     priv = (XVirtualKeyboardTracePrivate*)self->m_data;
     XMemset(priv, 0, sizeof(*priv));
     priv->m_traceId = -1;
+    XVector_init(&priv->m_channels, sizeof(XVirtualKeyboardTraceChannel),
+                 false);
+    XContainerSetDataCopyMethod(&priv->m_channels, xvkt_channelCopy);
+    XContainerSetDataMoveMethod(&priv->m_channels, xvkt_channelMove);
+    XContainerSetDataDeinitMethod(&priv->m_channels, xvkt_channelDeinit);
+    XVector_init(&priv->m_points, sizeof(XVirtualKeyboardTracePoint), false);
     priv->m_opacity = 1.0f;
     priv->m_hideTimer = XTIMER_INVALID_ID;
 }
@@ -197,15 +214,20 @@ void XVirtualKeyboardTrace_setTraceId(XVirtualKeyboardTrace* self,
 int XVirtualKeyboardTrace_channelCount(const XVirtualKeyboardTrace* self)
 {
     XVirtualKeyboardTracePrivate* priv = xvkt_priv(self);
-    return priv ? priv->m_channelCount : 0;
+    return priv ? (int)XVector_size_base(&priv->m_channels) : 0;
 }
 
 const char* XVirtualKeyboardTrace_channelAt(
         const XVirtualKeyboardTrace* self, int index)
 {
     XVirtualKeyboardTracePrivate* priv = xvkt_priv(self);
-    if (!priv || index < 0 || index >= priv->m_channelCount) return NULL;
-    return priv->m_channels[index].m_name;
+    XVirtualKeyboardTraceChannel* ch;
+    if (!priv || index < 0 ||
+        index >= (int)XVector_size_base(&priv->m_channels))
+        return NULL;
+    ch = (XVirtualKeyboardTraceChannel*)XVector_at_base(&priv->m_channels,
+                                                        index);
+    return ch ? XString_toUtf8(&ch->m_name) : NULL;
 }
 
 void XVirtualKeyboardTrace_setChannels(XVirtualKeyboardTrace* self,
@@ -214,28 +236,21 @@ void XVirtualKeyboardTrace_setChannels(XVirtualKeyboardTrace* self,
 {
     XVirtualKeyboardTracePrivate* priv = xvkt_priv(self);
     int i;
-    int n = 0;
     if (!priv) return;
-    xvkt_clearChannels(priv);
-    if (channels && count > 0) {
-        priv->m_channels = (XVirtualKeyboardTraceChannel*)XMalloc_System(
-            (size_t)count * sizeof(XVirtualKeyboardTraceChannel));
-        if (priv->m_channels) {
-            XMemset(priv->m_channels,
-                    0, (size_t)count * sizeof(XVirtualKeyboardTraceChannel));
-            /* 紧凑下标 n 写入：失败槽不占坑，计数与已填充槽严格一致，
-               clearChannels 按 m_channelCount 释放才不漏（对齐
-               XVirtualKeyboardSettings/XVirtualKeyboardDictionary 写法）。 */
-            for (i = 0; i < count && channels[i]; ++i) {
-                size_t len = XStrlen(channels[i]) + 1;
-                char* copy = (char*)XMalloc_System(len);
-                if (!copy) continue;
-                XMemcpy(copy, channels[i], len);
-                priv->m_channels[n].m_name = copy;
-                ++n;
-            }
-            priv->m_channelCount = n;
+    XVector_clear_base(&priv->m_channels);
+    for (i = 0; channels && i < count && channels[i]; ++i) {
+        XVirtualKeyboardTraceChannel channel;
+        bool ok;
+        XString_init(&channel.m_name);
+        XVector_init(&channel.m_data, sizeof(double), false);
+        ok = XString_assign_utf8(&channel.m_name, channels[i]) &&
+             XVector_push_back_move_1_base(&priv->m_channels, &channel);
+        if (!ok) {
+            /* 失败条目不占坑：就地释放本条后跳过（对齐原紧凑写入语义）。 */
+            XClassDeinit(&channel.m_name);
+            XClassDeinit(&channel.m_data);
         }
+        /* 成功时成员已 move 入表，channel 留空，无需再反初始化。 */
     }
     xvkt_emit(self, (size_t)XVirtualKeyboardTrace_channelsChanged_signal(
                         NULL),
@@ -245,7 +260,7 @@ void XVirtualKeyboardTrace_setChannels(XVirtualKeyboardTrace* self,
 int XVirtualKeyboardTrace_length(const XVirtualKeyboardTrace* self)
 {
     XVirtualKeyboardTracePrivate* priv = xvkt_priv(self);
-    return priv ? priv->m_pointCount : 0;
+    return priv ? (int)XVector_size_base(&priv->m_points) : 0;
 }
 
 int XVirtualKeyboardTrace_points(const XVirtualKeyboardTrace* self, int pos,
@@ -260,14 +275,16 @@ int XVirtualKeyboardTrace_points(const XVirtualKeyboardTrace* self, int pos,
     int i;
     if (!priv) return 0;
     if (pos < 0) pos = 0;
-    if (pos > priv->m_pointCount) return 0;
+    end = (int)XVector_size_base(&priv->m_points);
+    if (pos > end) return 0;
     start = pos;
-    end = (count < 0 || start + count > priv->m_pointCount)
-              ? priv->m_pointCount
-              : start + count;
+    end = (count < 0 || start + count > end) ? end : start + count;
     for (i = start; i < end; ++i) {
-        if (outPoints && written < maxCount)
-            outPoints[written] = priv->m_points[i];
+        if (outPoints && written < maxCount) {
+            outPoints[written] =
+                *(const XVirtualKeyboardTracePoint*)XVector_at_base(
+                    &priv->m_points, i);
+        }
         ++written;
     }
     return written;
@@ -277,29 +294,14 @@ int XVirtualKeyboardTrace_addPoint(XVirtualKeyboardTrace* self,
                                    const XVirtualKeyboardTracePoint* point)
 {
     XVirtualKeyboardTracePrivate* priv = xvkt_priv(self);
+    int count;
     if (!priv || !point) return -1;
-    if (priv->m_pointCount >= priv->m_pointCapacity) {
-        int newCap = priv->m_pointCapacity > 0 ? priv->m_pointCapacity * 2
-                                               : 16;
-        XVirtualKeyboardTracePoint* grown =
-            (XVirtualKeyboardTracePoint*)XMalloc_System(
-                (size_t)newCap * sizeof(XVirtualKeyboardTracePoint));
-        if (!grown) return -1;
-        if (priv->m_points) {
-            XMemcpy(grown, priv->m_points,
-                    (size_t)priv->m_pointCount *
-                        sizeof(XVirtualKeyboardTracePoint));
-            XFree_System(priv->m_points);
-        }
-        priv->m_points = grown;
-        priv->m_pointCapacity = newCap;
-    }
-    priv->m_points[priv->m_pointCount] = *point;
-    ++priv->m_pointCount;
+    if (!XVector_push_back_1_base(&priv->m_points, point)) return -1;
+    count = (int)XVector_size_base(&priv->m_points);
     xvkt_emit(self, (size_t)XVirtualKeyboardTrace_lengthChanged_signal(
                         NULL, 0),
-              XVarList_Create(XVar(int, priv->m_pointCount)));
-    return priv->m_pointCount - 1;
+              XVarList_Create(XVar(int, count)));
+    return count - 1;
 }
 
 bool XVirtualKeyboardTrace_setChannelData(XVirtualKeyboardTrace* self,
@@ -311,25 +313,12 @@ bool XVirtualKeyboardTrace_setChannelData(XVirtualKeyboardTrace* self,
     if (!priv || index < 0) return false;
     ch = xvkt_findChannel(priv, channel);
     if (!ch) return false;
-    if (index >= ch->m_capacity) {
-        int newCap = ch->m_capacity > 0 ? ch->m_capacity : 16;
-        double* grown;
-        while (newCap <= index) newCap *= 2;
-        grown = (double*)XMalloc_System((size_t)newCap * sizeof(double));
-        if (!grown) return false;
-        if (ch->m_data) {
-            XMemcpy(grown, ch->m_data,
-                    (size_t)ch->m_count * sizeof(double));
-            XFree_System(ch->m_data);
-        }
-        /* 扩容区间补 0（稀疏通道按需扩展语义）。 */
-        XMemset(grown + ch->m_count, 0,
-                (size_t)(newCap - ch->m_count) * sizeof(double));
-        ch->m_data = grown;
-        ch->m_capacity = newCap;
+    if ((size_t)index >= XVector_size_base(&ch->m_data)) {
+        /* 稀疏通道按需扩展：resize 将新增区间补 0（原语义）。 */
+        if (!XVector_resize_base(&ch->m_data, (size_t)index + 1))
+            return false;
     }
-    ch->m_data[index] = data;
-    if (index >= ch->m_count) ch->m_count = index + 1;
+    *(double*)XVector_at_base(&ch->m_data, index) = data;
     return true;
 }
 
@@ -348,12 +337,15 @@ int XVirtualKeyboardTrace_channelData(const XVirtualKeyboardTrace* self,
     ch = xvkt_findChannel(priv, channel);
     if (!ch) return 0;
     if (pos < 0) pos = 0;
-    if (pos > ch->m_count) return 0;
+    end = (int)XVector_size_base(&ch->m_data);
+    if (pos > end) return 0;
     start = pos;
-    end = (count < 0 || start + count > ch->m_count) ? ch->m_count
-                                                     : start + count;
+    end = (count < 0 || start + count > end) ? end : start + count;
     for (i = start; i < end; ++i) {
-        if (outData && written < maxCount) outData[written] = ch->m_data[i];
+        if (outData && written < maxCount) {
+            outData[written] = *(const double*)XVector_at_base(&ch->m_data,
+                                                               i);
+        }
         ++written;
     }
     return written;

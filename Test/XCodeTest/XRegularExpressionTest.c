@@ -448,7 +448,7 @@ static bool XRegularExpression_test_swap(void)
 
 #if XTHREAD_ON
 static XRegularExpression* g_regularExpressionThreadExpression;
-static XAtomic_int32_t g_regularExpressionThreadFailures;
+static XAtomic_Int32 g_regularExpressionThreadFailures;
 
 static void XRegularExpression_thread_reader(XThread* thread, XVarList* varList)
 {
@@ -501,32 +501,32 @@ static bool XRegularExpression_test_thread_safe_readers(void)
 static bool XRegularExpression_test_conversion(void)
 {
     XString* literal = XString_create_utf8("a.b");
-    XString* escaped = XRegularExpression_escape_2(literal);
+    XString* escaped = XRegularExpression_escape(literal);
     XREGEX_REQUIRE(escaped && XString_equals_utf8(escaped, "a\\.b", XChar_CaseSensitive),
                    "escape", "转义结果错误");
     XStringView literalView = XStringView_create_string(literal);
-    XString* escapedView = XRegularExpression_escape(&literalView);
-    XString* anchored = XRegularExpression_anchoredPattern(&literalView);
+    XString* escapedView = XRegularExpression_escapeView(&literalView);
+    XString* anchored = XRegularExpression_anchoredPatternView(&literalView);
     XREGEX_REQUIRE(escapedView && anchored &&
                            XString_equals_utf8(escapedView, "a\\.b", XChar_CaseSensitive) &&
                            XString_equals_utf8(anchored, "\\A(?:a.b)\\z", XChar_CaseSensitive),
                    "escape/anchored view", "视图转换结果错误");
 
     XString* wildcard = XString_create_utf8("*.txt");
-    XString* converted = XRegularExpression_wildcardToRegularExpression_2(
+    XString* converted = XRegularExpression_wildcardToRegularExpression(
             wildcard, XRegularExpression_DefaultWildcardConversion);
     XREGEX_REQUIRE(converted && XString_equals_utf8(converted, "\\A(?:[^/]*\\.txt)\\z",
                                                     XChar_CaseSensitive),
                    "wildcard conversion", "通配符转换结果错误");
     XString* backslashWildcard = XString_create_utf8("\\");
-    XString* convertedBackslash = XRegularExpression_wildcardToRegularExpression_2(
+    XString* convertedBackslash = XRegularExpression_wildcardToRegularExpression(
             backslashWildcard, XRegularExpression_DefaultWildcardConversion);
     XREGEX_REQUIRE(backslashWildcard && convertedBackslash &&
                            XString_equals_utf8(convertedBackslash, "\\A(?:\\\\)\\z",
                                                XChar_CaseSensitive),
                    "wildcard backslash conversion", "通配符反斜杠转义结果错误");
     XStringView wildcardView = XStringView_create_string(wildcard);
-    XString* convertedView = XRegularExpression_wildcardToRegularExpression(
+    XString* convertedView = XRegularExpression_wildcardToRegularExpressionView(
             &wildcardView, XRegularExpression_DefaultWildcardConversion);
     XREGEX_REQUIRE(convertedView && XString_equals(converted, convertedView,
                                                    XChar_CaseSensitive),

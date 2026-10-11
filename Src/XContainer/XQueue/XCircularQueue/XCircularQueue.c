@@ -1,8 +1,7 @@
 ﻿#include "XCircularQueue.h"
 #if XCircularQueue_ON
-#include "XAlgorithm.h"
 #include <string.h>
-#include <stdlib.h>
+#include "XAlgorithm.h"
 
 // =============== 虚函数前置声明 ===============
 static bool VXCircularQueue_isEmpty(const XCircularQueue* this_queue);
@@ -13,9 +12,9 @@ static bool VXCircularQueue_push(XCircularQueue* this_queue, void* pvValue, XCDa
 static void VXCircularQueue_pop(XCircularQueue* this_queue);
 static void* VXCircularQueue_top(XCircularQueue* this_queue);
 static bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer);
-static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src);
-static void VXClass_move(XCircularQueue* object, XCircularQueue* src);
-static void VXClass_deinit(XCircularQueue* this_queue);
+static void VXCircularQueue_copy(XCircularQueue* object, const XCircularQueue* src);
+static void VXCircularQueue_move(XCircularQueue* object, XCircularQueue* src);
+static void VXCircularQueue_deinit(XCircularQueue* this_queue);
 
 // =============== 内部辅助函数 ===============
 static bool enlargeCapacity(XCircularQueue* this_queue);
@@ -39,9 +38,9 @@ XVtable* XCircularQueue_class_init()
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_IsEmpty, VXCircularQueue_isEmpty);
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXCircularQueue_clear);
     XVTABLE_OVERLOAD_DEFAULT(EXContainer_Size, VXCircularQueue_size);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXClass_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXCircularQueue_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXCircularQueue_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXCircularQueue_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XCircularQueue);
     return XVTABLE_DEFAULT;
 }
@@ -240,37 +239,65 @@ static bool VXCircularQueue_receive(XCircularQueue* this_queue, void* pvBuffer)
     return true;
 }
 
-static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src)
+static void VXCircularQueue_copy(XCircularQueue* object, const XCircularQueue* src)
 {
     if (!object || !src) return;
 
     size_t typeSize = XContainerTypeSize(src);
     size_t capacity = getCapacity(src);
     size_t count = VXCircularQueue_size(src);
-    bool target_uninitialized = XClassIsVtableNull(object);
-    XMemory* target_memory = target_uninitialized ? NULL : XContainer_memory(object);
 
-    // 如果目标未初始化
-    if (target_uninitialized)
+    // 如果目标未初始化：兜底完整初始化
+    if (XClassIsVtableNull(object))
     {
         XCircularQueue_init_with_memory(object, typeSize,
             capacity > 0 ? capacity - 1 : 0, XContainer_memory_type(src));
+        /* 缓冲区分配失败且源有元素时无从拷贝，保持目标不变并返回 */
+        if (!getBuffer(object) && count > 0) return;
+    }
+    else if (XContainerTypeSize(object) != typeSize || getCapacity(object) < capacity)
+    {
+        // 目标需要更换/更大的缓冲区：先在临时对象中构建副本，成功后再整体移入目标，
+        // 分配失败时目标原有内容保持不变（不能先 deinit 输出再尝试分配）
+        XCircularQueue temp;
+        XCircularQueue_init_with_memory(&temp, typeSize,
+            capacity > 0 ? capacity - 1 : 0, XContainer_memory_type(object));
+        if (!getBuffer(&temp)) return;
+
+        XContainerSetDataCopyMethod(&temp, XContainerDataCopyMethod(src));
+        XContainerSetDataMoveMethod(&temp, XContainerDataMoveMethod(src));
+        XContainerSetDataDeinitMethod(&temp, XContainerDataDeinitMethod(src));
+
+        // 深拷贝数据（元素带拷贝回调时逐元素调用，禁止裸 memcpy 共享所有权）
+        uint8_t* srcBuffer = getBuffer((XCircularQueue*)src);
+        uint8_t* dstBuffer = getBuffer(&temp);
+        XCDataCopyMethod copyMethod = XContainerDataCopyMethod(&temp);
+        size_t src_index = src->m_head;
+
+        for (size_t i = 0; i < count; i++)
+        {
+            void* dstElem = dstBuffer + i * typeSize;
+            const void* srcElem = srcBuffer + src_index * typeSize;
+            if (copyMethod)
+                copyMethod(dstElem, srcElem);
+            else
+                memcpy(dstElem, srcElem, typeSize);
+            src_index = (src_index + 1) % capacity;
+        }
+
+        temp.m_autoExpansion = src->m_autoExpansion;
+        temp.m_head = 0;
+        temp.m_tail = count;
+
+        // 提交：释放目标旧缓冲并接管临时对象的资源；临时对象由创建者收尾
+        VXCircularQueue_move(object, &temp);
+        XClassDeinit(&temp);
+        return;
     }
     else
     {
-        // 清理目标原有数据
-        VXClass_deinit(object);
-        XContainer_init(object, typeSize, false);
-        XClassGetVtable(object) = XCircularQueue_class_init();
-        Class_Memory(object) = target_memory;
-
-        // 分配缓冲区
-        uint8_t* buffer = (uint8_t*)XContainer_malloc(object, typeSize * capacity);
-        if (!buffer) return;
-
-        XContainerDataPtr(object) = buffer;
-        XContainerSize(object) = capacity;
-        XContainerCapacity(object) = capacity;
+        // 目标缓冲区可复用：只清空并析构旧元素，保留容量
+        VXCircularQueue_clear(object);
     }
 
     // 复制回调函数
@@ -278,16 +305,20 @@ static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src)
     XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
     XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
 
-    // 深拷贝数据
+    // 深拷贝数据（元素带拷贝回调时逐元素调用，禁止裸 memcpy 共享所有权）
     uint8_t* srcBuffer = getBuffer((XCircularQueue*)src);
     uint8_t* dstBuffer = getBuffer(object);
+    XCDataCopyMethod copyMethod = XContainerDataCopyMethod(object);
     size_t src_index = src->m_head;
 
     for (size_t i = 0; i < count; i++)
     {
-        memcpy(dstBuffer + i * typeSize,
-            srcBuffer + src_index * typeSize,
-            typeSize);
+        void* dstElem = dstBuffer + i * typeSize;
+        const void* srcElem = srcBuffer + src_index * typeSize;
+        if (copyMethod)
+            copyMethod(dstElem, srcElem);
+        else
+            memcpy(dstElem, srcElem, typeSize);
         src_index = (src_index + 1) % capacity;
     }
 
@@ -297,7 +328,7 @@ static void VXClass_copy(XCircularQueue* object, const XCircularQueue* src)
     object->m_tail = count;
 }
 
-static void VXClass_move(XCircularQueue* object, XCircularQueue* src)
+static void VXCircularQueue_move(XCircularQueue* object, XCircularQueue* src)
 {
     if (!object || !src) return;
     XMemory* source_memory = Class_Memory(src);
@@ -310,7 +341,7 @@ static void VXClass_move(XCircularQueue* object, XCircularQueue* src)
     }
     else
     {
-        VXClass_deinit(object);
+        VXCircularQueue_deinit(object);
     }
 
     // 转移所有权（直接复制所有成员）
@@ -326,7 +357,7 @@ static void VXClass_move(XCircularQueue* object, XCircularQueue* src)
     src->m_autoExpansion = false;
 }
 
-static void VXClass_deinit(XCircularQueue* this_queue)
+static void VXCircularQueue_deinit(XCircularQueue* this_queue)
 {
     if (!this_queue) return;
 
@@ -366,7 +397,8 @@ static void VXClass_deinit(XCircularQueue* this_queue)
 static void XCircularQueue_init_with_memory(XCircularQueue* this_queue,
     size_t typeSize, size_t count, XMemoryType memory)
 {
-    if (ISNULL(this_queue, "") || ISNULL(typeSize, "") || ISNULL(count, ""))
+    /* typeSize/count 是 size_t 非指针，不能用 ISNULL（其语义是检查指针是否为空） */
+    if (ISNULL(this_queue, "") || typeSize == 0 || count == 0)
         return;
 
     // 初始化容器基类（不使用 COW）
@@ -398,7 +430,8 @@ void XCircularQueue_init(XCircularQueue* this_queue, size_t typeSize, size_t cou
 
 XCircularQueue* XCircularQueue_create_ex(XMemoryType memory, size_t typeSize, size_t count)
 {
-    if (ISNULL(typeSize, "") || ISNULL(count, ""))
+    /* typeSize/count 是 size_t 非指针，不能用 ISNULL（其语义是检查指针是否为空） */
+    if (typeSize == 0 || count == 0)
         return NULL;
 
     XCircularQueue* this_queue = XMemory_malloc(sizeof(XCircularQueue), memory);

@@ -1,4 +1,11 @@
-﻿#ifndef XRECURSIVEMUTEX_H
+﻿/**
+ * @file       XRecursiveMutex.h
+ * @brief      递归互斥锁公开 API。
+ * @details    对齐 Qt 6.8 QRecursiveMutex；经 XMutex_Recursive 宏映射提供递归锁语义，
+ *             平台原语由 Drive 平台适配层提供，本模块禁止直接调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XRECURSIVEMUTEX_H
 #define XRECURSIVEMUTEX_H
 #include "XSync_config.h"
 #if XSYNC_ON

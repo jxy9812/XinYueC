@@ -36,9 +36,10 @@ void XTuiKeyEvent_init(XTuiKeyEvent* event, XEventType type, XTuiKeyType key, XK
 {
     if (!event)
         return;
+    memset(((XClass*)event) + 1, 0, sizeof(XTuiKeyEvent) - sizeof(XClass));
     XEvent_init((XEvent*)event, type);
     XClassGetVtable(event) = XTuiKeyEvent_class_init();
-    event->m_class.input_event = true;
+    event->m_class.m_input_event = true;
     event->m_keyType = key;
     event->m_modifiers = modifiers;
     event->m_utf8[0] = '\0';

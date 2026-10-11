@@ -13,130 +13,6 @@
 #include <limits.h>
 #include <string.h>
 
-static bool VXSqlDriver_isOpen(const XSqlDriver* driver);
-static bool VXSqlDriver_beginTransaction(XSqlDriver* driver);
-static bool VXSqlDriver_commitTransaction(XSqlDriver* driver);
-static bool VXSqlDriver_rollbackTransaction(XSqlDriver* driver);
-static XStringList* VXSqlDriver_tables(const XSqlDriver* driver, XSqlTableType type);
-static XSqlIndex* VXSqlDriver_primaryIndex(const XSqlDriver* driver, const XString* tableName);
-static XSqlRecord* VXSqlDriver_record(const XSqlDriver* driver, const XString* tableName);
-static XString* VXSqlDriver_formatValue(const XSqlDriver* driver, const XSqlField* field, bool trimStrings);
-static XString* VXSqlDriver_escapeIdentifier(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type);
-static XString* VXSqlDriver_sqlStatement(const XSqlDriver* driver, XSqlStatementType type,
-                                         const XString* tableName, const XSqlRecord* record,
-                                         bool preparedStatement);
-static void* VXSqlDriver_handle(const XSqlDriver* driver);
-static bool VXSqlDriver_hasFeature(const XSqlDriver* driver, XSqlDriverFeature feature);
-static void VXSqlDriver_close(XSqlDriver* driver);
-static XSqlResult* VXSqlDriver_createResult(const XSqlDriver* driver);
-static bool VXSqlDriver_open(XSqlDriver* driver, const XString* database,
-                             const XString* user, const XString* password,
-                             const XString* host, int port, const XString* options);
-static bool VXSqlDriver_subscribe(XSqlDriver* driver, const XString* name);
-static bool VXSqlDriver_unsubscribe(XSqlDriver* driver, const XString* name);
-static XStringList* VXSqlDriver_subscribed(const XSqlDriver* driver);
-static bool VXSqlDriver_isIdentifierEscaped(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type);
-static XString* VXSqlDriver_stripDelimiters(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type);
-static bool VXSqlDriver_cancelQuery(XSqlDriver* driver);
-static int VXSqlDriver_maximumIdentifierLength(const XSqlDriver* driver, XSqlIdentifierType type);
-static void VXSqlDriver_setOpen(XSqlDriver* driver, bool open);
-static void VXSqlDriver_setOpenError(XSqlDriver* driver, bool error);
-static void VXSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error);
-static void VXSqlDriver_deinit(XSqlDriver* driver);
-
-XVtable* XSqlDriver_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(XSqlDriver)
-    XVTABLE_INHERIT_XCLASS(XObject);
-    void* table[] = {
-        VXSqlDriver_isOpen, VXSqlDriver_beginTransaction,
-        VXSqlDriver_commitTransaction, VXSqlDriver_rollbackTransaction,
-        VXSqlDriver_tables, VXSqlDriver_primaryIndex, VXSqlDriver_record,
-        VXSqlDriver_formatValue, VXSqlDriver_escapeIdentifier,
-        VXSqlDriver_sqlStatement, VXSqlDriver_handle, VXSqlDriver_hasFeature,
-        VXSqlDriver_close, VXSqlDriver_createResult, VXSqlDriver_open,
-        VXSqlDriver_subscribe, VXSqlDriver_unsubscribe, VXSqlDriver_subscribed,
-        VXSqlDriver_isIdentifierEscaped, VXSqlDriver_stripDelimiters,
-        VXSqlDriver_cancelQuery, VXSqlDriver_maximumIdentifierLength,
-        VXSqlDriver_setOpen, VXSqlDriver_setOpenError, VXSqlDriver_setLastError
-    };
-    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlDriver_deinit);
-    return XVTABLE_DEFAULT;
-}
-
-void XSqlDriver_init(XSqlDriver* driver, XSqlDriverType driverType, XSqlDbmsType dbmsType)
-{
-    if (!driver) return;
-    memset(((unsigned char*)driver) + sizeof(XObject), 0, sizeof(*driver) - sizeof(XObject));
-    XObject_init((XObject*)driver);
-    XClassSetVtable(driver, XSqlDriver);
-    driver->m_driverType = driverType;
-    driver->m_dbmsType = dbmsType;
-    XSqlError_init(&driver->m_lastError);
-    driver->m_precisionPolicy = XSqlNumericalPrecisionPolicy_LowPrecisionDouble;
-}
-
-XSqlDriver* XSqlDriver_create_ex(XMemoryType memory, XSqlDriverType driverType, XSqlDbmsType dbmsType)
-{
-    XSqlDriver* driver = (XSqlDriver*)XMemory_malloc(sizeof(XSqlDriver), memory);
-    if (!driver) return NULL;
-    memset(driver, 0, sizeof(*driver));
-    XSqlDriver_init(driver, driverType, dbmsType);
-    Set_Class_Memory(driver, memory); Set_Class_IsHeap(driver, true);
-    return driver;
-}
-
-static void VXSqlDriver_deinit(XSqlDriver* driver)
-{
-    if (!driver) return;
-    if (driver->m_open) XSqlDriver_close_base(driver);
-    XClassDeinit(&driver->m_lastError);
-    XClass_Deinit_Parent(XObject, driver);
-}
-
-XSqlDriverType XSqlDriver_driverType(const XSqlDriver* driver) { return driver ? driver->m_driverType : XSqlDriverType_Unknown; }
-XSqlDbmsType XSqlDriver_dbmsType(const XSqlDriver* driver) { return driver ? driver->m_dbmsType : XSqlDbmsType_Unknown; }
-bool XSqlDriver_isOpen(const XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_IsOpen, bool(*)(const XSqlDriver*))(driver); }
-bool XSqlDriver_isOpenError(const XSqlDriver* driver) { return driver ? driver->m_openError : true; }
-XSqlError* XSqlDriver_lastError(const XSqlDriver* driver) { return driver ? XSqlError_create_copy(&driver->m_lastError) : XSqlError_create(NULL, NULL, XSqlErrorType_UnknownError, NULL); }
-
-bool XSqlDriver_beginTransaction_base(XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_BeginTransaction, bool(*)(XSqlDriver*))(driver); }
-bool XSqlDriver_commitTransaction_base(XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_CommitTransaction, bool(*)(XSqlDriver*))(driver); }
-bool XSqlDriver_rollbackTransaction_base(XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_RollbackTransaction, bool(*)(XSqlDriver*))(driver); }
-XStringList* XSqlDriver_tables_base(const XSqlDriver* driver, XSqlTableType type) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_Tables, XStringList*(*)(const XSqlDriver*, XSqlTableType))(driver, type) : XStringList_create(); }
-XSqlIndex* XSqlDriver_primaryIndex_base(const XSqlDriver* driver, const XString* tableName) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_PrimaryIndex, XSqlIndex*(*)(const XSqlDriver*, const XString*))(driver, tableName) : XSqlIndex_create(); }
-XSqlRecord* XSqlDriver_record_base(const XSqlDriver* driver, const XString* tableName) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_Record, XSqlRecord*(*)(const XSqlDriver*, const XString*))(driver, tableName) : XSqlRecord_create(); }
-XString* XSqlDriver_formatValue_base(const XSqlDriver* driver, const XSqlField* field, bool trimStrings) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_FormatValue, XString*(*)(const XSqlDriver*, const XSqlField*, bool))(driver, field, trimStrings) : XString_create(); }
-XString* XSqlDriver_escapeIdentifier_base(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_EscapeIdentifier, XString*(*)(const XSqlDriver*, const XString*, XSqlIdentifierType))(driver, identifier, type) : XString_create(); }
-XString* XSqlDriver_sqlStatement_base(const XSqlDriver* driver, XSqlStatementType type, const XString* tableName, const XSqlRecord* record, bool preparedStatement) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_SqlStatement, XString*(*)(const XSqlDriver*, XSqlStatementType, const XString*, const XSqlRecord*, bool))(driver, type, tableName, record, preparedStatement) : XString_create(); }
-void* XSqlDriver_handle_base(const XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_Handle, void*(*)(const XSqlDriver*))(driver) : NULL; }
-bool XSqlDriver_hasFeature_base(const XSqlDriver* driver, XSqlDriverFeature feature) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_HasFeature, bool(*)(const XSqlDriver*, XSqlDriverFeature))(driver, feature); }
-void XSqlDriver_close_base(XSqlDriver* driver) { if (driver && !XClassIsVtableNull(driver)) XClassGetVirtualFunc(driver, EXSqlDriver_Close, void(*)(XSqlDriver*))(driver); }
-XSqlResult* XSqlDriver_createResult_base(const XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_CreateResult, XSqlResult*(*)(const XSqlDriver*))(driver) : NULL; }
-bool XSqlDriver_open_base(XSqlDriver* driver, const XString* database, const XString* user, const XString* password, const XString* host, int port, const XString* options) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_Open, bool(*)(XSqlDriver*, const XString*, const XString*, const XString*, const XString*, int, const XString*))(driver, database, user, password, host, port, options); }
-bool XSqlDriver_subscribeToNotification_base(XSqlDriver* driver, const XString* name) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_Subscribe, bool(*)(XSqlDriver*, const XString*))(driver, name); }
-bool XSqlDriver_unsubscribeFromNotification_base(XSqlDriver* driver, const XString* name) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_Unsubscribe, bool(*)(XSqlDriver*, const XString*))(driver, name); }
-XStringList* XSqlDriver_subscribedToNotifications_base(const XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_Subscribed, XStringList*(*)(const XSqlDriver*))(driver) : XStringList_create(); }
-bool XSqlDriver_isIdentifierEscaped_base(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_IsIdentifierEscaped, bool(*)(const XSqlDriver*, const XString*, XSqlIdentifierType))(driver, identifier, type); }
-XString* XSqlDriver_stripDelimiters_base(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_StripDelimiters, XString*(*)(const XSqlDriver*, const XString*, XSqlIdentifierType))(driver, identifier, type) : XString_create(); }
-void XSqlDriver_setNumericalPrecisionPolicy(XSqlDriver* driver, XSqlNumericalPrecisionPolicy policy) { if (driver) driver->m_precisionPolicy = policy; }
-XSqlNumericalPrecisionPolicy XSqlDriver_numericalPrecisionPolicy(const XSqlDriver* driver) { return driver ? driver->m_precisionPolicy : XSqlNumericalPrecisionPolicy_HighPrecision; }
-bool XSqlDriver_cancelQuery_base(XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_CancelQuery, bool(*)(XSqlDriver*))(driver); }
-int XSqlDriver_maximumIdentifierLength_base(const XSqlDriver* driver, XSqlIdentifierType type) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_MaximumIdentifierLength, int(*)(const XSqlDriver*, XSqlIdentifierType))(driver, type) : -1; }
-
-void XSqlDriver_setOpen(XSqlDriver* driver, bool open) { if (driver && !XClassIsVtableNull(driver)) XClassGetVirtualFunc(driver, EXSqlDriver_SetOpen, void(*)(XSqlDriver*, bool))(driver, open); }
-void XSqlDriver_setOpenError(XSqlDriver* driver, bool error) { if (driver && !XClassIsVtableNull(driver)) XClassGetVirtualFunc(driver, EXSqlDriver_SetOpenError, void(*)(XSqlDriver*, bool))(driver, error); }
-void XSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error) { if (driver && !XClassIsVtableNull(driver)) XClassGetVirtualFunc(driver, EXSqlDriver_SetLastError, void(*)(XSqlDriver*, const XSqlError*))(driver, error); }
-
-static bool VXSqlDriver_isOpen(const XSqlDriver* driver) { return driver && driver->m_open; }
-static bool VXSqlDriver_beginTransaction(XSqlDriver* driver) { (void)driver; return false; }
-static bool VXSqlDriver_commitTransaction(XSqlDriver* driver) { (void)driver; return false; }
-static bool VXSqlDriver_rollbackTransaction(XSqlDriver* driver) { (void)driver; return false; }
-static XStringList* VXSqlDriver_tables(const XSqlDriver* driver, XSqlTableType type) { (void)driver; (void)type; return XStringList_create(); }
-static XSqlIndex* VXSqlDriver_primaryIndex(const XSqlDriver* driver, const XString* tableName) { (void)driver; (void)tableName; return XSqlIndex_create(); }
-static XSqlRecord* VXSqlDriver_record(const XSqlDriver* driver, const XString* tableName) { (void)driver; (void)tableName; return XSqlRecord_create(); }
-
 static XString* xsql_driver_value_text(const XVariant* value)
 {
     XByteArray* bytes;
@@ -217,6 +93,14 @@ static XString* xsql_driver_trim_right(const XString* text)
     while (length > 0 && XChar_isSpace(XString_at(text, length - 1))) --length;
     return XString_sliced_2(text, 0, length);
 }
+
+static bool VXSqlDriver_isOpen(const XSqlDriver* driver) { return driver && driver->m_open; }
+static bool VXSqlDriver_beginTransaction(XSqlDriver* driver) { (void)driver; return false; }
+static bool VXSqlDriver_commitTransaction(XSqlDriver* driver) { (void)driver; return false; }
+static bool VXSqlDriver_rollbackTransaction(XSqlDriver* driver) { (void)driver; return false; }
+static XStringList* VXSqlDriver_tables(const XSqlDriver* driver, XSqlTableType type) { (void)driver; (void)type; return XStringList_create(); }
+static XSqlIndex* VXSqlDriver_primaryIndex(const XSqlDriver* driver, const XString* tableName) { (void)driver; (void)tableName; return XSqlIndex_create(); }
+static XSqlRecord* VXSqlDriver_record(const XSqlDriver* driver, const XString* tableName) { (void)driver; (void)tableName; return XSqlRecord_create(); }
 
 static XString* VXSqlDriver_formatValue(const XSqlDriver* driver, const XSqlField* field, bool trimStrings)
 {
@@ -372,6 +256,91 @@ static int VXSqlDriver_maximumIdentifierLength(const XSqlDriver* driver, XSqlIde
 static void VXSqlDriver_setOpen(XSqlDriver* driver, bool open) { if (driver) driver->m_open = open; }
 static void VXSqlDriver_setOpenError(XSqlDriver* driver, bool error) { if (driver) { driver->m_openError = error; if (error) driver->m_open = false; } }
 static void VXSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error) { if (driver && error) XClassCopy(&driver->m_lastError, error); }
+
+static void VXSqlDriver_deinit(XSqlDriver* driver)
+{
+    if (!driver) return;
+    if (driver->m_open) XSqlDriver_close_base(driver);
+    XClassDeinit(&driver->m_lastError);
+    XClass_Deinit_Parent(XObject, driver);
+}
+
+XVtable* XSqlDriver_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XSqlDriver)
+    XVTABLE_INHERIT_XCLASS(XObject);
+    void* table[] = {
+        VXSqlDriver_isOpen, VXSqlDriver_beginTransaction,
+        VXSqlDriver_commitTransaction, VXSqlDriver_rollbackTransaction,
+        VXSqlDriver_tables, VXSqlDriver_primaryIndex, VXSqlDriver_record,
+        VXSqlDriver_formatValue, VXSqlDriver_escapeIdentifier,
+        VXSqlDriver_sqlStatement, VXSqlDriver_handle, VXSqlDriver_hasFeature,
+        VXSqlDriver_close, VXSqlDriver_createResult, VXSqlDriver_open,
+        VXSqlDriver_subscribe, VXSqlDriver_unsubscribe, VXSqlDriver_subscribed,
+        VXSqlDriver_isIdentifierEscaped, VXSqlDriver_stripDelimiters,
+        VXSqlDriver_cancelQuery, VXSqlDriver_maximumIdentifierLength,
+        VXSqlDriver_setOpen, VXSqlDriver_setOpenError, VXSqlDriver_setLastError
+    };
+    XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSqlDriver_deinit);
+    return XVTABLE_DEFAULT;
+}
+
+void XSqlDriver_init(XSqlDriver* driver, XSqlDriverType driverType, XSqlDbmsType dbmsType)
+{
+    if (!driver) return;
+    memset(((unsigned char*)driver) + sizeof(XObject), 0, sizeof(*driver) - sizeof(XObject));
+    XObject_init((XObject*)driver);
+    XClassSetVtable(driver, XSqlDriver);
+    driver->m_driverType = driverType;
+    driver->m_dbmsType = dbmsType;
+    XSqlError_init(&driver->m_lastError);
+    driver->m_precisionPolicy = XSqlNumericalPrecisionPolicy_LowPrecisionDouble;
+}
+
+XSqlDriver* XSqlDriver_create_ex(XMemoryType memory, XSqlDriverType driverType, XSqlDbmsType dbmsType)
+{
+    XSqlDriver* driver = (XSqlDriver*)XMemory_malloc(sizeof(XSqlDriver), memory);
+    if (!driver) return NULL;
+    memset(driver, 0, sizeof(*driver));
+    XSqlDriver_init(driver, driverType, dbmsType);
+    Set_Class_Memory(driver, memory); Set_Class_IsHeap(driver, true);
+    return driver;
+}
+
+XSqlDriverType XSqlDriver_driverType(const XSqlDriver* driver) { return driver ? driver->m_driverType : XSqlDriverType_Unknown; }
+XSqlDbmsType XSqlDriver_dbmsType(const XSqlDriver* driver) { return driver ? driver->m_dbmsType : XSqlDbmsType_Unknown; }
+bool XSqlDriver_isOpen(const XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_IsOpen, bool(*)(const XSqlDriver*))(driver); }
+bool XSqlDriver_isOpenError(const XSqlDriver* driver) { return driver ? driver->m_openError : true; }
+XSqlError* XSqlDriver_lastError(const XSqlDriver* driver) { return driver ? XSqlError_create_copy(&driver->m_lastError) : XSqlError_create(NULL, NULL, XSqlErrorType_UnknownError, NULL); }
+
+bool XSqlDriver_beginTransaction_base(XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_BeginTransaction, bool(*)(XSqlDriver*))(driver); }
+bool XSqlDriver_commitTransaction_base(XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_CommitTransaction, bool(*)(XSqlDriver*))(driver); }
+bool XSqlDriver_rollbackTransaction_base(XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_RollbackTransaction, bool(*)(XSqlDriver*))(driver); }
+XStringList* XSqlDriver_tables_base(const XSqlDriver* driver, XSqlTableType type) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_Tables, XStringList*(*)(const XSqlDriver*, XSqlTableType))(driver, type) : XStringList_create(); }
+XSqlIndex* XSqlDriver_primaryIndex_base(const XSqlDriver* driver, const XString* tableName) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_PrimaryIndex, XSqlIndex*(*)(const XSqlDriver*, const XString*))(driver, tableName) : XSqlIndex_create(); }
+XSqlRecord* XSqlDriver_record_base(const XSqlDriver* driver, const XString* tableName) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_Record, XSqlRecord*(*)(const XSqlDriver*, const XString*))(driver, tableName) : XSqlRecord_create(); }
+XString* XSqlDriver_formatValue_base(const XSqlDriver* driver, const XSqlField* field, bool trimStrings) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_FormatValue, XString*(*)(const XSqlDriver*, const XSqlField*, bool))(driver, field, trimStrings) : XString_create(); }
+XString* XSqlDriver_escapeIdentifier_base(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_EscapeIdentifier, XString*(*)(const XSqlDriver*, const XString*, XSqlIdentifierType))(driver, identifier, type) : XString_create(); }
+XString* XSqlDriver_sqlStatement_base(const XSqlDriver* driver, XSqlStatementType type, const XString* tableName, const XSqlRecord* record, bool preparedStatement) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_SqlStatement, XString*(*)(const XSqlDriver*, XSqlStatementType, const XString*, const XSqlRecord*, bool))(driver, type, tableName, record, preparedStatement) : XString_create(); }
+void* XSqlDriver_handle_base(const XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_Handle, void*(*)(const XSqlDriver*))(driver) : NULL; }
+bool XSqlDriver_hasFeature_base(const XSqlDriver* driver, XSqlDriverFeature feature) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_HasFeature, bool(*)(const XSqlDriver*, XSqlDriverFeature))(driver, feature); }
+void XSqlDriver_close_base(XSqlDriver* driver) { if (driver && !XClassIsVtableNull(driver)) XClassGetVirtualFunc(driver, EXSqlDriver_Close, void(*)(XSqlDriver*))(driver); }
+XSqlResult* XSqlDriver_createResult_base(const XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_CreateResult, XSqlResult*(*)(const XSqlDriver*))(driver) : NULL; }
+bool XSqlDriver_open_base(XSqlDriver* driver, const XString* database, const XString* user, const XString* password, const XString* host, int port, const XString* options) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_Open, bool(*)(XSqlDriver*, const XString*, const XString*, const XString*, const XString*, int, const XString*))(driver, database, user, password, host, port, options); }
+bool XSqlDriver_subscribeToNotification_base(XSqlDriver* driver, const XString* name) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_Subscribe, bool(*)(XSqlDriver*, const XString*))(driver, name); }
+bool XSqlDriver_unsubscribeFromNotification_base(XSqlDriver* driver, const XString* name) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_Unsubscribe, bool(*)(XSqlDriver*, const XString*))(driver, name); }
+XStringList* XSqlDriver_subscribedToNotifications_base(const XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_Subscribed, XStringList*(*)(const XSqlDriver*))(driver) : XStringList_create(); }
+bool XSqlDriver_isIdentifierEscaped_base(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_IsIdentifierEscaped, bool(*)(const XSqlDriver*, const XString*, XSqlIdentifierType))(driver, identifier, type); }
+XString* XSqlDriver_stripDelimiters_base(const XSqlDriver* driver, const XString* identifier, XSqlIdentifierType type) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_StripDelimiters, XString*(*)(const XSqlDriver*, const XString*, XSqlIdentifierType))(driver, identifier, type) : XString_create(); }
+void XSqlDriver_setNumericalPrecisionPolicy(XSqlDriver* driver, XSqlNumericalPrecisionPolicy policy) { if (driver) driver->m_precisionPolicy = policy; }
+XSqlNumericalPrecisionPolicy XSqlDriver_numericalPrecisionPolicy(const XSqlDriver* driver) { return driver ? driver->m_precisionPolicy : XSqlNumericalPrecisionPolicy_HighPrecision; }
+bool XSqlDriver_cancelQuery_base(XSqlDriver* driver) { return driver && !XClassIsVtableNull(driver) && XClassGetVirtualFunc(driver, EXSqlDriver_CancelQuery, bool(*)(XSqlDriver*))(driver); }
+int XSqlDriver_maximumIdentifierLength_base(const XSqlDriver* driver, XSqlIdentifierType type) { return driver && !XClassIsVtableNull(driver) ? XClassGetVirtualFunc(driver, EXSqlDriver_MaximumIdentifierLength, int(*)(const XSqlDriver*, XSqlIdentifierType))(driver, type) : -1; }
+
+void XSqlDriver_setOpen(XSqlDriver* driver, bool open) { if (driver && !XClassIsVtableNull(driver)) XClassGetVirtualFunc(driver, EXSqlDriver_SetOpen, void(*)(XSqlDriver*, bool))(driver, open); }
+void XSqlDriver_setOpenError(XSqlDriver* driver, bool error) { if (driver && !XClassIsVtableNull(driver)) XClassGetVirtualFunc(driver, EXSqlDriver_SetOpenError, void(*)(XSqlDriver*, bool))(driver, error); }
+void XSqlDriver_setLastError(XSqlDriver* driver, const XSqlError* error) { if (driver && !XClassIsVtableNull(driver)) XClassGetVirtualFunc(driver, EXSqlDriver_SetLastError, void(*)(XSqlDriver*, const XSqlError*))(driver, error); }
 
 void* XSqlDriver_notification_signal(XSqlDriver* driver, const XString* name,
                                      XSqlNotificationSource source,

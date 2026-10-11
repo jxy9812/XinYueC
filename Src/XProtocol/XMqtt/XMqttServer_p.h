@@ -56,10 +56,10 @@ typedef struct XMqttServerSubscription {
  *          出站，等待 PUBREL 后发送 PUBCOMP —— 实际为已发送 PUBREL 等待 PUBCOMP）。
  */
 typedef struct XMqttServerQueuedMessage {
-    uint16_t packetId;             ///< 出站报文标识符，0 表示尚未分配。
     XString* topic;                ///< 消息主题，条目拥有。
     XByteArray* payload;           ///< 消息载荷，条目拥有。
     XMqttPublishProperties* properties; ///< MQTT 5.0 发布属性（订阅标识符等），可空。
+    uint16_t packetId;             ///< 出站报文标识符，0 表示尚未分配。
     /* 紧凑标志位（位域优化：qos 2 bit + retain 1 bit + stage 2 bit） */
     uint32_t qos : 2;              ///< 实际投递 QoS（0/1/2）。
     uint32_t retain : 1;           ///< 投递时是否带 RETAIN 标志。
@@ -123,17 +123,17 @@ typedef struct XMqttServerClient {
     XString* username;             ///< 用户名，条目拥有，可为 NULL。
     XString* password;             ///< 密码，条目拥有，可为 NULL。
     uint16_t keepAlive;            ///< 保活间隔（秒），0 表示不检查。
-    uint32_t sessionExpiry;        ///< MQTT 5.0 会话过期间隔（秒）。
-    uint32_t maxPacketSize;        ///< 客户端声明的最大报文大小（MQTT 5.0），0 表示不限制。
     uint16_t receiveMaximum;       ///< 客户端声明的接收最大 QoS1/2 在途报文数，默认 65535。
     uint16_t inboundAliasMaximum;   ///< 客户端声明的入站主题别名上限（MQTT 5.0），0 表示不支持。
     uint16_t nextPacketId;         ///< 下一个出站报文标识符，自动跳过 0。
+    uint32_t sessionExpiry;        ///< MQTT 5.0 会话过期间隔（秒）。
+    uint32_t maxPacketSize;        ///< 客户端声明的最大报文大小（MQTT 5.0），0 表示不限制。
+    uint32_t willDelay;            ///< MQTT 5.0 遗嘱延迟间隔（秒）。
     XTimerId keepAliveTimer;       ///< 保活检测定时器，无定时器时为 XTIMER_INVALID_ID。
     int64_t lastActivity;          ///< 最后一次收到报文的时间（自纪元毫秒）。
     /* MQTT 5.0 遗嘱 */
     XString* willTopic;            ///< 遗嘱主题，条目拥有，可为 NULL。
     XByteArray* willMessage;       ///< 遗嘱载荷，条目拥有，可为 NULL。
-    uint32_t willDelay;            ///< MQTT 5.0 遗嘱延迟间隔（秒）。
     XMqttPublishProperties* willProperties; ///< MQTT 5.0 遗嘱属性，可空。
     /* 入站 QoS2 状态：已投递但尚未 PUBREL 的报文标识符 */
     XVector* incomingQos2;         ///< uint16_t 数组。

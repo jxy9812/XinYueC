@@ -6,7 +6,7 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include "XTestMenu.h"
 #include"XClass.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 	//容器主菜单
 	void XTestMenu_XContainerTest(XTestMenu* root);
 
@@ -82,7 +82,7 @@ extern "C" {
 	void XLatin1StringViewTest(void);
 	void XUtf8StringViewTest(void);
 	void XAnyStringViewTest(void);
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

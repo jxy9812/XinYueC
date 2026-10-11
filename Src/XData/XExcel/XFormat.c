@@ -50,7 +50,7 @@ static void setPropertyInt(XFormat* self, int propertyId, int value)
     if (!self) return;
     if (!self->m_properties)
     {
-        self->m_properties = XMap_Create(int, intptr_t, int_compare);
+        self->m_properties = XMap_Create(int, intptr_t, Xint_compare);
         if (!self->m_properties) return;
     }
     intptr_t val = value;
@@ -69,7 +69,7 @@ static void setPropertyBool(XFormat* self, int propertyId, bool value)
 }
 
 /* 颜色打包/解包 */
-static int packColor(const XColor* c)
+static int XFormat_packColor(const XColor* c)
 {
     if (!c) return 0;
     uint32_t packed = ((uint32_t)XColor_alpha(c) << 24) |
@@ -80,7 +80,7 @@ static int packColor(const XColor* c)
     return result;
 }
 
-static XColor unpackColor(int packed)
+static XColor XFormat_unXFormat_packColor(int packed)
 {
     XColor c;
     c = XColor_create_rgb(        (uint8_t)((packed >> 16) & 0xFF),
@@ -93,12 +93,12 @@ static XColor unpackColor(int packed)
 static XColor getPropertyColor(const XFormat* self, int propertyId)
 {
     int packed = getPropertyInt(self, propertyId, 0);
-    return unpackColor(packed);
+    return XFormat_unXFormat_packColor(packed);
 }
 
 static void setPropertyColor(XFormat* self, int propertyId, const XColor* color)
 {
-    if (color) setPropertyInt(self, propertyId, packColor(color));
+    if (color) setPropertyInt(self, propertyId, XFormat_packColor(color));
 }
 
 /* 字符串属性存储：使用 intptr_t 存储 XString* 指针 */
@@ -126,7 +126,7 @@ static void setPropertyString(XFormat* self, int propertyId, const char* value)
     if (!self || !value) return;
     if (!self->m_properties)
     {
-        self->m_properties = XMap_Create(int, intptr_t, int_compare);
+        self->m_properties = XMap_Create(int, intptr_t, Xint_compare);
         if (!self->m_properties) return;
     }
     /* 先释放旧字符串 */
@@ -146,11 +146,17 @@ static void setPropertyString(XFormat* self, int propertyId, const char* value)
     if (str) XString_append_utf8(str, value);
     intptr_t ptr = (intptr_t)str;
     intptr_t val = ptr;
-    XMapBase_insert_base((XMapBase*)self->m_properties, &propertyId, &val);
+    /* 本 map 未注册 Key/DataDeinit 回调，insert 的任一失败出口都不会释放
+       键值（XMap_deinit_pair 为空操作）且 map 状态不变：失败时 str 仍归
+       调用方，需在此释放，否则泄漏（仅 OOM 路径）。 */
+    if (!XMapBase_insert_base((XMapBase*)self->m_properties, &propertyId, &val))
+    {
+        if (str) XClassDelete(str);
+    }
     self->m_dirty = true;
 }
 
-static bool hasProperty(const XFormat* self, int propertyId)
+bool XFormat_hasProperty(const XFormat* self, int propertyId)
 {
     if (!self || !self->m_properties) return false;
     XMap_iterator it;
@@ -207,7 +213,7 @@ void XFormat_copy(XFormat* self, const XFormat* other)
     if (other->m_properties)
     {
         if (!self->m_properties)
-            self->m_properties = XMap_Create(int, intptr_t, int_compare);
+            self->m_properties = XMap_Create(int, intptr_t, Xint_compare);
         if (self->m_properties)
         {
             /* 复制所有属性 */
@@ -692,7 +698,7 @@ void XFormat_mergeFormat(XFormat* self, const XFormat* modifier)
     if (!self || !modifier || self == modifier || !modifier->m_properties) return;
     if (!self->m_properties)
     {
-        self->m_properties = XMap_Create(int, intptr_t, int_compare);
+        self->m_properties = XMap_Create(int, intptr_t, Xint_compare);
         if (!self->m_properties) return;
     }
     XMap_iterator it = XMap_begin(modifier->m_properties);
@@ -788,69 +794,64 @@ void XFormat_clearProperty(XFormat* self, int propertyId)
     }
 }
 
-bool XFormat_hasProperty(const XFormat* self, int propertyId)
-{
-    return hasProperty(self, propertyId);
-}
-
 /* ========== 键/索引管理 ========== */
 
 bool XFormat_hasNumFmtData(const XFormat* self)
 {
-    return hasProperty(self, XFormat_P_NumFmt_Id) ||
-           hasProperty(self, XFormat_P_NumFmt_FormatCode);
+    return XFormat_hasProperty(self, XFormat_P_NumFmt_Id) ||
+           XFormat_hasProperty(self, XFormat_P_NumFmt_FormatCode);
 }
 
 bool XFormat_hasFontData(const XFormat* self)
 {
-    return hasProperty(self, XFormat_P_Font_Size) ||
-           hasProperty(self, XFormat_P_Font_Italic) ||
-           hasProperty(self, XFormat_P_Font_StrikeOut) ||
-           hasProperty(self, XFormat_P_Font_Color) ||
-           hasProperty(self, XFormat_P_Font_Bold) ||
-           hasProperty(self, XFormat_P_Font_Script) ||
-           hasProperty(self, XFormat_P_Font_Underline) ||
-           hasProperty(self, XFormat_P_Font_Outline) ||
-           hasProperty(self, XFormat_P_Font_Shadow) ||
-           hasProperty(self, XFormat_P_Font_Name);
+    return XFormat_hasProperty(self, XFormat_P_Font_Size) ||
+           XFormat_hasProperty(self, XFormat_P_Font_Italic) ||
+           XFormat_hasProperty(self, XFormat_P_Font_StrikeOut) ||
+           XFormat_hasProperty(self, XFormat_P_Font_Color) ||
+           XFormat_hasProperty(self, XFormat_P_Font_Bold) ||
+           XFormat_hasProperty(self, XFormat_P_Font_Script) ||
+           XFormat_hasProperty(self, XFormat_P_Font_Underline) ||
+           XFormat_hasProperty(self, XFormat_P_Font_Outline) ||
+           XFormat_hasProperty(self, XFormat_P_Font_Shadow) ||
+           XFormat_hasProperty(self, XFormat_P_Font_Name);
 }
 
 bool XFormat_hasFillData(const XFormat* self)
 {
-    return hasProperty(self, XFormat_P_Fill_Pattern) ||
-           hasProperty(self, XFormat_P_Fill_FgColor) ||
-           hasProperty(self, XFormat_P_Fill_BgColor);
+    return XFormat_hasProperty(self, XFormat_P_Fill_Pattern) ||
+           XFormat_hasProperty(self, XFormat_P_Fill_FgColor) ||
+           XFormat_hasProperty(self, XFormat_P_Fill_BgColor);
 }
 
 bool XFormat_hasBorderData(const XFormat* self)
 {
-    return hasProperty(self, XFormat_P_Border_LeftStyle) ||
-           hasProperty(self, XFormat_P_Border_RightStyle) ||
-           hasProperty(self, XFormat_P_Border_TopStyle) ||
-           hasProperty(self, XFormat_P_Border_BottomStyle) ||
-           hasProperty(self, XFormat_P_Border_DiagonalStyle) ||
-           hasProperty(self, XFormat_P_Border_LeftColor) ||
-           hasProperty(self, XFormat_P_Border_RightColor) ||
-           hasProperty(self, XFormat_P_Border_TopColor) ||
-           hasProperty(self, XFormat_P_Border_BottomColor) ||
-           hasProperty(self, XFormat_P_Border_DiagonalColor) ||
-           hasProperty(self, XFormat_P_Border_DiagonalType);
+    return XFormat_hasProperty(self, XFormat_P_Border_LeftStyle) ||
+           XFormat_hasProperty(self, XFormat_P_Border_RightStyle) ||
+           XFormat_hasProperty(self, XFormat_P_Border_TopStyle) ||
+           XFormat_hasProperty(self, XFormat_P_Border_BottomStyle) ||
+           XFormat_hasProperty(self, XFormat_P_Border_DiagonalStyle) ||
+           XFormat_hasProperty(self, XFormat_P_Border_LeftColor) ||
+           XFormat_hasProperty(self, XFormat_P_Border_RightColor) ||
+           XFormat_hasProperty(self, XFormat_P_Border_TopColor) ||
+           XFormat_hasProperty(self, XFormat_P_Border_BottomColor) ||
+           XFormat_hasProperty(self, XFormat_P_Border_DiagonalColor) ||
+           XFormat_hasProperty(self, XFormat_P_Border_DiagonalType);
 }
 
 bool XFormat_hasAlignmentData(const XFormat* self)
 {
-    return hasProperty(self, XFormat_P_Alignment_AlignH) ||
-           hasProperty(self, XFormat_P_Alignment_AlignV) ||
-           hasProperty(self, XFormat_P_Alignment_Wrap) ||
-           hasProperty(self, XFormat_P_Alignment_Rotation) ||
-           hasProperty(self, XFormat_P_Alignment_Indent) ||
-           hasProperty(self, XFormat_P_Alignment_ShinkToFit);
+    return XFormat_hasProperty(self, XFormat_P_Alignment_AlignH) ||
+           XFormat_hasProperty(self, XFormat_P_Alignment_AlignV) ||
+           XFormat_hasProperty(self, XFormat_P_Alignment_Wrap) ||
+           XFormat_hasProperty(self, XFormat_P_Alignment_Rotation) ||
+           XFormat_hasProperty(self, XFormat_P_Alignment_Indent) ||
+           XFormat_hasProperty(self, XFormat_P_Alignment_ShinkToFit);
 }
 
 bool XFormat_hasProtectionData(const XFormat* self)
 {
-    return hasProperty(self, XFormat_P_Protection_Locked) ||
-           hasProperty(self, XFormat_P_Protection_Hidden);
+    return XFormat_hasProperty(self, XFormat_P_Protection_Locked) ||
+           XFormat_hasProperty(self, XFormat_P_Protection_Hidden);
 }
 
 bool XFormat_fontIndexValid(const XFormat* self)
@@ -930,11 +931,19 @@ void XFormat_setDxfIndex(XFormat* self, int index)
 
 /* ========== 键生成（用于样式去重） ========== */
 
-/* 简单键生成：将相关属性序列化为字节数组 */
-static void appendInt(uint8_t** buf, size_t* len, size_t* cap, int val)
+/* 简单键生成：将相关属性序列化为字节数组。
+   返回 false 表示扩容失败（仅 OOM 路径）；此时旧缓冲仍由 *buf 持有、内容不变，由调用方负责释放。 */
+static bool appendInt(uint8_t** buf, size_t* len, size_t* cap, int val)
 {
-    if (*len + 4 > *cap) { *cap = (*cap + 4) * 2; *buf = (uint8_t*)XRealloc_System(*buf, *cap); }
+    if (*len + 4 > *cap)
+    {
+        uint8_t* nb = (uint8_t*)XRealloc_System(*buf, (*cap + 4) * 2);
+        if (!nb) return false; /* XRealloc_System 失败时旧块保持有效，不得覆盖 *buf，避免旧指针丢失 */
+        *buf = nb;
+        *cap = (*cap + 4) * 2;
+    }
     memcpy(*buf + *len, &val, 4); *len += 4;
+    return true;
 }
 
 void XFormat_fontKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
@@ -942,32 +951,46 @@ void XFormat_fontKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
     size_t cap = 64, len = 0;
     uint8_t* buf = (uint8_t*)XMalloc_System(cap);
     if (!buf) { *outKey = NULL; *outLen = 0; return; }
-    appendInt(&buf, &len, &cap, XFormat_fontSize(self));
-    appendInt(&buf, &len, &cap, XFormat_fontBold(self) ? 1 : 0);
-    appendInt(&buf, &len, &cap, XFormat_fontItalic(self) ? 1 : 0);
-    appendInt(&buf, &len, &cap, XFormat_fontStrikeOut(self) ? 1 : 0);
-    appendInt(&buf, &len, &cap, (int)XFormat_fontScript(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_fontUnderline(self));
-    appendInt(&buf, &len, &cap, XFormat_fontOutline(self) ? 1 : 0);
-    appendInt(&buf, &len, &cap,
-        XFormat_boolProperty(self, XFormat_P_Font_Shadow, false) ? 1 : 0);
-    appendInt(&buf, &len, &cap,
-        XFormat_intProperty(self, XFormat_P_Font_Family, 0));
-    appendInt(&buf, &len, &cap,
-        XFormat_intProperty(self, XFormat_P_Font_Charset, 0));
-    appendInt(&buf, &len, &cap,
-        XFormat_boolProperty(self, XFormat_P_Font_Condense, false) ? 1 : 0);
-    appendInt(&buf, &len, &cap,
-        XFormat_boolProperty(self, XFormat_P_Font_Extend, false) ? 1 : 0);
+    if (!appendInt(&buf, &len, &cap, XFormat_fontSize(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_fontBold(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_fontItalic(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_fontStrikeOut(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_fontScript(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_fontUnderline(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_fontOutline(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap,
+        XFormat_boolProperty(self, XFormat_P_Font_Shadow, false) ? 1 : 0)) {
+        XFree_System(buf); *outKey = NULL; *outLen = 0; return;
+    }
+    if (!appendInt(&buf, &len, &cap,
+        XFormat_intProperty(self, XFormat_P_Font_Family, 0))) {
+        XFree_System(buf); *outKey = NULL; *outLen = 0; return;
+    }
+    if (!appendInt(&buf, &len, &cap,
+        XFormat_intProperty(self, XFormat_P_Font_Charset, 0))) {
+        XFree_System(buf); *outKey = NULL; *outLen = 0; return;
+    }
+    if (!appendInt(&buf, &len, &cap,
+        XFormat_boolProperty(self, XFormat_P_Font_Condense, false) ? 1 : 0)) {
+        XFree_System(buf); *outKey = NULL; *outLen = 0; return;
+    }
+    if (!appendInt(&buf, &len, &cap,
+        XFormat_boolProperty(self, XFormat_P_Font_Extend, false) ? 1 : 0)) {
+        XFree_System(buf); *outKey = NULL; *outLen = 0; return;
+    }
     XColor fc = XFormat_fontColor(self);
-    appendInt(&buf, &len, &cap, packColor(&fc));
+    if (!appendInt(&buf, &len, &cap, XFormat_packColor(&fc))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     /* 字体名称 */
     const XString* nameX = XFormat_fontName(self);
     const char* name = nameX ? XString_toUtf8(nameX) : NULL;
     int nameLen = name ? (int)strlen(name) : 0;
-    appendInt(&buf, &len, &cap, nameLen);
+    if (!appendInt(&buf, &len, &cap, nameLen)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     if (nameLen > 0) {
-        if (len + (size_t)nameLen > cap) { cap = (len + nameLen) * 2; buf = (uint8_t*)XRealloc_System(buf, cap); }
+        if (len + (size_t)nameLen > cap) {
+            uint8_t* nb = (uint8_t*)XRealloc_System(buf, (len + nameLen) * 2);
+            if (!nb) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; } /* 失败时旧块保持有效，先释放再退出 */
+            buf = nb; cap = (len + nameLen) * 2;
+        }
         memcpy(buf + len, name, nameLen); len += nameLen;
     }
     *outKey = buf; *outLen = len;
@@ -978,17 +1001,22 @@ void XFormat_borderKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
     size_t cap = 64, len = 0;
     uint8_t* buf = (uint8_t*)XMalloc_System(cap);
     if (!buf) { *outKey = NULL; *outLen = 0; return; }
-    appendInt(&buf, &len, &cap, (int)XFormat_leftBorderStyle(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_rightBorderStyle(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_topBorderStyle(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_bottomBorderStyle(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_diagonalBorderStyle(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_diagonalBorderType(self));
-    XColor lc = XFormat_leftBorderColor(self); appendInt(&buf, &len, &cap, packColor(&lc));
-    XColor rc = XFormat_rightBorderColor(self); appendInt(&buf, &len, &cap, packColor(&rc));
-    XColor tc = XFormat_topBorderColor(self); appendInt(&buf, &len, &cap, packColor(&tc));
-    XColor bc = XFormat_bottomBorderColor(self); appendInt(&buf, &len, &cap, packColor(&bc));
-    XColor dc = XFormat_diagonalBorderColor(self); appendInt(&buf, &len, &cap, packColor(&dc));
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_leftBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_rightBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_topBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_bottomBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_diagonalBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_diagonalBorderType(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    XColor lc = XFormat_leftBorderColor(self);
+    if (!appendInt(&buf, &len, &cap, XFormat_packColor(&lc))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    XColor rc = XFormat_rightBorderColor(self);
+    if (!appendInt(&buf, &len, &cap, XFormat_packColor(&rc))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    XColor tc = XFormat_topBorderColor(self);
+    if (!appendInt(&buf, &len, &cap, XFormat_packColor(&tc))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    XColor bc = XFormat_bottomBorderColor(self);
+    if (!appendInt(&buf, &len, &cap, XFormat_packColor(&bc))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    XColor dc = XFormat_diagonalBorderColor(self);
+    if (!appendInt(&buf, &len, &cap, XFormat_packColor(&dc))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     *outKey = buf; *outLen = len;
 }
 
@@ -997,9 +1025,11 @@ void XFormat_fillKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
     size_t cap = 32, len = 0;
     uint8_t* buf = (uint8_t*)XMalloc_System(cap);
     if (!buf) { *outKey = NULL; *outLen = 0; return; }
-    appendInt(&buf, &len, &cap, (int)XFormat_fillPattern(self));
-    XColor fg = XFormat_patternForegroundColor(self); appendInt(&buf, &len, &cap, packColor(&fg));
-    XColor bg = XFormat_patternBackgroundColor(self); appendInt(&buf, &len, &cap, packColor(&bg));
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_fillPattern(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    XColor fg = XFormat_patternForegroundColor(self);
+    if (!appendInt(&buf, &len, &cap, XFormat_packColor(&fg))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    XColor bg = XFormat_patternBackgroundColor(self);
+    if (!appendInt(&buf, &len, &cap, XFormat_packColor(&bg))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     *outKey = buf; *outLen = len;
 }
 
@@ -1009,37 +1039,41 @@ void XFormat_formatKey(const XFormat* self, uint8_t** outKey, size_t* outLen)
     uint8_t* buf = (uint8_t*)XMalloc_System(cap);
     if (!buf) { *outKey = NULL; *outLen = 0; return; }
     /* 数字格式 */
-    appendInt(&buf, &len, &cap, XFormat_numberFormatIndex(self));
+    if (!appendInt(&buf, &len, &cap, XFormat_numberFormatIndex(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     const XString* nfX = XFormat_numberFormat(self);
     const char* nf = nfX ? XString_toUtf8(nfX) : NULL;
     int nfLen = nf ? (int)strlen(nf) : 0;
-    appendInt(&buf, &len, &cap, nfLen);
+    if (!appendInt(&buf, &len, &cap, nfLen)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     if (nfLen > 0) {
-        if (len + (size_t)nfLen > cap) { cap = (len + nfLen) * 2; buf = (uint8_t*)XRealloc_System(buf, cap); }
+        if (len + (size_t)nfLen > cap) {
+            uint8_t* nb = (uint8_t*)XRealloc_System(buf, (len + nfLen) * 2);
+            if (!nb) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; } /* 失败时旧块保持有效，先释放再退出 */
+            buf = nb; cap = (len + nfLen) * 2;
+        }
         memcpy(buf + len, nf, nfLen); len += nfLen;
     }
     /* 字体 */
-    appendInt(&buf, &len, &cap, XFormat_fontSize(self));
-    appendInt(&buf, &len, &cap, XFormat_fontBold(self) ? 1 : 0);
-    appendInt(&buf, &len, &cap, XFormat_fontItalic(self) ? 1 : 0);
-    appendInt(&buf, &len, &cap, (int)XFormat_fontUnderline(self));
+    if (!appendInt(&buf, &len, &cap, XFormat_fontSize(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_fontBold(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_fontItalic(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_fontUnderline(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     /* 对齐 */
-    appendInt(&buf, &len, &cap, (int)XFormat_horizontalAlignment(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_verticalAlignment(self));
-    appendInt(&buf, &len, &cap, XFormat_textWrap(self) ? 1 : 0);
-    appendInt(&buf, &len, &cap, XFormat_rotation(self));
-    appendInt(&buf, &len, &cap, XFormat_indent(self));
-    appendInt(&buf, &len, &cap, XFormat_shrinkToFit(self) ? 1 : 0);
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_horizontalAlignment(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_verticalAlignment(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_textWrap(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_rotation(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_indent(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_shrinkToFit(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     /* 填充 */
-    appendInt(&buf, &len, &cap, (int)XFormat_fillPattern(self));
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_fillPattern(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     /* 边框 */
-    appendInt(&buf, &len, &cap, (int)XFormat_leftBorderStyle(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_rightBorderStyle(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_topBorderStyle(self));
-    appendInt(&buf, &len, &cap, (int)XFormat_bottomBorderStyle(self));
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_leftBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_rightBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_topBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, (int)XFormat_bottomBorderStyle(self))) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     /* 保护 */
-    appendInt(&buf, &len, &cap, XFormat_locked(self) ? 1 : 0);
-    appendInt(&buf, &len, &cap, XFormat_hidden(self) ? 1 : 0);
+    if (!appendInt(&buf, &len, &cap, XFormat_locked(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
+    if (!appendInt(&buf, &len, &cap, XFormat_hidden(self) ? 1 : 0)) { XFree_System(buf); *outKey = NULL; *outLen = 0; return; }
     *outKey = buf; *outLen = len;
 }
 
@@ -1086,7 +1120,7 @@ const XString* XFormat_stringProperty(const XFormat* self, int propertyId, const
 
 XColor XFormat_colorProperty(const XFormat* self, int propertyId, const XColor* defaultValue)
 {
-    if (!hasProperty(self, propertyId)) {
+    if (!XFormat_hasProperty(self, propertyId)) {
         return defaultValue ? *defaultValue : XColor_create_rgb(0, 0, 0, 255);
     }
     return getPropertyColor(self, propertyId);

@@ -450,9 +450,13 @@ static void xcv_paintTitle(XChartView* self, XPainter* painter,
 {
     uint32_t text;
     XChart* chart = self->m_chart;
-    XFont font = XWidget_font((XWidget*)self);
     const char* title;
+    XFont font;
     if (!chart) return;
+    /* 字体深拷贝下移到空图表早退之后（XWidget_font 契约：用后必须
+     * XClassDeinit）：此前先拷贝再在空图表处 return，副本（家族
+     * XString）随早退泄漏（同 xcv_paintAxes R-106 修复模式）。 */
+    font = XWidget_font((XWidget*)self);
     text = chart->m_titleBrush != 0
         ? chart->m_titleBrush : xcv_color(self, XPaletteColorRole_WindowText);
     if (chart->m_titleFamily && XString_toUtf8(chart->m_titleFamily) &&

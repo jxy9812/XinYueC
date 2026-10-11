@@ -230,47 +230,34 @@ typedef struct XNtlmContext {
  * @brief 代理握手上下文，保存握手过程中的所有状态
  */
 typedef struct XProxyHandshakeContext {
-    /* 基本配置 */
-    XProxyHandshakeState state;         ///< 当前状态
+    /* ---- 8 字节对齐簇：指针 / size_t / 8 字节标量（int64 置首以兼容
+     *      32 位目标的 8 字节对齐要求） ---- */
+    int64_t startTime;                  ///< 开始时间（毫秒）
     XNetworkProxy* proxy;               ///< 代理配置（不拥有）
     XString* targetHost;                ///< 目标主机名
-    uint16_t targetPort;                ///< 目标端口
-    XSocks5Command socks5Command;       ///< SOCKS5命令类型
-    
-    /* SOCKS5 状态 */
-    XSocks5AuthMethod socks5AuthMethod; ///< 协商的认证方法
     XByteArray* socks5Buffer;           ///< SOCKS5缓冲区（最大地址+端口）
     size_t socks5BufferLen;             ///< 缓冲区数据长度
     size_t socks5BytesNeeded;           ///< 需要接收的字节数
-    
-    /* SOCKS5 BIND 状态 */
-    XSocks5BindResult bindResult;       ///< BIND操作结果
-    
-    /* SOCKS5 UDP ASSOCIATE 状态 */
-    XSocks5UdpAssociateResult udpResult;///< UDP ASSOCIATE结果
-    
-    /* HTTP 状态 */
     XByteArray* httpBuffer;             ///< HTTP响应缓冲区
-    int httpResponseCode;               ///< HTTP响应码
     XByteArray* httpAuthHeader;         ///< WWW-Authenticate头
-    XHttpProxyAuthType httpAuthType;    ///< HTTP认证类型
-    
-    /* HTTP Digest 参数 */
-    XHttpDigestParams digestParams;     ///< Digest认证参数
-    
-    /* NTLM 上下文 */
-    XNtlmContext ntlmContext;           ///< NTLM认证上下文
-    
-    /* GSSAPI 上下文 */
-    void* gssContext;                   ///< GSSAPI上下文（平台相关）
-    
-    /* 错误信息 */
-    XProxyHandshakeError errorCode;     ///< 错误码
     XString* errorMessage;              ///< 错误描述
-    
-    /* 超时控制 */
-    int64_t startTime;                  ///< 开始时间（毫秒）
+    void* gssContext;                   ///< GSSAPI上下文（平台相关）
+
+    /* ---- 子结构簇 ---- */
+    XSocks5BindResult bindResult;       ///< BIND操作结果
+    XSocks5UdpAssociateResult udpResult;///< UDP ASSOCIATE结果
+    XHttpDigestParams digestParams;     ///< Digest认证参数
+    XNtlmContext ntlmContext;           ///< NTLM认证上下文
+
+    /* ---- 4/2 字节标量簇 ---- */
+    XProxyHandshakeState state;         ///< 当前状态
+    XSocks5Command socks5Command;       ///< SOCKS5命令类型
+    XSocks5AuthMethod socks5AuthMethod; ///< 协商的认证方法
+    int httpResponseCode;               ///< HTTP响应码
+    XHttpProxyAuthType httpAuthType;    ///< HTTP认证类型
+    XProxyHandshakeError errorCode;     ///< 错误码
     int timeoutMs;                      ///< 超时时间（毫秒）
+    uint16_t targetPort;                ///< 目标端口
 } XProxyHandshakeContext;
 
 // =============== 核心API ===============

@@ -2,8 +2,9 @@
 #if XPROTOCOL_ON
 #if XMQTT_ON
 #if XMQTT_CLIENT_ON
-#include "XMqttClient_p.h"
+#include "XMqttClient_Protected.h"
 #include "XMemory.h"
+#include "XStringUtils.h" /* strchr 改经 XStrchr（外部依赖约束：string.h 白名单） */
 #include <string.h>
 
 enum {
@@ -274,17 +275,17 @@ static bool mqtt_add_user_property(XMqttUserProperties** properties,
 
 static void mqtt_subscription_entry_deinit(XMqttSubscriptionEntry* entry)
 {
-    if (entry && entry->wireTopic) {
-        XClassDelete(entry->wireTopic);
-        entry->wireTopic = NULL;
+    if (entry && entry->m_wireTopic) {
+        XClassDelete(entry->m_wireTopic);
+        entry->m_wireTopic = NULL;
     }
 }
 
 static void mqtt_alias_entry_deinit(XMqttTopicAliasEntry* entry)
 {
-    if (entry && entry->topic) {
-        XClassDelete(entry->topic);
-        entry->topic = NULL;
+    if (entry && entry->m_topic) {
+        XClassDelete(entry->m_topic);
+        entry->m_topic = NULL;
     }
 }
 
@@ -292,24 +293,24 @@ XMqttClientPrivate* XMqttClientPrivate_create(void)
 {
     XMqttClientPrivate* priv = (XMqttClientPrivate*)XCalloc_System(1, sizeof(*priv));
     if (!priv) return NULL;
-    priv->input = XByteArray_create();
-    priv->subscriptions = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttSubscriptionEntry), false);
-    priv->pendingPublishes = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttPendingPublish), false);
-    priv->incomingQos2 = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint16_t), false);
-    priv->receiveAliases = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttTopicAliasEntry), false);
-    priv->publishAliases = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttTopicAliasEntry), false);
-    priv->nextPacketIdentifier = 1;
-    priv->keepAliveTimer = XTIMER_INVALID_ID;
-    if (!priv->input || !priv->subscriptions || !priv->pendingPublishes ||
-        !priv->incomingQos2 || !priv->receiveAliases || !priv->publishAliases) {
+    priv->m_input = XByteArray_create();
+    priv->m_subscriptions = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttSubscriptionEntry), false);
+    priv->m_pendingPublishes = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttPendingPublish), false);
+    priv->m_incomingQos2 = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint16_t), false);
+    priv->m_receiveAliases = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttTopicAliasEntry), false);
+    priv->m_publishAliases = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XMqttTopicAliasEntry), false);
+    priv->m_nextPacketIdentifier = 1;
+    priv->m_keepAliveTimer = XTIMER_INVALID_ID;
+    if (!priv->m_input || !priv->m_subscriptions || !priv->m_pendingPublishes ||
+        !priv->m_incomingQos2 || !priv->m_receiveAliases || !priv->m_publishAliases) {
         XMqttClientPrivate_delete(priv);
         return NULL;
     }
-    XContainerSetDataDeinitMethod(priv->subscriptions,
+    XContainerSetDataDeinitMethod(priv->m_subscriptions,
         (XCDataDeinitMethod)mqtt_subscription_entry_deinit);
-    XContainerSetDataDeinitMethod(priv->receiveAliases,
+    XContainerSetDataDeinitMethod(priv->m_receiveAliases,
         (XCDataDeinitMethod)mqtt_alias_entry_deinit);
-    XContainerSetDataDeinitMethod(priv->publishAliases,
+    XContainerSetDataDeinitMethod(priv->m_publishAliases,
         (XCDataDeinitMethod)mqtt_alias_entry_deinit);
     return priv;
 }
@@ -317,35 +318,35 @@ XMqttClientPrivate* XMqttClientPrivate_create(void)
 void XMqttClientPrivate_delete(XMqttClientPrivate* priv)
 {
     if (!priv) return;
-    if (priv->input) XClassDelete(priv->input);
-    if (priv->subscriptions) XClassDelete(priv->subscriptions);
-    if (priv->pendingPublishes) XClassDelete(priv->pendingPublishes);
-    if (priv->incomingQos2) XClassDelete(priv->incomingQos2);
-    if (priv->receiveAliases) XClassDelete(priv->receiveAliases);
-    if (priv->publishAliases) XClassDelete(priv->publishAliases);
+    if (priv->m_input) XClassDelete(priv->m_input);
+    if (priv->m_subscriptions) XClassDelete(priv->m_subscriptions);
+    if (priv->m_pendingPublishes) XClassDelete(priv->m_pendingPublishes);
+    if (priv->m_incomingQos2) XClassDelete(priv->m_incomingQos2);
+    if (priv->m_receiveAliases) XClassDelete(priv->m_receiveAliases);
+    if (priv->m_publishAliases) XClassDelete(priv->m_publishAliases);
     XFree_System(priv);
 }
 
 static void mqtt_stop_keep_alive(XMqttClient* client)
 {
     if (!client || !client->m_private) return;
-    if (client->m_private->keepAliveTimer != XTIMER_INVALID_ID) {
-        XObject_killTimer((XObject*)client, client->m_private->keepAliveTimer);
-        client->m_private->keepAliveTimer = XTIMER_INVALID_ID;
+    if (client->m_private->m_keepAliveTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)client, client->m_private->m_keepAliveTimer);
+        client->m_private->m_keepAliveTimer = XTIMER_INVALID_ID;
     }
-    client->m_private->pingTimeout = 0;
+    client->m_private->m_pingTimeout = 0;
 }
 
 static void mqtt_clear_subscriptions(XMqttClient* client)
 {
-    if (!client || !client->m_private || !client->m_private->subscriptions) return;
-    for (size_t i = 0; i < XVector_size_base(client->m_private->subscriptions); ++i) {
+    if (!client || !client->m_private || !client->m_private->m_subscriptions) return;
+    for (size_t i = 0; i < XVector_size_base(client->m_private->m_subscriptions); ++i) {
         XMqttSubscriptionEntry* entry = (XMqttSubscriptionEntry*)XVector_at_base(
-            client->m_private->subscriptions, (int64_t)i);
-        if (entry && entry->subscription)
-            XMqttSubscription_setState(entry->subscription, XMqttSubscription_Unsubscribed);
+            client->m_private->m_subscriptions, (int64_t)i);
+        if (entry && entry->m_subscription)
+            XMqttSubscription_setState(entry->m_subscription, XMqttSubscription_Unsubscribed);
     }
-    XVector_clear_base(client->m_private->subscriptions);
+    XVector_clear_base(client->m_private->m_subscriptions);
 }
 
 void XMqttClientPrivate_resetConnection(XMqttClient* client, bool clearSubscriptions)
@@ -353,29 +354,29 @@ void XMqttClientPrivate_resetConnection(XMqttClient* client, bool clearSubscript
     if (!client || !client->m_private) return;
     XMqttClientPrivate* priv = client->m_private;
     mqtt_stop_keep_alive(client);
-    priv->connectPacketSent = false;
-    priv->disconnectRequested = false;
-    priv->processingInput = false;
-    XByteArray_clear_base(priv->input);
-    XVector_clear_base(priv->pendingPublishes);
-    XVector_clear_base(priv->incomingQos2);
-    XVector_clear_base(priv->receiveAliases);
-    XVector_clear_base(priv->publishAliases);
+    priv->m_connectPacketSent = false;
+    priv->m_disconnectRequested = false;
+    priv->m_processingInput = false;
+    XByteArray_clear_base(priv->m_input);
+    XVector_clear_base(priv->m_pendingPublishes);
+    XVector_clear_base(priv->m_incomingQos2);
+    XVector_clear_base(priv->m_receiveAliases);
+    XVector_clear_base(priv->m_publishAliases);
     if (clearSubscriptions) mqtt_clear_subscriptions(client);
 }
 
 static bool mqtt_identifier_in_use(const XMqttClient* client, uint16_t identifier)
 {
     XMqttClientPrivate* priv = client->m_private;
-    for (size_t i = 0; i < XVector_size_base(priv->pendingPublishes); ++i) {
+    for (size_t i = 0; i < XVector_size_base(priv->m_pendingPublishes); ++i) {
         const XMqttPendingPublish* pending = (const XMqttPendingPublish*)XVector_at_base(
-            priv->pendingPublishes, (int64_t)i);
-        if (pending && pending->identifier == identifier) return true;
+            priv->m_pendingPublishes, (int64_t)i);
+        if (pending && pending->m_identifier == identifier) return true;
     }
-    for (size_t i = 0; i < XVector_size_base(priv->subscriptions); ++i) {
+    for (size_t i = 0; i < XVector_size_base(priv->m_subscriptions); ++i) {
         const XMqttSubscriptionEntry* entry = (const XMqttSubscriptionEntry*)XVector_at_base(
-            priv->subscriptions, (int64_t)i);
-        if (entry && entry->identifier == identifier) return true;
+            priv->m_subscriptions, (int64_t)i);
+        if (entry && entry->m_identifier == identifier) return true;
     }
     return false;
 }
@@ -384,8 +385,8 @@ static uint16_t mqtt_next_identifier(XMqttClient* client)
 {
     XMqttClientPrivate* priv = client->m_private;
     for (uint32_t attempts = 0; attempts < UINT16_MAX; ++attempts) {
-        uint16_t id = priv->nextPacketIdentifier++;
-        if (priv->nextPacketIdentifier == 0) priv->nextPacketIdentifier = 1;
+        uint16_t id = priv->m_nextPacketIdentifier++;
+        if (priv->m_nextPacketIdentifier == 0) priv->m_nextPacketIdentifier = 1;
         if (id && !mqtt_identifier_in_use(client, id)) return id;
     }
     return 0;
@@ -395,7 +396,7 @@ static XMqttTopicAliasEntry* mqtt_alias_by_id(XVector* aliases, uint16_t alias)
 {
     for (size_t i = 0; aliases && i < XVector_size_base(aliases); ++i) {
         XMqttTopicAliasEntry* entry = (XMqttTopicAliasEntry*)XVector_at_base(aliases, (int64_t)i);
-        if (entry && entry->alias == alias) return entry;
+        if (entry && entry->m_alias == alias) return entry;
     }
     return NULL;
 }
@@ -404,7 +405,7 @@ static XMqttTopicAliasEntry* mqtt_alias_by_topic(XVector* aliases, const XString
 {
     for (size_t i = 0; aliases && i < XVector_size_base(aliases); ++i) {
         XMqttTopicAliasEntry* entry = (XMqttTopicAliasEntry*)XVector_at_base(aliases, (int64_t)i);
-        if (entry && XString_equals(entry->topic, topic, XChar_CaseSensitive)) return entry;
+        if (entry && XString_equals(entry->m_topic, topic, XChar_CaseSensitive)) return entry;
     }
     return NULL;
 }
@@ -413,13 +414,13 @@ static bool mqtt_alias_set(XVector* aliases, uint16_t alias, const XString* topi
 {
     XMqttTopicAliasEntry* entry = mqtt_alias_by_id(aliases, alias);
     if (entry) {
-        if (entry->topic) XClassDelete(entry->topic);
-        entry->topic = XString_create_copy(topic);
-        return entry->topic != NULL;
+        if (entry->m_topic) XClassDelete(entry->m_topic);
+        entry->m_topic = XString_create_copy(topic);
+        return entry->m_topic != NULL;
     }
     XMqttTopicAliasEntry value = {alias, XString_create_copy(topic)};
-    if (!value.topic || !XVector_push_back_1_base(aliases, &value)) {
-        if (value.topic) XClassDelete(value.topic);
+    if (!value.m_topic || !XVector_push_back_1_base(aliases, &value)) {
+        if (value.m_topic) XClassDelete(value.m_topic);
         return false;
     }
     return true;
@@ -554,7 +555,7 @@ static bool mqtt_append_publish_properties(XByteArray* output,
 bool XMqttProtocol_sendConnect(XMqttClient* client)
 {
     if (!client || !client->m_private || !client->m_transport ||
-        client->m_private->connectPacketSent) return false;
+        client->m_private->m_connectPacketSent) return false;
     XByteArray* payload = XByteArray_create();
     if (!payload) return false;
     bool mqtt31 = client->m_protocolVersion == XMqttClient_MQTT_3_1;
@@ -589,7 +590,7 @@ bool XMqttProtocol_sendConnect(XMqttClient* client)
     if (protocol) XClassDelete(protocol);
     if (ok) ok = mqtt_write_packet(client, MQTT_CONNECT, payload);
     XClassDelete(payload);
-    client->m_private->connectPacketSent = ok;
+    client->m_private->m_connectPacketSent = ok;
     if (!ok) XMqttProtocol_fail(client, XMqttClient_TransportInvalid);
     return ok;
 }
@@ -601,12 +602,12 @@ XMqttSubscription* XMqttProtocol_subscribe(XMqttClient* client,
 {
     if (!client || !client->m_private || client->m_state != XMqttClient_Connected ||
         !topic || !XMqttTopicFilter_isValid(topic) || qos > 2) return NULL;
-    for (size_t i = 0; i < XVector_size_base(client->m_private->subscriptions); ++i) {
+    for (size_t i = 0; i < XVector_size_base(client->m_private->m_subscriptions); ++i) {
         XMqttSubscriptionEntry* existing = (XMqttSubscriptionEntry*)XVector_at_base(
-            client->m_private->subscriptions, (int64_t)i);
-        if (existing && !existing->unsubscribePending &&
-            XMqttTopicFilter_equal(existing->wireTopic, topic))
-            return existing->subscription;
+            client->m_private->m_subscriptions, (int64_t)i);
+        if (existing && !existing->m_unsubscribePending &&
+            XMqttTopicFilter_equal(existing->m_wireTopic, topic))
+            return existing->m_subscription;
     }
     uint16_t identifier = mqtt_next_identifier(client);
     if (!identifier) return NULL;
@@ -640,7 +641,7 @@ XMqttSubscription* XMqttProtocol_subscribe(XMqttClient* client,
         XString* shareName = XMqttTopicFilter_sharedSubscriptionName(topic);
         if (shareName && XString_toUtf8_length(shareName)) {
             const char* wire = XString_toUtf8(topic->m_filter);
-            const char* filterStart = wire ? strchr(wire + 7, '/') : NULL;
+            const char* filterStart = wire ? XStrchr(wire + 7, '/') : NULL;
             subscription->m_sharedSubscription = true;
             subscription->m_sharedSubscriptionName = shareName;
             shareName = NULL;
@@ -653,11 +654,20 @@ XMqttSubscription* XMqttProtocol_subscribe(XMqttClient* client,
     }
     XMqttSubscription_setState(subscription, XMqttSubscription_SubscriptionPending);
     XMqttSubscriptionEntry entry = {identifier, wireTopic, subscription, false};
-    if (!XVector_push_back_1_base(client->m_private->subscriptions, &entry) ||
-        !mqtt_write_packet(client, MQTT_SUBSCRIBE | 0x02U, payload)) {
+    bool pushed = XVector_push_back_1_base(client->m_private->m_subscriptions, &entry);
+    if (!pushed || !mqtt_write_packet(client, MQTT_SUBSCRIBE | 0x02U, payload)) {
         XObject_setParent(subscription, NULL);
         XMqttSubscription_deleteLater(subscription);
-        mqtt_subscription_entry_deinit(&entry);
+        if (pushed) {
+            /* 入表已成功：容器元素按字节浅拷贝，与 entry 共享同一
+             * wireTopic 指针；必须先移除该元素，否则元素持有已释放
+             * 的 wireTopic（双重释放）与已 deleteLater 的 subscription
+             * （悬垂）。pop_back 经容器 deinit 回调释放容器副本内的
+             * wireTopic，局部 entry 此时不得再重复释放。 */
+            XVector_pop_back_base(client->m_private->m_subscriptions);
+        } else {
+            mqtt_subscription_entry_deinit(&entry);
+        }
         goto failed;
     }
     XClassDelete(prop);
@@ -676,11 +686,11 @@ bool XMqttProtocol_unsubscribe(XMqttClient* client,
     if (!client || !client->m_private || client->m_state != XMqttClient_Connected ||
         !topic || !XMqttTopicFilter_isValid(topic)) return false;
     XMqttSubscriptionEntry* entry = NULL;
-    for (size_t i = 0; i < XVector_size_base(client->m_private->subscriptions); ++i) {
+    for (size_t i = 0; i < XVector_size_base(client->m_private->m_subscriptions); ++i) {
         XMqttSubscriptionEntry* candidate = (XMqttSubscriptionEntry*)XVector_at_base(
-            client->m_private->subscriptions, (int64_t)i);
-        if (candidate && !candidate->unsubscribePending &&
-            XMqttTopicFilter_equal(candidate->wireTopic, topic)) { entry = candidate; break; }
+            client->m_private->m_subscriptions, (int64_t)i);
+        if (candidate && !candidate->m_unsubscribePending &&
+            XMqttTopicFilter_equal(candidate->m_wireTopic, topic)) { entry = candidate; break; }
     }
     if (!entry) return false;
     uint16_t identifier = mqtt_next_identifier(client);
@@ -695,9 +705,9 @@ bool XMqttProtocol_unsubscribe(XMqttClient* client,
     if (ok) ok = mqtt_append_string(payload, topic->m_filter) &&
                  mqtt_write_packet(client, MQTT_UNSUBSCRIBE | 0x02U, payload);
     if (ok) {
-        entry->identifier = identifier;
-        entry->unsubscribePending = true;
-        XMqttSubscription_setState(entry->subscription,
+        entry->m_identifier = identifier;
+        entry->m_unsubscribePending = true;
+        XMqttSubscription_setState(entry->m_subscription,
                                    XMqttSubscription_UnsubscriptionPending);
     }
     if (prop) XClassDelete(prop);
@@ -723,17 +733,17 @@ int32_t XMqttProtocol_publish(XMqttClient* client,
         if (properties && (properties->m_availableProperties & XMqttPublishProperties_TopicAlias)) {
             alias = properties->m_topicAlias;
             if (!alias || alias > maximum) return -1;
-            XMqttTopicAliasEntry* known = mqtt_alias_by_id(client->m_private->publishAliases, alias);
-            omitTopic = known && XString_equals(known->topic, topic->m_name, XChar_CaseSensitive);
-            if (!omitTopic && !mqtt_alias_set(client->m_private->publishAliases, alias,
+            XMqttTopicAliasEntry* known = mqtt_alias_by_id(client->m_private->m_publishAliases, alias);
+            omitTopic = known && XString_equals(known->m_topic, topic->m_name, XChar_CaseSensitive);
+            if (!omitTopic && !mqtt_alias_set(client->m_private->m_publishAliases, alias,
                                               topic->m_name)) return -1;
         } else if (maximum) {
-            XMqttTopicAliasEntry* known = mqtt_alias_by_topic(client->m_private->publishAliases,
+            XMqttTopicAliasEntry* known = mqtt_alias_by_topic(client->m_private->m_publishAliases,
                                                               topic->m_name);
-            if (known) { alias = known->alias; omitTopic = true; }
-            else if (XVector_size_base(client->m_private->publishAliases) < maximum) {
-                alias = (uint16_t)(XVector_size_base(client->m_private->publishAliases) + 1);
-                if (!mqtt_alias_set(client->m_private->publishAliases, alias, topic->m_name))
+            if (known) { alias = known->m_alias; omitTopic = true; }
+            else if (XVector_size_base(client->m_private->m_publishAliases) < maximum) {
+                alias = (uint16_t)(XVector_size_base(client->m_private->m_publishAliases) + 1);
+                if (!mqtt_alias_set(client->m_private->m_publishAliases, alias, topic->m_name))
                     return -1;
             }
         }
@@ -749,11 +759,11 @@ int32_t XMqttProtocol_publish(XMqttClient* client,
     if (ok) ok = mqtt_append(payload, message, messageLen);
     /* 用位域联合体构造固定头第一字节（避免手工移位/掩码） */
     XMqttFixedHeader fixed;
-    fixed.byte = 0;
-    fixed.bits.type = (uint8_t)(MQTT_PUBLISH >> 4);
-    fixed.bits.qos = qos;
-    fixed.bits.retain = retain ? 1U : 0U;
-    uint8_t header = fixed.byte;
+    fixed.m_byte = 0;
+    fixed.m_bits.m_type = (uint8_t)(MQTT_PUBLISH >> 4);
+    fixed.m_bits.m_qos = qos;
+    fixed.m_bits.m_retain = retain ? 1U : 0U;
+    uint8_t header = fixed.m_byte;
     if (ok) ok = mqtt_write_packet(client, header, payload);
     XClassDelete(payload);
     if (!ok) return -1;
@@ -762,7 +772,7 @@ int32_t XMqttProtocol_publish(XMqttClient* client,
         return 0;
     }
     XMqttPendingPublish pending = {identifier, qos, 0};
-    if (!XVector_push_back_1_base(client->m_private->pendingPublishes, &pending)) return -1;
+    if (!XVector_push_back_1_base(client->m_private->m_pendingPublishes, &pending)) return -1;
     XMqttClient_messageStatusChanged_signal(client, identifier,
                                             XMqtt_MessageStatus_Published, NULL);
     return identifier;
@@ -773,9 +783,9 @@ bool XMqttProtocol_sendPing(XMqttClient* client, bool automatic)
     if (!client || !client->m_private || client->m_state != XMqttClient_Connected)
         return false;
     if (!automatic && client->m_autoKeepAlive) return false;
-    if (client->m_private->pingTimeout) return false;
+    if (client->m_private->m_pingTimeout) return false;
     if (!mqtt_write_packet(client, MQTT_PINGREQ, NULL)) return false;
-    client->m_private->pingTimeout = 1;
+    client->m_private->m_pingTimeout = 1;
     return true;
 }
 
@@ -783,7 +793,7 @@ bool XMqttProtocol_sendDisconnect(XMqttClient* client)
 {
     if (!client || client->m_state != XMqttClient_Connected) return false;
     bool ok = mqtt_write_packet(client, MQTT_DISCONNECT, NULL);
-    if (client->m_private) client->m_private->disconnectRequested = true;
+    if (client->m_private) client->m_private->m_disconnectRequested = true;
     return ok;
 }
 
@@ -1041,10 +1051,10 @@ static bool mqtt_send_ack(XMqttClient* client, uint8_t type, uint16_t identifier
 
 static int64_t mqtt_pending_publish_index(XMqttClient* client, uint16_t identifier)
 {
-    for (size_t i = 0; i < XVector_size_base(client->m_private->pendingPublishes); ++i) {
+    for (size_t i = 0; i < XVector_size_base(client->m_private->m_pendingPublishes); ++i) {
         XMqttPendingPublish* pending = (XMqttPendingPublish*)XVector_at_base(
-            client->m_private->pendingPublishes, (int64_t)i);
-        if (pending && pending->identifier == identifier) return (int64_t)i;
+            client->m_private->m_pendingPublishes, (int64_t)i);
+        if (pending && pending->m_identifier == identifier) return (int64_t)i;
     }
     return -1;
 }
@@ -1078,7 +1088,7 @@ static void mqtt_handle_connack(XMqttClient* client, XMqttReader* reader)
     if (client->m_autoKeepAlive && client->m_keepAlive && client->m_private) {
         uint16_t seconds = client->m_serverConnectionProperties->m_serverKeepAlive ?
             client->m_serverConnectionProperties->m_serverKeepAlive : client->m_keepAlive;
-        client->m_private->keepAliveTimer = XObject_startTimer_ms(
+        client->m_private->m_keepAliveTimer = XObject_startTimer_ms(
             (XObject*)client, (uint64_t)seconds * 1000U, XTimerType_CoarseTimer);
     }
 }
@@ -1107,12 +1117,12 @@ static void mqtt_handle_suback(XMqttClient* client, XMqttReader* reader, bool un
         reader->ok = false;
     }
     if (!unsubscribe && code > 2 && code < 0x80) reader->ok = false;
-    for (size_t i = 0; i < XVector_size_base(client->m_private->subscriptions); ++i) {
+    for (size_t i = 0; i < XVector_size_base(client->m_private->m_subscriptions); ++i) {
         XMqttSubscriptionEntry* entry = (XMqttSubscriptionEntry*)XVector_at_base(
-            client->m_private->subscriptions, (int64_t)i);
-        if (!entry || entry->identifier != identifier || entry->unsubscribePending != unsubscribe)
+            client->m_private->m_subscriptions, (int64_t)i);
+        if (!entry || entry->m_identifier != identifier || entry->m_unsubscribePending != unsubscribe)
             continue;
-        XMqttSubscription* sub = entry->subscription;
+        XMqttSubscription* sub = entry->m_subscription;
         sub->m_reasonCode = code;
         mqtt_replace_string(&sub->m_reason, reason); reason = NULL;
         if (sub->m_userProperties) XClassDelete(sub->m_userProperties);
@@ -1120,14 +1130,14 @@ static void mqtt_handle_suback(XMqttClient* client, XMqttReader* reader, bool un
         if (unsubscribe) {
             XMqttSubscription_setState(sub, code < 0x80 ? XMqttSubscription_Unsubscribed
                                                         : XMqttSubscription_Error);
-            XVector_removeAt_base(client->m_private->subscriptions, (int64_t)i);
+            XVector_removeAt_base(client->m_private->m_subscriptions, (int64_t)i);
         } else if (code <= 2) {
             XMqttSubscription_setQos(sub, code);
             XMqttSubscription_setState(sub, XMqttSubscription_Subscribed);
-            entry->identifier = 0;
+            entry->m_identifier = 0;
         } else {
             XMqttSubscription_setState(sub, XMqttSubscription_Error);
-            entry->identifier = 0;
+            entry->m_identifier = 0;
         }
         break;
     }
@@ -1138,8 +1148,8 @@ cleanup:
 
 static bool mqtt_incoming_qos2_seen(XMqttClient* client, uint16_t identifier)
 {
-    for (size_t i = 0; i < XVector_size_base(client->m_private->incomingQos2); ++i) {
-        uint16_t* value = (uint16_t*)XVector_at_base(client->m_private->incomingQos2,
+    for (size_t i = 0; i < XVector_size_base(client->m_private->m_incomingQos2); ++i) {
+        uint16_t* value = (uint16_t*)XVector_at_base(client->m_private->m_incomingQos2,
                                                      (int64_t)i);
         if (value && *value == identifier) return true;
     }
@@ -1149,14 +1159,14 @@ static bool mqtt_incoming_qos2_seen(XMqttClient* client, uint16_t identifier)
 static void mqtt_emit_incoming(XMqttClient* client, XMqttMessage* message)
 {
     XMqttClient_messageReceived_signal(client, message->m_payload, message->m_topic);
-    for (size_t i = 0; i < XVector_size_base(client->m_private->subscriptions); ++i) {
+    for (size_t i = 0; i < XVector_size_base(client->m_private->m_subscriptions); ++i) {
         XMqttSubscriptionEntry* entry = (XMqttSubscriptionEntry*)XVector_at_base(
-            client->m_private->subscriptions, (int64_t)i);
-        if (entry && !entry->unsubscribePending && entry->subscription &&
-            XMqttSubscription_state(entry->subscription) == XMqttSubscription_Subscribed &&
-            XMqttTopicFilter_match(entry->subscription->m_topic, message->m_topic,
+            client->m_private->m_subscriptions, (int64_t)i);
+        if (entry && !entry->m_unsubscribePending && entry->m_subscription &&
+            XMqttSubscription_state(entry->m_subscription) == XMqttSubscription_Subscribed &&
+            XMqttTopicFilter_match(entry->m_subscription->m_topic, message->m_topic,
                 XMqttTopicFilter_WildcardsDontMatchDollarTopicMatchOption))
-            XMqttSubscription_messageReceived_signal(entry->subscription, message);
+            XMqttSubscription_messageReceived_signal(entry->m_subscription, message);
     }
 }
 
@@ -1164,9 +1174,9 @@ static void mqtt_handle_publish(XMqttClient* client, uint8_t header, XMqttReader
 {
     /* 用位域联合体解析固定头第一字节 */
     XMqttFixedHeader fixed = { header };
-    uint8_t qos = (uint8_t)fixed.bits.qos;
+    uint8_t qos = (uint8_t)fixed.m_bits.m_qos;
     if (qos == 3) { reader->ok = false; return; }
-    if (qos == 0 && fixed.bits.dup) { reader->ok = false; return; }
+    if (qos == 0 && fixed.m_bits.m_dup) { reader->ok = false; return; }
     XString* topic = mqtt_read_string(reader);
     uint16_t identifier = qos ? mqtt_read_u16(reader) : 0;
     if (qos && !identifier) reader->ok = false;
@@ -1179,13 +1189,13 @@ static void mqtt_handle_publish(XMqttClient* client, uint8_t header, XMqttReader
             client->m_connectionProperties->m_maximumTopicAlias : 0;
         if (prop->m_topicAlias > maximum) { reader->ok = false; goto cleanup; }
         if (mqtt_string_present(topic)) {
-            if (!mqtt_alias_set(client->m_private->receiveAliases, prop->m_topicAlias, topic))
+            if (!mqtt_alias_set(client->m_private->m_receiveAliases, prop->m_topicAlias, topic))
                 reader->ok = false;
         } else {
-            XMqttTopicAliasEntry* alias = mqtt_alias_by_id(client->m_private->receiveAliases,
+            XMqttTopicAliasEntry* alias = mqtt_alias_by_id(client->m_private->m_receiveAliases,
                                                            prop->m_topicAlias);
             if (!alias) reader->ok = false;
-            else mqtt_replace_string(&topic, XString_create_copy(alias->topic));
+            else mqtt_replace_string(&topic, XString_create_copy(alias->m_topic));
         }
     }
     XMqttTopicName* topicName = reader->ok ? XMqttTopicName_create(XString_toUtf8(topic)) : NULL;
@@ -1197,7 +1207,7 @@ static void mqtt_handle_publish(XMqttClient* client, uint8_t header, XMqttReader
     if (!duplicateQos2) {
         XMqttMessage* message = XMqttMessage_create_full(
             XString_toUtf8(topic), reader->data + reader->pos, reader->size - reader->pos,
-            identifier, qos, fixed.bits.dup != 0, fixed.bits.retain != 0);
+            identifier, qos, fixed.m_bits.m_dup != 0, fixed.m_bits.m_retain != 0);
         if (!message) { XClassDelete(topicName); reader->ok = false; goto cleanup; }
         if (message->m_publishProperties)
             XClassDelete(message->m_publishProperties);
@@ -1207,7 +1217,7 @@ static void mqtt_handle_publish(XMqttClient* client, uint8_t header, XMqttReader
             XMqttClient_messageStatusChanged_signal(client, identifier,
                                                     XMqtt_MessageStatus_Published, NULL);
         XClassDelete(message);
-        if (qos == 2 && !XVector_push_back_1_base(client->m_private->incomingQos2,
+        if (qos == 2 && !XVector_push_back_1_base(client->m_private->m_incomingQos2,
                                                   &identifier)) reader->ok = false;
     }
     XClassDelete(topicName);
@@ -1236,21 +1246,21 @@ static void mqtt_handle_publish_ack(XMqttClient* client, uint8_t type, XMqttRead
     int64_t index = mqtt_pending_publish_index(client, identifier);
     if (index < 0) { XClassDelete(prop); return; }
     XMqttPendingPublish* pending = (XMqttPendingPublish*)XVector_at_base(
-        client->m_private->pendingPublishes, index);
-    if (type == MQTT_PUBREC && pending->qos == 2) {
-        pending->stage = 1;
+        client->m_private->m_pendingPublishes, index);
+    if (type == MQTT_PUBREC && pending->m_qos == 2) {
+        pending->m_stage = 1;
         XMqttClient_messageStatusChanged_signal(client, identifier,
                                                 XMqtt_MessageStatus_Received, prop);
         mqtt_send_ack(client, MQTT_PUBREL | 0x02U, identifier, 0);
         XMqttClient_messageStatusChanged_signal(client, identifier,
                                                 XMqtt_MessageStatus_Released, NULL);
-    } else if ((type == MQTT_PUBACK && pending->qos == 1) ||
-               (type == MQTT_PUBCOMP && pending->qos == 2)) {
+    } else if ((type == MQTT_PUBACK && pending->m_qos == 1) ||
+               (type == MQTT_PUBCOMP && pending->m_qos == 2)) {
         XMqttClient_messageStatusChanged_signal(client, identifier,
             type == MQTT_PUBACK ? XMqtt_MessageStatus_Acknowledged
                                 : XMqtt_MessageStatus_Completed, prop);
         XMqttClient_messageSent_signal(client, identifier);
-        XVector_removeAt_base(client->m_private->pendingPublishes, index);
+        XVector_removeAt_base(client->m_private->m_pendingPublishes, index);
     } else {
         reader->ok = false;
     }
@@ -1260,11 +1270,11 @@ static void mqtt_handle_publish_ack(XMqttClient* client, uint8_t type, XMqttRead
 static void mqtt_handle_pubrel(XMqttClient* client, XMqttReader* reader)
 {
     uint16_t identifier = mqtt_read_u16(reader);
-    for (size_t i = 0; i < XVector_size_base(client->m_private->incomingQos2); ++i) {
-        uint16_t* value = (uint16_t*)XVector_at_base(client->m_private->incomingQos2,
+    for (size_t i = 0; i < XVector_size_base(client->m_private->m_incomingQos2); ++i) {
+        uint16_t* value = (uint16_t*)XVector_at_base(client->m_private->m_incomingQos2,
                                                      (int64_t)i);
         if (value && *value == identifier) {
-            XVector_removeAt_base(client->m_private->incomingQos2, (int64_t)i);
+            XVector_removeAt_base(client->m_private->m_incomingQos2, (int64_t)i);
             break;
         }
     }
@@ -1340,7 +1350,7 @@ static void mqtt_process_packet(XMqttClient* client, uint8_t header,
     case MQTT_PINGRESP:
         if (size != 0) reader.ok = false;
         else {
-            client->m_private->pingTimeout = 0;
+            client->m_private->m_pingTimeout = 0;
             XMqttClient_pingResponseReceived_signal(client);
         }
         break;
@@ -1366,12 +1376,12 @@ static void mqtt_process_packet(XMqttClient* client, uint8_t header,
 void XMqttProtocol_feed(XMqttClient* client, const uint8_t* data, size_t size)
 {
     if (!client || !client->m_private || (!data && size) ||
-        !mqtt_append(client->m_private->input, data, size) ||
-        client->m_private->processingInput) return;
-    client->m_private->processingInput = true;
-    while (XByteArray_size_base(client->m_private->input) >= 2) {
-        const uint8_t* input = (const uint8_t*)XByteArray_constData(client->m_private->input);
-        size_t inputSize = XByteArray_size_base(client->m_private->input);
+        !mqtt_append(client->m_private->m_input, data, size) ||
+        client->m_private->m_processingInput) return;
+    client->m_private->m_processingInput = true;
+    while (XByteArray_size_base(client->m_private->m_input) >= 2) {
+        const uint8_t* input = (const uint8_t*)XByteArray_constData(client->m_private->m_input);
+        size_t inputSize = XByteArray_size_base(client->m_private->m_input);
         uint32_t remaining = 0, multiplier = 1;
         size_t pos = 1;
         bool completeLength = false;
@@ -1391,11 +1401,11 @@ void XMqttProtocol_feed(XMqttClient* client, const uint8_t* data, size_t size)
         if (inputSize < pos + remaining) break;
         uint8_t header = input[0];
         mqtt_process_packet(client, header, input + pos, remaining);
-        XByteArray_remove_base(client->m_private->input, 0, (int64_t)(pos + remaining));
+        XByteArray_remove_base(client->m_private->m_input, 0, (int64_t)(pos + remaining));
         if (client->m_state == XMqttClient_Disconnected &&
             client->m_error != XMqttClient_NoError) break;
     }
-    client->m_private->processingInput = false;
+    client->m_private->m_processingInput = false;
 }
 
 void XMqttProtocol_fail(XMqttClient* client, XMqttClient_Error error)
@@ -1409,8 +1419,8 @@ void XMqttProtocol_fail(XMqttClient* client, XMqttClient_Error error)
 void XMqttProtocol_timerEvent(XMqttClient* client, XTimerEvent* event)
 {
     if (!client || !client->m_private || !event ||
-        XTimerEvent_timerId(event) != client->m_private->keepAliveTimer) return;
-    if (client->m_private->pingTimeout) {
+        XTimerEvent_timerId(event) != client->m_private->m_keepAliveTimer) return;
+    if (client->m_private->m_pingTimeout) {
         XMqttProtocol_fail(client, XMqttClient_TransportInvalid);
         return;
     }

@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XRedBlackTree.h"
 #include"XCompare.h"
 #include<stdio.h>
@@ -15,10 +15,10 @@ static void printTreeNode(void* LPVal, void* args)
 static void traverse(void* LPVal, void* args)
 {
 	struct XRBTreeNode* currentNode = *(struct XRBTreeNode**)LPVal;
-	//if (*XTreeNode_getChildRef(currentNode, XTreeParent) == NULL)
+	//if (*XTreeNode_child_ref(currentNode, XTreeParent) == NULL)
 	if (XTreeNode_GetParent(currentNode) == NULL)
 		return;
-	if (XTreeNode_getChildrenParentRef(currentNode) == NULL)
+	if (XTreeNode_childrenParent_ref(currentNode) == NULL)
 		XPrintf("找不到：%d \n\n\n\n\n\n", XTreeNode_GetData(currentNode,int));
 	
 }
@@ -28,12 +28,12 @@ void XRedBlackTreeTest()
 	int a[] = { 40,5,6,7,0,1,2,3,10,0,12,456,13,465,123,8748,4,6 };
 	int* LPa = a;
 	XPrintf("插入测试\n");
-	XRBTreeNode* root = XRBTree_insert(NULL, int_compare,XCompareRuleTwo_BinaryTree, LPa++, sizeof(int), XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
+	XRBTreeNode* root = XRBTree_insert(NULL, Xint_compare,XCompareRuleTwo_BinaryTree, LPa++, sizeof(int), XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
 	for (size_t i = 0; i < sizeof(a) / sizeof(a[0]) - 1; i++)
 	{
 		if (i == 11)
 			i = 11;
-		XRBTree_insert(&root, int_compare, XCompareRuleTwo_BinaryTree, LPa++, sizeof(int), XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
+		XRBTree_insert(&root, Xint_compare, XCompareRuleTwo_BinaryTree, LPa++, sizeof(int), XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
 	}
 	if (root != NULL)
 	{
@@ -52,7 +52,7 @@ void XRedBlackTreeTest()
 	//删除测试遍历插入的数组一个个查找删除，直至清空二叉树
 	for (size_t i = 0; i <sizeof(a) / sizeof(a[0]); i++)
 	{
-		XRBTreeNode* removeNode= XRBTree_remove(&root,int_compare,XCompareRuleOne_BinaryTree, a + i,sizeof(int), XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
+		XRBTreeNode* removeNode= XRBTree_remove(&root,Xint_compare,XCompareRuleOne_BinaryTree, a + i,sizeof(int), XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
 		XRBTreeNode_delete((XTreeNode*)removeNode, XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
 	}
 	if (root != NULL)

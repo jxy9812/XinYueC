@@ -9,9 +9,9 @@
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_SPI_ON
 
 #include "XConsoleShellSpi.h"
+#include "XStringUtils.h"
 #include "XUtf8StringView.h"
 #include <stdio.h>
-#include <string.h>
 
 #define XCSS_SPI_HAS_COMMANDS (XCONSOLE_SHELL_SPI_LIST_ON || XCONSOLE_SHELL_SPI_OPEN_ON || \
                                XCONSOLE_SHELL_SPI_CLOSE_ON || XCONSOLE_SHELL_SPI_INFO_ON || \
@@ -36,7 +36,7 @@ static bool xcss_parse_hex(const char* text, uint8_t* data, size_t capacity,
     size_t i;
     size_t size;
     if (!text || !data || !length) return false;
-    size = strlen(text);
+    size = XStrlen(text);
     if (size == 0u || (size & 1u) != 0u || size / 2u > capacity) return false;
     for (i = 0u; i < size / 2u; ++i) {
         unsigned value = 0u;
@@ -152,13 +152,13 @@ static bool xcss_apply_options(XSpiConfig* config, int argc,
     if (!config || !argv || start < 0 || start > argc) return false;
     for (i = start; i < argc; ++i) {
         uint32_t value;
-        if (strcmp(argv[i], "--speed") == 0 || strcmp(argv[i], "--mode") == 0 ||
-            strcmp(argv[i], "--bits") == 0) {
+        if (XStrcmp(argv[i], "--speed") == 0 || XStrcmp(argv[i], "--mode") == 0 ||
+            XStrcmp(argv[i], "--bits") == 0) {
             if (i + 1 >= argc || !xcss_parse_u32(argv[i + 1], &value)) return false;
-            if (strcmp(argv[i], "--speed") == 0) {
+            if (XStrcmp(argv[i], "--speed") == 0) {
                 if (value == 0u) return false;
                 config->m_frequencyHz = value;
-            } else if (strcmp(argv[i], "--mode") == 0) {
+            } else if (XStrcmp(argv[i], "--mode") == 0) {
                 if (value > 3u) return false;
                 config->m_mode = (uint8_t)value;
             } else {
@@ -166,7 +166,7 @@ static bool xcss_apply_options(XSpiConfig* config, int argc,
                 config->m_bitsPerWord = (uint8_t)value;
             }
             ++i;
-        } else if (strcmp(argv[i], "--lsb-first") == 0) {
+        } else if (XStrcmp(argv[i], "--lsb-first") == 0) {
             config->m_lsbFirst = true;
         } else {
             return false;

@@ -1,5 +1,5 @@
 ﻿#include "XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include "XMemory.h"
 #include "XClass.h"
 #include "XCompare.h"
@@ -115,11 +115,11 @@ static void XContainerMemory_checkMapSemantics(void)
     int key = 3;
     int value = 9;
     XMap* source = XMap_create_ex(XMEMORY_TYPE_MULTIPOOL, sizeof(int),
-        sizeof(int), int_compare, true);
+        sizeof(int), Xint_compare, true);
     XMap_insert_base(source, &key, &value);
 
     XMap target;
-    XMap_init(&target, sizeof(int), sizeof(int), int_compare, true);
+    XMap_init(&target, sizeof(int), sizeof(int), Xint_compare, true);
     XClassCopy(&target, source);
     bool rejected = XMap_size_base(&target) == 0;
     if (rejected)
@@ -244,29 +244,29 @@ static void XContainerMemoryPoolTest(void)
         XClassDelete(lfq);
 
         XPriorityQueue* priority = XPriorityQueue_create_ex(pool, sizeof(int),
-            int_compare, XSORT_ASC);
+            Xint_compare, XSORT_ASC);
         XPriorityQueue_push_base(priority, &value);
         XContainerMemory_check("PriorityQueue", (XClass*)priority, pool);
         XClassDelete(priority);
 
-        XMap* map = XMap_create_ex(pool, sizeof(int), sizeof(int), int_compare, false);
+        XMap* map = XMap_create_ex(pool, sizeof(int), sizeof(int), Xint_compare, false);
         XMap_insert_base(map, &value, &value);
         XContainerMemory_check("Map", (XClass*)map, pool);
         XClassDelete(map);
 
         XHashMap* hashMap = XHashMap_create_ex(pool, sizeof(int), sizeof(int),
-            XCryptographicHash_function(XCryptographicHash_XxHash64), int_compare, false);
+            XCryptographicHash_function(XCryptographicHash_XxHash64), Xint_compare, false);
         XHashMap_insert_base(hashMap, &value, &value);
         XContainerMemory_check("HashMap", (XClass*)hashMap, pool);
         XClassDelete(hashMap);
 
-        XSet* set = XSet_create_ex(pool, sizeof(int), int_compare, false);
+        XSet* set = XSet_create_ex(pool, sizeof(int), Xint_compare, false);
         XSet_insert_base(set, &value);
         XContainerMemory_check("Set", (XClass*)set, pool);
         XClassDelete(set);
 
         XHashSet* hashSet = XHashSet_create_ex(pool, sizeof(int),
-            XCryptographicHash_function(XCryptographicHash_XxHash64), int_compare, false);
+            XCryptographicHash_function(XCryptographicHash_XxHash64), Xint_compare, false);
         XHashSet_insert_base(hashSet, &value);
         XContainerMemory_check("HashSet", (XClass*)hashSet, pool);
         XClassDelete(hashSet);

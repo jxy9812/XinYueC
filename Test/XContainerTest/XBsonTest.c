@@ -1,6 +1,6 @@
 ﻿#include "XPrintf.h"
 #include "XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 
 #include "XAction.h"
 #include "XBsonArray.h"

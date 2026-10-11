@@ -1,25 +1,25 @@
-﻿/**
+/**
  * @file XDeviceNetwork_lwip.c
- * @brief lwIP 平台网络实现（平台无关 + Raw API 回调模式）
+ * @brief lwIP ??????(???? + Raw API ????)
  *
- * 架构分层：
- *   XDeviceNetwork.h                             -> 统一平台抽象接口
- *   +-- XDeviceNetwork_win32.c                   -> Windows IOCP 实现
- *   +-- XDeviceNetwork_lwip.c（本文件）          -> lwIP 适配层（平台无关）
- *       +-- XDeviceNetwork_lwip_win32.c          -> Npcap 虚拟网卡（Windows 平台）
+ * ????:
+ *   XDeviceNetwork.h                             -> ????????
+ *   +-- XDeviceNetwork_win32.c                   -> Windows IOCP ??
+ *   +-- XDeviceNetwork_lwip.c(???)          -> lwIP ???(????)
+ *       +-- XDeviceNetwork_lwip_win32.c          -> Npcap ????(Windows ??)
  *
- * 运行原理：
- *   1. lwip_init() 初始化 lwIP 协议栈
- *   2. XTimeWheelGroup 定时器每 LWIP_TICK_MS 毫秒触发（默认 5ms），
- *      a) 轮询虚拟网卡数据包（XDeviceNetworkLwip_pollPcap）
- *      b) lwIP 定时器由 LWIP_TIMERS_CUSTOM 直接对接 XTimeWheelGroup，无需轮询
- *      c) 向应用线程投递事件通知
- *   3. 应用线程通过 Raw API 操作，sys_arch_protect 提供递归锁保护
+ * ????:
+ *   1. lwip_init() ??? lwIP ???
+ *   2. XTimeWheelGroup ???? LWIP_TICK_MS ????(?? 5ms),
+ *      a) ?????????(XDeviceNetworkLwip_pollPcap)
+ *      b) lwIP ???? LWIP_TIMERS_CUSTOM ???? XTimeWheelGroup,????
+ *      c) ???????????
+ *   3. ?????? Raw API ??,sys_arch_protect ???????
  *
- * 基于 XSync + XMemory 系统实现，平台无关。
- * 内存分配统一使用 XMalloc_System / XRealloc_System / XFree_System。
- * 定时器使用 XTimeWheelGroup 全局时间轮。
- * 随机数使用 XRandomGenerator_system()。
+ * ?? XSync + XMemory ????,?????
+ * ???????? XMalloc_System / XRealloc_System / XFree_System?
+ * ????? XTimeWheelGroup ??????
+ * ????? XRandomGenerator_system()?
  */
 
 #include "XNetwork_config.h"
@@ -81,7 +81,7 @@
 #include <string.h>
 #include <stdio.h>
 
-/* 仅供 lwIP 适配层和所选平台网卡实现之间链接，不属于 XDeviceNetwork 公共头。 */
+/* ?? lwIP ????????????????,??? XDeviceNetwork ???? */
 struct netif* XDeviceNetworkLwip_platform_init(void);
 void XDeviceNetworkLwip_platform_deinit(void);
 int XDeviceNetworkLwip_err_to_errno(int errorCode);
@@ -94,16 +94,16 @@ typedef enum XMulticastOp {
 
 /* ================================================================
  * Core locking abstraction
- *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: 单线程，锁为空操作（零开销）
- *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1: sys_arch_protect（递归锁）
- *   NO_SYS=0: LOCK_TCPIP_CORE（与 tcpip_thread 同步）
+ *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=0: ???,?????(???)
+ *   NO_SYS=1 + SYS_LIGHTWEIGHT_PROT=1: sys_arch_protect(???)
+ *   NO_SYS=0: LOCK_TCPIP_CORE(? tcpip_thread ??)
  * ================================================================ */
 #if NO_SYS && SYS_LIGHTWEIGHT_PROT
 typedef sys_prot_t XNetLwipCoreLock;
 #define XNET_LWIP_LOCK()        sys_arch_protect()
 #define XNET_LWIP_UNLOCK(l)     sys_arch_unprotect(l)
 #elif NO_SYS
-/* 单线程模式：所有 lwIP 操作在主线程，无并发访问，锁为空操作 */
+/* ?????:?? lwIP ??????,?????,????? */
 typedef int XNetLwipCoreLock;
 #define XNET_LWIP_LOCK()        (0)
 #define XNET_LWIP_UNLOCK(l)     ((void)(l))
@@ -114,74 +114,74 @@ typedef int XNetLwipCoreLock;
 #endif
 
 /* ================================================================
- * 内部宏常量
+ * ?????
  * ================================================================ */
 #define L4P(p) ((XDeviceNetworkContextLwip*)(p))
-/* lwIP 网卡轮询周期，可通过 XNETWORK_LWIP_TICK_MS 配置 */
+/* lwIP ??????,??? XNETWORK_LWIP_TICK_MS ?? */
 #define LWIP_TICK_MS XNETWORK_LWIP_TICK_MS
 
 typedef struct XDeviceNetworkContextLwip XDeviceNetworkContextLwip;
 
 /* ================================================================
- * 全局状态
+ * ????
  * ================================================================ */
-/* lwIP 全局状态（位域压缩，减少内存占用）
- * 原本为 4 个独立静态变量（约 24~32 字节），合并为 1 个结构体（16 字节）。
- * 原本为 4 个独立静态变量（约 24~32 字节），合并为 1 个结构体（8 字节）。
- * - lastError:    错误码范围 -15~0，8 位有符号足够
- * - ref:          引用计数通常 1~5，7 位（最大 127）足够
- * - inited:       初始化标志，1 位足够 */
+/* lwIP ????(????,??????)
+ * ??? 4 ???????(? 24~32 ??),??? 1 ????(16 ??)?
+ * ??? 4 ???????(? 24~32 ??),??? 1 ????(8 ??)?
+ * - lastError:    ????? -15~0,8 ??????
+ * - ref:          ?????? 1~5,7 ?(?? 127)??
+ * - inited:       ?????,1 ??? */
 static struct {
-    int      lastError : 8;      /* 最后一次错误码 (-15~0) */
-    unsigned ref       : 7;      /* lwIP 引用计数 (max 127) */
-    unsigned inited    : 1;      /* 是否已初始化 */
+    int      lastError : 8;      /* ??????? (-15~0) */
+    unsigned ref       : 7;      /* lwIP ???? (max 127) */
+    unsigned inited    : 1;      /* ?????? */
 } g_state;
 
 
 /* ================================================================
- * Socket 私有数据结构
+ * Socket ??????
  *
- * 封装 lwIP 的 TCP/UDP PCB 指针和状态信息。
- * 每个 XAbstractSocket 对应一个此结构体实例。
+ * ?? lwIP ? TCP/UDP PCB ????????
+ * ?? XAbstractSocket ???????????
  * ================================================================ */
 typedef struct XDeviceNetworkContextLwip {
-    XDeviceNetworkContext base;    /* 基类：owner + notifiers (16 字节) */
-    XFd fd;                       /* 缓存的文件描述符（避免回调中 vtable 查找） */
-    struct tcp_pcb* tpcb;          /* TCP 协议控制块 */
-    struct udp_pcb* upcb;          /* UDP 协议控制块 */
-    char* rxBuf;                   /* 接收缓冲区 */
-    void* pendingAccept;           /* 待领取的客户端连接 */
-    size_t writeFinished;          /* 已发送并确认的累计字节数（通知消费者） */
-    size_t lastWriteFinished;      /* 上次通知消费者的已发送字节数 */
-    /* 以上指针/size_t 在 64 位下共 72 字节（含 XFd fd 字段） */
-    int rxPos;                     /* 接收缓冲区当前写入位置 */
-    int rxTotal;                   /* 上一次接收的字节数 */
-    ip_addr_t fromAddr;            /* UDP 数据报来源地址 (IPv4=4 字节) */
-    uint16_t fromPort;             /* UDP 数据报来源端口 */
-    uint16_t rxCapacity;           /* 懒分配接收缓冲容量，复用原对齐空隙 */
-    /* 位域压缩：7 个布尔(7位) + sockType(2位) + lastErr(8位) = 17 位，合并到 4 字节
-     * 原本 7 个 bool(7字节) + sockType(4字节) + lastErr(4字节) + 对齐填充
-     * 现压缩为 4 字节，结构体从 ~104 字节减至 88 字节 */
-    unsigned isServer    : 1;      /* 是否为服务端 */
-    unsigned closing     : 1;      /* 是否正在关闭 */
-    unsigned connectDone : 1;      /* 连接完成标记 */
-    unsigned hasReadData : 1;      /* 有可读数据标记 */
-    unsigned hasWriteDone: 1;      /* 写入完成标记 */
-    unsigned hasAccept   : 1;      /* 有新客户端连接标记 */
-    unsigned hasError    : 1;      /* 有错误发生标记 */
-    unsigned sockType    : 2;      /* Socket 类型 (0=TCP, 1=UDP) */
-    unsigned listenBacklog : 8;    /* TCP 服务端监听队列，0=使用配置默认值 */
-    int      lastErr     : 8;      /* 最后一次 lwIP 错误码 (err_t, -16~0) */
+    XDeviceNetworkContext base;    /* ??:owner + notifiers (16 ??) */
+    XFd fd;                       /* ????????(????? vtable ??) */
+    struct tcp_pcb* tpcb;          /* TCP ????? */
+    struct udp_pcb* upcb;          /* UDP ????? */
+    char* rxBuf;                   /* ????? */
+    void* pendingAccept;           /* ????????? */
+    size_t writeFinished;          /* ????????????(?????) */
+    size_t lastWriteFinished;      /* ?????????????? */
+    /* ????/size_t ? 64 ??? 72 ??(? XFd fd ??) */
+    int rxPos;                     /* ??????????? */
+    int rxTotal;                   /* ????????? */
+    ip_addr_t fromAddr;            /* UDP ??????? (IPv4=4 ??) */
+    uint16_t fromPort;             /* UDP ??????? */
+    uint16_t rxCapacity;           /* ?????????,??????? */
+    /* ????:7 ???(7?) + sockType(2?) + lastErr(8?) = 17 ?,??? 4 ??
+     * ?? 7 ? bool(7??) + sockType(4??) + lastErr(4??) + ????
+     * ???? 4 ??,???? ~104 ???? 88 ?? */
+    unsigned isServer    : 1;      /* ?????? */
+    unsigned closing     : 1;      /* ?????? */
+    unsigned connectDone : 1;      /* ?????? */
+    unsigned hasReadData : 1;      /* ??????? */
+    unsigned hasWriteDone: 1;      /* ?????? */
+    unsigned hasAccept   : 1;      /* ????????? */
+    unsigned hasError    : 1;      /* ??????? */
+    unsigned sockType    : 2;      /* Socket ?? (0=TCP, 1=UDP) */
+    unsigned listenBacklog : 8;    /* TCP ???????,0=??????? */
+    int      lastErr     : 8;      /* ???? lwIP ??? (err_t, -16~0) */
 } XDeviceNetworkContextLwip;
 
-/* Raw API 回调在描述符接管辅助函数之前声明。 */
+/* Raw API ????????????????? */
 static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err);
 static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len);
 static void tcpErrCb(void* arg, err_t err);
 static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb);
 static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err);
 
-/* 接收缓冲按需分配，未收数据的 socket 不占用缓冲预算。 */
+/* ????????,????? socket ???????? */
 static bool reserve_rx_buffer(XDeviceNetworkContextLwip* s, u16_t required)
 {
     char* resized;
@@ -194,8 +194,8 @@ static bool reserve_rx_buffer(XDeviceNetworkContextLwip* s, u16_t required)
     return true;
 }
 
-/* 优先使用配置容量以吸收连续报文、提高大内存设备吞吐；若该分配因
- * 内存压力失败，退化到只容纳当前整包，后续依靠 TCP 背压继续传输。 */
+/* ?????????????????????????;?????
+ * ??????,??????????,???? TCP ??????? */
 static bool reserve_tcp_rx_buffer(XDeviceNetworkContextLwip* s, u16_t required)
 {
     const u16_t configured = (u16_t)XNETWORK_LWIP_RECV_BUFFER_SIZE;
@@ -229,21 +229,21 @@ static void dispose_tcp_pcb(struct tcp_pcb** pcb)
 }
 
 /* ================================================================
- * Socket 事件直接投递（回调驱动，替代轮询）
+ * Socket ??????(????,????)
  *
- * 由 lwIP Raw API 回调函数调用，将指定类型的事件 CQ 条目
- * 推入全局 IoRing。每个回调推送自己的事件类型，无需合并标志，
- * 无 eventPending 防重复机制--重复 CQ 条目在应用层处理时
- * 因标志已清除而成为空操作（no-op），不会造成数据重复。
+ * ? lwIP Raw API ??????,???????? CQ ??
+ * ???? IoRing??????????????,??????,
+ * ? eventPending ?????--?? CQ ?????????
+ * ????????????(no-op),?????????
  * ================================================================ */
 
 /**
- * @brief 从 lwIP 回调中投递指定类型的 Socket 事件到 IoRing CQ
- * @param s       Socket 私有数据指针
- * @param actType 事件类型掩码（XSocketActType 位掩码）
+ * @brief ? lwIP ?????????? Socket ??? IoRing CQ
+ * @param s       Socket ??????
+ * @param actType ??????(XSocketActType ???)
  *
- * 调用时机：lwIP 回调函数设置标志位之后、返回之前。
- * 已在核心锁保护下执行（回调由 lwIP 核心在锁内调用）。
+ * ????:lwIP ?????????????????
+ * ??????????(??? lwIP ???????)?
  */
 static void push_socket_cq(XDeviceNetworkContextLwip* s, uint32_t actType) {
 #if XAbstractNetIoRing_ON
@@ -273,7 +273,7 @@ static void push_socket_cq(XDeviceNetworkContextLwip* s, uint32_t actType) {
 
 
 /* ================================================================
- * 地址转换工具函数
+ * ????????
  * ================================================================ */
 
 /* XHostAddress -> lwIP ip_addr_t */
@@ -534,7 +534,7 @@ static struct udp_pcb* createUdpPcb(const ip_addr_t* address)
 #endif
 }
 
-/* 将 lwIP 回调状态绑定到已由 XDevice_open 分配的唯一设备描述符。 */
+/* ? lwIP ????????? XDevice_open ??????????? */
 static void ensure_xfd(XDeviceNetworkContext* priv) {
     if (!priv) return;
     XDeviceNetworkContextLwip* s = L4P(priv);
@@ -543,8 +543,8 @@ static void ensure_xfd(XDeviceNetworkContext* priv) {
 }
 
 /*
- * lwIP 没有原生 socket descriptor。对外暴露 XFd 表索引，索引的 handle
- * 指向 Raw API 私有对象；接管时转移 tcp_pcb 的所有权，而不是转换裸指针。
+ * lwIP ???? socket descriptor????? XFd ???,??? handle
+ * ?? Raw API ????;????? tcp_pcb ????,?????????
  */
 static XDeviceNetworkContextLwip* descriptor_private(XFd fd)
 {
@@ -579,8 +579,8 @@ static bool adopt_connected_descriptor(XDeviceNetworkContextLwip* target,
     target->hasWriteDone = source->hasWriteDone;
     target->hasError = source->hasError;
     target->sockType = XDeviceNetwork_Tcp;
-    /* target 尚未接管任何 PCB；直接转移接收缓冲区，避免 accepted socket
-     * 接管时重新分配和复制一份数据。source 随后释放 target 的旧缓冲。 */
+    /* target ?????? PCB;?????????,?? accepted socket
+     * ???????????????source ???? target ????? */
     {
         char* targetRxBuf = target->rxBuf;
         uint16_t targetRxCapacity = target->rxCapacity;
@@ -650,7 +650,7 @@ static bool adopt_server_descriptor(XDeviceNetworkContextLwip* target,
 
 
 /* ================================================================
- * 错误码转换：lwIP err_t -> 类 POSIX errno
+ * ?????:lwIP err_t -> ? POSIX errno
  * ================================================================ */
 int XDeviceNetworkLwip_err_to_errno(int e) {
     switch (e) {
@@ -676,13 +676,13 @@ int XDeviceNetworkLwip_err_to_errno(int e) {
 }
 
 /* ================================================================
- * TCP 回调函数
+ * TCP ????
  *
- * 这些回调在 lwIP 核心线程或超时处理中执行，由 sys_arch_protect 保护。
- * 回调中只设置标志位，实际事件通知由应用线程完成。
+ * ????? lwIP ????????????,? sys_arch_protect ???
+ * ?????????,??????????????
  * ================================================================ */
 
-/* TCP 数据接收回调 */
+/* TCP ?????? */
 static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err) {
     u16_t total;
     size_t space;
@@ -695,7 +695,7 @@ static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err
         return ERR_OK;
     }
     if (!p) { s->closing = true; s->hasReadData = true;
-        push_socket_cq(s, XSocketAct_Read);
+        push_socket_cq(s, XSocketActType_Read);
         return ERR_OK; }
 
     total = p->tot_len;
@@ -704,9 +704,9 @@ static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err
         return ERR_OK;
     }
 
-    /* Raw API 不支持“复制一部分后释放整个 pbuf”。空间不足时必须保持
-     * pbuf 原样并返回 ERR_MEM，lwIP 才会存入 pcb->refused_data 后重试。
-     * 缓冲为空但单个重组 pbuf 较大时，按需扩容以避免永久拒收。 */
+    /* Raw API ???"?????????? pbuf"??????????
+     * pbuf ????? ERR_MEM,lwIP ???? pcb->refused_data ????
+     * ????????? pbuf ???,???????????? */
     space = s->rxPos < (int)s->rxCapacity
         ? (size_t)s->rxCapacity - (size_t)s->rxPos : 0;
     if ((size_t)total > space) {
@@ -717,65 +717,65 @@ static err_t tcpRecvCb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t err
     }
     s->rxPos += (int)total;
     s->hasReadData = true;
-    push_socket_cq(s, XSocketAct_Read);
+    push_socket_cq(s, XSocketActType_Read);
     pbuf_free(p);
-    /* tcp_recved 延迟到 XDeviceNetwork_socketContinueRead 中调用，避免窗口管理过早 */
+    /* tcp_recved ??? XDeviceNetwork_socketContinueRead ???,???????? */
     return ERR_OK;
 }
 
-/* TCP 发送完成回调 */
+/* TCP ?????? */
 static err_t tcpSentCb(void* arg, struct tcp_pcb* pcb, u16_t len) {
     (void)pcb;
     XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)arg;
     if (s) { s->writeFinished += len; s->hasWriteDone = true; }
-    push_socket_cq(s, XSocketAct_Write);
+    push_socket_cq(s, XSocketActType_Write);
     return ERR_OK;
 }
 
-/* TCP 错误回调 */
+/* TCP ???? */
 static void tcpErrCb(void* arg, err_t err) {
     XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)arg;
     if (s) {
         s->closing = true; s->hasError = true;
         s->lastErr = err; g_state.lastError = XDeviceNetworkLwip_err_to_errno(err);
         s->tpcb = NULL;
-        s->base.m_connected = false;  /* 标记为未连接，确保 Connect 通知走失败分支 */
-        push_socket_cq(s, XSocketAct_Connect);
+        s->base.m_connected = false;  /* ??????,?? Connect ??????? */
+        push_socket_cq(s, XSocketActType_Connect);
     }
 }
 
-/* TCP 轮询回调（保持连接，防超时断开）
- * 参数 interval 为 tcp_poll 的调用间隔，单位 0.5 秒。
- * interval=2 表示 1 秒间隔（每秒轮询一次） */
+/* TCP ????(????,?????)
+ * ?? interval ? tcp_poll ?????,?? 0.5 ??
+ * interval=2 ?? 1 ???(??????) */
 static err_t tcpPollCb(void* arg, struct tcp_pcb* pcb) {
     (void)arg; (void)pcb; return ERR_OK;
 }
 
-/* TCP 连接完成回调 */
+/* TCP ?????? */
 static err_t tcpConnectedCb(void* arg, struct tcp_pcb* pcb, err_t err) {
     (void)pcb;
     XDeviceNetworkContextLwip* s = (XDeviceNetworkContextLwip*)arg;
     if (!s) return ERR_ABRT;
     if (err == ERR_OK) {
         s->base.m_connected = true; s->connectDone = true;
-        LWIP_DBG("[TCP连接] 连接成功\n");
+        LWIP_DBG("[TCP??] ????\n");
     } else {
         s->hasError = true; s->lastErr = err;
         g_state.lastError = XDeviceNetworkLwip_err_to_errno(err);
-        LWIP_DBG("[TCP连接] 连接失败, err=%d\n", (int)err);
+        LWIP_DBG("[TCP??] ????, err=%d\n", (int)err);
     }
-    push_socket_cq(s, XSocketAct_Connect);
+    push_socket_cq(s, XSocketActType_Connect);
     return ERR_OK;
 }
 
-/* TCP 接受新连接回调（服务端）
- * 为客户端 Socket 分配私有数据，存入服务端 pendingAccept 字段 */
+/* TCP ???????(???)
+ * ???? Socket ??????,????? pendingAccept ?? */
 static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     (void)err;
     XDeviceNetworkContextLwip* ss = (XDeviceNetworkContextLwip*)arg;
     if (!ss || !newPcb) return ERR_ABRT;
 
-    /* 为新客户端分配 Socket 私有数据结构 */
+    /* ??????? Socket ?????? */
     XDeviceNetworkContextLwip* cs = (XDeviceNetworkContextLwip*)XMalloc_System(sizeof(*cs));
     if (!cs) return ERR_MEM;
     memset(cs, 0, sizeof(*cs));
@@ -784,22 +784,22 @@ static err_t tcpAcceptCb(void* arg, struct tcp_pcb* newPcb, err_t err) {
     cs->tpcb = newPcb;
     cs->base.m_connected = true;
     cs->sockType = XDeviceNetwork_Tcp;
-    /* 注册 TCP 回调 */
+    /* ?? TCP ?? */
     tcp_arg(newPcb, cs);
     tcp_recv(newPcb, tcpRecvCb);
     tcp_sent(newPcb, tcpSentCb);
     tcp_err(newPcb, tcpErrCb);
-    tcp_poll(newPcb, tcpPollCb, 2);  /* 每 1 秒轮询一次 */
+    tcp_poll(newPcb, tcpPollCb, 2);  /* ? 1 ????? */
 
-    /* 存入服务端的待领取队列 */
+    /* ??????????? */
     ss->pendingAccept = cs;
     ss->hasAccept = true;
-    push_socket_cq(ss, XSocketAct_Accept);
-    LWIP_DBG("[TCP服务] 新客户端连接\n");
+    push_socket_cq(ss, XSocketActType_Accept);
+    LWIP_DBG("[TCP??] ??????\n");
     return ERR_OK;
 }
 
-/* UDP 数据接收回调 */
+/* UDP ?????? */
 static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
                       const ip_addr_t* addr, u16_t port) {
     (void)pcb;
@@ -822,7 +822,7 @@ static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
             pbuf_copy_partial(p, s->rxBuf + s->rxPos, copy, 0);
             s->rxPos += copy;
             s->hasReadData = true;
-            push_socket_cq(s, XSocketAct_Read);
+            push_socket_cq(s, XSocketActType_Read);
         }
     }
     pbuf_free(p);
@@ -830,14 +830,14 @@ static void udpRecvCb(void* arg, struct udp_pcb* pcb, struct pbuf* p,
 
 
 /* ================================================================
- * 平台初始化/清理
+ * ?????/??
  * ================================================================ */
 
 void XDeviceNetwork_ensureInit(void) {
     if (g_state.inited) { g_state.ref++; return; }
-    LWIP_DBG("[lwIP初始化] 开始初始化 lwIP 协议栈...\n");
+    LWIP_DBG("[lwIP???] ????? lwIP ???...\n");
 
-    /* 初始化 lwIP 协议栈：内存池、pbuf、TCP/UDP/IP/ARP 等 */
+    /* ??? lwIP ???:????pbuf?TCP/UDP/IP/ARP ? */
     /* Initialize sys_arch layer (create core recursive mutex g_coreLock).
      * NO_SYS=1: lwip_init() does NOT call sys_init(), so we must call it here.
      * NO_SYS=0: lwip_init() also calls it, but sys_init() is idempotent (safe). */
@@ -848,17 +848,17 @@ void XDeviceNetwork_ensureInit(void) {
     tcpip_init(NULL, NULL);
 #endif
 
-    /* 平台网卡初始化：Npcap / TAP / 硬件 MAC */
+    /* ???????:Npcap / TAP / ?? MAC */
     struct netif* nif = XDeviceNetworkLwip_platform_init();
     if (nif) {
-        LWIP_DBG("[lwIP初始化] 平台网卡初始化成功\n");
+        LWIP_DBG("[lwIP???] ?????????\n");
     } else {
-        LWIP_DBG("[lwIP初始化] 警告：平台网卡初始化失败，可能无法通信\n");
+        LWIP_DBG("[lwIP???] ??:?????????,??????\n");
     }
 
     g_state.inited = 1;
     g_state.ref = 1;
-    LWIP_DBG("[lwIP初始化] 完成，引用计数=%d\n", g_state.ref);
+    LWIP_DBG("[lwIP???] ??,????=%d\n", g_state.ref);
 }
 
 void XDeviceNetwork_cleanup(void) {
@@ -866,20 +866,20 @@ void XDeviceNetwork_cleanup(void) {
     g_state.ref--;
     if (g_state.ref > 0) return;
 
-    LWIP_DBG("[lwIP清理] 开始清理...\n");
+    LWIP_DBG("[lwIP??] ????...\n");
 
-    /* 平台网卡清理 */
+    /* ?????? */
     XDeviceNetworkLwip_platform_deinit();
 
     g_state.inited = 0;
-    LWIP_DBG("[lwIP清理] 完成\n");
+    LWIP_DBG("[lwIP??] ??\n");
 }
 
 void XDeviceNetwork_poll(void) {
     XDeviceNetworkLwip_pollPcap();
 }
 
-/* 错误信息 */
+/* ???? */
 int XDeviceNetwork_lastError(void) { return g_state.lastError; }
 char* XDeviceNetwork_errorString(int errorCode) {
     char* s = (char*)XMalloc_System(64);
@@ -888,7 +888,7 @@ char* XDeviceNetwork_errorString(int errorCode) {
 }
 
 /* ================================================================
- * Socket 创建/销毁
+ * Socket ??/??
  * ================================================================ */
 
 XDeviceNetworkContext* XDeviceNetwork_createContext(void) {
@@ -905,7 +905,7 @@ void XDeviceNetwork_deleteContext(XDeviceNetworkContext* priv) {
     if (!priv) return;
     XDeviceNetworkContextLwip* s = L4P(priv);
 
-    /* 关闭 lwIP PCB，需要持有核心锁 */
+    /* ?? lwIP PCB,??????? */
     if (s->tpcb || s->upcb || s->pendingAccept) {
         XNetLwipCoreLock prot = XNET_LWIP_LOCK();
         dispose_tcp_pcb(&s->tpcb);
@@ -918,12 +918,12 @@ void XDeviceNetwork_deleteContext(XDeviceNetworkContext* priv) {
         XNET_LWIP_UNLOCK(prot);
     }
 
-    /* 释放资源 */
+    /* ???? */
     s->fd = XFD_INVALID;
     if (s->rxBuf) XFree_System(s->rxBuf);
     if (s->base.m_notifiers) XClassDelete((XClass*)s->base.m_notifiers);
 
-    /* 清理未领取的 Accept 连接 */
+    /* ?????? Accept ?? */
     if (s->pendingAccept) {
         XDeviceNetworkContextLwip* cs = (XDeviceNetworkContextLwip*)s->pendingAccept;
         if (cs->fd != XFD_INVALID) {
@@ -944,26 +944,26 @@ intptr_t XDeviceNetwork_socketDescriptor(XFd xfd) {
 /* ================================================================
  * Socket ??
  *
- * 基于 lwIP Raw API 回调的 TCP 服务端绑定（非阻塞模式）。
- * 回调模式中 XDeviceNetwork_socketBind 分配 TCP PCB 并立刻返回。
+ * ?? lwIP Raw API ??? TCP ?????(?????)?
+ * ????? XDeviceNetwork_socketBind ?? TCP PCB ??????
  * ================================================================ */
 uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
                               uint16_t port, bool reuseAddr, bool shareAddr,
                               XDeviceNetworkSocketType sockType) {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
-    (void)reuseAddr; (void)shareAddr;  /* lwIP Raw API 不支持 SO_REUSEADDR */
+    (void)reuseAddr; (void)shareAddr;  /* lwIP Raw API ??? SO_REUSEADDR */
     if (!priv) return 0;
     XDeviceNetwork_ensureInit();
     XDeviceNetworkContextLwip* s = L4P(priv);
     s->sockType = (int)sockType;
 
-    /* 地址转换 */
+    /* ???? */
     ip_addr_t bindAddr;
     if (address) addr_to_ip(address, &bindAddr); else bindAddr = *IP_ADDR_ANY;
 
     err_t err;
     if (sockType == XDeviceNetwork_Tcp) {
-        /* TCP 服务端：创建 PCB 并开始监听 */
+        /* TCP ???:?? PCB ????? */
         s->tpcb = createTcpPcb(&bindAddr);
         if (!s->tpcb) return 0;
         if (tcp_bind(s->tpcb, &bindAddr, port) != ERR_OK) {
@@ -979,10 +979,10 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
         s->isServer = true;
         tcp_arg(s->tpcb, s);
         tcp_accept(s->tpcb, tcpAcceptCb);
-        LWIP_DBG("[绑定] TCP服务端 port=%d backlog=%d\n", (int)s->tpcb->local_port,
+        LWIP_DBG("[??] TCP??? port=%d backlog=%d\n", (int)s->tpcb->local_port,
                  (int)listenBacklog);
     } else {
-        /* UDP：创建 PCB 并绑定 */
+        /* UDP:?? PCB ??? */
         s->upcb = createUdpPcb(&bindAddr);
         if (!s->upcb) return 0;
         if (udp_bind(s->upcb, &bindAddr, port) != ERR_OK) {
@@ -990,7 +990,7 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
         }
         udp_recv(s->upcb, udpRecvCb, s);
         s->base.m_connected = true;
-        LWIP_DBG("[绑定] UDP requested=%d local=%d\n", (int)port,
+        LWIP_DBG("[??] UDP requested=%d local=%d\n", (int)port,
                  (int)s->upcb->local_port);
     }
     ensure_xfd(priv);
@@ -999,37 +999,37 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
 
 
 /* ================================================================
- * 网络就绪保障 + 异步 DNS 解析
+ * ?????? + ?? DNS ??
  *
- * 问题背景：
- *   1. dns_gethostbyname 传 NULL 回调时，只能解析已缓存或 IP 字符串，
- *      对未缓存域名返回 ERR_INPROGRESS 后永远不会通知完成。
- *   2. DHCP 尚未完成时，netif 仍为 0.0.0.0，DNS 查询无源 IP；
- *      不能冒用宿主机地址作为 fallback，否则两个协议栈会产生地址冲突。
+ * ????:
+ *   1. dns_gethostbyname ? NULL ???,???????? IP ???,
+ *      ???????? ERR_INPROGRESS ??????????
+ *   2. DHCP ?????,netif ?? 0.0.0.0,DNS ???? IP;
+ *      ??????????? fallback,???????????????
  *
- * 解决方案：
- *   ensure_network_ready(): 等待网卡获取独立 DHCP 地址并确认默认路由
- *   lwip_resolve_name():    dns_gethostbyname + 回调 + 轮询等待结果
+ * ????:
+ *   ensure_network_ready(): ???????? DHCP ?????????
+ *   lwip_resolve_name():    dns_gethostbyname + ?? + ??????
  * ================================================================ */
 
-/* 判断 netif 是否拥有有效的非回环 IPv4 地址 */
+/* ?? netif ?????????? IPv4 ?? */
 static bool netif_has_valid_ipv4(struct netif* n) {
     if (!n || ip_addr_isany(&n->ip_addr) || !(n->flags & NETIF_FLAG_UP)) return false;
     uint32_t hip = lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&n->ip_addr)));
-    /* 跳过 127.x.x.x (回环) 和 169.254.x.x (APIPA) */
+    /* ?? 127.x.x.x (??) ? 169.254.x.x (APIPA) */
     if ((hip >> 24) == 127 || (hip >> 16) == 0xA9FE) return false;
     return true;
 }
 
-/* 确保网络就绪：
- *   1. 等待网卡通过 DHCP 获取有效 IP（DHCP 完成时 lwIP 自动设置 IP/网关/DNS）
- *   2. 确保有默认路由 */
+/* ??????:
+ *   1. ?????? DHCP ???? IP(DHCP ??? lwIP ???? IP/??/DNS)
+ *   2. ??????? */
 static bool ensure_network_ready(uint32_t timeoutMs) {
     struct netif* n;
     bool hasIp = false;
     uint32_t start = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF);
 
-    /* 等待至少一个网卡通过 DHCP 获取有效 IP */
+    /* ?????????? DHCP ???? IP */
     while (!hasIp) {
         uint32_t elapsed = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF) - start;
         if (elapsed >= timeoutMs) break;
@@ -1050,17 +1050,17 @@ static bool ensure_network_ready(uint32_t timeoutMs) {
     }
 
     if (hasIp) {
-        LWIP_DBG("[网络就绪] DHCP已完成，网卡已获取IP\n");
+        LWIP_DBG("[????] DHCP???,?????IP\n");
     } else {
-        LWIP_DBG("[网络就绪] 等待DHCP超时(%dms)，无可用IP\n", (int)timeoutMs);
+        LWIP_DBG("[????] ??DHCP??(%dms),???IP\n", (int)timeoutMs);
     }
 
-    /* 确保有默认路由 */
+    /* ??????? */
     if (!netif_default) {
         for (n = netif_list; n; n = n->next) {
             if (netif_has_valid_ipv4(n)) {
                 netif_set_default(n);
-                LWIP_DBG("[网络就绪] 设置默认网卡: %s\n", ip4addr_ntoa(ip_2_ip4(&n->ip_addr)));
+                LWIP_DBG("[????] ??????: %s\n", ip4addr_ntoa(ip_2_ip4(&n->ip_addr)));
                 break;
             }
         }
@@ -1068,14 +1068,14 @@ static bool ensure_network_ready(uint32_t timeoutMs) {
     return hasIp;
 }
 
-/* DNS 异步解析回调上下文 */
+/* DNS ????????? */
 typedef struct {
     ip_addr_t ip;
     volatile bool done;
     volatile bool found;
 } DnsResolveCtx;
 
-/* dns_gethostbyname 完成回调 */
+/* dns_gethostbyname ???? */
 static void dns_found_cb(const char* name, const ip_addr_t* ipaddr, void* arg) {
     (void)name;
     DnsResolveCtx* ctx = (DnsResolveCtx*)arg;
@@ -1088,11 +1088,11 @@ static void dns_found_cb(const char* name, const ip_addr_t* ipaddr, void* arg) {
     ctx->done = true;
 }
 
-/* 异步解析域名：dns_gethostbyname + 回调 + 轮询等待
- * @param name       域名或 IP 字符串
- * @param outIp      输出解析结果
- * @param timeoutMs  超时时间
- * @return true=解析成功 */
+/* ??????:dns_gethostbyname + ?? + ????
+ * @param name       ??? IP ???
+ * @param outIp      ??????
+ * @param timeoutMs  ????
+ * @return true=???? */
 static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeoutMs) {
     ip_addr_t ip;
     DnsResolveCtx ctx;
@@ -1114,17 +1114,17 @@ static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeo
 #endif
 
     if (e == ERR_OK) {
-        /* 已缓存或为 IP 字符串，直接返回 */
+        /* ????? IP ???,???? */
         *outIp = ip;
         return true;
     }
     if (e == ERR_INPROGRESS) {
-        /* 异步查询中，轮询 pcap + 超时处理，等待回调通知 */
+        /* ?????,?? pcap + ????,?????? */
         uint32_t start = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF);
         while (!ctx.done) {
             uint32_t elapsed = (uint32_t)(XDateTime_currentMSecsSinceEpoch() & 0xFFFFFFFF) - start;
             if (elapsed >= timeoutMs) {
-                LWIP_DBG("[DNS] 解析超时(%dms): %s\n", (int)timeoutMs, name);
+                LWIP_DBG("[DNS] ????(%dms): %s\n", (int)timeoutMs, name);
                 return false;
             }
 #if NO_SYS
@@ -1140,24 +1140,24 @@ static bool lwip_resolve_name(const char* name, ip_addr_t* outIp, uint32_t timeo
         }
         if (ctx.found) {
             *outIp = ctx.ip;
-            LWIP_DBG("[DNS] 解析成功: %s -> %s\n", name, ipaddr_ntoa(outIp));
+            LWIP_DBG("[DNS] ????: %s -> %s\n", name, ipaddr_ntoa(outIp));
             return true;
         }
-        LWIP_DBG("[DNS] 解析失败(域名不存在): %s\n", name);
+        LWIP_DBG("[DNS] ????(?????): %s\n", name);
         return false;
     }
 
-    /* ERR_ARG 或其他错误：尝试直接当 IP 地址解析 */
+    /* ERR_ARG ?????:????? IP ???? */
     if (ipaddr_aton(name, &ip)) {
         *outIp = ip;
         return true;
     }
-    LWIP_DBG("[DNS] dns_gethostbyname错误=%d: %s\n", (int)e, name);
+    LWIP_DBG("[DNS] dns_gethostbyname??=%d: %s\n", (int)e, name);
     return false;
 }
 
 /* ================================================================
- * Socket 连接
+ * Socket ??
  * ================================================================ */
 bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
                             uint16_t port, XDeviceNetworkProtocol protocol,
@@ -1184,30 +1184,30 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
         /* A hostname still requires an independent source address before DNS. */
         if (!ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS) ||
             !lwip_resolve_name(hostStr, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) {
-            LWIP_DBG("[连接] DNS和IP解析均失败\n");
+            LWIP_DBG("[??] DNS?IP?????\n");
             return false;
         }
     }
-    LWIP_DBG("[连接] 目标IP解析成功\n");
-    LWIP_DBG("[连接] 默认网卡=%s\n",
+    LWIP_DBG("[??] ??IP????\n");
+    LWIP_DBG("[??] ????=%s\n",
              netif_default ? ip4addr_ntoa(ip_2_ip4(&netif_default->ip_addr)) : "NULL");
 
     err_t err;
     if (sockType == XDeviceNetwork_Tcp) {
-        /* TCP 客户端连接 */
+        /* TCP ????? */
         s->tpcb = createTcpPcb(&ip);
-        LWIP_DBG("[连接] tcp_new=%p\n", (void*)s->tpcb);
+        LWIP_DBG("[??] tcp_new=%p\n", (void*)s->tpcb);
         if (!s->tpcb) return false;
         tcp_arg(s->tpcb, s);
         tcp_recv(s->tpcb, tcpRecvCb);
         tcp_sent(s->tpcb, tcpSentCb);
         tcp_err(s->tpcb, tcpErrCb);
-        tcp_poll(s->tpcb, tcpPollCb, 2);  /* 每 1 秒轮询 */
+        tcp_poll(s->tpcb, tcpPollCb, 2);  /* ? 1 ??? */
         err = tcp_connect(s->tpcb, &ip, port, tcpConnectedCb);
-        LWIP_DBG("[连接] tcp_connect结果=%d\n", (int)err);
+        LWIP_DBG("[??] tcp_connect??=%d\n", (int)err);
         if (err != ERR_OK) { dispose_tcp_pcb(&s->tpcb); return false; }
     } else {
-        /* UDP：创建 PCB 并直接设置目标地址 */
+        /* UDP:?? PCB ????????? */
         s->upcb = createUdpPcb(&ip);
         if (!s->upcb) return false;
         udp_recv(s->upcb, udpRecvCb, s);
@@ -1215,13 +1215,13 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
         if (err != ERR_OK) { udp_remove(s->upcb); s->upcb = NULL; return false; }
         s->base.m_connected = true;
         s->connectDone = true;
-        push_socket_cq(s, XSocketAct_Connect);
+        push_socket_cq(s, XSocketActType_Connect);
     }
     ensure_xfd(priv);
     return true;
 }
 
-/* 断开连接 */
+/* ???? */
 void XDeviceNetwork_socketDisconnect(XFd xfd) {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return;
@@ -1235,10 +1235,10 @@ void XDeviceNetwork_socketDisconnect(XFd xfd) {
 
 
 /* ================================================================
- * 数据读写
+ * ????
  * ================================================================ */
 
-/* 从 Socket 读取数据到用户缓冲区 */
+/* ? Socket ?????????? */
 int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
                             XDeviceNetworkSocketType sockType, void* ringBuffer) {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
@@ -1253,7 +1253,7 @@ int64_t XDeviceNetwork_socketRead(XFd xfd, void* buf, int64_t len,
     return copy;
 }
 
-/* 向 Socket 写入数据 */
+/* ? Socket ???? */
 int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
                              XDeviceNetworkSocketType sockType, const XHostAddress* destAddr,
                              uint16_t destPort, void* ringBuffer) {
@@ -1298,10 +1298,10 @@ int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
 }
 
 /* ================================================================
- * 事件处理
+ * ????
  * ================================================================ */
 
-/* 处理 Socket 事件：清除标志位并返回是否有事件 */
+/* ?? Socket ??:????????????? */
 bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event) {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !event) return false;
@@ -1313,38 +1313,38 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event) {
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     bool hasEvent = false;
 
-    /* 仅清除与当前事件类型匹配的标志位，避免丢失其他类型的事件。
-     * 例如：Connect 事件到达时只清除 connectDone/hasError，
-     * 不清除 hasReadData--后者由后续 Read 事件处理。 */
-    if ((sockAct->actType & XSocketAct_Connect) &&
+    /* ????????????????,????????????
+     * ??:Connect ???????? connectDone/hasError,
+     * ??? hasReadData--????? Read ????? */
+    if ((sockAct->actType & XSocketActType_Connect) &&
         (s->connectDone || s->hasError)) {
         if (s->base.m_connected && !s->isServer) syncSocketEndpoints(priv);
         s->connectDone = false;
         s->hasError = false;
-        s->closing = false;  /* 连接错误/完成时一并清除关闭标志 */
+        s->closing = false;  /* ????/??????????? */
         hasEvent = true;
     }
-    if (sockAct->actType & XSocketAct_Read) {
-        /* CQ 允许重复条目；没有新完成标志时必须清空旧快照，避免上层
-         * 再次复制上一批数据。 */
+    if (sockAct->actType & XSocketActType_Read) {
+        /* CQ ??????;???????????????,????
+         * ?????????? */
         s->rxTotal = 0;
         if (s->hasReadData || s->closing) {
             s->hasReadData = false;
             s->closing = false;
-            s->rxTotal = s->rxPos;  /* 更新已读字节数，供上层获取 */
+            s->rxTotal = s->rxPos;  /* ???????,????? */
             hasEvent = true;
         }
     }
-    if (sockAct->actType & XSocketAct_Write) {
+    if (sockAct->actType & XSocketActType_Write) {
         s->lastWriteFinished = 0;
         if (s->hasWriteDone) {
             s->hasWriteDone = false;
-            s->lastWriteFinished = s->writeFinished;  /* 记录已确认字节数 */
-            s->writeFinished = 0;                      /* 重置计数器 */
+            s->lastWriteFinished = s->writeFinished;  /* ???????? */
+            s->writeFinished = 0;                      /* ????? */
             hasEvent = true;
         }
     }
-    if ((sockAct->actType & XSocketAct_Accept) && s->hasAccept) {
+    if ((sockAct->actType & XSocketActType_Accept) && s->hasAccept) {
         s->hasAccept = false;
         hasEvent = true;
     }
@@ -1430,21 +1430,21 @@ void XDeviceNetwork_socketContinueRead(XFd xfd, bool isUdp) {
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     size_t consumed = (size_t)s->rxTotal;
     if (s->rxPos > (int)consumed) {
-        /* 如果还有未消费的数据，紧凑移动到缓冲区头部 */
+        /* ??????????,?????????? */
         size_t remaining = (size_t)s->rxPos - consumed;
         memmove(s->rxBuf, s->rxBuf + consumed, remaining);
         s->rxPos = (int)remaining;
         s->rxTotal = 0;
-        s->hasReadData = true;  /* 仍有剩余数据可读 */
-        push_socket_cq(s, XSocketAct_Read);  /* 投递 Read 事件通知上层 */
+        s->hasReadData = true;  /* ???????? */
+        push_socket_cq(s, XSocketActType_Read);  /* ?? Read ?????? */
     }
     else {
-        /* 全部已消费，清空缓冲区 */
+        /* ?????,????? */
         s->rxPos = 0;
         s->rxTotal = 0;
     }
-    /* 通知 lwIP 数据已消费，重新打开 TCP 接收窗口。若 Raw API 保存了
-     * refused_data，立即重新投递，避免等待 250ms fast timer。 */
+    /* ?? lwIP ?????,???? TCP ?????? Raw API ???
+     * refused_data,??????,???? 250ms fast timer? */
     if (consumed > 0 && s->tpcb) tcp_recved(s->tpcb, (u16_t)consumed);
     if (s->tpcb && s->tpcb->refused_data) {
         (void)tcp_process_refused_data(s->tpcb);
@@ -1468,7 +1468,7 @@ XDeviceNetworkServerHandle XDeviceNetwork_serverCreate(XFd deviceFd, const XHost
 
 bool XDeviceNetwork_serverAccept(XFd xfd) {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
-    /* lwIP 通过 tcp_accept 回调接受连接（在 socketBind 中已设置），此处无需操作 */
+    /* lwIP ?? tcp_accept ??????(? socketBind ????),?????? */
     (void)priv;
     return true;
 }
@@ -1493,11 +1493,11 @@ void XDeviceNetwork_serverClose(XFd xfd, XDeviceNetworkServerHandle server) {
     XNetLwipCoreLock prot = XNET_LWIP_LOCK();
     dispose_tcp_pcb(&s->tpcb);
     XNET_LWIP_UNLOCK(prot);
-    /* 有 owner 的服务端私有对象仍由 XTcpServer 销毁，保持服务端标记，
-     * 避免析构时把 XTcpServer 误当作 XIODevice。 */
+    /* ? owner ?????????? XTcpServer ??,???????,
+     * ?????? XTcpServer ??? XIODevice? */
     if (!s->base.m_owner) s->isServer = false;
 
-    /* 失败的 accepted socket 没有 XObject owner，由此路径负责回收。 */
+    /* ??? accepted socket ?? XObject owner,????????? */
     if (!s->base.m_owner) {
         XFd_free(s->fd);
         s->fd = XFD_INVALID;
@@ -1515,7 +1515,7 @@ XDeviceNetworkSocketHandle XDeviceNetwork_serverGetAcceptedSocket(XFd xfd,
     s->pendingAccept = NULL;
     if (clientAddr && cs->tpcb) ip_to_addr(&cs->tpcb->remote_ip, clientAddr);
     if (clientPort && cs->tpcb) *clientPort = cs->tpcb->remote_port;
-    LWIP_DBG("[TCP服务] 领取客户端Socket=%p\n", (void*)cs);
+    LWIP_DBG("[TCP??] ?????Socket=%p\n", (void*)cs);
     return (XDeviceNetworkSocketHandle)cs->fd;
 }
 
@@ -1528,7 +1528,7 @@ XVector* XDeviceNetwork_lookupName(const XString* name) {
     /* Name lookup also needs a usable source address for DNS traffic. */
     if (!ensure_network_ready(XNETWORK_LWIP_DNS_TIMEOUT_MS)) return NULL;
 
-    /* 异步 DNS 解析（带回调 + 轮询等待） */
+    /* ?? DNS ??(??? + ????) */
     ip_addr_t ip;
     if (!lwip_resolve_name(nameStr, &ip, XNETWORK_LWIP_DNS_TIMEOUT_MS)) return NULL;
 
@@ -1567,20 +1567,20 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
     XNetworkInterface* iface = XNetworkInterface_create();
     if (!iface) return NULL;
     char nameBuf[8]; snprintf(nameBuf, sizeof(nameBuf), "%c%c%d", nif->name[0], nif->name[1], nif->num);
-    iface->name = XString_create_utf8(nameBuf);
-    iface->humanReadableName = XString_create_utf8(nameBuf);
+    iface->m_name = XString_create_utf8(nameBuf);
+    iface->m_humanReadableName = XString_create_utf8(nameBuf);
     if (nif->hwaddr_len >= 6) {
         char macStr[32]; snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
             nif->hwaddr[0], nif->hwaddr[1], nif->hwaddr[2], nif->hwaddr[3], nif->hwaddr[4], nif->hwaddr[5]);
-        iface->hardwareAddress = XString_create_utf8(macStr);
+        iface->m_hardwareAddress = XString_create_utf8(macStr);
     }
-    iface->index = nif->num; iface->mtu = (int)nif->mtu;
-    if (nif->flags & NETIF_FLAG_UP) iface->flags |= XNetworkInterface_IsUp | XNetworkInterface_IsRunning;
-    if (nif->flags & NETIF_FLAG_LINK_UP) iface->flags |= XNetworkInterface_IsRunning;
-    if (nif->flags & NETIF_FLAG_BROADCAST) iface->flags |= XNetworkInterface_CanBroadcast;
+    iface->m_index = nif->num; iface->m_mtu = (int)nif->mtu;
+    if (nif->flags & NETIF_FLAG_UP) iface->m_flags |= XNetworkInterface_IsUp | XNetworkInterface_IsRunning;
+    if (nif->flags & NETIF_FLAG_LINK_UP) iface->m_flags |= XNetworkInterface_IsRunning;
+    if (nif->flags & NETIF_FLAG_BROADCAST) iface->m_flags |= XNetworkInterface_CanBroadcast;
     if (nif->name[0] == 'l' && nif->name[1] == 'o') {
-        iface->flags |= XNetworkInterface_IsLoopBack; iface->type = XNetworkInterface_Loopback;
-    } else { iface->type = XNetworkInterface_Ethernet; }
+        iface->m_flags |= XNetworkInterface_IsLoopBack; iface->m_type = XNetworkInterface_Loopback;
+    } else { iface->m_type = XNetworkInterface_Ethernet; }
     if (!ip_addr_isany(&nif->ip_addr)) {
         XNetworkAddressEntry entry; XNetworkAddressEntry_init(&entry);
         ip_to_addr(&nif->ip_addr, &entry.ip); ip_to_addr(&nif->netmask, &entry.netmask);
@@ -1590,29 +1590,29 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
             XHostAddress_setAddressIPv4(&entry.broadcast, lwip_ntohl(ipVal | ~maskVal));
             entry.broadcastIsValid = true;
         }
-        XVector_push_back_move_1_base(iface->addressEntries, &entry);
+        XVector_push_back_move_1_base(iface->m_addressEntries, &entry);
         XClassDeinit(&entry);
     }
-    iface->isValid = true; it->idx++;
+    iface->m_isValid = true; it->idx++;
     return iface;
 }
 
 void XDeviceNetwork_enumInterfacesEnd(XDeviceNetworkInterfaceIterator iter) { if (iter) XFree_System(iter); }
 
 /* ================================================================
- * 网卡配置（DHCP / 静态 IP）
+ * ????(DHCP / ?? IP)
  *
- * lwIP Raw API 直配（无 netsh/无系统权限概念）：
- *   - 查询：netif 的 ip_addr/netmask/gw + struct dhcp 服务器 +
- *     dns_getserver，全部经核心锁读取；
- *   - 静态：netif_set_addr + dns_setserver（dhcp 会话在跑先停）；
- *   - DHCP：dhcp_stop + dhcp_start（lwIP 自动清零地址并经 DHCP
- *     重取，DNS 随租约更新，先清本 地静态 DNS 交还自动管理）。
- * 接口定位约定：ifIndex == netif->num（上方 enumInterfacesNext
- * 填 XNetworkInterface_index 的同一来源）。
+ * lwIP Raw API ??(? netsh/???????):
+ *   - ??:netif ? ip_addr/netmask/gw + struct dhcp ??? +
+ *     dns_getserver,????????;
+ *   - ??:netif_set_addr + dns_setserver(dhcp ??????);
+ *   - DHCP:dhcp_stop + dhcp_start(lwIP ???????? DHCP
+ *     ??,DNS ?????,??? ??? DNS ??????)?
+ * ??????:ifIndex == netif->num(?? enumInterfacesNext
+ * ? XNetworkInterface_index ?????)?
  * ================================================================ */
 
-/** 按 netif->num 查找网卡（须持核心锁调用）。 */
+/** ? netif->num ????(???????)? */
 static struct netif* lwipConfig_findNetif(uint32_t ifIndex) {
     struct netif* n;
     for (n = netif_list; n; n = n->next) {
@@ -1621,15 +1621,15 @@ static struct netif* lwipConfig_findNetif(uint32_t ifIndex) {
     return NULL;
 }
 
-/** 点分 IPv4 字面量 → ip4_addr（空/非法返回 false）。 */
+/** ?? IPv4 ??? ? ip4_addr(?/???? false)? */
 static bool lwipConfig_parseIpv4(const char* text, ip4_addr_t* out) {
     if (!text || !text[0]) return false;
     return ip4addr_aton(text, out) == 1;
 }
 
 bool XDeviceNetwork_interfaceConfigSupported(void) {
-    /* 静态配置恒可；DHCP 能力取决于 LWIP_DHCP 编译（setDhcp 如实返回
-     * false），supported 只表达「配置能力存在」。 */
+    /* ??????;DHCP ????? LWIP_DHCP ??(setDhcp ????
+     * false),supported ???????????? */
     return true;
 }
 
@@ -1670,7 +1670,7 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
                 lwip_ntohl(ip4_addr_get_u32(ip_2_ip4(&nif->gw))));
         }
 #if LWIP_IPV6
-        /* 首个 VALID 态 IPv6（预填用；lwIP 不存静态前缀，按 64 记）。 */
+        /* ?? VALID ? IPv6(???;lwIP ??????,? 64 ?)? */
         {
             s8_t i6;
             for (i6 = 0; i6 < LWIP_IPV6_NUM_ADDRESSES; ++i6) {
@@ -1684,8 +1684,8 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
         }
 #endif
 #if LWIP_DHCP
-        /* dhcp_start 过即视作 DHCP 模式（含等待租约中）。lwIP 2.2 netif
-         * 无内嵌 dhcp 指针，经 client-data 索引取（netif_dhcp_data 宏）。 */
+        /* dhcp_start ???? DHCP ??(??????)?lwIP 2.2 netif
+         * ??? dhcp ??,? client-data ???(netif_dhcp_data ?)? */
         {
             struct dhcp* dhcp = netif_dhcp_data(nif);
             outConfig->dhcpEnabled = (dhcp != NULL);
@@ -1736,9 +1736,9 @@ bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex) {
     prot = XNET_LWIP_LOCK();
     nif = lwipConfig_findNetif(ifIndex);
     if (nif) {
-        /* 停旧会话（静态/DHCP 皆收口）→ dhcp_start 内部清零地址并经
-         * DHCP 重取；本地静态 DNS 一并清空交还自动管理（租约到达后
-         * lwIP 会以 DHCP 下发的 DNS 覆盖）。 */
+        /* ????(??/DHCP ???)? dhcp_start ????????
+         * DHCP ??;???? DNS ??????????(?????
+         * lwIP ?? DHCP ??? DNS ??)? */
         dhcp_stop(nif);
 #if LWIP_DNS
         dns_setserver(0, NULL);
@@ -1750,7 +1750,7 @@ bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex) {
     return ok;
 #else
     (void)ifIndex;
-    return false; /* lwIP 未编译 DHCP 模块 */
+    return false; /* lwIP ??? DHCP ?? */
 #endif
 }
 
@@ -1769,8 +1769,8 @@ bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
         prefixLength < 0 || prefixLength > 128)
         return false;
     if (!ip6addr_aton(ipv6Address, &a6)) return false;
-    /* lwIP 默认路由由 RA 管理，静态 IPv6 网关不支持（参数忽略，公共头
-     * 注释如实记录）；前缀长度 lwIP 不按地址存储，仅校验范围。 */
+    /* lwIP ????? RA ??,?? IPv6 ?????(????,???
+     * ??????);???? lwIP ??????,?????? */
     (void)prefixLength;
     (void)ipv6Gateway;
 
@@ -1788,7 +1788,7 @@ bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
     return ok;
 #else
     (void)ifIndex; (void)ipv6Address; (void)prefixLength; (void)ipv6Gateway;
-    return false; /* lwIP 未编译 IPv6 */
+    return false; /* lwIP ??? IPv6 */
 #endif
 }
 
@@ -1822,8 +1822,8 @@ bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address
     prot = XNET_LWIP_LOCK();
     nif = lwipConfig_findNetif(ifIndex);
     if (nif) {
-        /* DHCP 会话在跑先停（netif_set_addr 与 DHCP 续租互踩）。本 lwIP
-         * 衍生版 netif_set_addr 直收 ip4_addr（非上游的 ip_addr_t）。 */
+        /* DHCP ??????(netif_set_addr ? DHCP ????)?? lwIP
+         * ??? netif_set_addr ?? ip4_addr(???? ip_addr_t)? */
 #if LWIP_DHCP
         dhcp_stop(nif);
 #endif
@@ -1870,16 +1870,16 @@ int XDeviceNetwork_gssapiAuth(const XString* name, const XByteArray* in, XByteAr
 }
 
 /* ================================================================
- * 写入延续 - lwIP 模式下写入已通过 tcp_write/tcp_output 同步完成，
- * 环形缓冲区中待发送的明文已在 xssl_v_writeData -> BIO -> parent writeData
- * 路径中完成加密并发送，无需额外操作。
+ * ???? - lwIP ???????? tcp_write/tcp_output ????,
+ * ?????????????? xssl_v_writeData -> BIO -> parent writeData
+ * ??????????,???????
  * ================================================================ */
 void XDeviceNetwork_socketContinueWrite(XFd xfd, XRingBuffer* ringBuffer, bool isUdp)
 {
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv || !ringBuffer) return;
     (void)isUdp;
-    /* lwIP: 写入通过 tcp_write/tcp_output 同步完成，
-     * 环形缓冲区数据已在 XDeviceNetwork_socketWrite 路径中处理完毕。 */
+    /* lwIP: ???? tcp_write/tcp_output ????,
+     * ????????? XDeviceNetwork_socketWrite ???????? */
 }
 #endif /* XNETWORK_USE_LWIP */

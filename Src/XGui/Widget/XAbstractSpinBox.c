@@ -26,6 +26,7 @@
 #if XWIDGET_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON
 
 #include "XAbstractSpinBox.h"
+#include "XObject_Protected.h"
 #include "XString.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -878,7 +879,9 @@ void XAbstractSpinBox_selectAll(XAbstractSpinBox* self)
 
 void XAbstractSpinBox_stepBy_base(XAbstractSpinBox* self, int steps)
 {
-    if (!self) return;
+    if (ISNULL(self, "XAbstractSpinBox") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return;
     XClassGetVirtualFunc(self, EXAbstractSpinBox_StepBy,
                          void(*)(XAbstractSpinBox*, int))(self, steps);
 }
@@ -886,7 +889,9 @@ void XAbstractSpinBox_stepBy_base(XAbstractSpinBox* self, int steps)
 XValidatorState XAbstractSpinBox_validate_base(XAbstractSpinBox* self,
                                                const char* input, int* pos)
 {
-    if (!self) return XValidatorState_Invalid;
+    if (ISNULL(self, "XAbstractSpinBox") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return XValidatorState_Invalid;
     return XClassGetVirtualFunc(self, EXAbstractSpinBox_Validate,
                                 XValidatorState(*)(XAbstractSpinBox*,
                                                    const char*, int*))(
@@ -896,7 +901,9 @@ XValidatorState XAbstractSpinBox_validate_base(XAbstractSpinBox* self,
 void XAbstractSpinBox_fixup_base(XAbstractSpinBox* self, char* input,
                                  size_t capacity)
 {
-    if (!self) return;
+    if (ISNULL(self, "XAbstractSpinBox") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return;
     if (!XClassGetVirtualFunc(self, EXAbstractSpinBox_Fixup, bool)) return;
     XClassGetVirtualFunc(self, EXAbstractSpinBox_Fixup,
                          void(*)(XAbstractSpinBox*, char*, size_t))(
@@ -905,7 +912,9 @@ void XAbstractSpinBox_fixup_base(XAbstractSpinBox* self, char* input,
 
 void XAbstractSpinBox_clear_base(XAbstractSpinBox* self)
 {
-    if (!self) return;
+    if (ISNULL(self, "XAbstractSpinBox") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return;
     if (!XClassGetVirtualFunc(self, EXAbstractSpinBox_Clear, bool)) return;
     XClassGetVirtualFunc(self, EXAbstractSpinBox_Clear,
                          void(*)(XAbstractSpinBox*))(self);
@@ -913,7 +922,9 @@ void XAbstractSpinBox_clear_base(XAbstractSpinBox* self)
 
 int XAbstractSpinBox_stepEnabled_base(XAbstractSpinBox* self)
 {
-    if (!self) return XAbstractSpinBoxStepEnabledFlag_StepNone;
+    if (ISNULL(self, "XAbstractSpinBox") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return XAbstractSpinBoxStepEnabledFlag_StepNone;
     if (!XClassGetVirtualFunc(self, EXAbstractSpinBox_StepEnabled, bool))
         return XAbstractSpinBoxStepEnabledFlag_StepNone;
     return XClassGetVirtualFunc(self, EXAbstractSpinBox_StepEnabled,
@@ -922,7 +933,9 @@ int XAbstractSpinBox_stepEnabled_base(XAbstractSpinBox* self)
 
 void XAbstractSpinBox_interpret_base(XAbstractSpinBox* self)
 {
-    if (!self) return;
+    if (ISNULL(self, "XAbstractSpinBox") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return;
     if (!XClassGetVirtualFunc(self, EXAbstractSpinBox_Interpret, bool))
         return;
     XClassGetVirtualFunc(self, EXAbstractSpinBox_Interpret,
@@ -931,7 +944,9 @@ void XAbstractSpinBox_interpret_base(XAbstractSpinBox* self)
 
 void XAbstractSpinBox_updateEdit_base(XAbstractSpinBox* self)
 {
-    if (!self) return;
+    if (ISNULL(self, "XAbstractSpinBox") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return;
     if (!XClassGetVirtualFunc(self, EXAbstractSpinBox_UpdateEdit, bool))
         return;
     XClassGetVirtualFunc(self, EXAbstractSpinBox_UpdateEdit,

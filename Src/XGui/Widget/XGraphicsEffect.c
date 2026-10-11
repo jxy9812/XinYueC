@@ -12,14 +12,12 @@
  * @author     XinYueC 团队
  */
 
+#include "XGraphicsEffect.h"
+
 #include "XGuiConfig.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEvent.h"
-
-#if XWIDGET_ON
-
-#include "XGraphicsEffect.h"
 #include "XWidget.h"
 #include "XWidget_Protected.h" /* XWidget_paintImage/paintOffset（框架内部
                                     绘制入口，效果回贴目标获取用）。 */
@@ -27,6 +25,8 @@
 #include "XPainter.h"
 
 #include <math.h>
+
+#if XWIDGET_ON
 
 /* ==================== 内部辅助 ==================== */
 

@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XVector.h"
 #include"XFunctionCallback.h"
 #include"XTestMenu.h"
@@ -24,7 +24,7 @@ static void XVectorPrintInt(XVector* v, const char* prefix)
 static XVector* XVectorMakeInt(const int* arr, size_t n)
 {
 	XVector* v = XVector_Create(int);
-	XContainerSetCompare(v, int_compare);
+	XContainerSetCompare(v, Xint_compare);
 	for (size_t i = 0; i < n; i++)
 		XVector_Push_Back_Base(v, int, arr[i]);
 	return v;
@@ -89,7 +89,7 @@ static void XVectorCapacityTest(void)
 {
 	XPrintf("===== 容量与大小测试 =====\n");
 	XVector* v = XVector_Create(int);
-	XContainerSetCompare(v, int_compare);
+	XContainerSetCompare(v, Xint_compare);
 	XPrintf("初始: size=%zu, capacity=%zu\n",
 		XVector_size_base(v), XVector_capacity_base(v));
 	int arr[] = { 1, 2, 3, 4, 5 };
@@ -556,7 +556,7 @@ static void XVectorFillTest(void)
 {
 	XPrintf("===== 填充与赋值测试 =====\n");
 	XVector* v = XVector_Create(int);
-	XContainerSetCompare(v, int_compare);
+	XContainerSetCompare(v, Xint_compare);
 	int val = 42;
 	XVector_fill(v, &val, 5);
 	XVectorPrintInt(v, "fill(42,5): ");

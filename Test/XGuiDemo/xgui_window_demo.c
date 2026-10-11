@@ -21,6 +21,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include <stdio.h>
+#include "XObject_Protected.h"
 #include <stdarg.h> /* demo_log：va_list 转发 vprintf（诊断行立即落盘）。 */
 #if defined(__GLIBC__) /* mallopt(内存驻留治理)——glibc 专有, MSVC 无此 API。 */
 #include <malloc.h>
@@ -37,6 +38,7 @@
 #include "XSystem.h" /* XSystem_environment：环境变量唯一入口。 */
 #include "XMemory.h" /* [perf8r3 临时内存探针] XMemory_statistics_2。 */
 #include "XCoreApplication.h" /* demo 缺省字库经 exe 目录解析外挂轮廓字库。 */
+#include "XString.h"         /* applicationVersion 注入（XUPGRADE_PRODUCT_VERSION）。 */
 #include "XGuiApplication.h"
 #if XWIDGET_ON && XKEYBOARD_ON
 #include "XVirtualKeyboard.h" /* 键盘页单例面板 win 析构前摘挂（自包含声明，防 XVIRTUALKEYBOARD_ON=0 态缺声明）。 */
@@ -49,6 +51,8 @@
 #include "xgui_demo_pages.h"
 #include "xgui_demo_splitter.h" /* 通用分割条：导航面板/RC 控制列拖宽收展。 */
 #include "xgui_demo_theme.h" /* fusion-css 缺省主题样式表（xgui_demo_theme_css）。 */
+#include "XFusionStyle.h" /* XFusionStyle_installDefault：缺省 fusion 样式安装（XSTYLE_ON 样式矩阵），补声明消除 C4013 隐式声明。 */
+#include "XStyle.h" /* XStyle_installStyleSheet：全局样式表装载，补声明消除 C4013 隐式声明。 */
 #include "xgui_demo_page_remote_server.h" /* 远程窗口设置页 CLI 预置/autostart/shutdown。 */
 #include "xgui_demo_page_remote_client.h" /* 远程客户端页 CLI 预置/autostart/shutdown(2026-10-02)。 */
 #include "xgui_demo_apitest.h"
@@ -397,7 +401,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[16]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；2026-10-08 二维码页扩列 16）。 */
+    XPushButton     m_pageNav[17]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码演示、页 16=软件更新，2026-10-11 双页并入扩列 17）。 */
 #endif
 #if XBUTTONGROUP_ON
     XButtonGroup    m_navGroup;    /**< 页面钮互斥组：当前页按钮保持选中高亮（主题 :checked 态）。 */
@@ -430,7 +434,7 @@ typedef struct DemoWin
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
     XWidget         m_pageTabs;    /**< 页面 4：容器与窗口演示容器。 */
     XWidget         m_pageChart;   /**< 页面 12：图表演示容器（自选项卡页打散独立）。 */
-    XWidget*        m_extPages[11]; /**< 页面 5~15：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构）。 */
+    XWidget*        m_extPages[12]; /**< 页面 5~16：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构）。 */
 #endif
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
@@ -1304,14 +1308,14 @@ static void demo_input_autotest(DemoWin* self)
 /* 前向声明：本函数定义在 demo_page_name 之前。 */
 static const char* demo_page_name(int index);
 
-/** @brief 扩展页（5~14）图形界面自动化验证调度。
+/** @brief 扩展页（5~15）图形界面自动化验证调度。
  * @details 逐页切换并调用页面自带的 autotest（xgui_demo_pages.h 契约：
  *          事件注入 + getter 断言，全程非阻塞），汇总失败数；任一失败
  *          退出非零。结束恢复第 4 页，保持交互后截图口径不变。下标 7
  *          =页 12（图表演示，内置页无 autotest 契约）恒 NULL 跳过。 */
 static void demo_ext_pages_autotest(DemoWin* demo)
 {
-    int (*const kTests[11])(XWidget*) = {
+    int (*const kTests[12])(XWidget*) = {
         demo_page_views_autotest, demo_page_dialogs_autotest,
         demo_page_advanced_autotest, demo_page_effects_autotest,
         demo_page_keyboard_autotest, demo_page_remote_server_autotest,
@@ -1319,11 +1323,12 @@ static void demo_ext_pages_autotest(DemoWin* demo)
         NULL, /* 页 12（图表演示）内置页占位。 */
         demo_page_network_autotest, /* 2026-10-06 网络设置页。 */
         demo_page_overlay_settings_autotest, /* 2026-10-06 悬浮窗设置页。 */
-        demo_page_qrcode_autotest /* 2026-10-08 二维码演示页。 */
+        demo_page_qrcode_autotest, /* 2026-10-08 二维码演示页。 */
+        demo_page_update_autotest /* 2026-10-07 软件更新页。 */
     };
     int total = 0;
     int exti;
-    for (exti = 0; exti < 11; ++exti) {
+    for (exti = 0; exti < 12; ++exti) {
         int failures;
         if (!demo->m_extPages[exti] || !kTests[exti])
             continue; /* 页面模块被裁剪/无契约，跳过 */
@@ -1622,7 +1627,7 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[16] = {
+    static const char* const kNames[17] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
@@ -1638,9 +1643,10 @@ static const char* demo_page_name(int index)
         "\xE5\x9B\xBE\xE8\xA1\xA8\xE6\xBC\x94\xE7\xA4\xBA",  /* 图表演示(2026-10-03 打散独立) */
         "\xE7\xBD\x91\xE7\xBB\x9C\xE8\xAE\xBE\xE7\xBD\xAE",  /* 网络设置(2026-10-06 系统设置) */
         "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE\xE7\xBD\xAE", /* 悬浮窗设置(2026-10-06 系统设置) */
-        "\xE4\xBA\x8C\xE7\xBB\xB4\xE7\xA0\x81\xE6\xBC\x94\xE7\xA4\xBA"  /* 二维码演示(2026-10-08 控件类) */
+        "\xE4\xBA\x8C\xE7\xBB\xB4\xE7\xA0\x81\xE6\xBC\x94\xE7\xA4\xBA",  /* 二维码演示(2026-10-08 控件类) */
+        "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0" /* 软件更新(2026-10-07 系统设置) */
     };
-    if (index < 0 || index > 15)
+    if (index < 0 || index > 16)
         return kNames[0];
     return kNames[index];
 }
@@ -1659,7 +1665,7 @@ static const char* demo_page_name(int index)
 #define DEMO_NAV_TB_MAX  320   /**< 上下停靠面板高上限（换行页面钮自动抬高至此）。 */
 #define DEMO_NAV_STRIP_W 8     /**< 收起贴边分割条细条厚。 */
 #define DEMO_NAV_CAT_N   3     /**< 一级分类数（=kNavGroups 项数）。 */
-#define DEMO_NAV_PAGE_N  16    /**< 页面数。 */
+#define DEMO_NAV_PAGE_N  17    /**< 页面数。 */
 #define DEMO_NAV_HEAD_N  5     /**< 单分类最多子分组标题数（标签池容量）。 */
 #define DEMO_NAV_PAGE_H    24  /**< 页面钮高（竖版）。 */
 #define DEMO_NAV_PAGE_PITCH 26 /**< 页面钮行距（竖版）。 */
@@ -1695,7 +1701,8 @@ static const DemoNavItem kNavControlsItems[] = {
 /** @brief 系统设置类条目（2026-10-06 新增二级设置页）。 */
 static const DemoNavItem kNavSystemItems[] = {
     { "\xE7\xBD\x91\xE7\xBB\x9C\xE8\xAE\xBE\xE7\xBD\xAE", 13 },             /* 网络设置 */
-    { "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE\xE7\xBD\xAE", 14 }  /* 悬浮窗设置 */
+    { "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE\xE7\xBD\xAE", 14 }, /* 悬浮窗设置 */
+    { "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0", 16 }              /* 软件更新（2026-10-07 关于→软件更新；2026-10-11 双页并入移至页 16） */
 };
 
 /** @brief 远程类条目。 */
@@ -2320,7 +2327,7 @@ static void demo_layout_content(DemoWin* self)
      * 系统栏/窗口尺寸/导航面板占位变化，各页按当前根几何重排——本函数
      * 在切页/resize/startup/停靠切换全路径执行；登记表下标=页索引-5
      * （0=条目视图 2=高级 3=效果 6=远程客户端 8=网络设置 9=悬浮窗
-     * 设置，见 kExtBuilders 顺序）。 */
+     * 设置 10=二维码 11=软件更新，见 kExtBuilders 顺序）。 */
     if (self->m_extPages[0])
         demo_page_views_adapt(self->m_extPages[0]);
     if (self->m_extPages[2])
@@ -2337,6 +2344,8 @@ static void demo_layout_content(DemoWin* self)
         demo_page_overlay_settings_adapt(self->m_extPages[9]);
     if (self->m_extPages[10])
         demo_page_qrcode_adapt(self->m_extPages[10]); /* 2026-10-08 二维码页。 */
+    if (self->m_extPages[11])
+        demo_page_update_adapt(self->m_extPages[11]); /* 2026-10-07 软件更新页。 */
     /* 远程服务器页（2026-10-06 补入统一漏斗）：此前只在 resizeEvent
      * 单独调用，切页路径漏跑——XStackedLayout StackOne 只给当前页
      * 分配几何，resize 落在别的页时本页根保持陈旧尺寸，adapt 算出
@@ -2370,7 +2379,7 @@ static void demo_switchPage(DemoWin* self, int index)
     }
 #endif
     if (index < 0) index = 0;
-    if (index > 15) index = 15; /* 2026-10-08: 第 15 页(二维码演示)入列。 */
+    if (index > 16) index = 16; /* 2026-10-11: 页 15(二维码)/页 16(软件更新) 双页入列。 */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 导航面板手风琴随页展开所在分类（程序化切页 --page/autotest 与
@@ -2628,6 +2637,13 @@ static void demo_nav15Slot(XObject* receiver, XVarList* args)
 {
     (void)args;
     demo_switchPage((DemoWin*)receiver, 15);
+}
+
+/** @brief 页面 16（软件更新）导航槽（2026-10-07 系统设置入列；2026-10-11 双页并入移至页 16）。 */
+static void demo_nav16Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 16);
 }
 
 /** @brief 扩展页状态回调：转发到主窗状态栏（xgui_demo_pages.h 契约适配）。 */
@@ -3437,17 +3453,18 @@ static DemoWin* DemoWin_create(void)
     XWidget_init(&self->m_pageTabs, &self->m_base, 0);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageTabs);
-    /* ---- 页面 5~14：扩展页注册（xgui_demo_pages.h 契约，堆根随父级联
+    /* ---- 页面 5~16：扩展页注册（xgui_demo_pages.h 契约，堆根随父级联
      * 析构）；裁剪配置下 build 返回 NULL 则跳过注册。下标=页索引-5，
      * 下标 7=页 12（图表演示，内置页）恒 NULL 占位。 ---- */
     {
         int exti;
-        XWidget* (*const kExtBuilders[11])(XWidget*, DemoPageStatusFn, void*) = {
+        XWidget* (*const kExtBuilders[12])(XWidget*, DemoPageStatusFn, void*) = {
 #if XINYUE_EMBEDDED
             /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
              * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
              * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
-            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+            NULL, NULL
 #else
             demo_page_views_build, demo_page_dialogs_build,
             demo_page_advanced_build, demo_page_effects_build,
@@ -3456,10 +3473,11 @@ static DemoWin* DemoWin_create(void)
             NULL, /* 页 12（图表演示）内置页占位。 */
             demo_page_network_build, /* 2026-10-06 网络设置页（系统设置）。 */
             demo_page_overlay_settings_build, /* 2026-10-06 悬浮窗设置页。 */
-            demo_page_qrcode_build /* 2026-10-08 二维码演示页（控件类）。 */
+            demo_page_qrcode_build, /* 2026-10-08 二维码演示页（控件类）。 */
+            demo_page_update_build /* 2026-10-07 软件更新页（系统设置）。 */
 #endif
         };
-        for (exti = 0; exti < 11; ++exti) {
+        for (exti = 0; exti < 12; ++exti) {
 #if XCHARTS_ON
             if (exti == 7) {
                 /* 页 12（图表演示）内置页在此占位入栈：保证「堆叠下标=
@@ -3488,7 +3506,7 @@ static DemoWin* DemoWin_create(void)
     /* 浮动导航面板装配（「先切一级分类、再选页面」，见文件域
      * 「浮动导航面板」段）：面板/标题/换边/收起 + 3 一级分类钮
      * （控件/系统设置/远程，互斥组 idClicked 切手风琴）+ 5 子分组
-     * 标题标签池（竖版展开时按活动分类轮转显隐）+ 15 页面钮（挂活动
+     * 标题标签池（竖版展开时按活动分类轮转显隐）+ 16 页面钮（挂活动
      * 分类下，互斥组高亮当前页）。m_pageNav 下标=页索引不变，CLI
      * --page、扩展页 autotest 调度（5+exti）、XI2 回归锁（m_pageNav[5]
      * 几何取中心）不受影响。几何全部由 demo_navUpdatePanel 统一分配
@@ -3541,14 +3559,15 @@ static DemoWin* DemoWin_create(void)
                       XConnectionType_Direct);
     XWidget_show(&self->m_navCollapseBtn);
     {
-        static void (*const kNavSlots[16])(XObject*, XVarList*) = {
+        static void (*const kNavSlots[17])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
             demo_nav4Slot, demo_nav5Slot, demo_nav6Slot, demo_nav7Slot,
             demo_nav8Slot, demo_nav9Slot, demo_nav10Slot, demo_nav11Slot,
             demo_nav12Slot, /* 2026-10-03 图表演示入列。 */
             demo_nav13Slot, /* 2026-10-06 网络设置入列。 */
             demo_nav14Slot, /* 2026-10-06 悬浮窗设置入列。 */
-            demo_nav15Slot  /* 2026-10-08 二维码演示入列。 */
+            demo_nav15Slot, /* 2026-10-08 二维码演示入列。 */
+            demo_nav16Slot  /* 2026-10-07 软件更新入列（2026-10-11 双页并入移至页 16）。 */
         };
         int i;
 #if XBUTTONGROUP_ON
@@ -4544,6 +4563,7 @@ int xgui_demo_main(int argc, char* argv[])
      * _IONBF 全无缓冲：每个 XPrintf 即写即达，harness 探针行不再依赖
      * flush 运气（本行即 2165 注释所述问题的最终收口）。 */
     setvbuf(stdout, NULL, _IONBF, 1024);
+#if defined(__linux__) || defined(__GLIBC__) || defined(__BIONIC__)
     /* 【内存驻留治理 2026-10-06】glibc 阈值调优: 换页/拖动/编码每步 churn
      * 1-3MB 分配释放(静态场景重建+tile 差带+镜像编码), 缺省阈值下 glibc
      * 把释放块滞留主堆不还系统——A33(56MB 无 swap)实测导航点击 RSS
@@ -4553,6 +4573,7 @@ int xgui_demo_main(int argc, char* argv[])
     mallopt(M_TRIM_THRESHOLD, 128 * 1024);
     mallopt(M_MMAP_THRESHOLD, 128 * 1024);
 #endif
+#endif /* __linux__ || __GLIBC__ || __BIONIC__ */
     {
         /* 虚拟键盘面板开关(联调口; XPWN_VK=none/0 关——远程注入聚焦编辑框
          * 时面板会遮挡页面, 对齐平台层 XPWN_IME 环境约定纪律)。 */
@@ -4791,6 +4812,22 @@ int xgui_demo_main(int argc, char* argv[])
         return 1;
     }
     demo_diag("phase: app created\n");
+    /* 应用元数据走 XCoreApplication 库标准口（对标 Qt）：名称+出厂版本。
+     * 版本此处仅为进程启动缺省——软件更新页构建时会把 applicationVersion
+     * 同步为引擎激活版本（模拟真实产品"升级换二进制即换版本"），使标题行
+     * 「程序版本」与「当前版本」两处口径一致。 */
+    {
+        XString* appName = XString_create_utf8("XGuiWindowDemo");
+        XString* appVer = XString_create_utf8(XUPGRADE_PRODUCT_VERSION);
+        if (appName) {
+            XCoreApplication_setApplicationName(appName);
+            XClassDelete((XClass*)appName);
+        }
+        if (appVer) {
+            XCoreApplication_setApplicationVersion(appVer);
+            XClassDelete((XClass*)appVer);
+        }
+    }
 
 #if XGUI_DEMO_APITEST_ON
     /* 1.5) --apitest：控件 API 全量测试（无头，不进窗口流程）。 */
@@ -4883,10 +4920,11 @@ int xgui_demo_main(int argc, char* argv[])
     if (win->m_extPages[0] || win->m_extPages[1] ||
         win->m_extPages[2] || win->m_extPages[3] || win->m_extPages[4] ||
         win->m_extPages[5] || win->m_extPages[6] || win->m_extPages[7] ||
-        win->m_extPages[8] || win->m_extPages[9] || win->m_extPages[10])
+        win->m_extPages[8] || win->m_extPages[9] || win->m_extPages[10] ||
+        win->m_extPages[11])
         {
-            /* 15 页导航/扩展页（含二维码页）与网络设置双列布局需要
-               1000x700；无头一致性采集（XGUI_DEMO_WINDOW_SIZE=
+            /* 16 页导航/扩展页（含二维码/软件更新双页）与网络设置双列
+               布局需要 1000x700；无头一致性采集（XGUI_DEMO_WINDOW_SIZE=
                1000x600）可对齐面板尺寸，使桌面参考与设备窗口同几何、
                逐像素可比。 */
             int baseW = 1000;
@@ -5133,7 +5171,7 @@ int xgui_demo_main(int argc, char* argv[])
 #if XWIDGET_ON && XPUSHBUTTON_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     {
         int nav;
-        for (nav = 0; nav < 16; ++nav) /* 2026-10-08: 16 钮随二维码页扩列。 */
+        for (nav = 0; nav < 17; ++nav) /* 2026-10-11: 17 钮随二维码+软件更新双页扩列。 */
             XClassDeinit(&win->m_pageNav[nav]);
     }
 #endif
@@ -5183,6 +5221,9 @@ int xgui_demo_main(int argc, char* argv[])
     /* 远程客户端页收尾: 断链 + deleteLater（2026-10-02 追加; 须在主
        窗口析构前——client 为窗口子对象, 级联析构兜底两序皆安全）。 */
     demo_page_remote_client_shutdown();
+    /* 软件更新页收尾: 停泵 + 引擎 deinit + 队列互斥回收（2026-10-07
+       追加; 须在主窗口析构前——UI 线程调用, 契约只禁回调内调用）。 */
+    demo_page_update_shutdown();
 #if XMENUBAR_ON && XMENU_ON && XTOOLBAR_ON && XACTION_ON
     /* 页八：addMenu_2 返回的堆菜单归调用方（XMenuBar.h 口径），且为
        无父顶层弹窗——win 级联只回收菜单栏本体，触及不到它们；窗口

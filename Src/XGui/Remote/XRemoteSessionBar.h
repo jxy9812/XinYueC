@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XRemoteSessionBar.h
  * @brief      XRemoteSessionBar 向日葵式悬浮会话工具条(冻结契约, 只声明
  *             API 不含实现; 2026-10-03 新增)。
@@ -67,13 +67,20 @@ typedef struct XRemoteSessionBar {
 
 /* ==================== 生命周期 ==================== */
 
-/** @brief 初始化类虚函数表, 返回共享 XVtable 指针。 */
+/**
+ * @brief  初始化类虚函数表。
+ * @return 共享 XVtable 指针。
+ */
 XVtable* XRemoteSessionBar_class_init(void);
 
 /**
  * @brief  初始化控件(对标构造函数)。
  * @details 默认收起为悬浮球并吸附 parent 坐标系 (0,0) 视图区; 宿主
  *          在 setClient + attachView 后经 expand/show 摆位。
+ * @param  self 尚未初始化的控件; 不得为 NULL。
+ * @param  parent 父控件(借用, 语义同 XWidget_init)。
+ * @param  flags 控件标志(XWidgetFlags, 原样传给 XWidget_init)。
+ * @return 无。
  */
 void XRemoteSessionBar_init(XRemoteSessionBar* self, XWidget* parent,
                             XWidgetFlags flags);
@@ -83,6 +90,9 @@ void XRemoteSessionBar_init(XRemoteSessionBar* self, XWidget* parent,
     XRemoteSessionBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /**
  * @brief  按指定内存类型创建控件实例。
+ * @param  memory 内存类型。
+ * @param  parent 父控件(借用, 语义同 XWidget_init)。
+ * @param  flags 控件标志(XWidgetFlags, 原样传给 XWidget_init)。
  * @return 新控件; 分配失败返回 NULL(XClass_delete_base /
  *         XObject_deleteLater 释放)。
  */
@@ -102,33 +112,62 @@ XRemoteSessionBar* XRemoteSessionBar_create_ex(XMemoryType memory,
  *             connected/disconnected 信号自管理可见性(连上浮现并
  *             展开, 断开隐藏——「断开=回未连接态」语义的一半, 视图
  *             占位与页面可配置恢复由宿主页面负责)。传 NULL 仅解绑。
+ * @param      self 目标控件; 传入 NULL 时不执行任何操作。
+ * @param      client 目标客户端(借用, 生命周期归调用方); NULL 仅解绑
+ *             既有绑定。
+ * @return     无。
  */
 void XRemoteSessionBar_setClient(XRemoteSessionBar* self,
                                  XGuiClient* client);
 
-/** @brief 当前绑定的 XGuiClient(借用; 未绑定返回 NULL)。 */
+/**
+ * @brief      查询当前绑定的 XGuiClient。
+ * @param      self 目标控件; 不得为 NULL。
+ * @return     当前绑定的 XGuiClient(借用, 生命周期归调用方, 禁止释放);
+ *             未绑定返回 NULL。
+ */
 XGuiClient* XRemoteSessionBar_client(const XRemoteSessionBar* self);
 
 /**
  * @brief      设置吸附参照视图区(parent 坐标系)。
  * @details    展开条吸附 viewRect 顶部居中; 悬浮球默认位=视图区顶部
  *             居中(拖动换位/双击回位均以此为基准)。
+ * @param      self 目标控件; 传入 NULL 时不执行任何操作。
+ * @param      viewRect 视图区矩形(借用, 只在调用期间读取); 不得为 NULL。
+ * @return     无。
  */
 void XRemoteSessionBar_attachView(XRemoteSessionBar* self,
                                   const XRect* viewRect);
 
 /* ==================== 展开态与动作 ==================== */
 
-/** @brief 展开为吸附工具条(视图区顶部居中)。 */
+/**
+ * @brief      展开为吸附工具条(视图区顶部居中)。
+ * @param      self 目标控件; 传入 NULL 时不执行任何操作。
+ * @return     无。
+ */
 void XRemoteSessionBar_expand(XRemoteSessionBar* self);
 
-/** @brief 收起为半透明小悬浮球。 */
+/**
+ * @brief      收起为半透明小悬浮球。
+ * @param      self 目标控件; 传入 NULL 时不执行任何操作。
+ * @return     无。
+ */
 void XRemoteSessionBar_collapse(XRemoteSessionBar* self);
 
-/** @brief 当前是否为展开工具条态。 */
+/**
+ * @brief      查询当前是否为展开工具条态。
+ * @param      self 目标控件; 不得为 NULL。
+ * @return     true 展开工具条态; false 悬浮球态。
+ */
 bool XRemoteSessionBar_isExpanded(const XRemoteSessionBar* self);
 
-/** @brief 悬浮球是否已被用户拖离默认位(双击回位判定依据)。 */
+/**
+ * @brief      查询悬浮球是否已被用户拖离默认位。
+ * @param      self 目标控件; 不得为 NULL。
+ * @return     true 用户已拖动换位(拖到哪停哪); false 仍在默认位
+ *             (展开与双击回位逻辑以此判定)。
+ */
 bool XRemoteSessionBar_isBallUserPlaced(const XRemoteSessionBar* self);
 
 /**
@@ -136,21 +175,38 @@ bool XRemoteSessionBar_isBallUserPlaced(const XRemoteSessionBar* self);
  * @details    展开条档位下拉与回归测试共用的唯一入口; 未绑定 client
  *             或未连接时仅登记界面选择(与演示页「未连接仅更新界面
  *             值」口径一致), 连接协商结果以远端 FB_META 为准。
+ * @param      self 目标控件; 传入 NULL 时不执行任何操作。
+ * @param      id 目标档位 id(XGuiRemoteProfileId)。
+ * @return     无。
  */
 void XRemoteSessionBar_requestProfile(XRemoteSessionBar* self,
                                       XGuiRemoteProfileId id);
 
-/** @brief 当前界面档位选择。 */
+/**
+ * @brief      查询当前界面档位选择。
+ * @param      self 目标控件; 不得为 NULL。
+ * @return     当前界面档位选择(协商生效值以远端 FB_META 为准)。
+ */
 XGuiRemoteProfileId XRemoteSessionBar_profile(
     const XRemoteSessionBar* self);
 
 /* ==================== 回归测试/宿主直达(借用) ==================== */
 
-/** @brief 断开连接按钮(借用; 回归测试合成点击直达)。 */
+/**
+ * @brief      断开连接按钮(回归测试合成点击直达)。
+ * @param      self 目标控件; 不得为 NULL。
+ * @return     内部断开连接按钮(借用, 属本控件子控件, 生命周期归本控件,
+ *             禁止在外部释放); 未初始化返回 NULL。
+ */
 struct XPushButton* XRemoteSessionBar_disconnectButton(
     const XRemoteSessionBar* self);
 
-/** @brief 统计文本标签(借用; 「帧 N | RTT N ms | 丢帧 N」)。 */
+/**
+ * @brief      统计文本标签(「帧 N | RTT N ms | 丢帧 N」)。
+ * @param      self 目标控件; 不得为 NULL。
+ * @return     内部统计标签(借用, 属本控件子控件, 生命周期归本控件,
+ *             禁止在外部释放); 未初始化返回 NULL。
+ */
 struct XLabel* XRemoteSessionBar_statsLabel(
     const XRemoteSessionBar* self);
 

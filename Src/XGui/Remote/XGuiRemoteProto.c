@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XGuiRemoteProto.c
  * @brief      XGuiRemote 帧协议/会话层实现(小端序列化 + 20 条消息编解码 +
  *             横幅/组帧 + 增量帧泵 + 档位参数)。

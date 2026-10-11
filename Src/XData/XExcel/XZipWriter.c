@@ -1,9 +1,9 @@
 ﻿#include "XZipWriter.h"
-#include <stdio.h>
 #include "XMemory.h"
 #include "XCrc.h"
 #include "XFile.h"
 #include "XClass.h"
+#include "XStringUtils.h"   /* XStrlen/XStrcpy：库内字符串原语（外部依赖约束） */
 #include "zlib.h"
 #include <limits.h>
 #include <string.h>
@@ -149,10 +149,10 @@ void XZipWriter_delete(XZipWriter* self) {
 bool XZipWriter_addDirectory(XZipWriter* self, const XString* path) {
     if (!self || !self->m_entries || self->m_closeAttempted || !path) return false;
     const char* pathUtf8 = XString_toUtf8(path);
-    if (!pathUtf8 || !pathUtf8[0] || strlen(pathUtf8) + 1 > UINT16_MAX) return false;
+    if (!pathUtf8 || !pathUtf8[0] || XStrlen(pathUtf8) + 1 > UINT16_MAX) return false;
     ZipFileEntry entry;
     memset(&entry, 0, sizeof(entry));
-    size_t len = strlen(pathUtf8);
+    size_t len = XStrlen(pathUtf8);
     entry.m_path = (char*)XMalloc_System(len + 2);
     if (!entry.m_path) return false;
     memcpy(entry.m_path, pathUtf8, len);
@@ -181,7 +181,7 @@ bool XZipWriter_addFile(XZipWriter* self, const XString* path, const uint8_t* da
     if (!self || !self->m_entries || self->m_closeAttempted || !path ||
         (!data && size > 0) || size > UINT32_MAX) return false;
     const char* pathUtf8 = XString_toUtf8(path);
-    if (!pathUtf8 || !pathUtf8[0] || strlen(pathUtf8) > UINT16_MAX) return false;
+    if (!pathUtf8 || !pathUtf8[0] || XStrlen(pathUtf8) > UINT16_MAX) return false;
     for (size_t i = 0; i < XVector_size_base((XContainer*)self->m_entries); ++i) {
         ZipFileEntry* existing = (ZipFileEntry*)XVector_at_base((XVector*)self->m_entries, i);
         if (existing && existing->m_path &&
@@ -190,9 +190,9 @@ bool XZipWriter_addFile(XZipWriter* self, const XString* path, const uint8_t* da
     }
     ZipFileEntry entry;
     memset(&entry, 0, sizeof(entry));
-    entry.m_path = (char*)XMalloc_System(strlen(pathUtf8) + 1);
+    entry.m_path = (char*)XMalloc_System(XStrlen(pathUtf8) + 1);
     if (!entry.m_path) return false;
-    strcpy(entry.m_path, pathUtf8);
+    XStrcpy(entry.m_path, pathUtf8);
     entry.m_is_directory = 0;
     entry.m_size = size;
     entry.m_data = (uint8_t*)XMalloc_System(size ? size : 1);
@@ -261,7 +261,7 @@ bool XZipWriter_close(XZipWriter* self) {
         if (position < 0 || (uint64_t)position > UINT32_MAX) goto write_failed;
         offsets[i] = (uint32_t)position;
 
-        size_t name_len = strlen(entry->m_path);
+        size_t name_len = XStrlen(entry->m_path);
         uint8_t header[30];
         memset(header, 0, 30);
         write_le32(header, ZIP_LOCAL_FILE_HEADER_SIG);
@@ -297,7 +297,7 @@ bool XZipWriter_close(XZipWriter* self) {
 
     for (size_t i = 0; i < entry_count; i++) {
         ZipFileEntry* entry = (ZipFileEntry*)XVector_at_base((XVector*)self->m_entries, i);
-        size_t name_len = strlen(entry->m_path);
+        size_t name_len = XStrlen(entry->m_path);
         uint8_t cd_header[46];
         memset(cd_header, 0, 46);
         write_le32(cd_header, ZIP_CENTRAL_DIR_SIG);

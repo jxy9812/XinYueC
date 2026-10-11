@@ -11,16 +11,15 @@
 #ifndef XCONSOLE_SHELL_UPTIME_H
 #define XCONSOLE_SHELL_UPTIME_H
 
-#include "XConsoleShellConfig.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_UPTIME_ON
 
+#include "XConsoleShellConfig.h"
 #include "XConsoleShellCommand.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /**
  * @brief `uptime` 内建命令的静态描述。
@@ -29,10 +28,11 @@ extern "C" {
  */
 extern const XConsoleCommand XConsoleShellUptime_command;
 
+#endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+          XCONSOLE_SHELL_UPTIME_ON */
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
-          XCONSOLE_SHELL_UPTIME_ON */
 #endif /* XCONSOLE_SHELL_UPTIME_H */

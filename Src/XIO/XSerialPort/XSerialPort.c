@@ -190,7 +190,7 @@ static void VXSerialPort_deinit(XObject* object)
 
 static bool VXSerialPort_event(XSerialPort* port, XEvent* event)
 {
-    if (port && event && event->type == XEVENT_TYPE_SOCK_ACT &&
+    if (port && event && event->m_type == XEVENT_TYPE_SOCK_ACT &&
         port->base.m_fd != XFD_INVALID) {
         XEvent* eventValue = event;
         XVarList* arguments = XVarList_Create(XVar(XEvent*, eventValue));

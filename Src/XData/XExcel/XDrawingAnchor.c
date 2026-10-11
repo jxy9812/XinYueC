@@ -39,7 +39,7 @@ void XDrawingAnchor_delete(XDrawingAnchor* self) {
 }
 
 /* ========== 对象设置 ========== */
-static bool mime_details(const XString* mimeType, const char** suffix)
+static bool XDrawingAnchor_mime_details(const XString* mimeType, const char** suffix)
 {
     if (!mimeType || !suffix) return false;
     if (XString_equals_utf8(mimeType, "image/png", XChar_CaseSensitive)) *suffix = "png";
@@ -50,7 +50,7 @@ static bool mime_details(const XString* mimeType, const char** suffix)
     return true;
 }
 
-static const char* mime_from_path(const XString* path, const char** suffix)
+static const char* XDrawingAnchor_mime_from_path(const XString* path, const char** suffix)
 {
     if (!path || !suffix) return NULL;
     if (XString_endsWith_utf8(path, ".png", XChar_CaseInsensitive)) { *suffix = "png"; return "image/png"; }
@@ -66,7 +66,7 @@ static const char* mime_from_path(const XString* path, const char** suffix)
 void XDrawingAnchor_setPicture(XDrawingAnchor* self, const XString* imagePath) {
     if (!self || !imagePath) return;
     const char* suffix = NULL;
-    const char* mimeType = mime_from_path(imagePath, &suffix);
+    const char* mimeType = XDrawingAnchor_mime_from_path(imagePath, &suffix);
     if (!mimeType) return;
     XFile* file = XFile_create_2((XString*)imagePath);
     if (!file || !XIODevice_open_base((XIODevice*)file, XIODevice_ReadOnly)) {
@@ -88,7 +88,7 @@ void XDrawingAnchor_setPicture(XDrawingAnchor* self, const XString* imagePath) {
 bool XDrawingAnchor_setPictureFromData(XDrawingAnchor* self, const uint8_t* data, size_t len, const XString* mimeType) {
     if (!self || !data || len == 0 || !mimeType) return false;
     const char* suffix = NULL;
-    if (!mime_details(mimeType, &suffix)) return false;
+    if (!XDrawingAnchor_mime_details(mimeType, &suffix)) return false;
     XString_Init_Utf8(suffixString, suffix);
     XMediaFile* media = XMediaFile_create_data(data, len, suffixString, mimeType);
     XClassDeinit(suffixString);
@@ -137,7 +137,7 @@ XDrawingAnchor_Type XDrawingAnchor_anchorType(const XDrawingAnchor* self) {
 }
 
 /* ========== 辅助：写Marker ========== */
-static void write_marker(XXmlStreamWriter* w, const char* tag, const XlsxMarker* m) {
+static void XDrawingAnchor_write_marker(XXmlStreamWriter* w, const char* tag, const XlsxMarker* m) {
     XXmlStreamWriter_writeStartElement_utf8(w, tag);
     {
         char buf[32];
@@ -157,12 +157,12 @@ static void write_marker(XXmlStreamWriter* w, const char* tag, const XlsxMarker*
 }
 
 /* ========== 辅助：读Marker ========== */
-static bool xml_name_is(const XString* name, const char* localName)
+static bool XDrawingAnchor_xml_name_is(const XString* name, const char* localName)
 {
     return name && localName && XString_endsWith_utf8(name, localName, XChar_CaseSensitive);
 }
 
-static int attribute_int(const XXmlStreamAttributes* attributes, const char* name, int fallback)
+static int XDrawingAnchor_attribute_int(const XXmlStreamAttributes* attributes, const char* name, int fallback)
 {
     if (!attributes || !name) return fallback;
     XString_Init_Utf8(key, name);
@@ -172,29 +172,29 @@ static int attribute_int(const XXmlStreamAttributes* attributes, const char* nam
     return result;
 }
 
-static bool read_marker(XXmlStreamReader* reader, XlsxMarker* out) {
+static bool XDrawingAnchor_read_marker(XXmlStreamReader* reader, XlsxMarker* out) {
     memset(out, 0, sizeof(XlsxMarker));
     while (!XXmlStreamReader_atEnd(reader)) {
         int tt = XXmlStreamReader_readNext(reader);
         if (tt == XXmlStream_StartElement) {
             const XString* name = XXmlStreamReader_name(reader);
             if (!name) continue;
-            if (xml_name_is(name, "col")) {
+            if (XDrawingAnchor_xml_name_is(name, "col")) {
                 const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (t) out->m_col = XString_toInt(t, NULL, 10);
-            } else if (xml_name_is(name, "colOff")) {
+            } else if (XDrawingAnchor_xml_name_is(name, "colOff")) {
                 const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (t) out->m_colOffset = XString_toInt(t, NULL, 10);
-            } else if (xml_name_is(name, "row")) {
+            } else if (XDrawingAnchor_xml_name_is(name, "row")) {
                 const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (t) out->m_row = XString_toInt(t, NULL, 10);
-            } else if (xml_name_is(name, "rowOff")) {
+            } else if (XDrawingAnchor_xml_name_is(name, "rowOff")) {
                 const XString* t = XXmlStreamReader_readElementText(reader, XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 if (t) out->m_rowOffset = XString_toInt(t, NULL, 10);
             }
         } else if (tt == XXmlStream_EndElement) {
             const XString* name = XXmlStreamReader_name(reader);
-            if (xml_name_is(name, "from") || xml_name_is(name, "to"))
+            if (XDrawingAnchor_xml_name_is(name, "from") || XDrawingAnchor_xml_name_is(name, "to"))
                 break;
         }
     }
@@ -202,7 +202,7 @@ static bool read_marker(XXmlStreamReader* reader, XlsxMarker* out) {
 }
 
 /* ========== XML 序列化 ========== */
-static void write_anchor_object(const XDrawingAnchor* self, XXmlStreamWriter* writer)
+static void XDrawingAnchor_write_anchor_object(const XDrawingAnchor* self, XXmlStreamWriter* writer)
 {
     char id[32];
     char relationshipId[32];
@@ -278,7 +278,7 @@ bool XDrawingAnchor_saveToXml(const XDrawingAnchor* self, void* writer_) {
     } else if (self->m_anchorType == XDAnchor_OneCell) {
         char buffer[32];
         XXmlStreamWriter_writeStartElement_utf8(writer, "xdr:oneCellAnchor");
-        write_marker(writer, "xdr:from", &from);
+        XDrawingAnchor_write_marker(writer, "xdr:from", &from);
         XXmlStreamWriter_writeEmptyElement_utf8(writer, "xdr:ext");
         snprintf(buffer, sizeof(buffer), "%d", self->m_width);
         XXmlStreamWriter_writeAttribute_utf8(writer, "cx", buffer);
@@ -288,26 +288,26 @@ bool XDrawingAnchor_saveToXml(const XDrawingAnchor* self, void* writer_) {
         XXmlStreamWriter_writeStartElement_utf8(writer, "xdr:twoCellAnchor");
         XlsxMarker to = {self->m_toRow, self->m_toCol,
                          self->m_toRowOffset, self->m_toColOffset};
-        write_marker(writer, "xdr:from", &from);
-        write_marker(writer, "xdr:to", &to);
+        XDrawingAnchor_write_marker(writer, "xdr:from", &from);
+        XDrawingAnchor_write_marker(writer, "xdr:to", &to);
     }
-    write_anchor_object(self, writer);
+    XDrawingAnchor_write_anchor_object(self, writer);
     XXmlStreamWriter_writeEmptyElement_utf8(writer, "xdr:clientData");
     XXmlStreamWriter_writeEndElement(writer);
     return !XXmlStreamWriter_hasError(writer);
 }
 
-static bool load_anchor_xml(XDrawingAnchor* self, XXmlStreamReader* reader)
+static bool XDrawingAnchor_load_anchor_xml(XDrawingAnchor* self, XXmlStreamReader* reader)
 {
     const XString* element = XXmlStreamReader_name(reader);
     const char* anchorEnd = NULL;
-    if (xml_name_is(element, "twoCellAnchor")) {
+    if (XDrawingAnchor_xml_name_is(element, "twoCellAnchor")) {
         self->m_anchorType = XDAnchor_TwoCell;
         anchorEnd = "twoCellAnchor";
-    } else if (xml_name_is(element, "oneCellAnchor")) {
+    } else if (XDrawingAnchor_xml_name_is(element, "oneCellAnchor")) {
         self->m_anchorType = XDAnchor_OneCell;
         anchorEnd = "oneCellAnchor";
-    } else if (xml_name_is(element, "absoluteAnchor")) {
+    } else if (XDrawingAnchor_xml_name_is(element, "absoluteAnchor")) {
         self->m_anchorType = XDAnchor_Absolute;
         anchorEnd = "absoluteAnchor";
     } else {
@@ -318,34 +318,34 @@ static bool load_anchor_xml(XDrawingAnchor* self, XXmlStreamReader* reader)
         int token = XXmlStreamReader_readNext(reader);
         const XString* name = XXmlStreamReader_name(reader);
         if (token == XXmlStream_StartElement) {
-            if (xml_name_is(name, "from")) {
+            if (XDrawingAnchor_xml_name_is(name, "from")) {
                 XlsxMarker marker;
-                if (!read_marker(reader, &marker)) return false;
+                if (!XDrawingAnchor_read_marker(reader, &marker)) return false;
                 self->m_row = marker.m_row;
                 self->m_col = marker.m_col;
                 self->m_rowOffset = marker.m_rowOffset;
                 self->m_colOffset = marker.m_colOffset;
-            } else if (xml_name_is(name, "to")) {
+            } else if (XDrawingAnchor_xml_name_is(name, "to")) {
                 XlsxMarker marker;
-                if (!read_marker(reader, &marker)) return false;
+                if (!XDrawingAnchor_read_marker(reader, &marker)) return false;
                 self->m_toRow = marker.m_row;
                 self->m_toCol = marker.m_col;
                 self->m_toRowOffset = marker.m_rowOffset;
                 self->m_toColOffset = marker.m_colOffset;
-            } else if (xml_name_is(name, "pos")) {
+            } else if (XDrawingAnchor_xml_name_is(name, "pos")) {
                 const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
-                self->m_x = attribute_int(attributes, "x", self->m_x);
-                self->m_y = attribute_int(attributes, "y", self->m_y);
-            } else if (xml_name_is(name, "ext")) {
+                self->m_x = XDrawingAnchor_attribute_int(attributes, "x", self->m_x);
+                self->m_y = XDrawingAnchor_attribute_int(attributes, "y", self->m_y);
+            } else if (XDrawingAnchor_xml_name_is(name, "ext")) {
                 const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
-                self->m_width = attribute_int(attributes, "cx", self->m_width);
-                self->m_height = attribute_int(attributes, "cy", self->m_height);
-            } else if (xml_name_is(name, "pic")) {
+                self->m_width = XDrawingAnchor_attribute_int(attributes, "cx", self->m_width);
+                self->m_height = XDrawingAnchor_attribute_int(attributes, "cy", self->m_height);
+            } else if (XDrawingAnchor_xml_name_is(name, "pic")) {
                 self->m_objectType = XDAnchor_Picture;
-            } else if (xml_name_is(name, "graphicFrame")) {
+            } else if (XDrawingAnchor_xml_name_is(name, "graphicFrame")) {
                 self->m_objectType = XDAnchor_GraphicFrame;
             }
-        } else if (token == XXmlStream_EndElement && xml_name_is(name, anchorEnd)) {
+        } else if (token == XXmlStream_EndElement && XDrawingAnchor_xml_name_is(name, anchorEnd)) {
             return !XXmlStreamReader_hasError(reader);
         } else if (token == XXmlStream_Invalid) {
             return false;
@@ -358,5 +358,5 @@ bool XDrawingAnchor_loadFromXml(XDrawingAnchor* self, void* reader_) {
     XXmlStreamReader* reader = (XXmlStreamReader*)reader_;
     if (!self || !reader) return false;
 
-    return load_anchor_xml(self, reader);
+    return XDrawingAnchor_load_anchor_xml(self, reader);
 }

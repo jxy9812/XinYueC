@@ -1,9 +1,25 @@
-﻿#include"XContainer.h"
-#if !defined(XMAP_H)&& XMap_ON
+﻿/**
+* @file       XMap.h
+* @brief      XMap 有序映射容器公开 API。
+* @details    对齐 Qt 6.8 QMap<K,V>；继承 XMapBase，基于红黑树实现有序键值对
+*             存储，提供插入、删除、查找与遍历等操作。实现只依赖 XinYueC
+*             抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
+*/
+#ifndef XMAP_H
 #define XMAP_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 条件编译开关（第③段）：XMap_ON 由 CXinYueConfig.h 统一定义，
+ * 此处仅兜底默认值，保证开关先于包含依赖生效。 */
+#ifndef XMap_ON
+#define XMap_ON 1
+#endif
+
+#if XMap_ON
+
+#include "XContainer.h"                ///< 全局配置与容器基类（经其引入 CXinYueConfig.h）
 #include "XMapBase.h"                  ///< 包含映射基类XMapBase的定义，XMap继承自此基类
 #include "XMap_iterator.h"             ///< 包含XMap正向迭代器定义
 #include "XMap_reverse_iterator.h"     ///< 包含XMap反向迭代器定义
@@ -14,17 +30,18 @@ extern "C" {
 typedef struct XVector XVector;        ///< 向量容器类型向前声明
 typedef struct XPair XPair;            ///< 键值对结构体类型向前声明
 /**
-* @brief XMap容器虚函数表大小定义
-* @note 基于映射基类XMapBase的虚函数表大小扩展，确定XMap所需的虚函数表容量
+* @brief XMap 虚函数表枚举定义（第⑥段）
+* @note 仅继承 XMapBase、不新增虚函数，按规范使用 EXTEND_END 直接以父类收尾
 */
-#define XMAP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))       // XMap容器虚函数表大小
+XCLASS_DEFINE_BEGING(XMap)
+XCLASS_DEFINE_EXTEND_END(XMap, XMapBase)
 /**
 * @brief XMap结构体定义（映射容器）
 * @details 继承自映射基类XMapBase，封装键值对存储功能，支持有序映射操作
 */
 typedef struct XMap
 {
-	XMapBase m_class;  ///< 继承自映射基类，包含键值类型信息、比较函数及基础容器数据
+	XMapBase m_class;  ///< 第一个成员，由 XClass 统一管理，禁止手工修改；包含键值类型信息、比较函数及基础容器数据
 } XMap;
 // ------------------------------ 类初始化与虚函数表 ------------------------------
 /**
@@ -36,6 +53,7 @@ XVtable* XMap_class_init();
 // ------------------------------ 创建与初始化 ------------------------------
 /**
  * @brief 创建 XMap 实例（底层实现，可指定 COW 模式）
+ * @param memory 容器绑定的内存类型（XMemoryType），决定对象与内部缓冲使用哪族分配器
  * @param keyTypeSize 键的类型大小
  * @param valTypeSize 值的类型大小
  * @param compare 键的比较函数
@@ -79,25 +97,74 @@ XMap* XMap_create_move(XMap* other);
 * @param keyTypeSize 键的类型大小（字节数）
 * @param valTypeSize 值的类型大小（字节数）
 * @param compare 键的比较函数（非NULL）
+* @param useCow 是否启用 COW（true=COW，false=非COW）
 * @note 需确保this_map不为NULL，keyTypeSize和valTypeSize大于0，compare不为NULL
 */
 void XMap_init(XMap* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow);
 
-/** @brief 深复制创建存储 XMap 的 XVariant。 */
+/**
+ * @brief 深复制创建存储 XMap 的 XVariant。
+ * @param map 源 XMap 实例；传入 NULL 时不创建对象。
+ * @return 成功返回新建的 XVariant 指针（内部持有 map 的深拷贝副本），失败返回 NULL；
+ *         返回的是新对象，调用方使用 XClassDelete 释放；map 仅被借用，不取得其所有权。
+ */
 XVariant* XMap_toVariant(const XMap* map);
-/** @brief 移动创建存储 XMap 的 XVariant。 */
+/**
+ * @brief 移动创建存储 XMap 的 XVariant。
+ * @param map 源 XMap 实例；传入 NULL 时不创建对象。
+ * @return 成功返回新建的 XVariant 指针（接管 map 的内部资源），失败返回 NULL；
+ *         返回的是新对象，调用方使用 XClassDelete 释放。
+ * @note 移动后 map 为空容器，其结构体内存仍由创建方按分配方式释放。
+ */
 XVariant* XMap_toVariant_move(XMap* map);
-/** @brief 将已有 XMap 直接交给 XVariant 管理。 */
+/**
+ * @brief 将已有 XMap 直接交给 XVariant 管理（不拷贝）。
+ * @param map 待移交的 XMap 实例（须为堆分配对象）；传入 NULL 时不创建对象。
+ * @return 成功返回新建的 XVariant 指针（接管 map 的所有权），失败返回 NULL；
+ *         返回的是新对象，调用方使用 XClassDelete 释放。
+ * @note 移交后 map 的资源与结构体内存均由 XVariant 在反初始化时释放，
+ *       调用方不得再访问或释放 map。
+ */
 XVariant* XMap_toVariant_ref(XMap* map);
-/** @brief 从 XVariant 深复制取得 XMap。 */
+/**
+ * @brief 从 XVariant 深复制取得 XMap。
+ * @param var 源 XVariant 指针；须为 XVariantType_Map 类型，传入 NULL 或类型不匹配返回 NULL。
+ * @return 成功返回新建的 XMap 指针（Variant 内数据的深拷贝），失败返回 NULL；
+ *         返回的是新对象，调用方使用 XClassDelete 释放。
+ */
 XMap* XMap_fromVariant(const XVariant* var);
-/** @brief 从 XVariant 借用取得 XMap。 */
+/**
+ * @brief 从 XVariant 借用取得 XMap。
+ * @param var 源 XVariant 指针；须为 XVariantType_Map 类型，传入 NULL 或类型不匹配返回 NULL。
+ * @return 返回 Variant 内部 XMap 的借用指针；该指针归 var 所有，不得释放，
+ *         var 被重设或销毁后失效。
+ */
 XMap* XMap_fromVariant_ref(const XVariant* var);
-/** @brief 深复制设置 XVariant 的 XMap 值。 */
+/**
+ * @brief 深复制设置 XVariant 的 XMap 值。
+ * @param var 目标 XVariant 指针；传入 NULL 时不执行任何操作。
+ * @param map 源 XMap 实例；传入 NULL 时不执行任何操作，仅借用，不取得其所有权。
+ * @return 无。var 或 map 为 NULL 时保持原值不变；var 原类型不是 XMap 时旧值先被释放，
+ *         内存分配失败时 var 被置为空。
+ */
 void XMap_setVariant(XVariant* var, const XMap* map);
-/** @brief 移动设置 XVariant 的 XMap 值。 */
+/**
+ * @brief 移动设置 XVariant 的 XMap 值。
+ * @param var 目标 XVariant 指针；传入 NULL 时不执行任何操作。
+ * @param map 源 XMap 实例；传入 NULL 时不执行任何操作，内部资源被转移。
+ * @return 无。var 或 map 为 NULL 时保持原值不变；var 原类型不是 XMap 时旧值先被释放，
+ *         内存分配失败时 var 被置为空。
+ * @note 移动后 map 为空容器，其结构体内存仍由创建方按分配方式释放。
+ */
 void XMap_setVariant_move(XVariant* var, XMap* map);
-/** @brief 将已有 XMap 直接交给 XVariant 管理。 */
+/**
+ * @brief 将已有 XMap 直接交给 XVariant 管理（不拷贝）。
+ * @param var 目标 XVariant 指针；传入 NULL 时不执行任何操作。
+ * @param map 待移交的 XMap 实例（须为堆分配对象）；传入 NULL 时不执行任何操作。
+ * @return 无。var 或 map 为 NULL 时保持原值不变；var 原有数据先被释放。
+ * @note 移交后 map 的资源与结构体内存均由 XVariant 在反初始化时释放，
+ *       调用方不得再访问或释放 map。
+ */
 void XMap_setVariant_ref(XVariant* var, XMap* map);
 
 /* 兼容旧的 XVariant 扩展 API 名称；实际实现归属 XMap。 */
@@ -194,14 +261,8 @@ bool XMap_isDetached(const XMap* this_map);
 */
 #define XMap_keys_base                XMapBase_keys_base
 // ------------------------------ 其他操作 ------------------------------
-/**
-* @brief 反初始化容器（基础版本）
-* @note 继承自XMapBase的反初始化操作，释放资源但不释放容器本身
-*/
-/**
-* @brief 删除容器实例（基础版本）
-* @note 继承自XMapBase的删除操作，释放资源并销毁容器实例
-*/
+/* 反初始化/删除已统一：直接使用 XClassDeinit/XClassDelete，
+ * 派生容器不再提供 *_deinit_base/*_delete_base 别名（见风格指南迁移说明）。 */
 /**
 * @brief 清空容器元素（基础版本）
 * @note 继承自XMapBase的清空操作，删除所有元素但保留容器结构
@@ -278,13 +339,15 @@ static inline bool XMap_reserve_base(XMap* this_map, size_t size) { (void)this_m
  */
 static inline void XMap_squeeze_base(XMap* this_map) { (void)this_map; }
 
-#ifdef __cplusplus
-}
-#endif
-
 /* XClass create API default-memory wrappers. */
 #undef XMap_create
 #define XMap_create(keyTypeSize, valTypeSize, compare) \
 	XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, valTypeSize, compare, true)
 
-#endif // !XMAP_H
+#endif /* XMap_ON */
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* XMAP_H */

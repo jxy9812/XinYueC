@@ -5,10 +5,9 @@
 
 #include "XRestAccessManager.h"
 
-#include "XMemory.h"
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+
+#include "XMemory.h"
 #if XPROTOCOL_ON
 #if XHTTP_ON
 

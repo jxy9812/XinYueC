@@ -291,8 +291,11 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
                     XStyle_drawControl(style, XStyleCE_MenuBarItem, &mi,
                                        &painter, self);
                     x += mi.m_rect.width;
-                XClassDeinit(&font);
                 }
+                /* 字体深拷贝在守卫外分配（XWidget_font 返回独立副本），
+                 * 释放必须与分配同层配对：NULL 条目迭代同样要释放，
+                 * 否则 m_actions 混入 NULL 哨兵时 font 及其家族串泄漏。 */
+                XClassDeinit(&font);
             }
         }
         XPainter_deinit(&painter);
@@ -324,8 +327,9 @@ static void VX_menuBar_paintEvent(XWidget* self, XEvent* event)
                 } else {
                     x += 12;
                 }
-            XClassDeinit(&font);
             }
+            /* 同上：释放挪出守卫，与守卫外的 XWidget_font 深拷贝配对。 */
+            XClassDeinit(&font);
         }
     }
     XPainter_deinit(&painter);

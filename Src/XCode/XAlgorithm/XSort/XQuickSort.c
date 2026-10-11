@@ -36,7 +36,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 	char* begin = LpLeft;//头指针
 	char* end = LpRight;//尾指针
 	char* index = GetMidIndex(LpLeft, LpRight, TypeSize, compare);//三数取中
-	XSwap(index, LpLeft, TypeSize);//交换
+	XMemory_swap(index, LpLeft, TypeSize);//交换
 	char* pivit = LpLeft;//坑位置
 	int32_t cmp;
 	while (begin < end)
@@ -55,7 +55,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 		}
 		if (begin < end)
 		{
-			XSwap(pivit, end, TypeSize);  // 填入坑中
+			XMemory_swap(pivit, end, TypeSize);  // 填入坑中
 			pivit = end;                  // 更新坑位
 		}
 
@@ -75,7 +75,7 @@ static void* QuicPitSort_One(void const* LpLeft, void const* LpRight, const size
 		}
 		if (begin < end)
 		{
-			XSwap(pivit, begin, TypeSize);  // 填入坑中
+			XMemory_swap(pivit, begin, TypeSize);  // 填入坑中
 			pivit = begin;                  // 更新坑位
 		}
 	}
@@ -136,7 +136,7 @@ static void QuicPitSort_Recur(void* LParray, void const* LpLeft, void const* LpR
 	size_t nSize = ((char*)LpRight - (char*)LpLeft) / TypeSize + 1;
 	if (nSize <= 13 && nSize > 1)//优化最后几层的递归次数，调用直接插入排序
 	{
-		XInsertSort(LpLeft, nSize, TypeSize, compare, order);
+		XSort_insert(LpLeft, nSize, TypeSize, compare, order);
 		return;
 	}
 	char* pivit = QuicPitSort_One(LpLeft, LpRight, TypeSize, compare, order);

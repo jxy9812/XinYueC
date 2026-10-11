@@ -1,17 +1,22 @@
 ﻿#ifndef XMODBUSDEVICE_H
 #define XMODBUSDEVICE_H
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
-#include "XObject.h"
-#include "XVariant.h"
-#include "XString.h"
-#include "XMap.h"
+#include "XModbus_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if XPROTOCOL_ON
+#if XMODBUS_ON
+#if XMODBUS_CLIENT_ON
+
+#include <stdint.h>
+#include <stdbool.h>
+#include "XObject.h"
+#include "XVariant.h"
+#include "XString.h"
+#include "XMap.h"
 
 /**
  * @file XModbusDevice.h
@@ -147,7 +152,7 @@ typedef enum {
   * | m_ioDevice | XIODevice* | 底层IO设备 |
   */
 typedef struct XModbusDevice {
-    XObject m_class;                                      ///< 继承自XObject基类
+    XObject m_class;                                      /**< 第一个成员，由 XClass 管理，禁止手工修改。*/
     uint16_t/*XModbusDevice_State*/ m_state;                          ///< 当前设备连接状态
     uint16_t/*XModbusDevice_Error*/ m_error;                          ///< 当前错误码
     XString* m_errorString;                               ///< 错误描述字符串
@@ -168,6 +173,7 @@ XVtable* XModbusDevice_class_init(void);
 
 /**
  * @brief 在堆上创建并初始化一个XModbusDevice实例
+ * @param memory 内存分配器类型（XMemoryType）
  * @return 成功返回指向新分配XModbusDevice对象的指针，失败返回NULL
  * @note 返回的对象必须通过 XObject_deleteLater 释放
  * @warning 此为抽象基类，通常不应直接创建实例，而应使用子类的创建函数
@@ -352,6 +358,10 @@ void* XModbusDevice_stateChanged_signal(XModbusDevice* dev, XModbusDevice_State 
  * @note 将对象加入待删除队列，在事件循环中删除
  */
 #define XModbusDevice_deinitLater   XObject_deinitLater
+
+#endif /* XMODBUS_CLIENT_ON */
+#endif /* XMODBUS_ON */
+#endif /* XPROTOCOL_ON */
 
 #ifdef __cplusplus
 }

@@ -68,7 +68,7 @@ static void xsa_updateWidgetGeometry(XScrollArea* self)
 
 /** @brief scrollContentsBy：按滚动条值平移内容控件（第一版简化：
  *         直接按绝对值定位；平移后刷新视口暴露区域）。 */
-static void VX_scrollArea_scrollContentsBy(XAbstractScrollArea* self,
+static void VXScrollArea_scrollContentsBy(XAbstractScrollArea* self,
                                            int dx, int dy)
 {
     XScrollArea* area = (XScrollArea*)self;
@@ -96,7 +96,7 @@ static void VX_scrollArea_scrollContentsBy(XAbstractScrollArea* self,
     if (viewport) XWidget_update(viewport);
 }
 
-static void VX_scrollArea_deinit(XScrollArea* self)
+static void VXScrollArea_deinit(XScrollArea* self)
 {
     if (!self) return;
     XClass_Deinit_Parent(XAbstractScrollArea,
@@ -108,7 +108,7 @@ static void VX_scrollArea_deinit(XScrollArea* self)
  *  updateScrollBars → updateWidgetPosition）：容器尺寸变化（如页签
  *  容器拉伸页面）后内容对齐位与滚动范围必须重算——此前缺失该重载，
  *  对齐/内容尺寸停留在旧视口尺寸上（页签4 内容呈现异常的组成部分）。 */
-static void VX_scrollArea_resizeEvent(XWidget* self, XEvent* event)
+static void VXScrollArea_resizeEvent(XWidget* self, XEvent* event)
 {
     if (!self) return;
     XClass_Parent(XAbstractScrollArea, EXWidget_ResizeEvent,
@@ -123,12 +123,12 @@ static void VX_scrollArea_resizeEvent(XWidget* self, XEvent* event)
  *  拉伸虽同步派发 resize，但视口/内容的中间态几何（负宽夹 0 等）不
  *  会自发重算——显示瞬间按最终几何再断言一次，消除隐藏期遗留的
  *  陈旧视口尺寸（页签4 六行文本被裁成 ~1px 残条的收口）。 */
-static void VX_scrollArea_showEvent(XWidget* self, XEvent* event)
+static void VXScrollArea_showEvent(XWidget* self, XEvent* event)
 {
     if (!self) return;
     XClass_Parent(XWidget, EXWidget_ShowEvent,
                   XWidgetEventSlot)(self, event);
-    VX_scrollArea_resizeEvent(self, event);
+    VXScrollArea_resizeEvent(self, event);
 }
 
 /** @brief 滚轮 → 滚动条步进（复扫 r2 #48 根修）。
@@ -147,7 +147,7 @@ static void VX_scrollArea_showEvent(XWidget* self, XEvent* event)
  *         拖拽可滚」即此二因叠加（复扫 r2 lane1 #48 实证）。直接
  *         setValue 由内部钳位兜底（XAbstractSlider.c:599-602），
  *         valueChanged → scrollContentsBy → 重绘链既有。 */
-static void VX_scrollArea_wheelEvent(XWidget* self, XEvent* event)
+static void VXScrollArea_wheelEvent(XWidget* self, XEvent* event)
 {
     XScrollArea* area = (XScrollArea*)self;
     XAbstractScrollArea* base;
@@ -198,14 +198,14 @@ XVtable* XScrollArea_class_init(void)
     XVTABLE_INHERIT_XCLASS(XAbstractScrollArea);
     XVTABLE_OVERLOAD_DEFAULT(
         EXAbstractScrollArea_ScrollContentsBy,
-        VX_scrollArea_scrollContentsBy);
+        VXScrollArea_scrollContentsBy);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
-                             VX_scrollArea_resizeEvent);
+                             VXScrollArea_resizeEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent,
-                             VX_scrollArea_showEvent);
+                             VXScrollArea_showEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_WheelEvent,
-                             VX_scrollArea_wheelEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_scrollArea_deinit);
+                             VXScrollArea_wheelEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXScrollArea_deinit);
     return XVTABLE_DEFAULT;
 }
 

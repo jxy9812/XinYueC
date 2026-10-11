@@ -12,7 +12,8 @@
 #include "XClass.h"
 
 #if XPLATFORMINTEGRATION_ON
-struct XPlatformFontDatabase { XVector* m_families; bool m_valid; };
+struct XPlatformFontDatabase
+{ XMemoryType m_memory; XVector* m_families; bool m_valid; };
 
 static void font_clear(XPlatformFontDatabase* self)
 {
@@ -32,8 +33,9 @@ XPlatformFontDatabase* XPlatformFontDatabase_create_ex(XMemoryType memory)
         sizeof(*self), memory);
     if (!self) return NULL;
     XMemset(self, 0, sizeof(*self));
+    self->m_memory = memory; /* 记录分配器族: destroy 按同族配对释放。 */
     self->m_families = XVector_Create(XString*);
-    if (!self->m_families) { XFree_System(self); return NULL; }
+    if (!self->m_families) { XMemory_free(self, self->m_memory); return NULL; }
     self->m_valid = XPlatformFontDatabaseDriver_collect(self->m_families);
     return self;
 }
@@ -43,7 +45,7 @@ void XPlatformFontDatabase_destroy(XPlatformFontDatabase* self)
     if (!self) return;
     font_clear(self);
     if (self->m_families) XClassDelete((XClass*)self->m_families);
-    XFree_System(self);
+    XMemory_free(self, self->m_memory);
 }
 
 bool XPlatformFontDatabase_isValid(const XPlatformFontDatabase* self)
@@ -117,7 +119,7 @@ XVector* XPlatformFontDatabase_standardSizes(
     XVector* list;
     size_t i;
     (void)self;
-    list = XVector_create(sizeof(int));
+    list = XVector_Create(int);
     if (!list) return NULL;
     for (i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i)
         XVector_push_back_1_base(list, &sizes[i]);

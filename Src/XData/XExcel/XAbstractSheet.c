@@ -8,6 +8,8 @@
 void XAbstractSheet_init(XAbstractSheet* self, const XString* sheetName, int sheetId, XWorkbook* book, XAbstractOOXmlFile_CreateFlag flag)
 {
     if (!self) return;
+    /* 完整清零所有成员（含 m_sheetName/m_drawing），不依赖调用方先 memset（init/deinit 成对原则） */
+    memset(self, 0, sizeof(XAbstractSheet));
     XAbstractOOXmlFile_init(&self->m_base, flag);
     self->m_sheetType = XAbstractSheet_ST_WorkSheet;
     self->m_sheetState = XAbstractSheet_SS_Visible;

@@ -113,7 +113,7 @@ static void rs_collectLocalIPv4(char* buf, int cap, int maxAddrs)
                 if (ifName) XClassDelete(ifName);
                 continue; /* OTG 出厂口。 */
             }
-            entries = iface->addressEntries;
+            entries = iface->m_addressEntries;
             if (!entries) {
                 if (ifName) XClassDelete(ifName);
                 continue;
@@ -124,7 +124,7 @@ static void rs_collectLocalIPv4(char* buf, int cap, int maxAddrs)
                 XHostAddress addr;
                 XString* s;
                 if (!entry) continue;
-                addr = entry->ip;
+                addr = entry->m_ip;
                 if (addr.isNull || addr.protocol != XHostAddress_IPv4Protocol)
                     continue;
                 if (XHostAddress_isLoopback(&addr)) continue; /* 非回环口径。 */

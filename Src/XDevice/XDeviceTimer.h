@@ -1,10 +1,14 @@
-/**
+﻿/**
  * @file       XDeviceTimer.h
  * @brief      统一定时器设备接口。
  * @details    XDeviceTimer 通过 XFd 管理定时器实例。XTimerType 决定调度后端：
  *             Coarse/VeryCoarse 优先使用进程级时间轮，Precise 使用所属事件
  *             调度器的红黑树高精度队列。高精度队列不跨线程共享。设备本身
- *             不依赖 XObject；到期后只调用调用方提供的回调。
+ *             不依赖 XObject；到期后只调用调用方提供的回调。对齐 Qt QTimer 与
+ *             Qt::TimerType（Src/XClass/XTypes.h 的 Precise/Coarse/VeryCoarse
+ *             分别对应 Qt::PreciseTimer/Qt::CoarseTimer/Qt::VeryCoarseTimer）。
+ *             平台约束：实现只依赖 XinYueC 抽象层（事件调度器与时间轮），
+ *             不直接调用 Win32、POSIX 或其他平台定时器 API。
  */
 #ifndef XDEVICETIMER_H
 #define XDEVICETIMER_H
@@ -12,6 +16,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#ifndef XDEVICETIMER_ON
+#define XDEVICETIMER_ON 1
+#endif
+#if XDEVICETIMER_ON
 
 #include "XDevice.h"
 
@@ -106,6 +115,7 @@ XDeviceTimer* XDeviceTimer_create(void);
  * @brief 初始化并注册类别名为 "timer" 的定时器设备。
  * @details 同时创建唯一的进程级时间轮；重复调用安全。红黑树高精度队列不在
  *          此处创建，而由每个 XAbstractEventDispatcher 在首次 Precise 定时器时创建。
+ * @return 已注册或本次注册成功返回 true；时间轮创建失败或类别注册失败返回 false。
  */
 bool XDeviceTimer_register(void);
 
@@ -133,6 +143,8 @@ bool XDeviceTimer_setInterval(XFd fd, XDuration intervalNs);
 bool XDeviceTimer_setCallback(XFd fd, XDeviceTimerCallback callback);
 /** @brief 设置回调用户数据；内部转发到 XDevice_setProperty。 @param fd 定时器句柄。 @param userData 用户指针，只借用。 @return 成功返回 true。 */
 bool XDeviceTimer_setUserData(XFd fd, void* userData);
+
+#endif /* XDEVICETIMER_ON */
 
 #ifdef __cplusplus
 }

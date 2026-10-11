@@ -1,9 +1,11 @@
-﻿// XNetworkAddressEntry.h
+﻿/**
+ * @file       XNetworkAddressEntry.h
+ * @brief      网络接口 IP 地址条目公开 API。
+ * @details    对齐 Qt QNetworkAddressEntry；实现只依赖 XinYueC 抽象层，
+ *             禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ */
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
-//
-// C 语言模拟 Qt6 QNetworkAddressEntry。
-// 表示网络接口的一个 IP 地址条目，包含 IP 地址、子网掩码和广播地址。
 
 #ifndef XNETWORKADDRESSENTRY_H
 #define XNETWORKADDRESSENTRY_H
@@ -45,22 +47,22 @@ XCLASS_DEFINE_EXTEND_END(XNetworkAddressEntry, XClass);
  * 包括 IP 地址、子网掩码、广播地址、地址生命周期等。
  */
 typedef struct XNetworkAddressEntry {
-    XClass m_class;             ///< 基类虚表指针
-    XHostAddress ip;            ///< IP 地址
-    XHostAddress netmask;       ///< 子网掩码
-    XHostAddress broadcast;     ///< 广播地址
-    bool broadcastIsValid;      ///< 广播地址是否有效
-    
+    XClass m_class;             ///< 第一个成员，由 XClass 管理，禁止手工修改
+    XHostAddress m_ip;            ///< IP 地址
+    XHostAddress m_netmask;       ///< 子网掩码
+    XHostAddress m_broadcast;     ///< 广播地址
+    bool m_broadcastIsValid;      ///< 广播地址是否有效
+
     // ====== 地址生命周期（IPv6 地址常用）======
-    int64_t preferredLifetime;  ///< 首选生命周期（毫秒），-1 表示永久/未知
-    int64_t validityLifetime;   ///< 有效生命周期（毫秒），-1 表示永久/未知
-    bool lifetimeKnown;         ///< 生命周期是否已知
-    
+    int64_t m_preferredLifetime;  ///< 首选生命周期（毫秒），-1 表示永久/未知
+    int64_t m_validityLifetime;   ///< 有效生命周期（毫秒），-1 表示永久/未知
+    bool m_lifetimeKnown;         ///< 生命周期是否已知
+
     // ====== DNS 资格 ======
-    XNetworkAddressEntry_DnsEligibilityStatus dnsEligibilityStatus; ///< DNS 资格状态
-    
+    XNetworkAddressEntry_DnsEligibilityStatus m_dnsEligibilityStatus; ///< DNS 资格状态
+
     // ====== 地址类型标志 ======
-    bool isPermanent;           ///< 是否为永久地址
+    bool m_isPermanent;           ///< 是否为永久地址
 } XNetworkAddressEntry;
 
 // ==================== 构造与析构 ====================

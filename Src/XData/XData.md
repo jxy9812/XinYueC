@@ -375,7 +375,7 @@ XSharedData是隐式共享(Copy-On-Write)数据块，支持引用计数机制。
 
 ```c
 typedef struct XSharedData {
-    XAtomic_int32_t refCount;  // 原子引用计数(初始为1)
+    XAtomic_Int32 refCount;  // 原子引用计数(初始为1)
     char data[];               // 实际数据区
 } XSharedData;
 ```

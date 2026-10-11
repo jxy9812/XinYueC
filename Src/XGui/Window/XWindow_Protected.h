@@ -14,6 +14,7 @@ extern "C" {
 #endif
 
 #include "XWindow.h"
+#include "XObject_Protected.h" /* 下方 XWindow_event_base 宏展开为 XObject_event_base（XObject 保护接口） */
 
 #if XWINDOW_ON
 

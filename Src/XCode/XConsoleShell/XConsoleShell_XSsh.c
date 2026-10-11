@@ -1,6 +1,6 @@
 ﻿/**
  * @file XConsoleShell_XSsh.c
- * @brief XConsoleShell 的 mbedTLS(PSA) 精简 SSH Server 适配实现。
+ * @brief XConsoleShell 的精简 SSH Server 适配实现（密码学经库内 XCryptographic）。
  * @details
  * 实现 SSH 2.0 传输层：版本协商、KEXINIT、ecdh-sha2-nistp256 密钥交换、
  * AES-128-CTR 加密、HMAC-SHA2-256 完整性、password 用户认证和 session 通道。
@@ -21,7 +21,9 @@
 #include "XMemory.h"
 #include "XRandomGenerator.h"
 #include "XString.h"
+#include "XCryptographic.h"
 #include "psa/crypto.h"
+#include "XStringUtils.h"
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -125,13 +127,13 @@ struct XConsoleShellSshAdapter {
     uint8_t serverKexInit[XSSH_RX_CAPACITY];
     size_t serverKexInitLen;
 
-    /* 主机密钥 */
+    /* 主机密钥（PSA 密钥槽句柄，跨连接共享全局实例） */
     mbedtls_svc_key_id_t hostKey;
     bool hostKeyShared;
     uint8_t hostKeyBlob[256];
     size_t hostKeyBlobLen;
 
-    /* 服务端临时 ECDH */
+    /* 服务端临时 ECDH（PSA 密钥槽句柄） */
     mbedtls_svc_key_id_t ecdhKey;
     uint8_t clientPublicBlob[256];
     size_t clientPublicBlobLen;
@@ -142,7 +144,7 @@ struct XConsoleShellSshAdapter {
     uint8_t exchangeHash[XSSH_HASH_LEN];
     uint8_t sessionId[XSSH_HASH_LEN];
 
-    /* 会话密钥 */
+    /* 会话密钥（PSA 密钥槽句柄与流式运算上下文） */
     mbedtls_svc_key_id_t cipherKeyC2S;
     mbedtls_svc_key_id_t cipherKeyS2C;
     mbedtls_svc_key_id_t macKeyC2S;
@@ -199,19 +201,49 @@ struct XConsoleShellSshAdapter {
     size_t channelTxPendingOffset;
 };
 
-/* A volatile PSA key is shared by connections during one process lifetime.
- * This keeps the SSH host identity stable across reconnects while avoiding a
- * process-wide private-key byte buffer.  Callers still serialize PSA access
- * according to the library's normal threading contract. */
+/* A volatile host key object is shared by connections during one process
+ * lifetime.  This keeps the SSH host identity stable across reconnects while
+ * avoiding a process-wide private-key byte buffer.  Callers still serialize
+ * key access according to the library's normal threading contract. */
 static mbedtls_svc_key_id_t g_xssh_hostKey;
 static uint8_t g_xssh_hostKeyBlob[256];
 static size_t g_xssh_hostKeyBlobLen;
 static size_t g_xssh_hostKeyRefs;
 
+static bool xssh_key_is_valid(const XCryptographic_Key* key)
+{
+    return key && key->type != XCryptographic_KeyType_None;
+}
+
+/* SHA-256 摘要：写入调用者缓冲区，成功返回 true。 */
+static bool xssh_hash_sha256(const void* data, size_t dataLen, uint8_t output[XSSH_HASH_LEN])
+{
+    XByteArrayView result;
+    if (!output || (!data && dataLen)) return false;
+    result = XCryptographicHash_hashInto((char*)output, XSSH_HASH_LEN,
+                                         (const char*)data, dataLen,
+                                         XCryptographicHash_Sha256);
+    return result.m_data == output && result.m_size == XSSH_HASH_LEN;
+}
+
+/* HMAC-SHA256（SSH hmac-sha2-256）：写入调用者缓冲区，成功返回 true。 */
+static bool xssh_hmac_sha256(const void* key, size_t keyLen,
+                             const void* message, size_t messageLen,
+                             uint8_t output[XSSH_MAC_LEN])
+{
+    XByteArrayView result;
+    if (!output || (!key && keyLen) || (!message && messageLen)) return false;
+    result = XCryptographicHash_hmacInto((char*)output, XSSH_MAC_LEN,
+                                         (const char*)key, keyLen,
+                                         (const char*)message, messageLen,
+                                         XCryptographicHash_Sha256);
+    return result.m_data == output && result.m_size == XSSH_MAC_LEN;
+}
+
 /* ------------------------------------------------------------------ */
 /* 主机密钥持久化                                                      */
 /*  磁盘格式：magic(4) || version(4) || keyLen(4) || keyBytes(len)。
- *  keyBytes 为 PSA 导出的 ECC P-256 私钥标量（32 字节，大端）。     */
+ *  keyBytes 为 ECC P-256 私钥标量（32 字节，大端）。                  */
 /* ------------------------------------------------------------------ */
 
 #define XSSH_HOSTKEY_FILE_MAGIC   0x5853484Bu  /* 'XSHK' */
@@ -389,7 +421,7 @@ static bool xssh_get_string(const uint8_t* buf, size_t len, size_t* off,
 
 static bool xssh_name_list_contains(const uint8_t* list, size_t len, const char* name)
 {
-    size_t nameLen = strlen(name);
+    size_t nameLen = XStrlen(name);
     size_t start = 0;
     while (start <= len) {
         size_t i = start;
@@ -755,12 +787,12 @@ static bool xssh_send_kexinit(XConsoleShellSshAdapter* adapter)
     msg[off++] = SSH_MSG_KEXINIT;
     memcpy(msg + off, cookie, sizeof(cookie));
     off += sizeof(cookie);
-    xssh_write_string(msg, &off, kex, strlen((const char*)kex));
-    xssh_write_string(msg, &off, host, strlen((const char*)host));
-    xssh_write_string(msg, &off, cipher, strlen((const char*)cipher));
-    xssh_write_string(msg, &off, cipher, strlen((const char*)cipher));
-    xssh_write_string(msg, &off, mac, strlen((const char*)mac));
-    xssh_write_string(msg, &off, mac, strlen((const char*)mac));
+    xssh_write_string(msg, &off, kex, XStrlen((const char*)kex));
+    xssh_write_string(msg, &off, host, XStrlen((const char*)host));
+    xssh_write_string(msg, &off, cipher, XStrlen((const char*)cipher));
+    xssh_write_string(msg, &off, cipher, XStrlen((const char*)cipher));
+    xssh_write_string(msg, &off, mac, XStrlen((const char*)mac));
+    xssh_write_string(msg, &off, mac, XStrlen((const char*)mac));
     xssh_write_string(msg, &off, none, 4);
     xssh_write_string(msg, &off, none, 4);
     xssh_write_string(msg, &off, (const uint8_t*)"", 0);
@@ -913,7 +945,7 @@ static XConsoleResult xssh_handle_kex_ecdh_init(XConsoleShellSshAdapter* adapter
         const uint8_t* vc = adapter->clientVersion;
         size_t vcLen = adapter->clientVersionLen;
         const uint8_t* vs = (const uint8_t*)XSSH_VERSION;
-        size_t vsLen = strlen(XSSH_VERSION);
+        size_t vsLen = XStrlen(XSSH_VERSION);
         while (vcLen && (vc[vcLen - 1] == '\r' || vc[vcLen - 1] == '\n')) --vcLen;
         while (vsLen && (vs[vsLen - 1] == '\r' || vs[vsLen - 1] == '\n')) --vsLen;
         /* V_C/V_S 按 SSH string 编码（RFC 4253 §8：string V_C、string V_S） */
@@ -1190,7 +1222,7 @@ static bool xssh_send_channel_open_failure(XConsoleShellSshAdapter* adapter,
     uint8_t payload[160];
     size_t off = 0;
     const char* text = description ? description : "channel open failed";
-    size_t textLen = strlen(text);
+    size_t textLen = XStrlen(text);
     if (textLen > sizeof(payload) - 17) textLen = sizeof(payload) - 17;
     payload[off++] = SSH_MSG_CHANNEL_OPEN_FAILURE;
     xssh_write_u32(payload + off, sender); off += 4;
@@ -1887,7 +1919,7 @@ static void xssh_shell_emit_prompt(XConsoleShellSshAdapter* adapter)
             adapter->session->userName[0])
                ? adapter->session->userName
                : (const char*)XCONSOLE_SHELL_DEFAULT_PROMPT_NAME;
-    len = strlen(user);
+    len = XStrlen(user);
     if (len >= sizeof(prompt) - 2u)
         len = sizeof(prompt) - 2u;
     memcpy(prompt, user, len);
@@ -2070,7 +2102,7 @@ XConsoleShellSshAdapter* XConsoleShellSshAdapter_create(const XConsoleShellIo* t
     adapter->localChannel = 0;
     adapter->inputEcho = true;
     if (!xssh_generate_host_key(adapter)) goto fail;
-    if (!xssh_send_raw(adapter, (const uint8_t*)XSSH_VERSION, strlen(XSSH_VERSION))) goto fail;
+    if (!xssh_send_raw(adapter, (const uint8_t*)XSSH_VERSION, XStrlen(XSSH_VERSION))) goto fail;
     if (!xssh_send_kexinit(adapter)) goto fail;
     if (!xssh_flush(adapter)) goto fail;
     return adapter;

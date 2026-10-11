@@ -21,6 +21,7 @@
  *  @author     XinYueC 团队
  */
 #include "XGuiServer.h"
+#include "XObject_Protected.h"
 #include "XGuiClient.h"
 #include "XGuiRemoteLoopback.h"
 #include "XGuiApplication.h"

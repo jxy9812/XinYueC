@@ -53,7 +53,13 @@ int XWindowsStyle_styleHint(XWindowsStyle* self, int hint,
                             const XStyleOption* option,
                             const XWidget* widget)
 {
-    return VXWindowsStyle_styleHint((XStyle*)self, hint, option, widget);
+    if (ISNULL(self, "XWindowsStyle") ||
+        ISNULL(XClassGetVtable(self), "Vtable"))
+        return 0;
+    return XClassGetVirtualFunc((XStyle*)self, EXStyle_StyleHint,
+                                int (*)(XStyle*, int, const XStyleOption*,
+                                        const XWidget*))(
+        (XStyle*)self, hint, option, widget);
 }
 
 /** @brief 样式提示（对标 QWindowsStyle::styleHint 中不依赖平台主题的

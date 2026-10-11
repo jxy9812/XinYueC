@@ -15,11 +15,11 @@
 #include "XConsoleShellDateTime.h"
 #include "XDateTime.h"
 #include "XDate.h"
+#include "XStringUtils.h"
 #include "XTime.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 /* 输出缓冲覆盖 Shell 默认单行容量，并为自定义格式保留结尾 NUL。 */
@@ -54,7 +54,7 @@ static bool xcsdt_append_number(char* output, size_t capacity, size_t* length,
     int written;
     size_t digitLength;
     if (!output || !length || width >= sizeof(number)) return false;
-    written = snprintf(number, sizeof(number), "%lld", (long long)value);
+    written = XSnprintf(number, sizeof(number), "%lld", (long long)value);
     if (written < 0 || (size_t)written >= sizeof(number)) return false;
     digitLength = (size_t)written;
     while ((unsigned)written < width) {
@@ -124,11 +124,11 @@ static bool xcsdt_format(const XDateTime* datetime, const char* format,
             break;
         case 'F':
             if (!xcsdt_format(datetime, "%Y-%m-%d", output + length, capacity - length)) return false;
-            length = strlen(output);
+            length = XStrlen(output);
             break;
         case 'T':
             if (!xcsdt_format(datetime, "%H:%M:%S", output + length, capacity - length)) return false;
-            length = strlen(output);
+            length = XStrlen(output);
             break;
         case 's':
             if (!xcsdt_append_number(output, capacity, &length,
@@ -155,12 +155,12 @@ static int xcsdt_date(XConsoleShell* shell, XConsoleShellSession* session,
     for (i = 0; i < (size_t)argc; ++i) {
         const char* argument = argv[i];
         if (!argument) return XConsoleResult_InvalidArgument;
-        if (strcmp(argument, "-u") == 0 || strcmp(argument, "--utc") == 0) {
+        if (XStrcmp(argument, "-u") == 0 || XStrcmp(argument, "--utc") == 0) {
             utc = true;
-        } else if (strcmp(argument, "-I") == 0 || strcmp(argument, "--iso-8601") == 0) {
+        } else if (XStrcmp(argument, "-I") == 0 || XStrcmp(argument, "--iso-8601") == 0) {
             format = "%Y-%m-%d";
             explicitFormat = true;
-        } else if (strcmp(argument, "--help") == 0) {
+        } else if (XStrcmp(argument, "--help") == 0) {
             return xcsdt_write_line(shell, "用法: date [-u|--utc] [-I|--iso-8601] [+FORMAT]")
                        ? XConsoleResult_Ok : XConsoleResult_IoError;
         } else if (argument[0] == '+' && argument[1]) {

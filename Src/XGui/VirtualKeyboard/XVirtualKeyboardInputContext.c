@@ -528,18 +528,27 @@ int XVirtualKeyboardInputContext_preeditTextAttributes(
     return 0; /* 无属性面（本轮 scopeOut）。 */
 }
 
-void XVirtualKeyboardInputContext_setPreeditText_2(
-        XVirtualKeyboardInputContext* self, const char* text)
+void XVirtualKeyboardInputContext_setPreeditText(
+        XVirtualKeyboardInputContext* self, const XString* text)
 {
     XVirtualKeyboardInputContextPrivate* priv = xvkc_priv(self);
+    const char* utf8 = text ? XString_toUtf8(text) : NULL;
     if (!priv) return;
-    if (!text) text = "";
-    if (XStrcmp(priv->m_preedit, text) == 0) return;
-    XStrncpy(priv->m_preedit, text, sizeof(priv->m_preedit));
+    if (!utf8) utf8 = "";
+    if (XStrcmp(priv->m_preedit, utf8) == 0) return;
+    XStrncpy(priv->m_preedit, utf8, sizeof(priv->m_preedit));
     priv->m_preedit[XVKC_PREEDIT_MAX] = '\0';
     xvkc_emit(self, (size_t)
                   XVirtualKeyboardInputContext_preeditTextChanged_signal(NULL),
               NULL);
+}
+
+void XVirtualKeyboardInputContext_setPreeditText_2(
+        XVirtualKeyboardInputContext* self, const char* text)
+{
+    XString* tmp = text ? XString_create_utf8(text) : NULL;
+    XVirtualKeyboardInputContext_setPreeditText(self, tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 XString* XVirtualKeyboardInputContext_surroundingText(
@@ -686,16 +695,25 @@ void XVirtualKeyboardInputContext_commit(XVirtualKeyboardInputContext* self)
               NULL);
 }
 
-void XVirtualKeyboardInputContext_commit_2(
-        XVirtualKeyboardInputContext* self, const char* text)
+void XVirtualKeyboardInputContext_commitText(
+        XVirtualKeyboardInputContext* self, const XString* text)
 {
-    if (!self || !text || !text[0]) return;
+    const char* utf8 = text ? XString_toUtf8(text) : NULL;
+    if (!self || !utf8 || !utf8[0]) return;
     /* 【commit 落地契约】公共信号 → 已持 m_target 的默认面板执行既有
        写入链；无面板连接时丢弃（文档化，Qt 无平台集成层同型）。 */
     xvkc_emit(self, (size_t)
                   XVirtualKeyboardInputContext_commitRequested_signal(NULL,
                                                                       NULL),
-              XVarList_Create(XVar(const char*, text)));
+              XVarList_Create(XVar(const char*, utf8)));
+}
+
+void XVirtualKeyboardInputContext_commit_2(
+        XVirtualKeyboardInputContext* self, const char* text)
+{
+    XString* tmp = text ? XString_create_utf8(text) : NULL;
+    XVirtualKeyboardInputContext_commitText(self, tmp);
+    if (tmp) XClassDelete(tmp);
 }
 
 void XVirtualKeyboardInputContext_clear(XVirtualKeyboardInputContext* self)

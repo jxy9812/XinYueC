@@ -1,5 +1,5 @@
 ﻿#include"XIOTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XPWMDeviceBase.h"
 #include"XTimer.h"
 #include"XPrintf.h"

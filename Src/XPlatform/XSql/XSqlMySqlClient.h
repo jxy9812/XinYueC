@@ -44,9 +44,9 @@ typedef enum XSqlMySqlValueType {
  * @note m_data 在 executePrepared 返回前必须保持有效；客户端不会保存该指针。
  */
 typedef struct XSqlMySqlBind {
-    XSqlMySqlValueType m_type; /**< 参数值类型。 */
     const void* m_data;        /**< 参数数据借用指针；非 NULL 值必须在调用结束前有效。 */
     size_t m_size;             /**< 参数数据字节数；文本不要求包含末尾 NUL。 */
+    XSqlMySqlValueType m_type; /**< 参数值类型。 */
     bool m_isNull;             /**< 为 true 时忽略 m_data 和 m_size，并绑定 SQL NULL。 */
     bool m_unsigned;           /**< 整数参数是否按无符号值编码。 */
 } XSqlMySqlBind;

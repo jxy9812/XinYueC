@@ -8,6 +8,7 @@
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
 
+#include "XStringUtils.h"
 #include <string.h>
 #include <stdint.h>
 
@@ -206,7 +207,7 @@ static void xcs_tcpserver_ssh_user_name_slot(XObject* receiver, XVarList* args)
     XVarList_args_2(args, char*, buffer, size_t, capacity);
     (void)buffer; (void)capacity;
     XSshServer_setUserNameResult(server, binding->session->userName,
-                                 strlen(binding->session->userName));
+                                 XStrlen(binding->session->userName));
 #else
     (void)binding;
     (void)args;
@@ -466,7 +467,7 @@ static void xcs_tcpserver_telnet_user_name_slot(XObject* receiver, XVarList* arg
     XVarList_args_2(args, char*, buffer, size_t, capacity);
     (void)buffer; (void)capacity;
     XTelnetServer_setUserNameResult(server, binding->session->userName,
-                                    strlen(binding->session->userName));
+                                    XStrlen(binding->session->userName));
 #else
     (void)binding;
     (void)args;

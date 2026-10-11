@@ -93,10 +93,20 @@ void XAction_setAction(XAction* action, Action func)
 #### XAction_setData
 
 ```c
-void XAction_setData(XAction* action, XVariant* data)
+void XAction_setData(XAction* action, const XVariant* data)
 ```
 
-设置用户数据。
+设置用户数据（拷贝语义：内部深拷贝，调用者保留原指针所有权）。
+
+---
+
+#### XAction_setData_move
+
+```c
+void XAction_setData_move(XAction* action, XVariant* data)
+```
+
+设置用户数据（移动语义：动作对象接管 data 指针所有权，调用者不得再访问）。
 
 ---
 
@@ -191,13 +201,13 @@ typedef enum {
 ### 原子类型定义
 
 ```c
-typedef struct { volatile long value; } XAtomic_bool;
-typedef struct XAtomic_int32_t { volatile int32_t value; } XAtomic_int32_t;
-typedef struct XAtomic_uint32_t { volatile uint32_t value; } XAtomic_uint32_t;
-typedef struct XAtomic_int64_t { volatile int64_t value; } XAtomic_int64_t;
-typedef struct XAtomic_uint64_t { volatile uint64_t value; } XAtomic_uint64_t;
-typedef struct XAtomic_size_t { volatile size_t value; } XAtomic_size_t;
-typedef struct { volatile void* value; } XAtomic_uintptr_t;
+typedef struct { volatile long value; } XAtomic_Bool;
+typedef struct XAtomic_Int32 { volatile int32_t value; } XAtomic_Int32;
+typedef struct XAtomic_Uint32 { volatile uint32_t value; } XAtomic_Uint32;
+typedef struct XAtomic_Int64 { volatile int64_t value; } XAtomic_Int64;
+typedef struct XAtomic_Uint64 { volatile uint64_t value; } XAtomic_Uint64;
+typedef struct XAtomic_SizeT { volatile size_t value; } XAtomic_SizeT;
+typedef struct { volatile void* value; } XAtomic_Uintptr;
 ```
 
 ---
@@ -217,7 +227,7 @@ typedef struct { volatile void* value; } XAtomic_uintptr_t;
 #### XAtomic_init
 
 ```c
-#define XAtomic_init(var, v) do { (var).value = (v); } while(0)
+#define XAtomic_init(var, v) do { (var).m_value = (v); } while(0)
 ```
 
 初始化原子变量为指定值。
@@ -239,7 +249,7 @@ typedef struct { volatile void* value; } XAtomic_uintptr_t;
 #### XAtomic_load_bool
 
 ```c
-bool XAtomic_load_bool(const XAtomic_bool* var, XAtomic_MemoryOrder order)
+bool XAtomic_load_bool(const XAtomic_Bool* var, XAtomic_MemoryOrder order)
 ```
 
 从原子布尔变量中读取值。
@@ -249,7 +259,7 @@ bool XAtomic_load_bool(const XAtomic_bool* var, XAtomic_MemoryOrder order)
 #### XAtomic_load_int32
 
 ```c
-int32_t XAtomic_load_int32(const XAtomic_int32_t* var, XAtomic_MemoryOrder order)
+int32_t XAtomic_load_int32(const XAtomic_Int32* var, XAtomic_MemoryOrder order)
 ```
 
 从原子32位有符号整数变量中读取值。
@@ -259,7 +269,7 @@ int32_t XAtomic_load_int32(const XAtomic_int32_t* var, XAtomic_MemoryOrder order
 #### XAtomic_load_int64
 
 ```c
-int64_t XAtomic_load_int64(const XAtomic_int64_t* var, XAtomic_MemoryOrder order)
+int64_t XAtomic_load_int64(const XAtomic_Int64* var, XAtomic_MemoryOrder order)
 ```
 
 从原子64位有符号整数变量中读取值。
@@ -277,7 +287,7 @@ int64_t XAtomic_load_int64(const XAtomic_int64_t* var, XAtomic_MemoryOrder order
 #### XAtomic_store_bool
 
 ```c
-void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+void XAtomic_store_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order)
 ```
 
 将值写入原子布尔变量。
@@ -295,7 +305,7 @@ void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order
 #### XAtomic_exchange_bool
 
 ```c
-bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+bool XAtomic_exchange_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order)
 ```
 
 用新值替换原子变量的值，并返回旧值。
@@ -314,7 +324,7 @@ bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder or
 
 ```c
 bool XAtomic_compare_exchange_strong_bool(
-    XAtomic_bool* var, 
+    XAtomic_Bool* var, 
     bool* expected, 
     bool desired, 
     XAtomic_MemoryOrder success_order, 
@@ -338,7 +348,7 @@ bool XAtomic_compare_exchange_strong_bool(
 #### XAtomic_fetch_add_int32
 
 ```c
-int32_t XAtomic_fetch_add_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_fetch_add_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 ```
 
 原子地将值加到原子变量上，并返回旧值。
@@ -356,7 +366,7 @@ int32_t XAtomic_fetch_add_int32(XAtomic_int32_t* var, int32_t value, XAtomic_Mem
 #### XAtomic_fetch_sub_int32
 
 ```c
-int32_t XAtomic_fetch_sub_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_fetch_sub_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 ```
 
 原子地从原子变量中减去值，并返回旧值。
@@ -447,7 +457,7 @@ size_t XAtomic_unpack_version(size_t packed, size_t index_bits, size_t version_m
 
 ```c
 // 创建原子变量
-XAtomic_int32_t* counter = XAtomic_create(int32_t);
+XAtomic_Int32* counter = XAtomic_create(Int32);
 XAtomic_init(*counter, 0);
 
 // 原子加法
@@ -1208,7 +1218,7 @@ void XSignalSlot_emit(
     size_t signal,
     XVarList* args,
     void(*del)(XVarList*),
-    XAtomic_int32_t* ref_count,
+    XAtomic_Int32* ref_count,
     int priority)
 ```
 

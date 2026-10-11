@@ -1,4 +1,5 @@
-﻿#include "XReadLocker.h"
+﻿#include <string.h>
+#include "XReadLocker.h"
 #include "XRecursiveLockState.h"
 #include "XThread.h"
 #include "XHashMap.h"
@@ -29,9 +30,9 @@
 typedef struct XReadWriteLock
 {
 	XLock_Type type;
-	XAtomic_size_t state; // : false=unlocked, true=locked
-	XAtomic_size_t read_waiters; // 等待读锁的线程数
-	XAtomic_size_t write_waiters; //等待写锁的线程数
+	XAtomic_SizeT state; // : false=unlocked, true=locked
+	XAtomic_SizeT read_waiters; // 等待读锁的线程数
+	XAtomic_SizeT write_waiters; //等待写锁的线程数
 	char m_d[];//扩展数据
 }XReadWriteLock;
 //用户等待休眠 这里声明的结构实际是直接存储对象而不是指针
@@ -89,15 +90,15 @@ static bool try_acquire_read_recursive(XReadWriteLock* rwlock)
 	// 2. 情况A: 当前线程已经是此锁的写者。
 	//    根据读写锁的规则，写者可以降级为读者（即在持有写锁期间也可以读）。
 	//    这里我们简单地增加读锁计数，并返回成功。
-	if (tls->writer_count > 0) {
-		tls->reader_count++;
+	if (tls->m_writerCount > 0) {
+		tls->m_readerCount++;
 		return true;
 	}
 
 	// 3. 情况B: 当前线程已经是此锁的读者。
 	//    这是典型的递归读场景。我们只需增加读锁计数，并返回成功。
-	if (tls->reader_count > 0) {
-		tls->reader_count++;
+	if (tls->m_readerCount > 0) {
+		tls->m_readerCount++;
 		return true;
 	}
 
@@ -105,7 +106,7 @@ static bool try_acquire_read_recursive(XReadWriteLock* rwlock)
 	//    我们需要像非递归锁一样，尝试从全局状态中真正获取一次读锁。
 	if (try_acquire_read_nonrecursive(rwlock)) {
 		// 如果成功获取了读锁，将此线程对此锁的读计数初始化为1。
-		tls->reader_count = 1;
+		tls->m_readerCount = 1;
 		return true;
 	}
 
@@ -121,8 +122,8 @@ static bool try_acquire_write_recursive(XReadWriteLock* rwlock)
 
 	// 2. 情况A: 当前线程已经是此锁的写者。
 	//    这是典型的递归写场景。我们只需增加写锁计数，并返回成功。
-	if (tls->writer_count > 0) {
-		tls->writer_count++;
+	if (tls->m_writerCount > 0) {
+		tls->m_writerCount++;
 		return true;
 	}
 
@@ -130,7 +131,7 @@ static bool try_acquire_write_recursive(XReadWriteLock* rwlock)
 	//    这里明确禁止"读锁升级到写锁"。
 	//    原因：如果允许升级，当多个读者同时尝试升级时，会导致死锁。
 	//    因此，函数直接返回失败。
-	if (tls->reader_count > 0) {
+	if (tls->m_readerCount > 0) {
 		return false; // 不支持升级！
 	}
 
@@ -138,7 +139,7 @@ static bool try_acquire_write_recursive(XReadWriteLock* rwlock)
 	//    我们需要像非递归锁一样，尝试从全局状态中真正获取一次写锁。
 	if (try_acquire_write_nonrecursive(rwlock)) {
 		// 如果成功获取了写锁，将此线程对此锁的写计数初始化为1。
-		tls->writer_count = 1;
+		tls->m_writerCount = 1;
 		return true;
 	}
 
@@ -149,6 +150,7 @@ static bool try_acquire_write_recursive(XReadWriteLock* rwlock)
 XReadWriteLock* XReadWriteLock_create(XLock_Type type)
 {
 	XReadWriteLock* rwlock = (XReadWriteLock*)XMalloc_System(XReadWriteLock_typetSize(type));
+	if (!rwlock) return NULL;
 	XReadWriteLock_init(rwlock, type);
 	return rwlock;
 }
@@ -179,8 +181,9 @@ void XReadWriteLock_init(XReadWriteLock* rwlock, XLock_Type type)
 		XWaitCondition_init(GetWriteCond(rwlock));
 	}
 }
-void XReadWriteLock_deinit(XReadWriteLock* rwlock) 
+void XReadWriteLock_deinit(XReadWriteLock* rwlock)
 {
+	if (!rwlock) return;
 	if (XReadWriteLock_type(rwlock) & XLock_Recursive)
 	{
 		XRecursiveLockState_clear(rwlock);//清理全局数据
@@ -265,8 +268,8 @@ static void XReadWriteLock_lockForRead_NonSpin(XReadWriteLock* rwlock)
 	// --- 第一步：处理递归状态 ---
 	if (rwlock->type & XLock_Recursive) {
 		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
-		if (tls && (tls->reader_count > 0 || tls->writer_count > 0)) {
-			tls->reader_count++;
+		if (tls && (tls->m_readerCount > 0 || tls->m_writerCount > 0)) {
+			tls->m_readerCount++;
 			return;
 		}
 	}
@@ -310,8 +313,8 @@ static void XReadWriteLock_lockForWrite_NonSpin(XReadWriteLock* rwlock)
 	// --- 第一步：处理递归写锁 ---
 	if (rwlock->type & XLock_Recursive) {
 		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
-		if (tls && tls->writer_count > 0) {
-			tls->writer_count++;
+		if (tls && tls->m_writerCount > 0) {
+			tls->m_writerCount++;
 			return;
 		}
 		// 注意：从读锁升级到写锁在此设计中是被禁止的。
@@ -370,8 +373,8 @@ bool XReadWriteLock_tryLockForReadTimeout(XReadWriteLock* rwlock, int32_t timeou
 	// --- 第一步：处理递归读锁 ---
 	if (rwlock->type & XLock_Recursive) {
 		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
-		if (tls && (tls->reader_count > 0 || tls->writer_count > 0)) {
-			tls->reader_count++;
+		if (tls && (tls->m_readerCount > 0 || tls->m_writerCount > 0)) {
+			tls->m_readerCount++;
 			return true;
 		}
 	}
@@ -523,18 +526,18 @@ static void unlock_state_update(XReadWriteLock* rwlock)
 		XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
 		if (!tls) return;
 
-		if (tls->writer_count > 0) {
-			tls->writer_count--;
-			if (tls->writer_count == 0) {
+		if (tls->m_writerCount > 0) {
+			tls->m_writerCount--;
+			if (tls->m_writerCount == 0) {
 				// 修复点: 使用 Release 内存序
-				// 这确保了 'tls->writer_count = 0' 的操作
+				// 这确保了 'tls->m_writerCount = 0' 的操作
 				// 在此 store 操作之前完成，并且对其他线程可见。
 				XAtomic_store_size_t(&rwlock->state, 0, XAtomic_MemoryOrder_Release);
 			}
 		}
-		else if (tls->reader_count > 0) {
-			tls->reader_count--;
-			if (tls->reader_count == 0) {
+		else if (tls->m_readerCount > 0) {
+			tls->m_readerCount--;
+			if (tls->m_readerCount == 0) {
 				// 对于读者，我们执行原子减法。
 				// Acquire-Release 语义通常由 compare_exchange 或 fetch_add/sub 提供。
 				// 这里保持原有逻辑，但为了对称性，可以考虑其内存序。
@@ -588,7 +591,7 @@ bool XReadWriteLock_hasReadLock(XReadWriteLock* rwlock)
 	if (!rwlock) return false;
 	if (!rwlock || !(rwlock->type & XLock_Recursive)) return false;
 	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
-	return tls && (tls->reader_count > 0);
+	return tls && (tls->m_readerCount > 0);
 	
 }
 
@@ -597,7 +600,7 @@ bool XReadWriteLock_hasWriteLock(XReadWriteLock* rwlock)
 	if (!rwlock) return false;
 	if (!rwlock || !(rwlock->type & XLock_Recursive)) return false;
 	XRecursiveLockState* tls = XRecursiveLockState_get(rwlock);
-	return tls && (tls->writer_count > 0);
+	return tls && (tls->m_writerCount > 0);
 }
 #endif // XREADWRITELOCK_ON
 #endif /* XSYNC_ON */

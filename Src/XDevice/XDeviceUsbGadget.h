@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XDeviceUsbGadget.h
  * @brief      USB Device/Gadget 从机统一设备接口（XDeviceUsbGadget）。
  * @details    XDeviceUsbGadget 是 XDevice 的 USB Device/Gadget 子类，注册类别
@@ -20,8 +20,13 @@
 #define XDEVICEUSBGADGET_H
 
 #ifdef __cplusplus
-extern C {
+extern "C" {
 #endif
+
+#ifndef XDEVICEUSBGADGET_ON
+#define XDEVICEUSBGADGET_ON 1
+#endif
+#if XDEVICEUSBGADGET_ON
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -404,6 +409,8 @@ int32_t XDeviceUsbGadget_nativeError(XFd fd);
 void XDeviceUsbGadget_clearError(XFd fd);
 /** @brief 获取 USB 通用错误的 UTF-8 描述。 @param error 错误值。 @return 静态 UTF-8 字符串；未知值返回 Unknown。 */
 const char* XDeviceUsbGadget_errorString(XDeviceUsbError error);
+
+#endif /* XDEVICEUSBGADGET_ON */
 
 #ifdef __cplusplus
 }

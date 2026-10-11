@@ -1,4 +1,4 @@
-#请求CAMKE的最小构建版本
+﻿#请求CAMKE的最小构建版本
 cmake_minimum_required(VERSION 3.5)
 #设置项目名称
 project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
@@ -132,6 +132,16 @@ if(DEFINED XGUI_FORCE_DPI AND NOT XGUI_FORCE_DPI STREQUAL "" AND NOT XGUI_FORCE_
 endif()
 # 映射表文件路径（干净格式，无注释，固定4字节/行，支持文件二分）
 add_compile_definitions(XCHAR_COMPACT_PATH="${CMAKE_CURRENT_LIST_DIR}/Library/XCHAR_COMPACT.BIN")
+# XUpgrade 产品版本基线（XUpgradeIdentity.h 契约：桌面目标由构建注入真实
+# 版本，未注入回退 "0.0.0"=版本未知、引擎只允许手动检查）。量产恢复为按
+# 项目版本三段式派生：
+#   add_compile_definitions(XUPGRADE_PRODUCT_VERSION="${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}")
+# 当前为演示口径：出厂版本 1.2.0（配合服务器真实 1.3.0 二进制包做自升验收；
+# 1.3.0 负载 exe 由同树临时抬版本构建）。单一来源变量：编译定义与 Win32
+# VERSIONINFO 资源（demo 属性页文件/产品版本）同源注入。
+set(XUPGRADE_PRODUCT_VERSION "1.2.0")
+string(REPLACE "." "," XUPGRADE_PRODUCT_VERSION_RC "${XUPGRADE_PRODUCT_VERSION}")
+add_compile_definitions(XUPGRADE_PRODUCT_VERSION="${XUPGRADE_PRODUCT_VERSION}")
 include(CMake_Config.cmake)
 #查找include目录下的所有*.hpp,*.h头文件并路径列表保存到变量中
 FIND_INCLUDE_DIR(INCLUDE_SRC_LIST "Src")			#调用函数，指定参数
@@ -486,6 +496,10 @@ include_directories(BEFORE
 # LINK_ONLY 传给最终可执行文件）
 target_link_libraries(${EXPORT_NAME}S PRIVATE freetype)
 target_link_libraries(${EXPORT_NAME} PRIVATE freetype)
+# ==================== xxHash（非密码学哈希库）====================
+# 上游 xxHash（Yann Collet，BSD-2-Clause），XCryptographicHash_XxHash64 的实现。
+# 以子目录静态库方式集成，详见 Library/xxHash/CMakeLists.txt
+add_subdirectory(Library/xxHash)
 
 # 链接 mbedTLS 静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE mbedtls)
@@ -496,6 +510,9 @@ target_link_libraries(${EXPORT_NAME} PRIVATE pcre2)
 # 链接 SQLite 源码静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE sqlite)
 target_link_libraries(${EXPORT_NAME} PRIVATE sqlite)
+# 链接 xxHash 静态库
+target_link_libraries(${EXPORT_NAME}S PRIVATE xxhash)
+target_link_libraries(${EXPORT_NAME} PRIVATE xxhash)
 # 链接 lwIP 静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE lwip)
 target_link_libraries(${EXPORT_NAME} PRIVATE lwip)
@@ -623,6 +640,33 @@ else()
     target_link_libraries(FtpE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
+# ==================== XUpgrade 端到端联调测试（独立可执行 xupgrade_e2e_test.exe，自升级模块全流程联调：23 用例含版本边界/manifest 拒绝矩阵/断电矩阵 1-7/回滚限流/引擎锁/A-B 模拟） ====================
+if(NOT XINYUE_EMBEDDED)
+add_executable(XUpgradeE2E_Test
+    "./xupgrade_e2e_test.c"
+)
+if(UNIX)
+    target_link_libraries(XUpgradeE2E_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XUpgradeE2E_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+endif() # NOT XINYUE_EMBEDDED
+
+# ==================== XUpgrade 打包签名工具（服务端发版用，XUpgrade.md §4/§5） ====================
+# pack（目录→.pak）/ seal（补 size+sha256 并按 canonical+P-256 签名+自验）/ verify（设备侧
+# 同源验签+组件哈希核对）/ keygen（生成产品钥对，替换内嵌测试钥）。全程复用库内实现零口径漂移；
+# 仅宿主平台可执行（嵌入式端只解包不打包）。
+if(NOT XINYUE_EMBEDDED)
+add_executable(XUpgradePack
+    "./xupgrade_pack.c"
+)
+if(UNIX)
+    target_link_libraries(XUpgradePack ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XUpgradePack ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+endif() # NOT XINYUE_EMBEDDED
+
 # ==================== XGui 对齐回归测试 ====================
 # XGUI_ON=0（嵌入式全裁剪）时 GUI 类型全部消失，回归测试(引用 GUI 类型)
 # 与 GUI 控件测试源一并排除。
@@ -657,26 +701,35 @@ endif() # XGUI_ON
 # 独立可执行(自带 main): 回环对 + 127.0.0.1 真 TCP(MITM 抓包)跑 XGuiRemote.md
 # §3.8 认证矩阵——匿名基线/无口令快速失败/错口令拒绝/对口令准入/运行期设清
 # (存量会话不断)/nonce 逐连接随机/失败上限可配/口令明文不过网。
-# 测试源为 POSIX 专属（unistd.h/setenv），且须 Xvfb 会话直跑——仅 UNIX 构建。
-if(XGUI_ON AND UNIX)
+# Windows 无 POSIX 头（unistd.h/poll.h），认证矩阵测试为 POSIX CI 直跑口径，
+# 仅在 UNIX 族配置（Xvfb 会话执行），避免拖垮全树 ninja。
+if(XGUI_ON AND NOT WIN32)
 add_executable(XGuiRemoteAuth_Test
     "./Test/XGuiTest/XGuiRemoteAuthTest.c"
 )
+if(UNIX)
     target_link_libraries(XGuiRemoteAuth_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-endif() # XGUI_ON + UNIX（认证矩阵测试）
+else()
+    target_link_libraries(XGuiRemoteAuth_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
+endif()
+endif() # XGUI_ON && NOT WIN32（认证矩阵测试）
 
 # ==================== XGuiRemote 自适应降档阶梯测试(perf9 路4) ====================
 # 独立可执行(自带 main): (a) XGuiRemoteAdapt.h 纯状态机单元(阶梯映射/迟滞/
 # 换档重置); (b) 回环量化——latency 档 60fps 持续伤害流下 XGUI_REMOTE_ADAPT_
 # BUDGET_MS=1 强制超预算, 断言交付批率沉底 ~15fps; --adapt-baseline 反证组
 # (关阶梯≈60fps)。需显示环境, 由 Xvfb 会话直跑口径执行(同认证矩阵测试)。
-# 测试源为 POSIX 专属（setenv/unsetenv），仅 UNIX 构建。
-if(XGUI_ON AND UNIX)
+# 测试体用 setenv/unsetenv 等 POSIX 接口，仅 UNIX 族配置（Windows 跳过）。
+if(XGUI_ON AND NOT WIN32)
 add_executable(XGuiRemoteAdapt_Test
     "./Test/XGuiTest/XGuiRemoteAdaptTest.c"
 )
+if(UNIX)
     target_link_libraries(XGuiRemoteAdapt_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-endif() # XGUI_ON + UNIX（自适应降档阶梯测试）
+else()
+    target_link_libraries(XGuiRemoteAdapt_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
+endif()
+endif() # XGUI_ON && NOT WIN32（自适应降档阶梯测试）
 
 # ==================== fbdev 弹层拖动条带归位测试 ====================
 # 独立可执行(自带 main)：伪 fbdev 显示驱动（RAM 帧缓冲，双缓冲+行距
@@ -786,8 +839,17 @@ endif()
 # 是桌面窗口系统专用；安卓下 main 已改名 xgui_window_demo_main 且诊断
 # 依赖壳里的 XGuiDemo_debugLog，独立可执行无入口可链。
 if(XGUI_ON AND NOT ANDROID)
+if(WIN32)
+enable_language(RC)
+configure_file("${CMAKE_CURRENT_LIST_DIR}/Test/XGuiDemo/xgui_window_demo.rc.in"
+               "${CMAKE_CURRENT_BINARY_DIR}/xgui_window_demo.rc" @ONLY)
+set(XGUI_WINDOW_DEMO_RC "${CMAKE_CURRENT_BINARY_DIR}/xgui_window_demo.rc")
+else()
+set(XGUI_WINDOW_DEMO_RC)
+endif()
 add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_window_demo.c"
+    ${XGUI_WINDOW_DEMO_RC}
     "./Test/XGuiDemo/xgui_demo_splitter.c"
     "./Test/XGuiDemo/xgui_demo_page_views.c"
     "./Test/XGuiDemo/xgui_demo_page_dialogs.c"
@@ -799,6 +861,7 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_network.c"
     "./Test/XGuiDemo/xgui_demo_page_overlay_settings.c"
     "./Test/XGuiDemo/xgui_demo_page_qrcode.c"
+    "./Test/XGuiDemo/xgui_demo_page_update.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
     "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
     "./Test/XGuiDemo/xgui_demo_apitest_input.c"

@@ -16,6 +16,7 @@
 #include "XClass.h"
 #include "XXmlStreamReader.h"
 #include "XReadSax.h"
+#include "XStringUtils.h"   /* XStrlen/XStrchr/XStrrchr/XStrcpy：库内字符串原语（外部依赖约束） */
 #include <string.h>
 #include <stdlib.h>
 
@@ -75,9 +76,9 @@ XWorksheet* XWorksheet_create(const XString* sheetName, int sheetId, XWorkbook* 
     memset(self, 0, sizeof(XWorksheet));
     XAbstractSheet_init(&self->m_base, sheetName, sheetId, book, flag);
     self->m_base.m_sheetType = XAbstractSheet_ST_WorkSheet;
-    self->m_cellTable = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint64_t), sizeof(XCell*), uint64_t_compare, false);
-    self->m_rowInfoMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(XWorksheet_RowInfo*), int_compare, false);
-    self->m_colInfoMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(XWorksheet_ColumnInfo*), int_compare, false);
+    self->m_cellTable = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint64_t), sizeof(XCell*), Xuint64_t_compare, false);
+    self->m_rowInfoMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(XWorksheet_RowInfo*), Xint_compare, false);
+    self->m_colInfoMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(XWorksheet_ColumnInfo*), Xint_compare, false);
     self->m_mergedCells = XVector_Create(XCellRange);
     self->m_dataValidations = XVector_Create(XDataValidation*);
     self->m_conditionalFormatting = XVector_Create(XConditionalFormatting*);
@@ -85,7 +86,7 @@ XWorksheet* XWorksheet_create(const XString* sheetName, int sheetId, XWorkbook* 
     self->m_mediaFiles = XVector_Create(XMediaFile*);
     self->m_imagePositions = XVector_Create(XWorksheet_ImagePosition);
     self->m_chartFiles = XVector_Create(XExcelChart*);
-    self->m_rowSpans = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint64_t), sizeof(uint64_t), uint64_t_compare, false);
+    self->m_rowSpans = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(uint64_t), sizeof(uint64_t), Xuint64_t_compare, false);
     self->m_showGridLines = true;
     self->m_showRowColHeaders = true;
     self->m_showZeros = true;
@@ -114,7 +115,8 @@ XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int
                 XCell* dstCell = XCell_copy(srcCell);
                 if (dstCell) {
                     uint64_t key = cellKey(dstCell->m_row, dstCell->m_column);
-                    XMap_insert_base((XMapBase*)ws->m_cellTable, &key, &dstCell);
+                    if (!XMap_insert_base((XMapBase*)ws->m_cellTable, &key, &dstCell))
+                        XCell_delete(dstCell);
                 }
             }
         }
@@ -131,7 +133,8 @@ XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int
                 (XWorksheet_ColumnInfo*)XMalloc_System(sizeof(*copy));
             if (!copy) continue;
             *copy = *source;
-            XMap_insert_base((XMapBase*)ws->m_colInfoMap, &column, &copy);
+            if (!XMap_insert_base((XMapBase*)ws->m_colInfoMap, &column, &copy))
+                XFree_System(copy);
         }
     }
     if (self->m_rowInfoMap) {
@@ -146,7 +149,8 @@ XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int
                 (XWorksheet_RowInfo*)XMalloc_System(sizeof(*copy));
             if (!copy) continue;
             *copy = *source;
-            XMap_insert_base((XMapBase*)ws->m_rowInfoMap, &row, &copy);
+            if (!XMap_insert_base((XMapBase*)ws->m_rowInfoMap, &row, &copy))
+                XFree_System(copy);
         }
     }
     if (self->m_mergedCells) {
@@ -161,7 +165,8 @@ XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int
         for (size_t i = 0; i < count; ++i) {
             XDataValidation* source = *(XDataValidation**)XVector_at_base(self->m_dataValidations, i);
             XDataValidation* copy = source ? XDataValidation_copy(source) : NULL;
-            if (copy) XVector_push_back_2(ws->m_dataValidations, &copy, 1);
+            if (copy && !XVector_push_back_2(ws->m_dataValidations, &copy, 1))
+                XDataValidation_delete(copy);
         }
     }
     if (self->m_conditionalFormatting) {
@@ -188,7 +193,12 @@ XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int
                 ? XString_create_copy(source->m_relationshipId) : NULL;
             copy.m_display = source->m_display ? XString_create_copy(source->m_display) : NULL;
             copy.m_tip = source->m_tip ? XString_create_copy(source->m_tip) : NULL;
-            XVector_push_back_2(ws->m_hyperlinks, &copy, 1);
+            if (!XVector_push_back_2(ws->m_hyperlinks, &copy, 1)) {
+                if (copy.m_url) XClassDelete(copy.m_url);
+                if (copy.m_relationshipId) XClassDelete(copy.m_relationshipId);
+                if (copy.m_display) XClassDelete(copy.m_display);
+                if (copy.m_tip) XClassDelete(copy.m_tip);
+            }
         }
     }
     /* 复制属性 */
@@ -215,7 +225,10 @@ XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int
                 XMediaFile_contentsSize(source), XMediaFile_suffix(source), XMediaFile_mimeType(source));
             if (!copy) continue;
             XMediaFile_setFileName(copy, XMediaFile_fileName(source));
-            XVector_push_back_2(ws->m_mediaFiles, &copy, 1);
+            if (!XVector_push_back_2(ws->m_mediaFiles, &copy, 1)) {
+                XMediaFile_delete(copy);
+                continue;
+            }
             XVector_push_back_2(ws->m_imagePositions, position, 1);
         }
     }
@@ -224,7 +237,8 @@ XWorksheet* XWorksheet_copy(const XWorksheet* self, const XString* distName, int
         for (size_t i = 0; i < count; ++i) {
             XExcelChart* source = *(XExcelChart**)XVector_at_base(self->m_chartFiles, i);
             XExcelChart* copy = source ? XExcelChart_copy(source, &ws->m_base) : NULL;
-            if (copy) XVector_push_back_2(ws->m_chartFiles, &copy, 1);
+            if (copy && !XVector_push_back_2(ws->m_chartFiles, &copy, 1))
+                XExcelChart_delete(copy);
         }
     }
     if (self->m_rowSpans) {
@@ -341,7 +355,10 @@ static XCell* getOrCreateCell(XWorksheet* self, int row, int column)
     if (!cell) return NULL;
     cell->m_row = row;
     cell->m_column = column;
-    XMap_insert_base((XMapBase*)self->m_cellTable, &key, &cell);
+    if (!XMap_insert_base((XMapBase*)self->m_cellTable, &key, &cell)) {
+        XCell_delete(cell);
+        return NULL;
+    }
     /* 更新维度 */
     if (self->m_dimension.m_firstRow < 1 || row < self->m_dimension.m_firstRow) self->m_dimension.m_firstRow = row;
     if (row > self->m_dimension.m_lastRow) self->m_dimension.m_lastRow = row;
@@ -721,7 +738,7 @@ static bool image_type_from_path(const XString* imagePath, XString** suffix, XSt
     if (!imagePath || !suffix || !mimeType) return false;
 
     const char* path = XString_toUtf8(imagePath);
-    const char* dot = path ? strrchr(path, '.') : NULL;
+    const char* dot = path ? XStrrchr(path, '.') : NULL;
     if (!dot || !dot[1]) return false;
     ++dot;
 
@@ -833,7 +850,11 @@ XExcelChart* XWorksheet_insertChart(XWorksheet* self, int row, int column, int w
     if (!chart) return NULL;
     XExcelChart_setSize(chart, width, height);
     XExcelChart_setPosition(chart, row, column, 0, 0);
-    XVector_push_back_2(self->m_chartFiles, &chart, 1);
+    /* 图表由工作表持有；插入失败时无人释放，删除并返回 NULL */
+    if (!XVector_push_back_2(self->m_chartFiles, &chart, 1)) {
+        XExcelChart_delete(chart);
+        return NULL;
+    }
     return chart;
 }
 
@@ -1195,14 +1216,14 @@ static void colNumToLetters(int col, char* buf, size_t bufSize) {
     while (temp > 0) {
         temp--;
         char c = (char)('A' + (temp % 26));
-        size_t len = strlen(buf);
+        size_t len = XStrlen(buf);
         if (len < bufSize - 1) {
             memmove(buf + 1, buf, len + 1);
             buf[0] = c;
         }
         temp /= 26;
     }
-    if (buf[0] == '\0') strcpy(buf, "A");
+    if (buf[0] == '\0') XStrcpy(buf, "A");
 }
 
 /* 辅助：转义 XML 特殊字符 */
@@ -1470,7 +1491,7 @@ static void appendRowStart(XByteArray* output, int row,
 static bool richTextNeedsPreservedSpace(const char* text)
 {
     if (!text || !text[0]) return false;
-    size_t length = strlen(text);
+    size_t length = XStrlen(text);
     return text[0] == ' ' || text[0] == '\t' || text[0] == '\r' || text[0] == '\n' ||
         text[length - 1] == ' ' || text[length - 1] == '\t' ||
         text[length - 1] == '\r' || text[length - 1] == '\n';
@@ -1925,7 +1946,7 @@ static const XString* worksheetAttribute(const XXmlStreamAttributes* attributes,
     if (!attributes || !name) return NULL;
     XString_Init_Utf8(key, name);
     /* 带前缀的属性（例如 r:id）按限定名查询；普通属性按本地名查询。 */
-    const XString* value = strchr(name, ':')
+    const XString* value = XStrchr(name, ':')
         ? XXmlStreamAttributes_value(attributes, key)
         : XXmlStreamAttributes_value_ex(attributes, NULL, key);
     XClassDeinit(key);
@@ -2039,7 +2060,7 @@ static bool parseArgbColor(const XString* value, XColor* color)
 {
     if (!value || !color) return false;
     const char* text = XString_toUtf8(value);
-    size_t length = text ? strlen(text) : 0;
+    size_t length = text ? XStrlen(text) : 0;
     if (length != 6 && length != 8) return false;
     char* end = NULL;
     unsigned long rgba = strtoul(text, &end, 16);
@@ -2233,6 +2254,13 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                     worksheetAttribute(attributes, "sqref"));
             } else if (pendingFormatting &&
                        XString_equals_utf8(element, "cfRule", XChar_CaseSensitive)) {
+                /* 畸形/嵌套 XML 下上一条 cfRule 可能未闭合，覆盖前先释放旧属主 */
+                if (pendingRule.m_formula1) XClassDelete(pendingRule.m_formula1);
+                if (pendingRule.m_formula2) XClassDelete(pendingRule.m_formula2);
+                if (pendingRule.m_formula3) XClassDelete(pendingRule.m_formula3);
+                if (pendingRule.m_text) XClassDelete(pendingRule.m_text);
+                if (pendingRule.m_timePeriod) XClassDelete(pendingRule.m_timePeriod);
+                if (pendingRule.m_format) XFormat_delete(pendingRule.m_format);
                 memset(&pendingRule, 0, sizeof(pendingRule));
                 inConditionalRule = true;
                 cfvoIndex = 0;
@@ -2280,7 +2308,11 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                     XXmlStream_ReadElementTextBehaviour_IncludeChildElements);
                 XString** destination = pendingRule.m_formula1
                     ? &pendingRule.m_formula2 : &pendingRule.m_formula1;
-                if (text) *destination = XString_create_copy(text);
+                if (text) {
+                    /* 覆盖已有 formula 前先释放旧字符串 */
+                    if (*destination) XClassDelete(*destination);
+                    *destination = XString_create_copy(text);
+                }
             } else if (inConditionalRule &&
                        XString_equals_utf8(element, "dataBar", XChar_CaseSensitive)) {
                 pendingRule.m_ruleType = XCF_Rule_DataBar;
@@ -2295,13 +2327,23 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                 XConditionalFormatting_ValueObjectType parsedType = cfValueTypeFromName(type);
                 if (cfvoIndex == 0) {
                     pendingRule.m_valType1 = parsedType;
-                    if (val) pendingRule.m_formula1 = XString_create_copy(val);
+                    if (val) {
+                        /* 覆盖已有值前先释放旧字符串 */
+                        if (pendingRule.m_formula1) XClassDelete(pendingRule.m_formula1);
+                        pendingRule.m_formula1 = XString_create_copy(val);
+                    }
                 } else if (cfvoIndex == 1) {
                     pendingRule.m_valType2 = parsedType;
-                    if (val) pendingRule.m_formula2 = XString_create_copy(val);
+                    if (val) {
+                        if (pendingRule.m_formula2) XClassDelete(pendingRule.m_formula2);
+                        pendingRule.m_formula2 = XString_create_copy(val);
+                    }
                 } else if (cfvoIndex == 2) {
                     pendingRule.m_valType3 = parsedType;
-                    if (val) pendingRule.m_formula3 = XString_create_copy(val);
+                    if (val) {
+                        if (pendingRule.m_formula3) XClassDelete(pendingRule.m_formula3);
+                        pendingRule.m_formula3 = XString_create_copy(val);
+                    }
                 }
                 ++cfvoIndex;
             } else if (inConditionalRule &&
@@ -2333,7 +2375,12 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                     const XString* tip = worksheetAttribute(attributes, "tooltip");
                     hyperlink.m_display = display ? XString_create_copy(display) : NULL;
                     hyperlink.m_tip = tip ? XString_create_copy(tip) : NULL;
-                    XVector_push_back_2(self->m_hyperlinks, &hyperlink, 1);
+                    if (!XVector_push_back_2(self->m_hyperlinks, &hyperlink, 1)) {
+                        if (hyperlink.m_url) XClassDelete(hyperlink.m_url);
+                        if (hyperlink.m_relationshipId) XClassDelete(hyperlink.m_relationshipId);
+                        if (hyperlink.m_display) XClassDelete(hyperlink.m_display);
+                        if (hyperlink.m_tip) XClassDelete(hyperlink.m_tip);
+                    }
                 }
             } else if (XString_equals_utf8(element, "col", XChar_CaseSensitive)) {
                 WS_ATTR(minimum, "min");
@@ -2448,7 +2495,7 @@ bool XWorksheet_loadFromXmlData(XWorksheet* self, const uint8_t* data, size_t le
                             cell->m_format = XStyles_xfFormat(self->m_base.m_workbook->m_styles, cellStyle);
                         if (XString_size_base(formulaText) > 0) {
                             XCellFormula* formula = XCellFormula_create_ex(formulaText);
-                            XCell_setFormula(cell, formula);
+                            if (formula) XCell_setFormula(cell, formula);
                         }
                     }
                 }

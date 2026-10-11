@@ -10,6 +10,7 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XRandomGenerator.h"
+#include "XStringUtils.h" /* strlen 改经 XStrlen；memchr 本地扫描（外部依赖约束：string.h 白名单） */
 #include <string.h>
 
 enum {
@@ -494,9 +495,9 @@ static bool xssh_client_parse_host_key(XSshClient* self,
         if (!xssh_client_get_string(blob, blobLen, &offset, &algorithm, &algorithmLen) ||
             !xssh_client_get_string(blob, blobLen, &offset, &curve, &curveLen) ||
             !xssh_client_get_string(blob, blobLen, &offset, &point, &pointLen) ||
-            offset != blobLen || algorithmLen != strlen("ecdsa-sha2-nistp256") ||
+            offset != blobLen || algorithmLen != XStrlen("ecdsa-sha2-nistp256") ||
             memcmp(algorithm, "ecdsa-sha2-nistp256", algorithmLen) != 0 ||
-            curveLen != strlen("nistp256") || memcmp(curve, "nistp256", curveLen) != 0 ||
+            curveLen != XStrlen("nistp256") || memcmp(curve, "nistp256", curveLen) != 0 ||
             pointLen != XSSH_CLIENT_POINT_LEN || point[0] != 0x04) return false;
         memcpy(state->hostKeyBlob, blob, blobLen);
         state->hostKeyBlobLen = blobLen;
@@ -513,7 +514,7 @@ static bool xssh_client_build_exchange_hash(XSshClient* self)
     if (!state || state->serverVersionLen == 0 || state->serverKexInitLen == 0 ||
         state->clientKexInitLen == 0) return false;
     xssh_client_write_string(input, &offset, XSSH_CLIENT_VERSION,
-                             strlen(XSSH_CLIENT_VERSION) - 2u);
+                             XStrlen(XSSH_CLIENT_VERSION) - 2u);
     xssh_client_write_string(input, &offset, state->serverVersion,
                              state->serverVersionLen >= 2 ? state->serverVersionLen - 2u : state->serverVersionLen);
     xssh_client_write_string(input, &offset, state->clientKexInit,
@@ -548,7 +549,7 @@ static bool xssh_client_verify_host_signature(XSshClient* self,
                                           &algorithm, &algorithmLen) ||
         !xssh_client_get_string(signature, signatureLen, &offset,
                                 &signatureBlob, &signatureBlobLen) ||
-        offset != signatureLen || algorithmLen != strlen("ecdsa-sha2-nistp256") ||
+        offset != signatureLen || algorithmLen != XStrlen("ecdsa-sha2-nistp256") ||
         memcmp(algorithm, "ecdsa-sha2-nistp256", algorithmLen) != 0 ||
         !xssh_client_parse_ecdsa_signature(signatureBlob, signatureBlobLen, rawSignature))
         return false;
@@ -896,8 +897,14 @@ static XProtocolResult xssh_client_process_one(XSshClient* self)
 {
     XSshClientData* state = XSSH_CLIENT_DATA(self);
     if (state->state == XSshClientState_Version) {
-        const uint8_t* newline = (const uint8_t*)memchr(state->rxBuf, '\n', state->rxLen);
+        /* 库内无 memchr 原语（string.h 白名单仅 memcpy/memset/memmove/memcmp），
+         * 本地扫描定位版本行换行符，避免越白名单依赖（外部依赖约束）。 */
+        const uint8_t* newline = NULL;
+        size_t scan;
         size_t lineLen;
+        for (scan = 0; scan < state->rxLen; ++scan) {
+            if (state->rxBuf[scan] == (uint8_t)'\n') { newline = state->rxBuf + scan; break; }
+        }
         if (!newline) return state->rxLen > XSSH_CLIENT_VERSION_MAX ?
             XProtocolResult_ResourceLimit : XProtocolResult_Ok;
         lineLen = (size_t)(newline - state->rxBuf) + 1u;
@@ -1015,8 +1022,8 @@ bool XSshClient_setCredentials(XSshClient* self, const char* user,
     size_t userLen, passwordLen;
     if (!self || !self->m_data || !user || !password ||
         XSSH_CLIENT_DATA(self)->state != XSshClientState_Version) return false;
-    userLen = strlen(user);
-    passwordLen = strlen(password);
+    userLen = XStrlen(user);
+    passwordLen = XStrlen(password);
     if (userLen == 0 || userLen >= XSSH_LOGIN_NAME_SIZE ||
         passwordLen >= XSSH_LOGIN_PASSWORD_SIZE) return false;
     state = XSSH_CLIENT_DATA(self);
@@ -1037,7 +1044,7 @@ bool XSshClient_start(XSshClient* self)
     if (state->usernameLen == 0 || state->state != XSshClientState_Version) return false;
     state->closed = false;
     if (!xssh_client_send_raw(self, (const uint8_t*)XSSH_CLIENT_VERSION,
-                              strlen(XSSH_CLIENT_VERSION)) ||
+                              XStrlen(XSSH_CLIENT_VERSION)) ||
         !xssh_client_flush_output(self) || !XIODevice_flush(self->m_device)) {
         state->closed = true;
         return false;
@@ -1227,7 +1234,7 @@ static void xssh_client_cleanup_keys(XSshClient* self)
     memset(state->macKeyS2C, 0, sizeof(state->macKeyS2C));
 }
 
-static void xssh_client_deinit(XSshClient* self)
+static void VXSshClient_deinit(XSshClient* self)
 {
     if (!self) return;
     XSshClient_stop(self);
@@ -1244,7 +1251,7 @@ XVtable* XSshClient_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSshClient)
     XVTABLE_INHERIT_XCLASS(XObject);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, xssh_client_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSshClient_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XSshClient);
     return XVTABLE_DEFAULT;
 }

@@ -6,6 +6,8 @@
 
 #include <string.h>
 
+#include "XMemory.h"
+
 static void VXSqlRelationalTableModel_deinit(XSqlRelationalTableModel* model);
 static void VXSqlRelationalTableModel_clear(XSqlRelationalTableModel* model);
 static bool VXSqlRelationalTableModel_select(XSqlRelationalTableModel* model);
@@ -138,8 +140,8 @@ static XVariant* xsql_relational_lookup(const XSqlRelationalTableModel* model, i
     if (!child) return NULL;
     XString* indexName = XSqlRelation_indexColumn(relation);
     XString* displayName = XSqlRelation_displayColumn(relation);
-    int indexColumn = XSqlTableModel_fieldIndex(child, XString_toUtf8(indexName));
-    int displayColumn = XSqlTableModel_fieldIndex(child, XString_toUtf8(displayName));
+    int indexColumn = XSqlTableModel_fieldIndex(child, indexName);
+    int displayColumn = XSqlTableModel_fieldIndex(child, displayName);
     XVariant* source = XSqlTableModel_data(&model->m_parent, row, column, XSqlItemDataRole_Edit);
     XVariant* result = NULL;
     if (source && indexColumn >= 0 && displayColumn >= 0) {
@@ -197,7 +199,7 @@ bool XSqlRelationalTableModel_setData(XSqlRelationalTableModel* model, int row, 
         return XSqlTableModel_setData(&model->m_parent, row, column, value, role);
     child = XSqlRelationalTableModel_relationModel(model, column);
     indexName = XSqlRelation_indexColumn(relation);
-    indexColumn = indexName ? XSqlTableModel_fieldIndex(child, XString_toUtf8(indexName)) : -1;
+    indexColumn = indexName ? XSqlTableModel_fieldIndex(child, indexName) : -1;
     if (indexName) XClassDelete(indexName);
     for (int childRow = 0; child && indexColumn >= 0 && childRow < XSqlTableModel_rowCount(child); ++childRow) {
         XVariant* indexValue = XSqlTableModel_data(child, childRow, indexColumn,

@@ -177,6 +177,18 @@ bool XSystem_hasEnvironment(const char* name);
  */
 int64_t XSystem_pid(void);
 
+/**
+ * @brief 查询指定 PID 的进程是否存活。
+ * @param pid 目标进程标识；须为正数，非正数返回 false。
+ * @return 进程存活返回 true；不存在、已退出或当前平台无进程概念/无查询
+ *         能力时返回 false。
+ * @note 本接口用于锁文件持有者存活判定等系统域场景，避免上层直接调用
+ *       OpenProcess/kill(pid,0) 等平台 API；实现位于 Drive
+ *       （Posix/Windows/unsupported）。调用方不得依赖其对 PID 复用的
+ *       精确语义（ alive 判定以当时快照为准）。
+ */
+bool XSystem_processAlive(int64_t pid);
+
 /** @brief XSystem_executableFilePath 输出缓冲区的建议容量（含结尾 NUL）。 */
 #define XSYSTEM_EXECUTABLE_PATH_MAX 4096
 

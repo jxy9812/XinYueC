@@ -1,7 +1,8 @@
 ﻿/**
  * @file       XSqlDatabase.h
  * @brief      SQL 数据库连接类，对齐 Qt 6.8 QSqlDatabase。
- * @details    连接和驱动注册使用静态源码注册表，不依赖动态插件加载。
+ * @details    连接和驱动注册使用静态源码注册表，不依赖动态插件加载；
+ *             实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
  */
 #ifndef XSQLDATABASE_H
 #define XSQLDATABASE_H
@@ -43,7 +44,7 @@ XCLASS_DEFINE_EXTEND_END(XSqlDriverCreator, XSqlDriverCreatorBase)
  * @details m_create 保存具体后端创建回调；对象不能通过事件系统使用。
  */
 typedef struct XSqlDriverCreator {
-    XSqlDriverCreatorBase m_parent; /**< 驱动创建器基类。 */
+    XSqlDriverCreatorBase m_class; /**< 驱动创建器基类；第一个成员，由 XClass 管理，禁止手工修改。 */
 } XSqlDriverCreator;
 
 /**
@@ -58,6 +59,7 @@ XVtable* XSqlDriverCreatorBase_class_init(void);
 XVtable* XSqlDriverCreator_class_init(void);
 /**
  * @brief 创建带回调的驱动创建器。
+ * @param memory 内存类型。
  * @param createMethod 驱动创建回调；不能为 NULL。
  * @return 新创建器，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
@@ -107,6 +109,7 @@ XVtable* XSqlDatabase_class_init(void);
 void XSqlDatabase_init(XSqlDatabase* database);
 /**
  * @brief 创建空数据库句柄。
+ * @param memory 内存类型。
  * @return 新句柄，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlDatabase* XSqlDatabase_create_ex(XMemoryType memory);
@@ -129,10 +132,10 @@ XSqlDatabase* XSqlDatabase_create_move(XSqlDatabase* other);
 /**
  * @brief 按驱动枚举添加连接。
  * @param type 驱动类型。
- * @param connectionName UTF-8 连接名；借用，NULL 使用默认连接名。
+ * @param connectionName 连接名；借用，NULL 使用默认连接名。
  * @return 新连接句柄，调用者负责释放；驱动不可用或内存不足返回 NULL。
  */
-XSqlDatabase* XSqlDatabase_addDatabase(XSqlDriverType type, const char* connectionName);
+XSqlDatabase* XSqlDatabase_addDatabase(XSqlDriverType type, const XString* connectionName);
 /**
  * @brief 按驱动对象添加连接。
  * @param driver 驱动对象；转移所有权，不能为 NULL。
@@ -148,78 +151,78 @@ XSqlDatabase* XSqlDatabase_addDatabase_driver(XSqlDriver* driver, const char* co
  */
 XSqlDatabase* XSqlDatabase_addDatabase_utf8(const char* type, const char* connectionName);
 /**
- * @brief 使用 XString 驱动名和连接名添加连接。
- * @param type 驱动名称；借用，可为 NULL。
- * @param connectionName 连接名；借用，NULL 使用默认连接名。
- * @return 新连接句柄所有权；驱动不可用或内存不足返回 NULL。
+ * @brief 使用 UTF-8 连接名按驱动枚举添加连接。
+ * @param type 驱动类型。
+ * @param connectionName UTF-8 连接名；借用，NULL 使用默认连接名。
+ * @return 新连接句柄，调用者负责释放；驱动不可用或内存不足返回 NULL。
  */
-XSqlDatabase* XSqlDatabase_addDatabase_2(const XString* type, const XString* connectionName);
+XSqlDatabase* XSqlDatabase_addDatabase_2(XSqlDriverType type, const char* connectionName);
 /**
  * @brief 克隆连接配置到新连接句柄。
  * @param other 源连接；借用，不能为 NULL。
- * @param connectionName 新连接名；借用。
- * @return 新连接句柄，调用者负责释放；失败返回 NULL。
+ * @param connectionName 新连接名；借用，NULL 使用默认连接名。
+ * @return 新连接句柄，调用者负责释放；源连接无效或内存不足返回 NULL。
  */
-XSqlDatabase* XSqlDatabase_cloneDatabase(const XSqlDatabase* other, const char* connectionName);
+XSqlDatabase* XSqlDatabase_cloneDatabase(const XSqlDatabase* other, const XString* connectionName);
 /**
- * @brief 使用 XString 连接名克隆连接配置。
+ * @brief 使用 UTF-8 连接名克隆连接配置。
  * @param other 源连接；借用，不能为 NULL。
- * @param connectionName 新连接名；借用，可为 NULL。
- * @return 新连接句柄所有权；源连接无效或内存不足返回 NULL。
+ * @param connectionName UTF-8 连接名；借用，NULL 使用默认连接名。
+ * @return 新连接句柄，调用者负责释放；源连接无效或内存不足返回 NULL。
  */
-XSqlDatabase* XSqlDatabase_cloneDatabase_2(const XSqlDatabase* other, const XString* connectionName);
+XSqlDatabase* XSqlDatabase_cloneDatabase_2(const XSqlDatabase* other, const char* connectionName);
 /**
  * @brief 按连接名克隆连接配置。
- * @param otherConnectionName 源连接名；借用。
- * @param connectionName 新连接名；借用。
- * @return 新连接句柄，调用者负责释放；源连接不存在时返回 NULL。
- */
-XSqlDatabase* XSqlDatabase_cloneDatabase_name(const char* otherConnectionName, const char* connectionName);
-/**
- * @brief 使用 XString 连接名克隆连接配置。
  * @param otherConnectionName 源连接名；借用，NULL 表示默认连接。
  * @param connectionName 新连接名；借用，NULL 使用默认连接名。
- * @return 新连接句柄所有权；源连接不存在或内存不足返回 NULL。
+ * @return 新连接句柄，调用者负责释放；源连接不存在或内存不足返回 NULL。
  */
-XSqlDatabase* XSqlDatabase_cloneDatabase_name_2(const XString* otherConnectionName, const XString* connectionName);
+XSqlDatabase* XSqlDatabase_cloneDatabase_name(const XString* otherConnectionName, const XString* connectionName);
 /**
- * @brief 按连接名获取数据库句柄。
- * @param connectionName UTF-8 连接名；借用，NULL 表示默认连接。
+ * @brief 使用 UTF-8 连接名克隆连接配置。
+ * @param otherConnectionName UTF-8 源连接名；借用，NULL 表示默认连接。
+ * @param connectionName UTF-8 新连接名；借用，NULL 使用默认连接名。
+ * @return 新连接句柄，调用者负责释放；源连接不存在时返回 NULL。
+ */
+XSqlDatabase* XSqlDatabase_cloneDatabase_name_2(const char* otherConnectionName, const char* connectionName);
+/**
+ * @brief 按 XString 连接名获取数据库句柄。
+ * @param connectionName 连接名；借用，NULL 表示默认连接。
  * @param open 是否在获取时打开连接。
  * @return 新句柄，调用者负责释放；连接不存在或不属于当前线程时返回空句柄。
  */
-XSqlDatabase* XSqlDatabase_database(const char* connectionName, bool open);
+XSqlDatabase* XSqlDatabase_database(const XString* connectionName, bool open);
 /**
- * @brief 使用 XString 连接名获取数据库句柄。
- * @param connectionName 连接名；借用，NULL 表示默认连接。
+ * @brief 使用 UTF-8 连接名获取数据库句柄。
+ * @param connectionName UTF-8 连接名；借用，NULL 表示默认连接。
  * @param open 是否在取得句柄时打开连接。
  * @return 新句柄所有权；连接不存在、线程不匹配或打开失败时返回空句柄。
  */
-XSqlDatabase* XSqlDatabase_database_2(const XString* connectionName, bool open);
+XSqlDatabase* XSqlDatabase_database_2(const char* connectionName, bool open);
 /**
- * @brief 移除连接注册表中的连接。
- * @param connectionName UTF-8 连接名；借用，NULL 表示默认连接。
- * @return 无；仍被使用的连接移除行为由实现决定。
- */
-void XSqlDatabase_removeDatabase(const char* connectionName);
-/**
- * @brief 使用 XString 连接名移除连接注册。
+ * @brief 按 XString 连接名移除连接注册。
  * @param connectionName 连接名；借用，NULL 表示默认连接。
  * @return 无；仍被其他句柄使用时按 Qt 语义仅移除注册表条目。
  */
-void XSqlDatabase_removeDatabase_2(const XString* connectionName);
+void XSqlDatabase_removeDatabase(const XString* connectionName);
 /**
- * @brief 判断连接名是否存在。
+ * @brief 使用 UTF-8 连接名移除连接注册。
  * @param connectionName UTF-8 连接名；借用，NULL 表示默认连接。
- * @return 存在返回 true，否则返回 false。
+ * @return 无；仍被使用的连接移除行为由实现决定。
  */
-bool XSqlDatabase_contains(const char* connectionName);
+void XSqlDatabase_removeDatabase_2(const char* connectionName);
 /**
  * @brief 使用 XString 连接名判断连接是否存在。
  * @param connectionName 连接名；借用，NULL 表示默认连接。
  * @return 已注册返回 true，否则返回 false。
  */
-bool XSqlDatabase_contains_2(const XString* connectionName);
+bool XSqlDatabase_contains(const XString* connectionName);
+/**
+ * @brief 判断 UTF-8 连接名是否存在。
+ * @param connectionName UTF-8 连接名；借用，NULL 表示默认连接。
+ * @return 存在返回 true，否则返回 false。
+ */
+bool XSqlDatabase_contains_2(const char* connectionName);
 /**
  * @brief 获取已注册驱动名称列表。
  * @return 新字符串列表，调用者必须使用 XClassDelete 释放。

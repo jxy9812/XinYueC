@@ -13,7 +13,7 @@
 #include <string.h>
 
 typedef struct XRegularExpressionData {
-    XAtomic_int32_t m_refCount;
+    XAtomic_Int32 m_refCount;
     XString m_pattern;
     XString m_errorString;
     XRegularExpression_PatternOptions m_patternOptions;
@@ -458,7 +458,7 @@ static XString* XRegularExpression_wildcardInternal(const XStringView* pattern,
     if (!result) return NULL;
     if (!pattern || !XStringView_data(pattern)) {
         if (!(options & XRegularExpression_UnanchoredWildcardConversion)) {
-            XString* anchored = XRegularExpression_anchoredPattern_2(result);
+            XString* anchored = XRegularExpression_anchoredPattern(result);
             XClassDelete(result);
             return anchored;
         }
@@ -537,7 +537,7 @@ static XString* XRegularExpression_wildcardInternal(const XStringView* pattern,
     }
 
     if (!(options & XRegularExpression_UnanchoredWildcardConversion)) {
-        XString* anchored = XRegularExpression_anchoredPattern_2(result);
+        XString* anchored = XRegularExpression_anchoredPattern(result);
         XClassDelete(result);
         return anchored;
     }
@@ -1060,7 +1060,7 @@ XRegularExpressionMatch* XRegularExpression_match_utf8(const XRegularExpression*
     return result;
 }
 
-XString* XRegularExpression_escape(const XStringView* string)
+XString* XRegularExpression_escapeView(const XStringView* string)
 {
     XString* result = XString_create();
     if (!result || !string) return result;
@@ -1084,20 +1084,20 @@ XString* XRegularExpression_escape(const XStringView* string)
     return result;
 }
 
-XString* XRegularExpression_escape_2(const XString* string)
+XString* XRegularExpression_escape(const XString* string)
 {
     XStringView view = XStringView_create_string(string);
-    return XRegularExpression_escape(&view);
+    return XRegularExpression_escapeView(&view);
 }
 
-XString* XRegularExpression_wildcardToRegularExpression(const XStringView* pattern,
-                                                         XRegularExpression_WildcardConversionOptions options)
+XString* XRegularExpression_wildcardToRegularExpressionView(const XStringView* pattern,
+                                                            XRegularExpression_WildcardConversionOptions options)
 {
     return XRegularExpression_wildcardInternal(pattern, options);
 }
 
-XString* XRegularExpression_wildcardToRegularExpression_2(const XString* pattern,
-                                                           XRegularExpression_WildcardConversionOptions options)
+XString* XRegularExpression_wildcardToRegularExpression(const XString* pattern,
+                                                        XRegularExpression_WildcardConversionOptions options)
 {
     XStringView view = XStringView_create_string(pattern);
     return XRegularExpression_wildcardInternal(&view, options);
@@ -1119,7 +1119,7 @@ XRegularExpression* XRegularExpression_fromWildcard(const XStringView* pattern,
     return result;
 }
 
-XString* XRegularExpression_anchoredPattern(const XStringView* expression)
+XString* XRegularExpression_anchoredPatternView(const XStringView* expression)
 {
     XString* result = XString_create_utf8("\\A(?:");
     if (!result) return NULL;
@@ -1135,10 +1135,10 @@ XString* XRegularExpression_anchoredPattern(const XStringView* expression)
     return result;
 }
 
-XString* XRegularExpression_anchoredPattern_2(const XString* expression)
+XString* XRegularExpression_anchoredPattern(const XString* expression)
 {
     XStringView view = XStringView_create_string(expression);
-    return XRegularExpression_anchoredPattern(&view);
+    return XRegularExpression_anchoredPatternView(&view);
 }
 
 /* ============================== QRegularExpressionMatch API ============================== */
@@ -1272,8 +1272,7 @@ XStringList* XRegularExpressionMatch_capturedTexts(const XRegularExpressionMatch
         XString* text = XRegularExpressionMatch_captured(match, (int)i);
         if (text) {
             XStringList_push_back_base(result, text);
-            XClassDeinit(text);
-            XFree_System(text);
+            XClassDelete(text); /* 堆临时 XString 统一经 XClassDelete 释放 */
         }
     }
     return result;

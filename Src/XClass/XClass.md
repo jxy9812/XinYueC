@@ -321,13 +321,13 @@ XObject是所有对象的基类，继承自XClass，提供对象树、信号槽�
 ```c
 typedef struct XObject {
     XClass m_class;                      // 继承的基类
-    XAtomic_uint32_t m_posted_events;    // 已投递事件计数
+    XAtomic_Uint32 m_posted_events;    // 已投递事件计数
     
     // 对象标志位
-    uint32_t is_widget : 1;              // 是否为窗口部件
-    uint32_t block_sig : 1;              // 信号是否被阻塞
-    uint32_t was_deleted : 1;            // 是否已标记删除
-    uint32_t is_deleting_children : 1;   // 是否正在删除子对象
+    uint32_t m_is_widget : 1;            // 是否为窗口部件
+    uint32_t m_block_sig : 1;            // 信号是否被阻塞
+    uint32_t m_was_deleted : 1;          // 是否已标记删除
+    uint32_t m_is_deleting_children : 1; // 是否正在删除子对象
     // ... 其他标志位
     
     XTimerId pollId;                     // 轮询定时器ID
@@ -700,10 +700,10 @@ XinYueC实现了类似Qt的信号槽机制，支持对象间的松耦合通信�
 
 ### 信号定义
 
-使用`Signals`关键字标记信号函数：
+使用`XSIGNALS`宏标记信号函数（全大写宏，模拟 Qt `signals` 关键字）：
 
 ```c
-Signals
+XSIGNALS
 void* MyObject_clicked_signal(MyObject* obj) {
     // 信号实现
     XEmitSignal(obj, (size_t)MyObject_clicked_signal, NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);

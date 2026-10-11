@@ -1,4 +1,11 @@
-﻿#ifndef XJSON_H
+﻿/**
+ * @file       XJson.h
+ * @brief      JSON 模块公共基础定义（解析错误码与文档输出格式）。
+ * @details    错误码语义对齐 Qt QJsonParseError，输出格式对齐
+ *             QJsonDocument 的 Indented/Compact；实现只依赖 XinYueC
+ *             抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XJSON_H
 #define XJSON_H
 
 #ifdef __cplusplus

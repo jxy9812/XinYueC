@@ -1,6 +1,5 @@
 ﻿#include "XBitArray.h"
 #if XBitArray_ON
-#include <stdlib.h>
 #include <string.h>
 #include "XVtable.h"
 
@@ -26,20 +25,6 @@ static void VXBitArray_deinit(XBitArray* array);
 static bool VXBitArray_clear(XBitArray* array);
 static void XBitArray_init_with_memory(XBitArray* array, size_t initialBitCount,
     bool useCow, XMemoryType memory);
-
-XVtable* XBitArray_class_init() {
-    XVTABLE_INIT_DEFAULT(XBitArray)
-
-        XVTABLE_INHERIT_XCLASS(XContainer);
-
-    // 重载基础函数
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXBitArray_copy);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXBitArray_move);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXBitArray_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXBitArray_clear);
-
-    return XVTABLE_DEFAULT;
-}
 
 // COW分离核心函数
 static bool VXBitArrayDetachIfNeeded(XBitArray* array)
@@ -84,14 +69,13 @@ void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
     bool target_uninitialized = XClassIsVtableNull(dest);
     if (target_uninitialized) {
         XBitArray_init(dest, 0, false);
-        Class_Memory(dest) = Class_Memory(src);
     }
     else if (XContainerIsCow(src) &&
         XContainer_memory(dest) != XContainer_memory(src)) {
         return;
     }
 
-    // 释放目标原有数据
+    // 释放目标原有数据（此时仍使用目标原有分配器，必须先释放再切换，避免交叉分配器释放）
     if (XContainerIsCow(dest)) {
         if ((XSharedData*)XContainerDataPtr(dest))
             XSharedData_release_with((XSharedData*)XContainerDataPtr(dest),
@@ -104,6 +88,9 @@ void VXBitArray_copy(XBitArray* dest, const XBitArray* src)
 
     // 拷贝元数据（包括 m_useCow、容量、大小等）
     memcpy((XClass*)dest + 1, (XClass*)src + 1, sizeof(XBitArray) - sizeof(XClass));
+    // 兜底初始化的目标沿用源的分配器；切换必须发生在旧缓冲释放之后
+    if (target_uninitialized)
+        Class_Memory(dest) = Class_Memory(src);
 
     // 根据源模式拷贝数据
     if (XContainerIsCow(src)) {
@@ -141,7 +128,10 @@ void VXBitArray_move(XBitArray* dest, XBitArray* src)
     if (target_uninitialized) {
         XBitArray_init(dest, 0, false);
     }
-    else if (XContainerIsCow(dest)) {
+
+    // 无论是否兜底初始化，都要先释放目标原有数据（兜底 init 分配的初始缓冲
+    // 若不在此释放，会被下方 memcpy 覆盖 m_data 后孤立泄漏；与 VXBitArray_copy 一致）
+    if (XContainerIsCow(dest)) {
         if (XContainerDataPtr(dest))
             XSharedData_release_with((XSharedData*)XContainerDataPtr(dest),
                 VXBitArrayDataDelete, dest, XContainer_memory(dest));
@@ -212,6 +202,21 @@ bool VXBitArray_clear(XBitArray* array)
     // 不共享或非 COW：直接清空数据（fill false）
     XBitArray_fill(array, false);
     return true;
+}
+
+// 虚函数表初始化（单例）
+XVtable* XBitArray_class_init() {
+    XVTABLE_INIT_DEFAULT(XBitArray)
+
+        XVTABLE_INHERIT_XCLASS(XContainer);
+
+    // 重载基础函数
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXBitArray_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXBitArray_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXBitArray_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXContainer_Clear, VXBitArray_clear);
+
+    return XVTABLE_DEFAULT;
 }
 
 // ======================== 公开 API ========================
@@ -477,7 +482,7 @@ XBitOrder XBitArray_getBitOrder(const XBitArray* array)
     return array->m_bitOrder;
 }
 
-const char* XBitArray_bits(const XBitArray* array)
+const char* XBitArray_bits_const(const XBitArray* array)
 {
     if (!array) return NULL;
     return (const char*)XBitArray_data_const(array);

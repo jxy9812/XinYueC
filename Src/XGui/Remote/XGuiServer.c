@@ -1,4 +1,4 @@
-/******************************************************************************
+﻿/******************************************************************************
  * @file       XGuiServer.c
  * @brief      XGuiServer GUI 服务器实现(XGuiRemote.md §6 全部小节 +
  *             §3.7 握手时序 + §12 评审处置意见 1/3)。
@@ -298,7 +298,7 @@ typedef struct XgsSession {
     bool                 nextFrameTcp;      /**< [2026-10-06] 泵发送下帧强制
                                              *   TCP(全量轮批; 单帧标志, 泵
                                              *   发送后清零; GUI 线程单写)。 */
-    XAtomic_bool         hasDamage;         /**< 有新伤害(采集置位, 线程认领清零)。 */
+    XAtomic_Bool         hasDamage;         /**< 有新伤害(采集置位, 线程认领清零)。 */
     uint64_t             stageCaptureUs;    /**< [stage] 最近采集完成戳(m_qMutex;
                                                  0=无; 编码线程读算 srv-lat)。 */
     XgsQueueNode*        qHead;             /**< 编码队列头(最旧)。 */
@@ -2714,18 +2714,18 @@ static void xgs_workerMain(XThread* thread, XVarList* arguments)
     if (hashValid) XFree_System(hashValid);
     if (chgBuf) XFree_System(chgBuf);
     if (vpBuf) XFree_System(vpBuf);
+    /* orderBuf 线程作用域持久缓冲: 未经空闲裁剪窗口退出的会话由本出口
+     * 统一回收(空闲裁剪分支只覆盖运行期, 不覆盖 stopThread 直达出口)。 */
+    if (orderBuf) XFree_System(orderBuf);
     if (outA.stream) XFree_System(outA.stream);
     if (outA.tileLen) XFree_System(outA.tileLen);
     if (outA.pendIdx) XFree_System(outA.pendIdx);
     if (outA.pendHash) XFree_System(outA.pendHash);
+    if (outA.tileCodec) XFree_System(outA.tileCodec);
     if (outB.stream) XFree_System(outB.stream);
     if (outB.tileLen) XFree_System(outB.tileLen);
     if (outB.pendIdx) XFree_System(outB.pendIdx);
     if (outB.pendHash) XFree_System(outB.pendHash);
-    /* [泄漏修复] worker 退出补清三处定洩: 发送序排列与两路逐 tile
-     * 编码器(空闲裁剪只盖 orderBuf 的稳态路径, 退出路径此前漏)。 */
-    if (orderBuf) XFree_System(orderBuf);
-    if (outA.tileCodec) XFree_System(outA.tileCodec);
     if (outB.tileCodec) XFree_System(outB.tileCodec);
 }
 
@@ -4105,6 +4105,10 @@ static void VXGuiServer_deinit(XGuiServer* self)
         if (d->hosted && d->store) {
             XPlatformBackingStore_setPresentCallback(d->store, d->chainCb,
                                                      d->chainData);
+            /* 全局 present 通知是 host 时一并登记的单槽(host 内无失败
+               出口, hosted⟺已登记): 析构必须取消, 否则本对象释放后任意
+               存储 flush 仍以悬垂 self 进 xgs_anyPresentWrapper(UAF)。 */
+            XPlatformBackingStore_setGlobalPresentCallback(NULL, NULL);
         }
         d->hosted = NULL;
         d->store = NULL;
@@ -4116,7 +4120,10 @@ static void VXGuiServer_deinit(XGuiServer* self)
         }
         if (d->pumpTimer) { /* 兜底定时器随泵同生死(基准优化 2026-10-02)。 */
             XTimer_stop_base(d->pumpTimer);
-            XObject_deleteLater((XObject*)d->pumpTimer);
+            /* 同步删除而非 deleteLater: 析构内清自己的成员必须同步释放
+             * (约束文档「对象释放方式选择约束」); 事件循环停转后延迟删除
+             * 事件无人派发, XTimer 将永久泄漏(对齐 XGuiClient.c 同款注释)。 */
+            XClassDelete((XClass*)d->pumpTimer);
             d->pumpTimer = NULL;
         }
         while (d->sessionCount > 0 && d->sessionHead) {
@@ -4187,7 +4194,12 @@ XGuiServer* XGuiServer_create_ex(XMemoryType memory, XObject* parent)
     if (!self) return NULL;
     XGuiServer_init(self, parent);
     if (!self->m_d) {
-        XClassDelete((XClass*)self); /* 私有块失败: 回收半成品。 */
+        /* 私有块失败: 回收半成品。XClassDelete 仅在 is_heap 时释放结构体
+           (XClass.c:38-44), 而 init 已置 is_heap=false——须先补堆标记,
+           否则 sizeof(XGuiServer) 结构体在回收路径泄漏(常见错误 3)。 */
+        Set_Class_Memory(self, memory);
+        Set_Class_IsHeap(self, true);
+        XClassDelete((XClass*)self);
         return NULL;
     }
     Set_Class_Memory(self, memory);
@@ -4230,6 +4242,9 @@ void XGuiServer_unhost(XGuiServer* self)
     if (!d->hosted) return;
     XPlatformBackingStore_setPresentCallback(d->store, d->chainCb,
                                              d->chainData);
+    /* 同步取消 host 时登记的全局 present 单槽: 否则本对象随后析构后,
+     * 任意存储 flush 仍以悬垂 self 进 xgs_anyPresentWrapper(UAF)。 */
+    XPlatformBackingStore_setGlobalPresentCallback(NULL, NULL);
     d->hosted = NULL;
     d->store = NULL;
     d->chainCb = NULL;

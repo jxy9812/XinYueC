@@ -31,7 +31,6 @@ extern "C" {
  */
 struct XPropertyBinding
 {
-    XAtomic_int32_t m_ref;                    /**< 引用计数（对标 QPropertyBindingPrivatePtr）。 */
     XPropertyData* m_propertyData;            /**< 写入目标属性数据；未挂接为 NULL（对标 propertyData）。 */
     XPropertyBindingEvalFunc m_eval;          /**< 求值函数；create_eval 形式使用，否则 NULL。 */
     void* m_evalUser;                         /**< 求值函数用户数据（借用）。 */
@@ -39,7 +38,13 @@ struct XPropertyBinding
     XPropertyObserver* m_dependencies;        /**< 依赖节点链表头（单向；节点挂在被依赖属性的观察者链表上）。 */
     XPropertyBindingSourceLocation m_location; /**< 创建时登记的源码位置。 */
     XPropertyBindingError m_error;            /**< 最近错误（嵌入 XClass 对象；对象拥有描述字符串）。 */
-    XVariant m_result;                        /**< 最近求值结果缓存（定制更新器经 XBinding_result_const 读取）。 */
+    XVariant m_result;                        /**< 最近求值结果缓存（定制更新器经 XPropertyBinding_result_const 读取）。 */
+    /* 内存布局：m_ref/m_dirty/m_evaluating 归入尾组，消除 m_ref 位于头部时
+     * 后随 8 对齐指针成员产生的 4B 对齐空洞及尾部填充（x64 每实例 168B→160B；
+     * 32 位中性）。本结构为引用计数堆对象，实例数随绑定数线性增长。
+     * 成员仅供模块内部按名访问（&m_ref 取址见 XPropertyBinding.c），
+     * 禁止依赖成员顺序做偏移算术。 */
+    XAtomic_Int32 m_ref;                      /**< 引用计数（对标 QPropertyBindingPrivatePtr）。 */
     bool m_dirty;                             /**< 失效标记：true 表示下次读取须重算。 */
     bool m_evaluating;                        /**< 重入保护：本绑定求值函数正在执行。 */
 };
@@ -49,7 +54,7 @@ struct XPropertyBinding
  * @param binding 目标绑定；不能为 NULL。
  * @return 结果变体借用指针；禁止释放或修改。
  */
-const XVariant* XBinding_result_const(XPropertyBinding* binding);
+const XVariant* XPropertyBinding_result_const(XPropertyBinding* binding);
 
 /**
  * @brief 惰性求值绑定（内部；由 XPropertyData_value_const 在脏时调用）。
@@ -60,13 +65,13 @@ const XVariant* XBinding_result_const(XPropertyBinding* binding);
  *         栈扫描发现本绑定已在求值中（绑定循环）或求值函数重入时记录
  *         BindingLoop/EvaluationLoopError 并放弃本次求值。
  */
-void XBinding_evaluate(XPropertyBinding* binding);
+void XPropertyBinding_evaluate(XPropertyBinding* binding);
 
 /**
  * @brief 查询当前正在求值的绑定（求值栈顶；对标 QBindingStatus::currentlyEvaluatingBinding）。
  * @return 绑定指针；无求值上下文返回 NULL。依赖捕获据此登记依赖。
  */
-XPropertyBinding* XBinding_currentEvalBinding(void);
+XPropertyBinding* XPropertyBinding_currentEvalBinding(void);
 
 /**
  * @brief 解除并释放绑定的全部依赖节点（从各属性的观察者链表摘下并释放节点；
@@ -74,14 +79,14 @@ XPropertyBinding* XBinding_currentEvalBinding(void);
  * @param binding 目标绑定；NULL 安全。
  * @return 无返回值。绑定解挂/销毁/每次求值前调用。
  */
-void XBinding_detachDependencies(XPropertyBinding* binding);
+void XPropertyBinding_detachDependencies(XPropertyBinding* binding);
 
 /**
  * @brief 查询绑定是否正在求值（绑定循环检测判据：任何循环必经过正在求值的绑定）。
  * @param binding 目标绑定；NULL 返回 false。
  * @return 正在求值返回 true。
  */
-bool XBinding_isOnEvalStack(XPropertyBinding* binding);
+bool XPropertyBinding_isOnEvalStack(XPropertyBinding* binding);
 
 /* ==================== 观察者链表内部操作 ==================== */
 

@@ -12,15 +12,15 @@
  * @author     XinYueC 团队
  */
 
+#include "XGraphicsBlurEffect.h"
+
 #include "XGuiConfig.h"
 #include "XMemory.h"
-
-#if XWIDGET_ON
-
-#include "XGraphicsBlurEffect.h"
 #include "XWidget.h"
 #include "XImage.h"
 #include "XPainter.h"
+
+#if XWIDGET_ON
 
 /** @brief 固定盒式核外扩量：水平+垂直两趟各扩散 1px。 */
 #define XGRAPHICSBLUREFFECT_PAD 2.0f

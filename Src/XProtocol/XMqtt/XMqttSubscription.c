@@ -111,7 +111,8 @@ const XString* XMqttSubscription_sharedSubscriptionName_const(const XMqttSubscri
 
 void XMqttSubscription_unsubscribe_base(XMqttSubscription* sub)
 {
-    if (!sub) return;
+    if (ISNULL(sub, "") || ISNULL(XClassGetVtable(sub), ""))
+        return;
     void (*func)(XMqttSubscription*) = XClassGetVirtualFunc(sub, EXMqttSubscription_Unsubscribe, void(*)(XMqttSubscription*));
     if (func) func(sub);
 }
@@ -170,6 +171,11 @@ void* XMqttSubscription_messageReceived_signal(XMqttSubscription* sub, XMqttMess
     if (!sub) return (void*)(size_t)XMqttSubscription_messageReceived_signal;
     XMqttMessage* copy = msg ? XMqttMessage_create_copy(msg) : NULL;
     XVarList* args = XVarList_Create(XVar(XMqttMessage*, copy));
+    if (!args) {
+        /* args 创建失败时发射方不会接管参数，深拷贝需就地释放 */
+        if (copy) XClassDelete(copy);
+        return (void*)(size_t)XMqttSubscription_messageReceived_signal;
+    }
     XObject_emitSignal((XObject*)sub, (size_t)XMqttSubscription_messageReceived_signal,
                        args, XMqttSubscription_message_args_delete,
                        NULL, XEVENT_PRIORITY_NORMAL);

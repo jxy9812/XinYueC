@@ -2433,7 +2433,10 @@ static bool normalize_input(XXmlStreamReaderPrivate* d, const char* data, size_t
     }
 
     XByteArray* normalized = XByteArray_create();
-    if (!normalized) return false;
+    if (!normalized) {
+        XClassDelete(combined);
+        return false;
+    }
     bool ok = true;
     if (d->m_inputEncoding == XML_INPUT_UTF8) {
         ok = XByteArray_push_back_2(normalized, inputData + offset, inputLength - offset);

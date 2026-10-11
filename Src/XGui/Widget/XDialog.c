@@ -109,7 +109,8 @@ static bool xdlg_tb_pressed = false;
 /* 「画过标题带」登记：仅本对话框 paintEvent 实际绘制过标题栏后才参
  * 与 [×] 命中——XWizard/XErrorMessage 等覆写 paintEvent 且不回链
  * XDialog 面板绘制的派生类虽然继承本类鼠标重载，但右上角不会出现
- * 隐形关闭热区。槽位只在 done() 摘除，比较不 leading 解引用。 */
+ * 隐形关闭热区。槽位只在 done() 收口与析构（VXDialog_deinit）摘除，
+ * 比较不 leading 解引用。 */
 #define XDLG_TB_TRACK_MAX 4
 static const XDialog* xdlg_tb_painted[XDLG_TB_TRACK_MAX];
 
@@ -393,7 +394,7 @@ static void xdlg_applyContentAvoidance(XDialog* self)
             count = XVector_size_base((const XContainer*)object->m_children);
             for (i = 0; i < count; ++i) {
                 XWidget* w;
-                if (!children[i] || !children[i]->is_widget) continue;
+                if (!children[i] || !children[i]->m_is_widget) continue;
                 w = (XWidget*)children[i];
                 if (w->m_isWindow) continue; /* 顶层子窗口不随父几何摆位。 */
                 if (w == customBar) continue; /* 控件级自定义标题条。 */
@@ -708,7 +709,7 @@ static void xdlg_collectTabCandidates(XObject* object, XVector* out)
     int count;
     int i;
     if (!object || !out) return;
-    if (object->is_widget) {
+    if (object->m_is_widget) {
         XWidget* w = (XWidget*)object;
         if (XWidget_isEnabled(w) && XWidget_isVisible(w) &&
             (XWidget_focusPolicy(w) & XWidgetFocusPolicy_TabFocus))
@@ -1024,10 +1025,30 @@ static void VXDialog_mouseMoveEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
+/** @brief  析构：先摘除本对话框的标题带跟踪登记，再释放基类资源。
+ *  @details xdlg_tb_owner/xdlg_tb_painted 为文件级活对象登记，此前唯一
+ *           清除点在 done() 收口（xdlg_close）——对话框未经 done 直接纳
+ *           终（父链级联析构/直接 XClassDelete/deleteLater）时登记残留
+ *           悬垂指针，后续带标题对话框的 mouseMoveEvent 会 XWidget_update
+ *           该悬垂对象（UAF）。析构期反注册对齐 VXWidget_deinit 的登记
+ *           纪律（装饰表/焦点链/模态门/抓取登记析构即摘）。 */
+static void VXDialog_deinit(XDialog* self)
+{
+    if (!self) return;
+    if (xdlg_tb_owner == (const XDialog*)self) {
+        xdlg_tb_owner = NULL;
+        xdlg_tb_hover = false;
+        xdlg_tb_pressed = false;
+    }
+    xdlg_tb_unmark(self);
+    XClass_Deinit_Parent(XWidget, (XWidget*)self);
+}
+
 XVtable* XDialog_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDialog)
     XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXDialog_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXDialog_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXDialog_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXDialog_showEvent);

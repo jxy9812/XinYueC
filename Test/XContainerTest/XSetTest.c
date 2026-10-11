@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XSet.h"
 #include"XVector.h"
 #include"XTestMenu.h"
@@ -23,7 +23,7 @@ static void SumKeys(void* pvKey, void* args)
 static void XSetTest_Basic(void)
 {
     XPrintf("\n[XSet][基础] insert/remove/find/contains/迭代\n");
-    XSet* set = XSet_Create(int, int_compare);
+    XSet* set = XSet_Create(int, Xint_compare);
 
     int arr[] = { 10, 3, 55, 3, 7, 55, 42, 1 };
     for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); ++i)
@@ -58,7 +58,7 @@ static void XSetTest_Basic(void)
 static void XSetTest_QtAliases(void)
 {
     XPrintf("\n[XSet][Qt 别名] count/empty/values 与 size/isEmpty/keys 等价\n");
-    XSet* set = XSet_Create(int, int_compare);
+    XSet* set = XSet_Create(int, Xint_compare);
     for (int i = 0; i < 20; ++i) XSet_insert_base(set, &i);
 
     size_t s1 = XSet_size_base(set), s2 = XSet_count_base(set);
@@ -92,7 +92,7 @@ static bool IsEven(const void* pvKey, void* args)
 static void XSetTest_QtNewApis(void)
 {
     XPrintf("\n[XSet][Qt 新 API] constFind/removeIf/erase_if/reserve/squeeze\n");
-    XSet* set = XSet_Create(int, int_compare);
+    XSet* set = XSet_Create(int, Xint_compare);
 
     // reserve / squeeze：XSet 为红黑树，无操作但应返回成功
     bool r = XSet_reserve_base(set, 1000);
@@ -124,7 +124,7 @@ static void XSetTest_QtNewApis(void)
 static void XSetTest_Stress(void)
 {
     XPrintf("\n[XSet][压力] 大批量 insert / remove / contains\n");
-    XSet* set = XSet_Create(int, int_compare);
+    XSet* set = XSet_Create(int, Xint_compare);
     const int N = 5000;
     for (int i = 0; i < N; ++i) XSet_insert_base(set, &i);
     for (int i = 0; i < N; ++i) XSet_insert_base(set, &i); // 重复插入

@@ -373,6 +373,19 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
                          XByteArray* outputToken,
                          void** context);
 
+/**
+ * @brief 释放GSSAPI认证上下文
+ * @details 回收 XDeviceNetwork_gssapiAuth 写入 *context 的平台内部状态（凭据句柄、
+ *          安全上下文、服务名称副本等），并将 *context 置为 NULL。
+ * @param context 输入输出上下文；指向 XDeviceNetwork_gssapiAuth 写入的内部状态，
+ *        本身可为 NULL；*context 为 NULL 时不执行任何操作。
+ * @return 无。
+ * @note gssapiAuth 返回 0（完成）、-1（失败）后平台内部状态已由其自行释放，
+ *       本调用为空操作；协商中途（返回 1）放弃续传时必须调用本函数收尾，
+ *       否则平台 GSS/SSPI 资源泄漏。本函数不释放 outputToken 等调用方自有对象。
+ */
+void XDeviceNetwork_gssapiRelease(void** context);
+
 /* ============================================================================
  * XDeviceNetwork 类接口
  * ============================================================================ */

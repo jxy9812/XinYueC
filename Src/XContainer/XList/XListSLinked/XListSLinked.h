@@ -1,18 +1,31 @@
-﻿#include"CXinYueConfig.h"
+﻿/**
+* @file       XListSLinked.h
+* @brief      单向链表公开 API。
+* @details    对齐 Qt 6.8 QList/QLinkedList 的单向链表（带尾指针），继承链表
+*             基类 XListBase；实现只依赖 XinYueC 抽象层，禁止调用 Win32、
+*             POSIX、Qt 或其他平台 API，仅在 XListSLinked 模块启用时编译。
+*/
+#include"CXinYueConfig.h"
 #if !defined(XLISTSLINKED_H)&& XListSLinked_ON
 #define XLISTSLINKED_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include<stdbool.h>
-#include<stdio.h>
 #include"XListSLinked_iterator.h"
 #include"XListBase.h"
 /**
 * @brief 单链表容器虚函数表大小定义
-* @note 基于链表基类XListBase的虚函数表大小确定，确保虚函数索引不冲突
+* @note 单链表仅继承XListBase、不新增虚函数，槽位总数与XListBase一致
 */
-#define XLISTSLINKED_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))
+#define XLISTSLINKED_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListSLinked))
+/**
+* @brief 单链表容器虚函数表枚举
+* @details 仅继承链表基类XListBase、不新增虚函数，按文档「类的创建」规定使用
+*          XCLASS_DEFINE_EXTEND_END，槽位编号从XListBase槽位总数开始
+*/
+XCLASS_DEFINE_BEGING(XListSLinked)
+XCLASS_DEFINE_EXTEND_END(XListSLinked, XListBase)
 /**
 * @brief 单链表节点结构体定义
 * @details 存储单链表中的单个元素，包含指向下一个节点的指针和数据存储区
@@ -20,7 +33,7 @@ extern "C" {
 typedef struct XListSNode
 {
 	struct XListSNode* next; // 指向下一个节点的指针
-	char data[]; // 存储元素数据的指针
+	char data[]; // 节点存储实际元素的柔性数组（C99柔性数组成员），随节点一并分配，不是指针
 }XListSNode;
 /**
 * @brief 创建指定类型的单链表节点
@@ -357,8 +370,6 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize, bool useCow);
 #define XListSLinked_create(typeSize) \
 	XListSLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
 
-#endif // 
-
 // ====================== Qt 6.8 QList/QLinkedList 对齐 ======================
 // ===========================================================================
 
@@ -463,3 +474,5 @@ void XListSLinked_init(XListSLinked* this_list, size_t typeSize, bool useCow);
  * @brief 条件删除（对齐Qt removeIf）
  */
 #define XListSLinked_removeIf_base(list, pred, udata)   XListBase_removeIf_base(list, pred, udata)
+
+#endif // XLISTSLINKED_H

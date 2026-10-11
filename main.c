@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file main.c
  * @brief XinYueC 默认控制台入口。
  * @details
@@ -29,6 +29,7 @@
 #include "XDataTest.h"
 #include "XPropertyTest.h"
 #include "XTestCommand.h"
+#include "XUpgrade.h"
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
 #include "XConsoleShell.h"
@@ -59,7 +60,7 @@ static int main_run_test_path(const char* testPath)
         return XDeviceSerialPortTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xdata") == 0)
         return XDataTest_runAll() ? 0 : 1;
-#if DEMOTEST && XPROPERTY_ON
+#if DEMOTEST_ON && XPROPERTY_ON
     if (strcmp(testPath, "xproperty") == 0)
     {
         XPropertyTestAll();
@@ -90,7 +91,7 @@ static int main_run_test_path(const char* testPath)
         return XMqttTcpClientProcess_run() ? 0 : 1;
     if (strcmp(testPath, "xmqtt-tcp-interop") == 0)
         return XMqttTcpInteropTest_run() ? 0 : 1;
-#if DEMOTEST && XS7_ON
+#if DEMOTEST_ON && XS7_ON
     if (strcmp(testPath, "xs7-unit") == 0)
         return XS7Test_runAll() ? 0 : 1;
     /* S7 集成测试：目标 PLC IP 由环境变量 XS7_PLC_IP 指定（默认 192.168.1.251） */
@@ -146,6 +147,15 @@ int main(int argc, char* args[])
     XStringList* arguments;
     int result = 0;
 
+#if XUPGRADE_ON
+    /* XUpgrade 接线：--xupgrade-apply 分流到 apply 桩（该桩无头文件，extern 原型见 XUpgradeApplyStub.c） */
+    extern int XUpgradeApplyStub_main(int argc, char* argv[]);
+    for (int i = 1; i < argc; ++i)
+        if (strcmp(args[i], "--xupgrade-apply") == 0)
+            return XUpgradeApplyStub_main(argc, args);
+    XUpgrade_selfCheck(); /* 启动自检（GUI 与引擎初始化之前）：失败内部自动回滚，不阻塞启动 */
+#endif
+
     setvbuf(stdout, NULL, _IONBF, 0);
     XPrintf("=== XinYueC 启动 ===\n");
     app = XCoreApplication_create(argc, args);
@@ -156,15 +166,15 @@ int main(int argc, char* args[])
         XClassDelete(app);
         return 1;
     }
-    XCommandLineParser_setApplicationDescription(parser, "XinYueC 控制台");
-    option = XCommandLineOption_createFull("t", "直接运行指定测试", "test-path", NULL);
+    XCommandLineParser_setApplicationDescription_2(parser, "XinYueC 控制台");
+    option = XCommandLineOption_createFull_2("t", "直接运行指定测试", "test-path", NULL);
     if (!option) {
         if (option) XCommandLineOption_delete(option);
         XCommandLineParser_delete(parser);
         XClassDelete(app);
         return 1;
     }
-    XCommandLineOption_addName(option, "test");
+    XCommandLineOption_addName_2(option, "test");
     if (!XCommandLineParser_addOption(parser, option)) {
         XCommandLineOption_delete(option);
         XCommandLineParser_delete(parser);
@@ -172,14 +182,14 @@ int main(int argc, char* args[])
         return 1;
     }
     XCommandLineOption_delete(option);
-    option = XCommandLineOption_createFull("l", "列出测试命令", NULL, NULL);
+    option = XCommandLineOption_createFull_2("l", "列出测试命令", NULL, NULL);
     if (!option) {
         if (option) XCommandLineOption_delete(option);
         XCommandLineParser_delete(parser);
         XClassDelete(app);
         return 1;
     }
-    XCommandLineOption_addName(option, "list");
+    XCommandLineOption_addName_2(option, "list");
     if (!XCommandLineParser_addOption(parser, option)) {
         XCommandLineOption_delete(option);
         XCommandLineParser_delete(parser);
@@ -206,8 +216,8 @@ int main(int argc, char* args[])
             XClassDelete(app);
             return 1;
         }
-        if (XCommandLineParser_isSet(parser, "help") ||
-            XCommandLineParser_isSet(parser, "h")) {
+        if (XCommandLineParser_isSet_2(parser, "help") ||
+            XCommandLineParser_isSet_2(parser, "h")) {
             XString* help = XCommandLineParser_helpText(parser);
             if (help) {
                 XPrintf("%s\n", XString_toUtf8(help));
@@ -218,17 +228,17 @@ int main(int argc, char* args[])
             XClassDelete(app);
             return 0;
         }
-        if (XCommandLineParser_isSet(parser, "list") ||
-            XCommandLineParser_isSet(parser, "l")) {
+        if (XCommandLineParser_isSet_2(parser, "list") ||
+            XCommandLineParser_isSet_2(parser, "l")) {
             main_print_test_list();
             XClassDelete(arguments);
             XCommandLineParser_delete(parser);
             XClassDelete(app);
             return 0;
         }
-        if (XCommandLineParser_isSet(parser, "test") ||
-            XCommandLineParser_isSet(parser, "t")) {
-            result = main_run_test_path(XCommandLineParser_value(parser, "test"));
+        if (XCommandLineParser_isSet_2(parser, "test") ||
+            XCommandLineParser_isSet_2(parser, "t")) {
+            result = main_run_test_path(XCommandLineParser_value_2(parser, "test"));
             XClassDelete(arguments);
             XCommandLineParser_delete(parser);
             XClassDelete(app);

@@ -2,409 +2,22 @@
 #include "XVariant.h"
 #include "XVariantTypeOps.h"
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
 #include <limits.h>
 #include "XStringList.h"
 #include "XStringView.h"
 #include "XCryptographic.h"
+#include "XStringUtils.h"  /* XStrlen 等字符串原语（外部依赖约束：strlen 用库内 API 替代） */
 
 XVARIANT_TYPE_OPS_DEFINE(XString, sizeof(XString), XClass_copy_base,
 	XClass_move_base, XString_clear_base, XClass_deinit_base,
 	XString_compare, "XString");
 
-XVariant* XString_toVariant(const XString* str)
-{
-	XVariant* var;
-	if (!str)
-		return NULL;
-	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
-	if (!var)
-		return NULL;
-	XString_init((XString*)XVariant_data(var));
-	XClassCopy(XVariant_data(var), str);
-	return var;
-}
-
-XVariant* XString_toVariant_move(XString* str)
-{
-	XVariant* var;
-	if (!str)
-		return NULL;
-	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
-	if (!var)
-		return NULL;
-	XString_init((XString*)XVariant_data(var));
-	XClassMove(XVariant_data(var), str);
-	return var;
-}
-
-XVariant* XString_toVariant_ref(XString* str)
-{
-	XVariant* var;
-	if (!str)
-		return NULL;
-	var = XVariant_create(NULL, 0, XVariantType_String);
-	if (!var)
-		return NULL;
-	XVariant_setDataRef(var, str, sizeof(XString), XVariantType_String);
-	return var;
-}
-
-XVariant* XString_toVariant_utf8(const char* utf8)
-{
-	XVariant* var;
-	if (!utf8)
-		return NULL;
-	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
-	if (!var)
-		return NULL;
-	XString_init((XString*)XVariant_data(var));
-	XString_assign_utf8(XVariant_data(var), utf8);
-	return var;
-}
-
-XString* XString_fromVariant(const XVariant* var)
-{
-	return XString_create_copy(XString_fromVariant_ref(var));
-}
-
-const XString* XString_fromVariant_const(const XVariant* var)
-{
-	return (const XString*)XVariant_toRef(var, XVariantType_String);
-}
-
-XString* XString_fromVariant_ref(const XVariant* var)
-{
-	return (XString*)XString_fromVariant_const(var);
-}
-
-static bool XString_prepareVariant(XVariant* var)
-{
-	if (!var)
-		return false;
-	if (var->m_type != XVariantType_String)
-	{
-		XClassDeinit(var);
-		var->m_data = XMalloc_System(sizeof(XString));
-		if (!var->m_data)
-		{
-			var->m_dataSize = 0;
-			return false;
-		}
-		var->m_dataSize = sizeof(XString);
-		XString_init((XString*)var->m_data);
-		var->m_type = XVariantType_String;
-	}
-	else if (!var->m_data || var->m_dataSize != sizeof(XString))
-	{
-		if (var->m_data)
-			XClassDeinit(var);
-		var->m_data = XMalloc_System(sizeof(XString));
-		if (!var->m_data)
-		{
-			var->m_dataSize = 0;
-			return false;
-		}
-		var->m_dataSize = sizeof(XString);
-		XString_init((XString*)var->m_data);
-	}
-	return true;
-}
-
-void XString_setVariant(XVariant* var, const XString* str)
-{
-	if (!str || !XString_prepareVariant(var))
-		return;
-	XClassCopy(XVariant_data(var), str);
-}
-
-void XString_setVariant_move(XVariant* var, XString* str)
-{
-	if (!str || !XString_prepareVariant(var))
-		return;
-	XClassMove(XVariant_data(var), str);
-}
-
-void XString_setVariant_ref(XVariant* var, XString* str)
-{
-	if (!var || !str)
-		return;
-	XVariant_setDataRef(var, str, sizeof(XString), XVariantType_String);
-}
-
-void XString_setVariant_utf8(XVariant* var, const char* utf8)
-{
-	if (!utf8 || !XString_prepareVariant(var))
-		return;
-	XString_assign_utf8(XVariant_data(var), utf8);
-}
 #if XRegularExpression_ON
 #include "XCryptographic.h"
 #include "XRegularExpression.h"
 #endif
-
-#if XRegularExpression_ON
-
-static XString* XString_regularExpression_substring(const XString* str, size_t pos, size_t length)
-{
-    if (length == 0) return XString_create();
-    return XString_mid(str, pos, length);
-}
-
-static bool XString_append_match_replacement(XString* result, const XString* after,
-                                              const XRegularExpressionMatch* match)
-{
-    if (!result || !after || !match) return false;
-    const XChar* data = XString_unicode(after);
-    size_t length = XString_size_base(after);
-    int captureCount = XRegularExpressionMatch_lastCapturedIndex(match);
-    for (size_t i = 0; i < length; ++i) {
-        if (data && data[i] == '\\' && i + 1 < length &&
-                data[i + 1] >= '0' && data[i + 1] <= '9') {
-            int index = (int)(data[i + 1] - '0');
-            size_t consumed = 0;
-            if (index > 0 && index <= captureCount) {
-                consumed = 1;
-                if (i + 2 < length && data[i + 2] >= '0' && data[i + 2] <= '9') {
-                    int twoDigitIndex = index * 10 + (int)(data[i + 2] - '0');
-                    if (twoDigitIndex <= captureCount) {
-                        index = twoDigitIndex;
-                        consumed = 2;
-                    }
-                }
-            }
-            if (consumed) {
-                XString* captured = XRegularExpressionMatch_captured(match, index);
-                if (!captured) return false;
-                if (!XString_append(result, captured)) {
-                    XClassDelete(captured);
-                    return false;
-                }
-                XClassDelete(captured);
-                i += consumed;
-                continue;
-            }
-        }
-        if (!XString_append_char(result, data ? data[i] : 0)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-int64_t XString_indexOf_regularExpression(const XString* str,
-                                          const XRegularExpression* expression,
-                                          int64_t from,
-                                          XRegularExpressionMatch* match)
-{
-    if (!str || !expression) return -1;
-    XRegularExpressionMatch* result = XRegularExpression_match(
-            expression, str, from, XRegularExpression_NormalMatch,
-            XRegularExpression_NoMatchOption);
-    if (!result) return -1;
-    bool hasMatch = XRegularExpressionMatch_hasMatch(result);
-    int64_t position = hasMatch ?
-            XRegularExpressionMatch_capturedStart(result, 0) : -1;
-    if (match && hasMatch) XClassCopy(match, result);
-    XClassDelete(result);
-    return position;
-}
-
-int64_t XString_lastIndexOf_regularExpression(const XString* str,
-                                               const XRegularExpression* expression,
-                                               int64_t from,
-                                               XRegularExpressionMatch* match)
-{
-    if (!str || !expression) return -1;
-    int64_t length = (int64_t)XString_size_base(str);
-    int64_t endPosition;
-    if (from < 0) {
-        endPosition = length + from + 1;
-    } else if (from >= length) {
-        endPosition = length + 1;
-    } else {
-        endPosition = from + 1;
-    }
-    XRegularExpressionMatchIterator* iterator = XRegularExpression_globalMatch(
-            expression, str, 0, XRegularExpression_NormalMatch,
-            XRegularExpression_NoMatchOption);
-    if (!iterator) return -1;
-
-    int64_t resultPosition = -1;
-    XRegularExpressionMatch* last = NULL;
-    while (XRegularExpressionMatchIterator_hasNext(iterator)) {
-        XRegularExpressionMatch* current = XRegularExpressionMatchIterator_next(iterator);
-        if (!current) break;
-        int64_t position = XRegularExpressionMatch_capturedStart(current, 0);
-        if (position < 0 || position >= endPosition) {
-            XClassDelete(current);
-            break;
-        }
-        if (last) XClassDelete(last);
-        last = current;
-        resultPosition = position;
-    }
-    if (match && last) XClassCopy(match, last);
-    if (last) XClassDelete(last);
-    XClassDelete(iterator);
-    return resultPosition;
-}
-
-bool XString_contains_regularExpression(const XString* str,
-                                        const XRegularExpression* expression)
-{
-    return XString_contains_regularExpression_2(str, expression, NULL);
-}
-
-bool XString_contains_regularExpression_2(const XString* str,
-                                          const XRegularExpression* expression,
-                                          XRegularExpressionMatch* match)
-{
-    return XString_indexOf_regularExpression(str, expression, 0, match) >= 0;
-}
-
-size_t XString_count_regularExpression(const XString* str,
-                                       const XRegularExpression* expression)
-{
-    if (!str || !expression) return 0;
-    size_t count = 0;
-    int64_t index = -1;
-    int64_t length = (int64_t)XString_size_base(str);
-    const XChar* data = XString_unicode(str);
-    while (index <= length - 1) {
-        XRegularExpressionMatch* match = XRegularExpression_match(
-                expression, str, index + 1, XRegularExpression_NormalMatch,
-                XRegularExpression_NoMatchOption);
-        if (!match) break;
-        if (!XRegularExpressionMatch_hasMatch(match)) {
-            XClassDelete(match);
-            break;
-        }
-        ++count;
-        index = XRegularExpressionMatch_capturedStart(match, 0);
-        if (index >= 0 && index < length && data && XChar_isHighSurrogate(data[index]))
-            ++index;
-        XClassDelete(match);
-    }
-    return count;
-}
-
-bool XString_replace_regularExpression(XString* str,
-                                       const XRegularExpression* expression,
-                                       const XString* after)
-{
-    if (!str || !expression || !after) return false;
-    XRegularExpressionMatchIterator* iterator = XRegularExpression_globalMatch(
-            expression, str, 0, XRegularExpression_NormalMatch,
-            XRegularExpression_NoMatchOption);
-    if (!iterator) return false;
-    XString result;
-    XString_init(&result);
-    size_t cursor = 0;
-    bool replaced = false;
-    while (XRegularExpressionMatchIterator_hasNext(iterator)) {
-        XRegularExpressionMatch* match = XRegularExpressionMatchIterator_next(iterator);
-        if (!match) break;
-        int64_t start = XRegularExpressionMatch_capturedStart(match, 0);
-        int64_t end = XRegularExpressionMatch_capturedEnd(match, 0);
-        if (start < 0 || end < start || (size_t)start < cursor) {
-            XClassDelete(match);
-            XClassDeinit(&result);
-            XClassDelete(iterator);
-            return false;
-        }
-        XString* prefix = XString_regularExpression_substring(str, cursor, (size_t)start - cursor);
-        bool ok = prefix && XString_append(&result, prefix);
-        if (prefix) XClassDelete(prefix);
-        if (ok) ok = XString_append_match_replacement(&result, after, match);
-        if (!ok) {
-            XClassDelete(match);
-            XClassDeinit(&result);
-            XClassDelete(iterator);
-            return false;
-        }
-        cursor = (size_t)end;
-        replaced = true;
-        XClassDelete(match);
-    }
-    XClassDelete(iterator);
-    if (!replaced) {
-        XClassDeinit(&result);
-        return true;
-    }
-
-    XString* suffix = XString_regularExpression_substring(
-            str, cursor, XString_size_base(str) - cursor);
-    if (!suffix || !XString_append(&result, suffix)) {
-        if (suffix) XClassDelete(suffix);
-        XClassDeinit(&result);
-        return false;
-    }
-    XClassDelete(suffix);
-    XClassMove(str, &result);
-    XClassDeinit(&result);
-    return true;
-}
-
-bool XString_remove_regularExpression(XString* str,
-                                      const XRegularExpression* expression)
-{
-    if (!str || !expression) return false;
-    XString* empty = XString_create();
-    if (!empty) return false;
-    bool result = XString_replace_regularExpression(str, expression, empty);
-    XClassDelete(empty);
-    return result;
-}
-
-XStringList* XString_split_regularExpression(const XString* str,
-                                             const XRegularExpression* separator,
-                                             bool keepEmptyParts)
-{
-    if (!str || !separator) return NULL;
-    XStringList* result = XStringList_create();
-    if (!result) return NULL;
-    if (!XRegularExpression_isValid(separator)) return result;
-    XRegularExpressionMatchIterator* iterator = XRegularExpression_globalMatch(
-            separator, str, 0, XRegularExpression_NormalMatch,
-            XRegularExpression_NoMatchOption);
-    if (!iterator) {
-        XClassDelete(result);
-        return NULL;
-    }
-
-    size_t cursor = 0;
-    while (XRegularExpressionMatchIterator_hasNext(iterator)) {
-        XRegularExpressionMatch* match = XRegularExpressionMatchIterator_next(iterator);
-        if (!match) break;
-        int64_t start = XRegularExpressionMatch_capturedStart(match, 0);
-        int64_t end = XRegularExpressionMatch_capturedEnd(match, 0);
-        if (start < 0 || end < start || (size_t)start < cursor) {
-            XClassDelete(match);
-            XClassDelete(iterator);
-            XClassDelete(result);
-            return NULL;
-        }
-        XString* part = XString_regularExpression_substring(str, cursor, (size_t)start - cursor);
-        if (part && (keepEmptyParts || !XString_isEmpty_base(part)))
-            XStringList_push_back_base(result, part);
-        if (part) XClassDelete(part);
-        cursor = (size_t)end;
-        XClassDelete(match);
-    }
-    XClassDelete(iterator);
-
-    XString* tail = XString_regularExpression_substring(
-            str, cursor, XString_size_base(str) - cursor);
-    if (tail && (keepEmptyParts || !XString_isEmpty_base(tail)))
-        XStringList_push_back_base(result, tail);
-    if (tail) XClassDelete(tail);
-    return result;
-}
-
-#endif /* XRegularExpression_ON */
 
 // 内部常量定义
 #define UTF8_CACHE_SIZE 1024  // 初始UTF-8缓存大小
@@ -493,6 +106,11 @@ static int64_t kmp_search(const XChar* text, size_t n,const XChar* pattern, size
 //初始化缓存
 static void XString_initCache(XString* str);
 
+#if XRegularExpression_ON
+// 辅助函数：正则子串提取（实现见文件末正则功能段）
+static XString* XString_regularExpression_substring(const XString* str, size_t pos, size_t length);
+#endif
+
 XString* XString_create()
 {
     return XString_create_utf8(NULL);
@@ -527,7 +145,7 @@ XString* XString_create_move(XString* other)
 // 字符串创建函数
 XString* XString_create_utf8(const char* utf8_str) 
 {
-    return XString_create_with_length_utf8(utf8_str, utf8_str ? strlen(utf8_str) : 0);
+    return XString_create_with_length_utf8(utf8_str, utf8_str ? XStrlen(utf8_str) : 0);
 }
 
 XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
@@ -535,7 +153,7 @@ XString* XString_create_with_length_utf8(const char* utf8_str, size_t len)
     XString* str = (XString*)XClass_Malloc(XString);
     if (!str) return NULL;
     XString_init(str);
-    size_t actual_len = (len == 0 && utf8_str) ? strlen(utf8_str) : len;
+    size_t actual_len = (len == 0 && utf8_str) ? XStrlen(utf8_str) : len;
     if (utf8_str && actual_len > 0)
     {
         int xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str,len, NULL, 0);
@@ -587,6 +205,9 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
     xchar_count = XChar_fromUtf16Stream(utf16_str, len, data, (size_t)xchar_count + 1);
 
     if (xchar_count <= 0) {
+        /* 失败路径同样按堆对象释放：str 由 XClass_Malloc 分配，须先置堆标记，
+           否则 XClassDelete 因 m_is_heap=false 只 deinit 不释放结构体外壳，造成泄漏。 */
+        Set_Class_IsHeap(str, true);
         XClassDelete(str);
         return NULL;
     }
@@ -604,7 +225,7 @@ XString* XString_create_with_length_utf16(const uint16_t* utf16_str, size_t len)
 XString* XString_create_latin1(const char* latin1_str)
 {
     if (!latin1_str) return NULL;
-    return XString_create_with_length_latin1((const uint8_t*)latin1_str, strlen(latin1_str));
+    return XString_create_with_length_latin1((const uint8_t*)latin1_str, XStrlen(latin1_str));
 }
 
 XString* XString_create_with_length_latin1(const uint8_t* latin1, size_t len)
@@ -752,6 +373,9 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
         default_memory->free(temp_gbk); // 转换完成后释放临时缓冲区
 
     if (xchar_count <= 0) {
+        /* 失败路径同样按堆对象释放：str 由 XClass_Malloc 分配，须先置堆标记，
+           否则 XClassDelete 因 m_is_heap=false 只 deinit 不释放结构体外壳，造成泄漏。 */
+        Set_Class_IsHeap(str, true);
         XClassDelete(str);
         return NULL;
     }
@@ -765,7 +389,7 @@ XString* XString_create_with_length_gbk(const char* gbk_str, size_t len)
     return str;
 }
 
-XString* XString_create_fmt_utf8(const char* format, ...) 
+XString* XString_create_fmt_utf8(const char* format, ...)
 {
     if (!format) return NULL;
 
@@ -826,6 +450,50 @@ void XString_init(XString* str)
     XContainerSetDataPtr(str, NULL);
     str->m_cache = NULL;
     XClassSetVtable(str,XString);
+}
+
+// ==================== 虚函数调度函数（*_base：只查表分派，不写业务逻辑） ====================
+
+bool XString_remove_base(XString* str, size_t pos, size_t len) {
+    if (ISNULL(str, "") || ISNULL(XClassGetVtable(str), ""))
+        return false;
+    return XClassGetVirtualFunc(str, EXString_Remove, bool (*)(XString*, size_t, size_t))(str, pos, len);
+}
+
+void XString_erase_base(XString* str, const XString_iterator* it, XString_iterator* next)
+{
+    if (ISNULL(str, "") || ISNULL(XClassGetVtable(str), "") || !it)
+        return ;
+    XClassGetVirtualFunc(str, EXString_Erase, bool (*)(XString*, const XString_iterator*,XString_iterator*))(str, it, next);
+}
+
+
+// 尾插单个XChar
+bool XString_push_back_base(XString* str, XChar ch) {
+    if (ISNULL(str, "") || ISNULL(XClassGetVtable(str), ""))
+        return false;
+    return XClassGetVirtualFunc(str, EXString_PushBack, bool(*)(XString*, XChar))(str, ch);
+}
+
+// 尾删一个字符
+bool XString_pop_back_base(XString* str) {
+    if (ISNULL(str, "") || ISNULL(XClassGetVtable(str), ""))
+        return false;
+    return XClassGetVirtualFunc(str, EXString_PopBack, bool(*)(XString*))(str);
+}
+
+// 头插单个XChar
+bool XString_push_front_base(XString* str, XChar ch) {
+    if (ISNULL(str, "") || ISNULL(XClassGetVtable(str), ""))
+        return false;
+    return XClassGetVirtualFunc(str, EXString_PushFront, bool(*)(XString*, XChar))(str, ch);
+}
+
+// 头删一个字符
+bool XString_pop_front_base(XString* str) {
+    if (ISNULL(str, "") || ISNULL(XClassGetVtable(str), ""))
+        return false;
+    return XClassGetVirtualFunc(str, EXString_PopFront, bool(*)(XString*))(str);
 }
 
 const char* XString_toUtf8(const XString* str)
@@ -1022,9 +690,11 @@ size_t XString_toLocal_length(const XString* str)
     return 0;
 }
 
-XChar XString_at(const XString* str, size_t index) 
+XChar XString_at(const XString* str, size_t index)
 {
-    if (!str || index >= XString_length_base(str)) 
+    if (ISNULL(str, "") || ISNULL(XClassGetVtable(str), ""))
+        return 0;
+    if (index >= XString_length_base(str))
         return 0;
     return XClassGetVirtualFunc(str, EXString_At, XChar(*)(const XString*, size_t))(str, index);
 }
@@ -1423,128 +1093,6 @@ bool XString_insert_utf8(XString* str, size_t pos, const char* utf8_str)
     return true;
 }
 
-bool XString_remove_base(XString* str, size_t pos, size_t len) {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_Remove, bool (*)(XString*, size_t, size_t))(str, pos, len);
-}
-
-void XString_erase_base(XString* str, const XString_iterator* it, XString_iterator* next)
-{
-    if (!str||!it) return ;
-    XClassGetVirtualFunc(str, EXString_Erase, bool (*)(XString*, const XString_iterator*,XString_iterator*))(str, it, next);
-}
-
-bool XString_replace(XString* str, const XString* before, const XString* after, XChar_CaseSensitivity cs)
-{
-    if (!str || !before || !after) return false;
-
-    size_t before_len = XString_length_base(before);
-    if (before_len == 0) return false; // 不处理空替换串
-
-    size_t after_len = XString_length_base(after);
-    const XChar* before_data = XString_cdata(before);
-    const XChar* text = XString_cdata(str);
-    size_t text_len = XString_length_base(str);
-
-    // 预计算前缀表（KMP算法）
-    int* prefix = (int*)XContainer_malloc(str, before_len * sizeof(int));
-    if (!prefix) return false;
-    compute_prefix(before_data, before_len, prefix, cs);
-
-    // 分离共享数据，确保可修改
-    XString_detach(str);
-
-    int64_t pos = 0;
-    bool replaced = false;
-
-    // 循环查找并替换所有匹配
-    while (pos != -1) {
-        // 在当前位置继续查找
-        pos = kmp_search(text, text_len, before_data, before_len, prefix, cs, (size_t)pos);
-        if (pos == -1) break;
-
-        // 执行替换操作
-        // 1. 移除原子串
-        if (!XString_remove_base(str, (size_t)pos, before_len)) 
-        {
-            XContainer_free(str, prefix);
-            return false;
-        }
-
-        // 2. 插入新子串
-        if (!XString_insert(str, (size_t)pos, after)) 
-        {
-            XContainer_free(str, prefix);
-            return false;
-        }
-
-        replaced = true;
-        // 更新文本数据和长度（替换后字符串已变化）
-        text = XString_cdata(str);
-        text_len = XString_length_base(str);
-        // 计算下一次查找起始位置
-        pos += after_len;
-    }
-
-    XContainer_free(str, prefix);
-    return replaced; // 即使没有替换也返回true（操作成功但无匹配）
-}
-
-bool XString_replace_utf8(XString* str, const char* before, const char* after, XChar_CaseSensitivity cs)
-{
-    if (!str || !before || !after) return false;
-
-    XString* before_str = XString_create_utf8(before);
-    XString* after_str = XString_create_utf8(after);
-    if (!before_str || !after_str) {
-        XClassDelete(before_str);
-        XClassDelete(after_str);
-        return false;
-    }
-
-    size_t before_len = XString_length_base(before_str);
-    size_t after_len = XString_length_base(after_str);
-    if (before_len == 0) {
-        XClassDelete(before_str);
-        XClassDelete(after_str);
-        return false;
-    }
-
-    int64_t pos = XString_indexOf_utf8(str, before, 0, cs);
-    while (pos != -1) {
-        if (!XString_remove_base(str, (size_t)pos, before_len)) break;
-        if (!XString_insert_utf8(str, (size_t)pos, after)) break;
-        pos = XString_indexOf_utf8(str, before, (size_t)pos + after_len, cs);
-    }
-
-    XClassDelete(before_str);
-    XClassDelete(after_str);
-    return true;
-}
-
-// 尾插单个XChar
-bool XString_push_back_base(XString* str, XChar ch) {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_PushBack, bool(*)(XString*, XChar))(str, ch);
-}
-
-// 尾删一个字符
-bool XString_pop_back_base(XString* str) {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_PopBack, bool(*)(XString*))(str);
-}
-
-// 头插单个XChar
-bool XString_push_front_base(XString* str, XChar ch) {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_PushFront, bool(*)(XString*, XChar))(str, ch);
-}
-
-// 头删一个字符
-bool XString_pop_front_base(XString* str) {
-    if (!str) return false;
-    return XClassGetVirtualFunc(str, EXString_PopFront, bool(*)(XString*))(str);
-}
 //查找算法
 // 辅助函数：计算KMP前缀表
 void compute_prefix(const XChar* pattern, size_t m, int* prefix, XChar_CaseSensitivity cs) 
@@ -2279,7 +1827,7 @@ XStringList* XString_split_utf8(const XString* str, const char* delimiter, XChar
 
     size_t current_pos = 0;
     const size_t str_len = XString_length_base(str);
-    const size_t delimiter_len = strlen(delimiter);
+    const size_t delimiter_len = XStrlen(delimiter);
 
     // 空分隔符特殊处理（按字符拆分）
     if (delimiter_len == 0) {
@@ -2341,7 +1889,7 @@ XStringList* XString_split_limit_utf8(const XString* str, const char* delimiter,
 
     size_t current_pos = 0;
     const size_t str_len = XString_length_base(str);
-    const size_t delimiter_len = strlen(delimiter);
+    const size_t delimiter_len = XStrlen(delimiter);
     size_t split_count = 0;
 
     // 空分隔符特殊处理（按字符拆分，限制次数）
@@ -3432,5 +2980,492 @@ int32_t XString_localeAwareCompare(const XString* str1, const XString* str2)
     const char* l2 = XString_toLocal(str2);
     if (!l1) l1 = "";
     if (!l2) l2 = "";
-    return (int32_t)strcoll(l1, l2);
+    /* 外部依赖约束：string.h 白名单仅限四个内存原语，strcoll 不在其中；
+       库内无 locale/排序模块，区域感知比较回退为 XStrcmp 按无符号字节序
+       比较（C locale 下 strcoll 与 strcmp 语义一致）。 */
+    return (int32_t)XStrcmp(l1, l2);
+}
+
+// ==================== 功能函数：Variant 转换 / 正则表达式 / 字符串替换 ====================
+// （段序⑧：功能函数统一置于构造函数与 *_base 调度函数之后，见文件组织规范）
+
+XVariant* XString_toVariant(const XString* str)
+{
+	XVariant* var;
+	if (!str)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
+	if (!var)
+		return NULL;
+	XString_init((XString*)XVariant_data(var));
+	XClassCopy(XVariant_data(var), str);
+	return var;
+}
+
+XVariant* XString_toVariant_move(XString* str)
+{
+	XVariant* var;
+	if (!str)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
+	if (!var)
+		return NULL;
+	XString_init((XString*)XVariant_data(var));
+	XClassMove(XVariant_data(var), str);
+	return var;
+}
+
+XVariant* XString_toVariant_ref(XString* str)
+{
+	XVariant* var;
+	if (!str)
+		return NULL;
+	var = XVariant_create(NULL, 0, XVariantType_String);
+	if (!var)
+		return NULL;
+	XVariant_setDataRef(var, str, sizeof(XString), XVariantType_String);
+	return var;
+}
+
+XVariant* XString_toVariant_utf8(const char* utf8)
+{
+	XVariant* var;
+	if (!utf8)
+		return NULL;
+	var = XVariant_create(NULL, sizeof(XString), XVariantType_String);
+	if (!var)
+		return NULL;
+	XString_init((XString*)XVariant_data(var));
+	XString_assign_utf8(XVariant_data(var), utf8);
+	return var;
+}
+
+XString* XString_fromVariant(const XVariant* var)
+{
+	return XString_create_copy(XString_fromVariant_ref(var));
+}
+
+const XString* XString_fromVariant_const(const XVariant* var)
+{
+	return (const XString*)XVariant_toRef(var, XVariantType_String);
+}
+
+XString* XString_fromVariant_ref(const XVariant* var)
+{
+	return (XString*)XString_fromVariant_const(var);
+}
+
+static bool XString_prepareVariant(XVariant* var)
+{
+	if (!var)
+		return false;
+	if (var->m_type != XVariantType_String)
+	{
+		XClassDeinit(var);
+		var->m_data = XMalloc_System(sizeof(XString));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XString);
+		XString_init((XString*)var->m_data);
+		var->m_type = XVariantType_String;
+	}
+	else if (!var->m_data || var->m_dataSize != sizeof(XString))
+	{
+		if (var->m_data)
+			XClassDeinit(var);
+		var->m_data = XMalloc_System(sizeof(XString));
+		if (!var->m_data)
+		{
+			var->m_dataSize = 0;
+			return false;
+		}
+		var->m_dataSize = sizeof(XString);
+		XString_init((XString*)var->m_data);
+	}
+	return true;
+}
+
+void XString_setVariant(XVariant* var, const XString* str)
+{
+	if (!str || !XString_prepareVariant(var))
+		return;
+	XClassCopy(XVariant_data(var), str);
+}
+
+void XString_setVariant_move(XVariant* var, XString* str)
+{
+	if (!str || !XString_prepareVariant(var))
+		return;
+	XClassMove(XVariant_data(var), str);
+}
+
+void XString_setVariant_ref(XVariant* var, XString* str)
+{
+	if (!var || !str)
+		return;
+	XVariant_setDataRef(var, str, sizeof(XString), XVariantType_String);
+}
+
+void XString_setVariant_utf8(XVariant* var, const char* utf8)
+{
+	if (!utf8 || !XString_prepareVariant(var))
+		return;
+	XString_assign_utf8(XVariant_data(var), utf8);
+}
+
+#if XRegularExpression_ON
+
+static XString* XString_regularExpression_substring(const XString* str, size_t pos, size_t length)
+{
+    if (length == 0) return XString_create();
+    return XString_mid(str, pos, length);
+}
+
+static bool XString_append_match_replacement(XString* result, const XString* after,
+                                              const XRegularExpressionMatch* match)
+{
+    if (!result || !after || !match) return false;
+    const XChar* data = XString_unicode(after);
+    size_t length = XString_size_base(after);
+    int captureCount = XRegularExpressionMatch_lastCapturedIndex(match);
+    for (size_t i = 0; i < length; ++i) {
+        if (data && data[i] == '\\' && i + 1 < length &&
+                data[i + 1] >= '0' && data[i + 1] <= '9') {
+            int index = (int)(data[i + 1] - '0');
+            size_t consumed = 0;
+            if (index > 0 && index <= captureCount) {
+                consumed = 1;
+                if (i + 2 < length && data[i + 2] >= '0' && data[i + 2] <= '9') {
+                    int twoDigitIndex = index * 10 + (int)(data[i + 2] - '0');
+                    if (twoDigitIndex <= captureCount) {
+                        index = twoDigitIndex;
+                        consumed = 2;
+                    }
+                }
+            }
+            if (consumed) {
+                XString* captured = XRegularExpressionMatch_captured(match, index);
+                if (!captured) return false;
+                if (!XString_append(result, captured)) {
+                    XClassDelete(captured);
+                    return false;
+                }
+                XClassDelete(captured);
+                i += consumed;
+                continue;
+            }
+        }
+        if (!XString_append_char(result, data ? data[i] : 0)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int64_t XString_indexOf_regularExpression(const XString* str,
+                                          const XRegularExpression* expression,
+                                          int64_t from,
+                                          XRegularExpressionMatch* match)
+{
+    if (!str || !expression) return -1;
+    XRegularExpressionMatch* result = XRegularExpression_match(
+            expression, str, from, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    if (!result) return -1;
+    bool hasMatch = XRegularExpressionMatch_hasMatch(result);
+    int64_t position = hasMatch ?
+            XRegularExpressionMatch_capturedStart(result, 0) : -1;
+    if (match && hasMatch) XClassCopy(match, result);
+    XClassDelete(result);
+    return position;
+}
+
+int64_t XString_lastIndexOf_regularExpression(const XString* str,
+                                               const XRegularExpression* expression,
+                                               int64_t from,
+                                               XRegularExpressionMatch* match)
+{
+    if (!str || !expression) return -1;
+    int64_t length = (int64_t)XString_size_base(str);
+    int64_t endPosition;
+    if (from < 0) {
+        endPosition = length + from + 1;
+    } else if (from >= length) {
+        endPosition = length + 1;
+    } else {
+        endPosition = from + 1;
+    }
+    XRegularExpressionMatchIterator* iterator = XRegularExpression_globalMatch(
+            expression, str, 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    if (!iterator) return -1;
+
+    int64_t resultPosition = -1;
+    XRegularExpressionMatch* last = NULL;
+    while (XRegularExpressionMatchIterator_hasNext(iterator)) {
+        XRegularExpressionMatch* current = XRegularExpressionMatchIterator_next(iterator);
+        if (!current) break;
+        int64_t position = XRegularExpressionMatch_capturedStart(current, 0);
+        if (position < 0 || position >= endPosition) {
+            XClassDelete(current);
+            break;
+        }
+        if (last) XClassDelete(last);
+        last = current;
+        resultPosition = position;
+    }
+    if (match && last) XClassCopy(match, last);
+    if (last) XClassDelete(last);
+    XClassDelete(iterator);
+    return resultPosition;
+}
+
+bool XString_contains_regularExpression(const XString* str,
+                                        const XRegularExpression* expression)
+{
+    return XString_contains_regularExpression_2(str, expression, NULL);
+}
+
+bool XString_contains_regularExpression_2(const XString* str,
+                                          const XRegularExpression* expression,
+                                          XRegularExpressionMatch* match)
+{
+    return XString_indexOf_regularExpression(str, expression, 0, match) >= 0;
+}
+
+size_t XString_count_regularExpression(const XString* str,
+                                       const XRegularExpression* expression)
+{
+    if (!str || !expression) return 0;
+    size_t count = 0;
+    int64_t index = -1;
+    int64_t length = (int64_t)XString_size_base(str);
+    const XChar* data = XString_unicode(str);
+    while (index <= length - 1) {
+        XRegularExpressionMatch* match = XRegularExpression_match(
+                expression, str, index + 1, XRegularExpression_NormalMatch,
+                XRegularExpression_NoMatchOption);
+        if (!match) break;
+        if (!XRegularExpressionMatch_hasMatch(match)) {
+            XClassDelete(match);
+            break;
+        }
+        ++count;
+        index = XRegularExpressionMatch_capturedStart(match, 0);
+        if (index >= 0 && index < length && data && XChar_isHighSurrogate(data[index]))
+            ++index;
+        XClassDelete(match);
+    }
+    return count;
+}
+
+bool XString_replace_regularExpression(XString* str,
+                                       const XRegularExpression* expression,
+                                       const XString* after)
+{
+    if (!str || !expression || !after) return false;
+    XRegularExpressionMatchIterator* iterator = XRegularExpression_globalMatch(
+            expression, str, 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    if (!iterator) return false;
+    XString result;
+    XString_init(&result);
+    size_t cursor = 0;
+    bool replaced = false;
+    while (XRegularExpressionMatchIterator_hasNext(iterator)) {
+        XRegularExpressionMatch* match = XRegularExpressionMatchIterator_next(iterator);
+        if (!match) break;
+        int64_t start = XRegularExpressionMatch_capturedStart(match, 0);
+        int64_t end = XRegularExpressionMatch_capturedEnd(match, 0);
+        if (start < 0 || end < start || (size_t)start < cursor) {
+            XClassDelete(match);
+            XClassDeinit(&result);
+            XClassDelete(iterator);
+            return false;
+        }
+        XString* prefix = XString_regularExpression_substring(str, cursor, (size_t)start - cursor);
+        bool ok = prefix && XString_append(&result, prefix);
+        if (prefix) XClassDelete(prefix);
+        if (ok) ok = XString_append_match_replacement(&result, after, match);
+        if (!ok) {
+            XClassDelete(match);
+            XClassDeinit(&result);
+            XClassDelete(iterator);
+            return false;
+        }
+        cursor = (size_t)end;
+        replaced = true;
+        XClassDelete(match);
+    }
+    XClassDelete(iterator);
+    if (!replaced) {
+        XClassDeinit(&result);
+        return true;
+    }
+
+    XString* suffix = XString_regularExpression_substring(
+            str, cursor, XString_size_base(str) - cursor);
+    if (!suffix || !XString_append(&result, suffix)) {
+        if (suffix) XClassDelete(suffix);
+        XClassDeinit(&result);
+        return false;
+    }
+    XClassDelete(suffix);
+    XClassMove(str, &result);
+    XClassDeinit(&result);
+    return true;
+}
+
+bool XString_remove_regularExpression(XString* str,
+                                      const XRegularExpression* expression)
+{
+    if (!str || !expression) return false;
+    XString* empty = XString_create();
+    if (!empty) return false;
+    bool result = XString_replace_regularExpression(str, expression, empty);
+    XClassDelete(empty);
+    return result;
+}
+
+XStringList* XString_split_regularExpression(const XString* str,
+                                             const XRegularExpression* separator,
+                                             bool keepEmptyParts)
+{
+    if (!str || !separator) return NULL;
+    XStringList* result = XStringList_create();
+    if (!result) return NULL;
+    if (!XRegularExpression_isValid(separator)) return result;
+    XRegularExpressionMatchIterator* iterator = XRegularExpression_globalMatch(
+            separator, str, 0, XRegularExpression_NormalMatch,
+            XRegularExpression_NoMatchOption);
+    if (!iterator) {
+        XClassDelete(result);
+        return NULL;
+    }
+
+    size_t cursor = 0;
+    while (XRegularExpressionMatchIterator_hasNext(iterator)) {
+        XRegularExpressionMatch* match = XRegularExpressionMatchIterator_next(iterator);
+        if (!match) break;
+        int64_t start = XRegularExpressionMatch_capturedStart(match, 0);
+        int64_t end = XRegularExpressionMatch_capturedEnd(match, 0);
+        if (start < 0 || end < start || (size_t)start < cursor) {
+            XClassDelete(match);
+            XClassDelete(iterator);
+            XClassDelete(result);
+            return NULL;
+        }
+        XString* part = XString_regularExpression_substring(str, cursor, (size_t)start - cursor);
+        if (part && (keepEmptyParts || !XString_isEmpty_base(part)))
+            XStringList_push_back_base(result, part);
+        if (part) XClassDelete(part);
+        cursor = (size_t)end;
+        XClassDelete(match);
+    }
+    XClassDelete(iterator);
+
+    XString* tail = XString_regularExpression_substring(
+            str, cursor, XString_size_base(str) - cursor);
+    if (tail && (keepEmptyParts || !XString_isEmpty_base(tail)))
+        XStringList_push_back_base(result, tail);
+    if (tail) XClassDelete(tail);
+    return result;
+}
+
+#endif /* XRegularExpression_ON */
+
+bool XString_replace(XString* str, const XString* before, const XString* after, XChar_CaseSensitivity cs)
+{
+    if (!str || !before || !after) return false;
+
+    size_t before_len = XString_length_base(before);
+    if (before_len == 0) return false; // 不处理空替换串
+
+    size_t after_len = XString_length_base(after);
+    const XChar* before_data = XString_cdata(before);
+    const XChar* text = XString_cdata(str);
+    size_t text_len = XString_length_base(str);
+
+    // 预计算前缀表（KMP算法）
+    int* prefix = (int*)XContainer_malloc(str, before_len * sizeof(int));
+    if (!prefix) return false;
+    compute_prefix(before_data, before_len, prefix, cs);
+
+    // 分离共享数据，确保可修改
+    XString_detach(str);
+
+    int64_t pos = 0;
+    bool replaced = false;
+
+    // 循环查找并替换所有匹配
+    while (pos != -1) {
+        // 在当前位置继续查找
+        pos = kmp_search(text, text_len, before_data, before_len, prefix, cs, (size_t)pos);
+        if (pos == -1) break;
+
+        // 执行替换操作
+        // 1. 移除原子串
+        if (!XString_remove_base(str, (size_t)pos, before_len)) 
+        {
+            XContainer_free(str, prefix);
+            return false;
+        }
+
+        // 2. 插入新子串
+        if (!XString_insert(str, (size_t)pos, after)) 
+        {
+            XContainer_free(str, prefix);
+            return false;
+        }
+
+        replaced = true;
+        // 更新文本数据和长度（替换后字符串已变化）
+        text = XString_cdata(str);
+        text_len = XString_length_base(str);
+        // 计算下一次查找起始位置
+        pos += after_len;
+    }
+
+    XContainer_free(str, prefix);
+    return replaced; // 即使没有替换也返回true（操作成功但无匹配）
+}
+
+bool XString_replace_utf8(XString* str, const char* before, const char* after, XChar_CaseSensitivity cs)
+{
+    if (!str || !before || !after) return false;
+
+    XString* before_str = XString_create_utf8(before);
+    XString* after_str = XString_create_utf8(after);
+    if (!before_str || !after_str) {
+        XClassDelete(before_str);
+        XClassDelete(after_str);
+        return false;
+    }
+
+    size_t before_len = XString_length_base(before_str);
+    size_t after_len = XString_length_base(after_str);
+    if (before_len == 0) {
+        XClassDelete(before_str);
+        XClassDelete(after_str);
+        return false;
+    }
+
+    int64_t pos = XString_indexOf_utf8(str, before, 0, cs);
+    while (pos != -1) {
+        /* remove/insert 失败必须上报：设置函数失败返回 false（返回值规范） */
+        if (!XString_remove_base(str, (size_t)pos, before_len) ||
+            !XString_insert_utf8(str, (size_t)pos, after)) {
+            XClassDelete(before_str);
+            XClassDelete(after_str);
+            return false;
+        }
+        pos = XString_indexOf_utf8(str, before, (size_t)pos + after_len, cs);
+    }
+
+    XClassDelete(before_str);
+    XClassDelete(after_str);
+    return true;
 }

@@ -36,21 +36,21 @@
  * 收益：软件增量帧原先每帧固定 1 次 XPaintEvent 堆分配 + 1 次区域数组
  * 分配（及其对应释放），单槽复用后归零——实测把默认页 repaint 段从
  * 9.8µs/帧压到 1.1µs/帧（XGuiDemo 分段口径）。 */
-static XAtomic_uintptr_t g_paintEventSlot; /* 0=槽空 */
+static XAtomic_Uintptr g_paintEventSlot; /* 0=槽空 */
 
 /* ==================== 虚函数实现（Clone / Deinit） ==================== */
 
 /** @brief 复制 XEvent 基类值字段（克隆辅助；不含 XClass 管理字段）。 */
 static void xevent_clone_base(XEvent* dst, const XEvent* src)
 {
-    dst->type = src->type;
-    dst->reserved = src->reserved;
-    dst->accepted = src->accepted;
-    dst->spontaneous = src->spontaneous;
-    dst->posted = src->posted;
-    dst->input_event = src->input_event;
-    dst->pointer_event = src->pointer_event;
-    dst->single_point_event = src->single_point_event;
+    dst->m_type = src->m_type;
+    dst->m_reserved = src->m_reserved;
+    dst->m_accepted = src->m_accepted;
+    dst->m_spontaneous = src->m_spontaneous;
+    dst->m_posted = src->m_posted;
+    dst->m_input_event = src->m_input_event;
+    dst->m_pointer_event = src->m_pointer_event;
+    dst->m_single_point_event = src->m_single_point_event;
 }
 
 static XEvent* VXResizeEvent_clone(const XResizeEvent* event)
@@ -243,7 +243,7 @@ static XEvent* VXDropEvent_clone(const XDropEvent* event)
     /* 克隆件沿源事件自身保存的内存分配器族分配与记账（同基类口径）。 */
     copy = (XDropEvent*)Class_Memory(event)->malloc(sizeof(XDropEvent));
     if (!copy) return NULL;
-    XDropEvent_init(copy, event->m_class.type, &event->m_position,
+    XDropEvent_init(copy, event->m_class.m_type, &event->m_position,
                     &event->m_globalPosition, event->m_mimeType,
                     event->m_data);
     copy->m_dropAction = event->m_dropAction;
@@ -522,7 +522,7 @@ void XCloseEvent_init(XCloseEvent* event, XEventType type)
     XClassGetVtable(event) = XCloseEvent_class_init();
     /* 对齐 Qt：QEvent 默认 accepted=true，未重载 close 槽时默认允许关闭；
        应用在 close 槽调用 XEvent_ignore 可拒绝关闭。 */
-    event->m_class.accepted = true;
+    event->m_class.m_accepted = true;
 }
 
 /* ==================== XShowEvent ==================== */
@@ -581,18 +581,18 @@ void XFocusEvent_init(XFocusEvent* event, XEventType type, XFocusReason reason)
     if (!event) return;
     XEvent_init((XEvent*)event, type);
     XClassGetVtable(event) = XFocusEvent_class_init();
-    event->m_class.input_event = true;
+    event->m_class.m_input_event = true;
     event->m_reason = reason;
 }
 
 bool XFocusEvent_gotFocus(const XFocusEvent* event)
 {
-    return event && event->m_class.type == XEVENT_TYPE_FOCUS_IN;
+    return event && event->m_class.m_type == XEVENT_TYPE_FOCUS_IN;
 }
 
 bool XFocusEvent_lostFocus(const XFocusEvent* event)
 {
-    return event && event->m_class.type == XEVENT_TYPE_FOCUS_OUT;
+    return event && event->m_class.m_type == XEVENT_TYPE_FOCUS_OUT;
 }
 
 XFocusReason XFocusEvent_reason(const XFocusEvent* event)
@@ -626,7 +626,7 @@ void XInputMethodEvent_init(XInputMethodEvent* event,
     if (!event) return;
     XEvent_init((XEvent*)event, XEVENT_TYPE_INPUT_METHOD);
     XClassGetVtable(event) = XInputMethodEvent_class_init();
-    event->m_class.input_event = true;
+    event->m_class.m_input_event = true;
     event->m_preeditString = preeditString ? XString_create_copy(preeditString) : NULL;
     event->m_commitString = commitString ? XString_create_copy(commitString) : NULL;
     event->m_replacementStart = replacementStart;
@@ -679,9 +679,9 @@ void XDropEvent_init(XDropEvent* event, XEventType type,
     if (!event) return;
     XEvent_init((XEvent*)event, type);
     XClassGetVtable(event) = XDropEvent_class_init();
-    event->m_class.input_event = true;
-    event->m_class.pointer_event = true;
-    event->m_class.single_point_event = true;
+    event->m_class.m_input_event = true;
+    event->m_class.m_pointer_event = true;
+    event->m_class.m_single_point_event = true;
     event->m_position = position ? *position : (XPoint){0, 0};
     event->m_globalPosition = globalPosition ? *globalPosition :
                               event->m_position;
@@ -733,6 +733,11 @@ void XFocusEvent_setReason(XFocusEvent* event, XFocusReason reason)
 static void VXWheelEvent_copy(XWheelEvent* dest, const XWheelEvent* src)
 {
     if (!dest || !src || dest == src) return;
+    /* 目标未 init（虚表为空）时先按本类型完整初始化兜底，再复制。 */
+    if (XClassIsVtableNull(dest))
+        XWheelEvent_init(dest, src->m_class.m_type, &src->m_position,
+                         &src->m_globalPosition, &src->m_angleDelta,
+                         src->m_buttons, src->m_modifiers);
     XClass_Parent(XEvent, EXClass_Copy, void(*)(XEvent*, const XEvent*))(
         (XEvent*)dest, (const XEvent*)src);
     dest->m_position = src->m_position;
@@ -793,9 +798,9 @@ void XWheelEvent_init(XWheelEvent* event, XEventType type,
     if (!event) return;
     XEvent_init((XEvent*)event, type);
     XClassGetVtable(event) = XWheelEvent_class_init();
-    event->m_class.input_event = true;
-    event->m_class.pointer_event = true;
-    event->m_class.single_point_event = true;
+    event->m_class.m_input_event = true;
+    event->m_class.m_pointer_event = true;
+    event->m_class.m_single_point_event = true;
     if (position) event->m_position = *position;
     if (globalPosition) event->m_globalPosition = *globalPosition;
     if (angleDelta) event->m_angleDelta = *angleDelta;
@@ -884,6 +889,10 @@ void XWheelEvent_setSource(XWheelEvent* event, int source)
 static void VXEnterEvent_copy(XEnterEvent* dest, const XEnterEvent* src)
 {
     if (!dest || !src || dest == src) return;
+    /* 目标未 init（虚表为空）时先按本类型完整初始化兜底，再复制。 */
+    if (XClassIsVtableNull(dest))
+        XEnterEvent_init(dest, src->m_class.m_type, &src->m_position,
+                         &src->m_globalPosition);
     XClass_Parent(XEvent, EXClass_Copy, void(*)(XEvent*, const XEvent*))(
         (XEvent*)dest, (const XEvent*)src);
     dest->m_position = src->m_position;
@@ -932,9 +941,9 @@ void XEnterEvent_init(XEnterEvent* event, XEventType type,
     if (!event) return;
     XEvent_init((XEvent*)event, type);
     XClassGetVtable(event) = XEnterEvent_class_init();
-    event->m_class.input_event = true;
-    event->m_class.pointer_event = true;
-    event->m_class.single_point_event = true;
+    event->m_class.m_input_event = true;
+    event->m_class.m_pointer_event = true;
+    event->m_class.m_single_point_event = true;
     if (position) event->m_position = *position;
     if (globalPosition) event->m_globalPosition = *globalPosition;
     event->m_scenePosition = event->m_globalPosition;
@@ -978,7 +987,7 @@ void XContextMenuEvent_init(XContextMenuEvent* event, XEventType type,
     if (!event) return;
     XEvent_init((XEvent*)event, type);
     XClassGetVtable(event) = XContextMenuEvent_class_init();
-    event->m_class.input_event = true;
+    event->m_class.m_input_event = true;
     event->m_position = position ? *position : (XPoint){0, 0};
     event->m_globalPosition = globalPosition ? *globalPosition :
                               event->m_position;
@@ -1148,8 +1157,8 @@ void XTouchEvent_init(XTouchEvent* event, XEventType type,
     if (!event) return;
     XEvent_init((XEvent*)event, type);
     XClassGetVtable(event) = XTouchEvent_class_init();
-    event->m_class.input_event = true;
-    event->m_class.pointer_event = true;
+    event->m_class.m_input_event = true;
+    event->m_class.m_pointer_event = true;
     if (position) event->m_position = *position;
     if (globalPosition) event->m_globalPosition = *globalPosition;
     /* 实际点数恒 0（列表待填充）：m_pointCount==0=单点遗留形态，读方
@@ -1236,9 +1245,9 @@ void XTabletEvent_init(XTabletEvent* event, XEventType type,
     if (!event) return;
     XEvent_init((XEvent*)event, type);
     XClassGetVtable(event) = XTabletEvent_class_init();
-    event->m_class.input_event = true;
-    event->m_class.pointer_event = true;
-    event->m_class.single_point_event = true;
+    event->m_class.m_input_event = true;
+    event->m_class.m_pointer_event = true;
+    event->m_class.m_single_point_event = true;
     if (position) event->m_position = *position;
     if (globalPosition) event->m_globalPosition = *globalPosition;
     event->m_pressure = pressure;

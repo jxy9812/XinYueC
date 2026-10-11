@@ -14,6 +14,74 @@ static void VXAbstractSeries_copy(XAbstractSeries* self,
 static void VXAbstractSeries_move(XAbstractSeries* self,
                                   XAbstractSeries* other);
 
+static void VXAbstractSeries_deinit(XAbstractSeries* self)
+{
+    if (!self) return;
+    if (self->m_name) {
+        XClassDelete(self->m_name);
+        self->m_name = NULL;
+    }
+    if (self->m_axes) {
+        XFree_System(self->m_axes);
+        self->m_axes = NULL;
+    }
+    self->m_axisCount = 0;
+    self->m_axisCapacity = 0;
+    self->m_chart = NULL;
+    self->m_type = XChartSeriesType_Line;
+    self->m_axes = NULL;
+    self->m_axisCount = 0;
+    self->m_axisCapacity = 0;
+    XClass_Deinit_Parent(XObject, (XObject*)self);
+}
+
+static void VXAbstractSeries_copy(XAbstractSeries* self,
+                                  const XAbstractSeries* other)
+{
+    if (!self || !other || self == other) return;
+    if (XClassIsVtableNull(self)) XAbstractSeries_init(self);
+    if (self->m_name && other->m_name)
+        XString_assign(self->m_name, other->m_name);
+    else if (!self->m_name && other->m_name)
+        self->m_name = XString_create_copy(other->m_name);
+    self->m_visible = other->m_visible;
+    self->m_opacity = other->m_opacity;
+    self->m_useOpenGL = other->m_useOpenGL;
+    /* m_chart 为借用指针，不随拷贝转移。 */
+    self->m_chart = NULL;
+    self->m_type = other->m_type;
+    if (self->m_axes) {
+        /* 先释放目标旧轴数组（数组自有，轴指针为借用不释放），
+           否则对已挂接轴的目标 XClassCopy 泄漏数组。 */
+        XFree_System(self->m_axes);
+        self->m_axes = NULL;
+    }
+    self->m_axisCount = 0;
+    self->m_axisCapacity = 0;
+}
+
+static void VXAbstractSeries_move(XAbstractSeries* self,
+                                  XAbstractSeries* other)
+{
+    if (!self || !other || self == other) return;
+    if (XClassIsVtableNull(self)) XAbstractSeries_init(self);
+    if (self->m_name) XClassDelete(self->m_name);
+    self->m_name = other->m_name;
+    other->m_name = NULL;
+    self->m_visible = other->m_visible;
+    self->m_opacity = other->m_opacity;
+    self->m_useOpenGL = other->m_useOpenGL;
+    self->m_type = other->m_type;
+    self->m_chart = other->m_chart;
+    other->m_chart = NULL;
+    self->m_axes = other->m_axes;
+    other->m_axes = NULL;
+    self->m_axisCount = other->m_axisCount;
+    other->m_axisCount = 0;
+    self->m_axisCapacity = other->m_axisCapacity;
+    other->m_axisCapacity = 0;
+}
+
 XVtable* XAbstractSeries_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractSeries)
@@ -50,69 +118,6 @@ XAbstractSeries* XAbstractSeries_create_ex(XMemoryType memory)
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;
-}
-
-static void VXAbstractSeries_deinit(XAbstractSeries* self)
-{
-    if (!self) return;
-    if (self->m_name) {
-        XClassDelete(self->m_name);
-        self->m_name = NULL;
-    }
-    if (self->m_axes) {
-        XFree_System(self->m_axes);
-        self->m_axes = NULL;
-    }
-    self->m_axisCount = 0;
-    self->m_axisCapacity = 0;
-    self->m_chart = NULL;
-    self->m_type = XChartSeriesType_Line;
-    self->m_axes = NULL;
-    self->m_axisCount = 0;
-    self->m_axisCapacity = 0;
-    XClass_Deinit_Parent(XObject, (XObject*)self);
-}
-
-static void VXAbstractSeries_copy(XAbstractSeries* self,
-                                  const XAbstractSeries* other)
-{
-    if (!self || !other || self == other) return;
-    if (XClassIsVtableNull(self)) XAbstractSeries_init(self);
-    if (self->m_name && other->m_name)
-        XString_assign(self->m_name, other->m_name);
-    else if (!self->m_name && other->m_name)
-        self->m_name = XString_create_copy(other->m_name);
-    self->m_visible = other->m_visible;
-    self->m_opacity = other->m_opacity;
-    self->m_useOpenGL = other->m_useOpenGL;
-    /* m_chart 为借用指针，不随拷贝转移。 */
-    self->m_chart = NULL;
-    self->m_type = XChartSeriesType_Line;
-    self->m_axes = NULL;
-    self->m_axisCount = 0;
-    self->m_axisCapacity = 0;
-}
-
-static void VXAbstractSeries_move(XAbstractSeries* self,
-                                  XAbstractSeries* other)
-{
-    if (!self || !other || self == other) return;
-    if (XClassIsVtableNull(self)) XAbstractSeries_init(self);
-    if (self->m_name) XClassDelete(self->m_name);
-    self->m_name = other->m_name;
-    other->m_name = NULL;
-    self->m_visible = other->m_visible;
-    self->m_opacity = other->m_opacity;
-    self->m_useOpenGL = other->m_useOpenGL;
-    self->m_type = other->m_type;
-    self->m_chart = other->m_chart;
-    other->m_chart = NULL;
-    self->m_axes = other->m_axes;
-    other->m_axes = NULL;
-    self->m_axisCount = other->m_axisCount;
-    other->m_axisCount = 0;
-    self->m_axisCapacity = other->m_axisCapacity;
-    other->m_axisCapacity = 0;
 }
 
 void XAbstractSeries_setName(XAbstractSeries* self, const XString* name)

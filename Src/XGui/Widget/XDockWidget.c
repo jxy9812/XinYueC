@@ -24,18 +24,18 @@
 /* ==================== 调试跟踪（XGUI_DOCK_TRACE，问题关闭后移除） ==================== */
 
 #if XGUI_DOCK_TRACE
-#include <stdio.h>
+#include "XPrintf.h"
 /* 拖放链路逐事件跟踪：毫秒时间戳 + 函数名 + 关键决策值，行末即刷。
  * 移动事件逐条记录——两次跟踪行的时间差即事件环真实节奏，用于定位
- * "停靠操作卡顿数秒"类问题（时间戳断崖 = 冻结窗口）。 */
+ * "停靠操作卡顿数秒"类问题（时间戳断崖 = 冻结窗口）。控制台输出经
+ * 库内 XPrintf（带输出重定向栈），禁止直用 printf。 */
 #define XDW_TRACE(...)                                                    \
     do {                                                                  \
         int64_t xdwTraceMs = XDateTime_currentMSecsSinceEpoch();          \
-        printf("[DOCK %lld.%03lld %s] ", (long long)(xdwTraceMs / 1000),  \
-               (long long)(xdwTraceMs % 1000), __func__);                 \
-        printf(__VA_ARGS__);                                              \
-        printf("\n");                                                     \
-        fflush(stdout);                                                   \
+        XPrintf("[DOCK %lld.%03lld %s] ", (long long)(xdwTraceMs / 1000), \
+                (long long)(xdwTraceMs % 1000), __func__);                \
+        XPrintf(__VA_ARGS__);                                             \
+        XPrintf("\n");                                                    \
     } while (0)
 #else
 #define XDW_TRACE(...) do {} while (0)

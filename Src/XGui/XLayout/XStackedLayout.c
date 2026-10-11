@@ -355,9 +355,17 @@ void XStackedLayout_removeWidget(XStackedLayout* self, XWidget* widget)
     int index;
     XLayoutItem* item;
     XWidget* page;
+    bool owned;
     if (!self || !widget) return;
     index = XStackedLayout_indexOf(self, widget);
     if (index < 0) return;
+    /* takeAt 会清零 m_ownedByLayout（VXLayout_takeAt），属主必须在取出
+       前读取（与基类 releaseItems/deleteAllItems 同判据）：仅释放布局
+       自建条目（addWidget 内建包装）；经 addItem 显式传入的借用条目按
+       XLayout.h 契约释放责任仍在调用方，此处删除将造成调用方再释放时
+       的双重释放。 */
+    item = self->m_base.m_items[index];
+    owned = item && item->m_ownedByLayout;
     item = XLayout_takeAt_base((XLayout*)self, index);
     if (!item) return;
     page = XLayoutItem_widget_base(item);
@@ -367,7 +375,8 @@ void XStackedLayout_removeWidget(XStackedLayout* self, XWidget* widget)
            （parent 置 NULL），控件归还调用方管理。 */
         XWidget_setParentPlain(page, NULL);
     }
-    XClassDelete(item);
+    if (owned)
+        XClassDelete(item);
 }
 
 void XStackedLayout_setCurrentIndex(XStackedLayout* self, int index)

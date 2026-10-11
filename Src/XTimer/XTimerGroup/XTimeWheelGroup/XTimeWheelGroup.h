@@ -22,9 +22,9 @@ typedef struct XTimeWheelGroup
 {
 	XTimerGroupBase m_class;//继承
 	XVector m_timeWheel;//多时间轮	
-	XAtomic_size_t m_count;//正在管理的定时器数量
-	XAtomic_size_t m_activeProducers;//正在访问槽头的生产者数量，用于安全回收
-	XAtomic_bool m_hasCancelledTimers;//存在已取消节点，消费者下一轮统一清扫
+	XAtomic_SizeT m_count;//正在管理的定时器数量
+	XAtomic_SizeT m_activeProducers;//正在访问槽头的生产者数量，用于安全回收
+	XAtomic_Bool m_hasCancelledTimers;//存在已取消节点，消费者下一轮统一清扫
 	XListSNode* m_retiredNodes;//等待无生产者时回收的节点
 	//XMutex* m_mutex;
 }XTimeWheelGroup;

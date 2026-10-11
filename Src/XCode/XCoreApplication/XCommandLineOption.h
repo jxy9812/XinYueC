@@ -30,11 +30,18 @@ typedef struct {
 /* ==================== XCommandLineOption API（对标 QCommandLineOption） ==================== */
 
 /**
- * @brief 创建命令行选项（仅指定名称）
- * @param name 选项名称字符串（如 "o" 或 "output"）
+ * @brief 创建命令行选项（仅指定名称，XString 主版本）
+ * @param name 选项名称（如 "o" 或 "output"），可为 NULL；只在调用期间借用，不取得所有权
  * @return 新创建的选项指针，内存分配失败返回 NULL
  */
-XCommandLineOption* XCommandLineOption_create(const char* name);
+XCommandLineOption* XCommandLineOption_create(const XString* name);
+
+/**
+ * @brief 创建命令行选项（仅指定名称，UTF-8 兼容重载）
+ * @param name UTF-8 编码的选项名称，可为 NULL；内部创建临时 XString 后转发到 XString 主版本
+ * @return 新创建的选项指针，内存分配失败返回 NULL
+ */
+XCommandLineOption* XCommandLineOption_create_2(const char* name);
 
 /**
  * @brief 创建命令行选项（指定多个名称）
@@ -44,25 +51,49 @@ XCommandLineOption* XCommandLineOption_create(const char* name);
 XCommandLineOption* XCommandLineOption_createWithNames(const XStringList* names);
 
 /**
- * @brief 创建完整的命令行选项（指定名称、描述、值名称和默认值）
- * @param name 选项名称字符串
- * @param description 选项描述字符串
- * @param valueName 选项值名称字符串（如 "file"），可为 NULL
- * @param defaultValue 默认值字符串，可为 NULL
+ * @brief 创建完整的命令行选项（指定名称、描述、值名称和默认值，XString 主版本）
+ * @param name 选项名称；只在调用期间借用，不取得所有权
+ * @param description 选项描述；可为 NULL，借用参数
+ * @param valueName 选项值名称（如 "file"），可为 NULL，借用参数
+ * @param defaultValue 默认值，可为 NULL，借用参数
  * @return 新创建的选项指针，内存分配失败返回 NULL
  */
-XCommandLineOption* XCommandLineOption_createFull(const char* name, const char* description,
+XCommandLineOption* XCommandLineOption_createFull(const XString* name, const XString* description,
+    const XString* valueName, const XString* defaultValue);
+
+/**
+ * @brief 创建完整的命令行选项（UTF-8 兼容重载）
+ * @param name UTF-8 编码的选项名称，可为 NULL
+ * @param description UTF-8 编码的选项描述，可为 NULL
+ * @param valueName UTF-8 编码的选项值名称，可为 NULL
+ * @param defaultValue UTF-8 编码的默认值，可为 NULL
+ * @return 新创建的选项指针，内存分配失败返回 NULL
+ * @note 各 UTF-8 参数先转换为临时 XString，再转发到 XString 主版本
+ */
+XCommandLineOption* XCommandLineOption_createFull_2(const char* name, const char* description,
     const char* valueName, const char* defaultValue);
 
 /**
- * @brief 创建完整的命令行选项（指定多个名称、描述、值名称和默认值）
+ * @brief 创建完整的命令行选项（指定多个名称、描述、值名称和默认值，XString 主版本）
  * @param names 选项名称字符串列表
- * @param description 选项描述字符串
- * @param valueName 选项值名称字符串，可为 NULL
- * @param defaultValue 默认值字符串，可为 NULL
+ * @param description 选项描述；可为 NULL，借用参数
+ * @param valueName 选项值名称，可为 NULL，借用参数
+ * @param defaultValue 默认值，可为 NULL，借用参数
  * @return 新创建的选项指针，内存分配失败返回 NULL
  */
 XCommandLineOption* XCommandLineOption_createFullWithNames(const XStringList* names,
+    const XString* description, const XString* valueName, const XString* defaultValue);
+
+/**
+ * @brief 创建完整的命令行选项（指定多个名称，UTF-8 兼容重载）
+ * @param names 选项名称字符串列表
+ * @param description UTF-8 编码的选项描述，可为 NULL
+ * @param valueName UTF-8 编码的选项值名称，可为 NULL
+ * @param defaultValue UTF-8 编码的默认值，可为 NULL
+ * @return 新创建的选项指针，内存分配失败返回 NULL
+ * @note 各 UTF-8 参数先转换为临时 XString，再转发到 XString 主版本
+ */
+XCommandLineOption* XCommandLineOption_createFullWithNames_2(const XStringList* names,
     const char* description, const char* valueName, const char* defaultValue);
 
 /**
@@ -79,18 +110,32 @@ void XCommandLineOption_delete(XCommandLineOption* option);
 const XStringList* XCommandLineOption_names(const XCommandLineOption* option);
 
 /**
- * @brief 添加选项名称
+ * @brief 添加选项名称（XString 主版本）
  * @param option 选项指针
- * @param name 要添加的名称字符串
+ * @param name 要添加的名称；只在调用期间借用，内部拷贝进选项名称列表
  */
-void XCommandLineOption_addName(XCommandLineOption* option, const char* name);
+void XCommandLineOption_addName(XCommandLineOption* option, const XString* name);
 
 /**
- * @brief 设置选项值名称
+ * @brief 添加选项名称（UTF-8 兼容重载）
  * @param option 选项指针
- * @param name 值名称字符串（如 "file"），可为 NULL
+ * @param name UTF-8 编码的名称；内部创建临时 XString 后转发到 XString 主版本
  */
-void XCommandLineOption_setValueName(XCommandLineOption* option, const char* name);
+void XCommandLineOption_addName_2(XCommandLineOption* option, const char* name);
+
+/**
+ * @brief 设置选项值名称（XString 主版本）
+ * @param option 选项指针
+ * @param name 值名称（如 "file"），可为 NULL；拷贝进选项，调用方可立即释放
+ */
+void XCommandLineOption_setValueName(XCommandLineOption* option, const XString* name);
+
+/**
+ * @brief 设置选项值名称（UTF-8 兼容重载）
+ * @param option 选项指针
+ * @param name UTF-8 编码的值名称，可为 NULL；内部创建临时 XString 后转发到 XString 主版本
+ */
+void XCommandLineOption_setValueName_2(XCommandLineOption* option, const char* name);
 
 /**
  * @brief 获取选项值名称
@@ -100,11 +145,18 @@ void XCommandLineOption_setValueName(XCommandLineOption* option, const char* nam
 const char* XCommandLineOption_valueName(const XCommandLineOption* option);
 
 /**
- * @brief 设置选项描述
+ * @brief 设置选项描述（XString 主版本）
  * @param option 选项指针
- * @param description 描述字符串，可为 NULL
+ * @param description 描述，可为 NULL；拷贝进选项，调用方可立即释放
  */
-void XCommandLineOption_setDescription(XCommandLineOption* option, const char* description);
+void XCommandLineOption_setDescription(XCommandLineOption* option, const XString* description);
+
+/**
+ * @brief 设置选项描述（UTF-8 兼容重载）
+ * @param option 选项指针
+ * @param description UTF-8 编码的描述，可为 NULL；内部创建临时 XString 后转发到 XString 主版本
+ */
+void XCommandLineOption_setDescription_2(XCommandLineOption* option, const char* description);
 
 /**
  * @brief 获取选项描述
@@ -114,11 +166,18 @@ void XCommandLineOption_setDescription(XCommandLineOption* option, const char* d
 const char* XCommandLineOption_description(const XCommandLineOption* option);
 
 /**
- * @brief 设置选项默认值（单值）
+ * @brief 设置选项默认值（单值，XString 主版本）
  * @param option 选项指针
- * @param value 默认值字符串，可为 NULL
+ * @param value 默认值，可为 NULL；拷贝进选项的默认值列表，调用方可立即释放
  */
-void XCommandLineOption_setDefaultValue(XCommandLineOption* option, const char* value);
+void XCommandLineOption_setDefaultValue(XCommandLineOption* option, const XString* value);
+
+/**
+ * @brief 设置选项默认值（单值，UTF-8 兼容重载）
+ * @param option 选项指针
+ * @param value UTF-8 编码的默认值，可为 NULL；内部创建临时 XString 后转发到 XString 主版本
+ */
+void XCommandLineOption_setDefaultValue_2(XCommandLineOption* option, const char* value);
 
 /**
  * @brief 设置选项默认值列表

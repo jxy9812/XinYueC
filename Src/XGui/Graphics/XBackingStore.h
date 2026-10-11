@@ -123,8 +123,6 @@ void XBackingStore_reinit(XBackingStore* self, XWindow* window);
  */
 XBackingStore* XBackingStore_create_ex(XMemoryType memory, XWindow* window);
 
-/** @brief 删除堆上的 XBackingStore 对象。 */
-
 /* ==================== 窗口与可绘制设备（对标 QBackingStore） ==================== */
 
 /**

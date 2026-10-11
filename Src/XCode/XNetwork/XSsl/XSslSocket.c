@@ -1,21 +1,21 @@
-﻿// Copyright (C) 2026 Your Project Authors
+// Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
-// XSslSocket：TLS 客户端/服务端套接字，对齐 Qt 6.8 QSslSocket。
-// 基于 XClass 框架，继承 XTcpSocket，通过虚函数表重载将 TCP 明文通道
-// 替换为 TLS 加密通道。
+// XSslSocket:TLS ???/??????,?? Qt 6.8 QSslSocket?
+// ?? XClass ??,?? XTcpSocket,????????? TCP ????
+// ??? TLS ?????
 //
-// 设计要点：
-//   - 继承：XSslSocket 继承 XTcpSocket，虚函数表在 XSslSocket_init 中由
-//     XSslSocket_class_init() 设置，重载 readData / writeData /
+// ????:
+//   - ??:XSslSocket ?? XTcpSocket,????? XSslSocket_init ??
+//     XSslSocket_class_init() ??,?? readData / writeData /
 //     connectToHost / disconnectFromHost / close /
 //     waitForConnected / waitForReadyRead / waitForBytesWritten /
-//     waitForDisconnected 等虚函数。
-//   - 别名：父类同名 API 通过头文件宏别名暴露，本文件不写 wrapper 函数，
-//     避免符号重复与 API 漂移；read_1 经 vtable -> xssl_v_readData
-//     -> mbedtls_ssl_read -> BIO recv -> 父类 readData。
-//   - BIO：xssl_bio_send/recv 通过 XClass_Parent(XAbstractSocket, ...)
-//     直接调用父类 readData/writeData，绕过 TLS 层。
+//     waitForDisconnected ?????
+//   - ??:???? API ??????????,????? wrapper ??,
+//     ??????? API ??;read_1 ? vtable -> xssl_v_readData
+//     -> mbedtls_ssl_read -> BIO recv -> ?? readData?
+//   - BIO:xssl_bio_send/recv ?? XClass_Parent(XAbstractSocket, ...)
+//     ?????? readData/writeData,?? TLS ??
 
 #include "XSslSocket.h"
 #include "XMemory.h"
@@ -40,53 +40,53 @@
 #if XNETWORK_SSL_ON
 
 #define DEFAULT_CHUNK_SIZE 16384
-/* = 内部结构体 = */
+/* = ????? = */
 
 struct XSslSocket {
-    XTcpSocket           base;             /* 父类：TCP 明文通道 */
+    XTcpSocket           base;             /* ??:TCP ???? */
 
-    XSslSession*         session;          /* TLS 会话（mbedTLS 后端），自持有 */
+    XSslSession*         session;          /* TLS ??(mbedTLS ??),??? */
     XSslProtocol         protocol;
-    XString*             cipherSuites;    /* TLS 密码套件列表，自持有 */
+    XString*             cipherSuites;    /* TLS ??????,??? */
     XSslPeerVerifyMode   verifyMode;
     int                  peerVerifyDepth;
-    XString*             peerVerifyName;   /* 期望的对端名称（SNI/主机名校验） */
-    XSslCertificate*     localCert;        /* 外部引用，不持有 */
-    XSslKey*             privateKey;       /* 外部引用，不持有 */
-    XVector*             caCertificates;  /* XSslCertificate*，外部引用 */
-    XString*             caPath;          /* CA 目录，自持有 */
-    XString*             crlFile;         /* CRL 文件，自持有 */
-    XString*             crlPath;         /* CRL 目录，自持有 */
+    XString*             peerVerifyName;   /* ???????(SNI/?????) */
+    XSslCertificate*     localCert;        /* ????;? setLocalCertificate/_2 ?????,??? */
+    XSslKey*             privateKey;       /* ??;? setPrivateKey/_2 ?????,??? */
+    XVector*             caCertificates;  /* XSslCertificate*,???? */
+    XString*             caPath;          /* CA ??,??? */
+    XString*             crlFile;         /* CRL ??,??? */
+    XString*             crlPath;         /* CRL ??,??? */
 
     XSslSocket_SslMode   mode;
-    bool                 encrypted;        /* 握手是否完成 */
-    bool                 handshakePending; /* 是否处于握手态（read/write 会驱动握手） */
+    bool                 encrypted;        /* ?????? */
+    bool                 handshakePending; /* ???????(read/write ?????) */
     bool                 ignoreErrors;
-    XVector*             localCertChain;   /* Qt 6.8 setLocalCertificateChain；自持有 */
-    XVector*             peerCertChain;    /* Qt 6.8 peerCertificateChain 缓存；自持有 */
-    XVector*             handshakeErrors;  /* Qt 6.8 sslHandshakeErrors；每个元素为 int 错误码 */
-    XVector*             allowedNextProtocols; /* XByteArray*；本对象拥有 */
-    XByteArray*          nextNegotiatedProtocol; /* 本次握手结果；本对象拥有 */
+    XVector*             localCertChain;   /* Qt 6.8 setLocalCertificateChain;??? */
+    XVector*             peerCertChain;    /* Qt 6.8 peerCertificateChain ??;??? */
+    XVector*             handshakeErrors;  /* Qt 6.8 sslHandshakeErrors;????? int ??? */
+    XVector*             allowedNextProtocols; /* XByteArray*;????? */
+    XByteArray*          nextNegotiatedProtocol; /* ??????;????? */
     XSslNextProtocolNegotiationStatus nextProtocolStatus;
     struct XRingBuffer*  encRxBuf;
-    struct XRingBuffer*  encTxBuf;          /* BIO 部分写时按需创建 */
-    size_t               pendingAckedBytes; /* encTxBuf 排空前合并底层 ACK */
+    struct XRingBuffer*  encTxBuf;          /* BIO ???????? */
+    size_t               pendingAckedBytes; /* encTxBuf ??????? ACK */
 };
 
 
-/* =============== XSslConfiguration 结构体（对齐 Qt 6.8 QSslConfiguration） =============== */
+/* =============== XSslConfiguration ???(?? Qt 6.8 QSslConfiguration) =============== */
 
 struct XSslConfiguration {
     XSslProtocol         protocol;
     XSslPeerVerifyMode   verifyMode;
     int                  peerVerifyDepth;
-    XString*             peerVerifyName;   /* 自持有 */
-    XSslCertificate*     localCert;        /* 外部引用，不持有 */
-    XSslKey*             privateKey;       /* 外部引用，不持有 */
-    XVector*             localCertChain;   /* 自持有 */
+    XString*             peerVerifyName;   /* ??? */
+    XSslCertificate*     localCert;        /* ????,??? */
+    XSslKey*             privateKey;       /* ????,??? */
+    XVector*             localCertChain;   /* ??? */
 };
 
-/* = 父类虚函数指针类型（供 XClass_Parent 使用） = */
+/* = ?????????(? XClass_Parent ??) = */
 
 typedef int64_t (*Fn_readData) (XIODevice*, char*, int64_t);
 typedef int64_t (*Fn_writeData)(XIODevice*, const char*, int64_t);
@@ -101,11 +101,11 @@ typedef bool    (*Fn_waitForDisconnected)(XAbstractSocket*, int);
 typedef void    (*Fn_deinit)(XClass*);
 typedef bool    (*Fn_event) (XAbstractSocket*, XEvent*);
 
-/* 直接调用父类实现的语法糖 */
+/* ???????????? */
 #define PARENT_IO(SLOT, FnType)    XClass_Parent(XAbstractSocket, SLOT, FnType)
 #define PARENT_SOCK(SLOT, FnType)  XClass_Parent(XAbstractSocket, SLOT, FnType)
 
-/* = BIO：mbedTLS 原始 socket I/O 回调（绕过 TLS 层） = */
+/* = BIO:mbedTLS ?? socket I/O ??(?? TLS ?) = */
 
 static size_t xssl_encrypted_tx_pending(const XSslSocket* self)
 {
@@ -116,9 +116,9 @@ static bool xssl_getSocketBool(const XAbstractSocket* socket, XDeviceProperty pr
 {
     XVariant result;
     if (!socket || !value || socket->m_deviceFd == XFD_INVALID) return false;
-    /* 桶规约(与 XAbstractSocket socketGetBoolProperty 同款): memset+XVariant_init
-     * 建 vtable, 收尾 setValue_null 经 XClassDeinit 释放值槽。
-     * 旧 memset+XVariant_clear 只清内容不释放——值槽堆块每次调用泄漏。 */
+    /* ???(? XAbstractSocket socketGetBoolProperty ??): memset+XVariant_init
+     * ? vtable, ?? setValue_null ? XClassDeinit ?????
+     * ? memset+XVariant_clear ???????--??????????? */
     memset(&result, 0, sizeof(result));
     XVariant_init(&result, NULL, 0, XVariantType_NULL);
     if (!XDevice_getProperty(socket->m_deviceFd, property, &result)) {
@@ -135,7 +135,7 @@ static size_t xssl_getSocketSize(const XAbstractSocket* socket, XDeviceProperty 
     XVariant result;
     size_t value = 0;
     if (!socket || socket->m_deviceFd == XFD_INVALID) return 0;
-    /* 桶规约: 同 xssl_getSocketBool。 */
+    /* ???: ? xssl_getSocketBool? */
     memset(&result, 0, sizeof(result));
     XVariant_init(&result, NULL, 0, XVariantType_NULL);
     if (XDevice_getProperty(socket->m_deviceFd, property, &result))
@@ -183,7 +183,7 @@ static bool xssl_queue_encrypted_tx(XSslSocket* self, const uint8_t* data, size_
 {
     if (!self || !data || len == 0) return len == 0;
     if (!self->encTxBuf) {
-        /* 小窗口通常只剩少量 TLS 记录尾部，避免固定预分配完整记录。 */
+        /* ????????? TLS ????,???????????? */
         self->encTxBuf = (struct XRingBuffer*)XRingBuffer_create(1024);
         if (!self->encTxBuf) return false;
     }
@@ -219,8 +219,8 @@ static int xssl_bio_send(void* u, const uint8_t* buf, size_t len) {
         !xssl_queue_encrypted_tx(self, buf + (size_t)w, len - (size_t)w)) {
         return XSSL_BIO_ERROR;
     }
-    /* BIO 已接管全部密文：直接写入 TCP 的部分和 encTxBuf 中的尾部都
-     * 由 XSslSocket 持有，TLS 层无需以相同参数重试。 */
+    /* BIO ???????:???? TCP ???? encTxBuf ?????
+     * ? XSslSocket ??,TLS ??????????? */
     return (int)len;
 }
 
@@ -234,7 +234,7 @@ static int xssl_bio_recv(void* u, uint8_t* buf, size_t len) {
     return got > 0 ? (int)got : XSSL_BIO_WANT_READ;
 }
 
-/* = 会话懒创建 = */
+/* = ????? = */
 
 static bool xssl_ensure_session(XSslSocket* self, bool isServer) {
     if (self->session) return true;
@@ -292,7 +292,7 @@ static void xssl_clear_negotiated_protocol(XSslSocket* self)
         XSSL_NextProtocolNegotiationUnsupported : XSSL_NextProtocolNegotiationNone;
 }
 
-/* 推进一次握手，返回 XSSL_S_* */
+/* ??????,?? XSSL_S_* */
 static int xssl_pump_handshake(XSslSocket* self) {
     if (!self->handshakePending) return XSSL_S_OK;
     if (!xssl_ensure_session(self, self->mode == XSslSocket_SslServerMode))
@@ -301,7 +301,7 @@ static int xssl_pump_handshake(XSslSocket* self) {
     if (r == XSSL_S_OK) {
         self->encrypted = true;
         self->handshakePending = false;
-        /* 握手密文的 ACK 不属于应用明文写入。 */
+        /* ????? ACK ?????????? */
         self->pendingAckedBytes = 0;
         xssl_clear_negotiated_protocol(self);
         self->nextProtocolStatus = XSsl_sessionNextProtocolNegotiationStatus(self->session);
@@ -318,37 +318,37 @@ static int xssl_pump_handshake(XSslSocket* self) {
     return r;
 }
 
-/* = 虚函数重载：用 TLS 替换 TCP 明文 = */
+/* = ?????:? TLS ?? TCP ?? = */
 
-/* readData：解密后交给上层调用者；未加密模式直接透传父类 */
+/* readData:??????????;??????????? */
 static int64_t xssl_v_readData(XIODevice* io, char* data, int64_t maxlen) {
     XSslSocket* self = (XSslSocket*)io;
 
-    /* TLS 尚未启动：在 startClientEncryption 之前透传到 TCP 明文 */
+    /* TLS ????:? startClientEncryption ????? TCP ?? */
     if (self->mode == XSslSocket_UnencryptedMode) {
         return PARENT_IO(EXIODevice_ReadData, Fn_readData)(io, data, maxlen);
     }
 
-    /* 加密模式：先驱动握手；未完成则返回 0 */
+    /* ????:?????;?????? 0 */
     if (!self->encrypted) {
         if (!self->handshakePending) {
-            return 0; /* 会话已结束（close_notify/出错）：不再有明文 */
+            return 0; /* ?????(close_notify/??):????? */
         }
         int r = xssl_pump_handshake(self);
         if (r != XSSL_S_OK) {
-            return 0; /* XSSL_S_ERROR/CLOSED —— 错误已通过信号上报 */
+            return 0; /* XSSL_S_ERROR/CLOSED -- ????????? */
         }
     }
 
-    /* 解密：从 TLS 会话读取明文交给调用者 */
+    /* ??:? TLS ??????????? */
     int n = XSsl_sessionRead(self->session, (uint8_t*)data, (size_t)maxlen);
     if (n > 0) return (int64_t)n;
     if (n == 0) return 0;
-    if (n == XSSL_S_CLOSED) return 0; /* 对端以 close_notify 关闭 */
-    return 0; /* XSSL_S_ERROR -> 0：返回 0（非 -1），让 XIODevice_read_1 保留已缓冲明文；错误经 sslErrors/socketError 信号上报 */
+    if (n == XSSL_S_CLOSED) return 0; /* ??? close_notify ?? */
+    return 0; /* XSSL_S_ERROR -> 0:?? 0(? -1),? XIODevice_read_1 ???????;??? sslErrors/socketError ???? */
 }
 
-/* writeData：加密后写入 socket；未加密模式直接透传父类 */
+/* writeData:????? socket;??????????? */
 static int64_t xssl_v_writeData(XIODevice* io, const char* data, int64_t len) {
     XSslSocket* self = (XSslSocket*)io;
 
@@ -357,10 +357,10 @@ static int64_t xssl_v_writeData(XIODevice* io, const char* data, int64_t len) {
     }
     if (!self->encrypted) {
         if (!self->handshakePending) {
-            return 0; /* 会话已结束（close_notify/出错）：不再写明文 */
+            return 0; /* ?????(close_notify/??):????? */
         }
         int r = xssl_pump_handshake(self);
-        if (r != XSSL_S_OK) return 0; /* 握手未完成：延后 */
+        if (r != XSSL_S_OK) return 0; /* ?????:?? */
     }
     int n = XSsl_sessionWrite(self->session, (const uint8_t*)data, (size_t)len);
     if (n > 0) {
@@ -371,7 +371,7 @@ static int64_t xssl_v_writeData(XIODevice* io, const char* data, int64_t len) {
     return -1;
 }
 
-/* connectToHost：客户端模式自动记录 SNI，其余透传父类 */
+/* connectToHost:????????? SNI,?????? */
 static void xssl_v_connectToHost(XAbstractSocket* sock,
                                  const char* hostName, uint16_t port,
                                  XIODeviceBaseMode mode,
@@ -385,7 +385,7 @@ static void xssl_v_connectToHost(XAbstractSocket* sock,
         (sock, hostName, port, mode, proto);
 }
 
-/* disconnectFromHost：先发 close_notify，销毁会话，清理缓存，再走父类断开 */
+/* disconnectFromHost:?? close_notify,????,????,?????? */
 static void xssl_v_disconnectFromHost(XAbstractSocket* sock) {
     XSslSocket* self = (XSslSocket*)sock;
     if (self->session) {
@@ -397,19 +397,19 @@ static void xssl_v_disconnectFromHost(XAbstractSocket* sock) {
         self->session = NULL;
     }
     self->handshakePending = false;
-    /* 清空密文接收缓冲，防止重连时残留数据被误作为新连接密文 */
+    /* ????????,?????????????????? */
     if (self->encRxBuf) { XRingBuffer_reset(self->encRxBuf); }
     if (self->encTxBuf) { XRingBuffer_reset(self->encTxBuf); }
     self->pendingAckedBytes = 0;
-    /* 释放前一次连接的对端证书链缓存 */
+    /* ??????????????? */
     if (self->peerCertChain) { XClassDelete((XContainer*)self->peerCertChain); self->peerCertChain = NULL; }
-    /* 释放前一次连接的握手错误缓存 */
+    /* ?????????????? */
     if (self->handshakeErrors) { XClassDelete((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
     xssl_clear_negotiated_protocol(self);
     PARENT_SOCK(EXAbstractSocket_DisconnectFromHost, Fn_disconnectFromHost)(sock);
 }
 
-/* close：与 disconnect 类似，销毁会话，清理缓存，再走父类 XIODevice.close */
+/* close:? disconnect ??,????,????,???? XIODevice.close */
 static void xssl_v_close(XIODevice* io) {
     XSslSocket* self = (XSslSocket*)io;
     if (self->session) {
@@ -421,27 +421,27 @@ static void xssl_v_close(XIODevice* io) {
         self->session = NULL;
     }
     self->handshakePending = false;
-    /* 清空密文接收缓冲，防止重连时残留数据被误作为新连接密文 */
+    /* ????????,?????????????????? */
     if (self->encRxBuf) { XRingBuffer_reset(self->encRxBuf); }
     if (self->encTxBuf) { XRingBuffer_reset(self->encTxBuf); }
     self->pendingAckedBytes = 0;
-    /* 释放前一次连接的对端证书链缓存 */
+    /* ??????????????? */
     if (self->peerCertChain) { XClassDelete((XContainer*)self->peerCertChain); self->peerCertChain = NULL; }
-    /* 释放前一次连接的握手错误缓存 */
+    /* ?????????????? */
     if (self->handshakeErrors) { XClassDelete((XContainer*)self->handshakeErrors); self->handshakeErrors = NULL; }
     xssl_clear_negotiated_protocol(self);
     PARENT_IO(EXIODevice_Close, Fn_close)(io);
 }
 
-/* skipData：跳过密文数据（对齐 QSslSocket::skipData） */
+/* skipData:??????(?? QSslSocket::skipData) */
 static int64_t xssl_v_skipData(XIODevice* io, int64_t maxSize) {
     XSslSocket* self = (XSslSocket*)io;
     if (!self->encrypted || !self->session) {
-        /* 未加密态直接调用父类 skipData */
+        /* ?????????? skipData */
         typedef int64_t (*Fn_skipData)(XIODevice*, int64_t);
         return XClass_Parent(XAbstractSocket, EXIODevice_SkipData, Fn_skipData)(io, maxSize);
     }
-    /* 加密态：先排空已解密数据，若不足则从 TLS 读取并丢弃 */
+    /* ???:????????,????? TLS ????? */
     if (self->handshakePending && !self->encrypted) {
         (void)xssl_pump_handshake(self);
     }
@@ -457,8 +457,8 @@ static int64_t xssl_v_skipData(XIODevice* io, int64_t maxSize) {
     }
     return skipped;
 }
-/* waitForConnected：等待 TCP 完成，客户端模式下置握手待定标志；
-   实际握手由 waitForEncrypted 或 read/write 触发 */
+/* waitForConnected:?? TCP ??,?????????????;
+   ????? waitForEncrypted ? read/write ?? */
 static bool xssl_v_waitForConnected(XAbstractSocket* sock, int msecs) {
     bool ok = PARENT_SOCK(EXAbstractSocket_WaitForConnected, Fn_waitForConnected)(sock, msecs);
     if (!ok) return false;
@@ -467,7 +467,7 @@ static bool xssl_v_waitForConnected(XAbstractSocket* sock, int msecs) {
     return true;
 }
 
-/* waitForReadyRead：先完成握手，再等待明文可读 */
+/* waitForReadyRead:?????,??????? */
 static bool xssl_v_waitForReadyRead(XIODevice* io, int msecs) {
     XSslSocket* self = (XSslSocket*)io;
     if (self->mode == XSslSocket_UnencryptedMode) {
@@ -475,7 +475,7 @@ static bool xssl_v_waitForReadyRead(XIODevice* io, int msecs) {
     }
     uint64_t deadline = XDateTime_currentMSecsSinceEpoch() + (msecs < 0 ? 0 : (uint64_t)msecs);
 
-    /* 握手阶段：推进握手，再派发事件以推进 */
+    /* ????:????,???????? */
     while (!self->encrypted) {
         int r = xssl_pump_handshake(self);
         if (r == XSSL_S_OK) break;
@@ -485,7 +485,7 @@ static bool xssl_v_waitForReadyRead(XIODevice* io, int msecs) {
         XCoreApplication_processEvents(XEventLoop_AllEvents);
     }
 
-    /* 加密阶段：等待解密后的明文出现在 IODevice 读缓冲中 */
+    /* ????:??????????? IODevice ???? */
     while (XAbstractSocket_bytesAvailable_base((XAbstractSocket*)self) == 0) {
         if (((XAbstractSocket*)self)->state != XAbstractSocket_ConnectedState) return false;
         if (msecs >= 0 && XDateTime_currentMSecsSinceEpoch() >= deadline) return false;
@@ -494,17 +494,17 @@ static bool xssl_v_waitForReadyRead(XIODevice* io, int msecs) {
     return true;
 }
 
-/* waitForBytesWritten：透传父类；密文已写出即完成 */
+/* waitForBytesWritten:????;???????? */
 static bool xssl_v_waitForBytesWritten(XIODevice* io, int msecs) {
     return PARENT_IO(EXIODevice_WaitForBytesWritten, Fn_waitFor)(io, msecs);
 }
 
-/* waitForDisconnected：透传父类 */
+/* waitForDisconnected:???? */
 static bool xssl_v_waitForDisconnected(XAbstractSocket* sock, int msecs) {
     return PARENT_SOCK(EXAbstractSocket_WaitForDisconnected, Fn_waitForDisconnected)(sock, msecs);
 }
 
-/* deinit：销毁 TLS 会话、证书链缓存，再走父类析构 */
+/* deinit:?? TLS ????????,?????? */
 static void xssl_v_deinit(XClass* obj) {
     XSslSocket* self = (XSslSocket*)obj;
     if (self->session)         { XSsl_sessionDestroy(self->session); self->session = NULL; }
@@ -531,22 +531,26 @@ static void xssl_v_deinit(XClass* obj) {
     }
     if (self->encRxBuf) { XClassDelete((XContainer*)self->encRxBuf);    self->encRxBuf = NULL;/*(struct XRingBuffer*)XRingBuffer_create(16384);*/ }
     if (self->encTxBuf) { XClassDelete((XContainer*)self->encTxBuf); self->encTxBuf = NULL; }
-    /* localCert/privateKey/CA 证书均为外部引用，本类不持有。 */
+    /* localCert/privateKey ???????????????(setter ??"???
+     * ?????? self"),???????,??????????/???????;
+     * CA ????(addCaCertificate)????????,?????? */
+    if (self->localCert)  { XSsl_certificateDestroy(self->localCert);  self->localCert = NULL; }
+    if (self->privateKey) { XSsl_keyDestroy(self->privateKey);         self->privateKey = NULL; }
     XClass_Deinit_Parent(XAbstractSocket, self);
 }
 
-/* =============== 解密排空 =============== */
+/* =============== ???? =============== */
 
 
-/* resume：恢复被中断的操作（对齐 QSslSocket::resume） */
+/* resume:????????(?? QSslSocket::resume) */
 static void xssl_v_resume(XAbstractSocket* sock) {
     XSslSocket* self = (XSslSocket*)sock;
     if (!self) return;
-    /* 如果握手被中断，尝试继续推进 */
+    /* ???????,?????? */
     if (self->handshakePending && !self->encrypted) {
         (void)xssl_pump_handshake(self);
     }
-    /* 调用父类 resume */
+    /* ???? resume */
     XClass_Parent(XAbstractSocket, EXAbstractSocket_Resume, void(*)(XAbstractSocket*))(sock);
 }
 static void xssl_drain_encrypted(XSslSocket* self) {
@@ -554,7 +558,7 @@ static void xssl_drain_encrypted(XSslSocket* self) {
         (void)xssl_pump_handshake(self);
     }
     if (!self->encrypted || !self->session) return;
-    /* 连接已断开：不再尝试解密，防止将关闭后残留的垃圾数据当作 TLS 记录 */
+    /* ?????:??????,??????????????? TLS ?? */
     if (((XAbstractSocket*)self)->state != XAbstractSocket_ConnectedState)
         return;
     XIODevice* io = (XIODevice*)self;
@@ -574,31 +578,31 @@ static void xssl_drain_encrypted(XSslSocket* self) {
     if (session_closed) {
         self->encrypted = false;
         self->handshakePending = false;
-        /* 清空密文缓冲，防止后续残留数据被 mbedTLS 当作有效 TLS 记录尝试解密 */
+        /* ??????,????????? mbedTLS ???? TLS ?????? */
         if (self->encRxBuf) XRingBuffer_reset(self->encRxBuf);
     }
     if (any) XIODevice_readyRead_signal(io);
 }
 
-/* SOCK_ACT 事件接管：在密文进入 IODevice 读缓冲之前先解密到自有 encRxBuf，
-   再排空成明文写入 IODevice 读缓冲 */
+/* SOCK_ACT ????:????? IODevice ??????????? encRxBuf,
+   ???????? IODevice ??? */
 static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
     XSslSocket* self = (XSslSocket*)sock;
 
-    /* 未加密模式：透传父类 */
+    /* ?????:???? */
     if (self->mode == XSslSocket_UnencryptedMode) {
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
-    /* 非 SOCK_ACT 事件：透传父类（如 SOCK_CLOSE 等） */
-    if (e->type != XEVENT_TYPE_SOCK_ACT) {
-        /* SOCK_CLOSE 前先排空 encRxBuf 中残留的密文，防止最后一批
-           加密数据因 close 事件跳过解密 */
-        if (e->type == XEVENT_TYPE_SOCK_CLOSE) {
+    /* ? SOCK_ACT ??:????(? SOCK_CLOSE ?) */
+    if (e->m_type != XEVENT_TYPE_SOCK_ACT) {
+        /* SOCK_CLOSE ???? encRxBuf ??????,??????
+           ????? close ?????? */
+        if (e->m_type == XEVENT_TYPE_SOCK_CLOSE) {
             xssl_drain_encrypted(self);
         }
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
-    /* 存在代理握手上下文时，走父类兼容路径（不常见） */
+    /* ??????????,???????(???) */
     if (sock->proxyHandshakeCtx) {
         return PARENT_SOCK(EXObject_Event, Fn_event)(sock, e);
     }
@@ -607,13 +611,13 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
     }
 
     XEventSockAct* sa = (XEventSockAct*)e;
-    /* 驱动底层 IOCP/select 状态机（父类也是先调这一步） */
+    /* ???? IOCP/select ???(?????????) */
     xssl_controlSocketEvent(sock, e);
 
-    /* Read：把底层刚读到的密文塞进 encRxBuf；不写 IODevice 读缓冲 */
-    if (sa->actType & XSocketAct_Read) {
-        /* 连接已断开：跳过密文写入和解密，防止将关闭后残留的垃圾数据
-           写入 encRxBuf 并被 mbedTLS 尝试解密 */
+    /* Read:??????????? encRxBuf;?? IODevice ??? */
+    if (sa->actType & XSocketActType_Read) {
+        /* ?????:?????????,?????????????
+           ?? encRxBuf ?? mbedTLS ???? */
         if (sock->state == XAbstractSocket_ConnectedState) {
             size_t bytesTransferred = xssl_getSocketSize(sock,
                 (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes);
@@ -623,22 +627,22 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
                     XRingBuffer_write(self->encRxBuf, readBuf, bytesTransferred);
                 }
             }
-            /* 解密：mbedTLS 从 encRxBuf 读取密文，明文写入 IODevice 读缓冲并 emit readyRead */
+            /* ??:mbedTLS ? encRxBuf ????,???? IODevice ???? emit readyRead */
             xssl_drain_encrypted(self);
         }
-        /* 继续投递下一次异步读（排空事件队列） */
+        /* ??????????(??????) */
         xssl_controlSocket(sock, XDeviceNetworkCommand_ContinueRead);
     }
 
-    /* Write：明文出站已由 xssl_v_writeData 走父类 writeData 完成；
-       这里只处理底层写完成事件，emit bytesWritten 让上层继续写 */
-    if (sa->actType & XSocketAct_Write) {
+    /* Write:?????? xssl_v_writeData ??? writeData ??;
+       ????????????,emit bytesWritten ?????? */
+    if (sa->actType & XSocketActType_Write) {
         size_t bytesWritten = xssl_getSocketSize(sock,
             (XDeviceProperty)XDeviceNetworkProperty_WriteFinishedBytes);
         self->pendingAckedBytes += bytesWritten;
         xssl_flush_encrypted_tx(self);
-        /* 上层收到通知后会继续提交明文。只有前一条 TLS 记录的密文尾部
-         * 已全部交给 TCP 时才通知，避免低内存窗口下发送队列无界增长。 */
+        /* ???????????????????? TLS ???????
+         * ????? TCP ????,????????????????? */
         if (xssl_encrypted_tx_pending(self) == 0 && self->pendingAckedBytes > 0) {
             size_t completed = self->pendingAckedBytes;
             self->pendingAckedBytes = 0;
@@ -647,8 +651,8 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
         xssl_controlSocket(sock, XDeviceNetworkCommand_ContinueWrite);
     }
 
-    /* Connect：底层完成连接时切换状态 */
-    if (sa->actType & XSocketAct_Connect) {
+    /* Connect:??????????? */
+    if (sa->actType & XSocketActType_Connect) {
         bool connected = false;
         if (xssl_getSocketBool(sock, (XDeviceProperty)XDeviceNetworkProperty_Connected, &connected) && connected) {
             XAbstractSocket_setSocketState(sock, XAbstractSocket_ConnectedState);
@@ -662,7 +666,7 @@ static bool xssl_v_event(XAbstractSocket* sock, XEvent* e) {
 }
 
 
-/* =============== 信号实现 =============== */
+/* =============== ???? =============== */
 
 void* XSslSocket_encrypted_signal(XSslSocket* self)
 {
@@ -684,7 +688,7 @@ void* XSslSocket_encryptedBytesWritten_signal(XSslSocket* self, int64_t bytes)
 }
 
 
-/* =============== 生命周期管理 =============== */
+/* =============== ?????? =============== */
 
 void XSslSocket_init(XSslSocket* self)
 {
@@ -728,7 +732,7 @@ XSslSocket* XSslSocket_create_ex(XMemoryType memory)
     return self;
 }
 
-/* =============== 配置函数 =============== */
+/* =============== ???? =============== */
 
 //void XSslSocket_setSslConfiguration(XSslSocket* self, void* config) { (void)self; (void)config; }
 //void* XSslSocket_sslConfiguration(const XSslSocket* self) { (void)self; return NULL; }
@@ -920,7 +924,7 @@ XString* XSslSocket_peerVerifyName(const XSslSocket* self)
     return self->peerVerifyName;
 }
 
-/* =============== 连接与加密 =============== */
+/* =============== ????? =============== */
 
 void XSslSocket_connectToHostEncrypted(XSslSocket* self, const XString* hostName, uint16_t port)
 {
@@ -950,7 +954,7 @@ void XSslSocket_connectToHostEncrypted_2(XSslSocket* self,
 }
 
 
-/* 对齐 QSslSocket::connectToHostEncrypted(host, port, sslPeerName, mode, protocol) */
+/* ?? QSslSocket::connectToHostEncrypted(host, port, sslPeerName, mode, protocol) */
 void XSslSocket_connectToHostEncrypted_3(XSslSocket* self,
     const XString* hostName, uint16_t port,
     const XString* sslPeerName,
@@ -958,7 +962,7 @@ void XSslSocket_connectToHostEncrypted_3(XSslSocket* self,
 {
     if (!self) return;
     self->mode = XSslSocket_SslClientMode;
-    /* 设置 SNI 名称（独立于连接主机名） */
+    /* ?? SNI ??(????????) */
     if (sslPeerName) {
         if (self->peerVerifyName) {
             XClassDelete(self->peerVerifyName);
@@ -976,7 +980,7 @@ void XSslSocket_startClientEncryption(XSslSocket* self)
     if (self->encrypted || self->handshakePending) return;
     self->mode = XSslSocket_SslClientMode;
     self->handshakePending = true;
-    /* 明文协议升级后没有新的可读事件可触发握手，先发送 ClientHello。 */
+    /* ????????????????????,??? ClientHello? */
     (void)xssl_pump_handshake(self);
 }
 
@@ -1006,7 +1010,7 @@ bool XSslSocket_waitForEncrypted(XSslSocket* self, int msecs)
     return true;
 }
 
-/* =============== 会话查询 =============== */
+/* =============== ???? =============== */
 
 XString* XSslSocket_sessionProtocol(const XSslSocket* self)
 {
@@ -1023,7 +1027,7 @@ XString* XSslSocket_sessionCipher(const XSslSocket* self)
 //int XSslSocket_sessionCipherBits(const XSslSocket* self)
 //{
 //    if (!self || !self->session) return 0;
-//    return 0; /* 暂未实现 */
+//    return 0; /* ???? */
 //}
 //
 //int XSslSocket_sessionCipherBits_base(const XSslSocket* self)
@@ -1034,14 +1038,18 @@ XString* XSslSocket_sessionCipher(const XSslSocket* self)
 //int XSslSocket_sessionProtocolVersion(const XSslSocket* self)
 //{
 //    if (!self || !self->session) return 0;
-//    return 0; /* 暂未实现 */
+//    return 0; /* ???? */
 //}
 
-/* =============== 证书管理 =============== */
+/* =============== ???? =============== */
 
 void XSslSocket_setLocalCertificate(XSslSocket* self, XSslCertificate* cert)
 {
     if (!self) return;
+    /* ???????? self(??????):????????,????????? */
+    if (self->localCert && self->localCert != cert) {
+        XSsl_certificateDestroy(self->localCert);
+    }
     self->localCert = (XSslCertificate*)cert;
 }
 
@@ -1053,6 +1061,10 @@ XSslCertificate* XSslSocket_localCertificate(const XSslSocket* self)
 void XSslSocket_setPrivateKey(XSslSocket* self, XSslKey* key)
 {
     if (!self) return;
+    /* ???????? self(??????):????????,????????? */
+    if (self->privateKey && self->privateKey != key) {
+        XSsl_keyDestroy(self->privateKey);
+    }
     self->privateKey = key;
 }
 
@@ -1098,7 +1110,7 @@ XVector* XSslSocket_sslHandshakeErrors(const XSslSocket* self)
 
 void XSslSocket_ignoreSslErrors_2(XSslSocket* self, const XVector* errors)
 {
-    /* MVP：记录忽略意图，errors 列表暂不逐一比对 */
+    /* MVP:??????,errors ???????? */
     (void)errors;
     if (!self) return;
     self->ignoreErrors = true;
@@ -1112,7 +1124,7 @@ void XSslSocket_ignoreSslErrors(XSslSocket* self)
 
 void XSslSocket_continueInterruptedHandshake(XSslSocket* self)
 {
-    /* MVP：当前握手不在 sslErrors 处中断，直接继续推进 */
+    /* MVP:?????? sslErrors ???,?????? */
     if (!self) return;
     if (self->handshakePending && !self->encrypted) {
         (void)xssl_pump_handshake(self);
@@ -1120,7 +1132,7 @@ void XSslSocket_continueInterruptedHandshake(XSslSocket* self)
 }
 
 
-/* =============== 模式查询 =============== */
+/* =============== ???? =============== */
 
 XSslSocket_SslMode XSslSocket_mode(const XSslSocket* self)
 {
@@ -1142,7 +1154,7 @@ bool XSslSocket_isEncrypted(const XSslSocket* self)
 //}
 
 
-/* =============== 数据查询与访问器 =============== */
+/* =============== ???????? =============== */
 
 int64_t XSslSocket_encryptedBytesAvailable(const XSslSocket* self)
 {
@@ -1161,7 +1173,7 @@ XSslSession* XSslSocket_session(XSslSocket* self)
 {
     return self ? self->session : NULL;
 }
-/* =============== XSslConfiguration API 实现 =============== */
+/* =============== XSslConfiguration API ?? =============== */
 
 XSslConfiguration* XSslConfiguration_create(void)
 {
@@ -1262,12 +1274,12 @@ void XSslConfiguration_setPrivateKey(XSslConfiguration* self, XSslKey* key)
     if (self) self->privateKey = key;
 }
 
-/* =============== XSslSocket 缺失 API 实现 =============== */
+/* =============== XSslSocket ?? API ?? =============== */
 
 void XSslSocket_resume(XSslSocket* self)
 {
     if (!self) return;
-    /* 通过虚函数表调用 resume，确保多态 */
+    /* ???????? resume,???? */
     XClassGetVirtualFunc(self, EXAbstractSocket_Resume, void(*)(XAbstractSocket*))((XAbstractSocket*)self);
 }
 
@@ -1294,6 +1306,14 @@ void XSslSocket_setSslConfiguration(XSslSocket* self, const XSslConfiguration* c
     self->protocol = config->protocol;
     self->verifyMode = config->verifyMode;
     self->peerVerifyDepth = config->peerVerifyDepth;
+    /* ??????/???????????(self ??????????),
+       ??????????????;????????????,???? */
+    if (self->localCert && self->localCert != config->localCert) {
+        XSsl_certificateDestroy(self->localCert);
+    }
+    if (self->privateKey && self->privateKey != config->privateKey) {
+        XSsl_keyDestroy(self->privateKey);
+    }
     self->localCert = config->localCert;
     self->privateKey = config->privateKey;
     if (config->peerVerifyName) {
@@ -1313,6 +1333,11 @@ void XSslSocket_setLocalCertificate_2(XSslSocket* self, const XString* fileName,
     if (!path) return;
     XSslCertificate* cert = XSsl_certificateLoad(path, format);
     if (cert) {
+        /* ?????????? self ??,?????????????,
+         * ????????????? */
+        if (self->localCert) {
+            XSsl_certificateDestroy(self->localCert);
+        }
         self->localCert = cert;
     }
 }
@@ -1344,6 +1369,10 @@ void XSslSocket_setPrivateKey_2(XSslSocket* self, const XString* fileName,
                               XByteArray_size_base(contents), algo, XSSL_PrivateKey, pass);
     XClassDelete(contents);
     if (key) {
+        /* ?????????? self ??,????????????? */
+        if (self->privateKey) {
+            XSsl_keyDestroy(self->privateKey);
+        }
         self->privateKey = key;
     }
 }
@@ -1351,7 +1380,7 @@ void XSslSocket_setPrivateKey_2(XSslSocket* self, const XString* fileName,
 XVector* XSslSocket_ocspResponses(const XSslSocket* self)
 {
     (void)self;
-    /* OCSP 装订响应：当前 mbedTLS 后端未实现，返回空列表 */
+    /* OCSP ????:?? mbedTLS ?????,????? */
     return NULL;
 }
 
@@ -1407,7 +1436,7 @@ void* XSslSocket_preSharedKeyAuthenticationRequired_signal(
                 NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-/* =============== 静态/全局查询 =============== */
+/* =============== ??/???? =============== */
 
 bool XSslSocket_supportsSsl(void) { return true; }
 long XSslSocket_sslLibraryVersionNumber(void) { return 0; }
@@ -1423,7 +1452,7 @@ bool XSslSocket_isProtocolSupported(XSslProtocol protocol, const XString* backen
 XVector* XSslSocket_implementedClasses(const XString* backendName)
 {
     (void)backendName;
-    /* 当前后端实现：Socket、Certificate、Key、Session */
+    /* ??????:Socket?Certificate?Key?Session */
     XVector* vec = XVector_create(sizeof(int));
     if (!vec) return NULL;
     int classes[] = {
@@ -1467,29 +1496,29 @@ bool XSslSocket_isFeatureSupported(XSslSupportedFeature feat, const XString* bac
 
 XVtable* XSslSocket_class_init(void) {
     XVTABLE_INIT_DEFAULT(XSslSocket)
-    /* 继承 XAbstractSocket 的虚函数表 */
+    /* ?? XAbstractSocket ????? */
     XVTABLE_INHERIT_XCLASS(XAbstractSocket);
 
-    /* IO 层：读、写、关闭、等待可读、等待写完 —— 全部由 TLS 重载 */
+    /* IO ?:???????????????? -- ??? TLS ?? */
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_ReadData,             xssl_v_readData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WriteData,            xssl_v_writeData);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close,                xssl_v_close);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForReadyRead,     xssl_v_waitForReadyRead);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_WaitForBytesWritten,  xssl_v_waitForBytesWritten);
 
-    /* Socket 层：连接、断开、等待连接、等待断开 */
+    /* Socket ?:??????????????? */
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSocket_ConnectToHost,      xssl_v_connectToHost);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSocket_DisconnectFromHost, xssl_v_disconnectFromHost);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSocket_WaitForConnected,   xssl_v_waitForConnected);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSocket_WaitForDisconnected,xssl_v_waitForDisconnected);
 
-    /* IO 层：skipData */
+    /* IO ?:skipData */
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_SkipData,           xssl_v_skipData);
 
-    /* Socket 层：resume */
+    /* Socket ?:resume */
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractSocket_Resume,       xssl_v_resume);
 
-    /* Class 层：事件、析构 */
+    /* Class ?:????? */
     XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, xssl_v_event);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, xssl_v_deinit);
 

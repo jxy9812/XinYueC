@@ -18,7 +18,7 @@
 
 /* int 0~255 → u16 复制式扩展（对标 Qt `v * 0x101`，qcolor.cpp:2406-2409）。
  * 调用方按两档越界口径先行校验/钳位，此处钳位仅为内部兜底。 */
-static uint16_t intToU16(int v)
+static uint16_t XColor_intToU16(int v)
 {
     if (v < 0) return 0;
     if (v > 255) return 65535;
@@ -29,7 +29,7 @@ static uint16_t intToU16(int v)
  * qt_div_257(x) = qt_div_257_floor(x + 128)，qt_div_257_floor(y) =
  * (y - (y >> 8)) >> 8）。对复制式值（k×0x101）结果为 k；对原生 16 位值
  * （fromRgbF/16 位图来源，如 254）为四舍五入（→1），替代旧截断除的 0。 */
-static int qt_div_257(uint16_t v)
+static int XColor_div257(uint16_t v)
 {
     uint32_t y = (uint32_t)v + 128u;
     return (int)((y - (y >> 8)) >> 8);
@@ -38,7 +38,7 @@ static int qt_div_257(uint16_t v)
 /* float 0.0~1.0 → u16：对标 qRound(f * USHRT_MAX)（qcolor.cpp:2447-2450 等
  * 模式；qRound 为半值远离零，f≥0 域内与 +0.5 截断等价）。调用方按两档口径
  * 先行校验/钳位，此处钳位仅为内部兜底。 */
-static uint16_t floatToU16(float v)
+static uint16_t XColor_floatToU16(float v)
 {
     if (v < 0.0f) return 0;
     if (v > 1.0f) return 65535;
@@ -46,7 +46,7 @@ static uint16_t floatToU16(float v)
 }
 
 /* u16 → float：对标 v / float(USHRT_MAX)（qcolor.cpp:1261-1265 等模式） */
-static float u16ToFloat(uint16_t v)
+static float XColor_u16ToFloat(uint16_t v)
 {
     return (float)v / 65535.0f;
 }
@@ -55,19 +55,19 @@ static float u16ToFloat(uint16_t v)
 #define XCOLOR_HUE_SENTINEL 65535u
 
 /* 百分之一度（×100）→ 度（整除截断，36000 读出 360 为 Qt 原样怪癖） */
-static int hueU16ToInt(uint16_t h)
+static int XColor_hueU16ToInt(uint16_t h)
 {
     return (h == XCOLOR_HUE_SENTINEL) ? -1 : (int)(h / 100);
 }
 
 /* 百分之一度 → 轮分数 / -1.0f 哨兵（qcolor.cpp:1720, 1783 读出口径） */
-static float hueU16ToFloat(uint16_t h)
+static float XColor_hueU16ToFloat(uint16_t h)
 {
     return (h == XCOLOR_HUE_SENTINEL) ? -1.0f : (float)h / 36000.0f;
 }
 
 /* 置无效（对标 QColor::invalidate()，qcolor.cpp:2930-2938） */
-static void invalidateColor(XColor* c)
+static void XColor_invalidate(XColor* c)
 {
     c->m_spec = XColor_Invalid;
     c->m_alpha = 65535;
@@ -79,7 +79,7 @@ static void invalidateColor(XColor* c)
 
 /* 单通道整型钳位（对标 QCOLOR_INT_RANGE_CHECK 的 var = qMax(0, qMin(var,255))，
  * qcolor.cpp:579-585） */
-static int clampI0255(int v)
+static int XColor_clampI0255(int v)
 {
     if (v < 0) return 0;
     if (v > 255) return 255;
@@ -88,7 +88,7 @@ static int clampI0255(int v)
 
 /* 单通道浮点钳位（对标 QCOLOR_REAL_RANGE_CHECK 的 qMax/qMin [0,1]，
  * qcolor.cpp:587-593） */
-static float clampF01(float v)
+static float XColor_clampF01(float v)
 {
     if (v < 0.0f) return 0.0f;
     if (v > 1.0f) return 1.0f;
@@ -96,19 +96,19 @@ static float clampF01(float v)
 }
 
 /* 整数 RGBA 合法性（对标 QColor::isRgbaValid，qcolor.h:209-212） */
-static bool isRgbValid(int r, int g, int b, int a)
+static bool XColor_isRgbValid(int r, int g, int b, int a)
 {
     return (r >= 0 && r <= 255 && g >= 0 && g <= 255 &&
             b >= 0 && b <= 255 && a >= 0 && a <= 255);
 }
 
 /* 三值最大/最小（对标 Q_MAX_3/Q_MIN_3，qcolor.cpp:2177-2178） */
-static float max3f(float a, float b, float c)
+static float XColor_max3f(float a, float b, float c)
 {
     return (a > b && a > c) ? a : (b > c ? b : c);
 }
 
-static float min3f(float a, float b, float c)
+static float XColor_min3f(float a, float b, float c)
 {
     return (a < b && a < c) ? a : (b < c ? b : c);
 }
@@ -118,7 +118,7 @@ static float min3f(float a, float b, float c)
 XColor XColor_create(void)
 {
     XColor c;
-    invalidateColor(&c);
+    XColor_invalidate(&c);
     return c;
 }
 
@@ -126,16 +126,16 @@ XColor XColor_create_rgb(int r, int g, int b, int a)
 {
     XColor c;
     /* 对标 QColor::fromRgb（qcolor.cpp:2397-2412）：越界警告 + 返回无效色 */
-    if (!isRgbValid(r, g, b, a)) {
+    if (!XColor_isRgbValid(r, g, b, a)) {
         XERROR_PRINTF("XColor_create_rgb: RGB parameters out of range");
-        invalidateColor(&c);
+        XColor_invalidate(&c);
         return c;
     }
     c.m_spec = XColor_Rgb;
-    c.m_alpha = intToU16(a);
-    c.m_comp1 = intToU16(r);
-    c.m_comp2 = intToU16(g);
-    c.m_comp3 = intToU16(b);
+    c.m_alpha = XColor_intToU16(a);
+    c.m_comp1 = XColor_intToU16(r);
+    c.m_comp2 = XColor_intToU16(g);
+    c.m_comp3 = XColor_intToU16(b);
     c.m_comp4 = 0;
     return c;
 }
@@ -146,7 +146,7 @@ XColor XColor_create_rgbF(float r, float g, float b, float a)
     /* 对标 QColor::fromRgbF（qcolor.cpp:2425-2453）：alpha 越界警告 + 无效 */
     if (a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_create_rgbF: Alpha parameter out of range");
-        invalidateColor(&c);
+        XColor_invalidate(&c);
         return c;
     }
     /* 偏差声明（§8 台账候选）：Qt 对 r/g/b 越界转 ExtendedRgb
@@ -154,15 +154,15 @@ XColor XColor_create_rgbF(float r, float g, float b, float a)
      * 钳位 [0,1] 保持 Rgb。 */
     if (r < 0.0f || r > 1.0f || g < 0.0f || g > 1.0f || b < 0.0f || b > 1.0f) {
         XERROR_PRINTF("XColor_create_rgbF: RGB parameters out of range, clamped");
-        r = clampF01(r);
-        g = clampF01(g);
-        b = clampF01(b);
+        r = XColor_clampF01(r);
+        g = XColor_clampF01(g);
+        b = XColor_clampF01(b);
     }
     c.m_spec = XColor_Rgb;
-    c.m_alpha = floatToU16(a);
-    c.m_comp1 = floatToU16(r);
-    c.m_comp2 = floatToU16(g);
-    c.m_comp3 = floatToU16(b);
+    c.m_alpha = XColor_floatToU16(a);
+    c.m_comp1 = XColor_floatToU16(r);
+    c.m_comp2 = XColor_floatToU16(g);
+    c.m_comp3 = XColor_floatToU16(b);
     c.m_comp4 = 0;
     return c;
 }
@@ -177,15 +177,15 @@ XColor XColor_create_hsv(int h, int s, int v, int a)
     if (((h < 0 || h >= 360) && h != -1) ||
         s < 0 || s > 255 || v < 0 || v > 255 || a < 0 || a > 255) {
         XERROR_PRINTF("XColor_create_hsv: HSV parameters out of range");
-        invalidateColor(&c);
+        XColor_invalidate(&c);
         return c;
     }
     c.m_spec = XColor_Hsv;
-    c.m_alpha = intToU16(a);                                    /* qcolor.cpp:2509 */
+    c.m_alpha = XColor_intToU16(a);                                    /* qcolor.cpp:2509 */
     c.m_comp1 = (h == -1) ? XCOLOR_HUE_SENTINEL                 /* qcolor.cpp:2510 */
                           : (uint16_t)((h % 360) * 100);
-    c.m_comp2 = intToU16(s);
-    c.m_comp3 = intToU16(v);
+    c.m_comp2 = XColor_intToU16(s);
+    c.m_comp3 = XColor_intToU16(v);
     c.m_comp4 = 0;
     return c;
 }
@@ -199,15 +199,15 @@ XColor XColor_create_hsvF(float h, float s, float v, float a)
     if (((h < 0.0f || h > 1.0f) && h != -1.0f) ||
         s < 0.0f || s > 1.0f || v < 0.0f || v > 1.0f || a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_create_hsvF: HSV parameters out of range");
-        invalidateColor(&c);
+        XColor_invalidate(&c);
         return c;
     }
     c.m_spec = XColor_Hsv;
-    c.m_alpha = floatToU16(a);                                  /* qcolor.cpp:2540 */
+    c.m_alpha = XColor_floatToU16(a);                                  /* qcolor.cpp:2540 */
     c.m_comp1 = (h == -1.0f) ? XCOLOR_HUE_SENTINEL              /* qcolor.cpp:2541 */
                           : (uint16_t)(h * 36000.0f + 0.5f);
-    c.m_comp2 = floatToU16(s);
-    c.m_comp3 = floatToU16(v);
+    c.m_comp2 = XColor_floatToU16(s);
+    c.m_comp3 = XColor_floatToU16(v);
     c.m_comp4 = 0;
     return c;
 }
@@ -220,15 +220,15 @@ XColor XColor_create_cmyk(int c, int m, int y, int k, int a)
     if (c < 0 || c > 255 || m < 0 || m > 255 || y < 0 || y > 255 ||
         k < 0 || k > 255 || a < 0 || a > 255) {
         XERROR_PRINTF("XColor_create_cmyk: CMYK parameters out of range");
-        invalidateColor(&col);
+        XColor_invalidate(&col);
         return col;
     }
     col.m_spec = XColor_Cmyk;
-    col.m_alpha = intToU16(a);                                  /* qcolor.cpp:2752 */
-    col.m_comp1 = intToU16(c);
-    col.m_comp2 = intToU16(m);
-    col.m_comp3 = intToU16(y);
-    col.m_comp4 = intToU16(k);
+    col.m_alpha = XColor_intToU16(a);                                  /* qcolor.cpp:2752 */
+    col.m_comp1 = XColor_intToU16(c);
+    col.m_comp2 = XColor_intToU16(m);
+    col.m_comp3 = XColor_intToU16(y);
+    col.m_comp4 = XColor_intToU16(k);
     return col;
 }
 
@@ -240,15 +240,15 @@ XColor XColor_create_cmykF(float c, float m, float y, float k, float a)
         y < 0.0f || y > 1.0f || k < 0.0f || k > 1.0f ||
         a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_create_cmykF: CMYK parameters out of range");
-        invalidateColor(&col);
+        XColor_invalidate(&col);
         return col;
     }
     col.m_spec = XColor_Cmyk;
-    col.m_alpha = floatToU16(a);
-    col.m_comp1 = floatToU16(c);
-    col.m_comp2 = floatToU16(m);
-    col.m_comp3 = floatToU16(y);
-    col.m_comp4 = floatToU16(k);
+    col.m_alpha = XColor_floatToU16(a);
+    col.m_comp1 = XColor_floatToU16(c);
+    col.m_comp2 = XColor_floatToU16(m);
+    col.m_comp3 = XColor_floatToU16(y);
+    col.m_comp4 = XColor_floatToU16(k);
     return col;
 }
 
@@ -260,15 +260,15 @@ XColor XColor_create_hsl(int h, int s, int l, int a)
     if (((h < 0 || h >= 360) && h != -1) ||
         s < 0 || s > 255 || l < 0 || l > 255 || a < 0 || a > 255) {
         XERROR_PRINTF("XColor_create_hsl: HSL parameters out of range");
-        invalidateColor(&c);
+        XColor_invalidate(&c);
         return c;
     }
     c.m_spec = XColor_Hsl;
-    c.m_alpha = intToU16(a);                                    /* qcolor.cpp:2572 */
+    c.m_alpha = XColor_intToU16(a);                                    /* qcolor.cpp:2572 */
     c.m_comp1 = (h == -1) ? XCOLOR_HUE_SENTINEL                 /* qcolor.cpp:2573 */
                           : (uint16_t)((h % 360) * 100);
-    c.m_comp2 = intToU16(s);
-    c.m_comp3 = intToU16(l);
+    c.m_comp2 = XColor_intToU16(s);
+    c.m_comp3 = XColor_intToU16(l);
     c.m_comp4 = 0;
     return c;
 }
@@ -281,17 +281,17 @@ XColor XColor_create_hslF(float h, float s, float l, float a)
     if (((h < 0.0f || h > 1.0f) && h != -1.0f) ||
         s < 0.0f || s > 1.0f || l < 0.0f || l > 1.0f || a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_create_hslF: HSL parameters out of range");
-        invalidateColor(&c);
+        XColor_invalidate(&c);
         return c;
     }
     c.m_spec = XColor_Hsl;
-    c.m_alpha = floatToU16(a);                                  /* qcolor.cpp:2604 */
+    c.m_alpha = XColor_floatToU16(a);                                  /* qcolor.cpp:2604 */
     c.m_comp1 = (h == -1.0f) ? XCOLOR_HUE_SENTINEL              /* qcolor.cpp:2605-2607 */
                           : (uint16_t)(h * 36000.0f + 0.5f);
     if (c.m_comp1 == 36000u)
         c.m_comp1 = 0;
-    c.m_comp2 = floatToU16(s);
-    c.m_comp3 = floatToU16(l);
+    c.m_comp2 = XColor_floatToU16(s);
+    c.m_comp3 = XColor_floatToU16(l);
     c.m_comp4 = 0;
     return c;
 }
@@ -342,7 +342,13 @@ XColor_Spec XColor_spec(const XColor* self)
 XString XColor_toHexString(const XColor* self, XColor_NameFormat format)
 {
     XString_Init_Utf8(result, "");
-    if (!self) return _result;   /* C 护栏：调用者没有提供对象 */
+    XString out;
+    XString_init(&out);   /* 返回值载体：资源须经 XClassMove 转移，禁止按值浅拷贝冒充所有权转移 */
+    if (!self)
+    {
+        XClassDeinit(result);   /* 栈临时对象与 init 成对收尾 */
+        return out;
+    }
     /* 对标 QColor::name()（qcolor.cpp:832-842）：无效颜色不特判，经 rgba()
      * 按无效存储（alpha=65535、分量全 0）换算 → "#000000"/"#ff000000"
      * （qcolor.cpp:836-839），废除旧实现空串分支。 */
@@ -358,12 +364,14 @@ XString XColor_toHexString(const XColor* self, XColor_NameFormat format)
                                 (unsigned)((argb >> 16) & 0xFF),
                                 (unsigned)((argb >> 8) & 0xFF),
                                 (unsigned)(argb & 0xFF));
-    return _result;
+    XClassMove(&out, result);   /* 移动虚槽转移资源所有权 */
+    XClassDeinit(result);       /* 创建者收尾栈临时对象（资源已转出，安全空操作） */
+    return out;
 }
 
 /* 十六进制字符序列 → 整数，任一非法字符返回 -1（对标 QtMiscUtils::fromHex
  * + hex2int，qcolor.cpp:33-46） */
-static int hex2int(const char* s, int n)
+static int XColor_hex2int(const char* s, int n)
 {
     if (n < 0) return -1;
     int result = 0;
@@ -382,36 +390,36 @@ static int hex2int(const char* s, int n)
 
 /* 十六进制颜色解析（移植 get_hex_rgb，qcolor.cpp:48-88；len 为 '#' 后字符
  * 数）：任一非十六进制字符即整体无效；解析成功得 u16 直存四通道。 */
-static bool getHexRgb(const char* name, int len,
+static bool XColor_getHexRgb(const char* name, int len,
                       uint16_t* r, uint16_t* g, uint16_t* b, uint16_t* a)
 {
     int ri, gi, bi;
     int ai = 65535;
     if (len == 12) {          /* #RRRRGGGGBBBB：每通道 4 位直取 u16（:56-59） */
-        ri = hex2int(name + 0, 4);
-        gi = hex2int(name + 4, 4);
-        bi = hex2int(name + 8, 4);
+        ri = XColor_hex2int(name + 0, 4);
+        gi = XColor_hex2int(name + 4, 4);
+        bi = XColor_hex2int(name + 8, 4);
     } else if (len == 9) {    /* #RRRGGGBBB：每通道 3 位，(r<<4)|(r>>8)（:60-68） */
-        ri = hex2int(name + 0, 3);
-        gi = hex2int(name + 3, 3);
-        bi = hex2int(name + 6, 3);
+        ri = XColor_hex2int(name + 0, 3);
+        gi = XColor_hex2int(name + 3, 3);
+        bi = XColor_hex2int(name + 6, 3);
         if (ri == -1 || gi == -1 || bi == -1) return false;
         ri = (ri << 4) | (ri >> 8);
         gi = (gi << 4) | (gi >> 8);
         bi = (bi << 4) | (bi >> 8);
     } else if (len == 8) {    /* #AARRGGBB：alpha+每通道 2 位 ×0x101（:69-73） */
-        ai = hex2int(name + 0, 2) * 0x101;
-        ri = hex2int(name + 2, 2) * 0x101;
-        gi = hex2int(name + 4, 2) * 0x101;
-        bi = hex2int(name + 6, 2) * 0x101;
+        ai = XColor_hex2int(name + 0, 2) * 0x101;
+        ri = XColor_hex2int(name + 2, 2) * 0x101;
+        gi = XColor_hex2int(name + 4, 2) * 0x101;
+        bi = XColor_hex2int(name + 6, 2) * 0x101;
     } else if (len == 6) {    /* #RRGGBB：每通道 2 位 ×0x101（:74-77） */
-        ri = hex2int(name + 0, 2) * 0x101;
-        gi = hex2int(name + 2, 2) * 0x101;
-        bi = hex2int(name + 4, 2) * 0x101;
+        ri = XColor_hex2int(name + 0, 2) * 0x101;
+        gi = XColor_hex2int(name + 2, 2) * 0x101;
+        bi = XColor_hex2int(name + 4, 2) * 0x101;
     } else if (len == 3) {    /* #RGB：每通道 1 位 ×0x1111（:78-81） */
-        ri = hex2int(name + 0, 1) * 0x1111;
-        gi = hex2int(name + 1, 1) * 0x1111;
-        bi = hex2int(name + 2, 1) * 0x1111;
+        ri = XColor_hex2int(name + 0, 1) * 0x1111;
+        gi = XColor_hex2int(name + 1, 1) * 0x1111;
+        bi = XColor_hex2int(name + 2, 1) * 0x1111;
     } else {                  /* 其余长度无效（:82-86） */
         return false;
     }
@@ -437,7 +445,7 @@ XColor XColor_fromString(const XString* name)
     if (!utf8) return XColor_create();
     if (utf8[0] == '#') {
         uint16_t r, g, b, a;
-        if (getHexRgb(utf8 + 1, len - 1, &r, &g, &b, &a)) {
+        if (XColor_getHexRgb(utf8 + 1, len - 1, &r, &g, &b, &a)) {
             /* 解析成功走 fromRgba64 等价（qcolor.cpp:984-985 → fromRgba64
              * 2465-2470 → setRgba64 1420-1428）：u16 直存 Rgb，不经 8 位
              * 中转（缺陷 #10 根除，替换旧 sscanf 3/9 两态分派） */
@@ -466,7 +474,7 @@ void XColor_setNamedColor(XColor* self, const XString* name)
 void XColor_setNamedColor_2(XColor* self, const char* name)
 {
     if (!self) return;
-    if (!name) { invalidateColor(self); return; }
+    if (!name) { XColor_invalidate(self); return; }
     /* 风格文档 _2 惯例：只建临时 XString 转发原名，不维护第二份字符串状态
      *（宏展开后 tmp 本身即 XString*，指向栈对象 _tmp） */
     XString_Init_Utf8(tmp, name);
@@ -496,7 +504,7 @@ bool XColor_isValidColorName_2(const char* name)
 int XColor_alpha(const XColor* self)
 {
     if (!self) return 0;
-    return qt_div_257(self->m_alpha);
+    return XColor_div257(self->m_alpha);
 }
 
 void XColor_setAlpha(XColor* self, int a)
@@ -506,15 +514,15 @@ void XColor_setAlpha(XColor* self, int a)
      * 1479-1488）：越界警告 + 钳位后照设，不校验规格 */
     if (a < 0 || a > 255) {
         XERROR_PRINTF("XColor_setAlpha: invalid value %d", a);
-        a = clampI0255(a);
+        a = XColor_clampI0255(a);
     }
-    self->m_alpha = intToU16(a);
+    self->m_alpha = XColor_intToU16(a);
 }
 
 float XColor_alphaF(const XColor* self)
 {
     if (!self) return 0.0f;
-    return u16ToFloat(self->m_alpha);
+    return XColor_u16ToFloat(self->m_alpha);
 }
 
 void XColor_setAlphaF(XColor* self, float a)
@@ -523,9 +531,9 @@ void XColor_setAlphaF(XColor* self, float a)
     /* 单通道钳位档（对标 setAlphaF，qcolor.cpp:1509-1518） */
     if (a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_setAlphaF: invalid value %g", (double)a);
-        a = clampF01(a);
+        a = XColor_clampF01(a);
     }
-    self->m_alpha = floatToU16(a);
+    self->m_alpha = XColor_floatToU16(a);
 }
 
 int XColor_red(const XColor* self)
@@ -534,9 +542,9 @@ int XColor_red(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Rgb) {
         XColor rgb;
         XColor_toRgb(self, &rgb);   /* 三段式第二段：先转 RGB 再读（qcolor.cpp:1528-1529） */
-        return qt_div_257(rgb.m_comp1);
+        return XColor_div257(rgb.m_comp1);
     }
-    return qt_div_257(self->m_comp1);   /* Rgb/Invalid：直读（Invalid 分量 0） */
+    return XColor_div257(self->m_comp1);   /* Rgb/Invalid：直读（Invalid 分量 0） */
 }
 
 int XColor_green(const XColor* self)
@@ -545,9 +553,9 @@ int XColor_green(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Rgb) {
         XColor rgb;
         XColor_toRgb(self, &rgb);
-        return qt_div_257(rgb.m_comp2);
+        return XColor_div257(rgb.m_comp2);
     }
-    return qt_div_257(self->m_comp2);
+    return XColor_div257(self->m_comp2);
 }
 
 int XColor_blue(const XColor* self)
@@ -556,9 +564,9 @@ int XColor_blue(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Rgb) {
         XColor rgb;
         XColor_toRgb(self, &rgb);
-        return qt_div_257(rgb.m_comp3);
+        return XColor_div257(rgb.m_comp3);
     }
-    return qt_div_257(self->m_comp3);
+    return XColor_div257(self->m_comp3);
 }
 
 void XColor_setRed(XColor* self, int r)
@@ -567,7 +575,7 @@ void XColor_setRed(XColor* self, int r)
     /* 单通道钳位档（对标 setRed，qcolor.cpp:1539-1546） */
     if (r < 0 || r > 255) {
         XERROR_PRINTF("XColor_setRed: invalid value %d", r);
-        r = clampI0255(r);
+        r = XColor_clampI0255(r);
     }
     if (self->m_spec != XColor_Rgb)
         /* 非 Rgb（含 Invalid）整组重写并改判 Rgb（qcolor.cpp:1542-1543 →
@@ -576,7 +584,7 @@ void XColor_setRed(XColor* self, int r)
         XColor_setRgb(self, r, XColor_green(self), XColor_blue(self),
                       XColor_alpha(self));
     else
-        self->m_comp1 = intToU16(r);
+        self->m_comp1 = XColor_intToU16(r);
 }
 
 void XColor_setGreen(XColor* self, int g)
@@ -585,13 +593,13 @@ void XColor_setGreen(XColor* self, int g)
     /* 单通道钳位档（对标 setGreen，qcolor.cpp:1566-1573） */
     if (g < 0 || g > 255) {
         XERROR_PRINTF("XColor_setGreen: invalid value %d", g);
-        g = clampI0255(g);
+        g = XColor_clampI0255(g);
     }
     if (self->m_spec != XColor_Rgb)
         XColor_setRgb(self, XColor_red(self), g, XColor_blue(self),
                       XColor_alpha(self));
     else
-        self->m_comp2 = intToU16(g);
+        self->m_comp2 = XColor_intToU16(g);
 }
 
 void XColor_setBlue(XColor* self, int b)
@@ -600,13 +608,13 @@ void XColor_setBlue(XColor* self, int b)
     /* 单通道钳位档（对标 setBlue，qcolor.cpp:1595-1602） */
     if (b < 0 || b > 255) {
         XERROR_PRINTF("XColor_setBlue: invalid value %d", b);
-        b = clampI0255(b);
+        b = XColor_clampI0255(b);
     }
     if (self->m_spec != XColor_Rgb)
         XColor_setRgb(self, XColor_red(self), XColor_green(self), b,
                       XColor_alpha(self));
     else
-        self->m_comp3 = intToU16(b);
+        self->m_comp3 = XColor_intToU16(b);
 }
 
 float XColor_redF(const XColor* self)
@@ -615,9 +623,9 @@ float XColor_redF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Rgb) {
         XColor rgb;
         XColor_toRgb(self, &rgb);
-        return u16ToFloat(rgb.m_comp1);   /* u16 直读，废除旧 red()×0x101 回环 */
+        return XColor_u16ToFloat(rgb.m_comp1);   /* u16 直读，废除旧 red()×0x101 回环 */
     }
-    return u16ToFloat(self->m_comp1);   /* Rgb/Invalid：u16/65535.0f（qcolor.cpp:1611-1612） */
+    return XColor_u16ToFloat(self->m_comp1);   /* Rgb/Invalid：u16/65535.0f（qcolor.cpp:1611-1612） */
 }
 
 float XColor_greenF(const XColor* self)
@@ -626,9 +634,9 @@ float XColor_greenF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Rgb) {
         XColor rgb;
         XColor_toRgb(self, &rgb);
-        return u16ToFloat(rgb.m_comp2);
+        return XColor_u16ToFloat(rgb.m_comp2);
     }
-    return u16ToFloat(self->m_comp2);
+    return XColor_u16ToFloat(self->m_comp2);
 }
 
 float XColor_blueF(const XColor* self)
@@ -637,9 +645,9 @@ float XColor_blueF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Rgb) {
         XColor rgb;
         XColor_toRgb(self, &rgb);
-        return u16ToFloat(rgb.m_comp3);
+        return XColor_u16ToFloat(rgb.m_comp3);
     }
-    return u16ToFloat(self->m_comp3);
+    return XColor_u16ToFloat(self->m_comp3);
 }
 
 void XColor_setRedF(XColor* self, float r)
@@ -648,7 +656,7 @@ void XColor_setRedF(XColor* self, float r)
     /* 对标 setRedF（qcolor.cpp:1626-1634）：Rgb 且域内单通道直写；否则走
      * setRgbF 整组重写（越界=警告+钳位保持 Rgb） */
     if (self->m_spec == XColor_Rgb && r >= 0.0f && r <= 1.0f)
-        self->m_comp1 = floatToU16(r);
+        self->m_comp1 = XColor_floatToU16(r);
     else
         XColor_setRgbF(self, r, XColor_greenF(self), XColor_blueF(self),
                        XColor_alphaF(self));
@@ -659,7 +667,7 @@ void XColor_setGreenF(XColor* self, float g)
     if (!self) return;
     /* 对标 setGreenF（qcolor.cpp:1658-1666） */
     if (self->m_spec == XColor_Rgb && g >= 0.0f && g <= 1.0f)
-        self->m_comp2 = floatToU16(g);
+        self->m_comp2 = XColor_floatToU16(g);
     else
         XColor_setRgbF(self, XColor_redF(self), g, XColor_blueF(self),
                        XColor_alphaF(self));
@@ -670,7 +678,7 @@ void XColor_setBlueF(XColor* self, float b)
     if (!self) return;
     /* 对标 setBlueF（qcolor.cpp:1688-1696） */
     if (self->m_spec == XColor_Rgb && b >= 0.0f && b <= 1.0f)
-        self->m_comp3 = floatToU16(b);
+        self->m_comp3 = XColor_floatToU16(b);
     else
         XColor_setRgbF(self, XColor_redF(self), XColor_greenF(self), b,
                        XColor_alphaF(self));
@@ -688,10 +696,10 @@ void XColor_getRgb(const XColor* self, int* r, int* g, int* b, int* a)
     }
     /* 直读本规格存储（含 Invalid：照读得 (0,0,0,255)——qcolor.cpp:1290
      * 条件不含 Invalid） */
-    if (r) *r = qt_div_257(self->m_comp1);
-    if (g) *g = qt_div_257(self->m_comp2);
-    if (b) *b = qt_div_257(self->m_comp3);
-    if (a) *a = qt_div_257(self->m_alpha);
+    if (r) *r = XColor_div257(self->m_comp1);
+    if (g) *g = XColor_div257(self->m_comp2);
+    if (b) *b = XColor_div257(self->m_comp3);
+    if (a) *a = XColor_div257(self->m_alpha);
 }
 
 void XColor_setRgb(XColor* self, int r, int g, int b, int a)
@@ -711,10 +719,10 @@ void XColor_getRgbF(const XColor* self, float* r, float* g, float* b, float* a)
     }
     /* u16/65535.0f 直读，16 位精度不经 8 位中转（qcolor.cpp:1261-1265，
      * 废除旧"整数/255"两跳） */
-    if (r) *r = u16ToFloat(self->m_comp1);
-    if (g) *g = u16ToFloat(self->m_comp2);
-    if (b) *b = u16ToFloat(self->m_comp3);
-    if (a) *a = u16ToFloat(self->m_alpha);
+    if (r) *r = XColor_u16ToFloat(self->m_comp1);
+    if (g) *g = XColor_u16ToFloat(self->m_comp2);
+    if (b) *b = XColor_u16ToFloat(self->m_comp3);
+    if (a) *a = XColor_u16ToFloat(self->m_alpha);
 }
 
 void XColor_setRgbF(XColor* self, float r, float g, float b, float a)
@@ -723,7 +731,7 @@ void XColor_setRgbF(XColor* self, float r, float g, float b, float a)
     /* 对标 setRgbF（qcolor.cpp:1315-1339）：alpha 越界警告 + 整色置无效 */
     if (a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_setRgbF: Alpha parameter is out of range");
-        invalidateColor(self);
+        XColor_invalidate(self);
         return;
     }
     /* 偏差声明（§8 台账候选）：Qt 对 r/g/b 越界转 ExtendedRgb
@@ -731,15 +739,15 @@ void XColor_setRgbF(XColor* self, float r, float g, float b, float a)
      * 钳位保持 Rgb。 */
     if (r < 0.0f || r > 1.0f || g < 0.0f || g > 1.0f || b < 0.0f || b > 1.0f) {
         XERROR_PRINTF("XColor_setRgbF: RGB parameters out of range, clamped");
-        r = clampF01(r);
-        g = clampF01(g);
-        b = clampF01(b);
+        r = XColor_clampF01(r);
+        g = XColor_clampF01(g);
+        b = XColor_clampF01(b);
     }
     self->m_spec = XColor_Rgb;
-    self->m_comp1 = floatToU16(r);
-    self->m_comp2 = floatToU16(g);
-    self->m_comp3 = floatToU16(b);
-    self->m_alpha = floatToU16(a);
+    self->m_comp1 = XColor_floatToU16(r);
+    self->m_comp2 = XColor_floatToU16(g);
+    self->m_comp3 = XColor_floatToU16(b);
+    self->m_alpha = XColor_floatToU16(a);
     self->m_comp4 = 0;
 }
 
@@ -761,11 +769,11 @@ int XColor_hsvHue(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsv) {
         XColor hsv;
         XColor_toHsv(self, &hsv);   /* 三段式：非 Hsv（Invalid 除外）先转再读（qcolor.cpp:1718-1719） */
-        return hueU16ToInt(hsv.m_comp1);
+        return XColor_hueU16ToInt(hsv.m_comp1);
     }
     /* 哨兵 → -1（灰色无定义色相，缺陷 #4 根除），否则百分之一度整除 100
      * （36000 读出 360，忠实保留 Qt 怪癖，qcolor.cpp:1720） */
-    return hueU16ToInt(self->m_comp1);
+    return XColor_hueU16ToInt(self->m_comp1);
 }
 
 int XColor_hsvSaturation(const XColor* self)
@@ -774,9 +782,9 @@ int XColor_hsvSaturation(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsv) {
         XColor hsv;
         XColor_toHsv(self, &hsv);
-        return qt_div_257(hsv.m_comp2);
+        return XColor_div257(hsv.m_comp2);
     }
-    return qt_div_257(self->m_comp2);
+    return XColor_div257(self->m_comp2);
 }
 
 int XColor_value(const XColor* self)
@@ -785,9 +793,9 @@ int XColor_value(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsv) {
         XColor hsv;
         XColor_toHsv(self, &hsv);
-        return qt_div_257(hsv.m_comp3);
+        return XColor_div257(hsv.m_comp3);
     }
-    return qt_div_257(self->m_comp3);
+    return XColor_div257(self->m_comp3);
 }
 
 float XColor_hueF(const XColor* self)
@@ -806,11 +814,11 @@ float XColor_hsvHueF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsv) {
         XColor hsv;
         XColor_toHsv(self, &hsv);
-        return hueU16ToFloat(hsv.m_comp1);
+        return XColor_hueU16ToFloat(hsv.m_comp1);
     }
     /* 哨兵 → -1.0f，否则 /36000.0f 轮分数（qcolor.cpp:1783；qcolor.h:119-123
      * 的 0.0<=hueF<360.0 注释系 Qt 陈旧文档错，以实现为准） */
-    return hueU16ToFloat(self->m_comp1);
+    return XColor_hueU16ToFloat(self->m_comp1);
 }
 
 float XColor_hsvSaturationF(const XColor* self)
@@ -819,9 +827,9 @@ float XColor_hsvSaturationF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsv) {
         XColor hsv;
         XColor_toHsv(self, &hsv);
-        return u16ToFloat(hsv.m_comp2);   /* u16 直读，废除旧 /255 两跳 */
+        return XColor_u16ToFloat(hsv.m_comp2);   /* u16 直读，废除旧 /255 两跳 */
     }
-    return u16ToFloat(self->m_comp2);
+    return XColor_u16ToFloat(self->m_comp2);
 }
 
 float XColor_valueF(const XColor* self)
@@ -830,9 +838,9 @@ float XColor_valueF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsv) {
         XColor hsv;
         XColor_toHsv(self, &hsv);
-        return u16ToFloat(hsv.m_comp3);
+        return XColor_u16ToFloat(hsv.m_comp3);
     }
-    return u16ToFloat(self->m_comp3);
+    return XColor_u16ToFloat(self->m_comp3);
 }
 
 void XColor_getHsv(const XColor* self, int* h, int* s, int* v, int* a)
@@ -847,10 +855,10 @@ void XColor_getHsv(const XColor* self, int* h, int* s, int* v, int* a)
     }
     /* 直读本规格存储（含 Invalid：分量照读，hue 分量为 0 非 → 0）；
      * 灰色哨兵 → -1（qcolor.cpp:1053） */
-    if (h) *h = hueU16ToInt(self->m_comp1);
-    if (s) *s = qt_div_257(self->m_comp2);
-    if (v) *v = qt_div_257(self->m_comp3);
-    if (a) *a = qt_div_257(self->m_alpha);
+    if (h) *h = XColor_hueU16ToInt(self->m_comp1);
+    if (s) *s = XColor_div257(self->m_comp2);
+    if (v) *v = XColor_div257(self->m_comp3);
+    if (a) *a = XColor_div257(self->m_alpha);
 }
 
 void XColor_setHsv(XColor* self, int h, int s, int v, int a)
@@ -861,15 +869,15 @@ void XColor_setHsv(XColor* self, int h, int s, int v, int a)
      * create_hsv 的 h≥360 拒绝口径不同，两族不得混同） */
     if (h < -1 || s < 0 || s > 255 || v < 0 || v > 255 || a < 0 || a > 255) {
         XERROR_PRINTF("XColor_setHsv: HSV parameters out of range");
-        invalidateColor(self);
+        XColor_invalidate(self);
         return;
     }
     self->m_spec = XColor_Hsv;
-    self->m_alpha = intToU16(a);                                /* qcolor.cpp:1106 */
+    self->m_alpha = XColor_intToU16(a);                                /* qcolor.cpp:1106 */
     self->m_comp1 = (h == -1) ? XCOLOR_HUE_SENTINEL             /* qcolor.cpp:1107 */
                           : (uint16_t)((h % 360) * 100);
-    self->m_comp2 = intToU16(s);
-    self->m_comp3 = intToU16(v);
+    self->m_comp2 = XColor_intToU16(s);
+    self->m_comp3 = XColor_intToU16(v);
     self->m_comp4 = 0;
 }
 
@@ -883,10 +891,10 @@ void XColor_getHsvF(const XColor* self, float* h, float* s, float* v, float* a)
         XColor_getHsvF(&hsv, h, s, v, a);
         return;
     }
-    if (h) *h = hueU16ToFloat(self->m_comp1);
-    if (s) *s = u16ToFloat(self->m_comp2);
-    if (v) *v = u16ToFloat(self->m_comp3);
-    if (a) *a = u16ToFloat(self->m_alpha);
+    if (h) *h = XColor_hueU16ToFloat(self->m_comp1);
+    if (s) *s = XColor_u16ToFloat(self->m_comp2);
+    if (v) *v = XColor_u16ToFloat(self->m_comp3);
+    if (a) *a = XColor_u16ToFloat(self->m_alpha);
 }
 
 void XColor_setHsvF(XColor* self, float h, float s, float v, float a)
@@ -897,15 +905,15 @@ void XColor_setHsvF(XColor* self, float h, float s, float v, float a)
     if (((h < 0.0f || h > 1.0f) && h != -1.0f) ||
         s < 0.0f || s > 1.0f || v < 0.0f || v > 1.0f || a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_setHsvF: HSV parameters out of range");
-        invalidateColor(self);
+        XColor_invalidate(self);
         return;
     }
     self->m_spec = XColor_Hsv;
-    self->m_alpha = floatToU16(a);                              /* qcolor.cpp:1081 */
+    self->m_alpha = XColor_floatToU16(a);                              /* qcolor.cpp:1081 */
     self->m_comp1 = (h == -1.0f) ? XCOLOR_HUE_SENTINEL          /* qcolor.cpp:1082 */
                           : (uint16_t)(h * 36000.0f + 0.5f);
-    self->m_comp2 = floatToU16(s);
-    self->m_comp3 = floatToU16(v);
+    self->m_comp2 = XColor_floatToU16(s);
+    self->m_comp3 = XColor_floatToU16(v);
     self->m_comp4 = 0;
 }
 
@@ -917,9 +925,9 @@ int XColor_cyan(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Cmyk) {
         XColor cmyk;
         XColor_toCmyk(self, &cmyk);   /* 三段式（qcolor.cpp:1914-1915） */
-        return qt_div_257(cmyk.m_comp1);
+        return XColor_div257(cmyk.m_comp1);
     }
-    return qt_div_257(self->m_comp1);
+    return XColor_div257(self->m_comp1);
 }
 
 int XColor_magenta(const XColor* self)
@@ -928,9 +936,9 @@ int XColor_magenta(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Cmyk) {
         XColor cmyk;
         XColor_toCmyk(self, &cmyk);
-        return qt_div_257(cmyk.m_comp2);
+        return XColor_div257(cmyk.m_comp2);
     }
-    return qt_div_257(self->m_comp2);
+    return XColor_div257(self->m_comp2);
 }
 
 int XColor_yellow(const XColor* self)
@@ -939,9 +947,9 @@ int XColor_yellow(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Cmyk) {
         XColor cmyk;
         XColor_toCmyk(self, &cmyk);
-        return qt_div_257(cmyk.m_comp3);
+        return XColor_div257(cmyk.m_comp3);
     }
-    return qt_div_257(self->m_comp3);
+    return XColor_div257(self->m_comp3);
 }
 
 int XColor_black(const XColor* self)
@@ -950,9 +958,9 @@ int XColor_black(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Cmyk) {
         XColor cmyk;
         XColor_toCmyk(self, &cmyk);
-        return qt_div_257(cmyk.m_comp4);
+        return XColor_div257(cmyk.m_comp4);
     }
-    return qt_div_257(self->m_comp4);
+    return XColor_div257(self->m_comp4);
 }
 
 float XColor_cyanF(const XColor* self)
@@ -961,9 +969,9 @@ float XColor_cyanF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Cmyk) {
         XColor cmyk;
         XColor_toCmyk(self, &cmyk);
-        return u16ToFloat(cmyk.m_comp1);
+        return XColor_u16ToFloat(cmyk.m_comp1);
     }
-    return u16ToFloat(self->m_comp1);
+    return XColor_u16ToFloat(self->m_comp1);
 }
 
 float XColor_magentaF(const XColor* self)
@@ -972,9 +980,9 @@ float XColor_magentaF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Cmyk) {
         XColor cmyk;
         XColor_toCmyk(self, &cmyk);
-        return u16ToFloat(cmyk.m_comp2);
+        return XColor_u16ToFloat(cmyk.m_comp2);
     }
-    return u16ToFloat(self->m_comp2);
+    return XColor_u16ToFloat(self->m_comp2);
 }
 
 float XColor_yellowF(const XColor* self)
@@ -983,9 +991,9 @@ float XColor_yellowF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Cmyk) {
         XColor cmyk;
         XColor_toCmyk(self, &cmyk);
-        return u16ToFloat(cmyk.m_comp3);
+        return XColor_u16ToFloat(cmyk.m_comp3);
     }
-    return u16ToFloat(self->m_comp3);
+    return XColor_u16ToFloat(self->m_comp3);
 }
 
 float XColor_blackF(const XColor* self)
@@ -994,9 +1002,9 @@ float XColor_blackF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Cmyk) {
         XColor cmyk;
         XColor_toCmyk(self, &cmyk);
-        return u16ToFloat(cmyk.m_comp4);
+        return XColor_u16ToFloat(cmyk.m_comp4);
     }
-    return u16ToFloat(self->m_comp4);
+    return XColor_u16ToFloat(self->m_comp4);
 }
 
 void XColor_getCmyk(const XColor* self, int* c, int* m, int* y, int* k, int* a)
@@ -1009,11 +1017,11 @@ void XColor_getCmyk(const XColor* self, int* c, int* m, int* y, int* k, int* a)
         XColor_getCmyk(&cmyk, c, m, y, k, a);
         return;
     }
-    if (c) *c = qt_div_257(self->m_comp1);
-    if (m) *m = qt_div_257(self->m_comp2);
-    if (y) *y = qt_div_257(self->m_comp3);
-    if (k) *k = qt_div_257(self->m_comp4);
-    if (a) *a = qt_div_257(self->m_alpha);
+    if (c) *c = XColor_div257(self->m_comp1);
+    if (m) *m = XColor_div257(self->m_comp2);
+    if (y) *y = XColor_div257(self->m_comp3);
+    if (k) *k = XColor_div257(self->m_comp4);
+    if (a) *a = XColor_div257(self->m_alpha);
 }
 
 void XColor_setCmyk(XColor* self, int c, int m, int y, int k, int a)
@@ -1023,15 +1031,15 @@ void XColor_setCmyk(XColor* self, int c, int m, int y, int k, int a)
     if (c < 0 || c > 255 || m < 0 || m > 255 || y < 0 || y > 255 ||
         k < 0 || k > 255 || a < 0 || a > 255) {
         XERROR_PRINTF("XColor_setCmyk: CMYK parameters out of range");
-        invalidateColor(self);
+        XColor_invalidate(self);
         return;
     }
     self->m_spec = XColor_Cmyk;
-    self->m_alpha = intToU16(a);                                /* qcolor.cpp:2693 */
-    self->m_comp1 = intToU16(c);
-    self->m_comp2 = intToU16(m);
-    self->m_comp3 = intToU16(y);
-    self->m_comp4 = intToU16(k);
+    self->m_alpha = XColor_intToU16(a);                                /* qcolor.cpp:2693 */
+    self->m_comp1 = XColor_intToU16(c);
+    self->m_comp2 = XColor_intToU16(m);
+    self->m_comp3 = XColor_intToU16(y);
+    self->m_comp4 = XColor_intToU16(k);
 }
 
 void XColor_getCmykF(const XColor* self, float* c, float* m, float* y, float* k, float* a)
@@ -1044,11 +1052,11 @@ void XColor_getCmykF(const XColor* self, float* c, float* m, float* y, float* k,
         XColor_getCmykF(&cmyk, c, m, y, k, a);
         return;
     }
-    if (c) *c = u16ToFloat(self->m_comp1);
-    if (m) *m = u16ToFloat(self->m_comp2);
-    if (y) *y = u16ToFloat(self->m_comp3);
-    if (k) *k = u16ToFloat(self->m_comp4);
-    if (a) *a = u16ToFloat(self->m_alpha);
+    if (c) *c = XColor_u16ToFloat(self->m_comp1);
+    if (m) *m = XColor_u16ToFloat(self->m_comp2);
+    if (y) *y = XColor_u16ToFloat(self->m_comp3);
+    if (k) *k = XColor_u16ToFloat(self->m_comp4);
+    if (a) *a = XColor_u16ToFloat(self->m_alpha);
 }
 
 void XColor_setCmykF(XColor* self, float c, float m, float y, float k, float a)
@@ -1059,15 +1067,15 @@ void XColor_setCmykF(XColor* self, float c, float m, float y, float k, float a)
         y < 0.0f || y > 1.0f || k < 0.0f || k > 1.0f ||
         a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_setCmykF: CMYK parameters out of range");
-        invalidateColor(self);
+        XColor_invalidate(self);
         return;
     }
     self->m_spec = XColor_Cmyk;
-    self->m_alpha = floatToU16(a);
-    self->m_comp1 = floatToU16(c);
-    self->m_comp2 = floatToU16(m);
-    self->m_comp3 = floatToU16(y);
-    self->m_comp4 = floatToU16(k);
+    self->m_alpha = XColor_floatToU16(a);
+    self->m_comp1 = XColor_floatToU16(c);
+    self->m_comp2 = XColor_floatToU16(m);
+    self->m_comp3 = XColor_floatToU16(y);
+    self->m_comp4 = XColor_floatToU16(k);
 }
 
 /* ========== HSL 分量访问 ========== */
@@ -1078,9 +1086,9 @@ int XColor_hslHue(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsl) {
         XColor hsl;
         XColor_toHsl(self, &hsl);   /* 三段式（qcolor.cpp:1832-1833） */
-        return hueU16ToInt(hsl.m_comp1);
+        return XColor_hueU16ToInt(hsl.m_comp1);
     }
-    return hueU16ToInt(self->m_comp1);   /* 哨兵 → -1（qcolor.cpp:1834） */
+    return XColor_hueU16ToInt(self->m_comp1);   /* 哨兵 → -1（qcolor.cpp:1834） */
 }
 
 int XColor_hslSaturation(const XColor* self)
@@ -1089,9 +1097,9 @@ int XColor_hslSaturation(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsl) {
         XColor hsl;
         XColor_toHsl(self, &hsl);
-        return qt_div_257(hsl.m_comp2);
+        return XColor_div257(hsl.m_comp2);
     }
-    return qt_div_257(self->m_comp2);
+    return XColor_div257(self->m_comp2);
 }
 
 int XColor_lightness(const XColor* self)
@@ -1100,9 +1108,9 @@ int XColor_lightness(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsl) {
         XColor hsl;
         XColor_toHsl(self, &hsl);
-        return qt_div_257(hsl.m_comp3);
+        return XColor_div257(hsl.m_comp3);
     }
-    return qt_div_257(self->m_comp3);
+    return XColor_div257(self->m_comp3);
 }
 
 float XColor_hslHueF(const XColor* self)
@@ -1111,9 +1119,9 @@ float XColor_hslHueF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsl) {
         XColor hsl;
         XColor_toHsl(self, &hsl);
-        return hueU16ToFloat(hsl.m_comp1);
+        return XColor_hueU16ToFloat(hsl.m_comp1);
     }
-    return hueU16ToFloat(self->m_comp1);
+    return XColor_hueU16ToFloat(self->m_comp1);
 }
 
 float XColor_hslSaturationF(const XColor* self)
@@ -1122,9 +1130,9 @@ float XColor_hslSaturationF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsl) {
         XColor hsl;
         XColor_toHsl(self, &hsl);
-        return u16ToFloat(hsl.m_comp2);
+        return XColor_u16ToFloat(hsl.m_comp2);
     }
-    return u16ToFloat(self->m_comp2);
+    return XColor_u16ToFloat(self->m_comp2);
 }
 
 float XColor_lightnessF(const XColor* self)
@@ -1133,9 +1141,9 @@ float XColor_lightnessF(const XColor* self)
     if (self->m_spec != XColor_Invalid && self->m_spec != XColor_Hsl) {
         XColor hsl;
         XColor_toHsl(self, &hsl);
-        return u16ToFloat(hsl.m_comp3);
+        return XColor_u16ToFloat(hsl.m_comp3);
     }
-    return u16ToFloat(self->m_comp3);
+    return XColor_u16ToFloat(self->m_comp3);
 }
 
 void XColor_getHsl(const XColor* self, int* h, int* s, int* l, int* a)
@@ -1148,10 +1156,10 @@ void XColor_getHsl(const XColor* self, int* h, int* s, int* l, int* a)
         XColor_getHsl(&hsl, h, s, l, a);
         return;
     }
-    if (h) *h = hueU16ToInt(self->m_comp1);
-    if (s) *s = qt_div_257(self->m_comp2);
-    if (l) *l = qt_div_257(self->m_comp3);
-    if (a) *a = qt_div_257(self->m_alpha);
+    if (h) *h = XColor_hueU16ToInt(self->m_comp1);
+    if (s) *s = XColor_div257(self->m_comp2);
+    if (l) *l = XColor_div257(self->m_comp3);
+    if (a) *a = XColor_div257(self->m_alpha);
 }
 
 void XColor_setHsl(XColor* self, int h, int s, int l, int a)
@@ -1162,15 +1170,15 @@ void XColor_setHsl(XColor* self, int h, int s, int l, int a)
      * create_hsl 的 h≥360 拒绝口径不同，两族不得混同） */
     if (h < -1 || s < 0 || s > 255 || l < 0 || l > 255 || a < 0 || a > 255) {
         XERROR_PRINTF("XColor_setHsl: HSL parameters out of range");
-        invalidateColor(self);
+        XColor_invalidate(self);
         return;
     }
     self->m_spec = XColor_Hsl;
-    self->m_alpha = intToU16(a);                                /* qcolor.cpp:1222 */
+    self->m_alpha = XColor_intToU16(a);                                /* qcolor.cpp:1222 */
     self->m_comp1 = (h == -1) ? XCOLOR_HUE_SENTINEL             /* qcolor.cpp:1223 */
                           : (uint16_t)((h % 360) * 100);
-    self->m_comp2 = intToU16(s);
-    self->m_comp3 = intToU16(l);
+    self->m_comp2 = XColor_intToU16(s);
+    self->m_comp3 = XColor_intToU16(l);
     self->m_comp4 = 0;
 }
 
@@ -1184,10 +1192,10 @@ void XColor_getHslF(const XColor* self, float* h, float* s, float* l, float* a)
         XColor_getHslF(&hsl, h, s, l, a);
         return;
     }
-    if (h) *h = hueU16ToFloat(self->m_comp1);
-    if (s) *s = u16ToFloat(self->m_comp2);
-    if (l) *l = u16ToFloat(self->m_comp3);
-    if (a) *a = u16ToFloat(self->m_alpha);
+    if (h) *h = XColor_hueU16ToFloat(self->m_comp1);
+    if (s) *s = XColor_u16ToFloat(self->m_comp2);
+    if (l) *l = XColor_u16ToFloat(self->m_comp3);
+    if (a) *a = XColor_u16ToFloat(self->m_alpha);
 }
 
 void XColor_setHslF(XColor* self, float h, float s, float l, float a)
@@ -1198,15 +1206,15 @@ void XColor_setHslF(XColor* self, float h, float s, float l, float a)
     if (((h < 0.0f || h > 1.0f) && h != -1.0f) ||
         s < 0.0f || s > 1.0f || l < 0.0f || l > 1.0f || a < 0.0f || a > 1.0f) {
         XERROR_PRINTF("XColor_setHslF: HSL parameters out of range");
-        invalidateColor(self);
+        XColor_invalidate(self);
         return;
     }
     self->m_spec = XColor_Hsl;
-    self->m_alpha = floatToU16(a);
+    self->m_alpha = XColor_floatToU16(a);
     self->m_comp1 = (h == -1.0f) ? XCOLOR_HUE_SENTINEL
                           : (uint16_t)(h * 36000.0f + 0.5f);
-    self->m_comp2 = floatToU16(s);
-    self->m_comp3 = floatToU16(l);
+    self->m_comp2 = XColor_floatToU16(s);
+    self->m_comp3 = XColor_floatToU16(l);
     self->m_comp4 = 0;
 }
 
@@ -1250,8 +1258,8 @@ void XColor_toRgb(const XColor* self, XColor* out)
         } else {
             /* 色差分支：60° 扇区单位 + 奇偶扇区法（qcolor.cpp:2054-2101） */
             const float h = (self->m_comp1 == 36000u) ? 0.0f : (float)self->m_comp1 / 6000.0f;
-            const float s = u16ToFloat(self->m_comp2);
-            const float v = u16ToFloat(self->m_comp3);
+            const float s = XColor_u16ToFloat(self->m_comp2);
+            const float v = XColor_u16ToFloat(self->m_comp3);
             const int i = (int)h;
             const float f = h - (float)i;
             const float p = v * (1.0f - s);
@@ -1260,17 +1268,17 @@ void XColor_toRgb(const XColor* self, XColor* out)
             if (i & 1) {
                 const float q = v * (1.0f - (s * f));
                 switch (i) {
-                case 1: r = floatToU16(q); g = floatToU16(v); b = floatToU16(p); break;
-                case 3: r = floatToU16(p); g = floatToU16(q); b = floatToU16(v); break;
-                case 5: r = floatToU16(v); g = floatToU16(p); b = floatToU16(q); break;
+                case 1: r = XColor_floatToU16(q); g = XColor_floatToU16(v); b = XColor_floatToU16(p); break;
+                case 3: r = XColor_floatToU16(p); g = XColor_floatToU16(q); b = XColor_floatToU16(v); break;
+                case 5: r = XColor_floatToU16(v); g = XColor_floatToU16(p); b = XColor_floatToU16(q); break;
                 default: break;
                 }
             } else {
                 const float t = v * (1.0f - (s * (1.0f - f)));
                 switch (i) {
-                case 0: r = floatToU16(v); g = floatToU16(t); b = floatToU16(p); break;
-                case 2: r = floatToU16(p); g = floatToU16(v); b = floatToU16(t); break;
-                case 4: r = floatToU16(t); g = floatToU16(p); b = floatToU16(v); break;
+                case 0: r = XColor_floatToU16(v); g = XColor_floatToU16(t); b = XColor_floatToU16(p); break;
+                case 2: r = XColor_floatToU16(p); g = XColor_floatToU16(v); b = XColor_floatToU16(t); break;
+                case 4: r = XColor_floatToU16(t); g = XColor_floatToU16(p); b = XColor_floatToU16(v); break;
                 default: break;
                 }
             }
@@ -1295,8 +1303,8 @@ void XColor_toRgb(const XColor* self, XColor* out)
              * Qt 写 ct.array[i+1]（array[0]=alpha，[1..3]=r/g/b），此处以
              * 局部数组等价落 r/g/b。 */
             const float h = (self->m_comp1 == 36000u) ? 0.0f : (float)self->m_comp1 / 36000.0f;   /* qcolor.cpp:2114 */
-            const float s = u16ToFloat(self->m_comp2);
-            const float l = u16ToFloat(self->m_comp3);
+            const float s = XColor_u16ToFloat(self->m_comp2);
+            const float l = XColor_u16ToFloat(self->m_comp3);
             float temp2;
             float temp3[3];
             uint16_t rgbArr[3];
@@ -1321,13 +1329,13 @@ void XColor_toRgb(const XColor* self, XColor* out)
 
                 const float sixtemp3 = temp3[i] * 6.0f;
                 if (sixtemp3 < 1.0f)
-                    rgbArr[i] = floatToU16(temp1 + (temp2 - temp1) * sixtemp3);
+                    rgbArr[i] = XColor_floatToU16(temp1 + (temp2 - temp1) * sixtemp3);
                 else if ((temp3[i] * 2.0f) < 1.0f)
-                    rgbArr[i] = floatToU16(temp2);
+                    rgbArr[i] = XColor_floatToU16(temp2);
                 else if ((temp3[i] * 3.0f) < 2.0f)
-                    rgbArr[i] = floatToU16(temp1 + (temp2 - temp1) * (2.0f / 3.0f - temp3[i]) * 6.0f);
+                    rgbArr[i] = XColor_floatToU16(temp1 + (temp2 - temp1) * (2.0f / 3.0f - temp3[i]) * 6.0f);
                 else
-                    rgbArr[i] = floatToU16(temp1);
+                    rgbArr[i] = XColor_floatToU16(temp1);
             }
             /* u16==1 → 0 修正（qcolor.cpp:2145-2147） */
             if (rgbArr[0] == 1u) rgbArr[0] = 0;
@@ -1339,13 +1347,13 @@ void XColor_toRgb(const XColor* self, XColor* out)
         }
     } else if (self->m_spec == XColor_Cmyk) {
         /* 对标 qcolor.cpp:2151-2161：1-(c(1-k)+k)（缺陷 #5 根除） */
-        const float cc = u16ToFloat(self->m_comp1);
-        const float mm = u16ToFloat(self->m_comp2);
-        const float yy = u16ToFloat(self->m_comp3);
-        const float kk = u16ToFloat(self->m_comp4);
-        c.m_comp1 = floatToU16(1.0f - (cc * (1.0f - kk) + kk));
-        c.m_comp2 = floatToU16(1.0f - (mm * (1.0f - kk) + kk));
-        c.m_comp3 = floatToU16(1.0f - (yy * (1.0f - kk) + kk));
+        const float cc = XColor_u16ToFloat(self->m_comp1);
+        const float mm = XColor_u16ToFloat(self->m_comp2);
+        const float yy = XColor_u16ToFloat(self->m_comp3);
+        const float kk = XColor_u16ToFloat(self->m_comp4);
+        c.m_comp1 = XColor_floatToU16(1.0f - (cc * (1.0f - kk) + kk));
+        c.m_comp2 = XColor_floatToU16(1.0f - (mm * (1.0f - kk) + kk));
+        c.m_comp3 = XColor_floatToU16(1.0f - (yy * (1.0f - kk) + kk));
     } else {
         /* 不可达（仅 Rgb/Hsv/Cmyk/Hsl 会进入本函数，Rgb/Invalid 已早退） */
         *out = *self;
@@ -1379,21 +1387,21 @@ void XColor_toHsv(const XColor* self, XColor* out)
     c.m_comp4 = 0;
     /* alpha 原样携带（qcolor.cpp:2196） */
 
-    const float r = u16ToFloat(self->m_comp1);
-    const float g = u16ToFloat(self->m_comp2);
-    const float b = u16ToFloat(self->m_comp3);
-    const float max = max3f(r, g, b);
-    const float min = min3f(r, g, b);
+    const float r = XColor_u16ToFloat(self->m_comp1);
+    const float g = XColor_u16ToFloat(self->m_comp2);
+    const float b = XColor_u16ToFloat(self->m_comp3);
+    const float max = XColor_max3f(r, g, b);
+    const float min = XColor_min3f(r, g, b);
     const float delta = max - min;
 
-    c.m_comp3 = floatToU16(max);   /* value（qcolor.cpp:2205） */
+    c.m_comp3 = XColor_floatToU16(max);   /* value（qcolor.cpp:2205） */
     if (delta == 0.0f) {
         /* 消色差：hue 无定义 → 哨兵、sat 0（qcolor.cpp:2206-2209，缺陷 #4 根除） */
         c.m_comp1 = XCOLOR_HUE_SENTINEL;
         c.m_comp2 = 0;
     } else {
         float hue;
-        c.m_comp2 = floatToU16(delta / max);   /* qcolor.cpp:2213 */
+        c.m_comp2 = XColor_floatToU16(delta / max);   /* qcolor.cpp:2213 */
         if (r == max)
             hue = (g - b) / delta;
         else if (g == max)
@@ -1436,22 +1444,22 @@ void XColor_toCmyk(const XColor* self, XColor* out)
         c.m_comp4 = XCOLOR_HUE_SENTINEL;   /* k = 65535（USHRT_MAX） */
     } else {
         /* rgb → cmy → cmyk（qcolor.cpp:2311-2328，缺陷 #3 根除） */
-        const float r = u16ToFloat(self->m_comp1);
-        const float g = u16ToFloat(self->m_comp2);
-        const float b = u16ToFloat(self->m_comp3);
+        const float r = XColor_u16ToFloat(self->m_comp1);
+        const float g = XColor_u16ToFloat(self->m_comp2);
+        const float b = XColor_u16ToFloat(self->m_comp3);
         float cc = 1.0f - r;
         float mm = 1.0f - g;
         float yy = 1.0f - b;
 
-        const float kk = min3f(cc, mm, yy);
+        const float kk = XColor_min3f(cc, mm, yy);
         cc = (cc - kk) / (1.0f - kk);
         mm = (mm - kk) / (1.0f - kk);
         yy = (yy - kk) / (1.0f - kk);
 
-        c.m_comp1 = floatToU16(cc);
-        c.m_comp2 = floatToU16(mm);
-        c.m_comp3 = floatToU16(yy);
-        c.m_comp4 = floatToU16(kk);
+        c.m_comp1 = XColor_floatToU16(cc);
+        c.m_comp2 = XColor_floatToU16(mm);
+        c.m_comp3 = XColor_floatToU16(yy);
+        c.m_comp4 = XColor_floatToU16(kk);
     }
     *out = c;
 }
@@ -1477,16 +1485,16 @@ void XColor_toHsl(const XColor* self, XColor* out)
     c.m_comp4 = 0;
     /* alpha 原样携带（qcolor.cpp:2247） */
 
-    const float r = u16ToFloat(self->m_comp1);
-    const float g = u16ToFloat(self->m_comp2);
-    const float b = u16ToFloat(self->m_comp3);
-    const float max = max3f(r, g, b);
-    const float min = min3f(r, g, b);
+    const float r = XColor_u16ToFloat(self->m_comp1);
+    const float g = XColor_u16ToFloat(self->m_comp2);
+    const float b = XColor_u16ToFloat(self->m_comp3);
+    const float max = XColor_max3f(r, g, b);
+    const float min = XColor_min3f(r, g, b);
     const float delta = max - min;
     const float delta2 = max + min;
     const float lightness = 0.5f * delta2;
 
-    c.m_comp3 = floatToU16(lightness);   /* qcolor.cpp:2258 */
+    c.m_comp3 = XColor_floatToU16(lightness);   /* qcolor.cpp:2258 */
     if (delta == 0.0f) {
         /* 消色差：hue 哨兵、sat 0（qcolor.cpp:2259-2262） */
         c.m_comp1 = XCOLOR_HUE_SENTINEL;
@@ -1495,9 +1503,9 @@ void XColor_toHsl(const XColor* self, XColor* out)
         float hue;
         /* 饱和度按亮度 <0.5 切换分母 delta2 / 2-delta2（qcolor.cpp:2266-2269） */
         if (lightness < 0.5f)
-            c.m_comp2 = floatToU16(delta / delta2);
+            c.m_comp2 = XColor_floatToU16(delta / delta2);
         else
-            c.m_comp2 = floatToU16(delta / (2.0f - delta2));
+            c.m_comp2 = XColor_floatToU16(delta / (2.0f - delta2));
         if (r == max)
             hue = (g - b) / delta;
         else if (g == max)
@@ -1602,18 +1610,18 @@ uint32_t XColor_rgba(const XColor* self)
          * 局部换算，不递归调用自身（禁止回环纪律，见 XColor_toRgb 头注）。 */
         XColor rgb;
         XColor_toRgb(self, &rgb);
-        return ((uint32_t)qt_div_257(rgb.m_alpha) << 24) |
-               ((uint32_t)qt_div_257(rgb.m_comp1) << 16) |
-               ((uint32_t)qt_div_257(rgb.m_comp2) << 8) |
-               (uint32_t)qt_div_257(rgb.m_comp3);
+        return ((uint32_t)XColor_div257(rgb.m_alpha) << 24) |
+               ((uint32_t)XColor_div257(rgb.m_comp1) << 16) |
+               ((uint32_t)XColor_div257(rgb.m_comp2) << 8) |
+               (uint32_t)XColor_div257(rgb.m_comp3);
     }
     /* Invalid 不特判：按无效存储（alpha=65535、分量全 0）换算得
      * 0xFF000000（qcolor.cpp:1378；Qt 文档称该值"未指定"，以实现为准，
      * 旧实现的 Invalid→0 早退废除） */
-    return ((uint32_t)qt_div_257(self->m_alpha) << 24) |
-           ((uint32_t)qt_div_257(self->m_comp1) << 16) |
-           ((uint32_t)qt_div_257(self->m_comp2) << 8) |
-           (uint32_t)qt_div_257(self->m_comp3);
+    return ((uint32_t)XColor_div257(self->m_alpha) << 24) |
+           ((uint32_t)XColor_div257(self->m_comp1) << 16) |
+           ((uint32_t)XColor_div257(self->m_comp2) << 8) |
+           (uint32_t)XColor_div257(self->m_comp3);
 }
 
 uint32_t XColor_rgb(const XColor* self)
@@ -1630,10 +1638,10 @@ void XColor_setRgba(XColor* self, uint32_t argb)
     /* 对标 QColor::setRgba(QRgb)（qcolor.cpp:1386-1394）：含 alpha，各通
      * 道 ×0x101 直存（保留不删——qcolor.h:108 有对应物，规格 §2 改判） */
     self->m_spec = XColor_Rgb;
-    self->m_alpha = intToU16((int)((argb >> 24) & 0xFF));
-    self->m_comp1 = intToU16((int)((argb >> 16) & 0xFF));
-    self->m_comp2 = intToU16((int)((argb >> 8) & 0xFF));
-    self->m_comp3 = intToU16((int)(argb & 0xFF));
+    self->m_alpha = XColor_intToU16((int)((argb >> 24) & 0xFF));
+    self->m_comp1 = XColor_intToU16((int)((argb >> 16) & 0xFF));
+    self->m_comp2 = XColor_intToU16((int)((argb >> 8) & 0xFF));
+    self->m_comp3 = XColor_intToU16((int)(argb & 0xFF));
     self->m_comp4 = 0;
 }
 
@@ -1644,9 +1652,9 @@ void XColor_setRgb_uint32(XColor* self, uint32_t rgb)
      * 入参高位忽略（保留不删——qcolor.h:111 有对应物，规格 §2 改判） */
     self->m_spec = XColor_Rgb;
     self->m_alpha = 65535;
-    self->m_comp1 = intToU16((int)((rgb >> 16) & 0xFF));
-    self->m_comp2 = intToU16((int)((rgb >> 8) & 0xFF));
-    self->m_comp3 = intToU16((int)(rgb & 0xFF));
+    self->m_comp1 = XColor_intToU16((int)((rgb >> 16) & 0xFF));
+    self->m_comp2 = XColor_intToU16((int)((rgb >> 8) & 0xFF));
+    self->m_comp3 = XColor_intToU16((int)(rgb & 0xFF));
     self->m_comp4 = 0;
 }
 

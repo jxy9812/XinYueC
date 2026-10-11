@@ -148,7 +148,12 @@ static void VXPieSeries_copy(XPieSeries* self, const XPieSeries* other)
                                                  src ? XPieSlice_label(src) : "",
                                                  src ? XPieSlice_value(src) : 0.0);
             if (!dup) continue;
-            XPieSeries_appendSlice(self, dup);
+            /* appendSlice 仅在扩容失败时返回 false：此时 dup 未入集合、
+               无人接管，必须就地释放（与 XPieSeries_append 同契约）。 */
+            if (!XPieSeries_appendSlice(self, dup)) {
+                XClassDelete(dup);
+                continue;
+            }
         }
     }
 }

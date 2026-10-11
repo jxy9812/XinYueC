@@ -54,7 +54,7 @@ void XMap_iterator_add(XMap* this_map, XMap_iterator* it)
 
 bool XMap_iterator_equality(XMap_iterator* itFirst, XMap_iterator* itSecond)
 {
-    return itFirst->node == itSecond->node;
+    return (itFirst && itSecond) ? (itFirst->node == itSecond->node) : false;
 }
 
 void XMap_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args)

@@ -409,8 +409,8 @@ static void VXHttp2HeaderList_move(XHttp2HeaderList* dest, XHttp2HeaderList* src
     src->m_fields = NULL;
     src->m_size = 0;
     src->m_capacity = 0;
-    XClass_init((XClass*)src);
-    XClassSetVtable(src, XHttp2HeaderList);
+    /* move 只转移资源：源对象的虚表、内存方法和堆所有权标记保持不变，
+     * 仍由其创建者按分配方式 XClassDeinit/XClassDelete。 */
 }
 
 XVtable* XHttp2HeaderList_class_init(void)
@@ -876,8 +876,8 @@ static void VXHttp2HeaderEncoder_move(XHttp2HeaderEncoder* dest,
     src->m_dynamicMaxSize = 4096;
     src->m_maxSize = 4096;
     src->m_sizeUpdatePending = false;
-    XClass_init((XClass*)src);
-    XClassSetVtable(src, XHttp2HeaderEncoder);
+    /* move 只转移资源：源对象的虚表、内存方法和堆所有权标记保持不变，
+     * 仍由其创建者按分配方式 XClassDeinit/XClassDelete。 */
 }
 
 XVtable* XHttp2HeaderEncoder_class_init(void)
@@ -1103,8 +1103,8 @@ static void VXHttp2HeaderDecoder_move(XHttp2HeaderDecoder* dest,
     src->m_dynamicDataSize = 0;
     src->m_dynamicMaxSize = 4096;
     src->m_maxSize = 4096;
-    XClass_init((XClass*)src);
-    XClassSetVtable(src, XHttp2HeaderDecoder);
+    /* move 只转移资源：源对象的虚表、内存方法和堆所有权标记保持不变，
+     * 仍由其创建者按分配方式 XClassDeinit/XClassDelete。 */
 }
 
 XVtable* XHttp2HeaderDecoder_class_init(void)

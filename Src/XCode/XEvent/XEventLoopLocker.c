@@ -19,17 +19,17 @@ struct XEventLoopLocker {
 };
 
 // 辅助函数：从 data 解码类型
-static inline XEventLoopLocker_Type get_type(uintptr_t data) {
+static inline XEventLoopLocker_Type XEventLoopLocker_get_type(uintptr_t data) {
     return (XEventLoopLocker_Type)(data & XEL_TYPE_MASK);
 }
 
 // 辅助函数：从 data 解码指针（仅对 EventLoop/Thread 有效）
-static inline void* get_pointer(uintptr_t data) {
+static inline void* XEventLoopLocker_get_pointer(uintptr_t data) {
     return (void*)(data & XEL_PTR_MASK);
 }
 
 // 辅助函数：加锁（根据类型）
-static void acquire_lock(XEventLoopLocker_Type type, void* ptr) {
+static void XEventLoopLocker_acquire_lock(XEventLoopLocker_Type type, void* ptr) {
     switch (type) {
     case XEventLoopLocker_Type_EventLoop: {
         XEventLoop* loop = (XEventLoop*)ptr;
@@ -59,7 +59,7 @@ static void acquire_lock(XEventLoopLocker_Type type, void* ptr) {
 }
 
 // 辅助函数：解锁（根据类型）
-static void release_lock(XEventLoopLocker_Type type, void* ptr) {
+static void XEventLoopLocker_release_lock(XEventLoopLocker_Type type, void* ptr) {
     switch (type) {
     case XEventLoopLocker_Type_EventLoop: {
       /*  XEventLoop* loop = (XEventLoop*)ptr;
@@ -93,7 +93,7 @@ XEventLoopLocker* XEventLoopLocker_create(void) {
     XEventLoopLocker* self = (XEventLoopLocker*)XMalloc_System(sizeof(XEventLoopLocker));
     if (!self) return NULL;
     self->data = (uintptr_t)XEventLoopLocker_Type_Application; // 无指针，仅类型
-    acquire_lock(XEventLoopLocker_Type_Application, NULL);
+    XEventLoopLocker_acquire_lock(XEventLoopLocker_Type_Application, NULL);
     return self;
 }
 
@@ -105,7 +105,7 @@ XEventLoopLocker* XEventLoopLocker_createForLoop(XEventLoop* loop) {
     XEventLoopLocker* self = (XEventLoopLocker*)XMalloc_System(sizeof(XEventLoopLocker));
     if (!self) return NULL;
     self->data = ((uintptr_t)loop) | (uintptr_t)XEventLoopLocker_Type_EventLoop;
-    acquire_lock(XEventLoopLocker_Type_EventLoop, loop);
+    XEventLoopLocker_acquire_lock(XEventLoopLocker_Type_EventLoop, loop);
     return self;
 }
 
@@ -116,16 +116,16 @@ XEventLoopLocker* XEventLoopLocker_createForThread(XThread* thread) {
     XEventLoopLocker* self = (XEventLoopLocker*)XMalloc_System(sizeof(XEventLoopLocker));
     if (!self) return NULL;
     self->data = ((uintptr_t)thread) | (uintptr_t)XEventLoopLocker_Type_Thread;
-    acquire_lock(XEventLoopLocker_Type_Thread, thread);
+    XEventLoopLocker_acquire_lock(XEventLoopLocker_Type_Thread, thread);
     return self;
 }
 
 // --- 析构函数 ---
 void XEventLoopLocker_destroy(XEventLoopLocker* self) {
     if (!self) return;
-    XEventLoopLocker_Type type = get_type(self->data);
-    void* ptr = get_pointer(self->data);
-    release_lock(type, ptr);
+    XEventLoopLocker_Type type = XEventLoopLocker_get_type(self->data);
+    void* ptr = XEventLoopLocker_get_pointer(self->data);
+    XEventLoopLocker_release_lock(type, ptr);
     XFree_System(self);
 }
 
@@ -135,8 +135,8 @@ XEventLoopLocker* XEventLoopLocker_move(XEventLoopLocker* other) {
     XEventLoopLocker* self = (XEventLoopLocker*)XMalloc_System(sizeof(XEventLoopLocker));
     if (!self) return NULL;
     self->data = other->data;
-    // 将 other 置为空（避免重复释放）
-    //other->data = (uintptr_t)XEventLoopLocker_Type_Application; // safe empty state
+    // 将 other 置为空（转移所有权，避免双方重复释放同一资源）
+    other->data = (uintptr_t)XEventLoopLocker_Type_Application; // safe empty state
     return self;
 }
 

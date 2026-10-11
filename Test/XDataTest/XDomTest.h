@@ -22,7 +22,7 @@ extern "C" {
  */
 bool XDomTest_runAll(void);
 
-#if DEMOTEST
+#if DEMOTEST_ON
 /**
  * @brief      将 XDom 测试注册到 XDataTest 菜单。
  * @param      root 根菜单；函数只借用该菜单，不负责释放。

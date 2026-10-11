@@ -3,31 +3,22 @@
 #include "XHashMap.h"
 #include "XString.h"
 #include "XStringList.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XPrintf.h"
 #include "XCoreApplication.h"
 #include "XCryptographic.h"
-#include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
 
 /* ==================== 内部辅助函数 ==================== */
 
-static char* xStrDup(const char* str)
-{
-    if (!str) return NULL;
-    size_t len = strlen(str) + 1;
-    char* copy = XMalloc_System(len);
-    if (copy) memcpy(copy, str, len);
-    return copy;
-}
-
 /* 哈希表键/值释放辅助函数 */
 static void free_name_hash_key(void* data)
 {
-    /* m_nameHash 的键类型为 char*，pair 中存储的是 char* 指针值 */
-    char** p = (char**)data;
-    if (p && *p) XFree_System(*p);
+    /* m_nameHash 的键类型为 XString*，pair 中存储的是 XString* 指针值 */
+    XString** p = (XString**)data;
+    if (p && *p) XClassDelete(*p);
 }
 
 static void free_option_values_value(void* data)
@@ -42,21 +33,21 @@ static void free_option_values_value(void* data)
 
 static int stringCompare(const void* a, const void* b)
 {
-    const char* sa = *(const char**)a;
-    const char* sb = *(const char**)b;
+    const XString* sa = *(const XString**)a;
+    const XString* sb = *(const XString**)b;
     if (!sa && !sb) return 0;
     if (!sa) return -1;
     if (!sb) return 1;
-    return strcmp(sa, sb);
+    return (int)XString_compare(sa, sb);
 }
 
 static uint64_t xcommandline_hash_string(const void* key, size_t len)
 {
     (void)len;
-    const char* str = *(const char**)key;
+    const XString* str = *(const XString**)key;
     if (!str) return 0;
-    return XCryptographicHash_function(XCryptographicHash_XxHash64)(
-        str, strlen(str));
+    /* XString_hash 按内容哈希，与 stringCompare 的 XString_compare 语义一致 */
+    return XString_hash(str, sizeof(XString));
 }
 
 /* ==================== 构造/析构 ==================== */
@@ -69,11 +60,11 @@ XCommandLineParser* XCommandLineParser_create(void)
     parser->m_errorText = XString_create();
     parser->m_commandLineOptionList = XVector_create(sizeof(XCommandLineOption*));
     parser->m_nameHash = XHashMap_create(
-        sizeof(char*), sizeof(int), xcommandline_hash_string, stringCompare);
+        sizeof(XString*), sizeof(int), xcommandline_hash_string, stringCompare);
     XMapBaseSetKeyDeinitMethod(parser->m_nameHash, free_name_hash_key);
     parser->m_optionValuesHash = XHashMap_create(
         sizeof(int), sizeof(XStringList*),
-        XCryptographicHash_function(XCryptographicHash_XxHash64), int_compare);
+        XCryptographicHash_function(XCryptographicHash_XxHash64), Xint_compare);
     XContainerSetDataDeinitMethod(parser->m_optionValuesHash, free_option_values_value);
     parser->m_optionNames = XStringList_create();
     parser->m_positionalArgumentList = XStringList_create();
@@ -146,17 +137,43 @@ void XCommandLineParser_setOptionsAfterPositionalArgumentsMode(XCommandLineParse
 
 /* ==================== 内部：名称查找 ==================== */
 
-static int findOptionIndex(XCommandLineParser* parser, const char* name)
+static int findOptionIndex(XCommandLineParser* parser, const XString* name)
 {
+    int* idx;
     if (!parser || !name) return -1;
-    const char* key = name;
-    int* idx = (int*)XHashMap_value_base(parser->m_nameHash, &key);
+    /* m_nameHash 的键是 XString*；按键内容哈希/比较（见 stringCompare/
+       xcommandline_hash_string），name 只在调用期间借用、不取得所有权。 */
+    idx = (int*)XHashMap_value_base(parser->m_nameHash, &name);
     return idx ? *idx : -1;
 }
 
-static XCommandLineOption* findOption(XCommandLineParser* parser, const char* name)
+/* UTF-8 兼容入口：argv/char* 流动的解析路径先转临时 XString 再转发到主版本 */
+static int findOptionIndex_utf8(XCommandLineParser* parser, const char* name)
+{
+    int idx;
+    XString key;
+    if (!parser || !name) return -1;
+    XString_init(&key);
+    if (!XString_assign_utf8(&key, name)) {
+        XClassDeinit(&key);
+        return -1;
+    }
+    idx = findOptionIndex(parser, &key);
+    XClassDeinit(&key);
+    return idx;
+}
+
+static XCommandLineOption* findOption(XCommandLineParser* parser, const XString* name)
 {
     int idx = findOptionIndex(parser, name);
+    if (idx < 0) return NULL;
+    XCommandLineOption** opt = (XCommandLineOption**)XVector_at_base(parser->m_commandLineOptionList, idx);
+    return opt ? *opt : NULL;
+}
+
+static XCommandLineOption* findOption_utf8(XCommandLineParser* parser, const char* name)
+{
+    int idx = findOptionIndex_utf8(parser, name);
     if (idx < 0) return NULL;
     XCommandLineOption** opt = (XCommandLineOption**)XVector_at_base(parser->m_commandLineOptionList, idx);
     return opt ? *opt : NULL;
@@ -174,11 +191,8 @@ bool XCommandLineParser_addOption(XCommandLineParser* parser, const XCommandLine
     // 检查名称冲突
     for (size_t i = 0; i < XStringList_size_base(names); ++i) {
         const XString* s = XStringList_at_base(names, i);
-        if (s) {
-            const char* nameStr = XString_toUtf8(s);
-            if (findOptionIndex(parser, nameStr) >= 0)
-                return false; // 名称已存在
-        }
+        if (s && findOptionIndex(parser, s) >= 0)
+            return false; // 名称已存在
     }
 
     // 复制选项
@@ -232,16 +246,26 @@ bool XCommandLineParser_addOption(XCommandLineParser* parser, const XCommandLine
 
     // 添加到选项列表
     size_t idx = XVector_size_base(parser->m_commandLineOptionList);
-    XVector_push_back_1_base(parser->m_commandLineOptionList, &copy);
+    if (!XVector_push_back_1_base(parser->m_commandLineOptionList, &copy)) {
+        /* 入列失败时 copy 未被容器接管，其深拷贝的 names/description/
+           valueName/defaultValues 和结构体本身必须在此释放；同时不能
+           继续执行下方的哈希注册，避免注册越界索引 idx。 */
+        XCommandLineOption_delete(copy);
+        return false;
+    }
 
     // 注册所有名称到哈希表
     for (size_t i = 0; i < XStringList_size_base(copy->names); ++i) {
         const XString* s = XStringList_at_base(copy->names, i);
         if (s) {
-            const char* nameStr = XString_toUtf8(s);
-            char* key = xStrDup(nameStr);
+            /* 键以 XString* 长期保存（约束：私有状态禁止以 char* 长期保存）。
+               插入成功后键由哈希表接管，随条目经 free_name_hash_key 释放；
+               插入失败时 VXMap_insert 各失败出口一律不消费键（失败属主
+               归一，见 XHashMap.c），由调用方在此释放，避免 OOM 泄漏。 */
+            XString* key = XString_create_copy(s);
             if (key) {
-                XMapBase_insert_base(parser->m_nameHash, &key, &idx);
+                if (!XMapBase_insert_base(parser->m_nameHash, &key, &idx))
+                    XClassDelete(key);
             }
         }
     }
@@ -270,7 +294,7 @@ XCommandLineOption* XCommandLineParser_addVersionOption(XCommandLineParser* pars
     XStringList_push_back_utf8(names, "v");
     XStringList_push_back_utf8(names, "version");
 
-    XCommandLineOption* opt = XCommandLineOption_createFullWithNames(names,
+    XCommandLineOption* opt = XCommandLineOption_createFullWithNames_2(names,
         "显示版本信息。", NULL, NULL);
     XClassDelete(names);
 
@@ -295,7 +319,7 @@ XCommandLineOption* XCommandLineParser_addHelpOption(XCommandLineParser* parser)
     XStringList_push_back_utf8(names, "h");
     XStringList_push_back_utf8(names, "help");
 
-    XCommandLineOption* opt = XCommandLineOption_createFullWithNames(names,
+    XCommandLineOption* opt = XCommandLineOption_createFullWithNames_2(names,
         "显示命令行选项的帮助信息。", NULL, NULL);
     XClassDelete(names);
 
@@ -312,11 +336,19 @@ XCommandLineOption* XCommandLineParser_addHelpOption(XCommandLineParser* parser)
     return NULL;
 }
 
-void XCommandLineParser_setApplicationDescription(XCommandLineParser* parser, const char* description)
+void XCommandLineParser_setApplicationDescription(XCommandLineParser* parser, const XString* description)
 {
     if (!parser) return;
     XClassDelete(parser->m_description);
-    parser->m_description = description ? XString_create_utf8(description) : XString_create();
+    /* 主版本负责拷贝与生命周期：description 为 NULL 时保留空描述 */
+    parser->m_description = description ? XString_create_copy(description) : XString_create();
+}
+
+void XCommandLineParser_setApplicationDescription_2(XCommandLineParser* parser, const char* description)
+{
+    XString* temp = description ? XString_create_utf8(description) : NULL;
+    XCommandLineParser_setApplicationDescription(parser, temp);
+    if (temp) XClassDelete(temp);
 }
 
 const char* XCommandLineParser_applicationDescription(const XCommandLineParser* parser)
@@ -325,14 +357,37 @@ const char* XCommandLineParser_applicationDescription(const XCommandLineParser* 
 }
 
 void XCommandLineParser_addPositionalArgument(XCommandLineParser* parser,
-    const char* name, const char* description, const char* syntax)
+    const XString* name, const XString* description, const XString* syntax)
 {
     if (!parser) return;
     XPositionalArgumentDefinition def;
-    def.name = name ? XString_create_utf8(name) : XString_create();
-    def.description = description ? XString_create_utf8(description) : XString_create();
-    def.syntax = (syntax && strlen(syntax) > 0) ? XString_create_utf8(syntax) : (name ? XString_create_utf8(name) : XString_create());
-    XVector_push_back_1_base(parser->m_positionalArgumentDefinitions, &def);
+    def.name = name ? XString_create_copy(name) : XString_create();
+    def.description = description ? XString_create_copy(description) : XString_create();
+    /* 无 syntax 时回退为参数名，与 Qt 对齐；空串视同未提供 */
+    if (syntax && XString_length_base(syntax) > 0)
+        def.syntax = XString_create_copy(syntax);
+    else
+        def.syntax = name ? XString_create_copy(name) : XString_create();
+    if (!XVector_push_back_1_base(parser->m_positionalArgumentDefinitions, &def)) {
+        /* 入列失败时 def 未被容器接管，按 delete/clearPositionalArguments
+           的同一释放入口清理三个字符串，防止 OOM 时泄漏。 */
+        XClassDelete(def.name);
+        XClassDelete(def.description);
+        XClassDelete(def.syntax);
+        return;
+    }
+}
+
+void XCommandLineParser_addPositionalArgument_2(XCommandLineParser* parser,
+    const char* name, const char* description, const char* syntax)
+{
+    XString* nameStr = name ? XString_create_utf8(name) : NULL;
+    XString* descStr = description ? XString_create_utf8(description) : NULL;
+    XString* syntaxStr = syntax ? XString_create_utf8(syntax) : NULL;
+    XCommandLineParser_addPositionalArgument(parser, nameStr, descStr, syntaxStr);
+    if (nameStr) XClassDelete(nameStr);
+    if (descStr) XClassDelete(descStr);
+    if (syntaxStr) XClassDelete(syntaxStr);
 }
 
 void XCommandLineParser_clearPositionalArguments(XCommandLineParser* parser)
@@ -374,7 +429,7 @@ static bool parseOptionValue(XCommandLineParser* parser, const char* optionName,
 {
     if (!parser || !optionName) return false;
 
-    int optIdx = findOptionIndex(parser, optionName);
+    int optIdx = findOptionIndex_utf8(parser, optionName);
     if (optIdx < 0) return false; // 未知选项
 
     XCommandLineOption* opt;
@@ -387,7 +442,7 @@ static bool parseOptionValue(XCommandLineParser* parser, const char* optionName,
         const char* value = NULL;
 
         // 检查是否在 --key=value 格式中已提供值
-        if (argument && strlen(argument) > 0) {
+        if (argument && XStrlen(argument) > 0) {
             value = argument;
         } else if (*argIdx + 1 < argc) {
             // 从下一个参数获取值
@@ -407,8 +462,25 @@ static bool parseOptionValue(XCommandLineParser* parser, const char* optionName,
         if (existing) {
             values = *existing;
         } else {
+            /* 先以空值占位插入、成功后再回填新建列表：占位插入保证任何失败
+               出口都不存在孤儿资源；VXMap_insert 失败出口一律不消费存入的
+               值（失败属主归一，见 XHashMap.c），此处存入的是空指针，对值
+               清理回调 free_option_values_value 也安全。 */
+            values = NULL;
+            if (!XMapBase_insert_base(parser->m_optionValuesHash, &key, &values))
+                return false;
+            existing = (XStringList**)XHashMap_value_base(parser->m_optionValuesHash, &key);
+            if (!existing)
+                return false;
             values = XStringList_create();
-            XMapBase_insert_base(parser->m_optionValuesHash, &key, &values);
+            if (!values) {
+                /* 新建列表失败时先移除占位条目：残留 (key, NULL) 会让同一
+                   选项的下一次解析在下方 push_back_utf8(NULL,…) 处崩溃
+                   （XStringList 侧无判空）；移除后哈希不残留空值条目。 */
+                XMapBase_remove_base(parser->m_optionValuesHash, &key);
+                return false;
+            }
+            *existing = values;
         }
         XStringList_push_back_utf8(values, value);
     }
@@ -474,13 +546,13 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, const XStringList* arg
         if (isLong) optArg++; // 跳过第二个 '-'
 
         // 处理 --key=value 格式
-        char* eqPos = strchr(optArg, '=');
+        const char* eqPos = XStrchr(optArg, '=');
         const char* optionName = optArg;
         const char* optionValue = NULL;
         char* optCopy = NULL;
 
         if (eqPos) {
-            optCopy = xStrDup(optArg);
+            optCopy = XStrdup(optArg);
             if (optCopy) {
                 optCopy[eqPos - optArg] = '\0';
                 optionName = optCopy;
@@ -490,7 +562,7 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, const XStringList* arg
 
         if (isLong) {
             // 长选项
-            if (findOptionIndex(parser, optionName) >= 0) {
+            if (findOptionIndex_utf8(parser, optionName) >= 0) {
                 registerFoundOption(parser, optionName);
                 if (!parseOptionValue(parser, optionName, optionValue, &i, argc, argv)) {
                     result = false;
@@ -508,7 +580,7 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, const XStringList* arg
             // 短选项
             if (parser->m_singleDashWordOptionMode == XCOMMANDLINE_PARSER_PARSE_AS_LONG_OPTIONS) {
                 // 将整个 -abc 视为长选项 abc
-                if (findOptionIndex(parser, optionName) >= 0) {
+                if (findOptionIndex_utf8(parser, optionName) >= 0) {
                     registerFoundOption(parser, optionName);
                     if (!parseOptionValue(parser, optionName, optionValue, &i, argc, argv)) {
                         result = false;
@@ -523,10 +595,10 @@ bool XCommandLineParser_parse(XCommandLineParser* parser, const XStringList* arg
                 }
             } else {
                 // ParseAsCompactedShortOptions: 将 -abc 解析为 -a -b -c
-                size_t optLen = strlen(optionName);
+                size_t optLen = XStrlen(optionName);
                 for (size_t j = 0; j < optLen; ++j) {
                     char singleName[2] = { optionName[j], '\0' };
-                    if (findOptionIndex(parser, singleName) >= 0) {
+                    if (findOptionIndex_utf8(parser, singleName) >= 0) {
                         registerFoundOption(parser, singleName);
                         // 如果是最后一个字符且可能有值，尝试从下一个参数获取
                         const char* val = (j == optLen - 1) ? optionValue : NULL;
@@ -570,8 +642,8 @@ void XCommandLineParser_process(XCommandLineParser* parser, const XStringList* a
 
     // 检查 --help
     if (parser->m_builtinHelpOption) {
-        if (XCommandLineParser_isSet(parser, "help") || XCommandLineParser_isSet(parser, "h")
-            || XCommandLineParser_isSet(parser, "help-all")) {
+        if (XCommandLineParser_isSet_2(parser, "help") || XCommandLineParser_isSet_2(parser, "h")
+            || XCommandLineParser_isSet_2(parser, "help-all")) {
             XString* help = XCommandLineParser_helpText(parser);
             if (help) {
                 XPrintf("%s\n", XString_toUtf8(help));
@@ -583,7 +655,7 @@ void XCommandLineParser_process(XCommandLineParser* parser, const XStringList* a
 
     // 检查 --version
     if (parser->m_builtinVersionOption) {
-        if (XCommandLineParser_isSet(parser, "version") || XCommandLineParser_isSet(parser, "v")) {
+        if (XCommandLineParser_isSet_2(parser, "version") || XCommandLineParser_isSet_2(parser, "v")) {
             XCommandLineParser_showVersion(parser);
             exit(0);
         }
@@ -597,7 +669,11 @@ void XCommandLineParser_processApplication(XCommandLineParser* parser, const XCo
     if (!parser) return;
     XStringList* args = XCoreApplication_arguments();
     if (args) {
+        /* XCoreApplication_arguments() 每次调用都新建列表且契约由调用者释放；
+           process 仅按 const 借用（--help/--version/解析失败路径直接 exit，
+           不经过此处）。正常返回路径必须释放，否则每次调用整体泄漏。 */
         XCommandLineParser_process(parser, args);
+        XClassDelete(args);
     }
 }
 
@@ -609,17 +685,25 @@ const char* XCommandLineParser_errorText(const XCommandLineParser* parser)
 
 /* ==================== 查询 ==================== */
 
-bool XCommandLineParser_isSet(XCommandLineParser* parser, const char* name)
+bool XCommandLineParser_isSet(XCommandLineParser* parser, const XString* name)
 {
     if (!parser || !name) return false;
 
     // 检查是否在已找到的选项名称中
     for (size_t i = 0; i < XStringList_size_base(parser->m_optionNames); ++i) {
         const XString* s = XStringList_at_base(parser->m_optionNames, i);
-        if (s && strcmp(XString_toUtf8(s), name) == 0)
+        if (s && XString_compare(s, name) == 0)
             return true;
     }
     return false;
+}
+
+bool XCommandLineParser_isSet_2(XCommandLineParser* parser, const char* name)
+{
+    XString* temp = name ? XString_create_utf8(name) : NULL;
+    bool ret = XCommandLineParser_isSet(parser, temp);
+    if (temp) XClassDelete(temp);
+    return ret;
 }
 
 bool XCommandLineParser_isSetOption(XCommandLineParser* parser, const XCommandLineOption* option)
@@ -629,13 +713,13 @@ bool XCommandLineParser_isSetOption(XCommandLineParser* parser, const XCommandLi
     if (!names) return false;
     for (size_t i = 0; i < XStringList_size_base(names); ++i) {
         const XString* s = XStringList_at_base(names, i);
-        if (s && XCommandLineParser_isSet(parser, XString_toUtf8(s)))
+        if (s && XCommandLineParser_isSet(parser, s))
             return true;
     }
     return false;
 }
 
-const char* XCommandLineParser_value(XCommandLineParser* parser, const char* name)
+const char* XCommandLineParser_value(XCommandLineParser* parser, const XString* name)
 {
     if (!parser || !name) return NULL;
 
@@ -663,6 +747,14 @@ const char* XCommandLineParser_value(XCommandLineParser* parser, const char* nam
     return NULL;
 }
 
+const char* XCommandLineParser_value_2(XCommandLineParser* parser, const char* name)
+{
+    XString* temp = name ? XString_create_utf8(name) : NULL;
+    const char* ret = XCommandLineParser_value(parser, temp);
+    if (temp) XClassDelete(temp);
+    return ret;
+}
+
 const char* XCommandLineParser_valueOption(XCommandLineParser* parser, const XCommandLineOption* option)
 {
     if (!parser || !option) return NULL;
@@ -670,14 +762,14 @@ const char* XCommandLineParser_valueOption(XCommandLineParser* parser, const XCo
     if (!names || XStringList_size_base(names) == 0) return NULL;
     const XString* s = XStringList_at_base(names, 0);
     if (!s) return NULL;
-    return XCommandLineParser_value(parser, XString_toUtf8(s));
+    return XCommandLineParser_value(parser, s);
 }
 
 const XStringList* XCommandLineParser_values(XCommandLineParser* parser, const char* name)
 {
     if (!parser || !name) return NULL;
 
-    int idx = findOptionIndex(parser, name);
+    int idx = findOptionIndex_utf8(parser, name);
     if (idx < 0) return NULL;
 
     int key = idx;
@@ -685,7 +777,7 @@ const XStringList* XCommandLineParser_values(XCommandLineParser* parser, const c
     if (values) return *values;
 
     // 返回默认值
-    XCommandLineOption* opt = findOption(parser, name);
+    XCommandLineOption* opt = findOption_utf8(parser, name);
     if (opt) {
         return XCommandLineOption_defaultValues(opt);
     }
@@ -810,7 +902,7 @@ XString* XCommandLineParser_helpText(const XCommandLineParser* parser)
                     const char* n = XString_toUtf8(ns);
                     if (!n) continue;
                     if (!first) XString_append_utf8(line, ", ");
-                    if (strlen(n) == 1) {
+                    if (XStrlen(n) == 1) {
                         snprintf(buf, sizeof(buf), "-%s", n); XString_append_utf8(line, buf);
                     } else {
                         snprintf(buf, sizeof(buf), "--%s", n); XString_append_utf8(line, buf);
@@ -821,7 +913,7 @@ XString* XCommandLineParser_helpText(const XCommandLineParser* parser)
 
             // 值名称
             const char* vn = XCommandLineOption_valueName(opt);
-            if (vn && strlen(vn) > 0) {
+            if (vn && XStrlen(vn) > 0) {
                 snprintf(buf, sizeof(buf), " <%s>", vn); XString_append_utf8(line, buf);
             }
 

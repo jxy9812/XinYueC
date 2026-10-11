@@ -1,5 +1,19 @@
-﻿#ifndef XMQTTMESSAGE_H
+﻿/**
+ * @file       XMqttMessage.h
+ * @brief      MQTT 消息（对齐 Qt 6.8 QMqttMessage）。
+ * @details    表示一条完整的 MQTT 消息，包含主题、载荷、QoS、保留标志等。
+ *             受 XMQTT_CLIENT_ON 开关裁剪（见 XMqtt_config.h）。
+ */
+#ifndef XMQTTMESSAGE_H
 #define XMQTTMESSAGE_H
+
+#include "XMqtt_config.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#if XMQTT_ON
+#if XMQTT_CLIENT_ON
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -8,18 +22,8 @@
 #include "XMqttTopicName.h"
 #include "XMqttPublishProperties.h"
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 XCLASS_DEFINE_BEGING(XMqttMessage)
 XCLASS_DEFINE_EXTEND_END(XMqttMessage, XClass)
-
-/**
- * @file XMqttMessage.h
- * @brief MQTT 消息（对齐 Qt 6.8 QMqttMessage）
- * @details 表示一条完整的 MQTT 消息，包含主题、载荷、QoS、保留标志等。
- */
 
 /**
  * @brief MQTT 消息结构体
@@ -140,5 +144,8 @@ bool XMqttMessage_equal(const XMqttMessage* a, const XMqttMessage* b);
 /* XClass create API default-memory wrappers. */
 #undef XMqttMessage_create
 #define XMqttMessage_create() XMqttMessage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XMQTT_CLIENT_ON */
+#endif /* XMQTT_ON */
 
 #endif // XMQTTMESSAGE_H

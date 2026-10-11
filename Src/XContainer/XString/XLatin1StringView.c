@@ -10,24 +10,27 @@
 #include "XByteArrayView.h"   ///< 字节数组视图，用于从 XByteArrayView 构造
 #include "XStringView.h"      ///< 字符串视图，用于跨视图比较
 #include "XString.h"          ///< XString 字符串容器，用于 toString
-#include <string.h>           ///< memcmp、memchr、strlen 等内存操作
+#include "XStringUtils.h"     ///< XStrlen 等字符串原语（外部依赖约束：strlen 用库内 API 替代）
+#include <string.h>           ///< memcmp、memchr 等内存原语
 
 /* ============================== 内部辅助函数 ============================== */
 
 /**
 * @brief 判断 char 是否为空白字符
-* @details 空白字符包括：空格(' ')、制表符('\t')、换行符('\n')、回车符('\r')、
-*          垂直制表符('\v')、换页符('\f')。
+* @details 委托库内 XChar_isSpace（外部依赖约束：字符分类/转换必须使用 XChar），
+*          Latin-1 字节先按无符号字节提升为 XChar。
 * @param ch 待判断的字符
 * @return true 为空白字符，false 为非空白字符
 */
 static bool is_white_space_char(char ch)
 {
-    return (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\v' || ch == '\f');
+    return XChar_isSpace((XChar)(uint8_t)ch);
 }
 
 /**
 * @brief 比较两个 char 字符（支持大小写敏感性）
+* @details 委托库内 XChar_equals（外部依赖约束：字符分类/转换必须使用 XChar），
+*          Latin-1 字节先按无符号字节提升为 XChar。
 * @param a 第一个字符
 * @param b 第二个字符
 * @param cs 大小写敏感性（0=不区分，1=区分）
@@ -35,24 +38,19 @@ static bool is_white_space_char(char ch)
 */
 static bool char_equal(char a, char b, int cs)
 {
-    if (cs == 1) /* CaseSensitive */
-        return a == b;
-    /* CaseInsensitive */
-    if (a >= 'A' && a <= 'Z') a += 32;
-    if (b >= 'A' && b <= 'Z') b += 32;
-    return a == b;
+    return XChar_equals((XChar)(uint8_t)a, (XChar)(uint8_t)b,
+                        (cs == 1) ? XChar_CaseSensitive : XChar_CaseInsensitive);
 }
 
 /**
 * @brief 将 char 转小写（辅助函数）
+* @details 委托库内 XChar_toLower（外部依赖约束：字符分类/转换必须使用 XChar）。
 * @param ch 输入字符
 * @return 小写形式
 */
 static char char_to_lower(char ch)
 {
-    if (ch >= 'A' && ch <= 'Z')
-        return (char)(ch + 32);
-    return ch;
+    return (char)XChar_toLower((XChar)(uint8_t)ch);
 }
 
 /* ============================== 构造与创建 ============================== */
@@ -76,7 +74,7 @@ XLatin1StringView XLatin1StringView_create_cstr(const char* str)
     else
     {
         view.m_data = str;
-        view.m_size = (int64_t)strlen(str);
+        view.m_size = (int64_t)XStrlen(str);
     }
     return view;
 }
@@ -634,37 +632,11 @@ XString* XLatin1StringView_toString(const XLatin1StringView* self)
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return XString_create();
 
-    /* Latin-1 每个字符直接映射到 Unicode 码点 0-255 */
-    /* 构建 UTF-8 字符串然后通过 XString_create_utf8 转换 */
-    /* 或者逐个字符用 XString_append 构建 */
-    XString* result = XString_create();
-    if (result == NULL)
-        return NULL;
-
-    int64_t i;
-    for (i = 0; i < self->m_size; i++)
-    {
-        /* Latin-1 字符直接作为 Unicode 码点 */
-        uint8_t cp = (uint8_t)self->m_data[i];
-        XChar ch = (XChar)cp;
-        /* 使用 XString 的 append 方法逐个添加字符 */
-        /* 由于 XString 没有直接 append XChar 的 API，用 UTF-8 方式 */
-        char utf8_buf[4];
-        int utf8_len;
-        if (cp <= 0x7F)
-        {
-            utf8_buf[0] = (char)cp;
-            utf8_len = 1;
-        }
-        else
-        {
-            utf8_buf[0] = (char)(0xC0 | (cp >> 6));
-            utf8_buf[1] = (char)(0x80 | (cp & 0x3F));
-            utf8_len = 2;
-        }
-        XString_append_with_length_utf8(result, utf8_buf, (size_t)utf8_len);
-    }
-    return result;
+    /* Latin-1 每个字符直接映射到 Unicode 码点 0-255，
+       转换统一经库内 XString_create_with_length_latin1（内部走
+       XChar_fromLatin1Stream），不再手写 Latin-1→UTF-8 编码。 */
+    return XString_create_with_length_latin1((const uint8_t*)self->m_data,
+                                             (size_t)self->m_size);
 }
 
 #endif // XString_ON

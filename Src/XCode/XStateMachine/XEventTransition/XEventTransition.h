@@ -29,6 +29,7 @@ XVtable* XEventTransition_class_init(void);
  */
 /**
  * @brief 创建指定事件源、事件类型和源状态的事件转换。
+ * @param memory 内存类型。
  * @param object 被监听对象，不转移所有权，可为 NULL。
  * @param type 需要匹配的事件类型。
  * @param sourceState 源状态，可为 NULL；非 NULL 时取得转换所有权。

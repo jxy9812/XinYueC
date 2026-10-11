@@ -24,12 +24,12 @@ typedef struct XHashMap XHashMap;
 typedef struct 
 {
     union {
-        size_t lock_count; // 锁被当前线程持有的总次数 (对于互斥锁，这等同于递归深度；对于读写锁，这可以是读或写计数)
-        size_t reader_count;
+        size_t m_lockCount; // 锁被当前线程持有的总次数 (对于互斥锁，这等同于递归深度；对于读写锁，这可以是读或写计数)
+        size_t m_readerCount;
     };
     union {
-        size_t writer_count; // 当前线程持有的写锁计数 (0 or >=1)
-        size_t flags;    // 预留标志位，例如区分读/写 (XReadWriteLock 可能需要)
+        size_t m_writerCount; // 当前线程持有的写锁计数 (0 or >=1)
+        size_t m_flags;    // 预留标志位，例如区分读/写 (XReadWriteLock 可能需要)
     };
 } XRecursiveLockState;
 
@@ -41,7 +41,7 @@ void XRecursiveLockState_init();
 
 /**
  * @brief 获取指定锁对象在当前线程中的递归状态
- * 如果状态不存在，则会自动创建一个初始状态 {lock_count: 0, flags: 0}。
+ * 如果状态不存在，则会自动创建一个初始状态 {m_lockCount: 0, m_flags: 0}。
  *
  * @param lock_obj 指向锁对象的指针 (如 XMutex* 或 XReadWriteLock*)
  * @return 指向当前线程对此锁的递归状态的指针

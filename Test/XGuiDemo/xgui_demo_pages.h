@@ -139,6 +139,27 @@ int demo_page_qrcode_autotest(XWidget* page);
 
 /** @brief 二维码演示页自适应重排（预览标签位置；同上契约）。 */
 void demo_page_qrcode_adapt(XWidget* page);
+/** @brief 构建软件更新页（系统设置：关于→软件更新：当前组件版本列表
+ *         app/fontres、手动检查、策略显示、下载/校验/解包/激活四段进度
+ *         条、重启与回滚提示；纯观察者+用户决策入口，引擎逻辑零复制）。
+ *         引擎经 XUpgrade_init 懒启动（首次决策入口点击，autoCheck=
+ *         false；工作区在系统临时目录 xgui_demo_update，不写 demo 资源
+ *         /安装目录）。XUPGRADE_ON=0 或控件裁剪时返回 NULL，主文件跳过
+ *         注册（2026-10-07 追加）。 */
+XWidget* demo_page_update_build(XWidget* parent,
+                                DemoPageStatusFn status, void* user);
+
+/** @brief 软件更新页自测（非阻塞；不发起真实网络检查——事件路径经真实
+ *         listener 入队 + 泵出回调验证，懒启动走真实 XUpgrade_init）。 */
+int demo_page_update_autotest(XWidget* page);
+
+/** @brief 软件更新页自适应重排（信息列/进度条随根宽收放，提示/状态行
+ *         贴底；同上契约）。 */
+void demo_page_update_adapt(XWidget* page);
+
+/** @brief 软件更新页退出清理：停 UI 泵 → XUpgrade_deinit → 回收队列互
+ *        斥（须在主窗口析构前调用；页面未构建/引擎未启动时零操作）。 */
+void demo_page_update_shutdown(void);
 
 /**
  * @brief 主窗口性能悬浮层访问器（悬浮窗设置页专用；主文件实现）。

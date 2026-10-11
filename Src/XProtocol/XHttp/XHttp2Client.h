@@ -31,13 +31,13 @@ typedef struct XHttp2ClientSession {
     XClass m_class;                         /**< 第一个成员，继承 XClass。 */
     XHttp2Configuration* m_configuration;  /**< HTTP/2 配置；对象拥有。 */
     XHttp2HeaderEncoder* m_encoder;         /**< 连接级 HPACK 编码器；对象拥有。 */
+    bool m_started;                         /**< 是否已经生成客户端前言。 */
+    bool m_goingAway;                       /**< 是否已收到对端 GOAWAY。 */
     uint32_t m_nextStreamId;                /**< 下一个客户端奇数流号。 */
     size_t m_peerMaxHeaderListSize;          /**< 对端允许的解压后头字段总大小。 */
     uint32_t m_peerMaxConcurrentStreams;     /**< 对端允许的同时活动流数。 */
     uint32_t m_peerMaxFrameSize;             /**< 对端允许的帧 payload 上限。 */
     size_t m_activeStreamCount;              /**< 尚未关闭的本地请求流数。 */
-    bool m_started;                         /**< 是否已经生成客户端前言。 */
-    bool m_goingAway;                       /**< 是否已收到对端 GOAWAY。 */
 } XHttp2ClientSession;
 
 /**

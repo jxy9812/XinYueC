@@ -43,7 +43,7 @@ typedef struct XHeaderView
     XVector*  m_sections;  /**< 区间尺寸表（int；对象拥有）。 */
     bool      m_stretchLast; /**< 末尾拉伸（默认 false）。 */
     int       m_sectionMovedFrom; /**< moveSection 记录（预留）。 */
-    bool*     m_hidden;    /**< 区间隐藏表（平行数组；对象拥有）。 */
+    XVector*  m_hidden;    /**< 区间隐藏表（bool；与 m_sections 平行等长；对象拥有）。 */
     int       m_hiddenCount; /**< 隐藏区间数。 */
     XVector*  m_sectionModes; /**< 单段调整模式表（int；-1=跟随全局模式；与 m_sections 平行等长；对象拥有）。 */
     bool      m_sectionsClickable; /**< 区间可点击（对标 sectionsClickable）。 */

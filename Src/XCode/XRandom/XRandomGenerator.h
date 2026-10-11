@@ -74,7 +74,7 @@ XRandomGenerator* XRandomGenerator_createWithRange(const uint32_t* begin, const 
  * @return 新生成器对象指针，失败返回NULL
  * @note 对应Qt: QRandomGenerator(const QRandomGenerator &other)
  */
-XRandomGenerator* XRandomGenerator_copy(const XRandomGenerator* other);
+XRandomGenerator* XRandomGenerator_create_copy(const XRandomGenerator* other);
 
 /**
  * @brief 删除随机数生成器

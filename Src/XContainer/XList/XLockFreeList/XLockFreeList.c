@@ -23,7 +23,8 @@
  *      hazard-pointer 保护，保证 head 内存不会被并发释放），然后 CAS 推进
  *      m_head = head->next。CAS 成功后 “退休” 旧 head，待所有 HP 释放后才 free。
  *   4) HP：全局固定 128 槽 * 3 HP/槽，线程首次接入时通过 CAS 占据一个槽（终身
- *      持有直到进程退出）；退休链每线程独立，阈值触发扫描-回收。
+ *      持有直到进程退出）；退休链为全局共享（自旋锁保护），任意线程的阈值
+ *      扫描都能回收不再被 HP 引用的节点，线程退出不会丢失退休记录。
  *   5) 非并发操作（insert-middle / erase / remove / sort / pop_back / …）在
  *      当前测试用例中均为单线程使用，实现为普通遍历-拆链，不承诺并发安全，
  *      并在函数注释中说明。这保持库对既有单线程用例的向后兼容。
@@ -67,11 +68,11 @@ static void XLockFreeList_init_with_memory(XLockFreeList* this_list,
 #define XLFL_RETIRE_CAPACITY  256
 
 typedef struct XLFL_HPRec {
-    XAtomic_uintptr_t hp[XLFL_HP_PER_THREAD];
+    XAtomic_Uintptr hp[XLFL_HP_PER_THREAD];
 } XLFL_HPRec;
 
 static XLFL_HPRec           g_lfl_hp[XLFL_HP_MAX_THREADS];
-static XAtomic_uintptr_t    g_lfl_slot_used[XLFL_HP_MAX_THREADS]; /* 0/1，用 CAS 占位 */
+static XAtomic_Uintptr    g_lfl_slot_used[XLFL_HP_MAX_THREADS]; /* 0/1，用 CAS 占位 */
 
 typedef struct XLFL_RetiredNode {
     XLockFreeListNode* node;
@@ -79,8 +80,25 @@ typedef struct XLFL_RetiredNode {
 } XLFL_RetiredNode;
 
 static XATOMIC_THREAD_LOCAL int t_lfl_slot = -1;
-static XATOMIC_THREAD_LOCAL XLFL_RetiredNode t_lfl_retired[XLFL_RETIRE_CAPACITY];
-static XATOMIC_THREAD_LOCAL int t_lfl_retired_n = 0;
+/* 退休链为全局共享并用自旋锁保护：线程退出后其退休记录不再随 TLS 丢失，
+ * 任意线程随后的阈值扫描/反初始化都能回收已无 HP 引用的节点，
+ * 消除“被他人 HP 引用的退休节点随线程退出永久泄漏”的路径。 */
+static XLFL_RetiredNode    g_lfl_retired[XLFL_RETIRE_CAPACITY];
+static int                 g_lfl_retired_n = 0;
+static XAtomic_Uintptr     g_lfl_retire_lock = { 0 }; /* 0=未锁 1=已锁（自旋锁） */
+
+static void _lfl_retire_lock_acquire(void)
+{
+    while (XAtomic_exchange_uintptr_t(&g_lfl_retire_lock, 1,
+            XAtomic_MemoryOrder_Acquire) != 0) {
+        /* 自旋等待：临界区仅做 HP 快照与数组整理，持锁时间极短 */
+    }
+}
+static void _lfl_retire_lock_release(void)
+{
+    XAtomic_exchange_uintptr_t(&g_lfl_retire_lock, 0,
+        XAtomic_MemoryOrder_Release);
+}
 
 /* 为当前线程申请一个 HP 槽（终身持有，不释放）。返回槽下标；失败 abort。 */
 static int _lfl_hp_acquire_slot(void)
@@ -132,10 +150,11 @@ static inline void _lfl_hp_clear_all(void)
  * 数据已被 pop 消耗（copy 或 move 出去），因此这里只 free 内存。 */
 static void _lfl_free_node_memory(XLockFreeListNode* node, XMemory* memory);
 
-/* 收集所有他人 HP，扫描 t_lfl_retired[] 中未被引用的节点予以释放 */
-static void _lfl_scan_and_reclaim(void)
+/* 收集所有他人 HP，扫描全局退休链 g_lfl_retired[] 中未被引用的节点予以释放。
+ * 调用前必须已持有退休链锁。 */
+static void _lfl_scan_and_reclaim_locked(void)
 {
-    if (t_lfl_retired_n == 0) return;
+    if (g_lfl_retired_n == 0) return;
     /* 收集所有在用 HP 快照 */
     uintptr_t snapshot[XLFL_HP_MAX_THREADS * XLFL_HP_PER_THREAD];
     int nsnap = 0;
@@ -148,46 +167,56 @@ static void _lfl_scan_and_reclaim(void)
             if (v) snapshot[nsnap++] = v;
         }
     }
-    /* 遍历本线程退休链，未被引用的立刻释放；被引用的保留 */
+    /* 遍历全局退休链，未被引用的立刻释放；被引用的保留 */
     int keep = 0;
-    for (int i = 0; i < t_lfl_retired_n; i++) {
-        XLFL_RetiredNode retired = t_lfl_retired[i];
+    for (int i = 0; i < g_lfl_retired_n; i++) {
+        XLFL_RetiredNode retired = g_lfl_retired[i];
         XLockFreeListNode* n = retired.node;
         bool hazarded = false;
         for (int j = 0; j < nsnap; j++) {
             if (snapshot[j] == (uintptr_t)n) { hazarded = true; break; }
         }
         if (hazarded) {
-            t_lfl_retired[keep++] = retired;
+            g_lfl_retired[keep++] = retired;
         } else {
             _lfl_free_node_memory(n, retired.memory);
         }
     }
-    t_lfl_retired_n = keep;
+    g_lfl_retired_n = keep;
+}
+
+/* 加锁扫描并回收全局退休链（可跨线程回收他人退休的节点） */
+static void _lfl_scan_and_reclaim(void)
+{
+    _lfl_retire_lock_acquire();
+    _lfl_scan_and_reclaim_locked();
+    _lfl_retire_lock_release();
 }
 
 static void _lfl_retire(XLockFreeListNode* node, XMemory* memory)
 {
     XLFL_RetiredNode retired;
     if (node == NULL) return;
-    if (t_lfl_retired_n >= XLFL_RETIRE_CAPACITY) {
-        _lfl_scan_and_reclaim();
-        /* 若扫完还是满了（罕见），强制释放最老一个 —— 依赖调用者保证不会长期
-         * 持有过多 HP 引用。测试规模下不会触发。 */
-        if (t_lfl_retired_n >= XLFL_RETIRE_CAPACITY) {
-            _lfl_free_node_memory(t_lfl_retired[0].node,
-                t_lfl_retired[0].memory);
-            for (int i = 1; i < t_lfl_retired_n; i++)
-                t_lfl_retired[i-1] = t_lfl_retired[i];
-            t_lfl_retired_n--;
-        }
-    }
     retired.node = node;
     retired.memory = memory;
-    t_lfl_retired[t_lfl_retired_n++] = retired;
-    if (t_lfl_retired_n >= XLFL_RETIRE_THRESHOLD) {
-        _lfl_scan_and_reclaim();
+    _lfl_retire_lock_acquire();
+    if (g_lfl_retired_n >= XLFL_RETIRE_CAPACITY) {
+        _lfl_scan_and_reclaim_locked();
+        /* 若扫完还是满了（罕见），强制释放最老一个 —— 依赖调用者保证不会长期
+         * 持有过多 HP 引用。测试规模下不会触发。 */
+        if (g_lfl_retired_n >= XLFL_RETIRE_CAPACITY) {
+            _lfl_free_node_memory(g_lfl_retired[0].node,
+                g_lfl_retired[0].memory);
+            for (int i = 1; i < g_lfl_retired_n; i++)
+                g_lfl_retired[i-1] = g_lfl_retired[i];
+            g_lfl_retired_n--;
+        }
     }
+    g_lfl_retired[g_lfl_retired_n++] = retired;
+    if (g_lfl_retired_n >= XLFL_RETIRE_THRESHOLD) {
+        _lfl_scan_and_reclaim_locked();
+    }
+    _lfl_retire_lock_release();
 }
 
 /* ------------------ 节点创建/销毁 ------------------ */
@@ -246,7 +275,7 @@ static void destroyNode(XLockFreeList* this_list, XLockFreeListNode* node)
 /* ------------------ vtable ------------------ */
 XVtable* XLockFreeList_class_init()
 {
-    XVTABLE_INIT_DEFAULT_SIZE(XLISTSLINKED_VTABLE_SIZE)
+    XVTABLE_INIT_DEFAULT_SIZE(XLOCKFREELIST_VTABLE_SIZE)
 	XCLASS_SET_CLASS_NAME_DEFAULT("XLockFreeList");
         XVTABLE_INHERIT_XCLASS(XContainer);
 
@@ -290,7 +319,7 @@ static inline XLockFreeListNode* _load_tail(const XLockFreeList* l) {
 }
 static inline XLockFreeListNode* _load_next(const XLockFreeListNode* n) {
     return (XLockFreeListNode*)XAtomic_load_uintptr_t(
-        (const XAtomic_uintptr_t*)&n->next, XAtomic_MemoryOrder_Acquire);
+        (const XAtomic_Uintptr*)&n->next, XAtomic_MemoryOrder_Acquire);
 }
 
 /* ==========================================================================
@@ -320,7 +349,7 @@ bool VXListBase_push_back_node(XLockFreeList* this_list, XLockFreeListNode* node
         /* 尝试把 tail->next 从 NULL 变为 node */
         uintptr_t expected_next = 0;
         if (XAtomic_compare_exchange_strong_uintptr_t(
-                (XAtomic_uintptr_t*)&tail->next, &expected_next, (uintptr_t)node,
+                (XAtomic_Uintptr*)&tail->next, &expected_next, (uintptr_t)node,
                 XAtomic_MemoryOrder_Release, XAtomic_MemoryOrder_Relaxed)) {
             /* 尝试推进 m_tail —— 失败也无妨，会被后来者协助 */
             size_t expected = (size_t)(uintptr_t)tail;
@@ -358,7 +387,7 @@ bool VXListBase_push_front_node(XLockFreeList* this_list, XLockFreeListNode* nod
         node->next = first;
         uintptr_t expected = (uintptr_t)first;
         if (XAtomic_compare_exchange_strong_uintptr_t(
-                (XAtomic_uintptr_t*)&head->next, &expected, (uintptr_t)node,
+                (XAtomic_Uintptr*)&head->next, &expected, (uintptr_t)node,
                 XAtomic_MemoryOrder_Release, XAtomic_MemoryOrder_Relaxed)) {
             /* 若原来 first==NULL，可能需要推进 tail 以指向 node（空表转非空） */
             if (first == NULL) {
@@ -485,8 +514,12 @@ static XLockFreeListNode* VXListAtomic_push_front(XLockFreeList* this_list,
     XLockFreeListNode* newNode = NULL;
     if (dataCreatMethod) {
         void* temp = XContainer_calloc(this_list, 1, XContainerTypeSize(this_list));
+        if (temp == NULL) return NULL;
         dataCreatMethod(temp, pvData);
         newNode = createNode(this_list, temp, dataCreatMethod);
+        /* 拷贝构造出的临时元素先 deinit 再释放缓冲，否则其内部分配随裸 free 泄漏（同 destroyNode 约定） */
+        if (XContainerDataDeinitMethod(this_list) != NULL)
+            XContainerDataDeinitMethod(this_list)(temp);
         XContainer_free(this_list, temp);
     } else {
         newNode = createNode(this_list, pvData, dataCreatMethod);
@@ -503,8 +536,12 @@ static XLockFreeListNode* VXListAtomic_push_back(XLockFreeList* this_list,
     XLockFreeListNode* newNode = NULL;
     if (dataCreatMethod) {
         void* temp = XContainer_calloc(this_list, 1, XContainerTypeSize(this_list));
+        if (temp == NULL) return NULL;
         dataCreatMethod(temp, pvData);
         newNode = createNode(this_list, temp, dataCreatMethod);
+        /* 拷贝构造出的临时元素先 deinit 再释放缓冲，否则其内部分配随裸 free 泄漏（同 destroyNode 约定） */
+        if (XContainerDataDeinitMethod(this_list) != NULL)
+            XContainerDataDeinitMethod(this_list)(temp);
         XContainer_free(this_list, temp);
     } else {
         newNode = createNode(this_list, pvData, dataCreatMethod);
@@ -888,7 +925,7 @@ static void VXClass_move(XLockFreeList* object, XLockFreeList* src)
     } else if (!XListBase_isEmpty_base(object)) {
         XListBase_clear_base(object);
     }
-    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeList) - sizeof(XClass));
+    XMemory_swap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeList) - sizeof(XClass));
     Class_Memory(object) = source_memory;
     if (!target_uninitialized)
         Class_Memory(src) = target_memory;
@@ -925,8 +962,8 @@ static void VXListAtomic_deinit(XLockFreeList* this_list)
     if (this_list == NULL) return;
     VXListAtomic_clear(this_list);
     /* 释放哨兵节点。此时其他线程不应再访问该表；退休链在 clear/destroyNode
-     * 后无残留（clear 走单线程语义直接 free）。为保险起见，扫描一次本线程
-     * 退休链。*/
+     * 后无残留（clear 走单线程语义直接 free）。为保险起见，扫描一次全局
+     * 退休链（也会回收其他线程遗留的未引用退休节点）。*/
     _lfl_scan_and_reclaim();
     XLockFreeListNode* head = _load_head(this_list);
     if (head) _lfl_free_node_memory(head, XContainer_memory(this_list));

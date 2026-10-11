@@ -1,9 +1,20 @@
-﻿#ifndef XMODBUSCLIENT_PROTECTED_H
+﻿/**
+ * @file       XModbusClient_Protected.h
+ * @brief      XModbusClient 受保护接口。
+ * @details    仅供子类和内部实现使用，不对外公开。
+ */
+
+#ifndef XMODBUSCLIENT_PROTECTED_H
 #define XMODBUSCLIENT_PROTECTED_H
+
+#include "XModbusClient.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XMODBUS_ON
+#if XMODBUS_CLIENT_ON
+
 /******************************************************************************************
  * 受保护接口声明（供子类和内部模块使用，不暴露给用户）
  ******************************************************************************************/
@@ -18,14 +29,6 @@ extern "C" {
  */
 bool XModbusClient_processResponse_base(XModbusClient* client, const XModbusResponse* response, XModbusDataUnit* data);
 
-/**
- * @brief 处理私有/自定义Modbus响应（通过虚函数表调用）
- * @param client XModbusClient实例指针（非NULL）
- * @param response 接收到的响应PDU
- * @param data 用于存储解析结果的数据单元
- * @return 成功返回true，失败返回false
- * @note 子类可重载此虚函数实现自定义功能码处理
- */
 /**
  * @brief 处理私有响应（虚函数）
  * @param client XModbusClient实例指针（非NULL）
@@ -49,9 +52,11 @@ XModbusReply* XModbusClient_createReply(XModbusClient* client, const XModbusRequ
 /**
  * @brief 辅助函数：创建并初始化 Reply 对象（移动语义）
  * @param client 客户端实例指针（非NULL）
- * @param request 原始请求PDU（移动，函数内释放原指针）
+ * @param request 原始请求PDU（移动：函数内经 create_move 将其资源转移到新请求对象，
+ *        源对象变为空壳；函数内不释放源对象，仍由调用者按其分配方式负责释放）
  * @param serverAddress 目标从站地址
- * @return 成功返回指向XModbusReply对象的指针，失败返回NULL
+ * @return 成功返回指向XModbusReply对象的指针（接管新请求对象，随 Reply 一起释放），
+ *         失败返回NULL（函数内删除已创建的新请求对象）
  */
 XModbusReply* XModbusClient_createReply_move(XModbusClient* client, XModbusRequest* request, int serverAddress);
 
@@ -91,6 +96,9 @@ void XModbusClient_reconnectTimerStop(XModbusClient* client);
  * @note 在连接断开时调用，启动自动重连尝试
  */
 void XModbusClient_reconnectTimerStart(XModbusClient* client);
+
+#endif /* XMODBUS_CLIENT_ON */
+#endif /* XMODBUS_ON */
 
 #ifdef __cplusplus
 }

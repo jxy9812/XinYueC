@@ -23,10 +23,10 @@
 #include "XHostInfo.h"
 #include "XHostAddress.h"
 #include "XString.h"
+#include "XStringUtils.h"
 #include "XVector.h"
 #include <limits.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 static bool xcsn_write_line(XConsoleShell* shell, const char* text)
@@ -41,9 +41,9 @@ static bool xcsn_append_flag(char* output, size_t capacity, const char* flag,
     size_t length;
     int written;
     if (!output || !flag || !first) return false;
-    length = strlen(output);
-    written = snprintf(output + length, capacity > length ? capacity - length : 0,
-                       "%s%s", *first ? "" : ",", flag);
+    length = XStrlen(output);
+    written = XSnprintf(output + length, capacity > length ? capacity - length : 0,
+                        "%s%s", *first ? "" : ",", flag);
     if (written < 0 || (size_t)written >= (capacity > length ? capacity - length : 0))
         return false;
     *first = false;
@@ -86,14 +86,14 @@ static int xcsn_write_interface(XConsoleShell* shell, const XNetworkInterface* i
     hardware = XNetworkInterface_hardwareAddress_const(iface);
     if (!name || !xcsn_interface_flags(iface, flags, sizeof(flags)))
         return XConsoleResult_Failed;
-    if (snprintf(line, sizeof(line), "%-12s flags=%-38s mtu=%-5d index=%d",
-                 XString_toUtf8(name), flags,
-                 XNetworkInterface_maximumTransmissionUnit(iface),
-                 XNetworkInterface_index(iface)) < 0 ||
+    if (XSnprintf(line, sizeof(line), "%-12s flags=%-38s mtu=%-5d index=%d",
+                  XString_toUtf8(name), flags,
+                  XNetworkInterface_maximumTransmissionUnit(iface),
+                  XNetworkInterface_index(iface)) < 0 ||
         !xcsn_write_line(shell, line))
         return XConsoleResult_IoError;
     if (hardware && XString_size_base(hardware) > 0) {
-        if (snprintf(line, sizeof(line), "    hwaddr %s", XString_toUtf8(hardware)) < 0 ||
+        if (XSnprintf(line, sizeof(line), "    hwaddr %s", XString_toUtf8(hardware)) < 0 ||
             !xcsn_write_line(shell, line))
             return XConsoleResult_IoError;
     }
@@ -107,14 +107,14 @@ static int xcsn_write_interface(XConsoleShell* shell, const XNetworkInterface* i
         if (!addressText) continue;
         if (prefix >= 0) {
             char addressWithPrefix[192];
-            int addressWritten = snprintf(addressWithPrefix, sizeof(addressWithPrefix),
-                                          "%s/%d", XString_toUtf8(addressText), prefix);
+            int addressWritten = XSnprintf(addressWithPrefix, sizeof(addressWithPrefix),
+                                           "%s/%d", XString_toUtf8(addressText), prefix);
             written = addressWritten > 0 && (size_t)addressWritten < sizeof(addressWithPrefix)
-                          ? snprintf(line, sizeof(line), "    inet  %s", addressWithPrefix)
+                          ? XSnprintf(line, sizeof(line), "    inet  %s", addressWithPrefix)
                           : -1;
         } else {
-            written = snprintf(line, sizeof(line), "    inet  %s",
-                               XString_toUtf8(addressText));
+            written = XSnprintf(line, sizeof(line), "    inet  %s",
+                                XString_toUtf8(addressText));
         }
         XClassDelete(addressText);
         if (written < 0 || (size_t)written >= sizeof(line) ||
@@ -136,7 +136,7 @@ static int xcsn_ifconfig(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     if (!shell) return XConsoleResult_InvalidArgument;
     for (i = 0; i < argc; ++i) {
-        if (strcmp(argv[i], "-a") == 0 || strcmp(argv[i], "--all") == 0) continue;
+        if (XStrcmp(argv[i], "-a") == 0 || XStrcmp(argv[i], "--all") == 0) continue;
         if (argv[i][0] == '-') return XConsoleResult_InvalidArgument;
         if (selectedName) return XConsoleResult_InvalidArgument;
         selectedName = argv[i];
@@ -209,7 +209,7 @@ static int xcsn_resolve(XConsoleShell* shell, XConsoleShellSession* session,
         XString* text = address ? XHostAddress_toString(address) : NULL;
         int written;
         if (!text) continue;
-        written = snprintf(line, sizeof(line), "%-32s %s", argv[0], XString_toUtf8(text));
+        written = XSnprintf(line, sizeof(line), "%-32s %s", argv[0], XString_toUtf8(text));
         XClassDelete(text);
         if (written < 0 || (size_t)written >= sizeof(line) || !xcsn_write_line(shell, line)) {
             XClassDelete(info);
@@ -260,7 +260,7 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_InvalidArgument;
 
 #if XCONSOLE_SHELL_ASYNC_ON
-    if (shell->m_ping.active) {
+    if (shell->m_ping.m_active) {
         xcsn_write_line(shell, "ping: 已有 ping 正在运行");
         return XConsoleResult_Failed;
     }
@@ -271,13 +271,13 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
     }
     for (i = 1; i < (unsigned)argc; ++i) {
         const char* value = NULL;
-        if ((strcmp(argv[i], "-c") == 0 || strcmp(argv[i], "--count") == 0) && i + 1u < (unsigned)argc)
+        if ((XStrcmp(argv[i], "-c") == 0 || XStrcmp(argv[i], "--count") == 0) && i + 1u < (unsigned)argc)
             value = argv[++i], (void)0;
-        else if ((strcmp(argv[i], "-W") == 0 || strcmp(argv[i], "--timeout") == 0) && i + 1u < (unsigned)argc)
+        else if ((XStrcmp(argv[i], "-W") == 0 || XStrcmp(argv[i], "--timeout") == 0) && i + 1u < (unsigned)argc)
             value = argv[++i], (void)0;
         else
             return XConsoleResult_InvalidArgument;
-        if (strcmp(argv[i - 1u], "-c") == 0 || strcmp(argv[i - 1u], "--count") == 0) {
+        if (XStrcmp(argv[i - 1u], "-c") == 0 || XStrcmp(argv[i - 1u], "--count") == 0) {
             if (!xcsn_parse_unsigned(value, &count, 1u, 10u)) return XConsoleResult_InvalidArgument;
         } else if (!xcsn_parse_unsigned(value, &timeout, 1u, 10000u)) {
             return XConsoleResult_InvalidArgument;
@@ -321,8 +321,8 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
     }
     {
         char header[192];
-        snprintf(header, sizeof(header), "\xe6\xad\xa3\xe5\x9c\xa8 Ping %s \xe5\x85\xb7\xe6\x9c\x89 32 \xe5\xad\x97\xe8\x8a\x82\xe7\x9a\x84\xe6\x95\xb0\xe6\x8d\xae:",
-                 XString_toUtf8(targetText));
+        XSnprintf(header, sizeof(header), "\xe6\xad\xa3\xe5\x9c\xa8 Ping %s \xe5\x85\xb7\xe6\x9c\x89 32 \xe5\xad\x97\xe8\x8a\x82\xe7\x9a\x84\xe6\x95\xb0\xe6\x8d\xae:",
+                  XString_toUtf8(targetText));
         if (!xcsn_write_line(shell, header)) {
             XClassDelete(targetText);
             XClassDelete(info);
@@ -332,13 +332,13 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
 #if XCONSOLE_SHELL_ASYNC_ON
     memset(&shell->m_ping, 0, sizeof(shell->m_ping));
     shell->m_pingTimer = XTIMER_INVALID_ID;
-    shell->m_ping.info = info;
-    shell->m_ping.target = target;
-    shell->m_ping.targetText = targetText;
-    shell->m_ping.count = count;
-    shell->m_ping.timeout = timeout;
-    shell->m_ping.minimum = UINT_MAX;
-    shell->m_ping.active = true;
+    shell->m_ping.m_info = info;
+    shell->m_ping.m_target = target;
+    shell->m_ping.m_targetText = targetText;
+    shell->m_ping.m_count = count;
+    shell->m_ping.m_timeout = timeout;
+    shell->m_ping.m_minimum = UINT_MAX;
+    shell->m_ping.m_active = true;
 #if XCONSOLE_SHELL_LOGIN_ON || XCONSOLE_SHELL_EDITOR_ON
     shell->m_session.suppressPrompt = true;
 #endif
@@ -352,7 +352,7 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
         if (shell->m_pingTimer == XTIMER_INVALID_ID) {
             (void)xcsn_ping_write_summary(shell);
             {
-                int r = shell->m_ping.received ? XConsoleResult_Ok : XConsoleResult_Failed;
+                int r = shell->m_ping.m_received ? XConsoleResult_Ok : XConsoleResult_Failed;
                 xcsn_ping_cleanup(shell);
                 return r;
             }
@@ -361,7 +361,7 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
     }
     (void)xcsn_ping_write_summary(shell);
     {
-        int r = shell->m_ping.received ? XConsoleResult_Ok : XConsoleResult_Failed;
+        int r = shell->m_ping.m_received ? XConsoleResult_Ok : XConsoleResult_Failed;
         xcsn_ping_cleanup(shell);
         return r;
     }
@@ -385,13 +385,13 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
                 if (elapsed > maximum) maximum = elapsed;
                 sum += elapsed;
                 if (elapsed < 1u)
-                    snprintf(line, sizeof(line), "\xe6\x9d\xa5\xe8\x87\xaa %s \xe7\x9a\x84\xe5\x9b\x9e\xe5\xa4\x8d: \xe5\xad\x97\xe8\x8a\x82=32 \xe6\x97\xb6\xe9\x97\xb4<1ms",
-                             XString_toUtf8(targetText));
+                    XSnprintf(line, sizeof(line), "\xe6\x9d\xa5\xe8\x87\xaa %s \xe7\x9a\x84\xe5\x9b\x9e\xe5\xa4\x8d: \xe5\xad\x97\xe8\x8a\x82=32 \xe6\x97\xb6\xe9\x97\xb4<1ms",
+                              XString_toUtf8(targetText));
                 else
-                    snprintf(line, sizeof(line), "\xe6\x9d\xa5\xe8\x87\xaa %s \xe7\x9a\x84\xe5\x9b\x9e\xe5\xa4\x8d: \xe5\xad\x97\xe8\x8a\x82=32 \xe6\x97\xb6\xe9\x97\xb4=%ums",
-                             XString_toUtf8(targetText), elapsed);
+                    XSnprintf(line, sizeof(line), "\xe6\x9d\xa5\xe8\x87\xaa %s \xe7\x9a\x84\xe5\x9b\x9e\xe5\xa4\x8d: \xe5\xad\x97\xe8\x8a\x82=32 \xe6\x97\xb6\xe9\x97\xb4=%ums",
+                              XString_toUtf8(targetText), elapsed);
             } else {
-                snprintf(line, sizeof(line), "\xe8\xaf\xb7\xe6\xb1\x82\xe8\xb6\x85\xe6\x97\xb6\xe3\x80\x82");
+                XSnprintf(line, sizeof(line), "\xe8\xaf\xb7\xe6\xb1\x82\xe8\xb6\x85\xe6\x97\xb6\xe3\x80\x82");
             }
             if (!xcsn_write_line(shell, line)) {
                 XClassDelete(targetText);
@@ -408,29 +408,29 @@ static int xcsn_ping(XConsoleShell* shell, XConsoleShellSession* session,
         {
             char summary[256];
             unsigned lossPercent = total ? ((total - received) * 100u / total) : 100u;
-            snprintf(summary, sizeof(summary), "%s \xe7\x9a\x84 Ping \xe7\xbb\x9f\xe8\xae\xa1\xe4\xbf\xa1\xe6\x81\xaf:",
-                     XString_toUtf8(targetText));
+            XSnprintf(summary, sizeof(summary), "%s \xe7\x9a\x84 Ping \xe7\xbb\x9f\xe8\xae\xa1\xe4\xbf\xa1\xe6\x81\xaf:",
+                      XString_toUtf8(targetText));
             if (!xcsn_write_line(shell, summary)) {
                 XClassDelete(targetText);
                 XClassDelete(info);
                 return XConsoleResult_IoError;
             }
-            snprintf(summary, sizeof(summary), "    \xe6\x95\xb0\xe6\x8d\xae\xe5\x8c\x85: \xe5\xb7\xb2\xe5\x8f\x91\xe9\x80\x81 = %u\xef\xbc\x8c\xe5\xb7\xb2\xe6\x8e\xa5\xe6\x94\xb6 = %u\xef\xbc\x8c\xe4\xb8\xa2\xe5\xa4\xb1 = %u (%u%% \xe4\xb8\xa2\xe5\xa4\xb1)\xef\xbc\x8c",
-                     total, received, total - received, lossPercent);
+            XSnprintf(summary, sizeof(summary), "    \xe6\x95\xb0\xe6\x8d\xae\xe5\x8c\x85: \xe5\xb7\xb2\xe5\x8f\x91\xe9\x80\x81 = %u\xef\xbc\x8c\xe5\xb7\xb2\xe6\x8e\xa5\xe6\x94\xb6 = %u\xef\xbc\x8c\xe4\xb8\xa2\xe5\xa4\xb1 = %u (%u%% \xe4\xb8\xa2\xe5\xa4\xb1)\xef\xbc\x8c",
+                      total, received, total - received, lossPercent);
             if (!xcsn_write_line(shell, summary)) {
                 XClassDelete(targetText);
                 XClassDelete(info);
                 return XConsoleResult_IoError;
             }
             if (received) {
-                snprintf(summary, sizeof(summary), "\xe5\xbe\x80\xe8\xbf\x94\xe8\xa1\x8c\xe7\xa8\x8b\xe7\x9a\x84\xe4\xbc\xb0\xe8\xae\xa1\xe6\x97\xb6\xe9\x97\xb4(\xe4\xbb\xa5\xe6\xaf\xab\xe7\xa7\x92\xe4\xb8\xba\xe5\x8d\x95\xe4\xbd\x8d):");
+                XSnprintf(summary, sizeof(summary), "\xe5\xbe\x80\xe8\xbf\x94\xe8\xa1\x8c\xe7\xa8\x8b\xe7\x9a\x84\xe4\xbc\xb0\xe8\xae\xa1\xe6\x97\xb6\xe9\x97\xb4(\xe4\xbb\xa5\xe6\xaf\xab\xe7\xa7\x92\xe4\xb8\xba\xe5\x8d\x95\xe4\xbd\x8d):");
                 if (!xcsn_write_line(shell, summary)) {
                     XClassDelete(targetText);
                     XClassDelete(info);
                     return XConsoleResult_IoError;
                 }
-                snprintf(summary, sizeof(summary), "    \xe6\x9c\x80\xe7\x9f\xad = %ums\xef\xbc\x8c\xe6\x9c\x80\xe9\x95\xbf = %ums\xef\xbc\x8c\xe5\xb9\xb3\xe5\x9d\x87 = %ums",
-                         minimum, maximum, (unsigned)(sum / received));
+                XSnprintf(summary, sizeof(summary), "    \xe6\x9c\x80\xe7\x9f\xad = %ums\xef\xbc\x8c\xe6\x9c\x80\xe9\x95\xbf = %ums\xef\xbc\x8c\xe5\xb9\xb3\xe5\x9d\x87 = %ums",
+                          minimum, maximum, (unsigned)(sum / received));
                 if (!xcsn_write_line(shell, summary)) {
                     XClassDelete(targetText);
                     XClassDelete(info);
@@ -453,27 +453,27 @@ static bool xcsn_ping_send_one(XConsoleShell* shell)
     bool ok;
     char line[192];
     static const uint8_t payload[] = "XinYueC-XConsoleShell-ICMP";
-    if (!shell || !shell->m_ping.active || !shell->m_ping.target)
+    if (!shell || !shell->m_ping.m_active || !shell->m_ping.m_target)
         return false;
     state = &shell->m_ping;
-    ok = XDeviceNetwork_icmpEcho(state->target, 0x5859u,
-                           (uint16_t)(state->sent + 1u), payload,
-                           sizeof(payload) - 1u, (int)state->timeout,
+    ok = XDeviceNetwork_icmpEcho(state->m_target, 0x5859u,
+                           (uint16_t)(state->m_sent + 1u), payload,
+                           sizeof(payload) - 1u, (int)state->m_timeout,
                            &elapsed);
-    ++state->sent;
+    ++state->m_sent;
     if (ok) {
-        ++state->received;
-        if (elapsed < state->minimum) state->minimum = elapsed;
-        if (elapsed > state->maximum) state->maximum = elapsed;
-        state->sum += elapsed;
+        ++state->m_received;
+        if (elapsed < state->m_minimum) state->m_minimum = elapsed;
+        if (elapsed > state->m_maximum) state->m_maximum = elapsed;
+        state->m_sum += elapsed;
         if (elapsed < 1u)
-            snprintf(line, sizeof(line), "\xe6\x9d\xa5\xe8\x87\xaa %s \xe7\x9a\x84\xe5\x9b\x9e\xe5\xa4\x8d: \xe5\xad\x97\xe8\x8a\x82=32 \xe6\x97\xb6\xe9\x97\xb4<1ms",
-                     XString_toUtf8(state->targetText));
+            XSnprintf(line, sizeof(line), "\xe6\x9d\xa5\xe8\x87\xaa %s \xe7\x9a\x84\xe5\x9b\x9e\xe5\xa4\x8d: \xe5\xad\x97\xe8\x8a\x82=32 \xe6\x97\xb6\xe9\x97\xb4<1ms",
+                      XString_toUtf8(state->m_targetText));
         else
-            snprintf(line, sizeof(line), "\xe6\x9d\xa5\xe8\x87\xaa %s \xe7\x9a\x84\xe5\x9b\x9e\xe5\xa4\x8d: \xe5\xad\x97\xe8\x8a\x82=32 \xe6\x97\xb6\xe9\x97\xb4=%ums",
-                     XString_toUtf8(state->targetText), elapsed);
+            XSnprintf(line, sizeof(line), "\xe6\x9d\xa5\xe8\x87\xaa %s \xe7\x9a\x84\xe5\x9b\x9e\xe5\xa4\x8d: \xe5\xad\x97\xe8\x8a\x82=32 \xe6\x97\xb6\xe9\x97\xb4=%ums",
+                      XString_toUtf8(state->m_targetText), elapsed);
     } else {
-        snprintf(line, sizeof(line), "\xe8\xaf\xb7\xe6\xb1\x82\xe8\xb6\x85\xe6\x97\xb6\xe3\x80\x82");
+        XSnprintf(line, sizeof(line), "\xe8\xaf\xb7\xe6\xb1\x82\xe8\xb6\x85\xe6\x97\xb6\xe3\x80\x82");
     }
     return xcsn_write_line(shell, line);
 }
@@ -485,23 +485,23 @@ static int xcsn_ping_write_summary(XConsoleShell* shell)
     unsigned total;
     unsigned received;
     unsigned lossPercent;
-    if (!shell || !shell->m_ping.active) return XConsoleResult_Failed;
+    if (!shell || !shell->m_ping.m_active) return XConsoleResult_Failed;
     state = &shell->m_ping;
-    total = state->sent;
-    received = state->received;
+    total = state->m_sent;
+    received = state->m_received;
     lossPercent = total ? ((total - received) * 100u / total) : 100u;
     if (!xcsn_write_line(shell, "")) return XConsoleResult_IoError;
-    snprintf(summary, sizeof(summary), "%s \xe7\x9a\x84 Ping \xe7\xbb\x9f\xe8\xae\xa1\xe4\xbf\xa1\xe6\x81\xaf:",
-             XString_toUtf8(state->targetText));
+    XSnprintf(summary, sizeof(summary), "%s \xe7\x9a\x84 Ping \xe7\xbb\x9f\xe8\xae\xa1\xe4\xbf\xa1\xe6\x81\xaf:",
+              XString_toUtf8(state->m_targetText));
     if (!xcsn_write_line(shell, summary)) return XConsoleResult_IoError;
-    snprintf(summary, sizeof(summary), "    \xe6\x95\xb0\xe6\x8d\xae\xe5\x8c\x85: \xe5\xb7\xb2\xe5\x8f\x91\xe9\x80\x81 = %u\xef\xbc\x8c\xe5\xb7\xb2\xe6\x8e\xa5\xe6\x94\xb6 = %u\xef\xbc\x8c\xe4\xb8\xa2\xe5\xa4\xb1 = %u (%u%% \xe4\xb8\xa2\xe5\xa4\xb1)\xef\xbc\x8c",
-             total, received, total - received, lossPercent);
+    XSnprintf(summary, sizeof(summary), "    \xe6\x95\xb0\xe6\x8d\xae\xe5\x8c\x85: \xe5\xb7\xb2\xe5\x8f\x91\xe9\x80\x81 = %u\xef\xbc\x8c\xe5\xb7\xb2\xe6\x8e\xa5\xe6\x94\xb6 = %u\xef\xbc\x8c\xe4\xb8\xa2\xe5\xa4\xb1 = %u (%u%% \xe4\xb8\xa2\xe5\xa4\xb1)\xef\xbc\x8c",
+              total, received, total - received, lossPercent);
     if (!xcsn_write_line(shell, summary)) return XConsoleResult_IoError;
     if (received) {
-        snprintf(summary, sizeof(summary), "\xe5\xbe\x80\xe8\xbf\x94\xe8\xa1\x8c\xe7\xa8\x8b\xe7\x9a\x84\xe4\xbc\xb0\xe8\xae\xa1\xe6\x97\xb6\xe9\x97\xb4(\xe4\xbb\xa5\xe6\xaf\xab\xe7\xa7\x92\xe4\xb8\xba\xe5\x8d\x95\xe4\xbd\x8d):");
+        XSnprintf(summary, sizeof(summary), "\xe5\xbe\x80\xe8\xbf\x94\xe8\xa1\x8c\xe7\xa8\x8b\xe7\x9a\x84\xe4\xbc\xb0\xe8\xae\xa1\xe6\x97\xb6\xe9\x97\xb4(\xe4\xbb\xa5\xe6\xaf\xab\xe7\xa7\x92\xe4\xb8\xba\xe5\x8d\x95\xe4\xbd\x8d):");
         if (!xcsn_write_line(shell, summary)) return XConsoleResult_IoError;
-        snprintf(summary, sizeof(summary), "    \xe6\x9c\x80\xe7\x9f\xad = %ums\xef\xbc\x8c\xe6\x9c\x80\xe9\x95\xbf = %ums\xef\xbc\x8c\xe5\xb9\xb3\xe5\x9d\x87 = %ums",
-                 state->minimum, state->maximum, (unsigned)(state->sum / state->received));
+        XSnprintf(summary, sizeof(summary), "    \xe6\x9c\x80\xe7\x9f\xad = %ums\xef\xbc\x8c\xe6\x9c\x80\xe9\x95\xbf = %ums\xef\xbc\x8c\xe5\xb9\xb3\xe5\x9d\x87 = %ums",
+                  state->m_minimum, state->m_maximum, (unsigned)(state->m_sum / state->m_received));
         if (!xcsn_write_line(shell, summary)) return XConsoleResult_IoError;
     }
     return XConsoleResult_Ok;
@@ -516,16 +516,16 @@ static void xcsn_ping_cleanup(XConsoleShell* shell)
         XObject_killTimer((XObject*)shell, shell->m_pingTimer);
         shell->m_pingTimer = XTIMER_INVALID_ID;
     }
-    if (state->targetText) {
-        XClassDelete(state->targetText);
-        state->targetText = NULL;
+    if (state->m_targetText) {
+        XClassDelete(state->m_targetText);
+        state->m_targetText = NULL;
     }
-    if (state->info) {
-        XClassDelete(state->info);
-        state->info = NULL;
+    if (state->m_info) {
+        XClassDelete(state->m_info);
+        state->m_info = NULL;
     }
-    state->target = NULL;
-    state->active = false;
+    state->m_target = NULL;
+    state->m_active = false;
 #if XCONSOLE_SHELL_LOGIN_ON || XCONSOLE_SHELL_EDITOR_ON
     shell->m_session.suppressPrompt = false;
 #endif
@@ -535,9 +535,9 @@ static void xcsn_ping_cleanup(XConsoleShell* shell)
 void XConsoleShellNetwork_pingTick(XConsoleShell* shell)
 {
     XConsoleShellPingState* state;
-    if (!shell || !shell->m_ping.active) return;
+    if (!shell || !shell->m_ping.m_active) return;
     state = &shell->m_ping;
-    if (state->sent >= state->count) {
+    if (state->m_sent >= state->m_count) {
         xcsn_ping_cleanup(shell);
         return;
     }
@@ -545,7 +545,7 @@ void XConsoleShellNetwork_pingTick(XConsoleShell* shell)
         xcsn_ping_cleanup(shell);
         return;
     }
-    if (state->sent >= state->count) {
+    if (state->m_sent >= state->m_count) {
         (void)xcsn_ping_write_summary(shell);
         xcsn_ping_cleanup(shell);
         if (shell->m_io.prompt)

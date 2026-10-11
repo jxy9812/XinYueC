@@ -91,6 +91,7 @@ XHstsPolicy* XHstsPolicy_create_ex(XMemoryType memory, const XByteArray* host,
     if (!self)
         return NULL;
     XHstsPolicy_init(self);
+    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     if (!self->m_host || !XHstsPolicy_setHost(self, host) ||
         (flags & ~XHstsPolicy_IncludeSubDomains) != 0) {
         XClassDelete((XClass*)self);
@@ -98,7 +99,6 @@ XHstsPolicy* XHstsPolicy_create_ex(XMemoryType memory, const XByteArray* host,
     }
     self->m_expiryMSecs = expiryMSecs;
     self->m_flags = flags;
-    Set_Class_Memory(self, memory); Set_Class_IsHeap(self, true);
     return self;
 }
 

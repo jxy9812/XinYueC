@@ -13,7 +13,7 @@
 void XFileInfoTest_print_xstring(const char* label, const XString* str) {
     XPrintf("%s: ", label);
     if (str) {
-        XPrintf_2(str);
+        XPrintf_string(str);
     } else {
         XPrintf_3("(NULL)");
     }
@@ -24,7 +24,7 @@ void XFileInfoTest_print_datetime(const char* label, XDateTime* dt) {
     XPrintf("%s: ", label);
     if (dt && XDateTime_isValid(dt)) {
         XString* dtStr = XDateTime_toString_iso(dt);
-        XPrintf_2(dtStr);
+        XPrintf_string(dtStr);
         XClassDelete(dtStr);
     } else {
         XPrintf_3("(无效)");

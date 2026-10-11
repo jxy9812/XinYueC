@@ -226,6 +226,10 @@ static bool XMovie_loadFrame(XMovie* self, int frameNumber, bool emitSignals)
     }
     oldRect = data->m_frameRect;
     XClassMove(&data->m_currentImage, &image);
+    /* move 只转移资源、不转移清理责任：image 为本函数自建的栈临时
+       对象，成功路径同样要按栈对象规则 XClassDeinit 收尾（资源已
+       转出时为空操作），与上方失败路径的收尾保持成对。 */
+    XClassDeinit(&image);
     XPixmap_fromImage(&data->m_currentImage, 0, &data->m_currentPixmap);
     XImage_rect(&data->m_currentImage, &data->m_frameRect);
     data->m_currentFrame = frameNumber;

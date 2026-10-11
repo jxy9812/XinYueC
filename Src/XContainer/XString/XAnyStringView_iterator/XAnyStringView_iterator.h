@@ -5,9 +5,11 @@
 *          用于从前向后遍历视图中的字符数据（以 UTF-8 形式访问）。
 *          遵循与 XVector_iterator 相同的迭代器模式。
 */
-#include "CXinYueConfig.h"
-#if !defined(XANYSTRINGVIEW_ITERATOR_H) && XString_ON
+#if !defined(XANYSTRINGVIEW_ITERATOR_H)
 #define XANYSTRINGVIEW_ITERATOR_H
+#include "CXinYueConfig.h"
+
+#if XString_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,4 +34,5 @@ const char* XAnyStringView_iterator_data(XAnyStringView_iterator* it);
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif // XString_ON
+#endif // XANYSTRINGVIEW_ITERATOR_H

@@ -1713,7 +1713,11 @@ void XTextEdit_append(XTextEdit* self, const char* text)
     xte_exitPreview(self);
     XPlainTextEdit_appendPlainText(&self->m_editor->m_base, text);
 }
-void XTextEdit_copy_2(XTextEdit* self) { XPlainTextEdit_copy(&self->m_editor->m_base); }
+void XTextEdit_copy_2(XTextEdit* self)
+{
+    if (!self || !self->m_editor) return;
+    XPlainTextEdit_copy(&self->m_editor->m_base);
+}
 void XTextEdit_cut_2(XTextEdit* self)
 {
     if (!self || !self->m_editor) return;
@@ -1737,7 +1741,11 @@ void XTextEdit_clear_2(XTextEdit* self)
 #endif
     XWidget_update((XWidget*)self);
 }
-void XTextEdit_selectAll_2(XTextEdit* self) { XPlainTextEdit_selectAll(&self->m_editor->m_base); }
+void XTextEdit_selectAll_2(XTextEdit* self)
+{
+    if (!self || !self->m_editor) return;
+    XPlainTextEdit_selectAll(&self->m_editor->m_base);
+}
 bool XTextEdit_canPaste(XTextEdit* self)
 {
     /* 对标 QTextEdit::canPaste：可编辑且剪贴板有文本（读内嵌编辑器
@@ -1879,8 +1887,16 @@ const char* XTextEdit_documentTitle(const XTextEdit* self)
     if (!self || !self->m_documentTitle) return "";
     return XString_toUtf8(self->m_documentTitle);
 }
-void XTextEdit_setUndoRedoEnabled_2(XTextEdit* self, bool enable) { XPlainTextEdit_setUndoRedoEnabled(&self->m_editor->m_base, enable); }
-bool XTextEdit_isUndoRedoEnabled_2(const XTextEdit* self) { return XPlainTextEdit_isUndoRedoEnabled(&self->m_editor->m_base); }
+void XTextEdit_setUndoRedoEnabled_2(XTextEdit* self, bool enable)
+{
+    if (!self || !self->m_editor) return;
+    XPlainTextEdit_setUndoRedoEnabled(&self->m_editor->m_base, enable);
+}
+bool XTextEdit_isUndoRedoEnabled_2(const XTextEdit* self)
+{
+    if (!self || !self->m_editor) return false;
+    return XPlainTextEdit_isUndoRedoEnabled(&self->m_editor->m_base);
+}
 void XTextEdit_setLineWrapMode(XTextEdit* self, int mode)
 {
     if (!self || self->m_lineWrapMode == mode) return;
@@ -1902,11 +1918,31 @@ void XTextEdit_setWordWrapMode(XTextEdit* self, int policy)
 int XTextEdit_wordWrapMode(const XTextEdit* self)
 { return self ? self->m_wordWrapMode
               : (int)XTextControlWrap_WordBoundaryOrAnywhere; }
-void XTextEdit_setReadOnly_2(XTextEdit* self, bool ro) { XPlainTextEdit_setReadOnly(&self->m_editor->m_base, ro); }
-bool XTextEdit_isReadOnly_2(const XTextEdit* self) { return XPlainTextEdit_isReadOnly(&self->m_editor->m_base); }
-void XTextEdit_setPlaceholderText_2(XTextEdit* self, const char* text) { XPlainTextEdit_setPlaceholderText(&self->m_editor->m_base, text); }
-const char* XTextEdit_placeholderText_2(const XTextEdit* self) { return XPlainTextEdit_placeholderText(&self->m_editor->m_base); }
-void XTextEdit_ensureCursorVisible_2(XTextEdit* self) { XPlainTextEdit_ensureCursorVisible(&self->m_editor->m_base); }
+void XTextEdit_setReadOnly_2(XTextEdit* self, bool ro)
+{
+    if (!self || !self->m_editor) return;
+    XPlainTextEdit_setReadOnly(&self->m_editor->m_base, ro);
+}
+bool XTextEdit_isReadOnly_2(const XTextEdit* self)
+{
+    if (!self || !self->m_editor) return false;
+    return XPlainTextEdit_isReadOnly(&self->m_editor->m_base);
+}
+void XTextEdit_setPlaceholderText_2(XTextEdit* self, const char* text)
+{
+    if (!self || !self->m_editor) return;
+    XPlainTextEdit_setPlaceholderText(&self->m_editor->m_base, text);
+}
+const char* XTextEdit_placeholderText_2(const XTextEdit* self)
+{
+    if (!self || !self->m_editor) return "";
+    return XPlainTextEdit_placeholderText(&self->m_editor->m_base);
+}
+void XTextEdit_ensureCursorVisible_2(XTextEdit* self)
+{
+    if (!self || !self->m_editor) return;
+    XPlainTextEdit_ensureCursorVisible(&self->m_editor->m_base);
+}
 void XTextEdit_setCenterOnScroll(XTextEdit* self, bool enabled) { if (self) self->m_centerOnScroll = enabled; }
 bool XTextEdit_centerOnScroll(const XTextEdit* self) { return self ? self->m_centerOnScroll : false; }
 void XTextEdit_setExtraSelections(XTextEdit* self,

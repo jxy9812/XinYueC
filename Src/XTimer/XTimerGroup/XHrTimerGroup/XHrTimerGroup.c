@@ -231,9 +231,10 @@ static void VXHrTimerGroup_tick(XHrTimerGroup* group) {
             delete_hr_timer_node(group, current_expired);
         }
         else if (data->m_timer_data.m_isSingleShot) {
-            // 单次定时器：不释放节点！标记后由 removeTimer 回调释放。
-            // 避免 tick 提前释放导致 removeTimer 访问已释放内存。
-            data->m_is_was_deleted = true;
+            // 单次定时器：触发后节点已脱离树且不会再调度，节点由本组（属主）
+            // 就地释放，不再依赖调用方事后补调 removeTimer 造成泄漏；
+            // 回调期间已 removeTimer 标记删除的节点由上方分支释放，不会重复释放。
+            delete_hr_timer_node(group, current_expired);
         }
                 else {
             // 周期性定时器：重新计算下次到期时间

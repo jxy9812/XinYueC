@@ -53,6 +53,7 @@ void XAbstractTransition_init(XAbstractTransition* transition, XState* sourceSta
     XClassSetVtable(transition, XAbstractTransition);
     transition->m_sourceState = NULL;
     transition->m_targetStates = XVector_Create(XAbstractState*);
+    XAssert(transition->m_targetStates, "Memory allocation failed");
     transition->m_transitionType = XAbstractTransition_ExternalTransition;
     transition->m_kind = XAbstractTransition_CustomTransition;
 

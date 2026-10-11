@@ -86,13 +86,6 @@ bool XConsoleShell_setCanAuthorizeCallback(
     void* userData);
 
 /**
- * @brief      关闭并释放 Shell 持有的全部 CAN 槽位并清除授权策略。
- * @param      self Shell 对象；可为 NULL；函数不释放 self 本身。
- * @return     无。self 为 NULL 时不执行操作；后端关闭错误不通过本函数返回。
- */
-void XConsoleShellCan_deinit(XConsoleShell* self);
-
-/**
  * @brief can 根命令静态描述；子命令由各功能宏独立裁剪。
  * @details 该对象由库静态拥有，调用者只可借用其地址进行命令注册，不得
  *          修改或释放；对象在程序整个运行期间有效。

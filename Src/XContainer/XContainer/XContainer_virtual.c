@@ -2,7 +2,6 @@
 #if XContainer_ON
 #include"XAlgorithm.h"
 #include"XVtable.h"
-#include<stdlib.h>
 #include<string.h>
 //声明
 static void VXClass_copy(XContainer* dst, const XContainer* src);
@@ -36,21 +35,6 @@ static void VXContainer_destroy_shared_data(void* data, void* arg)
         return;
     for (size_t i = 0; i < object->m_size; ++i)
         object->m_dataDeinitMethod((char*)data + i * object->m_typeSize);
-}
-XVtable* XContainer_class_init()
-{
-	XVTABLE_INIT_DEFAULT(XContainer)
-	//继承类
-	XVTABLE_INHERIT_XCLASS(XClass);
-	void* table[] = {VXContainer_isEmpty,VXContainer_size,VXContainer_capacity,VXContainer_typeSize,VXContainer_swap,VXContainer_clear };
-	//追加虚函数
-	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXContainer_deinit);
-	XCLASS_SHOW_SIZE_DEFAULT(XContainer);
-	return XVTABLE_DEFAULT;
 }
 bool VXContainer_isEmpty(const XContainer* Object)
 {
@@ -86,7 +70,7 @@ void VXContainer_swap(XContainer* a, XContainer* b)
         return;
     }
     // 交换所有成员（跳过 XClass 部分，保留虚表指针）
-    XSwap((XClass*)a + 1, (XClass*)b + 1, sizeof(XContainer) - sizeof(XClass));
+    XMemory_swap((XClass*)a + 1, (XClass*)b + 1, sizeof(XContainer) - sizeof(XClass));
 }
 
 void VXContainer_clear(XContainer* Object)
@@ -174,22 +158,65 @@ void VXClass_move(XContainer* dst, XContainer* src)
 
 void VXContainer_deinit(XContainer* obj)
 {
-    // 先让子类清理元素（通过虚函数调用 clear）
-    XContainer_clear_base(obj);
+    /* XVector/XQueue 等派生类重载了 Clear（EXContainer_Clear），其 Clear 会自行
+     * 逐元素反初始化并释放元素，保持原有“先 clear 后释放块”的流程；
+     * 仅继承基类缺省 Clear（只清 m_size、不处理元素）的容器（XPriorityQueue、
+     * 裸 XContainer 等）无人执行元素反初始化回调，必须在释放数据块前补做，
+     * 否则用户注册的 m_dataDeinitMethod 永不执行，元素自有资源随块整体丢弃。 */
+    bool clearHandlesElements =
+        XVtableGetFunc(XClassGetVtable(obj), EXContainer_Clear, void (*)(XContainer*)) !=
+        XVtableGetFunc(XContainer_class_init(), EXContainer_Clear, void (*)(XContainer*));
 
-    // 释放数据块
-    if (obj->m_useCow) {
-        if (obj->m_data)
-            XSharedData_release_with(obj->m_data, NULL, NULL, XContainer_memory(obj));
+    if (clearHandlesElements) {
+        // 先让子类清理元素（通过虚函数调用 clear）
+        XContainer_clear_base(obj);
+
+        // 释放数据块
+        if (obj->m_useCow) {
+            if (obj->m_data)
+                XSharedData_release_with(obj->m_data, NULL, NULL, XContainer_memory(obj));
+        }
+        else {
+            if (obj->m_data)
+                XContainer_free(obj, obj->m_data);
+        }
     }
     else {
-        if (obj->m_data)
-            XContainer_free(obj, obj->m_data);
+        // 先释放数据块：非共享块按进入时的元素个数先执行反初始化回调再释放
+        // （此时 m_size 尚未被 Clear 清零）；共享块仅递减引用，元素由最后一个属主反初始化
+        if (obj->m_useCow) {
+            if (obj->m_data)
+                XSharedData_release_with(obj->m_data, VXContainer_destroy_shared_data,
+                    obj, XContainer_memory(obj));
+        }
+        else {
+            VXContainer_destroy_raw_data(obj);
+        }
+
+        // 基类缺省 Clear 只清计数，保持调用完成统一收尾
+        XContainer_clear_base(obj);
     }
+
     obj->m_data = NULL;
     obj->m_capacity = 0;
     obj->m_size = 0;
     obj->m_typeSize = 0;
+}
+
+XVtable* XContainer_class_init()
+{
+	XVTABLE_INIT_DEFAULT(XContainer)
+	//继承类
+	XVTABLE_INHERIT_XCLASS(XClass);
+	void* table[] = {VXContainer_isEmpty,VXContainer_size,VXContainer_capacity,VXContainer_typeSize,VXContainer_swap,VXContainer_clear };
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXClass_copy);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXClass_move);
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXContainer_deinit);
+	XCLASS_SHOW_SIZE_DEFAULT(XContainer);
+	return XVTABLE_DEFAULT;
 }
 
 

@@ -6,7 +6,8 @@
  *             - 状态属性：checkable/checked、enabled（含 resetEnabled 与
  *               visible 联动）、visible、separator、priority、menuRole、
  *               iconVisibleInMenu、shortcutVisibleInContextMenu；
- *             - 用户数据：data/setData（XVariant* 所有权转移）；
+ *             - 用户数据：data/setData（拷贝语义）/setData_move
+ *               （XVariant* 所有权转移）；
  *             - 激活行为：trigger/activate(Trigger|Hover)/hover；
  *             - 信号：changed、enabledChanged(bool)、checkableChanged(bool)、
  *               visibleChanged()、triggered(bool)、hovered()、toggled(bool)。
@@ -30,6 +31,14 @@
 extern "C" {
 #endif
 
+/* 模块总开关（第③段）：在 CXinYueConfig.h 中统一定义，此处仅兜底默认值，
+ * 保证开关先于包含依赖生效。 */
+#ifndef XACTION_ON
+#define XACTION_ON 1
+#endif
+
+#if XACTION_ON
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -37,8 +46,6 @@ extern "C" {
 #include "XObject.h"
 #include "XString.h"
 #include "XTypes.h"
-
-#if XACTION_ON
 
 /* ==================== 枚举（对标 Qt 6.8 QAction） ==================== */
 
@@ -94,33 +101,37 @@ XCLASS_DEFINE_EXTEND_END(XAction, XObject)
 
 /**
  * @brief      XAction 动作对象。
- * @details    m_base 是第一个成员，因此对象可向上转换为 XObject；文本
+ * @details    m_class 是第一个成员，因此对象可向上转换为 XObject；文本
  *             族字段为对象拥有的 XString，m_data 为对象拥有的 XVariant
- *             （随 setData 所有权转移）。所有成员均属于实现状态，调用方
+ *             （默认经 setData 拷贝写入，setData_move 转移所有权）。
+ *             所有成员均属于实现状态，调用方
  *             不得直接修改，应通过本文件声明的 API 访问。
  */
 typedef struct XAction
 {
-    XObject      m_base;                  /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
+    XObject      m_class;                 /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
+    XActionPriority m_priority;           /**< 优先级（对标 QAction::priority）。 */
+    XActionMenuRole  m_menuRole;          /**< 菜单角色（对标 QAction::menuRole）。 */
     XString*     m_text;                  /**< 主文本（对标 QAction::text）；对象拥有。 */
     XString*     m_iconText;              /**< 图标文本（对标 QAction::iconText）；对象拥有。 */
     XString*     m_iconPath;              /**< 图标路径（对标 QAction::icon；XGui §8.1 图标以路径字符串承载）；对象拥有。 */
     XString*     m_toolTip;               /**< 工具提示（对标 QAction::toolTip）；对象拥有。 */
     XString*     m_statusTip;             /**< 状态栏提示（对标 QAction::statusTip）；对象拥有。 */
     XString*     m_whatsThis;             /**< What's This 帮助文本（对标 QAction::whatsThis）；对象拥有。 */
-    XVariant*    m_data;                  /**< 用户数据（对标 QAction::data）；对象拥有，setData 转移所有权。 */
+    XVariant*    m_data;                  /**< 用户数据（对标 QAction::data）；对象拥有，setData 拷贝写入、setData_move 转移所有权。 */
     XMenu*       m_menu;                  /**< 关联弹出菜单（对标 QAction::menu）；借用指针，不拥有。 */
-    bool         m_checkable;             /**< 是否可选中（对标 QAction::checkable）。 */
-    bool         m_checked;               /**< 原始选中位；仅 m_checkable 为 true 时对外有效。 */
-    bool         m_enabled;               /**< 有效启用状态（对标 QAction::enabled 有效值）。 */
-    bool         m_explicitEnabled;       /**< 是否经 setEnabled/setDisabled 显式设置。 */
-    bool         m_explicitEnabledValue;  /**< 显式设置记录的目标启用值。 */
-    bool         m_visible;               /**< 是否可见（对标 QAction::visible）。 */
-    bool         m_separator;             /**< 是否为分隔条（对标 QAction::separator）。 */
-    bool         m_iconVisibleInMenu;     /**< 菜单中是否显示图标（对标 QAction::iconVisibleInMenu）。 */
-    bool         m_shortcutVisibleInContextMenu; /**< 上下文菜单中是否显示快捷键（对标 QAction::shortcutVisibleInContextMenu）。 */
-    XActionPriority m_priority;           /**< 优先级（对标 QAction::priority）。 */
-    XActionMenuRole  m_menuRole;          /**< 菜单角色（对标 QAction::menuRole）。 */
+    /* 标志位域：9 个布尔标志合并为 1 个 uint16_t 存储（7 位保留）；
+     * 全库无对这些成员的取址（红线核查通过），禁止再改回独立 bool。 */
+    uint16_t     m_checkable              : 1; /**< 是否可选中（对标 QAction::checkable）。 */
+    uint16_t     m_checked                : 1; /**< 原始选中位；仅 m_checkable 为 true 时对外有效。 */
+    uint16_t     m_enabled                : 1; /**< 有效启用状态（对标 QAction::enabled 有效值）。 */
+    uint16_t     m_explicitEnabled        : 1; /**< 是否经 setEnabled/setDisabled 显式设置。 */
+    uint16_t     m_explicitEnabledValue   : 1; /**< 显式设置记录的目标启用值。 */
+    uint16_t     m_visible                : 1; /**< 是否可见（对标 QAction::visible）。 */
+    uint16_t     m_separator              : 1; /**< 是否为分隔条（对标 QAction::separator）。 */
+    uint16_t     m_iconVisibleInMenu      : 1; /**< 菜单中是否显示图标（对标 QAction::iconVisibleInMenu）。 */
+    uint16_t     m_shortcutVisibleInContextMenu : 1; /**< 上下文菜单中是否显示快捷键（对标 QAction::shortcutVisibleInContextMenu）。 */
+    uint16_t     m_reserved               : 7; /**< 保留位。 */
 } XAction;
 
 /* ==================== 类初始化与生命周期 ==================== */
@@ -199,22 +210,6 @@ XAction* XAction_create_copy(const XAction* other);
  *             XClassDelete 释放。
  */
 XAction* XAction_create_move(XAction* other);
-
-/**
- * @brief      通过当前 XClass 虚表释放动作对象所拥有的资源。
- * @param      self 已初始化的栈对象或外部存储对象；可为 NULL，NULL 时
- *             不执行操作。
- * @return     无返回值；函数不会释放 self 指向的存储空间，堆对象必须
- *             使用 XClassDelete。
- */
-
-/**
- * @brief      释放动作对象资源并按对象所有权删除其存储空间。
- * @param      self 由 XAction_create 系列返回的堆对象；可为 NULL，NULL
- *             时不执行操作。
- * @return     无返回值；堆对象会先执行虚表析构，再由创建时的内存方法
- *             释放；栈对象不应使用此宏，栈对象请使用 XClassDeinit。
- */
 
 /* 复制/移动统一使用全局 XClassCopy/XClassMove（经虚表分派到 VXAction_copy/
  * VXAction_move），本类不再单独声明 *_copy_base/*_move_base 宏。 */
@@ -616,15 +611,28 @@ XVariant* XAction_data(const XAction* self);
 
 /**
  * @brief      设置动作用户数据（对标 QAction::setData）。
- * @details    按项目惯例采用所有权转移语义：释放旧数据并接管新 data
- *             指针（Qt 为 QVariant 值拷贝，本实现以指针所有权记录差异，
- *             见 XGui.md）。指针发生变化时发射 changed 信号。
+ * @details    默认拷贝语义：内部经 XVariant_create_copy 深拷贝 data，
+ *             调用者保留原指针所有权并自行释放；动作对象拥有写入后的
+ *             副本，并在替换或清空时释放旧值（Qt 为 QVariant 值拷贝）。
+ *             数据真正变化时发射 changed 信号；需要转移所有权请使用
+ *             XAction_setData_move。
+ * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
+ * @param      data 新数据；按拷贝语义借用，可为 NULL 表示清空。
+ * @return     无返回值；self 为 NULL 或拷贝失败时保持原数据不变。
+ */
+void XAction_setData(XAction* self, const XVariant* data);
+
+/**
+ * @brief      设置动作用户数据的移动版本（对标 QAction::setData）。
+ * @details    _move 后缀为所有权转移语义：释放旧数据并直接接管新 data
+ *             指针，调用者此后不得再访问或释放该指针；仅需拷贝时使用
+ *             XAction_setData。指针发生变化时发射 changed 信号。
  * @param      self 待修改的动作对象；可为 NULL，NULL 时不执行操作。
  * @param      data 新数据指针；所有权转移给动作对象，可为 NULL 表示
  *             清空。
  * @return     无返回值；self 为 NULL 时保持原数据不变。
  */
-void XAction_setData(XAction* self, XVariant* data);
+void XAction_setData_move(XAction* self, XVariant* data);
 
 /* ==================== 菜单关联（对标 QAction::menu/setMenu） ==================== */
 

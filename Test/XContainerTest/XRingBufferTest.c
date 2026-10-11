@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XRingBuffer.h"
 #include"XTestMenu.h"
 #include"XAction.h"

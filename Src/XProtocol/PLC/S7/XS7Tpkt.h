@@ -1,27 +1,28 @@
-﻿#ifndef XS7TPKT_H
+﻿/**
+ * @file XS7Tpkt.h
+ * @brief TPKT 层（RFC1006）组帧与半包判定（纯函数，无IO无状态）
+ * @details 帧格式：03 00 | length(BE, 含头) | payload；
+ *          仅由 XS7Session_feed 调用，可完全离线单测。
+ */
+#ifndef XS7TPKT_H
 #define XS7TPKT_H
-
-#include "XPlc_config.h"
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include "XByteArray.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 全局配置须先于开关求值（定义 XPROTOCOL_ON 等开关宏） */
+#include "XPlc_config.h"
 
 #if XPROTOCOL_ON
 #if XPLC_ON
 #if XS7_ON
 #if XS7_CORE_ON
 
-/**
- * @file XS7Tpkt.h
- * @brief TPKT 层（RFC1006）组帧与半包判定（纯函数，无IO无状态）
- * @details 帧格式：03 00 | length(BE, 含头) | payload；
- *          仅由 XS7Session_feed 调用，可完全离线单测。
- */
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "XByteArray.h"
 
 /** @brief 单帧防失控上限（字节）。协商 PDU≤960，块传输单帧也远小于该值 */
 #define XS7_MAX_FRAME 8192

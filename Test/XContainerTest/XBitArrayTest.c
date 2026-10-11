@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XBitArray.h"
 #include"XTestMenu.h"
 #include"XAction.h"
@@ -30,7 +30,7 @@ static void XBitArrayTest_Basic(void)
 /* ==================== Qt 命名对齐 ==================== */
 static void XBitArrayTest_QtAliases(void)
 {
-    XPrintf("\n[XBitArray][Qt 别名] testBit/at/clearBit/count_base/isNull/bits\n");
+    XPrintf("\n[XBitArray][Qt 别名] testBit/at/clearBit/count_base/isNull/bits_const\n");
     XBitArray* a = XBitArray_create(8);
     XBitArray_fill(a, true);
     XPrintf("  count_base=%zu isNull=%d (期望 8 0)\n",
@@ -41,8 +41,8 @@ static void XBitArrayTest_QtAliases(void)
     XBitArray_clearBit(a, 0);
     XPrintf("  clearBit(0) -> testBit(0)=%d (期望 0)\n", XBitArray_testBit(a, 0));
 
-    const char* raw = XBitArray_bits(a);
-    XPrintf("  bits ptr=%s\n", raw ? "OK" : "NULL");
+    const char* raw = XBitArray_bits_const(a);
+    XPrintf("  bits_const ptr=%s\n", raw ? "OK" : "NULL");
 
     XClassDelete(a);
 }

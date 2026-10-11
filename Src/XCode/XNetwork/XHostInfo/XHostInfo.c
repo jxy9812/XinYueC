@@ -35,7 +35,7 @@ typedef struct XHostInfoLookupRequest {
 
 static XVector* g_lookupRequests = NULL;
 static XMutex* g_lookupMutex = NULL;
-static XAtomic_int32_t g_lookupInitialized = {0};
+static XAtomic_Int32 g_lookupInitialized = {0};
 static int g_nextLookupId = 1;
 
 // ======================== DNS缓存前向声明 ========================
@@ -54,32 +54,32 @@ static void VXHostInfo_copy(XHostInfo* self, const XHostInfo* src) {
         XHostInfo_init(self);
     
     // 先释放旧资源
-    if (self->hostName) {
-        XClassDelete(self->hostName);
-        self->hostName = NULL;
+    if (self->m_hostName) {
+        XClassDelete(self->m_hostName);
+        self->m_hostName = NULL;
     }
-    if (self->addresses) {
-        XClassDelete(self->addresses);
-        self->addresses = NULL;
+    if (self->m_addresses) {
+        XClassDelete(self->m_addresses);
+        self->m_addresses = NULL;
     }
-    if (self->errorString) {
-        XClassDelete(self->errorString);
-        self->errorString = NULL;
+    if (self->m_errorString) {
+        XClassDelete(self->m_errorString);
+        self->m_errorString = NULL;
     }
     
     // 拷贝新资源
-    if (src->hostName) {
-        self->hostName = XString_create_copy(src->hostName);
+    if (src->m_hostName) {
+        self->m_hostName = XString_create_copy(src->m_hostName);
     }
     
-    self->addresses = XVector_create_copy(src->addresses);
-    self->error = src->error;
+    self->m_addresses = XVector_create_copy(src->m_addresses);
+    self->m_error = src->m_error;
     
-    if (src->errorString) {
-        self->errorString = XString_create_copy(src->errorString);
+    if (src->m_errorString) {
+        self->m_errorString = XString_create_copy(src->m_errorString);
     }
     
-    self->lookupId = src->lookupId;
+    self->m_lookupId = src->m_lookupId;
 }
 
 static void VXHostInfo_move(XHostInfo* self, XHostInfo* src) {
@@ -89,48 +89,48 @@ static void VXHostInfo_move(XHostInfo* self, XHostInfo* src) {
         XHostInfo_init(self);
     
     // 先释放旧资源
-    if (self->hostName) {
-        XClassDelete(self->hostName);
+    if (self->m_hostName) {
+        XClassDelete(self->m_hostName);
     }
-    if (self->addresses) {
-        XClassDelete(self->addresses);
+    if (self->m_addresses) {
+        XClassDelete(self->m_addresses);
     }
-    if (self->errorString) {
-        XClassDelete(self->errorString);
+    if (self->m_errorString) {
+        XClassDelete(self->m_errorString);
     }
     
     // 移动资源
-    self->hostName = src->hostName;
-    src->hostName = NULL;
+    self->m_hostName = src->m_hostName;
+    src->m_hostName = NULL;
     
-    self->addresses = src->addresses;
-    src->addresses = NULL;
+    self->m_addresses = src->m_addresses;
+    src->m_addresses = NULL;
     
-    self->error = src->error;
+    self->m_error = src->m_error;
     
-    self->errorString = src->errorString;
-    src->errorString = NULL;
+    self->m_errorString = src->m_errorString;
+    src->m_errorString = NULL;
     
-    self->lookupId = src->lookupId;
-    src->lookupId = -1;
+    self->m_lookupId = src->m_lookupId;
+    src->m_lookupId = -1;
 }
 
 static void VXHostInfo_deinit(XHostInfo* self) {
     if (!self) return;
     
-    if (self->hostName) {
-        XClassDelete(self->hostName);
-        self->hostName = NULL;
+    if (self->m_hostName) {
+        XClassDelete(self->m_hostName);
+        self->m_hostName = NULL;
     }
     
-    if (self->errorString) {
-        XClassDelete(self->errorString);
-        self->errorString = NULL;
+    if (self->m_errorString) {
+        XClassDelete(self->m_errorString);
+        self->m_errorString = NULL;
     }
     
-    if (self->addresses) {
-        XClassDelete(self->addresses);
-        self->addresses = NULL;
+    if (self->m_addresses) {
+        XClassDelete(self->m_addresses);
+        self->m_addresses = NULL;
     }
 }
 
@@ -152,9 +152,9 @@ void XHostInfo_init(XHostInfo* info) {
     memset(((XClass*)info) + 1, 0, sizeof(XHostInfo) - sizeof(XClass));
     XClass_init((XClass*)info);
     XClassGetVtable(info) = XHostInfo_class_init();
-    info->addresses = XVector_create(sizeof(XHostAddress));
-    info->error = XHostInfo_NoError;
-    info->lookupId = -1;
+    info->m_addresses = XVector_create(sizeof(XHostAddress));
+    info->m_error = XHostInfo_NoError;
+    info->m_lookupId = -1;
 }
 
 XHostInfo* XHostInfo_create_ex(XMemoryType memory) {
@@ -172,6 +172,7 @@ XHostInfo* XHostInfo_create_copy(const XHostInfo* other) {
     if (!info) return NULL;
     
     XHostInfo_init(info);
+    Set_Class_Memory(info, XMEMORY_TYPE_SYSTEM); Set_Class_IsHeap(info, true);  /* 同 create_ex：XMalloc_System 分配的堆对象必须设堆标记，否则 XClassDelete 只反初始化不释放 */
     XClassCopy(info, other);
     
     return info;
@@ -181,87 +182,87 @@ XHostInfo* XHostInfo_create_copy(const XHostInfo* other) {
 
 XString* XHostInfo_hostName(const XHostInfo* info) {
     if (!info) return NULL;
-    return info->hostName;
+    return info->m_hostName;
 }
 
 void XHostInfo_setHostName(XHostInfo* info, const XString* name) {
     if (!info) return;
     
-    if (info->hostName) {
-        XClassDelete(info->hostName);
+    if (info->m_hostName) {
+        XClassDelete(info->m_hostName);
     }
     
     if (name) {
-        info->hostName = XString_create_copy(name);
+        info->m_hostName = XString_create_copy(name);
     } else {
-        info->hostName = NULL;
+        info->m_hostName = NULL;
     }
 }
 
 const XVector* XHostInfo_addresses_const(const XHostInfo* info) {
-    if (!info || !info->addresses) {
+    if (!info || !info->m_addresses) {
         return NULL;
     }
-    if (XVector_isEmpty_base(info->addresses))
+    if (XVector_isEmpty_base(info->m_addresses))
         return NULL;
-    return info->addresses;
+    return info->m_addresses;
 }
 
 void XHostInfo_setAddresses(XHostInfo* info, const XHostAddress* addrs, int count) {
-    if (!info || !info->addresses) return;
+    if (!info || !info->m_addresses) return;
     
-    XVector_clear_base(info->addresses);
+    XVector_clear_base(info->m_addresses);
     
     if (!addrs || count <= 0) return;
     
     for (int i = 0; i < count; i++) {
-        XVector_push_back_1_base(info->addresses, &addrs[i]);
+        XVector_push_back_1_base(info->m_addresses, &addrs[i]);
     }
 }
 
 XHostInfo_Error XHostInfo_error(const XHostInfo* info) {
     if (!info) return XHostInfo_UnknownError;
-    return info->error;
+    return info->m_error;
 }
 
 void XHostInfo_setError(XHostInfo* info, XHostInfo_Error error) {
     if (!info) return;
-    info->error = error;
+    info->m_error = error;
 }
 
 XString* XHostInfo_errorString(const XHostInfo* info) {
     if (!info) return NULL;
-    return info->errorString;
+    return info->m_errorString;
 }
 
 void XHostInfo_setErrorString(XHostInfo* info, const XString* str) 
 {
     if (!info) return;
     
-    if (info->errorString) {
-        XClassDelete(info->errorString);
+    if (info->m_errorString) {
+        XClassDelete(info->m_errorString);
     }
     
     if (str) {
-        info->errorString = XString_create_copy(str);
+        info->m_errorString = XString_create_copy(str);
     } else {
-        info->errorString = NULL;
+        info->m_errorString = NULL;
     }
 }
 
 int XHostInfo_lookupId(const XHostInfo* info) {
     if (!info) return -1;
-    return info->lookupId;
+    return info->m_lookupId;
 }
 
 void XHostInfo_setLookupId(XHostInfo* info, int id) {
     if (!info) return;
-    info->lookupId = id;
+    info->m_lookupId = id;
 }
 
 // ==================== 静态工具函数 ====================
 
-XHostInfo* XHostInfo_fromName1(const XString* name) {
+XHostInfo* XHostInfo_fromName(const XString* name) {
     if (!name || XString_size_base(name) == 0) {
         XHostInfo* info = XHostInfo_create();
         XHostInfo_setError(info, XHostInfo_HostNotFound);
@@ -289,7 +290,7 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
         int errCode = XDeviceNetwork_lastError();
         char* errStr = XDeviceNetwork_errorString(errCode);
         if (errStr) {
-            info->errorString = XString_create_utf8(errStr);
+            info->m_errorString = XString_create_utf8(errStr);
             XFree_System(errStr);
         }
         return info;
@@ -299,7 +300,7 @@ XHostInfo* XHostInfo_fromName1(const XString* name) {
     size_t addrCount = XVector_size_base(addrVec);
     for (size_t i = 0; i < addrCount; i++) {
         XHostAddress* addr = (XHostAddress*)XVector_at_base(addrVec, (int64_t)i);
-        XVector_push_back_1_base(info->addresses, addr);
+        XVector_push_back_1_base(info->m_addresses, addr);
     }
     
     /* 释放 XVector */
@@ -315,7 +316,7 @@ XHostInfo* XHostInfo_fromName2(const char* name)
 {
     if (!name || *name == 0) return NULL;
     XString* str = XString_create_utf8(name);
-    XHostInfo* info = XHostInfo_fromName1(str);
+    XHostInfo* info = XHostInfo_fromName(str);
     XClassDelete(str);
     return info;
 }
@@ -399,9 +400,15 @@ static void lookupWorker(XVarList* varlist) {
     bool aborted = req->aborted;
     XMutex_unlock(req->mutex);
     
-    if (aborted) return;
+    if (aborted) {
+        /* 已中止：请求仍登记在 g_lookupRequests 中，必须就地回收，否则 req 及其字段永久泄漏 */
+        XMutex_lock(g_lookupMutex);
+        removeRequest(req->id);
+        XMutex_unlock(g_lookupMutex);
+        return;
+    }
     
-    XHostInfo* result = XHostInfo_fromName1(req->hostName);
+    XHostInfo* result = XHostInfo_fromName(req->hostName);
     XHostInfo_setLookupId(result, req->id);
     
     XMutex_lock(req->mutex);
@@ -410,11 +417,17 @@ static void lookupWorker(XVarList* varlist) {
     
     if (aborted) {
         XClassDelete(result);
+        /* 已中止：跳过尾部 removeRequest 会把 req 永久留在注册表中，这里补回收 */
+        XMutex_lock(g_lookupMutex);
+        removeRequest(req->id);
+        XMutex_unlock(g_lookupMutex);
         return;
     }
     
     if (req->receiver) {
         req->signal(req->receiver);
+        /* 信号签名只投递 receiver，result 无法随信号传递给接收方，必须就地释放 */
+        XClassDelete(result);
     } else if (req->callback) {
         req->callback(result, req->userData);
     } else {
@@ -536,7 +549,7 @@ typedef struct XHostInfoCacheEntry {
 typedef struct XHostInfoCacheManager {
     XHashMap* cache;           /**< 缓存哈希表 */
     XMutex* mutex;             /**< 缓存互斥锁 */
-    XAtomic_int32_t initialized; /**< 初始化状态 */
+    XAtomic_Int32 initialized; /**< 初始化状态 */
     bool enabled : 1;          /**< 是否启用缓存（位域） */
     unsigned int ttl : 31;     /**< 缓存TTL（秒），最大约68年（位域） */
 } XHostInfoCacheManager;
@@ -563,6 +576,17 @@ static void ensureCacheInit(void) {
         g_cacheManager.cache = XHashMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
             sizeof(XString), sizeof(XHostInfoCacheEntry),
             XString_hash, XString_compare, true);
+        /* 键为 XString（内含堆上 UTF-16 共享缓冲与编码缓存指针），必须注册键
+         * 拷贝/移动/反初始化回调（对照 XHashMap_create_XVariantHashMap 的
+         * XString 键注册方式）：否则插入按字节浅拷贝与源串共享堆缓冲且不增
+         * 引用，源串释放后存储键悬垂（后续 find 比较即 UAF），erase/clear 也
+         * 无人释放键的堆资源。值为含所有权指针的 POD，生命周期仍由本文件在
+         * 各 erase/clear 点手工管理，不注册数据回调。 */
+        if (g_cacheManager.cache) {
+            XMapBaseSetKeyCopyMethod(g_cacheManager.cache, XClass_copy_base);
+            XMapBaseSetKeyMoveMethod(g_cacheManager.cache, XClass_move_base);
+            XMapBaseSetKeyDeinitMethod(g_cacheManager.cache, XClass_deinit_base);
+        }
         XAtomic_store_int32(&g_cacheManager.initialized, 2, XAtomic_MemoryOrder_Release);
     } else if (expected == 1) {
         while (XAtomic_load_int32(&g_cacheManager.initialized, XAtomic_MemoryOrder_Acquire) != 2) {
@@ -619,7 +643,7 @@ static XHostInfo* getFromCache(const XString* hostName) {
  */
 static void putToCache(const XString* hostName, const XHostInfo* info) {
     if (!g_cacheManager.enabled || !hostName || !info) return;
-    if (info->error != XHostInfo_NoError) return;  /* 不缓存失败的查询 */
+    if (info->m_error != XHostInfo_NoError) return;  /* 不缓存失败的查询 */
     
     ensureCacheInit();
     
@@ -643,7 +667,13 @@ static void putToCache(const XString* hostName, const XHostInfo* info) {
         XHostInfoCacheEntry newEntry;
         newEntry.info = XHostInfo_create_copy(info);
         newEntry.timestamp = XDateTime_currentSecsSinceEpoch();
-        XHashMap_insert_base(g_cacheManager.cache, hostName, &newEntry);
+        /* 插入失败（如内存不足，见 VXMap_insert 各失败出口）时容器按契约
+         * 不消费调用方键/值，堆上的 info 副本必须就地释放，否则失联泄漏。 */
+        if (!XHashMap_insert_base(g_cacheManager.cache, hostName, &newEntry)) {
+            if (newEntry.info) {
+                XClassDelete(newEntry.info);
+            }
+        }
     }
     
     XMutex_unlock(g_cacheManager.mutex);
@@ -652,8 +682,8 @@ static void putToCache(const XString* hostName, const XHostInfo* info) {
 /* 预取回调函数 */
 static void prefetchCallback(XHostInfo* result, void* userData) {
     (void)userData;  /* 未使用 */
-    if (result && result->error == XHostInfo_NoError) {
-        putToCache(result->hostName, result);
+    if (result && result->m_error == XHostInfo_NoError) {
+        putToCache(result->m_hostName, result);
     }
     if (result) {
         XClassDelete(result);
@@ -667,7 +697,19 @@ void XHostInfo_setCacheEnabled(bool enabled) {
     XMutex_lock(g_cacheManager.mutex);
     g_cacheManager.enabled = enabled;
     if (!enabled) {
-        /* 禁用时清空缓存 */
+        /* 禁用时先逐条释放条目持有的 XHostInfo 再清空哈希表：
+           缓存哈希表未注册数据反初始化回调，仅 clear_base 会把每个
+           entry->info（XHostInfo 及其成员）整图泄漏（与 XHostInfo_clearCache 同型） */
+        XHashMap_iterator it = XHashMap_begin(g_cacheManager.cache);
+        while (!XHashMap_iterator_isEnd(&it)) {
+            XPair* pair = XHashMap_iterator_data(&it);
+            XHostInfoCacheEntry* entry = (XHostInfoCacheEntry*)XPair_second(pair);
+            if (entry && entry->info) {
+                XClassDelete(entry->info);
+                entry->info = NULL;
+            }
+            XHashMap_iterator_add(g_cacheManager.cache, &it);
+        }
         XHashMap_clear_base(g_cacheManager.cache);
     }
     XMutex_unlock(g_cacheManager.mutex);

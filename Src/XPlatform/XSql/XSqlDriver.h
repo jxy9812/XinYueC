@@ -86,9 +86,6 @@ void XSqlDriver_init(XSqlDriver* driver, XSqlDriverType driverType, XSqlDbmsType
  */
 XSqlDriver* XSqlDriver_create_ex(XMemoryType memory,  XSqlDriverType driverType, XSqlDbmsType dbmsType);
 
-/** @brief 调用 XClass 析构入口释放驱动对象及其最近错误。 */
-/** @brief 释放由具体驱动创建函数返回的驱动对象。 */
-
 /**
  * @brief 获取驱动实现类型。
  * @param driver 驱动对象；NULL 返回 Unknown。

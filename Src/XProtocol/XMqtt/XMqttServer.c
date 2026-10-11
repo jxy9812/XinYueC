@@ -778,7 +778,17 @@ static uint32_t server_shared_next_index(XMqttServer* server, const XString* key
     else {
         XString* keyCopy = XString_create_copy(key);
         if (!keyCopy) return 0;
-        XMapBase_insert_base((XMapBase*)priv->m_sharedIndex, &keyCopy, &value);
+        if (!XMapBase_insert_base((XMapBase*)priv->m_sharedIndex, &keyCopy, &value)) {
+            /* 入表失败分两类（见 XMap.c VXMap_insert）：pair 缓冲分配失败时
+             * 映射未接管键，副本需就地释放（同 XMqttServer_beginClient 的
+             * 插入失败处理）；共享数据/红黑树节点分配失败时映射已经
+             * XMap_deinit_pair 经 server_shared_deinit 代删同一键副本，
+             * 不得重复释放。pair 缓冲仅在分配成功后缓存、deinit 才清空，
+             * 故以其是否为 NULL 区分两类失败。 */
+            if (!XMapBasePairBuffer((XMapBase*)priv->m_sharedIndex))
+                XClassDelete(keyCopy);
+            return 0;
+        }
     }
     return value;
 }
@@ -998,7 +1008,11 @@ static XVector* server_shared_build_selections(XMqttServer* server,
                     if (sel.actualFilter) XClassDelete(sel.actualFilter);
                     continue;
                 }
-                XVector_push_back_1_base(selections, &sel);
+                /* 入表失败时容器不持有 sel，两份深拷贝需就地释放 */
+                if (!XVector_push_back_1_base(selections, &sel)) {
+                    XClassDelete(sel.shareName);
+                    XClassDelete(sel.actualFilter);
+                }
             }
         }
     }
@@ -1043,7 +1057,14 @@ static bool server_subscription_set(XMqttServerSession* session, XMqttServerSubs
     }
     value = *sub;
     memset(sub, 0, sizeof(*sub));
-    return XVector_push_back_1_base(session->subscriptions, &value);
+    if (!XVector_push_back_1_base(session->subscriptions, &value)) {
+        /* 入表失败时容器不持有条目，条目内字符串需就地释放（同
+         * server_enqueue_message 的失败处理），否则 filter/actualFilter/
+         * shareName 随局部 value 出作用域泄漏。 */
+        server_subscription_deinit(&value);
+        return false;
+    }
+    return true;
 }
 
 static bool server_session_remove_subscription(XMqttServerSession* session,
@@ -1263,12 +1284,12 @@ static bool server_send_publish(XMqttServer* server, XMqttServerClient* client,
     XByteArray* props = XByteArray_create();
     /* 用位域联合体构造固定头第一字节（避免手工移位/掩码） */
     XMqttFixedHeader fixed;
-    fixed.byte = 0;
-    fixed.bits.type = (uint8_t)(MQTT_PUBLISH >> 4);
-    fixed.bits.qos = qos;
-    fixed.bits.retain = retain ? 1U : 0U;
-    fixed.bits.dup = dup ? 1U : 0U;
-    uint8_t header = fixed.byte;
+    fixed.m_byte = 0;
+    fixed.m_bits.m_type = (uint8_t)(MQTT_PUBLISH >> 4);
+    fixed.m_bits.m_qos = qos;
+    fixed.m_bits.m_retain = retain ? 1U : 0U;
+    fixed.m_bits.m_dup = dup ? 1U : 0U;
+    uint8_t header = fixed.m_byte;
     bool ok = body && props && server_append_string(body, topic);
     if (ok && qos) ok = server_append_u16(body, packetId);
     if (ok && properties) {
@@ -2022,15 +2043,23 @@ static void server_route_message(XMqttServer* server, XMqttServerClient* source,
                         /* 先移除旧条目再插入新条目：旧条目的键与值同属一条
                          * 保留消息，直接替换值会留下悬垂的键指针。 */
                         XMapBase_remove_base((XMapBase*)priv->m_retained, &topic);
-                        XMapBase_insert_valueMove_base((XMapBase*)priv->m_retained,
-                                                       &topicCopy, &msg);
-                    } else {
-                        XMapBase_insert_valueMove_base((XMapBase*)priv->m_retained,
-                                                       &topicCopy, &msg);
+                    }
+                    /* 入表失败分两类（见 XMap.c VXMap_insert）：pair 缓冲
+                     * 分配失败时映射未接管所有权，msg（其 topic 即
+                     * topicCopy）需就地释放，避免泄漏；共享数据/红黑树节点
+                     * 分配失败时映射已经 XMap_deinit_pair 经
+                     * server_retained_value_deinit 代删同一 msg，不得重复
+                     * 释放。pair 缓冲仅在分配成功后缓存、deinit 才清空，
+                     * 故以其是否为 NULL 区分两类失败。 */
+                    if (!XMapBase_insert_valueMove_base((XMapBase*)priv->m_retained,
+                                                       &topicCopy, &msg)) {
+                        if (!XMapBasePairBuffer((XMapBase*)priv->m_retained))
+                            server_retained_deinit(msg);
                     }
                 } else {
+                    /* msg->topic 即 topicCopy，server_retained_deinit 已释放，
+                     * 不得对同一 XString 再次 XClassDelete（双重释放）。 */
                     server_retained_deinit(msg);
-                    XClassDelete(topicCopy);
                 }
             } else {
                 if (msg) XFree_System(msg);
@@ -2247,9 +2276,9 @@ static void server_handle_publish(XMqttServer* server, XMqttServerClient* client
     XMqttPublishProperties* props = NULL;
     /* 用位域联合体解析固定头第一字节 */
     XMqttFixedHeader fixed = { header };
-    uint8_t qos = (uint8_t)fixed.bits.qos;
-    bool retain = fixed.bits.retain != 0;
-    bool dup = fixed.bits.dup != 0;
+    uint8_t qos = (uint8_t)fixed.m_bits.m_qos;
+    bool retain = fixed.m_bits.m_retain != 0;
+    bool dup = fixed.m_bits.m_dup != 0;
     uint16_t packetId = 0;
     XByteArray* payload = NULL;
     if (qos == 3 || (qos == 0 && dup)) { reader->ok = false; return; }
@@ -3106,6 +3135,12 @@ void* XMqttServer_messageReceived_signal(XMqttServer* server, void* transport,
     args = XVarList_Create(XVar(void*, transport),
                            XVar(XMqttTopicName*, topicCopy),
                            XVar(XByteArray*, payloadCopy));
+    if (!args) {
+        /* args 为 NULL 时发射方不接管参数所有权，深拷贝需就地释放 */
+        if (topicCopy) XClassDelete(topicCopy);
+        if (payloadCopy) XClassDelete(payloadCopy);
+        return (void*)(size_t)XMqttServer_messageReceived_signal;
+    }
     XObject_emitSignal((XObject*)server, (size_t)XMqttServer_messageReceived_signal,
                        args, mqtt_server_message_args_delete, NULL, XEVENT_PRIORITY_NORMAL);
     return (void*)(size_t)XMqttServer_messageReceived_signal;

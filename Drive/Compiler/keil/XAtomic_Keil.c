@@ -51,168 +51,168 @@ static inline int xatomic_to_gcc_memory_order(XAtomic_MemoryOrder order)
 }
 
 // --- Load ---
-bool XAtomic_load_bool(const XAtomic_bool* var, XAtomic_MemoryOrder order)
+bool XAtomic_load_bool(const XAtomic_Bool* var, XAtomic_MemoryOrder order)
 {
-    return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
+    return __atomic_load_n(&(var->m_value), xatomic_to_gcc_memory_order(order));
 }
-int32_t XAtomic_load_int32(const XAtomic_int32_t* var, XAtomic_MemoryOrder order)
+int32_t XAtomic_load_int32(const XAtomic_Int32* var, XAtomic_MemoryOrder order)
 {
-    return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
+    return __atomic_load_n(&(var->m_value), xatomic_to_gcc_memory_order(order));
 }
-uint32_t XAtomic_load_uint32(const XAtomic_uint32_t* var, XAtomic_MemoryOrder order)
+uint32_t XAtomic_load_uint32(const XAtomic_Uint32* var, XAtomic_MemoryOrder order)
 {
-    return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
+    return __atomic_load_n(&(var->m_value), xatomic_to_gcc_memory_order(order));
 }
-int64_t XAtomic_load_int64(const XAtomic_int64_t* var, XAtomic_MemoryOrder order)
+int64_t XAtomic_load_int64(const XAtomic_Int64* var, XAtomic_MemoryOrder order)
 {
     // 对于 Cortex-M，64位原子操作通常不被硬件支持，这里保留以供 A-profile 使用
     // 在 M-profile 上应避免使用或由软件模拟（性能差）
-    return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
+    return __atomic_load_n(&(var->m_value), xatomic_to_gcc_memory_order(order));
 }
-uint64_t XAtomic_load_uint64(const XAtomic_uint64_t* var, XAtomic_MemoryOrder order)
+uint64_t XAtomic_load_uint64(const XAtomic_Uint64* var, XAtomic_MemoryOrder order)
 {
-    return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
+    return __atomic_load_n(&(var->m_value), xatomic_to_gcc_memory_order(order));
 }
-size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
+size_t XAtomic_load_size_t(const XAtomic_SizeT* var, XAtomic_MemoryOrder order)
 {
-    return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
+    return __atomic_load_n(&(var->m_value), xatomic_to_gcc_memory_order(order));
 }
-uintptr_t XAtomic_load_uintptr_t(const XAtomic_uintptr_t* var, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_load_uintptr_t(const XAtomic_Uintptr* var, XAtomic_MemoryOrder order)
 {
-    return __atomic_load_n(&(var->value), xatomic_to_gcc_memory_order(order));
+    return __atomic_load_n(&(var->m_value), xatomic_to_gcc_memory_order(order));
 }
 
 // --- Store ---
-void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+void XAtomic_store_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order)
 {
-    __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    __atomic_store_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-void XAtomic_store_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    __atomic_store_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-void XAtomic_store_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    __atomic_store_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-void XAtomic_store_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    __atomic_store_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-void XAtomic_store_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    __atomic_store_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    __atomic_store_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
-    __atomic_store_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    __atomic_store_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
 
 // --- Exchange ---
-bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+bool XAtomic_exchange_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order)
 {
-    return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_exchange_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_exchange_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_exchange_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-uint32_t XAtomic_exchange_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+uint32_t XAtomic_exchange_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_exchange_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-int64_t XAtomic_exchange_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_exchange_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_exchange_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-uint64_t XAtomic_exchange_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_exchange_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_exchange_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_exchange_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_exchange_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_exchange_n(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_exchange_n(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
 
 // --- Compare Exchange ---
-bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, bool desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_bool(XAtomic_Bool* var, bool* expected, bool desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&(var->m_value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
-bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_int32(XAtomic_Int32* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&(var->m_value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
-bool XAtomic_compare_exchange_strong_uint32(XAtomic_uint32_t* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uint32(XAtomic_Uint32* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&(var->m_value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
-bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_int64(XAtomic_Int64* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&(var->m_value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
-bool XAtomic_compare_exchange_strong_uint64(XAtomic_uint64_t* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uint64(XAtomic_Uint64* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&(var->m_value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
-bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expected, size_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_size_t(XAtomic_SizeT* var, size_t* expected, size_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&(var->m_value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
-bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_uintptr_t* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_Uintptr* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
-    return __atomic_compare_exchange_n(&(var->value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
+    return __atomic_compare_exchange_n(&(var->m_value), expected, desired, false, xatomic_to_gcc_memory_order(success_order), xatomic_to_gcc_memory_order(failure_order));
 }
 
 // --- Fetch Add/Sub ---
-int32_t XAtomic_fetch_add_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_fetch_add_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-uint32_t XAtomic_fetch_add_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+uint32_t XAtomic_fetch_add_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-int64_t XAtomic_fetch_add_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_fetch_add_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-uint64_t XAtomic_fetch_add_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_fetch_add_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-size_t XAtomic_fetch_add_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_fetch_add_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_add(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_add(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
 
-int32_t XAtomic_fetch_sub_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_fetch_sub_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-uint32_t XAtomic_fetch_sub_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+uint32_t XAtomic_fetch_sub_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-int64_t XAtomic_fetch_sub_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_fetch_sub_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-uint64_t XAtomic_fetch_sub_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_fetch_sub_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
-size_t XAtomic_fetch_sub_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_fetch_sub_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
-    return __atomic_fetch_sub(&(var->value), value, xatomic_to_gcc_memory_order(order));
+    return __atomic_fetch_sub(&(var->m_value), value, xatomic_to_gcc_memory_order(order));
 }
 
 #else
@@ -271,142 +271,142 @@ static inline void __apply_release(XAtomic_MemoryOrder order)
 }
 
 // --- Load (simple load with acquire barrier if needed) ---
-bool XAtomic_load_bool(const XAtomic_bool* var, XAtomic_MemoryOrder order)
+bool XAtomic_load_bool(const XAtomic_Bool* var, XAtomic_MemoryOrder order)
 {
-    bool val = var->value;
+    bool val = var->m_value;
     __apply_acquire(order);
     return val;
 }
-int32_t XAtomic_load_int32(const XAtomic_int32_t* var, XAtomic_MemoryOrder order)
+int32_t XAtomic_load_int32(const XAtomic_Int32* var, XAtomic_MemoryOrder order)
 {
-    int32_t val = var->value;
+    int32_t val = var->m_value;
     __apply_acquire(order);
     return val;
 }
-uint32_t XAtomic_load_uint32(const XAtomic_uint32_t* var, XAtomic_MemoryOrder order)
+uint32_t XAtomic_load_uint32(const XAtomic_Uint32* var, XAtomic_MemoryOrder order)
 {
-    uint32_t val = var->value;
+    uint32_t val = var->m_value;
     __apply_acquire(order);
     return val;
 }
 // Note: 64-bit loads are NOT atomic on most Cortex-M cores!
-int64_t XAtomic_load_int64(const XAtomic_int64_t* var, XAtomic_MemoryOrder order)
+int64_t XAtomic_load_int64(const XAtomic_Int64* var, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return 0;
 }
-uint64_t XAtomic_load_uint64(const XAtomic_uint64_t* var, XAtomic_MemoryOrder order)
+uint64_t XAtomic_load_uint64(const XAtomic_Uint64* var, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return 0;
 }
-size_t XAtomic_load_size_t(const XAtomic_size_t* var, XAtomic_MemoryOrder order)
+size_t XAtomic_load_size_t(const XAtomic_SizeT* var, XAtomic_MemoryOrder order)
 {
-    size_t val = var->value;
+    size_t val = var->m_value;
     __apply_acquire(order);
     return val;
 }
-uintptr_t XAtomic_load_uintptr_t(const XAtomic_uintptr_t* var, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_load_uintptr_t(const XAtomic_Uintptr* var, XAtomic_MemoryOrder order)
 {
-    uintptr_t val = var->value;
+    uintptr_t val = var->m_value;
     __apply_acquire(order);
     return val;
 }
 
 // --- Store (simple store with release barrier if needed) ---
-void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+void XAtomic_store_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order)
 {
     __apply_release(order);
-    var->value = value;
+    var->m_value = value;
 }
-void XAtomic_store_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
     __apply_release(order);
-    var->value = value;
+    var->m_value = value;
 }
-void XAtomic_store_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
     __apply_release(order);
-    var->value = value;
+    var->m_value = value;
 }
-void XAtomic_store_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
 }
-void XAtomic_store_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
 }
-void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
     __apply_release(order);
-    var->value = value;
+    var->m_value = value;
 }
-void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+void XAtomic_store_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
     __apply_release(order);
-    var->value = value;
+    var->m_value = value;
 }
 
 // --- Exchange (基于 CAS, which is seq_cst) ---
 // For RMW operations, the CAS loop provides seq_cst semantics inherently.
-bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order)
+bool XAtomic_exchange_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order)
 {
     (void)order;
-    bool expected = var->value;
+    bool expected = var->m_value;
     while (!XAtomic_compare_exchange_strong_bool(var, &expected, value, XAtomic_MemoryOrder_SeqCst, XAtomic_MemoryOrder_SeqCst)) {
         // expected 已被更新为当前值，继续循环
     }
     return expected;
 }
-int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order)
+int32_t XAtomic_exchange_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
-    int32_t expected = var->value;
+    int32_t expected = var->m_value;
     while (!XAtomic_compare_exchange_strong_int32(var, &expected, value, XAtomic_MemoryOrder_SeqCst, XAtomic_MemoryOrder_SeqCst)) {
         // expected 已被更新为当前值，继续循环
     }
     return expected;
 }
-uint32_t XAtomic_exchange_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order)
+uint32_t XAtomic_exchange_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
-    uint32_t expected = var->value;
+    uint32_t expected = var->m_value;
     while (!XAtomic_compare_exchange_strong_uint32(var, &expected, value, XAtomic_MemoryOrder_SeqCst, XAtomic_MemoryOrder_SeqCst)) {
         // expected 已被更新为当前值，继续循环
     }
     return expected;
 }
 // 64位 exchange 在 armcc 下不支持
-int64_t XAtomic_exchange_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_exchange_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return 0;
 }
-uint64_t XAtomic_exchange_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_exchange_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return 0;
 }
-size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_exchange_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
-    size_t expected = var->value;
+    size_t expected = var->m_value;
     while (!XAtomic_compare_exchange_strong_size_t(var, &expected, value, XAtomic_MemoryOrder_SeqCst, XAtomic_MemoryOrder_SeqCst)) {
         // expected 已被更新为当前值，继续循环
     }
     return expected;
 }
-uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order)
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
-    uintptr_t expected = var->value;
+    uintptr_t expected = var->m_value;
     while (!XAtomic_compare_exchange_strong_uintptr_t(var, &expected, value, XAtomic_MemoryOrder_SeqCst, XAtomic_MemoryOrder_SeqCst)) {
         // expected 已被更新为当前值，继续循环
     }
@@ -414,63 +414,63 @@ uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XA
 }
 
 // --- Compare Exchange (32位由汇编实现，64位不支持) ---
-bool XAtomic_compare_exchange_strong_bool(XAtomic_bool* var, bool* expected, bool desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_bool(XAtomic_Bool* var, bool* expected, bool desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     (void)success_order;
     (void)failure_order;
     uint32_t exp_u32 = (uint32_t)*expected;
-    bool success = __xatomic_cas_32((volatile uint32_t*)&var->value, &exp_u32, (uint32_t)desired);
+    bool success = __xatomic_cas_32((volatile uint32_t*)&var->m_value, &exp_u32, (uint32_t)desired);
     *expected = (bool)exp_u32;
     return success;
 }
-bool XAtomic_compare_exchange_strong_int32(XAtomic_int32_t* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_int32(XAtomic_Int32* var, int32_t* expected, int32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     (void)success_order;
     (void)failure_order;
     uint32_t exp_u32 = (uint32_t)*expected;
-    bool success = __xatomic_cas_32((volatile uint32_t*)&var->value, &exp_u32, (uint32_t)desired);
+    bool success = __xatomic_cas_32((volatile uint32_t*)&var->m_value, &exp_u32, (uint32_t)desired);
     *expected = (int32_t)exp_u32;
     return success;
 }
-bool XAtomic_compare_exchange_strong_uint32(XAtomic_uint32_t* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uint32(XAtomic_Uint32* var, uint32_t* expected, uint32_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     (void)success_order;
     (void)failure_order;
-    return __xatomic_cas_32((volatile uint32_t*)&var->value, expected, desired);
+    return __xatomic_cas_32((volatile uint32_t*)&var->m_value, expected, desired);
 }
-bool XAtomic_compare_exchange_strong_int64(XAtomic_int64_t* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_int64(XAtomic_Int64* var, int64_t* expected, int64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     (void)success_order;
     (void)failure_order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return false;
 }
-bool XAtomic_compare_exchange_strong_uint64(XAtomic_uint64_t* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uint64(XAtomic_Uint64* var, uint64_t* expected, uint64_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     (void)success_order;
     (void)failure_order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return false;
 }
-bool XAtomic_compare_exchange_strong_size_t(XAtomic_size_t* var, size_t* expected, size_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_size_t(XAtomic_SizeT* var, size_t* expected, size_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     (void)success_order;
     (void)failure_order;
-    return __xatomic_cas_32((volatile uint32_t*)&var->value, expected, desired);
+    return __xatomic_cas_32((volatile uint32_t*)&var->m_value, expected, desired);
 }
-bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_uintptr_t* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
+bool XAtomic_compare_exchange_strong_uintptr_t(XAtomic_Uintptr* var, uintptr_t* expected, uintptr_t desired, XAtomic_MemoryOrder success_order, XAtomic_MemoryOrder failure_order)
 {
     (void)success_order;
     (void)failure_order;
-    return __xatomic_cas_32((volatile uint32_t*)&var->value, (uint32_t*)expected, (uint32_t)desired);
+    return __xatomic_cas_32((volatile uint32_t*)&var->m_value, (uint32_t*)expected, (uint32_t)desired);
 }
 
 // --- Fetch Add/Sub (基于 CAS, which is seq_cst) ---
-#define DEFINE_FETCH_OP(type, suffix, op) \
-type XAtomic_fetch_##op##_##suffix(XAtomic_##suffix* var, type value, XAtomic_MemoryOrder order) \
+#define DEFINE_FETCH_OP(type, suffix, op, type_name) \
+type XAtomic_fetch_##op##_##suffix(XAtomic_##type_name* var, type value, XAtomic_MemoryOrder order) \
 { \
     (void)order; \
-    type old_val = var->value; \
+    type old_val = var->m_value; \
     type new_val; \
     do { \
         new_val = old_val op value; \
@@ -478,51 +478,51 @@ type XAtomic_fetch_##op##_##suffix(XAtomic_##suffix* var, type value, XAtomic_Me
     return old_val; \
 }
 
-DEFINE_FETCH_OP(int32_t, int32_t, +)
-DEFINE_FETCH_OP(uint32_t, uint32_t, +)
-DEFINE_FETCH_OP(int32_t, int32_t, -)
-DEFINE_FETCH_OP(uint32_t, uint32_t, -)
+DEFINE_FETCH_OP(int32_t, int32_t, +, Int32)
+DEFINE_FETCH_OP(uint32_t, uint32_t, +, Uint32)
+DEFINE_FETCH_OP(int32_t, int32_t, -, Int32)
+DEFINE_FETCH_OP(uint32_t, uint32_t, -, Uint32)
 
 // 64位操作不支持
-int64_t XAtomic_fetch_add_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_fetch_add_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return 0;
 }
-uint64_t XAtomic_fetch_add_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_fetch_add_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return 0;
 }
-int64_t XAtomic_fetch_sub_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order)
+int64_t XAtomic_fetch_sub_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return 0;
 }
-uint64_t XAtomic_fetch_sub_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order)
+uint64_t XAtomic_fetch_sub_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
     assert(0 && "64-bit atomics not supported with ARM Compiler 5 on Cortex-M!");
     return 0;
 }
 
-size_t XAtomic_fetch_add_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_fetch_add_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
-    size_t old_val = var->value;
+    size_t old_val = var->m_value;
     size_t new_val;
     do {
         new_val = old_val + value;
     } while (!XAtomic_compare_exchange_strong_size_t(var, &old_val, new_val, XAtomic_MemoryOrder_SeqCst, XAtomic_MemoryOrder_SeqCst));
     return old_val;
 }
-size_t XAtomic_fetch_sub_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order)
+size_t XAtomic_fetch_sub_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order)
 {
     (void)order;
-    size_t old_val = var->value;
+    size_t old_val = var->m_value;
     size_t new_val;
     do {
         new_val = old_val - value;

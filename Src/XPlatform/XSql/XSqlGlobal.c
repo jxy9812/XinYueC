@@ -4,7 +4,7 @@
  */
 #include "XSqlGlobal.h"
 
-#include <string.h>
+#include "XStringUtils.h" /* strcmp 直出改经 XStrcmp（外部依赖约束） */
 
 const char* XSqlDriverType_name(XSqlDriverType type)
 {
@@ -29,29 +29,29 @@ const char* XSqlDriverType_name(XSqlDriverType type)
 XSqlDriverType XSqlDriverType_fromName_utf8(const char* name)
 {
     if (!name) return XSqlDriverType_Unknown;
-    if (strcmp(name, "XMSSQLSERVER") == 0 || strcmp(name, "mssql") == 0 || strcmp(name, "sqlserver") == 0)
+    if (XStrcmp(name, "XMSSQLSERVER") == 0 || XStrcmp(name, "mssql") == 0 || XStrcmp(name, "sqlserver") == 0)
         return XSqlDriverType_MsSqlServer;
-    if (strcmp(name, "QSQLITE") == 0 || strcmp(name, "sqlite") == 0)
+    if (XStrcmp(name, "QSQLITE") == 0 || XStrcmp(name, "sqlite") == 0)
         return XSqlDriverType_Sqlite;
-    if (strcmp(name, "QMYSQL") == 0 || strcmp(name, "mysql") == 0 || strcmp(name, "mariadb") == 0)
+    if (XStrcmp(name, "QMYSQL") == 0 || XStrcmp(name, "mysql") == 0 || XStrcmp(name, "mariadb") == 0)
         return XSqlDriverType_MySql;
-    if (strcmp(name, "QPSQL") == 0 || strcmp(name, "psql") == 0 || strcmp(name, "postgresql") == 0)
+    if (XStrcmp(name, "QPSQL") == 0 || XStrcmp(name, "psql") == 0 || XStrcmp(name, "postgresql") == 0)
         return XSqlDriverType_PostgreSql;
-    if (strcmp(name, "QOCI") == 0 || strcmp(name, "oci") == 0 || strcmp(name, "oracle") == 0)
+    if (XStrcmp(name, "QOCI") == 0 || XStrcmp(name, "oci") == 0 || XStrcmp(name, "oracle") == 0)
         return XSqlDriverType_Oracle;
-    if (strcmp(name, "QTDS") == 0 || strcmp(name, "tds") == 0 || strcmp(name, "sybase") == 0)
+    if (XStrcmp(name, "QTDS") == 0 || XStrcmp(name, "tds") == 0 || XStrcmp(name, "sybase") == 0)
         return XSqlDriverType_Sybase;
-    if (strcmp(name, "QIBASE") == 0 || strcmp(name, "ibase") == 0 || strcmp(name, "firebird") == 0)
+    if (XStrcmp(name, "QIBASE") == 0 || XStrcmp(name, "ibase") == 0 || XStrcmp(name, "firebird") == 0)
         return XSqlDriverType_Interbase;
-    if (strcmp(name, "QDB2") == 0 || strcmp(name, "db2") == 0)
+    if (XStrcmp(name, "QDB2") == 0 || XStrcmp(name, "db2") == 0)
         return XSqlDriverType_Db2;
-    if (strcmp(name, "QMIMER") == 0 || strcmp(name, "mimer") == 0)
+    if (XStrcmp(name, "QMIMER") == 0 || XStrcmp(name, "mimer") == 0)
         return XSqlDriverType_MimerSql;
-    if (strcmp(name, "QODBC") == 0 || strcmp(name, "odbc") == 0)
+    if (XStrcmp(name, "QODBC") == 0 || XStrcmp(name, "odbc") == 0)
         return XSqlDriverType_Odbc;
-    if (strcmp(name, "XEMBEDDED") == 0 || strcmp(name, "embedded") == 0)
+    if (XStrcmp(name, "XEMBEDDED") == 0 || XStrcmp(name, "embedded") == 0)
         return XSqlDriverType_Embedded;
-    if (strcmp(name, "XCUSTOM") == 0 || strcmp(name, "custom") == 0)
+    if (XStrcmp(name, "XCUSTOM") == 0 || XStrcmp(name, "custom") == 0)
         return XSqlDriverType_Custom;
     return XSqlDriverType_Unknown;
 }

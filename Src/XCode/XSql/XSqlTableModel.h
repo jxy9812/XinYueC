@@ -62,6 +62,7 @@ XVtable* XSqlTableModel_class_init(void);
 void XSqlTableModel_init(XSqlTableModel* model, const XSqlDatabase* database);
 /**
  * @brief 创建表模型。
+ * @param memory 内存类型。
  * @param database 数据库连接；创建时复制连接句柄，可为 NULL。
  * @return 新模型，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
@@ -192,19 +193,19 @@ XSqlIndex* XSqlTableModel_primaryKey(const XSqlTableModel* model);
  */
 XSqlDatabase* XSqlTableModel_database(const XSqlTableModel* model);
 /**
- * @brief 按 UTF-8 字段名获取字段索引。
- * @param model 表模型；NULL 返回 -1。
- * @param fieldName UTF-8 字段名；借用。
- * @return 字段索引；未找到返回 -1。
- */
-int XSqlTableModel_fieldIndex(const XSqlTableModel* model, const char* fieldName);
-/**
  * @brief 使用 XString 查找字段索引。
- * @param model 表模型；可为 NULL。
+ * @param model 表模型；NULL 返回 -1。
  * @param fieldName 字段名；借用，可为 NULL。
  * @return 字段索引；模型、名称无效或未找到时返回 -1。
  */
-int XSqlTableModel_fieldIndex_2(const XSqlTableModel* model, const XString* fieldName);
+int XSqlTableModel_fieldIndex(const XSqlTableModel* model, const XString* fieldName);
+/**
+ * @brief 按 UTF-8 字段名获取字段索引。
+ * @param model 表模型；可为 NULL。
+ * @param fieldName UTF-8 字段名；借用。
+ * @return 字段索引；未找到返回 -1。
+ */
+int XSqlTableModel_fieldIndex_2(const XSqlTableModel* model, const char* fieldName);
 /**
  * @brief 设置排序并重新查询。
  * @param model 表模型；不能为 NULL。

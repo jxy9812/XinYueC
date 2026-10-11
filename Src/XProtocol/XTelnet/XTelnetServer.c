@@ -223,7 +223,9 @@ bool XTelnetServer_emitPrompt(XTelnetServer* self)
     n = xtelnet_query_user_name(self, name, sizeof(name));
     if (n == 0 || n >= sizeof(name)) {
         const char* def = XTELNET_DEFAULT_PROMPT_NAME;
-        n = strlen(def);
+        /* XTELNET_DEFAULT_PROMPT_NAME 为字符串字面量，长度编译期可得，
+         * 不引入 string.h 白名单外的 strlen（外部依赖约束）。 */
+        n = sizeof(XTELNET_DEFAULT_PROMPT_NAME) - 1u;
         if (n >= sizeof(name)) n = sizeof(name) - 1u;
         memcpy(name, def, n);
     }
@@ -415,8 +417,8 @@ XProtocolResult XTelnetServer_feedData(XTelnetServer* self,
 void* XTelnetServer_bytesReceived_signal(XTelnetServer* self,
                                          const void* data, size_t size)
 {
-    XVarList* args = XVarList_Create(XVar(const void*, data), XVar(size_t, size));
-    XEmitSignal(self, XTelnetServer_bytesReceived_signal, args,
+    XEmitSignal(self, XTelnetServer_bytesReceived_signal,
+                XVarList_Create(XVar(const void*, data), XVar(size_t, size)),
                 NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 

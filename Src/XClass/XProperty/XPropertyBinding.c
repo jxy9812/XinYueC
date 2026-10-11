@@ -37,7 +37,7 @@ static XPropertyBinding* s_fallbackEvalTop = NULL;
  * @brief 查询当前正在求值的绑定（求值栈顶；对标 QBindingStatus::currentlyEvaluatingBinding）。
  * @return 绑定指针；无求值上下文返回 NULL。声明见 XProperty_Protected.h。
  */
-XPropertyBinding* XBinding_currentEvalBinding(void)
+XPropertyBinding* XPropertyBinding_currentEvalBinding(void)
 {
 #if XPROPERTY_HAS_THREADDATA
     XStack* stack = XBinding_evalStack();
@@ -147,7 +147,7 @@ void XPropertyBinding_unref(XPropertyBinding* self)
             self->m_propertyData->m_binding = NULL;
         self->m_propertyData = NULL;
     }
-    XBinding_detachDependencies(self);
+    XPropertyBinding_detachDependencies(self);
     XClassDeinit((XClass*)&self->m_error);
     XClassDeinit((XClass*)&self->m_result);
     XFree_System(self);
@@ -176,29 +176,36 @@ XPropertyBindingSourceLocation XPropertyBinding_sourceLocation(const XPropertyBi
 void XPropertyBinding_setError(XPropertyBinding* self, XPropertyBindingErrorType type, const XString* description)
 {
     if (!self) return;
+    /* setError 是可重复调用的覆盖式 setter（见 XPropertyBinding.h"覆盖此前错误"）：
+     * 先 clear 释放旧描述再重初始化，否则 init 的 memset 会覆盖旧 m_description
+     * 指针导致每次调用泄漏一个 XString（m_error 由 alloc 统一初始化，必已初始化） */
+    XPropertyBindingError_clear(&self->m_error);
     XPropertyBindingError_init_ex(&self->m_error, type, description);
 }
 
 void XPropertyBinding_setError_2(XPropertyBinding* self, XPropertyBindingErrorType type, const char* description)
 {
     if (!self) return;
+    /* 同 setError：先释放旧描述，防止重复上报错误时泄漏（如绑定环每次读取经
+     * XPropertyData_value_const -> XPropertyBinding_setError_2 反复覆盖） */
+    XPropertyBindingError_clear(&self->m_error);
     XPropertyBindingError_init_ex_2(&self->m_error, type, description);
 }
 
 /* ==================== 依赖与求值（内部） ==================== */
 
-bool XBinding_isOnEvalStack(XPropertyBinding* binding)
+bool XPropertyBinding_isOnEvalStack(XPropertyBinding* binding)
 {
     /* 任何绑定循环必然经过一个正在求值的绑定，重入标记即完整判据 */
     return binding && binding->m_evaluating;
 }
 
-const XVariant* XBinding_result_const(XPropertyBinding* binding)
+const XVariant* XPropertyBinding_result_const(XPropertyBinding* binding)
 {
     return binding ? &binding->m_result : NULL;
 }
 
-void XBinding_detachDependencies(XPropertyBinding* binding)
+void XPropertyBinding_detachDependencies(XPropertyBinding* binding)
 {
     if (!binding) return;
     /* 依赖节点归绑定所有：解挂并释放，依赖在每次求值中重新捕获 */
@@ -213,7 +220,7 @@ void XBinding_detachDependencies(XPropertyBinding* binding)
     }
 }
 
-void XBinding_evaluate(XPropertyBinding* binding)
+void XPropertyBinding_evaluate(XPropertyBinding* binding)
 {
     if (!binding || !binding->m_propertyData) return;
     if (binding->m_evaluating)
@@ -224,16 +231,16 @@ void XBinding_evaluate(XPropertyBinding* binding)
     }
     /* 求值期间自持引用：求值/通知路径可能触发外部 unref */
     XPropertyBinding_ref(binding);
-    XPropertyBinding* prevTop = XBinding_currentEvalBinding();
+    XPropertyBinding* prevTop = XPropertyBinding_currentEvalBinding();
     if (!XBinding_pushEval(binding))
     {
         /* 入栈失败（内存不足）：保持脏标记，下次读取重试 */
-        XERROR_PRINTF("XBinding_evaluate: push eval stack failed\n");
+        XERROR_PRINTF("XPropertyBinding_evaluate: push eval stack failed\n");
         XPropertyBinding_unref(binding);
         return;
     }
     binding->m_evaluating = true;
-    XBinding_detachDependencies(binding);
+    XPropertyBinding_detachDependencies(binding);
     binding->m_dirty = false;
     XPropertyBindingError_clear(&binding->m_error);
 
@@ -329,6 +336,12 @@ XVtable* XPropertyBindingError_class_init(void)
 void XPropertyBindingError_init(XPropertyBindingError* self)
 {
     if (!self) return;
+    /* 防泄漏契约（同 XVariant_init）：已初始化对象重复 init 仍先释放旧数据。
+     * 仅当本结构已是本类初始化对象（vtable 精确等于本类虚表）时，旧
+     * m_description 才归本类托管、可安全释放；未初始化结构的 vtable/
+     * m_description 均为垃圾值，直接清零兜底，杜绝误释放。 */
+    if (XClassGetVtable(self) == XPropertyBindingError_class_init() && self->m_description)
+        XClassDelete((XClass*)self->m_description);
     memset(self, 0, sizeof(XPropertyBindingError));
     XClass_init((XClass*)self);
     XClassSetVtable(self, XPropertyBindingError);

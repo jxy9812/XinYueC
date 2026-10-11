@@ -76,6 +76,12 @@ typedef struct XCursor
 } XCursor;
 
 /**
+ * @brief      初始化 XCursor 类虚函数表并返回共享表指针。
+ * @return     XCursor 类的共享 XVtable 指针。
+ */
+XVtable* XCursor_class_init(void);
+
+/**
  * @brief      初始化默认 XCursor（对标 QCursor() 默认构造，ArrowCursor）。
  * @param      self 待初始化的对象指针；生命周期结束时必须成对调用
  *             XClassDeinit。

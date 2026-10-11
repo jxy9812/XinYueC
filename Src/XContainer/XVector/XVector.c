@@ -204,33 +204,74 @@ static void VXVectorDataDelete(void* data, XVector* this_vector)
 // ========================
 void VXClass_copy(XVector* object, const XVector* src)
 {
-    // 如果目标还未初始化，先初始化
+    if (!object || !src || object == src) return;
+
+    if (XContainerIsCow(src)) {
+        /* COW 源：基类经 XSharedData_addRef 共享数据块，行为正确，直接复用 */
+        if (XClassIsVtableNull(object))
+        {
+            XVector_init(object, XContainerTypeSize(src), XContainerIsCow(src));
+            Class_Memory(object) = Class_Memory(src);
+        }
+        XClass_Parent(XContainer,EXClass_Copy,void(*)(XVector*, const XVector*))(object, src);
+        return;
+    }
+
+    /* 非 COW 源：基类对元素按裸 memcpy 复制且不调用 m_dataCopyMethod，
+       含所有权的元素（如 XString）会与源容器共享同一块底层资源且不增加引用，
+       双方析构时双重释放。此处自行完成：先析构并释放目标旧资源，
+       再逐元素经 m_dataCopyMethod 深拷贝（无回调的 POD 元素退化为字节拷贝）。 */
     if (XClassIsVtableNull(object))
     {
         XVector_init(object, XContainerTypeSize(src), XContainerIsCow(src));
         Class_Memory(object) = Class_Memory(src);
     }
-    XClass_Parent(XContainer,EXClass_Copy,void(*)(XVector*, const XVector*))(object, src);
-    //else if ((XSharedData*)XContainerDataPtr(object))
-    //{
-    //    XSharedData_release_with((XSharedData*)XContainerDataPtr(object), (XCDataDeinitMethod)VXVectorDataDelete, object);
-    //}
 
-    //// 复制回调函数
-    //XContainerSetDataCopyMethod(object, XContainerDataCopyMethod(src));
-    //XContainerSetDataMoveMethod(object, XContainerDataMoveMethod(src));
-    //XContainerSetDataDeinitMethod(object, XContainerDataDeinitMethod(src));
+    // 1. 按目标当前模式释放原有资源
+    if (XContainerIsCow(object)) {
+        XSharedData* sd = (XSharedData*)XContainerDataPtr(object);
+        if (sd)
+            XSharedData_release_with(sd, (XCDataDeinitMethod)VXVectorDataDelete,
+                object, XContainer_memory(object));
+    }
+    else if (XContainerDataPtr(object)) {
+        if (XContainerDataDeinitMethod(object)) {
+            size_t old_size = XContainerSize(object);
+            size_t type_size = XContainerTypeSize(object);
+            uint8_t* old_data = (uint8_t*)XContainerDataPtr(object);
+            for (size_t i = 0; i < old_size; i++)
+                XContainerDataDeinitMethod(object)(old_data + i * type_size);
+        }
+        XContainer_free(object, XContainerDataPtr(object));
+    }
+    XContainerSetDataPtr(object, NULL);
+    XContainerSize(object) = 0;
+    XContainerCapacity(object) = 0;
 
-    //// 共享源数据的 XSharedData（COW 机制）
-    //XContainerSetDataPtr(object, (XSharedData*)XContainerDataPtr(src));
-    //if ((XSharedData*)XContainerDataPtr(object))
-    //{
-    //    XSharedData_addRef((XSharedData*)XContainerDataPtr(object));
-    //}
+    // 2. 复制公共字段（容量、长度、回调等，与基类一致）
+    memcpy((XClass*)object + 1, (XClass*)src + 1, sizeof(XContainer) - sizeof(XClass));
 
-    //XContainerSize(object) = XContainerSize(src);
-    //XContainerCapacity(object) = XContainerCapacity(src);
-    //XContainerTypeSize(object) = XContainerTypeSize(src);
+    // 3. 逐元素深拷贝源数据
+    size_t size = XContainerSize(src);
+    size_t type_size = XContainerTypeSize(src);
+    if (XContainerDataPtr((XVector*)src) && size > 0) {
+        void* new_data = XContainer_malloc(object, XContainerCapacity(src) * type_size);
+        if (!new_data) {
+            XContainerSize(object) = 0;
+            XContainerCapacity(object) = 0;
+            return;
+        }
+        const uint8_t* src_data = (const uint8_t*)XContainerDataPtr((XVector*)src);
+        uint8_t* dst_data = (uint8_t*)new_data;
+        XCDataCopyMethod copy = XContainerDataCopyMethod(object);
+        for (size_t i = 0; i < size; i++) {
+            if (copy)
+                copy(dst_data + i * type_size, src_data + i * type_size);
+            else
+                memcpy(dst_data + i * type_size, src_data + i * type_size, type_size);
+        }
+        XContainerDataPtr(object) = new_data;
+    }
 }
 
 void VXClass_move(XVector* object, XVector* src)
@@ -490,6 +531,10 @@ void VXVector_erase(XVector* this_vector, const XVector_iterator* it, XVector_it
     {
         if (XContainerSize(this_vector) == 1)
         {
+            /* 删除唯一元素同样必须走元素析构回调，否则拥有型容器（如注册了
+               XClass_deinit_base 的 XStringList）每 erase 最后一个元素就泄漏其资源。 */
+            if (XContainerDataDeinitMethod(this_vector) != NULL)
+                XContainerDataDeinitMethod(this_vector)(pvValue);
             XContainerSize(this_vector) = 0;
             if (next)
                 *next = XVector_end(this_vector);
@@ -592,9 +637,23 @@ void VXVector_rcopy(XVector* this_One, const XVector* this_Two)
                 this_One, XContainer_memory(this_One));
         }
         else {
-            if (XContainerDataPtr(this_One))
+            if (XContainerDataPtr(this_One)) {
+                // 释放前先逐元素析构，非COW缓冲与基类destroy_raw_data范式一致，避免元素持有的堆资源泄漏
+                if (XContainerDataDeinitMethod(this_One)) {
+                    char* oldData = (char*)VXVectorData(this_One);
+                    size_t oldSize = XContainerSize(this_One);
+                    size_t oldTypeSize = XContainerTypeSize(this_One);
+                    for (size_t i = 0; i < oldSize; i++)
+                        XContainerDataDeinitMethod(this_One)(oldData + i * oldTypeSize);
+                }
                 XContainer_free(this_One, XContainerDataPtr(this_One));
+            }
         }
+        // 释放后立即复位属主指针与大小/容量：源向量为空或下方分配失败提前返回时，
+        // 目标容器保持一致的空状态，不残留悬挂指针（同VXVector_clear的置空处理）
+        XContainerSetDataPtr(this_One, NULL);
+        XContainerSize(this_One) = 0;
+        XContainerCapacity(this_One) = 0;
     }
 
     XContainerSetDataCopyMethod(this_One, XContainerDataCopyMethod(this_Two));
@@ -1430,7 +1489,9 @@ void* XVector_takeAt(XVector* this_vector, int64_t index)
 
     size_t typeSize = XContainerTypeSize(this_vector);
     char* data = (char*)VXVectorData(this_vector);
-    void* out = XContainer_malloc(this_vector, typeSize);
+    // 返回缓冲按头文件约定由调用者用XFree_System释放，故固定走系统分配器族配对申请；
+    // 不用容器绑定的内存池，避免MultiPool/Hybrid容器下调用者按文档释放构成跨分配器族free
+    void* out = XMalloc_System(typeSize);
     if (!out)
         return NULL;
     // 取出元素（移动语义：优先用move方法转移资源，否则字节拷贝）

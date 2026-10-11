@@ -1158,9 +1158,23 @@ static void xtd_parseHtml(XTextDocument* self, const char* html,
                         if (xtd_attrValue(content, tagEnd, "href", buf,
                                           sizeof(buf)) &&
                             buf[0]) {
-                            /* href 对象独立新建（栈中旧指针不受影响）。 */
-                            if (cur.anchorHref)
-                                XClassDelete(cur.anchorHref);
+                            /* href 对象独立新建。压栈为浅拷贝：旧 href 若
+                             * 仍被内联栈条目别名共享（嵌套 <a>）则不释放
+                             * （宁漏不悬，同 </pre> 字族恢复口径），弹栈
+                             * 恢复时仍指向有效对象，避免双释放。 */
+                            if (cur.anchorHref) {
+                                int si;
+                                bool aliased = false;
+                                for (si = 0; si < depth; ++si) {
+                                    if (stack[si].anchorHref ==
+                                        cur.anchorHref) {
+                                        aliased = true;
+                                        break;
+                                    }
+                                }
+                                if (!aliased)
+                                    XClassDelete(cur.anchorHref);
+                            }
                             cur.anchorHref = XString_create_utf8(buf);
                         }
                     }
@@ -1357,6 +1371,25 @@ static void xtd_parseHtml(XTextDocument* self, const char* html,
                 p += seq;
             }
         }
+    }
+    /* 文末仍未闭合的 <pre> 按自动闭合处理：恢复进入 pre 前的字体族，
+     * 并释放 monospace 串（别名防双释放口径与 </pre> 分支一致：仍被
+     * 内联栈条目共享则不释放，宁漏不悬）。 */
+    if (inPre) {
+        if (cur.fontFamily != preSavedFamily) {
+            int si;
+            bool aliased = false;
+            for (si = 0; si < depth; ++si) {
+                if (stack[si].fontFamily == cur.fontFamily) {
+                    aliased = true;
+                    break;
+                }
+            }
+            if (!aliased && cur.fontFamily)
+                XClassDelete(cur.fontFamily);
+            cur.fontFamily = preSavedFamily;
+        }
+        preSavedFamily = NULL;
     }
     /* 收尾：释放解析器仍持有的 href 对象（片段已深拷贝，不受影响）。 */
     if (cur.anchorHref) XClassDelete(cur.anchorHref);

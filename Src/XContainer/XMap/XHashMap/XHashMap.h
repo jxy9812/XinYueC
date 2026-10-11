@@ -1,13 +1,29 @@
-﻿#include"XContainer.h"
-#if !defined(XHASHMAP_H)&& XHashMap_ON
+﻿/**
+* @file       XHashMap.h
+* @brief      XHashMap 哈希映射容器公开 API。
+* @details    对齐 Qt 6.8 QHash<K,V>；继承 XMapBase，基于哈希桶数组实现键值对
+*             存储，提供插入、删除、查找、扩容与收缩等操作。实现只依赖
+*             XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
+*/
+#ifndef XHASHMAP_H
 #define XHASHMAP_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 条件编译开关（第③段）：XHashMap_ON 由 CXinYueConfig.h 统一定义，
+ * 此处仅兜底默认值，保证开关先于包含依赖生效。 */
+#ifndef XHashMap_ON
+#define XHashMap_ON 1
+#endif
+
+#if XHashMap_ON
+
 /**
 * @brief 包含必要的头文件
 * @note 提供函数回调、映射基类、哈希函数、迭代器等核心功能支持
 */
+#include "XContainer.h"           ///< 全局配置与容器基类（经其引入 CXinYueConfig.h）
 #include "XFunctionCallback.h"    ///< 包含函数回调相关定义
 #include "XMapBase.h"             ///< 包含映射基类XMapBase的定义，XHashMap继承自此基类
 #include "XCryptographic.h"       ///< 包含统一哈希算法定义
@@ -23,17 +39,18 @@ extern "C" {
 */
 #define DEFAULT_LOAD_FACTOR 0.75f
 /**
-* @brief XHashMap容器虚函数表大小定义
-* @note 基于映射基类XMapBase的虚函数表大小扩展，确定XHashMap所需的虚函数表容量
+* @brief XHashMap 虚函数表枚举定义（第⑥段）
+* @note 仅继承 XMapBase、不新增虚函数，按规范使用 EXTEND_END 直接以父类收尾
 */
-#define XHASHMAP_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XMapBase))
+XCLASS_DEFINE_BEGING(XHashMap)
+XCLASS_DEFINE_EXTEND_END(XHashMap, XMapBase)
 /**
 * @brief XHashMap结构体定义（哈希映射容器）
 * @details 继承自映射基类XMapBase，通过哈希表实现键值对存储，支持高效的插入、删除和查找操作
 */
 typedef struct XHashMap
 {
-	XMapBase m_class;  ///< 继承自映射基类，包含键值类型信息、比较函数及基础容器数据
+	XMapBase m_class;  ///< 第一个成员，由 XClass 统一管理，禁止手工修改；包含键值类型信息、比较函数及基础容器数据
 	XHashFunc m_hash;  ///< 哈希函数，用于计算键的哈希值，确定元素存储位置
 } XHashMap;
 // ------------------------------ 类初始化与虚函数表 ------------------------------
@@ -75,7 +92,7 @@ XHashMap* XHashMap_create_move(XHashMap* other);
 * @param keyType 键的类型（如int、XString等）
 * @param valType 值的类型（如float、XVariant等）
 * @param compare 键的比较函数
-* @return 调用XHashMap_create创建的XHashMap指针，哈希函数默认使用XHashMap_murmur3_32
+* @return 调用XHashMap_create_ex创建的XHashMap指针，哈希函数默认使用XCryptographicHash_XxHash64（经XCryptographicHash_function获取）
 * @note 自动推导键和值的类型大小，避免手动计算sizeof
 */
 #define XHashMap_Create(keyType, valType, compare) \
@@ -122,6 +139,7 @@ void XHashMap_setVariant_ref(XVariant* var, XHashMap* map);
 /**
 * @brief 插入键值对（拷贝语义，基础版本）
 * @note 继承自XMapBase的插入操作，通过宏重命名实现接口统一
+* @note 失败返回false时（参数无效或内存分配失败）哈希表不接管键/值，调用方保留所有权并负责释放；插入成功后键/值由哈希表接管，随条目按注册的释放回调（XMapBaseSetKeyDeinitMethod/XContainerSetDataDeinitMethod）释放。键已存在时覆盖旧值并返回true，不视为失败
 */
 #define XHashMap_insert_base XMapBase_insert_base
 // ------------------------------ 删除操作 ------------------------------
@@ -148,14 +166,8 @@ void XHashMap_setVariant_ref(XVariant* var, XHashMap* map);
 */
 #define XHashMap_find_base XMapBase_find_base
 // ------------------------------ 容器管理 ------------------------------
-/**
-* @brief 删除容器实例（基础版本）
-* @note 继承自XMapBase的删除操作，释放资源并销毁容器实例
-*/
-/**
-* @brief 反初始化容器（基础版本）
-* @note 继承自XMapBase的反初始化操作，释放资源但不释放容器本身
-*/
+/* 反初始化/删除已统一：直接使用 XClassDeinit/XClassDelete，
+ * 派生容器不再提供 *_deinit_base/*_delete_base 别名（见风格指南迁移说明）。 */
 /**
 * @brief 清空容器元素（基础版本）
 * @note 继承自XMapBase的清空操作，删除所有元素但保留容器结构
@@ -224,22 +236,24 @@ typedef XMapBase_predicate XHashMap_predicate;
  * @note Qt 映射: QHash::reserve(qsizetype)。仅在期望容量大于当前桶数时触发扩容；
  *       桶数按 2 的幂上取，负载因子上限为 DEFAULT_LOAD_FACTOR。
  */
-bool XHashMap_reserve_base(XHashMap* this_map, size_t size);
+bool XHashMap_reserve(XHashMap* this_map, size_t size);
 
 /**
  * @brief 释放多余桶空间（对齐 Qt QHash::squeeze）
  * @param this_map XHashMap 实例指针
  * @note Qt 映射: QHash::squeeze()。将桶数下调至与元素数量相当（不低于默认桶数 16）。
  */
-void XHashMap_squeeze_base(XHashMap* this_map);
-
-#ifdef __cplusplus
-}
-#endif
+void XHashMap_squeeze(XHashMap* this_map);
 
 /* XClass create API default-memory wrappers. */
 #undef XHashMap_create
 #define XHashMap_create(keyTypeSize, valTypeSize, hash, compare) \
 	XHashMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, keyTypeSize, valTypeSize, hash, compare, true)
 
-#endif // !XHASHMAP_H
+#endif /* XHashMap_ON */
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* XHASHMAP_H */

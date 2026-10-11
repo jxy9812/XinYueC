@@ -26,7 +26,7 @@ extern "C" {
 #error "Unsupported platform for ABA protection"
 #endif
 
-typedef uintptr_t tagged_ptr_t;
+typedef uintptr_t XTaggedPtr;
 
 #ifdef __cplusplus
 }

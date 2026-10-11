@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XBinaryTree.h"
 #include"XTestMenu.h"
 #include"XAction.h"
@@ -21,16 +21,16 @@ void XBinaryTreeTest()
 
 		XTreeNode* root = XBTreeNode_create(LPa++, sizeof(int));
 		XTreeNode* curNode = root;
-		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
+		*XTreeNode_child_ref(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
 		//curNode->leftChild = XBinaryTreeObject_creationInsertData(LPa++, sizeof(int));
-		curNode = *XTreeNode_getChildRef(curNode, XBTreeLChild);
-		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
-		*XTreeNode_getChildRef(curNode, XBTreeRChild) = XBTreeNode_create(LPa++,sizeof(int));
+		curNode = *XTreeNode_child_ref(curNode, XBTreeLChild);
+		*XTreeNode_child_ref(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
+		*XTreeNode_child_ref(curNode, XBTreeRChild) = XBTreeNode_create(LPa++,sizeof(int));
 
-		*XTreeNode_getChildRef(root, XBTreeRChild) = XBTreeNode_create(LPa++, sizeof(int));
-		curNode = *XTreeNode_getChildRef(root, XBTreeRChild);
-		*XTreeNode_getChildRef(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
-		*XTreeNode_getChildRef(curNode, XBTreeRChild) = XBTreeNode_create(LPa++, sizeof(int));
+		*XTreeNode_child_ref(root, XBTreeRChild) = XBTreeNode_create(LPa++, sizeof(int));
+		curNode = *XTreeNode_child_ref(root, XBTreeRChild);
+		*XTreeNode_child_ref(curNode, XBTreeLChild) = XBTreeNode_create(LPa++, sizeof(int));
+		*XTreeNode_child_ref(curNode, XBTreeRChild) = XBTreeNode_create(LPa++, sizeof(int));
 
 		//前序测试
 		XVector* TreePreorder = XBTree_TraversingToXVector(root, XBTreePreorder, NULL);
@@ -52,7 +52,7 @@ void XBinaryTreeTest()
 		XVector_iterator_for_each(TreePreorder, printTreeNode, NULL);
 		XPrintf("\n");
 		XClassDelete(TreePreorder);
-		XTree_delete(root, XTreeNode_delete, NULL,NULL, XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
+		XTreeNode_deleteTree(root, XTreeNode_delete, NULL,NULL, XMemory_method(XCLASS_DEFAULT_MEMORY_TYPE));
 #else
 		IS_ON_DEBUG(XVector_ON);
 #endif

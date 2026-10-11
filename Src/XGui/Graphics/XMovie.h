@@ -71,7 +71,7 @@ XVtable* XMovie_class_init(void);
 
 /**
  * @brief 初始化空 XMovie。
- * @param self 待初始化的对象指针；生命周期结束时必须调用 deinit_base。
+ * @param self 待初始化的对象指针；生命周期结束时必须调用 XClassDeinit。
  */
 void XMovie_init(XMovie* self);
 /**
@@ -140,24 +140,6 @@ XMovie* XMovie_create_file_ex(XMemoryType memory, const XString* fileName, const
  * @return 新对象指针；失败时返回 NULL。
  */
 XMovie* XMovie_create_file_ex_2(XMemoryType memory, const char* fileName, const char* format);
-
-/**
- * @brief 释放对象资源但保留对象存储，之后可再次 init。
- * @param self 待释放的对象指针。
- */
-/**
- * @brief 通过 XClass 虚析构入口释放对象资源。
- * @param self 待释放的对象指针。
- */
-/** @brief 通过 XClass 虚表释放动画资源。 @param self 待释放的动画对象指针。 */
-/**
- * @brief 删除堆对象；栈对象只能调用 deinit_base。
- * @param self 待删除的堆对象指针。
- */
-/** @brief 删除堆上的动画对象。 @param self 待删除的动画对象指针。 */
-/** @brief 深拷贝 XMovie；目标未初始化时会先初始化，源对象为空时不执行。 */
-/** @brief 移动 XMovie；目标未初始化时会先初始化，源对象移动后为空。 */
-/** @brief 通过虚表执行深拷贝。 */
 
 /**
  * @brief 返回当前支持的图像格式列表。

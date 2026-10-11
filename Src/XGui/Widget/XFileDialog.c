@@ -19,9 +19,9 @@
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XEvent.h"
-/* 真实弹窗依赖（对标 Qt QFileDialog 静态便捷函数的对话框组装路径）： */
-#include <stdio.h>             /* snprintf：路径拼接（残余位点见 deferred） */
-#include <string.h>            /* strrchr：父目录推导 */
+/* 真实弹窗依赖（对标 Qt QFileDialog 静态便捷函数的对话框组装路径）：
+   格式化与字符串原语统一经 XStringUtils（XSnprintf/XStrlen/XStrcmp/
+   XStrstr/XStrchr/XStrrchr，外部依赖约束），不引入 C 标准库头。 */
 #include "XSystem.h"           /* XSystem_environment：家目录回退/导航窗格 */
 #include "XDateTime.h"         /* xff_nowMs：单调毫秒（时间源统一经 XDateTime） */
 #include "XCoreApplication.h"  /* qApp 等价物：有应用实例才允许模态循环 */
@@ -273,12 +273,12 @@ void XFileDialog_setNameFilter(XFileDialog* self, const XString* filter)
      * （复扫-5 #31附3），文件通配解析也误混两段的括号模式。 */
     utf8 = filter ? XString_toUtf8(filter) : NULL;
     if (utf8 && utf8[0] && self->m_nameFilters) {
-        const char* sep = strstr(utf8, ";;") ? ";;" : "\n";
+        const char* sep = XStrstr(utf8, ";;") ? ";;" : "\n";
         size_t sepLen = (sep[1] == '\0') ? 1u : 2u;
         const char* p = utf8;
         for (;;) {
-            const char* hit = strstr(p, sep);
-            size_t len = hit ? (size_t)(hit - p) : strlen(p);
+            const char* hit = XStrstr(p, sep);
+            size_t len = hit ? (size_t)(hit - p) : XStrlen(p);
             if (len > 0) {
                 char* part =
                     (char*)XMemory_malloc(len + 1u,
@@ -554,7 +554,7 @@ static XWidget* xff_childByName(XDialog* dlg, const char* name)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, name);
     w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
-                                    XFindDirectChildrenOnly);
+                                    XFindChildOption_DirectChildrenOnly);
     XClassDeinit((XClass*)&tmp);
     return w;
 }
@@ -644,22 +644,22 @@ static bool xff_sortViewInstall(XFileDialog* dlg, XTreeWidget* view)
     if (!dlg || !view) return false;
     if (xff_sortViewVtable) return true; /* 已接管（串行会话理论不达）。 */
     src = XClassGetVtable(view);
-    if (!src || !src->data || src->capacity == 0) return false;
+    if (!src || !src->m_data || src->m_capacity == 0) return false;
     clone = (XVtable*)XMemory_malloc(sizeof(XVtable),
                                      XCLASS_DEFAULT_MEMORY_TYPE);
     if (!clone) return false;
-    *clone = *src; /* 拷贝 size/capacity/name 标志，data 换堆拷贝。 */
-    bytes = sizeof(void*) * (size_t)src->capacity;
-    clone->data = (void**)XMemory_malloc(bytes, XCLASS_DEFAULT_MEMORY_TYPE);
-    if (!clone->data) {
+    *clone = *src; /* 拷贝 m_size/m_capacity/m_name 标志，m_data 换堆拷贝。 */
+    bytes = sizeof(void*) * (size_t)src->m_capacity;
+    clone->m_data = (void**)XMemory_malloc(bytes, XCLASS_DEFAULT_MEMORY_TYPE);
+    if (!clone->m_data) {
         XFree_System(clone);
         return false;
     }
-    XMemcpy(clone->data, src->data, bytes);
-    clone->isStack = 0; /* data 为本侧堆拷贝（语义对齐堆模式虚表）。 */
+    XMemcpy(clone->m_data, src->m_data, bytes);
+    clone->m_isStack = 0; /* m_data 为本侧堆拷贝（语义对齐堆模式虚表）。 */
     orig = XVtable_at(clone, (size_t)EXWidget_MousePressEvent);
     if (!orig) {
-        XFree_System(clone->data);
+        XFree_System(clone->m_data);
         XFree_System(clone);
         return false;
     }
@@ -680,7 +680,7 @@ static void xff_sortViewUninstall(void)
     if (xff_sortView && xff_sortViewVtable)
         XClassGetVtable(xff_sortView) = XTreeWidget_class_init();
     if (xff_sortViewVtable) {
-        if (xff_sortViewVtable->data) XFree_System(xff_sortViewVtable->data);
+        if (xff_sortViewVtable->m_data) XFree_System(xff_sortViewVtable->m_data);
         XFree_System(xff_sortViewVtable);
     }
     xff_sortView = NULL;
@@ -1004,8 +1004,8 @@ static XStringList* xff_filterPatterns(const XString* filter)
     if (!out || !filter) return out;
     s = XString_toUtf8(filter);
     if (!s) return out;
-    lparen = strchr(s, '(');
-    rparen = lparen ? strchr(lparen, ')') : NULL;
+    lparen = XStrchr(s, '(');
+    rparen = lparen ? XStrchr(lparen, ')') : NULL;
     if (lparen && rparen && rparen > lparen) {
         dup = XStrdup(lparen + 1);
         if (dup && rparen > lparen + 1)
@@ -1017,7 +1017,7 @@ static XStringList* xff_filterPatterns(const XString* filter)
     savePtr = NULL;
     token = XStrtokReentrant(dup, " ;,", &savePtr);
     while (token) {
-        if (strchr(token, '*') || strchr(token, '?'))
+        if (XStrchr(token, '*') || XStrchr(token, '?'))
             XStringList_push_back_utf8(out, token);
         token = XStrtokReentrant(NULL, " ;,", &savePtr);
     }
@@ -1064,13 +1064,13 @@ static void xff_formatSize(char* buf, size_t cap, int64_t bytes)
 {
     if (!buf || cap == 0) return;
     if (bytes < 1024)
-        snprintf(buf, cap, "%lld B", (long long)bytes);
+        XSnprintf(buf, cap, "%lld B", (long long)bytes);
     else if (bytes < 1024 * 1024)
-        snprintf(buf, cap, "%.1f KB", (double)bytes / 1024.0);
+        XSnprintf(buf, cap, "%.1f KB", (double)bytes / 1024.0);
     else if (bytes < 1024LL * 1024 * 1024)
-        snprintf(buf, cap, "%.1f MB", (double)bytes / (1024.0 * 1024.0));
+        XSnprintf(buf, cap, "%.1f MB", (double)bytes / (1024.0 * 1024.0));
     else
-        snprintf(buf, cap, "%.1f GB",
+        XSnprintf(buf, cap, "%.1f GB",
                  (double)bytes / (1024.0 * 1024.0 * 1024.0));
 }
 
@@ -1277,7 +1277,7 @@ static void xff_listDir(const XString* dirStr, const XStringList* patterns,
 static XString* xff_joinPath(const XString* dir, const char* name)
 {
     const char* d = (dir && XString_toUtf8(dir)) ? XString_toUtf8(dir) : ".";
-    size_t n = strlen(d);
+    size_t n = XStrlen(d);
     if (n > 0 && d[n - 1] == '/')
         return XString_create_fmt_utf8("%s%s", d, name ? name : "");
     return XString_create_fmt_utf8("%s/%s", d, name ? name : "");
@@ -1304,7 +1304,7 @@ static XString* xff_parentOfDepth(const XString* dir, int depth)
     size_t len, end, cut;
     if (!dir || !(s = XString_toUtf8(dir)) || !s[0])
         return XString_create_utf8("/");
-    len = strlen(s);
+    len = XStrlen(s);
 
     /* Windows 盘符根："C:"、"C:\"、"C:/" —— 自身即顶，无法再上。 */
     if (len >= 2 && s[1] == ':') {
@@ -1446,8 +1446,8 @@ static bool xff_pathSameTailTrim(const char* a, const char* b)
 {
     size_t la, lb, i;
     if (!a || !b) return false;
-    la = strlen(a);
-    lb = strlen(b);
+    la = XStrlen(a);
+    lb = XStrlen(b);
     while (la > 0 && (a[la - 1] == '/' || a[la - 1] == '\\')) --la;
     while (lb > 0 && (b[lb - 1] == '/' || b[lb - 1] == '\\')) --lb;
     if (la != lb) return false;
@@ -1699,10 +1699,10 @@ static void xff_dirDisplayName(const XString* dir, char* buf, size_t cap)
     if (!buf || cap == 0) return;
     buf[0] = '\0';
     if (!dir || !(s = XString_toUtf8(dir)) || !s[0]) return;
-    base = strrchr(s, '/');
+    base = XStrrchr(s, '/');
     base = base ? base + 1 : s;
     if (!base[0]) base = s; /* 根目录 "/" 无 basename：回退全路径。 */
-    snprintf(buf, cap, "%s", base);
+    XSnprintf(buf, cap, "%s", base);
 }
 
 /** @brief 目录模式底部「文件夹:」只读框同步为当前目录显示名。
@@ -2291,7 +2291,7 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
          * 显示名（未点选，= cur）或条目全路径（绝对路径，单击回填）。
          * 绝对路径直接结算（可存在才采纳）；相对名按当前目录拼接
          * （手输/历史行为兼容）。 */
-        if (name && name[0] && strcmp(name, cur) != 0 && dlg->m_directory) {
+        if (name && name[0] && XStrcmp(name, cur) != 0 && dlg->m_directory) {
             XString* sel = (name[0] == '/')
                 ? XString_create_utf8(name)
                 : xff_joinPath(dlg->m_directory, name);
@@ -2325,7 +2325,7 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
             path = XString_create_utf8(name);
         } else if (dlg->m_acceptMode == XFileDialog_AcceptSave &&
                    dlg->m_defaultSuffix &&
-                   !strchr(name, '.')) {
+                   !XStrchr(name, '.')) {
             /* 保存模式默认后缀：名称无 '.' 时补 defaultSuffix（对标
              * QFileDialog defaultSuffix 语义；仅相对名补，绝对路径
              * 不改写）。 */
@@ -3104,7 +3104,7 @@ XString* XFileDialog_getSaveFileName(XWidget* parent, const XString* caption,
             if (!dirIsPath) {
                 /* 非现存目录：按“父目录 + 预填文件名”拆分（对标 Qt
                  * getSaveFileName 传入完整文件路径的行为）。 */
-                slash = strrchr(dutf, '/');
+                slash = XStrrchr(dutf, '/');
                 if (slash && slash != dutf) {
                     startDir = XString_create_fmt_utf8("%.*s",
                                                        (int)(slash - dutf),
@@ -3347,7 +3347,7 @@ static void xff_splitSaveHint(const XString* hint, XString** outDir,
         *outDir = xfiledialog_dupString(hint);
         return;
     }
-    slash = strrchr(utf, '/');
+    slash = XStrrchr(utf, '/');
     if (slash && slash != utf)
         *outDir = XString_create_fmt_utf8("%.*s", (int)(slash - utf), utf);
     *outPrefill = XString_create_utf8(slash ? slash + 1 : utf);

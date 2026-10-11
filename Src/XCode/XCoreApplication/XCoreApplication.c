@@ -1,4 +1,4 @@
-#include "XPrintf.h"
+﻿#include "XPrintf.h"
 #include "XCoreApplication.h"
 #include "XMemory.h"
 #include "XHashMap.h"
@@ -7,6 +7,7 @@
 #include "XHashSet.h"
 #include "XMutex.h"
 #include "XObject.h"
+#include "XObject_Protected.h"
 #include "XString.h"
 #include "XTimeWheelGroup.h"
 #include "XEventLoop.h"
@@ -17,6 +18,7 @@
 #include "XMultiPool.h"
 #include "XAbstractNativeEventFilter.h"
 #include "XSystem.h"
+#include "XStringUtils.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -33,8 +35,8 @@ static bool setuidAllowed = false;
 /* 当前 QCoreApplication::exec 对应的栈事件循环；用于安全退出当前循环。 */
 static XEventLoop* g_execLoop = NULL;
 
-bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
-bool VXCoreApplication_event(XObject* self, XEvent* e);
+static bool VXCoreApplication_notify(XObject* receiver, XEvent* e);
+static bool VXCoreApplication_event(XObject* self, XEvent* e);
 
 /* ==================== compressEvent 实现（对标 Qt 6.8 QCoreApplication::compressEvent） ==================== */
 /* Qt 6.8: compressEvent 是非虚函数 */
@@ -46,12 +48,12 @@ bool XCoreApplication_compressEvent(XEvent* event, XObject* receiver, void* post
 
     XVector* postList = (XVector*)postedEvents;
 
-    if (event->type == XEVENT_TYPE_TIMER) {
+    if (event->m_type == XEVENT_TYPE_TIMER) {
         int timerId = ((XTimerEvent*)event)->timerId;
         for (size_t i = 0; i < XVector_size_base(postList); ++i) {
             XPostEvent* pe = (XPostEvent*)XVector_at_base(postList, i);
-            if (pe && pe->event && pe->event->type == XEVENT_TYPE_TIMER && pe->receiver == receiver) {
-                if (((XTimerEvent*)pe->event)->timerId == timerId) {
+            if (pe && pe->m_event && pe->m_event->m_type == XEVENT_TYPE_TIMER && pe->m_receiver == receiver) {
+                if (((XTimerEvent*)pe->m_event)->timerId == timerId) {
                     XClassDelete(event);
                     return true;
                 }
@@ -60,10 +62,10 @@ bool XCoreApplication_compressEvent(XEvent* event, XObject* receiver, void* post
         return false;
     }
 
-    if (event->type == XEVENT_TYPE_QUIT) {
+    if (event->m_type == XEVENT_TYPE_QUIT) {
         for (size_t i = 0; i < XVector_size_base(postList); ++i) {
             XPostEvent* pe = (XPostEvent*)XVector_at_base(postList, i);
-            if (pe && pe->event && pe->event->type == XEVENT_TYPE_QUIT && pe->receiver == receiver) {
+            if (pe && pe->m_event && pe->m_event->m_type == XEVENT_TYPE_QUIT && pe->m_receiver == receiver) {
                 XClassDelete(event);
                 return true;
             }
@@ -74,7 +76,7 @@ bool XCoreApplication_compressEvent(XEvent* event, XObject* receiver, void* post
     return false;
 }
 
-void VXCoreApplication_deinit(XCoreApplication* app);
+static void VXCoreApplication_deinit(XCoreApplication* app);
 
 XVtable* XCoreApplication_class_init() {
     XVTABLE_INIT_DEFAULT(XCoreApplication)
@@ -115,7 +117,7 @@ void XCoreApplication_init(XCoreApplication* app, int argc, char** argv) {
     app->m_argc = argc;
     app->m_argv = argv;
     if (argc > 0 && argv && argv[0] && argv[0][0]) {
-        size_t n = strlen(argv[0]);
+        size_t n = XStrlen(argv[0]);
         char* keep = (char*)XMalloc_System(n + 1);
         if (keep) {
             memcpy(keep, argv[0], n + 1);
@@ -261,8 +263,8 @@ const XString* XCoreApplication_applicationDirPath(void)
     const char* lastBack;
 
     if (path) {
-        lastSlash = strrchr(path, '/');
-        lastBack = strrchr(path, '\\');
+        lastSlash = XStrrchr(path, '/');
+        lastBack = XStrrchr(path, '\\');
         if (lastBack && (!lastSlash || lastBack > lastSlash)) {
             lastSlash = lastBack;
         }
@@ -283,11 +285,11 @@ const XString* XCoreApplication_applicationDirPath(void)
     {
         char exePath[XSYSTEM_EXECUTABLE_PATH_MAX];
         if (XSystem_executableFilePath(exePath, sizeof(exePath))) {
-            char* slash = strrchr(exePath, '/');
-            char* back = strrchr(exePath, '\\');
-            char* last = (back && (!slash || back > slash)) ? back : slash;
+            const char* slash = XStrrchr(exePath, '/');
+            const char* back = XStrrchr(exePath, '\\');
+            const char* last = (back && (!slash || back > slash)) ? back : slash;
             if (last && last != exePath) {
-                *last = '\0';
+                exePath[last - exePath] = '\0';
                 return XString_create_utf8(exePath);
             }
         }
@@ -459,7 +461,7 @@ bool XCoreApplication_sendEvent(XObject* receiver, XEvent* event)
 {
     if (!receiver || !event) return false;
     /* Qt 6.8: sendEvent 设置 spontaneous = false，然后调用 notifyInternal2 */
-    event->spontaneous = 0;
+    event->m_spontaneous = 0;
     return XCoreApplication_notifyInternal2(receiver, event);
 }
 
@@ -468,7 +470,7 @@ bool XCoreApplication_sendEvent(XObject* receiver, XEvent* event)
 bool XCoreApplication_sendSpontaneousEvent(XObject* receiver, XEvent* event)
 {
     if (!receiver || !event) return false;
-    event->spontaneous = 1;
+    event->m_spontaneous = 1;
     return XCoreApplication_notifyInternal2(receiver, event);
 }
 
@@ -479,7 +481,7 @@ bool XCoreApplication_forwardEvent(XObject* receiver, XEvent* event, XEvent* ori
     if (!receiver || !event) return false;
     /* Qt 6.8: forwardEvent 复制源事件的 spontaneous 状态 */
     if (originatingEvent)
-        event->spontaneous = originatingEvent->spontaneous;
+        event->m_spontaneous = originatingEvent->m_spontaneous;
     return XCoreApplication_notifyInternal2(receiver, event);
 }
 
@@ -521,13 +523,13 @@ void XCoreApplication_postEvent(XObject* receiver, XEvent* event, int priority)
         }
     }
 
-    event->posted = true;
+    event->m_posted = true;
     XAtomic_fetch_add_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
 
     XPostEvent pe = { receiver, event, priority };
     if (!XVector_push_back_1_base(&td->m_postEventList, &pe)) {
         XAtomic_fetch_sub_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
-        event->posted = false;
+        event->m_posted = false;
         XMutex_unlock(td->m_mutex);
         XClassDelete(event);
         return;
@@ -554,9 +556,9 @@ void XCoreApplication_removePostedEvents(XObject* receiver, XEventType eventType
     if (!events) return;
     for_each_iterator(events, XVector, it) {
         XPostEvent* ePost = XVector_iterator_data(&it);
-        if (!ePost || !ePost->event) continue;
-        if (receiver && ePost->receiver != receiver) continue;
-        if (eventType && eventType != ePost->event->type) continue;
+        if (!ePost || !ePost->m_event) continue;
+        if (receiver && ePost->m_receiver != receiver) continue;
+        if (eventType && eventType != ePost->m_event->m_type) continue;
         XThreadData_discardPostedEvent(ePost);
     }
     XThreadData_push_front_list(events);
@@ -586,26 +588,26 @@ void XCoreApplication_sendPostedEvents(XObject* receiver, XEventType eventType)
         XPostEvent* ePost = (XPostEvent*)XVector_at_base(events, i);
         ++i;
 
-        if (!ePost || !ePost->event) continue;
-        if (receiver && ePost->receiver != receiver) {
+        if (!ePost || !ePost->m_event) continue;
+        if (receiver && ePost->m_receiver != receiver) {
             XAtomic_store_bool(&data->m_canWait, false, XAtomic_MemoryOrder_Release);
             continue;
         }
-        if (eventType && eventType != ePost->event->type) {
+        if (eventType && eventType != ePost->m_event->m_type) {
             XAtomic_store_bool(&data->m_canWait, false, XAtomic_MemoryOrder_Release);
             continue;
         }
 
         /* Qt 6.8: DeferredDelete 事件处理 — 不能发送时重新投递到线程队列 */
-        if (ePost->event->type == XEVENT_TYPE_DEFERRED_DELETE) {
+        if (ePost->m_event->m_type == XEVENT_TYPE_DEFERRED_DELETE) {
             if (!XDeferredDeleteEvent_shouldDeliver(
-                    (XDeferredDeleteEvent*)ePost->event,
+                    (XDeferredDeleteEvent*)ePost->m_event,
                     data,
                     eventType == XEVENT_TYPE_DEFERRED_DELETE)) {
                 /* Qt 6.8: 复制事件并重新投递到线程的 postEventList（原始队列）
                  * 将原条目 event 置空，复制的事件重新添加到队列尾部 */
                 XPostEvent pe_copy = *ePost;
-                ePost->event = NULL;  // 原条目置空，避免后续处理
+                ePost->m_event = NULL;  // 原条目置空，避免后续处理
 
                 /* 重新添加到线程数据的 postEventList */
                 XMutex_lock(data->m_mutex);
@@ -750,9 +752,9 @@ void XCoreApplication_setQuitLockEnabled(bool enabled)
 
 /* ==================== VXCoreApplication_event（对标 Qt 6.8 QCoreApplication::event） ==================== */
 
-bool VXCoreApplication_event(XObject* self, XEvent* e)
+static bool VXCoreApplication_event(XObject* self, XEvent* e)
 {
-    if (e->type == XEVENT_TYPE_QUIT) {
+    if (e->m_type == XEVENT_TYPE_QUIT) {
         XCoreApplication_exit(0);
         return true;
     }
@@ -761,7 +763,7 @@ bool VXCoreApplication_event(XObject* self, XEvent* e)
 
 /* ==================== VXCoreApplication_notify（对标 Qt 6.8 QCoreApplication::notify） ==================== */
 
-bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
+static bool VXCoreApplication_notify(XObject* receiver, XEvent* event)
 {
     if (!receiver || !event) return true;
     if (is_app_closing)
@@ -822,7 +824,7 @@ done:
 
 /* ==================== VXCoreApplication_deinit ==================== */
 
-void VXCoreApplication_deinit(XCoreApplication* app)
+static void VXCoreApplication_deinit(XCoreApplication* app)
 {
     if (!app) return;
 
@@ -858,6 +860,25 @@ void VXCoreApplication_deinit(XCoreApplication* app)
         XClassDelete(td->m_eventDispatcher);
         td->m_eventDispatcher = NULL;
     }
+
+#if XTHREAD_ON
+    /* 释放主线程对象：g_mainThread 由 init 经 XThread_createMainThread 堆
+       分配且无其他释放点，此处不释放则每次销毁重建实例都泄漏一个 XThread，
+       旧线程还会永久残留 XTask 线程注册表。XThreadData 归 TLS/
+       main_thread_data 所有、跨实例复用（与 init 的无 XTHREAD 分支一致），
+       按 VXThread_run 收尾的同一做法先 detach 再删，防止平台层
+       VXThread_deinit 将仍在服役的主线程数据一并删除；同时解除
+       XThreadData->m_thread 对本线程对象的反向引用，避免悬挂（下次
+       XThreadData_initMainThread 检测到 m_thread 为空会重新绑定新实例）。 */
+    if (g_mainThread) {
+        XThreadData* mainData = g_mainThread->m_data;
+        if (mainData && mainData->m_thread == g_mainThread)
+            mainData->m_thread = NULL;
+        g_mainThread->m_data = NULL;
+        XClassDelete((XClass*)g_mainThread);
+        g_mainThread = NULL;
+    }
+#endif
 
     XClass_Deinit_Parent(XObject, app);
 

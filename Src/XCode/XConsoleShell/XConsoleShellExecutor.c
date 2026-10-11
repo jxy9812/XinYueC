@@ -17,6 +17,7 @@
 #include "XProcess.h"
 #include "XDeviceFile.h"
 #include "XMemory.h"
+#include "XStringUtils.h"
 #include <string.h>
 
 static XFd xexec_open_file(const XString* path, int mode, int* error)
@@ -139,19 +140,19 @@ static bool xexec_parse_redirects(int argc, const char* const* argv,
     *append = false;
     for (i = 0; i < argc; ++i) {
 #if XCONSOLE_SHELL_REDIRECT_ON
-        if ((!strcmp(argv[i], "--stdin") || !strcmp(argv[i], "<")) && i + 1 < argc) {
+        if ((!XStrcmp(argv[i], "--stdin") || !XStrcmp(argv[i], "<")) && i + 1 < argc) {
             *stdinPath = argv[++i];
             continue;
         }
-        if ((!strcmp(argv[i], "--stdout") || !strcmp(argv[i], ">")) && i + 1 < argc) {
+        if ((!XStrcmp(argv[i], "--stdout") || !XStrcmp(argv[i], ">")) && i + 1 < argc) {
             *stdoutPath = argv[++i];
             continue;
         }
-        if ((!strcmp(argv[i], "--stderr") || !strcmp(argv[i], "2>")) && i + 1 < argc) {
+        if ((!XStrcmp(argv[i], "--stderr") || !XStrcmp(argv[i], "2>")) && i + 1 < argc) {
             *stderrPath = argv[++i];
             continue;
         }
-        if (!strcmp(argv[i], "--append")) {
+        if (!XStrcmp(argv[i], "--append")) {
             *append = true;
             continue;
         }
@@ -302,10 +303,10 @@ static int xexec_run_pipe(XConsoleShell* shell, XConsoleShellSession* session,
     int producerCount;
     int consumerCount;
     int result = XConsoleResult_Failed;
-    if (!shell || !session || !argv || argc < 4 || strcmp(argv[0], "--pipe") != 0)
+    if (!shell || !session || !argv || argc < 4 || XStrcmp(argv[0], "--pipe") != 0)
         return XConsoleResult_InvalidArgument;
     for (i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--") == 0) {
+        if (XStrcmp(argv[i], "--") == 0) {
             separator = i;
             break;
         }
@@ -374,11 +375,11 @@ static int xexec_run(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     if (argc < 1) return XConsoleResult_InvalidArgument;
 #if XCONSOLE_SHELL_PROCESS_ASYNC_ON
-    if (strcmp(argv[0], "--async") == 0)
+    if (XStrcmp(argv[0], "--async") == 0)
         return xexec_start_async(shell, session, argc, argv);
 #endif
 #if XCONSOLE_SHELL_PIPE_ON
-    if (strcmp(argv[0], "--pipe") == 0)
+    if (XStrcmp(argv[0], "--pipe") == 0)
         return xexec_run_pipe(shell, session, argc, argv);
 #endif
     if (!xexec_parse_redirects(argc, argv, childArgs, &childCount,

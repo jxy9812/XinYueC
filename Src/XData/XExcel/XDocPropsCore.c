@@ -12,7 +12,7 @@
 
 
 /* XMap 键是 XString*，直接复用 XString 的字典序比较。 */
-static int32_t str_compare(const void* lhs, const void* rhs)
+static int32_t XDocPropsCore_str_compare(const void* lhs, const void* rhs)
 {
     XString* a = *(XString**)lhs;
     XString* b = *(XString**)rhs;
@@ -22,15 +22,15 @@ static int32_t str_compare(const void* lhs, const void* rhs)
     return XString_compare(a, b);
 }
 
-static bool is_author_alias(const XString* name)
+static bool XDocPropsCore_is_author_alias(const XString* name)
 {
     return name && XString_equals_utf8(name, "author", XChar_CaseSensitive);
 }
 
-static bool property_name_equals(const XString* stored, const XString* requested)
+static bool XDocPropsCore_property_name_equals(const XString* stored, const XString* requested)
 {
     if (!stored || !requested) return false;
-    if (is_author_alias(requested))
+    if (XDocPropsCore_is_author_alias(requested))
         return XString_equals_utf8(stored, "creator", XChar_CaseSensitive);
     return XString_equals(stored, requested, XChar_CaseSensitive);
 }
@@ -41,7 +41,7 @@ XDocPropsCore* XDocPropsCore_create(XAbstractOOXmlFile_CreateFlag flag)
     if (!self) return NULL;
     memset(self, 0, sizeof(XDocPropsCore));
     XAbstractOOXmlFile_init(&self->m_base, flag);
-    self->m_properties = XMap_create(sizeof(XString*), sizeof(XString*), str_compare);
+    self->m_properties = XMap_Create(XString*, XString*, XDocPropsCore_str_compare);
     return self;
 }
 
@@ -76,21 +76,26 @@ bool XDocPropsCore_setProperty(XDocPropsCore* self, const XString* name, const X
     for (; !XMap_iterator_isEnd(&it); XMap_iterator_add(self->m_properties, &it)) {
         XPair* pair = XMap_iterator_data(&it);
         XString* key = pair ? *(XString**)XPair_first(pair) : NULL;
-        if (property_name_equals(key, name)) {
+        if (XDocPropsCore_property_name_equals(key, name)) {
             XString* current = *(XString**)XPair_second(pair);
             return current && XString_assign(current, value);
         }
     }
-    XString* keyStr = is_author_alias(name)
+    XString* keyStr = XDocPropsCore_is_author_alias(name)
         ? XString_create_utf8("creator") : XString_create_copy(name);
     if (!keyStr) return false;
     XString* valStr = XString_create_copy(value);
     if (!valStr) { XClassDelete(keyStr); return false; }
-    XMap_insert_base(self->m_properties, &keyStr, &valStr);
+    /* 插入失败（仅 OOM 路径）时 map 未取得键值所有权，需自行释放避免泄漏 */
+    if (!XMap_insert_base(self->m_properties, &keyStr, &valStr)) {
+        XClassDelete(keyStr);
+        XClassDelete(valStr);
+        return false;
+    }
     return true;
 }
 
-static void clear_properties(XDocPropsCore* self)
+static void XDocPropsCore_clear_properties(XDocPropsCore* self)
 {
     if (!self || !self->m_properties) return;
     XMap_iterator it = XMap_begin(self->m_properties);
@@ -117,7 +122,7 @@ const XString* XDocPropsCore_property(const XDocPropsCore* self, const XString* 
         if (pair)
         {
             XString* key = *(XString**)XPair_first(pair);
-            if (property_name_equals(key, name))
+            if (XDocPropsCore_property_name_equals(key, name))
             {
                 XString* val = *(XString**)XPair_second(pair);
                 return val;
@@ -143,7 +148,13 @@ int XDocPropsCore_propertyNames(const XDocPropsCore* self, XString*** names)
         XPair* pair = XMap_iterator_data(&it);
         if (pair) {
             XString* key = *(XString**)XPair_first(pair);
-            XString* ks = XString_create_copy(key);
+            XString* ks = key ? XString_create_copy(key) : NULL;
+            if (!ks) {
+                for (int i = 0; i < idx; ++i) XClassDelete((*names)[i]);
+                XFree_System(*names);
+                *names = NULL;
+                return 0;
+            }
             (*names)[idx++] = ks;
         }
     }
@@ -186,7 +197,7 @@ bool XDocPropsCore_loadFromXmlFile(XDocPropsCore* self, const XString* filePath)
     return ok;
 }
 
-static const char* qualified_property_name(const XString* name)
+static const char* XDocPropsCore_qualified_property_name(const XString* name)
 {
     if (!name) return NULL;
     if (XString_equals_utf8(name, "title", XChar_CaseSensitive) ||
@@ -239,7 +250,7 @@ bool XDocPropsCore_saveToXmlData(const XDocPropsCore* self, uint8_t** outData, s
         XString* key = pair ? *(XString**)XPair_first(pair) : NULL;
         XString* value = pair ? *(XString**)XPair_second(pair) : NULL;
         if (!key || !value) continue;
-        const char* qualified = qualified_property_name(key);
+        const char* qualified = XDocPropsCore_qualified_property_name(key);
         XXmlStreamWriter_writeStartElement_utf8(writer, qualified);
         if (XString_equals_utf8(key, "created", XChar_CaseSensitive) ||
             XString_equals_utf8(key, "modified", XChar_CaseSensitive))
@@ -274,7 +285,7 @@ bool XDocPropsCore_loadFromXmlData(XDocPropsCore* self, const uint8_t* data, siz
     }
     XXmlStreamReader_addData(reader, bytes);
     XClassDelete(bytes);
-    clear_properties(self);
+    XDocPropsCore_clear_properties(self);
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
         if (token != XXmlStream_StartElement) continue;
@@ -286,13 +297,13 @@ bool XDocPropsCore_loadFromXmlData(XDocPropsCore* self, const uint8_t* data, siz
         if (!key || !value || !XDocPropsCore_setProperty(self, key, value)) {
             if (key) XClassDelete(key);
             XClassDelete(reader);
-            clear_properties(self);
+            XDocPropsCore_clear_properties(self);
             return false;
         }
         XClassDelete(key);
     }
     bool ok = !XXmlStreamReader_hasError(reader);
     XClassDelete(reader);
-    if (!ok) clear_properties(self);
+    if (!ok) XDocPropsCore_clear_properties(self);
     return ok;
 }

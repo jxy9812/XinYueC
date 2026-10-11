@@ -70,7 +70,7 @@ static bool cacheThreadAllowed(void)
  */
 typedef struct XPixmapCacheLock
 {
-    XAtomic_bool m_state;       /**< 锁状态：false=未锁定，true=已锁定 */
+    XAtomic_Bool m_state;       /**< 锁状态：false=未锁定，true=已锁定 */
 }XPixmapCacheLock;
 
 static XPixmapCacheLock g_cacheLock = { { false } };
@@ -138,13 +138,13 @@ static struct
  */
 typedef struct XPixmapCacheKeyData
 {
-    XAtomic_int32_t  m_refCount;    /**< 引用计数（缓存项持有 1 份 + 每个键持有 1 份） */
-    XAtomic_uint32_t m_serial;      /**< 全局唯一序列号（原子分配，用于哈希） */
-    XAtomic_bool     m_isValid;     /**< 是否有效（原子访问） */
+    XAtomic_Int32  m_refCount;    /**< 引用计数（缓存项持有 1 份 + 每个键持有 1 份） */
+    XAtomic_Uint32 m_serial;      /**< 全局唯一序列号（原子分配，用于哈希） */
+    XAtomic_Bool     m_isValid;     /**< 是否有效（原子访问） */
 }XPixmapCacheKeyData;
 
 /** @brief 全局键序列号计数器（原子分配，保证多线程唯一性）。 */
-static XAtomic_uint32_t g_keySerialCounter = { 1u };
+static XAtomic_Uint32 g_keySerialCounter = { 1u };
 
 /**
  * @brief      原子分配下一个键序列号（0 不会被分配）

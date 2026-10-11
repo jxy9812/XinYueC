@@ -304,7 +304,7 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits)
 
 XModbusDataUnitMap* XModbusDataUnitMap_create()
 {
-	XModbusDataUnitMap* map = XMap_Create(XModbusRegisterType, XModbusDataUnit,int_compare);
+	XModbusDataUnitMap* map = XMap_Create(XModbusRegisterType, XModbusDataUnit,Xint_compare);
 	if (map)
 	{
 		XContainerSetDataCopyMethod(map, XClass_copy_base);
@@ -320,6 +320,7 @@ void VXModbusDataUnit_move(XModbusDataUnit* unit, XModbusDataUnit* src)
 	
 	// 检查是否需要初始化
 	if (XClassIsVtableNull(unit)) {
+		XModbusDataUnit_init(unit);
 		unit->m_type = src->m_type;
 		unit->m_startAddress = src->m_startAddress;
 		//unit->m_valueCount = src->m_valueCount;

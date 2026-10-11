@@ -3,12 +3,12 @@
 * @brief XSetBase迭代器头文件
 * @details 定义XSetBase容器的迭代器结构，为XSet、XHashSet等派生类提供统一的迭代器基础
 */
-#include"CXinYueConfig.h"
 #if !defined(XSETBASE_ITERATOR_H)
 #define XSETBASE_ITERATOR_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include"CXinYueConfig.h"
 #include"XContainer_iterator.h"
 #include"XFunctionCallback.h"
 

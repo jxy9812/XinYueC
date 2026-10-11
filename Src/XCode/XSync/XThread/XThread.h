@@ -21,7 +21,7 @@ typedef struct XThread XThread;
  */
 typedef enum 
 {
-    XThread_err=-1,                 /**< 错误哨兵值（无效优先级） */
+    XThread_InvalidPriority=-1,     /**< 错误哨兵值（无效优先级） */
     XThread_IdlePriority,           /**< 空闲优先级（仅在无其它线程运行时调度） */
     XThread_LowestPriority,         /**< 最低优先级 */
     XThread_LowPriority,            /**< 低优先级 */
@@ -55,7 +55,7 @@ typedef void (*XThreadFunc)(XThread*,XVarList*);
  */
 typedef struct XThread
 {
-    XObject m_base;                           /**< 基类（对标 QObject） */
+    XObject m_class;                          /**< 第一个成员、由 XClass 管理、禁止手工修改；基类（对标 QObject） */
     uint8_t  m_finished:1;                    /**< 线程是否已结束 */
     uint8_t  m_interruptionRequested:1;       /**< 是否请求中断线程（对标 QThread::isInterruptionRequested） */
     uint8_t  m_running:1;                     /**< 线程是否正在运行 */
@@ -244,7 +244,7 @@ bool XThread_terminate(XThread* thread);
  */
 #define XThread_deinitLater XObject_deinitLater
 
-Signals
+XSIGNALS
 
 /**
  * @brief 线程结束信号（对标 QThread::finished）
@@ -303,8 +303,9 @@ XHandle XThread_currentThreadId();
  *
  * 对标 Qt 6.8 thread_local currentThreadData + pthreadTlsKey（带析构函数）。
  * Posix: pthread_key_create 带析构，线程退出自动清理 adopted 线程数据；
- * Win32: TlsAlloc（无析构，需显式 clearCurrentThreadData）；
- * FreeRTOS: no-op。
+ * Win32: FlsAlloc 带析构回调（XThreadData_destroyTlsData），线程退出自动清理 adopted 线程数据；
+ * FreeRTOS: TCB 原生槽 + portCLEAN_UP_TCB 登记表回收（FreeRTOSConfig.h 定义钩子，
+ *           实现见 XThreadFreeRTOS.c），线程退出自动清理 adopted 线程数据。
  * @param p 要设置的 XThreadData 指针，NULL 表示清除当前线程 TLS
  */
 void  XThreadStorage_set(void* p);

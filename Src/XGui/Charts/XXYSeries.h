@@ -1,4 +1,15 @@
-﻿#ifndef XXYSERIES_H
+﻿/**
+ * @file       XXYSeries.h
+ * @brief      XXYSeries XY 点序列基类（对标 Qt Charts 6.8 QXYSeries）。
+ * @details    继承 XAbstractSeries；承载点数组与增删改查、点外观
+ *             （颜色/线宽/标记尺寸/点标签）、点选择以及点击/悬停等
+ *             交互信号；QLineSeries/QScatterSeries/QSplineSeries 均
+ *             继承本类。
+ * @note       模块总开关 XCHARTS_ON；实现只依赖 XinYueC 抽象层，
+ *             禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ * @author     XinYueC 团队
+ ******************************************************************************/
+#ifndef XXYSERIES_H
 #define XXYSERIES_H
 #ifdef __cplusplus
 extern "C" {
@@ -25,31 +36,40 @@ XCLASS_DEFINE_EXTEND_END(XXYSeries, XAbstractSeries)
  */
 typedef struct XXYSeries
 {
-    XAbstractSeries m_base;      /**< 基类成员；必须是第一个。 */
+    XAbstractSeries m_base;      /**< 基类成员；必须是第一个（派生系列
+                                      强转仅依赖首成员，布局冻结）。 */
+
+    /* ---- 8 字节对齐组：指针 / 双精度（对齐分组前移，消除原布局
+     *      0xc4/0xd9/0xe9/0x101/0x13d/0x144 空洞；成员访问一律按名，
+     *      无位置初始化/offsetof 依赖） ---- */
     XPointF* m_points;           /**< 点数组（堆）。 */
-    int m_count;                 /**< 点数。 */
-    int m_capacity;              /**< 点容量。 */
-    uint32_t m_color;            /**< 线/点色（0=使用主题色）。 */
-    double m_width;              /**< 线宽（像素，默认 2）。 */
-    double m_markerSize;         /**< 标记尺寸（默认 8）。 */
-    bool m_pointsVisible;        /**< 点标记可见（默认 false）。 */
     XString* m_pointLabelsFormat; /**< 点标签格式（对象拥有；默认 "@xPoint, @yPoint"）。 */
-    bool m_pointLabelsVisible;   /**< 点标签可见（默认 false）。 */
-    uint32_t m_pointLabelsColor; /**< 点标签颜色（0=默认）。 */
     bool* m_selected;            /**< 点选择位图（堆；NULL=全未选）。 */
-    uint32_t m_brush;            /**< 画刷颜色（0=透明；对标 brush）。 */
-    uint32_t m_selectedColor;    /**< 选中点颜色（0=默认）。 */
-    bool m_pointLabelsClipping;  /**< 点标签裁剪（默认 true）。 */
     XString* m_pointLabelsFontFamily; /**< 点标签字体族（对象拥有）。 */
-    int m_pointLabelsFontSize;   /**< 点标签字号（磅；0=默认）。 */
     const XPixmap* m_lightMarker; /**< 普通点标记图像（借用）。 */
     const XPixmap* m_selectedLightMarker; /**< 选中点标记图像（借用）。 */
     uint32_t* m_pointColors;     /**< 点级颜色配置（堆；下标=点）。 */
     double* m_pointSizes;        /**< 点级尺寸配置（堆；下标=点）。 */
-    int m_pointConfigCapacity;   /**< 点级配置容量。 */
-    bool m_bestFitVisible;       /**< 最佳拟合线可见（默认 false）。 */
-    uint32_t m_bestFitColor;     /**< 最佳拟合线颜色（0=默认）。 */
+    double m_width;              /**< 线宽（像素，默认 2）。 */
+    double m_markerSize;         /**< 标记尺寸（默认 8）。 */
     double m_bestFitWidth;       /**< 最佳拟合线宽（默认 2）。 */
+
+    /* ---- 4 字节对齐组：计数与颜色 ---- */
+    int m_count;                 /**< 点数。 */
+    int m_capacity;              /**< 点容量。 */
+    uint32_t m_color;            /**< 线/点色（0=使用主题色）。 */
+    uint32_t m_pointLabelsColor; /**< 点标签颜色（0=默认）。 */
+    uint32_t m_brush;            /**< 画刷颜色（0=透明；对标 brush）。 */
+    uint32_t m_selectedColor;    /**< 选中点颜色（0=默认）。 */
+    int m_pointLabelsFontSize;   /**< 点标签字号（磅；0=默认）。 */
+    int m_pointConfigCapacity;   /**< 点级配置容量。 */
+    uint32_t m_bestFitColor;     /**< 最佳拟合线颜色（0=默认）。 */
+
+    /* ---- 1 字节标志组（尾部填充；全部无取址使用） ---- */
+    bool m_pointsVisible;        /**< 点标记可见（默认 false）。 */
+    bool m_pointLabelsVisible;   /**< 点标签可见（默认 false）。 */
+    bool m_pointLabelsClipping;  /**< 点标签裁剪（默认 true）。 */
+    bool m_bestFitVisible;       /**< 最佳拟合线可见（默认 false）。 */
 } XXYSeries;
 
 XVtable* XXYSeries_class_init(void);
@@ -70,10 +90,6 @@ void XXYSeries_init(XXYSeries* self);
  */
 XXYSeries* XXYSeries_create_ex(XMemoryType memory);
 #define XXYSeries_create() XXYSeries_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-
-/** @brief 析构入口（查表分派父类析构）。 */
-
-/** @brief 删除堆上序列（查表分派析构并释放内存）。 */
 
 /* ==================== 数据操作（对标 QXYSeries） ==================== */
 

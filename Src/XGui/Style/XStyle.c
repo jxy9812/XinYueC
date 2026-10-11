@@ -1,4 +1,4 @@
-#include "XStyle.h"
+﻿#include "XStyle.h"
 #include "XStringUtils.h"
 #include "XAlgorithm.h"
 #include "XCommonStyle.h"

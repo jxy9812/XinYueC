@@ -148,7 +148,7 @@
 
 库内**有**日志设施，三件套：
 
-1. **XPrintf**（`Src/XCode/XPrintf/XPrintf.h`）——stdout 打印：`int XPrintf(const char* format, ...);`（:67）、`int XPrintf_line(const char* prefix, const char* format, ...);`（:69）、`int XPrintf_2(const XString*); XPrintf_3(const char*); XPrintf_4(const XByteArray*); XPrintf_5(XChar*);`（:75-87）。支持输出重定向栈 `XPrintf_outputPush/XPrintf_outputPop`（:49,57）。
+1. **XPrintf**（`Src/XCode/XPrintf/XPrintf.h`）——stdout 打印：`int XPrintf(const char* format, ...);`（:67）、`int XPrintf_line(const char* prefix, const char* format, ...);`（:69）、`int XPrintf_string(const XString*); XPrintf_3(const char*); XPrintf_4(const XByteArray*); XPrintf_5(XChar*);`（:75-87）。支持输出重定向栈 `XPrintf_outputPush/XPrintf_outputPop`（:49,57）。
 2. **XDebug**（`Src/XCode/XDebug/XDebug.h`）——带位置/类型的调试流：`XDebug* XDebug_create_with_location_(const char* file, const char* function, int line);`（:39）、`XDebug* XDebug_printf_(XDebug*, const char* format, ...);`（:60）、类型化输出 `XDebug_int64_/double_/ptr_/hex64_` 等（:66-81）；流式宏 `XDebug_start_stream … XDebug_end_stream`（:102-140，仅 `DEBUG_ON || _DEBUG` 生效，:99）。
 3. **XInfo**（`Src/XCode/XDebug/XInfo.h`）——自动携带 `__FILE__/__FUNCTION__/__LINE__` 的信息日志流宏 `XInfo_start_stream … XInfo_end_stream`。
 

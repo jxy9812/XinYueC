@@ -64,7 +64,7 @@ void XTestMenu_setTitle(XTestMenu* menu, const char* title)
 {
 	if (menu == NULL)
 		return;
-	XTestMenuData* data=XTreeNode_getData(menu);
+	XTestMenuData* data = &XTreeNode_GetData(menu, XTestMenuData);
 	XTestMenuData_setTitle(data,title);
 }
 
@@ -72,7 +72,7 @@ const char* XTestMenu_getTitle(XTestMenu* menu)
 {
 	if (menu == NULL)
 		return NULL;
-	XTestMenuData* data = XTreeNode_getData(menu);
+	const XTestMenuData* data = (const XTestMenuData*)XTreeNode_data_const(menu);
 	return data->title;
 }
 
@@ -80,7 +80,7 @@ XAction* XTestMenu_addAction(XTestMenu* menu, const char* text)
 {
 	if (menu == NULL)
 		return NULL;
-	XTestMenuData* data = XTreeNode_getData(menu);
+	const XTestMenuData* data = (const XTestMenuData*)XTreeNode_data_const(menu);
 	XAction* action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, text);
 	if (action == NULL)
 		return NULL;
@@ -99,14 +99,14 @@ void XTestMenu_setActionFunction(XAction* action, XTestMenuActionFunc func)
 	if (action == NULL)
 		return;
 	value = func ? XVariant_create_ptr((void*)func) : NULL;
-	XAction_setData(action, value);
+	XAction_setData_move(action, value);
 }
 
 bool XTestMenu_removeAction(XTestMenu* menu, XAction* action)
 {
 	if (menu == NULL||action==NULL)
 		return false;
-	XTestMenuData* data = XTreeNode_getData(menu);
+	const XTestMenuData* data = (const XTestMenuData*)XTreeNode_data_const(menu);
 	int64_t index= XVector_indexOf(data->actions,&action,0);
 	if (index == -1)
 		return false;
@@ -119,7 +119,7 @@ const XVector* XTestMenu_getActions(XTestMenu* menu)
 {
 	if(menu==NULL)
 		return NULL;
-	XTestMenuData* data = XTreeNode_getData(menu);
+	const XTestMenuData* data = (const XTestMenuData*)XTreeNode_data_const(menu);
 	return data->actions;
 }
 
@@ -127,7 +127,6 @@ bool XTestMenu_addMenu(XTestMenu* menu, XTestMenu* newMenu)
 {
 	if (menu == NULL||newMenu==NULL)
 		return false;
-	XTestMenuData* data = XTreeNode_getData(menu);
 	if (XHTreeNode_addNode(menu, newMenu))
 	{
 		return true;
@@ -160,7 +159,6 @@ XVector* XTestMenu_getMenus(XTestMenu* menu)
 	XHTreeNode* child = XHTreeNode_GetFirstChild(menu);
 	while (child)
 	{
-		XTestMenuData* data = XTreeNode_getData(child);
 		XVector_push_back_1_base(v, &child);
 		child = XHTreeNode_GetNextSibling(child);
 	}
@@ -191,7 +189,7 @@ void XTestMenuData_init(XTestMenuData* data, const char* title)
 	}
 	data->title = str;
 	data->actions = XVector_create(sizeof(XAction*));
-	XContainerSetCompare(data->actions, uintptr_t_compare);
+	XContainerSetCompare(data->actions, Xuintptr_t_compare);
 }
 
 void XTestMenuData_setTitle(XTestMenuData* data, const char* title)

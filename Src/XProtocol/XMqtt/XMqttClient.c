@@ -2,7 +2,7 @@
 #if XPROTOCOL_ON
 #if XMQTT_ON
 #if XMQTT_CLIENT_ON
-#include "XMqttClient_p.h"
+#include "XMqttClient_Protected.h"
 #include "XTcpSocket.h"
 #include "XRandomGenerator.h"
 #include "XMemory.h"
@@ -171,7 +171,7 @@ void XMqttClient_setTransport(XMqttClient* client, void* device,
     if (!client || client->m_state != XMqttClient_Disconnected ||
         transport < XMqttClient_IODevice || transport > XMqttClient_SecureSocket) return;
     if (client->m_transport == device && client->m_transportType == transport) return;
-    if (client->m_private && client->m_private->ownsTransport && client->m_transport) {
+    if (client->m_private && client->m_private->m_ownsTransport && client->m_transport) {
         mqtt_detach_transport(client, client->m_transport);
         XObject_setParent((XObject*)client->m_transport, NULL);
         XObject_deleteLater((XObject*)client->m_transport);
@@ -181,7 +181,7 @@ void XMqttClient_setTransport(XMqttClient* client, void* device,
     }
     client->m_transport = device;
     client->m_transportType = transport;
-    if (client->m_private) client->m_private->ownsTransport = false;
+    if (client->m_private) client->m_private->m_ownsTransport = false;
     if (device) mqtt_attach_transport(client, device);
 }
 
@@ -255,7 +255,8 @@ bool XMqttClient_requestPing(XMqttClient* client)
 
 void XMqttClient_connectToHost_base(XMqttClient* client)
 {
-    if (!client) return;
+    if (ISNULL(client, "") || ISNULL(XClassGetVtable(client), ""))
+        return;
     void (*func)(XMqttClient*) = XClassGetVirtualFunc(
         client, EXMqttClient_ConnectToHost, void (*)(XMqttClient*));
     if (func) func(client);
@@ -270,17 +271,18 @@ void XMqttClient_connectToHostEncrypted(XMqttClient* client,
         if (!socket) { XMqttProtocol_fail(client, XMqttClient_TransportInvalid); return; }
         XMqttClient_setTransport(client, socket, XMqttClient_SecureSocket);
         XObject_setParent((XObject*)socket, client);
-        client->m_private->ownsTransport = true;
+        client->m_private->m_ownsTransport = true;
     }
     if (sslConfig)
         XSslSocket_setSslConfiguration((XSslSocket*)client->m_transport, sslConfig);
-    client->m_private->encryptedRequested = true;
+    client->m_private->m_encryptedRequested = true;
     XMqttClient_connectToHost_base(client);
 }
 
 void XMqttClient_disconnectFromHost_base(XMqttClient* client)
 {
-    if (!client) return;
+    if (ISNULL(client, "") || ISNULL(XClassGetVtable(client), ""))
+        return;
     void (*func)(XMqttClient*) = XClassGetVirtualFunc(
         client, EXMqttClient_DisconnectFromHost, void (*)(XMqttClient*));
     if (func) func(client);
@@ -297,7 +299,7 @@ static void V_connectToHost(XMqttClient* client)
         if (!socket) { XMqttProtocol_fail(client, XMqttClient_TransportInvalid); return; }
         XMqttClient_setTransport(client, socket, XMqttClient_AbstractSocket);
         XObject_setParent((XObject*)socket, client);
-        client->m_private->ownsTransport = true;
+        client->m_private->m_ownsTransport = true;
     }
     XMqttClient_setState(client, XMqttClient_Connecting);
     if (client->m_transportType == XMqttClient_IODevice) {
@@ -312,7 +314,7 @@ static void V_connectToHost(XMqttClient* client)
         return;
     }
     if (client->m_transportType == XMqttClient_SecureSocket &&
-        client->m_private->encryptedRequested) {
+        client->m_private->m_encryptedRequested) {
         XSslSocket_connectToHostEncrypted((XSslSocket*)client->m_transport,
                                           client->m_hostname, client->m_port);
     } else {
@@ -600,6 +602,12 @@ void* XMqttClient_messageReceived_signal(XMqttClient* c, const XByteArray* messa
     XByteArray* payload = message ? XByteArray_create_copy(message) : XByteArray_create();
     XMqttTopicName* topicCopy = topic ? XMqttTopicName_create_copy(topic) : NULL;
     XVarList* args = XVarList_Create(XVar(XByteArray*, payload), XVar(XMqttTopicName*, topicCopy));
+    if (!args) {
+        /* args 创建失败时发射方不会接管参数，深拷贝需就地释放 */
+        if (payload) XClassDelete(payload);
+        if (topicCopy) XClassDelete(topicCopy);
+        return (void*)(size_t)XMqttClient_messageReceived_signal;
+    }
     XObject_emitSignal((XObject*)c, (size_t)XMqttClient_messageReceived_signal,
                        args, mqtt_message_args_delete, NULL, XEVENT_PRIORITY_NORMAL);
     return (void*)(size_t)XMqttClient_messageReceived_signal;
@@ -612,6 +620,11 @@ void* XMqttClient_messageStatusChanged_signal(XMqttClient* c, int32_t id, uint8_
         XMqttMessageStatusProperties_create_copy(properties) : NULL;
     XVarList* args = XVarList_Create(XVar(int32_t, id), XVar(uint8_t, status),
                                     XVar(XMqttMessageStatusProperties*, copy));
+    if (!args) {
+        /* args 创建失败时发射方不会接管参数，深拷贝需就地释放 */
+        if (copy) XClassDelete(copy);
+        return (void*)(size_t)XMqttClient_messageStatusChanged_signal;
+    }
     XObject_emitSignal((XObject*)c, (size_t)XMqttClient_messageStatusChanged_signal,
                        args, mqtt_status_args_delete, NULL, XEVENT_PRIORITY_NORMAL);
     return (void*)(size_t)XMqttClient_messageStatusChanged_signal;
@@ -623,7 +636,13 @@ static void* mqtt_emit_string_signal(XMqttClient* c, size_t signal, const XStrin
 {
     if (!c) return (void*)signal;
     XString* copy = value ? XString_create_copy(value) : XString_create_utf8("");
-    XObject_emitSignal((XObject*)c, signal, XVarList_Create(XVar(XString*, copy)),
+    XVarList* args = XVarList_Create(XVar(XString*, copy));
+    if (!args) {
+        /* args 创建失败时发射方不会接管参数，深拷贝需就地释放 */
+        if (copy) XClassDelete(copy);
+        return (void*)signal;
+    }
+    XObject_emitSignal((XObject*)c, signal, args,
                        mqtt_string_arg_delete, NULL, XEVENT_PRIORITY_NORMAL);
     return (void*)signal;
 }
@@ -655,9 +674,14 @@ void* XMqttClient_willMessageChanged_signal(XMqttClient* c, const XByteArray* v)
 {
     if (!c) return (void*)(size_t)XMqttClient_willMessageChanged_signal;
     XByteArray* copy = v ? XByteArray_create_copy(v) : XByteArray_create();
+    XVarList* args = XVarList_Create(XVar(XByteArray*, copy));
+    if (!args) {
+        /* args 创建失败时发射方不会接管参数，深拷贝需就地释放 */
+        if (copy) XClassDelete(copy);
+        return (void*)(size_t)XMqttClient_willMessageChanged_signal;
+    }
     XObject_emitSignal((XObject*)c, (size_t)XMqttClient_willMessageChanged_signal,
-                       XVarList_Create(XVar(XByteArray*, copy)),
-                       mqtt_byte_array_arg_delete, NULL, XEVENT_PRIORITY_NORMAL);
+                       args, mqtt_byte_array_arg_delete, NULL, XEVENT_PRIORITY_NORMAL);
     return (void*)(size_t)XMqttClient_willMessageChanged_signal;
 }
 void* XMqttClient_willRetainChanged_signal(XMqttClient* c, bool v)
@@ -670,8 +694,13 @@ static void* mqtt_emit_auth_signal(XMqttClient* c, size_t signal,
     if (!c) return (void*)signal;
     XMqttAuthenticationProperties* copy = value ?
         XMqttAuthenticationProperties_create_copy(value) : NULL;
-    XObject_emitSignal((XObject*)c, signal,
-        XVarList_Create(XVar(XMqttAuthenticationProperties*, copy)),
+    XVarList* args = XVarList_Create(XVar(XMqttAuthenticationProperties*, copy));
+    if (!args) {
+        /* args 创建失败时发射方不会接管参数，深拷贝需就地释放 */
+        if (copy) XClassDelete(copy);
+        return (void*)signal;
+    }
+    XObject_emitSignal((XObject*)c, signal, args,
         mqtt_auth_args_delete, NULL, XEVENT_PRIORITY_NORMAL);
     return (void*)signal;
 }

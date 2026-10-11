@@ -144,7 +144,7 @@ void VXClass_move(XQueue* object, XQueue* src)
 	{
 		XQueue_clear_base(object);
 	}
-	XSwap((XClass*)object + 1, (XClass*)src + 1,
+	XMemory_swap((XClass*)object + 1, (XClass*)src + 1,
 		sizeof(XQueue) - sizeof(XClass));
 	Class_Memory(object) = source_memory;
 	if (!target_uninitialized)

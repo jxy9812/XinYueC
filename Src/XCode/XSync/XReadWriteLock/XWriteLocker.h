@@ -16,8 +16,8 @@ extern "C" {
  */
 typedef struct XWriteLocker 
 {
-    XReadWriteLock* rwlock;  // 关联的读写锁
-    bool locked;             // 锁状态标记
+    XReadWriteLock* m_rwlock;  // 关联的读写锁
+    bool m_locked;             // 锁状态标记
 }XWriteLocker;
 /**
  * @brief 初始化栈上的写锁管理器

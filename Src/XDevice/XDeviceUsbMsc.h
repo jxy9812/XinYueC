@@ -12,6 +12,11 @@
 extern "C" {
 #endif
 
+#ifndef XDEVICEUSBMSC_ON
+#define XDEVICEUSBMSC_ON 1
+#endif
+#if XDEVICEUSBMSC_ON
+
 #include "XDeviceUsbHost.h"
 
 /** @brief MSC BOT 命令完成状态，来自 Command Status Wrapper。 */
@@ -26,17 +31,17 @@ typedef enum XDeviceUsbMscCommandStatus
 /** @brief 被识别的 MSC BOT 接口和端点。 */
 typedef struct XDeviceUsbMscDevice
 {
+    uint64_t m_blockCount;                /**< 逻辑块数量，未知时为 0。 */
     XFd m_hostFd;                         /**< 所属 XDeviceUsbHost 句柄。 */
+    uint32_t m_tag;                       /**< 下一个 BOT 命令标签。 */
+    uint32_t m_blockSize;                 /**< 逻辑块大小，未知时为 0。 */
+    uint16_t m_bulkInPacketSize;          /**< IN 端点最大包长。 */
+    uint16_t m_bulkOutPacketSize;         /**< OUT 端点最大包长。 */
     uint8_t m_interfaceNumber;            /**< MSC 接口编号。 */
     uint8_t m_alternateSetting;           /**< 已选择的备用设置。 */
     XDeviceUsbEndpointAddress m_bulkIn;   /**< CSW/数据 IN 端点。 */
     XDeviceUsbEndpointAddress m_bulkOut;  /**< CBW/数据 OUT 端点。 */
-    uint16_t m_bulkInPacketSize;          /**< IN 端点最大包长。 */
-    uint16_t m_bulkOutPacketSize;         /**< OUT 端点最大包长。 */
     uint8_t m_lun;                        /**< 当前使用的逻辑单元号。 */
-    uint32_t m_tag;                       /**< 下一个 BOT 命令标签。 */
-    uint32_t m_blockSize;                 /**< 逻辑块大小，未知时为 0。 */
-    uint64_t m_blockCount;                /**< 逻辑块数量，未知时为 0。 */
     bool m_interfaceClaimed;              /**< 是否由此对象 Claim。 */
 } XDeviceUsbMscDevice;
 
@@ -149,6 +154,8 @@ XDeviceUsbTransferResult XDeviceUsbMsc_readBytes(
 XDeviceUsbTransferResult XDeviceUsbMsc_writeBytes(
     XDeviceUsbMscDevice* device, uint64_t byteOffset,
     const void* data, size_t byteCount, size_t* transferred, int32_t timeoutMs);
+
+#endif /* XDEVICEUSBMSC_ON */
 
 #ifdef __cplusplus
 }

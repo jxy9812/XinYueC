@@ -23,6 +23,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "xgui_demo_apitest.h"
+#include "XObject_Protected.h"
 
 #include <stdio.h>
 #include <string.h>

@@ -62,25 +62,25 @@ typedef struct XExcelChart_Series {
 /** @brief XExcelChart 图表结构体 */
 typedef struct XExcelChart {
     XAbstractOOXmlFile m_base;            /**< 基类 */
-    XExcelChart_ChartType m_chartType;         /**< 图表类型 */
-    int m_chartStyle;                      /**< 图表样式 */
-    XExcelChart_ChartAxisPos m_legendPos;       /**< 图例位置 */
-    bool m_legendOverlay;                  /**< 图例是否覆盖 */
     XString* m_chartTitle;                 /**< 图表标题 */
     XString* m_axisTitleLeft;               /**< 左侧轴标题 */
     XString* m_axisTitleRight;              /**< 右侧轴标题 */
     XString* m_axisTitleTop;                /**< 顶部轴标题 */
     XString* m_axisTitleBottom;             /**< 底部轴标题 */
     XString* m_dataSheetName;               /**< 图表数据所属工作表名称 */
-    bool m_majorGridlinesEnable;            /**< 是否启用主网格线 */
-    bool m_minorGridlinesEnable;           /**< 是否启用次网格线 */
+    XVector* m_series;                     /**< 数据系列列表 */
+    XExcelChart_ChartType m_chartType;         /**< 图表类型 */
+    int m_chartStyle;                      /**< 图表样式 */
+    XExcelChart_ChartAxisPos m_legendPos;       /**< 图例位置 */
     int m_row;                             /**< 所在行 */
     int m_col;                             /**< 所在列 */
     int m_width;                           /**< 宽度 */
     int m_height;                          /**< 高度 */
     int m_colOffset;                       /**< 列偏移 */
     int m_rowOffset;                       /**< 行偏移 */
-    XVector* m_series;                     /**< 数据系列列表 */
+    bool m_legendOverlay;                  /**< 图例是否覆盖 */
+    bool m_majorGridlinesEnable;            /**< 是否启用主网格线 */
+    bool m_minorGridlinesEnable;           /**< 是否启用次网格线 */
 } XExcelChart;
 
 /**

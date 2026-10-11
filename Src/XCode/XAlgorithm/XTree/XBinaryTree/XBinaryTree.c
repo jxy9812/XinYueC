@@ -116,7 +116,7 @@ static XVector* BinaryTreeTraversingToXVector_Postorder(struct XTreeNode* this_r
 			XStack_push_base(stack, &RChild);
 	}
 	XClassDelete(stack);
-	XStackCopyXVector(stackTraversing, vector);
+	XStack_CopyXVector(stackTraversing, vector);
 	XClassDelete(stackTraversing);
 	return vector;
 #else
@@ -153,7 +153,7 @@ XTreeNode* XBTree_SpinRR(XTreeNode** this_root, XTreeNode* nodes)
 		return NULL;
 	}
 	//设置NewRoot的父节点，this_root成为NewRoot的孩子
-	XTreeNode** ppThis_nodeParent = XTreeNode_getParentRef(nodes);
+	XTreeNode** ppThis_nodeParent = XTreeNode_parent_ref(nodes);
 	//父节点
 	XTreeNode* pater = *ppThis_nodeParent;
 	if (pater == NULL)//根节点改变
@@ -162,13 +162,13 @@ XTreeNode* XBTree_SpinRR(XTreeNode** this_root, XTreeNode* nodes)
 	}
 	else
 	{
-		*XTreeNode_getChildrenParentRef(nodes) = NewNode;
+		*XTreeNode_childrenParent_ref(nodes) = NewNode;
 	}
 	XBTreeNode_SetParent(NewNode, pater);
 	*ppThis_nodeParent = NewNode;
 
 	//NewRoot的右孩子交给this_root的左孩子，
-	XTreeNode** ppNewRootRightChild = XTreeNode_getChildRef(NewNode, XBTreeRChild);
+	XTreeNode** ppNewRootRightChild = XTreeNode_child_ref(NewNode, XBTreeRChild);
 	XBTreeNode_SetLChild(nodes, *ppNewRootRightChild);
 	if (*ppNewRootRightChild != NULL)
 		XBTreeNode_SetParent(*ppNewRootRightChild, nodes);
@@ -186,7 +186,7 @@ XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes)
 		// 无法执行左旋，因为 nodes 没有右子节点
 		return NULL;
 	}
-	XTreeNode** ppThis_rootParent = XTreeNode_getParentRef(nodes);
+	XTreeNode** ppThis_rootParent = XTreeNode_parent_ref(nodes);
 	//父节点
 	XTreeNode* pater = *ppThis_rootParent;
 	if (pater == NULL)//根节点改变
@@ -195,12 +195,12 @@ XTreeNode* XBTree_SpinLL(XTreeNode** this_root, XTreeNode* nodes)
 	}
 	else
 	{
-		*XTreeNode_getChildrenParentRef(nodes) = NewNode;
+		*XTreeNode_childrenParent_ref(nodes) = NewNode;
 	}
 	XBTreeNode_SetParent(NewNode, pater);
 	*ppThis_rootParent = NewNode;
 
-	XTreeNode** ppNewRootLeftChild = XTreeNode_getChildRef(NewNode, XBTreeLChild);
+	XTreeNode** ppNewRootLeftChild = XTreeNode_child_ref(NewNode, XBTreeLChild);
 	XBTreeNode_SetRChild(nodes, *ppNewRootLeftChild);
 	if (*ppNewRootLeftChild != NULL)
 		XBTreeNode_SetParent(*ppNewRootLeftChild, nodes);

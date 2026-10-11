@@ -1,7 +1,7 @@
 ﻿#include "XMutex.h"
-#include "XThread.h"
-#include "XDateTime.h" 
 #include <string.h>
+#include "XThread.h"
+#include "XDateTime.h"
 #if XSYNC_ON
 #if XMUTEX_ON
 typedef struct XMutex
@@ -11,7 +11,7 @@ typedef struct XMutex
 }XMutex;
 typedef struct SpinPrivate
 {
-	XAtomic_bool state; // 用于自旋模式: false=unlocked, true=locked
+	XAtomic_Bool state; // 用于自旋模式: false=unlocked, true=locked
     XALIGNAS(XALIGN_PTR_SIZE) char m_d[];//扩展数据
 }SpinPrivate;
 typedef struct RecursivePrivate

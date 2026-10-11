@@ -9,13 +9,12 @@
  * @author     XinYueC 团队
  */
 
+#include "XOffscreenSurface.h"
 #include "XGuiConfig.h"
 #include "XMemory.h"
 #include "XGeometry.h"
 
 #if XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON
-
-#include "XOffscreenSurface.h"
 
 /* ==================== 类与实例生命周期 ==================== */
 

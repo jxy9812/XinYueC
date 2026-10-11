@@ -9,6 +9,7 @@
 #include "XStringUtils.h"
 #include "XMemory.h"
 #include "XVarList.h"
+#include "XMap.h"
 #include "XEvent.h"
 #include "XEventType.h"
 #include "XCursor.h"
@@ -91,125 +92,123 @@ static void xhv_emitVoid(XHeaderView* self, size_t signal)
 
 /* ==================== 鼠标点击链（sectionPressed/sectionClicked） ==================== */
 
-/* 头文件无按压段字段的替代承载：表头 → 按压段逻辑号 的单链旁表
- * （对照 XAbstractItemView 悬停差分旁表范式）。节点随首次按压创建、
- * 随表头析构移除（VXHeaderView_deinit 为全路径唯一析构入口），无
- * 泄漏与悬垂键。 */
-typedef struct XhvPressEntry
-{
-    struct XhvPressEntry* m_next; /**< 链表后继。 */
-    const XHeaderView* m_view;    /**< 键（表头借用指针）。 */
-    int m_pressed;                /**< 按压段逻辑号；-1=无按压。 */
-} XhvPressEntry;
+/* 头文件无按压段字段的替代承载：表头指针 → 按压段逻辑号 的映射旁表
+ * （库内 XMap 指针键承载）。键随首次按压创建、随表头析构移除
+ * （VXHeaderView_deinit 为全路径唯一析构入口），无泄漏与悬垂键。 */
 
-static XhvPressEntry* xhv_pressEntries = NULL;
+/** @brief XMap 指针键比较回调：按表头地址定序（XCompare 约定 -1/0/1）。 */
+static int32_t xhv_viewKeyCompare(const void* lhs, const void* rhs)
+{
+    const XHeaderView* const* l = (const XHeaderView* const*)lhs;
+    const XHeaderView* const* r = (const XHeaderView* const*)rhs;
+    if (*l == *r) return 0;
+    return (*l < *r) ? -1 : 1;
+}
+
+static XMap* xhv_pressMap = NULL;
 
 /** @brief 读表头的按压段；无记录返回 -1。 */
 static int xhv_pressGet(const XHeaderView* view)
 {
-    const XhvPressEntry* e;
-    for (e = xhv_pressEntries; e; e = e->m_next)
-        if (e->m_view == view) return e->m_pressed;
-    return -1;
+    const XHeaderView* key = view;
+    const int* pressed;
+    if (!view || !xhv_pressMap) return -1;
+    pressed = (const int*)XMap_value_base((XMapBase*)xhv_pressMap, &key);
+    return pressed ? *pressed : -1;
 }
 
-/** @brief 写表头的按压段（无记录则头插建节点；分配失败忽略——
+/** @brief 写表头的按压段（无记录则建键；映射创建失败忽略——
  *         释放路径按 -1 基准收敛，最多不发射 sectionClicked）。 */
 static void xhv_pressSet(const XHeaderView* view, int section)
 {
-    XhvPressEntry* e;
-    for (e = xhv_pressEntries; e; e = e->m_next) {
-        if (e->m_view == view) {
-            e->m_pressed = section;
-            return;
-        }
+    const XHeaderView* key = view;
+    int value = section;
+    int* slot;
+    if (!view) return;
+    if (!xhv_pressMap) {
+        xhv_pressMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                      sizeof(XHeaderView*), sizeof(int),
+                                      xhv_viewKeyCompare, false);
+        if (!xhv_pressMap) return;
     }
-    e = (XhvPressEntry*)XMalloc_System(sizeof(*e));
-    if (!e) return;
-    e->m_next = xhv_pressEntries;
-    e->m_view = view;
-    e->m_pressed = section;
-    xhv_pressEntries = e;
+    slot = (int*)XMap_value_base((XMapBase*)xhv_pressMap, &key);
+    if (slot) {
+        *slot = section;
+        return;
+    }
+    XMap_insert_base((XMapBase*)xhv_pressMap, &key, &value);
 }
 
 /** @brief 移除表头的按压记录（析构路径）。 */
 static void xhv_pressRelease(const XHeaderView* view)
 {
-    XhvPressEntry** p = &xhv_pressEntries;
-    while (*p) {
-        if ((*p)->m_view == view) {
-            XhvPressEntry* dead = *p;
-            *p = dead->m_next;
-            XFree_System(dead);
-            return;
-        }
-        p = &(*p)->m_next;
-    }
+    const XHeaderView* key = view;
+    if (!view || !xhv_pressMap) return;
+    XMap_remove_base((XMapBase*)xhv_pressMap, &key);
 }
 
 /* ==================== 分隔线拖拽调宽手势（第八轮②） ==================== */
 
-/* 头文件无手势字段承载：与按压段旁表同款「表头 → 手势态」单链旁表
- * （节点随手势创建、随表头析构移除，无泄漏与悬垂键）。对标 Qt
- * QHeaderViewPrivate 的 state=ResizeSection + d->section + d->firstPos
- * + d->originalSize 四元态（qheaderview_p.h）。 */
-typedef struct XhvResizeEntry
+/* 头文件无手势字段承载：与按压段旁表同款「表头指针 → 手势态」映射
+ * 旁表（库内 XMap 指针键承载；键随手势创建、随表头析构移除，无泄漏
+ * 与悬垂键）。对标 Qt QHeaderViewPrivate 的 state=ResizeSection +
+ * d->section + d->firstPos + d->originalSize 四元态
+ * （qheaderview_p.h）。 */
+typedef struct XhvResizeState
 {
-    struct XhvResizeEntry* m_next; /**< 链表后继。 */
-    const XHeaderView* m_view;     /**< 键（表头借用指针）。 */
-    bool m_active;                 /**< 手势进行中（state==ResizeSection）。 */
-    int m_section;                 /**< 拖拽命中的段逻辑号。 */
-    int m_pressPos;                /**< 按下点沿轴位置（d->firstPos）。 */
-    int m_originalSize;            /**< 按下时段宽（d->originalSize）。 */
-} XhvResizeEntry;
+    bool m_active;      /**< 手势进行中（state==ResizeSection）。 */
+    int m_section;      /**< 拖拽命中的段逻辑号。 */
+    int m_pressPos;     /**< 按下点沿轴位置（d->firstPos）。 */
+    int m_originalSize; /**< 按下时段宽（d->originalSize）。 */
+} XhvResizeState;
 
-static XhvResizeEntry* xhv_resizeEntries = NULL;
+static XMap* xhv_resizeMap = NULL;
 
 /** @brief 读表头的手势态；无记录返回 NULL。 */
-static XhvResizeEntry* xhv_resizeGet(const XHeaderView* view)
+static XhvResizeState* xhv_resizeGet(const XHeaderView* view)
 {
-    XhvResizeEntry* e;
-    for (e = xhv_resizeEntries; e; e = e->m_next)
-        if (e->m_view == view) return e;
-    return NULL;
+    const XHeaderView* key = view;
+    if (!view || !xhv_resizeMap) return NULL;
+    return (XhvResizeState*)XMap_value_base((XMapBase*)xhv_resizeMap, &key);
 }
 
-/** @brief 写表头的手势态（无记录则头插建节点；分配失败忽略——
+/** @brief 写表头的手势态（无记录则建键；映射创建失败忽略——
  *         最坏退化为该表头本次不可拖拽调宽）。 */
 static void xhv_resizeSet(const XHeaderView* view, bool active, int section,
                           int pressPos, int originalSize)
 {
-    XhvResizeEntry* e = xhv_resizeGet(view);
-    if (!e) {
-        e = (XhvResizeEntry*)XMalloc_System(sizeof(*e));
-        if (!e) return;
-        e->m_next = xhv_resizeEntries;
-        e->m_view = view;
-        e->m_active = false;
-        e->m_section = -1;
-        e->m_pressPos = 0;
-        e->m_originalSize = 0;
-        xhv_resizeEntries = e;
+    const XHeaderView* key = view;
+    XhvResizeState state;
+    XhvResizeState* slot;
+    if (!view) return;
+    if (!xhv_resizeMap) {
+        xhv_resizeMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                       sizeof(XHeaderView*),
+                                       sizeof(XhvResizeState),
+                                       xhv_viewKeyCompare, false);
+        if (!xhv_resizeMap) return;
     }
-    e->m_active = active;
-    e->m_section = section;
-    e->m_pressPos = pressPos;
-    e->m_originalSize = originalSize;
+    slot = (XhvResizeState*)XMap_value_base((XMapBase*)xhv_resizeMap, &key);
+    if (slot) {
+        slot->m_active = active;
+        slot->m_section = section;
+        slot->m_pressPos = pressPos;
+        slot->m_originalSize = originalSize;
+        return;
+    }
+    state.m_active = active;
+    state.m_section = section;
+    state.m_pressPos = pressPos;
+    state.m_originalSize = originalSize;
+    XMap_insert_base((XMapBase*)xhv_resizeMap, &key, &state);
 }
 
 /** @brief 移除表头的手势记录（析构路径）。 */
 static void xhv_resizeRelease(const XHeaderView* view)
 {
-    XhvResizeEntry** p = &xhv_resizeEntries;
-    while (*p) {
-        if ((*p)->m_view == view) {
-            XhvResizeEntry* dead = *p;
-            *p = dead->m_next;
-            XFree_System(dead);
-            return;
-        }
-        p = &(*p)->m_next;
-    }
+    const XHeaderView* key = view;
+    if (!view || !xhv_resizeMap) return;
+    XMap_remove_base((XMapBase*)xhv_resizeMap, &key);
 }
 
 static void VXHeaderView_mousePressEvent(XWidget* self, XEvent* event);
@@ -271,7 +270,7 @@ static void VXHeaderView_mouseMoveEvent(XWidget* self, XEvent* event)
     XMouseEvent* me;
     XPoint pos;
     int position;
-    XhvResizeEntry* gesture;
+    XhvResizeState* gesture;
     if (!header || !event || XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE)
         return;
     me = (XMouseEvent*)event;
@@ -330,7 +329,7 @@ static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event)
     int position;
     int section;
     int pressed;
-    XhvResizeEntry* gesture;
+    XhvResizeState* gesture;
     if (!header || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_RELEASE) return;
     me = (XMouseEvent*)event;
@@ -356,7 +355,7 @@ static void VXHeaderView_mouseReleaseEvent(XWidget* self, XEvent* event)
 static void VXHeaderView_deinit(XHeaderView* self)
 {
     if (!self) return;
-    /* 按压段/拖拽手势旁表节点随表头析构移除（防悬垂键；旁表头为静态承载）。 */
+    /* 按压段/拖拽手势旁表键随表头析构移除（防悬垂键；旁表为静态 XMap 承载）。 */
     xhv_pressRelease(self);
     xhv_resizeRelease(self);
     if (self->m_sections) {
@@ -368,7 +367,7 @@ static void VXHeaderView_deinit(XHeaderView* self)
         self->m_sectionModes = NULL;
     }
     if (self->m_hidden) {
-        XFree_System(self->m_hidden);
+        XClassDelete(self->m_hidden);
         self->m_hidden = NULL;
     }
     /* m_model 为借用指针（表头不拥有），仅解除关联。 */
@@ -405,15 +404,13 @@ static void VXHeaderView_copy(XHeaderView* self, const XHeaderView* other)
         int v = XVector_At_Base(other->m_sectionModes, (int64_t)i, int);
         XVector_push_back_1_base(self->m_sectionModes, &v);
     }
-    if (self->m_hidden) {
-        XFree_System(self->m_hidden);
-        self->m_hidden = NULL;
-    }
-    if (n > 0) {
-        self->m_hidden = (bool*)XMalloc_System(sizeof(bool) * (size_t)n);
-        if (self->m_hidden)
-            XMemmove(self->m_hidden, other->m_hidden,
-                     sizeof(bool) * (size_t)n);
+    XVector_clear_base(self->m_hidden);
+    n = other->m_hidden
+            ? (int)XVector_size_base((const XContainer*)other->m_hidden)
+            : 0;
+    for (i = 0; i < n; ++i) {
+        bool v = XVector_At_Base(other->m_hidden, (int64_t)i, bool);
+        XVector_push_back_1_base(self->m_hidden, &v);
     }
     self->m_hiddenCount = other->m_hiddenCount;
     self->m_sectionsClickable = other->m_sectionsClickable;
@@ -444,7 +441,7 @@ static void VXHeaderView_move(XHeaderView* self, XHeaderView* other)
                                                (XWidget*)other);
     if (self->m_sections) XClassDelete(self->m_sections);
     if (self->m_sectionModes) XClassDelete(self->m_sectionModes);
-    if (self->m_hidden) XFree_System(self->m_hidden);
+    if (self->m_hidden) XClassDelete(self->m_hidden);
     self->m_orientation = other->m_orientation;
     self->m_count = other->m_count;
     self->m_defaultSize = other->m_defaultSize;
@@ -454,7 +451,7 @@ static void VXHeaderView_move(XHeaderView* self, XHeaderView* other)
     self->m_sectionModes = other->m_sectionModes;
     other->m_sectionModes = XVector_Create(int);
     self->m_hidden = other->m_hidden;
-    other->m_hidden = NULL;
+    other->m_hidden = XVector_Create(bool);
     self->m_hiddenCount = other->m_hiddenCount;
     other->m_hiddenCount = 0;
     self->m_sectionsClickable = other->m_sectionsClickable;
@@ -513,7 +510,7 @@ void XHeaderView_init(XHeaderView* self, XWidget* parent, XWidgetFlags flags,
     self->m_model = NULL;
     self->m_sections = XVector_Create(int);
     self->m_sectionModes = XVector_Create(int);
-    self->m_hidden = NULL;
+    self->m_hidden = XVector_Create(bool);
     self->m_hiddenCount = 0;
     self->m_sectionsClickable = false;
     self->m_sectionsMovable = false;
@@ -569,24 +566,22 @@ void XHeaderView_setCount(XHeaderView* self, int count)
             XVector_push_back_1_base(self->m_sections, &v);
             if (self->m_sectionModes)
                 XVector_push_back_1_base(self->m_sectionModes, &mv);
-            {
-                /* 失败时 realloc 原块保持有效：先接临时指针再回写，防 OOM 丢块；
-                   整体放弃本次扩容，保证 m_hidden 容量始终 ≥ m_count。 */
-                bool* grown = (bool*)XRealloc_System(
-                    self->m_hidden, sizeof(bool) * (size_t)(i + 1));
-                if (!grown) return;
-                self->m_hidden = grown;
-                grown[i] = h;
-            }
+            if (self->m_hidden)
+                XVector_push_back_1_base(self->m_hidden, &h);
         }
     } else if (count < n) {
         for (i = count; i < n; ++i) {
-            if (self->m_hidden && self->m_hidden[i]) --self->m_hiddenCount;
+            if (self->m_hidden &&
+                XVector_At_Base(self->m_hidden, (int64_t)i, bool))
+                --self->m_hiddenCount;
         }
         XVector_remove_base(self->m_sections, (int64_t)count,
                             (int64_t)(n - count));
         if (self->m_sectionModes)
             XVector_remove_base(self->m_sectionModes, (int64_t)count,
+                                (int64_t)(n - count));
+        if (self->m_hidden)
+            XVector_remove_base(self->m_hidden, (int64_t)count,
                                 (int64_t)(n - count));
     }
     if (count == oldCount) return; /* 对标 Qt：段数未变不发信号。 */
@@ -627,7 +622,7 @@ bool XHeaderView_isSectionHidden(const XHeaderView* self, int section)
             ? (int)XVector_size_base((const XContainer*)self->m_sections)
             : 0;
     if (section >= n) return false;
-    return self->m_hidden[section];
+    return XVector_At_Base(self->m_hidden, (int64_t)section, bool);
 }
 
 void XHeaderView_hideSection(XHeaderView* self, int section)
@@ -638,8 +633,8 @@ void XHeaderView_hideSection(XHeaderView* self, int section)
             ? (int)XVector_size_base((const XContainer*)self->m_sections)
             : 0;
     if (section >= n) return;
-    if (!self->m_hidden[section]) {
-        self->m_hidden[section] = true;
+    if (!XVector_At_Base(self->m_hidden, (int64_t)section, bool)) {
+        XVector_At_Base(self->m_hidden, (int64_t)section, bool) = true;
         ++self->m_hiddenCount;
         /* 隐藏影响表头几何（对标 Qt updateGeometries→geometriesChanged）。 */
         xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
@@ -654,8 +649,8 @@ void XHeaderView_showSection(XHeaderView* self, int section)
             ? (int)XVector_size_base((const XContainer*)self->m_sections)
             : 0;
     if (section >= n) return;
-    if (self->m_hidden[section]) {
-        self->m_hidden[section] = false;
+    if (XVector_At_Base(self->m_hidden, (int64_t)section, bool)) {
+        XVector_At_Base(self->m_hidden, (int64_t)section, bool) = false;
         --self->m_hiddenCount;
         /* 显示影响表头几何（对标 Qt updateGeometries→geometriesChanged）。 */
         xhv_emitVoid(self, (size_t)XHeaderView_geometriesChanged_signal(self));
@@ -704,9 +699,10 @@ void XHeaderView_swapSections(XHeaderView* self, int first, int second)
         XVector_At_Base(self->m_sectionModes, (int64_t)second, int) = tmp;
     }
     if (self->m_hidden) {
-        htmp = self->m_hidden[first];
-        self->m_hidden[first] = self->m_hidden[second];
-        self->m_hidden[second] = htmp;
+        htmp = XVector_At_Base(self->m_hidden, (int64_t)first, bool);
+        XVector_At_Base(self->m_hidden, (int64_t)first, bool) =
+            XVector_At_Base(self->m_hidden, (int64_t)second, bool);
+        XVector_At_Base(self->m_hidden, (int64_t)second, bool) = htmp;
     }
     self->m_sectionMovedFrom = first;
     /* 对标 Qt emitSectionMoved：交换即两个方向各发生一次段移动
@@ -730,7 +726,9 @@ void XHeaderView_moveSection(XHeaderView* self, int from, int to)
     n = (int)XVector_size_base((const XContainer*)self->m_sections);
     if (from >= n || to >= n) return;
     size = XVector_At_Base(self->m_sections, (int64_t)from, int);
-    hidden = self->m_hidden ? self->m_hidden[from] : false;
+    hidden = self->m_hidden
+        ? XVector_At_Base(self->m_hidden, (int64_t)from, bool)
+        : false;
     if (self->m_sectionModes)
         mode = XVector_At_Base(self->m_sectionModes, (int64_t)from, int);
     if (from < to) {
@@ -742,7 +740,8 @@ void XHeaderView_moveSection(XHeaderView* self, int from, int to)
                     XVector_At_Base(self->m_sectionModes,
                                     (int64_t)(i + 1), int);
             if (self->m_hidden)
-                self->m_hidden[i] = self->m_hidden[i + 1];
+                XVector_At_Base(self->m_hidden, (int64_t)i, bool) =
+                    XVector_At_Base(self->m_hidden, (int64_t)(i + 1), bool);
         }
     } else {
         for (i = from; i > to; --i) {
@@ -753,13 +752,15 @@ void XHeaderView_moveSection(XHeaderView* self, int from, int to)
                     XVector_At_Base(self->m_sectionModes,
                                     (int64_t)(i - 1), int);
             if (self->m_hidden)
-                self->m_hidden[i] = self->m_hidden[i - 1];
+                XVector_At_Base(self->m_hidden, (int64_t)i, bool) =
+                    XVector_At_Base(self->m_hidden, (int64_t)(i - 1), bool);
         }
     }
     XVector_At_Base(self->m_sections, (int64_t)to, int) = size;
     if (self->m_sectionModes)
         XVector_At_Base(self->m_sectionModes, (int64_t)to, int) = mode;
-    if (self->m_hidden) self->m_hidden[to] = hidden;
+    if (self->m_hidden)
+        XVector_At_Base(self->m_hidden, (int64_t)to, bool) = hidden;
     self->m_sectionMovedFrom = from;
     /* 对标 Qt emitSectionMoved(from→to)：载荷逻辑号取移动后的新位置
      * （逻辑序与视觉序恒一致），原视觉序 from、新视觉序 to。 */
@@ -912,7 +913,9 @@ void XHeaderView_resizeSections(XHeaderView* self, int mode)
      * 均分；逐段钳制到 [min,max]，隐藏段不参与（Qt 亦跳过隐藏段）。 */
     n = (int)XVector_size_base((const XContainer*)self->m_sections);
     for (i = 0; i < n; ++i) {
-        if (self->m_hidden && self->m_hidden[i]) continue;
+        if (self->m_hidden &&
+            XVector_At_Base(self->m_hidden, (int64_t)i, bool))
+            continue;
         total += XVector_At_Base(self->m_sections, (int64_t)i, int);
         ++visible;
     }
@@ -921,7 +924,9 @@ void XHeaderView_resizeSections(XHeaderView* self, int mode)
     for (i = 0; i < n; ++i) {
         int oldSize;
         int newSize;
-        if (self->m_hidden && self->m_hidden[i]) continue;
+        if (self->m_hidden &&
+            XVector_At_Base(self->m_hidden, (int64_t)i, bool))
+            continue;
         newSize = xhv_clampSize(self, each);
         oldSize = XVector_At_Base(self->m_sections, (int64_t)i, int);
         if (newSize != oldSize) {
@@ -993,7 +998,8 @@ void XHeaderView_reset(XHeaderView* self)
             self->m_defaultSize;
         if (self->m_sectionModes)
             XVector_At_Base(self->m_sectionModes, (int64_t)i, int) = -1;
-        if (self->m_hidden) self->m_hidden[i] = false;
+        if (self->m_hidden)
+            XVector_At_Base(self->m_hidden, (int64_t)i, bool) = false;
     }
     self->m_hiddenCount = 0;
     self->m_sectionMovedFrom = -1;
@@ -1179,7 +1185,9 @@ XByteArray* XHeaderView_saveState(const XHeaderView* self)
         ok = xhv_stateWriteInt(out, XVector_At_Base(self->m_sections,
                                                     (int64_t)i, int)) &&
              xhv_stateWriteDigit(out,
-                                 (self->m_hidden && self->m_hidden[i])
+                                 (self->m_hidden &&
+                                  XVector_At_Base(self->m_hidden,
+                                                  (int64_t)i, bool))
                                      ? 1 : 0) &&
              xhv_stateWriteMode(out, mode);
     }
@@ -1370,11 +1378,12 @@ bool XHeaderView_restoreState(XHeaderView* self, const XByteArray* state)
             changed = true;
         }
         if (self->m_hidden) {
-            if (hiddens[i] != self->m_hidden[i]) {
-                if (hiddens[i] && !self->m_hidden[i]) ++self->m_hiddenCount;
-                else if (!hiddens[i] && self->m_hidden[i])
-                    --self->m_hiddenCount;
-                self->m_hidden[i] = hiddens[i];
+            bool cur = XVector_At_Base(self->m_hidden, (int64_t)i, bool);
+            if (hiddens[i] != cur) {
+                if (hiddens[i] && !cur) ++self->m_hiddenCount;
+                else if (!hiddens[i] && cur) --self->m_hiddenCount;
+                XVector_At_Base(self->m_hidden, (int64_t)i, bool) =
+                    hiddens[i];
                 changed = true;
             }
         }
@@ -1531,7 +1540,9 @@ int XHeaderView_resizeHandleSectionAt(const XHeaderView* self, int position)
         int sep;
         pos += size;
         sep = pos - 1;
-        if (self->m_hidden && self->m_hidden[i]) continue;
+        if (self->m_hidden &&
+            XVector_At_Base(self->m_hidden, (int64_t)i, bool))
+            continue;
         if (position >= sep - XHEADERVIEW_HANDLE_HIT_MARGIN &&
             position <= sep + XHEADERVIEW_HANDLE_HIT_MARGIN)
             return i;
@@ -1541,7 +1552,7 @@ int XHeaderView_resizeHandleSectionAt(const XHeaderView* self, int position)
 
 bool XHeaderView_resizeGestureActive(const XHeaderView* self)
 {
-    XhvResizeEntry* gesture;
+    XhvResizeState* gesture;
     if (!self) return false;
     gesture = xhv_resizeGet(self);
     return gesture && gesture->m_active;
@@ -1549,7 +1560,7 @@ bool XHeaderView_resizeGestureActive(const XHeaderView* self)
 
 int XHeaderView_resizeGestureSection(const XHeaderView* self)
 {
-    XhvResizeEntry* gesture;
+    XhvResizeState* gesture;
     if (!self) return -1;
     gesture = xhv_resizeGet(self);
     return (gesture && gesture->m_active) ? gesture->m_section : -1;
@@ -1569,7 +1580,9 @@ int XHeaderView_length(const XHeaderView* self)
     if (!self || !self->m_sections) return 0;
     n = (int)XVector_size_base((const XContainer*)self->m_sections);
     for (i = 0; i < n; ++i) {
-        if (self->m_hidden && self->m_hidden[i]) continue;
+        if (self->m_hidden &&
+            XVector_At_Base(self->m_hidden, (int64_t)i, bool))
+            continue;
         total += XVector_At_Base(self->m_sections, (int64_t)i, int);
     }
     return total;

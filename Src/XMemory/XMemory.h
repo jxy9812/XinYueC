@@ -1,9 +1,19 @@
-﻿#ifndef XMEMORY_H
+﻿/**
+ * @file       XMemory.h
+ * @brief      统一动态内存分配器公开 API。
+ * @details    模块用途：封装系统堆、多级池、可变池与混合等多后端的内存
+ *             申请、释放、重分配和零初始化接口，并提供全局内存统计与
+ *             字节序读写工具；对齐 Qt 的全局内存管理职责（Qt 中无单一
+ *             对应类，角色近似 qMalloc/qFree 及其池化分配后端）；
+ *             平台约束：实现只依赖 XinYueC 抽象层与白名单 C 标准头，
+ *             禁止直接调用 Win32、POSIX、Qt 或其他平台 API，平台差异
+ *             由 Drive/ 适配层承担。
+ */
+#ifndef XMEMORY_H
 #define XMEMORY_H
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
 #include"CXinYueConfig.h"
@@ -81,6 +91,13 @@ typedef enum {
 * @param method 内存管理方法结构体指针，为NULL时不执行操作
 */
 void XMemory_setMethod(const XMemory* method, XMemoryType type);
+/**
+* @brief 获取指定内存类型的全局内存方法表
+* @param type 内存类型，取值见 XMemoryType
+* @return 返回库内部槽位表中对应槽位的借用指针（生命周期与库相同，
+*         调用方不得释放或长期保存；可读取各成员或经 XMemory_setMethod
+*         系列换装）；type 越界时返回的指针无效，禁止解引用
+*/
 XMemory* XMemory_method(XMemoryType type);
 /**
 * @brief 设置内存申请函数
@@ -163,9 +180,34 @@ bool XMemory_realloc_isNULL(XMemoryType type);
 * @brief XMalloc_System的宏别名
 */
 #define XMalloc                        XMemory_malloc
+/**
+* @brief 从系统堆申请内存（XMEMORY_TYPE_SYSTEM 槽位）
+* @param size 申请的内存大小（字节数）
+* @return 成功返回新申请的内存块指针（内容未初始化，为新增对象，调用方
+*         必须用 XFree_System 释放），失败返回NULL
+*/
 void* XMalloc_System(size_t size);
+/**
+* @brief 从全局多级内存池申请内存（XMEMORY_TYPE_MULTIPOOL 槽位）
+* @param size 申请的内存大小（字节数）
+* @return 成功返回新申请的内存块指针（内容未初始化，为新增对象，调用方
+*         必须用 XFree_MultiPool 释放），失败返回NULL
+*/
 void* XMalloc_MultiPool(size_t size);
+/**
+* @brief 混合模式申请内存（XMEMORY_TYPE_HYBRID 槽位）：不大于
+*        XMEMORY_HYBRID_THRESHOLD 的申请走全局多级池，否则走系统堆
+* @param size 申请的内存大小（字节数）
+* @return 成功返回新申请的内存块指针（内容未初始化，为新增对象，调用方
+*         必须用 XFree_Hybrid 释放），失败返回NULL
+*/
 void* XMalloc_Hybrid(size_t size);
+/**
+* @brief 从全局 TLSF 可变内存池申请内存（XMEMORY_TYPE_VARIABLEPOOL 槽位）
+* @param size 申请的内存大小（字节数）
+* @return 成功返回新申请的内存块指针（内容未初始化，为新增对象，调用方
+*         必须用 XFree_VariablePool 释放），失败返回NULL
+*/
 void* XMalloc_VariablePool(size_t size);
 
 /**
@@ -181,9 +223,30 @@ void XAlignedFree_System(void* ptr);
 * @brief XFree_System的宏别名
 */
 #define XFree						   XMemory_free
+/**
+* @brief 向系统堆释放内存（XMEMORY_TYPE_SYSTEM 槽位）
+* @param ptr 待释放的内存块指针，NULL 按空操作处理；只能用于释放同一
+*        槽位分配函数返回的指针，释放后不得再访问
+*/
 void XFree_System(void* ptr);
+/**
+* @brief 向全局多级内存池释放内存（XMEMORY_TYPE_MULTIPOOL 槽位）
+* @param ptr 待释放的内存块指针，NULL 按空操作处理；只能用于释放
+*        XMalloc_MultiPool 等同槽位分配函数返回的指针，释放后不得再访问
+*/
 void XFree_MultiPool(void* ptr);
+/**
+* @brief 向混合模式释放内存（XMEMORY_TYPE_HYBRID 槽位，内部按指针来源
+*        自动分派到多级池或系统堆）
+* @param ptr 待释放的内存块指针，NULL 按空操作处理；只能用于释放
+*        XMalloc_Hybrid 返回的指针，释放后不得再访问
+*/
 void XFree_Hybrid(void* ptr);
+/**
+* @brief 向全局 TLSF 可变内存池释放内存（XMEMORY_TYPE_VARIABLEPOOL 槽位）
+* @param ptr 待释放的内存块指针，NULL 按空操作处理；只能用于释放
+*        XMalloc_VariablePool 等同槽位分配函数返回的指针，释放后不得再访问
+*/
 void XFree_VariablePool(void* ptr);
 /**
 * @brief 内存重分配函数（调用全局配置的reallocate方法）
@@ -192,9 +255,38 @@ void XFree_VariablePool(void* ptr);
 * @return 成功返回新内存块指针，失败返回NULL
 */
 #define XRealloc                           XMemory_realloc
+/**
+* @brief 使用系统堆重分配内存（XMEMORY_TYPE_SYSTEM 槽位）
+* @param ptr 原内存块指针，NULL 时等同于 XMalloc_System
+* @param size 新的内存大小（字节数），为0时释放原块并返回NULL
+* @return 成功返回新内存块指针（须用 XFree_System 释放），失败返回NULL
+*         且原块保持有效
+*/
 void* XRealloc_System(void* ptr, size_t size);
+/**
+* @brief 使用全局多级内存池重分配内存（XMEMORY_TYPE_MULTIPOOL 槽位）
+* @param ptr 原内存块指针，NULL 时等同于 XMalloc_MultiPool
+* @param size 新的内存大小（字节数），为0时释放原块并返回NULL
+* @return 成功返回新内存块指针（须用 XFree_MultiPool 释放），失败返回
+*         NULL 且原块保持有效
+*/
 void* XRealloc_MultiPool(void* ptr, size_t size);
+/**
+* @brief 使用混合模式重分配内存（XMEMORY_TYPE_HYBRID 槽位，内部按指针
+*        来源在多级池与系统堆之间迁移数据）
+* @param ptr 原内存块指针，NULL 时等同于 XMalloc_Hybrid
+* @param size 新的内存大小（字节数），为0时释放原块并返回NULL
+* @return 成功返回新内存块指针（须用 XFree_Hybrid 释放），失败返回NULL
+*         且原块保持有效
+*/
 void* XRealloc_Hybrid(void* ptr, size_t size);
+/**
+* @brief 使用全局 TLSF 可变内存池重分配内存（XMEMORY_TYPE_VARIABLEPOOL 槽位）
+* @param ptr 原内存块指针，NULL 时按新申请处理（size 为0返回NULL）
+* @param size 新的内存大小（字节数），为0时释放原块并返回NULL
+* @return 成功返回新内存块指针（须用 XFree_VariablePool 释放），失败
+*         返回NULL 且原块保持有效
+*/
 void* XRealloc_VariablePool(void* ptr, size_t size);
 /**
 * @brief 零初始化内存分配函数（调用全局配置的callocZero方法）
@@ -203,9 +295,38 @@ void* XRealloc_VariablePool(void* ptr, size_t size);
 * @return 成功返回连续内存块指针（已初始化为0），失败返回NULL
 */
 #define XCalloc								XMemory_calloc
+/**
+* @brief 使用系统堆分配零初始化内存（XMEMORY_TYPE_SYSTEM 槽位）
+* @param count 元素数量
+* @param size 单个元素大小（字节数）
+* @return 成功返回连续内存块指针（已初始化为0，为新增对象，调用方必须
+*         用 XFree_System 释放），失败返回NULL
+*/
 void* XCalloc_System(size_t count, size_t size);
+/**
+* @brief 使用全局多级内存池分配零初始化内存（XMEMORY_TYPE_MULTIPOOL 槽位）
+* @param count 元素数量
+* @param size 单个元素大小（字节数）
+* @return 成功返回连续内存块指针（已初始化为0，为新增对象，调用方必须
+*         用 XFree_MultiPool 释放），失败返回NULL
+*/
 void* XCalloc_MultiPool(size_t count, size_t size);
+/**
+* @brief 使用混合模式分配零初始化内存（XMEMORY_TYPE_HYBRID 槽位，与
+*        XMalloc_Hybrid 相同的阈值分派）
+* @param count 元素数量
+* @param size 单个元素大小（字节数）
+* @return 成功返回连续内存块指针（已初始化为0，为新增对象，调用方必须
+*         用 XFree_Hybrid 释放），失败返回NULL
+*/
 void* XCalloc_Hybrid(size_t count, size_t size);
+/**
+* @brief 使用全局 TLSF 可变内存池分配零初始化内存（XMEMORY_TYPE_VARIABLEPOOL 槽位）
+* @param count 元素数量
+* @param size 单个元素大小（字节数）
+* @return 成功返回连续内存块指针（已初始化为0，为新增对象，调用方必须
+*         用 XFree_VariablePool 释放），失败返回NULL
+*/
 void* XCalloc_VariablePool(size_t count, size_t size);
 
 /* ========================================================================

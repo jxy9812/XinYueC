@@ -1,23 +1,4 @@
-﻿#ifndef XS7SESSION_H
-#define XS7SESSION_H
-
-#include "XPlc_config.h"
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include "XObject.h"
-#include "XByteArray.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#if XPROTOCOL_ON
-#if XPLC_ON
-#if XS7_ON
-#if XS7_CORE_ON
-
-/**
+﻿/**
  * @file XS7Session.h
  * @brief S7 会话状态机（握手推进、pduRef 分配、粘包/半包分帧、事件队列）
  * @details 会话层唯一有状态对象：COTP CR → CC → SetupCommunication 协商；
@@ -33,6 +14,26 @@ extern "C" {
  * 按 TPKT len 精确推进读指针 + XERROR_PRINTF 记录，禁止清空缓冲了事
  * （否则后续半包错位）；超 XS7_MAX_FRAME 丢弃该帧。
  */
+#ifndef XS7SESSION_H
+#define XS7SESSION_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* 全局配置须先于开关求值（定义 XPROTOCOL_ON 等开关宏） */
+#include "XPlc_config.h"
+
+#if XPROTOCOL_ON
+#if XPLC_ON
+#if XS7_ON
+#if XS7_CORE_ON
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "XObject.h"
+#include "XByteArray.h"
 
 /**
  * @brief 会话状态枚举
@@ -98,6 +99,7 @@ XS7Session* XS7Session_create_ex(XMemoryType memory);
 /**
  * @brief 初始化一个已分配的XS7Session实例
  * @param session 待初始化的实例指针（非NULL）
+ * @return 无。session 为 NULL 时不执行任何操作
  * @note 状态置 Idle、分配游标从 1 起、创建内部缓冲
  */
 void XS7Session_init(XS7Session* session);
@@ -111,9 +113,10 @@ void XS7Session_init(XS7Session* session);
   * @param session 会话指针（非NULL）
   * @param localTsap 本端 TSAP
   * @param remoteTsap 目标 TSAP（-1=按 Rack/Slot 自动已换算）
-  * @param requestedPduLen 请求的 PDU 长度（首期 960）
-  * @param amq 请求的最大并行任务数（首期 1）
-  */
+ * @param requestedPduLen 请求的 PDU 长度（首期 960）
+ * @param amq 请求的最大并行任务数（首期 1）
+ * @return 无。session 为 NULL 时不执行任何操作
+ */
 void XS7Session_setParameters(XS7Session* session, uint16_t localTsap, uint16_t remoteTsap,
                               uint16_t requestedPduLen, uint16_t amq);
 
@@ -176,6 +179,7 @@ const uint8_t* XS7Session_frame(XS7Session* session, size_t* len);
 /**
  * @brief 重置会话（断线后调用）
  * @param session 会话指针（非NULL）
+ * @return 无。session 为 NULL 时不执行任何操作
  * @note 清缓冲/状态/事件，保留握手参数；握手失败必须先 reset 再重连，
  *       防残留帧污染二次握手
  */

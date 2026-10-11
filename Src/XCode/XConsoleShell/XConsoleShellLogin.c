@@ -13,6 +13,7 @@
     XCONSOLE_SHELL_LOGIN_ON
 
 #include "XByteArray.h"
+#include "XChar.h"
 #include "XCryptographic.h"
 #include "XDeviceFile.h"
 #include "XJsonArray.h"
@@ -22,9 +23,8 @@
 #include "XMemory.h"
 #include "XRandomGenerator.h"
 #include "XString.h"
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
+#include "XStringUtils.h"
+#include "XUtf8StringView.h"
 #include <string.h>
 
 #define XLOGIN_SALT_SIZE 16u
@@ -96,9 +96,9 @@ static bool xlogin_begin_input(XConsoleShell* shell,
                                const char* user, const char* prompt)
 {
     if (!shell || !session || !user || !prompt ||
-        strlen(user) >= sizeof(session->loginInputUser)) return false;
+        XStrlen(user) >= sizeof(session->loginInputUser)) return false;
     xlogin_clear_input(session);
-    strcpy(session->loginInputUser, user);
+    XStrcpy(session->loginInputUser, user);
     session->loginInputMode = mode;
     session->suppressPrompt = true;
     xlogin_set_echo(shell, mode == XConsoleShellLoginInput_LoginUser);
@@ -113,11 +113,11 @@ static bool xlogin_begin_input(XConsoleShell* shell,
 static bool xlogin_name_valid(const char* name)
 {
     size_t i;
-    if (!name || !name[0] || strlen(name) >= XCONSOLE_SHELL_LOGIN_NAME_SIZE)
+    if (!name || !name[0] || XStrlen(name) >= XCONSOLE_SHELL_LOGIN_NAME_SIZE)
         return false;
-    if (!(isalpha((unsigned char)name[0]) || name[0] == '_')) return false;
+    if (!(XChar_isLetter((XChar)(unsigned char)name[0]) || name[0] == '_')) return false;
     for (i = 1; name[i]; ++i) {
-        if (!(isalnum((unsigned char)name[i]) || name[i] == '_' || name[i] == '-'))
+        if (!(XChar_isLetterOrNumber((XChar)(unsigned char)name[i]) || name[i] == '_' || name[i] == '-'))
             return false;
     }
     return true;
@@ -125,7 +125,7 @@ static bool xlogin_name_valid(const char* name)
 
 static bool xlogin_password_valid(const char* password)
 {
-    return password && password[0] && strlen(password) <= XCONSOLE_SHELL_LOGIN_PASSWORD_SIZE;
+    return password && password[0] && XStrlen(password) <= XCONSOLE_SHELL_LOGIN_PASSWORD_SIZE;
 }
 
 static bool xlogin_hex_encode(const uint8_t* data, size_t size,
@@ -152,7 +152,7 @@ static int xlogin_hex_value(char c)
 static bool xlogin_hex_decode(const char* text, uint8_t* output, size_t size)
 {
     size_t i;
-    if (!text || !output || strlen(text) != size * 2u) return false;
+    if (!text || !output || XStrlen(text) != size * 2u) return false;
     for (i = 0; i < size; ++i) {
         int high = xlogin_hex_value(text[i * 2u]);
         int low = xlogin_hex_value(text[i * 2u + 1u]);
@@ -182,7 +182,7 @@ static bool xlogin_password_digest(const char* password,
     size_t passwordSize;
     if (!xlogin_password_valid(password) || !salt || !output || iterations == 0)
         return false;
-    passwordSize = strlen(password);
+    passwordSize = XStrlen(password);
     view = XCryptographicHash_hmacInto((char*)previous, sizeof(previous),
                                        password, passwordSize,
                                        (const char*)salt, XLOGIN_SALT_SIZE,
@@ -225,11 +225,11 @@ static bool xlogin_json_string(const XJsonObject* object, const char* key,
     value = XJsonObject_value_keyUtf8(object, key);
     string = value ? XJsonValue_toString(value) : NULL;
     utf8 = string ? XString_toUtf8(string) : NULL;
-    if (!utf8 || strlen(utf8) >= outputSize) {
+    if (!utf8 || XStrlen(utf8) >= outputSize) {
         if (value) XJsonValue_delete(value);
         return false;
     }
-    strcpy(output, utf8);
+    XStrcpy(output, utf8);
     XJsonValue_delete(value);
     return true;
 }
@@ -516,7 +516,7 @@ static XConsoleShellLoginRecord* xlogin_find(XConsoleShellLoginRecord* records,
     size_t i;
     if (!records || !name) return NULL;
     for (i = 0; i < count; ++i)
-        if (strcmp(records[i].name, name) == 0) return &records[i];
+        if (XStrcmp(records[i].name, name) == 0) return &records[i];
     return NULL;
 }
 
@@ -568,7 +568,7 @@ static void xlogin_apply_session(XConsoleShell* shell,
         session->permissionMask |= XConsoleShellPermission_Dangerous |
                                    XConsoleShellPermission_Administrator;
 #if XCONSOLE_SHELL_LOGIN_ON
-    strncpy(session->userName, record->name, sizeof(session->userName) - 1u);
+    XStrncpy(session->userName, record->name, sizeof(session->userName) - 1u);
     session->userName[sizeof(session->userName) - 1u] = '\0';
     session->uid = record->uid;
     session->gid = record->gid;
@@ -579,11 +579,13 @@ static void xlogin_apply_session(XConsoleShell* shell,
 
 static bool xlogin_parse_u32(const char* text, uint32_t* value)
 {
-    char* end = NULL;
-    unsigned long parsed;
+    XUtf8StringView view;
+    uint64_t parsed;
+    bool ok = false;
     if (!text || !text[0] || !value) return false;
-    parsed = strtoul(text, &end, 0);
-    if (!end || *end != '\0' || parsed > UINT32_MAX) return false;
+    view = XUtf8StringView_create_cstr(text);
+    parsed = XUtf8StringView_toULongLong(&view, &ok, 0);
+    if (!ok || parsed > UINT32_MAX) return false;
     *value = (uint32_t)parsed;
     return true;
 }
@@ -594,13 +596,13 @@ static bool xlogin_parse_groups(const char* text, uint32_t* groups, size_t* coun
     size_t length;
     size_t offset = 0;
     size_t used = 0;
-    if (!text || !groups || !count || !text[0] || strlen(text) >= sizeof(buffer))
+    if (!text || !groups || !count || !text[0] || XStrlen(text) >= sizeof(buffer))
         return false;
-    strcpy(buffer, text);
-    length = strlen(buffer);
+    XStrcpy(buffer, text);
+    length = XStrlen(buffer);
     while (offset < length) {
         char* token = buffer + offset;
-        char* separator = strchr(token, ',');
+        char* separator = (char*)XStrchr(token, ',');
         if (separator) {
             *separator = '\0';
             offset = (size_t)(separator - buffer) + 1u;
@@ -628,12 +630,12 @@ typedef struct XConsoleShellLoginOptionState {
 
 static bool xlogin_option_requires_value(const char* option)
 {
-    return option && (strcmp(option, "-u") == 0 || strcmp(option, "--uid") == 0 ||
-        strcmp(option, "-g") == 0 || strcmp(option, "--gid") == 0 ||
-        strcmp(option, "-G") == 0 || strcmp(option, "--groups") == 0 ||
-        strcmp(option, "-aG") == 0 ||
-        strcmp(option, "-l") == 0 || strcmp(option, "--login") == 0 ||
-        strcmp(option, "--permissions") == 0);
+    return option && (XStrcmp(option, "-u") == 0 || XStrcmp(option, "--uid") == 0 ||
+        XStrcmp(option, "-g") == 0 || XStrcmp(option, "--gid") == 0 ||
+        XStrcmp(option, "-G") == 0 || XStrcmp(option, "--groups") == 0 ||
+        XStrcmp(option, "-aG") == 0 ||
+        XStrcmp(option, "-l") == 0 || XStrcmp(option, "--login") == 0 ||
+        XStrcmp(option, "--permissions") == 0);
 }
 
 static bool xlogin_find_login_argument(int argc, const char* const* argv,
@@ -644,13 +646,13 @@ static bool xlogin_find_login_argument(int argc, const char* const* argv,
     if (!argv || !loginIndex) return false;
     for (i = 0; i < argc; ++i) {
         if (argv[i][0] == '-') {
-            if (strcmp(argv[i], "--") == 0 ||
+            if (XStrcmp(argv[i], "--") == 0 ||
                 (!xlogin_option_requires_value(argv[i]) &&
-                 strcmp(argv[i], "-a") != 0 && strcmp(argv[i], "--append") != 0 &&
-                 strcmp(argv[i], "-L") != 0 && strcmp(argv[i], "--lock") != 0 &&
-                 strcmp(argv[i], "-U") != 0 && strcmp(argv[i], "--unlock") != 0 &&
-                 strcmp(argv[i], "-r") != 0 && strcmp(argv[i], "--system") != 0 &&
-                 strcmp(argv[i], "--admin") != 0))
+                 XStrcmp(argv[i], "-a") != 0 && XStrcmp(argv[i], "--append") != 0 &&
+                 XStrcmp(argv[i], "-L") != 0 && XStrcmp(argv[i], "--lock") != 0 &&
+                 XStrcmp(argv[i], "-U") != 0 && XStrcmp(argv[i], "--unlock") != 0 &&
+                 XStrcmp(argv[i], "-r") != 0 && XStrcmp(argv[i], "--system") != 0 &&
+                 XStrcmp(argv[i], "--admin") != 0))
                 return false;
             if (xlogin_option_requires_value(argv[i]) && ++i >= argc) return false;
             continue;
@@ -697,45 +699,45 @@ static bool xlogin_parse_user_options(XConsoleShellLoginRecord* record,
         uint32_t number;
         if (i == loginIndex) continue;
         option = argv[i];
-        if (strcmp(option, "-u") == 0 || strcmp(option, "--uid") == 0 ||
-            strcmp(option, "-g") == 0 || strcmp(option, "--gid") == 0 ||
-            strcmp(option, "--permissions") == 0) {
+        if (XStrcmp(option, "-u") == 0 || XStrcmp(option, "--uid") == 0 ||
+            XStrcmp(option, "-g") == 0 || XStrcmp(option, "--gid") == 0 ||
+            XStrcmp(option, "--permissions") == 0) {
             if (++i >= argc || !xlogin_parse_u32(argv[i], &number)) return false;
-            if (strcmp(option, "-u") == 0 || strcmp(option, "--uid") == 0)
+            if (XStrcmp(option, "-u") == 0 || XStrcmp(option, "--uid") == 0)
                 record->uid = number, state->uidSet = true;
-            else if (strcmp(option, "-g") == 0 || strcmp(option, "--gid") == 0) {
+            else if (XStrcmp(option, "-g") == 0 || XStrcmp(option, "--gid") == 0) {
                 record->gid = number, state->gidSet = true;
                 gidChanged = true;
             } else {
                 record->permissions = number;
             }
-        } else if (strcmp(option, "-G") == 0 || strcmp(option, "--groups") == 0 ||
-                   strcmp(option, "-aG") == 0) {
+        } else if (XStrcmp(option, "-G") == 0 || XStrcmp(option, "--groups") == 0 ||
+                   XStrcmp(option, "-aG") == 0) {
             uint32_t groups[XCONSOLE_SHELL_LOGIN_GROUP_CAPACITY];
             size_t count = 0;
             if (++i >= argc || !xlogin_parse_groups(argv[i], groups, &count)) return false;
-            if (strcmp(option, "-aG") == 0) state->appendGroups = true;
+            if (XStrcmp(option, "-aG") == 0) state->appendGroups = true;
             if (state->appendGroups) {
                 if (!xlogin_append_groups(record, groups, count)) return false;
             } else {
                 memcpy(record->groups, groups, count * sizeof(groups[0]));
                 record->groupCount = count;
             }
-        } else if (strcmp(option, "-a") == 0 || strcmp(option, "--append") == 0) {
+        } else if (XStrcmp(option, "-a") == 0 || XStrcmp(option, "--append") == 0) {
             state->appendGroups = true;
-        } else if (strcmp(option, "-l") == 0 || strcmp(option, "--login") == 0) {
+        } else if (XStrcmp(option, "-l") == 0 || XStrcmp(option, "--login") == 0) {
             if (++i >= argc || !xlogin_name_valid(argv[i]) ||
-                strlen(argv[i]) >= sizeof(state->newName)) return false;
-            strcpy(state->newName, argv[i]);
-        } else if (strcmp(option, "-L") == 0 || strcmp(option, "--lock") == 0) {
+                XStrlen(argv[i]) >= sizeof(state->newName)) return false;
+            XStrcpy(state->newName, argv[i]);
+        } else if (XStrcmp(option, "-L") == 0 || XStrcmp(option, "--lock") == 0) {
             record->locked = true;
             state->lockUsed = true;
-        } else if (strcmp(option, "-U") == 0 || strcmp(option, "--unlock") == 0) {
+        } else if (XStrcmp(option, "-U") == 0 || XStrcmp(option, "--unlock") == 0) {
             record->locked = false;
             state->unlockUsed = true;
-        } else if (strcmp(option, "-r") == 0 || strcmp(option, "--system") == 0) {
+        } else if (XStrcmp(option, "-r") == 0 || XStrcmp(option, "--system") == 0) {
             state->systemUser = true;
-        } else if (strcmp(option, "--admin") == 0) {
+        } else if (XStrcmp(option, "--admin") == 0) {
             record->permissions |= XConsoleShellPermission_Dangerous |
                                    XConsoleShellPermission_Administrator;
         } else {
@@ -848,16 +850,16 @@ static int xlogin_id(XConsoleShell* shell, XConsoleShellSession* session,
         groupCount = session->groupCount;
         (void)xlogin_load(shell, records, &count, &exists);
     }
-    snprintf(line, sizeof(line), "uid=%u(%s) gid=%u groups=", uid,
-             name && name[0] ? name : "?", gid);
+    XSnprintf(line, sizeof(line), "uid=%u(%s) gid=%u groups=", uid,
+              name && name[0] ? name : "?", gid);
     if (!XConsoleShell_writeUtf8(shell, line)) return XConsoleResult_IoError;
     for (i = 0; i < groupCount; ++i) {
         const char* gname = xlogin_group_name(records, count, groups[i]);
         if (i && !XConsoleShell_writeUtf8(shell, ",")) return XConsoleResult_IoError;
         if (gname)
-            snprintf(line, sizeof(line), "%u(%s)", groups[i], gname);
+            XSnprintf(line, sizeof(line), "%u(%s)", groups[i], gname);
         else
-            snprintf(line, sizeof(line), "%u", groups[i]);
+            XSnprintf(line, sizeof(line), "%u", groups[i]);
         if (!XConsoleShell_writeUtf8(shell, line)) return XConsoleResult_IoError;
     }
     return XConsoleShell_writeUtf8(shell, "\n") ? XConsoleResult_Ok : XConsoleResult_IoError;
@@ -901,9 +903,9 @@ static int xlogin_groups(XConsoleShell* shell, XConsoleShellSession* session,
         const char* gname = xlogin_group_name(records, count, groups[i]);
         if (!XConsoleShell_writeUtf8(shell, " ")) return XConsoleResult_IoError;
         if (gname)
-            snprintf(line, sizeof(line), "%s", gname);
+            XSnprintf(line, sizeof(line), "%s", gname);
         else
-            snprintf(line, sizeof(line), "%u", groups[i]);
+            XSnprintf(line, sizeof(line), "%u", groups[i]);
         if (!XConsoleShell_writeUtf8(shell, line)) return XConsoleResult_IoError;
     }
     return XConsoleShell_writeUtf8(shell, "\n") ? XConsoleResult_Ok : XConsoleResult_IoError;
@@ -923,10 +925,10 @@ static int xlogin_userlist(XConsoleShell* shell, XConsoleShellSession* session,
     if (!exists) return xlogin_emit(shell, "users: 用户配置文件不存在\n") ?
         XConsoleResult_NotSupported : XConsoleResult_IoError;
     for (i = 0; i < count; ++i) {
-        snprintf(line, sizeof(line), "%s uid=%u gid=%u permissions=%u%s%s\n",
-                 records[i].name, records[i].uid, records[i].gid,
-                 records[i].permissions, records[i].passwordSet ? "" : " 未设密码",
-                 records[i].locked ? " 已锁定" : "");
+        XSnprintf(line, sizeof(line), "%s uid=%u gid=%u permissions=%u%s%s\n",
+                  records[i].name, records[i].uid, records[i].gid,
+                  records[i].permissions, records[i].passwordSet ? "" : " 未设密码",
+                  records[i].locked ? " 已锁定" : "");
         if (!XConsoleShell_writeUtf8(shell, line)) return XConsoleResult_IoError;
     }
     return XConsoleResult_Ok;
@@ -978,7 +980,7 @@ static int xlogin_useradd(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_PermissionDenied;
     if (xlogin_find(records, count, argv[loginIndex])) return XConsoleResult_Failed;
     memset(&records[count], 0, sizeof(records[count]));
-    strcpy(records[count].name, argv[loginIndex]);
+    XStrcpy(records[count].name, argv[loginIndex]);
     records[count].permissions = exists ? 0u :
         (XConsoleShellPermission_Dangerous | XConsoleShellPermission_Administrator);
     records[count].passwordSet = false;
@@ -1040,7 +1042,7 @@ static int xlogin_userdel(XConsoleShell* shell, XConsoleShellSession* session,
     if (!shell || !session || argc < 1 || !argv)
         return XConsoleResult_InvalidArgument;
     for (i = 0; i < (size_t)argc; ++i) {
-        if (strcmp(argv[i], "-r") == 0 || strcmp(argv[i], "--remove") == 0) {
+        if (XStrcmp(argv[i], "-r") == 0 || XStrcmp(argv[i], "--remove") == 0) {
             removeHome = true;
         } else if (argv[i][0] == '-') {
             return XConsoleResult_InvalidArgument;
@@ -1058,7 +1060,7 @@ static int xlogin_userdel(XConsoleShell* shell, XConsoleShellSession* session,
     if (!xlogin_load(shell, records, &count, &exists) || !exists ||
         !xlogin_is_admin(session)) return XConsoleResult_PermissionDenied;
     target = xlogin_find(records, count, argv[loginIndex]);
-    if (!target || (session->userName[0] && strcmp(session->userName, argv[loginIndex]) == 0))
+    if (!target || (session->userName[0] && XStrcmp(session->userName, argv[loginIndex]) == 0))
         return XConsoleResult_PermissionDenied;
     for (i = 0; i < count; ++i)
         if (records[i].permissions & XConsoleShellPermission_Administrator)
@@ -1092,18 +1094,18 @@ static int xlogin_usermod(XConsoleShell* shell, XConsoleShellSession* session,
     if (!target || !xlogin_parse_user_options(target, argc, argv, loginIndex, &options) ||
         options.systemUser)
         return XConsoleResult_InvalidArgument;
-    strcpy(oldName, target->name);
+    XStrcpy(oldName, target->name);
     if (options.newName[0]) {
         if (xlogin_find(records, count, options.newName) &&
-            strcmp(options.newName, oldName) != 0)
+            XStrcmp(options.newName, oldName) != 0)
             return XConsoleResult_Failed;
-        strcpy(target->name, options.newName);
+        XStrcpy(target->name, options.newName);
     }
     if (!xlogin_save(shell, records, count)) return XConsoleResult_IoError;
-    if (session->userName[0] && strcmp(session->userName, oldName) == 0) {
+    if (session->userName[0] && XStrcmp(session->userName, oldName) == 0) {
         xlogin_apply_session(shell, session, target);
         if (options.newName[0]) {
-            strncpy(session->userName, target->name, sizeof(session->userName) - 1u);
+            XStrncpy(session->userName, target->name, sizeof(session->userName) - 1u);
             session->userName[sizeof(session->userName) - 1u] = '\0';
         }
     }
@@ -1133,12 +1135,12 @@ static int xlogin_passwd(XConsoleShell* shell, XConsoleShellSession* session,
         (target->permissions & XConsoleShellPermission_Administrator))
         bootstrap = true;
     if (!target || (!session->authenticated && !bootstrap) ||
-        (session->authenticated && strcmp(session->userName, name) != 0 &&
+        (session->authenticated && XStrcmp(session->userName, name) != 0 &&
          !xlogin_is_admin(session)))
         return XConsoleResult_PermissionDenied;
     /* 非管理员改自己的密码先验证当前密码，与 Linux passwd 一致；
        管理员与其他用户、bootstrap 初始化不要求旧密码。 */
-    if (session->authenticated && strcmp(session->userName, name) == 0 &&
+    if (session->authenticated && XStrcmp(session->userName, name) == 0 &&
         !xlogin_is_admin(session))
         return xlogin_begin_input(shell, session,
                                   XConsoleShellLoginInput_PasswdOldPassword,
@@ -1267,7 +1269,7 @@ XConsoleResult XConsoleShellLogin_submitInput(XConsoleShell* shell,
             XConsoleResult_MoreOutput : XConsoleResult_IoError;
     }
     if (mode == XConsoleShellLoginInput_PasswdNewPassword) {
-        strcpy(session->loginInputPassword, password);
+        XStrcpy(session->loginInputPassword, password);
         session->loginInputMode = XConsoleShellLoginInput_PasswdConfirm;
         session->suppressPrompt = true;
         xlogin_secure_zero(password, sizeof(password));
@@ -1275,7 +1277,7 @@ XConsoleResult XConsoleShellLogin_submitInput(XConsoleShell* shell,
             XConsoleResult_MoreOutput : XConsoleResult_IoError;
     }
     if (mode != XConsoleShellLoginInput_PasswdConfirm ||
-        strcmp(session->loginInputPassword, password) != 0) {
+        XStrcmp(session->loginInputPassword, password) != 0) {
         xlogin_set_echo(shell, true);
         xlogin_clear_input(session);
         xlogin_secure_zero(password, sizeof(password));
@@ -1292,7 +1294,7 @@ XConsoleResult XConsoleShellLogin_submitInput(XConsoleShell* shell,
     if (!record || (!session->authenticated &&
         !(count == 1u && record->uid == 0u && !record->passwordSet &&
           (record->permissions & XConsoleShellPermission_Administrator))) ||
-        (session->authenticated && strcmp(session->userName, record->name) != 0 &&
+        (session->authenticated && XStrcmp(session->userName, record->name) != 0 &&
          !xlogin_is_admin(session)) ||
         !xlogin_set_password(record, password) || !xlogin_save(shell, records, count)) {
         xlogin_set_echo(shell, true);
@@ -1369,9 +1371,9 @@ const char* XConsoleShellLogin_databasePath(const XConsoleShell* shell)
 
 bool XConsoleShellLogin_setDatabasePath(XConsoleShell* shell, const char* path)
 {
-    if (!shell || !path || !path[0] || strlen(path) >= sizeof(shell->m_loginDatabasePath))
+    if (!shell || !path || !path[0] || XStrlen(path) >= sizeof(shell->m_loginDatabasePath))
         return false;
-    strcpy(shell->m_loginDatabasePath, path);
+    XStrcpy(shell->m_loginDatabasePath, path);
     return true;
 }
 

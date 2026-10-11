@@ -41,6 +41,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include <stdio.h>
+#include "XObject_Protected.h"
 #include <string.h>
 
 #include "XPrintf.h"

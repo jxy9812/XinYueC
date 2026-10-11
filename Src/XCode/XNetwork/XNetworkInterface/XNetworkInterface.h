@@ -89,15 +89,15 @@ XCLASS_DEFINE_EXTEND_END(XNetworkInterface, XClass);
  */
 typedef struct XNetworkInterface {
     XClass m_class;                         ///< 基类虚表指针
-    XString* name;                          ///< 接口名称（如 "eth0"、"en0"、"lo"）
-    XString* humanReadableName;             ///< 人类可读名称（Windows 上为 "本地连接" 等）
-    XString* hardwareAddress;               ///< 硬件地址（MAC 地址，格式 "00:11:22:33:44:55"）
-    int index;                              ///< 接口索引（系统分配的唯一标识符）
-    int mtu;                                ///< 最大传输单元（字节）
-    XNetworkInterface_InterfaceFlags flags; ///< 接口标志
-    XNetworkInterface_InterfaceType type;   ///< 接口硬件类型
-    XVector* addressEntries;                ///< IP 地址条目列表（XNetworkAddressEntry）
-    bool isValid;                           ///< 是否包含有效信息
+    XString* m_name;                          ///< 接口名称（如 "eth0"、"en0"、"lo"）
+    XString* m_humanReadableName;             ///< 人类可读名称（Windows 上为 "本地连接" 等）
+    XString* m_hardwareAddress;               ///< 硬件地址（MAC 地址，格式 "00:11:22:33:44:55"）
+    int m_index;                              ///< 接口索引（系统分配的唯一标识符）
+    int m_mtu;                                ///< 最大传输单元（字节）
+    XNetworkInterface_InterfaceFlags m_flags; ///< 接口标志
+    XNetworkInterface_InterfaceType m_type;   ///< 接口硬件类型
+    XVector* m_addressEntries;                ///< IP 地址条目列表（XNetworkAddressEntry）
+    bool m_isValid;                           ///< 是否包含有效信息
 } XNetworkInterface;
 
 // ==================== 构造与析构 ====================
@@ -115,7 +115,12 @@ XNetworkInterface* XNetworkInterface_create_ex(XMemoryType memory);
  */
 XNetworkInterface* XNetworkInterface_create_copy(const XNetworkInterface* other);
 
-XNetworkInterface* XNetworkInterface_create_move(const XNetworkInterface* other);
+/**
+ * @brief 移动构造函数，转移源对象的资源所有权。
+ * @param other 源对象；移动完成后源对象被清空，处于已初始化但为空的状态。
+ * @return 新分配的实例（接管源对象资源），需调用 XClassDelete() 释放。
+ */
+XNetworkInterface* XNetworkInterface_create_move(XNetworkInterface* other);
 /**
  * @brief 初始化已分配的 XNetworkInterface 结构体。
  * @param iface 指向未初始化的实例

@@ -1,19 +1,4 @@
-﻿#ifndef XS7TYPES_H
-#define XS7TYPES_H
-
-#include "XPlc_config.h"
-#include <stdint.h>
-#include <stdbool.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#if XPROTOCOL_ON
-#if XPLC_ON
-#if XS7_ON
-
-/**
+﻿/**
  * @file XS7Types.h
  * @brief S7 公共类型与常量（被所有 S7 头共享，避免循环 include）
  * @details 区域枚举、值类型枚举、运行模式枚举、ROSCTR/功能码/传输大小常量、
@@ -26,6 +11,22 @@ extern "C" {
  *   T/C 位访问与字访问编码归属（0x1C/0x1D vs 0x1E/0x1F）、V 区编码（0x84 映射）
  *   —— 阶段 0 须用 Wireshark s7comm 解码器或 snap7 抓包核对后方可写入本表。
  */
+#ifndef XS7TYPES_H
+#define XS7TYPES_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* 全局配置须先于开关求值（定义 XPROTOCOL_ON 等开关宏） */
+#include "XPlc_config.h"
+
+#if XPROTOCOL_ON
+#if XPLC_ON
+#if XS7_ON
+
+#include <stdint.h>
+#include <stdbool.h>
 
 /******************************************************************************************
  * 枚举类型定义

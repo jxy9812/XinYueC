@@ -15,6 +15,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XSliderTest.h"
+#include "XObject_Protected.h"
 #include "XSlider.h"
 #include "XAbstractSlider.h"
 #include "XMemory.h"

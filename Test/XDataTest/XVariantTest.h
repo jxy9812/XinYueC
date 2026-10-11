@@ -9,9 +9,9 @@ extern "C" {
 #include <stdbool.h>
 /** @brief 执行 XVariant 生命周期/未清零栈结构防呆专项测试。 @return 成功返回 0，失败返回非 0。 */
 int XVariantTest_run(void);
-#if DEMOTEST
+#if DEMOTEST_ON
 	void XTestMenu_XVariantTest(XTestMenu* root);
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

@@ -1,9 +1,12 @@
-﻿// XTcpServer.h
+﻿/**
+ * @file       XTcpServer.h
+ * @brief      TCP 服务器公开 API。
+ * @details    对齐 Qt QTcpServer，继承 XObject，提供 TCP 监听与传入连接接受
+ *             功能；实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或
+ *             其他平台 API。
+ */
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
-//
-// C 语言模拟 Qt6 QTcpServer，继承自 XObject。
-// 提供 TCP 服务器功能，接受传入的 TCP 连接。
 
 #ifndef XTCPSERVER_H
 #define XTCPSERVER_H
@@ -52,21 +55,22 @@ XCLASS_DEFINE_END(XTcpServer)
  */
 typedef struct XTcpServer {
     XObject base;                              ///< 继承 XObject
+    /* ---- 指针/大结构簇前置 ---- */
     XFd m_deviceFd;                            ///< XDeviceNetwork 的统一监听设备 fd。
     XHostAddress serverAddress;                ///< 服务器监听地址
+    XHostAddress lastAcceptedAddr;             ///< 最近接受的客户端地址（临时存储，供 incomingConnection_base 使用）
+    XNetworkProxy proxy;                       ///< 代理配置
+    XVector* pendingConnections;               ///< 待处理连接队列（XTcpSocket* 列表）
+    XString* errorString;                      ///< 错误字符串
+    XTcpServer_IncomingSocketFactory incomingSocketFactory; ///< 接受连接对象创建器
+    void* incomingSocketFactoryContext;        ///< 创建器私有上下文（不拥有）
+    /* ---- 小标量簇收尾 ---- */
     uint16_t serverPort;                       ///< 服务器监听端口
     bool listening;                            ///< 是否正在监听
     bool pauseAccepting;                       ///< 是否暂停接受连接
-    XVector* pendingConnections;               ///< 待处理连接队列（XTcpSocket* 列表）
     int maxPendingConnections;                 ///< 最大待处理连接数（默认30）
     int listenBacklogSize;                     ///< 监听积压大小（默认50）
     XAbstractSocket_SocketError lastError;     ///< 最后一次错误代码
-    XString* errorString;                      ///< 错误字符串
-    XNetworkProxy proxy;                       ///< 代理配置
-    XTcpServer_IncomingSocketFactory incomingSocketFactory; ///< 接受连接对象创建器
-    void* incomingSocketFactoryContext;        ///< 创建器私有上下文（不拥有）
-    /* 临时存储最近接受的连接信息（供 incomingConnection_base 使用）*/
-    XHostAddress lastAcceptedAddr;             ///< 最近接受的客户端地址
     uint16_t lastAcceptedPort;                 ///< 最近接受的客户端端口
 } XTcpServer;
 

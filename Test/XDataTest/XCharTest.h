@@ -6,9 +6,9 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include "XTestMenu.h"
 #include"XClass.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 	void XTestMenu_XCharTest(XTestMenu* root);
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

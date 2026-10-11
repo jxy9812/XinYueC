@@ -6,6 +6,7 @@
 #include "XFontBitmapFace.h"
 #include "XFont.h"
 #include "XFontFace_Protected.h"
+#include "XStringUtils.h" /* XStrcmp：库内字符串原语（外部依赖约束） */
 #include <string.h>
 
 static XFontBitmapFace g_bitmapFaces[XFONT_MAX_BITMAP_PROVIDERS];
@@ -326,8 +327,8 @@ bool XFontBitmapFace_registerProvider(const XFontBitmapProvider* provider)
     if (!XFontBitmapFace_validProvider(provider))
         return false;
     for (i = 0; i < g_bitmapFaceCount; ++i)
-        if (strcmp(g_bitmapFaces[i].m_class.m_family,
-                   provider->m_family) == 0)
+        if (XStrcmp(g_bitmapFaces[i].m_class.m_family,
+                    provider->m_family) == 0)
         {
             XFontBitmapFace_init(&g_bitmapFaces[i], provider);
             return XFontFace_register(&g_bitmapFaces[i].m_class);

@@ -67,7 +67,7 @@ void XModbusServer_init(XModbusServer* server)
     
     server->m_serverAddress = 1;
     server->m_dataMap = XModbusDataUnitMap_create();
-    server->m_options = XMap_Create(int, XVariant, int_compare);
+    server->m_options = XMap_Create(int, XVariant, Xint_compare);
     if (server->m_options) {
         XContainerSetDataCopyMethod(server->m_options, XClass_copy_base);
         XContainerSetDataMoveMethod(server->m_options, XClass_move_base);
@@ -1045,20 +1045,23 @@ static bool VXModbusServer_setValue(XModbusServer* server, int option,XVariant* 
 static void VXModbusServer_deinit(XModbusServer* server)
 {
     if (!server) return;
-    
+
     // 释放数据映射表
     if (server->m_dataMap) {
         XClassDelete(server->m_dataMap);
         server->m_dataMap = NULL;
     }
-    
+
     // 释放选项映射表
     if (server->m_options) {
         XClassDelete(server->m_options);
         server->m_options = NULL;
     }
-    
+
     server->m_serverAddress = 0;
+
+    // 调用基类析构（释放XModbusDevice层的m_errorString/m_params与XObject层资源）
+    XClass_Deinit_Parent(XModbusDevice, server);
 }
 
 // =============== 信号 ===============

@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XString.h"
 #include"XStringView.h"
 #include"XStringList.h"
@@ -11,7 +11,7 @@
 static void XPrintStr(const char* label, XString* s)
 {
 	XPrintf("%s", label);
-	if (s) { XPrintf_2(s); XPrintf("\n"); }
+	if (s) { XPrintf_string(s); XPrintf("\n"); }
 	else XPrintf("NULL\n");
 }
 

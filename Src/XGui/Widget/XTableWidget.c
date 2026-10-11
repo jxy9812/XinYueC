@@ -45,41 +45,47 @@ static bool xtw_ensureVHeaders(XTableWidget* self, int count);
 /** @brief 挂载部件表：按 (row,col) 查找条目下标；无则返回 -1。 */
 static int xtw_cwFind(const XTableWidget* self, int row, int col);
 
-/** @brief 确保行指针数组容量（保留现有行内容）。 */
-static void xtw_ensureRows(XTableWidget* self, int rows)
+/** @brief 确保行指针数组容量（保留现有行内容；成功 true）。 */
+static bool xtw_ensureRows(XTableWidget* self, int rows)
 {
     XTableWidgetItem** p;
     int cap = self->m_rowCapacity > 0 ? self->m_rowCapacity : 4;
-    if (rows <= self->m_rowCapacity) return;
+    if (rows <= self->m_rowCapacity) return true;
     while (cap < rows) cap *= 2;
     p = (XTableWidgetItem**)XRealloc_System(self->m_cells,
         sizeof(XTableWidgetItem*) * (size_t)cap);
-    if (!p) return;
+    if (!p) return false;
     /* 扩容区必须清零：realloc 复用块里的旧内容是野行指针（曾实测为已释放
        字符串的残余字节），后续插入/释放路径读到即破坏堆。 */
     XMemset(p + self->m_rows, 0,
             sizeof(XTableWidgetItem*) * (size_t)(cap - self->m_rows));
     self->m_cells = p;
     self->m_rowCapacity = cap;
+    return true;
 }
 
-/** @brief 确保列容量：扩列宽数组/表头/每行单元格数组。 */
-static void xtw_ensureCols(XTableWidget* self, int cols)
+/** @brief 确保列容量：扩列宽数组/表头/每行单元格数组（成功 true）。
+ *         任一分配失败不推进 m_colCapacity（已扩容的数组只会偏大，
+ *         安全；下次调用对失败数组重试），调用方不得按新列下标写入。 */
+static bool xtw_ensureCols(XTableWidget* self, int cols)
 {
     int* w;
     XString** hh;
     int cap = self->m_base.m_colCapacity > 0 ? self->m_base.m_colCapacity : 4;
     int i;
-    if (cols <= self->m_base.m_colCapacity) return;
+    bool ok = true;
+    if (cols <= self->m_base.m_colCapacity) return true;
     while (cap < cols) cap *= 2;
     w = (int*)XRealloc_System(self->m_base.m_colWidths, sizeof(int) * (size_t)cap);
     if (w) { self->m_base.m_colWidths = w;
         for (i = self->m_base.m_colCapacity; i < cap; ++i) self->m_base.m_colWidths[i] = XTW_DEFAULT_COL_WIDTH; }
+    else ok = false;
     hh = (XString**)XRealloc_System(self->m_hHeaders,
                                     sizeof(XString*) * (size_t)cap);
     if (hh) { self->m_hHeaders = hh;
         for (i = self->m_base.m_colCapacity; i < cap; ++i)
             self->m_hHeaders[i] = NULL; }
+    else ok = false;
     for (i = 0; i < self->m_rows; ++i) {
         XTableWidgetItem* row = self->m_cells ? self->m_cells[i] : NULL;
         XTableWidgetItem* nr = (XTableWidgetItem*)XRealloc_System(row,
@@ -87,8 +93,11 @@ static void xtw_ensureCols(XTableWidget* self, int cols)
         if (nr) { self->m_cells[i] = nr;
             XMemset(nr + self->m_base.m_colCapacity, 0,
                    sizeof(XTableWidgetItem) * (size_t)(cap - self->m_base.m_colCapacity)); }
+        else ok = false;
     }
+    if (!ok) return false;
     self->m_base.m_colCapacity = cap;
+    return true;
 }
 
 /** @brief 分配一个全零单元格行。 */
@@ -433,11 +442,27 @@ void XTableWidget_setRowCount(XTableWidget* self, int rows)
     int i;
     if (!self || rows < 0 || rows == self->m_rows) return;
     if (rows > self->m_rows) {
-        xtw_ensureRows(self, rows);
-        xtw_ensureCols(self, self->m_columns > 0 ? self->m_columns : 1);
-        for (i = self->m_rows; i < rows; ++i)
+        int start;
+        /* 扩容失败不得按旧容量下标写新行（越界写且行块脱离登记无法
+           回收）：直接放弃本次增长，保持原行数与模型一致。 */
+        if (!xtw_ensureRows(self, rows)) return;
+        if (!xtw_ensureCols(self, self->m_columns > 0 ? self->m_columns : 1))
+            return;
+        start = self->m_rows;
+        for (i = start; i < rows; ++i) {
             self->m_cells[i] = xtw_newRow(self->m_base.m_colCapacity > 0 ?
                                          self->m_base.m_colCapacity : 1);
+            if (!self->m_cells[i]) {
+                /* 新行分配失败：回收本轮已建空行（单元格尚为空），
+                   m_rows 不变，全部状态可供下次调用重试。 */
+                while (i > start) {
+                    --i;
+                    xtw_freeRowItems(self->m_cells[i], self->m_base.m_colCapacity);
+                    self->m_cells[i] = NULL;
+                }
+                return;
+            }
+        }
     }
     if (rows < self->m_rows) xtw_cwTruncateRows(self, rows); /* 收缩：解除越界挂载。 */
     self->m_rows = rows;
@@ -458,13 +483,19 @@ void XTableWidget_setColumnCount(XTableWidget* self, int columns)
 {
     int i;
     if (!self || columns < 0 || columns == self->m_columns) return;
-    xtw_ensureRows(self, self->m_rows > 0 ? self->m_rows : 1);
+    if (!xtw_ensureRows(self, self->m_rows > 0 ? self->m_rows : 1)) return;
     if (self->m_rows == 0) self->m_rows = 0;
     if (columns > self->m_columns) {
-        xtw_ensureCols(self, columns);
+        /* 列容量未扩成（m_colCapacity 未推进）时不得清零未扩的行块：
+           保持原列数，状态可供下次调用重试。 */
+        if (!xtw_ensureCols(self, columns)) return;
         for (i = 0; i < self->m_rows; ++i) {
-            if (self->m_cells[i] == NULL)
-                self->m_cells[i] = xtw_newRow(columns);
+            if (self->m_cells[i] == NULL) {
+                /* 行块按全局列容量分配（同 setRowCount 口径）：
+                   deinit/clear 按 m_colCapacity 释放每行。 */
+                self->m_cells[i] = xtw_newRow(self->m_base.m_colCapacity);
+                if (!self->m_cells[i]) return; /* 行块分配失败：保持原列数。 */
+            }
             XMemset(&self->m_cells[i][self->m_columns], 0,
                    sizeof(XTableWidgetItem) * (size_t)(columns - self->m_columns));
         }
@@ -484,13 +515,19 @@ int XTableWidget_columnCount(const XTableWidget* self) { return self ? self->m_c
 void XTableWidget_insertRow(XTableWidget* self, int row)
 {
     int i;
+    XTableWidgetItem* fresh;
     if (!self || row < 0 || row > self->m_rows) return;
-    xtw_ensureRows(self, self->m_rows + 1);
-    xtw_ensureCols(self, self->m_columns > 0 ? self->m_columns : 1);
+    /* 扩容/新行分配失败直接放弃：不移动任何既有行指针，
+       保持原行数（避免越界写与行块脱离登记无法回收）。 */
+    if (!xtw_ensureRows(self, self->m_rows + 1)) return;
+    if (!xtw_ensureCols(self, self->m_columns > 0 ? self->m_columns : 1))
+        return;
     /* 行指针整体后移后，新行只落在插入位一处：
        不可先在 m_cells[m_rows] 预置新行——移位/追加两条路径都会把它覆盖，纯泄漏。 */
+    fresh = xtw_newRow(self->m_base.m_colCapacity);
+    if (!fresh) return;
     for (i = self->m_rows; i > row; --i) self->m_cells[i] = self->m_cells[i-1];
-    self->m_cells[row] = xtw_newRow(self->m_base.m_colCapacity);
+    self->m_cells[row] = fresh;
     self->m_rows++;
     xtw_cwOnRowInserted(self, row); /* 挂载表随行号平移。 */
     xtw_updateContentSize(self);
@@ -503,8 +540,10 @@ void XTableWidget_insertRow(XTableWidget* self, int row)
 void XTableWidget_insertColumn(XTableWidget* self, int column)
 {
     if (!self || column < 0 || column > self->m_columns) return;
+    /* 列容量未扩成时不得推进 m_columns（否则 m_columns 越过
+       m_colCapacity，后续移列/读写越界）：保持原列数。 */
+    if (!xtw_ensureCols(self, self->m_columns + 1)) return;
     self->m_columns++;
-    xtw_ensureCols(self, self->m_columns);
     xtw_shiftColumnsRight(self, column); /* 单元格数据右移，新列置空（对标 Qt）。 */
     xtw_cwOnColumnInserted(self, column); /* 挂载表随列号平移。 */
     xtw_updateContentSize(self);
@@ -1202,7 +1241,7 @@ XVector* XTableWidget_items(const XTableWidget* self, const char* text)
     int row;
     int col;
     if (!self) return NULL;
-    rows = XVector_create(sizeof(int));
+    rows = XVector_Create(int);
     if (!rows) return NULL;
     for (row = 0; row < self->m_rows; ++row) {
         for (col = 0; col < self->m_columns; ++col) {

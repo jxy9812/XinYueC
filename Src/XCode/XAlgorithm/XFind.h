@@ -23,7 +23,7 @@ extern "C" {
  * @return 找到时返回数组中匹配元素的地址，未找到或参数无效时返回 NULL。
  * @note 数组顺序必须与 compare 的结果一致，返回地址仍属于调用者。
  */
-void* XBinarySearch(void* value, size_t n, size_t TypeSize,
+void* XFind_binarySearch(void* value, size_t n, size_t TypeSize,
     XCompare compare, void* findVal);
 
 #ifdef __cplusplus

@@ -287,7 +287,7 @@ void VXClass_move(XLockFreeStack* object, XLockFreeStack* src)
     {
         XLockFreeStack_clear_base(object);
     }
-    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeStack) - sizeof(XClass));
+    XMemory_swap((XClass*)object + 1, (XClass*)src + 1, sizeof(XLockFreeStack) - sizeof(XClass));
     Class_Memory(object) = source_memory;
     if (!target_uninitialized)
         Class_Memory(src) = target_memory;
@@ -296,7 +296,7 @@ void VXClass_move(XLockFreeStack* object, XLockFreeStack* src)
 void VXClass_deinit(XLockFreeStack* this_stack)
 {
     XVtableGetFunc(XVector_class_init(), EXClass_Deinit, void(*)(XVector*))(this_stack);
-    this_stack->m_top.value = 0;
+    this_stack->m_top.m_value = 0;
     this_stack->m_index_bits = 0;
     this_stack->m_index_mask = 0;
     this_stack->m_version_mask = 0;

@@ -101,6 +101,11 @@ static void VX_splash_mousePressEvent(XWidget* self, XEvent* event)
 static void VXSplashScreen_deinit(XSplashScreen* self)
 {
     if (!self) return;
+    if (self->m_pixmap) {
+        /* setPixmap 深拷贝所得，对象拥有；无人级联回收，须在此释放。 */
+        XClassDelete(self->m_pixmap);
+        self->m_pixmap = NULL;
+    }
     if (self->m_message) {
         XClassDelete(self->m_message);
         self->m_message = NULL;
@@ -124,7 +129,7 @@ void XSplashScreen_init(XSplashScreen* self, XWidget* parent,
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
-    XWidget_init(&self->m_base, parent, flags);
+    XWidget_init(&self->m_class, parent, flags);
     XClassSetVtable(self, XSplashScreen);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);

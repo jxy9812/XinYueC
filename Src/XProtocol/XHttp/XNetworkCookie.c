@@ -5,12 +5,10 @@
 
 #include "XNetworkCookie.h"
 
+#include <string.h>
+
 #include "XDateTime.h"
 #include "XMemory.h"
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #if XPROTOCOL_ON
 #if XHTTP_ON
 
@@ -89,23 +87,43 @@ static XByteArray* xcookie_trim(const uint8_t* data, size_t begin, size_t end)
     return XByteArray_create_with_data((const char*)(data + begin), end - begin);
 }
 
+static bool xcookie_decimal_bytes(const uint8_t* data, size_t size)
+{
+    size_t i;
+    size_t begin = 0;
+    if (!data || size == 0)
+        return false;
+    if (data[0] == '-' || data[0] == '+')
+        begin = 1;
+    if (begin >= size)
+        return false;
+    for (i = begin; i < size; ++i) {
+        if (data[i] < '0' || data[i] > '9')
+            return false;
+    }
+    return true;
+}
+
 static bool xcookie_parse_int(const XByteArray* value, int64_t* result)
 {
-    char buffer[48];
-    size_t size;
-    char* end;
-    long long number;
+    XString* text;
+    bool ok = false;
+    int64_t number;
     if (!value || !result)
         return false;
-    size = XByteArray_size_base((XContainer*)value);
-    if (size == 0 || size >= sizeof(buffer))
+    if (!xcookie_decimal_bytes(XByteArray_constData((XByteArray*)value),
+                               XByteArray_size_base((XContainer*)value)))
         return false;
-    memcpy(buffer, XByteArray_constData((XByteArray*)value), size);
-    buffer[size] = '\0';
-    number = strtoll(buffer, &end, 10);
-    if (end == buffer || *end != '\0')
+    text = XString_create_with_length_utf8(
+        (const char*)XByteArray_constData((XByteArray*)value),
+        XByteArray_size_base((XContainer*)value));
+    if (!text)
         return false;
-    *result = (int64_t)number;
+    number = XString_toLongLong(text, &ok, 10);
+    XClassDelete((XClass*)text);
+    if (!ok)
+        return false;
+    *result = number;
     return true;
 }
 
@@ -253,6 +271,11 @@ static void VXNetworkCookie_move(XNetworkCookie* dest, XNetworkCookie* src)
     src->m_value = NULL;
     src->m_domain = NULL;
     src->m_path = NULL;
+    src->m_expirationSecs = -1;
+    src->m_maxAge = -1;
+    src->m_secure = false;
+    src->m_httpOnly = false;
+    src->m_sameSite = XNetworkCookie_SameSiteDefault;
 }
 
 static bool xcookie_set_bytes(XByteArray** target, const XByteArray* value)
@@ -373,8 +396,6 @@ bool XNetworkCookie_hasSameIdentifier(const XNetworkCookie* self, const XNetwork
 XByteArray* XNetworkCookie_toRawForm(const XNetworkCookie* self, XNetworkCookie_RawForm form)
 {
     XByteArray* result;
-    char number[64];
-    int written;
     if (!self || !self->m_name || !self->m_value)
         return NULL;
     result = XByteArray_create();
@@ -393,8 +414,14 @@ XByteArray* XNetworkCookie_toRawForm(const XNetworkCookie* self, XNetworkCookie_
          !xcookie_append(result, XByteArray_constData(self->m_path), XByteArray_size_base((XContainer*)self->m_path))))
         goto failed;
     if (self->m_maxAge >= 0) {
-        written = snprintf(number, sizeof(number), "; Max-Age=%lld", (long long)self->m_maxAge);
-        if (written < 0 || !xcookie_append(result, number, (size_t)written)) goto failed;
+        XString* formatted = XString_create_fmt_utf8("; Max-Age=%lld", (long long)self->m_maxAge);
+        if (!formatted)
+            goto failed;
+        if (!xcookie_append(result, XString_toUtf8(formatted), XString_toUtf8_length(formatted))) {
+            XClassDelete((XClass*)formatted);
+            goto failed;
+        }
+        XClassDelete((XClass*)formatted);
     }
     if (self->m_secure && !XByteArray_append_utf8(result, "; Secure")) goto failed;
     if (self->m_httpOnly && !XByteArray_append_utf8(result, "; HttpOnly")) goto failed;
@@ -466,7 +493,7 @@ XVector* XNetworkCookie_parseCookies(const XByteArray* cookieString)
         if (attr) XClassDelete((XClass*)attr);
         if (attrValue) XClassDelete((XClass*)attrValue);
     }
-    result = XVector_create(sizeof(XNetworkCookie*));
+    result = XVector_Create(XNetworkCookie*);
     if (!result || !XVector_push_back_1_base(result, &cookie)) {
         if (result) XClassDelete((XClass*)result);
         XClassDelete((XClass*)cookie);
@@ -542,7 +569,7 @@ void XNetworkCookieJar_init(XNetworkCookieJar* self)
     memset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XNetworkCookieJar);
-    self->m_cookies = XVector_create(sizeof(XNetworkCookie*));
+    self->m_cookies = XVector_Create(XNetworkCookie*);
 }
 
 XNetworkCookieJar* XNetworkCookieJar_create_ex(XMemoryType memory)
@@ -662,7 +689,7 @@ XVector* XNetworkCookieJar_cookiesForUrl(const XNetworkCookieJar* self, const XU
         return NULL;
     host = XByteArray_create_with_data(XString_toUtf8(XUrl_host_const(url)), XString_toUtf8_length(XUrl_host_const(url)));
     path = XByteArray_create_with_data(XString_toUtf8(XUrl_path_const(url)), XString_toUtf8_length(XUrl_path_const(url)));
-    result = XVector_create(sizeof(XNetworkCookie*));
+    result = XVector_Create(XNetworkCookie*);
     scheme = XUrl_scheme_const(url);
     https = scheme && XString_equals_utf8(scheme, "https", XChar_CaseInsensitive);
     if (!host || !path || !result) goto failed;
@@ -727,7 +754,7 @@ bool XNetworkCookieJar_setCookiesFromHeaders(XNetworkCookieJar* self, const XHtt
     XByteArray* name;
     if (!self || !headers || !url)
         return false;
-    values = XVector_create(sizeof(XByteArray*));
+    values = XVector_Create(XByteArray*);
     name = XByteArray_create_utf8("Set-Cookie");
     if (!values || !name) {
         if (values) XClassDelete((XClass*)values);

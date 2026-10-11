@@ -66,7 +66,7 @@ typedef bool (*XConsoleShellGpioAuthorizeFn)(
  */
 typedef struct XConsoleShellGpioSlot {
     XGpio* gpio;                    /**< Shell 拥有的 GPIO 句柄；空槽为 NULL。 */
-    XAtomic_uint32_t eventCount;    /**< 自打开或上次清零后的中断事件数量。 */
+    XAtomic_Uint32 eventCount;    /**< 自打开或上次清零后的中断事件数量。 */
 } XConsoleShellGpioSlot;
 
 /**

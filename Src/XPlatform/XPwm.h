@@ -53,10 +53,10 @@ typedef enum XPwmPolarity {
 typedef struct XPwmConfig {
     XPwmChannel m_channel;       /**< 逻辑 PWM 控制器和输出通道。 */
     uint32_t m_frequencyHz;      /**< 输出频率，单位 Hz；必须大于 0。 */
-    uint16_t m_dutyPermille;     /**< 占空比万分比；范围 0..10000 表示 0%..100%。 */
-    XPwmPolarity m_polarity;     /**< 有效脉冲极性。 */
-    bool m_initialEnabled;       /**< true 表示打开成功后立即启动输出。 */
     uint32_t m_flags;            /**< 保留配置标志；当前必须为 0。 */
+    XPwmPolarity m_polarity;     /**< 有效脉冲极性。 */
+    uint16_t m_dutyPermille;     /**< 占空比万分比；范围 0..10000 表示 0%..100%。 */
+    bool m_initialEnabled;       /**< true 表示打开成功后立即启动输出。 */
 } XPwmConfig;
 
 /**
@@ -65,7 +65,7 @@ typedef struct XPwmConfig {
  *          打开后不自动输出；调用者应根据实际硬件修改通道和频率。
  */
 #define XPWM_CONFIG_INIT \
-    { { 0u, 0u, NULL }, 1000u, 0u, XPwmPolarity_Normal, false, 0u }
+    { { 0u, 0u, NULL }, 1000u, 0u, XPwmPolarity_Normal, 0u, false }
 
 /**
  * @brief PWM 后端能力位。

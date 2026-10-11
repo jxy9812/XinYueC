@@ -7,7 +7,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include <stdio.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include "XAtomic.h"

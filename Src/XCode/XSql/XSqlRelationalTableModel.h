@@ -47,6 +47,7 @@ XVtable* XSqlRelationalTableModel_class_init(void);
 void XSqlRelationalTableModel_init(XSqlRelationalTableModel* model, const XSqlDatabase* database);
 /**
  * @brief 创建关系表模型。
+ * @param memory 内存类型。
  * @param database 数据库连接；创建时复制连接句柄，可为 NULL。
  * @return 新模型，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */

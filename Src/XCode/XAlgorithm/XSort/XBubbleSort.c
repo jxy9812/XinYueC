@@ -12,7 +12,7 @@ void XBubbleSort(void* LParray, const size_t nSize, const size_t TypeSize,XCompa
 			cmp = compare(Lp, Lp + TypeSize);
 			if (!((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))
 			{
-				XSwap(Lp, Lp + TypeSize, TypeSize);//交换函数
+				XMemory_swap(Lp, Lp + TypeSize, TypeSize);//交换函数
 				flag = false;
 			}
 		}

@@ -10,6 +10,8 @@
  * @author     XinYueC 团队
  */
 
+#include "XInputDialog.h"
+
 #include "XGuiConfig.h"
 #include "XString.h"
 #include "XStringList.h"
@@ -17,7 +19,6 @@
 #include "XVarList.h"
 #include "XEvent.h"
 /* 真实弹窗依赖（对标 Qt 静态便捷函数的对话框组装路径）： */
-#include <stdlib.h>            /* strtod：浮点输入解析（前缀解析语义，XString_toDouble 为全串校验不等价，暂留） */
 #include "XCoreApplication.h"  /* qApp 等价物：有应用实例才允许模态循环 */
 #include "XGuiApplication.h"   /* 主屏查询（弹窗居中） */
 #include "XScreen.h"           /* 屏幕几何 */
@@ -37,7 +38,6 @@
 
 #if XWIDGET_ON && XDIALOG_ON
 
-#include "XInputDialog.h"
 #include "XWidget_Protected.h"
 
 /* ==================== 内部辅助 ==================== */
@@ -412,7 +412,7 @@ static XWidget* xid_childByName(XDialog* dlg, const char* name)
     XString_init(&tmp);
     XString_assign_utf8(&tmp, name);
     w = (XWidget*)XObject_findChild((XObject*)dlg, &tmp,
-                                    XFindDirectChildrenOnly);
+                                    XFindChildOption_DirectChildrenOnly);
     XClassDeinit((XClass*)&tmp);
     return w;
 }
@@ -750,10 +750,15 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
         XLineEdit* edit =
             (XLineEdit*)xid_childByName(&dlg->m_base, XID_NAME_EDIT);
         if (edit) {
+            /* 浮点解析用库内 XString_toDouble（对标 Qt QLocale 全串校验
+             * 语义）：非合法数字整串时回落当前存储值。 */
             const char* txt = XLineEdit_text(edit);
-            char* end = NULL;
-            double v = txt ? strtod(txt, &end) : dlg->m_doubleValue;
-            if (!txt || end == txt) v = dlg->m_doubleValue;
+            XString* parsed = txt ? XString_create_utf8(txt) : NULL;
+            bool ok = false;
+            double v = parsed ? XString_toDouble(parsed, &ok)
+                              : dlg->m_doubleValue;
+            if (parsed) XClassDelete((XClass*)parsed);
+            if (!ok) v = dlg->m_doubleValue;
             if (v < dlg->m_doubleMinimum) v = dlg->m_doubleMinimum;
             if (v > dlg->m_doubleMaximum) v = dlg->m_doubleMaximum;
             XInputDialog_setDoubleValue(dlg, v);

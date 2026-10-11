@@ -128,9 +128,6 @@ XScreen* XScreen_create_copy(const XScreen* other);
  */
 XScreen* XScreen_create_move(XScreen* other);
 
-/** @brief 通过 XClass 虚表释放 XScreen 资源（栈/外部存储对象使用）。 */
-/** @brief 删除堆上的 XScreen 对象。 */
-
 /* ==================== 屏幕注册表（未来由 XGuiApplication 接管） ==================== */
 
 /**

@@ -278,8 +278,9 @@ void* XShortcut_activated_signal(XShortcut* self);
  */
 void* XShortcut_activatedAmbiguously_signal(XShortcut* self);
 
+#endif /* XWIDGET_ON */
+
 #ifdef __cplusplus
 }
 #endif
-#endif /* XWIDGET_ON */
 #endif /* XSHORTCUT_H */

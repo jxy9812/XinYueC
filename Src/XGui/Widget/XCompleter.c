@@ -615,7 +615,7 @@ static bool xc_withinSubtree(const XWidget* root, const XWidget* w)
  *          ① 编辑框生效不可见（宿主页/祖先隐藏链，页切换场景）；
  *          ② 应用焦点移出"编辑框∪弹层"子树（对话框抢焦/点击其他可
  *          焦点控件）；点空白等无焦点迁移场景由弹层鼠标抓取的外点
- *          收层承担（见 xc_PopupList）。命中即 hidePopup（内部幂等）。
+ *          收层承担（见 XCompleterPopupList）。命中即 hidePopup（内部幂等）。
  */
 static void VX_completer_timerEvent(XObject* object, XTimerEvent* event)
 {
@@ -661,17 +661,17 @@ static void VX_completer_timerEvent(XObject* object, XTimerEvent* event)
  *          第九轮活体 ①：弹层开着点空白/切页均不关的孤儿浮层。
  */
 /* 子类槽位表注册：纯扩展（不新增槽位，END_SIZE 对齐 XListWidget）。 */
-XCLASS_DEFINE_BEGING(xc_PopupList)
-XCLASS_DEFINE_EXTEND_END(xc_PopupList, XListWidget)
-typedef struct xc_PopupList
+XCLASS_DEFINE_BEGING(XCompleterPopupList)
+XCLASS_DEFINE_EXTEND_END(XCompleterPopupList, XListWidget)
+typedef struct XCompleterPopupList
 {
     XListWidget m_base;   /**< 基类成员；必须是第一个。 */
     XCompleter* m_owner;  /**< 拥有本弹层的补全器（借用，可为 NULL）。 */
-} xc_PopupList;
+} XCompleterPopupList;
 
-static void xc_popupList_mousePressEvent(XWidget* self, XEvent* event)
+static void VXCompleterPopupList_mousePressEvent(XWidget* self, XEvent* event)
 {
-    xc_PopupList* popup = (xc_PopupList*)self;
+    XCompleterPopupList* popup = (XCompleterPopupList*)self;
     XMouseEvent* mouse;
     XPoint pos;
     if (!self || !event ||
@@ -698,9 +698,9 @@ static void xc_popupList_mousePressEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
-static void xc_popupList_hideEvent(XWidget* self, XEvent* event)
+static void VXCompleterPopupList_hideEvent(XWidget* self, XEvent* event)
 {
-    xc_PopupList* popup = (xc_PopupList*)self;
+    XCompleterPopupList* popup = (XCompleterPopupList*)self;
     if (!self || !event || XEvent_type(event) != XEVENT_TYPE_HIDE) return;
     /* 收层联动：解除抓取 + 停守护（hidePopup 之外的隐藏路径兜底，
        如父窗口隐藏链直接压熄弹层）。 */
@@ -711,13 +711,13 @@ static void xc_popupList_hideEvent(XWidget* self, XEvent* event)
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
-static XVtable* xc_PopupList_class_init(void)
+static XVtable* XCompleterPopupList_class_init(void)
 {
-    XVTABLE_INIT_DEFAULT(xc_PopupList)
+    XVTABLE_INIT_DEFAULT(XCompleterPopupList)
     XVTABLE_INHERIT_XCLASS(XListWidget);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
-                             xc_popupList_mousePressEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, xc_popupList_hideEvent);
+                             VXCompleterPopupList_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_HideEvent, VXCompleterPopupList_hideEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -739,6 +739,22 @@ static void xc_defaultPopupSyncCurrentRow(XCompleter* self)
     XListWidget_setCurrentRow(self->m_defaultPopup, self->m_currentRow);
 }
 
+/** @brief 默认弹层 destroyed 自摘槽：弹层挂编辑框顶层窗口、设计上随
+ *  顶层析构（本类不重复拥有），顶层先亡时必须清 m_defaultPopup 回
+ *  指针，否则补全器存活期会触碰已释放弹层（反注册惯例对标 XMenu/
+ *  XActionGroup 的动作 destroyed 自摘）。 */
+static void xc_defaultPopupDestroyedSlot(XObject* receiver, XVarList* args)
+{
+    XCompleter* self = (XCompleter*)receiver;
+    XObject* sender = XObject_sender(receiver);
+
+    (void)args;
+    if (!self || sender != (XObject*)self->m_defaultPopup) return;
+    self->m_defaultPopup = NULL;
+    /* 弹层已亡：守护巡检立即停表（巡检只触存活弹层）。 */
+    xc_completerStopGuard(self);
+}
+
 static void xc_defaultPopupSync(XCompleter* self)
 {
     XWidget* editor;
@@ -757,16 +773,16 @@ static void xc_defaultPopupSync(XCompleter* self)
     }
     if (!self->m_defaultPopup) {
         XWidget* top = XWidget_topLevelWidget(editor);
-        xc_PopupList* list;
+        XCompleterPopupList* list;
         if (!top) return;
         /* 以补全专用子类实例化（XListWidget 布局前缀兼容；事件槽经
            虚表多态分派）。弹层挂顶层窗口（随顶层析构，本类不重复
            拥有）；点击经槽回写编辑框并隐藏。 */
-        list = (xc_PopupList*)XMemory_malloc(sizeof(*list),
-                                             XCLASS_DEFAULT_MEMORY_TYPE);
+        list = (XCompleterPopupList*)XMemory_malloc(
+            sizeof(*list), XCLASS_DEFAULT_MEMORY_TYPE);
         if (!list) return;
         XListWidget_init(&list->m_base, top, 0);
-        XClassSetVtable(list, xc_PopupList);
+        XClassSetVtable(list, XCompleterPopupList);
         Set_Class_Memory(list, XCLASS_DEFAULT_MEMORY_TYPE);
         Set_Class_IsHeap(list, true);
         list->m_owner = self;
@@ -774,6 +790,11 @@ static void xc_defaultPopupSync(XCompleter* self)
         XObject_connect_1((XObject*)self->m_defaultPopup,
                           (size_t)XListWidget_itemClicked_signal(NULL, 0),
                           (XObject*)self, xc_popupClickedSlot,
+                          XConnectionType_Direct);
+        /* 弹层销毁反注册：弹层随顶层窗口析构时自摘回指针（防悬垂）。 */
+        XObject_connect_1((XObject*)self->m_defaultPopup,
+                          (size_t)XObject_destroyed_signal(NULL),
+                          (XObject*)self, xc_defaultPopupDestroyedSlot,
                           XConnectionType_Direct);
     }
     XListWidget_clear(self->m_defaultPopup);

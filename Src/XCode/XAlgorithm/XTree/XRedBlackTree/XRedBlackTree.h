@@ -58,7 +58,7 @@ extern "C" {
  * @param this_root 目标红黑树节点。
  * @return 用户数据首地址。
  */
-#define XRBTree_getData(this_root)				XTreeNode_getData(this_root)//红黑树-获取数据指针
+#define XRBTree_getData(this_root)				XTreeNode_GetDataPtr(this_root)//红黑树-获取数据指针
 
 /** @brief 红黑树节点颜色。 */
 enum XRBTreeColor {
@@ -187,7 +187,7 @@ void XRBTreeNode_delete(XTreeNode* node, XMemory* memory);
  * @param args 传递给 method 的上下文参数。
  * @param memory 节点释放所使用的内存管理器。
  */
-#define XRBTree_delete(this_root,method,args,memory)		XTree_delete(this_root,XRBTreeNode_delete,method,args,memory)
+#define XRBTree_delete(this_root,method,args,memory)		XTreeNode_deleteTree(this_root,XRBTreeNode_delete,method,args,memory)
 #ifdef __cplusplus
 }
 #endif

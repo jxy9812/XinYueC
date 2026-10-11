@@ -1,19 +1,23 @@
-﻿#ifndef XMQTTGLOBAL_H
+﻿/**
+ * @file       XMqttGlobal.h
+ * @brief      MQTT 全局枚举和常量定义（对齐 Qt 6.8 QMqtt）。
+ * @details    定义 MQTT 协议相关的枚举类型，包括载荷格式指示、消息状态和
+ *             原因码。受 XMQTT_CLIENT_ON 开关裁剪（见 XMqtt_config.h）。
+ */
+#ifndef XMQTTGLOBAL_H
 #define XMQTTGLOBAL_H
 
-#include <stdint.h>
-#include <stdbool.h>
-#include "XClass.h"
+#include "XMqtt_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+#if XMQTT_ON
+#if XMQTT_CLIENT_ON
 
-/**
- * @file XMqttGlobal.h
- * @brief MQTT 全局枚举和常量定义（对齐 Qt 6.8 QMqtt）
- * @details 定义 MQTT 协议相关的枚举类型，包括载荷格式指示、消息状态和原因码。
- */
+#include <stdint.h>
+#include <stdbool.h>
+#include "XClass.h"
 
 /**
  * @brief 载荷格式指示枚举
@@ -83,24 +87,27 @@ typedef enum {
  * @brief MQTT 报文固定头第一字节联合体（位域解析）。
  * @details 用于以位域方式读取或构造 MQTT 报文固定头的第一个字节，避免手工
  *          移位/掩码。线上字节与各标志位的对应关系：
- *          - bits.retain：bit0，RETAIN 标志；
- *          - bits.qos：bit1-2，QoS 等级（0/1/2）；
- *          - bits.dup：bit3，DUP 重发标志；
- *          - bits.type：bit4-7，报文类型（低 4 位为 0x0 的报文类型常量，
+ *          - m_bits.m_retain：bit0，RETAIN 标志；
+ *          - m_bits.m_qos：bit1-2，QoS 等级（0/1/2）；
+ *          - m_bits.m_dup：bit3，DUP 重发标志；
+ *          - m_bits.m_type：bit4-7，报文类型（低 4 位为 0x0 的报文类型常量，
  *            例如 PUBLISH 的类型值为 0x3）。
  * @note 位域声明顺序依赖小端序实现（x86/ARM 等主流平台均为小端，首个字段
  *       占据最低位）；跨大端平台移植时需重新核对位序。
  * @see XMqttProtocol.c、XMqttServer.c 中 MQTT_* 报文类型常量。
  */
 typedef union XMqttFixedHeader {
-    uint8_t byte;                       ///< 固定头原始字节（线上格式）
+    uint8_t m_byte;                     ///< 固定头原始字节（线上格式）
     struct {
-        uint8_t retain : 1;             ///< bit0：RETAIN 标志
-        uint8_t qos : 2;                ///< bit1-2：QoS 等级（0/1/2）
-        uint8_t dup : 1;                ///< bit3：DUP 重发标志
-        uint8_t type : 4;               ///< bit4-7：报文类型
-    } bits;
+        uint8_t m_retain : 1;           ///< bit0：RETAIN 标志
+        uint8_t m_qos : 2;              ///< bit1-2：QoS 等级（0/1/2）
+        uint8_t m_dup : 1;              ///< bit3：DUP 重发标志
+        uint8_t m_type : 4;             ///< bit4-7：报文类型
+    } m_bits;
 } XMqttFixedHeader;
+
+#endif /* XMQTT_CLIENT_ON */
+#endif /* XMQTT_ON */
 
 #ifdef __cplusplus
 }

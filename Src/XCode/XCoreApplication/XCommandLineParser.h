@@ -128,9 +128,16 @@ XCommandLineOption* XCommandLineParser_addHelpOption(XCommandLineParser* parser)
 /**
  * @brief 设置应用程序描述（对标 QCommandLineParser::setApplicationDescription）
  * @param parser 解析器指针
- * @param description 描述字符串
+ * @param description 描述字符串，内部拷贝保存
  */
-void XCommandLineParser_setApplicationDescription(XCommandLineParser* parser, const char* description);
+void XCommandLineParser_setApplicationDescription(XCommandLineParser* parser, const XString* description);
+
+/**
+ * @brief 设置应用程序描述（UTF-8 兼容重载）
+ * @param parser 解析器指针
+ * @param description UTF-8 编码的描述字符串，可为 NULL；内部创建临时 XString 后转发到 XString 主版本
+ */
+void XCommandLineParser_setApplicationDescription_2(XCommandLineParser* parser, const char* description);
 
 /**
  * @brief 获取应用程序描述（对标 QCommandLineParser::applicationDescription）
@@ -146,7 +153,18 @@ const char* XCommandLineParser_applicationDescription(const XCommandLineParser* 
  * @param description 参数描述
  * @param syntax 参数语法（如 "[file]"），可为 NULL
  */
-void XCommandLineParser_addPositionalArgument(XCommandLineParser* parser, const char* name,
+void XCommandLineParser_addPositionalArgument(XCommandLineParser* parser, const XString* name,
+    const XString* description, const XString* syntax);
+
+/**
+ * @brief 添加位置参数定义（UTF-8 兼容重载）
+ * @param parser 解析器指针
+ * @param name UTF-8 编码的参数名称
+ * @param description UTF-8 编码的参数描述
+ * @param syntax UTF-8 编码的参数语法（如 "[file]"），可为 NULL
+ * @note 各 UTF-8 参数先转换为临时 XString，再转发到 XString 主版本
+ */
+void XCommandLineParser_addPositionalArgument_2(XCommandLineParser* parser, const char* name,
     const char* description, const char* syntax);
 
 /**
@@ -194,10 +212,18 @@ const char* XCommandLineParser_errorText(const XCommandLineParser* parser);
 /**
  * @brief 检查选项是否已设置（按名称）（对标 QCommandLineParser::isSet）
  * @param parser 解析器指针
- * @param name 选项名称
+ * @param name 选项名称，按内容比较、只在调用期间借用
  * @return true 已设置，false 未设置
  */
-bool XCommandLineParser_isSet(XCommandLineParser* parser, const char* name);
+bool XCommandLineParser_isSet(XCommandLineParser* parser, const XString* name);
+
+/**
+ * @brief 检查选项是否已设置（按名称，UTF-8 兼容重载）
+ * @param parser 解析器指针
+ * @param name UTF-8 编码的选项名称；内部创建临时 XString 后转发到 XString 主版本
+ * @return true 已设置，false 未设置
+ */
+bool XCommandLineParser_isSet_2(XCommandLineParser* parser, const char* name);
 
 /**
  * @brief 检查选项是否已设置（按选项对象）（对标 QCommandLineParser::isSet）
@@ -210,10 +236,18 @@ bool XCommandLineParser_isSetOption(XCommandLineParser* parser, const XCommandLi
 /**
  * @brief 获取选项值（按名称）（对标 QCommandLineParser::value）
  * @param parser 解析器指针
- * @param name 选项名称
- * @return 选项值字符串，未设置返回 NULL
+ * @param name 选项名称，按内容比较、只在调用期间借用
+ * @return 选项值字符串（内部存储的临时 UTF-8 缓存，随下一次访问失效，禁止长期持有），未设置返回 NULL
  */
-const char* XCommandLineParser_value(XCommandLineParser* parser, const char* name);
+const char* XCommandLineParser_value(XCommandLineParser* parser, const XString* name);
+
+/**
+ * @brief 获取选项值（按名称，UTF-8 兼容重载）
+ * @param parser 解析器指针
+ * @param name UTF-8 编码的选项名称；内部创建临时 XString 后转发到 XString 主版本
+ * @return 选项值字符串（内部存储的临时 UTF-8 缓存，随下一次访问失效，禁止长期持有），未设置返回 NULL
+ */
+const char* XCommandLineParser_value_2(XCommandLineParser* parser, const char* name);
 
 /**
  * @brief 获取选项值（按选项对象）（对标 QCommandLineParser::value）

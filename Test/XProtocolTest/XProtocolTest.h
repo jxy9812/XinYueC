@@ -7,7 +7,7 @@ extern "C" {
 #include "XTestMenu.h"
 #include"XClass.h"
 #include "XPlc_config.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 	//协议栈
 	void XTestMenu_XProtocolTest(XTestMenu* root);
 	void XTestMenu_XDataFrameCommTest(XTestMenu* root);
@@ -66,7 +66,7 @@ extern "C" {
 	bool XMqttTcpClientProcess_run(void);
 	bool XMqttTcpInteropTest_run(void);
 	bool XMqttTest_runAll(void);
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

@@ -125,6 +125,7 @@
 
 #include "XVirtualKeyboard.h"
 #include "XWidget_Protected.h"
+#include "XObject_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XVarList.h"
@@ -1153,7 +1154,7 @@ static void xkb_targetDestroyedSlot(XObject* receiver, XVarList* args)
 }
 
 /** @brief 宿主 destroyed 防悬垂槽：清宿主、收层并摘挂归还单例。
- *  @details destroyed 发射于宿主 is_deleting_children 置位之前
+ *  @details destroyed 发射于宿主 m_is_deleting_children 置位之前
  *           （XObject.c VXObject_deinit），此刻 setParent(NULL) 经
  *           prev_parent 分支（XVector_remove_base）把面板从宿主
  *           children 摘除，随后的子控件级联删除循环不再连带删除堆
@@ -1269,11 +1270,11 @@ static void xkb_roundRect(XPainter* painter, const XRect* rect,
  *         选择/文字编辑/收起；四等分热区）。 */
 typedef enum XkbToolBarSlot
 {
-    XKB_TOOL_FLOAT = 0,    /**< 悬浮切换（本阶段桩）。 */
-    XKB_TOOL_LAYOUT = 1,   /**< 键盘选择（本阶段桩）。 */
-    XKB_TOOL_EDIT = 2,     /**< 文字编辑（本阶段桩）。 */
-    XKB_TOOL_COLLAPSE = 3, /**< 收起（XVirtualKeyboard_closePopup 直连）。 */
-    XKB_TOOL_COUNT = 4     /**< 工具栏槽数（四等分）。 */
+    XkbToolBarSlot_Float = 0,    /**< 悬浮切换（本阶段桩）。 */
+    XkbToolBarSlot_Layout = 1,   /**< 键盘选择（本阶段桩）。 */
+    XkbToolBarSlot_Edit = 2,     /**< 文字编辑（本阶段桩）。 */
+    XkbToolBarSlot_Collapse = 3, /**< 收起（XVirtualKeyboard_closePopup 直连）。 */
+    XkbToolBarSlot_Count = 4     /**< 工具栏槽数（四等分）。 */
 } XkbToolBarSlot;
 
 /** @brief 菜单条内部子区域几何（布局/绘制/命中三方共用同一几何函数
@@ -1282,7 +1283,7 @@ typedef struct XkbMenuBarGeo
 {
     XRect bar;                      /**< 整条矩形（=m_menuBarRect，控件
                                          局部坐标）。 */
-    XRect cell[XKB_TOOL_COUNT];     /**< 四等分热区（图标格内居中；末格
+    XRect cell[XkbToolBarSlot_Count];     /**< 四等分热区（图标格内居中；末格
                                          含条宽余数，命中/绘制同源）。 */
 } XkbMenuBarGeo;
 
@@ -1310,17 +1311,17 @@ static void xkb_menuBarLayout(const XVirtualKeyboard* self, XkbMenuBarGeo* geo)
     int i;
     if (!geo) return;
     XRect_init(&geo->bar, 0, 0, 0, 0);
-    for (i = 0; i < XKB_TOOL_COUNT; ++i) XRect_init(&geo->cell[i], 0, 0, 0, 0);
+    for (i = 0; i < XkbToolBarSlot_Count; ++i) XRect_init(&geo->cell[i], 0, 0, 0, 0);
     if (!self || self->m_menuBarRect.height <= 0 ||
         self->m_menuBarRect.width <= 0)
         return;
     geo->bar = self->m_menuBarRect;
     {
         int x = geo->bar.x;
-        for (i = 0; i < XKB_TOOL_COUNT; ++i) {
+        for (i = 0; i < XkbToolBarSlot_Count; ++i) {
             int xEnd = geo->bar.x +
                        (int)(((int64_t)geo->bar.width * (i + 1)) /
-                             XKB_TOOL_COUNT);
+                             XkbToolBarSlot_Count);
             geo->cell[i].x = x;
             geo->cell[i].y = geo->bar.y;
             geo->cell[i].width = xEnd - x;
@@ -1341,10 +1342,10 @@ static int xkb_menuBarCellAt(const XVirtualKeyboard* self, int x, int y)
     if (x < geo.bar.x || x >= geo.bar.x + geo.bar.width ||
         y < geo.bar.y || y >= geo.bar.y + geo.bar.height)
         return -1;
-    for (i = 0; i < XKB_TOOL_COUNT; ++i) {
+    for (i = 0; i < XkbToolBarSlot_Count; ++i) {
         if (x < geo.cell[i].x + geo.cell[i].width) return i;
     }
-    return XKB_TOOL_COUNT - 1;
+    return XkbToolBarSlot_Count - 1;
 }
 
 /** @brief 工具栏图标热区判定（紧凑悬浮态拖移分流用）：热区=格内居中
@@ -1357,7 +1358,7 @@ static bool xkb_menuBarIconHot(const XVirtualKeyboard* self, int slot,
     int box;
     int ix;
     int iy;
-    if (!self || slot < 0 || slot >= XKB_TOOL_COUNT) return false;
+    if (!self || slot < 0 || slot >= XkbToolBarSlot_Count) return false;
     xkb_menuBarLayout(self, &geo);
     if (geo.bar.height <= 0 || geo.cell[slot].width <= 0) return false;
     box = geo.bar.height - 2 * XKB_MENU_PAD;
@@ -1504,18 +1505,18 @@ static void xkb_openEditPanel(XVirtualKeyboard* self)
 /** @brief 工具栏槽位动作分发（释放触发单点；滑动出格取消不触发）。 */
 static void xkb_menuBarActivate(XVirtualKeyboard* self, int slot)
 {
-    if (!self || slot < 0 || slot >= XKB_TOOL_COUNT) return;
+    if (!self || slot < 0 || slot >= XkbToolBarSlot_Count) return;
     switch ((XkbToolBarSlot)slot) {
-    case XKB_TOOL_FLOAT:
+    case XkbToolBarSlot_Float:
         xkb_toggleCompactFloat(self);
         break;
-    case XKB_TOOL_LAYOUT:
+    case XkbToolBarSlot_Layout:
         xkb_openLayoutSelector(self);
         break;
-    case XKB_TOOL_EDIT:
+    case XkbToolBarSlot_Edit:
         xkb_openEditPanel(self);
         break;
-    case XKB_TOOL_COLLAPSE:
+    case XkbToolBarSlot_Collapse:
         XVirtualKeyboard_closePopup(self); /* 收起直连（规格口径）。 */
         break;
     default:
@@ -1549,7 +1550,7 @@ static void xkb_menuBarPaint(XVirtualKeyboard* self, XPainter* painter)
     box = geo.bar.height - 2 * XKB_MENU_PAD;
     if (box < 8) box = 8;
     if (box > XKB_MENU_ICON_MAX) box = XKB_MENU_ICON_MAX;
-    for (i = 0; i < XKB_TOOL_COUNT; ++i) {
+    for (i = 0; i < XkbToolBarSlot_Count; ++i) {
         XRect icon;
         bool pressed = (self->m_pressedTool == i);
         uint32_t ink = pressed ? XKB_LVGL_PRESSED_TEXT : XKB_LVGL_TEXT;
@@ -1572,7 +1573,7 @@ static void xkb_menuBarPaint(XVirtualKeyboard* self, XPainter* painter)
         XPainter_setPenWidth(painter, 1);
         XPainter_setBrush_2(painter, XPainterBrushStyle_NoBrush);
         switch ((XkbToolBarSlot)i) {
-        case XKB_TOOL_FLOAT: {
+        case XkbToolBarSlot_Float: {
             /* 画中画：外框 + 右下小实块（悬浮/压缩切换）。 */
             XPainter_drawRect(painter, &icon);
             {
@@ -1587,7 +1588,7 @@ static void xkb_menuBarPaint(XVirtualKeyboard* self, XPainter* painter)
             }
             break;
         }
-        case XKB_TOOL_LAYOUT: {
+        case XkbToolBarSlot_Layout: {
             /* 键盘面板：外圆角框 + 两行键点阵。 */
             XPainter_drawRect(painter, &icon);
             {
@@ -1610,7 +1611,7 @@ static void xkb_menuBarPaint(XVirtualKeyboard* self, XPainter* painter)
             }
             break;
         }
-        case XKB_TOOL_EDIT: {
+        case XkbToolBarSlot_Edit: {
             /* 文字编辑：两行文档线 + 斜置铅笔（右上线身+左下笔尖）。 */
             XRect line = icon;
             line.height = 1;
@@ -1630,7 +1631,7 @@ static void xkb_menuBarPaint(XVirtualKeyboard* self, XPainter* painter)
                               icon.y + icon.height - XKB_MENU_PAD);
             break;
         }
-        case XKB_TOOL_COLLAPSE: {
+        case XkbToolBarSlot_Collapse: {
             /* 收起：下箭头（左上→中下→右上折线）。 */
             XPoint pts[3];
             pts[0].x = icon.x + box / 4;
@@ -1885,24 +1886,24 @@ static void xkb_layoutSelectorPaint(XVirtualKeyboard* self, XPainter* painter)
  */
 typedef enum XkbEditPanelSlot
 {
-    XKB_EDIT_UP = 0,     /**< 上方向（选择态带 Shift）。 */
-    XKB_EDIT_LEFT,       /**< 左方向。 */
-    XKB_EDIT_SEL,        /**< 开始选择（面板本地选择态切换）。 */
-    XKB_EDIT_RIGHT,      /**< 右方向。 */
-    XKB_EDIT_DOWN,       /**< 下方向。 */
-    XKB_EDIT_HOME,       /**< Home（选择态带 Shift）。 */
-    XKB_EDIT_ALL,        /**< 全选（Ctrl+A）。 */
-    XKB_EDIT_END,        /**< End（选择态带 Shift）。 */
-    XKB_EDIT_BACKSPACE,  /**< ⌫ 退格（字库无 ⌫ 字形，键面用「退格」）。 */
-    XKB_EDIT_COPY,       /**< 复制（公开 API 优先，回落 Ctrl+C）。 */
-    XKB_EDIT_CUT,        /**< 剪切（公开 API 优先，回落 Ctrl+X）。 */
-    XKB_EDIT_PASTE,      /**< 粘贴（公开 API 优先，回落 Ctrl+V）。 */
-    XKB_EDIT_COUNT = 12  /**< 动作槽位总数。 */
+    XkbEditPanelSlot_Up = 0,     /**< 上方向（选择态带 Shift）。 */
+    XkbEditPanelSlot_Left,       /**< 左方向。 */
+    XkbEditPanelSlot_Sel,        /**< 开始选择（面板本地选择态切换）。 */
+    XkbEditPanelSlot_Right,      /**< 右方向。 */
+    XkbEditPanelSlot_Down,       /**< 下方向。 */
+    XkbEditPanelSlot_Home,       /**< Home（选择态带 Shift）。 */
+    XkbEditPanelSlot_All,        /**< 全选（Ctrl+A）。 */
+    XkbEditPanelSlot_End,        /**< End（选择态带 Shift）。 */
+    XkbEditPanelSlot_Backspace,  /**< ⌫ 退格（字库无 ⌫ 字形，键面用「退格」）。 */
+    XkbEditPanelSlot_Copy,       /**< 复制（公开 API 优先，回落 Ctrl+C）。 */
+    XkbEditPanelSlot_Cut,        /**< 剪切（公开 API 优先，回落 Ctrl+X）。 */
+    XkbEditPanelSlot_Paste,      /**< 粘贴（公开 API 优先，回落 Ctrl+V）。 */
+    XkbEditPanelSlot_Count = 12  /**< 动作槽位总数。 */
 } XkbEditPanelSlot;
 
 /** @brief 编辑面板动作标签（与 XkbEditPanelSlot 一一对应；方向/退格
  *         标签复用既有键帽常量，字库无箭头字形口径同键位文案）。 */
-static const char* const kEditPanelLabels[XKB_EDIT_COUNT] = {
+static const char* const kEditPanelLabels[XkbEditPanelSlot_Count] = {
     "\xE4\xB8\x8A",            /* 上 */
     XKEYBOARD_LBL_LEFT,        /* <- */
     XKB_EDIT_LBL_SEL,          /* 开始选择 */
@@ -1925,7 +1926,7 @@ typedef struct XkbEditPanelGeo
     XRect title;                  /**< 标题行（左「文字编辑」）。 */
     XRect back;                   /**< 返回箭头热区（标题行右端方形）。 */
     XRect main;                   /**< 主区大块白底（左 3/4 宽）。 */
-    XRect cell[XKB_EDIT_COUNT];   /**< 动作热区（主区 8 + 右列 4；空白
+    XRect cell[XkbEditPanelSlot_Count];   /**< 动作热区（主区 8 + 右列 4；空白
                                        格不算槽位不在场内）。 */
 } XkbEditPanelGeo;
 
@@ -1948,7 +1949,7 @@ static void xkb_editPanelLayout(const XVirtualKeyboard* self,
     XRect_init(&geo->title, 0, 0, 0, 0);
     XRect_init(&geo->back, 0, 0, 0, 0);
     XRect_init(&geo->main, 0, 0, 0, 0);
-    for (i = 0; i < XKB_EDIT_COUNT; ++i) XRect_init(&geo->cell[i], 0, 0, 0, 0);
+    for (i = 0; i < XkbEditPanelSlot_Count; ++i) XRect_init(&geo->cell[i], 0, 0, 0, 0);
     if (!self || !self->m_editPanelOpen || self->m_menuBarRect.height <= 0 ||
         self->m_menuBarRect.width <= 0)
         return;
@@ -1985,38 +1986,38 @@ static void xkb_editPanelLayout(const XVirtualKeyboard* self,
         colX[3] = geo->main.x + mainW;
         for (i = 0; i <= 4; ++i)
             rowY[i] = gridY + (int)(((int64_t)gridH * i) / 4);
-        geo->cell[XKB_EDIT_UP].x = colX[1];
-        geo->cell[XKB_EDIT_UP].y = rowY[0];
-        geo->cell[XKB_EDIT_UP].width = colX[2] - colX[1];
-        geo->cell[XKB_EDIT_UP].height = rowY[1] - rowY[0];
-        geo->cell[XKB_EDIT_LEFT].x = colX[0];
-        geo->cell[XKB_EDIT_LEFT].y = rowY[1];
-        geo->cell[XKB_EDIT_LEFT].width = colX[1] - colX[0];
-        geo->cell[XKB_EDIT_LEFT].height = rowY[2] - rowY[1];
-        geo->cell[XKB_EDIT_SEL].x = colX[1];
-        geo->cell[XKB_EDIT_SEL].y = rowY[1];
-        geo->cell[XKB_EDIT_SEL].width = colX[2] - colX[1];
-        geo->cell[XKB_EDIT_SEL].height = rowY[2] - rowY[1];
-        geo->cell[XKB_EDIT_RIGHT].x = colX[2];
-        geo->cell[XKB_EDIT_RIGHT].y = rowY[1];
-        geo->cell[XKB_EDIT_RIGHT].width = colX[3] - colX[2];
-        geo->cell[XKB_EDIT_RIGHT].height = rowY[2] - rowY[1];
-        geo->cell[XKB_EDIT_DOWN].x = colX[1];
-        geo->cell[XKB_EDIT_DOWN].y = rowY[2];
-        geo->cell[XKB_EDIT_DOWN].width = colX[2] - colX[1];
-        geo->cell[XKB_EDIT_DOWN].height = rowY[3] - rowY[2];
-        geo->cell[XKB_EDIT_HOME].x = colX[0];
-        geo->cell[XKB_EDIT_HOME].y = rowY[3];
-        geo->cell[XKB_EDIT_HOME].width = colX[1] - colX[0];
-        geo->cell[XKB_EDIT_HOME].height = rowY[4] - rowY[3];
-        geo->cell[XKB_EDIT_ALL].x = colX[1];
-        geo->cell[XKB_EDIT_ALL].y = rowY[3];
-        geo->cell[XKB_EDIT_ALL].width = colX[2] - colX[1];
-        geo->cell[XKB_EDIT_ALL].height = rowY[4] - rowY[3];
-        geo->cell[XKB_EDIT_END].x = colX[2];
-        geo->cell[XKB_EDIT_END].y = rowY[3];
-        geo->cell[XKB_EDIT_END].width = colX[3] - colX[2];
-        geo->cell[XKB_EDIT_END].height = rowY[4] - rowY[3];
+        geo->cell[XkbEditPanelSlot_Up].x = colX[1];
+        geo->cell[XkbEditPanelSlot_Up].y = rowY[0];
+        geo->cell[XkbEditPanelSlot_Up].width = colX[2] - colX[1];
+        geo->cell[XkbEditPanelSlot_Up].height = rowY[1] - rowY[0];
+        geo->cell[XkbEditPanelSlot_Left].x = colX[0];
+        geo->cell[XkbEditPanelSlot_Left].y = rowY[1];
+        geo->cell[XkbEditPanelSlot_Left].width = colX[1] - colX[0];
+        geo->cell[XkbEditPanelSlot_Left].height = rowY[2] - rowY[1];
+        geo->cell[XkbEditPanelSlot_Sel].x = colX[1];
+        geo->cell[XkbEditPanelSlot_Sel].y = rowY[1];
+        geo->cell[XkbEditPanelSlot_Sel].width = colX[2] - colX[1];
+        geo->cell[XkbEditPanelSlot_Sel].height = rowY[2] - rowY[1];
+        geo->cell[XkbEditPanelSlot_Right].x = colX[2];
+        geo->cell[XkbEditPanelSlot_Right].y = rowY[1];
+        geo->cell[XkbEditPanelSlot_Right].width = colX[3] - colX[2];
+        geo->cell[XkbEditPanelSlot_Right].height = rowY[2] - rowY[1];
+        geo->cell[XkbEditPanelSlot_Down].x = colX[1];
+        geo->cell[XkbEditPanelSlot_Down].y = rowY[2];
+        geo->cell[XkbEditPanelSlot_Down].width = colX[2] - colX[1];
+        geo->cell[XkbEditPanelSlot_Down].height = rowY[3] - rowY[2];
+        geo->cell[XkbEditPanelSlot_Home].x = colX[0];
+        geo->cell[XkbEditPanelSlot_Home].y = rowY[3];
+        geo->cell[XkbEditPanelSlot_Home].width = colX[1] - colX[0];
+        geo->cell[XkbEditPanelSlot_Home].height = rowY[4] - rowY[3];
+        geo->cell[XkbEditPanelSlot_All].x = colX[1];
+        geo->cell[XkbEditPanelSlot_All].y = rowY[3];
+        geo->cell[XkbEditPanelSlot_All].width = colX[2] - colX[1];
+        geo->cell[XkbEditPanelSlot_All].height = rowY[4] - rowY[3];
+        geo->cell[XkbEditPanelSlot_End].x = colX[2];
+        geo->cell[XkbEditPanelSlot_End].y = rowY[3];
+        geo->cell[XkbEditPanelSlot_End].width = colX[3] - colX[2];
+        geo->cell[XkbEditPanelSlot_End].height = rowY[4] - rowY[3];
     }
     /* 右列 4 键（列宽=面板宽/4，行高边界累进）。 */
     {
@@ -2024,7 +2025,7 @@ static void xkb_editPanelLayout(const XVirtualKeyboard* self,
         for (i = 0; i < 4; ++i) {
             int y0 = gridY + (int)(((int64_t)gridH * i) / 4);
             int y1 = gridY + (int)(((int64_t)gridH * (i + 1)) / 4);
-            XRect* r = &geo->cell[XKB_EDIT_BACKSPACE + i];
+            XRect* r = &geo->cell[XkbEditPanelSlot_Backspace + i];
             r->x = rx;
             r->y = y0;
             r->width = rightW;
@@ -2039,7 +2040,7 @@ static void xkb_editPanelLayout(const XVirtualKeyboard* self,
 static bool xkb_editPanelEnabled(const XVirtualKeyboard* self, int slot)
 {
     if (!self) return false;
-    if (slot == XKB_EDIT_SEL) return true;
+    if (slot == XkbEditPanelSlot_Sel) return true;
     return self->m_target != NULL;
 }
 
@@ -2052,18 +2053,18 @@ static void xkb_editPanelClipboard(XVirtualKeyboard* self, int slot)
     int key;
     if (!self || !self->m_target) return;
     target = self->m_target;
-    if (slot == XKB_EDIT_COPY)
+    if (slot == XkbEditPanelSlot_Copy)
         key = XKey_C;
-    else if (slot == XKB_EDIT_CUT)
+    else if (slot == XkbEditPanelSlot_Cut)
         key = XKey_X;
     else
         key = XKey_V;
 #if XLINEEDIT_ON
     if (XClassGetVtable(target) == XLineEdit_class_init()) {
         XLineEdit* le = (XLineEdit*)target;
-        if (slot == XKB_EDIT_COPY)
+        if (slot == XkbEditPanelSlot_Copy)
             XLineEdit_copy(le);
-        else if (slot == XKB_EDIT_CUT)
+        else if (slot == XkbEditPanelSlot_Cut)
             XLineEdit_cut(le);
         else
             XLineEdit_paste(le);
@@ -2073,9 +2074,9 @@ static void xkb_editPanelClipboard(XVirtualKeyboard* self, int slot)
 #if XPLAINTEXTEDIT_ON
     if (XClassGetVtable(target) == XPlainTextEdit_class_init()) {
         XPlainTextEdit* pe = (XPlainTextEdit*)target;
-        if (slot == XKB_EDIT_COPY)
+        if (slot == XkbEditPanelSlot_Copy)
             XPlainTextEdit_copy(pe);
-        else if (slot == XKB_EDIT_CUT)
+        else if (slot == XkbEditPanelSlot_Cut)
             XPlainTextEdit_cut(pe);
         else
             XPlainTextEdit_paste(pe);
@@ -2085,9 +2086,9 @@ static void xkb_editPanelClipboard(XVirtualKeyboard* self, int slot)
 #if XTEXTEDIT_ON
     if (XClassGetVtable(target) == XTextEdit_class_init()) {
         XTextEdit* te = (XTextEdit*)target;
-        if (slot == XKB_EDIT_COPY)
+        if (slot == XkbEditPanelSlot_Copy)
             XTextEdit_copy_2(te);
-        else if (slot == XKB_EDIT_CUT)
+        else if (slot == XkbEditPanelSlot_Cut)
             XTextEdit_cut_2(te);
         else
             XTextEdit_paste_2(te);
@@ -2104,39 +2105,39 @@ static void xkb_editPanelActivate(XVirtualKeyboard* self, int slot)
 {
     XKeyboardModifiers mods = XKeyboardModifier_NoModifier;
     if (!self) return;
-    if (slot != XKB_EDIT_SEL && self->m_editSelArmed)
+    if (slot != XkbEditPanelSlot_Sel && self->m_editSelArmed)
         mods = XKeyboardModifier_ShiftModifier;
     switch ((XkbEditPanelSlot)slot) {
-    case XKB_EDIT_UP:
+    case XkbEditPanelSlot_Up:
         xkb_sendKey(self, XKey_Up, mods);
         break;
-    case XKB_EDIT_DOWN:
+    case XkbEditPanelSlot_Down:
         xkb_sendKey(self, XKey_Down, mods);
         break;
-    case XKB_EDIT_LEFT:
+    case XkbEditPanelSlot_Left:
         xkb_sendKey(self, XKey_Left, mods);
         break;
-    case XKB_EDIT_RIGHT:
+    case XkbEditPanelSlot_Right:
         xkb_sendKey(self, XKey_Right, mods);
         break;
-    case XKB_EDIT_SEL:
+    case XkbEditPanelSlot_Sel:
         self->m_editSelArmed = !self->m_editSelArmed; /* 按下视觉保持。 */
         break;
-    case XKB_EDIT_HOME:
+    case XkbEditPanelSlot_Home:
         xkb_sendKey(self, XKey_Home, mods);
         break;
-    case XKB_EDIT_END:
+    case XkbEditPanelSlot_End:
         xkb_sendKey(self, XKey_End, mods);
         break;
-    case XKB_EDIT_ALL:
+    case XkbEditPanelSlot_All:
         xkb_sendKey(self, XKey_A, XKeyboardModifier_ControlModifier);
         break;
-    case XKB_EDIT_BACKSPACE:
+    case XkbEditPanelSlot_Backspace:
         xkb_sendKey(self, XKey_Backspace, XKeyboardModifier_NoModifier);
         break;
-    case XKB_EDIT_COPY:
-    case XKB_EDIT_CUT:
-    case XKB_EDIT_PASTE:
+    case XkbEditPanelSlot_Copy:
+    case XkbEditPanelSlot_Cut:
+    case XkbEditPanelSlot_Paste:
         xkb_editPanelClipboard(self, slot);
         break;
     default:
@@ -2171,7 +2172,7 @@ static bool xkb_editPanelHit(XVirtualKeyboard* self, int x, int y)
         XWidget_update((XWidget*)self);
         return true;
     }
-    for (i = 0; i < XKB_EDIT_COUNT; ++i) {
+    for (i = 0; i < XkbEditPanelSlot_Count; ++i) {
         const XRect* r = &geo.cell[i];
         if (x >= r->x && x < r->x + r->width &&
             y >= r->y && y < r->y + r->height) {
@@ -2250,17 +2251,17 @@ static void xkb_editPanelPaint(XVirtualKeyboard* self, XPainter* painter)
     xkb_roundRect(painter, &geo.main, XKB_LVGL_CARD, XKB_LVGL_GREY, radius);
     /* 主区 8 键：GREY 面（白底上可见）；选择态「开始选择」PRIMARY_
        MUTED 强调保持；无绑定目标灰字（禁用态）。 */
-    for (i = XKB_EDIT_UP; i <= XKB_EDIT_END; ++i) {
+    for (i = XkbEditPanelSlot_Up; i <= XkbEditPanelSlot_End; ++i) {
         uint32_t fill = XKB_LVGL_GREY;
         uint32_t textColor = XKB_LVGL_TEXT;
-        if (i == XKB_EDIT_SEL && self->m_editSelArmed)
+        if (i == XkbEditPanelSlot_Sel && self->m_editSelArmed)
             fill = XKB_LVGL_PRIMARY_MUTED; /* 选择态按下视觉保持。 */
         if (!xkb_editPanelEnabled(self, i)) textColor = XKB_LVGL_DISABLED_TEXT;
         xkb_editPanelDrawKey(painter, &geo.cell[i], kEditPanelLabels[i],
                              fill, textColor);
     }
     /* 右列 4 键（CARD 面标准键样；无绑定目标灰字）。 */
-    for (i = XKB_EDIT_BACKSPACE; i < XKB_EDIT_COUNT; ++i) {
+    for (i = XkbEditPanelSlot_Backspace; i < XkbEditPanelSlot_Count; ++i) {
         uint32_t textColor =
             xkb_editPanelEnabled(self, i) ? XKB_LVGL_TEXT
                                           : XKB_LVGL_DISABLED_TEXT;

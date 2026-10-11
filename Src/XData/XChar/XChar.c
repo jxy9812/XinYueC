@@ -93,7 +93,7 @@ static const XCharCasePair g_caseMap[] = {
 #define CASE_MAP_SIZE (sizeof(g_caseMap) / sizeof(g_caseMap[0]))
 
 /* 在查找表中查找：from→to（小写→大写），返回是否找到 */
-static bool caseMap_lookupLowerToUpper(uint16_t code, uint16_t* out)
+static bool XChar_lookupLowerToUpper(uint16_t code, uint16_t* out)
 {
     for (size_t i = 0; i < CASE_MAP_SIZE; i++) {
         if (g_caseMap[i].from == code) { *out = g_caseMap[i].to; return true; }
@@ -102,7 +102,7 @@ static bool caseMap_lookupLowerToUpper(uint16_t code, uint16_t* out)
 }
 
 /* 在查找表中查找：to→from（大写→小写），返回是否找到 */
-static bool caseMap_lookupUpperToLower(uint16_t code, uint16_t* out)
+static bool XChar_lookupUpperToLower(uint16_t code, uint16_t* out)
 {
     for (size_t i = 0; i < CASE_MAP_SIZE; i++) {
         if (g_caseMap[i].to == code) { *out = g_caseMap[i].from; return true; }
@@ -129,7 +129,7 @@ static bool caseMap_lookupUpperToLower(uint16_t code, uint16_t* out)
 /*               流式转换公共辅助：输入长度计算 + 终止符处理                       */
 /* ========================================================================== */
 /* 计算以0结尾的uint16_t数组长度 */
-static size_t stream_input_len_u16(const uint16_t* data, size_t input_size)
+static size_t XChar_streamInputLenU16(const uint16_t* data, size_t input_size)
 {
     if (input_size == 0) {
         size_t len = 0;
@@ -143,7 +143,7 @@ static size_t stream_input_len_u16(const uint16_t* data, size_t input_size)
 }
 
 /* 计算以0结尾的uint32_t数组长度 */
-static size_t stream_input_len_u32(const uint32_t* data, size_t input_count)
+static size_t XChar_streamInputLenU32(const uint32_t* data, size_t input_count)
 {
     if (input_count == 0) {
         size_t len = 0;
@@ -157,7 +157,7 @@ static size_t stream_input_len_u32(const uint32_t* data, size_t input_count)
 }
 
 /* 计算XChar数组长度（复用已有 XChar_getInputLength，但内部版不依赖公共API） */
-static size_t stream_input_len_xchar(const XChar* data, size_t input_count)
+static size_t XChar_streamInputLenXChar(const XChar* data, size_t input_count)
 {
     if (input_count == 0) {
         size_t len = 0;
@@ -171,7 +171,7 @@ static size_t stream_input_len_xchar(const XChar* data, size_t input_count)
 }
 
 /* 计算以'\0'结尾的字节串长度 */
-static size_t stream_input_len_u8(const uint8_t* data, size_t input_size)
+static size_t XChar_streamInputLenU8(const uint8_t* data, size_t input_size)
 {
     if (input_size == 0) {
         size_t len = 0;
@@ -739,7 +739,7 @@ XChar XChar_toUpper(XChar ch)
     if (!XChar_isLower(ch)) return ch;
     if (ch >= 'a' && ch <= 'z') return ch - 32;
     uint16_t mapped;
-    if (caseMap_lookupLowerToUpper(ch, &mapped)) return mapped;
+    if (XChar_lookupLowerToUpper(ch, &mapped)) return mapped;
     return ch;
 }
 
@@ -748,7 +748,7 @@ XChar XChar_toLower(XChar ch)
     if (!XChar_isUpper(ch)) return ch;
     if (ch >= 'A' && ch <= 'Z') return ch + 32;
     uint16_t mapped;
-    if (caseMap_lookupUpperToLower(ch, &mapped)) return mapped;
+    if (XChar_lookupUpperToLower(ch, &mapped)) return mapped;
     return ch;
 }
 
@@ -859,7 +859,7 @@ DEFINE_XCHAR_FUNC2_RET_U32(XChar_toTitleCase_2, XChar_toTitleCase((XChar)ucs4))
 int64_t XChar_fromUtf8Stream(const uint8_t* utf8, size_t input_size, XChar* out, size_t max_out)
 {
     if (!utf8) return -1;
-    size_t utf8_len = stream_input_len_u8(utf8, input_size);
+    size_t utf8_len = XChar_streamInputLenU8(utf8, input_size);
 
     if (!out || max_out == 0) {
         /* 仅计算数量 */
@@ -908,7 +908,7 @@ int64_t XChar_fromUtf8Stream(const uint8_t* utf8, size_t input_size, XChar* out,
 int64_t XChar_toUtf8Stream(const XChar* ch, size_t input_count, uint8_t* utf8, size_t max_utf8)
 {
     if (!ch) return -1;
-    size_t ch_count = stream_input_len_xchar(ch, input_count);
+    size_t ch_count = XChar_streamInputLenXChar(ch, input_count);
 
     if (!utf8 || max_utf8 == 0) {
         size_t bytes = 0;
@@ -957,7 +957,7 @@ int64_t XChar_toUtf8Stream(const XChar* ch, size_t input_count, uint8_t* utf8, s
 int64_t XChar_fromUtf16Stream(const uint16_t* utf16_str, size_t input_size, XChar* out, size_t max_count)
 {
     if (!utf16_str) return -1;
-    size_t len = stream_input_len_u16(utf16_str, input_size);
+    size_t len = XChar_streamInputLenU16(utf16_str, input_size);
     if (!out || max_count == 0) return (int64_t)len;
     size_t out_idx = 0;
     while (out_idx < len && out_idx + 1 < max_count) {
@@ -970,7 +970,7 @@ int64_t XChar_fromUtf16Stream(const uint16_t* utf16_str, size_t input_size, XCha
 int64_t XChar_toUtf16Stream(const XChar* xchars, size_t input_count, uint16_t* out_buf, size_t buf_size)
 {
     if (!xchars) return -1;
-    size_t count = stream_input_len_xchar(xchars, input_count);
+    size_t count = XChar_streamInputLenXChar(xchars, input_count);
     if (!out_buf || buf_size == 0) return (int64_t)count;
     size_t out_idx = 0;
     while (out_idx < count && out_idx + 1 < buf_size) {
@@ -987,7 +987,7 @@ int64_t XChar_toUtf16Stream(const XChar* xchars, size_t input_count, uint16_t* o
 int64_t XChar_fromUtf32Stream(const uint32_t* utf32, size_t input_count, XChar* out, size_t max_out)
 {
     if (!utf32) return -1;
-    size_t count = stream_input_len_u32(utf32, input_count);
+    size_t count = XChar_streamInputLenU32(utf32, input_count);
     if (!out || max_out == 0) {
         size_t n = 0;
         for (size_t i = 0; i < count; i++) n += (utf32[i] > 0xFFFF) ? 2 : 1;
@@ -1011,7 +1011,7 @@ int64_t XChar_fromUtf32Stream(const uint32_t* utf32, size_t input_count, XChar* 
 int64_t XChar_toUtf32Stream(const XChar* ch, size_t input_count, uint32_t* utf32, size_t max_utf32)
 {
     if (!ch) return -1;
-    size_t ch_count = stream_input_len_xchar(ch, input_count);
+    size_t ch_count = XChar_streamInputLenXChar(ch, input_count);
     if (!utf32 || max_utf32 == 0) {
         size_t n = 0;
         for (size_t i = 0; i < ch_count; i++) {
@@ -1037,7 +1037,7 @@ int64_t XChar_toUtf32Stream(const XChar* ch, size_t input_count, uint32_t* utf32
 int64_t XChar_fromLatin1Stream(const uint8_t* latin1, size_t input_size, XChar* out, size_t max_out)
 {
     if (!latin1) return -1;
-    size_t len = stream_input_len_u8(latin1, input_size);
+    size_t len = XChar_streamInputLenU8(latin1, input_size);
     if (!out || max_out == 0) return (int64_t)len;
     size_t out_idx = 0;
     while (out_idx < len && out_idx + 1 < max_out) {
@@ -1050,7 +1050,7 @@ int64_t XChar_fromLatin1Stream(const uint8_t* latin1, size_t input_size, XChar* 
 int64_t XChar_toLatin1Stream(const XChar* ch, size_t input_count, uint8_t* latin1, size_t max_latin1)
 {
     if (!ch) return -1;
-    size_t count = stream_input_len_xchar(ch, input_count);
+    size_t count = XChar_streamInputLenXChar(ch, input_count);
     for (size_t i = 0; i < count; i++) { if (ch[i] > 0xFF) return -1; }
     if (!latin1 || max_latin1 == 0) return (int64_t)count;
     size_t out_idx = 0;
@@ -1190,7 +1190,7 @@ static double XChar_parse_float(const XChar* xchars, size_t input_count, bool* s
     return result * sign;
 }
 
-static size_t calc_uint_decimal_len(unsigned long long num) {
+static size_t XChar_calcUintDecimalLen(unsigned long long num) {
     if (num == 0) return 1;
     size_t len = 0; while (num > 0) { len++; num /= 10; } return len;
 }
@@ -1255,8 +1255,8 @@ static int64_t XChar_from_floating_point(double value, char format, XChar* out, 
     else if (format=='e'||format=='E') { sci = true; exponent = (int)floor(log10(abs_val)); double sv = abs_val / pow(10.0, exponent); int_part = (unsigned long long)sv; frac = sv - (double)int_part; }
     else { double l = log10(abs_val); sci = (fabs(l) >= (double)prec || l < -4.0);
         if (sci) { exponent = (int)floor(l); double sv = abs_val / pow(10.0, exponent); int_part = (unsigned long long)sv; frac = sv - (double)int_part; prec = prec > 0 ? prec - 1 : 0; }
-        else { int_part = (unsigned long long)abs_val; frac = abs_val - (double)int_part; prec = (int)(prec - calc_uint_decimal_len(int_part)); if (prec < 0) prec = 0; } }
-    size_t sign_len = neg ? 1 : 0; size_t int_len = calc_uint_decimal_len(int_part);
+        else { int_part = (unsigned long long)abs_val; frac = abs_val - (double)int_part; prec = (int)(prec - XChar_calcUintDecimalLen(int_part)); if (prec < 0) prec = 0; } }
+    size_t sign_len = neg ? 1 : 0; size_t int_len = XChar_calcUintDecimalLen(int_part);
     size_t frac_len = 0; size_t exp_len = 0;
     if (prec > 0) {
         frac_len = 1 + (size_t)prec;

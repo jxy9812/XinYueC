@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XString.h"
 #include"XByteArray.h"
 #include"XJsonObject.h"
@@ -52,7 +52,7 @@ void XJsonObjectTest()
 		for_each_iterator(keys, XVector, it)
 		{
 			XString* key = XVector_iterator_data(&it);
-			XPrintf_2(key);
+			XPrintf_string(key);
 			printf("\n");
 		}
 		XClassDelete(keys);*/
@@ -67,7 +67,7 @@ void XJsonObjectTest()
 		XClassDelete(json);
 
 		XString* str = XJsonDocument_toString(doc, XJsonDocument_Indented);
-		XPrintf_2(str);
+		XPrintf_string(str);
 		XPrintf("\n");
 		XClassDelete(str);
 		XClassDelete(doc);
@@ -114,7 +114,7 @@ void XJsonArrayTest()
 
 
 		XString* str = XJsonArray_toString(array, XJsonDocument_Indented);
-		XPrintf_2(str);
+		XPrintf_string(str);
 		XPrintf("\n");
 		XClassDelete(str);
 

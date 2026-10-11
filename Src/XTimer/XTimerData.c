@@ -27,7 +27,7 @@ void XTimerData_init(XTimerData* timer, XVtable* vtable)
 void XTimerData_delete(XTimerData* timer)
 {
 	if (timer)
-		XFree_System(timer);
+		XClassDelete(timer);/* 按对象记录的分配器配对释放（栈对象仅反初始化） */
 }
 
 void XTimerData_setTimerId(XTimerData* timer, size_t timerId)
@@ -88,20 +88,24 @@ bool XTimerData_isAutoDelete(XTimerData* timer)
 
 void XTimerData_setTimerCallback(XTimerData* timer, XTimerCallback callback)
 {
-	timer->m_timerCallback = callback;
+	if (timer)
+		timer->m_timerCallback = callback;
 }
 
 void XTimerData_setUserData(XTimerData* timer, void* userData)
 {
-	timer->m_userData = userData;
+	if (timer)
+		timer->m_userData = userData;
 }
 void XTimerData_setTimeout(XTimerData* timer, size_t value)
 {
-	timer->m_timeout = value;
+	if (timer)
+		timer->m_timeout = value;
 }
 void XTimerData_setInterval(XTimerData* timer, size_t value)
 {
-	timer->m_interval = value;
+	if (timer)
+		timer->m_interval = value;
 }
 void XTimerData_out(XTimerData* timer)
 {

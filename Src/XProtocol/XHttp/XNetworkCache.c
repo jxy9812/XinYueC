@@ -5,13 +5,12 @@
 
 #include "XNetworkCache.h"
 
+#include <string.h>
+
 #include "XDir.h"
 #include "XFile.h"
 #include "XCryptographic.h"
 #include "XMemory.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #if XPROTOCOL_ON
 #if XHTTP_ON
 
@@ -412,8 +411,11 @@ XNetworkCacheMetaData* XNetworkCacheMetaData_create_move(XNetworkCacheMetaData* 
 
 bool XNetworkCacheMetaData_setUrl(XNetworkCacheMetaData* self, const XUrl* url)
 {
-    XUrl* replacement = url ? XUrl_create_copy(url) : XUrl_create();
-    if (!self || !replacement)
+    XUrl* replacement;
+    if (!self)
+        return false;
+    replacement = url ? XUrl_create_copy(url) : XUrl_create();
+    if (!replacement)
         return false;
     if (self->m_url) XClassDelete((XClass*)self->m_url);
     self->m_url = replacement;
@@ -429,8 +431,11 @@ const XUrl* XNetworkCacheMetaData_url_const(const XNetworkCacheMetaData* self)
 bool XNetworkCacheMetaData_setHeaders(XNetworkCacheMetaData* self,
                                       const XHttpHeaders* headers)
 {
-    XHttpHeaders* replacement = headers ? XHttpHeaders_create_copy(headers) : XHttpHeaders_create();
-    if (!self || !replacement)
+    XHttpHeaders* replacement;
+    if (!self)
+        return false;
+    replacement = headers ? XHttpHeaders_create_copy(headers) : XHttpHeaders_create();
+    if (!replacement)
         return false;
     if (self->m_headers) XClassDelete((XClass*)self->m_headers);
     self->m_headers = replacement;
@@ -574,7 +579,7 @@ void XNetworkDiskCache_init(XNetworkDiskCache* self)
     XObject_init((XObject*)self);
     XClassSetVtable(self, XNetworkDiskCache);
     self->m_cacheDirectory = XString_create();
-    self->m_entries = XVector_create(sizeof(XNetworkCacheEntry*));
+    self->m_entries = XVector_Create(XNetworkCacheEntry*);
     self->m_maximumCacheSize = -1;
     self->m_cacheSize = 0;
 }

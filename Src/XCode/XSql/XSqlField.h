@@ -63,6 +63,7 @@ void XSqlField_init_ex(XSqlField* field, const XString* fieldName,
  */
 /**
  * @brief 创建字段。
+ * @param memory 内存类型。
  * @param fieldName 字段名；借用。
  * @param metaType XVariant 类型编号。
  * @param tableName 所属表名；借用。

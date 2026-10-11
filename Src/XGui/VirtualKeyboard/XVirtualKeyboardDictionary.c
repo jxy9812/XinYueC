@@ -12,6 +12,8 @@
 #include "XVirtualKeyboardDictionaryManager_Protected.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
+#include "XString.h"
+#include "XStringList.h"
 
 /** @brief 词条容量上限（单词典；防御性钳制）。 */
 #define XVKD_WORD_MAX 1024
@@ -19,9 +21,8 @@
 /** @brief 私有数据块。 */
 typedef struct XVirtualKeyboardDictionaryPrivate
 {
-    char* m_name;       /**< 词典名（堆拷贝）。 */
-    char** m_contents;  /**< 词条数组（堆拷贝）。 */
-    int m_count;        /**< 词条数。 */
+    XString m_name;         /**< 词典名（对象拥有）。 */
+    XStringList m_contents; /**< 词条列表（对象拥有，元素 XString）。 */
 } XVirtualKeyboardDictionaryPrivate;
 
 /** @brief 内部取私有块。 */
@@ -41,19 +42,6 @@ static void xvkd_emit(XVirtualKeyboardDictionary* self, size_t signal,
                            XEVENT_PRIORITY_NORMAL);
     else if (args)
         XVarList_delete(args);
-}
-
-/** @brief 释放词条数组。 */
-static void xvkd_clearContents(XVirtualKeyboardDictionaryPrivate* priv)
-{
-    int i;
-    if (!priv) return;
-    for (i = 0; i < priv->m_count; ++i) {
-        if (priv->m_contents[i]) XFree_System(priv->m_contents[i]);
-    }
-    if (priv->m_contents) XFree_System(priv->m_contents);
-    priv->m_contents = NULL;
-    priv->m_count = 0;
 }
 
 /* 前向声明。 */
@@ -77,8 +65,8 @@ static void XVkd_deinit(XVirtualKeyboardDictionary* self)
     if (!self) return;
     priv = xvkd_priv(self);
     if (priv) {
-        if (priv->m_name) XFree_System(priv->m_name);
-        xvkd_clearContents(priv);
+        XClassDeinit(&priv->m_name);
+        XClassDeinit(&priv->m_contents);
         XFree_System(priv);
         self->m_data = NULL;
     }
@@ -87,13 +75,16 @@ static void XVkd_deinit(XVirtualKeyboardDictionary* self)
 
 void XVirtualKeyboardDictionary_init(XVirtualKeyboardDictionary* self)
 {
+    XVirtualKeyboardDictionaryPrivate* priv;
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XVirtualKeyboardDictionary);
     self->m_data = XMalloc_System(sizeof(XVirtualKeyboardDictionaryPrivate));
-    if (self->m_data) XMemset(self->m_data, 0,
-                              sizeof(XVirtualKeyboardDictionaryPrivate));
+    if (!self->m_data) return;
+    priv = (XVirtualKeyboardDictionaryPrivate*)self->m_data;
+    XString_init(&priv->m_name);
+    XStringList_init(&priv->m_contents);
 }
 
 /**
@@ -113,7 +104,8 @@ XVirtualKeyboardDictionary* XVirtualKeyboardDictionary_create_named(
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
     priv = xvkd_priv(self);
-    if (priv && name && name[0]) priv->m_name = XStrdup(name);
+    if (priv && name && name[0])
+        XString_assign_utf8(&priv->m_name, name);
     return self;
 }
 
@@ -121,22 +113,26 @@ const char* XVirtualKeyboardDictionary_name(
         const XVirtualKeyboardDictionary* self)
 {
     XVirtualKeyboardDictionaryPrivate* priv = xvkd_priv(self);
-    return priv ? priv->m_name : NULL;
+    return priv ? XString_toUtf8(&priv->m_name) : NULL;
 }
 
 int XVirtualKeyboardDictionary_contentsCount(
         const XVirtualKeyboardDictionary* self)
 {
     XVirtualKeyboardDictionaryPrivate* priv = xvkd_priv(self);
-    return priv ? priv->m_count : 0;
+    return priv ? (int)XStringList_size_base(&priv->m_contents) : 0;
 }
 
 const char* XVirtualKeyboardDictionary_contentsAt(
         const XVirtualKeyboardDictionary* self, int index)
 {
     XVirtualKeyboardDictionaryPrivate* priv = xvkd_priv(self);
-    if (!priv || index < 0 || index >= priv->m_count) return NULL;
-    return priv->m_contents[index];
+    XString* word;
+    if (!priv || index < 0 ||
+        index >= (int)XStringList_size_base(&priv->m_contents))
+        return NULL;
+    word = (XString*)XStringList_at_base(&priv->m_contents, index);
+    return word ? XString_toUtf8(word) : NULL;
 }
 
 void XVirtualKeyboardDictionary_setContents(XVirtualKeyboardDictionary* self,
@@ -145,21 +141,13 @@ void XVirtualKeyboardDictionary_setContents(XVirtualKeyboardDictionary* self,
 {
     XVirtualKeyboardDictionaryPrivate* priv = xvkd_priv(self);
     int i;
-    int n = 0;
     if (!priv) return;
     if (count > XVKD_WORD_MAX) count = XVKD_WORD_MAX;
-    xvkd_clearContents(priv);
-    if (contents && count > 0) {
-        priv->m_contents =
-            (char**)XMalloc_System((size_t)count * sizeof(char*));
-        if (priv->m_contents) {
-            for (i = 0; i < count && contents[i]; ++i) {
-                priv->m_contents[n] = XStrdup(contents[i]);
-                if (priv->m_contents[n]) ++n;
-            }
-        }
+    XStringList_clear_base(&priv->m_contents);
+    if (contents) {
+        for (i = 0; i < count && contents[i]; ++i)
+            XStringList_push_back_utf8(&priv->m_contents, contents[i]);
     }
-    priv->m_count = n;
     xvkd_emit(self, (size_t)
                   XVirtualKeyboardDictionary_contentsChanged_signal(NULL),
               NULL);
@@ -170,8 +158,8 @@ void XVirtualKeyboardDictionary_resetContents(
 {
     XVirtualKeyboardDictionaryPrivate* priv = xvkd_priv(self);
     if (!priv) return;
-    if (priv->m_count == 0) return;
-    xvkd_clearContents(priv);
+    if (XStringList_size_base(&priv->m_contents) == 0) return;
+    XStringList_clear_base(&priv->m_contents);
     xvkd_emit(self, (size_t)
                   XVirtualKeyboardDictionary_contentsChanged_signal(NULL),
               NULL);

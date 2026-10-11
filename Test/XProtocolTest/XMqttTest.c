@@ -1297,19 +1297,19 @@ bool XMqttDataLayoutTest_run(void)
     {
         /* 构造 PUBLISH QoS1 + RETAIN：线上字节应为 0x33 */
         XMqttFixedHeader fh;
-        fh.byte = 0;
-        fh.bits.type = 3;
-        fh.bits.qos = 1;
-        fh.bits.retain = 1;
-        fh.bits.dup = 0;
-        if (fh.byte == 0x33) {
+        fh.m_byte = 0;
+        fh.m_bits.m_type = 3;
+        fh.m_bits.m_qos = 1;
+        fh.m_bits.m_retain = 1;
+        fh.m_bits.m_dup = 0;
+        if (fh.m_byte == 0x33) {
             XPrintf("  [通过] 联合体构造 PUBLISH QoS1+RETAIN 字节正确\n"); pass++;
         } else {
-            XPrintf("  [失败] 构造字节期望 0x33, 实际 0x%02X\n", fh.byte); fail++;
+            XPrintf("  [失败] 构造字节期望 0x33, 实际 0x%02X\n", fh.m_byte); fail++;
         }
         /* 反向解析同一字节 */
-        XMqttFixedHeader r = { fh.byte };
-        if (r.bits.type == 3 && r.bits.qos == 1 && r.bits.retain == 1 && r.bits.dup == 0) {
+        XMqttFixedHeader r = { fh.m_byte };
+        if (r.m_bits.m_type == 3 && r.m_bits.m_qos == 1 && r.m_bits.m_retain == 1 && r.m_bits.m_dup == 0) {
             XPrintf("  [通过] 联合体反向解析 PUBLISH 固定头正确\n"); pass++;
         } else {
             XPrintf("  [失败] 联合体反向解析结果不正确\n"); fail++;
@@ -1324,16 +1324,16 @@ bool XMqttDataLayoutTest_run(void)
                 for (int dup = 0; dup < 2 && !bad; dup++)
                     for (int retain = 0; retain < 2 && !bad; retain++) {
                         XMqttFixedHeader w;
-                        w.byte = 0;
-                        w.bits.type = (uint8_t)type;
-                        w.bits.qos = (uint8_t)qos;
-                        w.bits.dup = (uint8_t)dup;
-                        w.bits.retain = (uint8_t)retain;
+                        w.m_byte = 0;
+                        w.m_bits.m_type = (uint8_t)type;
+                        w.m_bits.m_qos = (uint8_t)qos;
+                        w.m_bits.m_dup = (uint8_t)dup;
+                        w.m_bits.m_retain = (uint8_t)retain;
                         uint8_t expect = (uint8_t)((type << 4) | (dup << 3) | (qos << 1) | retain);
-                        XMqttFixedHeader rt = { w.byte };
-                        if (w.byte != expect || rt.bits.type != (uint8_t)type ||
-                            rt.bits.qos != (uint8_t)qos || rt.bits.dup != (uint8_t)dup ||
-                            rt.bits.retain != (uint8_t)retain) bad++;
+                        XMqttFixedHeader rt = { w.m_byte };
+                        if (w.m_byte != expect || rt.m_bits.m_type != (uint8_t)type ||
+                            rt.m_bits.m_qos != (uint8_t)qos || rt.m_bits.m_dup != (uint8_t)dup ||
+                            rt.m_bits.m_retain != (uint8_t)retain) bad++;
                     }
         if (!bad) {
             XPrintf("  [通过] 联合体 %d 种组合字节往返一致\n", total); pass++;

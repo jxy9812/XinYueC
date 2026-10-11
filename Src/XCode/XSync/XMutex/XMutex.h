@@ -1,4 +1,10 @@
-﻿#ifndef XMUTEX_H
+﻿/**
+ * @file       XMutex.h
+ * @brief      互斥锁公开 API。
+ * @details    对齐 Qt 6.8 QMutex；不透明类型，平台原语由 Drive 平台适配层提供，
+ *             本模块禁止直接调用 Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XMUTEX_H
 #define XMUTEX_H
 #include "XSync_config.h"
 #if XSYNC_ON
@@ -8,7 +14,7 @@
 extern "C" {
 #endif
 
-#include <stdio.h>
+#include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include "XAtomic.h"

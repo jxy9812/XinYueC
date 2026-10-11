@@ -1,4 +1,4 @@
-/* Generated from the legacy 8x16 source table in LVGL fmt_txt layout. */
+﻿/* Generated from the legacy 8x16 source table in LVGL fmt_txt layout. */
 #include "XFont8x16.h"
 
 #if XFONT_BUILTIN_8X16_ON

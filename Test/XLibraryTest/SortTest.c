@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XSort.h"
 #include"XCompare.h"
 #include"XPrintf.h"

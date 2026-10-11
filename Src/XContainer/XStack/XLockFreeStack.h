@@ -1,4 +1,10 @@
-﻿#ifndef XLOCKFREESTACK_H
+﻿/**
+* @file XLockFreeStack.h
+* @brief 无锁栈公开头文件
+* @details 基于数组实现的高性能无锁栈，使用原子操作保证多线程环境下的
+*          线程安全，继承XStackBase接口，对标Qt QStack的并发使用场景
+*/
+#ifndef XLOCKFREESTACK_H
 #define XLOCKFREESTACK_H
 
 #ifdef __cplusplus
@@ -14,10 +20,15 @@ extern "C" {
 */
 #define XLOCKFREESTACK_VTABLE_SIZE (XSTACKBASE_VTABLE_SIZE)
 
+// 虚函数表枚举（继承XStackBase）
+// 定义XLockFreeStack类的虚函数索引，用于虚函数表中定位具体函数
+XCLASS_DEFINE_BEGING(XLockFreeStack)
+XCLASS_DEFINE_EXTEND_END(XLockFreeStack, XStackBase)
+
 /**
 * @brief 高性能无锁栈
 * @details 基于数组实现，使用原子操作保证多线程环境下的线程安全
-* @param m_vector 底层存储向量，用于存储栈元素
+* @param m_class 底层存储向量，用于存储栈元素
 * @param m_top 原子类型的栈顶索引，支持线程安全的读写操作
 * @param m_index_bits 索引位数，用于版本号打包
 * @param m_index_mask 索引掩码，用于从打包值中提取索引
@@ -25,8 +36,8 @@ extern "C" {
 */
 typedef struct XLockFreeStack
 {
-    XVector m_vector;           ///< 底层向量容器，提供元素存储功能
-    XAtomic_size_t m_top;       ///< 原子化栈顶索引（包含版本号），标识栈顶位置
+    XVector m_class;            ///< 继承自XVector基类，提供元素存储功能（第一个成员，禁止手工修改）
+    XAtomic_SizeT m_top;       ///< 原子化栈顶索引（包含版本号），标识栈顶位置
     size_t m_index_bits;        ///< 索引位数
     size_t m_index_mask;        ///< 索引掩码
     size_t m_version_mask;      ///< 版本号掩码

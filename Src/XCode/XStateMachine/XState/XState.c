@@ -71,7 +71,9 @@ void XState_init_ex(XState* state, XState_ChildMode childMode, XState* parent)
     XAbstractState_init((XAbstractState*)state, XAbstractState_StandardState, NULL);
     XClassSetVtable(state, XState);
     state->m_childStates = XVector_Create(XAbstractState*);
+    XAssert(state->m_childStates, "Memory allocation failed");
     state->m_transitions = XVector_Create(XAbstractTransition*);
+    XAssert(state->m_transitions, "Memory allocation failed");
     state->m_initialState = NULL;
     state->m_errorState = NULL;
     state->m_childMode = childMode;

@@ -383,13 +383,30 @@ XVariant* XAction_data(const XAction* self)
     return self ? self->m_data : NULL;
 }
 
-void XAction_setData(XAction* self, XVariant* data)
+void XAction_setData(XAction* self, const XVariant* data)
+{
+    XVariant* copy;
+
+    if (!self)
+        return;
+    if (!data && !self->m_data)
+        return;
+    copy = data ? XVariant_create_copy(data) : NULL;
+    if (data && !copy)
+        return;                 /* 拷贝失败保持原数据不变 */
+    if (self->m_data)
+        XClassDelete(self->m_data);
+    self->m_data = copy;
+    xaction_sendChanged(self);
+}
+
+void XAction_setData_move(XAction* self, XVariant* data)
 {
     if (!self || self->m_data == data)
         return;
     if (self->m_data)
         XClassDelete(self->m_data);
-    self->m_data = data;
+    self->m_data = data;        /* 接管调用者指针所有权（_move 语义） */
     xaction_sendChanged(self);
 }
 
@@ -595,7 +612,21 @@ static void VXAction_copy(XAction* self, const XAction* other)
         other->m_shortcutVisibleInContextMenu;
     self->m_priority = other->m_priority;
     self->m_menuRole = other->m_menuRole;
+    /* 菜单为借用指针，本类不复制信号连接，但副本必须自行向该菜单注册
+     * destroyed 监听（与 XAction_setMenu 相同），否则菜单先销毁时只有
+     * 源对象收到通知，副本 m_menu 悬垂；目标原本关联其他菜单时先断开。 */
+    if (self->m_menu) {
+        XObject_disconnect_1((XObject*)self->m_menu,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, xaction_menuDestroyedSlot);
+    }
     self->m_menu = other->m_menu;
+    if (self->m_menu) {
+        XObject_connect_1((XObject*)self->m_menu,
+                          XSignal(XObject_destroyed_signal),
+                          (XObject*)self, xaction_menuDestroyedSlot,
+                          XConnectionType_Direct);
+    }
 }
 
 static void VXAction_move(XAction* self, XAction* other)
@@ -643,8 +674,26 @@ static void VXAction_move(XAction* self, XAction* other)
     other->m_priority = XActionPriority_Normal;
     self->m_menuRole = other->m_menuRole;
     other->m_menuRole = XActionMenuRole_TextHeuristicRole;
+    /* 菜单为借用指针：move 同步迁移 destroyed 监听——先断开目标旧菜单与
+     * 源对象的既有连接，再把借用的菜单改挂到目标并重新注册（与
+     * XAction_setMenu/VXAction_copy 保持同一注册不变式），否则菜单先销毁
+     * 时源对象的旧槽只会清空源，目标 m_menu 悬垂。 */
+    if (self->m_menu) {
+        XObject_disconnect_1((XObject*)self->m_menu,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, xaction_menuDestroyedSlot);
+    }
     self->m_menu = other->m_menu;
     other->m_menu = NULL;
+    if (self->m_menu) {
+        XObject_disconnect_1((XObject*)self->m_menu,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)other, xaction_menuDestroyedSlot);
+        XObject_connect_1((XObject*)self->m_menu,
+                          XSignal(XObject_destroyed_signal),
+                          (XObject*)self, xaction_menuDestroyedSlot,
+                          XConnectionType_Direct);
+    }
 }
 
 static void VXAction_deinit(XAction* self)
@@ -680,7 +729,7 @@ void XAction_init(XAction* self)
     if (!self)
         return;
     memset(self, 0, sizeof(XAction));
-    XObject_init(&self->m_base);
+    XObject_init(&self->m_class);
     XClassSetVtable(self, XAction);
     self->m_enabled = true;
     self->m_visible = true;

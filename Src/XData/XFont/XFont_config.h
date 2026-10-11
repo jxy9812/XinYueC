@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XFont_config.h
  * @brief      XFont 字体模块的编译期配置。
  * @details    配置项可以通过编译器 -D 覆盖，便于嵌入式工程裁剪字库数据、

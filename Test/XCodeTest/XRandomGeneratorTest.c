@@ -190,7 +190,7 @@ static void test_copy(void)
     XRandomGenerator* original = XRandomGenerator_createWithSeed(99999);
     if (original) {
         // 测试复制
-        XRandomGenerator* copied = XRandomGenerator_copy(original);
+        XRandomGenerator* copied = XRandomGenerator_create_copy(original);
         
         if (copied) {
             XPrintf("原始: %u\n", XRandomGenerator_generate(original));

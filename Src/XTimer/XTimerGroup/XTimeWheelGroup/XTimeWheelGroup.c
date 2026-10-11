@@ -16,7 +16,7 @@ typedef struct XTimeWheel {
 typedef struct XTimerWheelData
 {
     XTimerData m_data;
-    XAtomic_bool m_deleted;				 ///< 定时器是否正在运行
+    XAtomic_Bool m_deleted;				 ///< 定时器是否正在运行
     size_t m_expire_ticks;                  // 到期时间戳（毫秒）
 } XTimerWheelData;
 // 内联函数：分配包含 XTimerWheelData 的链表节点
@@ -83,7 +83,7 @@ static void sweep_cancelled_timers(XTimeWheelGroup* group)
         for (size_t slot_index = 0;
              slot_index < XContainerSize(&wheel->m_slots);
              ++slot_index) {
-            XAtomic_uintptr_t* slot = XVector_at_base(&wheel->m_slots, slot_index);
+            XAtomic_Uintptr* slot = XVector_at_base(&wheel->m_slots, slot_index);
             XListSNode* node = (XListSNode*)XAtomic_exchange_uintptr_t(
                 slot, (uintptr_t)NULL, XAtomic_MemoryOrder_SeqCst);
             XListSNode* keep_head = NULL;
@@ -185,14 +185,14 @@ void VXTimeWheelGroup_deinit(XTimeWheelGroup* group)
     XClassDeinit(&group->m_timeWheel);
     reclaim_retired_nodes(group);
     // 释放父对象
-    XClass_Parent(XIODevice,EXClass_Deinit, void(*)(XIODevice*))(group);
+    XClass_Deinit_Parent(XObject, group);
 }
 // 无锁添加到时间轮槽位 - 使用 MPSC 链表
 static bool add_timer_to_wheel_lockfree(XTimeWheelGroup* group, XTimeWheel* wheel,
     XListSNode* timer_node, size_t ticks)
 {
     size_t expire_slot = (wheel->m_tick + ticks) % XContainerSize(&wheel->m_slots);
-    XAtomic_uintptr_t* slot_ptr = XVector_at_base(&wheel->m_slots, expire_slot);
+    XAtomic_Uintptr* slot_ptr = XVector_at_base(&wheel->m_slots, expire_slot);
 
     XAtomic_fetch_add_size_t(&group->m_activeProducers, 1, XAtomic_MemoryOrder_SeqCst);
     uintptr_t expected = XAtomic_load_uintptr_t(slot_ptr, XAtomic_MemoryOrder_SeqCst);
@@ -242,6 +242,8 @@ XHandle VXTimerGroupBase_addTimerNs(XTimeWheelGroup* group, XTimerData data)
     data.m_interval /= 1000000ULL;
     data.m_timeout /= 1000000ULL;
     //校准下时间
+    if (((XTimerGroupBase*)group)->m_high_res_time_func == NULL)
+        return NULL;/* 未设置时间源无法校准刻度，按添加失败处理（与 handler 判空惯例一致） */
     group->m_class.m_current_tick =  ((XTimerGroupBase*)group)->m_high_res_time_func()/** 1000000ULL *// group->m_class.m_precision;
     // 计算超时时间（转换为）
     size_t timeout_ticks = ceil_div(data.m_timeout, group->m_class.m_precision);
@@ -302,26 +304,40 @@ size_t calculate_max_time_range(XTimeWheelGroup* group)
 
 void XTimeWheelGroup_addTimeWheel(XTimeWheelGroup* group, size_t slotsCount)
 {
+    if (group == NULL)
+        return;
     XTimeWheel wheel = { 0 };
     wheel.m_tick = 0;
 
     // 创建原子指针数组
-    XVector_init(&wheel.m_slots, sizeof(XAtomic_uintptr_t),false);
-    XVector_resize_base(&wheel.m_slots, slotsCount);
+    XVector_init(&wheel.m_slots, sizeof(XAtomic_Uintptr),false);
+    if (!XVector_resize_base(&wheel.m_slots, slotsCount))
+    {
+        // 扩容失败：槽数组缓冲所有权未转移，就地释放后再返回
+        XClassDeinit(&wheel.m_slots);
+        return;
+    }
 
     // 初始化每个槽位为 NULL
     for (size_t i = 0; i < slotsCount; ++i) {
-        XAtomic_uintptr_t* ptr = XVector_at_base(&wheel.m_slots, i);
+        XAtomic_Uintptr* ptr = XVector_at_base(&wheel.m_slots, i);
         XAtomic_init(*ptr, NULL);
     }
 
     // 无锁添加时间轮（假设只在初始化时调用）
-    XVector_push_back_1_base(&group->m_timeWheel, &wheel);
+    if (!XVector_push_back_1_base(&group->m_timeWheel, &wheel))
+    {
+        // 入队失败：槽缓冲仍在栈临时对象上，就地释放避免泄漏
+        XClassDeinit(&wheel.m_slots);
+        return;
+    }
     ((XTimerGroupBase*)group)->m_max_time = calculate_max_time_range(group);
 }
 
 void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group)
 {
+    if (group == NULL)
+        return;
     if (XVector_isEmpty_base(&group->m_timeWheel))
         return;
 
@@ -329,7 +345,7 @@ void XTimeWheelGroup_removeTimeWheel(XTimeWheelGroup* group)
     // 遍历槽数组
     for (size_t i = 0; i < XContainerSize(&wheel->m_slots); ++i)
     {
-        XAtomic_uintptr_t* slot_ptr = XVector_at_base(&wheel->m_slots, i);
+        XAtomic_Uintptr* slot_ptr = XVector_at_base(&wheel->m_slots, i);
         uintptr_t head = XAtomic_exchange_uintptr_t(slot_ptr, (uintptr_t)NULL, XAtomic_MemoryOrder_SeqCst);
 
         if (head != (uintptr_t)NULL)
@@ -429,7 +445,7 @@ static void cascade_timers(XTimeWheelGroup* group, XTimeWheel* higher_level, siz
     if (higher_level_idx == 0) return;
 
     // 原子获取高级轮当前槽的所有定时器
-    XAtomic_uintptr_t* slot_ptr = XVector_at_base(&higher_level->m_slots, slot_index);
+    XAtomic_Uintptr* slot_ptr = XVector_at_base(&higher_level->m_slots, slot_index);
     uintptr_t head = XAtomic_exchange_uintptr_t(slot_ptr, (uintptr_t)NULL, XAtomic_MemoryOrder_SeqCst);
     if (head == (uintptr_t)NULL) return;
 
@@ -498,7 +514,7 @@ void VXTimeWheelGroup_tick(XTimeWheelGroup* group)
     size_t current_slot = wheel->m_tick % XContainerSize(&wheel->m_slots);
 
     // 原子获取并清空当前槽的链表
-    XAtomic_uintptr_t* slot_ptr = XVector_at_base(&wheel->m_slots, current_slot);
+    XAtomic_Uintptr* slot_ptr = XVector_at_base(&wheel->m_slots, current_slot);
     uintptr_t head = XAtomic_exchange_uintptr_t(slot_ptr, (uintptr_t)NULL, XAtomic_MemoryOrder_SeqCst);
 
     // 处理当前槽的所有定时器
@@ -624,7 +640,7 @@ uint64_t XTimeWheelGroup_getNextExpireTime(XTimeWheelGroup* group)
         size_t j;
         for (j = 0; j < slot_count; ++j)
         {
-            XAtomic_uintptr_t* slot = XVector_at_base(&wheel->m_slots, j);
+            XAtomic_Uintptr* slot = XVector_at_base(&wheel->m_slots, j);
             XListSNode* node = (XListSNode*)XAtomic_load_uintptr_t(
                 slot, XAtomic_MemoryOrder_SeqCst);
             while (node)
@@ -651,6 +667,8 @@ static void XTimeWheelGroup_global_init()
 {
     if (global_XTimeWheelGroup)return;
     global_XTimeWheelGroup = XTimeWheelGroup_create(1);
+    if (global_XTimeWheelGroup == NULL)
+        return;/* 分配失败：保持未初始化，等待下次 XTimeWheelGroup_global 重试 */
     XObject_moveToThread(global_XTimeWheelGroup, XThreadData_mainThread()->m_thread);
     XTimerGroupBase_setHighResTimeFunc(global_XTimeWheelGroup,XDateTime_currentMSecsSinceEpoch );
     XTimeWheelGroup_addTimeWheel(global_XTimeWheelGroup, 30);

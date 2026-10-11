@@ -6,7 +6,7 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include "XTestMenu.h"
 #include"XClass.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 	void XTestMenu_XIOTest(XTestMenu* root);
 	void XTestMenu_XSerialPortTest(XTestMenu* root);
 	void XTestMenu_XSocketTest(XTestMenu* root);
@@ -21,7 +21,7 @@ extern "C" {
 	void XTestMenu_XSaveFileTest(XTestMenu* root);
 	void XTestMenu_XFileDescriptorTest(XTestMenu* root);
 	void XPWMDeviceTest();
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

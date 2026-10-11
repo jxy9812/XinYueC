@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XAbstractEventDispatcher.h
  * @brief 事件调度器抽象基类（仅新版高精度 API，对标 Qt 7+ QAbstractEventDispatcher）。
  *
@@ -39,43 +39,16 @@ typedef struct {
     XTimerId timerId;           ///< 定时器 ID
     union
     {
-        XHandle* Xhandle;  ///定时器句柄
+        XHandle* m_handle;  ///定时器句柄
     };
     int64_t interval;           ///< 间隔 (纳秒)
 } XAbstractEventDispatcher_TimerInfo;
 // 前向声明
 struct XAbstractNativeEventFilter;
-typedef struct XAbstractEventDispatcherPrivate
-{
-    XHrTimerGroup* m_hrtimerGroup;//高精度定时器组
-    XHashMap* notifiers;           ///< XFd → XVector<XSocketNotifier*>，notifier 注册表
-    XAbstractNetIoRing* m_ioRing;          ///< I/O 事件环（平台无关 I/O 抽象）
-    XAtomic_bool m_interrupt;      ///< 中断标志，阻止阻塞等待
-    XThreadData* m_threadData;    ///< 反向引用：本调度器所属线程的 XThreadData（工作线程信号量唤醒用）
-    //XMutex* mutex;              ///< 保护原生事件过滤器的互斥锁
-    void* m_consoleTransport;     ///< 默认 Shell 的标准输入传输（由调度器持有并释放）
-    void* m_consoleShell;         ///< 默认 Shell 实例（由调度器持有，析构时释放）
-#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
-    XCONSOLE_SHELL_ASYNC_ON
-    bool m_consolePromptShown;    ///< 默认 Shell 初始提示符是否已经输出
-#endif
-#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
-    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
-    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
-    void* m_consoleSshServer;     ///< 默认 Shell 的 SSH TCP Server（由调度器持有）
-    void* m_consoleSshAdapter;    ///< 默认 Shell 的 SSH 多会话适配器（由调度器持有）
-#endif
-#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
-    XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && \
-    XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
-    void* m_consoleTelnetServer;  ///< 默认 Shell 的 Telnet TCP Server（由调度器持有）
-    void* m_consoleTelnetAdapter; ///< 默认 Shell 的 Telnet 多会话适配器（由调度器持有）
-#endif
-    /* 周期轮询回调链表（USB Host/Gadget、串口等需在事件循环中定期处理的设备） */
-    struct XAbstractEventDispatcher_PollEntry* m_pollCallbacks;
-}XAbstractEventDispatcherPrivate;
-void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp);
-void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate* dp);
+/* XAbstractEventDispatcherPrivate 私有结构体及其 _init/_deinit 已迁至
+ * XAbstractEventDispatcher_Protected.h，此处仅保留不透明前向 typedef（PIMPL）；
+ * 需解引用 m_d_ptr 的内部实现须显式 include 该保护头文件。 */
+typedef struct XAbstractEventDispatcherPrivate XAbstractEventDispatcherPrivate;
 // ===================================================================
 // === 核心类型定义（对标 Qt 7+） =====================================
 // ===================================================================
@@ -117,10 +90,16 @@ XCLASS_DEFINE_END(XAbstractEventDispatcher)
 // ===================================================================
 // === 类结构体定义 ===================================================
 // ===================================================================
+/**
+ * @brief XAbstractEventDispatcher 实例所属线程类型。
+ * @details 记录在 XAbstractEventDispatcher 的 m_type 成员中，经
+ *          XAbstractEventDispatcher_threadType 查询，用于区分主线程
+ *          调度器与工作线程调度器。
+ */
 typedef enum
 {
-    XDISPATCHER_THREAD_TYPE_WORKER,   // 子线程/工作线程
-    XDISPATCHER_THREAD_TYPE_MAIN     // 主线程
+    XDispatcherThreadType_Worker,   ///< 子线程/工作线程
+    XDispatcherThreadType_Main      ///< 主线程
 } XDispatcherThreadType;
 /**
  * @brief XAbstractEventDispatcher 类结构体。
@@ -129,10 +108,10 @@ typedef enum
  */
 typedef struct XAbstractEventDispatcher 
 {
-    XObject m_class; ///< 继承自 XObject
-    XDispatcherThreadType type;
+    XObject m_class; ///< 第一个成员（继承自 XObject），由 XClass 管理，禁止手工修改
+    XDispatcherThreadType m_type;
     // 私有数据（PIMPL）
-    XAbstractEventDispatcherPrivate* d_ptr;
+    XAbstractEventDispatcherPrivate* m_d_ptr;
 } XAbstractEventDispatcher;
 
 // ===================================================================
@@ -148,6 +127,7 @@ XVtable* XAbstractEventDispatcher_class_init(void);
 /**
  * @brief 在堆上创建 XAbstractEventDispatcher 实例。
  * @note 此为抽象基类，不应直接实例化！应由子类（如 XEventDispatcherPOSIX）实现。
+ * @param memory 内存分配器类型（XMALLOC_TYPE_*，如 XCLASS_DEFAULT_MEMORY_TYPE）。
  * @param parent 父对象（可为 NULL）。
  * @return 新创建的对象指针。
  */

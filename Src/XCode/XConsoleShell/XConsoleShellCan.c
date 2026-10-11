@@ -12,8 +12,8 @@
     XCONSOLE_SHELL_CAN_ON
 
 #include "XConsoleShellCan.h"
+#include "XStringUtils.h"
 #include "XUtf8StringView.h"
-#include <stdio.h>
 #include <string.h>
 
 static bool xcc_parse_u32(const char* text, uint32_t* value)
@@ -102,7 +102,7 @@ static XConsoleResult xcc_error(XConsoleShell* shell, const char* operation,
     char line[160];
     XCanError error = can ? XCan_lastError(can) : XCanError_Unknown;
     int32_t nativeError = can ? XCan_nativeError(can) : 0;
-    int written = snprintf(line, sizeof(line), "can: %s: %s (本机错误=%d)\n",
+    int written = XSnprintf(line, sizeof(line), "can: %s: %s (本机错误=%d)\n",
                            operation ? operation : "操作",
                            XCan_errorString(error), (int)nativeError);
     if (written < 0 || (size_t)written >= sizeof(line) ||
@@ -122,7 +122,7 @@ static XConsoleResult xcc_error(XConsoleShell* shell, const char* operation,
 static XConsoleResult xcc_missing(XConsoleShell* shell, const char* operation)
 {
     char line[96];
-    int written = snprintf(line, sizeof(line), "can: %s: 通道未打开\n",
+    int written = XSnprintf(line, sizeof(line), "can: %s: 通道未打开\n",
                            operation ? operation : "操作");
     return written > 0 && (size_t)written < sizeof(line) &&
                    XConsoleShell_writeUtf8(shell, line)
@@ -164,7 +164,7 @@ static bool xcc_copy_name(char* destination, size_t capacity,
     if (!destination || capacity == 0u) return false;
     destination[0] = '\0';
     if (!source) return true;
-    length = strlen(source);
+    length = XStrlen(source);
     if (length >= capacity) return false;
     memcpy(destination, source, length + 1u);
     return true;
@@ -179,58 +179,58 @@ static bool xcc_apply_open_options(XCanConfig* config,
     if (!config || !name || !argv || start < 0 || start > argc) return false;
     while (i < argc) {
         uint32_t value;
-        if (strcmp(argv[i], "--name") == 0) {
+        if (XStrcmp(argv[i], "--name") == 0) {
             if (i + 1 >= argc || !xcc_copy_name(name, nameCapacity, argv[i + 1]))
                 return false;
             hasName = true;
             i += 2;
-        } else if (strcmp(argv[i], "--bitrate") == 0) {
+        } else if (XStrcmp(argv[i], "--bitrate") == 0) {
             if (i + 1 >= argc || !xcc_parse_u32(argv[i + 1], &value) || value == 0u)
                 return false;
             config->m_nominalTiming.m_bitrate = value;
             i += 2;
-        } else if (strcmp(argv[i], "--sample-point") == 0) {
+        } else if (XStrcmp(argv[i], "--sample-point") == 0) {
             if (i + 1 >= argc || !xcc_parse_u32(argv[i + 1], &value) || value > 1000u)
                 return false;
             config->m_nominalTiming.m_samplePointPermille = (uint16_t)value;
             i += 2;
-        } else if (strcmp(argv[i], "--data-bitrate") == 0) {
+        } else if (XStrcmp(argv[i], "--data-bitrate") == 0) {
             if (i + 1 >= argc || !xcc_parse_u32(argv[i + 1], &value) || value == 0u)
                 return false;
             config->m_dataTiming.m_bitrate = value;
             config->m_frameFormat = XCanFrameFormat_FlexibleDataRate;
             i += 2;
-        } else if (strcmp(argv[i], "--fd") == 0) {
+        } else if (XStrcmp(argv[i], "--fd") == 0) {
             config->m_frameFormat = XCanFrameFormat_FlexibleDataRate;
             ++i;
-        } else if (strcmp(argv[i], "--auto") == 0) {
+        } else if (XStrcmp(argv[i], "--auto") == 0) {
             config->m_frameFormat = XCanFrameFormat_Auto;
             ++i;
-        } else if (strcmp(argv[i], "--loopback") == 0) {
+        } else if (XStrcmp(argv[i], "--loopback") == 0) {
             config->m_mode = XCanMode_Loopback;
             ++i;
-        } else if (strcmp(argv[i], "--listen-only") == 0) {
+        } else if (XStrcmp(argv[i], "--listen-only") == 0) {
             config->m_mode = XCanMode_ListenOnly;
             ++i;
-        } else if (strcmp(argv[i], "--restricted") == 0) {
+        } else if (XStrcmp(argv[i], "--restricted") == 0) {
             config->m_mode = XCanMode_Restricted;
             ++i;
-        } else if (strcmp(argv[i], "--auto-restart") == 0) {
+        } else if (XStrcmp(argv[i], "--auto-restart") == 0) {
             config->m_flags |= XCanConfigFlag_AutoRestart;
             ++i;
-        } else if (strcmp(argv[i], "--one-shot") == 0) {
+        } else if (XStrcmp(argv[i], "--one-shot") == 0) {
             config->m_flags |= XCanConfigFlag_OneShot;
             ++i;
-        } else if (strcmp(argv[i], "--receive-own") == 0) {
+        } else if (XStrcmp(argv[i], "--receive-own") == 0) {
             config->m_flags |= XCanConfigFlag_ReceiveOwn;
             ++i;
-        } else if (strcmp(argv[i], "--timestamp") == 0) {
+        } else if (XStrcmp(argv[i], "--timestamp") == 0) {
             config->m_flags |= XCanConfigFlag_Timestamp;
             ++i;
-        } else if (strcmp(argv[i], "--error-frames") == 0) {
+        } else if (XStrcmp(argv[i], "--error-frames") == 0) {
             config->m_flags |= XCanConfigFlag_ErrorFrames;
             ++i;
-        } else if (strcmp(argv[i], "--non-iso-fd") == 0) {
+        } else if (XStrcmp(argv[i], "--non-iso-fd") == 0) {
             config->m_flags |= XCanConfigFlag_NonIsoCanFd;
             ++i;
         } else {
@@ -272,7 +272,7 @@ static int xcc_list(XConsoleShell* shell, XConsoleShellSession* session,
             XCanStatus status;
             if (XCan_getStatus(slot->can, &status)) state = status.m_state;
         }
-        written = snprintf(line, sizeof(line), "%5u %5u %-28s %-4s %-5s %s\n",
+        written = XSnprintf(line, sizeof(line), "%5u %5u %-28s %-4s %-5s %s\n",
                            slot->controller, slot->channel,
                            slot->name[0] ? slot->name : "-",
                            XCan_isOpen(slot->can) ? "yes" : "no",
@@ -443,7 +443,7 @@ static int xcc_info(XConsoleShell* shell, XConsoleShellSession* session,
         status.m_rxPending = UINT32_MAX;
         status.m_txPending = UINT32_MAX;
     }
-    written = snprintf(line, sizeof(line),
+    written = XSnprintf(line, sizeof(line),
         "controller=%u channel=%u name=%s open=%s started=%s\n"
         "format=%s mode=%s bitrate=%u data-bitrate=%u flags=0x%08x\n"
         "state=%s rx-errors=%u tx-errors=%u rx-pending=%u tx-pending=%u\n"
@@ -482,7 +482,7 @@ static int xcc_status(XConsoleShell* shell, XConsoleShellSession* session,
         if (result != XConsoleResult_Ok) return result;
     }
     if (!XCan_getStatus(slot->can, &status)) return xcc_error(shell, "查询状态", slot->can);
-    written = snprintf(line, sizeof(line),
+    written = XSnprintf(line, sizeof(line),
                        "can %u:%u state=%s rx-errors=%u tx-errors=%u "
                        "rx-pending=%u tx-pending=%u flags=0x%08x\n",
                        channel.m_controller, channel.m_channel,
@@ -508,19 +508,19 @@ static bool xcc_parse_frame(XCanFrame* frame, int argc, const char* const* argv,
     frame->m_idFormat = XCanIdFormat_Standard;
     *timeout = 1000;
     while (i < argc) {
-        if (strcmp(argv[i], "--extended") == 0) {
+        if (XStrcmp(argv[i], "--extended") == 0) {
             frame->m_idFormat = XCanIdFormat_Extended;
             ++i;
-        } else if (strcmp(argv[i], "--fd") == 0) {
+        } else if (XStrcmp(argv[i], "--fd") == 0) {
             frame->m_flags |= XCanFrameFlag_FlexibleDataRate;
             ++i;
-        } else if (strcmp(argv[i], "--remote") == 0) {
+        } else if (XStrcmp(argv[i], "--remote") == 0) {
             frame->m_type = XCanFrameType_Remote;
             ++i;
-        } else if (strcmp(argv[i], "--timeout") == 0) {
+        } else if (XStrcmp(argv[i], "--timeout") == 0) {
             if (i + 1 >= argc || !xcc_parse_timeout(argv[i + 1], timeout)) return false;
             i += 2;
-        } else if (strcmp(argv[i], "--dlc") == 0) {
+        } else if (XStrcmp(argv[i], "--dlc") == 0) {
             if (i + 1 >= argc || !xcc_parse_u32(argv[i + 1], &value) || value > 15u)
                 return false;
             frame->m_dlc = (uint8_t)value;
@@ -552,7 +552,7 @@ static void xcc_print_frame(XConsoleShell* shell, const XCanFrame* frame)
     int written;
     uint8_t i;
     if (!shell || !frame) return;
-    written = snprintf(line, sizeof(line), "id=0x%08x format=%s type=%s len=%u data=",
+    written = XSnprintf(line, sizeof(line), "id=0x%08x format=%s type=%s len=%u data=",
                        frame->m_id, frame->m_idFormat == XCanIdFormat_Extended ? "extended" : "standard",
                        frame->m_type == XCanFrameType_Remote ? "remote" :
                        (frame->m_type == XCanFrameType_Error ? "error" : "data"),
@@ -560,7 +560,7 @@ static void xcc_print_frame(XConsoleShell* shell, const XCanFrame* frame)
     if (written < 0 || (size_t)written >= sizeof(line)) return;
     offset = (size_t)written;
     for (i = 0u; i < frame->m_length && offset + 4u < sizeof(line); ++i) {
-        written = snprintf(line + offset, sizeof(line) - offset, "%02x%s",
+        written = XSnprintf(line + offset, sizeof(line) - offset, "%02x%s",
                            frame->m_data[i], i + 1u == frame->m_length ? "" : " ");
         if (written < 0) return;
         offset += (size_t)written;
@@ -614,10 +614,10 @@ static int xcc_receive(XConsoleShell* shell, XConsoleShellSession* session,
         !xcc_parse_channel(argv[0], argv[1], &channel)) return XConsoleResult_InvalidArgument;
     while (i < argc) {
         if (i + 1 >= argc) return XConsoleResult_InvalidArgument;
-        if (strcmp(argv[i], "--count") == 0) {
+        if (XStrcmp(argv[i], "--count") == 0) {
             if (!xcc_parse_u32(argv[i + 1], &count) || count == 0u ||
                 count > XCONSOLE_SHELL_CAN_MAX_RECEIVE_COUNT) return XConsoleResult_InvalidArgument;
-        } else if (strcmp(argv[i], "--timeout") == 0) {
+        } else if (XStrcmp(argv[i], "--timeout") == 0) {
             if (!xcc_parse_timeout(argv[i + 1], &timeout)) return XConsoleResult_InvalidArgument;
         } else {
             return XConsoleResult_InvalidArgument;
@@ -667,10 +667,10 @@ static int xcc_recover(XConsoleShell* shell, XConsoleShellSession* session,
 static bool xcc_filter_type(const char* text, XCanFilterFrameType* type)
 {
     if (!text || !type) return false;
-    if (strcmp(text, "all") == 0) *type = XCanFilterFrameType_All;
-    else if (strcmp(text, "data") == 0) *type = XCanFilterFrameType_Data;
-    else if (strcmp(text, "remote") == 0) *type = XCanFilterFrameType_Remote;
-    else if (strcmp(text, "error") == 0) *type = XCanFilterFrameType_Error;
+    if (XStrcmp(text, "all") == 0) *type = XCanFilterFrameType_All;
+    else if (XStrcmp(text, "data") == 0) *type = XCanFilterFrameType_Data;
+    else if (XStrcmp(text, "remote") == 0) *type = XCanFilterFrameType_Remote;
+    else if (XStrcmp(text, "error") == 0) *type = XCanFilterFrameType_Error;
     else return false;
     return true;
 }
@@ -691,13 +691,13 @@ static int xcc_filter_add(XConsoleShell* shell, XConsoleShellSession* session,
         !xcc_parse_u32(argv[2], &filter.m_id) ||
         !xcc_parse_u32(argv[3], &filter.m_mask)) return XConsoleResult_InvalidArgument;
     while (i < argc) {
-        if (strcmp(argv[i], "--extended") == 0) {
+        if (XStrcmp(argv[i], "--extended") == 0) {
             filter.m_idFormat = XCanIdFormat_Extended;
             ++i;
-        } else if (strcmp(argv[i], "--invert") == 0) {
+        } else if (XStrcmp(argv[i], "--invert") == 0) {
             filter.m_flags |= XCanFilterFlag_Invert;
             ++i;
-        } else if (strcmp(argv[i], "--type") == 0) {
+        } else if (XStrcmp(argv[i], "--type") == 0) {
             if (i + 1 >= argc || !xcc_filter_type(argv[i + 1], &filter.m_frameType))
                 return XConsoleResult_InvalidArgument;
             i += 2;
@@ -716,7 +716,7 @@ static int xcc_filter_add(XConsoleShell* shell, XConsoleShellSession* session,
     if (!xcc_authorized(shell, session, &channel,
                         XConsoleShellCanOperation_Filter, true)) return xcc_denied(shell);
     if (!XCan_addFilter(slot->can, &filter, &filterId)) return xcc_error(shell, "添加过滤器", slot->can);
-    written = snprintf(line, sizeof(line), "can: 过滤器添加: id=%u\n", filterId);
+    written = XSnprintf(line, sizeof(line), "can: 过滤器添加: id=%u\n", filterId);
     return written > 0 && (size_t)written < sizeof(line) &&
                    XConsoleShell_writeUtf8(shell, line)
                ? XConsoleResult_Ok : XConsoleResult_IoError;

@@ -1,19 +1,32 @@
-﻿#include"CXinYueConfig.h"
+﻿/**
+* @file       XListDLinked.h
+* @brief      双向循环链表公开 API。
+* @details    对齐 Qt 6.8 QList/QLinkedList 的双向循环链表，继承链表基类
+*             XListBase；实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、
+*             Qt 或其他平台 API，仅在 XListDLinked 模块启用时编译。
+*/
+#include"CXinYueConfig.h"
 #if !defined(XLISTDLINKED_H)&& XListDLinked_ON
 #define XLISTDLINKED_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include <stdbool.h>						///< 提供bool、true、false等布尔类型定义
-#include <stdio.h>							///< 提供标准输入输出函数声明
 #include "XListDLinked_iterator.h"			///< 包含双向链表正向迭代器定义
 #include "XListDLinked_reverse_iterator.h"	///< 包含双向链表反向迭代器定义
 #include "XListBase.h"						///< 包含链表基类XListBase的定义，双向链表继承自此基类
 /**
 * @brief 双向链表虚函数表大小定义
-* @note 基于链表基类XListBase的虚函数表大小扩展，确定双向链表所需的虚函数表容量
+* @note 双向链表仅继承XListBase、不新增虚函数，槽位总数与XListBase一致
 */
-#define XLISTDLINKED_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))       //XList容器虚函数表大小
+#define XLISTDLINKED_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListDLinked))       //XList容器虚函数表大小
+/**
+* @brief 双向链表虚函数表枚举
+* @details 仅继承链表基类XListBase、不新增虚函数，按文档「类的创建」规定使用
+*          XCLASS_DEFINE_EXTEND_END，槽位编号从XListBase槽位总数开始
+*/
+XCLASS_DEFINE_BEGING(XListDLinked)
+XCLASS_DEFINE_EXTEND_END(XListDLinked, XListBase)
 /**
 * @brief 双向链表节点结构体定义
 * @details 存储链表中的单个元素，包含前驱指针、后继指针和数据指针
@@ -22,7 +35,7 @@ typedef struct XListDNode
 {
 	struct XListDNode* prev;///< 指向前驱节点的指针
 	struct XListDNode* next;///< 指向后继节点的指针
-	char data[];             ///< 指向节点存储的实际数据的指针
+	char data[];             ///< 节点存储实际数据的柔性数组（C99柔性数组成员），随节点一并分配，不是指针
 } XListDNode;
 /**
 * @brief 创建指定类型的双链表节点
@@ -237,20 +250,10 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize, bool useCow);
 * @note 继承自XListBase的获取类型大小操作，通过宏重命名实现接口统一
 */
 #define XListDLinked_typeSize_base                XListBase_typeSize_base
-/**
-* @brief C++兼容性声明结束
-*/
-#ifdef __cplusplus
-}
-#endif
-
-
 /* XClass create API default-memory wrappers. */
 #undef XListDLinked_create
 #define XListDLinked_create(typeSize) \
 	XListDLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
-
-#endif // XLISTDLINKED_H
 
 // ====================== Qt 6.8 QList/QLinkedList 对齐 ======================
 // 以下宏继承自 XListBase 的 Qt 对齐实现。
@@ -287,7 +290,7 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize, bool useCow);
 #define XListDLinked_prepend_base               XListDLinked_push_front_base
 
 /**
- * @brief 判断两个链表是否相等（用父类XContainerCompare宏实现）
+ * @brief 判断两个链表是否满足相等比较的前提（转发 XListBase_equals_base）
  */
 #define XListDLinked_equals_base(lhs, rhs)      XListBase_equals_base(lhs, rhs)
 
@@ -358,3 +361,12 @@ void XListDLinked_init(XListDLinked* this_list, size_t typeSize, bool useCow);
  * @brief 条件删除（对齐Qt removeIf）
  */
 #define XListDLinked_removeIf_base(list, pred, udata)   XListBase_removeIf_base(list, pred, udata)
+
+/**
+* @brief C++兼容性声明结束
+*/
+#ifdef __cplusplus
+}
+#endif
+
+#endif // XLISTDLINKED_H

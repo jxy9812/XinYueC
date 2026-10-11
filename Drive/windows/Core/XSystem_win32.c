@@ -115,6 +115,20 @@ int64_t XSystem_platformPid(void)
     return (int64_t)GetCurrentProcessId();
 }
 
+bool XSystem_platformProcessAlive(int64_t pid)
+{
+    HANDLE handle;
+    DWORD exitCode = 0u;
+    bool alive;
+    if (pid <= 0) return false;
+    /* PROCESS_QUERY_LIMITED_INFORMATION：Vista+ 最小权限存活探测。 */
+    handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, (DWORD)pid);
+    if (!handle) return GetLastError() == ERROR_ACCESS_DENIED; /* 存在但无权查询=存活 */
+    alive = GetExitCodeProcess(handle, &exitCode) && exitCode == STILL_ACTIVE;
+    CloseHandle(handle);
+    return alive;
+}
+
 bool XSystem_platformExecutableFilePath(char* path, size_t cap)
 {
     DWORD n;

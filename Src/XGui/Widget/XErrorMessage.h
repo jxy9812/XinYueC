@@ -47,15 +47,17 @@ void XErrorMessage_init(XErrorMessage* self, XWidget* parent, XWidgetFlags flags
  */
 XErrorMessage* XErrorMessage_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
-/** @brief XError消息show消息（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param msg 消息文本。
+/** @brief XError消息show消息（弹出错误消息；对标 Qt 同名接口）。
+ * @param self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param msg 消息文本；按 UTF-8 解码，内部存为对象拥有的 XString；
+ *        传入 NULL 时函数不执行任何操作。
  * @return 无返回值。
  */
 void XErrorMessage_showMessage(XErrorMessage* self, const char* msg);
-/** @brief XError消息current消息（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @return 返回 UTF-8 文本；无效时返回空串。
+/** @brief XError消息current消息（当前消息文本；对标 Qt 同名接口）。
+ * @param self 目标控件指针；可为 NULL。
+ * @return 返回借用指针：内部消息的 UTF-8 文本，禁止释放或修改；
+ *         无消息或无效时返回空串。
  */
 const char* XErrorMessage_currentMessage(const XErrorMessage* self);
 /** @brief XError消息setDoneShown（对标 Qt 同名接口）。
@@ -71,5 +73,9 @@ void XErrorMessage_setDoneShown(XErrorMessage* self, bool on);
 bool XErrorMessage_isDoneShown(const XErrorMessage* self);
 
 #endif /* XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* XERRORMESSAGE_H */

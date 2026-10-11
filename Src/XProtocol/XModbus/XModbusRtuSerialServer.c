@@ -569,6 +569,9 @@ static void VXModbusRtuSerialServer_deinit(XModbusRtuSerialServer* server)
 
     server->m_interFrameDelay = 0;
     server->m_turnaroundDelay = 0;
+
+    // 调用基类析构（释放XModbusServer的m_dataMap/m_options、XModbusDevice层与XObject层资源）
+    XClass_Deinit_Parent(XModbusServer, server);
 }
 
 // =============== 槽函数 ================

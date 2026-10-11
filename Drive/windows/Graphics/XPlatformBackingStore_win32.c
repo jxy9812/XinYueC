@@ -609,11 +609,14 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
     (void)nativePixel;
 }
 
-/* Composite-content blit into the panel double buffers (2026-10-05, fbdev
- * "让位条带归位还原" path). fbdev-only semantics; on Windows the window
- * system re-covers exposed regions and the per-rect BitBlt flush is already
- * atomic, so this stays a no-op (same policy as fillPanelRects above) --
- * link stub, the posix commit only implemented the fbdev side. */
+/* Blit already-composited strips from a sibling top-level backing store
+ * (window-decoration/keyboard drag "yielded strip restore", 2026-10-05).
+ * fbdev-only semantics (real implementation lives in the posix backend);
+ * on Windows the window system re-covers exposed regions, so this stays
+ * a no-op per the header contract ("desktop platforms: no-op") -- link
+ * stub, same policy as fillPanelRects above (the merge integration added
+ * the fill/snapshot stubs but missed this one, breaking XinYueC_Static
+ * with LNK2019). */
 void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
                                           const XRect* rects, int count,
                                           const XPoint* origin)

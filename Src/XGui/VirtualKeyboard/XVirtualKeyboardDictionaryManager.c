@@ -136,17 +136,18 @@ XVirtualKeyboardDictionaryManager_instance(void)
 
 XVirtualKeyboardDictionary*
 XVirtualKeyboardDictionaryManager_createDictionary(
-        XVirtualKeyboardDictionaryManager* self, const char* name)
+        XVirtualKeyboardDictionaryManager* self, const XString* name)
 {
     XVirtualKeyboardDictionaryManagerPrivate* priv = xvkdm_priv(self);
     XvkdmDictEntry* existing;
-    if (!priv || !name || !name[0]) return NULL;
-    existing = xvkdm_find(priv, name);
+    const char* nameUtf8 = name ? XString_toUtf8(name) : NULL;
+    if (!priv || !nameUtf8 || !nameUtf8[0]) return NULL;
+    existing = xvkdm_find(priv, nameUtf8);
     if (existing) return existing->m_dict; /* 同名已存在返回既有。 */
     if (priv->m_dictCount >= XVKDM_DICT_MAX) return NULL;
     {
         XVirtualKeyboardDictionary* dict =
-            XVirtualKeyboardDictionary_create_named(name);
+            XVirtualKeyboardDictionary_create_named(nameUtf8);
         if (!dict) return NULL;
         priv->m_dicts[priv->m_dictCount].m_dict = dict;
         priv->m_dicts[priv->m_dictCount].m_isExtra = false;
@@ -160,25 +161,48 @@ XVirtualKeyboardDictionaryManager_createDictionary(
     }
 }
 
+XVirtualKeyboardDictionary*
+XVirtualKeyboardDictionaryManager_createDictionary_2(
+        XVirtualKeyboardDictionaryManager* self, const char* name)
+{
+    XString* tmp = name ? XString_create_utf8(name) : NULL;
+    XVirtualKeyboardDictionary* dict =
+        XVirtualKeyboardDictionaryManager_createDictionary(self, tmp);
+    if (tmp) XClassDelete(tmp);
+    return dict;
+}
+
 XVirtualKeyboardDictionary* XVirtualKeyboardDictionaryManager_dictionary(
-        const XVirtualKeyboardDictionaryManager* self, const char* name)
+        const XVirtualKeyboardDictionaryManager* self, const XString* name)
 {
     XVirtualKeyboardDictionaryManagerPrivate* priv = xvkdm_priv(self);
-    XvkdmDictEntry* entry = xvkdm_find(priv, name);
+    const char* nameUtf8 = name ? XString_toUtf8(name) : NULL;
+    XvkdmDictEntry* entry = xvkdm_find(priv, nameUtf8);
     return entry ? entry->m_dict : NULL;
 }
 
+XVirtualKeyboardDictionary* XVirtualKeyboardDictionaryManager_dictionary_2(
+        const XVirtualKeyboardDictionaryManager* self, const char* name)
+{
+    XString* tmp = name ? XString_create_utf8(name) : NULL;
+    XVirtualKeyboardDictionary* dict =
+        XVirtualKeyboardDictionaryManager_dictionary(self, tmp);
+    if (tmp) XClassDelete(tmp);
+    return dict;
+}
+
 bool XVirtualKeyboardDictionaryManager_removeDictionary(
-        XVirtualKeyboardDictionaryManager* self, const char* name)
+        XVirtualKeyboardDictionaryManager* self, const XString* name)
 {
     XVirtualKeyboardDictionaryManagerPrivate* priv = xvkdm_priv(self);
+    const char* nameUtf8 = name ? XString_toUtf8(name) : NULL;
     int i;
     int index = -1;
-    if (!priv || !name) return false;
+    if (!priv || !nameUtf8) return false;
     for (i = 0; i < priv->m_dictCount; ++i) {
         if (priv->m_dicts[i].m_dict &&
             XStrcmp(XVirtualKeyboardDictionary_name(priv->m_dicts[i].m_dict),
-                    name) == 0) {
+                    nameUtf8) == 0) {
             index = i;
             break;
         }
@@ -195,6 +219,15 @@ bool XVirtualKeyboardDictionaryManager_removeDictionary(
                 XVirtualKeyboardDictionaryManager_activeDictionariesChanged_signal(
                     NULL));
     return true;
+}
+
+bool XVirtualKeyboardDictionaryManager_removeDictionary_2(
+        XVirtualKeyboardDictionaryManager* self, const char* name)
+{
+    XString* tmp = name ? XString_create_utf8(name) : NULL;
+    bool removed = XVirtualKeyboardDictionaryManager_removeDictionary(self, tmp);
+    if (tmp) XClassDelete(tmp);
+    return removed;
 }
 
 /** @brief 收集集合名列表（extra/base/active 三态过滤共用）。 */

@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XVariantList.h"
 #include"XString.h"
 #include"XStringList.h"

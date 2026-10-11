@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XSystem.c
  * @brief 系统复位、关机和有序重启回调的默认分发实现。
  * @details
@@ -109,6 +109,21 @@ int64_t XSystem_pid(void)
     return XSystem_platformPid();
 #else
     return 0;
+#endif
+}
+
+/**
+ * @brief 查询指定 PID 的进程是否存活（公共分发）。
+ * @param pid 目标进程标识；非正数视为不存在。
+ * @return 进程存活返回 true；不存在、已退出或无 OS 目标返回 false。
+ */
+bool XSystem_processAlive(int64_t pid)
+{
+    if (pid <= 0) return false;
+#if XPLATFORM_HAS_OS
+    return XSystem_platformProcessAlive(pid);
+#else
+    return false;
 #endif
 }
 

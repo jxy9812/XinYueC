@@ -145,9 +145,6 @@ XVtable* XLayout_class_init(void);
  */
 void XLayout_init(XLayout* self);
 
-/** @brief 通过 XClass 虚表释放布局资源（栈/外部存储对象使用）。 */
-/** @brief 删除堆上的布局对象。 */
-
 /* ==================== 条目管理虚函数（对标 QLayout 纯虚函数） ==================== */
 
 /**

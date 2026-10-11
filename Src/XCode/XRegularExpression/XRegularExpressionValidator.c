@@ -114,7 +114,7 @@ void XRegularExpressionValidator_setRegularExpression(XRegularExpressionValidato
     }
 
     XString* pattern = XRegularExpression_pattern(&validator->m_originalExpression);
-    XString* anchored = XRegularExpression_anchoredPattern_2(pattern);
+    XString* anchored = XRegularExpression_anchoredPattern(pattern);
     if (anchored) {
         XRegularExpression_setPattern(&validator->m_usedExpression, anchored);
         XClassDelete(anchored);

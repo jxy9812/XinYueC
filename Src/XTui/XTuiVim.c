@@ -19,10 +19,9 @@
     (XTUI_VIM_SEARCH_ON || XTUI_VIM_SUBSTITUTE_ON)
 #include "XRegularExpression.h"
 #endif
-#include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include "XStringUtils.h" /* strlen/strcmp/strstr 等直改经 XStr*（外部依赖约束：
+                             string.h 仅限 mem 原语；禁 ctype/stdio/stdlib） */
 
 static void xvim_record(XTuiVim* vim, const char* text);
 static void xvim_goto(XTuiVim* vim, int line, int column);
@@ -295,7 +294,7 @@ static char** xvim_clone_lines(char* const* src, int count, int* capacity)
     if (!dst) return NULL;
     memset(dst, 0, (size_t)cap * sizeof(char*));
     for (i = 0; i < count; ++i) {
-        size_t len = strlen(src && src[i] ? src[i] : "");
+        size_t len = XStrlen(src && src[i] ? src[i] : "");
         if (len >= XTUI_VIM_LINE_MAX) len = XTUI_VIM_LINE_MAX - 1u;
         dst[i] = (char*)XMalloc_System(len + 1u);
         if (!dst[i]) {
@@ -352,7 +351,7 @@ static bool xvim_set_line_raw(XTuiVim* vim, int line, const char* text)
     size_t len;
     if (!vim || line < 0 || line >= vim->m_lineCount) return false;
     text = text ? text : "";
-    len = strlen(text);
+    len = XStrlen(text);
     if (len >= XTUI_VIM_LINE_MAX) len = XTUI_VIM_LINE_MAX - 1u;
     copy = (char*)XMalloc_System(len + 1u);
     if (!copy) return false;
@@ -371,7 +370,7 @@ static bool xvim_insert_line_raw(XTuiVim* vim, int line, const char* text)
     if (!vim || line < 0 || line > vim->m_lineCount) return false;
     if (!xvim_ensure_lines(vim, vim->m_lineCount + 1)) return false;
     text = text ? text : "";
-    len = strlen(text);
+    len = XStrlen(text);
     if (len >= XTUI_VIM_LINE_MAX) len = XTUI_VIM_LINE_MAX - 1u;
     copy = (char*)XMalloc_System(len + 1u);
     if (!copy) return false;
@@ -529,7 +528,7 @@ static bool xvim_append_register_value(XVimRegister* reg, char* const* lines,
     memset(combined, 0, (size_t)total * sizeof(char*));
     for (i = 0; i < total; ++i) {
         const char* text = i < reg->count ? reg->lines[i] : lines[i - reg->count];
-        size_t length = strlen(text ? text : "");
+        size_t length = XStrlen(text ? text : "");
         combined[i] = (char*)XMalloc_System(length + 1u);
         if (!combined[i]) {
             xvim_free_lines(combined, i);
@@ -869,14 +868,14 @@ static bool xvim_replace_range(XTuiVim* vim, int line, int start, int end,
     a = xvim_byte(text, start);
     b = xvim_byte(text, end);
     if (b < a) return false;
-    repl = strlen(replacement ? replacement : "");
-    len = strlen(text) - (size_t)(b - a) + repl;
+    repl = XStrlen(replacement ? replacement : "");
+    len = XStrlen(text) - (size_t)(b - a) + repl;
     if (len >= XTUI_VIM_LINE_MAX) return false;
     out = (char*)XMalloc_System(len + 1u);
     if (!out) return false;
     memcpy(out, text, (size_t)a);
     if (repl) memcpy(out + a, replacement, repl);
-    memcpy(out + a + repl, text + b, strlen(text + b) + 1u);
+    memcpy(out + a + repl, text + b, XStrlen(text + b) + 1u);
     if (!xvim_set_line_raw(vim, line, out)) { XFree_System(out); return false; }
     XFree_System(out);
     return true;
@@ -898,8 +897,8 @@ static bool xvim_insert_text(XTuiVim* vim, const char* utf8)
     col = vim->m_cursorColumn;
     text = vim->m_lines[line];
     byte = xvim_byte(text, col);
-    oldLen = strlen(text);
-    addLen = strlen(utf8);
+    oldLen = XStrlen(text);
+    addLen = XStrlen(utf8);
     if (oldLen + addLen >= XTUI_VIM_LINE_MAX) return false;
     out = (char*)XMalloc_System(oldLen + addLen + 1u);
     if (!out) return false;
@@ -968,10 +967,10 @@ static bool xvim_split(XTuiVim* vim)
     text = vim->m_lines[vim->m_cursorLine];
     byte = xvim_byte(text, vim->m_cursorColumn);
     left = (char*)XMalloc_System((size_t)byte + 1u);
-    right = (char*)XMalloc_System(strlen(text + byte) + 1u);
+    right = (char*)XMalloc_System(XStrlen(text + byte) + 1u);
     if (!left || !right) { if (left) XFree_System(left); if (right) XFree_System(right); return false; }
     memcpy(left, text, (size_t)byte); left[byte] = '\0';
-    strcpy(right, text + byte);
+    XStrcpy(right, text + byte);
     if (!xvim_set_line_raw(vim, vim->m_cursorLine, left) ||
         !xvim_insert_line_raw(vim, vim->m_cursorLine + 1, right)) {
         XFree_System(left); XFree_System(right); return false;
@@ -988,11 +987,11 @@ static bool xvim_join_previous(XTuiVim* vim)
     char* out;
     if (!vim || vim->m_cursorLine <= 0) return false;
     prev = vim->m_cursorLine - 1;
-    len = strlen(vim->m_lines[prev]) + strlen(vim->m_lines[vim->m_cursorLine]);
+    len = XStrlen(vim->m_lines[prev]) + XStrlen(vim->m_lines[vim->m_cursorLine]);
     if (len >= XTUI_VIM_LINE_MAX) return false;
     out = (char*)XMalloc_System(len + 1u);
     if (!out) return false;
-    strcpy(out, vim->m_lines[prev]); strcat(out, vim->m_lines[vim->m_cursorLine]);
+    XStrcpy(out, vim->m_lines[prev]); XStrcat(out, vim->m_lines[vim->m_cursorLine]);
     if (!xvim_set_line_raw(vim, prev, out)) { XFree_System(out); return false; }
     XFree_System(out);
     xvim_delete_line_raw(vim, vim->m_cursorLine);
@@ -1006,7 +1005,7 @@ static bool xvim_join_previous(XTuiVim* vim)
 
 static bool xvim_word_char(int c)
 {
-    return isalnum((unsigned char)c) || c == '_';
+    return XIsAlnum((unsigned char)c) || c == '_';
 }
 
 static int xvim_word_forward_line(const char* text, int col, bool end, bool big)
@@ -1115,13 +1114,13 @@ static XRegularExpression* xvim_create_regular_expression(XTuiVim* vim, const ch
     expression = XRegularExpression_create_utf8(
         pattern, options | XRegularExpression_UseUnicodePropertiesOption);
     if (!expression) {
-        if (vim) snprintf(vim->m_status, sizeof(vim->m_status), "正则表达式内存不足");
+        if (vim) XSnprintf(vim->m_status, sizeof(vim->m_status), "正则表达式内存不足");
         return NULL;
     }
     if (XRegularExpression_isValid(expression)) return expression;
     error = XRegularExpression_errorString_const(expression);
     message = error ? XString_toUtf8(error) : "";
-    if (vim) snprintf(vim->m_status, sizeof(vim->m_status), "无效正则: %.72s", message ? message : "");
+    if (vim) XSnprintf(vim->m_status, sizeof(vim->m_status), "无效正则: %.72s", message ? message : "");
     xvim_delete_regular_expression(expression);
     return NULL;
 }
@@ -1255,28 +1254,28 @@ static bool xvim_search(XTuiVim* vim, const char* needle, bool backward)
     text = vim->m_lines[vim->m_cursorLine];
     cursorByte = xvim_byte(text, vim->m_cursorColumn);
     if (!backward) {
-        hit = strstr(text + cursorByte + (text[cursorByte] ? 1 : 0), needle);
+        hit = XStrstr(text + cursorByte + (text[cursorByte] ? 1 : 0), needle);
         if (hit) { vim->m_cursorColumn = xvim_chars(text) - xvim_chars(hit); return true; }
         for (line = vim->m_cursorLine + 1; line < vim->m_lineCount; ++line) {
-            text = vim->m_lines[line]; hit = strstr(text, needle);
+            text = vim->m_lines[line]; hit = XStrstr(text, needle);
             if (hit) { vim->m_cursorLine = line; vim->m_cursorColumn = xvim_chars(text) - xvim_chars(hit); return true; }
         }
         for (line = 0; line <= vim->m_cursorLine; ++line) {
-            text = vim->m_lines[line]; hit = strstr(text, needle);
+            text = vim->m_lines[line]; hit = XStrstr(text, needle);
             if (line == vim->m_cursorLine && hit && hit >= text + cursorByte) hit = NULL;
             if (hit) { vim->m_cursorLine = line; vim->m_cursorColumn = xvim_chars(text) - xvim_chars(hit); return true; }
         }
     } else {
-        candidate = NULL; hit = strstr(text, needle);
-        while (hit && hit < text + cursorByte) { candidate = hit; hit = strstr(hit + 1, needle); }
+        candidate = NULL; hit = XStrstr(text, needle);
+        while (hit && hit < text + cursorByte) { candidate = hit; hit = XStrstr(hit + 1, needle); }
         if (candidate) { vim->m_cursorColumn = xvim_chars(text) - xvim_chars(candidate); return true; }
         for (line = vim->m_cursorLine - 1; line >= 0; --line) {
-            text = vim->m_lines[line]; hit = strstr(text, needle);
-            if (hit) { candidate = hit; while ((hit = strstr(hit + 1, needle)) != NULL) candidate = hit; vim->m_cursorLine = line; vim->m_cursorColumn = xvim_chars(text) - xvim_chars(candidate); return true; }
+            text = vim->m_lines[line]; hit = XStrstr(text, needle);
+            if (hit) { candidate = hit; while ((hit = XStrstr(hit + 1, needle)) != NULL) candidate = hit; vim->m_cursorLine = line; vim->m_cursorColumn = xvim_chars(text) - xvim_chars(candidate); return true; }
         }
         for (line = vim->m_lineCount - 1; line >= vim->m_cursorLine; --line) {
             text = vim->m_lines[line];
-            hit = line == vim->m_cursorLine ? strstr(text + cursorByte, needle) : strstr(text, needle);
+            hit = line == vim->m_cursorLine ? XStrstr(text + cursorByte, needle) : XStrstr(text, needle);
             if (hit) { vim->m_cursorLine = line; vim->m_cursorColumn = xvim_chars(text) - xvim_chars(hit); return true; }
         }
     }
@@ -1391,7 +1390,7 @@ static bool xvim_delete_selection(XTuiVim* vim, int sl, int sc, int el, int ec)
     firstByte = xvim_byte(first, b);
     lastByte = xvim_byte(last, d + 1);
     prefixLen = (size_t)firstByte;
-    suffixLen = strlen(last + lastByte);
+    suffixLen = XStrlen(last + lastByte);
     out = (char*)XMalloc_System(prefixLen + suffixLen + 1u);
     if (!out) return false;
     memcpy(out, first, prefixLen);
@@ -1467,7 +1466,7 @@ static void xvim_set_insert_repeat(XTuiVim* vim, const char* prefix)
 #if XTUI_VIM_ADVANCED_MOTION_ON
     if (!vim) return;
     if (!prefix) prefix = "i:";
-    strncpy(vim->m_insertRepeatPrefix, prefix,
+    XStrncpy(vim->m_insertRepeatPrefix, prefix,
             sizeof(vim->m_insertRepeatPrefix) - 1u);
     vim->m_insertRepeatPrefix[sizeof(vim->m_insertRepeatPrefix) - 1u] = '\0';
 #else
@@ -1499,7 +1498,7 @@ static void xvim_leave_insert(XTuiVim* vim)
 #if XTUI_VIM_ADVANCED_MOTION_ON
         if (vim->m_insertRepeatPrefix[0]) prefixText = vim->m_insertRepeatPrefix;
 #endif
-        prefix = strlen(prefixText);
+        prefix = XStrlen(prefixText);
         if ((size_t)vim->m_insertLen + prefix < sizeof(repeat)) {
             memcpy(repeat, prefixText, prefix);
             memcpy(repeat + prefix, vim->m_insertBuf, (size_t)vim->m_insertLen);
@@ -1589,7 +1588,7 @@ static bool xvim_append_substitute_capture(char* out, size_t capacity, size_t* u
     if (!captured) return false;
     text = XString_toUtf8(captured);
     ok = xvim_append_substitute_bytes(out, capacity, used, text ? text : "",
-                                      text ? strlen(text) : 0u);
+                                      text ? XStrlen(text) : 0u);
     XClassDelete((XClass*)captured);
     return ok;
 }
@@ -1602,7 +1601,7 @@ static bool xvim_append_substitute_replacement(char* out, size_t capacity, size_
     replacement = replacement ? replacement : "";
     while (replacement[i]) {
         if (replacement[i] == '\\' && replacement[i + 1]) {
-            if (isdigit((unsigned char)replacement[i + 1])) {
+            if (XIsDigit((unsigned char)replacement[i + 1])) {
                 int nth = replacement[i + 1] - '0';
                 if (!xvim_append_substitute_capture(out, capacity, used, match, nth)) return false;
             } else if (!xvim_append_substitute_bytes(out, capacity, used,
@@ -1662,7 +1661,7 @@ static bool xvim_substitute_line(XTuiVim* vim, int line,
     }
     if (!matches || !xvim_append_substitute_bytes(out, sizeof(out), &used,
                                                   text + sourceByte,
-                                                  strlen(text + sourceByte))) {
+                                                  XStrlen(text + sourceByte))) {
         xvim_delete_regular_iterator(iterator);
         return false;
     }
@@ -1679,11 +1678,11 @@ static bool xvim_substitute_line(XTuiVim* vim, int line, const char* old,
     size_t oldLen, replLen, used = 0;
     int matches = 0;
     if (!vim || !old || !old[0]) return false;
-    p = vim->m_lines[line]; oldLen = strlen(old); replLen = strlen(replacement ? replacement : "");
+    p = vim->m_lines[line]; oldLen = XStrlen(old); replLen = XStrlen(replacement ? replacement : "");
     while (*p && used + 1u < sizeof(out)) {
-        const char* hit = strstr(p, old);
+        const char* hit = XStrstr(p, old);
         if (!hit || (!global && matches > 0)) {
-            size_t tail = strlen(p); if (tail > sizeof(out) - used - 1u) tail = sizeof(out) - used - 1u;
+            size_t tail = XStrlen(p); if (tail > sizeof(out) - used - 1u) tail = sizeof(out) - used - 1u;
             memcpy(out + used, p, tail); used += tail; break;
         }
         if ((size_t)(hit - p) > sizeof(out) - used - 1u) break;
@@ -1725,7 +1724,7 @@ static bool xvim_substitute_confirm_find(XTuiVim* vim)
             vim->m_substituteEndColumn = end;
             vim->m_cursorLine = line;
             vim->m_cursorColumn = start;
-            snprintf(vim->m_status, sizeof(vim->m_status),
+            XSnprintf(vim->m_status, sizeof(vim->m_status),
                      "替换? (y/n/a/l/q)");
             xvim_delete_regular_expression(expression);
             return true;
@@ -1736,7 +1735,7 @@ static bool xvim_substitute_confirm_find(XTuiVim* vim)
     }
     xvim_delete_regular_expression(expression);
     vim->m_substituteConfirm = false;
-    snprintf(vim->m_status, sizeof(vim->m_status), "替换完成");
+    XSnprintf(vim->m_status, sizeof(vim->m_status), "替换完成");
     return false;
 }
 
@@ -1882,7 +1881,7 @@ static bool xvim_parse_substitute(XTuiVim* vim, const char* cmd)
     if (!vim || !cmd || !xvim_parse_range(vim, &p, &first, &last) || *p != 's') return false;
     ++p;
     delimiter = *p++;
-    if (!delimiter || isalnum((unsigned char)delimiter) || delimiter == ' ') return false;
+    if (!delimiter || XIsAlnum((unsigned char)delimiter) || delimiter == ' ') return false;
     if (!xvim_copy_substitute_part(&p, delimiter, old, sizeof(old)) || !old[0] ||
         !xvim_copy_substitute_part(&p, delimiter, repl, sizeof(repl))) return false;
     while (*p) {
@@ -1903,8 +1902,8 @@ static bool xvim_parse_substitute(XTuiVim* vim, const char* cmd)
     if (ignoreCase) options |= XRegularExpression_CaseInsensitiveOption;
 #if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
     if (confirm) {
-        size_t oldLength = strlen(old);
-        size_t replLength = strlen(repl);
+        size_t oldLength = XStrlen(old);
+        size_t replLength = XStrlen(repl);
         if (oldLength >= sizeof(vim->m_substitutePattern) ||
             replLength >= sizeof(vim->m_substituteReplacement) ||
             !xvim_begin_change(vim)) return false;
@@ -1953,9 +1952,9 @@ static bool xvim_request_path_action(XTuiVim* vim, const char* path,
 {
     size_t length;
     if (!vim || !path || !path[0]) return false;
-    length = strlen(path);
+    length = XStrlen(path);
     if (length >= sizeof(vim->m_actionPath)) {
-        snprintf(vim->m_status, sizeof(vim->m_status), "文件路径过长");
+        XSnprintf(vim->m_status, sizeof(vim->m_status), "文件路径过长");
         return false;
     }
     memcpy(vim->m_actionPath, path, length + 1u);
@@ -1969,13 +1968,13 @@ static bool xvim_request_edit(XTuiVim* vim, const char* path, bool force)
     size_t length;
     if (!vim || !path || !path[0]) return false;
     if (vim->m_modified && !force) {
-        snprintf(vim->m_status, sizeof(vim->m_status),
+        XSnprintf(vim->m_status, sizeof(vim->m_status),
                  "有未保存修改，使用 :e! 放弃当前缓冲修改");
         return false;
     }
-    length = strlen(path);
+    length = XStrlen(path);
     if (length >= sizeof(vim->m_actionPath)) {
-        snprintf(vim->m_status, sizeof(vim->m_status), "文件路径过长");
+        XSnprintf(vim->m_status, sizeof(vim->m_status), "文件路径过长");
         return false;
     }
     memcpy(vim->m_actionPath, path, length + 1u);
@@ -1988,16 +1987,16 @@ static bool xvim_request_buffer(XTuiVim* vim, const char* cmd)
 {
     int index = 0;
     if (!vim || !cmd) return false;
-    if (strcmp(cmd, "bnext") == 0 || strcmp(cmd, "bn") == 0) {
+    if (XStrcmp(cmd, "bnext") == 0 || XStrcmp(cmd, "bn") == 0) {
         vim->m_wantBufferNext = true;
         return true;
     }
-    if (strcmp(cmd, "bprevious") == 0 || strcmp(cmd, "bprev") == 0 ||
-        strcmp(cmd, "bp") == 0) {
+    if (XStrcmp(cmd, "bprevious") == 0 || XStrcmp(cmd, "bprev") == 0 ||
+        XStrcmp(cmd, "bp") == 0) {
         vim->m_wantBufferPrev = true;
         return true;
     }
-    if (strcmp(cmd, "buffers") == 0 || strcmp(cmd, "ls") == 0 || strcmp(cmd, "files") == 0) {
+    if (XStrcmp(cmd, "buffers") == 0 || XStrcmp(cmd, "ls") == 0 || XStrcmp(cmd, "files") == 0) {
         vim->m_wantBufferList = true;
         return true;
     }
@@ -2025,7 +2024,7 @@ static void xvim_history_add(char history[][XTUI_VIM_CMD_MAX + 1], int* length,
 {
     int i;
     if (!history || !length || !index || !text || !text[0]) return;
-    if (*length > 0 && strcmp(history[*length - 1], text) == 0) {
+    if (*length > 0 && XStrcmp(history[*length - 1], text) == 0) {
         *index = *length;
         return;
     }
@@ -2034,7 +2033,7 @@ static void xvim_history_add(char history[][XTUI_VIM_CMD_MAX + 1], int* length,
             memcpy(history[i - 1], history[i], sizeof(history[i - 1]));
         --*length;
     }
-    memcpy(history[*length], text, strlen(text) + 1u);
+    memcpy(history[*length], text, XStrlen(text) + 1u);
     ++*length;
     *index = *length;
 }
@@ -2045,7 +2044,7 @@ static void xvim_history_previous(char history[][XTUI_VIM_CMD_MAX + 1], int leng
     if (!history || !index || !value || !valueLength || length <= 0) return;
     if (*index > 0) --*index;
     memcpy(value, history[*index], XTUI_VIM_CMD_MAX + 1u);
-    *valueLength = (int)strlen(value);
+    *valueLength = (int)XStrlen(value);
 }
 
 static void xvim_history_next(char history[][XTUI_VIM_CMD_MAX + 1], int length,
@@ -2055,7 +2054,7 @@ static void xvim_history_next(char history[][XTUI_VIM_CMD_MAX + 1], int length,
     if (*index + 1 < length) {
         ++*index;
         memcpy(value, history[*index], XTUI_VIM_CMD_MAX + 1u);
-        *valueLength = (int)strlen(value);
+        *valueLength = (int)XStrlen(value);
     } else {
         *index = length;
         value[0] = '\0';
@@ -2076,77 +2075,77 @@ static void xvim_execute_command(XTuiVim* vim)
                              &history->m_index, cmd);
     }
 #endif
-    if (strcmp(cmd, "w") == 0 || strcmp(cmd, "write") == 0) vim->m_wantSave = true;
-    else if (strcmp(cmd, "w!") == 0 || strcmp(cmd, "write!") == 0) {
+    if (XStrcmp(cmd, "w") == 0 || XStrcmp(cmd, "write") == 0) vim->m_wantSave = true;
+    else if (XStrcmp(cmd, "w!") == 0 || XStrcmp(cmd, "write!") == 0) {
         vim->m_wantSave = true;
 #if XTUI_VIM_MULTIBUFFER_ON
         vim->m_wantForce = true;
 #endif
     }
-    else if (strcmp(cmd, "q") == 0) {
-        if (vim->m_modified) snprintf(vim->m_status, sizeof(vim->m_status), "有未保存修改，使用 :wq 保存退出或 :q! 放弃");
+    else if (XStrcmp(cmd, "q") == 0) {
+        if (vim->m_modified) XSnprintf(vim->m_status, sizeof(vim->m_status), "有未保存修改，使用 :wq 保存退出或 :q! 放弃");
         else vim->m_wantQuit = true;
-    } else if (strcmp(cmd, "wq") == 0 || strcmp(cmd, "x") == 0) vim->m_wantSaveQuit = true;
-    else if (strcmp(cmd, "wq!") == 0 || strcmp(cmd, "x!") == 0) {
+    } else if (XStrcmp(cmd, "wq") == 0 || XStrcmp(cmd, "x") == 0) vim->m_wantSaveQuit = true;
+    else if (XStrcmp(cmd, "wq!") == 0 || XStrcmp(cmd, "x!") == 0) {
         vim->m_wantSaveQuit = true;
 #if XTUI_VIM_MULTIBUFFER_ON
         vim->m_wantForce = true;
 #endif
-    } else if (strcmp(cmd, "q!") == 0) {
+    } else if (XStrcmp(cmd, "q!") == 0) {
         vim->m_wantQuit = true;
 #if XTUI_VIM_MULTIBUFFER_ON
         vim->m_wantForce = true;
 #endif
     }
 #if XTUI_VIM_EX_ON
-    else if (strcmp(cmd, "set nu") == 0 || strcmp(cmd, "set number") == 0) vim->m_showLineNumbers = true;
-    else if (strcmp(cmd, "set nonu") == 0 || strcmp(cmd, "set nonumber") == 0) vim->m_showLineNumbers = false;
+    else if (XStrcmp(cmd, "set nu") == 0 || XStrcmp(cmd, "set number") == 0) vim->m_showLineNumbers = true;
+    else if (XStrcmp(cmd, "set nonu") == 0 || XStrcmp(cmd, "set nonumber") == 0) vim->m_showLineNumbers = false;
 #if XTUI_VIM_SEARCH_ON
-    else if (strcmp(cmd, "nohlsearch") == 0) vim->m_searchHighlight = false;
-    else if (strcmp(cmd, "set hlsearch") == 0) vim->m_searchHighlight = true;
+    else if (XStrcmp(cmd, "nohlsearch") == 0) vim->m_searchHighlight = false;
+    else if (XStrcmp(cmd, "set hlsearch") == 0) vim->m_searchHighlight = true;
 #endif
 #endif
 #if XTUI_VIM_MULTIBUFFER_ON
-    else if (strncmp(cmd, "e! ", 3) == 0) (void)xvim_request_edit(vim, cmd + 3, true);
-    else if (strncmp(cmd, "edit! ", 6) == 0) (void)xvim_request_edit(vim, cmd + 6, true);
-    else if (strncmp(cmd, "e ", 2) == 0) (void)xvim_request_edit(vim, cmd + 2, false);
-    else if (strncmp(cmd, "edit ", 5) == 0) (void)xvim_request_edit(vim, cmd + 5, false);
+    else if (XStrncmp(cmd, "e! ", 3) == 0) (void)xvim_request_edit(vim, cmd + 3, true);
+    else if (XStrncmp(cmd, "edit! ", 6) == 0) (void)xvim_request_edit(vim, cmd + 6, true);
+    else if (XStrncmp(cmd, "e ", 2) == 0) (void)xvim_request_edit(vim, cmd + 2, false);
+    else if (XStrncmp(cmd, "edit ", 5) == 0) (void)xvim_request_edit(vim, cmd + 5, false);
     else if (xvim_request_buffer(vim, cmd)) { }
 #endif
 #if XTUI_VIM_YANK_PASTE_ON
-    else if (strcmp(cmd, "put") == 0) xvim_paste(vim, false);
-    else if (strcmp(cmd, "put!") == 0) xvim_paste(vim, true);
+    else if (XStrcmp(cmd, "put") == 0) xvim_paste(vim, false);
+    else if (XStrcmp(cmd, "put!") == 0) xvim_paste(vim, true);
 #else
-    else if (strcmp(cmd, "put") == 0 || strcmp(cmd, "put!") == 0)
-        snprintf(vim->m_status, sizeof(vim->m_status), "未启用寄存器粘贴");
+    else if (XStrcmp(cmd, "put") == 0 || XStrcmp(cmd, "put!") == 0)
+        XSnprintf(vim->m_status, sizeof(vim->m_status), "未启用寄存器粘贴");
 #endif
-    else if (strcmp(cmd, "delete") == 0 || strcmp(cmd, "d") == 0)
+    else if (XStrcmp(cmd, "delete") == 0 || XStrcmp(cmd, "d") == 0)
         xvim_linewise_op(vim, 'd', 1);
 #if XTUI_VIM_YANK_PASTE_ON
-    else if (strcmp(cmd, "yank") == 0 || strcmp(cmd, "y") == 0)
+    else if (XStrcmp(cmd, "yank") == 0 || XStrcmp(cmd, "y") == 0)
         xvim_linewise_op(vim, 'y', 1);
 #endif
 #if XTUI_VIM_MULTIBUFFER_ON
-    else if (strcmp(cmd, "wa") == 0 || strcmp(cmd, "wall") == 0)
+    else if (XStrcmp(cmd, "wa") == 0 || XStrcmp(cmd, "wall") == 0)
         vim->m_wantWriteAll = true;
-    else if (strcmp(cmd, "wqa") == 0 || strcmp(cmd, "wqall") == 0) {
+    else if (XStrcmp(cmd, "wqa") == 0 || XStrcmp(cmd, "wqall") == 0) {
         vim->m_wantWriteAll = true;
         vim->m_wantQuitAll = true;
-    } else if (strcmp(cmd, "qa") == 0 || strcmp(cmd, "qall") == 0)
+    } else if (XStrcmp(cmd, "qa") == 0 || XStrcmp(cmd, "qall") == 0)
         vim->m_wantQuitAll = true;
-    else if (strcmp(cmd, "qa!") == 0 || strcmp(cmd, "qall!") == 0) {
+    else if (XStrcmp(cmd, "qa!") == 0 || XStrcmp(cmd, "qall!") == 0) {
         vim->m_wantQuitAll = true;
         vim->m_wantForce = true;
-    } else if (strcmp(cmd, "bd") == 0 || strcmp(cmd, "bdelete") == 0)
+    } else if (XStrcmp(cmd, "bd") == 0 || XStrcmp(cmd, "bdelete") == 0)
         vim->m_wantBufferClose = true;
-    else if (strcmp(cmd, "bd!") == 0 || strcmp(cmd, "bdelete!") == 0) {
+    else if (XStrcmp(cmd, "bd!") == 0 || XStrcmp(cmd, "bdelete!") == 0) {
         vim->m_wantBufferClose = true;
         vim->m_wantForce = true;
-    } else if (strncmp(cmd, "w ", 2) == 0 || strncmp(cmd, "write ", 6) == 0) {
+    } else if (XStrncmp(cmd, "w ", 2) == 0 || XStrncmp(cmd, "write ", 6) == 0) {
         const char* path = cmd[1] == ' ' ? cmd + 2 : cmd + 6;
         while (*path == ' ') ++path;
         (void)xvim_request_path_action(vim, path, true, false);
-    } else if (strncmp(cmd, "saveas ", 7) == 0) {
+    } else if (XStrncmp(cmd, "saveas ", 7) == 0) {
         const char* path = cmd + 7;
         while (*path == ' ') ++path;
         (void)xvim_request_path_action(vim, path, false, true);
@@ -2156,9 +2155,9 @@ static void xvim_execute_command(XTuiVim* vim)
         vim->m_status[0] = '\0';
 #if XTUI_VIM_SUBSTITUTE_ON
         if (!xvim_parse_substitute(vim, cmd) && !vim->m_status[0])
-            snprintf(vim->m_status, sizeof(vim->m_status), "无效命令: :%s", cmd);
+            XSnprintf(vim->m_status, sizeof(vim->m_status), "无效命令: :%s", cmd);
 #else
-        snprintf(vim->m_status, sizeof(vim->m_status), "无效命令: :%s", cmd);
+        XSnprintf(vim->m_status, sizeof(vim->m_status), "无效命令: :%s", cmd);
 #endif
     }
     xvim_leave_command(vim);
@@ -2194,7 +2193,7 @@ static void xvim_finish_search(XTuiVim* vim)
         xvim_jump_push(vim);
 #endif
         if (!xvim_search(vim, vim->m_search, vim->m_searchBackward) && !vim->m_status[0])
-            snprintf(vim->m_status, sizeof(vim->m_status), "未找到: %s", vim->m_search);
+            XSnprintf(vim->m_status, sizeof(vim->m_status), "未找到: %s", vim->m_search);
     }
     vim->m_searchMode = false; vim->m_searchLen = 0; vim->m_search[0] = '\0';
 }
@@ -2207,7 +2206,7 @@ static void xvim_record(XTuiVim* vim, const char* text)
 #if XTUI_VIM_ADVANCED_MOTION_ON
     size_t n;
     if (!vim || !text) return;
-    n = strlen(text); if (n > XTUI_VIM_CMD_MAX) n = XTUI_VIM_CMD_MAX;
+    n = XStrlen(text); if (n > XTUI_VIM_CMD_MAX) n = XTUI_VIM_CMD_MAX;
     memcpy(vim->m_lastRepeat, text, n); vim->m_lastRepeat[n] = '\0'; vim->m_lastRepeatLen = (int)n;
 #else
     (void)vim;
@@ -2266,6 +2265,7 @@ static void xvim_macro_play(XTuiVim* vim, char name)
             event.m_utf8[1] = '\0';
         }
         XTuiWidget_keyPress_base((XTuiWidget*)vim, &event);
+        XClassDeinit(&event);
     }
     vim->m_macroPlaying = false;
 }
@@ -2517,7 +2517,7 @@ static void xvim_operator_motion(XTuiVim* vim, char motion, int count)
             for (i = a + 1; i < c; ++i) xvim_delete_line_raw(vim, a + 1);
             if (c < vim->m_lineCount) {
                 int index = a + 1; const char* tail = vim->m_lines[index];
-                int cut = xvim_byte(tail, inclusive ? d + 1 : d); size_t tailLen = strlen(tail + cut);
+                int cut = xvim_byte(tail, inclusive ? d + 1 : d); size_t tailLen = XStrlen(tail + cut);
                 char* out = (char*)XMalloc_System(tailLen + 1u);
                 if (out) { memcpy(out, tail + cut, tailLen + 1u); xvim_set_line_raw(vim, a, out); XFree_System(out); xvim_delete_line_raw(vim, index); }
             }
@@ -2526,7 +2526,7 @@ static void xvim_operator_motion(XTuiVim* vim, char motion, int count)
         if (op == 'c') {
 #if XTUI_VIM_ADVANCED_MOTION_ON
             char prefix[8];
-            snprintf(prefix, sizeof(prefix), "c%c:", motion);
+            XSnprintf(prefix, sizeof(prefix), "c%c:", motion);
             xvim_set_insert_repeat(vim, prefix);
 #endif
             xvim_enter_insert(vim, false, true);
@@ -2557,34 +2557,34 @@ static void xvim_repeat(XTuiVim* vim)
 {
     int count;
     if (!vim || !vim->m_lastRepeatLen) return;
-    if (strncmp(vim->m_lastRepeat, "i:", 2) == 0) {
+    if (XStrncmp(vim->m_lastRepeat, "i:", 2) == 0) {
         xvim_repeat_text(vim, vim->m_lastRepeat + 2, false);
     }
-    else if (strncmp(vim->m_lastRepeat, "R:", 2) == 0) {
+    else if (XStrncmp(vim->m_lastRepeat, "R:", 2) == 0) {
         xvim_repeat_text(vim, vim->m_lastRepeat + 2, true);
     }
-    else if (strncmp(vim->m_lastRepeat, "s:", 2) == 0) {
+    else if (XStrncmp(vim->m_lastRepeat, "s:", 2) == 0) {
         if (xvim_begin_change(vim)) {
             xvim_delete_char(vim, vim->m_cursorLine, vim->m_cursorColumn);
             xvim_repeat_text(vim, vim->m_lastRepeat + 2, false);
         }
     }
-    else if (strncmp(vim->m_lastRepeat, "S:", 2) == 0) {
+    else if (XStrncmp(vim->m_lastRepeat, "S:", 2) == 0) {
         if (xvim_begin_change(vim)) {
             xvim_set_line_raw(vim, vim->m_cursorLine, "");
             vim->m_cursorColumn = 0;
             xvim_repeat_text(vim, vim->m_lastRepeat + 2, false);
         }
     }
-    else if (strncmp(vim->m_lastRepeat, "C:", 2) == 0) {
+    else if (XStrncmp(vim->m_lastRepeat, "C:", 2) == 0) {
         if (xvim_begin_change(vim)) {
             xvim_delete_range(vim, vim->m_cursorLine, vim->m_cursorColumn,
                               xvim_chars(vim->m_lines[vim->m_cursorLine]));
             xvim_repeat_text(vim, vim->m_lastRepeat + 2, false);
         }
     }
-    else if (strncmp(vim->m_lastRepeat, "o:", 2) == 0 ||
-             strncmp(vim->m_lastRepeat, "O:", 2) == 0) {
+    else if (XStrncmp(vim->m_lastRepeat, "o:", 2) == 0 ||
+             XStrncmp(vim->m_lastRepeat, "O:", 2) == 0) {
         bool above = vim->m_lastRepeat[0] == 'O';
         if (xvim_begin_change(vim)) {
             int line = vim->m_cursorLine + (above ? 0 : 1);
@@ -2594,48 +2594,51 @@ static void xvim_repeat(XTuiVim* vim)
             }
         }
     }
-    else if (strncmp(vim->m_lastRepeat, "x:", 2) == 0) {
-        count = atoi(vim->m_lastRepeat + 2);
+    else if (XStrncmp(vim->m_lastRepeat, "x:", 2) == 0) {
+        count = (int)XStrtol(vim->m_lastRepeat + 2, NULL, 10);
         if (count < 1) count = 1;
         if (xvim_begin_change(vim)) while (count-- > 0)
             xvim_delete_char(vim, vim->m_cursorLine, vim->m_cursorColumn);
     }
-    else if (strcmp(vim->m_lastRepeat, "x") == 0) { if (xvim_begin_change(vim)) { xvim_delete_char(vim, vim->m_cursorLine, vim->m_cursorColumn); } }
-    else if (strcmp(vim->m_lastRepeat, "dd") == 0) xvim_linewise_op(vim, 'd', 1);
-    else if (strcmp(vim->m_lastRepeat, "dw") == 0) { vim->m_pendingOperator = 'd'; vim->m_opStartLine = vim->m_cursorLine; vim->m_opStartColumn = vim->m_cursorColumn; xvim_operator_motion(vim, 'w', 1); }
-    else if (strncmp(vim->m_lastRepeat, "r:", 2) == 0) {
+    else if (XStrcmp(vim->m_lastRepeat, "x") == 0) { if (xvim_begin_change(vim)) { xvim_delete_char(vim, vim->m_cursorLine, vim->m_cursorColumn); } }
+    else if (XStrcmp(vim->m_lastRepeat, "dd") == 0) xvim_linewise_op(vim, 'd', 1);
+    else if (XStrcmp(vim->m_lastRepeat, "dw") == 0) { vim->m_pendingOperator = 'd'; vim->m_opStartLine = vim->m_cursorLine; vim->m_opStartColumn = vim->m_cursorColumn; xvim_operator_motion(vim, 'w', 1); }
+    else if (XStrncmp(vim->m_lastRepeat, "r:", 2) == 0) {
         if (vim->m_cursorColumn < xvim_chars(vim->m_lines[vim->m_cursorLine])) {
             if (xvim_begin_change(vim)) { xvim_replace_range(vim, vim->m_cursorLine, vim->m_cursorColumn, vim->m_cursorColumn + 1, vim->m_lastRepeat + 2); vim->m_modified = true; }
         }
     }
 #if XTUI_VIM_YANK_PASTE_ON
-    else if (strcmp(vim->m_lastRepeat, "p") == 0) xvim_paste(vim, false);
-    else if (strcmp(vim->m_lastRepeat, "P") == 0) xvim_paste(vim, true);
+    else if (XStrcmp(vim->m_lastRepeat, "p") == 0) xvim_paste(vim, false);
+    else if (XStrcmp(vim->m_lastRepeat, "P") == 0) xvim_paste(vim, true);
 #endif
-    else if (strcmp(vim->m_lastRepeat, "D") == 0) {
+    else if (XStrcmp(vim->m_lastRepeat, "D") == 0) {
         if (xvim_begin_change(vim))
             xvim_delete_range(vim, vim->m_cursorLine, vim->m_cursorColumn,
                               xvim_chars(vim->m_lines[vim->m_cursorLine]));
     }
-    else if (strcmp(vim->m_lastRepeat, "J") == 0) {
+    else if (XStrcmp(vim->m_lastRepeat, "J") == 0) {
         if (vim->m_cursorLine + 1 < vim->m_lineCount && xvim_begin_change(vim)) {
             const char* first = vim->m_lines[vim->m_cursorLine];
             const char* second = vim->m_lines[vim->m_cursorLine + 1];
-            size_t n = strlen(first) + strlen(second) + (first[0] && second[0] ? 2u : 1u);
+            size_t n = XStrlen(first) + XStrlen(second) + (first[0] && second[0] ? 2u : 1u);
             char* out = (char*)XMalloc_System(n + 1u);
             if (out) {
-                strcpy(out, first); if (first[0] && second[0]) strcat(out, " ");
-                strcat(out, second); xvim_set_line_raw(vim, vim->m_cursorLine, out);
+                XStrcpy(out, first); if (first[0] && second[0]) XStrcat(out, " ");
+                XStrcat(out, second); xvim_set_line_raw(vim, vim->m_cursorLine, out);
                 XFree_System(out); xvim_delete_line_raw(vim, vim->m_cursorLine + 1);
             }
         }
     }
-    else if (strcmp(vim->m_lastRepeat, "~") == 0) {
+    else if (XStrcmp(vim->m_lastRepeat, "~") == 0) {
         int ch = xvim_char_at(vim->m_lines[vim->m_cursorLine], vim->m_cursorColumn);
         if (ch && xvim_begin_change(vim)) {
-            char changed[2] = { (char)(islower((unsigned char)ch) ?
-                                       toupper((unsigned char)ch) :
-                                       tolower((unsigned char)ch)), '\0' };
+            /* 库内未提供 isLower：islower 的 ASCII 语义即 'a'-'z' 判定，
+               大小写折叠走 XStringUtils 的 XToUpper/XToLower。 */
+            char changed[2] = { (char)(((unsigned char)ch >= 'a' &&
+                                       (unsigned char)ch <= 'z') ?
+                                       XToUpper((unsigned char)ch) :
+                                       XToLower((unsigned char)ch)), '\0' };
             (void)xvim_replace_range(vim, vim->m_cursorLine, vim->m_cursorColumn,
                                      vim->m_cursorColumn + 1, changed);
         }
@@ -2743,7 +2746,7 @@ static bool VXTuiVim_render(XTuiWidget* base, XTuiScreen* screen)
 #endif
         for (x = 0; x < r.width; ++x) XTuiScreen_setCell(screen, r.x + x, r.y + y, " ", XTUI_COLOR_DEFAULT, XTUI_COLOR_DEFAULT, 0);
         if (vim->m_showLineNumbers) {
-            char no[16]; int n = snprintf(no, sizeof(no), "%4d ", line + 1); int i;
+            char no[16]; int n = XSnprintf(no, sizeof(no), "%4d ", line + 1); int i;
             if (line >= 0 && line < vim->m_lineCount) {
                 char cell[2];
                 if (n > numberWidth) n = numberWidth;
@@ -2812,12 +2815,12 @@ static bool VXTuiVim_render(XTuiWidget* base, XTuiScreen* screen)
         else mode = vim->m_insertMode ?
                     (vim->m_replaceMode ? "-- 替换 --" : "-- 插入 --") :
                     "-- 命令 --";
-        if (vim->m_commandMode) n = snprintf(status, sizeof(status), ":%s", vim->m_command);
+        if (vim->m_commandMode) n = XSnprintf(status, sizeof(status), ":%s", vim->m_command);
 #if XTUI_VIM_SEARCH_ON
-        else if (vim->m_searchMode) n = snprintf(status, sizeof(status), "%s%s", mode, vim->m_search);
+        else if (vim->m_searchMode) n = XSnprintf(status, sizeof(status), "%s%s", mode, vim->m_search);
 #endif
         /* 行列信息放在路径前，窄终端或长路径截断时仍必须保留当前行。 */
-        else n = snprintf(status, sizeof(status), "%s  行 %d/%d 列 %d  %s%s", mode,
+        else n = XSnprintf(status, sizeof(status), "%s  行 %d/%d 列 %d  %s%s", mode,
                           currentLine + 1, lineCount, vim->m_cursorColumn + 1,
                           vim->m_path ? vim->m_path : "",
                           vim->m_modified ? " [已修改]" : "");
@@ -2869,7 +2872,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
         else return true;
         if (c == 'q' || c == 'Q') {
             vim->m_substituteConfirm = false;
-            snprintf(vim->m_status, sizeof(vim->m_status), "替换已停止");
+            XSnprintf(vim->m_status, sizeof(vim->m_status), "替换已停止");
             return true;
         }
         if (c == 'n' || c == 'N') {
@@ -2884,12 +2887,12 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
             do {
                 if (!xvim_substitute_confirm_replace(vim)) {
                     vim->m_substituteConfirm = false;
-                    snprintf(vim->m_status, sizeof(vim->m_status), "替换失败");
+                    XSnprintf(vim->m_status, sizeof(vim->m_status), "替换失败");
                     return true;
                 }
                 if (last) {
                     vim->m_substituteConfirm = false;
-                    snprintf(vim->m_status, sizeof(vim->m_status), "替换完成");
+                    XSnprintf(vim->m_status, sizeof(vim->m_status), "替换完成");
                     return true;
                 }
                 if (!xvim_substitute_confirm_find(vim)) return true;
@@ -2906,7 +2909,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
         vim->m_pendingNormal == '\0') {
         vim->m_macroRecording = false;
         vim->m_pendingNormal = '\0';
-        snprintf(vim->m_status, sizeof(vim->m_status), "宏录制结束");
+        XSnprintf(vim->m_status, sizeof(vim->m_status), "宏录制结束");
         return true;
     }
     if (!vim->m_commandMode && !xvim_search_active(vim) && !vim->m_insertMode &&
@@ -2922,9 +2925,9 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
                 state->m_lengths[index] = 0;
                 state->m_entries[index][0] = '\0';
                 vim->m_macroRecording = true;
-                snprintf(vim->m_status, sizeof(vim->m_status), "录制宏 @%c", name);
+                XSnprintf(vim->m_status, sizeof(vim->m_status), "录制宏 @%c", name);
             } else {
-                snprintf(vim->m_status, sizeof(vim->m_status), "宏状态内存不足");
+                XSnprintf(vim->m_status, sizeof(vim->m_status), "宏状态内存不足");
             }
         }
         return true;
@@ -2940,7 +2943,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
     xvim_macro_record_event(vim, event);
 #endif
     if (vim->m_commandMode) {
-        if (event->m_keyType == XTuiKey_Char) { size_t n = strlen(event->m_utf8); if (vim->m_commandLen + (int)n < (int)sizeof(vim->m_command)) { memcpy(vim->m_command + vim->m_commandLen, event->m_utf8, n); vim->m_commandLen += (int)n; vim->m_command[vim->m_commandLen] = '\0'; } return true; }
+        if (event->m_keyType == XTuiKey_Char) { size_t n = XStrlen(event->m_utf8); if (vim->m_commandLen + (int)n < (int)sizeof(vim->m_command)) { memcpy(vim->m_command + vim->m_commandLen, event->m_utf8, n); vim->m_commandLen += (int)n; vim->m_command[vim->m_commandLen] = '\0'; } return true; }
         if (event->m_keyType == XTuiKey_Backspace) { if (vim->m_commandLen > 0) vim->m_command[--vim->m_commandLen] = '\0'; return true; }
 #if XTUI_VIM_HISTORY_ON
         if (event->m_keyType == XTuiKey_ArrowUp) {
@@ -2966,7 +2969,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
     }
 #if XTUI_VIM_SEARCH_ON
     if (vim->m_searchMode) {
-        if (event->m_keyType == XTuiKey_Char) { size_t n = strlen(event->m_utf8); if (vim->m_searchLen + (int)n < (int)sizeof(vim->m_search)) { memcpy(vim->m_search + vim->m_searchLen, event->m_utf8, n); vim->m_searchLen += (int)n; vim->m_search[vim->m_searchLen] = '\0'; } return true; }
+        if (event->m_keyType == XTuiKey_Char) { size_t n = XStrlen(event->m_utf8); if (vim->m_searchLen + (int)n < (int)sizeof(vim->m_search)) { memcpy(vim->m_search + vim->m_searchLen, event->m_utf8, n); vim->m_searchLen += (int)n; vim->m_search[vim->m_searchLen] = '\0'; } return true; }
         if (event->m_keyType == XTuiKey_Backspace) { if (vim->m_searchLen > 0) vim->m_search[--vim->m_searchLen] = '\0'; return true; }
 #if XTUI_VIM_HISTORY_ON
         if (event->m_keyType == XTuiKey_ArrowUp) {
@@ -3012,7 +3015,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
             bool changed = vim->m_replaceMode ? xvim_replace_char(vim, event->m_utf8) :
                                                 xvim_insert_text(vim, event->m_utf8);
 #endif
-            size_t n = strlen(event->m_utf8);
+            size_t n = XStrlen(event->m_utf8);
             if (changed && vim->m_insertLen + (int)n < (int)sizeof(vim->m_insertBuf)) {
                 memcpy(vim->m_insertBuf + vim->m_insertLen, event->m_utf8, n);
                 vim->m_insertLen += (int)n;
@@ -3167,7 +3170,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
         vim->m_pendingNormal = '\0';
         if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
             (c >= '0' && c <= '9') || c == '_') {
-            vim->m_activeRegister = (char)tolower((unsigned char)c);
+            vim->m_activeRegister = (char)XToLower((unsigned char)c);
             vim->m_appendRegister = c >= 'A' && c <= 'Z';
         }
         return true;
@@ -3199,7 +3202,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
                 vim->m_modified = true;
                 {
                     char repeat[XTUI_VIM_CMD_MAX + 1];
-                    snprintf(repeat, sizeof(repeat), "r:%s", event->m_utf8);
+                    XSnprintf(repeat, sizeof(repeat), "r:%s", event->m_utf8);
                     xvim_record(vim, repeat);
                 }
             }
@@ -3247,7 +3250,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
                 if (op == 'c') {
 #if XTUI_VIM_ADVANCED_MOTION_ON
                     char prefix[8];
-                    snprintf(prefix, sizeof(prefix), "c%c%c:", objectMode, c);
+                    XSnprintf(prefix, sizeof(prefix), "c%c%c:", objectMode, c);
                     xvim_set_insert_repeat(vim, prefix);
 #endif
                     xvim_enter_insert(vim, false, true);
@@ -3317,11 +3320,11 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
     if (c == 'r') { vim->m_pendingNormal = 'r'; return true; }
     if (c == 's') { if (vim->m_cursorColumn < xvim_chars(vim->m_lines[vim->m_cursorLine]) && xvim_begin_change(vim)) { xvim_delete_char(vim, vim->m_cursorLine, vim->m_cursorColumn); xvim_set_insert_repeat(vim, "s:"); xvim_enter_insert(vim, false, true); } return true; }
     if (c == 'S') { if (xvim_begin_change(vim)) { xvim_set_line_raw(vim, vim->m_cursorLine, ""); vim->m_cursorColumn = 0; vim->m_modified = true; xvim_set_insert_repeat(vim, "S:"); xvim_enter_insert(vim, false, true); } return true; }
-    if (c == '~') { int ch = xvim_char_at(vim->m_lines[vim->m_cursorLine], vim->m_cursorColumn); if (ch && xvim_begin_change(vim)) { char changed[2] = { (char)(islower((unsigned char)ch) ? toupper((unsigned char)ch) : tolower((unsigned char)ch)), '\0' }; if (xvim_replace_range(vim, vim->m_cursorLine, vim->m_cursorColumn, vim->m_cursorColumn + 1, changed)) { vim->m_modified = true; if (vim->m_cursorColumn + 1 < xvim_chars(vim->m_lines[vim->m_cursorLine])) ++vim->m_cursorColumn; xvim_record(vim, "~"); } } return true; }
+    if (c == '~') { int ch = xvim_char_at(vim->m_lines[vim->m_cursorLine], vim->m_cursorColumn); if (ch && xvim_begin_change(vim)) { char changed[2] = { (char)(((unsigned char)ch >= 'a' && (unsigned char)ch <= 'z') ? XToUpper((unsigned char)ch) : XToLower((unsigned char)ch)), '\0' }; if (xvim_replace_range(vim, vim->m_cursorLine, vim->m_cursorColumn, vim->m_cursorColumn + 1, changed)) { vim->m_modified = true; if (vim->m_cursorColumn + 1 < xvim_chars(vim->m_lines[vim->m_cursorLine])) ++vim->m_cursorColumn; xvim_record(vim, "~"); } } return true; }
 #endif
     if (c == 'o' || c == 'O') { if (xvim_begin_change(vim)) { int line = c == 'o' ? vim->m_cursorLine + 1 : vim->m_cursorLine; if (xvim_insert_line_raw(vim, line, "")) { vim->m_cursorLine = line; vim->m_cursorColumn = 0; vim->m_modified = true; xvim_set_insert_repeat(vim, c == 'o' ? "o:" : "O:"); xvim_enter_insert(vim, false, true); } } return true; }
     if (c == 'x') { if (xvim_begin_change(vim)) { int n = count; while (n-- > 0) xvim_delete_char(vim, vim->m_cursorLine, vim->m_cursorColumn); vim->m_modified = true; } {
-        char repeat[24]; snprintf(repeat, sizeof(repeat), count > 1 ? "x:%d" : "x", count); xvim_record(vim, repeat);
+        char repeat[24]; XSnprintf(repeat, sizeof(repeat), count > 1 ? "x:%d" : "x", count); xvim_record(vim, repeat);
     } return true; }
     if (c == 'd'
 #if XTUI_VIM_REPLACE_ON
@@ -3376,7 +3379,7 @@ static bool VXTuiVim_keyPress(XTuiWidget* base, const XTuiKeyEvent* event)
 #if XTUI_VIM_REPLACE_ON
     if (c == 'C') { if (xvim_begin_change(vim)) { xvim_delete_range(vim, vim->m_cursorLine, vim->m_cursorColumn, xvim_chars(vim->m_lines[vim->m_cursorLine])); vim->m_modified = true; xvim_set_insert_repeat(vim, "C:"); xvim_enter_insert(vim, false, true); } return true; }
 #endif
-    if (c == 'J') { if (vim->m_cursorLine + 1 < vim->m_lineCount && xvim_begin_change(vim)) { const char* first = vim->m_lines[vim->m_cursorLine]; const char* second = vim->m_lines[vim->m_cursorLine + 1]; bool needSpace = first[0] && second[0]; size_t n = strlen(first) + strlen(second) + (needSpace ? 1u : 0u); if (n < XTUI_VIM_LINE_MAX) { char* out = (char*)XMalloc_System(n + 1u); if (out) { strcpy(out, first); if (needSpace) strcat(out, " "); strcat(out, second); xvim_set_line_raw(vim, vim->m_cursorLine, out); XFree_System(out); xvim_delete_line_raw(vim, vim->m_cursorLine + 1); vim->m_modified = true; xvim_record(vim, "J"); } } } return true; }
+    if (c == 'J') { if (vim->m_cursorLine + 1 < vim->m_lineCount && xvim_begin_change(vim)) { const char* first = vim->m_lines[vim->m_cursorLine]; const char* second = vim->m_lines[vim->m_cursorLine + 1]; bool needSpace = first[0] && second[0]; size_t n = XStrlen(first) + XStrlen(second) + (needSpace ? 1u : 0u); if (n < XTUI_VIM_LINE_MAX) { char* out = (char*)XMalloc_System(n + 1u); if (out) { XStrcpy(out, first); if (needSpace) XStrcat(out, " "); XStrcat(out, second); xvim_set_line_raw(vim, vim->m_cursorLine, out); XFree_System(out); xvim_delete_line_raw(vim, vim->m_cursorLine + 1); vim->m_modified = true; xvim_record(vim, "J"); } } } return true; }
 #endif
     return true;
 }
@@ -3514,7 +3517,10 @@ static void VXTuiVim_copy(XTuiVim* dest, const XTuiVim* src)
                       (XTuiWidget*)dest, (const XTuiWidget*)src);
     dest->m_lines = xvim_clone_lines(src->m_lines, src->m_lineCount,
                                      &dest->m_linesCapacity);
-    dest->m_lineCount = src->m_lineCount;
+    if (!dest->m_lines)
+        dest->m_lineCount = 0; /* 克隆失败：保持 m_lines=NULL 与行数一致的空缓冲，避免悬空状态 */
+    else
+        dest->m_lineCount = src->m_lineCount;
     dest->m_cursorLine = src->m_cursorLine;
     dest->m_cursorColumn = src->m_cursorColumn;
     dest->m_topLine = src->m_topLine;
@@ -3542,6 +3548,8 @@ static void VXTuiVim_copy(XTuiVim* dest, const XTuiVim* src)
     dest->m_regLineWise = src->m_regLineWise;
     if (src->m_regLines)
         dest->m_regLines = xvim_clone_lines(src->m_regLines, src->m_regCount, NULL);
+    if (!dest->m_regLines)
+        dest->m_regCount = 0; /* 克隆失败：行数同步清零，保持寄存器状态一致 */
 #endif
 #if XTUI_VIM_SUBSTITUTE_CONFIRM_ON
     dest->m_substituteConfirm = src->m_substituteConfirm;
@@ -3613,8 +3621,8 @@ static void VXTuiVim_copy(XTuiVim* dest, const XTuiVim* src)
     dest->m_showLineNumbers = src->m_showLineNumbers;
     xvim_copy_optional_states(dest, src);
     if (src->m_path) {
-        dest->m_path = (char*)XMalloc_System(strlen(src->m_path) + 1u);
-        if (dest->m_path) strcpy(dest->m_path, src->m_path);
+        dest->m_path = (char*)XMalloc_System(XStrlen(src->m_path) + 1u);
+        if (dest->m_path) XStrcpy(dest->m_path, src->m_path);
     }
 }
 
@@ -3630,9 +3638,10 @@ static void VXTuiVim_move(XTuiVim* dest, XTuiVim* src)
     }
     sameMemory = Class_Memory(dest) == Class_Memory(src);
     if (!sameMemory) {
+        /* 分配器不一致时不能转移指针，只做深拷贝；move 现场只转移/复制
+           资源，不代替创建者清理源对象，源对象保持已初始化状态，由其
+           创建者按分配方式自行 XClassDeinit/XClassDelete。 */
         VXTuiVim_copy(dest, src);
-        xvim_clear_owned(src);
-        XClass_Deinit_Parent(XTuiWidget, (XTuiWidget*)src);
         return;
     }
     xvim_clear_owned(dest);
@@ -3859,7 +3868,7 @@ const char* XTuiVim_line(const XTuiVim* vim, int index) { return vim && index >=
 
 void XTuiVim_setPath(XTuiVim* vim, const char* path)
 {
-    char* copy; if (!vim) return; path = path ? path : ""; copy = (char*)XMalloc_System(strlen(path) + 1u); if (!copy) return; strcpy(copy, path); if (vim->m_path) XFree_System(vim->m_path); vim->m_path = copy;
+    char* copy; if (!vim) return; path = path ? path : ""; copy = (char*)XMalloc_System(XStrlen(path) + 1u); if (!copy) return; XStrcpy(copy, path); if (vim->m_path) XFree_System(vim->m_path); vim->m_path = copy;
 }
 
 const char* XTuiVim_path(const XTuiVim* vim) { return vim && vim->m_path ? vim->m_path : ""; }

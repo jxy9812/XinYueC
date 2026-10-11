@@ -1,4 +1,10 @@
-﻿#ifndef XMOUSEEVENTTRANSITION_H
+﻿/**
+ * @file       XMouseEventTransition.h
+ * @brief      鼠标事件触发转换公开 API。
+ * @details    对齐 Qt 6.8 QMouseEventTransition；实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XMOUSEEVENTTRANSITION_H
 #define XMOUSEEVENTTRANSITION_H
 
 #ifdef __cplusplus

@@ -1,9 +1,9 @@
 ﻿#include"XVarList.h"
+#include<stdarg.h>
+#include<string.h>
 #include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include"XMultiPool.h"
 #include"XVtable.h"
-#include<stdarg.h>
-#include<string.h>
 void XVarList_delete(XVarList* list)
 {
     if (list)
@@ -42,6 +42,7 @@ XVarList* XVarList_create(uint8_t count, ...)
     if (!list)
     {
         list = XMalloc_System(ALIGN_UP(sumTypeSize + sizeof(XVarList), sizeof(void*)));
+        if (!list)return NULL;
         list->m_free = XFree_System;
     }
     if (!list)return NULL;

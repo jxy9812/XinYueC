@@ -11,9 +11,8 @@
     XCONSOLE_SHELL_ADC_ON
 
 #include "XConsoleShellAdc.h"
+#include "XStringUtils.h"
 #include "XUtf8StringView.h"
-#include <stdio.h>
-#include <string.h>
 
 static bool xcsa_parse_u32(const char* text, uint32_t* value)
 {
@@ -92,7 +91,7 @@ static XConsoleResult xcsa_error(XConsoleShell* shell, const char* operation,
     char line[160];
     XAdcError error = adc ? XAdc_lastError(adc) : XAdcError_Unknown;
     int32_t nativeError = adc ? XAdc_nativeError(adc) : 0;
-    int written = snprintf(line, sizeof(line), "adc: %s: %s (本机错误=%d)\n",
+    int written = XSnprintf(line, sizeof(line), "adc: %s: %s (本机错误=%d)\n",
                            operation ? operation : "操作",
                            XAdc_errorString(error), (int)nativeError);
     if (written < 0 || (size_t)written >= sizeof(line) ||
@@ -109,7 +108,7 @@ static XConsoleResult xcsa_error(XConsoleShell* shell, const char* operation,
 static XConsoleResult xcsa_missing(XConsoleShell* shell, const char* operation)
 {
     char line[96];
-    int written = snprintf(line, sizeof(line), "adc: %s: 通道未打开\n",
+    int written = XSnprintf(line, sizeof(line), "adc: %s: 通道未打开\n",
                            operation ? operation : "操作");
     return written > 0 && (size_t)written < sizeof(line) &&
                    XConsoleShell_writeUtf8(shell, line)
@@ -131,14 +130,14 @@ static bool xcsa_apply_options(XAdcConfig* config, int argc,
     while (i < argc) {
         uint32_t value;
         if (i + 1 >= argc || !xcsa_parse_u32(argv[i + 1], &value)) return false;
-        if (strcmp(argv[i], "--resolution") == 0) {
+        if (XStrcmp(argv[i], "--resolution") == 0) {
             if (value > UINT8_MAX) return false;
             config->m_resolutionBits = (uint8_t)value;
-        } else if (strcmp(argv[i], "--reference") == 0) {
+        } else if (XStrcmp(argv[i], "--reference") == 0) {
             config->m_referenceMv = value;
-        } else if (strcmp(argv[i], "--sample-us") == 0) {
+        } else if (XStrcmp(argv[i], "--sample-us") == 0) {
             config->m_sampleTimeUs = value;
-        } else if (strcmp(argv[i], "--oversample") == 0) {
+        } else if (XStrcmp(argv[i], "--oversample") == 0) {
             if (value > UINT16_MAX) return false;
             config->m_oversample = (uint16_t)value;
         } else {
@@ -172,7 +171,7 @@ static int xcsa_list(XConsoleShell* shell, XConsoleShellSession* session,
             !xcsa_authorized(shell, session, &config.m_channel,
                              XConsoleShellAdcOperation_List, false))
             continue;
-        written = snprintf(line, sizeof(line),
+        written = XSnprintf(line, sizeof(line),
                            "%5u %5u %-6s %10u %9u %9u %10u\n",
                            config.m_channel.m_controller,
                            config.m_channel.m_channel,
@@ -270,7 +269,7 @@ static int xcsa_info(XConsoleShell* shell, XConsoleShellSession* session,
                          XConsoleShellAdcOperation_Info, false))
         return xcsa_denied(shell);
     if (!XAdc_getConfig(slot->adc, &config)) return xcsa_error(shell, "查询配置", slot->adc);
-    written = snprintf(line, sizeof(line),
+    written = XSnprintf(line, sizeof(line),
                        "adc %u/%u state=%s resolution=%u reference-mv=%u sample-us=%u oversample=%u features=0x%08x\n",
                        config.m_channel.m_controller, config.m_channel.m_channel,
                        XAdc_isOpen(slot->adc) ? "open" : "close",
@@ -302,9 +301,9 @@ static int xcsa_read(XConsoleShell* shell, XConsoleShellSession* session,
         !xcsa_parse_channel(argv[0], argv[1], &channel))
         return XConsoleResult_InvalidArgument;
     for (i = 2; i < argc; ++i) {
-        if (strcmp(argv[i], "--mv") == 0) millivolts = true;
-        else if (strcmp(argv[i], "--raw") == 0) millivolts = false;
-        else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
+        if (XStrcmp(argv[i], "--mv") == 0) millivolts = true;
+        else if (XStrcmp(argv[i], "--raw") == 0) millivolts = false;
+        else if (XStrcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
             if (!xcsa_parse_i32(argv[++i], &timeoutMs) ||
                 timeoutMs > XCONSOLE_SHELL_ADC_MAX_WAIT_MS) return XConsoleResult_InvalidArgument;
         } else return XConsoleResult_InvalidArgument;
@@ -317,13 +316,13 @@ static int xcsa_read(XConsoleShell* shell, XConsoleShellSession* session,
     if (millivolts) {
         if (!XAdc_readMillivolts(slot->adc, &value, timeoutMs))
             return xcsa_error(shell, "读取", slot->adc);
-        written = snprintf(line, sizeof(line), "adc %u/%u %u mV\n",
+        written = XSnprintf(line, sizeof(line), "adc %u/%u %u mV\n",
                            channel.m_controller, channel.m_channel,
                            (unsigned)value);
     } else {
         if (!XAdc_readRaw(slot->adc, &value, timeoutMs))
             return xcsa_error(shell, "读取", slot->adc);
-        written = snprintf(line, sizeof(line), "adc %u/%u raw=%u\n",
+        written = XSnprintf(line, sizeof(line), "adc %u/%u raw=%u\n",
                            channel.m_controller, channel.m_channel,
                            (unsigned)value);
     }

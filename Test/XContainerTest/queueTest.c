@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XQueue.h"
 #include"XPriorityQueue.h"
 #include"XSort.h"
@@ -103,8 +103,8 @@ static void XPQInsertHelper(void* value, void* args)
 static void XPriorityQueueBasicTest(void)
 {
     XPrintf("===== XPriorityQueue 基础(大顶堆) =====\n");
-    XPriorityQueue* q = XPriorityQueue_create(sizeof(int), int_compare, XSORT_DESC);
-    XContainerSetCompare(q, int_compare);
+    XPriorityQueue* q = XPriorityQueue_create(sizeof(int), Xint_compare, XSORT_DESC);
+    XContainerSetCompare(q, Xint_compare);
     XVector* v = XVector_Create(int);
     for (size_t i = 0; i < 10; i++)
         XVector_push_back_1_base(v, &i);
@@ -133,8 +133,8 @@ static void XPriorityQueueBasicTest(void)
 static void XPriorityQueueAscTest(void)
 {
     XPrintf("===== XPriorityQueue 小顶堆(升序优先) =====\n");
-    XPriorityQueue* q = XPriorityQueue_create(sizeof(int), int_compare, XSORT_ASC);
-    XContainerSetCompare(q, int_compare);
+    XPriorityQueue* q = XPriorityQueue_create(sizeof(int), Xint_compare, XSORT_ASC);
+    XContainerSetCompare(q, Xint_compare);
     int arr[] = { 7, 2, 9, 4, 1, 8, 3, 6, 5, 0 };
     for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++) {
         XPriorityQueue_enqueue_base(q, arr + i);
@@ -153,8 +153,8 @@ static void XPriorityQueueAscTest(void)
 static void XPriorityQueueRemoveTest(void)
 {
     XPrintf("===== XPriorityQueue remove(v,n) =====\n");
-    XPriorityQueue* q = XPriorityQueue_create(sizeof(int), int_compare, XSORT_ASC);
-    XContainerSetCompare(q, int_compare);
+    XPriorityQueue* q = XPriorityQueue_create(sizeof(int), Xint_compare, XSORT_ASC);
+    XContainerSetCompare(q, Xint_compare);
     int arr[] = { 5, 3, 5, 1, 5, 2, 5 };
     for (size_t i = 0; i < sizeof(arr)/sizeof(arr[0]); i++)
         XPriorityQueue_enqueue_base(q, arr + i);

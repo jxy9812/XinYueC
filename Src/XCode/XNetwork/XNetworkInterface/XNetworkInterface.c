@@ -32,88 +32,90 @@ static void VXNetworkInterface_deinit(XNetworkInterface* iface)
 {
     if (!iface) return;
     
-    if (iface->name) {
-        XClassDelete(iface->name);
-        iface->name = NULL;
+    if (iface->m_name) {
+        XClassDelete(iface->m_name);
+        iface->m_name = NULL;
     }
     
-    if (iface->humanReadableName) {
-        XClassDelete(iface->humanReadableName);
-        iface->humanReadableName = NULL;
+    if (iface->m_humanReadableName) {
+        XClassDelete(iface->m_humanReadableName);
+        iface->m_humanReadableName = NULL;
     }
     
-    if (iface->hardwareAddress) {
-        XClassDelete(iface->hardwareAddress);
-        iface->hardwareAddress = NULL;
+    if (iface->m_hardwareAddress) {
+        XClassDelete(iface->m_hardwareAddress);
+        iface->m_hardwareAddress = NULL;
     }
     
-    if (iface->addressEntries) {
-        XClassDelete(iface->addressEntries);
-        iface->addressEntries = NULL;
+    if (iface->m_addressEntries) {
+        XClassDelete(iface->m_addressEntries);
+        iface->m_addressEntries = NULL;
     }
 }
 
 static void VXNetworkInterface_copy(XNetworkInterface* dest, const XNetworkInterface* src)
 {
     if (!dest || !src) return;
-    
+    if (dest == src) return;  /* 自拷贝直接返回，避免对同一成员做同指针复制 */
+
     // 检查目标对象是否已初始化，如果未初始化则先初始化
     if (XClassIsVtableNull(dest))
         XNetworkInterface_init(dest);
     // 复制基本字段
-    dest->index = src->index;
-    dest->mtu = src->mtu;
-    dest->flags = src->flags;
-    dest->type = src->type;
-    dest->isValid = src->isValid;
+    dest->m_index = src->m_index;
+    dest->m_mtu = src->m_mtu;
+    dest->m_flags = src->m_flags;
+    dest->m_type = src->m_type;
+    dest->m_isValid = src->m_isValid;
     
     // 复制字符串
-    if (src->name) 
+    if (src->m_name) 
     {
-        if (dest->name)
-            XClassCopy(dest->name, src->name);
+        if (dest->m_name)
+            XClassCopy(dest->m_name, src->m_name);
         else
-            dest->name = XString_create_copy(src->name);
+            dest->m_name = XString_create_copy(src->m_name);
     }
     
-    if (src->humanReadableName) 
+    if (src->m_humanReadableName) 
     {
-        if (dest->humanReadableName)
-            XClassCopy(dest->humanReadableName, src->humanReadableName);
+        if (dest->m_humanReadableName)
+            XClassCopy(dest->m_humanReadableName, src->m_humanReadableName);
         else
-            dest->humanReadableName = XString_create_copy(src->humanReadableName);
+            dest->m_humanReadableName = XString_create_copy(src->m_humanReadableName);
     }
     
-    if (src->hardwareAddress)
+    if (src->m_hardwareAddress)
     {
-        if (dest->hardwareAddress)
-            XClassCopy(dest->hardwareAddress, src->hardwareAddress);
+        if (dest->m_hardwareAddress)
+            XClassCopy(dest->m_hardwareAddress, src->m_hardwareAddress);
         else
-            dest->hardwareAddress = XString_create_copy(src->hardwareAddress);
+            dest->m_hardwareAddress = XString_create_copy(src->m_hardwareAddress);
     }
     
     /* 复制地址条目列表 */
-    if (src->addressEntries) 
+    if (src->m_addressEntries) 
     {
-        if (dest->addressEntries)
-            XClassCopy(dest->addressEntries, src->addressEntries);
+        if (dest->m_addressEntries)
+            XClassCopy(dest->m_addressEntries, src->m_addressEntries);
         else
-            dest->addressEntries = XVector_create_copy(src->addressEntries);
+            dest->m_addressEntries = XVector_create_copy(src->m_addressEntries);
     }
 }
 
 static void VXNetworkInterface_move(XNetworkInterface* dest, XNetworkInterface* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;  /* 自移动直接返回，避免清空自身内容 */
 
     // 检查目标对象是否已初始化，如果未初始化则先初始化
     if (XClassIsVtableNull(dest))
         XNetworkInterface_init(dest);
 
-    /* [memhunt F1 修复 2026-10-06] payload-only move，禁用 XSwap 整块交换。
+    /* [memhunt F1 修复 2026-10-06] payload-only move，禁用 XMemory_swap 整块交换。
      * LSan 证据（XGuiWindowDemo --autotest 优雅退出 / 远程窗口页 62 调枚举）:
      * XNetworkInterface_create_ex:157 分配的接口对象本体(≈80B/接口)每次枚举
-     * 全漏(160B/2objs，62 调=124obj/9920B)。根因: XSwap 连 XClass 头一起
+     * 全漏(160B/2objs，62 调=124obj/9920B)。根因: XMemory_swap 连 XClass 头一起
      * 字节交换，push 进向量(allInterfaces:301)后原堆块的 is_heap/内存类型
      * 被向量槽位旧内容顶掉，调用侧 XClassDelete(iface)(:302、
      * rs_collectLocalIPv4 等)按 XClass.h:207「非堆对象仅反初始化不释放」
@@ -124,26 +126,26 @@ static void VXNetworkInterface_move(XNetworkInterface* dest, XNetworkInterface* 
     VXNetworkInterface_deinit(dest); /* dest 旧载荷先释放(含 init 预建的 addressEntries 空向量)，防覆盖泄漏。 */
 
     // 移动所有字段
-    dest->name = src->name;
-    dest->humanReadableName = src->humanReadableName;
-    dest->hardwareAddress = src->hardwareAddress;
-    dest->addressEntries = src->addressEntries;
-    dest->index = src->index;
-    dest->mtu = src->mtu;
-    dest->flags = src->flags;
-    dest->type = src->type;
-    dest->isValid = src->isValid;
+    dest->m_name = src->m_name;
+    dest->m_humanReadableName = src->m_humanReadableName;
+    dest->m_hardwareAddress = src->m_hardwareAddress;
+    dest->m_addressEntries = src->m_addressEntries;
+    dest->m_index = src->m_index;
+    dest->m_mtu = src->m_mtu;
+    dest->m_flags = src->m_flags;
+    dest->m_type = src->m_type;
+    dest->m_isValid = src->m_isValid;
 
     // 清空源对象(指针置 NULL: XClassDelete(src) 时 deinit 空载，堆块正常释放)
-    src->name = NULL;
-    src->humanReadableName = NULL;
-    src->hardwareAddress = NULL;
-    src->addressEntries = NULL;
-    src->index = 0;
-    src->mtu = 0;
-    src->flags = 0;
-    src->type = XNetworkInterface_Unknown;
-    src->isValid = false;
+    src->m_name = NULL;
+    src->m_humanReadableName = NULL;
+    src->m_hardwareAddress = NULL;
+    src->m_addressEntries = NULL;
+    src->m_index = 0;
+    src->m_mtu = 0;
+    src->m_flags = 0;
+    src->m_type = XNetworkInterface_Unknown;
+    src->m_isValid = false;
 }
 
 // ==================== 构造函数 ====================
@@ -155,12 +157,12 @@ void XNetworkInterface_init(XNetworkInterface* iface)
     memset(((XClass*)iface) + 1, 0, sizeof(XNetworkInterface) - sizeof(XClass));
     XClass_init((XClass*)iface);
     XClassGetVtable(iface) = XNetworkInterface_class_init();
-    iface->addressEntries = XVector_create(sizeof(XNetworkAddressEntry));
-    XContainerSetDataCopyMethod(iface->addressEntries, XClass_copy_base);
-    XContainerSetDataMoveMethod(iface->addressEntries, XClass_move_base);
-    XContainerSetDataDeinitMethod(iface->addressEntries, XClass_deinit_base);
-    iface->type = XNetworkInterface_Unknown;
-    iface->isValid = false;
+    iface->m_addressEntries = XVector_create(sizeof(XNetworkAddressEntry));
+    XContainerSetDataCopyMethod(iface->m_addressEntries, XClass_copy_base);
+    XContainerSetDataMoveMethod(iface->m_addressEntries, XClass_move_base);
+    XContainerSetDataDeinitMethod(iface->m_addressEntries, XClass_deinit_base);
+    iface->m_type = XNetworkInterface_Unknown;
+    iface->m_isValid = false;
 }
 
 XNetworkInterface* XNetworkInterface_create_ex(XMemoryType memory)
@@ -184,7 +186,7 @@ XNetworkInterface* XNetworkInterface_create_copy(const XNetworkInterface* other)
     return iface;
 }
 
-XNetworkInterface* XNetworkInterface_create_move(const XNetworkInterface* other)
+XNetworkInterface* XNetworkInterface_create_move(XNetworkInterface* other)
 {
     if (!other) return NULL;
 
@@ -199,62 +201,62 @@ XNetworkInterface* XNetworkInterface_create_move(const XNetworkInterface* other)
 
 XString* XNetworkInterface_name(const XNetworkInterface* iface)
 {
-    return iface ? XString_create_copy(iface->name) : NULL;
+    return iface ? XString_create_copy(iface->m_name) : NULL;
 }
 
 const XString* XNetworkInterface_name_const(const XNetworkInterface* iface)
 {
-    return iface ? iface->name : NULL;
+    return iface ? iface->m_name : NULL;
 }
 
 XString* XNetworkInterface_humanReadableName(const XNetworkInterface* iface)
 {
-    return iface ? XString_create_copy(iface->humanReadableName) : NULL;
+    return iface ? XString_create_copy(iface->m_humanReadableName) : NULL;
 }
 
 const XString* XNetworkInterface_humanReadableName_const(const XNetworkInterface* iface)
 {
-    return iface ? iface->humanReadableName : NULL;
+    return iface ? iface->m_humanReadableName : NULL;
 }
 
 XString* XNetworkInterface_hardwareAddress(const XNetworkInterface* iface)
 {
-    return iface ? XString_create_copy(iface->hardwareAddress) : NULL;
+    return iface ? XString_create_copy(iface->m_hardwareAddress) : NULL;
 }
 
 const XString* XNetworkInterface_hardwareAddress_const(const XNetworkInterface* iface)
 {
-    return iface ? iface->hardwareAddress : NULL;
+    return iface ? iface->m_hardwareAddress : NULL;
 }
 
 int XNetworkInterface_index(const XNetworkInterface* iface)
 {
-    return iface ? iface->index : 0;
+    return iface ? iface->m_index : 0;
 }
 
 int XNetworkInterface_maximumTransmissionUnit(const XNetworkInterface* iface)
 {
-    return iface ? iface->mtu : 0;
+    return iface ? iface->m_mtu : 0;
 }
 
 XNetworkInterface_InterfaceFlags XNetworkInterface_flags(const XNetworkInterface* iface)
 {
-    return iface ? iface->flags : 0;
+    return iface ? iface->m_flags : 0;
 }
 
 XNetworkInterface_InterfaceType XNetworkInterface_type(const XNetworkInterface* iface)
 {
-    return iface ? iface->type : XNetworkInterface_Unknown;
+    return iface ? iface->m_type : XNetworkInterface_Unknown;
 }
 
 XVector* XNetworkInterface_addressEntries(const XNetworkInterface* iface)
 {
-    return iface ? iface->addressEntries : NULL;
+    return iface ? iface->m_addressEntries : NULL;
 }
 
 bool XNetworkInterface_isValid(const XNetworkInterface* iface)
 {
-    return iface ? iface->isValid : false;
+    return iface ? iface->m_isValid : false;
 }
 
 // ==================== 静态工具函数 ====================
@@ -275,15 +277,20 @@ XVector* XNetworkInterface_allAddresses(void)
         XNetworkInterface* iface = (XNetworkInterface*)XVector_at_base(interfaces, i);
         if (!iface) continue;
         
-        XVector* entries = iface->addressEntries;
+        XVector* entries = iface->m_addressEntries;
         if (!entries) continue;
         
         entryCount = XVector_size_base(entries);
         for (j = 0; j < entryCount; j++) {
             XNetworkAddressEntry* entry = (XNetworkAddressEntry*)XVector_at_base(entries, j);
             if (entry) {
-                XHostAddress addr = entry->ip;
+                /* 禁止结构体赋值按位浅拷贝对象：init 后经 XClassCopy 多态深拷贝，
+                 * push 转移后按栈上对象规则收尾。 */
+                XHostAddress addr;
+                XHostAddress_init(&addr);
+                XClassCopy(&addr, &entry->m_ip);
                 XVector_push_back_move_1_base(addresses, &addr);
+                XClassDeinit(&addr);
             }
         }
     }
@@ -328,9 +335,9 @@ XNetworkInterface* XNetworkInterface_interfaceFromName(const XString* name)
     for (i = 0; i < count; i++) 
     {
         XNetworkInterface* iface = (XNetworkInterface*)XVector_at_base(interfaces, i);
-        if (iface && iface->name) 
+        if (iface && iface->m_name) 
         {
-            if (XString_compare(iface->name, name) == XCompare_Equality) 
+            if (XString_compare(iface->m_name, name) == XCompare_Equality) 
             {
                 result = XNetworkInterface_create_move(iface);
                 break;
@@ -352,7 +359,7 @@ XNetworkInterface* XNetworkInterface_interfaceFromIndex(int index)
     size_t i, count = XVector_size_base(interfaces);
     for (i = 0; i < count; i++) {
         XNetworkInterface* iface = (XNetworkInterface*)XVector_at_base(interfaces, i);
-        if (iface && iface->index == index) {
+        if (iface && iface->m_index == index) {
             /* 找到匹配的接口 */
             result = XNetworkInterface_create_move(iface);
             break;
@@ -372,9 +379,9 @@ int XNetworkInterface_interfaceIndexFromName(const XString* name)
     
     XNetworkInterface* iface;
     while ((iface = XDeviceNetwork_enumInterfacesNext(iter)) != NULL) {
-        if (iface->name) {
-            if (XString_compare(iface->name, name) == XCompare_Equality) {
-                int index = iface->index;
+        if (iface->m_name) {
+            if (XString_compare(iface->m_name, name) == XCompare_Equality) {
+                int index = iface->m_index;
                 XClassDelete(iface);
                 XDeviceNetwork_enumInterfacesEnd(iter);
                 return index;
@@ -396,8 +403,8 @@ XString* XNetworkInterface_interfaceNameFromIndex(int index)
     
     XNetworkInterface* iface;
     while ((iface = XDeviceNetwork_enumInterfacesNext(iter)) != NULL) {
-        if (iface->index == index) {
-            XString* result = XString_create_copy(iface->name);
+        if (iface->m_index == index) {
+            XString* result = XString_create_copy(iface->m_name);
             XClassDelete(iface);
             XDeviceNetwork_enumInterfacesEnd(iter);
             return result;
@@ -413,32 +420,32 @@ XString* XNetworkInterface_interfaceNameFromIndex(int index)
 
 bool XNetworkInterface_isUp(const XNetworkInterface* iface)
 {
-    return iface ? (iface->flags & XNetworkInterface_IsUp) != 0 : false;
+    return iface ? (iface->m_flags & XNetworkInterface_IsUp) != 0 : false;
 }
 
 bool XNetworkInterface_isRunning(const XNetworkInterface* iface)
 {
-    return iface ? (iface->flags & XNetworkInterface_IsRunning) != 0 : false;
+    return iface ? (iface->m_flags & XNetworkInterface_IsRunning) != 0 : false;
 }
 
 bool XNetworkInterface_canBroadcast(const XNetworkInterface* iface)
 {
-    return iface ? (iface->flags & XNetworkInterface_CanBroadcast) != 0 : false;
+    return iface ? (iface->m_flags & XNetworkInterface_CanBroadcast) != 0 : false;
 }
 
 bool XNetworkInterface_isLoopBack(const XNetworkInterface* iface)
 {
-    return iface ? (iface->flags & XNetworkInterface_IsLoopBack) != 0 : false;
+    return iface ? (iface->m_flags & XNetworkInterface_IsLoopBack) != 0 : false;
 }
 
 bool XNetworkInterface_isPointToPoint(const XNetworkInterface* iface)
 {
-    return iface ? (iface->flags & XNetworkInterface_IsPointToPoint) != 0 : false;
+    return iface ? (iface->m_flags & XNetworkInterface_IsPointToPoint) != 0 : false;
 }
 
 bool XNetworkInterface_canMulticast(const XNetworkInterface* iface)
 {
-    return iface ? (iface->flags & XNetworkInterface_CanMulticast) != 0 : false;
+    return iface ? (iface->m_flags & XNetworkInterface_CanMulticast) != 0 : false;
 }
 
 // ==================== 交换操作 ====================
@@ -495,6 +502,7 @@ static void VXNetworkInterfaceConfig_copy(XNetworkInterfaceConfig* dest,
                                           const XNetworkInterfaceConfig* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;  /* 自拷贝直接返回，避免对同一成员做同地址复制 */
     if (XClassIsVtableNull(dest))
         XNetworkInterfaceConfig_init(dest);
     if (src->m_friendlyName) {
@@ -521,9 +529,36 @@ static void VXNetworkInterfaceConfig_move(XNetworkInterfaceConfig* dest,
                                           XNetworkInterfaceConfig* src)
 {
     if (!dest || !src) return;
+    if (dest == src) return;  /* 自移动直接返回，避免清空自身内容 */
     if (XClassIsVtableNull(dest))
         XNetworkInterfaceConfig_init(dest);
-    XSwap(dest, src, sizeof(XNetworkInterfaceConfig));
+    /* [payload-only move] 禁用 XMemory_swap 整对象交换：XClass 头（虚表/内存
+     * 方法/is_heap）位于结构体首成员，整块字节交换后堆所有权标记随字节换位，
+     * XClassDelete 将失去释放资格漏释放本体（同本文件 VXNetworkInterface_move
+     * 的 memhunt F1 判例）。改为释放 dest 旧载荷、逐字段转移并清空 src，
+     * 两端对象的 XClass 头均保持不变。 */
+    VXNetworkInterfaceConfig_deinit(dest); /* dest 旧载荷先释放，防覆盖泄漏。 */
+
+    dest->m_friendlyName = src->m_friendlyName;
+    src->m_friendlyName = NULL;
+    XClassMove(&dest->m_ipv4Address, &src->m_ipv4Address);
+    XClassMove(&dest->m_ipv4Netmask, &src->m_ipv4Netmask);
+    XClassMove(&dest->m_ipv4Gateway, &src->m_ipv4Gateway);
+    XClassMove(&dest->m_ipv6Address, &src->m_ipv6Address);
+    XClassMove(&dest->m_ipv6Gateway, &src->m_ipv6Gateway);
+    XClassMove(&dest->m_dhcpServer, &src->m_dhcpServer);
+    XClassMove(&dest->m_dnsPrimary, &src->m_dnsPrimary);
+    XClassMove(&dest->m_dnsSecondary, &src->m_dnsSecondary);
+    dest->m_ifIndex = src->m_ifIndex;
+    dest->m_ipv6PrefixLength = src->m_ipv6PrefixLength;
+    dest->m_dhcpEnabled = src->m_dhcpEnabled;
+    dest->m_operUp = src->m_operUp;
+
+    /* 清空源标量字段：src 恢复为"已初始化但为空"的空壳，XClassDelete 可正常收尾。 */
+    src->m_ifIndex = 0;
+    src->m_ipv6PrefixLength = 0;
+    src->m_dhcpEnabled = false;
+    src->m_operUp = false;
 }
 
 void XNetworkInterfaceConfig_init(XNetworkInterfaceConfig* config)

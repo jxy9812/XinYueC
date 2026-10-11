@@ -1,28 +1,27 @@
 ﻿#include "XSqliteDriver.h"
 
+#include <string.h>
+
+#include "XChar.h"
 #include "XMemory.h"
 #include "XSqlDatabase.h"
 #include "XSqlQuery.h"
 #include "XString.h"
+#include "XStringUtils.h"
 #include "XByteArray.h"
+#include "XVector.h"
 #include "XDate.h"
 #include "XTime.h"
 #include "XDateTime.h"
 
 #include "sqlite3.h"
 
-#include <ctype.h>
-#include <stdio.h>
-#include <string.h>
-
 int XSqliteMemory_initialize(void);
 
 typedef struct XSqliteResult {
     XSqlResult m_parent;
     sqlite3_stmt* m_statement;
-    XVariant*** m_rows;
-    size_t m_rowCount;
-    size_t m_rowCapacity;
+    XVector* m_rows;    /**< 结果集行容器：每行为一个 XVector*，行内元素为 XVariant*，由本对象拥有。 */
     int m_columnCount;
     bool m_done;
 } XSqliteResult;
@@ -113,17 +112,17 @@ static int xsqlite_type_from_name(const char* name)
 
     if (!name) return XVariantType_NULL;
     while (name[length] && length < sizeof(type) - 1) {
-        type[length] = (char)tolower((unsigned char)name[length]);
+        type[length] = (char)XChar_toLower(XChar_fromLatin1(name[length]));
         ++length;
     }
     type[length] = 0;
-    if (strcmp(type, "integer") == 0 || strcmp(type, "int") == 0)
+    if (XStrcmp(type, "integer") == 0 || XStrcmp(type, "int") == 0)
         return XVariantType_Int32;
-    if (strcmp(type, "double") == 0 || strcmp(type, "float") == 0
-        || strcmp(type, "real") == 0 || strncmp(type, "numeric", 7) == 0)
+    if (XStrcmp(type, "double") == 0 || XStrcmp(type, "float") == 0
+        || XStrcmp(type, "real") == 0 || XStrncmp(type, "numeric", 7) == 0)
         return XVariantType_Double;
-    if (strcmp(type, "blob") == 0) return XVariantType_ByteArray;
-    if (strcmp(type, "boolean") == 0 || strcmp(type, "bool") == 0)
+    if (XStrcmp(type, "blob") == 0) return XVariantType_ByteArray;
+    if (XStrcmp(type, "boolean") == 0 || XStrcmp(type, "bool") == 0)
         return XVariantType_Bool;
     for (i = 0; i < length; ++i) {
         if (i + 2 < length && type[i] == 'i' && type[i + 1] == 'n' && type[i + 2] == 't')
@@ -201,32 +200,30 @@ static void xsqlite_set_driver_error(XSqliteDriver* driver, const char* text,
 static void xsqlite_clear_rows(XSqliteResult* result)
 {
     size_t row;
-    int column;
-    if (!result) return;
-    for (row = 0; row < result->m_rowCount; ++row) {
-        if (!result->m_rows[row]) continue;
-        for (column = 0; column < result->m_columnCount; ++column)
-            if (result->m_rows[row][column]) XClassDelete(result->m_rows[row][column]);
-        XFree_System(result->m_rows[row]);
+    size_t count;
+    if (!result || !result->m_rows) return;
+    count = XVector_size_base((const XContainer*)result->m_rows);
+    for (row = 0; row < count; ++row) {
+        XVector* entries = XVector_At_Base(result->m_rows, row, XVector*);
+        size_t column;
+        size_t columns;
+        if (!entries) continue;
+        columns = XVector_size_base((const XContainer*)entries);
+        for (column = 0; column < columns; ++column)
+            XClassDelete(XVector_At_Base(entries, column, XVariant*));
+        XClassDelete((XClass*)entries);
     }
-    if (result->m_rows) XFree_System(result->m_rows);
+    XClassDelete((XClass*)result->m_rows);
     result->m_rows = NULL;
-    result->m_rowCount = 0;
-    result->m_rowCapacity = 0;
 }
 
-static bool xsqlite_reserve_rows(XSqliteResult* result, size_t wanted)
+static bool xsqlite_ensure_rows(XSqliteResult* result)
 {
-    size_t capacity;
-    XVariant*** rows;
     if (!result) return false;
-    if (wanted <= result->m_rowCapacity) return true;
-    capacity = result->m_rowCapacity ? result->m_rowCapacity * 2 : 8;
-    while (capacity < wanted) capacity *= 2;
-    rows = (XVariant***)XRealloc_System(result->m_rows, capacity * sizeof(*rows));
-    if (!rows) return false;
-    result->m_rows = rows;
-    result->m_rowCapacity = capacity;
+    if (!result->m_rows) {
+        result->m_rows = XVector_Create(XVector*);
+        if (!result->m_rows) return false;
+    }
     return true;
 }
 
@@ -283,22 +280,28 @@ static bool xsqlite_build_record(XSqliteResult* result)
 
 static bool xsqlite_append_row(XSqliteResult* result)
 {
-    XVariant** row;
+    XVector* row;
+    XVariant* value;
     int column;
-    if (!result || !xsqlite_reserve_rows(result, result->m_rowCount + 1)) return false;
-    row = (XVariant**)XCalloc_System((size_t)result->m_columnCount, sizeof(*row));
-    if (!row && result->m_columnCount > 0) return false;
+    if (!result || !xsqlite_ensure_rows(result)) return false;
+    row = XVector_Create(XVariant*);
+    if (!row) return false;
     for (column = 0; column < result->m_columnCount; ++column) {
-        row[column] = xsqlite_column_value(result->m_statement, column);
-        if (!row[column]) {
-            int cleanup;
-            for (cleanup = 0; cleanup < column; ++cleanup)
-                XClassDelete(row[cleanup]);
-            XFree_System(row);
+        value = xsqlite_column_value(result->m_statement, column);
+        if (!value || !XVector_push_back_1_base(row, &value)) {
+            size_t cached = XVector_size_base((const XContainer*)row);
+            size_t cleanup;
+            for (cleanup = 0; cleanup < cached; ++cleanup)
+                XClassDelete(XVector_At_Base(row, cleanup, XVariant*));
+            if (value) XClassDelete(value);
+            XClassDelete((XClass*)row);
             return false;
         }
     }
-    result->m_rows[result->m_rowCount++] = row;
+    if (!XVector_push_back_1_base(result->m_rows, &row)) {
+        XClassDelete((XClass*)row);
+        return false;
+    }
     return true;
 }
 
@@ -308,9 +311,9 @@ static bool xsqlite_names_equal(const XString* boundName, const char* sqliteName
     if (!boundName || !sqliteName) return false;
     name = XString_toUtf8(boundName);
     if (!name) return false;
-    if (strcmp(name, sqliteName) == 0) return true;
+    if (XStrcmp(name, sqliteName) == 0) return true;
     if (name[0] != ':' && name[0] != '@' && name[0] != '$') {
-        if (sqliteName[0] && strcmp(name, sqliteName + 1) == 0) return true;
+        if (sqliteName[0] && XStrcmp(name, sqliteName + 1) == 0) return true;
     }
     return false;
 }
@@ -502,6 +505,8 @@ static void VXSqliteResult_copy(XSqliteResult* dest, const XSqliteResult* src)
     int column;
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) {
+        /* 未 init 的目标兜底完整初始化：派生成员在 XSqlResult_init 范围之外，必须先清零 */
+        memset(dest, 0, sizeof(*dest));
         XSqlResult_init(&dest->m_parent, src->m_parent.m_driver);
         XClassSetVtable(dest, XSqliteResult);
     }
@@ -520,14 +525,24 @@ static void VXSqliteResult_copy(XSqliteResult* dest, const XSqliteResult* src)
         xsqlite_finalize(dest);
         xsqlite_clear_rows(dest);
     }
-    for (row = 0; row < src->m_rowCount; ++row) {
-        if (!xsqlite_reserve_rows(dest, dest->m_rowCount + 1)) return;
-        dest->m_rows[dest->m_rowCount] = (XVariant**)XCalloc_System(
-            (size_t)dest->m_columnCount, sizeof(XVariant*));
-        if (!dest->m_rows[dest->m_rowCount] && dest->m_columnCount > 0) return;
-        for (column = 0; column < dest->m_columnCount; ++column)
-            dest->m_rows[dest->m_rowCount][column] = XVariant_create_copy(src->m_rows[row][column]);
-        ++dest->m_rowCount;
+    if (!xsqlite_ensure_rows(dest)) return;
+    for (row = 0; row < XVector_size_base((const XContainer*)src->m_rows); ++row) {
+        XVector* srcRow = XVector_At_Base(src->m_rows, row, XVector*);
+        XVector* destRow = XVector_Create(XVariant*);
+        if (!destRow) return;
+        for (column = 0; column < dest->m_columnCount; ++column) {
+            XVariant* value = XVariant_create_copy(
+                XVector_At_Base(srcRow, column, XVariant*));
+            if (!value || !XVector_push_back_1_base(destRow, &value)) {
+                if (value) XClassDelete(value);
+                XClassDelete((XClass*)destRow);
+                return;
+            }
+        }
+        if (!XVector_push_back_1_base(dest->m_rows, &destRow)) {
+            XClassDelete((XClass*)destRow);
+            return;
+        }
     }
     dest->m_statement = NULL;
     dest->m_parent.m_handle = NULL;
@@ -538,6 +553,8 @@ static void VXSqliteResult_move(XSqliteResult* dest, XSqliteResult* src)
 {
     if (!dest || !src || dest == src) return;
     if (XClassIsVtableNull(dest)) {
+        /* 未 init 的目标兜底完整初始化：派生成员在 XSqlResult_init 范围之外，必须先清零 */
+        memset(dest, 0, sizeof(*dest));
         XSqlResult_init(&dest->m_parent, src->m_parent.m_driver);
         XClassSetVtable(dest, XSqliteResult);
     }
@@ -547,15 +564,11 @@ static void VXSqliteResult_move(XSqliteResult* dest, XSqliteResult* src)
         (&dest->m_parent, &src->m_parent);
     dest->m_statement = src->m_statement;
     dest->m_rows = src->m_rows;
-    dest->m_rowCount = src->m_rowCount;
-    dest->m_rowCapacity = src->m_rowCapacity;
     dest->m_columnCount = src->m_columnCount;
     dest->m_done = src->m_done;
     dest->m_parent.m_handle = dest->m_statement;
     src->m_statement = NULL;
     src->m_rows = NULL;
-    src->m_rowCount = 0;
-    src->m_rowCapacity = 0;
     src->m_columnCount = 0;
     src->m_done = true;
     src->m_parent.m_handle = NULL;
@@ -564,9 +577,12 @@ static void VXSqliteResult_move(XSqliteResult* dest, XSqliteResult* src)
 static XVariant* VXSqliteResult_data(XSqlResult* base, int field)
 {
     XSqliteResult* result = (XSqliteResult*)base;
-    if (!result || base->m_at < 0 || (size_t)base->m_at >= result->m_rowCount
+    XVector* row;
+    if (!result || !result->m_rows || base->m_at < 0
+        || (size_t)base->m_at >= XVector_size_base((const XContainer*)result->m_rows)
         || field < 0 || field >= result->m_columnCount) return XVariant_create_null();
-    return XVariant_create_copy(result->m_rows[base->m_at][field]);
+    row = XVector_At_Base(result->m_rows, (int64_t)base->m_at, XVector*);
+    return XVariant_create_copy(XVector_At_Base(row, field, XVariant*));
 }
 
 static bool VXSqliteResult_isNull(XSqlResult* base, int field)
@@ -603,7 +619,7 @@ static bool VXSqliteResult_prepare(XSqlResult* base, const XString* query)
         xsqlite_finalize(result);
         return false;
     }
-    while (tail && *tail && isspace((unsigned char)*tail)) ++tail;
+    while (tail && *tail && XChar_isSpace(XChar_fromLatin1(*tail))) ++tail;
     if (tail && *tail) {
         xsqlite_set_result_error(result, "Unable to execute multiple statements at a time",
                                  XSqlErrorType_StatementError, SQLITE_MISUSE);
@@ -695,7 +711,7 @@ static bool VXSqliteResult_fetch(XSqlResult* base, int index)
         if (base) base->m_at = XSqlLocation_AfterLastRow;
         return false;
     }
-    while ((size_t)index >= result->m_rowCount && !result->m_done) {
+    while ((size_t)index >= XVector_size_base((const XContainer*)result->m_rows) && !result->m_done) {
         code = sqlite3_step(result->m_statement);
         if (code == SQLITE_ROW) {
             if (!xsqlite_append_row(result)) {
@@ -716,7 +732,7 @@ static bool VXSqliteResult_fetch(XSqlResult* base, int index)
             base->m_active = false;
         }
     }
-    if ((size_t)index >= result->m_rowCount) {
+    if ((size_t)index >= XVector_size_base((const XContainer*)result->m_rows)) {
         base->m_at = XSqlLocation_AfterLastRow;
         return false;
     }
@@ -737,8 +753,8 @@ static bool VXSqliteResult_fetchPrevious(XSqlResult* base)
     if (!result || !base->m_active || base->m_at == XSqlLocation_BeforeFirstRow)
         return false;
     if (base->m_at == XSqlLocation_AfterLastRow) {
-        if (result->m_rowCount == 0) return false;
-        base->m_at = (int)result->m_rowCount - 1;
+        if (XVector_size_base((const XContainer*)result->m_rows) == 0) return false;
+        base->m_at = (int)XVector_size_base((const XContainer*)result->m_rows) - 1;
         return true;
     }
     if (base->m_at <= 0) {
@@ -759,9 +775,10 @@ static bool VXSqliteResult_fetchLast(XSqlResult* base)
     XSqliteResult* result = (XSqliteResult*)base;
     if (!result || !base->m_active || !base->m_select) return false;
     while (!result->m_done) {
-        if (!VXSqliteResult_fetch(base, (int)result->m_rowCount)) break;
+        if (!VXSqliteResult_fetch(base, (int)XVector_size_base((const XContainer*)result->m_rows))) break;
     }
-    return result->m_rowCount && VXSqliteResult_fetch(base, (int)result->m_rowCount - 1);
+    return XVector_size_base((const XContainer*)result->m_rows) != 0
+        && VXSqliteResult_fetch(base, (int)XVector_size_base((const XContainer*)result->m_rows) - 1);
 }
 
 static int VXSqliteResult_size(XSqlResult* base)
@@ -879,7 +896,7 @@ static XSqlField* xsqlite_field_from_info(XSqlResult* result, const XString* tab
     if (field) {
         XSqlField_setRequired(field, notNullValue && XVariant_toInt(notNullValue) != 0);
         if (defaultValue && XVariant_isValid(defaultValue)) XSqlField_setDefaultValue(field, defaultValue);
-        if (isPrimary && type && strcmp(XString_toUtf8(type), "INTEGER") == 0)
+        if (isPrimary && type && XStrcmp(XString_toUtf8(type), "INTEGER") == 0)
             XSqlField_setAutoValue(field, true);
         if (primaryOnly && !isPrimary) {
             XClassDelete(field);
@@ -1011,7 +1028,7 @@ static bool VXSqliteDriver_open(XSqlDriver* base, const XString* database,
     if (!path || !path[0]) path = ":memory:";
     code = sqlite3_open_v2(path, &driver->m_database,
                             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
-                            strcmp(path, ":memory:") == 0 ? NULL : "xin_xfile");
+                            XStrcmp(path, ":memory:") == 0 ? NULL : "xin_xfile");
     if (code != SQLITE_OK) {
         xsqlite_set_driver_error(driver, "Unable to open database", XSqlErrorType_ConnectionError, code);
         if (driver->m_database) sqlite3_close_v2(driver->m_database);
@@ -1105,11 +1122,11 @@ static XStringList* VXSqliteDriver_tables(const XSqlDriver* base, XSqlTableType 
         const char* filter = (type & XSqlTableType_Tables) && (type & XSqlTableType_Views)
             ? "type='table' OR type='view'"
             : (type & XSqlTableType_Tables) ? "type='table'" : "type='view'";
-        char sql[256];
-        (void)snprintf(sql, sizeof(sql),
-                       "SELECT name FROM sqlite_master WHERE %s UNION ALL SELECT name FROM sqlite_temp_master WHERE %s",
-                       filter, filter);
-        query = xsqlite_exec_metadata(base, sql);
+        XString* sql = XString_create_fmt_utf8(
+            "SELECT name FROM sqlite_master WHERE %s UNION ALL SELECT name FROM sqlite_temp_master WHERE %s",
+            filter, filter);
+        query = sql ? xsqlite_exec_metadata(base, XString_toUtf8(sql)) : NULL;
+        if (sql) XClassDelete(sql);
         if (query) {
             xsqlite_append_table_names(result, query);
             XClassDelete(query);
@@ -1147,8 +1164,8 @@ static XString* VXSqliteDriver_escapeIdentifier(const XSqlDriver* base, const XS
     if (!identifier || XString_length_base(identifier) == 0 || xsqlite_is_escaped(identifier))
         return identifier ? XString_create_copy(identifier) : XString_create();
     text = XString_toUtf8(identifier);
-    separator = text ? strchr(text, '.') : NULL;
-    if (!separator) return xsqlite_escape_part(text ? text : "", text ? strlen(text) : 0);
+    separator = text ? XStrchr(text, '.') : NULL;
+    if (!separator) return xsqlite_escape_part(text ? text : "", text ? XStrlen(text) : 0);
     {
         XString* left = XString_create_with_length_utf8(text, (size_t)(separator - text));
         XString* right = XString_create_utf8(separator + 1);
@@ -1157,7 +1174,7 @@ static XString* VXSqliteDriver_escapeIdentifier(const XSqlDriver* base, const XS
             : xsqlite_escape_part(text, (size_t)(separator - text));
         XString* escapedRight = right && xsqlite_is_escaped(right)
             ? XString_create_copy(right)
-            : xsqlite_escape_part(separator + 1, strlen(separator + 1));
+            : xsqlite_escape_part(separator + 1, XStrlen(separator + 1));
         result = XString_create();
         if (result && escapedLeft && escapedRight
             && XString_append(result, escapedLeft)
@@ -1230,7 +1247,7 @@ static XString* VXSqliteDriver_stripDelimiters(const XSqlDriver* base,
     if (!identifier) return XString_create();
     length = XString_length_base(identifier);
     text = XString_toUtf8(identifier);
-    separator = text ? strchr(text, '.') : NULL;
+    separator = text ? XStrchr(text, '.') : NULL;
     if (separator) {
         XString* left = XString_create_with_length_utf8(text, (size_t)(separator - text));
         XString* right = XString_create_utf8(separator + 1);
@@ -1277,7 +1294,7 @@ bool XSqliteDriver_register(void)
     static XSqlDriverCreator* creator;
     if (creator) return true;
     creator = XSqlDriverCreator_create(XSqliteDriver_create_default);
-    if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_Sqlite, &creator->m_parent)) {
+    if (!creator || !XSqlDatabase_registerSqlDriver_type(XSqlDriverType_Sqlite, &creator->m_class)) {
         if (creator) XClassDelete(creator);
         creator = NULL;
         return false;

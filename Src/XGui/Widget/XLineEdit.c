@@ -72,7 +72,9 @@
 #include "XCompleter.h"
 #endif /* XTABLEWIDGET_ON */
 
-/** @brief 当前聚焦的 XLineEdit（全局；IME CommitString 直投目标）。 */
+/** @brief 当前聚焦的 XLineEdit（全局；IME CommitString 直投目标；
+ *         mousePress 聚焦时登记，失焦与析构时反注册，保证访问器
+ *         XLineEdit_focusedLineEdit 不返回悬挂指针）。 */
 static XLineEdit* g_focusedLineEdit = NULL;
 
 /* 光标竖线宽度与文本估算度量（每字符 8px，与点阵默认一致） */
@@ -1134,6 +1136,9 @@ static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
     XFocusReason reason = XFocusReason_Other;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_FOCUS_OUT) return;
+    /* 失焦即反注册全局聚焦登记（登记语义=当前聚焦；防失焦后 IME
+       直投到非聚焦对象，也收窄悬挂窗口）。 */
+    if (g_focusedLineEdit == edit) g_focusedLineEdit = NULL;
 #if XWINDOWEVENT_ON
     reason = XFocusEvent_reason((XFocusEvent*)event);
 #endif /* XWINDOWEVENT_ON */
@@ -1460,6 +1465,10 @@ static void VXLineEdit_timerEvent(XObject* object, XTimerEvent* event)
 static void VXLineEdit_deinit(XLineEdit* self)
 {
     if (!self) return;
+    /* 反注册全局聚焦登记：本对象析构后 g_focusedLineEdit 不得残留
+       悬挂指针（否则 XLineEdit_focusedLineEdit() 返回已释放对象，
+       且地址复用时 IME 直投误投）。 */
+    if (g_focusedLineEdit == self) g_focusedLineEdit = NULL;
     xlineedit_disarmTripleClick(self);
     if (self->m_control) {
         /* 先关闪烁再删控制器：销毁聚焦中的编辑框时 FOCUS_OUT 由基类

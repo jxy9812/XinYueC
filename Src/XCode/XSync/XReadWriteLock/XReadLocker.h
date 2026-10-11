@@ -1,4 +1,11 @@
-﻿#ifndef XREADLOCKER_H
+﻿/**
+ * @file       XReadLocker.h
+ * @brief      读锁自动管理器公开 API。
+ * @details    对齐 Qt 6.8 QReadLocker；RAII 语义（初始化加读锁、销毁自动释放），
+ *             平台原语由 Drive 平台适配层提供，本模块禁止直接调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XREADLOCKER_H
 #define XREADLOCKER_H
 #include "XSync_config.h"
 #if XSYNC_ON
@@ -16,8 +23,8 @@ extern "C" {
  */
 typedef struct XReadLocker
 {
-    XReadWriteLock* rwlock;  // 关联的读写锁
-    bool locked;             // 锁状态标记
+    XReadWriteLock* m_rwlock;  // 关联的读写锁
+    bool m_locked;             // 锁状态标记
 }XReadLocker;
 
 /**

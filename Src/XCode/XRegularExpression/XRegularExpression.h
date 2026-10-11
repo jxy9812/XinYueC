@@ -435,29 +435,29 @@ XRegularExpressionMatchIterator* XRegularExpression_globalMatch_utf8(const XRegu
  * @param string 待转义的 UTF-16 非拥有视图，仅在调用期间需要有效。
  * @return 新创建的转义后 XString，调用者负责释放；参数无效或分配失败时返回 NULL 或空字符串。
  */
-XString* XRegularExpression_escape(const XStringView* string);
+XString* XRegularExpression_escapeView(const XStringView* string);
 /**
  * @brief 转义正则表达式中的特殊字符。
  * @param string 待转义的 XString；参数无效时返回 NULL。
  * @return 新创建的转义后 XString，调用者负责释放。
  */
-XString* XRegularExpression_escape_2(const XString* string);
+XString* XRegularExpression_escape(const XString* string);
 /**
  * @brief 将通配符模式转换为正则表达式。
  * @param pattern UTF-16 通配符非拥有视图，仅在调用期间需要有效。
  * @param options 通配符转换选项组合。
  * @return 新创建的正则模式字符串，调用者负责释放；失败返回 NULL。
  */
-XString* XRegularExpression_wildcardToRegularExpression(const XStringView* pattern,
-                                                         XRegularExpression_WildcardConversionOptions options);
+XString* XRegularExpression_wildcardToRegularExpressionView(const XStringView* pattern,
+                                                            XRegularExpression_WildcardConversionOptions options);
 /**
  * @brief 将 XString 通配符模式转换为正则表达式。
  * @param pattern 通配符模式字符串。
  * @param options 通配符转换选项组合。
  * @return 新创建的正则模式字符串，调用者负责释放；参数无效或失败返回 NULL。
  */
-XString* XRegularExpression_wildcardToRegularExpression_2(const XString* pattern,
-                                                           XRegularExpression_WildcardConversionOptions options);
+XString* XRegularExpression_wildcardToRegularExpression(const XString* pattern,
+                                                        XRegularExpression_WildcardConversionOptions options);
 /**
  * @brief 将通配符模式直接转换为正则表达式对象。
  * @param pattern UTF-16 通配符非拥有视图，仅在调用期间需要有效。
@@ -473,13 +473,13 @@ XRegularExpression* XRegularExpression_fromWildcard(const XStringView* pattern,
  * @param expression UTF-16 模式非拥有视图，仅在调用期间需要有效。
  * @return 新创建的 \A(?:expression)\z 模式字符串，调用者负责释放；失败返回 NULL。
  */
-XString* XRegularExpression_anchoredPattern(const XStringView* expression);
+XString* XRegularExpression_anchoredPatternView(const XStringView* expression);
 /**
  * @brief 为 XString 模式添加完整匹配锚点。
  * @param expression 待锚定的模式字符串；NULL 按空模式处理。
  * @return 新创建的锚定模式字符串，调用者负责释放；失败返回 NULL。
  */
-XString* XRegularExpression_anchoredPattern_2(const XString* expression);
+XString* XRegularExpression_anchoredPattern(const XString* expression);
 
 /* ============================== QRegularExpressionMatch 对齐 API ============================== */
 

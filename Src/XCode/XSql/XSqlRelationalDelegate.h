@@ -33,6 +33,7 @@ typedef struct XSqlRelationalDelegate {
 void XSqlRelationalDelegate_init(XSqlRelationalDelegate* delegate);
 /**
  * @brief 创建关系委托对象。
+ * @param memory 内存类型。
  * @return 新委托对象，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlRelationalDelegate* XSqlRelationalDelegate_create_ex(XMemoryType memory);

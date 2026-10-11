@@ -2143,12 +2143,12 @@ static void mock_test_data_layout(void)
     MOCK_CHECK(sizeof(XMqttFixedHeader) == 1, "XMqttFixedHeader 联合体占用 1 字节");
     {
         XMqttFixedHeader fh;
-        fh.byte = 0x33; /* PUBLISH QoS1 + RETAIN */
-        MOCK_CHECK(fh.bits.type == 3 && fh.bits.qos == 1 &&
-                   fh.bits.retain == 1 && fh.bits.dup == 0,
+        fh.m_byte = 0x33; /* PUBLISH QoS1 + RETAIN */
+        MOCK_CHECK(fh.m_bits.m_type == 3 && fh.m_bits.m_qos == 1 &&
+                   fh.m_bits.m_retain == 1 && fh.m_bits.m_dup == 0,
                    "固定头联合体解析 0x33 正确");
-        fh.bits.type = 3; fh.bits.qos = 2; fh.bits.dup = 1; fh.bits.retain = 0;
-        MOCK_CHECK(fh.byte == 0x3C, "固定头联合体构造 PUBLISH QoS2+DUP 正确");
+        fh.m_bits.m_type = 3; fh.m_bits.m_qos = 2; fh.m_bits.m_dup = 1; fh.m_bits.m_retain = 0;
+        MOCK_CHECK(fh.m_byte == 0x3C, "固定头联合体构造 PUBLISH QoS2+DUP 正确");
     }
     {
         XMqttServerClient c;

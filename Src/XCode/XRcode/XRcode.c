@@ -1,8 +1,7 @@
-﻿#include "XPrintf.h"
-#include "XRcode.h"
-#include "XMemory.h"
+﻿#include "XRcode.h"
 #include <string.h>
-#include <stdio.h>
+#include "XPrintf.h"
+#include "XMemory.h"
 
 /* =========================== RS 编码相关表格 =========================== */
 /* GF(2^8) 指数到系数表 */

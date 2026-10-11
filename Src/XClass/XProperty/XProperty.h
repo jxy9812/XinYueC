@@ -203,6 +203,12 @@ typedef struct XProperty
 } XProperty;
 
 /**
+ * @brief 初始化 XProperty 类的虚函数表。
+ * @return 指向初始化完成的 XVtable 的指针。
+ */
+XVtable* XProperty_class_init(void);
+
+/**
  * @brief 初始化独立属性（NULL 变体、无绑定；对标 QProperty() 默认构造）。
  * @param self 目标属性指针，不能为 NULL。
  * @return 无返回值。

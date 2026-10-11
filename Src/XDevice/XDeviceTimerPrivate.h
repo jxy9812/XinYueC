@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file XDeviceTimerPrivate.h
  * @brief 定时器设备内部调度接口。
  * @details 仅供 XDeviceTimer 和事件调度器实现使用，不构成稳定公共 API。所有

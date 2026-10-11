@@ -1,4 +1,9 @@
-﻿// XStackBase.h
+﻿/**
+* @file XStackBase.h
+* @brief 栈基类公开头文件
+* @details 定义所有栈容器（XStack、XLockFreeStack等）共用的基类结构、
+*          虚函数表枚举与基础操作接口，继承自XContainer容器基类
+*/
 #ifndef XSTACKBASE_H
 #define XSTACKBASE_H
 

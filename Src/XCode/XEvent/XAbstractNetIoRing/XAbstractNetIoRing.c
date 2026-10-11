@@ -1,4 +1,4 @@
-// XAbstractNetIoRing.c
+﻿// XAbstractNetIoRing.c
 //
 // 基类实现：提供 class_init、9 个虚函数的默认实现（平台无关）、
 // SQ/CQ 队列管理、全局单例、虚函数调度入口。
@@ -15,11 +15,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <time.h>
-#endif
+/* 单调时长统一经 XDateTime（约束文档「外部依赖约束」时间源规则：
+ * Src/ 禁止直呼 QueryPerformanceCounter/clock_gettime 等平台时间源）。 */
+#include "XDateTime.h"
 
 
 
@@ -144,13 +142,13 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
     /* 原生套接字对端关闭检测：0 字节 + Read + NativeIO 来源 => 关闭事件。
      * 串口的异步读可以在超时或取消时以 0 字节完成，不表示连接关闭。 */
     if (entry->m_bytes == 0 &&
-        (entry->m_events & XSocketAct_Read) &&
+        (entry->m_events & XSocketActType_Read) &&
         entry->m_sourceType == XAbstractNetIoRing_Source_NativeIO &&
         xabstractnetioring_is_socket_fd(entry)) {
         XEventSockClose* closeEvent = XEventSockClose_create(entry->m_fd);
         if (closeEvent) {
-            ((XEvent*)closeEvent)->posted = true;
-            ((XEvent*)closeEvent)->spontaneous = true;
+            ((XEvent*)closeEvent)->m_posted = true;
+            ((XEvent*)closeEvent)->m_spontaneous = true;
             XCoreApplication_postEvent(owner, (XEvent*)closeEvent,
                                        XEVENT_PRIORITY_NORMAL);
         }
@@ -162,8 +160,8 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
         XEventSockAct* ev = XEventSockAct_create(entry->m_fd,
                                                    (XSocketActType)entry->m_events);
         if (ev) {
-            ((XEvent*)ev)->posted = true;
-            ((XEvent*)ev)->spontaneous = true;
+            ((XEvent*)ev)->m_posted = true;
+            ((XEvent*)ev)->m_spontaneous = true;
             XCoreApplication_postEvent(owner, (XEvent*)ev,
                                        XEVENT_PRIORITY_NORMAL);
         }
@@ -444,22 +442,11 @@ static int xnetioring_profEnabled(void) {
 }
 
 uint64_t XAbstractNetIoRing_profNowUs(void) {
-#ifdef _WIN32
-    LARGE_INTEGER freq;
-    LARGE_INTEGER counter;
-    freq.QuadPart = 0;
-    QueryPerformanceCounter(&counter);
-    QueryPerformanceFrequency(&freq);
-    if (freq.QuadPart == 0) return 0;
-    return (uint64_t)(counter.QuadPart * 1000000LL / freq.QuadPart);
-#else
-    struct timespec ts;
-    ts.tv_sec = 0;
-    ts.tv_nsec = 0;
-    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
-    return (uint64_t)ts.tv_sec * 1000000ULL +
-           (uint64_t)ts.tv_nsec / 1000ULL;
-#endif
+    /* 单调时长统一经 XDateTime_currentMSecsSinceEpoch()（单调钟，全库
+     * 统一计时源），换算到 µs 轴返回；粒度为毫秒，亚毫秒跨度量化到毫秒。
+     * µs 级精度需 XDateTime 下沉提供单调 µs/nsecs 计时 API 后再切换
+     * （现役 currentNSecsSinceEpoch 为墙钟，不满足时长测量要求）。 */
+    return (uint64_t)XDateTime_currentMSecsSinceEpoch() * 1000ULL;
 }
 
 void XAbstractNetIoRing_profMarkRecv(int fd) {

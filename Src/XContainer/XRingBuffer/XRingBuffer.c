@@ -93,7 +93,25 @@ static void XRingBuffer_init_with_memory(XRingBuffer* buffer,
         return;
     }
 
-    XVector_push_back_1_base(buffer->m_chunks, &firstChunk);
+    if (!XVector_push_back_1_base(buffer->m_chunks, &firstChunk))
+    {
+        /* 入表失败时容器未接管 chunk，必须由创建者释放，避免泄漏 */
+        XClassDelete(firstChunk);
+        XClassDelete(buffer->m_chunks);
+        buffer->m_chunks = NULL;
+        XContainerCapacity(buffer) = 0;
+        XContainerSize(buffer) = 0;
+        buffer->m_currentReadChunk = 0;
+        buffer->m_currentWriteChunk = 0;
+        // --- 初始化标记成员 ---
+        buffer->m_markedReadChunk = 0;
+        buffer->m_markedReadChunkIndex = 0;
+        buffer->m_markedReadPosInChunk = 0;
+        buffer->m_markedTotalSize = 0;
+        buffer->m_hasMark = false;
+        // -------------------------
+        return;
+    }
 
     // --- 关键修正: 容量语义 ---
    // XRingBuffer是动态扩容的，没有固定总容量，故设为0。
@@ -549,7 +567,11 @@ static void VXClass_copy(XRingBuffer* object, const XRingBuffer* src)
             if (newChunk)
             {
                 XClassCopy(newChunk, *srcChunkPtr);
-                XVector_push_back_1_base(object->m_chunks, &newChunk);
+                if (!XVector_push_back_1_base(object->m_chunks, &newChunk))
+                {
+                    /* 入表失败时容器未接管 chunk，必须由创建者释放，避免泄漏 */
+                    XClassDelete(newChunk);
+                }
             }
         }
     }

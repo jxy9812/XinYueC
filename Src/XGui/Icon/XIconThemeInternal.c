@@ -499,57 +499,57 @@ static bool theme_tryTheme(const char* root, const char* theme,
     return false;
 }
 
-typedef enum ThemeDirType
+typedef enum XThemeDirType
 {
-    ThemeDir_Threshold = 0, /**< 阈值型：允许在 Size +/- Threshold 范围内匹配 */
-    ThemeDir_Scalable,      /**< 可缩放型：MinSize/MaxSize 区间内均匹配 */
-    ThemeDir_Fixed,         /**< 固定型：仅精确 Size 匹配 */
-    ThemeDir_Fallback,      /**< 回退型：任意尺寸均可匹配 */
-    ThemeDir_Invalid = INT_MAX
-} ThemeDirType;
+    XThemeDirType_Threshold = 0, /**< 阈值型：允许在 Size +/- Threshold 范围内匹配 */
+    XThemeDirType_Scalable,      /**< 可缩放型：MinSize/MaxSize 区间内均匹配 */
+    XThemeDirType_Fixed,         /**< 固定型：仅精确 Size 匹配 */
+    XThemeDirType_Fallback,      /**< 回退型：任意尺寸均可匹配 */
+    XThemeDirType_Invalid = INT_MAX
+} XThemeDirType;
 
-typedef enum ThemeDirContext
+typedef enum XThemeDirContext
 {
-    ThemeDir_UnknownContext = 0, /**< 未声明或未知 Context */
-    ThemeDir_Applications,       /**< Applications 上下文 */
-    ThemeDir_MimeTypes           /**< MimeTypes 上下文 */
-} ThemeDirContext;
+    XThemeDirContext_UnknownContext = 0, /**< 未声明或未知 Context */
+    XThemeDirContext_Applications,       /**< Applications 上下文 */
+    XThemeDirContext_MimeTypes           /**< MimeTypes 上下文 */
+} XThemeDirContext;
 
-typedef struct ThemeDirInfo
+typedef struct XThemeDirInfo
 {
-    size_t       m_nameIndex; /**< 对应 ThemeContext::m_dirs 中的目录名索引 */
+    size_t       m_nameIndex; /**< 对应 XThemeContext::m_dirs 中的目录名索引 */
     int          m_size;      /**< 目录名义尺寸 */
     int          m_minSize;   /**< 可缩放最小尺寸；未提供时为 Size */
     int          m_maxSize;   /**< 可缩放最大尺寸；未提供时为 Size */
     int          m_threshold; /**< 阈值型允许误差；默认 2 */
     int          m_scale;     /**< 高分辨率倍率；默认 1 */
-    ThemeDirType m_type;      /**< 目录类型 */
-    ThemeDirContext m_context; /**< 目录上下文；通用回退时跳过应用/MIME 目录 */
-} ThemeDirInfo;
+    XThemeDirType m_type;      /**< 目录类型 */
+    XThemeDirContext m_context; /**< 目录上下文；通用回退时跳过应用/MIME 目录 */
+} XThemeDirInfo;
 
-typedef struct ThemeContext
+typedef struct XThemeContext
 {
     XStringList*   m_dirs;      /**< Directories 列出的目录名 */
     XStringList*   m_parents;   /**< Inherits 列出的父主题名 */
-    ThemeDirInfo*  m_meta;      /**< 每个目录对应的元数据 */
+    XThemeDirInfo*  m_meta;      /**< 每个目录对应的元数据 */
     size_t         m_metaCount; /**< m_meta 元素个数 */
     bool           m_valid;     /**< 成功读取过 index.theme */
-} ThemeContext;
+} XThemeContext;
 
-typedef struct ThemeVisitStack
+typedef struct XThemeVisitStack
 {
     const char* m_names[64]; /**< 已访问主题名，防循环继承 */
     size_t      m_count;     /**< 当前访问深度 */
-} ThemeVisitStack;
+} XThemeVisitStack;
 
 /* 这些辅助函数在主题递归实现之后定义；提前声明以保持 C99 下的严格
  * 原型检查，同时让“按请求尺寸选择条目类型”的审计逻辑集中在一起。 */
-static XStringList* theme_parentsFor(const ThemeContext* ctx,
+static XStringList* theme_parentsFor(const XThemeContext* ctx,
                                      const char* fallbackTheme);
 static size_t theme_lastDash(const char* name, size_t len);
-static bool theme_visitContains(const ThemeVisitStack* stack, const char* name);
-static void theme_visitPush(ThemeVisitStack* stack, const char* name);
-static void theme_visitPop(ThemeVisitStack* stack);
+static bool theme_visitContains(const XThemeVisitStack* stack, const char* name);
+static void theme_visitPush(XThemeVisitStack* stack, const char* name);
+static void theme_visitPop(XThemeVisitStack* stack);
 
 static bool theme_keyEquals(const char* a, const char* b)
 {
@@ -667,7 +667,7 @@ static void theme_stringListDelete(XStringList* list)
     XClassDelete((XClass*)list);
 }
 
-static void themeContext_init(ThemeContext* self)
+static void themeContext_init(XThemeContext* self)
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
@@ -675,7 +675,7 @@ static void themeContext_init(ThemeContext* self)
     self->m_parents = XStringList_create();
 }
 
-static void themeContext_deinit(ThemeContext* self)
+static void themeContext_deinit(XThemeContext* self)
 {
     if (!self) return;
     theme_stringListDelete(self->m_dirs);
@@ -685,7 +685,7 @@ static void themeContext_deinit(ThemeContext* self)
 }
 
 /* 解析同一批搜索路径时只替换目录元数据，列表对象和容量可以继续复用。 */
-static void themeContext_reset(ThemeContext* self)
+static void themeContext_reset(XThemeContext* self)
 {
     if (!self) return;
     theme_stringListClear(self->m_dirs);
@@ -696,20 +696,20 @@ static void themeContext_reset(ThemeContext* self)
     self->m_valid = false;
 }
 
-static bool themeContext_prepareDirs(ThemeContext* self)
+static bool themeContext_prepareDirs(XThemeContext* self)
 {
     size_t count;
     size_t i;
     if (!self || !self->m_dirs) return false;
     count = (size_t)XStringList_size_base((XContainer*)self->m_dirs);
-    self->m_meta = count ? (ThemeDirInfo*)XMalloc_System(
-        count * sizeof(ThemeDirInfo)) : NULL;
+    self->m_meta = count ? (XThemeDirInfo*)XMalloc_System(
+        count * sizeof(XThemeDirInfo)) : NULL;
     if (count && !self->m_meta) return false;
     self->m_metaCount = count;
     /* C 标准不允许把 NULL 作为 memset 目标，即使长度为零；空主题
        目录列表在 UBSan 下也必须保持合法。 */
     if (count)
-        XMemset(self->m_meta, 0, count * sizeof(ThemeDirInfo));
+        XMemset(self->m_meta, 0, count * sizeof(XThemeDirInfo));
     for (i = 0; i < count; ++i) {
         const XString* nameStr = (const XString*)XStringList_at_base(
             (const XVector*)self->m_dirs, (int64_t)i);
@@ -720,13 +720,13 @@ static bool themeContext_prepareDirs(ThemeContext* self)
         self->m_meta[i].m_maxSize = -1;
         self->m_meta[i].m_threshold = 2;
         self->m_meta[i].m_scale = 1;
-        self->m_meta[i].m_type = ThemeDir_Threshold;
-        self->m_meta[i].m_context = ThemeDir_UnknownContext;
+        self->m_meta[i].m_type = XThemeDirType_Threshold;
+        self->m_meta[i].m_context = XThemeDirContext_UnknownContext;
     }
     return true;
 }
 
-static ThemeDirInfo* themeContext_findDir(ThemeContext* self,
+static XThemeDirInfo* themeContext_findDir(XThemeContext* self,
                                           const char* section)
 {
     size_t i;
@@ -741,12 +741,12 @@ static ThemeDirInfo* themeContext_findDir(ThemeContext* self,
     return NULL;
 }
 
-static void themeContext_finalizeDirs(ThemeContext* self)
+static void themeContext_finalizeDirs(XThemeContext* self)
 {
     size_t i;
     if (!self) return;
     for (i = 0; i < self->m_metaCount; ++i) {
-        ThemeDirInfo* info = &self->m_meta[i];
+        XThemeDirInfo* info = &self->m_meta[i];
         if (info->m_size > 0) {
             if (info->m_minSize < 0) info->m_minSize = info->m_size;
             if (info->m_maxSize < 0) info->m_maxSize = info->m_size;
@@ -754,13 +754,13 @@ static void themeContext_finalizeDirs(ThemeContext* self)
             /* Qt QIconTheme 仅从 index.theme 中带正 Size 的组建立
                QIconDirInfo；缺少 Size 的组不是主题内的 Fallback 目录。
                Fallback 只用于主题外的独立文件条目。 */
-            info->m_type = ThemeDir_Invalid;
+            info->m_type = XThemeDirType_Invalid;
         }
     }
 }
 
 static bool theme_parseIndexFile(const char* root, const char* theme,
-                                 ThemeContext* out)
+                                 XThemeContext* out)
 {
     char filePath[1024];
     XString* fileName = NULL;
@@ -887,7 +887,7 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
                     if (eq && section[0]) {
                         char* key;
                         char* value;
-                        ThemeDirInfo* info;
+                        XThemeDirInfo* info;
                         *eq = '\0';
                         key = theme_trimLine(lp);
                         value = theme_trimLine(eq + 1);
@@ -907,21 +907,21 @@ static bool theme_parseIndexFile(const char* root, const char* theme,
                                 info->m_scale = theme_parseInt(value, 1);
                             else if (theme_keyEquals(key, "Context")) {
                                 if (theme_keyEquals(value, "Applications"))
-                                    info->m_context = ThemeDir_Applications;
+                                    info->m_context = XThemeDirContext_Applications;
                                 else if (theme_keyEquals(value, "MimeTypes"))
-                                    info->m_context = ThemeDir_MimeTypes;
+                                    info->m_context = XThemeDirContext_MimeTypes;
                                 else
-                                    info->m_context = ThemeDir_UnknownContext;
+                                    info->m_context = XThemeDirContext_UnknownContext;
                             }
                             else if (theme_keyEquals(key, "Type")) {
                                 if (theme_keyEquals(value, "Fixed"))
-                                    info->m_type = ThemeDir_Fixed;
+                                    info->m_type = XThemeDirType_Fixed;
                                 else if (theme_keyEquals(value, "Scalable"))
-                                    info->m_type = ThemeDir_Scalable;
+                                    info->m_type = XThemeDirType_Scalable;
                                 else if (theme_keyEquals(value, "Threshold"))
-                                    info->m_type = ThemeDir_Threshold;
+                                    info->m_type = XThemeDirType_Threshold;
                                 else
-                                    info->m_type = ThemeDir_Threshold;
+                                    info->m_type = XThemeDirType_Threshold;
                             }
                         }
                     }
@@ -940,7 +940,7 @@ done:
     return ok;
 }
 
-static bool theme_directoryMatches(const ThemeDirInfo* info, int iconsize,
+static bool theme_directoryMatches(const XThemeDirInfo* info, int iconsize,
                                    int iconscale)
 {
     int scale;
@@ -949,18 +949,18 @@ static bool theme_directoryMatches(const ThemeDirInfo* info, int iconsize,
        不得被当成默认的 1 倍目录。 */
     scale = info->m_scale;
     if (scale != iconscale) return false;
-    if (info->m_type == ThemeDir_Fixed)
+    if (info->m_type == XThemeDirType_Fixed)
         return info->m_size == iconsize;
-    if (info->m_type == ThemeDir_Scalable)
+    if (info->m_type == XThemeDirType_Scalable)
         return iconsize >= info->m_minSize && iconsize <= info->m_maxSize;
-    if (info->m_type == ThemeDir_Threshold)
+    if (info->m_type == XThemeDirType_Threshold)
         return iconsize >= info->m_size - info->m_threshold &&
                iconsize <= info->m_size + info->m_threshold;
-    if (info->m_type == ThemeDir_Fallback) return true;
+    if (info->m_type == XThemeDirType_Fallback) return true;
     return false;
 }
 
-static int theme_dirDistance(const ThemeDirInfo* info, int iconsize,
+static int theme_dirDistance(const XThemeDirInfo* info, int iconsize,
                              int iconscale)
 {
     int scale;
@@ -973,25 +973,25 @@ static int theme_dirDistance(const ThemeDirInfo* info, int iconsize,
     int scaledLow;
     int scaledHigh;
     if (!info || iconsize <= 0 || iconscale <= 0) return INT_MAX;
-    if (info->m_type == ThemeDir_Fallback) return 0;
+    if (info->m_type == XThemeDirType_Fallback) return 0;
     /* Qt directorySizeDistance() 同样使用原始 Scale 值。 */
     scale = info->m_scale;
     scaledIconSize = iconsize * iconscale;
     size = info->m_size > 0 ? info->m_size * scale : 0;
     minSize = info->m_minSize > 0 ? info->m_minSize * scale : size;
     maxSize = info->m_maxSize > 0 ? info->m_maxSize * scale : size;
-    if (info->m_type == ThemeDir_Fixed) {
+    if (info->m_type == XThemeDirType_Fixed) {
         return size > 0 ? (scaledIconSize > size ? scaledIconSize - size :
                            size - scaledIconSize)
                         : INT_MAX;
     }
-    if (info->m_type == ThemeDir_Scalable) {
+    if (info->m_type == XThemeDirType_Scalable) {
         if (minSize <= 0 || maxSize <= 0) return INT_MAX;
         if (scaledIconSize < minSize) return minSize - scaledIconSize;
         if (scaledIconSize > maxSize) return scaledIconSize - maxSize;
         return 0;
     }
-    if (info->m_type == ThemeDir_Invalid) return INT_MAX;
+    if (info->m_type == XThemeDirType_Invalid) return INT_MAX;
     if (size <= 0) return INT_MAX;
     /* Threshold 的负值也按 Qt 的原始算式保留，不要静默改成零。 */
     scaledLow = size - info->m_threshold * scale;
@@ -1003,7 +1003,7 @@ static int theme_dirDistance(const ThemeDirInfo* info, int iconsize,
     return 0;
 }
 
-static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
+static bool theme_tryParsedDir(const XThemeContext* ctx, size_t dirIndex,
                                const char* root, const char* theme,
                                const char* name, int target, int iconScale,
                                XPixmap* out, int* distance,
@@ -1011,7 +1011,7 @@ static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
 {
     const XString* dirStr;
     const char* dir;
-    const ThemeDirInfo* info;
+    const XThemeDirInfo* info;
     size_t extIndex;
     char path[1024];
     bool present = false;
@@ -1054,7 +1054,7 @@ static bool theme_tryParsedDir(const ThemeContext* ctx, size_t dirIndex,
  * pixmap() 调用；因此这里故意不调用 theme_loadFile()，损坏文件也应
  * 作为已登记条目参与 isNull()/hasThemeIcon() 判定。
  */
-static bool theme_tryParsedDirExists(const ThemeContext* ctx, size_t dirIndex,
+static bool theme_tryParsedDirExists(const XThemeContext* ctx, size_t dirIndex,
                                      const char* root, const char* theme,
                                      const char* name)
 {
@@ -1091,7 +1091,7 @@ static bool theme_tryParsedDirExists(const ThemeContext* ctx, size_t dirIndex,
  * 决定 Scalable/Fixed 语义，文件损坏不应让另一个格式或父主题改变条目
  * 选择。返回 INT_MAX 表示没有可用文件。
  */
-static int theme_parsedDirFormatPriority(const ThemeContext* ctx,
+static int theme_parsedDirFormatPriority(const XThemeContext* ctx,
                                          size_t dirIndex,
                                          const char* root,
                                          const char* theme,
@@ -1128,7 +1128,7 @@ static int theme_parsedDirFormatPriority(const ThemeContext* ctx,
  * 之前；当多个目录同样匹配时，格式优先级必须先于目录距离相同情况下
  * 的后出现条目。该函数不读取像素，因此与真正 pixmap() 的延迟解码一致。
  */
-static bool theme_selectParsedEntryType(const ThemeContext* ctx,
+static bool theme_selectParsedEntryType(const XThemeContext* ctx,
                                         const XStringList* paths,
                                         const char* rootTheme,
                                         const char* name,
@@ -1150,12 +1150,12 @@ static bool theme_selectParsedEntryType(const ThemeContext* ctx,
 
     /* 与 qiconloader.cpp:825-834 的第一轮 exact match 对齐。 */
     for (dirIndex = 0; dirIndex < ctx->m_metaCount; ++dirIndex) {
-        const ThemeDirInfo* info = &ctx->m_meta[dirIndex];
+        const XThemeDirInfo* info = &ctx->m_meta[dirIndex];
         int priority = INT_MAX;
-        if (info->m_type == ThemeDir_Invalid ||
+        if (info->m_type == XThemeDirType_Invalid ||
             (skipGenericContext &&
-             (info->m_context == ThemeDir_Applications ||
-              info->m_context == ThemeDir_MimeTypes)) ||
+             (info->m_context == XThemeDirContext_Applications ||
+              info->m_context == XThemeDirContext_MimeTypes)) ||
             !theme_directoryMatches(info, target, iconScale))
             continue;
         for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
@@ -1175,19 +1175,19 @@ static bool theme_selectParsedEntryType(const ThemeContext* ctx,
         }
     }
     if (exactFound) {
-        *scalable = ctx->m_meta[selectedIndex].m_type == ThemeDir_Scalable;
+        *scalable = ctx->m_meta[selectedIndex].m_type == XThemeDirType_Scalable;
         return true;
     }
 
     /* 与 qiconloader.cpp:837-853 的最近距离选择对齐。 */
     for (dirIndex = 0; dirIndex < ctx->m_metaCount; ++dirIndex) {
-        const ThemeDirInfo* info = &ctx->m_meta[dirIndex];
+        const XThemeDirInfo* info = &ctx->m_meta[dirIndex];
         int distance = theme_dirDistance(info, target, iconScale);
         int priority = INT_MAX;
-        if (info->m_type == ThemeDir_Invalid ||
+        if (info->m_type == XThemeDirType_Invalid ||
             (skipGenericContext &&
-             (info->m_context == ThemeDir_Applications ||
-              info->m_context == ThemeDir_MimeTypes)))
+             (info->m_context == XThemeDirContext_Applications ||
+              info->m_context == XThemeDirContext_MimeTypes)))
             continue;
         for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
                  (const XContainer*)paths); ++pathIndex) {
@@ -1207,7 +1207,7 @@ static bool theme_selectParsedEntryType(const ThemeContext* ctx,
         }
     }
     if (selectedDistance == INT_MAX) return false;
-    *scalable = ctx->m_meta[selectedIndex].m_type == ThemeDir_Scalable;
+    *scalable = ctx->m_meta[selectedIndex].m_type == XThemeDirType_Scalable;
     return true;
 }
 
@@ -1263,12 +1263,12 @@ static bool theme_selectEntryType(const XStringList* paths,
                                   const char* name,
                                   int target,
                                   const char* fallbackTheme,
-                                  ThemeVisitStack* visited,
+                                  XThemeVisitStack* visited,
                                   bool genericFallback,
                                   bool allowDashFallback,
                                   bool* scalable)
 {
-    ThemeContext ctx;
+    XThemeContext ctx;
     XStringList* parents = NULL;
     bool parsed = false;
     bool indexPresent = false;
@@ -1329,7 +1329,7 @@ static bool theme_selectEntryType(const XStringList* paths,
         while (nameLen > 2) {
             char dashName[1024];
             size_t dashPos = theme_lastDash(name, nameLen);
-            ThemeVisitStack fresh;
+            XThemeVisitStack fresh;
             if (dashPos == (size_t)-1 || dashPos == 0 ||
                 dashPos >= sizeof(dashName)) break;
             nameLen = dashPos;
@@ -1352,7 +1352,7 @@ static bool theme_selectEntryType(const XStringList* paths,
     return false;
 }
 
-static bool theme_tryParsedTheme(const ThemeContext* ctx,
+static bool theme_tryParsedTheme(const XThemeContext* ctx,
                                  const char* root, const char* theme,
                                  const char* name, int target, int iconScale,
                                  bool skipGenericContext,
@@ -1376,8 +1376,8 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
         int formatPriority = INT_MAX;
         XMemset(&candidate, 0, sizeof(XPixmap));
         if (skipGenericContext &&
-            (ctx->m_meta[di].m_context == ThemeDir_Applications ||
-             ctx->m_meta[di].m_context == ThemeDir_MimeTypes))
+            (ctx->m_meta[di].m_context == XThemeDirContext_Applications ||
+             ctx->m_meta[di].m_context == XThemeDirContext_MimeTypes))
             continue;
         if (!theme_directoryMatches(&ctx->m_meta[di], target, iconScale))
             continue;
@@ -1424,8 +1424,8 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
         int formatPriority = INT_MAX;
         XMemset(&candidate, 0, sizeof(XPixmap));
         if (skipGenericContext &&
-            (ctx->m_meta[di].m_context == ThemeDir_Applications ||
-             ctx->m_meta[di].m_context == ThemeDir_MimeTypes))
+            (ctx->m_meta[di].m_context == XThemeDirContext_Applications ||
+             ctx->m_meta[di].m_context == XThemeDirContext_MimeTypes))
             continue;
         XPixmap_init(&candidate);
         if (theme_tryParsedDir(ctx, di, root, theme, name, target,
@@ -1465,7 +1465,7 @@ static bool theme_tryParsedTheme(const ThemeContext* ctx,
     return found;
 }
 
-static bool theme_visitContains(const ThemeVisitStack* stack, const char* name)
+static bool theme_visitContains(const XThemeVisitStack* stack, const char* name)
 {
     size_t i;
     if (!stack || !name) return false;
@@ -1476,14 +1476,14 @@ static bool theme_visitContains(const ThemeVisitStack* stack, const char* name)
     return false;
 }
 
-static void theme_visitPush(ThemeVisitStack* stack, const char* name)
+static void theme_visitPush(XThemeVisitStack* stack, const char* name)
 {
     if (stack && name &&
         stack->m_count < sizeof(stack->m_names) / sizeof(stack->m_names[0]))
         stack->m_names[stack->m_count++] = name;
 }
 
-static void theme_visitPop(ThemeVisitStack* stack)
+static void theme_visitPop(XThemeVisitStack* stack)
 {
     if (stack && stack->m_count)
         stack->m_names[--stack->m_count] = NULL;
@@ -1502,7 +1502,7 @@ static void theme_appendUnique(XStringList* list, const char* value)
     XStringList_push_back_utf8(list, value);
 }
 
-static XStringList* theme_parentsFor(const ThemeContext* ctx,
+static XStringList* theme_parentsFor(const XThemeContext* ctx,
                                      const char* fallbackTheme)
 {
     XStringList* result = XStringList_create();
@@ -1544,11 +1544,11 @@ static size_t theme_lastDash(const char* name, size_t len)
 static bool theme_searchTheme(const XStringList* paths, const char* theme,
                               const char* name, int target, int iconScale,
                               const char* fallbackTheme,
-                              ThemeVisitStack* visited,
+                              XThemeVisitStack* visited,
                               bool genericFallback, bool allowDashFallback,
                               XPixmap* out)
 {
-    ThemeContext ctx;
+    XThemeContext ctx;
     XPixmap best;
     XMemset(&best, 0, sizeof(best)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
     int bestDistance = INT_MAX;
@@ -1662,7 +1662,7 @@ static bool theme_searchTheme(const XStringList* paths, const char* theme,
         while (nameLen > 2) {
             char dashName[1024];
             size_t dashPos;
-            ThemeVisitStack fresh;
+            XThemeVisitStack fresh;
             dashPos = theme_lastDash(name, nameLen);
             if (dashPos == (size_t)-1 || dashPos == 0) break;
             nameLen = dashPos;
@@ -1694,11 +1694,11 @@ static bool theme_searchThemeExists(const XStringList* paths,
                                     const char* theme, const char* name,
                                     int target, int iconScale,
                                     const char* fallbackTheme,
-                                    ThemeVisitStack* visited,
+                                    XThemeVisitStack* visited,
                                     bool genericFallback,
                                     bool allowDashFallback)
 {
-    ThemeContext ctx;
+    XThemeContext ctx;
     XStringList* parents = NULL;
     size_t pathIndex;
     size_t dirIndex;
@@ -1724,11 +1724,11 @@ static bool theme_searchThemeExists(const XStringList* paths,
     if (indexPresent) parsed = true;
     if (parsed) {
         for (dirIndex = 0; dirIndex < ctx.m_metaCount && !local; ++dirIndex) {
-            const ThemeDirInfo* info = &ctx.m_meta[dirIndex];
-            if (info->m_type == ThemeDir_Invalid ||
+            const XThemeDirInfo* info = &ctx.m_meta[dirIndex];
+            if (info->m_type == XThemeDirType_Invalid ||
                 (genericFallback &&
-                 (info->m_context == ThemeDir_Applications ||
-                  info->m_context == ThemeDir_MimeTypes)) ||
+                 (info->m_context == XThemeDirContext_Applications ||
+                  info->m_context == XThemeDirContext_MimeTypes)) ||
                 !theme_directoryMatches(info, target, iconScale))
                 continue;
             for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
@@ -1803,7 +1803,7 @@ static bool theme_searchThemeExists(const XStringList* paths,
         while (nameLen > 2) {
             char dashName[1024];
             size_t dashPos = theme_lastDash(name, nameLen);
-            ThemeVisitStack fresh;
+            XThemeVisitStack fresh;
             if (dashPos == (size_t)-1 || dashPos == 0 ||
                 dashPos >= sizeof(dashName)) break;
             nameLen = dashPos;
@@ -1893,9 +1893,9 @@ static void theme_appendSize(XVector* out, int size)
 
 static bool theme_collectSizes(const XStringList* paths, const char* theme,
                                const char* name, const char* fallbackTheme,
-                               ThemeVisitStack* visited, XVector* out)
+                               XThemeVisitStack* visited, XVector* out)
 {
-    ThemeContext ctx;
+    XThemeContext ctx;
     XStringList* parents = NULL;
     bool parsed = false;
     bool found = false;
@@ -1987,9 +1987,9 @@ static bool theme_collectSizes(const XStringList* paths, const char* theme,
 
 static bool theme_collectScalable(const XStringList* paths, const char* theme,
                                   const char* name, const char* fallbackTheme,
-                                  ThemeVisitStack* visited)
+                                  XThemeVisitStack* visited)
 {
-    ThemeContext ctx;
+    XThemeContext ctx;
     XStringList* parents = NULL;
     bool parsed = false;
     bool found = false;
@@ -2015,7 +2015,7 @@ static bool theme_collectScalable(const XStringList* paths, const char* theme,
             const XString* dirStr = (const XString*)XStringList_at_base(
                 (const XVector*)ctx.m_dirs, (int64_t)dirIndex);
             const char* dir = dirStr ? XString_toUtf8(dirStr) : NULL;
-            if (ctx.m_meta[dirIndex].m_type != ThemeDir_Scalable ||
+            if (ctx.m_meta[dirIndex].m_type != XThemeDirType_Scalable ||
                 !dir || !dir[0])
                 continue;
             for (pathIndex = 0; pathIndex < (size_t)XStringList_size_base(
@@ -2227,7 +2227,7 @@ static bool theme_resolveThemePixmapSizeInternal(const char* name, int size,
     const char* fallbackUtf8 = NULL;
     XPixmap best;
     XMemset(&best, 0, sizeof(best)); /* 裸栈清零：防 init 的 vtable 探测把前序帧残留误判为已初始化而释放陈旧 m_data */
-    ThemeVisitStack visited;
+    XThemeVisitStack visited;
     bool any = false;
     bool found;
     XMemset(&best, 0, sizeof(XPixmap));
@@ -2359,7 +2359,7 @@ bool XIconInternal_availableThemeSizes(const char* name, XVector* out)
     XString* fallbackThemeName = NULL;
     const char* themeUtf8 = NULL;
     const char* fallbackUtf8 = NULL;
-    ThemeVisitStack visited;
+    XThemeVisitStack visited;
     bool found = false;
     if (!name || !name[0] || !out) return false;
 
@@ -2403,7 +2403,7 @@ bool XIconInternal_themeHasScalable(const char* name)
     XString* fallbackThemeName = NULL;
     const char* themeUtf8 = NULL;
     const char* fallbackUtf8 = NULL;
-    ThemeVisitStack visited;
+    XThemeVisitStack visited;
     bool found = false;
     if (!name || !name[0]) return false;
 
@@ -2476,7 +2476,7 @@ bool XIconInternal_themeUsesScalableEntry(const char* name, int size)
     XString* fallbackThemeName = NULL;
     const char* themeUtf8 = NULL;
     const char* fallbackUtf8 = NULL;
-    ThemeVisitStack visited;
+    XThemeVisitStack visited;
     bool found = false;
     bool scalable = false;
     if (!name || !name[0] || size <= 0) return false;
@@ -2522,7 +2522,7 @@ bool XIconInternal_themeHasIcon(const char* name)
     XString* fallbackThemeName = NULL;
     const char* themeUtf8 = NULL;
     const char* fallbackUtf8 = NULL;
-    ThemeVisitStack visited;
+    XThemeVisitStack visited;
     bool found = false;
     if (!name || !name[0]) return false;
 
@@ -2562,7 +2562,7 @@ static bool theme_exactEntryExists(const XStringList* paths,
                                    const char* theme, const char* name,
                                    const char* fallbackTheme)
 {
-    ThemeVisitStack visited;
+    XThemeVisitStack visited;
     if (!paths || !theme || !theme[0] || !name || !name[0]) return false;
     XMemset(&visited, 0, sizeof(visited));
     return theme_searchThemeExists(paths, theme, name, 48, 1,

@@ -7,6 +7,7 @@
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_TELNET_PROTOCOL_ON
 
+#include "XStringUtils.h"
 #include <string.h>
 
 enum {
@@ -197,7 +198,7 @@ bool XConsoleShellTelnetAdapter_emitPrompt(XConsoleShellTelnetAdapter* adapter)
             adapter->session->userName[0])
                ? adapter->session->userName
                : (const char*)XCONSOLE_SHELL_DEFAULT_PROMPT_NAME;
-    len = strlen(user);
+    len = XStrlen(user);
     if (len >= sizeof(prompt) - 2u)
         len = sizeof(prompt) - 2u;
     memcpy(prompt, user, len);

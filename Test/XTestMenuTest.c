@@ -32,7 +32,7 @@ XTestMenu* XTestMenuTest_create()
 	XTestMenu_XTimerTest(root);
 	XTestMenu_XMemoryTest(root);
 	XTestMenu_XDataTest(root);
-#if DEMOTEST && XPROPERTY_ON
+#if DEMOTEST_ON && XPROPERTY_ON
 	XTestMenu_XPropertyTest(root);
 #endif
 	return root;

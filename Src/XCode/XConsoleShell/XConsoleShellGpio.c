@@ -13,10 +13,9 @@
     XCONSOLE_SHELL_GPIO_ON
 
 #include "XConsoleShellGpio.h"
+#include "XStringUtils.h"
 #include "XThread.h"
 #include "XUtf8StringView.h"
-#include <stdio.h>
-#include <string.h>
 
 static bool xcg_parse_u32(const char* text, uint32_t* value)
 {
@@ -71,11 +70,11 @@ static const char* xcg_edge_text(XGpioInterruptEdge edge)
 static bool xcg_parse_direction(const char* text, XGpioDirection* direction)
 {
     if (!text || !direction) return false;
-    if (strcmp(text, "input") == 0) {
+    if (XStrcmp(text, "input") == 0) {
         *direction = XGpioDirection_Input;
         return true;
     }
-    if (strcmp(text, "output") == 0) {
+    if (XStrcmp(text, "output") == 0) {
         *direction = XGpioDirection_Output;
         return true;
     }
@@ -85,9 +84,9 @@ static bool xcg_parse_direction(const char* text, XGpioDirection* direction)
 static bool xcg_parse_pull(const char* text, XGpioPull* pull)
 {
     if (!text || !pull) return false;
-    if (strcmp(text, "none") == 0) *pull = XGpioPull_None;
-    else if (strcmp(text, "up") == 0) *pull = XGpioPull_Up;
-    else if (strcmp(text, "down") == 0) *pull = XGpioPull_Down;
+    if (XStrcmp(text, "none") == 0) *pull = XGpioPull_None;
+    else if (XStrcmp(text, "up") == 0) *pull = XGpioPull_Up;
+    else if (XStrcmp(text, "down") == 0) *pull = XGpioPull_Down;
     else return false;
     return true;
 }
@@ -95,8 +94,8 @@ static bool xcg_parse_pull(const char* text, XGpioPull* pull)
 static bool xcg_parse_drive(const char* text, XGpioOutputType* drive)
 {
     if (!text || !drive) return false;
-    if (strcmp(text, "push-pull") == 0) *drive = XGpioOutputType_PushPull;
-    else if (strcmp(text, "open-drain") == 0) *drive = XGpioOutputType_OpenDrain;
+    if (XStrcmp(text, "push-pull") == 0) *drive = XGpioOutputType_PushPull;
+    else if (XStrcmp(text, "open-drain") == 0) *drive = XGpioOutputType_OpenDrain;
     else return false;
     return true;
 }
@@ -104,8 +103,8 @@ static bool xcg_parse_drive(const char* text, XGpioOutputType* drive)
 static bool xcg_parse_active(const char* text, XGpioActiveLevel* active)
 {
     if (!text || !active) return false;
-    if (strcmp(text, "low") == 0) *active = XGpioActiveLevel_Low;
-    else if (strcmp(text, "high") == 0) *active = XGpioActiveLevel_High;
+    if (XStrcmp(text, "low") == 0) *active = XGpioActiveLevel_Low;
+    else if (XStrcmp(text, "high") == 0) *active = XGpioActiveLevel_High;
     else return false;
     return true;
 }
@@ -113,10 +112,10 @@ static bool xcg_parse_active(const char* text, XGpioActiveLevel* active)
 static bool xcg_parse_initial(const char* text, XGpioInitialLevel* initial)
 {
     if (!text || !initial) return false;
-    if (strcmp(text, "keep") == 0) *initial = XGpioInitialLevel_Keep;
-    else if (strcmp(text, "0") == 0 || strcmp(text, "low") == 0)
+    if (XStrcmp(text, "keep") == 0) *initial = XGpioInitialLevel_Keep;
+    else if (XStrcmp(text, "0") == 0 || XStrcmp(text, "low") == 0)
         *initial = XGpioInitialLevel_Low;
-    else if (strcmp(text, "1") == 0 || strcmp(text, "high") == 0)
+    else if (XStrcmp(text, "1") == 0 || XStrcmp(text, "high") == 0)
         *initial = XGpioInitialLevel_High;
     else return false;
     return true;
@@ -126,10 +125,10 @@ static bool xcg_parse_initial(const char* text, XGpioInitialLevel* initial)
 static bool xcg_parse_edge(const char* text, XGpioInterruptEdge* edge)
 {
     if (!text || !edge) return false;
-    if (strcmp(text, "off") == 0) *edge = XGpioInterruptEdge_Disabled;
-    else if (strcmp(text, "rising") == 0) *edge = XGpioInterruptEdge_Rising;
-    else if (strcmp(text, "falling") == 0) *edge = XGpioInterruptEdge_Falling;
-    else if (strcmp(text, "both") == 0) *edge = XGpioInterruptEdge_Both;
+    if (XStrcmp(text, "off") == 0) *edge = XGpioInterruptEdge_Disabled;
+    else if (XStrcmp(text, "rising") == 0) *edge = XGpioInterruptEdge_Rising;
+    else if (XStrcmp(text, "falling") == 0) *edge = XGpioInterruptEdge_Falling;
+    else if (XStrcmp(text, "both") == 0) *edge = XGpioInterruptEdge_Both;
     else return false;
     return true;
 }
@@ -143,23 +142,23 @@ static bool xcg_apply_options(XGpioConfig* config, int argc,
     if (!config || !argv || start < 0 || start > argc) return false;
     while (i < argc) {
         if (i + 1 >= argc) return false;
-        if (strcmp(argv[i], "--direction") == 0) {
+        if (XStrcmp(argv[i], "--direction") == 0) {
             if (!xcg_parse_direction(argv[i + 1], &config->m_direction)) return false;
-        } else if (strcmp(argv[i], "--pull") == 0) {
+        } else if (XStrcmp(argv[i], "--pull") == 0) {
             if (!xcg_parse_pull(argv[i + 1], &config->m_pull)) return false;
-        } else if (strcmp(argv[i], "--drive") == 0) {
+        } else if (XStrcmp(argv[i], "--drive") == 0) {
             if (!xcg_parse_drive(argv[i + 1], &config->m_outputType)) return false;
-        } else if (strcmp(argv[i], "--active") == 0) {
+        } else if (XStrcmp(argv[i], "--active") == 0) {
             if (!xcg_parse_active(argv[i + 1], &config->m_activeLevel)) return false;
-        } else if (strcmp(argv[i], "--initial") == 0) {
+        } else if (XStrcmp(argv[i], "--initial") == 0) {
             if (!xcg_parse_initial(argv[i + 1], &config->m_initialLevel)) return false;
         }
 #if XCONSOLE_SHELL_GPIO_INTERRUPT_ON
-        else if (strcmp(argv[i], "--edge") == 0) {
+        else if (XStrcmp(argv[i], "--edge") == 0) {
             if (!xcg_parse_edge(argv[i + 1], &config->m_interruptEdge)) return false;
         }
 #endif
-        else if (strcmp(argv[i], "--debounce") == 0) {
+        else if (XStrcmp(argv[i], "--debounce") == 0) {
             if (!xcg_parse_u32(argv[i + 1], &config->m_debounceUs)) return false;
         } else {
             return false;
@@ -225,7 +224,7 @@ static XConsoleResult xcg_gpio_error(XConsoleShell* shell, const char* operation
     char line[160];
     XGpioError error = gpio ? XGpio_lastError(gpio) : XGpioError_Unknown;
     int32_t nativeError = gpio ? XGpio_nativeError(gpio) : 0;
-    int written = snprintf(line, sizeof(line), "gpio: %s: %s (本机错误=%d)\n",
+    int written = XSnprintf(line, sizeof(line), "gpio: %s: %s (本机错误=%d)\n",
                            operation ? operation : "操作",
                            XGpio_errorString(error), (int)nativeError);
     if (written < 0 || (size_t)written >= sizeof(line) ||
@@ -242,7 +241,7 @@ static XConsoleResult xcg_gpio_error(XConsoleShell* shell, const char* operation
 static XConsoleResult xcg_missing(XConsoleShell* shell, const char* operation)
 {
     char line[96];
-    int written = snprintf(line, sizeof(line), "gpio: %s: 引脚未打开\n",
+    int written = XSnprintf(line, sizeof(line), "gpio: %s: 引脚未打开\n",
                            operation ? operation : "操作");
     return written > 0 && (size_t)written < sizeof(line) &&
                    XConsoleShell_writeUtf8(shell, line)
@@ -325,7 +324,7 @@ static int xcg_list(XConsoleShell* shell, XConsoleShellSession* session,
             continue;
         hasLevel = XGpio_read(slot->gpio, &level);
         hasActive = hasLevel && XGpio_readActive(slot->gpio, &active);
-        written = snprintf(
+        written = XSnprintf(
             line, sizeof(line), "%5u %5u %-5s %-9s %5s %6s %-4s %-11s %s\n",
             config.m_pin.m_controller, config.m_pin.m_line,
             XGpio_isOpen(slot->gpio) ? "open" : "close",
@@ -434,7 +433,7 @@ static int xcg_info(XConsoleShell* shell, XConsoleShellSession* session,
         return xcg_denied(shell);
     if (!XGpio_getConfig(slot->gpio, &config))
         return xcg_gpio_error(shell, "查询配置", slot->gpio);
-    written = snprintf(
+    written = XSnprintf(
         line, sizeof(line),
         "controller=%u line=%u open=%s direction=%s\n"
         "pull=%s drive=%s active=%s initial=%d debounce-us=%u\n"
@@ -465,7 +464,7 @@ static int xcg_read(XConsoleShell* shell, XConsoleShellSession* session,
 {
     XGpioPin pin;
     XConsoleShellGpioSlot* slot;
-    bool logical = argc == 3 && strcmp(argv[2], "--active") == 0;
+    bool logical = argc == 3 && XStrcmp(argv[2], "--active") == 0;
     char line[96];
     int written;
     (void)userData;
@@ -481,13 +480,13 @@ static int xcg_read(XConsoleShell* shell, XConsoleShellSession* session,
         bool active;
         if (!XGpio_readActive(slot->gpio, &active))
             return xcg_gpio_error(shell, "读取", slot->gpio);
-        written = snprintf(line, sizeof(line), "gpio %u:%u active=%s\n",
+        written = XSnprintf(line, sizeof(line), "gpio %u:%u active=%s\n",
                            pin.m_controller, pin.m_line, active ? "yes" : "no");
     } else {
         XGpioLevel level;
         if (!XGpio_read(slot->gpio, &level))
             return xcg_gpio_error(shell, "读取", slot->gpio);
-        written = snprintf(line, sizeof(line), "gpio %u:%u level=%u\n",
+        written = XSnprintf(line, sizeof(line), "gpio %u:%u level=%u\n",
                            pin.m_controller, pin.m_line,
                            level == XGpioLevel_High ? 1u : 0u);
     }
@@ -503,15 +502,15 @@ static int xcg_write(XConsoleShell* shell, XConsoleShellSession* session,
 {
     XGpioPin pin;
     XConsoleShellGpioSlot* slot;
-    bool logical = argc == 4 && strcmp(argv[3], "--active") == 0;
+    bool logical = argc == 4 && XStrcmp(argv[3], "--active") == 0;
     bool value;
     bool ok;
     (void)userData;
     if (!shell || !session || (argc != 3 && !logical) ||
         !xcg_parse_pin(argv[0], argv[1], &pin) ||
-        (strcmp(argv[2], "0") != 0 && strcmp(argv[2], "1") != 0))
+        (XStrcmp(argv[2], "0") != 0 && XStrcmp(argv[2], "1") != 0))
         return XConsoleResult_InvalidArgument;
-    value = strcmp(argv[2], "1") == 0;
+    value = XStrcmp(argv[2], "1") == 0;
     slot = xcg_find_slot(shell, &pin);
     if (!slot) return xcg_missing(shell, "写入");
     if (!xcg_authorized(shell, session, &pin,
@@ -663,7 +662,7 @@ static int xcg_irq_status(XConsoleShell* shell, XConsoleShellSession* session,
     if (!xcg_authorized(shell, session, &pin,
                         XConsoleShellGpioOperation_Interrupt, false))
         return xcg_denied(shell);
-    written = snprintf(
+    written = XSnprintf(
         line, sizeof(line), "gpio %u:%u irq=%s edge=%s events=%u\n",
         pin.m_controller, pin.m_line,
         XGpio_isInterruptEnabled(slot->gpio) ? "enabled" : "disabled",
@@ -693,11 +692,11 @@ static int xcg_irq_wait(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_InvalidArgument;
     while (i < argc) {
         if (i + 1 >= argc) return XConsoleResult_InvalidArgument;
-        if (strcmp(argv[i], "--count") == 0) {
+        if (XStrcmp(argv[i], "--count") == 0) {
             if (!xcg_parse_u32(argv[i + 1], &wanted) || wanted == 0 ||
                 wanted > XCONSOLE_SHELL_GPIO_MAX_WAIT_COUNT)
                 return XConsoleResult_InvalidArgument;
-        } else if (strcmp(argv[i], "--timeout") == 0) {
+        } else if (XStrcmp(argv[i], "--timeout") == 0) {
             if (!xcg_parse_u32(argv[i + 1], &timeout) ||
                 timeout > XCONSOLE_SHELL_GPIO_MAX_WAIT_MS)
                 return XConsoleResult_InvalidArgument;
@@ -745,7 +744,7 @@ static int xcg_irq_wait(XConsoleShell* shell, XConsoleShellSession* session,
     } while (remaining > 0u);
     currentCount =
         XAtomic_load_uint32(&slot->eventCount, XAtomic_MemoryOrder_Relaxed);
-    written = snprintf(line, sizeof(line), "gpio %u:%u events=%u timeout=%s\n",
+    written = XSnprintf(line, sizeof(line), "gpio %u:%u events=%u timeout=%s\n",
                        pin.m_controller, pin.m_line,
                        currentCount - startCount, timedOut ? "yes" : "no");
     return written > 0 && (size_t)written < sizeof(line) &&

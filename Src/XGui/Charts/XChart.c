@@ -835,16 +835,16 @@ static void xchart_unlinkSeries(XChart* self, void* series)
 void XChart_removeSeries(XChart* self, void* series)
 {
     XChartSeriesType type = XChartSeriesType_Line;
-    int found;
     if (!self || !series) return;
-    /* 先从泛型注册表摘除（P0-2：唯一摘除路径，memmove 收缩 + 尾部清空）。 */
-    found = xchart_unregisterSeries(self, series, &type) ? 1 : 0;
+    /* 先查泛型注册表（P0-2：唯一摘除路径，memmove 收缩 + 尾部清空）。
+       未注册序列按 XChart.h 契约为空操作：类型化直加（addXxxSeries/
+       setPieSeries）的序列仍由图表持有、随 VXChart_deinit 统一释放，
+       不得经 unlink 摘出类型化数组后无人释放（失联泄漏）。 */
+    if (!xchart_unregisterSeries(self, series, &type)) return;
     xchart_unlinkSeries(self, series);
-    if (found) {
-        /* 系列的 hovered/clicked 等信号可由自身 mouseMove/点击事件链触发,
-           remove 可能在系列自身发射帧内被调用;延迟回收防 UAF。 */
-        xchart_deleteSeriesByTypeLater(series, type);
-    }
+    /* 系列的 hovered/clicked 等信号可由自身 mouseMove/点击事件链触发,
+       remove 可能在系列自身发射帧内被调用;延迟回收防 UAF。 */
+    xchart_deleteSeriesByTypeLater(series, type);
 }
 
 void XChart_removeAllSeries(XChart* self)
@@ -1534,9 +1534,16 @@ void* XChart_plotAreaChanged_signal(XChart* self)
 
 void XChart_addLineSeries(XChart* self, XLineSeries* series)
 {
-    if (!self || !series || self->m_lineCount >= 8) return;
+    if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_lineSeries,
                                  self->m_lineCount, series)) return;
+    if (self->m_lineCount >= 8) {
+        /* 容量静默拒绝仍由图表接管生命周期：登记进泛型注册表，随图表
+           析构经 VXChart_deinit 注册表兜底补释放；否则被拒序列既不在
+           类型化数组也不在注册表，无人拥有而泄漏（XChart.h 接管契约）。 */
+        xchart_registerSeries(self, series, XChartSeriesType_Line);
+        return;
+    }
     self->m_lineSeries[self->m_lineCount++] = series;
 }
 
@@ -1570,33 +1577,53 @@ XPieSeries* XChart_pieSeries(const XChart* self)
 
 void XChart_addBarSeries(XChart* self, XBarSeries* series)
 {
-    if (!self || !series || self->m_barCount >= 4) return;
+    if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_barSeries,
                                  self->m_barCount, series)) return;
+    if (self->m_barCount >= 4) {
+        /* 容量静默拒绝：登记进泛型注册表兜底析构（同 addLineSeries）。 */
+        xchart_registerSeries(self, series, XChartSeriesType_Bar);
+        return;
+    }
     self->m_barSeries[self->m_barCount++] = series;
 }
 
 void XChart_addScatterSeries(XChart* self, XScatterSeries* series)
 {
-    if (!self || !series || self->m_scatterCount >= 4) return;
+    if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_scatterSeries,
                                  self->m_scatterCount, series)) return;
+    if (self->m_scatterCount >= 4) {
+        /* 容量静默拒绝：登记进泛型注册表兜底析构（同 addLineSeries）。 */
+        xchart_registerSeries(self, series, XChartSeriesType_Scatter);
+        return;
+    }
     self->m_scatterSeries[self->m_scatterCount++] = series;
 }
 
 void XChart_addAreaSeries(XChart* self, XAreaSeries* series)
 {
-    if (!self || !series || self->m_areaCount >= 4) return;
+    if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_areaSeries,
                                  self->m_areaCount, series)) return;
+    if (self->m_areaCount >= 4) {
+        /* 容量静默拒绝：登记进泛型注册表兜底析构（同 addLineSeries）。 */
+        xchart_registerSeries(self, series, XChartSeriesType_Area);
+        return;
+    }
     self->m_areaSeries[self->m_areaCount++] = series;
 }
 
 void XChart_addSplineSeries(XChart* self, XSplineSeries* series)
 {
-    if (!self || !series || self->m_splineCount >= 4) return;
+    if (!self || !series) return;
     if (xchart_typeArrayContains((const void* const*)self->m_splineSeries,
                                  self->m_splineCount, series)) return;
+    if (self->m_splineCount >= 4) {
+        /* 容量静默拒绝：登记进泛型注册表兜底析构（同 addLineSeries）。 */
+        xchart_registerSeries(self, series, XChartSeriesType_Spline);
+        return;
+    }
     self->m_splineSeries[self->m_splineCount++] = series;
 }
 

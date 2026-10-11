@@ -10,12 +10,12 @@
 
 #include <string.h>
 
-static void delete_string(XString* value)
+static void XMediaFile_delete_string(XString* value)
 {
     if (value) XClassDelete(value);
 }
 
-static void delete_contents(XByteArray* value)
+static void XMediaFile_delete_contents(XByteArray* value)
 {
     if (value) XClassDelete(value);
 }
@@ -47,10 +47,10 @@ XMediaFile* XMediaFile_create_data(const uint8_t* bytes, size_t dataSize, const 
 void XMediaFile_delete(XMediaFile* self)
 {
     if (!self) return;
-    delete_string(self->m_fileName);
-    delete_contents(self->m_contents);
-    delete_string(self->m_suffix);
-    delete_string(self->m_mimeType);
+    XMediaFile_delete_string(self->m_fileName);
+    XMediaFile_delete_contents(self->m_contents);
+    XMediaFile_delete_string(self->m_suffix);
+    XMediaFile_delete_string(self->m_mimeType);
     XFree_System(self);
 }
 
@@ -61,14 +61,14 @@ void XMediaFile_set(XMediaFile* self, const uint8_t* bytes, size_t dataSize, con
     XString* newSuffix = suffix ? XString_create_copy(suffix) : NULL;
     XString* newMimeType = mimeType ? XString_create_copy(mimeType) : NULL;
     if (!newContents || (suffix && !newSuffix) || (mimeType && !newMimeType)) {
-        delete_contents(newContents);
-        delete_string(newSuffix);
-        delete_string(newMimeType);
+        XMediaFile_delete_contents(newContents);
+        XMediaFile_delete_string(newSuffix);
+        XMediaFile_delete_string(newMimeType);
         return;
     }
-    delete_contents(self->m_contents);
-    delete_string(self->m_suffix);
-    delete_string(self->m_mimeType);
+    XMediaFile_delete_contents(self->m_contents);
+    XMediaFile_delete_string(self->m_suffix);
+    XMediaFile_delete_string(self->m_mimeType);
     self->m_contents = newContents;
     self->m_suffix = newSuffix;
     self->m_mimeType = newMimeType;
@@ -95,7 +95,7 @@ void XMediaFile_setFileName(XMediaFile* self, const XString* name)
     if (!self) return;
     XString* replacement = name ? XString_create_copy(name) : NULL;
     if (name && !replacement) return;
-    delete_string(self->m_fileName);
+    XMediaFile_delete_string(self->m_fileName);
     self->m_fileName = replacement;
 }
 const XString* XMediaFile_fileName(const XMediaFile* self)

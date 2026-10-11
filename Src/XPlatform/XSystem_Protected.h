@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XSystem_Protected.h
  * @brief      XSystem 内部平台后端契约。
  * @details    本文件没有直接对应的 Qt 类型，仅供 XSystem 公共分发实现和
@@ -66,6 +66,15 @@ bool XSystem_platformHasEnvironment(const char* name);
  * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用。
  */
 int64_t XSystem_platformPid(void);
+
+/**
+ * @brief 调用当前平台的进程存活查询实现。
+ * @param pid 目标进程标识；非正数视为不存在。
+ * @return 进程存活返回 true；不存在、已退出或平台无进程概念返回 false。
+ * @note 该函数仅供 XSystem 公共分发实现和 Drive 平台文件使用；调用方不得
+ *       依赖其对 PID 复用的精确语义（存活判定以当时快照为准）。
+ */
+bool XSystem_platformProcessAlive(int64_t pid);
 
 /**
  * @brief 调用当前平台的可执行文件路径读取实现。

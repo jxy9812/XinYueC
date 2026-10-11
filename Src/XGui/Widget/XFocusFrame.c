@@ -19,7 +19,7 @@
 
 #if XWIDGET_ON && XFOCUSFRAME_ON
 
-static void XFocusFrame_paintEvent(XWidget* self, XEvent* event)
+static void VXFocusFrame_paintEvent(XWidget* self, XEvent* event)
 {
     XFocusFrame* ff = (XFocusFrame*)self;
     XPainter painter;
@@ -84,7 +84,7 @@ XVtable* XFocusFrame_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XFocusFrame)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, XFocusFrame_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXFocusFrame_paintEvent);
     return XVTABLE_DEFAULT;
 }
 

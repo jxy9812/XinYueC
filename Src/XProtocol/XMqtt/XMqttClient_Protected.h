@@ -1,13 +1,21 @@
 ﻿/**
- * @file XMqttClient_p.h
- * @brief XMqttClient 的私有协议状态和内部协议操作。
- * @details
- * 该头文件只供 XMqttClient.c、XMqttProtocol.c 等实现文件使用，不属于
- * 对外公开 API。这里保存连接期间的 MQTT 收发缓存、请求跟踪表、QoS
- * 状态和 MQTT 5.0 主题别名；公开头文件只通过不完整类型声明引用本结构。
+ * @file       XMqttClient_Protected.h
+ * @brief      XMqttClient 的私有协议状态和内部协议操作。
+ * @details    仅供 XMqttClient.c、XMqttProtocol.c 等实现文件与子类使用的
+ *             保护接口，不对外公开。这里保存连接期间的 MQTT 收发缓存、
+ *             请求跟踪表、QoS 状态和 MQTT 5.0 主题别名；公开头文件只通过
+ *             不完整类型声明引用本结构。
  */
-#ifndef XMQTTCLIENT_P_H
-#define XMQTTCLIENT_P_H
+#ifndef XMQTTCLIENT_PROTECTED_H
+#define XMQTTCLIENT_PROTECTED_H
+
+#include "XMqtt_config.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#if XMQTT_ON
+#if XMQTT_CLIENT_ON
 
 #include "XMqttClient.h"
 #include "XAbstractSocket.h"
@@ -17,40 +25,40 @@
 /**
  * @brief 一条待处理的订阅/取消订阅请求。
  * @details
- * MQTT SUBSCRIBE 和 UNSUBSCRIBE 共用包标识符空间。wireTopic 是内部保存
- * 的过滤器副本，由条目负责释放；subscription 指向公开的订阅对象，不由
- * 条目单独释放。取消订阅等待服务端应答时使用 unsubscribePending 标记。
+ * MQTT SUBSCRIBE 和 UNSUBSCRIBE 共用包标识符空间。m_wireTopic 是内部保存
+ * 的过滤器副本，由条目负责释放；m_subscription 指向公开的订阅对象，不由
+ * 条目单独释放。取消订阅等待服务端应答时使用 m_unsubscribePending 标记。
  */
 typedef struct XMqttSubscriptionEntry {
-    uint16_t identifier;                 ///< SUBSCRIBE/UNSUBSCRIBE 报文标识符，0 表示无效。
-    XMqttTopicFilter* wireTopic;         ///< 发线上的主题过滤器副本，条目拥有其所有权。
-    XMqttSubscription* subscription;    ///< 对应的公开订阅对象，借用指针。
+    uint16_t m_identifier;               ///< SUBSCRIBE/UNSUBSCRIBE 报文标识符，0 表示无效。
+    XMqttTopicFilter* m_wireTopic;       ///< 发线上的主题过滤器副本，条目拥有其所有权。
+    XMqttSubscription* m_subscription;   ///< 对应的公开订阅对象，借用指针。
     /* 紧凑标志位（位域优化：unsubscribePending 1 bit） */
-    uint32_t unsubscribePending : 1;     ///< 是否已发送取消订阅并等待 UNSUBACK。
+    uint32_t m_unsubscribePending : 1;   ///< 是否已发送取消订阅并等待 UNSUBACK。
 } XMqttSubscriptionEntry;
 
 /**
  * @brief 一条等待服务端 QoS 应答的出站 PUBLISH。
  * @details
  * QoS 1/2 发布在收到 PUBACK、PUBREC、PUBREL 或 PUBCOMP 前保留该记录；
- * stage 是实现内部的握手阶段值，不应被公开 API 或外部代码解释。
+ * m_stage 是实现内部的握手阶段值，不应被公开 API 或外部代码解释。
  */
 typedef struct XMqttPendingPublish {
-    uint16_t identifier;                 ///< PUBLISH 报文标识符。
+    uint16_t m_identifier;               ///< PUBLISH 报文标识符。
     /* 紧凑标志位（位域优化：qos 2 bit + stage 2 bit） */
-    uint32_t qos : 2;                    ///< 发布时使用的 QoS 等级（1 或 2）。
-    uint32_t stage : 2;                  ///< 当前 QoS 握手阶段，取值由协议实现维护。
+    uint32_t m_qos : 2;                  ///< 发布时使用的 QoS 等级（1 或 2）。
+    uint32_t m_stage : 2;                ///< 当前 QoS 握手阶段，取值由协议实现维护。
 } XMqttPendingPublish;
 
 /**
  * @brief MQTT 主题别名表中的一项。
  * @details
- * MQTT 5.0 允许用整数别名替代重复的主题名。topic 为拥有的字符串副本；
- * receiveAliases 和 publishAliases 分别对应入站与出站方向。
+ * MQTT 5.0 允许用整数别名替代重复的主题名。m_topic 为拥有的字符串副本；
+ * m_receiveAliases 和 m_publishAliases 分别对应入站与出站方向。
  */
 typedef struct XMqttTopicAliasEntry {
-    uint16_t alias;                      ///< MQTT 主题别名，0 不作为有效别名使用。
-    XString* topic;                      ///< 与别名绑定的主题名，条目拥有其所有权。
+    uint16_t m_alias;                    ///< MQTT 主题别名，0 不作为有效别名使用。
+    XString* m_topic;                    ///< 与别名绑定的主题名，条目拥有其所有权。
 } XMqttTopicAliasEntry;
 
 /**
@@ -58,21 +66,21 @@ typedef struct XMqttTopicAliasEntry {
  * @warning 该结构不是公开 API，字段布局可随协议实现变化。
  */
 struct XMqttClientPrivate {
-    XByteArray* input;                   ///< 尚未组成完整 MQTT 报文的入站字节缓存。
-    XVector* subscriptions;              ///< XMqttSubscriptionEntry 数组，跟踪订阅请求。
-    XVector* pendingPublishes;           ///< XMqttPendingPublish 数组，跟踪 QoS 发布请求。
-    XVector* incomingQos2;               ///< 已收到但尚未完成 PUBREL 的入站 QoS 2 标识符。
-    XVector* receiveAliases;             ///< 服务端到客户端方向的 MQTT 5.0 主题别名表。
-    XVector* publishAliases;             ///< 客户端到服务端方向的 MQTT 5.0 主题别名表。
-    uint16_t nextPacketIdentifier;       ///< 下一个待分配的报文标识符，自动跳过 0 和占用值。
-    XTimerId keepAliveTimer;             ///< 自动保活定时器 ID，无定时器时为 XTIMER_INVALID_ID。
-    unsigned int pingTimeout;            ///< 已发出 PINGREQ 后的等待标志/超时状态。
+    XByteArray* m_input;                 ///< 尚未组成完整 MQTT 报文的入站字节缓存。
+    XVector* m_subscriptions;            ///< XMqttSubscriptionEntry 数组，跟踪订阅请求。
+    XVector* m_pendingPublishes;         ///< XMqttPendingPublish 数组，跟踪 QoS 发布请求。
+    XVector* m_incomingQos2;             ///< 已收到但尚未完成 PUBREL 的入站 QoS 2 标识符。
+    XVector* m_receiveAliases;           ///< 服务端到客户端方向的 MQTT 5.0 主题别名表。
+    XVector* m_publishAliases;           ///< 客户端到服务端方向的 MQTT 5.0 主题别名表。
+    uint16_t m_nextPacketIdentifier;     ///< 下一个待分配的报文标识符，自动跳过 0 和占用值。
+    XTimerId m_keepAliveTimer;           ///< 自动保活定时器 ID，无定时器时为 XTIMER_INVALID_ID。
+    unsigned int m_pingTimeout;          ///< 已发出 PINGREQ 后的等待标志/超时状态。
     /* 紧凑标志位（位域优化：5 个连接状态开关各 1 bit） */
-    uint32_t ownsTransport : 1;          ///< 是否由客户端负责释放内部创建的传输对象。
-    uint32_t encryptedRequested : 1;     ///< 是否通过加密连接入口请求了 TLS 传输。
-    uint32_t connectPacketSent : 1;      ///< 本次连接是否已经发送 CONNECT，避免重复发送。
-    uint32_t disconnectRequested : 1;    ///< 是否已经请求主动断开并等待传输层结束。
-    uint32_t processingInput : 1;        ///< 是否正在解析输入，防止 readyRead 重入解析器。
+    uint32_t m_ownsTransport : 1;        ///< 是否由客户端负责释放内部创建的传输对象。
+    uint32_t m_encryptedRequested : 1;   ///< 是否通过加密连接入口请求了 TLS 传输。
+    uint32_t m_connectPacketSent : 1;    ///< 本次连接是否已经发送 CONNECT，避免重复发送。
+    uint32_t m_disconnectRequested : 1;  ///< 是否已经请求主动断开并等待传输层结束。
+    uint32_t m_processingInput : 1;      ///< 是否正在解析输入，防止 readyRead 重入解析器。
 };
 
 /**
@@ -175,4 +183,10 @@ void XMqttProtocol_fail(XMqttClient* client, XMqttClient_Error error);
  */
 void XMqttProtocol_timerEvent(XMqttClient* client, XTimerEvent* event);
 
+#endif /* XMQTT_CLIENT_ON */
+#endif /* XMQTT_ON */
+
+#ifdef __cplusplus
+}
 #endif
+#endif /* XMQTTCLIENT_PROTECTED_H */

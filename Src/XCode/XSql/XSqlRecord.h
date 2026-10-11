@@ -32,7 +32,7 @@ typedef struct XSqlRecord {
 XVtable* XSqlRecord_class_init(void);
 /** @brief 初始化空记录。 @param record 待初始化记录；不能为 NULL。 @return 无；对象进入可析构的空记录状态。 */
 void XSqlRecord_init(XSqlRecord* record);
-/** @brief 创建空记录。 @return 新记录所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
+/** @brief 创建空记录。 @param memory 内存类型。 @return 新记录所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
 XSqlRecord* XSqlRecord_create_ex(XMemoryType memory);
 /** @brief 深拷贝创建记录。 @param other 源记录；借用，不能为 NULL。 @return 新记录所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
 XSqlRecord* XSqlRecord_create_copy(const XSqlRecord* other);

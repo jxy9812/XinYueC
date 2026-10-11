@@ -91,7 +91,7 @@ XAbstractSheet* XWorkbook_sheet(const XWorkbook* self, int index)
     return *(XAbstractSheet**)XVector_at_base(self->m_sheets, (size_t)index);
 }
 
-static bool workbook_sheet_name_exists(const XWorkbook* self, const XString* name,
+static bool XWorkbook_workbook_sheet_name_exists(const XWorkbook* self, const XString* name,
                                        const XAbstractSheet* ignored)
 {
     if (!self || !self->m_sheets || !name) return false;
@@ -103,18 +103,18 @@ static bool workbook_sheet_name_exists(const XWorkbook* self, const XString* nam
     return false;
 }
 
-static XString* workbook_default_sheet_name(const XWorkbook* self)
+static XString* XWorkbook_workbook_default_sheet_name(const XWorkbook* self)
 {
     for (int suffix = 1; suffix < INT32_MAX; ++suffix) {
         XString* candidate = XString_create_fmt_utf8("Sheet%d", suffix);
         if (!candidate) return NULL;
-        if (!workbook_sheet_name_exists(self, candidate, NULL)) return candidate;
+        if (!XWorkbook_workbook_sheet_name_exists(self, candidate, NULL)) return candidate;
         XClassDelete(candidate);
     }
     return NULL;
 }
 
-static XString* workbook_copy_sheet_name(const XWorkbook* self, const XString* sourceName)
+static XString* XWorkbook_workbook_copy_sheet_name(const XWorkbook* self, const XString* sourceName)
 {
     for (int suffix = 1; suffix < INT32_MAX; ++suffix) {
         char suffixText[32];
@@ -128,7 +128,7 @@ static XString* workbook_copy_sheet_name(const XWorkbook* self, const XString* s
         if (!candidate) return NULL;
         XString_append_utf8(candidate, suffixText);
         if (XUtility_isValidSheetName(candidate) &&
-            !workbook_sheet_name_exists(self, candidate, NULL)) return candidate;
+            !XWorkbook_workbook_sheet_name_exists(self, candidate, NULL)) return candidate;
         XClassDelete(candidate);
     }
     return NULL;
@@ -142,11 +142,11 @@ XAbstractSheet* XWorkbook_addSheet(XWorkbook* self, const XString* name, XAbstra
     XString* tempName = NULL;
     const XString* useName = name;
     if (!name || XString_size_base((XString*)name) == 0) {
-        tempName = workbook_default_sheet_name(self);
+        tempName = XWorkbook_workbook_default_sheet_name(self);
         useName = tempName;
     }
     if (!useName || !XUtility_isValidSheetName(useName) ||
-        workbook_sheet_name_exists(self, useName, NULL)) {
+        XWorkbook_workbook_sheet_name_exists(self, useName, NULL)) {
         if (tempName) XClassDelete(tempName);
         return NULL;
     }
@@ -193,7 +193,7 @@ bool XWorkbook_renameSheet(XWorkbook* self, int index, const XString* name)
 {
     XAbstractSheet* sheet = XWorkbook_sheet(self, index);
     if (!sheet || !name || !XUtility_isValidSheetName(name) ||
-        workbook_sheet_name_exists(self, name, sheet)) return false;
+        XWorkbook_workbook_sheet_name_exists(self, name, sheet)) return false;
     XAbstractSheet_setSheetName(sheet, name);
     return true;
 }
@@ -218,11 +218,11 @@ bool XWorkbook_copySheet(XWorkbook* self, int index, const XString* newName)
     XString* tempName = NULL;
     const XString* useName = newName;
     if (!newName || XString_size_base((XString*)newName) == 0) {
-        tempName = workbook_copy_sheet_name(self, src->m_sheetName);
+        tempName = XWorkbook_workbook_copy_sheet_name(self, src->m_sheetName);
         useName = tempName;
     }
     if (!useName || !XUtility_isValidSheetName(useName) ||
-        workbook_sheet_name_exists(self, useName, NULL)) {
+        XWorkbook_workbook_sheet_name_exists(self, useName, NULL)) {
         if (tempName) XClassDelete(tempName);
         return false;
     }
@@ -445,7 +445,7 @@ XAbstractSheet* XWorkbook_addSheetEx(XWorkbook* self, const XString* name, int s
 
 /* ========== XML 序列化 ========== */
 
-static void workbookAppendEscaped(XByteArray* output, const XString* value)
+static void XWorkbook_workbookAppendEscaped(XByteArray* output, const XString* value)
 {
     const char* text = value ? XString_toUtf8(value) : "";
     if (!text) return;
@@ -461,7 +461,7 @@ static void workbookAppendEscaped(XByteArray* output, const XString* value)
     }
 }
 
-static const XString* workbookAttribute(const XXmlStreamAttributes* attributes, const char* name)
+static const XString* XWorkbook_workbookAttribute(const XXmlStreamAttributes* attributes, const char* name)
 {
     if (!attributes || !name) return NULL;
     XString_Init_Utf8(attributeName, name);
@@ -476,7 +476,7 @@ static const XString* workbookAttribute(const XXmlStreamAttributes* attributes, 
     return value;
 }
 
-static int workbookRidFromString(const XString* value)
+static int XWorkbook_workbookRidFromString(const XString* value)
 {
     const char* text = value ? XString_toUtf8(value) : NULL;
     if (!text) return -1;
@@ -486,7 +486,7 @@ static int workbookRidFromString(const XString* value)
     return end && *end == '\0' && rid >= 0 && rid <= INT32_MAX ? (int)rid : -1;
 }
 
-static void workbookClearSheets(XWorkbook* self)
+static void XWorkbook_workbookClearSheets(XWorkbook* self)
 {
     while (self && XWorkbook_sheetCount(self) > 0) XWorkbook_deleteSheet(self, 0);
     if (self) {
@@ -495,7 +495,7 @@ static void workbookClearSheets(XWorkbook* self)
     }
 }
 
-static void workbookClearDefinedNames(XWorkbook* self)
+static void XWorkbook_workbookClearDefinedNames(XWorkbook* self)
 {
     if (!self || !self->m_defineNames) return;
     while (XVector_size_base(self->m_defineNames) > 0) {
@@ -553,7 +553,7 @@ bool XWorkbook_saveToXmlData(const XWorkbook* self, uint8_t** outData, size_t* o
          */
         int sheetRid = sheet->m_rid >= 0 ? sheet->m_rid : (i + 1);
         XByteArray_append_utf8(buf, "    <sheet name=\"");
-        workbookAppendEscaped(buf, sheet->m_sheetName);
+        XWorkbook_workbookAppendEscaped(buf, sheet->m_sheetName);
         snprintf(sheetEntry, sizeof(sheetEntry),
             "\" sheetId=\"%d\" r:id=\"rId%d\" state=\"%s\"/>\n",
             sheet->m_sheetId, sheetRid, sheetState);
@@ -569,11 +569,11 @@ bool XWorkbook_saveToXmlData(const XWorkbook* self, uint8_t** outData, size_t* o
             XWorkbook_DefineName* dn = (XWorkbook_DefineName*)XVector_at_base(self->m_defineNames, i);
             if (!dn || !dn->m_name) continue;
             XByteArray_append_utf8(buf, "    <definedName name=\"");
-            workbookAppendEscaped(buf, dn->m_name);
+            XWorkbook_workbookAppendEscaped(buf, dn->m_name);
             XByteArray_append_utf8(buf, "\"");
             if (dn->m_comment && XString_size_base(dn->m_comment) > 0) {
                 XByteArray_append_utf8(buf, " comment=\"");
-                workbookAppendEscaped(buf, dn->m_comment);
+                XWorkbook_workbookAppendEscaped(buf, dn->m_comment);
                 XByteArray_append_utf8(buf, "\"");
             }
             if (dn->m_scope && XString_size_base(dn->m_scope) > 0) {
@@ -589,7 +589,7 @@ bool XWorkbook_saveToXmlData(const XWorkbook* self, uint8_t** outData, size_t* o
                 }
             }
             XByteArray_append_utf8(buf, ">");
-            workbookAppendEscaped(buf, dn->m_formula);
+            XWorkbook_workbookAppendEscaped(buf, dn->m_formula);
             XByteArray_append_utf8(buf, "</definedName>\n");
         }
         XByteArray_append_utf8(buf, "  </definedNames>\n");
@@ -638,8 +638,8 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
         return false;
     }
 
-    workbookClearSheets(self);
-    workbookClearDefinedNames(self);
+    XWorkbook_workbookClearSheets(self);
+    XWorkbook_workbookClearDefinedNames(self);
     XXmlStreamReader_addData(reader, xml);
     while (!XXmlStreamReader_atEnd(reader)) {
         int token = XXmlStreamReader_readNext(reader);
@@ -649,19 +649,19 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
         if (!element) continue;
 
         if (XString_equals_utf8(element, "workbookPr", XChar_CaseSensitive)) {
-            const XString* value = workbookAttribute(attributes, "date1904");
+            const XString* value = XWorkbook_workbookAttribute(attributes, "date1904");
             self->m_date1904 = value &&
                 (XString_equals_utf8(value, "1", XChar_CaseSensitive) ||
                  XString_equals_utf8(value, "true", XChar_CaseInsensitive));
         } else if (XString_equals_utf8(element, "workbookView", XChar_CaseSensitive)) {
-            const XString* value = workbookAttribute(attributes, "activeTab");
+            const XString* value = XWorkbook_workbookAttribute(attributes, "activeTab");
             if (value) self->m_activeSheetIndex = XString_toInt(value, NULL, 10);
         } else if (XString_equals_utf8(element, "sheet", XChar_CaseSensitive)) {
-            const XString* name = workbookAttribute(attributes, "name");
-            const XString* id = workbookAttribute(attributes, "sheetId");
-            const XString* rid = workbookAttribute(attributes, "id");
-            const XString* type = workbookAttribute(attributes, "type");
-            const XString* state = workbookAttribute(attributes, "state");
+            const XString* name = XWorkbook_workbookAttribute(attributes, "name");
+            const XString* id = XWorkbook_workbookAttribute(attributes, "sheetId");
+            const XString* rid = XWorkbook_workbookAttribute(attributes, "id");
+            const XString* type = XWorkbook_workbookAttribute(attributes, "type");
+            const XString* state = XWorkbook_workbookAttribute(attributes, "state");
             if (!name) continue;
             XAbstractSheet_SheetType sheetType = type &&
                 XString_equals_utf8(type, "chartsheet", XChar_CaseInsensitive)
@@ -669,7 +669,7 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
             XAbstractSheet* sheet = XWorkbook_addSheet(self, name, sheetType);
             if (!sheet) continue;
             if (id) sheet->m_sheetId = XString_toInt(id, NULL, 10);
-            sheet->m_rid = workbookRidFromString(rid);
+            sheet->m_rid = XWorkbook_workbookRidFromString(rid);
             if (state && XString_equals_utf8(state, "veryHidden", XChar_CaseInsensitive))
                 sheet->m_sheetState = XAbstractSheet_SS_VeryHidden;
             else if (state && XString_equals_utf8(state, "hidden", XChar_CaseInsensitive))
@@ -678,9 +678,9 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
                 sheet->m_sheetState = XAbstractSheet_SS_Visible;
             if (sheet->m_sheetId >= self->m_nextSheetId) self->m_nextSheetId = sheet->m_sheetId + 1;
         } else if (XString_equals_utf8(element, "definedName", XChar_CaseSensitive)) {
-            const XString* nameAttr = workbookAttribute(attributes, "name");
-            const XString* commentAttr = workbookAttribute(attributes, "comment");
-            const XString* localSheetId = workbookAttribute(attributes, "localSheetId");
+            const XString* nameAttr = XWorkbook_workbookAttribute(attributes, "name");
+            const XString* commentAttr = XWorkbook_workbookAttribute(attributes, "comment");
+            const XString* localSheetId = XWorkbook_workbookAttribute(attributes, "localSheetId");
             XString* name = nameAttr ? XString_create_copy(nameAttr) : NULL;
             XString* comment = commentAttr ? XString_create_copy(commentAttr) : NULL;
             XString* scope = NULL;

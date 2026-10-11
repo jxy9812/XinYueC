@@ -10,7 +10,8 @@
 #include "XFileDescriptor.h"
 #include "XVariant.h"
 #include "XVarList.h"
-#include <stdlib.h>
+#include "XStringUtils.h"
+#include "XString.h"
 #include <string.h>
 
 /* 兼容旧 XFd 文件描述符的内部实现，不属于 XDevice 公共 API。 */
@@ -33,8 +34,8 @@ bool XDeviceFile_legacyUnmap(void* address, int64_t size);
 
 typedef struct XDeviceRegistryEntry
 {
-    char* m_className;   /**< 设备类别名（借用，指向设备虚函数表） */
-    XDevice* m_device;   /**< 已注册设备对象（借用） */
+    XString m_className;   /**< 设备类别名（对象拥有，注册时自设备类虚函数表名复制） */
+    XDevice* m_device;     /**< 已注册设备对象（借用） */
 } XDeviceRegistryEntry;
 
 static XDeviceRegistryEntry g_deviceRegistry[XDEVICE_MAX_DEVICES];
@@ -187,7 +188,7 @@ static bool VXDevice_control(XDevice* self, XDeviceContext* handle, uint32_t com
  * ============================================================================ */
 static XDeviceContext* XDevice_dispatchOpen(XDevice* self, const XDeviceOpenOptions* opts, int* err)
 {
-	if (ISNULL(self, "") || ISNULL(opts, "")) {
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(opts, "")) {
 		if (err) *err = (int)XDeviceError_InvalidArgument;
 		return NULL;
 	}
@@ -196,62 +197,62 @@ static XDeviceContext* XDevice_dispatchOpen(XDevice* self, const XDeviceOpenOpti
 
 static void XDevice_dispatchClose(XDevice* self, XDeviceContext* handle)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "")) return;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "")) return;
 	XClassGetVirtualFunc(self, EXDevice_Close, XDeviceCloseFn)(self, handle);
 }
 
 static int64_t XDevice_dispatchRead(XDevice* self, XDeviceContext* handle, void* buffer, int64_t size)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "") || ISNULL(buffer, "")) return -1;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "") || ISNULL(buffer, "")) return -1;
 	return XClassGetVirtualFunc(self, EXDevice_Read, XDeviceReadFn)(self, handle, buffer, size);
 }
 
 static int64_t XDevice_dispatchWrite(XDevice* self, XDeviceContext* handle, const void* data, int64_t size)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "") || ISNULL(data, "")) return -1;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "") || ISNULL(data, "")) return -1;
 	return XClassGetVirtualFunc(self, EXDevice_Write, XDeviceWriteFn)(self, handle, data, size);
 }
 
 static int64_t XDevice_dispatchSeek(XDevice* self, XDeviceContext* handle, int64_t offset, int whence)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "")) return -1;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "")) return -1;
 	return XClassGetVirtualFunc(self, EXDevice_Seek, XDeviceSeekFn)(self, handle, offset, whence);
 }
 
 static bool XDevice_dispatchFlush(XDevice* self, XDeviceContext* handle)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "")) return false;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "")) return false;
 	return XClassGetVirtualFunc(self, EXDevice_Flush, XDeviceFlushFn)(self, handle);
 }
 
 static bool XDevice_dispatchResize(XDevice* self, XDeviceContext* handle, int64_t size)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "")) return false;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "")) return false;
 	return XClassGetVirtualFunc(self, EXDevice_Resize, XDeviceResizeFn)(self, handle, size);
 }
 
 static bool XDevice_dispatchSetProperty(XDevice* self, XDeviceContext* handle, uint32_t property, const XVariant* value)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "") || ISNULL(value, "")) return false;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "") || ISNULL(value, "")) return false;
 	return XClassGetVirtualFunc(self, EXDevice_SetProperty, XDeviceSetPropertyFn)(self, handle, property, value);
 }
 
 static bool XDevice_dispatchGetProperty(XDevice* self, XDeviceContext* handle, uint32_t property, XVariant* value)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "") || ISNULL(value, "")) return false;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "") || ISNULL(value, "")) return false;
 	return XClassGetVirtualFunc(self, EXDevice_GetProperty, XDeviceGetPropertyFn)(self, handle, property, value);
 }
 
 static bool XDevice_dispatchQueryProperty(XDevice* self, XDeviceContext* handle, uint32_t property, XVariant* value)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "") || ISNULL(value, "")) return false;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "") || ISNULL(value, "")) return false;
 	return XClassGetVirtualFunc(self, EXDevice_QueryProperty, XDeviceQueryPropertyFn)(self, handle, property, value);
 }
 
 static bool XDevice_dispatchControl(XDevice* self, XDeviceContext* handle, uint32_t command,
                                     const XVarList* in, XVarList* out)
 {
-	if (ISNULL(self, "") || ISNULL(handle, "")) return false;
+	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || ISNULL(handle, "")) return false;
 	return XClassGetVirtualFunc(self, EXDevice_Control, XDeviceControlFn)(self, handle, command, in, out);
 }
 
@@ -275,14 +276,17 @@ bool XDevice_register(XDevice* device)
 
 	for (i = 0; i < g_deviceCount; ++i) {
 		if (g_deviceRegistry[i].m_device == device ||
-			(g_deviceRegistry[i].m_className &&
-			 strcmp(g_deviceRegistry[i].m_className, className) == 0)) {
+			XString_equals_utf8(&g_deviceRegistry[i].m_className, className,
+			                    XChar_CaseSensitive)) {
 			return false; /* 重复注册 */
 		}
 	}
 	if (g_deviceCount >= XDEVICE_MAX_DEVICES) return false;
 
-	g_deviceRegistry[g_deviceCount].m_className = (char*)className;
+	XString_init(&g_deviceRegistry[g_deviceCount].m_className);
+	if (!XString_append_utf8(&g_deviceRegistry[g_deviceCount].m_className,
+	                          className))
+		return false; /* 类名复制失败，不注册 */
 	g_deviceRegistry[g_deviceCount].m_device = device;
 	++g_deviceCount;
 	device->m_registered = true;
@@ -294,8 +298,8 @@ XDevice* XDevice_find(const char* className)
 	size_t i;
 	if (ISNULL(className, "") || className[0] == '\0') return NULL;
 	for (i = 0; i < g_deviceCount; ++i) {
-		if (g_deviceRegistry[i].m_className &&
-			strcmp(g_deviceRegistry[i].m_className, className) == 0) {
+		if (XString_equals_utf8(&g_deviceRegistry[i].m_className, className,
+		                        XChar_CaseSensitive)) {
 			return g_deviceRegistry[i].m_device;
 		}
 	}
@@ -343,35 +347,35 @@ XFd XDevice_openClass(const char* className, const XDeviceOpenOptions* opts, int
 	device = XDevice_find(className);
 	if (!device) {
 		/* 内置文件设备支持懒注册，保证 XDevice_open(XDeviceType_File, ...) 开箱即用。 */
-		if (strcmp(className, "file") == 0) {
+		if (XStrcmp(className, "file") == 0) {
 			XDeviceFile_register();
 			device = XDevice_find(className);
 		}
-		if (!device && strcmp(className, "socket") == 0) {
+		if (!device && XStrcmp(className, "socket") == 0) {
 			XDeviceNetwork_register();
 			device = XDevice_find(className);
 		}
-		if (!device && strcmp(className, "serial") == 0) {
+		if (!device && XStrcmp(className, "serial") == 0) {
 			XDeviceSerialPort_register();
 			device = XDevice_find(className);
 		}
-		if (!device && strcmp(className, "timer") == 0) {
+		if (!device && XStrcmp(className, "timer") == 0) {
 			XDeviceTimer_register();
 			device = XDevice_find(className);
 		}
-		if (!device && strcmp(className, "dir") == 0) {
+		if (!device && XStrcmp(className, "dir") == 0) {
 			XDeviceDir_register();
 			device = XDevice_find(className);
 		}
-		if (!device && strcmp(className, "console") == 0) {
+		if (!device && XStrcmp(className, "console") == 0) {
 			XDeviceConsole_register();
 			device = XDevice_find(className);
 		}
-		if (!device && strcmp(className, "usbhost") == 0) {
+		if (!device && XStrcmp(className, "usbhost") == 0) {
 			XDeviceUsbHost_register();
 			device = XDevice_find(className);
 		}
-		if (!device && strcmp(className, "usbgadget") == 0) {
+		if (!device && XStrcmp(className, "usbgadget") == 0) {
 			XDeviceUsbGadget_register();
 			device = XDevice_find(className);
 		}

@@ -613,7 +613,27 @@ typedef struct XStyleOption
     /* ---- 通用控件字段 ---- */
     const char* m_text;   /**< 文本（借用；可空）。 */
     uint32_t m_textColor; /**< 文本色（0=调色板决定）。 */
-    bool m_flat;          /**< 扁平（对标 flat）。 */
+    /* 标志位域组：无取址使用的 17 个 bool 连续合并为 1 位位域（每次绘制
+     * 在栈上填充的临时选项对象，逐字段语义不变，仅存储位合拢；
+     * m_checkable/m_checked/m_progressTextVisible/m_selected 按方案
+     * 保持 bool 不合并，仍在原逻辑位置）。 */
+    uint8_t m_flat : 1;   /**< 扁平（对标 flat）。 */
+    uint8_t m_progressInverted : 1; /**< 进度反向。 */
+    uint8_t m_tabSelected : 1; /**< 页签选中。 */
+    uint8_t m_horizontal : 1; /**< 水平方向。 */
+    uint8_t m_scrollSubLine : 1; /**< 绘制起始按钮（对标 SC_ScrollBarSubLine）。 */
+    uint8_t m_scrollAddLine : 1; /**< 绘制结束按钮（对标 SC_ScrollBarAddLine）。 */
+    uint8_t m_scrollActiveSub : 1; /**< 按下按钮（对标 activeSubControls 非空）。 */
+    uint8_t m_mouseOver : 1; /**< 悬停（冗余便捷）。 */
+    uint8_t m_spinFrame : 1; /**< 是否有边框（对标 frame）。 */
+    uint8_t m_spinActiveUp : 1; /**< 上按钮为活动子控件。 */
+    uint8_t m_spinActiveDown : 1; /**< 下按钮为活动子控件。 */
+    uint8_t m_dialWrapping : 1; /**< 环绕（对标 dialWrapping）。 */
+    uint8_t m_notchesVisible : 1; /**< 刻度可见（对标 subControls SC_DialTickmarks）。 */
+    uint8_t m_closable : 1; /**< 可关闭。 */
+    uint8_t m_movable : 1; /**< 可移动。 */
+    uint8_t m_floatable : 1; /**< 可浮动。 */
+    uint8_t m_showDecorationSelected : 1; /**< 装饰随选中高亮。 */
     bool m_checkable;     /**< 可勾选（GroupBox/按钮）。 */
     bool m_checked;       /**< 已勾选。 */
     /* ---- 按钮/复选/单选 ---- */
@@ -622,14 +642,11 @@ typedef struct XStyleOption
     int m_progressMin;    /**< 进度最小值。 */
     int m_progressMax;    /**< 进度最大值。 */
     int m_progressValue;  /**< 进度当前值。 */
-    bool m_progressInverted; /**< 进度反向。 */
     bool m_progressTextVisible; /**< 进度文本可见。 */
     /* ---- 页签 ---- */
     int m_tabPosition;    /**< 页签位置（0 上/1 下/2 左/3 右）。 */
     int m_tabIndex;       /**< 页签下标。 */
-    bool m_tabSelected;   /**< 页签选中。 */
     /* ---- 滚动条/滑块 ---- */
-    bool m_horizontal;    /**< 水平方向。 */
     int m_sliderMin;      /**< 滑块最小值。 */
     int m_sliderMax;      /**< 滑块最大值。 */
     int m_sliderValue;    /**< 滑块当前值。 */
@@ -637,29 +654,15 @@ typedef struct XStyleOption
     int m_sliderPageStep; /**< 滑块页步。 */
     int m_sliderTickInterval; /**< 刻度间隔值（0=自动，对标 tickInterval）。 */
     int m_sliderTickPosition; /**< 刻度位置：0 无/1 上/2 下/3 双侧。 */
-    bool m_scrollSubLine;     /**< 绘制起始按钮（对标 SC_ScrollBarSubLine）。 */
-    bool m_scrollAddLine;     /**< 绘制结束按钮（对标 SC_ScrollBarAddLine）。 */
-    bool m_scrollActiveSub;   /**< 按下按钮（对标 activeSubControls 非空）。 */
     /* ---- 菜单/表头 ---- */
     bool m_selected;      /**< 选中。 */
-    bool m_mouseOver;     /**< 悬停（冗余便捷）。 */
     /* ---- 微调框（对标 QStyleOptionSpinBox） ---- */
-    bool m_spinFrame;     /**< 是否有边框（对标 frame）。 */
     int m_spinStepEnabled; /**< 步进使能位：0x1 上/0x2 下（对标 stepEnabled）。 */
     int m_spinSymbols;    /**< 按钮符号：0 上下箭头/1 加减号（对标 buttonSymbols）。 */
-    bool m_spinActiveUp;  /**< 上按钮为活动子控件。 */
-    bool m_spinActiveDown; /**< 下按钮为活动子控件。 */
     /* ---- 表盘（对标 QStyleOptionSlider 的 dial 子集） ---- */
-    bool m_dialWrapping;  /**< 环绕（对标 dialWrapping）。 */
-    bool m_notchesVisible; /**< 刻度可见（对标 subControls SC_DialTickmarks）。 */
     int m_notchSize;      /**< 刻度间隔值（对标 tickInterval）。 */
     int m_pageStep;       /**< 大刻度步长（对标 pageStep）。 */
-    /* ---- 停靠/工具 ---- */
-    bool m_closable;      /**< 可关闭。 */
-    bool m_movable;       /**< 可移动。 */
-    bool m_floatable;     /**< 可浮动。 */
     /* ---- 条目视图（对标 QStyleOptionViewItem 子集） ---- */
-    bool m_showDecorationSelected; /**< 装饰随选中高亮。 */
     uint32_t m_viewFeatures; /**< 条目特性位：0x1 勾选指示/0x2 装饰/0x4 文本。 */
     int m_checkState2;    /**< 条目勾选状态（0 未选/1 部分/2 选中）。 */
     XIcon* m_icon;        /**< 条目图标（借用；可空）。 */

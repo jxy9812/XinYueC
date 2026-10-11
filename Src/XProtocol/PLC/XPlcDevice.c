@@ -4,8 +4,8 @@
 #if XPLC_CORE_ON
 #include "XPlcDevice.h"
 #include "XPlcDevice_Protected.h"
-#include "XMemory.h"
 #include <string.h>
+#include "XMemory.h"
 
 // =============== 虚函数前置声明 ===============
 static void VXPlcDevice_deinit(XPlcDevice* dev);
@@ -25,6 +25,32 @@ static const char* errorToString(XPlcDevice_Error err) {
     case XPlcDevice_InvalidResponseError: return "Invalid response";
     default: return "Undefined error";
     }
+}
+
+// =============== 析构函数 ===============
+static void VXPlcDevice_deinit(XPlcDevice* dev)
+{
+    if (!dev) return;
+
+    // 释放错误字符串
+    if (dev->m_errorString) {
+        XClassDelete((XClass*)dev->m_errorString);
+        dev->m_errorString = NULL;
+    }
+
+    // 释放参数数组
+    for (int i = 0; i < XPlcDevice_ParameterCount; i++) {
+        if (dev->m_params[i]) {
+            XClassDelete((XClass*)dev->m_params[i]);
+            dev->m_params[i] = NULL;
+        }
+    }
+
+    // 注意：m_ioDevice 由子类管理，这里不释放
+    dev->m_ioDevice = NULL;
+
+    // 调用基类析构
+    XClass_Deinit_Parent(XObject, (XObject*)dev);
 }
 
 // =============== 类初始化 ===============
@@ -73,32 +99,6 @@ void XPlcDevice_init(XPlcDevice* dev)
     for (int i = 0; i < XPlcDevice_ParameterCount; i++) {
         dev->m_params[i] = NULL;
     }
-}
-
-// =============== 析构函数 ===============
-static void VXPlcDevice_deinit(XPlcDevice* dev)
-{
-    if (!dev) return;
-
-    // 释放错误字符串
-    if (dev->m_errorString) {
-        XClassDelete((XClass*)dev->m_errorString);
-        dev->m_errorString = NULL;
-    }
-
-    // 释放参数数组
-    for (int i = 0; i < XPlcDevice_ParameterCount; i++) {
-        if (dev->m_params[i]) {
-            XClassDelete((XClass*)dev->m_params[i]);
-            dev->m_params[i] = NULL;
-        }
-    }
-
-    // 注意：m_ioDevice 由子类管理，这里不释放
-    dev->m_ioDevice = NULL;
-
-    // 调用基类析构
-    XClass_Deinit_Parent(XObject, (XObject*)dev);
 }
 
 // =============== 连接参数 API ===============
@@ -258,7 +258,7 @@ void XPlcDevice_setError(XPlcDevice* dev, XPlcDevice_Error error, const char* er
 // =============== 虚函数调用接口 ===============
 bool XPlcDevice_open_base(XPlcDevice* dev)
 {
-    if (!dev) return false;
+    if (!dev || !XClassGetVtable(dev)) return false;
 
     bool (*open_func)(XPlcDevice*) = XClassGetVirtualFunc(dev, EXPlcDevice_Open, bool(*)(XPlcDevice*));
     if (open_func) {
@@ -269,7 +269,7 @@ bool XPlcDevice_open_base(XPlcDevice* dev)
 
 void XPlcDevice_close_base(XPlcDevice* dev)
 {
-    if (!dev) return;
+    if (!dev || !XClassGetVtable(dev)) return;
 
     void (*close_func)(XPlcDevice*) = XClassGetVirtualFunc(dev, EXPlcDevice_Close, void(*)(XPlcDevice*));
     if (close_func) {

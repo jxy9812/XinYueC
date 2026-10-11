@@ -4,13 +4,10 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XUrl.h"
+#include <string.h>
+#include <stdint.h>
 #include "XMemory.h"
 #include "XStringUtils.h"
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <ctype.h>
-#include <stdint.h>
 
 /* ========== 内部 URL 解析函数 ========== */
 
@@ -19,7 +16,7 @@
  * @param c    十六进制字符
  * @return     数值（0~15），无效返回 -1
  */
-static int hexCharToInt(char c)
+static int XUrl_hexCharToInt(char c)
 {
     if (c >= '0' && c <= '9') return c - '0';
     if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -40,9 +37,9 @@ static int hexCharToInt(char c)
  * @param c    字符
  * @return     非保留字符返回 true
  */
-static bool isUnreservedChar(char c)
+static bool XUrl_isUnreservedChar(char c)
 {
-    return isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~';
+    return XIsAlnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~';
 }
 
 /**
@@ -51,14 +48,14 @@ static bool isUnreservedChar(char c)
  * @param out  输出缓冲区（至少 4 字节）
  * @return     编码后的字符数
  */
-static int percentEncode(char c, char* out)
+static int XUrl_percentEncode(char c, char* out)
 {
-    if (isUnreservedChar(c)) {
+    if (XUrl_isUnreservedChar(c)) {
         out[0] = c;
         out[1] = '\0';
         return 1;
     }
-    snprintf(out, 4, "%%%02X", (unsigned char)c);
+    XSnprintf(out, 4, "%%%02X", (unsigned char)c);
     return 3;
 }
 
@@ -68,13 +65,13 @@ static int percentEncode(char c, char* out)
  * @param dst  输出缓冲区
  * @return     解码后的字符数
  */
-static int percentDecode(const char* src, char* dst)
+static int XUrl_percentDecode(const char* src, char* dst)
 {
     int i = 0, j = 0;
     while (src[i]) {
         if (src[i] == '%' && src[i+1] && src[i+2]) {
-            int hi = hexCharToInt(src[i+1]);
-            int lo = hexCharToInt(src[i+2]);
+            int hi = XUrl_hexCharToInt(src[i+1]);
+            int lo = XUrl_hexCharToInt(src[i+2]);
             if (hi >= 0 && lo >= 0) {
                 dst[j++] = (char)((hi << 4) | lo);
                 i += 3;
@@ -93,7 +90,7 @@ static int percentDecode(const char* src, char* dst)
  * @param urlString URL 字符串
  * @param mode 解析模式
  */
-static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
+static void XUrl_parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
 {
     if (!self || !urlString) return;
     
@@ -109,15 +106,15 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
     self->m_isValid = true;
 
     const char* p = urlString;
-    const char* end = p + strlen(p);
+    const char* end = p + XStrlen(p);
     
     /* 1. 解析方案（scheme） */
-    const char* schemeEnd = strstr(p, "://");
+    const char* schemeEnd = XStrstr(p, "://");
     if (schemeEnd && schemeEnd > p) {
         char scheme[64];
         size_t len = (size_t)(schemeEnd - p);
         if (len < sizeof(scheme)) {
-            strncpy(scheme, p, len);
+            XStrncpy(scheme, p, len);
             scheme[len] = '\0';
             XString_append_utf8(self->m_scheme, scheme);
         }
@@ -126,9 +123,9 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
     
     /* 2. 解析权限部分（authority = userinfo@host:port） */
     const char* pathStart = NULL;
-    const char* slashPos = strchr(p, '/');
-    const char* queryPos = strchr(p, '?');
-    const char* fragPos = strchr(p, '#');
+    const char* slashPos = XStrchr(p, '/');
+    const char* queryPos = XStrchr(p, '?');
+    const char* fragPos = XStrchr(p, '#');
     
     /* 查找路径开始位置 */
     if (slashPos) {
@@ -168,8 +165,8 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
                 size_t ulen = (size_t)(colonPos - p);
                 size_t plen = (size_t)(atPos - colonPos - 1);
                 if (ulen < sizeof(userName) && plen < sizeof(password)) {
-                    strncpy(userName, p, ulen); userName[ulen] = '\0';
-                    strncpy(password, colonPos + 1, plen); password[plen] = '\0';
+                    XStrncpy(userName, p, ulen); userName[ulen] = '\0';
+                    XStrncpy(password, colonPos + 1, plen); password[plen] = '\0';
                     XString_append_utf8(self->m_userName, userName);
                     XString_append_utf8(self->m_password, password);
                 }
@@ -178,7 +175,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
                 char userName[256];
                 size_t ulen = (size_t)(atPos - p);
                 if (ulen < sizeof(userName)) {
-                    strncpy(userName, p, ulen); userName[ulen] = '\0';
+                    XStrncpy(userName, p, ulen); userName[ulen] = '\0';
                     XString_append_utf8(self->m_userName, userName);
                 }
             }
@@ -191,12 +188,12 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
         
         /* IPv6 地址 */
         if (*hostStart == '[') {
-            const char* bracketEnd = strchr(hostStart, ']');
+            const char* bracketEnd = XStrchr(hostStart, ']');
             if (bracketEnd && bracketEnd < hostEnd) {
                 char host[256];
                 size_t hlen = (size_t)(bracketEnd - hostStart - 1);
                 if (hlen < sizeof(host)) {
-                    strncpy(host, hostStart + 1, hlen); host[hlen] = '\0';
+                    XStrncpy(host, hostStart + 1, hlen); host[hlen] = '\0';
                     XString_append_utf8(self->m_host, host);
                 }
                 hostStart = bracketEnd + 1;
@@ -218,18 +215,18 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
                 char host[256];
                 size_t hlen = (size_t)(portColon - hostStart);
                 if (hlen < sizeof(host)) {
-                    strncpy(host, hostStart, hlen); host[hlen] = '\0';
+                    XStrncpy(host, hostStart, hlen); host[hlen] = '\0';
                     XString_append_utf8(self->m_host, host);
                 }
             }
-            self->m_port = atoi(portColon + 1);
+            self->m_port = (int)XStrtol(portColon + 1, NULL, 10);
         } else {
             /* 没有端口，只有主机 */
             if (hostStart < hostEnd) {
                 char host[256];
                 size_t hlen = (size_t)(hostEnd - hostStart);
                 if (hlen < sizeof(host)) {
-                    strncpy(host, hostStart, hlen); host[hlen] = '\0';
+                    XStrncpy(host, hostStart, hlen); host[hlen] = '\0';
                     XString_append_utf8(self->m_host, host);
                 }
             }
@@ -244,7 +241,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
             char path[4096];
             size_t plen = (size_t)(pathEnd - p);
             if (plen < sizeof(path)) {
-                strncpy(path, p, plen); path[plen] = '\0';
+                XStrncpy(path, p, plen); path[plen] = '\0';
                 XString_append_utf8(self->m_path, path);
             }
         }
@@ -256,7 +253,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
             char path[4096];
             size_t plen = (size_t)(pathEnd - p);
             if (plen < sizeof(path)) {
-                strncpy(path, p, plen); path[plen] = '\0';
+                XStrncpy(path, p, plen); path[plen] = '\0';
                 XString_append_utf8(self->m_path, path);
             }
         }
@@ -270,7 +267,7 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
             char query[4096];
             size_t qlen = (size_t)(qEnd - queryPos - 1);
             if (qlen < sizeof(query)) {
-                strncpy(query, queryPos + 1, qlen); query[qlen] = '\0';
+                XStrncpy(query, queryPos + 1, qlen); query[qlen] = '\0';
                 XString_append_utf8(self->m_query, query);
             }
         }
@@ -279,9 +276,9 @@ static void parseUrl(XUrl* self, const char* urlString, XUrl_ParsingMode mode)
     /* 5. 解析片段 */
     if (fragPos && fragPos + 1 < end) {
         char fragment[4096];
-        size_t flen = strlen(fragPos + 1);
+        size_t flen = XStrlen(fragPos + 1);
         if (flen < sizeof(fragment)) {
-            strncpy(fragment, fragPos + 1, flen); fragment[flen] = '\0';
+            XStrncpy(fragment, fragPos + 1, flen); fragment[flen] = '\0';
             XString_append_utf8(self->m_fragment, fragment);
         }
     }
@@ -457,7 +454,7 @@ void XUrl_setUrl(XUrl* self, const XString* urlString, XUrl_ParsingMode mode)
         self->m_isValid = false;
         return;
     }
-    parseUrl(self, XString_toUtf8(urlString), mode);
+    XUrl_parseUrl(self, XString_toUtf8(urlString), mode);
 }
 
 void XUrl_setEncodedUrl(XUrl* self, const XString* urlString, XUrl_ParsingMode mode)
@@ -465,7 +462,7 @@ void XUrl_setEncodedUrl(XUrl* self, const XString* urlString, XUrl_ParsingMode m
     if (!urlString) return;
     /* 先解码再设置 */
     char decoded[4096];
-    percentDecode(XString_toUtf8(urlString), decoded);
+    XUrl_percentDecode(XString_toUtf8(urlString), decoded);
     XUrl_setUrl(self, urlString, mode);
 }
 
@@ -618,12 +615,12 @@ void XUrl_setUserInfo(XUrl* self, const XString* userInfo)
     XString_clear_base(self->m_password);
     if (!userInfo) return;
     const char* utf8 = XString_toUtf8(userInfo);
-    const char* colon = strchr(utf8, ':');
+    const char* colon = XStrchr(utf8, ':');
     if (colon) {
         char user[256];
         size_t ulen = (size_t)(colon - utf8);
         if (ulen < sizeof(user)) {
-            strncpy(user, utf8, ulen); user[ulen] = '\0';
+            XStrncpy(user, utf8, ulen); user[ulen] = '\0';
             XString_append_utf8(self->m_userName, user);
         }
         XString_append_utf8(self->m_password, colon + 1);
@@ -658,7 +655,7 @@ const XString* XUrl_authority_const(const XUrl* self)
     }
     if (port >= 0) {
         char portBuf[16];
-        snprintf(portBuf, sizeof(portBuf), ":%d", port);
+        XSnprintf(portBuf, sizeof(portBuf), ":%d", port);
         XString_append_utf8(result, portBuf);
     }
     return result;
@@ -702,7 +699,7 @@ XString* XUrl_toEncoded(const XUrl* self)
     const char* utf8 = XString_toUtf8(plain);
     for (int i = 0; utf8[i]; i++) {
         char enc[4];
-        int n = percentEncode(utf8[i], enc);
+        int n = XUrl_percentEncode(utf8[i], enc);
         XString_append_utf8(result, enc);
     }
     XClassDelete(plain);
@@ -719,31 +716,31 @@ XString* XUrl_toDisplayString(const XUrl* self, int options)
     if (options & XUrl_RemoveScheme) {
         const XString* scheme = XUrl_scheme_const(self);
         if (scheme && !XString_isEmpty_base(scheme)) {
-            char* sp = strstr(temp, "://");
+            const char* sp = XStrstr(temp, "://");
             if (sp) {
-                size_t remain = strlen(sp + 3) + 1;
+                size_t remain = XStrlen(sp + 3) + 1;
                 memmove(temp, sp + 3, remain);
             }
         }
     }
     if (options & XUrl_RemovePassword) {
-        char* at = strchr(temp, '@');
-        char* colon = strchr(temp, ':');
+        const char* at = XStrchr(temp, '@');
+        const char* colon = XStrchr(temp, ':');
         if (colon && at && colon < at) {
-            size_t remain = strlen(at) + 1;
-            memmove(colon, at, remain);
+            size_t remain = XStrlen(at) + 1;
+            memmove(temp + (colon - temp), at, remain);
         }
     }
     if (options & XUrl_RemoveFragment) {
-        char* hash = strchr(temp, '#');
-        if (hash) *hash = '\0';
+        const char* hash = XStrchr(temp, '#');
+        if (hash) temp[hash - temp] = '\0';
     }
     if (options & XUrl_RemoveQuery) {
-        char* qm = strchr(temp, '?');
-        if (qm) *qm = '\0';
+        const char* qm = XStrchr(temp, '?');
+        if (qm) temp[qm - temp] = '\0';
     }
     if (options & XUrl_StripTrailingSlash) {
-        size_t len = strlen(temp);
+        size_t len = XStrlen(temp);
         if (len > 0 && temp[len-1] == '/') temp[len-1] = '\0';
     }
     XString_assign_utf8(result, temp);
@@ -754,6 +751,7 @@ XUrl* XUrl_fromLocalFile(const XString* localfile)
 {
     if (!localfile) return NULL;
     XString* urlBuf = XString_create();
+    if (!urlBuf) return NULL;
     XString_append_utf8(urlBuf, "file:///");
     XString_append(urlBuf, localfile);
     XUrl* url = XUrl_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, urlBuf, XUrl_TolerantMode);
@@ -766,23 +764,26 @@ const XString* XUrl_toLocalFile_const(const XUrl* self)
 {
     if (!self) return NULL;
     if (!XUrl_isLocalFile(self)) return NULL;
-    const XString* path = XUrl_path_const(self);
-    if (!path) return NULL;
-    const char* utf8 = XString_toUtf8(path);
-    if (utf8[0] == '/') utf8++;
-    return XString_create_utf8(utf8);
+    /* _const 语义：返回内部 m_path 借用指针（禁止释放），不新建对象；
+       路径保留原始形式（含前导 '/'，对齐 QUrl::toLocalFile）。 */
+    return XUrl_path_const(self);
 }
 
 void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
 {
     if (!self || !out) return;
-    if (!relative || XString_isEmpty_base(relative)) {
+    /* out 未初始化（vtable 为空）时兜底 init（同 VXUrl_copy/move 约定）：
+       已初始化的 out 不再重复 init 覆盖旧成员，未初始化的 out 也保证
+       后续 XClassCopy/setUrl 不会解引用未初始化成员。 */
+    if (XClassIsVtableNull(out)) {
         XUrl_init(out);
+    }
+    if (!relative || XString_isEmpty_base(relative)) {
         XClassCopy(out, self);
         return;
     }
     const char* relUtf8 = XString_toUtf8(relative);
-    if (strstr(relUtf8, "://")) {
+    if (XStrstr(relUtf8, "://")) {
         XUrl_setUrl(out, relative, XUrl_TolerantMode);
         return;
     }
@@ -791,9 +792,9 @@ void XUrl_resolved(const XUrl* self, const XString* relative, XUrl* out)
     char* baseUtf8 = XStrdup(XString_toUtf8(base));
     XClassDelete(base);
     if (!baseUtf8) return;
-    char* lastSlash = strrchr(baseUtf8, '/');
-    size_t baseLength = strlen(baseUtf8);
-    size_t relativeLength = strlen(relUtf8);
+    const char* lastSlash = XStrrchr(baseUtf8, '/');
+    size_t baseLength = XStrlen(baseUtf8);
+    size_t relativeLength = XStrlen(relUtf8);
     size_t prefixLength;
     bool hasDirectoryPrefix = lastSlash && lastSlash > baseUtf8 + 6;
     if (hasDirectoryPrefix)
@@ -835,12 +836,12 @@ XString* XUrl_toPercentEncoding(const XString* input, const XString* exclude, co
     for (int i = 0; inUtf8[i]; i++) {
         char c = inUtf8[i];
         bool shouldEncode = true;
-        if (isUnreservedChar(c)) shouldEncode = false;
-        if (exUtf8 && strchr(exUtf8, c)) shouldEncode = false;
-        if (inUtf8Inc && strchr(inUtf8Inc, c)) shouldEncode = true;
+        if (XUrl_isUnreservedChar(c)) shouldEncode = false;
+        if (exUtf8 && XStrchr(exUtf8, c)) shouldEncode = false;
+        if (inUtf8Inc && XStrchr(inUtf8Inc, c)) shouldEncode = true;
         if (shouldEncode) {
             char enc[4];
-            percentEncode(c, enc);
+            XUrl_percentEncode(c, enc);
             XString_append_utf8(result, enc);
         } else {
             char str[2] = {c, '\0'};
@@ -853,7 +854,7 @@ XString* XUrl_fromPercentEncoding(const XString* input)
 {
     if (!input) return NULL;
     char decoded[4096];
-    percentDecode(XString_toUtf8(input), decoded);
+    XUrl_percentDecode(XString_toUtf8(input), decoded);
     return XString_create_utf8(decoded);
 }
 
@@ -875,9 +876,21 @@ bool XUrl_equals(const XUrl* a, const XUrl* b)
 void XUrl_swap(XUrl* a, XUrl* b)
 {
     if (!a || !b) return;
-    XUrl tmp = *a;
-    *a = *b;
-    *b = tmp;
-    XClassSetVtable(a, XUrl);
-    XClassSetVtable(b, XUrl);
+    /* 逐成员交换对象自有资源（9 个 XString* 与值成员）；整体结构体赋值会连同
+       m_class 的分配器/堆所有权标记一起搬运，swap 后 XClassDelete 将按错误的
+       分配器释放对方资源，故 m_class 保持原样，仅交换成员指针完成所有权转移。 */
+    XString* tmpString;
+    int tmpPort;
+    bool tmpValid;
+    tmpString = a->m_scheme;    a->m_scheme = b->m_scheme;       b->m_scheme = tmpString;
+    tmpString = a->m_userName;  a->m_userName = b->m_userName;   b->m_userName = tmpString;
+    tmpString = a->m_password;  a->m_password = b->m_password;   b->m_password = tmpString;
+    tmpString = a->m_host;      a->m_host = b->m_host;           b->m_host = tmpString;
+    tmpString = a->m_path;      a->m_path = b->m_path;           b->m_path = tmpString;
+    tmpString = a->m_query;     a->m_query = b->m_query;         b->m_query = tmpString;
+    tmpString = a->m_fragment;  a->m_fragment = b->m_fragment;   b->m_fragment = tmpString;
+    tmpString = a->m_userInfo;  a->m_userInfo = b->m_userInfo;   b->m_userInfo = tmpString;
+    tmpString = a->m_authority; a->m_authority = b->m_authority; b->m_authority = tmpString;
+    tmpPort = a->m_port;        a->m_port = b->m_port;           b->m_port = tmpPort;
+    tmpValid = a->m_isValid;    a->m_isValid = b->m_isValid;     b->m_isValid = tmpValid;
 }

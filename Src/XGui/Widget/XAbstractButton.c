@@ -661,7 +661,7 @@ void XAbstractButton_animateClick(XAbstractButton* self)
 
 /* ==================== 保护虚函数 ==================== */
 
-void XAbstractButton_checkStateSet(XAbstractButton* self)
+static void VXAbstractButton_checkStateSet(XAbstractButton* self)
 {
     (void)self;
 }
@@ -670,7 +670,7 @@ void XAbstractButton_checkStateSet_base(XAbstractButton* self)
 {
     XAbstractButtonCheckStateSetSlot slot;
 
-    if (!self || !XClassGetVtable(self) ||
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") ||
         XVtable_size(XClassGetVtable(self)) <=
             EXAbstractButton_CheckStateSet) {
         return;
@@ -692,7 +692,7 @@ void XAbstractButton_nextCheckState_base(XAbstractButton* self)
 {
     XAbstractButtonNextCheckStateSlot slot;
 
-    if (!self || !XClassGetVtable(self) ||
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") ||
         XVtable_size(XClassGetVtable(self)) <=
             EXAbstractButton_NextCheckState) {
         return;
@@ -719,7 +719,7 @@ bool XAbstractButton_hitButton_base(const XAbstractButton* self,
 {
     XAbstractButtonHitButtonSlot slot;
 
-    if (!self || !pos || !XClassGetVtable(self) ||
+    if (ISNULL(self, "") || !pos || ISNULL(XClassGetVtable(self), "") ||
         XVtable_size(XClassGetVtable(self)) <= EXAbstractButton_HitButton) {
         return false;
     }
@@ -728,7 +728,7 @@ bool XAbstractButton_hitButton_base(const XAbstractButton* self,
     return slot ? slot(self, pos) : false;
 }
 
-void XAbstractButton_contentChanged(XAbstractButton* self)
+static void VXAbstractButton_contentChanged(XAbstractButton* self)
 {
     (void)self;
 }
@@ -737,7 +737,7 @@ void XAbstractButton_contentChanged_base(XAbstractButton* self)
 {
     XAbstractButtonContentChangedSlot slot;
 
-    if (!self || !XClassGetVtable(self) ||
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") ||
         XVtable_size(XClassGetVtable(self)) <=
             EXAbstractButton_ContentChanged) {
         return;
@@ -1177,10 +1177,10 @@ static void VXAbstractButton_timerEvent(XObject* object,
 XVtable* XAbstractButton_class_init(void)
 {
     void* protectedSlots[] = {
-        XAbstractButton_checkStateSet,
+        VXAbstractButton_checkStateSet,
         XAbstractButton_nextCheckState,
         XAbstractButton_hitButton,
-        XAbstractButton_contentChanged
+        VXAbstractButton_contentChanged
     };
 
     XVTABLE_INIT_DEFAULT(XAbstractButton)

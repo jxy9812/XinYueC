@@ -14,6 +14,15 @@
 
 // Internal forward declaration
 static void VXSocketNotifier_deinit(XObject* obj);
+
+void VXSocketNotifier_deinit(XObject* obj)
+{
+    XSocketNotifier* self = (XSocketNotifier*)obj;
+    // 注销（由 dispatcher 实现，安全处理无效状态）
+    XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentEventDispatcher(), self);
+    XClass_Deinit_Parent(XObject, obj);
+}
+
 XVtable* XSocketNotifier_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSocketNotifier)
@@ -25,14 +34,6 @@ XVtable* XSocketNotifier_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXSocketNotifier_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XSocketNotifier);
     return XVTABLE_DEFAULT;
-}
-
-void VXSocketNotifier_deinit(XObject* obj)
-{
-    XSocketNotifier* self = (XSocketNotifier*)obj;
-    // 注销（由 dispatcher 实现，安全处理无效状态）
-    XAbstractEventDispatcher_unregisterSocketNotifier_base(XThread_currentEventDispatcher(), self);
-    XClass_Deinit_Parent(XObject, obj);
 }
 
 XSocketNotifier* XSocketNotifier_createWithType(XSocketNotifierType type)

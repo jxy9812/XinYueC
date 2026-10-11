@@ -13,6 +13,7 @@
 #if defined(__linux__)
 
 #include <errno.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <sys/reboot.h>
 #include <unistd.h>
@@ -68,6 +69,14 @@ bool XSystem_platformHasEnvironment(const char* name)
 int64_t XSystem_platformPid(void)
 {
     return (int64_t)getpid();
+}
+
+bool XSystem_platformProcessAlive(int64_t pid)
+{
+    if (pid <= 0) return false;
+    /* kill(pid, 0)：仅探测权限与存在性，不实际发信号。EPERM=存在但无权
+     * （存活口径）；ESRCH=不存在。 */
+    return kill((pid_t)pid, 0) == 0 || errno == EPERM;
 }
 
 bool XSystem_platformExecutableFilePath(char* path, size_t cap)

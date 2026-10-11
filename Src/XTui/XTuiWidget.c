@@ -7,6 +7,7 @@
 
 #if XTUI_ON && XTUI_WIDGET_ON
 #include <string.h>
+#include "XStringUtils.h" /* strlen 直改经 XStrlen（外部依赖约束：string.h 仅限 mem 原语） */
 
 /* ==================== 默认虚函数实现 ==================== */
 
@@ -64,7 +65,7 @@ static bool copyName(XTuiWidget* dest, const XTuiWidget* src)
 {
     if (!src->m_name)
         return true;
-    size_t len = strlen(src->m_name);
+    size_t len = XStrlen(src->m_name);
     char* name = (char*)XMalloc_System(len + 1);
     if (!name)
         return false;
@@ -235,7 +236,7 @@ void XTuiWidget_setName(XTuiWidget* self, const char* name)
         }
         return;
     }
-    size_t len = strlen(name);
+    size_t len = XStrlen(name);
     char* copy = (char*)XMalloc_System(len + 1);
     if (!copy)
         return;

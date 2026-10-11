@@ -106,9 +106,36 @@ typedef struct XDockWidget
  * @return 返回对象指针；无效时返回 NULL。
  */
 XVtable* XDockWidget_class_init(void);
+/**
+ * @brief      初始化停靠面板控件（对标 QDockWidget 构造）。
+ * @details    默认特性 Closable|Movable|Floatable、允许全部停靠区域、
+ *             非浮动；标题文本深拷贝为对象拥有的 XString。栈对象须与
+ *             XClassDeinit 成对使用。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      utf8Title 标题文本；按 UTF-8 解码；NULL 按空串处理。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     无返回值。
+ */
 void XDockWidget_init(XDockWidget* self, const char* utf8Title,
                       XWidget* parent, XWidgetFlags flags);
+/**
+ * @brief      以默认内存类型创建 XDockWidget 堆对象（转发
+ *             XDockWidget_create_ex）。
+ * @param      title 标题文本；按 UTF-8 解码；NULL 按空串处理。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     新对象指针，调用方拥有，须 XClassDelete；失败返回 NULL。
+ */
 #define XDockWidget_create(title, parent, flags) XDockWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (title), (parent), (flags))
+/**
+ * @brief      以指定内存类型创建 XDockWidget 堆对象。
+ * @param      memory 对象内存类型。
+ * @param      utf8Title 标题文本；按 UTF-8 解码；NULL 按空串处理。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     新对象指针，调用方拥有，须 XClassDelete；失败返回 NULL。
+ */
 XDockWidget* XDockWidget_create_ex(XMemoryType memory,
                                    const char* utf8Title,
                                    XWidget* parent, XWidgetFlags flags);
@@ -230,6 +257,11 @@ XAction* XDockWidget_toggleViewAction(XDockWidget* self);
 
 /* ==================== 信号 ==================== */
 
+/** @brief X停靠控件features变更 信号地址（发射经 XObject_emitSignal）。
+ * @param self 目标控件指针。
+ * @param features 变化后的特性位集合（XDockWidgetFeature 位组合）。
+ * @return 返回信号标识地址。
+ */
 void* XDockWidget_featuresChanged_signal(XDockWidget* self, int features);
 /** @brief X停靠控件topLevel变更 信号地址（发射经 XObject_emitSignal）。
  * @param self 目标控件指针。
@@ -258,5 +290,9 @@ void* XDockWidget_visibilityChanged_signal(XDockWidget* self, bool visible);
 void* XDockWidget_dockLocationChanged_signal(XDockWidget* self, int area);
 
 #endif /* XWIDGET_ON && XDOCKWIDGET_ON */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* XDOCKWIDGET_H */

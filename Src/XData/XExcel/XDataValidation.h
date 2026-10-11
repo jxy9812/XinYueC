@@ -50,19 +50,19 @@ typedef enum XDataValidation_ErrorStyle {
 } XDataValidation_ErrorStyle;
 /** @brief 数据验证结构体 */
 typedef struct XDataValidation {
-    XDataValidation_ValidationType m_validationType;       /**< 验证类型 */
-    XDataValidation_ValidationOperator m_validationOperator; /**< 验证运算符 */
-    XDataValidation_ErrorStyle m_errorStyle;               /**< 错误样式 */
     XString* m_formula1;                                   /**< 公式1 */
     XString* m_formula2;                                   /**< 公式2 */
     XString* m_errorMessage;                               /**< 错误消息 */
     XString* m_errorMessageTitle;                          /**< 错误消息标题 */
     XString* m_promptMessage;                               /**< 提示消息 */
     XString* m_promptMessageTitle;                         /**< 提示消息标题 */
+    XVector* m_ranges;                                     /**< 验证范围列表 */
+    XDataValidation_ValidationType m_validationType;       /**< 验证类型 */
+    XDataValidation_ValidationOperator m_validationOperator; /**< 验证运算符 */
+    XDataValidation_ErrorStyle m_errorStyle;               /**< 错误样式 */
     bool m_allowBlank;                                     /**< 是否允许空值 */
     bool m_promptMessageVisible;                            /**< 提示消息是否可见 */
     bool m_errorMessageVisible;                             /**< 错误消息是否可见 */
-    XVector* m_ranges;                                     /**< 验证范围列表 */
 } XDataValidation;
 /**
  * @brief  创建默认数据验证对象

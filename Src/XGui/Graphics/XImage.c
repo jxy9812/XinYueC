@@ -52,7 +52,7 @@
 
 typedef struct XImageColorProfileResource
 {
-    XAtomic_int32_t m_refCount;
+    XAtomic_Int32 m_refCount;
     XByteArray* m_iccData;
     uint8_t* m_lutData[3];
     uint32_t m_lutElements[3];
@@ -190,7 +190,7 @@ static void XImageColorProfileResource_unref(XImageColorProfileResource* resourc
  */
 typedef struct XImageData
 {
-    XAtomic_int32_t  m_refCount;        /**< 引用计数 */
+    XAtomic_Int32  m_refCount;        /**< 引用计数 */
     int              m_width;            /**< 图像宽度 */
     int              m_height;           /**< 图像高度 */
     int              m_depth;            /**< 位深度 */
@@ -229,7 +229,7 @@ typedef struct XImageData
 #endif
 }XImageData;
 
-static XAtomic_uint32_t g_imageSerialCounter;  /**< 全局序列号计数器 */
+static XAtomic_Uint32 g_imageSerialCounter;  /**< 全局序列号计数器 */
 
 static uint8_t XImage_luma(uint32_t color);
 static uint32_t XImage_readPixelValue(const XImageData* d, int x, int y);

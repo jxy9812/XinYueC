@@ -3,7 +3,8 @@
  * @brief      XSplineSeries 样条序列（对标 Qt Charts 6.8 QSplineSeries）。
  * @details    继承 XXYSeries（QXYSeries 对齐）；无自有 API，
  *             渲染时以 Catmull-Rom 插值平滑。
- * @note       模块总开关 XCHARTS_ON。
+ * @note       模块总开关 XCHARTS_ON；实现只依赖 XinYueC 抽象层，
+ *             禁止调用 Win32、POSIX、Qt 或其他平台 API。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XSPLINESERIES_H
@@ -37,12 +38,14 @@ XVtable* XSplineSeries_class_init(void);
  */
 void XSplineSeries_init(XSplineSeries* self);
 
+/**
+ * @brief 在堆上创建样条序列（对标 QSplineSeries 构造）。
+ *
+ * @param memory 内存类型。
+ * @return 新序列指针；分配失败返回 NULL，调用方用 XClassDelete 释放。
+ */
 XSplineSeries* XSplineSeries_create_ex(XMemoryType memory);
 #define XSplineSeries_create() XSplineSeries_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-
-/** @brief 析构入口（查表分派父类析构）。 */
-
-/** @brief 删除堆上序列（查表分派析构并释放内存）。 */
 
 #endif /* XCHARTS_ON */
 #ifdef __cplusplus

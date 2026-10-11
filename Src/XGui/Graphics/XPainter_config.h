@@ -43,6 +43,9 @@
  *         17. XPAINTER_TILED_PIXMAP_ON - 像素图平铺绘制
  *                                      （对标 QPainter::drawTiledPixmap）；
  *                                      依赖像素图和图像矩形能力。
+ *         18. XPAINTER_PATH_ON      - 路径绘制对象与路径命令
+ *                                      （XPainterPath / drawPath /
+ *                                      fillPath / strokePath）。
  *        关闭某项开关后：
  *          - 对应公共 API 被条件编译裁剪，引用会触发编译错误，提醒调用方
  *            同步裁剪引用（硬裁剪语义，与 XLayout_config.h 保持一致）；

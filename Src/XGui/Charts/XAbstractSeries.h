@@ -1,4 +1,15 @@
-﻿#ifndef XABSTRACTSERIES_H
+﻿/**
+ * @file       XAbstractSeries.h
+ * @brief      XAbstractSeries 抽象序列基类（对标 Qt Charts 6.8 QAbstractSeries）。
+ * @details    提供序列公共属性与信号：名称、可见性、不透明度、OpenGL
+ *             加速开关及对应变更信号；维护所属图表回写指针（借用）与
+ *             挂接轴数组（借用），并持有序列名 XString。折线、面积、
+ *             柱状、饼图等具体序列以基类嵌入方式组合继承本类。
+ * @note       模块总开关 XCHARTS_ON；XAbstractSeries 为 XObject 派生，
+ *             支持信号槽。实现只依赖 XinYueC 抽象层，不依赖任何平台 API。
+ * @author     XinYueC 团队
+ ******************************************************************************/
+#ifndef XABSTRACTSERIES_H
 #define XABSTRACTSERIES_H
 #ifdef __cplusplus
 extern "C" {
@@ -48,16 +59,24 @@ XCLASS_DEFINE_EXTEND_END(XAbstractSeries, XObject)
  */
 typedef struct XAbstractSeries
 {
-    XObject m_base;           /**< 基类成员；必须是第一个。 */
+    XObject m_base;           /**< 基类成员；必须是第一个（派生系列
+                                   强转仅依赖首成员，布局冻结）。 */
+
+    /* ---- 8 字节对齐组（对齐分组前移，消除原布局 0x79/0x89/0x9c 空洞；
+     *      成员访问一律按名，无位置初始化/offsetof 依赖） ---- */
     XString* m_name;          /**< 序列名（对象拥有）。 */
-    bool m_visible;           /**< 可见（默认 true）。 */
-    double m_opacity;         /**< 不透明度 0-1（默认 1）。 */
-    bool m_useOpenGL;         /**< OpenGL 加速开关（属性存储）。 */
     XChart* m_chart;          /**< 所属图表（借用；不拥有）。 */
-    int m_type;               /**< XChartSeriesType；派生类 init 设置。 */
     XValueAxis** m_axes;      /**< 挂接轴数组（借用；不拥有）。 */
+    double m_opacity;         /**< 不透明度 0-1（默认 1）。 */
+
+    /* ---- 4 字节对齐组 ---- */
+    int m_type;               /**< XChartSeriesType；派生类 init 设置。 */
     int m_axisCount;          /**< 挂接轴数。 */
     int m_axisCapacity;       /**< 挂接轴容量。 */
+
+    /* ---- 1 字节标志组（尾部填充） ---- */
+    bool m_visible;           /**< 可见（默认 true）。 */
+    bool m_useOpenGL;         /**< OpenGL 加速开关（属性存储）。 */
 } XAbstractSeries;
 
 XVtable* XAbstractSeries_class_init(void);

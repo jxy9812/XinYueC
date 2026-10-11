@@ -143,9 +143,9 @@ static XSpacerItem* VXLayoutItem_spacerItem(const XLayoutItem* self)
 
 /* ==================== XWidgetItem 控件条目（内部） ==================== */
 
-/** @brief 控件条目虚表枚举：不新增槽位，仅重载 XLayoutItem 槽位。 */
-XCLASS_DEFINE_BEGING(XWidgetItem)
-XCLASS_DEFINE_EXTEND_END(XWidgetItem, XLayoutItem)
+/* 控件条目虚表枚举（XCLASS_DEFINE_*）已上移至类头文件 XLayout_Internal.h
+ * （文档「头文件结构」段⑥：虚函数表定义置于头文件），本文件经包含该头
+ * 取得 EXWidgetItem_* 槽位枚举。 */
 
 /** @brief 控件条目空判定（前置声明；实现见后文）。 */
 static bool VXWidgetItem_isEmpty(const XLayoutItem* self);
@@ -419,9 +419,9 @@ static void VXWidgetItem_move(XWidgetItem* self, XWidgetItem* other)
 
 /* ==================== XSpacerItem 空白条目（内部） ==================== */
 
-/** @brief 空白条目虚表枚举：不新增槽位，仅重载 XLayoutItem 槽位。 */
-XCLASS_DEFINE_BEGING(XSpacerItem)
-XCLASS_DEFINE_EXTEND_END(XSpacerItem, XLayoutItem)
+/* 空白条目虚表枚举（XCLASS_DEFINE_*）已上移至公共头文件 XSpacerItem.h
+ * （文档「头文件结构」段⑥：虚函数表定义置于头文件），本文件经包含该头
+ * 取得 EXSpacerItem_* 槽位枚举。 */
 
 /** @brief 空白条目首选尺寸：固定首选空白尺寸。 */
 static XSize VXSpacerItem_sizeHint(const XLayoutItem* self)

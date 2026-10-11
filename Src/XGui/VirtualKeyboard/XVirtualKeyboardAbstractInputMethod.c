@@ -272,7 +272,7 @@ int XVirtualKeyboardAbstractInputMethod_inputModes_base(
         XVirtualKeyboardAbstractInputMethod* self, const char* locale,
         int* outModes, int maxCount)
 {
-    if (!self || !XClassGetVtable(self)) return 0;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return 0;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_InputModes,
         XVirtualKeyboardInputMethodInputModesSlot)(self, locale, outModes,
@@ -283,7 +283,7 @@ bool XVirtualKeyboardAbstractInputMethod_setInputMode_base(
         XVirtualKeyboardAbstractInputMethod* self, const char* locale,
         int inputMode)
 {
-    if (!self || !XClassGetVtable(self)) return false;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return false;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_SetInputMode,
         XVirtualKeyboardInputMethodSetInputModeSlot)(self, locale,
@@ -293,7 +293,7 @@ bool XVirtualKeyboardAbstractInputMethod_setInputMode_base(
 bool XVirtualKeyboardAbstractInputMethod_setTextCase_base(
         XVirtualKeyboardAbstractInputMethod* self, int textCase)
 {
-    if (!self || !XClassGetVtable(self)) return false;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return false;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_SetTextCase,
         XVirtualKeyboardInputMethodSetTextCaseSlot)(self, textCase);
@@ -303,7 +303,7 @@ bool XVirtualKeyboardAbstractInputMethod_keyEvent_base(
         XVirtualKeyboardAbstractInputMethod* self, int key, const char* text,
         uint32_t modifiers)
 {
-    if (!self || !XClassGetVtable(self)) return false;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return false;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_KeyEvent,
         XVirtualKeyboardInputMethodKeyEventSlot)(self, key, text, modifiers);
@@ -313,7 +313,7 @@ int XVirtualKeyboardAbstractInputMethod_selectionLists_base(
         XVirtualKeyboardAbstractInputMethod* self, int* outTypes,
         int maxCount)
 {
-    if (!self || !XClassGetVtable(self)) return 0;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return 0;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_SelectionLists,
         XVirtualKeyboardInputMethodSelectionListsSlot)(self, outTypes,
@@ -323,7 +323,7 @@ int XVirtualKeyboardAbstractInputMethod_selectionLists_base(
 int XVirtualKeyboardAbstractInputMethod_selectionListItemCount_base(
         XVirtualKeyboardAbstractInputMethod* self, int type)
 {
-    if (!self || !XClassGetVtable(self)) return 0;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return 0;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_SelectionListItemCount,
         XVirtualKeyboardInputMethodSelectionListItemCountSlot)(self, type);
@@ -333,7 +333,7 @@ XVariant* XVirtualKeyboardAbstractInputMethod_selectionListData_base(
         XVirtualKeyboardAbstractInputMethod* self, int type, int index,
         int role)
 {
-    if (!self || !XClassGetVtable(self)) return NULL;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return NULL;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_SelectionListData,
         XVirtualKeyboardInputMethodSelectionListDataSlot)(self, type, index,
@@ -343,7 +343,7 @@ XVariant* XVirtualKeyboardAbstractInputMethod_selectionListData_base(
 void XVirtualKeyboardAbstractInputMethod_selectionListItemSelected_base(
         XVirtualKeyboardAbstractInputMethod* self, int type, int index)
 {
-    if (!self || !XClassGetVtable(self)) return;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return;
     XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_SelectionListItemSelected,
         XVirtualKeyboardInputMethodSelectionListItemSelectedSlot)(self, type,
@@ -353,7 +353,7 @@ void XVirtualKeyboardAbstractInputMethod_selectionListItemSelected_base(
 bool XVirtualKeyboardAbstractInputMethod_selectionListRemoveItem_base(
         XVirtualKeyboardAbstractInputMethod* self, int type, int index)
 {
-    if (!self || !XClassGetVtable(self)) return false;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return false;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_SelectionListRemoveItem,
         XVirtualKeyboardInputMethodSelectionListRemoveItemSlot)(self, type,
@@ -364,7 +364,7 @@ int XVirtualKeyboardAbstractInputMethod_patternRecognitionModes_base(
         XVirtualKeyboardAbstractInputMethod* self, int* outModes,
         int maxCount)
 {
-    if (!self || !XClassGetVtable(self)) return 0;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return 0;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_PatternRecognitionModes,
         XVirtualKeyboardInputMethodPatternRecognitionModesSlot)(self,
@@ -376,7 +376,7 @@ XVirtualKeyboardTrace* XVirtualKeyboardAbstractInputMethod_traceBegin_base(
         XVirtualKeyboardAbstractInputMethod* self, int traceId,
         int patternRecognitionMode)
 {
-    if (!self || !XClassGetVtable(self)) return NULL;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return NULL;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_TraceBegin,
         XVirtualKeyboardInputMethodTraceBeginSlot)(self, traceId,
@@ -387,7 +387,7 @@ bool XVirtualKeyboardAbstractInputMethod_traceEnd_base(
         XVirtualKeyboardAbstractInputMethod* self,
         XVirtualKeyboardTrace* trace)
 {
-    if (!self || !XClassGetVtable(self)) return false;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return false;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_TraceEnd,
         XVirtualKeyboardInputMethodTraceEndSlot)(self, trace);
@@ -397,7 +397,7 @@ bool XVirtualKeyboardAbstractInputMethod_reselect_base(
         XVirtualKeyboardAbstractInputMethod* self, int cursorPosition,
         uint32_t reselectFlags)
 {
-    if (!self || !XClassGetVtable(self)) return false;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return false;
     return XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_Reselect,
         XVirtualKeyboardInputMethodReselectSlot)(self, cursorPosition,
@@ -407,7 +407,7 @@ bool XVirtualKeyboardAbstractInputMethod_reselect_base(
 void XVirtualKeyboardAbstractInputMethod_clickPreeditText_base(
         XVirtualKeyboardAbstractInputMethod* self, int cursorPosition)
 {
-    if (!self || !XClassGetVtable(self)) return;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return;
     XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_ClickPreeditText,
         XVirtualKeyboardInputMethodClickPreeditTextSlot)(self,
@@ -417,7 +417,7 @@ void XVirtualKeyboardAbstractInputMethod_clickPreeditText_base(
 void XVirtualKeyboardAbstractInputMethod_reset_base(
         XVirtualKeyboardAbstractInputMethod* self)
 {
-    if (!self || !XClassGetVtable(self)) return;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return;
     XClassGetVirtualFunc(self, EXVirtualKeyboardAbstractInputMethod_Reset,
                          XVirtualKeyboardInputMethodVoidSlot)(self);
 }
@@ -425,7 +425,7 @@ void XVirtualKeyboardAbstractInputMethod_reset_base(
 void XVirtualKeyboardAbstractInputMethod_update_base(
         XVirtualKeyboardAbstractInputMethod* self)
 {
-    if (!self || !XClassGetVtable(self)) return;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return;
     XClassGetVirtualFunc(self, EXVirtualKeyboardAbstractInputMethod_Update,
                          XVirtualKeyboardInputMethodVoidSlot)(self);
 }
@@ -433,7 +433,7 @@ void XVirtualKeyboardAbstractInputMethod_update_base(
 void XVirtualKeyboardAbstractInputMethod_clearInputMode_base(
         XVirtualKeyboardAbstractInputMethod* self)
 {
-    if (!self || !XClassGetVtable(self)) return;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")) return;
     XClassGetVirtualFunc(
         self, EXVirtualKeyboardAbstractInputMethod_ClearInputMode,
         XVirtualKeyboardInputMethodVoidSlot)(self);

@@ -12,7 +12,6 @@
 #include "XRandomGenerator.h"
 #include "XCryptographicHash.h"
 #include <string.h>
-#include <stdlib.h>
 
 /*
  * Hash/KDF temporary storage follows the same pool as XCryptographicHash.
@@ -8829,7 +8828,7 @@ static bool xcbig_mont_exp(XCryptographic_BigInt *out,
     size_t n = m->n;
     size_t i, total_bits;
     uint32_t n0inv;
-    XCryptographic_BigInt r2;
+    XCryptographic_BigInt r2 = {0};
     XCryptographic_BigInt red = {0};
     uint32_t *M = NULL, *R = NULL, *B = NULL, *T = NULL;
     bool ok = false;
@@ -8932,7 +8931,7 @@ bool XCryptographic_ffdhGeneratePrivateKeyInto(char* buffer, size_t bufferSize)
 {
     const uint8_t *prime;
     size_t primeLen;
-    XCryptographic_BigInt P, X, one;
+    XCryptographic_BigInt P = {0}, X = {0}, one = {0};
     size_t attempts;
     uint8_t *tmp = NULL;
     bool ok = false;
@@ -8970,7 +8969,7 @@ XByteArrayView XCryptographic_ffdhExportPublicKeyInto(
 {
     const uint8_t *prime;
     size_t primeLen;
-    XCryptographic_BigInt P, G, X, GX;
+    XCryptographic_BigInt P = {0}, G = {0}, X = {0}, GX = {0};
     XByteArrayView empty = { NULL, 0 };
     XByteArrayView result = empty;
     if (!buffer || !privateKey || !XCRYPTOGRAPHIC_FFDH_ON ||
@@ -9000,7 +8999,7 @@ XByteArrayView XCryptographic_ffdhAgreeInto(
 {
     const uint8_t *prime;
     size_t primeLen;
-    XCryptographic_BigInt P, X, GY, K, Pminus1, one;
+    XCryptographic_BigInt P = {0}, X = {0}, GY = {0}, K = {0}, Pminus1 = {0}, one = {0};
     XByteArrayView empty = { NULL, 0 };
     XByteArrayView result = empty;
     if (!buffer || !privateKey || !peerPublicKey || !XCRYPTOGRAPHIC_FFDH_ON ||
@@ -9613,7 +9612,7 @@ static bool xcbig_divmod(XCryptographic_BigInt *quot, XCryptographic_BigInt *rem
 {
     size_t abits = a->n * 32;
     size_t i;
-    XCryptographic_BigInt r, q;
+    XCryptographic_BigInt r = {0}, q = {0};
     bool ok = false;
     if (!quot || !rem || !a || !b || b->n == 0 ||
         (b->n == 1 && b->d[0] == 0)) return false;
@@ -9654,7 +9653,7 @@ cleanup:
 static bool xcbig_mod(XCryptographic_BigInt *out, const XCryptographic_BigInt *a,
                       const XCryptographic_BigInt *m)
 {
-    XCryptographic_BigInt q, r;
+    XCryptographic_BigInt q = {0}, r = {0};
     bool ok = false;
     if (!out || !a || !m || m->n == 0) return false;
     if (!xcbig_alloc(&q, a->n + 1) || !xcbig_alloc(&r, a->n + 1)) goto cleanup;
@@ -9670,7 +9669,7 @@ cleanup:
 static bool xcbig_gcd(XCryptographic_BigInt *out, const XCryptographic_BigInt *a,
                       const XCryptographic_BigInt *b)
 {
-    XCryptographic_BigInt x, y, t, r;
+    XCryptographic_BigInt x = {0}, y = {0}, t = {0}, r = {0};
     bool ok = false;
     if (!out || !a || !b) return false;
     if (!xcbig_alloc(&x, a->n + 1) || !xcbig_alloc(&y, b->n + 1) ||
@@ -9777,7 +9776,7 @@ static bool xcbig_signed_sub(xcbig_signed_t *out, const xcbig_signed_t *a,
 static bool xcbig_mod_inv(XCryptographic_BigInt *out, const XCryptographic_BigInt *a,
                           const XCryptographic_BigInt *m)
 {
-    xcbig_signed_t t, newt, r, newr, tmp, tmp2;
+    xcbig_signed_t t = {0}, newt = {0}, r = {0}, newr = {0}, tmp = {0}, tmp2 = {0};
     bool ok = false;
     if (!out || !a || !m || m->n == 0) return false;
     if (!xcbig_signed_alloc(&t, m->n + 1) || !xcbig_signed_alloc(&newt, a->n + 1) ||
@@ -9891,7 +9890,8 @@ static void xcbig_from_uint32(XCryptographic_BigInt *out, uint32_t v)
 /* Miller-Rabin 素性测试。 */
 static bool xcbig_is_prime(const XCryptographic_BigInt *n, unsigned rounds)
 {
-    XCryptographic_BigInt one, nm1, d, a, x, y, g, two;
+    XCryptographic_BigInt one = {0}, nm1 = {0}, d = {0}, a = {0};
+    XCryptographic_BigInt x = {0}, y = {0}, g = {0}, two = {0};
     unsigned s = 0;
     unsigned round;
     bool ok = false;

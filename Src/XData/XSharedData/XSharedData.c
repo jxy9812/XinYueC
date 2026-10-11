@@ -3,9 +3,9 @@
  * @brief 隐式共享（Copy-On-Write）数据块实现
  */
 #include "XSharedData.h"
+#include <string.h>
 #include "XClassConfig.h"
 #include "XVtable.h"
-#include <string.h>
 XSharedData* XSharedData_create(void* dataPtr, size_t  dataSize)
 {
     return XSharedData_create_ex(dataPtr, dataSize,

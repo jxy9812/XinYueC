@@ -14,14 +14,14 @@
 #if XPROCESS_ENVIRONMENT_ON
 
 #include "XMemory.h"
-#include <string.h>
+#include "XStringUtils.h" /* strchr/strlen/strcmp 直出改经 XStrchr/XStrlen/XStrcmp（外部依赖约束） */
 
 /* 当前系统环境由 Drive/Posix 或 Drive/windows 提供。 */
 XProcessEnvironment* XProcessEnvironment_platform_systemEnvironment(void);
 
 static bool xpe_valid_name(const char* name)
 {
-    return name && name[0] != '\0' && strchr(name, '=') == NULL;
+    return name && name[0] != '\0' && XStrchr(name, '=') == NULL;
 }
 
 /* Windows 环境变量名大小写不敏感；POSIX 保持标准的大小写敏感语义。 */
@@ -48,9 +48,9 @@ static int64_t xpe_find_index(const XProcessEnvironment* self, const char* name)
     for (i = 0; i < XStringList_size_base(self->m_entries); ++i) {
         const XString* item = XStringList_at_base(self->m_entries, i);
         const char* text = item ? XString_toUtf8(item) : NULL;
-        const char* equal = text ? strchr(text, '=') : NULL;
+        const char* equal = text ? XStrchr(text, '=') : NULL;
         size_t nameLen = equal ? (size_t)(equal - text) : 0;
-        if (equal && nameLen == strlen(name) && xpe_name_equal(text, name, nameLen))
+        if (equal && nameLen == XStrlen(name) && xpe_name_equal(text, name, nameLen))
             return (int64_t)i;
     }
     return -1;
@@ -95,7 +95,7 @@ XProcessEnvironment* XProcessEnvironment_createInherit(void)
     return self;
 }
 
-XProcessEnvironment* XProcessEnvironment_createCopy(const XProcessEnvironment* other)
+XProcessEnvironment* XProcessEnvironment_create_copy(const XProcessEnvironment* other)
 {
     XProcessEnvironment* self;
     if (!other) return NULL;
@@ -171,7 +171,7 @@ bool XProcessEnvironment_equals(const XProcessEnvironment* self,
     for (i = 0; i < count; ++i) {
         const XString* item = XStringList_at_base(self->m_entries, i);
         const char* text = item ? XString_toUtf8(item) : NULL;
-        const char* equal = text ? strchr(text, '=') : NULL;
+        const char* equal = text ? XStrchr(text, '=') : NULL;
         XString* name;
         XString* value;
         int64_t index;
@@ -186,7 +186,7 @@ bool XProcessEnvironment_equals(const XProcessEnvironment* self,
         value = XProcessEnvironment_value_utf8(other, XString_toUtf8(name), NULL);
         XClassDelete(name);
         if (!value) return false;
-        if (strcmp(XString_toUtf8(value), equal + 1) != 0) {
+        if (XStrcmp(XString_toUtf8(value), equal + 1) != 0) {
             XClassDelete(value);
             return false;
         }
@@ -254,7 +254,7 @@ XString* XProcessEnvironment_value_utf8(const XProcessEnvironment* self,
     if (index < 0) return XString_create_utf8(defaultValue ? defaultValue : "");
     item = XStringList_at_base(self->m_entries, index);
     text = item ? XString_toUtf8(item) : NULL;
-    equal = text ? strchr(text, '=') : NULL;
+    equal = text ? XStrchr(text, '=') : NULL;
     return XString_create_utf8(equal ? equal + 1 : (defaultValue ? defaultValue : ""));
 }
 
@@ -281,7 +281,7 @@ XStringList* XProcessEnvironment_keys(const XProcessEnvironment* self)
     for (i = 0; i < XStringList_size_base(self->m_entries); ++i) {
         const XString* item = XStringList_at_base(self->m_entries, i);
         const char* text = item ? XString_toUtf8(item) : NULL;
-        const char* equal = text ? strchr(text, '=') : NULL;
+        const char* equal = text ? XStrchr(text, '=') : NULL;
         if (equal) {
             XString* key = XString_create_with_length_utf8(text, (size_t)(equal - text));
             if (!key) {
@@ -305,7 +305,7 @@ bool XProcessEnvironment_insertEnvironment(XProcessEnvironment* self,
     for (i = 0; i < XStringList_size_base(other->m_entries); ++i) {
         const XString* item = XStringList_at_base(other->m_entries, i);
         const char* text = item ? XString_toUtf8(item) : NULL;
-        const char* equal = text ? strchr(text, '=') : NULL;
+        const char* equal = text ? XStrchr(text, '=') : NULL;
         XString* name;
         bool inserted;
         if (!equal || equal == text) return false;
@@ -353,7 +353,7 @@ XProcessEnvironment* XProcessEnvironment_createInherit(void)
     return self;
 }
 
-XProcessEnvironment* XProcessEnvironment_createCopy(const XProcessEnvironment* other)
+XProcessEnvironment* XProcessEnvironment_create_copy(const XProcessEnvironment* other)
 {
     XProcessEnvironment* self;
     if (!other) return NULL;

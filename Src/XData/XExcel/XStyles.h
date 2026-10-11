@@ -29,7 +29,7 @@ typedef struct XlsxFormatNumberData {
 
 /** @brief XStyles 样式管理器结构体 */
 typedef struct XStyles {
-    XAbstractOOXmlFile m_base;             /**< 基类 */
+    XAbstractOOXmlFile m_class;            /**< 基类 */
     XVector* m_fontsList;                 /**< 字体列表 */
     XVector* m_fillsList;                 /**< 填充列表 */
     XVector* m_bordersList;                /**< 边框列表 */

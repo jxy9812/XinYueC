@@ -8,6 +8,10 @@
  */
 #include "XSqlMySqlClient.h"
 
+#include <limits.h>
+#include <stdio.h>
+#include <string.h>
+
 #include "XCryptographic.h"
 #include "XMemory.h"
 #include "XByteArray.h"
@@ -15,6 +19,8 @@
 #include "XDate.h"
 #include "XTime.h"
 #include "XDateTime.h"
+#include "XChar.h" /* tolower 直出改经 XChar_toLower（外部依赖约束） */
+#include "XStringUtils.h" /* strlen/strcmp 直出改经 XStrlen/XStrcmp（外部依赖约束） */
 #include "XTcpSocket.h"
 #include "XAbstractSocket_p.h"
 #include "XSslSocket.h"
@@ -23,11 +29,6 @@
 #include "XFile.h"
 #include "XMySqlSharedMemory.h"
 #include "zlib.h"
-
-#include <limits.h>
-#include <ctype.h>
-#include <stdio.h>
-#include <string.h>
 
 #define XMYSQL_MAX_PACKET_SIZE 0x00ffffffu
 #define XMYSQL_UNIX_SOCKET_PATH_MAX 512u
@@ -295,7 +296,7 @@ static void xmysql_set_error(XSqlMySqlClient* client, const char* driverText,
                              XSqlErrorType type)
 {
     xmysql_set_error_with_length(client, driverText, databaseText,
-                                 databaseText ? strlen(databaseText) : 0, code, type);
+                                 databaseText ? XStrlen(databaseText) : 0, code, type);
 }
 
 static void xmysql_clear_error(XSqlMySqlClient* client)
@@ -310,8 +311,8 @@ static int xmysql_ascii_casecmp(const char* left, const char* right)
     unsigned char rightChar;
     if (!left || !right) return left == right ? 0 : (left ? 1 : -1);
     while (*left && *right) {
-        leftChar = (unsigned char)tolower((unsigned char)*left++);
-        rightChar = (unsigned char)tolower((unsigned char)*right++);
+        leftChar = (unsigned char)XChar_toLower((XChar)(unsigned char)*left++);
+        rightChar = (unsigned char)XChar_toLower((XChar)(unsigned char)*right++);
         if (leftChar != rightChar) return (int)leftChar - (int)rightChar;
     }
     return (int)(unsigned char)*left - (int)(unsigned char)*right;
@@ -324,8 +325,8 @@ static int xmysql_ascii_ncasecmp(const char* left, const char* right, size_t cou
     unsigned char rightChar;
     if (!left || !right) return left == right ? 0 : (left ? 1 : -1);
     for (index = 0; index < count; ++index) {
-        leftChar = (unsigned char)tolower((unsigned char)left[index]);
-        rightChar = (unsigned char)tolower((unsigned char)right[index]);
+        leftChar = (unsigned char)XChar_toLower((XChar)(unsigned char)left[index]);
+        rightChar = (unsigned char)XChar_toLower((XChar)(unsigned char)right[index]);
         if (leftChar != rightChar) return (int)leftChar - (int)rightChar;
         if (leftChar == 0) return 0;
     }
@@ -755,7 +756,7 @@ static bool xmysql_append_lenenc_string(XByteArray* data, const void* value, siz
 
 static bool xmysql_append_cstring(XByteArray* data, const char* value)
 {
-    size_t size = value ? strlen(value) : 0;
+    size_t size = value ? XStrlen(value) : 0;
     return data && (size == 0 || XByteArray_push_back_2(data, value, size))
         && XByteArray_push_back_1(data, 0);
 }
@@ -991,7 +992,7 @@ static bool xmysql_native_password(const char* password, const uint8_t* scramble
     XByteArray* input = NULL;
     XByteArray* third = NULL;
     bool ok = false;
-    size_t passwordSize = password ? strlen(password) : 0;
+    size_t passwordSize = password ? XStrlen(password) : 0;
     first = XCryptographicHash_hash(password ? password : "", passwordSize,
                                     XCryptographicHash_Sha1);
     second = first ? XCryptographicHash_hash((const char*)XByteArray_data(first),
@@ -1026,7 +1027,7 @@ static bool xmysql_caching_sha2_password(const char* password, const uint8_t* sc
     XByteArray* third = NULL;
     bool ok = false;
     const char* text = password ? password : "";
-    size_t length = strlen(text);
+    size_t length = XStrlen(text);
     first = XCryptographicHash_hash(text, length, XCryptographicHash_Sha256);
     second = first ? XCryptographicHash_hash((const char*)XByteArray_data(first),
                                              XByteArray_size_base(first),
@@ -1065,7 +1066,7 @@ static bool xmysql_encrypt_caching_sha2_password(const char* password,
     if (!password || !scramble || scrambleSize == 0 || !publicKey || publicKeySize == 0
         || !encrypted) return false;
     *encrypted = NULL;
-    passwordSize = strlen(password) + 1;
+    passwordSize = XStrlen(password) + 1;
     plain = XByteArray_create_with_data(password, passwordSize);
     if (!plain || !XByteArray_data(plain)) {
         if (plain) XClassDelete(plain);
@@ -1087,7 +1088,7 @@ static bool xmysql_append_auth_token(XSqlMySqlClient* client, XByteArray* respon
     size_t tokenSize = 0;
     if (!response) return false;
     if (!password || !password[0]) return xmysql_append_u8(response, 0);
-    if (strcmp(client->m_authPlugin, "caching_sha2_password") == 0) {
+    if (XStrcmp(client->m_authPlugin, "caching_sha2_password") == 0) {
         if (!xmysql_caching_sha2_password(password, client->m_scramble,
                                           client->m_scrambleSize, token)) return false;
         tokenSize = 32;
@@ -1107,15 +1108,23 @@ static bool xmysql_option_value(const char* options, const char* name,
     size_t nameLength;
     if (output && outputSize > 0) output[0] = 0;
     if (!options || !name || !output || outputSize == 0) return false;
-    nameLength = strlen(name);
+    nameLength = XStrlen(name);
     while (*cursor) {
         const char* token = cursor;
         const char* end;
         const char* equals;
+        const char* scan;
         while (*token == ';' || *token == ',' || *token == ' ' || *token == '\t') ++token;
         end = token;
         while (*end && *end != ';' && *end != ',') ++end;
-        equals = memchr(token, '=', (size_t)(end - token));
+        /* memchr 超出 string.h 白名单四原语，用定界扫描替代（token..end 未必以 NUL 结尾）。 */
+        equals = NULL;
+        for (scan = token; scan < end; ++scan) {
+            if (*scan == '=') {
+                equals = scan;
+                break;
+            }
+        }
         if (equals) {
             const char* keyEnd = equals;
             const char* value = equals + 1;
@@ -1246,7 +1255,7 @@ static bool xmysql_parse_handshake(XSqlMySqlClient* client, XByteArray* payload,
     while (pluginName + pluginSize < end && pluginName[pluginSize]) ++pluginSize;
     if (pluginSize == 0) {
         pluginName = (const uint8_t*)"mysql_native_password";
-        pluginSize = strlen("mysql_native_password");
+        pluginSize = XStrlen("mysql_native_password");
     }
     if (pluginSize >= sizeof(client->m_authPlugin)) {
         xmysql_set_error(client, "MySQL authentication plugin name is too long", "", 0,
@@ -1255,8 +1264,8 @@ static bool xmysql_parse_handshake(XSqlMySqlClient* client, XByteArray* payload,
     }
     memcpy(client->m_authPlugin, pluginName, pluginSize);
     client->m_authPlugin[pluginSize] = 0;
-    if (strcmp(client->m_authPlugin, "mysql_native_password") != 0
-        && strcmp(client->m_authPlugin, "caching_sha2_password") != 0) {
+    if (XStrcmp(client->m_authPlugin, "mysql_native_password") != 0
+        && XStrcmp(client->m_authPlugin, "caching_sha2_password") != 0) {
         xmysql_set_error(client, "Unsupported MySQL authentication plugin",
                          client->m_authPlugin, 0, XSqlErrorType_ConnectionError);
         return false;
@@ -1354,7 +1363,7 @@ static bool xmysql_client_handshake(XSqlMySqlClient* client, const char* databas
         ok = true;
     } else if (XByteArray_size_base(authResponse) >= 2
                && XByteArray_data(authResponse)[0] == 0x01u
-               && strcmp(client->m_authPlugin, "caching_sha2_password") == 0) {
+               && XStrcmp(client->m_authPlugin, "caching_sha2_password") == 0) {
         uint8_t authState = XByteArray_data(authResponse)[1];
         if (authState == 0x03u) {
             ok = true;
@@ -1628,7 +1637,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
 #if defined(_WIN32)
     if ((!protocolSpecified || xmysql_ascii_casecmp(protocol, "DEFAULT") == 0
          || xmysql_ascii_casecmp(protocol, "MYSQL_PROTOCOL_DEFAULT") == 0)
-        && host && strcmp(host, ".") == 0) {
+        && host && XStrcmp(host, ".") == 0) {
         useNamedPipe = true;
         useDefaultNamedPipe = true;
     }
@@ -1869,7 +1878,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
     if (client->m_preparedQueries) {
         XSqlMySqlResult* timeZoneResult = NULL;
         bool timeZoneOk = xmysql_client_execute_once(client,
-            "SET time_zone = '+00:00'", strlen("SET time_zone = '+00:00'"),
+            "SET time_zone = '+00:00'", XStrlen("SET time_zone = '+00:00'"),
             &timeZoneResult);
         if (timeZoneResult) xmysql_result_destroy(timeZoneResult);
         if (!timeZoneOk) xmysql_clear_error(client);
@@ -2292,7 +2301,8 @@ static bool xmysql_client_execute_once(XSqlMySqlClient* client, const char* quer
             XSqlMySqlResult* next = NULL;
             if (!xmysql_client_read_packet(client, &nextPayload, &sequence)
                 || !xmysql_read_result(client, nextPayload, false, sequence, &next)) {
-                if (nextPayload) XClassDelete(nextPayload);
+                /* xmysql_read_result 按值接管包缓冲并在所有出口释放，置空防双释放 */
+                nextPayload = NULL;
                 goto fail;
             }
             tail->m_next = next;
@@ -2481,7 +2491,11 @@ static bool xmysql_client_execute_prepared_once(XSqlMySqlClient* client, const c
     if (!xmysql_client_send_packet(client, XByteArray_data(packet),
                             XByteArray_size_base(packet), 0)
         || !xmysql_client_read_packet(client, &response, &sequence)
-        || !xmysql_read_result(client, response, true, sequence, &output)) goto fail;
+        || !xmysql_read_result(client, response, true, sequence, &output)) {
+        /* xmysql_read_result 按值接管包缓冲并在所有出口释放，置空防 fail 处双释放 */
+        response = NULL;
+        goto fail;
+    }
     response = NULL;
     if (output && output->m_moreResults) {
         XSqlMySqlResult* tail = output;
@@ -2490,7 +2504,8 @@ static bool xmysql_client_execute_prepared_once(XSqlMySqlClient* client, const c
             XSqlMySqlResult* next = NULL;
             if (!xmysql_client_read_packet(client, &nextPayload, &sequence)
                 || !xmysql_read_result(client, nextPayload, true, sequence, &next)) {
-                if (nextPayload) XClassDelete(nextPayload);
+                /* xmysql_read_result 按值接管包缓冲并在所有出口释放，置空防双释放 */
+                nextPayload = NULL;
                 goto fail;
             }
             tail->m_next = next;
@@ -2550,7 +2565,7 @@ static bool xmysql_client_check_prepared_queries(XSqlMySqlClient* client)
     binds[1].m_data = &second;
     binds[1].m_size = sizeof(second);
     ok = xmysql_client_execute_prepared_once(client, "SELECT ? + ?",
-                                             strlen("SELECT ? + ?"), binds, 2, &result);
+                                             XStrlen("SELECT ? + ?"), binds, 2, &result);
     if (result) xmysql_result_destroy(result);
     if (!ok) xmysql_clear_error(client);
     return ok;

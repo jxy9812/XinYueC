@@ -1565,7 +1565,8 @@ void XGridLayout_addLayoutSpan(XGridLayout* self, XLayout* child,
 void XGridLayout_addItem(XGridLayout* self, XLayoutItem* item)
 {
     if (!self || !item) return;
-    VXGridLayout_addItem((XLayout*)self, item);
+    /* 经 base 入口走虚表分派：派生类重载 EXLayout_AddItem 不被绕过。 */
+    XLayout_addItem_base((XLayout*)self, item);
 }
 
 void XGridLayout_addItemAt(XGridLayout* self, XLayoutItem* item,

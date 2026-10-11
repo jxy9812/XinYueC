@@ -11,18 +11,18 @@
 #ifndef XCONSOLE_SHELL_VI_H
 #define XCONSOLE_SHELL_VI_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+    XCONSOLE_SHELL_EDITOR_ON
+
 #include "XConsoleShellConfig.h"
 #include "XConsoleShellCommand.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-
-#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
-    XCONSOLE_SHELL_EDITOR_ON
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 struct XConsoleShell;
 struct XConsoleShellSession;
@@ -106,9 +106,10 @@ extern const XConsoleCommand XConsoleShellVi_command;
 /** @brief `vim` 命令静态描述（与 vi 共用同一处理函数）。 */
 extern const XConsoleCommand XConsoleShellVim_command;
 
+#endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_EDITOR_ON */
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_EDITOR_ON */
 #endif /* XCONSOLE_SHELL_VI_H */

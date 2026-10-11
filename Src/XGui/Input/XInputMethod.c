@@ -210,7 +210,7 @@ XVariant* XInputMethod_defaultQueryHandler(XObject* focusObject,
        不响应查询，返回 NULL 等价无效 QVariant。 */
     if (!focusObject) return NULL;
 #if XWIDGET_ON
-    if (((XObject*)focusObject)->is_widget)
+    if (((XObject*)focusObject)->m_is_widget)
         return XWidget_inputMethodQuery((const XWidget*)focusObject, query);
 #endif /* XWIDGET_ON */
     return NULL;

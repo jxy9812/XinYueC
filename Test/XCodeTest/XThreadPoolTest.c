@@ -12,7 +12,7 @@
 static void threadFunc( XVarList* list)
 {
 	XThread* thread = XThread_currentThread();
-	//XVarList_args_1(list, XAtomic_int32_t*, rt);
+	//XVarList_args_1(list, XAtomic_Int32*, rt);
 	XPrintf("子线程:%p \n", XThread_currentThread());
 	XTimer* timer = XTimer_create();
 	//XObject_moveToThread(timer, XThreadData_mainThread()->m_thread);
@@ -30,7 +30,7 @@ static void threadFunc( XVarList* list)
 }
 void XThreadPoolTest()
 {
-	XAtomic_int32_t* rt= XAtomic_create(int32_t);
+	XAtomic_Int32* rt= XAtomic_create(Int32);
 	XThreadPool* pool = XThreadPool_create(NULL);
 	XObject_connect_1(pool, XSignal(XThreadPool_tasksEmpty_signal), xApp, XCoreApplication_quit, XConnectionType_Auto);
 	while (true)

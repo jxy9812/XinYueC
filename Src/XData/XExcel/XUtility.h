@@ -114,25 +114,25 @@ void XUtility_splitPath(const XString* path, XString* dir, XString* fileName);
 /**
  * @brief  获取路径中的文件名部分（去掉目录前缀）
  * @param  filePath  完整文件路径
- * @return 文件名（栈上 XString，调用者需调用 XClassDeinit 释放）
+ * @return 新创建的 XString*（调用者负责释放），失败返回 NULL
  */
-XString XUtility_getRelFilePath(const XString* filePath);
+XString* XUtility_getRelFilePath(const XString* filePath);
 
 /* ========== 工作表名称转义 ========== */
 
 /**
  * @brief  对工作表名称进行转义（包含特殊字符时用单引号包裹）
  * @param  sheetName  原始工作表名称
- * @return 转义后的名称（栈上 XString，调用者需调用 XClassDeinit 释放）
+ * @return 新创建的 XString*（调用者负责释放），失败返回 NULL
  */
-XString XUtility_escapeSheetName(const XString* sheetName);
+XString* XUtility_escapeSheetName(const XString* sheetName);
 
 /**
  * @brief  对工作表名称进行反转义（去掉首尾单引号，还原内部 '' 为 '）
  * @param  sheetName  转义后的工作表名称
- * @return 反转义后的名称（栈上 XString，调用者需调用 XClassDeinit 释放）
+ * @return 新创建的 XString*（调用者负责释放），失败返回 NULL
  */
-XString XUtility_unescapeSheetName(const XString* sheetName);
+XString* XUtility_unescapeSheetName(const XString* sheetName);
 
 /**
  * @brief  判断字符串首尾是否包含空格（需要保留空格标记）

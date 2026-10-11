@@ -1,12 +1,14 @@
-﻿#ifndef XATCOMM_H
-#define XATCOMM_H
-
-/**
- * @file XATComm.h
- * @brief 通用 AT 指令通信引擎接口。
- * @details 该组件基于 XObject 和 XIODevice，供蜂窝、WiFi 等 AT 模块复用；
- *          底层 I/O 对象始终由调用方持有，XATComm 只负责协议交互和响应缓存。
+﻿/**
+ * @file       XATComm.h
+ * @brief      通用 AT 指令通信引擎公开 API。
+ * @details    该组件基于 XObject 和 XIODevice，供蜂窝、WiFi 等 AT 模块复用；
+ *             底层 I/O 对象始终由调用方持有，XATComm 只负责协议交互和响应缓存。
+ *             平台约束：实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt
+ *             或其他平台 API。
  */
+
+#ifndef XATCOMM_H
+#define XATCOMM_H
 
 #ifdef __cplusplus
 extern "C" {

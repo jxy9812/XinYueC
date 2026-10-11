@@ -7,6 +7,7 @@
 
 #if XTUI_ON && XTUI_WIDGET_ON
 #include <string.h>
+#include "XStringUtils.h" /* strlen 直改经 XStrlen（外部依赖约束：string.h 仅限 mem 原语） */
 
 /* ==================== 虚函数实现 ==================== */
 
@@ -42,7 +43,7 @@ static bool VXTuiBox_render(XTuiWidget* base, XTuiScreen* screen)
 
     /* 居中标题。 */
     if (box->m_title && box->m_title[0]) {
-        int titleLen = (int)strlen(box->m_title);
+        int titleLen = (int)XStrlen(box->m_title);
         int startX = r.x + 1;
         int maxW = r.width - 2;
         if (titleLen > maxW)
@@ -75,7 +76,7 @@ static bool copyTitle(XTuiBox* dest, const XTuiBox* src)
 {
     if (!src->m_title)
         return true;
-    size_t len = strlen(src->m_title);
+    size_t len = XStrlen(src->m_title);
     char* title = (char*)XMalloc_System(len + 1);
     if (!title)
         return false;
@@ -170,7 +171,7 @@ void XTuiBox_setTitle(XTuiBox* box, const char* title)
         }
         return;
     }
-    size_t len = strlen(title);
+    size_t len = XStrlen(title);
     char* copy = (char*)XMalloc_System(len + 1);
     if (!copy)
         return;

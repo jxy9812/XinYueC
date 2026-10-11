@@ -1,8 +1,7 @@
 ﻿#include "XFixedPool.h"
+#include <string.h>
 #include "XPrintf.h"   /* printf 直出改经 XPrintf（输出重定向栈，约束文档时间/依赖规则） */
 #include "XMemory.h"
-#include <stdlib.h>
-#include <string.h>
 
 #if XMEMORY_FIXEDPOOL_ON
 

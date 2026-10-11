@@ -306,8 +306,15 @@ static bool svgDecodeXmlText(const uint8_t* data, size_t size,
     if (!text) return false;
 
     if (!encoded) {
-        /* XML 中嵌入 NUL 不合法；拒绝它可避免后续 strstr 截断输入。 */
-        if (memchr(data + offset, 0, size - offset) != NULL) {
+        /* XML 中嵌入 NUL 不合法；拒绝它可避免后续 strstr 截断输入。
+           库内无 memchr 原语（string.h 白名单仅 memcpy/memset/memmove/
+           memcmp），本地扫描检测 NUL，避免 <string.h> 依赖（外部依赖
+           约束）。 */
+        size_t i;
+        for (i = offset; i < size; ++i) {
+            if (data[i] == 0) break;
+        }
+        if (i < size) {
             XFree_Hybrid(text);
             return false;
         }
@@ -2048,7 +2055,16 @@ static const SvgGradient* svgGradientFindUrl(SvgRenderer* r,
     int i;
     if (!p) return NULL;
     ++p;
-    n = strcspn(p, ") \t\r\n");
+    /* 库内无 strcspn 封装（string.h 白名单仅 memcpy/memset/memmove/
+       memcmp），本地扫描求 token 长度，避免 <string.h> 依赖（外部依赖
+       约束）；终止集与原 strcspn 一致：')'、空格、\t、\r、\n 或 NUL。 */
+    {
+        const char* q = p;
+        while (*q && *q != ')' && *q != ' ' && *q != '\t' &&
+               *q != '\r' && *q != '\n')
+            ++q;
+        n = (size_t)(q - p);
+    }
     for (i = 0; i < r->m_gradientCount; ++i) {
         const char* gid = r->m_gradients[i].m_id;
         if (gid && XStrlen(gid) == n && XStrncmp(gid, p, n) == 0)

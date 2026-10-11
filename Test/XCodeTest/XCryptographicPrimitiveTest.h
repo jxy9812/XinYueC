@@ -19,7 +19,7 @@ typedef struct XTestMenu XTestMenu;
 /** @brief 运行 XCryptographic 独立密码原语标准向量测试。 */
 bool XCryptographicPrimitiveTest_runAll(void);
 
-#if DEMOTEST
+#if DEMOTEST_ON
 void XTestMenu_XCryptographicPrimitiveTest(XTestMenu* root);
 #endif
 

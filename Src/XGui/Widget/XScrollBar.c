@@ -132,7 +132,7 @@ static int xsb_posToValue(const XScrollBar* self, int pos, int contentLen,
 /* ==================== 事件处理 ==================== */
 
 /** @brief paintEvent：槽体 + 滑块矩形（水平/垂直）。 */
-static void VX_scrollBar_paintEvent(XWidget* self, XEvent* event)
+static void VXScrollBar_paintEvent(XWidget* self, XEvent* event)
 {
     XScrollBar* sb = (XScrollBar*)self;
     XPainter painter;
@@ -249,7 +249,7 @@ static void VX_scrollBar_paintEvent(XWidget* self, XEvent* event)
 
 /** @brief 鼠标按下：命中滑块开始拖动；命中轨道执行翻页（对标
  *         QScrollBar::mousePressEvent 的轨道翻页语义）。 */
-static void VX_scrollBar_mousePressEvent(XWidget* self, XEvent* event)
+static void VXScrollBar_mousePressEvent(XWidget* self, XEvent* event)
 {
     XScrollBar* sb = (XScrollBar*)self;
     XMouseEvent* me = (XMouseEvent*)event;
@@ -315,7 +315,7 @@ static void VX_scrollBar_mousePressEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 鼠标移动：拖动中按像素映射更新值。 */
-static void VX_scrollBar_mouseMoveEvent(XWidget* self, XEvent* event)
+static void VXScrollBar_mouseMoveEvent(XWidget* self, XEvent* event)
 {
     XScrollBar* sb = (XScrollBar*)self;
     XMouseEvent* me = (XMouseEvent*)event;
@@ -335,7 +335,7 @@ static void VX_scrollBar_mouseMoveEvent(XWidget* self, XEvent* event)
 }
 
 /** @brief 鼠标释放：结束拖动。 */
-static void VX_scrollBar_mouseReleaseEvent(XWidget* self, XEvent* event)
+static void VXScrollBar_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     XScrollBar* sbr = (XScrollBar*)self;
     if (sbr && (sbr->m_activeSub)) {
@@ -367,7 +367,7 @@ static const XScrollBar* xsb_ctxOwner = NULL;
 static int xsb_ctxPos = 0;
 
 /** @brief "滚动到此处"：右击点沿滑轨映射为滑块原点值并定位
- *         （映射公式与拖动 VX_scrollBar_mouseMoveEvent 同源，
+ *         （映射公式与拖动 VXScrollBar_mouseMoveEvent 同源，
  *         pressOffset 已由 contextMenuEvent 清零）。 */
 static void xsb_actScrollHereSlot(XObject* receiver, XVarList* args)
 {
@@ -443,7 +443,7 @@ static void xsb_actStepAddSlot(XObject* receiver, XVarList* args)
 /** @brief 右键标准菜单（对标 QScrollBar::contextMenuEvent）：滚动到此处/
  *         上(左)缘/下(右)缘/翻页/单步，条目文本随方向变化；
  *         popup + DeleteOnClose 呈现。 */
-static void VX_scrollBar_contextMenuEvent(XWidget* self, XEvent* event)
+static void VXScrollBar_contextMenuEvent(XWidget* self, XEvent* event)
 {
     XScrollBar* sb = (XScrollBar*)self;
     XContextMenuEvent* ctx = (XContextMenuEvent*)event;
@@ -476,15 +476,15 @@ XVtable* XScrollBar_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XScrollBar)
     XVTABLE_INHERIT_XCLASS(XAbstractSlider);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_scrollBar_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXScrollBar_paintEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
-                             VX_scrollBar_mousePressEvent);
+                             VXScrollBar_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
-                             VX_scrollBar_mouseMoveEvent);
+                             VXScrollBar_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
-                             VX_scrollBar_mouseReleaseEvent);
+                             VXScrollBar_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ContextMenuEvent,
-                             VX_scrollBar_contextMenuEvent);
+                             VXScrollBar_contextMenuEvent);
     return XVTABLE_DEFAULT;
 }
 

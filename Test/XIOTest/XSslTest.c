@@ -8,7 +8,7 @@
 #endif
 #include "XSslTest.h"
 
-#if DEMOTEST
+#if DEMOTEST_ON
 
 #include "XSsl_platform.h"
 #include "XSsl_session.h"
@@ -4077,4 +4077,4 @@ void XTestMenu_XSslTest(XTestMenu* root)
     if (action) XTestMenu_setActionFunction(action, xssl_test_run_all_wrapper);
 }
 
-#endif /* DEMOTEST */
+#endif /* DEMOTEST_ON */

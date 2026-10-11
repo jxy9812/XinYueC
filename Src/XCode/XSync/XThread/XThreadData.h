@@ -10,6 +10,7 @@ typedef struct XThread XThread;
 /* XProperty 模块的属性绑定对象（求值栈元素类型，仅用指针，定义在 XClass/XPropertyBinding.h）。 */
 struct XPropertyBinding;
 #include "XAbstractEventDispatcher.h"
+#include "XEventDispatcher.h"
 #include "XMutex.h"
 #include "XVector.h"
 #include "XStack.h"
@@ -22,14 +23,14 @@ extern "C" {
 
 /**
  * @brief 投递事件（对标 Qt QPostEvent）
- * @param receiver 事件接收者对象
- * @param event 待投递事件
- * @param priority 事件优先级（越大越优先）
+ * @param m_receiver 事件接收者对象
+ * @param m_event 待投递事件
+ * @param m_priority 事件优先级（越大越优先）
  */
 typedef struct {
-    XObject* receiver;
-    XEvent* event;
-    int      priority;
+    XObject* m_receiver;
+    XEvent* m_event;
+    int      m_priority;
 } XPostEvent;
 
 /**
@@ -39,9 +40,9 @@ typedef struct {
  * @param signal 当前信号索引（对标 QObjectPrivate::Sender::signal）
  */
 typedef struct {
-    XObject* receiver;
-    XObject* sender;
-    size_t  signal;
+    XObject* m_receiver;
+    XObject* m_sender;
+    size_t  m_signal;
 } XSenderFrame;
 
 /**
@@ -64,8 +65,8 @@ typedef struct {
  *   requiresCoreApplication -> m_requiresCoreApplication (是否需要 QCoreApplication)
  */
 typedef struct XThreadData{
-    XAtomic_int32_t m_ref;            ///< 引用计数（对标 QAtomicInt _ref）
-    XAtomic_size_t  m_loopLevel;      ///< 事件循环嵌套层级（对标 int loopLevel）
+    XAtomic_Int32 m_ref;            ///< 引用计数（对标 QAtomicInt _ref）
+    XAtomic_SizeT  m_loopLevel;      ///< 事件循环嵌套层级（对标 int loopLevel）
     int             m_scopeLevel;     ///< 作用域层级（对标 int scopeLevel）
 
     XStack          m_eventLoops;     ///< 事件循环栈（对标 QStack<QEventLoop*> eventLoops）
@@ -80,7 +81,7 @@ typedef struct XThreadData{
     XAbstractEventDispatcher* m_eventDispatcher; ///< 事件分发器（对标 QAtomicPointer<QAbstractEventDispatcher>）
     //XVector*        m_tls;            ///< 线程局部存储（对标 QList<void*> tls）
 
-    XAtomic_bool    m_canWait;        ///< 是否可阻塞等待（对标 bool canWait）
+    XAtomic_Bool    m_canWait;        ///< 是否可阻塞等待（对标 bool canWait）
     bool            m_quitNow;        ///< 立即退出标志（对标 bool quitNow）
     bool            m_isAdopted;      ///< 是否为 adopted 线程（对标 bool isAdopted）
     bool            m_requiresCoreApplication; ///< 是否需要 QCoreApplication（对标 bool requiresCoreApplication）
@@ -94,12 +95,7 @@ typedef struct XThreadData{
 #endif
 } XThreadData;
 
-/**
- * @brief 创建平台事件分发器（需平台层实现）
- * @param parent 父对象，可为 NULL
- * @return 新创建的事件分发器
- */
-XAbstractEventDispatcher* XEventDispatcher_create_ex(XMemoryType memory,  XObject* parent);
+/* 平台事件分发器工厂 XEventDispatcher_create_ex 声明见 XEventDispatcher.h（类名与文件名一致）。 */
 
 /* ======================== 构造/析构/引用计数（对标 QThreadData 构造/析构/ref/deref） ======================== */
 
@@ -160,8 +156,10 @@ void XThreadData_clearCurrentThreadData(void);
 
 /**
  * @brief TLS 析构回调（对标 Qt destroy_current_thread_data）
- * @param p 线程退出时由 pthread_key 析构传入的 XThreadData 指针
- * @note 由平台层 pthread_key 析构函数在线程退出时自动调用，清理 adopted 线程残留数据
+ * @param p 线程退出时由平台层 TLS/FLS 析构传入的 XThreadData 指针
+ * @note 由平台层在线程退出时自动调用（Posix: pthread_key_create 析构；
+ *       Win32: FlsAlloc 析构回调；FreeRTOS: portCLEAN_UP_TCB 钩子经登记表
+ *       延迟清扫转发），清理 adopted 线程残留数据
  */
 void XThreadData_destroyTlsData(void* p);
 
@@ -356,9 +354,5 @@ int XThreadData_currentSenderSignalIndex(XObject* receiver);
 
 #endif // XTHREADDATA_ON
 #endif /* XSYNC_ON */
-
-/* XClass create API default-memory wrappers. */
-#undef XEventDispatcher_create
-#define XEventDispatcher_create(...) XEventDispatcher_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
 #endif // XTHREADDATA_H

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XRemoteSessionBar.c
  * @brief      XRemoteSessionBar 向日葵式悬浮会话工具条实现(悬浮条 +
  *             半透明悬浮球 + 本地消费的拖拽/展开收起交互)。
@@ -681,17 +681,20 @@ static void VX_xrb_deinit(XRemoteSessionBar* self)
     }
     if (d->m_collapseTimer) {
         XTimer_stop_base(d->m_collapseTimer);
-        XObject_deleteLater((XObject*)d->m_collapseTimer);
+        /* 同步删除而非 deleteLater: 析构内清自己的成员必须同步释放
+         * (约束文档「对象释放方式选择约束」); 三定时器无父且已停,
+         * 若析构发生在事件循环停转后, 延迟删除事件无人派发即永久泄漏。 */
+        XClassDelete((XClass*)d->m_collapseTimer);
         d->m_collapseTimer = NULL;
     }
     if (d->m_hoverTimer) {
         XTimer_stop_base(d->m_hoverTimer);
-        XObject_deleteLater((XObject*)d->m_hoverTimer);
+        XClassDelete((XClass*)d->m_hoverTimer);
         d->m_hoverTimer = NULL;
     }
     if (d->m_statsTimer) {
         XTimer_stop_base(d->m_statsTimer);
-        XObject_deleteLater((XObject*)d->m_statsTimer);
+        XClassDelete((XClass*)d->m_statsTimer);
         d->m_statsTimer = NULL;
     }
     /* 子控件/按钮经控件树级联析构(XWidget_deinit), 此处仅释放私有块。 */

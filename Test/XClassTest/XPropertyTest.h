@@ -5,10 +5,10 @@ extern "C" {
 #endif
 #include"CXinYueConfig.h"
 #include "XTestMenu.h"
-#if DEMOTEST && XPROPERTY_ON
+#if DEMOTEST_ON && XPROPERTY_ON
 	void XTestMenu_XPropertyTest(XTestMenu* root);
 	void XPropertyTestAll(void);
-#endif /* DEMOTEST && XPROPERTY_ON */
+#endif /* DEMOTEST_ON && XPROPERTY_ON */
 
 #ifdef __cplusplus
 }

@@ -50,8 +50,8 @@ typedef struct XEventLoop
     XTimer* m_deley;
     int m_exitCode;                   // 退出代码（对标 QEventLoopPrivate::returnCode）
     bool inExec;                      // Qt 6.8: 防止重入 exec()（对标 QEventLoopPrivate::inExec）
-    XAtomic_bool m_exit;              // 原子退出标志，允许其他线程安全调用 exit()
-    XAtomic_int32_t m_returnCode;     // 原子返回码
+    XAtomic_Bool m_exit;              // 原子退出标志，允许其他线程安全调用 exit()
+    XAtomic_Int32 m_returnCode;     // 原子返回码
 } XEventLoop;
 
 /**

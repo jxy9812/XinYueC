@@ -130,65 +130,6 @@ static void VXBarSet_deinit(XBarSet* self);
 static void VXBarSet_copy(XBarSet* self, const XBarSet* other);
 static void VXBarSet_move(XBarSet* self, XBarSet* other);
 
-XVtable* XBarSet_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(XBarSet)
-    XVTABLE_INHERIT_XCLASS(XObject);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXBarSet_deinit);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXBarSet_copy);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXBarSet_move);
-    return XVTABLE_DEFAULT;
-}
-
-void XBarSet_init(XBarSet* self)
-{
-    if (!self) return;
-    XMemset(self, 0, sizeof(*self));
-    XObject_init(&self->m_base);
-    XClassSetVtable(self, XBarSet);
-    self->m_label = XString_create();
-    self->m_penWidth = 2.0;
-}
-
-void XBarSet_init_ex(XBarSet* self, const XString* label)
-{
-    if (!self) return;
-    XBarSet_init(self);
-    XBarSet_setLabel(self, label);
-}
-void XBarSet_init_ex_2(XBarSet* self, const char* label)
-{
-    XString* tmp = NULL;
-    if (label) {
-        tmp = XString_create_utf8(label);
-        if (!tmp) return;
-    }
-    XBarSet_init_ex(self, tmp);
-    if (tmp) XClassDelete(tmp);
-}
-
-XBarSet* XBarSet_create_ex(XMemoryType memory, const XString* label)
-{
-    XBarSet* self = (XBarSet*)XMemory_malloc(sizeof(*self), memory);
-    if (!self) return NULL;
-    XBarSet_init_ex(self, label);
-    Set_Class_Memory(self, memory);
-    Set_Class_IsHeap(self, true);
-    return self;
-}
-XBarSet* XBarSet_create_ex_2(XMemoryType memory, const char* label)
-{
-    XString* tmp = NULL;
-    XBarSet* self;
-    if (label) {
-        tmp = XString_create_utf8(label);
-        if (!tmp) return NULL;
-    }
-    self = XBarSet_create_ex(memory, tmp);
-    if (tmp) XClassDelete(tmp);
-    return self;
-}
-
 static void VXBarSet_deinit(XBarSet* self)
 {
     if (!self) return;
@@ -260,19 +201,131 @@ static void VXBarSet_copy(XBarSet* self, const XBarSet* other)
     self->m_labelBrushColor = other->m_labelBrushColor;
     self->m_labelFontSize = other->m_labelFontSize;
     self->m_selectedColor = other->m_selectedColor;
-    if (self->m_labelFontFamily && other->m_labelFontFamily)
-        XString_assign(self->m_labelFontFamily, other->m_labelFontFamily);
+    /* 标签字体族为惰性创建成员（init 后为 NULL）：目标未创建时先
+       创建再深拷贝，避免拷贝构造后字体族静默丢失。 */
+    if (self->m_labelFontFamily) {
+        XClassDelete(self->m_labelFontFamily);
+        self->m_labelFontFamily = NULL;
+    }
+    if (other->m_labelFontFamily)
+        self->m_labelFontFamily = XString_create_copy(other->m_labelFontFamily);
 }
 
 static void VXBarSet_move(XBarSet* self, XBarSet* other)
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XBarSet_init(self);
-    VXBarSet_deinit(self);
-    *self = *other;
-    XMemset(other, 0, sizeof(XBarSet));
-    XBarSet_init(other);
+    /* 释放 self 原有自有成员（不整体 deinit：XObject 的信号槽与
+       m_was_deleted 状态须保持存活，与 VXAbstractBarSeries_move 同口径）。 */
+    if (self->m_label) {
+        XClassDelete(self->m_label);
+        self->m_label = NULL;
+    }
+    if (self->m_labelFontFamily) {
+        XClassDelete(self->m_labelFontFamily);
+        self->m_labelFontFamily = NULL;
+    }
+    if (self->m_values) {
+        XFree_System(self->m_values);
+        self->m_values = NULL;
+    }
+    if (self->m_selectedBars) {
+        XFree_System(self->m_selectedBars);
+        self->m_selectedBars = NULL;
+    }
+    self->m_count = 0;
+    self->m_capacity = 0;
+    self->m_selectedCount = 0;
+    self->m_selectedCapacity = 0;
+    /* 逐成员转移资源，源对象类头（虚表/内存方法/堆所有权标记）保持
+       不变；源对象仍处"已初始化但为空"状态，由创建者按分配方式收尾。 */
+    self->m_label = other->m_label;
+    other->m_label = NULL;
+    self->m_values = other->m_values;
+    other->m_values = NULL;
+    self->m_count = other->m_count;
+    other->m_count = 0;
+    self->m_capacity = other->m_capacity;
+    other->m_capacity = 0;
+    self->m_selectedBars = other->m_selectedBars;
+    other->m_selectedBars = NULL;
+    self->m_selectedCount = other->m_selectedCount;
+    other->m_selectedCount = 0;
+    self->m_selectedCapacity = other->m_selectedCapacity;
+    other->m_selectedCapacity = 0;
+    self->m_penColor = other->m_penColor;
+    other->m_penColor = 0;
+    self->m_penWidth = other->m_penWidth;
+    other->m_penWidth = 2.0;
+    self->m_brushColor = other->m_brushColor;
+    other->m_brushColor = 0;
+    self->m_labelBrushColor = other->m_labelBrushColor;
+    other->m_labelBrushColor = 0;
+    self->m_labelFontFamily = other->m_labelFontFamily;
+    other->m_labelFontFamily = NULL;
+    self->m_labelFontSize = other->m_labelFontSize;
+    other->m_labelFontSize = 0;
+    self->m_selectedColor = other->m_selectedColor;
+    other->m_selectedColor = 0;
+}
+
+XVtable* XBarSet_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XBarSet)
+    XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXBarSet_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXBarSet_copy);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXBarSet_move);
+    return XVTABLE_DEFAULT;
+}
+
+void XBarSet_init(XBarSet* self)
+{
+    if (!self) return;
+    XMemset(self, 0, sizeof(*self));
+    XObject_init(&self->m_base);
     XClassSetVtable(self, XBarSet);
+    self->m_label = XString_create();
+    self->m_penWidth = 2.0;
+}
+
+void XBarSet_init_ex(XBarSet* self, const XString* label)
+{
+    if (!self) return;
+    XBarSet_init(self);
+    XBarSet_setLabel(self, label);
+}
+void XBarSet_init_ex_2(XBarSet* self, const char* label)
+{
+    XString* tmp = NULL;
+    if (label) {
+        tmp = XString_create_utf8(label);
+        if (!tmp) return;
+    }
+    XBarSet_init_ex(self, tmp);
+    if (tmp) XClassDelete(tmp);
+}
+
+XBarSet* XBarSet_create_ex(XMemoryType memory, const XString* label)
+{
+    XBarSet* self = (XBarSet*)XMemory_malloc(sizeof(*self), memory);
+    if (!self) return NULL;
+    XBarSet_init_ex(self, label);
+    Set_Class_Memory(self, memory);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+XBarSet* XBarSet_create_ex_2(XMemoryType memory, const char* label)
+{
+    XString* tmp = NULL;
+    XBarSet* self;
+    if (label) {
+        tmp = XString_create_utf8(label);
+        if (!tmp) return NULL;
+    }
+    self = XBarSet_create_ex(memory, tmp);
+    if (tmp) XClassDelete(tmp);
+    return self;
 }
 
 /* ==================== 标签 ==================== */

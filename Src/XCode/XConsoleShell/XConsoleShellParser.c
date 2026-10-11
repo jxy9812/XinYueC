@@ -11,6 +11,7 @@
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_PARSER_ON
 
+#include "XStringUtils.h"
 #include <string.h>
 
 static bool xcs_is_space(char c)
@@ -23,16 +24,16 @@ static bool xcs_name_equals(const char* name, const char* candidate)
     const char* begin;
     const char* end;
     if (!name || !candidate) return false;
-    if (strcmp(name, candidate) == 0) return true;
+    if (XStrcmp(name, candidate) == 0) return true;
 #if XCONSOLE_SHELL_ALIAS_ON
-    if (!strchr(candidate, ',')) return false;
+    if (!XStrchr(candidate, ',')) return false;
     begin = candidate;
     while (*begin) {
         while (*begin == ' ' || *begin == '\t' || *begin == ',') ++begin;
         end = begin;
         while (*end && *end != ',') ++end;
-        if ((size_t)(end - begin) == strlen(name) &&
-            strncmp(begin, name, (size_t)(end - begin)) == 0) return true;
+        if ((size_t)(end - begin) == XStrlen(name) &&
+            XStrncmp(begin, name, (size_t)(end - begin)) == 0) return true;
         begin = end;
     }
 #else

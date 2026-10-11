@@ -1,6 +1,16 @@
 ﻿#ifndef XMODBUSDATAUNIT_H
 #define XMODBUSDATAUNIT_H
 
+#include "XModbus_config.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#if XPROTOCOL_ON
+#if XMODBUS_ON
+#if XMODBUS_CORE_ON
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -39,7 +49,7 @@ XCLASS_DEFINE_EXTEND_END(XModbusDataUnit, XClass)
 
 typedef struct XModbusDataUnit
 {
-    XClass m_class;                           ///< 基类信息
+    XClass m_class;                           /**< 第一个成员，由 XClass 管理，禁止手工修改。*/
     uint16_t /*XModbusRegisterType*/ m_type;  ///< 寄存器类型
     uint16_t m_startAddress;                  ///< 寄存器起始地址
     union {
@@ -59,7 +69,11 @@ XVtable* XModbusDataUnit_class_init();
 
 /**
 * @brief 创建Modbus数据单元实例
-* @return 成功返回XModbusDataUnit实例指针，失败返回NULL
+* @param memory 内存分配器类型（XMemoryType）
+* @param type 初始寄存器类型；传入XModbusInvalid时按默认值初始化
+* @param startAddress 起始地址；type为XModbusInvalid时忽略
+* @param valueCount 初始数据数量；type为XModbusInvalid时忽略
+* @return 成功返回XModbusDataUnit实例指针（新对象，调用方负责XClassDelete释放），失败返回NULL
 * @details 动态分配内存并初始化数据单元，默认初始值：
 *          - 寄存器类型：XModbusInvalid
 *          - 起始地址：0xFFFF（无效地址）
@@ -67,7 +81,21 @@ XVtable* XModbusDataUnit_class_init();
 *          - 数据数量：0
 */
 XModbusDataUnit* XModbusDataUnit_create_ex(XMemoryType memory, XModbusRegisterType type, uint16_t startAddress, size_t valueCount);
+/**
+* @brief 创建Modbus数据单元的深拷贝
+* @param unit 源数据单元指针（借用，不取得所有权）；NULL时返回NULL
+* @return 成功返回新创建的XModbusDataUnit实例指针（新对象，调用方负责XClassDelete释放），失败返回NULL
+* @details 源对象可为任意已初始化实例；拷贝不修改源对象，源对象生命周期与释放方式不变
+*/
 XModbusDataUnit* XModbusDataUnit_create_copy(const XModbusDataUnit* unit);
+/**
+* @brief 通过移动语义创建Modbus数据单元实例
+* @param unit 源数据单元指针；NULL时返回NULL（签名中的const为历史遗留，
+*             实现会转移并清空源对象，禁止传入声明为const的共享对象）
+* @return 成功返回新创建的XModbusDataUnit实例指针（新对象，调用方负责XClassDelete释放），失败返回NULL
+* @warning 移动后源对象被清空（容器被接管，类型复位为XModbusInvalid），
+*          源对象仍由其创建者按原分配方式释放（栈对象XClassDeinit、堆对象XClassDelete）
+*/
 XModbusDataUnit* XModbusDataUnit_create_move(const XModbusDataUnit* unit);
 /**
  * @brief 初始化数据单元
@@ -205,15 +233,30 @@ size_t XModbusDataUnit_valueCount(const XModbusDataUnit* unit);
 * @note 返回的是拷贝后的XVector，需手动释放，避免内存泄漏
 */
 XVector* XModbusDataUnit_values1(const XModbusDataUnit* unit);
+/**
+* @brief 获取寄存器数据的内部只读容器（借用指针）
+* @param unit XModbusDataUnit实例指针（const，不修改实例）
+* @return 返回内部XVector的借用指针（禁止释放、禁止修改），
+*         unit为NULL、位类型或容器为空时返回NULL
+*/
 const XVector* XModbusDataUnit_values1_const(const XModbusDataUnit* unit);
 /**
 * @brief 获取位数据容器（仅当类型为Coils/DiscreteInputs时有效）
 * @return 返回内部XBitArray指针，其他类型返回NULL
 */
 XBitArray* XModbusDataUnit_values2(const XModbusDataUnit* unit);
+/**
+* @brief 获取位数据的内部只读容器（借用指针）
+* @param unit XModbusDataUnit实例指针（const，不修改实例）
+* @return 返回内部XBitArray的借用指针（禁止释放、禁止修改），
+*         unit为NULL、非位类型或容器为空时返回NULL
+*/
 const XBitArray* XModbusDataUnit_values2_const(const XModbusDataUnit* unit);
 /**
 * @brief 设置位数据（仅对Coils/DiscreteInputs有效）
+* @param unit XModbusDataUnit实例指针（非NULL）
+* @param bits 源位数据指针（借用，内部深拷贝，不取得所有权）
+* @return 成功返回true；unit为NULL、bits为NULL或类型非位类型返回false
 */
 bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits);
 
@@ -234,7 +277,20 @@ bool XModbusDataUnit_setBitArray(XModbusDataUnit* unit, const XBitArray* bits);
 * @details 存储所有寄存器类型的数据范围
 */
 typedef XMap XModbusDataUnitMap;
+/**
+* @brief 创建Modbus服务器数据映射表
+* @details 存储所有寄存器类型的数据范围，元素拷贝/移动/析构经XClass多态入口分派
+* @return 成功返回新创建的XModbusDataUnitMap实例指针（新对象，调用方负责XClassDelete释放），失败返回NULL
+*/
 XModbusDataUnitMap* XModbusDataUnitMap_create();
+
+#endif /* XMODBUS_CORE_ON */
+#endif /* XMODBUS_ON */
+#endif /* XPROTOCOL_ON */
+
+#ifdef __cplusplus
+}
+#endif
 
 /* XClass create API default-memory wrappers. */
 #undef XModbusDataUnit_create

@@ -161,35 +161,43 @@ XCLASS_DEFINE_EXTEND_END(XTextDocument, XObject)
 typedef struct XTextDocument
 {
     XObject m_base;        /**< 基类成员；必须是第一个。 */
+
+    /* ---- 8 字节对齐组：指针 / 快照栈 / 值类型（对齐分组前移，消除原
+     *      布局 0x81/0x21c/0x3b4/0x3e7/0x3f4 空洞；成员访问一律按名，
+     *      无位置初始化/offsetof 依赖） ---- */
     XTDBlock* m_blocks;    /**< 块数组（堆分配）。 */
-    int m_blockCount;      /**< 块数。 */
-    int m_capacity;        /**< 块数组容量。 */
-    bool m_undoRedoEnabled;
     /* 撤销/重做栈（实例持有；此前为全局静态，多文档互相污染） */
     char* m_undoStack[50];
-    int   m_undoTop;
     char* m_redoStack[50];
-    int   m_redoTop;
     XString* m_title;      /**< 文档标题（对象拥有；metaInformation 0）。 */
     XString* m_url;        /**< 文档源 URL（对象拥有；metaInformation 1）。 */
     XString* m_cssMedia;   /**< CSS '@media' 选择（对象拥有；metaInformation 2）。 */
     XString* m_frontMatter;/**< 前置元材料（对象拥有；metaInformation 3）。 */
     XString* m_baseUrl;    /**< baseUrl 属性（对象拥有；独立于 DocumentUrl
                                 元信息，对标 Qt d->baseUrl 分立存储）。 */
-    int m_modified;        /**< 修订计数（对标 revision()；每次内容变化递增）。 */
-    bool m_modifiedFlag;   /**< modified 属性（对标 isModified；默认 false）。 */
-    bool m_wasUndoAvailable;   /**< undoAvailable 边沿检测（Qt wasUndoAvailable）。 */
-    bool m_wasRedoAvailable;   /**< redoAvailable 边沿检测（Qt wasRedoAvailable）。 */
-    int m_maximumBlockCount;   /**< 块数上限（0=不限，对标 maximumBlockCount 默认 0）。 */
-    int m_emittedBlockCount;   /**< blockCountChanged 去重发射的上次块数。 */
-    int m_emittedCharCount;    /**< contentsChange removed/added 计算基准。 */
     XTDCharFormat m_defaultFormat; /**< 每文档默认字符格式（对标 defaultFont
                                         属性的字符格式子集；此前为全局静态，
                                         多文档互相污染）。 */
     XTDResource m_resources[XTD_MAX_RESOURCES]; /**< 按名资源表（对标
                                                      addResource/resource）。 */
+
+    /* ---- 4 字节对齐组：计数与游标 ---- */
+    int m_blockCount;      /**< 块数。 */
+    int m_capacity;        /**< 块数组容量。 */
+    int   m_undoTop;
+    int   m_redoTop;
+    int m_modified;        /**< 修订计数（对标 revision()；每次内容变化递增）。 */
+    int m_maximumBlockCount;   /**< 块数上限（0=不限，对标 maximumBlockCount 默认 0）。 */
+    int m_emittedBlockCount;   /**< blockCountChanged 去重发射的上次块数。 */
+    int m_emittedCharCount;    /**< contentsChange removed/added 计算基准。 */
     int m_resourceCount;       /**< 资源表占用数。 */
     int m_cursorPosition;  /**< 光标位置（字符索引；默认 0）。 */
+
+    /* ---- 1 字节标志组（尾部填充） ---- */
+    bool m_undoRedoEnabled;
+    bool m_modifiedFlag;   /**< modified 属性（对标 isModified；默认 false）。 */
+    bool m_wasUndoAvailable;   /**< undoAvailable 边沿检测（Qt wasUndoAvailable）。 */
+    bool m_wasRedoAvailable;   /**< redoAvailable 边沿检测（Qt wasRedoAvailable）。 */
 } XTextDocument;
 
 XVtable* XTextDocument_class_init(void);

@@ -32,7 +32,7 @@ static void testProxyQuery_basic(void)
         const XString* queryUrl = XNetworkProxyQuery_url_const(query);
         if (queryUrl) {
             XPrintf("  URL: ");
-            XPrintf_2(queryUrl);
+            XPrintf_string(queryUrl);
             XPrintf("\n");
         }
         XClassDelete(query);
@@ -50,13 +50,13 @@ static void testProxyQuery_basic(void)
         const XString* host = XNetworkProxyQuery_peerHostName_const(query);
         if (host) {
             XPrintf("  主机名: ");
-            XPrintf_2(host);
+            XPrintf_string(host);
             XPrintf("\n");
         }
         const XString* tag = XNetworkProxyQuery_protocolTag_const(query);
         if (tag) {
             XPrintf("  协议标签: ");
-            XPrintf_2(tag);
+            XPrintf_string(tag);
             XPrintf("\n");
         }
         XClassDelete(query);
@@ -99,7 +99,7 @@ static void testProxyQuery_setters(void)
     const XString* host = XNetworkProxyQuery_peerHostName_const(&query);
     if (host) {
         XPrintf("设置主机名: ");
-        XPrintf_2(host);
+        XPrintf_string(host);
         XPrintf("\n");
     }
     XClassDelete(hostname);
@@ -110,7 +110,7 @@ static void testProxyQuery_setters(void)
     const XString* protocolTag = XNetworkProxyQuery_protocolTag_const(&query);
     if (protocolTag) {
         XPrintf("设置协议标签: ");
-        XPrintf_2(protocolTag);
+        XPrintf_string(protocolTag);
         XPrintf("\n");
     }
     XClassDelete(tag);
@@ -121,7 +121,7 @@ static void testProxyQuery_setters(void)
     const XString* queryUrl = XNetworkProxyQuery_url_const(&query);
     if (queryUrl) {
         XPrintf("设置 URL: ");
-        XPrintf_2(queryUrl);
+        XPrintf_string(queryUrl);
         XPrintf("\n");
     }
     XClassDelete(url);
@@ -189,21 +189,21 @@ static void testProxy_basic(void)
         const XString* proxyHost = XNetworkProxy_hostName_const(proxy);
         if (proxyHost) {
             XPrintf("  主机名: ");
-            XPrintf_2(proxyHost);
+            XPrintf_string(proxyHost);
             XPrintf("\n");
         }
         
         const XString* proxyUser = XNetworkProxy_user_const(proxy);
         if (proxyUser) {
             XPrintf("  用户名: ");
-            XPrintf_2(proxyUser);
+            XPrintf_string(proxyUser);
             XPrintf("\n");
         }
         
         const XString* proxyPass = XNetworkProxy_password_const(proxy);
         if (proxyPass) {
             XPrintf("  密码: ");
-            XPrintf_2(proxyPass);
+            XPrintf_string(proxyPass);
             XPrintf("\n");
         }
         
@@ -298,7 +298,7 @@ static void testProxy_setters(void)
     const XString* proxyHost = XNetworkProxy_hostName_const(&proxy);
     if (proxyHost) {
         XPrintf("设置主机名: ");
-        XPrintf_2(proxyHost);
+        XPrintf_string(proxyHost);
         XPrintf("\n");
     }
     XClassDelete(host);
@@ -313,7 +313,7 @@ static void testProxy_setters(void)
     const XString* proxyUser = XNetworkProxy_user_const(&proxy);
     if (proxyUser) {
         XPrintf("设置用户名: ");
-        XPrintf_2(proxyUser);
+        XPrintf_string(proxyUser);
         XPrintf("\n");
     }
     XClassDelete(user);
@@ -324,7 +324,7 @@ static void testProxy_setters(void)
     const XString* proxyPass = XNetworkProxy_password_const(&proxy);
     if (proxyPass) {
         XPrintf("设置密码: ");
-        XPrintf_2(proxyPass);
+        XPrintf_string(proxyPass);
         XPrintf("\n");
     }
     XClassDelete(pass);
@@ -399,7 +399,7 @@ static void testProxy_applicationProxy(void)
             const XString* proxyHost = XNetworkProxy_hostName_const(retrieved);
             if (proxyHost) {
                 XPrintf("  主机名: ");
-                XPrintf_2(proxyHost);
+                XPrintf_string(proxyHost);
                 XPrintf("\n");
             }
         }
@@ -453,7 +453,7 @@ static void testProxyFactory_basic(void)
                 const XString* proxyHost = XNetworkProxy_hostName_const(proxy);
                 if (proxyHost) {
                     XPrintf("  主机名: ");
-                    XPrintf_2(proxyHost);
+                    XPrintf_string(proxyHost);
                     XPrintf("\n");
                 }
                 
@@ -497,7 +497,7 @@ static void testProxyFactory_systemConfig(void)
             const XString* proxyHost = XNetworkProxy_hostName_const(systemProxy);
             if (proxyHost) {
                 XPrintf("  主机名: ");
-                XPrintf_2(proxyHost);
+                XPrintf_string(proxyHost);
                 XPrintf("\n");
             }
             

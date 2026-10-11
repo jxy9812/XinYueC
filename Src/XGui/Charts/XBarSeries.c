@@ -10,6 +10,12 @@
 
 static void VXBarSeries_deinit(XBarSeries* self);
 
+static void VXBarSeries_deinit(XBarSeries* self)
+{
+    if (!self) return;
+    XClass_Deinit_Parent(XAbstractBarSeries, (XAbstractBarSeries*)self);
+}
+
 XVtable* XBarSeries_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XBarSeries)
@@ -36,12 +42,6 @@ XBarSeries* XBarSeries_create_ex(XMemoryType memory)
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;
-}
-
-static void VXBarSeries_deinit(XBarSeries* self)
-{
-    if (!self) return;
-    XClass_Deinit_Parent(XAbstractBarSeries, (XAbstractBarSeries*)self);
 }
 
 void XBarSeries_setColor(XBarSeries* self, uint32_t color)

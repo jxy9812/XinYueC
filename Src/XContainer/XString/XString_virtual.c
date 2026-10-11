@@ -1,7 +1,6 @@
 ﻿#include"XString.h"
 #if XString_ON
 #include <string.h>
-#include <ctype.h>
 #include <limits.h>
 #include <math.h>
 #include "XAlgorithm.h"
@@ -214,6 +213,8 @@ static void VXStringDataDelete(void* data, XString* str)
 // 类方法：拷贝
 static void VXClass_copy(XString* object, const XString* src)
 {
+    if (!object || !src) return;
+    if (object == src) return; /* 自拷贝直接返回（源与目标相同时禁止释放自身数据） */
     bool target_uninitialized = XClassIsVtableNull(object);
     if (target_uninitialized)
     {
@@ -245,8 +246,9 @@ static void VXClass_copy(XString* object, const XString* src)
 }
 
 // 类方法：移动
-static void VXClass_move(XString* object, XString* src) 
+static void VXClass_move(XString* object, XString* src)
 {
+    if (!object || !src) return;
     XMemory* source_memory = Class_Memory(src);
     if (XClassIsVtableNull(object))
     {

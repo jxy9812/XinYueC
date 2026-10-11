@@ -2117,38 +2117,33 @@ bool XDocument_copyStyle(const XString* fromPath, const XString* toPath)
         bool needCopy = false;
         const char* content = NULL;
         size_t contentLen = 0;
+        XByteArray* data = NULL; /* fileData 返回新建对象，调用方负责释放 */
 
         /* 1. 复制 styles.xml */
         if (strstr(toFilePath, "xl/styles") != NULL) {
-            if (XZipReader_fileData(fromZip, *ppPath) != NULL) {
-                XByteArray* data = XZipReader_fileData(fromZip, *ppPath);
-                if (data) {
-                    content = (const char*)XByteArray_data(data);
-                    contentLen = XByteArray_size_base(data);
-                    needCopy = true;
-                }
+            data = XZipReader_fileData(fromZip, *ppPath);
+            if (data) {
+                content = (const char*)XByteArray_data(data);
+                contentLen = XByteArray_size_base(data);
+                needCopy = true;
             }
         }
         /* 2. 复制 workbook.xml 中的 workbookPr */
         else if (strstr(toFilePath, "xl/workbook") != NULL) {
-            if (XZipReader_fileData(fromZip, *ppPath) != NULL) {
-                XByteArray* data = XZipReader_fileData(fromZip, *ppPath);
-                if (data) {
-                    content = (const char*)XByteArray_data(data);
-                    contentLen = XByteArray_size_base(data);
-                    needCopy = true;
-                }
+            data = XZipReader_fileData(fromZip, *ppPath);
+            if (data) {
+                content = (const char*)XByteArray_data(data);
+                contentLen = XByteArray_size_base(data);
+                needCopy = true;
             }
         }
         /* 3. 复制 worksheets 中的相关样式 */
         else if (strstr(toFilePath, "xl/worksheets/sheet") != NULL) {
-            if (XZipReader_fileData(fromZip, *ppPath) != NULL) {
-                XByteArray* data = XZipReader_fileData(fromZip, *ppPath);
-                if (data) {
-                    content = (const char*)XByteArray_data(data);
-                    contentLen = XByteArray_size_base(data);
-                    needCopy = true;
-                }
+            data = XZipReader_fileData(fromZip, *ppPath);
+            if (data) {
+                content = (const char*)XByteArray_data(data);
+                contentLen = XByteArray_size_base(data);
+                needCopy = true;
             }
         }
 
@@ -2168,6 +2163,7 @@ bool XDocument_copyStyle(const XString* fromPath, const XString* toPath)
                 XZipWriter_addFile(tempZip, *ppPath, (const uint8_t*)"", 0);
             }
         }
+        if (data) XClassDelete(data); /* addFile 只借用缓冲，写完即释放 */
     }
 
 cleanup:

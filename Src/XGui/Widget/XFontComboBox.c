@@ -31,31 +31,26 @@ static void xfcb_systemSampleFree(XFontComboBox* self);
 /* 样例文本表首配容量（之后倍增摊还）。 */
 #define XFCB_SAMPLE_MIN_CAPACITY 4
 
-/** @brief 族名样例表条目（键=UTF-8 族名；值=样例文本；两者均对象拥有）。 */
+/** @brief 族名样例表条目（键=族名；值=样例文本；两者均为对象拥有的
+ *         XString，经 XClassDelete 释放）。 */
 typedef struct xfcb_FontSample
 {
-    char* m_family; /**< 族名键（对象拥有）。 */
-    char* m_sample; /**< 样例文本（对象拥有；可为 NULL=键已占位）。 */
+    XString* m_family; /**< 族名键（对象拥有）。 */
+    XString* m_sample; /**< 样例文本（对象拥有；可为 NULL=键已占位）。 */
 } xfcb_FontSample;
 
 /** @brief 书写系统样例表条目（键=书写系统枚举值）。 */
 typedef struct xfcb_SystemSample
 {
-    int m_system;   /**< 书写系统枚举值（键）。 */
-    char* m_sample; /**< 样例文本（对象拥有）。 */
+    int m_system;       /**< 书写系统枚举值（键）。 */
+    XString* m_sample;  /**< 样例文本（对象拥有）。 */
 } xfcb_SystemSample;
 
-/** @brief 以 XMemory 复制 UTF-8 字符串（含结尾 NUL）；失败返回 NULL。 */
-static char* xfcb_textClone(const char* text)
+/** @brief 以 UTF-8 文本新建样例 XString 对象（表条目拥有）；失败返回 NULL。 */
+static XString* xfcb_textClone(const char* text)
 {
-    size_t len;
-    char* copy;
     if (!text) return NULL;
-    len = XStrlen(text);
-    copy = (char*)XMemory_malloc(len + 1, XFCB_TABLE_MEMORY);
-    if (!copy) return NULL;
-    XMemcpy(copy, text, len + 1);
-    return copy;
+    return XString_create_utf8(text);
 }
 
 /** @brief 查询族名自定义样例文本；未设置返回 NULL。 */
@@ -66,8 +61,11 @@ static const char* xfcb_fontSampleGet(const XFontComboBox* self,
         (const xfcb_FontSample*)self->m_fontSamples;
     int i;
     for (i = 0; i < self->m_fontSampleCount; ++i) {
-        if (table[i].m_family && XStrcmp(table[i].m_family, family) == 0)
-            return table[i].m_sample;
+        if (table[i].m_family &&
+            XString_equals_utf8(table[i].m_family, family,
+                                XChar_CaseSensitive))
+            return table[i].m_sample ? XString_toUtf8(table[i].m_sample)
+                                     : "";
     }
     return NULL;
 }
@@ -84,7 +82,9 @@ static void xfcb_fontSampleSet(XFontComboBox* self, const char* family,
     int i;
     if (!family || family[0] == '\0') return;
     for (i = 0; i < self->m_fontSampleCount; ++i) {
-        if (table[i].m_family && XStrcmp(table[i].m_family, family) == 0) {
+        if (table[i].m_family &&
+            XString_equals_utf8(table[i].m_family, family,
+                                XChar_CaseSensitive)) {
             target = i;
             break;
         }
@@ -92,9 +92,10 @@ static void xfcb_fontSampleSet(XFontComboBox* self, const char* family,
     if (!sample) {
         /* NULL 样例 = 移除该族自定义（交换尾条目保持表紧凑）。 */
         if (target < 0) return;
-        XMemory_free(table[target].m_family, XFCB_TABLE_MEMORY);
+        if (table[target].m_family)
+            XClassDelete((XClass*)table[target].m_family);
         if (table[target].m_sample)
-            XMemory_free(table[target].m_sample, XFCB_TABLE_MEMORY);
+            XClassDelete((XClass*)table[target].m_sample);
         table[target] = table[self->m_fontSampleCount - 1];
         --self->m_fontSampleCount;
         return;
@@ -124,10 +125,10 @@ static void xfcb_fontSampleSet(XFontComboBox* self, const char* family,
         ++self->m_fontSampleCount;
     }
     {
-        char* copy = xfcb_textClone(sample);
+        XString* copy = xfcb_textClone(sample);
         if (!copy) return; /* 分配失败保留旧文本。 */
         if (table[target].m_sample)
-            XMemory_free(table[target].m_sample, XFCB_TABLE_MEMORY);
+            XClassDelete((XClass*)table[target].m_sample);
         table[target].m_sample = copy;
     }
 }
@@ -139,9 +140,9 @@ static void xfcb_fontSampleFree(XFontComboBox* self)
     int i;
     for (i = 0; i < self->m_fontSampleCount; ++i) {
         if (table[i].m_family)
-            XMemory_free(table[i].m_family, XFCB_TABLE_MEMORY);
+            XClassDelete((XClass*)table[i].m_family);
         if (table[i].m_sample)
-            XMemory_free(table[i].m_sample, XFCB_TABLE_MEMORY);
+            XClassDelete((XClass*)table[i].m_sample);
     }
     if (table) XMemory_free(table, XFCB_TABLE_MEMORY);
     self->m_fontSamples = NULL;
@@ -156,7 +157,9 @@ static const char* xfcb_systemSampleGet(const XFontComboBox* self, int system)
         (const xfcb_SystemSample*)self->m_systemSamples;
     int i;
     for (i = 0; i < self->m_systemSampleCount; ++i) {
-        if (table[i].m_system == system) return table[i].m_sample;
+        if (table[i].m_system == system)
+            return table[i].m_sample ? XString_toUtf8(table[i].m_sample)
+                                     : "";
     }
     return NULL;
 }
@@ -181,7 +184,7 @@ static void xfcb_systemSampleSet(XFontComboBox* self, int system,
         /* NULL 样例 = 移除该系统自定义（交换尾条目保持表紧凑）。 */
         if (target < 0) return;
         if (table[target].m_sample)
-            XMemory_free(table[target].m_sample, XFCB_TABLE_MEMORY);
+            XClassDelete((XClass*)table[target].m_sample);
         table[target] = table[self->m_systemSampleCount - 1];
         --self->m_systemSampleCount;
         return;
@@ -211,10 +214,10 @@ static void xfcb_systemSampleSet(XFontComboBox* self, int system,
         ++self->m_systemSampleCount;
     }
     {
-        char* copy = xfcb_textClone(sample);
+        XString* copy = xfcb_textClone(sample);
         if (!copy) return; /* 分配失败保留旧文本。 */
         if (table[target].m_sample)
-            XMemory_free(table[target].m_sample, XFCB_TABLE_MEMORY);
+            XClassDelete((XClass*)table[target].m_sample);
         table[target].m_sample = copy;
     }
 }
@@ -226,7 +229,7 @@ static void xfcb_systemSampleFree(XFontComboBox* self)
     int i;
     for (i = 0; i < self->m_systemSampleCount; ++i) {
         if (table[i].m_sample)
-            XMemory_free(table[i].m_sample, XFCB_TABLE_MEMORY);
+            XClassDelete((XClass*)table[i].m_sample);
     }
     if (table) XMemory_free(table, XFCB_TABLE_MEMORY);
     self->m_systemSamples = NULL;
@@ -291,19 +294,24 @@ static void VXFontComboBox_copy(XFontComboBox* self,
     self->m_writingSystem = other->m_writingSystem;
     /* 显示字体值承载：经 XFont 多态拷贝深复制族名/样式字符串。 */
     XClassCopy(&self->m_displayFont, &other->m_displayFont);
-    /* 样例文本表深拷贝（键与文本均复制所有权）。 */
+    /* 样例文本表深拷贝（键与文本均为对象拥有的 XString，按 UTF-8
+     * 转换后重设，重建目标侧所有权）。 */
     xfcb_fontSampleFree(self);
     xfcb_systemSampleFree(self);
     fontSamples = (const xfcb_FontSample*)other->m_fontSamples;
     for (i = 0; i < other->m_fontSampleCount; ++i) {
-        if (fontSamples[i].m_family)
-            xfcb_fontSampleSet(self, fontSamples[i].m_family,
-                               fontSamples[i].m_sample);
+        const char* familyUtf8 = fontSamples[i].m_family
+            ? XString_toUtf8(fontSamples[i].m_family) : NULL;
+        const char* sampleUtf8 = fontSamples[i].m_sample
+            ? XString_toUtf8(fontSamples[i].m_sample) : NULL;
+        if (familyUtf8)
+            xfcb_fontSampleSet(self, familyUtf8, sampleUtf8);
     }
     systemSamples = (const xfcb_SystemSample*)other->m_systemSamples;
     for (i = 0; i < other->m_systemSampleCount; ++i) {
-        xfcb_systemSampleSet(self, systemSamples[i].m_system,
-                             systemSamples[i].m_sample);
+        const char* sampleUtf8 = systemSamples[i].m_sample
+            ? XString_toUtf8(systemSamples[i].m_sample) : NULL;
+        xfcb_systemSampleSet(self, systemSamples[i].m_system, sampleUtf8);
     }
 }
 

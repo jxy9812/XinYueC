@@ -1,8 +1,12 @@
-﻿// XNetworkProxy.h
+﻿/**
+ * @file       XNetworkProxy.h
+ * @brief      网络代理配置公开 API。
+ * @details    对齐 Qt QNetworkProxy，提供代理查询条件、代理配置、代理工厂与
+ *             应用级代理设置；实现只依赖 XinYueC 抽象层，禁止调用 Win32、
+ *             POSIX、Qt 或其他平台 API。
+ */
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
-//
-// C 语言模拟 Qt6 QNetworkProxy，提供网络代理配置功能。
 
 #ifndef XNETWORKPROXY_H
 #define XNETWORKPROXY_H
@@ -79,7 +83,7 @@ XCLASS_DEFINE_EXTEND_END(XNetworkProxyQuery, XClass)
  *        继承自 XClass，支持类继承和虚函数。
  */
 typedef struct XNetworkProxyQuery {
-    XClass base;                            ///< 基类（必须是第一个成员）
+    XClass base;                            ///< 第一个成员，由 XClass 管理，禁止手工修改
     XNetworkProxyQuery_QueryType queryType; ///< 查询类型
     XString* peerHostName;                  ///< 目标主机名
     int peerPort;                           ///< 目标端口
@@ -140,10 +144,6 @@ XNetworkProxyQuery* XNetworkProxyQuery_create_4(uint16_t bindPort, const XString
                                                            XNetworkProxyQuery_QueryType queryType);
 
 /**
- * @brief 释放 XNetworkProxyQuery 结构体内部资源。
- * @param query 查询实例
- */
-/**
  * @brief 获取查询类型。
  * @param query 查询实例
  * @return 查询类型枚举值
@@ -177,6 +177,13 @@ void XNetworkProxyQuery_setPeerPort(XNetworkProxyQuery* query, int port);
  * @return 主机名字符串（可能为 NULL）
  */
 const XString* XNetworkProxyQuery_peerHostName_const(const XNetworkProxyQuery* query);
+
+/**
+ * @brief 获取目标主机名（返回新建拷贝）。
+ * @param query 查询实例；传入 NULL 时返回 NULL。
+ * @return 新建的 XString 拷贝（可能为 NULL）；调用者必须用 XClassDelete() 释放。
+ * @note 仅需借用内部字符串时改用 XNetworkProxyQuery_peerHostName_const()。
+ */
 XString* XNetworkProxyQuery_peerHostName(const XNetworkProxyQuery* query);
 /**
  * @brief 设置目标主机名。
@@ -205,6 +212,13 @@ void XNetworkProxyQuery_setLocalPort(XNetworkProxyQuery* query, int port);
  * @return 协议标签字符串（可能为 NULL）
  */
 const XString* XNetworkProxyQuery_protocolTag_const(const XNetworkProxyQuery* query);
+
+/**
+ * @brief 获取协议标签（返回新建拷贝）。
+ * @param query 查询实例；传入 NULL 时返回 NULL。
+ * @return 新建的 XString 拷贝（可能为 NULL）；调用者必须用 XClassDelete() 释放。
+ * @note 仅需借用内部字符串时改用 XNetworkProxyQuery_protocolTag_const()。
+ */
 XString* XNetworkProxyQuery_protocolTag(const XNetworkProxyQuery* query);
 /**
  * @brief 设置协议标签。
@@ -219,6 +233,13 @@ void XNetworkProxyQuery_setProtocolTag(XNetworkProxyQuery* query, const XString*
  * @return URL 字符串（可能为 NULL）
  */
 const XString* XNetworkProxyQuery_url_const(const XNetworkProxyQuery* query);
+
+/**
+ * @brief 获取请求 URL（返回新建拷贝）。
+ * @param query 查询实例；传入 NULL 时返回 NULL。
+ * @return 新建的 XString 拷贝（可能为 NULL）；调用者必须用 XClassDelete() 释放。
+ * @note 仅需借用内部字符串时改用 XNetworkProxyQuery_url_const()。
+ */
 XString* XNetworkProxyQuery_url(const XNetworkProxyQuery* query);
 /**
  * @brief 设置请求 URL。
@@ -256,7 +277,7 @@ XCLASS_DEFINE_EXTEND_END(XNetworkProxy,XClass)
  *        继承自 XClass，支持类继承和虚函数。
  */
 typedef struct XNetworkProxy {
-    XClass base;                           ///< 基类（必须是第一个成员）
+    XClass base;                           ///< 第一个成员，由 XClass 管理，禁止手工修改
     XNetworkProxy_ProxyType type;          ///< 代理类型
     XNetworkProxy_Capabilities capabilities; ///< 能力标志
     XString* hostName;                     ///< 代理服务器主机名
@@ -348,6 +369,13 @@ bool XNetworkProxy_isTransparentProxy(const XNetworkProxy* proxy);
  * @return 用户名字符串（可能为 NULL）
  */
 const XString* XNetworkProxy_user_const(const XNetworkProxy* proxy);
+
+/**
+ * @brief 获取认证用户名（返回新建拷贝）。
+ * @param proxy 代理实例；传入 NULL 时返回 NULL。
+ * @return 新建的 XString 拷贝（可能为 NULL）；调用者必须用 XClassDelete() 释放。
+ * @note 仅需借用内部字符串时改用 XNetworkProxy_user_const()。
+ */
 XString* XNetworkProxy_user(const XNetworkProxy* proxy);
 /**
  * @brief 设置认证用户名。
@@ -362,6 +390,13 @@ void XNetworkProxy_setUser(XNetworkProxy* proxy, const XString* userName);
  * @return 密码字符串（可能为 NULL）
  */
 const XString* XNetworkProxy_password_const(const XNetworkProxy* proxy);
+
+/**
+ * @brief 获取认证密码（返回新建拷贝）。
+ * @param proxy 代理实例；传入 NULL 时返回 NULL。
+ * @return 新建的 XString 拷贝（可能为 NULL）；调用者必须用 XClassDelete() 释放。
+ * @note 仅需借用内部字符串时改用 XNetworkProxy_password_const()。
+ */
 XString* XNetworkProxy_password(const XNetworkProxy* proxy);
 /**
  * @brief 设置认证密码。
@@ -376,6 +411,13 @@ void XNetworkProxy_setPassword(XNetworkProxy* proxy, const XString* password);
  * @return 主机名字符串（可能为 NULL）
  */
 const XString* XNetworkProxy_hostName_const(const XNetworkProxy* proxy);
+
+/**
+ * @brief 获取代理服务器主机名（返回新建拷贝）。
+ * @param proxy 代理实例；传入 NULL 时返回 NULL。
+ * @return 新建的 XString 拷贝（可能为 NULL）；调用者必须用 XClassDelete() 释放。
+ * @note 仅需借用内部字符串时改用 XNetworkProxy_hostName_const()。
+ */
 XString* XNetworkProxy_hostName(const XNetworkProxy* proxy);
 /**
  * @brief 设置代理服务器主机名。
@@ -448,7 +490,7 @@ typedef struct XNetworkProxyFactory XNetworkProxyFactory;
 typedef XNetworkProxy* (*XNetworkProxyFactory_QueryFunc)(XNetworkProxyFactory* factory, const XNetworkProxyQuery* query);
 
 struct XNetworkProxyFactory {
-    XClass base;                          ///< 基类（必须是第一个成员）
+    XClass base;                          ///< 第一个成员，由 XClass 管理，禁止手工修改
     XNetworkProxyFactory_QueryFunc queryProxy; ///< 查询代理回调
 };
 

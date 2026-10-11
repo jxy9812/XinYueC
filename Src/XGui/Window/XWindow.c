@@ -36,6 +36,7 @@
 #include "XAlgorithm.h"
 #include "XWindow_Protected.h"
 #include "XWidget_Protected.h" /* XWidget_appFocusWidget（防 C4013 隐式声明，指针截断）。 */
+#include "XObject_Protected.h"
 #include "XAccessible.h"
 #if XACCESSIBLE_ON
 #include "XPlatformAccessibility.h"
@@ -557,7 +558,7 @@ void XWindow_init(XWindow* self)
     XMemset(self, 0, sizeof(XWindow));
     XObject_init((XObject*)self);
     XClassSetVtable(self, XWindow);
-    ((XObject*)self)->is_window = 1;
+    ((XObject*)self)->m_is_window = 1;
     self->m_data = (XWindowPrivate*)XMalloc_System(sizeof(XWindowPrivate));
     if (!self->m_data) return;
     XMemset(self->m_data, 0, sizeof(XWindowPrivate));
@@ -774,7 +775,7 @@ static void VXWindow_copy(XWindow* self, const XWindow* other)
 #if XSCREEN_ON
     target->m_screen = source->m_screen;
 #endif
-    ((XObject*)self)->is_window = 1;
+    ((XObject*)self)->m_is_window = 1;
     return;
 
 copy_failed:
@@ -834,7 +835,7 @@ static void VXWindow_move(XWindow* self, XWindow* other)
     else
         self->m_data->m_accessibleRoot = XAccessible_createForWindow(self);
     #endif
-    ((XObject*)self)->is_window = 1;
+    ((XObject*)self)->m_is_window = 1;
 }
 
 /* ==================== 表面与窗口标识 ==================== */
@@ -2583,7 +2584,7 @@ void* XWindow_transientParentChanged_signal(XWindow* self,
 static bool VXWindow_event(XWindow* self, XEvent* event)
 {
     if (!self || !event) return false;
-    switch (event->type) {
+    switch (event->m_type) {
     case XEVENT_TYPE_EXPOSE:
         XWindow_exposeEvent_base(self, event);
         XEvent_accept(event);
@@ -2691,7 +2692,7 @@ static bool VXWindow_event(XWindow* self, XEvent* event)
         XWindow_dropEvent_base(self, event);
         break;
     default:
-        /* 未识别事件回退 XObject 默认 Event 实现（返回 e->accepted）。 */
+        /* 未识别事件回退 XObject 默认 Event 实现（返回 e->m_accepted）。 */
         return XClass_Parent(XObject, EXObject_Event,
                              bool(*)(XObject*, XEvent*))((XObject*)self, event);
     }
@@ -2708,7 +2709,8 @@ static bool VXWindow_event(XWindow* self, XEvent* event)
 #define XWINDOW_DEFINE_EVENT_BASE(Name, Type) \
     void XWindow_##Name##_base(XWindow* self, XEvent* event) \
     { \
-        if (!self || !event) return; \
+        if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !event) return; \
+        if (!XClassGetVirtualFunc(self, Type, bool)) return; \
         XClassGetVirtualFunc(self, Type, XWindowEventSlot)(self, event); \
     }
 
@@ -2740,7 +2742,10 @@ XWINDOW_DEFINE_EVENT_BASE(tabletEvent, EXWindow_TabletEvent)
 
 bool XWindow_nativeEvent_base(XWindow* self, XEvent* event)
 {
-    if (!self || !event) return false;
+    if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !event)
+        return false;
+    if (!XClassGetVirtualFunc(self, EXWindow_NativeEvent, bool))
+        return false;
     return XClassGetVirtualFunc(self, EXWindow_NativeEvent,
                                 bool(*)(XWindow*, XEvent*))(self, event);
 }

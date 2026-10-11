@@ -14,6 +14,40 @@
 // 虚函数重载
 static void VXPlcReply_deinit(XPlcReply* reply);
 
+static void VXPlcReply_deinit(XPlcReply* reply) {
+    if (!reply) return;
+
+    // 释放成员
+    if (reply->m_errorString) {
+        XClassDelete((XClass*)reply->m_errorString);
+        reply->m_errorString = NULL;
+    }
+
+    if (reply->m_result) {
+        XClassDelete((XClass*)reply->m_result);
+        reply->m_result = NULL;
+    }
+
+    if (reply->m_rawResult) {
+        XClassDelete((XClass*)reply->m_rawResult);
+        reply->m_rawResult = NULL;
+    }
+
+    if (reply->m_request)
+    {
+        XClassDelete((XClass*)reply->m_request);
+        reply->m_request = NULL;
+    }
+
+    if (reply->m_intermediateErrors) {
+        XClassDelete((XClass*)reply->m_intermediateErrors);
+        reply->m_intermediateErrors = NULL;
+    }
+
+    // 调用基类析构
+    XClass_Deinit_Parent(XObject, (XObject*)reply);
+}
+
 XVtable* XPlcReply_class_init(void) {
     XVTABLE_INIT_DEFAULT(XPlcReply)
 
@@ -53,40 +87,6 @@ void XPlcReply_init(XPlcReply* reply, XPlcReply_ReplyType type) {
     reply->m_rawResult = NULL;
     reply->m_request = NULL;
     reply->m_intermediateErrors = NULL;
-}
-
-static void VXPlcReply_deinit(XPlcReply* reply) {
-    if (!reply) return;
-
-    // 释放成员
-    if (reply->m_errorString) {
-        XClassDelete((XClass*)reply->m_errorString);
-        reply->m_errorString = NULL;
-    }
-
-    if (reply->m_result) {
-        XClassDelete((XClass*)reply->m_result);
-        reply->m_result = NULL;
-    }
-
-    if (reply->m_rawResult) {
-        XClassDelete((XClass*)reply->m_rawResult);
-        reply->m_rawResult = NULL;
-    }
-
-    if (reply->m_request)
-    {
-        XClassDelete((XClass*)reply->m_request);
-        reply->m_request = NULL;
-    }
-
-    if (reply->m_intermediateErrors) {
-        XClassDelete((XClass*)reply->m_intermediateErrors);
-        reply->m_intermediateErrors = NULL;
-    }
-
-    // 调用基类析构
-    XClass_Deinit_Parent(XObject, (XObject*)reply);
 }
 
 // --- Getters ---
@@ -281,7 +281,7 @@ XVector* XPlcReply_intermediateErrors(const XPlcReply* reply) {
 
 void XPlcReply_addIntermediateError(XPlcReply* reply, XPlcDevice_IntermediateError error) {
     if (!reply) return;
-    if (!reply->m_intermediateErrors) reply->m_intermediateErrors = XVector_create(sizeof(XPlcDevice_IntermediateError));
+    if (!reply->m_intermediateErrors) reply->m_intermediateErrors = XVector_Create(XPlcDevice_IntermediateError);
     XVector_append_1_base(reply->m_intermediateErrors, &error);
     // 发射信号
     XPlcReply_intermediateErrorOccurred_signal(reply, error);

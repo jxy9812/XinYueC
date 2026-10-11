@@ -36,26 +36,34 @@ typedef enum XPieSlice_LabelPosition
 typedef struct XPieSlice
 {
     XObject m_base;                  /**< 基类成员；必须是第一个。 */
+
+    /* ---- 8 字节对齐组：指针 / 双精度（对齐分组前移，消除原布局
+     *      0x91/0x99/0xcc/尾部空洞；成员访问一律按名，无位置初始化/
+     *      offsetof 依赖） ---- */
     XString* m_label;                /**< 切片标签（UTF-8；对象拥有）。 */
+    XString* m_labelFontFamily;      /**< 标签字体族（对象拥有）。 */
     double m_value;                  /**< 切片值。 */
-    uint32_t m_color;                /**< 切片填充色（ARGB；0=主题色）。 */
-    uint32_t m_borderColor;          /**< 边框色（ARGB；0=填充色）。 */
-    int m_borderWidth;               /**< 边框宽（像素；0=无边框）。 */
-    uint32_t m_labelColor;           /**< 标签色（ARGB；0=白色）。 */
-    bool m_labelVisible;             /**< 标签可见（默认 false）。 */
-    XPieSlice_LabelPosition m_labelPosition; /**< 标签位置。 */
-    bool m_exploded;                 /**< 是否分离突出。 */
     double m_explodeDistanceFactor;  /**< 分离距离系数（0-1；默认 0.15）。 */
     double m_labelArmLengthFactor;   /**< 标签引线长度系数（默认 0.15）。 */
     double m_percentage;             /**< 占比（0-1；series 布局回写）。 */
     double m_startAngle;             /**< 起始角（度；series 布局回写）。 */
     double m_angleSpan;              /**< 角跨度（度；series 布局回写）。 */
-    uint32_t m_penColor;             /**< 画笔颜色（0=默认）。 */
     double m_penWidth;               /**< 画笔线宽（默认 1）。 */
+
+    /* ---- 4 字节对齐组：颜色与整型 ---- */
+    uint32_t m_color;                /**< 切片填充色（ARGB；0=主题色）。 */
+    uint32_t m_borderColor;          /**< 边框色（ARGB；0=填充色）。 */
+    int m_borderWidth;               /**< 边框宽（像素；0=无边框）。 */
+    uint32_t m_labelColor;           /**< 标签色（ARGB；0=白色）。 */
+    XPieSlice_LabelPosition m_labelPosition; /**< 标签位置。 */
+    uint32_t m_penColor;             /**< 画笔颜色（0=默认）。 */
     uint32_t m_brushColor;           /**< 画刷颜色（0=透明）。 */
     uint32_t m_labelBrushColor;      /**< 标签画刷颜色（0=默认）。 */
-    XString* m_labelFontFamily;      /**< 标签字体族（对象拥有）。 */
     int m_labelFontSize;             /**< 标签字号（磅；0=默认）。 */
+
+    /* ---- 1 字节标志组（尾部填充；保持 bool 不并位域） ---- */
+    bool m_labelVisible;             /**< 标签可见（默认 false）。 */
+    bool m_exploded;                 /**< 是否分离突出。 */
 } XPieSlice;
 
 XVtable* XPieSlice_class_init(void);

@@ -25,8 +25,6 @@ typedef struct XIODevicePrivate {
     struct XVector* writeBuffers;       /**< @brief XVector<XRingBuffer*>，存储所有写缓冲区。索引即为通道ID。 */
 
     // --- 事务相关 ---
-    bool transactionStarted;            /**< @brief 标志位，指示是否已调用 startTransaction()。 */
-    bool aboutToCloseEmitted;           /**< @brief 标志位，防止 aboutToClose 信号重复发射。 */
     int64_t transactionReadPos;         /**< @brief 事务开始时的读位置（针对默认通道）。 */
     // --- 错误 & 状态 ---
     struct XString* errorString;        /**< @brief 存储最近一次 I/O 操作的错误信息。 */
@@ -35,6 +33,10 @@ typedef struct XIODevicePrivate {
     /* unget 字符栈 (深度有限, 满足 ungetChar/getChar 测试) */
     char ungetStack[8];
     int ungetCount;
+
+    // --- 标志位（置于尾部，避免在 64 位指针前产生对齐空洞） ---
+    bool transactionStarted;            /**< @brief 标志位，指示是否已调用 startTransaction()。 */
+    bool aboutToCloseEmitted;           /**< @brief 标志位，防止 aboutToClose 信号重复发射。 */
 
 } XIODevicePrivate;
 

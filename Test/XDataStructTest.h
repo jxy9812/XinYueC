@@ -7,7 +7,7 @@ extern "C" {
 #include"XClass.h"
 //#include"XContainerTest.h"
 
-#if DEMOTEST
+#if DEMOTEST_ON
 	//排序算法测试
 	void SortTest();
 	//随机迷宫生成算法——深度优先算法
@@ -27,7 +27,7 @@ extern "C" {
 	//哈夫曼树测试
 	void XHuffmanTreeTest();
 
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

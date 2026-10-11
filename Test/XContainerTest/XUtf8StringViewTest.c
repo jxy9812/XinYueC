@@ -5,7 +5,7 @@
  *          包括 null/empty 边界、UTF-8 有效性检测、中文多字节字符测试。
  */
 #include "XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include "XUtf8StringView.h"
 #include "XString.h"
 #include "XStringView.h"

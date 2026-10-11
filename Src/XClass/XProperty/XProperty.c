@@ -69,7 +69,7 @@ const XVariant* XPropertyData_value_const(XPropertyData* data)
     if (!data) return NULL;
     if (data->m_binding)
     {
-        if (XBinding_isOnEvalStack(data->m_binding))
+        if (XPropertyBinding_isOnEvalStack(data->m_binding))
         {
             /* 绑定循环：求值中读取自身目标，记错误并返回现值，绝不重入 */
             XPropertyBinding_setError_2(data->m_binding, XPropertyBindingError_BindingLoop,
@@ -77,11 +77,11 @@ const XVariant* XPropertyData_value_const(XPropertyData* data)
             return &data->m_value;
         }
         if (data->m_binding->m_dirty)
-            XBinding_evaluate(data->m_binding);
+            XPropertyBinding_evaluate(data->m_binding);
     }
     {
         /* 依赖捕获：处于求值上下文时把本属性登记为当前绑定（栈顶）的依赖 */
-        XPropertyBinding* evaluating = XBinding_currentEvalBinding();
+        XPropertyBinding* evaluating = XPropertyBinding_currentEvalBinding();
         if (evaluating)
             XPropertyData_captureDependency(data, evaluating);
     }
@@ -222,7 +222,7 @@ void XPropertyData_removeBindingInternal(XPropertyData* data)
     data->m_binding = NULL;
     if (binding->m_propertyData == data)
         binding->m_propertyData = NULL;
-    XBinding_detachDependencies(binding);
+    XPropertyBinding_detachDependencies(binding);
     /* 释放属性持有的引用；绑定对象由剩余引用方（若有）继续持有 */
     XPropertyBinding_unref(binding);
 }
@@ -240,9 +240,14 @@ void XPropertyData_setBinding(XPropertyData* data, XPropertyBinding* binding)
     if (!data) return;
     if (data->m_binding == binding)
     {
-        /* 重复设置同一绑定：仅需保证待求值状态 */
+        /* 重复设置同一绑定：仅需保证待求值状态。契约规定调用方移交引用
+         * （见 XPropertyBinding.h：传入后调用方不得再 unref），此处必须
+         * 消费该引用，否则多出的引用永久无法归零、绑定对象泄漏 */
         if (binding)
+        {
             binding->m_dirty = true;
+            XPropertyBinding_unref(binding);   /* 属性自身仍持有引用，绑定不会销毁 */
+        }
         return;
     }
     if (data->m_binding)
@@ -270,7 +275,7 @@ XPropertyBinding* XPropertyData_takeBinding(XPropertyData* data)
     data->m_binding = NULL;
     if (binding->m_propertyData == data)
         binding->m_propertyData = NULL;
-    XBinding_detachDependencies(binding);
+    XPropertyBinding_detachDependencies(binding);
     return binding;   /* 所有权移交调用方 */
 }
 

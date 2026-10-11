@@ -6,8 +6,8 @@
 
 #include <string.h>
 
-static XSqlDriver* VXSqlDriverPlugin_create(XSqlDriverPlugin* plugin, const char* key);
-static void VXSqlDriverPlugin_deinit(XSqlDriverPlugin* plugin);
+static XSqlDriver* VXSqlDriverPlugin_create(XSqlDriverPlugin* plugin, const char* key) { (void)plugin; (void)key; return NULL; }
+static void VXSqlDriverPlugin_deinit(XSqlDriverPlugin* plugin) { if (plugin) XClass_Deinit_Parent(XObject, plugin); }
 
 XVtable* XSqlDriverPlugin_class_init(void)
 {
@@ -28,5 +28,3 @@ void XSqlDriverPlugin_init(XSqlDriverPlugin* plugin)
 }
 XSqlDriverPlugin* XSqlDriverPlugin_create_ex(XMemoryType memory) { XSqlDriverPlugin* plugin = (XSqlDriverPlugin*)XMemory_malloc(sizeof(XSqlDriverPlugin), memory); if (!plugin) return NULL; XSqlDriverPlugin_init(plugin); Set_Class_Memory(plugin, memory); Set_Class_IsHeap(plugin, true); return plugin; }
 XSqlDriver* XSqlDriverPlugin_create_base(XSqlDriverPlugin* plugin, const char* key) { return plugin && !XClassIsVtableNull(plugin) ? XClassGetVirtualFunc(plugin, EXSqlDriverPlugin_Create, XSqlDriver*(*)(XSqlDriverPlugin*, const char*))(plugin, key) : NULL; }
-static XSqlDriver* VXSqlDriverPlugin_create(XSqlDriverPlugin* plugin, const char* key) { (void)plugin; (void)key; return NULL; }
-static void VXSqlDriverPlugin_deinit(XSqlDriverPlugin* plugin) { if (plugin) XClass_Deinit_Parent(XObject, plugin); }

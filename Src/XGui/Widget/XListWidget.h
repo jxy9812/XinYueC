@@ -66,6 +66,12 @@ typedef struct XListWidget
 
 /* ==================== 生命周期 ==================== */
 
+/**
+ * @brief      获取 XListWidget 虚函数表（首次调用时构建单例虚表）。
+ * @details    继承 XListView 虚表，重载 deinit 与鼠标按下/释放/双击/
+ *             移动、按键事件槽（行级部件命中与编辑交互）。
+ * @return     虚函数表单例指针（库内部管理，借用；不得释放）。
+ */
 XVtable* XListWidget_class_init(void);
 /** @brief 初始化列表控件。
  * @param self 目标控件；不可为 NULL。

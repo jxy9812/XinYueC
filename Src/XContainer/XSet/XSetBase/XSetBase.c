@@ -4,7 +4,13 @@
 #if XSet_ON
 XVtable* XSetBase_class_init()
 {
-    return XContainer_class_init();
+    /* 标准流程：按本类枚举容量建自有表（含 Insert..Keys 共 5 个自有槽位），
+       再继承 XContainer；自身未实现的槽位保持空，由具体子类（XSet/XHashSet）注册。
+       直接返回 XContainer_class_init() 会使该单例表容量止于 XContainer 槽位，
+       XSetBase_init 绑定后按 EXSetBase_Insert 等槽位取函数即越界读表。 */
+    XVTABLE_INIT_DEFAULT(XSetBase)
+    XVTABLE_INHERIT_XCLASS(XContainer);
+    return XVTABLE_DEFAULT;
 }
 
 void XSetBase_init(XSetBase* this_set, const size_t keyTypeSize, XCompare compare, bool useCow)

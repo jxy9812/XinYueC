@@ -22,7 +22,7 @@ extern "C" {
  * @param compare 元素比较器。
  * @param order 排序方向。
  */
-void InsertSort_gap(void* LParray, size_t nSize, size_t TypeSize,
+void XSort_insert_gap(void* LParray, size_t nSize, size_t TypeSize,
     size_t gap, XCompare compare, XSortOrder order);
 
 /**
@@ -33,7 +33,7 @@ void InsertSort_gap(void* LParray, size_t nSize, size_t TypeSize,
  * @param compare 元素比较器。
  * @param order 排序方向。
  */
-void XInsertSort(void* LParray, size_t nSize, size_t TypeSize,
+void XSort_insert(void* LParray, size_t nSize, size_t TypeSize,
     XCompare compare, XSortOrder order);
 
 /**

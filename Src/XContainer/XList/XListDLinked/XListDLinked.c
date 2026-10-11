@@ -7,6 +7,8 @@ XListDLinked* XListDLinked_create_ex(XMemoryType memory, size_t typeSize, bool u
 	if (ISNULL(typeSize, ""))
 		return NULL;
 	XListDLinked* this_list = XMemory_malloc(sizeof(XListDLinked), memory);
+	if (!this_list)
+		return NULL;
 	XListDLinked_init(this_list, typeSize, useCow);
 	Set_Class_Memory(this_list, memory); Set_Class_IsHeap(this_list, true);
 	return this_list;

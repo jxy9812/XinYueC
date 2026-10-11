@@ -153,13 +153,13 @@ void XNetworkProxyHandshake_destroyContext(XProxyHandshakeContext* ctx) {
     XClassDelete(ctx->httpBuffer);
     XClassDelete(ctx->httpAuthHeader);
     
-    // 释放Digest参数
-    XClassDelete(ctx->digestParams.realm);
-    XClassDelete(ctx->digestParams.nonce);
-    XClassDelete(ctx->digestParams.opaque);
-    XClassDelete(ctx->digestParams.algorithm);
-    XClassDelete(ctx->digestParams.qop);
-    XClassDelete(ctx->digestParams.cnonce);
+    // 释放Digest参数（字段为 XMalloc_System 分配的缓冲，须配对 XFree_System）
+    if (ctx->digestParams.realm) XFree_System(ctx->digestParams.realm);
+    if (ctx->digestParams.nonce) XFree_System(ctx->digestParams.nonce);
+    if (ctx->digestParams.opaque) XFree_System(ctx->digestParams.opaque);
+    if (ctx->digestParams.algorithm) XFree_System(ctx->digestParams.algorithm);
+    if (ctx->digestParams.qop) XFree_System(ctx->digestParams.qop);
+    if (ctx->digestParams.cnonce) XFree_System(ctx->digestParams.cnonce);
     
     // 释放NTLM上下文
     XClassDelete(ctx->ntlmContext.type1Message);
@@ -169,7 +169,11 @@ void XNetworkProxyHandshake_destroyContext(XProxyHandshakeContext* ctx) {
     XClassDelete(ctx->ntlmContext.domain);
     
     XClassDelete(ctx->errorMessage);
-    
+
+    // 释放GSSAPI平台上下文（Negotiate认证期间由 XDeviceNetwork_gssapiAuth 写入，
+    // 平台私有布局须经 XDeviceNetwork_gssapiRelease 契约回收）
+    XDeviceNetwork_gssapiRelease(&ctx->gssContext);
+
     XFree_System(ctx);
 }
 
@@ -667,6 +671,14 @@ bool XHttpProxy_parseAuthHeader(
         *outAuthType = XHttpProxyAuth_Digest;
         
         if (outParams) {
+            /* 各字段存的是 XMalloc_System 分配的缓冲，覆盖前必须先释放旧值，
+             * 否则重复 407 挑战或重复解析时上一轮参数全部泄漏 */
+            if (outParams->realm) XFree_System(outParams->realm);
+            if (outParams->nonce) XFree_System(outParams->nonce);
+            if (outParams->opaque) XFree_System(outParams->opaque);
+            if (outParams->algorithm) XFree_System(outParams->algorithm);
+            if (outParams->qop) XFree_System(outParams->qop);
+            if (outParams->cnonce) XFree_System(outParams->cnonce);
             memset(outParams, 0, sizeof(XHttpDigestParams));
             
             const char* p = authHeader + 6;
@@ -703,11 +715,26 @@ bool XHttpProxy_parseAuthHeader(
                     value[valueLen] = '\0';
                 }
                 
-                if (strcmp(name, "realm") == 0) outParams->realm = value;
-                else if (strcmp(name, "nonce") == 0) outParams->nonce = value;
-                else if (strcmp(name, "opaque") == 0) outParams->opaque = value;
-                else if (strcmp(name, "algorithm") == 0) outParams->algorithm = value;
-                else if (strcmp(name, "qop") == 0) outParams->qop = value;
+                if (strcmp(name, "realm") == 0) {
+                    if (outParams->realm) XFree_System(outParams->realm);   /* 同名参数重复时释放前值 */
+                    outParams->realm = value;
+                }
+                else if (strcmp(name, "nonce") == 0) {
+                    if (outParams->nonce) XFree_System(outParams->nonce);
+                    outParams->nonce = value;
+                }
+                else if (strcmp(name, "opaque") == 0) {
+                    if (outParams->opaque) XFree_System(outParams->opaque);
+                    outParams->opaque = value;
+                }
+                else if (strcmp(name, "algorithm") == 0) {
+                    if (outParams->algorithm) XFree_System(outParams->algorithm);
+                    outParams->algorithm = value;
+                }
+                else if (strcmp(name, "qop") == 0) {
+                    if (outParams->qop) XFree_System(outParams->qop);
+                    outParams->qop = value;
+                }
                 else XFree_System(value);
                 
                 p = end;
@@ -1046,8 +1073,14 @@ int XHttpProxy_buildNtlmType3(
     memcpy(buffer, "NTLMSSP", 8);
     buffer[8] = 0x03; // Type-3
     
-    // 从Type-2获取challenge（偏移24，8字节）
-    const uint8_t* challenge = context->type2Message + 24;
+    // 从Type-2获取challenge（偏移24，8字节）。type2Message 是 XByteArray 容器对象，
+    // 禁止对容器指针直接 +24 步进（得到的是按 sizeof(XByteArray) 越界的元素地址），
+    // 必须经 XByteArray_data 取字节指针；parseNtlmType2 已保证消息长度 >= 48。
+    const uint8_t* type2Data = XByteArray_data(context->type2Message);
+    if (!type2Data) {
+        return -1;
+    }
+    const uint8_t* challenge = type2Data + 24;
     
     // 计算NTLM响应（简化）
     uint8_t ntlmHash[16] = {0};
@@ -1222,6 +1255,11 @@ bool XNetworkProxyHandshake_perform(
         }
         
         ctx->state = XProxyHandshakeState_Http_WaitResponse;
+        /* httpBuffer 已由 createContext 创建，这里必须先释放旧缓冲再重建，
+         * 否则每次 HTTP 同步握手泄漏一个 XByteArray（异步 start 用 clear_base 原地清空）。 */
+        if (ctx->httpBuffer) {
+            XClassDelete(ctx->httpBuffer);
+        }
         ctx->httpBuffer = XByteArray_create();
         
         // 等待响应
@@ -1523,7 +1561,8 @@ XProxyHandshakeState XNetworkProxyHandshake_process(
                     if (XHttpProxy_parseResponse(httpData, httpBufferLen,
                                                   &code, NULL, &authHeader)) {
                         if (code == 200) {
-                            // 成功
+                            // 成功；携带的 WWW-Authenticate 头不再需要，释放避免泄漏
+                            if (authHeader) XFree_System(authHeader);
                             ctx->state = XProxyHandshakeState_Completed;
                         }
                         else if (code == 407) {
@@ -1532,7 +1571,16 @@ XProxyHandshakeState XNetworkProxyHandshake_process(
                                 XHttpProxyAuthType authType;
                                 if (XHttpProxy_parseAuthHeader(authHeader, &authType, &ctx->digestParams)) {
                                     ctx->httpAuthType = authType;
-                                    ctx->httpAuthHeader = authHeader;
+                                    /* httpAuthHeader 字段类型为 XByteArray*，不能直接存裸 char*
+                                     * （destroyContext 按 XClass 释放会读垃圾虚表）；复制进
+                                     * XByteArray 后立即释放解析缓冲。
+                                     * 二次 407（NTLM 两轮必经）时先释放上一轮已存的认证头，防覆盖泄漏。 */
+                                    if (ctx->httpAuthHeader) {
+                                        XClassDelete(ctx->httpAuthHeader);
+                                        ctx->httpAuthHeader = NULL;
+                                    }
+                                    ctx->httpAuthHeader = XByteArray_create_with_data(authHeader, strlen(authHeader));
+                                    XFree_System(authHeader);
                                     ctx->state = XProxyHandshakeState_Http_Authenticating;
                                 } else {
                                     XFree_System(authHeader);
@@ -1545,6 +1593,7 @@ XProxyHandshakeState XNetworkProxyHandshake_process(
                             }
                         }
                         else {
+                            if (authHeader) XFree_System(authHeader);   /* 非 407 错误分支同样要释放认证头 */
                             ctx->errorCode = XProxyHandshakeError_HttpError;
                             char errBuf[128];
                             snprintf(errBuf, sizeof(errBuf), "HTTP error: %d", code);

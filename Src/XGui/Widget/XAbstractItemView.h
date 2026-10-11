@@ -1,4 +1,19 @@
-﻿#ifndef XABSTRACTITEMVIEW_H
+﻿/**
+ * @file       XAbstractItemView.h
+ * @brief      XAbstractItemView 抽象条目视图基类公开 API（对标 Qt 6.8
+ *             QAbstractItemView）。
+ * @details    承载条目视图通用状态与行为：当前索引、选择模式/行为、编辑
+ *             触发与编辑闭环（委托/持久编辑器/条目控件）、role 叠加数据、
+ *             键盘搜索、滚动控制与尺寸提示；数据呈现由 XTableView/
+ *             XListView/XTreeView 等派生视图实现。QModelIndex 以
+ *             (row,column) 平面索引表达。实现只依赖 XinYueC 抽象层，
+ *             禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ * @note       模块总开关 XTABLEWIDGET_ON 定义于 XGuiConfig.h，依赖
+ *             XWIDGET_ON；关闭时裁剪本头文件全部声明。对象字段由 XClass
+ *             生命周期管理，不保证线程安全，调用方应在所属 GUI 线程访问。
+ * @author     XinYueC 团队
+ */
+#ifndef XABSTRACTITEMVIEW_H
 #define XABSTRACTITEMVIEW_H
 #ifdef __cplusplus
 extern "C" {
@@ -10,6 +25,7 @@ extern "C" {
 #include "XAbstractScrollArea.h"
 #include "XAbstractItemModel.h"
 #include "XItemSelectionModel.h"
+#include "XVector.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
 
@@ -173,16 +189,18 @@ typedef struct XAbstractItemView
     int m_verticalScrollMode;        /**< 垂直滚动模式（XAbstractItemViewScrollMode；默认 ScrollPerItem）。 */
     int m_horizontalScrollMode;      /**< 水平滚动模式（XAbstractItemViewScrollMode；默认 ScrollPerItem）。 */
     void* m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载；默认 NULL）。 */
-    bool* m_persistentFlags;         /**< 持久编辑器打开标记平行表（行主序扁平数组；按需扩容；NULL=未分配）。 */
-    int m_persistentRows;            /**< 持久编辑器表已分配行数（0=未分配）。 */
-    int m_persistentCols;            /**< 持久编辑器表已分配列数（0=未分配）。 */
-    void** m_indexWidgets;           /**< 条目控件指针平行表（行主序扁平数组；按需扩容；NULL=未分配）。 */
-    int m_indexWidgetRows;           /**< 条目控件表已分配行数（0=未分配）。 */
-    int m_indexWidgetCols;           /**< 条目控件表已分配列数（0=未分配）。 */
-    void** m_columnDelegates;        /**< 列级委托不透明指针表（按列号索引；按需扩容；NULL=未分配）。 */
-    int m_columnDelegateCount;       /**< 列级委托表已分配容量（0=未分配）。 */
-    void** m_rowDelegates;           /**< 行级委托不透明指针表（按行号索引；按需扩容；NULL=未分配）。 */
-    int m_rowDelegateCount;          /**< 行级委托表已分配容量（0=未分配）。 */
+    XVector m_persistentFlags;       /**< 持久编辑器打开标记平行表（行主序
+                                          m_persistentRows*m_persistentCols；元素 bool）。 */
+    int m_persistentRows;            /**< 持久编辑器表逻辑行数（0=未使用）。 */
+    int m_persistentCols;            /**< 持久编辑器表逻辑列数（0=未使用）。 */
+    XVector m_indexWidgets;          /**< 条目控件指针平行表（行主序；
+                                          元素 void* 借用承载）。 */
+    int m_indexWidgetRows;           /**< 条目控件表逻辑行数（0=未使用）。 */
+    int m_indexWidgetCols;           /**< 条目控件表逻辑列数（0=未使用）。 */
+    XVector m_columnDelegates;       /**< 列级委托不透明指针表（元素 void*，
+                                          按列号索引；借用承载）。 */
+    XVector m_rowDelegates;          /**< 行级委托不透明指针表（元素 void*，
+                                          按行号索引；借用承载）。 */
     XWidget* m_editor;               /**< 当前打开的临时编辑器（委托 createEditor 产物；对象拥有；NULL=未在编辑）。 */
     int m_editRow;                   /**< 编辑中行；-1=无。 */
     int m_editCol;                   /**< 编辑中列；-1=无。 */
@@ -190,9 +208,11 @@ typedef struct XAbstractItemView
     bool m_editClosing;              /**< 编辑器关闭流程进行中（抑制编辑器失焦回调重入）。 */
     bool m_itemsEditable;            /**< 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载；默认 false 保持既有行为）。 */
     XItemDelegate* m_defaultDelegate; /**< 默认条目委托（对标 Qt 视图缺省 QStyledItemDelegate；对象拥有；懒创建）。 */
-    void* m_roleTable;               /**< role 叠加存储平行表（XItemDataRole 非 text 维度；行主序；按需扩容；NULL=未分配）。 */
-    int m_roleRows;                  /**< role 表已分配行数（0=未分配）。 */
-    int m_roleCols;                  /**< role 表已分配列数（0=未分配）。 */
+    XVector m_roleTable;             /**< role 叠加存储平行表（XItemDataRole
+                                          非 text 维度；行主序
+                                          m_roleRows*m_roleCols）。 */
+    int m_roleRows;                  /**< role 表逻辑行数（0=未使用）。 */
+    int m_roleCols;                  /**< role 表逻辑列数（0=未使用）。 */
     /* 键盘搜索累积状态（每视图实例承载；对标 Qt keyboardSearch 的
      * 视图私有 m_keyboardSearchPrefix/时间戳——此前为全库共享静态缓冲，
      * 多视图交替键入时互相污染前缀）。 */
@@ -201,6 +221,10 @@ typedef struct XAbstractItemView
     int64_t m_searchLastMs;          /**< 上次键入时刻（epoch 毫秒；超 XAIV 间隔重置前缀）。 */
 } XAbstractItemView;
 
+/**
+ * @brief 初始化抽象条目视图类虚函数表并返回共享表指针。
+ * @return 类共享虚函数表指针（进程期常驻，借用；调用方不得释放或修改）。
+ */
 XVtable* XAbstractItemView_class_init(void);
 
 /**

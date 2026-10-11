@@ -1,6 +1,8 @@
 ﻿/**
  * @file XRegularExpressionValidator.h
  * @brief Qt 6.8 QRegularExpressionValidator 对齐实现。
+ * @details 对齐 Qt QRegularExpressionValidator 的输入校验语义；实现只依赖
+ *          XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
  */
 #ifndef XREGULAREXPRESSIONVALIDATOR_H
 #define XREGULAREXPRESSIONVALIDATOR_H
@@ -56,6 +58,7 @@ void XRegularExpressionValidator_init(XRegularExpressionValidator* validator);
  */
 /**
  * @brief 使用指定正则表达式创建校验器。
+ * @param memory 内存类型。
  * @param expression 初始正则表达式；函数只读取该对象，不能传入 NULL。
  * @return 成功返回新校验器，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */

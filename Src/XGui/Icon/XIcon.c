@@ -86,7 +86,7 @@ static void XIconEntry_deinit(void* value)
  */
 typedef struct XIconPrivate
 {
-    XAtomic_int32_t  m_refCount;    /**< 引用计数 */
+    XAtomic_Int32  m_refCount;    /**< 引用计数 */
     XVector          m_entries;     /**< 图标条目容器 */
     bool             m_isMask;      /**< 是否为掩码 */
     int64_t          m_cacheKey;    /**< 缓存键值 */
@@ -1062,6 +1062,9 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         if (!XPixmap_isNull(&scaled))
         {
             XClassMove(out, &scaled);
+            /* move 只转移资源：scaled 为本函数自建栈临时对象，成功
+               路径同样按栈对象规则收尾（资源已转出时为空操作）。 */
+            XClassDeinit(&scaled);
         }
         else
             XClassDeinit(&scaled);
@@ -1075,6 +1078,9 @@ static void XIconPrivate_scaledPixmap(const XIconPrivate* d, int width, int heig
         if (!XPixmap_isNull(&styled))
         {
             XClassMove(out, &styled);
+            /* move 只转移资源：styled 为本函数自建栈临时对象，成功
+               路径同样按栈对象规则收尾（资源已转出时为空操作）。 */
+            XClassDeinit(&styled);
         }
         else
             XClassDeinit(&styled);

@@ -4,7 +4,7 @@
 #include "XVariant.h"
 #include "XVarList.h"
 #include "XFileDescriptor.h"
-#include <stdlib.h>
+#include "XMemory.h"
 #include <string.h>
 
 /* 兼容旧 XFd 文件描述符的内部实现，不属于 XDeviceFile 公共 API。 */
@@ -117,7 +117,7 @@ static void VXDeviceFile_releaseMappings(XDeviceFileCtx* ctx)
         next = mapping->m_next;
         (void)VXDeviceFile_writeBackMapping(ctx, mapping);
         (void)XDeviceFile_legacyUnmap(mapping->m_address, mapping->m_size);
-        free(mapping);
+        XFree_System(mapping);
         mapping = next;
     }
     ctx->m_mappings = NULL;
@@ -195,7 +195,7 @@ static XDeviceContext* VXDeviceFile_open(XDevice* self, const XDeviceOpenOptions
         return NULL;
     }
 
-    ctx = (XDeviceFileCtx*)calloc(1, sizeof(XDeviceFileCtx));
+    ctx = (XDeviceFileCtx*)XCalloc_System(1, sizeof(XDeviceFileCtx));
     if (ISNULL(ctx, "")) {
         XDeviceFile_legacyClose(fileFd);
         if (err) *err = (int)XDeviceError_OutOfMemory;
@@ -221,7 +221,7 @@ static void VXDeviceFile_close(XDevice* self, XDeviceContext* handle)
         VXDeviceFile_releaseMappings(ctx);
         if (ctx->m_fileFd != XFD_INVALID)
             XDeviceFile_legacyClose(ctx->m_fileFd);
-        free(ctx);
+        XFree_System(ctx);
     }
 }
 
@@ -323,7 +323,7 @@ static bool VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t
                   XDeviceFile_legacyMap(ctx->m_fileFd, offset, size, flags);
         ok = address != NULL;
         if (ok) {
-            mapping = (XDeviceFileMapping*)calloc(1, sizeof(*mapping));
+            mapping = (XDeviceFileMapping*)XCalloc_System(1, sizeof(*mapping));
             if (!mapping) {
                 (void)XDeviceFile_legacyUnmap(address, size);
                 return false;
@@ -356,7 +356,7 @@ static bool VXDeviceFile_control(XDevice* self, XDeviceContext* handle, uint32_t
         if (ok) {
             if (previous) previous->m_next = mapping->m_next;
             else ctx->m_mappings = mapping->m_next;
-            free(mapping);
+            XFree_System(mapping);
         }
         break;
     case XDeviceFileCommand_SetFileTime:

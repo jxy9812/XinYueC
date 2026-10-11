@@ -1,17 +1,4 @@
-﻿#ifndef XMODBUSADU_H
-#define XMODBUSADU_H
-
-#include <stdint.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include "XModbusPdu.h"
-#include "XByteArray.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/**
+﻿/**
  * @file XModbusAdu.h
  * @brief Modbus ADU（应用数据单元）工具
  * @details 提供Modbus串行链路ADU帧的封装、解析和校验功能。
@@ -54,6 +41,22 @@ extern "C" {
  * XModbusAdu_deinit(&adu);
  * @endcode
  */
+
+#ifndef XMODBUSADU_H
+#define XMODBUSADU_H
+#include "XModbus_config.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+#if XMODBUS_ON
+#if XMODBUS_CORE_ON
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include "XModbusPdu.h"
+#include "XByteArray.h"
 
 /******************************************************************************************
  * 枚举类型定义
@@ -253,6 +256,9 @@ uint8_t XModbusAdu_calculateLRC(const uint8_t* data, int len);
  *       此函数与XCrc16_calculate功能相同，提供便捷封装
  */
 uint16_t XModbusAdu_calculateCRC(const uint8_t* data, int len);
+
+#endif /* XMODBUS_CORE_ON */
+#endif /* XMODBUS_ON */
 
 #ifdef __cplusplus
 }

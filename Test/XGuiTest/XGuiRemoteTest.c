@@ -28,6 +28,7 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XGuiRemoteTest.h"
+#include "XObject_Protected.h"
 #include "XGuiConfig.h" /* 门控宏定义源：必须在 #if 之前（XKeyboardTest 惯例，
                             宏未定义时 #if 恒 0 → 静默 stub 恒绿的实锅预防）。 */
 #include "XGuiRemoteProto.h" /* XGUI_REMOTE_ON 开关单一来源（#ifndef 定义于

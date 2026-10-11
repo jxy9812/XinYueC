@@ -59,6 +59,9 @@ typedef struct XTreeView
 
 /* ==================== 生命周期 ==================== */
 
+/** @brief 初始化 XTreeView 类虚函数表并返回共享表指针。
+ * @return XTreeView 类的共享 XVtable 指针。
+ */
 XVtable* XTreeView_class_init(void);
 /** @brief 初始化树视图。
  * @param self 目标视图；不可为 NULL。

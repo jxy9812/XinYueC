@@ -1,8 +1,11 @@
-﻿// XNetworkDatagram.h
+﻿/**
+ * @file       XNetworkDatagram.h
+ * @brief      UDP 数据报封装公开 API。
+ * @details    对齐 Qt QNetworkDatagram；实现只依赖 XinYueC 抽象层，
+ *             禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ */
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
-//
-// C 语言模拟 Qt6 QNetworkDatagram，UDP 数据报封装。
 
 #ifndef XNETWORKDATAGRAM_H
 #define XNETWORKDATAGRAM_H
@@ -37,15 +40,15 @@ XCLASS_DEFINE_EXTEND_END(XNetworkDatagram, XClass)
  * - 网络接口索引
  */
 typedef struct XNetworkDatagram {
-    XClass m_class;                      ///< 基类虚表指针
-    
-    XByteArray* data;                    ///< 数据报内容
-    XHostAddress senderAddress;          ///< 发送者地址
-    XHostAddress destinationAddress;     ///< 目标地址
-    uint16_t senderPort;                 ///< 发送者端口
-    uint16_t destinationPort;            ///< 目标端口
-    int hopLimit;                        ///< 跳数限制（TTL），-1 表示未设置
-    uint32_t interfaceIndex;             ///< 网络接口索引（IPv6 scope）
+    XClass m_class;                      ///< 第一个成员，由 XClass 管理，禁止手工修改
+
+    XByteArray* m_data;                  ///< 数据报内容（由对象拥有，删除数据报时自动释放）
+    XHostAddress m_senderAddress;        ///< 发送者地址
+    XHostAddress m_destinationAddress;   ///< 目标地址
+    uint16_t m_senderPort;               ///< 发送者端口
+    uint16_t m_destinationPort;          ///< 目标端口
+    int m_hopLimit;                      ///< 跳数限制（TTL），-1 表示未设置
+    uint32_t m_interfaceIndex;           ///< 网络接口索引（IPv6 scope）
 } XNetworkDatagram;
 
 // ==================== 构造与析构 ====================
@@ -221,15 +224,13 @@ void XNetworkDatagram_swap(XNetworkDatagram* a, XNetworkDatagram* b);
  */
 XNetworkDatagram* XNetworkDatagram_makeReply(const XNetworkDatagram* dgram, const XByteArray* payload);
 
+/* XClass create API default-memory wrappers. */
+#undef XNetworkDatagram_create
+#define XNetworkDatagram_create() XNetworkDatagram_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
 #endif // XNETWORK_DATAGRAM_ON
 #endif /* XNETWORK_ON */
 #ifdef __cplusplus
 }
 #endif
-
-
-/* XClass create API default-memory wrappers. */
-#undef XNetworkDatagram_create
-#define XNetworkDatagram_create() XNetworkDatagram_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-
 #endif // XNETWORKDATAGRAM_H

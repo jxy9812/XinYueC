@@ -9,6 +9,10 @@ extern "C" {
 #endif
 
 #include "XClass.h"
+
+// 前向类型定义
+typedef struct XRunnable XRunnable;
+
  /**
  * @brief 开始定义XRunnable类的虚函数表枚举
  * @note QRunnable只有一个纯虚函数run()
@@ -17,8 +21,7 @@ XCLASS_DEFINE_BEGING(XRunnable)
 // QRunnable特有的虚函数
 XCLASS_DEFINE_ENUM(XRunnable, Run) = XCLASS_VTABLE_GET_SIZE(XClass),
 XCLASS_DEFINE_END(XRunnable)
-typedef struct XRunnable XRunnable;
- 
+
 /**
  * @brief 初始化XRunnable类的虚函数表
  * @return 指向初始化完成的XVtable的指针

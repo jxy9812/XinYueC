@@ -190,11 +190,21 @@ void XInputMethod_setPlatformContext(XInputMethod* self,
 
 /**
  * @brief      返回当前绑定的平台输入上下文。
+ * @param      self 目标对象；可为 NULL。
  * @return     借用指针；未绑定返回 NULL。
  */
 XPlatformInputContext* XInputMethod_platformContext(const XInputMethod* self);
 
-/** @brief 设置/清除焦点对象输入法查询回调。 */
+/**
+ * @brief      设置/清除焦点对象输入法查询回调。
+ * @details    回调与上下文均为借用指针，由调用方保证生命期；handler 传
+ *             NULL 时清除注册。集成方可用本函数覆盖框架内置桥接
+ *             XInputMethod_defaultQueryHandler。
+ * @param      self 目标对象；可为 NULL。
+ * @param      handler 查询回调；可为 NULL（清除注册）。
+ * @param      userData 注册时传入的回调上下文（借用）；可为 NULL。
+ * @return     无。参数非法时保持原注册不变。
+ */
 void XInputMethod_setQueryHandler(XInputMethod* self,
                                   XInputMethodQueryHandler handler,
                                   void* userData);
@@ -222,6 +232,7 @@ XVariant* XInputMethod_defaultQueryHandler(XObject* focusObject,
 
 /**
  * @brief      返回输入项变换（对标 QInputMethod::inputItemTransform）。
+ * @param      self 目标对象；可为 NULL（返回单位矩阵）。
  * @return     当前仿射矩阵副本。
  */
 XInputMethodTransform XInputMethod_inputItemTransform(const XInputMethod* self);
@@ -238,6 +249,7 @@ void XInputMethod_setInputItemTransform(XInputMethod* self,
 
 /**
  * @brief      返回输入项几何（输入项坐标，对标 QInputMethod::inputItemRectangle）。
+ * @param      self 目标对象；可为 NULL（返回零矩形）。
  * @return     输入项矩形副本。
  */
 XRectF XInputMethod_inputItemRectangle(const XInputMethod* self);
@@ -253,6 +265,7 @@ void XInputMethod_setInputItemRectangle(XInputMethod* self, const XRectF* rect);
  * @brief      返回输入项裁剪矩形（对标 QInputMethod::inputItemClipRectangle）。
  * @details    通过 XInputMethodQueryHandler 查询 ImInputItemClipRectangle，
  *             再按输入项变换映射到窗口坐标；无有效查询结果返回零矩形。
+ * @param      self 目标对象；可为 NULL。
  * @return     窗口坐标下的裁剪矩形副本。
  */
 XRectF XInputMethod_inputItemClipRectangle(const XInputMethod* self);
@@ -261,6 +274,7 @@ XRectF XInputMethod_inputItemClipRectangle(const XInputMethod* self);
  * @brief      返回光标矩形（对标 QInputMethod::cursorRectangle）。
  * @details    通过 XInputMethodQueryHandler 查询 ImCursorRectangle，再按
  *             输入项变换映射到窗口坐标；无有效查询结果返回零矩形。
+ * @param      self 目标对象；可为 NULL。
  * @return     窗口坐标下的光标矩形副本。
  */
 XRectF XInputMethod_cursorRectangle(const XInputMethod* self);
@@ -269,12 +283,14 @@ XRectF XInputMethod_cursorRectangle(const XInputMethod* self);
  * @brief      返回锚点矩形（对标 QInputMethod::anchorRectangle）。
  * @details    通过 XInputMethodQueryHandler 查询 ImAnchorRectangle，再按
  *             输入项变换映射到窗口坐标；无有效查询结果返回零矩形。
+ * @param      self 目标对象；可为 NULL。
  * @return     窗口坐标下的锚点矩形副本。
  */
 XRectF XInputMethod_anchorRectangle(const XInputMethod* self);
 
 /**
  * @brief      返回虚拟键盘矩形（对标 QInputMethod::keyboardRectangle）。
+ * @param      self 目标对象；可为 NULL。
  * @return     窗口坐标下的键盘矩形副本；平台无键盘或未绑定上下文时为零矩形。
  */
 XRectF XInputMethod_keyboardRectangle(const XInputMethod* self);
@@ -283,6 +299,7 @@ XRectF XInputMethod_keyboardRectangle(const XInputMethod* self);
 
 /**
  * @brief      虚拟键盘是否可见（对标 QInputMethod::isVisible）。
+ * @param      self 目标对象；可为 NULL。
  * @return     true 可见；无平台上下文恒 false。
  */
 bool XInputMethod_isVisible(const XInputMethod* self);
@@ -296,12 +313,14 @@ void XInputMethod_setVisible(XInputMethod* self, bool visible);
 
 /**
  * @brief      虚拟键盘是否正在动画（对标 QInputMethod::isAnimating）。
+ * @param      self 目标对象；可为 NULL。
  * @return     true 动画中；无平台上下文恒 false。
  */
 bool XInputMethod_isAnimating(const XInputMethod* self);
 
 /**
  * @brief      当前输入区域语言（对标 QInputMethod::locale）。
+ * @param      self 目标对象；可为 NULL。
  * @return     新建 XString（IETF 语言标签，默认 "C"）；调用方用
  *             XClassDelete 释放。
  */
@@ -309,6 +328,7 @@ XString* XInputMethod_locale(const XInputMethod* self);
 
 /**
  * @brief      当前输入方向（对标 QInputMethod::inputDirection）。
+ * @param      self 目标对象；可为 NULL。
  * @return     方向枚举；无平台上下文恒 LeftToRight。
  */
 XInputMethodLayoutDirection XInputMethod_inputDirection(const XInputMethod* self);
@@ -375,28 +395,61 @@ void XInputMethod_invokeAction(XInputMethod* self, XInputMethodAction action,
 
 /* ==================== 信号（8 个，对标 QInputMethod 全部信号） ==================== */
 
-/** @brief 光标矩形变化信号（对标 cursorRectangleChanged）。 */
+/**
+ * @brief      光标矩形变化信号（对标 cursorRectangleChanged）。
+ * @param      self 发射信号的输入法对象；NULL 时返回稳定信号标识。
+ * @return     信号标识或发射结果指针；借用值，不转移所有权，调用方不释放。
+ */
 void* XInputMethod_cursorRectangleChanged_signal(XInputMethod* self);
 
-/** @brief 锚点矩形变化信号（对标 anchorRectangleChanged）。 */
+/**
+ * @brief      锚点矩形变化信号（对标 anchorRectangleChanged）。
+ * @param      self 发射信号的输入法对象；NULL 时返回稳定信号标识。
+ * @return     信号标识或发射结果指针；借用值，不转移所有权，调用方不释放。
+ */
 void* XInputMethod_anchorRectangleChanged_signal(XInputMethod* self);
 
-/** @brief 键盘矩形变化信号（对标 keyboardRectangleChanged）。 */
+/**
+ * @brief      键盘矩形变化信号（对标 keyboardRectangleChanged）。
+ * @param      self 发射信号的输入法对象；NULL 时返回稳定信号标识。
+ * @return     信号标识或发射结果指针；借用值，不转移所有权，调用方不释放。
+ */
 void* XInputMethod_keyboardRectangleChanged_signal(XInputMethod* self);
 
-/** @brief 输入项裁剪矩形变化信号（对标 inputItemClipRectangleChanged）。 */
+/**
+ * @brief      输入项裁剪矩形变化信号（对标 inputItemClipRectangleChanged）。
+ * @param      self 发射信号的输入法对象；NULL 时返回稳定信号标识。
+ * @return     信号标识或发射结果指针；借用值，不转移所有权，调用方不释放。
+ */
 void* XInputMethod_inputItemClipRectangleChanged_signal(XInputMethod* self);
 
-/** @brief 可见性变化信号（对标 visibleChanged）。 */
+/**
+ * @brief      可见性变化信号（对标 visibleChanged）。
+ * @param      self 发射信号的输入法对象；NULL 时返回稳定信号标识。
+ * @return     信号标识或发射结果指针；借用值，不转移所有权，调用方不释放。
+ */
 void* XInputMethod_visibleChanged_signal(XInputMethod* self);
 
-/** @brief 动画状态变化信号（对标 animatingChanged）。 */
+/**
+ * @brief      动画状态变化信号（对标 animatingChanged）。
+ * @param      self 发射信号的输入法对象；NULL 时返回稳定信号标识。
+ * @return     信号标识或发射结果指针；借用值，不转移所有权，调用方不释放。
+ */
 void* XInputMethod_animatingChanged_signal(XInputMethod* self);
 
-/** @brief 区域语言变化信号（对标 localeChanged）。 */
+/**
+ * @brief      区域语言变化信号（对标 localeChanged）。
+ * @param      self 发射信号的输入法对象；NULL 时返回稳定信号标识。
+ * @return     信号标识或发射结果指针；借用值，不转移所有权，调用方不释放。
+ */
 void* XInputMethod_localeChanged_signal(XInputMethod* self);
 
-/** @brief 输入方向变化信号（对标 inputDirectionChanged）。 */
+/**
+ * @brief      输入方向变化信号（对标 inputDirectionChanged）。
+ * @param      self 发射信号的输入法对象；NULL 时返回稳定信号标识。
+ * @param      newDirection 新输入方向。
+ * @return     信号标识或发射结果指针；借用值，不转移所有权，调用方不释放。
+ */
 void* XInputMethod_inputDirectionChanged_signal(XInputMethod* self,
         XInputMethodLayoutDirection newDirection);
 

@@ -13,9 +13,9 @@ static size_t XReadLocker_getTypeSize() {
 void XReadLocker_init(XReadLocker* locker, XReadWriteLock* rwlock) {
     if (!locker || !rwlock) return;
 
-    locker->rwlock = rwlock;
+    locker->m_rwlock = rwlock;
     XReadWriteLock_lockForRead(rwlock);
-    locker->locked = true;
+    locker->m_locked = true;
 }
 
 void XReadLocker_deinit(XReadLocker* locker) {
@@ -42,21 +42,21 @@ void XReadLocker_delete(XReadLocker* locker) {
 }
 
 void XReadLocker_unlock(XReadLocker* locker) {
-    if (locker && locker->locked && locker->rwlock) {
-        XReadWriteLock_unlock(locker->rwlock);
-        locker->locked = false;
+    if (locker && locker->m_locked && locker->m_rwlock) {
+        XReadWriteLock_unlock(locker->m_rwlock);
+        locker->m_locked = false;
     }
 }
 
 void XReadLocker_relock(XReadLocker* locker) {
-    if (locker && locker->rwlock && !locker->locked) {
-        XReadWriteLock_lockForRead(locker->rwlock);
-        locker->locked = true;
+    if (locker && locker->m_rwlock && !locker->m_locked) {
+        XReadWriteLock_lockForRead(locker->m_rwlock);
+        locker->m_locked = true;
     }
 }
 
 XReadWriteLock* XReadLocker_rwlock(XReadLocker* locker) {
-    return locker ? locker->rwlock : NULL;
+    return locker ? locker->m_rwlock : NULL;
 }
 #endif // XREADWRITELOCK_ON
 #endif /* XSYNC_ON */

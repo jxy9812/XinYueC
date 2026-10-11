@@ -26,8 +26,8 @@ typedef struct XTimer
 	XObject m_class;
 	uint32_t m_isRun : 1;				 ///< 定时器是否正在运行
 	uint32_t m_firstTrigger : 1;		//首次触发
+	uint32_t m_type : 2;				///< 定时器类型（XTimerType 共3个枚举值(XTypes.h:116-120)，2位足够）
 	XTimerData m_timerData;
-	XTimerType m_type;
 } XTimer;
 // === 类初始化与构造相关接口 ===
 /**

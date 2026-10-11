@@ -3,7 +3,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define  STM32F407_168M_StepMotor_TIM_1MHz_Prescaler (84-1)//STM32F407 主频168M步进电机定时器在1Mz的预分频系数
+#define  STM32F407_168M_STEPMOTOR_TIM_1MHZ_PRESCALER (84-1)//STM32F407 主频168M步进电机定时器在1MHz的预分频系数
 #include"XObject.h"
 #include"XPWMDeviceBase.h"
 #include"XSwitchDeviceBase.h"
@@ -28,10 +28,10 @@ XCLASS_DEFINE_ENUM(XStepMotor, IsTaskFinish),
 XCLASS_DEFINE_END(XStepMotor)
 typedef enum
 {
-	XSM_SPEED_CONTROL = 1,         // 速度控制模式
-	XSM_DISTANCE_CONTROL = 3,	   // 距离控制模式
-	XSM_POSITION_CONTROL = 5,	   // 位置控制模式
-	XSM_TORQUE_CONTROL=7           // 扭矩控制模式
+	XStepMotorMode_SpeedControl = 1,     // 速度控制模式
+	XStepMotorMode_DistanceControl = 3,  // 距离控制模式
+	XStepMotorMode_PositionControl = 5,  // 位置控制模式
+	XStepMotorMode_TorqueControl = 7     // 扭矩控制模式
 }XStepMotorMode;
 //步进电机
 typedef struct XStepMotor XStepMotor;
@@ -40,18 +40,19 @@ typedef struct XStepMotor
 	XObject m_class;//继承类
 	uint16_t m_currentSpeed;//当前转速
 	uint16_t m_pulsesPerRevolution;//每转脉冲数
-	uint64_t m_currentPulses;//当前脉冲数 
+	XStepMotorMode m_controlMode;//控制模式（前移填补两个 uint16_t 之后的对齐空洞）
+	uint64_t m_currentPulses;//当前脉冲数
 	uint64_t m_setPulses;//设置脉冲数 //0是速度模式 其他是距离模式
-	XStepMotorMode m_ControlMode;//控制模式
 	int64_t m_directionPulses;//累计方向脉冲数 正++ 反--
-	XPWMDeviceBase* m_PUL;//pwm引脚
-	XSwitchDeviceBase* m_ENA;//使能引脚
-	XSwitchDeviceBase* m_DIR;//方向引脚
+	XPWMDeviceBase* m_pul;//pwm引脚
+	XSwitchDeviceBase* m_ena;//使能引脚
+	XSwitchDeviceBase* m_dir;//方向引脚
 	void (*m_speedChangeCb)(XStepMotor* motor);//速度改变回调
 }XStepMotor;
 XVtable* XStepMotor_class_init();
+//创建步进电机对象；ENA/DIR/PUL为调用方创建并持有的借用指针（ENA/DIR可为NULL，PUL不可为NULL），对象deinit不负责释放
 XStepMotor* XStepMotor_create_ex(XMemoryType memory,  XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
-//初始化
+//初始化；ENA/DIR/PUL为调用方创建并持有的借用指针（ENA/DIR可为NULL，PUL不可为NULL），对象deinit不负责释放
 void XStepMotor_init(XStepMotor* motor, XSwitchDeviceBase* ENA, XSwitchDeviceBase* DIR, XPWMDeviceBase* PUL);
 //打开设备
 void XStepMotor_open_base(XStepMotor* motor);

@@ -1,17 +1,25 @@
-﻿#ifndef XS7TCPCLIENT_PROTECTED_H
+﻿/**
+ * @file XS7TcpClient_Protected.h
+ * @brief 西门子 S7 客户端受保护接口
+ * @details 仅供子类和内部实现使用，不对外公开；注释标准同公开头文件。
+ */
+#ifndef XS7TCPCLIENT_PROTECTED_H
 #define XS7TCPCLIENT_PROTECTED_H
-
-#include "XS7TcpClient.h"
-#include "XTcpSocket.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* 全局配置须先于开关求值（定义 XPROTOCOL_ON 等开关宏） */
+#include "XPlc_config.h"
+
 #if XPROTOCOL_ON
 #if XPLC_ON
 #if XS7_ON
 #if XS7_CORE_ON
+
+#include "XS7TcpClient.h"
+#include "XTcpSocket.h"
 
 /******************************************************************************************
  * 受保护接口声明（供子类和内部模块使用，不暴露给用户）
@@ -45,8 +53,10 @@ size_t XS7TcpClient_pendingRequestCount(const XS7TcpClient* client);
  * @param client XS7TcpClient实例指针（非NULL）
  * @param error 结束各请求的错误码（XPlcDevice_NoError 表示不置错误）
  * @param errorMsg 结束各请求的错误描述（可为NULL）
+ * @return 无。client 为 NULL 或 pending 表未创建时不执行任何操作
  * @note 模式对齐 XModbusTcpClient：停定时器、清 pending 表与 timerMap、
- *       对各 Reply setError+setState
+ *       对各 Reply setError+setState；容器失步时废弃重建映射表，
+ *       已存在的 pending 保持不变
  */
 void XS7TcpClient_clearAllPendingRequests(XS7TcpClient* client, XPlcDevice_Error error, const char* errorMsg);
 

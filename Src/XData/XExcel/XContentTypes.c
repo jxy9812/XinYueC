@@ -4,15 +4,15 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XContentTypes.h"
+#include <string.h>
 #include "XByteArray.h"
 #include "XMemory.h"
 #include "XFile.h"
 #include "XXmlStreamReader.h"
-#include <string.h>
 
 
 /* XMap 键以 intptr_t 保存 XString*，比较时仍使用 XString 原生语义。 */
-static int32_t str_compare(const void* lhs, const void* rhs)
+static int32_t XContentTypes_str_compare(const void* lhs, const void* rhs)
 {
     XString* ls = (XString*)(*(const intptr_t*)lhs);
     XString* rs = (XString*)(*(const intptr_t*)rhs);
@@ -22,40 +22,36 @@ static int32_t str_compare(const void* lhs, const void* rhs)
     return XString_compare(ls, rs);
 }
 
-/* 内部辅助：接受 const char* 的 addDefault */
-static void addDefault_cstr(XContentTypes* self, const char* key, const char* value)
-{
-    if (!self || !key || !value) return;
-    XString* kstr = XString_create();
-    if (!kstr) return;
-    XString_append_utf8(kstr, key);
-    XString* vstr = XString_create();
-    if (!vstr) { XClassDelete(kstr); return; }
-    XString_append_utf8(vstr, value);
-    intptr_t pk = (intptr_t)kstr;
-    intptr_t pv = (intptr_t)vstr;
-    XMapBase_insert_base((XMapBase*)self->m_defaults, &pk, &pv);
-}
-
-void XContentTypes_addDefault(XContentTypes* self, const XString* key, const XString* value)
-{
-    if (!self || !key || !value) return;
-    addDefault_cstr(self, XString_toUtf8(key), XString_toUtf8(value));
-}
-
-/* 释放 map entry 中存的 XString* 副本（被 XMap_deinit 通过 setKeyDeinit/setDataDeinit 回调） */
+/* 释放 map entry 槽位中存的 XString*（p 是 intptr_t 字节（sizeof(intptr_t) 大小），
+ * 不是 XString* 指针）。本文件的 map 未注册 Key/DataDeinit 回调，条目中的
+ * XString 由本文件显式管理：覆盖插入前与 clear/delete 时经此函数释放。 */
 static void XStringContainer_deinit(void* p)
 {
     if (!p) return;
-    /* 这里 p 是 intptr_t 字节（sizeof(intptr_t) 大小），不是 XString* 指针 */
     intptr_t v;
     memcpy(&v, p, sizeof(v));
     XString* s = (XString*)v;
     if (s) XClassDelete(s);
 }
 
-/* 内部辅助：接受 const char* 的 addOverride */
-static void addOverride_cstr(XContentTypes* self, const char* key, const char* value)
+/* 释放 map 中全部条目持有的两个 XString 并清空 map。
+ * 本 map 未注册 Key/DataDeinit 回调，条目释放由本文件显式完成。 */
+static void XContentTypes_freeMapEntries(XMap* map)
+{
+    if (!map) return;
+    XMap_iterator it = XMap_begin(map);
+    XMap_iterator end = XMap_end(map);
+    for (; !XMap_iterator_isEnd(&it); XMap_iterator_add(map, &it)) {
+        XPair* pair = XMap_iterator_data(&it);
+        if (!pair) continue;
+        XStringContainer_deinit(XPair_first(pair));
+        XStringContainer_deinit(XPair_second(pair));
+    }
+    XMap_clear_base(map);
+}
+
+/* 内部辅助：接受 const char* 的 addDefault */
+static void XContentTypes_addDefault_cstr(XContentTypes* self, const char* key, const char* value)
 {
     if (!self || !key || !value) return;
     XString* kstr = XString_create();
@@ -66,31 +62,94 @@ static void addOverride_cstr(XContentTypes* self, const char* key, const char* v
     XString_append_utf8(vstr, value);
     intptr_t pk = (intptr_t)kstr;
     intptr_t pv = (intptr_t)vstr;
-    XMapBase_insert_base((XMapBase*)self->m_overrides, &pk, &pv);
+    /* 键已存在时先释放旧条目持有的两个 XString 再覆盖（本 map 未注册
+       Key/DataDeinit 回调，覆盖分支不会自动释放旧值） */
+    {
+        XMap_iterator it;
+        if (XMapBase_find_base((XMapBase*)self->m_defaults, &pk, (XMapBase_iterator*)&it))
+        {
+            XPair* pair = XMap_iterator_data(&it);
+            if (pair)
+            {
+                XStringContainer_deinit(XPair_first(pair));
+                XStringContainer_deinit(XPair_second(pair));
+            }
+        }
+    }
+    /* 本 map 未注册 Key/DataDeinit 回调，insert 的任一失败出口（含节点分配失败
+       路径经 XMap_deinit_pair）都不会释放键值且 map 状态不变：失败时 kstr/vstr
+       仍归调用方，需在此释放，否则泄漏（仅 OOM 路径）。 */
+    if (!XMapBase_insert_base((XMapBase*)self->m_defaults, &pk, &pv))
+    {
+        XClassDelete(kstr);
+        XClassDelete(vstr);
+    }
+}
+
+void XContentTypes_addDefault(XContentTypes* self, const XString* key, const XString* value)
+{
+    if (!self || !key || !value) return;
+    XContentTypes_addDefault_cstr(self, XString_toUtf8(key), XString_toUtf8(value));
+}
+
+/* 内部辅助：接受 const char* 的 addOverride */
+static void XContentTypes_addOverride_cstr(XContentTypes* self, const char* key, const char* value)
+{
+    if (!self || !key || !value) return;
+    XString* kstr = XString_create();
+    if (!kstr) return;
+    XString_append_utf8(kstr, key);
+    XString* vstr = XString_create();
+    if (!vstr) { XClassDelete(kstr); return; }
+    XString_append_utf8(vstr, value);
+    intptr_t pk = (intptr_t)kstr;
+    intptr_t pv = (intptr_t)vstr;
+    /* 键已存在时先释放旧条目持有的两个 XString 再覆盖（本 map 未注册
+       Key/DataDeinit 回调，覆盖分支不会自动释放旧值） */
+    {
+        XMap_iterator it;
+        if (XMapBase_find_base((XMapBase*)self->m_overrides, &pk, (XMapBase_iterator*)&it))
+        {
+            XPair* pair = XMap_iterator_data(&it);
+            if (pair)
+            {
+                XStringContainer_deinit(XPair_first(pair));
+                XStringContainer_deinit(XPair_second(pair));
+            }
+        }
+    }
+    /* 本 map 未注册 Key/DataDeinit 回调，insert 的任一失败出口（含节点分配失败
+       路径经 XMap_deinit_pair）都不会释放键值且 map 状态不变：失败时 kstr/vstr
+       仍归调用方，需在此释放，否则泄漏（仅 OOM 路径）。 */
+    if (!XMapBase_insert_base((XMapBase*)self->m_overrides, &pk, &pv))
+    {
+        XClassDelete(kstr);
+        XClassDelete(vstr);
+    }
 }
 
 void XContentTypes_addOverride(XContentTypes* self, const XString* key, const XString* value)
 {
     if (!self || !key || !value) return;
-    addOverride_cstr(self, XString_toUtf8(key), XString_toUtf8(value));
+    XContentTypes_addOverride_cstr(self, XString_toUtf8(key), XString_toUtf8(value));
 }
 
 void XContentTypes_addDocPropCore(XContentTypes* self)
-{ addOverride_cstr(self, "/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"); }
+{ XContentTypes_addOverride_cstr(self, "/docProps/core.xml", "application/vnd.openxmlformats-package.core-properties+xml"); }
 
 void XContentTypes_addDocPropApp(XContentTypes* self)
-{ addOverride_cstr(self, "/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml"); }
+{ XContentTypes_addOverride_cstr(self, "/docProps/app.xml", "application/vnd.openxmlformats-officedocument.extended-properties+xml"); }
 
 void XContentTypes_addStyles(XContentTypes* self)
-{ addOverride_cstr(self, "/xl/styles.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"); }
+{ XContentTypes_addOverride_cstr(self, "/xl/styles.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"); }
 
 void XContentTypes_addTheme(XContentTypes* self)
-{ addOverride_cstr(self, "/xl/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml"); }
+{ XContentTypes_addOverride_cstr(self, "/xl/theme/theme1.xml", "application/vnd.openxmlformats-officedocument.theme+xml"); }
 
 void XContentTypes_addWorkbook(XContentTypes* self)
-{ addOverride_cstr(self, "/xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"); }
+{ XContentTypes_addOverride_cstr(self, "/xl/workbook.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"); }
 
-static void add_named_override(XContentTypes* self, const XString* name,
+static void XContentTypes_add_named_override(XContentTypes* self, const XString* name,
                                const char* directory, const char* fallbackPrefix,
                                int index, const char* contentType)
 {
@@ -105,18 +164,18 @@ static void add_named_override(XContentTypes* self, const XString* name,
         snprintf(key, sizeof(key), "%s", supplied);
     } else if (XString_startsWith_utf8(name, "xl/", XChar_CaseSensitive)) {
         snprintf(key, sizeof(key), "/%s", supplied);
-    } else if (strchr(supplied, '/')) {
+    } else if (XString_contains_char(name, XChar_fromLatin1('/'), XChar_CaseSensitive)) {
         snprintf(key, sizeof(key), "/xl/%s", supplied);
     } else {
         snprintf(key, sizeof(key), "/xl/%s/%s", directory, supplied);
     }
-    addOverride_cstr(self, key, contentType);
+    XContentTypes_addOverride_cstr(self, key, contentType);
 }
 
 void XContentTypes_addWorksheetName(XContentTypes* self, const XString* name)
 {
     if (!self) return;
-    add_named_override(self, name, "worksheets", "sheet", self->m_worksheetCount + 1,
+    XContentTypes_add_named_override(self, name, "worksheets", "sheet", self->m_worksheetCount + 1,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml");
     self->m_worksheetCount++;
 }
@@ -124,7 +183,7 @@ void XContentTypes_addWorksheetName(XContentTypes* self, const XString* name)
 void XContentTypes_addChartsheetName(XContentTypes* self, const XString* name)
 {
     if (!self) return;
-    add_named_override(self, name, "chartsheets", "sheet", self->m_chartsheetCount + 1,
+    XContentTypes_add_named_override(self, name, "chartsheets", "sheet", self->m_chartsheetCount + 1,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.chartsheet+xml");
     self->m_chartsheetCount++;
 }
@@ -132,7 +191,7 @@ void XContentTypes_addChartsheetName(XContentTypes* self, const XString* name)
 void XContentTypes_addChartName(XContentTypes* self, const XString* name)
 {
     if (!self) return;
-    add_named_override(self, name, "charts", "chart", self->m_chartCount + 1,
+    XContentTypes_add_named_override(self, name, "charts", "chart", self->m_chartCount + 1,
         "application/vnd.openxmlformats-officedocument.drawingml.chart+xml");
     self->m_chartCount++;
 }
@@ -140,7 +199,7 @@ void XContentTypes_addChartName(XContentTypes* self, const XString* name)
 void XContentTypes_addDrawingName(XContentTypes* self, const XString* name)
 {
     if (!self) return;
-    add_named_override(self, name, "drawings", "drawing", self->m_drawingCount + 1,
+    XContentTypes_add_named_override(self, name, "drawings", "drawing", self->m_drawingCount + 1,
         "application/vnd.openxmlformats-officedocument.drawing+xml");
     self->m_drawingCount++;
 }
@@ -148,7 +207,7 @@ void XContentTypes_addDrawingName(XContentTypes* self, const XString* name)
 void XContentTypes_addCommentName(XContentTypes* self, const XString* name)
 {
     if (!self) return;
-    add_named_override(self, name, "", "comments", self->m_commentCount + 1,
+    XContentTypes_add_named_override(self, name, "", "comments", self->m_commentCount + 1,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml");
     self->m_commentCount++;
 }
@@ -156,7 +215,7 @@ void XContentTypes_addCommentName(XContentTypes* self, const XString* name)
 void XContentTypes_addTableName(XContentTypes* self, const XString* name)
 {
     if (!self) return;
-    add_named_override(self, name, "tables", "table", self->m_tableCount + 1,
+    XContentTypes_add_named_override(self, name, "tables", "table", self->m_tableCount + 1,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml");
     self->m_tableCount++;
 }
@@ -164,31 +223,31 @@ void XContentTypes_addTableName(XContentTypes* self, const XString* name)
 void XContentTypes_addExternalLinkName(XContentTypes* self, const XString* name)
 {
     if (!self) return;
-    add_named_override(self, name, "externalLinks", "externalLink", self->m_externalLinkCount + 1,
+    XContentTypes_add_named_override(self, name, "externalLinks", "externalLink", self->m_externalLinkCount + 1,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.externalLink+xml");
     self->m_externalLinkCount++;
 }
 
 void XContentTypes_addSharedString(XContentTypes* self)
-{ addOverride_cstr(self, "/xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"); }
+{ XContentTypes_addOverride_cstr(self, "/xl/sharedStrings.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"); }
 
 void XContentTypes_addVmlName(XContentTypes* self)
 {
     char key[256];
     snprintf(key, sizeof(key), "/xl/drawings/vmlDrawing%d.vml", self->m_vmlCount + 1);
-    addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.vmlDrawing");
+    XContentTypes_addOverride_cstr(self, key, "application/vnd.openxmlformats-officedocument.vmlDrawing");
     self->m_vmlCount++;
 }
 
 void XContentTypes_addCalcChain(XContentTypes* self)
-{ addOverride_cstr(self, "/xl/calcChain.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"); }
+{ XContentTypes_addOverride_cstr(self, "/xl/calcChain.xml", "application/vnd.openxmlformats-officedocument.spreadsheetml.calcChain+xml"); }
 
 void XContentTypes_addVbaProject(XContentTypes* self)
-{ addOverride_cstr(self, "/xl/vbaProject.bin", "application/vnd.ms-office.vbaProject"); }
+{ XContentTypes_addOverride_cstr(self, "/xl/vbaProject.bin", "application/vnd.ms-office.vbaProject"); }
 
 void XContentTypes_clearOverrides(XContentTypes* self)
 {
-    if (self) { XMap_clear_base(self->m_overrides); }
+    if (self) { XContentTypes_freeMapEntries(self->m_overrides); }
 }
 
 /* ========== 创建与销毁 ========== */
@@ -198,14 +257,18 @@ XContentTypes* XContentTypes_create(void)
     XContentTypes* self = (XContentTypes*)XMalloc_System(sizeof(XContentTypes));
     if (!self) return NULL;
     memset(self, 0, sizeof(XContentTypes));
-    /* 用 sizeof(intptr_t) 存 XString*，并注册 deinit 方法让 XClassDelete 自动清理 */
-    self->m_defaults = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
-    self->m_overrides = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(intptr_t), sizeof(intptr_t), str_compare, false);
-    /* 通知 map 在清空条目时调用的 deinit 方法（按 key、按 value 各一次） */
-    XMapBaseSetKeyDeinitMethod(self->m_defaults, XStringContainer_deinit);
-    XContainerSetDataDeinitMethod(self->m_defaults, XStringContainer_deinit);
-    XMapBaseSetKeyDeinitMethod(self->m_overrides, XStringContainer_deinit);
-    XContainerSetDataDeinitMethod(self->m_overrides, XStringContainer_deinit);
+    /* 用 sizeof(intptr_t) 存 XString*；不注册 Key/DataDeinit 回调，条目中的
+       XString 由本文件显式拥有并在覆盖插入/清空/删除时经
+       XStringContainer_deinit 释放（XMap 插入失败出口不会吞掉调用方键值，
+       使"插入失败即释放"语义明确，见 addDefault_cstr/addOverride_cstr） */
+    self->m_defaults = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(intptr_t), sizeof(intptr_t), XContentTypes_str_compare, false);
+    self->m_overrides = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(intptr_t), sizeof(intptr_t), XContentTypes_str_compare, false);
+    if (!self->m_defaults || !self->m_overrides) {
+        if (self->m_defaults) XClassDelete(self->m_defaults);
+        if (self->m_overrides) XClassDelete(self->m_overrides);
+        XFree_System(self);
+        return NULL;
+    }
     self->m_worksheetCount = 0;
     self->m_chartsheetCount = 0;
     self->m_chartCount = 0;
@@ -220,8 +283,10 @@ XContentTypes* XContentTypes_create(void)
 void XContentTypes_delete(XContentTypes* self)
 {
     if (!self) return;
-    /* map 创建时已设置 KeyDeinit/DataDeinit 为 XStringContainer_deinit，
-       XClassDelete 会自动调用它们释放每个 entry 中的 XString* */
+    /* 本文件 map 未注册 Key/DataDeinit 回调：先显式释放每个 entry 持有的
+       XString*，再删除 map 本体 */
+    XContentTypes_freeMapEntries(self->m_defaults);
+    XContentTypes_freeMapEntries(self->m_overrides);
     if (self->m_defaults) XClassDelete(self->m_defaults);
     if (self->m_overrides) XClassDelete(self->m_overrides);
     XFree_System(self);
@@ -313,7 +378,7 @@ bool XContentTypes_saveToXmlFile(const XContentTypes* self, const XString* fileP
     return result;
 }
 
-static const XString* content_type_attribute(const XXmlStreamAttributes* attributes,
+static const XString* XContentTypes_content_type_attribute(const XXmlStreamAttributes* attributes,
                                              const char* name)
 {
     XString_Init_Utf8(attributeName, name);
@@ -331,8 +396,8 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
         if (reader) XClassDelete(reader);
         return false;
     }
-    XMap_clear_base(self->m_defaults);
-    XMap_clear_base(self->m_overrides);
+    XContentTypes_freeMapEntries(self->m_defaults);
+    XContentTypes_freeMapEntries(self->m_overrides);
     self->m_worksheetCount = self->m_chartsheetCount = self->m_chartCount = 0;
     self->m_drawingCount = self->m_commentCount = self->m_tableCount = 0;
     self->m_externalLinkCount = self->m_vmlCount = 0;
@@ -348,20 +413,20 @@ bool XContentTypes_loadFromXmlData(XContentTypes* self, const uint8_t* data, siz
         if (XString_equals_utf8(element, "Types", XChar_CaseSensitive)) {
             sawRoot = true;
         } else if (XString_equals_utf8(element, "Default", XChar_CaseSensitive)) {
-            const XString* extension = content_type_attribute(attributes, "Extension");
-            const XString* contentType = content_type_attribute(attributes, "ContentType");
+            const XString* extension = XContentTypes_content_type_attribute(attributes, "Extension");
+            const XString* contentType = XContentTypes_content_type_attribute(attributes, "ContentType");
             if (extension && contentType) XContentTypes_addDefault(self, extension, contentType);
         } else if (XString_equals_utf8(element, "Override", XChar_CaseSensitive)) {
-            const XString* partName = content_type_attribute(attributes, "PartName");
-            const XString* contentType = content_type_attribute(attributes, "ContentType");
+            const XString* partName = XContentTypes_content_type_attribute(attributes, "PartName");
+            const XString* contentType = XContentTypes_content_type_attribute(attributes, "ContentType");
             if (partName && contentType) XContentTypes_addOverride(self, partName, contentType);
         }
     }
     bool result = sawRoot && !XXmlStreamReader_hasError(reader);
     XClassDelete(reader);
     if (!result) {
-        XMap_clear_base(self->m_defaults);
-        XMap_clear_base(self->m_overrides);
+        XContentTypes_freeMapEntries(self->m_defaults);
+        XContentTypes_freeMapEntries(self->m_overrides);
     }
     return result;
 }
@@ -388,12 +453,12 @@ bool XContentTypes_loadFromXmlFile(XContentTypes* self, const XString* filePath)
 
 void XContentTypes_addDefault_utf8(XContentTypes* self, const char* key, const char* value)
 {
-    addDefault_cstr(self, key, value);
+    XContentTypes_addDefault_cstr(self, key, value);
 }
 
 void XContentTypes_addOverride_utf8(XContentTypes* self, const char* key, const char* value)
 {
-    addOverride_cstr(self, key, value);
+    XContentTypes_addOverride_cstr(self, key, value);
 }
 
 void XContentTypes_addWorksheetName_utf8(XContentTypes* self, const char* name)

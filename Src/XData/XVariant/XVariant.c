@@ -11,7 +11,7 @@
 //#define XVariant_DataPtr(Var)  (&(((XVariant*)Var)->data))
 #define XVariant_Data(Var,Type)   (*((Type*)XVariant_DataPtr(Var)))
 
-#define to_value(var,t) \
+#define TO_VALUE(var,t) \
 switch (var->m_type)\
 {\
 case XVariantType_Uint8:	return (t)XVariant_Data(var, uint8_t);\
@@ -217,7 +217,7 @@ uint8_t XVariant_toUint8(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toUShort(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, uint8_t);
+	TO_VALUE(var, uint8_t);
 }
 
 uint8_t* XVariant_toUint8_ref(const XVariant* var)
@@ -231,7 +231,7 @@ uint16_t XVariant_toUint16(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toUShort(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, uint16_t);
+	TO_VALUE(var, uint16_t);
 }
 
 uint16_t* XVariant_toUint16_ref(const XVariant* var)
@@ -245,7 +245,7 @@ uint32_t XVariant_toUint32(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toULong(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, uint32_t);
+	TO_VALUE(var, uint32_t);
 }
 
 uint32_t* XVariant_toUint32_ref(const XVariant* var)
@@ -259,7 +259,7 @@ uint64_t XVariant_toUint64(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toULongLong(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, uint64_t);
+	TO_VALUE(var, uint64_t);
 }
 
 uint64_t* XVariant_toUint64_ref(const XVariant* var)
@@ -273,7 +273,7 @@ int8_t XVariant_toInt8(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toShort(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, int8_t);
+	TO_VALUE(var, int8_t);
 }
 
 int8_t* XVariant_toInt8_ref(const XVariant* var)
@@ -287,7 +287,7 @@ int16_t XVariant_toInt16(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toShort(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, int16_t);
+	TO_VALUE(var, int16_t);
 }
 
 int16_t* XVariant_toInt16_ref(const XVariant* var)
@@ -301,7 +301,7 @@ int32_t XVariant_toInt32(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toLong(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, int32_t);
+	TO_VALUE(var, int32_t);
 }
 
 int32_t* XVariant_toInt32_ref(const XVariant* var)
@@ -315,7 +315,7 @@ int64_t XVariant_toInt64(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toLongLong(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, int64_t);
+	TO_VALUE(var, int64_t);
 }
 
 int64_t* XVariant_toInt64_ref(const XVariant* var)
@@ -327,7 +327,7 @@ bool XVariant_toBool(const XVariant* var)
 {
 	if (var == NULL)
 		return 0;
-	to_value(var, bool);
+	TO_VALUE(var, bool);
 }
 
 bool* XVariant_toBool_ref(const XVariant* var)
@@ -339,7 +339,7 @@ char XVariant_toChar(const XVariant* var)
 {
 	if (var == NULL)
 		return 0;
-	to_value(var, char);
+	TO_VALUE(var, char);
 }
 
 char* XVariant_toChar_ref(const XVariant* var)
@@ -351,7 +351,7 @@ unsigned char XVariant_toUChar(const XVariant* var)
 {
 	if (var == NULL)
 		return 0;
-	to_value(var, unsigned char);
+	TO_VALUE(var, unsigned char);
 }
 
 unsigned char* XVariant_toUChar_ref(const XVariant* var)
@@ -365,7 +365,7 @@ int XVariant_toInt(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toInt(XVariant_DataPtr(var),NULL,10);
-	to_value(var, int);
+	TO_VALUE(var, int);
 }
 
 int* XVariant_toInt_ref(const XVariant* var)
@@ -379,7 +379,7 @@ size_t XVariant_toSize_t(const XVariant* var)
 		return 0;
 	if (var->m_type == XVariantType_String)
 		return XString_toULongLong(XVariant_DataPtr(var), NULL, 10);
-	to_value(var, size_t);
+	TO_VALUE(var, size_t);
 }
 
 size_t* XVariant_toSize_t_ref(const XVariant* var)
@@ -651,7 +651,7 @@ void XVariant_swap(XVariant* var, XVariant* other)
 {
 	if (var == NULL || other == NULL)
 		return;
-	XSwap(var,other,sizeof(XVariant));
+	XMemory_swap(var,other,sizeof(XVariant));
 }
 
 int XVariant_type(XVariant* var)
@@ -698,22 +698,22 @@ int32_t XVariant_compare(XVariant* var, XVariant* cmp)
 		return false;
 	switch (var->m_type)
 	{
-	case XVariantType_Uint8:return uint8_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Uint16:return uint16_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Uint32:return uint32_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Uint64:return uint64_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Int8:return int8_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Int16:return int16_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Int32:return int32_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Int64:return int64_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Bool:return bool_compare(var->m_data, cmp->m_data);
-	case XVariantType_Char:return char_compare(var->m_data, cmp->m_data);
-	case XVariantType_UChar:return unsigned_char_compare(var->m_data, cmp->m_data);
-	case XVariantType_Int:return int_compare(var->m_data, cmp->m_data);
-	case XVariantType_Size_t:return size_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Ptr:return uintptr_t_compare(var->m_data, cmp->m_data);
-	case XVariantType_Float:return float_compare(var->m_data, cmp->m_data);
-	case XVariantType_Double:return double_compare(var->m_data, cmp->m_data);
+	case XVariantType_Uint8:return Xuint8_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Uint16:return Xuint16_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Uint32:return Xuint32_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Uint64:return Xuint64_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int8:return Xint8_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int16:return Xint16_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int32:return Xint32_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int64:return Xint64_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Bool:return Xbool_compare(var->m_data, cmp->m_data);
+	case XVariantType_Char:return Xchar_compare(var->m_data, cmp->m_data);
+	case XVariantType_UChar:return Xunsigned_char_compare(var->m_data, cmp->m_data);
+	case XVariantType_Int:return Xint_compare(var->m_data, cmp->m_data);
+	case XVariantType_Size_t:return Xsize_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Ptr:return Xuintptr_t_compare(var->m_data, cmp->m_data);
+	case XVariantType_Float:return Xfloat_compare(var->m_data, cmp->m_data);
+	case XVariantType_Double:return Xdouble_compare(var->m_data, cmp->m_data);
 	default:
 	{
 		ops = XVariantTypeOps_forType(var->m_type);

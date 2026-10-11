@@ -13,7 +13,7 @@
 void XSaveFileTest_print_xstring(const char* label, const XString* str) {
     XPrintf("%s: ", label);
     if (str) {
-        XPrintf_2(str);
+        XPrintf_string(str);
     } else {
         XPrintf_3("(NULL)");
     }
@@ -79,7 +79,7 @@ void XSaveFileTest()
                 XByteArray_append_1(content, 0);
                 XString* strContent = XString_create_utf8((const char*)XByteArray_data(content));
                 XPrintf_3("文件内容:\n");
-                XPrintf_2(strContent);
+                XPrintf_string(strContent);
                 XClassDelete(strContent);
                 XClassDelete(content);
             }

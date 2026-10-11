@@ -5,7 +5,7 @@
  *          包括 null/empty 边界、内存安全测试。
  */
 #include "XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include "XStringView.h"
 #include "XString.h"
 #include "XTestMenu.h"

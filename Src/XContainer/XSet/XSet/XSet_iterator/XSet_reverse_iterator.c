@@ -10,6 +10,8 @@ XSet_reverse_iterator XSet_rbegin(XSet* this_set)
 {
     XSet_reverse_iterator it = { 0 };
     if (!this_set) return it;
+    /* 空 set 时 m_data 为 NULL，XContainerSharedDataPtr 返回 NULL，直接返回空迭代器 */
+    if (!XContainerDataPtr(this_set)) return it;
     XRBTreeNode* root = *XSet_RootPtr(this_set);
     if (!root) return it;
     XRBTreeNode* current = root;
@@ -51,7 +53,7 @@ void XSet_reverse_iterator_add(XSet* this_set, XSet_reverse_iterator* it)
 
 bool XSet_reverse_iterator_equality(XSet_reverse_iterator* itFirst, XSet_reverse_iterator* itSecond)
 {
-    return itFirst->node == itSecond->node;
+    return (itFirst && itSecond) ? (itFirst->node == itSecond->node) : false;
 }
 
 void XSet_reverse_iterator_for_each(XSet* this_set, XFor_each ForFunction, void* args)

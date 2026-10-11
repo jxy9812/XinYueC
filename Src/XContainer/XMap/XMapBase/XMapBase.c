@@ -6,20 +6,24 @@
 #include"XString.h"
 XVtable* XMapBase_class_init()
 {
-	return XContainer_class_init();
+	/* 标准流程：按本类枚举容量建自有表（含 Insert..Values 共 7 个自有槽位），
+	   再继承 XContainer；自身未实现的槽位保持空，由具体子类（XMap/XHashMap）注册。 */
+	XVTABLE_INIT_DEFAULT(XMapBase)
+	XVTABLE_INHERIT_XCLASS(XContainer);
+	return XVTABLE_DEFAULT;
 }
 
 void XMapBase_init(XMapBase* this_map, const size_t keyTypeSize, const size_t valTypeSize, XCompare compare, bool useCow)
 {
 	if (ISNULL(this_map, ""))
-		return NULL;
+		return;
 	if (keyTypeSize == 0 || valTypeSize == 0)
 	{
 		//XPrintf("类型参数不能为0");
-		return NULL;
+		return;
 	}
 	if (ISNULL(this_map, ""))
-		return NULL;
+		return;
 	XContainer_init(&this_map->m_class, valTypeSize, useCow);
 	XClassGetVtable(this_map) = XMapBase_class_init();
 	this_map->m_keyTypeSize = keyTypeSize;

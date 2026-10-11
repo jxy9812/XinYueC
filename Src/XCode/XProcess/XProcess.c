@@ -11,13 +11,14 @@
 
 #if XProcess_ON
 
+#include <string.h>
 #include "XProcess_Protected.h"
 #include "XMemory.h"
 #include "XDateTime.h"
 #include "XEventLoop.h"
 #include "XVarList.h"
-#include <string.h>
-#include <ctype.h>
+#include "XChar.h" /* isspace 直出改经 XChar_isSpace（外部依赖约束） */
+#include "XStringUtils.h" /* strlen/strchr 直出改经 XStrlen/XStrchr（外部依赖约束） */
 
 static void VXProcess_deinit(XObject* object);
 static bool VXProcess_open(XIODevice* io, XIODeviceBaseMode mode);
@@ -48,7 +49,7 @@ static bool xprocess_path_allowed(const XString* value)
     const char* utf8;
     if (!value || XPROCESS_MAX_PATH == 0) return true;
     utf8 = XString_toUtf8(value);
-    return utf8 && strlen(utf8) <= (size_t)XPROCESS_MAX_PATH;
+    return utf8 && XStrlen(utf8) <= (size_t)XPROCESS_MAX_PATH;
 }
 
 /* 从 QProcess::setEnvironment 使用的 name=value 字符串创建独立名称。 */
@@ -59,7 +60,7 @@ static bool xprocess_insert_environment_entry(XProcessEnvironment* environment,
     XString* name;
     bool result;
     if (!environment || !entry) return false;
-    equal = strchr(entry, '=');
+    equal = XStrchr(entry, '=');
     if (!equal || equal == entry) return true;
     name = XString_create_with_length_utf8(entry, (size_t)(equal - entry));
     if (!name) return false;
@@ -166,13 +167,13 @@ static void VXProcess_deinit(XObject* object)
         XProcess_waitForFinished(self, -1);
     }
     XProcess_backend_deinit(self);
-    if (self->m_program) XClassDelete((XString*)self->m_program);
-    if (self->m_arguments) XClassDelete((XStringList*)self->m_arguments);
-    if (self->m_workingDirectory) XClassDelete((XString*)self->m_workingDirectory);
-    if (self->m_standardInputFile) XClassDelete((XString*)self->m_standardInputFile);
-    if (self->m_standardOutputFile) XClassDelete((XString*)self->m_standardOutputFile);
-    if (self->m_standardErrorFile) XClassDelete((XString*)self->m_standardErrorFile);
-    if (self->m_errorString) XClassDelete((XString*)self->m_errorString);
+    if (self->m_program) { XClassDelete((XString*)self->m_program); self->m_program = NULL; }
+    if (self->m_arguments) { XClassDelete((XStringList*)self->m_arguments); self->m_arguments = NULL; }
+    if (self->m_workingDirectory) { XClassDelete((XString*)self->m_workingDirectory); self->m_workingDirectory = NULL; }
+    if (self->m_standardInputFile) { XClassDelete((XString*)self->m_standardInputFile); self->m_standardInputFile = NULL; }
+    if (self->m_standardOutputFile) { XClassDelete((XString*)self->m_standardOutputFile); self->m_standardOutputFile = NULL; }
+    if (self->m_standardErrorFile) { XClassDelete((XString*)self->m_standardErrorFile); self->m_standardErrorFile = NULL; }
+    if (self->m_errorString) { XClassDelete((XString*)self->m_errorString); self->m_errorString = NULL; }
     XProcessEnvironment_deinit(&self->m_environment);
     XClass_Deinit_Parent(XIODevice, (XIODevice*)self);
 }
@@ -417,7 +418,7 @@ bool XProcess_setProcessEnvironment(XProcess* self, const XProcessEnvironment* e
 {
     XProcessEnvironment* copy;
     if (!self || !environment || self->m_state != XProcessState_NotRunning) return false;
-    copy = XProcessEnvironment_createCopy(environment);
+    copy = XProcessEnvironment_create_copy(environment);
     if (!copy) return false;
     XProcessEnvironment_deinit(&self->m_environment);
     self->m_environment = *copy;
@@ -427,7 +428,7 @@ bool XProcess_setProcessEnvironment(XProcess* self, const XProcessEnvironment* e
 
 XProcessEnvironment* XProcess_processEnvironment(const XProcess* self)
 {
-    return self ? XProcessEnvironment_createCopy(&self->m_environment) : NULL;
+    return self ? XProcessEnvironment_create_copy(&self->m_environment) : NULL;
 }
 
 bool XProcess_setEnvironment(XProcess* self, const XStringList* environment)
@@ -847,7 +848,7 @@ XStringList* XProcess_splitCommand_static(const XString* command)
             if (quoteCount == 1) inQuote = !inQuote;
             quoteCount = 0;
         }
-        if (!inQuote && isspace((unsigned char)c)) {
+        if (!inQuote && XChar_isSpace((XChar)(unsigned char)c)) {
             if (!XString_isEmpty_base(token)) {
                 XStringList_push_back_base(result, token);
                 XString_clear_base(token);

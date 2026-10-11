@@ -332,7 +332,11 @@ void XStatusBar_addWidget(XStatusBar* self, XWidget* widget, int stretch)
     if (!self || !widget) return;
     item = xsb_itemCreate(widget, stretch);
     if (!item) return;
-    XVector_push_back_1_base(self->m_items, &item);
+    if (!XVector_push_back_1_base(self->m_items, &item)) {
+        /* 入容器失败：条目无人接管，就地释放（widget 不入布局追踪）。 */
+        xsb_itemDestroy(item);
+        return;
+    }
     XWidget_setParent(widget, (XWidget*)self, 0);
     XWidget_setVisible(widget, !self->m_currentMessage ||
                         !XString_toUtf8(self->m_currentMessage) ||
@@ -350,7 +354,11 @@ int XStatusBar_insertWidget(XStatusBar* self, int index, XWidget* widget,
     if (!item) return -1;
     n = XVector_size_base((const XContainer*)self->m_items);
     if (index < 0 || (int64_t)index > n) index = (int)n;
-    XVector_insert_1_base(self->m_items, index, &item, 1);
+    if (!XVector_insert_1_base(self->m_items, index, &item, 1)) {
+        /* 入容器失败：条目无人接管，就地释放（widget 不入布局追踪）。 */
+        xsb_itemDestroy(item);
+        return -1;
+    }
     XWidget_setParent(widget, (XWidget*)self, 0);
     /* 对标 Qt 6.8 qstatusbar.cpp QStatusBar::insertWidget：临时消息显示
      * 期间插入的普通区控件需隐藏（与 addWidget 同款消息在场判定；
@@ -369,7 +377,11 @@ void XStatusBar_addPermanentWidget(XStatusBar* self, XWidget* widget,
     if (!self || !widget) return;
     item = xsb_itemCreate(widget, stretch);
     if (!item) return;
-    XVector_push_back_1_base(self->m_permanents, &item);
+    if (!XVector_push_back_1_base(self->m_permanents, &item)) {
+        /* 入容器失败：条目无人接管，就地释放（widget 不入布局追踪）。 */
+        xsb_itemDestroy(item);
+        return;
+    }
     XWidget_setParent(widget, (XWidget*)self, 0);
     /* 对标 Qt 6.8 qstatusbar.cpp insertPermanentWidget：加入永久区即
      * widget->show()（常驻语义，不被临时消息遮挡；hideOrShow 只遍历
@@ -388,7 +400,11 @@ int XStatusBar_insertPermanentWidget(XStatusBar* self, int index,
     if (!item) return -1;
     n = XVector_size_base((const XContainer*)self->m_permanents);
     if (index < 0 || (int64_t)index > n) index = (int)n;
-    XVector_insert_1_base(self->m_permanents, index, &item, 1);
+    if (!XVector_insert_1_base(self->m_permanents, index, &item, 1)) {
+        /* 入容器失败：条目无人接管，就地释放（widget 不入布局追踪）。 */
+        xsb_itemDestroy(item);
+        return -1;
+    }
     XWidget_setParent(widget, (XWidget*)self, 0);
     /* 同 addPermanentWidget：对标 Qt 6.8 insertPermanentWidget 的
      * widget->show() 常驻语义。 */

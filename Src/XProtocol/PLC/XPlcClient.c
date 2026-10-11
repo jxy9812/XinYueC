@@ -4,17 +4,52 @@
 #if XPLC_CORE_ON
 #include "XPlcClient.h"
 #include "XPlcClient_Protected.h"
+#include <string.h>
 #include "XMemory.h"
 #include "XString.h"
 #include "XVariant.h"
 #include "XByteArray.h"
 #include "XHashMap.h"
-#include <string.h>
 
 // 虚函数重载声明
 static void VXPlcClient_deinit(XPlcClient* client);
 static bool VXPlcClient_sendRequest(XPlcClient* client, const XByteArray* payload, XPlcReply* reply);
 static bool VXPlcClient_processResponse(XPlcClient* client, const XByteArray* payload, XPlcReply* reply);
+
+// ================== 静态虚函数实现 ==================
+
+static void VXPlcClient_deinit(XPlcClient* client) {
+    if (!client) return;
+
+    // 停止超时与重连定时器
+    XPlcClient_timeoutTimerStop(client);
+    XPlcClient_reconnectTimerStop(client);
+    if (client->m_poolMap)
+    {
+        XClassDelete((XClass*)client->m_poolMap);
+        client->m_poolMap = NULL;
+    }
+    // 调用基类析构
+    XClass_Deinit_Parent(XPlcDevice, (XPlcDevice*)client);
+}
+
+/**
+ * @brief 默认的 SendRequest 实现
+ * @note 基类是抽象的，不提供默认发送功能，子类必须重写此槽
+ */
+static bool VXPlcClient_sendRequest(XPlcClient* client, const XByteArray* payload, XPlcReply* reply) {
+    (void)client; (void)payload; (void)reply;
+    return false;
+}
+
+/**
+ * @brief 默认的 ProcessResponse 实现
+ * @note 基类是抽象的，不提供默认解析功能，子类必须重写此槽
+ */
+static bool VXPlcClient_processResponse(XPlcClient* client, const XByteArray* payload, XPlcReply* reply) {
+    (void)client; (void)payload; (void)reply;
+    return false;
+}
 
 // ================== 虚表初始化 ==================
 XVtable* XPlcClient_class_init(void)
@@ -65,41 +100,6 @@ void XPlcClient_init(XPlcClient* client) {
     client->m_maxReconnectAttempts = -1;   // 默认无限次
     client->m_reconnectAttempts = 0;       // 当前重连次数
     client->m_reconnectTimer = XTIMER_INVALID_ID;
-}
-
-static void VXPlcClient_deinit(XPlcClient* client) {
-    if (!client) return;
-
-    // 停止超时与重连定时器
-    XPlcClient_timeoutTimerStop(client);
-    XPlcClient_reconnectTimerStop(client);
-    if (client->m_poolMap)
-    {
-        XClassDelete((XClass*)client->m_poolMap);
-        client->m_poolMap = NULL;
-    }
-    // 调用基类析构
-    XClass_Deinit_Parent(XPlcDevice, (XPlcDevice*)client);
-}
-
-// ================== 虚函数默认实现 ==================
-
-/**
- * @brief 默认的 SendRequest 实现
- * @note 基类是抽象的，不提供默认发送功能，子类必须重写此槽
- */
-static bool VXPlcClient_sendRequest(XPlcClient* client, const XByteArray* payload, XPlcReply* reply) {
-    (void)client; (void)payload; (void)reply;
-    return false;
-}
-
-/**
- * @brief 默认的 ProcessResponse 实现
- * @note 基类是抽象的，不提供默认解析功能，子类必须重写此槽
- */
-static bool VXPlcClient_processResponse(XPlcClient* client, const XByteArray* payload, XPlcReply* reply) {
-    (void)client; (void)payload; (void)reply;
-    return false;
 }
 
 // ================== 虚函数查表分派入口 ==================

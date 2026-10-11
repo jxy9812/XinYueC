@@ -12,6 +12,7 @@
  *  - 每条断言中文注释标对标 Qt 的哪个行为；渲染/视觉效果不在断言职责。
  */
 #include "xgui_demo_apitest.h"
+#include "XObject_Protected.h"
 
 #include "XObject.h"
 #include "XEvent.h"

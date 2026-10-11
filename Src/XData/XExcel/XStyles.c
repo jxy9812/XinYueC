@@ -44,13 +44,13 @@ XStyles* XStyles_create(XAbstractOOXmlFile_CreateFlag flag)
     XStyles* self = (XStyles*)XMalloc_System(sizeof(XStyles));
     if (!self) return NULL;
     memset(self, 0, sizeof(*self));
-    XAbstractOOXmlFile_init(&self->m_base, flag);
+    XAbstractOOXmlFile_init(&self->m_class, flag);
     self->m_fontsList = XVector_create(sizeof(XFormat*));
     self->m_fillsList = XVector_create(sizeof(XFormat*));
     self->m_bordersList = XVector_create(sizeof(XFormat*));
     self->m_xfFormatsList = XVector_create(sizeof(XFormat*));
     self->m_dxfFormatsList = XVector_create(sizeof(XFormat*));
-    self->m_customNumFmtIdMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(int), int_compare, false);
+    self->m_customNumFmtIdMap = XMap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), sizeof(int), Xint_compare, false);
     self->m_nextCustomNumFmtId = 164;
     for (int i = 0; i < 64; ++i)
         self->m_indexedColors[i] = XColor_create_rgb(0, 0, 0, 0);
@@ -75,7 +75,7 @@ void XStyles_delete(XStyles* self)
     if (self->m_customNumFmtIdMap) {
         XClassDelete(self->m_customNumFmtIdMap);
     }
-    XAbstractOOXmlFile_deinit(&self->m_base);
+    XAbstractOOXmlFile_deinit(&self->m_class);
     XFree_System(self);
 }
 
@@ -637,7 +637,10 @@ bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len)
                 const XString* code = attribute(reader, "formatCode");
                 ParsedNumFmt parsed = { attribute_int(reader, "numFmtId", 0),
                                         code ? XString_create_copy(code) : NULL };
-                if (parsed.m_code) XVector_push_back_2(numFormats, &parsed, 1);
+                if (parsed.m_code && !XVector_push_back_2(numFormats, &parsed, 1)) {
+                    XClassDelete(parsed.m_code);
+                    parsed.m_code = NULL;
+                }
             } else if ((section == SectionFonts && XString_equals_utf8(element, "font", XChar_CaseSensitive)) ||
                        (section == SectionFills && XString_equals_utf8(element, "fill", XChar_CaseSensitive)) ||
                        (section == SectionBorders && XString_equals_utf8(element, "border", XChar_CaseSensitive)) ||
@@ -732,19 +735,24 @@ bool XStyles_loadFromXmlData(XStyles* self, const uint8_t* data, size_t len)
             }
         } else if (token == XXmlStream_EndElement && element) {
             if (section == SectionFonts && XString_equals_utf8(element, "font", XChar_CaseSensitive) && current) {
-                XVector_push_back_2(self->m_fontsList, &current, 1); current = NULL;
+                if (!XVector_push_back_2(self->m_fontsList, &current, 1)) XFormat_delete(current);
+                current = NULL;
             } else if (section == SectionFills && XString_equals_utf8(element, "fill", XChar_CaseSensitive) && current) {
-                XVector_push_back_2(self->m_fillsList, &current, 1); current = NULL;
+                if (!XVector_push_back_2(self->m_fillsList, &current, 1)) XFormat_delete(current);
+                current = NULL;
             } else if (section == SectionBorders && XString_equals_utf8(element, "border", XChar_CaseSensitive) && current) {
-                XVector_push_back_2(self->m_bordersList, &current, 1); current = NULL;
+                if (!XVector_push_back_2(self->m_bordersList, &current, 1)) XFormat_delete(current);
+                current = NULL;
             } else if (section == SectionCellXfs && XString_equals_utf8(element, "xf", XChar_CaseSensitive) && current) {
                 XFormat_setXfIndex(current,
                     (int)XVector_size_base((XContainer*)self->m_xfFormatsList));
-                XVector_push_back_2(self->m_xfFormatsList, &current, 1); current = NULL;
+                if (!XVector_push_back_2(self->m_xfFormatsList, &current, 1)) XFormat_delete(current);
+                current = NULL;
             } else if (section == SectionDxfs && XString_equals_utf8(element, "dxf", XChar_CaseSensitive) && current) {
                 XFormat_setDxfIndex(current,
                     (int)XVector_size_base((XContainer*)self->m_dxfFormatsList));
-                XVector_push_back_2(self->m_dxfFormatsList, &current, 1); current = NULL;
+                if (!XVector_push_back_2(self->m_dxfFormatsList, &current, 1)) XFormat_delete(current);
+                current = NULL;
                 dxfComponent = DxfComponentNone;
             } else if (section == SectionDxfs &&
                        (XString_equals_utf8(element, "font", XChar_CaseSensitive) ||

@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool is_builtin_date_format(int code)
+static bool XNumFormatParser_is_builtin_date_format(int code)
 {
     return (code >= 14 && code <= 22) || (code >= 27 && code <= 36) ||
            (code >= 45 && code <= 47) || (code >= 50 && code <= 58) ||
@@ -18,7 +18,7 @@ bool XNumFormatParser_isDateTime(const XString* formatCode)
     /* 仅当整个字符串是十进制编号时，才按 Excel 内置 numFmtId 判断。 */
     char* end = NULL;
     long code = strtol(fc, &end, 10);
-    if (end != fc && *end == '\0') return is_builtin_date_format((int)code);
+    if (end != fc && *end == '\0') return XNumFormatParser_is_builtin_date_format((int)code);
 
     bool quoted = false;
     for (size_t i = 0; fc[i] != '\0'; ++i) {

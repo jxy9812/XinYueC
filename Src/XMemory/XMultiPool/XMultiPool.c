@@ -236,15 +236,29 @@ void XMultiPool_delete(XMultiPool* mp) {
 bool XMultiPool_add_pool(XMultiPool* mp, XFixedPool* sub_pool) {
     if (!mp || !sub_pool) return false;
     /* 堆模式自动扩容 */
-    if (mp->owns_memory && !ensure_capacity(mp, mp->sub_pool_count + 1)) return false;
+    if (mp->owns_memory && !ensure_capacity(mp, mp->sub_pool_count + 1)) {
+        /* 所有权已随调用转移（XMultiPool.h @param pool），注册失败的
+           子池由属主就地释放，避免调用方失去指针后无人释放 */
+        XFixedPool_delete(sub_pool);
+        return false;
+    }
 
     if (mp->is_power_of_two_mode) {
-        if (sub_pool->user_block_size != mp->next_expected_size) return false;
+        if (sub_pool->user_block_size != mp->next_expected_size) {
+            XFixedPool_delete(sub_pool);/* 同上：失败出口释放已接管的子池 */
+            return false;
+        }
         mp->next_expected_size *= mp->growth_multiplier;
-        if (!array_push_back(mp, sub_pool)) return false;
+        if (!array_push_back(mp, sub_pool)) {
+            XFixedPool_delete(sub_pool);
+            return false;
+        }
     } else {
         size_t pos = find_insert_position(mp, sub_pool->user_block_size);
-        if (!array_insert(mp, pos, sub_pool)) return false;
+        if (!array_insert(mp, pos, sub_pool)) {
+            XFixedPool_delete(sub_pool);
+            return false;
+        }
     }
 
     size_t pool_user_size = (sub_pool->user_block_size - POOL_INDEX_SIZE) * sub_pool->num_blocks;
@@ -269,8 +283,15 @@ bool XMultiPool_init(XMultiPool* mp) {
 
 void XMultiPool_deinit(XMultiPool* mp) {
     if (!mp || mp->owns_memory) return;
-    for (size_t i = 0; i < mp->sub_pool_count; ++i)
-        XFixedPool_deinit(mp->sub_pools[i]);
+    /* add_pool 按契约接收了子池所有权（XMultiPool.h @param pool），
+       静态模式 deinit 须兑现"清理对象拥有的动态资源"（XMultiPool.h
+       @note）：经 XFixedPool_delete 释放堆上子池结构体，并按子池自身
+       owns_memory 释放其 raw_memory；调用方提供的 sub_pools 数组存储
+       仍由调用方负责，不在释放范围。 */
+    for (size_t i = 0; i < mp->sub_pool_count; ++i) {
+        XFixedPool* p = mp->sub_pools[i];
+        if (p) XFixedPool_delete(p);
+    }
     mp->sub_pool_count = 0;
 }
 
@@ -307,12 +328,19 @@ static void XMultiPool_initGlobal(void) {
                                         XMP_GLOBAL_GROWTH_MULTIPLIER);
 
     /* 全局池块数可配置（桌面默认 256/256/256；嵌入式经编译选项缩小，
-     * 否则小容量 FreeRTOS 堆在首个 XCoreApplication 初始化即耗尽）。 */
-    XMultiPool_add_pool(global_pool, XFixedPool_create(32,  XMP_GLOBAL_C32));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(64,  XMP_GLOBAL_C64));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(128, XMP_GLOBAL_C128));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(256, XMP_GLOBAL_C256));
-    XMultiPool_add_pool(global_pool, XFixedPool_create(512, XMP_GLOBAL_C512));
+     * 否则小容量 FreeRTOS 堆在首个 XCoreApplication 初始化即耗尽）。
+     * add_pool 失败时子池已由其内部按所有权就地释放，此处检查返回值
+     * 仅记录失败：档位/容量配置不匹配会使对应档位的分配返回 NULL。 */
+    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(32,  XMP_GLOBAL_C32)))
+        XERROR_PRINTF("XMultiPool,全局池32B档注册失败\n");
+    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(64,  XMP_GLOBAL_C64)))
+        XERROR_PRINTF("XMultiPool,全局池64B档注册失败\n");
+    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(128, XMP_GLOBAL_C128)))
+        XERROR_PRINTF("XMultiPool,全局池128B档注册失败\n");
+    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(256, XMP_GLOBAL_C256)))
+        XERROR_PRINTF("XMultiPool,全局池256B档注册失败\n");
+    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(512, XMP_GLOBAL_C512)))
+        XERROR_PRINTF("XMultiPool,全局池512B档注册失败\n");
     //XMultiPool_add_pool(global_pool, XFixedPool_create(1024, 32));
     //XMultiPool_add_pool(global_pool, XFixedPool_create(2048, 32));
     //XMultiPool_add_pool(global_pool, XFixedPool_create(4096, 16));

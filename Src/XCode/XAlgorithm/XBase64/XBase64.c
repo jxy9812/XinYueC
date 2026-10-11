@@ -1,7 +1,6 @@
 ﻿#include "XBase64.h"
 #if XBase64_ON
 #include <string.h>
-#include <ctype.h>
 
 /* Base64编码表 */
 static const char base64_table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

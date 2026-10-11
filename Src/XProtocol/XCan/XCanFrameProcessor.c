@@ -21,6 +21,11 @@ void XCanFrameProcessor_ParseResult_init(XCanFrameProcessor_ParseResult* result)
     XMapBaseSetKeyCopyMethod(result->m_signalValues, XClass_copy_base);
     XMapBaseSetKeyMoveMethod(result->m_signalValues, XClass_move_base);
     XMapBaseSetKeyDeinitMethod(result->m_signalValues, XClass_deinit_base);
+    /* 值是 XVariant，注册多态拷贝/移动/析构回调：插入时深拷入容器，
+       源对象可安全 deinit；容器销毁时逐值释放，覆盖旧键时旧值也被释放 */
+    XContainerSetDataCopyMethod(result->m_signalValues, XClass_copy_base);
+    XContainerSetDataMoveMethod(result->m_signalValues, XClass_move_base);
+    XContainerSetDataDeinitMethod(result->m_signalValues, XClass_deinit_base);
 }
 
 void XCanFrameProcessor_ParseResult_deinit(XCanFrameProcessor_ParseResult* result)
@@ -82,8 +87,16 @@ XStringList* XCanFrameProcessor_warnings(const XCanFrameProcessor* processor)
 
 XVector* XCanFrameProcessor_messageDescriptions(const XCanFrameProcessor* processor)
 {
-    if (!processor || !processor->m_messageDescriptions)
-        return XVector_create(sizeof(XCanMessageDescription));
+    if (!processor || !processor->m_messageDescriptions) {
+        XVector* empty = XVector_create(sizeof(XCanMessageDescription));
+        if (empty) {
+            XContainerSetDataCopyMethod(empty, XCanMessageDescription_copy);
+            XContainerSetDataMoveMethod(empty, XCanMessageDescription_move);
+            XContainerSetDataDeinitMethod(empty, XCanMessageDescription_deinit);
+        }
+        return empty;
+    }
+    /* create_copy 经 COW 共享并传播元素深拷贝/析构方法，元素属主清晰 */
     return XVector_create_copy(processor->m_messageDescriptions);
 }
 
@@ -91,8 +104,13 @@ void XCanFrameProcessor_addMessageDescriptions(XCanFrameProcessor* processor,
     const XVector* descriptions)
 {
     if (!processor || !descriptions) return;
-    if (!processor->m_messageDescriptions)
+    if (!processor->m_messageDescriptions) {
         processor->m_messageDescriptions = XVector_create(sizeof(XCanMessageDescription));
+        /* 元素深拷贝/析构回调：push_back 深拷贝元素，容器销毁时逐元素释放 */
+        XContainerSetDataCopyMethod(processor->m_messageDescriptions, XCanMessageDescription_copy);
+        XContainerSetDataMoveMethod(processor->m_messageDescriptions, XCanMessageDescription_move);
+        XContainerSetDataDeinitMethod(processor->m_messageDescriptions, XCanMessageDescription_deinit);
+    }
 
     size_t count = XVector_size_base(descriptions);
     for (size_t i = 0; i < count; i++) {
@@ -111,8 +129,16 @@ void XCanFrameProcessor_setMessageDescriptions(XCanFrameProcessor* processor,
         XClassDelete(processor->m_messageDescriptions);
         processor->m_messageDescriptions = NULL;
     }
-    if (descriptions)
+    if (descriptions) {
         processor->m_messageDescriptions = XVector_create_copy(descriptions);
+        if (processor->m_messageDescriptions) {
+            /* 显式补齐元素深拷贝/析构回调：源向量未注册方法时，
+               处理器销毁仍能逐元素释放（COW 共享块由引用计数保证只释放一次） */
+            XContainerSetDataCopyMethod(processor->m_messageDescriptions, XCanMessageDescription_copy);
+            XContainerSetDataMoveMethod(processor->m_messageDescriptions, XCanMessageDescription_move);
+            XContainerSetDataDeinitMethod(processor->m_messageDescriptions, XCanMessageDescription_deinit);
+        }
+    }
 }
 
 void XCanFrameProcessor_clearMessageDescriptions(XCanFrameProcessor* processor)

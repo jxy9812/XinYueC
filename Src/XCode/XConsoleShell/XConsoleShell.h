@@ -67,28 +67,58 @@ extern "C" {
  * @details 会话存储由所属 XConsoleShell 内嵌拥有，调用者不得释放、移动或
  *          复制该结构。除非具体成员注释允许，调用者也不应直接修改成员。
  *          会话及其借用指针默认非线程安全，只能在所属 Shell 的执行线程使用。
+ *          成员按对齐分簇排列（8 字节指针/size_t 簇 → 4 字节标量簇 → 1 字节
+ *          缓冲与标志簇），消除对齐空洞；簇内成员不得再随意插入，以免重新
+ *          引入填充字节。
  */
 typedef struct XConsoleShellSession {
-    uint32_t id;                                      /**< 会话标识；默认会话固定为 1，0 表示无效。 */
-    char currentPath[XCONSOLE_SHELL_MAX_PATH];       /**< NUL 结尾 UTF-8 逻辑当前目录；最长为容量减 1 字节。 */
-#if XCONSOLE_SHELL_FS_CD_ON
-    char previousPath[XCONSOLE_SHELL_MAX_PATH];      /**< cd 切换前的逻辑当前目录，用于 cd -；首次为空串。 */
-#endif
-    uint32_t permissionMask;                         /**< 产品定义权限位；可由标准权限位按位组合。 */
+    /* ---- 8 字节对齐簇：指针与 size_t ---- */
     void* userData;                                   /**< 会话私有数据；不释放。 */
-    bool authenticated;                               /**< 是否已通过产品认证。 */
-    bool cancelled;                                   /**< 当前命令是否取消。 */
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     XConsoleShellInputLineHandler inputLineHandler;   /**< 后续整行输入处理器；NULL 表示走普通命令解析。 */
     void* inputLineHandlerUserData;                   /**< 后续整行输入处理器上下文；Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_LOGIN_ON
-    char userName[XCONSOLE_SHELL_LOGIN_NAME_SIZE];    /**< 当前登录用户名；未登录时为空字符串。 */
+    size_t groupCount;                                /**< groups 中有效元素数量。 */
+#endif
+#if XCONSOLE_SHELL_EDITOR_ON
+    size_t editorLineCount;                           /**< 编辑缓冲有效行数。 */
+    size_t editorCursorLine;                          /**< 插入模式插入位置所在行；0 起。 */
+    size_t editorCursorColumn;                        /**< 插入模式插入位置所在列；0 起。 */
+    size_t editorInsertLen;                           /**< 插入模式当前行的长度。 */
+    size_t editorInsertCursor;                        /**< 插入模式当前行的光标列。 */
+    void* editorTui;                                  /**< XConsoleShellViTui 私有 TUI 会话；由编辑器拥有，Shell 不释放。 */
+#endif
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    XConsoleShellIo m_io;                             /**< 会话借用的传输回调集合。 */
+    size_t m_lineLength;                              /**< 会话当前输入长度。 */
+#if XCONSOLE_SHELL_HISTORY_ON
+    size_t m_historyCount;                            /**< 会话历史条目数。 */
+    size_t m_historyNext;                             /**< 会话下一条历史写入位置。 */
+    size_t m_historyCursor;                           /**< 会话历史浏览位置。 */
+#endif
+#if XCONSOLE_SHELL_LINE_EDITOR_ON
+    size_t m_lineCursor;                              /**< 会话行编辑光标位置。 */
+#endif
+#endif
+    /* ---- 4 字节对齐簇：整型标量 ---- */
+    uint32_t id;                                      /**< 会话标识；默认会话固定为 1，0 表示无效。 */
+    uint32_t permissionMask;                          /**< 产品定义权限位；可由标准权限位按位组合。 */
+#if XCONSOLE_SHELL_LOGIN_ON
     uint32_t uid;                                     /**< 当前账户 UID；未登录时为 UINT32_MAX。 */
     uint32_t gid;                                     /**< 当前账户主 GID；未登录时为 UINT32_MAX。 */
     uint32_t groups[XCONSOLE_SHELL_LOGIN_GROUP_CAPACITY]; /**< 当前账户附加组 ID。 */
-    size_t groupCount;                                /**< groups 中有效元素数量。 */
     XConsoleShellLoginInputMode loginInputMode;       /**< 当前等待的登录或改密输入类型。 */
+#endif
+    /* ---- 1 字节簇：char 缓冲与标志 ---- */
+    char currentPath[XCONSOLE_SHELL_MAX_PATH];        /**< NUL 结尾 UTF-8 逻辑当前目录；最长为容量减 1 字节。 */
+#if XCONSOLE_SHELL_FS_CD_ON
+    char previousPath[XCONSOLE_SHELL_MAX_PATH];       /**< cd 切换前的逻辑当前目录，用于 cd -；首次为空串。 */
+#endif
+    bool authenticated;                               /**< 是否已通过产品认证。 */
+    bool cancelled;                                   /**< 当前命令是否取消。 */
+#if XCONSOLE_SHELL_LOGIN_ON
+    char userName[XCONSOLE_SHELL_LOGIN_NAME_SIZE];    /**< 当前登录用户名；未登录时为空字符串。 */
     char loginInputUser[XCONSOLE_SHELL_LOGIN_NAME_SIZE]; /**< 等待输入对应的目标用户名。 */
     char loginInputPassword[XCONSOLE_SHELL_LOGIN_PASSWORD_SIZE + 1u]; /**< 改密确认用的临时密码。 */
 #endif
@@ -102,28 +132,14 @@ typedef struct XConsoleShellSession {
     bool editorInsertAfter;                           /**< 插入模式是否在当前行之后追加。 */
     char editorPath[XCONSOLE_SHELL_MAX_PATH];         /**< 编辑目标文件路径；NUL 结尾。 */
     char editorLines[XCONSOLE_SHELL_EDITOR_MAX_LINES][XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 编辑行缓冲。 */
-    size_t editorLineCount;                           /**< 编辑缓冲有效行数。 */
-    size_t editorCursorLine;                          /**< 插入模式插入位置所在行；0 起。 */
-    size_t editorCursorColumn;                        /**< 插入模式插入位置所在列；0 起。 */
     char editorInsertBuf[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 插入模式当前正在编辑的一行。 */
-    size_t editorInsertLen;                           /**< 插入模式当前行的长度。 */
-    size_t editorInsertCursor;                        /**< 插入模式当前行的光标列。 */
     bool editorInsertPendingCr;                       /**< 插入模式已收到 \r，等待合并其后的 \n。 */
     unsigned char editorInsertEscape;                 /**< 插入模式 ESC/方向键状态；0 无，1 收到 ESC，2 收到 ESC [。 */
-    void* editorTui;                                  /**< XConsoleShellViTui 私有 TUI 会话；由编辑器拥有，Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
-    XConsoleShellIo m_io;                             /**< 会话借用的传输回调集合。 */
     char m_lineBuffer[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 会话独立输入行缓冲。 */
-    size_t m_lineLength;                              /**< 会话当前输入长度。 */
 #if XCONSOLE_SHELL_HISTORY_ON
     char m_history[XCONSOLE_SHELL_HISTORY_CAPACITY][XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 会话历史环形缓冲。 */
-    size_t m_historyCount;                            /**< 会话历史条目数。 */
-    size_t m_historyNext;                             /**< 会话下一条历史写入位置。 */
-    size_t m_historyCursor;                           /**< 会话历史浏览位置。 */
-#endif
-#if XCONSOLE_SHELL_LINE_EDITOR_ON
-    size_t m_lineCursor;                              /**< 会话行编辑光标位置。 */
 #endif
     uint8_t m_escapeState;                            /**< 会话 ANSI 转义状态：0 普通、1 ESC、2 CSI、3 SS3。 */
     bool m_closeRequested;                            /**< 附加会话已请求退出；所属 Shell 继续运行。 */
@@ -145,12 +161,14 @@ typedef struct XConsoleShellStats {
 } XConsoleShellStats;
 #endif
 
-/** @brief XConsoleShell 虚函数表布局；异步模式下额外重载 XObject 事件槽。 */
+/** @brief XConsoleShell 虚函数表布局；异步模式下额外新增 XObject 事件槽。 */
 XCLASS_DEFINE_BEGING(XConsoleShell)
 #if XCONSOLE_SHELL_ASYNC_ON
 XCLASS_DEFINE_ENUM(XConsoleShell, Event) = XCLASS_VTABLE_GET_SIZE(XObject),
-#endif
+XCLASS_DEFINE_END(XConsoleShell)
+#else
 XCLASS_DEFINE_EXTEND_END(XConsoleShell, XObject)
+#endif
 
 /** @brief 动态命令所有者的内部前置声明；仅供实现使用。 */
 struct XConsoleShellDynamicCommand;
@@ -160,10 +178,28 @@ struct XConsoleShellAsyncProcess;
  * @brief XConsoleShell 对象。
  * @details base 是第一个成员，由 XClass 管理，禁止手工修改。其余成员公开
  *          仅为保持 C 对象布局可见，均应通过本文件 API 操作。对象默认非
- *          线程安全，不支持按值复制或移动。
+ *          线程安全，不支持按值复制或移动。成员按对齐分簇排列（8 字节
+ *          指针/size_t 簇 → 4 字节标量簇 → 1 字节缓冲与标志簇），消除对齐
+ *          空洞；簇内不得随意插入成员，以免重新引入填充字节。
  */
 typedef struct XConsoleShell {
     XObject base;                                     /**< 第一个成员，由 XClass 管理，禁止手工修改。 */
+    /* ---- 8 字节对齐簇：指针 / size_t / 8 字节标量与子结构 ----
+     * 注：int64/uint64 及含 64 位成员的子结构在 32 位目标上仍按 8 字节对齐，
+     * 因此置于簇首，避免被 32 位平台 4 字节的 size_t/指针成员挡出空洞。 */
+#if XCONSOLE_SHELL_UPTIME_ON
+    int64_t m_startTimeMsecs;                         /**< Shell 初始化时的日历毫秒时间戳；无效时为负数。 */
+#endif
+#if XCONSOLE_SHELL_STATS_ON
+    uint64_t m_processedLines;                         /**< 已处理完整输入行数。 */
+    uint64_t m_successfulCommands;                     /**< 成功命令数。 */
+    uint64_t m_failedCommands;                         /**< 失败命令数。 */
+    uint64_t m_inputBytes;                             /**< 输入字节数。 */
+    uint64_t m_outputBytes;                            /**< 输出字节数。 */
+#endif
+#if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
+    XConsoleShellPingState m_ping;                    /**< 顶层 ping 异步状态。 */
+#endif
     XConsoleShellIo m_io;                             /**< 传输回调值副本；其中 userData 由调用者拥有。 */
     const XConsoleCommand* m_commands[XCONSOLE_SHELL_COMMAND_CAPACITY]; /**< 借用命令指针表；Shell 不释放静态项。 */
     size_t m_commandCount;                            /**< 当前命令数量。 */
@@ -176,26 +212,18 @@ typedef struct XConsoleShell {
     size_t m_commandExecutionDepth;                  /**< 当前命令回调嵌套深度。 */
 #endif
     XConsoleShellSession m_session;                   /**< 默认会话状态。 */
-#if XCONSOLE_SHELL_LOGIN_ON
-    char m_loginDatabasePath[XCONSOLE_SHELL_MAX_PATH]; /**< 用户 JSON 配置路径；Shell 自有文本副本。 */
-#endif
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
     XConsoleShellSession m_sessions[XCONSOLE_SHELL_MAX_SESSIONS - 1u]; /**< 固定附加会话槽位。 */
     size_t m_sessionCount;                            /**< 包含默认会话的已打开会话数量。 */
-    uint32_t m_nextSessionId;                         /**< 下一个附加会话的单调 ID，避免复用旧任务目标。 */
 #endif
 #if XCONSOLE_SHELL_PROCESS_ASYNC_ON
     struct XConsoleShellAsyncProcess*
         m_asyncProcesses[XCONSOLE_SHELL_ASYNC_PROCESS_CAPACITY]; /**< Executor 拥有的异步任务槽。 */
 #endif
-    char m_lineBuffer[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< tokenizer 工作缓冲。 */
     const char* m_arguments[XCONSOLE_SHELL_MAX_ARGUMENTS]; /**< 借用 token 指针。 */
     size_t m_lineLength;                              /**< 当前输入行长度。 */
     size_t m_argumentCount;                           /**< 当前 token 数量。 */
-    bool m_discardLine;                               /**< 当前输入行已超长，直到换行前丢弃。 */
-    bool m_lastByteCR;                                /**< 上一个输入字节是否为 \r，用于合并 CRLF 的 \n，避免空行被提交。 */
 #if XCONSOLE_SHELL_HISTORY_ON
-    char m_history[XCONSOLE_SHELL_HISTORY_CAPACITY][XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 固定历史环形缓冲。 */
     size_t m_historyCount;                            /**< 当前保存的历史条目数。 */
     size_t m_historyNext;                             /**< 下一条历史写入位置。 */
     size_t m_historyCursor;                           /**< 行编辑历史浏览位置。 */
@@ -203,82 +231,103 @@ typedef struct XConsoleShell {
 #if XCONSOLE_SHELL_LINE_EDITOR_ON
     size_t m_lineCursor;                               /**< 行编辑光标位置。 */
 #endif
-    uint8_t m_escapeState;                             /**< ANSI 转义状态：0 普通、1 ESC、2 CSI、3 SS3。 */
-#if XCONSOLE_SHELL_STATS_ON
-    uint64_t m_processedLines;                         /**< 已处理完整输入行数。 */
-    uint64_t m_successfulCommands;                     /**< 成功命令数。 */
-    uint64_t m_failedCommands;                         /**< 失败命令数。 */
-    uint64_t m_inputBytes;                             /**< 输入字节数。 */
-    uint64_t m_outputBytes;                            /**< 输出字节数。 */
-#endif
 #if XCONSOLE_SHELL_SCRIPT_ON
     size_t m_scriptDepth;                              /**< source 嵌套深度。 */
 #endif
 #if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
-    uint8_t m_asyncOutput[XCONSOLE_SHELL_ASYNC_OUTPUT_CAPACITY]; /**< 固定异步输出环形缓冲。 */
     size_t m_asyncOutputHead;                           /**< 异步输出读取位置。 */
     size_t m_asyncOutputTail;                           /**< 异步输出写入位置。 */
     size_t m_asyncOutputSize;                           /**< 异步输出待发送字节数。 */
-#endif
-#if XCONSOLE_SHELL_UPTIME_ON
-    int64_t m_startTimeMsecs;                         /**< Shell 初始化时的日历毫秒时间戳；无效时为负数。 */
 #endif
 #if XCONSOLE_SHELL_TASKS_ON
     XConsoleShellTaskProviderFn m_taskProvider;       /**< 产品任务快照提供者；由产品拥有。 */
     void* m_taskProviderUserData;                     /**< 提供者上下文；Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_GPIO_ON
-    XConsoleShellGpioSlot
-        m_gpioSlots[XCONSOLE_SHELL_GPIO_SLOT_CAPACITY]; /**< Shell 拥有的固定 GPIO 槽位。 */
     XConsoleShellGpioAuthorizeFn m_gpioAuthorize;     /**< 产品引脚授权策略；Shell 不释放。 */
     void* m_gpioAuthorizeUserData;                    /**< 引脚策略上下文；Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_I2C_ON
-    XConsoleShellI2cSlot
-        m_i2cSlots[XCONSOLE_SHELL_I2C_SLOT_CAPACITY]; /**< Shell 拥有的固定 I2C 槽位。 */
     XConsoleShellI2cAuthorizeFn m_i2cAuthorize;       /**< 产品 I2C 访问策略。 */
     void* m_i2cAuthorizeUserData;                      /**< I2C 策略上下文；Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_SPI_ON
-    XConsoleShellSpiSlot
-        m_spiSlots[XCONSOLE_SHELL_SPI_SLOT_CAPACITY]; /**< Shell 拥有的固定 SPI 槽位。 */
     XConsoleShellSpiAuthorizeFn m_spiAuthorize;       /**< 产品 SPI 访问策略。 */
     void* m_spiAuthorizeUserData;                     /**< SPI 策略上下文；Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_CAN_ON
-    XConsoleShellCanSlot
-        m_canSlots[XCONSOLE_SHELL_CAN_SLOT_CAPACITY]; /**< Shell 拥有的固定 CAN 槽位。 */
     XConsoleShellCanAuthorizeFn m_canAuthorize;       /**< CAN 授权策略；Shell 不释放。 */
     void* m_canAuthorizeUserData;                      /**< CAN 策略上下文；Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_ADC_ON
-    XConsoleShellAdcSlot
-        m_adcSlots[XCONSOLE_SHELL_ADC_SLOT_CAPACITY]; /**< Shell 拥有的固定 ADC 槽位。 */
     XConsoleShellAdcAuthorizeFn m_adcAuthorize;       /**< ADC 授权策略；Shell 不释放。 */
     void* m_adcAuthorizeUserData;                     /**< ADC 策略上下文；Shell 不释放。 */
 #endif
 #if XCONSOLE_SHELL_PWM_ON
-    XConsoleShellPwmSlot
-        m_pwmSlots[XCONSOLE_SHELL_PWM_SLOT_CAPACITY]; /**< Shell 拥有的固定 PWM 槽位。 */
     XConsoleShellPwmAuthorizeFn m_pwmAuthorize;       /**< PWM 授权策略；Shell 不释放。 */
     void* m_pwmAuthorizeUserData;                     /**< PWM 策略上下文；Shell 不释放。 */
 #endif
-    bool m_running;                                   /**< 是否接受输入。 */
 #if XCONSOLE_SHELL_ASYNC_ON
-    XAtomic_bool m_asyncRunning;                      /**< 异步输入调度是否已启动。 */
-    XAtomic_bool m_asyncInputPosted;                 /**< 是否已有输入事件在队列中。 */
-    XEventType m_asyncEventType;                      /**< Shell 私有输入事件类型。 */
     XThread* m_asyncOwnerThread;                      /**< 事件模式下创建 Shell 的线程借用指针。 */
     XThread* m_asyncThread;                           /**< 线程模式下 Shell 独占的线程对象。 */
-    XAtomic_bool m_asyncWorkerReady;                  /**< 线程模式下专用事件循环是否已就绪。 */
     size_t m_asyncLastReadBytes;                     /**< 最近一次 pump 读取的字节数。 */
     XTimerId m_asyncPollTimer;                       /**< 事件模式下非阻塞输入轮询定时器。 */
-    XAtomic_bool m_asyncInputAttached;               /**< 是否已调用输入源附加回调。 */
-    bool m_asyncInputEventDriven;                    /**< 输入源是否通过 I/O 事件环通知。 */
 #endif
 #if XCONSOLE_SHELL_NETWORK_ON && XCONSOLE_SHELL_NET_PING_ON
-    XConsoleShellPingState m_ping;                    /**< 顶层 ping 异步状态。 */
     XTimerId m_pingTimer;                             /**< ping 定时器；无效时为 XTIMER_INVALID_ID。 */
+#endif
+    /* ---- 4 字节对齐簇：整型标量与 4 字节槽位 ---- */
+#if XCONSOLE_SHELL_MULTI_SESSION_ON
+    uint32_t m_nextSessionId;                         /**< 下一个附加会话的单调 ID，避免复用旧任务目标。 */
+#endif
+#if XCONSOLE_SHELL_GPIO_ON
+    XConsoleShellGpioSlot
+        m_gpioSlots[XCONSOLE_SHELL_GPIO_SLOT_CAPACITY]; /**< Shell 拥有的固定 GPIO 槽位。 */
+#endif
+#if XCONSOLE_SHELL_I2C_ON
+    XConsoleShellI2cSlot
+        m_i2cSlots[XCONSOLE_SHELL_I2C_SLOT_CAPACITY]; /**< Shell 拥有的固定 I2C 槽位。 */
+#endif
+#if XCONSOLE_SHELL_SPI_ON
+    XConsoleShellSpiSlot
+        m_spiSlots[XCONSOLE_SHELL_SPI_SLOT_CAPACITY]; /**< Shell 拥有的固定 SPI 槽位。 */
+#endif
+#if XCONSOLE_SHELL_CAN_ON
+    XConsoleShellCanSlot
+        m_canSlots[XCONSOLE_SHELL_CAN_SLOT_CAPACITY]; /**< Shell 拥有的固定 CAN 槽位。 */
+#endif
+#if XCONSOLE_SHELL_ADC_ON
+    XConsoleShellAdcSlot
+        m_adcSlots[XCONSOLE_SHELL_ADC_SLOT_CAPACITY]; /**< Shell 拥有的固定 ADC 槽位。 */
+#endif
+#if XCONSOLE_SHELL_PWM_ON
+    XConsoleShellPwmSlot
+        m_pwmSlots[XCONSOLE_SHELL_PWM_SLOT_CAPACITY]; /**< Shell 拥有的固定 PWM 槽位。 */
+#endif
+#if XCONSOLE_SHELL_ASYNC_ON
+    XEventType m_asyncEventType;                      /**< Shell 私有输入事件类型。 */
+    XAtomic_Bool m_asyncRunning;                      /**< 异步输入调度是否已启动。 */
+    XAtomic_Bool m_asyncInputPosted;                 /**< 是否已有输入事件在队列中。 */
+    XAtomic_Bool m_asyncWorkerReady;                  /**< 线程模式下专用事件循环是否已就绪。 */
+    XAtomic_Bool m_asyncInputAttached;               /**< 是否已调用输入源附加回调。 */
+#endif
+    /* ---- 1 字节簇：char 缓冲与标志 ---- */
+#if XCONSOLE_SHELL_LOGIN_ON
+    char m_loginDatabasePath[XCONSOLE_SHELL_MAX_PATH]; /**< 用户 JSON 配置路径；Shell 自有文本副本。 */
+#endif
+    char m_lineBuffer[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< tokenizer 工作缓冲。 */
+#if XCONSOLE_SHELL_HISTORY_ON
+    char m_history[XCONSOLE_SHELL_HISTORY_CAPACITY][XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 固定历史环形缓冲。 */
+#endif
+#if XCONSOLE_SHELL_ASYNC_OUTPUT_ON
+    uint8_t m_asyncOutput[XCONSOLE_SHELL_ASYNC_OUTPUT_CAPACITY]; /**< 固定异步输出环形缓冲。 */
+#endif
+    bool m_discardLine;                               /**< 当前输入行已超长，直到换行前丢弃。 */
+    bool m_lastByteCR;                                /**< 上一个输入字节是否为 \r，用于合并 CRLF 的 \n，避免空行被提交。 */
+    uint8_t m_escapeState;                             /**< ANSI 转义状态：0 普通、1 ESC、2 CSI、3 SS3。 */
+    bool m_running;                                   /**< 是否接受输入。 */
+#if XCONSOLE_SHELL_ASYNC_ON
+    bool m_asyncInputEventDriven;                    /**< 输入源是否通过 I/O 事件环通知。 */
 #endif
 } XConsoleShell;
 

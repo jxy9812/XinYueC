@@ -1,10 +1,15 @@
-﻿#include"CXinYueConfig.h"
+﻿/**
+ * @file       XVector.h
+ * @brief      动态数组容器公开 API。
+ * @details    对齐 Qt QVector；实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#include"CXinYueConfig.h"
 #if !defined(XVECTOR_H)&& XVector_ON
 #define XVECTOR_H
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include<stdio.h>
 #include<stdbool.h>
 #include<stdint.h>
 #include<stdarg.h>
@@ -12,29 +17,34 @@ extern "C" {
 #include"XVector_iterator.h"
 #include"XVector_reverse_iterator.h"
 #define XVECTOR_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XVector))       //XVector容器虚函数表大小
-//XVector虚函数表枚举
+//XVector虚函数表枚举：首项从父类XContainer虚表大小起，后续各值连续递增；
+//各枚举值仅作为虚函数表槽位索引使用，相互独立，不可按位组合
 XCLASS_DEFINE_BEGING(XVector)
-XCLASS_DEFINE_ENUM(XVector, Resize) = XCLASS_VTABLE_GET_SIZE(XContainer),
-XCLASS_DEFINE_ENUM(XVector, Push_Front),
-XCLASS_DEFINE_ENUM(XVector, Push_Back),
-XCLASS_DEFINE_ENUM(XVector, Insert_Array),
-XCLASS_DEFINE_ENUM(XVector, Pop_Front),
-XCLASS_DEFINE_ENUM(XVector, Pop_Back),
-XCLASS_DEFINE_ENUM(XVector, Erase),
-XCLASS_DEFINE_ENUM(XVector, Remove),
-XCLASS_DEFINE_ENUM(XVector, Rcopy),
-XCLASS_DEFINE_ENUM(XVector, At),
-XCLASS_DEFINE_ENUM(XVector, Front),
-XCLASS_DEFINE_ENUM(XVector, Back),
-XCLASS_DEFINE_ENUM(XVector, Find),
-XCLASS_DEFINE_ENUM(XVector, Sort),
-XCLASS_DEFINE_ENUM(XVector, Reserve),
-XCLASS_DEFINE_ENUM(XVector, Squeeze),
+XCLASS_DEFINE_ENUM(XVector, Resize) = XCLASS_VTABLE_GET_SIZE(XContainer),   /**< 调整元素数量（resize/resizeForOverwrite实现槽） */
+XCLASS_DEFINE_ENUM(XVector, Push_Front),   /**< 向头部插入单个元素（回调参数区分拷贝/移动语义） */
+XCLASS_DEFINE_ENUM(XVector, Push_Back),    /**< 向尾部插入单个元素（回调参数区分拷贝/移动语义） */
+XCLASS_DEFINE_ENUM(XVector, Insert_Array), /**< 向指定索引插入数组或另一个向量（各插入接口的统一实现槽） */
+XCLASS_DEFINE_ENUM(XVector, Pop_Front),    /**< 删除首元素 */
+XCLASS_DEFINE_ENUM(XVector, Pop_Back),     /**< 删除尾元素 */
+XCLASS_DEFINE_ENUM(XVector, Erase),        /**< 删除迭代器指向的元素 */
+XCLASS_DEFINE_ENUM(XVector, Remove),       /**< 删除指定索引开始的n个元素 */
+XCLASS_DEFINE_ENUM(XVector, Rcopy),        /**< 将源向量元素逆序拷贝到本向量 */
+XCLASS_DEFINE_ENUM(XVector, At),           /**< 按索引取元素指针 */
+XCLASS_DEFINE_ENUM(XVector, Front),        /**< 取首元素指针 */
+XCLASS_DEFINE_ENUM(XVector, Back),         /**< 取尾元素指针 */
+XCLASS_DEFINE_ENUM(XVector, Find),         /**< 查找元素并输出迭代器 */
+XCLASS_DEFINE_ENUM(XVector, Sort),         /**< 对元素排序 */
+XCLASS_DEFINE_ENUM(XVector, Reserve),      /**< 预留容量（只增不减） */
+XCLASS_DEFINE_ENUM(XVector, Squeeze),      /**< 收缩容量至恰好等于元素数量 */
 XCLASS_DEFINE_END(XVector)
 
+/**
+ * @brief 动态数组容器结构体（继承XContainer，对齐Qt QVector）
+ * @details 通过XVector_*公开函数操作；元素存储、容量与COW共享状态均由基类XContainer管理
+ */
 typedef struct XVector
 {
-	XContainer m_class;
+	XContainer m_class;	/**< 基类：第一个成员，由XClass管理，禁止手工修改 */
 }XVector;
 
 /**
@@ -45,7 +55,9 @@ XVtable* XVector_class_init();
 
 /**
  * @brief 创建一个动态数组（XVector）
+ * @param memory 容器绑定的内存池类型（XMemoryType，如XMEMORY_TYPE_SYSTEM），决定内部缓冲使用哪族分配器
  * @param typeSize 数组中元素的类型大小（字节数）
+ * @param useCow 是否启用COW（写时拷贝）：true启用（拷贝共享底层数据，写入时自动分离），false禁用（各自独立分配）
  * @return 新创建的XVector指针，失败返回NULL
  * @note 需确保typeSize大于0，否则创建失败
  */
@@ -54,7 +66,7 @@ XVector* XVector_create_ex(XMemoryType memory, size_t typeSize, bool useCow);
  * @brief 宏定义：创建一个默认开启COW（写时拷贝）的动态数组
  * @param typeSize 数组中元素的类型大小（字节数）
  * @return 新创建的XVector指针，失败返回NULL
- * @note 内部调用XVector_create_ex(typeSize,true)，即useCow=true的便捷版本
+ * @note 内部调用XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)，即默认内存池、useCow=true的便捷版本
  */
 #define XVector_create(typeSize) \
 	XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, typeSize, true)
@@ -86,6 +98,7 @@ XVector* XVector_create_move(XVector* other);
  * @brief 初始化指定的XVector
  * @param this_vector 待初始化的XVector指针
  * @param typeSize 数组中元素的类型大小（字节数）
+ * @param useCow 是否启用COW（写时拷贝）：true启用，false禁用
  * @note 需确保this_vector不为NULL且typeSize大于0，否则初始化无效
  */
 void XVector_init(XVector* this_vector, size_t typeSize, bool useCow);
@@ -116,6 +129,14 @@ bool XVector_push_front_1_base(XVector* this_vector, void* pvValue);
  * @note 宏实现，等价于XVector_insert_1_base(this_vector,0,begin,n)；this_vector/begin为NULL或n为0时返回false
  */
 #define XVector_push_front_2(this_vector, begin, n)		XVector_insert_1_base(this_vector, 0, begin, n)
+/**
+ * @brief 向XVector头部添加另一个XVector的全部元素（拷贝语义，对齐Qt QVector::prepend）
+ * @param this_vector 目标XVector
+ * @param pvValue 源XVector指针（借用，只读，函数不取得其所有权也不修改它）
+ * @return 添加成功返回true，失败返回false
+ * @note this_vector或pvValue为NULL、两者元素类型大小不一致或源向量为空时返回false；
+ *       内部等价于XVector_push_front_2(this_vector, XVector_front_base(pvValue), XVector_size(pvValue))
+ */
 bool XVector_push_front_3(XVector* this_vector,const XVector* pvValue);
 /**
  * @brief 宏定义：向XVector头部添加指定类型的元素（拷贝语义）
@@ -143,6 +164,14 @@ bool XVector_push_front_move_1_base(XVector* this_vector, void* pvValue);
  * @note 宏实现，等价于XVector_insert_move_1_base(this_vector,0,begin,n)；源数组数据可能失效
  */
 #define XVector_push_front_move_2(this_vector, begin, n)		XVector_insert_move_1_base(this_vector, 0, begin, n)
+/**
+ * @brief 向XVector头部添加另一个XVector的全部元素（移动语义）
+ * @param this_vector 目标XVector
+ * @param pvValue 源XVector指针（元素所有权被转移；添加成功后pvValue元素数量清0）
+ * @return 添加成功返回true，失败返回false
+ * @note this_vector或pvValue为NULL、两者元素类型大小不一致时返回false且源保持不变；
+ *       成功时源向量元素被移入目标，源数据可能失效；pvValue结构体本身仍由其创建者释放
+ */
 bool XVector_push_front_move_3(XVector* this_vector,XVector* pvValue);
 /**
  * @brief 向XVector尾部添加一个元素（拷贝语义）
@@ -152,7 +181,23 @@ bool XVector_push_front_move_3(XVector* this_vector,XVector* pvValue);
  * @note 若this_vector或pvValue为NULL，返回false；内部通过拷贝方式添加元素
  */
 bool XVector_push_back_1_base(XVector* this_vector, void* pvValue);
+/**
+ * @brief 向XVector尾部添加一个数组（拷贝语义，对齐Qt QVector::append）
+ * @param this_vector 目标XVector
+ * @param begin 数组起始地址（借用，只读，函数不取得其所有权）
+ * @param n 数组元素数量
+ * @return 添加成功返回true，失败返回false
+ * @note this_vector或begin为NULL、或n为0时返回false；
+ *       内部等价于XVector_insert_1_base(this_vector, XVector_size(this_vector), begin, n)
+ */
 bool XVector_push_back_2(XVector* this_vector, const void* begin, size_t n);
+/**
+ * @brief 向XVector尾部添加另一个XVector的全部元素（拷贝语义，对齐Qt QVector::append）
+ * @param this_vector 目标XVector
+ * @param pvValue 源XVector指针（借用，只读，函数不取得其所有权也不修改它）
+ * @return 添加成功返回true，失败返回false
+ * @note this_vector或pvValue为NULL、两者元素类型大小不一致或源向量为空时返回false
+ */
 bool XVector_push_back_3(XVector* this_vector, const XVector* pvValue);
 /**
  * @brief 在XVector尾部原地构造一个元素（对齐C++ std::vector::emplace_back）
@@ -178,7 +223,24 @@ void* XVector_emplace_back(XVector* this_vector);
   * @note 若this_vector或pvValue为NULL，返回false；内部通过移动方式添加元素，源数据可能失效
   */
 bool XVector_push_back_move_1_base(XVector* this_vector, void* pvValue);
+/**
+ * @brief 向XVector尾部添加一个数组（移动语义）
+ * @param this_vector 目标XVector
+ * @param begin 数组起始地址（元素按移动回调转移所有权，源数组数据可能失效）
+ * @param n 数组元素数量
+ * @return 添加成功返回true，失败返回false
+ * @note this_vector或begin为NULL、或n为0时返回false；
+ *       内部等价于XVector_insert_move_1_base(this_vector, XVector_size(this_vector), begin, n)
+ */
 bool XVector_push_back_move_2(XVector* this_vector, void* begin, size_t n);
+/**
+ * @brief 向XVector尾部添加另一个XVector的全部元素（移动语义）
+ * @param this_vector 目标XVector
+ * @param pvValue 源XVector指针（元素所有权被转移；添加成功后pvValue元素数量清0）
+ * @return 添加成功返回true，失败返回false
+ * @note this_vector或pvValue为NULL、两者元素类型大小不一致时返回false且源保持不变；
+ *       成功时源向量元素被移入目标，源数据可能失效；pvValue结构体本身仍由其创建者释放
+ */
 bool XVector_push_back_move_3(XVector* this_vector,XVector* pvValue);
 /**
  * @brief 向XVector指定索引位置插入一个数组（拷贝语义）
@@ -199,6 +261,15 @@ bool XVector_insert_1_base(XVector* this_vector, int64_t index, const void* begi
  * @note 宏实现，等价于XVector_insert_1_base(this_vector,index,pvValue,1)；index越界由底层处理，通过拷贝插入
  */
 #define XVector_insert_2(this_vector, index, pvValue)		XVector_insert_1_base(this_vector, index, pvValue, 1)
+/**
+ * @brief 向XVector指定索引位置插入另一个XVector的全部元素（拷贝语义，对齐Qt QVector::insert）
+ * @param this_vector 目标XVector
+ * @param index 插入位置索引（0-based，越界由底层处理）
+ * @param pvValue 源XVector指针（借用，只读，函数不取得其所有权也不修改它）
+ * @return 插入成功返回true，失败返回false
+ * @note this_vector或pvValue为NULL、两者元素类型大小不一致或源向量为空时返回false；
+ *       内部等价于XVector_insert_1_base(this_vector, index, XVector_front_base(pvValue), XVector_size(pvValue))
+ */
 bool XVector_insert_3(XVector* this_vector, int64_t index, const XVector* pvValue);
 
 /**
@@ -230,6 +301,15 @@ bool XVector_insert_move_1_base(XVector* this_vector, int64_t index, const void*
  * @note 宏实现，等价于XVector_insert_move_1_base(this_vector,index,pvValue,1)；index越界由底层处理，通过移动插入，源数据可能失效
  */
 #define XVector_insert_move_2(this_vector, index, pvValue)		XVector_insert_move_1_base(this_vector, index, pvValue, 1)
+/**
+ * @brief 向XVector指定索引位置插入另一个XVector的全部元素（移动语义，对齐Qt QVector::insert）
+ * @param this_vector 目标XVector
+ * @param index 插入位置索引（0-based，越界由底层处理）
+ * @param pvValue 源XVector指针（元素所有权被转移；插入成功后pvValue元素数量清0）
+ * @return 插入成功返回true，失败返回false
+ * @note this_vector或pvValue为NULL、两者元素类型大小不一致时返回false且源保持不变；
+ *       成功时源向量元素被移入目标，源数据可能失效；pvValue结构体本身仍由其创建者释放
+ */
 bool XVector_insert_move_3(XVector* this_vector, int64_t index, XVector* pvValue);
 
 /**
@@ -454,6 +534,16 @@ void  XVector_squeeze_base(XVector* this_vector);
  * @note 若index超出范围，返回false；内部通过拷贝方式替换
  */
 bool  XVector_replace_1(XVector* this_vector, int64_t index, void* pvValue);
+/**
+ * @brief 将XVector指定索引位置的元素替换为另一个XVector的全部元素（拷贝语义）
+ * @param this_vector 目标XVector
+ * @param index 要替换的元素索引（0-based，越界时删除操作无效）
+ * @param pvValue 源XVector指针（借用，只读，提供替换用的全部元素）
+ * @return 替换成功返回true，失败返回false
+ * @note this_vector或pvValue为NULL时返回false且不修改容器；
+ *       内部先移除index处元素，再等价于XVector_insert_3将pvValue的全部元素拷贝插入到index处；
+ *       插入失败时被移除的元素不会恢复
+ */
 bool  XVector_replace_2(XVector* this_vector, int64_t index,const XVector* pvValue);
 /**
  * @brief 替换XVector中指定索引位置的元素（移动语义）
@@ -464,6 +554,16 @@ bool  XVector_replace_2(XVector* this_vector, int64_t index,const XVector* pvVal
  * @note 若index超出范围，返回false；内部通过移动方式替换，源数据可能失效
  */
 bool  XVector_replace_move_1(XVector* this_vector, int64_t index, void* pvValue);
+/**
+ * @brief 将XVector指定索引位置的元素替换为另一个XVector的全部元素（移动语义）
+ * @param this_vector 目标XVector
+ * @param index 要替换的元素索引（0-based，越界时删除操作无效）
+ * @param pvValue 源XVector指针（其全部元素被移入目标向量）
+ * @return 替换成功返回true，失败返回false
+ * @note this_vector或pvValue为NULL时返回false且不修改容器；
+ *       内部先移除index处元素，再等价于XVector_insert_move_3将pvValue的全部元素移动插入到index处；
+ *       插入失败时被移除的元素不会恢复；成功时源向量元素被移入目标、源数据可能失效，pvValue结构体本身仍由其创建者释放
+ */
 bool  XVector_replace_move_2(XVector* this_vector, int64_t index, XVector* pvValue);
 
 /**
@@ -650,14 +750,6 @@ size_t XVector_maxSize(size_t typeSize);
  */
 #define XVector_value(this_vector, index, defaultValue) \
 	(((index) >= 0 && (size_t)(index) < XVector_size_base(this_vector)) ? XVector_at_base(this_vector, index) : (void*)(defaultValue))
-/**
- * @brief 复用XContainer的接口，析构容器（释放资源，可重复调用）
- * @note 宏实现，等价于XClassDeinit
- */
-/**
- * @brief 复用XContainer的接口，删除并释放堆对象（先析构再释放内存）
- * @note 宏实现，等价于XClassDelete
- */
 /**
  * @brief 复用XContainer的接口，清空所有元素（保留容量）
  * @note 宏实现，等价于XContainer_clear_base

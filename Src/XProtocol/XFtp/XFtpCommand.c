@@ -7,6 +7,7 @@
 #include "XMemory.h"
 #include "XString.h"
 #include "XObject.h"
+#include "XStringUtils.h" /* strlen 直出改经 XStrlen/XStrdup（外部依赖约束） */
 #include <string.h>
 
 #if XPROTOCOL_ON
@@ -35,18 +36,14 @@ static void VXFtpCommand_deinit(XFtpCommand* cmd)
     XClass_Deinit_Parent(XObject, (XObject*)cmd);
 }
 
-static XVtable* s_xftpCommand_vtable = NULL;
-static bool s_xftpCommand_inited = false;
-
 XVtable* XFtpCommand_class_init(void)
 {
-    if (s_xftpCommand_inited && s_xftpCommand_vtable) return s_xftpCommand_vtable;
-    XVtable_init(s_xftpCommand_vtable = XVtable_create());
-    XVTABLE_SET_NAME(s_xftpCommand_vtable, "XFtpCommand");
-    XVtable_append_vtable(s_xftpCommand_vtable, XObject_class_init());
-    XVTABLE_OVERLOAD(s_xftpCommand_vtable, EXClass_Deinit, VXFtpCommand_deinit);
-    s_xftpCommand_inited = true;
-    return s_xftpCommand_vtable;
+    /* XFtpCommand 头文件未新增虚函数槽位，虚表容量沿用 XObject 的槽位总数。 */
+    XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XObject))
+    XCLASS_SET_CLASS_NAME_DEFAULT("XFtpCommand");
+    XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXFtpCommand_deinit);
+    return XVTABLE_DEFAULT;
 }
 
 XFtpCommand* XFtpCommand_create_ex(XMemoryType memory, int id, XFtpCommand_Type cmdType)
@@ -82,14 +79,12 @@ void XFtpCommand_addRawArg(XFtpCommand* cmd, const char* arg)
         cmd->m_rawCmds = XVector_Create(const char*);
         if (!cmd->m_rawCmds) return;
     }
-    size_t len = strlen(arg);
-    char* dup = (char*)XMalloc(len + 1, XMEMORY_TYPE_SYSTEM);
+    char* dup = XStrdup(arg);
     if (!dup) return;
-    memcpy(dup, arg, len + 1);
     size_t before = XVector_size_base(cmd->m_rawCmds);
     XVector_push_back_1_base(cmd->m_rawCmds, &dup);
     if (XVector_size_base(cmd->m_rawCmds) != before + 1)
-        XFree(dup, XMEMORY_TYPE_SYSTEM);
+        XFree_System(dup);
 }
 
 #endif /* XFTP_ON */

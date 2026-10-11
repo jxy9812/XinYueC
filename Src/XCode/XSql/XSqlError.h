@@ -43,6 +43,7 @@ void XSqlError_init(XSqlError* error);
 
 /**
  * @brief 创建 SQL 错误对象。
+ * @param memory 内存类型。
  * @param driverText 驱动错误文本；NULL 按空文本处理。
  * @param databaseText 数据库错误文本；NULL 按空文本处理。
  * @param type 错误类型。

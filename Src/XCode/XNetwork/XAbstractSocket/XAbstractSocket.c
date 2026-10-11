@@ -1,4 +1,4 @@
-﻿// XAbstractSocket.c
+// XAbstractSocket.c
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
@@ -20,13 +20,13 @@
 #if XNETWORK_ON
 #if XNETWORK_ABSTRACT_SOCKET_ON
 
-/* SocketType 转换：XAbstractSocket_SocketType -> XDeviceNetworkSocketType */
+/* SocketType ??:XAbstractSocket_SocketType -> XDeviceNetworkSocketType */
 static XDeviceNetworkSocketType toNetworkSockType(XAbstractSocket_SocketType type)
 {
     return (type == XAbstractSocket_UdpSocket) ? XDeviceNetwork_Udp : XDeviceNetwork_Tcp;
 }
 
-/* Protocol 转换：XAbstractSocket_NetworkLayerProtocol -> XDeviceNetworkProtocol */
+/* Protocol ??:XAbstractSocket_NetworkLayerProtocol -> XDeviceNetworkProtocol */
 static XDeviceNetworkProtocol toNetworkProtocol(XAbstractSocket_NetworkLayerProtocol protocol)
 {
     switch (protocol) {
@@ -45,14 +45,14 @@ static bool socketGetBoolProperty(const XAbstractSocket* socket, XDeviceProperty
 {
     XVariant result;
     if (!socket || !value || socketDeviceFd(socket) == XFD_INVALID) return false;
-    /* 桶规约: 必须走 XVariant_init(建 vtable)+setValue_null(经 XClassDeinit
-     * 释放值槽)。旧 memset+XVariant_clear 组合只清内容不释放——ASan 实测
-     * 每次 getProperty 泄漏值槽堆块(远程会话统计采样随时长无上限增长)。
-     * 【真机修复 2026-10-04】init 前必须 memset: XVariant_init 对传入结构
-     * 自带「旧 m_data 防御性释放」(XVariant.c:88-92), 未初始化栈对象该字段
-     * 为栈残影——armel Release(-O3) 热栈槽残留陈旧非空指针, init 内直接
-     * XFree_System(垃圾指针) → glibc "free(): invalid pointer" 启动即崩
-     * (Debug 栈区恰逢全零故不现形; 真机复验: 5 处补 memset 后干净监听)。 */
+    /* ???: ??? XVariant_init(? vtable)+setValue_null(? XClassDeinit
+     * ????)?? memset+XVariant_clear ?????????--ASan ??
+     * ?? getProperty ??????(????????????????)?
+     * ????? 2026-10-04?init ??? memset: XVariant_init ?????
+     * ???? m_data ??????(XVariant.c:88-92), ??????????
+     * ????--armel Release(-O3) ???????????, init ???
+     * XFree_System(????) ? glibc "free(): invalid pointer" ????
+     * (Debug ??????????; ????: 5 ?? memset ?????)? */
     memset(&result, 0, sizeof(result));
     XVariant_init(&result, NULL, 0, XVariantType_NULL);
     if (!XDevice_getProperty(socketDeviceFd(socket), property, &result)) {
@@ -68,7 +68,7 @@ static bool socketGetSizeProperty(const XAbstractSocket* socket, XDeviceProperty
 {
     XVariant result;
     if (!socket || !value || socketDeviceFd(socket) == XFD_INVALID) return false;
-    memset(&result, 0, sizeof(result)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
+    memset(&result, 0, sizeof(result)); /* fix(r7crash): ? socketGetBoolProperty ?????? */
     XVariant_init(&result, NULL, 0, XVariantType_NULL);
     if (!XDevice_getProperty(socketDeviceFd(socket), property, &result)) {
         XVariant_setValue_null(&result);
@@ -133,7 +133,7 @@ static XFd socketOpenDevice(XAbstractSocket* socket, XDeviceNetworkOpenOptions* 
     return fd;
 }
 
-// ==================== 内部辅助函数声明 ====================
+// ==================== ???????? ====================
 static void VXAbstractSocket_deinit(XAbstractSocket* sock);
 static bool VXAbstractSocket_open(XAbstractSocket* self, XIODeviceBaseMode mode);
 static void VXAbstractSocket_close(XAbstractSocket* self);
@@ -152,7 +152,7 @@ static bool VXAbstractSocket_reset(XAbstractSocket* self);
 static int64_t VXAbstractSocket_readLineData(XAbstractSocket* self, char* data, int64_t maxlen);
 static int64_t VXAbstractSocket_skipData(XAbstractSocket* self, int64_t maxSize);
 static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e);
-// --- XAbstractSocket 特有虚函数（默认实现）---
+// --- XAbstractSocket ?????(????)---
 static void VXAbstractSocket_Resume(XAbstractSocket* self);
 static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode);
 static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* hostName, uint16_t port, XIODeviceBaseMode mode, XAbstractSocket_NetworkLayerProtocol protocol);
@@ -164,13 +164,13 @@ static XVariant* VXAbstractSocket_SocketOption(XAbstractSocket* self, XAbstractS
 static void VXAbstractSocket_SetReadBufferSize(XAbstractSocket* self, int64_t size);
 static bool VXAbstractSocket_WaitForConnected(XAbstractSocket* self, int msecs);
 static bool VXAbstractSocket_WaitForDisconnected(XAbstractSocket* self, int msecs);
-// ==================== 虚函数表初始化 ====================
+// ==================== ??????? ====================
 XVtable* XAbstractSocket_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XAbstractSocket)
-    // 继承 XIODevice 的虚表
+    // ?? XIODevice ???
     XVTABLE_INHERIT_XCLASS(XIODevice);
-    // 添加 XAbstractSocket 特有虚函数
+    // ?? XAbstractSocket ?????
     void* table[] = {
         VXAbstractSocket_Resume,
         VXAbstractSocket_Bind,
@@ -185,7 +185,7 @@ XVtable* XAbstractSocket_class_init(void)
         VXAbstractSocket_WaitForDisconnected
     };
     XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-        // 重载关键虚函数
+        // ???????
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXAbstractSocket_deinit);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Open, VXAbstractSocket_open);
     XVTABLE_OVERLOAD_DEFAULT(EXIODevice_Close, VXAbstractSocket_close);
@@ -210,7 +210,7 @@ XVtable* XAbstractSocket_class_init(void)
         return XVTABLE_DEFAULT;
 }
 
-// ==================== 析构函数 ====================
+// ==================== ???? ====================
 static void VXAbstractSocket_deinit(XAbstractSocket* sock)
 {
     if (!sock) return;
@@ -218,7 +218,7 @@ static void VXAbstractSocket_deinit(XAbstractSocket* sock)
     XCoreApplication_sendPostedEvents(sock, 0);
     socketCloseDevice(sock);
 
-    // 清理自身资源
+    // ??????
     if (sock->errorString) {
         XClassDelete(sock->errorString);
         sock->errorString = NULL;
@@ -231,30 +231,30 @@ static void VXAbstractSocket_deinit(XAbstractSocket* sock)
         XClassDelete(sock->protocolTag);
         sock->protocolTag = NULL;
     }
-    // 释放代理配置资源
+    // ????????
     XClassDeinit(&sock->proxy);
-    // 释放代理握手上下文
+    // ?????????
     if (sock->proxyHandshakeCtx) {
         XNetworkProxyHandshake_destroyContext(sock->proxyHandshakeCtx);
         sock->proxyHandshakeCtx = NULL;
     }
-    // 释放地址对象
+    // ??????
     XClassDeinit((XHostAddress*)&sock->localAddress);
     XClassDeinit((XHostAddress*)&sock->peerAddress);
-    // 调用父类析构（XIODevice → XObject → XClass）
+    // ??????(XIODevice ? XObject ? XClass)
     XClass_Deinit_Parent(XIODevice, sock);
 }
 
-// ==================== 初始化函数 ====================
+// ==================== ????? ====================
 void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type)
 {
     if (!sock) return;
 
-    // 初始化父类 XIODevice
+    // ????? XIODevice
     XIODevice_init((XIODevice*)sock);
     XClassGetVtable(sock) = XAbstractSocket_class_init();
 
-    // 初始化自身字段
+    // ???????
     sock->socketType = type;
     sock->state = XAbstractSocket_UnconnectedState;
     sock->error = XAbstractSocket_UnknownSocketError;
@@ -266,7 +266,7 @@ void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type
     XHostAddress_setAddressSpecial(&sock->peerAddress, XHostAddress_NullSpecial);
     sock->peerPort = 0;
     sock->peerName = NULL;
-    sock->readBufferSize = -1; // 无限制
+    sock->readBufferSize = -1; // ???
     sock->m_pauseMode = XAbstractSocket_PauseNever;
     sock->autoDeleteOnDisconnect = false;
     sock->isValidFlag = false;
@@ -277,7 +277,7 @@ void XAbstractSocket_init(XAbstractSocket* sock, XAbstractSocket_SocketType type
     sock->m_deviceFd = XFD_INVALID;
 }
 
-// ==================== Getter 实现 ====================
+// ==================== Getter ?? ====================
 XAbstractSocket_SocketType XAbstractSocket_socketType(const XAbstractSocket* sock)
 {
     return sock ? sock->socketType : XAbstractSocket_UnknownSocketType;
@@ -346,7 +346,7 @@ XString* XAbstractSocket_protocolTag(const XAbstractSocket* sock)
     return sock ? sock->protocolTag : NULL;
 }
 
-// ==================== Setter 实现 ====================
+// ==================== Setter ?? ====================
 void XAbstractSocket_setReadBufferSize_base(XAbstractSocket* sock, int64_t size)
 {
     if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), ""))
@@ -363,13 +363,13 @@ void XAbstractSocket_setProtocolTag(XAbstractSocket* sock, const char* tag)
 {
     if (!sock) return;
   
-    // 释放旧的标签
+    // ??????
     if (sock->protocolTag) {
         XClassDelete(sock->protocolTag);
         sock->protocolTag = NULL;
     }
   
-    // 创建新的标签
+    // ??????
     if (tag && tag[0] != '\0') {
         sock->protocolTag = XString_create_fmt_utf8(tag);
     }
@@ -379,25 +379,25 @@ void XAbstractSocket_setProxy(XAbstractSocket* sock, const XNetworkProxy* proxy)
 {
     if (!sock) return;
 
-    // 释放旧的代理配置资源（inline 释放，避开 vtable 调度：
-    // sock->proxy 是值类型成员，XAbstractSocket_init 时没给它设 vtable，
-    // 走 XClassDeinit 会读 garbage m_class.m_vtable 崩溃）
-    if (sock->proxy.hostName) { XClassDelete(sock->proxy.hostName); sock->proxy.hostName = NULL; }
-    if (sock->proxy.user)     { XClassDelete(sock->proxy.user);     sock->proxy.user = NULL;     }
-    if (sock->proxy.password) { XClassDelete(sock->proxy.password); sock->proxy.password = NULL; }
-
+    /* 经四件套入口整体替换嵌入 proxy（对齐 XTcpServer_setProxy 标准写法）：
+     * XAbstractSocket_init 已对 sock->proxy 调 XNetworkProxy_init（vtable 就绪），
+     * deinit 释放旧载荷、init 复位空壳，字符串经 XNetworkProxy_set* 深拷贝，
+     * 不再逐字段手工释放 + 复制。 */
+    XClassDeinit(&sock->proxy);
+    XNetworkProxy_init(&sock->proxy);
     if (proxy) {
-        // 深拷贝代理配置，字符串副本统一由 XMemory 管理。
-        // 会把 XString struct 的前几个字节当长度读，得到 garbage）
         sock->proxy.type = proxy->type;
         sock->proxy.capabilities = proxy->capabilities;
         sock->proxy.port = proxy->port;
-        sock->proxy.hostName = proxy->hostName ? XString_create_copy(proxy->hostName) : NULL;
-        sock->proxy.user     = proxy->user     ? XString_create_copy(proxy->user)     : NULL;
-        sock->proxy.password = proxy->password ? XString_create_copy(proxy->password) : NULL;
-    } else {
-        // 使用默认代理配置
-        XNetworkProxy_init(&sock->proxy);
+        if (proxy->hostName) {
+            XNetworkProxy_setHostName(&sock->proxy, proxy->hostName);
+        }
+        if (proxy->user) {
+            XNetworkProxy_setUser(&sock->proxy, proxy->user);
+        }
+        if (proxy->password) {
+            XNetworkProxy_setPassword(&sock->proxy, proxy->password);
+        }
     }
 }
 
@@ -406,21 +406,21 @@ XNetworkProxy* XAbstractSocket_proxy(const XAbstractSocket* sock)
     return sock ? (XNetworkProxy*)&sock->proxy : NULL;
 }
 
-// flush - 刷新发送缓冲区，等待所有待发送数据发送完毕
+// flush - ???????,?????????????
 bool XAbstractSocket_flush(XAbstractSocket* sock)
 {
     bool writePending;
     if (!sock) return false;
     XIODevice* io = (XIODevice*)sock;
 
-    // 检查是否有待发送数据：既包括 XIODevice 环形缓冲队列，也包括平台
-    // 已提交但尚未完成的异步写请求（io_uring/IOCP 的 SEND 仍在内核队列时，
-    // bytesToWrite 可能已经是 0，但 writePending 仍为 true，直接关闭会丢包）。
+    // ??????????:??? XIODevice ??????,?????
+    // ??????????????(io_uring/IOCP ? SEND ???????,
+    // bytesToWrite ????? 0,? writePending ?? true,???????)?
     while (XIODevice_bytesToWrite_base(io) > 0 ||
            (socketGetBoolProperty(sock, (XDeviceProperty)XDeviceNetworkProperty_WritePending, &writePending) && writePending)) {
-        // 等待数据发送完成
+        // ????????
         if (!XAbstractSocket_waitForBytesWritten(sock, 100)) {
-            // 超时或出错
+            // ?????
             return false;
         }
     }
@@ -428,7 +428,7 @@ bool XAbstractSocket_flush(XAbstractSocket* sock)
     return true;
 }
 
-// ==================== 受保护的 setter ====================
+// ==================== ???? setter ====================
 void XAbstractSocket_setLocalPort(XAbstractSocket* sock, uint16_t port)
 {
     if (sock) sock->localPort = port;
@@ -473,18 +473,18 @@ void XAbstractSocket_setSocketState(XAbstractSocket* sock, XAbstractSocket_Socke
     XAbstractSocket_SocketState oldState = sock->state;
     sock->state = state;
 
-    // 发射 stateChanged 信号
+    // ?? stateChanged ??
     XAbstractSocket_stateChanged_signal(sock, state);
 
-    // 特殊状态转换处理
+    // ????????
     if (state == XAbstractSocket_ConnectedState) 
     {
         XIODevice_open_base(sock, XIODevice_ReadWrite);
-        // 从 HostLookupState 转换时，先发出 hostFound 信号
+        // ? HostLookupState ???,??? hostFound ??
         if (oldState == XAbstractSocket_HostLookupState) {
             XAbstractSocket_hostFound_signal(sock);
         }
-        // 无论从哪个状态转换到 ConnectedState，都发出 connected 信号
+        // ?????????? ConnectedState,??? connected ??
         XAbstractSocket_connected_signal(sock);
     }
     else if (state == XAbstractSocket_UnconnectedState && oldState != XAbstractSocket_UnconnectedState) 
@@ -512,11 +512,11 @@ void XAbstractSocket_setSocketError(XAbstractSocket* sock, XAbstractSocket_Socke
         }
     }
 
-    // 发射 errorOccurred 信号
+    // ?? errorOccurred ??
     XAbstractSocket_errorOccurred_signal(sock, error);
 }
 
-// ==================== 核心操作（存根，由子类实现）====================
+// ==================== ????(??,?????)====================
 bool XAbstractSocket_bind_base(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XAbstractSocket_BindMode mode)
 {
     if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), ""))
@@ -567,7 +567,7 @@ void XAbstractSocket_resume_base(XAbstractSocket* sock)
     XClassGetVirtualFunc(sock, EXAbstractSocket_Resume, void(*)(XAbstractSocket*))(sock);
 }
 
-// ==================== 套接字选项（存根）====================
+// ==================== ?????(??)====================
 void XAbstractSocket_setSocketOption_base(XAbstractSocket* sock, XAbstractSocket_SocketOption option, const XVariant* value)
 {
     if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), ""))
@@ -582,10 +582,10 @@ XVariant* XAbstractSocket_socketOption_base(XAbstractSocket* sock, XAbstractSock
     return XClassGetVirtualFunc(sock, EXAbstractSocket_SocketOption, XVariant* (*)(XAbstractSocket*, XAbstractSocket_SocketOption))(sock, option);
 }
 
-// ==================== 平台句柄 ====================
+// ==================== ???? ====================
 intptr_t XAbstractSocket_socketDescriptor_base(const XAbstractSocket* sock)
 {
-    if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), "")|| XClassGetVtable(sock)->size< EXAbstractSocket_SocketDescriptor)
+    if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), "")|| XVtable_size(XClassGetVtable(sock))<= EXAbstractSocket_SocketDescriptor)
         return 0;
     return XClassGetVirtualFunc(sock, EXAbstractSocket_SocketDescriptor, intptr_t(*)(XAbstractSocket*))(sock);
 }
@@ -597,7 +597,7 @@ bool XAbstractSocket_setSocketDescriptor_base(XAbstractSocket* sock, intptr_t so
     return XClassGetVirtualFunc(sock, EXAbstractSocket_SetSocketDescriptor, bool (*)(XAbstractSocket*, intptr_t, XAbstractSocket_SocketState, XIODeviceBaseMode))(sock, socketDescriptor, state, openMode);
 }
 
-// ==================== 同步等待 ====================
+// ==================== ???? ====================
 bool XAbstractSocket_waitForConnected_base(XAbstractSocket* sock, int msecs)
 {
     if (ISNULL(sock, "") || ISNULL(XClassGetVtable(sock), ""))
@@ -617,11 +617,11 @@ bool XAbstractSocket_waitForBytesWritten(XAbstractSocket* sock, int msecs)
     return XIODevice_waitForBytesWritten_base((XIODevice*)sock, msecs);
 }
 
-// ==================== 虚函数重载 ====================
+// ==================== ????? ====================
 
 static bool VXAbstractSocket_open(XAbstractSocket* self, XIODeviceBaseMode mode)
 {
-    // 内部使用：设置打开模式
+    // ????:??????
     if (!self) return false;
     self->base.m_openMode = mode;
     return true;
@@ -652,7 +652,7 @@ static int64_t VXAbstractSocket_writeData(XAbstractSocket* self, const char* dat
 static bool VXAbstractSocket_isSequential(const XAbstractSocket* self)
 {
     (void)self;
-    return true; // 所有套接字都是顺序设备
+    return true; // ???????????
 }
 
 
@@ -663,7 +663,7 @@ static bool VXAbstractSocket_isSequential(const XAbstractSocket* self)
 
 static bool VXAbstractSocket_waitForReadyRead(XAbstractSocket* self, int msecs)
 {
-    // 通用实现：事件循环等待
+    // ????:??????
     if (!self) return false;
     if (XAbstractSocket_bytesAvailable_base(self) > 0) return true;
     
@@ -679,7 +679,7 @@ static bool VXAbstractSocket_waitForReadyRead(XAbstractSocket* self, int msecs)
 static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msecs)
 {
     bool writePending = false;
-    // 通用实现：事件循环等待
+    // ????:??????
     if (!self) return false;
     if (XAbstractSocket_bytesToWrite_base(self) == 0 &&
         (!socketGetBoolProperty(self, (XDeviceProperty)XDeviceNetworkProperty_WritePending, &writePending) ||
@@ -698,7 +698,7 @@ static bool VXAbstractSocket_waitForBytesWritten(XAbstractSocket* self, int msec
 
 static bool VXAbstractSocket_atEnd(XAbstractSocket* self)
 {
-    // 通用实现：未连接或无数据可读
+    // ????:?????????
     if (!self) return true;
     if (self->state != XAbstractSocket_ConnectedState) return true;
     return XAbstractSocket_bytesAvailable_base(self) == 0;
@@ -707,37 +707,37 @@ static bool VXAbstractSocket_atEnd(XAbstractSocket* self)
 static int64_t VXAbstractSocket_pos(const XAbstractSocket* self)
 {
     (void)self;
-    return 0; // 顺序设备无位置概念
+    return 0; // ?????????
 }
 
 static int64_t VXAbstractSocket_size(const XAbstractSocket* self)
 {
     (void)self;
-    return 0; // 未知大小
+    return 0; // ????
 }
 
 static bool VXAbstractSocket_seek(XAbstractSocket* self, int64_t pos)
 {
     (void)self; (void)pos;
-    return false; // 顺序设备不可 seek
+    return false; // ?????? seek
 }
 
 static bool VXAbstractSocket_reset(XAbstractSocket* self)
 {
     (void)self;
-    return false; // 顺序设备不可 reset
+    return false; // ?????? reset
 }
 
 static int64_t VXAbstractSocket_readLineData(XAbstractSocket* self, char* data, int64_t maxlen)
 {
-    // 通用实现：从缓冲区读取一行
+    // ????:????????
     if (!self || !self->base.m_d || maxlen <= 0) return -1;
     return XIODevicePrivate_readLineFromBuffer(self->base.m_d, data, maxlen);
 }
 
 static int64_t VXAbstractSocket_skipData(XAbstractSocket* self, int64_t maxSize)
 {
-    // 通用实现：从缓冲区跳过数据
+    // ????:????????
     if (!self || !self->base.m_d || maxSize <= 0) return 0;
     int currentReadChannel = XIODevice_currentReadChannel((XIODevice*)self);
     struct XRingBuffer* readBuf = XIODevicePrivate_getOrCreateReadBuffer(self->base.m_d, currentReadChannel);
@@ -751,51 +751,51 @@ static int64_t VXAbstractSocket_skipData(XAbstractSocket* self, int64_t maxSize)
 static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
 {
     if (!self) return false;
-    /* [memhunt F2 根修 2026-10-06] fd 失效不可拦截 DeferredDelete：
-     * abort/close 后 fd=XFD_INVALID，旧代码此行把投递到本 socket 的
-     * XEVENT_TYPE_DEFERRED_DELETE 一并 return false 吞掉——XObject_event
-     * 的 DeferredDelete 分支（XClassDelete(receiver)）永不执行，
-     * deleteLater 永不兑现，会话设备树（4KB 通道 ring buffer+设备私有，
-     * XIODevicePrivate.c:58/:121）整体泄漏。LSan 实证：单轮「连接→对端
-     * 消失→优雅退出」SUMMARY 55008B/138，设备树全 Indirect、[DD-handler]
-     * 对 socket 对象零兑现；派发门控(shouldDeliver)已判 "->1 放行"后
-     * 事件仍消失，断点即本行。修后仅放行 DD（与 Qt QObject::event 对
-     * DeferredDelete 的处理同构），SOCK_ACT/SOCK_CLOSE 等其余事件维持
-     * fd 失效挡护（行为不变，改动最小化）。 */
+    /* [memhunt F2 ?? 2026-10-06] fd ?????? DeferredDelete:
+     * abort/close ? fd=XFD_INVALID,?????????? socket ?
+     * XEVENT_TYPE_DEFERRED_DELETE ?? return false ??--XObject_event
+     * ? DeferredDelete ??(XClassDelete(receiver))????,
+     * deleteLater ????,?????(4KB ?? ring buffer+????,
+     * XIODevicePrivate.c:58/:121)?????LSan ??:????????
+     * ????????SUMMARY 55008B/138,???? Indirect?[DD-handler]
+     * ? socket ?????;????(shouldDeliver)?? "->1 ??"?
+     * ?????,??????????? DD(? Qt QObject::event ?
+     * DeferredDelete ?????),SOCK_ACT/SOCK_CLOSE ???????
+     * fd ????(????,?????)? */
     if (socketDeviceFd(self) == XFD_INVALID &&
-        e->type != XEVENT_TYPE_DEFERRED_DELETE)
+        e->m_type != XEVENT_TYPE_DEFERRED_DELETE)
         return false;
 
-    if (e->type == XEVENT_TYPE_SOCK_ACT) {
+    if (e->m_type == XEVENT_TYPE_SOCK_ACT) {
         XEventSockAct* sockAct = (XEventSockAct*)e;
-        //XPrintf("消费:%p %d\n", e, sockAct->actType);
+        //XPrintf("??:%p %d\n", e, sockAct->actType);
         socketControlEvent(self, e);
 
-        if (sockAct->actType & XSocketAct_Read) {
-            // 检查是否在代理握手过程中
+        if (sockAct->actType & XSocketActType_Read) {
+            // ????????????
             if (self->proxyHandshakeCtx && !XNetworkProxyHandshake_isCompleted(self->proxyHandshakeCtx)) {
-                // 处理代理握手读事件
+                // ?????????
                 XProxyHandshakeState hsState = XNetworkProxyHandshake_process(self, self->proxyHandshakeCtx);
                 
                 if (hsState == XProxyHandshakeState_Completed) {
-                    // 代理握手完成，进入连接状态
+                    // ??????,??????
                     XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
                     XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
                     self->proxyHandshakeCtx = NULL;
                     socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
                 }
                 else if (hsState == XProxyHandshakeState_Failed) {
-                    // 代理握手失败
+                    // ??????
                     XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError,
                         XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
                     XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
                     XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
                     self->proxyHandshakeCtx = NULL;
                 }
-                // 否则握手仍在进行中，继续等待
+                // ?????????,????
             }
             else {
-                // 正常数据读取
+                // ??????
                 size_t bytesTransferred = 0;
                 socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_ReadFinishedBytes,
                                       &bytesTransferred);
@@ -819,20 +819,20 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
             }
         }
 
-        if (sockAct->actType & XSocketAct_Write) {
-            // 检查是否在代理握手过程中
+        if (sockAct->actType & XSocketActType_Write) {
+            // ????????????
             if (self->proxyHandshakeCtx && !XNetworkProxyHandshake_isCompleted(self->proxyHandshakeCtx)) {
-                // 处理代理握手写事件
+                // ?????????
                 XProxyHandshakeState hsState = XNetworkProxyHandshake_process(self, self->proxyHandshakeCtx);
                 
                 if (hsState == XProxyHandshakeState_Completed) {
-                    // 代理握手完成，进入连接状态
+                    // ??????,??????
                     XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
                     XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
                     self->proxyHandshakeCtx = NULL;
                 }
                 else if (hsState == XProxyHandshakeState_Failed) {
-                    // 代理握手失败
+                    // ??????
                     XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError,
                         XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
                     XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
@@ -841,26 +841,26 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                 }
             }
             else {
-                // 正常数据写入完成
+                // ????????
                 size_t bytesWritten = 0;
                 socketGetSizeProperty(self, (XDeviceProperty)XDeviceNetworkProperty_WriteFinishedBytes,
                                       &bytesWritten);
                 if (bytesWritten > 0) {
                     XIODevice_bytesWritten_signal((XIODevice*)self, bytesWritten);
                 }
-                /* 继续投递写环形缓冲区中残留数据 */
+                /* ??????????????? */
                 {
                     socketControlNoArgs(self, XDeviceNetworkCommand_ContinueWrite);
                 }
             }
         }
 
-        if (sockAct->actType & XSocketAct_Connect) {
+        if (sockAct->actType & XSocketActType_Connect) {
             bool connected = false;
             if (socketGetBoolProperty(self, (XDeviceProperty)XDeviceNetworkProperty_Connected, &connected) && connected) {
-                // 检查是否需要代理握手
+                // ??????????
                 if (self->proxyHandshakeCtx) {
-                    // 开始异步代理握手
+                    // ????????
                     if (!XNetworkProxyHandshake_start(self, self->proxyHandshakeCtx)) {
                         XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyProtocolError, 
                             XNetworkProxyHandshake_errorMessage(self->proxyHandshakeCtx));
@@ -868,10 +868,10 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
                         XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
                         self->proxyHandshakeCtx = NULL;
                     }
-                    // 握手开始，等待读写事件继续处理
+                    // ????,??????????
                 }
                 else {
-                    // 无代理，直接连接成功
+                    // ???,??????
                     XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
                     socketControlNoArgs(self, XDeviceNetworkCommand_ContinueRead);
                 }
@@ -884,20 +884,20 @@ static bool VXAbstractSocket_event(XAbstractSocket* self, XEvent* e)
 
         return true;
     }
-    else if (e->type == XEVENT_TYPE_SOCK_CLOSE) {
+    else if (e->m_type == XEVENT_TYPE_SOCK_CLOSE) {
         socketCloseDevice(self);
         XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
         return true;
     }
 
-    // 调用父类事件处理
+    // ????????
     return XClass_Parent(XIODevice, EXObject_Event, bool (*)(XIODevice*, XEvent*))((XIODevice*)self, e);
 }
 
-// ==================== XAbstractSocket 特有虚函数 ====================
+// ==================== XAbstractSocket ????? ====================
 static void VXAbstractSocket_Resume(XAbstractSocket* self)
 {
-    // 非SSL套接字不需要特殊处理
+    // ?SSL??????????
     (void)self;
 }
 
@@ -922,8 +922,8 @@ static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* add
     if (socketOpenDevice(self, &options, &error) == XFD_INVALID) {
         return false;
     }
-    memset(&value, 0, sizeof(value)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
-    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* 桶规约: 见 socketGetBoolProperty。 */
+    memset(&value, 0, sizeof(value)); /* fix(r7crash): ? socketGetBoolProperty ?????? */
+    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* ???: ? socketGetBoolProperty? */
     if (!XDevice_getProperty(socketDeviceFd(self), (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
         XVariant_setValue_null(&value);
         socketCloseDevice(self);
@@ -932,7 +932,7 @@ static bool VXAbstractSocket_Bind(XAbstractSocket* self, const XHostAddress* add
     actualPort = (uint16_t)XVariant_toInt(&value);
     XVariant_setValue_null(&value);
     XAbstractSocket_setLocalAddress(self, address);
-    XAbstractSocket_setLocalPort(self, actualPort);  // 使用实际端口
+    XAbstractSocket_setLocalPort(self, actualPort);  // ??????
     XAbstractSocket_setSocketState(self, XAbstractSocket_BoundState);
 
     XClass_Parent(XIODevice, EXIODevice_Open, bool (*)(XIODevice*, XIODeviceBaseMode))(self, XIODevice_ReadWrite);
@@ -950,21 +950,21 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
     XAbstractSocket_setPeerName(self, hostName);
     XAbstractSocket_setPeerPort(self, port);
 
-    // 检查是否需要使用代理
+    // ??????????
     if (self->proxy.type != XNetworkProxy_NoProxy && self->proxy.type != XNetworkProxy_DefaultProxy) {
-        // 使用代理连接
+        // ??????
         if (!self->proxy.hostName || self->proxy.port == 0) {
             XAbstractSocket_setSocketError(self, XAbstractSocket_ProxyNotFoundError, "Proxy server not configured");
             XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             return;
         }
 
-        // 销毁旧的代理握手上下文
+        // ???????????
         if (self->proxyHandshakeCtx) {
             XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
         }
         
-        // 创建代理握手上下文
+        // ?????????
         self->proxyHandshakeCtx = XNetworkProxyHandshake_createContext(
             &self->proxy, hostName, port);
         
@@ -974,7 +974,7 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
             return;
         }
 
-        // 先连接到代理服务器
+        // ?????????
         XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
 
         memset(&options, 0, sizeof(options));
@@ -985,6 +985,10 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
         options.m_operation = XDeviceNetworkOpen_Connect;
         options.m_port = self->proxy.port;
         if (socketOpenDevice(self, &options, &error) == XFD_INVALID) {
+            /* ?????????:fd ???,??????????????,
+               ???????,??????? connectToHost ?????? */
+            XNetworkProxyHandshake_destroyContext(self->proxyHandshakeCtx);
+            self->proxyHandshakeCtx = NULL;
             XAbstractSocket_setSocketState(self, XAbstractSocket_UnconnectedState);
             return;
         }
@@ -992,7 +996,7 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
         XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
     }
     else {
-        // 直接连接（无代理）
+        // ????(???)
         XAbstractSocket_setSocketState(self, XAbstractSocket_HostLookupState);
 
         hostStr = XString_create_utf8(hostName);
@@ -1033,8 +1037,8 @@ static intptr_t VXAbstractSocket_SocketDescriptor(const XAbstractSocket* self)
 {
     XVariant value;
     if (!self || socketDeviceFd(self) == XFD_INVALID) return -1;
-    memset(&value, 0, sizeof(value)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
-    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* 桶规约: 见 socketGetBoolProperty。 */
+    memset(&value, 0, sizeof(value)); /* fix(r7crash): ? socketGetBoolProperty ?????? */
+    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* ???: ? socketGetBoolProperty? */
     if (!XDevice_getProperty(socketDeviceFd(self), XDeviceProperty_NativeHandle, &value)) {
         XVariant_setValue_null(&value);
         return -1;
@@ -1111,8 +1115,8 @@ static void VXAbstractSocket_SetReadBufferSize(XAbstractSocket* self, int64_t si
     if (!self) return;
     self->readBufferSize = size;
     if (socketDeviceFd(self) == XFD_INVALID) return;
-    memset(&value, 0, sizeof(value)); /* fix(r7crash): 见 socketGetBoolProperty 真机修复注。 */
-    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* 桶规约: 见 socketGetBoolProperty。 */
+    memset(&value, 0, sizeof(value)); /* fix(r7crash): ? socketGetBoolProperty ?????? */
+    XVariant_init(&value, NULL, 0, XVariantType_NULL); /* ???: ? socketGetBoolProperty? */
     XVariant_setValue_int64(&value, size);
     (void)XDevice_setProperty(socketDeviceFd(self),
                               (XDeviceProperty)XDeviceNetworkProperty_ReadBufferSize, &value);
@@ -1121,7 +1125,7 @@ static void VXAbstractSocket_SetReadBufferSize(XAbstractSocket* self, int64_t si
 
 static bool VXAbstractSocket_WaitForConnected(XAbstractSocket* self, int msecs)
 {
-    // 通用实现：事件循环等待连接状态
+    // ????:??????????
     if (!self) return false;
     if (self->state == XAbstractSocket_ConnectedState) return true;
     if (self->state == XAbstractSocket_UnconnectedState) return false;
@@ -1137,7 +1141,7 @@ static bool VXAbstractSocket_WaitForConnected(XAbstractSocket* self, int msecs)
 
 static bool VXAbstractSocket_WaitForDisconnected(XAbstractSocket* self, int msecs)
 {
-    // 通用实现：事件循环等待断开状态
+    // ????:??????????
     if (!self) return true;
     if (self->state == XAbstractSocket_UnconnectedState) return true;
     
@@ -1149,7 +1153,7 @@ static bool VXAbstractSocket_WaitForDisconnected(XAbstractSocket* self, int msec
     return true;
 }
 
-// ==================== 信号实现 ====================
+// ==================== ???? ====================
 
 void* XAbstractSocket_hostFound_signal(XAbstractSocket* sock)
 {
@@ -1176,14 +1180,14 @@ void* XAbstractSocket_errorOccurred_signal(XAbstractSocket* sock, XAbstractSocke
     XEmitSignal(sock, XAbstractSocket_errorOccurred_signal, XVarList_Create(XVar(XAbstractSocket_SocketError, error)), NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
-// ==================== Qt6 对齐：按地址直连（跳过 DNS）====================
+// ==================== Qt6 ??:?????(?? DNS)====================
 void XAbstractSocket_connectToHostByAddress(XAbstractSocket* sock, const XHostAddress* address, uint16_t port, XIODeviceBaseMode mode)
 {
     if (!sock || !address) return;
     XString* s = XHostAddress_toString(address);
     if (!s) return;
     const char* hostStr = XString_toUtf8(s);
-    /* NetworkLayerProtocol: 依据地址决定 IPv4/IPv6，交给内部协议识别 */
+    /* NetworkLayerProtocol: ?????? IPv4/IPv6,???????? */
     XAbstractSocket_connectToHost_base(sock, hostStr, port, mode, XAbstractSocket_AnyIPProtocol);
     XClassDelete(s);
 }
@@ -1220,7 +1224,7 @@ bool XAbstractSocket_connectLocalStream_private(XAbstractSocket* sock,
     return true;
 }
 
-// ==================== Qt6 对齐：代理认证信号 ====================
+// ==================== Qt6 ??:?????? ====================
 void* XAbstractSocket_proxyAuthenticationRequired_signal(XAbstractSocket* sock, XNetworkProxy* proxy, void* authenticator)
 {
     XEmitSignal(sock, XAbstractSocket_proxyAuthenticationRequired_signal,

@@ -2,10 +2,10 @@
 #include "XHostAddress.h"
 #include "XMemory.h"
 #include "XString.h"
+#include "XStringUtils.h"   /* XStrlen/XStrchr：库内字符串原语（外部依赖约束） */
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 
 // ==================== IPv4 解析 ====================
 
@@ -25,19 +25,19 @@ static bool parseIPv6(const char* src, uint8_t dst[16]) {
     memset(dst, 0, 16);
 
     char buf[64];
-    size_t len = strlen(src);
+    size_t len = XStrlen(src);
     if (len == 0 || len >= sizeof(buf)) return false;
     memcpy(buf, src, len + 1);
 
     // Strip scope ID (e.g., %eth0)
-    char* percent = strchr(buf, '%');
+    char* percent = (char*)XStrchr(buf, '%');
     if (percent) *percent = '\0';
 
     // Strip brackets
     char* s = buf;
     if (*s == '[') {
         s++;
-        char* end = strchr(s, ']');
+        char* end = (char*)XStrchr(s, ']');
         if (end) *end = '\0';
     }
     if (!s[0]) return false;
@@ -45,8 +45,8 @@ static bool parseIPv6(const char* src, uint8_t dst[16]) {
     // 点分四段尾部（::ffff:1.2.3.4 / 64:ff9b::192.0.2.33）：原地改写为两个
     // 十六进制组（"1.2.3.4"→"102:304"，长度只缩不增），交给常规扫描，
     // 避免在 "::" 第二个冒号处截断留下悬挂冒号。
-    char* lastColon = strrchr(s, ':');
-    if (lastColon && strchr(lastColon, '.')) {
+    char* lastColon = (char*)XStrrchr(s, ':');
+    if (lastColon && XStrchr(lastColon, '.')) {
         uint32_t v4 = 0;
         if (!parseIPv4(lastColon + 1, &v4)) return false;
         snprintf(lastColon + 1, sizeof(buf) - (size_t)(lastColon + 1 - buf),
@@ -143,6 +143,7 @@ static bool isIPv6Global(const uint8_t ip6[16]) {
 
 static void VXHostAddress_copy(XHostAddress* self, const XHostAddress* other) {
     if (!self || !other) return;
+    if (self == other) return; /* 源与目标相同：直接返回，避免同址复制 */
     if (XClassIsVtableNull(self))
         XHostAddress_init(self);
     self->protocol = other->protocol;
@@ -156,9 +157,15 @@ static void VXHostAddress_copy(XHostAddress* self, const XHostAddress* other) {
 
 static void VXHostAddress_move(XHostAddress* self, XHostAddress* other) {
     if (!self || !other) return;
+    if (self == other) return; /* 源与目标相同：直接返回，避免同址复制 */
     if (XClassIsVtableNull(self))
         XHostAddress_init(self);
-    memcpy(self, other, sizeof(XHostAddress));
+    self->protocol = other->protocol;
+    self->isNull = other->isNull;
+    memcpy(self->ip6, other->ip6, 16); /* 逐成员转移（联合体原始字节，禁 memcpy 整对象） */
+    other->protocol = XHostAddress_UnknownNetworkLayerProtocol; /* 清空源对象 */
+    other->isNull = true;
+    memset(other->ip6, 0, 16);
 }
 
 static void VXHostAddress_deinit(XHostAddress* self) {
@@ -501,7 +508,7 @@ bool XHostAddress_isInSubnet(const XHostAddress* addr, const XHostAddress* subne
 bool XHostAddress_parseSubnet(const char* subnetStr, XHostAddress* host, int* prefixLen) {
     if (!subnetStr || !host || !prefixLen) return false;
 
-    const char* slash = strchr(subnetStr, '/');
+    const char* slash = XStrchr(subnetStr, '/');
     if (!slash) return false;
 
     size_t len = slash - subnetStr;

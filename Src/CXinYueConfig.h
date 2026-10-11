@@ -1,4 +1,12 @@
-﻿#ifndef CXINYUECONFIG_H
+﻿/**
+ * @file CXinYueConfig.h
+ * @brief XinYueC 全局配置公开头文件。
+ * @details 汇总平台/字节序自动检测、调试输出配置、XPrintf 输出编码模式和各模块
+ *          条件编译总开关；按「文件组织规范」各模块头文件通常第一个包含本文件。
+ *          无 Qt 对齐对象；平台约束：自动检测 FreeRTOS/Windows/POSIX/裸机，
+ *          仅依赖编译器预定义宏，不引入任何平台 API 或 C 标准库头文件。
+ */
+#ifndef CXINYUECONFIG_H
 #define CXINYUECONFIG_H
 
 #ifdef __cplusplus
@@ -70,8 +78,16 @@ extern "C" {
 /* ========================================================================== */
 /*                                   调试输出配置                                   */
 /* ========================================================================== */
+/** @brief 调试输出总开关；置 1 且为 _DEBUG 构建时启用 XDEBUG_PRINTF 输出调试日志，置 0 时不输出。
+ * @note 完全不定义此宏时，XDEBUG_PRINTF 回退为仅按 _DEBUG 判定（带 "Debug" 标签）。 */
 #define DEBUG_ON						0
+/** @brief 错误输出开关；置 1 时启用 XERROR_PRINTF 输出带 "XError" 标签的错误日志，置 0 时编译为空。 */
 #define XERROR_ON						1//错误输出
+/** @brief 测试/演示代码总开关；置 1 时启用 Test/ 目录测试代码及 main.c 中的演示入口，置 0 时裁剪。 */
+#define DEMOTEST_ON						1//测试代码
+/** @brief 测试/演示代码开关（FreeType 字库战役侧命名，与 DEMOTEST_ON 同义同值）：
+ *  XFontFtTest.{h,c} 等远端新增测试以此门控，两宏必须同时定义，缺一即整段
+ *  测试定义编译出局而调用点仍在（LNK2019：XTestMenu_XFontFtTest 未解析）。 */
 #define DEMOTEST						1//测试代码
 
 /* ========================================================================== */
@@ -187,26 +203,48 @@ extern "C" {
 /* ========================================================================== */
 /*                                   算法模块开关                                   */
 /* ========================================================================== */
+/** @brief XBase64 算法模块开关；置 1 时启用 XBase64.h 公开的 Base64 编码/解码 API，置 0 时裁剪整个模块。 */
 #define XBase64_ON						1
+/** @brief XAbstractNetIoRing 网络 I/O 事件环模块开关；置 0 时裁剪整个模块公共 API 和实现。
+ * @note 对齐 io_uring 的 SQ/CQ 抽象事件环，平台 I/O（IOCP/epoll 等）由平台子类实现；
+ *       关闭后 XAbstractEventDispatcher 不再创建全局事件环，XFileDevice 的异步注册也随之失效。 */
 #define	XAbstractNetIoRing_ON					1
 
 /* ========================================================================== */
 /*                                事件投递 无锁队列大小                                 */
 /* ========================================================================== */
-#ifndef TryPostEvent_QueueSize
+/** @brief 跨线程事件试投递（XThreadData_tryPostEvent）所用每线程无锁队列的容量，单位为队列元素个数。
+ * @note 每个线程的 XThreadData 初始化时按此容量建立元素为 XPostEvent 的 XLockFreeQueue，
+ *       队满时试投递失败并输出 XError；用户可在包含本头文件前预定义本宏覆盖默认值：
+ *       桌面平台默认 512，其余（嵌入式）平台默认 64 以节省 RAM。 */
+#ifndef TRY_POST_EVENT_QUEUE_SIZE
 #if XPLATFORM_DESKTOP
-#define TryPostEvent_QueueSize      512 
+#define TRY_POST_EVENT_QUEUE_SIZE      512
 #else
-#define TryPostEvent_QueueSize      64   /* 适配嵌入式设备节省RAM */
+#define TRY_POST_EVENT_QUEUE_SIZE      64   /* 适配嵌入式设备节省RAM */
 #endif
 #endif
 
 /* ========================================================================== */
 /*                                  调试/输出宏定义                                  */
 /* ========================================================================== */
+/** @brief 模块开关守卫宏；on 给出的编译期开关为 0（未开启）时经 ISNULL 报告调用处文件、函数和行号，
+ *         并提示该函数需要在 CXinYueConfig.h 中开启对应开关。 */
 #define IS_ON_DEBUG(on)						ISNULL(on,"此函数需要开启"#on",在CXinYueConfig.h")
 
-/** @brief 输出带文件、函数和行号上下文的格式化日志。 */
+/**
+ * @brief 输出带文件、函数和行号上下文的格式化日志。
+ * @details 先格式化可变参数，再经 XPrintf 统一处理平台输出编码和换行；label 为空时
+ *          不输出标签前缀。供 XDEBUG_PRINTF/XERROR_PRINTF 调试与错误输出宏使用。
+ * @param label 日志标签字符串；只读借用，不取得所有权；NULL 或空串时不输出标签前缀。
+ * @param file 源文件名，通常传 __FILE__；只读借用。
+ * @param function 函数名，通常传 __FUNCTION__；只读借用。
+ * @param line 源代码行号，通常传 __LINE__。
+ * @param format printf 风格的 UTF-8 格式串；只读借用；为 NULL 时不输出并返回 0。
+ * @param ... 与 format 中转换说明符匹配的可变参数。
+ * @return 返回 XPrintf 的返回值（实际输出的字符数）；format 为 NULL、格式化失败或
+ *         缓冲区分配失败时不产生输出并返回 0。
+ */
 int XPrintf_context(const char* label, const char* file, const char* function,
                     int line, const char* format, ...);
 

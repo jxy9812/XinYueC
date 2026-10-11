@@ -1,4 +1,10 @@
-﻿// XHostInfo.h
+﻿/**
+ * @file       XHostInfo.h
+ * @brief      主机名 DNS 查询结果与异步查询公开 API。
+ * @details    对齐 Qt QHostInfo；实现只依赖 XinYueC 抽象层，DNS 解析统一经
+ *             XDeviceNetwork 平台抽象层完成，禁止直接调用 Win32、POSIX、
+ *             Qt 或其他平台 API。
+ */
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 
@@ -39,12 +45,12 @@ XCLASS_DEFINE_EXTEND_END(XHostInfo, XClass);
  * @note 此类不进行 DNS 缓存，每次查询均为实时请求。
  */
 typedef struct XHostInfo {
-    XClass m_class;                     ///< 基类虚表指针
-    XString* hostName;                  ///< 被查询的主机名
-    XVector* addresses;                 ///< IP地址列表 (XHostAddress)
-    XHostInfo_Error error;              ///< 错误码
-    XString* errorString;               ///< 错误描述
-    int lookupId;                       ///< 异步查询ID
+    XClass m_class;                     ///< 第一个成员，由 XClass 管理，禁止手工修改
+    XString* m_hostName;                ///< 被查询的主机名
+    XVector* m_addresses;               ///< IP地址列表 (XHostAddress)
+    XHostInfo_Error m_error;            ///< 错误码
+    XString* m_errorString;             ///< 错误描述
+    int m_lookupId;                     ///< 异步查询ID
 } XHostInfo;
 
 // ==================== 构造与析构 ====================
@@ -62,6 +68,13 @@ XHostInfo* XHostInfo_create_ex(XMemoryType memory);
  */
 XHostInfo* XHostInfo_create_copy(const XHostInfo* other);
 
+/**
+ * @brief 初始化 XHostInfo 实例（栈上对象使用）。
+ * @details 清零业务字段、初始化基类并创建空的地址列表；对象使用完毕后
+ *          必须以 XClassDeinit() 收尾。堆上对象请改用 XHostInfo_create_ex()。
+ * @param info 指向未初始化的 XHostInfo 实例；传入 NULL 时不执行任何操作。
+ * @return 无。
+ */
 void XHostInfo_init(XHostInfo* info);
 
 /**
@@ -155,9 +168,16 @@ void XHostInfo_setLookupId(XHostInfo* info, int id);
  * 此函数会阻塞调用线程直到查询完成或失败。
  *
  * @param name 要解析的主机名（XString）。
- * @return 包含查询结果的 XHostInfo 实例。
+ * @return 包含查询结果的 XHostInfo 实例（新对象，需调用 XClassDelete() 释放）。
  */
-XHostInfo* XHostInfo_fromName1(const XString* name);
+XHostInfo* XHostInfo_fromName(const XString* name);
+/**
+ * @brief 同步执行 DNS 主机名查询（UTF-8 兼容重载）。
+ * @details 创建临时 XString 后转发到 XHostInfo_fromName()；name 按 UTF-8 解码。
+ * @param name 要解析的主机名（UTF-8 编码）；不能为 NULL 或空字符串。
+ * @return 包含查询结果的 XHostInfo 实例（新对象，需调用 XClassDelete() 释放）；
+ *         name 为 NULL 或空字符串时返回 NULL。
+ */
 XHostInfo* XHostInfo_fromName2(const char* name);
 /**
  * @brief 获取本机的主机名。

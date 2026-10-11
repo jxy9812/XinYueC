@@ -134,13 +134,15 @@ XNetworkDatagram* XUdpSocket_receiveDatagram(XUdpSocket* sock, int64_t maxSize)
     int64_t bytesRead = XUdpSocket_readDatagram(sock, buffer, readSize, &senderAddr, &senderPort);
     
     if (bytesRead < 0) {
+        XClassDeinit(&senderAddr);
         XFree_System(buffer);
         return NULL;
     }
-    
+
     /* 创建 XNetworkDatagram */
     XNetworkDatagram* dgram = XNetworkDatagram_create();
     if (!dgram) {
+        XClassDeinit(&senderAddr);
         XFree_System(buffer);
         return NULL;
     }
@@ -157,6 +159,7 @@ XNetworkDatagram* XUdpSocket_receiveDatagram(XUdpSocket* sock, int64_t maxSize)
     XNetworkDatagram_setSender(dgram, &senderAddr, senderPort);
     
     XFree_System(buffer);
+    XClassDeinit(&senderAddr);
     return dgram;
 }
 

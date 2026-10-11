@@ -4,6 +4,7 @@
 #if XMQTT_TOPIC_ON
 #include "XMqttTopicName.h"
 #include "XMemory.h"
+#include "XStringUtils.h" /* strchr/strlen 改经 XStrchr/XStrlen（外部依赖约束：string.h 白名单） */
 #include <string.h>
 
 static void VXMqttTopicName_deinit(XMqttTopicName* name);
@@ -16,6 +17,16 @@ static void XMqttTopicName_level_deinit(XString** level)
         XClassDelete(*level);
         *level = NULL;
     }
+}
+
+/* 库内无 memchr 原语（string.h 白名单仅 memcpy/memset/memmove/memcmp），
+   本地扫描检测指定字节，避免越白名单依赖（外部依赖约束）。 */
+static bool XMqttTopicName_containsByte(const char* data, size_t length, char c)
+{
+    for (size_t i = 0; i < length; ++i) {
+        if (data[i] == c) return true;
+    }
+    return false;
 }
 
 XVtable* XMqttTopicName_class_init(void)
@@ -111,7 +122,8 @@ bool XMqttTopicName_isValid(const XMqttTopicName* name)
     for (size_t i = 0; i < chars; ++i) {
         if (unicode[i] == 0) return false;
     }
-    if (memchr(s, '+', bytes) || memchr(s, '#', bytes)) return false;
+    if (XMqttTopicName_containsByte(s, bytes, '+') ||
+        XMqttTopicName_containsByte(s, bytes, '#')) return false;
     return true;
 }
 
@@ -137,8 +149,8 @@ XVector* XMqttTopicName_levels(const XMqttTopicName* name)
     XContainerSetDataDeinitMethod(vec, (XCDataDeinitMethod)XMqttTopicName_level_deinit);
     const char* p = s;
     for (;;) {
-        const char* slash = strchr(p, '/');
-        size_t len = slash ? (size_t)(slash - p) : strlen(p);
+        const char* slash = XStrchr(p, '/');
+        size_t len = slash ? (size_t)(slash - p) : XStrlen(p);
         XString* level = len ? XString_create_with_length_utf8(p, len) :
                                XString_create_utf8("");
         if (!level || !XVector_push_back_1_base(vec, &level)) {

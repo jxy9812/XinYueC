@@ -33,7 +33,7 @@ static void XNetworkInterface_allInterfacesTest(void)
         XString* name = XNetworkInterface_name_const(iface);
         if (name) {
             XPrintf("    名称: ");
-            XPrintf_2(name);
+            XPrintf_string(name);
             XPrintf("\n");
         }
         
@@ -41,7 +41,7 @@ static void XNetworkInterface_allInterfacesTest(void)
         XString* humanName = XNetworkInterface_humanReadableName_const(iface);
         if (humanName) {
             XPrintf("    可读名称: ");
-            XPrintf_2(humanName);
+            XPrintf_string(humanName);
             XPrintf("\n");
         }
         
@@ -49,7 +49,7 @@ static void XNetworkInterface_allInterfacesTest(void)
         XString* hwAddr = XNetworkInterface_hardwareAddress_const(iface);
         if (hwAddr) {
             XPrintf("    硬件地址: ");
-            XPrintf_2(hwAddr);
+            XPrintf_string(hwAddr);
             XPrintf("\n");
         }
         
@@ -91,16 +91,16 @@ static void XNetworkInterface_allInterfacesTest(void)
                 if (!entry) continue;
                 
                 XPrintf("      IP: ");
-                XString* ipStr = XHostAddress_toString(&entry->ip);
+                XString* ipStr = XHostAddress_toString(&entry->m_ip);
                 if (ipStr) {
-                    XPrintf_2(ipStr);
+                    XPrintf_string(ipStr);
                     XClassDelete(ipStr);
                 }
                 
                 XPrintf(" / 掩码: ");
-                XString* maskStr = XHostAddress_toString(&entry->netmask);
+                XString* maskStr = XHostAddress_toString(&entry->m_netmask);
                 if (maskStr) {
-                    XPrintf_2(maskStr);
+                    XPrintf_string(maskStr);
                     XClassDelete(maskStr);
                 }
                 XPrintf("\n");
@@ -133,7 +133,7 @@ static void XNetworkInterface_allAddressesTest(void)
             XString* addrStr = XHostAddress_toString(addr);
             if (addrStr) {
                 XPrintf("    - ");
-                XPrintf_2(addrStr);
+                XPrintf_string(addrStr);
                 XPrintf("\n");
                 XClassDelete(addrStr);
             }
@@ -163,7 +163,7 @@ static void XNetworkInterface_interfaceFromNameTest(void)
     XString* firstName = XNetworkInterface_name(first);
     
     XPrintf("  使用接口名称: ");
-    XPrintf_2(firstName);
+    XPrintf_string(firstName);
     XPrintf("\n");
     
     /* 清理列表 */
@@ -213,7 +213,7 @@ static void XNetworkInterface_interfaceFromIndexTest(void)
         XString* name = XNetworkInterface_name_const(found);
         if (name) {
             XPrintf("    名称: ");
-            XPrintf_2(name);
+            XPrintf_string(name);
             XPrintf("\n");
         }
         XClassDelete(found);
@@ -242,7 +242,7 @@ static void XNetworkInterface_nameIndexConversionTest(void)
     int index = XNetworkInterface_index(first);
     
     XPrintf("  原始接口: ");
-    XPrintf_2(name);
+    XPrintf_string(name);
     XPrintf(" (索引: %d)\n", index);
     
     /* 清理列表 */
@@ -256,7 +256,7 @@ static void XNetworkInterface_nameIndexConversionTest(void)
     XString* foundName = XNetworkInterface_interfaceNameFromIndex(index);
     if (foundName) {
         XPrintf("  索引转名称: ");
-        XPrintf_2(foundName);
+        XPrintf_string(foundName);
         XPrintf("\n");
         XClassDelete(foundName);
     }

@@ -283,12 +283,12 @@ typedef enum XPainterClipOperation
 /** @brief 渲染提示位（对标 QPainter::RenderHint，数值与 Qt 6.8 一致）。 */
 typedef enum XPainterRenderHint
 {
-    XPainterRenderHint_Antialiasing = 0x01,
-    XPainterRenderHint_TextAntialiasing = 0x02,
-    XPainterRenderHint_SmoothPixmapTransform = 0x04,
-    XPainterRenderHint_VerticalSubpixelPositioning = 0x08,
-    XPainterRenderHint_LosslessImageRendering = 0x40,
-    XPainterRenderHint_NonCosmeticBrushPatterns = 0x80
+    XPainterRenderHint_Antialiasing = 0x01,             /**< 抗锯齿：图元边缘平滑（位 0；可按位组合）。 */
+    XPainterRenderHint_TextAntialiasing = 0x02,         /**< 文本抗锯齿（位 1；可按位组合）。 */
+    XPainterRenderHint_SmoothPixmapTransform = 0x04,    /**< 图像变换使用平滑插值（位 2；可按位组合）。 */
+    XPainterRenderHint_VerticalSubpixelPositioning = 0x08, /**< 文本垂直方向亚像素定位（位 3；可按位组合）。 */
+    XPainterRenderHint_LosslessImageRendering = 0x40,   /**< 图像绘制不做有损优化（位 6；可按位组合）。 */
+    XPainterRenderHint_NonCosmeticBrushPatterns = 0x80  /**< 图案画刷随世界变换缩放/旋转（位 7；可按位组合）。 */
 } XPainterRenderHint;
 typedef uint32_t XPainterRenderHints;
 #endif /* XPAINTER_RENDERHINT_ON */
@@ -353,9 +353,9 @@ typedef enum XPainterBrushStyle
 /** @brief 渐变色类型（对标 Qt 6.8 QGradient::Type）。 */
 typedef enum XPainterGradientType
 {
-    XPainterGradientType_Linear = 0,
-    XPainterGradientType_Radial = 1,
-    XPainterGradientType_Conical = 2
+    XPainterGradientType_Linear = 0,  /**< 线性渐变：起点与终点间颜色插值。 */
+    XPainterGradientType_Radial = 1,  /**< 径向渐变：圆心经焦点向外辐射插值。 */
+    XPainterGradientType_Conical = 2  /**< 锥形渐变：绕中心按角度扫掠插值。 */
 } XPainterGradientType;
 
 /** @brief 渐变色停止点（对标 QGradientStop）。 */
@@ -457,8 +457,8 @@ typedef enum XPainterDeviceKind
  */
 typedef enum XPainterRasterBackend
 {
-    XPainterRasterBackend_Raster = 0,
-    XPainterRasterBackend_Gpu = 1
+    XPainterRasterBackend_Raster = 0, /**< 软件光栅化后端；始终可用且为默认。 */
+    XPainterRasterBackend_Gpu = 1     /**< GPU 后端；仅在 XGPU_ON 开启、运行时请求且会话创建成功时使用，遇未实现原语回落 Raster。 */
 } XPainterRasterBackend;
 
 #if XPAINTER_LAYOUT_DIRECTION_ON

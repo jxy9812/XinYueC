@@ -152,6 +152,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             code = XModbusPdu_WriteSingleRegister;
         }
         else {
+            XClassDelete(req);
             return NULL;
         }
 
@@ -175,6 +176,7 @@ static XModbusRequest* buildWriteRequest(const XModbusDataUnit* unit) {
             code = XModbusPdu_WriteMultipleRegisters;
         }
         else {
+            XClassDelete(req);
             return NULL;
         }
 
@@ -224,6 +226,7 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
 
     // 只支持保持寄存器
     if (readUnit->m_type != XModbusHoldingRegisters || writeUnit->m_type != XModbusHoldingRegisters) {
+        XClassDelete(req);
         return NULL;
     }
 
@@ -231,6 +234,7 @@ static XModbusRequest* buildReadWriteRequest(const XModbusDataUnit* readUnit, co
     size_t writeCount = XModbusDataUnit_valueCount(writeUnit);
 
     if (readCount == 0 || readCount > 125 || writeCount == 0 || writeCount > 121) {
+        XClassDelete(req);
         return NULL;  // Modbus规范限制
     }
 
@@ -270,7 +274,7 @@ XModbusReply* XModbusClient_sendReadRequest(XModbusClient* client, const XModbus
         return NULL;
     }
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
-    //XClassDelete(request);
+    if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
     return reply;
 }
 
@@ -284,7 +288,7 @@ XModbusReply* XModbusClient_pollReadRequest(XModbusClient* client, const XModbus
         return NULL;
     }
     XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
-    //XClassDelete(request);
+    if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
     return reply;
 }
 
@@ -297,7 +301,7 @@ XModbusReply* XModbusClient_sendWriteRequest(XModbusClient* client, const XModbu
         return NULL;
     }
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
-    //XClassDelete(request);
+    if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
     return reply;
 }
 
@@ -311,7 +315,7 @@ XModbusReply* XModbusClient_pollWriteRequest(XModbusClient* client, const XModbu
         return NULL;
     }
     XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
-    //XClassDelete(request);
+    if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
     return reply;
 }
 
@@ -326,7 +330,7 @@ XModbusReply* XModbusClient_sendReadWriteRequest(XModbusClient* client, const XM
     }
 
     XModbusReply* reply = XModbusClient_sendRawRequest_ref_base(client, request, serverAddress);
-    //XClassDelete(request);
+    if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
     return reply;
 }
 
@@ -342,7 +346,7 @@ XModbusReply* XModbusClient_pollReadWriteRequest(XModbusClient* client, const XM
     }
 
     XModbusReply* reply = XModbusClient_pollRawRequest_ref(client, request, serverAddress, pollIntervalMs);
-    //XClassDelete(request);
+    if (!reply) XClassDelete(request);   // 失败时所有权退回调用方（成功路径由 reply 释放）
     return reply;
 }
 
@@ -414,12 +418,13 @@ XModbusReply* XModbusClient_pollRawRequest_ref(XModbusClient* client, XModbusReq
     XTimerId id = XObject_startTimer_ms(client, pollIntervalMs, XTimerType_CoarseTimer);
     if (id == XTIMER_INVALID_ID)
     {
+        reply->m_request = NULL; // 解除接管：失败时request交还调用者释放，避免与deleteLater双重释放
         XModbusReply_deleteLater(reply);
         return NULL;
     }
     if (!client->m_poolMap)
     {
-        client->m_poolMap = XHashMap_Create(XTimerId, XModbusReply*, size_t_compare);
+        client->m_poolMap = XHashMap_Create(XTimerId, XModbusReply*, Xsize_t_compare);
     }
     XHashMap_insert_base(client->m_poolMap, &id, &reply);
     return reply;

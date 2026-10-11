@@ -62,6 +62,7 @@ XVtable* XSqlQueryModel_class_init(void);
 void XSqlQueryModel_init(XSqlQueryModel* model);
 /**
  * @brief 创建查询模型。
+ * @param memory 内存类型。
  * @return 新模型，调用者必须使用 XClassDelete 释放；失败返回 NULL。
  */
 XSqlQueryModel* XSqlQueryModel_create_ex(XMemoryType memory);

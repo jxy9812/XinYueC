@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XGuiClient.c
  * @brief      XGuiClient 远程视图控件实现(画面合成 + 输入转发 + 断线重连)。
  * @details    契约见冻结头 XGuiClient.h, 设计依据仓库根 XGuiRemote.md §7:
@@ -28,7 +28,6 @@
  * @author     XinYueC 团队
  */
 #include "XGuiClient.h"
-#include <stdio.h>   /* fprintf: 基准追踪 stderr(XGUI_REMOTE_BENCH_TRACE)。 */
 #if XGUI_REMOTE_ON
 
 #include "XGuiRemoteAuth.h"
@@ -42,6 +41,9 @@
 #include "XImage.h"
 #include "XString.h"
 #include "XVarList.h"
+#include "XStringUtils.h" /* XStrlen: string.h 字符串函数禁用(外部依赖约束)。 */
+#include "XVector.h"      /* 键码按下集合容器(容器与数据结构规范)。 */
+#include "XPrintf.h"      /* 探针/诊断打印统一出口(外部依赖约束)。 */
 #include "XMemory.h"
 #include "XAbstractEventDispatcher.h"
 #include "XAbstractNetIoRing.h" /* [wake] 探针: 载体读完成时戳查询。 */
@@ -290,10 +292,8 @@ typedef struct XGuiClientPrivate {
                                        *   的本地 TOUCH_* 事件转发门)。 */
     uint16_t m_pressedButtons;        /**< 已转发 PRESS 未配对 RELEASE 的键
                                        *   集合(XGUI_REMOTE_BTN_* 掩码)。 */
-    uint32_t* m_pressedKeys;          /**< 已转发 PRESS 未配对 RELEASE 的键
-                                       *   码集合(XKey 码位)。 */
-    int      m_pressedKeyCount;
-    int      m_pressedKeyCap;
+    XVector  m_pressedKeys;           /**< 已转发 PRESS 未配对 RELEASE 的键
+                                       *   码集合(XKey 码位; 元素 uint32_t)。 */
     XGuiRemoteMsgInputPointer m_pendingMove; /**< 合并中的鼠标移动(resource 档)。 */
     bool     m_hasPendingMove;        /**< 有待发移动。 */
     uint64_t m_lastMoveSentMs;        /**< 最近一次移动实际发出(单调 ms)。 */
@@ -353,7 +353,7 @@ typedef struct XGuiClientPrivate {
     int64_t  m_viewRepMs;          /**< 上次视口检测时刻(XGC_VIEW_REPORT_MS 节流)。 */
 
     /* ---- 首帧完整度探针(XGUI_REMOTE_FIRSTFRAME_PROF=1 才启用; 探针纪律:
-     *      env 门控交付前可关, stderr 单行, 连接级状态 teardown 释放) ---- */
+     *      env 门控交付前可关, 单行输出, 连接级状态 teardown 释放) ---- */
     bool     m_ffOn;               /**< 探针开关(构造时 env 定版)。 */
     uint8_t* m_ffMap;              /**< tile 覆盖位图(拥有; teardown 释放)。 */
     uint32_t m_hintBaselineTiles;  /**< [perf9 任务4] META 时刻 tile 计数
@@ -675,7 +675,7 @@ static bool xgc_scaledCacheEnsure(XGuiClient* self, XGuiClientPrivate* d)
  * @details 三重断言(ARGB32/RGB16 两格式): ①随机损伤带序列增量重缩放 ==
  *          全量重算逐字节(增量记账不缺列/行); ②缓存全量重算 ==
  *          XPainter_drawImage_3 painter 全量路径逐字节(可见语义不漂移)。
- *          stderr 单行 PASS/FAIL(探针纪律: 交付前可关, 缺省不跑)。
+ *          单行输出 PASS/FAIL(探针纪律: 交付前可关, 缺省不跑)。
  * @note    XImage 为值语义共享 m_data: 代理私有块仅做结构体头拷贝借用
  *          bits, 清理只 deinit 原头对象, 代理侧不重复 deinit。
  */
@@ -1095,36 +1095,15 @@ static void xgc_flushOutbox(XGuiClient* self)
 
 static bool xgc_pressedKeysAdd(XGuiClientPrivate* d, uint32_t key)
 {
-    int i;
-    for (i = 0; i < d->m_pressedKeyCount; ++i) {
-        if (d->m_pressedKeys[i] == key) return true; /* 已在集合(幂等)。 */
-    }
-    if (d->m_pressedKeyCount >= d->m_pressedKeyCap) {
-        int cap = d->m_pressedKeyCap ? d->m_pressedKeyCap * 2 : 8;
-        uint32_t* p = (uint32_t*)XRealloc_System(d->m_pressedKeys,
-                                                 (size_t)cap * sizeof(uint32_t));
-        if (!p) return false;
-        d->m_pressedKeys = p;
-        d->m_pressedKeyCap = cap;
-    }
-    d->m_pressedKeys[d->m_pressedKeyCount++] = key;
-    return true;
+    /* 键码集合用 XVector 容器(容器规范: 禁手工裸数组+扩容);
+     * contains 内存比较对 uint32_t 元素与原线性扫描语义一致。 */
+    if (XVector_contains(&d->m_pressedKeys, &key)) return true; /* 已在集合(幂等)。 */
+    return XVector_push_back_1_base(&d->m_pressedKeys, &key);
 }
 
 static bool xgc_pressedKeysRemove(XGuiClientPrivate* d, uint32_t key)
 {
-    int i;
-    for (i = 0; i < d->m_pressedKeyCount; ++i) {
-        if (d->m_pressedKeys[i] == key) {
-            int j;
-            for (j = i + 1; j < d->m_pressedKeyCount; ++j) {
-                d->m_pressedKeys[j - 1] = d->m_pressedKeys[j];
-            }
-            --d->m_pressedKeyCount;
-            return true;
-        }
-    }
-    return false;
+    return XVector_removeOne(&d->m_pressedKeys, &key);
 }
 
 /* ==================== 会话建立与拆除 ==================== */
@@ -1147,7 +1126,7 @@ static void xgc_sendHello(XGuiClient* self)
         hello.capabilities &= ~(uint32_t)XGUI_REMOTE_CAP_UDP;
     hello.authMethod = (uint8_t)(d->m_password[0] != '\0'
             ? XGUI_REMOTE_AUTH_SHA256_CHALLENGE : XGUI_REMOTE_AUTH_NONE);
-    n = strlen(name);
+    n = XStrlen(name);
     if (n > XGUI_REMOTE_MAX_NAME_BYTES) n = XGUI_REMOTE_MAX_NAME_BYTES;
     hello.nameBytes = (uint16_t)n;
     memcpy(hello.name, name, n);
@@ -1223,7 +1202,7 @@ static void xgc_teardown(XGuiClient* self, XGuiRemoteByeReason reason,
         return; /* 已拆除, 幂等。 */
     }
 #if defined(XGC_TILE_DEBUG) && XGC_TILE_DEBUG
-    fprintf(stderr, "XGC_TEARDOWN reason=%d err=%d sendBye=%d state=%d\n",
+    XPrintf( "XGC_TEARDOWN reason=%d err=%d sendBye=%d state=%d\n",
             (int)reason, (int)errCode, (int)sendBye, (int)d->m_state);
 #endif
 
@@ -1231,13 +1210,14 @@ static void xgc_teardown(XGuiClient* self, XGuiRemoteByeReason reason,
      * 防服务端 grabMouse/按键滞留; 设备已死则直接清集合。 */
     if (dev != NULL && sendBye && d->m_sessionReady) {
         int i;
-        for (i = 0; i < d->m_pressedKeyCount; ++i) {
+        int nKeys = (int)XVector_size_base((const XContainer*)&d->m_pressedKeys);
+        for (i = 0; i < nKeys; ++i) {
             XGuiRemoteMsgInputKey key;
             uint8_t kbuf[24];
             size_t klen;
             XMemset(&key, 0, sizeof(key));
             key.action = XGUI_REMOTE_KEY_RELEASE;
-            key.key = d->m_pressedKeys[i];
+            key.key = XVector_At_Base(&d->m_pressedKeys, i, uint32_t);
             key.timestampMs = (uint32_t)xgc_nowMs();
             /* 冻结契约: enc* 显式序列化后上网(修复: 结构体直发)。 */
             klen = XGuiRemoteProto_encInputKey(kbuf, sizeof(kbuf), &key);
@@ -1278,7 +1258,7 @@ static void xgc_teardown(XGuiClient* self, XGuiRemoteByeReason reason,
         xgc_flushOutbox(self); /* BYE/RELEASE 余量尽力而出(一圈内)。 */
     }
     d->m_pressedButtons = 0;
-    d->m_pressedKeyCount = 0;
+    XVector_clear_base((XContainer*)&d->m_pressedKeys); /* 清键码集合(复用容量)。 */
     d->m_hasPendingMove = false;
     d->m_pingAwait = false;
     d->m_challengeValid = false;
@@ -1477,7 +1457,7 @@ static void xgc_sessionDeviceReady(XGuiClient* self)
 /* ==================== FB_META / FB_UPDATE(画面合成, §7.2) ==================== */
 
 /* 基准追踪(XGUI_REMOTE_BENCH_TRACE=1 启用; 2026-10-02 延迟基准诊断,
- * stderr 单行, 未启用零成本)。 */
+ * 单行输出, 未启用零成本)。 */
 /* [2026-10-03 互联测试指挥官] tile 逐枚踪(XGC_TILE_DEBUG=1 编译期启用):
  * 真机镜像碎片/黑洞定位用, 生产零成本。 */
 #ifndef XGC_TILE_DEBUG
@@ -1585,7 +1565,7 @@ static void xgc_sendFbRequest(XGuiClient* self, uint8_t mode,
     if (rlen > 0)
         xgc_sendFrame(self, XGUI_REMOTE_MSG_FB_REQUEST, rbuf, rlen);
     if (d->m_ffOn)
-        fprintf(stderr, "XGC_FF fbreq t=%lld mode=%u vp=%d,%d+%dx%d\n",
+        XPrintf( "XGC_FF fbreq t=%lld mode=%u vp=%d,%d+%dx%d\n",
                 (long long)xgc_nowMs(), (unsigned)mode, vx, vy, vw, vh);
 }
 
@@ -1625,7 +1605,7 @@ static void xgc_ffStart(XGuiClient* self, int vx, int vy, int vw, int vh)
         if (gx1 >= gx0 && gy1 >= gy0)
             d->m_ffVpTotal = (gx1 - gx0 + 1) * (gy1 - gy0 + 1);
     }
-    fprintf(stderr,
+    XPrintf(
             "XGC_FF start t=%lld grid=%dx%d total=%d vp=%d,%d+%dx%d "
             "vpTotal=%d\n",
             (long long)d->m_ffT0Ms, gw, gh, d->m_ffTotal,
@@ -1662,7 +1642,7 @@ static void xgc_ffMarkTile(XGuiClient* self, int tx, int ty, int tw, int th)
     }
     if (!d->m_ffFullPrinted && d->m_ffGot >= d->m_ffTotal) {
         d->m_ffFullPrinted = true;
-        fprintf(stderr, "XGC_FF full t=%lld ms=%lld tiles=%d/%d\n",
+        XPrintf( "XGC_FF full t=%lld ms=%lld tiles=%d/%d\n",
                 (long long)xgc_nowMs(),
                 (long long)(xgc_nowMs() - d->m_ffT0Ms),
                 d->m_ffGot, d->m_ffTotal);
@@ -1670,7 +1650,7 @@ static void xgc_ffMarkTile(XGuiClient* self, int tx, int ty, int tw, int th)
     if (!d->m_ffVpPrinted && d->m_ffVpTotal > 0 &&
         d->m_ffVpGot >= d->m_ffVpTotal) {
         d->m_ffVpPrinted = true;
-        fprintf(stderr, "XGC_FF vpfull t=%lld ms=%lld tiles=%d/%d\n",
+        XPrintf( "XGC_FF vpfull t=%lld ms=%lld tiles=%d/%d\n",
                 (long long)xgc_nowMs(),
                 (long long)(xgc_nowMs() - d->m_ffT0Ms),
                 d->m_ffVpGot, d->m_ffVpTotal);
@@ -1681,7 +1661,7 @@ static void xgc_ffMarkTile(XGuiClient* self, int tx, int ty, int tw, int th)
 static void xgc_ffReset(XGuiClientPrivate* d, const char* why)
 {
     if (d->m_ffOn && d->m_ffMap && !d->m_ffFullPrinted)
-        fprintf(stderr, "XGC_FF partial why=%s got=%d/%d ms=%lld\n",
+        XPrintf( "XGC_FF partial why=%s got=%d/%d ms=%lld\n",
                 why, d->m_ffGot, d->m_ffTotal,
                 (long long)(xgc_nowMs() - d->m_ffT0Ms));
     if (d->m_ffMap) {
@@ -1725,7 +1705,7 @@ static void xgc_handleFbMeta(XGuiClient* self, const XGuiRemoteMsgFbMeta* meta)
      * FB_META 宣告档位 = 服务端协商生效的端到端事实, 2026-10-03)。 */
 #if defined(XGC_PROFILE_DEBUG) && XGC_PROFILE_DEBUG
     if (meta->profileId != d->m_profileId) {
-        fprintf(stderr, "XGuiClient: fb-meta profile-id=%u\n",
+        XPrintf( "XGuiClient: fb-meta profile-id=%u\n",
                 (unsigned)meta->profileId);
     }
 #endif
@@ -1953,7 +1933,7 @@ static void xgc_handleFbUpdate(XGuiClient* self, const uint8_t* payload,
         xgc_decodeTile(self, &tile, upd.format);
 #if defined(XGC_TILE_DEBUG) && XGC_TILE_DEBUG
         if (d->m_stats.tileCount < 4000u)
-            fprintf(stderr, "XGC_TILE #%u t=(%u,%u %ux%u) fmt=%u len=%u\n",
+            XPrintf( "XGC_TILE #%u t=(%u,%u %ux%u) fmt=%u len=%u\n",
                     (unsigned)d->m_stats.tileCount,
                     (unsigned)tile.x, (unsigned)tile.y,
                     (unsigned)tile.w, (unsigned)tile.h,
@@ -2007,7 +1987,7 @@ static void xgc_handleFbUpdate(XGuiClient* self, const uint8_t* payload,
         }
     }
     if (xgc_benchTraceOn())
-        fprintf(stderr, "XGC_TRACE fbup t=%llu tiles=%u\n",
+        XPrintf( "XGC_TRACE fbup t=%llu tiles=%u\n",
                 (unsigned long long)(uint64_t)xgc_nowMs(),
                 (unsigned)upd.tileCount);
 }
@@ -2228,7 +2208,7 @@ static void xgc_dispatchFrame(XGuiClient* self, XGuiRemoteMsgType type,
              * OFFER/重绑竞态, 2026-10-04 稳态实测根修)。 */
             d->m_udpRetryMs = xgc_nowMs() + 5000;
             if (xgc_benchTraceOn())
-                fprintf(stderr, "XGuiClient: udp bind sent server=%s:%u "
+                XPrintf( "XGuiClient: udp bind sent server=%s:%u "
                         "local=%u\n", d->m_host, (unsigned)offer.udpPort,
                         (unsigned)bind.clientUdpPort);
         }
@@ -2240,7 +2220,7 @@ static void xgc_dispatchFrame(XGuiClient* self, XGuiRemoteMsgType type,
         if (!XGuiRemoteProto_decUdpResult(payload, len, &result)) return;
         if (!d->m_udp) return;
         if (xgc_benchTraceOn())
-            fprintf(stderr, "XGuiClient: udp result active=%u\n",
+            XPrintf( "XGuiClient: udp result active=%u\n",
                     (unsigned)result.active);
         if (result.active == 1) {
             XGuiRemoteUdpChannel_setActive(d->m_udp, true);
@@ -2302,7 +2282,7 @@ static void xgc_udpRecv(void* user, uint8_t channel, uint8_t msgType,
     }
 }
 
-/** @brief 通道状态迁移: 镜像 + 诊断行(stderr, 联调 grep 锚)。 */
+ /** @brief 通道状态迁移: 镜像 + 诊断行(联调 grep 锚)。 */
 static void xgc_udpStateChanged(void* user, int state)
 {
     XGuiClient* self = (XGuiClient*)user;
@@ -2312,7 +2292,7 @@ static void xgc_udpStateChanged(void* user, int state)
     if (d->m_udpState == state) return;
     d->m_udpState = state;
     if (xgc_benchTraceOn())
-        fprintf(stderr, "XGuiClient: udp state=%d\n", state);
+        XPrintf( "XGuiClient: udp state=%d\n", state);
 }
 
 /** @brief 通道 readyRead 直连槽: 数据报到达即排空(XNetIoRing 事件驱动)。 */
@@ -2384,7 +2364,7 @@ static void xgc_pumpRead(XGuiClient* self)
             while (r > 0) {
                 if (xgc_benchTraceOn() &&
                     d->m_reader.type == XGUI_REMOTE_MSG_FB_UPDATE)
-                    fprintf(stderr, "XGC_TRACE recv t=%llu bytes=%zu\n",
+                    XPrintf( "XGC_TRACE recv t=%llu bytes=%zu\n",
                             (unsigned long long)(uint64_t)xgc_nowMs(),
                             d->m_reader.payloadLen + 5u);
                 xgc_dispatchFrame(self, d->m_reader.type, d->m_reader.payload,
@@ -2442,7 +2422,7 @@ static bool xgc_pollPump(void* userData)
         int64_t pumpAvail = d->m_dev ? XIODevice_bytesAvailable_base(d->m_dev)
                                      : 0;
         if (pumpAvail > 0)
-            fprintf(stderr, "XGC_TRACE pump t=%llu avail=%lld\n",
+            XPrintf( "XGC_TRACE pump t=%llu avail=%lld\n",
                     (unsigned long long)(uint64_t)xgc_nowMs(),
                     (long long)pumpAvail);
     }
@@ -2473,7 +2453,7 @@ static bool xgc_pollPump(void* userData)
         if ((vx != d->m_viewRepX || vy != d->m_viewRepY ||
              vw != d->m_viewRepW || vh != d->m_viewRepH)) {
             if (d->m_ffOn)
-                fprintf(stderr,
+                XPrintf(
                         "XGC_FF vppoll t=%lld vp=%d,%d+%dx%d\n",
                         (long long)now, vx, vy, vw, vh);
             if (xgc_fbReqAllowed(d)) {
@@ -2542,7 +2522,7 @@ static bool xgc_pollPump(void* userData)
                                           mbuf, mlen);
                     }
                     if (xgc_benchTraceOn())
-                        fprintf(stderr, "XGuiClient: udp fallback "
+                        XPrintf( "XGuiClient: udp fallback "
                                 "(silence>3000ms)\n");
                 } else {
                     /* 单向丢帧恢复: 服务端帧活性(PONG msAgo<2s)而本端
@@ -2568,7 +2548,7 @@ static bool xgc_pollPump(void* userData)
                         }
                         d->m_udpFullReqMs = now;
                         if (xgc_benchTraceOn())
-                            fprintf(stderr, "XGuiClient: udp frame-loss "
+                            XPrintf( "XGuiClient: udp frame-loss "
                                     "recovery FB_REQUEST\n");
                     }
                 }
@@ -3123,7 +3103,7 @@ static void VX_xgc_touchEvent(XWidget* self, XEvent* event)
     int count;
     int i;
     XEventType type = XEvent_type(event);
-    if (!c || !c->m_d || event ||
+    if (!c || !c->m_d || !event ||
         (type != XEVENT_TYPE_TOUCH_BEGIN && type != XEVENT_TYPE_TOUCH_UPDATE &&
          type != XEVENT_TYPE_TOUCH_END && type != XEVENT_TYPE_TOUCH_CANCEL)) {
         return;
@@ -3257,14 +3237,14 @@ static void VX_xgc_inputMethodEvent(XWidget* self, XEvent* event)
     XMemset(&msg, 0, sizeof(msg));
     if (ime->m_preeditString) {
         utf8 = XString_toUtf8(ime->m_preeditString);
-        n = utf8 ? strlen(utf8) : 0;
+        n = utf8 ? XStrlen(utf8) : 0;
         if (n > XGUI_REMOTE_MAX_TEXT_BYTES) n = XGUI_REMOTE_MAX_TEXT_BYTES;
         msg.preeditBytes = (uint16_t)n;
         if (n > 0) memcpy(msg.preedit, utf8, n);
     }
     if (ime->m_commitString) {
         utf8 = XString_toUtf8(ime->m_commitString);
-        n = utf8 ? strlen(utf8) : 0;
+        n = utf8 ? XStrlen(utf8) : 0;
         if (n > XGUI_REMOTE_MAX_TEXT_BYTES) n = XGUI_REMOTE_MAX_TEXT_BYTES;
         msg.commitBytes = (uint16_t)n;
         if (n > 0) memcpy(msg.commit, utf8, n);
@@ -3314,10 +3294,7 @@ static void VX_xgc_deinit(XGuiClient* self)
     }
     XGuiRemoteFrameReader_deinit(&d->m_reader);
     XRegion_deinit(&d->m_damage);
-    if (d->m_pressedKeys) {
-        XFree_System(d->m_pressedKeys);
-        d->m_pressedKeys = NULL;
-    }
+    XClassDeinit(&d->m_pressedKeys); /* 键码集合容器收尾(资源由容器释放)。 */
     if (d->m_outbox) {
         XFree_System(d->m_outbox);
         d->m_outbox = NULL;
@@ -3373,6 +3350,7 @@ void XGuiClient_init(XGuiClient* self, XWidget* parent, XWidgetFlags flags)
     XImage_init(&d->m_fb);            /* 空 backbuffer, FB_META 重建。 */
     XImage_init(&d->m_scaled);        /* FIT 缩放缓存(perf9 路5)。 */
     XRegion_init(&d->m_damage);
+    XVector_init(&d->m_pressedKeys, sizeof(uint32_t), true); /* 键码按下集合(§7.4)。 */
     XGuiRemoteFrameReader_init(&d->m_reader);
     XGuiRemoteProfile_initPerformance(&d->m_profile);
     XGuiRemoteProfile_sanitize(&d->m_profile);
@@ -3391,9 +3369,9 @@ void XGuiClient_init(XGuiClient* self, XWidget* parent, XWidgetFlags flags)
     }
     d->m_viewScale = 1.0f;
     /* [perf9 路5] FIT 增量缩放像素等价离屏断言(env 门控, 缺省不跑;
-     * 探针纪律: stderr 单行 PASS/FAIL, 不依赖网络/屏幕)。 */
+     * 探针纪律: 单行输出 PASS/FAIL, 不依赖网络/屏幕)。 */
     if (XSystem_environment("XGUI_REMOTE_FIT_SCALE_SELFTEST") != NULL) {
-        fprintf(stderr, "XGC_FIT_SCALE_SELFTEST %s\n",
+        XPrintf( "XGC_FIT_SCALE_SELFTEST %s\n",
                 xgc_fitScaleSelfTest() ? "PASS" : "FAIL");
     }
 
@@ -3479,7 +3457,7 @@ void XGuiClient_connectToHost(XGuiClient* self, const char* hostUtf8,
     size_t n;
     if (!self || !self->m_d || !hostUtf8 || hostUtf8[0] == '\0') return;
     d = (XGuiClientPrivate*)self->m_d;
-    n = strlen(hostUtf8);
+    n = XStrlen(hostUtf8);
     if (n >= XGC_HOST_CAP) n = XGC_HOST_CAP - 1;
     memcpy(d->m_host, hostUtf8, n);
     d->m_host[n] = '\0';
@@ -3500,12 +3478,12 @@ void XGuiClient_connectToHostEncrypted(XGuiClient* self, const char* hostUtf8,
     size_t n;
     if (!self || !self->m_d || !hostUtf8 || hostUtf8[0] == '\0') return;
     d = (XGuiClientPrivate*)self->m_d;
-    n = strlen(hostUtf8);
+    n = XStrlen(hostUtf8);
     if (n >= XGC_HOST_CAP) n = XGC_HOST_CAP - 1;
     memcpy(d->m_host, hostUtf8, n);
     d->m_host[n] = '\0';
     if (peerNameUtf8 && peerNameUtf8[0] != '\0') {
-        n = strlen(peerNameUtf8);
+        n = XStrlen(peerNameUtf8);
         if (n >= XGC_HOST_CAP) n = XGC_HOST_CAP - 1;
         memcpy(d->m_peerName, peerNameUtf8, n);
         d->m_peerName[n] = '\0';
@@ -3748,12 +3726,12 @@ void XGuiClient_setUdpEnabled(XGuiClient* self, bool enabled)
                 xgc_sendFrame(self, XGUI_REMOTE_MSG_UDP_MODE, mbuf, mlen);
         }
         if (xgc_benchTraceOn())
-            fprintf(stderr, "XGuiClient: udp disabled by user\n");
+            XPrintf( "XGuiClient: udp disabled by user\n");
     } else {
         /* 开: 会话中对端支持时请求建链/重建(UDP_MODE(1) → OFFER)。 */
         d->m_udpRetryMs = 0; /* 下一泵圈即试(冷却归零)。 */
         if (xgc_benchTraceOn())
-            fprintf(stderr, "XGuiClient: udp enabled by user\n");
+            XPrintf( "XGuiClient: udp enabled by user\n");
     }
 }
 

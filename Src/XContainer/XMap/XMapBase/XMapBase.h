@@ -1,9 +1,25 @@
-﻿#include"XContainer.h"
-#if !defined(XMAPBASE_H)&& XMap_ON
+﻿/**
+* @file       XMapBase.h
+* @brief      XMapBase 映射容器基类公开 API。
+* @details    对齐 Qt 6.8 QMap<K,V>/QHash<K,V> 的公共映射语义；作为 XMap/XHashMap
+*             的共同基类提供键值对的插入、删除、查找与遍历等操作。实现只依赖
+*             XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
+*/
+#ifndef XMAPBASE_H
 #define XMAPBASE_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 条件编译开关（第③段）：XMap_ON 由 CXinYueConfig.h 统一定义，
+ * 此处仅兜底默认值，保证开关先于包含依赖生效。 */
+#ifndef XMap_ON
+#define XMap_ON 1
+#endif
+
+#if XMap_ON
+
+#include"XContainer.h"                ///< 全局配置与容器基类（经其引入 CXinYueConfig.h）
 #include"XCompare.h"
 #include"XPair.h"
 #include"XMapBase_iterator.h"
@@ -34,9 +50,9 @@ XCLASS_DEFINE_END(XMapBase)
 */
 typedef struct XMapBase
 {
-	XContainer m_class;						// 继承自容器基类，存储值类型信息及基础容器数据
+	XContainer m_class;						///< 第一个成员，由 XClass 统一管理，禁止手工修改；继承自容器基类，存储值类型信息及基础容器数据
 	void* m_pairBuffer;						//键值的缓冲区
-	size_t m_pairTypeSize;
+	size_t m_pairTypeSize;                   // 键值对节点（XPair）的总大小（字节数），用于分配键值缓冲区
 	XCDataCopyMethod m_keyCopyMethod;        // 键的拷贝方法
 	XCDataMoveMethod m_keyMoveMethod;        // 键的移动方法
 	XCDataDeinitMethod m_keyDeinitMethod;    // 键的释放方法
@@ -82,7 +98,7 @@ bool XMapBase_insert_base(XMapBase* this_map, const void* key, const void* pvVal
 * @param Value 待插入的值
 * @note 内部通过创建临时键值变量，调用XMapBase_insert_base实现
 */
-#define XMapBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMap_insert_base(this_map,&k,&v);}
+#define XMapBase_Insert_Base(this_map,keyType,key,valType,Value) {keyType k=key;valType v=Value; XMapBase_insert_base(this_map,&k,&v);}
 
 /**
 * @brief 插入键值对（移动语义，键和值均移动）
@@ -210,23 +226,14 @@ XVector* XMapBase_values_base(const XMapBase* this_map);
 
 // ========================= 继承与工具方法 =========================
 
-
-
-/**
-* @brief 释放容器资源（继承自XContainer）
-* @note 宏定义，等价于XClassDeinit
-*/
-
-/**
-* @brief 删除容器实例（继承自XContainer）
-* @note 宏定义，等价于XClassDelete
-*/
+/* 反初始化/删除已统一：直接使用 XClassDeinit/XClassDelete，
+ * 派生容器不再提供 *_deinit_base/*_delete_base 别名（见风格指南迁移说明）。 */
 
 /**
 * @brief 清空容器元素（继承自XContainer）
 * @note 宏定义，等价于XContainer_clear_base
 */
-#define XMapBase_clear_base				XContainer_clear_base	
+#define XMapBase_clear_base				XContainer_clear_base
 
 /**
 * @brief 判断容器是否为空（继承自XContainer）
@@ -369,7 +376,9 @@ size_t XMapBase_removeIf_base(XMapBase* this_map, XMapBase_predicate pred, void*
  */
 #define XMapBase_erase_if_base        XMapBase_removeIf_base
 
+#endif /* XMap_ON */
+
 #ifdef __cplusplus
 }
 #endif
-#endif// !XMap_H
+#endif /* XMAPBASE_H */

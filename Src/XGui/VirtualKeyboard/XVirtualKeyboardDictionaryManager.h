@@ -23,6 +23,7 @@ extern "C" {
 #include "XGuiConfig.h"
 #include "XObject.h"
 #include "XMemory.h"
+#include "XString.h"
 
 #if XVIRTUALKEYBOARD_ON
 
@@ -44,7 +45,10 @@ typedef struct XVirtualKeyboardDictionaryManager
     void* m_data;      /**< 私有数据块，由对象拥有；仅供实现使用。 */
 } XVirtualKeyboardDictionaryManager;
 
-/** @brief 初始化类虚函数表并返回共享表指针。 */
+/**
+ * @brief      初始化类虚函数表并返回共享表指针。
+ * @return     类共享虚函数表指针（进程期常驻，借用）；不失败。
+ */
 XVtable* XVirtualKeyboardDictionaryManager_class_init(void);
 
 /**
@@ -57,30 +61,64 @@ XVirtualKeyboardDictionaryManager_instance(void);
 /**
  * @brief      创建命名词典（对标 createDictionary；同名已存在返回既
  *             有实例；管理器拥有）。
- * @param      name 词典名（UTF-8 借用）；NULL/空串拒绝。
+ * @param      self 管理器对象；可为 NULL，NULL 时不执行操作。
+ * @param      name 词典名（借用，函数不取得所有权）；NULL/空串拒绝。
  * @return     词典借用指针（管理器拥有，进程期有效）；失败返回 NULL。
  */
 XVirtualKeyboardDictionary*
 XVirtualKeyboardDictionaryManager_createDictionary(
+        XVirtualKeyboardDictionaryManager* self, const XString* name);
+/**
+ * @brief      创建命名词典（UTF-8 转发版本；对标 createDictionary）。
+ * @details    仅创建临时 XString 并转发到 createDictionary。
+ * @param      self 管理器对象；可为 NULL，NULL 时不执行操作。
+ * @param      name 词典名，按 UTF-8 解码（借用，只在调用期间有效）；
+ *             NULL/空串拒绝。
+ * @return     词典借用指针（管理器拥有，进程期有效）；失败返回 NULL。
+ */
+XVirtualKeyboardDictionary*
+XVirtualKeyboardDictionaryManager_createDictionary_2(
         XVirtualKeyboardDictionaryManager* self, const char* name);
 
 /**
  * @brief      按名取词典（对标 dictionary；未创建返回 NULL）。
  * @param      self 管理器对象借用指针；可为 NULL。
- * @param      name 词典名（UTF-8 借用）；NULL/空串视为不存在。
+ * @param      name 词典名（借用，函数不取得所有权）；NULL/空串视为不
+ *             存在。
  * @return     词典借用指针（管理器拥有，不得释放）；未创建或入参非
  *             法返回 NULL。
  */
 XVirtualKeyboardDictionary* XVirtualKeyboardDictionaryManager_dictionary(
+        const XVirtualKeyboardDictionaryManager* self, const XString* name);
+/**
+ * @brief      按名取词典（UTF-8 转发版本；对标 dictionary）。
+ * @details    仅创建临时 XString 并转发到 dictionary。
+ * @param      self 管理器对象借用指针；可为 NULL。
+ * @param      name 词典名，按 UTF-8 解码（借用，只在调用期间有效）；
+ *             NULL/空串视为不存在。
+ * @return     词典借用指针（管理器拥有，不得释放）；未创建或入参非
+ *             法返回 NULL。
+ */
+XVirtualKeyboardDictionary* XVirtualKeyboardDictionaryManager_dictionary_2(
         const XVirtualKeyboardDictionaryManager* self, const char* name);
 
 /**
  * @brief      移除词典（Qt deleteDictionary 等价扩展；管理器拥有期销毁）。
  * @param      self 管理器对象；可为 NULL，NULL 时不执行操作。
- * @param      name 待移除词典名（UTF-8 借用）。
+ * @param      name 待移除词典名（借用，函数不取得所有权）。
  * @return     已移除返回 true；不存在或入参非法返回 false。
  */
 bool XVirtualKeyboardDictionaryManager_removeDictionary(
+        XVirtualKeyboardDictionaryManager* self, const XString* name);
+/**
+ * @brief      移除词典（UTF-8 转发版本；对标 deleteDictionary）。
+ * @details    仅创建临时 XString 并转发到 removeDictionary。
+ * @param      self 管理器对象；可为 NULL，NULL 时不执行操作。
+ * @param      name 待移除词典名，按 UTF-8 解码（借用，只在调用期间有
+ *             效）。
+ * @return     已移除返回 true；不存在或入参非法返回 false。
+ */
+bool XVirtualKeyboardDictionaryManager_removeDictionary_2(
         XVirtualKeyboardDictionaryManager* self, const char* name);
 
 /**

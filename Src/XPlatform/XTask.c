@@ -11,6 +11,7 @@
 #include "XTask.h"
 #include "XThread.h"
 #include "XString.h"
+#include "XStringUtils.h" /* strncpy 直出改经 XStrncpy（外部依赖约束） */
 #include "XAtomic.h"
 #include <string.h>
 
@@ -20,7 +21,7 @@ typedef struct XTaskSnapshot {
 } XTaskSnapshot;
 
 static XThread* g_threads[XTASK_REGISTRY_CAPACITY];
-static XAtomic_bool g_registryLock = { false };
+static XAtomic_Bool g_registryLock = { false };
 
 static void xtask_lock(void)
 {
@@ -96,7 +97,7 @@ static void xtask_copy_snapshot(XTaskSnapshot* snapshot, XThread* thread, size_t
     objectName = XObject_objectName((const XObject*)thread);
     name = objectName ? XString_toUtf8(objectName) : NULL;
     if (!name || !name[0]) name = "XThread";
-    strncpy(snapshot->name, name, sizeof(snapshot->name) - 1u);
+    XStrncpy(snapshot->name, name, sizeof(snapshot->name) - 1u);
     snapshot->name[sizeof(snapshot->name) - 1u] = '\0';
     snapshot->info.name = snapshot->name;
 }

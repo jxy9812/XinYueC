@@ -77,7 +77,7 @@ typedef enum XHttpReply_NetworkError {
  *          XHttpReply 的反初始化函数释放，调用者不能直接释放内部指针。
  */
 typedef struct XHttpReply {
-    XObject m_class;                         /**< 第一个成员，继承 XObject。 */
+    XObject m_class;                         /**< 第一个成员，由 XObject 管理，禁止手工修改。 */
     XHttpRequest* m_request;                 /**< 请求副本；由对象拥有。 */
     XHttpHeaders* m_headers;                /**< 响应头；由对象拥有。 */
     XHttpHeaders* m_trailers;               /**< chunked 尾部头；由对象拥有。 */
@@ -92,19 +92,21 @@ typedef struct XHttpReply {
     int m_statusCode;                       /**< HTTP 状态码；未解析时为 0。 */
     XHttpReply_State m_state;               /**< 当前生命周期状态。 */
     XHttpReply_NetworkError m_error;        /**< 当前错误码。 */
-    bool m_headerParsed;                    /**< 是否已经解析响应头。 */
-    bool m_hasContentLength;                /**< 是否存在合法 Content-Length。 */
-    bool m_chunked;                         /**< 是否使用 Transfer-Encoding: chunked。 */
-    bool m_chunkNeedCrlf;                   /**< 当前 chunk 数据后是否等待 CRLF。 */
-    bool m_chunkTrailer;                    /**< 是否正在读取 chunk 尾部头。 */
-    bool m_noBody;                          /**< 当前响应按协议禁止实体。 */
-    bool m_closeDelimited;                  /**< 响应体以输入结束作为边界。 */
-    bool m_inputEnded;                      /**< 网络层已通知输入结束。 */
-    bool m_errorEmitted;                    /**< 是否已经发射错误信号。 */
-    bool m_deferFinished;                   /**< 自动重定向时暂缓 finished 信号。 */
-    bool m_deferAuthentication;             /**< 管理器是否需要先处理 401/407 认证挑战。 */
-    bool m_authenticationPending;           /**< 已收到待管理器处理的 401/407 响应。 */
-    bool m_finishedPending;                 /**< 已解析完成但 finished 尚未发射。 */
+    /* 13 个互斥性无关的 1-bit 状态标志：合并为 uint8_t 容器位域（每标志 1 bit），
+     * 全部赋值点均为 true/false 或布尔表达式（XHttpReply.c），无取址、无 memcpy/序列化。 */
+    uint8_t m_headerParsed : 1;             /**< 是否已经解析响应头。 */
+    uint8_t m_hasContentLength : 1;         /**< 是否存在合法 Content-Length。 */
+    uint8_t m_chunked : 1;                  /**< 是否使用 Transfer-Encoding: chunked。 */
+    uint8_t m_chunkNeedCrlf : 1;            /**< 当前 chunk 数据后是否等待 CRLF。 */
+    uint8_t m_chunkTrailer : 1;             /**< 是否正在读取 chunk 尾部头。 */
+    uint8_t m_noBody : 1;                   /**< 当前响应按协议禁止实体。 */
+    uint8_t m_closeDelimited : 1;           /**< 响应体以输入结束作为边界。 */
+    uint8_t m_inputEnded : 1;               /**< 网络层已通知输入结束。 */
+    uint8_t m_errorEmitted : 1;             /**< 是否已经发射错误信号。 */
+    uint8_t m_deferFinished : 1;            /**< 自动重定向时暂缓 finished 信号。 */
+    uint8_t m_deferAuthentication : 1;      /**< 管理器是否需要先处理 401/407 认证挑战。 */
+    uint8_t m_authenticationPending : 1;    /**< 已收到待管理器处理的 401/407 响应。 */
+    uint8_t m_finishedPending : 1;          /**< 已解析完成但 finished 尚未发射。 */
 } XHttpReply;
 
 /**

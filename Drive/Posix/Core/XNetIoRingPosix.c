@@ -1,30 +1,30 @@
-﻿/**
+/**
  * @file XNetIoRingPosix.c
- * @brief XAbstractNetIoRing Linux 后端实现（io_uring/epoll 双引擎）
+ * @brief XAbstractNetIoRing Linux ????(io_uring/epoll ???)
  *
- * 继承 XAbstractNetIoRing，Linux 5.1+ 内核运行 io_uring 完成型异步
- * I/O；init 时 io_uring_setup 失败（-ENOSYS，Linux 4.x 及以下内核）
- * 自动回退 epoll 就绪模型（同一结构体、同一虚函数表、外部 API 签名
- * 完全一致，外部调用点零修改）。
+ * ?? XAbstractNetIoRing,Linux 5.1+ ???? io_uring ?????
+ * I/O;init ? io_uring_setup ??(-ENOSYS,Linux 4.x ?????)
+ * ???? epoll ????(??????????????? API ??
+ * ????,????????)?
  *
- * 双引擎编译期开关（XNetIoRingPosix.h 探测）：
- *   XNET_BUILD_IO_URING  工具链内核头含 linux/io_uring.h 且未强制 epoll
- *   XNET_BUILD_EPOLL     恒为 1（运行时回退引擎，保证低版本内核可用）
+ * ????????(XNetIoRingPosix.h ??):
+ *   XNET_BUILD_IO_URING  ??????? linux/io_uring.h ???? epoll
+ *   XNET_BUILD_EPOLL     ?? 1(???????,?????????)
  *
- * io_uring 路径核心流程：
- *   pollPlatform:  io_uring CQ 非阻塞轮询 -> processOneCompletion 推 CQ
- *   waitForEvents: io_uring_enter(timeout) 阻塞；wakeUp 经 eventfd
+ * io_uring ??????:
+ *   pollPlatform:  io_uring CQ ????? -> processOneCompletion ? CQ
+ *   waitForEvents: io_uring_enter(timeout) ??;wakeUp ? eventfd
  *
- * epoll 路径语义映射（就绪模型 -> 完成语义）：
- *   网络 RECV/RECVMSG/SEND/ACCEPT/CONNECT：提交时注册 epoll 兴趣挂起，
- *     就绪即执行非阻塞 IO 并推 CQ 条目（对上层等价完成通知）；
- *   文件 READ/WRITE/FSYNC：提交时同步执行（普通文件 epoll 不适用），
- *     完成入队供 waitCqe 立即取回；
- *   唤醒：eventfd 常驻 epoll 集合；定时器：timerfd 以 READ 提交。
+ * epoll ??????(???? -> ????):
+ *   ?? RECV/RECVMSG/SEND/ACCEPT/CONNECT:????? epoll ????,
+ *     ???????? IO ?? CQ ??(?????????);
+ *   ?? READ/WRITE/FSYNC:???????(???? epoll ???),
+ *     ????? waitCqe ????;
+ *   ??:eventfd ?? epoll ??;???:timerfd ? READ ???
  *
- * 外部 API（getSqe/submitSqe/waitCqe/ringFd）双模式分发，调用点
- * （XDeviceFile_posix_api.c / XDeviceNetwork_posix.c 直接构造 SQE）
- * 零修改；无 io_uring 头的老工具链由头文件伪 SQE 兼容层保证编译。
+ * ?? API(getSqe/submitSqe/waitCqe/ringFd)?????,???
+ * (XDeviceFile_posix_api.c / XDeviceNetwork_posix.c ???? SQE)
+ * ???;? io_uring ??????????? SQE ????????
  */
 
 #include "CXinYueConfig.h"
@@ -58,7 +58,7 @@
 #include <sys/syscall.h>
 #include <linux/io_uring.h>
 
-/* 确保 io_uring 系统调用号可用 */
+/* ?? io_uring ??????? */
 #ifndef __NR_io_uring_setup
 #define __NR_io_uring_setup 425
 #endif
@@ -67,80 +67,80 @@
 #endif
 #endif /* XNET_BUILD_IO_URING */
 
-/* 单次 pollPlatform 最大处理的事件数，防止饿死其他任务 */
+/* ?? pollPlatform ????????,???????? */
 #ifndef XNETIORING_POSIX_POLL_BATCH
 #define XNETIORING_POSIX_POLL_BATCH  64
 #endif
 
-/* io_uring SQ 条目数 */
+/* io_uring SQ ??? */
 #ifndef XNETIORING_POSIX_QUEUE_DEPTH
 #define XNETIORING_POSIX_QUEUE_DEPTH  256
 #endif
 
-/* epoll 单次等待的最大事件数 */
+/* epoll ?????????? */
 #ifndef XNET_EPOLL_MAX_EVENTS
 #define XNET_EPOLL_MAX_EVENTS 64
 #endif
 
-/* [2026-10-03 互联测试指挥官] epoll 引擎逐操作追踪（默认 0）：真机
- * MCGS(5.2.9 内核 memlock 回退 epoll)互联联调缺陷定位用, 编译期
- * -DXNET_EPOLL_IO_DEBUG=1 重开全部输出 —— 仿本仓库 XPWN_IME_DEBUG
- * 收编先例(Drive/Posix/Graphics/XPlatformNativeWindow_posix.c:238)。 */
+/* [2026-10-03 ???????] epoll ???????(?? 0):??
+ * MCGS(5.2.9 ?? memlock ?? epoll)?????????, ???
+ * -DXNET_EPOLL_IO_DEBUG=1 ?????? -- ???? XPWN_IME_DEBUG
+ * ????(Drive/Posix/Graphics/XPlatformNativeWindow_posix.c:238)? */
 #ifndef XNET_EPOLL_IO_DEBUG
 #define XNET_EPOLL_IO_DEBUG 0
 #endif
 
-/* epoll 兴趣/操作封装（与 XSocketActType 解耦的内部常量） */
+/* epoll ??/????(? XSocketActType ???????) */
 #define XNET_EPOLL_IN_INTEREST   (uint32_t)EPOLLIN
 #define XNET_EPOLL_OUT_INTEREST  (uint32_t)EPOLLOUT
 #define XNET_EPOLL_WANT_IN       0
 #define XNET_EPOLL_WANT_OUT      1
 
 /* ================================================================
- * 运行时后端模式
+ * ???????
  * ================================================================ */
 typedef enum XNetIoRingMode {
-    XNET_MODE_NONE = 0,   /**< 未初始化 */
-    XNET_MODE_IOURING,    /**< io_uring 完成型（Linux 5.1+ 内核） */
-    XNET_MODE_EPOLL       /**< epoll 就绪型（低版本内核回退） */
+    XNET_MODE_NONE = 0,   /**< ???? */
+    XNET_MODE_IOURING,    /**< io_uring ???(Linux 5.1+ ??) */
+    XNET_MODE_EPOLL       /**< epoll ???(???????) */
 } XNetIoRingMode;
 
 /* ================================================================
- * 完成处理（公共辅助函数，双引擎共用）
+ * ????(??????,?????)
  *
- * 将一条完成结果（res + user_data 上下文）转换为 CQ 条目或直接
- * 投递定时器事件。pollPlatform（非阻塞批量）和 waitForEvents
- * （阻塞单条）共用。对应 Win32 的 processOneCompletion。 */
+ * ???????(res + user_data ???)??? CQ ?????
+ * ????????pollPlatform(?????)? waitForEvents
+ * (????)????? Win32 ? processOneCompletion? */
 
 /* ================================================================
- * [wake] 事件循环唤醒延迟探针（诊断, env XGUI_REMOTE_WAKE_PROF 门控）
+ * [wake] ??????????(??, env XGUI_REMOTE_WAKE_PROF ??)
  *
- * 三段打点（设计稿 out/mcgs-campaign/udp-design.md「事件循环唤醒延迟」）：
- *   ① 阻塞原语进入 → fd 就绪唤醒返回（内核唤醒+syscall 延迟）；
- *   ② fd 就绪唤醒 → 首条读完成回收（环内完成处理延迟）；
- *   ③ 读完成 → 消息解析派发（消息层, 经 XAbstractNetIoRing_profMarkRecv/
- *      profLastRecvUs 与 XGuiServer/XGuiClient 协同, 见 [wake][srv/cli] 行）。
- * 每 5s 汇总一行 [wake][ring]（stderr, P50/P95, 防日志洪水）。探针未开时
- * 全部路径零成本（on 缓存 getenv, 每进程探测一次）。
+ * ????(??? out/mcgs-campaign/udp-design.md??????????):
+ *   ? ?????? ? fd ??????(????+syscall ??);
+ *   ? fd ???? ? ???????(????????);
+ *   ? ??? ? ??????(???, ? XAbstractNetIoRing_profMarkRecv/
+ *      profLastRecvUs ? XGuiServer/XGuiClient ??, ? [wake][srv/cli] ?)?
+ * ? 5s ???? [wake][ring](stderr, P50/P95, ?????)??????
+ * ???????(on ?? getenv, ???????)?
  * ================================================================ */
 #define XNET_WAKE_PROF_SAMPLES 256
 #define XNET_WAKE_PROF_WIN_US  5000000ULL
 typedef struct XNetWakeSampleSet {
-    uint32_t v[XNET_WAKE_PROF_SAMPLES]; /* 样本(µs; 满后滚动覆盖)。 */
+    uint32_t v[XNET_WAKE_PROF_SAMPLES]; /* ??(�s; ??????)? */
     int      n;
 } XNetWakeSampleSet;
 static struct XNetWakeProfState {
-    uint64_t wakeUs;         /* fd 就绪唤醒时刻(0=无待采样)。 */
-    uint64_t winStartUs;     /* 5s 汇总窗口起点。 */
-    uint32_t fdWakes;        /* fd 就绪唤醒次数。 */
-    uint32_t timeoutRounds;  /* 超时醒圈数(定时器节拍兜底证据)。 */
-    XNetWakeSampleSet enterWake; /* ①进入阻塞→fd 就绪唤醒。 */
-    XNetWakeSampleSet wakeCqe;   /* ②唤醒→首条读完成。 */
+    uint64_t wakeUs;         /* fd ??????(0=????)? */
+    uint64_t winStartUs;     /* 5s ??????? */
+    uint32_t fdWakes;        /* fd ??????? */
+    uint32_t timeoutRounds;  /* ?????(?????????)? */
+    XNetWakeSampleSet enterWake; /* ??????fd ????? */
+    XNetWakeSampleSet wakeCqe;   /* ?????????? */
 } xnet_wakeProf;
-/* -1=未探测 env(静态零初始化≠已禁用, 探测一次后 0/1 定版)。 */
+/* -1=??? env(??????????, ????? 0/1 ??)? */
 static int xnet_wakeProfOn = -1;
 
-/** @brief 探针开关(env 探测一次)。 */
+/** @brief ????(env ????)? */
 static int xnet_wakeProfEnabled(void) {
     if (xnet_wakeProfOn < 0) {
         const char* env = getenv("XGUI_REMOTE_WAKE_PROF");
@@ -149,7 +149,7 @@ static int xnet_wakeProfEnabled(void) {
     return xnet_wakeProfOn;
 }
 
-/** @brief 样本入集(满后滚动覆盖; 诊断用途)。 */
+/** @brief ????(??????; ????)? */
 static void xnet_wakeProfPush(XNetWakeSampleSet* set, uint32_t us) {
     set->v[(set->n < XNET_WAKE_PROF_SAMPLES)
                ? set->n
@@ -162,7 +162,7 @@ static int xnet_wakeProfCmpU32(const void* a, const void* b) {
     return (x < y) ? -1 : ((x > y) ? 1 : 0);
 }
 
-/** @brief 取百分位(µs; 集内排序副本)。 */
+/** @brief ????(�s; ??????)? */
 static uint32_t xnet_wakeProfPct(const XNetWakeSampleSet* set, int pctX100) {
     uint32_t buf[XNET_WAKE_PROF_SAMPLES];
     int n = set->n;
@@ -176,7 +176,7 @@ static uint32_t xnet_wakeProfPct(const XNetWakeSampleSet* set, int pctX100) {
     return buf[idx];
 }
 
-/** @brief 5s 窗口汇总输出并复位。 */
+/** @brief 5s ?????????? */
 static void xnet_wakeProfFlush(const char* mode, uint64_t nowUs) {
     fprintf(stderr,
             "[wake][ring] mode=%s fdWakes=%u enterToWakeUs p50=%u p95=%u "
@@ -198,15 +198,15 @@ static void xnet_wakeProfFlush(const char* mode, uint64_t nowUs) {
 static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
                                  void* userData) {
     XEventContext* ctx = (XEventContext*)(uintptr_t)userData;
-    /* user_data==0 表示 wakeUp 唤醒，无完成需处理（对应 Win32 overlapped==NULL） */
+    /* user_data==0 ?? wakeUp ??,??????(?? Win32 overlapped==NULL) */
     if (!ctx) return;
 
     ctx->result = res;
-    /* [wake] 探针: 套接字读完成打点(方向以 eventMask 区分, SEND 完成不
-     * 污染到达时戳) + 「唤醒→首条读完成」段采样。 */
+    /* [wake] ??: ????????(??? eventMask ??, SEND ???
+     * ??????) + ?????????????? */
     if (xnet_wakeProfEnabled() && res > 0 &&
         ctx->type == XEventContextType_Type_Socket &&
-        ctx->eventMask == XSocketAct_Read) {
+        ctx->eventMask == XSocketActType_Read) {
         XAbstractNetIoRing_profMarkRecv(ctx->fd);
         if (xnet_wakeProf.wakeUs) {
             xnet_wakeProfPush(&xnet_wakeProf.wakeCqe,
@@ -216,15 +216,15 @@ static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
         }
     }
     if (ctx->type == XEventContextType_Type_Timer) {
-        /* 定时器完成：直接投递定时器事件到应用层 */
+        /* ?????:????????????? */
         XFd timerFd = ctx->fd;
         if (timerFd != XFD_INVALID) {
             XTimerEvent* timerEv = XTimerEvent_create((XTimerId)timerFd);
             XEvent* timerEvent = (XEvent*)timerEv;
             if (timerEvent) {
-                timerEvent->posted = true;
-                timerEvent->spontaneous = true;
-                /* 从 fd 表获取 owner */
+                timerEvent->m_posted = true;
+                timerEvent->m_spontaneous = true;
+                /* ? fd ??? owner */
                 XFileDescriptor* desc = XFd_get(timerFd);
                 if (desc && desc->object) {
                     XCoreApplication_postEvent((XObject*)desc->object,
@@ -235,7 +235,7 @@ static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
     }
     else if (ctx->type == XEventContextType_Type_Socket ||
              ctx->type == XEventContextType_Type_File) {
-        /* Socket/File I/O 完成：转换为 CQ 条目 */
+        /* Socket/File I/O ??:??? CQ ?? */
         XAbstractNetIoRing_CQEntry cqEntry;
         memset(&cqEntry, 0, sizeof(cqEntry));
 
@@ -245,19 +245,19 @@ static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
         cqEntry.m_sourceType = XAbstractNetIoRing_Source_NativeIO;
         cqEntry.m_fdType = XFd_type(ctx->fd);
 
-        /* XSocketActType 事件掩码直接使用 ctx->eventMask（与 Windows 不同，
-         * io_uring 下 eventMask 由调用者直接设置为 XSocketActType 值） */
+        /* XSocketActType ???????? ctx->eventMask(? Windows ??,
+         * io_uring ? eventMask ????????? XSocketActType ?) */
         cqEntry.m_events = ctx->eventMask;
 
-        /* 取消请求只用于回收 user_data，不能在 fd 槽位复用后变成一条
-         * 新的连接事件。上下文结果仍在上面写回，供关闭路径确认 CQE 已
-         * 被消费。 */
+        /* ????????? user_data,??? fd ?????????
+         * ??????????????????,??????? CQE ?
+         * ???? */
         if (ctx->eventMask == 0)
             return;
 
-        /* I/O 失败时：连接丢失等错误也标记为 Connect 事件 */
+        /* I/O ???:??????????? Connect ?? */
         if (res < 0 && cqEntry.m_events == 0) {
-            cqEntry.m_events = XSocketAct_Connect;
+            cqEntry.m_events = XSocketActType_Connect;
         }
 
         ctx->finishedBytes = (res >= 0) ? (size_t)res : 0;
@@ -266,47 +266,47 @@ static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
 }
 
 /* ================================================================
- * 主结构体（双引擎字段集，按编译开关收编）
+ * ????(??????,???????)
  * ================================================================ */
 
-/** @brief 挂起（等待 fd 就绪）的伪 SQE 请求（epoll 引擎）。 */
+/** @brief ??(?? fd ??)?? SQE ??(epoll ??)? */
 typedef struct XNetPendingOp {
-    struct io_uring_sqe sqe;    /**< 伪/真 SQE 副本（提交时快照） */
-    XEventContext* ctx;         /**< 完成上下文（= sqe.user_data） */
-    struct XNetPendingOp* next; /**< 链表后继 */
+    struct io_uring_sqe sqe;    /**< ?/? SQE ??(?????) */
+    XEventContext* ctx;         /**< ?????(= sqe.user_data) */
+    struct XNetPendingOp* next; /**< ???? */
 } XNetPendingOp;
 
 typedef struct XNetIoRingPosix {
-    XAbstractNetIoRing m_class;   /**< 基类（必须位于第一位） */
-    XNetIoRingMode m_mode;        /**< 运行时后端模式 */
-    int     m_wakeFd;             /**< 跨线程唤醒 eventfd（双引擎共用） */
-    bool    m_ownsRing;           /**< 是否拥有后端资源 */
+    XAbstractNetIoRing m_class;   /**< ??(???????) */
+    XNetIoRingMode m_mode;        /**< ??????? */
+    int     m_wakeFd;             /**< ????? eventfd(?????) */
+    bool    m_ownsRing;           /**< ???????? */
 #if XNET_BUILD_IO_URING
-    int     m_ringFd;             /**< io_uring 环形缓冲区 fd */
-    /* io_uring 内存映射区域 */
-    unsigned* m_sqHeadPtr;        /**< SQ head 指针（内核写入） */
-    unsigned* m_sqTailPtr;        /**< SQ tail 指针（用户空间写入） */
+    int     m_ringFd;             /**< io_uring ????? fd */
+    /* io_uring ?????? */
+    unsigned* m_sqHeadPtr;        /**< SQ head ??(????) */
+    unsigned* m_sqTailPtr;        /**< SQ tail ??(??????) */
     unsigned* m_sqMaskPtr;        /**< SQ ring mask */
     unsigned* m_sqFlagsPtr;       /**< SQ ring flags */
-    unsigned* m_sqArray;          /**< SQ 索引数组 */
-    struct io_uring_cqe* m_cqes;  /**< CQ 条目数组 */
-    unsigned* m_cqHeadPtr;        /**< CQ head 指针（用户空间写入） */
-    unsigned* m_cqTailPtr;        /**< CQ tail 指针（内核写入） */
+    unsigned* m_sqArray;          /**< SQ ???? */
+    struct io_uring_cqe* m_cqes;  /**< CQ ???? */
+    unsigned* m_cqHeadPtr;        /**< CQ head ??(??????) */
+    unsigned* m_cqTailPtr;        /**< CQ tail ??(????) */
     unsigned* m_cqMaskPtr;        /**< CQ ring mask */
-    struct io_uring_sqe* m_sqes;  /**< SQ 条目数组 */
-    unsigned m_sqEntries;         /**< SQ 条目数 */
+    struct io_uring_sqe* m_sqes;  /**< SQ ???? */
+    unsigned m_sqEntries;         /**< SQ ??? */
 #endif /* XNET_BUILD_IO_URING */
 #if XNET_BUILD_EPOLL
-    int     m_epollFd;            /**< epoll 实例 fd */
-    struct io_uring_sqe m_currentSqe; /**< getSqe 单槽暂存（外部填充） */
-    bool    m_hasCurrentSqe;      /**< 暂存槽是否有效 */
-    XNetPendingOp* m_pendingHead; /**< 挂起请求链表头 */
+    int     m_epollFd;            /**< epoll ?? fd */
+    struct io_uring_sqe m_currentSqe; /**< getSqe ????(????) */
+    bool    m_hasCurrentSqe;      /**< ??????? */
+    XNetPendingOp* m_pendingHead; /**< ??????? */
 #endif /* XNET_BUILD_EPOLL */
 } XNetIoRingPosix;
 
-/* 前置声明（结构体定义在 XNetIoRingPosix.c）——保持 .h 兼容 */
+/* ????(?????? XNetIoRingPosix.c)--?? .h ?? */
 
-/* ==================== 前向声明 ==================== */
+/* ==================== ???? ==================== */
 static XFd   VXNetIoRingPosix_getEventFd(XAbstractNetIoRing* self);
 static void  VXNetIoRingPosix_pollPlatform(XAbstractNetIoRing* self);
 static bool  VXNetIoRingPosix_registerEvent(XAbstractNetIoRing* self, XFd fd);
@@ -315,11 +315,11 @@ static void  VXNetIoRingPosix_wakeUp(XAbstractNetIoRing* self);
 static void  VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj);
 
 /* ================================================================
- * io_uring 引擎（XNET_BUILD_IO_URING 时编译）
+ * io_uring ??(XNET_BUILD_IO_URING ???)
  * ================================================================ */
 #if XNET_BUILD_IO_URING
 
-/* 获取 SQ 空闲槽位索引，返回 SQE 指针 */
+/* ?? SQ ??????,?? SQE ?? */
 static struct io_uring_sqe* ioGetSqeSlot(XNetIoRingPosix* posix) {
     if (!posix->m_sqHeadPtr || !posix->m_sqTailPtr || !posix->m_sqMaskPtr || !posix->m_sqes)
         return NULL;
@@ -327,7 +327,7 @@ static struct io_uring_sqe* ioGetSqeSlot(XNetIoRingPosix* posix) {
     unsigned tail = __atomic_load_n(posix->m_sqTailPtr, __ATOMIC_RELAXED);
     unsigned next = tail + 1;
 
-    /* SQ 已满 */
+    /* SQ ?? */
     if (next - head > posix->m_sqEntries)
         return NULL;
 
@@ -335,25 +335,25 @@ static struct io_uring_sqe* ioGetSqeSlot(XNetIoRingPosix* posix) {
     return &posix->m_sqes[index];
 }
 
-/* 提交已填充的 SQE 到内核 */
+/* ?????? SQE ??? */
 static void ioSubmitEntries(XNetIoRingPosix* posix, int toSubmit) {
     unsigned tail = __atomic_load_n(posix->m_sqTailPtr, __ATOMIC_RELAXED);
     unsigned startIndex = tail & (*posix->m_sqMaskPtr);
 
-    /* 写入 SQ array 映射 */
+    /* ?? SQ array ?? */
     for (int i = 0; i < toSubmit; i++) {
         posix->m_sqArray[(startIndex + i) & (*posix->m_sqMaskPtr)] =
             (startIndex + i) & (*posix->m_sqMaskPtr);
     }
 
-    /* 推进 SQ tail（发布到内核） */
+    /* ?? SQ tail(?????) */
     __atomic_store_n(posix->m_sqTailPtr, tail + toSubmit, __ATOMIC_RELEASE);
 
-    /* 非 SQPOLL 模式必须调用 io_uring_enter 才会真正提交 SQE。
-     * 防御性修复(2026-10-02 延迟基准): 返回值此前被忽略——EINTR 时 SQE
-     * 不会提交, RECV 将静默滞留至下一次 enter(表现收侧无界延迟)。
-     * EINTR 重试; 其余短提交回滚 tail(调用方 readPending 状态保持,
-     * 下一事件重试), 语义与提交前一致。 */
+    /* ? SQPOLL ?????? io_uring_enter ?????? SQE?
+     * ?????(2026-10-02 ????): ????????--EINTR ? SQE
+     * ????, RECV ????????? enter(????????)?
+     * EINTR ??; ??????? tail(??? readPending ????,
+     * ??????), ????????? */
     {
         long done;
         do {
@@ -366,24 +366,24 @@ static void ioSubmitEntries(XNetIoRingPosix* posix, int toSubmit) {
     }
 }
 
-/* 从 CQ 获取一个完成条目，非阻塞 */
+/* ? CQ ????????,??? */
 static struct io_uring_cqe* ioPeekCqe(XNetIoRingPosix* posix) {
     unsigned head = __atomic_load_n(posix->m_cqHeadPtr, __ATOMIC_ACQUIRE);
     unsigned tail = __atomic_load_n(posix->m_cqTailPtr, __ATOMIC_ACQUIRE);
 
     if (head == tail)
-        return NULL;  /* CQ 为空 */
+        return NULL;  /* CQ ?? */
 
     return &posix->m_cqes[head & (*posix->m_cqMaskPtr)];
 }
 
-/* 推进 CQ head（标记已消费） */
+/* ?? CQ head(?????) */
 static void ioAdvanceCq(XNetIoRingPosix* posix) {
     unsigned head = __atomic_load_n(posix->m_cqHeadPtr, __ATOMIC_RELAXED);
     __atomic_store_n(posix->m_cqHeadPtr, head + 1, __ATOMIC_RELEASE);
 }
 
-/* 非阻塞轮询 CQ（io 引擎） */
+/* ????? CQ(io ??) */
 static void ioPollPlatform(XNetIoRingPosix* posix, XAbstractNetIoRing* self) {
     int batchCount = 0;
     if (posix->m_ringFd < 0) return;
@@ -397,7 +397,7 @@ static void ioPollPlatform(XNetIoRingPosix* posix, XAbstractNetIoRing* self) {
     }
 }
 
-/* 使用 io_uring_setup 创建实例并 mmap 环形缓冲区 */
+/* ?? io_uring_setup ????? mmap ????? */
 static bool ioSetupRing(XNetIoRingPosix* ring) {
     struct io_uring_params params;
     memset(&params, 0, sizeof(params));
@@ -455,7 +455,7 @@ fail:
     return false;
 }
 
-/* io 引擎资源清理 */
+/* io ?????? */
 static void ioDeinitCleanup(XNetIoRingPosix* posix) {
     if (posix->m_ownsRing && posix->m_ringFd >= 0) {
         size_t sqRingSize = (size_t)(posix->m_sqArray) -
@@ -487,11 +487,11 @@ static void ioDeinitCleanup(XNetIoRingPosix* posix) {
 #endif /* XNET_BUILD_IO_URING */
 
 /* ================================================================
- * epoll 引擎（恒编译：io_uring 失败的运行时回退）
+ * epoll ??(???:io_uring ????????)
  * ================================================================ */
 #if XNET_BUILD_EPOLL
 
-/** @brief 从挂起链中按 fd 与兴趣方向摘除一个请求（无则 NULL）。 */
+/** @brief ?????? fd ???????????(?? NULL)? */
 static XNetPendingOp* epTakePending(XNetIoRingPosix* posix, int fd,
                                     int wantOut) {
     XNetPendingOp** pp = &posix->m_pendingHead;
@@ -512,16 +512,16 @@ static XNetPendingOp* epTakePending(XNetIoRingPosix* posix, int fd,
     return NULL;
 }
 
-/** @brief [2026-10-03 互联测试指挥官修复归因] 按 fd 挂起请求方向重铸 epoll 兴趣。
- *  @details 缺陷实证(桌面 ulimit -l 8 强制 epoll 引擎复现; 设备真机 5.2.9
- *           内核同走 epoll 回退同症): 同 fd 同时挂异向请求时——服务端建
- *           会话即「RECV(IN) 挂起 + 握手 SEND(OUT) 提交」——提交路径
- *           EPOLL_CTL_ADD 撞 EEXIST 被静默忽略, 兴趣仍停在 IN, OUT 事件
- *           永不上报 → SEND 永久滞留, 客户端停在 connecting 等不到 XGR1
- *           握手横幅; 完成路径无条件 DEL 也会饿死同 fd 其余方向挂起请求。
- *           本函数按挂起链方向并集重铸(MOD/DEL): 单请求场景行为不变
- *           (提交 ADD/完成 DEL), 多请求场景按并集。仅动 epoll 引擎兴趣
- *           管理, 不改 io_uring 路径与任何头文件声明。 */
+/** @brief [2026-10-03 ???????????] ? fd ???????? epoll ???
+ *  @details ????(?? ulimit -l 8 ?? epoll ????; ???? 5.2.9
+ *           ???? epoll ????): ? fd ????????--????
+ *           ????RECV(IN) ?? + ?? SEND(OUT) ???--????
+ *           EPOLL_CTL_ADD ? EEXIST ?????, ????? IN, OUT ??
+ *           ???? ? SEND ????, ????? connecting ??? XGR1
+ *           ????; ??????? DEL ????? fd ?????????
+ *           ?????????????(MOD/DEL): ?????????
+ *           (?? ADD/?? DEL), ??????????? epoll ????
+ *           ??, ?? io_uring ??????????? */
 static void epRearmInterest(XNetIoRingPosix* posix, int fd) {
     XNetPendingOp* op;
     unsigned wantIn = 0;
@@ -548,8 +548,8 @@ static void epRearmInterest(XNetIoRingPosix* posix, int fd) {
     epoll_ctl(posix->m_epollFd, EPOLL_CTL_MOD, fd, &ev);
 }
 
-/** @brief 执行挂起请求的 IO（fd 已就绪），完成推 CQ 条目。
- *  @return true 已完成并释放；false 仍在挂起（EAGAIN）。 */
+/** @brief ??????? IO(fd ???),??? CQ ???
+ *  @return true ??????;false ????(EAGAIN)? */
 static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
                              XAbstractNetIoRing* self) {
     const struct io_uring_sqe* sqe = &op->sqe;
@@ -588,21 +588,21 @@ static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
             (int)sqe->opcode, sqe->fd, res, errno);
 #endif
     if (res < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        /* [2026-10-03 互联测试指挥官修复归因] 摘除后未完成必须挂回链头:
-         * epTakePending 已把本请求从挂起链摘下, EAGAIN 原样 return 会令
-         * 请求孤儿化——既不在链上(重铸/再派发都找不到)也无完成事件,
-         * 后续 rearm 视该 fd 无挂起而 DEL 兴趣, 连接双向永久饿死
-         * (实证: 桌面 ulimit 复现, 服务器 PING EAGAIN 孤儿化后
-         *  ~30s 保活双端互踢; 真机 MCGS 同症)。挂回链头, 语义与
-         * 摘除前一致(仍在挂起, 等下一次就绪)。 */
+        /* [2026-10-03 ???????????] ????????????:
+         * epTakePending ???????????, EAGAIN ?? return ??
+         * ?????--?????(??/???????)??????,
+         * ?? rearm ?? fd ???? DEL ??, ????????
+         * (??: ?? ulimit ??, ??? PING EAGAIN ????
+         *  ~30s ??????; ?? MCGS ??)?????, ???
+         * ?????(????, ??????)? */
         op->next = posix->m_pendingHead;
         posix->m_pendingHead = op;
-        return false; /* 仍在挂起，等下一次就绪 */
+        return false; /* ????,?????? */
     }
 
-    /* 完成：按剩余挂起请求重铸兴趣、推 CQ 条目并释放
-     * （[2026-10-03 互联测试指挥官] 原无条件 DEL 会饿死同 fd 异向挂起
-     *   请求——见 epRearmInterest 处注释; 单请求场景 DEL 等价）。 */
+    /* ??:????????????? CQ ?????
+     * ([2026-10-03 ???????] ???? DEL ???? fd ????
+     *   ??--? epRearmInterest ???; ????? DEL ??)? */
     epRearmInterest(posix, sqe->fd);
     processOneCompletion(self, (int64_t)res,
                          (void*)(uintptr_t)sqe->user_data);
@@ -610,7 +610,7 @@ static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
     return true;
 }
 
-/** @brief 文件类操作同步执行（普通文件 epoll 不适用），完成入队。 */
+/** @brief ?????????(???? epoll ???),????? */
 static void epExecuteFileSync(XNetIoRingPosix* posix,
                               XAbstractNetIoRing* self,
                               const struct io_uring_sqe* sqe) {
@@ -619,7 +619,7 @@ static void epExecuteFileSync(XNetIoRingPosix* posix,
     errno = 0;
     switch (sqe->opcode) {
     case IORING_OP_READ:
-        /* 先按偏移读（普通文件）；ESPIPE（管道/事件fd）回退当前位置读。 */
+        /* ?????(????);ESPIPE(??/??fd)???????? */
         res = pread(sqe->fd, (void*)(uintptr_t)sqe->addr, sqe->len,
                     (off_t)sqe->off);
         if (res < 0 && errno == ESPIPE)
@@ -642,7 +642,7 @@ static void epExecuteFileSync(XNetIoRingPosix* posix,
                          (void*)(uintptr_t)sqe->user_data);
 }
 
-/** @brief 非阻塞 epoll 轮询并执行就绪请求。 */
+/** @brief ??? epoll ?????????? */
 static void epPollPlatform(XNetIoRingPosix* posix, XAbstractNetIoRing* self) {
     struct epoll_event events[XNET_EPOLL_MAX_EVENTS];
     int n;
@@ -670,7 +670,7 @@ static void epPollPlatform(XNetIoRingPosix* posix, XAbstractNetIoRing* self) {
     }
 }
 
-/** @brief 创建 epoll 实例并注册唤醒 eventfd。 */
+/** @brief ?? epoll ??????? eventfd? */
 static bool epSetup(XNetIoRingPosix* ring) {
     struct epoll_event ev;
     int epollFd = epoll_create1(EPOLL_CLOEXEC);
@@ -699,7 +699,7 @@ static bool epSetup(XNetIoRingPosix* ring) {
     return true;
 }
 
-/** @brief epoll 引擎资源清理。 */
+/** @brief epoll ??????? */
 static void epDeinitCleanup(XNetIoRingPosix* posix) {
     XNetPendingOp* op;
     while ((op = posix->m_pendingHead) != NULL) {
@@ -715,12 +715,12 @@ static void epDeinitCleanup(XNetIoRingPosix* posix) {
 }
 #endif /* XNET_BUILD_EPOLL */
 
-/* 虚函数表枚举：继承 XAbstractNetIoRing（vtable 大小由本宏生成） */
+/* ??????:?? XAbstractNetIoRing(vtable ???????) */
 XCLASS_DEFINE_BEGING(XNetIoRingPosix)
 XCLASS_DEFINE_EXTEND_END(XNetIoRingPosix, XAbstractNetIoRing)
 
 /* ================================================================
- * 重载虚函数实现（双引擎 mode 分发）
+ * ???????(??? mode ??)
  * ================================================================ */
 
 static void VXNetIoRingPosix_pollPlatform(XAbstractNetIoRing* self) {
@@ -756,7 +756,7 @@ static XFd VXNetIoRingPosix_getEventFd(XAbstractNetIoRing* self) {
 static bool VXNetIoRingPosix_registerEvent(XAbstractNetIoRing* self, XFd fd) {
     (void)self;
     (void)fd;
-    return true; /* io_uring SQE 自带 fd；epoll 在提交时按需 ADD */
+    return true; /* io_uring SQE ?? fd;epoll ?????? ADD */
 }
 
 static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
@@ -769,7 +769,7 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
         nfds_t count = 0;
         if (posix->m_ringFd < 0) return;
 
-        /* [wake] 5s 汇总窗口到点即输出(探针开启时)。 */
+        /* [wake] 5s ?????????(?????)? */
         if (xnet_wakeProfEnabled()) {
             uint64_t nowUs = XAbstractNetIoRing_profNowUs();
             if (!xnet_wakeProf.winStartUs)
@@ -795,8 +795,8 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
             do {
                 result = poll(fds, count, timeoutMs);
             } while (result < 0 && errno == EINTR);
-            /* [wake] 段①: fd 就绪唤醒(仅 ring fd, 纯 eventfd 唤醒不计);
-             * 超时醒计一轮(定时器节拍兜底证据)。 */
+            /* [wake] ??: fd ????(? ring fd, ? eventfd ????);
+             * ??????(?????????)? */
             if (enterUs) {
                 if (result > 0 && (fds[0].revents & POLLIN)) {
                     xnet_wakeProf.wakeUs = XAbstractNetIoRing_profNowUs();
@@ -819,7 +819,7 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
     }
 #endif
 #if XNET_BUILD_EPOLL
-    /* [wake] 5s 汇总窗口到点即输出(探针开启时)。 */
+    /* [wake] 5s ?????????(?????)? */
     if (xnet_wakeProfEnabled()) {
         uint64_t nowUs = XAbstractNetIoRing_profNowUs();
         if (!xnet_wakeProf.winStartUs)
@@ -827,7 +827,7 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
         else if (nowUs - xnet_wakeProf.winStartUs >= XNET_WAKE_PROF_WIN_US)
             xnet_wakeProfFlush("epoll", nowUs);
     }
-    epPollPlatform(posix, self); /* 先非阻塞一轮（可能在等待前已有完成） */
+    epPollPlatform(posix, self); /* ??????(??????????) */
     {
         struct epoll_event events[XNET_EPOLL_MAX_EVENTS];
         int n;
@@ -838,7 +838,7 @@ static void VXNetIoRingPosix_waitForEvents(XAbstractNetIoRing* self,
             n = epoll_wait(posix->m_epollFd, events, XNET_EPOLL_MAX_EVENTS,
                            timeoutMs);
         } while (n < 0 && errno == EINTR);
-        /* [wake] 段①: 网络 fd 就绪唤醒(wakeFd 纯唤醒不计); 超时醒计一轮。 */
+        /* [wake] ??: ?? fd ????(wakeFd ?????); ??????? */
         if (enterUs) {
             bool netReady = false;
             for (i = 0; i < n; ++i) {
@@ -904,7 +904,7 @@ static void VXNetIoRingPosix_deinit(XAbstractNetIoRing* obj) {
     XClass_Deinit_Parent(XAbstractNetIoRing, obj);
 }
 
-/** @brief 虚函数表初始化（双引擎共用同一虚函数表）。 */
+/** @brief ???????(???????????)? */
 XVtable* XNetIoRingPosix_class_init(void) {
     XVTABLE_INIT_DEFAULT(XNetIoRingPosix)
     XVTABLE_INHERIT_XCLASS(XAbstractNetIoRing);
@@ -920,7 +920,7 @@ XVtable* XNetIoRingPosix_class_init(void) {
 }
 
 /* ================================================================
- * 构造与初始化（运行时回退链：io_uring 失败 -> epoll）
+ * ??????(??????:io_uring ?? -> epoll)
  * ================================================================ */
 void XNetIoRingPosix_init(XNetIoRingPosix* ring) {
     bool enabled = false;
@@ -936,14 +936,14 @@ void XNetIoRingPosix_init(XNetIoRingPosix* ring) {
 #endif
     ring->m_mode = XNET_MODE_NONE;
 
-    /* 初始化基类（设置基类虚函数表 + 创建 SQ/CQ 队列） */
+    /* ?????(???????? + ?? SQ/CQ ??) */
     XAbstractNetIoRing_init((XAbstractNetIoRing*)ring);
 
-    /* 重载为本类的虚函数表 */
+    /* ?????????? */
     XClassSetVtable(ring, XNetIoRingPosix);
 
-    /* 运行时回退链：优先 io_uring（Linux 5.1+ 内核）；io_uring_setup
-     * 失败（-ENOSYS 等，如 4.x 内核）自动回退 epoll。 */
+    /* ??????:?? io_uring(Linux 5.1+ ??);io_uring_setup
+     * ??(-ENOSYS ?,? 4.x ??)???? epoll? */
 #if XNET_BUILD_IO_URING
     if (ioSetupRing(ring)) {
         ring->m_mode = XNET_MODE_IOURING;
@@ -969,7 +969,7 @@ XNetIoRingPosix* XNetIoRingPosix_create_ex(XMemoryType memory) {
 }
 
 /* ================================================================
- * 外部 I/O 提交 API（双模式分发，签名与调用点不变）
+ * ?? I/O ?? API(?????,????????)
  * ================================================================ */
 int XNetIoRingPosix_ringFd(const XNetIoRingPosix* ring) {
     if (!ring) return -1;
@@ -1022,13 +1022,13 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
         ctx = (XEventContext*)(uintptr_t)sqe->user_data;
 
         switch (sqe->opcode) {
-        /* 文件类：同步执行（普通文件 epoll 不适用），完成立即入队。 */
+        /* ???:????(???? epoll ???),??????? */
         case IORING_OP_READ:
         case IORING_OP_WRITE:
         case IORING_OP_FSYNC:
             epExecuteFileSync(ring, self, sqe);
             return;
-        /* 取消：从挂起链移除目标请求并以 -ECANCELED 完成。 */
+        /* ??:???????????? -ECANCELED ??? */
         case IORING_OP_ASYNC_CANCEL: {
             XNetPendingOp** pp = &ring->m_pendingHead;
             XEventContext* target = (XEventContext*)(uintptr_t)sqe->addr;
@@ -1052,7 +1052,7 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
             break;
         }
 
-        /* 网络类：注册 epoll 兴趣并挂起，等事件循环就绪执行。 */
+        /* ???:?? epoll ?????,?????????? */
         op = (XNetPendingOp*)XMalloc_System(sizeof(*op));
         if (!op) {
             processOneCompletion(self, -ENOMEM,
@@ -1076,9 +1076,9 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
         ev.data.fd = sqe->fd;
         if (epoll_ctl(ring->m_epollFd, EPOLL_CTL_ADD, sqe->fd, &ev) != 0) {
             if (errno == EEXIST) {
-                /* [2026-10-03 互联测试指挥官] fd 已注册（多见：RECV 挂起
-                 * 中提交 SEND/CONNECT）——按挂起链方向并集重铸兴趣
-                 * （IN|OUT, 旧方向请求不被饿死），不再静默忽略。 */
+                /* [2026-10-03 ???????] fd ???(??:RECV ??
+                 * ??? SEND/CONNECT)--????????????
+                 * (IN|OUT, ?????????),??????? */
                 epRearmInterest(ring, sqe->fd);
                 return;
             }
@@ -1087,7 +1087,7 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
             processOneCompletion(self, -errno,
                                  (void*)(uintptr_t)sqe->user_data);
         }
-        (void)toSubmit; /* epoll 模式恒为单条提交 */
+        (void)toSubmit; /* epoll ???????? */
         return;
     }
 #endif
@@ -1096,12 +1096,12 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
 int XNetIoRingPosix_waitCqe(XNetIoRingPosix* ring, uint64_t userData) {
 #if XNET_BUILD_IO_URING
     if (ring && ring->m_mode == XNET_MODE_IOURING) {
-        /* 文件 I/O 的完成由内核异步产生：有限次重试 GETEVENTS（每次
-           1ms），直到目标 CQE 出现（此前单次非阻塞会在完成未到达时
-           误报 -1）。 */
+        /* ?? I/O ??????????:????? GETEVENTS(??
+           1ms),???? CQE ??(???????????????
+           ?? -1)? */
         int retry;
         for (retry = 0; retry < 100; ++retry) {
-            struct __kernel_timespec ts = { 0, 1000000 }; /* 1ms 阻塞等待 */
+            struct __kernel_timespec ts = { 0, 1000000 }; /* 1ms ???? */
             (void)syscall(__NR_io_uring_enter, ring->m_ringFd, 0, 1,
                           IORING_ENTER_GETEVENTS, &ts, NULL);
             {
@@ -1117,7 +1117,7 @@ int XNetIoRingPosix_waitCqe(XNetIoRingPosix* ring, uint64_t userData) {
                                          __ATOMIC_RELEASE);
                         return cqe->res;
                     }
-                    /* 非目标完成：跳过（推进 head 避免阻塞） */
+                    /* ?????:??(?? head ????) */
                     __atomic_store_n(ring->m_cqHeadPtr, head + 1,
                                      __ATOMIC_RELEASE);
                 }
@@ -1127,8 +1127,8 @@ int XNetIoRingPosix_waitCqe(XNetIoRingPosix* ring, uint64_t userData) {
     }
 #endif
 #if XNET_BUILD_EPOLL
-    /* 文件类操作在 submitSqe 时已同步完成并写回 ctx->result；
-       网络类挂起请求不走 waitCqe（由事件循环异步完成）。 */
+    /* ?????? submitSqe ????????? ctx->result;
+       ????????? waitCqe(?????????)? */
     {
         XEventContext* ctx = (XEventContext*)(uintptr_t)userData;
         if (!ctx) return -1;
@@ -1141,7 +1141,7 @@ int XNetIoRingPosix_waitCqe(XNetIoRingPosix* ring, uint64_t userData) {
 }
 
 /* ================================================================
- * 平台钩子：创建 Linux 后端（io_uring 或 epoll 由运行时回退决定）
+ * ????:?? Linux ??(io_uring ? epoll ????????)
  * ================================================================ */
 XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void) {
     return (XAbstractNetIoRing*)XNetIoRingPosix_create();

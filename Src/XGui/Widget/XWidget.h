@@ -495,8 +495,8 @@ XCLASS_DEFINE_ENUM(XWidget, HideEvent),
 /**
  * @brief      XWidget 控件对象；m_class 必须是第一个成员（嵌 XObject）。
  * @details    字段含义：
- *             - m_windowFlags：窗口标志（XWindowFlags，默认 Widget=0）；
  *             - m_attributes：控件属性位集（XWidgetAttributes）；
+ *             - m_windowFlags：窗口标志（XWindowFlags，默认 Widget=0）；
  *             - m_focusPolicy：键盘焦点策略（默认 NoFocus）；
  *             - m_isWindow：顶层控件标志（无父对象或 Window 位）；
  *             - m_visible / m_explicitShow：生效可见状态与 setVisible 显式状态；
@@ -534,8 +534,8 @@ XCLASS_DEFINE_ENUM(XWidget, HideEvent),
 typedef struct XWidget
 {
     XObject                 m_class;          /**< 基类成员；必须是第一个。 */
-    XWidgetFlags            m_windowFlags;    /**< 窗口标志位组合。 */
     XWidgetAttributes       m_attributes;     /**< 控件属性位集。 */
+    XWidgetFlags            m_windowFlags;    /**< 窗口标志位组合。 */
     XWidgetFocusPolicy      m_focusPolicy;    /**< 键盘焦点策略。 */
     uint32_t                m_contextMenuPolicy : 4; /**< 右键菜单策略（XWidgetContextMenuPolicy）。 */
     uint32_t                m_layoutDirection : 2;   /**< 布局方向（XWidgetLayoutDirection）。 */
@@ -572,6 +572,7 @@ typedef struct XWidget
     XWindowModality         m_windowModality;  /**< 窗口模态（XWindowModality；默认 NonModal）。 */
     int                     m_toolTipDuration; /**< 工具提示时长（毫秒；0=系统默认）。 */
     float                   m_windowOpacity;   /**< 窗口不透明度（默认 1.0）。 */
+    XInputMethodHints       m_inputMethodHints;/**< 输入法提示位（默认 0，对标 inputMethodHints）。 */
     XString*                m_toolTip;         /**< 工具提示文本（拥有）。 */
     XString*                m_windowTitle;     /**< 顶层标题（拥有）。 */
     XString*                m_windowIconText; /**< 窗口图标文本（拥有；Qt 6.1+ 已废弃，仅存储不推送）。 */
@@ -591,7 +592,6 @@ typedef struct XWidget
                                                 *   对标 QWidget::setStyle/style）。 */
     XScreen*                m_associatedScreen;/**< 显式关联屏幕（借用；仅顶层控件有效，
                                                 *   对标 QWidget::setScreen/screen）。 */
-    XInputMethodHints       m_inputMethodHints;/**< 输入法提示位（默认 0，对标 inputMethodHints）。 */
     XCursor*                m_cursor;          /**< 自定义光标（拥有；仅 XCURSOR_ON）。 */
     XIcon                   m_icon;            /**< 窗口图标（值类型 refcount 共享）。 */
     XPalette                m_palette;         /**< 控件调色板（值类型）。 */
@@ -616,7 +616,11 @@ typedef struct XWidget
     XPoint                  m_offscreenOrigin; /**< 离屏渲染原点偏移（m_offscreenTarget 有效时叠加到
                                                 *   子树绘制偏移；render 为 targetOffset，grab 为
                                                 *   -rectangle.topLeft()）。 */
-    XAtomic_int32_t         m_paintEventPosted; /**< 内部：PAINT 事件已占位/已投递。 */
+    XAtomic_Int32         m_paintEventPosted; /**< 内部：PAINT 事件已占位/已投递。 */
+    bool                    m_retainedEnabled; /**< 保留层开关（显式选择加入，
+                                                 *   默认 false=零回归）。 */
+    bool                    m_retainedValid;   /**< 保留层缓存内容有效
+                                                 *   （失效后待重渲染更新）。 */
     bool                    m_contentCacheDirty; /**< 内容或几何变更后置脏，等待重建。 */
     XWidgetHeightForWidthHandler m_heightForWidthHandler; /**< hfw 回调（借用）。 */
     void*                   m_heightForWidthUserData; /**< hfw 回调上下文（借用）。 */
@@ -647,10 +651,6 @@ typedef struct XWidget
                                                  *   （拥有；NULL=未登记）。 */
     uint64_t                m_retainedStamp;   /**< 保留层最近访问时间戳
                                                  *   （LRU 淘汰序）。 */
-    bool                    m_retainedEnabled; /**< 保留层开关（显式选择加入，
-                                                 *   默认 false=零回归）。 */
-    bool                    m_retainedValid;   /**< 保留层缓存内容有效
-                                                 *   （失效后待重渲染更新）。 */
 } XWidget;
 
 /* ==================== 类与实例生命周期 ==================== */
@@ -1025,7 +1025,7 @@ void XWidget_setSizePolicyFull(XWidget* self, const XWidgetSizePolicy* policy);
 /* ==================== 控件树与命中测试（对标 QWidget） ==================== */
 
 /** @brief 返回父控件（对标 QWidget::parentWidget）。
- * @note  父对象带 is_widget 校验：绕过控件 API 直接挂到非控件 XObject
+ * @note  父对象带 m_is_widget 校验：绕过控件 API 直接挂到非控件 XObject
  *        之下时返回 NULL，保证调用方可安全解引用返回值。 */
 XWidget* XWidget_parentWidget(const XWidget* self);
 /**

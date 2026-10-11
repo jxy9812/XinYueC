@@ -1,17 +1,18 @@
 ﻿#include "XDocPropsApp.h"
+#include <stdio.h>
+
+#include <string.h>
+
 #include "XMemory.h"
 #include "XMap.h"
 #include "XFile.h"
 #include "XByteArray.h"
 #include "XXmlStreamReader.h"
 #include "XXmlStreamWriter.h"
-#include <stdio.h>
-
-#include <string.h>
 
 
 /* XMap 键是 XString*，直接复用 XString 的字典序比较。 */
-static int32_t str_compare(const void* lhs, const void* rhs)
+static int32_t XDocPropsApp_str_compare(const void* lhs, const void* rhs)
 {
     XString* a = *(XString**)lhs;
     XString* b = *(XString**)rhs;
@@ -28,8 +29,8 @@ XDocPropsApp* XDocPropsApp_create(XAbstractOOXmlFile_CreateFlag flag)
     memset(self, 0, sizeof(XDocPropsApp));
     XAbstractOOXmlFile_init(&self->m_base, flag);
     self->m_titlesOfPartsList = XStringList_create();
-    self->m_headingPairsList = XVector_create(sizeof(XDocPropsAppHeadingPair));
-    self->m_properties = XMap_create(sizeof(XString*), sizeof(XString*), str_compare);
+    self->m_headingPairsList = XVector_Create(XDocPropsAppHeadingPair);
+    self->m_properties = XMap_Create(XString*, XString*, XDocPropsApp_str_compare);
     return self;
 }
 
@@ -94,7 +95,12 @@ bool XDocPropsApp_setProperty(XDocPropsApp* self, const XString* name, const XSt
     if (!keyStr) return false;
     XString* valStr = XString_create_copy(value);
     if (!valStr) { XClassDelete(keyStr); return false; }
-    XMap_insert_base(self->m_properties, &keyStr, &valStr);
+    /* 插入失败（仅 OOM 路径）时 map 未取得键值所有权，需自行释放避免泄漏 */
+    if (!XMap_insert_base(self->m_properties, &keyStr, &valStr)) {
+        XClassDelete(keyStr);
+        XClassDelete(valStr);
+        return false;
+    }
     return true;
 }
 
@@ -144,7 +150,7 @@ int XDocPropsApp_propertyNames(const XDocPropsApp* self, XString*** names)
     return index;
 }
 
-static void clear_properties(XDocPropsApp* self)
+static void XDocPropsApp_clear_properties(XDocPropsApp* self)
 {
     if (!self || !self->m_properties) return;
     XMap_iterator it = XMap_begin(self->m_properties);
@@ -303,7 +309,7 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
     XXmlStreamReader_addData(reader, bytes);
     XClassDelete(bytes);
     XDocPropsApp_clearParts(self);
-    clear_properties(self);
+    XDocPropsApp_clear_properties(self);
     bool inHeadingPairs = false;
     bool inTitles = false;
     XString* pendingHeading = NULL;
@@ -343,7 +349,7 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
                     if (pendingHeading) XClassDelete(pendingHeading);
                     XClassDelete(reader);
                     XDocPropsApp_clearParts(self);
-                    clear_properties(self);
+                    XDocPropsApp_clear_properties(self);
                     return false;
                 }
                 XClassDelete(key);
@@ -358,7 +364,7 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
     XClassDelete(reader);
     if (!ok) {
         XDocPropsApp_clearParts(self);
-        clear_properties(self);
+        XDocPropsApp_clear_properties(self);
     }
     return ok;
 }

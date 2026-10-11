@@ -3,8 +3,7 @@
 #include "XVariant.h"
 #include "XChar.h"
 #include <stdlib.h>
-#include <string.h>
-#include <stdio.h>
+#include "XStringUtils.h"   /* XStrlen/XStrchr/XSscanf：库内字符串原语（外部依赖约束） */
 /**
  * @brief （内部使用）获取自午夜以来的毫秒数。
  * @param time XTime 对象指针。
@@ -20,7 +19,7 @@ int XTime_msecsSinceStartOfDay(const XTime* time);
 XTime XTime_fromMSecsSinceStartOfDay(int msecs);
 
 // 内部函数：验证时间
-bool is_valid_time(int hour, int minute, int second, int msec) {
+bool XTime_isValidTime(int hour, int minute, int second, int msec) {
     return (hour >= 0 && hour <= 23) &&
         (minute >= 0 && minute <= 59) &&
         (second >= 0 && second <= 59) &&
@@ -29,7 +28,7 @@ bool is_valid_time(int hour, int minute, int second, int msec) {
 
 // 公共静态方法实现
 bool XTime_isValid_static(int hour, int minute, int second, int msec) {
-    return is_valid_time(hour, minute, second, msec);
+    return XTime_isValidTime(hour, minute, second, msec);
 }
 
 // 公共接口实现
@@ -40,7 +39,7 @@ XTime XTime_create(void) {
 }
 
 XTime XTime_create_time(int hour, int minute, int second, int msec) {
-    if (!is_valid_time(hour, minute, second, msec)) {
+    if (!XTime_isValidTime(hour, minute, second, msec)) {
         return XTime_create();
     }
     XTime time;
@@ -127,13 +126,16 @@ XString* XTime_toString_format(const XTime* time, const char* format) {
     if (XTime_isNull(time) || !format) return NULL;
 
     XString* result = XString_create();
+    if (!result) {
+        return NULL;   /* 处理内存分配失败（返回值检查） */
+    }
 
     int hour = XTime_hour(time);
     int minute = XTime_minute(time);
     int second = XTime_second(time);
     int msec = XTime_msec(time);
 
-    size_t len = strlen(format);
+    size_t len = XStrlen(format);
     for (size_t i = 0; i < len; i++) {
         if (format[i] == 'H') {
             int count = 0;
@@ -190,10 +192,10 @@ XTime XTime_fromString_format(const char* str, const char* format) {
     int digits = 0;
     int fractionValue = 0;
     if (!str || !format) return XTime_create();
-    if (sscanf(str, "%d:%d:%d", &hour, &minute, &second) != 3) {
+    if (XSscanf(str, "%d:%d:%d", &hour, &minute, &second) != 3) {
         return XTime_create();
     }
-    fraction = strchr(str, '.');
+    fraction = XStrchr(str, '.');
     if (fraction) {
         ++fraction;
         while (XChar_isDigit_2((uint32_t)(unsigned char)fraction[digits]) && digits < 6) {
@@ -231,7 +233,7 @@ void XTime_clear(XTime* time)
 int32_t XTime_compare(const XTime* lhs, const XTime* rhs)
 {
     if (!lhs || !rhs) return XCompare_Other;
-    return int_compare(&((const XTime*)lhs)->m_msecs,
+    return Xint_compare(&((const XTime*)lhs)->m_msecs,
                        &((const XTime*)rhs)->m_msecs);
 }
 

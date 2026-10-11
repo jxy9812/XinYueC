@@ -462,14 +462,18 @@ static void xtw_setHeaderLabelAt(XTreeWidget* self, int index,
 }
 
 /** @brief 确保顶层条目数组与单元格部件表行容量（两者同倍增策略同步
- *         扩容，保证 [row] 下标对齐；新增区域清零）。 */
-static void xtw_ensureTop(XTreeWidget* self, int need)
+ *         扩容，保证 [row] 下标对齐；新增区域清零）。
+ * @return 条目表与部件行表是否都能容纳 need 行（m_topExpanded 自带
+ *         容量防护，不参与判定）；扩容失败时容量可能部分推进，调用方
+ *         不得按下标 need-1 写入，下次挂载按需重试。 */
+static bool xtw_ensureTop(XTreeWidget* self, int need)
 {
     XTreeWidgetItem** grown;
     XWidget*** cgrown;
     bool* egrown;
     int cap = self->m_topCapacity > 0 ? self->m_topCapacity : 4;
-    if (need <= self->m_topCapacity) return;
+    if (need <= self->m_topCapacity)
+        return !self->m_cellWidgets || self->m_cellRowCapacity >= need;
     while (cap < need) cap *= 2;
     grown = (XTreeWidgetItem**)XRealloc_System(
         self->m_topItems, sizeof(XTreeWidgetItem*) * (size_t)cap);
@@ -500,6 +504,8 @@ static void xtw_ensureTop(XTreeWidget* self, int need)
     }
     /* 顶层存储指针可能已更换：同步不可见根借用视图。 */
     xtw_syncRoot(self);
+    return self->m_topCapacity >= need &&
+           (!self->m_cellWidgets || self->m_cellRowCapacity >= need);
 }
 
 /** @brief 确保单元格部件表列容量：对每行已分配的列指针表倍增扩容并
@@ -938,7 +944,9 @@ static void VXTreeWidget_deinit(XTreeWidget* self)
 bool XTreeWidget_addTopLevelItem(XTreeWidget* self, XTreeWidgetItem* item)
 {
     if (!self || !item) return false;
-    xtw_ensureTop(self, self->m_topCount + 1);
+    /* 扩容失败不得按 m_topCount 写入（越界写且条目脱离登记）：直接
+     * 报失败，条目所有权留在调用方。 */
+    if (!xtw_ensureTop(self, self->m_topCount + 1)) return false;
     if (self->m_cellWidgets) self->m_cellWidgets[self->m_topCount] = NULL;
     if (self->m_topExpanded && self->m_topCount < self->m_topExpCapacity)
         self->m_topExpanded[self->m_topCount] = true; /* 新行默认展开。 */
@@ -957,7 +965,9 @@ bool XTreeWidget_insertTopLevelItem(XTreeWidget* self, int index,
     int i;
     if (!self || !item || index < 0 || index > self->m_topCount)
         return false;
-    xtw_ensureTop(self, self->m_topCount + 1);
+    /* 扩容失败不得平移/写入 m_topItems[index==m_topCount]（越界写）：
+     * 直接报失败，条目所有权留在调用方。 */
+    if (!xtw_ensureTop(self, self->m_topCount + 1)) return false;
     for (i = self->m_topCount; i > index; --i) {
         self->m_topItems[i] = self->m_topItems[i - 1];
         /* 部件表行随条目同步后移（NULL 行表同样平移）。 */

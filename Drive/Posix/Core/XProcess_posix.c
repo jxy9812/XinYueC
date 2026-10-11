@@ -120,7 +120,7 @@ static char** xpp_build_envp(const XProcess* self)
     if (!self) return NULL;
     env = XProcessEnvironment_inheritsFromParent(&self->m_environment)
             ? XProcessEnvironment_systemEnvironment()
-            : XProcessEnvironment_createCopy(&self->m_environment);
+            : XProcessEnvironment_create_copy(&self->m_environment);
     if (!env) return NULL;
     list = XProcessEnvironment_toStringList(env);
     XProcessEnvironment_delete(env);

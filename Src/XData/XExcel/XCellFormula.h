@@ -1,6 +1,9 @@
 ﻿/******************************************************************************
  * @file       XCellFormula.h
  * @brief      XCellFormula 单元格公式类（对标 QXlsx::CellFormula）
+ * @details    对齐 QXlsx::CellFormula；纯 C99 实现，仅依赖 XinYueC 库内
+ *             组件（XString/XCellReference/XCellRange 等）与白名单标准头，
+ *             不调用 Win32、POSIX、Qt 或其他平台 API。
  * @author     XinYueC 团队
  * @note       提供单元格公式的表示，支持普通公式、共享公式和数组公式。
  *             对齐 QXlsx::CellFormula 全部功能
@@ -39,11 +42,11 @@ typedef enum XCellFormula_Type
  */
 typedef struct XCellFormula
 {
-    XString* m_text;             /**< 公式文本（如 "SUM(A1:A10)"） */
+    XString* m_text;             /**< 公式文本（如 "SUM(A1:A10)"）；可为 NULL（未设置文本时），由本对象拥有并在 XCellFormula_delete 中释放；禁止调用者直接修改或释放 */
     XCellFormula_Type m_type;    /**< 公式类型 */
     int m_sharedIndex;           /**< 共享公式索引（-1 表示非共享公式） */
     XCellRange m_reference;      /**< 公式引用范围（共享/数组公式的区域） */
-    XString* m_ca;               /**< 数组公式的单元格范围字符串 */
+    XString* m_ca;               /**< 数组公式的单元格范围字符串；可为 NULL（非数组公式或未设置时），由本对象拥有并在 XCellFormula_delete 中释放；禁止调用者直接修改或释放 */
 } XCellFormula;
 
 /**
@@ -105,7 +108,9 @@ XCellFormula_Type XCellFormula_formulaType(const XCellFormula* self);
 /**
  * @brief      获取公式文本
  * @param self 指针
- * @return     公式文本字符串
+ * @return     公式文本字符串（借用内部对象，禁止释放或修改；对象销毁或
+ *             setText 后失效）；未设置文本或 self 为 NULL 时返回 NULL
+ * @warning    返回的 XString* 属于对象内部存储，不能调用 XClassDelete 释放。
  */
 const XString* XCellFormula_formulaText(const XCellFormula* self);
 
@@ -127,12 +132,14 @@ int XCellFormula_sharedIndex(const XCellFormula* self);
  * @brief      设置公式文本
  * @param self 指针
  * @param text 公式文本
+ * @return     无。参数非法时保持原对象不变。
  */
 void XCellFormula_setText(XCellFormula* self, const XString* text);
 /**
  * @brief 使用 UTF-8 文本设置公式内容。
  * @param self 公式对象指针。
  * @param text UTF-8 公式文本。
+ * @return 无。参数非法时保持原对象不变。
  */
 void XCellFormula_setText_utf8(XCellFormula* self, const char* text);
 
@@ -140,6 +147,7 @@ void XCellFormula_setText_utf8(XCellFormula* self, const char* text);
  * @brief      设置公式类型
  * @param self 指针
  * @param type 公式类型
+ * @return     无。参数非法时保持原对象不变。
  */
 void XCellFormula_setType(XCellFormula* self, XCellFormula_Type type);
 
@@ -147,6 +155,7 @@ void XCellFormula_setType(XCellFormula* self, XCellFormula_Type type);
  * @brief      设置引用范围
  * @param self 指针
  * @param ref  引用范围
+ * @return     无。参数非法时保持原对象不变。
  */
 void XCellFormula_setReference(XCellFormula* self, const XCellRange* ref);
 
@@ -154,6 +163,7 @@ void XCellFormula_setReference(XCellFormula* self, const XCellRange* ref);
  * @brief      设置共享公式索引
  * @param self  指针
  * @param index 共享公式索引
+ * @return     无。参数非法时保持原对象不变。
  */
 void XCellFormula_setSharedIndex(XCellFormula* self, int index);
 

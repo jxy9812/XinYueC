@@ -91,13 +91,13 @@ static void test_sendEvent_spont(void)
 
     XEvent e;
     XEvent_init(&e, XEVENT_TYPE_USER);
-    e.spontaneous = 1;
+    e.m_spontaneous = 1;
 
     /* Qt 6.8: sendEvent 设置 spontaneous = false */
     XCoreApplication_sendEvent((XObject*)xApp, &e);
 
-    XPrintf("  sendEvent 后 spontaneous: %d (Qt 行为: sendEvent 设置 spont=0)\n", e.spontaneous);
-    assert(e.spontaneous == 0);
+    XPrintf("  sendEvent 后 m_spontaneous: %d (Qt 行为: sendEvent 设置 spont=0)\n", e.m_spontaneous);
+    assert(e.m_spontaneous == 0);
     XPrintf("  [通过] sendEvent 正确设置 spontaneous=0\n");
 }
 
@@ -432,16 +432,16 @@ static void test_forwardEvent(void)
 
     XEvent e;
     XEvent_init(&e, XEVENT_TYPE_USER);
-    e.spontaneous = 1;
+    e.m_spontaneous = 1;
 
     XEvent forwarded;
     XEvent_init(&forwarded, XEVENT_TYPE_USER);
-    forwarded.spontaneous = 0;
+    forwarded.m_spontaneous = 0;
 
     /* Qt 6.8: forwardEvent 复制源事件的 spontaneous 状态 */
     XCoreApplication_forwardEvent((XObject*)recv, &forwarded, &e);
-    XPrintf("  forwardEvent 后 forwarded.spontaneous: %d (预期 1, 从源事件复制)\n", forwarded.spontaneous);
-    assert(forwarded.spontaneous == 1);
+    XPrintf("  forwardEvent 后 forwarded.m_spontaneous: %d (预期 1, 从源事件复制)\n", forwarded.m_spontaneous);
+    assert(forwarded.m_spontaneous == 1);
 
     XPrintf("  接收器收到 %d 个事件 (预期 1)\n", recv->receivedCount);
     assert(recv->receivedCount == 1);

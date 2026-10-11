@@ -1,4 +1,4 @@
-﻿#include"XTreeObject.h"
+﻿#include"XTreeNode.h"
 #include"XContainer.h"
 #include"XStack.h"
 #include"XAlgorithm.h"
@@ -8,12 +8,12 @@ void XTreeNode_init(XTreeNode* node, const uint8_t nodeCount, size_t treeNodeSiz
 {
 	if (node == NULL||nodeCount==0|| dataSize ==0)
 		return;
-	node->nodeSize = treeNodeSize;
-	node->nodeCount = nodeCount;
+	node->m_nodeSize = treeNodeSize;
+	node->m_nodeCount = nodeCount;
 	//node->dataSize = dataSize;
 	//初始化孩子数组
 	memset(XTreeNode_GetNodes(node), 0, sizeof(XTreeNode*) * nodeCount);
-	node->parentNode = NULL;
+	node->m_parentNode = NULL;
 	if (pvData)
 		memcpy(XTreeNode_GetDataPtr(node), pvData, dataSize);
 	else
@@ -52,7 +52,7 @@ bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t dataSize
 	memcpy((uint8_t*)(XTreeNode_GetDataPtr(this_root)), pvData, dataSize);
 	return true;
 }
-void* XTreeNode_getData(XTreeNode* this_root)
+const void* XTreeNode_data_const(const XTreeNode* this_root)
 {
 	if (this_root == NULL )
 		return NULL;
@@ -60,13 +60,13 @@ void* XTreeNode_getData(XTreeNode* this_root)
 }
 bool XTreeNode_setNode(XTreeNode* this_root, const uint8_t nodeType, XTreeNode* node)
 {
-	if (this_root == NULL || this_root->nodeCount <= nodeType)
+	if (this_root == NULL || this_root->m_nodeCount <= nodeType)
 		return false;
 	XTreeNode_SetChild(this_root, nodeType, node);
 	//((XTreeNode**)(this_root->nodes))[nodeType] = node;
 	return true;
 }
-XTreeNode* XTreeNode_getChild(XTreeNode* this_root, const uint8_t nodeType)
+XTreeNode* XTreeNode_child(XTreeNode* this_root, const uint8_t nodeType)
 {
 	if(this_root==NULL)
 		return NULL;
@@ -90,9 +90,11 @@ void XTreeNode_delete(XTreeNode* node, XMemory* memory)
 }
 
 /* 原名 XTree_delete_base：树节点递归释放算法接口，非 XClass 生命周期
-   API；_base 后缀去除后与 XTreeNode_delete 等节点级接口同名成族，
-   原默认节点释放器的 4 参便捷版已并入（调用方显式传 XTreeNode_delete）。 */
-void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
+   API；_base 后缀去除后曾名 XTree_delete，因实际操作类型是 XTreeNode，
+   按「X类型名_功能名」更名 XTreeNode_deleteTree，与 XTreeNode_delete
+   等节点级接口同名成族；原默认节点释放器的 4 参便捷版已并入
+   （调用方显式传 XTreeNode_delete）。 */
+void XTreeNode_deleteTree(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
 	XTreeNodeDataDeleteMethod dataMethod, void* args, XMemory* memory)
 {
 	if (this_root == NULL)
@@ -110,7 +112,7 @@ void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
 		XStack_pop_base(stack);
 		if (currentNode == NULL)
 			continue;
-		for (size_t i = 0; i < currentNode->nodeCount; i++)
+		for (size_t i = 0; i < currentNode->m_nodeCount; i++)
 		{
 			node = XTreeNode_GetChild(currentNode,i);
 			if (node)
@@ -129,11 +131,11 @@ void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
 #endif
 }
 
-XTreeNode** XTreeNode_getChildRef(XTreeNode* this_root, const uint8_t nodeType)
+XTreeNode** XTreeNode_child_ref(XTreeNode* this_root, const uint8_t nodeType)
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
-	size_t count = this_root->nodeCount;
+	size_t count = this_root->m_nodeCount;
 	if (nodeType >= count)
 	{
 		XDEBUG_PRINTF("nodeType:%d>=总量:%d", nodeType, count);
@@ -143,15 +145,15 @@ XTreeNode** XTreeNode_getChildRef(XTreeNode* this_root, const uint8_t nodeType)
 	//return ((XTreeNode**)(this_root->nodes)) + nodeType;
 }
 
-XTreeNode** XTreeNode_getParentRef(XTreeNode* this_root)
+XTreeNode** XTreeNode_parent_ref(XTreeNode* this_root)
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
-	return &(this_root->parentNode);
+	return &(this_root->m_parentNode);
 }
 
 
-bool XTree_ReplacementChildNode(XTreeNode* formerChild, XTreeNode* freshChild)
+bool XTreeNode_ReplacementChildNode(XTreeNode* formerChild, XTreeNode* freshChild)
 {
 	if (ISNULL(formerChild, ""))
 		return false;
@@ -160,7 +162,7 @@ bool XTree_ReplacementChildNode(XTreeNode* formerChild, XTreeNode* freshChild)
 	XTreeNode* Parent = XTreeNode_GetParent(formerChild);//父节点
 	if (Parent == NULL)
 		return false;
-	XTreeNode** ParentPointToChild = XTreeNode_getChildrenParentRef(formerChild);//父节点指向孩子指针
+	XTreeNode** ParentPointToChild = XTreeNode_childrenParent_ref(formerChild);//父节点指向孩子指针
 	if (ParentPointToChild == NULL)
 		return false;
 	//与新节点互相建立链接
@@ -170,14 +172,14 @@ bool XTree_ReplacementChildNode(XTreeNode* formerChild, XTreeNode* freshChild)
 	XTreeNode_SetParent(formerChild, NULL);
 	return true;
 }
-XTreeNode** XTreeNode_getChildrenParentRef(XTreeNode* this_root)
+XTreeNode** XTreeNode_childrenParent_ref(XTreeNode* this_root)
 {
 	if (ISNULL(this_root, ""))
 		return NULL;
 	XTreeNode* Parent = XTreeNode_GetParent(this_root);
 	if (Parent == NULL)
 		return NULL;
-	for (size_t i = 0; i < this_root->nodeCount; i++)
+	for (size_t i = 0; i < this_root->m_nodeCount; i++)
 	{
 		if (XTreeNode_GetChild(Parent, i) == this_root)
 			//return Parent->nodes + i;

@@ -42,7 +42,7 @@ typedef enum XHttpPart_KnownHeader {
  * - @details 复制操作深拷贝头和内存 body；bodyDevice 仅借用，销毁部件时不会释放设备。
  */
 typedef struct XHttpPart {
-    XClass m_class;             /**< 第一个成员，继承 XClass。 */
+    XClass m_class;             /**< 第一个成员，由 XClass 管理，禁止手工修改。 */
     XHttpHeaders* m_headers;   /**< 部件头，当前对象拥有。 */
     XByteArray* m_body;        /**< 内存 body，当前对象拥有。 */
     XIODevice* m_bodyDevice;   /**< 设备 body，借用，不由当前对象释放。 */
@@ -56,6 +56,7 @@ XVtable* XHttpPart_class_init(void);
 
 /**
  * - @brief 创建空 MIME 部件。
+ * - @param memory 内存分配类型（XCLASS_DEFAULT_MEMORY_TYPE 使用系统默认内存）。
  * - @return 新部件；调用者必须使用 XClassDelete 释放，失败返回 NULL。
  */
 XHttpPart* XHttpPart_create_ex(XMemoryType memory);
@@ -178,7 +179,7 @@ typedef enum XHttpMultiPart_ContentType {
  * - @details 对象拥有部件副本和 boundary；append 不保存调用者部件指针。
  */
 typedef struct XHttpMultiPart {
-    XObject m_class;                     /**< 第一个成员，继承 XObject。 */
+    XObject m_class;                     /**< 第一个成员，由 XObject 管理，禁止手工修改。 */
     XVector* m_parts;                   /**< XHttpPart* 列表，当前对象拥有。 */
     XByteArray* m_boundary;             /**< boundary 文本，当前对象拥有。 */
     XHttpMultiPart_ContentType m_type;  /**< multipart 子类型。 */
@@ -191,8 +192,10 @@ typedef struct XHttpMultiPart {
 XVtable* XHttpMultiPart_class_init(void);
 
 /**
- * - @brief 创建 MixedType multipart。
- * - @return 新对象；调用者必须使用 XClassDelete 释放。
+ * - @brief 创建指定类型的 multipart。
+ * - @param memory 内存分配类型（XCLASS_DEFAULT_MEMORY_TYPE 使用系统默认内存）。
+ * - @param type multipart 子类型；必须是已知枚举值。
+ * - @return 新对象；调用者必须使用 XClassDelete 释放，失败返回 NULL。
  */
 XHttpMultiPart* XHttpMultiPart_create_ex(XMemoryType memory, XHttpMultiPart_ContentType type);
 

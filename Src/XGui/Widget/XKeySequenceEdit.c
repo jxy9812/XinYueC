@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XKeySequenceEdit.c
  * @brief      快捷键捕获控件实现（对标 Qt 6.8 QKeySequenceEdit 全部公共 API）。
  * @details    与同名头文件的公共 API 一一对应；内部实现细节见
@@ -170,7 +170,7 @@ static void xkse_finishEditing(XKeySequenceEdit* edit)
  *         捕获；XGui 的点击聚焦由控件 mousePress 自请焦点（XLineEdit
  *         同款模式），此前未重载 MousePressEvent 且默认 NoFocus，点击
  *         不聚焦、Ctrl+O 等组合永不被捕获（night #31）。 */
-static void VX_kse_mousePressEvent(XWidget* self, XEvent* event)
+static void VXKeySequenceEdit_mousePressEvent(XWidget* self, XEvent* event)
 {
     if (!self || !event ||
         XEvent_type(event) != XEVENT_TYPE_MOUSE_BUTTON_PRESS) return;
@@ -187,7 +187,7 @@ static void VX_kse_mousePressEvent(XWidget* self, XEvent* event)
 /** @brief 获得焦点：发起捕获（对标 Qt 文档 "The recording is initiated
  *         when the widget receives the focus"；night #31 的点击聚焦修复
  *         使点击进入同时启动捕获，捕获指示随即可见）。 */
-static void VX_kse_focusInEvent(XWidget* self, XEvent* event)
+static void VXKeySequenceEdit_focusInEvent(XWidget* self, XEvent* event)
 {
     XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
     if (!edit || !event ||
@@ -200,7 +200,7 @@ static void VX_kse_focusInEvent(XWidget* self, XEvent* event)
 /** @brief 失去焦点：结束捕获并收口编辑（对标 Qt 6.8 focusOutEvent→
  *         finishEditing，弹窗焦点豁免——Qt PopupFocusReason 同口径）；
  *         此后按键不再被吞，Tab 恢复走链。 */
-static void VX_kse_focusOutEvent(XWidget* self, XEvent* event)
+static void VXKeySequenceEdit_focusOutEvent(XWidget* self, XEvent* event)
 {
     XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
     if (!edit || !event ||
@@ -216,7 +216,7 @@ static void VX_kse_focusOutEvent(XWidget* self, XEvent* event)
 /** @brief 捕获空闲超时：捕获期间持续无输入达
  *         XKEYSEQUENCEEDIT_CAPTURE_IDLE_MS 自动结束捕获（防永久键盘
  *         陷阱；对标 Qt 以释放键定时器收口录制的思路）。 */
-static void VX_kse_timerEvent(XObject* object, XTimerEvent* event)
+static void VXKeySequenceEdit_timerEvent(XObject* object, XTimerEvent* event)
 {
     XKeySequenceEdit* edit = (XKeySequenceEdit*)object;
     if (!edit || !event) return;
@@ -229,7 +229,7 @@ static void VX_kse_timerEvent(XObject* object, XTimerEvent* event)
     }
 }
 
-static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
+static void VXKeySequenceEdit_keyPressEvent(XWidget* self, XEvent* event)
 {
     XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
     XKeyEvent* ke;
@@ -321,7 +321,7 @@ static void VX_kse_keyPressEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
-static void VX_kse_paintEvent(XWidget* self, XEvent* event)
+static void VXKeySequenceEdit_paintEvent(XWidget* self, XEvent* event)
 {
     XKeySequenceEdit* edit = (XKeySequenceEdit*)self;
     XPainter painter;
@@ -407,7 +407,7 @@ static void VX_kse_paintEvent(XWidget* self, XEvent* event)
 /* ==================== 生命周期与虚表 ==================== */
 
 /** @brief 析构：注销捕获空闲定时器，防止对象释放后定时器悬空派发。 */
-static void VX_kse_deinit(XKeySequenceEdit* self)
+static void VXKeySequenceEdit_deinit(XKeySequenceEdit* self)
 {
     if (!self) return;
     xkse_disarmIdleTimer(self);
@@ -418,13 +418,13 @@ XVtable* XKeySequenceEdit_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XKeySequenceEdit)
     XVTABLE_INHERIT_XCLASS(XWidget);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VX_kse_keyPressEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VX_kse_mousePressEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VX_kse_paintEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VX_kse_focusInEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VX_kse_focusOutEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VX_kse_timerEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VX_kse_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent, VXKeySequenceEdit_keyPressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent, VXKeySequenceEdit_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VXKeySequenceEdit_paintEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusInEvent, VXKeySequenceEdit_focusInEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_FocusOutEvent, VXKeySequenceEdit_focusOutEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXKeySequenceEdit_timerEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXKeySequenceEdit_deinit);
     return XVTABLE_DEFAULT;
 }
 

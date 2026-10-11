@@ -71,7 +71,7 @@ XProcessEnvironment* XProcessEnvironment_createInherit(void);
  * @return 新建环境对象；参数非法或分配失败返回 NULL。调用方必须
  *         使用 XProcessEnvironment_delete 释放返回对象。
  */
-XProcessEnvironment* XProcessEnvironment_createCopy(const XProcessEnvironment* other);
+XProcessEnvironment* XProcessEnvironment_create_copy(const XProcessEnvironment* other);
 
 /**
  * @brief 释放环境对象内部资源但保留对象存储。

@@ -552,8 +552,8 @@ void XHttp2Connection_init(XHttp2Connection* self)
     self->m_configuration = XHttp2Configuration_create();
     self->m_session = XHttp2ClientSession_create();
     self->m_decoder = XHttp2HeaderDecoder_create();
-    self->m_streams = XVector_create(sizeof(XHttp2Stream*));
-    self->m_pushedReplies = XVector_create(sizeof(XHttpReply*));
+    self->m_streams = XVector_Create(XHttp2Stream*);
+    self->m_pushedReplies = XVector_Create(XHttpReply*);
     self->m_input = XByteArray_create();
     self->m_outgoing = XByteArray_create();
     self->m_sessionSendWindow = 65535;

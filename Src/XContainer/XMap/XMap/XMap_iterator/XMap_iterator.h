@@ -1,14 +1,25 @@
 ﻿/**
 * @file XMap_iterator.h
 * @brief XMap正向迭代器头文件
-* @details 定义XMap容器的正向迭代器类型及相关操作函数，用于从前向后遍历映射中的键值对
+* @details 定义XMap容器的正向迭代器类型及相关操作函数，用于从前向后遍历映射中的键值对；
+*          对齐 Qt 6.8 QMap 的迭代器遍历语义（QMap::iterator 与 begin/end）。
+*          实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
 */
-#include"CXinYueConfig.h"
-#if !defined(XMAP_ITERATOR_H)&& XMap_ON
+#ifndef XMAP_ITERATOR_H
 #define XMAP_ITERATOR_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 条件编译开关（第③段）：XMap_ON 由 CXinYueConfig.h 统一定义，
+ * 此处仅兜底默认值，保证开关先于包含依赖生效。 */
+#ifndef XMap_ON
+#define XMap_ON 1
+#endif
+
+#if XMap_ON
+
+#include"CXinYueConfig.h"       ///< 全局配置（XMap_ON 开关定义）
 #include"XMapBase_iterator.h"
 
 /**
@@ -73,7 +84,9 @@ void XMap_iterator_for_each(XMap* this_map, XFor_each ForFunction, void* args);
 */
 XPair* XMap_iterator_data(XMap_iterator* it);
 
+#endif /* XMap_ON */
+
 #ifdef __cplusplus
 }
 #endif
-#endif
+#endif /* XMAP_ITERATOR_H */

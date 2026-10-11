@@ -145,6 +145,8 @@ XTimer* XTimer_create_ex(XMemoryType memory)
 
 void XTimer_out(XTimer* timer)
 {
+	if (timer == NULL)
+		return;
 	XTimerData_out(&timer->m_timerData);
 }
 
@@ -182,6 +184,8 @@ void XTimer_singleShot1(size_t msec, XObject* receiver, XSlotFunc1 slot_func, XC
 	if (msec == 0 || slot_func == NULL)
 		return;
 	XTimer* timer = XTimer_create();
+	if (!timer)
+		return;
 	XTimer_setTimeout(timer, msec);
 	XTimer_setAutoDelete(timer,true);
 	XTimer_setSingleShot(timer, true);
@@ -193,6 +197,8 @@ void XTimer_singleShot2(size_t msec, XSlotFunc1 slot_func)
 	if (msec == 0 || slot_func == NULL)
 		return;
 	XTimer* timer = XTimer_create();
+	if (!timer)
+		return;
 	XTimer_setTimeout(timer, msec);
 	XTimer_setAutoDelete(timer, true);
 	XTimer_setSingleShot(timer, true);

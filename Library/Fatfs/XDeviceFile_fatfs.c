@@ -85,7 +85,7 @@ static FATFS* g_volumes[XFATFS_MAX_VOLUMES];   /* NULL = 未分配 */
 static uint32_t g_mountedMask = 0;              /* bit[i] = 已挂载 */
 static int g_defaultIndex = -1;                 /* 默认驱动器索引 */
 static XMutex* g_volumeStateMutex = NULL;       /* 卷状态互斥锁 */
-static XAtomic_int32_t g_volumeStateInit = {0}; /* 0=未初始化，1=初始化中，2=已就绪，-1=失败 */
+static XAtomic_Int32 g_volumeStateInit = {0}; /* 0=未初始化，1=初始化中，2=已就绪，-1=失败 */
 
 /**
  * @brief 构造 FatFs 的十进制卷字符串。
@@ -742,6 +742,27 @@ bool XDeviceFile_rename(const XString* oldPath, const XString* newPath)
     if (!XFATFS_convertPath(oldPath, oldFatfs, sizeof(oldFatfs))) return false;
     if (!XFATFS_convertPath(newPath, newFatfs, sizeof(newFatfs))) return false;
     
+    return f_rename(oldFatfs, newFatfs) == FR_OK;
+#endif
+}
+
+bool XDeviceFile_renameReplace(const XString* oldPath, const XString* newPath)
+{
+#if FF_FS_READONLY
+    (void)oldPath;
+    (void)newPath;
+    return false;
+#else
+    if (!oldPath || !newPath) return false;
+
+    char oldFatfs[512], newFatfs[512];
+    if (!XFATFS_convertPath(oldPath, oldFatfs, sizeof(oldFatfs))) return false;
+    if (!XFATFS_convertPath(newPath, newFatfs, sizeof(newFatfs))) return false;
+
+    /* Fatfs f_rename 目标存在即失败（FR_EXIST）：替换语义=先删目标再改名。
+     * 非原子（删后改名间断电丢目标）——嵌入式无原生原子替换，调用方
+     * （XSaveFile commit）依赖本语义；临时文件缺失窗口由调用方重试兜底。 */
+    f_unlink(newFatfs);
     return f_rename(oldFatfs, newFatfs) == FR_OK;
 #endif
 }

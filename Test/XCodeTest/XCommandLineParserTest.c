@@ -38,13 +38,13 @@ static void test_basic_parsing(void)
     XCommandLineParser* parser = XCommandLineParser_create();
     assert(parser != NULL);
 
-    XCommandLineOption* optOutput = XCommandLineOption_createFull("o", "输出文件", "file", NULL);
-    XCommandLineOption_addName(optOutput, "output");
+    XCommandLineOption* optOutput = XCommandLineOption_createFull_2("o", "输出文件", "file", NULL);
+    XCommandLineOption_addName_2(optOutput, "output");
     bool ok = XCommandLineParser_addOption(parser, optOutput);
     assert(ok);
 
-    XCommandLineOption* optVerbose = XCommandLineOption_createFull("v", "详细输出", NULL, NULL);
-    XCommandLineOption_addName(optVerbose, "verbose");
+    XCommandLineOption* optVerbose = XCommandLineOption_createFull_2("v", "详细输出", NULL, NULL);
+    XCommandLineOption_addName_2(optVerbose, "verbose");
     ok = XCommandLineParser_addOption(parser, optVerbose);
     assert(ok);
 
@@ -55,15 +55,15 @@ static void test_basic_parsing(void)
     XPrintf("  解析结果: %s (预期 true)\n", result ? "成功" : "失败");
     assert(result == true);
 
-    bool isSet = XCommandLineParser_isSet(parser, "o");
+    bool isSet = XCommandLineParser_isSet_2(parser, "o");
     XPrintf("  -o 已设置: %s (预期 true)\n", isSet ? "是" : "否");
     assert(isSet == true);
 
-    const char* val = XCommandLineParser_value(parser, "o");
+    const char* val = XCommandLineParser_value_2(parser, "o");
     XPrintf("  -o 的值: %s (预期 'out.txt')\n", val ? val : "NULL");
     assert(val != NULL && strcmp(val, "out.txt") == 0);
 
-    isSet = XCommandLineParser_isSet(parser, "v");
+    isSet = XCommandLineParser_isSet_2(parser, "v");
     XPrintf("  -v 已设置: %s (预期 true)\n", isSet ? "是" : "否");
     assert(isSet == true);
 
@@ -85,8 +85,8 @@ static void test_long_options(void)
     XCommandLineParser* parser = XCommandLineParser_create();
     assert(parser != NULL);
 
-    XCommandLineOption* opt = XCommandLineOption_createFull("o", "输出文件", "file", NULL);
-    XCommandLineOption_addName(opt, "output");
+    XCommandLineOption* opt = XCommandLineOption_createFull_2("o", "输出文件", "file", NULL);
+    XCommandLineOption_addName_2(opt, "output");
     XCommandLineParser_addOption(parser, opt);
 
     XStringList* args = makeArgs("prog", "--output=result.txt", NULL, NULL);
@@ -94,7 +94,7 @@ static void test_long_options(void)
     XPrintf("  解析 --output=result.txt: %s (预期 true)\n", result ? "成功" : "失败");
     assert(result == true);
 
-    const char* val = XCommandLineParser_value(parser, "output");
+    const char* val = XCommandLineParser_value_2(parser, "output");
     XPrintf("  --output 的值: %s (预期 'result.txt')\n", val ? val : "NULL");
     assert(val != NULL && strcmp(val, "result.txt") == 0);
 
@@ -135,13 +135,13 @@ static void test_help_text(void)
     XCommandLineParser* parser = XCommandLineParser_create();
     assert(parser != NULL);
 
-    XCommandLineParser_setApplicationDescription(parser, "测试应用程序");
+    XCommandLineParser_setApplicationDescription_2(parser, "测试应用程序");
 
-    XCommandLineOption* opt = XCommandLineOption_createFull("o", "输出文件", "file", NULL);
-    XCommandLineOption_addName(opt, "output");
+    XCommandLineOption* opt = XCommandLineOption_createFull_2("o", "输出文件", "file", NULL);
+    XCommandLineOption_addName_2(opt, "output");
     XCommandLineParser_addOption(parser, opt);
 
-    XCommandLineParser_addPositionalArgument(parser, "input", "输入文件", "<input>");
+    XCommandLineParser_addPositionalArgument_2(parser, "input", "输入文件", "<input>");
 
     XString* help = XCommandLineParser_helpText(parser);
     XPrintf("  帮助文本:\n%s\n", help ? XString_toUtf8(help) : "NULL");
@@ -161,8 +161,8 @@ static void test_positional_args_mode(void)
     XCommandLineParser* parser = XCommandLineParser_create();
     assert(parser != NULL);
 
-    XCommandLineOption* opt = XCommandLineOption_createFull("v", "详细模式", NULL, NULL);
-    XCommandLineOption_addName(opt, "verbose");
+    XCommandLineOption* opt = XCommandLineOption_createFull_2("v", "详细模式", NULL, NULL);
+    XCommandLineOption_addName_2(opt, "verbose");
     XCommandLineParser_addOption(parser, opt);
 
     XCommandLineParser_setOptionsAfterPositionalArgumentsMode(parser,
@@ -173,7 +173,7 @@ static void test_positional_args_mode(void)
     XPrintf("  解析结果: %s (预期 true)\n", result ? "成功" : "失败");
     assert(result == true);
 
-    bool isSet = XCommandLineParser_isSet(parser, "v");
+    bool isSet = XCommandLineParser_isSet_2(parser, "v");
     XPrintf("  -v 已设置: %s (预期 false)\n", isSet ? "是" : "否");
     assert(isSet == false);
 
@@ -192,7 +192,7 @@ static void test_default_values(void)
 {
     XPrintf("\n===== [测试 6] 默认值 =====\n");
 
-    XCommandLineOption* opt = XCommandLineOption_createFull("p", "端口号", "port", "8080");
+    XCommandLineOption* opt = XCommandLineOption_createFull_2("p", "端口号", "port", "8080");
     assert(opt != NULL);
 
     const XStringList* defaults = XCommandLineOption_defaultValues(opt);
@@ -215,7 +215,7 @@ static void test_option_flags(void)
 {
     XPrintf("\n===== [测试 7] 选项标志 =====\n");
 
-    XCommandLineOption* opt = XCommandLineOption_create("hidden");
+    XCommandLineOption* opt = XCommandLineOption_create_2("hidden");
     XCommandLineOption_setFlags(opt, XCOMMANDLINE_OPTION_FLAG_HIDDEN_FROM_HELP);
 
     XPrintf("  隐藏: %s (预期 true)\n", XCommandLineOption_isHidden(opt) ? "是" : "否");
@@ -237,9 +237,9 @@ static void test_compacted_short_options(void)
     XCommandLineParser* parser = XCommandLineParser_create();
     assert(parser != NULL);
 
-    XCommandLineOption* optA = XCommandLineOption_createFull("a", "选项A", NULL, NULL);
-    XCommandLineOption* optB = XCommandLineOption_createFull("b", "选项B", NULL, NULL);
-    XCommandLineOption* optC = XCommandLineOption_createFull("c", "选项C", NULL, NULL);
+    XCommandLineOption* optA = XCommandLineOption_createFull_2("a", "选项A", NULL, NULL);
+    XCommandLineOption* optB = XCommandLineOption_createFull_2("b", "选项B", NULL, NULL);
+    XCommandLineOption* optC = XCommandLineOption_createFull_2("c", "选项C", NULL, NULL);
     XCommandLineParser_addOption(parser, optA);
     XCommandLineParser_addOption(parser, optB);
     XCommandLineParser_addOption(parser, optC);
@@ -250,14 +250,14 @@ static void test_compacted_short_options(void)
     XPrintf("  解析 -abc: %s (预期 true)\n", result ? "成功" : "失败");
     assert(result == true);
 
-    XPrintf("  -a 已设置: %s (预期 true)\n", XCommandLineParser_isSet(parser, "a") ? "是" : "否");
-    assert(XCommandLineParser_isSet(parser, "a"));
+    XPrintf("  -a 已设置: %s (预期 true)\n", XCommandLineParser_isSet_2(parser, "a") ? "是" : "否");
+    assert(XCommandLineParser_isSet_2(parser, "a"));
 
-    XPrintf("  -b 已设置: %s (预期 true)\n", XCommandLineParser_isSet(parser, "b") ? "是" : "否");
-    assert(XCommandLineParser_isSet(parser, "b"));
+    XPrintf("  -b 已设置: %s (预期 true)\n", XCommandLineParser_isSet_2(parser, "b") ? "是" : "否");
+    assert(XCommandLineParser_isSet_2(parser, "b"));
 
-    XPrintf("  -c 已设置: %s (预期 true)\n", XCommandLineParser_isSet(parser, "c") ? "是" : "否");
-    assert(XCommandLineParser_isSet(parser, "c"));
+    XPrintf("  -c 已设置: %s (预期 true)\n", XCommandLineParser_isSet_2(parser, "c") ? "是" : "否");
+    assert(XCommandLineParser_isSet_2(parser, "c"));
 
     XPrintf("  [通过] 紧凑短选项解析正常\n");
 
@@ -273,7 +273,7 @@ static void test_double_dash(void)
     XCommandLineParser* parser = XCommandLineParser_create();
     assert(parser != NULL);
 
-    XCommandLineOption* opt = XCommandLineOption_createFull("v", "详细模式", NULL, NULL);
+    XCommandLineOption* opt = XCommandLineOption_createFull_2("v", "详细模式", NULL, NULL);
     XCommandLineParser_addOption(parser, opt);
 
     /* -- 之后所有参数视为位置参数 */
@@ -286,8 +286,8 @@ static void test_double_dash(void)
     XPrintf("  解析 -- -v --foo: %s (预期 true)\n", result ? "成功" : "失败");
     assert(result == true);
 
-    XPrintf("  -v 已设置: %s (预期 false)\n", XCommandLineParser_isSet(parser, "v") ? "是" : "否");
-    assert(!XCommandLineParser_isSet(parser, "v"));
+    XPrintf("  -v 已设置: %s (预期 false)\n", XCommandLineParser_isSet_2(parser, "v") ? "是" : "否");
+    assert(!XCommandLineParser_isSet_2(parser, "v"));
 
     const XStringList* posArgs = XCommandLineParser_positionalArguments(parser);
     XPrintf("  位置参数数量: %zu (预期 2: -v, --foo)\n", XStringList_size_base(posArgs));
@@ -307,8 +307,8 @@ static void test_isSetOption(void)
     XCommandLineParser* parser = XCommandLineParser_create();
     assert(parser != NULL);
 
-    XCommandLineOption* opt = XCommandLineOption_createFull("v", "详细模式", NULL, NULL);
-    XCommandLineOption_addName(opt, "verbose");
+    XCommandLineOption* opt = XCommandLineOption_createFull_2("v", "详细模式", NULL, NULL);
+    XCommandLineOption_addName_2(opt, "verbose");
     XCommandLineParser_addOption(parser, opt);
 
     XStringList* args = makeArgs("prog", "--verbose", NULL, NULL);
@@ -331,8 +331,8 @@ static void test_multi_values(void)
     XCommandLineParser* parser = XCommandLineParser_create();
     assert(parser != NULL);
 
-    XCommandLineOption* opt = XCommandLineOption_createFull("I", "包含路径", "path", NULL);
-    XCommandLineOption_addName(opt, "include");
+    XCommandLineOption* opt = XCommandLineOption_createFull_2("I", "包含路径", "path", NULL);
+    XCommandLineOption_addName_2(opt, "include");
     XCommandLineParser_addOption(parser, opt);
 
     XStringList* args = XStringList_create();

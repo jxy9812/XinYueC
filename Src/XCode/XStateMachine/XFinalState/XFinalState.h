@@ -29,6 +29,7 @@ XVtable* XFinalState_class_init(void);
  */
 /**
  * @brief 创建指定父状态的最终状态。
+ * @param memory 内存类型。
  * @param parent 父状态，可为 NULL；非 NULL 时取得最终状态所有权。
  * @return 新最终状态；内存分配失败时返回 NULL。
  */

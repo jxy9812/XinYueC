@@ -17,7 +17,7 @@ extern "C" {
 /* 直接运行全部 Reader 测试，不经过交互式菜单。 */
 bool XXmlStreamReaderTest_runAll(void);
 
-#if DEMOTEST
+#if DEMOTEST_ON
 void XTestMenu_XXmlStreamReaderTest(XTestMenu* root);
 #endif
 #ifdef __cplusplus

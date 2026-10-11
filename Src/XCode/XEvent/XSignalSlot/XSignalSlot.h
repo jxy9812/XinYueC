@@ -103,7 +103,7 @@ bool XSignalSlot_disconnect2(XConnection* conn);
  * @param ref_count 优化参数,传入NULL,内部自己创建管理，外部传入可以与事件共享参数，而不用拷贝，谁最后谁释放参数
  * @param priority  信号与槽队列连接的时候的优先级(内部走的是事件投递)
  */
-void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, int priority);
+void XSignalSlot_emit(XSignalSlot* manager, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_Int32* ref_count, int priority);
 #ifdef __cplusplus
 }
 #endif

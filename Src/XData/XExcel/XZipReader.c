@@ -3,6 +3,7 @@
 #include "XCrc.h"
 #include "XFile.h"
 #include "XClass.h"
+#include "XStringUtils.h"   /* XStrlen：库内字符串原语（外部依赖约束） */
 #include "zlib.h"
 #include <limits.h>
 #include <string.h>
@@ -229,7 +230,7 @@ XByteArray* XZipReader_fileData(const XZipReader* self, const XString* fileName)
         if (!range_is_valid(offset, entryLength, size)) return NULL;
 
         const uint8_t* name = data + offset + 46;
-        size_t wantedLength = strlen(wantedName);
+        size_t wantedLength = XStrlen(wantedName);
         bool matches = wantedLength == nameLength && memcmp(name, wantedName, nameLength) == 0;
         if (!matches) {
             offset += entryLength;

@@ -71,7 +71,7 @@ static void AdjustUp(void* LParray, const size_t TypeSize, size_t childNSel, XCo
 		if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))
 		//if (compare(LPchild, LPparent))
 		{
-			XSwap(LPchild, LPparent, TypeSize);
+			XMemory_swap(LPchild, LPparent, TypeSize);
 		}
 		if (parentNSel == 0)//已经调整到顶部了
 			return;
@@ -102,7 +102,7 @@ static void AdjustDwon(void* LParray, const size_t nSize, const size_t TypeSize,
 		if (((cmp == XCompare_Less) && (order == XSORT_ASC) || (cmp == XCompare_Equality) || (cmp == XCompare_Greater) && (order == XSORT_DESC)))
 		//if (compare(LPchild, LPparent))//排序比较函数
 		{
-			XSwap(LPchild, LPparent, TypeSize);//交换函数
+			XMemory_swap(LPchild, LPparent, TypeSize);//交换函数
 			parentNSel = child;//父亲节点更新
 			child = parentNSel * 2 + 1;//默认孩子更新
 		}

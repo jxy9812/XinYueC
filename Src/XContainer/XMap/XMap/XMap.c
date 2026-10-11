@@ -211,8 +211,7 @@ static void VXMap_deinit(XMap* this_map);
 
 XVtable* XMap_class_init()
 {
-    XVTABLE_INIT_DEFAULT_SIZE(XMAP_VTABLE_SIZE)
-	XCLASS_SET_CLASS_NAME_DEFAULT("XMap");
+    XVTABLE_INIT_DEFAULT(XMap)
         XVTABLE_INHERIT_XCLASS(XContainer);
     void* table[] = {
         VXMap_insert, VXMap_erase, VXMap_remove, VXMap_value, VXMap_find,
@@ -266,20 +265,20 @@ static bool VXMapDetachIfNeeded(XMap* this_map)
         else
             memcpy(XPair_second(newPair), XPair_second(oldPair), typeSize);
         XRBTree_SetRed(newNode);
-        memset(XTreeNode_GetNodes(newNode), 0, sizeof(XTreeNode*) * ((XTreeNode*)newNode)->nodeCount);
-        ((XTreeNode*)newNode)->parentNode = NULL;
+        memset(XTreeNode_GetNodes(newNode), 0, sizeof(XTreeNode*) * ((XTreeNode*)newNode)->m_nodeCount);
+        ((XTreeNode*)newNode)->m_parentNode = NULL;
         XRBTree_insertNode(&newRoot, XContainerCompare(this_map), XCompareRuleTwo_XMap, newNode, XContainer_memory(this_map));
     }
     XClassDelete(nodes);
 
     if (!success) {
-        XTree_delete(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+        XTreeNode_deleteTree(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
         return false;
     }
 
     XSharedData* newShared = XSharedData_create_ex(NULL, sizeof(XRBTreeNode*), XContainer_memory(this_map));
     if (!newShared) {
-        XTree_delete(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+        XTreeNode_deleteTree(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
         return false;
     }
     *(XRBTreeNode**)newShared->data = newRoot;
@@ -293,7 +292,7 @@ static void VXMapDataDelete(void* data, XMap* this_map)
     if (data == NULL || this_map == NULL) return;
     XRBTreeNode* root = *(XRBTreeNode**)data;
     if (root)
-        XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+        XTreeNode_deleteTree(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
     XContainerSize(this_map) = 0;
     XContainerCapacity(this_map) = 0;
     XContainerSetDataPtr(this_map, NULL);
@@ -321,7 +320,14 @@ bool VXMap_insert(XMap* this_map, const void* pvKey, const void* pvValue,
 
         if (XContainerIsCow(this_map)) {
             if (!(XSharedData*)XContainerDataPtr(this_map)) {
-                XContainerSetDataPtr(this_map, XSharedData_create_ex(NULL, sizeof(XRBTreeNode*), XContainer_memory(this_map)));
+                /* 分配失败必须提前返回：否则根指针为 NULL，XRBTree_insertNode
+                   不会挂链却把节点当作插入成功返回，节点成孤儿泄漏且计数虚增 */
+                XSharedData* sd = XSharedData_create_ex(NULL, sizeof(XRBTreeNode*), XContainer_memory(this_map));
+                if (!sd) {
+                    XMap_deinit_pair(this_map, pair);
+                    return false;
+                }
+                XContainerSetDataPtr(this_map, sd);
             }
         }
         else {
@@ -456,6 +462,7 @@ bool VXMap_find(XMap* this_map, const void* key, XMap_iterator* it)
 XVector* VXMapBase_keys(const XMapBase* this_map)
 {
     XVector* v = XVector_create_ex(XContainer_memory_type(this_map), this_map->m_keyTypeSize, true);
+    if (!v) return NULL;
     XContainerSetDataCopyMethod(v, XMapBaseKeyCopyMethod(this_map));
     XContainerSetDataMoveMethod(v, XMapBaseKeyMoveMethod(this_map));
     XContainerSetDataDeinitMethod(v, XMapBaseKeyDeinitMethod(this_map));
@@ -468,6 +475,7 @@ XVector* VXMapBase_keys(const XMapBase* this_map)
 XVector* VXMapBase_values(const XMapBase* this_map)
 {
     XVector* v = XVector_create_ex(XContainer_memory_type(this_map), XContainerTypeSize(this_map), true);
+    if (!v) return NULL;
     XContainerSetDataCopyMethod(v, XContainerDataCopyMethod(this_map));
     XContainerSetDataMoveMethod(v, XContainerDataMoveMethod(this_map));
     XContainerSetDataDeinitMethod(v, XContainerDataDeinitMethod(this_map));
@@ -490,7 +498,7 @@ void VXMap_clear(XMap* this_map)
     }
     XRBTreeNode* root = XMap_root(this_map);
     if (root)
-    XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+    XTreeNode_deleteTree(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
     if (XContainerIsCow(this_map))
         *XMap_root_ptr(this_map) = NULL;
     else
@@ -520,7 +528,7 @@ void VXClass_copy(XMap* object, const XMap* src)
         else {
             XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(object);
             if (root)
-                XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
+                XTreeNode_deleteTree(root, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
             XContainerDataPtr(object) = NULL;
         }
     }
@@ -556,7 +564,7 @@ void VXClass_copy(XMap* object, const XMap* src)
                 XRBTreeNode* newNode = XRBTree_create_ex(NULL, XMapBasePairTypeSize(object), XContainer_memory(object));
                 if (!newNode) {
                     XClassDelete(nodes);
-                    XTree_delete(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
+                    XTreeNode_deleteTree(newRoot, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
                     return;
                 }
                 XPair* newPair = XBTreeNode_GetDataPtr(newNode);
@@ -570,8 +578,8 @@ void VXClass_copy(XMap* object, const XMap* src)
                 else
                     memcpy(XPair_second(newPair), XPair_second(oldPair), typeSize);
                 XRBTree_SetRed(newNode);
-                memset(XTreeNode_GetNodes(newNode), 0, sizeof(XTreeNode*) * ((XTreeNode*)newNode)->nodeCount);
-                ((XTreeNode*)newNode)->parentNode = NULL;
+                memset(XTreeNode_GetNodes(newNode), 0, sizeof(XTreeNode*) * ((XTreeNode*)newNode)->m_nodeCount);
+                ((XTreeNode*)newNode)->m_parentNode = NULL;
                 XRBTree_insertNode(&newRoot, XContainerCompare(object), XCompareRuleTwo_XMap, newNode, XContainer_memory(object));
             }
             XClassDelete(nodes);
@@ -606,7 +614,7 @@ void VXClass_move(XMap* object, XMap* src)
         else {
             XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(object);
             if (root)
-        XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
+        XTreeNode_deleteTree(root, XTreeNode_delete, XMapBase_deleteNodeData, object, XContainer_memory(object));
             XContainerDataPtr(object) = NULL;
         }
         // 3. 清空目标的大小和容量（已经由释放函数完成？不，需要显式清零）
@@ -616,7 +624,7 @@ void VXClass_move(XMap* object, XMap* src)
     }
 
     // 4. 交换目标与源的内存（跳过 XClass 部分，包括 m_useCow、m_data、size、capacity 等）
-    XSwap((XClass*)object + 1, (XClass*)src + 1, sizeof(XMap) - sizeof(XClass));
+    XMemory_swap((XClass*)object + 1, (XClass*)src + 1, sizeof(XMap) - sizeof(XClass));
     Class_Memory(object) = source_memory;
     if (!target_uninitialized)
         Class_Memory(src) = target_memory;
@@ -632,7 +640,7 @@ void VXMap_deinit(XMap* this_map)
     else {
         XRBTreeNode* root = (XRBTreeNode*)XContainerDataPtr(this_map);
         if (root)
-            XTree_delete(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
+            XTreeNode_deleteTree(root, XTreeNode_delete, XMapBase_deleteNodeData, this_map, XContainer_memory(this_map));
         XContainerDataPtr(this_map) = NULL;
     }
     XContainerSize(this_map) = 0;
@@ -657,6 +665,7 @@ XMap* XMap_create_ex(XMemoryType memory, const size_t keyTypeSize, const size_t 
         return NULL;
     }
     XMap* this_map = (XMap*)XMemory_malloc(sizeof(XMap), memory);
+    if (!this_map) return NULL;
     XMap_init(this_map, keyTypeSize, valTypeSize, compare, useCow);
     Set_Class_Memory(this_map, memory); Set_Class_IsHeap(this_map, true);
     return this_map;

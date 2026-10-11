@@ -11,7 +11,7 @@ extern "C" {
  * @return 原子变量的旧值
  * @note 原子性保证：整个读取-替换过程不可分割
  */
-bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order);
+bool XAtomic_exchange_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子交换操作 - 用新值替换原子32位有符号整数变量的值，并返回旧值
@@ -21,7 +21,7 @@ bool XAtomic_exchange_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder or
  * @return 原子变量的旧值
  * @note 原子性保证：整个读取-替换过程不可分割
  */
-int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order);
+int32_t XAtomic_exchange_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子交换操作 - 用新值替换原子32位无符号整数变量的值，并返回旧值
@@ -31,7 +31,7 @@ int32_t XAtomic_exchange_int32(XAtomic_int32_t* var, int32_t value, XAtomic_Memo
  * @return 原子变量的旧值
  * @note 原子性保证：整个读取-替换过程不可分割
  */
-uint32_t XAtomic_exchange_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order);
+uint32_t XAtomic_exchange_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子交换操作 - 用新值替换原子64位有符号整数变量的值，并返回旧值
@@ -41,7 +41,7 @@ uint32_t XAtomic_exchange_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_
  * @return 原子变量的旧值
  * @note 原子性保证：整个读取-替换过程不可分割
  */
-int64_t XAtomic_exchange_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order);
+int64_t XAtomic_exchange_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子交换操作 - 用新值替换原子64位无符号整数变量的值，并返回旧值
@@ -51,7 +51,7 @@ int64_t XAtomic_exchange_int64(XAtomic_int64_t* var, int64_t value, XAtomic_Memo
  * @return 原子变量的旧值
  * @note 原子性保证：整个读取-替换过程不可分割
  */
-uint64_t XAtomic_exchange_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order);
+uint64_t XAtomic_exchange_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子交换操作 - 用新值替换原子size_t类型变量的值，并返回旧值
@@ -61,7 +61,7 @@ uint64_t XAtomic_exchange_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_
  * @return 原子变量的旧值
  * @note 原子性保证：整个读取-替换过程不可分割
  */
-size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order);
+size_t XAtomic_exchange_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子交换操作 - 用新值替换原子指针变量的值，并返回旧值
@@ -71,7 +71,7 @@ size_t XAtomic_exchange_size_t(XAtomic_size_t* var, size_t value, XAtomic_Memory
  * @return 原子变量的旧值
  * @note 原子性保证：整个读取-替换过程不可分割
  */
-uintptr_t XAtomic_exchange_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order);
+uintptr_t XAtomic_exchange_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order);
 
 #ifdef __cplusplus
 }

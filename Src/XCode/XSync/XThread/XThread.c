@@ -1,4 +1,5 @@
 ﻿#include "XThread.h"
+#include <string.h>
 #include "XVtable.h"
 #include "XMemory.h"
 #include "XEventLoop.h"
@@ -6,7 +7,6 @@
 #include "XCoreApplication.h"
 #include "XThreadData.h"
 #include "XTask.h"
-#include <string.h>
 #if XSYNC_ON
 #if XTHREAD_ON
 XThread* XThread_create_func(XThreadFunc start_routine, XVarList* varlist)
@@ -175,6 +175,8 @@ int XThread_exec(XThread* thread)
 
 void XThread_run_base(XThread* thread)
 {
+    if (ISNULL(thread, "XThread") || ISNULL(XClassGetVtable(thread), "Vtable"))
+        return;
     XClassGetVirtualFunc(thread, EXThread_Run, void(*)(XThread*))(thread);
 }
 

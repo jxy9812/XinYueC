@@ -27,19 +27,26 @@ XCLASS_DEFINE_EXTEND_END(XAreaSeries, XAbstractSeries)
 typedef struct XAreaSeries
 {
     XAbstractSeries m_base;  /**< 基类成员；必须是第一个。 */
+
+    /* ---- 8 字节对齐组（对齐分组前移，消除原布局 0xde/0xec/尾部空洞；
+     *      成员访问一律按名，无位置初始化/offsetof 依赖） ---- */
     XLineSeries* m_upper;     /**< 上边界折线（内部拥有）。 */
     XLineSeries* m_lower;     /**< 下边界折线（借用；NULL=基线）。 */
+    XString* m_pointLabelsFormat; /**< 点标签格式（对象拥有；默认 "@xPoint, @yPoint"）。 */
+    XString* m_pointLabelsFontFamily; /**< 点标签字体族（对象拥有）。 */
     double m_baseValue;       /**< 下边界基线值（默认 0）。 */
+    double m_borderWidth;     /**< 边框线宽（默认 1）。 */
+
+    /* ---- 4 字节对齐组 ---- */
     uint32_t m_color;         /**< 填充色（0=主题色）。 */
     uint32_t m_borderColor;   /**< 边框色（0=填充色）。 */
-    double m_borderWidth;     /**< 边框线宽（默认 1）。 */
     uint32_t m_brushColor;    /**< 画刷颜色（0=透明）。 */
+    uint32_t m_pointLabelsColor; /**< 点标签颜色（0=默认）。 */
+    int m_pointLabelsFontSize; /**< 点标签字号（磅；0=默认）。 */
+
+    /* ---- 1 字节标志组（尾部填充） ---- */
     bool m_pointsVisible;     /**< 上边界点标记可见（默认 false）。 */
     bool m_pointLabelsVisible; /**< 点标签可见（默认 false）。 */
-    XString* m_pointLabelsFormat; /**< 点标签格式（对象拥有；默认 "@xPoint, @yPoint"）。 */
-    uint32_t m_pointLabelsColor; /**< 点标签颜色（0=默认）。 */
-    XString* m_pointLabelsFontFamily; /**< 点标签字体族（对象拥有）。 */
-    int m_pointLabelsFontSize; /**< 点标签字号（磅；0=默认）。 */
     bool m_pointLabelsClipping; /**< 点标签裁剪（默认 true）。 */
 } XAreaSeries;
 

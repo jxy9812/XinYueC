@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XGuiServer.h
  * @brief      XGuiServer GUI 服务器契约(冻结头, 只声明 API 不含实现)。
  * @details    远程窗口服务端: 镜像本机顶层控件画面(共存模式), 或在无屏
@@ -52,7 +52,10 @@ typedef struct XGuiServer {
 
 /* ==================== 生命周期 ==================== */
 
-/** @brief 初始化类虚函数表, 返回共享 XVtable 指针。 */
+/**
+ * @brief  初始化类虚函数表。
+ * @return 共享 XVtable 指针。
+ */
 XVtable* XGuiServer_class_init(void);
 
 /**
@@ -67,6 +70,8 @@ void XGuiServer_init(XGuiServer* self, XObject* parent);
     XGuiServer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent))
 /**
  * @brief  按指定内存类型创建服务对象。
+ * @param  memory 内存类型。
+ * @param  parent 父对象(借用; 可为 NULL, 为 NULL 时调用方负责 delete)。
  * @return 新实例; 分配失败返回 NULL(需 XClass_delete_base /
  *         XObject_deleteLater 释放)。
  */
@@ -92,10 +97,19 @@ XGuiServer* XGuiServer_create_ex(XMemoryType memory, XObject* parent);
  */
 bool XGuiServer_host(XGuiServer* self, XWidget* topLevel);
 
-/** @brief 解除绑定并恢复原 present 回调; 会话转入"无画面"等待态。 */
+/**
+ * @brief      解除绑定并恢复原 present 回调; 会话转入"无画面"等待态。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @return     无。
+ */
 void XGuiServer_unhost(XGuiServer* self);
 
-/** @brief 当前镜像目标(借用); 未绑定返回 NULL。 */
+/**
+ * @brief      当前镜像目标。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     当前镜像顶层控件(借用, 生命周期归控件自身, 禁止在此释放);
+ *             未绑定返回 NULL。
+ */
 XWidget* XGuiServer_hostedWidget(const XGuiServer* self);
 
 /* ==================== 监听与接入(需求 2: 传输无关) ==================== */
@@ -103,64 +117,119 @@ XWidget* XGuiServer_hostedWidget(const XGuiServer* self);
 /**
  * @brief      开始监听所有本机地址的 port 端口(TCP; TLS 档由 policy 决定
  *             accept 后是否升级, 见 XGuiRemote.md §4.3)。
- * @return     false 端口占用/已监听/参数非法。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @param      port 监听端口; 0 由系统分配(实际端口经 serverPort 查询)。
+ * @return     true 监听成功; false 端口占用/已监听/参数非法(对象状态不变)。
  */
 bool XGuiServer_listen(XGuiServer* self, uint16_t port);
 
 /**
  * @brief      监听指定地址(点分 IPv4 文本或主机名; NULL 等价所有地址)。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @param      addressUtf8 监听地址(UTF-8, 借用); NULL 等价 listen 的
+ *             全地址形态。
+ * @param      port 监听端口; 0 由系统分配。
+ * @return     true 监听成功; false 地址非法/端口占用/已监听(对象状态不变)。
+ * @note       addressUtf8 只在调用期间借用, 函数返回后可立即释放。
  */
 bool XGuiServer_listen_2(XGuiServer* self, const char* addressUtf8,
                          uint16_t port);
 
-/** @brief 停止监听并断开全部会话(发 BYE, 原因 SERVER_SHUTDOWN)。 */
+/**
+ * @brief      停止监听并断开全部会话(发 BYE, 原因 SERVER_SHUTDOWN)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @return     无。
+ */
 void XGuiServer_close(XGuiServer* self);
 
-/** @brief 是否正在监听。 */
+/**
+ * @brief      查询是否正在监听。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     true 监听中; false 未监听。
+ */
 bool XGuiServer_isListening(const XGuiServer* self);
 
-/** @brief 实际监听端口(listen 传 0 由系统分配时尤为有用); 未监听返回 0。 */
+/**
+ * @brief      查询实际监听端口(listen 传 0 由系统分配时尤为有用)。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     实际监听端口; 未监听返回 0。
+ */
 uint16_t XGuiServer_serverPort(const XGuiServer* self);
 
-/** @brief 设置最大并发会话数(默认 4; 超限接入被 BYE(SESSION_LIMIT) 拒绝)。 */
+/**
+ * @brief      设置最大并发会话数(默认 4)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param      maxSessions 最大并发会话数; 超限接入被 BYE(SESSION_LIMIT)
+ *             拒绝。
+ * @return     无。
+ */
 void XGuiServer_setMaxSessions(XGuiServer* self, int maxSessions);
 
-/** @brief 当前活跃会话数。 */
+/**
+ * @brief      查询当前活跃会话数。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     当前活跃会话数。
+ */
 int XGuiServer_sessionCount(const XGuiServer* self);
 
 /**
  * @brief      直挂自定义传输(需求 2: 任意 XIODevice; 嵌入式管道/测试)。
  * @details    device 必须已连通且为读写打开(借用, 生命周期由调用方管理,
  *             detachTransport 或 close 前不得销毁)。每调用建立一条会话。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @param      device 直挂设备(借用, 生命周期由调用方管理; detachTransport
+ *             或 close 前不得销毁)。
  * @return     新会话 id(>0); 失败返回 -1(会话已满/设备非法)。
  */
 int XGuiServer_attachTransport(XGuiServer* self, XIODevice* device);
 
 /**
  * @brief      摘除并结束直挂传输会话(发 BYE; 设备本身不销毁)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
  * @param      sessionId attachTransport 返回的会话 id。
+ * @return     无。
  */
 void XGuiServer_detachTransport(XGuiServer* self, int sessionId);
 
 /* ==================== 认证(XGuiRemote.md §3.8) ==================== */
 
-/** @brief 设置认证方法(默认 NONE)。切为 SHA256_CHALLENGE 前必须 setPassword。 */
+/**
+ * @brief      设置认证方法(默认 NONE)。切为 SHA256_CHALLENGE 前必须
+ *             setPassword。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param      method 认证方法(XGuiRemoteAuthMethod)。
+ * @return     无。
+ */
 void XGuiServer_setAuthMethod(XGuiServer* self, XGuiRemoteAuthMethod method);
 
-/** @brief 查询认证方法。 */
+/**
+ * @brief      查询认证方法。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     当前认证方法。
+ */
 XGuiRemoteAuthMethod XGuiServer_authMethod(const XGuiServer* self);
 
 /**
  * @brief      设置口令(内部即刻计算 SHA-256 存储, 原文不留存)。
- * @param      passwordUtf8 口令原文; 不得为 NULL, 空串等价 clearPassword。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param      passwordUtf8 口令原文(UTF-8, 借用); 不得为 NULL, 空串等价
+ *             clearPassword。
  * @return     true 已设置; false 参数非法/哈希失败。
  */
 bool XGuiServer_setPassword(XGuiServer* self, const char* passwordUtf8);
 
-/** @brief 清除口令(此后 SHA256_CHALLENGE 方法将拒绝所有认证)。 */
+/**
+ * @brief      清除口令(此后 SHA256_CHALLENGE 方法将拒绝所有认证)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @return     无。
+ */
 void XGuiServer_clearPassword(XGuiServer* self);
 
-/** @brief 是否已设口令。 */
+/**
+ * @brief      查询是否已设口令。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     true 已设口令; false 未设。
+ */
 bool XGuiServer_hasPassword(const XGuiServer* self);
 
 /* ==================== 访问口令(加法式运行期扩展, 实现主体
@@ -182,12 +251,16 @@ bool XGuiServer_hasPassword(const XGuiServer* self);
  * @details    内部即刻计算 SHA-256 存储, 原文不留存; 认证方法旋钮随之
  *             置 SHA256_CHALLENGE。已有会话不断线。空串等价
  *             clearAccessPassword。
- * @return     true 已设置; false 参数非法/哈希失败。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @param      passwordUtf8 口令原文(UTF-8, 借用); 不得为 NULL, 只在调用
+ *             期间借用, 空串等价 clearAccessPassword。
+ * @return     true 已设置; false 参数非法/哈希失败(对象状态不变)。
  */
 bool XGuiServer_setAccessPassword(XGuiServer* self, const char* passwordUtf8);
 
 /**
  * @brief      查询访问口令状态(掩码形态, 不明文回吐)。
+ * @param      self 目标服务对象; 不得为 NULL。
  * @param      maskedOutUtf8 掩码输出缓冲; 可为 NULL(仅查询是否已设)。
  *             已设时写入定长掩码 "********"(不泄露真实长度), 未设写入
  *             空串。
@@ -197,23 +270,36 @@ bool XGuiServer_setAccessPassword(XGuiServer* self, const char* passwordUtf8);
 bool XGuiServer_accessPassword(const XGuiServer* self, char* maskedOutUtf8,
                                size_t cap);
 
-/** @brief 清除访问口令并回匿名模式(运行期即时生效于新会话; 已有会话
- *         不断线)。 */
+/**
+ * @brief      清除访问口令并回匿名模式(运行期即时生效于新会话; 已有
+ *             会话不断线)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @return     无。
+ */
 void XGuiServer_clearAccessPassword(XGuiServer* self);
 
 /**
  * @brief  设置单连接认证失败断链上限(默认 1=错 1 次即断, 历史口径;
  *         设 N>1 时单连接内前 N-1 次错误回 AUTH_RESULT(0) 可重答,
  *         第 N 次错误 AUTH_RESULT(0)+BYE(AUTH_FAILED) 断链)。
+ * @param  self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param  maxFailures 单连接认证失败断链上限。
+ * @return 无。
  */
 void XGuiServer_setAuthFailureLimit(XGuiServer* self, int maxFailures);
 
-/** @brief 当前单连接认证失败断链上限。 */
+/**
+ * @brief      查询当前单连接认证失败断链上限。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     当前单连接认证失败断链上限。
+ */
 int XGuiServer_authFailureLimit(const XGuiServer* self);
 
 /**
- * @brief  会话认证形态(接入会话的握手结论)。
- * @return 1=经挑战应答认证准入; 0=匿名接入; -1=会话不存在。
+ * @brief      查询会话认证形态(接入会话的握手结论)。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @param      sessionId attachTransport 返回或信号携带的会话 id。
+ * @return     1=经挑战应答认证准入; 0=匿名接入; -1=会话不存在。
  */
 int XGuiServer_sessionAuthState(const XGuiServer* self, int sessionId);
 
@@ -229,13 +315,17 @@ int XGuiServer_sessionAuthState(const XGuiServer* self, int sessionId);
 
 /**
  * @brief      显式开启/关闭服务端 TLS(accept 后升级), 覆盖环境变量。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
  * @param      enabled true=TLS 档; false=明文。此后环境变量不再参与。
+ * @return     无。
  */
 void XGuiServer_setTlsEnabled(XGuiServer* self, bool enabled);
 
 /**
  * @brief      当前 TLS 策略(监听中=已定版的实际策略; 未监听=待生效
  *             策略——显式设置优先, 未设置时回退环境变量)。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     true TLS 档; false 明文。
  */
 bool XGuiServer_tlsEnabled(const XGuiServer* self);
 
@@ -245,6 +335,11 @@ bool XGuiServer_tlsEnabled(const XGuiServer* self);
  *             XSslSocket_setLocalCertificate_2/_setPrivateKey_2 在每个
  *             accept 套接字上装载, 对改动后的新建会话生效)。路径副本
  *             由对象持有; 传 NULL/空串清除。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @param      certPemPathUtf8 证书文件路径(UTF-8, 借用; 只在调用期间
+ *             读取); NULL/空串清除既有路径。
+ * @param      keyPemPathUtf8 私钥文件路径(UTF-8, 借用; 只在调用期间
+ *             读取); NULL/空串清除既有路径。
  * @return     true 已应用; false 参数非法/装载失败(证书不可读或私钥
  *             解析失败——以临时 XSslSocket 试装载校验, 失败不改动
  *             既有路径)。
@@ -253,30 +348,56 @@ bool XGuiServer_setTlsCertificateFiles(XGuiServer* self,
                                        const char* certPemPathUtf8,
                                        const char* keyPemPathUtf8);
 
-/** @brief 当前证书文件路径(借用; 未设返回 NULL)。 */
+/**
+ * @brief      当前证书文件路径。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     当前证书文件路径(借用, 属对象内部存储, 禁止释放或修改);
+ *             未设返回 NULL。
+ */
 const char* XGuiServer_tlsCertFile(const XGuiServer* self);
 
-/** @brief 当前私钥文件路径(借用; 未设返回 NULL)。 */
+/**
+ * @brief      当前私钥文件路径。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     当前私钥文件路径(借用, 属对象内部存储, 禁止释放或修改);
+ *             未设返回 NULL。
+ */
 const char* XGuiServer_tlsKeyFile(const XGuiServer* self);
 
 /* ==================== 档位(需求 6, XGuiRemote.md §5) ==================== */
 
-/** @brief 设置档位预设(对既有会话在帧边界生效并广播 FB_META)。 */
+/**
+ * @brief      设置档位预设(对既有会话在帧边界生效并广播 FB_META)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param      id 目标档位 id(XGuiRemoteProfileId)。
+ * @return     无。
+ */
 void XGuiServer_setProfileId(XGuiServer* self, XGuiRemoteProfileId id);
 
 /**
  * @brief      设置自定义档位参数(广播 FB_META 携带新 tile/格式参数)。
  * @details    profile 会被 sanitize 夹取后生效; 后续以 Custom 档运行。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param      profile 自定义档位参数(借用, 只在调用期间读取; 内部夹取
+ *             后生效); 不得为 NULL。
+ * @return     无。
  */
 void XGuiServer_setProfile(XGuiServer* self, const XGuiRemoteProfile* profile);
 
 /**
  * @brief      是否允许客户端经 PROFILE_SET 切档(默认 false; 拒绝时回
  *             PROFILE_RESULT(accepted=0), 会话维持服务端档位)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param      allow true 允许客户端切档; false 拒绝。
+ * @return     无。
  */
 void XGuiServer_setAllowClientProfile(XGuiServer* self, bool allow);
 
-/** @brief 当前档位 id(自定义档返回 CUSTOM)。 */
+/**
+ * @brief      当前档位 id。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     当前档位 id; 自定义档返回 XGUI_REMOTE_PROFILE_CUSTOM。
+ */
 XGuiRemoteProfileId XGuiServer_profileId(const XGuiServer* self);
 
 /* ==================== UDP 低延迟旁路通道(2026-10-04 加法式扩展) ==================== */
@@ -293,31 +414,68 @@ XGuiRemoteProfileId XGuiServer_profileId(const XGuiServer* self);
  * @brief      设置 UDP 通道开关(默认开)。监听中改动即时生效:
  *             开=按当前 TCP 端口顺延试绑(既有 UDP 请求会话重新获 OFFER);
  *             关=停用通道, 激活会话静默回落 TCP(会话不断)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param      enabled true 启用 UDP 旁路通道; false 停用。
+ * @return     无。
  */
 void XGuiServer_setUdpEnabled(XGuiServer* self, bool enabled);
 
-/** @brief UDP 通道是否启用(用户策略, 未必已绑定)。 */
+/**
+ * @brief      UDP 通道是否启用(用户策略, 未必已绑定)。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     true 用户策略启用; false 停用。
+ */
 bool XGuiServer_udpEnabled(const XGuiServer* self);
 
-/** @brief UDP 通道实际绑定端口(未绑定返回 0)。 */
+/**
+ * @brief      UDP 通道实际绑定端口。
+ * @param      self 目标服务对象; 不得为 NULL。
+ * @return     实际绑定端口; 未绑定返回 0。
+ */
 uint16_t XGuiServer_udpPort(const XGuiServer* self);
 
 /* ==================== 会话控制 ==================== */
 
-/** @brief 踢出指定会话(发 BYE(NORMAL) 后断开; id 非法为 no-op)。 */
+/**
+ * @brief      踢出指定会话(发 BYE(NORMAL) 后断开)。
+ * @param      self 目标服务对象; 传入 NULL 时不执行任何操作。
+ * @param      sessionId 目标会话 id; 非法 id 为 no-op。
+ * @return     无。
+ */
 void XGuiServer_kickSession(XGuiServer* self, int sessionId);
 
 /* ==================== 信号(GUI 线程发射) ==================== */
 
-/** @brief 信号: 客户端会话建立(握手+认证完成后)。 */
+/**
+ * @brief      信号: 客户端会话建立(握手+认证完成后)。
+ * @param      self 目标服务对象。
+ * @param      sessionId 新建会话 id。
+ * @return     信号标识自身(发射型声明形态; 调用方忽略)。
+ */
 void* XGuiServer_clientConnected_signal(XGuiServer* self, int sessionId);
-/** @brief 信号: 客户端会话结束(reason 为 XGuiRemoteByeReason)。 */
+/**
+ * @brief      信号: 客户端会话结束。
+ * @param      self 目标服务对象。
+ * @param      sessionId 结束的会话 id。
+ * @param      reason 断开原因(XGuiRemoteByeReason)。
+ * @return     信号标识自身(发射型声明形态; 调用方忽略)。
+ */
 void* XGuiServer_clientDisconnected_signal(XGuiServer* self, int sessionId,
                                            int reason);
-/** @brief 信号: 会话级错误(协议错/队列溢出等; code 为 XGuiRemoteError)。 */
+/**
+ * @brief      信号: 会话级错误(协议错/队列溢出等)。
+ * @param      self 目标服务对象。
+ * @param      sessionId 出错会话 id。
+ * @param      errorCode 错误码(XGuiRemoteError)。
+ * @return     信号标识自身(发射型声明形态; 调用方忽略)。
+ */
 void* XGuiServer_sessionError_signal(XGuiServer* self, int sessionId,
                                      int errorCode);
-/** @brief 信号: 画面元信息变化并已向全部会话广播(尺寸/档位/标题)。 */
+/**
+ * @brief      信号: 画面元信息变化并已向全部会话广播(尺寸/档位/标题)。
+ * @param      self 目标服务对象。
+ * @return     信号标识自身(发射型声明形态; 调用方忽略)。
+ */
 void* XGuiServer_fbMetaChanged_signal(XGuiServer* self);
 
 #endif /* XGUI_REMOTE_ON */

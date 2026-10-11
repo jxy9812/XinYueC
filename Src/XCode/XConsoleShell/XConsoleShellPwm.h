@@ -13,15 +13,15 @@
 #ifndef XCONSOLE_SHELL_PWM_H
 #define XCONSOLE_SHELL_PWM_H
 
-#include "XConsoleShellCommand.h"
-#include "XPwm.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_PWM_ON
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "XConsoleShellCommand.h"
+#include "XPwm.h"
 
 /** @brief Shell 对象前置声明；实际对象由 XConsoleShell.h 定义和管理。 */
 typedef struct XConsoleShell XConsoleShell;
@@ -60,7 +60,7 @@ typedef bool (*XConsoleShellPwmAuthorizeFn)(
  * @details 槽位存储由所属 Shell 内嵌拥有，不得按值复制或由调用者释放。
  */
 typedef struct XConsoleShellPwmSlot {
-    XPwm* pwm; /**< Shell 拥有的 PWM 句柄；不允许外部释放。 */
+    XPwm* m_pwm; /**< Shell 拥有的 PWM 句柄；不允许外部释放。 */
 } XConsoleShellPwmSlot;
 
 /**
@@ -82,9 +82,10 @@ bool XConsoleShell_setPwmAuthorizeCallback(
  */
 extern const XConsoleCommand XConsoleShellPwm_command;
 
+#endif /* Shell、命令、I/O 和 PWM 均启用 */
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* Shell、命令、I/O 和 PWM 均启用 */
 #endif /* XCONSOLE_SHELL_PWM_H */

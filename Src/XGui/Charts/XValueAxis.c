@@ -6,11 +6,34 @@
 
 #if XCHARTS_ON
 
+/* ==================== 类与对象生命周期 ==================== */
+
+static void VXValueAxis_deinit(XValueAxis* self)
+{
+    if (!self) return;
+    if (self->m_labelFormat) {
+        XClassDelete(self->m_labelFormat);
+        self->m_labelFormat = NULL;
+    }
+    XClass_Deinit_Parent(XAbstractAxis, &self->m_base);
+}
+
+XVtable* XValueAxis_class_init(void)
+{
+    /* 本类为组合式继承且不新增虚槽（头文件未定义虚表枚举）：
+       按父类槽位容量建表，仅重载 EXClass_Deinit 释放标签格式。 */
+    XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XAbstractAxis))
+    XVTABLE_INHERIT_XCLASS(XAbstractAxis);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXValueAxis_deinit);
+    return XVTABLE_DEFAULT;
+}
+
 void XValueAxis_init(XValueAxis* self)
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
     XAbstractAxis_init(&self->m_base);
+    XClassSetVtable(self, XValueAxis);
     self->m_tickCount = 6;
     self->m_labelFormat = XString_create_utf8("%g");
 }

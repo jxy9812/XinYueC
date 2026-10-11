@@ -305,7 +305,7 @@ int XVariantTest_run(void)
 	return all ? 0 : 1;
 }
 
-#if DEMOTEST
+#if DEMOTEST_ON
 static void xvariant_test_wrapper(XVariant* data)
 {
 	(void)data;

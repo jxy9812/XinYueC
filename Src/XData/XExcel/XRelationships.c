@@ -17,7 +17,7 @@
 /* 仅供旧的无实例 API 返回最近一次结果；内部逻辑使用每个集合的计数。 */
 static int g_lastAssignedRid = 0;
 
-static int next_rid(const XRelationships* self)
+static int XRelationships_next_rid(const XRelationships* self)
 {
     int candidate = 1;
     while (self && self->m_relationships) {
@@ -41,7 +41,7 @@ static int next_rid(const XRelationships* self)
 }
 
 /* 添加关系 */
-static void addRel(XRelationships* self, const char* type, const char* target, const char* targetMode) {
+static void XRelationships_addRel(XRelationships* self, const char* type, const char* target, const char* targetMode) {
     if (!self || !type || !target) return;
     if (!self->m_relationships) {
         self->m_relationships = XVector_Create(XlsxRelationship);
@@ -50,7 +50,7 @@ static void addRel(XRelationships* self, const char* type, const char* target, c
     XlsxRelationship rel;
     memset(&rel, 0, sizeof(rel));
     rel.m_id = XString_create();
-    int assigned = next_rid(self);
+    int assigned = XRelationships_next_rid(self);
     char idBuf[16];
     snprintf(idBuf, sizeof(idBuf), "rId%d", assigned);
     if (rel.m_id) XString_append_utf8(rel.m_id, idBuf);
@@ -75,7 +75,7 @@ static void addRel(XRelationships* self, const char* type, const char* target, c
     g_lastAssignedRid = assigned;
 }
 
-static void add_category_relationship(XRelationships* self, const char* base,
+static void XRelationships_add_category_relationship(XRelationships* self, const char* base,
                                       const XString* relativeType, const XString* target,
                                       const XString* targetMode)
 {
@@ -88,29 +88,29 @@ static void add_category_relationship(XRelationships* self, const char* base,
         snprintf(fullType, sizeof(fullType), "%s%s", base, relative);
         type = fullType;
     }
-    addRel(self, type, targetText, targetMode ? XString_toUtf8(targetMode) : NULL);
+    XRelationships_addRel(self, type, targetText, targetMode ? XString_toUtf8(targetMode) : NULL);
 }
 
 void XRelationships_addDocumentRelationship(XRelationships* self, const XString* relativeType, const XString* target) {
-    add_category_relationship(self,
+    XRelationships_add_category_relationship(self,
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/",
         relativeType, target, NULL);
 }
 
 void XRelationships_addPackageRelationship(XRelationships* self, const XString* relativeType, const XString* target) {
-    add_category_relationship(self,
+    XRelationships_add_category_relationship(self,
         "http://schemas.openxmlformats.org/package/2006/relationships/",
         relativeType, target, NULL);
 }
 
 void XRelationships_addWorksheetRelationship(XRelationships* self, const XString* relativeType, const XString* target, const XString* targetMode) {
-    add_category_relationship(self,
+    XRelationships_add_category_relationship(self,
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/",
         relativeType, target, targetMode);
 }
 
 void XRelationships_addMsPackageRelationship(XRelationships* self, const XString* relativeType, const XString* target) {
-    add_category_relationship(self,
+    XRelationships_add_category_relationship(self,
         "http://schemas.microsoft.com/office/2006/relationships/",
         relativeType, target, NULL);
 }
@@ -267,7 +267,7 @@ bool XRelationships_saveToXmlData(const XRelationships* self, uint8_t** outData,
     return *outData != NULL;
 }
 
-static const XString* relationship_attribute(const XXmlStreamAttributes* attributes,
+static const XString* XRelationships_relationship_attribute(const XXmlStreamAttributes* attributes,
                                              const char* name)
 {
     if (!attributes || !name) return NULL;
@@ -302,10 +302,10 @@ bool XRelationships_loadFromXmlData(XRelationships* self, const uint8_t* data, s
         }
         if (!name || !XString_equals_utf8(name, "Relationship", XChar_CaseSensitive)) continue;
         const XXmlStreamAttributes* attributes = XXmlStreamReader_attributes(reader);
-        const XString* id = relationship_attribute(attributes, "Id");
-        const XString* type = relationship_attribute(attributes, "Type");
-        const XString* target = relationship_attribute(attributes, "Target");
-        const XString* mode = relationship_attribute(attributes, "TargetMode");
+        const XString* id = XRelationships_relationship_attribute(attributes, "Id");
+        const XString* type = XRelationships_relationship_attribute(attributes, "Type");
+        const XString* target = XRelationships_relationship_attribute(attributes, "Target");
+        const XString* mode = XRelationships_relationship_attribute(attributes, "TargetMode");
         if (!id || !type || !target) continue;
         XlsxRelationship relationship;
         memset(&relationship, 0, sizeof(relationship));
@@ -332,7 +332,7 @@ bool XRelationships_loadFromXmlData(XRelationships* self, const uint8_t* data, s
 }
 
 /* 按类型查询 */
-static bool relationship_type_matches(const XString* actual, const char* categoryBase,
+static bool XRelationships_relationship_type_matches(const XString* actual, const char* categoryBase,
                                       const XString* relativeType)
 {
     if (!actual || !categoryBase) return false;
@@ -343,7 +343,7 @@ static bool relationship_type_matches(const XString* actual, const char* categor
         XString_endsWith(actual, relativeType, XChar_CaseSensitive);
 }
 
-static XlsxRelationship** queryByType(const XRelationships* self, const char* categoryBase,
+static XlsxRelationship** XRelationships_queryByType(const XRelationships* self, const char* categoryBase,
                                       const XString* relativeType, int* outCount) {
     if (outCount) *outCount = 0;
     if (!outCount || !self || !self->m_relationships) return NULL;
@@ -353,7 +353,7 @@ static XlsxRelationship** queryByType(const XRelationships* self, const char* ca
     for (size_t i = 0; i < total; i++) {
         XlsxRelationship* rel = (XlsxRelationship*)XVector_at_base(self->m_relationships, i);
         if (rel && rel->m_type &&
-            relationship_type_matches(rel->m_type, categoryBase, relativeType)) count++;
+            XRelationships_relationship_type_matches(rel->m_type, categoryBase, relativeType)) count++;
     }
     
     if (count == 0) return NULL;
@@ -365,7 +365,7 @@ static XlsxRelationship** queryByType(const XRelationships* self, const char* ca
     for (size_t i = 0; i < total && idx < count; i++) {
         XlsxRelationship* rel = (XlsxRelationship*)XVector_at_base(self->m_relationships, i);
         if (rel && rel->m_type &&
-            relationship_type_matches(rel->m_type, categoryBase, relativeType))
+            XRelationships_relationship_type_matches(rel->m_type, categoryBase, relativeType))
             result[idx++] = rel;
     }
     
@@ -374,25 +374,25 @@ static XlsxRelationship** queryByType(const XRelationships* self, const char* ca
 }
 
 XlsxRelationship** XRelationships_documentRelationships(const XRelationships* self, const XString* relativeType, int* outCount) {
-    return queryByType(self,
+    return XRelationships_queryByType(self,
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/",
         relativeType, outCount);
 }
 
 XlsxRelationship** XRelationships_packageRelationships(const XRelationships* self, const XString* relativeType, int* outCount) {
-    return queryByType(self,
+    return XRelationships_queryByType(self,
         "http://schemas.openxmlformats.org/package/2006/relationships/",
         relativeType, outCount);
 }
 
 XlsxRelationship** XRelationships_msPackageRelationships(const XRelationships* self, const XString* relativeType, int* outCount) {
-    return queryByType(self,
+    return XRelationships_queryByType(self,
         "http://schemas.microsoft.com/office/2006/relationships/",
         relativeType, outCount);
 }
 
 XlsxRelationship** XRelationships_worksheetRelationships(const XRelationships* self, const XString* relativeType, int* outCount) {
-    return queryByType(self,
+    return XRelationships_queryByType(self,
         "http://schemas.openxmlformats.org/officeDocument/2006/relationships/",
         relativeType, outCount);
 }

@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XMap.h"
 #include"XVector.h"
 #include"XPair.h"
@@ -27,7 +27,7 @@ static void SumValues(void* pvPair, void* args)
 static void XMapTest_Basic(void)
 {
     XPrintf("\n[XMap][基础] insert/remove/find/value/contains/迭代\n");
-    XMap* map = XMap_Create(int, int, int_compare);
+    XMap* map = XMap_Create(int, int, Xint_compare);
 
     int keys[] = { 10, 3, 55, 3, 7, 55, 42, 1 };
     for (size_t i = 0; i < sizeof(keys)/sizeof(keys[0]); ++i) {
@@ -66,7 +66,7 @@ static void XMapTest_Basic(void)
 static void XMapTest_QtAliases(void)
 {
     XPrintf("\n[XMap][Qt 别名] count/empty/constFind 与 size/isEmpty/find 等价\n");
-    XMap* map = XMap_Create(int, int, int_compare);
+    XMap* map = XMap_Create(int, int, Xint_compare);
     for (int i = 0; i < 20; ++i) { int v = i*i; XMap_insert_base(map, &i, &v); }
 
     size_t s1 = XMap_size_base(map), s2 = XMap_count_base(map);
@@ -105,7 +105,7 @@ static bool KeyGT100(const void* pvKey, void* pvValue, void* args)
 static void XMapTest_QtNewApis(void)
 {
     XPrintf("\n[XMap][Qt 新 API] removeIf/erase_if/reserve/squeeze(no-op)\n");
-    XMap* map = XMap_Create(int, int, int_compare);
+    XMap* map = XMap_Create(int, int, Xint_compare);
 
     bool r = XMap_reserve_base(map, 1000);
     XPrintf("  reserve(1000)=%d (期望 1 no-op)\n", (int)r);
@@ -129,7 +129,7 @@ static void XMapTest_QtNewApis(void)
 static void XMapTest_Stress(void)
 {
     XPrintf("\n[XMap][压力] 大批量 insert/value/remove\n");
-    XMap* map = XMap_Create(int, int, int_compare);
+    XMap* map = XMap_Create(int, int, Xint_compare);
     const int N = 5000;
     for (int i = 0; i < N; ++i) { int v = i * 3; XMap_insert_base(map, &i, &v); }
     XPrintf("  插入 %d 后 size=%zu\n", N, XMap_size_base(map));

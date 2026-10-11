@@ -1,5 +1,5 @@
 ﻿#include"XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include"XListDLinked.h"
 #include"XCompare.h"
 #include"XTestMenu.h"
@@ -33,7 +33,7 @@ static void XListDLinkedPushBackArr(XListDLinked* li, const int* arr, size_t n)
 static XListDLinked* XListDLinkedMakeInt(const int* arr, size_t n)
 {
 	XListDLinked* li = XListDLinked_Create(int);
-	XContainerSetCompare(li, int_compare);
+	XContainerSetCompare(li, Xint_compare);
 	XListDLinkedPushBackArr(li, arr, n);
 	return li;
 }
@@ -50,7 +50,7 @@ static void XListDLinkedCreateTest(void)
 	XPrintf("===== 创建与初始化测试 =====\n");
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		XPrintf("XListDLinked_Create(int): size=%zu, capacity=%zu, isEmpty=%s\n",
 			XListDLinked_size_base(li), XListDLinked_capacity_base(li),
 			XListDLinked_isEmpty_base(li) ? "是" : "否");
@@ -59,7 +59,7 @@ static void XListDLinkedCreateTest(void)
 	}
 	{
 		XListDLinked* li = XListDLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), false);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		XPrintf("create_ex(int,cow=false): size=%zu, typeSize=%zu\n",
 			XListDLinked_size_base(li), XListDLinked_typeSize_base(li));
 		XClassDelete(li);
@@ -67,7 +67,7 @@ static void XListDLinkedCreateTest(void)
 	{
 		XListDLinked li;
 		XListDLinked_init(&li, sizeof(int), true);
-		XContainerSetCompare(&li, int_compare);
+		XContainerSetCompare(&li, Xint_compare);
 		XPrintf("init: size=%zu, isEmpty=%s\n",
 			XListDLinked_size_base(&li), XListDLinked_isEmpty_base(&li) ? "是" : "否");
 		int val = 42;
@@ -79,7 +79,7 @@ static void XListDLinkedCreateTest(void)
 		int arr[] = { 1, 2, 3 };
 		XListDLinked* src = XListDLinkedMakeInt(arr, 3);
 		XListDLinked* copy = XListDLinked_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(int), true);
-		XContainerSetCompare(copy, int_compare);
+		XContainerSetCompare(copy, Xint_compare);
 		XClassCopy(copy, src);
 		XPrintf("copy_base: copy.size=%zu, src.size=%zu\n",
 			XListDLinked_size_base(copy), XListDLinked_size_base(src));
@@ -95,7 +95,7 @@ static void XListDLinkedCreateTest(void)
 		int arr[] = { 10, 20, 30 };
 		XListDLinked* src = XListDLinkedMakeInt(arr, 3);
 		XListDLinked* moved = XListDLinked_Create(int);
-		XContainerSetCompare(moved, int_compare);
+		XContainerSetCompare(moved, Xint_compare);
 		XClassMove(moved, src);
 		XPrintf("move_base: moved.size=%zu, src.isEmpty=%s\n",
 			XListDLinked_size_base(moved),
@@ -118,7 +118,7 @@ static void XListDLinkedInsertTest(void)
 	/* --- push_front / prepend --- */
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int a = 10, b = 20, c = 30;
 		XListDLinked_push_front_base(li, &a);
 		XListDLinked_push_front_base(li, &b);
@@ -129,7 +129,7 @@ static void XListDLinkedInsertTest(void)
 	}
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int* p = XMalloc_System(sizeof(int)); *p = 99;
 		XListDLinked_push_front_move_base(li, p);
 		XListDLinkedPrintInt(li, "push_front_move(99): ");
@@ -137,7 +137,7 @@ static void XListDLinkedInsertTest(void)
 	}
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int v = 5;
 		XListDLinked_prepend_base(li, &v);
 		int v2 = 3;
@@ -149,7 +149,7 @@ static void XListDLinkedInsertTest(void)
 	/* --- push_back / append --- */
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int a = 1, b = 2, c = 3;
 		XListDLinked_push_back_base(li, &a);
 		XListDLinked_push_back_base(li, &b);
@@ -160,7 +160,7 @@ static void XListDLinkedInsertTest(void)
 	}
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int* p = XMalloc_System(sizeof(int)); *p = 88;
 		XListDLinked_push_back_move_base(li, p);
 		XListDLinkedPrintInt(li, "push_back_move(88): ");
@@ -168,7 +168,7 @@ static void XListDLinkedInsertTest(void)
 	}
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int a = 100, b = 200;
 		XListDLinked_append_base(li, &a);
 		XListDLinked_append_base(li, &b);
@@ -191,7 +191,7 @@ static void XListDLinkedInsertTest(void)
 	}
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int a = 10;
 		XListDLinked_push_back_base(li, &a);
 		int* p = XMalloc_System(sizeof(int)); *p = 999;
@@ -396,7 +396,7 @@ static void XListDLinkedAccessTest(void)
 	}
 	{
 		XListDLinked* empty = XListDLinked_Create(int);
-		XContainerSetCompare(empty, int_compare);
+		XContainerSetCompare(empty, Xint_compare);
 		XPrintf("空链表: front=%s, back=%s\n",
 			XListDLinked_front_base(empty) ? "非空" : "空",
 			XListDLinked_back_base(empty) ? "非空" : "空");
@@ -424,7 +424,7 @@ static void XListDLinkedTakeTest(void)
 	}
 	{
 		XListDLinked* empty = XListDLinked_Create(int);
-		XContainerSetCompare(empty, int_compare);
+		XContainerSetCompare(empty, Xint_compare);
 		XPrintf("空: takeFirst=%s, takeLast=%s\n",
 			XListDLinked_takeFirst_base(empty) ? "非空" : "空",
 			XListDLinked_takeLast_base(empty) ? "非空" : "空");
@@ -515,7 +515,7 @@ static void XListDLinkedIteratorTest(void)
 	}
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int a = 100;
 		XListDLinked_push_back_base(li, &a);
 		XListDLinked_iterator it = XListDLinked_begin(li);
@@ -555,7 +555,7 @@ static void XListDLinkedSafetyTest(void)
 	XPrintf("===== 边界与安全检查测试 =====\n");
 	{
 		XListDLinked* li = XListDLinked_Create(int);
-		XContainerSetCompare(li, int_compare);
+		XContainerSetCompare(li, Xint_compare);
 		int val = 1;
 		XPrintf("空链表: pop_front=%s, pop_back=%s\n",
 			XListDLinked_pop_front_base(li) ? "是" : "否",
@@ -617,7 +617,7 @@ static void XListDLinkedSafetyTest(void)
 		int arr[] = { 1, 2, 3 };
 		XListDLinked* li = XListDLinkedMakeInt(arr, 3);
 		XListDLinked* other = XListDLinked_create(sizeof(double));
-		XContainerSetCompare(other, double_compare);
+		XContainerSetCompare(other, Xdouble_compare);
 		double dv = 3.14;
 		XListDLinked_push_back_base(other, &dv);
 		XClassCopy(li, other);

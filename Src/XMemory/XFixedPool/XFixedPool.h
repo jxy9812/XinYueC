@@ -1,6 +1,4 @@
-﻿#ifndef XFIXEDPOOL_H
-#define XFIXEDPOOL_H
-/**
+﻿/**
  * @file XFixedPool.h
  * @brief 固定大小内存池（对齐、多模式）
  *
@@ -16,29 +14,33 @@
  * 裁剪：XMEMORY_FIXEDPOOL_ON=0（XMemory_config.h，默认跟随
  * XMEMORY_MULTIPOOL_ON）时整个 API 编译裁剪。
  */
+#ifndef XFIXEDPOOL_H
+#define XFIXEDPOOL_H
 #include "XMemory_config.h"
-#if XMEMORY_FIXEDPOOL_ON
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if XMEMORY_FIXEDPOOL_ON
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "XAtomic.h" 
 typedef struct XFixedPool 
 {
-    XAtomic_size_t  free_list_head_packed; //打包头指针 (index + version)
-    XAtomic_size_t  free_count;            //当前剩余可用块数量（原子变量）
-    size_t block_size;          // 对齐后的块大小
-    size_t user_block_size;     // 用户视角的块大小
-    void* raw_memory;           // 指向数据缓冲区的指针
-    size_t total_raw_size;      // 数据缓冲区的总有效字节数
-    size_t num_blocks; // 新增：总块数，用于判断空和计算索引
+    XAtomic_SizeT  free_list_head_packed;  /**< 空闲链表打包头：低位为块索引、高位为ABA版本号；仅供实现使用，init 成功后调用方不得直接修改。 */
+    XAtomic_SizeT  free_count;             /**< 当前剩余可用块数量（个）；原子变量，线程安全读取请经 XFixedPool_freeCount。 */
+    size_t block_size;                      /**< 对齐后的内部块大小（字节），含块内隐藏的 next 索引头；仅供实现使用。 */
+    size_t user_block_size;                 /**< 用户可用块大小（字节），等于 block_size 减去内部索引头。 */
+    void* raw_memory;                       /**< 数据缓冲区起始地址，init 成功后不为 NULL；owns_memory 为 true 时由本对象拥有（delete 时释放），为 false 时借用调用方内存。 */
+    size_t total_raw_size;                  /**< 数据缓冲区的总字节数。 */
+    size_t num_blocks;                      /**< 总块数（个），用于判空和索引计算；同时用作空链表哨兵索引。 */
     // --- 无锁辅助字段 ---
-    size_t index_bits;          // 用于存储索引的位数
-    size_t index_mask;          // 索引掩码 
-    size_t version_mask;        // 版本号掩码 
-    bool owns_memory;  //所有权标记
+    size_t index_bits;                      /**< 块索引存储位数，可表达 [0, num_blocks]；仅供实现使用。 */
+    size_t index_mask;                      /**< 块索引掩码；仅供实现使用。 */
+    size_t version_mask;                    /**< ABA 版本号掩码；仅供实现使用。 */
+    bool owns_memory;                       /**< 所有权标记：true 表示 raw_memory 由本对象拥有（delete 时释放），false 表示借用调用方提供的缓冲区。 */
 } XFixedPool;
 /**
  * @brief （动态模式）创建一个新的固定大小内存池
@@ -88,34 +90,8 @@ void XFixedPool_delete(XFixedPool* pool);
  * @param block_size 用户期望的每个内存块的大小（字节）。
  * @return bool 初始化成功返回 `true`，失败（如参数无效）返回 `false`。
  */
-/**
- * @brief （静态/栈模式）初始化一个内存池实例
- *
- * 此函数不进行任何动态内存分配。用户必须自行提供：
- * 1. 一个 `XFixedPool` 结构体实例（在栈、全局区或自定义内存中）。
- * 2. 一个足够大的、连续的内存缓冲区 `memory`。
- *
- * @param pool 指向待初始化的 `XFixedPool` 结构体的指针。
- * @param memory 指向用户提供的内存缓冲区的指针。
- * @param total_bytes `memory` 缓冲区的总大小（字节）。
- * @param block_size 用户期望的每个内存块的大小（字节）。
- * @return bool 初始化成功返回 `true`，失败（如参数无效）返回 `false`。
- */
 bool XFixedPool_init(XFixedPool* pool, void* memory, size_t total_bytes, size_t block_size);
 
-/**
- * @brief （便捷宏）在静态/全局区创建固定大小内存池
- *
- * 此宏自动计算所需缓冲区大小，并在静态区分配 XFixedPool 结构体和数据缓冲区。
- *
- * 使用示例：
- *   XFIXEDPOOL_STATIC(myPool, sizeof(MyStruct), 64);
- *   XFixedPool_malloc(&myPool);
- *
- * @param name      内存池变量名（生成 XFixedPool 实例）
- * @param block_size 每个块的用户期望大小
- * @param count      预分配的块数量
- */
 /**
  * @brief （便捷宏）在静态/全局区定义固定大小内存池的数据（仅声明，不执行代码）
  *
@@ -248,10 +224,10 @@ size_t XFixedPool_freeSize(const XFixedPool* pool);
  */
 size_t XFixedPool_totalSize(const XFixedPool* pool);
 
+#endif /* XMEMORY_FIXEDPOOL_ON */
+
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* XMEMORY_FIXEDPOOL_ON */
 
 #endif // XFIXEDPOOL_H

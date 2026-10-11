@@ -191,6 +191,31 @@
 - 解压前后双哈希（条目 sha256 + 数据区 payloadSha256）。
 - 顺序读一次性流式校验，嵌入端不需要随机访问。
 
+### 5.1 服务端打包签名工具（XUpgradePack，2026-10-07 落地）
+
+服务端发版的唯一配套工具，目标名 `XUpgradePack`（源 `xupgrade_pack.c`，随库同源编译，
+任何可编 XinYueCS 的宿主平台可用；嵌入式端只解包不打包）。五个子命令覆盖 §4 全流程：
+
+```
+XUpgradePack pack   <源目录> <输出.pak> [--store]        # 目录→.pak（zlib，不可压缩条目自动原样存储）
+XUpgradePack seal   <draft.json> <out.json> [--key <64位hex私钥>]
+                    [--search-dir <目录>]...              # 自动补 size/sha256 → canonical → P-256 签名
+                                                          # → 插入 sig → 设备侧同源自验（解析/canonical 逐字节/
+                                                          #   派生公钥验签三关）后写出
+XUpgradePack verify <manifest.json> [--pubkey <130hex>] [--key <64hex>]
+                    [--search-dir <目录>]... [--no-files] # 设备侧同源验签 + 组件 size/sha256 核对
+XUpgradePack verify-pak <包.pak>                          # 设备侧同源逐步校验（头/条目表/整段哈希/逐条目解压哈希）
+XUpgradePack keygen <私钥输出> <公钥输出>                  # 生成产品钥对（替换内嵌测试钥，§17.7）
+```
+
+- 信任链：签名锚 manifest、manifest 锚 pak——`verify` 验签过但包被篡改时由组件
+  sha256 当场拒绝（冒烟已验）。缺省信任钥=内嵌测试钥：`seal` 有警告提示，
+  `verify`/`verify-pak` 静默使用（生产必须 `--pubkey`/`--key` 指定产品钥）。
+- seal 的 draft 允许 size=0/sha256 占位/缺 sig，空可选字段（`"min_version":""`）
+  合法（2026-10-07 修复 XUpgradeManifest_getString 对空 XString 的误拒——契约
+  "空串=未设置"此前被整单拒绝，该修复属产品码缺陷修复）。
+
+
 ## 6. 引擎状态机
 
 用现有 `XStateMachine`（Src/XCode/XStateMachine）承载，状态可持久化到
@@ -412,9 +437,11 @@ UI 侧（XGuiDemo 接入点）：
 | `RolledBack`          | 故障提示（含回滚前后版本号）               |
 | `CheckFailed`         | 静默记日志（手动检查时才提示用户）         |
 
-设置页新增"关于 → 软件更新"：当前版本列表（各组件版本+更新时间）、手动检查、
-策略配置、历史日志入口。嵌入式无 UI 构建下引擎照常运行（silent+维护窗口），
-UI 层代码经裁剪宏隔离。
+设置页新增"关于 → 软件更新"：当前版本列表（各组件版本，检查后附本地/远程
+对照）、手动检查、远程版本选择安装（含降级）、四段进度条与就绪弹窗自重启
+（2026-10-08 演示页落地子集；本节的更新时间/策略配置/历史日志入口为设计稿
+全量口径，随产品化迭代补齐）。嵌入式无 UI 构建下引擎照常运行（silent+维护
+窗口），UI 层代码经裁剪宏隔离。
 
 ## 13. 模块落位与配置裁剪
 

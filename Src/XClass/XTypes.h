@@ -1,4 +1,12 @@
-﻿#ifndef XTYPES_H
+﻿/**
+ * @file       XTypes.h
+ * @brief      公共基础类型定义(跨模块共享的前向声明、别名与公共枚举)。
+ * @details    对齐 Qt 公共类型:XTimerType 对齐 Qt::TimerType,
+ *             XFindChildOption 对齐 Qt::FindChildOption,XSocketActType 对齐
+ *             QSocketNotifier::Type(允许按位组合)。以上类型均为 XinYueC
+ *             库内类型,不依赖 Win32、POSIX、Qt 等其他平台 API。
+ */
+#ifndef XTYPES_H
 #define XTYPES_H
 #ifdef __cplusplus
 extern "C" {
@@ -63,76 +71,87 @@ typedef struct XBsonArray XBsonArray;
 typedef struct XBsonDocument XBsonDocument;
 typedef struct XBsonValue XBsonValue;
 typedef struct XSignalSlot XSignalSlot;
-typedef struct XAtomic_int32_t XAtomic_int32_t;
+typedef struct XAtomic_Int32 XAtomic_Int32;
 typedef struct XAbstractNativeEventFilter XAbstractNativeEventFilter;
 typedef struct XVarList XVarList;
-typedef XMapBase XFuncCodeMap;
-typedef XMap XVariantMap;
-typedef XHashMap XVariantHashMap;
+typedef XMapBase XFuncCodeMap;       /**< 功能码映射：以功能码为键的语义化容器别名。 */
+typedef XMap XVariantMap;            /**< Variant 键值映射：键与值均为 XVariant 的语义化容器别名。 */
+typedef XHashMap XVariantHashMap;    /**< Variant 哈希映射：键与值均为 XVariant 的语义化容器别名。 */
 
-typedef intptr_t XFd;               /**< 统一文件描述符/标识符 */
-#define XFD_INVALID  ((XFd)(-1))   /**< 无效标识符 */
+typedef intptr_t XFd;               /**< 文件描述符/套接字句柄 */
+#define XFD_INVALID  ((XFd)(-1))   /**< 无效句柄 */
 
-typedef void (*XCallableToRun)(XVarList*);
-//函数参数类型
+typedef void (*XCallableToRun)(XVarList*);   /**< 可调用回调函数指针：形式为 void(XVarList*)，参数列表承载实参 */
+/**
+ * @brief 函数参数的传递方式
+ */
 typedef enum XFuncParamType
 {
-	XFuncParamType_Copy,//拷贝模式
-	XFuncParamType_Move,//移动模式
-	XFuncParamType_Ref//引用模式
+	XFuncParamType_Copy,//拷贝传递
+	XFuncParamType_Move,//移动传递
+	XFuncParamType_Ref//引用传递
 }XFuncParamType;
-//函数返回类型
+/**
+ * @brief 返回值的传递方式
+ */
 typedef enum XFuncReturnType
 {
-	XFuncReturnType_Copy,//拷贝模式
-	XFuncReturnType_Move,//移动模式
-	XFuncReturnType_Ref//引用模式
+	XFuncReturnType_Copy,//拷贝传递
+	XFuncReturnType_Move,//移动传递
+	XFuncReturnType_Ref//引用传递
 }XFuncReturnType;
 /**
- * @brief 定时器唯一标识符。
+ * @brief 定时器标识符类型
  */
 typedef XFd XTimerId;
-#define  XTIMER_INVALID_ID  ((XTimerId)(-1))
+#define  XTIMER_INVALID_ID  ((XTimerId)(-1))   /**< 无效定时器标识符 */
 /**
- * @brief 时间持续量（Duration）。
+ * @brief 时长类型(Duration)。
  */
 typedef int64_t XDuration;
 
+/**
+ * @brief 定时器精度类型
+ */
 typedef enum XTimerType {
-	XTimerType_PreciseTimer,   ///< 精确定时器（高精度，高功耗）
-	XTimerType_CoarseTimer,   ///< 粗略定时器（允许 ±5% 误差，节能）
-	XTimerType_VeryCoarseTimer// 仅保持完整的秒级精度。
+	XTimerType_PreciseTimer,   ///< 精确计时(毫秒级精度,较慢)
+	XTimerType_CoarseTimer,   ///< 粗糙计时(允许约 5% 误差,较快)
+	XTimerType_VeryCoarseTimer// 非常粗糙计时(秒级精度)
 } XTimerType;
 /**
- * @brief 查找子对象的选项（对应 Qt::FindChildOption）
+ * @brief 子对象查找选项(对齐 Qt::FindChildOption)
  *
- * 用于控制 QObject::findChild() / findChildren() 的查找行为。
+ * 供 QObject::findChild() / findChildren() 一类的查找接口选用
  */
 typedef enum XFindChildOption {
-	XFindDirectChildrenOnly = 0x0,  /**< 仅查找直接子对象（不递归） */
-	XFindChildrenRecursively = 0x1  /**< 递归查找所有后代子对象（默认行为） */
+	XFindChildOption_DirectChildrenOnly = 0x0,  /**< 仅查找直接子对象(不递归) */
+	XFindChildOption_ChildrenRecursively = 0x1  /**< 连同全部后代一起查找(递归) */
 }XFindChildOption;
-//套接字活动类型
+/**
+ * @brief 套接字活动类型
+ * @details 值可按位组合,一次监听可用按位或/组合多种活动兴趣
+ *          (如 ReadWrite 即 Read 与 Write 的按位或)。
+ */
 typedef enum {
-	XSocketAct_Invalid = 0,
-	XSocketAct_Read = 1,
-	XSocketAct_Write = 2,
-	XSocketAct_ReadWrite = XSocketAct_Read | XSocketAct_Write,
-	XSocketAct_Connect = 4,       ///< 连接完成（TCP）
-	XSocketAct_Accept=8,
-	XSocketAct_Exception = 16
+	XSocketActType_Invalid = 0,       ///< 无效活动(0 表示未选择任何活动)
+	XSocketActType_Read = 1,          ///< 读活动(值 0x1,可按位组合)
+	XSocketActType_Write = 2,         ///< 写活动(值 0x2,可按位组合)
+	XSocketActType_ReadWrite = XSocketActType_Read | XSocketActType_Write,   ///< 读写活动(Read|Write 组合为 0x3)
+	XSocketActType_Connect = 4,       ///< 发起连接(TCP)
+	XSocketActType_Accept=8,          ///< 监听到新连接待接受(TCP 服务端)
+	XSocketActType_Exception = 16     ///< 异常活动(对应 QSocketNotifier::Exception)
 } XSocketActType;
 
 /**
- * @brief 锁类型枚举
+ * @brief 锁的类型
  */
 typedef enum
 {
-	XLock_NonRecursive = 1,			//非递归模式-默认等待中会休眠
-	XLock_Spin = 2,					//自旋模式-等于XLock_SpinNonRecursive
-	XLock_SpinNonRecursive = 3,		//自旋非递归模式
-	XLock_Recursive = 4,			//递归模式-默认等待中会休眠
-	XLock_SpinRecursive = 6			//自旋递归模式
+	XLock_NonRecursive = 1,			//非递归互斥锁-非自旋
+	XLock_Spin = 2,					//自旋锁-参见XLock_SpinNonRecursive
+	XLock_SpinNonRecursive = 3,		//非递归自旋锁
+	XLock_Recursive = 4,			//递归锁-同一线程可重入
+	XLock_SpinRecursive = 6			//递归自旋锁
 } XLock_Type;
 #ifdef __cplusplus
 }

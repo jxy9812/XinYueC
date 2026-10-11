@@ -37,11 +37,28 @@ static const char* errorToString(XCanBusDevice_Error err)
 }
 
 // =============== 配置条目辅助函数 ===============
-/* [死码清理] configEntryDeinit 已删除：全仓无调用点（见审计清单）。
- */
+/* 元素析构/拷贝回调：条目持有 XVariant* m_value（属主为条目），容器
+   清表/深拷贝时逐条释放或克隆，防按位浅拷共享 m_value 指针（泄漏战役
+   恢复：远端按 base 态"无调用点"审计删除，本地 init 注册使其实际复活）。 */
+static void configEntryDeinit(void* entry)
+{
+    XCanBusDevice_ConfigEntry* e = (XCanBusDevice_ConfigEntry*)entry;
+    if (e->m_value) {
+        XClassDelete((XVariant*)e->m_value);
+        e->m_value = NULL;
+    }
+}
 
-/* [死码清理] configEntryCopy 已删除：全仓无调用点（见审计清单）。
- */
+static void configEntryCopy(void* dest, const void* src)
+{
+    const XCanBusDevice_ConfigEntry* s = (const XCanBusDevice_ConfigEntry*)src;
+    XCanBusDevice_ConfigEntry* d = (XCanBusDevice_ConfigEntry*)dest;
+    d->m_key = s->m_key;
+    if (s->m_value)
+        d->m_value = XVariant_create_copy((const XVariant*)s->m_value);
+    else
+        d->m_value = NULL;
+}
 
 // =============== 类初始化 ===============
 XVtable* XCanBusDevice_class_init()
@@ -92,11 +109,17 @@ void XCanBusDevice_init(XCanBusDevice* dev)
     dev->m_errorString = NULL;
 
     // 初始化帧队列
-    dev->m_incomingFrames = XVector_create(sizeof(XCanBusFrame*));
-    dev->m_outgoingFrames = XVector_create(sizeof(XCanBusFrame*));
+    dev->m_incomingFrames = XVector_Create(XCanBusFrame*);
+    dev->m_outgoingFrames = XVector_Create(XCanBusFrame*);
 
     // 初始化配置参数列表
     dev->m_configOptions = XVector_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, sizeof(XCanBusDevice_ConfigEntry), false);
+    /* 注册元素析构：条目持有 XVariant* m_value（属主为条目），
+       设备析构清表时逐条释放，防 m_value 整批泄漏 */
+    XContainerSetDataDeinitMethod(dev->m_configOptions, configEntryDeinit);
+    /* 元素拷贝同步登记（同 XCanMessageDescription 元素回调模式）：
+       深拷贝容器时逐条目克隆变体，杜绝按位浅拷共享 m_value 指针 */
+    XContainerSetDataCopyMethod(dev->m_configOptions, configEntryCopy);
 
     dev->m_waitForReceivedEntered = false;
     dev->m_waitForWrittenEntered = false;
@@ -184,7 +207,10 @@ void XCanBusDevice_setConfigurationParameter(XCanBusDevice* dev,
     XCanBusDevice_ConfigEntry newEntry;
     newEntry.m_key = key;
     newEntry.m_value = XVariant_create_copy((const XVariant*)value);
+    /* 容器经元素拷贝回调接管条目副本；本地原件（含堆上 m_value）
+     * 无论插入成败都由本函数收尾，防副本之外的原件泄漏 */
     XVector_push_back_1_base(dev->m_configOptions, &newEntry);
+    configEntryDeinit(&newEntry);
 }
 
 void* XCanBusDevice_configurationParameter(const XCanBusDevice* dev,
@@ -205,9 +231,9 @@ void* XCanBusDevice_configurationParameter(const XCanBusDevice* dev,
 
 XVector* XCanBusDevice_configurationKeys(const XCanBusDevice* dev)
 {
-    if (!dev) return XVector_create(sizeof(int));
+    if (!dev) return XVector_Create(int);
 
-    XVector* keys = XVector_create(sizeof(int));
+    XVector* keys = XVector_Create(int);
     size_t count = XVector_size_base(dev->m_configOptions);
     for (size_t i = 0; i < count; i++) {
         XCanBusDevice_ConfigEntry* entry = (XCanBusDevice_ConfigEntry*)
@@ -282,13 +308,13 @@ XCanBusFrame* XCanBusDevice_readFrame(XCanBusDevice* dev)
 
 XVector* XCanBusDevice_readAllFrames(XCanBusDevice* dev)
 {
-    if (!dev || !dev->m_incomingFrames) return XVector_create(sizeof(XCanBusFrame*));
+    if (!dev || !dev->m_incomingFrames) return XVector_Create(XCanBusFrame*);
 
     // Qt 行为：未连接时设置 OperationError 并返回空列表
     if (dev->m_state != XCanBusDevice_ConnectedState) {
         XCanBusDevice_setError(dev, XCanBusDevice_OperationError,
             "Cannot read frame as device is not connected.");
-        return XVector_create(sizeof(XCanBusFrame*));
+        return XVector_Create(XCanBusFrame*);
     }
 
     XCanBusDevice_clearError(dev);
@@ -299,7 +325,9 @@ XVector* XCanBusDevice_readAllFrames(XCanBusDevice* dev)
 
     // 移动所有帧到新列表
     XVector* frames = XVector_create_move(dev->m_incomingFrames);
-    dev->m_incomingFrames = XVector_create(sizeof(XCanBusFrame*));
+    /* 被搬空的旧外壳仍由创建者（本对象）释放（move 后源对象的清理责任） */
+    XClassDelete((XClass*)dev->m_incomingFrames);
+    dev->m_incomingFrames = XVector_Create(XCanBusFrame*);
 
     if (dev->m_incomingFramesGuard)
         XMutex_unlock(dev->m_incomingFramesGuard);
@@ -766,7 +794,7 @@ void XCanBusDevice_createDeviceInfo_full(XCanBusDeviceInfo* info,
 // =============== 虚函数调用接口 ===============
 bool XCanBusDevice_open_base(XCanBusDevice* dev)
 {
-    if (!dev) return false;
+    if (!dev || !XClassGetVtable(dev)) return false;
     bool (*open_func)(XCanBusDevice*) = XClassGetVirtualFunc(dev,
         EXCanBusDevice_Open, bool(*)(XCanBusDevice*));
     if (open_func) return open_func(dev);
@@ -775,7 +803,7 @@ bool XCanBusDevice_open_base(XCanBusDevice* dev)
 
 void XCanBusDevice_close_base(XCanBusDevice* dev)
 {
-    if (!dev) return;
+    if (!dev || !XClassGetVtable(dev)) return;
     void (*close_func)(XCanBusDevice*) = XClassGetVirtualFunc(dev,
         EXCanBusDevice_Close, void(*)(XCanBusDevice*));
     if (close_func) close_func(dev);

@@ -20,13 +20,13 @@
  *             （由 XWidget 基类提供）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "XProgressBar.h"
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
 #if XWIDGET_ON && XPROGRESSBAR_ON
 
-#include "XProgressBar.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XString.h"
@@ -502,6 +502,7 @@ XVtable* XProgressBar_class_init(void)
 void XProgressBar_init(XProgressBar* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
+    XMemset(self, 0, sizeof(*self));
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XProgressBar);
 

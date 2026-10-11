@@ -1,20 +1,23 @@
-﻿#ifndef XCANCOMMONDEFINITIONS_H
-#define XCANCOMMONDEFINITIONS_H
-
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdlib.h>
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/**
+﻿/**
  * @file XCanCommonDefinitions.h
  * @brief CAN 公共定义头文件（对齐 Qt6 QtCanBus 命名空间）
  * @details 定义 CAN 协议栈中通用的枚举类型和常量，包括数据源、数据格式、
  *          多路复用状态和唯一 ID 类型等。对应 Qt 的 QtCanBus 命名空间。
  */
+
+#ifndef XCANCOMMONDEFINITIONS_H
+#define XCANCOMMONDEFINITIONS_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include "XCan_config.h"
+
+#if XCAN_FRAME_ON
+
+#include <stdint.h>
+#include <stdbool.h>
 
 /******************************************************************************************
  * 枚举类型定义
@@ -57,6 +60,8 @@ typedef enum {
  * @details 使用 uint32_t 表示 CAN 消息的唯一标识符，对齐 Qt6 QtCanBus::UniqueId
  */
 typedef uint32_t XCanBus_UniqueId;
+
+#endif /* XCAN_FRAME_ON */
 
 #ifdef __cplusplus
 }

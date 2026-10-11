@@ -26,16 +26,16 @@
 #ifndef XMYSQL_SHARED_MEMORY_H
 #define XMYSQL_SHARED_MEMORY_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "XString.h"
 #include "XAtomic.h"
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /** MySQL 共享内存传输对象，具体布局由通用实现负责。 */
 typedef struct XMySqlSharedMemory XMySqlSharedMemory;
@@ -52,29 +52,29 @@ typedef struct XMySqlSharedMemory XMySqlSharedMemory;
 
 /**
  * @brief 单向数据通道（服务器→客户端 或 客户端→服务器）。
- * @note 字段按 XAtomic_uint32_t（4 字节对齐）排列，无内部填充，
+ * @note 字段按 XAtomic_Uint32（4 字节对齐）排列，无内部填充，
  *       布局在 Windows/POSIX 编译器上保持一致。
  */
 typedef struct {
-    XAtomic_uint32_t length; /**< 当前块长度（1..DATA_SIZE，写入方填写的字节数） */
-    XAtomic_uint32_t status; /**< 状态：0=空闲，1=本端已写入数据待对端读取 */
-    XAtomic_uint32_t closed; /**< 关闭标志：0=正常，1=本端已通知关闭 */
+    XAtomic_Uint32 length; /**< 当前块长度（1..DATA_SIZE，写入方填写的字节数） */
+    XAtomic_Uint32 status; /**< 状态：0=空闲，1=本端已写入数据待对端读取 */
+    XAtomic_Uint32 closed; /**< 关闭标志：0=正常，1=本端已通知关闭 */
     uint8_t data[XMYSQL_SHARED_MEMORY_DATA_SIZE]; /**< 块数据区 */
 } XMySqlSharedMemoryChannel;
 
 /** 数据段线协议布局（段名 <BASE>_<连接编号>_DATA）。 */
 typedef struct {
-    XAtomic_uint32_t magic;                    /**< 魔数 XMYSQL_SHARED_MEMORY_MAGIC */
+    XAtomic_Uint32 magic;                    /**< 魔数 XMYSQL_SHARED_MEMORY_MAGIC */
     XMySqlSharedMemoryChannel serverToClient;  /**< 服务器→客户端通道 */
     XMySqlSharedMemoryChannel clientToServer;  /**< 客户端→服务器通道 */
 } XMySqlSharedMemorySegment;
 
 /** 连接协商段线协议布局（段名 <BASE>_CONNECT_DATA）。 */
 typedef struct {
-    XAtomic_uint32_t magic;   /**< 魔数 XMYSQL_SHARED_MEMORY_MAGIC */
-    XAtomic_uint32_t number;  /**< 服务端分配的连接编号 */
-    XAtomic_uint32_t request; /**< 客户端请求标志：0=空闲，1=请求连接 */
-    XAtomic_uint32_t answer;  /**< 服务端应答标志：0=空闲，1=已应答 */
+    XAtomic_Uint32 magic;   /**< 魔数 XMYSQL_SHARED_MEMORY_MAGIC */
+    XAtomic_Uint32 number;  /**< 服务端分配的连接编号 */
+    XAtomic_Uint32 request; /**< 客户端请求标志：0=空闲，1=请求连接 */
+    XAtomic_Uint32 answer;  /**< 服务端应答标志：0=空闲，1=已应答 */
 } XMySqlSharedMemoryConnect;
 
 /**

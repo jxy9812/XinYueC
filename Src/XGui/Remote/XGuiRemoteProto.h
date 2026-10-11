@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XGuiRemoteProto.h
  * @brief      XGuiRemote 帧协议/会话层契约(冻结头, 只声明 API 不含实现)。
  * @details    XGuiServer/XGuiClient 远程窗口功能共用的线上协议定义:
@@ -459,20 +459,20 @@ typedef struct XGuiRemoteMsgHello {
 typedef struct XGuiRemoteMsgAuthChallenge {
     uint8_t  method;                          /**< 认证方法。 */
     uint16_t nonceBytes;                      /**< 恒 AUTH_NONCE_BYTES。 */
-    uint8_t  nonce[XGUI_REMOTE_AUTH_NONCE_BYTES];
+    uint8_t  nonce[XGUI_REMOTE_AUTH_NONCE_BYTES]; /**< 挑战随机数(每连接随机, 防重放)。 */
 } XGuiRemoteMsgAuthChallenge;
 
 /** @brief AUTH_RESPONSE。 */
 typedef struct XGuiRemoteMsgAuthResponse {
     uint16_t responseBytes;                   /**< 恒 AUTH_RESPONSE_BYTES。 */
-    uint8_t  response[XGUI_REMOTE_AUTH_RESPONSE_BYTES];
+    uint8_t  response[XGUI_REMOTE_AUTH_RESPONSE_BYTES]; /**< 挑战应答(口令哈希参与运算结果)。 */
 } XGuiRemoteMsgAuthResponse;
 
 /** @brief AUTH_RESULT。 */
 typedef struct XGuiRemoteMsgAuthResult {
     uint8_t  ok;                              /**< 1 通过 / 0 拒绝(拒绝后 BYE)。 */
     uint16_t textBytes;                       /**< 文本字节数(≤MAX_MSG)。 */
-    char     text[XGUI_REMOTE_MAX_MSG_BYTES];
+    char     text[XGUI_REMOTE_MAX_MSG_BYTES]; /**< 结果说明文本(UTF-8, 非终止符保证)。 */
 } XGuiRemoteMsgAuthResult;
 
 /** @brief FB_META(画面元信息; 尺寸/格式/tile 变化时重发)。 */
@@ -485,7 +485,7 @@ typedef struct XGuiRemoteMsgFbMeta {
     uint8_t  profileId;                       /**< 当前档位 id。 */
     uint8_t  flags;                           /**< bit0=标题字段有效。 */
     uint16_t titleBytes;                      /**< 标题字节数(≤MAX_NAME)。 */
-    char     title[XGUI_REMOTE_MAX_NAME_BYTES];
+    char     title[XGUI_REMOTE_MAX_NAME_BYTES]; /**< 远端窗口标题(UTF-8, 非终止符保证; flags bit0 有效)。 */
 } XGuiRemoteMsgFbMeta;
 
 /** @brief FB_REQUEST。
@@ -566,16 +566,16 @@ typedef struct XGuiRemoteMsgInputTouch {
     uint8_t  action;                          /**< TOUCH_BEGIN/UPDATE/END/CANCEL。 */
     uint8_t  pointCount;                      /**< ≤MAX_TOUCH_POINTS。 */
     uint32_t timestampMs;                     /**< 事件时间戳。 */
-    XGuiRemoteMsgTouchPoint points[XGUI_REMOTE_MAX_TOUCH_POINTS];
+    XGuiRemoteMsgTouchPoint points[XGUI_REMOTE_MAX_TOUCH_POINTS]; /**< 触点数组(主点必须放 points[0])。 */
 } XGuiRemoteMsgInputTouch;
 
 /** @brief INPUT_IME(preedit/commit 为 UTF-8 原文; 坐标类字段为 preedit
  *         内部量, 语义对齐 XInputMethodEvent)。 */
 typedef struct XGuiRemoteMsgInputIme {
     uint16_t preeditBytes;                    /**< 组合文本字节数(≤MAX_TEXT)。 */
-    char     preedit[XGUI_REMOTE_MAX_TEXT_BYTES];
+    char     preedit[XGUI_REMOTE_MAX_TEXT_BYTES]; /**< 组合文本(UTF-8 原文, 非终止符保证)。 */
     uint16_t commitBytes;                     /**< 提交文本字节数(≤MAX_TEXT)。 */
-    char     commit[XGUI_REMOTE_MAX_TEXT_BYTES];
+    char     commit[XGUI_REMOTE_MAX_TEXT_BYTES];  /**< 提交文本(UTF-8 原文, 非终止符保证)。 */
     int32_t  replacementStart;                /**< 相对光标的替换起点。 */
     int32_t  replacementLength;               /**< 替换长度。 */
     int32_t  cursorPosition;                  /**< -1 未知。 */
@@ -597,7 +597,7 @@ typedef struct XGuiRemoteMsgProfileResult {
 
 /** @brief PING / PONG 共用(u64 毫秒时间戳; PONG 回显对端值)。 */
 typedef struct XGuiRemoteMsgPing {
-    uint64_t timestampMs;
+    uint64_t timestampMs;                     /**< 发送方单调毫秒时间戳(PONG 回显对端值)。 */
 } XGuiRemoteMsgPing;
 
 /* ==================== UDP 通道协商消息(2026-10-04 加法式) ==================== */
@@ -632,14 +632,14 @@ typedef struct XGuiRemoteMsgUdpMode {
 typedef struct XGuiRemoteMsgBye {
     uint8_t  reason;                          /**< XGuiRemoteByeReason。 */
     uint16_t textBytes;                       /**< 文本字节数(≤MAX_MSG)。 */
-    char     text[XGUI_REMOTE_MAX_MSG_BYTES];
+    char     text[XGUI_REMOTE_MAX_MSG_BYTES]; /**< 断开说明文本(UTF-8, 非终止符保证)。 */
 } XGuiRemoteMsgBye;
 
 /** @brief ERROR。 */
 typedef struct XGuiRemoteMsgError {
     uint16_t code;                            /**< XGuiRemoteError。 */
     uint16_t textBytes;                       /**< 文本字节数(≤MAX_MSG)。 */
-    char     text[XGUI_REMOTE_MAX_MSG_BYTES];
+    char     text[XGUI_REMOTE_MAX_MSG_BYTES]; /**< 错误描述文本(UTF-8, 非终止符保证)。 */
 } XGuiRemoteMsgError;
 
 /* ==================== 消息编解码(纯函数, 统一约定) ==================== */
@@ -657,40 +657,145 @@ typedef struct XGuiRemoteMsgError {
  *           为通用值, 为前向兼容留空间(配合帧层"未知名节跳过")。
  */
 
+/**
+ * @brief      序列化 HELLO/HELLO_ACK 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encHello(uint8_t* out, size_t cap,
                                 const XGuiRemoteMsgHello* msg);
+/**
+ * @brief      从负载解析 HELLO/HELLO_ACK 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界/
+ *             认证方法值域非法(协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decHello(const uint8_t* payload, size_t len,
                               XGuiRemoteMsgHello* out);
 
+/**
+ * @brief      序列化 AUTH_CHALLENGE 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encAuthChallenge(uint8_t* out, size_t cap,
                                         const XGuiRemoteMsgAuthChallenge* msg);
+/**
+ * @brief      从负载解析 AUTH_CHALLENGE 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界/
+ *             认证方法值域非法(协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decAuthChallenge(const uint8_t* payload, size_t len,
                                       XGuiRemoteMsgAuthChallenge* out);
 
+/**
+ * @brief      序列化 AUTH_RESPONSE 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encAuthResponse(uint8_t* out, size_t cap,
                                        const XGuiRemoteMsgAuthResponse* msg);
+/**
+ * @brief      从负载解析 AUTH_RESPONSE 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decAuthResponse(const uint8_t* payload, size_t len,
                                      XGuiRemoteMsgAuthResponse* out);
 
+/**
+ * @brief      序列化 AUTH_RESULT 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写; 文本超长截断)。
+ */
 size_t XGuiRemoteProto_encAuthResult(uint8_t* out, size_t cap,
                                      const XGuiRemoteMsgAuthResult* msg);
+/**
+ * @brief      从负载解析 AUTH_RESULT 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decAuthResult(const uint8_t* payload, size_t len,
                                    XGuiRemoteMsgAuthResult* out);
 
+/**
+ * @brief      序列化 FB_META 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写; 标题超长截断)。
+ */
 size_t XGuiRemoteProto_encFbMeta(uint8_t* out, size_t cap,
                                  const XGuiRemoteMsgFbMeta* msg);
+/**
+ * @brief      从负载解析 FB_META 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界/
+ *             像素格式或档位 id 值域非法(协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decFbMeta(const uint8_t* payload, size_t len,
                                XGuiRemoteMsgFbMeta* out);
 
+/**
+ * @brief      序列化 FB_REQUEST 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encFbRequest(uint8_t* out, size_t cap,
                                     const XGuiRemoteMsgFbRequest* msg);
+/**
+ * @brief      从负载解析 FB_REQUEST 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界/
+ *             mode 值域非法(协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decFbRequest(const uint8_t* payload, size_t len,
                                   XGuiRemoteMsgFbRequest* out);
 
-/** @brief 序列化 FB_UPDATE 帧级头(恒 XGUI_REMOTE_FB_UPDATE_HEADER_BYTES
- *         字节; 随后由 encFbTile 逐条追加 tile 记录)。 */
+/**
+ * @brief      序列化 FB_UPDATE 帧级头(恒 XGUI_REMOTE_FB_UPDATE_HEADER_BYTES
+ *             字节; 随后由 encFbTile 逐条追加 tile 记录; 统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数(成功恒 8); 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encFbUpdate(uint8_t* out, size_t cap,
                                    const XGuiRemoteMsgFbUpdate* msg);
+/**
+ * @brief      从负载解析 FB_UPDATE 帧级头(统一约定见上方族注; tile 记录
+ *             由 decFbTile 按偏移逐条解析, 本函数不消费记录区)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(帧级头 8 字节完整消费); false 负载长度不符/像素
+ *             格式值域非法(协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decFbUpdate(const uint8_t* payload, size_t len,
                                  XGuiRemoteMsgFbUpdate* out);
 
@@ -715,79 +820,310 @@ size_t XGuiRemoteProto_encFbTile(uint8_t* out, size_t cap,
 bool XGuiRemoteProto_decFbTile(const uint8_t* payload, size_t len, size_t offset,
                                XGuiRemoteMsgFbTile* tileOut, size_t* nextOffset);
 
+/**
+ * @brief      序列化 FB_ACK 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encFbAck(uint8_t* out, size_t cap,
                                 const XGuiRemoteMsgFbAck* msg);
+/**
+ * @brief      从负载解析 FB_ACK 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decFbAck(const uint8_t* payload, size_t len,
                               XGuiRemoteMsgFbAck* out);
 
+/**
+ * @brief      序列化 INPUT_KEY 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encInputKey(uint8_t* out, size_t cap,
                                    const XGuiRemoteMsgInputKey* msg);
+/**
+ * @brief      从负载解析 INPUT_KEY 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界/
+ *             action 值域非法(协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decInputKey(const uint8_t* payload, size_t len,
                                  XGuiRemoteMsgInputKey* out);
 
+/**
+ * @brief      序列化 INPUT_POINTER 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encInputPointer(uint8_t* out, size_t cap,
                                        const XGuiRemoteMsgInputPointer* msg);
+/**
+ * @brief      从负载解析 INPUT_POINTER 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界/
+ *             action 值域非法(协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decInputPointer(const uint8_t* payload, size_t len,
                                      XGuiRemoteMsgInputPointer* out);
 
+/**
+ * @brief      序列化 INPUT_WHEEL 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encInputWheel(uint8_t* out, size_t cap,
                                      const XGuiRemoteMsgInputWheel* msg);
+/**
+ * @brief      从负载解析 INPUT_WHEEL 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decInputWheel(const uint8_t* payload, size_t len,
                                    XGuiRemoteMsgInputWheel* out);
 
+/**
+ * @brief      序列化 INPUT_TOUCH 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encInputTouch(uint8_t* out, size_t cap,
                                      const XGuiRemoteMsgInputTouch* msg);
+/**
+ * @brief      从负载解析 INPUT_TOUCH 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界/
+ *             action 值域非法或触点数超上限(协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decInputTouch(const uint8_t* payload, size_t len,
                                    XGuiRemoteMsgInputTouch* out);
 
+/**
+ * @brief      序列化 INPUT_IME 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写; preedit/
+ *             commit 文本超长截断)。
+ */
 size_t XGuiRemoteProto_encInputIme(uint8_t* out, size_t cap,
                                    const XGuiRemoteMsgInputIme* msg);
+/**
+ * @brief      从负载解析 INPUT_IME 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decInputIme(const uint8_t* payload, size_t len,
                                  XGuiRemoteMsgInputIme* out);
 
+/**
+ * @brief      序列化 PROFILE_SET 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encProfileSet(uint8_t* out, size_t cap,
                                      const XGuiRemoteMsgProfileSet* msg);
+/**
+ * @brief      从负载解析 PROFILE_SET 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费, 自定义块已 sanitize); false 负载
+ *             长度不符/字段越界/档位 id 值域非法(协议错误, 应断链)。
+ */
 bool XGuiRemoteProto_decProfileSet(const uint8_t* payload, size_t len,
                                    XGuiRemoteMsgProfileSet* out);
 
+/**
+ * @brief      序列化 PROFILE_RESULT 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encProfileResult(uint8_t* out, size_t cap,
                                         const XGuiRemoteMsgProfileResult* msg);
+/**
+ * @brief      从负载解析 PROFILE_RESULT 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decProfileResult(const uint8_t* payload, size_t len,
                                       XGuiRemoteMsgProfileResult* out);
 
+/**
+ * @brief      序列化 PING/PONG 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      timestampMs 发送方时间戳(毫秒; PONG 回显对端值)。
+ * @return     写入字节数(成功恒 8); 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encPing(uint8_t* out, size_t cap, uint64_t timestampMs);
+/**
+ * @brief      从负载解析 PING/PONG 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      timestampMsOut 输出时间戳(毫秒); 可为 NULL(仅做协议校验
+ *             不取值)。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decPing(const uint8_t* payload, size_t len,
                              uint64_t* timestampMsOut);
 
 /* ---- UDP 通道协商(enc/dec, 2026-10-04 加法式; 兼容纪律见消息结构注) ---- */
 
+/**
+ * @brief      序列化 UDP_OFFER 消息(统一约定见上方族注; 仅能力交集含
+ *             CAP_UDP 时收发)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encUdpOffer(uint8_t* out, size_t cap,
                                    const XGuiRemoteMsgUdpOffer* msg);
+/**
+ * @brief      从负载解析 UDP_OFFER 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decUdpOffer(const uint8_t* payload, size_t len,
                                  XGuiRemoteMsgUdpOffer* out);
 
+/**
+ * @brief      序列化 UDP_BIND 消息(统一约定见上方族注; 仅能力交集含
+ *             CAP_UDP 时收发)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encUdpBind(uint8_t* out, size_t cap,
                                   const XGuiRemoteMsgUdpBind* msg);
+/**
+ * @brief      从负载解析 UDP_BIND 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decUdpBind(const uint8_t* payload, size_t len,
                                 XGuiRemoteMsgUdpBind* out);
 
+/**
+ * @brief      序列化 UDP_RESULT 消息(统一约定见上方族注; 仅能力交集含
+ *             CAP_UDP 时收发)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encUdpResult(uint8_t* out, size_t cap,
                                     const XGuiRemoteMsgUdpResult* msg);
+/**
+ * @brief      从负载解析 UDP_RESULT 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decUdpResult(const uint8_t* payload, size_t len,
                                   XGuiRemoteMsgUdpResult* out);
 
+/**
+ * @brief      序列化 UDP_MODE 消息(统一约定见上方族注; 仅能力交集含
+ *             CAP_UDP 时收发)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写)。
+ */
 size_t XGuiRemoteProto_encUdpMode(uint8_t* out, size_t cap,
                                   const XGuiRemoteMsgUdpMode* msg);
+/**
+ * @brief      从负载解析 UDP_MODE 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链)。
+ */
 bool XGuiRemoteProto_decUdpMode(const uint8_t* payload, size_t len,
                                 XGuiRemoteMsgUdpMode* out);
 
+/**
+ * @brief      序列化 BYE 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写; 文本超长截断)。
+ */
 size_t XGuiRemoteProto_encBye(uint8_t* out, size_t cap,
                               const XGuiRemoteMsgBye* msg);
+/**
+ * @brief      从负载解析 BYE 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链; reason 为开放值域, 未知值原样透传)。
+ */
 bool XGuiRemoteProto_decBye(const uint8_t* payload, size_t len,
                             XGuiRemoteMsgBye* out);
 
+/**
+ * @brief      序列化 ERROR 消息(统一约定见上方族注)。
+ * @param      out 输出缓冲(借用); 不得为 NULL。
+ * @param      cap 输出缓冲容量(字节)。
+ * @param      msg 待编码消息(借用); 不得为 NULL。
+ * @return     写入字节数; 缓冲不足/参数非法返回 0(不产生半写; 文本超长截断)。
+ */
 size_t XGuiRemoteProto_encError(uint8_t* out, size_t cap,
                                 const XGuiRemoteMsgError* msg);
+/**
+ * @brief      从负载解析 ERROR 消息(统一约定见上方族注)。
+ * @param      payload 负载缓冲(借用); 不得为 NULL。
+ * @param      len 负载字节数。
+ * @param      out 输出消息(调用方提供存储); 失败时字段不完整, 不得使用。
+ * @return     true 成功(负载被完整消费); false 负载长度不符/字段越界
+ *             (协议错误, 调用方应断链; code 为开放值域, 未知值原样透传)。
+ */
 bool XGuiRemoteProto_decError(const uint8_t* payload, size_t len,
                               XGuiRemoteMsgError* out);
 

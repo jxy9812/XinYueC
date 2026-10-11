@@ -1,4 +1,10 @@
-﻿#ifndef XHISTORYSTATE_H
+﻿/**
+ * @file       XHistoryState.h
+ * @brief      状态机历史伪状态公开 API。
+ * @details    对齐 Qt 6.8 QHistoryState；实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XHISTORYSTATE_H
 #define XHISTORYSTATE_H
 
 #ifdef __cplusplus

@@ -42,7 +42,7 @@ static void VXDial_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VXDial_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VXDial_changeEvent(XWidget* self, XEvent* event);
 static void VXDial_copy(XDial* self, const XDial* other);
-static void XDial_move(XDial* self, XDial* other);
+static void VXDial_move(XDial* self, XDial* other);
 
 /* ==================== 内部辅助 ==================== */
 
@@ -437,7 +437,7 @@ static void VXDial_copy(XDial* self, const XDial* other)
     self->m_dragging = other->m_dragging;
 }
 
-static void XDial_move(XDial* self, XDial* other)
+static void VXDial_move(XDial* self, XDial* other)
 {
     if (!self || !other || self == other) return;
     if (XClassIsVtableNull(self)) XDial_init(self, NULL, 0);
@@ -458,7 +458,7 @@ static void XDial_move(XDial* self, XDial* other)
 
 /* ==================== 生命周期 ==================== */
 
-static void XDial_stepBy(XDial* self, int steps);
+static void VXDial_stepBy(XDial* self, int steps);
 
 XVtable* XDial_class_init(void)
 {
@@ -470,9 +470,9 @@ XVtable* XDial_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXDial_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXDial_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXDial_changeEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSlider_StepBy, XDial_stepBy);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSlider_StepBy, VXDial_stepBy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXDial_copy);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, XDial_move);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXDial_move);
 
     return XVTABLE_DEFAULT;
 }
@@ -529,7 +529,7 @@ void XDial_setNotchesVisible(XDial* self, bool visible)
 
 /** @brief 步进（对标 QDial::stepBy）：wrapping=true 时越过端点回绕
  *  到另一端（此前与普通滑块同为端点钳位，回绕语义缺失）。 */
-static void XDial_stepBy(XDial* self, int steps)
+static void VXDial_stepBy(XDial* self, int steps)
 {
     int minimum = XAbstractSlider_minimum((const XAbstractSlider*)self);
     int maximum = XAbstractSlider_maximum((const XAbstractSlider*)self);

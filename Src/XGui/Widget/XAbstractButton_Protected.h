@@ -90,15 +90,6 @@ bool XAbstractButton_isInstance(const XObject* object);
 /* ==================== 保护虚函数与分派入口（对标 QAbstractButton protected API） ==================== */
 
 /**
- * @brief      选中状态已由公共 API 设置后的默认保护钩子。
- * @details    基类默认实现不执行操作；具体按钮可重载该钩子以同步复选框
- *             或单选按钮的附加状态。该函数是默认实现，不负责虚表分派。
- * @param      self 已初始化的按钮对象；由调用方借用，不可为 NULL。
- * @return     无返回值。
- */
-void XAbstractButton_checkStateSet(XAbstractButton* self);
-
-/**
  * @brief      通过当前按钮虚表分派 checkStateSet 保护钩子。
  * @details    该入口只查询和调用虚表，不包含业务逻辑；子类重载后若需要
  *             基类行为，应使用 XClass_Parent 访问父类槽位，不能递归调用
@@ -150,17 +141,6 @@ bool XAbstractButton_hitButton(const XAbstractButton* self,
  */
 bool XAbstractButton_hitButton_base(const XAbstractButton* self,
                                     const XPoint* pos);
-
-/**
- * @brief      文本/图标等可视内容变更后的默认保护钩子。
- * @details    基类默认实现不执行操作；具体按钮可重载该钩子以刷新自己的
- *             尺寸提示或外观缓存（例如按钮文本/图标变化后重算 sizeHint
- *             存储位）。基类会在 setText/setIcon/setIconSize 等公共入口
- *             内容真正变化后、刷新几何之前分派该钩子。
- * @param      self 已初始化的按钮对象；由调用方借用，不可为 NULL。
- * @return     无返回值。
- */
-void XAbstractButton_contentChanged(XAbstractButton* self);
 
 /**
  * @brief      通过当前按钮虚表分派 contentChanged 保护钩子。

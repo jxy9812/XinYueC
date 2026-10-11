@@ -47,6 +47,16 @@ static bool XBsonValue_isKnownType(XBsonType type)
 /* [死码清理] XBsonValue_hasString 已删除：全仓无调用点（见审计清单）。
  */
 
+/* 库内无 memchr 原语（string.h 白名单仅 memcpy/memset/memmove/memcmp），
+   本地扫描检测缓冲区内嵌 NUL，避免越白名单依赖（外部依赖约束）。 */
+static bool XBsonValue_bufferHasNul(const char* data, size_t length)
+{
+	for (size_t i = 0; i < length; ++i) {
+		if (data[i] == '\0') return true;
+	}
+	return false;
+}
+
 static bool XBsonValue_appendBytes(XByteArray* output, const void* data,
 	                                   size_t size)
 {
@@ -74,7 +84,7 @@ static bool XBsonValue_writeCString(XByteArray* output, const XString* string)
 	if (!output || !string) return false;
 	const char* utf8 = XString_toUtf8(string);
 	size_t length = XString_toUtf8_length(string);
-	if (!utf8 || memchr(utf8, 0, length) != NULL) return false;
+	if (!utf8 || XBsonValue_bufferHasNul(utf8, length)) return false;
 	return XBsonValue_appendBytes(output, utf8, length) &&
 		XByteArray_push_back_1(output, 0x00);
 }
@@ -157,7 +167,7 @@ static bool XBsonValue_isSortedRegexOptions(const XString* options)
 	if (!text) return false;
 	for (size_t i = 1; i < length; ++i)
 		if ((unsigned char)text[i - 1] > (unsigned char)text[i]) return false;
-	return memchr(text, 0, length) == NULL;
+	return !XBsonValue_bufferHasNul(text, length);
 }
 
 static char XBsonValue_hexDigit(uint8_t value)
@@ -1210,7 +1220,7 @@ bool XBsonValue_serialize(const XBsonValue* value, const char* key,
 	XString_Init_Utf8(name, key);
 	size_t key_length = XString_toUtf8_length(name);
 	const char* key_utf8 = XString_toUtf8(name);
-	bool valid_key = key_utf8 && memchr(key_utf8, 0, key_length) == NULL;
+	bool valid_key = key_utf8 && !XBsonValue_bufferHasNul(key_utf8, key_length);
 	if (!valid_key || !XByteArray_push_back_1(output, (uint8_t)value->type) ||
 		!XBsonValue_appendBytes(output, key_utf8, key_length) ||
 		!XByteArray_push_back_1(output, 0x00)) {

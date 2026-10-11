@@ -86,7 +86,7 @@ XCLASS_DEFINE_BEGING(XSlider)
 XCLASS_DEFINE_EXTEND_END(XSlider, XAbstractSlider)
 
 /**
- * @brief      XSlider 滑块控件对象；m_base 必须是第一个成员。
+ * @brief      XSlider 滑块控件对象；m_class 必须是第一个成员。
  * @details    字段含义（对标 QSlider 同名属性）：
  *             - m_tickPosition：刻度位置（默认 NoTicks）；
  *             - m_tickInterval：刻度值间隔（默认 0=自动）；
@@ -95,7 +95,7 @@ XCLASS_DEFINE_EXTEND_END(XSlider, XAbstractSlider)
  */
 typedef struct XSlider
 {
-    XAbstractSlider m_base;        /**< 基类成员；必须是第一个。 */
+    XAbstractSlider m_class;       /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
     int  m_tickPosition;           /**< 刻度位置（XSliderTickPosition）。 */
     int  m_tickInterval;           /**< 刻度间隔（值间隔；0=自动）。 */
     int  m_dragOffset;             /**< 拖动偏移（按下点相对 handle 中心）。 */
@@ -123,8 +123,8 @@ void XSlider_init(XSlider* self, XWidget* parent, XWidgetFlags flags);
  */
 XSlider* XSlider_create_ex(XMemoryType memory, XWidget* parent,
                            XWidgetFlags flags);
-/** @brief 通过 XClass 虚表释放 XSlider 资源（栈/外部存储对象使用）。 */
-/** @brief 删除堆上的 XSlider 对象。 */
+/* 反初始化/释放：统一用 XClassDeinit/XClassDelete（派生类不再声明
+ * deinit/delete 入口，见约束文档「类的创建」迁移说明）。 */
 
 /* ==================== 刻度（对标 QSlider） ==================== */
 
@@ -138,9 +138,6 @@ int XSlider_tickInterval(const XSlider* self);
  *         QSlider::setTickInterval）。 */
 void XSlider_setTickInterval(XSlider* self, int interval);
 
-#ifdef __cplusplus
-}
-#endif
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON && XSLIDER_ON */
 
 #ifdef __cplusplus

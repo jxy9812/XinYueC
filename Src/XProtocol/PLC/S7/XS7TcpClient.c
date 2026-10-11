@@ -15,6 +15,7 @@
 #include "XS7Value.h"
 #include "XS7Control.h"
 #include "XS7Block.h"
+#include <string.h>
 #include "XPrintf.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -24,7 +25,6 @@
 #include "XQueue.h"
 #include "XTcpSocket.h"
 #include "XTimer.h"
-#include <string.h>
 
 /* ==========================================================================
  * XS7TcpClient —— 西门子 S7（ISO-on-TCP）客户端实现
@@ -316,7 +316,7 @@ static void s7CopyBounded(char* dst, size_t dstSize, const char* src)
 // =============== 零警告键比较（精确匹配 XCompare 签名） ===============
 /**
  * @brief uint16_t 键比较（pduRef → pending 表用）
- * @note 库内生成的 uint16_t_compare 签名为 (const uint16_t*)，与 XCompare
+ * @note 库内生成的 Xuint16_t_compare 签名为 (const uint16_t*)，与 XCompare
  *       (const void*) 不一致会触发告警；此处按规范手写等价实现
  */
 static int32_t s7PduRefCompare(const void* lhs, const void* rhs)
@@ -578,57 +578,7 @@ static XByteArray* XS7TcpClient_wrapDtFrame(const uint8_t* pdu, size_t pduLen)
     return frame;
 }
 
-// =============== 类初始化 ===============
-XVtable* XS7TcpClient_class_init(void)
-{
-    XVTABLE_INIT_DEFAULT(XS7TcpClient)
-        // 先继承（顺序不可颠倒）
-        XVTABLE_INHERIT_XCLASS(XPlcClient);
-
-    // 后重载：Open/Close/Deinit/TimerEvent/SendRequest/ProcessResponse
-    XVTABLE_OVERLOAD_DEFAULT(EXPlcDevice_Open, VXPlcDevice_open_s7);
-    XVTABLE_OVERLOAD_DEFAULT(EXPlcDevice_Close, VXPlcDevice_close_s7);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPlcClient_deinit_s7);
-    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXPlcClient_timerEvent_s7);
-    XVTABLE_OVERLOAD_DEFAULT(EXPlcClient_SendRequest, VXPlcClient_sendRequest_s7);
-    XVTABLE_OVERLOAD_DEFAULT(EXPlcClient_ProcessResponse, VXPlcClient_processResponse_s7);
-
-    XCLASS_SHOW_SIZE_DEFAULT(XS7TcpClient);
-    return XVTABLE_DEFAULT;
-}
-
-// =============== 创建/初始化/析构 ===============
-XS7TcpClient* XS7TcpClient_create_ex(XMemoryType memory)
-{
-    XS7TcpClient* client = (XS7TcpClient*)XMemory_malloc(sizeof(XS7TcpClient), memory);
-    if (!client) return NULL;
-    XS7TcpClient_init(client);
-    Set_Class_Memory(client, memory); Set_Class_IsHeap(client, true);
-    return client;
-}
-
-void XS7TcpClient_init(XS7TcpClient* client)
-{
-    if (!client) return;
-
-    // 初始化基类
-    XPlcClient_init(&client->m_base);
-    XClassGetVtable(client) = XS7TcpClient_class_init();
-
-    // 初始化成员
-    client->m_session = XS7Session_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
-    if (client->m_session) {
-        XObject_setParent((XObject*)client->m_session, (XObject*)client);
-    }
-    client->m_pendingRequests = XHashMap_Create(uint16_t, XS7PendingRequest*, s7PduRefCompare);
-    client->m_timerMap = XHashMap_Create(XTimerId, uint16_t, s7TimerIdCompare);
-    client->m_sendQueue = XQueue_Create(XS7PendingRequest*);
-    client->m_requestData = XByteArray_create();
-    client->m_negotiatedPduLen = XS7_FALLBACK_PDU_LEN;
-    client->m_pumping = false;
-    client->m_clearingAll = false;
-}
-
+// =============== 静态虚函数实现：析构 ===============
 static void VXPlcClient_deinit_s7(XS7TcpClient* client)
 {
     if (!client) return;
@@ -636,7 +586,10 @@ static void VXPlcClient_deinit_s7(XS7TcpClient* client)
     XPlcDevice_disconnectDevice((XPlcDevice*)client);
 
     if (client->m_session) {
-        XS7Session_deleteLater((XObject*)client->m_session);
+        /* 析构内清理自己的成员/子对象必须同步释放（对象释放方式选择约束
+         * ①：延迟删除析构路径引入重入与顺序问题）。XObject 析构会自行从
+         * 父对象 m_children 摘除并清理在途投递事件，不会二次释放 */
+        XClassDelete((XClass*)client->m_session);
         client->m_session = NULL;
     }
 
@@ -844,8 +797,30 @@ static bool XS7TcpClient_sendPendingNow(XS7TcpClient* client, XS7PendingRequest*
     // 起该片独立超时定时器并登记两级映射
     int timeout = (int)XPlcClient_timeout(&client->m_base);
     pending->timeoutTimer = XObject_startTimer_ms((XObject*)client, timeout, XTimerType_CoarseTimer);
-    s7MapInsert(client->m_pendingRequests, &pending->pduRef, &pending);
-    s7MapInsert(client->m_timerMap, &pending->timeoutTimer, &pending->pduRef);
+    /* 登记结果以长度实变校验（同 enqueuePending：容器虚槽经 bool 截断的
+     * 返回值不可信）。两张表是已发出分片的 pending 的唯一属主，任一登记
+     * 落空即成孤儿：应答无法认领、超时反查失效、clearAll 快照也覆盖不到，
+     * pending（含 frame/fallbackFrame）将永久泄漏且 Reply 永不完成。 */
+    {
+        size_t pendingBefore = s7MapSize(client->m_pendingRequests);
+        size_t timerBefore = s7MapSize(client->m_timerMap);
+        s7MapInsert(client->m_pendingRequests, &pending->pduRef, &pending);
+        s7MapInsert(client->m_timerMap, &pending->timeoutTimer, &pending->pduRef);
+        if (s7MapSize(client->m_pendingRequests) == pendingBefore ||
+            s7MapSize(client->m_timerMap) == timerBefore) {
+            XERROR_PRINTF("[XS7TcpClient] pending register failed ref=%u, abort send\n",
+                          (unsigned)pending->pduRef);
+            /* 回滚登记（落空一侧为安全空操作）并停表，交还调用方按发送
+             * 失败路径处置（pumpSendQueue 置错丢弃/重试路径摘表收尾） */
+            s7MapRemoveKey(client->m_pendingRequests, &pending->pduRef);
+            if (pending->timeoutTimer != XTIMER_INVALID_ID) {
+                s7MapRemoveKey(client->m_timerMap, &pending->timeoutTimer);
+                XObject_killTimer((XObject*)client, pending->timeoutTimer);
+                pending->timeoutTimer = XTIMER_INVALID_ID;
+            }
+            return false;
+        }
+    }
 
     XPlcReply_setState(pending->reply, XPlcReply_State_Waiting);
     return true;
@@ -961,6 +936,7 @@ static void XS7TcpClient_handleRequestTimeout(XS7TcpClient* client, uint16_t pdu
     XPlcReply* reply = pending->reply;
     uint8_t retryCount = pending->retryCount;
     int maxRetries = XPlcClient_numberOfRetries(&client->m_base);
+    bool retryKeyRemoved = false;   /* 旧键已摘且重发失败：pending 已不在任何容器 */
 
     if (reply && retryCount < (uint8_t)maxRetries && pending->frame) {
         XAbstractSocket* socket = (XAbstractSocket*)XS7TcpClient_socket(client);
@@ -986,7 +962,11 @@ static void XS7TcpClient_handleRequestTimeout(XS7TcpClient* client, uint16_t pdu
                     pending->retryCount = (uint8_t)(retryCount + 1);
                     return;   /* 重试已发出，等待新一轮应答/超时 */
                 }
-                /* 重发失败：表键已移除，走下方超时收尾 */
+                /* 重发失败：旧键已摘、新键未落表（sendPendingNow 在
+                 * 重插之前返回），pending 已不在 pending 表/timerMap/发送
+                 * 队列任何容器中，收尾时直接释放（同 processFrame 换发
+                 * 失败路径），不得再走表摘收尾（必失败→游离化→永久泄漏） */
+                retryKeyRemoved = true;
             }
         }
     }
@@ -998,8 +978,13 @@ static void XS7TcpClient_handleRequestTimeout(XS7TcpClient* client, uint16_t pdu
         XPlcReply_setError(reply, XPlcDevice_TimeoutError, "Request timeout");
         XPlcReply_setState(reply, XPlcReply_State_Timeout);
     }
-    pending->pduRef = pduRef;   /* 与表键对齐后再摘（重试失败路径未改键） */
-    XS7TcpClient_removePendingFromMap(client, pending);
+    if (retryKeyRemoved) {
+        XS7TcpClient_freePending(pending);
+    }
+    else {
+        pending->pduRef = pduRef;   /* 与表键对齐后再摘 */
+        XS7TcpClient_removePendingFromMap(client, pending);
+    }
     XS7TcpClient_abortReplyQueuedChunks(client, reply);
     XS7TcpClient_pumpSendQueue(client);
 }
@@ -1824,6 +1809,57 @@ parent_call:
     XClass_Parent(XPlcClient, EXObject_TimerEvent, void (*)(XObject*, XTimerEvent*))(obj, event);
 }
 
+// =============== 类初始化 ===============
+XVtable* XS7TcpClient_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(XS7TcpClient)
+        // 先继承（顺序不可颠倒）
+        XVTABLE_INHERIT_XCLASS(XPlcClient);
+
+    // 后重载：Open/Close/Deinit/TimerEvent/SendRequest/ProcessResponse
+    XVTABLE_OVERLOAD_DEFAULT(EXPlcDevice_Open, VXPlcDevice_open_s7);
+    XVTABLE_OVERLOAD_DEFAULT(EXPlcDevice_Close, VXPlcDevice_close_s7);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXPlcClient_deinit_s7);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_TimerEvent, VXPlcClient_timerEvent_s7);
+    XVTABLE_OVERLOAD_DEFAULT(EXPlcClient_SendRequest, VXPlcClient_sendRequest_s7);
+    XVTABLE_OVERLOAD_DEFAULT(EXPlcClient_ProcessResponse, VXPlcClient_processResponse_s7);
+
+    XCLASS_SHOW_SIZE_DEFAULT(XS7TcpClient);
+    return XVTABLE_DEFAULT;
+}
+
+// =============== 创建/初始化 ===============
+XS7TcpClient* XS7TcpClient_create_ex(XMemoryType memory)
+{
+    XS7TcpClient* client = (XS7TcpClient*)XMemory_malloc(sizeof(XS7TcpClient), memory);
+    if (!client) return NULL;
+    XS7TcpClient_init(client);
+    Set_Class_Memory(client, memory); Set_Class_IsHeap(client, true);
+    return client;
+}
+
+void XS7TcpClient_init(XS7TcpClient* client)
+{
+    if (!client) return;
+
+    // 初始化基类
+    XPlcClient_init(&client->m_base);
+    XClassGetVtable(client) = XS7TcpClient_class_init();
+
+    // 初始化成员
+    client->m_session = XS7Session_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (client->m_session) {
+        XObject_setParent((XObject*)client->m_session, (XObject*)client);
+    }
+    client->m_pendingRequests = XHashMap_Create(uint16_t, XS7PendingRequest*, s7PduRefCompare);
+    client->m_timerMap = XHashMap_Create(XTimerId, uint16_t, s7TimerIdCompare);
+    client->m_sendQueue = XQueue_Create(XS7PendingRequest*);
+    client->m_requestData = XByteArray_create();
+    client->m_negotiatedPduLen = XS7_FALLBACK_PDU_LEN;
+    client->m_pumping = false;
+    client->m_clearingAll = false;
+}
+
 // =============== 槽函数实现 ===============
 
 /**
@@ -2256,6 +2292,7 @@ XPlcReply* XS7TcpClient_sendWrite(XS7TcpClient* client, const XString* address, 
         (XS7PendingRequest**)XMemory_malloc(sizeof(XS7PendingRequest*) * (size_t)chunkCount,
                                             XCLASS_DEFAULT_MEMORY_TYPE);
     if (!pendings) {
+        s7ByteArrayDelete(encoded);
         XPlcReply_deleteLater((XObject*)reply);
         return NULL;
     }

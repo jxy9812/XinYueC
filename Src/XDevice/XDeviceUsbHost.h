@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XDeviceUsbHost.h
  * @brief      USB Host 外接设备统一设备接口（XDeviceUsbHost）。
  * @details    XDeviceUsbHost 是 XDevice 的 USB Host 子类，继承 XDevice、注册类别
@@ -16,6 +16,11 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#ifndef XDEVICEUSBHOST_ON
+#define XDEVICEUSBHOST_ON 1
+#endif
+#if XDEVICEUSBHOST_ON
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -636,6 +641,8 @@ void XDeviceUsbHost_clearError(XFd fd);
  * @return 静态 UTF-8 字符串；未知值返回 "Unknown"。
  */
 const char* XDeviceUsbHost_errorString(XDeviceUsbError error);
+
+#endif /* XDEVICEUSBHOST_ON */
 
 #ifdef __cplusplus
 }

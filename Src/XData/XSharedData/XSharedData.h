@@ -20,7 +20,7 @@ extern "C" {
  * @brief 隐式共享数据块结构体
  */
 typedef struct XSharedData {
-    XAtomic_int32_t refCount;  ///< 原子引用计数（初始为1）
+    XAtomic_Int32 refCount;  ///< 原子引用计数（初始为1）
     XALIGNAS(XALIGN_PTR_SIZE) char data[];
 } XSharedData;
 

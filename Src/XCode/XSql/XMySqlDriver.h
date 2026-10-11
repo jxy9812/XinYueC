@@ -16,6 +16,7 @@ extern "C" {
 
 /**
  * @brief 创建 MySQL/MariaDB 源码驱动。
+ * @param memory 内存类型。
  * @return 新驱动对象，调用者取得所有权并必须使用 XClassDelete
  *         释放；内存不足或默认客户端不可用时返回 NULL。
  */

@@ -1,5 +1,6 @@
 ﻿#include "XPrintf.h"
 #include "XObject.h"
+#include "XObject_Protected.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XThread.h"
@@ -18,6 +19,185 @@ static void VXObject_deinit(XObject* object);
 static bool VXObject_event(XObject* self, XEvent* e);
 static bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event);
 static void VXObject_timerEvent(XObject* timer, XTimerEvent* event);
+static void VXObject_poll(XObject* object)
+{
+}
+
+void VXObject_deinit(XObject* object)
+{
+	if (!object || object->m_was_deleted)
+		return;
+
+	object->m_was_deleted = true;
+	object->m_block_sig = 0;
+	if (XObject_thread(object) == XThread_currentThread())
+		XCoreApplication_removePostedEvents(object, XEVENT_TYPE_NONE);
+	/* 注销本对象在事件分发器上的全部定时器（对标 Qt ~QObject 经
+	 * QAbstractEventDispatcherPrivate::removeTimerInfo 的对象级清理）：
+	 * 定时器回调在计时线程异步触发，若对象先亡而轮表项残留，回调将
+	 * 向已释放内存 postEvent（实测堆 UAF 崩溃）。分发器必须取本对象
+	 * threadData 所属线程的（XObject_eventDispatcher，与
+	 * startTimer/killTimer 同源）——XThread 为每个工作线程建独立
+	 * dispatcher，XCoreApplication_eventDispatcher 只返回主线程的，
+	 * 跨线程对象会注销错表、真表残留悬垂指针。 */
+	{
+		XAbstractEventDispatcher* disp = XObject_eventDispatcher(object);
+		if (disp)
+			XAbstractEventDispatcher_unregisterTimers_base(disp, object);
+	}
+	XObject_destroyed_signal(object);
+
+	object->m_is_deleting_children = true;
+	if(object->m_children)
+	{
+		for (int i = 0; i < (int)XContainerSize(object->m_children); i++)
+		{
+			XObject** childPtr = (XObject**)XContainerDataAddr(object->m_children);
+			XObject* child = childPtr[i];
+			if (!child)continue;
+			object->m_currentChildBeingDeleted = child;
+			childPtr[i] = NULL;
+			child->m_parent = NULL;
+			if (Class_IsHeap(child))
+				XClassDelete(child);
+			else
+				XClassDeinit(child);
+		}
+		XClassDelete(object->m_children);
+		object->m_children = NULL;
+	}
+	object->m_currentChildBeingDeleted = NULL;
+	object->m_is_deleting_children = false;
+
+	if (object->m_parent) {
+		XObject* parent = object->m_parent;
+		object->m_parent = NULL;
+		if (parent->m_children && !parent->m_is_deleting_children) {
+			int index = XVector_indexOf(parent->m_children, &object, 0);
+			if (index != -1)
+				XVector_remove_base(parent->m_children, index, 1);
+			if (index != -1 && object->m_send_child_events && parent->m_receive_child_events) {
+				XChildEvent* event = XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object);
+				if (event) {
+					XCoreApplication_sendEvent(parent, (XEvent*)event);
+					XClassDelete((XEvent*)event);
+				}
+			}
+		}
+	}
+
+	/* 反注册事件过滤器双向登记（防悬挂引用）：本对象作为被观察者时，从各
+	 * 过滤器的回登记表 m_watchedObjects 中移除自己；本对象作为过滤器时，从
+	 * 各被观察对象的 m_filters 中移除自己。两侧对称维护后，m_filters 中的
+	 * 过滤器指针恒为存活对象，事件分发（XCoreApplication_notify）不再触碰
+	 * 已释放内存——此前过滤器先亡会在被观察对象表中残留悬挂指针。 */
+	if (object->m_filters)
+	{
+		for (size_t i = 0; i < XContainerSize(object->m_filters); ++i)
+		{
+			XObject** filterPtr = (XObject**)XContainerDataAddr(object->m_filters);
+			XObject* filter = filterPtr[i];
+			if (filter && filter->m_watchedObjects)
+			{
+				int index = XVector_indexOf(filter->m_watchedObjects, &object, 0);
+				if (index != -1)
+					XVector_remove_base(filter->m_watchedObjects, index, 1);
+			}
+		}
+		XClassDelete(object->m_filters);
+		object->m_filters = NULL;
+	}
+	if (object->m_watchedObjects)
+	{
+		for (size_t i = 0; i < XContainerSize(object->m_watchedObjects); ++i)
+		{
+			XObject** watchedPtr = (XObject**)XContainerDataAddr(object->m_watchedObjects);
+			XObject* watched = watchedPtr[i];
+			if (watched && watched->m_filters)
+			{
+				int index = XVector_indexOf(watched->m_filters, &object, 0);
+				if (index != -1)
+					XVector_remove_base(watched->m_filters, index, 1);
+			}
+		}
+		XClassDelete(object->m_watchedObjects);
+		object->m_watchedObjects = NULL;
+	}
+	if (object->m_object_name)
+	{
+		XClassDelete(object->m_object_name);
+		object->m_object_name = NULL;
+	}
+	//释放信号与槽
+	if (object->m_signalSlot)
+	{
+		XSignalSlot_delete(object->m_signalSlot);
+		object->m_signalSlot = NULL;
+	}
+	if (object->m_dynamicPropertyNames)
+	{
+		for (int i = 0; i < (int)XContainerSize(object->m_dynamicPropertyNames); i++) {
+			XString** namePtr = (XString**)XContainerDataAddr(object->m_dynamicPropertyNames);
+			if (namePtr[i]) {
+				XClassDelete(namePtr[i]);
+			}
+		}
+		XClassDelete(object->m_dynamicPropertyNames);
+		object->m_dynamicPropertyNames = NULL;
+	}
+	if (object->m_dynamicPropertyValues)
+	{
+		XVariant** values = (XVariant**)XContainerDataAddr(object->m_dynamicPropertyValues);
+		for (size_t i = 0; i < XContainerSize(object->m_dynamicPropertyValues); ++i) {
+			if (values[i])
+				XClassDelete(values[i]);
+		}
+		XClassDelete(object->m_dynamicPropertyValues);
+		object->m_dynamicPropertyValues = NULL;
+	}
+	// Qt 6.8: ~QObjectPrivate() - 释放线程亲和性引用 (对标 thisThreadData->deref())
+	// 放在所有子对象/信号槽清理之后: 清理过程可能仍需通过 threadData 访问当前线程。
+	// XObject_init 时 ref, moveToThread 时平衡 (ref 新/deref 旧), 析构时此处 deref 收尾。
+	XThreadData* td = (XThreadData*)XAtomic_load_uintptr_t(
+		(XAtomic_Uintptr*)&object->m_threadData, XAtomic_MemoryOrder_Acquire);
+	if (td) {
+		XAtomic_store_uintptr_t(&object->m_threadData, (uintptr_t)NULL,
+			XAtomic_MemoryOrder_Release);
+		XThreadData_deref(td);
+	}
+}
+bool VXObject_event(XObject* self, XEvent* e)
+{
+	if (!self || !e) {
+		return false; // 安全防护：空指针直接忽略
+	}
+	switch (e->m_type)
+	{
+		case XEVENT_TYPE_TIMER: XObject_timerEvent_base(self, (XTimerEvent*)e); break;
+		case XEVENT_TYPE_CHILD_ADDED:
+		case XEVENT_TYPE_CHILD_POLISHED:
+		case XEVENT_TYPE_CHILD_REMOVED: XChildEvent_handler(e,self); break;
+		case XEVENT_TYPE_META_CALL: XMetaCallEvent_handler(e, self); break;
+		case XEVENT_TYPE_FUNC_RUN: XEventFunc_handler( e); break;
+		case XEVENT_TYPE_DEFERRED_DELETE: XDeferredDeleteEvent_handler((XDeferredDeleteEvent*)e, self); break;
+		case XEVENT_TYPE_THREAD_CHANGE: {
+			// Qt 6.8: ThreadChange 事件 - 在新线程中重新注册定时器
+			// 当前实现: 标记事件已处理
+			XEvent_accept(e);
+			break;
+		}
+	}
+	return e->m_accepted;
+}
+
+bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event)
+{
+	return false;
+}
+void VXObject_timerEvent(XObject* self, XTimerEvent* event)
+{
+	XEvent_accept((XEvent*)event);
+}
 XVtable* XObject_class_init()
 {
 	XVTABLE_INIT_DEFAULT(XObject)
@@ -57,8 +237,8 @@ void XObject_init(XObject* object)
 		XAtomic_store_uintptr_t(&object->m_threadData, (uintptr_t)threadData,
 			XAtomic_MemoryOrder_Release);
 	}
-	object->send_child_events = true;
-	object->receive_child_events = true;
+	object->m_send_child_events = true;
+	object->m_receive_child_events = true;
 	XAtomic_init(object->m_posted_events, 0);
 }
 
@@ -100,7 +280,7 @@ int XObject_receivers(const XObject* self, size_t signal)
 void XObject_setParent(XObject* object, XObject* parent)
 {
 	// 健壮性检查：空对象或已删除的对象不应再设置父对象
-	if (!object || object->was_deleted) {
+	if (!object || object->m_was_deleted) {
 		return;
 	}
 
@@ -127,12 +307,12 @@ void XObject_setParent(XObject* object, XObject* parent)
 	XObject* prev_parent = object->m_parent;
 	if (prev_parent && prev_parent->m_children) {
 		int index = XVector_indexOf(prev_parent->m_children, &object, 0);
-		if (index != -1 && prev_parent->is_deleting_children) {
+		if (index != -1 && prev_parent->m_is_deleting_children) {
 			XObject** children = (XObject**)XContainerDataAddr(prev_parent->m_children);
 			children[index] = NULL;
 		} else if (index != -1) {
 			XVector_remove_base(prev_parent->m_children, index, 1);
-			if (object->send_child_events && prev_parent->receive_child_events) {
+			if (object->m_send_child_events && prev_parent->m_receive_child_events) {
 				XChildEvent* event = XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object);
 				if (event) {
 					XCoreApplication_sendEvent(prev_parent, (XEvent*)event);
@@ -142,7 +322,7 @@ void XObject_setParent(XObject* object, XObject* parent)
 		}
 	}
 
-	if (object->receive_parent_events) {
+	if (object->m_receive_parent_events) {
 		XEvent* event = XEvent_create(XEVENT_TYPE_PARENT_ABOUT_TO_CHANGE);
 		if (event) {
 			XCoreApplication_sendEvent(object, event);
@@ -161,7 +341,7 @@ void XObject_setParent(XObject* object, XObject* parent)
 		if (parent->m_children) {
 			XVector_push_back_1_base(parent->m_children, &object);
 		}
-		if (object->send_child_events && parent->receive_child_events) {
+		if (object->m_send_child_events && parent->m_receive_child_events) {
 			XChildEvent* event = XChildEvent_create(XEVENT_TYPE_CHILD_ADDED, object);
 			if (event) {
 				XCoreApplication_sendEvent(parent, (XEvent*)event);
@@ -171,7 +351,7 @@ void XObject_setParent(XObject* object, XObject* parent)
 	}
 
 	// Qt 6.8: 发送 ParentChange 事件给自身
-	if (object->receive_parent_events) {
+	if (object->m_receive_parent_events) {
 		XEvent* event = XEvent_create(XEVENT_TYPE_PARENT_CHANGE);
 		if (event) {
 			XCoreApplication_sendEvent(object, event);
@@ -215,19 +395,19 @@ XObject* XObject_nextSibling(const XObject* self)
 bool XObject_isWidgetType(const XObject* self)
 {
 	if (!self)return false;
-	return self->is_widget;
+	return self->m_is_widget;
 }
 
 bool XObject_isQuickItemType(const XObject* self)
 {
 	if (!self) return false;
-	return self->is_quick_item;
+	return self->m_is_quick_item;
 }
 
 bool XObject_isWindowType(const XObject* self)
 {
 	if (!self)return false;
-	return self->is_window;
+	return self->m_is_window;
 }
 XObject* XObject_parent(XObject* object)
 {
@@ -270,10 +450,10 @@ static size_t XObject_setThreadData_helper(XObject* object,
 		XPostEvent* events = (XPostEvent*)XContainerDataAddr(&currentData->m_postEventList);
 		size_t eventCount = XContainerSize(&currentData->m_postEventList);
 		for (size_t i = 0; i < eventCount; ++i) {
-			if (events[i].event && events[i].receiver == object) {
+			if (events[i].m_event && events[i].m_receiver == object) {
 				XPostEvent event = events[i];
 				if (XVector_push_back_1_base(&targetData->m_postEventList, &event)) {
-					events[i].event = NULL;
+					events[i].m_event = NULL;
 					++moved;
 				} else
 					XThreadData_discardPostedEvent(&events[i]);
@@ -289,10 +469,10 @@ static size_t XObject_setThreadData_helper(XObject* object,
 			XPostEvent* activeEvents = (XPostEvent*)XContainerDataAddr(active);
 			size_t activeEventCount = XContainerSize(active);
 			for (size_t j = 0; j < activeEventCount; ++j) {
-				if (activeEvents[j].event && activeEvents[j].receiver == object) {
+				if (activeEvents[j].m_event && activeEvents[j].m_receiver == object) {
 					XPostEvent event = activeEvents[j];
 					if (XVector_push_back_1_base(&targetData->m_postEventList, &event)) {
-						activeEvents[j].event = NULL;
+						activeEvents[j].m_event = NULL;
 						++moved;
 					} else
 						XThreadData_discardPostedEvent(&activeEvents[j]);
@@ -317,7 +497,7 @@ static size_t XObject_setThreadData_helper(XObject* object,
 bool XObject_moveToThread(XObject* object, XThread* target_thread)
 {
 	// 健壮性检查
-	if (!object || object->was_deleted) {
+	if (!object || object->m_was_deleted) {
 		return false;
 	}
 
@@ -330,7 +510,7 @@ bool XObject_moveToThread(XObject* object, XThread* target_thread)
 	if (object->m_parent != NULL) {
 		return false;
 	}
-	if (object->is_widget)
+	if (object->m_is_widget)
 		return false;
 
 	XThreadData* currentData = XThreadData_current();
@@ -383,14 +563,14 @@ bool XObject_moveToThread(XObject* object, XThread* target_thread)
 bool XObject_signalsBlocked(const XObject* self)
 {
 	if(!self)return false;
-	return self->block_sig;
+	return self->m_block_sig;
 }
 
 bool XObject_blockSignals(XObject* self, bool block)
 {
 	if (!self)return false;
 	bool state = XObject_signalsBlocked(self);
-	self->block_sig = block;
+	self->m_block_sig = block;
 	return state;
 }
 XTimerId XObject_startTimer_ms(XObject* self, uint64_t interval, XTimerType timerType)
@@ -421,7 +601,7 @@ XThreadData* XObject_threadData(const XObject* object)
 	if (!object)
 		return NULL;
 	return (XThreadData*)XAtomic_load_uintptr_t(
-		(XAtomic_uintptr_t*)&object->m_threadData, XAtomic_MemoryOrder_Relaxed);
+		(XAtomic_Uintptr*)&object->m_threadData, XAtomic_MemoryOrder_Relaxed);
 }
 
 // Qt 6.8: QObject::thread() -> d_func()->threadData.loadRelaxed()->thread.loadAcquire()
@@ -483,11 +663,11 @@ static void XObject_scheduleDeferredDelete(XObject* object, bool isDelete)
 	XThreadData* td = XThreadData_lockPostEventList(object);
 	if (!td) return;
 
-	if (object->delete_later_called) {
+	if (object->m_delete_later_called) {
 		XMutex_unlock(td->m_mutex);
 		return;
 	}
-	object->delete_later_called = true;
+	object->m_delete_later_called = true;
 
 	int loopLevel = 0;
 	int scopeLevel = 0;
@@ -504,7 +684,7 @@ static void XObject_scheduleDeferredDelete(XObject* object, bool isDelete)
 	if (!event) {
 		XThreadData* current = XThreadData_lockPostEventList(object);
 		if (current) {
-			object->delete_later_called = false;
+			object->m_delete_later_called = false;
 			XMutex_unlock(current->m_mutex);
 		}
 		return;
@@ -522,7 +702,7 @@ void XObject_deleteLater(XObject* object)
 	XObject_scheduleDeferredDelete(object, true);
 }
 
-void XObject_emitSignal(XObject* object, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, XEventPriority priority)
+void XObject_emitSignal(XObject* object, size_t signal, XVarList* args, void(*del)(XVarList*), XAtomic_Int32* ref_count, XEventPriority priority)
 {
 	if(object)
 		XSignalSlot_emit(object->m_signalSlot, signal, args,del, ref_count,priority);
@@ -532,7 +712,7 @@ void* XObject_destroyed_signal(XObject* object)
 {
 	XEmitSignal(object, XObject_destroyed_signal, NULL, NULL, NULL, XEVENT_PRIORITY_LOWEST);
 }
-static void objectNameChanged_signal_del(struct XVarList* list)
+static void XObject_objectNameChanged_signal_del(struct XVarList* list)
 {
 	XVarList_args_1(list, XString*, objectName);
 	if (objectName)
@@ -552,10 +732,10 @@ void XObject_objectNameChanged_signal(XObject* object, const XString* objectName
 		}
 		if (object && object->m_signalSlot)
 			XObject_emitSignal(object, (size_t)XObject_objectNameChanged_signal,
-				args, objectNameChanged_signal_del, NULL, XEVENT_PRIORITY_NORMAL);
+				args, XObject_objectNameChanged_signal_del, NULL, XEVENT_PRIORITY_NORMAL);
 		else
 		{
-			XVarList_setArgsDel(args, objectNameChanged_signal_del);
+			XVarList_setArgsDel(args, XObject_objectNameChanged_signal_del);
 			XVarList_delete(args);
 		}
 	}
@@ -567,153 +747,6 @@ void XObject_objectNameChanged_signal(XObject* object, const XString* objectName
 	}
 }
 
-/* [死码清理] VXObject_poll 已删除：XObject 虚表槽位从 Event 起编排，
- * 无 Poll 槽（历史各处 EXObject_Poll 挂接行皆为注释），空函数体成
- * 永久孤儿。 */
-
-void VXObject_deinit(XObject* object)
-{
-	if (!object || object->was_deleted)
-		return;
-
-	object->was_deleted = true;
-	object->block_sig = 0;
-	if (XObject_thread(object) == XThread_currentThread())
-		XCoreApplication_removePostedEvents(object, XEVENT_TYPE_NONE);
-	/* 注销本对象在事件分发器上的全部定时器（对标 Qt ~QObject 经
-	 * QAbstractEventDispatcherPrivate::removeTimerInfo 的对象级清理）：
-	 * 定时器回调在计时线程异步触发，若对象先亡而轮表项残留，回调将
-	 * 向已释放内存 postEvent（实测堆 UAF 崩溃）。分发器必须取本对象
-	 * threadData 所属线程的（XObject_eventDispatcher，与
-	 * startTimer/killTimer 同源）——XThread 为每个工作线程建独立
-	 * dispatcher，XCoreApplication_eventDispatcher 只返回主线程的，
-	 * 跨线程对象会注销错表、真表残留悬垂指针。 */
-	{
-		XAbstractEventDispatcher* disp = XObject_eventDispatcher(object);
-		if (disp)
-			XAbstractEventDispatcher_unregisterTimers_base(disp, object);
-	}
-	XObject_destroyed_signal(object);
-
-	object->is_deleting_children = true;
-	if(object->m_children)
-	{
-		for (int i = 0; i < (int)XContainerSize(object->m_children); i++)
-		{
-			XObject** childPtr = (XObject**)XContainerDataAddr(object->m_children);
-			XObject* child = childPtr[i];
-			if (!child)continue;
-			object->currentChildBeingDeleted = child;
-			childPtr[i] = NULL;
-			child->m_parent = NULL;
-			if (Class_IsHeap(child))
-				XClassDelete(child);
-			else
-				XClassDeinit(child);
-		}
-		XClassDelete(object->m_children);
-		object->m_children = NULL;
-	}
-	object->currentChildBeingDeleted = NULL;
-	object->is_deleting_children = false;
-
-	if (object->m_parent) {
-		XObject* parent = object->m_parent;
-		object->m_parent = NULL;
-		if (parent->m_children && !parent->is_deleting_children) {
-			int index = XVector_indexOf(parent->m_children, &object, 0);
-			if (index != -1)
-				XVector_remove_base(parent->m_children, index, 1);
-			if (index != -1 && object->send_child_events && parent->receive_child_events) {
-				XChildEvent* event = XChildEvent_create(XEVENT_TYPE_CHILD_REMOVED, object);
-				if (event) {
-					XCoreApplication_sendEvent(parent, (XEvent*)event);
-					XClassDelete((XEvent*)event);
-				}
-			}
-		}
-	}
-
-	if (object->m_filters)
-	{
-		XClassDelete(object->m_filters);
-		object->m_filters = NULL;
-	}
-	if (object->m_object_name)
-	{
-		XClassDelete(object->m_object_name);
-		object->m_object_name = NULL;
-	}
-	//释放信号与槽
-	if (object->m_signalSlot)
-	{
-		XSignalSlot_delete(object->m_signalSlot);
-		object->m_signalSlot = NULL;
-	}
-	if (object->m_dynamicPropertyNames)
-	{
-		for (int i = 0; i < (int)XContainerSize(object->m_dynamicPropertyNames); i++) {
-			XString** namePtr = (XString**)XContainerDataAddr(object->m_dynamicPropertyNames);
-			if (namePtr[i]) {
-				XClassDelete(namePtr[i]);
-			}
-		}
-		XClassDelete(object->m_dynamicPropertyNames);
-		object->m_dynamicPropertyNames = NULL;
-	}
-	if (object->m_dynamicPropertyValues)
-	{
-		XVariant** values = (XVariant**)XContainerDataAddr(object->m_dynamicPropertyValues);
-		for (size_t i = 0; i < XContainerSize(object->m_dynamicPropertyValues); ++i) {
-			if (values[i])
-				XClassDelete(values[i]);
-		}
-		XClassDelete(object->m_dynamicPropertyValues);
-		object->m_dynamicPropertyValues = NULL;
-	}
-	// Qt 6.8: ~QObjectPrivate() - 释放线程亲和性引用 (对标 thisThreadData->deref())
-	// 放在所有子对象/信号槽清理之后: 清理过程可能仍需通过 threadData 访问当前线程。
-	// XObject_init 时 ref, moveToThread 时平衡 (ref 新/deref 旧), 析构时此处 deref 收尾。
-	XThreadData* td = (XThreadData*)XAtomic_load_uintptr_t(
-		(XAtomic_uintptr_t*)&object->m_threadData, XAtomic_MemoryOrder_Acquire);
-	if (td) {
-		XAtomic_store_uintptr_t(&object->m_threadData, (uintptr_t)NULL,
-			XAtomic_MemoryOrder_Release);
-		XThreadData_deref(td);
-	}
-}
-bool VXObject_event(XObject* self, XEvent* e)
-{
-	if (!self || !e) {
-		return false; // 安全防护：空指针直接忽略
-	}
-	switch (e->type)
-	{
-		case XEVENT_TYPE_TIMER: XObject_timerEvent_base(self, e); break;
-		case XEVENT_TYPE_CHILD_ADDED:
-		case XEVENT_TYPE_CHILD_POLISHED:
-		case XEVENT_TYPE_CHILD_REMOVED: XChildEvent_handler(e,self); break;
-		case XEVENT_TYPE_META_CALL: XMetaCallEvent_handler(e, self); break;
-		case XEVENT_TYPE_FUNC_RUN: XEventFunc_handler( e); break;
-		case XEVENT_TYPE_DEFERRED_DELETE: XDeferredDeleteEvent_handler((XDeferredDeleteEvent*)e, self); break;
-		case XEVENT_TYPE_THREAD_CHANGE: {
-			// Qt 6.8: ThreadChange 事件 - 在新线程中重新注册定时器
-			// 当前实现: 标记事件已处理
-			XEvent_accept(e);
-			break;
-		}
-	}
-	return e->accepted;
-}
-
-bool VXObject_eventFilter(XObject* self, XObject* watched, XEvent* event)
-{
-	return false;
-}
-void VXObject_timerEvent(XObject* self, XTimerEvent* event)
-{
-	XEvent_accept((XEvent*)event);
-}
 void XObject_installEventFilter(XObject* self, XObject* filterObj)
 {
 	if (!self || !filterObj)return;
@@ -723,6 +756,12 @@ void XObject_installEventFilter(XObject* self, XObject* filterObj)
 		return;
 	}
 
+	// 回登记表须先就绪：过滤器记录自己观察的对象，供过滤器先亡时反注册
+	if (!filterObj->m_watchedObjects) {
+		filterObj->m_watchedObjects = XVector_create(sizeof(XObject*));
+		if (!filterObj->m_watchedObjects)return;
+	}
+
 	XVector* filters = self->m_filters;
 	if (!filters)
 	{
@@ -730,12 +769,18 @@ void XObject_installEventFilter(XObject* self, XObject* filterObj)
 		filters = self->m_filters;
 		if (!filters)return;
 	}
-	
+
 	// Qt 6.8: 如果已存在，先移除再 prepend（最后安装的最先调用）
 	int idx = XVector_indexOf(filters, &filterObj, 0);
 	if (idx != -1)
 		XVector_remove_base(filters, idx, 1);
-	XVector_insert_1_base(filters, 0, &filterObj, 1); // prepend
+	if (!XVector_insert_1_base(filters, 0, &filterObj, 1)) // prepend
+		return;
+	/* 双向登记：把被观察对象写入过滤器回登记表；写失败则回滚本次安装，
+	 * 保持 m_filters 与 m_watchedObjects 两侧登记一致 */
+	if (XVector_indexOf(filterObj->m_watchedObjects, &self, 0) == -1
+		&& !XVector_push_back_1_base(filterObj->m_watchedObjects, &self))
+		XVector_remove_base(filters, 0, 1);
 }
 
 void XObject_removeEventFilter(XObject* self, XObject* obj)
@@ -745,7 +790,16 @@ void XObject_removeEventFilter(XObject* self, XObject* obj)
 	if (!filters) return;
 	int index = XVector_indexOf(filters, &obj, 0);
 	if (index != -1)
+	{
 		XVector_remove_base(filters, index, 1);
+		// 同步回删过滤器回登记表中的本对象，保持 m_filters/m_watchedObjects 双向一致
+		if (obj->m_watchedObjects)
+		{
+			int backIndex = XVector_indexOf(obj->m_watchedObjects, &self, 0);
+			if (backIndex != -1)
+				XVector_remove_base(obj->m_watchedObjects, backIndex, 1);
+		}
+	}
 }
 
 static bool XObject_nameMatches(const XObject* object, const XString* name)
@@ -765,7 +819,7 @@ static XObject* XObject_findChild_recursive(const XObject* parent, const XString
 		if (XObject_nameMatches(child, name))
 			return child;
 	}
-	if (options & XFindChildrenRecursively) {
+	if (options & XFindChildOption_ChildrenRecursively) {
 		for_each_iterator(parent->m_children, XVector, it) {
 			XObject* child = *((XObject**)XVector_iterator_data(&it));
 			XObject* match = XObject_findChild_recursive(child, name, options);
@@ -789,7 +843,7 @@ static void XObject_findChildren_recursive(const XObject* parent, const XString*
 		if (!child) continue;
 		if (XObject_nameMatches(child, name))
 			XVector_push_back_1_base(result, &child);
-		if (options & XFindChildrenRecursively)
+		if (options & XFindChildOption_ChildrenRecursively)
 			XObject_findChildren_recursive(child, name, options, result);
 	}
 }
@@ -822,7 +876,7 @@ void XObject_timerEvent_base(XObject* self, XTimerEvent* event)
 	//子类没重载直接退出
 	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "")|| !XClassGetVirtualFunc(self, EXObject_TimerEvent,bool))
 		return ;
-	XClassGetVirtualFunc(self, EXObject_TimerEvent, void(*)(XObject*, XEvent*))(self, event);
+	XClassGetVirtualFunc(self, EXObject_TimerEvent, void(*)(XObject*, XTimerEvent*))(self, event);
 }
 
 void XObject_childEvent_base(XObject* self, XChildEvent* event)
@@ -830,10 +884,10 @@ void XObject_childEvent_base(XObject* self, XChildEvent* event)
 	//子类没重载直接退出
 	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_ChildEvent, bool))
 		return;
-	XClassGetVirtualFunc(self, EXObject_ChildEvent, void(*)(XObject*, XEvent*))(self, event);
+	XClassGetVirtualFunc(self, EXObject_ChildEvent, void(*)(XObject*, XChildEvent*))(self, event);
 }
 
-void XObject_customEvent(XObject* self, XEvent* event)
+void XObject_customEvent_base(XObject* self, XEvent* event)
 {
 	//子类没重载直接退出
 	if (ISNULL(self, "") || ISNULL(XClassGetVtable(self), "") || !XClassGetVirtualFunc(self, EXObject_CustomEvent, bool))
@@ -872,7 +926,8 @@ int XObject_senderSignalIndex(const XObject* self)
 }
 
 // Qt 6.8: 动态属性系统 (对标 QObject::setProperty / property / dynamicPropertyNames)
-// 使用 XVariant 存储属性值，由对象管理 XVariant 生命周期
+// 使用 XVariant 存储属性值；仅设置成功时所有权转移给对象，失败路径不接管 value，
+// 由调用方自行释放（与 XObject.h 的属主契约一致）
 bool XObject_setProperty(XObject* self, const XString* name, XVariant* value)
 {
 	if (!self || !name) return false;
@@ -1028,10 +1083,10 @@ void XObject_dumpObjectInfo(const XObject* self)
 
 	// 标志位
 	XPrintf("  FLAGS: %s%s%s%s%s%s\n",
-		self->is_widget ? "Widget " : "",
-		self->block_sig ? "BlockSig " : "",
-		self->was_deleted ? "WasDeleted " : "",
-		self->is_deleting_children ? "DeletingChildren " : "",
-		self->delete_later_called ? "DeleteLaterCalled " : "",
-		self->is_window ? "Window " : "");
+		self->m_is_widget ? "Widget " : "",
+		self->m_block_sig ? "BlockSig " : "",
+		self->m_was_deleted ? "WasDeleted " : "",
+		self->m_is_deleting_children ? "DeletingChildren " : "",
+		self->m_delete_later_called ? "DeleteLaterCalled " : "",
+		self->m_is_window ? "Window " : "");
 }

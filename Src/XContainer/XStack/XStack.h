@@ -1,10 +1,17 @@
-﻿#include"CXinYueConfig.h"
-/**
-* @brief 条件编译控制
-* @note 防止头文件重复包含，且仅在XStack模块启用时编译
+﻿/**
+* @file XStack.h
+* @brief 栈容器头文件
+* @details 后进先出（LIFO）栈容器，基于XVector组合复用实现，对标Qt QStack
 */
-#if !defined(XSTACK_H) && XStack_ON
+#if !defined(XSTACK_H)
 #define XSTACK_H
+#include"CXinYueConfig.h"
+
+/**
+* @brief 条件编译开关
+* @note 仅在XStack模块启用时编译本头文件内容
+*/
+#if XStack_ON
 
 /**
 * @brief C++兼容声明
@@ -14,11 +21,15 @@
 extern "C" {
 #endif
 
-#include <stdio.h>    /** @brief 标准输入输出库，用于调试输出 */
 #include <stdbool.h>  /** @brief 布尔类型支持，提供bool、true、false定义 */
 #include "XVector.h"  /** @brief 依赖XVector作为底层存储容器，栈操作复用向量尾操作 */
 #include "XStackBase.h"
 #define XSTACK_VTABLE_SIZE (XSTACKBASE_VTABLE_SIZE)
+
+// 虚函数表枚举（继承XStackBase）
+// 定义XStack类的虚函数索引，用于虚函数表中定位具体函数
+XCLASS_DEFINE_BEGING(XStack)
+XCLASS_DEFINE_EXTEND_END(XStack, XStackBase)
 /**
 * @brief 栈结构体定义
 * @details 采用组合复用设计，内嵌XVector作为底层存储容器
@@ -26,7 +37,7 @@ extern "C" {
 */
 typedef struct XStack
 {
-	XVector vector;  /** @brief 底层向量容器，用于存储栈元素 */
+	XVector m_class;  /** @brief 继承自XVector基类，提供底层存储，虚函数表经它承载（第一个成员，禁止手工修改） */
 } XStack;
 
 /**
@@ -256,4 +267,5 @@ bool XStack_resize(XStack* this_stack, size_t new_capacity);
 #undef XStack_create
 #define XStack_create(...) XStack_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
 
+#endif // XStack_ON
 #endif  // !XSTACK_H

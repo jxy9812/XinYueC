@@ -4,31 +4,32 @@
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XDataValidation.h"
-#include "XMemory.h"
-#include "XCellRange.h"
-#include "XCellReference.h"
 #include <stdlib.h>
 
 #include <string.h>
 
 #include <stdio.h>
 
-static bool validation_type_is_valid(XDataValidation_ValidationType type)
+#include "XMemory.h"
+#include "XCellRange.h"
+#include "XCellReference.h"
+
+static bool XDataValidation_validation_type_is_valid(XDataValidation_ValidationType type)
 {
     return type >= XDataValidation_None && type <= XDataValidation_Custom;
 }
 
-static bool validation_operator_is_valid(XDataValidation_ValidationOperator op)
+static bool XDataValidation_validation_operator_is_valid(XDataValidation_ValidationOperator op)
 {
     return op >= XDataValidation_Between && op <= XDataValidation_GreaterThanOrEqual;
 }
 
-static bool error_style_is_valid(XDataValidation_ErrorStyle style)
+static bool XDataValidation_error_style_is_valid(XDataValidation_ErrorStyle style)
 {
     return style >= XDataValidation_Stop && style <= XDataValidation_Information;
 }
 
-static bool copy_optional_string(XString** target, const XString* source)
+static bool XDataValidation_copy_optional_string(XString** target, const XString* source)
 {
     if (!target) return false;
     if (!source) {
@@ -39,7 +40,7 @@ static bool copy_optional_string(XString** target, const XString* source)
     return *target != NULL;
 }
 
-static void assign_optional_string(XString** target, const XString* value)
+static void XDataValidation_assign_optional_string(XString** target, const XString* value)
 {
     if (!target) return;
     if (!value) {
@@ -81,14 +82,14 @@ XDataValidation* XDataValidation_create(void)
 XDataValidation* XDataValidation_create_ex(XDataValidation_ValidationType type,
     XDataValidation_ValidationOperator op, const XString* formula1, const XString* formula2, bool allowBlank)
 {
-    if (!validation_type_is_valid(type) || !validation_operator_is_valid(op)) return NULL;
+    if (!XDataValidation_validation_type_is_valid(type) || !XDataValidation_validation_operator_is_valid(op)) return NULL;
     XDataValidation* self = XDataValidation_create();
     if (!self) return NULL;
     self->m_validationType = type;
     self->m_validationOperator = op;
     self->m_allowBlank = allowBlank;
-    if (!copy_optional_string(&self->m_formula1, formula1) ||
-        !copy_optional_string(&self->m_formula2, formula2)) {
+    if (!XDataValidation_copy_optional_string(&self->m_formula1, formula1) ||
+        !XDataValidation_copy_optional_string(&self->m_formula2, formula2)) {
         XDataValidation_delete(self);
         return NULL;
     }
@@ -107,12 +108,12 @@ XDataValidation* XDataValidation_copy(const XDataValidation* other)
     self->m_allowBlank = other->m_allowBlank;
     self->m_promptMessageVisible = other->m_promptMessageVisible;
     self->m_errorMessageVisible = other->m_errorMessageVisible;
-    if (!copy_optional_string(&self->m_formula1, other->m_formula1) ||
-        !copy_optional_string(&self->m_formula2, other->m_formula2) ||
-        !copy_optional_string(&self->m_errorMessage, other->m_errorMessage) ||
-        !copy_optional_string(&self->m_errorMessageTitle, other->m_errorMessageTitle) ||
-        !copy_optional_string(&self->m_promptMessage, other->m_promptMessage) ||
-        !copy_optional_string(&self->m_promptMessageTitle, other->m_promptMessageTitle)) {
+    if (!XDataValidation_copy_optional_string(&self->m_formula1, other->m_formula1) ||
+        !XDataValidation_copy_optional_string(&self->m_formula2, other->m_formula2) ||
+        !XDataValidation_copy_optional_string(&self->m_errorMessage, other->m_errorMessage) ||
+        !XDataValidation_copy_optional_string(&self->m_errorMessageTitle, other->m_errorMessageTitle) ||
+        !XDataValidation_copy_optional_string(&self->m_promptMessage, other->m_promptMessage) ||
+        !XDataValidation_copy_optional_string(&self->m_promptMessageTitle, other->m_promptMessageTitle)) {
         XDataValidation_delete(self);
         return NULL;
     }
@@ -147,20 +148,20 @@ void XDataValidation_delete(XDataValidation* self)
 
 /* ========== 属性访问方法 ========== */
 XDataValidation_ValidationType XDataValidation_validationType(const XDataValidation* self) { return self ? self->m_validationType : XDataValidation_None; }
-void XDataValidation_setValidationType(XDataValidation* self, XDataValidation_ValidationType type) { if (self && validation_type_is_valid(type)) self->m_validationType = type; }
+void XDataValidation_setValidationType(XDataValidation* self, XDataValidation_ValidationType type) { if (self && XDataValidation_validation_type_is_valid(type)) self->m_validationType = type; }
 XDataValidation_ValidationOperator XDataValidation_validationOperator(const XDataValidation* self) { return self ? self->m_validationOperator : XDataValidation_Between; }
-void XDataValidation_setValidationOperator(XDataValidation* self, XDataValidation_ValidationOperator op) { if (self && validation_operator_is_valid(op)) self->m_validationOperator = op; }
+void XDataValidation_setValidationOperator(XDataValidation* self, XDataValidation_ValidationOperator op) { if (self && XDataValidation_validation_operator_is_valid(op)) self->m_validationOperator = op; }
 XDataValidation_ErrorStyle XDataValidation_errorStyle(const XDataValidation* self) { return self ? self->m_errorStyle : XDataValidation_Stop; }
-void XDataValidation_setErrorStyle(XDataValidation* self, XDataValidation_ErrorStyle es) { if (self && error_style_is_valid(es)) self->m_errorStyle = es; }
+void XDataValidation_setErrorStyle(XDataValidation* self, XDataValidation_ErrorStyle es) { if (self && XDataValidation_error_style_is_valid(es)) self->m_errorStyle = es; }
 const XString* XDataValidation_formula1(const XDataValidation* self) { return (self && self->m_formula1) ? self->m_formula1 : NULL; }
 void XDataValidation_setFormula1(XDataValidation* self, const XString* formula) {
     if (!self) return;
-    assign_optional_string(&self->m_formula1, formula);
+    XDataValidation_assign_optional_string(&self->m_formula1, formula);
 }
 const XString* XDataValidation_formula2(const XDataValidation* self) { return (self && self->m_formula2) ? self->m_formula2 : NULL; }
 void XDataValidation_setFormula2(XDataValidation* self, const XString* formula) {
     if (!self) return;
-    assign_optional_string(&self->m_formula2, formula);
+    XDataValidation_assign_optional_string(&self->m_formula2, formula);
 }
 bool XDataValidation_allowBlank(const XDataValidation* self) { return self ? self->m_allowBlank : false; }
 void XDataValidation_setAllowBlank(XDataValidation* self, bool enable) { if (self) self->m_allowBlank = enable; }
@@ -172,13 +173,13 @@ bool XDataValidation_isPromptMessageVisible(const XDataValidation* self) { retur
 bool XDataValidation_isErrorMessageVisible(const XDataValidation* self) { return self ? self->m_errorMessageVisible : false; }
 void XDataValidation_setErrorMessage(XDataValidation* self, const XString* error, const XString* title) {
     if (!self) return;
-    assign_optional_string(&self->m_errorMessage, error);
-    assign_optional_string(&self->m_errorMessageTitle, title);
+    XDataValidation_assign_optional_string(&self->m_errorMessage, error);
+    XDataValidation_assign_optional_string(&self->m_errorMessageTitle, title);
 }
 void XDataValidation_setPromptMessage(XDataValidation* self, const XString* prompt, const XString* title) {
     if (!self) return;
-    assign_optional_string(&self->m_promptMessage, prompt);
-    assign_optional_string(&self->m_promptMessageTitle, title);
+    XDataValidation_assign_optional_string(&self->m_promptMessage, prompt);
+    XDataValidation_assign_optional_string(&self->m_promptMessageTitle, title);
 }
 void XDataValidation_setPromptMessageVisible(XDataValidation* self, bool visible) { if (self) self->m_promptMessageVisible = visible; }
 void XDataValidation_setErrorMessageVisible(XDataValidation* self, bool visible) { if (self) self->m_errorMessageVisible = visible; }

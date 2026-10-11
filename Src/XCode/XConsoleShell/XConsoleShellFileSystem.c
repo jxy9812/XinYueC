@@ -15,6 +15,7 @@
 #include "XDeviceFile.h"
 #include "XDeviceDir.h"
 #include "XString.h"
+#include "XStringUtils.h"
 #include "XMemory.h"
 #include "XDateTime.h"
 #include "XVarList.h"
@@ -56,7 +57,7 @@ static bool xfs_append_path_component(XString* base, const char* component)
 
     if (!base) return false;
     current = XString_toUtf8(base);
-    length = current ? strlen(current) : 0;
+    length = current ? XStrlen(current) : 0;
     if (length == 0) return XString_append_utf8(base, text);
 
     hasSeparator = current[length - 1] == '/' || current[length - 1] == '\\';
@@ -82,7 +83,7 @@ static bool xfs_make_path(const XConsoleShellSession* session, const char* input
             XClassDelete(raw);
             return false;
         }
-        if (strcmp(value, ".") != 0 &&
+        if (XStrcmp(value, ".") != 0 &&
             !xfs_append_path_component(prefix, XString_toUtf8(raw))) {
             XClassDelete(prefix);
             XClassDelete(raw);
@@ -122,7 +123,7 @@ static int xfs_cd(XConsoleShell* shell, XConsoleShellSession* session,
     if (ok) {
         if (argc == 0) {
             ok = XDeviceFile_getSpecialPath(XSpecialPath_Home, path);
-        } else if (strcmp(argv[0], "-") == 0) {
+        } else if (XStrcmp(argv[0], "-") == 0) {
             if (session->previousPath[0] == '\0') ok = false;
             else ok = XString_assign_utf8(path, session->previousPath);
         } else {
@@ -135,11 +136,11 @@ static int xfs_cd(XConsoleShell* shell, XConsoleShellSession* session,
         if (path) XClassDelete(path);
         return XConsoleResult_InvalidArgument;
     }
-    strncpy(savedPath, session->currentPath, sizeof(savedPath) - 1u);
+    XStrncpy(savedPath, session->currentPath, sizeof(savedPath) - 1u);
     savedPath[sizeof(savedPath) - 1u] = '\0';
-    strncpy(session->currentPath, XString_toUtf8(path), sizeof(session->currentPath) - 1u);
+    XStrncpy(session->currentPath, XString_toUtf8(path), sizeof(session->currentPath) - 1u);
     session->currentPath[sizeof(session->currentPath) - 1u] = '\0';
-    strncpy(session->previousPath, savedPath, sizeof(session->previousPath) - 1u);
+    XStrncpy(session->previousPath, savedPath, sizeof(session->previousPath) - 1u);
     session->previousPath[sizeof(session->previousPath) - 1u] = '\0';
     XClassDelete(path);
     return XConsoleResult_Ok;
@@ -166,10 +167,10 @@ static void xfs_ls_size(int64_t value, bool human, char* output, size_t capacity
             number /= 1024.0;
             ++unit;
         }
-        if (unit) snprintf(output, capacity, "%.1f%c", number, units[unit - 1u]);
-        else snprintf(output, capacity, "%lld", (long long)number);
+        if (unit) XSnprintf(output, capacity, "%.1f%c", number, units[unit - 1u]);
+        else XSnprintf(output, capacity, "%lld", (long long)number);
     } else {
-        snprintf(output, capacity, "%lld", (long long)value);
+        XSnprintf(output, capacity, "%lld", (long long)value);
     }
 }
 
@@ -199,7 +200,7 @@ static bool xfs_ls_time(int64_t secs, char* output, size_t capacity)
 
     memset(&datetime, 0, sizeof(datetime));
     if (!XDateTime_setSecsSinceEpoch(&datetime, secs)) return false;
-    written = snprintf(output, capacity, "%04d-%02d-%02d %02d:%02d:%02d",
+    written = XSnprintf(output, capacity, "%04d-%02d-%02d %02d:%02d:%02d",
                        XDate_year(&datetime.m_date),
                        XDate_month(&datetime.m_date),
                        XDate_day(&datetime.m_date),
@@ -223,7 +224,7 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
     int written;
     if (!shell || !fullPath || !displayName || !entry || !options) return false;
     /* 文件名长度受后端长文件名配置控制，不能用固定的小栈缓冲区截断。 */
-    lineCapacity = strlen(displayName) + 128u;
+    lineCapacity = XStrlen(displayName) + 128u;
     line = (char*)XMalloc_System(lineCapacity);
     if (!line) return false;
     memset(&stat, 0, sizeof(stat));
@@ -239,7 +240,7 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
         xfs_ls_permissions(stat.permissions, stat.isDir, permissions, sizeof(permissions));
         xfs_ls_size(stat.size, options->human, size, sizeof(size));
         /* 固定列宽便于串口终端逐行比较；大小右对齐，时间显示为可读日期时刻。 */
-        written = snprintf(line, lineCapacity, "%-10s %10s %-9s %s %s",
+        written = XSnprintf(line, lineCapacity, "%-10s %10s %-9s %s %s",
                            permissions, size, stat.isSymLink ? "链接" :
                            (stat.isDir ? "目录" : "文件"),
                            timeText, displayName);
@@ -249,7 +250,7 @@ static bool xfs_ls_emit(XConsoleShell* shell, const XString* fullPath,
             else if (stat.isSymLink) suffix = "@";
             else if (stat.isExecutable) suffix = "*";
         }
-        written = snprintf(line, lineCapacity, "%s%s", displayName, suffix);
+        written = XSnprintf(line, lineCapacity, "%s%s", displayName, suffix);
     }
     {
         bool result = written > 0 && (size_t)written < lineCapacity &&
@@ -277,8 +278,8 @@ static int xfs_ls_directory(XConsoleShell* shell, const XString* path,
         while (XDeviceDir_readNext(iterator, &entry)) {
             const char* text = XString_toUtf8(name);
             if (entry.isHidden && !options->all &&
-                (!options->almostAll || strcmp(text, ".") == 0 ||
-                 strcmp(text, "..") == 0)) continue;
+                (!options->almostAll || XStrcmp(text, ".") == 0 ||
+                 XStrcmp(text, "..") == 0)) continue;
             if (!XString_assign_utf8(child, XString_toUtf8(path)) ||
                 !xfs_append_path_component(child, text) ||
                 !xfs_ls_emit(shell, child, text, &entry, options)) {
@@ -286,7 +287,7 @@ static int xfs_ls_directory(XConsoleShell* shell, const XString* path,
                 break;
             }
             if (options->recursive && entry.isDir && depth < 32u &&
-                strcmp(text, ".") != 0 && strcmp(text, "..") != 0) {
+                XStrcmp(text, ".") != 0 && XStrcmp(text, "..") != 0) {
                 result = xfs_ls_directory(shell, child, options, depth + 1u);
                 if (result < 0) break;
             }
@@ -315,18 +316,18 @@ static int xfs_ls(XConsoleShell* shell, XConsoleShellSession* session,
     for (i = 0; i < (size_t)argc; ++i) {
         const char* argument = argv[i];
         size_t j;
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
             continue;
         }
         if (!endOptions && argument[0] == '-' && argument[1]) {
-            if (strcmp(argument, "--all") == 0) options.all = true;
-            else if (strcmp(argument, "--almost-all") == 0) options.almostAll = true;
-            else if (strcmp(argument, "--long") == 0) options.longFormat = true;
-            else if (strcmp(argument, "--classify") == 0) options.classify = true;
-            else if (strcmp(argument, "--directory") == 0) options.directory = true;
-            else if (strcmp(argument, "--recursive") == 0) options.recursive = true;
-            else if (strcmp(argument, "--human-readable") == 0) options.human = true;
+            if (XStrcmp(argument, "--all") == 0) options.all = true;
+            else if (XStrcmp(argument, "--almost-all") == 0) options.almostAll = true;
+            else if (XStrcmp(argument, "--long") == 0) options.longFormat = true;
+            else if (XStrcmp(argument, "--classify") == 0) options.classify = true;
+            else if (XStrcmp(argument, "--directory") == 0) options.directory = true;
+            else if (XStrcmp(argument, "--recursive") == 0) options.recursive = true;
+            else if (XStrcmp(argument, "--human-readable") == 0) options.human = true;
             else {
                 for (j = 1; argument[j]; ++j) {
                     switch (argument[j]) {
@@ -364,7 +365,7 @@ static int xfs_ls(XConsoleShell* shell, XConsoleShellSession* session,
             XClassDelete(path);
             if (result < 0) return result;
         } else {
-            const char* slash = strrchr(name, '/');
+            const char* slash = XStrrchr(name, '/');
             entry.isDir = stat.isDir;
             entry.isFile = stat.isFile;
             entry.isSymLink = stat.isSymLink;
@@ -436,9 +437,9 @@ static int xfs_touch(XConsoleShell* shell, XConsoleShellSession* session,
         int i;
         int pathCount = 0;
         for (i = 0; i < argc; ++i)
-            if (strcmp(argv[i], "--no-create") == 0 || strcmp(argv[i], "-c") == 0) noCreate = true;
+            if (XStrcmp(argv[i], "--no-create") == 0 || XStrcmp(argv[i], "-c") == 0) noCreate = true;
         for (i = 0; i < argc; ++i) {
-            if (strcmp(argv[i], "--no-create") == 0 || strcmp(argv[i], "-c") == 0) continue;
+            if (XStrcmp(argv[i], "--no-create") == 0 || XStrcmp(argv[i], "-c") == 0) continue;
             ++pathCount;
             path = XString_create();
             if (!path || !xfs_make_path(session, argv[i], path)) {
@@ -595,10 +596,10 @@ static int xfs_readlink(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     for (i = 0; i < argc; ++i) {
         const char* argument = argv[i];
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
-        } else if (!endOptions && (strcmp(argument, "-f") == 0 ||
-                                   strcmp(argument, "--canonicalize") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-f") == 0 ||
+                                   XStrcmp(argument, "--canonicalize") == 0)) {
             canonical = true;
         } else if (!endOptions && argument[0] == '-' && argument[1]) {
             return XConsoleResult_InvalidArgument;
@@ -671,16 +672,16 @@ static int xfs_truncate(XConsoleShell* shell, XConsoleShellSession* session,
     for (i = 0; i < argc; ++i) {
         const char* argument = argv[i];
         int64_t value;
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
-        } else if (!endOptions && (strcmp(argument, "-s") == 0 ||
-                                   strcmp(argument, "--size") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-s") == 0 ||
+                                   XStrcmp(argument, "--size") == 0)) {
             if (i + 1 >= argc || size >= 0 ||
                 !xfs_parse_nonnegative(argv[++i], &value))
                 return XConsoleResult_InvalidArgument;
             size = value;
-        } else if (!endOptions && (strcmp(argument, "-c") == 0 ||
-                                   strcmp(argument, "--no-create") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-c") == 0 ||
+                                   XStrcmp(argument, "--no-create") == 0)) {
             noCreate = true;
         } else if (!endOptions && argument[0] == '-' && argument[1]) {
             return XConsoleResult_InvalidArgument;
@@ -734,7 +735,7 @@ static int xfs_df(XConsoleShell* shell, XConsoleShellSession* session,
         XClassDelete(path);
         return XConsoleResult_Failed;
     }
-    written = snprintf(line, sizeof(line), "总计=%-16lld 空闲=%-16lld 可用=%-16lld 块=%-8d\n",
+    written = XSnprintf(line, sizeof(line), "总计=%-16lld 空闲=%-16lld 可用=%-16lld 块=%-8d\n",
                        (long long)info.bytesTotal, (long long)info.bytesFree,
                        (long long)info.bytesAvailable, info.blockSize);
     XClassDelete(path);
@@ -764,8 +765,8 @@ static bool xfs_du_size(const XString* path, int64_t* total)
         entry.name = name;
         while (XDeviceDir_readNext(iterator, &entry)) {
             if (entry.isSymLink) continue;
-            if (strcmp(XString_toUtf8(name), ".") == 0 ||
-                strcmp(XString_toUtf8(name), "..") == 0) continue;
+            if (XStrcmp(XString_toUtf8(name), ".") == 0 ||
+                XStrcmp(XString_toUtf8(name), "..") == 0) continue;
             if (!XString_assign_utf8(child, XString_toUtf8(path)) ||
                 !xfs_append_path_component(child, XString_toUtf8(name)) ||
                 !xfs_du_size(child, total)) {
@@ -798,7 +799,7 @@ static int xfs_du(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_Failed;
     }
     xfs_number(total, number, sizeof(number));
-    written = snprintf(line, sizeof(line), "%12s  %s\n", number, XString_toUtf8(path));
+    written = XSnprintf(line, sizeof(line), "%12s  %s\n", number, XString_toUtf8(path));
     XClassDelete(path);
     return written > 0 && (size_t)written < sizeof(line) &&
            XConsoleShell_write(shell, line, (size_t)written)
@@ -821,19 +822,19 @@ static int xfs_wc(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     for (i = 0; i < argc; ++i) {
         const char* argument = argv[i];
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
-        } else if (!endOptions && (strcmp(argument, "-l") == 0 ||
-                                   strcmp(argument, "--lines") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-l") == 0 ||
+                                   XStrcmp(argument, "--lines") == 0)) {
             showLines = true; showWords = false; showBytes = false;
-        } else if (!endOptions && (strcmp(argument, "-w") == 0 ||
-                                   strcmp(argument, "--words") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-w") == 0 ||
+                                   XStrcmp(argument, "--words") == 0)) {
             showLines = false; showWords = true; showBytes = false;
-        } else if (!endOptions && (strcmp(argument, "-c") == 0 ||
-                                   strcmp(argument, "--bytes") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-c") == 0 ||
+                                   XStrcmp(argument, "--bytes") == 0)) {
             showLines = false; showWords = false; showBytes = true;
-        } else if (!endOptions && (strcmp(argument, "-m") == 0 ||
-                                   strcmp(argument, "--chars") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-m") == 0 ||
+                                   XStrcmp(argument, "--chars") == 0)) {
             showLines = false; showWords = false; showBytes = true;
         } else if (!endOptions && argument[0] == '-' && argument[1]) {
             return XConsoleResult_InvalidArgument;
@@ -883,35 +884,35 @@ static int xfs_wc(XConsoleShell* shell, XConsoleShellSession* session,
         written = 0;
         column = 0;
         if (showLines) {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%7lld ", (long long)lines);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
             written += n; ++column;
         }
         if (showWords) {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%7lld ", (long long)words);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
             written += n; ++column;
         }
         if (showBytes) {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%7lld ", (long long)bytes);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
             written += n; ++column;
         }
         if (column == 0) {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%7lld ", (long long)lines);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
             written += n;
         }
         {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%s\n", paths[i]);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
@@ -928,34 +929,34 @@ static int xfs_wc(XConsoleShell* shell, XConsoleShellSession* session,
         int written = 0;
         int column = 0;
         if (showLines) {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%7lld ", (long long)totalLines);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
             written += n; ++column;
         }
         if (showWords) {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%7lld ", (long long)totalWords);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
             written += n; ++column;
         }
         if (showBytes) {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%7lld ", (long long)totalBytes);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
             written += n; ++column;
         }
         if (column == 0) {
-            int n = snprintf(line + written, sizeof(line) - (size_t)written,
+            int n = XSnprintf(line + written, sizeof(line) - (size_t)written,
                              "%7lld ", (long long)totalLines);
             if (n < 0 || (size_t)n >= sizeof(line) - (size_t)written)
                 return XConsoleResult_IoError;
             written += n;
         }
-        if (snprintf(line + written, sizeof(line) - (size_t)written, "总计\n") < 0)
+        if (XSnprintf(line + written, sizeof(line) - (size_t)written, "总计\n") < 0)
             return XConsoleResult_IoError;
         if (!XConsoleShell_write(shell, line, (size_t)written))
             return XConsoleResult_IoError;
@@ -975,10 +976,10 @@ static int xfs_head(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     for (i = 0; i < argc; ++i) {
         const char* argument = argv[i];
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
-        } else if (!endOptions && (strcmp(argument, "-n") == 0 ||
-                                   strcmp(argument, "--lines") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-n") == 0 ||
+                                   XStrcmp(argument, "--lines") == 0)) {
             if (i + 1 >= argc || !xfs_parse_nonnegative(argv[++i], &lines))
                 return XConsoleResult_InvalidArgument;
         } else if (!endOptions && argument[0] == '-' && argument[1]) {
@@ -1041,10 +1042,10 @@ static int xfs_tail(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     for (i = 0; i < argc; ++i) {
         const char* argument = argv[i];
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
-        } else if (!endOptions && (strcmp(argument, "-n") == 0 ||
-                                   strcmp(argument, "--lines") == 0)) {
+        } else if (!endOptions && (XStrcmp(argument, "-n") == 0 ||
+                                   XStrcmp(argument, "--lines") == 0)) {
             if (i + 1 >= argc || !xfs_parse_nonnegative(argv[++i], &lines))
                 return XConsoleResult_InvalidArgument;
         } else if (!endOptions && argument[0] == '-' && argument[1]) {
@@ -1198,7 +1199,7 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
     if (!path || !name || !child || !XDeviceFile_stat(path, &stat)) result = XConsoleResult_Failed;
     base = path ? XString_toUtf8(path) : NULL;
     if (result == XConsoleResult_Ok && (!pattern || xfs_glob_match_local(pattern, base +
-        (strrchr(base, '/') ? (strrchr(base, '/') - base + 1) : 0)) &&
+        (XStrrchr(base, '/') ? (XStrrchr(base, '/') - base + 1) : 0)) &&
         (type == 0 || (type == 'f' && stat.isFile) || (type == 'd' && stat.isDir)))) {
         bool matched = true;
         if (mtimeDays >= 0) {
@@ -1223,7 +1224,7 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
             entry.name = name;
             while (XDeviceDir_readNext(iterator, &entry)) {
                 const char* item = XString_toUtf8(name);
-                if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0) continue;
+                if (XStrcmp(item, ".") == 0 || XStrcmp(item, "..") == 0) continue;
                 if (!XString_assign_utf8(child, base) ||
                     !xfs_append_path_component(child, item)) {
                     result = XConsoleResult_Failed;
@@ -1259,27 +1260,27 @@ static int xfs_find(XConsoleShell* shell, XConsoleShellSession* session,
         return XConsoleResult_InvalidArgument;
     }
     for (i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "-name") == 0 && i + 1 < argc) pattern = argv[++i];
-        else if (strcmp(argv[i], "-type") == 0 && i + 1 < argc &&
+        if (XStrcmp(argv[i], "-name") == 0 && i + 1 < argc) pattern = argv[++i];
+        else if (XStrcmp(argv[i], "-type") == 0 && i + 1 < argc &&
                  (argv[i + 1][0] == 'f' || argv[i + 1][0] == 'd') && !argv[i + 1][1])
             type = argv[++i][0];
-        else if (strcmp(argv[i], "-maxdepth") == 0 && i + 1 < argc) {
+        else if (XStrcmp(argv[i], "-maxdepth") == 0 && i + 1 < argc) {
             int64_t value;
             if (!xfs_parse_nonnegative(argv[++i], &value) || value > 64) {
                 XClassDelete(path);
                 return XConsoleResult_InvalidArgument;
             }
             maxDepth = (int)value;
-        } else if (strcmp(argv[i], "-mtime") == 0 && i + 1 < argc) {
+        } else if (XStrcmp(argv[i], "-mtime") == 0 && i + 1 < argc) {
             int64_t value;
             if (!xfs_parse_nonnegative(argv[++i], &value)) {
                 XClassDelete(path);
                 return XConsoleResult_InvalidArgument;
             }
             mtimeDays = value;
-        } else if (strcmp(argv[i], "-size") == 0 && i + 1 < argc) {
+        } else if (XStrcmp(argv[i], "-size") == 0 && i + 1 < argc) {
             const char* text = argv[++i];
-            size_t len = strlen(text);
+            size_t len = XStrlen(text);
             char copy[64];
             if (len == 0) {
                 XClassDelete(path);
@@ -1327,7 +1328,7 @@ static int xfs_tree_walk(XConsoleShell* shell, const XString* path, size_t depth
             while (XDeviceDir_readNext(iterator, &entry)) {
                 const char* item = XString_toUtf8(name);
                 size_t i;
-                if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0 || entry.isHidden) continue;
+                if (XStrcmp(item, ".") == 0 || XStrcmp(item, "..") == 0 || entry.isHidden) continue;
                 for (i = 0; i < depth; ++i)
                     if (!XConsoleShell_writeUtf8(shell, "  ")) { result = XConsoleResult_IoError; break; }
                 if (result < 0 || !XConsoleShell_writeUtf8(shell, item) ||
@@ -1385,7 +1386,7 @@ static int xfs_file(XConsoleShell* shell, XConsoleShellSession* session,
     }
     type = stat.isDir ? "目录" : (stat.isSymLink ? "符号链接" :
            (stat.isFile ? "常规文件" : "其他"));
-    written = snprintf(line, sizeof(line), "%s: %s\n", XString_toUtf8(path), type);
+    written = XSnprintf(line, sizeof(line), "%s: %s\n", XString_toUtf8(path), type);
     XClassDelete(path);
     return written > 0 && (size_t)written < sizeof(line) &&
            XConsoleShell_write(shell, line, (size_t)written)
@@ -1403,7 +1404,7 @@ static int xfs_basename(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     if (!shell || argc != 1) return XConsoleResult_InvalidArgument;
     text = (argv[0] && argv[0][0]) ? argv[0] : ".";
-    length = strlen(text);
+    length = XStrlen(text);
     while (length > 1u && (text[length - 1u] == '/' || text[length - 1u] == '\\')) --length;
     if (!(length == 1u && (text[0] == '/' || text[0] == '\\'))) {
         for (i = 0; i < length; ++i)
@@ -1425,7 +1426,7 @@ static int xfs_dirname(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     if (!shell || argc != 1) return XConsoleResult_InvalidArgument;
     text = (argv[0] && argv[0][0]) ? argv[0] : ".";
-    length = strlen(text);
+    length = XStrlen(text);
     while (length > 1u && (text[length - 1u] == '/' || text[length - 1u] == '\\')) --length;
     for (i = 0; i < length; ++i)
         if (text[i] == '/' || text[i] == '\\') slash = i;
@@ -1468,28 +1469,28 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
     if (argc < 1) return XConsoleResult_InvalidArgument;
     for (i = 0; i < argc; ++i) {
         int64_t value;
-        if (strcmp(argv[i], "--offset") == 0) {
+        if (XStrcmp(argv[i], "--offset") == 0) {
             if (offsetSet || i + 1 >= argc ||
                 !xfs_parse_nonnegative(argv[++i], &value))
                 return XConsoleResult_InvalidArgument;
             offset = value;
             offsetSet = true;
-        } else if (strcmp(argv[i], "--length") == 0) {
+        } else if (XStrcmp(argv[i], "--length") == 0) {
             if (lengthSet || i + 1 >= argc ||
                 !xfs_parse_nonnegative(argv[++i], &value))
                 return XConsoleResult_InvalidArgument;
             remaining = value;
             length = value;
             lengthSet = true;
-        } else if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--number") == 0) {
+        } else if (XStrcmp(argv[i], "-n") == 0 || XStrcmp(argv[i], "--number") == 0) {
             numberAll = true;
-        } else if (strcmp(argv[i], "-b") == 0 || strcmp(argv[i], "--number-nonblank") == 0) {
+        } else if (XStrcmp(argv[i], "-b") == 0 || XStrcmp(argv[i], "--number-nonblank") == 0) {
             numberNonblank = true;
-        } else if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--squeeze-blank") == 0) {
+        } else if (XStrcmp(argv[i], "-s") == 0 || XStrcmp(argv[i], "--squeeze-blank") == 0) {
             squeezeBlank = true;
-        } else if (strcmp(argv[i], "-E") == 0 || strcmp(argv[i], "--show-ends") == 0) {
+        } else if (XStrcmp(argv[i], "-E") == 0 || XStrcmp(argv[i], "--show-ends") == 0) {
             showEnds = true;
-        } else if (strcmp(argv[i], "-T") == 0 || strcmp(argv[i], "--show-tabs") == 0) {
+        } else if (XStrcmp(argv[i], "-T") == 0 || XStrcmp(argv[i], "--show-tabs") == 0) {
             showTabs = true;
         } else if (argv[i][0] == '-' && argv[i][1]) {
             return XConsoleResult_InvalidArgument;
@@ -1532,7 +1533,7 @@ static int xfs_cat(XConsoleShell* shell, XConsoleShellSession* session,
                         /* no line number */
                     } else {
                         char num[24];
-                        int written = snprintf(num, sizeof(num), "%6lld\t",
+                        int written = XSnprintf(num, sizeof(num), "%6lld\t",
                                                (long long)(++lineNumber));
                         if (written < 0 || (size_t)written >= sizeof(num) ||
                             !XConsoleShell_write(shell, num, (size_t)written)) {
@@ -1598,11 +1599,11 @@ static int xfs_hexdump(XConsoleShell* shell, XConsoleShellSession* session,
     if (!shell || !session || argc < 1) return XConsoleResult_InvalidArgument;
     for (int i = 0; i < argc; ++i) {
         int64_t value;
-        if (strcmp(argv[i], "-C") == 0 || strcmp(argv[i], "--canonical") == 0) {
+        if (XStrcmp(argv[i], "-C") == 0 || XStrcmp(argv[i], "--canonical") == 0) {
             continue;
         }
-        if (strcmp(argv[i], "-s") == 0 || strcmp(argv[i], "--skip") == 0 ||
-            strcmp(argv[i], "--offset") == 0) {
+        if (XStrcmp(argv[i], "-s") == 0 || XStrcmp(argv[i], "--skip") == 0 ||
+            XStrcmp(argv[i], "--offset") == 0) {
             if (offsetSet || i + 1 >= argc ||
                 !xfs_parse_nonnegative(argv[++i], &value))
                 return XConsoleResult_InvalidArgument;
@@ -1610,7 +1611,7 @@ static int xfs_hexdump(XConsoleShell* shell, XConsoleShellSession* session,
             offsetSet = true;
             continue;
         }
-        if (strcmp(argv[i], "-n") == 0 || strcmp(argv[i], "--length") == 0) {
+        if (XStrcmp(argv[i], "-n") == 0 || XStrcmp(argv[i], "--length") == 0) {
             if (lengthSet || i + 1 >= argc ||
                 !xfs_parse_nonnegative(argv[++i], &value))
                 return XConsoleResult_InvalidArgument;
@@ -1637,13 +1638,13 @@ static int xfs_hexdump(XConsoleShell* shell, XConsoleShellSession* session,
         count = XDeviceFile_read(fd, buffer, request);
         if (count < 0) goto io_error;
         if (count == 0) break;
-        written = snprintf(line, sizeof(line), "%08llx  ", (unsigned long long)offset);
+        written = XSnprintf(line, sizeof(line), "%08llx  ", (unsigned long long)offset);
         if (written < 0 || (size_t)written >= sizeof(line)) goto io_error;
         for (i = 0; i < 16; ++i) {
             int part = i < count
-                           ? snprintf(line + written, sizeof(line) - (size_t)written,
+                           ? XSnprintf(line + written, sizeof(line) - (size_t)written,
                                        "%02x ", buffer[i])
-                           : snprintf(line + written, sizeof(line) - (size_t)written, "   ");
+                           : XSnprintf(line + written, sizeof(line) - (size_t)written, "   ");
             if (part < 0 || (size_t)part >= sizeof(line) - (size_t)written) goto io_error;
             written += part;
             if (i == 7) {
@@ -1743,14 +1744,14 @@ static int xfs_remove(XConsoleShell* shell, XConsoleShellSession* session,
     for (i = 0; i < argc; ++i) {
         const char* argument = argv[i];
         size_t j;
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
             continue;
         }
         if (!endOptions && argument[0] == '-' && argument[1]) {
-            if (strcmp(argument, "--force") == 0) {
+            if (XStrcmp(argument, "--force") == 0) {
                 force = true;
-            } else if (strcmp(argument, "--recursive") == 0) {
+            } else if (XStrcmp(argument, "--recursive") == 0) {
                 recursive = true;
             } else {
                 for (j = 1; argument[j]; ++j) {
@@ -1797,9 +1798,9 @@ static int xfs_mkdir(XConsoleShell* shell, XConsoleShellSession* session,
     (void)shell;
     (void)userData;
     for (i = 0; i < argc; ++i)
-        if (strcmp(argv[i], "--parents") == 0 || strcmp(argv[i], "-p") == 0) recursive = true;
+        if (XStrcmp(argv[i], "--parents") == 0 || XStrcmp(argv[i], "-p") == 0) recursive = true;
     for (i = 0; i < argc; ++i) {
-        if (strcmp(argv[i], "--parents") == 0 || strcmp(argv[i], "-p") == 0) {
+        if (XStrcmp(argv[i], "--parents") == 0 || XStrcmp(argv[i], "-p") == 0) {
             continue;
         }
         ++pathCount;
@@ -1828,14 +1829,14 @@ static int xfs_rmdir(XConsoleShell* shell, XConsoleShellSession* session,
     (void)shell;
     (void)userData;
     for (i = 0; i < argc; ++i) {
-        if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--parents") == 0) {
+        if (XStrcmp(argv[i], "-p") == 0 || XStrcmp(argv[i], "--parents") == 0) {
             parents = true;
         } else if (argv[i][0] == '-') {
             return XConsoleResult_InvalidArgument;
         }
     }
     for (i = 0; i < argc; ++i) {
-        if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--parents") == 0) continue;
+        if (XStrcmp(argv[i], "-p") == 0 || XStrcmp(argv[i], "--parents") == 0) continue;
         ++pathCount;
         path = XString_create();
         if (!path || !xfs_make_path(session, argv[i], path)) {
@@ -1847,8 +1848,8 @@ static int xfs_rmdir(XConsoleShell* shell, XConsoleShellSession* session,
             for (;;) {
                 const char* text = XString_toUtf8(path);
                 const char* slash;
-                if (!text || !*text || strcmp(text, "/") == 0) break;
-                slash = strrchr(text, '/');
+                if (!text || !*text || XStrcmp(text, "/") == 0) break;
+                slash = XStrrchr(text, '/');
                 if (!slash || slash == text) break;
                 XString_truncate(path, (size_t)(slash - text));
                 if (!XDeviceFile_rmdir(path, false)) break;
@@ -1885,7 +1886,7 @@ static bool xfs_copy_recursive(const XString* source, const XString* target)
         entry.name = name;
         while (XDeviceDir_readNext(iterator, &entry)) {
             const char* item = XString_toUtf8(name);
-            if (strcmp(item, ".") == 0 || strcmp(item, "..") == 0) continue;
+            if (XStrcmp(item, ".") == 0 || XStrcmp(item, "..") == 0) continue;
             if (!XString_assign(childSource, source) ||
                 !xfs_append_path_component(childSource, item) ||
                 !XString_assign(childTarget, target) ||
@@ -1922,13 +1923,13 @@ static int xfs_copy(XConsoleShell* shell, XConsoleShellSession* session,
     for (i = 0; i < argc; ++i) {
         const char* argument = argv[i];
         size_t j;
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
             continue;
         }
         if (!endOptions && argument[0] == '-' && argument[1]) {
-            if (strcmp(argument, "--recursive") == 0) recursive = true;
-            else if (strcmp(argument, "--force") == 0) force = true;
+            if (XStrcmp(argument, "--recursive") == 0) recursive = true;
+            else if (XStrcmp(argument, "--force") == 0) force = true;
             else {
                 for (j = 1; argument[j]; ++j) {
                     if (argument[j] == 'r' || argument[j] == 'R') recursive = true;
@@ -1969,7 +1970,7 @@ static int xfs_copy(XConsoleShell* shell, XConsoleShellSession* session,
             break;
         }
         if (stat.isDir && !recursive) ok = false;
-        sourceName = strrchr(XString_toUtf8(source), '/');
+        sourceName = XStrrchr(XString_toUtf8(source), '/');
         if (ok && targetIsDir && sourceName) {
             ok = xfs_append_path_component(destination, sourceName + 1);
         }
@@ -2003,7 +2004,7 @@ static int xfs_move(XConsoleShell* shell, XConsoleShellSession* session,
     (void)shell;
     (void)userData;
     for (i = 0; i < argc; ++i) {
-        if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) force = true;
+        if (XStrcmp(argv[i], "-f") == 0 || XStrcmp(argv[i], "--force") == 0) force = true;
         else if (sourceCount < XCONSOLE_SHELL_MAX_ARGUMENTS) sourceArgs[sourceCount++] = argv[i];
         else return XConsoleResult_ResourceLimit;
     }
@@ -2032,7 +2033,7 @@ static int xfs_move(XConsoleShell* shell, XConsoleShellSession* session,
             ok = false;
             break;
         }
-        sourceName = strrchr(XString_toUtf8(source), '/');
+        sourceName = XStrrchr(XString_toUtf8(source), '/');
         if (targetIsDir && sourceName)
             ok = xfs_append_path_component(destination, sourceName + 1);
         if (ok && force) {
@@ -2071,8 +2072,8 @@ static int xfs_write_file(XConsoleShell* shell, XConsoleShellSession* session,
     if (fd == XFD_INVALID) return XConsoleResult_Failed;
     for (i = 1; i < argc && ok; ++i) {
         if (i > 1) ok = XDeviceFile_write(fd, " ", 1) == 1;
-        if (ok) ok = XDeviceFile_write(fd, argv[i], (int64_t)strlen(argv[i])) ==
-                         (int64_t)strlen(argv[i]);
+        if (ok) ok = XDeviceFile_write(fd, argv[i], (int64_t)XStrlen(argv[i])) ==
+                         (int64_t)XStrlen(argv[i]);
     }
     if (ok) ok = XDeviceFile_flush(fd);
     XDeviceFile_close(fd);
@@ -2120,12 +2121,12 @@ static int xfs_ln(XConsoleShell* shell, XConsoleShellSession* session,
     for (i = 0; i < argc; ++i) {
         const char* argument = argv[i];
         size_t j;
-        if (!endOptions && strcmp(argument, "--") == 0) {
+        if (!endOptions && XStrcmp(argument, "--") == 0) {
             endOptions = true;
             continue;
         }
         if (!endOptions && argument[0] == '-' && argument[1]) {
-            if (strcmp(argument, "--symbolic") == 0) {
+            if (XStrcmp(argument, "--symbolic") == 0) {
                 symbolic = true;
                 continue;
             }
@@ -2166,7 +2167,7 @@ static int xfs_unlink(XConsoleShell* shell, XConsoleShellSession* session,
     (void)userData;
     for (i = 0; i < argc; ++i) {
         XString* path;
-        if (!endOptions && strcmp(argv[i], "--") == 0) {
+        if (!endOptions && XStrcmp(argv[i], "--") == 0) {
             endOptions = true;
             continue;
         }
@@ -2199,7 +2200,7 @@ static int xfs_format(XConsoleShell* shell, XConsoleShellSession* session,
     XString* drive = XString_create();
     bool ok;
     (void)userData;
-    if ((argc != 1 && argc != 2) || (argc == 2 && strcmp(argv[1], "--force") != 0) ||
+    if ((argc != 1 && argc != 2) || (argc == 2 && XStrcmp(argv[1], "--force") != 0) ||
         !drive || !xfs_make_path(session, argv[0], drive)) {
         if (drive) XClassDelete(drive);
         return XConsoleResult_InvalidArgument;
@@ -2443,7 +2444,7 @@ int XConsoleShellFileSystem_execute(XConsoleShell* shell,
         for (i = 0; i < XCONSOLE_SHELL_FS_COMMAND_COUNT; ++i) {
             const XConsoleCommand* command = &g_fsCommands[i];
             int subArgc;
-            if (strcmp(command->name, argv[0]) != 0) continue;
+            if (XStrcmp(command->name, argv[0]) != 0) continue;
             subArgc = argc - 1;
             if (subArgc < command->minArgs ||
                 (command->maxArgs >= 0 && subArgc > command->maxArgs))

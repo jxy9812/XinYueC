@@ -12,15 +12,15 @@
 #ifndef XCONSOLE_SHELL_SPI_H
 #define XCONSOLE_SHELL_SPI_H
 
-#include "XConsoleShellCommand.h"
-#include "XSpi.h"
-#include <stdbool.h>
-
-#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_SPI_ON
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && XCONSOLE_SHELL_SPI_ON
+
+#include "XConsoleShellCommand.h"
+#include "XSpi.h"
+#include <stdbool.h>
 
 /** @brief 产品策略需要判断的 SPI 操作类型；枚举值互斥，不可按位组合。 */
 typedef enum XConsoleShellSpiOperation {
@@ -70,9 +70,10 @@ bool XConsoleShell_setSpiAuthorizeCallback(
  */
 extern const XConsoleCommand XConsoleShellSpi_command;
 
+#endif /* Shell、命令、I/O 和 SPI 均启用 */
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* Shell、命令、I/O 和 SPI 均启用 */
 #endif /* XCONSOLE_SHELL_SPI_H */

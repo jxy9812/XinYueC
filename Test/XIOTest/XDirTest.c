@@ -14,7 +14,7 @@
 void XDirTest_print_xstring(const char* label, const XString* str) {
     XPrintf("%s: ", label);
     if (str) {
-        XPrintf_2(str);
+        XPrintf_string(str);
     } else {
         XPrintf_3("(NULL)");
     }
@@ -32,7 +32,7 @@ void XDirTest_print_stringlist(const char* label, const XStringList* list) {
         XString* item = (XString*)XStringList_at_base(list, (int64_t)i);
         if (item ) {
             XPrintf("  [%d] ", (int)i);
-            XPrintf_2(item);
+            XPrintf_string(item);
             XPrintf_3("\n");
         }
     }
@@ -251,10 +251,10 @@ void XDirTest_fatfs(void)
         XDeviceFile_getStorageInfo(drivePath, infos[i]);
 
         XPrintf("  [%d] ", i);
-        XPrintf_2(drivePath);
+        XPrintf_string(drivePath);
         if (infos[i]->isValid && infos[i]->fileSystemType) {
             XPrintf("  (");
-            XPrintf_2(infos[i]->fileSystemType);
+            XPrintf_string(infos[i]->fileSystemType);
             if (XDirTest_fatfs_isSupportedFileSystem(infos[i]->fileSystemType)) {
                 XPrintf_3(", FatFs支持)");
             } else {

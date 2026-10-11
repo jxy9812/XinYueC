@@ -1,8 +1,6 @@
 ﻿#include"XSort.h"
 #include"XAlgorithm.h"
 #include"XRandomGenerator.h"
-#include<stdio.h>
-#include<stdlib.h>
 #include<string.h>
 
 //打乱数组元素-乱序
@@ -11,7 +9,7 @@ void XDerangement(void* LParray, const size_t nSize, const size_t TypeSize)
 	for (size_t i = nSize; i > 1; i--)
 	{
 		size_t nSel = (size_t)XRandomGenerator_boundedU64(XRandomGenerator_global(), (uint64_t)i);
-		XSwap((char*)LParray + nSel * TypeSize, (char*)LParray + (i - 1) * TypeSize, TypeSize);//交换数据
+		XMemory_swap((char*)LParray + nSel * TypeSize, (char*)LParray + (i - 1) * TypeSize, TypeSize);//交换数据
 	}
 }
 

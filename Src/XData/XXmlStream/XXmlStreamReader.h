@@ -475,9 +475,6 @@ typedef struct XXmlStreamReader
 {
     XClass    m_class;           /**< 继承的基类成员 */
     XByteArray* m_data;          /**< 内部 XML 数据缓冲区 */
-    int64_t   m_position;        /**< 当前解析位置 */
-    int       m_tokenType;       /**< 当前 Token 类型 */
-    int       m_error;           /**< 错误类型 */
     XString*  m_errorString;     /**< 错误描述 */
     XString*  m_name;            /**< 当前元素/属性名（本地名） */
     XString*  m_namespaceUri;    /**< 当前命名空间 URI */
@@ -492,16 +489,19 @@ typedef struct XXmlStreamReader
     XString*  m_piData;          /**< 处理指令数据 */
     XString*  m_documentVersion; /**< 文档版本 */
     XString*  m_documentEncoding; /**< 文档编码 */
-    bool      m_isStandalone;    /**< 是否为独立文档 */
-    bool      m_hasStandalone;   /**< 是否已声明 standalone */
     XXmlStreamAttributes* m_attributes;  /**< 当前元素属性列表 */
     void*     m_namespaceDeclarations;   /**< 命名空间声明列表（内部数组） */
-    int       m_nsDeclCount;     /**< 命名空间声明数量 */
-    int       m_entityExpansionLimit; /**< 实体扩展限制 */
-    bool      m_isEndOfDocument;  /**< 是否到达文档末尾 */
     XXmlStreamNotationDeclarations* m_notationDeclarations; /**< DTD 符号声明列表 */
     XXmlStreamEntityDeclarations* m_entityDeclarations; /**< DTD 实体声明列表 */
     XXmlStreamEntityResolver* m_entityResolver; /**< 实体解析器 */
+    int64_t   m_position;        /**< 当前解析位置 */
+    int       m_tokenType;       /**< 当前 Token 类型 */
+    int       m_error;           /**< 错误类型 */
+    int       m_nsDeclCount;     /**< 命名空间声明数量 */
+    int       m_entityExpansionLimit; /**< 实体扩展限制 */
+    bool      m_isStandalone;    /**< 是否为独立文档 */
+    bool      m_hasStandalone;   /**< 是否已声明 standalone */
+    bool      m_isEndOfDocument;  /**< 是否到达文档末尾 */
 } XXmlStreamReader;
 
 /* ========== 虚函数表初始化 ========== */

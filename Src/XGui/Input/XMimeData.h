@@ -97,12 +97,24 @@ void XMimeData_clear(XMimeData* self);
  * @return     存在返回 true。
  */
 bool XMimeData_hasFormat(const XMimeData* self, const char* mimeType);
-/** @brief 是否含 URL 列表（对标 QMimeData::hasUrls）。 */
+/**
+ * @brief      是否含 URL 列表（对标 QMimeData::hasUrls）。
+ * @param      self 目标对象；可为 NULL。
+ * @return     已设置非空 URL 列表返回 true；入参非法或列表为空返回 false。
+ */
 bool XMimeData_hasUrls(const XMimeData* self);
-/** @brief 返回 URL 列表（对标 QMimeData::urls；URL 以字符串承载）。
- * @return 新建列表（调用方释放）；未设置返回空列表。 */
+/**
+ * @brief      返回 URL 列表（对标 QMimeData::urls；URL 以字符串承载）。
+ * @param      self 目标对象；可为 NULL。
+ * @return     新建列表（调用方释放）；未设置返回空列表。
+ */
 XStringList* XMimeData_urls(const XMimeData* self);
-/** @brief 设置 URL 列表（对标 QMimeData::setUrls；深拷贝）。 */
+/**
+ * @brief      设置 URL 列表（对标 QMimeData::setUrls；深拷贝）。
+ * @param      self 目标对象；可为 NULL。
+ * @param      urls 源 URL 列表（借用）；可为 NULL（清除 URL 列表）。
+ * @return     无。列表整体深拷贝，源列表所有权仍在调用方。
+ */
 void XMimeData_setUrls(XMimeData* self, const XStringList* urls);
 
 /**
@@ -119,7 +131,11 @@ XStringList* XMimeData_formats(const XMimeData* self);
 
 /* ==================== 纯文本（对标 QMimeData::text / setText） ==================== */
 
-/** @brief 是否存在纯文本数据。 */
+/**
+ * @brief      是否存在纯文本数据。
+ * @param      self 目标对象；可为 NULL。
+ * @return     已登记文本数据返回 true；入参非法返回 false。
+ */
 bool XMimeData_hasText(const XMimeData* self);
 
 /**
@@ -138,7 +154,11 @@ void XMimeData_setText(XMimeData* self, const XString* text);
 
 /* ==================== HTML（对标 QMimeData::html / setHtml） ==================== */
 
-/** @brief 是否存在 HTML 数据。 */
+/**
+ * @brief      是否存在 HTML 数据。
+ * @param      self 目标对象；可为 NULL。
+ * @return     已登记 HTML 数据返回 true；入参非法返回 false。
+ */
 bool XMimeData_hasHtml(const XMimeData* self);
 
 /**
@@ -156,7 +176,11 @@ void XMimeData_setHtml(XMimeData* self, const XString* html);
 
 /* ==================== 颜色（对标 QMimeData::colorData / setColorData） ==================== */
 
-/** @brief 是否存在颜色数据。 */
+/**
+ * @brief      是否存在颜色数据。
+ * @param      self 目标对象；可为 NULL。
+ * @return     已登记颜色数据返回 true；入参非法返回 false。
+ */
 bool XMimeData_hasColor(const XMimeData* self);
 
 /**
@@ -174,7 +198,11 @@ void XMimeData_setColorData(XMimeData* self, XColor color);
 
 /* ==================== 图像（对标 QMimeData::imageData / setImageData） ==================== */
 
-/** @brief 是否存在图像数据。 */
+/**
+ * @brief      是否存在图像数据。
+ * @param      self 目标对象；可为 NULL。
+ * @return     已登记图像数据返回 true；入参非法返回 false。
+ */
 bool XMimeData_hasImage(const XMimeData* self);
 
 /**

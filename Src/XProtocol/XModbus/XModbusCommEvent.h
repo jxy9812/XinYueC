@@ -1,12 +1,18 @@
 ﻿#ifndef XMODBUSCOMMEVENT_H
 #define XMODBUSCOMMEVENT_H
 
-#include <stdint.h>
-#include <stdbool.h>
+#include "XModbus_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if XPROTOCOL_ON
+#if XMODBUS_ON
+#if XMODBUS_CORE_ON
+
+#include <stdint.h>
+#include <stdbool.h>
 
 /**
  * @file XModbusCommEvent.h
@@ -251,6 +257,10 @@ XModbusCommEvent_EventByte XModbusCommEvent_combineEventByte(XModbusCommEvent_Ev
  * @return 组合后的事件字节值
  */
 XModbusCommEvent_EventByte XModbusCommEvent_combineEventByteWithReceive(XModbusCommEvent_EventByte byte, XModbusCommEvent_ReceiveFlag flag);
+
+#endif /* XMODBUS_CORE_ON */
+#endif /* XMODBUS_ON */
+#endif /* XPROTOCOL_ON */
 
 #ifdef __cplusplus
 }

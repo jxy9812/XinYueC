@@ -19,7 +19,7 @@ typedef struct XTestMenu XTestMenu;
 /** @brief 运行离线 XSsl、XSslSocket 与 PSA AEAD 回归测试。 */
 bool XSslTest_runAll(void);
 
-#if DEMOTEST
+#if DEMOTEST_ON
 void XTestMenu_XSslTest(XTestMenu* root);
 #endif
 

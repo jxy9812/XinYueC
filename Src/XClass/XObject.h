@@ -1,4 +1,11 @@
-﻿#ifndef XOBJECT_H
+﻿/**
+ * @file       XObject.h
+ * @brief      XObject 对象基类公开 API。
+ * @details    对齐 Qt 6.8 QObject：提供对象树（父子关系）、事件系统（过滤器、
+ *             投递/发送）、定时器、信号与槽、动态属性与延迟删除等对象基础设施。
+ *             实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
+ */
+#ifndef XOBJECT_H
 #define XOBJECT_H
 #ifdef __cplusplus
 extern "C" {
@@ -11,7 +18,7 @@ extern "C" {
 #include"XAtomic.h"
 #include"XVarList.h"
 typedef struct XThreadData XThreadData;    ///< 线程私有数据（前向声明，对标 QThreadData）
-#define Signals
+#define XSIGNALS
 /**
  * @brief XObject 类的虚函数表枚举（对标 Qt 6.8 QObject 虚函数）
  * @note 枚举值对应虚函数在虚函数表中的索引，用于实现 C 语言多态机制
@@ -32,31 +39,31 @@ XCLASS_DEFINE_END(XObject)
  */
 typedef struct XObject
 {
-    XClass m_class;                          ///< 继承的基类成员，包含虚函数表指针（实现多态）
-    XAtomic_int32_t m_posted_events;         ///< 已投递但未处理的事件计数（对标 Qt 6.8 QAtomicInt）
+    XClass m_class;                          ///< 第一个成员，由 XClass 管理，禁止手工修改（含虚函数表指针，实现多态）
+    XAtomic_Int32 m_posted_events;         ///< 已投递但未处理的事件计数（对标 Qt 6.8 QAtomicInt）
 
     /* 对象标志位 */
-    uint32_t is_widget : 1;                  ///< 是否为窗口部件
-    uint32_t block_sig : 1;                  ///< 信号是否被阻塞
-    uint32_t was_deleted : 1;                ///< 对象是否已被标记为删除
-    uint32_t is_deleting_children : 1;       ///< 是否正在删除子对象
-    uint32_t send_child_events : 1;          ///< 是否发送子对象事件
-    uint32_t receive_child_events : 1;       ///< 是否接收子对象事件
-    uint32_t is_window : 1;                  ///< 是否为窗口（用于 XWindow）
-    uint32_t delete_later_called : 1;        ///< deleteLater 是否已被调用
-    uint32_t is_quick_item : 1;              ///< 是否为 Quick 项
-    uint32_t will_be_widget : 1;             ///< 构造时将变为窗口部件
-    uint32_t was_widget : 1;                 ///< 析构时曾是窗口部件
-    uint32_t receive_parent_events : 1;      ///< 是否接收父对象事件
-    uint32_t unused : 20;                    ///< 保留位
-    XObject* currentChildBeingDeleted;       ///< 当前正在删除的子对象（对标 QObjectPrivate）
+    uint32_t m_is_widget : 1;                ///< 是否为窗口部件
+    uint32_t m_block_sig : 1;                ///< 信号是否被阻塞
+    uint32_t m_was_deleted : 1;              ///< 对象是否已被标记为删除
+    uint32_t m_is_deleting_children : 1;     ///< 是否正在删除子对象
+    uint32_t m_send_child_events : 1;        ///< 是否发送子对象事件
+    uint32_t m_receive_child_events : 1;     ///< 是否接收子对象事件
+    uint32_t m_is_window : 1;                ///< 是否为窗口（用于 XWindow）
+    uint32_t m_delete_later_called : 1;      ///< deleteLater 是否已被调用
+    uint32_t m_is_quick_item : 1;            ///< 是否为 Quick 项
+    uint32_t m_will_be_widget : 1;           ///< 构造时将变为窗口部件
+    uint32_t m_was_widget : 1;               ///< 析构时曾是窗口部件
+    uint32_t m_receive_parent_events : 1;    ///< 是否接收父对象事件
+    uint32_t m_unused : 20;                  ///< 保留位
+    XObject* m_currentChildBeingDeleted;     ///< 当前正在删除的子对象（对标 QObjectPrivate）
     XSignalSlot* m_signalSlot;               ///< 信号与槽控制器，管理当前对象的所有信号与槽连接关系
 
     /* 父子关系 */
     XObject* m_parent;                       ///< 父对象
     XVector* m_children;                     ///< 子对象列表
     XVector* m_filters;                      ///< 事件过滤器列表
-    XAtomic_uintptr_t m_threadData;          ///< 线程亲和性数据（对标 QObjectPrivate::threadData）
+    XAtomic_Uintptr m_threadData;          ///< 线程亲和性数据（对标 QObjectPrivate::threadData）
 
     /* 对象名称 */
     XString* m_object_name;                  ///< 对象名称
@@ -64,6 +71,10 @@ typedef struct XObject
     /* 动态属性存储（对标 QObjectPrivate::ExtraData） */
     XVector* m_dynamicPropertyNames;         ///< 动态属性名列表（XString*）
     XVector* m_dynamicPropertyValues;        ///< 动态属性值列表（XVariant*）
+
+    /* 事件过滤器回登记：本对象作为过滤器所观察的对象列表（懒创建，对象拥有），
+     * 供本对象先亡时从各被观察对象的 m_filters 中反注册，防止悬挂引用 */
+    XVector* m_watchedObjects;               ///< 本对象作为过滤器所观察的对象列表（XObject*）
 }XObject;
 
 /**
@@ -258,7 +269,8 @@ XObject* XObject_findChild(const XObject* self, const XString* name, XFindChildO
  * @param self 目标对象指针
  * @param name 子对象名称
  * @param options 查找选项
- * @return 匹配的子对象列表指针，未找到返回空列表
+ * @return 匹配的子对象列表指针（新建堆对象，由调用方拥有），未找到返回空列表；
+ *         用完必须由调用方 XClassDelete 释放
  */
 XObjectList* XObject_findChildren(const XObject* self, const XString* name, XFindChildOption options);
 
@@ -268,8 +280,10 @@ XObjectList* XObject_findChildren(const XObject* self, const XString* name, XFin
  * @brief 设置动态属性（对标 Qt 6.8 QObject::setProperty）
  * @param self 目标对象指针
  * @param name 属性名
- * @param value 属性值（XVariant*，所有权转移给对象，由对象管理生命周期）
- * @return 设置成功返回 true，否则返回 false
+ * @param value 属性值（XVariant*）；仅设置成功时所有权转移给对象、由对象管理生命周期，
+ *              设置失败时所有权不转移、仍归调用方，由调用方自行释放
+ * @return 设置成功返回 true，此时 value 所有权已转移给对象；返回 false 时对象未新增
+ *         也未修改任何动态属性，value 所有权仍归调用方
  */
 bool XObject_setProperty(XObject* self, const XString* name, XVariant* value);
 
@@ -294,67 +308,6 @@ XVector* XObject_dynamicPropertyNames(const XObject* self);
  * @param name 属性名
  */
 void XObject_removeProperty(XObject* self, const XString* name);
-
-/* ======================== 受保护的虚函数与辅助函数（需由子类实现或使用） ======================== */
-
-/**
- * @brief 核心事件处理器（对标 Qt 6.8 QObject::event）
- * @param self 目标对象指针
- * @param e 事件指针
- * @return 事件已被处理返回 true，否则返回 false
- * @note 应在子类初始化时通过函数指针重写
- */
-bool XObject_event_base(XObject* self, XEvent* e);
-
-/**
- * @brief 事件过滤器（对标 Qt 6.8 QObject::eventFilter）
- * @param self 目标对象指针
- * @param watched 被监视的对象
- * @param event 事件指针
- * @return 事件已被过滤（不再传播）返回 true，否则返回 false
- * @note watched 对象收到事件时先调用此过滤器
- */
-bool XObject_eventFilter_base(XObject* self, XObject* watched, XEvent* event);
-
-/**
- * @brief 定时器事件回调（对标 Qt 6.8 QObject::timerEvent）
- * @param self 目标对象指针
- * @param event 定时器事件指针
- * @note 定时器触发时被调用
- */
-void XObject_timerEvent_base(XObject* self, XTimerEvent* event);
-
-/**
- * @brief 子对象事件回调（对标 Qt 6.8 QObject::childEvent）
- * @param self 目标对象指针
- * @param event 子对象事件指针
- * @note 子对象被添加、移除或销毁时被调用
- */
-void XObject_childEvent_base(XObject* self, XChildEvent* event);
-
-/**
- * @brief 自定义事件回调（对标 Qt 6.8 QObject::customEvent）
- * @param self 目标对象指针
- * @param event 自定义事件指针
- * @note 用于处理用户自定义的事件类型
- */
-void XObject_customEvent(XObject* self, XEvent* event);
-
-/**
- * @brief 连接通知（对标 Qt 6.8 QObject::connectNotify）
- * @param self 目标对象指针
- * @param signal 信号标识
- * @note 有信号连接到此对象的槽时被调用
- */
-void XObject_connectNotify_base(XObject* self, size_t signal);
-
-/**
- * @brief 断开连接通知（对标 Qt 6.8 QObject::disconnectNotify）
- * @param self 目标对象指针
- * @param signal 信号标识
- * @note 有信号从此对象的槽断开时被调用
- */
-void XObject_disconnectNotify_base(XObject* self, size_t signal);
 
 /* ======================== 信号/槽上下文查询（仅在槽函数内有效） ======================== */
 
@@ -429,7 +382,7 @@ void XObject_dumpObjectInfo(const XObject* self);
  * @param object 发送信号的对象指针（非 NULL）
  * @param signal 信号标识（由 XSignal 宏生成）
  * @param receiver 接收槽函数的对象指针（非 NULL）
- * @param slot_func1 槽函数指针（XSlotFunc1 类型）
+ * @param slot_func 槽函数指针（XSlotFunc1 类型）
  * @param type 连接类型（直接调用/队列调用等）
  * @return 连接对象指针（XConnection*），失败返回 NULL
  * @note 建立信号与槽的关联，当信号发射时触发槽函数
@@ -487,7 +440,7 @@ void XObject_deinitLater(XObject* object);
  */
 void XObject_deleteLater(XObject* object);
 
-Signals
+XSIGNALS
 
 /**
  * @brief 对象销毁信号（对标 Qt 6.8 QObject::destroyed）
@@ -541,7 +494,7 @@ void XObject_objectNameChanged_signal(XObject* object, const XString* objectName
  * @param ref_count 引用计数（可为 NULL，用于管理参数生命周期）
  * @param priority 信号优先级
  */
-void XObject_emitSignal(XObject* object, size_t signal, XVarList * args, void(*del)(XVarList*), XAtomic_int32_t* ref_count, XEventPriority priority);
+void XObject_emitSignal(XObject* object, size_t signal, XVarList * args, void(*del)(XVarList*), XAtomic_Int32* ref_count, XEventPriority priority);
 
 #ifdef __cplusplus
 }

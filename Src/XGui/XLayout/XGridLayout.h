@@ -122,15 +122,25 @@ typedef struct XGridLayoutCell
 typedef struct XGridLayout
 {
     XLayout                m_base;          /**< 基类成员；必须是第一个。 */
+
+    /* ---- 8 字节对齐组：数组指针（对齐分组前移，消除原布局
+     *      0xac/0xbc/0xcc/0xdc 各 4B 与 0x109 7B 空洞；成员访问一律
+     *      按名，无位置初始化/offsetof 依赖） ---- */
     XGridLayoutCell*       m_cells;         /**< 单元格数组（与条目平行）。 */
-    int                    m_cellCapacity;  /**< 单元格数组容量。 */
     int*                   m_rowStretch;    /**< 行伸展因子数组。 */
-    int                    m_rowStretchCapacity;  /**< 行伸展数组容量。 */
     int*                   m_columnStretch;       /**< 列伸展因子数组。 */
-    int                    m_columnStretchCapacity; /**< 列伸展数组容量。 */
     int*                   m_rowMinHeight;  /**< 行最小高度数组。 */
-    int                    m_rowMinHeightCapacity; /**< 行最小高度数组容量。 */
     int*                   m_columnMinWidth;       /**< 列最小宽度数组。 */
+    int*                   m_cacheColPos;   /**< 列位置缓存（cellRect）。 */
+    int*                   m_cacheColSize;  /**< 列宽度缓存（cellRect）。 */
+    int*                   m_cacheRowPos;   /**< 行位置缓存（cellRect）。 */
+    int*                   m_cacheRowSize;  /**< 行高度缓存（cellRect）。 */
+
+    /* ---- 4 字节对齐组：容量 / 间距 / 行列数 / 缓存计数 ---- */
+    int                    m_cellCapacity;  /**< 单元格数组容量。 */
+    int                    m_rowStretchCapacity;  /**< 行伸展数组容量。 */
+    int                    m_columnStretchCapacity; /**< 列伸展数组容量。 */
+    int                    m_rowMinHeightCapacity; /**< 行最小高度数组容量。 */
     int                    m_columnMinWidthCapacity; /**< 列最小宽度数组容量。 */
     int                    m_hSpacing;      /**< 水平间距；-1 沿用父级默认。 */
     int                    m_vSpacing;      /**< 垂直间距；-1 沿用父级默认。 */
@@ -139,15 +149,13 @@ typedef struct XGridLayout
     int                    m_columnCount;   /**< 当前网格列数（初始为 1）。 */
     int                    m_nextR;         /**< 默认定位游标行（对标 Qt nextR）。 */
     int                    m_nextC;         /**< 默认定位游标列（对标 Qt nextC）。 */
-    uint8_t                m_addVertical;   /**< 默认定位方向：1=先竖后横、0=先横后竖（对标 Qt addVertical）。 */
-    int*                   m_cacheColPos;   /**< 列位置缓存（cellRect）。 */
-    int*                   m_cacheColSize;  /**< 列宽度缓存（cellRect）。 */
-    int*                   m_cacheRowPos;   /**< 行位置缓存（cellRect）。 */
-    int*                   m_cacheRowSize;  /**< 行高度缓存（cellRect）。 */
     int                    m_cacheColPosCount;  /**< 列位置缓存容量。 */
     int                    m_cacheColSizeCount; /**< 列尺寸缓存容量。 */
     int                    m_cacheRowPosCount;  /**< 行位置缓存容量。 */
     int                    m_cacheRowSizeCount; /**< 行尺寸缓存容量。 */
+
+    /* ---- 1 字节标志（尾部填充） ---- */
+    uint8_t                m_addVertical;   /**< 默认定位方向：1=先竖后横、0=先横后竖（对标 Qt addVertical）。 */
 } XGridLayout;
 
 /* ==================== 类初始化与生命周期 ==================== */
@@ -174,9 +182,6 @@ void XGridLayout_init(XGridLayout* self);
  * @return     堆上新建布局对象；失败返回 NULL。
  */
 XGridLayout* XGridLayout_create(XWidget* parent);
-
-/** @brief 通过 XClass 虚表释放网格布局资源。 */
-/** @brief 删除堆上的网格布局对象。 */
 
 /* ==================== 间距（对标 QGridLayout） ==================== */
 

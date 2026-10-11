@@ -393,7 +393,7 @@ static void processReceivedFrame(XModbusRtuSerialClient* client, XByteArray* rec
     XModbusDataUnit* resultUnit = client->m_currentReply->m_result;
 
     /* XString* text= XByteArray_to16HexString(receiveBuffer);
-     XPrintf_2(text);
+     XPrintf_string(text);
      XPrintf("\n");
      XClassDelete(text);*/
 
@@ -478,7 +478,7 @@ bool startNewRequest(XModbusRtuSerialClient* client)
     XContainerSize(rtuClient->m_requestData) += 2;
 
     /* XString* text= XByteArray_to16HexString(rtuClient->m_requestData);
-     XPrintf_2(text);
+     XPrintf_string(text);
      XPrintf("\n");
      XClassDelete(text);*/
 
@@ -701,6 +701,12 @@ static void VXModbusRtuSerialClient_deinit(XModbusRtuSerialClient* client)
     if (client->m_receiveBuffer) {
         XClassDelete(client->m_receiveBuffer);
         client->m_receiveBuffer = NULL;
+    }
+    // 释放请求队列容器（init 中创建；队列内的 XModbusReply* 归调用方所有，
+    // 这里只销毁容器本身，不触碰队列元素）
+    if (client->m_queue) {
+        XClassDelete(client->m_queue);
+        client->m_queue = NULL;
     }
     if (client->m_currentReply) {
         XModbusReply_setError(client->m_currentReply, XModbusDevice_TimeoutError, "Device closed");

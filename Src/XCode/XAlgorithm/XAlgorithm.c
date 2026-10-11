@@ -2,10 +2,8 @@
 #include"XClass.h"
 #include"XStack.h"
 #include"XVector.h"
-#include<stdio.h>
-#include<stdlib.h>
 #include<string.h>
-void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据类型的函数
+void XMemory_swap(void* valOne, void* valTwo, const int typeSize)//交换任意数据类型的函数
 {
 	if (valOne == NULL || valTwo == NULL || typeSize <= 0)
 	{
@@ -41,11 +39,7 @@ void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据�
 		else
 		{
 			void* valMiddle = XMalloc_System(typeSize);
-			if (valMiddle == NULL)
-			{
-				XERROR_PRINTF("交换函数创建p临时空间失败");
-				exit(-1);
-			}
+			XAssert(valMiddle, "交换函数创建p临时空间失败");
 			memcpy(valMiddle, valOne, typeSize);
 			memcpy(valOne, valTwo, typeSize);
 			memcpy(valTwo, valMiddle, typeSize);
@@ -54,7 +48,7 @@ void XSwap(void* valOne, void* valTwo, const int typeSize)//交换任意数据�
 	}
 }
 
-void XStackRCopyXVector(const XStack* stack, XVector* vector)
+void XStack_RCopyXVector(const XStack* stack, XVector* vector)
 {
 #if XStack_ON
 	size_t Size = XStack_size_base(stack);
@@ -79,7 +73,7 @@ void XStackRCopyXVector(const XStack* stack, XVector* vector)
 #endif
 }
 
-void XStackCopyXVector(const XStack* stack, XVector* vector)
+void XStack_CopyXVector(const XStack* stack, XVector* vector)
 {
 #if XStack_ON
 	size_t Size = XStack_size_base(stack);
@@ -99,7 +93,7 @@ void XStackCopyXVector(const XStack* stack, XVector* vector)
 #endif
 }
 
-uint16_t SwapEndian16(uint16_t data, uint8_t mode)
+uint16_t XAlgorithm_swapEndian16(uint16_t data, uint8_t mode)
 {
 #if IS_BIG_ENDIAN
 	if (mode) {

@@ -2,7 +2,8 @@
  * @file       XScatterSeries.h
  * @brief      XScatterSeries 散点序列（对标 Qt Charts 6.8 QScatterSeries）。
  * @details    继承 XXYSeries（QXYSeries 对齐）；自有标记形状/边框色。
- * @note       模块总开关 XCHARTS_ON。
+ * @note       模块总开关 XCHARTS_ON；实现只依赖 XinYueC 抽象层，
+ *             禁止调用 Win32、POSIX、Qt 或其他平台 API。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XSCATERSERIES_H
@@ -47,12 +48,14 @@ XVtable* XScatterSeries_class_init(void);
  */
 void XScatterSeries_init(XScatterSeries* self);
 
+/**
+ * @brief 在堆上创建散点序列（对标 QScatterSeries 构造）。
+ *
+ * @param memory 内存类型。
+ * @return 新序列指针；分配失败返回 NULL，调用方用 XClassDelete 释放。
+ */
 XScatterSeries* XScatterSeries_create_ex(XMemoryType memory);
 #define XScatterSeries_create() XScatterSeries_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
-
-/** @brief 析构入口（查表分派父类析构）。 */
-
-/** @brief 删除堆上序列（查表分派析构并释放内存）。 */
 
 /** @brief 设置标记形状。 @param self 目标序列指针。 @param shape 形状枚举。 @return 无返回值。 */
 void XScatterSeries_setMarkerShape(XScatterSeries* self, int shape);

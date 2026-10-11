@@ -49,6 +49,12 @@ int64_t XSystem_platformPid(void)
     return 0;
 }
 
+bool XSystem_platformProcessAlive(int64_t pid)
+{
+    (void)pid;
+    return false;
+}
+
 bool XSystem_platformExecutableFilePath(char* path, size_t cap)
 {
     (void)path;

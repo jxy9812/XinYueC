@@ -273,14 +273,12 @@ static void VXTabWidget_deinit(XTabWidget* self)
     int i;
     if (!self) return;
     if (self->m_pages) {
-        /* 页容器为 XWidget_init 的嵌入式堆对象（对齐 removeTab 惯例：
-           deinit_base + XFree_System，而非 delete_base——delete_base
-           仅对 IsHeap=true 的对象释放存储，测试的 XMemory_malloc+init
-           页对象会泄漏本体）。 */
+        /* 页容器为堆对象（insertTab 处 XMemory_malloc + Set_Class_Memory +
+           IsHeap(true)）：统一经 XClassDelete 虚析构并按登记分配器归还
+           本体（同 removeTab 的 deleteLater → delete_base 释放路径）。 */
         for (i = 0; i < self->m_count; ++i) {
             if (self->m_pages[i]) {
-                XClassDeinit(self->m_pages[i]);
-                XFree_System(self->m_pages[i]);
+                XClassDelete((XClass*)self->m_pages[i]);
                 self->m_pages[i] = NULL;
             }
         }
@@ -317,6 +315,7 @@ XVtable* XTabWidget_class_init(void)
 void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
+    XMemset(self, 0, sizeof(XTabWidget)); /* 先清零子类字段，再走父类 init。 */
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XTabWidget);
 

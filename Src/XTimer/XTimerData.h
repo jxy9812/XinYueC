@@ -24,6 +24,7 @@ typedef struct XTimerGroupBase XTimerGroupBase;
 
 typedef struct XTimerData
 {
+	XClass m_class;						///< 基类（第一个成员，由 XClass 管理，禁止手工修改）
 	uint32_t m_autoDelete : 1;			///< 定时器超时后是否自动释放  
 	uint32_t m_isSingleShot : 1;		///< 是否为单次定时器（true：只触发一次，false：周期性触发）
 	XTimerId timerId;					///< 定时器唯一标识ID

@@ -13,17 +13,17 @@
  * @author     XinYueC 团队
  */
 
+#include "XGraphicsDropShadowEffect.h"
+
 #include "XGuiConfig.h"
 #include "XMemory.h"
-
-#if XWIDGET_ON
-
-#include "XGraphicsDropShadowEffect.h"
 #include "XWidget.h"
 #include "XImage.h"
 #include "XPainter.h"
 
 #include <math.h>
+
+#if XWIDGET_ON
 
 /** @brief 投影模糊扩散外扩量（固定 3x3 两趟盒式核各扩散 1px）。 */
 #define XGRAPHICSDROPSHADOW_PAD 2.0f

@@ -38,7 +38,7 @@ typedef struct XHrTimerGroup
     XTimerGroupBase m_class;         ///< 继承自 XTimerGroupBase
     XRBTreeNode* m_rbtree_root;      ///< 红黑树根节点
     XRBTreeNode* m_min_node;         ///< 指向到期时间最小的节点，用于O(1)查找
-    XAtomic_size_t m_count;          ///< 正在管理的定时器数量
+    XAtomic_SizeT m_count;          ///< 正在管理的定时器数量
     XMutex* m_mutex;                 ///< 互斥锁，保证线程安全
 } XHrTimerGroup;
 

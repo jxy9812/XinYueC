@@ -17,7 +17,7 @@
 
 
 /** @brief Create 虚槽：仅接受 svg/svgz 后缀，返回 XSvgIconEngine。 */
-static XIconEngine* VSvgPlugin_create(XIconEnginePlugin* self,
+static XIconEngine* VSvgIconEnginePlugin_create(XIconEnginePlugin* self,
                                       const XString* fileName)
 {
     const char* utf8;
@@ -29,7 +29,7 @@ static XIconEngine* VSvgPlugin_create(XIconEnginePlugin* self,
 }
 
 /** @brief Keys 虚槽：支持 svg/svgz。 */
-static XStringList* VSvgPlugin_keys(const XIconEnginePlugin* self)
+static XStringList* VSvgIconEnginePlugin_keys(const XIconEnginePlugin* self)
 {
     XStringList* list;
     (void)self;
@@ -44,12 +44,12 @@ XVtable* XSvgIconEnginePlugin_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XSvgIconEnginePlugin)
     XVTABLE_INHERIT_XCLASS(XIconEnginePlugin);
-    XVTABLE_OVERLOAD_DEFAULT(EXIconEnginePlugin_Create, VSvgPlugin_create);
-    XVTABLE_OVERLOAD_DEFAULT(EXIconEnginePlugin_Keys, VSvgPlugin_keys);
+    XVTABLE_OVERLOAD_DEFAULT(EXIconEnginePlugin_Create, VSvgIconEnginePlugin_create);
+    XVTABLE_OVERLOAD_DEFAULT(EXIconEnginePlugin_Keys, VSvgIconEnginePlugin_keys);
     return XVTABLE_DEFAULT;
 }
 
-static void VSvgPlugin_init(XSvgIconEnginePlugin* self)
+static void svgIconEnginePlugin_init(XSvgIconEnginePlugin* self)
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
@@ -65,7 +65,7 @@ XSvgIconEnginePlugin* XSvgIconEnginePlugin_create(void)
         (XSvgIconEnginePlugin*)XMemory_malloc(sizeof(*self),
                                               XCLASS_DEFAULT_MEMORY_TYPE);
     if (!self) return NULL;
-    VSvgPlugin_init(self);
+    svgIconEnginePlugin_init(self);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, true);
     return self;

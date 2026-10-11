@@ -138,21 +138,33 @@ XCLASS_DEFINE_EXTEND_END(XChart, XObject)
 typedef struct XChart
 {
     XObject m_base;           /**< 基类成员；必须是第一个，由 XClass 管理。 */
+
+    /* ---- 8 字节对齐组：指针数组 / 双精度域（对齐分组前移，消除原布局
+     *      0x7a/0xd4/0x104/0x12c/0x154/0x1d4/0x1f2/0x225/0x231/0x384 等
+     *      空洞；成员访问一律按名，无位置初始化/offsetof 依赖） ---- */
     XString* m_title;         /**< 图表标题（对象拥有）。 */
-    bool m_legendVisible;     /**< 图例可见（默认 true）。 */
-    bool m_titleVisible;      /**< 标题可见（默认 true）。 */
     XValueAxis* m_axisX;      /**< X 数值轴（内部拥有）。 */
     XValueAxis* m_axisY;      /**< Y 数值轴（内部拥有）。 */
     XLineSeries* m_lineSeries[8];   /**< 折线序列集合（内部拥有）。 */
-    int m_lineCount;          /**< 折线序列数。 */
     XPieSeries* m_pieSeries;  /**< 饼图序列（内部拥有；单例）。 */
     XBarSeries* m_barSeries[4];     /**< 柱状序列集合（内部拥有）。 */
-    int m_barCount;           /**< 柱状序列数。 */
     XScatterSeries* m_scatterSeries[4]; /**< 散点序列集合。 */
-    int m_scatterCount;       /**< 散点序列数。 */
     XAreaSeries* m_areaSeries[4];   /**< 面积序列集合。 */
-    int m_areaCount;          /**< 面积序列数。 */
     XSplineSeries* m_splineSeries[4]; /**< 样条序列集合。 */
+    XString* m_titleFamily;   /**< 标题字体家族（对象拥有；对标 setTitleFont().family()）。 */
+    XString* m_locale;        /**< 区域名称（对象拥有；对标 locale）。 */
+    double m_defaultMinX;     /**< 初始 X 域下界（zoomReset 恢复用）。 */
+    double m_defaultMaxX;     /**< 初始 X 域上界（zoomReset 恢复用）。 */
+    double m_defaultMinY;     /**< 初始 Y 域下界（zoomReset 恢复用）。 */
+    double m_defaultMaxY;     /**< 初始 Y 域上界（zoomReset 恢复用）。 */
+    void* m_series[24];       /**< 泛型序列表（加入顺序；内部拥有）。 */
+    XRectF* m_zoomStack;      /**< 缩放域栈（数据域矩形；内部拥有）。 */
+
+    /* ---- 4 字节对齐组：序列计数 / 主题色板 / 几何与动画 ---- */
+    int m_lineCount;          /**< 折线序列数。 */
+    int m_barCount;           /**< 柱状序列数。 */
+    int m_scatterCount;       /**< 散点序列数。 */
+    int m_areaCount;          /**< 面积序列数。 */
     int m_splineCount;        /**< 样条序列数。 */
     uint32_t m_theme[8];      /**< 当前主题序列色板缓存（ARGB；对标 seriesColors）。 */
     XChart_ChartTheme m_themeId; /**< 当前主题 ID（对标 theme()）。 */
@@ -169,34 +181,30 @@ typedef struct XChart
     int m_themeOutlineWidth;  /**< 主题轮廓画笔宽（像素）。 */
     uint32_t m_themeShadesBrush; /**< 主题阴影带画刷色（ARGB；0=无；对标 backgroundShadesBrush）。 */
     int m_themeShadesMode;    /**< 主题阴影带模式（0 无/1 垂直/2 水平/3 双向；对标 BackgroundShadesMode）。 */
-    XString* m_titleFamily;   /**< 标题字体家族（对象拥有；对标 setTitleFont().family()）。 */
     int m_titlePixelSize;     /**< 标题字号（像素；<=0 用视图默认）。 */
     uint32_t m_titleBrush;    /**< 标题画刷色（ARGB；0=跟随窗口文本色）。 */
     uint32_t m_backgroundBrush; /**< 背景画刷色（ARGB；0=调色板 Base）。 */
     uint32_t m_backgroundPen;   /**< 背景画笔色（ARGB；0=无描边）。 */
-    bool m_backgroundVisible; /**< 背景可见（默认 true）。 */
-    bool m_dropShadowEnabled; /**< 背景投影（属性存储；渲染待后续批次）。 */
     float m_backgroundRoundness; /**< 背景圆角直径（对标 backgroundRoundness）。 */
     XChart_AnimationOptions m_animationOptions; /**< 动画选项（对标 animationOptions）。 */
     int m_animationDuration;  /**< 动画时长（毫秒）。 */
     int m_animationEasingCurve; /**< 缓动类型（XEasingCurve_Type；默认 Linear）。 */
     XMargins m_margins;       /**< 图表边距（对标 margins；<=0 用视图默认）。 */
     XRectF m_plotArea;        /**< 绘图区矩形（视图坐标；对标 plotArea）。 */
-    bool m_plotAreaBackgroundVisible; /**< 绘图区背景可见（对标 isPlotAreaBackgroundVisible）。 */
     uint32_t m_plotAreaBackgroundBrush; /**< 绘图区背景画刷色（ARGB）。 */
     uint32_t m_plotAreaBackgroundPen;   /**< 绘图区背景画笔色（ARGB）。 */
-    bool m_localizeNumbers;   /**< 本地化数字（对标 localizeNumbers；属性存储）。 */
-    XString* m_locale;        /**< 区域名称（对象拥有；对标 locale）。 */
-    double m_defaultMinX;     /**< 初始 X 域下界（zoomReset 恢复用）。 */
-    double m_defaultMaxX;     /**< 初始 X 域上界（zoomReset 恢复用）。 */
-    double m_defaultMinY;     /**< 初始 Y 域下界（zoomReset 恢复用）。 */
-    double m_defaultMaxY;     /**< 初始 Y 域上界（zoomReset 恢复用）。 */
-    void* m_series[24];       /**< 泛型序列表（加入顺序；内部拥有）。 */
     XChartSeriesType m_seriesTypes[24]; /**< 泛型序列类型表。 */
     int m_seriesCount;        /**< 泛型序列数。 */
-    XRectF* m_zoomStack;      /**< 缩放域栈（数据域矩形；内部拥有）。 */
     int m_zoomCount;          /**< 缩放栈深度。 */
     int m_zoomCapacity;       /**< 缩放栈容量。 */
+
+    /* ---- 1 字节标志组（尾部填充；全部无取址使用） ---- */
+    bool m_legendVisible;     /**< 图例可见（默认 true）。 */
+    bool m_titleVisible;      /**< 标题可见（默认 true）。 */
+    bool m_backgroundVisible; /**< 背景可见（默认 true）。 */
+    bool m_dropShadowEnabled; /**< 背景投影（属性存储；渲染待后续批次）。 */
+    bool m_plotAreaBackgroundVisible; /**< 绘图区背景可见（对标 isPlotAreaBackgroundVisible）。 */
+    bool m_localizeNumbers;   /**< 本地化数字（对标 localizeNumbers；属性存储）。 */
 } XChart;
 
 /** @brief 析构入口（查表分派父类析构；对标 C++ 虚析构语义）。 */

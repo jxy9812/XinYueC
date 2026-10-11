@@ -1,4 +1,12 @@
-﻿#ifndef XIODevice_H
+﻿/**
+ * @file       XIODevice.h
+ * @brief      IO 设备抽象基类公开 API。
+ * @details    对齐 Qt QIODevice；提供打开模式、缓冲读写、行读取、事务与
+ *             多通道支持，底层 readData/writeData 由子类经虚函数表实现。
+ *             实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或
+ *             其他平台 API，平台差异由具体子类适配。
+ */
+#ifndef XIODevice_H
 #define XIODevice_H
 #ifdef __cplusplus
 extern "C" {
@@ -50,13 +58,13 @@ typedef enum /*XIODevice*/
 //IO设备
 typedef struct XIODevice
 {
-	XObject m_class;//继承类
+	XObject m_class;//继承类：第一个成员，由 XClass 管理，禁止手工修改
     XFd      m_fd;                       /**< @brief XFileDescriptor 统一标识符（继承层级使用） */
-    bool m_textModeEnabled;
+    bool m_textModeEnabled;             /**< 是否启用文本模式（自动转换换行符）；由 XIODevice_setTextModeEnabled 设置 */
     uint8_t m_openMode;//打开模式
-    uint8_t m_currentReadChannel;       // ← 多通道支持
-    uint8_t m_currentWriteChannel;
-    XIODevicePrivate* m_d;
+    uint8_t m_currentReadChannel;       /**< 当前读通道索引；有效范围 [0, readChannelCount-1]，单通道设备固定为 0 */
+    uint8_t m_currentWriteChannel;      /**< 当前写通道索引；有效范围 [0, writeChannelCount-1]，单通道设备固定为 0 */
+    XIODevicePrivate* m_d;              /**< 私有实现数据（通道缓冲、事务、错误串），由对象拥有并在析构时释放；仅供实现使用，禁止直接访问；init 分配失败时可为 NULL */
 }XIODevice;
 
 /** XFileDescriptor 统一标识符（继承层级使用） */
@@ -191,6 +199,15 @@ void XIODevice_setCurrentWriteChannel(XIODevice* self, int channel);
  * @note 此函数会调用底层的 readData 虚函数
  */
 int64_t XIODevice_read_1(XIODevice* self, char* data, int64_t maxlen);
+/**
+ * @brief 从设备中读取最多 maxlen 个字节的数据到 XByteArray 缓冲区中
+ * @param self 指向 XIODevice 对象的指针
+ * @param buff 调用方提供的 XByteArray 存储空间；函数按 isAppend 调整其大小并写入数据
+ * @param maxlen 要读取的最大字节数
+ * @param isAppend 为 true 时在 buff 现有内容后追加，为 false 时覆盖原有内容
+ * @return 实际读取的字节数；参数非法或读取失败时返回 0
+ * @note 内部经 XIODevice_read_1 调用底层 readData 虚函数
+ */
 int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen, bool isAppend);
 /**
  * @brief 从设备中读取最多 maxlen 个字节的数据，并返回一个新的 XByteArray 对象
@@ -202,13 +219,28 @@ int64_t XIODevice_read_2(XIODevice* self, XByteArray* buff, int64_t maxlen, bool
 XByteArray* XIODevice_read_3(XIODevice* self, int64_t maxlen);
 
 /**
- * @brief 从设备中读取所有可用数据
+ * @brief 从设备中读取所有可用数据到调用方缓冲区中
  * @param self 指向 XIODevice 对象的指针
- * @return 包含所有读取数据的 XByteArray 对象指针
- * @note 返回的对象需要手动释放。此函数会循环调用 read 直到无数据可读
+ * @param buff 调用方提供用于存放读取数据的缓冲区，借用、不会取得所有权
+ * @param buffSize 缓冲区容量（字节数）
+ * @return 实际读取的字节数；参数非法或设备不可读时返回 0
+ * @note 可用字节数超过 buffSize 时按 buffSize 截断
  */
 int64_t XIODevice_readAll_1(XIODevice* self, char* buff, int64_t buffSize);
+/**
+ * @brief 从设备中读取所有可用数据到 XByteArray 缓冲区中
+ * @param self 指向 XIODevice 对象的指针
+ * @param buff 调用方提供的 XByteArray 存储空间；函数按 isAppend 调整其大小并写入数据
+ * @param isAppend 为 true 时在 buff 现有内容后追加，为 false 时覆盖原有内容
+ * @return 实际读取的字节数；参数非法时返回 0
+ */
 int64_t XIODevice_readAll_2(XIODevice* self, XByteArray* buff,bool isAppend);
+/**
+ * @brief 从设备中读取所有可用数据，并返回一个新的 XByteArray 对象
+ * @param self 指向 XIODevice 对象的指针
+ * @return 包含所有读取数据的 XByteArray 对象指针，创建失败时返回 NULL
+ * @note 返回的对象需要手动释放
+ */
 XByteArray* XIODevice_readAll_3(XIODevice* self);
 
 /**
@@ -219,6 +251,12 @@ XByteArray* XIODevice_readAll_3(XIODevice* self);
  * @return 实际读取的字节数（包含换行符），若发生错误则返回 -1
  */
 int64_t XIODevice_readLine_1(XIODevice* self, char* data, int64_t maxlen);
+/**
+ * @brief 从设备中读取一行数据到 XByteArray 缓冲区中
+ * @param self 指向 XIODevice 对象的指针
+ * @param buff 调用方提供的 XByteArray 存储空间；函数按可用字节数调整其大小并写入数据
+ * @return 实际读取的字节数（含换行符）；无数据或参数非法时返回 0
+ */
 int64_t XIODevice_readLine_2(XIODevice* self, XByteArray* buff);
 /**
  * @brief 从设备中读取一行数据，并返回一个新的 XByteArray 对象
@@ -296,6 +334,13 @@ bool XIODevice_flush(XIODevice* self);
  * @return 实际窥探到的字节数
  */
 int64_t XIODevice_peek_1(XIODevice* self, char* data, int64_t maxlen);
+/**
+ * @brief 从设备中窥探（不移除）最多 maxlen 个字节的数据到 XByteArray 缓冲区中
+ * @param self 指向 XIODevice 对象的指针
+ * @param buff 调用方提供的 XByteArray 存储空间；函数将其调整为 maxlen 并写入窥探数据
+ * @param maxlen 要窥探的最大字节数
+ * @return 实际窥探到的字节数；失败时返回 0
+ */
 int64_t XIODevice_peek_2(XIODevice* self, XByteArray* buff, int64_t maxlen);
 /**
  * @brief 从设备中窥探（不移除）最多 maxlen 个字节的数据，并返回一个新的 XByteArray 对象

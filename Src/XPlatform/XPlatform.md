@@ -270,7 +270,7 @@ ODBC、Embedded 和 Custom 是实现路径，不是具体数据库产品，因�
 1. 在后端目录定义驱动结构体、结果结构体和创建器。
 2. 使用 XSqlDriverCreatorMethod 或对应创建器接口提供驱动创建方法。
 3. 对自定义后端在程序初始化阶段调用 XSqlDatabase_registerSqlDriver 或按类型注册接口；SQLite 由 XSqlDatabase_addDatabase 首次使用时自动完成内置源码注册。
-4. 应用通过 XSqlDatabase_addDatabase 或 XSqlDatabase_addDatabase_utf8 选择连接。
+4. 应用通过 XSqlDatabase_addDatabase（XString 连接名）、XSqlDatabase_addDatabase_2（UTF-8 连接名）或 XSqlDatabase_addDatabase_utf8（按驱动名称）选择连接。
 5. 连接创建后，公共 XSqlQuery 和模型类不再关心具体后端。
 
 静态注册的优点：
@@ -292,7 +292,7 @@ ODBC、Embedded 和 Custom 是实现路径，不是具体数据库产品，因�
 - 已实现单连接生命周期、预处理、位置和命名绑定、事务、NULL、BLOB、最后插入行 ID、缓存游标和表/字段/主键元数据。
 - 结果集使用 XMemory 缓存行数据，因此支持 `first/last/previous/seek` 和模型一次性加载；大结果集的内存成本需要由产品评估。
 - 已实现 SQLite 能力枚举、标识符双引号转义、事件通知和 SQLite 错误码转换；`CancelQuery` 按 Qt QSQLITE 语义保持不支持并返回 `false`。
-- `XSqlDatabase_addDatabase(XSqlDriverType_Sqlite, name)` 会自动注册内置源码创建器，不需要动态插件。
+- `XSqlDatabase_addDatabase_2(XSqlDriverType_Sqlite, name)` 会自动注册内置源码创建器，不需要动态插件。
 - `Library/sqlite/sqlite3.c` 和 `sqlite3.h` 是可替换的源码组件；当前来自 Qt 6.8.3 自带的 SQLite 3.49.1。
 - `Library/sqlite/sqlite3_xin_memory.c` 使用带对齐头的 XMemory 包装器提供 SQLite allocator，避免适配层直接使用 C 分配函数。
 - `Library/sqlite/sqlite3_xin_vfs.c` 实现 `xin_xfile` VFS，文件打开、删除、定位、读写、扩容、刷新和大小查询均通过 XFile 的 `XDeviceFile_*` 抽象接口。

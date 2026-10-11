@@ -49,17 +49,31 @@ typedef struct XDialog
                                 XDialog_decorationTopOffset）。 */
 } XDialog;
 
-/** @brief XDialogclassinit（对标 Qt 同名接口）。
- * @return 返回对象指针；无效时返回 NULL。
+/**
+ * @brief      初始化 XDialog 类虚函数表（对标 QDialog 类元对象初始化）。
+ * @details    进程内单例：首次调用建表并继承 XWidget 虚表，重复调用
+ *             返回同一份共享虚表。
+ * @return     返回 XDialog 共享虚表指针。
  */
 XVtable* XDialog_class_init(void);
-/** @brief XDialoginit（对标 Qt 同名接口）。
- * @param self 目标控件指针。
- * @param parent 父控件指针；可为 NULL。
- * @param flags 窗口标志位组合。
- * @return 无返回值。
+/**
+ * @brief      初始化对话框控件（对标 QDialog 构造）。
+ * @details    flags 不含窗口类型位时自动叠加 Dialog 类型（恒为独立
+ *             顶层窗口）；结果码初值 0、默认非模态。栈对象须与
+ *             XClassDeinit 成对使用。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     无返回值。
  */
 void XDialog_init(XDialog* self, XWidget* parent, XWidgetFlags flags);
+/**
+ * @brief      以默认内存类型创建 XDialog 堆对象（转发
+ *             XDialog_create_ex）。
+ * @param      parent 父控件借用指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     新对象指针，调用方拥有，须 XClassDelete；失败返回 NULL。
+ */
 #define XDialog_create(parent, flags) XDialog_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /** @brief XDialogcreateex（对标 Qt 同名接口）。
  * @param memory XMemoryType 参数。
@@ -80,30 +94,54 @@ XDialog* XDialog_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags fla
 int XDialog_exec(XDialog* self);
 /**
  * @brief      关闭对话框并设置结果码（对标 QDialog::done）。
+ * @details    隐藏对话框、解除应用模态登记并恢复 open() 临时切换的
+ *             窗口模态；随后按结果码发射 accepted()/rejected()，再发射
+ *             finished(result)。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      result 结果码（XDialogCode 或标准按钮位值），经 result()
+ *             回读。
+ * @return     无返回值。
  */
 void XDialog_done(XDialog* self, int result);
 /**
  * @brief      以接受方式关闭对话框（对标 QDialog::accept；result=1）。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @return     无返回值。
  */
 void XDialog_accept(XDialog* self);
 /**
  * @brief      以拒绝方式关闭对话框（对标 QDialog::reject；result=0）。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @return     无返回值。
  */
 void XDialog_reject(XDialog* self);
 /**
  * @brief      获取最近一次结果码（对标 QDialog::result）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     最近一次 done/accept/reject 写入或 setResult 设置的
+ *             结果码；无效时返回 0。
  */
 int XDialog_result(const XDialog* self);
 /**
  * @brief      设置结果码（对标 QDialog::setResult）。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      result 结果码（XDialogCode 或标准按钮位值）。
+ * @return     无返回值。
  */
 void XDialog_setResult(XDialog* self, int result);
 /**
  * @brief      设置模态标志（对标 QDialog::setModal）。
+ * @details    置 true 且窗口模态仍为 NonModal 时同步改为应用模态，
+ *             使 isModal()/XWidget_isModal() 查询一致。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      modal true 应用模态；false 非模态。
+ * @return     无返回值。
  */
 void XDialog_setModal(XDialog* self, bool modal);
 /**
  * @brief      获取模态标志（对标 QDialog::isModal）。
+ * @param      self 目标对话框；可为 NULL。
+ * @return     模态返回 true；无效时返回 false。
  */
 bool XDialog_isModal(const XDialog* self);
 /**
@@ -158,18 +196,30 @@ int XDialog_decorationTopOffset(const XDialog* self);
 /* ==================== 信号 ==================== */
 
 /**
- * @brief      接受信号（真发射）。
+ * @brief      接受信号（真发射；done(result=Accepted)/accept 内发射）。
+ * @param      self 目标控件指针。
+ * @return     信号标识地址（发射经 XObject_emitSignal）。
  */
 void* XDialog_accepted_signal(XDialog* self);
 /**
- * @brief      拒绝信号（真发射）。
+ * @brief      拒绝信号（真发射；done(result=Rejected)/reject 内发射）。
+ * @param      self 目标控件指针。
+ * @return     信号标识地址（发射经 XObject_emitSignal）。
  */
 void* XDialog_rejected_signal(XDialog* self);
 /**
- * @brief      完成信号（真发射）。
+ * @brief      完成信号（真发射；done 收口时在 accepted/rejected 之后
+ *             发射）。
+ * @param      self 目标控件指针。
+ * @param      result 本次关闭写入的结果码。
+ * @return     信号标识地址（发射经 XObject_emitSignal）。
  */
 void* XDialog_finished_signal(XDialog* self, int result);
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* XDIALOG_H */

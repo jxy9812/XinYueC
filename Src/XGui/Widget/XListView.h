@@ -121,6 +121,12 @@ typedef struct XListView
 
 /* ==================== 生命周期 ==================== */
 
+/**
+ * @brief      获取 XListView 虚函数表（首次调用时构建单例虚表）。
+ * @details    继承 XAbstractItemView 虚表，重载 deinit、PaintEvent、
+ *             IndexAt、VisualRect 与 ScrollContentsBy 槽。
+ * @return     虚函数表单例指针（库内部管理，借用；不得释放）。
+ */
 XVtable* XListView_class_init(void);
 /** @brief 初始化列表视图。
  * @param self 目标视图；不可为 NULL。

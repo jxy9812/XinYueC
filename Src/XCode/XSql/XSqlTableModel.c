@@ -6,6 +6,8 @@
 
 #include <string.h>
 
+#include "XMemory.h"
+
 static void VXSqlTableModel_deinit(XSqlTableModel* model);
 static void VXSqlTableModel_clear(XSqlTableModel* model);
 static void VXSqlTableModel_setTable(XSqlTableModel* model, const char* tableName);
@@ -271,7 +273,7 @@ bool XSqlTableModel_setData(XSqlTableModel* model, int row, int column, const XV
     field = XSqlRecord_field_const(model->m_parent.m_rows[row], column);
     if (XSqlField_isReadOnly(field)) return false;
     if (model->m_strategy != XSqlTableEditStrategy_OnManualSubmit
-        && (!model->m_dirty[row])) {
+        && (!model->m_dirty || !model->m_dirty[row])) {
         for (size_t i = 0; i < model->m_parent.m_rowCount; ++i)
             if (i != (size_t)row && model->m_dirty && model->m_dirty[i]) return false;
     }
@@ -319,8 +321,8 @@ void XSqlTableModel_setEditStrategy(XSqlTableModel* model, XSqlTableEditStrategy
 XSqlTableEditStrategy XSqlTableModel_editStrategy(const XSqlTableModel* model) { return model ? model->m_strategy : XSqlTableEditStrategy_OnRowChange; }
 XSqlIndex* XSqlTableModel_primaryKey(const XSqlTableModel* model) { return model ? XSqlIndex_create_copy(&model->m_primaryKey) : XSqlIndex_create(); }
 XSqlDatabase* XSqlTableModel_database(const XSqlTableModel* model) { return model && model->m_database ? XSqlDatabase_create_copy(model->m_database) : XSqlDatabase_create(); }
-int XSqlTableModel_fieldIndex(const XSqlTableModel* model, const char* fieldName) { return model ? XSqlRecord_indexOf_utf8(&model->m_parent.m_record, fieldName) : -1; }
-int XSqlTableModel_fieldIndex_2(const XSqlTableModel* model, const XString* fieldName) { return model ? XSqlRecord_indexOf(&model->m_parent.m_record, fieldName) : -1; }
+int XSqlTableModel_fieldIndex(const XSqlTableModel* model, const XString* fieldName) { return model ? XSqlRecord_indexOf(&model->m_parent.m_record, fieldName) : -1; }
+int XSqlTableModel_fieldIndex_2(const XSqlTableModel* model, const char* fieldName) { return model ? XSqlRecord_indexOf_utf8(&model->m_parent.m_record, fieldName) : -1; }
 void XSqlTableModel_sort(XSqlTableModel* model, int column, XSqlSortOrder order) { XSqlTableModel_setSort(model, column, order); XSqlTableModel_select(model); }
 static void VXSqlTableModel_setSort(XSqlTableModel* model, int column, XSqlSortOrder order) { if (model) { model->m_sortColumn = column; model->m_sortOrder = order; } }
 void XSqlTableModel_setSort(XSqlTableModel* model, int column, XSqlSortOrder order) { if (model && !XClassIsVtableNull(model)) XClassGetVirtualFunc(model, EXSqlTableModel_SetSort, void(*)(XSqlTableModel*, int, XSqlSortOrder))(model, column, order); }
@@ -421,7 +423,7 @@ bool XSqlTableModel_setRecord(XSqlTableModel* model, int row, const XSqlRecord* 
     if (!model || !record || row < 0 || (size_t)row >= model->m_parent.m_rowCount
         || (model->m_deleted && model->m_deleted[row])) return false;
     if (model->m_strategy != XSqlTableEditStrategy_OnManualSubmit
-        && (!model->m_dirty[row])) {
+        && (!model->m_dirty || !model->m_dirty[row])) {
         for (size_t i = 0; i < model->m_parent.m_rowCount; ++i)
             if (i != (size_t)row && model->m_dirty && model->m_dirty[i]) return false;
     }

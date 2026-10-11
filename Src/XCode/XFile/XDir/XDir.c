@@ -7,7 +7,6 @@
 #include "XMemory.h"
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #if XFILE_ON
 #if XDIR_ON
 
@@ -18,6 +17,7 @@
 static void VXDir_copy(XDir* self, const XDir* other)
 {
     if (!self || !other) return;
+    if (self == other) return;  /* 自拷贝直接返回，避免先释放自身成员再读取已释放内容 */
     if (XClassIsVtableNull(self))
         XDir_init_1(self);
     
@@ -38,6 +38,7 @@ static void VXDir_copy(XDir* self, const XDir* other)
 static void VXDir_move(XDir* self, XDir* other)
 {
     if (!self || !other) return;
+    if (self == other) return;  /* 自移动直接返回，避免清空自身内容 */
     if (XClassIsVtableNull(self))
         XDir_init_1(self);
     
@@ -339,15 +340,15 @@ const XStringList* XDir_nameFilters(const XDir* dir)
  * 通配符匹配（平台无关）
  * ============================================================================ */
 
-static bool matchWildcard(const char* pattern, const char* str, bool ignoreCase)
+static bool XDir_matchWildcard(const char* pattern, const char* str, bool ignoreCase)
 {
     while (*pattern && *str) {
         if (*pattern == '*') {
             pattern++;
             if (!*pattern) return true;
-            
+
             while (*str) {
-                if (matchWildcard(pattern, str, ignoreCase)) {
+                if (XDir_matchWildcard(pattern, str, ignoreCase)) {
                     return true;
                 }
                 str++;
@@ -357,9 +358,9 @@ static bool matchWildcard(const char* pattern, const char* str, bool ignoreCase)
             pattern++;
             str++;
         } else {
-            char pc = ignoreCase ? tolower((unsigned char)*pattern) : *pattern;
-            char sc = ignoreCase ? tolower((unsigned char)*str) : *str;
-            if (pc != sc) return false;
+            XChar pc = XChar_fromLatin1(*pattern);
+            XChar sc = XChar_fromLatin1(*str);
+            if (!XChar_equals(pc, sc, ignoreCase ? XChar_CaseInsensitive : XChar_CaseSensitive)) return false;
             pattern++;
             str++;
         }
@@ -369,9 +370,9 @@ static bool matchWildcard(const char* pattern, const char* str, bool ignoreCase)
     return !*pattern && !*str;
 }
 
-bool matchWildcardCaseSensitive(const char* pattern, const char* str)
+bool XDir_matchWildcardCaseSensitive(const char* pattern, const char* str)
 {
-    return matchWildcard(pattern, str, false);
+    return XDir_matchWildcard(pattern, str, false);
 }
 
 bool XDir_match_1(const XString* filter, const XString* fileName)
@@ -381,7 +382,7 @@ bool XDir_match_1(const XString* filter, const XString* fileName)
     const char* filterUtf8 = XString_toUtf8(filter);
     const char* fileUtf8 = XString_toUtf8(fileName);
     
-    return matchWildcard(filterUtf8, fileUtf8, true);
+    return XDir_matchWildcard(filterUtf8, fileUtf8, true);
 }
 
 bool XDir_match_2(const XStringList* filters, const XString* fileName)
@@ -423,36 +424,28 @@ XChar XDir_listSeparator(void)
 XString* XDir_toNativeSeparators(const XString* pathName)
 {
     if (!pathName) return NULL;
-    
+
+    /* 经 XString_replace_char 修改对象自身内容；
+       XString_toUtf8 返回的是内部编码缓存，禁止强转改写 */
     XString* result = XString_create_copy(pathName);
-    const char* utf8 = XString_toUtf8(result);
-    
+    if (!result) return NULL;
+
 #ifdef _WIN32
-    char* data = (char*)utf8;
-    while (*data) {
-        if (*data == '/') *data = '\\';
-        data++;
-    }
-#else
-    (void)utf8;
+    XString_replace_char(result, XChar_from('/'), XChar_from('\\'), XChar_CaseSensitive);
 #endif
-    
+
     return result;
 }
 
 XString* XDir_fromNativeSeparators(const XString* pathName)
 {
     if (!pathName) return NULL;
-    
+
     XString* result = XString_create_copy(pathName);
-    const char* utf8 = XString_toUtf8(result);
-    char* data = (char*)utf8;
-    
-    while (*data) {
-        if (*data == '\\') *data = '/';
-        data++;
-    }
-    
+    if (!result) return NULL;
+
+    XString_replace_char(result, XChar_from('\\'), XChar_from('/'), XChar_CaseSensitive);
+
     return result;
 }
 
@@ -470,11 +463,13 @@ XStringList* XDir_nameFiltersFromString(const XString* nameFilter)
     
     char* dup = XStrdup(filterUtf8);
     if (!dup) return result;
-    
-    char* token = strtok(dup, " ;");
+
+    /* strtok 有静态状态、非线程安全，按外部依赖约束改用可重入的 XStrtokReentrant */
+    char* savePtr = NULL;
+    char* token = XStrtokReentrant(dup, " ;", &savePtr);
     while (token) {
         XStringList_push_back_utf8(result, token);
-        token = strtok(NULL, " ;");
+        token = XStrtokReentrant(NULL, " ;", &savePtr);
     }
     
     XFree_System(dup);
@@ -498,50 +493,61 @@ typedef struct {
 
 static XDirSortContext g_sortContext;
 
-static int compareByName(const XDirEntryInfo* a, const XDirEntryInfo* b, XDirSortFlags flags)
+static int XDir_compareByName(const XDirEntryInfo* a, const XDirEntryInfo* b, XDirSortFlags flags)
 {
     (void)flags;
     return XString_compare(a->name, b->name);
 }
 
-static int compareByTime(const XDirEntryInfo* a, const XDirEntryInfo* b)
+static int XDir_compareByTime(const XDirEntryInfo* a, const XDirEntryInfo* b)
 {
     if (a->time < b->time) return XCompare_Less;
     if (a->time > b->time) return XCompare_Greater;
     return XCompare_Equality;
 }
 
-static int compareBySize(const XDirEntryInfo* a, const XDirEntryInfo* b)
+static int XDir_compareBySize(const XDirEntryInfo* a, const XDirEntryInfo* b)
 {
     if (a->size < b->size) return XCompare_Less;
     if (a->size > b->size) return XCompare_Greater;
     return XCompare_Equality;
 }
 
-static int compareByType(const XDirEntryInfo* a, const XDirEntryInfo* b, XDirSortFlags flags)
+/* 用 XChar 基元逐字符比较两个 C 字符串（可忽略大小写），
+   替代 string.h 的 strcmp/_stricmp/strcasecmp（外部依赖约束禁止直用） */
+static int XDir_compareUtf8(const char* a, const char* b, bool ignoreCase)
+{
+    XChar_CaseSensitivity cs = ignoreCase ? XChar_CaseInsensitive : XChar_CaseSensitive;
+    while (*a && *b) {
+        if (!XChar_equals(XChar_fromLatin1(*a), XChar_fromLatin1(*b), cs)) {
+            return ((int)(unsigned char)*a < (int)(unsigned char)*b) ? XCompare_Less : XCompare_Greater;
+        }
+        ++a;
+        ++b;
+    }
+    if (*a) return XCompare_Greater;
+    if (*b) return XCompare_Less;
+    return XCompare_Equality;
+}
+
+static int XDir_compareByType(const XDirEntryInfo* a, const XDirEntryInfo* b, XDirSortFlags flags)
 {
     const char* nameA = XString_toUtf8(a->name);
     const char* nameB = XString_toUtf8(b->name);
-    
+
     const char* extA = nameA ? strrchr(nameA, '.') : NULL;
     const char* extB = nameB ? strrchr(nameB, '.') : NULL;
-    
+
     if (!extA) extA = "";
     if (!extB) extB = "";
-    
+
     bool ignoreCase = (flags & XDir_IgnoreCase) != 0;
-    int result;
-    
-#ifdef _WIN32
-    result = ignoreCase ? _stricmp(extA, extB) : strcmp(extA, extB);
-#else
-    result = ignoreCase ? strcasecmp(extA, extB) : strcmp(extA, extB);
-#endif
-    
+    int result = XDir_compareUtf8(extA, extB, ignoreCase);
+
     if (result == 0) {
-        result = compareByName(a, b, flags);
+        result = XDir_compareByName(a, b, flags);
     }
-    
+
     return result;
 }
 
@@ -563,19 +569,19 @@ static int32_t XDirEntryInfo_compare(const void* lhs, const void* rhs)
     }
     
     if (flags & XDir_Type) {
-        result = compareByType(a, b, flags);
+        result = XDir_compareByType(a, b, flags);
     } else {
         switch (flags & XDir_SortByMask) {
             case XDir_Time:
-                result = compareByTime(a, b);
+                result = XDir_compareByTime(a, b);
                 break;
             case XDir_Size:
-                result = compareBySize(a, b);
+                result = XDir_compareBySize(a, b);
                 break;
             case XDir_Name:
             case XDir_Unsorted:
             default:
-                result = compareByName(a, b, flags);
+                result = XDir_compareByName(a, b, flags);
                 break;
         }
     }
@@ -731,11 +737,13 @@ XString* XDir_absoluteFilePath(const XDir* dir, const XString* fileName)
     XString* absPath = XDir_absolutePath(dir);
     if (!absPath) return NULL;
     
+    /* 临时对象必须先完整初始化再使用，用完 XClassDeinit 收尾（init_2 会拷贝 absPath） */
     XDir tempDir;
-    tempDir.m_path = absPath;
-    
+    XDir_init_2(&tempDir, absPath);
+
     XString* result = XDir_filePath(&tempDir, fileName);
-    
+
+    XClassDeinit(&tempDir);
     XClassDelete(absPath);
     return result;
 }
@@ -853,68 +861,112 @@ XString* XDir_cleanPath(const XString* path)
  * 搜索路径（平台无关）
  * ============================================================================ */
 
-#define MAX_SEARCH_PREFIXES 32
-
 typedef struct {
     XString* prefix;
     XStringList* paths;
 } XDirSearchPathEntry;
 
-static XDirSearchPathEntry g_searchPaths[MAX_SEARCH_PREFIXES];
-static int g_searchPathCount = 0;
+/* 前缀→搜索路径注册表：使用库内容器 XVector，条目资源经数据反初始化回调释放，
+   禁止手工裸数组+计数管理（容器与数据结构规范） */
+static XVector* g_searchPaths = NULL;
+
+/* 条目持有 XString/XStringList 堆对象，注册反初始化回调供容器删除/清空时回收 */
+static void XDirSearchPathEntry_deinit(void* data)
+{
+    XDirSearchPathEntry* entry = (XDirSearchPathEntry*)data;
+    if (!entry) return;
+    if (entry->prefix) {
+        XClassDelete(entry->prefix);
+        entry->prefix = NULL;
+    }
+    if (entry->paths) {
+        XClassDelete(entry->paths);
+        entry->paths = NULL;
+    }
+}
+
+static XVector* XDir_searchPathRegistry(void)
+{
+    if (!g_searchPaths) {
+        g_searchPaths = XVector_create(sizeof(XDirSearchPathEntry));
+        if (g_searchPaths) {
+            XContainerSetDataDeinitMethod(g_searchPaths, XDirSearchPathEntry_deinit);
+        }
+    }
+    return g_searchPaths;
+}
+
+static XDirSearchPathEntry* XDir_findSearchPathEntry(const XString* prefix)
+{
+    XVector* registry = XDir_searchPathRegistry();
+    if (!registry) return NULL;
+
+    size_t count = XVector_size_base(registry);
+    for (size_t i = 0; i < count; i++) {
+        XDirSearchPathEntry* entry = (XDirSearchPathEntry*)XVector_at_base(registry, i);
+        if (entry && entry->prefix &&
+            XString_equals(entry->prefix, prefix, XChar_CaseSensitive)) {
+            return entry;
+        }
+    }
+    return NULL;
+}
 
 void XDir_setSearchPaths(const XString* prefix, const XStringList* searchPaths)
 {
     if (!prefix) return;
-    
-    for (int i = 0; i < g_searchPathCount; i++) {
-        if (XString_equals(g_searchPaths[i].prefix, prefix, XChar_CaseSensitive)) {
-            if (g_searchPaths[i].paths) {
-                XClassDelete(g_searchPaths[i].paths);
-            }
-            g_searchPaths[i].paths = XStringList_create_copy(searchPaths);
-            return;
+
+    XDirSearchPathEntry* entry = XDir_findSearchPathEntry(prefix);
+    if (entry) {
+        if (entry->paths) {
+            XClassDelete(entry->paths);
         }
+        entry->paths = XStringList_create_copy(searchPaths);
+        return;
     }
-    
-    if (g_searchPathCount < MAX_SEARCH_PREFIXES) {
-        g_searchPaths[g_searchPathCount].prefix = XString_create_copy(prefix);
-        g_searchPaths[g_searchPathCount].paths = XStringList_create_copy(searchPaths);
-        g_searchPathCount++;
-    }
+
+    XVector* registry = XDir_searchPathRegistry();
+    if (!registry) return;
+
+    XDirSearchPathEntry newEntry;
+    newEntry.prefix = XString_create_copy(prefix);
+    newEntry.paths = XStringList_create_copy(searchPaths);
+    XVector_push_back_1_base(registry, &newEntry);
 }
 
 void XDir_addSearchPath(const XString* prefix, const XString* path)
 {
     if (!prefix || !path) return;
-    
-    for (int i = 0; i < g_searchPathCount; i++) {
-        if (XString_equals(g_searchPaths[i].prefix, prefix, XChar_CaseSensitive)) {
-            if (g_searchPaths[i].paths) {
-                XStringList_push_back_base(g_searchPaths[i].paths, path);
-            }
-            return;
+
+    XDirSearchPathEntry* entry = XDir_findSearchPathEntry(prefix);
+    if (entry) {
+        if (entry->paths) {
+            XStringList_push_back_base(entry->paths, path);
         }
+        return;
     }
-    
-    if (g_searchPathCount < MAX_SEARCH_PREFIXES) {
-        g_searchPaths[g_searchPathCount].prefix = XString_create_copy(prefix);
-        g_searchPaths[g_searchPathCount].paths = XStringList_create();
-        XStringList_push_back_base(g_searchPaths[g_searchPathCount].paths, path);
-        g_searchPathCount++;
+
+    XVector* registry = XDir_searchPathRegistry();
+    if (!registry) return;
+
+    XDirSearchPathEntry newEntry;
+    newEntry.prefix = XString_create_copy(prefix);
+    newEntry.paths = XStringList_create();
+    if (newEntry.paths) {
+        XStringList_push_back_base(newEntry.paths, path);
     }
+    XVector_push_back_1_base(registry, &newEntry);
 }
 
 XStringList* XDir_searchPaths(const XString* prefix)
 {
     if (!prefix) return NULL;
-    
-    for (int i = 0; i < g_searchPathCount; i++) {
-        if (XString_equals(g_searchPaths[i].prefix, prefix, XChar_CaseSensitive)) {
-            return XStringList_create_copy(g_searchPaths[i].paths);
-        }
+
+    XDirSearchPathEntry* entry = XDir_findSearchPathEntry(prefix);
+    if (entry && entry->paths) {
+        return XStringList_create_copy(entry->paths);
     }
-    
+
     return XStringList_create();
 }
 
@@ -999,8 +1051,14 @@ XStringList* XDir_entryList_2(const XDir* dir, const XStringList* nameFilters,
         info.isDir = entry.isDir;
         info.size = 0;
         info.time = 0;
-        XVector_push_back_1_base(entryInfos, &info);
-        
+        if (!XVector_push_back_1_base(entryInfos, &info)) {
+            /* 入列失败（COW 分离/扩容分配失败）：元素未进入向量，后续清理
+             * 只遍历已入列元素，必须在此释放本次条目名，否则 info.name 泄漏。 */
+            XClassDelete(info.name);
+            XString_clear_base(entry.name);
+            continue;
+        }
+
         XString_clear_base(entry.name);
     }
     
@@ -1169,7 +1227,7 @@ bool XDir_isAbsolutePath(const XString* path)
     if (!pathUtf8) return false;
     if (pathUtf8[0] == '/') return true;
 #ifdef _WIN32
-    if (isalpha((unsigned char)pathUtf8[0]) && pathUtf8[1] == ':') return true;
+    if (XChar_isLetter(XChar_fromLatin1(pathUtf8[0])) && pathUtf8[1] == ':') return true;
     if (pathUtf8[0] == '\\' && pathUtf8[1] == '\\') return true;
 #endif
     return false;

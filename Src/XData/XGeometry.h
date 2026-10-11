@@ -2,6 +2,8 @@
  * @file       XGeometry.h
  * @brief      基础空间几何类型定义（对标 Qt 6.8 QPoint/QSize/QRect/QRegion）
  * @author     XinYueC 团队
+ * @details    纯数值几何类型，无独立平台差异；实现只依赖 XinYueC 抽象层，
+ *             禁止调用 Win32、POSIX、Qt 或其他平台 API。
  * @note       提供通用的点、尺寸、矩形、区域等基础几何类型，供 GUI、TUI
  *             和其他坐标相关模块复用
  ******************************************************************************/
@@ -201,11 +203,6 @@ typedef struct XRectF
  */
 void XRectF_init(XRectF* self, float x, float y, float w, float h);
 
-/**
- * @brief      区域类型（对标 Qt 6.8 QRegion）
- * @note       表示一个复杂区域，由矩形列表组成
- */
-
 /* ========== 边距类型（对标 Qt 6.8 QMargins） ========== */
 
 /**
@@ -252,11 +249,20 @@ int XMargins_horizontal(const XMargins* self);
  */
 int XMargins_vertical(const XMargins* self);
 
+/**
+ * @brief      区域类型（对标 Qt 6.8 QRegion）
+ * @note       表示一个复杂区域，由矩形列表组成；通过 XRegion_init/
+ *             XRegion_deinit 管理生命周期
+ */
 typedef struct XRegion
 {
-    XRect* rects;     /**< 矩形数组 */
-    int    count;     /**< 矩形数量 */
-    int    capacity;  /**< 矩形数组容量 */
+    XRect* rects;     /**< 子矩形数组；由对象拥有（deinit 时经 XFree_System
+                           释放），调用者不得直接修改、释放或长期借用；
+                           capacity 为 0 时为 NULL。 */
+    int    count;     /**< 有效子矩形数量；范围 0 <= count <= capacity，
+                           单位为元素个数。 */
+    int    capacity;  /**< 矩形数组容量；0 表示尚未分配，调用者不可直接
+                           修改。 */
 }XRegion;
 
 /* ========== 辅助函数 ========== */

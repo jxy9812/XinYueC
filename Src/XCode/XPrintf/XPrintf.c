@@ -3,7 +3,7 @@
 #include "XAtomic.h"
 #endif
 #include <limits.h>
-#include <string.h>
+#include"XStringUtils.h" /* strlen 直出改经 XStrlen（外部依赖约束） */
 #include"XString.h"
 #include"XByteArray.h"
 
@@ -68,9 +68,9 @@ extern void XPrintf_platformInitConsole(void);
 #endif /* _WIN32 */
 
 /* ========================================================================== */
-/*                              XPrintf_2                                     */
+/*                            XPrintf_string                                   */
 /* ========================================================================== */
-int XPrintf_2(const XString* str)
+int XPrintf_string(const XString* str)
 {
     const char* utf8;
     if (str == NULL)
@@ -80,19 +80,19 @@ int XPrintf_2(const XString* str)
         return 0;
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     if (g_xprintf_output_write) {
-        return xprintf_write_redirect(utf8, strlen(utf8));
+        return xprintf_write_redirect(utf8, XStrlen(utf8));
     }
 #endif
 #ifdef _WIN32
     XPrintf_platformInitConsole();
 #if XPRINTF_UTF8_CONSOLE
-    return xprintf_write_stdout(utf8, strlen(utf8));
+    return xprintf_write_stdout(utf8, XStrlen(utf8));
 #else
     const char* local = XString_toLocal(str);
-    return local ? xprintf_write_stdout(local, strlen(local)) : 0;
+    return local ? xprintf_write_stdout(local, XStrlen(local)) : 0;
 #endif
 #else
-    return xprintf_write_stdout(utf8, strlen(utf8));
+    return xprintf_write_stdout(utf8, XStrlen(utf8));
 #endif
 }
 
@@ -104,14 +104,14 @@ int XPrintf_3(const char* utf8_str)
     if (!utf8_str) return 0;
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     if (g_xprintf_output_write)
-        return xprintf_write_redirect(utf8_str, strlen(utf8_str));
+        return xprintf_write_redirect(utf8_str, XStrlen(utf8_str));
 #endif
 
 #ifdef _WIN32
     XPrintf_platformInitConsole();
 #if XPRINTF_UTF8_CONSOLE
     /* UTF-8模式：直接输出 */
-    return xprintf_write_stdout(utf8_str, strlen(utf8_str));
+    return xprintf_write_stdout(utf8_str, XStrlen(utf8_str));
 #else
     /* GBK模式：UTF-8 -> GBK 转换后输出 */
     int64_t gbk_len = XChar_utf8ToGbkStream(utf8_str, 0, NULL, 0);
@@ -125,12 +125,12 @@ int XPrintf_3(const char* utf8_str)
         return 0;
     }
 
-    int result = xprintf_write_stdout(gbk_buf, strlen(gbk_buf));
+    int result = xprintf_write_stdout(gbk_buf, XStrlen(gbk_buf));
     XFree_System(gbk_buf);
     return result;
 #endif
 #else
-    return xprintf_write_stdout(utf8_str, strlen(utf8_str));
+    return xprintf_write_stdout(utf8_str, XStrlen(utf8_str));
 #endif
 }
 
@@ -186,7 +186,7 @@ int XPrintf(const char* format, ...)
 
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     if (g_xprintf_output_write) {
-        result = xprintf_write_redirect(utf8_buf, strlen(utf8_buf));
+        result = xprintf_write_redirect(utf8_buf, XStrlen(utf8_buf));
         XFree_System(utf8_buf);
         return result;
     }
@@ -198,7 +198,7 @@ int XPrintf(const char* format, ...)
     XPrintf_platformInitConsole();
 #if XPRINTF_UTF8_CONSOLE
     /* UTF-8模式：直接输出 */
-    result = xprintf_write_stdout(utf8_buf, strlen(utf8_buf));
+    result = xprintf_write_stdout(utf8_buf, XStrlen(utf8_buf));
 #else
     /* GBK模式：UTF-8 -> GBK 转换后输出 */
     int gbk_len = XChar_utf8ToGbkStream(utf8_buf, 0, NULL, 0);
@@ -217,13 +217,13 @@ int XPrintf(const char* format, ...)
 
     if (XChar_utf8ToGbkStream(utf8_buf, 0, gbk_buf, gbk_len + 1) > 0)
     {
-        result = xprintf_write_stdout(gbk_buf, strlen(gbk_buf));
+        result = xprintf_write_stdout(gbk_buf, XStrlen(gbk_buf));
     }
     XFree_System(gbk_buf);
 #endif
 #else
     /* Linux/macOS：直接输出UTF-8 */
-    result = xprintf_write_stdout(utf8_buf, strlen(utf8_buf));
+    result = xprintf_write_stdout(utf8_buf, XStrlen(utf8_buf));
 #endif
 
     XFree_System(utf8_buf);
@@ -326,7 +326,7 @@ int XPrintf_5(XChar* ch)
 #endif
 #if XCONSOLE_SHELL_REMOTE_OUTPUT_REDIRECT_ON
     if (g_xprintf_output_write)
-        return xprintf_write_redirect(buff, strlen(buff));
+        return xprintf_write_redirect(buff, XStrlen(buff));
 #endif
-    return xprintf_write_stdout(buff, strlen(buff));
+    return xprintf_write_stdout(buff, XStrlen(buff));
 }

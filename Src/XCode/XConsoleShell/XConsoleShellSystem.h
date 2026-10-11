@@ -11,13 +11,13 @@
 #ifndef XCONSOLE_SHELL_SYSTEM_H
 #define XCONSOLE_SHELL_SYSTEM_H
 
-#include "XConsoleShellCommand.h"
-
-#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON
-
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON
+
+#include "XConsoleShellCommand.h"
 
 #if XCONSOLE_SHELL_CLEAR_ON
 /**
@@ -63,9 +63,10 @@ extern const XConsoleCommand XConsoleShellShutdown_command;
 extern const XConsoleCommand XConsoleShellExit_command;
 #endif
 
+#endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON */
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON */
 #endif /* XCONSOLE_SHELL_SYSTEM_H */

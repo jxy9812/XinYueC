@@ -1,4 +1,5 @@
-#include "XAbstractEventDispatcher.h"
+﻿#include "XAbstractEventDispatcher.h"
+#include "XAbstractEventDispatcher_Protected.h" /* 私有结构体完整定义与 _init/_deinit */
 #include "XMemory.h"
 #include "XCoreApplication.h"
 #include "XVector.h"
@@ -30,7 +31,7 @@
 #endif
 static XVector* global_nativeFilters;///< 本地事件过滤器列表
 static XMutex* global_mutex = NULL;
-#define PlatformPrivate(Dispatcher)  (((XAbstractEventDispatcher*)Dispatcher)->d_ptr)
+#define PlatformPrivate(Dispatcher)  (((XAbstractEventDispatcher*)Dispatcher)->m_d_ptr)
 #define GetXMutex(Dispatcher)         PlatformPrivate(Dispatcher)->mutex
 #define Global_Lock             XMutex_lock(global_mutex)
 #define Global_UnLock           XMutex_unlock(global_mutex)
@@ -189,8 +190,8 @@ static bool console_ssh_attach(XAbstractEventDispatcher* self)
     XAbstractEventDispatcherPrivate* dp;
     XConsoleShellXTcpServerAdapter* adapter;
     XTcpServer* server;
-    if (!self || !self->d_ptr || !self->d_ptr->m_consoleShell) return false;
-    dp = self->d_ptr;
+    if (!self || !self->m_d_ptr || !self->m_d_ptr->m_consoleShell) return false;
+    dp = self->m_d_ptr;
     if (dp->m_consoleSshServer && dp->m_consoleSshAdapter) return true;
 
     server = XTcpServer_create();
@@ -252,8 +253,8 @@ static bool console_telnet_attach(XAbstractEventDispatcher* self)
     XAbstractEventDispatcherPrivate* dp;
     XConsoleShellXTcpServerAdapter* adapter;
     XTcpServer* server;
-    if (!self || !self->d_ptr || !self->d_ptr->m_consoleShell) return false;
-    dp = self->d_ptr;
+    if (!self || !self->m_d_ptr || !self->m_d_ptr->m_consoleShell) return false;
+    dp = self->m_d_ptr;
     if (dp->m_consoleTelnetServer && dp->m_consoleTelnetAdapter) return true;
 
     server = XTcpServer_create();
@@ -317,8 +318,8 @@ static bool console_shell_attach(XAbstractEventDispatcher* self)
     XAbstractEventDispatcherPrivate* dp;
     MainConsoleTransport* transport;
     XConsoleShell* shell;
-    if (!self || !self->d_ptr) return false;
-    dp = self->d_ptr;
+    if (!self || !self->m_d_ptr) return false;
+    dp = self->m_d_ptr;
     if (dp->m_consoleShell) return true;
     transport = (MainConsoleTransport*)XCalloc_System(1, sizeof(MainConsoleTransport));
     if (!transport) return false;
@@ -350,9 +351,9 @@ XConsoleShell* XAbstractEventDispatcher_consoleShell(XAbstractEventDispatcher* s
 #if !(XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
       XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
       XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON)
-    console_show_initial_prompt(self->d_ptr);
+    console_show_initial_prompt(self->m_d_ptr);
 #endif
-    return (XConsoleShell*)self->d_ptr->m_consoleShell;
+    return (XConsoleShell*)self->m_d_ptr->m_consoleShell;
 }
 
 int XAbstractEventDispatcher_runDefaultShell(XAbstractEventDispatcher* self)
@@ -369,7 +370,7 @@ int XAbstractEventDispatcher_runDefaultShell(XAbstractEventDispatcher* self)
     if (!console_telnet_attach(self)) return 3;
 #endif
 #if XCONSOLE_SHELL_CONSOLE_ON
-    console_show_initial_prompt(self->d_ptr);
+    console_show_initial_prompt(self->m_d_ptr);
 #endif
     return XCoreApplication_exec();
 }
@@ -441,7 +442,7 @@ XHandle XAbstractEventDispatcher_addPollCallback(
     XAbstractEventDispatcherPrivate* dp;
     XAbstractEventDispatcher_PollEntry* entry;
     if (!disp || !callback) return NULL;
-    dp = disp->d_ptr;
+    dp = disp->m_d_ptr;
     if (!dp) return NULL;
     entry = (XAbstractEventDispatcher_PollEntry*)XCalloc_System(1, sizeof(*entry));
     if (!entry) return NULL;
@@ -466,7 +467,7 @@ void XAbstractEventDispatcher_removePollCallback(XHandle handle)
 void XAbstractEventDispatcherPrivate_init(XAbstractEventDispatcherPrivate* dp)
 {
     dp->m_hrtimerGroup = NULL;
-    dp->notifiers = NULL;
+    dp->m_notifiers = NULL;
     dp->m_ioRing = NULL;
     dp->m_pollCallbacks = NULL;
     XAtomic_init(dp->m_interrupt, false);
@@ -527,10 +528,10 @@ void XAbstractEventDispatcherPrivate_deinit(XAbstractEventDispatcherPrivate * dp
     }
     dp->m_pollCallbacks = NULL;
     /* 高精度红黑树由 XDeviceTimer 统一管理，但实例仍归当前调度器所有。 */
-    if (dp->notifiers)
+    if (dp->m_notifiers)
     {
-        XClassDelete(dp->notifiers);
-        dp->notifiers = NULL;
+        XClassDelete(dp->m_notifiers);
+        dp->m_notifiers = NULL;
     }
     /* ioRing 是全局单例，生命周期独立，此处仅清空指针 */
     dp->m_ioRing = NULL;
@@ -593,9 +594,9 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
     XObject_setParent((XObject*)self, (XObject*)parent);
 
     ///* 不能在这里分配并初始化私有数据，这个类要被继承，子类需要扩展数据*/
-    //self->d_ptr = (XAbstractEventDispatcherPrivate*)XMalloc_System(sizeof(XAbstractEventDispatcherPrivate));
-    //if (self->d_ptr) {
-    //    XAbstractEventDispatcherPrivate_init(self->d_ptr);
+    //self->m_d_ptr = (XAbstractEventDispatcherPrivate*)XMalloc_System(sizeof(XAbstractEventDispatcherPrivate));
+    //if (self->m_d_ptr) {
+    //    XAbstractEventDispatcherPrivate_init(self->m_d_ptr);
     //}
 
     global_init();
@@ -611,14 +612,14 @@ void XAbstractEventDispatcher_init(XAbstractEventDispatcher* self, XObject* pare
  *  心跳轮询覆盖，见 processEvents 回退分支注释）。 */
 static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* self, XEventLoopProcessEventsFlags flags)
 {
-    XAtomic_store_bool(&self->d_ptr->m_interrupt, false, XAtomic_MemoryOrder_Release);
+    XAtomic_store_bool(&self->m_d_ptr->m_interrupt, false, XAtomic_MemoryOrder_Release);
 
     /* 1. 先处理定时器任务 */
     XDeviceTimer_process(self, XAbstractEventDispatcher_isMainThread(self));
 
     /* 周期轮询回调（USB Host/Gadget、串口等需周期处理的设备） */
-    xPollDispatch(self->d_ptr);
-    XAbstractNetIoRing* ioRing = self->d_ptr->m_ioRing;
+    xPollDispatch(self->m_d_ptr);
+    XAbstractNetIoRing* ioRing = self->m_d_ptr->m_ioRing;
     if (XAbstractEventDispatcher_isMainThread(self))
     {
         /* 2. 处理 I/O 事件（仅主线程轮询共享 IOCP/epoll 完成端口，
@@ -643,24 +644,24 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         for_each_iterator(events, XVector, it)
         {
             XPostEvent* ePost = XVector_iterator_data(&it);
-            if (!ePost|| !ePost->event) continue;
-            if (ePost->event->type == XEVENT_TYPE_DEFERRED_DELETE
-                && !XDeferredDeleteEvent_shouldDeliver((XDeferredDeleteEvent*)ePost->event,
+            if (!ePost|| !ePost->m_event) continue;
+            if (ePost->m_event->m_type == XEVENT_TYPE_DEFERRED_DELETE
+                && !XDeferredDeleteEvent_shouldDeliver((XDeferredDeleteEvent*)ePost->m_event,
                                                         XThreadData_current(), false))
             {
                 continue;
             }
-            if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->event->input_event == XEventLoop_ExcludeUserInputEvents)
+            if ((flags & XEventLoop_ExcludeUserInputEvents) && ePost->m_event->m_input_event == XEventLoop_ExcludeUserInputEvents)
             {
                 continue;
             }
-            if ((flags & XEventLoop_ExcludeSocketNotifiers) && ePost->event->type == XEVENT_TYPE_SOCK_ACT) {
+            if ((flags & XEventLoop_ExcludeSocketNotifiers) && ePost->m_event->m_type == XEVENT_TYPE_SOCK_ACT) {
                 continue;
             }
-            if ((flags & XEventLoop_X11ExcludeTimers) && ePost->event->type == XEVENT_TYPE_TIMER) {
+            if ((flags & XEventLoop_X11ExcludeTimers) && ePost->m_event->m_type == XEVENT_TYPE_TIMER) {
                 continue;
             }
-            if (!ePost->receiver||ePost->receiver->is_deleting_children)
+            if (!ePost->m_receiver||ePost->m_receiver->m_is_deleting_children)
             {
                 XThreadData_discardPostedEvent(ePost);
                 ++size;
@@ -678,13 +679,13 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
     XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XSSHSERVER_BACKEND_ON && \
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
     /* 默认 SSH Server 与主事件循环共用线程，避免引入额外线程和竞态。 */
-    console_ssh_pump(self->d_ptr);
+    console_ssh_pump(self->m_d_ptr);
 #endif
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON && XCONSOLE_SHELL_XTELNETSERVER_BACKEND_ON && \
     XCONSOLE_SHELL_MULTI_SESSION_ON && XCONSOLE_SHELL_XTCPSERVER_BACKEND_ON
     /* 默认 Telnet Server 与主事件循环共用线程，避免引入额外线程和竞态。 */
-    console_telnet_pump(self->d_ptr);
+    console_telnet_pump(self->m_d_ptr);
 #endif
 
     /* 4. Qt 6.8: 阻塞等待（对标 QAbstractEventDispatcher::processEvents 的 WaitForMoreEvents）
@@ -692,7 +693,7 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
      *    - 检查 m_interrupt: 被 exit() 中断时不阻塞（对标 Qt 6.8 interrupt() 唤醒）
      */
     if ((flags & XEventLoop_WaitForMoreEvents) && size == 0
-        && !XAtomic_load_bool(&self->d_ptr->m_interrupt, XAtomic_MemoryOrder_Acquire)
+        && !XAtomic_load_bool(&self->m_d_ptr->m_interrupt, XAtomic_MemoryOrder_Acquire)
         && XThreadData_canWait(XThreadData_current()))
     {
         /* 计算超时：统一截止查询（高精度红黑树 + 主线程的全局时间轮普通
@@ -775,10 +776,10 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
         {
             /* 工作线程：阻塞在线程局部信号量上（不触碰共享 IOCP，
              *    防止窃取主线程的 I/O 完成事件；由 postEvent -> signalWake 唤醒） */
-            if (self->d_ptr->m_threadData)
+            if (self->m_d_ptr->m_threadData)
             {
                 XAbstractEventDispatcher_aboutToBlock_signal(self);
-                XThreadData_waitForWake(self->d_ptr->m_threadData, timeoutMs);
+                XThreadData_waitForWake(self->m_d_ptr->m_threadData, timeoutMs);
                 XAbstractEventDispatcher_awake_signal(self);
             }
         }
@@ -789,23 +790,23 @@ static bool VXAbstractEventDispatcher_processEvents(XAbstractEventDispatcher* se
 
 static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
 {
-    if (!notifier || !self || !self->d_ptr) return;
+    if (!notifier || !self || !self->m_d_ptr) return;
     XFd fd = XSocketNotifier_socket(notifier);
     if (fd < 0) return;
-    if (!self->d_ptr->notifiers)
+    if (!self->m_d_ptr->m_notifiers)
     {
-        self->d_ptr->notifiers = XHashMap_Create(XFd, XVector, uintptr_t_compare);
-        XContainerSetDataDeinitMethod(self->d_ptr->notifiers, XClass_deinit_base);
+        self->m_d_ptr->m_notifiers = XHashMap_Create(XFd, XVector, Xuintptr_t_compare);
+        XContainerSetDataDeinitMethod(self->m_d_ptr->m_notifiers, XClass_deinit_base);
     }
     /* 从 dispatcher 全局 HashMap 查找或创建 XVector */
-    XVector* v = (XVector*)XHashMap_value_base(self->d_ptr->notifiers, &fd);
+    XVector* v = (XVector*)XHashMap_value_base(self->m_d_ptr->m_notifiers, &fd);
     if (!v)
     {
         v = XVector_Create(XSocketNotifier*);
-        XContainerSetCompare(v, uintptr_t_compare);
-        XMapBase_insert_valueMove_base(self->d_ptr->notifiers, &fd, v);
+        XContainerSetCompare(v, Xuintptr_t_compare);
+        XMapBase_insert_valueMove_base(self->m_d_ptr->m_notifiers, &fd, v);
         XClassDelete(v);
-        v = (XVector*)XHashMap_value_base(self->d_ptr->notifiers, &fd);
+        v = (XVector*)XHashMap_value_base(self->m_d_ptr->m_notifiers, &fd);
         if (!v)return;
     }
     if (XVector_indexOf(v, &notifier, 0) == -1)
@@ -815,7 +816,7 @@ static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispa
     /* notifier fd 注册进 ioRing 等待集（poll/io_uring 双模式在 Drive
      * 平台层）：数据就绪直接唤醒阻塞中的主循环，零轮询延迟。 */
     {
-        XAbstractNetIoRing* ring = self->d_ptr->m_ioRing;
+        XAbstractNetIoRing* ring = self->m_d_ptr->m_ioRing;
         if (ring)
             XAbstractNetIoRing_registerEvent_base(ring, fd);
     }
@@ -823,11 +824,11 @@ static void VXAbstractEventDispatcher_registerSocketNotifier(XAbstractEventDispa
 
 static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDispatcher* self, XSocketNotifier* notifier)
 {
-    if (!notifier || !self || !self->d_ptr || !self->d_ptr->notifiers) return;
+    if (!notifier || !self || !self->m_d_ptr || !self->m_d_ptr->m_notifiers) return;
     XFd fd = XSocketNotifier_socket(notifier);
     if (fd < 0) return;
 
-    XVector* v = (XVector*)XHashMap_value_base(self->d_ptr->notifiers, &fd);
+    XVector* v = (XVector*)XHashMap_value_base(self->m_d_ptr->m_notifiers, &fd);
     if (!v) return;
 
     int index = XVector_indexOf(v, &notifier, 0);
@@ -837,11 +838,11 @@ static void VXAbstractEventDispatcher_unregisterSocketNotifier(XAbstractEventDis
     }
     if (XVector_isEmpty_base(v))
     {
-        XHashMap_remove_base(self->d_ptr->notifiers, &fd);
+        XHashMap_remove_base(self->m_d_ptr->m_notifiers, &fd);
         //XClassDelete(v);
         /* fd 上已无任何 notifier：从 ioRing 等待集注销，停止唤醒。 */
         {
-            XAbstractNetIoRing* ring = self->d_ptr->m_ioRing;
+            XAbstractNetIoRing* ring = self->m_d_ptr->m_ioRing;
             if (ring)
                 XAbstractNetIoRing_unregisterEvent_base(ring, fd);
         }
@@ -854,8 +855,8 @@ static void TimerCallback(void* userData, XTimerData* timer)
     XEvent* timerEvent = XTimerEvent_create(XTimerData_timerId(timer));
     if (timerEvent)
     {
-        timerEvent->posted = true;
-        timerEvent->spontaneous = true;
+        timerEvent->m_posted = true;
+        timerEvent->m_spontaneous = true;
         XCoreApplication_postEvent(object, timerEvent, XEVENT_PRIORITY_NORMAL);
     }
 }
@@ -889,7 +890,7 @@ static void VXAbstractEventDispatcher_registerTimer(XAbstractEventDispatcher* di
                 &actualType, &handle))
         {
             timerInfo->timerType = actualType;
-            timerInfo->Xhandle = handle;
+            timerInfo->m_handle = handle;
             desc->m_deviceCtx = timerInfo;
             XAbstractEventDispatcher_wakeUp_base(dispatcher);
             return;
@@ -908,7 +909,7 @@ static bool VXAbstractEventDispatcher_unregisterTimer(XAbstractEventDispatcher* 
     if (!timerInfo) return false;
 
     bool is_ok = false;
-    is_ok = XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->Xhandle);
+    is_ok = XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->m_handle);
     /* 无论 removeTimer 是否成功，都释放 timerInfo 和 XFd，防止泄漏。
      * removeTimer 可能因 tick 已分离节点而返回 false，但定时器已停止。 */
     XFree_Hybrid(timerInfo);
@@ -935,7 +936,7 @@ static bool VXAbstractEventDispatcher_unregisterTimers(XAbstractEventDispatcher*
         XAbstractEventDispatcher_TimerInfo* timerInfo = (XAbstractEventDispatcher_TimerInfo*)desc->m_deviceCtx;
         if (!timerInfo) continue;
 
-        XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->Xhandle);
+        XDeviceTimer_cancel(dispatcher, timerInfo->timerType, timerInfo->m_handle);
         XFree_Hybrid(timerInfo);
         XFd_free(i);
         found = true;
@@ -981,28 +982,28 @@ static XDuration VXAbstractEventDispatcher_remainingTime(const XAbstractEventDis
 
 static void VXAbstractEventDispatcher_wakeUp(XAbstractEventDispatcher* self)
 {
-    if (!self || !self->d_ptr) return;
+    if (!self || !self->m_d_ptr) return;
     if (XAbstractEventDispatcher_isMainThread(self))
     {
         /* 主线程：通过 IOCP 唤醒（主线程在 GetQueuedCompletionStatus 上阻塞）。
          * 无 ioRing 平台的等待由 notifier fd 注册进 ioRing 等待集解决
          * （XAbstractNetIoRing_registerEvent_base），不经信号量。 */
-        if (self->d_ptr->m_ioRing)
-            XAbstractNetIoRing_wakeUp_base(self->d_ptr->m_ioRing);
+        if (self->m_d_ptr->m_ioRing)
+            XAbstractNetIoRing_wakeUp_base(self->m_d_ptr->m_ioRing);
     }
     else
     {
         /* 工作线程：通过线程局部信号量唤醒（不触碰共享 IOCP） */
-        if (self->d_ptr->m_threadData)
-            XThreadData_signalWake(self->d_ptr->m_threadData);
+        if (self->m_d_ptr->m_threadData)
+            XThreadData_signalWake(self->m_d_ptr->m_threadData);
     }
 }
 
 static void VXAbstractEventDispatcher_interrupt(XAbstractEventDispatcher* self)
 {
-    if (self && self->d_ptr)
+    if (self && self->m_d_ptr)
     {
-        XAtomic_store_bool(&self->d_ptr->m_interrupt, true, XAtomic_MemoryOrder_Release);
+        XAtomic_store_bool(&self->m_d_ptr->m_interrupt, true, XAtomic_MemoryOrder_Release);
         XAbstractEventDispatcher_wakeUp_base(self);
     }
 }
@@ -1018,11 +1019,11 @@ static void VXAbstractEventDispatcher_closingDown(XAbstractEventDispatcher* self
 }
 void VXAbstractEventDispatcher_deinit(XAbstractEventDispatcher* self)
 {
-    if (self->d_ptr) {
+    if (self->m_d_ptr) {
         XDeviceTimer_releaseDispatcher(self);
-        XAbstractEventDispatcherPrivate_deinit(self->d_ptr);
-        XFree_System(self->d_ptr);
-        self->d_ptr = NULL;
+        XAbstractEventDispatcherPrivate_deinit(self->m_d_ptr);
+        XFree_System(self->m_d_ptr);
+        self->m_d_ptr = NULL;
     }
     XClass_Deinit_Parent(XObject, self);
 }
@@ -1051,17 +1052,21 @@ XAbstractEventDispatcher* XEventDispatcher_create_ex(XMemoryType memory, XObject
     XAbstractEventDispatcherPrivate* d = (XAbstractEventDispatcherPrivate*)XCalloc_System(1, sizeof(XAbstractEventDispatcherPrivate));
     if (!d)
     {
+        /* 上面的 init 已执行：XObject_init 持有了线程数据引用、XObject_setParent
+         * 已把 self 登记进父对象子列表。必须先经虚表反初始化解除这两处登记，
+         * 再释放内存，否则线程数据引用泄漏、父对象子列表残留悬挂指针。 */
+        XClassDeinit(self);
         XMemory_method(memory)->free(self);
         return NULL;
     }
     XAbstractEventDispatcherPrivate_init(d);
-    self->d_ptr = d;
+    self->m_d_ptr = d;
 
     /* 设置线程类型 */
     if (XThread_isMainThread())
-        self->type = XDISPATCHER_THREAD_TYPE_MAIN;
+        self->m_type = XDispatcherThreadType_Main;
     else
-        self->type = XDISPATCHER_THREAD_TYPE_WORKER;
+        self->m_type = XDispatcherThreadType_Worker;
 
     /* 建立反向引用：调度器 -> 所属线程的 XThreadData（工作线程信号量唤醒用） */
     d->m_threadData = XThreadData_current();
@@ -1165,7 +1170,7 @@ void XAbstractEventDispatcher_installNativeEventFilter(XAbstractEventDispatcher*
     (void)self; // 保留参数以匹配 Qt 签名
     if (ISNULL(filter, "filter is NULL")) return;
     if (XObject_thread(self))return;//子线程不需要原生事件过滤器
-    //XMutex_lock(self->d_ptr->mutex);
+    //XMutex_lock(self->m_d_ptr->mutex);
     Global_Lock;
     // 首次使用时创建 vector
     if (!global_nativeFilters) {
@@ -1176,13 +1181,14 @@ void XAbstractEventDispatcher_installNativeEventFilter(XAbstractEventDispatcher*
     for (size_t i = 0; i < XVector_size_base(global_nativeFilters); ++i) {
         XAbstractNativeEventFilter* existing = XVector_At_Base(global_nativeFilters, i, XAbstractNativeEventFilter*);
         if (existing == filter) {
-            return; // 已存在
+            Global_UnLock; // 已存在：先解锁再返回，防止持全局自旋锁返回导致后续死锁
+            return;
         }
     }
 
     // 头插：插入到索引 0（实现“后安装的先调用”）
     XVector_Insert(global_nativeFilters, 0, void*, filter);
-    //XMutex_unlock(self->d_ptr->mutex);
+    //XMutex_unlock(self->m_d_ptr->mutex);
     Global_UnLock;
 }
 
@@ -1191,7 +1197,7 @@ void XAbstractEventDispatcher_removeNativeEventFilter(XAbstractEventDispatcher* 
     (void)self;
     if (ISNULL(filter, "filter is NULL") || !global_nativeFilters) return;
     if (XObject_thread(self))return;//子线程不需要原生事件过滤器
-    //XMutex_lock(self->d_ptr->mutex);
+    //XMutex_lock(self->m_d_ptr->mutex);
     Global_Lock;
     // 查找并移除
     for (size_t i = 0; i < XVector_size_base(global_nativeFilters); ++i) {
@@ -1201,7 +1207,7 @@ void XAbstractEventDispatcher_removeNativeEventFilter(XAbstractEventDispatcher* 
             break;
         }
     }
-    //XMutex_unlock(self->d_ptr->mutex);
+    //XMutex_unlock(self->m_d_ptr->mutex);
     Global_UnLock;
 }
 
@@ -1215,17 +1221,17 @@ bool XAbstractEventDispatcher_filterNativeEvent(XAbstractEventDispatcher* self, 
     if (ISNULL(eventType, "eventType is NULL") || !global_nativeFilters) {
         return false;
     }
-    //XMutex_lock(self->d_ptr->mutex);
+    //XMutex_lock(self->m_d_ptr->mutex);
     Global_Lock;
    for (size_t i = 0; i < XVector_size_base(global_nativeFilters); ++i) {
         XAbstractNativeEventFilter* filter = *(XAbstractNativeEventFilter**)XVector_at_base(global_nativeFilters, i);
         if (filter && XAbstractNativeEventFilter_nativeEventFilter_base(filter, eventType, message, result)) {
-            //XMutex_unlock(self->d_ptr->mutex);
+            //XMutex_unlock(self->m_d_ptr->mutex);
             Global_UnLock;
             return true;
         }
     }
-    //XMutex_unlock(self->d_ptr->mutex);
+    //XMutex_unlock(self->m_d_ptr->mutex);
    Global_UnLock;
     return false;
 }
@@ -1284,10 +1290,10 @@ void* XAbstractEventDispatcher_aboutToBlock_signal(XAbstractEventDispatcher* sel
 
 XDispatcherThreadType XAbstractEventDispatcher_threadType(XAbstractEventDispatcher* self)
 {
-    return self ? self->type: XDISPATCHER_THREAD_TYPE_WORKER;
+    return self ? self->m_type: XDispatcherThreadType_Worker;
 }
 
 bool XAbstractEventDispatcher_isMainThread(XAbstractEventDispatcher* self)
 {
-    return self ? self->type == XDISPATCHER_THREAD_TYPE_MAIN : false;
+    return self ? self->m_type == XDispatcherThreadType_Main : false;
 }

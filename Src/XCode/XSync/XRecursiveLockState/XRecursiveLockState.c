@@ -16,7 +16,9 @@ void XRecursiveLockState_init()
 {
 	if (global_locks_map)return;
 	global_lock = XReadWriteLock_create(XLock_Spin);
-	global_locks_map = XHashMap_Create(XReadWriteLock*, XHashMap, uintptr_t_compare);
+	XAssert(global_lock, "Memory allocation failed");
+	global_locks_map = XHashMap_Create(XReadWriteLock*, XHashMap, Xuintptr_t_compare);
+	XAssert(global_locks_map, "Memory allocation failed");
 	XContainerSetDataDeinitMethod(global_locks_map, XClass_deinit_base);
 }
 
@@ -48,7 +50,7 @@ start:
 		XHashMap map;
 		XHashMap_init(&map, sizeof(XHandle), sizeof(XRecursiveLockState),
 			XCryptographicHash_function(XCryptographicHash_XxHash64),
-			uintptr_t_compare, false);
+			Xuintptr_t_compare, false);
 		XReadWriteLock_lockForWrite(global_lock);
 		XHashMap_insert_base(global_locks_map, &lock_obj, &map);
 		XReadWriteLock_unlock(global_lock);
@@ -59,7 +61,11 @@ start:
 // ========== 清除状态函数 ==========
 void XRecursiveLockState_clear(void* lock_obj) {
 	XReadWriteLock_lockForWrite(global_lock);
-	if (global_locks_map)return;
+	if (!global_locks_map)
+	{
+		XReadWriteLock_unlock(global_lock);
+		return;
+	}
 	XHashMap_remove_base(global_locks_map, &lock_obj);
 	XReadWriteLock_unlock(global_lock);
 }

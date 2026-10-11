@@ -14,6 +14,27 @@
 static void VXEventLoop_deinit(XEventLoop* loop);
 static bool VXEventLoop_event(XEventLoop* loop, XEvent* event);
 
+static bool VXEventLoop_event(XEventLoop* loop, XEvent* event)
+{
+    if (!loop || !event) return false;
+    if (event->m_type == XEVENT_TYPE_QUIT) {
+        XEventLoop_quit(loop);
+        XEvent_accept(event);
+        return true;
+    }
+    return XClass_Parent(XObject, EXObject_Event,
+                         bool(*)(XObject*, XEvent*))((XObject*)loop, event);
+}
+
+/**
+ * @brief 释放事件循环资源
+ */
+static void VXEventLoop_deinit(XEventLoop* loop)
+{
+    if (!loop) return;
+    XClass_Deinit_Parent(XObject, loop);
+}
+
 static XThreadData* XEventLoop_threadData(const XEventLoop* loop)
 {
     if (!loop) return NULL;
@@ -199,25 +220,4 @@ bool XEventLoop_processEvents(XEventLoop* loop, XEventLoopProcessEventsFlags fla
         return false;
 
     return XAbstractEventDispatcher_processEvents_base(dispatcher, flags);
-}
-
-static bool VXEventLoop_event(XEventLoop* loop, XEvent* event)
-{
-    if (!loop || !event) return false;
-    if (event->type == XEVENT_TYPE_QUIT) {
-        XEventLoop_quit(loop);
-        XEvent_accept(event);
-        return true;
-    }
-    return XClass_Parent(XObject, EXObject_Event,
-                         bool(*)(XObject*, XEvent*))((XObject*)loop, event);
-}
-
-/**
- * @brief 释放事件循环资源
- */
-static void VXEventLoop_deinit(XEventLoop* loop)
-{
-    if (!loop) return;
-    XClass_Deinit_Parent(XObject, loop);
 }

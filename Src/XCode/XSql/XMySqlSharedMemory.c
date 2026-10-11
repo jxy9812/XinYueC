@@ -77,7 +77,7 @@ struct XMySqlSharedMemory {
     bool m_writeGranted;                  /**< 本端写通道是否已获得写许可 */
 };
 
-/* 编译期校验线协议布局（4 字节对齐的 XAtomic_uint32_t 无填充）。 */
+/* 编译期校验线协议布局（4 字节对齐的 XAtomic_Uint32 无填充）。 */
 typedef char xmysql_shm_layout_check_channel[
     (sizeof(XMySqlSharedMemoryChannel) == 12 + XMYSQL_SHARED_MEMORY_DATA_SIZE) ? 1 : -1];
 typedef char xmysql_shm_layout_check_segment[
@@ -211,6 +211,7 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
         ? XDateTime_currentMSecsSinceEpoch() + (int64_t)timeoutMs : -1;
 
     if (!baseName) return NULL;
+    /* base 是 baseName 内部编码缓存的借用指针，所有权在调用方字符串，不得释放。 */
     base = XString_toUtf8(baseName);
     if (!base) return NULL;
 
@@ -297,7 +298,6 @@ XMySqlSharedMemory* XMySqlSharedMemory_open(const XString* baseName, int timeout
     /* 初始状态：客户端→服务器通道空闲，首次写无需等待空间许可。 */
     shared->m_writeGranted = true;
 
-    XFree_System((void*)base);
     return shared;
 
 fail:
@@ -311,7 +311,6 @@ fail:
         xmysql_shm_release_resources(shared);
         XFree_System(shared);
     }
-    XFree_System((void*)base);
     return NULL;
 }
 

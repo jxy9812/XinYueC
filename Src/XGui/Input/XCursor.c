@@ -302,11 +302,21 @@ bool XCursor_isShapeCursor(const XCursor* self)
 
 void XCursor_swap(XCursor* a, XCursor* b)
 {
+#if XCURSOR_ON
     XCursor tmp;
     if (!a || !b || a == b) return;
-    tmp = *a;
-    *a = *b;
-    *b = tmp;
+    /* 经移动语义交换资源：临时对象先初始化，资源只转移指针不复制，
+     * 不触碰 XObject 头（结构体赋值会连 m_memory/m_is_heap 一起互换，
+     * 冒充所有权转移）。 */
+    XCursor_init(&tmp);
+    XClassMove(&tmp, a);  /* tmp ← a 资源；a 复位为空光标 */
+    XClassMove(a, b);     /* a ← b 资源 */
+    XClassMove(b, &tmp);  /* b ← 原 a 资源；tmp 已空 */
+    XClassDeinit(&tmp);   /* 创建者收尾：资源已转出，此处为空操作 */
+#else
+    (void)a;
+    (void)b;
+#endif /* XCURSOR_ON */
 }
 
 bool XCursor_equals(const XCursor* a, const XCursor* b)

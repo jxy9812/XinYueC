@@ -1,15 +1,19 @@
-﻿#include "XCrc_config.h"
-#if !defined(XCRC_H)&& XCrc_ON
-#define XCRC_H
-
-/**
+﻿/**
  * @file XCrc.h
  * @brief CRC16/CRC32 校验和计算 API。
  */
 
+#ifndef XCRC_H
+#define XCRC_H
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 模块总开关 XCrc_ON 定义于 XCrc_config.h，须先包含该配置文件再判定开关。 */
+#include "XCrc_config.h"
+
+#if XCrc_ON
 
 #include <stddef.h>
 #include <stdint.h>
@@ -103,6 +107,8 @@ uint32_t XCrc32_update(XCrc32_Algorithm algorithm, uint32_t crc,
 uint32_t XCrc32_combine(XCrc32_Algorithm algorithm, uint32_t crc1,
                         uint32_t crc2, uint64_t len2);
 #endif /* XCrc32_ON */
+
+#endif /* XCrc_ON */
 
 #ifdef __cplusplus
 }

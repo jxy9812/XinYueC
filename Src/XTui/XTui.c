@@ -35,6 +35,7 @@ static void postCharEvent(XTui* self, const char* utf8, XKeyboardModifiers modif
     memcpy(ev.m_utf8, utf8, len);
     ev.m_utf8[len] = '\0';
     XTui_handleKey(self, &ev);
+    XClassDeinit(&ev);
 }
 
 static void postKeyEvent(XTui* self, XTuiKeyType type, XKeyboardModifiers modifiers)
@@ -42,6 +43,7 @@ static void postKeyEvent(XTui* self, XTuiKeyType type, XKeyboardModifiers modifi
     XTuiKeyEvent ev;
     XTuiKeyEvent_init(&ev, XEVENT_TYPE_KEY_PRESS, type, modifiers);
     XTui_handleKey(self, &ev);
+    XClassDeinit(&ev);
 }
 
 static int firstCsiNumber(const char* buf, size_t len, int def)

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file       XLineControl.c
  * @brief      XLineControl 私有文本控制器实现（Qt 6.8
  *             QWidgetLineControl 的 C99 逐方法移植）。

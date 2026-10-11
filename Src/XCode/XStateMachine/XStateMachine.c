@@ -2,8 +2,16 @@
 
 #include "XCoreApplication.h"
 #include "XMemory.h"
+#include "XString.h"
 #include "XStateMachine_p.h"
+#include "XStateMachine_Protected.h"
 
+/** @brief 延迟事件的内部记录。仅供本实现文件使用，不进入公开头文件。 */
+typedef struct XStateMachine_DelayedEvent {
+    int m_id;              ///< 对外返回的延迟事件编号。
+    XTimerId m_timerId;    ///< XObject 定时器编号；零延迟时为 XTIMER_INVALID_ID。
+    XEvent* m_event;       ///< 到期后进入外部队列的事件。
+} XStateMachine_DelayedEvent;
 
 typedef struct XStateMachine_SignalConnection {
     XObject m_class;
@@ -250,24 +258,31 @@ static XAbstractState* XStateMachine_setError(XStateMachine* machine,
 {
     if (!machine)
         return NULL;
+    const char* errorText = NULL;
     machine->m_error = error;
     switch (error) {
     case XStateMachine_NoInitialStateError:
-        machine->m_errorString = "Missing initial state in compound state";
+        errorText = "Missing initial state in compound state";
         break;
     case XStateMachine_NoDefaultStateInHistoryStateError:
-        machine->m_errorString = "Missing default state in history state";
+        errorText = "Missing default state in history state";
         break;
     case XStateMachine_NoCommonAncestorForTransitionError:
-        machine->m_errorString = "No common ancestor for transition source and targets";
+        errorText = "No common ancestor for transition source and targets";
         break;
     case XStateMachine_StateMachineChildModeSetToParallelError:
-        machine->m_errorString = "Invalid state machine child mode";
+        errorText = "Invalid state machine child mode";
         break;
     default:
-        machine->m_errorString = "Unknown state machine error";
+        errorText = "Unknown state machine error";
         break;
     }
+    /* 错误描述按 XString 主版本存储（对标 Qt QString errorString）；
+     * 字面量仅在此转换为库内字符串，禁止以 char* 长期保存。 */
+    if (machine->m_errorString)
+        XString_assign_utf8(machine->m_errorString, errorText);
+    else
+        machine->m_errorString = XString_create_utf8(errorText);
 
     XAbstractState* errorState = XStateMachine_findErrorState(context);
     machine->m_pendingErrorState = errorState;
@@ -948,7 +963,14 @@ static void XStateMachine_process(XStateMachine* machine)
             if (!event)
                 break;
             enabled = XStateMachine_selectTransitions(machine, event);
-            if (enabled && XVector_isEmpty_base((const XContainer*)enabled)) {
+            if (!enabled) {
+                /* 转换选择失败（内存分配失败返回 NULL）：已出队事件归本循环所有，
+                 * 先释放再停止处理，防止事件指针被下一轮循环覆盖后泄漏。 */
+                XClassDelete((XClass*)event);
+                event = NULL;
+                break;
+            }
+            if (XVector_isEmpty_base((const XContainer*)enabled)) {
                 XClassDelete((XClass*)enabled);
                 enabled = NULL;
                 XClassDelete((XClass*)event);
@@ -1001,6 +1023,7 @@ static void XStateMachine_startInternal(XStateMachine* machine)
     }
 
     XVector* entries = XVector_Create(XAbstractState*);
+    XAssert(entries, "Memory allocation failed");
     XEvent nullEvent;
     XEvent_init(&nullEvent, XEVENT_TYPE_NONE);
     XState* root = (XState*)machine;
@@ -1129,6 +1152,10 @@ static void VXStateMachine_deinit(XStateMachine* machine)
     XClassDelete((XClass*)machine->m_externalEventQueue);
     XClassDelete((XClass*)machine->m_delayedEvents);
     XClassDelete((XClass*)machine->m_signalConnections);
+    if (machine->m_errorString) {
+        XClassDelete((XClass*)machine->m_errorString);
+        machine->m_errorString = NULL;
+    }
     machine->m_configuration = NULL;
     machine->m_internalEventQueue = NULL;
     machine->m_externalEventQueue = NULL;
@@ -1185,10 +1212,15 @@ void XStateMachine_init_ex(XStateMachine* machine, XState_ChildMode childMode)
     machine->m_class.m_class.m_kind = XAbstractState_StateMachine;
     machine->m_class.m_class.m_machine = machine;
     machine->m_configuration = XVector_Create(XAbstractState*);
+    XAssert(machine->m_configuration, "Memory allocation failed");
     machine->m_internalEventQueue = XVector_Create(XEvent*);
+    XAssert(machine->m_internalEventQueue, "Memory allocation failed");
     machine->m_externalEventQueue = XVector_Create(XEvent*);
+    XAssert(machine->m_externalEventQueue, "Memory allocation failed");
     machine->m_delayedEvents = XVector_Create(XStateMachine_DelayedEvent);
+    XAssert(machine->m_delayedEvents, "Memory allocation failed");
     machine->m_signalConnections = XVector_Create(XStateMachine_SignalConnection*);
+    XAssert(machine->m_signalConnections, "Memory allocation failed");
     machine->m_pendingErrorState = NULL;
     machine->m_state = XStateMachine_NotRunning;
     machine->m_error = XStateMachine_NoError;
@@ -1219,9 +1251,15 @@ XStateMachine_Error XStateMachine_error(const XStateMachine* machine)
     return machine ? machine->m_error : XStateMachine_NoError;
 }
 
+const XString* XStateMachine_errorString_const(const XStateMachine* machine)
+{
+    return (machine && machine->m_errorString) ? machine->m_errorString : NULL;
+}
+
 const char* XStateMachine_errorString(const XStateMachine* machine)
 {
-    return machine ? machine->m_errorString : NULL;
+    /* 兼容视图：文本来自内部 XString 的 UTF-8 转换缓存，核心存储是 errorString_const 的 XString。 */
+    return (machine && machine->m_errorString) ? XString_toUtf8(machine->m_errorString) : NULL;
 }
 
 void XStateMachine_clearError(XStateMachine* machine)
@@ -1229,7 +1267,10 @@ void XStateMachine_clearError(XStateMachine* machine)
     if (!machine)
         return;
     machine->m_error = XStateMachine_NoError;
-    machine->m_errorString = NULL;
+    if (machine->m_errorString) {
+        XClassDelete((XClass*)machine->m_errorString);
+        machine->m_errorString = NULL;
+    }
     machine->m_pendingErrorState = NULL;
 }
 
@@ -1602,12 +1643,23 @@ static void VXStateMachine_SignalEvent_deinit(XStateMachine_SignalEvent* event)
                    void(*)(XEvent*))((XEvent*)event);
 }
 
-static XVtable* XStateMachine_SignalEvent_class_init(void)
+XVtable* XStateMachine_SignalEvent_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XStateMachine_SignalEvent)
     XVTABLE_INHERIT_XCLASS(XEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXStateMachine_SignalEvent_deinit);
     return XVTABLE_DEFAULT;
+}
+
+void XStateMachine_SignalEvent_init(XStateMachine_SignalEvent* event)
+{
+    if (!event)
+        return;
+    XEvent_init((XEvent*)event, g_signalEventType);
+    XClassSetVtable(event, XStateMachine_SignalEvent);
+    event->m_sender = NULL;
+    event->m_signal = 0;
+    event->m_arguments = NULL;
 }
 
 XStateMachine_SignalEvent* XStateMachine_SignalEvent_create_ex(XMemoryType memory, XObject* sender,
@@ -1617,8 +1669,7 @@ XStateMachine_SignalEvent* XStateMachine_SignalEvent_create_ex(XMemoryType memor
     XStateMachine_SignalEvent* event = XMemory_malloc(sizeof(XStateMachine_SignalEvent), memory);
     if (!event)
         return NULL;
-    XEvent_init((XEvent*)event, g_signalEventType);
-    XClassGetVtable(event) = XStateMachine_SignalEvent_class_init();
+    XStateMachine_SignalEvent_init(event);
     event->m_sender = sender;
     event->m_signal = signal;
     event->m_arguments = XVarList_create_copy(arguments);

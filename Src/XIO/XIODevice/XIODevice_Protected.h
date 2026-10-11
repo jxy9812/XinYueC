@@ -1,8 +1,15 @@
-﻿#ifndef XIODevice_Protected_H
+﻿/**
+ * @file       XIODevice_Protected.h
+ * @brief      XIODevice 保护接口（子类重载入口与内部辅助）。
+ * @details    仅供子类（XSerialPort 等）和内部实现使用，不对外公开；
+ *             使用者必须显式包含本头文件。
+ */
+#ifndef XIODevice_Protected_H
 #define XIODevice_Protected_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+#include "XIODevice.h"
 /**
  * @brief 虚函数：从设备读取原始数据（纯虚函数，子类必须实现）
  * @param self 指向 XIODevice 对象的指针

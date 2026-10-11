@@ -284,7 +284,7 @@ void* XTelnetClient_errorOccurred_signal(XTelnetClient* self, int error)
                 XEVENT_PRIORITY_NORMAL);
 }
 
-static void xtelnet_client_deinit(XTelnetClient* self)
+static void VXTelnetClient_deinit(XTelnetClient* self)
 {
     if (!self) return;
     XTelnetClient_stop(self);
@@ -295,7 +295,7 @@ XVtable* XTelnetClient_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XTelnetClient)
     XVTABLE_INHERIT_XCLASS(XObject);
-    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, xtelnet_client_deinit);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTelnetClient_deinit);
     XCLASS_SHOW_SIZE_DEFAULT(XTelnetClient);
     return XVTABLE_DEFAULT;
 }

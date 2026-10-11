@@ -12,6 +12,7 @@
 
 #if XPLATFORMINTEGRATION_ON
 struct XPlatformTheme {
+    XMemoryType m_memory; /**< 分配器族标记(经 _ex 传入, destroy 按同族释放)。 */
     XString* m_name;      /**< 主题名（拥有）。 */
     bool m_dark;          /**< 深色偏好。 */
     int m_colorScheme;    /**< 色彩方案（XPlatformThemeColorScheme）。 */
@@ -26,6 +27,7 @@ XPlatformTheme* XPlatformTheme_create_ex(XMemoryType memory, const XString* name
     const char* effective = NULL;
     if (!self) return NULL;
     XMemset(self, 0, sizeof(*self));
+    self->m_memory = memory; /* 记录分配器族: destroy 按同族配对释放。 */
     (void)XPlatformThemeDriver_detect(&dark, detected, sizeof(detected));
     if (name && XString_length_base((XContainer*)name) > 0)
         effective = XString_toUtf8(name);
@@ -56,7 +58,7 @@ void XPlatformTheme_destroy(XPlatformTheme* self)
     if (!self) return;
     if (self->m_name) XClassDelete(self->m_name);
     XClassDeinit(&self->m_font);
-    XFree_System(self);
+    XMemory_free(self, self->m_memory);
 }
 const XString* XPlatformTheme_name(const XPlatformTheme* self)
 { return self ? self->m_name : NULL; }

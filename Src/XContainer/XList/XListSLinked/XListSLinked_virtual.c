@@ -135,9 +135,15 @@ static bool VXListSLinkedDetachIfNeeded(XListSLinked* this_list)
         XListSNode* newNode = XContainer_malloc(this_list, ALIGN_UP(sizeof(XListSNode) + typeSize, sizeof(void*)));
         if (!newNode)
         {
-            // 释放已创建的节点
+            // 释放已创建的节点（先反初始化已拷贝构造的元素再释放，与同文件 VXClass_copy 回滚一致）
             XListSNode* tmp = newHead;
-            while (tmp) { XListSNode* next = tmp->next; XContainer_free(this_list, tmp); tmp = next; }
+            while (tmp) {
+                XListSNode* next = tmp->next;
+                if (XContainerDataDeinitMethod(this_list) != NULL)
+                    XContainerDataDeinitMethod(this_list)(XListSNode_DataPtr(tmp));
+                XContainer_free(this_list, tmp);
+                tmp = next;
+            }
             XSharedData_release(newShared, XContainer_memory(this_list));
             return false;
         }
@@ -179,7 +185,8 @@ static void VXListSLinkedDataDelete(void* data, XListSLinked* this_list)
     this_list->m_tail = NULL;
     XContainerSize(this_list) = 0;
     XContainerCapacity(this_list) = 0;
-    //XContainerSetDataPtr(this_list, NULL);
+    // 共享块已随引用归零释放，必须清空属主指针，避免二次 deinit/clear 触碰悬挂 m_data
+    XContainerSetDataPtr(this_list, NULL);
 }
 
 bool VXListBase_push_front_node(XListSLinked* this_list, XListSNode* node)
@@ -237,6 +244,10 @@ XListSNode* VXList_push_front(XListSLinked* this_list, void* pvData, XCDataCreat
     }
     if(VXListBase_push_front_node(this_list,newNode))
         return newNode;
+    // 入链失败：节点不会进入容器，须先清理再返回（与同文件 insert_array 失败路径一致）
+    if (XContainerDataDeinitMethod(this_list) != NULL)
+        XContainerDataDeinitMethod(this_list)(XListSNode_DataPtr(newNode));
+    XContainer_free(this_list, newNode);
     return NULL;
 }
 
@@ -260,6 +271,10 @@ XListSNode* VXList_push_back(XListSLinked* this_list, void* pvData, XCDataCreatM
     }
     if (VXListBase_push_back_node(this_list, NewNode))
         return NewNode;
+    // 入链失败：节点不会进入容器，须先清理再返回（与同文件 insert_array 失败路径一致）
+    if (XContainerDataDeinitMethod(this_list) != NULL)
+        XContainerDataDeinitMethod(this_list)(XListSNode_DataPtr(NewNode));
+    XContainer_free(this_list, NewNode);
     return NULL;
 }
 
@@ -458,6 +473,11 @@ bool VXList_pop_back(XListSLinked* this_list)
     if (tail == NULL)
         return false;
     XListSNode* node = *XListSLinked_head_ptr(this_list);//当前节点
+    if (node == tail)
+    {//单节点链表：唯一节点即尾节点，直接摘除（否则 node->next==NULL 永不等于 tail，循环空转却返回 true）
+        removeNode(this_list, NULL, tail);
+        return true;
+    }
     while (node)
     {
         if (node->next == tail)
@@ -532,8 +552,8 @@ void VXList_clear(XListSLinked* this_list)
 {
     if (XListBase_isEmpty_base(this_list))
         return;
-    // 如果数据被共享，减少引用并置空
-    if ((XSharedData*)XContainerDataPtr(this_list) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_list)))
+    // COW 模式且共享：直接丢弃共享块并置空（非 COW 时 m_data 是节点链而非共享块，不得按 XSharedData 判定）
+    if (XContainerIsCow(this_list) && (XSharedData*)XContainerDataPtr(this_list) && XSharedData_isShared((XSharedData*)XContainerDataPtr(this_list)))
     {
         XSharedData_release((XSharedData*)XContainerDataPtr(this_list),
             XContainer_memory(this_list));
@@ -635,6 +655,11 @@ static XListSNode* List_OneSort(XListSLinked* this_list, XListSNode* left, XList
             // 交换i和j的数据
 
             void* temp = XContainer_malloc(this_list, typeSize);
+            if (temp == NULL)
+            {//分配失败：释放 pivot 后按同函数 pivot 的失败约定返回 NULL
+                XContainer_free(this_list, pivot);
+                return NULL;
+            }
             memcpy(temp, &(i->data), typeSize);
             memcpy(&(i->data), &(j->data), typeSize);
             memcpy(&(j->data), temp, typeSize);
@@ -646,6 +671,11 @@ static XListSNode* List_OneSort(XListSLinked* this_list, XListSNode* left, XList
 
     // 将pivot放到正确位置
     void* temp = XContainer_malloc(this_list, typeSize);
+    if (temp == NULL)
+    {//分配失败：释放 pivot 后按同函数 pivot 的失败约定返回 NULL
+        XContainer_free(this_list, pivot);
+        return NULL;
+    }
     memcpy(temp, &(i->data), typeSize);
     memcpy(&(i->data), &(left->data), typeSize);
     memcpy(&(left->data), temp, typeSize);
@@ -783,6 +813,12 @@ void VXClass_copy(XListSLinked* object, const XListSLinked* src)
                         XContainerDataDeinitMethod(object)(XListSNode_DataPtr(tmp));
                     XContainer_free(object, tmp);
                 }
+                // 失败回滚：上面 memcpy 已让 object 别名 src 的节点链，
+                // 必须解除别名并置为空表状态，否则后续 clear/deinit 会双释放源节点
+                XContainerDataPtr(object) = NULL;
+                object->m_tail = NULL;
+                XContainerSize(object) = 0;
+                XContainerCapacity(object) = 0;
                 return;
             }
             if (XContainerDataCopyMethod(object))
@@ -890,6 +926,8 @@ void VXList_deinit(XListSLinked* this_list)
 
 static bool VXList_indexOf(const XListSLinked* this_list, const void* findVal, size_t from, XListSLinked_iterator* it)
 {
+	if (XContainerCompare(this_list) == NULL)
+		return false;//未注册比较函数，不解引用空槽（与 VXList_remove 的防御一致）
 	XListSLinked_iterator tmpIt = XListSLinked_begin((XListSLinked*)this_list);
 	if (!it) it = &tmpIt;
 	size_t idx = 0;
@@ -907,6 +945,8 @@ static bool VXList_indexOf(const XListSLinked* this_list, const void* findVal, s
 
 static bool VXList_lastIndexOf(const XListSLinked* this_list, const void* findVal, size_t from, XListSLinked_iterator* it)
 {
+	if (XContainerCompare(this_list) == NULL)
+		return false;//未注册比较函数，不解引用空槽（与 VXList_remove 的防御一致）
 	bool found = false;
 	XListSLinked_iterator tmpIt = XListSLinked_begin((XListSLinked*)this_list);
 	XListSLinked_iterator lastFound;
@@ -955,6 +995,8 @@ static size_t VXList_remove_all(XListSLinked* this_list, const void* pvData)
 		return 0;
 	if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
 		return 0;
+	if (XContainerCompare(this_list) == NULL)
+		return 0;//未注册比较函数，不解引用空槽（与 VXList_remove 的防御一致）
 	size_t removed = 0;
 	XListSNode* node = *XListSLinked_head_ptr(this_list);
 	XListSNode* prev = NULL;
@@ -982,6 +1024,8 @@ static bool VXList_remove_one(XListSLinked* this_list, const void* pvData)
 		return false;
 	if (!ensureSharedData(this_list) || !VXListSLinkedDetachIfNeeded(this_list))
 		return false;
+	if (XContainerCompare(this_list) == NULL)
+		return false;//未注册比较函数，不解引用空槽（与 VXList_remove 的防御一致）
 	XListSNode* node = *XListSLinked_head_ptr(this_list);
 	XListSNode* prev = NULL;
 	while (node)

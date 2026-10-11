@@ -40,6 +40,7 @@
  *    （button(HelpButton) 恒 NULL，属文档化简化）。
  */
 #include "xgui_demo_apitest.h"
+#include "XObject_Protected.h"
 
 #include <stdint.h>
 #include <stdio.h>

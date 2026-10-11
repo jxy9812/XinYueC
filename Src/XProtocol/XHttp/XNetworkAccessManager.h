@@ -65,9 +65,9 @@ typedef struct XNetworkAccessManager {
     bool m_autoDeleteReplies;            /**< 是否在完成后延迟删除响应。 */
     bool m_hstsEnabled;                  /**< 是否启用 HSTS 自动升级和响应学习。 */
     bool m_hstsStoreEnabled;             /**< 是否启用 HSTS 持久化开关。 */
+    bool m_deinitializing;              /**< 是否正在反初始化。 */
     XSslPeerVerifyMode m_sslPeerVerifyMode; /**< HTTPS 对端证书校验模式。 */
     XSslCertificate* m_sslCaCertificate; /**< HTTPS 校验 CA；所有权由管理器持有。 */
-    bool m_deinitializing;              /**< 是否正在反初始化。 */
 } XNetworkAccessManager;
 
 /**

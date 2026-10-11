@@ -1,13 +1,12 @@
-﻿//二叉树基类
-#ifndef XBINARYTREEOBJECT_H
-#define XBINARYTREEOBJECT_H
-
-/**
- * @file XTreeObject.h
+﻿/**
+ * @file XTreeNode.h
  * @brief 多叉树节点的公共布局、关系操作和生命周期 API。
- *
- * 节点采用连续内存布局：[节点对象][子节点指针数组][用户数据]。
+ * @details 节点采用连续内存布局：[节点对象][子节点指针数组][用户数据]。
+ *          实现只依赖 XinYueC 抽象层（XTypes.h/XVector.h 与语言基础头文件），
+ *          禁止调用 Win32、POSIX、Qt 或其他平台 API。
  */
+#ifndef XTREENODE_H
+#define XTREENODE_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -35,14 +34,14 @@ typedef void (*XTreeNodeDeleteMethod)(XTreeNode* node, XMemory* memory);
 
 /**
  * @brief 树节点公共基类布局。
- * @details nodeSize 是从节点首地址到用户数据的偏移量，nodeCount 是子节点槽位数。
+ * @details m_nodeSize 是从节点首地址到用户数据的偏移量，m_nodeCount 是子节点槽位数。
  *          具体树类型可将该结构作为第一个成员进行布局兼容。
  */
 typedef struct XTreeNode //内存布局 [XTreeNode(及派生类)] [XTreeNode* nodes[](存储其他节点)] [char data[](用户数据)]
 {
-	uint32_t nodeSize:24; /**< 节点及子节点指针区域的大小，不含用户数据。 */
-	uint32_t nodeCount:8; /**< 子节点指针槽位数量。 */
-	struct XTreeNode* parentNode; /**< 父节点；根节点为 NULL。 */
+	uint32_t m_nodeSize:24; /**< 节点及子节点指针区域的大小，不含用户数据。 */
+	uint32_t m_nodeCount:8; /**< 子节点指针槽位数量。 */
+	struct XTreeNode* m_parentNode; /**< 父节点；根节点为 NULL。 */
 } XTreeNode;
 
 /**
@@ -93,11 +92,14 @@ void XTreeNode_init(XTreeNode* node,const uint8_t nodeCount, size_t treeNodeSize
 bool XTreeNode_setData(XTreeNode* this_root, const void* pvData, size_t dataSize);
 
 /**
- * @brief 获取节点用户数据的可写地址。
+ * @brief 获取节点用户数据的只读地址。
  * @param this_root 目标节点。
- * @return 用户数据地址；this_root 为 NULL 时返回 NULL。
+ * @return 用户数据的 const 借用地址，调用者不得释放、不得通过它修改数据；
+ *         this_root 为 NULL 时返回 NULL。
+ * @note 需要可写访问时使用 XTreeNode_GetData/XTreeNode_GetDataPtr 宏，
+ *       或调用 XTreeNode_setData 覆盖数据。
  */
-void* XTreeNode_getData(XTreeNode* this_root);
+const void* XTreeNode_data_const(const XTreeNode* this_root);
 
 /**
  * @brief 设置指定子节点槽位。
@@ -105,7 +107,7 @@ void* XTreeNode_getData(XTreeNode* this_root);
  * @param nodeType 子节点槽位索引，范围为 [0, nodeCount)。
  * @param node 要写入的子节点，可为 NULL 以清空槽位。
  * @return 成功写入返回 true；节点为空或索引越界返回 false。
- * @note 函数不会自动更新 node 的 parentNode。
+ * @note 函数不会自动更新 node 的 m_parentNode。
  */
 bool XTreeNode_setNode(XTreeNode* this_root, const uint8_t nodeType, XTreeNode* node);
 
@@ -115,7 +117,7 @@ bool XTreeNode_setNode(XTreeNode* this_root, const uint8_t nodeType, XTreeNode* 
  * @param nodeType 子节点槽位索引，调用者必须保证索引有效。
  * @return 子节点指针；节点为空或对应槽位为空时返回 NULL。
  */
-XTreeNode* XTreeNode_getChild(XTreeNode* this_root, const uint8_t nodeType);
+XTreeNode* XTreeNode_child(XTreeNode* this_root, const uint8_t nodeType);
 
 /**
  * @brief 获取指定子节点槽位的指针引用。
@@ -123,14 +125,14 @@ XTreeNode* XTreeNode_getChild(XTreeNode* this_root, const uint8_t nodeType);
  * @param nodeType 子节点槽位索引，范围为 [0, nodeCount)。
  * @return 指向子节点槽位的地址；参数无效或索引越界返回 NULL。
  */
-XTreeNode** XTreeNode_getChildRef(XTreeNode* this_root, const uint8_t nodeType);//
+XTreeNode** XTreeNode_child_ref(XTreeNode* this_root, const uint8_t nodeType);//
 
 /**
- * @brief 获取节点 parentNode 成员的地址。
+ * @brief 获取节点 m_parentNode 成员的地址。
  * @param this_root 目标节点。
  * @return 父节点指针成员的地址；this_root 为 NULL 时返回 NULL。
  */
-XTreeNode** XTreeNode_getParentRef(XTreeNode* this_root);
+XTreeNode** XTreeNode_parent_ref(XTreeNode* this_root);
 
 /**
  * @brief 在父节点中用新节点替换旧子节点。
@@ -139,14 +141,14 @@ XTreeNode** XTreeNode_getParentRef(XTreeNode* this_root);
  * @return 替换成功返回 true；任一节点为空、旧节点没有父节点或关系不存在返回 false。
  * @note 旧节点不会被释放；新节点原有的父子关系由调用者负责处理。
  */
-bool XTree_ReplacementChildNode(XTreeNode* formerChild/*旧的*/, XTreeNode* freshChild/*新的*/);
+bool XTreeNode_ReplacementChildNode(XTreeNode* formerChild/*旧的*/, XTreeNode* freshChild/*新的*/);
 
 /**
  * @brief 获取父节点中指向当前节点的子节点槽位地址。
  * @param this_root 要查询的子节点。
  * @return 父节点对应槽位的地址；节点是根节点、关系不存在或参数无效时返回 NULL。
  */
-XTreeNode** XTreeNode_getChildrenParentRef(XTreeNode* this_root);//
+XTreeNode** XTreeNode_childrenParent_ref(XTreeNode* this_root);//
 
 /**
  * @brief 释放单个节点的内存。
@@ -164,10 +166,12 @@ void XTreeNode_delete(XTreeNode* node, XMemory* memory);
  * @param args 传递给 dataMethod 的上下文参数，可为 NULL。
  * @param memory 节点释放所使用的内存管理器，可为 NULL。
  * @note 本函数即原 XTree_delete_base（树节点算法接口，非 XClass 生命周期
- *       API，_base 后缀已去除）。原 4 参便捷版（默认节点释放器）已并入：
- *       默认行为请显式传 XTreeNode_delete 作 nodeMethod。
+ *       API；_base 后缀去除后曾名 XTree_delete，因实际操作类型是 XTreeNode，
+ *       按「X类型名_功能名」更名 XTreeNode_deleteTree）。原 4 参便捷版
+ *       （默认节点释放器）已并入：默认行为请显式传 XTreeNode_delete 作
+ *       nodeMethod。
  */
-void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
+void XTreeNode_deleteTree(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
 	XTreeNodeDataDeleteMethod dataMethod, void* args, XMemory* memory);
 
 /**
@@ -175,7 +179,7 @@ void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
  * @param this_root 目标节点。
  * @return 用户数据地址。
  */
-#define XTreeNode_GetDataPtr(this_root)				(((uint8_t*)this_root)+((XTreeNode*)this_root)->nodeSize)
+#define XTreeNode_GetDataPtr(this_root)				(((uint8_t*)this_root)+((XTreeNode*)this_root)->m_nodeSize)
 
 /**
  * @brief 按指定类型读取节点用户数据。
@@ -190,14 +194,14 @@ void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
  * @param this_root 目标节点。
  * @return 子节点槽位数组首地址。
  */
-#define XTreeNode_GetNodes(this_root)				((XTreeNode**)((uint8_t*)XTreeNode_GetDataPtr(this_root)-((XTreeNode*)this_root)->nodeCount*sizeof(XTreeNode*)))
+#define XTreeNode_GetNodes(this_root)				((XTreeNode**)((uint8_t*)XTreeNode_GetDataPtr(this_root)-((XTreeNode*)this_root)->m_nodeCount*sizeof(XTreeNode*)))
 
 /**
  * @brief 获取节点的父节点指针。
  * @param this_root 目标节点。
  * @return 父节点指针，根节点返回 NULL。
  */
-#define XTreeNode_GetParent(this_root)				(((XTreeNode*)this_root)->parentNode)//树-获取父节点(继承的子类均可以使用)
+#define XTreeNode_GetParent(this_root)				(((XTreeNode*)this_root)->m_parentNode)//树-获取父节点(继承的子类均可以使用)
 
 /**
  * @brief 获取指定子节点指针。
@@ -212,7 +216,7 @@ void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
  * @param this_root 目标节点。
  * @param node 新父节点，可为 NULL。
  */
-#define XTreeNode_SetParent(this_root,node)			((((XTreeNode*)this_root)->parentNode)=node)//树-设置父节点(继承的子类均可以使用)
+#define XTreeNode_SetParent(this_root,node)			((((XTreeNode*)this_root)->m_parentNode)=node)//树-设置父节点(继承的子类均可以使用)
 
 /**
  * @brief 设置指定子节点槽位。
@@ -225,4 +229,4 @@ void XTree_delete(XTreeNode* this_root, XTreeNodeDeleteMethod nodeMethod,
 #ifdef __cplusplus
 }
 #endif
-#endif // !XBINARYTREEOBJECT_H
+#endif // !XTREENODE_H

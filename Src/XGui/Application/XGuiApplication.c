@@ -235,8 +235,8 @@ static bool VXGuiApplication_notify(XObject* receiver, XEvent* event)
      * 平台 XIM（XFilterEvent）与 DBus portal（fcitx）在 WSI 键事件入口
      * 之前已自行消费组合键，因此本钩子位于 IME 处理之后、控件派发之前，
      * 两条过滤路径互不打架；空后端默认恒 false，派发行为不变。 */
-    if (event && (event->type == XEVENT_TYPE_KEY_PRESS ||
-                  event->type == XEVENT_TYPE_KEY_RELEASE)) {
+    if (event && (event->m_type == XEVENT_TYPE_KEY_PRESS ||
+                  event->m_type == XEVENT_TYPE_KEY_RELEASE)) {
 #if XWIDGET_ON
         /* 对标 Qt QGuiApplicationPrivate::processKeyEvent：平台键事件
          * 交付给应用焦点窗口（focusWindow()），而不是发起投递的原生
@@ -279,6 +279,110 @@ static bool VXGuiApplication_notify(XObject* receiver, XEvent* event)
 #endif /* XINPUTMETHOD_ON || (XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON) */
     return XClass_Parent(XCoreApplication, EXCoreApplication_Notify,
                          bool (*)(XObject*, XEvent*))(receiver, event);
+}
+
+static void VXGuiApplication_deinit(XGuiApplication* app)
+{
+    size_t i;
+    size_t n;
+    if (!app || g_guiApplication != app)
+        return;
+
+    /* 先摘除 GUI 单例标记，防止析构回调重入时再次看到半析构对象。 */
+    g_guiApplication = NULL;
+    if (((XObject*)app)->m_was_deleted)
+        return;
+
+    /* 释放 GUI 尾部拥有的堆资源；借用指针（窗口/焦点/模态）只清空不释放。 */
+    if (app->m_displayName) { XClassDelete(app->m_displayName); app->m_displayName = NULL; }
+    if (app->m_desktopFileName) { XClassDelete(app->m_desktopFileName); app->m_desktopFileName = NULL; }
+    if (app->m_platformName) { XClassDelete(app->m_platformName); app->m_platformName = NULL; }
+    if (app->m_sessionId) { XClassDelete(app->m_sessionId); app->m_sessionId = NULL; }
+    if (app->m_sessionKey) { XClassDelete(app->m_sessionKey); app->m_sessionKey = NULL; }
+    if (app->m_windowIcon) { XClassDelete(app->m_windowIcon); app->m_windowIcon = NULL; }
+    if (app->m_font) { XClassDelete(app->m_font); app->m_font = NULL; }
+    if (app->m_overrideStack) {
+#if XCURSOR_ON
+        n = XVector_size_base((const XContainer*)app->m_overrideStack);
+        for (i = 0; i < n; ++i) {
+            XCursor** p = (XCursor**)XVector_at_base(app->m_overrideStack, (int64_t)i);
+            if (p && *p) XClassDelete(*p);
+        }
+#else
+        (void)i; (void)n;
+#endif /* XCURSOR_ON */
+        XClassDelete((XClass*)app->m_overrideStack);
+        app->m_overrideStack = NULL;
+    }
+#if XVIRTUALKEYBOARD_ON
+    /* 虚拟键盘默认面板先于窗口注册表释放：其桥接窗口登记在 m_windows
+       内，析构经 removeWindow 摘除，容器释放后再删会访问已释放向量。 */
+    if (app->m_virtualKeyboard) {
+        XClassDelete(app->m_virtualKeyboard);
+        app->m_virtualKeyboard = NULL;
+    }
+#endif /* XVIRTUALKEYBOARD_ON */
+    if (app->m_windows) {
+        /* 窗口对象由调用方拥有，这里只释放注册表容器。 */
+        XClassDelete((XClass*)app->m_windows);
+        app->m_windows = NULL;
+    }
+    app->m_focusWindow = NULL;
+    app->m_modalWindow = NULL;
+    app->m_focusObject = NULL;
+#if XINPUTMETHOD_ON
+    /* 输入法先于集成层释放（其绑定输入上下文由集成层拥有）。 */
+    if (app->m_inputMethod) {
+#if XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
+        if (app->m_platformIntegration) {
+            XPlatformInputContext* context =
+                XPlatformIntegration_inputContext(app->m_platformIntegration);
+            if (context)
+                XPlatformInputContext_setInputMethod(context, NULL);
+        }
+#if XVIRTUALKEYBOARD_ON
+        /* VK 平台上下文（装配侧自有，非集成层拥有）：解绑并回收。 */
+        {
+            XPlatformInputContext* bound =
+                XInputMethod_platformContext(app->m_inputMethod);
+            if (bound && XClassGetVtable(bound) ==
+                             XVirtualKeyboardPlatformInputContext_class_init()) {
+                XPlatformInputContext_setInputMethod(bound, NULL);
+                XClassDelete(
+                    (XVirtualKeyboardPlatformInputContext*)bound);
+            }
+        }
+#endif /* XVIRTUALKEYBOARD_ON */
+#endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
+        XClassDelete(app->m_inputMethod);
+        app->m_inputMethod = NULL;
+    }
+#endif /* XINPUTMETHOD_ON */
+#if XPLATFORMINTEGRATION_ON
+    if (app->m_nativeEventPump) {
+        XAbstractEventDispatcher_removePollCallback(app->m_nativeEventPump);
+        app->m_nativeEventPump = NULL;
+    }
+    if (app->m_platformIntegration) {
+        XClassDelete(app->m_platformIntegration);
+        app->m_platformIntegration = NULL;
+    }
+#endif /* XPLATFORMINTEGRATION_ON */
+#if XSTYLEHINTS_ON
+    if (app->m_styleHints) {
+        XClassDelete(app->m_styleHints);
+        app->m_styleHints = NULL;
+    }
+#endif /* XSTYLEHINTS_ON */
+#if XCLIPBOARD_ON
+    if (app->m_clipboard) {
+        XClassDelete(app->m_clipboard);
+        app->m_clipboard = NULL;
+    }
+#endif /* XCLIPBOARD_ON */
+
+    /* 父类析构：释放 XCoreApplication 资源并清空全局单例。 */
+    XClass_Deinit_Parent(XCoreApplication, (XCoreApplication*)app);
 }
 
 /* ==================== 类初始化与生命周期 ==================== */
@@ -404,110 +508,6 @@ void XGuiApplication_init(XGuiApplication* app, int argc, char** argv)
     /* 所有成员已经处于可用状态后再发布 GUI 单例，避免初始化回调看到
        只有 XCoreApplication 已登记、GUI 尾部尚未完成的中间状态。 */
     g_guiApplication = app;
-}
-
-static void VXGuiApplication_deinit(XGuiApplication* app)
-{
-    size_t i;
-    size_t n;
-    if (!app || g_guiApplication != app)
-        return;
-
-    /* 先摘除 GUI 单例标记，防止析构回调重入时再次看到半析构对象。 */
-    g_guiApplication = NULL;
-    if (((XObject*)app)->was_deleted)
-        return;
-
-    /* 释放 GUI 尾部拥有的堆资源；借用指针（窗口/焦点/模态）只清空不释放。 */
-    if (app->m_displayName) { XClassDelete(app->m_displayName); app->m_displayName = NULL; }
-    if (app->m_desktopFileName) { XClassDelete(app->m_desktopFileName); app->m_desktopFileName = NULL; }
-    if (app->m_platformName) { XClassDelete(app->m_platformName); app->m_platformName = NULL; }
-    if (app->m_sessionId) { XClassDelete(app->m_sessionId); app->m_sessionId = NULL; }
-    if (app->m_sessionKey) { XClassDelete(app->m_sessionKey); app->m_sessionKey = NULL; }
-    if (app->m_windowIcon) { XClassDelete(app->m_windowIcon); app->m_windowIcon = NULL; }
-    if (app->m_font) { XClassDelete(app->m_font); app->m_font = NULL; }
-    if (app->m_overrideStack) {
-#if XCURSOR_ON
-        n = XVector_size_base((const XContainer*)app->m_overrideStack);
-        for (i = 0; i < n; ++i) {
-            XCursor** p = (XCursor**)XVector_at_base(app->m_overrideStack, (int64_t)i);
-            if (p && *p) XClassDelete(*p);
-        }
-#else
-        (void)i; (void)n;
-#endif /* XCURSOR_ON */
-        XClassDelete((XClass*)app->m_overrideStack);
-        app->m_overrideStack = NULL;
-    }
-#if XVIRTUALKEYBOARD_ON
-    /* 虚拟键盘默认面板先于窗口注册表释放：其桥接窗口登记在 m_windows
-       内，析构经 removeWindow 摘除，容器释放后再删会访问已释放向量。 */
-    if (app->m_virtualKeyboard) {
-        XClassDelete(app->m_virtualKeyboard);
-        app->m_virtualKeyboard = NULL;
-    }
-#endif /* XVIRTUALKEYBOARD_ON */
-    if (app->m_windows) {
-        /* 窗口对象由调用方拥有，这里只释放注册表容器。 */
-        XClassDelete((XClass*)app->m_windows);
-        app->m_windows = NULL;
-    }
-    app->m_focusWindow = NULL;
-    app->m_modalWindow = NULL;
-    app->m_focusObject = NULL;
-#if XINPUTMETHOD_ON
-    /* 输入法先于集成层释放（其绑定输入上下文由集成层拥有）。 */
-    if (app->m_inputMethod) {
-#if XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON
-        if (app->m_platformIntegration) {
-            XPlatformInputContext* context =
-                XPlatformIntegration_inputContext(app->m_platformIntegration);
-            if (context)
-                XPlatformInputContext_setInputMethod(context, NULL);
-        }
-#if XVIRTUALKEYBOARD_ON
-        /* VK 平台上下文（装配侧自有，非集成层拥有）：解绑并回收。 */
-        {
-            XPlatformInputContext* bound =
-                XInputMethod_platformContext(app->m_inputMethod);
-            if (bound && XClassGetVtable(bound) ==
-                             XVirtualKeyboardPlatformInputContext_class_init()) {
-                XPlatformInputContext_setInputMethod(bound, NULL);
-                XClassDelete(
-                    (XVirtualKeyboardPlatformInputContext*)bound);
-            }
-        }
-#endif /* XVIRTUALKEYBOARD_ON */
-#endif /* XPLATFORMINTEGRATION_ON && XPLATFORMINPUTCTX_ON */
-        XClassDelete(app->m_inputMethod);
-        app->m_inputMethod = NULL;
-    }
-#endif /* XINPUTMETHOD_ON */
-#if XPLATFORMINTEGRATION_ON
-    if (app->m_nativeEventPump) {
-        XAbstractEventDispatcher_removePollCallback(app->m_nativeEventPump);
-        app->m_nativeEventPump = NULL;
-    }
-    if (app->m_platformIntegration) {
-        XClassDelete(app->m_platformIntegration);
-        app->m_platformIntegration = NULL;
-    }
-#endif /* XPLATFORMINTEGRATION_ON */
-#if XSTYLEHINTS_ON
-    if (app->m_styleHints) {
-        XClassDelete(app->m_styleHints);
-        app->m_styleHints = NULL;
-    }
-#endif /* XSTYLEHINTS_ON */
-#if XCLIPBOARD_ON
-    if (app->m_clipboard) {
-        XClassDelete(app->m_clipboard);
-        app->m_clipboard = NULL;
-    }
-#endif /* XCLIPBOARD_ON */
-
-    /* 父类析构：释放 XCoreApplication 资源并清空全局单例。 */
-    XClass_Deinit_Parent(XCoreApplication, (XCoreApplication*)app);
 }
 
 /* ==================== 应用程序属性（GUI 语义接线） ==================== */

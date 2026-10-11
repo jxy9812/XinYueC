@@ -1,4 +1,9 @@
-﻿// XHostAddress.h
+﻿/**
+ * @file       XHostAddress.h
+ * @brief      IPv4/IPv6 地址值类型公开 API。
+ * @details    对齐 Qt QHostAddress；实现只依赖 XinYueC 抽象层，禁止调用
+ *             Win32、POSIX、Qt 或其他平台 API。
+ */
 #ifndef XHOSTADDRESS_H
 #define XHOSTADDRESS_H
 
@@ -186,11 +191,13 @@ void XHostAddress_toIPv6Address(const XHostAddress* addr, uint8_t out[16]);
 const char* XHostAddress_scopeId(const XHostAddress* addr);
 
 /**
- * @brief 转为字符串表示（malloc，需 free）。
+ * @brief 转为字符串表示。
  * @param addr 地址
- * @return 动态分配的字符串；IPv4 为点分十进制（"192.168.1.1"），IPv6 为
- *         RFC 5952 压缩小写形式（如 "fe80::1"、映射地址 "::ffff:192.168.1.1"，
- *         均可经 setAddress/isIPv6Address 无损回解析），失败返回 NULL
+ * @return 新分配的 XString；调用方负责经 XClassDelete() 释放（内部为
+ *         堆类对象，禁止用 free()）。IPv4 为点分十进制（"192.168.1.1"），
+ *         IPv6 为 RFC 5952 压缩小写形式（如 "fe80::1"、映射地址
+ *         "::ffff:192.168.1.1"，均可经 setAddress/isIPv6Address 无损回
+ *         解析），失败返回 NULL
  */
 XString* XHostAddress_toString(const XHostAddress* addr);
 

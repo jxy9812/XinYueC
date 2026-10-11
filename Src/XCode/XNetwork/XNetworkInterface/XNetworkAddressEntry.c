@@ -15,66 +15,68 @@ static void VXNetworkAddressEntry_deinit(XNetworkAddressEntry* entry)
 {
     if (!entry) return;
     // 释放内嵌的 XHostAddress 对象
-    XClassDeinit(&entry->ip);
-    XClassDeinit(&entry->netmask);
-    XClassDeinit(&entry->broadcast);
+    XClassDeinit(&entry->m_ip);
+    XClassDeinit(&entry->m_netmask);
+    XClassDeinit(&entry->m_broadcast);
 }
 
 static void VXNetworkAddressEntry_copy(XNetworkAddressEntry* dest, const XNetworkAddressEntry* src)
 {
     if (!dest || !src) return;
-    
+    if (dest == src) return;  /* 自拷贝直接返回，避免先释放自身成员再读取已释放内容 */
+
     // 检查目标对象是否已初始化，如果未初始化则先初始化
     if (XClassIsVtableNull(dest))
         XNetworkAddressEntry_init(dest);
     
     // 先释放目标对象的旧值
-    XClassDeinit(&dest->ip);
-    XClassDeinit(&dest->netmask);
-    XClassDeinit(&dest->broadcast);
+    XClassDeinit(&dest->m_ip);
+    XClassDeinit(&dest->m_netmask);
+    XClassDeinit(&dest->m_broadcast);
     
     // 复制源对象的值
-    XClassCopy(&dest->ip, &src->ip);
-    XClassCopy(&dest->netmask, &src->netmask);
-    XClassCopy(&dest->broadcast, &src->broadcast);
-    dest->broadcastIsValid = src->broadcastIsValid;
+    XClassCopy(&dest->m_ip, &src->m_ip);
+    XClassCopy(&dest->m_netmask, &src->m_netmask);
+    XClassCopy(&dest->m_broadcast, &src->m_broadcast);
+    dest->m_broadcastIsValid = src->m_broadcastIsValid;
     
-    dest->preferredLifetime = src->preferredLifetime;
-    dest->validityLifetime = src->validityLifetime;
-    dest->lifetimeKnown = src->lifetimeKnown;
+    dest->m_preferredLifetime = src->m_preferredLifetime;
+    dest->m_validityLifetime = src->m_validityLifetime;
+    dest->m_lifetimeKnown = src->m_lifetimeKnown;
     
-    dest->dnsEligibilityStatus = src->dnsEligibilityStatus;
-    dest->isPermanent = src->isPermanent;
+    dest->m_dnsEligibilityStatus = src->m_dnsEligibilityStatus;
+    dest->m_isPermanent = src->m_isPermanent;
 }
 
 static void VXNetworkAddressEntry_move(XNetworkAddressEntry* dest, XNetworkAddressEntry* src)
 {
     if (!dest || !src) return;
-    
+    if (dest == src) return;  /* 自移动直接返回，避免清空自身内容 */
+
     // 检查目标对象是否已初始化，如果未初始化则先初始化
     if (XClassIsVtableNull(dest))
         XNetworkAddressEntry_init(dest);
    
     // 移动语义：转移资源
-    XClassMove(&dest->ip, &src->ip);
-    XClassMove(&dest->netmask, &src->netmask);
-    XClassMove(&dest->broadcast, &src->broadcast);
-    dest->broadcastIsValid = src->broadcastIsValid;
+    XClassMove(&dest->m_ip, &src->m_ip);
+    XClassMove(&dest->m_netmask, &src->m_netmask);
+    XClassMove(&dest->m_broadcast, &src->m_broadcast);
+    dest->m_broadcastIsValid = src->m_broadcastIsValid;
     
-    dest->preferredLifetime = src->preferredLifetime;
-    dest->validityLifetime = src->validityLifetime;
-    dest->lifetimeKnown = src->lifetimeKnown;
+    dest->m_preferredLifetime = src->m_preferredLifetime;
+    dest->m_validityLifetime = src->m_validityLifetime;
+    dest->m_lifetimeKnown = src->m_lifetimeKnown;
     
-    dest->dnsEligibilityStatus = src->dnsEligibilityStatus;
-    dest->isPermanent = src->isPermanent;
+    dest->m_dnsEligibilityStatus = src->m_dnsEligibilityStatus;
+    dest->m_isPermanent = src->m_isPermanent;
     
     // 清空源对象
-    src->broadcastIsValid = false;
-    src->preferredLifetime = -1;
-    src->validityLifetime = -1;
-    src->lifetimeKnown = false;
-    src->dnsEligibilityStatus = XNetworkAddressEntry_DnsEligibilityUnknown;
-    src->isPermanent = true;
+    src->m_broadcastIsValid = false;
+    src->m_preferredLifetime = -1;
+    src->m_validityLifetime = -1;
+    src->m_lifetimeKnown = false;
+    src->m_dnsEligibilityStatus = XNetworkAddressEntry_DnsEligibilityUnknown;
+    src->m_isPermanent = true;
 }
 
 XVtable* XNetworkAddressEntry_class_init(void)
@@ -98,17 +100,17 @@ void XNetworkAddressEntry_init(XNetworkAddressEntry* entry)
     XClassSetVtable(entry, XNetworkAddressEntry);
     
     // 初始化内嵌的 XHostAddress 对象
-    XHostAddress_init(&entry->ip);
-    XHostAddress_init(&entry->netmask);
-    XHostAddress_init(&entry->broadcast);
+    XHostAddress_init(&entry->m_ip);
+    XHostAddress_init(&entry->m_netmask);
+    XHostAddress_init(&entry->m_broadcast);
     
     // 默认值
-    entry->broadcastIsValid = false;
-    entry->preferredLifetime = -1;  // 永久
-    entry->validityLifetime = -1;   // 永久
-    entry->lifetimeKnown = false;
-    entry->dnsEligibilityStatus = XNetworkAddressEntry_DnsEligibilityUnknown;
-    entry->isPermanent = true;  // 默认为永久地址
+    entry->m_broadcastIsValid = false;
+    entry->m_preferredLifetime = -1;  // 永久
+    entry->m_validityLifetime = -1;   // 永久
+    entry->m_lifetimeKnown = false;
+    entry->m_dnsEligibilityStatus = XNetworkAddressEntry_DnsEligibilityUnknown;
+    entry->m_isPermanent = true;  // 默认为永久地址
 }
 
 XNetworkAddressEntry* XNetworkAddressEntry_create_ex(XMemoryType memory)
@@ -127,7 +129,7 @@ XNetworkAddressEntry* XNetworkAddressEntry_createWithIp(const XHostAddress* ip)
     if (!entry) return NULL;
     
     if (ip) {
-        XClassCopy(&entry->ip, ip);
+        XClassCopy(&entry->m_ip, ip);
     }
     
     return entry;
@@ -141,16 +143,16 @@ XNetworkAddressEntry* XNetworkAddressEntry_createFull(const XHostAddress* ip,
     if (!entry) return NULL;
     
     if (ip) {
-        XClassCopy(&entry->ip, ip);
+        XClassCopy(&entry->m_ip, ip);
     }
     
     if (netmask) {
-        XClassCopy(&entry->netmask, netmask);
+        XClassCopy(&entry->m_netmask, netmask);
     }
     
     if (broadcast) {
-        XClassCopy(&entry->broadcast, broadcast);
-        entry->broadcastIsValid = true;
+        XClassCopy(&entry->m_broadcast, broadcast);
+        entry->m_broadcastIsValid = true;
     }
     
     return entry;
@@ -171,31 +173,31 @@ XNetworkAddressEntry* XNetworkAddressEntry_create_copy(const XNetworkAddressEntr
 
 const XHostAddress* XNetworkAddressEntry_ip(const XNetworkAddressEntry* entry)
 {
-    return entry ? &entry->ip : NULL;
+    return entry ? &entry->m_ip : NULL;
 }
 
 void XNetworkAddressEntry_setIp(XNetworkAddressEntry* entry, const XHostAddress* ip)
 {
     if (!entry || !ip) return;
-    XClassCopy(&entry->ip, ip);
+    XClassCopy(&entry->m_ip, ip);
 }
 
 const XHostAddress* XNetworkAddressEntry_netmask(const XNetworkAddressEntry* entry)
 {
-    return entry ? &entry->netmask : NULL;
+    return entry ? &entry->m_netmask : NULL;
 }
 
 void XNetworkAddressEntry_setNetmask(XNetworkAddressEntry* entry, const XHostAddress* netmask)
 {
     if (!entry || !netmask) return;
-    XClassCopy(&entry->netmask, netmask);
-    //memcpy(&entry->netmask, netmask, sizeof(XHostAddress));
+    XClassCopy(&entry->m_netmask, netmask);
+    //memcpy(&entry->m_netmask, netmask, sizeof(XHostAddress));
 }
 
 const XHostAddress* XNetworkAddressEntry_broadcast(const XNetworkAddressEntry* entry)
 {
-    if (!entry || !entry->broadcastIsValid) return NULL;
-    return &entry->broadcast;
+    if (!entry || !entry->m_broadcastIsValid) return NULL;
+    return &entry->m_broadcast;
 }
 
 void XNetworkAddressEntry_setBroadcast(XNetworkAddressEntry* entry, const XHostAddress* broadcast)
@@ -203,22 +205,22 @@ void XNetworkAddressEntry_setBroadcast(XNetworkAddressEntry* entry, const XHostA
     if (!entry) return;
     
     if (broadcast) {
-        XClassCopy(&entry->broadcast, broadcast);
-        entry->broadcastIsValid = true;
+        XClassCopy(&entry->m_broadcast, broadcast);
+        entry->m_broadcastIsValid = true;
     } else {
-        entry->broadcastIsValid = false;
+        entry->m_broadcastIsValid = false;
     }
 }
 
 bool XNetworkAddressEntry_isBroadcastValid(const XNetworkAddressEntry* entry)
 {
-    return entry ? entry->broadcastIsValid : false;
+    return entry ? entry->m_broadcastIsValid : false;
 }
 
 void XNetworkAddressEntry_clearBroadcast(XNetworkAddressEntry* entry)
 {
     if (!entry) return;
-    entry->broadcastIsValid = false;
+    entry->m_broadcastIsValid = false;
 }
 
 // ==================== 前缀长度计算 ====================
@@ -250,11 +252,11 @@ int XNetworkAddressEntry_prefixLength(const XNetworkAddressEntry* entry)
     if (!entry) return -1;
     
     /* 根据协议类型确定掩码数据长度 */
-    XHostAddress_NetworkLayerProtocol protocol = XHostAddress_protocol(&entry->netmask);
+    XHostAddress_NetworkLayerProtocol protocol = XHostAddress_protocol(&entry->m_netmask);
     
     if (protocol == XHostAddress_IPv4Protocol) {
         /* IPv4: 4 字节 */
-        uint32_t ip = XHostAddress_toIPv4Address(&entry->netmask);
+        uint32_t ip = XHostAddress_toIPv4Address(&entry->m_netmask);
         uint8_t data[4];
         data[0] = (ip >> 24) & 0xFF;
         data[1] = (ip >> 16) & 0xFF;
@@ -264,7 +266,7 @@ int XNetworkAddressEntry_prefixLength(const XNetworkAddressEntry* entry)
     } else if (protocol == XHostAddress_IPv6Protocol) {
         /* IPv6: 16 字节 */
         uint8_t data[16];
-        XHostAddress_toIPv6Address(&entry->netmask, data);
+        XHostAddress_toIPv6Address(&entry->m_netmask, data);
         return countLeadingOnes(data, 16);
     }
     
@@ -276,7 +278,7 @@ void XNetworkAddressEntry_setPrefixLength(XNetworkAddressEntry* entry, int lengt
     int i;
     if (!entry) return;
     
-    XHostAddress_NetworkLayerProtocol protocol = XHostAddress_protocol(&entry->ip);
+    XHostAddress_NetworkLayerProtocol protocol = XHostAddress_protocol(&entry->m_ip);
     
     if (protocol == XHostAddress_IPv4Protocol) {
         /* IPv4: 0-32 */
@@ -286,7 +288,7 @@ void XNetworkAddressEntry_setPrefixLength(XNetworkAddressEntry* entry, int lengt
         
         if (length < 0) {
             /* 清除掩码 */
-            memset(&entry->netmask, 0, sizeof(XHostAddress));
+            memset(&entry->m_netmask, 0, sizeof(XHostAddress));
             return;
         }
         
@@ -296,7 +298,7 @@ void XNetworkAddressEntry_setPrefixLength(XNetworkAddressEntry* entry, int lengt
             mask = 0xFFFFFFFFu << (32 - length);
         }
         
-        XHostAddress_setAddressIPv4(&entry->netmask, mask);
+        XHostAddress_setAddressIPv4(&entry->m_netmask, mask);
     } else if (protocol == XHostAddress_IPv6Protocol) {
         /* IPv6: 0-128 */
         if (length < 0 || length > 128) {
@@ -304,7 +306,7 @@ void XNetworkAddressEntry_setPrefixLength(XNetworkAddressEntry* entry, int lengt
         }
         
         if (length < 0) {
-            memset(&entry->netmask, 0, sizeof(XHostAddress));
+            memset(&entry->m_netmask, 0, sizeof(XHostAddress));
             return;
         }
         
@@ -321,7 +323,7 @@ void XNetworkAddressEntry_setPrefixLength(XNetworkAddressEntry* entry, int lengt
             data[fullBytes] = 0xFF << (8 - remainingBits);
         }
         
-        XHostAddress_setAddressIPv6(&entry->netmask, data);
+        XHostAddress_setAddressIPv6(&entry->m_netmask, data);
     }
 }
 
@@ -329,17 +331,17 @@ void XNetworkAddressEntry_setPrefixLength(XNetworkAddressEntry* entry, int lengt
 
 int64_t XNetworkAddressEntry_preferredLifetime(const XNetworkAddressEntry* entry)
 {
-    return entry ? entry->preferredLifetime : -1;
+    return entry ? entry->m_preferredLifetime : -1;
 }
 
 int64_t XNetworkAddressEntry_validityLifetime(const XNetworkAddressEntry* entry)
 {
-    return entry ? entry->validityLifetime : -1;
+    return entry ? entry->m_validityLifetime : -1;
 }
 
 bool XNetworkAddressEntry_isLifetimeKnown(const XNetworkAddressEntry* entry)
 {
-    return entry ? entry->lifetimeKnown : false;
+    return entry ? entry->m_lifetimeKnown : false;
 }
 
 void XNetworkAddressEntry_setAddressLifetime(XNetworkAddressEntry* entry, 
@@ -347,32 +349,32 @@ void XNetworkAddressEntry_setAddressLifetime(XNetworkAddressEntry* entry,
 {
     if (!entry) return;
     
-    entry->preferredLifetime = preferred;
-    entry->validityLifetime = validity;
-    entry->lifetimeKnown = true;
+    entry->m_preferredLifetime = preferred;
+    entry->m_validityLifetime = validity;
+    entry->m_lifetimeKnown = true;
 }
 
 void XNetworkAddressEntry_clearAddressLifetime(XNetworkAddressEntry* entry)
 {
     if (!entry) return;
     
-    entry->preferredLifetime = -1;
-    entry->validityLifetime = -1;
-    entry->lifetimeKnown = false;
+    entry->m_preferredLifetime = -1;
+    entry->m_validityLifetime = -1;
+    entry->m_lifetimeKnown = false;
 }
 
 // ==================== DNS 资格 ====================
 
 XNetworkAddressEntry_DnsEligibilityStatus XNetworkAddressEntry_dnsEligibility(const XNetworkAddressEntry* entry)
 {
-    return entry ? entry->dnsEligibilityStatus : XNetworkAddressEntry_DnsEligibilityUnknown;
+    return entry ? entry->m_dnsEligibilityStatus : XNetworkAddressEntry_DnsEligibilityUnknown;
 }
 
 void XNetworkAddressEntry_setDnsEligibility(XNetworkAddressEntry* entry, 
                                              XNetworkAddressEntry_DnsEligibilityStatus status)
 {
     if (entry) {
-        entry->dnsEligibilityStatus = status;
+        entry->m_dnsEligibilityStatus = status;
     }
 }
 
@@ -380,18 +382,18 @@ void XNetworkAddressEntry_setDnsEligibility(XNetworkAddressEntry* entry,
 
 bool XNetworkAddressEntry_isPermanent(const XNetworkAddressEntry* entry)
 {
-    return entry ? entry->isPermanent : true;
+    return entry ? entry->m_isPermanent : true;
 }
 
 bool XNetworkAddressEntry_isTemporary(const XNetworkAddressEntry* entry)
 {
-    return entry ? !entry->isPermanent : false;
+    return entry ? !entry->m_isPermanent : false;
 }
 
 void XNetworkAddressEntry_setPermanent(XNetworkAddressEntry* entry, bool permanent)
 {
     if (entry) {
-        entry->isPermanent = permanent;
+        entry->m_isPermanent = permanent;
     }
 }
 
@@ -403,15 +405,15 @@ bool XNetworkAddressEntry_equals(const XNetworkAddressEntry* entry1,
     if (!entry1 || !entry2) return entry1 == entry2;
     
     /* 比较 IP 地址 */
-    if (!XHostAddress_operator_equal(&entry1->ip, &entry2->ip)) return false;
+    if (!XHostAddress_operator_equal(&entry1->m_ip, &entry2->m_ip)) return false;
     
     /* 比较子网掩码 */
-    if (!XHostAddress_operator_equal(&entry1->netmask, &entry2->netmask)) return false;
+    if (!XHostAddress_operator_equal(&entry1->m_netmask, &entry2->m_netmask)) return false;
     
     /* 比较广播地址 */
-    if (entry1->broadcastIsValid != entry2->broadcastIsValid) return false;
-    if (entry1->broadcastIsValid && 
-        !XHostAddress_operator_equal(&entry1->broadcast, &entry2->broadcast)) {
+    if (entry1->m_broadcastIsValid != entry2->m_broadcastIsValid) return false;
+    if (entry1->m_broadcastIsValid && 
+        !XHostAddress_operator_equal(&entry1->m_broadcast, &entry2->m_broadcast)) {
         return false;
     }
     

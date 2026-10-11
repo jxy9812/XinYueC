@@ -1,4 +1,11 @@
-﻿#ifndef XSERIALPORT_H
+﻿/**
+ * @file       XSerialPort.h
+ * @brief      串口设备类公开 API。
+ * @details    对齐 Qt QSerialPort；继承 XIODevice 并重载 open/close/read/write
+ *             等虚槽，平台差异经 XDevice 串口设备层（XDeviceSerialPort）适配，
+ *             本模块实现不直接调用 Win32/POSIX/STM32 平台 API。
+ */
+#ifndef XSERIALPORT_H
 #define XSERIALPORT_H
 #ifdef __cplusplus
 extern "C" {
@@ -7,27 +14,40 @@ extern "C" {
 #include<stdbool.h>
 #include"XIODevice.h"
 #include"XDeviceSerialPort.h"
+#if XSERIALPORT_ON
 //XSerialPortDevice虚函数表
+//XSerialPort 仅继承 XIODevice，未新增虚函数，重载的虚函数在 XSerialPort.c 中实现
+XCLASS_DEFINE_BEGING(XSerialPort)
+XCLASS_DEFINE_EXTEND_END(XSerialPort, XIODevice)
 #define XSERIALPORT_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XIODevice))       //XSerialPort容器虚函数表大小
-typedef struct XSerialPort 
+/**
+ * @brief 串口设备类，对齐 Qt QSerialPort。
+ * @details 继承 XIODevice；堆对象经 XSerialPort_create* 创建并用 XClassDelete 释放，
+ *          栈对象经 XSerialPort_init 初始化并用 XClassDeinit 反初始化。
+ */
+typedef struct XSerialPort
 {
-    XIODevice base;
-    char* portName;
-    uint16_t dataTerminalReady : 1;// DTR 信号
-    uint16_t requestToSend : 1;// RTS 信号
-    uint16_t breakEnabled : 1; // Break 信号使能
-    uint16_t isOpen : 1;// 串口已打开标志
-    uint16_t readyReadTriggered : 1;//是否触发了数据可读事件
-    uint16_t bytesWrittenTriggered : 1;//是否触发了数据发送完成事件
-    int32_t baudRate;
-    XSerialPort_DataBits dataBits;
-    XSerialPort_Parity parity;
-    XSerialPort_StopBits stopBits;
-    XSerialPort_FlowControl flowControl;
-    XSerialPort_Error error;
-    int64_t readBufferSize;
+    XIODevice base;/**< 基类子对象；第一个成员，由 XClass/XIODevice 基类机制管理，禁止手工修改 */
+    char* portName;/**< 串口设备名称（如"COM3"、"/dev/ttyS0"），UTF-8 编码；由对象拥有（setPortName 时深拷贝，反初始化时释放），NULL 表示未设置，调用者不得直接修改 */
+    uint16_t dataTerminalReady : 1;/**< DTR（数据终端就绪）信号电平缓存；1=置高 0=置低，仅设备打开时有意义 */
+    uint16_t requestToSend : 1;/**< RTS（请求发送）信号电平缓存；1=置高 0=置低，仅设备打开时有意义 */
+    uint16_t breakEnabled : 1;/**< Break 信号使能状态；1=持续发送逻辑 0，0=正常传输 */
+    uint16_t isOpen : 1;/**< 串口已打开标志；1=已打开 0=未打开，仅供实现内部维护 */
+    uint16_t readyReadTriggered : 1;/**< 是否触发了数据可读事件；仅供实现内部维护 */
+    uint16_t bytesWrittenTriggered : 1;/**< 是否触发了数据发送完成事件；仅供实现内部维护 */
+    int32_t baudRate;/**< 波特率（单位：波特），有效范围受平台限定，默认 XSerialPort_Baud9600 */
+    XSerialPort_DataBits dataBits;/**< 数据位数（5~8 位），默认 XSerialPort_Data8 */
+    XSerialPort_Parity parity;/**< 校验方式，默认 XSerialPort_NoParity */
+    XSerialPort_StopBits stopBits;/**< 停止位类型（1/1.5/2 位），默认 XSerialPort_OneStop */
+    XSerialPort_FlowControl flowControl;/**< 流控方式，默认 XSerialPort_NoFlowControl */
+    XSerialPort_Error error;/**< 最近一次操作的错误码；XSerialPort_NoError 表示无错误 */
+    int64_t readBufferSize;/**< 内部读缓冲区容量（单位：字节），必须大于 0，默认 512*1024 */
 } XSerialPort;
-//获取类型大小,此类在不同平台大小不一样,用在继承的时候使用
+/**
+ * @brief 获取XSerialPort类型大小
+ * @details 此类在不同平台大小不一样，供继承该类时计算子对象偏移使用
+ * @return 返回sizeof(XSerialPort)的字节数，恒为正值
+ */
 size_t XSerialPort_typetSize();
 /**
  * @brief 初始化XSerialPort的虚函数表
@@ -41,7 +61,7 @@ XVtable* XSerialPort_class_init();
  * @brief 创建并初始化一个XSerialPort实例
  * @return 成功返回指向新分配XSerialPort对象的指针，失败返回NULL
  * @details 内部调用XSerialPort_class_init确保虚表已初始化，
- *          对象需通过XObject_destroy释放
+ *          对象需通过XClassDelete释放（栈对象经XSerialPort_init初始化后用XClassDeinit反初始化）
  */
 XSerialPort* XSerialPort_create_ex(XMemoryType memory);
 /**
@@ -238,10 +258,32 @@ void XSerialPort_clearError(XSerialPort* port);
 #define XSerialPort_isOpen                                          XIODevice_isOpen
 #define XSerialPort_poll_base                                       XIODevice_poll_base
 
+/**
+ * @brief 获取内部读缓冲区容量
+ * @param port 指向XSerialPort实例的指针（不可为NULL）
+ * @return 返回当前读缓冲区容量（字节）；port为NULL时返回0
+ */
 int64_t XSerialPort_readBufferSize(const XSerialPort* port);
+/**
+ * @brief 设置内部读缓冲区容量
+ * @param port 指向XSerialPort实例的指针（不可为NULL）
+ * @param size 新的缓冲区容量（字节），必须大于0
+ * @details 设备已打开时尝试同步到平台层，失败时保持原容量不变
+ */
 void XSerialPort_setReadBufferSize(XSerialPort* port, int64_t size);
 
+/**
+ * @brief 立即写出输出缓冲区中的待发数据
+ * @param port 指向XSerialPort实例的指针（不可为NULL）
+ * @return 刷新成功返回true；port为NULL、设备未打开或平台刷新失败返回false
+ */
 bool XSerialPort_flush(XSerialPort* port);
+/**
+ * @brief 清除指定方向上已接收/待发送的缓冲数据
+ * @param port 指向XSerialPort实例的指针（不可为NULL）
+ * @param directions 清除方向（输入、输出或双向），须为XSerialPort_AllDirections范围内的组合
+ * @return 清除成功返回true；port为NULL、设备未打开或directions非法返回false
+ */
 bool XSerialPort_clear(XSerialPort* port, XSerialPort_Direction directions);
 /******************************************************************************************
  * 信号触发（兼容你的事件系统）
@@ -320,6 +362,8 @@ void* XSerialPort_requestToSendChanged_signal(XSerialPort* port, bool set);
 void* XSerialPort_breakEnabledChanged_signal(XSerialPort* port, bool enabled);
 
 
+
+#endif /* XSERIALPORT_ON */
 
 #ifdef __cplusplus
 }

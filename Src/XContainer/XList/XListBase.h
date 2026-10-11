@@ -1,4 +1,12 @@
-﻿#include"CXinYueConfig.h"
+﻿/**
+* @file       XListBase.h
+* @brief      链表基类公开 API。
+* @details    对齐 Qt 6.8 QList/QLinkedList 的链表基类，供 XListDLinked、
+*             XListSLinked、XLockFreeList 等派生链表继承复用；实现只依赖
+*             XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API，
+*             仅在 XList 模块启用时编译。
+*/
+#include"CXinYueConfig.h"
 /**
 * @brief 条件编译控制
 * @note 防止头文件重复包含，且仅在XList模块启用时编译
@@ -15,7 +23,6 @@ extern "C" {
 #endif
 
 #include<stdbool.h>        /** @brief 布尔类型支持，提供bool、true、false定义 */
-#include<stdio.h>          /** @brief 标准输入输出库，用于调试输出 */
 #include"XContainer.h" /** @brief 容器基类，XListBase继承自该类 */
 #include"XFunctionCallback.h" /** @brief 函数回调支持，提供容器操作所需的回调函数类型 */
 #include"XListBase_iterator.h" /** @brief 链表迭代器定义，支持链表遍历操作 */
@@ -75,6 +82,13 @@ typedef struct XListBaseNode XListBaseNode;
 /**
 * @brief 类初始化接口
 */
+
+/**
+ * @brief 初始化链表基类的虚函数表
+ * @return 初始化完成的虚函数表指针（XVtable*类型）
+ * @note 为链表基类创建并注册虚函数表，供派生链表继承，实现多态
+ */
+XVtable* XListBase_class_init(void);
 
 /**
  * @brief 初始化链表基类实例
@@ -402,15 +416,6 @@ void XListBase_sort_base(XListBase* this_list, XSortOrder order);
 */
 #define XListBase_typeSize_base			XContainer_typeSize_base
 
-/**
-* @brief C++兼容声明结束
-*/
-#ifdef __cplusplus
-}
-#endif
-
-#endif // XLISTBASE_H
-
 // ====================== Qt 6.8 QList/QLinkedList 对齐 ======================
 // 以下函数和宏用于对齐 Qt 6.8 的 API，功能相同的用宏别名，
 // 功能相近的名字直接改名统一。
@@ -506,11 +511,12 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
 #define XListBase_length_base                   XListBase_size_base
 
 /**
- * @brief 判断两个链表是否相等（用父类XContainerCompare宏实现）
+ * @brief 判断两个链表是否满足相等比较的前提（用父类XContainerCompare宏实现）
  * @param lhs 左链表指针
  * @param rhs 右链表指针
- * @return 元素数量相等且所有对应元素相等返回true
- * @note equals_base 基于父类 XContainerCompare 进行遍历比较
+ * @return 双方非空、均已注册元素比较函数（XContainerCompare）且元素数量相等返回true
+ * @note 基类没有泛型元素遍历入口，本宏不做逐元素比较；
+ *       逐元素相等语义需由派生类基于自身遍历另行实现
  */
 #define XListBase_equals_base(lhs, rhs) \
     ((lhs) != NULL && (rhs) != NULL && \
@@ -520,9 +526,8 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
 /**
  * @brief 判断链表是否以指定值开头（对齐Qt startsWith）
  * @param this_list 链表实例指针
- * @param type 元素数据类型
- * @param value 待判断的元素值
- * @return 链表非空且首元素等于value返回true
+ * @param value_ptr 待比较的元素值指针（指向待判断的元素值，借用、不取得所有权）
+ * @return 链表非空且首元素等于value_ptr指向的值返回true
  */
 #define XListBase_StartsWith_Base(this_list, value_ptr) \
     (!XListBase_isEmpty_base(this_list) && \
@@ -531,9 +536,8 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
 /**
  * @brief 判断链表是否以指定值结尾（对齐Qt endsWith）
  * @param this_list 链表实例指针
- * @param type 元素数据类型
- * @param value 待判断的元素值
- * @return 链表非空且尾元素等于value返回true
+ * @param value_ptr 待比较的元素值指针（指向待判断的元素值，借用、不取得所有权）
+ * @return 链表非空且尾元素等于value_ptr指向的值返回true
  */
 #define XListBase_EndsWith_Base(this_list, value_ptr) \
     (!XListBase_isEmpty_base(this_list) && \
@@ -542,8 +546,7 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
 /**
  * @brief 类型安全的contains判断（对齐Qt contains，统一命名）
  * @param this_list 链表实例指针
- * @param type 元素数据类型
- * @param value 待查找的元素值
+ * @param value_ptr 待查找的元素值指针（指向待查找的元素值，借用、不取得所有权）
  * @return 包含返回true，否则返回false
  * @note 内部调用find_base。子类通过此宏继承，不再额外定义contains_base
  */
@@ -564,3 +567,12 @@ size_t XListBase_removeIf_base(XListBase* this_list, bool (*predicate)(const voi
  * @brief 静态最大容量（对齐Qt maxSize/max_size）
  */
 #define XListBase_maxSize_base()                ((size_t)-1)
+
+/**
+* @brief C++兼容声明结束
+*/
+#ifdef __cplusplus
+}
+#endif
+
+#endif // XLISTBASE_H

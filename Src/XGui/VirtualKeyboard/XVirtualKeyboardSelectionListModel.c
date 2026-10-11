@@ -47,7 +47,7 @@ static void XVksl_deinit(XVirtualKeyboardSelectionListModel* self);
 void XVirtualKeyboardSelectionListModel_init(
         XVirtualKeyboardSelectionListModel* self);
 XVirtualKeyboardSelectionListModel*
-XVirtualKeyboardSelectionListModel_create_engine(
+XVirtualKeyboardSelectionListModel_create_ex(
         XVirtualKeyboardSelectionListModelType type);
 
 XVtable* XVirtualKeyboardSelectionListModel_class_init(void)
@@ -72,10 +72,10 @@ static void XVksl_deinit(XVirtualKeyboardSelectionListModel* self)
 /**
  * @brief      引擎 TU 专用创建入口（Qt 私有构造+friend 口径）。
  * @param      type 模型类型。
- * @return     新对象指针；失败返回 NULL。调用方用 *_delete_base 释放。
+ * @return     新对象指针；失败返回 NULL。调用方用 XClassDelete 释放。
  */
 XVirtualKeyboardSelectionListModel*
-XVirtualKeyboardSelectionListModel_create_engine(
+XVirtualKeyboardSelectionListModel_create_ex(
         XVirtualKeyboardSelectionListModelType type)
 {
     XVirtualKeyboardSelectionListModel* self =

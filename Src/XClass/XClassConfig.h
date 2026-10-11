@@ -38,8 +38,8 @@
  * 0：从 XVtable 结构中移除 name 成员，相关宏退化为空操作/NULL，适合
  *    对内存占用敏感且不需要调试类名的嵌入式构建。
  */
-#ifndef XCLASS_VTABLE_ENABLE_NAME
-#define XCLASS_VTABLE_ENABLE_NAME 1
+#ifndef XCLASS_VTABLE_NAME_ON
+#define XCLASS_VTABLE_NAME_ON 1
 #endif
 
 /**
@@ -47,11 +47,11 @@
  *
  * 该选项只影响调试输出，不影响虚函数表布局。
  */
-#ifndef XCLASS_VTABLE_SHOW_SIZE
+#ifndef XCLASS_VTABLE_SHOW_SIZE_ON
 #if defined(SHOWCONTAINERSIZE)
-#define XCLASS_VTABLE_SHOW_SIZE SHOWCONTAINERSIZE
+#define XCLASS_VTABLE_SHOW_SIZE_ON SHOWCONTAINERSIZE
 #else
-#define XCLASS_VTABLE_SHOW_SIZE 0
+#define XCLASS_VTABLE_SHOW_SIZE_ON 0
 #endif
 #endif
 
@@ -59,11 +59,11 @@
 #if (XCLASS_VTABLE_USE_STACK != 0) && (XCLASS_VTABLE_USE_STACK != 1)
 #error "XClass: XCLASS_VTABLE_USE_STACK 只能设置为 0 或 1"
 #endif
-#if (XCLASS_VTABLE_ENABLE_NAME != 0) && (XCLASS_VTABLE_ENABLE_NAME != 1)
-#error "XClass: XCLASS_VTABLE_ENABLE_NAME 只能设置为 0 或 1"
+#if (XCLASS_VTABLE_NAME_ON != 0) && (XCLASS_VTABLE_NAME_ON != 1)
+#error "XClass: XCLASS_VTABLE_NAME_ON 只能设置为 0 或 1"
 #endif
-#if (XCLASS_VTABLE_SHOW_SIZE != 0) && (XCLASS_VTABLE_SHOW_SIZE != 1)
-#error "XClass: XCLASS_VTABLE_SHOW_SIZE 只能设置为 0 或 1"
+#if (XCLASS_VTABLE_SHOW_SIZE_ON != 0) && (XCLASS_VTABLE_SHOW_SIZE_ON != 1)
+#error "XClass: XCLASS_VTABLE_SHOW_SIZE_ON 只能设置为 0 或 1"
 #endif
 
 /* 旧宏保留为兼容别名；新代码统一使用 XCLASS_* 配置名。 */
@@ -71,7 +71,7 @@
 #define VTABLE_ISSTACK XCLASS_VTABLE_USE_STACK
 #endif
 #ifndef SHOWCONTAINERSIZE
-#define SHOWCONTAINERSIZE XCLASS_VTABLE_SHOW_SIZE
+#define SHOWCONTAINERSIZE XCLASS_VTABLE_SHOW_SIZE_ON
 #endif
 
 #endif /* XCLASS_CONFIG_H */

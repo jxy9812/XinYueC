@@ -288,31 +288,51 @@ typedef struct XLineControl
 {
     XObject m_base;                    /**< 基类成员；必须是第一个。 */
 
-    /* ---- 文本模型（对标 m_text QString：定容缓冲 + NUL 终止 + 扩容） ---- */
+    /* ---- 8 字节对齐组：指针 / 定时器（对齐分组前移，消除原布局
+     *      0x118 处 8B、0xc4/0x144/0x184/0x1f4 处 4B、0x175/0x1c1 处
+     *      3B/7B 空洞；成员访问一律按名，无位置初始化/offsetof 依赖） ---- */
     char* m_text;                      /**< 编辑文本定容缓冲（拥有，NUL 结尾）。 */
+    char* m_displayText;               /**< 回显处理后的显示文本（拥有）。 */
+    char* m_preeditText;               /**< IME preedit 区文本（拥有）。 */
+    char* m_layoutText;                /**< 布局全文（display+preedit 插入；拥有）。 */
+    XFont* m_font;                     /**< 布局字体（拥有深拷贝；NULL=默认字库）。 */
+    char* m_textReturn;                /**< text()/inputMask() 返回缓存（拥有）。 */
+    char* m_maskReturn;                /**< inputMask() 组装缓存（拥有）。 */
+    char* m_inputMask;                 /**< 原始掩码串（拥有；NULL=无掩码）。 */
+    XLineControlMaskInputData* m_maskData; /**< 掩码槽位表（拥有；NULL=无掩码）。 */
+    XLineControlCommand* m_history;    /**< 命令历史动态数组（拥有）。 */
+    int*  m_transactions;              /**< IME 事务表（Qt 恒空，保留判定）。 */
+    char* m_cancelText;                /**< 取消恢复文本（拥有）。 */
+    void* m_validator;                 /**< 不透明校验器（借用；XValidator 未建）。 */
+    XLineControlValidateFunc m_validateFunc; /**< validate 委托（可 NULL）。 */
+    XLineControlFixupFunc    m_fixupFunc;    /**< fixup 委托（可 NULL）。 */
+    void* m_validatorUserData;         /**< 校验回调上下文（借用）。 */
+    XObject* m_accessibleObject;       /**< 无障碍事件目标（借用；NULL 时用 m_parent）。 */
+    XCompleter* m_completer;           /**< 补全器（借用，不拥有）。 */
+    XTimerId m_blinkTimer;             /**< 光标闪烁定时器（XTIMER_INVALID_ID
+                                            表示未启动；对标 m_blinkTimer）。 */
+    XTimerId m_deleteAllTimer;         /**< 键盘导航长按清空定时器。 */
+    XTimerId m_tripleClickTimer;       /**< 三击窗口定时器。 */
+    XTimerId m_passwordEchoTimer;      /**< 密码回显延迟定时器。 */
+
+    /* ---- 文本模型长度（对标 m_text QString：定容缓冲 + NUL 终止 + 扩容） ---- */
     int   m_textLen;                   /**< 缓冲有效字节长（不含 NUL）。 */
     int   m_textCap;                   /**< 缓冲容量（含 NUL 位；对标 reserve）。 */
 
     /* ---- 显示/布局缓存（对标 m_textLayout 的文本与度量） ---- */
-    char* m_displayText;               /**< 回显处理后的显示文本（拥有）。 */
     int   m_displayLen;                /**< 显示文本字节长。 */
     int   m_displayCap;                /**< 显示文本容量。 */
-    char* m_preeditText;               /**< IME preedit 区文本（拥有）。 */
     int   m_preeditLen;                /**< preedit 字节长。 */
     int   m_preeditCap;                /**< preedit 容量。 */
     int   m_preeditPos;                /**< preedit 插入点（文本坐标字节偏移；<0 清除）。 */
     int   m_preeditLayoutPos;          /**< preedit 插入点（显示坐标；redoTextLayout 维护）。 */
-    char* m_layoutText;                /**< 布局全文（display+preedit 插入；拥有）。 */
     int   m_layoutLen;                 /**< 布局全文字节长。 */
     int   m_layoutCap;                 /**< 布局全文容量。 */
     int   m_layoutAscent;              /**< 首行 ascent（像素；对标 m_ascent）。 */
     int   m_layoutLineWidth;           /**< 首行宽（像素）。 */
     int   m_layoutLineHeight;          /**< 首行高（像素）。 */
-    XFont* m_font;                     /**< 布局字体（拥有深拷贝；NULL=默认字库）。 */
-    char* m_textReturn;                /**< text()/inputMask() 返回缓存（拥有）。 */
     int   m_textReturnLen;             /**< 返回缓存字节长。 */
     int   m_textReturnCap;             /**< 返回缓存容量。 */
-    char* m_maskReturn;                /**< inputMask() 组装缓存（拥有）。 */
     int   m_maskReturnLen;             /**< 组装缓存字节长。 */
     int   m_maskReturnCap;             /**< 组装缓存容量。 */
 
@@ -341,51 +361,25 @@ typedef struct XLineControl
     uint32_t m_blinkStatus : 1;        /**< 光标闪烁相位。 */
     uint32_t m_blinkEnabled : 1;       /**< 光标闪烁使能。 */
 
-    /* ---- 定时器（对标 m_blinkTimer/m_deleteAllTimer/m_tripleClickTimer/
-     *      m_passwordEchoTimer；XTIMER_INVALID_ID 表示未启动） ---- */
-    XTimerId m_blinkTimer;             /**< 光标闪烁定时器。 */
-    XTimerId m_deleteAllTimer;         /**< 键盘导航长按清空定时器。 */
-    XTimerId m_tripleClickTimer;       /**< 三击窗口定时器。 */
-    XTimerId m_passwordEchoTimer;      /**< 密码回显延迟定时器。 */
-
-    /* ---- 长度与校验 ---- */
+    /* ---- 长度与校验 / 掩码 / 撤销栈 / 回显 / 键盘（4 字节整型成组） ---- */
     int   m_maxLength;                 /**< 最大字符数（默认 32767；对标 m_maxLength）。 */
-    void* m_validator;                 /**< 不透明校验器（借用；XValidator 未建）。 */
-    XLineControlValidateFunc m_validateFunc; /**< validate 委托（可 NULL）。 */
-    XLineControlFixupFunc    m_fixupFunc;    /**< fixup 委托（可 NULL）。 */
-    void* m_validatorUserData;         /**< 校验回调上下文（借用）。 */
-
-    /* ---- 输入掩码（对标 m_inputMask/m_blank/m_maskData） ---- */
-    char* m_inputMask;                 /**< 原始掩码串（拥有；NULL=无掩码）。 */
-    char  m_blank[5];                  /**< 掩码占位字符（UTF-8，默认空格）。 */
-    XLineControlMaskInputData* m_maskData; /**< 掩码槽位表（拥有；NULL=无掩码）。 */
     int   m_maskDataCount;             /**< 槽位表长度（= 掩码后 maxLength）。 */
-
-    /* ---- 撤销栈（对标 m_history/m_undoState/m_modifiedState） ---- */
-    XLineControlCommand* m_history;    /**< 命令历史动态数组（拥有）。 */
     int   m_historySize;               /**< 历史长度。 */
     int   m_historyCap;                /**< 历史容量。 */
     int   m_undoState;                 /**< 撤销游标（0..historySize）。 */
     int   m_modifiedState;             /**< 修改基准态（isModified 判定）。 */
-    int*  m_transactions;              /**< IME 事务表（Qt 恒空，保留判定）。 */
     int   m_transactionCount;          /**< 事务表长度。 */
     int   m_transactionCap;            /**< 事务表容量。 */
-
-    /* ---- 回显状态机 ---- */
-    bool  m_passwordEchoEditing;       /**< PasswordEchoOnEdit 的编辑中标志。 */
-    char  m_passwordCharacter[5];      /**< 密码掩码字符（UTF-8，默认 '*'）。 */
     int   m_passwordMaskDelay;         /**< 密码回显延迟 ms（-1=禁用；对标 m_passwordMaskDelay）。 */
-
-    /* ---- 键盘与外部对象 ---- */
     int   m_keyboardScheme;            /**< 键盘方案（XLineControlKeyboardScheme）。 */
-    bool  m_keypadNavigationEnabled;   /**< 键盘导航开关（项目扩展；默认 false）。 */
-    XObject* m_accessibleObject;       /**< 无障碍事件目标（借用；NULL 时用 m_parent）。 */
-    XCompleter* m_completer;           /**< 补全器（借用，不拥有）。 */
+    int   m_cancelTextCap;             /**< 取消文本容量。 */
     XLineControlPalette m_palette;     /**< 绘制四色快照（对标 m_palette 消费面）。 */
 
-    /* ---- 取消文本（对标 m_cancelText；键盘导航 Back 恢复用） ---- */
-    char* m_cancelText;                /**< 取消恢复文本（拥有）。 */
-    int   m_cancelTextCap;             /**< 取消文本容量。 */
+    /* ---- 1 字节成组：定长字符缓冲与布尔标志（尾部填充，无尾部空洞） ---- */
+    char  m_blank[5];                  /**< 掩码占位字符（UTF-8，默认空格）。 */
+    char  m_passwordCharacter[5];      /**< 密码掩码字符（UTF-8，默认 '*'）。 */
+    bool  m_passwordEchoEditing;       /**< PasswordEchoOnEdit 的编辑中标志。 */
+    bool  m_keypadNavigationEnabled;   /**< 键盘导航开关（项目扩展；默认 false）。 */
 } XLineControl;
 
 /* ==================== 生命周期（对标构造/析构/init） ==================== */

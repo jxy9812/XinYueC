@@ -22,8 +22,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
-#include <time.h>
+#include "XChar.h"        /* isdigit/isspace 直出改经 XChar_isDigit/XChar_isSpace（外部依赖约束） */
+#include "XDateTime.h"    /* struct tm/mktime 直出改经 XDateTime（外部依赖约束） */
+#include "XStringUtils.h" /* strlen/strchr 等直出改经 XStrlen/XStrchr（外部依赖约束） */
 
 // 自实现跨平台大小写不敏感字符串比较（避免依赖 strncasecmp/_strnicmp 等 platform API）
 static int xftp_stricmp_n(const char* a, const char* b, size_t n)
@@ -59,10 +60,6 @@ static int xftp_stricmp_n(const char* a, const char* b, size_t n)
 #define XFTP_UPLOAD_CHUNK_SIZE 8192
 #define XFTP_STACK_IO_CHUNK_SIZE 8192
 #endif
-
-// =============== 静态变量 ===============
-static bool s_classInitialized = false;
-static XVtable* s_vtable = NULL;
 
 /* XVector_at_base 返回的是元素存储位置的地址，需要再解一层拿到实际值。
  * 这里定义几个辅助宏，把 vector 中第 i 个元素（T*）正确解出来。 */
@@ -116,7 +113,7 @@ static bool ftp_writeDtpBufferToDevice(XFtp* ftp);
 static void ftp_pi_sendCommand(XFtp* ftp, const char* cmd)
 {
     if (!ftp || !cmd || !ftp->m_piSocket) return;
-    int64_t len = (int64_t)strlen(cmd);
+    int64_t len = (int64_t)XStrlen(cmd);
     XAbstractSocket_write(ftp->m_piSocket, cmd, len);
 }
 
@@ -309,82 +306,13 @@ static bool ftp_isIgnorableListLine(const char* line);
 static void trim_crlf(char* s)
 {
     if (!s) return;
-    size_t len = strlen(s);
+    size_t len = XStrlen(s);
     while (len > 0 && (s[len-1] == '\r' || s[len-1] == '\n' || s[len-1] == ' ')) {
         s[--len] = '\0';
     }
 }
 
-// =============== Vtable / class init ===============
-XVtable* XFtp_class_init(void)
-{
-    if (s_classInitialized && s_vtable) return s_vtable;
-    // 简化的 vtable 初始化：直接继承 XObject
-    XVtable_init(s_vtable = XVtable_create());
-    if (s_vtable) {
-        XVTABLE_SET_NAME(s_vtable, "XFtp");
-        XVtable_append_vtable(s_vtable, XObject_class_init());
-        XVTABLE_OVERLOAD(s_vtable, EXClass_Deinit, VXFtp_deinit);
-    }
-    s_classInitialized = true;
-    return s_vtable;
-}
-
-// =============== 构造/析构 ===============
-
-void XFtp_init(XFtp* ftp)
-{
-    if (!ftp) return;
-    memset(ftp, 0, sizeof(XFtp));
-    XObject_init((XObject*)ftp);
-    XClassSetVtable(ftp, XFtp);
-
-    ftp->m_replyText = XString_create();
-    ftp->m_piBuffer = XByteArray_create();
-    ftp->m_readBuffer = XByteArray_create();
-    ftp->m_pendingCommands = XVector_Create(XFtpCommand*);
-    ftp->m_commandMutex = XMutex_create(XLock_NonRecursive);
-    ftp->m_errorString = XString_create();
-    ftp->m_listInfo = XVector_Create(XFileInfo*);
-    // 自动重连定时器在首次安排重连时惰性创建，避免普通连接常驻一个定时器对象。
-    // 默认状态
-    ftp->m_state = XFtp_State_Unconnected;
-    ftp->m_error = XFtp_Error_NoError;
-    ftp->m_transferMode = XFtp_TransferMode_Passive;
-    ftp->m_transferType = XFtp_DataType_Binary;
-    ftp->m_proxyType = XFtp_ProxyType_None;
-    ftp->m_sslPeerVerifyMode = XSSL_VerifyPeer;
-    ftp->m_port = 21;
-    ftp->m_reconnectInterval = 5000;
-    ftp->m_maxReconnectAttempts = 3;
-    ftp->m_reconnectAttempts = 0;
-    ftp->m_currentId = 0;
-    ftp->m_features = 0;
-    ftp->m_useMlsd = 1;        // 默认优先 MLSD（如果服务器支持）
-    ftp->m_piSocket = (XAbstractSocket*)XSslSocket_create();
-    if (ftp->m_piSocket) {
-        XSslSocket_setPeerVerifyMode((XSslSocket*)ftp->m_piSocket,
-                                      ftp->m_sslPeerVerifyMode);
-        ftp_connectPiSocketSignals(ftp);
-    }
-}
-
-XFtp* XFtp_create_ex(XMemoryType memory)
-{
-    XFtp* ftp = (XFtp*)XMalloc(sizeof(XFtp), XMEMORY_TYPE_SYSTEM);
-    if (!ftp) return NULL;
-    XFtp_init(ftp);
-    Set_Class_Memory(ftp, memory); Set_Class_IsHeap(ftp, true);
-    if (!ftp->m_replyText || !ftp->m_piSocket || !ftp->m_piBuffer ||
-        !ftp->m_readBuffer ||
-        !ftp->m_pendingCommands || !ftp->m_commandMutex ||
-        !ftp->m_errorString || !ftp->m_listInfo) {
-        XClassDelete((XClass*)ftp);
-        return NULL;
-    }
-    return ftp;
-}
-
+// =============== 静态虚函数实现 ===============
 static void VXFtp_deinit(XFtp* ftp)
 {
     if (!ftp) return;
@@ -469,6 +397,73 @@ static void VXFtp_deinit(XFtp* ftp)
 
     ftp->m_currentCommand = NULL;
     XClass_Deinit_Parent(XObject, ftp);
+}
+
+// =============== Vtable / class init ===============
+XVtable* XFtp_class_init(void)
+{
+    /* XFtp 头文件未新增虚函数槽位，虚表容量沿用 XObject 的槽位总数。 */
+    XVTABLE_INIT_DEFAULT_SIZE(XCLASS_VTABLE_GET_SIZE(XObject))
+    XCLASS_SET_CLASS_NAME_DEFAULT("XFtp");
+    XVTABLE_INHERIT_XCLASS(XObject);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXFtp_deinit);
+    return XVTABLE_DEFAULT;
+}
+
+// =============== 构造/析构 ===============
+
+void XFtp_init(XFtp* ftp)
+{
+    if (!ftp) return;
+    memset(ftp, 0, sizeof(XFtp));
+    XObject_init((XObject*)ftp);
+    XClassSetVtable(ftp, XFtp);
+
+    ftp->m_replyText = XString_create();
+    ftp->m_piBuffer = XByteArray_create();
+    ftp->m_readBuffer = XByteArray_create();
+    ftp->m_pendingCommands = XVector_Create(XFtpCommand*);
+    ftp->m_commandMutex = XMutex_create(XLock_NonRecursive);
+    ftp->m_errorString = XString_create();
+    ftp->m_listInfo = XVector_Create(XFileInfo*);
+    // 自动重连定时器在首次安排重连时惰性创建，避免普通连接常驻一个定时器对象。
+    // 默认状态
+    ftp->m_state = XFtp_State_Unconnected;
+    ftp->m_error = XFtp_Error_NoError;
+    ftp->m_transferMode = XFtp_TransferMode_Passive;
+    ftp->m_transferType = XFtp_DataType_Binary;
+    ftp->m_proxyType = XFtp_ProxyType_None;
+    ftp->m_sslPeerVerifyMode = XSSL_VerifyPeer;
+    ftp->m_port = 21;
+    ftp->m_reconnectInterval = 5000;
+    ftp->m_maxReconnectAttempts = 3;
+    ftp->m_reconnectAttempts = 0;
+    ftp->m_currentId = 0;
+    ftp->m_features = 0;
+    ftp->m_useMlsd = 1;        // 默认优先 MLSD（如果服务器支持）
+    ftp->m_piSocket = (XAbstractSocket*)XSslSocket_create();
+    if (ftp->m_piSocket) {
+        XSslSocket_setPeerVerifyMode((XSslSocket*)ftp->m_piSocket,
+                                      ftp->m_sslPeerVerifyMode);
+        ftp_connectPiSocketSignals(ftp);
+    }
+}
+
+XFtp* XFtp_create_ex(XMemoryType memory)
+{
+    /* 分配与释放必须同族：按调用方 memory 申请，Set_Class_Memory 登记同族释放器 */
+    XFtp* ftp = (XFtp*)XMemory_malloc(sizeof(XFtp), memory);
+    if (!ftp) return NULL;
+    XFtp_init(ftp);
+    Set_Class_Memory(ftp, memory); Set_Class_IsHeap(ftp, true);
+    if (!ftp->m_replyText || !ftp->m_piSocket || !ftp->m_piBuffer ||
+        !ftp->m_readBuffer ||
+        !ftp->m_pendingCommands || !ftp->m_commandMutex ||
+        !ftp->m_errorString || !ftp->m_listInfo) {
+        XClassDelete((XClass*)ftp);
+        return NULL;
+    }
+    return ftp;
 }
 
 // =============== 信号连接 ===============
@@ -603,6 +598,7 @@ static void ftp_pi_error_handler(XObject* receiver, XVarList* args)
     XString* errStr = XAbstractSocket_errorString(ftp->m_piSocket);
     if (errStr) {
         XString_assign_utf8(ftp->m_errorString, XString_toUtf8(errStr));
+        XClassDelete((XClass*)errStr);  /* errorString 返回新建对象，用完必须释放 */
     }
 
     ftp->m_state = XFtp_State_Unconnected;
@@ -802,6 +798,7 @@ static void ftp_dtp_error_handler(XObject* receiver, XVarList* args)
         XString* errStr = XAbstractSocket_errorString(ftp->m_dtpSocket);
         XString_assign_utf8(ftp->m_errorString,
             errStr ? XString_toUtf8(errStr) : "Data connection error");
+        if (errStr) XClassDelete((XClass*)errStr);  /* errorString 返回新建对象，用完必须释放 */
     }
     if (ftp->m_currentCommand) {
         ftp_pi_handleError(ftp, 0,
@@ -1157,7 +1154,7 @@ static bool ftp_canUsePasvFallback(const XFtp* ftp)
      * An explicit IPv6 literal must not fall back to PASV; host names and
      * IPv4 literals may still use the IPv4 PASV fallback. */
     const char* host = ftp->m_host ? XString_toUtf8(ftp->m_host) : NULL;
-    return host && host[0] && strchr(host, ':') == NULL;
+    return host && host[0] && XStrchr(host, ':') == NULL;
 }
 
 static const XString* ftp_sslPeerVerifyName(const XFtp* ftp)
@@ -1522,10 +1519,10 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
     // 解析回复码
     int code = 0;
     char codeStr[4] = {0};
-    if (strlen(reply) >= 3 &&
-        isdigit((unsigned char)reply[0]) &&
-        isdigit((unsigned char)reply[1]) &&
-        isdigit((unsigned char)reply[2])) {
+    if (XStrlen(reply) >= 3 &&
+        XChar_isDigit((unsigned char)reply[0]) &&
+        XChar_isDigit((unsigned char)reply[1]) &&
+        XChar_isDigit((unsigned char)reply[2])) {
         codeStr[0] = reply[0];
         codeStr[1] = reply[1];
         codeStr[2] = reply[2];
@@ -1535,7 +1532,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
 
     // 获取回复文本
     const char* text = reply;
-    if (strlen(reply) > 4) {
+    if (XStrlen(reply) > 4) {
         text = reply + 4;
         if (text[0] == '-' || text[0] == ' ') text++;
     }
@@ -1545,7 +1542,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
     // 启动命令队列（Login）。FEAT 等特性探测推迟到登录成功后再发，
     // 避免带外应答与登录的 331/230 在时序上互相干扰。
     if (code == 220 && ftp->m_waitForGreeting
-        && (strlen(reply) <= 3 || reply[3] != '-')) {
+        && (XStrlen(reply) <= 3 || reply[3] != '-')) {
         ftp->m_waitForGreeting = 0;
         // 清理多行缓冲（防止多行 220 问候残留影响后续解析）
         if (ftp->m_replyText) XString_assign_utf8(ftp->m_replyText, "");
@@ -1583,7 +1580,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
     }
 
     // 多行响应：以 xxx- 开头表示还有后续
-    if (strlen(reply) > 3 && reply[3] == '-') {
+    if (XStrlen(reply) > 3 && reply[3] == '-') {
         // 如果这是 FEAT 多行响应（211-...），首行也可能是 "211-UTF8" 这类带特性的格式
         if (code == 211) {
             ftp_parse_feat_line(ftp, text);
@@ -1604,7 +1601,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
     // 标准 FTP 多行响应中间行格式：无响应码前缀，前面有空格
     if (code == 0 && ftp->m_replyText
         && XString_toUtf8(ftp->m_replyText)
-        && strlen(XString_toUtf8(ftp->m_replyText)) > 0) {
+        && XStrlen(XString_toUtf8(ftp->m_replyText)) > 0) {
         // MLST 多行响应：当前 m_mlstState==1 时，解析 facts 行（带分号）
         if (ftp->m_sm.m_mlstState == 1 && ftp->m_currentCommand
             && ftp->m_currentCommand->m_command == XFtpCommand_Mlst) {
@@ -1686,7 +1683,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
                 if (!ftp->m_useCompression &&
                     ftp->m_currentCommand->m_command == XFtpCommand_Get &&
                     ftp->m_currentCommand->m_restOffset == 0 && text) {
-                    const char* sizeText = strchr(text, '(');
+                    const char* sizeText = XStrchr(text, '(');
                     long long advertised = 0;
                     if (sizeText && sscanf(sizeText, "(%lld bytes", &advertised) == 1 &&
                         advertised >= 0) {
@@ -1760,7 +1757,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
                 }
                 break;
             }
-            const char* p = strchr(text, '(');
+            const char* p = XStrchr(text, '(');
             bool parsed = false;
             if (p) {
                 int h1, h2, h3, h4, p1, p2;
@@ -1792,7 +1789,7 @@ static void ftp_processReply(XFtp* ftp, const char* reply)
                 }
                 break;
             }
-            const char* p = strchr(text, '(');
+            const char* p = XStrchr(text, '(');
             bool parsed = false;
             if (p) {
                 int d1;
@@ -1993,7 +1990,7 @@ static void ftp_pi_handleIntermediateReply(XFtp* ftp, int code, const char* text
 
     // 解析 PASV 响应：227 Entering Passive Mode (h1,h2,h3,h4,p1,p2)
     if (code == 227 && ftp->m_transferMode == XFtp_TransferMode_Passive) {
-        const char* p = strchr(text, '(');
+        const char* p = XStrchr(text, '(');
         if (p) {
             int h1, h2, h3, h4, p1, p2;
             if (sscanf(p, "(%d,%d,%d,%d,%d,%d)", &h1, &h2, &h3, &h4, &p1, &p2) == 6) {
@@ -2008,7 +2005,7 @@ static void ftp_pi_handleIntermediateReply(XFtp* ftp, int code, const char* text
 
     // 解析 EPSV 响应：229 Entering Extended Passive Mode (|||port|)
     if (code == 229 && ftp->m_transferMode == XFtp_TransferMode_Passive) {
-        const char* p = strchr(text, '(');
+        const char* p = XStrchr(text, '(');
         if (p) {
             // 格式 (|||port|) 或 (|proto|port|)
             int d1, d2, d3, d4;
@@ -2031,7 +2028,7 @@ static void ftp_pi_handleIntermediateReply(XFtp* ftp, int code, const char* text
             char buf[600];
             const char* cmdline = XString_toUtf8((XString*)ftp->m_currentCommand->m_data);
             if (cmdline) {
-                size_t len = strlen(cmdline);
+                size_t len = XStrlen(cmdline);
                 if (len > sizeof(buf) - 4) len = sizeof(buf) - 4;
                 memcpy(buf, cmdline, len);
                 buf[len] = '\r';
@@ -2229,7 +2226,7 @@ static void ftp_dtp_connect(XFtp* ftp, const char* host, uint16_t port)
             if (addrStr) {
                 const char* s = XString_toUtf8(addrStr);
                 if (s) {
-                    size_t slen = strlen(s);
+                    size_t slen = XStrlen(s);
                     size_t cpLen = slen < sizeof(peerIp) - 1 ? slen : sizeof(peerIp) - 1;
                     memcpy(peerIp, s, cpLen);
                     peerIp[cpLen] = '\0';
@@ -2267,7 +2264,7 @@ static void ftp_dtp_startTransfer(XFtp* ftp)
             char buf[600];
             const char* cmdline = XString_toUtf8((XString*)ftp->m_currentCommand->m_data);
             if (cmdline) {
-                size_t len = strlen(cmdline);
+                size_t len = XStrlen(cmdline);
                 if (len > sizeof(buf) - 4) len = sizeof(buf) - 4;
                 memcpy(buf, cmdline, len);
                 buf[len] = '\r';
@@ -2500,7 +2497,7 @@ static int ftp_dtp_startListen(XFtp* ftp, char* portCmd, size_t portCmdSize)
 			if (addrStr) {
 				const char* utf8 = XString_toUtf8(addrStr);
 				if (utf8 && utf8[0]) {
-					strncpy(ipStr, utf8, sizeof(ipStr) - 1);
+					XStrncpy(ipStr, utf8, sizeof(ipStr) - 1);
 					ipStr[sizeof(ipStr) - 1] = '\0';
 				}
 				XClassDelete((XClass*)addrStr);
@@ -2508,7 +2505,7 @@ static int ftp_dtp_startListen(XFtp* ftp, char* portCmd, size_t portCmdSize)
 		}
 	}
 
-	if (strchr(ipStr, ':')) {
+	if (XStrchr(ipStr, ':')) {
 		/* IPv6 active FTP requires independently negotiated EPRT support. */
 		if (!(ftp->m_features & XFtp_Feature_EPRT)) return -1;
 		int n = snprintf(portCmd, portCmdSize, "EPRT |2|%s|%u|\r\n", ipStr, port);
@@ -2539,11 +2536,11 @@ static bool ftp_parse_mlsd_facts(const char* facts, char* name, size_t nameSize,
 
     const char* p = facts;
     while (*p && *p != ' ') {
-        const char* eq = strchr(p, '=');
+        const char* eq = XStrchr(p, '=');
         if (!eq) break;
-        const char* semi = strchr(eq, ';');
+        const char* semi = XStrchr(eq, ';');
         size_t keyLen = (size_t)(eq - p);
-        size_t valLen = semi ? (size_t)(semi - eq - 1) : strlen(eq + 1);
+        size_t valLen = semi ? (size_t)(semi - eq - 1) : XStrlen(eq + 1);
 
         if (keyLen == 4 && memcmp(p, "name", 4) == 0) {
             size_t cpLen = valLen < nameSize - 1 ? valLen : nameSize - 1;
@@ -2564,20 +2561,25 @@ static bool ftp_parse_mlsd_facts(const char* facts, char* name, size_t nameSize,
             char tmp[20] = {0};
             size_t cp = valLen < 14 ? valLen : 14;
             memcpy(tmp, eq + 1, cp);
-            // 简化：解析 YYYYMMDDHHMMSS
+            // 简化：解析 YYYYMMDDHHMMSS。RFC 3659 规定 MLSD modify 为 UTC，
+            // 先补齐 ISO 分隔符再经 XDateTime 解析、换算纪元秒（外部依赖约束）。
             if (cp >= 14) {
-                struct tm t = {0};
-                char year[5] = {0}, mon[3] = {0}, day[3] = {0};
-                memcpy(year, tmp, 4);
-                memcpy(mon, tmp + 4, 2);
-                memcpy(day, tmp + 6, 2);
-                t.tm_year = atoi(year) - 1900;
-                t.tm_mon = atoi(mon) - 1;
-                t.tm_mday = atoi(day);
-                t.tm_hour = (tmp[8] - '0') * 10 + (tmp[9] - '0');
-                t.tm_min = (tmp[10] - '0') * 10 + (tmp[11] - '0');
-                t.tm_sec = (tmp[12] - '0') * 10 + (tmp[13] - '0');
-                *pModifyTime = (int64_t)mktime(&t);
+                char iso[20] = {0};
+                XDateTime parsed;
+                XMemcpy(iso, tmp, 4);
+                iso[4] = '-';
+                XMemcpy(iso + 5, tmp + 4, 2);
+                iso[7] = '-';
+                XMemcpy(iso + 8, tmp + 6, 2);
+                iso[10] = ' ';
+                XMemcpy(iso + 11, tmp + 8, 2);
+                iso[13] = ':';
+                XMemcpy(iso + 14, tmp + 10, 2);
+                iso[16] = ':';
+                XMemcpy(iso + 17, tmp + 12, 2);
+                parsed = XDateTime_fromString_format(iso, "yyyy-MM-dd HH:mm:ss");
+                if (XDateTime_isValid(&parsed))
+                    *pModifyTime = XDateTime_toSecsSinceEpoch(&parsed);
             }
         }
 
@@ -2594,7 +2596,7 @@ static bool ftp_parse_eplf(const char* line, char* name, size_t nameSize,
 {
     if (!line || line[0] != '+' || line[1] == '|') return false;
     // 找第一个 |
-    const char* p1 = strchr(line, '|');
+    const char* p1 = XStrchr(line, '|');
     if (!p1) return false;
     // 第二个 | 之前的字段是 size（可选）
     if (p1[1] != '|' && p1[1] != ',') {
@@ -2605,11 +2607,11 @@ static bool ftp_parse_eplf(const char* line, char* name, size_t nameSize,
         *pSize = (int64_t)strtoll(tmp, NULL, 10);
     }
     // 文件名在最后一个 | 之后
-    const char* last = strrchr(line, '|');
+    const char* last = XStrrchr(line, '|');
     if (!last) return false;
     last++;
     if (*last == '\0') return false;
-    size_t nlen = strlen(last);
+    size_t nlen = XStrlen(last);
     if (nlen >= nameSize) nlen = nameSize - 1;
     memcpy(name, last, nlen);
     name[nlen] = '\0';
@@ -2642,15 +2644,15 @@ static bool ftp_parse_unix_ls(const char* line, char* name, size_t nameSize,
                         perm, &linkCount, owner, group, &size, tmpName);
         if (fields < 6) return false;
     }
-    size_t nlen = strlen(tmpName);
+    size_t nlen = XStrlen(tmpName);
     if (nlen >= nameSize) nlen = nameSize - 1;
     memcpy(name, tmpName, nlen);
     name[nlen] = '\0';
     // 去掉 "link -> target" 中的 " -> xxx"
-    char* arrow = strstr(name, " -> ");
-    if (arrow) *arrow = '\0';
+    const char* arrow = XStrstr(name, " -> ");
+    if (arrow) name[arrow - name] = '\0';
     // 去掉 \r
-    nlen = strlen(name);
+    nlen = XStrlen(name);
     while (nlen > 0 && (name[nlen-1] == '\r' || name[nlen-1] == '\n')) {
         name[--nlen] = '\0';
     }
@@ -2680,11 +2682,11 @@ static bool ftp_parse_windows_nt(const char* line, char* name, size_t nameSize,
         if (fields < 4) return false;
         size = -1;
     }
-    size_t nlen = strlen(tmpName);
+    size_t nlen = XStrlen(tmpName);
     if (nlen >= nameSize) nlen = nameSize - 1;
     memcpy(name, tmpName, nlen);
     name[nlen] = '\0';
-    nlen = strlen(name);
+    nlen = XStrlen(name);
     while (nlen > 0 && (name[nlen-1] == '\r' || name[nlen-1] == '\n')) {
         name[--nlen] = '\0';
     }
@@ -2701,23 +2703,23 @@ static bool ftp_listingUsesMlsd(const XFtp* ftp)
         return false;
     }
     const char* command = XString_toUtf8((const XString*)ftp->m_currentCommand->m_data);
-    return command && strncmp(command, "MLSD", 4) == 0 &&
+    return command && XStrncmp(command, "MLSD", 4) == 0 &&
            (command[4] == '\0' || command[4] == ' ');
 }
 
 static bool ftp_isIgnorableListLine(const char* line)
 {
     if (!line) return true;
-    while (*line && isspace((unsigned char)*line)) line++;
+    while (*line && XChar_isSpace((unsigned char)*line)) line++;
     if (xftp_stricmp_n(line, "total", 5) != 0 ||
-        (line[5] != '\0' && !isspace((unsigned char)line[5]))) {
+        (line[5] != '\0' && !XChar_isSpace((unsigned char)line[5]))) {
         return false;
     }
     line += 5;
-    while (*line && isspace((unsigned char)*line)) line++;
+    while (*line && XChar_isSpace((unsigned char)*line)) line++;
     if (!*line) return true;
     while (*line) {
-        if (!isdigit((unsigned char)*line)) return false;
+        if (!XChar_isDigit((unsigned char)*line)) return false;
         line++;
     }
     return true;
@@ -2734,8 +2736,8 @@ static bool ftp_parse_list_line(XFtp* ftp, const char* line)
     bool parsed = false;
 
     // MLSD 格式：facts 段在第一个空格前
-    if (strchr(line, '=') && strchr(line, ';')) {
-        const char* sp = strchr(line, ' ');
+    if (XStrchr(line, '=') && XStrchr(line, ';')) {
+        const char* sp = XStrchr(line, ' ');
         if (sp) {
             char facts[1024] = {0};
             size_t flen = (size_t)(sp - line);
@@ -2743,7 +2745,7 @@ static bool ftp_parse_list_line(XFtp* ftp, const char* line)
             memcpy(facts, line, flen);
             facts[flen] = '\0';
             while (*sp == ' ') sp++;
-            size_t nameLen = strlen(sp);
+            size_t nameLen = XStrlen(sp);
             if (nameLen >= sizeof(name)) nameLen = sizeof(name) - 1;
             memcpy(name, sp, nameLen);
             name[nameLen] = '\0';
@@ -3152,7 +3154,7 @@ int XFtp_rawCommand(XFtp* ftp, const char* command)
     {
         // 自动追加 \r\n（如果没有）
         XString_assign_utf8(cmd->m_rawCmd, command);
-        size_t len = strlen(command);
+        size_t len = XStrlen(command);
         if (len < 2 || command[len-2] != '\r' || command[len-1] != '\n') {
             XString_append_utf8(cmd->m_rawCmd, "\r\n");
         }
@@ -3230,7 +3232,7 @@ int XFtp_connectToUrl(XFtp* ftp, const char* url)
 
     const XString* schemeStr = XUrl_scheme_const(parsed);
     const char* scheme = schemeStr ? XString_toUtf8(schemeStr) : NULL;
-    size_t schemeLen = scheme ? strlen(scheme) : 0;
+    size_t schemeLen = scheme ? XStrlen(scheme) : 0;
     bool isFtps = schemeLen == 5 && xftp_stricmp_n(scheme, "ftps", 5) == 0;
     bool isFtp = schemeLen == 3 && xftp_stricmp_n(scheme, "ftp", 3) == 0;
     if (scheme && scheme[0] && !isFtp && !isFtps) {

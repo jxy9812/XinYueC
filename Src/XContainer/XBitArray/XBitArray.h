@@ -158,7 +158,7 @@ XBitOrder XBitArray_getBitOrder(const XBitArray* array);
  * @note 指针有效期与数组对象一致，数组被修改或销毁后指针失效
  * @since 对应Qt 5.11的QBitArray::bits()行为
  */
-const char* XBitArray_bits(const XBitArray* array);
+const char* XBitArray_bits_const(const XBitArray* array);
 
 /**
  * @brief 截断XBitArray到指定位置，保留0~pos-1的比特，删除pos及之后的比特，对应QBitArray::truncate

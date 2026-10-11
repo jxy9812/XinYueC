@@ -1,23 +1,24 @@
 ﻿#include "XThreadData.h"
+#include <string.h>
 #include "XThread.h" // XThread_currentThreadId() / XThreadStorage_set/get
 #include "XSort.h"
 #include "XMutex.h"
 #include "XAbstractEventDispatcher.h"
+#include "XAbstractEventDispatcher_Protected.h" /* 解引用 m_d_ptr->m_threadData（createEventDispatcher 回填） */
 #include "XDateTime.h" // 诊断计时（XDateTime_currentMSecsSinceEpoch，单调时钟）
 #include "XSemaphore.h"
 #include "XCoreApplication.h"
 #include "XMemory.h"
-#include <string.h>
 #if XSYNC_ON
 #if XTHREADDATA_ON
 
 // Qt 6.8: 主线程数据 (对标 QCoreApplicationPrivate::theMainThread, QAtomicPointer<QThread>)
 // 原子指针: initMainThread 写入(storeRelease), 其它线程读取(loadAcquire)
-static XAtomic_uintptr_t main_thread_data = { NULL };
+static XAtomic_Uintptr main_thread_data = { NULL };
 
 // 类初始化保护 (XVector/XStack/XLockFreeQueue 的 vtable 首次创建需要线程安全)
-static XAtomic_uintptr_t classes_init_mutex = { 0 };
-static XAtomic_bool classes_initialized = { false };
+static XAtomic_Uintptr classes_init_mutex = { 0 };
+static XAtomic_Bool classes_initialized = { false };
 
 // ========================
 // 类初始化（线程安全,对标 Qt 全局静态初始化）
@@ -72,8 +73,8 @@ static bool ensure_classes_init(void)
 // ========================
 static int32_t  stable_sort_post_events_desc(const void* a, const void* b) 
 {
-    int prio_a = ((XPostEvent*)a)->priority;
-    int prio_b = ((XPostEvent*)b)->priority;
+    int prio_a = ((XPostEvent*)a)->m_priority;
+    int prio_b = ((XPostEvent*)b)->m_priority;
     if (prio_a > prio_b) return XCompare_Greater;    // a 优先级更高
     if (prio_a < prio_b) return XCompare_Less;       // a 优先级更低
     return XCompare_Equality;                        // 优先级相等
@@ -106,13 +107,13 @@ void XThreadData_delete(XThreadData* data)
         XPostEvent pe;
         while (XLockFreeQueue_receive_base(&data->m_tryPostEventList, &pe))
         {
-            if (pe.event)
+            if (pe.m_event)
             {
-                if (pe.receiver)
-                    XAtomic_fetch_sub_int32(&pe.receiver->m_posted_events, 1,
+                if (pe.m_receiver)
+                    XAtomic_fetch_sub_int32(&pe.m_receiver->m_posted_events, 1,
                                             XAtomic_MemoryOrder_Release);
-                pe.event->posted = false;
-                XClassDelete(pe.event);
+                pe.m_event->m_posted = false;
+                XClassDelete(pe.m_event);
             }
         }
     }
@@ -120,13 +121,13 @@ void XThreadData_delete(XThreadData* data)
     for_each_iterator(&data->m_postEventList, XVector, it)
     {
         XPostEvent* post = XVector_iterator_data(&it);
-        if (post && post->event)
+        if (post && post->m_event)
         {
             /* Qt 6.8: 递减接收者的投递事件计数 */
-            if (post->receiver)
-                XAtomic_fetch_sub_int32(&post->receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
-            post->event->posted = false;
-            XClassDelete(post->event);
+            if (post->m_receiver)
+                XAtomic_fetch_sub_int32(&post->m_receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
+            post->m_event->m_posted = false;
+            XClassDelete(post->m_event);
         }
     }
     XClassDeinit(&data->m_tryPostEventList);
@@ -206,8 +207,8 @@ XAbstractEventDispatcher* XThreadData_createEventDispatcher(XThreadData* data)
     if (data->m_eventDispatcher) return data->m_eventDispatcher;
     // 平台相关: 由 XEventDispatcher_create 创建
     data->m_eventDispatcher = XEventDispatcher_create(NULL);
-    if (data->m_eventDispatcher && data->m_eventDispatcher->d_ptr)
-        data->m_eventDispatcher->d_ptr->m_threadData = data;
+    if (data->m_eventDispatcher && data->m_eventDispatcher->m_d_ptr)
+        data->m_eventDispatcher->m_d_ptr->m_threadData = data;
     return data->m_eventDispatcher;
 }
 
@@ -235,10 +236,12 @@ void XThreadData_init(XThreadData* data, XThread* thread)
     if (!data)return;
     memset(data,0,sizeof(XThreadData));
     data->m_mutex = XMutex_create(XLock_NonRecursive);
+    XAssert(data->m_mutex, "Memory allocation failed");
 #if XSEMAPHORE_ON
     data->m_wakeSemaphore = XSemaphore_create(0, 0x7FFFFFFF);
+    XAssert(data->m_wakeSemaphore, "Memory allocation failed");
 #endif
-    XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent), TryPostEvent_QueueSize);
+    XLockFreeQueue_init(&data->m_tryPostEventList,sizeof(XPostEvent), TRY_POST_EVENT_QUEUE_SIZE);
     XVector_init(&data->m_postEventList, sizeof(XPostEvent),false);
     XStack_init(&data->m_activePostEventLists, sizeof(XVector*));
     XStack_init(&data->m_eventLoops, sizeof(XEventLoop*));  // Qt 6.8: 事件循环栈
@@ -286,7 +289,9 @@ XThreadData* XThreadData_current(void)
 }
 
 // Qt 6.8: TLS 析构回调 (对标 destroy_current_thread_data)
-// 由平台层 pthread_key 析构函数在线程退出时自动调用 (仅 Posix)。
+// 由平台层在线程退出时自动调用 (Posix: pthread_key_create 析构;
+// Win32: FlsAlloc 析构回调经 XThreadStorage_flsCallback 转发;
+// FreeRTOS: portCLEAN_UP_TCB 钩子经 XThreadStorage 登记表延迟清扫转发)。
 // 清理 adopted 线程未显式调用 clearCurrentThreadData() 时残留的 XThreadData。
 // XThread 管理的线程在 VXThread_run 末尾已 set TLS(NULL),不会触发此回调。
 void XThreadData_destroyTlsData(void* p)
@@ -423,7 +428,7 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority)
     }
 
     // Qt 6.8: 标记事件为已投递 (对标 event->m_posted = true)
-    event->posted = true;
+    event->m_posted = true;
 
     // Qt 6.8: 递增接收者的投递事件计数 (对标 ++receiver->d_func()->postedEvents)
     XAtomic_fetch_add_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
@@ -431,7 +436,7 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority)
     XPostEvent pe = { receiver, event, priority };
     if (!XVector_push_back_1_base(&td->m_postEventList, &pe)) {
         XAtomic_fetch_sub_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
-        event->posted = false;
+        event->m_posted = false;
         XMutex_unlock(td->m_mutex);
         XClassDelete(event);
         return;
@@ -457,7 +462,7 @@ bool XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority)
     if (!td) return false;
 
     // Qt 6.8: 标记事件为已投递
-    event->posted = true;
+    event->m_posted = true;
 
     // Qt 6.8: 递增接收者的投递事件计数
     XAtomic_fetch_add_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Relaxed);
@@ -476,7 +481,7 @@ bool XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority)
     }
     // 入队失败：回滚计数
     XAtomic_fetch_sub_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Release);
-    event->posted = false;
+    event->m_posted = false;
     XERROR_PRINTF("XThreadData_tryPostEvent,线程调度器中无锁队列满了,入队失败，count:%d\n",XQueueBase_size_base(&td->m_tryPostEventList));
     return false;
 }
@@ -493,8 +498,8 @@ void XThreadData_push_front_list(const XVector* events)
     bool pushed = false;
     for (size_t i = count; i > 0; --i) {
         XPostEvent* post = &posts[i - 1];
-        if (post->event && XVector_insert_1_base(&td->m_postEventList, 0, post, 1)) {
-            post->event = NULL;
+        if (post->m_event && XVector_insert_1_base(&td->m_postEventList, 0, post, 1)) {
+            post->m_event = NULL;
             pushed = true;
         }
     }
@@ -503,7 +508,7 @@ void XThreadData_push_front_list(const XVector* events)
     XMutex_unlock(td->m_mutex);
 
     for (size_t i = 0; i < count; ++i) {
-        if (posts[i].event)
+        if (posts[i].m_event)
             XThreadData_discardPostedEvent(&posts[i]);
     }
 }
@@ -537,19 +542,19 @@ XVector* XThreadData_takePostedEvents(void)
     // 关键：稳定降序排序 (对标 Qt 6.8 QPostEventList::addEvent 使用 std::upper_bound)
     if (XContainerSize(local) > 1)
     {
-        XInsertSort(XContainerDataAddr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
+        XSort_insert(XContainerDataAddr(local), XContainerSize(local), XContainerTypeSize(local), stable_sort_post_events_desc, XSORT_DESC);
     }
     return local;
 }
 
 bool XThreadData_deliverPostedEvent(XPostEvent* post)
 {
-    if (!post || !post->event) return false;
+    if (!post || !post->m_event) return false;
 
-    XObject* receiver = post->receiver;
-    XEvent* event = post->event;
-    post->event = NULL;
-    event->posted = false;
+    XObject* receiver = post->m_receiver;
+    XEvent* event = post->m_event;
+    post->m_event = NULL;
+    event->m_posted = false;
     if (receiver)
         XAtomic_fetch_sub_int32(&receiver->m_posted_events, 1, XAtomic_MemoryOrder_Acquire);
 
@@ -560,13 +565,13 @@ bool XThreadData_deliverPostedEvent(XPostEvent* post)
 
 void XThreadData_discardPostedEvent(XPostEvent* post)
 {
-    if (!post || !post->event) return;
+    if (!post || !post->m_event) return;
 
-    XEvent* event = post->event;
-    post->event = NULL;
-    event->posted = false;
-    if (post->receiver)
-        XAtomic_fetch_sub_int32(&post->receiver->m_posted_events, 1, XAtomic_MemoryOrder_Acquire);
+    XEvent* event = post->m_event;
+    post->m_event = NULL;
+    event->m_posted = false;
+    if (post->m_receiver)
+        XAtomic_fetch_sub_int32(&post->m_receiver->m_posted_events, 1, XAtomic_MemoryOrder_Acquire);
     XClassDelete(event);
 }
 
@@ -603,11 +608,11 @@ void XThreadData_discardActivePostedEvents(XObject* receiver, XEventType eventTy
         size_t postCount = XContainerSize(events);
         for (size_t j = 0; j < postCount; ++j) {
             XPostEvent* post = &posts[j];
-            if (!post->event)
+            if (!post->m_event)
                 continue;
-            if (receiver && post->receiver != receiver)
+            if (receiver && post->m_receiver != receiver)
                 continue;
-            if (eventType && post->event->type != eventType)
+            if (eventType && post->m_event->m_type != eventType)
                 continue;
             XThreadData_discardPostedEvent(post);
         }
@@ -652,8 +657,8 @@ XObject* XThreadData_currentSender(XObject* receiver)
     int64_t n = (int64_t)XContainerSize(&td->m_senderStack);
     for (int64_t i = n - 1; i >= 0; i--)
     {
-        if (base[i].receiver == receiver)
-            return base[i].sender;
+        if (base[i].m_receiver == receiver)
+            return base[i].m_sender;
     }
     return NULL;
 }
@@ -667,8 +672,8 @@ int XThreadData_currentSenderSignalIndex(XObject* receiver)
     int64_t n = (int64_t)XContainerSize(&td->m_senderStack);
     for (int64_t i = n - 1; i >= 0; i--)
     {
-        if (base[i].receiver == receiver)
-            return (int)base[i].signal;
+        if (base[i].m_receiver == receiver)
+            return (int)base[i].m_signal;
     }
     return -1;
 }

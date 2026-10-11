@@ -284,6 +284,7 @@ extern void vAssertCalled(const char *pcFileName, unsigned long ulLine);
 #define INCLUDE_eTaskGetState			           1
 #define INCLUDE_xTimerPendFunctionCall	     0
 //#define INCLUDE_xTaskGetCurrentTaskHandle       1
+#define INCLUDE_xTaskGetCurrentTaskHandle             1   /* XThreadStorage_get/set、XThread_currentThreadId（TLS 载体）必需 */
 //#define INCLUDE_uxTaskGetStackHighWaterMark     0
 //#define INCLUDE_xTaskGetIdleTaskHandle          0
 
@@ -318,6 +319,17 @@ extern void vAssertCalled(const char *pcFileName, unsigned long ulLine);
 //（XMutex/XSemaphore/容器全套），调用即泄漏数百字节——固件 48KB 堆
 //数秒内耗尽。每个 TCB 增加 4 字节指针。
 #define configNUM_THREAD_LOCAL_STORAGE_POINTERS 	1
+
+//XThreadStorage 收养线程数据回收钩子：本内核为 V9.0.0，无 TLS 析构回调
+//（configUSE_THREAD_LOCAL_STORAGE_DELETE_CALLBACKS 为 V10.5.0+ 特性），
+//改挂内核既有钩子 portCLEAN_UP_TCB——任务 TCB 释放前由 prvDeleteTCB 调用
+//（tasks.c），把该任务在 XThreadStorage 登记表中的 adopted XThreadData 标记为
+//待清扫；实际释放在 XThreadStorage_get() 的延迟清扫中执行（钩子可能位于内核
+//临界区，不得直接调用堆释放/XSemaphore 删除等 FreeRTOS API）。
+//实现位于 Drive/FreeRTOS/Sync/XThreadFreeRTOS.c（XTHREADDATA_ON 模块，模块
+//裁剪时为空实现），启用 FreeRTOS 平台构建时该文件必须参与编译。
+void XThreadStorage_taskCleanup( void* task );
+#define portCLEAN_UP_TCB( pxTCB )	XThreadStorage_taskCleanup( ( void* ) ( pxTCB ) )
 
 
 /* 以下为使用Percepio Tracealyzer需要的东西，不需要时将 configUSE_TRACE_FACILITY 定义为 0 */

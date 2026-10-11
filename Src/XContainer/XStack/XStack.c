@@ -42,7 +42,10 @@ bool XStack_resize(XStack* this_stack, size_t new_capacity)
 	size_t size = XStack_size_base(this_stack);
 	bool is_ok = XVtableGetFunc(XVector_class_init(), EXVector_Resize,
 		bool (*)(XVector*, size_t))(this_stack, new_capacity);
-	XContainerSize(this_stack)=size;
+	//缩容时XVector已截断并反初始化多余元素，恢复旧size会复活已析构元素造成二次反初始化；
+	//仅扩容时恢复旧size，使本次resize只扩容量、不改变元素数量
+	if (is_ok && new_capacity > size)
+		XContainerSize(this_stack)=size;
 	return is_ok;
 }
 XVtable* XStack_class_init()
@@ -146,7 +149,7 @@ void VXClass_move(XStack * object, XStack * src)
 	{
 		XStack_clear_base(object);
 	}
-	XSwap((XClass*)object + 1, (XClass*)src + 1,
+	XMemory_swap((XClass*)object + 1, (XClass*)src + 1,
 		sizeof(XStack) - sizeof(XClass));
 	Class_Memory(object) = source_memory;
 	if (!target_uninitialized)

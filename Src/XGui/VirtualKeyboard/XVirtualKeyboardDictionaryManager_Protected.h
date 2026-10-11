@@ -2,6 +2,8 @@
  * @file       XVirtualKeyboardDictionaryManager_Protected.h
  * @brief      XVirtualKeyboardDictionaryManager 保护头（类名级）：词典
  *             创建入口（Qt friend 私有构造口径）。
+ * @details    仅供子类和内部实现使用，不对外公开；外部代码禁止
+ *             include 本头文件。
  * @author     XinYueC 团队
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDDICTIONARYMANAGER_PROTECTED_H

@@ -224,7 +224,7 @@ static void OneChild_erase(XRBTreeNode** this_root, XRBTreeNode* eraseNode)
 	enum XRBTreeColor color = XRBTree_GetColor(eraseNode);//颜色
 	if (parent != NULL)
 	{
-		XRBTreeNode** LPpaterToEraseNode = XTreeNode_getChildrenParentRef(eraseNode);//孩子在父节点位置
+		XRBTreeNode** LPpaterToEraseNode = XTreeNode_childrenParent_ref(eraseNode);//孩子在父节点位置
 		*LPpaterToEraseNode = Pchild;
 	}
 	else

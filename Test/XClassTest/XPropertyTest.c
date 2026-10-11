@@ -1,5 +1,5 @@
 ﻿#include"XPropertyTest.h"
-#if DEMOTEST && XPROPERTY_ON
+#if DEMOTEST_ON && XPROPERTY_ON
 
 #include"XProperty.h"
 #include"XPropertyBinding.h"
@@ -620,13 +620,13 @@ cleanup:
 typedef struct ThCtx {
     XProperty* local;       /* 线程私有属性 */
     XProperty* mirror;      /* 绑定目标：mirror = local + 1 */
-    XAtomic_int32_t done;   /* 完成计数（原子） */
+    XAtomic_Int32 done;   /* 完成计数（原子） */
     int32_t result;         /* 镜像求值结果 */
 } ThCtx;
 
 typedef struct CrossCtx {
     XProperty* shared;      /* 两线程共读的属性 */
-    XAtomic_int32_t done;   /* 完成计数（原子） */
+    XAtomic_Int32 done;   /* 完成计数（原子） */
 } CrossCtx;
 
 /* mirror = local + 1 */
@@ -794,7 +794,7 @@ cleanup:
 
 #define TH_RW_THREADS 2
 static XProperty* g_sharedProp = NULL;
-static XAtomic_int32_t g_rwDone;
+static XAtomic_Int32 g_rwDone;
 
 /* 各线程写各自的值到共享属性,再回读快照验证结构体完好 */
 static void th_rw_func(XThread* thread, XVarList* list)
@@ -949,4 +949,4 @@ void XTestMenu_XPropertyTest(XTestMenu* root)
 	}
 }
 
-#endif /* DEMOTEST && XPROPERTY_ON */
+#endif /* DEMOTEST_ON && XPROPERTY_ON */

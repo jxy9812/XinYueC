@@ -1,7 +1,7 @@
 ﻿/**
  * @file       XDataTest.h
  * @brief      XData 模块测试入口声明。
- * @details    仅包含测试调度接口；DEMOTEST 菜单接口由测试可执行程序使用，
+ * @details    仅包含测试调度接口；DEMOTEST_ON 菜单接口由测试可执行程序使用，
  *             不属于库的运行时公共 API。
  */
 #ifndef XDataTest_H
@@ -21,11 +21,11 @@ int XSqlTest_run(void);
 bool XDataTest_runAll(void);
 /** @brief 执行 XVariant 生命周期/未清零栈结构防呆专项测试。 @return 成功返回 0，失败返回非 0。 */
 int XVariantTest_run(void);
-#if DEMOTEST
+#if DEMOTEST_ON
 	void XTestMenu_XJsonQtAlignmentTest(XTestMenu* root);
 	void XTestMenu_XDataTest(XTestMenu* root);
 	void XTestMenu_XVariantTest(XTestMenu* root);
-#endif // DEMOTEST
+#endif // DEMOTEST_ON
 
 #ifdef __cplusplus
 }

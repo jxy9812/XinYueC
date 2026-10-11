@@ -8,6 +8,9 @@
 #include"XEventLoop.h"
 #include"XThreadData.h"
 #include "XTask.h"
+#ifndef _WIN32_WINNT          /* FlsAlloc 需 Vista+、GetActiveProcessorCount 需 Win7+ 声明（后者静态直调，x86 下隐式 cdecl 声明会 LNK2019） */
+#define _WIN32_WINNT 0x0601
+#endif
 #include <windows.h>
 #include"XAtomic.h"
 #if XSYNC_ON
@@ -98,7 +101,7 @@ XThread_Priority XThread_priority(const XThread* thread)
     }
 
     // 如果不是主线程，直接返回缓存的值
-    if (!thread->m_isMainThread|| thread->m_priority!= XThread_err) {
+    if (!thread->m_isMainThread|| thread->m_priority!= XThread_InvalidPriority) {
         return thread->m_priority;
     }
 
@@ -323,43 +326,55 @@ void XThread_yieldCurrentThread()
 {
     SwitchToThread();
 }
-#ifndef TLS_OUT_OF_BOUNDS
-#define TLS_OUT_OF_BOUNDS ((DWORD)0xFFFFFFFF)   /* TlsAlloc 失败返回值,部分 SDK 未定义 */
+#ifndef TLS_OUT_OF_INDEXES
+#define TLS_OUT_OF_INDEXES ((DWORD)0xFFFFFFFF)  /* FlsAlloc 失败返回值,部分 SDK 未定义 */
 #endif
 //==================== TLS: 每线程指针存储 (对标 Qt 6.8 QThreadStorage) ====================
-//使用 TlsAlloc 分配 TLS 槽,首次访问通过原子 CAS 初始化(once 语义)
-//存储 (slotIndex+1) 以区分 "索引0合法" 的情况
-static XAtomic_uintptr_t g_tlsSlot = { 0 };
+//使用 FlsAlloc 分配 FLS 槽,首次访问通过原子 CAS 初始化(once 语义)
+//存储 (slotIndex+1) 以区分 "索引0合法" 的情况。
+//FlsAlloc 带 XThreadData_destroyTlsData 析构回调:任何线程退出时,若 FLS 槽仍持有
+//非 NULL 的 adopted XThreadData,系统自动调用回调 deref 释放,与 Posix
+//pthread_key_create 的析构语义对齐,修复 win32 上外部线程退出泄漏 XThreadData
+//(内含 XMutex/XSemaphore 及事件队列容器)。
+//(XThread 管理的线程在 VXThread_run 末尾已 set NULL,回调不触发,无双重释放)
+static XAtomic_Uintptr g_tlsSlot = { 0 };
+
+//FlsAlloc 回调要求 WINAPI 调用约定 (x86 下与 cdecl 不同,不能直接传
+//XThreadData_destroyTlsData),包装一层转发。
+static void WINAPI XThreadStorage_flsCallback(PVOID p)
+{
+    XThreadData_destroyTlsData(p);
+}
 
 static DWORD XThreadStorage_slot(void)
 {
     uintptr_t v = XAtomic_load_uintptr_t(&g_tlsSlot, XAtomic_MemoryOrder_Acquire);
     if (v)
         return (DWORD)(v - 1);            //还原真实索引
-    DWORD slot = TlsAlloc();
-    if (slot == TLS_OUT_OF_BOUNDS)
-        return TLS_OUT_OF_BOUNDS;
+    DWORD slot = FlsAlloc(XThreadStorage_flsCallback);
+    if (slot == TLS_OUT_OF_INDEXES)
+        return TLS_OUT_OF_INDEXES;
     uintptr_t expected = 0;
     if (XAtomic_compare_exchange_strong_uintptr_t(&g_tlsSlot, &expected, (uintptr_t)slot + 1,
             XAtomic_MemoryOrder_AcqRel, XAtomic_MemoryOrder_Acquire))
         return slot;                       //赢家:已发布
-    TlsFree(slot);                         //输家:另一线程已发布,释放本次冗余
-    return (DWORD)(expected - 1);
+    FlsFree(slot);                         //输家:另一线程已发布,释放本次冗余
+    return (DWORD)(expected - 1);          //(输家槽位从未存入数据,FlsFree 不触发回调)
 }
 
 void XThreadStorage_set(void* p)
 {
     DWORD slot = XThreadStorage_slot();
-    if (slot != TLS_OUT_OF_BOUNDS)
-        TlsSetValue(slot, p);
+    if (slot != TLS_OUT_OF_INDEXES)
+        FlsSetValue(slot, p);
 }
 
 void* XThreadStorage_get(void)
 {
     DWORD slot = XThreadStorage_slot();
-    if (slot == TLS_OUT_OF_BOUNDS)
+    if (slot == TLS_OUT_OF_INDEXES)
         return NULL;
-    return TlsGetValue(slot);
+    return FlsGetValue(slot);
 }
 
 #endif /* XTHREADDATA_ON */

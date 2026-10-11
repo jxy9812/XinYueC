@@ -74,6 +74,21 @@ void XInterrupt_removeCallback(XInterrupt* interrupt, uint8_t index, InterruptCa
 	XInterruptNode i = { callback,userData };
 	XListSLinked_remove_base(list, &i);
 }
+//销毁注册表中所有已分配的回调链表容器（全生命周期收尾入口）；
+//removeCallback 只删节点，链表容器须经 XClassDelete 释放（XListSLinked.h 释放约定），清除后注册表可继续使用
+static void XInterrupt_deinit(XInterrupt* interrupt)
+{
+	if (interrupt == NULL || interrupt->m_data == NULL)
+		return;
+	for (size_t i = 0; i < interrupt->m_size; ++i)
+	{
+		if (interrupt->m_data[i] != NULL)
+		{
+			XClassDelete((XListSLinked*)interrupt->m_data[i]);
+			interrupt->m_data[i] = NULL;
+		}
+	}
+}
 size_t XInterrupt_getCallbackSize(XInterrupt* interrupt, uint8_t index)
 {
 	if (interrupt == NULL || index >= interrupt->m_size)
@@ -107,6 +122,12 @@ size_t XInterrupt_getUSARTxCallbackSize(uint8_t portNum)
 	return XInterrupt_getCallbackSize(&USARTx, portNum - 1);
 }
 
+void XInterrupt_deinitUSARTxCallbacks(void)
+{
+	XInterrupt_Init(USARTx);
+	XInterrupt_deinit(&USARTx);
+}
+
 #endif
 
 #if XINTERRUPT_ENABLE_TIMX_HANDLING
@@ -125,6 +146,11 @@ size_t XInterrupt_getTIMxCallbackSize(uint8_t portNum)
 {
 	XInterrupt_Init(TIMx);
 	return XInterrupt_getCallbackSize(&TIMx, portNum - 1);
+}
+void XInterrupt_deinitTIMxCallbacks(void)
+{
+	XInterrupt_Init(TIMx);
+	XInterrupt_deinit(&TIMx);
 }
 #endif
 //标准库

@@ -1,19 +1,33 @@
-﻿#include"CXinYueConfig.h"
+﻿/**
+* @file       XLockFreeList.h
+* @brief      无锁单链表公开 API。
+* @details    对齐 Qt 6.8 QList/QLinkedList 的无锁单链表（Michael-Scott 队列
+*             + 危险指针退休回收），继承链表基类 XListBase；实现只依赖
+*             XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API，
+*             仅在 XLockFreeList 模块启用时编译。
+*/
+#include"CXinYueConfig.h"
 #if !defined(XLockFreeList_H)&& XLockFreeList_ON
 #define XLockFreeList_H
 #ifdef __cplusplus
 extern "C" {
 #endif
 #include <stdbool.h>                  ///< 提供bool、true、false等布尔类型定义
-#include <stdio.h>                    ///< 提供标准输入输出函数声明
 #include "XAtomic.h"                  ///< 提供原子操作相关定义，支持无锁机制
 #include "XLockFreeList_iterator.h"  ///< 包含无锁单链表正向迭代器定义
 #include "XListBase.h"                ///< 包含链表基类XListBase的定义，无锁单链表继承自此基类
 /**
 * @brief 无锁单链表虚函数表大小定义
-* @note 基于链表基类XListBase的虚函数表大小扩展，确定无锁单链表所需的虚函数表容量
+* @note 无锁单链表仅继承XListBase、不新增虚函数，槽位总数与XListBase一致
 */
-#define XLISTSLINKED_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XListBase))  // 无锁单链表虚函数表大小
+#define XLOCKFREELIST_VTABLE_SIZE (XCLASS_VTABLE_GET_SIZE(XLockFreeList))
+/**
+* @brief 无锁单链表虚函数表枚举
+* @details 仅继承链表基类XListBase、不新增虚函数，按文档「类的创建」规定使用
+*          XCLASS_DEFINE_EXTEND_END，槽位编号从XListBase槽位总数开始
+*/
+XCLASS_DEFINE_BEGING(XLockFreeList)
+XCLASS_DEFINE_EXTEND_END(XLockFreeList, XListBase)
 /**
 * @brief 无锁单链表节点结构体定义
 * @details 存储链表中的单个元素，包含后继指针和数据指针，用于无锁环境下的节点操作
@@ -21,7 +35,7 @@ extern "C" {
 typedef struct XLockFreeListNode 
 {
 	struct XLockFreeListNode* next;  ///< 指向后继节点的指针（原子操作保护）
-	char data[];                     ///< 指向节点存储的实际数据的指针
+	char data[];                     ///< 节点存储实际数据的柔性数组（C99柔性数组成员），随节点一并分配，不是指针
 } XLockFreeListNode;
 /**
 * @brief 获取节点中数据的指针（地址）
@@ -48,8 +62,8 @@ typedef struct XLockFreeList
 	// m_tail 指向最后一个节点。push_back 追加到 m_tail->next 并 CAS 推进 m_tail；
 	// pop_front 先读 head->next 的数据再 CAS 推进 m_head，旧哨兵进入 hazard-pointer 退休链，
 	// 待所有观测线程释放对它的引用后才真正 free，避免 ABA 与 use-after-free。
-	XCACHE_ALIGN XAtomic_size_t m_head;          ///< 当前哨兵节点指针（原子）
-	XCACHE_ALIGN XAtomic_size_t m_tail;          ///< 最后一个节点指针（原子）；空表时等于 m_head
+	XCACHE_ALIGN XAtomic_SizeT m_head;          ///< 当前哨兵节点指针（原子）
+	XCACHE_ALIGN XAtomic_SizeT m_tail;          ///< 最后一个节点指针（原子）；空表时等于 m_head
 } XLockFreeList;
 // ------------------------------ 类初始化与创建 ------------------------------
 /**

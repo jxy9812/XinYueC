@@ -10,26 +10,27 @@
 #include "XByteArrayView.h"   ///< 字节数组视图，用于从 XByteArrayView 构造
 #include "XStringView.h"      ///< 字符串视图，用于跨视图比较
 #include "XString.h"          ///< XString 字符串容器，用于 toString
-#include <string.h>           ///< memcmp、memchr、strlen 等内存操作
-#include <stdlib.h>           ///< strtol、strtoll、strtoul、strtoull、strtod 等数值转换
-#include <ctype.h>            ///< isspace 空白字符判断
+#include "XStringUtils.h"     ///< XStrlen 等字符串原语（外部依赖约束：strlen 用库内 API 替代）
+#include <string.h>           ///< memcmp、memcpy 等内存原语（白名单）
 
 /* ============================== 内部辅助函数 ============================== */
 
 /**
 * @brief 判断 char 是否为空白字符
-* @details 空白字符包括：空格(' ')、制表符('\t')、换行符('\n')、回车符('\r')、
-*          垂直制表符('\v')、换页符('\f')。
+* @details 委托库内 XChar_isSpace（外部依赖约束：字符分类/转换必须使用 XChar），
+*          字节先按无符号提升为 XChar。
 * @param ch 待判断的字符
 * @return true 为空白字符，false 为非空白字符
 */
 static bool is_white_space_char(char ch)
 {
-    return (ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\v' || ch == '\f');
+    return XChar_isSpace((XChar)(uint8_t)ch);
 }
 
 /**
 * @brief 比较两个 char 字符（支持大小写敏感性）
+* @details 委托库内 XChar_equals（外部依赖约束：字符分类/转换必须使用 XChar），
+*          大小写折叠覆盖完整 Unicode，不再手写 ASCII 范围处理。
 * @param a 第一个字符
 * @param b 第二个字符
 * @param cs 大小写敏感性（0=不区分，1=区分）
@@ -37,24 +38,19 @@ static bool is_white_space_char(char ch)
 */
 static bool char_equal(char a, char b, int cs)
 {
-    if (cs == 1) /* CaseSensitive */
-        return a == b;
-    /* CaseInsensitive */
-    if (a >= 'A' && a <= 'Z') a += 32;
-    if (b >= 'A' && b <= 'Z') b += 32;
-    return a == b;
+    return XChar_equals((XChar)(uint8_t)a, (XChar)(uint8_t)b,
+                        (cs == 1) ? XChar_CaseSensitive : XChar_CaseInsensitive);
 }
 
 /**
 * @brief 将 char 转小写（辅助函数）
+* @details 委托库内 XChar_toLower（外部依赖约束：字符分类/转换必须使用 XChar）。
 * @param ch 输入字符
 * @return 小写形式
 */
 static char char_to_lower(char ch)
 {
-    if (ch >= 'A' && ch <= 'Z')
-        return (char)(ch + 32);
-    return ch;
+    return (char)XChar_toLower((XChar)(uint8_t)ch);
 }
 
 /**
@@ -99,7 +95,7 @@ XUtf8StringView XUtf8StringView_create_cstr(const char* str)
     else
     {
         view.m_data = str;
-        view.m_size = (int64_t)strlen(str);
+        view.m_size = (int64_t)XStrlen(str);
     }
     return view;
 }
@@ -678,20 +674,24 @@ bool XUtf8StringView_isValidUtf8(const XUtf8StringView* self)
 /* ============================== 数值转换 ============================== */
 
 /**
-* @brief 将视图内容复制到 NULL 终止的临时缓冲区
+* @brief 将视图内容转换为以 0 终止的 XChar（UTF-16）临时数组
+* @details 委托库内 XChar_fromUtf8Stream（外部依赖约束：编码转换必须使用
+*          XChar），供数值转换经 XChar_to* 系列库内解析，不再依赖 strtol 族。
 * @param self 视图指针
-* @param buf 输出缓冲区（由调用者分配，大小需 >= size + 1）
-* @param buf_size 缓冲区大小
+* @param buf 输出缓冲区（由调用者分配，XChar 元素数需 > size）
+* @param buf_size 缓冲区容量（XChar 元素数）
 * @return 缓冲区指针，失败返回 NULL
 */
-static char* view_to_cstr(const XUtf8StringView* self, char* buf, size_t buf_size)
+static XChar* view_to_xchar(const XUtf8StringView* self, XChar* buf, size_t buf_size)
 {
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return NULL;
     if ((size_t)self->m_size >= buf_size)
         return NULL;
-    memcpy(buf, self->m_data, (size_t)self->m_size);
-    buf[self->m_size] = '\0';
+    int64_t count = XChar_fromUtf8Stream((const uint8_t*)self->m_data,
+                                         (size_t)self->m_size, buf, buf_size);
+    if (count < 0)
+        return NULL;
     return buf;
 }
 
@@ -758,17 +758,16 @@ long XUtf8StringView_toLong(const XUtf8StringView* self, bool* ok, int base)
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return 0;
 
-    char buf[128];
-    char* endptr = NULL;
-    if (!view_to_cstr(self, buf, sizeof(buf)))
+    XChar buf[128];
+    if (!view_to_xchar(self, buf, sizeof(buf) / sizeof(buf[0])))
         return 0;
 
-    long val = strtol(buf, &endptr, base);
-    if (endptr == buf)
-        return 0;
-
+    /* 委托库内 XChar_toLong（外部依赖约束：数值解析必须使用库内 API），
+       内部含溢出检测；input_count 传 0 按缓冲区终止符自动检测。 */
+    bool parsed = false;
+    long val = XChar_toLong(buf, 0, base, &parsed);
     if (ok != NULL)
-        *ok = true;
+        *ok = parsed;
     return val;
 }
 
@@ -779,17 +778,16 @@ unsigned long XUtf8StringView_toULong(const XUtf8StringView* self, bool* ok, int
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return 0;
 
-    char buf[128];
-    char* endptr = NULL;
-    if (!view_to_cstr(self, buf, sizeof(buf)))
+    XChar buf[128];
+    if (!view_to_xchar(self, buf, sizeof(buf) / sizeof(buf[0])))
         return 0;
 
-    unsigned long val = strtoul(buf, &endptr, base);
-    if (endptr == buf)
-        return 0;
-
+    /* 委托库内 XChar_toULong（外部依赖约束：数值解析必须使用库内 API），
+       内部含溢出检测；库内无 char* 版 strtoul 替代，统一走 XChar 路径。 */
+    bool parsed = false;
+    unsigned long val = XChar_toULong(buf, 0, base, &parsed);
     if (ok != NULL)
-        *ok = true;
+        *ok = parsed;
     return val;
 }
 
@@ -800,17 +798,15 @@ int64_t XUtf8StringView_toLongLong(const XUtf8StringView* self, bool* ok, int ba
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return 0;
 
-    char buf[128];
-    char* endptr = NULL;
-    if (!view_to_cstr(self, buf, sizeof(buf)))
+    XChar buf[128];
+    if (!view_to_xchar(self, buf, sizeof(buf) / sizeof(buf[0])))
         return 0;
 
-    int64_t val = strtoll(buf, &endptr, base);
-    if (endptr == buf)
-        return 0;
-
+    /* 委托库内 XChar_toLongLong（外部依赖约束：数值解析必须使用库内 API）。 */
+    bool parsed = false;
+    int64_t val = (int64_t)XChar_toLongLong(buf, 0, base, &parsed);
     if (ok != NULL)
-        *ok = true;
+        *ok = parsed;
     return val;
 }
 
@@ -821,17 +817,15 @@ uint64_t XUtf8StringView_toULongLong(const XUtf8StringView* self, bool* ok, int 
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return 0;
 
-    char buf[128];
-    char* endptr = NULL;
-    if (!view_to_cstr(self, buf, sizeof(buf)))
+    XChar buf[128];
+    if (!view_to_xchar(self, buf, sizeof(buf) / sizeof(buf[0])))
         return 0;
 
-    uint64_t val = strtoull(buf, &endptr, base);
-    if (endptr == buf)
-        return 0;
-
+    /* 委托库内 XChar_toULongLong（外部依赖约束：数值解析必须使用库内 API）。 */
+    bool parsed = false;
+    uint64_t val = (uint64_t)XChar_toULongLong(buf, 0, base, &parsed);
     if (ok != NULL)
-        *ok = true;
+        *ok = parsed;
     return val;
 }
 
@@ -848,17 +842,15 @@ double XUtf8StringView_toDouble(const XUtf8StringView* self, bool* ok)
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return 0.0;
 
-    char buf[128];
-    char* endptr = NULL;
-    if (!view_to_cstr(self, buf, sizeof(buf)))
+    XChar buf[128];
+    if (!view_to_xchar(self, buf, sizeof(buf) / sizeof(buf[0])))
         return 0.0;
 
-    double val = strtod(buf, &endptr);
-    if (endptr == buf)
-        return 0.0;
-
+    /* 委托库内 XChar_toDouble（外部依赖约束：数值解析必须使用库内 API）。 */
+    bool parsed = false;
+    double val = XChar_toDouble(buf, 0, &parsed);
     if (ok != NULL)
-        *ok = true;
+        *ok = parsed;
     return val;
 }
 

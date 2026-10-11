@@ -16,13 +16,11 @@
  *             标题对齐仅水平分量（Left/HCenter/Right）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "XGroupBox.h"
+
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
-
 #include "XAlgorithm.h"
-#if XWIDGET_ON && XGROUPBOX_ON
-
-#include "XGroupBox.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XString.h"
@@ -36,6 +34,8 @@
 #if XPALETTE_ON
 #include "XPalette.h"
 #endif /* XPALETTE_ON */
+
+#if XWIDGET_ON && XGROUPBOX_ON
 
 /* 标题区上下间距（像素） */
 #define XGROUPBOX_TITLE_PAD 2
@@ -107,7 +107,7 @@ static void xgroupbox_setChildrenEnabled(XGroupBox* self, bool enabled)
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(children, (int64_t)i);
         XWidget* widget;
-        if (!child || !child->is_widget) continue;
+        if (!child || !child->m_is_widget) continue;
         widget = (XWidget*)child;
         /* 对标 Qt：顶层子窗口不受分组框勾选状态影响。 */
         if (widget->m_isWindow) continue;
@@ -314,7 +314,7 @@ static bool VXGroupBox_event(XWidget* self, XEvent* event)
                            bool(*)(XObject*, XEvent*))((XObject*)self, event);
     if (type == XEVENT_TYPE_CHILD_ADDED) {
         XObject* child = XChildEvent_child((const XChildEvent*)event);
-        if (child && child->is_widget) {
+        if (child && child->m_is_widget) {
             XGroupBox* box = (XGroupBox*)self;
             if (box->m_checkable && !box->m_checked)
                 XWidget_setEnabled((XWidget*)child, false);
@@ -516,6 +516,7 @@ XVtable* XGroupBox_class_init(void)
 void XGroupBox_init(XGroupBox* self, XWidget* parent, XWidgetFlags flags)
 {
     if (!self) return;
+    XMemset(self, 0, sizeof(XGroupBox));
     XWidget_init((XWidget*)self, parent, flags);
     XClassSetVtable(self, XGroupBox);
 

@@ -1,4 +1,5 @@
 ﻿#include "XKeyboardTest.h"
+#include "XObject_Protected.h"
 #include "XGuiConfig.h" /* 门控宏定义源：必须在 :3 的 #if 之前（原缺陷——
                             宏未定义时 #if 恒 0，真实测试体整段被编译
                             出，套件经静默 stub 恒绿，断言全部失效）。 */
@@ -464,7 +465,7 @@ static int64_t xkb_zIndex(const XWidget* parent, const XWidget* w)
     n = XVector_size_base((const XContainer*)kids);
     for (i = 0; i < n; ++i) {
         XObject* child = *(XObject**)XVector_at_base(kids, (int64_t)i);
-        if (child && child->is_widget && (XWidget*)child == w)
+        if (child && child->m_is_widget && (XWidget*)child == w)
             return (int64_t)i;
     }
     return -1;

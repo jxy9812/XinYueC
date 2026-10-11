@@ -31,27 +31,6 @@ static int64_t VXIODevice_readLineData(XIODevice* self, char* data, int64_t maxl
 static int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize);
 
 
-XVtable* XIODevice_class_init()
-{
-	XVTABLE_INIT_DEFAULT(XIODevice)
-	//继承类
-	XVTABLE_INHERIT_XCLASS(XObject);
-	void* table[] = {
-		VXIODevice_open,VXIODevice_close,VXIODevice_isSequential ,
-		VXIODevice_pos ,VXIODevice_size ,VXIODevice_seek ,
-		VXIODevice_atEnd ,VXIODevice_reset ,VXIODevice_bytesAvailable ,
-		VXIODevice_bytesToWrite ,VXIODevice_canReadLine ,
-		VXIODevice_waitForReadyRead ,VXIODevice_waitForBytesWritten ,
-		VXIODevice_readData ,VXIODevice_readLineData ,
-		VXIODevice_skipData ,VXIODevice_writeData 
-	};
-	//追加虚函数
-	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-	//重载
-	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
-	XCLASS_SHOW_SIZE_DEFAULT(XIODevice);
-	return XVTABLE_DEFAULT;
-}
 void VXIODevice_deinit(XIODevice* obj)
 {
 	XIODevice* self = (XIODevice*)obj;
@@ -93,19 +72,23 @@ void VXIODevice_close(XIODevice* self)
 {
 	if (!self || self->m_openMode == XIODevice_NotOpen) return;
 
-	if (!self->m_d->aboutToCloseEmitted) {
-		XIODevice_aboutToClose_signal(self);
-		self->m_d->aboutToCloseEmitted = true;
-	}
+	// m_d 在 init 阶段 XIODevicePrivate_create 失败时可为 NULL，判空自防御避免解引用崩溃
+	if (self->m_d) {
+		if (!self->m_d->aboutToCloseEmitted) {
+			XIODevice_aboutToClose_signal(self);
+			self->m_d->aboutToCloseEmitted = true;
+		}
 
-	// 关闭时，基类不负责清空缓冲区，由具体子类决定
-	// 但可以提交任何未完成的事务
-	if (self->m_d->transactionStarted) {
-		XIODevicePrivate_commitTransaction(self->m_d);
+		// 关闭时，基类不负责清空缓冲区，由具体子类决定
+		// 但可以提交任何未完成的事务
+		if (self->m_d->transactionStarted) {
+			XIODevicePrivate_commitTransaction(self->m_d);
+		}
+
+		self->m_d->aboutToCloseEmitted = false;
 	}
 
 	self->m_openMode = XIODevice_NotOpen;
-	self->m_d->aboutToCloseEmitted = false;
 }
 
 bool VXIODevice_isSequential(const XIODevice* self)
@@ -208,6 +191,8 @@ bool VXIODevice_waitForBytesWritten(XIODevice* self, int msecs)
 
 int64_t VXIODevice_readLineData(XIODevice* self, char* data, int64_t maxlen)
 {
+	// m_d 在 init 阶段 XIODevicePrivate_create 失败时可为 NULL，判空自防御（与 readLineData_base 的空参数返回一致）
+	if (!self || !self->m_d) return 0;
 	return XIODevicePrivate_readLineFromBuffer(self->m_d, data, maxlen);
 }
 
@@ -227,4 +212,26 @@ int64_t VXIODevice_skipData(XIODevice* self, int64_t maxSize)
 	}
 
 	return skipped;
+}
+
+XVtable* XIODevice_class_init()
+{
+	XVTABLE_INIT_DEFAULT(XIODevice)
+	//继承类
+	XVTABLE_INHERIT_XCLASS(XObject);
+	void* table[] = {
+		VXIODevice_open,VXIODevice_close,VXIODevice_isSequential ,
+		VXIODevice_pos ,VXIODevice_size ,VXIODevice_seek ,
+		VXIODevice_atEnd ,VXIODevice_reset ,VXIODevice_bytesAvailable ,
+		VXIODevice_bytesToWrite ,VXIODevice_canReadLine ,
+		VXIODevice_waitForReadyRead ,VXIODevice_waitForBytesWritten ,
+		VXIODevice_readData ,VXIODevice_readLineData ,
+		VXIODevice_skipData ,VXIODevice_writeData
+	};
+	//追加虚函数
+	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
+	//重载
+	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXIODevice_deinit);
+	XCLASS_SHOW_SIZE_DEFAULT(XIODevice);
+	return XVTABLE_DEFAULT;
 }

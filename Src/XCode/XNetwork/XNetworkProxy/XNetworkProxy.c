@@ -33,11 +33,25 @@ static void VXNetworkProxyQuery_copy(XNetworkProxyQuery* dest, const XNetworkPro
     dest->queryType = src->queryType;
     dest->peerPort = src->peerPort;
     dest->localPort = src->localPort;
+    /* 先无条件释放目标旧值（置 NULL），再按 src 深拷贝（对齐 VXExample_copy 标准形态，
+       src 为空时目标不得残留旧指针） */
+    if (dest->peerHostName) {
+        XClassDelete(dest->peerHostName);
+        dest->peerHostName = NULL;
+    }
     if (src->peerHostName) {
         dest->peerHostName = XString_create_copy(src->peerHostName);
     }
+    if (dest->protocolTag) {
+        XClassDelete(dest->protocolTag);
+        dest->protocolTag = NULL;
+    }
     if (src->protocolTag) {
         dest->protocolTag = XString_create_copy(src->protocolTag);
+    }
+    if (dest->url) {
+        XClassDelete(dest->url);
+        dest->url = NULL;
     }
     if (src->url) {
         dest->url = XString_create_copy(src->url);
@@ -86,6 +100,7 @@ void XNetworkProxyQuery_init(XNetworkProxyQuery* query) {
 
 XNetworkProxyQuery* XNetworkProxyQuery_create_ex(XMemoryType memory) {
     XNetworkProxyQuery* query = XMemory_malloc(sizeof(XNetworkProxyQuery), memory);
+    if (!query) return NULL;
     XNetworkProxyQuery_init(query);
     Set_Class_Memory(query, memory); Set_Class_IsHeap(query, true);
     return query;
@@ -228,9 +243,29 @@ static void VXNetworkProxy_copy(XNetworkProxy* dest, const XNetworkProxy* src) {
     dest->type = src->type;
     dest->capabilities = src->capabilities;
     dest->port = src->port;
-    if (src->hostName) dest->hostName = XString_create_copy(src->hostName);
-    if (src->user) dest->user = XString_create_copy(src->user);
-    if (src->password) dest->password = XString_create_copy(src->password);
+    /* 先无条件释放目标旧值（置 NULL），再按 src 深拷贝（对齐 VXExample_copy 标准形态，
+       src 为空时目标不得残留旧指针） */
+    if (dest->hostName) {
+        XClassDelete(dest->hostName);
+        dest->hostName = NULL;
+    }
+    if (src->hostName) {
+        dest->hostName = XString_create_copy(src->hostName);
+    }
+    if (dest->user) {
+        XClassDelete(dest->user);
+        dest->user = NULL;
+    }
+    if (src->user) {
+        dest->user = XString_create_copy(src->user);
+    }
+    if (dest->password) {
+        XClassDelete(dest->password);
+        dest->password = NULL;
+    }
+    if (src->password) {
+        dest->password = XString_create_copy(src->password);
+    }
 }
 
 static void VXNetworkProxy_move(XNetworkProxy* dest, XNetworkProxy* src) {
@@ -274,6 +309,7 @@ void XNetworkProxy_init(XNetworkProxy* proxy) {
 
 XNetworkProxy* XNetworkProxy_create_ex(XMemoryType memory) {
     XNetworkProxy* proxy = XMemory_malloc(sizeof(XNetworkProxy), memory);
+    if (!proxy) return NULL;
     XNetworkProxy_init(proxy);
     Set_Class_Memory(proxy, memory); Set_Class_IsHeap(proxy, true);
     return proxy;
@@ -425,22 +461,24 @@ void XNetworkProxy_setApplicationProxy(const XNetworkProxy* proxy) {
         g_applicationProxyInitialized = true;
     }
 
+    /* 经四件套入口整体替换（对齐 XTcpServer_setProxy/XAbstractSocket_setProxy 标准写法）：
+     * deinit 释放旧载荷、init 复位空壳，字符串经 XNetworkProxy_set* 深拷贝，
+     * 不再逐字段手工释放 + 复制。 */
+    XClassDeinit(&g_applicationProxy);
+    XNetworkProxy_init(&g_applicationProxy);
     if (proxy) {
         g_applicationProxy.type = proxy->type;
         g_applicationProxy.capabilities = proxy->capabilities;
         g_applicationProxy.port = proxy->port;
-
-        if (g_applicationProxy.hostName) XClassDelete(g_applicationProxy.hostName);
-        g_applicationProxy.hostName = proxy->hostName ? XString_create_copy(proxy->hostName) : NULL;
-
-        if (g_applicationProxy.user) XClassDelete(g_applicationProxy.user);
-        g_applicationProxy.user = proxy->user ? XString_create_copy(proxy->user) : NULL;
-
-        if (g_applicationProxy.password) XClassDelete(g_applicationProxy.password);
-        g_applicationProxy.password = proxy->password ? XString_create_copy(proxy->password) : NULL;
-    } else {
-        XClassDeinit(&g_applicationProxy);
-        XNetworkProxy_init(&g_applicationProxy);
+        if (proxy->hostName) {
+            XNetworkProxy_setHostName(&g_applicationProxy, proxy->hostName);
+        }
+        if (proxy->user) {
+            XNetworkProxy_setUser(&g_applicationProxy, proxy->user);
+        }
+        if (proxy->password) {
+            XNetworkProxy_setPassword(&g_applicationProxy, proxy->password);
+        }
     }
 }
 
@@ -500,6 +538,7 @@ void XNetworkProxyFactory_init(XNetworkProxyFactory* factory, XNetworkProxyFacto
 
 XNetworkProxyFactory* XNetworkProxyFactory_create_ex(XMemoryType memory, XNetworkProxyFactory_QueryFunc queryFunc) {
     XNetworkProxyFactory* factory = XMemory_malloc(sizeof(XNetworkProxyFactory), memory);
+    if (!factory) return NULL;
     XNetworkProxyFactory_init(factory, queryFunc);
     Set_Class_Memory(factory, memory); Set_Class_IsHeap(factory, true);
     return factory;

@@ -95,7 +95,7 @@ static XChar_FileGlobal s_files = { NULL, false, 0, 0, 0 };
 /**
  * @brief 初始化全局状态
  */
-static void init_global_state(void)
+static void XChar_initGlobalState(void)
 {
     if (g_lock == NULL)
     {
@@ -103,7 +103,7 @@ static void init_global_state(void)
     }
     if (g_thread_map == NULL)
     {
-        g_thread_map = XHashMap_Create(XHandle, XChar_ThreadFile*, size_t_compare);
+        g_thread_map = XHashMap_Create(XHandle, XChar_ThreadFile*, Xsize_t_compare);
     }
 }
 
@@ -111,10 +111,10 @@ static void init_global_state(void)
  * @brief 获取当前线程的文件句柄（线程安全）
  * @return 成功返回文件句柄，失败返回NULL
  */
-static XChar_ThreadFile* get_thread_file(void)
+static XChar_ThreadFile* XChar_getThreadFile(void)
 {
     /* 初始化全局状态 */
-    init_global_state();
+    XChar_initGlobalState();
     
     XHandle thread_id = XThread_currentThreadId();
     
@@ -143,7 +143,12 @@ static XChar_ThreadFile* get_thread_file(void)
         if (tf)
         {
             memset(tf, 0, sizeof(XChar_ThreadFile));
-            XMapBase_insert_base(g_thread_map, &thread_id, &tf);
+            if (!XMapBase_insert_base(g_thread_map, &thread_id, &tf))
+            {
+                /* 插入失败（内部分配失败）：不登记即无人释放，就地回收防止泄漏 */
+                XFree_System(tf);
+                tf = NULL;
+            }
         }
     }
     
@@ -157,7 +162,7 @@ static XChar_ThreadFile* get_thread_file(void)
  * @param tf 线程文件结构
  * @return 成功返回true
  */
-static bool open_file_for_thread(XChar_ThreadFile* tf)
+static bool XChar_openFileForThread(XChar_ThreadFile* tf)
 {
     if (tf->initialized && tf->file)
     {
@@ -179,7 +184,7 @@ static bool open_file_for_thread(XChar_ThreadFile* tf)
     
     if (!XFile_open_2(tf->file, XIODevice_ReadOnly, 0))
     {
-        XFile_deleteLater(tf->file);
+        XClassDelete((XClass*)tf->file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
         tf->file = NULL;
         return false;
     }
@@ -188,7 +193,7 @@ static bool open_file_for_thread(XChar_ThreadFile* tf)
     int64_t file_size = XIODevice_size_base((XIODevice*)tf->file);
     if (file_size <= 0)
     {
-        XFile_deleteLater(tf->file);
+        XClassDelete((XClass*)tf->file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
         tf->file = NULL;
         return false;
     }
@@ -197,7 +202,7 @@ static bool open_file_for_thread(XChar_ThreadFile* tf)
     uint32_t total_entries = (uint32_t)(file_size / (BINARY_ENTRY_SIZE * 2));
     if (total_entries == 0)
     {
-        XFile_deleteLater(tf->file);
+        XClassDelete((XClass*)tf->file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
         tf->file = NULL;
         return false;
     }
@@ -223,9 +228,9 @@ static bool open_file_for_thread(XChar_ThreadFile* tf)
  * @brief 获取已打开的文件（确保文件已打开）
  * @return 成功返回XFile指针，失败返回NULL
  */
-static XFile* get_opened_file(void)
+static XFile* XChar_getOpenedFile(void)
 {
-    XChar_ThreadFile* tf = get_thread_file();
+    XChar_ThreadFile* tf = XChar_getThreadFile();
     if (!tf) return NULL;
     
     if (tf->initialized && tf->file)
@@ -233,7 +238,7 @@ static XFile* get_opened_file(void)
         return tf->file;
     }
     
-    if (open_file_for_thread(tf))
+    if (XChar_openFileForThread(tf))
     {
         return tf->file;
     }
@@ -251,7 +256,7 @@ static XFile* get_opened_file(void)
  * @brief 打开二进制格式文件
  * @return 成功返回文件指针，失败返回NULL
  */
-static XFile* open_binary_file(void)
+static XFile* XChar_openBinaryFile(void)
 {
     XString* xpath = XString_create_utf8(XCHAR_COMPACT_PATH);
     if (!xpath) return NULL;
@@ -263,21 +268,24 @@ static XFile* open_binary_file(void)
     XClassDelete(xpath);
 
     if (!XFile_open_2(s_files.file, XIODevice_ReadOnly, 0)) {
-        XFile_deleteLater(s_files.file); s_files.file = NULL;
+        XClassDelete((XClass*)s_files.file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
+        s_files.file = NULL;
         return NULL;
     }
 
     /* 计算文件大小来确定条目数 */
     int64_t file_size = XIODevice_size_base((XIODevice*)s_files.file);
     if (file_size <= 0) {
-        XFile_deleteLater(s_files.file); s_files.file = NULL;
+        XClassDelete((XClass*)s_files.file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
+        s_files.file = NULL;
         return NULL;
     }
 
     /* 二进制格式：两个表，每项4字节 */
     uint32_t total_entries = (uint32_t)(file_size / (BINARY_ENTRY_SIZE * 2));
     if (total_entries == 0) {
-        XFile_deleteLater(s_files.file); s_files.file = NULL;
+        XClassDelete((XClass*)s_files.file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
+        s_files.file = NULL;
         return NULL;
     }
 
@@ -292,10 +300,10 @@ static XFile* open_binary_file(void)
 /**
  * @brief 获取文件单例
  */
-static XFile* get_opened_file(void)
+static XFile* XChar_getOpenedFile(void)
 {
     if (s_files.file_opened && s_files.file) return s_files.file;
-    return open_binary_file();
+    return XChar_openBinaryFile();
 }
 
 #endif /* XCHAR_FILE_THREAD_SAFE */
@@ -307,7 +315,7 @@ static XFile* get_opened_file(void)
 /**
  * @brief 在二进制格式表中二分查找
  */
-static bool binary_search_table(XFile* file, int64_t table_offset, uint16_t key, uint16_t* out_val)
+static bool XChar_binarySearchTable(XFile* file, int64_t table_offset, uint16_t key, uint16_t* out_val)
 {
 #if XCHAR_FILE_THREAD_SAFE
     int lo = 0, hi = (int)g_entry_count - 1;
@@ -344,37 +352,37 @@ static bool binary_search_table(XFile* file, int64_t table_offset, uint16_t key,
 /*                   平台抽象函数实现                                          */
 /* ========================================================================== */
 
-static bool file_lookup_by_gbk(uint16_t gbk_code, uint16_t* unicode)
+static bool XChar_lookupFileByGbk(uint16_t gbk_code, uint16_t* unicode)
 {
     if (gbk_code <= 0x7F) {
         if (unicode) *unicode = gbk_code;
         return true;
     }
 
-    XFile* file = get_opened_file();
+    XFile* file = XChar_getOpenedFile();
     if (!file) return false;
 
 #if XCHAR_FILE_THREAD_SAFE
-    return binary_search_table(file, g_gbk_offset, gbk_code, unicode);
+    return XChar_binarySearchTable(file, g_gbk_offset, gbk_code, unicode);
 #else
-    return binary_search_table(file, s_files.gbk_offset, gbk_code, unicode);
+    return XChar_binarySearchTable(file, s_files.gbk_offset, gbk_code, unicode);
 #endif
 }
 
-static bool file_lookup_by_unicode(uint16_t unicode_code, uint16_t* gbk)
+static bool XChar_lookupFileByUnicode(uint16_t unicode_code, uint16_t* gbk)
 {
     if (unicode_code <= 0x7F) {
         if (gbk) *gbk = unicode_code;
         return true;
     }
 
-    XFile* file = get_opened_file();
+    XFile* file = XChar_getOpenedFile();
     if (!file) return false;
 
 #if XCHAR_FILE_THREAD_SAFE
-    return binary_search_table(file, g_uni_offset, unicode_code, gbk);
+    return XChar_binarySearchTable(file, g_uni_offset, unicode_code, gbk);
 #else
-    return binary_search_table(file, s_files.uni_offset, unicode_code, gbk);
+    return XChar_binarySearchTable(file, s_files.uni_offset, unicode_code, gbk);
 #endif
 }
 
@@ -382,7 +390,7 @@ static bool file_lookup_by_unicode(uint16_t unicode_code, uint16_t* gbk)
 /*                   辅助函数                                                  */
 /* ========================================================================== */
 
-static size_t xchar_input_len_char(const char* data, size_t input_size)
+static size_t XChar_inputLenChar(const char* data, size_t input_size)
 {
     if (input_size == 0) {
         size_t len = 0;
@@ -398,7 +406,7 @@ static size_t xchar_input_len_char(const char* data, size_t input_size)
     return input_size;
 }
 
-static size_t xchar_input_len(const XChar* data, size_t input_count)
+static size_t XChar_inputLen(const XChar* data, size_t input_count)
 {
     if (input_count == 0) {
         size_t len = 0;
@@ -422,7 +430,7 @@ int64_t XCharPlatform_fromGbkStream(const char* gbk, size_t input_size, XChar* o
 {
     size_t actual_len, i;
     if (!gbk) return -1;
-    actual_len = xchar_input_len_char(gbk, input_size);
+    actual_len = XChar_inputLenChar(gbk, input_size);
     if (actual_len == 0) { if (out && max_out > 0) out[0] = 0; return 0; }
 
     if (!out || max_out == 0) {
@@ -438,7 +446,7 @@ int64_t XCharPlatform_fromGbkStream(const char* gbk, size_t input_size, XChar* o
                 gbk_code = (uint8_t)gbk[i];
                 i++;
             }
-            if (file_lookup_by_gbk(gbk_code, &unicode)) count++;
+            if (XChar_lookupFileByGbk(gbk_code, &unicode)) count++;
         }
         return (int64_t)count;
     }
@@ -456,7 +464,7 @@ int64_t XCharPlatform_fromGbkStream(const char* gbk, size_t input_size, XChar* o
                 gbk_code = (uint8_t)gbk[i];
                 i++;
             }
-            if (file_lookup_by_gbk(gbk_code, &unicode))
+            if (XChar_lookupFileByGbk(gbk_code, &unicode))
                 out[out_idx++] = unicode;
             else
                 out[out_idx++] = 0xFFFD;
@@ -470,7 +478,7 @@ int64_t XCharPlatform_toGbkStream(const XChar* ch, size_t input_count, char* gbk
 {
     size_t actual_count, i;
     if (!ch) return -1;
-    actual_count = xchar_input_len(ch, input_count);
+    actual_count = XChar_inputLen(ch, input_count);
     if (actual_count == 0) { if (gbk && max_gbk > 0) gbk[0] = '\0'; return 0; }
 
     if (!gbk || max_gbk == 0) {
@@ -478,7 +486,7 @@ int64_t XCharPlatform_toGbkStream(const XChar* ch, size_t input_count, char* gbk
         for (i = 0; i < actual_count; i++) {
             uint16_t gbk_code;
             if (ch[i] <= 0x7F) byte_count += 1;
-            else if (file_lookup_by_unicode(ch[i], &gbk_code))
+            else if (XChar_lookupFileByUnicode(ch[i], &gbk_code))
                 byte_count += (gbk_code > 0xFF) ? 2 : 1;
         }
         return (int64_t)byte_count;
@@ -490,7 +498,7 @@ int64_t XCharPlatform_toGbkStream(const XChar* ch, size_t input_count, char* gbk
             uint16_t gbk_code;
             if (ch[i] <= 0x7F) {
                 if (gbk_idx < max_gbk - 1) gbk[gbk_idx++] = (char)ch[i];
-            } else if (file_lookup_by_unicode(ch[i], &gbk_code)) {
+            } else if (XChar_lookupFileByUnicode(ch[i], &gbk_code)) {
                 if (gbk_code > 0xFF) {
                     if (gbk_idx + 2 < max_gbk) {
                         gbk[gbk_idx++] = (char)((gbk_code >> 8) & 0xFF);
@@ -511,7 +519,7 @@ int64_t XCharPlatform_utf8ToGbkStream(const char* utf8_str, size_t input_size, c
     size_t utf8_len; int64_t xchar_count, actual, result;
     XChar* xchars;
     if (!utf8_str) return -1;
-    utf8_len = xchar_input_len_char(utf8_str, input_size);
+    utf8_len = XChar_inputLenChar(utf8_str, input_size);
 
     xchar_count = XChar_fromUtf8Stream((const uint8_t*)utf8_str, utf8_len, NULL, 0);
     if (xchar_count <= 0) return xchar_count;
@@ -533,7 +541,7 @@ int64_t XCharPlatform_gbkToUtf8Stream(const char* gbk_str, size_t input_size, ch
     size_t gbk_len; int64_t xchar_count, actual, utf8_len, result;
     XChar* xchars;
     if (!gbk_str) return -1;
-    gbk_len = xchar_input_len_char(gbk_str, input_size);
+    gbk_len = XChar_inputLenChar(gbk_str, input_size);
 
     xchar_count = XCharPlatform_fromGbkStream(gbk_str, gbk_len, NULL, 0);
     if (xchar_count <= 0) return xchar_count;
@@ -579,7 +587,7 @@ void XCharPlatform_cleanupThread(void)
     {
         if (tf->file)
         {
-            XFile_deleteLater(tf->file);
+            XClassDelete((XClass*)tf->file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
             tf->file = NULL;
         }
         XFree_System(tf);
@@ -610,7 +618,7 @@ void XCharPlatform_cleanupAll(void)
             {
                 if (tf->file)
                 {
-                    XFile_deleteLater(tf->file);
+                    XClassDelete((XClass*)tf->file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
                 }
                 XFree_System(tf);
             }
@@ -639,7 +647,7 @@ void XCharPlatform_cleanup(void)
 {
     if (s_files.file)
     {
-        XFile_deleteLater(s_files.file);
+        XClassDelete((XClass*)s_files.file);   /* 纯业务对象无信号槽/在途事件，按 2026-10 裁定同步释放 */
         s_files.file = NULL;
     }
     s_files.file_opened = false;

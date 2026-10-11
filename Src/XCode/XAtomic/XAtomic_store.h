@@ -10,7 +10,7 @@ extern "C" {
  * @param order 内存序
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order);
+void XAtomic_store_bool(XAtomic_Bool* var, bool value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子存储操作 - 将值写入原子32位有符号整数变量
@@ -19,7 +19,7 @@ void XAtomic_store_bool(XAtomic_bool* var, bool value, XAtomic_MemoryOrder order
  * @param order 内存序
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrder order);
+void XAtomic_store_int32(XAtomic_Int32* var, int32_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子存储操作 - 将值写入原子32位无符号整数变量
@@ -28,7 +28,7 @@ void XAtomic_store_int32(XAtomic_int32_t* var, int32_t value, XAtomic_MemoryOrde
  * @param order 内存序
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryOrder order);
+void XAtomic_store_uint32(XAtomic_Uint32* var, uint32_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子存储操作 - 将值写入原子64位有符号整数变量
@@ -37,7 +37,7 @@ void XAtomic_store_uint32(XAtomic_uint32_t* var, uint32_t value, XAtomic_MemoryO
  * @param order 内存序
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrder order);
+void XAtomic_store_int64(XAtomic_Int64* var, int64_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子存储操作 - 将值写入原子64位无符号整数变量
@@ -46,7 +46,7 @@ void XAtomic_store_int64(XAtomic_int64_t* var, int64_t value, XAtomic_MemoryOrde
  * @param order 内存序
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryOrder order);
+void XAtomic_store_uint64(XAtomic_Uint64* var, uint64_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子存储操作 - 将值写入原子size_t类型变量
@@ -55,7 +55,7 @@ void XAtomic_store_uint64(XAtomic_uint64_t* var, uint64_t value, XAtomic_MemoryO
  * @param order 内存序
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder order);
+void XAtomic_store_size_t(XAtomic_SizeT* var, size_t value, XAtomic_MemoryOrder order);
 
 /**
  * @brief 原子存储操作 - 将值写入原子指针变量
@@ -64,7 +64,7 @@ void XAtomic_store_size_t(XAtomic_size_t* var, size_t value, XAtomic_MemoryOrder
  * @param order 内存序
  * @note 原子性保证：写入操作不会被中断，保证写入的完整性
  */
-void XAtomic_store_uintptr_t(XAtomic_uintptr_t* var, uintptr_t value, XAtomic_MemoryOrder order);
+void XAtomic_store_uintptr_t(XAtomic_Uintptr* var, uintptr_t value, XAtomic_MemoryOrder order);
 
 #ifdef __cplusplus
 }

@@ -13,8 +13,8 @@
 #include "XUtf8StringView.h"      ///< UTF-8 字符串视图
 #include "XByteArrayView.h"       ///< 字节数组视图
 #include "XString.h"              ///< XString 字符串容器，用于 toString
-#include <string.h>               ///< memcmp、memchr、strlen 等内存操作
-#include <stdlib.h>               ///< 数值转换
+#include "XStringUtils.h"         ///< XStrlen 等字符串原语（外部依赖约束：strlen 用库内 API 替代）
+#include <string.h>               ///< memcmp 等内存原语（白名单）
 
 /* ============================== 内部辅助函数 ============================== */
 
@@ -65,34 +65,6 @@ static size_t encode_size_and_tag(int64_t size, XAnyStringView_Encoding enc)
         break;
     }
     return ((size_t)size & XAnyStringView_SizeMask) | tag;
-}
-
-/**
-* @brief 将 XChar 转换为 UTF-8 并写入缓冲区
-* @param ch   XChar 字符
-* @param buf  输出缓冲区（至少 4 字节）
-* @return UTF-8 字节数
-*/
-static int xchar_to_utf8(XChar ch, char* buf)
-{
-    if (ch <= 0x7F)
-    {
-        buf[0] = (char)ch;
-        return 1;
-    }
-    else if (ch <= 0x7FF)
-    {
-        buf[0] = (char)(0xC0 | (ch >> 6));
-        buf[1] = (char)(0x80 | (ch & 0x3F));
-        return 2;
-    }
-    else
-    {
-        buf[0] = (char)(0xE0 | (ch >> 12));
-        buf[1] = (char)(0x80 | ((ch >> 6) & 0x3F));
-        buf[2] = (char)(0x80 | (ch & 0x3F));
-        return 3;
-    }
 }
 
 /**
@@ -153,12 +125,11 @@ static uint32_t utf8_to_codepoint(const char* data, int64_t* pos, int64_t size)
 
 /**
 * @brief 将 XChar 转小写
+* @details 委托库内 XChar_toLower（外部依赖约束：字符分类/转换必须使用 XChar）。
 */
 static XChar xchar_to_lower(XChar ch)
 {
-    if (ch >= 'A' && ch <= 'Z')
-        return (XChar)(ch + 32);
-    return ch;
+    return XChar_toLower(ch);
 }
 
 /* ============================== 构造与创建 ============================== */
@@ -252,7 +223,7 @@ XAnyStringView XAnyStringView_create_cstr(const char* str)
         return view;
     }
     view.m_data_utf8 = str;
-    view.m_size_and_tag = encode_size_and_tag((int64_t)strlen(str), XAnyStringView_Utf8);
+    view.m_size_and_tag = encode_size_and_tag((int64_t)XStrlen(str), XAnyStringView_Utf8);
     return view;
 }
 
@@ -668,45 +639,20 @@ XString* XAnyStringView_toString(const XAnyStringView* self)
     {
     case XAnyStringView_Utf16:
     {
-        /* 直接使用 UTF-16 数据创建 XString */
-        XString* result = XString_create();
-        if (result == NULL)
-            return NULL;
-        int64_t i;
-        for (i = 0; i < sz; i++)
-        {
-            char utf8_buf[4];
-            int utf8_len = xchar_to_utf8(self->m_data_utf16[i], utf8_buf);
-            XString_append_with_length_utf8(result, utf8_buf, (size_t)utf8_len);
-        }
-        return result;
+        /* 直接使用 UTF-16 数据创建 XString（XString 内部即 UTF-16 存储），
+           转换统一经库内 XString_create_with_length_utf16，与
+           XStringView_toString 同一约定，代理对不再被逐单元手写编码
+           拆成无效的 CESU-8 字节序列。 */
+        return XString_create_with_length_utf16((const uint16_t*)self->m_data_utf16,
+                                                (size_t)sz);
     }
     case XAnyStringView_Latin1:
     {
-        /* Latin-1 每个字节直接映射到 Unicode 码点 0-255 */
-        XString* result = XString_create();
-        if (result == NULL)
-            return NULL;
-        int64_t i;
-        for (i = 0; i < sz; i++)
-        {
-            unsigned char cp = (unsigned char)self->m_data_latin1[i];
-            char utf8_buf[4];
-            int utf8_len;
-            if (cp <= 0x7F)
-            {
-                utf8_buf[0] = (char)cp;
-                utf8_len = 1;
-            }
-            else
-            {
-                utf8_buf[0] = (char)(0xC0 | (cp >> 6));
-                utf8_buf[1] = (char)(0x80 | (cp & 0x3F));
-                utf8_len = 2;
-            }
-            XString_append_with_length_utf8(result, utf8_buf, (size_t)utf8_len);
-        }
-        return result;
+        /* Latin-1 每个字符直接映射到 Unicode 码点 0-255，
+           转换统一经库内 XString_create_with_length_latin1（内部走
+           XChar_fromLatin1Stream），不再手写 Latin-1→UTF-8 编码。 */
+        return XString_create_with_length_latin1((const uint8_t*)self->m_data_latin1,
+                                                 (size_t)sz);
     }
     default: /* Utf8 */
     {

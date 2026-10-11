@@ -12,15 +12,15 @@
 #ifndef XCONSOLE_SHELL_TASKS_H
 #define XCONSOLE_SHELL_TASKS_H
 
-#include "XConsoleShellCommand.h"
-#include "XTask.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_TASKS_ON
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+#include "XConsoleShellCommand.h"
+#include "XTask.h"
 
 /** @brief XConsoleShell 不完整类型；任务提供者仅在回调期间借用该对象。 */
 typedef struct XConsoleShell XConsoleShell;
@@ -79,10 +79,11 @@ typedef XConsoleResult (*XConsoleShellTaskProviderFn)(
     void* userData, XConsoleShell* shell, XConsoleShellSession* session,
     XConsoleShellTaskEmitFn emit, void* emitUserData);
 
+#endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
+          XCONSOLE_SHELL_TASKS_ON */
+
 #ifdef __cplusplus
 }
 #endif
 
-#endif /* XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
-          XCONSOLE_SHELL_TASKS_ON */
 #endif /* XCONSOLE_SHELL_TASKS_H */

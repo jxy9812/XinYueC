@@ -77,13 +77,13 @@ static void XTimerTimeWheelCancelRegressionTest(XVariant* menuData)
 typedef struct XTimeWheelMpscTestContext
 {
 	XTimeWheelGroup* wheel;
-	XAtomic_bool start;
-	XAtomic_bool stop;
-	XAtomic_int32_t ready;
-	XAtomic_int32_t completed;
-	XAtomic_int32_t addFailures;
-	XAtomic_int32_t cancelFailures;
-	XAtomic_int32_t unexpectedCallbacks;
+	XAtomic_Bool start;
+	XAtomic_Bool stop;
+	XAtomic_Int32 ready;
+	XAtomic_Int32 completed;
+	XAtomic_Int32 addFailures;
+	XAtomic_Int32 cancelFailures;
+	XAtomic_Int32 unexpectedCallbacks;
 } XTimeWheelMpscTestContext;
 
 static void MpscRegressionCallback(void* userData, XTimerData* timer)

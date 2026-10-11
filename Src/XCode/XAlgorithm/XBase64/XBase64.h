@@ -1,15 +1,19 @@
-﻿#include"CXinYueConfig.h"
-#if !defined(XBASE64_H)&& XBase64_ON
-#define XBASE64_H
-
-/**
+﻿/**
  * @file XBase64.h
  * @brief Base64 编码和解码 API。
  */
 
+#ifndef XBASE64_H
+#define XBASE64_H
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 模块总开关 XBase64_ON 定义于 CXinYueConfig.h，须先包含该配置文件再判定开关。 */
+#include"CXinYueConfig.h"
+
+#if XBase64_ON
 
 #include <stddef.h>
 #include <stdint.h>
@@ -50,6 +54,8 @@ int XBase64_encode(const uint8_t* input, size_t input_len, char* output, size_t*
  * @return 成功返回 0；参数无效返回 -1；缓冲区不足返回 -2；包含非法字符返回 -3。
  */
 int XBase64_decode(const char* input, size_t input_len, uint8_t* output, size_t* output_len);
+
+#endif /* XBase64_ON */
 
 #ifdef __cplusplus
 }

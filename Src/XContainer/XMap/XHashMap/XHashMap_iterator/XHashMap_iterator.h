@@ -1,14 +1,25 @@
 ﻿/**
 * @file XHashMap_iterator.h
 * @brief XHashMap正向迭代器头文件
-* @details 定义XHashMap容器的正向迭代器结构及相关操作函数，用于从前向后遍历哈希映射中的键值对
+* @details 定义XHashMap容器的正向迭代器结构及相关操作函数，用于从前向后遍历哈希映射中的
+*          键值对；对齐 Qt 6.8 QHash 的迭代器遍历语义（QHash::iterator 与 begin/end）。
+*          实现只依赖 XinYueC 抽象层，禁止调用 Win32、POSIX、Qt 或其他平台 API。
 */
-#include"CXinYueConfig.h"
-#if !defined(XHASHMAP_ITERATOR_H)&& XHashMap_ON
+#ifndef XHASHMAP_ITERATOR_H
 #define XHASHMAP_ITERATOR_H
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* 条件编译开关（第③段）：XHashMap_ON 由 CXinYueConfig.h 统一定义，
+ * 此处仅兜底默认值，保证开关先于包含依赖生效。 */
+#ifndef XHashMap_ON
+#define XHashMap_ON 1
+#endif
+
+#if XHashMap_ON
+
+#include"CXinYueConfig.h"       ///< 全局配置（XHashMap_ON 开关定义）
 #include"XMapBase_iterator.h"
 
 /**
@@ -22,12 +33,12 @@ XContainerTypeDeclare(XHashMap);
 */
 typedef struct XHashMap_iterator
 {
-    union ///< 联合体，node和parent实际指向同一内存位置
+    union ///< 联合体，m_node和m_parent实际指向同一内存位置
     {
-        void* node;             ///< 当前节点指针（指向哈希桶节点）
-        XMapBase_iterator parent; ///< 父类迭代器，用于兼容基类接口
+        void* m_node;             ///< 当前节点指针（指向哈希桶节点）
+        XMapBase_iterator m_parent; ///< 父类迭代器，用于兼容基类接口
     };
-    size_t index; ///< 当前桶索引（用于遍历哈希表）
+    size_t m_index; ///< 当前桶索引（用于遍历哈希表）
 } XHashMap_iterator;
 
 /**
@@ -81,7 +92,10 @@ void XHashMap_iterator_for_each(XHashMap* this_map, XFor_each ForFunction, void*
 */
 XPair* XHashMap_iterator_data(XHashMap_iterator* it);
 
+#endif /* XHashMap_ON */
+
 #ifdef __cplusplus
 }
 #endif
-#endif
+
+#endif /* XHASHMAP_ITERATOR_H */

@@ -6,7 +6,7 @@
  *          null/empty 边界、编码间转换测试。
  */
 #include "XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include "XAnyStringView.h"
 #include "XString.h"
 #include "XStringView.h"

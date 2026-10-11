@@ -5,7 +5,7 @@
  *          包括 null/empty 边界测试。
  */
 #include "XDataStructTest.h"
-#if DEMOTEST
+#if DEMOTEST_ON
 #include "XLatin1StringView.h"
 #include "XString.h"
 #include "XByteArrayView.h"

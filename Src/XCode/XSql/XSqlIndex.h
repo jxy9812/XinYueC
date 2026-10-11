@@ -34,7 +34,7 @@ typedef struct XSqlIndex {
 XVtable* XSqlIndex_class_init(void);
 /** @brief 初始化空索引。 @param index 待初始化索引；不能为 NULL。 @return 无；对象进入可析构的空索引状态。 */
 void XSqlIndex_init(XSqlIndex* index);
-/** @brief 创建空索引。 @return 新索引所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
+/** @brief 创建空索引。 @param memory 内存类型。 @return 新索引所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
 XSqlIndex* XSqlIndex_create_ex(XMemoryType memory);
 /** @brief 使用 UTF-8 游标名和索引名创建索引。 @param cursorName 游标名；借用并复制，可为 NULL。 @param name 索引名；借用并复制，可为 NULL。 @return 新索引所有权；调用者使用 XClassDelete 释放，失败返回 NULL。 */
 XSqlIndex* XSqlIndex_create_utf8(const char* cursorName, const char* name);

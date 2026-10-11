@@ -37,7 +37,7 @@ static unsigned int g_discoveryGeneration = 0;
  */
 #if XSYNC_ON && XMUTEX_ON
 typedef XMutex* XImagePluginRegistryMutex;
-static XAtomic_uintptr_t g_registryMutex = { 0 };
+static XAtomic_Uintptr g_registryMutex = { 0 };
 #else
 /* 关闭 XSync 时保留相同的调用点，注册表退化为单线程静态实现。 */
 typedef void* XImagePluginRegistryMutex;

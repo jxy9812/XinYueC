@@ -113,6 +113,7 @@ void XMouseEventTransition_init_ex(XMouseEventTransition* transition, XObject* o
     transition->m_button = button;
     transition->m_modifierMask = XKeyboardModifier_NoModifier;
     transition->m_hitTestPath = XVector_Create(XPoint);
+    XAssert(transition->m_hitTestPath, "Memory allocation failed");
 }
 
 XMouseButton XMouseEventTransition_button(const XMouseEventTransition* transition)
