@@ -1766,10 +1766,19 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
          * 控件后按钮不再卡下压态、RELEASE 不丢失；全部按键松开时在投
          * 递后清除（下方）。显式 grabMouse 优先级仍高于本隐式抓取。
          * 触摸合成的鼠标事件不参与（Qt 同口径：合成事件已带 per-point
-         * 隐式抓取，混入 buttonDown 会破坏多点 per-id 路由）。 */
-        if (g_buttonDownWidget && !((const XMouseEvent*)event)->m_synthesized &&
+         * 隐式抓取，混入 buttonDown 会破坏多点 per-id 路由）。
+         * [越界读根修 2026-10-11] 类型判定必须先于 m_synthesized 解引
+         * 用——本入口还收 ENTER/LEAVE 等非鼠标负载事件（如
+         * XWindowSystemInterface_handleEnterEvent 投递的 XEnterEvent，
+         * 比 XMouseEvent 小），先强转后判型即小对象尾部越界读：分配块
+         * 落在堆段末尾时越数字节踩进未映射页，AV 地址恒为页对齐
+         * （用户实测双击最大化循环后崩，0x04D1A000/0x0BE58000）。
+         * XEvent_type 只读各事件共有的基类头部，恒安全；MOVE/RELEASE
+         * 均为真 XMouseEvent，其后解引用合法。 */
+        if (g_buttonDownWidget &&
             (XEvent_type(event) == XEVENT_TYPE_MOUSE_MOVE ||
-             XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE)) {
+             XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_RELEASE) &&
+            !((const XMouseEvent*)event)->m_synthesized) {
             target = g_buttonDownWidget;
         } else {
             target = XWidget_childAt(top, &pos);

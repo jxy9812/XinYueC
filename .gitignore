@@ -478,10 +478,12 @@ bin-armel/
 bld-fb/
 bld-armel/
 
-# 字体大文件不入库（部署件，见 docs 部署说明；ttc 全量禁上屏）
-Library/XFont/XFontOutlineCommon.ttc
-Library/XFont/XFontOutlineCommon.otf
-Library/XFont/XFontOutlineCommon-Bold.otf
+# 轮廓字字体文件现已入库（2026-10-11）：XFO1 内嵌通道随自研轮廓字实现
+# 移除后，轮廓字形供货唯一来源是 FT 文件后端的外挂文件（ttf/otf/ttc），
+# 缺文件即全量降级点阵——入库保证克隆即可跑轮廓字。Regular 档 .otf 与
+# .ttc 同目录并存（探测序 ttf→otf→ttc，.otf 优先生效，三机一致）；
+# Bold 档仅 .otf 供货（真粗体，缺席合成）。已移除的 .xfo/.inc 通道产物
+# 维持不入库。
 Library/XFont/*.xfo
 Library/XFont/*.inc
 
@@ -489,10 +491,11 @@ Library/XFont/*.inc
 # CMakeLists 最小模块集 + ftoption 定制，克隆即可构建）；只排构建残留
 # 与 include 生成物（CMake 在构建目录另生成最小 ftmodule.h，仓库内的
 # 这份是上游全量注册表，同样不入库以绝「改错文件」歧义）。
+# include/ft2build.h 是上游静态文件而非生成物，必须入库，否则克隆后
+# FreeType 及其使用方（XFontFt/XPainter）全部编译失败。
 Library/freetype/CMakeFiles/
 Library/freetype/cmake_install.cmake
 Library/freetype/Makefile
 Library/freetype/include/freetype/config/ftmodule.h
-Library/freetype/include/ft2build.h
 Library/freetype/docs/
 Library/freetype/builds/

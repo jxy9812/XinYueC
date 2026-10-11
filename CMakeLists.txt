@@ -586,10 +586,14 @@ set_target_properties(${EXPORT_NAME}_Static PROPERTIES
 # Windows(MSVC): 数学函数内置在 C 运行时，线程使用 Drive/windows 的 Win32 实现，无需链接 m/pthread
 # Unix(Linux/macOS/BSD): 需链接数学库 m 与线程库 pthread（对应 Drive/Posix 实现，源码已用
 #                         __linux__/__APPLE__/__BSD__ 宏守护，仅在这些平台编译）
+# 追加 freetype 直链：测试菜单 XFontFtTest.c 在 XFONT_FT_FACE_ON 下直接调用
+# FT_* API——共享库 ${EXPORT_NAME} 的 PRIVATE 依赖不进导入库（Windows 导入库
+# 不携带 FT_* 符号，动态 exe 链接必缺）；静态库经 LINK_ONLY 本已传递，重复
+# 列出无害。
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
+    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 else()
-    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
+    target_link_libraries(${EXPORT_NAME}_Static ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite freetype ${EXPORT_NAME}S)
 endif()
 
 # ==================== 动态链接的可执行程序 ====================
@@ -602,9 +606,9 @@ set_target_properties(${EXPORT_NAME}_Dynamic PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Dynamic"
 )
 if(UNIX)
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite)
+    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
 else()
-    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite)
+    target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
 endif()
 endif() # XGUI_ON（demo 可执行排除）
 
@@ -653,32 +657,26 @@ endif() # XGUI_ON
 # 独立可执行(自带 main): 回环对 + 127.0.0.1 真 TCP(MITM 抓包)跑 XGuiRemote.md
 # §3.8 认证矩阵——匿名基线/无口令快速失败/错口令拒绝/对口令准入/运行期设清
 # (存量会话不断)/nonce 逐连接随机/失败上限可配/口令明文不过网。
-if(XGUI_ON)
+# 测试源为 POSIX 专属（unistd.h/setenv），且须 Xvfb 会话直跑——仅 UNIX 构建。
+if(XGUI_ON AND UNIX)
 add_executable(XGuiRemoteAuth_Test
     "./Test/XGuiTest/XGuiRemoteAuthTest.c"
 )
-if(UNIX)
     target_link_libraries(XGuiRemoteAuth_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiRemoteAuth_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON（认证矩阵测试）
+endif() # XGUI_ON + UNIX（认证矩阵测试）
 
 # ==================== XGuiRemote 自适应降档阶梯测试(perf9 路4) ====================
 # 独立可执行(自带 main): (a) XGuiRemoteAdapt.h 纯状态机单元(阶梯映射/迟滞/
 # 换档重置); (b) 回环量化——latency 档 60fps 持续伤害流下 XGUI_REMOTE_ADAPT_
 # BUDGET_MS=1 强制超预算, 断言交付批率沉底 ~15fps; --adapt-baseline 反证组
 # (关阶梯≈60fps)。需显示环境, 由 Xvfb 会话直跑口径执行(同认证矩阵测试)。
-if(XGUI_ON)
+# 测试源为 POSIX 专属（setenv/unsetenv），仅 UNIX 构建。
+if(XGUI_ON AND UNIX)
 add_executable(XGuiRemoteAdapt_Test
     "./Test/XGuiTest/XGuiRemoteAdaptTest.c"
 )
-if(UNIX)
     target_link_libraries(XGuiRemoteAdapt_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-else()
-    target_link_libraries(XGuiRemoteAdapt_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
-endif()
-endif() # XGUI_ON（自适应降档阶梯测试）
+endif() # XGUI_ON + UNIX（自适应降档阶梯测试）
 
 # ==================== fbdev 弹层拖动条带归位测试 ====================
 # 独立可执行(自带 main)：伪 fbdev 显示驱动（RAM 帧缓冲，双缓冲+行距

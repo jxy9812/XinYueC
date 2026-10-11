@@ -9,6 +9,8 @@
 #include "XFontBitmapFace.h"
 #include "XFontOutlineFace.h"
 #include "XFontFt.h"
+#include "XDateTime.h" /* 文件探测退避计时：单调毫秒（时间源约束同 XWindowDecoration 限帧） */
+#include <stdint.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -24,6 +26,14 @@ static size_t g_faceCount;
 static bool g_builtinProvidersInitialized;
 /* FT 探测失败的一次性 stderr 警告旗标（进程期只告警一次，见 XFont_face）。 */
 static bool g_ftProbeFailedWarned;
+
+/* 文件探测退避窗口（ms）：FT/位图两级文件探测全落空（缺文件降级）后，
+ * 窗口内跳过文件 I/O——XFont_face 位于逐字形热路径，缺字库时每字形
+ * 最多 6+ 次失败 open 即「降级卡顿」（用户实测 2026-10-11）。窗口过期
+ * 自动重探，「文件落盘自动转正」语义保留，采纳延迟≤一个窗口；命中
+ * 任一级则不记戳，正常路径零额外开销。 */
+#define XFONT_FILE_PROBE_BACKOFF_MS 500
+static int64_t g_fileProbeBackoffMs; /* 0=无退避；>0=上次全落空时刻。 */
 
 /* Built-in faces are linked according to XFont_config.h and registered on the
    first face lookup, keeping startup cost out of applications that do not use
@@ -209,6 +219,21 @@ const XFontFace* XFont_face(const XFont* font)
 
     /* A path or an unknown family can be resolved by the file backends. */
     memset(&bitmapFileInfo, 0, sizeof(bitmapFileInfo));
+    /* 退避闸（降级卡顿根修 2026-10-11）：两级文件探测全落空后的窗口内
+     * 跳过文件 I/O，直接落既有注册表/位图回退——逐字形热路径不再付
+     * 失败 open 风暴；窗口过期自动重探，文件落盘转正延迟≤一个窗口
+     * （语义见 g_fileProbeBackoffMs 处注）。 */
+    {
+        int64_t nowMs = XDateTime_currentMSecsSinceEpoch();
+        if (g_fileProbeBackoffMs != 0 &&
+            nowMs - g_fileProbeBackoffMs < XFONT_FILE_PROBE_BACKOFF_MS)
+        {
+            if (forceOutline)
+                return NULL;
+            return XFontFace_first(preferOutline ? XFontFace_Outline :
+                                   XFontFace_Bitmap);
+        }
+    }
 #if XFONT_FT_FACE_ON
     /* FT 是唯一轮廓字实现（自研 XFO1 链已移除）：先探 .ttf/.otf/.ttc。
        命中即返回家族槽静态 face——其 m_ft 位使两槽位分发均走 XFontFt。 */
@@ -231,9 +256,14 @@ const XFontFace* XFont_face(const XFont* font)
     }
 #endif
     if (forceOutline)
+    {
+        g_fileProbeBackoffMs = XDateTime_currentMSecsSinceEpoch();
         return NULL;
+    }
     if (XFontBitmapFace_fileInfo(font, &bitmapFileInfo))
         return XFontBitmapFace_fileFace();
+    /* 两级文件探测全落空：记退避戳（窗口内后续字形零文件 I/O）。 */
+    g_fileProbeBackoffMs = XDateTime_currentMSecsSinceEpoch();
     return XFontFace_first(preferOutline ? XFontFace_Outline :
                            XFontFace_Bitmap);
 }

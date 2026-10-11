@@ -17,6 +17,8 @@
 #include "XSystem.h"
 #include "XMemory.h"
 #include "XPrintf.h"
+#include "XDateTime.h" /* 慢装载诊断计时：单调毫秒 */
+#include <stdint.h>
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
@@ -902,7 +904,23 @@ static bool XFontFt_readGlobalMetrics(FT_Face face, XFontOutlineInfo* info)
    是全后端唯一的 FT_New_Memory_Face 站点：成功路径 face 常驻入槽（度量
    读定与后续字形供货共用），失败路径保持「先 FT_Done_Face 后弃 blob」
    红线次序。 */
+static XFontFtFamilySlot* XFontFt_fillFamilyInner(const char* family);
+
+/** @brief fillFamily 慢装载诊断壳（2026-10-11 启动卡顿分段定位）：装载
+ *  耗时 ≥50ms 才打印一行（首启冷读 3.5MB+ CFF 字体/逐字形热路径误探
+ *  均可由本行直接归因；正常命中热路径静默零开销）。 */
 static XFontFtFamilySlot* XFontFt_fillFamily(const char* family)
+{
+    int64_t t0 = XDateTime_currentMSecsSinceEpoch();
+    XFontFtFamilySlot* slot = XFontFt_fillFamilyInner(family);
+    int64_t elapsed = XDateTime_currentMSecsSinceEpoch() - t0;
+    if (elapsed >= 50)
+        XPrintf("XFontFt: 家族 '%s' 装载耗时 %dms（慢装载诊断：≥50ms）\n",
+                family ? family : "", (int)elapsed);
+    return slot;
+}
+
+static XFontFtFamilySlot* XFontFt_fillFamilyInner(const char* family)
 {
     XFontFtPathIter it;
     char exeDir[XFONT_EXTERNAL_FONT_PATH_MAX];

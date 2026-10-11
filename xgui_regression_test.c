@@ -29479,7 +29479,7 @@ static void test_qss_wave2_contract(void)
     {
         XStyleSheetStyle* ss = XStyleSheetStyle_create();
         XLabel* lbl = XLabel_create(NULL, 0);
-        XImage img;
+        XImage img = {0};
         XColor pc;
         uint32_t px;
         w1_expect(ss != NULL && lbl != NULL, "G3 图像盒模型：样式与控件创建");
@@ -29679,7 +29679,7 @@ static void test_qss_wave2_contract(void)
         XStyleSheetStyle* ss = XStyleSheetStyle_create();
         XLabel* lbl = XLabel_create(NULL, 0);
         XPushButton* btn = XPushButton_create(NULL, 0);
-        XImage img;
+        XImage img = {0};
         w1_expect(ss != NULL && lbl != NULL && btn != NULL,
                   "G4 palette 取色：样式与控件创建");
         XStyleSheetStyle_setSourceStyle(ss, XStyle_defaultStyle());
@@ -29716,8 +29716,8 @@ static void test_qss_wave2_contract(void)
         XStyleSheetStyle* ssUp = XStyleSheetStyle_create();
         XStyleSheetStyle* ssPlain = XStyleSheetStyle_create();
         XPushButton* btn = XPushButton_create(NULL, 0);
-        XImage a;
-        XImage b;
+        XImage a = {0};
+        XImage b = {0};
         w1_expect(ssUp != NULL && ssPlain != NULL && btn != NULL,
                   "G4 text-transform：样式与控件创建");
         XStyleSheetStyle_setSourceStyle(ssUp, XStyle_defaultStyle());

@@ -60,6 +60,12 @@
 #define XWD_RESIZE_ZONE XStyle_dpiScaled(24, NULL)
 /** @brief 顶边改尺寸命中带宽度（窄带：标题栏大部分区域归拖拽移动）。 */
 #define XWD_RESIZE_ZONE_N XStyle_dpiScaled(8, NULL)
+/** @brief 最大化「还原并跟随拖动」的越阈判定（DPI 缩放 px）：最大化态
+ *  按下标题栏只登记待定不还原，拖动越阈才「还原并跟随」，阈内松开=
+ *  纯单击不还原（单击误还原根修 2026-10-11）；双击切换还原由
+ *  XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK 臂承担。对标 Windows SM_CXDRAG(4)
+ *  取 1.5 倍余量。 */
+#define XWD_MAX_RESTORE_SLOP XStyle_dpiScaled(6, NULL)
 
 /** @brief 无窗口管理器环境的「桌面底色」（面板原生像素）。
  *  框架即合成器：窗口外的面板区域没有 WM 铺桌面，恒为黑会被用户
@@ -96,6 +102,17 @@ typedef struct XWindowDecorationState
     bool m_dragging;       /**< 标题栏拖拽移动进行中。 */
     XPoint m_dragLast;     /**< 拖拽上一采样点（全局坐标；窗口自身移动
                                 不改变全局系，增量才不自指）。 */
+    bool m_maxRestorePending; /**< 最大化态标题栏按压待定（单击误还原
+                                根修 2026-10-11）：PRESS 已抓取鼠标但
+                                未还原，MOVE 越阈才「还原并跟随拖动」，
+                                阈内松开=纯单击不还原；双击切换还原由
+                                DBL_CLICK 臂承担。 */
+    XPoint m_maxPressGlobal; /**< 待定按压锚（全局坐标；越阈判定基准，
+                                口径同 m_resizeAnchor）。 */
+    XPoint m_maxPressLocal;  /**< 待定按压点（最大化窗口本地坐标；还原
+                                时抓取点比例映射的分子——还原后窗口变
+                                小，须按按下时在最大化标题栏的相对位置
+                                落位，见越阈还原处注）。 */
     bool m_resizing;       /**< 边缘改尺寸进行中。 */
     bool m_shaded;         /**< 最小化=卷起态（窗口只剩标题条）。 */
     XRect m_preShadeGeometry; /**< 卷起前的完整几何（展开恢复）。 */
@@ -1796,7 +1813,14 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
             int sc;
             /* 新按压=新手势：先清上一手势残留（松开事件在注入/裁剪边
                界偶发丢失时，m_resizing/m_dragging 卡真会吞掉后续全部
-               标题拖拽而改尺寸假活——真机第二轮工作流实测）。 */
+               标题拖拽而改尺寸假活——真机第二轮工作流实测）。最大化
+               还原待定位同口径清残（其鼠标抓取与拖拽共用，卡真会吞
+               掉下一次按下后的 MOVE 越阈判定）。 */
+            if (st->m_maxRestorePending) {
+                st->m_maxRestorePending = false;
+                XWidget_releaseMouse(top);
+                xwd_platformGrab(st, false);
+            }
             if (st->m_dragging || st->m_resizing) {
                 st->m_dragging = false;
                 st->m_resizing = false;
@@ -1892,18 +1916,20 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
             /* 条内空白区：开始拖拽移动（须显式抓取鼠标——框架对 MOVE
                逐事件重命中，斜向拖出条区即断流，真机教训）。增量锚取全
                局坐标：窗口本地系会随窗口自身移动而平移，按本地增量拖
-               拽自指减半（Xvfb 目验实测 +200 指针只走 +100，dx_k=d−
+               曳自指减半（Xvfb 目验实测 +200 指针只走 +100，dx_k=d−
                dx_{k−1} 交替归零）。
-               2026-10-10 最大化改为「还原并跟随拖动」（对标原生）：
-               Windows 下按住最大化窗口标题栏拖动，会把窗口还原到指针
-               下并随鼠标移动。此前本处对最大化/全屏一律禁拖（注释写
-               「对标桌面」），而 Windows 实际会先发还原——事件被吞但
-               还原已发生，视觉上就成了「窗口突然还原、且不跟手」的错
-               位感（用户实测）。现按原生语义：最大化时按下即还原，并以
-               *还原后* 的几何续接拖拽；全屏无标题栏可拖，维持禁拖。 */
+               最大化「还原并跟随拖动」两段式（2026-10-11 单击误还原根
+               修）：按下只登记待定+抓取鼠标，**不**还原——拖动越
+               XWD_MAX_RESTORE_SLOP 才在 MOVE 臂「还原并跟随拖动」（原生
+               语义，比例映射续接见彼处注），阈内松开=纯单击不还原，双
+               击切换还原归 DBL_CLICK 臂。2026-10-10 版曾「按下即还原」：
+               Windows 确实是按住最大化标题栏拖动即还原，但还原时机挂在
+               PRESS 上，点击标题栏任意空白处（本意只是激活/准备双击）
+               都会意外整窗翻变（用户实测驳回）；改由 MOVE 越阈判定后，
+               原生「拖动还原跟手」与「单击不还原」两不误。全屏无标题
+               栏可拖，维持禁拖（仅吞事件）。 */
             if (pos.y >= 0 && pos.y < barH) {
                 XWindowState wsNow = XWindow_windowState(st->m_window);
-                bool wasMax = (wsNow == XWindowState_Maximized);
                 if (wsNow != XWindowState_Maximized &&
                     wsNow != XWindowState_FullScreen) {
                     st->m_dragging = true;
@@ -1914,40 +1940,17 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
                     XWidget_grabMouse(top);
                     xwd_platformGrab(st, true);
                 }
-                else if (wasMax) {
-                    /* 最大化：先还原，再让「抓取点」续接在指针下（原生
-                     * 语义），抓取点按比例映射而非直接复用。
-                     *
-                     * pos 是**最大化时**的窗口内坐标，横向最大到屏幕宽
-                     * （如 2752）；还原后窗口只有原先的普通宽度（如
-                     * 1250）。直接拿 pos 当还原后窗口内的偏移，量纲不匹
-                     * 配——窗口被甩到右上角（用户实测）。原生做法是保持
-                     * 抓取点的**相对位置**：按下时在标题栏的哪个比例处，
-                     * 还原后就落在还原后标题栏的同一比例处。故：
-                     *   ratio = pos.x / 最大化宽度        （0..1）
-                     *   目标局部 x = ratio × 还原后宽度
-                     *   增量 dx = now.x − (post.x + ratio×post.width)
-                     * 纵向同理（条高通常不变，按比例无碍；仍用同一公式
-                     * 保持一致）。 */
-                    XRect pre = XWidget_geometry(top);
-                    int preW = pre.width > 0 ? pre.width : 1;
-                    int preH = pre.height > 0 ? pre.height : 1;
-                    XWidget_showNormal(top);
-                    xwd_pinBarGeometry(st);
-                    st->m_dragging = true;
-                    xwd_dragGestureBegin(st); /* 须在还原后：探针基准取普通态几何 */
+                else if (wsNow == XWindowState_Maximized) {
+                    /* 最大化：登记待定（锚=全局按压点，供越阈判定；本
+                     * 地按压点存档，供越阈还原时抓取点比例映射——还原
+                     * 后窗口变小，量纲映射必须用按下时的最大化几何），
+                     * 抓取鼠标保证后续 MOVE/RELEASE 不漏（斜向拖出条区
+                     * 断流同上）。是否还原全权交给 MOVE 臂。 */
+                    st->m_maxRestorePending = true;
+                    st->m_maxPressGlobal = XMouseEvent_globalPosition(mouse);
+                    st->m_maxPressLocal = pos;
                     XWidget_grabMouse(top);
                     xwd_platformGrab(st, true);
-                    {
-                        XPoint now = XMouseEvent_globalPosition(mouse);
-                        XRect post = XWidget_geometry(top);
-                        int rx = (preW > 0) ? (pos.x * post.width) / preW : pos.x;
-                        int ry = (preH > 0) ? (pos.y * post.height) / preH : pos.y;
-                        int dx = now.x - (post.x + rx);
-                        int dy = now.y - (post.y + ry);
-                        if (dx || dy) xwd_applyMove(st, dx, dy);
-                        st->m_dragLast = now;
-                    }
                 }
                 XEvent_accept(event);
                 return true;
@@ -1986,6 +1989,16 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
     case XEVENT_TYPE_MOUSE_BUTTON_RELEASE:
         mouse = (XMouseEvent*)event;
         pos = XMouseEvent_position(mouse);
+        if (st->m_maxRestorePending) {
+            /* 最大化待定内松开=未越阈的纯单击：不还原，仅解除 PRESS
+               建立的抓取收尾（单击误还原根修 2026-10-11 的另一半）；
+               双击切换还原由 DBL_CLICK 臂在两次释放之间承接。 */
+            st->m_maxRestorePending = false;
+            XWidget_releaseMouse(top);
+            xwd_platformGrab(st, false);
+            XEvent_accept(event);
+            return true;
+        }
 #if XGUI_PRESENT_MAX_FPS > 0
         if (st->m_dragging) {
             /* 尾帧必达（限帧零丢失收尾）：限帧闸跳过的移动由本补齐——
@@ -2066,6 +2079,55 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
 #endif
             xwd_applyResize(st, g.x - st->m_resizeAnchor.x,
                             g.y - st->m_resizeAnchor.y);
+            XEvent_accept(event);
+            return true;
+        }
+        if (st->m_maxRestorePending) {
+            /* 最大化待定→拖动越阈判定（单击误还原根修 2026-10-11）：
+               阈内维持待定（窗口保持最大化，无任何几何翻变）；越阈才
+               真正「还原并跟随拖动」。抓取已于 PRESS 臂建立，此处只做
+               状态迁移。 */
+            XPoint g = XMouseEvent_globalPosition(mouse);
+            int adx = g.x - st->m_maxPressGlobal.x;
+            int ady = g.y - st->m_maxPressGlobal.y;
+            if (adx < 0) adx = -adx;
+            if (ady < 0) ady = -ady;
+            if (adx <= XWD_MAX_RESTORE_SLOP && ady <= XWD_MAX_RESTORE_SLOP) {
+                XEvent_accept(event);
+                return true;
+            }
+            {
+                /* 越阈还原：抓取点比例映射续接（原生语义）。映射分子须
+                 * 取**按下时**的本地坐标（存于 m_maxPressLocal）与**还原
+                 * 前**的最大化几何——pos 是最大化时的窗口内坐标，还原后
+                 * 窗口只有普通宽度，直接复用会量纲不匹配把窗口甩到角落
+                 * （用户实测）。原生做法是保持抓取点的相对位置：按下时
+                 * 在标题栏的哪个比例处，还原后就落在还原后标题栏的同一
+                 * 比例处。故：
+                 *   ratio = press.x / 最大化宽度      （0..1）
+                 *   目标局部 x = ratio × 还原后宽度
+                 *   增量 dx = now.x − (post.x + ratio×post.width)
+                 * 纵向同理（条高通常不变，按比例无碍；仍用同一公式保持
+                 * 一致）。 */
+                XRect pre = XWidget_geometry(top);
+                int preW = pre.width > 0 ? pre.width : 1;
+                int preH = pre.height > 0 ? pre.height : 1;
+                XWidget_showNormal(top);
+                xwd_pinBarGeometry(st);
+                st->m_maxRestorePending = false;
+                st->m_dragging = true;
+                xwd_dragGestureBegin(st); /* 须在还原后：探针基准取普通态几何 */
+                {
+                    XPoint now = XMouseEvent_globalPosition(mouse);
+                    XRect post = XWidget_geometry(top);
+                    int rx = (st->m_maxPressLocal.x * post.width) / preW;
+                    int ry = (st->m_maxPressLocal.y * post.height) / preH;
+                    int dx = now.x - (post.x + rx);
+                    int dy = now.y - (post.y + ry);
+                    if (dx || dy) xwd_applyMove(st, dx, dy);
+                    st->m_dragLast = now;
+                }
+            }
             XEvent_accept(event);
             return true;
         }

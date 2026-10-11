@@ -1847,9 +1847,15 @@ static void demo_navUpdatePanel(DemoWin* self)
                                 pw, scrollH);
             XWidget_show((XWidget*)&self->m_navScroll);
             XWidget_raise((XWidget*)&self->m_navScroll);
-            /* 布局前先按竖版父域（content）排版：先回挂再量高。 */
-            XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[0],
-                                   self->m_navContent);
+            /* 布局前先按竖版父域（content）排版：先回挂再量高。
+               [系统设置/远程消失根修 2026-10-11] 三个一级分类钮须全部
+               回挂——原实现只回挂 [0]（控件），[1]/[2] 仍挂面板却按
+               content 域坐标定位（y=454/482），被不透明滚动区整体盖住，
+               两分类从导航面板消失（用户实测）。横竖版来回切换亦须对称
+               回挂，防跨态残留。 */
+            for (i = 0; i < DEMO_NAV_CAT_N; ++i)
+                XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
+                                       self->m_navContent);
 #endif
             y = 0; /* y 从此为 content 域坐标（滚动容器内容高）。 */
             head = 0;
@@ -1914,8 +1920,9 @@ static void demo_navUpdatePanel(DemoWin* self)
             int row;
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
             XWidget_hide((XWidget*)&self->m_navScroll);
-            XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[0],
-                                   &self->m_navPanel);
+            for (i = 0; i < DEMO_NAV_CAT_N; ++i)
+                XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
+                                       &self->m_navPanel);
             for (i = 0; i < DEMO_NAV_PAGE_N; ++i)
                 XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
                                        &self->m_navPanel);
@@ -3131,6 +3138,34 @@ static int demo_log(const char* fmt, ...);
  *  底层写失败（vprintf 返回负 / fflush 返回 EOF——读端断开、共享流错误
  *  态）即置位，后续调用直接短路返回，不再对失效句柄逐次阻塞重试。 */
 static bool g_logDisabled;
+
+/* 诊断时间戳基准（2026-10-11 启动卡顿分段定位）：main 入口置位，此后
+ * 每行 demo_log 前缀 [秒.毫秒]=距进程入口耗时，慢段在行间直接现形。 */
+static int64_t s_logBaseMs;
+static bool s_logBaseInit;
+static void demo_log_markBase(void)
+{
+    s_logBaseMs = XDateTime_currentMSecsSinceEpoch();
+    s_logBaseInit = true;
+}
+
+/** @brief 带时间戳的启动里程碑打点（[秒.毫秒] 同基准；独立于 demo_log
+ *  ——XPrintf 直呼的既有阶段行不经 demo_log，卡顿分段须在 main 各阶段
+ *  主动打点，慢段在相邻行差值中直接现形）。 */
+static void demo_diag(const char* fmt, ...)
+{
+    va_list args;
+    int64_t now;
+    if (!s_logBaseInit)
+        return;
+    now = XDateTime_currentMSecsSinceEpoch();
+    printf("[%d.%03d] ", (int)((now - s_logBaseMs) / 1000),
+           (int)((now - s_logBaseMs) % 1000));
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+    fflush(stdout);
+}
 
 /** @brief KeyPressEvent：打印键码/修饰键/自动重复（真实输入闭环验证）。 */
 static void VDemoWin_keyPressEvent(XWidget* self, XEvent* event)
@@ -4422,6 +4457,14 @@ static int demo_log(const char* fmt, ...)
     return 0;
 #endif
     va_start(args, fmt);
+    if (s_logBaseInit)
+    {
+        /* 每行前缀 [秒.毫秒]：距 main 入口耗时（XDateTime 单调毫秒）。
+         * 静态期调用（markBase 之前）不打前缀，恒等价旧行为。 */
+        int64_t now = XDateTime_currentMSecsSinceEpoch();
+        printf("[%d.%03d] ", (int)((now - s_logBaseMs) / 1000),
+               (int)((now - s_logBaseMs) % 1000));
+    }
     written = vprintf(fmt, args);
     va_end(args);
     if (written < 0 || fflush(stdout) != 0)
@@ -4474,6 +4517,7 @@ int xgui_demo_main(int argc, char* argv[])
     bool benchmarkResize;
     bool benchmarkMaximized;
     const char* screenshotPath;
+    demo_log_markBase(); /* 诊断时间戳基准：此后每行日志前缀 [秒.毫秒]。 */
     const char* styleOpt;
     int screenshotPage;
     int screenshotTab;
@@ -4746,6 +4790,7 @@ int xgui_demo_main(int argc, char* argv[])
         XPrintf("XGuiWindowDemo: XGuiApplication_create_ex 失败\n");
         return 1;
     }
+    demo_diag("phase: app created\n");
 
 #if XGUI_DEMO_APITEST_ON
     /* 1.5) --apitest：控件 API 全量测试（无头，不进窗口流程）。 */
@@ -4797,6 +4842,7 @@ int xgui_demo_main(int argc, char* argv[])
 
     /* 2) 创建演示窗口并设置标题/几何。show() 会在框架内部惰性创建平台窗口。 */
     win = DemoWin_create();
+    demo_diag("phase: DemoWin_create done\n");
     if (!win) {
         /* 判空守卫前置：创建失败即收口退出（后续 win-> 字段写入
            不容 NULL 解引用；守卫体必须 return，否则落空继续走）。 */
@@ -4947,6 +4993,7 @@ int xgui_demo_main(int argc, char* argv[])
 #endif
     }
     xgui_demo_platformPostShow(&win->m_base);
+    demo_diag("phase: postShow done\n");
     XPrintf("XGuiWindowDemo: 屏幕尺寸=%.0fx%.0f\n",
            (double)XWidget_width(&win->m_base),
            (double)XWidget_height(&win->m_base));
@@ -4959,6 +5006,7 @@ int xgui_demo_main(int argc, char* argv[])
            逐轮强制重绘，不加这步保持旧口径逐位一致。 */
         demo_repaint(win);
         XGuiApplication_processEvents(XEventLoop_AllEvents);
+        demo_diag("phase: first full paint done\n");
     }
 
     eventLoopResult = 0;
