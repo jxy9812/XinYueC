@@ -49,8 +49,8 @@ typedef struct XActionGroup
     XVector*    m_actions;       /**< 成员动作借用指针数组（XAction*）。 */
     XVector*    m_bridges;       /**< 与成员顺序一致的内信号桥（XActionGroupBridge*）。 */
     XAction*    m_checkedAction; /**< 当前选中动作（借用；可为 NULL）。 */
-    bool        m_exclusive;     /**< 互斥（默认 true）。 */
-    bool        m_enabled;       /**< 分组启用状态（默认 true）。 */
+    uint8_t     m_exclusive : 1; /**< 互斥（默认 true）。 */
+    uint8_t     m_enabled : 1;   /**< 分组启用状态（默认 true）。 */
 } XActionGroup;
 
 /* ==================== 生命周期 ==================== */

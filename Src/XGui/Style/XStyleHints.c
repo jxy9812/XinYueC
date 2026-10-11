@@ -36,9 +36,10 @@ struct XStyleHintsPrivate
     int        m_startDragTime;            /**< 拖拽启动耗时（毫秒）。 */
     int        m_startDragVelocity;        /**< 拖拽启动速度（只读）。 */
     int        m_wheelScrollLines;         /**< 滚轮滚动行数。 */
-    XStyleHintsTabFocusBehavior   m_tabFocusBehavior;   /**< Tab 焦点行为。 */
-    XStyleHintsContextMenuTrigger m_contextMenuTrigger; /**< 右键菜单触发时机。 */
-    XStyleHintsColorScheme        m_colorScheme;        /**< 颜色方案。 */
+    uint8_t    m_tabFocusBehavior;   /**< Tab 焦点行为（XStyleHintsTabFocusBehavior
+                                          ≤0xff；setter 只收枚举值）。 */
+    uint8_t    m_contextMenuTrigger; /**< 右键菜单触发时机（枚举 ≤1）。 */
+    uint8_t    m_colorScheme;        /**< 颜色方案（XStyleHintsColorScheme ≤2）。 */
 };
 
 static void VXStyleHints_deinit(XStyleHints* self)

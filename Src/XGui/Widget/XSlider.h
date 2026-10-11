@@ -96,9 +96,12 @@ XCLASS_DEFINE_EXTEND_END(XSlider, XAbstractSlider)
 typedef struct XSlider
 {
     XAbstractSlider m_class;       /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
-    int  m_tickPosition;           /**< 刻度位置（XSliderTickPosition）。 */
-    int  m_tickInterval;           /**< 刻度间隔（值间隔；0=自动）。 */
-    int  m_dragOffset;             /**< 拖动偏移（按下点相对 handle 中心）。 */
+    int  m_dragOffset;             /**< 拖动偏移（按下点相对 handle 中心；保守保留 int）。 */
+    /* [内存治理 2026-10-11] 标志位字：刻度位置 0..3（XSliderTickPosition）
+       收 2 位 + 刻度间隔 0..65535 收 16 位，两个短字段并入 1 字。 */
+    uint32_t m_tickPosition : 2;   /**< 刻度位置（XSliderTickPosition 0..3）。 */
+    uint32_t m_tickInterval : 16;  /**< 刻度间隔（值间隔；0=自动）。 */
+    uint32_t m_sliderFlagsUnused : 14; /**< 保留位。 */
 } XSlider;
 
 /* ==================== 生命周期 ==================== */

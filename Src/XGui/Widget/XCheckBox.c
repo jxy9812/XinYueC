@@ -215,9 +215,9 @@ void XCheckBox_setCheckState(XCheckBox* self, XCheckState state)
                                state != XCheckState_Unchecked);
     self->m_blockRefresh = false;
     XWidget_update((XWidget*)self);
-    old = self->m_publishedState;
+    old = (XCheckState)self->m_publishedState;
     if (state != old) {
-        self->m_publishedState = state;
+        self->m_publishedState = (uint8_t)state;
         checkbox_emitState(self, state);
     }
 }
@@ -423,8 +423,8 @@ static void VXCheckBox_checkStateSet(XAbstractButton* base)
         return;
     self->m_noChange = false;
     state = XCheckBox_checkState(self);
-    if (state != self->m_publishedState) {
-        self->m_publishedState = state;
+    if ((XCheckState)state != self->m_publishedState) {
+        self->m_publishedState = (uint8_t)state;
         checkbox_emitState(self, state);
     }
 }

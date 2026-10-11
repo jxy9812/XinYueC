@@ -42,7 +42,9 @@ typedef struct XToolBox
 {
     XFrame m_base;         /**< 基类成员；必须是第一个。 */
     XVector* m_items;      /**< 页面条目（XToolBoxItem*，拥有）。 */
-    int m_currentIndex;    /**< 当前页索引（无页 -1）。 */
+    /* [内存治理 2026-10-11] 窄整型：页索引有 -1 哨兵（无页），
+       用 int16_t 保留符号并消除指针后的 4B 洞。 */
+    int16_t m_currentIndex;    /**< 当前页索引（无页 -1）。 */
 } XToolBox;
 
 /* ==================== 生命周期 ==================== */

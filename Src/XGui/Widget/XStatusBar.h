@@ -42,12 +42,15 @@ XCLASS_DEFINE_EXTEND_END(XStatusBar, XWidget)
 typedef struct XStatusBar
 {
     XWidget m_base;              /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
     XVector* m_items;            /**< 普通区条目（XStatusBarItem*，拥有）。 */
     XVector* m_permanents;       /**< 永久区条目（XStatusBarItem*，拥有）。 */
     XString* m_currentMessage;  /**< 当前临时消息（对象拥有）。 */
-    int m_tempTimeout;           /**< 当前消息超时（毫秒；0=不自动清除）。 */
-    XTimerId m_messageTimer;     /**< 消息超时定时器。 */
-    bool m_sizeGripEnabled;      /**< 尺寸手柄开关（默认 true）。 */
+    XTimerId m_messageTimer;     /**< 消息超时定时器（intptr_t）。 */
+    uint16_t m_tempTimeout;      /**< 当前消息超时（毫秒；0=不自动清除）。 */
+    /* [内存治理 2026-10-11] 标志位字：单 bool 位域。 */
+    uint32_t m_sizeGripEnabled : 1;      /**< 尺寸手柄开关（默认 true）。 */
+    uint32_t m_statusBarFlagsUnused : 31; /**< 保留位。 */
 } XStatusBar;
 
 /* ==================== 生命周期 ==================== */

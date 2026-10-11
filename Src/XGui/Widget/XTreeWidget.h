@@ -43,17 +43,20 @@ typedef struct XTreeWidgetItem
                                        对应列 col；对象拥有；懒分配，
                                        未写入列保持 NULL）。 */
     struct XTreeWidgetItem** children; /**< 子节点数组（对象拥有）。 */
-    int childCount;               /**< 子节点数。 */
-    int childCapacity;            /**< 子节点容量。 */
     struct XTreeWidgetItem* parent; /**< 父节点（借用；顶层为 NULL）。 */
     struct XTreeWidget* owner;    /**< 所属树控件（借用；未被树持有为
                                        NULL）。顶层挂载时写入、takeTopLevelItem
                                        时清空；仅用于 itemChanged(row) 的
                                        发射定位（子条目不挂 owner，平铺行
                                        模型无子行号）。 */
-    int extraTextCapacity;        /**< 逐列文本表容量（覆盖列 1..容量）；
+    /* [内存治理 2026-10-11] 短整型值：子节点数/容量、逐列文本表容量
+       （计数/索引量级 ≤32767）收 int16_t；勾选态 0..2 收 uint8_t——
+       全组无 -1 哨兵（已核对 XTreeWidget.c 全部赋值）。 */
+    int16_t childCount;           /**< 子节点数。 */
+    int16_t childCapacity;        /**< 子节点容量。 */
+    int16_t extraTextCapacity;    /**< 逐列文本表容量（覆盖列 1..容量）；
                                        未分配为 0。 */
-    int checkState;               /**< 勾选态（XItemCheckState：0 未选/
+    uint8_t checkState;           /**< 勾选态（XItemCheckState：0 未选/
                                        1 部分/2 选中；列 0 指示器承载，
                                        对标 QTreeWidgetItem checkState）。 */
 } XTreeWidgetItem;
@@ -66,42 +69,22 @@ XCLASS_DEFINE_EXTEND_END(XTreeWidget, XTreeView)
 typedef struct XTreeWidget
 {
     XTreeView m_base;             /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
     XTreeWidgetItem** m_topItems; /**< 顶层条目数组（对象拥有）。 */
-    int m_topCount;               /**< 顶层条目数。 */
-    int m_topCapacity;            /**< 顶层条目容量。 */
     XWidget*** m_cellWidgets;     /**< 单元格部件表：行指针数组 → 每行
                                        列指针表（下标 [row][column]）；
                                        表本身对象拥有，部件为借用
                                        （生命周期由调用方管理）。 */
-    int m_cellRowCapacity;        /**< 部件表行容量（与 m_topCapacity
-                                       经 xtw_ensureTop 同步扩容）。 */
-    int m_cellColCapacity;        /**< 部件表每行列容量（列越界时按
-                                       xtw_ensureCols 模式倍增扩容）。 */
-    int m_sortColumn;             /**< 最近排序列（便捷族 sortItems 承载；
-                                       -1=未排序）。 */
-    int m_sortOrder;              /**< 最近排序序：0=升序，1=降序。 */
     XAbstractItemModel* m_bridgeModel; /**< 内建模型桥（四期②；行=顶层行、
                                        列=列号，与条目文本同步；对象拥有）。 */
-    int m_enteredRow;             /**< 上次发射 itemEntered 的顶层行号；
-                                       -2=尚未进入任何行（同 XListWidget
-                                       差分口径）。 */
     bool* m_topExpanded;          /**< 顶层行展开状态表（平行数组，下标与
                                        m_topItems 对齐；对象拥有）。默认
                                        展开（与历史"子树恒绘制"行为一致）；
                                        指示器点击/双击切换时发射
                                        itemExpanded/itemCollapsed。 */
-    int m_topExpCapacity;         /**< 展开状态表容量（与 m_topCapacity
-                                       经 xtw_ensureTop 同步扩容）。 */
     XString** m_headerLabels;     /**< 表头文本表（对象拥有；便捷族
                                        setHeaderLabels 承载，下标=
                                        列号；倍增扩容、新增区清零）。 */
-    int m_headerCount;            /**< 已设置表头文本数（历史最大写入
-                                       个数；查询承载用）。 */
-    int m_headerCapacity;         /**< 表头文本表容量。 */
-    int m_columnCount;            /**< 列数承载（setColumnCount 承载；
-                                       默认 1；>1 时单元格部件列容量经
-                                       xtw_ensureCellCols 同步扩容；
-                                       自绘仍为单文本列渲染）。 */
     XTreeWidgetItem* m_invisibleRoot; /**< 不可见根条目（对标
                                        invisibleRootItem；对象拥有；
                                        init 创建）。其 children 借用
@@ -115,6 +98,30 @@ typedef struct XTreeWidget
                                        m_headerLabels（绘制路径仍读
                                        标签表）；setHeaderItem 移交
                                        所有权并回填标签。 */
+    /* [内存治理 2026-10-11] 短整型值：条目/容量/表头/列数计数索引
+       收 int16_t；-1/-2 哨兵（sortColumn=-1 未排序、enteredRow=-2
+       未进入）依赖有符号语义，int16_t 保留。 */
+    int16_t m_topCount;           /**< 顶层条目数。 */
+    int16_t m_topCapacity;        /**< 顶层条目容量。 */
+    int16_t m_cellRowCapacity;    /**< 部件表行容量（与 m_topCapacity
+                                       经 xtw_ensureTop 同步扩容）。 */
+    int16_t m_cellColCapacity;    /**< 部件表每行列容量（列越界时按
+                                       xtw_ensureCols 模式倍增扩容）。 */
+    int16_t m_sortColumn;         /**< 最近排序列（便捷族 sortItems 承载；
+                                       -1=未排序）。 */
+    int16_t m_sortOrder;          /**< 最近排序序：0=升序，1=降序。 */
+    int16_t m_enteredRow;         /**< 上次发射 itemEntered 的顶层行号；
+                                       -2=尚未进入任何行（同 XListWidget
+                                       差分口径）。 */
+    int16_t m_topExpCapacity;     /**< 展开状态表容量（与 m_topCapacity
+                                       经 xtw_ensureTop 同步扩容）。 */
+    int16_t m_headerCount;        /**< 已设置表头文本数（历史最大写入
+                                       个数；查询承载用）。 */
+    int16_t m_headerCapacity;     /**< 表头文本表容量。 */
+    int16_t m_columnCount;        /**< 列数承载（setColumnCount 承载；
+                                       默认 1；>1 时单元格部件列容量经
+                                       xtw_ensureCellCols 同步扩容；
+                                       自绘仍为单文本列渲染）。 */
 } XTreeWidget;
 
 /* ==================== 生命周期 ==================== */

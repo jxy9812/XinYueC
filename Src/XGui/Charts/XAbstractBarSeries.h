@@ -45,15 +45,20 @@ XCLASS_DEFINE_EXTEND_END(XAbstractBarSeries, XAbstractSeries)
 typedef struct XAbstractBarSeries
 {
     XAbstractSeries m_base;       /**< 基类成员；必须是第一个。 */
+
+    /* ---- 8 字节对齐组（对齐分组前移；成员访问一律按名，无
+     *      位置初始化/offsetof 依赖） ---- */
     XBarSet** m_barSets;          /**< 柱组指针数组（堆；对象拥有）。 */
-    int m_barSetCount;            /**< 柱组数（对标 QAbstractBarSeries::count）。 */
-    int m_barSetCapacity;         /**< 柱组容量。 */
-    double m_barWidth;            /**< 组宽比例（默认 0.5，对标 Qt 6.8）。 */
-    bool m_labelsVisible;         /**< 柱标签可见（默认 false）。 */
     XString* m_labelsFormat;      /**< 柱标签格式（对象拥有；默认空=渲染用 "@value"）。 */
+    double m_barWidth;            /**< 组宽比例（默认 0.5，对标 Qt 6.8）。 */
     double m_labelsAngle;         /**< 柱标签角度（度，默认 0）。 */
-    XAbstractBarSeries_LabelsPosition m_labelsPosition; /**< 标签位置（默认居中）。 */
-    int m_labelsPrecision;        /**< 标签有效位数（默认 6，对标 Qt 6.8）。 */
+
+    /* ---- 4/2/1 字节窄整型组（柱组数为小值域；无 -1 哨兵、无取址使用） ---- */
+    int m_labelsPrecision;        /**< 标签有效位数（默认 6，对标 Qt 6.8；setter 原样往返）。 */
+    uint16_t m_barSetCount;       /**< 柱组数（对标 QAbstractBarSeries::count）。 */
+    uint16_t m_barSetCapacity;    /**< 柱组容量。 */
+    uint8_t m_labelsPosition;     /**< 标签位置（XAbstractBarSeries_LabelsPosition，0-3）。 */
+    bool m_labelsVisible;         /**< 柱标签可见（默认 false）。 */
 } XAbstractBarSeries;
 
 XVtable* XAbstractBarSeries_class_init(void);

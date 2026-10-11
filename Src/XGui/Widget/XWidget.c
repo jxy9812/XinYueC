@@ -562,6 +562,10 @@ static XString* XWidget_copyString(const XString* source)
     return source ? XString_create_copy(source) : NULL;
 }
 
+/** @brief 惰性调色板写入前置声明（定义见 XWidget_palette 前；copy/assign
+ *         路径先行调用）。 */
+static void xwidget_paletteStore(XWidget* self, const XPalette* palette);
+
 /** @brief 释放拥有字符串并置空。 */
 static void XWidget_freeString(XString** slot)
 {
@@ -3502,9 +3506,9 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_accessible = XAccessible_createForWidget(self);
 #endif
 #if XPALETTE_ON
-    XPalette_init_default(&self->m_palette);
+    self->m_palette = NULL; /* 惰性调色板：setPalette 首设才分配（Qt 同模型）。 */
 #else
-    self->m_palette.m_disabled = 0;
+    self->m_palette = NULL;
 #endif
     XIcon_init(&self->m_icon);
     XRegion_init(&self->m_dirty);
@@ -3743,6 +3747,13 @@ static void VXWidget_deinit(XWidget* self)
 #endif /* XCURSOR_ON */
     XClassDeinit(&self->m_font);
     XClassDeinit(&self->m_icon);
+#if XPALETTE_ON
+    /* 惰性调色板槽位归还（Qt 同模型：仅显式 setPalette 过的控件有分配）。 */
+    if (self->m_palette) {
+        XFree_System(self->m_palette);
+        self->m_palette = NULL;
+    }
+#endif /* XPALETTE_ON */
     XWidget_freeContentCache(self);
     /* 保留层登记节点持有本控件借用指针，析构必须先摘除再释放缓存。 */
     xwidget_retainedDisable(self);
@@ -3887,11 +3898,10 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_windowRole = XWidget_copyString(other->m_windowRole);
     self->m_styleSheet = XWidget_copyString(other->m_styleSheet);
     self->m_inputMethodHints = other->m_inputMethodHints;
-#if XPALETTE_ON
-    XPalette_copy(&self->m_palette, &other->m_palette);
-#else
-    self->m_palette = other->m_palette;
-#endif
+    /* 惰性调色板拷贝：源有自定义调色板才深拷贝，否则保持 NULL 回落全局
+       （copy 构造路径 self 恒 NULL 起步，store 内自管分配；XPALETTE_OFF
+       时 helper 整体裁剪、槽位随指针拷贝恒 NULL）。 */
+    xwidget_paletteStore(self, other->m_palette);
     XClassCopy(&self->m_font, &other->m_font);
     XClassCopy(&self->m_icon, &other->m_icon);
 #if XCURSOR_ON
@@ -4033,7 +4043,13 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     self->m_toolTipDuration = other->m_toolTipDuration;
     self->m_windowOpacity = other->m_windowOpacity;
 #if XPALETTE_ON
-    XPalette_copy(&self->m_palette, &other->m_palette);
+    /* 惰性调色板 move：所有权转移（下方源对象 XMemset 归零槽位，
+     * 不会双释放）；目标旧槽若有先归还。 */
+    if (self->m_palette) {
+        XFree_System(self->m_palette);
+        self->m_palette = NULL;
+    }
+    self->m_palette = other->m_palette;
 #else
     self->m_palette = other->m_palette;
 #endif
@@ -7485,6 +7501,32 @@ XFont XWidget_fontInfo(const XWidget* self)
     return XWidget_font(self);
 }
 
+/** @brief 惰性调色板写入（Qt 同模型，[内存治理 2026-10-11]）：palette
+ *  非 NULL 深拷贝入槽（首次分配 1408B）；NULL 释放槽位回落应用全局
+ *  调色板。copy/assign/move/setPalette/deinit 共用，分配失败静默保持
+ *  未设态（下次调用重试）。 */
+static void xwidget_paletteStore(XWidget* self, const XPalette* palette)
+{
+#if XPALETTE_ON
+    if (!palette) {
+        if (self->m_palette) {
+            XFree_System(self->m_palette);
+            self->m_palette = NULL;
+        }
+        return;
+    }
+    if (!self->m_palette) {
+        self->m_palette = (XPalette*)XMalloc_System(sizeof(XPalette));
+        if (!self->m_palette)
+            return; /* 分配失败：保持未设态，回退应用全局调色板。 */
+    }
+    XPalette_copy(self->m_palette, palette);
+#else
+    (void)self;
+    (void)palette;
+#endif /* XPALETTE_ON */
+}
+
 XPalette XWidget_palette(const XWidget* self)
 {
     XPalette out;
@@ -7497,9 +7539,9 @@ XPalette XWidget_palette(const XWidget* self)
         XPalette_init_default(&out);
         return out;
     }
-    if (self->m_paletteSet) {
-        XPalette_init_default(&out);
-        XPalette_copy(&out, &self->m_palette);
+    if (self->m_paletteSet && self->m_palette) {
+        XPalette_init_default(&out); /* 防御兜底：copy 覆盖全矩阵前先落默认。 */
+        XPalette_copy(&out, self->m_palette);
     }
 #if XGUIAPPLICATION_ON
     else {
@@ -7521,11 +7563,8 @@ void XWidget_setPalette(XWidget* self, const XPalette* palette)
     return;
 #else
     if (!self || !palette) return;
-    if (!self->m_paletteSet) {
-        XPalette_init_default(&self->m_palette);
-        self->m_paletteSet = 1;
-    }
-    XPalette_copy(&self->m_palette, palette);
+    xwidget_paletteStore(self, palette);
+    self->m_paletteSet = 1;
     XWidget_update(self);
 #endif /* XPALETTE_ON */
 }

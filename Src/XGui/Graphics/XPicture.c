@@ -523,19 +523,23 @@ static bool XPicture_validateStreamData(const char* data, uint32_t size)
 
 /**
  * @brief      XPicture 私有数据结构
+ * @note       内存压缩：成员按对齐重排（4B 组 → bool/int16 尾组 → 8B 指针），
+ *             m_formatVersion 收窄为 int16_t（全库赋值仅 -1 哨兵与
+ *             XPICTURE_STREAM_VERSION=1，见 XPicture_init/clone 用法），
+ *             结构体 48→40（不含内嵌设备）/104→88（含）字节。
  */
 typedef struct XPicturePrivate
 {
-    XAtomic_Int32  m_refCount;    /**< 引用计数 */
-    char*            m_data;        /**< 绘图指令数据 */
-    uint32_t         m_dataSize;    /**< 数据大小 */
-    uint32_t         m_dataCapacity;/**< 数据容量 */
-    bool             m_isNull;      /**< 是否为 null */
-    int              m_formatVersion; /**< 格式版本号 */
-    int              m_boundingX;   /**< 边界矩形 X */
-    int              m_boundingY;   /**< 边界矩形 Y */
-    int              m_boundingW;   /**< 边界矩形宽度 */
-    int              m_boundingH;   /**< 边界矩形高度 */
+    XAtomic_Int32    m_refCount;      /**< 引用计数 */
+    uint32_t         m_dataSize;      /**< 数据大小 */
+    uint32_t         m_dataCapacity;  /**< 数据容量 */
+    int              m_boundingX;     /**< 边界矩形 X（流中任意 int32，不收窄） */
+    int              m_boundingY;     /**< 边界矩形 Y */
+    int              m_boundingW;     /**< 边界矩形宽度 */
+    int              m_boundingH;     /**< 边界矩形高度 */
+    bool             m_isNull;        /**< 是否为 null（与版本号 pack 尾组） */
+    int16_t          m_formatVersion; /**< 格式版本号（-1=默认版本哨兵） */
+    char*            m_data;          /**< 绘图指令数据 */
 #if XPAINTDEVICE_ON
     XPaintDevice     m_paintDevice; /**< 绘制设备描述（内嵌）。 */
     struct XPicture* m_deviceShell; /**< §8.0g10 begin 泛化：惰性分配的堆上

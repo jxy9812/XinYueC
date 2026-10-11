@@ -35,7 +35,9 @@ XCLASS_DEFINE_EXTEND_END(XRubberBand, XWidget)
 typedef struct XRubberBand
 {
     XWidget m_base;          /**< 基类成员；必须是第一个。 */
-    int m_shape;             /**< 形状（XRubberBandShape）。 */
+    /* [内存治理 2026-10-11] 形状枚举 0..1 收 1 位域。 */
+    uint32_t m_shape : 1;    /**< 形状（XRubberBandShape 0=Line，1=Rectangle）。 */
+    uint32_t m_rubberBandFlagsUnused : 31; /**< 保留位。 */
 } XRubberBand;
 
 XVtable* XRubberBand_class_init(void);

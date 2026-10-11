@@ -101,6 +101,10 @@ static bool XImageWriter_mimeEquals(const char* mimeType, const char* expected)
 
 /**
  * @brief      XImageWriter 私有数据
+ * @note       内存压缩：两个枚举成员（XImageWriterError 0..3、
+ *             XImageIOHandlerTransformation 0..6，setter 形参即枚举类型）收窄
+ *             为 uint8_t 并与两个 bool pack 进尾组；指针成员前置对齐。
+ *             结构体 88→80 字节。
  */
 typedef struct XImageWriterPrivate
 {
@@ -109,16 +113,16 @@ typedef struct XImageWriterPrivate
     XString*    m_fileName;          /**< 文件名（UTF-8） */
     XString*    m_format;            /**< 格式字符串（UTF-8） */
     XImageIOHandler* m_handler;      /**< 当前插件处理器 */
+    XString*    m_description;       /**< 按 Qt 格式拼接的文本描述元数据 */
+    XString*    m_subType;           /**< 子类型 */
+    XString*    m_errorString;       /**< 错误描述 */
     int         m_quality;           /**< 质量参数 */
     int         m_compression;       /**< 压缩参数 */
     float       m_gamma;             /**< Gamma 参数，Qt 默认值为 0.0 */
-    XString*    m_description;       /**< 按 Qt 格式拼接的文本描述元数据 */
-    XString*    m_subType;           /**< 子类型 */
+    uint8_t     m_transformation;    /**< 变换类型（XImageIOHandlerTransformation）。 */
+    uint8_t     m_error;             /**< 错误码（XImageWriterError）。 */
     bool        m_optimizedWrite;    /**< 是否优化写入 */
     bool        m_progressiveScan;   /**< 是否渐进式扫描 */
-    XImageIOHandlerTransformation m_transformation; /**< 变换类型 */
-    XImageWriterError m_error;       /**< 错误码 */
-    XString*    m_errorString;       /**< 错误描述 */
 }XImageWriterPrivate;
 
 static void XImageWriter_releaseHandler(XImageWriterPrivate* data)

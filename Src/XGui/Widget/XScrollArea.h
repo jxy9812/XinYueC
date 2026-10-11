@@ -44,8 +44,10 @@ typedef struct XScrollArea
     XAbstractScrollArea m_base; /**< 基类成员；必须是第一个。 */
     XWidget* m_widget;          /**< 内容控件（借用；所有权随接管的
                                      父子关系，takeWidget 可取回）。 */
-    bool m_resizable;           /**< 内容随视口缩放（默认 false）。 */
     int m_alignment;            /**< 对齐（XAlignment 位掩码，默认 0）。 */
+    /* [内存治理 2026-10-11] 标志位字：单 bool 位域，填充指针后的 4B 洞。 */
+    uint32_t m_resizable : 1;   /**< 内容随视口缩放（默认 false）。 */
+    uint32_t m_scrollAreaFlagsUnused : 31; /**< 保留位。 */
 } XScrollArea;
 
 /* ==================== 生命周期 ==================== */

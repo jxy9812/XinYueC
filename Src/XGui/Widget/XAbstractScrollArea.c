@@ -379,8 +379,8 @@ void XAbstractScrollArea_init(XAbstractScrollArea* self, XWidget* parent,
         (int)XAbstractSliderOrientation_Vertical, self, 0);
     self->m_hScrollBar = XScrollBar_create_2(
         (int)XAbstractSliderOrientation_Horizontal, self, 0);
-    self->m_vPolicy = (int)XScrollBarPolicy_AsNeeded;
-    self->m_hPolicy = (int)XScrollBarPolicy_AsNeeded;
+    self->m_vPolicy = (uint8_t)XScrollBarPolicy_AsNeeded;
+    self->m_hPolicy = (uint8_t)XScrollBarPolicy_AsNeeded;
     XWidget_setVisible((XWidget*)self->m_vScrollBar, false);
     XWidget_setVisible((XWidget*)self->m_hScrollBar, false);
     xasa_connectBar(self, self->m_vScrollBar, false);
@@ -426,7 +426,7 @@ void XAbstractScrollArea_setVerticalScrollBarPolicy(
     XAbstractScrollArea* self, XScrollBarPolicy policy)
 {
     if (!self) return;
-    self->m_vPolicy = (int)policy;
+    self->m_vPolicy = (uint8_t)policy;
     VX_asa_resizeEvent((XWidget*)self, NULL);
 }
 
@@ -441,7 +441,7 @@ void XAbstractScrollArea_setHorizontalScrollBarPolicy(
     XAbstractScrollArea* self, XScrollBarPolicy policy)
 {
     if (!self) return;
-    self->m_hPolicy = (int)policy;
+    self->m_hPolicy = (uint8_t)policy;
     VX_asa_resizeEvent((XWidget*)self, NULL);
 }
 
@@ -524,7 +524,7 @@ void XAbstractScrollArea_addScrollBarWidget(XAbstractScrollArea* self,
     if (self->m_sbWidgetCount >= 8) return;
     XWidget_setParent(widget, (XWidget*)self, 0);
     self->m_sbWidgets[self->m_sbWidgetCount] = widget;
-    self->m_sbWidgetAligns[self->m_sbWidgetCount] = alignment;
+    self->m_sbWidgetAligns[self->m_sbWidgetCount] = (uint16_t)alignment;
     ++self->m_sbWidgetCount;
     VX_asa_resizeEvent((XWidget*)self, NULL);
 }
@@ -643,7 +643,7 @@ void XAbstractScrollArea_setSizeAdjustPolicy(
 {
     if (!self) return;
     if (self->m_sizeAdjustPolicy == (int)policy) return;
-    self->m_sizeAdjustPolicy = (int)policy;
+    self->m_sizeAdjustPolicy = (uint8_t)policy;
     /* 对标 Qt：清缓存并请求重新布局。 */
     self->m_sizeHintCached = false;
     XSize_init(&self->m_sizeHintCache, 0, 0);

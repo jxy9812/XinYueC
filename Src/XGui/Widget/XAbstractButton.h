@@ -83,21 +83,21 @@ typedef struct XAbstractButton XAbstractButton;
 struct XAbstractButton
 {
     XWidget      m_base;               /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
+    XTimerId     m_repeatTimer;        /**< 自动重复定时器（XTimerId=intptr_t，8B 放 8B 组）；无效时为 XTIMER_INVALID_ID，仅供内部使用。 */
+    XTimerId     m_animateTimer;       /**< animateClick 释放定时器；无效时为 XTIMER_INVALID_ID，仅供内部使用。 */
     XString*     m_text;               /**< 按钮文本；对象拥有，按 XString 的 UTF-16 代码单元保存。 */
     XIcon        m_icon;               /**< 按钮图标；值类型并按 XIcon 的隐式共享规则管理。 */
     XSize        m_iconSize;           /**< 显式图标尺寸，单位为像素；宽高均为 0 表示使用默认尺寸。 */
-    bool         m_checkable;          /**< 是否允许选中；false 时 setChecked/toggle 不改变选中状态。 */
-    bool         m_checked;            /**< 当前选中状态；只有 m_checkable 为 true 时具有按钮语义。 */
-    bool         m_down;               /**< 当前视觉按下状态；由程序化调用或输入事件维护。 */
-    bool         m_pressed;            /**< 鼠标/键盘按压跟踪状态；仅供内部事件处理使用。 */
-    bool         m_autoRepeat;         /**< 是否允许按住后自动重复点击。 */
-    bool         m_autoExclusive;      /**< 是否与同一父控件下的可选中按钮自动互斥。 */
-    int          m_autoRepeatDelay;    /**< 首次自动重复前的延迟，单位为毫秒；由调用方整数保存。 */
-    int          m_autoRepeatInterval; /**< 自动重复间隔，单位为毫秒；由调用方整数保存。 */
-    XTimerId     m_repeatTimer;        /**< 自动重复定时器；无效时为 XTIMER_INVALID_ID，仅供内部使用。 */
-    XTimerId     m_animateTimer;       /**< animateClick 释放定时器；无效时为 XTIMER_INVALID_ID，仅供内部使用。 */
+    int          m_autoRepeatDelay;    /**< 首次自动重复前的延迟，单位为毫秒；由调用方整数原样保存（非正值由定时器侧降级）。 */
+    int          m_autoRepeatInterval; /**< 自动重复间隔，单位为毫秒；由调用方整数原样保存（非正值由定时器侧降级）。 */
     XString*     m_shortcut;           /**< 快捷键文本承载（对标 QAbstractButton::shortcut）；对象拥有，NULL 表示未设置。 */
     void*        m_group;              /**< 所属按钮组不透明承载（对标 QAbstractButton::group）；按钮组体系未建，仅存储位。 */
+    uint8_t      m_checkable : 1;      /**< 是否允许选中；false 时 setChecked/toggle 不改变选中状态。 */
+    uint8_t      m_checked : 1;        /**< 当前选中状态；只有 m_checkable 为 true 时具有按钮语义。 */
+    uint8_t      m_down : 1;           /**< 当前视觉按下状态；由程序化调用或输入事件维护。 */
+    uint8_t      m_pressed : 1;        /**< 鼠标/键盘按压跟踪状态；仅供内部事件处理使用。 */
+    uint8_t      m_autoRepeat : 1;     /**< 是否允许按住后自动重复点击。 */
+    uint8_t      m_autoExclusive : 1;  /**< 是否与同一父控件下的可选中按钮自动互斥。 */
 };
 
 /* ==================== 类初始化与生命周期 ==================== */

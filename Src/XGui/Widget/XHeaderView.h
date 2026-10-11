@@ -37,31 +37,39 @@ XCLASS_DEFINE_EXTEND_END(XHeaderView, XWidget)
 typedef struct XHeaderView
 {
     XWidget   m_base;      /**< 基类成员；必须是第一个。 */
-    int       m_orientation; /**< 方向（0=水平列头，1=垂直行头）。 */
-    int       m_count;     /**< 区间数。 */
-    int       m_defaultSize; /**< 默认区间尺寸（默认 30）。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XVector*  m_sections;  /**< 区间尺寸表（int；对象拥有）。 */
-    bool      m_stretchLast; /**< 末尾拉伸（默认 false）。 */
-    int       m_sectionMovedFrom; /**< moveSection 记录（预留）。 */
     XVector*  m_hidden;    /**< 区间隐藏表（bool；与 m_sections 平行等长；对象拥有）。 */
-    int       m_hiddenCount; /**< 隐藏区间数。 */
     XVector*  m_sectionModes; /**< 单段调整模式表（int；-1=跟随全局模式；与 m_sections 平行等长；对象拥有）。 */
-    bool      m_sectionsClickable; /**< 区间可点击（对标 sectionsClickable）。 */
-    bool      m_sectionsMovable;   /**< 区间可拖动（对标 sectionsMovable）。 */
-    bool      m_sortIndicatorShown; /**< 排序指示器可见（默认 false）。 */
-    int       m_sortIndicatorSection; /**< 排序指示器区间（-1 无）。 */
-    int       m_sortIndicatorOrder;   /**< 排序方向（0=升序，1=降序）。 */
-    bool      m_sortIndicatorClearable; /**< 排序指示器可点击清除（对标 sortIndicatorClearable；缺省 false）。 */
-    int       m_minimumSectionSize; /**< 最小区间尺寸（默认 20；对标 minimumSectionSize）。 */
-    int       m_maximumSectionSize; /**< 最大区间尺寸（默认 1048575；对标 maximumSectionSize）。 */
-    int       m_resizeMode;         /**< 全局调整模式（XHeaderViewResizeMode；默认 Interactive）。 */
-    bool      m_firstSectionMovable; /**< 首段可动状态（实际生效还需 m_sectionsMovable）。 */
-    int       m_defaultAlignment;   /**< 缺省文本对齐（XAlignment 位标志组合）。 */
-    bool      m_highlightSections;  /**< 选中段高亮开关（默认 false）。 */
-    bool      m_cascadingResizes;   /**< 级联调整开关（默认 false；级联行为未接）。 */
-    int       m_resizeContentsPrecision; /**< ResizeToContents 测算精度（默认 1000）。 */
-    int       m_offset;    /**< 表头滚动偏移（像素；仅存储承载，滚动联动未接入）。 */
     void*     m_model;     /**< 关联模型不透明承载指针（借用；表头不拥有、不依赖）。 */
+    /* ---- 4 字节组 ---- */
+    int       m_count;     /**< 区间数。 */
+    int       m_hiddenCount; /**< 隐藏区间数（≤ m_count）。 */
+    int       m_minimumSectionSize; /**< 最小区间尺寸（默认 20；对标 minimumSectionSize；可被
+                                         *   setMaximumSectionSize 抬到 1048575，须 32 位承载）。 */
+    int       m_maximumSectionSize; /**< 最大区间尺寸（默认 1048575；对标 maximumSectionSize）。 */
+    int       m_offset;    /**< 表头滚动偏移（像素；仅存储承载，滚动联动未接入）。 */
+    int       m_defaultAlignment;   /**< 缺省文本对齐（XAlignment 位标志组合）。 */
+    /* ---- 2 字节组 ---- */
+    int16_t   m_defaultSize; /**< 默认区间尺寸（默认 30）。 */
+    int16_t   m_sectionMovedFrom; /**< moveSection 记录（预留；-1=无）。 */
+    int16_t   m_sortIndicatorSection; /**< 排序指示器区间（-1 无）。 */
+    uint16_t  m_resizeContentsPrecision; /**< ResizeToContents 测算精度（默认 1000；setter
+                                          *   原样存取，>65535 值会被截断——实测调用方
+                                          *   仅用默认值/小阈值）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t   m_orientation; /**< 方向（0=水平列头，1=垂直行头；init 钳位 0/1）。 */
+    uint8_t   m_sortIndicatorOrder;   /**< 排序方向（0=升序，1=降序）。 */
+    uint8_t   m_resizeMode;         /**< 全局调整模式（XHeaderViewResizeMode；默认 Interactive）。 */
+    /* ---- 位域组（8 个布尔打包 1 字节） ---- */
+    uint8_t   m_stretchLast : 1; /**< 末尾拉伸（默认 false）。 */
+    uint8_t   m_sectionsClickable : 1; /**< 区间可点击（对标 sectionsClickable）。 */
+    uint8_t   m_sectionsMovable : 1;   /**< 区间可拖动（对标 sectionsMovable）。 */
+    uint8_t   m_sortIndicatorShown : 1; /**< 排序指示器可见（默认 false）。 */
+    uint8_t   m_sortIndicatorClearable : 1; /**< 排序指示器可点击清除（对标 sortIndicatorClearable；缺省 false）。 */
+    uint8_t   m_firstSectionMovable : 1; /**< 首段可动状态（实际生效还需 m_sectionsMovable）。 */
+    uint8_t   m_highlightSections : 1;  /**< 选中段高亮开关（默认 false）。 */
+    uint8_t   m_cascadingResizes : 1;   /**< 级联调整开关（默认 false；级联行为未接）。 */
 } XHeaderView;
 
 /** @brief 排序方向（对标 Qt::SortOrder，数值一致）。 */

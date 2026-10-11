@@ -46,7 +46,7 @@ static void VXTableView_move(XTableView* self, XTableView* other);
  * @note 只增长不收缩：模型缩小时保留原状态，模型恢复后隐藏态不丢失
  *       （对标 Qt 分段状态与模型尺寸解耦）；deinit/copy/move 全路径
  *       另行接管数组生命周期。 */
-static bool xtv_ensureBoolTable(bool** table, int* count, int need)
+static bool xtv_ensureBoolTable(bool** table, int16_t* count, int need)
 {
     bool* grown;
     if (!table || !count) return false;

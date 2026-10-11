@@ -113,34 +113,35 @@ typedef struct XComboBox
     XString** m_itemData;              /**< 项数据数组（平行；对象拥有）。 */
     XString** m_itemIcons;             /**< 项图标路径数组（平行；对象拥有）。 */
     XCompleter* m_completer;           /**< 补全器（借用；可为 NULL）。 */
-    int m_iconSize;                    /**< 图标尺寸（方边像素；默认 16）。 */
+    XLineEdit* m_lineEdit;             /**< 可编辑模式的内嵌编辑框（拥有）。 */
+    XListView* m_popupView;            /**< 弹出列表视图（对象拥有；懒创建；对标 view）。 */
+    XAbstractItemModel* m_model;       /**< 条目数据模型（对象拥有；懒创建并随条目同步）。 */
+    XString* m_placeholderText;        /**< 字符串字段（对象拥有）。 */
+    void*   m_validator;               /**< 校验器不透明指针（XValidator 体系未建，仅承载）。 */
+    void*   m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载）。 */
+    XTimerId m_grabTimer;              /**< 弹出后延迟执行平台鼠标抓取的定时器；无效时为
+                                            XTIMER_INVALID_ID，仅供内部使用。 */
     int     m_itemCount;               /**< 当前项数。 */
     int     m_itemCapacity;            /**< 数组容量。 */
     int     m_currentIndex;            /**< 当前项索引（-1 无）。 */
     int     m_maxCount;                /**< 最大项数（默认 2147483647 截为可用上限）。 */
     int     m_maxVisibleItems;         /**< 弹出最大可见项数（默认 10）。 */
-    bool    m_duplicatesEnabled;       /**< 允许重复项。 */
-    bool    m_editable;                /**< 可编辑模式。 */
-    XLineEdit* m_lineEdit;             /**< 可编辑模式的内嵌编辑框（拥有）。 */
-    bool    m_completerMode;           /**< 可编辑时启用前缀补全过滤（对标内建
-                                            completer 的 PopupCompletion 子集）。 */
-    bool    m_completionActive;        /**< 弹层当前处于补全过滤态（内部）。 */
-    int     m_completionRow;           /**< 补全弹层当前高亮行（内部；-1 无）。 */
-    int     m_insertPolicy;            /**< 插入策略。 */
-    int     m_sizeAdjustPolicy;        /**< 尺寸自适应策略。 */
     int     m_minimumContentsLength;   /**< 最小内容字符数。 */
-    bool    m_frame;                   /**< 边框开关（默认 true）。 */    XString* m_placeholderText;             /**< 字符串字段（对象拥有）。 */
-    bool    m_popupVisible;            /**< 弹出可见（内部）。 */
-    int     m_savedHeight;             /**< 弹出前高度（展开/收起恢复）。 */
-    XListView* m_popupView;            /**< 弹出列表视图（对象拥有；懒创建；对标 view）。 */
-    XAbstractItemModel* m_model;       /**< 条目数据模型（对象拥有；懒创建并随条目同步）。 */
-    int     m_modelColumn;             /**< 模型显示列（对标 modelColumn）。 */
+    int     m_modelColumn;             /**< 模型显示列（对标 modelColumn；setter 原样保存）。 */
     int     m_rootRow;                 /**< 根索引行（Qt QModelIndex 的平铺简化承载）。 */
     int     m_rootCol;                 /**< 根索引列。 */
-    void*   m_validator;               /**< 校验器不透明指针（XValidator 体系未建，仅承载）。 */
-    void*   m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载）。 */
-    XTimerId m_grabTimer;              /**< 弹出后延迟执行平台鼠标抓取的定时器；无效时为
-                                            XTIMER_INVALID_ID，仅供内部使用。 */
+    int     m_savedHeight;             /**< 弹出前高度（展开/收起恢复）。 */
+    int16_t m_completionRow;           /**< 补全弹层当前高亮行（内部；-1 无）。 */
+    int16_t m_iconSize;                /**< 图标尺寸（方边像素；默认 16）。 */
+    uint8_t m_insertPolicy;            /**< 插入策略（XComboBoxInsertPolicy 0..6）。 */
+    uint8_t m_sizeAdjustPolicy;        /**< 尺寸自适应策略（XComboBoxSizeAdjustPolicy 0..2）。 */
+    uint8_t m_duplicatesEnabled : 1;   /**< 允许重复项。 */
+    uint8_t m_editable : 1;            /**< 可编辑模式。 */
+    uint8_t m_completerMode : 1;       /**< 可编辑时启用前缀补全过滤（对标内建
+                                            completer 的 PopupCompletion 子集）。 */
+    uint8_t m_completionActive : 1;    /**< 弹层当前处于补全过滤态（内部）。 */
+    uint8_t m_frame : 1;               /**< 边框开关（默认 true）。 */
+    uint8_t m_popupVisible : 1;        /**< 弹出可见（内部）。 */
 } XComboBox;
 
 /* ==================== 生命周期 ==================== */

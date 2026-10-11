@@ -54,17 +54,20 @@ XCLASS_DEFINE_END(XSpinBox)
 typedef struct XSpinBox
 {
     XAbstractSpinBox m_base;         /**< 基类成员；必须是第一个。 */
-    int     m_min;                   /**< 范围下限。 */
-    int     m_max;                   /**< 范围上限。 */
-    int     m_value;                 /**< 当前值。 */
-    int     m_singleStep;            /**< 单步。 */
-    int     m_stepType;              /**< 步进类型（XAbstractSpinBoxStepType）。 */
-    int     m_displayIntegerBase;    /**< 显示进制（默认 10）。 */
     XString* m_prefix;               /**< 前缀（对象拥有；NULL=空）。 */
     XString* m_suffix;               /**< 后缀（对象拥有；NULL=空）。 */
-    bool    m_activeUp;              /**< 上按钮为活动子控件（对标 activeSubControls）。 */
-    bool    m_activeDown;            /**< 下按钮为活动子控件。 */
-    bool    m_textDirty;             /**< 文本编辑中标志。 */
+    int     m_min;                   /**< 范围下限（数值域全 int，保留）。 */
+    int     m_max;                   /**< 范围上限（数值域全 int，保留）。 */
+    int     m_value;                 /**< 当前值（数值域全 int，保留）。 */
+    int     m_singleStep;            /**< 单步（可任意 int，保留）。 */
+    int     m_displayIntegerBase;    /**< 显示进制（默认 10；setter 往返任意值，保留）。 */
+    /* [内存治理 2026-10-11] 标志位字：3 个 bool + 步进类型枚举
+       （XAbstractSpinBoxStepType 0..1）合并 1 字。 */
+    uint32_t m_activeUp : 1;         /**< 上按钮为活动子控件（对标 activeSubControls）。 */
+    uint32_t m_activeDown : 1;       /**< 下按钮为活动子控件。 */
+    uint32_t m_textDirty : 1;        /**< 文本编辑中标志。 */
+    uint32_t m_stepType : 2;         /**< 步进类型（XAbstractSpinBoxStepType 0..1）。 */
+    uint32_t m_spinBoxFlagsUnused : 27; /**< 保留位。 */
 } XSpinBox;
 
 /* ==================== 生命周期 ==================== */

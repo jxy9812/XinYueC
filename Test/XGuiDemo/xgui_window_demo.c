@@ -4537,6 +4537,7 @@ int xgui_demo_main(int argc, char* argv[])
     bool benchmarkMaximized;
     const char* screenshotPath;
     demo_log_markBase(); /* 诊断时间戳基准：此后每行日志前缀 [秒.毫秒]。 */
+    demo_log_markBase(); /* 诊断时间戳基准：此后每行日志前缀 [秒.毫秒]。 */
     const char* styleOpt;
     int screenshotPage;
     int screenshotTab;

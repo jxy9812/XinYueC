@@ -58,27 +58,28 @@ typedef struct XCalendarWidget
 {
     XWidget m_base;        /**< 基类成员；必须是第一个。 */
     XDate m_selected;      /**< 选中日期。 */
-    int m_shownYear;       /**< 显示年。 */
-    int m_shownMonth;      /**< 显示月（1..12）。 */
     XDate m_min;           /**< 最小日期。 */
     XDate m_max;           /**< 最大日期。 */
-    bool m_minSet;         /**< 最小日期已设置。 */
-    bool m_maxSet;         /**< 最大日期已设置。 */
+    struct XLineEdit* m_yearEdit; /**< 年份就地编辑器（对标 Qt yearEdit 的
+                                       真实编辑控件：WA14+焦点接入输入法/
+                                       屏幕键盘链路；懒创建、归属本控件，
+                                       deinit 释放；可见即编辑态）。 */
+    int m_shownYear;       /**< 显示年。 */
     int m_firstDayOfWeek;  /**< 每周首日（1=Monday..7=Sunday）。 */
-    bool m_gridVisible;    /**< 网格线（默认 false）。 */
-    bool m_navBarVisible;  /**< 导航栏（默认 true）。 */
     int m_selectionMode;   /**< 选择模式。 */
-    bool m_dateEditEnabled; /**< 日期编辑框（默认 false；存储）。 */
-    bool m_showTodayDate;   /**< 今日按钮（默认 true）。 */
     int m_verticalHeaderFormat; /**< 垂直表头格式（0=ISO 周数，1=无）。 */
     int m_headerTextFormat; /**< 表头文本格式位（0=默认；预留 QTextCharFormat 简化）。 */
     int m_weekdayTextFormat; /**< 周几文本格式位（预留）。 */
     int m_horizontalHeaderFormat; /**< 水平表头格式（对标 HorizontalHeaderFormat；默认 2=ShortDayNames）。 */
     int m_dateEditAcceptDelay;  /**< 日期编辑确认延迟 ms（对标 dateEditAcceptDelay；默认 1500；仅存储）。 */
-    struct XLineEdit* m_yearEdit; /**< 年份就地编辑器（对标 Qt yearEdit 的
-                                       真实编辑控件：WA14+焦点接入输入法/
-                                       屏幕键盘链路；懒创建、归属本控件，
-                                       deinit 释放；可见即编辑态）。 */
+    int m_shownMonth;      /**< 显示月（1..12；setCurrentPage 内钳位到 1..12；
+                                    注意 XVar 宏按地址取值，保持 int 供信号参数直接借用）。 */
+    uint8_t m_minSet : 1;  /**< 最小日期已设置。 */
+    uint8_t m_maxSet : 1;  /**< 最大日期已设置。 */
+    uint8_t m_gridVisible : 1; /**< 网格线（默认 false）。 */
+    uint8_t m_navBarVisible : 1; /**< 导航栏（默认 true）。 */
+    uint8_t m_dateEditEnabled : 1; /**< 日期编辑框（默认 false；存储）。 */
+    uint8_t m_showTodayDate : 1;  /**< 今日按钮（默认 true）。 */
 } XCalendarWidget;
 
 /** @brief X日历控件classinit（对标 Qt 同名接口）。

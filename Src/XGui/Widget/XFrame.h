@@ -82,8 +82,8 @@ typedef struct XFrameStyleOption
 {
     XPalette           m_palette;      /**< 绘制调色板（当前取 XFrame 的生效调色板）。 */
     XRect              m_rect;         /**< 边框绘制矩形（frameRect()）。 */
-    XFrameShape        m_frameShape;   /**< 形状。 */
-    XFrameShadow       m_frameShadow;  /**< 阴影。 */
+    uint8_t m_frameShape;   /**< 形状。 */
+    uint8_t m_frameShadow;  /**< 阴影。 */
     int                m_lineWidth;    /**< 线宽。 */
     int                m_midLineWidth; /**< 中间线宽。 */
     bool               m_raised;       /**< 置真表示 Raised 阴影态。 */

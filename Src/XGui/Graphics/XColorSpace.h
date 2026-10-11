@@ -106,13 +106,13 @@ typedef struct XColorSpacePrimariesData
  */
 typedef struct XColorSpace
 {
-    XColorSpacePrimaries m_primaries; /**< 原色集合。 */
-    XColorSpaceTransferFunction m_transferFunction; /**< 传递函数。 */
+    uint8_t m_primaries; /**< 原色集合。 */
+    uint8_t m_transferFunction; /**< 传递函数。 */
     float m_gamma; /**< Gamma 传递函数的伽马值；其他函数为约定近似值或 0。 */
     bool m_valid; /**< 是否为有效色彩空间。 */
-    XColorSpaceNamedColorSpace m_namedColorSpace; /**< 命名空间；未知时为 0。 */
-    XColorSpaceTransformModel m_transformModel; /**< 色彩变换模型。 */
-    XColorSpaceColorModel m_colorModel; /**< RGB、Gray、CMYK 或未知模型。 */
+    uint8_t m_namedColorSpace; /**< 命名空间；未知时为 0。 */
+    uint8_t m_transformModel; /**< 色彩变换模型。 */
+    uint8_t m_colorModel; /**< RGB、Gray、CMYK 或未知模型。 */
     XColorSpacePrimariesData m_primariesData; /**< 自定义或预定义原色坐标。 */
     char m_description[64]; /**< 自动识别或预定义的短描述；超长内容会被截断。 */
     char m_userDescription[64]; /**< 用户设置的短描述；为空时回退到自动描述。 */

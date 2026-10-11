@@ -176,15 +176,6 @@ typedef struct XLabel
 {
     XFrame                          m_base;      /**< 基类成员；必须是第一个。 */
     XString*                        m_text;      /**< 原始文本（拥有）。 */
-    XLabelTextFormat                m_textFormat;/**< 用户文本格式。 */
-    XLabelTextFormat                m_effectiveTextFormat; /**< 生效文本格式。 */
-    XAlignments                     m_alignment; /**< 内容对齐。 */
-    bool                            m_isTextLabel;/**< 是否文本标签。 */
-    bool                            m_wordWrap;  /**< 自动换行。 */
-    bool                            m_scaledContents; /**< 内容缩放。 */
-    bool                            m_openExternalLinks; /**< 外链打开标志。 */
-    int                             m_indent;    /**< 文本缩进（-1 自动）。 */
-    int                             m_margin;    /**< 内容边距。 */
     XLabelTextInteractionFlags      m_textInteractionFlags; /**< 交互标志。 */
     XPixmap                         m_pixmap;    /**< 像素图（值类型）。 */
     XPicture*                       m_picture;   /**< 绘图记录（拥有）。 */
@@ -192,13 +183,27 @@ typedef struct XLabel
     XWidget*                        m_buddy;     /**< 伙伴控件（借用）。 */
     XString*                        m_displayText;/**< 显示文本（拥有）。 */
     XLabelLinkRange*                m_links;     /**< 链接范围数组（拥有）。 */
-    int                             m_linkCount; /**< 链接数量。 */
-    int                             m_linkCapacity; /**< 链接数组容量。 */
-    int                             m_pressedLink;  /**< 按下链接索引（-1 无；壳级编排状态）。 */
-    bool                            m_textSelecting; /**< 鼠标拖选进行中（壳级编排状态）。 */
     XTextControl*                   m_textControl; /**< 文本控制器（拥有；选区/键盘/链接交互承载）。 */
     XLabelResourceProvider           m_resourceProvider;       /**< 资源回调（借用）。 */
     void*                           m_resourceProviderUserData;/**< 资源回调上下文（借用）。 */
+    XAlignments                     m_alignment; /**< 内容对齐。 */
+    /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
+       5 个 bool + 2 个格式枚举并入一个 uint32_t 字——原 5×bool + 2×enum
+       分散占 13B（含对齐洞），合并后 1 字；短整型值（indent/margin/link
+       系）以 int16_t 紧随其后填满字尾填充。 */
+    uint32_t m_textFormat : 2;          /**< 用户文本格式。 */
+    uint32_t m_effectiveTextFormat : 2; /**< 生效文本格式。 */
+    uint32_t m_isTextLabel : 1;         /**< 是否文本标签。 */
+    uint32_t m_wordWrap : 1;            /**< 自动换行。 */
+    uint32_t m_scaledContents : 1;      /**< 内容缩放。 */
+    uint32_t m_openExternalLinks : 1;   /**< 外链打开标志。 */
+    uint32_t m_textSelecting : 1;       /**< 鼠标拖选进行中（壳级编排状态）。 */
+    uint32_t m_labelFlagsUnused : 23;   /**< 保留位（对标 m_unused）。 */
+    int16_t m_indent;                   /**< 文本缩进（-1 自动；0..255）。 */
+    int16_t m_margin;                   /**< 内容边距（0..255 px）。 */
+    int16_t m_linkCount;                /**< 链接数量。 */
+    int16_t m_linkCapacity;             /**< 链接数组容量。 */
+    int16_t m_pressedLink;              /**< 按下链接索引（-1 无；壳级编排状态）。 */
 } XLabel;
 
 /* ==================== 生命周期（对标 QLabel 构造/析构） ==================== */

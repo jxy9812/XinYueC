@@ -120,6 +120,7 @@ typedef struct XMessageBox
                                   *   m_modal/m_inExec/m_sizeGripEnabled 八字节会
                                   *   按别名覆盖 m_textLabel 与 m_buttonBox 低
                                   *   字节，accept/done 后按钮盒变野指针。 */
+    /* ---- 指针组（8 字节对齐，置顶；#if 条件成员随块整体参与排布） ---- */
     XLabel* m_textLabel;         /**< 消息文本标签（拥有；对标 qt_msgbox_label）。 */
 #if XDIALOGBUTTONBOX_ON
     XDialogButtonBox* m_buttonBox; /**< 按钮盒（拥有；对标 qt_msgbox_buttonbox）。 */
@@ -132,14 +133,9 @@ typedef struct XMessageBox
 #endif
     XAbstractButton* m_detailsButton; /**< Show Details... 切换按钮（拥有；
                                   *   设详细文本时自动追加，对标 DetailButton）。 */
-    bool m_detailsVisible;       /**< 详细区展开态（Show Details... 点击切换）。 */
-    bool m_autoAddOkButton;      /**< 显示时零按钮自动补 Ok（对标 autoAddOkButton，
-                                  *   addButton/setStandardButtons 清除）。 */
     XString* m_text;            /**< 消息文本缓存（对象拥有；对标 text）。 */
     XString* m_detailedText;    /**< 详细文本（对象拥有；对标 detailedText）。 */
     XString* m_informativeText; /**< 补充文本（对象拥有；对标 informativeText）。 */
-    int m_icon;                  /**< 图标（XMessageBoxIcon）。 */
-    XMessageBoxOptions m_options; /**< 选项位集（对标 options）。 */
     XAbstractButton* m_clicked;  /**< 最近点击的按钮（exec 结果）。 */
     XAbstractButton* m_defaultButton; /**< 默认按钮（借用；对标 defaultButton）。 */
     XAbstractButton* m_escapeButton;  /**< 转义按钮（借用；对标 escapeButton）。 */
@@ -150,7 +146,15 @@ typedef struct XMessageBox
     XObject* m_openReceiver;     /**< open_2 记录的接收对象（关闭时
                                   *   自动断开；对标 receiverToDisconnectOnClose）。 */
     XSlotFunc1 m_openMember;     /**< open_2 记录的槽函数。 */
-    bool m_openButtonPayload;    /**< open_2 连接的信号类型
+    /* ---- 4 字节组 ---- */
+    XMessageBoxOptions m_options; /**< 选项位集（对标 options）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_icon;              /**< 图标（XMessageBoxIcon，0..4）。 */
+    /* ---- 位域组（3 个布尔打包 1 字节） ---- */
+    uint8_t m_detailsVisible : 1; /**< 详细区展开态（Show Details... 点击切换）。 */
+    uint8_t m_autoAddOkButton : 1; /**< 显示时零按钮自动补 Ok（对标 autoAddOkButton，
+                                  *   addButton/setStandardButtons 清除）。 */
+    uint8_t m_openButtonPayload : 1; /**< open_2 连接的信号类型
                                   *   （true=buttonClicked，false=finished）。 */
 } XMessageBox;
 

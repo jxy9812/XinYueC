@@ -187,37 +187,27 @@ static void XImageColorProfileResource_unref(XImageColorProfileResource* resourc
 /**
  * @brief      XImage 图像数据私有结构体
  * @note       使用引用计数管理，支持写时复制（COW）
+ * @note       内存压缩：按对齐重排（指针/容器/内嵌大结构 → int/float 组 →
+ *             uint8/bool 尾组），m_depth 收窄为 uint8_t（赋值仅
+ *             XImageFormat_bitDepth 的 1..128 且经 >0 校验）、m_format 收窄
+ *             为 uint8_t（赋值均先经 >Invalid && <NImageFormats(=37) 校验），
+ *             结构体 1680→1664 字节。m_width/height/dpm/offset/colorCount
+ *             为任意 int32 契约值（PNG oFFs、setDotsPerMeterX 等透传），不收窄。
  */
 typedef struct XImageData
 {
-    XAtomic_Int32  m_refCount;        /**< 引用计数 */
-    int              m_width;            /**< 图像宽度 */
-    int              m_height;           /**< 图像高度 */
-    int              m_depth;            /**< 位深度 */
-    int              m_bytesPerLine;     /**< 每行字节数 */
-    XImageFormat     m_format;           /**< 像素格式 */
-    XColorSpace      m_colorSpace;       /**< 色彩空间描述 */
     XImageColorProfileResource* m_colorProfile; /**< ICC/LUT 不可变资源侧车 */
-    int              m_colorCount;       /**< 颜色表颜色数量 */
     uint32_t*        m_colorTable;       /**< 颜色表指针 */
-    int              m_dpmX;             /**< X 方向分辨率（点/米） */
-    int              m_dpmY;             /**< Y 方向分辨率（点/米） */
-    float            m_devicePixelRatio; /**< 设备像素比 */
-    int              m_offsetX;          /**< X 偏移 */
-    int              m_offsetY;          /**< Y 偏移 */
     uint8_t*         m_data;             /**< 像素数据指针 */
-    bool             m_ownsData;         /**< 是否拥有数据所有权 */
     void (*m_cleanupFunc)(void*);        /**< 清理回调函数 */
     void*            m_cleanupInfo;      /**< 清理回调参数 */
     int64_t          m_cacheKey;         /**< 缓存键值 */
-    uint32_t         m_contentVersion;   /**< 内容版本号（P-A，2026-09-25：
-                                           GPU 纹理身份缓存键；随写点经
-                                           markDirty 派生新值，初值取全局
-                                           序号保证跨数据生命周期不复用）。 */
-    int              m_serialNumber;     /**< 序列号（用于生成缓存键） */
     XStringList      m_textKeys;         /**< 文本元数据键列表 */
     XStringList      m_textValues;       /**< 文本元数据值列表 */
     XString          m_textAll;          /**< 空键聚合文本缓存（对标 text("") 的稳定返回） */
+    XColorSpace      m_colorSpace;       /**< 色彩空间描述（≈1240B，含 1KB ICC
+                                              透明承载，属 ≥64B 值类型成员，
+                                              收敛需专门设计，本次不动）。 */
 #if XPAINTDEVICE_ON
     XPaintDevice     m_paintDevice;      /**< 绘制设备描述（内嵌，供 paintDevice() 查询）。 */
     struct XImage*   m_deviceShell;      /**< §8.0g10 begin 泛化：惰性分配的堆上
@@ -227,6 +217,24 @@ typedef struct XImageData
                                               栈包装不可行（ASan stack-use-after-
                                               return 实证）；随数据 unref 释放。 */
 #endif
+    XAtomic_Int32    m_refCount;         /**< 引用计数 */
+    int              m_width;            /**< 图像宽度 */
+    int              m_height;           /**< 图像高度 */
+    int              m_bytesPerLine;     /**< 每行字节数 */
+    int              m_colorCount;       /**< 颜色表颜色数量 */
+    int              m_dpmX;             /**< X 方向分辨率（点/米） */
+    int              m_dpmY;             /**< Y 方向分辨率（点/米） */
+    float            m_devicePixelRatio; /**< 设备像素比 */
+    int              m_offsetX;          /**< X 偏移 */
+    int              m_offsetY;          /**< Y 偏移 */
+    uint32_t         m_contentVersion;   /**< 内容版本号（P-A，2026-09-25：
+                                           GPU 纹理身份缓存键；随写点经
+                                           markDirty 派生新值，初值取全局
+                                           序号保证跨数据生命周期不复用）。 */
+    int              m_serialNumber;     /**< 序列号（用于生成缓存键） */
+    uint8_t          m_depth;            /**< 位深度（1..128）。 */
+    uint8_t          m_format;           /**< 像素格式（XImageFormat，1..36）。 */
+    bool             m_ownsData;         /**< 是否拥有数据所有权 */
 }XImageData;
 
 static XAtomic_Uint32 g_imageSerialCounter;  /**< 全局序列号计数器 */

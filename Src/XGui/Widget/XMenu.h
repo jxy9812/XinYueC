@@ -63,6 +63,7 @@ XCLASS_DEFINE_EXTEND_END(XMenu, XWidget)
 typedef struct XMenu
 {
     XWidget      m_base;                  /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
+    /* ---- 指针/句柄组（8 字节对齐，置顶） ---- */
     XString*     m_title;                 /**< 菜单标题（对标 QMenu::title）；对象拥有。 */
     XString*     m_icon;                  /**< 菜单图标路径（对标 QMenu::icon）；对象拥有；可为 NULL。 */
     XVector*     m_actions;               /**< 动作列表（XAction*，对标 QMenu::actions）；对象拥有。 */
@@ -70,16 +71,19 @@ typedef struct XMenu
     XMenu*       m_parentMenu;            /**< 父菜单借用指针；NULL 表示顶层菜单。 */
     XAction*     m_defaultAction;         /**< 默认动作（对标 QMenu::defaultAction）；借用指针。 */
     XAction*     m_activeAction;          /**< 当前高亮动作（对标 QMenu::activeAction）；借用指针。 */
-    bool         m_popupActive;           /**< 弹出窗口是否打开；仅供内部使用。 */
     XAction*     m_execResult;            /**< exec() 返回的被选动作；仅供内部使用。 */
-    XTimerId     m_grabTimer;             /**< 弹出后延迟执行平台鼠标抓取的定时器；仅供内部使用。 */
-    bool         m_separatorsCollapsible; /**< 相邻分隔条是否合并（对标 QMenu::separatorsCollapsible）。 */
-    bool         m_toolTipsVisible;       /**< 是否显示动作工具提示（对标 QMenu::toolTipsVisible）。 */
-    bool         m_tearOffEnabled;        /**< 是否允许撕离（对标 QMenu::tearOffEnabled）；仅存储位。 */
-    bool         m_tearOffMenuVisible;    /**< 撕离菜单是否可见（对标 isTearOffMenuVisible）。 */
     XWidget*     m_noReplayFor;           /**< 不重放点击的目标控件（对标 setNoReplayFor）；借用。 */
     void*        m_platformMenu;          /**< 平台菜单句柄（对标 setPlatformMenu）；不透明。 */
-    int          m_actionHeight;          /**< 每个动作条目的渲染高度；仅供内部使用。 */
+    XTimerId     m_grabTimer;             /**< 弹出后延迟执行平台鼠标抓取的定时器；仅供内部使用。 */
+    /* ---- 2 字节组 ---- */
+    int16_t      m_actionHeight;          /**< 每个动作条目的渲染高度（像素，
+                                               初值 20）；仅供内部使用。 */
+    /* ---- 位域组（5 个布尔打包 1 字节） ---- */
+    uint8_t      m_popupActive : 1;       /**< 弹出窗口是否打开；仅供内部使用。 */
+    uint8_t      m_separatorsCollapsible : 1; /**< 相邻分隔条是否合并（对标 QMenu::separatorsCollapsible）。 */
+    uint8_t      m_toolTipsVisible : 1;   /**< 是否显示动作工具提示（对标 QMenu::toolTipsVisible）。 */
+    uint8_t      m_tearOffEnabled : 1;    /**< 是否允许撕离（对标 QMenu::tearOffEnabled）；仅存储位。 */
+    uint8_t      m_tearOffMenuVisible : 1;/**< 撕离菜单是否可见（对标 isTearOffMenuVisible）。 */
 } XMenu;
 
 /* ==================== 类初始化与生命周期 ==================== */

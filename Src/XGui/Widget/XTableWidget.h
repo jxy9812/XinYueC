@@ -40,10 +40,13 @@ XCLASS_DEFINE_EXTEND_END(XTableWidget, XTableView)
 typedef struct XTableWidgetItem
 {
     XString* text;            /**< 显示文本（对象拥有）。 */
-    bool     selected;        /**< 是否选中。 */
     uint32_t foreground;      /**< 前景色 ARGB；0=使用调色板默认。 */
     uint32_t background;      /**< 背景色 ARGB；0=使用调色板默认。 */
-    int      checkState;      /**< 勾选态：0 未选/1 部分/2 选中。 */
+    /* [内存治理 2026-10-11] 标志位字：selected 并入 1 位；勾选态
+       0..2（XItemCheckState）收 uint8_t。 */
+    uint32_t selected : 1;    /**< 是否选中。 */
+    uint32_t itemFlagsUnused : 31; /**< 保留位。 */
+    uint8_t checkState;       /**< 勾选态：0 未选/1 部分/2 选中。 */
 } XTableWidgetItem;
 
 /**
@@ -54,9 +57,9 @@ typedef struct XTableWidgetItem
  */
 typedef struct XTableWidgetCellWidget
 {
-    int      row;     /**< 挂载行号。 */
-    int      column;  /**< 挂载列号。 */
     XWidget* widget;  /**< 借用的部件指针（所有权归调用方）。 */
+    int16_t row;     /**< 挂载行号。 */
+    int16_t column;  /**< 挂载列号。 */
 } XTableWidgetCellWidget;
 
 /**
@@ -68,25 +71,30 @@ typedef struct XTableWidgetCellWidget
 typedef struct XTableWidget
 {
     XTableView m_base;            /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
     XTableWidgetItem** m_cells;   /**< 行指针数组（行×列单元格）。 */
-    int m_rows;                   /**< 当前行数。 */
-    int m_columns;                /**< 当前列数。 */
-    int m_rowCapacity;            /**< 行指针数组容量。 */
     XString** m_hHeaders;         /**< 水平表头标签（对象拥有；下标=列号）。 */
     XString** m_vHeaders;         /**< 垂直表头标签（对象拥有；下标=行号）。 */
-    int m_vHeaderCapacity;        /**< 垂直表头容量。 */
-    int m_headerHeight;           /**< 水平表头高度（像素）。 */
-    int m_headerWidth;            /**< 垂直表头宽度（像素）。 */
-    int m_selectionRow;           /**< 选中单元格行；-1=无（用于 itemSelectionChanged）。 */
-    int m_selectionColumn;        /**< 选中单元格列；-1=无。 */
-    int m_enteredRow;             /**< 上次发射 cellEntered 的行；-2=尚未进入任何单元格。 */
-    int m_enteredColumn;          /**< 上次发射 cellEntered 的列；-2=尚未进入。 */
-    bool m_selectionChangedPending; /**< 选区等待发射 itemSelectionChanged。 */
     XAbstractItemModel* m_model;   /**< 内建数据模型桥（对象拥有；与单元格同步）。 */
     const XTableWidgetItem* m_itemPrototype; /**< 原型单元格（借用；不透明记录，见 setItemPrototype）。 */
     XTableWidgetCellWidget* m_cellWidgets;  /**< 单元格挂载部件条目数组（部件借用，不负责释放）。 */
-    int m_cellWidgetCount;         /**< 挂载条目数。 */
-    int m_cellWidgetCapacity;      /**< 挂载条目数组容量。 */
+    /* [内存治理 2026-10-11] 短整型值：行列数/容量/表头 px 收窄；
+       selection/entered 依赖 -1/-2 哨兵语义，用 int16_t 保留符号。
+       [内存治理 2026-10-11] 标志位字：选区待发射开关 1 位。 */
+    int16_t m_rows;               /**< 当前行数。 */
+    int16_t m_columns;            /**< 当前列数。 */
+    int16_t m_rowCapacity;        /**< 行指针数组容量。 */
+    int16_t m_vHeaderCapacity;    /**< 垂直表头容量。 */
+    int16_t m_selectionRow;       /**< 选中单元格行；-1=无（用于 itemSelectionChanged）。 */
+    int16_t m_selectionColumn;    /**< 选中单元格列；-1=无。 */
+    int16_t m_enteredRow;         /**< 上次发射 cellEntered 的行；-2=尚未进入任何单元格。 */
+    int16_t m_enteredColumn;      /**< 上次发射 cellEntered 的列；-2=尚未进入。 */
+    int16_t m_cellWidgetCount;    /**< 挂载条目数。 */
+    int16_t m_cellWidgetCapacity; /**< 挂载条目数组容量。 */
+    uint16_t m_headerHeight;      /**< 水平表头高度（像素）。 */
+    uint16_t m_headerWidth;       /**< 垂直表头宽度（像素）。 */
+    uint32_t m_selectionChangedPending : 1; /**< 选区等待发射 itemSelectionChanged。 */
+    uint32_t m_tableWidgetFlagsUnused : 31; /**< 保留位。 */
 } XTableWidget;
 
 XVtable* XTableWidget_class_init(void);

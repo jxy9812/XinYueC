@@ -76,10 +76,10 @@ typedef enum XCheckState
 typedef struct XCheckBox
 {
     XAbstractButton m_base;           /**< XAbstractButton 基类成员；必须是第一个。 */
-    bool            m_tristate;       /**< 是否允许三态（部分选中）。 */
-    bool            m_noChange;       /**< 三态中间态标志（对标 QCheckBoxPrivate::noChange）。 */
-    bool            m_blockRefresh;   /**< setCheckState 期间抑制 checkStateSet 发信号。 */
-    XCheckState     m_publishedState; /**< 已发布的选中状态（信号去重）。 */
+    uint8_t         m_publishedState; /**< 已发布的选中状态（XCheckState 0..2；信号去重）。 */
+    uint8_t         m_tristate : 1;   /**< 是否允许三态（部分选中）。 */
+    uint8_t         m_noChange : 1;   /**< 三态中间态标志（对标 QCheckBoxPrivate::noChange）。 */
+    uint8_t         m_blockRefresh : 1; /**< setCheckState 期间抑制 checkStateSet 发信号。 */
 } XCheckBox;
 
 /* ==================== 生命周期（对标 QCheckBox 构造/析构） ==================== */

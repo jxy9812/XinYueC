@@ -35,20 +35,28 @@ XCLASS_DEFINE_EXTEND_END(XBarSet, XObject)
 typedef struct XBarSet
 {
     XObject m_base;               /**< 基类成员；必须是第一个。 */
+
+    /* ---- 8 字节对齐组（对齐分组前移；成员访问一律按名，无
+     *      位置初始化/offsetof 依赖） ---- */
     XString* m_label;             /**< 柱组标签（对象拥有；默认空）。 */
     double* m_values;             /**< 数值数组（堆；默认空）。 */
-    int m_count;                  /**< 数值个数。 */
-    int m_capacity;               /**< 数值容量。 */
     int* m_selectedBars;          /**< 选中下标集合（升序；堆；默认空）。 */
-    int m_selectedCount;          /**< 选中个数。 */
-    int m_selectedCapacity;       /**< 选中集合容量。 */
-    uint32_t m_penColor;          /**< 画笔颜色（ARGB；0=主题默认）。 */
+    XString* m_labelFontFamily;   /**< 标签字体族（对象拥有；默认空）。 */
     double m_penWidth;            /**< 画笔线宽（像素；默认 2）。 */
+
+    /* ---- 4 字节对齐组 ---- */
+    uint32_t m_penColor;          /**< 画笔颜色（ARGB；0=主题默认）。 */
     uint32_t m_brushColor;        /**< 画刷填充颜色（ARGB；0=主题默认）。 */
     uint32_t m_labelBrushColor;   /**< 标签画刷颜色（ARGB；0=主题默认）。 */
-    XString* m_labelFontFamily;   /**< 标签字体族（对象拥有；默认空）。 */
-    int m_labelFontSize;          /**< 标签字号（磅；0=主题默认）。 */
     uint32_t m_selectedColor;     /**< 选中柱填充颜色（ARGB；0=用 color）。 */
+
+    /* ---- 2/1 字节窄整型组（计数/容量为类别级小值域；无 -1 哨兵；
+     *      无取址使用） ---- */
+    uint16_t m_count;             /**< 数值个数。 */
+    uint16_t m_capacity;          /**< 数值容量。 */
+    uint16_t m_selectedCount;     /**< 选中个数。 */
+    uint16_t m_selectedCapacity;  /**< 选中集合容量。 */
+    uint8_t m_labelFontSize;      /**< 标签字号（磅；0=主题默认；<=255）。 */
 } XBarSet;
 
 XVtable* XBarSet_class_init(void);

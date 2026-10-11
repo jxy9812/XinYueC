@@ -50,10 +50,12 @@ XCLASS_DEFINE_EXTEND_END(XOffscreenSurface, XObject)
 typedef struct XOffscreenSurface
 {
     XObject m_class;          /**< 基类成员；必须是第一个。 */
-    XSurfaceFormat m_format;  /**< 表面格式（值类型）。 */
-    XSize m_size;             /**< 表面尺寸（值类型）。 */
     XScreen* m_screen;        /**< 屏幕（借用；对标 screen）。 */
-    bool m_isValid;           /**< 是否已创建（对标 isValid）。 */
+    XSurfaceFormat m_format;  /**< 表面格式（值类型；≥64B，专项设计后再动）。 */
+    XSize m_size;             /**< 表面尺寸（值类型）。 */
+    /* [内存治理 2026-10-11] 标志位字：单 bool 位域。 */
+    uint32_t m_isValid : 1;   /**< 是否已创建（对标 isValid）。 */
+    uint32_t m_offscreenFlagsUnused : 31; /**< 保留位。 */
 } XOffscreenSurface;
 
 /**

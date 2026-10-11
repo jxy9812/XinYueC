@@ -160,51 +160,54 @@ typedef struct XChart
     void* m_series[24];       /**< 泛型序列表（加入顺序；内部拥有）。 */
     XRectF* m_zoomStack;      /**< 缩放域栈（数据域矩形；内部拥有）。 */
 
-    /* ---- 4 字节对齐组：序列计数 / 主题色板 / 几何与动画 ---- */
-    int m_lineCount;          /**< 折线序列数。 */
-    int m_barCount;           /**< 柱状序列数。 */
-    int m_scatterCount;       /**< 散点序列数。 */
-    int m_areaCount;          /**< 面积序列数。 */
-    int m_splineCount;        /**< 样条序列数。 */
+    /* ---- 4 字节对齐组：主题色板 / 几何与动画（收窄后按对齐降序重排） ---- */
     uint32_t m_theme[8];      /**< 当前主题序列色板缓存（ARGB；对标 seriesColors）。 */
-    XChart_ChartTheme m_themeId; /**< 当前主题 ID（对标 theme()）。 */
     uint32_t m_themeBgStart;  /**< 主题背景渐变起点色（ARGB；对标 chartBackgroundGradient stop 0）。 */
     uint32_t m_themeBgEnd;    /**< 主题背景渐变终点色（ARGB；对标 chartBackgroundGradient stop 1）。 */
     uint32_t m_themeLabelBrush; /**< 主题标签画刷色（ARGB；对标 labelBrush）。 */
     uint32_t m_themeAxisLinePen; /**< 主题轴线画笔色（ARGB；对标 axisLinePen）。 */
-    int m_themeAxisLineWidth; /**< 主题轴线画笔宽（像素）。 */
     uint32_t m_themeGridPen;  /**< 主题网格线画笔色（ARGB；对标 gridLinePen）。 */
-    int m_themeGridLineWidth; /**< 主题网格线画笔宽（像素）。 */
     uint32_t m_themeMinorGridPen; /**< 主题次网格线画笔色（ARGB；对标 minorGridLinePen）。 */
-    int m_themeMinorGridLineWidth; /**< 主题次网格线画笔宽（像素）。 */
     uint32_t m_themeOutlinePen; /**< 主题轮廓画笔色（ARGB；对标 outlinePen）。 */
-    int m_themeOutlineWidth;  /**< 主题轮廓画笔宽（像素）。 */
     uint32_t m_themeShadesBrush; /**< 主题阴影带画刷色（ARGB；0=无；对标 backgroundShadesBrush）。 */
-    int m_themeShadesMode;    /**< 主题阴影带模式（0 无/1 垂直/2 水平/3 双向；对标 BackgroundShadesMode）。 */
-    int m_titlePixelSize;     /**< 标题字号（像素；<=0 用视图默认）。 */
     uint32_t m_titleBrush;    /**< 标题画刷色（ARGB；0=跟随窗口文本色）。 */
     uint32_t m_backgroundBrush; /**< 背景画刷色（ARGB；0=调色板 Base）。 */
     uint32_t m_backgroundPen;   /**< 背景画笔色（ARGB；0=无描边）。 */
-    float m_backgroundRoundness; /**< 背景圆角直径（对标 backgroundRoundness）。 */
-    XChart_AnimationOptions m_animationOptions; /**< 动画选项（对标 animationOptions）。 */
-    int m_animationDuration;  /**< 动画时长（毫秒）。 */
-    int m_animationEasingCurve; /**< 缓动类型（XEasingCurve_Type；默认 Linear）。 */
-    XMargins m_margins;       /**< 图表边距（对标 margins；<=0 用视图默认）。 */
-    XRectF m_plotArea;        /**< 绘图区矩形（视图坐标；对标 plotArea）。 */
     uint32_t m_plotAreaBackgroundBrush; /**< 绘图区背景画刷色（ARGB）。 */
     uint32_t m_plotAreaBackgroundPen;   /**< 绘图区背景画笔色（ARGB）。 */
-    XChartSeriesType m_seriesTypes[24]; /**< 泛型序列类型表。 */
-    int m_seriesCount;        /**< 泛型序列数。 */
-    int m_zoomCount;          /**< 缩放栈深度。 */
-    int m_zoomCapacity;       /**< 缩放栈容量。 */
+    XChart_AnimationOptions m_animationOptions; /**< 动画选项（对标 animationOptions；契约字段保持 uint32 往返）。 */
+    float m_backgroundRoundness; /**< 背景圆角直径（对标 backgroundRoundness）。 */
+    int m_animationDuration;  /**< 动画时长（毫秒；公开 setter 原样往返）。 */
+    XMargins m_margins;       /**< 图表边距（对标 margins；<=0 用视图默认）。 */
+    XRectF m_plotArea;        /**< 绘图区矩形（视图坐标；对标 plotArea）。 */
 
-    /* ---- 1 字节标志组（尾部填充；全部无取址使用） ---- */
-    bool m_legendVisible;     /**< 图例可见（默认 true）。 */
-    bool m_titleVisible;      /**< 标题可见（默认 true）。 */
-    bool m_backgroundVisible; /**< 背景可见（默认 true）。 */
-    bool m_dropShadowEnabled; /**< 背景投影（属性存储；渲染待后续批次）。 */
-    bool m_plotAreaBackgroundVisible; /**< 绘图区背景可见（对标 isPlotAreaBackgroundVisible）。 */
-    bool m_localizeNumbers;   /**< 本地化数字（对标 localizeNumbers；属性存储）。 */
+    /* ---- 1 字节窄整型组（计数受数组容量约束；主题线宽 0-255 像素；
+     *      全部无取址使用、无 -1 哨兵） ---- */
+    uint8_t m_seriesTypes[24]; /**< 泛型序列类型表（XChartSeriesType，0-12）。 */
+    int16_t m_titlePixelSize; /**< 标题字号（像素；<=0 用视图默认，有符号保留哨兵）。 */
+    uint8_t m_lineCount;      /**< 折线序列数（<=8）。 */
+    uint8_t m_barCount;       /**< 柱状序列数（<=4）。 */
+    uint8_t m_scatterCount;   /**< 散点序列数（<=4）。 */
+    uint8_t m_areaCount;      /**< 面积序列数（<=4）。 */
+    uint8_t m_splineCount;    /**< 样条序列数（<=4）。 */
+    uint8_t m_seriesCount;    /**< 泛型序列数（<=24）。 */
+    uint8_t m_themeId;        /**< 当前主题 ID（XChart_ChartTheme，0-7）。 */
+    uint8_t m_themeAxisLineWidth; /**< 主题轴线画笔宽（像素，<=255）。 */
+    uint8_t m_themeGridLineWidth; /**< 主题网格线画笔宽（像素，<=255）。 */
+    uint8_t m_themeMinorGridLineWidth; /**< 主题次网格线画笔宽（像素，<=255）。 */
+    uint8_t m_themeOutlineWidth; /**< 主题轮廓画笔宽（像素，<=255）。 */
+    uint8_t m_themeShadesMode; /**< 主题阴影带模式（0 无/1 垂直/2 水平/3 双向）。 */
+    uint8_t m_animationEasingCurve; /**< 缓动类型（XEasingCurve_Type，0-44）。 */
+    uint16_t m_zoomCount;     /**< 缩放栈深度。 */
+    uint16_t m_zoomCapacity;  /**< 缩放栈容量。 */
+
+    /* ---- 1 字节标志组（位域压缩；全部无取址使用） ---- */
+    bool m_legendVisible : 1;     /**< 图例可见（默认 true）。 */
+    bool m_titleVisible : 1;      /**< 标题可见（默认 true）。 */
+    bool m_backgroundVisible : 1; /**< 背景可见（默认 true）。 */
+    bool m_dropShadowEnabled : 1; /**< 背景投影（属性存储；渲染待后续批次）。 */
+    bool m_plotAreaBackgroundVisible : 1; /**< 绘图区背景可见（对标 isPlotAreaBackgroundVisible）。 */
+    bool m_localizeNumbers : 1;   /**< 本地化数字（对标 localizeNumbers；属性存储）。 */
 } XChart;
 
 /** @brief 析构入口（查表分派父类析构；对标 C++ 虚析构语义）。 */

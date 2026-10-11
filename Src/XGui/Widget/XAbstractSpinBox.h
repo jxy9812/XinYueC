@@ -112,16 +112,18 @@ typedef struct XAbstractSpinBox
 {
     XWidget m_base;                    /**< 基类成员；必须是第一个。 */
     XLineEdit* m_lineEdit;             /**< 内嵌编辑框（拥有）。 */
-    int     m_buttonSymbols;           /**< 按钮符号。 */
-    bool    m_keyboardTracking;        /**< 键盘跟踪。 */
-    bool    m_frame;                   /**< 边框开关。 */
-    int     m_correctionMode;          /**< 提交修正模式。 */
-    bool    m_wrapping;                /**< 循环步进开关。 */
-    bool    m_accelerated;             /**< 加速开关（行为后续扩展）。 */
-    bool    m_groupSeparatorShown;     /**< 千分位分隔显示。 */
     XString* m_specialValueText;       /**< 特殊值文本（对象拥有；NULL=未设置）。 */
-    bool    m_cleared;                 /**< 内部：clear() 后待解释标志。 */
-    int     m_wheelDeltaRemainder;     /**< 内部：滚轮角度累积余数。 */
+    int     m_wheelDeltaRemainder;     /**< 内部：滚轮角度累积余数（内部累加器，保持 int）。 */
+    uint8_t m_buttonSymbols;           /**< 按钮符号（XAbstractSpinBoxButtonSymbols
+                                           0..2；setter 校验后写入）。 */
+    uint8_t m_correctionMode;          /**< 提交修正模式（XAbstractSpinBoxCorrectionMode
+                                           0..1；setter 校验后写入）。 */
+    uint8_t m_keyboardTracking : 1;    /**< 键盘跟踪。 */
+    uint8_t m_frame : 1;               /**< 边框开关。 */
+    uint8_t m_wrapping : 1;            /**< 循环步进开关。 */
+    uint8_t m_accelerated : 1;         /**< 加速开关（行为后续扩展）。 */
+    uint8_t m_groupSeparatorShown : 1; /**< 千分位分隔显示。 */
+    uint8_t m_cleared : 1;             /**< 内部：clear() 后待解释标志。 */
 } XAbstractSpinBox;
 
 /* ==================== 生命周期 ==================== */

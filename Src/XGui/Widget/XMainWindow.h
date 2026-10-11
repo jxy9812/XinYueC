@@ -66,10 +66,9 @@ XCLASS_DEFINE_EXTEND_END(XMainWindow, XWidget)
 typedef struct XMainWindow
 {
     XWidget m_base;              /**< 基类成员；必须是第一个。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XWidget* m_menuBar;          /**< 菜单栏（XMenuBar*，拥有或外部）。 */
-    bool m_menuBarOwned;         /**< 菜单栏是否内部创建。 */
     XWidget* m_statusBar;        /**< 状态栏（XStatusBar*，拥有或外部）。 */
-    bool m_statusBarOwned;       /**< 状态栏是否内部创建。 */
     XWidget* m_central;          /**< 中央控件（借用）。 */
     XVector* m_toolBars;         /**< 工具栏数组（XToolBar*，借用）。 */
     XVector* m_toolBarAreas;     /**< 工具栏停靠区域（int）。 */
@@ -87,24 +86,6 @@ typedef struct XMainWindow
                                   *   m_dockTabGroups 按下标平行；使 tab 化
                                   *   结果可见可切换，对标 Qt 每标签组的
                                   *   QTabBar）。 */
-    bool m_inTabSync;            /**< 页签条同步重入保护：xmw_layout 回填
-                                  *   current 下标时置位，抑制 currentChanged
-                                  *   槽递归重排。 */
-    bool m_inGroupSync;          /**< 标签组同步重入保护：dockGroupSync 修改
-                                  *   面板可见性触发 show/hide 事件 → 回触
-                                  *   updateDockLayout → 递归 dockGroupSync，
-                                  *   防止递归破坏停靠状态。 */
-    int m_leftDockWidth;         /**< 左侧停靠列宽度（像素；默认 160，
-                                  *   可经 resizeDocks 横向调整）。 */
-    int m_rightDockWidth;        /**< 右侧停靠列宽度（像素；默认 160，
-                                  *   可经 resizeDocks 横向调整）。 */
-    int m_topDockHeight;         /**< 顶部停靠行高度（像素；默认 100，
-                                  *   可经 resizeDocks 纵向调整）。 */
-    int m_bottomDockHeight;      /**< 底部停靠行高度（像素；默认 100，
-                                  *   可经 resizeDocks 纵向调整）。 */
-    int m_dockOptions;           /**< 停靠选项。 */
-    int m_iconSize;              /**< 工具栏图标尺寸。 */
-    int m_toolButtonStyle;       /**< 全局工具按钮样式（XToolButtonStyle 取值）。 */
     XWidget* m_activeTabifiedDock; /**< 最近激活的标签化停靠面板（借用）。 */
     XWidget* m_dropIndicator;  /**< 拖放落点指示器（XRubberBand*，惰性
                                 *   创建的主窗口子控件，随父级联销毁、
@@ -113,11 +94,6 @@ typedef struct XMainWindow
                                 *   QRubberBand(QRubberBand::Rectangle,
                                 *   parentWidget())，qmainwindowlayout.cpp
                                 *   :2963-2964）。 */
-    int m_dropAreaShown;       /**< 指示器当前展示的区域码（0=隐藏；
-                                *   hoverDrop 幂等门——区域未变时不重复
-                                *   setGeometry/show/raise，拖动中每条
-                                *   移动都调用 hoverDrop，冗余的同步
-                                *   SetWindowPos 往返会放大呈现压力）。 */
     XVector* m_dockTabBarPool; /**< 回收页签条池（XTabBar* 数组；组解散
                                 *   时页签条只隐藏不销毁——拖放回调链内
                                 *   删除会经析构级联触发事件分发崩溃——
@@ -125,14 +101,45 @@ typedef struct XMainWindow
                                 *   遗弃一个隐藏页签条子控件线性累积）。
                                 *   池中条目仍为主窗口子控件，随主窗级
                                 *   联销毁；本向量仅持指针。 */
-    bool m_documentMode;       /**< 文档模式（对标 documentMode）。 */
-    bool m_animated;           /**< 动画（对标 animated）。 */
-    bool m_dockNestingEnabled; /**< 停靠嵌套（对标 dockNestingEnabled）。 */
-    bool m_unifiedTitleAndToolBarOnMac; /**< 统一标题栏（属性存储）。 */
-    int m_tabPosition;         /**< 页签位置（对标 tabPosition）。 */
-    int m_tabShape;            /**< 页签形状（对标 tabShape）。 */
-    bool m_separator;          /**< 工具栏分隔线（对标 setSeparator）。 */
-    int m_corner;              /**< 角控件位置位集（对标 corner）。 */
+    /* ---- 2 字节组 ---- */
+    int16_t m_leftDockWidth;     /**< 左侧停靠列宽度（像素；默认 160，
+                                  *   可经 resizeDocks 横向调整）。 */
+    int16_t m_rightDockWidth;    /**< 右侧停靠列宽度（像素；默认 160，
+                                  *   可经 resizeDocks 横向调整）。 */
+    int16_t m_topDockHeight;     /**< 顶部停靠行高度（像素；默认 100，
+                                  *   可经 resizeDocks 纵向调整）。 */
+    int16_t m_bottomDockHeight;  /**< 底部停靠行高度（像素；默认 100，
+                                  *   可经 resizeDocks 纵向调整）。 */
+    uint16_t m_iconSize;         /**< 工具栏图标尺寸（像素；默认 16）。 */
+    uint16_t m_corner;           /**< 角控件位置位集（对标 corner；4 角
+                                  *   × 4 位半字节）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_dockOptions;       /**< 停靠选项（XMainWindowDockOption 位
+                                  *   组合，最大 0x20）。 */
+    uint8_t m_toolButtonStyle;   /**< 全局工具按钮样式（XToolButtonStyle
+                                  *   取值，0..4）。 */
+    uint8_t m_dropAreaShown;     /**< 指示器当前展示的区域码（0=隐藏；
+                                  *   hoverDrop 幂等门——区域未变时不重复
+                                  *   setGeometry/show/raise，拖动中每条
+                                  *   移动都调用 hoverDrop，冗余的同步
+                                  *   SetWindowPos 往返会放大呈现压力）。 */
+    uint8_t m_tabPosition;       /**< 页签位置（对标 tabPosition）。 */
+    uint8_t m_tabShape;          /**< 页签形状（对标 tabShape）。 */
+    /* ---- 位域组（9 个连续布尔打包 2 字节） ---- */
+    uint8_t m_menuBarOwned : 1;  /**< 菜单栏是否内部创建。 */
+    uint8_t m_statusBarOwned : 1;/**< 状态栏是否内部创建。 */
+    uint8_t m_inTabSync : 1;     /**< 页签条同步重入保护：xmw_layout 回填
+                                  *   current 下标时置位，抑制 currentChanged
+                                  *   槽递归重排。 */
+    uint8_t m_inGroupSync : 1;   /**< 标签组同步重入保护：dockGroupSync 修改
+                                  *   面板可见性触发 show/hide 事件 → 回触
+                                  *   updateDockLayout → 递归 dockGroupSync，
+                                  *   防止递归破坏停靠状态。 */
+    uint8_t m_documentMode : 1;  /**< 文档模式（对标 documentMode）。 */
+    uint8_t m_animated : 1;      /**< 动画（对标 animated）。 */
+    uint8_t m_dockNestingEnabled : 1; /**< 停靠嵌套（对标 dockNestingEnabled）。 */
+    uint8_t m_unifiedTitleAndToolBarOnMac : 1; /**< 统一标题栏（属性存储）。 */
+    uint8_t m_separator : 1;     /**< 工具栏分隔线（对标 setSeparator）。 */
 } XMainWindow;
 
 /** @brief XMainWindowclassinit（对标 Qt 同名接口）。

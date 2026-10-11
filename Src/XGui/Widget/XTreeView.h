@@ -31,30 +31,37 @@ XCLASS_DEFINE_EXTEND_END(XTreeView, XAbstractItemView)
 typedef struct XTreeView
 {
     XAbstractItemView m_base;   /**< 基类成员；必须是第一个。 */
-    int m_indentation;          /**< 缩进宽度（像素，默认 20）。 */
-    bool m_headerHidden;        /**< 表头隐藏（默认 false）。 */
-    int m_rowHeight;            /**< 行高（像素，默认 24）。 */
+    /* 指针组（8B 对齐）。 */
     bool* m_expanded;           /**< 行展开状态表（平行数组；对象拥有）。 */
-    int m_rowStateCount;        /**< 行展开状态表长度（随模型行数同步）。 */
     bool* m_columnHidden;       /**< 列隐藏状态表（平行数组；对象拥有）。 */
     int* m_columnWidths;        /**< 列宽表（平行数组；0=自动铺满）。 */
-    int m_columnStateCount;     /**< 列状态表长度。 */
-    bool m_expandsOnDoubleClick; /**< 双击切换展开（默认 true）。 */
-    bool m_itemsExpandable;      /**< 条目可展开（默认 true）。 */
-    bool m_rootIsDecorated;      /**< 绘制展开控件列（默认 true）。 */
-    bool m_sortingEnabled;       /**< 排序使能（默认 false）。 */
-    bool m_uniformRowHeights;    /**< 等高行（默认 false）。 */
-    int m_sortColumn;            /**< 排序列（-1=未设置；默认 -1）。 */
-    int m_sortOrder;             /**< 排序方向（0=升序，1=降序；默认 0）。 */
-    bool m_selectionRectVisible; /**< 拖拽橡皮筋选区可见（默认 false）。 */
-    bool m_allColumnsShowFocus;  /**< 焦点框横贯全部列（默认 false）。 */
-    int m_treePosition;          /**< 树位置列（-1=跟随视觉第 0 列；默认 0）。 */
-    bool* m_rowHidden;           /**< 行隐藏状态表（平行数组；对象拥有）。 */
-    int m_rowHiddenCount;        /**< 行隐藏状态表长度（随模型行数同步）。 */
-    int m_autoExpandDelay;       /**< 悬停自动展开延时（毫秒；-1=禁用；默认 -1）。 */
-    bool m_animated;             /**< 展开/收起动画开关（默认 false）。 */
-    bool m_wordWrap;             /**< 条目文本自动换行（默认 false）。 */
-    XHeaderView* m_header;       /**< 表头对象借用指针（不拥有；默认 NULL）。 */
+    bool* m_rowHidden;          /**< 行隐藏状态表（平行数组；对象拥有）。 */
+    XHeaderView* m_header;      /**< 表头对象借用指针（不拥有；默认 NULL）。 */
+    /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
+       10 个 bool 原分散占 10B（含对齐洞），合并后 1 字。 */
+    uint32_t m_headerHidden : 1;        /**< 表头隐藏（默认 false）。 */
+    uint32_t m_expandsOnDoubleClick : 1; /**< 双击切换展开（默认 true）。 */
+    uint32_t m_itemsExpandable : 1;     /**< 条目可展开（默认 true）。 */
+    uint32_t m_rootIsDecorated : 1;     /**< 绘制展开控件列（默认 true）。 */
+    uint32_t m_sortingEnabled : 1;      /**< 排序使能（默认 false）。 */
+    uint32_t m_uniformRowHeights : 1;   /**< 等高行（默认 false）。 */
+    uint32_t m_selectionRectVisible : 1; /**< 拖拽橡皮筋选区可见（默认 false）。 */
+    uint32_t m_allColumnsShowFocus : 1; /**< 焦点框横贯全部列（默认 false）。 */
+    uint32_t m_animated : 1;            /**< 展开/收起动画开关（默认 false）。 */
+    uint32_t m_wordWrap : 1;            /**< 条目文本自动换行（默认 false）。 */
+    uint32_t m_treeViewFlagsUnused : 22; /**< 保留位。 */
+    /* [内存治理 2026-10-11] 短整型值：状态表长度/排序索引/树位置列收
+       int16_t（-1/-2 哨兵依赖有符号语义：sortColumn=-1、treePosition=-1、
+       autoExpandDelay=-1）；缩进/行高 px 收 uint16_t。 */
+    int16_t m_rowStateCount;    /**< 行展开状态表长度（随模型行数同步）。 */
+    int16_t m_columnStateCount; /**< 列状态表长度。 */
+    int16_t m_sortColumn;       /**< 排序列（-1=未设置；默认 -1）。 */
+    int16_t m_sortOrder;        /**< 排序方向（0=升序，1=降序；默认 0）。 */
+    int16_t m_treePosition;     /**< 树位置列（-1=跟随视觉第 0 列；默认 0）。 */
+    int16_t m_rowHiddenCount;   /**< 行隐藏状态表长度（随模型行数同步）。 */
+    int16_t m_autoExpandDelay;  /**< 悬停自动展开延时（毫秒；-1=禁用；默认 -1）。 */
+    uint16_t m_indentation;     /**< 缩进宽度（像素，默认 20）。 */
+    uint16_t m_rowHeight;       /**< 行高（像素，默认 24）。 */
 } XTreeView;
 
 /* ==================== 生命周期 ==================== */

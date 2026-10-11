@@ -98,9 +98,9 @@ typedef struct XToolButton
     XAbstractButton m_base;               /**< 基类成员；必须是第一个，由 XClass 管理，禁止手工修改。 */
     XAction*        m_defaultAction;      /**< 默认动作（对标 QToolButton::defaultAction）；借用指针。 */
     XMenu*          m_menu;               /**< 关联弹出菜单（对标 QToolButton::menu）；借用指针。 */
-    XToolButtonStyle    m_toolButtonStyle;   /**< 工具按钮样式。 */
-    XToolButtonArrowType m_arrowType;     /**< 箭头类型。 */
-    XToolButtonPopupMode m_popupMode;     /**< 菜单弹出模式。 */
+    uint8_t m_toolButtonStyle;   /**< 工具按钮样式。 */
+    uint8_t m_arrowType;     /**< 箭头类型。 */
+    uint8_t m_popupMode;     /**< 菜单弹出模式。 */
     bool            m_autoRaise;          /**< 是否自动凸起（对标 QToolButton::autoRaise）。 */
 } XToolButton;
 

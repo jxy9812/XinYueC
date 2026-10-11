@@ -662,7 +662,7 @@ void XColorDialog_setCustomColor(XColorDialog* self, int index, XColor color)
     if (!self || index < 0 || index >= 16) return;
     self->m_customColors[index] = color;
     if (index >= self->m_customCount)
-        self->m_customCount = index + 1;
+        self->m_customCount = (uint8_t)(index + 1);
 }
 
 XColor XColorDialog_customColor(const XColorDialog* self, int index)
@@ -678,7 +678,7 @@ void XColorDialog_setStandardColor(XColorDialog* self, int index, XColor color)
     if (!self || index < 0 || index >= 48) return;
     self->m_standardColors[index] = color;
     if (index >= self->m_standardCount)
-        self->m_standardCount = index + 1;
+        self->m_standardCount = (uint8_t)(index + 1);
 }
 
 XColor XColorDialog_standardColor(const XColorDialog* self, int index)

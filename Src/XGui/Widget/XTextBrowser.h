@@ -32,23 +32,30 @@ XCLASS_DEFINE_EXTEND_END(XTextBrowser, XTextEdit)
 typedef struct XTextBrowser
 {
     XTextEdit m_base;  /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
 #if XTEXTDOCUMENT_ON
     XTextDocument* m_textDoc; /**< 富文本文档。 */
 #endif
     XString** m_history;    /**< 历史环形数组（对象拥有；容量上限 50，
                                   满后环形覆盖最老条目）。 */
-    int m_historyCount;
-    int m_historyIndex;
-    int m_historyCapacity;
-    int m_historyStart;     /**< 环形数组中逻辑第 0 条的物理下标。 */
     XString* m_source;      /**< 当前源 URL（对象拥有）。 */
     XStringList* m_searchPaths; /**< 资源搜索路径列表（拥有；对标 searchPaths）。 */
-    bool m_openLinks;       /**< 链接可点击（默认 true）。 */
-    bool m_openExternalLinks; /**< 外链自动打开开关（默认 false；对标 openExternalLinks）。 */
-    bool m_backwardAvailable; /**< 上次发射的后退可用状态（变化才发信号）。 */
-    bool m_forwardAvailable;  /**< 上次发射的前进可用状态（变化才发信号）。 */
     XString* m_hoverAnchor; /**< 悬停锚点去重承载（对象拥有；NULL=无；
                                   对标 Qt 悬停高亮只在进出链接时发射）。 */
+    /* [内存治理 2026-10-11] 短整型值：环形历史计数/容量/物理起点
+       （XTB_HISTORY_MAX=50）收 int16_t；historyIndex 有 -1 哨兵
+       （XTextBrowser.c:101 `m_historyIndex < 0` 判无历史），
+       用 int16_t 保留符号。 */
+    int16_t m_historyCount;
+    int16_t m_historyIndex;
+    int16_t m_historyCapacity;
+    int16_t m_historyStart;     /**< 环形数组中逻辑第 0 条的物理下标。 */
+    /* [内存治理 2026-10-11] 标志位字：4 个 bool 合并 1 字。 */
+    uint32_t m_openLinks : 1;       /**< 链接可点击（默认 true）。 */
+    uint32_t m_openExternalLinks : 1; /**< 外链自动打开开关（默认 false；对标 openExternalLinks）。 */
+    uint32_t m_backwardAvailable : 1; /**< 上次发射的后退可用状态（变化才发信号）。 */
+    uint32_t m_forwardAvailable : 1;  /**< 上次发射的前进可用状态（变化才发信号）。 */
+    uint32_t m_textBrowserFlagsUnused : 28; /**< 保留位。 */
 } XTextBrowser;
 
 /**

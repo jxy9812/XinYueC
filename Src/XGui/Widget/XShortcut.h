@@ -80,12 +80,16 @@ XCLASS_DEFINE_EXTEND_END(XShortcut, XObject)
 typedef struct XShortcut
 {
     XObject           m_base;         /**< 基类成员；必须是第一个，由 XClass 管理。 */
-    int               m_key;          /**< 键码（XKey 枚举值；0 表示未设置）。 */
-    bool              m_enabled;      /**< 是否启用（默认 true）。 */
-    bool              m_autoRepeat;   /**< 是否允许自动重复（默认 true）。 */
-    XShortcutContext  m_context;      /**< 快捷键上下文（默认 WindowShortcut）。 */
     XString*          m_whatsThis;    /**< What's This 帮助文本（对象拥有）。 */
     XObject*          m_parentWidget; /**< 创建时父对象借用指针（可为 NULL）。 */
+    int               m_key;          /**< 键码（XKey 枚举值；setKey 往返任意
+                                          键码，保守保留 int）。 */
+    /* [内存治理 2026-10-11] 标志位字：2 个 bool + 上下文 0..3
+       （XShortcutContext）合并 1 字。 */
+    uint32_t m_enabled : 1;      /**< 是否启用（默认 true）。 */
+    uint32_t m_autoRepeat : 1;   /**< 是否允许自动重复（默认 true）。 */
+    uint32_t m_context : 2;      /**< 快捷键上下文（默认 WindowShortcut）。 */
+    uint32_t m_shortcutFlagsUnused : 28; /**< 保留位。 */
 } XShortcut;
 
 /* ==================== 生命周期（对标 QShortcut 构造） ==================== */

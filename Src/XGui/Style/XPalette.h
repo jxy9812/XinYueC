@@ -71,10 +71,24 @@ typedef enum XPaletteColorRole
  *             槽位仅为对齐 Qt 而保留，读写统一映射到活动组。所有颜色初值
  *             由 XPalette_init_default 填充；本类型无堆资源，可直接按值
  *             拷贝，不需要 *_delete 释放。
+ *             [内存治理 2026-10-11] 存储由 16B XColor 压缩为 8B 全精度
+ *             单元 XPaletteCell（alpha/R/G/B 各 uint16 原样，1408→704B）：
+ *             写入时非 RGB 色彩空间经 XColor_toRgb 归一（调色板语义=
+ *             「最终显示色」，丢弃原色彩空间标签），通道值零量化零损失。
+ *             存取一律经 XPalette_color/setColor（内部 pack/unpack 桥接），
+ *             勿直访。
  */
+typedef struct XPaletteCell
+{
+    uint16_t m_alpha; /**< Alpha 通道（0~65535，XColor 原值）。 */
+    uint16_t m_red;   /**< 红（0~65535，XColor 原值）。 */
+    uint16_t m_green; /**< 绿（0~65535，XColor 原值）。 */
+    uint16_t m_blue;  /**< 蓝（0~65535，XColor 原值）。 */
+} XPaletteCell;
+
 typedef struct XPalette
 {
-    XColor m_colors[XPaletteColorGroup_NColorGroups][XPaletteColorRole_NColorRoles];
+    XPaletteCell m_colors[XPaletteColorGroup_NColorGroups][XPaletteColorRole_NColorRoles];
 } XPalette;
 
 /**

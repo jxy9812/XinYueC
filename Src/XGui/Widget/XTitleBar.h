@@ -67,25 +67,29 @@ typedef struct XTitleBar
 {
     XWidget m_class;         /**< 基类成员；必须是第一个，由 XClass 管理，
                                   禁止手工修改。 */
+    XTimerId m_releaseVerifyTimer; /**< 松手校验帧一次性定时器 id
+                                  （intptr_t；XTIMER_INVALID_ID=未排程；
+                                  实现状态，禁止直接修改）：装饰模块
+                                  RELEASE 分支经 XTitleBar_armReleaseVerify
+                                  排程，到时自毁并对宿主顶层补一帧重绘
+                                  （兜底拖拽改尺寸最终帧在框架下游——WM
+                                  回注/dde 合成器等段——偶发搁浅时的
+                                  可见停滞）。析构时若仍挂起由本类
+                                  Deinit 槽回收。 */
     int m_activeSubControls; /**< 当前活动子控件位（XStyleSC_TitleBar*
                                   组合；0=无）：装饰模块按住/悬停按钮时
                                   注入（按住优先，armed?armed:hot 合并
                                   口径），默认实现组装选项时注入
                                   CC_TitleBar 的 activeSubControls 并按
                                   按下态高亮该钮。 */
-    bool m_stripKick;        /**< 首帧装饰补拍已排标志：默认 paintEvent
+    /* [内存治理 2026-10-11] 标志位字：单 bool 位域填充 m_releaseVerifyTimer
+       后的 4B 洞，避免独立 1B 成员再吃 3B 填充。 */
+    uint32_t m_stripKick : 1; /**< 首帧装饰补拍已排标志：默认 paintEvent
                                   首次绘制后补排一次自身重绘，兜底真机
                                   惰性字体初始化竞态导致的首帧标题字形
                                   缺席（原 XWindowDecoration 绘制尾部
                                   行为迁入）。 */
-    XTimerId m_releaseVerifyTimer; /**< 松手校验帧一次性定时器 id
-                                  （XTIMER_INVALID_ID=未排程；实现状态，
-                                  禁止直接修改）：装饰模块 RELEASE 分支经
-                                  XTitleBar_armReleaseVerify 排程，到时
-                                  自毁并对宿主顶层补一帧重绘（兜底拖拽
-                                  改尺寸最终帧在框架下游——WM 回注/dde
-                                  合成器等段——偶发搁浅时的可见停滞）。
-                                  析构时若仍挂起由本类 Deinit 槽回收。 */
+    uint32_t m_titleBarFlagsUnused : 31; /**< 保留位。 */
 } XTitleBar;
 
 /* ==================== 类初始化 / 构造与析构 ==================== */

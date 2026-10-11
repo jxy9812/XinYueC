@@ -18,26 +18,31 @@
 #endif
 #include <limits.h>
 
+/** @note 内存压缩：三个枚举成员（XImageReaderError 0..4、XMovieState 0..2、
+ *        XMovieCacheMode 0..1，全部赋值点在枚举域内，见 XMovie_setError/
+ *        setState/init/copy）收窄为 uint8_t 并与两个 bool pack 进尾组；
+ *        其余成员按对齐重排。结构体 176→168 字节。m_currentFrame 与
+ *        m_playCounter 含 -1 哨兵（XMovie_resetPlayback），保持 int。 */
 struct XMoviePrivate
 {
     XImageReader*       m_reader;             /**< 对象拥有的图像读取器。 */
     XImage              m_currentImage;      /**< 当前帧图像。 */
     XPixmap             m_currentPixmap;     /**< 当前帧像素图。 */
-    XColor              m_backgroundColor;   /**< 当前背景色值。 */
-    XRect               m_frameRect;         /**< 当前帧矩形。 */
-    XSize               m_scaledSize;        /**< 读取器缩放尺寸。 */
     XString*            m_fileName;          /**< 文件名；对象拥有。 */
     XString*            m_format;            /**< 格式；对象拥有。 */
     XString*            m_errorString;      /**< 最近一次错误文本；对象拥有。 */
-    XImageReaderError   m_error;             /**< 最近一次错误。 */
-    XMovieState         m_state;             /**< 当前播放状态。 */
-    XMovieCacheMode     m_cacheMode;         /**< 缓存策略。 */
+    XSize               m_scaledSize;        /**< 读取器缩放尺寸。 */
+    XRect               m_frameRect;         /**< 当前帧矩形。 */
+    XColor              m_backgroundColor;   /**< 当前背景色值。 */
     int                 m_speed;             /**< 播放速度百分比。 */
     int                 m_currentFrame;      /**< 当前帧编号，未加载时为 -1。 */
     int                 m_nextFrame;         /**< 下一次读取的帧编号。 */
     int                 m_greatestFrame;     /**< 已成功读取的最大帧编号。 */
     int                 m_nextDelay;         /**< 当前帧对应的下一帧延迟。 */
     int                 m_playCounter;       /**< 剩余循环次数，-1 表示尚未开始计数。 */
+    uint8_t             m_error;             /**< 最近一次错误（XImageReaderError）。 */
+    uint8_t             m_state;             /**< 当前播放状态（XMovieState）。 */
+    uint8_t             m_cacheMode;         /**< 缓存策略（XMovieCacheMode）。 */
     bool                m_haveReadAll;       /**< 是否已经确认读完所有帧。 */
     bool                m_isFirstIteration;  /**< 是否仍处于第一次循环。 */
 };

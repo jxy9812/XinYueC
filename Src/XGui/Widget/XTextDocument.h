@@ -51,17 +51,20 @@ extern "C" {
 /** @brief 内联字符格式（对标 QTextCharFormat）。 */
 typedef struct XTDCharFormat
 {
-    bool bold;
-    bool italic;
-    bool underline;
-    bool strikeOut;
+    XString* fontFamily;     /**< 字体族（对象拥有；空=默认）。 */
+    XString* anchorHref;   /**< 超链接（对象拥有；空=无链接）。 */
     uint32_t fgColor;      /**< ARGB。 */
     uint32_t bgColor;      /**< ARGB；0=无背景。 */
-    XString* fontFamily;     /**< 字体族（对象拥有；空=默认）。 */
-    int fontPointSize;     /**< 字号（磅），0=默认。 */
-    bool superScript;
-    bool subScript;
-    XString* anchorHref;   /**< 超链接（对象拥有；空=无链接）。 */
+    /* [内存治理 2026-10-11] 标志位字：6 个 bool 原分散占 6B（含对齐洞），
+       合并后 1 字；字号经 xtd_parseFontSize 钳制 ≤96，uint16_t 足够。 */
+    uint32_t bold : 1;
+    uint32_t italic : 1;
+    uint32_t underline : 1;
+    uint32_t strikeOut : 1;
+    uint32_t superScript : 1;
+    uint32_t subScript : 1;
+    uint32_t charFormatFlagsUnused : 26; /**< 保留位。 */
+    uint16_t fontPointSize;     /**< 字号（磅），0=默认；解析钳制 ≤96。 */
 } XTDCharFormat;
 
 /** @brief 文本片段（连续相同格式的字符范围）。 */
@@ -90,16 +93,22 @@ typedef enum XTDAlignment
 typedef struct XTDBlock
 {
     XTDFragment fragments[XTD_MAX_FRAGMENTS_PER_BLOCK];
-    int fragmentCount;
-    int alignment;         /**< XTDAlignment 位组合。 */
-    int indentLevel;       /**< 列表缩进级别（0=非列表，1 起）。 */
-    bool isListItem;       /**< 是否为列表项。 */
-    bool isOrdered;        /**< 有序列表（<ol>）。 */
-    bool listFresh;        /**< 本层列表的首个列表项（§8.0g5：同层新列表
+    XString* blockFormat;  /**< 附加块级格式（对象拥有；CSS 类名等）。 */
+    int alignment;         /**< XTDAlignment 位组合（位集至 0x80；setter
+                                往返任意组合，保留 int）。 */
+    /* [内存治理 2026-10-11] 窄整型：片段数 ≤XTD_MAX_FRAGMENTS_PER_BLOCK=64、
+       标题级 0..6（h1-h6）——均 ≤255 收 uint8_t；列表缩进级别按 HTML
+       嵌套深度，保守保留 int16_t。 */
+    int16_t indentLevel;       /**< 列表缩进级别（0=非列表，1 起）。 */
+    uint8_t fragmentCount;
+    uint8_t headingLevel;      /**< h1-h6，0=普通段落。 */
+    /* [内存治理 2026-10-11] 标志位字：3 个 bool 合并 1 字。 */
+    uint32_t isListItem : 1;       /**< 是否为列表项。 */
+    uint32_t isOrdered : 1;        /**< 有序列表（<ol>）。 */
+    uint32_t listFresh : 1;        /**< 本层列表的首个列表项（§8.0g5：同层新列表
                                 序号重起标记——</ul><ul> 相邻两列表靠它
                                 区别于同列表兄弟项）。 */
-    int headingLevel;      /**< h1-h6，0=普通段落。 */
-    XString* blockFormat;  /**< 附加块级格式（对象拥有；CSS 类名等）。 */
+    uint32_t blockFlagsUnused : 29; /**< 保留位。 */
 } XTDBlock;
 
 /** @brief 元信息类别（对标 QTextDocument::MetaInformation，数值一致）。 */
@@ -193,11 +202,13 @@ typedef struct XTextDocument
     int m_resourceCount;       /**< 资源表占用数。 */
     int m_cursorPosition;  /**< 光标位置（字符索引；默认 0）。 */
 
-    /* ---- 1 字节标志组（尾部填充） ---- */
-    bool m_undoRedoEnabled;
-    bool m_modifiedFlag;   /**< modified 属性（对标 isModified；默认 false）。 */
-    bool m_wasUndoAvailable;   /**< undoAvailable 边沿检测（Qt wasUndoAvailable）。 */
-    bool m_wasRedoAvailable;   /**< redoAvailable 边沿检测（Qt wasRedoAvailable）。 */
+    /* ---- 1 字节标志组（尾部填充）[内存治理 2026-10-11] 4 个 bool 并入
+       1 个 uint32_t 字（对标 XObject 位域风格） ---- */
+    uint32_t m_undoRedoEnabled : 1;
+    uint32_t m_modifiedFlag : 1;   /**< modified 属性（对标 isModified；默认 false）。 */
+    uint32_t m_wasUndoAvailable : 1;   /**< undoAvailable 边沿检测（Qt wasUndoAvailable）。 */
+    uint32_t m_wasRedoAvailable : 1;   /**< redoAvailable 边沿检测（Qt wasRedoAvailable）。 */
+    uint32_t m_textDocFlagsUnused : 28; /**< 保留位。 */
 } XTextDocument;
 
 XVtable* XTextDocument_class_init(void);

@@ -22,15 +22,17 @@
 /**
  * @brief      XPlatformPixmap 平台像素图数据
  * @note       内部包装 XImage，提供平台相关优化
+ * @note       内存压缩：按对齐重排（8B 组 → 4B 组 → bool 尾组），
+ *             结构体 64→56 字节；成员访问全部按名进行，无布局依赖。
  */
 typedef struct XPlatformPixmap
 {
-    XAtomic_Int32  m_refCount;        /**< 引用计数 */
     XImage           m_image;            /**< 内部图像数据 */
-    float            m_devicePixelRatio; /**< 设备像素比 */
-    bool             m_isQBitmap;        /**< 是否为位图 */
     int64_t          m_cacheKey;         /**< 缓存键值 */
+    float            m_devicePixelRatio; /**< 设备像素比 */
     int              m_serialNumber;     /**< 序列号 */
+    XAtomic_Int32    m_refCount;         /**< 引用计数 */
+    bool             m_isQBitmap;        /**< 是否为位图 */
 }XPlatformPixmap;
 
 static int g_pixmapSerialCounter = 1;

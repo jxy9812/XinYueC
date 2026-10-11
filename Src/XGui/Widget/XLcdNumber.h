@@ -72,15 +72,18 @@ XCLASS_DEFINE_EXTEND_END(XLcdNumber, XFrame)
 typedef struct XLcdNumber
 {
     XFrame m_base;                   /**< 基类成员；必须是第一个。 */
+    /* ---- 8 字节对齐组 ---- */
     double m_value;                  /**< 当前数值（对标 d->val）。 */
-    int    m_digitCount;             /**< 位数（0..99）。 */
-    int    m_mode;                   /**< 进制模式（XLcdNumberMode）。 */
-    int    m_segmentStyle;           /**< 段风格（XLcdNumberSegmentStyle）。 */
-    bool   m_smallDecimalPoint;      /**< 小数点并入数字位模式。 */
+    /* ---- 字符数组组 ---- */
     char   m_digitStr[XLCDNUMBER_STR_MAX]; /**< 当前显示串（已裁剪）。 */
     unsigned char m_points[XLCDNUMBER_STR_MAX];
                                      /**< smallPoint 模式下各数字位的
                                           小数点标志（对标 points 位图）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_digitCount;            /**< 位数（0..99；setter 已钳位）。 */
+    uint8_t m_mode;                  /**< 进制模式（XLcdNumberMode，0..3）。 */
+    uint8_t m_segmentStyle;          /**< 段风格（XLcdNumberSegmentStyle，0..2）。 */
+    uint8_t m_smallDecimalPoint : 1; /**< 小数点并入数字位模式。 */
 } XLcdNumber;
 
 /* ==================== 生命周期 ==================== */

@@ -84,71 +84,72 @@ struct XWindowPrivate
 #if XCURSOR_ON
     XCursor* m_cursor;                  /**< 窗口光标；对象拥有，可为 NULL。 */
 #endif
-    XRegion m_mask;                     /**< 形状遮罩；对象拥有（值类型容器）。 */
-    bool m_hasMask;                     /**< 是否存在已设置的遮罩。 */
-
-    XRect m_geometry;                   /**< 窗口几何（设备无关像素）。 */
-    XWindowSurfaceType m_surfaceType;   /**< 表面类型；默认 Raster。 */
-    XWindowFlags m_flags;               /**< 窗口标志位；默认 Window。 */
-    bool m_visible;                     /**< 是否可见（对标 isVisible）。 */
-    XWindowVisibility m_visibility;     /**< 可见性枚举；默认 Hidden。 */
-    bool m_exposed;                     /**< 是否已暴露（对标 isExposed）。 */
-    bool m_created;                     /**< 平台窗口资源是否已创建（占位）。 */
-    XWindowId m_winId;                  /**< 窗口 id；未创建为 0。 */
     XWindowPlatform* m_platform;        /**< 平台窗口句柄；借用不拥有。 */
-    bool m_platformWindowLinked;        /**< 已确认 m_platform 为 XPlatformWindow。 */
-    bool m_nativeWindowAttached;    /**< 是否已挂接真实原生窗口（平台后端注入）。 */
-
     XWindow* m_parentWindow;            /**< 普通父窗口（借用，与 XObject 父同步）。 */
     XWindow* m_transientParent;         /**< 瞬态父窗口（借用）。 */
-    XWindowModality m_modality;         /**< 模态；默认 NonModal。 */
+#if XSCREEN_ON
+    XScreen* m_screen;                  /**< 显式关联屏幕（借用）；NULL 表示未设置。 */
+#endif
+    void* m_vulkanInstance;             /**< Vulkan 实例句柄（借用；对标
+                                             QWindow::vulkanInstance）。 */
+#if XACCESSIBLE_ON
+    XAccessible* m_accessibleRoot;      /**< 窗口可访问根节点（拥有）。 */
+#endif
+    XWindowId m_winId;                  /**< 窗口 id；未创建为 0。 */
 
-    XWindowStates m_windowStates;       /**< 窗口状态位组合。 */
-    bool m_positionAutomatic;           /**< 位置是否由平台自动摆放。 */
-    bool m_active;                      /**< 是否激活。 */
-    bool m_closing;                     /**< close() 重入保护。 */
-    bool m_inDestruct;                  /**< deinit 进行中（析构期复活闸）；
-                                             VXWindow_deinit 入口置位，
-                                             createHandle/winId/addWindow
-                                             据此拒绝服务，杜绝垂死窗口
-                                             在摘除登记后被复活再登记。 */
+    XRegion m_mask;                     /**< 形状遮罩；对象拥有（值类型容器）。 */
+
+    XRect m_geometry;                   /**< 窗口几何（设备无关像素）。 */
+    XWindowFlags m_flags;               /**< 窗口标志位；默认 Window。 */
 
     XMargins m_frameMargins;            /**< 客户端窗口装饰保留边距（标题
                                              栏计入顶部）；仅窗口装饰模
                                              块经 XWindow_setFrameMargins
                                              落盘，桌面 WM 管理路径恒零。 */
-    uint32_t m_csdFrameSuppressed : 1;  /**< CSD 激活时抑制原生 WM 装饰，
+    XRect m_normalGeometry;             /**< 最大化/全屏前的正常几何（软
+                                             件窗口状态路径保存/恢复）。 */
+
+    XSurfaceFormat m_format;/**< 请求的表面格式快照。 */
+
+    XWindowStates m_windowStates;       /**< 窗口状态位组合。 */
+
+    float m_devicePixelRatio;           /**< 设备像素比；默认 1.0。 */
+
+    float m_opacity;                    /**< 不透明度；默认 1.0。 */
+
+    XSize m_minimumSize;                /**< 最小尺寸；默认 (0,0)。 */
+    XSize m_maximumSize;                /**< 最大尺寸；默认 (16777215,16777215）。 */
+    XSize m_baseSize;                   /**< 基准尺寸；默认 (0,0)。 */
+    XSize m_sizeIncrement;              /**< 尺寸步进；默认 (0,0）。 */
+
+    int m_alertMsec;                    /**< 最近一次 alert() 的毫秒数。 */
+    uint8_t m_surfaceType;              /**< 表面类型；存 XWindowSurfaceType（0..6），默认 Raster。 */
+    uint8_t m_visibility;               /**< 可见性枚举；存 XWindowVisibility（0..5），默认 Hidden。 */
+    uint8_t m_modality;                 /**< 模态；存 XWindowModality（0..2），默认 NonModal。 */
+    uint8_t m_contentOrientation;       /**< 内容方向；存 XScreenOrientation（0..8），默认 Primary。 */
+    uint8_t m_hasMask : 1;              /**< 是否存在已设置的遮罩。 */
+    uint8_t m_visible : 1;              /**< 是否可见（对标 isVisible）。 */
+    uint8_t m_exposed : 1;              /**< 是否已暴露（对标 isExposed）。 */
+    uint8_t m_created : 1;              /**< 平台窗口资源是否已创建（占位）。 */
+    uint8_t m_platformWindowLinked : 1; /**< 已确认 m_platform 为 XPlatformWindow。 */
+    uint8_t m_nativeWindowAttached : 1; /**< 是否已挂接真实原生窗口（平台后端注入）。 */
+    uint8_t m_positionAutomatic : 1;    /**< 位置是否由平台自动摆放。 */
+    uint8_t m_active : 1;               /**< 是否激活。 */
+    uint8_t m_closing : 1;              /**< close() 重入保护。 */
+    uint8_t m_inDestruct : 1;           /**< deinit 进行中（析构期复活闸）；
+                                             VXWindow_deinit 入口置位，
+                                             createHandle/winId/addWindow
+                                             据此拒绝服务，杜绝垂死窗口
+                                             在摘除登记后被复活再登记。 */
+    uint8_t m_csdFrameSuppressed : 1;   /**< CSD 激活时抑制原生 WM 装饰，
                                              仅供平台层读取（经
                                              XWindow_isCsdFrameSuppressed）；
                                              由框架标题栏激活路径经
                                              XWindow_setCsdFrameSuppressed
                                              置位，平台组装装饰提示时按
                                              无边框语义抑制 WM 装饰。 */
-    XRect m_normalGeometry;             /**< 最大化/全屏前的正常几何（软
-                                             件窗口状态路径保存/恢复）。 */
-    bool m_normalGeometryValid;         /**< m_normalGeometry 是否有效。 */
-
-    XSurfaceFormat m_format;/**< 请求的表面格式快照。 */
-
-    float m_devicePixelRatio;           /**< 设备像素比；默认 1.0。 */
-    XScreenOrientation m_contentOrientation; /**< 内容方向；默认 Primary。 */
-    float m_opacity;                    /**< 不透明度；默认 1.0。 */
-
-    XSize m_minimumSize;                /**< 最小尺寸；默认 (0,0)。 */
-    XSize m_maximumSize;                /**< 最大尺寸；默认 (16777215,16777215)。 */
-    XSize m_baseSize;                   /**< 基准尺寸；默认 (0,0)。 */
-    XSize m_sizeIncrement;              /**< 尺寸步进；默认 (0,0)。 */
-
-#if XSCREEN_ON
-    XScreen* m_screen;                  /**< 显式关联屏幕（借用）；NULL 表示未设置。 */
-#endif
-    int m_alertMsec;                    /**< 最近一次 alert() 的毫秒数。 */
-    bool m_updateRequested;             /**< requestUpdate() 待更新标志。 */
-    void* m_vulkanInstance;             /**< Vulkan 实例句柄（借用；对标
-                                             QWindow::vulkanInstance）。 */
-#if XACCESSIBLE_ON
-    XAccessible* m_accessibleRoot;      /**< 窗口可访问根节点（拥有）。 */
-#endif
+    uint8_t m_normalGeometryValid : 1;  /**< m_normalGeometry 是否有效。 */
+    uint8_t m_updateRequested : 1;      /**< requestUpdate() 待更新标志。 */
 };
 
 /** @brief 最大尺寸上限（对标 Qt QWINDOWSIZE_MAX；qwindow.cpp 同值）。 */
@@ -456,7 +457,7 @@ static void XWindow_updateVisibility(XWindow* self)
         visibility = XWindowVisibility_Windowed;
     }
     if (visibility != data->m_visibility) {
-        data->m_visibility = visibility;
+        data->m_visibility = (uint8_t)visibility;
         XWindow_visibilityChanged_signal(self, visibility);
     }
 }
@@ -841,7 +842,7 @@ static void VXWindow_move(XWindow* self, XWindow* other)
 /* ==================== 表面与窗口标识 ==================== */
 
 void XWindow_setSurfaceType(XWindow* self, XWindowSurfaceType surfaceType)
-{ if (self && self->m_data) self->m_data->m_surfaceType = surfaceType; }
+{ if (self && self->m_data) self->m_data->m_surfaceType = (uint8_t)surfaceType; }
 
 XWindowSurfaceType XWindow_surfaceType(const XWindow* self)
 {
@@ -1081,7 +1082,7 @@ void XWindow_setModality(XWindow* self, XWindowModality modality)
 {
     XWindowPrivate* data;
     if (!self || !(data = self->m_data) || data->m_modality == modality) return;
-    data->m_modality = modality;
+    data->m_modality = (uint8_t)modality;
     XWindow_modalityChanged_signal(self, modality);
 }
 
@@ -1248,7 +1249,7 @@ void XWindow_reportContentOrientationChange(XWindow* self,
     XWindowPrivate* data;
     if (!self || !(data = self->m_data) ||
         data->m_contentOrientation == orientation) return;
-    data->m_contentOrientation = orientation;
+    data->m_contentOrientation = (uint8_t)orientation;
     XWindow_contentOrientationChanged_signal(self, orientation);
 }
 

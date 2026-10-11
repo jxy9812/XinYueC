@@ -60,11 +60,11 @@ typedef enum XIconEngineHook
  */
 typedef struct XIconEngineScaledPixmapArgument
 {
-    XSize size; /**< 目标像素尺寸。 */
-    XIconMode mode; /**< 图标显示模式。 */
-    XIconState state; /**< 图标状态。 */
-    float scale; /**< 设备像素比或缩放因子。 */
     XPixmap* pixmap; /**< 输出图像指针。 */
+    XSize size; /**< 目标像素尺寸。 */
+    float scale; /**< 设备像素比或缩放因子。 */
+    uint8_t mode; /**< 图标显示模式（XIconMode，0-3）。 */
+    uint8_t state; /**< 图标状态（XIconState，0-1）。 */
 } XIconEngineScaledPixmapArgument;
 
 /**

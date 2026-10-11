@@ -242,15 +242,15 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     XClassSetVtable(self, XAbstractItemView);
     self->m_currentRow = -1;
     self->m_currentColumn = -1;
-    self->m_selectionMode = XAbstractItemViewSelectionMode_ExtendedSelection;
+    self->m_selectionMode = (uint8_t)XAbstractItemViewSelectionMode_ExtendedSelection;
     self->m_selectionBehavior =
         XAbstractItemViewSelectionBehavior_SelectItems;
     /* 对标 Qt 6.8 QAbstractItemView::editTriggers 缺省
      * DoubleClicked|EditKeyPressed（文档：除 QTableView 外全部视图的
      * 默认值；QTableView/QTreeView 为 DoubleClicked|AnyKeyPressed）。
      * 此前多出 CurrentChanged 使单击按压即进编辑，非 Qt 默认行为。 */
-    self->m_editTriggers = XAbstractItemViewEditTrigger_DoubleClicked |
-        XAbstractItemViewEditTrigger_EditKeyPressed;
+    self->m_editTriggers = (uint8_t)(XAbstractItemViewEditTrigger_DoubleClicked |
+        XAbstractItemViewEditTrigger_EditKeyPressed);
     self->m_alternatingRowColors = false;
     self->m_autoScroll = true;
     self->m_model = NULL;
@@ -259,17 +259,17 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_selectionAnchorCol = -1;
     self->m_rootRow = -1;
     self->m_rootCol = -1;
-    self->m_iconW = 16;
+    self->m_iconW = 16; /* 小像素值，int16 承载。 */
     self->m_iconH = 16;
     self->m_keyboardSearch = true;
     self->m_tabKeyNavigation = false;
     self->m_autoScrollMargin = 16;
     self->m_showDropIndicator = true;
     self->m_defaultDropAction = 0; /* 0=IgnoreAction，对标 Qt::IgnoreAction。 */
-    self->m_dragDropMode = XAbstractItemViewDragDropMode_NoDragDrop;
+    self->m_dragDropMode = (uint8_t)XAbstractItemViewDragDropMode_NoDragDrop;
     self->m_dragEnabled = false;
     self->m_dragDropOverwriteMode = false;
-    self->m_textElideMode = XAbstractItemViewTextElideMode_ElideRight;
+    self->m_textElideMode = (uint8_t)XAbstractItemViewTextElideMode_ElideRight;
     self->m_verticalScrollMode =
         XAbstractItemViewScrollMode_ScrollPerItem;
     self->m_horizontalScrollMode =
@@ -426,18 +426,18 @@ void XAbstractItemView_doItemsLayout(XAbstractItemView* self)
 }
 
 void XAbstractItemView_setSelectionMode(XAbstractItemView* self, int mode)
-{ if (self) self->m_selectionMode = mode; }
+{ if (self) self->m_selectionMode = (uint8_t)mode; }
 int XAbstractItemView_selectionMode(const XAbstractItemView* self)
 { return self ? self->m_selectionMode : 0; }
 
 void XAbstractItemView_setSelectionBehavior(XAbstractItemView* self,
                                             int behavior)
-{ if (self) self->m_selectionBehavior = behavior; }
+{ if (self) self->m_selectionBehavior = (uint8_t)behavior; }
 int XAbstractItemView_selectionBehavior(const XAbstractItemView* self)
 { return self ? self->m_selectionBehavior : 0; }
 
 void XAbstractItemView_setEditTriggers(XAbstractItemView* self, int triggers)
-{ if (self) self->m_editTriggers = triggers; }
+{ if (self) self->m_editTriggers = (uint8_t)triggers; }
 int XAbstractItemView_editTriggers(const XAbstractItemView* self)
 { return self ? self->m_editTriggers : 0; }
 
@@ -1097,7 +1097,7 @@ bool XAbstractItemView_keyboardSearch_2(XAbstractItemView* self,
     col = self->m_currentColumn;
     if (col < 0) col = 0; /* 无当前列时在首列搜索（与命中后移动保持一致）。 */
     hitRow = xaiv_searchHitRow(self, col);
-    if (hitRow < 0 && self->m_searchPrefixLen > textLen) {
+    if (hitRow < 0 && (size_t)self->m_searchPrefixLen > textLen) {
         /* 同 Qt：累积前缀无命中时回退为仅本次键入文本重新搜索。 */
         xaiv_searchReset(self);
         xaiv_searchAppend(self, text, textLen);
@@ -1127,25 +1127,25 @@ bool XAbstractItemView_hasAutoScroll(const XAbstractItemView* self)
 { return self ? self->m_autoScroll : true; }
 
 void XAbstractItemView_setAutoScrollMargin(XAbstractItemView* self, int margin)
-{ if (self) self->m_autoScrollMargin = margin; }
+{ if (self) self->m_autoScrollMargin = (int16_t)margin; }
 int XAbstractItemView_autoScrollMargin(const XAbstractItemView* self)
 { return self ? self->m_autoScrollMargin : 16; }
 
 void XAbstractItemView_setTextElideMode(XAbstractItemView* self, int mode)
-{ if (self) self->m_textElideMode = mode; }
+{ if (self) self->m_textElideMode = (uint8_t)mode; }
 int XAbstractItemView_textElideMode(const XAbstractItemView* self)
 { return self ? self->m_textElideMode
               : (int)XAbstractItemViewTextElideMode_ElideRight; }
 
 void XAbstractItemView_setVerticalScrollMode(XAbstractItemView* self, int mode)
-{ if (self) self->m_verticalScrollMode = mode; }
+{ if (self) self->m_verticalScrollMode = (uint8_t)mode; }
 int XAbstractItemView_verticalScrollMode(const XAbstractItemView* self)
 { return self ? self->m_verticalScrollMode
               : (int)XAbstractItemViewScrollMode_ScrollPerItem; }
 
 void XAbstractItemView_setHorizontalScrollMode(XAbstractItemView* self,
                                                int mode)
-{ if (self) self->m_horizontalScrollMode = mode; }
+{ if (self) self->m_horizontalScrollMode = (uint8_t)mode; }
 int XAbstractItemView_horizontalScrollMode(const XAbstractItemView* self)
 { return self ? self->m_horizontalScrollMode
               : (int)XAbstractItemViewScrollMode_ScrollPerItem; }
@@ -1179,7 +1179,7 @@ bool XAbstractItemView_dragEnabled(const XAbstractItemView* self)
 { return self ? self->m_dragEnabled : false; }
 
 void XAbstractItemView_setDragDropMode(XAbstractItemView* self, int mode)
-{ if (self) self->m_dragDropMode = mode; }
+{ if (self) self->m_dragDropMode = (uint8_t)mode; }
 int XAbstractItemView_dragDropMode(const XAbstractItemView* self)
 { return self ? self->m_dragDropMode
               : (int)XAbstractItemViewDragDropMode_NoDragDrop; }
@@ -1192,7 +1192,7 @@ bool XAbstractItemView_dragDropOverwriteMode(const XAbstractItemView* self)
 
 void XAbstractItemView_setDefaultDropAction(XAbstractItemView* self,
                                             int action)
-{ if (self) self->m_defaultDropAction = action; }
+{ if (self) self->m_defaultDropAction = (uint16_t)action; }
 int XAbstractItemView_defaultDropAction(const XAbstractItemView* self)
 { return self ? self->m_defaultDropAction : 0; }
 
@@ -1569,8 +1569,8 @@ void XAbstractItemView_setIconSize(XAbstractItemView* self, int w, int h)
     XVarList* args;
     if (!self || w <= 0 || h <= 0) return;
     if (self->m_iconW == w && self->m_iconH == h) return;
-    self->m_iconW = w;
-    self->m_iconH = h;
+    self->m_iconW = (int16_t)w;
+    self->m_iconH = (int16_t)h;
     args = XVarList_Create(XVar(int, w), XVar(int, h));
     if (self && ((XObject*)self)->m_signalSlot && args) {
         XObject_emitSignal((XObject*)self,

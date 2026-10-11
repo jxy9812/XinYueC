@@ -48,7 +48,7 @@ typedef struct XButtonGroup
     XVector* m_bridges;    /**< 与成员顺序一致的内信号桥（XBGroupBridge*）。 */
     XAbstractButton* m_checkedButton;
                            /**< 当前选中按钮（借用；对标 d->checkedButton）。 */
-    bool m_exclusive;      /**< 互斥（默认 true）。 */
+    uint8_t m_exclusive : 1; /**< 互斥（默认 true）。 */
 } XButtonGroup;
 
 /* ==================== 生命周期 ==================== */

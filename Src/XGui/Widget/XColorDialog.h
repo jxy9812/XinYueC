@@ -60,9 +60,9 @@ typedef struct XColorDialog
     XColor m_selectedColor;       /**< 最近一次接受的颜色（对标 selectedColor）。 */
     XColorDialogOptions m_options;/**< 选项位集；默认 0。 */
     XColor m_customColors[16];    /**< 自定义颜色表（对标 customColor/customCount）。 */
-    int m_customCount;            /**< 自定义颜色数量。 */
     XColor m_standardColors[48];  /**< 标准颜色表（对标 standardColor）。 */
-    int m_standardCount;          /**< 标准颜色数量。 */
+    uint8_t m_customCount;        /**< 自定义颜色数量（setCustomColor 硬上限 16）。 */
+    uint8_t m_standardCount;      /**< 标准颜色数量（setStandardColor 硬上限 48）。 */
 } XColorDialog;
 
 /**

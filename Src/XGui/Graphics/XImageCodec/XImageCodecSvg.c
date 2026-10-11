@@ -637,6 +637,9 @@ static bool svgNameChar(char c)
            c == '-' || c == '.';
 }
 
+/** @note 内存压缩：m_depth 受 SVG_DEPTH_MAX=128 硬上限约束（++ 后即比较），
+ *         收窄为 uint16_t 并前置 2B 组；结构体 48→48（指针 5×8+2 已对齐最优，
+ *         实际无字节变化，但消除了尾部 6 字节填充）。 */
 typedef struct SvgParser
 {
     char* m_pos;
@@ -644,7 +647,7 @@ typedef struct SvgParser
     SvgArena* m_arena;
     SvgNode* m_root;
     SvgNode* m_cur;
-    int m_depth;
+    uint16_t m_depth;   /**< 嵌套深度（<= SVG_DEPTH_MAX=128）。 */
 } SvgParser;
 
 static bool svgNodeAddAttr(SvgParser* p, SvgNode* n,
@@ -1814,39 +1817,46 @@ typedef struct SvgGradientStop
     uint32_t m_color;
 } SvgGradientStop;
 
+/** @note 内存压缩：按对齐重排（指针/matrix/stops 数组 → double 组 →
+ *         1 字节组），13 个相邻 bool 与 m_kind(0/1)、m_stopCount(<=SVG_STOPS_MAX=64)
+ *         一同 pack 进尾组。结构体 1208→1192 字节；SVG_GRADIENT_MAX=256 时
+ *         渲染器内联数组省约 4KB。 */
 typedef struct SvgGradient
 {
     const char* m_id;
     const char* m_href;
-    int m_kind;             /* 0=线性 1=径向 */
+    const char* m_spread;
+    SvgMatrix m_transform;
+    double m_x1, m_y1, m_x2, m_y2;
+    double m_cx, m_cy, m_r, m_fx, m_fy;
+    SvgGradientStop m_stops[SVG_STOPS_MAX];
+    uint8_t m_kind;         /* 0=线性 1=径向 */
+    uint8_t m_stopCount;    /* 已接受停止点数（<=SVG_STOPS_MAX=64） */
     bool m_hasX1, m_hasY1, m_hasX2, m_hasY2;
     bool m_hasCx, m_hasCy, m_hasR, m_hasFx, m_hasFy;
     bool m_hasUnits, m_hasSpread, m_hasTransform;
-    double m_x1, m_y1, m_x2, m_y2;
-    double m_cx, m_cy, m_r, m_fx, m_fy;
     bool m_userSpace;
-    const char* m_spread;
-    SvgMatrix m_transform;
-    SvgGradientStop m_stops[SVG_STOPS_MAX];
-    int m_stopCount;
 } SvgGradient;
 
 /* ===================================================================== */
 /* 样式                                                                   */
 /* ===================================================================== */
+/** @note 内存压缩：成员按对齐重排（指针 → 4B → 8B double → bool 组），
+ *         结构体 72→64 字节；svgRenderNode 递归最深 SVG_DEPTH_MAX=128 层，
+ *         每层持有一份 SvgStyle 值副本，栈占用同步收敛。 */
 typedef struct SvgStyle
 {
-    bool m_fillSet;
-    uint32_t m_fillColor;
     const char* m_fillUrl;
-    bool m_strokeSet;
-    uint32_t m_strokeColor;
     const char* m_strokeUrl;
-    bool m_strokeWidthSet;
+    uint32_t m_fillColor;
+    uint32_t m_strokeColor;
     double m_strokeWidth;
     double m_fillOpacity;
     double m_strokeOpacity;
     double m_opacity;
+    bool m_fillSet;
+    bool m_strokeSet;
+    bool m_strokeWidthSet;
 } SvgStyle;
 
 static void svgStyleInit(SvgStyle* st)

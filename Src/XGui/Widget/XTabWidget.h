@@ -33,15 +33,19 @@ typedef struct XTabWidget
     XTabBar m_tabBar;                /**< 顶部页签条（拥有）。 */
     XWidget** m_pages;               /**< 页容器数组（每页 XWidget 拥有）。 */
     XWidget** m_clients;             /**< 用户内容控件（借用指针记录）。 */
-    int m_count;                     /**< 页数。 */
-    int m_capacity;                  /**< 容量。 */
-    int m_currentIndex;              /**< 当前页。 */
-    int m_tabPosition;               /**< 页签位置（North=0，其余保留字段）。 */
-    bool m_tabsClosable;             /**< 可关闭（转发页签条）。 */
-    bool m_movable;                  /**< 可拖动（转发页签条）。 */
     XWidget* m_cornerWidgets[4];     /**< 四角部件（借用，不拥有；下标对标
                                           Qt::Corner：0=TopLeft，1=TopRight，
                                           2=BottomLeft，3=BottomRight）。 */
+    /* [内存治理 2026-10-11] 短整型：页数/容量收 int16_t；currentIndex
+       有 -1 哨兵（XTabWidget.c:326 无页时复位 -1），int16_t 保留符号。 */
+    int16_t m_count;                 /**< 页数。 */
+    int16_t m_capacity;              /**< 容量。 */
+    int16_t m_currentIndex;          /**< 当前页（-1=无）。 */
+    /* [内存治理 2026-10-11] 标志位字：2 个转发 bool + 页签位置码合并 1 字。 */
+    uint32_t m_tabsClosable : 1;     /**< 可关闭（转发页签条）。 */
+    uint32_t m_movable : 1;          /**< 可拖动（转发页签条）。 */
+    uint32_t m_tabPosition : 3;      /**< 页签位置（North=0，其余保留字段）。 */
+    uint32_t m_tabWidgetFlagsUnused : 27; /**< 保留位。 */
 } XTabWidget;
 
 /* ==================== 生命周期 ==================== */

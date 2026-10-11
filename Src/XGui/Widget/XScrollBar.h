@@ -43,13 +43,16 @@ XCLASS_DEFINE_EXTEND_END(XScrollBar, XAbstractSlider)
 typedef struct XScrollBar
 {
     XAbstractSlider m_base;      /**< 基类成员；必须是第一个。 */
-    bool m_dragging;             /**< 滑块拖动中。 */
-    int  m_pressOffset;          /**< 按下点相对滑块原点的偏移像素。 */
-    bool m_showButtons;          /**< 显示两端步进按钮（对标
+    int  m_pressOffset;          /**< 按下点相对滑块原点的偏移像素（保守保留 int）。 */
+    /* [内存治理 2026-10-11] 标志位字：3 个 bool + AddLine/SubLine 指示
+       （0/1）合并 1 字。 */
+    uint32_t m_dragging : 1;      /**< 滑块拖动中。 */
+    uint32_t m_showButtons : 1;   /**< 显示两端步进按钮（对标
                                       QScrollBar 按钮；默认 false=transient
                                       风格无按钮）。 */
-    bool m_activeSub;            /**< 按下按钮（对标 activeSubControls）。 */
-    int  m_activeIsAdd;          /**< 按下的是 AddLine（1）或 SubLine（0）。 */
+    uint32_t m_activeSub : 1;     /**< 按下按钮（对标 activeSubControls）。 */
+    uint32_t m_activeIsAdd : 1;   /**< 按下的是 AddLine（1）或 SubLine（0）。 */
+    uint32_t m_scrollBarFlagsUnused : 28; /**< 保留位。 */
 } XScrollBar;
 
 /* ==================== 生命周期 ==================== */

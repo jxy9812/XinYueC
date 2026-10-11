@@ -125,13 +125,13 @@ extern "C" {
  */
 typedef struct XPinyinPhraseEntry
 {
+    const char* m_utf8;      /**< 词组 UTF-8 串借用指针（指入进程期常
+                                  驻 blob，NUL 结尾；不得释放或修改，
+                                  unload 后失效）。 */
     uint16_t m_syllable[4]; /**< 音节 id 序列（合法音节表下标，按字典
                                   序；m_syllableCount 个有效，其余为 0
                                   填充）。 */
     uint8_t m_syllableCount; /**< 有效音节数（2..4；加载校验口径②）。 */
-    const char* m_utf8;      /**< 词组 UTF-8 串借用指针（指入进程期常
-                                  驻 blob，NUL 结尾；不得释放或修改，
-                                  unload 后失效）。 */
     uint8_t m_rank;          /**< 组内频序等级（1=该组最常用，组内严
                                   格 1..n 递增；受
                                   XKEYBOARD_IME_PHRASE_LIMIT 裁剪）。 */

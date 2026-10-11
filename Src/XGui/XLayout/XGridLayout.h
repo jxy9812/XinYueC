@@ -136,7 +136,7 @@ typedef struct XGridLayout
     int*                   m_cacheRowPos;   /**< 行位置缓存（cellRect）。 */
     int*                   m_cacheRowSize;  /**< 行高度缓存（cellRect）。 */
 
-    /* ---- 4 字节对齐组：容量 / 间距 / 行列数 / 缓存计数 ---- */
+    /* ---- 4 字节对齐组：容量 / 间距（-1 哨兵，有符号）/ 行列数 / 缓存计数 ---- */
     int                    m_cellCapacity;  /**< 单元格数组容量。 */
     int                    m_rowStretchCapacity;  /**< 行伸展数组容量。 */
     int                    m_columnStretchCapacity; /**< 列伸展数组容量。 */
@@ -144,7 +144,6 @@ typedef struct XGridLayout
     int                    m_columnMinWidthCapacity; /**< 列最小宽度数组容量。 */
     int                    m_hSpacing;      /**< 水平间距；-1 沿用父级默认。 */
     int                    m_vSpacing;      /**< 垂直间距；-1 沿用父级默认。 */
-    XGridLayoutOriginCorner m_originCorner; /**< 原点角。 */
     int                    m_rowCount;      /**< 当前网格行数（初始为 1）。 */
     int                    m_columnCount;   /**< 当前网格列数（初始为 1）。 */
     int                    m_nextR;         /**< 默认定位游标行（对标 Qt nextR）。 */
@@ -154,7 +153,8 @@ typedef struct XGridLayout
     int                    m_cacheRowPosCount;  /**< 行位置缓存容量。 */
     int                    m_cacheRowSizeCount; /**< 行尺寸缓存容量。 */
 
-    /* ---- 1 字节标志（尾部填充） ---- */
+    /* ---- 1 字节窄整型组（枚举 0-3；与 m_addVertical 合并消尾部填充） ---- */
+    uint8_t                m_originCorner;  /**< 原点角（XGridLayoutOriginCorner）。 */
     uint8_t                m_addVertical;   /**< 默认定位方向：1=先竖后横、0=先横后竖（对标 Qt addVertical）。 */
 } XGridLayout;
 

@@ -81,7 +81,12 @@ typedef int xgui_demo_page_dialogs_nonempty_t;
 
 /* ==================== 页面几何常量（内容区约 760x480） ==================== */
 
-#define DLGPG_PAGE_WIDTH   760
+/* [页宽根修 2026-10-11] 760→812：FT 直读字体（Noto 系）字形宽于设计期
+ * 旧内置字库，最长说明文案实测 396（含度量余量）——176（说明列 X）+
+ * 396 = 572，旧页宽 760 经 HUD 让位（-224）后 content 仅 536，说明列
+ * 尾字被滚动区右缘裁半（「互」字实测）。812-224=588 ≥ 572+16 余量；
+ * 窄窗横向滚动条 AsNeeded 兜底。 */
+#define DLGPG_PAGE_WIDTH   812
 #define DLGPG_PAGE_HEIGHT  480
 /* 触发按钮行数。必须与下方 dlgpg_addRow 调用次数严格一致（当前 10：
    消息框×4+输入/文件/颜色/进度/自定义/目录）——此值小一处，
@@ -220,6 +225,8 @@ static void dlgpg_scrollRelayout(XScrollArea* scroll)
         }
         if (noteW < 1)
             noteW = 1;
+        XPrintf("[dlgpg] rootW=%d contentW=%d measured=%d noteW=%d\n",
+                rootW, contentW, s_dlgpg.m_noteTextW, noteW);
         for (i = 0; i < DLGPG_ROW_COUNT; ++i) {
             if (!s_dlgpg.m_note[i])
                 continue;
@@ -864,9 +871,18 @@ static void dlgpg_addRow(int row, const char* btnText,
             /* 字体度量自适应：ft2 直读字体的字形宽于旧内置字库，常量
                列宽会截断文案（真屏对话框页实证）。按标签自身字体实测
                最长文案宽度，relayout 时列宽取「常量口径/实测」较大者。 */
+            /* 字体度量自适应：ft2 直读字体的字形宽于旧内置字库，常量
+               列宽会截断文案（真屏对话框页实证）。按标签自身字体实测
+               最长文案宽度，relayout 时列宽取「常量口径/实测」较大者。
+               [尾字裁半根修 2026-10-11] 余量固定 +8 不够：分数 DPR
+               （本机 1.25）下绘制路径逐字形设备像素取整，长文案累计
+               漂移 ~1 设备px/字（「互」字实测裁半，24 字 ≈ +21 设备px
+               ≈ 17 逻辑px）——余量改按字号给（textHeight 覆盖同量级
+               字数），随字体尺寸自适应。 */
             noteFont = XWidget_font((XWidget*)note);
             {
-                int textW = XPainter_textWidth(&noteFont, noteText) + 8;
+                int textW = XPainter_textWidth(&noteFont, noteText) +
+                            XPainter_textHeight(&noteFont) + 8;
                 if (textW > s_dlgpg.m_noteTextW)
                     s_dlgpg.m_noteTextW = textW;
             }

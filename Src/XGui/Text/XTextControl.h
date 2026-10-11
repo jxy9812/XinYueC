@@ -218,9 +218,9 @@ typedef struct XTextControlVisualRow
  */
 typedef struct XTextControlUndoCommand
 {
-    int pos;     /**< 作用起点（文档绝对 UTF-8 字节位置）。 */
     char* removed;  /**< 被删除文本（堆拷贝；无删除为 NULL）。 */
     char* inserted; /**< 插入文本（堆拷贝；无插入为 NULL）。 */
+    int pos;        /**< 作用起点（文档绝对 UTF-8 字节位置）。 */
     int group;      /**< 撤销组号；0 = 自动分组。 */
 } XTextControlUndoCommand;
 
@@ -232,9 +232,9 @@ typedef struct XTextControlUndoCommand
  */
 typedef struct XTextControlAnchor
 {
+    char* href;  /**< 链接目标（堆拷贝，对标 anchorHref）。 */
     int start;   /**< 起始文档绝对字节位置（含）。 */
     int end;     /**< 结束文档绝对字节位置（排他）。 */
-    char* href;  /**< 链接目标（堆拷贝，对标 anchorHref）。 */
 } XTextControlAnchor;
 
 /**

@@ -51,6 +51,7 @@ XCLASS_DEFINE_EXTEND_END(XMenuBar, XWidget)
 typedef struct XMenuBar
 {
     XWidget m_base;         /**< 基类成员；必须是第一个。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XVector* m_actions;     /**< 菜单栏动作数组（XAction*）；逐项所有权由
                                  m_actionOwned 标记（addAction 系创建的为
                                  拥有，insertAction 注入的为借用）。 */
@@ -60,11 +61,13 @@ typedef struct XMenuBar
                                  false=借用（insertAction 注入，析构/clear
                                  时仅摘除）。 */
     XAction* m_activeAction;/**< 当前激活动作（借用）。 */
-    bool m_defaultUp;       /**< 弹出菜单默认向上（默认 false）。 */
-    bool m_nativeMenuBar;   /**< 原生菜单栏（对标 isNativeMenuBar）。 */
     XWidget* m_cornerWidgetL; /**< 左上角控件（对标 cornerWidget(TopLeft)）。 */
     XWidget* m_cornerWidgetR; /**< 右上角控件（对标 cornerWidget(TopRight)）。 */
+    /* ---- 4 字节组 ---- */
     XSize m_cachedHint;     /**< 尺寸提示缓存。 */
+    /* ---- 位域组（2 个布尔打包 1 字节） ---- */
+    uint8_t m_defaultUp : 1; /**< 弹出菜单默认向上（默认 false）。 */
+    uint8_t m_nativeMenuBar : 1; /**< 原生菜单栏（对标 isNativeMenuBar）。 */
 } XMenuBar;
 
 /** @brief 菜单栏角落位置（对标 Qt::Corner，数值一致）。 */

@@ -83,14 +83,18 @@ XCLASS_DEFINE_EXTEND_END(XMdiSubWindow, XWidget)
 typedef struct XMdiSubWindow
 {
     XWidget m_base;      /**< 基类成员；必须是第一个。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XWidget* m_widget;   /**< 内容控件（借用，归 sub window）。 */
     XString* m_title;   /**< 标题条文本（对象拥有）。 */
     XMenu* m_systemMenu; /**< 系统菜单（对标 QMdiSubWindow::systemMenu；对象拥有）。 */
-    int m_options;       /**< 选项位组合（XMdiSubWindowOption）。 */
-    int m_keyboardSingleStep; /**< 键盘单步移动像素（对标 keyboardSingleStep）。 */
-    int m_keyboardPageStep;   /**< 键盘页步移动像素（对标 keyboardPageStep）。 */
-    bool m_shaded;       /**< 是否处于折叠（仅标题条）状态。 */
-    int m_state;         /**< 当前窗口状态位（0=Normal；其余位后续扩展）。 */
+    /* ---- 2 字节组 ---- */
+    uint16_t m_keyboardSingleStep; /**< 键盘单步移动像素（对标 keyboardSingleStep；初值 5）。 */
+    uint16_t m_keyboardPageStep;   /**< 键盘页步移动像素（对标 keyboardPageStep；初值 20）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_options;       /**< 选项位组合（XMdiSubWindowOption，最大 0x8；
+                                *   setOption 只按位或/与单选项位）。 */
+    uint8_t m_state;         /**< 当前窗口状态位（0=Normal；其余位后续扩展）。 */
+    uint8_t m_shaded : 1;    /**< 是否处于折叠（仅标题条）状态。 */
 } XMdiSubWindow;
 
 /** @brief XMdi子Windowclassinit（对标 Qt 同名接口）。
@@ -230,17 +234,23 @@ XCLASS_DEFINE_EXTEND_END(XMdiArea, XAbstractScrollArea)
 typedef struct XMdiArea
 {
     XAbstractScrollArea m_base; /**< 基类成员；必须是第一个。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XVector* m_subWindows; /**< 子窗口数组（XMdiSubWindow*，拥有）。 */
     XMdiSubWindow* m_active; /**< 当前活动子窗口（借用）。 */
-    int m_viewMode;      /**< 视图模式（XMdiAreaViewMode）。 */
+    /* ---- 4 字节组 ---- */
     uint32_t m_background; /**< 背景画刷色（ARGB；0=默认）。 */
-    int m_tabPosition;    /**< 页签位置（Tabbed 模式）。 */
-    int m_tabShape;       /**< 页签形状（Tabbed 模式；0=Rounded，1=Triangular）。 */
-    bool m_tabsMovable;   /**< 页签可拖（Tabbed 模式）。 */
-    bool m_tabsClosable;  /**< 页签可关（Tabbed 模式）。 */
-    int m_activationOrder; /**< 激活顺序（XMdiAreaWindowOrder）。 */
-    int m_options;        /**< 选项位组合（XMdiAreaAreaOption）。 */
-    bool m_documentMode;  /**< 文档模式（对标 documentMode）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_viewMode;      /**< 视图模式（XMdiAreaViewMode，0=SubWindow/1=Tabbed）。 */
+    uint8_t m_tabPosition;    /**< 页签位置（Tabbed 模式；setter 原样存取外部
+                                  *   位置码，按对齐保持 uint8_t 承载）。 */
+    uint8_t m_tabShape;       /**< 页签形状（Tabbed 模式；0=Rounded，1=Triangular）。 */
+    uint8_t m_activationOrder; /**< 激活顺序（XMdiAreaWindowOrder，0..2）。 */
+    uint8_t m_options;        /**< 选项位组合（XMdiAreaAreaOption，最大 0x2；
+                                  *   setOption 只按位或/与单选项位）。 */
+    /* ---- 位域组（3 个布尔打包 1 字节） ---- */
+    uint8_t m_tabsMovable : 1;   /**< 页签可拖（Tabbed 模式）。 */
+    uint8_t m_tabsClosable : 1;  /**< 页签可关（Tabbed 模式）。 */
+    uint8_t m_documentMode : 1;  /**< 文档模式（对标 documentMode）。 */
 } XMdiArea;
 
 /**

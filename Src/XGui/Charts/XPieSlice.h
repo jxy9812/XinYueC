@@ -50,20 +50,21 @@ typedef struct XPieSlice
     double m_angleSpan;              /**< 角跨度（度；series 布局回写）。 */
     double m_penWidth;               /**< 画笔线宽（默认 1）。 */
 
-    /* ---- 4 字节对齐组：颜色与整型 ---- */
+    /* ---- 4 字节对齐组：颜色 ---- */
     uint32_t m_color;                /**< 切片填充色（ARGB；0=主题色）。 */
     uint32_t m_borderColor;          /**< 边框色（ARGB；0=填充色）。 */
-    int m_borderWidth;               /**< 边框宽（像素；0=无边框）。 */
     uint32_t m_labelColor;           /**< 标签色（ARGB；0=白色）。 */
-    XPieSlice_LabelPosition m_labelPosition; /**< 标签位置。 */
     uint32_t m_penColor;             /**< 画笔颜色（0=默认）。 */
     uint32_t m_brushColor;           /**< 画刷颜色（0=透明）。 */
     uint32_t m_labelBrushColor;      /**< 标签画刷颜色（0=默认）。 */
-    int m_labelFontSize;             /**< 标签字号（磅；0=默认）。 */
 
-    /* ---- 1 字节标志组（尾部填充；保持 bool 不并位域） ---- */
-    bool m_labelVisible;             /**< 标签可见（默认 false）。 */
-    bool m_exploded;                 /**< 是否分离突出。 */
+    /* ---- 1 字节窄整型/标志组（枚举 0-3、宽度/字号 <=255；setter 已钳
+     *      非负；无取址使用、无 -1 哨兵） ---- */
+    uint8_t m_borderWidth;           /**< 边框宽（像素；0=无边框）。 */
+    uint8_t m_labelPosition;         /**< 标签位置（XPieSlice_LabelPosition）。 */
+    uint8_t m_labelFontSize;         /**< 标签字号（磅；0=默认）。 */
+    bool m_labelVisible : 1;         /**< 标签可见（默认 false）。 */
+    bool m_exploded : 1;             /**< 是否分离突出。 */
 } XPieSlice;
 
 XVtable* XPieSlice_class_init(void);

@@ -29,9 +29,11 @@ XCLASS_DEFINE_EXTEND_END(XItemSelectionModel, XObject)
 typedef struct XItemSelectionModel
 {
     XObject m_base;          /**< 基类成员；必须是第一个，由 XClass 管理。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XVector* m_selected;     /**< 选中索引集合（(row<<16)|col，拥有）。 */
-    int m_currentRow;        /**< 当前行；-1=无。 */
-    int m_currentCol;        /**< 当前列；-1=无。 */
+    /* ---- 2 字节组 ---- */
+    int16_t m_currentRow;    /**< 当前行；-1=无（负值哨兵，故有符号）。 */
+    int16_t m_currentCol;    /**< 当前列；-1=无。 */
 } XItemSelectionModel;
 
 /* ==================== 生命周期 ==================== */

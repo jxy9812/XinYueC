@@ -81,14 +81,19 @@ XCLASS_DEFINE_EXTEND_END(XProgressBar, XWidget)
 typedef struct XProgressBar
 {
     XWidget m_base;                 /**< 基类成员；必须是第一个。 */
-    int     m_min;                  /**< 进度范围下限。 */
-    int     m_max;                  /**< 进度范围上限。 */
-    int     m_value;                /**< 当前进度值。 */
-    int     m_orientation;          /**< 方向（XProgressBarOrientation）。 */
-    bool    m_invertedAppearance;   /**< 外观翻转。 */
-    bool    m_textVisible;          /**< 是否绘制文本。 */
-    int     m_textDirection;        /**< 垂直文本方向（XProgressBarDirection）。 */
-    int     m_alignment;            /**< 文本对齐（XAlignment 组合）。 */    XString* m_format;             /**< 字符串字段（对象拥有）。 */
+    XString* m_format;             /**< 字符串字段（对象拥有）。 */
+    int     m_min;                  /**< 进度范围下限（数值域全 int，保留）。 */
+    int     m_max;                  /**< 进度范围上限（数值域全 int，保留）。 */
+    int     m_value;                /**< 当前进度值（数值域全 int，保留）。 */
+    int     m_alignment;            /**< 文本对齐（XAlignment 组合；setter
+                                       往返任意组合，保留 int）。 */
+    /* [内存治理 2026-10-11] 标志位字：2 个 bool + 方向 1..2 + 文本方向
+       0..1（XProgressBarDirection）合并 1 字。 */
+    uint32_t m_invertedAppearance : 1; /**< 外观翻转。 */
+    uint32_t m_textVisible : 1;     /**< 是否绘制文本。 */
+    uint32_t m_orientation : 2;     /**< 方向（XProgressBarOrientation 1..2）。 */
+    uint32_t m_textDirection : 2;   /**< 垂直文本方向（XProgressBarDirection 0..1）。 */
+    uint32_t m_progressBarFlagsUnused : 26; /**< 保留位。 */
 } XProgressBar;
 
 /* ==================== 生命周期（对标 QProgressBar 构造/析构） ==================== */

@@ -46,41 +46,48 @@ typedef struct XVariant XVariant;
 typedef struct XTextEdit
 {
     XAbstractScrollArea m_base; /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
     XPlainTextEdit* m_editor;   /**< 内嵌多行编辑器（拥有）。 */
+    XString* m_fontFamily;  /**< 当前字体族（对象拥有）。 */
+    XString* m_documentTitle; /**< 文档标题（对象拥有）。 */
+    XString* m_markdown;    /**< Markdown 原文（对象拥有；setMarkdown
+                                  写入、内容被替换接口清除）。 */
+    XString* m_hoverAnchor; /**< 预览态悬停链接 URL（对象拥有；NULL=无；
+                                  对标 QLabel 悬停按 href 去重）。 */
+    XString* m_pressedAnchor; /**< 预览态按压链接 URL（对象拥有；NULL=无；
+                                  对标 QLabel 按下记录、释放同链触发）。 */
 #if XTEXTDOCUMENT_ON
     XTextDocument* m_textDoc;   /**< 富文本文档。 */
     bool m_textDocOwned;        /**< 文档所有权：true=内部创建并负责释放；
                                      false=外部 setDocument 接管不释放。 */
 #endif
-    bool m_bold;            /**< 当前粗体格式。 */
-    bool m_italic;          /**< 当前斜体格式。 */
-    bool m_underline;       /**< 当前下划线格式。 */
-    uint32_t m_textColor;   /**< 当前文字颜色（ARGB）。 */
-    int m_alignment;        /**< 当前对齐。 */
-    XString* m_fontFamily;  /**< 当前字体族（对象拥有）。 */
-    int m_fontWeight;       /**< 当前字重（默认 400）。 */
     double m_fontPointSize; /**< 当前字号（磅；默认 10）。 */
     double m_tabStopDistance; /**< 制表位距（默认 80）。 */
-    int m_cursorWidth;      /**< 光标宽（像素；默认 1）。 */
-    int m_lineWrapMode;     /**< 换行模式（默认 WidgetWidth）。 */
-    int m_lineWrapColumnOrWidth; /**< 换行列宽/像素宽（默认 0；对标
-                                      lineWrapColumnOrWidth 属性承载）。 */
-    int m_wordWrapMode;     /**< 单词换行策略（默认 WrapAtWordBoundaryOrAnywhere）。 */
-    bool m_acceptRichText;  /**< 接受富文本（默认 true）。 */
-    int m_autoFormatting;   /**< 自动格式化位集（默认 0）。 */
-    bool m_centerOnScroll;  /**< 滚动居中（默认 false）。 */
-    XString* m_documentTitle; /**< 文档标题（对象拥有）。 */
-    XString* m_markdown;    /**< Markdown 原文（对象拥有；setMarkdown
-                                  写入、内容被替换接口清除）。 */
+    uint32_t m_textColor;   /**< 当前文字颜色（ARGB）。 */
     uint32_t m_textBackgroundColor; /**< 文本背景色（ARGB；0=默认）。 */
-    bool m_richPreview;     /**< 只读富文本预览态：true=隐藏内嵌编辑器、
+    int m_alignment;        /**< 当前对齐（位组合，setter/getter 往返任意值，保守保留 int）。 */
+    int m_autoFormatting;   /**< 自动格式化位集（默认 0；位组合保守保留 int）。 */
+    /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
+       6 个 bool + 2 个小值域模式枚举（换行模式 0..1、单词换行策略 0..4）
+       原分散占 6B bool + 2×4B int（含对齐洞），合并后 1 字。 */
+    uint32_t m_bold : 1;    /**< 当前粗体格式。 */
+    uint32_t m_italic : 1;  /**< 当前斜体格式。 */
+    uint32_t m_underline : 1; /**< 当前下划线格式。 */
+    uint32_t m_acceptRichText : 1; /**< 接受富文本（默认 true）。 */
+    uint32_t m_centerOnScroll : 1; /**< 滚动居中（默认 false）。 */
+    uint32_t m_richPreview : 1; /**< 只读富文本预览态：true=隐藏内嵌编辑器、
                                   壳按渲染子集逐块绘制 m_textDoc（对标
                                   QTextEdit::setHtml 进入富文本呈现；
                                   编辑缓冲保持纯文本语义——所见即所存）。 */
-    XString* m_hoverAnchor; /**< 预览态悬停链接 URL（对象拥有；NULL=无；
-                                  对标 QLabel 悬停按 href 去重）。 */
-    XString* m_pressedAnchor; /**< 预览态按压链接 URL（对象拥有；NULL=无；
-                                  对标 QLabel 按下记录、释放同链触发）。 */
+    uint32_t m_lineWrapMode : 2; /**< 换行模式（XPlainTextEditMode 0..1；默认 WidgetWidth）。 */
+    uint32_t m_wordWrapMode : 3; /**< 单词换行策略（XTextControlWrap 0..4；默认 WordBoundaryOrAnywhere）。 */
+    uint32_t m_textEditFlagsUnused : 19; /**< 保留位。 */
+    /* [内存治理 2026-10-11] 短整型值：字重 0..65535（默认 400）、光标宽
+       小 px 值、换行列宽/像素宽（int16 承载负值余量）。 */
+    uint16_t m_fontWeight;  /**< 当前字重（默认 400）。 */
+    uint16_t m_cursorWidth; /**< 光标宽（像素；默认 1）。 */
+    int16_t m_lineWrapColumnOrWidth; /**< 换行列宽/像素宽（默认 0；对标
+                                      lineWrapColumnOrWidth 属性承载）。 */
 } XTextEdit;
 
 /** @brief X文本Editclassinit（对标 Qt 同名接口）。

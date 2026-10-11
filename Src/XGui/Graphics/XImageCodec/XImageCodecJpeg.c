@@ -274,7 +274,7 @@ typedef struct JpegHuff
 {
     uint8_t count[16];   /**< 各码长对应的符号数量（索引为长度-1） */
     uint8_t symbol[256]; /**< 符号序列（按规范排列） */
-    int     total;       /**< 符号总数 */
+    uint16_t total;      /**< 符号总数（构造时校验 <=256） */
 } JpegHuff;
 
 /** JPEG Huffman 表（编码用，含规范码字）。 */
@@ -282,7 +282,7 @@ typedef struct JpegHuffEncode
 {
     uint16_t code[256];  /**< 符号 -> 规范码字 */
     uint8_t  size[256];  /**< 符号 -> 码长 */
-    int      total;
+    uint16_t total;      /**< 符号总数 */
 } JpegHuffEncode;
 
 /* 从 DHT 载荷构造解码表（返回消费字节数，失败返回 -1）。 */
@@ -400,46 +400,59 @@ static void jpegForwardDct(const float samples[64], float f[64])
 /* 解码框架（支持基线/渐进/12 位/算术/CMYK）                                */
 /* ====================================================================== */
 
-/** 解码帧分量。 */
+/** 解码帧分量。
+ *  @note  内存压缩：id 来自 SOF 单字节（0..255），h/v/tq 由 & 15 掩码
+ *         （赋值发生在 1..4 范围校验之前，最大 15），四项均收窄为
+ *         uint8_t；JpegFrame.comp[4] 由 64→16 字节，JpegFrame 省 48 字节。 */
 typedef struct JpegFrameComp
 {
-    int id;    /**< 分量标识（1=Y, 2=Cb, 3=Cr, 4=C/M/Y/K 等） */
-    int h;     /**< 水平抽样因子（1..4） */
-    int v;     /**< 垂直抽样因子（1..4） */
-    int tq;    /**< 量化表选择（0..3） */
+    uint8_t id; /**< 分量标识（1=Y, 2=Cb, 3=Cr, 4=C/M/Y/K 等） */
+    uint8_t h;  /**< 水平抽样因子（1..4；越界值在校验前临时存储） */
+    uint8_t v;  /**< 垂直抽样因子（1..4） */
+    uint8_t tq; /**< 量化表选择（0..3） */
 } JpegFrameComp;
 
-/** 解码帧（SOF）信息，支持 SOF0/1/2 与 SOF9/10（算术熵编码）。 */
+/** 解码帧（SOF）信息，支持 SOF0/1/2 与 SOF9/10（算术熵编码）。
+ *  @note  内存压缩：precision(8/12)、nf(1..4)、maxH/maxV(1..4) 经 SOF 校验
+ *         后为小值，progressive/arithmetic/adobe 为 0/1 标志，adobeTransform
+ *         来自 APP14 单字节（0..255），全部收窄为 uint8_t 并与 parsed 成
+ *         1 字节组；comp[4] 已收窄为 16B。结构体 112→64 字节。 */
 typedef struct JpegFrame
 {
     int width;            /**< 图像宽度（像素） */
     int height;           /**< 图像高度（像素） */
-    int precision;        /**< 样本精度（8 或 12） */
-    int nf;               /**< 分量数量（1..4） */
-    int maxH, maxV;       /**< 最大抽样因子 */
-    int progressive;      /**< 渐进式（SOF2/SOF10） */
-    int arithmetic;       /**< 算术熵编码（SOF9/SOF10） */
-    int adobe;            /**< 找到 Adobe APP14 标记 */
-    int adobeTransform;   /**< Adobe APP14 转换字段（0=CMYK,1=YCbCr,2=YCCK） */
-    bool parsed;          /**< SOF 是否已解析 */
     JpegFrameComp comp[4]; /**< 分量（最多 4 个） */
+    uint8_t precision;    /**< 样本精度（8 或 12） */
+    uint8_t nf;           /**< 分量数量（1..4） */
+    uint8_t maxH, maxV;   /**< 最大抽样因子（1..4） */
+    uint8_t progressive;  /**< 渐进式（SOF2/SOF10） */
+    uint8_t arithmetic;   /**< 算术熵编码（SOF9/SOF10） */
+    uint8_t adobe;        /**< 找到 Adobe APP14 标记 */
+    uint8_t adobeTransform; /**< Adobe APP14 转换字段（0=CMYK,1=YCbCr,2=YCCK） */
+    bool parsed;          /**< SOF 是否已解析 */
 } JpegFrame;
 
-/** 解码扫描（SOS）分量。 */
+/** 解码扫描（SOS）分量。
+ *  @note  内存压缩：frameIdx 仅在 found>=0 时写入（found<0 直接返回失败，
+ *         无 -1 哨兵落盘，值域 0..3），tdc/tac 由 & 15 掩码，均收窄为
+ *         uint8_t。 */
 typedef struct JpegScanComp
 {
-    int frameIdx;  /**< 对应 JpegFrame.comp 索引 */
-    int tdc;       /**< DC Huffman/条件表号（0..3） */
-    int tac;       /**< AC Huffman/条件表号（0..3） */
+    uint8_t frameIdx; /**< 对应 JpegFrame.comp 索引（0..3） */
+    uint8_t tdc;      /**< DC Huffman/条件表号（0..3） */
+    uint8_t tac;      /**< AC Huffman/条件表号（0..3） */
 } JpegScanComp;
 
-/** 解码扫描（SOS）描述：分量子集 + 光谱选择 + 逐次逼近参数。 */
+/** 解码扫描（SOS）描述：分量子集 + 光谱选择 + 逐次逼近参数。
+ *  @note  内存压缩：ns(1..4)、Ss/Se(0..63 之字形位置)、Ah/Al(<=13) 全部
+ *         经 1044-1046 校验后为小值，收窄为 uint8_t；comp[4] 由 48→12
+ *         字节。结构体 68→28 字节。 */
 typedef struct JpegScan
 {
-    int ns;               /**< 扫描中分量数量 */
     JpegScanComp comp[4]; /**< 扫描分量 */
-    int Ss, Se;           /**< 光谱选择（起始/结束之字形位置） */
-    int Ah, Al;           /**< 逐次逼近：高位已传位数/本扫描低位位数 */
+    uint8_t Ss, Se;       /**< 光谱选择（起始/结束之字形位置，0..63） */
+    uint8_t Ah, Al;       /**< 逐次逼近：高位已传位数/本扫描低位位数（<=13） */
+    uint8_t ns;           /**< 扫描中分量数量（1..4） */
 } JpegScan;
 
 /** 解码样本平面（8 位或 12 位样本；平面为块网格尺寸并含抽样因子）。 */
@@ -448,8 +461,8 @@ typedef struct JpegSamplePlane
     uint8_t* data;    /**< 平面数据（每样本 byteDepth 字节） */
     int      pw;      /**< 平面宽（像素） */
     int      ph;      /**< 平面高（像素） */
-    int      h, v;    /**< 抽样因子 */
-    int      byteDepth; /**< 1=8 位，2=12 位 */
+    uint8_t  h, v;    /**< 抽样因子（1..4） */
+    uint8_t  byteDepth; /**< 1=8 位，2=12 位 */
 } JpegSamplePlane;
 
 /** 渐进式/顺序解码系数平面（每块 64 个量化系数，自然顺序）。 */
@@ -476,9 +489,19 @@ typedef struct JpegArith
     int            dcContext[4]; /**< DC 条件上下文（按帧分量索引） */
 } JpegArith;
 
-/** 当前 JPEG 文件解码上下文。 */
+/** 当前 JPEG 文件解码上下文。
+ *  @note  内存压缩：成员按对齐重排（8B 指针/size_t/含内嵌数组的大对象 →
+ *         4B 组 → 2B 组 → 1B 组）；JpegFrame/JpegScan/JpegSamplePlane 已在
+ *         本文件内收窄（frame 112→64、planes[4] 由 96→64），
+ *         结构体约 2200→2144 字节。 */
 typedef struct JpegCtx
 {
+    uint8_t*           iccProfile;   /**< APP2 ICC 原始 profile 拼接缓冲区 */
+    size_t             iccSize;      /**< ICC 原始字节数 */
+    size_t             iccCapacity;  /**< ICC 缓冲区容量 */
+    size_t             textBytes;    /**< 已接受的 COM 文本 UTF-8 字节数 */
+    JpegBitReader      bits;         /**< Huffman 位读取器 */
+    JpegArith          arith;        /**< 算术熵解码器（算术模式使用） */
     JpegFrame          frame;
     JpegHuff           huff[2][4];
     bool               haveHuff[2][4];
@@ -495,16 +518,10 @@ typedef struct JpegCtx
     JpegSamplePlane    planes[4];    /**< 样本平面（每帧分量一个） */
     int                dcPred[4];    /**< DC 预测值（按帧分量索引停驻） */
     int                eobrun;       /**< 渐进 AC EOBRUN（按扫描持久） */
-    JpegBitReader      bits;         /**< Huffman 位读取器 */
-    JpegArith          arith;        /**< 算术熵解码器（算术模式使用） */
     int                frBlkW;       /**< 该分量块网格宽（块单元） */
     int                frBlkH;       /**< 该分量块网格高（块单元） */
     XStringList        textKeys;     /**< COM 文本键列表（按出现顺序暂存） */
     XStringList        textValues;   /**< COM 文本值列表，与键一一对应 */
-    size_t             textBytes;    /**< 已接受的 COM 文本 UTF-8 字节数 */
-    uint8_t*           iccProfile;   /**< APP2 ICC 原始 profile 拼接缓冲区 */
-    size_t             iccSize;      /**< ICC 原始字节数 */
-    size_t             iccCapacity;  /**< ICC 缓冲区容量 */
     int                exifTransformation; /**< EXIF Orientation 映射到 Qt 变换枚举 */
 } JpegCtx;
 

@@ -57,13 +57,7 @@ XCLASS_DEFINE_EXTEND_END(XProgressDialog, XDialog)
 typedef struct XProgressDialog
 {
     XDialog m_base;              /**< 基类成员；必须是第一个。 */
-    int m_minimum;               /**< 最小值；默认 0。 */
-    int m_maximum;               /**< 最大值；默认 100。 */
-    int m_value;                 /**< 当前值；默认 0。 */
-    int m_minimumDuration;       /**< 显示最小时长（ms）；默认 4000。 */
-    bool m_wasCanceled;          /**< 是否已取消（对标 wasCanceled）。 */
-    bool m_autoReset;            /**< 达最大值自动复位；默认 true。 */
-    bool m_autoClose;            /**< 达最大值/复位自动隐藏；默认 true。 */
+    /* 指针组（8B 对齐）。 */
     XString* m_labelText;        /**< 提示文本（拥有）。 */
     XString* m_cancelButtonText; /**< 取消按钮文本（拥有）。 */
     XProgressBar* m_bar;         /**< 进度条（借用；setBar 简化存储）。 */
@@ -73,6 +67,17 @@ typedef struct XProgressDialog
                                      对标 QDialog::open 的
                                      receiverToDisconnectOnClose）。 */
     XSlotFunc1 m_openMember;     /**< open_2 记录的槽函数。 */
+    /* [内存治理 2026-10-11] 进度值为数值域全 int（setRange/setValue
+       往返任意值），保守保留 int；最短显示时长收 uint16_t（ms）。 */
+    int m_minimum;               /**< 最小值；默认 0。 */
+    int m_maximum;               /**< 最大值；默认 100。 */
+    int m_value;                 /**< 当前值；默认 0。 */
+    uint16_t m_minimumDuration;  /**< 显示最小时长（ms）；默认 4000。 */
+    /* [内存治理 2026-10-11] 标志位字：3 个 bool 合并 1 字。 */
+    uint32_t m_wasCanceled : 1;  /**< 是否已取消（对标 wasCanceled）。 */
+    uint32_t m_autoReset : 1;    /**< 达最大值自动复位；默认 true。 */
+    uint32_t m_autoClose : 1;    /**< 达最大值/复位自动隐藏；默认 true。 */
+    uint32_t m_progressDialogFlagsUnused : 29; /**< 保留位。 */
 } XProgressDialog;
 
 /**

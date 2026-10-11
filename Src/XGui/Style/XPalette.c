@@ -33,6 +33,42 @@ static XPaletteColorGroup palette_normalize_group(XPaletteColorGroup group)
     return group;
 }
 
+/* ========== 全精度调色板单元桥接（[内存治理 2026-10-11]） ==========
+   存储格 16B XColor → 8B XPaletteCell：alpha/R/G/B 各 uint16 原样搬运
+   （零量化零损失），非 RGB 色彩空间写入先经 XColor_toRgb 归一（调色板
+   语义是「最终显示色」，仅丢弃原色彩空间标签）。XPalette_color/setColor
+   与 init 系赋值全部经此两桥，m_colors 勿直访。 */
+static XPaletteCell xpal_pack(XColor color)
+{
+    XPaletteCell cell;
+    XColor rgb;
+    if (color.m_spec != XColor_Rgb && color.m_spec != XColor_Invalid &&
+        color.m_spec != XColor_ExtendedRgb)
+    {
+        XColor_toRgb(&color, &rgb);
+        color = rgb;
+    }
+    cell.m_alpha = color.m_alpha;
+    cell.m_red = color.m_comp1;
+    cell.m_green = color.m_comp2;
+    cell.m_blue = color.m_comp3;
+    return cell;
+}
+
+static XColor xpal_unpack(const XPaletteCell* cell)
+{
+    XColor c;
+    if (!cell)
+        return XColor_create();
+    c.m_spec = XColor_Rgb;
+    c.m_alpha = cell->m_alpha;
+    c.m_comp1 = cell->m_red;
+    c.m_comp2 = cell->m_green;
+    c.m_comp3 = cell->m_blue;
+    c.m_comp4 = 0;
+    return c;
+}
+
 void XPalette_init_default(XPalette* self)
 {
     XColor invalid;
@@ -45,7 +81,7 @@ void XPalette_init_default(XPalette* self)
     /* 先整体清为无效颜色，再按角色填充，保证越界单元可辨识。 */
     for (g = 0; g < XPaletteColorGroup_NColorGroups; ++g)
         for (r = 0; r < XPaletteColorRole_NColorRoles; ++r)
-            self->m_colors[g][r] = invalid;
+            self->m_colors[g][r] = xpal_pack(invalid);
 
     /* ---------- Qt 6.8 Fusion 浅色主题（Active / Inactive / Current） ---------- */
     {
@@ -74,31 +110,31 @@ void XPalette_init_default(XPalette* self)
 
         XPaletteColorGroup groups[3] = { active, inactive, current };
         for (g = 0; g < 3; ++g) {
-            self->m_colors[groups[g]][XPaletteColorRole_WindowText]      = text;
-            self->m_colors[groups[g]][XPaletteColorRole_Button]          = button;
-            self->m_colors[groups[g]][XPaletteColorRole_Light]           = light;
-            self->m_colors[groups[g]][XPaletteColorRole_Midlight]        = midlight;
-            self->m_colors[groups[g]][XPaletteColorRole_Dark]            = dark;
-            self->m_colors[groups[g]][XPaletteColorRole_Mid]             = mid;
-            self->m_colors[groups[g]][XPaletteColorRole_Text]            = text;
-            self->m_colors[groups[g]][XPaletteColorRole_BrightText]      = brightText;
-            self->m_colors[groups[g]][XPaletteColorRole_ButtonText]      = text;
-            self->m_colors[groups[g]][XPaletteColorRole_Base]            = base;
-            self->m_colors[groups[g]][XPaletteColorRole_Window]          = window;
-            self->m_colors[groups[g]][XPaletteColorRole_Shadow]          = shadow;
-            self->m_colors[groups[g]][XPaletteColorRole_Highlight]       = highlight;
-            self->m_colors[groups[g]][XPaletteColorRole_HighlightedText] = hiText;
-            self->m_colors[groups[g]][XPaletteColorRole_Link]            = link;
-            self->m_colors[groups[g]][XPaletteColorRole_LinkVisited]     = linkVisited;
-            self->m_colors[groups[g]][XPaletteColorRole_AlternateBase]   = altBase;
-            self->m_colors[groups[g]][XPaletteColorRole_NoRole]          = invalid;
-            self->m_colors[groups[g]][XPaletteColorRole_ToolTipBase]     = toolTipBase;
-            self->m_colors[groups[g]][XPaletteColorRole_ToolTipText]     = text;
-            self->m_colors[groups[g]][XPaletteColorRole_PlaceholderText] = placeHolder;
+            self->m_colors[groups[g]][XPaletteColorRole_WindowText] = xpal_pack(text);
+            self->m_colors[groups[g]][XPaletteColorRole_Button] = xpal_pack(button);
+            self->m_colors[groups[g]][XPaletteColorRole_Light] = xpal_pack(light);
+            self->m_colors[groups[g]][XPaletteColorRole_Midlight] = xpal_pack(midlight);
+            self->m_colors[groups[g]][XPaletteColorRole_Dark] = xpal_pack(dark);
+            self->m_colors[groups[g]][XPaletteColorRole_Mid] = xpal_pack(mid);
+            self->m_colors[groups[g]][XPaletteColorRole_Text] = xpal_pack(text);
+            self->m_colors[groups[g]][XPaletteColorRole_BrightText] = xpal_pack(brightText);
+            self->m_colors[groups[g]][XPaletteColorRole_ButtonText] = xpal_pack(text);
+            self->m_colors[groups[g]][XPaletteColorRole_Base] = xpal_pack(base);
+            self->m_colors[groups[g]][XPaletteColorRole_Window] = xpal_pack(window);
+            self->m_colors[groups[g]][XPaletteColorRole_Shadow] = xpal_pack(shadow);
+            self->m_colors[groups[g]][XPaletteColorRole_Highlight] = xpal_pack(highlight);
+            self->m_colors[groups[g]][XPaletteColorRole_HighlightedText] = xpal_pack(hiText);
+            self->m_colors[groups[g]][XPaletteColorRole_Link] = xpal_pack(link);
+            self->m_colors[groups[g]][XPaletteColorRole_LinkVisited] = xpal_pack(linkVisited);
+            self->m_colors[groups[g]][XPaletteColorRole_AlternateBase] = xpal_pack(altBase);
+            self->m_colors[groups[g]][XPaletteColorRole_NoRole] = xpal_pack(invalid);
+            self->m_colors[groups[g]][XPaletteColorRole_ToolTipBase] = xpal_pack(toolTipBase);
+            self->m_colors[groups[g]][XPaletteColorRole_ToolTipText] = xpal_pack(text);
+            self->m_colors[groups[g]][XPaletteColorRole_PlaceholderText] = xpal_pack(placeHolder);
             /* Qt 6.8 qt_fusionPalette 将 Accent 镜像为高亮色（"Unless
                explicitly set, it defaults to Highlight"），浅色组同深色组
                一并补齐，保证深浅切换时 Accent 语义一致。 */
-            self->m_colors[groups[g]][XPaletteColorRole_Accent]          = highlight;
+            self->m_colors[groups[g]][XPaletteColorRole_Accent] = xpal_pack(highlight);
         }
     }
 
@@ -120,30 +156,29 @@ void XPalette_init_default(XPalette* self)
         XColor disToolTipText = palette_rgb(0, 0, 0);
 
         for (r = 0; r < XPaletteColorRole_NColorRoles; ++r)
-            self->m_colors[disabled][r] = disWindow;
-        self->m_colors[disabled][XPaletteColorRole_Window]     = disWindow;
-        self->m_colors[disabled][XPaletteColorRole_Button]     = disWindow;
-        self->m_colors[disabled][XPaletteColorRole_Base]       = disBase;
-        self->m_colors[disabled][XPaletteColorRole_AlternateBase] = disBase;
-        self->m_colors[disabled][XPaletteColorRole_WindowText] = disText;
-        self->m_colors[disabled][XPaletteColorRole_Text]       = disText;
-        self->m_colors[disabled][XPaletteColorRole_ButtonText] = disText;
-        self->m_colors[disabled][XPaletteColorRole_PlaceholderText] = disText;
-        self->m_colors[disabled][XPaletteColorRole_ToolTipText] = disText;
-        self->m_colors[disabled][XPaletteColorRole_Dark]       = disDark;
-        self->m_colors[disabled][XPaletteColorRole_Mid]        = disMid;
-        self->m_colors[disabled][XPaletteColorRole_Midlight]   = disMidlight;
-        self->m_colors[disabled][XPaletteColorRole_Light]      = disLight;
-        self->m_colors[disabled][XPaletteColorRole_Shadow]     = disShadow;
-        self->m_colors[disabled][XPaletteColorRole_Highlight]  = palette_rgb(145, 145, 145);
-        self->m_colors[disabled][XPaletteColorRole_HighlightedText] = disHiText;
-        self->m_colors[disabled][XPaletteColorRole_Link]       = disLink;
-        self->m_colors[disabled][XPaletteColorRole_LinkVisited] = disVisited;
-        self->m_colors[disabled][XPaletteColorRole_ToolTipBase] = disToolTipBase;
-        self->m_colors[disabled][XPaletteColorRole_ToolTipText] = disToolTipText;
-        self->m_colors[disabled][XPaletteColorRole_PlaceholderText] =
-            palette_rgba(190, 190, 190, 128);
-        self->m_colors[disabled][XPaletteColorRole_NoRole]     = invalid;
+            self->m_colors[disabled][r] = xpal_pack(disWindow);
+        self->m_colors[disabled][XPaletteColorRole_Window] = xpal_pack(disWindow);
+        self->m_colors[disabled][XPaletteColorRole_Button] = xpal_pack(disWindow);
+        self->m_colors[disabled][XPaletteColorRole_Base] = xpal_pack(disBase);
+        self->m_colors[disabled][XPaletteColorRole_AlternateBase] = xpal_pack(disBase);
+        self->m_colors[disabled][XPaletteColorRole_WindowText] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_Text] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_ButtonText] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_PlaceholderText] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_ToolTipText] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_Dark] = xpal_pack(disDark);
+        self->m_colors[disabled][XPaletteColorRole_Mid] = xpal_pack(disMid);
+        self->m_colors[disabled][XPaletteColorRole_Midlight] = xpal_pack(disMidlight);
+        self->m_colors[disabled][XPaletteColorRole_Light] = xpal_pack(disLight);
+        self->m_colors[disabled][XPaletteColorRole_Shadow] = xpal_pack(disShadow);
+        self->m_colors[disabled][XPaletteColorRole_Highlight] = xpal_pack(palette_rgb(145, 145, 145));
+        self->m_colors[disabled][XPaletteColorRole_HighlightedText] = xpal_pack(disHiText);
+        self->m_colors[disabled][XPaletteColorRole_Link] = xpal_pack(disLink);
+        self->m_colors[disabled][XPaletteColorRole_LinkVisited] = xpal_pack(disVisited);
+        self->m_colors[disabled][XPaletteColorRole_ToolTipBase] = xpal_pack(disToolTipBase);
+        self->m_colors[disabled][XPaletteColorRole_ToolTipText] = xpal_pack(disToolTipText);
+        self->m_colors[disabled][XPaletteColorRole_PlaceholderText] = xpal_pack(palette_rgba(190, 190, 190, 128));
+        self->m_colors[disabled][XPaletteColorRole_NoRole] = xpal_pack(invalid);
     }
 }
 
@@ -175,7 +210,7 @@ void XPalette_init_dark(XPalette* self)
     /* 先整体清为无效颜色，再按角色填充，与浅色路径同一套路。 */
     for (g = 0; g < XPaletteColorGroup_NColorGroups; ++g)
         for (r = 0; r < XPaletteColorRole_NColorRoles; ++r)
-            self->m_colors[g][r] = invalid;
+            self->m_colors[g][r] = xpal_pack(invalid);
 
     /* ---------- 深色 Active / Inactive / Current ---------- */
     {
@@ -203,29 +238,29 @@ void XPalette_init_dark(XPalette* self)
 
         XPaletteColorGroup groups[3] = { active, inactive, current };
         for (g = 0; g < 3; ++g) {
-            self->m_colors[groups[g]][XPaletteColorRole_WindowText]      = text;
-            self->m_colors[groups[g]][XPaletteColorRole_Button]          = button;
-            self->m_colors[groups[g]][XPaletteColorRole_Light]           = light;
-            self->m_colors[groups[g]][XPaletteColorRole_Midlight]        = midlight;
-            self->m_colors[groups[g]][XPaletteColorRole_Dark]            = dark;
-            self->m_colors[groups[g]][XPaletteColorRole_Mid]             = mid;
-            self->m_colors[groups[g]][XPaletteColorRole_Text]            = text;
-            self->m_colors[groups[g]][XPaletteColorRole_BrightText]      = brightText;
-            self->m_colors[groups[g]][XPaletteColorRole_ButtonText]      = text;
-            self->m_colors[groups[g]][XPaletteColorRole_Base]            = base;
-            self->m_colors[groups[g]][XPaletteColorRole_Window]          = window;
-            self->m_colors[groups[g]][XPaletteColorRole_Shadow]          = shadow;
-            self->m_colors[groups[g]][XPaletteColorRole_Highlight]       = highlight;
-            self->m_colors[groups[g]][XPaletteColorRole_HighlightedText] = hiText;
-            self->m_colors[groups[g]][XPaletteColorRole_Link]            = link;
-            self->m_colors[groups[g]][XPaletteColorRole_LinkVisited]     = linkVisited;
-            self->m_colors[groups[g]][XPaletteColorRole_AlternateBase]   = altBase;
-            self->m_colors[groups[g]][XPaletteColorRole_NoRole]          = invalid;
-            self->m_colors[groups[g]][XPaletteColorRole_ToolTipBase]     = toolTipBase;
-            self->m_colors[groups[g]][XPaletteColorRole_ToolTipText]     = text;
-            self->m_colors[groups[g]][XPaletteColorRole_PlaceholderText] = placeHolder;
+            self->m_colors[groups[g]][XPaletteColorRole_WindowText] = xpal_pack(text);
+            self->m_colors[groups[g]][XPaletteColorRole_Button] = xpal_pack(button);
+            self->m_colors[groups[g]][XPaletteColorRole_Light] = xpal_pack(light);
+            self->m_colors[groups[g]][XPaletteColorRole_Midlight] = xpal_pack(midlight);
+            self->m_colors[groups[g]][XPaletteColorRole_Dark] = xpal_pack(dark);
+            self->m_colors[groups[g]][XPaletteColorRole_Mid] = xpal_pack(mid);
+            self->m_colors[groups[g]][XPaletteColorRole_Text] = xpal_pack(text);
+            self->m_colors[groups[g]][XPaletteColorRole_BrightText] = xpal_pack(brightText);
+            self->m_colors[groups[g]][XPaletteColorRole_ButtonText] = xpal_pack(text);
+            self->m_colors[groups[g]][XPaletteColorRole_Base] = xpal_pack(base);
+            self->m_colors[groups[g]][XPaletteColorRole_Window] = xpal_pack(window);
+            self->m_colors[groups[g]][XPaletteColorRole_Shadow] = xpal_pack(shadow);
+            self->m_colors[groups[g]][XPaletteColorRole_Highlight] = xpal_pack(highlight);
+            self->m_colors[groups[g]][XPaletteColorRole_HighlightedText] = xpal_pack(hiText);
+            self->m_colors[groups[g]][XPaletteColorRole_Link] = xpal_pack(link);
+            self->m_colors[groups[g]][XPaletteColorRole_LinkVisited] = xpal_pack(linkVisited);
+            self->m_colors[groups[g]][XPaletteColorRole_AlternateBase] = xpal_pack(altBase);
+            self->m_colors[groups[g]][XPaletteColorRole_NoRole] = xpal_pack(invalid);
+            self->m_colors[groups[g]][XPaletteColorRole_ToolTipBase] = xpal_pack(toolTipBase);
+            self->m_colors[groups[g]][XPaletteColorRole_ToolTipText] = xpal_pack(text);
+            self->m_colors[groups[g]][XPaletteColorRole_PlaceholderText] = xpal_pack(placeHolder);
             /* Accent 镜像高亮（qt_fusionPalette 三组统一设置）。 */
-            self->m_colors[groups[g]][XPaletteColorRole_Accent]          = highlight;
+            self->m_colors[groups[g]][XPaletteColorRole_Accent] = xpal_pack(highlight);
         }
     }
 
@@ -240,30 +275,28 @@ void XPalette_init_dark(XPalette* self)
 
         /* 7 参构造的 Disabled 组沿用 Active 的 light/mid/midlight 值。 */
         for (r = 0; r < XPaletteColorRole_NColorRoles; ++r)
-            self->m_colors[disabled][r] = disWindow;
-        self->m_colors[disabled][XPaletteColorRole_Window]     = disWindow;
-        self->m_colors[disabled][XPaletteColorRole_Button]     = disWindow;
-        self->m_colors[disabled][XPaletteColorRole_Base]       = disWindow;
-        self->m_colors[disabled][XPaletteColorRole_AlternateBase] =
-            palette_rgb(42, 42, 42);
-        self->m_colors[disabled][XPaletteColorRole_WindowText] = disText;
-        self->m_colors[disabled][XPaletteColorRole_Text]       = disText;
-        self->m_colors[disabled][XPaletteColorRole_ButtonText] = disText;
-        self->m_colors[disabled][XPaletteColorRole_PlaceholderText] = disText;
-        self->m_colors[disabled][XPaletteColorRole_ToolTipText] = disText;
-        self->m_colors[disabled][XPaletteColorRole_Dark]       = disDark;
-        self->m_colors[disabled][XPaletteColorRole_Shadow]     = disShadow;
-        self->m_colors[disabled][XPaletteColorRole_Light]      = palette_rgb(75, 75, 75);
-        self->m_colors[disabled][XPaletteColorRole_Mid]        = palette_rgb(38, 38, 38);
-        self->m_colors[disabled][XPaletteColorRole_Midlight]   = palette_rgb(41, 41, 41);
-        self->m_colors[disabled][XPaletteColorRole_Highlight]  = disHi;
-        self->m_colors[disabled][XPaletteColorRole_HighlightedText] =
-            palette_rgb(240, 240, 240);
-        self->m_colors[disabled][XPaletteColorRole_Accent]     = disHi;
-        self->m_colors[disabled][XPaletteColorRole_Link]       = palette_rgb(48, 140, 198);
-        self->m_colors[disabled][XPaletteColorRole_LinkVisited] = palette_rgb(255, 0, 255);
-        self->m_colors[disabled][XPaletteColorRole_ToolTipBase] = palette_rgb(255, 255, 220);
-        self->m_colors[disabled][XPaletteColorRole_NoRole]     = invalid;
+            self->m_colors[disabled][r] = xpal_pack(disWindow);
+        self->m_colors[disabled][XPaletteColorRole_Window] = xpal_pack(disWindow);
+        self->m_colors[disabled][XPaletteColorRole_Button] = xpal_pack(disWindow);
+        self->m_colors[disabled][XPaletteColorRole_Base] = xpal_pack(disWindow);
+        self->m_colors[disabled][XPaletteColorRole_AlternateBase] = xpal_pack(palette_rgb(42, 42, 42));
+        self->m_colors[disabled][XPaletteColorRole_WindowText] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_Text] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_ButtonText] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_PlaceholderText] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_ToolTipText] = xpal_pack(disText);
+        self->m_colors[disabled][XPaletteColorRole_Dark] = xpal_pack(disDark);
+        self->m_colors[disabled][XPaletteColorRole_Shadow] = xpal_pack(disShadow);
+        self->m_colors[disabled][XPaletteColorRole_Light] = xpal_pack(palette_rgb(75, 75, 75));
+        self->m_colors[disabled][XPaletteColorRole_Mid] = xpal_pack(palette_rgb(38, 38, 38));
+        self->m_colors[disabled][XPaletteColorRole_Midlight] = xpal_pack(palette_rgb(41, 41, 41));
+        self->m_colors[disabled][XPaletteColorRole_Highlight] = xpal_pack(disHi);
+        self->m_colors[disabled][XPaletteColorRole_HighlightedText] = xpal_pack(palette_rgb(240, 240, 240));
+        self->m_colors[disabled][XPaletteColorRole_Accent] = xpal_pack(disHi);
+        self->m_colors[disabled][XPaletteColorRole_Link] = xpal_pack(palette_rgb(48, 140, 198));
+        self->m_colors[disabled][XPaletteColorRole_LinkVisited] = xpal_pack(palette_rgb(255, 0, 255));
+        self->m_colors[disabled][XPaletteColorRole_ToolTipBase] = xpal_pack(palette_rgb(255, 255, 220));
+        self->m_colors[disabled][XPaletteColorRole_NoRole] = xpal_pack(invalid);
     }
 }
 
@@ -295,7 +328,7 @@ XColor XPalette_color(const XPalette* self, XPaletteColorGroup group, XPaletteCo
     if (!self || role < 0 || role >= XPaletteColorRole_NColorRoles)
         return invalid;
     g = palette_normalize_group(group);
-    return self->m_colors[g][role];
+    return xpal_unpack(&self->m_colors[g][role]);
 }
 
 void XPalette_setColor(XPalette* self, XPaletteColorGroup group, XPaletteColorRole role, XColor color)
@@ -305,7 +338,7 @@ void XPalette_setColor(XPalette* self, XPaletteColorGroup group, XPaletteColorRo
         role == XPaletteColorRole_NoRole)
         return;
     g = palette_normalize_group(group);
-    self->m_colors[g][role] = color;
+    self->m_colors[g][role] = xpal_pack(color);
 }
 
 bool XPalette_isEqual(const XPalette* a, const XPalette* b)
@@ -316,9 +349,15 @@ bool XPalette_isEqual(const XPalette* a, const XPalette* b)
     if (!a || !b)
         return false;
     for (g = 0; g < XPaletteColorGroup_NColorGroups; ++g)
+    {
         for (r = 0; r < XPaletteColorRole_NColorRoles; ++r)
-            if (!XColor_equals(&a->m_colors[g][r], &b->m_colors[g][r]))
+        {
+            XColor ca = xpal_unpack(&a->m_colors[g][r]);
+            XColor cb = xpal_unpack(&b->m_colors[g][r]);
+            if (!XColor_equals(&ca, &cb))
                 return false;
+        }
+    }
     return true;
 }
 

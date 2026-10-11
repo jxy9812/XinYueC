@@ -45,17 +45,22 @@ XCLASS_DEFINE_EXTEND_END(XSplitter, XFrame)
 typedef struct XSplitter
 {
     XFrame m_base;              /**< 基类成员；必须是第一个。 */
-    int m_orientation;          /**< 方向（1=水平 2=垂直，默认水平）。 */
-    int m_handleWidth;          /**< 分隔条宽度（默认 5）。 */
-    bool m_childrenCollapsible; /**< 子页可折叠（默认 true）。 */
-    bool m_opaqueResize;        /**< 不透明拖动（默认 true）。 */
     int* m_collapsible;         /**< 逐页折叠覆写（-1 未设置）。 */
-    int m_collapsibleCap;       /**< 折叠数组容量。 */
-    int m_dragIndex;            /**< 正在拖动的分隔条索引（-1 无）。 */
     int* m_sizes;               /**< 页尺寸意图（对标 Qt sizer；0=未设定，
                                      全零时布局均分；拖动/setSizes 落位
                                      后写入，容器缩放按此比例重排）。 */
-    int m_sizesCap;             /**< 页尺寸意图数组容量。 */
+    /* [内存治理 2026-10-11] 短整型：折叠/尺寸数组容量收 int16_t；
+       dragIndex 有 -1 哨兵（-1=无拖动），用 int16_t 保留符号；
+       分隔条宽度小 px 值收 uint16_t；方向 1/2 收 uint8_t。 */
+    int16_t m_collapsibleCap;   /**< 折叠数组容量。 */
+    int16_t m_dragIndex;        /**< 正在拖动的分隔条索引（-1 无）。 */
+    int16_t m_sizesCap;         /**< 页尺寸意图数组容量。 */
+    uint16_t m_handleWidth;     /**< 分隔条宽度（默认 5）。 */
+    uint8_t m_orientation;      /**< 方向（1=水平 2=垂直，默认水平）。 */
+    /* [内存治理 2026-10-11] 标志位字：2 个 bool 合并 1 字。 */
+    uint32_t m_childrenCollapsible : 1; /**< 子页可折叠（默认 true）。 */
+    uint32_t m_opaqueResize : 1; /**< 不透明拖动（默认 true）。 */
+    uint32_t m_splitterFlagsUnused : 30; /**< 保留位。 */
 } XSplitter;
 
 /* ==================== 生命周期 ==================== */

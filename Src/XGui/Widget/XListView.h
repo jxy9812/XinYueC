@@ -99,24 +99,30 @@ XCLASS_DEFINE_EXTEND_END(XListView, XAbstractItemView)
 typedef struct XListView
 {
     XAbstractItemView m_base;   /**< 基类成员；必须是第一个。 */
-    int m_spacing;              /**< 条目间距（像素，默认 0）。 */
-    int m_modelColumn;          /**< 渲染列（默认 0）。 */
-    int m_rowHeight;            /**< 行高（像素，默认 24）。 */
-    int m_flow;                 /**< 排列方向（XListViewFlow，默认 TopDown）。 */
-    int m_gridWidth;            /**< 网格宽（像素；<=0 未启用，默认 -1）。 */
-    int m_gridHeight;           /**< 网格高（像素；<=0 未启用，默认 -1）。 */
-    bool m_wrapping;            /**< 换行排布（默认 false）。 */
-    int m_viewMode;             /**< 视图模式（XListViewViewMode，默认 ListMode）。 */
-    int m_resizeMode;           /**< 尺寸调整模式（XListViewResizeMode，默认 Static）。 */
-    int m_layoutMode;           /**< 布局模式（XListViewLayoutMode，默认 SinglePass）。 */
-    int m_batchSize;            /**< 批式布局批量（>0，默认 100）。 */
-    int m_itemAlignment;        /**< 条目对齐位掩码（Qt::Alignment 位值，默认 0）。 */
-    bool m_selectionRectVisible; /**< 橡皮筋选择框可见（默认 false）。 */
-    bool m_wordWrap;            /**< 文本按词换行（默认 false）。 */
-    int m_movement;             /**< 条目移动模式（XListViewMovement，默认 Static）。 */
-    bool m_uniformItemSizes;    /**< 均匀条目尺寸优化声明（默认 false）。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     bool* m_rowHidden;          /**< 行隐藏状态表（平行数组；对象拥有）。 */
+    /* ---- 4 字节组 ---- */
+    int m_modelColumn;          /**< 渲染列（默认 0；setter 拒绝负值）。 */
+    int m_itemAlignment;        /**< 条目对齐位掩码（Qt::Alignment 位值，默认 0）。 */
     int m_rowStateCount;        /**< 行隐藏状态表长度（随模型行数同步）。 */
+    /* ---- 2 字节组 ---- */
+    int16_t m_spacing;          /**< 条目间距（像素，默认 0；setter 拒绝负值）。 */
+    int16_t m_rowHeight;        /**< 行高（像素，默认 24；setter 拒绝非正值）。 */
+    int16_t m_gridWidth;        /**< 网格宽（像素；<=0 未启用，默认 -1——负值
+                                     哨兵，故用有符号窄整型）。 */
+    int16_t m_gridHeight;       /**< 网格高（像素；<=0 未启用，默认 -1）。 */
+    uint16_t m_batchSize;       /**< 批式布局批量（>0，默认 100；setter 拒绝非正值）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_flow;             /**< 排列方向（XListViewFlow，默认 TopDown）。 */
+    uint8_t m_viewMode;         /**< 视图模式（XListViewViewMode，默认 ListMode）。 */
+    uint8_t m_resizeMode;       /**< 尺寸调整模式（XListViewResizeMode，默认 Static）。 */
+    uint8_t m_layoutMode;       /**< 布局模式（XListViewLayoutMode，默认 SinglePass）。 */
+    uint8_t m_movement;         /**< 条目移动模式（XListViewMovement，默认 Static）。 */
+    /* ---- 位域组（4 个布尔打包 1 字节） ---- */
+    uint8_t m_wrapping : 1;     /**< 换行排布（默认 false）。 */
+    uint8_t m_selectionRectVisible : 1; /**< 橡皮筋选择框可见（默认 false）。 */
+    uint8_t m_wordWrap : 1;     /**< 文本按词换行（默认 false）。 */
+    uint8_t m_uniformItemSizes : 1; /**< 均匀条目尺寸优化声明（默认 false）。 */
 } XListView;
 
 /* ==================== 生命周期 ==================== */

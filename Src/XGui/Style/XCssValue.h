@@ -51,11 +51,11 @@ typedef struct XCssGradientStop
  */
 typedef struct XCssGradient
 {
-    XCssGradientType m_type;              /**< 渐变类型。 */
     double m_x1, m_y1, m_x2, m_y2;        /**< 线性起点/终点（仅 Linear 有效）。 */
     double m_cx, m_cy, m_radius, m_angle; /**< 径向圆心/半径与锥形圆心/起始角（度，仅 Radial/Conical 有效）。 */
     XCssGradientStop m_stops[16];         /**< 停靠点数组（容量 16）。 */
-    int m_stopCount;                      /**< 实际停靠点数。 */
+    uint8_t m_type;                       /**< 渐变类型（XCssGradientType ≤2）。 */
+    uint8_t m_stopCount;                  /**< 实际停靠点数（≤16）。 */
 } XCssGradient;
 
 /**

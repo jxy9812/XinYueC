@@ -134,18 +134,23 @@ typedef int (*XPaintDeviceMetricFunc)(void* userData, int metric);
  */
 typedef bool (*XPaintDeviceBeginFunc)(void* userData, XPainter* painter);
 
-/** @brief 绘制引擎描述（对标 QPaintEngine 的数据查询部分）。 */
+/** @brief 绘制引擎描述（对标 QPaintEngine 的数据查询部分）。
+ *  @note   内存压缩：m_type/m_devType 取值均为 XGui 内部枚举常量
+ *          （0..100），收窄为 uint8_t 后 m_active 与之 pack，结构体
+ *          12→8 字节；init 传枚举常量，getter 返回时零扩展回 int。 */
 typedef struct XPaintEngine
 {
-    int m_type;      /**< 引擎类型（XPaintEngineType）。 */
+    uint8_t m_type;  /**< 引擎类型（XPaintEngineType，0..100）。 */
     bool m_active;   /**< 是否活动（对标 isActive）。 */
     uint32_t m_features; /**< 能力位组合（XPaintEngineFeature）。 */
 } XPaintEngine;
 
-/** @brief 绘制设备（对标 QPaintDevice；接入类内嵌并回调度量）。 */
+/** @brief 绘制设备（对标 QPaintDevice；接入类内嵌并回调度量）。
+ *  @note   内存压缩：m_devType 收窄为 uint8_t（XPaintDeviceType 共 5 值），
+ *          XPaintEngine 收窄后 12→8，结构体 48→40 字节。 */
 typedef struct XPaintDevice
 {
-    int m_devType;              /**< 设备类型码（XPaintDeviceType）。 */
+    uint8_t m_devType;          /**< 设备类型码（XPaintDeviceType）。 */
     void* m_userData;           /**< 接入对象指针（借用）。 */
     XPaintDeviceMetricFunc m_metric; /**< 度量回调（可为 NULL=默认 0）。 */
     XPaintEngine m_engine;      /**< 引擎描述（paintEngine() 返回）。 */

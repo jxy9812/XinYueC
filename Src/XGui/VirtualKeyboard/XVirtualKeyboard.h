@@ -369,34 +369,54 @@ typedef struct XVirtualKeyboard
     XKeyboardLayoutKind m_layoutKind;  /**< 布局款型（默认 PinyinFull；
                                             主表装载进文本双槽位，见
                                             setLayoutKind）。 */
-    int m_shiftState;                  /**< 布局层 shift 展示态（款型主
-                                            表专用；0=小写、1=大写一次
-                                            性、2=锁定，见
-                                            XKEYBOARD_LBL_SHIFT）。 */
-    bool m_imeChineseSaved;            /**< 中英态跨款型保存（进英文全键
-                                            时快照、回拼音全键/九键时恢
-                                            复，见 setLayoutKind——否则
-                                            英文款型上点 中/EN 收敛回英
-                                            文后切回中文款型仍残 English
-                                            态，拼音键盘打字无组串无候
-                                            选）。 */
-    char m_t9TapDigit;                 /**< 九键英文多击当前数字组（'2'..'9'；
-                                            0=无活动循环，见
-                                            xkb_t9EnglishKey）。 */
-    int m_t9TapIdx;                    /**< 九键英文多击组内循环位次。 */
     XTimerId m_t9TapTimer;             /**< 九键英文多击确认定时器（超时
                                             闭合循环；非周期）。 */
-    bool m_popovers;                   /**< 按压放大气泡开关。 */
-    bool m_autoPopup;                  /**< 自动弹出开关（XGui 扩展，默认 true）。 */
-    bool m_popped;                     /**< 弹层可见状态。 */
-    bool m_pressArmed;                 /**< 按下触发武装位（滑动出键即取消）。 */
     const char* const* m_maps[XKEYBOARD_MODE_SLOT_COUNT + 1];  /**< 各模式文本槽位（借用；末位 NULL）。 */
     const XKeyboardButtonCtrl* m_ctrls[XKEYBOARD_MODE_SLOT_COUNT + 1]; /**< 各模式控制字槽位（借用）。 */
-    XRect m_keyRects[XKEYBOARD_MAX_BUTTONS];   /**< 键位矩形（控件局部坐标）。 */
     XKeyboardButtonCtrl m_keyCtrls[XKEYBOARD_MAX_BUTTONS]; /**< 生效控制字表。 */
     const char* m_keyLabels[XKEYBOARD_MAX_BUTTONS]; /**< 生效键帽表（借用，
                                         重建落表；buttonText 读此而非模式
                                         槽位——shift 逻辑态不重建布局）。 */
+    XTimerId m_repeatTimer;            /**< 长按重复定时器（XTIMER_INVALID_ID=未启动）。 */
+    XTimerId m_guardTimer;             /**< 守护轮询定时器（XTIMER_INVALID_ID=未启动）。 */
+    XWidget* m_host;                   /**< 弹层宿主顶层窗口（借用；NULL=未挂载）。 */
+    XConnection* m_geomConn[8];        /**< 宿主/范围顶层几何信号连接句柄（借用；
+                                            [0..3]=宿主 x/y/width/height 变化、
+                                            [4..7]=对话框浮层形态范围顶层同序——
+                                            2026-10-03 所有者裁定「几何跟随走事
+                                            件推送不走轮询」：WM 拖拽/缩放经
+                                            ConfigureNotify→XWindow_setGeometry-
+                                            Fields 发射逐字段信号，Queued 连接
+                                            投递 XMetaCallEvent 事件循环异步执
+                                            行（2026-10-03 所有者裁定「投递函数
+                                            事件」），reposition 几何短路聚合；
+                                            closePopup/宿主亡清。 */
+    XWidget* m_geomScope;              /**< 几何信号连接中的范围顶层（对话框浮层
+                                            形态；借用，断连清扫用）。 */
+    XTimerId m_geomSyncTimer;          /**< 几何重排聚合定时器（30ms 单发；拖拽/
+                                            缩放的高频信号槽内只置 pending，同
+                                            一批次聚合为一次 reposition——对齐
+                                            主窗重绘节奏防「键盘先窜出」观感，
+                                            拖动停止 ≤30ms 必达，非周期轮询）。 */
+    XWidget* m_hostOverride;           /**< 悬浮模式宿主锚（借用；NULL=内嵌
+                                            挂父模式）。可传弹层容器（Popup
+                                            型顶层），popup() 时自动解析主
+                                            窗口为实际锚；closePopup 自动
+                                            清空。 */
+    XWidget* m_hostHint;               /**< 悬浮锚解析提示（借用；setHost
+                                            Window 时刻的焦点顶层快照=弹层
+                                            打开前用户所在主窗口，transient
+                                            parent 语义；closePopup 清空）。 */
+    XConnection* m_targetConn;         /**< 目标 destroyed 防悬垂连接句柄（借用）。 */
+    XConnection* m_hostConn;           /**< 宿主 destroyed 防悬垂连接句柄（借用）。 */
+    XWidget* m_prevMouseGrab;          /**< popup 悬浮抢占前的鼠标抓取者快照
+                                            （借用；closePopup 归还后清）。 */
+    XWidget* m_prevKbdGrab;            /**< popup 悬浮抢占前的键盘抓取者快
+                                            照（借用；closePopup 归还后清）。 */
+    XWidget* m_prevFocus;              /**< 守护边沿上一焦点采样（dismissFix；
+                                            无条件成员——三段边沿判据在
+                                            XVK=0 时仍承载 WA14 边沿化）。 */
+    XRect m_keyRects[XKEYBOARD_MAX_BUTTONS];   /**< 键位矩形（控件局部坐标）。 */
     uint32_t m_keyCount;               /**< 当前布局按钮数（换行分隔符不计数）。 */
     XRect m_menuBarRect;               /**< 键盘顶部菜单条矩形（控件局部坐
                                             标；键区上方常驻预留，条高=
@@ -407,7 +427,51 @@ typedef struct XVirtualKeyboard
                                             盘选择/文字编辑/收起）。 */
     uint32_t m_selectedKey;            /**< 最后激活按钮；无则 XKEYBOARD_BUTTON_NONE。 */
     uint32_t m_pressedKey;             /**< 按下中按钮；无则 XKEYBOARD_BUTTON_NONE。 */
-    int m_pressedTool;                 /**< 按下中工具栏槽位（0..3，按压武
+    int m_hostW;                       /**< 宿主宽度缓存（reposition 工作变量）。 */
+    int m_hostH;                       /**< 宿主高度缓存（reposition 工作变量）。 */
+    int m_popupHeight;                 /**< 弹层高度缓存（守护重定位复用）。 */
+#if XVIRTUALKEYBOARD_ON
+    XRect m_imeBandRect;               /**< 拼音候选带矩形（控件局部坐标；
+                                            height==0 表示无带）。Sogou 改
+                                            版二阶段起组串态时=菜单条矩形
+                                            （候选带替换菜单渲染在条内），
+                                            空闲态归零（条渲染工具栏）。 */
+    bool m_imeEnabled;                 /**< 拼音插件装载镜像（true=engine
+                                            已装 Pinyin 插件；默认 false）。 */
+    XConnection* m_commitConn;         /**< commitRequested 落地契约连接
+                                            （借用；NULL=未连接）。 */
+    XConnection* m_keyEventConn;       /**< keyEventRequested 落地契约连接
+                                            （借用；NULL=未连接）。 */
+    XConnection* m_preeditConn;        /**< preeditTextChanged 组串收缩连
+                                            接（借用；NULL=未连接）——
+                                            组串态停靠几何翻转事件源。 */
+    int16_t m_candidatePage;               /**< 候选带当前页（面板本地，0 基）。 */
+    uint8_t m_candidatePageSize : 4;           /**< 候选带页容量（面板本地，[1,9]）。 */
+#endif
+    int16_t m_shiftState;                  /**< 布局层 shift 展示态（款型主
+                                            表专用；0=小写、1=大写一次
+                                            性、2=锁定，见
+                                            XKEYBOARD_LBL_SHIFT）。 */
+    int16_t m_dragOffX;                    /**< 拖移锚点偏移（按下时全局锚-
+                                            窗口左上 x）。 */
+    int16_t m_dragOffY;                    /**< 拖移锚点偏移（按下时全局锚-
+                                            窗口左上 y）。 */
+    bool m_imeChineseSaved;            /**< 中英态跨款型保存（进英文全键
+                                            时快照、回拼音全键/九键时恢
+                                            复，见 setLayoutKind——否则
+                                            英文款型上点 中/EN 收敛回英
+                                            文后切回中文款型仍残 English
+                                            态，拼音键盘打字无组串无候
+                                            选）。 */
+    char m_t9TapDigit;                 /**< 九键英文多击当前数字组（'2'..'9'；
+                                            0=无活动循环，见
+                                            xkb_t9EnglishKey）。 */
+    uint8_t m_t9TapIdx : 3;                    /**< 九键英文多击组内循环位次。 */
+    bool m_popovers;                   /**< 按压放大气泡开关。 */
+    bool m_autoPopup;                  /**< 自动弹出开关（XGui 扩展，默认 true）。 */
+    bool m_popped;                     /**< 弹层可见状态。 */
+    bool m_pressArmed;                 /**< 按下触发武装位（滑动出键即取消）。 */
+    int8_t  m_pressedTool : 3;  /* -1=未按压（哨兵）、0..3=槽位 */                 /**< 按下中工具栏槽位（0..3，按压武
                                             装释放触发；-1=无）。 */
     bool m_layoutSelectorOpen;         /**< 键盘选择面板开合（Sogou 改版
                                             三阶段；面板内部自绘覆盖键区，
@@ -439,75 +503,11 @@ typedef struct XVirtualKeyboard
                                             组串结束（preedit 空）/收层/
                                             重弹复位；屏幕键组串永不收缩
                                             不收层。 */
-    int m_dragOffX;                    /**< 拖移锚点偏移（按下时全局锚-
-                                            窗口左上 x）。 */
-    int m_dragOffY;                    /**< 拖移锚点偏移（按下时全局锚-
-                                            窗口左上 y）。 */
-    XTimerId m_repeatTimer;            /**< 长按重复定时器（XTIMER_INVALID_ID=未启动）。 */
-    XTimerId m_guardTimer;             /**< 守护轮询定时器（XTIMER_INVALID_ID=未启动）。 */
-    XWidget* m_host;                   /**< 弹层宿主顶层窗口（借用；NULL=未挂载）。 */
     bool m_userCollapsed;              /**< 用户收起闩锁（收起键/确认后置位：
                                             守护轮询不再自动重弹，直到用户
                                             再次按下编辑框；防「收起即弹回」）。 */
-    int m_hostW;                       /**< 宿主宽度缓存（reposition 工作变量）。 */
-    int m_hostH;                       /**< 宿主高度缓存（reposition 工作变量）。 */
-    XConnection* m_geomConn[8];        /**< 宿主/范围顶层几何信号连接句柄（借用；
-                                            [0..3]=宿主 x/y/width/height 变化、
-                                            [4..7]=对话框浮层形态范围顶层同序——
-                                            2026-10-03 所有者裁定「几何跟随走事
-                                            件推送不走轮询」：WM 拖拽/缩放经
-                                            ConfigureNotify→XWindow_setGeometry-
-                                            Fields 发射逐字段信号，Queued 连接
-                                            投递 XMetaCallEvent 事件循环异步执
-                                            行（2026-10-03 所有者裁定「投递函数
-                                            事件」），reposition 几何短路聚合；
-                                            closePopup/宿主亡清。 */
-    XWidget* m_geomScope;              /**< 几何信号连接中的范围顶层（对话框浮层
-                                            形态；借用，断连清扫用）。 */
-    XTimerId m_geomSyncTimer;          /**< 几何重排聚合定时器（30ms 单发；拖拽/
-                                            缩放的高频信号槽内只置 pending，同
-                                            一批次聚合为一次 reposition——对齐
-                                            主窗重绘节奏防「键盘先窜出」观感，
-                                            拖动停止 ≤30ms 必达，非周期轮询）。 */
-    XWidget* m_hostOverride;           /**< 悬浮模式宿主锚（借用；NULL=内嵌
-                                            挂父模式）。可传弹层容器（Popup
-                                            型顶层），popup() 时自动解析主
-                                            窗口为实际锚；closePopup 自动
-                                            清空。 */
-    XWidget* m_hostHint;               /**< 悬浮锚解析提示（借用；setHost
-                                            Window 时刻的焦点顶层快照=弹层
-                                            打开前用户所在主窗口，transient
-                                            parent 语义；closePopup 清空）。 */
     bool m_floating;                   /**< 当前弹层=独立顶层悬浮形态（悬浮
                                             锚生效期弹出；closePopup 复位）。 */
-    XConnection* m_targetConn;         /**< 目标 destroyed 防悬垂连接句柄（借用）。 */
-    XConnection* m_hostConn;           /**< 宿主 destroyed 防悬垂连接句柄（借用）。 */
-    XWidget* m_prevMouseGrab;          /**< popup 悬浮抢占前的鼠标抓取者快照
-                                            （借用；closePopup 归还后清）。 */
-    XWidget* m_prevKbdGrab;            /**< popup 悬浮抢占前的键盘抓取者快
-                                            照（借用；closePopup 归还后清）。 */
-    int m_popupHeight;                 /**< 弹层高度缓存（守护重定位复用）。 */
-    XWidget* m_prevFocus;              /**< 守护边沿上一焦点采样（dismissFix；
-                                            无条件成员——三段边沿判据在
-                                            XVK=0 时仍承载 WA14 边沿化）。 */
-#if XVIRTUALKEYBOARD_ON
-    XRect m_imeBandRect;               /**< 拼音候选带矩形（控件局部坐标；
-                                            height==0 表示无带）。Sogou 改
-                                            版二阶段起组串态时=菜单条矩形
-                                            （候选带替换菜单渲染在条内），
-                                            空闲态归零（条渲染工具栏）。 */
-    bool m_imeEnabled;                 /**< 拼音插件装载镜像（true=engine
-                                            已装 Pinyin 插件；默认 false）。 */
-    XConnection* m_commitConn;         /**< commitRequested 落地契约连接
-                                            （借用；NULL=未连接）。 */
-    XConnection* m_keyEventConn;       /**< keyEventRequested 落地契约连接
-                                            （借用；NULL=未连接）。 */
-    XConnection* m_preeditConn;        /**< preeditTextChanged 组串收缩连
-                                            接（借用；NULL=未连接）——
-                                            组串态停靠几何翻转事件源。 */
-    int m_candidatePage;               /**< 候选带当前页（面板本地，0 基）。 */
-    int m_candidatePageSize;           /**< 候选带页容量（面板本地，[1,9]）。 */
-#endif
 } XVirtualKeyboard;
 
 /* ==================== 生命周期 ==================== */

@@ -206,15 +206,17 @@ typedef enum XLineControlCaseMode
  */
 typedef struct XLineControlCommand
 {
-    int      type;      /**< 命令类型（XLineControlCommandType）。 */
+    int      pos;       /**< 作用位置（UTF-8 字节偏移）。 */
+    int      selStart;  /**< 选区起点快照。 */
+    int      selEnd;    /**< 选区终点快照。 */
     uint8_t  m_uc[5];   /**< 承载的 UTF-8 字符原样字节（4 字节满额 + NUL，
                            *   与 m_maskChar/m_passwordCharacter 同一 5 字节
                            *   契约；消费方按 m_ucLen 读取，NUL 仅为经
                            *   maskCharSet 写入时的边界保证）。 */
     uint8_t  m_ucLen;   /**< 字符字节长（1~4；Separator/SetSelection 为 0）。 */
-    int      pos;       /**< 作用位置（UTF-8 字节偏移）。 */
-    int      selStart;  /**< 选区起点快照。 */
-    int      selEnd;    /**< 选区终点快照。 */
+    uint8_t  type;      /**< 命令类型（XLineControlCommandType，0..6；
+                           *   原值仅来自本枚举常量/0..6 组合式，收窄为
+                           *   uint8_t；位域式快照拷贝按值语义，无序依赖）。 */
 } XLineControlCommand;
 
 /**
@@ -224,9 +226,10 @@ typedef struct XLineControlCommand
  */
 typedef struct XLineControlMaskInputData
 {
-    char m_maskChar[5];      /**< 分隔符字符或掩码字符（UTF-8，NUL 结尾）。 */
-    bool m_separator;        /**< true 表示字面分隔符（不可编辑）。 */
-    int  m_caseMode;         /**< 大小写模式（XLineControlCaseMode）。 */
+    char    m_maskChar[5];   /**< 分隔符字符或掩码字符（UTF-8，NUL 结尾）。 */
+    bool    m_separator;     /**< true 表示字面分隔符（不可编辑）。 */
+    uint8_t m_caseMode;      /**< 大小写模式（XLineControlCaseMode，0..2；
+                              *   赋值源仅解析 '>'/'<'/'!' 三分支，收窄）。 */
 } XLineControlMaskInputData;
 
 /**

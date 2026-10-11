@@ -70,11 +70,11 @@ typedef struct XBoxGeom
     int   crossMax;        /**< 最大尺寸（交叉轴）。 */
     int   stretch;         /**< 伸展因子。 */
     int   spacing;         /**< 与下一非空条目的间距。 */
-    bool  expanding;       /**< 主轴方向是否可伸展。 */
-    bool  crossExpanding;  /**< 交叉轴方向是否可伸展。 */
-    bool  empty;           /**< 是否为空条目（isEmpty）。 */
-    bool  hiddenWidget;    /**< 空条目且承载控件（隐藏控件，交叉轴忽略）。 */
-    bool  done;            /**< 运行期：是否已定稿。 */
+    bool  expanding : 1;       /**< 主轴方向是否可伸展。 */
+    bool  crossExpanding : 1;  /**< 交叉轴方向是否可伸展。 */
+    bool  empty : 1;           /**< 是否为空条目（isEmpty）。 */
+    bool  hiddenWidget : 1;    /**< 空条目且承载控件（隐藏控件，交叉轴忽略）。 */
+    bool  done : 1;            /**< 运行期：是否已定稿。 */
     int   pos;             /**< 分配结果：起点。 */
     int   size;            /**< 分配结果：长度。 */
 } XBoxGeom;

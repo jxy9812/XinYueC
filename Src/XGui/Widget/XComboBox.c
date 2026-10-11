@@ -346,8 +346,8 @@ static void VXComboBox_move(XComboBox* self, XComboBox* other)
     other->m_completerMode = false;
     other->m_completionActive = false;
     other->m_completionRow = -1;
-    other->m_insertPolicy = XComboBoxInsertPolicy_InsertAtBottom;
-    other->m_sizeAdjustPolicy = XComboBoxSizeAdjustPolicy_AdjustToContents;
+    other->m_insertPolicy = (uint8_t)XComboBoxInsertPolicy_InsertAtBottom;
+    other->m_sizeAdjustPolicy = (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents;
     other->m_frame = true;
     /* m_placeholderText 已转移并重建。 */
 }
@@ -553,8 +553,8 @@ void XComboBox_init(XComboBox* self, XWidget* parent, XWidgetFlags flags)
     self->m_completerMode = false;
     self->m_completionActive = false;
     self->m_completionRow = -1;
-    self->m_insertPolicy = XComboBoxInsertPolicy_InsertAtBottom;
-    self->m_sizeAdjustPolicy = XComboBoxSizeAdjustPolicy_AdjustToContents;
+    self->m_insertPolicy = (uint8_t)XComboBoxInsertPolicy_InsertAtBottom;
+    self->m_sizeAdjustPolicy = (uint8_t)XComboBoxSizeAdjustPolicy_AdjustToContents;
     self->m_minimumContentsLength = 0;
     self->m_frame = true;
     self->m_placeholderText = XString_create();
@@ -619,7 +619,7 @@ int XComboBox_insertPolicy(const XComboBox* self)
 }
 void XComboBox_setInsertPolicy(XComboBox* self, int policy)
 {
-    if (self && policy >= 0 && policy <= 6) self->m_insertPolicy = policy;
+    if (self && policy >= 0 && policy <= 6) self->m_insertPolicy = (uint8_t)policy;
 }
 int XComboBox_sizeAdjustPolicy(const XComboBox* self)
 {
@@ -631,7 +631,7 @@ static void xcombo_updateSizeHint(XComboBox* self);
 void XComboBox_setSizeAdjustPolicy(XComboBox* self, int policy)
 {
     if (self && policy >= 0 && policy <= 2) {
-        self->m_sizeAdjustPolicy = policy;
+        self->m_sizeAdjustPolicy = (uint8_t)policy;
         xcombo_updateSizeHint(self); /* [sizeHint] 策略参与几何后随刷新。 */
     }
 }
@@ -2141,7 +2141,7 @@ static void xcombo_completionRefresh(XComboBox* self, const char* prefix)
     if (self->m_completionRow < 0 ||
         self->m_completionRow >= self->m_itemCount ||
         XListView_isRowHidden(view, self->m_completionRow))
-        self->m_completionRow = first;
+        self->m_completionRow = (int16_t)first;
     XAbstractItemView_setCurrentIndex((XAbstractItemView*)view,
                                       self->m_completionRow,
                                       self->m_modelColumn);
@@ -2189,7 +2189,7 @@ static void xcombo_completionNavigate(XComboBox* self, int step)
         row = next;
     }
     if (row == self->m_completionRow) return;
-    self->m_completionRow = row;
+    self->m_completionRow = (int16_t)row;
     XAbstractItemView_setCurrentIndex((XAbstractItemView*)view, row,
                                       self->m_modelColumn);
     XWidget_update((XWidget*)view);
@@ -2465,7 +2465,7 @@ XCompleter* XComboBox_completer(const XComboBox* self)
 void XComboBox_setIconSize(XComboBox* self, int size)
 {
     if (self && size > 0) {
-        self->m_iconSize = size;
+        self->m_iconSize = (int16_t)size;
         XWidget_update((XWidget*)self);
     }
 }

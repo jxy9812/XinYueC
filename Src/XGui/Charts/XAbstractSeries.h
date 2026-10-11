@@ -69,14 +69,13 @@ typedef struct XAbstractSeries
     XValueAxis** m_axes;      /**< 挂接轴数组（借用；不拥有）。 */
     double m_opacity;         /**< 不透明度 0-1（默认 1）。 */
 
-    /* ---- 4 字节对齐组 ---- */
-    int m_type;               /**< XChartSeriesType；派生类 init 设置。 */
-    int m_axisCount;          /**< 挂接轴数。 */
-    int m_axisCapacity;       /**< 挂接轴容量。 */
-
-    /* ---- 1 字节标志组（尾部填充） ---- */
-    bool m_visible;           /**< 可见（默认 true）。 */
-    bool m_useOpenGL;         /**< OpenGL 加速开关（属性存储）。 */
+    /* ---- 1/2 字节窄整型组（类型 0-12；轴数个位数；无取址使用、
+     *      无 -1 哨兵；容量用 uint16 避免 4→8→…→256 倍增回绕为 0） ---- */
+    uint8_t m_type;           /**< XChartSeriesType；派生类 init 设置（0-12）。 */
+    uint16_t m_axisCount;      /**< 挂接轴数。 */
+    uint16_t m_axisCapacity;   /**< 挂接轴容量（4 起倍增）。 */
+    bool m_visible : 1;           /**< 可见（默认 true）。 */
+    bool m_useOpenGL : 1;         /**< OpenGL 加速开关（属性存储）。 */
 } XAbstractSeries;
 
 XVtable* XAbstractSeries_class_init(void);

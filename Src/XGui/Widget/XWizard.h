@@ -112,15 +112,17 @@ typedef struct XWizardPage
     XString* m_buttonTexts[XWizardButton_NStandardButtons];
                           /**< 自定义按钮文本（对标 QWizardPage::setButtonText；
                                对象拥有；NULL 表示用向导默认文本）。 */
-    bool m_complete;       /**< 是否完成（默认 true）。 */
-    bool m_commitPage;     /**< 是否提交页（对标 QWizardPage::isCommitPage）。 */
-    bool m_finalPage;      /**< 是否强制末页（对标 QWizardPage::isFinalPage）。 */
     struct XWizard* m_wizard; /**< 所属向导（借用指针；由 addPage/setPage/
                                    removePage 维护；对标 QWizardPage 私有
                                    d->wizard，供 nextId 默认实现定位）。 */
-    bool m_initialized;       /**< 首次进入标记（对标 QWizardPage 私有
+    /* [内存治理 2026-10-11] 标志位字：4 个 bool 原占 4B（含对齐洞），并入 1 字。 */
+    uint32_t m_complete : 1;   /**< 是否完成（默认 true）。 */
+    uint32_t m_commitPage : 1; /**< 是否提交页（对标 QWizardPage::isCommitPage）。 */
+    uint32_t m_finalPage : 1;  /**< 是否强制末页（对标 QWizardPage::isFinalPage）。 */
+    uint32_t m_initialized : 1;/**< 首次进入标记（对标 QWizardPage 私有
                                    d->initialized；true 表示已调用过
                                    initializePage，前进导航不再重复触发）。 */
+    uint32_t m_wizardPageFlagsUnused : 28; /**< 保留位。 */
 } XWizardPage;
 
 /** @brief XWizard页classinit（对标 Qt 同名接口）。
@@ -301,28 +303,10 @@ XCLASS_DEFINE_EXTEND_END(XWizard, XDialog)
 typedef struct XWizard
 {
     XDialog m_base;             /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐；内嵌指针数组/字段表整体为一个 8B 对齐单元）。 */
     XWizardPage* m_pages[XWIZARD_MAX_PAGES]; /**< 页面数组。 */
-    int m_pageCount;            /**< 已添加页面数。 */
-    int m_currentIndex;         /**< 当前页索引。 */
-    int m_startIndex;           /**< 起始页索引。 */
-    bool m_visited[XWIZARD_MAX_PAGES]; /**< 已访问标记。 */
-    int m_style;                /**< 向导样式。 */
-    int m_options;              /**< 选项位标志。 */
-    XString* m_buttonTexts[XWizardButton_NStandardButtons]; /**< 自定义按钮文本（对象拥有）。 */
-#if XPUSHBUTTON_ON
-    XPushButton* m_btnBack;     /**< 上一页按钮。 */
-    XPushButton* m_btnNext;     /**< 下一页按钮。 */
-    XPushButton* m_btnFinish;   /**< 完成按钮。 */
-    XPushButton* m_btnCancel;   /**< 取消按钮。 */
-    XPushButton* m_btnHelp;     /**< 帮助按钮（HaveHelpButton 时创建）。 */
-#endif
     struct XWizardField { XString* name; XString* value; } m_fields[32]; /**< 字段表（内嵌；name/value 对象拥有）。 */
-    int m_fieldCount;           /**< 字段数。 */
-    XString* m_pixmap;          /**< 向导横幅图路径（对象拥有）。 */
-    XWidget* m_sideWidget;      /**< 侧边控件（借用）。 */
-    int m_buttonLayout;         /**< 按钮布局码（对标 setButtonLayout）。 */
-    int m_titleFormat;          /**< 标题格式码（对标 setTitleFormat）。 */
-    int m_subTitleFormat;       /**< 子标题格式码（对标 setSubTitleFormat）。 */
+    XString* m_buttonTexts[XWizardButton_NStandardButtons]; /**< 自定义按钮文本（对象拥有）。 */
     struct XAbstractButton* m_customButtons[XWizardButton_NStandardButtons];
                                 /**< setButton 登记的自定义按钮（借用；
                                      NULL=未登记，button() 回退内建按钮）。 */
@@ -335,7 +319,35 @@ typedef struct XWizard
     } m_defaultProps[XWIZARD_MAX_DEFAULT_PROPERTIES];
                                 /**< 默认属性登记表（setDefaultProperty
                                      写入；固定容量，满后忽略新登记）。 */
-    int m_defaultPropCount;     /**< 默认属性表已用条数（0=空）。 */
+    XString* m_pixmap;          /**< 向导横幅图路径（对象拥有）。 */
+    XWidget* m_sideWidget;      /**< 侧边控件（借用）。 */
+#if XPUSHBUTTON_ON
+    XPushButton* m_btnBack;     /**< 上一页按钮。 */
+    XPushButton* m_btnNext;     /**< 下一页按钮。 */
+    XPushButton* m_btnFinish;   /**< 完成按钮。 */
+    XPushButton* m_btnCancel;   /**< 取消按钮。 */
+    XPushButton* m_btnHelp;     /**< 帮助按钮（HaveHelpButton 时创建）。 */
+#endif
+    int m_options;              /**< 选项位标志（XWizardOption 位集至
+                                   0x00010000，setter 往返任意组合，保留 int）。 */
+    int m_buttonLayout;         /**< 按钮布局码（对标 setButtonLayout；setter
+                                   往返任意值，保留 int）。 */
+    int m_titleFormat;          /**< 标题格式码（对标 setTitleFormat；setter
+                                   往返任意值，保留 int）。 */
+    int m_subTitleFormat;       /**< 子标题格式码（对标 setSubTitleFormat；
+                                   setter 往返任意值，保留 int）。 */
+    bool m_visited[XWIZARD_MAX_PAGES]; /**< 已访问标记（布尔数组；作为整体
+                                   单元置于对齐洞尾部，不改语义）。 */
+    /* [内存治理 2026-10-11] 窄整型：页数/索引/计数容量上限
+       XWIZARD_MAX_PAGES=16 与字段表 32 条，均 ≤127，uint8_t 足够；
+       currentIndex 有 -1 哨兵（XWizard.c:1112 无页面复位），用
+       int8_t 保留符号。样式 0..3 收 uint8_t。 */
+    uint8_t m_pageCount;        /**< 已添加页面数。 */
+    int8_t m_currentIndex;      /**< 当前页索引（-1=无页面）。 */
+    uint8_t m_startIndex;       /**< 起始页索引。 */
+    uint8_t m_fieldCount;       /**< 字段数。 */
+    uint8_t m_defaultPropCount; /**< 默认属性表已用条数（0=空）。 */
+    uint8_t m_style;            /**< 向导样式（XWizardStyle 0..3）。 */
 } XWizard;
 
 /** @brief XWizardclassinit（对标 Qt 同名接口）。

@@ -40,9 +40,10 @@ typedef struct XDial
 {
     XAbstractSlider m_base;        /**< 基类成员；必须是第一个。 */
     double  m_notchTarget;         /**< 刻度间距目标像素。 */
-    bool    m_notchesVisible;      /**< 刻度可见。 */
-    bool    m_wrapping;            /**< 环绕（对标 QDial::wrapping）。 */
-    bool    m_dragging;            /**< 拖动中。 */
+    /* ---- 位域组（3 个布尔打包 1 字节） ---- */
+    uint8_t m_notchesVisible : 1;  /**< 刻度可见。 */
+    uint8_t m_wrapping : 1;        /**< 环绕（对标 QDial::wrapping）。 */
+    uint8_t m_dragging : 1;        /**< 拖动中。 */
 } XDial;
 
 /* ==================== 生命周期 ==================== */

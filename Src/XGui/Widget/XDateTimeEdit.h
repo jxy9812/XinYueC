@@ -94,31 +94,11 @@ typedef struct XDateTimePopup XDateTimePopup;
 typedef struct XDateTimeEdit
 {
     XAbstractSpinBox m_base;   /**< 基类成员；必须是第一个。 */
-    XDateTime m_dateTime;      /**< 当前值。 */
-    XDateTime m_minimum;       /**< 最小值。 */
-    XDateTime m_maximum;       /**< 最大值。 */
+    /* ---- 指针/句柄组（8 字节对齐，置顶） ---- */
     XString* m_displayFormat;  /**< 显示格式串（对象拥有）。 */
-    int m_currentSection;      /**< 当前编辑分段。 */
-    int m_typingSection;       /**< 数字键入累积段序号（分段在格式中的
-                                    0 基位置；-1=无键入态）。 */
-    int m_typingValue;         /**< 当前段已键入的累积数值。 */
-    int m_typingDigits;        /**< 当前段已键入位数（满段位宽即提交并
-                                    跳下一段，对标 QDateTimeEdit 分段
-                                    键入模型）。 */
-    int m_undoSection;         /**< 键入撤销段（G3 退格回归 2026-10-02）：
-                                    最近一次满位键入提交的段枚举码；
-                                    NoSection=无撤销态，退格据此回退。 */
-    int m_undoValue;           /**< 撤销段键入落账前的段值（退格恢复
-                                    目标；z 段存实际毫秒，回退时按
-                                    记号位宽逆折回键入域）。 */
-    bool m_calendarPopup;      /**< 日历弹出（默认 false，对标
-                                    QDateTimeEdit::calendarPopup）。 */
-    int m_timeSpec;            /**< 时区规格（Qt::TimeSpec；默认 0=LocalTime）。 */
-    int m_parserType;          /**< 解析类型（XDateTimeEditParserType；
-                                    默认 0=DateTime；基类与两子类共用同
-                                    一承载，对标 QDateTimeEditPrivate::
-                                    parserType——Qt 亦无 QDateEditPrivate/
-                                    QTimeEditPrivate）。 */
+    XTimerId m_grabTimer;      /**< 弹层平台双抓取延迟定时器（1ms 精确；
+                                    平台 XGrabPointer/XGrabKeyboard 需
+                                    窗口完成映射，XComboBox 同款时序）。 */
 #if XCALENDARWIDGET_ON
     XCalendarWidget* m_calendar; /**< 内置日历（懒创建；对象由本控件持有，
                                      setCalendarWidget 可整体接管）。 */
@@ -126,10 +106,6 @@ typedef struct XDateTimeEdit
     XDateTimePopup* m_popup;   /**< 日历弹层容器（懒创建；对象拥有；
                                     对标 QDateTimeEditPrivate::popup；
                                     仅 XCALENDARWIDGET_ON 下会创建）。 */
-    bool m_popupVisible;       /**< 弹层可见态（收起/点击外部/Esc 复位）。 */
-    XTimerId m_grabTimer;      /**< 弹层平台双抓取延迟定时器（1ms 精确；
-                                    平台 XGrabPointer/XGrabKeyboard 需
-                                    窗口完成映射，XComboBox 同款时序）。 */
     XLineEdit* m_timeEdits[3]; /**< 弹层时间行 时/分/秒 三段真实编辑器
                                     （缺陷 G；懒创建于弹层容器、对象由
                                     deinit 级联释放；手绘值框的手绘点击
@@ -137,9 +113,41 @@ typedef struct XDateTimeEdit
                                     换真实 XLineEdit 后焦点即接入屏幕
                                     键盘/输入法，与年份编辑器定版方案
                                     同款）。 */
-    int m_timeEditGroup;       /**< 当前编辑的时间行组序号（0=时/1=分/
+    /* ---- 8 字节对齐嵌套值组（XDateTime=int64 儒略日+int 毫秒） ---- */
+    XDateTime m_dateTime;      /**< 当前值。 */
+    XDateTime m_minimum;       /**< 最小值。 */
+    XDateTime m_maximum;       /**< 最大值。 */
+    /* ---- 4 字节组 ---- */
+    int m_timeSpec;            /**< 时区规格（Qt::TimeSpec；默认 0=LocalTime；
+                                    setter 原样存取的契约字段，保持 int）。 */
+    /* ---- 2 字节组 ---- */
+    uint16_t m_currentSection; /**< 当前编辑分段（XDateTimeEditSection 位
+                                    码，最大 YearSection=0x0400）。 */
+    uint16_t m_undoSection;    /**< 键入撤销段（G3 退格回归 2026-10-02）：
+                                    最近一次满位键入提交的段枚举码；
+                                    NoSection=无撤销态，退格据此回退。 */
+    int16_t m_typingSection;   /**< 数字键入累积段序号（分段在格式中的
+                                    0 基位置；-1=无键入态）。 */
+    int16_t m_typingValue;     /**< 当前段已键入的累积数值（段位宽≤4，
+                                    最大 9999）。 */
+    int16_t m_undoValue;       /**< 撤销段键入落账前的段值（退格恢复
+                                    目标；z 段存实际毫秒，回退时按
+                                    记号位宽逆折回键入域；-1=无）。 */
+    int16_t m_timeEditGroup;   /**< 当前编辑的时间行组序号（0=时/1=分/
                                     2=秒；-1=无编辑会话；Return/失焦
                                     提交时按此定位写回段）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_typingDigits;    /**< 当前段已键入位数（满段位宽即提交并
+                                    跳下一段，对标 QDateTimeEdit 分段
+                                    键入模型；最大 4）。 */
+    uint8_t m_parserType;      /**< 解析类型（XDateTimeEditParserType；
+                                    默认 0=DateTime；基类与两子类共用同
+                                    一承载，对标 QDateTimeEditPrivate::
+                                    parserType——Qt 亦无 QDateEditPrivate/
+                                    QTimeEditPrivate）。 */
+    uint8_t m_calendarPopup : 1; /**< 日历弹出（默认 false，对标
+                                    QDateTimeEdit::calendarPopup）。 */
+    uint8_t m_popupVisible : 1;  /**< 弹层可见态（收起/点击外部/Esc 复位）。 */
 } XDateTimeEdit;
 
 XVtable* XDateTimeEdit_class_init(void);

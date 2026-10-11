@@ -85,9 +85,9 @@ typedef struct XSurfaceFormat
     int                     m_depthBufferSize;  /**< 深度缓冲大小；-1 未指定。 */
     int                     m_stencilBufferSize;/**< 模板缓冲大小；-1 未指定。 */
     int                     m_samples;          /**< 多重采样数；-1 未指定。 */
-    XSurfaceFormatSwapBehavior   m_swapBehavior;/**< 交换行为；默认平台默认。 */
-    XSurfaceFormatRenderableType m_renderableType; /**< 可渲染类型。 */
-    XSurfaceFormatProfile        m_profile;     /**< OpenGL 上下文 profile。 */
+    uint8_t m_swapBehavior;/**< 交换行为；默认平台默认。 */
+    uint8_t m_renderableType; /**< 可渲染类型。 */
+    uint8_t m_profile;     /**< OpenGL 上下文 profile。 */
     int                     m_majorVersion;     /**< OpenGL 主版本；默认 2。 */
     int                     m_minorVersion;     /**< OpenGL 次版本；默认 0。 */
     int                     m_swapInterval;     /**< 交换间隔；默认 1（垂直同步）。 */

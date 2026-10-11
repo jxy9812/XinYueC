@@ -57,12 +57,15 @@ XCLASS_DEFINE_EXTEND_END(XGroupBox, XWidget)
 typedef struct XGroupBox
 {
     XWidget m_base;                 /**< 基类成员；必须是第一个。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XString* m_title;             /**< 标题文本（对象拥有；空串表示无标题）。 */
-    int     m_alignment;            /**< 标题水平对齐（XAlignment 组合）。 */
-    bool    m_flat;                 /**< 扁平样式。 */
-    bool    m_checkable;            /**< 是否可勾选。 */
-    bool    m_checked;              /**< 勾选状态。 */
-    bool    m_pressed;              /**< 标题区按压中（对标 QGroupBoxPrivate::pressed）。 */
+    /* ---- 4 字节组 ---- */
+    int     m_alignment;            /**< 标题水平对齐（XAlignment 位掩码组合，保持 int）。 */
+    /* ---- 位域组（4 个布尔打包 1 字节） ---- */
+    uint8_t m_flat : 1;             /**< 扁平样式。 */
+    uint8_t m_checkable : 1;        /**< 是否可勾选。 */
+    uint8_t m_checked : 1;          /**< 勾选状态。 */
+    uint8_t m_pressed : 1;          /**< 标题区按压中（对标 QGroupBoxPrivate::pressed）。 */
 } XGroupBox;
 
 /* ==================== 生命周期（对标 QGroupBox 构造/析构） ==================== */

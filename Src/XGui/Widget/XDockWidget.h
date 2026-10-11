@@ -66,10 +66,8 @@ XCLASS_DEFINE_EXTEND_END(XDockWidget, XWidget)
 typedef struct XDockWidget
 {
     XWidget m_base;          /**< 基类成员；必须是第一个。 */
+    /* ---- 指针组（8 字节对齐，置顶；#if 条件块整体作为一个单元） ---- */
     XWidget* m_widget;       /**< 内容控件（借用，归 dock）。 */
-    int m_features;          /**< 特性位标志（默认全开）。 */
-    int m_allowedAreas;      /**< 允许停靠区域。 */
-    bool m_floating;         /**< 浮动状态。 */
 #if XGUI_CUSTOM_TITLEBAR_ON
     /* 自定义标题条由父类槽位承载：XWidget::m_titleBarWidget（借用，
      * 见 XWidget_setTitleBarWidget）；本类自有成员 m_titleBar 删除，
@@ -82,22 +80,30 @@ typedef struct XDockWidget
                               *   对标 QDockWidget 回链 QMainWindowLayout）。 */
     XAction* m_toggleAction; /**< 显示/隐藏切换动作（拥有；toggleViewAction
                               *   惰性创建，对标 QDockWidget::toggleViewAction）。 */
-    bool m_dragging;         /**< 浮动标题栏拖动进行中（内部状态）。 */
-    bool m_ctrlDrag;         /**< Ctrl 拖动保持浮动（内部状态）：置位时拖动
-                              *   中不吸附宿主落点、释放不落位（对标
-                              *   QDockWidgetPrivate::DragState::ctrlDrag，
-                              *   qdockwidget_p.h:50；按下时按 Ctrl 修饰键
-                              *   判定，qdockwidget.cpp:934）。 */
+    /* ---- 4 字节组 ---- */
+    int m_allowedAreas;      /**< 允许停靠区域（setAllowedAreas 原样存取
+                               *   外部传入值——getter 往返契约，保持 int）。 */
     XPoint m_dragOffset;     /**< 拖动抓取偏移（全局坐标 − 窗口左上角）。 */
     XPoint m_pressGlobal;    /**< 按下点全局坐标（浮动态释放时与当前点
                               *   比较判定是否真实拖动，过滤原地单击误
                               *   触发落位）。 */
-    bool m_announcedVisible; /**< 上次广播 visibilityChanged 的值（去重）。 */
     XRect m_undockedGeometry; /**< 最近一次浮动态几何（全局坐标，对标
                               *   QDockWidgetPrivate::undockedGeometry，
                               *   qdockwidget_p.h:88；重新 setFloating(true)
                               *   时恢复，qdockwidget.cpp:1465）。 */
-    bool m_undockedValid;    /**< m_undockedGeometry 是否已记录（对标
+    /* ---- 1 字节组 ---- */
+    uint8_t m_features;      /**< 特性位标志（默认全开；setFeatures 已按
+                               *   XDockWidgetFeature_FeatureMask=0xF 裁剪）。 */
+    /* ---- 位域组（5 个布尔打包 1 字节） ---- */
+    uint8_t m_floating : 1;  /**< 浮动状态。 */
+    uint8_t m_dragging : 1;  /**< 浮动标题栏拖动进行中（内部状态）。 */
+    uint8_t m_ctrlDrag : 1;  /**< Ctrl 拖动保持浮动（内部状态）：置位时拖动
+                              *   中不吸附宿主落点、释放不落位（对标
+                              *   QDockWidgetPrivate::DragState::ctrlDrag，
+                              *   qdockwidget_p.h:50；按下时按 Ctrl 修饰键
+                              *   判定，qdockwidget.cpp:934）。 */
+    uint8_t m_announcedVisible : 1; /**< 上次广播 visibilityChanged 的值（去重）。 */
+    uint8_t m_undockedValid : 1; /**< m_undockedGeometry 是否已记录（对标
                               *   QRect::isValid 的有效性判定，
                               *   qdockwidget.cpp:1466）。 */
 } XDockWidget;

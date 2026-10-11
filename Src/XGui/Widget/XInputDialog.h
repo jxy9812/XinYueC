@@ -94,14 +94,14 @@ XCLASS_DEFINE_EXTEND_END(XInputDialog, XDialog)
 typedef struct XInputDialog
 {
     XDialog m_base;               /**< 基类成员；必须是第一个。 */
-    XInputDialogInputMode m_inputMode; /**< 输入模式；默认 TextInput。 */
+    uint8_t m_inputMode; /**< 输入模式；默认 TextInput。 */
     XInputDialogOptions m_options;     /**< 选项位集；默认 0。 */
     XString* m_labelText;         /**< 标签文本（拥有）。 */
     XString* m_textValue;         /**< 文本输入值（拥有）。 */
     XString* m_comboBoxText;      /**< 下拉当前文本（拥有；comboBoxTextChanged 载荷）。 */
     XStringList* m_comboBoxItems; /**< 下拉项列表（拥有）。 */
     bool m_comboBoxEditable;      /**< 下拉可编辑；默认 false。 */
-    XInputDialogEchoMode m_echoMode; /**< 文本回显模式；默认 Normal。 */
+    uint8_t m_echoMode; /**< 文本回显模式；默认 Normal。 */
     int m_intValue;               /**< 整数值。 */
     double m_doubleValue;         /**< 浮点值。 */
     XString* m_okButtonText;      /**< OK 按钮文本（拥有）。 */
@@ -116,7 +116,7 @@ typedef struct XInputDialog
     int m_doubleDecimals;         /**< 浮点小数位（默认 2）。 */
     XObject* m_openReceiver;      /**< open_2 记录的接收对象（关闭收口时自动断开）。 */
     XSlotFunc1 m_openMember;      /**< open_2 记录的槽函数。 */
-    XInputDialogOpenSignal m_openSignal; /**< open_2 连接的信号选择。 */
+    uint8_t m_openSignal; /**< open_2 连接的信号选择。 */
 } XInputDialog;
 
 /**

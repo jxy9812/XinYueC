@@ -320,45 +320,49 @@ static XImageIOHandler* XImageReader_ensureHandler(XImageReader* self);
 
 /**
  * @brief      XImageReader 私有数据
+ * @note       内存压缩：m_error（XImageReaderError 0..4）收窄为 uint8_t，
+ *             与 8 个 bool pack 进尾组；成员按对齐重排（指针/内嵌容器 →
+ *             int 组 → 1B 组），#if GIF 块整体作为末尾单元。
+ *             结构体 440→408 字节。
  */
 typedef struct XImageReaderPrivate
 {
     XIODevice*  m_device;            /**< IO 设备 */
     XString*    m_fileName;          /**< 文件名（UTF-8） */
     XString*    m_format;            /**< 格式字符串（UTF-8） */
-    bool        m_autoDetectFormat;  /**< 是否自动检测格式 */
-    bool        m_decideFromContent; /**< 是否从内容决定格式 */
+    XImageIOHandler* m_handler;      /**< 内部 IO 处理器 */
+    XIODevice*      m_fileDevice;   /**< 内部文件设备；由读取器拥有，供插件处理器使用 */
+    XString*        m_detectedFormat; /**< 自动探测到的格式缓存；由读取器拥有 */
+    XByteArray* m_sourceBytes;        /**< 设备数据缓存，避免多次消费设备（GIF 动画与 probe 共用）。 */
+    XStringList     m_textKeys;      /**< 处理器描述解析出的文本键列表 */
+    XStringList     m_textValues;    /**< 与文本键按索引对应的文本值列表 */
+    XString         m_textCache;     /**< UTF-8 兼容重载的最近一次文本缓存 */
     int         m_clipX;             /**< 裁剪矩形 X */
     int         m_clipY;             /**< 裁剪矩形 Y */
     int         m_clipW;             /**< 裁剪矩形宽度 */
     int         m_clipH;             /**< 裁剪矩形高度 */
-    bool        m_hasClipRect;       /**< 是否有裁剪矩形 */
     int         m_scaledW;           /**< 缩放宽度 */
     int         m_scaledH;           /**< 缩放高度 */
-    bool        m_hasScaledSize;     /**< 是否有缩放尺寸 */
     int         m_quality;           /**< 质量参数 */
     int         m_scaledClipX;       /**< 缩放裁剪矩形 X */
     int         m_scaledClipY;       /**< 缩放裁剪矩形 Y */
     int         m_scaledClipW;       /**< 缩放裁剪矩形宽度 */
     int         m_scaledClipH;       /**< 缩放裁剪矩形高度 */
-    bool        m_hasScaledClipRect; /**< 是否有缩放裁剪矩形 */
-    bool        m_autoTransform;     /**< 是否自动变换 */
-    XImageReaderError m_error;       /**< 错误码 */
-    XString*    m_errorString;       /**< 错误描述 */
-    XImageIOHandler* m_handler;      /**< 内部 IO 处理器 */
-    XIODevice*      m_fileDevice;   /**< 内部文件设备；由读取器拥有，供插件处理器使用 */
-    XString*        m_detectedFormat; /**< 自动探测到的格式缓存；由读取器拥有 */
-    XStringList     m_textKeys;      /**< 处理器描述解析出的文本键列表 */
-    XStringList     m_textValues;    /**< 与文本键按索引对应的文本值列表 */
-    XString         m_textCache;     /**< UTF-8 兼容重载的最近一次文本缓存 */
-    bool            m_textLoaded;    /**< 是否已尝试从处理器读取描述文本 */
     int         m_sizeW;             /**< 已探测图像宽度 */
     int         m_sizeH;             /**< 已探测图像高度 */
+    XString*    m_errorString;       /**< 错误描述 */
+    uint8_t     m_error;             /**< 错误码（XImageReaderError）。 */
+    bool        m_autoDetectFormat;  /**< 是否自动检测格式 */
+    bool        m_decideFromContent; /**< 是否从内容决定格式 */
+    bool        m_hasClipRect;       /**< 是否有裁剪矩形 */
+    bool        m_hasScaledSize;     /**< 是否有缩放尺寸 */
+    bool        m_hasScaledClipRect; /**< 是否有缩放裁剪矩形 */
+    bool        m_autoTransform;     /**< 是否自动变换 */
+    bool        m_textLoaded;        /**< 是否已尝试从处理器读取描述文本 */
     bool        m_hasSize;           /**< 是否已探测到图像尺寸 */
-    XByteArray* m_sourceBytes;        /**< 设备数据缓存，避免多次消费设备（GIF 动画与 probe 共用）。 */
 #if XIMAGECODEC_ON && XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON
     XImageCodecAnimation* m_animation; /**< GIF 动画缓存；由读取器拥有。 */
-    int         m_currentImageNumber; /**< 当前帧编号。 */
+    int         m_currentImageNumber; /*< 当前帧编号。 */
     bool        m_imageJumpPending; /**< 是否已定位到下一次 read() 的目标帧。 */
 #endif
 }XImageReaderPrivate;

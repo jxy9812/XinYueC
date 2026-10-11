@@ -93,10 +93,10 @@ typedef struct XInputMethodEvent
     XEvent   m_class;             /**< 继承 XEvent；必须为第一个成员。 */
     XString* m_preeditString;     /**< 组合文本（事件拥有，可为空）。 */
     XString* m_commitString;      /**< 已提交文本（事件拥有，可为空）。 */
-    int      m_replacementStart;  /**< 相对当前光标的替换起始。 */
-    int      m_replacementLength; /**< 替换长度。 */
-    int      m_cursorPosition;    /**< preedit 内光标位置；-1 表示未知。 */
-    int      m_anchorPosition;    /**< preedit 内锚点位置；-1 表示未知。 */
+    int16_t  m_replacementStart;  /**< 相对当前光标的替换起始（有符号，可为负）。 */
+    int16_t  m_replacementLength; /**< 替换长度。 */
+    int16_t  m_cursorPosition;    /**< preedit 内光标位置；-1 表示未知。 */
+    int16_t  m_anchorPosition;    /**< preedit 内锚点位置；-1 表示未知。 */
 } XInputMethodEvent;
 
 XVtable* XInputMethodEvent_class_init(void);
@@ -511,9 +511,9 @@ typedef struct XWheelEvent
     XPoint m_globalPosition;      /**< 屏幕全局坐标（对标 QWheelEvent::globalPosition）。 */
     XPoint m_angleDelta;          /**< 滚动角度增量；垂直滚轮 ±120/格，水平滚轮在 x 轴（对标 QWheelEvent::angleDelta）。 */
     XPoint m_pixelDelta;          /**< 像素增量（对标 QWheelEvent::pixelDelta；无高分辨率滚轮平台恒 (0,0)，消费方非零才优先）。 */
-    int m_phase;                  /**< 滚动阶段（XWheelEventPhase）。 */
-    bool m_inverted;              /**< 是否反向（对标 QWheelEvent::inverted）。 */
-    int m_source;                 /**< 事件来源（XWheelEventSource）。 */
+    uint8_t m_phase;              /**< 滚动阶段（存 XWheelEventPhase，0..3）。 */
+    uint8_t m_inverted : 1;       /**< 是否反向（对标 QWheelEvent::inverted）。 */
+    uint8_t m_source;             /**< 事件来源（存 XWheelEventSource，0..3）。 */
     XMouseButton m_buttons;       /**< 事件发生时按下的鼠标按键位掩码。 */
     XKeyboardModifiers m_modifiers; /**< 事件发生时按下的键盘修饰键。 */
 } XWheelEvent;
@@ -819,11 +819,11 @@ typedef struct XTouchEvent
     XEvent m_class;          /**< 继承 XEvent；必须为第一个成员。 */
     XPoint m_position;       /**< 主点局部坐标（=points[0]）。 */
     XPoint m_globalPosition; /**< 主点屏幕坐标（=points[0]）。 */
-    int    m_pointCount;     /**< 实际触点数量（0=单点遗留形态，主点字段
+    uint16_t m_pointCount;     /**< 实际触点数量（0=单点遗留形态，主点字段
                                    承载；>0=柔性数组内有效点数）。 */
-    int    m_pointCapacity;  /**< 柔性数组容量（创建时定容；0=无柔性空间，
+    uint16_t m_pointCapacity;  /**< 柔性数组容量（创建时定容；0=无柔性空间，
                                    外部存储/无列表事件；setPoints 上界）。 */
-    int    m_gesture;        /**< 手势种类（XTouchGestureKind；默认 None）。 */
+    uint8_t m_gesture;        /**< 手势种类（存 XTouchGestureKind，0..4；默认 None）。 */
     XTouchPoint m_points[];  /**< 柔性数组（C99）：触点列表内联在本对象
                                    尾部同一分配块内；容量=m_pointCapacity，
                                    实际=m_pointCount，经 XTouchEvent_points

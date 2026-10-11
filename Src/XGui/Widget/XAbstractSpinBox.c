@@ -547,10 +547,10 @@ static void VXAbstractSpinBox_move(XAbstractSpinBox* self,
     self->m_groupSeparatorShown = other->m_groupSeparatorShown;
     self->m_cleared = other->m_cleared;
     self->m_wheelDeltaRemainder = other->m_wheelDeltaRemainder;
-    other->m_buttonSymbols = XAbstractSpinBoxButtonSymbols_UpDownArrows;
+    other->m_buttonSymbols = (uint8_t)XAbstractSpinBoxButtonSymbols_UpDownArrows;
     other->m_keyboardTracking = true;
     other->m_frame = true;
-    other->m_correctionMode = XAbstractSpinBoxCorrectionMode_CorrectToPreviousValue;
+    other->m_correctionMode = (uint8_t)XAbstractSpinBoxCorrectionMode_CorrectToPreviousValue;
     other->m_wrapping = false;
     other->m_accelerated = false;
     other->m_groupSeparatorShown = false;
@@ -629,10 +629,10 @@ void XAbstractSpinBox_init(XAbstractSpinBox* self, XWidget* parent,
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
 
     self->m_lineEdit = NULL;
-    self->m_buttonSymbols = XAbstractSpinBoxButtonSymbols_UpDownArrows;
+    self->m_buttonSymbols = (uint8_t)XAbstractSpinBoxButtonSymbols_UpDownArrows;
     self->m_keyboardTracking = true;
     self->m_frame = true;
-    self->m_correctionMode = XAbstractSpinBoxCorrectionMode_CorrectToPreviousValue;
+    self->m_correctionMode = (uint8_t)XAbstractSpinBoxCorrectionMode_CorrectToPreviousValue;
     self->m_wrapping = false;
     self->m_accelerated = false;
     self->m_groupSeparatorShown = false;
@@ -707,7 +707,7 @@ void XAbstractSpinBox_setButtonSymbols(XAbstractSpinBox* self, int symbols)
         symbols != XAbstractSpinBoxButtonSymbols_UpDownArrows &&
         symbols != XAbstractSpinBoxButtonSymbols_PlusMinus)
         return;
-    self->m_buttonSymbols = symbols;
+    self->m_buttonSymbols = (uint8_t)symbols;
     XWidget_update((XWidget*)self);
     /* 编辑框几何与绘制同源（样式 SC_SpinBoxEditField；NoButtons 全宽）。 */
     spinbox_syncEditFieldGeometry(self);
@@ -719,7 +719,7 @@ void XAbstractSpinBox_setCorrectionMode(XAbstractSpinBox* self, int mode)
     if (mode != XAbstractSpinBoxCorrectionMode_CorrectToPreviousValue &&
         mode != XAbstractSpinBoxCorrectionMode_CorrectToNearestValue)
         return;
-    self->m_correctionMode = mode;
+    self->m_correctionMode = (uint8_t)mode;
 }
 
 int XAbstractSpinBox_correctionMode(const XAbstractSpinBox* self)

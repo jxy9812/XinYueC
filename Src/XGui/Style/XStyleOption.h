@@ -600,23 +600,54 @@ typedef enum XStyleStandardPixmap
 
 /**
  * @brief      样式选项（对标 QStyleOption 核心字段）。
+ * @details    [内存治理 2026-10-11] 成员按对齐降序重排（指针→4B 值组→
+ *             uint16→bool/uint8/位域组），并收窄文档化小值域整型：
+ *             m_version/m_type/m_direction/m_checkState/
+ *             m_sliderTickPosition/m_spinStepEnabled/m_spinSymbols/
+ *             m_checkState2/m_tabElideMode → uint8_t（值域均 ≤255，
+ *             已核 .c 全部赋值/比较无越界无 -1 哨兵），m_tabIndex/
+ *             m_decorationAlignment → uint16_t；m_progressValue 保留
+ *             int（init 置 -1 哨兵），进度/滑块 min/max/value 保留
+ *             int（外部原样值，值域不受限）。m_tabPosition 收 int8_t
+ *             （非 uint8_t：承载 -1 未指定哨兵）。初始化一律走
+ *             XStyleOption_init 的 XMemset 全量清零，无位置式初始化
+ *             依赖（全库 grep 核实）。
  */
 typedef struct XStyleOption
 {
-    int m_version;        /**< 版本（保留）。 */
-    int m_type;           /**< 基元/控件/复杂控件元素枚举。 */
+    XObject* m_styleObject; /**< 样式对象（对标 styleObject；QSS 匹配用，可空）。 */
+    const char* m_text;   /**< 文本（借用；可空）。 */
+    XIcon* m_icon;        /**< 条目图标（借用；可空）。 */
+    /* ---- 通用控件字段 ---- */
     uint32_t m_state;     /**< XStyleStateFlag 位组合。 */
-    int m_direction;      /**< 布局方向：0 左到右/1 右到左（对标 direction）。 */
     XRect m_rect;         /**< 目标矩形（控件局部坐标）。 */
     XPalette m_palette;   /**< 调色板（按需填充）。 */
-    XObject* m_styleObject; /**< 样式对象（对标 styleObject；QSS 匹配用，可空）。 */
-    /* ---- 通用控件字段 ---- */
-    const char* m_text;   /**< 文本（借用；可空）。 */
     uint32_t m_textColor; /**< 文本色（0=调色板决定）。 */
+    /* ---- 进度条 ---- */
+    int m_progressMin;    /**< 进度最小值。 */
+    int m_progressMax;    /**< 进度最大值。 */
+    int m_progressValue;  /**< 进度当前值（-1=无值哨兵，保持有符号）。 */
+    /* ---- 滚动条/滑块 ---- */
+    int m_sliderMin;      /**< 滑块最小值。 */
+    int m_sliderMax;      /**< 滑块最大值。 */
+    int m_sliderValue;    /**< 滑块当前值。 */
+    int m_sliderSingleStep; /**< 滑块单步。 */
+    int m_sliderPageStep; /**< 滑块页步。 */
+    int m_sliderTickInterval; /**< 刻度间隔值（0=自动，对标 tickInterval）。 */
+    /* ---- 表盘（对标 QStyleOptionSlider 的 dial 子集） ---- */
+    int m_notchSize;      /**< 刻度间隔值（对标 tickInterval）。 */
+    int m_pageStep;       /**< 大刻度步长（对标 pageStep）。 */
+    /* ---- 条目视图（对标 QStyleOptionViewItem 子集） ---- */
+    uint32_t m_viewFeatures; /**< 条目特性位：0x1 勾选指示/0x2 装饰/0x4 文本。 */
+    uint16_t m_tabIndex;       /**< 页签下标（≤65535；无 -1 哨兵）。 */
+    uint16_t m_decorationAlignment; /**< 装饰对齐（XAlignment 位 ≤0x1ff）。 */
+    uint8_t m_version;    /**< 版本（保留）。 */
+    uint8_t m_type;       /**< 基元/控件/复杂控件元素枚举（≤255）。 */
+    uint8_t m_direction;  /**< 布局方向：0 左到右/1 右到左（对标 direction）。 */
     /* 标志位域组：无取址使用的 17 个 bool 连续合并为 1 位位域（每次绘制
      * 在栈上填充的临时选项对象，逐字段语义不变，仅存储位合拢；
      * m_checkable/m_checked/m_progressTextVisible/m_selected 按方案
-     * 保持 bool 不合并，仍在原逻辑位置）。 */
+     * 保持 bool 不合并，与本组相邻排布）。 */
     uint8_t m_flat : 1;   /**< 扁平（对标 flat）。 */
     uint8_t m_progressInverted : 1; /**< 进度反向。 */
     uint8_t m_tabSelected : 1; /**< 页签选中。 */
@@ -637,39 +668,23 @@ typedef struct XStyleOption
     bool m_checkable;     /**< 可勾选（GroupBox/按钮）。 */
     bool m_checked;       /**< 已勾选。 */
     /* ---- 按钮/复选/单选 ---- */
-    int m_checkState;     /**< 0 未选/1 部分/2 选中（对标 checkState）。 */
-    /* ---- 进度条 ---- */
-    int m_progressMin;    /**< 进度最小值。 */
-    int m_progressMax;    /**< 进度最大值。 */
-    int m_progressValue;  /**< 进度当前值。 */
+    uint8_t m_checkState; /**< 0 未选/1 部分/2 选中（对标 checkState；
+                               另被复用传箭头方向 0-3，见 XCommonStyle）。 */
     bool m_progressTextVisible; /**< 进度文本可见。 */
     /* ---- 页签 ---- */
-    int m_tabPosition;    /**< 页签位置（0 上/1 下/2 左/3 右）。 */
-    int m_tabIndex;       /**< 页签下标。 */
-    /* ---- 滚动条/滑块 ---- */
-    int m_sliderMin;      /**< 滑块最小值。 */
-    int m_sliderMax;      /**< 滑块最大值。 */
-    int m_sliderValue;    /**< 滑块当前值。 */
-    int m_sliderSingleStep; /**< 滑块单步。 */
-    int m_sliderPageStep; /**< 滑块页步。 */
-    int m_sliderTickInterval; /**< 刻度间隔值（0=自动，对标 tickInterval）。 */
-    int m_sliderTickPosition; /**< 刻度位置：0 无/1 上/2 下/3 双侧。 */
+    int8_t  m_tabPosition;    /**< 页签位置（0 上/1 下/2 左/3 右；-1=未指定哨兵，
+                                  故保留有符号：XCommonStyle 的 TabBarTabVSpace
+                                  以 >=2 判 Triangular，-1 必须落回「其余 2」，
+                                  收 uint8_t 会回绕成 255 而误判为 Triangular）。 */
+    uint8_t m_sliderTickPosition; /**< 刻度位置：0 无/1 上/2 下/3 双侧。 */
     /* ---- 菜单/表头 ---- */
     bool m_selected;      /**< 选中。 */
     /* ---- 微调框（对标 QStyleOptionSpinBox） ---- */
-    int m_spinStepEnabled; /**< 步进使能位：0x1 上/0x2 下（对标 stepEnabled）。 */
-    int m_spinSymbols;    /**< 按钮符号：0 上下箭头/1 加减号（对标 buttonSymbols）。 */
-    /* ---- 表盘（对标 QStyleOptionSlider 的 dial 子集） ---- */
-    int m_notchSize;      /**< 刻度间隔值（对标 tickInterval）。 */
-    int m_pageStep;       /**< 大刻度步长（对标 pageStep）。 */
-    /* ---- 条目视图（对标 QStyleOptionViewItem 子集） ---- */
-    uint32_t m_viewFeatures; /**< 条目特性位：0x1 勾选指示/0x2 装饰/0x4 文本。 */
-    int m_checkState2;    /**< 条目勾选状态（0 未选/1 部分/2 选中）。 */
-    XIcon* m_icon;        /**< 条目图标（借用；可空）。 */
-    int m_decorationAlignment; /**< 装饰对齐（XAlignment 位）。 */
-    int m_tabElideMode;   /**< 页签省略模式（§8.0g11：0 无/1 右省略/2 左
-                               省略/3 中省略，对标 Qt::ElideRight 等；
-                               追加尾部保持既有初始化兼容）。 */
+    uint8_t m_spinStepEnabled; /**< 步进使能位：0x1 上/0x2 下（对标 stepEnabled）。 */
+    uint8_t m_spinSymbols;    /**< 按钮符号：0 上下箭头/1 加减号/2 无按钮（对标 buttonSymbols）。 */
+    uint8_t m_checkState2;    /**< 条目勾选状态（0 未选/1 部分/2 选中）。 */
+    uint8_t m_tabElideMode;   /**< 页签省略模式（§8.0g11：0 无/1 右省略/2 左
+                               省略/3 中省略，对标 Qt::ElideRight 等）。 */
 } XStyleOption;
 
 /**

@@ -16,6 +16,8 @@
 extern "C" {
 #endif
 
+#include <stdint.h>
+#include <stdbool.h>
 #include "XGuiConfig.h"
 #include "XWidget.h"
 
@@ -34,19 +36,24 @@ typedef enum XDialogCode
 typedef struct XDialog
 {
     XWidget m_base;    /**< 基类成员；必须是第一个。 */
-    int m_result;      /**< 对标 result()；DialogCode 或标准按钮位值。 */
-    bool m_modal;      /**< 对标 modal 属性（默认 false，对标 QDialog::modal；exec 路径显式模态化）。 */
-    bool m_inExec;     /**< exec() 循环标志。 */
-    bool m_sizeGripEnabled; /**< 对标 QDialog::sizeGripEnabled；仅存储位
-                                （XSizeGrip 控件未自动嵌入）。 */
-    int m_resetModalityTo; /**< open() 临时切换窗口模态前的原模态值
-                                （-1=未记录；对标 QDialogPrivate::
-                                resetModalityTo，done/exec 时恢复）。 */
-    int m_csdAppliedTop;   /**< 当前已套用的 CSD 内容避让顶偏移（像素；
+    int m_result;      /**< 对标 result()；DialogCode 或标准按钮位值
+                          （setResult 原样存取外部任意值——契约字段，
+                          保持 int）。 */
+    /* ---- 2 字节组 ---- */
+    int16_t m_resetModalityTo; /**< open() 临时切换窗口模态前的原模态值
+                                （-1=未记录——负值哨兵，故有符号；
+                                对标 QDialogPrivate::resetModalityTo，
+                                done/exec 时恢复）。 */
+    int16_t m_csdAppliedTop;   /**< 当前已套用的 CSD 内容避让顶偏移（像素；
                                 0=未套用/系统标题栏模式）。增量记账：
                                 再次套用只补「目标-已套用」差值，重复
                                 调用幂等不叠加（见
                                 XDialog_decorationTopOffset）。 */
+    /* ---- 位域组（3 个布尔打包 1 字节） ---- */
+    uint8_t m_modal : 1;   /**< 对标 modal 属性（默认 false，对标 QDialog::modal；exec 路径显式模态化）。 */
+    uint8_t m_inExec : 1;  /**< exec() 循环标志。 */
+    uint8_t m_sizeGripEnabled : 1; /**< 对标 QDialog::sizeGripEnabled；仅存储位
+                                （XSizeGrip 控件未自动嵌入）。 */
 } XDialog;
 
 /**

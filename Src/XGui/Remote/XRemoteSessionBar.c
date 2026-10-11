@@ -86,31 +86,33 @@
 
 /** @brief 工具条私有状态(契约不暴露, 见 XRemoteSessionBar.h m_d)。 */
 typedef struct XRemoteSessionBarPrivate {
+    /* ---- 指针组(8 字节对齐前移) ---- */
     XGuiClient* m_client;        /**< 绑定的客户端(借用)。 */
-    XRect     m_viewRect;        /**< 吸附参照视图区(parent 坐标)。 */
-    bool      m_expanded;        /**< true=展开条, false=悬浮球。 */
-    XPoint    m_ballPos;         /**< 悬浮球左上角(parent 坐标)。 */
-    bool      m_ballUserPlaced;  /**< 用户拖动换位过(双击回位依据)。 */
-
-    bool      m_dragging;        /**< 球拖动进行中。 */
-    XPoint    m_pressLocal;      /**< 按下点(控件局部)。 */
-    XPoint    m_grabOffset;      /**< 按下点-球左上角(拖动保形)。 */
-    bool      m_dragMoved;       /**< 本次按下已越过点击阈值。 */
-
-    XGuiRemoteProfileId m_profile; /**< 界面档位选择(协商结果以 FB_META 为准)。 */
-    uint32_t  m_dropEvents;      /**< 丢帧口径计数(帧类传输错误事件)。 */
-    char      m_lastStats[128];  /**< 上次统计文本(去重刷新)。 */
-    bool      m_keyboardPopped;  /**< 键盘钮 toggle 态(true=已请求弹出)。 */
-
     XPushButton* m_disconnectBtn; /**< [断开连接](子控件, 自持于树)。 */
     XComboBox*   m_profileCombo;  /**< 档位 性能|资源。 */
     XLabel*      m_statsLabel;    /**< 统计: 帧数/RTT/丢帧。 */
     XPushButton* m_keyboardBtn;   /**< [键盘] 显式弹收应用虚拟键盘(私有)。 */
     XPushButton* m_collapseBtn;   /**< [收起]。 */
-
     XTimer* m_collapseTimer;     /**< 离开 2s 收起(单次, 拥有)。 */
     XTimer* m_hoverTimer;        /**< 球悬停展开(单次, 拥有)。 */
     XTimer* m_statsTimer;        /**< 统计刷新(周期, 拥有)。 */
+
+    /* ---- 4 字节组：几何/枚举/计数 ---- */
+    XRect     m_viewRect;        /**< 吸附参照视图区(parent 坐标)。 */
+    XPoint    m_ballPos;         /**< 悬浮球左上角(parent 坐标)。 */
+    XPoint    m_pressLocal;      /**< 按下点(控件局部)。 */
+    XPoint    m_grabOffset;      /**< 按下点-球左上角(拖动保形)。 */
+    XGuiRemoteProfileId m_profile; /**< 界面档位选择(协商结果以 FB_META 为准)。 */
+    uint32_t  m_dropEvents;      /**< 丢帧口径计数(帧类传输错误事件)。 */
+
+    /* ---- 1 字节组：定长文本 + 标志位域(原 6 个散布 bool 合并;
+     *      全部仅按名读写, 无取址使用) ---- */
+    char      m_lastStats[128];  /**< 上次统计文本(去重刷新)。 */
+    uint8_t   m_expanded : 1;        /**< true=展开条, false=悬浮球。 */
+    uint8_t   m_ballUserPlaced : 1;  /**< 用户拖动换位过(双击回位依据)。 */
+    uint8_t   m_dragging : 1;        /**< 球拖动进行中。 */
+    uint8_t   m_dragMoved : 1;       /**< 本次按下已越过点击阈值。 */
+    uint8_t   m_keyboardPopped : 1;  /**< 键盘钮 toggle 态(true=已请求弹出)。 */
 } XRemoteSessionBarPrivate;
 
 /* ==================== 前置声明 ==================== */

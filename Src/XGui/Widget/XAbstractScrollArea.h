@@ -60,15 +60,18 @@ typedef struct XAbstractScrollArea
     XWidget* m_viewport;       /**< 内容承载区子控件（拥有）。 */
     XScrollBar* m_vScrollBar;  /**< 垂直滚动条（拥有）。 */
     XScrollBar* m_hScrollBar;  /**< 水平滚动条（拥有）。 */
-    int m_vPolicy;             /**< 垂直滚动条策略（默认 AsNeeded）。 */
-    int m_hPolicy;             /**< 水平滚动条策略（默认 AsNeeded）。 */
     XWidget* m_cornerWidget;   /**< 右下角控件（借用）。 */
-    int m_contentWidth;        /**< 内容宽度（驱动水平滚动范围）。 */
-    int m_contentHeight;       /**< 内容高度（驱动垂直滚动范围）。 */
     XWidget* m_sbWidgets[8];   /**< 附加滚动条控件（对标 addScrollBarWidget；借用）。 */
-    int m_sbWidgetAligns[8];   /**< 附加控件对齐位（XAlignment 位掩码）。 */
-    int m_sbWidgetCount;       /**< 附加控件数量。 */
-    int m_sizeAdjustPolicy;    /**< 尺寸自适应策略（XAbstractScrollAreaSizeAdjustPolicy；
+    int m_contentWidth;        /**< 内容宽度（驱动水平滚动范围；内容尺寸可能超出
+                                    16 位，保持 int）。 */
+    int m_contentHeight;       /**< 内容高度（驱动垂直滚动范围；内容尺寸可能超出
+                                    16 位，保持 int）。 */
+    uint16_t m_sbWidgetAligns[8]; /**< 附加控件对齐位（XAlignment 位掩码；
+                                       掩码上限 0x1ff，uint16 全值往返）。 */
+    uint8_t m_vPolicy;         /**< 垂直滚动条策略（XScrollBarPolicy；默认 AsNeeded）。 */
+    uint8_t m_hPolicy;         /**< 水平滚动条策略（XScrollBarPolicy；默认 AsNeeded）。 */
+    uint8_t m_sbWidgetCount;   /**< 附加控件数量（硬上限 8，见 addScrollBarWidget）。 */
+    uint8_t m_sizeAdjustPolicy; /**< 尺寸自适应策略（XAbstractScrollAreaSizeAdjustPolicy；
                                     默认 AdjustIgnored）。 */
     XSize m_sizeHintCache;     /**< AdjustToContentsOnFirstShow 的尺寸提示缓存（内部）。 */
     bool m_sizeHintCached;     /**< 尺寸提示缓存是否有效（内部）。 */

@@ -64,15 +64,22 @@ XCLASS_DEFINE_EXTEND_END(XFontComboBox, XComboBox)
 typedef struct XFontComboBox
 {
     XComboBox m_base;     /**< 基类成员；必须是第一个。 */
-    int m_filters;        /**< 字体过滤位标志（默认 AllFonts）。 */
-    int m_writingSystem;  /**< 书写系统（默认 Any；当前仅状态承载）。 */
-    XFont m_displayFont;  /**< 显示字体状态（值承载；默认构造；setDisplayFont 写入）。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     void* m_fontSamples;  /**< 族名样例文本表（内部条目数组；按需扩容；NULL=未分配）。 */
+    void* m_systemSamples;/**< 书写系统样例文本表（内部条目数组；按需扩容；NULL=未分配）。 */
+    /* ---- ≥64B 值类型成员（XFont ≈72B，须 8 字节对齐；按手册第 5 步不擅改） ---- */
+    XFont m_displayFont;  /**< 显示字体状态（值承载；默认构造；setDisplayFont 写入）。 */
+    /* ---- 4 字节组 ---- */
+    int m_filters;        /**< 字体过滤位标志（默认 AllFonts；setFontFilters
+                              *   原样存取外部值——getter 往返契约，保持 int）。 */
     int m_fontSampleCount;/**< 族名样例表已用条数（0=空）。 */
     int m_fontSampleCap;  /**< 族名样例表已分配容量（0=未分配）。 */
-    void* m_systemSamples;/**< 书写系统样例文本表（内部条目数组；按需扩容；NULL=未分配）。 */
     int m_systemSampleCount; /**< 书写系统样例表已用条数（0=空）。 */
     int m_systemSampleCap;   /**< 书写系统样例表已分配容量（0=未分配）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_writingSystem; /**< 书写系统（XFontComboBoxWritingSystem，最大
+                              *   Symbol=30；setWritingSystem 已按
+                              *   xfcb_isValidWritingSystem 校验，默认 Any）。 */
 } XFontComboBox;
 
 /** @brief X字体Combo盒classinit（对标 Qt 同名接口）。

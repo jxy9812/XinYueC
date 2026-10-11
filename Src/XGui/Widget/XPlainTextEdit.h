@@ -98,6 +98,7 @@ XCLASS_DEFINE_EXTEND_END(XPlainTextEdit, XAbstractScrollArea)
 typedef struct XPlainTextEdit
 {
     XAbstractScrollArea m_base; /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
     XTextControl* m_control;    /**< 私有文本控制器（拥有；init 创建/
                                      deinit 销毁；文档/光标/选区/撤销
                                      承载，对标 Qt control 私有指针）。 */
@@ -105,31 +106,38 @@ typedef struct XPlainTextEdit
                                      有；权威在控制器，textChanged 时
                                      整体重建）。仅供不可修改的既有
                                      消费方 XTextEdit 只读借用。 */
-    bool m_readOnly;            /**< 只读（映射控制器可编辑交互标志）。 */
-    int m_wrapMode;             /**< 换行模式（默认 WidgetWidth）。 */
-    int m_maxBlockCount;        /**< 块数上限（0 = 无限制）。 */
     XString* m_placeholder;    /**< 占位文本（对象拥有）。 */
-    bool m_undoEnabled;         /**< 撤销开关（镜像控制器，默认 true）。 */
     XVector* m_undoStack;       /**< @compat 撤销可用哨兵栈（char*；仅以
                                      空/非空镜像控制器 undoAvailable，
                                      内容不访问）。仅供 XTextEdit 查询。 */
     XVector* m_redoStack;       /**< @compat 重做可用哨兵栈（同上）。 */
-    bool m_backgroundVisible;   /**< 背景可见（默认 true）。 */
-    bool m_centerCursor;        /**< 光标居中滚动。 */
-    bool m_centerOnScroll;      /**< 滚动跟随光标。 */
-    bool m_tabChangesFocus;     /**< Tab 切焦点（默认 false）。 */
-    int  m_tabStopDistance;     /**< Tab 步进（px，默认 40）。 */
-    int  m_wordWrapMode;        /**< 断行规则（对标 QTextOption::WrapMode；
-                                     默认 WordWrap，下发控制器承载）。 */
     XString* m_documentTitle;   /**< 文档标题（对象拥有）。 */
-    int  m_textInteractionFlags;/**< 文本交互标志位集（壳存储镜像）。 */
-    XTimerId m_autoScrollTimer; /**< 拖选边缘自动滚动定时器（100ms 启动；
-                                     XTIMER_INVALID_ID = 未启动）。 */
-    int  m_autoScrollDir;       /**< 自动滚动方向（+1 向下 / -1 向上）。 */
-    bool m_inTrim;              /**< 块数上限裁剪进行中（防重入）。 */
+    XTimerId m_autoScrollTimer; /**< 拖选边缘自动滚动定时器（intptr_t；
+                                     100ms 启动；XTIMER_INVALID_ID = 未启动）。 */
     XVector* m_extraSelCache;   /**< 额外选择集 (行,列,长度) 换算缓存
                                      （XPlainTextEditExtraSelection 数组，
                                      拥有；承载换算内部用）。 */
+    /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
+       7 个 bool + 2 个小值域模式枚举（换行模式 0..1、断行规则 0..4）
+       原分散占 7B bool + 2×4B int（含对齐洞），合并后 1 字。 */
+    uint32_t m_readOnly : 1;    /**< 只读（映射控制器可编辑交互标志）。 */
+    uint32_t m_undoEnabled : 1; /**< 撤销开关（镜像控制器，默认 true）。 */
+    uint32_t m_backgroundVisible : 1; /**< 背景可见（默认 true）。 */
+    uint32_t m_centerCursor : 1;/**< 光标居中滚动。 */
+    uint32_t m_centerOnScroll : 1; /**< 滚动跟随光标。 */
+    uint32_t m_tabChangesFocus : 1; /**< Tab 切焦点（默认 false）。 */
+    uint32_t m_inTrim : 1;      /**< 块数上限裁剪进行中（防重入）。 */
+    uint32_t m_wrapMode : 3;    /**< 换行模式（XPlainTextEditMode 0..1；默认 WidgetWidth）。 */
+    uint32_t m_wordWrapMode : 3;/**< 断行规则（XTextControlWrap 0..4；对标
+                                     QTextOption::WrapMode，下发控制器承载）。 */
+    uint32_t m_plainTextEditFlagsUnused : 19; /**< 保留位。 */
+    /* [内存治理 2026-10-11] 窄整型：交互标志位集 ≤0x1F 收 uint8_t；
+       块数上限（0=无限制）/Tab 步进 px 收 uint16_t；自动滚动方向
+       -1/0/+1 收 int8_t（保留符号，>=0 判断依赖有符号）。 */
+    uint8_t m_textInteractionFlags; /**< 文本交互标志位集（XTextControlInteractionFlag ≤0x1F；壳存储镜像）。 */
+    uint16_t m_maxBlockCount;   /**< 块数上限（0 = 无限制）。 */
+    uint16_t m_tabStopDistance; /**< Tab 步进（px，默认 40）。 */
+    int8_t  m_autoScrollDir;    /**< 自动滚动方向（+1 向下 / -1 向上 / 0 无）。 */
 } XPlainTextEdit;
 
 /** @brief XPlain文本Editclassinit（对标 Qt 同名接口）。

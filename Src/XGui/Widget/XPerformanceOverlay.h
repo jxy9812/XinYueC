@@ -94,8 +94,8 @@ typedef struct XPerformanceOverlay
     bool    m_networkVisible;          /**< 是否显示下载/上传速率。 */
     bool    m_sysStatVisible;          /**< 是否显示 CPU/GPU 系统负载。 */
     bool    m_memoryVisible;           /**< 是否显示内存使用量行。 */
-    XPerformanceOverlayMemoryDisplay m_memoryDisplay; /**< 内存行显示种类（准确数/百分比/两者）。 */
-    XPerformanceOverlayMemorySource  m_memorySource;  /**< 内存行数据来源（自动/系统/库内）。 */
+    uint8_t m_memoryDisplay; /**< 内存行显示种类（准确数/百分比/两者）。 */
+    uint8_t m_memorySource;  /**< 内存行数据来源（自动/系统/库内）。 */
     bool    m_autoFitSize;             /**< 是否按文本自然尺寸收框（宽取最宽行、高贴底）。 */
     bool    m_movable;                 /**< 是否允许开始拖拽。 */
     bool    m_fixed;                   /**< 是否锁定当前位置。 */

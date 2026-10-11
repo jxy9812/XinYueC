@@ -162,62 +162,65 @@ XCLASS_DEFINE_END(XAbstractItemView)
 typedef struct XAbstractItemView
 {
     XAbstractScrollArea m_base;      /**< 基类成员；必须是第一个。 */
-    int m_currentRow;                /**< 当前行；-1=无。 */
-    int m_currentColumn;             /**< 当前列；-1=无。 */
-    int m_selectionMode;             /**< XAbstractItemViewSelectionMode。 */
-    int m_selectionBehavior;         /**< XAbstractItemViewSelectionBehavior。 */
-    int m_editTriggers;              /**< XAbstractItemViewEditTrigger 位组合。 */
-    bool m_alternatingRowColors;     /**< 交替行色（默认 false）。 */
-    bool m_autoScroll;               /**< 自动滚动（默认 true）。 */
     XAbstractItemModel* m_model;     /**< 数据模型（借用；可为 NULL）。 */
     XItemSelectionModel* m_selectionModel; /**< 选择模型（对象拥有；懒创建）。 */
-    int m_selectionAnchorRow;        /**< Shift 扩选锚点行（-1 未设置）。 */
-    int m_selectionAnchorCol;        /**< Shift 扩选锚点列。 */
-    int m_rootRow;                   /**< 根索引行（预留树；默认 -1=根）。 */
-    int m_rootCol;                   /**< 根索引列（预留树；默认 -1=根）。 */
-    int m_iconW;                     /**< 图标尺寸宽（默认 16）。 */
-    int m_iconH;                     /**< 图标尺寸高（默认 16）。 */
-    bool m_keyboardSearch;           /**< 键盘搜索开关（默认 true）。 */
-    bool m_tabKeyNavigation;         /**< Tab 键焦点导航（默认 false）。 */
-    int m_autoScrollMargin;          /**< 自动滚动判定边距（像素；默认 16）。 */
-    bool m_showDropIndicator;        /**< 是否显示拖放指示器（默认 true）。 */
-    int m_defaultDropAction;         /**< 默认拖放动作（数值对齐 Qt::DropAction；默认 0=IgnoreAction）。 */
-    int m_dragDropMode;              /**< 拖放模式（XAbstractItemViewDragDropMode；默认 NoDragDrop）。 */
-    bool m_dragEnabled;              /**< 允许拖出条目（默认 false）。 */
-    bool m_dragDropOverwriteMode;    /**< 拖放覆盖模式（基类默认 false，见 Qt 文档）。 */
-    int m_textElideMode;             /**< 文本省略模式（XAbstractItemViewTextElideMode；默认 ElideRight）。 */
-    int m_verticalScrollMode;        /**< 垂直滚动模式（XAbstractItemViewScrollMode；默认 ScrollPerItem）。 */
-    int m_horizontalScrollMode;      /**< 水平滚动模式（XAbstractItemViewScrollMode；默认 ScrollPerItem）。 */
     void* m_itemDelegate;            /**< 条目委托不透明指针（委托体系未建，仅承载；默认 NULL）。 */
+    XItemDelegate* m_defaultDelegate; /**< 默认条目委托（对标 Qt 视图缺省 QStyledItemDelegate；对象拥有；懒创建）。 */
+    XWidget* m_editor;               /**< 当前打开的临时编辑器（委托 createEditor 产物；对象拥有；NULL=未在编辑）。 */
     XVector m_persistentFlags;       /**< 持久编辑器打开标记平行表（行主序
                                           m_persistentRows*m_persistentCols；元素 bool）。 */
-    int m_persistentRows;            /**< 持久编辑器表逻辑行数（0=未使用）。 */
-    int m_persistentCols;            /**< 持久编辑器表逻辑列数（0=未使用）。 */
     XVector m_indexWidgets;          /**< 条目控件指针平行表（行主序；
                                           元素 void* 借用承载）。 */
-    int m_indexWidgetRows;           /**< 条目控件表逻辑行数（0=未使用）。 */
-    int m_indexWidgetCols;           /**< 条目控件表逻辑列数（0=未使用）。 */
     XVector m_columnDelegates;       /**< 列级委托不透明指针表（元素 void*，
                                           按列号索引；借用承载）。 */
     XVector m_rowDelegates;          /**< 行级委托不透明指针表（元素 void*，
                                           按行号索引；借用承载）。 */
-    XWidget* m_editor;               /**< 当前打开的临时编辑器（委托 createEditor 产物；对象拥有；NULL=未在编辑）。 */
-    int m_editRow;                   /**< 编辑中行；-1=无。 */
-    int m_editCol;                   /**< 编辑中列；-1=无。 */
-    bool m_editCommitted;            /**< 本次编辑会话已提交（commitData 幂等门禁；对标 Qt 提交/回退分支判定）。 */
-    bool m_editClosing;              /**< 编辑器关闭流程进行中（抑制编辑器失焦回调重入）。 */
-    bool m_itemsEditable;            /**< 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载；默认 false 保持既有行为）。 */
-    XItemDelegate* m_defaultDelegate; /**< 默认条目委托（对标 Qt 视图缺省 QStyledItemDelegate；对象拥有；懒创建）。 */
     XVector m_roleTable;             /**< role 叠加存储平行表（XItemDataRole
                                           非 text 维度；行主序
                                           m_roleRows*m_roleCols）。 */
+    /* 行/列索引保持 int：模型维度沿用库内 int 索引风格（见
+     * XAbstractItemModel.h 文件头），-1 哨兵，不作 16 位收窄。 */
+    int m_currentRow;                /**< 当前行；-1=无。 */
+    int m_currentColumn;             /**< 当前列；-1=无。 */
+    int m_selectionAnchorRow;        /**< Shift 扩选锚点行（-1 未设置）。 */
+    int m_selectionAnchorCol;        /**< Shift 扩选锚点列。 */
+    int m_rootRow;                   /**< 根索引行（预留树；默认 -1=根）。 */
+    int m_rootCol;                   /**< 根索引列（预留树；默认 -1=根）。 */
+    int m_persistentRows;            /**< 持久编辑器表逻辑行数（0=未使用）。 */
+    int m_persistentCols;            /**< 持久编辑器表逻辑列数（0=未使用）。 */
+    int m_indexWidgetRows;           /**< 条目控件表逻辑行数（0=未使用）。 */
+    int m_indexWidgetCols;           /**< 条目控件表逻辑列数（0=未使用）。 */
     int m_roleRows;                  /**< role 表逻辑行数（0=未使用）。 */
     int m_roleCols;                  /**< role 表逻辑列数（0=未使用）。 */
+    int m_editRow;                   /**< 编辑中行；-1=无。 */
+    int m_editCol;                   /**< 编辑中列；-1=无。 */
+    uint16_t m_defaultDropAction;    /**< 默认拖放动作（数值对齐 Qt::DropAction，
+                                          含 TargetMoveAction=0x8002；默认 0=IgnoreAction）。 */
+    int16_t m_iconW;                 /**< 图标尺寸宽（小像素值；默认 16）。 */
+    int16_t m_iconH;                 /**< 图标尺寸高（小像素值；默认 16）。 */
+    int16_t m_autoScrollMargin;      /**< 自动滚动判定边距（小像素值；默认 16）。 */
+    uint8_t m_selectionMode;         /**< XAbstractItemViewSelectionMode（0..4）。 */
+    uint8_t m_selectionBehavior;     /**< XAbstractItemViewSelectionBehavior（0..2）。 */
+    uint8_t m_editTriggers;          /**< XAbstractItemViewEditTrigger 位组合（≤0x1f）。 */
+    uint8_t m_dragDropMode;          /**< XAbstractItemViewDragDropMode（0..4；默认 NoDragDrop）。 */
+    uint8_t m_textElideMode;         /**< XAbstractItemViewTextElideMode（0..3；默认 ElideRight）。 */
+    uint8_t m_verticalScrollMode;    /**< XAbstractItemViewScrollMode（0..1；默认 ScrollPerItem）。 */
+    uint8_t m_horizontalScrollMode;  /**< XAbstractItemViewScrollMode（0..1；默认 ScrollPerItem）。 */
+    uint8_t m_searchPrefixLen;       /**< 前缀长度（不含 NUL；0=无前缀；容量 64，实际 ≤63）。 */
+    uint8_t m_alternatingRowColors : 1; /**< 交替行色（默认 false）。 */
+    uint8_t m_autoScroll : 1;        /**< 自动滚动（默认 true）。 */
+    uint8_t m_keyboardSearch : 1;    /**< 键盘搜索开关（默认 true）。 */
+    uint8_t m_tabKeyNavigation : 1;  /**< Tab 键焦点导航（默认 false）。 */
+    uint8_t m_showDropIndicator : 1; /**< 是否显示拖放指示器（默认 true）。 */
+    uint8_t m_dragEnabled : 1;       /**< 允许拖出条目（默认 false）。 */
+    uint8_t m_dragDropOverwriteMode : 1; /**< 拖放覆盖模式（基类默认 false，见 Qt 文档）。 */
+    uint8_t m_editCommitted : 1;     /**< 本次编辑会话已提交（commitData 幂等门禁；对标 Qt 提交/回退分支判定）。 */
+    uint8_t m_editClosing : 1;       /**< 编辑器关闭流程进行中（抑制编辑器失焦回调重入）。 */
+    uint8_t m_itemsEditable : 1;     /**< 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载；默认 false 保持既有行为）。 */
     /* 键盘搜索累积状态（每视图实例承载；对标 Qt keyboardSearch 的
      * 视图私有 m_keyboardSearchPrefix/时间戳——此前为全库共享静态缓冲，
      * 多视图交替键入时互相污染前缀）。 */
     char m_searchPrefix[XABSTRACTITEMVIEW_SEARCH_CAPACITY]; /**< 累积前缀（含结尾 NUL；init 零值=空）。 */
-    size_t m_searchPrefixLen;        /**< 前缀长度（不含 NUL；0=无前缀）。 */
     int64_t m_searchLastMs;          /**< 上次键入时刻（epoch 毫秒；超 XAIV 间隔重置前缀）。 */
 } XAbstractItemView;
 

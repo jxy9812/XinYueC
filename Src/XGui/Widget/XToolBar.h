@@ -61,20 +61,26 @@ XCLASS_DEFINE_EXTEND_END(XToolBar, XWidget)
 typedef struct XToolBar
 {
     XWidget m_base;          /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
     XVector* m_actions;      /**< 动作数组（XAction*；内部创建的归工具栏）。 */
     XVector* m_buttons;      /**< 与动作顺序对应的按钮（XToolButton*）。 */
     XVector* m_bridges;      /**< 与动作顺序对应的桥（XTBBridge*，拥有）。 */
     XVector* m_widgets;      /**< 与动作顺序对应的附加控件（XWidget*，借用；
                                   平行数组，无控件位为 NULL）。 */
     XAction* m_toggleAction; /**< 显示/隐藏工具栏的动作（对标 toggleViewAction）。 */
-    bool m_movable;          /**< 可移动（默认 true）。 */
-    bool m_floatable;        /**< 可浮动（默认 true）。 */
-    int m_orientation;       /**< 方向（1=水平 2=垂直，默认水平）。 */
-    int m_allowedAreas;      /**< 允许停靠区域（默认全部）。 */
-    int m_iconSize;          /**< 图标尺寸（默认 16）。 */
-    int m_buttonStyle;       /**< 按钮风格（默认 IconOnly；文本绘制用）。 */
-    bool m_floating;         /**< 是否浮动（对标 QToolBar::isFloating；
+    int m_allowedAreas;      /**< 允许停靠区域（XToolBarArea 位集 0x1..0x8；
+                                  setAllowedAreas 往返任意组合，保留 int）。 */
+    /* [内存治理 2026-10-11] 标志位字：3 个 bool 合并 1 字。 */
+    uint32_t m_movable : 1;   /**< 可移动（默认 true）。 */
+    uint32_t m_floatable : 1; /**< 可浮动（默认 true）。 */
+    uint32_t m_floating : 1;  /**< 是否浮动（对标 QToolBar::isFloating；
                                   停靠体系未建，默认 false 仅存储位）。 */
+    uint32_t m_toolBarFlagsUnused : 29; /**< 保留位。 */
+    /* [内存治理 2026-10-11] 窄整型：方向 1/2、按钮风格 0..4
+       （XToolButtonStyle）收 uint8_t；图标尺寸小 px 值收 uint16_t。 */
+    uint8_t m_orientation;    /**< 方向（1=水平 2=垂直，默认水平）。 */
+    uint8_t m_buttonStyle;    /**< 按钮风格（默认 IconOnly；文本绘制用）。 */
+    uint16_t m_iconSize;      /**< 图标尺寸（默认 16）。 */
 } XToolBar;
 
 /** @brief 设置工具栏标题（对标 QToolBar::setWindowTitle；存于 XWidget 窗口标题）。 @param self 目标工具栏指针。 @param utf8 标题（UTF-8）。 @return 无返回值。 */

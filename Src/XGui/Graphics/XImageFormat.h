@@ -127,10 +127,14 @@ typedef enum XPixelFormatByteOrder
     XPixelFormatByteOrder_CurrentSystemEndian = 2 /**< 本机字节序。 */
 } XPixelFormatByteOrder;
 
-/** @brief 图像像素布局描述（对标 Qt QPixelFormat）。 */
+/** @brief 图像像素布局描述（对标 Qt QPixelFormat）。
+ *  @note  内存压缩：5 个枚举成员（m_model/m_alphaUsage/m_alphaPosition/
+ *         m_typeInterpretation/m_byteOrder，赋值全部来自 XPixelFormat_make
+ *         的枚举形参与静态表常量）收窄为 uint8_t，与既有 uint8/bool 同组。
+ *         结构体 32→24 字节。 */
 typedef struct XPixelFormat
 {
-    XPixelFormatModel m_model; /**< 颜色通道模型。 */
+    uint8_t m_model; /**< 颜色通道模型（XPixelFormatModel）。 */
     uint8_t m_redSize; /**< 红色通道位数。 */
     uint8_t m_greenSize; /**< 绿色通道位数。 */
     uint8_t m_blueSize; /**< 蓝色通道位数。 */
@@ -144,10 +148,10 @@ typedef struct XPixelFormat
     uint8_t m_channelCount; /**< 通道总数。 */
     bool m_premultiplied; /**< 是否使用预乘 Alpha。 */
     bool m_byteOrdered; /**< 旧版字节排列标志，保留供兼容代码读取。 */
-    XPixelFormatAlphaUsage m_alphaUsage; /**< Alpha 是否参与颜色表示。 */
-    XPixelFormatAlphaPosition m_alphaPosition; /**< Alpha 的逻辑位置。 */
-    XPixelFormatTypeInterpretation m_typeInterpretation; /**< 通道数据类型解释。 */
-    XPixelFormatByteOrder m_byteOrder; /**< 通道数据字节序。 */
+    uint8_t m_alphaUsage; /**< Alpha 是否参与颜色表示（XPixelFormatAlphaUsage）。 */
+    uint8_t m_alphaPosition; /**< Alpha 的逻辑位置（XPixelFormatAlphaPosition）。 */
+    uint8_t m_typeInterpretation; /**< 通道数据类型解释（XPixelFormatTypeInterpretation）。 */
+    uint8_t m_byteOrder; /**< 通道数据字节序（XPixelFormatByteOrder）。 */
     uint8_t m_subEnum; /**< YUV 等扩展模型的子枚举值。 */
 } XPixelFormat;
 

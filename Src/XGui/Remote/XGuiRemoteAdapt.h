@@ -41,11 +41,12 @@ extern "C" {
 
 /** @brief 阶梯状态(编码线程私有, 无锁; 全零=步 0 原速)。 */
 typedef struct XGuiRemoteAdapt {
-    int     baseFps;    /**< 阶梯基准(会话 plan.maxFps 快照; 变化即重置)。 */
-    int     step;       /**< 当前阶梯步(0..XGUI_REMOTE_ADAPT_MAX_STEP)。 */
-    int     overRun;    /**< 连续超预算轮数(下行计数)。 */
-    int     underRun;   /**< 连续富余轮数(上行计数)。 */
     int64_t lastMoveMs; /**< 最近阶梯移动时刻 ms(0=未动; 上行驻留基准)。 */
+    int     baseFps;    /**< 阶梯基准(会话 plan.maxFps 快照; 变化即重置;
+                             <=0=无门控哨兵, 保持有符号)。 */
+    uint8_t step;       /**< 当前阶梯步(0..XGUI_REMOTE_ADAPT_MAX_STEP)。 */
+    uint8_t overRun;    /**< 连续超预算轮数(下行计数; 阈值 2, 回绕无害)。 */
+    uint8_t underRun;   /**< 连续富余轮数(上行计数; 阈值 8, 回绕无害)。 */
 } XGuiRemoteAdapt;
 
 /**

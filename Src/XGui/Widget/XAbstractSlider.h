@@ -119,26 +119,28 @@ XCLASS_DEFINE_END(XAbstractSlider)
 typedef struct XAbstractSlider
 {
     XWidget m_base;                  /**< 基类成员；必须是第一个。 */
-    int  m_min;                      /**< 范围下限。 */
-    int  m_max;                      /**< 范围上限。 */
-    int  m_value;                    /**< 当前值。 */
-    int  m_position;                 /**< 句柄位置（与 m_value 分离）。 */
-    int  m_orientation;              /**< 方向（XAbstractSliderOrientation）。 */
-    int  m_pageStep;                 /**< 翻页步进。 */
-    int  m_singleStep;               /**< 单步步进。 */
-    bool m_tracking;                 /**< 拖动实时发射 valueChanged。 */
-    bool m_sliderDown;               /**< handle 按下状态。 */
-    bool m_invertedAppearance;       /**< 外观翻转。 */
-    bool m_invertedControls;         /**< 控制翻转（键盘/滚轮方向）。 */
-    int  m_repeatAction;             /**< 长按重复动作（默认 NoAction）。 */
-    int  m_repeatActionThreshold;    /**< 长按重复初始延迟（毫秒；timer 后续扩展）。 */
-    int  m_repeatActionTime;         /**< 长按重复间隔（毫秒；timer 后续扩展）。 */
-    int  m_wheelDeltaRemainder;      /**< 内部：滚轮角度累积余数。 */
-    bool m_blockTracking;            /**< 内部：triggerAction 期间禁止位置→值递归。 */
-    XTimerId m_repeatTimerId;        /**< 内部：长按重复定时器（[长按连发
-                                          2026-10-07] 到期先按阈值→重启为
+    XTimerId m_repeatTimerId;        /**< 内部：长按重复定时器（XTimerId=intptr_t，8B 放首位；
+                                          [长按连发 2026-10-07] 到期先按阈值→重启为
                                           重复间隔连发，对标 QAbstractSlider
                                           repeat 档；NoAction 时 INVALID）。 */
+    int  m_min;                      /**< 范围下限（与 value 同域，保持 int）。 */
+    int  m_max;                      /**< 范围上限（与 value 同域，保持 int）。 */
+    int  m_value;                    /**< 当前值（setter 原样保存，保持 int）。 */
+    int  m_position;                 /**< 句柄位置（与 m_value 分离；保持 int）。 */
+    int  m_pageStep;                 /**< 翻页步进（setter 原样保存，保持 int）。 */
+    int  m_singleStep;               /**< 单步步进（setter 原样保存，保持 int）。 */
+    int  m_repeatActionThreshold;    /**< 长按重复初始延迟（毫秒；timer 后续扩展）。 */
+    int  m_repeatActionTime;         /**< 长按重复间隔（毫秒；timer 后续扩展）。 */
+    int  m_wheelDeltaRemainder;      /**< 内部：滚轮角度累积余数（内部累加器，保持 int）。 */
+    uint8_t m_orientation;           /**< 方向（XAbstractSliderOrientation 0..1；
+                                          setOrientation 校验后写入）。 */
+    uint8_t m_repeatAction;          /**< 长按重复动作（XAbstractSliderSliderAction
+                                          0..7；默认 NoAction）。 */
+    uint8_t m_tracking : 1;          /**< 拖动实时发射 valueChanged。 */
+    uint8_t m_sliderDown : 1;        /**< handle 按下状态。 */
+    uint8_t m_invertedAppearance : 1; /**< 外观翻转。 */
+    uint8_t m_invertedControls : 1;  /**< 控制翻转（键盘/滚轮方向）。 */
+    uint8_t m_blockTracking : 1;     /**< 内部：triggerAction 期间禁止位置→值递归。 */
 } XAbstractSlider;
 
 /* ==================== 生命周期 ==================== */

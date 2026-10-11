@@ -42,11 +42,7 @@ typedef struct XStyleSheetStyleSource
 typedef struct XStyleSheetStyle
 {
     XWindowsStyle m_base;      /**< 基类成员；必须是第一个。 */
-    XCssStyleSheet m_sheet;    /**< 解析后的规则表（对象拥有；级联中的
-                                    应用级源——经 XStyle_installStyleSheet
-                                    装在全局默认样式对象里时即全局表）。 */
     XStyle* m_source;          /**< 底层样式（NULL=用全局默认）。 */
-    bool m_sourceOwned;        /**< m_source 是否由本对象拥有（析构时释放）。 */
     /* ---- 级联多源解析缓存（控件自身 styleSheet + 祖先 sheets 逐串
      *      解析为规则集的缓存；键=源文本内容等值（深拷贝比对），淘汰=
      *      环形替换且替换时失效渲染规则缓存（m_cacheRule 指进条目规则
@@ -56,6 +52,12 @@ typedef struct XStyleSheetStyle
      *      源条目自身随文本内容变化自然失配、随环形替换淘汰，随本对象
      *      析构释放 ---- */
     XStyleSheetStyleSource* m_sources; /**< 源缓存条目数组（对象拥有）。 */
+    const XObject* m_cacheObj;      /**< 缓存对象指针。 */
+    const XCssStyleRule* m_cacheRule; /**< 缓存命中规则。 */
+    const XCssSelector* m_cacheSel;  /**< 缓存命中选择器。 */
+    XCssStyleSheet m_sheet;    /**< 解析后的规则表（对象拥有；级联中的
+                                    应用级源——经 XStyle_installStyleSheet
+                                    装在全局默认样式对象里时即全局表）。 */
     int m_sourceCount;         /**< 已占用条目数。 */
     int m_sourceCapacity;      /**< 条目容量。 */
     int m_sourceCursor;        /**< 环形替换游标。 */
@@ -66,12 +68,10 @@ typedef struct XStyleSheetStyle
      *      （matchRule，qcssparser.cpp；无 importance 轨道），故「缓存
      *      规则=最高权重且同权取后」与完整级联在任一属性上的裁决等价，
      *      命中直返规则内声明即可 ---- */
-    const XObject* m_cacheObj;      /**< 缓存对象指针。 */
     uint32_t m_cacheState;          /**< 缓存状态位。 */
-    const XCssStyleRule* m_cacheRule; /**< 缓存命中规则。 */
-    const XCssSelector* m_cacheSel;  /**< 缓存命中选择器。 */
     uint32_t m_cacheWeight;         /**< 缓存命中权重（order+spec*0x100+
                                          (origin+depth)*0x100000）。 */
+    bool m_sourceOwned;        /**< m_source 是否由本对象拥有（析构时释放）。 */
     bool m_cacheValid;              /**< 缓存是否有效。 */
 } XStyleSheetStyle;
 

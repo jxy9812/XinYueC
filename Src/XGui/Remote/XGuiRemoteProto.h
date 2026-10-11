@@ -366,13 +366,16 @@ int64_t XGuiRemoteProto_writeFrame(XIODevice* device, XGuiRemoteMsgType type,
  *             线程约定: 同一 reader 只能被创建它的线程使用(会话中=GUI 线程)。
  */
 typedef struct XGuiRemoteFrameReader {
-    uint8_t  headerBuf[XGUI_REMOTE_FRAME_HEADER_BYTES]; /**< 帧头攒字节缓冲。 */
-    int      headerGot;      /**< 已攒帧头字节数(0..5)。 */
     uint8_t* payload;        /**< 当前帧负载缓冲(内部拥有; 可能随帧长增长)。 */
     size_t   payloadCap;     /**< 负载缓冲容量。 */
     size_t   payloadGot;     /**< 已收负载数。 */
     size_t   payloadLen;     /**< 当前帧负载总长。 */
-    XGuiRemoteMsgType type;  /**< 当前完成帧的类型(仅在 feed 返回 >0 后有效)。 */
+    uint8_t  type;           /**< 当前完成帧的类型(XGuiRemoteMsgType, 仅在
+                                  feed 返回 >0 后有效; 原值来自线上帧头
+                                  单字节 head[4], 0..255 原样往返, 收窄)。 */
+    uint8_t  headerBuf[XGUI_REMOTE_FRAME_HEADER_BYTES]; /**< 帧头攒字节缓冲。 */
+    int8_t   headerGot;      /**< 已攒帧头字节数(0..5; -1=粘性协议错误
+                                  哨兵, 必须有符号)。 */
 } XGuiRemoteFrameReader;
 
 /** @brief 初始化帧读取器(零分配; 首帧到来时才按需分配负载缓冲)。 */

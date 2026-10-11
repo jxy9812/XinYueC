@@ -114,13 +114,15 @@ XCLASS_DEFINE_EXTEND_END(XDialogButtonBox, XWidget)
 typedef struct XDialogButtonBox
 {
     XWidget m_base;           /**< 基类成员；必须是第一个。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XVector* m_buttons;       /**< 成员按钮借用指针数组（XAbstractButton*）。 */
     XVector* m_roles;         /**< 与成员顺序一致的 role 数组（int）。 */
     XVector* m_standards;     /**< 与成员顺序一致的标准按钮值（int）。 */
     XVector* m_bridges;       /**< 成员桥接对象数组（XDBBridge*，拥有）。 */
-    int m_orientation;        /**< 方向（XAbstractSliderOrientation 复用
-                                   数值：1=水平 2=垂直；默认水平）。 */
-    bool m_center;            /**< 按钮居中（默认 false 右对齐）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_orientation;    /**< 方向（XAbstractSliderOrientation 复用
+                                 数值：1=水平 2=垂直；默认水平）。 */
+    uint8_t m_center : 1;     /**< 按钮居中（默认 false 右对齐）。 */
 } XDialogButtonBox;
 
 /* ==================== 生命周期 ==================== */

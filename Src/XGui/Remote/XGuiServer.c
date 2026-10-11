@@ -163,18 +163,18 @@ typedef struct XgsPopupEntry {
 /** @brief 编码队列节点: 一帧 FB_UPDATE 的完整负载(帧级头+tile 记录)。 */
 typedef struct XgsQueueNode {
     struct XgsQueueNode* next;      /**< 链尾。 */
-    uint32_t             epoch;     /**< 认领时的计划代际(换档/换尺寸后作废)。 */
     size_t               len;       /**< 负载字节数。 */
+    /* [stage] 探针戳(XGUI_REMOTE_STAGE_PROF; 关闭恒 0=段采样跳过):
+     * claimUs=本轮认领始, enqueueUs=本批入队时刻(同进程单调钟 µs)。 */
+    uint64_t             stageClaimUs;
+    uint64_t             stageEnqueueUs;
+    uint32_t             epoch;     /**< 认领时的计划代际(换档/换尺寸后作废)。 */
     bool                 forceTcp;  /**< [2026-10-06 首帧全量根修] 全量轮批次
                                          *   强制 TCP: UDP 数据报静默丢失无
                                          *   重传(小批 tile 丢=区域恒黑, 真机
                                          *   实测换档后顶部行永不补齐), 全量
                                          *   轮是低频一次性交付, 走 TCP 保
                                          *   完整; 稳态伤害批照走 UDP。 */
-    /* [stage] 探针戳(XGUI_REMOTE_STAGE_PROF; 关闭恒 0=段采样跳过):
-     * claimUs=本轮认领始, enqueueUs=本批入队时刻(同进程单调钟 µs)。 */
-    uint64_t             stageClaimUs;
-    uint64_t             stageEnqueueUs;
     /* uint8_t data[len] 负载紧跟其后(节点按 len 变长分配)。 */
 } XgsQueueNode;
 

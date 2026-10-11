@@ -31,30 +31,30 @@
 
 /* ==================== 私有实现 ==================== */
 
-/** @brief XScreen 私有属性快照；仅本文件访问。 */
+/** @brief XScreen 私有属性快照；仅本文件访问。成员按对齐降序排列以压缩体积。 */
 struct XScreenPrivate
 {
     XString* m_name;                      /**< 屏幕名称；对象拥有。 */
     XString* m_manufacturer;              /**< 厂商；对象拥有。 */
     XString* m_model;                     /**< 型号；对象拥有。 */
     XString* m_serialNumber;              /**< 序列号；对象拥有。 */
-    int m_depth;                          /**< 每像素位数；默认 32。 */
+    XScreenPlatform* m_platform;          /**< 平台屏幕句柄；借用不拥有。 */
+    XVector* m_virtualSiblings;           /**< 显式兄弟列表（XScreen* 借用）；NULL 表示默认语义。 */
     XRect m_geometry;                     /**< 屏幕几何（设备无关像素）。 */
     XRect m_availableGeometry;            /**< 可用几何；未显式设置时跟随几何。 */
-    bool m_hasAvailableGeometry;          /**< 可用几何是否被显式设置。 */
+    XRect m_lastVirtualGeometry;          /**< 最近一次发出的虚拟几何缓存。 */
     XSizeF m_physicalSize;                /**< 物理尺寸（毫米）。 */
     float m_logicalDotsPerInchX;          /**< 水平逻辑 DPI；默认 96。 */
     float m_logicalDotsPerInchY;          /**< 垂直逻辑 DPI；默认 96。 */
     float m_devicePixelRatio;             /**< 设备像素比；默认 1.0。 */
-    XScreenOrientation m_primaryOrientation; /**< 主方向；默认按几何推导。 */
-    XScreenOrientation m_orientation;     /**< 当前显示方向；默认 Primary。 */
-    XScreenOrientation m_nativeOrientation;  /**< 原生方向；默认 Primary。 */
     float m_refreshRate;                  /**< 刷新率（Hz）；默认 60。 */
-    XScreenPlatform* m_platform;          /**< 平台屏幕句柄；借用不拥有。 */
-    XVector* m_virtualSiblings;           /**< 显式兄弟列表（XScreen* 借用）；NULL 表示默认语义。 */
-    bool m_primaryForced;                 /**< 主方向是否被显式锁定。 */
     float m_lastPhysicalDpi;              /**< 最近一次发出的平均物理 DPI 缓存。 */
-    XRect m_lastVirtualGeometry;          /**< 最近一次发出的虚拟几何缓存。 */
+    uint8_t m_depth;                      /**< 每像素位数；默认 32（值域 0..255）。 */
+    uint8_t m_primaryOrientation;         /**< 主方向；存 XScreenOrientation（0..8），默认按几何推导。 */
+    uint8_t m_orientation;                /**< 当前显示方向；存 XScreenOrientation（0..8），默认 Primary。 */
+    uint8_t m_nativeOrientation;          /**< 原生方向；存 XScreenOrientation（0..8），默认 Primary。 */
+    uint8_t m_hasAvailableGeometry : 1;   /**< 可用几何是否被显式设置。 */
+    uint8_t m_primaryForced : 1;          /**< 主方向是否被显式锁定。 */
 };
 
 /** @brief 进程内屏幕注册表（元素为 XScreen* 借用指针，不持有所有权）。 */

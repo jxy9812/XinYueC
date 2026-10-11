@@ -1084,9 +1084,10 @@ void XCalendarWidget_setCurrentPage(XCalendarWidget* self, int year, int month)
         XWidget_setFocus((XWidget*)self);
     }
     self->m_shownYear = year;
+    /* 按 1..12 钳位后再写入 m_shownMonth。 */
+    if (month < 1) month = 1;
+    if (month > 12) month = 12;
     self->m_shownMonth = month;
-    if (self->m_shownMonth < 1) self->m_shownMonth = 1;
-    if (self->m_shownMonth > 12) self->m_shownMonth = 12;
     xcal_emitPageChanged(self);
     XWidget_update((XWidget*)self);
 }

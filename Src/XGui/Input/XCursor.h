@@ -67,7 +67,7 @@ XCLASS_DEFINE_EXTEND_END(XCursor, XObject)
 typedef struct XCursor
 {
     XObject m_class;   /**< 第一个成员，由 XObject 管理，禁止手工修改。 */
-    XCursorShape m_shape; /**< 当前形状（对标 QCursor::shape）。 */
+    XCursorShape m_shape; /**< 当前形状（对标 QCursor::shape；setter 原样往返，不收窄）。 */
     XPoint m_hotSpot;  /**< 热点坐标；(-1,-1) 表示使用中心（未显式设置）。 */
     bool m_hasHotSpot; /**< 是否显式设置了热点。 */
     struct XBitmap* m_bitmap; /**< 位图光标源；对象拥有，可为 NULL。 */

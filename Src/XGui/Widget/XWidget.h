@@ -536,7 +536,7 @@ typedef struct XWidget
     XObject                 m_class;          /**< 基类成员；必须是第一个。 */
     XWidgetAttributes       m_attributes;     /**< 控件属性位集。 */
     XWidgetFlags            m_windowFlags;    /**< 窗口标志位组合。 */
-    XWidgetFocusPolicy      m_focusPolicy;    /**< 键盘焦点策略。 */
+    uint8_t m_focusPolicy;    /**< 键盘焦点策略。 */
     uint32_t                m_contextMenuPolicy : 4; /**< 右键菜单策略（XWidgetContextMenuPolicy）。 */
     uint32_t                m_layoutDirection : 2;   /**< 布局方向（XWidgetLayoutDirection）。 */
     uint32_t                m_isWindow : 1;          /**< 顶层控件标志。 */
@@ -558,8 +558,8 @@ typedef struct XWidget
     XRect                   m_windowRect;      /**< 几何矩形（父坐标系）。 */
     XRect                   m_contentsRect;    /**< 客户区（自身坐标）。 */
     XMargins                m_contentsMargins; /**< 内容边距（对标 QWidget::contentsMargins）。 */
-    XPaletteColorRole       m_backgroundRole;  /**< 背景颜色角色（默认 Window，对标 backgroundRole）。 */
-    XPaletteColorRole       m_foregroundRole;  /**< 前景颜色角色（默认 NoRole，对标 foregroundRole）。 */
+    uint8_t m_backgroundRole;  /**< 背景颜色角色（默认 Window，对标 backgroundRole）。 */
+    uint8_t m_foregroundRole;  /**< 前景颜色角色（默认 NoRole，对标 foregroundRole）。 */
     XSize                   m_minimumSize;     /**< 最小尺寸。 */
     XSize                   m_maximumSize;     /**< 最大尺寸。 */
     XSize                   m_baseSize;        /**< 基准尺寸。 */
@@ -569,7 +569,7 @@ typedef struct XWidget
     XWidgetSizePolicy       m_sizePolicy;      /**< 尺寸策略。 */
     XRect                   m_normalGeometry;  /**< 正常态几何（无边框矩形的正常位置尺寸）。 */
     XWindowStates           m_windowState;     /**< 窗口状态位（XWindowStates；顶层控件同步到桥接窗口）。 */
-    XWindowModality         m_windowModality;  /**< 窗口模态（XWindowModality；默认 NonModal）。 */
+    uint8_t m_windowModality;  /**< 窗口模态（XWindowModality；默认 NonModal）。 */
     int                     m_toolTipDuration; /**< 工具提示时长（毫秒；0=系统默认）。 */
     float                   m_windowOpacity;   /**< 窗口不透明度（默认 1.0）。 */
     XInputMethodHints       m_inputMethodHints;/**< 输入法提示位（默认 0，对标 inputMethodHints）。 */
@@ -594,7 +594,11 @@ typedef struct XWidget
                                                 *   对标 QWidget::setScreen/screen）。 */
     XCursor*                m_cursor;          /**< 自定义光标（拥有；仅 XCURSOR_ON）。 */
     XIcon                   m_icon;            /**< 窗口图标（值类型 refcount 共享）。 */
-    XPalette                m_palette;         /**< 控件调色板（值类型）。 */
+    XPalette*               m_palette;         /**< 控件级调色板（拥有；NULL=未显式设置，
+                                                *   palette() 回落应用全局调色板——Qt
+                                                *   惰性模型：多数控件零调色板内存，
+                                                *   [内存治理 2026-10-11] 值成员 1408B
+                                                *   每控件改懒指针）。 */
     XFont                   m_font;            /**< 控件字体（值类型；对标 QWidget::font）。 */
     XRegion                 m_dirty;           /**< 待重绘区域（拥有）。 */
     XRegion                 m_staticContents;  /**< 静态内容区域（拥有）。 */

@@ -63,17 +63,28 @@ typedef enum XImageIOHandlerTransformation
 /**
  * @brief 图像处理器选项的可移植 C 值容器。
  * @note option/setOption 的 out/value 参数按选项使用对应成员；未知选项返回 false。
+ * @note 内存压缩：format（XImageFormat 0..37）与 transformation
+ *      （XImageIOHandlerTransformation 0..7）两个枚举成员收窄为 uint8_t，
+ *      与 boolean pack 进 1 字节组；尾部 8B 指针组后置（4B → 1B → 指针）。
+ *      结构体 64→56 字节；每个 handler 的 m_options 数组按选项数
+ *      （XImageIOHandlerOption_ImageTransformation+1）线性缩减同等字节。
+ * @warning size 必须保持为首成员（偏移 0）：@note 里的“out/value 按选项
+ *      使用对应成员”在本库有两种写法并存——XImageBuiltinPlugin.c 与
+ *      XImageReader 的其余选项按 XImageIOHandlerOptionValue* 整体传递并写
+ *      value->size，而 XImageReader_size()（XImageReader.c）与回归测试的
+ *      mock 处理器直接把 XSize* 当 out 传入。把 size 挪到偏移 16 会让处理器
+ *      写到调用方 XSize 之外（栈越界），且调用方尺寸永远停在 {0,0}。
  */
 typedef struct XImageIOHandlerOptionValue
 {
-    XSize size; /**< 尺寸选项值。 */
+    XSize size; /**< 尺寸选项值；首成员，偏移 0（见上方 @warning）。 */
     XRect rect; /**< 矩形选项值。 */
     uint32_t color; /**< ARGB32 颜色选项值。 */
     int integer; /**< 整数选项值。 */
     float real; /**< 浮点选项值。 */
+    uint8_t format; /**< 图像格式选项值（XImageFormat）。 */
+    uint8_t transformation; /**< 变换选项值（XImageIOHandlerTransformation）。 */
     bool boolean; /**< 布尔选项值。 */
-    XImageFormat format; /**< 图像格式选项值。 */
-    XImageIOHandlerTransformation transformation; /**< 变换选项值。 */
     const XString* string; /**< 由调用方持有的字符串对象，不转移所有权。 */
     XStringList* stringList; /**< 字符串列表选项值；由调用方持有，不转移所有权。 */
 } XImageIOHandlerOptionValue;

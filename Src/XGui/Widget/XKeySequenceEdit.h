@@ -62,17 +62,20 @@ XCLASS_DEFINE_EXTEND_END(XKeySequenceEdit, XWidget)
 typedef struct XKeySequenceEdit
 {
     XWidget m_base;          /**< 基类成员；必须是第一个。 */
+    /* ---- 8 字节对齐组 ---- */
     XKeySequence m_sequence; /**< 当前快捷键序列。 */
     XKeySequence m_oldSequence; /**< 确认前的旧序列。 */
-    int m_maxLength;         /**< 序列最大长度（默认 4）。 */
-    bool m_clearButton;      /**< 清除按钮开关（默认 false）。 */
-    bool m_capturing;        /**< 捕获态机：true=捕获中（获得焦点发起，
-                                  Esc/失焦/空闲超时退出）。 */
     XKeyCombination m_finishing[XKEYSEQUENCEEDIT_MAX_FINISHING]; /**< 结束编辑的键组合
                                   （对标 finishingKeyCombinations；默认 Tab/Backtab）。 */
-    int m_finishingCount;    /**< 结束键组合数量（默认 2）。 */
     XTimerId m_idleTimer;    /**< 捕获空闲超时定时器（XTIMER_INVALID_ID=未启动；
                                   捕获期间 X 毫秒无输入自动结束捕获，防键盘陷阱）。 */
+    /* ---- 1 字节组 ---- */
+    uint8_t m_maxLength;     /**< 序列最大长度（默认 4；setter 拒绝 <1 或 >4）。 */
+    uint8_t m_finishingCount;/**< 结束键组合数量（默认 2；setter 上限 8）。 */
+    /* ---- 位域组（2 个布尔打包 1 字节） ---- */
+    uint8_t m_clearButton : 1; /**< 清除按钮开关（默认 false）。 */
+    uint8_t m_capturing : 1; /**< 捕获态机：true=捕获中（获得焦点发起，
+                                  Esc/失焦/空闲超时退出）。 */
 } XKeySequenceEdit;
 
 /** @brief XKeySequenceEditclassinit（对标 Qt 同名接口）。

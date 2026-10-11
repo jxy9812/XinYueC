@@ -32,8 +32,8 @@ typedef struct XTableViewSpan
 {
     int row;        /**< 原点行号。 */
     int column;     /**< 原点列号。 */
-    int rowSpan;    /**< 跨行数（>=1）。 */
-    int columnSpan; /**< 跨列数（>=1）。 */
+    int16_t rowSpan;    /**< 跨行数（>=1；单元格量级 ≤32767）。 */
+    int16_t columnSpan; /**< 跨列数（>=1；列量级 ≤32767）。 */
 } XTableViewSpan;
 
 /**
@@ -47,25 +47,31 @@ typedef struct XTableViewSpan
 typedef struct XTableView
 {
     XAbstractItemView m_base;      /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
     int* m_colWidths;              /**< 各列宽（像素，下标=列号）。 */
-    int m_colCapacity;             /**< 列容量。 */
-    int m_rowHeight;               /**< 统一行高（像素，默认 24）。 */
-    int m_gridStyle;               /**< 网格风格（XTableViewGridStyle；默认实线）。 */
-    int m_gridVisible;             /**< 网格镜像位；恒等于 m_gridStyle != NoGrid。 */
-    bool m_wordWrap;               /**< 单元格文本自动换行（对标 wordWrap；默认 false）。 */
-    bool m_cornerButton;           /**< 左上角按钮（对标 cornerButtonEnabled；默认 true）。 */
     bool* m_rowHidden;             /**< 行隐藏状态表（平行数组；下标=行号）。 */
-    int m_rowHiddenCount;          /**< 行隐藏状态表长度。 */
     bool* m_colHidden;             /**< 列隐藏状态表（平行数组；下标=列号）。 */
-    int m_colHiddenCount;          /**< 列隐藏状态表长度。 */
-    bool m_sortingEnabled;         /**< 允许排序（对标 sortingEnabled）。 */
-    int m_sortColumn;              /**< 最近一次排序列。 */
-    int m_sortOrder;               /**< 最近一次排序序：0 升/1 降。 */
     XHeaderView* m_horizontalHeader; /**< 水平表头对象（借用；默认 NULL）。 */
     XHeaderView* m_verticalHeader;   /**< 垂直表头对象（借用；默认 NULL）。 */
     XTableViewSpan* m_spans;       /**< 合并区间表（平行数组；下标=序号）。 */
-    int m_spanCount;               /**< 合并区间数。 */
-    int m_spanCapacity;            /**< 合并区间容量。 */
+    /* [内存治理 2026-10-11] 窄整型：容量/计数与排序索引收 int16_t
+       （sortColumn 有 -1 哨兵，保留符号）；行高 px 收 uint16_t；
+       网格风格 0..2 收 uint8_t；gridVisible 是 0/1 镜像位并入位域。 */
+    int16_t m_colCapacity;         /**< 列容量。 */
+    int16_t m_rowHiddenCount;      /**< 行隐藏状态表长度。 */
+    int16_t m_colHiddenCount;      /**< 列隐藏状态表长度。 */
+    int16_t m_sortColumn;          /**< 最近一次排序列（-1=未排序）。 */
+    int16_t m_sortOrder;           /**< 最近一次排序序：0 升/1 降。 */
+    int16_t m_spanCount;           /**< 合并区间数。 */
+    int16_t m_spanCapacity;        /**< 合并区间容量。 */
+    uint16_t m_rowHeight;          /**< 统一行高（像素，默认 24）。 */
+    /* [内存治理 2026-10-11] 标志位字：3 个开关 + 网格镜像位合并 1 字。 */
+    uint32_t m_wordWrap : 1;       /**< 单元格文本自动换行（对标 wordWrap；默认 false）。 */
+    uint32_t m_cornerButton : 1;   /**< 左上角按钮（对标 cornerButtonEnabled；默认 true）。 */
+    uint32_t m_sortingEnabled : 1; /**< 允许排序（对标 sortingEnabled）。 */
+    uint32_t m_gridVisible : 1;    /**< 网格镜像位；恒等于 m_gridStyle != NoGrid。 */
+    uint32_t m_tableViewFlagsUnused : 28; /**< 保留位。 */
+    uint8_t m_gridStyle;           /**< 网格风格（XTableViewGridStyle 0..2；默认实线）。 */
 } XTableView;
 
 XVtable* XTableView_class_init(void);

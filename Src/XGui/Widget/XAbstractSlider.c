@@ -251,7 +251,7 @@ static void VXAbstractSlider_changeEvent(XWidget* self, XEvent* event)
             XObject_killTimer((XObject*)slider, slider->m_repeatTimerId);
             slider->m_repeatTimerId = XTIMER_INVALID_ID;
         }
-        slider->m_repeatAction = XAbstractSliderSliderAction_NoAction;
+        slider->m_repeatAction = (uint8_t)XAbstractSliderSliderAction_NoAction;
         XAbstractSlider_setSliderDown(slider, false);
     }
     XClass_Parent(XWidget, EXWidget_ChangeEvent,
@@ -368,7 +368,7 @@ static void VXAbstractSlider_move(XAbstractSlider* self,
     other->m_sliderDown = false;
     other->m_invertedAppearance = false;
     other->m_invertedControls = false;
-    other->m_repeatAction = XAbstractSliderSliderAction_NoAction;
+    other->m_repeatAction = (uint8_t)XAbstractSliderSliderAction_NoAction;
     other->m_repeatActionThreshold = 0;
     other->m_repeatActionTime = 0;
     other->m_wheelDeltaRemainder = 0;
@@ -422,7 +422,7 @@ void XAbstractSlider_init(XAbstractSlider* self, XWidget* parent,
     self->m_sliderDown = false;
     self->m_invertedAppearance = false;
     self->m_invertedControls = false;
-    self->m_repeatAction = XAbstractSliderSliderAction_NoAction;
+    self->m_repeatAction = (uint8_t)XAbstractSliderSliderAction_NoAction;
     self->m_repeatActionThreshold = 0;
     self->m_repeatActionTime = 0;
     self->m_wheelDeltaRemainder = 0;
@@ -455,7 +455,7 @@ void XAbstractSlider_setOrientation(XAbstractSlider* self, int orientation)
     if (orientation != XAbstractSliderOrientation_Horizontal &&
         orientation != XAbstractSliderOrientation_Vertical)
         return;
-    self->m_orientation = orientation;
+    self->m_orientation = (uint8_t)orientation;
     XWidget_update((XWidget*)self);
 }
 
@@ -696,7 +696,7 @@ void XAbstractSlider_setRepeatAction(XAbstractSlider* self, int action,
                                      int thresholdTime, int repeatTime)
 {
     if (!self) return;
-    self->m_repeatAction = action;
+    self->m_repeatAction = (uint8_t)action;
     if (action == XAbstractSliderSliderAction_NoAction) {
         self->m_repeatActionThreshold = 0;
         self->m_repeatActionTime = 0;

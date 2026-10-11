@@ -42,23 +42,27 @@ XCLASS_DEFINE_EXTEND_END(XListWidget, XListView)
 typedef struct XListWidget
 {
     XListView m_base;             /**< 基类成员；必须是第一个。 */
+    /* ---- 指针组（8 字节对齐，置顶） ---- */
     XAbstractItemModel* m_model;  /**< 内建条目模型（对象拥有；单列）。 */
     XWidget** m_rowWidgets;       /**< 行级挂载部件表（平行数组，下标=行号）；
                                        表本身对象拥有，部件为借用
                                        （生命周期由调用方管理，列表不删除）；
                                        行数变化入口（插入/移除/排序/清空）
                                        同步平移，deinit 释放承载表。 */
+    /* ---- 4 字节组 ---- */
     int m_rowWidgetCapacity;      /**< 行级部件表容量（倍增扩容；与模型
                                        行数独立，行数收缩时平移清尾）。 */
-    bool m_sortingEnabled;        /**< 排序使能（setSortingEnabled 承载；
+    int m_sortOrder;              /**< 最近排序序：0=升序，1=降序（默认
+                                       0；sortItems 原样存取外部传入值——
+                                       setter/getter 往返契约，保持 int）。 */
+    /* ---- 2 字节组 ---- */
+    int16_t m_enteredRow;         /**< 上次发射 itemEntered 的行号；
+                                       -2=尚未进入任何行（差分判重哨兵）。 */
+    /* ---- 位域组（2 个布尔打包 1 字节） ---- */
+    uint8_t m_sortingEnabled : 1; /**< 排序使能（setSortingEnabled 承载；
                                        开启时插入条目按 m_sortOrder
                                        自动排序，对标 sortingEnabled）。 */
-    int m_sortOrder;              /**< 最近排序序：0=升序，1=降序（默认
-                                       0；sortItems 落地时写入，
-                                       setSortingEnabled(true) 按此排序）。 */
-    int m_enteredRow;             /**< 上次发射 itemEntered 的行号；
-                                       -2=尚未进入任何行（差分判重）。 */
-    bool m_dataGuard;             /**< 内部数据改写保护：插入平移/取出
+    uint8_t m_dataGuard : 1;      /**< 内部数据改写保护：插入平移/取出
                                        前移/排序写回等批量 setData 期间
                                        置位，抑制 itemChanged 桥接转发
                                        （对标 Qt 内部路径不发 itemChanged）。 */

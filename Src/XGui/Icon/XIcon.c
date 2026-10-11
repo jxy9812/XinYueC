@@ -40,8 +40,8 @@ typedef struct XIconEntry
     XPixmap     m_pixmap;   /**< 像素图数据 */
     XString*    m_fileName; /**< 惰性加载条目的文件名 */
     XSize       m_requestedSize; /**< 调用方请求的逻辑尺寸 */
-    XIconMode   m_mode;     /**< 图标模式 */
-    XIconState  m_state;    /**< 图标状态 */
+    uint8_t     m_mode;     /**< 图标模式（XIconMode，0-3） */
+    uint8_t     m_state;    /**< 图标状态（XIconState，0-1） */
     bool        m_loaded;   /**< 已加载真实像素图 */
 }XIconEntry;
 
@@ -87,12 +87,12 @@ static void XIconEntry_deinit(void* value)
 typedef struct XIconPrivate
 {
     XAtomic_Int32  m_refCount;    /**< 引用计数 */
-    XVector          m_entries;     /**< 图标条目容器 */
-    bool             m_isMask;      /**< 是否为掩码 */
     int64_t          m_cacheKey;    /**< 缓存键值 */
-    int              m_serialNumber;/**< 序列号 */
+    XVector          m_entries;     /**< 图标条目容器 */
     XString*         m_name;        /**< 文件或主题名称 */
     XIconEngine*     m_engine;      /**< 可选的自定义图标引擎，独占所有权 */
+    int              m_serialNumber;/**< 序列号 */
+    bool             m_isMask;      /**< 是否为掩码 */
 }XIconPrivate;
 
 static int g_iconSerialCounter = 1;

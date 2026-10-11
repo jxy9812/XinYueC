@@ -178,37 +178,44 @@ static void xgpu_prof_frame_tick(const XGpuRenderBackend* self,
 /** @brief 图集条目上限（超出即整体重置，防止条目数组无界增长）。 */
 #define XGPU_GLYPH_ATLAS_MAX_ENTRIES 8192
 
-/** @brief 字形图集条目：键 + 尺寸 + 图集内位置（行式 shelf 装箱）。 */
+/** @brief 字形图集条目：键 + 尺寸 + 图集内位置（行式 shelf 装箱）。
+ *  @note  内存压缩：宽高与图集内坐标值域 1..512（xgpu_glyph_atlas_alloc
+ *         先按 XGPU_RENDER_GLYPH_ATLAS_SIZE=512 拒绝超界/非正值再存储），
+ *         int→uint16_t，条目 24→16 字节（上限 8192 条时省 64KB）。 */
 typedef struct XGpuGlyphAtlasEntry
 {
     uint64_t m_key;
-    int m_width;
-    int m_height;
-    int m_x;
-    int m_y;
+    uint16_t m_width;   /**< 覆盖图宽（≤图集边长 512）。 */
+    uint16_t m_height;  /**< 覆盖图高。 */
+    uint16_t m_x;       /**< 图集内 X（纹素）。 */
+    uint16_t m_y;       /**< 图集内 Y。 */
 } XGpuGlyphAtlasEntry;
 
 /* ==================== 通用会话 ==================== */
 
+/** @note 内存压缩：按对齐重排（指针/容器 → int 组 → uint8/bool 尾组），
+ *         m_driverType 收窄为 uint8_t（XGpuRenderDriverType 仅 OpenGL=0/
+ *         Vulkan=1），结构体 160→144 字节。 */
 struct XGpuRenderBackend
 {
-    int m_width;                     /**< 渲染缓冲宽度（像素）。 */
-    int m_height;                    /**< 渲染缓冲高度（像素）。 */
-    bool m_windowMode;               /**< 是否窗口直通会话。 */
-    bool m_valid;                    /**< 驱动会话创建成功。 */
     const XGpuRenderDriverProcs* m_driver; /**< 驱动操作表（借用，注册表单例）。 */
-    XGpuRenderDriverType m_driverType;     /**< 实际驱动类型（有序回退后的真值）。 */
     XGpuRenderDriverSession* m_session;    /**< 驱动会话（由驱动创建/销毁）。 */
     XImage* m_syncTarget;                  /**< SYNC 读回/上传目标（借用，XGUI_GPU_SYNC 调试模式）。 */
 
     XVector m_glyphEntries;                /**< 图集条目容器（拥有；元素为
                                                 XGpuGlyphAtlasEntry，容量与
                                                 扩容由 XVector 管理）。 */
+    int m_width;                     /**< 渲染缓冲宽度（像素，随窗口尺寸，不收窄）。 */
+    int m_height;                    /**< 渲染缓冲高度（像素）。 */
     int m_glyphCursorX;              /**< shelf 装箱当前行游标。 */
     int m_glyphCursorY;
     int m_glyphRowHeight;
     unsigned m_glyphUploads;         /**< 累计上传次数（含重置后重传）。 */
     unsigned m_glyphHits;            /**< 累计命中次数。 */
+    uint8_t m_driverType;            /**< 实际驱动类型（XGpuRenderDriverType，
+                                          有序回退后的真值；0..1）。 */
+    bool m_windowMode;               /**< 是否窗口直通会话。 */
+    bool m_valid;                    /**< 驱动会话创建成功。 */
 };
 
 /* ==================== 驱动注册表（对齐 Qt 后端工厂） ==================== */

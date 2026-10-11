@@ -132,9 +132,9 @@ typedef struct XCompleter
     XWidget*                   m_popup;           /**< 弹出视图借用指针（默认 NULL；自绘弹出列表不使用，不拥有）。 */
     XListWidget*               m_defaultPopup;    /**< 内建默认弹层（懒建于首次匹配；挂编辑框顶层窗口，随顶层析构，本类不拥有）。 */
     XTimerId                   m_popupGuardTimer; /**< 弹层守护巡检定时器（仅弹层可见期间运行：编辑框隐藏/焦点离场→收层；无巡检为 XTIMER_INVALID_ID）。 */
-    XCompleterCompletionMode   m_completionMode;  /**< 补全模式（默认 PopupCompletion）。 */
-    XCompleterFilterMode       m_filterMode;      /**< 过滤模式（默认 StartsWith）。 */
-    XCompleterModelSorting     m_modelSorting;    /**< 模型排序假设（默认 UnsortedModel）。 */
+    uint8_t m_completionMode;  /**< 补全模式（默认 PopupCompletion）。 */
+    uint8_t m_filterMode;      /**< 过滤模式（默认 StartsWith）。 */
+    uint8_t m_modelSorting;    /**< 模型排序假设（默认 UnsortedModel）。 */
     int                        m_completionColumn;/**< 补全列（默认 0）。 */
     int                        m_completionRole;  /**< 补全角色（仅存储；默认 -1）。 */
     XChar_CaseSensitivity      m_caseSensitivity; /**< 大小写敏感性（默认 CaseSensitive）。 */

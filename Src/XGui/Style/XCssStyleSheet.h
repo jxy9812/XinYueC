@@ -215,12 +215,13 @@ typedef enum XCssPseudoClass
  */
 typedef struct XCssDeclaration
 {
-    XCssProperty m_propertyId; /**< 属性 ID。 */
-    bool m_important;          /**< !important。 */
     XString* m_value;          /**< 原始值（对象拥有；如 "#FF0000"、"12px"）。 */
     XString* m_propertyName;   /**< 属性原名（对象拥有；对标 Declaration::property
                                     始终保留原名，未知属性时配
                                     XCssProperty_Unknown 使用）。 */
+    uint8_t m_propertyId;      /**< 属性 ID（枚举 ≤255；解析内部赋值，
+                                    非外部往返契约）。 */
+    bool m_important;          /**< !important。 */
 } XCssDeclaration;
 
 /**
@@ -261,7 +262,7 @@ typedef struct XCssAttributeSelector
 {
     XString* m_name;   /**< 属性名（对象拥有）。 */
     XString* m_value;  /**< 属性值（对象拥有；NULL=仅要求属性存在）。 */
-    XCssValueMatch m_match; /**< 匹配准则（默认 NoMatch）。 */
+    uint8_t m_match;   /**< 匹配准则（XCssValueMatch，≤7；默认 NoMatch）。 */
 } XCssAttributeSelector;
 
 /**
@@ -270,22 +271,24 @@ typedef struct XCssAttributeSelector
  *        多 ID（#a#b）与多属性（[a][b]）对标 Qt 的 ids/attributeSelectors
  *        列表全量存储：首 ID 存 m_id、首属性存 m_attribute（与旧版一致，
  *        供既有消费端使用），第 2 个起分别进 m_ids/m_attributes。
+ *        [内存治理 2026-10-11] 指针成员前置、计数/关系位收窄尾排
+ *        （88→80B）；全库无位置式初始化/offsetof 依赖（grep 核实）。
  */
 typedef struct XCssBasicSelector
 {
     XString* m_elementName;   /**< 元素名（对象拥有；如 "XLineEdit"；空=通配）。 */
     XString* m_id;            /**< 首个 ID 选择器（对象拥有；#objectName）。 */
-    uint32_t m_pseudoClasses; /**< XCssPseudoClass 位组合。 */
-    XCssAttributeSelector m_attribute; /**< 首个属性选择器（对标 attributeSelectors[0]）。 */
-    XCssRelation m_relationToPrev; /**< 与前一段的关系（首段为 None）。 */
     XString* m_pseudoElement;  /**< 伪元素/子控件名（对象拥有；'::name' 双冒号
                                     记录；NULL=无；对标 Qt Selector::pseudoElement
                                     ——名字未入伪类名表的伪记为伪元素/子控件）。 */
     XString** m_ids;           /**< 第 2..n 个 ID 选择器（对象拥有数组与元素）。 */
-    int m_idCount;             /**< m_ids 元素数。 */
     XCssAttributeSelector* m_attributes; /**< 第 2..n 个属性选择器
                                              （对象拥有数组与内部字符串）。 */
+    XCssAttributeSelector m_attribute; /**< 首个属性选择器（对标 attributeSelectors[0]）。 */
+    uint32_t m_pseudoClasses; /**< XCssPseudoClass 位组合。 */
+    int m_idCount;             /**< m_ids 元素数。 */
     int m_attributeCount;      /**< m_attributes 元素数。 */
+    uint8_t m_relationToPrev;  /**< 与前一段的关系（XCssRelation ≤4；首段为 None）。 */
 } XCssBasicSelector;
 
 /**
@@ -316,8 +319,8 @@ typedef struct XCssSelector
 typedef struct XCssStyleRule
 {
     XCssSelector* m_selectors;    /**< 选择器数组（堆；对象拥有）。 */
-    int m_selectorCount;          /**< 选择器数。 */
     XCssDeclaration* m_declarations; /**< 声明数组（堆；对象拥有）。 */
+    int m_selectorCount;          /**< 选择器数。 */
     int m_declarationCount;       /**< 声明数。 */
 } XCssStyleRule;
 
@@ -344,8 +347,8 @@ typedef struct XCssImportRule
 typedef struct XCssMediaRule
 {
     XString** m_media;       /**< 媒体名列表（对象拥有数组与元素）。 */
-    int m_mediaCount;        /**< 媒体名数。 */
     XCssStyleRule* m_rules;  /**< 内嵌规则集数组（堆；对象拥有）。 */
+    int m_mediaCount;        /**< 媒体名数。 */
     int m_ruleCount;         /**< 内嵌规则数。 */
 } XCssMediaRule;
 
@@ -366,13 +369,13 @@ typedef struct XCssPageRule
 typedef struct XCssStyleSheet
 {
     XCssStyleRule* m_rules;   /**< 规则数组（堆；对象拥有）。 */
+    XCssImportRule* m_imports;    /**< @import 规则数组（堆；对象拥有）。 */
+    XCssMediaRule* m_mediaRules;  /**< @media 规则数组（堆；对象拥有）。 */
+    XCssPageRule* m_pageRules;    /**< @page 规则数组（堆；对象拥有）。 */
     int m_ruleCount;          /**< 规则数。 */
     int m_ruleCapacity;       /**< 容量。 */
-    XCssImportRule* m_imports;    /**< @import 规则数组（堆；对象拥有）。 */
     int m_importCount;            /**< @import 规则数。 */
-    XCssMediaRule* m_mediaRules;  /**< @media 规则数组（堆；对象拥有）。 */
     int m_mediaRuleCount;         /**< @media 规则数。 */
-    XCssPageRule* m_pageRules;    /**< @page 规则数组（堆；对象拥有）。 */
     int m_pageRuleCount;          /**< @page 规则数。 */
 } XCssStyleSheet;
 

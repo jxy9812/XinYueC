@@ -31,30 +31,10 @@ XCLASS_DEFINE_EXTEND_END(XTabBar, XWidget)
 typedef struct XTabBar
 {
     XWidget m_base;                  /**< 基类成员；必须是第一个。 */
+    /* 指针组（8B 对齐）。 */
     XString** m_titles;              /**< 项标题数组（每项 XString* 拥有）。 */
-    int     m_count;                 /**< 项数。 */
-    int     m_capacity;              /**< 容量。 */
-    int     m_currentIndex;          /**< 当前项。 */
     bool*   m_enabled;               /**< 各项启用状态。 */
-    bool    m_tabsClosable;          /**< 可关闭（字段保留）。 */
-    bool    m_movable;               /**< 可拖动（拖拽换位 + tabMoved）。 */
-    bool    m_dragActive;            /**< 拖拽换位进行中。 */
-    int     m_dragIndex;             /**< 拖拽起始页签索引。 */
-    int     m_dragPressX;            /**< 按下时鼠标 x（本地坐标）。 */
-bool    m_autoHide;              /**< 自动隐藏。 */
-    bool    m_expanding;             /**< 扩展。 */
-    int     m_elideMode;             /**< 省略模式。 */
-    int     m_selectionBehavior;     /**< 移除行为。 */
-    int     m_shape;                 /**< 页签形状（Qt::TabShape；0=Rounded，1=Triangular）。 */
-    int     m_iconSize;              /**< 页签图标尺寸（单 int 方边值；0=默认）。 */
-    bool    m_changeCurrentOnDrag;   /**< 拖拽悬停切换（仅存状态；拖放切换未实现）。 */
-    bool    m_usesScrollButtons;     /**< 滚动按钮（默认 true，对标 Qt）。 */
-    int     m_scrollOffset;          /**< 滚动偏移（px；溢出态下最左可见内容 x）。 */
-    int     m_scrollRepeatDir;       /**< §8.0g11 按住连发方向（-1 左/+1 右/0 无）。 */
-    XTimerId m_scrollRepeatTimer;    /**< §8.0g11 连发定时器（XTIMER_INVALID_ID=无）。 */
-    int     m_repeatSkip;            /**< §8.0g11 连发首段延迟计数（350ms≈3 跳）。 */
-    bool    m_documentMode;          /**< 文档模式（无边框）。 */
-    bool    m_drawBase;              /**< 绘制基底（默认 true）。 */
+    XTimerId m_scrollRepeatTimer;    /**< §8.0g11 连发定时器（intptr_t；XTIMER_INVALID_ID=无）。 */
     uint32_t* m_tabTextColors;       /**< 各项文本颜色（0=默认；平行数组）。 */
     XString** m_tabToolTips;         /**< 各项提示（平行数组；对象拥有）。 */
     XString** m_tabWhatsThis;        /**< 各项帮助文本（平行数组；对象拥有）。 */
@@ -63,6 +43,35 @@ bool    m_autoHide;              /**< 自动隐藏。 */
     XString** m_tabData;             /**< 各项数据（平行数组；对象拥有）。 */
     XAbstractButton** m_tabButtons;  /**< 各项角按钮（平行数组；借用）。 */
     bool*   m_tabVisible;            /**< 各项可见（平行数组；默认 true）。 */
+    /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
+       9 个 bool + 3 个小值域枚举（elide 0..3 / 移除行为 0..2 / 形状 0..1）
+       原分散占 9B bool + 3×4B int（含对齐洞），合并后 1 字。 */
+    uint32_t m_tabsClosable : 1;     /**< 可关闭（字段保留）。 */
+    uint32_t m_movable : 1;          /**< 可拖动（拖拽换位 + tabMoved）。 */
+    uint32_t m_dragActive : 1;       /**< 拖拽换位进行中。 */
+    uint32_t m_autoHide : 1;         /**< 自动隐藏。 */
+    uint32_t m_expanding : 1;        /**< 扩展。 */
+    uint32_t m_changeCurrentOnDrag : 1; /**< 拖拽悬停切换（仅存状态；拖放切换未实现）。 */
+    uint32_t m_usesScrollButtons : 1;/**< 滚动按钮（默认 true，对标 Qt）。 */
+    uint32_t m_documentMode : 1;     /**< 文档模式（无边框）。 */
+    uint32_t m_drawBase : 1;         /**< 绘制基底（默认 true）。 */
+    uint32_t m_elideMode : 3;        /**< 省略模式（Qt::TextElideMode 0..3）。 */
+    uint32_t m_selectionBehavior : 3;/**< 移除行为（0..2）。 */
+    uint32_t m_shape : 2;            /**< 页签形状（Qt::TabShape；0=Rounded，1=Triangular）。 */
+    uint32_t m_tabBarFlagsUnused : 15; /**< 保留位。 */
+    int     m_dragPressX;            /**< 按下时鼠标 x（本地坐标；保守保留 int）。 */
+    /* [内存治理 2026-10-11] 短整型值：项数/索引页签量级 ≤32767；-1 哨兵
+       （currentIndex/dragIndex）用有符号 int16_t；scrollOffset 经
+       xtabbar_scrollBy clamp 恒 ≥0，uint16_t 承载 px；连发方向 -1/0/+1
+       用 int8_t，连发跳计数 ≤3 用 uint8_t。 */
+    int16_t m_count;                 /**< 项数。 */
+    int16_t m_capacity;              /**< 容量。 */
+    int16_t m_currentIndex;          /**< 当前项（-1 无）。 */
+    int16_t m_dragIndex;             /**< 拖拽起始页签索引（-1 无）。 */
+    uint16_t m_iconSize;             /**< 页签图标尺寸（单值方边 px；0=默认）。 */
+    uint16_t m_scrollOffset;         /**< 滚动偏移（px；恒 ≥0，溢出态下最左可见内容 x）。 */
+    int8_t  m_scrollRepeatDir;       /**< §8.0g11 按住连发方向（-1 左/+1 右/0 无）。 */
+    uint8_t m_repeatSkip;            /**< §8.0g11 连发首段延迟计数（350ms≈3 跳）。 */
 } XTabBar;
 
 /* ==================== 生命周期 ==================== */

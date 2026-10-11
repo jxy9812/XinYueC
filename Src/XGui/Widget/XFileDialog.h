@@ -110,9 +110,9 @@ XCLASS_DEFINE_EXTEND_END(XFileDialog, XDialog)
 typedef struct XFileDialog
 {
     XDialog m_base;                /**< 基类成员；必须是第一个。 */
-    XFileDialogFileMode m_fileMode;    /**< 文件模式；默认 ExistingFile。 */
-    XFileDialogAcceptMode m_acceptMode;/**< 接受模式；默认 AcceptOpen。 */
-    XFileDialogViewMode m_viewMode;    /**< 视图模式；默认 Detail。 */
+    uint8_t m_fileMode;    /**< 文件模式；默认 ExistingFile。 */
+    uint8_t m_acceptMode;/**< 接受模式；默认 AcceptOpen。 */
+    uint8_t m_viewMode;    /**< 视图模式；默认 Detail。 */
     XFileDialogOptions m_options;      /**< 选项位集；默认 0。 */
     XString* m_directory;          /**< 当前目录（拥有；对标 directory）。 */
     XStringList* m_nameFilters;    /**< 名称过滤器列表（拥有）。 */
