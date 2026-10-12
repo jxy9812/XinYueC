@@ -2740,12 +2740,42 @@ bool XPlatformNativeWindow_processPendingEvents(void)
     /* 首次泵时惰性登记屏幕（枚举/主屏选定；此后幂等）。与 X11 后端
        同构：放在泵而非连接期，保证应用单例已发布、信号有接收方。 */
     xpwn_screensInit();
+    /* 移动压缩（降低低配主机拖拽负载；对标 Qt Windows 侧合帧与本仓
+       fbdev/X11 输入泵同圈口径）：同 hwnd 同键位的连续 WM_MOUSEMOVE
+       只派发末条——预读下条消息（PM_NOREMOVE），仍是同窗 MOVE 才取走
+       当前条保留新条继续折叠。拖拽语义按绝对位置无状态重算，中间移
+       动帧丢尾无损；重排昂贵时一圈积压的移动帧折叠为一次注入，重排
+       频率自动钳到事件循环圈频率。非同窗 MOVE 即断链照常派发，时序
+       逐位不变（触摸/笔合成 MOVE 已在 WndProc 签名过滤，不入队列）。 */
     while ((got = PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) != 0) {
         if (got == -1) break; /* 出错：终止本次泵空。 */
         if (msg.message == WM_QUIT) {
             /* WM_QUIT 不派发；仅记录，供未来退出策略使用。 */
             g_xpwnQuitReceived = true;
             continue;
+        }
+        if (msg.message == WM_MOUSEMOVE) {
+            bool latest = false;
+            while (!latest) {
+                MSG next;
+                if (!PeekMessageW(&next, msg.hwnd, WM_MOUSEMOVE,
+                                  WM_MOUSEMOVE, PM_NOREMOVE)) {
+                    latest = true;
+                    break;
+                }
+                if (next.hwnd == msg.hwnd &&
+                    next.wParam == msg.wParam) {
+                    MSG drop;
+                    /* 同窗同键位的新 MOVE 在队：取走旧条，新条留队供
+                       下轮继续折叠（wParam=按键掩码，键位变化=手势状
+                       态变化不可折叠）。 */
+                    PeekMessageW(&drop, msg.hwnd, WM_MOUSEMOVE,
+                                 WM_MOUSEMOVE, PM_REMOVE);
+                    msg = next;
+                } else {
+                    latest = true;
+                }
+            }
         }
         TranslateMessage(&msg);
         DispatchMessageW(&msg);

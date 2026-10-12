@@ -14,6 +14,7 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h> /* size_t：本头直接使用（XAtomic_SizeT/pack API），此前靠传递包含侥幸，头链变化即断（2026-10-11 构建修复）。 */
  /**
  * @brief 原子操作内存序类型
  * @note 这些值对应于 C11/C++11 标准中的内存序语义

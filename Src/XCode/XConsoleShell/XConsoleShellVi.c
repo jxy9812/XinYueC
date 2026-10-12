@@ -9,6 +9,7 @@
  */
 
 #include "XConsoleShell_Protected.h"
+#include "XMemory.h" /* editorLines 懒分配 calloc（2026-10-12 瘦身）。 */
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_EDITOR_ON
@@ -37,6 +38,7 @@ static XFd xvi_open_file(const XString* path, int mode, int* error)
 #include "XTuiVim.h"
 
 static void xvi_clear(XConsoleShellSession* session);
+static char (*xvi_ensure_editor_lines(XConsoleShellSession* session))[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /* 编辑行池懒分配（2026-10-12 瘦身）。 */
 static bool xvi_load_lines(XConsoleShell* shell, XConsoleShellSession* session,
                            const XString* path);
 static bool xvi_write_line(XConsoleShell* shell, const char* text);
@@ -622,8 +624,29 @@ static void xvi_clear(XConsoleShellSession* session)
     session->editorInsertPendingCr = false;
     session->editorInsertEscape = 0;
     session->editorPath[0] = '\0';
-    memset(session->editorLines, 0, sizeof(session->editorLines));
+    {
+        char (*lines)[XCONSOLE_SHELL_LINE_BUFFER_SIZE] =
+            xvi_ensure_editor_lines(session);
+        if (!lines) return;
+        memset(lines, 0,
+               XCONSOLE_SHELL_EDITOR_MAX_LINES *
+                   XCONSOLE_SHELL_LINE_BUFFER_SIZE);
+    }
     memset(session->editorInsertBuf, 0, sizeof(session->editorInsertBuf));
+}
+
+/** @brief 编辑行缓冲懒分配（2026-10-12 瘦身）：16KB 行池从会话常驻改为
+ *  编辑器首次使用时一次性分配并清零；分配失败返回 NULL（调用方按编辑器
+ *  打开失败口径报错）。分配后伴随会话生命周期，编辑器退出不归还（复用
+ *  免反复分配）。 */
+static char (*xvi_ensure_editor_lines(XConsoleShellSession* session))[XCONSOLE_SHELL_LINE_BUFFER_SIZE]
+{
+    if (!session) return NULL;
+    if (session->editorLines) return session->editorLines;
+    session->editorLines = (char (*)[XCONSOLE_SHELL_LINE_BUFFER_SIZE])XMemory_calloc(
+        XCONSOLE_SHELL_EDITOR_MAX_LINES, XCONSOLE_SHELL_LINE_BUFFER_SIZE,
+        XCLASS_DEFAULT_MEMORY_TYPE); /* 全部调用方均 DEFAULT 池。 */
+    return session->editorLines;
 }
 
 static bool xvi_load_lines(XConsoleShell* shell, XConsoleShellSession* session,
@@ -638,6 +661,7 @@ static bool xvi_load_lines(XConsoleShell* shell, XConsoleShellSession* session,
     size_t i;
     (void)shell;
     session->editorLineCount = 0;
+    if (!xvi_ensure_editor_lines(session)) return false;
     fd = xvi_open_file(path, XDeviceFile_ReadOnly, &error);
     if (fd == XFD_INVALID) return true; /* 新文件：空缓冲。 */
     while ((count = XDeviceFile_read(fd, buffer, sizeof(buffer))) > 0) {

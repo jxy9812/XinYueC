@@ -123,7 +123,7 @@ typedef enum XNetIoRingMode {
  * ? 5s ???? [wake][ring](stderr, P50/P95, ?????)??????
  * ???????(on ?? getenv, ???????)?
  * ================================================================ */
-#define XNET_WAKE_PROF_SAMPLES 256
+#define XNET_WAKE_PROF_SAMPLES 128
 #define XNET_WAKE_PROF_WIN_US  5000000ULL
 typedef struct XNetWakeSampleSet {
     uint32_t v[XNET_WAKE_PROF_SAMPLES]; /* ??(µs; ??????)? */

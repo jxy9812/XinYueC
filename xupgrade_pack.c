@@ -102,16 +102,9 @@ extern bool XSsl_p256GenerateKeyPair(uint8_t* outPrivateKeyBe, size_t privCap, s
 /*                              小工具（hex/base64/串）                        */
 /* ========================================================================== */
 
-static size_t strlen(const char* s)
-{
-    size_t n = 0;
-    if (s) {
-        while (s[n] != '\0') {
-            ++n;
-        }
-    }
-    return n;
-}
+/* strlen 直接用 <string.h> 标准版：既有 include 原型在先，本地 static
+ * 重定义与其冲突（GCC "static declaration follows non-static"）。
+ * 调用点均为非 NULL 字面量/缓冲，标准版语义覆盖。 */
 
 static bool xpack_strEq(const char* a, const char* b)
 {

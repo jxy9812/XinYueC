@@ -889,7 +889,7 @@ uint64_t XGuiRemoteUdpChannel_droppedInputs(const XGuiRemoteUdpChannel* c)
 /* ==================== [wake] 事件循环响应延迟探针(消息层) ================= */
 
 #define XWAKE_TAG_MAX     8      /**< 标签槽数(两端四标签, 充分)。 */
-#define XWAKE_SAMPLES     256    /**< 每窗口每标签样本数(满后滚动覆盖)。 */
+#define XWAKE_SAMPLES     128    /**< 每窗口每标签样本数(满后滚动覆盖)。 */
 #define XWAKE_WINDOW_US   5000000ULL
 
 typedef struct XWakeSampleSet {
@@ -1041,7 +1041,7 @@ uint64_t XGuiRemoteUdpChannel_probeArrivalUs(const XGuiRemoteUdpChannel* c)
  * CLOCK_MONOTONIC 同轴可减; 跨机器段(发送→收包)不做减法, 归入残差。 */
 
 #define XSTAGE_TAG_MAX     16     /**< 标签槽数(服务端 7 + 客户端 4, 充分)。 */
-#define XSTAGE_SAMPLES     256    /**< 每窗口每标签样本数(满后滚动覆盖)。 */
+#define XSTAGE_SAMPLES     128    /**< 每窗口每标签样本数(满后滚动覆盖)；2026-10-12 瘦身 256→128（-8KB），P50/P95 统计够用。 */
 #define XSTAGE_WINDOW_US   5000000ULL
 
 typedef struct XStageSampleSet {

@@ -6307,6 +6307,28 @@ bool XPlatformNativeWindow_processPendingEvents(void)
             continue;
         }
 #endif
+        /* 移动压缩（降低低配主机拖拽负载；对标 Qt xcb compressing
+           dispatcher 与 fbdev 输入泵同圈口径）：抽干循环内预读下一条，
+           连续同窗口 MotionNotify 只注入末条——拖拽语义按绝对位置无
+           状态重算，中间移动帧丢尾无损；重排昂贵时一圈积压的移动帧
+           折叠为一次注入，重排频率自动钳到事件循环圈频率。非 motion
+           事件（含按键/交叉/其它窗口的 motion）即断链照常分派，时序
+           逐位不变。 */
+        if (event.type == MotionNotify) {
+            bool latest = false;
+            while (!latest) {
+                X11_XEvent next;
+                if (XPending(g_xpwnDisplay) <= 0) { latest = true; break; }
+                XPeekEvent(g_xpwnDisplay, &next);
+                if (next.type == MotionNotify &&
+                    next.xmotion.window == event.xmotion.window &&
+                    next.xmotion.state == event.xmotion.state) {
+                    XNextEvent(g_xpwnDisplay, &event); /* 丢弃旧条取新条。 */
+                } else {
+                    latest = true;
+                }
+            }
+        }
         if (xpwn_dispatchEvent(&event)) delivered = true;
     }
     return delivered;

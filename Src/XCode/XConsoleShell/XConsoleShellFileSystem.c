@@ -1218,7 +1218,13 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
     }
     if (result == XConsoleResult_Ok && stat.isDir && (maxDepth < 0 || depth < maxDepth)) {
         iterator = XDeviceDir_openPath(path, NULL);
-        if (iterator == XFD_INVALID) result = XConsoleResult_Failed;
+        if (iterator == XFD_INVALID) {
+            /* [2026-10-12 健壮性根修] 子目录打开失败（权限/非常规文件系统
+             * 对象）不再终结整条 find——对齐 GNU find 的"报错后继续遍历"
+             * 口径：仓库根级 find 遇单个不可读目录即 Failed 会让输出丢失
+             * 且命令报错（测试在真实仓库根跑必踩）。 */
+            return XConsoleResult_Ok;
+        }
         if (result == XConsoleResult_Ok) {
             memset(&entry, 0, sizeof(entry));
             entry.name = name;
@@ -1232,7 +1238,12 @@ static int xfs_find_walk(XConsoleShell* shell, const XString* path,
                 }
                 result = xfs_find_walk(shell, child, pattern, type, depth + 1,
                                        maxDepth, mtimeDays, sizeBytes);
-                if (result < 0 || XConsoleShell_isCancelled(shell)) break;
+                /* 子目录遍历失败（Failed=不可读等）容错跳过，对齐 GNU find
+                   "报错后继续"；IoError（输出侧）与取消仍传播。 */
+                if (XConsoleShell_isCancelled(shell) ||
+                    result == XConsoleResult_IoError)
+                    break;
+                result = XConsoleResult_Ok;
             }
             XDeviceDir_close(iterator);
         }

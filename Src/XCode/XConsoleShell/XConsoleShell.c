@@ -1552,7 +1552,15 @@ void XConsoleShell_init(XConsoleShell* self, const XConsoleShellIo* io)
     memset(self->m_asyncProcesses, 0, sizeof(self->m_asyncProcesses));
 #endif
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
-    memset(self->m_sessions, 0, sizeof(self->m_sessions));
+    {
+        size_t si;
+        for (si = 0; si < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++si) {
+            if (self->m_sessions[si]) {
+                XMemory_free(self->m_sessions[si], XCLASS_DEFAULT_MEMORY_TYPE);
+                self->m_sessions[si] = NULL;
+            }
+        }
+    }
     self->m_sessionCount = 1;
     self->m_nextSessionId = 2;
 #endif
@@ -1835,7 +1843,15 @@ static void VXConsoleShell_deinit(XObject* object)
 #endif
     self->m_running = false;
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
-    memset(self->m_sessions, 0, sizeof(self->m_sessions));
+    {
+        size_t si;
+        for (si = 0; si < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++si) {
+            if (self->m_sessions[si]) {
+                XMemory_free(self->m_sessions[si], XCLASS_DEFAULT_MEMORY_TYPE);
+                self->m_sessions[si] = NULL;
+            }
+        }
+    }
     self->m_sessionCount = 0;
 #endif
 #if XCONSOLE_SHELL_HISTORY_ON
@@ -1972,7 +1988,7 @@ static bool xcs_is_session(const XConsoleShell* self,
     if (!self || !session) return false;
     if (session == &self->m_session) return true;
     for (i = 0; i < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++i) {
-        if (session == &self->m_sessions[i] && self->m_sessions[i].m_open)
+        if (session == self->m_sessions[i] && self->m_sessions[i]->m_open)
             return true;
     }
     return false;
@@ -2068,8 +2084,17 @@ XConsoleShellSession* XConsoleShell_openSession(XConsoleShell* self,
     size_t i;
     if (!self) return NULL;
     for (i = 0; i < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++i) {
-        XConsoleShellSession* session = &self->m_sessions[i];
-        if (session->m_open) continue;
+        XConsoleShellSession* session = self->m_sessions[i];
+        if (session && session->m_open) continue;
+        if (!session) {
+            /* 懒分配（2026-10-12 瘦身）：附加会话槽按需一次 calloc，
+             * 空槽 NULL 常驻零成本；关闭时释放归 NULL。 */
+            session = (XConsoleShellSession*)XMemory_calloc(
+                1, sizeof(XConsoleShellSession),
+                XCLASS_DEFAULT_MEMORY_TYPE); /* 全部调用方均 DEFAULT 池（见 create 宏），与 shell 同池。 */
+            if (!session) return NULL;
+            self->m_sessions[i] = session;
+        }
         memset(session, 0, sizeof(*session));
         do {
             session->id = self->m_nextSessionId++;
@@ -2106,6 +2131,17 @@ bool XConsoleShell_closeSession(XConsoleShell* self, XConsoleShellSession* sessi
     XConsoleShellVi_cancel(self, session);
 #endif
     memset(session, 0, sizeof(*session));
+    {
+        /* 懒分配配对（2026-10-12）：关闭即释放归 NULL，空槽常驻零成本。 */
+        size_t si;
+        for (si = 0; si < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++si) {
+            if (self->m_sessions[si] == session) {
+                XMemory_free(session, XCLASS_DEFAULT_MEMORY_TYPE);
+                self->m_sessions[si] = NULL;
+                break;
+            }
+        }
+    }
     if (self->m_sessionCount) --self->m_sessionCount;
     return true;
 }
@@ -2121,8 +2157,9 @@ XConsoleShellSession* XConsoleShell_findSession(XConsoleShell* self, uint32_t id
     if (!self) return NULL;
     if (self->m_session.id == id) return &self->m_session;
     for (i = 0; i < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++i) {
-        if (self->m_sessions[i].m_open && self->m_sessions[i].id == id)
-            return &self->m_sessions[i];
+        if (self->m_sessions[i] && self->m_sessions[i]->m_open &&
+            self->m_sessions[i]->id == id)
+            return self->m_sessions[i];
     }
     return NULL;
 }
@@ -2879,7 +2916,7 @@ bool XConsoleShell_setInputLineHandler(
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
         bool belongs = false;
         for (i = 0; i < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++i) {
-            if (session == &self->m_sessions[i] && self->m_sessions[i].m_open) {
+            if (session == self->m_sessions[i] && self->m_sessions[i]->m_open) {
                 belongs = true;
                 break;
             }

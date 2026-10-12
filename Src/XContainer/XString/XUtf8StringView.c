@@ -682,7 +682,9 @@ bool XUtf8StringView_isValidUtf8(const XUtf8StringView* self)
 * @param buf_size 缓冲区容量（XChar 元素数）
 * @return 缓冲区指针，失败返回 NULL
 */
-static XChar* view_to_xchar(const XUtf8StringView* self, XChar* buf, size_t buf_size)
+/** @brief 同 view_to_xchar，另出实际转换的 XChar 数（数值解析需要长度）。 */
+static XChar* view_to_xchar_counted(const XUtf8StringView* self, XChar* buf,
+                                    size_t buf_size, int64_t* outCount)
 {
     if (self == NULL || self->m_data == NULL || self->m_size <= 0)
         return NULL;
@@ -692,7 +694,14 @@ static XChar* view_to_xchar(const XUtf8StringView* self, XChar* buf, size_t buf_
                                          (size_t)self->m_size, buf, buf_size);
     if (count < 0)
         return NULL;
+    if (outCount) *outCount = count;
     return buf;
+}
+
+static XChar* view_to_xchar(const XUtf8StringView* self, XChar* buf, size_t buf_size)
+{
+    int64_t n = 0;
+    return view_to_xchar_counted(self, buf, buf_size, &n);
 }
 
 short XUtf8StringView_toShort(const XUtf8StringView* self, bool* ok, int base)
@@ -764,8 +773,12 @@ long XUtf8StringView_toLong(const XUtf8StringView* self, bool* ok, int base)
 
     /* 委托库内 XChar_toLong（外部依赖约束：数值解析必须使用库内 API），
        内部含溢出检测；input_count 传 0 按缓冲区终止符自动检测。 */
+    int64_t n = 0;
+    if (!view_to_xchar_counted(self, buf, sizeof(buf) / sizeof(buf[0]), &n))
+        return 0;
+    int effBase = base == 0 ? 10 : base; /* 同上根修。 */
     bool parsed = false;
-    long val = XChar_toLong(buf, 0, base, &parsed);
+    long val = XChar_toLong(buf, (size_t)n, effBase, &parsed);
     if (ok != NULL)
         *ok = parsed;
     return val;
@@ -779,13 +792,15 @@ unsigned long XUtf8StringView_toULong(const XUtf8StringView* self, bool* ok, int
         return 0;
 
     XChar buf[128];
-    if (!view_to_xchar(self, buf, sizeof(buf) / sizeof(buf[0])))
+    int64_t n = 0;
+    if (!view_to_xchar_counted(self, buf, sizeof(buf) / sizeof(buf[0]), &n))
         return 0;
+    int effBase = base == 0 ? 10 : base; /* 同上根修（2026-10-12）。 */
 
     /* 委托库内 XChar_toULong（外部依赖约束：数值解析必须使用库内 API），
        内部含溢出检测；库内无 char* 版 strtoul 替代，统一走 XChar 路径。 */
     bool parsed = false;
-    unsigned long val = XChar_toULong(buf, 0, base, &parsed);
+    unsigned long val = XChar_toULong(buf, (size_t)n, effBase, &parsed);
     if (ok != NULL)
         *ok = parsed;
     return val;
@@ -818,12 +833,16 @@ uint64_t XUtf8StringView_toULongLong(const XUtf8StringView* self, bool* ok, int 
         return 0;
 
     XChar buf[128];
-    if (!view_to_xchar(self, buf, sizeof(buf) / sizeof(buf[0])))
+    /* 2026-10-12 竞态外另修：旧码把 XChar_toULongLong 的元素计数硬编码 0，
+     * 任何纯数字串（usermod --permissions 等）都解析失败；改为实际转换数。 */
+    int64_t n = 0;
+    if (!view_to_xchar_counted(self, buf, sizeof(buf) / sizeof(buf[0]), &n))
         return 0;
 
     /* 委托库内 XChar_toULongLong（外部依赖约束：数值解析必须使用库内 API）。 */
     bool parsed = false;
-    uint64_t val = (uint64_t)XChar_toULongLong(buf, 0, base, &parsed);
+    int effBase = base == 0 ? 10 : base; /* base=0 底层不支持（2..36），翻译 10（2026-10-12）。 */
+    uint64_t val = (uint64_t)XChar_toULongLong(buf, (size_t)n, effBase, &parsed);
     if (ok != NULL)
         *ok = parsed;
     return val;

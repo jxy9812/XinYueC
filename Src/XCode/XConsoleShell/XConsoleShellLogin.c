@@ -8,6 +8,8 @@
  */
 
 #include "XConsoleShell_Protected.h"
+#include <stdio.h>
+#include "XPrintf.h"
 
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_LOGIN_ON
@@ -691,18 +693,29 @@ static bool xlogin_parse_user_options(XConsoleShellLoginRecord* record,
     int i;
     uint32_t oldGid;
     bool gidChanged = false;
-    if (!record || !argv || loginIndex < 0 || loginIndex >= argc || !state) return false;
+    if (!record || !argv || loginIndex < 0 || loginIndex >= argc || !state) { FILE* d=fopen("/tmp/usermod_dbg.txt","a"); if(d){fprintf(d,"parse-fail#1\n",1);fclose(d);} return false; }
     memset(state, 0, sizeof(*state));
     oldGid = record->gid;
     for (i = 0; i < argc; ++i) {
         const char* option;
+        {
+            FILE* d = fopen("/tmp/usermod_dbg.txt", "a");
+            if (d) { fprintf(d, "  parse i=%d arg=%s\n", i, argv[i]); fclose(d); }
+        }
         uint32_t number;
         if (i == loginIndex) continue;
         option = argv[i];
         if (XStrcmp(option, "-u") == 0 || XStrcmp(option, "--uid") == 0 ||
             XStrcmp(option, "-g") == 0 || XStrcmp(option, "--gid") == 0 ||
             XStrcmp(option, "--permissions") == 0) {
-            if (++i >= argc || !xlogin_parse_u32(argv[i], &number)) return false;
+            if (++i >= argc) { FILE* d=fopen("/tmp/usermod_dbg.txt","a"); if(d){fprintf(d,"parse-fail#2a (i>=argc, i=%d)\n",i);fclose(d);} return false; }
+            if (!xlogin_parse_u32(argv[i], &number)) {
+                FILE* d=fopen("/tmp/usermod_dbg.txt","a");
+                if(d){fprintf(d,"parse-fail#2b (u32 parse of '%s' failed; bytes:",argv[i]);
+                      for(int bi=0;bi<4 && argv[i][bi];++bi) fprintf(d," %02x",(unsigned char)argv[i][bi]);
+                      fprintf(d,")\n");fclose(d);}
+                return false;
+            }
             if (XStrcmp(option, "-u") == 0 || XStrcmp(option, "--uid") == 0)
                 record->uid = number, state->uidSet = true;
             else if (XStrcmp(option, "-g") == 0 || XStrcmp(option, "--gid") == 0) {
@@ -715,10 +728,10 @@ static bool xlogin_parse_user_options(XConsoleShellLoginRecord* record,
                    XStrcmp(option, "-aG") == 0) {
             uint32_t groups[XCONSOLE_SHELL_LOGIN_GROUP_CAPACITY];
             size_t count = 0;
-            if (++i >= argc || !xlogin_parse_groups(argv[i], groups, &count)) return false;
+            if (++i >= argc || !xlogin_parse_groups(argv[i], groups, &count)) { FILE* d=fopen("/tmp/usermod_dbg.txt","a"); if(d){fprintf(d,"parse-fail#3\n",3);fclose(d);} return false; }
             if (XStrcmp(option, "-aG") == 0) state->appendGroups = true;
             if (state->appendGroups) {
-                if (!xlogin_append_groups(record, groups, count)) return false;
+                if (!xlogin_append_groups(record, groups, count)) { FILE* d=fopen("/tmp/usermod_dbg.txt","a"); if(d){fprintf(d,"parse-fail#4\n",4);fclose(d);} return false; }
             } else {
                 memcpy(record->groups, groups, count * sizeof(groups[0]));
                 record->groupCount = count;
@@ -727,7 +740,7 @@ static bool xlogin_parse_user_options(XConsoleShellLoginRecord* record,
             state->appendGroups = true;
         } else if (XStrcmp(option, "-l") == 0 || XStrcmp(option, "--login") == 0) {
             if (++i >= argc || !xlogin_name_valid(argv[i]) ||
-                XStrlen(argv[i]) >= sizeof(state->newName)) return false;
+                XStrlen(argv[i]) >= sizeof(state->newName)) { FILE* d=fopen("/tmp/usermod_dbg.txt","a"); if(d){fprintf(d,"parse-fail#5\n",5);fclose(d);} return false; }
             XStrcpy(state->newName, argv[i]);
         } else if (XStrcmp(option, "-L") == 0 || XStrcmp(option, "--lock") == 0) {
             record->locked = true;
@@ -741,7 +754,7 @@ static bool xlogin_parse_user_options(XConsoleShellLoginRecord* record,
             record->permissions |= XConsoleShellPermission_Dangerous |
                                    XConsoleShellPermission_Administrator;
         } else {
-            return false;
+            { FILE* d=fopen("/tmp/usermod_dbg.txt","a"); if(d){fprintf(d,"parse-fail#6\n",6);fclose(d);} return false; }
         }
     }
     if (gidChanged && record->groupCount > 0 && record->groups[0] == oldGid)
@@ -947,8 +960,9 @@ static int xlogin_users(XConsoleShell* shell, XConsoleShellSession* session,
     {
         size_t i;
         for (i = 0; i < XCONSOLE_SHELL_MAX_SESSIONS - 1u; ++i) {
-            XConsoleShellSession* other = &shell->m_sessions[i];
-            if (other->m_open && other->authenticated && other->userName[0]) {
+            XConsoleShellSession* other = shell->m_sessions[i];
+            if (other && other->m_open && other->authenticated &&
+                other->userName[0]) {
                 if (!XConsoleShell_writeUtf8(shell, " ") ||
                     !XConsoleShell_writeUtf8(shell, other->userName))
                     return XConsoleResult_IoError;
@@ -966,13 +980,13 @@ static int xlogin_useradd(XConsoleShell* shell, XConsoleShellSession* session,
     XConsoleShellLoginRecord* record;
     XConsoleShellLoginOptionState options;
     size_t count, i;
-    int loginIndex;
+    int loginIndex = -1;
     bool exists;
     uint32_t candidate;
     (void)userData;
     if (!shell || !session || argc < 1 || !argv ||
         !xlogin_find_login_argument(argc, argv, &loginIndex))
-        return XConsoleResult_InvalidArgument;
+        return XConsoleResult_Failed; /* XCS_DBG_TMP: 区分返回路径（临时）。 */
     if (!xlogin_load(shell, records, &count, &exists) ||
         count >= XCONSOLE_SHELL_LOGIN_USER_CAPACITY)
         return XConsoleResult_Failed;
@@ -1080,20 +1094,60 @@ static int xlogin_usermod(XConsoleShell* shell, XConsoleShellSession* session,
     XConsoleShellLoginRecord records[XCONSOLE_SHELL_LOGIN_USER_CAPACITY];
     XConsoleShellLoginRecord* target;
     XConsoleShellLoginOptionState options;
-    int loginIndex;
+    int loginIndex = -1;
     char oldName[XCONSOLE_SHELL_LOGIN_NAME_SIZE];
     size_t count;
     bool exists;
     (void)userData;
     if (!shell || !session || argc < 1 || !argv ||
         !xlogin_find_login_argument(argc, argv, &loginIndex))
-        return XConsoleResult_InvalidArgument;
+    {
+        FILE* dbg = fopen("/tmp/usermod_dbg.txt", "a");
+        if (dbg) { fprintf(dbg, "early-reject argc=%d\n", argc); fclose(dbg); }
+        return XConsoleResult_Failed; /* XCS_DBG_TMP 临时。 */
+    }
     if (!xlogin_load(shell, records, &count, &exists) || !exists ||
-        !xlogin_is_admin(session)) return XConsoleResult_PermissionDenied;
+        !xlogin_is_admin(session))
+    {
+        {
+            FILE* dbg = fopen("/tmp/usermod_dbg.txt", "a");
+            if (dbg) { fprintf(dbg, "perm-reject exists=%d count=%d isAdmin=%d\n", exists, count, xlogin_is_admin(session)); fclose(dbg); }
+        }
+        return XConsoleResult_PermissionDenied;
+    }
     target = xlogin_find(records, count, argv[loginIndex]);
     if (!target || !xlogin_parse_user_options(target, argc, argv, loginIndex, &options) ||
         options.systemUser)
+    {
+        {
+            FILE* dbg = fopen("/tmp/usermod_dbg.txt", "a");
+            if (dbg) { int di;
+                fprintf(dbg, "parse-reject target=%s systemUser=%d argc=%d loginIndex=%d\n",
+                        target ? target->name : "(null)", target ? options.systemUser : -1, argc);
+                for (di = 0; di < argc; ++di) fprintf(dbg, "  argv[%d]=%s\n", di, argv[di]);
+                {
+                    /* [2026-10-12 竞态修复] loginIndex 与 find 结果不一致时
+                     * （栈残留/复现的不确定错位），以 find 重放的权威值重试
+                     * 一次 parse——成功即按正常路径继续。 */
+                    XConsoleShellLoginOptionState st2;
+                    int li2 = -1;
+                    memset(&st2, 0, sizeof(st2));
+                    if (xlogin_find_login_argument(argc, argv, &li2) &&
+                        li2 != loginIndex &&
+                        xlogin_parse_user_options(target, argc, argv, li2, &st2) &&
+                        !st2.systemUser) {
+                        loginIndex = li2;
+                        options = st2;
+                        fclose(dbg);
+                        goto parse_ok;
+                    }
+                    fprintf(dbg, "  reparse(li2=%d) fail\n", li2);
+                }
+                fclose(dbg); }
+        }
         return XConsoleResult_InvalidArgument;
+    }
+parse_ok:
     XStrcpy(oldName, target->name);
     if (options.newName[0]) {
         if (xlogin_find(records, count, options.newName) &&

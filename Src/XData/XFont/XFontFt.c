@@ -104,7 +104,7 @@ static long g_ftHistBytes[FT_HIST_BINS];
 static long g_ftHistReallocs;
 static long g_ftBandLive[FT_HIST_BINS];
 static long g_ftBandPeak[FT_HIST_BINS];
-#define FT_LIVE_SLOTS 4096
+#define FT_LIVE_SLOTS 1024 /* 2026-10-12 瘦身：4096→1024（8KB），FT 内存桥 live 表 4 倍覆盖单屏字形量。 */
 #define FT_LIVE_MASK (FT_LIVE_SLOTS - 1)
 static struct { const void* ptr; long size; } g_ftLiveTab[FT_LIVE_SLOTS];
 

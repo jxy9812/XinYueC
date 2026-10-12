@@ -1551,8 +1551,10 @@ static bool t_storedir_flow(void)
     for (i = 0; i < sizeof(chunkA); ++i) chunkA[i] = (uint8_t)(i & 0xFF);
     for (i = 0; i < sizeof(chunkB); ++i) chunkB[i] = (uint8_t)(0xC0 - (i & 0x3F));
     xtest_scratch_wipe(XUP_TEST_SCRATCH_STORE);
-    /* 抽象基类：全部分派入口 NotSupported（M1 不实现接口的返回值口径）。 */
-    base = XUpgradeStore_create();
+    /* 抽象基类：全部分派入口 NotSupported（M1 不实现接口的返回值口径）。
+       2026-10-11：create 包装宏要求至少一参（库惯例 __VA_ARGS__ 无 ##，
+       空参调用留下悬空逗号 GCC 报错），零参直呼 create_ex。 */
+    base = XUpgradeStore_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     XTEST_CHECK(base != NULL);
     if (base) {
         XTEST_CHECK(XUpgradeStore_stageBegin_base(base, "app", "1.0.0", 0, &err)

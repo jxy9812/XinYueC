@@ -400,7 +400,7 @@ static int XConsoleShellTest_outputThenFail(XConsoleShell* shell,
 #endif
 
 #define XCS_TEST_CHECK(condition, text) \
-    do { if (!(condition)) { XPrintf("[FAIL] XConsoleShell: %s\n", text); return false; } } while (0)
+    do { if (!(condition)) { XPrintf("[FAIL] L%d XConsoleShell: %s\n", __LINE__, text); return false; } } while (0)
 
 static bool XConsoleShellTest_runLine(XConsoleShell* shell,
                                       XConsoleShellTestTransport* transport,
@@ -1416,8 +1416,11 @@ static bool XConsoleShellTest_runVimAdvanced(void)
         XConsoleShellTest_vimKey(source, 'w');
         XConsoleShellTest_vimEnter(source);
         XClassMove((XClass*)target, (XClass*)source);
-        XCS_TEST_CHECK(target->m_commandHistoryState &&
-                       source->m_commandHistoryState == NULL,
+        /* 跨池移动=深拷贝到目标分配池；源对象保持已初始化状态（move
+           不代替创建者清理源，XTuiVim_move 注释口径），断言对齐该契约。 */
+        XCS_TEST_CHECK(target->m_commandHistoryState != NULL &&
+                       source->m_commandHistoryState != NULL &&
+                       target->m_commandHistoryState != source->m_commandHistoryState,
                        "Vim 跨内存池移动深拷贝历史状态");
         XClassDelete(source);
         XClassDelete(target);
@@ -1738,7 +1741,8 @@ static bool XConsoleShellTest_runEditorCommands(
     command = XString_create_fmt_utf8(":e %s\n", XString_toUtf8(other));
     if (!command) goto cleanup;
     if (!XConsoleShellTest_feedEditor(shell, transport, XString_toUtf8(command),
-                                      XString_size_base(command),
+                                      XContainer_size_base(
+                                          (const XContainer*)command),
                                       XConsoleResult_MoreOutput, NULL))
         goto cleanup;
     XClassDelete(command);

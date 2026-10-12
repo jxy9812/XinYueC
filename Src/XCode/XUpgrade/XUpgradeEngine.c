@@ -908,15 +908,17 @@ static bool xup_save_state_to(XUpgradeEngine* e, const XString* updateDir)
     XUpgradeStateFile snapshot;
     bool ok;
     if (!e || !updateDir) return false;
+    /* 落盘段全程持保存锁，且快照在保存锁内取（2026-10-12 竞态根修）：
+     * 进程内多写者（worker 分块确认/状态迁移与用户线程 skipVersion）并发
+     * 保存时，旧实现"先取快照再进保存锁"会让晚进锁的写者把早进锁写者的
+     * 新状态用旧快照覆盖回去（并发 skipVersion 丢 skip 记录）。现在
+     * saveMutex 先行串行化写者，快照在锁内取——后落盘者快照必含此前全部
+     * 已提交变更，写序=提交序。锁序纪律：saveMutex→m_mutex 单向（全库
+     * 无 m_mutex→saveMutex 反序点，无 ABBA）。 */
+    XMutex_lock(e->m_saveMutex);
     XMutex_lock(e->m_mutex);
     snapshot = e->m_state;
     XMutex_unlock(e->m_mutex);
-    /* 落盘段全程持保存锁：进程内多写者（worker 分块确认/状态迁移与用户线程
-     * skipVersion）并发保存时串行化，后写者覆盖前写者但不交错——否则两个
-     * 写者共用同一临时文件名，第二写者 open 即截断第一写者已写数据，可留下
-     * 空/截断/混写的 state.json（load 侧 CRC 拒收后按全新设备重建，丢失
-     * staged/skip 标记）。锁序：m_saveMutex 内不再获取 m_mutex。 */
-    XMutex_lock(e->m_saveMutex);
     ok = XUpgradeStateFile_save(&snapshot, XString_toUtf8(updateDir));
     XMutex_unlock(e->m_saveMutex);
     return ok;
@@ -1068,18 +1070,18 @@ static bool xup_read_pointer(XUpgradeEngine* e, const char* componentId, char* o
 }
 
 /** @brief 版本目录是否完整（manifest.version 标记存在且内容吻合=完整）。 */
-static bool xup_version_dir_complete(XUpgradeEngine* e, const char* componentId, const char* version)
+static bool xup_version_dir_complete(XUpgradeEngine* e, XString* root, const char* componentId, const char* version)
 {
-    XString* root;
     XString* mark;
     XByteArray* bytes = NULL;
     char buf[XUPGRADE_VERSION_MAX];
     bool ok = false;
-    if (!e || !componentId || !version) return false;
-    root = xup_root_copy(e);
-    if (!root) return false;
+    if (!e || !root || !componentId || !version) return false;
+    /* root 由调用方锁外预取（安装根 start 后只读）：本函数可能被持有
+     * m_mutex 的路径调用（recover 尾部/staging 清理），内部再走
+     * xup_root_copy 的非递归锁即同线程重锁自死锁（2026-10-11 检查更新
+     * 卡死根因）。 */
     mark = xup_path3(root, XUPGRADE_DIR_VERSIONS, componentId);
-    XClassDelete(root);
     if (!mark) return false;
     if (!XString_append_utf8(mark, "/") || !XString_append_utf8(mark, version) ||
         !XString_append_utf8(mark, "/" XUPGRADE_FILE_VERSION_MARK)) {
@@ -1332,19 +1334,18 @@ static void xup_clear_partial(XUpgradeEngine* e)
 }
 
 /** @brief 删除组件下不完整的版本目录（无 manifest.version 标记且非 keep 版本）。 */
-static void xup_remove_half_version_dirs(XUpgradeEngine* e, const char* componentId,
+static void xup_remove_half_version_dirs(XUpgradeEngine* e, XString* root, const char* componentId,
                                          const char* keepVersion)
 {
-    XString* root;
     XString* compDir;
     XDir* d;
     XStringList* entries;
     int64_t i;
-    if (!e || !componentId) return;
-    root = xup_root_copy(e);
-    if (!root) return;
+    if (!e || !root || !componentId) return;
+    /* root 由调用方锁外预取：调用方多处持 m_mutex 遍历组件表（recover
+     * 尾部/Staging 恢复/staging 失败清理），内部 root_copy 的非递归锁
+     * 同线程重入即死锁（同 version_dir_complete 口径，2026-10-11）。 */
     compDir = xup_path3(root, XUPGRADE_DIR_VERSIONS, componentId);
-    XClassDelete(root);
     if (!compDir) return;
     d = XDir_create_2(compDir);
     if (!d) { XClassDelete(compDir); return; }
@@ -1356,7 +1357,7 @@ static void xup_remove_half_version_dirs(XUpgradeEngine* e, const char* componen
                 const char* ver = name ? XString_toUtf8(name) : NULL;
                 if (!ver || !xups_version_valid(ver)) continue;
                 if (keepVersion && keepVersion[0] != '\0' && xups_str_eq(ver, keepVersion)) continue;
-                if (xup_version_dir_complete(e, componentId, ver)) continue;
+                if (xup_version_dir_complete(e, root, componentId, ver)) continue;
                 {
                     XString* full = xup_path3(compDir, ver, NULL);
                     if (full) { xup_remove_dir_recursively(full); XClassDelete(full); }
@@ -1389,13 +1390,18 @@ static void xup_recover(XUpgradeEngine* e)
     } else if (st == XUpgradeState_Staging) {
         /* 矩阵 3：解包中断 → 半成品版本目录 + partial 清除后重 stage。 */
         xup_clear_partial(e);
-        XMutex_lock(e->m_mutex);
-        for (i = 0; i < e->m_state.m_componentCount && i < XUPGRADE_STATE_COMPONENT_MAX; ++i)
-            xup_remove_half_version_dirs(e, e->m_state.m_components[i].m_id,
-                                         e->m_state.m_components[i].m_activeVersion);
-        XMemset(&e->m_state.m_download, 0, sizeof(e->m_state.m_download));
-        e->m_state.m_state = XUpgradeState_Idle;
-        XMutex_unlock(e->m_mutex);
+        {
+            /* root 锁外预取（remove_half 内部不再取锁，防同线程重锁自死锁）。 */
+            XString* root = xup_root_copy(e);
+            XMutex_lock(e->m_mutex);
+            for (i = 0; i < e->m_state.m_componentCount && i < XUPGRADE_STATE_COMPONENT_MAX; ++i)
+                xup_remove_half_version_dirs(e, root, e->m_state.m_components[i].m_id,
+                                             e->m_state.m_components[i].m_activeVersion);
+            XMemset(&e->m_state.m_download, 0, sizeof(e->m_state.m_download));
+            e->m_state.m_state = XUpgradeState_Idle;
+            XMutex_unlock(e->m_mutex);
+            if (root) XClassDelete(root);
+        }
         xup_save_state(e);
         xup_log(e, "恢复：staging 中断，半成品已清理（矩阵3）");
     } else if (st == XUpgradeState_Downloading) {
@@ -1425,11 +1431,18 @@ static void xup_recover(XUpgradeEngine* e)
         xup_log(e, "恢复：Ready 态保持，等待 apply（矩阵4）");
     }
     /* 通用兜底：任意状态下清理孤儿半成品目录。 */
-    XMutex_lock(e->m_mutex);
-    for (i = 0; i < e->m_state.m_componentCount && i < XUPGRADE_STATE_COMPONENT_MAX; ++i)
-        xup_remove_half_version_dirs(e, e->m_state.m_components[i].m_id,
-                                     e->m_state.m_components[i].m_activeVersion);
-    XMutex_unlock(e->m_mutex);
+    {
+        /* root 锁外预取（remove_half 内部不再取锁，防同线程重锁自死锁：
+         * 2026-10-11 检查更新卡死根因——持 m_mutex 调 root_copy 非递归
+         * 锁重入，init 永不返回，UI 整体冻结）。 */
+        XString* root = xup_root_copy(e);
+        XMutex_lock(e->m_mutex);
+        for (i = 0; i < e->m_state.m_componentCount && i < XUPGRADE_STATE_COMPONENT_MAX; ++i)
+            xup_remove_half_version_dirs(e, root, e->m_state.m_components[i].m_id,
+                                         e->m_state.m_components[i].m_activeVersion);
+        XMutex_unlock(e->m_mutex);
+        if (root) XClassDelete(root);
+    }
 }
 
 /* ========================================================================== */
@@ -3199,12 +3212,15 @@ static bool xup_check_requires(XUpgradeEngine* e)
 static void xup_upgrade_abort_staging(XUpgradeEngine* e, const char* reason)
 {
     uint32_t k;
+    /* root 锁外预取（remove_half 内部不再取锁，防同线程重锁自死锁）。 */
+    XString* root = xup_root_copy(e);
     XMutex_lock(e->m_mutex);
     for (k = 0; k < e->m_targetCount && k < XUPGRADE_COMPONENT_MAX; ++k)
-        xup_remove_half_version_dirs(e, e->m_targets[k].m_componentId, NULL);
+        xup_remove_half_version_dirs(e, root, e->m_targets[k].m_componentId, NULL);
     XMemset(&e->m_state.m_download, 0, sizeof(e->m_state.m_download));
     e->m_state.m_state = XUpgradeState_Idle;
     XMutex_unlock(e->m_mutex);
+    if (root) XClassDelete(root);
     xup_save_state(e);
     xup_emit(e, XUpgradeState_Idle, XUpgradePhase_Stage, -1, "", "", reason, false);
     xup_logf(e, "%s：半成品已清理（矩阵3）", reason);
@@ -3603,6 +3619,9 @@ bool XUpgradeEngine_selfCheck(XUpgradeEngine* e)
     XMutex_unlock(e->m_mutex);
     /* 组件记录：判定用快照、落盘前改写集中加锁（工作线程并发改写同一镜像时
      * 不撕裂；快照点之间记录只被本函数改写，语义与逐字段访问一致）。 */
+    /* root 锁外预取：循环内 version_dir_complete 消费（其内部不再取锁，
+     * 防持 m_mutex 路径同线程重锁自死锁，2026-10-11）。 */
+    XString* selfCheckRoot = xup_root_copy(e);
     for (i = 0; i < componentCount && i < XUPGRADE_STATE_COMPONENT_MAX; ++i) {
         XUpgradeStateComponent* rec = &st->m_components[i];
         char ptr[XUPGRADE_VERSION_MAX];
@@ -3667,7 +3686,7 @@ bool XUpgradeEngine_selfCheck(XUpgradeEngine* e)
              * 校验通过后的收口处（Active 分支）再行赋值。 */
         }
         /* §8.3 步骤 1：版本目录存在且 manifest.version 吻合。 */
-        if (!xup_version_dir_complete(e, id, ptr)) {
+        if (!xup_version_dir_complete(e, selfCheckRoot, id, ptr)) {
             xup_fmt(detail, sizeof(detail), "自检：%s@%s 版本目录缺失或标记不符",
                     id, ptr);
             xup_log(e, detail);
@@ -3756,6 +3775,7 @@ bool XUpgradeEngine_selfCheck(XUpgradeEngine* e)
         xup_emit_evt(e, XUpgradeEventType_RolledBack, XUpgradeState_RolledBack,
                      XUpgradePhase_Activate, -1, "", "", detail, true);
     }
+    if (selfCheckRoot) XClassDelete(selfCheckRoot);
     return allOk;
 }
 

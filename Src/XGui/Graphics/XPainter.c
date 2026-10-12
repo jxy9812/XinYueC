@@ -13525,9 +13525,11 @@ static bool xpainter_glyph_hash_requested(void)
     return requested != 0;
 }
 
-/** @brief 备忘槽数（2 的幂，开放寻址掩码；4096 槽 ×24B≈96KB 静态）。 */
+/** @brief 备忘槽数（2 的幂，开放寻址掩码；1024 槽 ×24B≈24KB 静态）。
+ *  2026-10-12 瘦身：4096→1024——单屏活跃字形（≤1000）远小于旧容量，
+ *  开放寻址 4 倍覆盖仍近满命中；命中 miss 只损失一次图集查询。 */
 #ifndef XPAINTER_GLYPH_MEMO_SLOTS
-#define XPAINTER_GLYPH_MEMO_SLOTS 4096u
+#define XPAINTER_GLYPH_MEMO_SLOTS 1024u
 #endif
 
 typedef struct PainterGlyphMemoSlot

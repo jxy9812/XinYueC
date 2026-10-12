@@ -38,6 +38,18 @@
  *             按下沿在注入成功前保持（下帧重试），抬起沿消费即终不跨
  *             帧重放（防幽灵事件）；无接触的悬空坐标上报不注入（触屏
  *             无 hover 口径保持）。
+ *             【移动压缩 2026-10-11】pump 一圈把 evdev 积压全部抽干，
+ *             重排昂贵时（拖拽分割条/面板全页重排期间）积压可达成串
+ *             SYN_REPORT 帧，逐帧同步注入=一圈 N 个 TOUCH_UPDATE 逐一
+ *             触发 N 次全页重排（昆仑通态 A33 真机拖拽持续满载根因）。
+ *             同圈合并：一圈内仅最后一个「纯 UPDATE 帧」立即注入，同圈
+ *             更早的纯 UPDATE 帧整体丢弃——拖拽语义按绝对位置无状态重
+ *             算（按下锚/基准尺寸+总位移），中间移动帧丢尾无损（对标
+ *             Qt XCB MOTION_NOTIFY 压缩 / Windows PeekMessage 抽干只
+ *             处理最新位置的口径）。混合帧（含按下/抬起沿）与尾部纯
+ *             UPDATE 帧照常即时注入：沿时序逐位不变，多指 per-id 抓取
+ *             语义不受影响；抽干循环本圈不再注入被合并帧，其坐标已落
+ *             槽表（rawX/rawY 帧间保持），由尾帧或下一圈代表末态。
  * @note       本文件只在「__linux__ && XGUI_ON && XPLATFORM_FBDEV_ON &&
  *             XPLATFORM_FBINPUT_ON」时参与编译（开关默认 0）。内存体
  *             系：驱动全程无堆分配，状态静态（触点槽表定容 8 槽）；
@@ -294,6 +306,66 @@ static int xpfi_collectState(const XTouchPoint* points,
     return n;
 }
 
+/* ==================== 移动压缩（同圈纯 UPDATE 帧合并） ==================== */
+
+/**
+ * @brief      当前槽表状态是否为「无沿纯移动」帧（可被同圈折叠）。
+ * @details    任一槽带 framePressed/frameReleased 即混合帧（沿时序必须
+ *             即时保序注入，折叠会破坏 BEGIN/END 与 UPDATE 的先后与
+ *             per-id 抓取语义）；按下沿注入失败保留重试期同样走混合
+ *             路径即时提交（重试语义不变）。
+ */
+static bool xpfi_framePureUpdate(void)
+{
+    int i;
+    for (i = 0; i < XPFI_SLOT_COUNT; ++i)
+    {
+        const XpfiTouchSlot* s = &g_xpfiSlots[i];
+        if (s->framePressed || s->frameReleased) return false;
+    }
+    return true;
+}
+
+/* 同圈压缩簿记：圈内首个纯 UPDATE 帧即时注入后置位 committed；其后纯
+ * UPDATE 帧不再 commitFrame（坐标已在槽表 rawX/rawY 帧间保持），仅记
+ * 末帧时间戳；混合帧即时提交（其 UPDATED 判定与沿同帧消费折叠位移）
+ * 并清账使后续首帧恢复即时注入；pump 抽干结束时若存在被折叠帧，按末
+ * 帧时间戳补一次 commitFrame——整圈移动折叠为单帧末态注入，中间帧零
+ * 注入零重排。
+ * 【跨圈帧界 2026-10-11】同圈折叠只保证"一圈一次重排"，而重排+提交
+ * 单帧 ~25ms（昆仑通态 A33）：真实手指报点 100~400Hz > 处理率时，圈
+ * 与圈之间仍每圈一次重排 → 重排频率≈100Hz+ → CPU 持续跑满（拖拽卡
+ * 顿根因第二层）。帧界门：距上次纯 UPDATE 提交 < XPF_MOVE_FRAME_MS
+ * (33ms≈30fps) 时本圈纯 UPDATE 帧全部折叠（坐标照常落槽表，沿帧不
+ * 受限），committed/skipped 跨圈保持——重排频率钳到 30fps，报点密度
+ * 再高也不放大重排量。拖拽语义按绝对位置无状态重算，被折叠帧的位移
+ * 由放行帧一次落位，零丢失。 */
+#define XPF_MOVE_FRAME_MS 25 /* 实测单帧处理 8.35ms（A33 主页拖宽），25ms=40fps 且有 3 倍余量；33 曾=30fps */
+static bool     s_xpfiMoveCommitted = false; /**< 帧界窗口内已提交过纯 UPDATE 帧（跨圈保持）。 */
+static bool     s_xpfiMoveSkipped = false;   /**< 帧界内被折叠的纯 UPDATE 帧（跨圈保持）。 */
+static uint32_t s_xpfiMoveTs = 0;            /**< 最近被折叠帧的时间戳。 */
+static int64_t  s_xpfiMoveLastCommitMs = 0;  /**< 上次纯 UPDATE 帧提交的单调毫秒（帧界基准；0=从未）。 */
+
+/**
+ * @brief      把活动槽的当前 rawX/rawY 归一化推进 lastX/lastY（帧界折叠
+ *             帧的坐标语义消费）。
+ * @details    帧界内被折叠的纯 UPDATE 帧没有注入，槽 lastX/lastY 停在
+ *             上次注入点；若就此抬起（混合帧 RELEASED 用 lastX/lastY
+ *             落点），抬起会落回拖拽起点（物理末位置丢失）。折叠时把
+ *             物理末位置推进 lastX/lastY，抬起沿落点=物理末位置，位移
+ *             零丢失。
+ */
+static void xpfi_syncSlotLastFromRaw(void)
+{
+    int i;
+    for (i = 0; i < XPFI_SLOT_COUNT; ++i)
+    {
+        XpfiTouchSlot* s = &g_xpfiSlots[i];
+        if (!s->active || !s->injected || !s->havePoint) continue;
+        xpfi_normalizePoint(s->rawX, s->rawY, &s->lastX, &s->lastY);
+    }
+}
+
 /**
  * @brief      按槽位状态机收集本帧触点并注入多点触摸（SYN_REPORT 边界
  *             调用）。
@@ -343,9 +415,19 @@ static void xpfi_commitFrame(uint32_t timestampMs)
             if (s->injected)
             {
                 state = XTOUCHPOINT_STATE_RELEASED;
-                x = s->lastX;
-                y = s->lastY;
+                /* 落点=物理末位置：帧界折叠期间 rawX/rawY 持续推进而
+                 * lastX/lastY 停在放行点，抬起沿用归一化末位置（havePoint
+                 * 时）；无坐标上报才回退上次注入位置（历史口径：抬起帧
+                 * 坐标偶发清零/跳变，落于原位语义更稳）。 */
+                if (s->havePoint)
+                    xpfi_normalizePoint(s->rawX, s->rawY, &x, &y);
+                else
+                {
+                    x = s->lastX;
+                    y = s->lastY;
+                }
                 s->injected = false;
+                s->havePoint = false; /* 抬起沿已消费物理末位置，防下次接触误用。 */
                 releasedCount++;
             }
             else if (!s->active)
@@ -593,7 +675,10 @@ static void xpfi_feedEvent(const struct input_event* ev)
             else
             {
                 /* 接触结束：全部槽视为本帧释放（含按下沿注入失败期的
-                 * 槽，提交时作幽灵沿作废）；坐标有效性一并失效。 */
+                 * 槽，提交时作幽灵沿作废）。rawX/rawY+havePoint 保留：
+                 * 抬起沿落点取物理末位置（帧界折叠期间 lastX/lastY 停
+                 * 在放行点，2026-10-11 拖拽终态丢失根修）；提交消费后
+                 * commitFrame 清 havePoint，防下一次接触误用旧坐标。 */
                 int i;
                 for (i = 0; i < XPFI_SLOT_COUNT; ++i)
                 {
@@ -603,7 +688,6 @@ static void xpfi_feedEvent(const struct input_event* ev)
                         s->frameReleased = true;
                         s->active = false;
                     }
-                    s->havePoint = false;
                 }
             }
         }
@@ -654,8 +738,43 @@ static bool xpfi_pump(void* userData)
                                batch[i].time.tv_usec / 1000);
                 if (batch[i].type == EV_SYN && batch[i].code == SYN_REPORT)
                 {
-                    xpfi_commitFrame(timestampMs);
-                    delivered = true;
+                    /* 移动压缩（见文件头）：纯 UPDATE 帧圈内首帧即时注
+                     * 入、后续帧折叠（槽表 rawX/rawY 已保持末态）；混合
+                     * 帧（含按下/抬起沿）即时提交保沿时序。折叠帧由圈
+                     * 界尾注按末帧时间戳补注。 */
+                    if (xpfi_framePureUpdate())
+                    {
+                        int64_t nowMs = (int64_t)timestampMs;
+                        if (s_xpfiMoveLastCommitMs != 0 &&
+                            nowMs < s_xpfiMoveLastCommitMs)
+                            nowMs = s_xpfiMoveLastCommitMs; /* 时间戳回绕/乱序兜底。 */
+                        if (!s_xpfiMoveCommitted &&
+                            (s_xpfiMoveLastCommitMs == 0 ||
+                             nowMs - s_xpfiMoveLastCommitMs >= XPF_MOVE_FRAME_MS))
+                        {
+                            xpfi_commitFrame(timestampMs);
+                            s_xpfiMoveCommitted = true;
+                            s_xpfiMoveLastCommitMs = (int64_t)timestampMs;
+                            delivered = true;
+                        }
+                        else
+                        {
+                            s_xpfiMoveSkipped = true;
+                            s_xpfiMoveTs = timestampMs;
+                            xpfi_syncSlotLastFromRaw();
+                        }
+                    }
+                    else
+                    {
+                        xpfi_commitFrame(timestampMs);
+                        /* 混合帧已按沿+移动注入：本圈折叠账清零，其后
+                         * 首个纯 UPDATE 帧恢复即时注入（更低延迟）。
+                         * 帧界基准照常推进（沿帧不含移动折叠语义）。 */
+                        s_xpfiMoveCommitted = false;
+                        s_xpfiMoveSkipped = false;
+                        s_xpfiMoveLastCommitMs = (int64_t)timestampMs;
+                        delivered = true;
+                    }
                 }
                 else
                 {
@@ -666,10 +785,27 @@ static bool xpfi_pump(void* userData)
         if (n < (ssize_t)sizeof(batch))
             break; /* 不足整批：内核已无更多积压，尽快返回。 */
     }
+    if (s_xpfiMoveSkipped)
+    {
+        /* 圈界尾注：整圈折叠移动按末帧时间戳补注单帧——但仅当末帧已
+         * 出帧界窗口：帧界内则连尾注一并折叠（坐标留槽表，下圈放行帧
+         * 一次落位；防 3ms 报点下圈界补注变成 100Hz 重排的旁路）。
+         * 末态无变化时 commitFrame 内部「未动不收集」自然空转。 */
+        int64_t nowMs = (int64_t)s_xpfiMoveTs;
+        if (s_xpfiMoveLastCommitMs != 0 && nowMs < s_xpfiMoveLastCommitMs)
+            nowMs = s_xpfiMoveLastCommitMs;
+        if (s_xpfiMoveLastCommitMs == 0 ||
+            nowMs - s_xpfiMoveLastCommitMs >= XPF_MOVE_FRAME_MS)
+        {
+            xpfi_commitFrame(s_xpfiMoveTs);
+            s_xpfiMoveLastCommitMs = (int64_t)s_xpfiMoveTs;
+            s_xpfiMoveSkipped = false;
+            delivered = true;
+        }
+    }
+    s_xpfiMoveCommitted = false;
     return delivered;
 }
-
-/* ==================== 契约注册入口 ==================== */
 
 bool XPlatformFbInput_register(void)
 {

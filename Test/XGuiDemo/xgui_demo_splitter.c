@@ -143,10 +143,21 @@ static void VDemoSplitter_mouseMoveEvent(XWidget* self, XEvent* event)
 static void VDemoSplitter_mouseReleaseEvent(XWidget* self, XEvent* event)
 {
     DemoSplitter* sp = (DemoSplitter*)self;
+    XMouseEvent* mouse = (XMouseEvent*)event;
     if (!sp) return;
     if (sp->m_dragging) {
         sp->m_dragging = false;
         XWidget_releaseMouse(self);
+        /* 尾帧必达：输入泵帧界折叠期间，末段位移的 MOUSE_MOVE 可能整
+         * 段未派发（重排频率钳到帧界），release 自带的全局坐标就是物理
+         * 末位置——按它补一次 applySize（同值早退幂等），拖拽终态零丢
+         * 失。touch 合成 RELEASE 与真鼠标 RELEASE 同路，一处覆盖。 */
+        if (mouse && sp->m_cbs.applySize) {
+            XPoint gpos = XMouseEvent_globalPosition(mouse);
+            sp->m_cbs.applySize(sp->m_owner,
+                                sp->m_baseSize +
+                                    demoSplitter_deltaOf(sp, gpos.x, gpos.y));
+        }
         XWidget_update(self);
     }
     if (event) XEvent_accept(event);

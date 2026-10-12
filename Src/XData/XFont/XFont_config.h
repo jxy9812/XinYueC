@@ -68,7 +68,7 @@
 
 /** @brief 轮廓灰度图缓存项数量；设为 0 或关闭开关可裁剪缓存。 */
 #ifndef XFONT_GLYPH_ALPHA_CACHE_ENTRIES
-#define XFONT_GLYPH_ALPHA_CACHE_ENTRIES 256
+#define XFONT_GLYPH_ALPHA_CACHE_ENTRIES 128 /* 2026-10-12 瘦身：256→128（-8.5KB），单屏活跃字形 4 倍覆盖。 */
 #endif
 
 /** @brief 单个灰度图缓存项的像素上限（宽*高）；超过则只绘制不缓存，

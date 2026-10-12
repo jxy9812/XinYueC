@@ -1037,6 +1037,21 @@ bool XPlatformNativeWindow_processPendingEvents(void)
                 if (n <= 0) continue;          /* 畸形空帧：不可注入 */
                 if (n > XPAD_MAX_TOUCH_POINTS) n = XPAD_MAX_TOUCH_POINTS;
                 if (actionIndex >= n) actionIndex = n - 1;  /* 畸形下标兜底 */
+                /* 移动压缩（降低低配主机拖拽负载；与本仓 fbdev/X11/
+                   win32 输入泵同圈口径）：队列里紧随的仍是 MOVE 帧时
+                   丢弃当前帧——拖拽语义按绝对位置无状态重算，中间移动
+                   帧丢尾无损（对标 Qt 触摸输入合帧）；末帧成为队首时
+                   正常注入，重排频率自动钳到事件循环圈频率。偷看不
+                   移除（peek），非 MOVE 即断链照常注入，沿时序逐位不
+                   变。 */
+                if (baseAction == AMOTION_EVENT_ACTION_MOVE) {
+                    XPadTouchEvent next;
+                    if (XRingBuffer_peek(&g_xpad.m_touchQueue, &next,
+                                         sizeof(next)) == sizeof(next) &&
+                        (next.action & AMOTION_EVENT_ACTION_MASK) ==
+                            AMOTION_EVENT_ACTION_MOVE)
+                        continue; /* 后面还有 MOVE：本帧折叠。 */
+                }
                 /* 动作映射（K3 多点收口，对标 QWindowSystemInterface::
                    handleTouchEvent 的 QEventPoint 列表形态）：
                    - DOWN         → BEGIN（单点 PRESSED）

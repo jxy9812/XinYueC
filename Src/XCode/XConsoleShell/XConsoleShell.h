@@ -131,7 +131,7 @@ typedef struct XConsoleShellSession {
     bool editorModified;                              /**< 编辑缓冲相对磁盘是否已修改。 */
     bool editorInsertAfter;                           /**< 插入模式是否在当前行之后追加。 */
     char editorPath[XCONSOLE_SHELL_MAX_PATH];         /**< 编辑目标文件路径；NUL 结尾。 */
-    char editorLines[XCONSOLE_SHELL_EDITOR_MAX_LINES][XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 编辑行缓冲。 */
+    char (*editorLines)[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 编辑行缓冲（懒分配 EDITOR_MAX_LINES×LINE_BUFFER；NULL=未分配，编辑器首次使用时一次性分配并清零——常驻省 16KB/会话，2026-10-12 瘦身）。 */
     char editorInsertBuf[XCONSOLE_SHELL_LINE_BUFFER_SIZE]; /**< 插入模式当前正在编辑的一行。 */
     bool editorInsertPendingCr;                       /**< 插入模式已收到 \r，等待合并其后的 \n。 */
     unsigned char editorInsertEscape;                 /**< 插入模式 ESC/方向键状态；0 无，1 收到 ESC，2 收到 ESC [。 */
@@ -213,7 +213,7 @@ typedef struct XConsoleShell {
 #endif
     XConsoleShellSession m_session;                   /**< 默认会话状态。 */
 #if XCONSOLE_SHELL_MULTI_SESSION_ON
-    XConsoleShellSession m_sessions[XCONSOLE_SHELL_MAX_SESSIONS - 1u]; /**< 固定附加会话槽位。 */
+    XConsoleShellSession* m_sessions[XCONSOLE_SHELL_MAX_SESSIONS - 1u]; /**< 附加会话指针槽（懒分配：NULL=空槽，openSession 时一次 calloc；常驻省 ~15KB/空槽，2026-10-12 瘦身）。关闭时释放归 NULL。 */
     size_t m_sessionCount;                            /**< 包含默认会话的已打开会话数量。 */
 #endif
 #if XCONSOLE_SHELL_PROCESS_ASYNC_ON

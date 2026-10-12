@@ -4575,8 +4575,13 @@ static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
     }
     /* 新旧矩形一并失效（对标 Qt setGeometry_sys 的双失效语义）：
        控件移动/缩放后，旧位置像素由父层背景重绘，不再留下残影。
-       此前只发事件不失效旧区域——按钮重排后旧位置文字长期残留。 */
-    {
+       此前只发事件不失效旧区域——按钮重排后旧位置文字长期残留。
+       【生效可见门控 2026-10-11】隐藏（含父链传播隐藏）控件的几何变化
+       不产生脏区：隐藏页每步 setGeometry 的大矩形并入顶层脏区会把整窗
+       拖成全窗重绘（昆仑通态 A33 分割条拖拽单步 28ms 卡顿大头）。
+       显示路径已有完整失效兜底：显式 show 走 setVisible 的双向
+       XWidget_update；父级传播显示的子树区域 ⊆ 页根 update 矩形。 */
+    if (self->m_visible) {
         XWidget* parent = XWidget_parentWidget(self);
         if (parent) {
             XRect dirty = XRect_united(&old, &self->m_windowRect);
