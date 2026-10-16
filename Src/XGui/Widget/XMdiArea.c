@@ -538,7 +538,18 @@ void XMdiSubWindow_setWidget(XMdiSubWindow* self, XWidget* widget)
 {
     XRect r;
     if (!self) return;
-    if (self->m_widget) return;
+    /* 对标 QMdiSubWindow::setWidget（qmdisubwindow.cpp:2257-2287）：
+       同指针重设幂等返回（Qt 同款护栏）；widget 为 NULL 等价
+       removeBaseWidget——摘除旧件不销毁；不同指针先摘旧件再装新件
+       （替换语义可用，此前以 `if (m_widget) return` 静默拒绝）。 */
+    if (widget == self->m_widget) return;
+    if (self->m_widget) {
+        /* removeBaseWidget 对标（qmdisubwindow.cpp:985-1005）：解除
+           父子链交还调用方（不删，所有权归还）。 */
+        XWidget_setParent(self->m_widget, NULL, 0);
+        self->m_widget = NULL;
+    }
+    if (!widget) return;
     self->m_widget = widget;
     XWidget_setParent(widget, (XWidget*)self, 0);
     /* 内容件内收 1px 挂载（x=1 起，底留框线行）：chrome 窗框绘制后
@@ -870,12 +881,30 @@ void XMdiArea_removeSubWindow(XMdiArea* self, XWidget* widget)
         XMdiSubWindow** sw =
             (XMdiSubWindow**)XVector_at_base(self->m_subWindows, i);
         if (sw && *sw && XMdiSubWindow_widget(*sw) == widget) {
-            if (self->m_active == *sw) self->m_active = NULL;
+            bool wasActive = (self->m_active == *sw);
             /* 子窗口可能正处于自身 closeEvent/事件分发栈上（closeAll
                级联、内容控件触发移除等）；同步删会在其事件帧返回途中
                释放结构体。延迟回收（对标 Qt QMdiArea::removeSubWindow）。 */
             XObject_deleteLater((XObject*)*sw);
             XVector_remove_base(self->m_subWindows, i, 1);
+            if (wasActive) {
+                /* 对标 QMdiAreaPrivate::updateActiveWindow（qmdiarea.cpp:
+                   1082-1126，removeSubWindow:2009 调用点）：活动窗被移除
+                   后激活下一个可见子窗；列表已空则 resetActiveWindow →
+                   emit subWindowActivated(nullptr)（qmdiarea.cpp:1068/
+                   1076）。此前置 NULL 即返回，订阅者收不到任何通知。 */
+                self->m_active = NULL;
+                n = XVector_size_base((const XContainer*)self->m_subWindows);
+                if (n > 0) {
+                    int64_t next = (i < n) ? i : n - 1;
+                    XMdiArea_setActiveSubWindow(
+                        self,
+                        *(XMdiSubWindow**)XVector_at_base(self->m_subWindows,
+                                                          next));
+                } else {
+                    xmdi_emitActivated(self, NULL);
+                }
+            }
             return;
         }
     }
@@ -893,7 +922,22 @@ XMdiSubWindow* XMdiArea_activeSubWindow(const XMdiArea* self)
 
 void XMdiArea_setActiveSubWindow(XMdiArea* self, XMdiSubWindow* window)
 {
-    if (!self || !window) return;
+    if (!self) return;
+    if (!window) {
+        /* 对标 qmdiarea.cpp:1805-1811：setActiveSubWindow(nullptr) →
+           activateWindow(nullptr) → 失活当前窗并经 resetActiveWindow
+           发射 subWindowActivated(nullptr)（qmdiarea.cpp:957-963）。
+           此前 NULL 直接到 return，无法触发失活。区域为空时 Qt 的
+           activateWindow 亦直接返回（qmdiarea.cpp:951-955）——无活动
+           窗时同样不发射。 */
+        if (!self->m_active) return;
+        xmdi_emitStateChanged(self->m_active, self->m_active->m_state, 0);
+        self->m_active->m_state = 0;
+        XWidget_update((XWidget*)self->m_active);
+        self->m_active = NULL;
+        xmdi_emitActivated(self, NULL);
+        return;
+    }
     if (self->m_active == window) return;
     if (self->m_active) {
         xmdi_emitStateChanged(self->m_active, self->m_active->m_state, 0);

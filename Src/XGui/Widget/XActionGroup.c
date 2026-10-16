@@ -47,13 +47,16 @@ static int xactiongroup_indexOf(const XActionGroup* self,
     return -1;
 }
 
-/** @brief 互斥：选中某动作时取消其它成员选中（exclusive 语义）。 */
+/** @brief 互斥：选中某动作时取消其它成员选中（策略非 None 生效）。 */
 static void xactiongroup_applyExclusive(XActionGroup* self,
                                         XAction* checked)
 {
     int64_t i;
     int64_t n;
-    if (!self->m_exclusive || !self->m_actions) return;
+    if (!self->m_actions) return;
+    /* 对标 qactiongroup.cpp:21-37 _q_actionChanged：策略 None 时组不
+       干预成员选中（Exclusive 与 ExclusiveOptional 的联动部分相同）。 */
+    if (self->m_exclusionPolicy == XActionGroupExclusionPolicy_None) return;
     n = XVector_size_base((const XContainer*)self->m_actions);
     for (i = 0; i < n; ++i) {
         XAction** item =
@@ -330,8 +333,11 @@ void XActionGroup_init(XActionGroup* self, XObject* parent)
     XClassSetVtable(self, XActionGroup);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    self->m_exclusive = true;
+    /* 对标 Qt：默认互斥（ExclusionPolicy::Exclusive，qactiongroup.h:83
+       Q_PROPERTY exclusionPolicy）；enabled/visible 默认 true。 */
+    self->m_exclusionPolicy = XActionGroupExclusionPolicy_Exclusive;
     self->m_enabled = true;
+    self->m_visible = true;
     self->m_checkedAction = NULL;
     self->m_actions = XVector_Create(XAction*);
     self->m_bridges = XVector_Create(XActionGroupBridge*);
@@ -350,23 +356,55 @@ XActionGroup* XActionGroup_create_ex(XMemoryType memory, XObject* parent)
 
 /* ==================== 成员管理（对标 QActionGroup） ==================== */
 
-void XActionGroup_addAction(XActionGroup* self, XAction* action)
+XAction* XActionGroup_addAction(XActionGroup* self, XAction* action)
 {
-    if (!self || !action ||
-        xactiongroup_indexOf(self, action) >= 0) return;
-    if (!self->m_actions || !self->m_bridges) return;
-    XVector_push_back_1_base(self->m_actions, &action);
-    {
-        XActionGroupBridge* bridge =
-            xactiongroup_connectAction(self, action);
-        XVector_push_back_1_base(self->m_bridges, &bridge);
+    if (!self || !action)
+        return action;
+    if (xactiongroup_indexOf(self, action) < 0) {
+        if (!self->m_actions || !self->m_bridges) return action;
+        XVector_push_back_1_base(self->m_actions, &action);
+        {
+            XActionGroupBridge* bridge =
+                xactiongroup_connectAction(self, action);
+            XVector_push_back_1_base(self->m_bridges, &bridge);
+        }
+        if (XAction_isChecked(action)) {
+            xactiongroup_applyExclusive(self, action);
+            self->m_checkedAction = action;
+        }
     }
-    if (XAction_isChecked(action)) {
-        xactiongroup_applyExclusive(self, action);
-        self->m_checkedAction = action;
-    }
+    /* 对标 qactiongroup.cpp:135-137：加入时把组 enabled/visible 套用到
+       成员（组状态为关才下发，避免覆盖动作自身的显式开启）。 */
     if (!self->m_enabled)
         XAction_setEnabled(action, false);
+    if (!self->m_visible)
+        XAction_setVisible(action, false);
+    return action;
+}
+
+XAction* XActionGroup_addAction_2(XActionGroup* self, const char* utf8Text)
+{
+    XAction* action;
+    /* 对标 QActionGroup::addAction(text)：新建动作以组为父
+       （qactiongroup.cpp:159-162 的 new QAction(text, this)）。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)self,
+                               utf8Text);
+    if (!action) return NULL;
+    return XActionGroup_addAction(self, action);
+}
+
+XAction* XActionGroup_addAction_3(XActionGroup* self, const char* iconUtf8,
+                                  const char* utf8Text)
+{
+    XAction* action;
+    /* 对标 QActionGroup::addAction(icon, text)
+       （qactiongroup.cpp:173-176）；图标以路径承载（XAction_setIcon）。 */
+    action = XAction_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XObject*)self,
+                               utf8Text);
+    if (!action) return NULL;
+    if (iconUtf8)
+        XAction_setIcon_2(action, iconUtf8);
+    return XActionGroup_addAction(self, action);
 }
 
 void XActionGroup_removeAction(XActionGroup* self, XAction* action)
@@ -426,13 +464,38 @@ void XActionGroup_setCheckedAction(XActionGroup* self, XAction* action)
 
 bool XActionGroup_isExclusive(const XActionGroup* self)
 {
-    return self ? self->m_exclusive : false;
+    /* 对标 qactiongroup.cpp:263-270：策略非 None 即互斥。 */
+    return self ? self->m_exclusionPolicy !=
+                      XActionGroupExclusionPolicy_None : false;
 }
 
 void XActionGroup_setExclusive(XActionGroup* self, bool exclusive)
 {
+    /* 对标 qactiongroup.cpp:247-257 setExclusive：便捷映射到策略。 */
     if (!self) return;
-    self->m_exclusive = exclusive;
+    self->m_exclusionPolicy = exclusive
+        ? XActionGroupExclusionPolicy_Exclusive
+        : XActionGroupExclusionPolicy_None;
+}
+
+XActionGroupExclusionPolicy XActionGroup_exclusionPolicy(
+    const XActionGroup* self)
+{
+    return self ? (XActionGroupExclusionPolicy)self->m_exclusionPolicy
+                : XActionGroupExclusionPolicy_None;
+}
+
+void XActionGroup_setExclusionPolicy(XActionGroup* self,
+                                     XActionGroupExclusionPolicy policy)
+{
+    /* 对标 qactiongroup.cpp:239-245 setExclusionPolicy：直接记录策略，
+       已有成员的选中态不回溯重排（Qt 亦然）。 */
+    if (!self) return;
+    if (policy != XActionGroupExclusionPolicy_None &&
+        policy != XActionGroupExclusionPolicy_Exclusive &&
+        policy != XActionGroupExclusionPolicy_ExclusiveOptional)
+        return; /* 越界枚举防御（位域只承载 0..2）。 */
+    self->m_exclusionPolicy = (uint8_t)policy;
 }
 
 bool XActionGroup_isEnabled(const XActionGroup* self)
@@ -453,6 +516,29 @@ void XActionGroup_setEnabled(XActionGroup* self, bool enabled)
             (XAction**)XVector_at_base(self->m_actions, i);
         if (item && *item)
             XAction_setEnabled(*item, enabled);
+    }
+}
+
+bool XActionGroup_isVisible(const XActionGroup* self)
+{
+    return self ? self->m_visible : false;
+}
+
+void XActionGroup_setVisible(XActionGroup* self, bool visible)
+{
+    int64_t i;
+    int64_t n;
+    if (!self) return;
+    self->m_visible = visible;
+    /* 对标 qactiongroup.cpp:288-300 setVisible：成员动作跟随组可见态
+       （Qt 的 forceInvisible 豁免为控件内嵌动作概念，本库无对应）。 */
+    if (!self->m_actions) return;
+    n = XVector_size_base((const XContainer*)self->m_actions);
+    for (i = 0; i < n; ++i) {
+        XAction** item =
+            (XAction**)XVector_at_base(self->m_actions, i);
+        if (item && *item)
+            XAction_setVisible(*item, visible);
     }
 }
 

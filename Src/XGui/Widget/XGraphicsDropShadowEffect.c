@@ -20,6 +20,7 @@
 #include "XWidget.h"
 #include "XImage.h"
 #include "XPainter.h"
+#include "XVarList.h"
 
 #include <math.h>
 
@@ -34,6 +35,48 @@
 static int xgraphicsdropshadow_roundOffset(float value)
 {
     return (int)floorf(value + 0.5f);
+}
+
+/** @brief 发射携带 XPointF 参数的信号（无连接时释放参数，防泄漏）。 */
+static void xgraphicsdropshadow_emitPointF(XGraphicsDropShadowEffect* self,
+                                           size_t signal, XPointF value)
+{
+    XVarList* args = XVarList_Create(XVar(XPointF, value));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/** @brief 发射携带 float 参数的信号（无连接时释放参数，防泄漏）。 */
+static void xgraphicsdropshadow_emitFloat(XGraphicsDropShadowEffect* self,
+                                          size_t signal, float value)
+{
+    XVarList* args = XVarList_Create(XVar(float, value));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/** @brief 发射携带 XColor 参数的信号（无连接时释放参数，防泄漏）。 */
+static void xgraphicsdropshadow_emitColor(XGraphicsDropShadowEffect* self,
+                                          size_t signal, XColor value)
+{
+    XVarList* args = XVarList_Create(XVar(XColor, value));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
 }
 
 /** @brief BoundingRectFor 槽位实现：按模糊扩散与偏移外沿生长源矩形。 */
@@ -256,8 +299,13 @@ void XGraphicsDropShadowEffect_setOffset(XGraphicsDropShadowEffect* self,
     if (!self) return;
     if (self->m_offset.x == offset.x && self->m_offset.y == offset.y) return;
     self->m_offset = offset;
-    /* 对标 Qt：offset 实际变化即触发源重绘。 */
+    /* 对标 Qt：offset 实际变化即触发源重绘并发射 offsetChanged(offset)
+     * （qgraphicseffect.cpp:896-905，updateBoundingRect + emit；偏移同时
+     * 影响效果包围盒，update 的外扩失效一并覆盖）。 */
     XGraphicsEffect_update(&self->m_base);
+    xgraphicsdropshadow_emitPointF(
+        self, (size_t)XGraphicsDropShadowEffect_offsetChanged_signal,
+        offset);
 }
 
 float XGraphicsDropShadowEffect_blurRadius(
@@ -271,9 +319,13 @@ void XGraphicsDropShadowEffect_setBlurRadius(
     if (radius < 0.0f) radius = 0.0f;
     if (self->m_blurRadius == radius) return;
     self->m_blurRadius = radius;
-    /* 对标 Qt：setBlurRadius 实际变化即触发源重绘（半径当前不改变
-       固定核尺寸，见文件头"与 Qt 的差异"）。 */
+    /* 对标 Qt：setBlurRadius 实际变化即触发源重绘并发射
+     * blurRadiusChanged(radius)（qgraphicseffect.cpp:951-960；半径当前
+     * 不改变固定核尺寸，见文件头"与 Qt 的差异"）。 */
     XGraphicsEffect_update(&self->m_base);
+    xgraphicsdropshadow_emitFloat(
+        self, (size_t)XGraphicsDropShadowEffect_blurRadiusChanged_signal,
+        radius);
 }
 
 XColor XGraphicsDropShadowEffect_color(
@@ -291,8 +343,34 @@ void XGraphicsDropShadowEffect_setColor(XGraphicsDropShadowEffect* self,
     if (!self) return;
     if (XColor_rgba(&self->m_color) == XColor_rgba(&color)) return;
     self->m_color = color;
-    /* 对标 Qt：setColor 实际变化即触发源重绘。 */
+    /* 对标 Qt：setColor 实际变化即触发源重绘并发射 colorChanged(color)
+     * （qgraphicseffect.cpp:984-993，update + emit）。 */
     XGraphicsEffect_update(&self->m_base);
+    xgraphicsdropshadow_emitColor(
+        self, (size_t)XGraphicsDropShadowEffect_colorChanged_signal, color);
+}
+
+/* ==================== 信号 ==================== */
+
+void* XGraphicsDropShadowEffect_offsetChanged_signal(
+    XGraphicsDropShadowEffect* self, XPointF offset)
+{
+    (void)self; (void)offset;
+    return (void*)(size_t)XGraphicsDropShadowEffect_offsetChanged_signal;
+}
+
+void* XGraphicsDropShadowEffect_blurRadiusChanged_signal(
+    XGraphicsDropShadowEffect* self, float radius)
+{
+    (void)self; (void)radius;
+    return (void*)(size_t)XGraphicsDropShadowEffect_blurRadiusChanged_signal;
+}
+
+void* XGraphicsDropShadowEffect_colorChanged_signal(
+    XGraphicsDropShadowEffect* self, XColor color)
+{
+    (void)self; (void)color;
+    return (void*)(size_t)XGraphicsDropShadowEffect_colorChanged_signal;
 }
 
 #endif /* XWIDGET_ON */

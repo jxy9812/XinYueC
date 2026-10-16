@@ -171,6 +171,13 @@ typedef struct XLineEdit
     int     m_alignment;             /**< 文本对齐（XAlignment 组合）。 */
     XMargins m_textMargins;          /**< 文本边距（像素）。 */
     bool    m_finishedPending;       /**< 自上次 editingFinished 后用户是否编辑过。 */
+    bool    m_finishOnFocusOut;      /**< 失焦必发 editingFinished（对标 Qt 视图
+                                          delegate 编辑器语义：QAbstractItemDelegate
+                                          eventFilter 在 editor FocusOut 时无条件
+                                          commitData+closeEditor，不问有无编辑）；
+                                          缺省 false=Qt 裸 QLineEdit 语义（未编辑
+                                          失焦不发）。表格/列表 cellWidget 编辑器
+                                          场景由宿主开启。 */
     bool    m_clearButtonEnabled;    /**< 清除按钮开关（点击清空文本）。 */
     XRect   m_clearButtonRect;       /**< 清除按钮命中矩形（绘制时记录）。 */
     XLineEditValidatorFunc m_validator;  /**< 校验回调（借用；NULL=无）。 */
@@ -367,6 +374,18 @@ bool XLineEdit_isClearButtonEnabled(const XLineEdit* self);
  * @return     无返回值；变化后刷新绘制与尺寸提示。
  */
 void XLineEdit_setClearButtonEnabled(XLineEdit* self, bool enable);
+/**
+ * @brief      设置失焦必发 editingFinished（对标 Qt 视图 delegate 编辑器
+ *             的 FocusOut→commitData+closeEditor 语义）。
+ * @details    缺省 false：裸 QLineEdit 语义，失焦仅当用户编辑过（textEdited
+ *             已发生）才发 editingFinished。开启后失焦一律走
+ *             hasAcceptableInput/fixup 门禁再发，宿主（如 XTableWidget
+ *             的 cellWidget 编辑器）据此在失焦时无条件确认并收起编辑器。
+ * @param      self 目标编辑框；可为 NULL。
+ * @param      enable true=失焦必发；false=仅编辑过的失焦才发（缺省）。
+ * @return     无返回值。
+ */
+void XLineEdit_setFinishOnFocusOut(XLineEdit* self, bool enable);
 /**
  * @brief      设置文本校验回调（对标 QLineEdit::setValidator 的 C 适配）。
  * @details    校验回调为借用指针，函数不取得所有权；编辑产生的文本若
@@ -843,9 +862,6 @@ void* XLineEdit_selectionChanged_signal(XLineEdit* self);
  * @return     不透明的信号标识。
  */
 void* XLineEdit_inputRejected_signal(XLineEdit* self);
-
-/** @brief 返回当前聚焦的 XLineEdit（全局；供平台层 IME 直投。可 NULL）。 */
-XLineEdit* XLineEdit_focusedLineEdit(void);
 
 #endif /* XWIDGET_ON && XLINEEDIT_ON */
 

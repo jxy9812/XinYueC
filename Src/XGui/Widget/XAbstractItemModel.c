@@ -7,6 +7,7 @@
 
 #include "XAlgorithm.h"
 #include "XMemory.h"
+#include "XStringUtils.h"
 #include "XVarList.h"
 #include "XVector.h"
 #include "XEventType.h"
@@ -95,6 +96,30 @@ static void xaim_emitReset(XAbstractItemModel* self)
         XObject_emitSignal((XObject*)self,
                            (size_t)XAbstractItemModel_modelReset_signal,
                            NULL, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    }
+}
+
+/** @brief 发射无载荷信号（layoutChanged 等共用）。 */
+static void xaim_emitVoid(XAbstractItemModel* self, size_t signal)
+{
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, NULL, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    }
+}
+
+static void xaim_emitHeaderDataChanged(XAbstractItemModel* self,
+                                       int orientation, int first, int last)
+{
+    XVarList* args = XVarList_Create(XVar(int, orientation), XVar(int, first),
+                                     XVar(int, last));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XAbstractItemModel_headerDataChanged_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
     }
 }
 
@@ -333,6 +358,10 @@ bool XAbstractItemModel_setHeaderData(XAbstractItemModel* self, int section,
     if (value && !repl) return false;
     if (*slot) XClassDelete(*slot);
     *slot = repl;
+    /* 对标 Qt：表头数据落库成功即发射 headerDataChanged（首末段同为
+       本段，单段口径），驱动表头视图重绘（XHeaderView 经 setModel
+       接线接收）。 */
+    xaim_emitHeaderDataChanged(self, orientation, section, section);
     return true;
 }
 
@@ -357,6 +386,160 @@ int XAbstractItemModel_parent(const XAbstractItemModel* self,
 {
     (void)self; (void)row; (void)col;
     return -1;
+}
+
+/* ==================== 结构操作 ==================== */
+
+int XAbstractItemModel_flags(const XAbstractItemModel* self, int row, int col)
+{
+    /* 对标 Qt 6.8 基类缺省 flags：无效索引 NoItemFlags；有效索引
+       Selectable|Enabled（缺省不含 DropEnabled——拖放基础设施未建，
+       见头文件注）。 */
+    if (!xaim_cellSlot(self, row, col)) return XItemFlag_NoItemFlags;
+    return XItemFlag_ItemIsSelectable | XItemFlag_ItemIsEnabled;
+}
+
+bool XAbstractItemModel_hasChildren(const XAbstractItemModel* self)
+{
+    /* 扁平模型收敛：hasChildren(root) ⇔ 行数、列数均大于 0（对标 Qt
+       hasChildren 缺省按 rowCount/columnCount 判定的扁平退化）。 */
+    return self && self->m_rows > 0 && self->m_cols > 0;
+}
+
+bool XAbstractItemModel_insertRows(XAbstractItemModel* self, int row,
+                                   int count)
+{
+    XString** blanks;
+    int64_t at;
+    if (!self || row < 0 || row > self->m_rows || count <= 0) return false;
+    /* 单元格：在 row*cols 处插入 count*cols 个空槽（元素回调保证复制
+       语义安全；空槽以 NULL 填充）。 */
+    blanks = (XString**)XCalloc_System((size_t)count * (size_t)self->m_cols,
+                                       sizeof(XString*));
+    if (!blanks) return false;
+    at = (int64_t)row * self->m_cols;
+    XVector_insert_1_base(&self->m_cells, at, blanks,
+                          (size_t)count * (size_t)self->m_cols);
+    XFree_System(blanks);
+    /* 行头：在 row 处插入 count 个空槽。 */
+    if (self->m_rows > 0) {
+        XString** headBlanks = (XString**)XCalloc_System(
+            (size_t)count, sizeof(XString*));
+        if (headBlanks) {
+            XVector_insert_1_base(&self->m_vHeader, row, headBlanks,
+                                  (size_t)count);
+            XFree_System(headBlanks);
+        }
+    }
+    self->m_rows += count;
+    xaim_emitRows(self, (size_t)XAbstractItemModel_rowsInserted_signal,
+                  row, count);
+    return true;
+}
+
+bool XAbstractItemModel_removeRows(XAbstractItemModel* self, int row,
+                                   int count)
+{
+    int64_t at;
+    if (!self || row < 0 || row >= self->m_rows || count <= 0) return false;
+    if (count > self->m_rows - row) count = self->m_rows - row;
+    at = (int64_t)row * self->m_cols;
+    /* 元素回调对被裁剪格逐个释放（XString*），无泄漏。 */
+    XVector_remove_base(&self->m_cells, at,
+                        (int64_t)count * self->m_cols);
+    if (self->m_rows > 0)
+        XVector_remove_base(&self->m_vHeader, row, count);
+    self->m_rows -= count;
+    xaim_emitRows(self, (size_t)XAbstractItemModel_rowsRemoved_signal,
+                  row, count);
+    return true;
+}
+
+bool XAbstractItemModel_insertColumns(XAbstractItemModel* self, int column,
+                                      int count)
+{
+    int k;
+    if (!self || column < 0 || column > self->m_cols || count <= 0)
+        return false;
+    /* 逐列插入（单列一步）：行主序扁平向量上，从末行向前在每行
+       column 位插入一个空槽（行距随已插入列数同步加一），避免整段
+       搬移的索引换算。 */
+    for (k = 0; k < count; ++k) {
+        int r;
+        XString* blank = NULL;
+        for (r = self->m_rows - 1; r >= 0; --r) {
+            XVector_insert_2(&self->m_cells,
+                             (int64_t)r * (self->m_cols + 1) + column,
+                             &blank);
+        }
+        ++self->m_cols;
+    }
+    /* 列头：在 column 处插入 count 个空槽。 */
+    if (self->m_cols > 0) {
+        XString** headBlanks = (XString**)XCalloc_System(
+            (size_t)count, sizeof(XString*));
+        if (headBlanks) {
+            XVector_insert_1_base(&self->m_hHeader, column, headBlanks,
+                                  (size_t)count);
+            XFree_System(headBlanks);
+        }
+    }
+    xaim_emitRows(self, (size_t)XAbstractItemModel_columnsInserted_signal,
+                  column, count);
+    return true;
+}
+
+bool XAbstractItemModel_removeColumns(XAbstractItemModel* self, int column,
+                                      int count)
+{
+    int k;
+    if (!self || column < 0 || column >= self->m_cols || count <= 0)
+        return false;
+    if (count > self->m_cols - column) count = self->m_cols - column;
+    for (k = 0; k < count; ++k) {
+        int r;
+        for (r = self->m_rows - 1; r >= 0; --r) {
+            /* 元素回调对被移除格逐个释放；行距随已移除列数同步减一。 */
+            XVector_remove_base(&self->m_cells,
+                                (int64_t)r * (self->m_cols - 1) + column, 1);
+        }
+        --self->m_cols;
+    }
+    XVector_remove_base(&self->m_hHeader, column, count);
+    xaim_emitRows(self, (size_t)XAbstractItemModel_columnsRemoved_signal,
+                  column, count);
+    return true;
+}
+
+void XAbstractItemModel_sort(XAbstractItemModel* self, int column, int order)
+{
+    int i;
+    int j;
+    if (!self || column < 0 || column >= self->m_cols || self->m_rows < 2)
+        return;
+    /* 稳定交换排序（同 XTableWidget_sortItems 口径）：按 UTF-8 字典序
+       比较 column 列文本，order 0=升序、非 0=降序；整行单元格交换。 */
+    for (i = 0; i < self->m_rows; ++i) {
+        for (j = 0; j < self->m_rows - 1 - i; ++j) {
+            XString** a = xaim_cellSlot(self, j, column);
+            XString** b = xaim_cellSlot(self, j + 1, column);
+            const char* sa = (a && *a) ? XString_toUtf8(*a) : "";
+            const char* sb = (b && *b) ? XString_toUtf8(*b) : "";
+            bool swap = (order == 0) ? (XStrcmp(sa, sb) > 0)
+                                     : (XStrcmp(sa, sb) < 0);
+            if (swap) {
+                int c;
+                for (c = 0; c < self->m_cols; ++c) {
+                    XString** x = xaim_cellSlot(self, j, c);
+                    XString** y = xaim_cellSlot(self, j + 1, c);
+                    XString* tmp = *x;
+                    *x = *y;
+                    *y = tmp;
+                }
+            }
+        }
+    }
+    xaim_emitVoid(self, (size_t)XAbstractItemModel_layoutChanged_signal);
 }
 
 /* ==================== 信号 ==================== */
@@ -388,6 +571,36 @@ void* XAbstractItemModel_rowsRemoved_signal(XAbstractItemModel* self,
     xaim_emitRows(self, (size_t)XAbstractItemModel_rowsRemoved_signal,
                   row, count);
     return (void*)(size_t)XAbstractItemModel_rowsRemoved_signal;
+}
+
+void* XAbstractItemModel_headerDataChanged_signal(XAbstractItemModel* self,
+                                                  int orientation, int first,
+                                                  int last)
+{
+    xaim_emitHeaderDataChanged(self, orientation, first, last);
+    return (void*)(size_t)XAbstractItemModel_headerDataChanged_signal;
+}
+
+void* XAbstractItemModel_columnsInserted_signal(XAbstractItemModel* self,
+                                                int column, int count)
+{
+    xaim_emitRows(self, (size_t)XAbstractItemModel_columnsInserted_signal,
+                  column, count);
+    return (void*)(size_t)XAbstractItemModel_columnsInserted_signal;
+}
+
+void* XAbstractItemModel_columnsRemoved_signal(XAbstractItemModel* self,
+                                               int column, int count)
+{
+    xaim_emitRows(self, (size_t)XAbstractItemModel_columnsRemoved_signal,
+                  column, count);
+    return (void*)(size_t)XAbstractItemModel_columnsRemoved_signal;
+}
+
+void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self)
+{
+    xaim_emitVoid(self, (size_t)XAbstractItemModel_layoutChanged_signal);
+    return (void*)(size_t)XAbstractItemModel_layoutChanged_signal;
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */

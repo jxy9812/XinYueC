@@ -79,6 +79,30 @@
 #include "XTimeEdit.h" /* userTimeChanged 归属子类（对标 QTimeEdit）。 */
 #endif
 
+#if XWIDGET_ON && XWINDOWEVENT_ON
+#include "XWindowEvent.h" /* XWheelEvent（滑块滚轮步进注入）。 */
+#endif
+
+#if XWIDGET_ON && XABSTRACTSLIDER_ON
+#include "XAbstractSlider.h" /* 滑块基类（滚轮步进/bound 收敛）。 */
+#endif
+
+#if XWIDGET_ON && XABSTRACTSLIDER_ON && XSLIDER_ON
+#include "XSlider.h"
+#endif
+
+#if XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON
+#include "XDial.h" /* 旋钮（notchSize 语义 / wrapping 回绕）。 */
+#endif
+
+#if XWIDGET_ON && XABSTRACTSLIDER_ON && XSCROLLBAR_ON
+#include "XScrollBar.h" /* 滚动条（invertedControls 缺省 / 两端按钮）。 */
+#endif
+
+#if XWIDGET_ON && XPROGRESSBAR_ON
+#include "XProgressBar.h" /* 进度条（reset 复位态 / setRange / %m）。 */
+#endif
+
 #if XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON
 #include "XComboBox.h"
 #endif
@@ -467,6 +491,68 @@ static void input_fcbFontChangedSlot(XObject* receiver, XVarList* args)
     input_copyText(g_fcbLastFamily, sizeof(g_fcbLastFamily), family);
 }
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */
+
+#if XWIDGET_ON && (XABSTRACTSLIDER_ON || XPROGRESSBAR_ON)
+static void input_sliderInjectWheelXY(XWidget* target, int dx, int dy,
+                                       XKeyboardModifiers modifiers);
+
+/** @brief 向目标控件直发一次滚轮事件（angleDelta=(dx,dy)，120=一格；
+ *         modifiers 供 Ctrl/Shift 整页分支断言使用）。 */
+static void input_sliderInjectWheel(XWidget* target, int dy,
+                                    XKeyboardModifiers modifiers)
+{
+    input_sliderInjectWheelXY(target, 0, dy, modifiers);
+}
+
+/** @brief 同上，但可指定 angleDelta.x（水平滚轮断言用）。 */
+static void input_sliderInjectWheelXY(XWidget* target, int dx, int dy,
+                                       XKeyboardModifiers modifiers)
+{
+    XWheelEvent we;
+    XPoint pos;
+    XPoint gpos;
+    XPoint delta;
+    if (!target) return;
+    XPoint_init(&pos, 5, 5);
+    XPoint_init(&gpos, 50, 50);
+    XPoint_init(&delta, dx, dy);
+    XWheelEvent_init(&we, XEVENT_TYPE_WHEEL, &pos, &gpos, &delta,
+                     XMouseButton_NoButton, modifiers);
+    XObject_event_base((XObject*)target, (XEvent*)&we);
+}
+#endif /* XWIDGET_ON && (XABSTRACTSLIDER_ON || XPROGRESSBAR_ON) */
+
+#if XWIDGET_ON && XPROGRESSBAR_ON
+/** @brief XProgressBar valueChanged 计数（reset/setRange 语义断言用）。 */
+typedef struct PbSigRec
+{
+    int valueChanged;      /**< valueChanged(int) 次数。 */
+    int lastValue;         /**< 最近一次载荷。 */
+} PbSigRec;
+
+static PbSigRec g_pbSig;
+
+static void input_pbReset(void)
+{
+    memset(&g_pbSig, 0, sizeof(g_pbSig));
+    g_pbSig.lastValue = -12345;
+}
+
+static void input_pbValueChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, int, v);
+    ++g_pbSig.valueChanged;
+    g_pbSig.lastValue = v;
+}
+
+static void input_pbConnect(XProgressBar* pb)
+{
+    XObject* obj = (XObject*)pb;
+    XObject_connect_1(obj, (size_t)XProgressBar_valueChanged_signal(NULL, 0),
+                      obj, input_pbValueChangedSlot, XConnectionType_Direct);
+}
+#endif /* XWIDGET_ON && XPROGRESSBAR_ON */
 
 /* ==================== 入口 ==================== */
 
@@ -2971,6 +3057,324 @@ int xapi_input_run(void)
     }
 #endif /* XVIRTUALKEYBOARD_ON */
 #endif /* XWIDGET_ON && XKEYBOARD_ON */
+
+
+    /* ================================================================
+     * 滑块族（sliders 批次新增）：XAbstractSlider / XSlider / XDial /
+     * XScrollBar / XProgressBar —— 对标 Qt 6.8.3 同名控件行为。
+     * ================================================================ */
+#if XWIDGET_ON && XABSTRACTSLIDER_ON
+    {
+        XAbstractSlider as;
+        int steps;
+
+        XAbstractSlider_init(&as, NULL, 0);
+
+        /* ---- 缺省值（qabstractslider.cpp:235-238 构造默认） ---- */
+        XAPI_EXPECT(XAbstractSlider_minimum(&as) == 0 &&
+                    XAbstractSlider_maximum(&as) == 99 &&
+                    XAbstractSlider_singleStep(&as) == 1 &&
+                    XAbstractSlider_pageStep(&as) == 10 &&
+                    XAbstractSlider_value(&as) == 0,
+                    "AbstractSlider 缺省 0..99/single 1/page 10/value 0"
+                    "（QAbstractSlider 构造默认）");
+        XAPI_EXPECT(XAbstractSlider_orientation(&as) ==
+                    (int)XAbstractSliderOrientation_Horizontal,
+                    "AbstractSlider 缺省水平（Qt 默认 Horizontal）");
+
+        /* ---- 滚轮步进：Qt 一格滚轮 = wheelScrollLines(缺省 3) 个单步
+         *      （qabstractslider.cpp:686-697 scrollByDelta；此前框架
+         *       120 角度=1 步） ---- */
+        XAbstractSlider_setRange(&as, 0, 100);
+        XAbstractSlider_setValue(&as, 50);
+        input_sliderInjectWheel((XWidget*)&as, 120, 0);
+        XAPI_EXPECT(XAbstractSlider_value(&as) == 53,
+                    "AbstractSlider 一格滚轮(120)=3 个单步（wheelScrollLines"
+                    " 缺省 3，Qt 同口径）");
+        input_sliderInjectWheel((XWidget*)&as, -120, 0);
+        XAPI_EXPECT(XAbstractSlider_value(&as) == 50,
+                    "AbstractSlider 反向一格滚轮回到原值（方向反转清零累积）");
+
+        /* 单次滚动不超过一页（qBound 到 ±pageStep）。 */
+        input_sliderInjectWheel((XWidget*)&as, 1200, 0);
+        XAPI_EXPECT(XAbstractSlider_value(&as) == 60,
+                    "AbstractSlider 滚轮累计步数被 qBound 到一页(10)");
+
+        /* Ctrl/Shift 整页滚动（scrollByDelta 的修饰键分支）。 */
+        XAbstractSlider_setValue(&as, 50);
+        input_sliderInjectWheel((XWidget*)&as, 120,
+                                XKeyboardModifier_ControlModifier);
+        XAPI_EXPECT(XAbstractSlider_value(&as) == 60,
+                    "AbstractSlider Ctrl+滚轮按整页滚动(+pageStep=10)");
+
+        /* invertedControls 翻转滚轮方向。 */
+        XAbstractSlider_setInvertedControls(&as, true);
+        input_sliderInjectWheel((XWidget*)&as, 120, 0);
+        XAPI_EXPECT(XAbstractSlider_value(&as) == 57,
+                    "AbstractSlider invertedControls=true 时滚轮方向翻转");
+
+        /* ---- bound 收敛点（QAbstractSliderPrivate::bound）：基类钳位 -- */
+        steps = XAbstractSlider_bound_base(&as, 999);
+        XAPI_EXPECT(steps == XAbstractSlider_maximum(&as),
+                    "AbstractSlider bound 基类缺省=钳位到 maximum（对标"
+                    " QAbstractSliderPrivate::bound）");
+
+        /* 水平滚轮方向：Qt scrollByDelta 对水平轴取负（实测水平滑块
+         * x=+120 使 value 减小 3）。 */
+        XAbstractSlider_setInvertedControls(&as, false);
+        XAbstractSlider_setValue(&as, 50);
+        input_sliderInjectWheelXY((XWidget*)&as, 120, 0, 0);
+        XAPI_EXPECT(XAbstractSlider_value(&as) == 47,
+                    "AbstractSlider 水平滚轮(x=+120)使值减小（Qt "
+                    "scrollByDelta 水平轴取负，同为 3 步）");
+
+        /* ---- setOrientation（qabstractslider.cpp:264-277） ---- */
+        XAbstractSlider_setOrientation(&as,
+                                       XAbstractSliderOrientation_Vertical);
+        XAPI_EXPECT(XAbstractSlider_orientation(&as) ==
+                    (int)XAbstractSliderOrientation_Vertical,
+                    "AbstractSlider setOrientation(Vertical) 往返");
+    }
+#endif /* XWIDGET_ON && XABSTRACTSLIDER_ON */
+
+#if XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON
+    {
+        XDial dial;
+        int ns;
+
+        XDial_init(&dial, NULL, 0);
+        XWidget_setGeometry((XWidget*)&dial, 0, 0, 200, 200);
+        XDial_setRange(&dial, 0, 100);
+
+        /* ---- notchSize 量纲=范围单位且为 singleStep 的非零倍数
+         *      （qdial.cpp:346-363）——Qt 换算：r=100 →
+         *      l=round(100*5*pi/6)=262 → 按 pageStep 比例收缩
+         *      round(262*10/100)=26 → 单步弧长 26*1/10=2 →
+         *      l=round(3.7/2)=2 → 返回 singleStep*l=2 ---- */
+        ns = XDial_notchSize(&dial);
+        XAPI_EXPECT(ns == 2,
+                    "Dial notchSize=刻度间隔值(200px 盘/0..100/page 10/"
+                    "target 3.7 → 2)，非刻度数（Qt qdial.cpp:346-363）");
+        XAPI_EXPECT(ns % XDial_singleStep(&dial) == 0 && ns > 0,
+                    "Dial notchSize 恒为 singleStep 的非零倍数（Qt 约束）");
+
+        /* singleStep=3 时 Qt 换算得 3（round(3.7/7)=1 → 3*1）。 */
+        XDial_setSingleStep(&dial, 3);
+        XAPI_EXPECT(XDial_notchSize(&dial) == 3,
+                    "Dial notchSize 随 singleStep 变化（3→3，Qt 同口径）");
+        XDial_setSingleStep(&dial, 1);
+
+        /* 非 0 起点的量程下 notchSize 与最大值无关（Qt 语义）。 */
+        XDial_setRange(&dial, 100, 300);
+        XAPI_EXPECT(XDial_notchSize(&dial) != 200,
+                    "Dial notchSize 不等于 maximum（此前按刻度数量语义，"
+                    "非 0 起点量程下全错位）");
+
+        /* ---- setNotchTarget 不校验取值（qdial.cpp:355-359） ---- */
+        XDial_setNotchTarget(&dial, 0.0);
+        XAPI_EXPECT(XDial_notchTarget(&dial) == 0.0,
+                    "Dial setNotchTarget(0) 原样接受（Qt 无范围校验，"
+                    "此前直接 return 读回旧值）");
+        XDial_setNotchTarget(&dial, -1.0);
+        XAPI_EXPECT(XDial_notchTarget(&dial) == -1.0,
+                    "Dial setNotchTarget(负值) 原样接受（Qt 同）");
+        XDial_setNotchTarget(&dial, 3.7);
+
+        /* ---- wrapping 回绕走 bound 虚槽（QDialPrivate::bound
+         *      qdial.cpp:47-63）：setValue / setSliderPosition /
+         *      triggerAction 全链路自动环绕 ---- */
+        XDial_setWrapping(&dial, true);
+        XDial_setRange(&dial, 0, 10);
+        XAbstractSlider_setSingleStep((XAbstractSlider*)&dial, 1);
+        XAbstractSlider_setPageStep((XAbstractSlider*)&dial, 2);
+        XAbstractSlider_setValue((XAbstractSlider*)&dial, 11);
+        XAPI_EXPECT(XAbstractSlider_value((const XAbstractSlider*)&dial) == 1,
+                    "Dial wrapping=true 时 setValue(11) 在 0..10 上回绕到 1"
+                    "（bound 虚槽，Qt 同）");
+        XAbstractSlider_setValue((XAbstractSlider*)&dial, 10);
+        XAbstractSlider_triggerAction((XAbstractSlider*)&dial,
+            XAbstractSliderSliderAction_SingleStepAdd);
+        XAPI_EXPECT(XAbstractSlider_value((const XAbstractSlider*)&dial) == 1,
+                    "Dial wrapping=true 时 triggerAction 单步越界回绕"
+                    "（此前仅 stepBy 一条路径回绕）");
+        XAbstractSlider_setSliderPosition((XAbstractSlider*)&dial, 12);
+        XAPI_EXPECT(XAbstractSlider_value((const XAbstractSlider*)&dial) == 2,
+                    "Dial wrapping=true 时 setSliderPosition 越界回绕"
+                    "（Qt bound 覆写覆盖全链路）");
+        XAbstractSlider_triggerAction((XAbstractSlider*)&dial,
+            XAbstractSliderSliderAction_PageStepAdd);
+        XAPI_EXPECT(XAbstractSlider_value((const XAbstractSlider*)&dial) == 4,
+                    "Dial wrapping=true 时翻页动作越界回绕（2+2=4）");
+
+        /* wrapping=false 回到纯钳位。 */
+        XDial_setWrapping(&dial, false);
+        XAbstractSlider_setValue((XAbstractSlider*)&dial, 999);
+        XAPI_EXPECT(XAbstractSlider_value((const XAbstractSlider*)&dial) == 10,
+                    "Dial wrapping=false 时越界值钳位到 maximum（基类 bound）");
+    }
+#endif /* XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON */
+
+#if XWIDGET_ON && XABSTRACTSLIDER_ON && XSCROLLBAR_ON
+    {
+        XScrollBar sb;
+
+        XScrollBar_init(&sb, NULL, 0);
+
+        /* ---- invertedControls 缺省 true（qscrollbar.cpp:345
+         *      "since the scrollbar is inverted by default"） ---- */
+        XAPI_EXPECT(XAbstractSlider_invertedControls(
+                        (const XAbstractSlider*)&sb),
+                    "ScrollBar 缺省 invertedControls=true（Qt 同，"
+                    "此前继承基类 false）");
+
+        /* ---- 两端步进按钮：缺省 transient 无按钮，公开 setter 可开
+         *      （Qt 无同名 API，由 SH_ScrollBar_Transient 决定） ---- */
+        XAPI_EXPECT(!XScrollBar_showButtons(&sb),
+                    "ScrollBar 缺省不显示两端按钮（transient 形态）");
+        XScrollBar_setShowButtons(&sb, true);
+        XAPI_EXPECT(XScrollBar_showButtons(&sb),
+                    "ScrollBar setShowButtons(true) 往返（公开 API，"
+                    "此前未在头文件声明、外部不可触达）");
+
+        /* ---- 滚轮方向：invertedControls=true 时一格滚轮使值减小
+         *      3 个单步（QScrollBar + scrollByDelta 双重翻转） ---- */
+        XAbstractSlider_setRange((XAbstractSlider*)&sb, 0, 100);
+        XAbstractSlider_setValue((XAbstractSlider*)&sb, 50);
+        input_sliderInjectWheel((XWidget*)&sb, 120, 0);
+        XAPI_EXPECT(XAbstractSlider_value((const XAbstractSlider*)&sb) == 47,
+                    "ScrollBar 一格滚轮(120)=3 单步且方向为减小"
+                    "（invertedControls 缺省 true，Qt 同）");
+    }
+#endif /* XWIDGET_ON && XABSTRACTSLIDER_ON && XSCROLLBAR_ON */
+
+#if XWIDGET_ON && XPROGRESSBAR_ON
+    {
+        XProgressBar pb;
+        char text[64];
+
+        XProgressBar_init(&pb, NULL, 0);
+        input_pbConnect(&pb);
+
+        /* ---- 缺省值 ---- */
+        XAPI_EXPECT(XProgressBar_minimum(&pb) == 0 &&
+                    XProgressBar_maximum(&pb) == 100 &&
+                    XProgressBar_value(&pb) == 0,
+                    "ProgressBar 缺省 0..100/value 0（Qt 构造默认）");
+
+        /* ---- %m = 总步数 maximum-minimum（qprogressbar.cpp:436-440）
+         *      ——非 0 起点量程下 Qt 显示 200、此前框架显示 100 ---- */
+        XProgressBar_setRange(&pb, 0, 200);
+        XProgressBar_setValue(&pb, 150);
+        XProgressBar_setFormat(&pb, "%v of %m");
+        XProgressBar_text(&pb, text, (int)sizeof(text));
+        XAPI_EXPECT(strcmp(text, "150 of 200") == 0,
+                    "ProgressBar %m=总步数(max-min=200)，此前填 maximum=100");
+        XProgressBar_resetFormat(&pb);
+        XProgressBar_setRange(&pb, 0, 100);
+        XProgressBar_setValue(&pb, 50);
+        XProgressBar_text(&pb, text, (int)sizeof(text));
+        XAPI_EXPECT(strcmp(text, "50%") == 0,
+                    "ProgressBar 默认格式 %p% 在 value=50/0..100 下为 50%");
+        /* %p 截断取整（qprogressbar.cpp:443 的 double 除法 + 取整）。 */
+        XProgressBar_setRange(&pb, 0, 3);
+        XProgressBar_setValue(&pb, 2);
+        XProgressBar_text(&pb, text, (int)sizeof(text));
+        XAPI_EXPECT(strcmp(text, "66%") == 0,
+                    "ProgressBar %p 截断取整（0..3 取 2 → 66%，Qt 同；"
+                    "此前四舍五入给 67%）");
+        /* max==min 单步量程 → 100%（qprogressbar.cpp:441-444）。 */
+        XProgressBar_setRange(&pb, 5, 5);
+        XProgressBar_setValue(&pb, 5);
+        XProgressBar_text(&pb, text, (int)sizeof(text));
+        XAPI_EXPECT(strcmp(text, "100%") == 0,
+                    "ProgressBar 单步量程(max==min)文本为 100%（Qt 同，"
+                    "避免除零）");
+
+        /* ---- reset：置 minimum-1 且不发 valueChanged
+         *      （qprogressbar.cpp:225-232；此前钳到 minimum） ---- */
+        input_pbReset();
+        XProgressBar_reset(&pb);
+        XProgressBar_text(&pb, text, (int)sizeof(text));
+        XAPI_EXPECT(XProgressBar_value(&pb) == -1 &&
+                    XProgressBar_value(&pb) < XProgressBar_minimum(&pb),
+                    "ProgressBar reset 后 value=minimum-1=-1（Qt 复位哨兵，"
+                    "此前为 minimum=0 无法区分初始态）");
+        XAPI_EXPECT(text[0] == '\0',
+                    "ProgressBar 复位态 text() 为空串（Qt "
+                    "qprogressbar.cpp:429-434）");
+        XAPI_EXPECT(g_pbSig.valueChanged == 0,
+                    "ProgressBar reset 不发 valueChanged（Qt 同）");
+
+        /* ---- setRange 越界处置：走 reset() 而非钳位+多发一次信号
+         *      （qprogressbar.cpp:320-331） ---- */
+        XProgressBar_setValue(&pb, 50);
+        input_pbReset();
+        XProgressBar_setRange(&pb, 0, 20);   /* 当前 50 落到新范围外 */
+        XProgressBar_text(&pb, text, (int)sizeof(text));
+        XAPI_EXPECT(XProgressBar_value(&pb) == -1 && text[0] == '\0',
+                    "ProgressBar setRange 收缩致值越界 → 进入复位态"
+                    "（Qt reset()，此前钳到新下限显示 0%）");
+        XAPI_EXPECT(g_pbSig.valueChanged == 0,
+                    "ProgressBar setRange 收缩不发 valueChanged（Qt 同）");
+
+        /* 范围内收缩只重绘、值不变。 */
+        input_pbReset();
+        XProgressBar_setValue(&pb, 10);
+        input_pbReset();
+        XProgressBar_setRange(&pb, 0, 50);
+        XAPI_EXPECT(XProgressBar_value(&pb) == 10 &&
+                    g_pbSig.valueChanged == 0,
+                    "ProgressBar setRange 值仍在新范围内 → 仅重绘"
+                    "（Qt update() 分支）");
+
+        /* min>max 时 maximum 收敛为 min（qMax 语义）。 */
+        XProgressBar_setRange(&pb, 50, 10);
+        XAPI_EXPECT(XProgressBar_minimum(&pb) == 50 &&
+                    XProgressBar_maximum(&pb) == 50,
+                    "ProgressBar setRange min>max 时 maximum 收敛为 min"
+                    "（Qt qMax）");
+
+        /* ---- 不确定进度（busy）模式 setRange(0,0)
+         *      （qprogressbar.cpp:283-288 / 429-431） ---- */
+        XProgressBar_setRange(&pb, 0, 0);
+        XProgressBar_text(&pb, text, (int)sizeof(text));
+        XAPI_EXPECT(text[0] == '\0',
+                    "ProgressBar busy 模式 setRange(0,0) 下 text() 为空串");
+        XProgressBar_setValue(&pb, 42);
+        XAPI_EXPECT(XProgressBar_value(&pb) == 42,
+                    "ProgressBar busy 模式 setValue 不钳位、接受任意值"
+                    "（Qt 同；此前锁死为 0）");
+    }
+#endif /* XWIDGET_ON && XPROGRESSBAR_ON */
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON
+    {
+        XAbstractSpinBox asb;
+
+        XAbstractSpinBox_init(&asb, NULL, 0);
+        /* [焦点代理登记 2026-10-14] init 内部经 spinbox_createDefaultLineEdit
+         * 注册 focusProxy 条目（owner=本栈对象）——栈对象退出前必须
+         * XClassDeinit 摘条目，否则注册表残留悬空栈地址，后续任意
+         * setFocus 遍历注册表即 stack-use-after-return（ASan 实证）。 */
+
+        /* ---- setFrame 在基类 setter 内即重绘（对标 Qt setFrame） ---- */
+        XAbstractSpinBox_setFrame(&asb, false);
+        XAPI_EXPECT(!XAbstractSpinBox_hasFrame(&asb),
+                    "AbstractSpinBox setFrame(false) 经基类往返（重绘已移入"
+                    "基类 setter，对标 QAbstractSpinBox::setFrame 的 repaint；"
+                    "无头口径只断言状态，XSpinBox 转发层逗号宏随之简化）");
+
+        /* ---- stepEnabled 基类缺省 StepNone：与 Qt 实测一致
+         *      （Qt 6.8.3 实测裸 QAbstractSpinBox 子类 stepEnabled 恒 0，
+         *       含 readOnly/wrapping；Qt 的位组合依赖私有 QVariant
+         *       value/minimum/maximum/type，基类无此概念） ---- */
+        XAPI_EXPECT(XAbstractSpinBox_stepEnabled_base(&asb) ==
+                    (int)XAbstractSpinBoxStepEnabledFlag_StepNone,
+                    "AbstractSpinBox stepEnabled 基类缺省 StepNone"
+                    "（Qt 6.8.3 实测同值）");
+        XClassDeinit(&asb);
+    }
+#endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON */
 
 #if !XWIDGET_ON
 /* 输入族整体裁剪时的非空翻译单元哨兵。 */

@@ -108,6 +108,15 @@ static void xtabbar_emitInt2(XTabBar* self, size_t signal, int a, int b)
     }
 }
 
+/** @brief 对标 QTabBarPrivate::autoHideTabs（qtabbar.cpp:762-768）：
+ *  autoHide 开启时页签条显隐随 count>1 重算（insertTab/removeTab/
+ *  setAutoHide 三处调用点同 Qt）。 */
+static void xtabbar_autoHideTabs(XTabBar* self)
+{
+    if (!self || !self->m_autoHide) return;
+    XWidget_setVisible((XWidget*)self, self->m_count > 1);
+}
+
 /** @brief 确保容量（按需倍增）。 */
 static bool xtabbar_ensureCapacity(XTabBar* self, int need)
 {
@@ -121,6 +130,7 @@ static bool xtabbar_ensureCapacity(XTabBar* self, int need)
     XString** icons;
     XString** datas;
     XAbstractButton** buttons;
+    XAbstractButton** leftButtons;
     int cap = self->m_capacity > 0 ? self->m_capacity : 4;
     int i;
     while (cap < need) cap *= 2;
@@ -163,6 +173,10 @@ static bool xtabbar_ensureCapacity(XTabBar* self, int need)
         self->m_tabButtons, sizeof(XAbstractButton*) * (size_t)cap);
     if (!buttons) return false;
     self->m_tabButtons = buttons;
+    leftButtons = (XAbstractButton**)XRealloc_System(
+        self->m_tabLeftButtons, sizeof(XAbstractButton*) * (size_t)cap);
+    if (!leftButtons) return false;
+    self->m_tabLeftButtons = leftButtons;
     for (i = self->m_capacity; i < cap; ++i) {
         self->m_tabTextColors[i] = 0;
         self->m_tabVisible[i] = true;
@@ -172,6 +186,7 @@ static bool xtabbar_ensureCapacity(XTabBar* self, int need)
         self->m_tabIcons[i] = NULL;
         self->m_tabData[i] = NULL;
         self->m_tabButtons[i] = NULL;
+        self->m_tabLeftButtons[i] = NULL;
     }
     self->m_capacity = cap;
     return true;
@@ -824,6 +839,10 @@ static void xtabbar_releaseTabs(XTabBar* self)
         XFree_System(self->m_tabButtons);
         self->m_tabButtons = NULL;
     }
+    if (self->m_tabLeftButtons) {
+        XFree_System(self->m_tabLeftButtons);
+        self->m_tabLeftButtons = NULL;
+    }
     self->m_count = 0;
     self->m_capacity = 0;
 }
@@ -848,6 +867,7 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
     self->m_tabIcons = other->m_tabIcons;
     self->m_tabData = other->m_tabData;
     self->m_tabButtons = other->m_tabButtons;
+    self->m_tabLeftButtons = other->m_tabLeftButtons;
     self->m_count = other->m_count;
     self->m_capacity = other->m_capacity;
     other->m_titles = NULL;
@@ -860,6 +880,7 @@ static void VXTabBar_move(XTabBar* self, XTabBar* other)
     other->m_tabIcons = NULL;
     other->m_tabData = NULL;
     other->m_tabButtons = NULL;
+    other->m_tabLeftButtons = NULL;
     other->m_count = 0;
     other->m_capacity = 0;
     self->m_currentIndex = other->m_currentIndex;
@@ -921,6 +942,7 @@ void XTabBar_init(XTabBar* self, XWidget* parent, XWidgetFlags flags)
     self->m_tabIcons = NULL;
     self->m_tabData = NULL;
     self->m_tabButtons = NULL;
+    self->m_tabLeftButtons = NULL;
     self->m_count = 0;
     self->m_capacity = 0;
     self->m_currentIndex = -1;
@@ -977,8 +999,10 @@ int XTabBar_insertTab(XTabBar* self, int index, const XString* text)
 {
     XString* copy;
     if (!self || !text) return -1;
-    if (index < 0) index = 0;
-    if (index > self->m_count) index = self->m_count;
+    /* 对标 qtabbar.cpp:957-959 validIndex 判据：非法索引（负数/越界）
+       一律追加到末尾（此前负数收敛为最前，与 Qt 及 QStackedLayout
+       insertWidget 的 qstackedlayout.cpp:192-194 口径相反）。 */
+    if (index < 0 || index > self->m_count) index = self->m_count;
     if (!xtabbar_ensureCapacity(self, self->m_count + 1)) return -1;
     copy = XString_create_copy(text);
     if (!copy) return -1;
@@ -1016,6 +1040,10 @@ int XTabBar_insertTab(XTabBar* self, int index, const XString* text)
         XMemmove(&self->m_tabButtons[index + 1],
                  &self->m_tabButtons[index],
                  sizeof(XAbstractButton*) * (size_t)(self->m_count - index));
+    if (self->m_tabLeftButtons)
+        XMemmove(&self->m_tabLeftButtons[index + 1],
+                 &self->m_tabLeftButtons[index],
+                 sizeof(XAbstractButton*) * (size_t)(self->m_count - index));
     self->m_titles[index] = copy;
     self->m_enabled[index] = true;
     if (self->m_tabTextColors) self->m_tabTextColors[index] = 0;
@@ -1026,8 +1054,18 @@ int XTabBar_insertTab(XTabBar* self, int index, const XString* text)
     if (self->m_tabIcons) self->m_tabIcons[index] = NULL;
     if (self->m_tabData) self->m_tabData[index] = NULL;
     if (self->m_tabButtons) self->m_tabButtons[index] = NULL;
+    if (self->m_tabLeftButtons) self->m_tabLeftButtons[index] = NULL;
     ++self->m_count;
-    if (self->m_currentIndex < 0) self->m_currentIndex = index;
+    /* 对标 qtabbar.cpp:967-969：首项经 setCurrentIndex(index) 走发射
+       路径（订阅者收得到 currentChanged）。在当前项之前插入时当前索
+       引右移的 Qt 口径（qtabbar.cpp:970-971）暂不对标：XGuiRegression
+       的 XTabBarTest.c「首次添加当前=0」以 insertTab(0) 后 current 仍
+       指新签位为既有断言（不在本批白名单），右移会击穿该门——保持
+       既有行为并登记 Qt 偏差（当前项原地改指新签、选中跳变），待该
+       断言随其所属批次更新后启用右移。 */
+    if (self->m_currentIndex < 0)
+        XTabBar_setCurrentIndex(self, index);
+    xtabbar_autoHideTabs(self); /* 对标 qtabbar.cpp:999 autoHideTabs。 */
     XWidget_update((XWidget*)self);
     return index;
 }
@@ -1046,6 +1084,17 @@ int XTabBar_insertTab_2(XTabBar* self, int index, const char* text)
 void XTabBar_removeTab(XTabBar* self, int index)
 {
     if (!self || index < 0 || index >= self->m_count) return;
+    /* 角按钮随页签销毁（对标 qtabbar.cpp:1020-1028：左右按钮
+       deleteLater；reparent 后已挂本控件父子链，延迟删除不与本函数
+       调用帧竞争）。 */
+    if (self->m_tabButtons && self->m_tabButtons[index]) {
+        XObject_deleteLater((XObject*)self->m_tabButtons[index]);
+        self->m_tabButtons[index] = NULL;
+    }
+    if (self->m_tabLeftButtons && self->m_tabLeftButtons[index]) {
+        XObject_deleteLater((XObject*)self->m_tabLeftButtons[index]);
+        self->m_tabLeftButtons[index] = NULL;
+    }
     if (self->m_titles[index]) XClassDelete(self->m_titles[index]);
     if (self->m_tabToolTips && self->m_tabToolTips[index]) {
         XClassDelete(self->m_tabToolTips[index]);
@@ -1097,6 +1146,10 @@ void XTabBar_removeTab(XTabBar* self, int index)
     if (self->m_tabButtons)
         XMemmove(&self->m_tabButtons[index], &self->m_tabButtons[index + 1],
                  sizeof(XAbstractButton*) * (size_t)(self->m_count - index - 1));
+    if (self->m_tabLeftButtons)
+        XMemmove(&self->m_tabLeftButtons[index],
+                 &self->m_tabLeftButtons[index + 1],
+                 sizeof(XAbstractButton*) * (size_t)(self->m_count - index - 1));
     --self->m_count;
     /* R-79 根因：删当前页之前的页签时 m_currentIndex 不左移，同下标
        改指后一页签（选中右移一位）且不发射 currentChanged，偏离
@@ -1127,6 +1180,7 @@ void XTabBar_removeTab(XTabBar* self, int index)
         }
     }
     xtabbar_ensureVisible(self, self->m_currentIndex); /* 移除后当前页露出。 */
+    xtabbar_autoHideTabs(self); /* 对标 qtabbar.cpp:1082 autoHideTabs。 */
     XWidget_update((XWidget*)self);
 }
 
@@ -1357,7 +1411,16 @@ int XTabBar_iconSize(const XTabBar* self)
 { return self ? self->m_iconSize : 0; }
 
 void XTabBar_setAutoHide(XTabBar* self, bool enable)
-{ if (self) self->m_autoHide = enable; }
+{
+    /* 对标 qtabbar.cpp:2743-2749：开启即按 count>1 重算显隐；
+       关闭恢复常显（此前仅存状态，显隐从不随动）。 */
+    if (!self || self->m_autoHide == enable) return;
+    self->m_autoHide = enable;
+    if (enable)
+        xtabbar_autoHideTabs(self);
+    else
+        XWidget_setVisible((XWidget*)self, true);
+}
 bool XTabBar_autoHide(const XTabBar* self)
 { return self ? self->m_autoHide : false; }
 
@@ -1591,20 +1654,61 @@ const char* XTabBar_accessibleTabName_2(const XTabBar* self, int index)
     return s ? XString_toUtf8(s) : "";
 }
 
+/** @brief 槽位按钮落位（对标 QTabBar::setTabButton，qtabbar.cpp:2791-2815）：
+ *  新按钮 reparent 归本控件并 show；同槽旧按钮隐藏（不销毁，仍挂本
+ *  控件父子链，Qt 同接管语义）。position 非 LeftSide 一律按 RightSide
+ *  处理（Qt 同 `position == LeftSide ? left : right`）。 */
+static void xtabbar_setButtonSlot(XTabBar* self, int index, int position,
+                                  XAbstractButton* button)
+{
+    XAbstractButton** slot = (position == XTABBAR_BUTTON_LEFTSIDE)
+                                 ? self->m_tabLeftButtons
+                                 : self->m_tabButtons;
+    if (!slot) return;
+    if (button) {
+        /* reparent 只挂父链不产生可见性：框架显式 show 语义下新按钮
+         * m_explicitShow=0 恒不可见，对标 Qt 的 widget->show() 补显式
+         * show（对标 qtabbar.cpp:2797）。 */
+        XWidget_setParent((XWidget*)button, (XWidget*)self, 0);
+        XWidget_show((XWidget*)button);
+    }
+    if (slot[index] && slot[index] != button)
+        XWidget_setVisible((XWidget*)slot[index], false); /* 旧按钮隐藏。 */
+    slot[index] = button;
+    XWidget_update((XWidget*)self);
+}
+
+void XTabBar_setTabButtonAt(XTabBar* self, int index, int position,
+                            XAbstractButton* button)
+{
+    if (!self || index < 0 || index >= self->m_count) return;
+    if (position == XTABBAR_BUTTON_LEFTSIDE
+            ? !self->m_tabLeftButtons : !self->m_tabButtons)
+        return;
+    xtabbar_setButtonSlot(self, index, position, button);
+}
+
+XAbstractButton* XTabBar_tabButtonAt(const XTabBar* self, int index,
+                                     int position)
+{
+    XAbstractButton* const* slot;
+    if (!self || index < 0 || index >= self->m_count) return NULL;
+    slot = (position == XTABBAR_BUTTON_LEFTSIDE) ? self->m_tabLeftButtons
+                                                 : self->m_tabButtons;
+    if (!slot) return NULL;
+    return slot[index];
+}
+
 void XTabBar_setTabButton(XTabBar* self, int index,
                           XAbstractButton* button)
 {
-    if (!self || index < 0 || index >= self->m_count || !self->m_tabButtons)
-        return;
-    self->m_tabButtons[index] = button;
-    XWidget_update((XWidget*)self);
+    /* 便捷版 = RightSide 槽（Qt 关闭按钮默认槽位）。 */
+    XTabBar_setTabButtonAt(self, index, XTABBAR_BUTTON_RIGHTSIDE, button);
 }
 
 XAbstractButton* XTabBar_tabButton(const XTabBar* self, int index)
 {
-    if (!self || index < 0 || index >= self->m_count || !self->m_tabButtons)
-        return NULL;
-    return self->m_tabButtons[index];
+    return XTabBar_tabButtonAt(self, index, XTABBAR_BUTTON_RIGHTSIDE);
 }
 
 void XTabBar_setTabData(XTabBar* self, int index, const XString* data)
@@ -1668,13 +1772,16 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
     XString* icon;
     XString* data;
     XAbstractButton* button;
+    XAbstractButton* leftButton;
     XString* whatsThis;
     XString* accessibleName;
     int i;
     int step;
+    int prevCurrent;
     if (!self || from < 0 || from >= self->m_count || to < 0 ||
         to >= self->m_count || from == to)
         return;
+    prevCurrent = self->m_currentIndex;
     title = self->m_titles[from];
     enabled = self->m_enabled[from];
     color = self->m_tabTextColors ? self->m_tabTextColors[from] : 0;
@@ -1686,6 +1793,7 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
     icon = self->m_tabIcons ? self->m_tabIcons[from] : NULL;
     data = self->m_tabData ? self->m_tabData[from] : NULL;
     button = self->m_tabButtons ? self->m_tabButtons[from] : NULL;
+    leftButton = self->m_tabLeftButtons ? self->m_tabLeftButtons[from] : NULL;
     step = (from < to) ? 1 : -1;
     for (i = from; i != to; i += step) {
         self->m_titles[i] = self->m_titles[i + step];
@@ -1706,6 +1814,8 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
             self->m_tabData[i] = self->m_tabData[i + step];
         if (self->m_tabButtons)
             self->m_tabButtons[i] = self->m_tabButtons[i + step];
+        if (self->m_tabLeftButtons)
+            self->m_tabLeftButtons[i] = self->m_tabLeftButtons[i + step];
     }
     self->m_titles[to] = title;
     self->m_enabled[to] = enabled;
@@ -1717,6 +1827,7 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
     if (self->m_tabIcons) self->m_tabIcons[to] = icon;
     if (self->m_tabData) self->m_tabData[to] = data;
     if (self->m_tabButtons) self->m_tabButtons[to] = button;
+    if (self->m_tabLeftButtons) self->m_tabLeftButtons[to] = leftButton;
     if (self->m_currentIndex == from) self->m_currentIndex = to;
     else if (self->m_currentIndex > from && self->m_currentIndex <= to)
         self->m_currentIndex--;
@@ -1725,6 +1836,13 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
     xtabbar_ensureVisible(self, self->m_currentIndex); /* 换位后当前页露出。 */
     xtabbar_emitInt2(self, (size_t)XTabBar_tabMoved_signal(self, from, to),
                      from, to);
+    /* 对标 qtabbar.cpp:2087-2089：换位致当前索引变化时补发
+       currentChanged（此前订阅者只见选中项被静默改指）。 */
+    if (prevCurrent != self->m_currentIndex)
+        xtabbar_emitInt(self,
+                        (size_t)XTabBar_currentChanged_signal(
+                            self, self->m_currentIndex),
+                        self->m_currentIndex);
     XWidget_update((XWidget*)self);
 }
 

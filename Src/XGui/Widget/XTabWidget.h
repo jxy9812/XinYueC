@@ -73,7 +73,8 @@ int XTabWidget_addTab(XTabWidget* self, XWidget* page, const XString* label);
 int XTabWidget_addTab_2(XTabWidget* self, XWidget* page, const char* label);
 /** @brief 插入页签（XString 主版本；对标 QTabWidget::insertTab）。
  * @param self 目标控件指针。
- * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param index 索引（0 起；负数/越界一律追加到末尾，对标
+ *        QStackedLayout::insertWidget）。
  * @param page 页控件借用指针；不能为 NULL。
  * @param label 借用 XString*；不能为 NULL。
  * @return 插入位置索引；参数无效时返回 -1。
@@ -82,7 +83,7 @@ int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
                          const XString* label);
 /** @brief 插入页签（UTF-8 兼容重载，转发主版本）。
  * @param self 目标控件指针。
- * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param index 索引（0 起；负数/越界一律追加到末尾，对标 Qt）。
  * @param page 页控件借用指针；不能为 NULL。
  * @param label UTF-8 文本；不能为 NULL。
  * @return 插入位置索引；参数无效时返回 -1。
@@ -204,8 +205,9 @@ void XTabWidget_setTabsClosable(XTabWidget* self, bool closable);
 bool XTabWidget_isMovable(const XTabWidget* self);
 void XTabWidget_setMovable(XTabWidget* self, bool movable);
 /** @brief 移除全部页签（对标 QTabWidget::clear）。
- * @details 等价于循环移除全部页；页控件按所有者规则一并释放，
- *          用户内容控件仅解除借用记录。
+ * @details 等价于循环 removeTab（Qt 同：qtabwidget.cpp:1403-1413
+ *          只摘页不删页）：内部页容器延迟销毁；页内容控件不销毁，
+ *          经摘父链归还调用方（转独立顶层并隐藏）。
  * @param self 目标控件；传入 NULL 时函数不执行任何操作。
  * @return 无返回值。
  */
@@ -279,7 +281,6 @@ void XTabWidget_setCornerWidget(XTabWidget* self, XWidget* widget, int corner);
 /* ==================== 信号（转发页签条） ==================== */
 
 void* XTabWidget_currentChanged_signal(XTabWidget* self, int index);
-void* XTabWidget_tabClicked_signal(XTabWidget* self);
 /** @brief tabCloseRequested(int) 信号地址（对标 QTabWidget::
  *         tabCloseRequested；载荷：页签索引）。
  * @details 发射点为“tabsClosable 且点击页签关闭按钮”——发射路径在

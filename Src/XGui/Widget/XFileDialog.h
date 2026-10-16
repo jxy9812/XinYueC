@@ -110,7 +110,7 @@ XCLASS_DEFINE_EXTEND_END(XFileDialog, XDialog)
 typedef struct XFileDialog
 {
     XDialog m_base;                /**< 基类成员；必须是第一个。 */
-    uint8_t m_fileMode;    /**< 文件模式；默认 ExistingFile。 */
+    uint8_t m_fileMode;    /**< 文件模式；默认 AnyFile（对标 Qt init）。 */
     uint8_t m_acceptMode;/**< 接受模式；默认 AcceptOpen。 */
     uint8_t m_viewMode;    /**< 视图模式；默认 Detail。 */
     XFileDialogOptions m_options;      /**< 选项位集；默认 0。 */
@@ -121,7 +121,9 @@ typedef struct XFileDialog
     XString* m_defaultSuffix;      /**< 默认后缀（拥有）。 */
     XString* m_labelTexts[5];      /**< 各 DialogLabel 的标签文本（拥有）。 */
     XString* m_directoryUrl;       /**< 目录 URL（拥有；对标 directoryUrl）。 */
-    XString* m_filter;             /**< 简单过滤器（拥有；对标 filter）。 */
+    int m_dirFilters;              /**< 目录枚举过滤位集（对标
+                                        filter(QDir::Filters)；位值
+                                        XDirFilter，默认 0）。 */
     XStringList* m_mimeTypeFilters;/**< MIME 过滤器列表（拥有）。 */
     XString* m_selectedMimeTypeFilter; /**< 当前选中 MIME 过滤器（拥有）。 */
     XStringList* m_history;        /**< 历史目录列表（拥有）。 */
@@ -173,9 +175,25 @@ void XFileDialog_setFileMode(XFileDialog* self, XFileDialogFileMode mode);
 /**
  * @brief      获取文件模式（对标 QFileDialog::fileMode）。
  * @param      self 目标对话框；可为 NULL。
- * @return     当前文件模式；无效时返回 XFileDialog_ExistingFile。
+ * @return     当前文件模式；无效时返回 XFileDialog_AnyFile（Qt 默认）。
  */
 XFileDialogFileMode XFileDialog_fileMode(const XFileDialog* self);
+/**
+ * @brief      确认收口（对标 QFileDialog::accept 公有虚槽，qfiledialog.cpp:2706-2796）。
+ * @details    按 fileMode 分模式校验后结算收口：Directory 校验目录存在
+ *             且确为目录；AnyFile 对已存在目标（保存模式且未设
+ *             DontConfirmOverwrite）过覆盖确认询问（无问询 UI 的实例
+ *             路径按已确认放行）；ExistingFile/ExistingFiles 逐个校验
+ *             存在性，任一不存在即弹 itemNotFound（无问询 UI 时静默）
+ *             并 return 不关窗。校验通过恒发 filesSelected(files)，
+ *             仅当列表单元素时补发 fileSelected(first)（对标
+ *             emitFilesSelected，qfiledialog.cpp:686-692）。C 无虚
+ *             函数，沿用 XWizard_done 的同名漏斗惯例：GUI 路径的 OK
+ *             槽结算文件名后转发到这里，实例路径可直接调用。
+ * @param      self 目标对话框；NULL 时函数不执行任何操作。
+ * @return     无返回值。
+ */
+void XFileDialog_accept(XFileDialog* self);
 /**
  * @brief      设置接受模式（对标 QFileDialog::setAcceptMode）。
  * @param      self 目标对话框。
@@ -302,19 +320,23 @@ XString* XFileDialog_directoryUrl(const XFileDialog* self);
  */
 void XFileDialog_selectUrl(XFileDialog* self, const XString* url);
 /**
- * @brief      设置简单过滤器（对标 setFilter）。
+ * @brief      设置目录枚举过滤器位集（对标 setFilter(QDir::Filters)，
+ *             qfiledialog.h:94-95；位值取 XDir.h 的 XDirFilter 枚举：
+ *             Dirs|Files|Drives|NoSymLinks...，类型同域 int）。
+ * @note       与名称过滤器（setNameFilter 的 "Images (*.png)" 文本
+ *             通配）分属两个维度：本函数是目录枚举位标志（Qt 语义），
+ *             不做文本通配。
  * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。
- * @param      filter 过滤器文本；借用、深拷贝存储；可为 NULL 清空。
+ * @param      filters 目录枚举过滤位组合（XDirFilter 按位或）。
  * @return     无返回值。
  */
-void XFileDialog_setFilter(XFileDialog* self, const XString* filter);
+void XFileDialog_setFilter(XFileDialog* self, int filters);
 /**
- * @brief      获取简单过滤器副本（对标 filter）。
+ * @brief      获取目录枚举过滤器位集（对标 filter()，qfiledialog.h:92）。
  * @param      self 目标对话框；可为 NULL。
- * @return     新建的 XString 拷贝，调用方拥有，须 XClassDelete；
- *             未设置时返回空串。
+ * @return     当前过滤位组合；无效时返回 0。
  */
-XString* XFileDialog_filter(const XFileDialog* self);
+int XFileDialog_filter(const XFileDialog* self);
 /**
  * @brief      设置 MIME 过滤器列表（对标 setMimeTypeFilters）。
  * @param      self 目标对话框；传入 NULL 时函数不执行任何操作。

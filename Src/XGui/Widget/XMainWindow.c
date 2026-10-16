@@ -805,10 +805,42 @@ void XMainWindow_setMenuWidget(XMainWindow* self, XWidget* menuWidget)
 #if XMENU_ON
 XMenu* XMainWindow_createPopupMenu(XMainWindow* self)
 {
+    XMenu* menu;
+    int64_t i;
+    int64_t n;
     if (!self) return NULL;
     /* 父对象设为主窗口：调用方未释放时随主窗口析构级联销毁；
      * 所有权按 Qt 约定转移给调用方。 */
-    return XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, "");
+    menu = XMenu_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (XWidget*)self, "");
+    if (!menu) return NULL;
+    /* 对标 QMainWindow::createPopupMenu：填充各工具栏/停靠面板的
+       toggleViewAction（XMenu_insertAction 借用挂接，动作本体仍归
+       工具栏/停靠面板所有，Qt 同语义）。此前因 XMenu 缺"加入已有
+       动作"通道只能返回空菜单（头文件 @note 同步解除）。哨兵条目
+       （NULL 工具栏 = 分隔占位）跳过。 */
+#if XTOOLBAR_ON
+    if (self->m_toolBars) {
+        n = XVector_size_base((const XContainer*)self->m_toolBars);
+        for (i = 0; i < n; ++i) {
+            XToolBar* tb = *(XToolBar**)XVector_at_base(self->m_toolBars, i);
+            if (tb)
+                XMenu_insertAction(menu, NULL, XToolBar_toggleViewAction(tb));
+        }
+    }
+#endif
+#if XDOCKWIDGET_ON
+    if (self->m_docks) {
+        n = XVector_size_base((const XContainer*)self->m_docks);
+        for (i = 0; i < n; ++i) {
+            XDockWidget* dock =
+                *(XDockWidget**)XVector_at_base(self->m_docks, i);
+            if (dock)
+                XMenu_insertAction(menu, NULL,
+                                   XDockWidget_toggleViewAction(dock));
+        }
+    }
+#endif
+    return menu;
 }
 #endif /* XMENU_ON */
 

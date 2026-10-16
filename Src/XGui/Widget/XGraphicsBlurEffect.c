@@ -19,6 +19,7 @@
 #include "XWidget.h"
 #include "XImage.h"
 #include "XPainter.h"
+#include "XVarList.h"
 
 #if XWIDGET_ON
 
@@ -26,6 +27,36 @@
 #define XGRAPHICSBLUREFFECT_PAD 2.0f
 
 /* ==================== 内部辅助 ==================== */
+
+/** @brief 发射携带 float 参数的信号（无连接时释放参数，防泄漏）。 */
+static void xgraphicsblureffect_emitFloat(XGraphicsBlurEffect* self,
+                                          size_t signal, float value)
+{
+    XVarList* args = XVarList_Create(XVar(float, value));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/** @brief 发射携带 int 参数的信号（无连接时释放参数，防泄漏）。 */
+static void xgraphicsblureffect_emitInt(XGraphicsBlurEffect* self,
+                                        size_t signal, int value)
+{
+    XVarList* args = XVarList_Create(XVar(int, value));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+/* ==================== 虚槽位实现（对标 Qt 基类/派生行为） ==================== */
 
 /** @brief BoundingRectFor 槽位实现：源矩形四周外扩固定核半径。 */
 static XRectF VXGraphicsBlurEffect_boundingRectFor(
@@ -96,6 +127,9 @@ void XGraphicsBlurEffect_init(XGraphicsBlurEffect* self)
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     self->m_blurRadius = 1.0f;
+    /* 对标 Qt 文档默认：blurHints=PerformanceHint（qgraphicseffect.cpp
+       「By default, the blur hint is PerformanceHint」）。 */
+    self->m_blurHints = (int)XGraphicsBlurEffectHint_Performance;
 }
 
 XGraphicsBlurEffect* XGraphicsBlurEffect_create_ex(XMemoryType memory)
@@ -120,9 +154,48 @@ void XGraphicsBlurEffect_setBlurRadius(XGraphicsBlurEffect* self, float radius)
     if (radius < 0.0f) radius = 0.0f;
     if (self->m_blurRadius == radius) return;
     self->m_blurRadius = radius;
-    /* 对标 Qt：setBlurRadius 实际变化即触发源重绘（半径当前不改变
-       固定核尺寸，见文件头"与 Qt 的差异"）。 */
+    /* 对标 Qt：setBlurRadius 实际变化即触发源重绘并发射
+     * blurRadiusChanged(radius)（qgraphicseffect.cpp:760-769，updateBoundingRect
+     * + emit；半径当前不改变固定核尺寸，见文件头"与 Qt 的差异"）。 */
     XGraphicsEffect_update(&self->m_base);
+    xgraphicsblureffect_emitFloat(
+        self, (size_t)XGraphicsBlurEffect_blurRadiusChanged_signal, radius);
+}
+
+XGraphicsBlurEffectBlurHints XGraphicsBlurEffect_blurHints(
+    const XGraphicsBlurEffect* self)
+{
+    return self ? self->m_blurHints
+                : (int)XGraphicsBlurEffectHint_Performance;
+}
+
+void XGraphicsBlurEffect_setBlurHints(XGraphicsBlurEffect* self,
+                                      XGraphicsBlurEffectBlurHints hints)
+{
+    if (!self) return;
+    if (self->m_blurHints == hints) return;
+    self->m_blurHints = hints;
+    /* 对标 Qt setBlurHints（qgraphicseffect.cpp:794-802）：实际变化发射
+     * blurHintsChanged(hints)；Qt 此处不触发重绘，本实现同样仅存储
+     * （固定核下 hints 不改变渲染，见文件头"与 Qt 的差异"）。 */
+    xgraphicsblureffect_emitInt(
+        self, (size_t)XGraphicsBlurEffect_blurHintsChanged_signal, hints);
+}
+
+/* ==================== 信号 ==================== */
+
+void* XGraphicsBlurEffect_blurRadiusChanged_signal(
+    XGraphicsBlurEffect* self, float radius)
+{
+    (void)self; (void)radius;
+    return (void*)(size_t)XGraphicsBlurEffect_blurRadiusChanged_signal;
+}
+
+void* XGraphicsBlurEffect_blurHintsChanged_signal(
+    XGraphicsBlurEffect* self, XGraphicsBlurEffectBlurHints hints)
+{
+    (void)self; (void)hints;
+    return (void*)(size_t)XGraphicsBlurEffect_blurHintsChanged_signal;
 }
 
 #endif /* XWIDGET_ON */

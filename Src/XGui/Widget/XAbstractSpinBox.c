@@ -242,7 +242,14 @@ static void VXAbstractSpinBox_clear(XAbstractSpinBox* self)
         XLineEdit_setText(self->m_lineEdit, "");
 }
 
-/** @brief StepEnabled 默认实现：抽象基类无范围语义，返回 StepNone。 */
+/**
+ * @brief StepEnabled 默认实现：返回 StepNone。
+ * @details Qt 侧 QAbstractSpinBox::stepEnabled (qabstractspinbox.cpp:537-552)
+ *          的位组合依赖私有 value/minimum/maximum 三个 QVariant 与 type
+ *          字段（qabstractspinbox_p.h:92 附近），基类本身无范围/取值概念：
+ *          未设置 QVariant type 的裸子类实测恒返回 StepNone（Qt 6.8.3
+ *          实测：基类默认 0、readOnly 0、wrapping 0），本实现与之同。
+ *          XSpinBox / XDateTimeEdit 均已覆写该虚槽（各自按范围给位）。 */
 static int VXAbstractSpinBox_stepEnabled(XAbstractSpinBox* self)
 {
     (void)self;
@@ -824,7 +831,12 @@ bool XAbstractSpinBox_hasFrame(const XAbstractSpinBox* self)
 
 void XAbstractSpinBox_setFrame(XAbstractSpinBox* self, bool on)
 {
-    if (self) self->m_frame = on;
+    /* 对标 Qt setFrame：置位后立即重绘（此前仅存字段，边框变化要等
+     * 下一次无关事件才可见；XSpinBox 转发层用逗号宏补的 update 已并入
+     * 此处基类 setter，其它子类直呼基类亦生效）。 */
+    if (!self || self->m_frame == on) return;
+    self->m_frame = on;
+    XWidget_update((XWidget*)self);
 }
 
 void XAbstractSpinBox_setAccelerated(XAbstractSpinBox* self, bool on)

@@ -17,6 +17,7 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XPrintf.h" /* setCornerWidget 非法角告警（对标 qWarning）。 */
 
 #if XWIDGET_ON && XMENU_ON && XMENUBAR_ON
 #include "XAbstractButton.h"
@@ -875,10 +876,23 @@ XWidget* XMenuBar_cornerWidget(const XMenuBar* self, int corner)
 void XMenuBar_setCornerWidget(XMenuBar* self, XWidget* widget, int corner)
 {
     if (!self) return;
-    if (corner == (int)XMenuBarCorner_TopLeft)
+    /* 对标 QMenuBar::setCornerWidget（qmenubar.cpp:1716-1741）：仅
+       TopLeft/TopRight 有槽位，其余角值告警并返回、不改动任何槽
+       （此前 BottomLeft/BottomRight/非法值一律静默写到右上角槽；
+       reparent/installEventFilter/重排为 Qt 接管语义，本头文件口径
+       角件为借用仅存储，维持不接管的既定分歧）。 */
+    switch (corner) {
+    case (int)XMenuBarCorner_TopLeft:
         self->m_cornerWidgetL = widget;
-    else
+        break;
+    case (int)XMenuBarCorner_TopRight:
         self->m_cornerWidgetR = widget;
+        break;
+    default:
+        XPrintf("[XMenuBar] setCornerWidget: Only TopLeftCorner and "
+                "TopRightCorner are supported\n");
+        return;
+    }
     XWidget_update((XWidget*)self);
 }
 

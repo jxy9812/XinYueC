@@ -446,8 +446,9 @@ static void VX_calendar_paintEvent(XWidget* self, XEvent* event)
             XPainter_drawText(&painter, cx, cy, buf,
                               inMonth ? windowText : mid);
             /* 今日标记：日期数字下加下划线（对标 Qt QCalendarModel 数据
-             * 里 Today 角色的 Underline 文本格式，paintCell 呈现）。 */
-            if (cal->m_showTodayDate) {
+             * 里 Today 角色的 Underline 文本格式，paintCell 呈现；恒开
+             * ——原 setShowTodayDate 开关属自造 API 已删除）。 */
+            {
                 XDate today = XDate_currentDate();
                 if (XDate_compare(&d, &today) == 0) {
                     XRect ul;
@@ -1008,7 +1009,6 @@ void XCalendarWidget_init(XCalendarWidget* self, XWidget* parent,
     XWidget_setSizeHint((XWidget*)self, &hint);
 
     self->m_dateEditEnabled = false;
-    self->m_showTodayDate = true;
     self->m_verticalHeaderFormat = 0;
     self->m_headerTextFormat = 0;
     self->m_weekdayTextFormat = 0;
@@ -1102,10 +1102,22 @@ XDate XCalendarWidget_minimumDate(const XCalendarWidget* self)
 
 void XCalendarWidget_setMinimumDate(XCalendarWidget* self, const XDate* date)
 {
+    XDate oldDate;
     if (!self || !date) return;
+    oldDate = self->m_selected;
     self->m_min = *date;
     self->m_minSet = true;
     xcal_clampToRange(self);
+    /* 对标 Qt 6.8.3 QCalendarWidget::setMinimumDate
+     * （qcalendarwidget.cpp:2512-2531）：钳位吃掉选中日期（oldDate !=
+     * newDate）时 update + showMonth + emit selectionChanged——范围
+     * 收紧改写选中值时订阅方同步收到通知。 */
+    if (XDate_compare(&oldDate, &self->m_selected) != 0) {
+        self->m_shownYear = XDate_year(&self->m_selected);
+        self->m_shownMonth = XDate_month(&self->m_selected);
+        xcal_emitSelectionChanged(self);
+        XWidget_update((XWidget*)self);
+    }
 }
 
 void XCalendarWidget_clearMinimumDate(XCalendarWidget* self)
@@ -1124,10 +1136,21 @@ XDate XCalendarWidget_maximumDate(const XCalendarWidget* self)
 
 void XCalendarWidget_setMaximumDate(XCalendarWidget* self, const XDate* date)
 {
+    XDate oldDate;
     if (!self || !date) return;
+    oldDate = self->m_selected;
     self->m_max = *date;
     self->m_maxSet = true;
     xcal_clampToRange(self);
+    /* 对标 QCalendarWidget::setMaximumDate（qcalendarwidget.cpp:2568-2587）：
+     * 钳位改写选中日期时 update + showMonth + emit selectionChanged
+     * （同 setMinimumDate 口径）。 */
+    if (XDate_compare(&oldDate, &self->m_selected) != 0) {
+        self->m_shownYear = XDate_year(&self->m_selected);
+        self->m_shownMonth = XDate_month(&self->m_selected);
+        xcal_emitSelectionChanged(self);
+        XWidget_update((XWidget*)self);
+    }
 }
 
 void XCalendarWidget_clearMaximumDate(XCalendarWidget* self)
@@ -1162,7 +1185,9 @@ void XCalendarWidget_setGridVisible(XCalendarWidget* self, bool visible)
 
 bool XCalendarWidget_isNavigationBarVisible(const XCalendarWidget* self)
 {
-    return self ? self->m_navBarVisible : false;
+    /* NULL 回退与 init 默认一致（导航栏默认 true），避免 getter 空值
+     * 与构造默认互相矛盾。 */
+    return self ? self->m_navBarVisible : true;
 }
 
 void XCalendarWidget_setNavigationBarVisible(XCalendarWidget* self, bool visible)
@@ -1240,44 +1265,21 @@ void* XCalendarWidget_currentPageChanged_signal(XCalendarWidget* self, int year,
 
 
 
-/* ==================== Task 2.5：日历补充 API ==================== */
+/* ==================== Task 2.5：日历补充 API ====================
+ * 注：weekNumber/isDateSelected/setShowTodayDate/isShowTodayDate/
+ * todayDate/showTodayPage 六个自造 API 已删除（冗余清理）：QCalendarWidget
+ * 无对应公开符号，且全仓（Src/Test/App）无消费者；今日标记行为恒开
+ * （对标 Qt 日历恒下划线标今日）。 */
 
 void XCalendarWidget_setDateEditEnabled(XCalendarWidget* self, bool enable)
 { if (self) self->m_dateEditEnabled = enable; }
 bool XCalendarWidget_isDateEditEnabled(const XCalendarWidget* self)
 { return self ? self->m_dateEditEnabled : false; }
 
-int XCalendarWidget_weekNumber(const XCalendarWidget* self,
-                               const XDate* date)
-{
-    int doy;
-    if (!self || !date) return -1;
-    doy = XDate_dayOfYear(date);
-    if (doy < 0) return -1;
-    return (doy + 6) / 7; /* 简化 ISO 周估算。 */
-}
-
 void XCalendarWidget_setHeaderTextFormat(XCalendarWidget* self, int fmt)
 { if (self) self->m_headerTextFormat = fmt; }
 void XCalendarWidget_setWeekdayTextFormat(XCalendarWidget* self, int fmt)
 { if (self) self->m_weekdayTextFormat = fmt; }
-
-bool XCalendarWidget_isDateSelected(const XCalendarWidget* self,
-                                    const XDate* date)
-{
-    if (!self || !date) return false;
-    return XDate_compare(date, &self->m_selected) == 0;
-}
-
-void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show)
-{
-    if (self) {
-        self->m_showTodayDate = show;
-        XWidget_update((XWidget*)self);
-    }
-}
-bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self)
-{ return self ? self->m_showTodayDate : true; }
 
 void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self,
                                              int format)
@@ -1289,23 +1291,6 @@ void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self,
 }
 int XCalendarWidget_verticalHeaderFormat(const XCalendarWidget* self)
 { return self ? self->m_verticalHeaderFormat : 0; }
-
-bool XCalendarWidget_todayDate(const XCalendarWidget* self, XDate* out)
-{
-    if (!self || !out) return false;
-    *out = XDate_currentDate();
-    return true;
-}
-
-void XCalendarWidget_showTodayPage(XCalendarWidget* self)
-{
-    XDate today;
-    if (!self) return;
-    today = XDate_currentDate();
-    XCalendarWidget_setCurrentPage(self, XDate_year(&today),
-                                   XDate_month(&today));
-    XCalendarWidget_setSelectedDate(self, &today);
-}
 
 int XCalendarWidget_headerTextFormat(const XCalendarWidget* self)
 {

@@ -9,8 +9,10 @@
  *             - 文本：按 format 替换 %p/%v/%m 后沿 alignment 绘制，
  *               并按进度块边界分两段裁剪着色（块内 HighlightedText、
  *               块外 WindowText，对标 Qt 的分段文本）。
- *             数值语义：setValue 越界钳位到 [min,max]，实际变化才发射
- *             valueChanged(int) 并 update()；setRange 交换 min>max；
+ *             数值语义：setValue 越界钳位到 [min,max]（busy 模式
+ *             setRange(0,0) 下不钳位），实际变化才发射 valueChanged(int)
+ *             并 update()；setRange 取 qMax(min,max) 且越界值走 reset()；
+ *             reset 置 minimum-1（复位态，text() 空串）；
  *             setMinimum/setMaximum 按 Qt 语义联动另一端端点。垂直进度
  *             条文本按 textDirection 旋转 90°（TopToBottom 自上而下、
  *             BottomToTop 自下而上），单色居中（分段裁剪为后续扩展）。
@@ -25,6 +27,7 @@
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
+#include <limits.h>
 #if XWIDGET_ON && XPROGRESSBAR_ON
 
 #include "XStyle.h"
@@ -65,7 +68,8 @@ static uint32_t xprogressbar_color(const XProgressBar* self, XPaletteColorRole r
 #endif /* XPALETTE_ON */
 }
 
-/** @brief 把值钳位到 [min,max]（min>max 时视为 [max,min]）。 */
+/** @brief 把值钳位到 [min,max]（min>max 时视为 [max,min]）。
+ *  @note    对标 Qt：setRange 已保证 max>=min，本函数等价 qBound。 */
 static int xprogressbar_clamp(const XProgressBar* self, int value)
 {
     int lo = self->m_min <= self->m_max ? self->m_min : self->m_max;
@@ -73,6 +77,25 @@ static int xprogressbar_clamp(const XProgressBar* self, int value)
     if (value < lo) return lo;
     if (value > hi) return hi;
     return value;
+}
+
+/** @brief 是否不确定进度（busy）模式：对标 QProgressBar::text 判定
+ *         (qprogressbar.cpp:430) 的 setRange(0,0) 口径。 */
+static bool xprogressbar_isBusy(const XProgressBar* self)
+{
+    return self->m_max == 0 && self->m_min == 0;
+}
+
+/** @brief 是否复位态（value 落在 minimum 之下，代表“尚未开始”）：
+ *         对标 QProgressBar::text (qprogressbar.cpp:429-434) 与
+ *         QProgressBar::reset (qprogressbar.cpp:225-232) 的
+ *         minimum-1 哨兵（minimum==INT_MIN 时哨兵为 INT_MIN）。 */
+static bool xprogressbar_isReset(const XProgressBar* self)
+{
+    if (xprogressbar_isBusy(self)) return true;
+    if (self->m_value < self->m_min) return true;
+    if (self->m_value == INT_MIN && self->m_min == INT_MIN) return true;
+    return false;
 }
 
 /** @brief 发射 int 参数信号（对标 abstractbutton_emitInt 模式）。 */
@@ -88,20 +111,29 @@ static void xprogressbar_emitInt(XProgressBar* self, size_t signal, int value)
     }
 }
 
-/** @brief 按格式串生成文本（%p 百分比、%v 当前值、%m 最大值）。 */
+/** @brief 按格式串生成文本（%p 百分比、%v 当前值、%m 总步数）。
+ *  @details 对标 QProgressBar::text (qprogressbar.cpp:429-445)：
+ *           - busy（max==0&&min==0）或复位态（value<min）→ 空串；
+ *           - %m 替换为总步数 maximum-minimum（非 maximum）；
+ *           - %p 为 (value-min)*100/totalSteps 截断取整；totalSteps==0
+ *             （单步量程）→ 100%。 */
 static void xprogressbar_buildText(const XProgressBar* self, char* out,
                                    int outSize)
 {
-    const char* fmt = (self->m_format ? XString_toUtf8(self->m_format) : NULL);
-    if (!fmt) fmt = "%p%";
-    int range = self->m_max - self->m_min;
-    int percent = (range > 0)
-        ? (int)(((int64_t)(self->m_value - self->m_min) * 100 + range / 2) / range)
-        : 0;
+    const char* fmt;
+    int64_t range = (int64_t)self->m_max - (int64_t)self->m_min;
+    int percent;
     int o = 0;
     const char* p;
     if (!out || outSize <= 0) return;
+    out[0] = '\0';
+    if (xprogressbar_isReset(self)) return; /* 复位/busy：文本为空串。 */
+    fmt = (self->m_format ? XString_toUtf8(self->m_format) : NULL);
     if (!fmt || !fmt[0]) fmt = "%p%";
+    /* 单步量程（totalSteps==0）：Qt 返回 100% 以避开除零。 */
+    percent = (range == 0)
+        ? 100
+        : (int)(((int64_t)self->m_value - (int64_t)self->m_min) * 100 / range);
     for (p = fmt; *p != '\0' && o < outSize - 1; ++p) {
         if (p[0] == '%' && p[1] != '\0') {
             char tmp[16];
@@ -111,7 +143,9 @@ static void xprogressbar_buildText(const XProgressBar* self, char* out,
             } else if (p[0] == 'v') {
                 XSnprintf(tmp, sizeof(tmp), "%d", self->m_value);
             } else if (p[0] == 'm') {
-                XSnprintf(tmp, sizeof(tmp), "%d", self->m_max);
+                /* %m = 总步数（对标 qprogressbar.cpp:436）。 */
+                XSnprintf(tmp, sizeof(tmp), "%lld",
+                          (long long)range);
             } else if (p[0] == '%') {
                 tmp[0] = '%'; tmp[1] = '\0';
             } else {
@@ -543,12 +577,18 @@ int XProgressBar_maximum(const XProgressBar* self)
 void XProgressBar_setRange(XProgressBar* self, int min, int max)
 {
     if (!self) return;
-    /* 对标 Qt：min>max 时收敛为 (min,min)（qBound 语义），不交换——
-     * 此前交换得 (min,max)，与 XSpinBox/XAbstractSlider 不一致。 */
-    if (min > max) max = min;
+    /* 对标 QProgressBar::setRange (qprogressbar.cpp:320-331)：范围变化时
+     * maximum 取 qMax(min, max)；当前值落到新范围外（< min-1 或 > max）
+     * 时走 reset()（置 minimum-1、不发 valueChanged），否则仅 update()。
+     * 此前经 setValue 把值钳进新范围并多发一次 valueChanged，与 Qt 相反。 */
+    if (min == self->m_min && max == self->m_max) return;
     self->m_min = min;
-    self->m_max = max;
-    XProgressBar_setValue(self, self->m_value); /* 钳位 + 条件信号/重绘 */
+    self->m_max = min > max ? min : max;
+    if ((int64_t)self->m_value < (int64_t)self->m_min - 1 ||
+        self->m_value > self->m_max)
+        XProgressBar_reset(self);
+    else
+        XWidget_update((XWidget*)self);
 }
 
 void XProgressBar_setMinimum(XProgressBar* self, int minimum)
@@ -578,7 +618,10 @@ void XProgressBar_setValue(XProgressBar* self, int value)
 {
     int clamped;
     if (!self) return;
-    clamped = xprogressbar_clamp(self, value);
+    /* 对标 Qt setValue (qprogressbar.cpp:283-288) 的 busy 分支：
+     * setRange(0,0) 进入不确定进度后 value 不再钳位，接受任意值。 */
+    clamped = xprogressbar_isBusy(self) ? value
+                                        : xprogressbar_clamp(self, value);
     if (clamped == self->m_value) return;
     self->m_value = clamped;
     xprogressbar_emitInt(self, (size_t)XProgressBar_valueChanged_signal,
@@ -589,7 +632,10 @@ void XProgressBar_setValue(XProgressBar* self, int value)
 void XProgressBar_reset(XProgressBar* self)
 {
     if (!self) return;
-    self->m_value = xprogressbar_clamp(self, self->m_min);
+    /* 对标 QProgressBar::reset (qprogressbar.cpp:225-232)：置 minimum-1
+     * 作为“未开始”哨兵（minimum==INT_MIN 时取 INT_MIN），text() 据此
+     * 返回空串；不发射 valueChanged。 */
+    self->m_value = (self->m_min == INT_MIN) ? INT_MIN : self->m_min - 1;
     XWidget_update((XWidget*)self);
 }
 

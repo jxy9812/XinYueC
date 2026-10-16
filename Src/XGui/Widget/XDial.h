@@ -5,7 +5,9 @@
  *             wrapping 全部由基类提供），本类实现圆形绘制（凹槽圆弧
  *             + 指示针 + notches 刻度）与鼠标交互（角度拖动调值）。
  *             附加属性：notchTarget（刻度间距目标像素）、
- *             notchesVisible（是否绘制刻度）。
+ *             notchesVisible（是否绘制刻度）、wrapping（越界回绕：
+ *             经基类 bound 虚槽覆写生效，setValue/triggerAction/滚轮
+ *             全链路环绕，对标 QDialPrivate::bound）。
  * @note       模块总开关 XDIAL_ON 定义于 XGuiConfig.h；=0 时裁剪
  *             全部公共 API。依赖 XABSTRACTSLIDER_ON。
  * @author     XinYueC 团队
@@ -57,7 +59,8 @@ XDial* XDial_create_ex(XMemoryType memory, XWidget* parent, XWidgetFlags flags);
 
 /** @brief 查询刻度间距目标像素（默认 3.7）。 */
 double XDial_notchTarget(const XDial* self);
-/** @brief 设置刻度间距目标并重绘。 */
+/** @brief 设置刻度间距目标并重绘（对标 QDial::setNotchTarget：不校验
+ *         取值范围，0/负值原样接受，由 notchSize 换算自行收敛）。 */
 void XDial_setNotchTarget(XDial* self, double target);
 /** @brief 查询刻度可见性。 */
 bool XDial_notchesVisible(const XDial* self);
@@ -67,7 +70,14 @@ void XDial_setNotchesVisible(XDial* self, bool visible);
 bool XDial_wrapping(const XDial* self);
 /** @brief 设置环绕。 */
 void XDial_setWrapping(XDial* self, bool on);
-/** @brief 计算当前实际刻度数（对标 QDial::notchSize 的刻度数量语义）。 */
+/**
+ * @brief 查询刻度间隔（对标 QDial::notchSize qdial.cpp:346-363）。
+ * @details 量纲为**范围单位**（Qt 同），恒为 singleStep 的非零倍数，
+ *          由样式层按 tickInterval 消费（对标 initStyleOption
+ *          qdial.cpp:103 的 option->tickInterval = notchSize()）；
+ *          非 0 起点量程下不等于最大值。绘制端刻度数由
+ *          (maximum + ns - 1 - minimum) / ns 得到。
+ */
 int XDial_notchSize(const XDial* self);
 
 /* ==================== 父类 API 宏转发（对齐库内 XRadioButton 惯例） ==================== */

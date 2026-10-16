@@ -654,7 +654,10 @@ void XHeaderView_setOffsetToSectionPosition(XHeaderView* self, int index);
  *        @note 表头独立于模型：Qt 中 QHeaderView 继承自
  *        QAbstractItemView、经模型取 headerData；本项目表头文本由
  *        XTableView 统一取用，本类仅保存该指针（借用、不拥有），设置
- *        后不触发任何重建或信号。
+ *        后不触发重建。信号接线（对标 Qt 表头对模型 headerDataChanged
+ *        的槽连接）：model 非 NULL 时连接其 headerDataChanged 信号到
+ *        表头同名句柄（段重绘联动），model 须为 XAbstractItemModel 或
+ *        其派生；更换/解除关联时自动断开旧连接。
  *
  * @param self 目标表头；NULL 忽略。
  * @param model 模型指针（借用；可为 NULL 表示解除关联）。
@@ -764,9 +767,9 @@ void* XHeaderView_geometriesChanged_signal(XHeaderView* self);
  * @brief headerDataChanged(int) 信号句柄（对标 QHeaderView::headerDataChanged；
  *        载荷：区间号）。
  * @note Qt 中为公开槽（签名含方向与首末逻辑号，由模型 headerDataChanged
- *       触发）；本项目按列模型表头数据变化场景收敛为单 int 载荷，由
- *       XTableWidget 转发调用。本轮仅加句柄，转发接线尚未完成（暂无
- *       发射点）。
+ *       触发）；本项目按列模型表头数据变化场景收敛为单 int 载荷。
+ *       发射点：XHeaderView_setModel 接线的模型 headerDataChanged 转发
+ *       槽（段重绘请求随发射一并进行）；连接方亦可调用本句柄手动发射。
  */
 void* XHeaderView_headerDataChanged_signal(XHeaderView* self, int section);
 

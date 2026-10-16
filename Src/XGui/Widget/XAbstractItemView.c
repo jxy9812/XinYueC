@@ -30,6 +30,9 @@ static bool VXAbstractItemView_indexAt(const XAbstractItemView* self,
                                        int x, int y,
                                        int* outRow, int* outCol);
 
+static void xaiv_dataChangedSlot(XObject* receiver, XVarList* args);
+static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args);
+
 /** @brief 仅移动当前索引（不触碰选择集合；对标 Ctrl+方向键的移动）。 */
 static void xaiv_setCurrentPreservingSelection(XAbstractItemView* view,
                                                int row, int col)
@@ -301,10 +304,11 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
      * 获得键盘焦点，方向键导航（keyPressEvent）才可达（修复点击选中
      * 后 Down/Up 方向键不动当前项——焦点滞留原处、键事件不达视图）。 */
     XWidget_setFocusPolicy((XWidget*)self, XWidgetFocusPolicy_StrongFocus);
-    /* 悬停外观 opt-in（对标 Qt polish 的 WA_Hover 收口）：条目悬停
-     * 高亮离开即清——leaveEvent 重载只复位悬停记录不自重绘，依赖
-     * ENTER/LEAVE 收口门的翻转标脏抹掉屏上残留行高亮。 */
-    XWidget_setAttribute((XWidget*)self, XWidgetAttribute_Hover, true);
+    /* 悬停外观 opt-in 不声明（脏区收窄 2026-10-15）：条目视图族没有任何
+     * paintEvent 消费悬停态（entered/viewportEntered 信号由 mouseMove
+     * 差分直接发射，与本位无关）——声明 Hover 只会让指针每次进出视图
+     * 触发 ENTER/LEAVE 整件标脏（真机大表=视口带整刷，触摸阵发大头
+     * 之一）。若未来引入悬停行高亮，改为差分行带 updateRect 而非整件。 */
 }
 
 XAbstractItemView* XAbstractItemView_create_ex(XMemoryType memory,
@@ -356,22 +360,36 @@ void XAbstractItemView_setCurrentIndex(XAbstractItemView* self, int row,
     self->m_currentRow = row;
     self->m_currentColumn = column;
     /* SelectCurrent 语义：同步选择模型当前索引；非 NoSelection 且索引
-     * 有效时按 ClearAndSelect 选中该单元格（对标 Qt
-     * QAbstractItemView::setCurrentIndex 的缺省 command=ClearAndSelect，
-     * qabstractitemview.cpp selectionCommand 对无修饰普通点击/键盘
-     * 导航亦回落 ClearAndSelect：先清空旧选区再选中当前项——修复
-     * 列表/视图点击换行后旧行高亮残留的双选缺陷）。索引无效（-1）
-     * 仅清当前项、不动选择集合：XListWidget/XTreeWidget 的 clear 路径
-     * 在本调用之后显式 XItemSelectionModel_clear 并依赖其返回值发射
-     * itemSelectionChanged，此处不得抢清。 */
+     * 有效时按模式分派选择命令（对标 Qt
+     * QAbstractItemView::setCurrentIndex(index) →
+     * selectionCommand(index, nullptr) 的模式分派，
+     * qabstractitemview.cpp:2985-2992：
+     *   - Single/Extended/Contiguous → ClearAndSelect|behaviorFlags
+     *     （先清空旧选区再选中当前项——修复列表/视图点击换行后旧行
+     *     高亮残留的双选缺陷）；
+     *   - MultiSelection → multiSelectionCommand(index, nullptr) 尾段
+     *     返回 Toggle|behaviorFlags（qabstractitemview.cpp:4183-4229
+     *     的 event==nullptr 回落）：已选中则取消、未选中则追加，不
+     *     清空既有选择）。
+     * 索引无效（-1）仅清当前项、不动选择集合：XListWidget/XTreeWidget
+     * 的 clear 路径在本调用之后显式 XItemSelectionModel_clear 并依赖
+     * 其返回值发射 itemSelectionChanged，此处不得抢清。 */
     selection = self->m_selectionModel;
     if (!selection) return;
     XItemSelectionModel_setCurrentIndex(selection, row, column);
     if (row >= 0 && column >= 0 &&
         self->m_selectionMode !=
             XAbstractItemViewSelectionMode_NoSelection) {
-        XItemSelectionModel_clear(selection);
-        XItemSelectionModel_select(selection, row, column, true);
+        if (self->m_selectionMode ==
+            XAbstractItemViewSelectionMode_MultiSelection) {
+            /* Toggle 语义：整行/整列行为经 xaiv_selectCellExpanded
+             * 展开（对标 Toggle|selectionBehaviorFlags）。 */
+            bool sel = XItemSelectionModel_isSelected(selection, row, column);
+            xaiv_selectCellExpanded(self, row, column, !sel);
+        } else {
+            XItemSelectionModel_clear(selection);
+            XItemSelectionModel_select(selection, row, column, true);
+        }
     }
 }
 
@@ -423,6 +441,32 @@ void XAbstractItemView_doItemsLayout(XAbstractItemView* self)
      * 这里仅对齐 Qt 的全量重绘效果（updateGeometries + viewport update
      * → 一次视图 update）；滚动条范围仍由派生视图维护。 */
     XWidget_update((XWidget*)self);
+}
+
+void XAbstractItemView_update(XAbstractItemView* self, int row, int col)
+{
+    XWidget* viewport;
+    XRect rect;
+    if (!self || row < 0 || col < 0) return;
+    /* 对标 QAbstractItemView::update(const QModelIndex&)（Qt 6.8
+     * qabstractitemview.cpp）：条目可视矩形与视口相交才做局部重绘
+     * （避免不可见条目的无效脏区合并，Qt 同款性能门禁）。 */
+    if (!XAbstractItemView_visualRect(self, row, col, &rect)) return;
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
+    if (!viewport) {
+        /* 本库视口懒建：无视口时退化为整控件重绘请求（Qt 无此分支）。 */
+        XWidget_update((XWidget*)self);
+        return;
+    }
+    {
+        XRect vr;
+        XRect_init(&vr, 0, 0, XWidget_width(viewport),
+                   XWidget_height(viewport));
+        if (rect.x + rect.width < 0 || rect.y + rect.height < 0 ||
+            rect.x > vr.x + vr.width || rect.y > vr.y + vr.height)
+            return;
+    }
+    XWidget_updateRect(viewport, &rect);
 }
 
 void XAbstractItemView_setSelectionMode(XAbstractItemView* self, int mode)
@@ -1379,6 +1423,15 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
         XObject_disconnect_1(m, (size_t)XAbstractItemModel_modelReset_signal(
                                    self->m_model),
                              (XObject*)self, xaiv_modelRefreshSlot);
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsInserted_signal(
+                                    self->m_model, 0, 0),
+                             (XObject*)self, xaiv_modelRefreshSlot);
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_columnsRemoved_signal(
+                                    self->m_model, 0, 0),
+                             (XObject*)self, xaiv_modelRefreshSlot);
+        XObject_disconnect_1(m, (size_t)XAbstractItemModel_layoutChanged_signal(
+                                   self->m_model),
+                             (XObject*)self, xaiv_modelRefreshSlot);
     }
     self->m_model = model;
     /* 行/列变化入口同步：模型替换使全部 (row,col) 失效，释放持久编辑器
@@ -1386,6 +1439,11 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
     xaiv_persistentRelease(self);
     xaiv_indexWidgetRelease(self);
     xaiv_roleRelease(self);
+    /* 选择模型侧同步绑定（对标 Qt QAbstractItemView::setModel 时选择
+     * 模型随视图换挂模型；Qt 为 QItemSelectionModel 构造传模型，本库
+     * 以借用指针同步）。 */
+    if (self->m_selectionModel)
+        XItemSelectionModel_setModel(self->m_selectionModel, model);
     if (model) {
         if (self->m_currentRow >= model->m_rows)
             self->m_currentRow = model->m_rows - 1;
@@ -1397,15 +1455,27 @@ void XAbstractItemView_setModel(XAbstractItemView* self,
     }
     if (model) {
         XObject* m = (XObject*)model;
-#define XAIV_MODEL_CONNECT(sig) \
+#define XAIV_MODEL_CONNECT(sig, slotFn) \
     XObject_connect_1(m, (size_t)(sig), (XObject*)self, \
-                      xaiv_modelRefreshSlot, XConnectionType_Direct)
-        XAIV_MODEL_CONNECT(XAbstractItemModel_dataChanged_signal(model, 0, 0));
+                      slotFn, XConnectionType_Direct)
+        XAIV_MODEL_CONNECT(XAbstractItemModel_dataChanged_signal(model, 0, 0),
+                           xaiv_dataChangedSlot);
         XAIV_MODEL_CONNECT(XAbstractItemModel_rowsInserted_signal(model,
-                                                                   0, 0));
+                                                                   0, 0),
+                           xaiv_modelRefreshSlot);
         XAIV_MODEL_CONNECT(XAbstractItemModel_rowsRemoved_signal(model,
-                                                                   0, 0));
-        XAIV_MODEL_CONNECT(XAbstractItemModel_modelReset_signal(model));
+                                                                   0, 0),
+                           xaiv_modelRefreshSlot);
+        XAIV_MODEL_CONNECT(XAbstractItemModel_modelReset_signal(model),
+                           xaiv_modelRefreshSlot);
+        XAIV_MODEL_CONNECT(XAbstractItemModel_columnsInserted_signal(model,
+                                                                      0, 0),
+                           xaiv_modelRefreshSlot);
+        XAIV_MODEL_CONNECT(XAbstractItemModel_columnsRemoved_signal(model,
+                                                                      0, 0),
+                           xaiv_modelRefreshSlot);
+        XAIV_MODEL_CONNECT(XAbstractItemModel_layoutChanged_signal(model),
+                           xaiv_modelRefreshSlot);
 #undef XAIV_MODEL_CONNECT
     }
     XWidget_update((XWidget*)self);
@@ -1436,6 +1506,28 @@ static void xaiv_modelRefreshSlot(XObject* receiver, XVarList* args)
     XWidget_update((XWidget*)view);
 }
 
+/** @brief dataChanged 窄化槽：单格内容变更只失效该格可视矩形。
+ *  @details 对标 Qt QAbstractItemView::dataChanged → d->update(变更
+ *           索引区间)；此前与结构信号共用整视图刷新槽——模型里写一格
+ *           （真机轮询 10ms 逐格写）就把整表拖成视口带整刷，触摸阵发
+ *           与稳态 CPU 的大头之一。格滚出视口/越界（visualRect 失败）
+ *           即免失效；当前索引越界收敛与编辑器失效是结构变化语义，
+ *           留在共享刷新槽（rows/cols/reset/layout）不在此重复。 */
+static void xaiv_dataChangedSlot(XObject* receiver, XVarList* args)
+{
+    XAbstractItemView* view = (XAbstractItemView*)receiver;
+    XRect rect;
+    int row = -1;
+    int col = -1;
+    if (!view || !args) return;
+    XVarList_args_2(args, int, r, int, c);
+    row = r;
+    col = c;
+    if (row < 0 || col < 0) return;
+    if (!XAbstractItemView_visualRect(view, row, col, &rect)) return;
+    XWidget_updateRect((XWidget*)view, &rect);
+}
+
 XItemSelectionModel* XAbstractItemView_selectionModel(
     const XAbstractItemView* self)
 {
@@ -1451,6 +1543,10 @@ void XAbstractItemView_setSelectionModel(XAbstractItemView* self,
     self->m_selectionModel = selectionModel;
     if (!self->m_selectionModel)
         self->m_selectionModel = XItemSelectionModel_create();
+    /* 对标 Qt setSelectionModel 的模型一致性：选择模型随视图绑定当前
+     * 模型（Qt 校验 selectionModel->model() == view model()，本库直接
+     * 同步写入，见 XItemSelectionModel_setModel）。 */
+    XItemSelectionModel_setModel(self->m_selectionModel, self->m_model);
 }
 
 void XAbstractItemView_clearSelection(XAbstractItemView* self)
@@ -1988,6 +2084,14 @@ static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event)
                     XItemSelectionModel_setCurrentIndex(
                         view->m_selectionModel, r, c);
                 XWidget_update((XWidget*)view);
+            } else if (view->m_selectionMode ==
+                       XAbstractItemViewSelectionMode_MultiSelection) {
+                /* MultiSelection 无修饰键导航（对标 Qt
+                 * multiSelectionCommand 的 KeyPress 分支——非
+                 * Space/Select 键回落 NoUpdate，qabstractitemview.cpp
+                 * :4190-4196：键盘导航不触碰选择集合；本实现仍移动
+                 * 当前项以保导航可用，偏离 Qt 的整键忽略语义）。 */
+                xaiv_setCurrentPreservingSelection(view, r, c);
             } else if (view->m_selectionMode !=
                        XAbstractItemViewSelectionMode_NoSelection) {
                 XAbstractItemView_setCurrentIndex(view, r, c);

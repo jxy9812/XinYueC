@@ -119,6 +119,10 @@ static void label_ctlSelectionUtf16(const XLabel* self, int* start, int* end);
 static bool label_byteToControlPoint(const XLabel* self, int byte,
                                      XPoint* out);
 
+/** @brief 伙伴控件 destroyed 自摘槽（定义在「伙伴与链接」节；
+ *         VXLabel_deinit/copy/move 与 setBuddy 共用）。 */
+static void label_buddyDestroyedSlot(XObject* receiver, XVarList* args);
+
 /** @brief 按控件布局方向转换逻辑水平对齐（对标 QStyle::visualAlignment）。 */
 static XAlignments label_visualAlignment(const XLabel* self,
                                          XAlignments alignment)
@@ -2465,7 +2469,18 @@ static void VXLabel_copy(XLabel* self, const XLabel* other)
                                                XCLASS_DEFAULT_MEMORY_TYPE);
     XClassCopy(&self->m_pixmap, &other->m_pixmap);
     self->m_movie = other->m_movie;
+    /* buddy 为借用指针 + destroyed 自摘连接：先断开目标既有 buddy 的
+       连接再覆盖（同 setBuddy 换绑口径）。 */
+    if (self->m_buddy)
+        XObject_disconnect_1((XObject*)self->m_buddy,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, label_buddyDestroyedSlot);
     self->m_buddy = other->m_buddy;
+    if (self->m_buddy)
+        XObject_connect_1((XObject*)self->m_buddy,
+                          XSignal(XObject_destroyed_signal),
+                          (XObject*)self, label_buddyDestroyedSlot,
+                          XConnectionType_Direct);
     if (other->m_linkCount > 0) {
         self->m_links = (XLabelLinkRange*)XMemory_malloc(
             sizeof(XLabelLinkRange) * (size_t)other->m_linkCount,
@@ -2532,6 +2547,17 @@ static void VXLabel_move(XLabel* self, XLabel* other)
     XPixmap_init(&other->m_pixmap); /* 源像素图保留有效 vtable，可安全析构 */
     self->m_movie = other->m_movie; other->m_movie = NULL;
     self->m_buddy = other->m_buddy; other->m_buddy = NULL;
+    /* buddy 的 destroyed 连接登记的接收者仍是源对象地址：按旧接收者
+       断开再以新对象重接（同下方控制器转发的接收者变更口径）。 */
+    if (self->m_buddy) {
+        XObject_disconnect_1((XObject*)self->m_buddy,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)other, label_buddyDestroyedSlot);
+        XObject_connect_1((XObject*)self->m_buddy,
+                          XSignal(XObject_destroyed_signal),
+                          (XObject*)self, label_buddyDestroyedSlot,
+                          XConnectionType_Direct);
+    }
     self->m_links = other->m_links; other->m_links = NULL;
     self->m_linkCount = other->m_linkCount; other->m_linkCount = 0;
     self->m_linkCapacity = other->m_linkCapacity; other->m_linkCapacity = 0;
@@ -2569,6 +2595,14 @@ static void VXLabel_deinit(XLabel* self)
     if (self->m_textControl) {
         XClassDelete(self->m_textControl);
         self->m_textControl = NULL;
+    }
+    /* 断开 buddy destroyed 自摘连接（接收者=self 即将失效；显式断开同
+       控制器转发口径，随后基类析构亦会清理接收者侧登记）。 */
+    if (self->m_buddy) {
+        XObject_disconnect_1((XObject*)self->m_buddy,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, label_buddyDestroyedSlot);
+        self->m_buddy = NULL;
     }
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
 }
@@ -2986,10 +3020,37 @@ XWidget* XLabel_buddy(const XLabel* self)
     return self ? self->m_buddy : NULL;
 }
 
+/** @brief 伙伴控件 destroyed 自摘槽（对标 QLabelPrivate::buddyDeleted，
+ *         qlabel.cpp 接线 setBuddy 内 connect(buddy,&QObject::destroyed,
+ *         …,QLabelPrivate::buddyDeleted)；Qt 以 QPointer<QWidget> 持有
+ *         buddy（qlabel_p.h:103），销毁即自动置空——本框架以「destroyed
+ *         发射帧上清借用指针」等价实现，杜绝 buddy() 返回悬垂指针）。 */
+static void label_buddyDestroyedSlot(XObject* receiver, XVarList* args)
+{
+    XLabel* self = (XLabel*)receiver;
+    XObject* sender;
+    (void)args;
+    if (!self) return;
+    sender = XObject_sender(receiver);
+    if (sender && (XWidget*)sender == self->m_buddy)
+        self->m_buddy = NULL;
+}
+
 void XLabel_setBuddy(XLabel* self, XWidget* buddy)
 {
     if (!self) return;
+    /* 对标 QLabel::setBuddy（qlabel.cpp:1126-1137）：先断开旧 buddy 的
+     * destroyed 连接再换指针，新 buddy 非空则建立 destroyed 连接。 */
+    if (self->m_buddy)
+        XObject_disconnect_1((XObject*)self->m_buddy,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)self, label_buddyDestroyedSlot);
     self->m_buddy = buddy;
+    if (buddy)
+        XObject_connect_1((XObject*)buddy,
+                          XSignal(XObject_destroyed_signal),
+                          (XObject*)self, label_buddyDestroyedSlot,
+                          XConnectionType_Direct);
 }
 
 bool XLabel_openExternalLinks(const XLabel* self)

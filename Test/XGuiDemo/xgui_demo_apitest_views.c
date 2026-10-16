@@ -31,6 +31,7 @@
 #include "XTreeWidget.h"
 #include "XTableView.h"
 #include "XTableWidget.h"
+#include "XAbstractScrollArea.h"
 #include "XHeaderView.h"
 #include "XLineEdit.h"
 #include "XVector.h"
@@ -58,10 +59,29 @@ typedef struct ViewsSigRec
     int rowsRemoved;           /**< rowsRemoved(row,count) 次数。 */
     int rrRow;                 /**< 最近 rowsRemoved 起始行。 */
     int rrCount;               /**< 最近 rowsRemoved 行数。 */
+    int headerDataChanged;     /**< headerDataChanged(ori,first,last) 次数。 */
+    int hdcOrientation;        /**< 最近 headerDataChanged 方向。 */
+    int hdcFirst;              /**< 最近 headerDataChanged 首段。 */
+    int hdcLast;               /**< 最近 headerDataChanged 末段。 */
+    int columnsInserted;       /**< columnsInserted(col,count) 次数。 */
+    int ciCol;                 /**< 最近 columnsInserted 起始列。 */
+    int ciCount;               /**< 最近 columnsInserted 列数。 */
+    int columnsRemoved;        /**< columnsRemoved(col,count) 次数。 */
+    int crCol;                 /**< 最近 columnsRemoved 起始列。 */
+    int crCount;               /**< 最近 columnsRemoved 列数。 */
+    int layoutChanged;         /**< layoutChanged 次数。 */
     /* XAbstractItemView 信号族。 */
     int iconSizeChanged;       /**< iconSizeChanged(w,h) 次数。 */
     int icW;                   /**< 最近 iconSizeChanged 宽。 */
     int icH;                   /**< 最近 iconSizeChanged 高。 */
+    /* XItemSelectionModel 信号族（对标 QItemSelectionModel）。 */
+    int ismCurrentChanged;     /**< currentChanged(cur,prev) 次数。 */
+    int ismRow;                /**< 最近 currentChanged 当前行。 */
+    int ismCol;                /**< 最近 currentChanged 当前列。 */
+    int ismPrevRow;            /**< 最近 currentChanged 前行。 */
+    int ismPrevCol;            /**< 最近 currentChanged 前列。 */
+    int ismRowChanged;         /**< currentRowChanged(cur,prev) 次数。 */
+    int ismColChanged;         /**< currentColumnChanged(cur,prev) 次数。 */
     /* XListView 信号族。 */
     int indexesMoved;          /**< indexesMoved(rows,count) 次数。 */
     int imCount;               /**< 最近 indexesMoved 行数。 */
@@ -85,6 +105,13 @@ typedef struct ViewsSigRec
     int tvExpRow;              /**< 最近 expanded 行。 */
     int tvCollapsed;           /**< collapsed(row) 次数。 */
     int tvColRow;              /**< 最近 collapsed 行。 */
+    int tvColResized;          /**< columnResized(col,old,new) 次数。 */
+    int tvCRCol;               /**< 最近 columnResized 列号。 */
+    int tvCROld;               /**< 最近 columnResized 原宽。 */
+    int tvCRNew;               /**< 最近 columnResized 新宽。 */
+    int tvColCountChanged;     /**< columnCountChanged(old,new) 次数。 */
+    int tvCCOld;               /**< 最近 columnCountChanged 原列数。 */
+    int tvCCNew;               /**< 最近 columnCountChanged 新列数。 */
     /* XTreeWidget 信号族。 */
     int twItemExpanded;        /**< itemExpanded(row) 次数。 */
     int twItemCollapsed;       /**< itemCollapsed(row) 次数。 */
@@ -103,6 +130,8 @@ typedef struct ViewsSigRec
     int hvOldCount;            /**< 最近原段数。 */
     int hvNewCount;            /**< 最近新段数。 */
     int hvGeometries;          /**< geometriesChanged 次数。 */
+    int hvHeaderData;          /**< headerDataChanged(section) 次数。 */
+    int hvHDSection;           /**< 最近 headerDataChanged 段。 */
     int hvSortIndicator;       /**< sortIndicatorChanged 次数。 */
     int hvSortSection;         /**< 最近 sortIndicatorChanged 段。 */
     int hvClearable;           /**< sortIndicatorClearableChanged 次数。 */
@@ -118,6 +147,8 @@ typedef struct ViewsSigRec
     int tblCurCell;            /**< currentCellChanged 次数。 */
     int tblSelChanged;         /**< itemSelectionChanged 次数。 */
     int tblCellChanged;        /**< cellChanged(row,col) 次数。 */
+    int tblCellActivated;      /**< cellActivated(row,col) 次数。 */
+    int tblItemActivated;      /**< itemActivated(item) 次数。 */
     char order[8];             /**< 单击发射次序：'p'=cellPressed、
                                     'c'=cellClicked（同按先按压后点击）。 */
     int orderLen;              /**< order 已写入长度。 */
@@ -157,7 +188,71 @@ static void vw_modelRowsRemovedSlot(XObject* receiver, XVarList* args)
     g_sig.rrCount = count;
 }
 
-/** @brief 模型三信号统一装配（sender==receiver 自连定式）。 */
+static void vw_modelHeaderDataChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_3(args, int, orientation, int, first, int, last);
+    ++g_sig.headerDataChanged;
+    g_sig.hdcOrientation = orientation;
+    g_sig.hdcFirst = first;
+    g_sig.hdcLast = last;
+}
+
+static void vw_modelColumnsInsertedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_2(args, int, column, int, count);
+    ++g_sig.columnsInserted;
+    g_sig.ciCol = column;
+    g_sig.ciCount = count;
+}
+
+static void vw_modelColumnsRemovedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_2(args, int, column, int, count);
+    ++g_sig.columnsRemoved;
+    g_sig.crCol = column;
+    g_sig.crCount = count;
+}
+
+static void vw_modelLayoutChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    ++g_sig.layoutChanged;
+}
+
+static void vw_ismCurrentChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_4(args, int, row, int, col, int, prevRow, int, prevCol);
+    ++g_sig.ismCurrentChanged;
+    g_sig.ismRow = row;
+    g_sig.ismCol = col;
+    g_sig.ismPrevRow = prevRow;
+    g_sig.ismPrevCol = prevCol;
+}
+
+static void vw_ismRowChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_2(args, int, row, int, prevRow);
+    ++g_sig.ismRowChanged;
+    g_sig.ismRow = row;
+    g_sig.ismPrevRow = prevRow;
+}
+
+static void vw_ismColChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_2(args, int, col, int, prevCol);
+    ++g_sig.ismColChanged;
+    g_sig.ismCol = col;
+    g_sig.ismPrevCol = prevCol;
+}
+
+/** @brief 模型信号统一装配（sender==receiver 自连定式；含表头/列结构/
+ *        布局信号，供结构操作与表头联动断言共用）。 */
 static void vsig_connectModel(XObject* sender)
 {
     XObject_connect_1(sender, XSignal(XAbstractItemModel_dataChanged_signal),
@@ -166,6 +261,37 @@ static void vsig_connectModel(XObject* sender)
                       sender, vw_modelRowsInsertedSlot, XConnectionType_Direct);
     XObject_connect_1(sender, XSignal(XAbstractItemModel_rowsRemoved_signal),
                       sender, vw_modelRowsRemovedSlot, XConnectionType_Direct);
+    XObject_connect_1(sender,
+                      XSignal(XAbstractItemModel_headerDataChanged_signal),
+                      sender, vw_modelHeaderDataChangedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1(sender,
+                      XSignal(XAbstractItemModel_columnsInserted_signal),
+                      sender, vw_modelColumnsInsertedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1(sender,
+                      XSignal(XAbstractItemModel_columnsRemoved_signal),
+                      sender, vw_modelColumnsRemovedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1(sender,
+                      XSignal(XAbstractItemModel_layoutChanged_signal),
+                      sender, vw_modelLayoutChangedSlot,
+                      XConnectionType_Direct);
+}
+
+/** @brief 选择模型 current 族信号装配（sender==receiver 自连定式）。 */
+static void vsig_connectSelectionModel(XObject* sender)
+{
+    XObject_connect_1(sender,
+                      XSignal(XItemSelectionModel_currentChanged_signal),
+                      sender, vw_ismCurrentChangedSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1(sender,
+                      XSignal(XItemSelectionModel_currentRowChanged_signal),
+                      sender, vw_ismRowChangedSlot, XConnectionType_Direct);
+    XObject_connect_1(sender,
+                      XSignal(XItemSelectionModel_currentColumnChanged_signal),
+                      sender, vw_ismColChangedSlot, XConnectionType_Direct);
 }
 
 static void vw_iconSizeChangedSlot(XObject* receiver, XVarList* args)
@@ -295,6 +421,33 @@ static void vw_tvCollapsedSlot(XObject* receiver, XVarList* args)
     XVarList_args_1(args, int, row);
     ++g_sig.tvCollapsed;
     g_sig.tvColRow = row;
+}
+
+static void vw_tvColumnResizedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_3(args, int, column, int, oldSize, int, newSize);
+    ++g_sig.tvColResized;
+    g_sig.tvCRCol = column;
+    g_sig.tvCROld = oldSize;
+    g_sig.tvCRNew = newSize;
+}
+
+static void vw_tvColumnCountChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_2(args, int, oldCount, int, newCount);
+    ++g_sig.tvColCountChanged;
+    g_sig.tvCCOld = oldCount;
+    g_sig.tvCCNew = newCount;
+}
+
+static void vw_hvHeaderDataSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, int, section);
+    ++g_sig.hvHeaderData;
+    g_sig.hvHDSection = section;
 }
 
 static void vw_twItemExpandedSlot(XObject* receiver, XVarList* args)
@@ -443,6 +596,8 @@ static void vsig_connectHeader(XObject* sender)
                       sender, vw_hvSectionResizedSlot, XConnectionType_Direct);
     XObject_connect_1(sender, XSignal(XHeaderView_sectionMoved_signal),
                       sender, vw_hvSectionMovedSlot, XConnectionType_Direct);
+    XObject_connect_1(sender, XSignal(XHeaderView_headerDataChanged_signal),
+                      sender, vw_hvHeaderDataSlot, XConnectionType_Direct);
 }
 
 static void vw_tblCellClickedSlot(XObject* receiver, XVarList* args)
@@ -454,6 +609,22 @@ static void vw_tblCellClickedSlot(XObject* receiver, XVarList* args)
     g_sig.tblCCCol = col;
     if (g_sig.orderLen < (int)sizeof(g_sig.order) - 1)
         g_sig.order[g_sig.orderLen++] = 'c';
+}
+
+static void vw_tblCellActivatedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_2(args, int, row, int, col);
+    ++g_sig.tblCellActivated;
+    g_sig.tblCCRow = row;
+    g_sig.tblCCCol = col;
+}
+
+static void vw_tblItemActivatedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    ++g_sig.tblItemActivated;
 }
 
 static void vw_tblCellPressedSlot(XObject* receiver, XVarList* args)
@@ -504,6 +675,10 @@ static void vsig_connectTable(XObject* sender)
                       sender, vw_tblSelChangedSlot, XConnectionType_Direct);
     XObject_connect_1(sender, XSignal(XTableWidget_cellChanged_signal),
                       sender, vw_tblCellChangedSlot, XConnectionType_Direct);
+    XObject_connect_1(sender, XSignal(XTableWidget_cellActivated_signal),
+                      sender, vw_tblCellActivatedSlot, XConnectionType_Direct);
+    XObject_connect_1(sender, XSignal(XTableWidget_itemActivated_signal),
+                      sender, vw_tblItemActivatedSlot, XConnectionType_Direct);
 }
 
 /* ==================== 合成事件注入（XObject_event_base 直发，与真实输入同路径） ==================== */
@@ -683,6 +858,124 @@ int xapi_views_run(void)
         XAPI_EXPECT(XAbstractItemModel_rowCount(&model) == 4 &&
                     xapi_cstr(XAbstractItemModel_data_2(&model, 3, 0))[0] == '\0',
                     "setRowCount(4) 补空行");
+        /* ---- flags（对标 QAbstractItemModel::flags 基类缺省：有效格
+         *      Selectable|Enabled，无效格 NoItemFlags） ---- */
+        XAPI_EXPECT(XAbstractItemModel_flags(&model, 0, 0) ==
+                        (XItemFlag_ItemIsSelectable |
+                         XItemFlag_ItemIsEnabled) &&
+                    XAbstractItemModel_flags(&model, -1, 0) ==
+                        XItemFlag_NoItemFlags &&
+                    XAbstractItemModel_flags(&model, 9, 9) ==
+                        XItemFlag_NoItemFlags,
+                    "flags 有效格 Selectable|Enabled、越界格 NoItemFlags");
+        /* ---- hasChildren（对标 hasChildren 的扁平收敛：行列均>0） ---- */
+        XAPI_EXPECT(XAbstractItemModel_hasChildren(&model),
+                    "4x3 模型 hasChildren 为 true");
+
+        /* ---- 结构操作（对标 insertRows/removeRows/insertColumns/
+         *      removeColumns；Qt 基类为虚占位，本内存模型为真实现） ---- */
+        XAbstractItemModel_setDimension(&model, 2, 2);
+        XAbstractItemModel_setData_2(&model, 0, 0, "r0c0");
+        XAbstractItemModel_setData_2(&model, 0, 1, "r0c1");
+        XAbstractItemModel_setData_2(&model, 1, 0, "r1c0");
+        XAbstractItemModel_setData_2(&model, 1, 1, "r1c1");
+        vsig_reset();
+        XAPI_EXPECT(XAbstractItemModel_insertRows(&model, 1, 2) &&
+                    XAbstractItemModel_rowCount(&model) == 4,
+                    "insertRows(1,2) 后 4 行");
+        XAPI_EXPECT(g_sig.rowsInserted == 1 && g_sig.riRow == 1 &&
+                    g_sig.riCount == 2,
+                    "insertRows 发射 rowsInserted(1,2)");
+        XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 0)),
+                           "r0c0") == 0 &&
+                    strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 3, 1)),
+                           "r1c1") == 0,
+                    "插入行后原数据整体后移（原 1 行 → 3 行）");
+        XAPI_EXPECT(xapi_cstr(XAbstractItemModel_data_2(&model, 1, 0))[0] == '\0',
+                    "插入的新行为空行");
+        XAPI_EXPECT(!XAbstractItemModel_insertRows(&model, -1, 1) &&
+                    !XAbstractItemModel_insertRows(&model, 0, 0),
+                    "insertRows 负位置/零行数拒绝");
+        vsig_reset();
+        XAPI_EXPECT(XAbstractItemModel_removeRows(&model, 1, 2) &&
+                    XAbstractItemModel_rowCount(&model) == 2,
+                    "removeRows(1,2) 后回到 2 行");
+        XAPI_EXPECT(g_sig.rowsRemoved == 1 && g_sig.rrRow == 1 &&
+                    g_sig.rrCount == 2,
+                    "removeRows 发射 rowsRemoved(1,2)");
+        XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 1, 1)),
+                           "r1c1") == 0,
+                    "移除中间行后原末行数据回到 1 行");
+        vsig_reset();
+        XAPI_EXPECT(XAbstractItemModel_insertColumns(&model, 1, 1) &&
+                    XAbstractItemModel_columnCount(&model) == 3,
+                    "insertColumns(1,1) 后 3 列");
+        XAPI_EXPECT(g_sig.columnsInserted == 1 && g_sig.ciCol == 1 &&
+                    g_sig.ciCount == 1,
+                    "insertColumns 发射 columnsInserted(1,1)");
+        XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 0)),
+                           "r0c0") == 0 &&
+                    strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 2)),
+                           "r0c1") == 0,
+                    "插入列后原第 1 列数据右移到第 2 列");
+        XAPI_EXPECT(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 1))[0] == '\0',
+                    "插入的新列为空列");
+        vsig_reset();
+        XAPI_EXPECT(XAbstractItemModel_removeColumns(&model, 1, 1) &&
+                    XAbstractItemModel_columnCount(&model) == 2,
+                    "removeColumns(1,1) 后回到 2 列");
+        XAPI_EXPECT(g_sig.columnsRemoved == 1 && g_sig.crCol == 1 &&
+                    g_sig.crCount == 1,
+                    "removeColumns 发射 columnsRemoved(1,1)");
+        /* ---- sort（对标 QAbstractItemModel::sort：Qt 基类为空实现、
+         *      由模型覆写，本内存模型按列文本重排并发射 layoutChanged） */
+        XAbstractItemModel_setDimension(&model, 3, 1);
+        XAbstractItemModel_setData_2(&model, 0, 0, "pear");
+        XAbstractItemModel_setData_2(&model, 1, 0, "apple");
+        XAbstractItemModel_setData_2(&model, 2, 0, "cherry");
+        vsig_reset();
+        XAbstractItemModel_sort(&model, 0, 0);
+        XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 0)),
+                           "apple") == 0 &&
+                    strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 1, 0)),
+                           "cherry") == 0 &&
+                    strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 2, 0)),
+                           "pear") == 0,
+                    "sort(0,升序) 按列文本字典序重排");
+        XAPI_EXPECT(g_sig.layoutChanged == 1,
+                    "sort 发射 layoutChanged");
+        XAbstractItemModel_sort(&model, 0, 1);
+        XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 0)),
+                           "pear") == 0 &&
+                    strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 2, 0)),
+                           "apple") == 0,
+                    "sort(0,降序) 反向重排");
+        XAbstractItemModel_sort(&model, 9, 0);
+        XAPI_EXPECT(strcmp(xapi_cstr(XAbstractItemModel_data_2(&model, 0, 0)),
+                           "pear") == 0,
+                    "sort 越界列忽略");
+        /* ---- 空模型 hasChildren（扁平收敛的假分支） ---- */
+        XAbstractItemModel_setDimension(&model, 0, 0);
+        XAPI_EXPECT(!XAbstractItemModel_hasChildren(&model),
+                    "0x0 模型 hasChildren 为 false");
+        /* ---- headerDataChanged（对标 QAbstractItemModel::
+         *      headerDataChanged 信号 qabstractitemmodel.h:358：
+         *      setHeaderData 落库成功即发射，驱动表头重绘链路） ---- */
+        XAbstractItemModel_setDimension(&model, 1, 2);
+        vsig_reset();
+        XAbstractItemModel_setHeaderData_2(&model, 1, 0, "列B");
+        XAPI_EXPECT(g_sig.headerDataChanged == 1 &&
+                    g_sig.hdcOrientation == 0 &&
+                    g_sig.hdcFirst == 1 && g_sig.hdcLast == 1,
+                    "setHeaderData 发射 headerDataChanged(0,1,1)");
+        XAbstractItemModel_setHeaderData_2(&model, 0, 1, "行A");
+        XAPI_EXPECT(g_sig.headerDataChanged == 2 &&
+                    g_sig.hdcOrientation == 1 &&
+                    g_sig.hdcFirst == 0 && g_sig.hdcLast == 0,
+                    "行头变化发射 headerDataChanged(1,0,0)");
+        XAbstractItemModel_setHeaderData_2(&model, 9, 0, "越界");
+        XAPI_EXPECT(g_sig.headerDataChanged == 2,
+                    "越界 setHeaderData 拒绝且不发 headerDataChanged");
 
         XClassDeinit(&model);
     }
@@ -1204,6 +1497,171 @@ int xapi_views_run(void)
     }
 
     /* ================================================================
+     * 2b. XItemSelectionModel 选择模型补齐面（current 信号族/区间选择/
+     *     整行整列/清空区分/模型绑定）+ 视图 MultiSelection Toggle
+     *     语义（对标 Qt setCurrentIndex → selectionCommand(nullptr)）。
+     * ================================================================ */
+    {
+        XItemSelectionModel* sm = XItemSelectionModel_create();
+        XAbstractItemModel* model = XAbstractItemModel_create();
+
+        vsig_reset();
+        if (model) XAbstractItemModel_setDimension(model, 3, 4);
+        if (sm) vsig_connectSelectionModel((XObject*)sm);
+
+        /* ---- setCurrentIndex 的 current 族发射（对标
+         *      QItemSelectionModel::setCurrentIndex：currentChanged 先
+         *      行、行/列分别变化再发射 row/column 版，载荷为当前/前值） */
+        XItemSelectionModel_setCurrentIndex(sm, 2, 3);
+        XAPI_EXPECT(g_sig.ismCurrentChanged == 1 && g_sig.ismRow == 2 &&
+                    g_sig.ismCol == 3 && g_sig.ismPrevRow == -1 &&
+                    g_sig.ismPrevCol == -1,
+                    "setCurrentIndex(2,3) 发射 currentChanged(2,3,-1,-1)");
+        XAPI_EXPECT(g_sig.ismRowChanged == 1 && g_sig.ismRow == 2 &&
+                    g_sig.ismPrevRow == -1,
+                    "行变化发射 currentRowChanged(2,-1)");
+        XAPI_EXPECT(g_sig.ismColChanged == 1 && g_sig.ismCol == 3 &&
+                    g_sig.ismPrevCol == -1,
+                    "列变化发射 currentColumnChanged(3,-1)");
+        XItemSelectionModel_setCurrentIndex(sm, 2, 3);
+        XAPI_EXPECT(g_sig.ismCurrentChanged == 1 && g_sig.ismRowChanged == 1 &&
+                    g_sig.ismColChanged == 1,
+                    "同格重设不发射（索引未变化无操作，同 Qt）");
+        XItemSelectionModel_setCurrentIndex(sm, 2, 1);
+        XAPI_EXPECT(g_sig.ismCurrentChanged == 2 && g_sig.ismRowChanged == 1 &&
+                    g_sig.ismColChanged == 2 && g_sig.ismCol == 1 &&
+                    g_sig.ismPrevCol == 3,
+                    "仅列变化发射 currentChanged+currentColumnChanged");
+        /* ---- selectRange（对标 select(QItemSelectionRange, Select)：
+         *      区间全格置选、单次 selectionChanged 语义；本库以
+         *      selectedCount 差分承载单次发射判定） ---- */
+        vsig_reset();
+        XAPI_EXPECT(XItemSelectionModel_selectRange(sm, 0, 1, 2, 2) &&
+                    XItemSelectionModel_selectedCount(sm) == 6,
+                    "selectRange(0,1,2,2) 选中 3 行 x 2 列 = 6 格");
+        XAPI_EXPECT(XItemSelectionModel_isSelected(sm, 0, 2) &&
+                    XItemSelectionModel_isSelected(sm, 2, 1) &&
+                    !XItemSelectionModel_isSelected(sm, 0, 0),
+                    "区间端点选中、区间外未选");
+        XAPI_EXPECT(!XItemSelectionModel_selectRange(sm, 2, 2, 0, 1) &&
+                    XItemSelectionModel_selectedCount(sm) == 6,
+                    "逆序区间归一后为幂等重选（集合不变返回 false）");
+        XAPI_EXPECT(XItemSelectionModel_hasSelection(sm),
+                    "hasSelection 有选中为 true");
+        /* ---- clearSelection 保留当前索引（对标 clearSelection 与
+         *      clear 的语义区分：clear 同 Qt 清当前索引的既有收敛保留
+         *      ——本库 clear 沿用不清当前的历史行为，见头文件注） ---- */
+        XItemSelectionModel_setCurrentIndex(sm, 1, 1);
+        vsig_reset();
+        XAPI_EXPECT(XItemSelectionModel_clearSelection(sm) &&
+                    XItemSelectionModel_selectedCount(sm) == 0,
+                    "clearSelection 清空选择集合");
+        XAPI_EXPECT(XItemSelectionModel_currentRow(sm) == 1 &&
+                    XItemSelectionModel_currentColumn(sm) == 1,
+                    "clearSelection 保留当前索引（同 Qt clearSelection）");
+        XAPI_EXPECT(!XItemSelectionModel_hasSelection(sm),
+                    "清空后 hasSelection 为 false");
+        /* ---- 模型绑定 + selectRow/selectColumn（对标 model/setModel
+         *      与 selectRow/selectColumn；未绑定模型时整行/列选择拒绝） */
+        XAPI_EXPECT(!XItemSelectionModel_selectRow(sm, 0),
+                    "未绑定模型 selectRow 拒绝");
+        XItemSelectionModel_setModel(sm, model);
+        XAPI_EXPECT(XItemSelectionModel_model(sm) == model,
+                    "setModel/model 绑定往返");
+        vsig_reset();
+        XAPI_EXPECT(XItemSelectionModel_selectRow(sm, 1) &&
+                    XItemSelectionModel_selectedCount(sm) == 4,
+                    "selectRow(1) 选中整行 4 格");
+        XAPI_EXPECT(XItemSelectionModel_isSelected(sm, 1, 3) &&
+                    !XItemSelectionModel_isSelected(sm, 0, 0),
+                    "整行选择覆盖该行全部列");
+        vsig_reset();
+        XAPI_EXPECT(XItemSelectionModel_selectColumn(sm, 2) &&
+                    XItemSelectionModel_selectedCount(sm) == 4 + 3 - 1,
+                    "selectColumn(2) 追加整列（交格去重，共 6 格）");
+        XAPI_EXPECT(!XItemSelectionModel_selectRow(sm, 9),
+                    "selectRow 越界拒绝");
+        XItemSelectionModel_setModel(sm, NULL);
+        XAPI_EXPECT(XItemSelectionModel_model(sm) == NULL,
+                    "setModel(NULL) 解除绑定");
+
+        if (model) XClassDelete(model);
+        if (sm) XClassDelete((XClass*)sm);
+    }
+
+    /* ================================================================
+     * 2c. 视图 MultiSelection 选择命令分派（对标 Qt 6.8.3
+     *     QAbstractItemView::setCurrentIndex → selectionCommand(index,
+     *     nullptr)：MultiSelection 走 multiSelectionCommand 尾段 Toggle
+     *     |behaviorFlags（qabstractitemview.cpp:4183-4229），其余模式
+     *     ClearAndSelect）与 update(index) 局部刷新入口。
+     * ================================================================ */
+    {
+        XAbstractItemView view;
+        XAbstractItemModel* model = XAbstractItemModel_create();
+
+        vsig_reset();
+        XAbstractItemView_init(&view, NULL, 0);
+        if (model) {
+            XAbstractItemModel_setDimension(model, 3, 3);
+            XAbstractItemView_setModel(&view, model);
+        }
+
+        /* ---- MultiSelection：setCurrentIndex 为 Toggle 语义 ---- */
+        XAbstractItemView_setSelectionMode(
+            &view, XAbstractItemViewSelectionMode_MultiSelection);
+        XItemSelectionModel_select(XAbstractItemView_selectionModel(&view),
+                                   1, 1, true);
+        XAbstractItemView_setCurrentIndex(&view, 1, 1);
+        {
+            XItemSelectionModel* smv = XAbstractItemView_selectionModel(&view);
+            XAPI_EXPECT(!XItemSelectionModel_isSelected(smv, 1, 1),
+                        "MultiSelection setCurrentIndex 对已选项 Toggle 取消");
+            XAbstractItemView_setCurrentIndex(&view, 2, 2);
+            XItemSelectionModel_select(smv, 1, 1, true);
+            XAPI_EXPECT(XItemSelectionModel_isSelected(smv, 1, 1) &&
+                        XItemSelectionModel_isSelected(smv, 2, 2),
+                        "MultiSelection setCurrentIndex 追加不清理既有选择");
+        }
+        /* ---- ExtendedSelection 回归：仍为 ClearAndSelect ---- */
+        XAbstractItemView_setSelectionMode(
+            &view, XAbstractItemViewSelectionMode_ExtendedSelection);
+        XAbstractItemView_setCurrentIndex(&view, 2, 2);
+        {
+            XItemSelectionModel* smv = XAbstractItemView_selectionModel(&view);
+            XAPI_EXPECT(XItemSelectionModel_isSelected(smv, 2, 2) &&
+                        !XItemSelectionModel_isSelected(smv, 1, 1),
+                        "ExtendedSelection setCurrentIndex 先清后选（回归）");
+        }
+        /* ---- MultiSelection 键盘导航不触碰选择集合（对标 Qt
+         *      multiSelectionCommand 的 KeyPress 分支回落 NoUpdate；
+         *      本实现仍移动当前项保导航可用） ---- */
+        XAbstractItemView_setSelectionMode(
+            &view, XAbstractItemViewSelectionMode_MultiSelection);
+        XAbstractItemView_setCurrentIndex(&view, 0, 0);
+        vsig_reset();
+        vw_injectKey((XWidget*)&view, XEVENT_TYPE_KEY_PRESS, XKey_Down);
+        XAPI_EXPECT(XAbstractItemView_currentRow(&view) == 1,
+                    "MultiSelection Down 移动当前项");
+        {
+            XItemSelectionModel* smv = XAbstractItemView_selectionModel(&view);
+            XAPI_EXPECT(XItemSelectionModel_isSelected(smv, 0, 0) &&
+                        !XItemSelectionModel_isSelected(smv, 1, 0),
+                        "MultiSelection 键盘导航不改选择集合（NoUpdate 语义）");
+        }
+        /* ---- update(index) 局部刷新入口（对标
+         *      QAbstractItemView::update(const QModelIndex&)；渲染效果
+         *      不在断言职责，覆盖有效/无效索引无崩溃与入口可达） ---- */
+        XAbstractItemView_update(&view, 1, 1);
+        XAbstractItemView_update(&view, -1, -1);
+        XAbstractItemView_update(&view, 99, 99);
+        XAPI_EXPECT(true, "update(index) 有效/越界索引调用无崩溃");
+
+        if (model) XClassDelete(model);
+        XClassDeinit(&view);
+    }
+
+    /* ================================================================
      * 3. XListView：列表视图状态族（flow/grid/wrapping/viewMode 等）。
      * ================================================================ */
     {
@@ -1630,6 +2088,14 @@ int xapi_views_run(void)
         XObject_connect_1((XObject*)&tv, XSignal(XTreeView_collapsed_signal),
                           (XObject*)&tv, vw_tvCollapsedSlot,
                           XConnectionType_Direct);
+        XObject_connect_1((XObject*)&tv,
+                          XSignal(XTreeView_columnResized_signal),
+                          (XObject*)&tv, vw_tvColumnResizedSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)&tv,
+                          XSignal(XTreeView_columnCountChanged_signal),
+                          (XObject*)&tv, vw_tvColumnCountChangedSlot,
+                          XConnectionType_Direct);
         if (model) {
             XAbstractItemModel_setDimension(model, 3, 2);
             XAbstractItemView_setModel(&tv.m_base, model);
@@ -1820,6 +2286,31 @@ int xapi_views_run(void)
         XTreeView_resizeColumnToContents(&tv, 0);
         XAPI_EXPECT(XTreeView_columnWidth(&tv, 0) == 100,
                     "resizeColumnToContents 内容测算未接（列宽保持）");
+
+        /* ---- 列信号（对标 Qt QTreeView 的 columnResized/
+         *      columnCountChanged 受保护槽——Qt 6.8.3 qtreeview.h 中
+         *      二者为受保护槽而非信号，由表头 sectionResized/
+         *      sectionCountChanged 驱动；本实现列宽/列数由视图自持，
+         *      以 setColumnWidth 实际变化、列状态表长度变化为发射点） */
+        vsig_reset();
+        XTreeView_setColumnWidth(&tv, 0, 120);
+        XAPI_EXPECT(g_sig.tvColResized == 1 && g_sig.tvCRCol == 0 &&
+                    g_sig.tvCROld == 100 && g_sig.tvCRNew == 120,
+                    "setColumnWidth 实际变化发射 columnResized(0,100,120)");
+        XTreeView_setColumnWidth(&tv, 0, 120);
+        XAPI_EXPECT(g_sig.tvColResized == 1,
+                    "同宽重设不重复发射 columnResized");
+        XAPI_EXPECT(g_sig.tvColCountChanged == 0,
+                    "列数未变不发射 columnCountChanged");
+        XTreeView_setColumnWidth(&tv, 2, 60);
+        XAPI_EXPECT(g_sig.tvColCountChanged == 1 && g_sig.tvCCOld == 2 &&
+                    g_sig.tvCCNew == 3,
+                    "按列访问扩列状态表发射 columnCountChanged(2,3)");
+        XAPI_EXPECT(g_sig.tvColResized == 2 && g_sig.tvCRCol == 2 &&
+                    g_sig.tvCROld == 0 && g_sig.tvCRNew == 60,
+                    "新列首设列宽发射 columnResized(2,0,60)");
+        /* 还原列状态（后续断言依赖 col0=100 的几何口径）。 */
+        XTreeView_setColumnWidth(&tv, 0, 100);
 
         /* ---- 表头对象挂接（对标 setHeader/header + headerHidden 镜像） ---- */
         XTreeView_setHeaderHidden(&tv, true);
@@ -2502,6 +2993,15 @@ int xapi_views_run(void)
         XTableWidget_removeColumn(&table, 1);
         XAPI_EXPECT(XTableWidget_columnCount(&table) == 2,
                     "removeColumn(1) 列数 -1");
+        /* ---- 持久编辑器三件套（对标 QTableWidget open/close/
+         *      isPersistentEditorOpen(item) → 基类 index 形态转发） ---- */
+        XTableWidget_openPersistentEditor(&table, 1, 1);
+        XAPI_EXPECT(XTableWidget_isPersistentEditorOpen(&table, 1, 1),
+                    "openPersistentEditor 后 isPersistentEditorOpen 为 true");
+        XTableWidget_closePersistentEditor(&table, 1, 1);
+        XAPI_EXPECT(!XTableWidget_isPersistentEditorOpen(&table, 1, 1) &&
+                    !XTableWidget_isPersistentEditorOpen(&table, 9, 9),
+                    "closePersistentEditor 后关闭、越界格 false");
 
         /* ---- 单元格文本（对标 setText/text 快捷族） ---- */
         XTableWidget_setText(&table, 0, 0, "苹果");
@@ -2668,20 +3168,80 @@ int xapi_views_run(void)
         count = XTableWidget_selectedItems(&table, rows, cols, 4);
         XAPI_EXPECT(count >= 0,
                     "selectedItems 转发 selectedIndexes（语义重合）");
-        /* ---- 单元格部件挂载（对标 setCellWidget/cellWidget） ---- */
+        /* ---- 单元格部件挂载（对标 setCellWidget/cellWidget：表接管
+         *      所有权——reparent 到视口+摆位+显示；removeCellWidget/
+         *      setCellWidget(NULL)/同格重挂均 deleteLater 旧件） ---- */
         {
             XWidget* cellWidget = XWidget_create(NULL, 0);
             XTableWidget_setCellWidget(&table, 0, 1, cellWidget);
             XAPI_EXPECT(XTableWidget_cellWidget(&table, 0, 1) == cellWidget,
-                        "setCellWidget/cellWidget 借用往返");
+                        "setCellWidget/cellWidget 往返");
+            XAPI_EXPECT(XWidget_parentWidget(cellWidget) ==
+                            XAbstractScrollArea_viewport(
+                                (const XAbstractScrollArea*)&table),
+                        "setCellWidget reparent 到视口（Qt 同）");
             XTableWidget_removeCellWidget(&table, 0, 1);
             XAPI_EXPECT(XTableWidget_cellWidget(&table, 0, 1) == NULL,
-                        "removeCellWidget 解除关联");
+                        "removeCellWidget 解除关联并 deleteLater 挂件");
+            cellWidget = XWidget_create(NULL, 0);
             XTableWidget_setCellWidget(&table, 0, 1, cellWidget);
             XTableWidget_setCellWidget(&table, 0, 1, NULL);
             XAPI_EXPECT(XTableWidget_cellWidget(&table, 0, 1) == NULL,
                         "setCellWidget(NULL) 等价 removeCellWidget");
-            if (cellWidget) XClassDelete(cellWidget);
+            cellWidget = XWidget_create(NULL, 0);
+            XTableWidget_setCellWidget(&table, 0, 1, cellWidget);
+            XTableWidget_setCellWidget(&table, 0, 1, cellWidget);
+            XAPI_EXPECT(XTableWidget_cellWidget(&table, 0, 1) == cellWidget,
+                        "同指针重挂幂等（Qt 同）");
+            XTableWidget_setCellWidget(&table, 0, 1, NULL);
+            /* 挂件生命周期归表：延迟删除事件在对象析构时统一清除，
+               此处不再手工 XClassDelete（Qt 同：widget 由视图接管）。 */
+        }
+        /* ---- 挂件滚动联动（reparent 视口+摆位随滚动重算） ---- */
+        {
+            XWidget* cellWidget = XWidget_create(NULL, 0);
+            XRect before;
+            XRect after;
+            XTableWidget_setCellWidget(&table, 2, 1, cellWidget);
+            before = XWidget_geometry(cellWidget);
+            /* 加行制造滚动空间→滚到第 19 行→row2 挂件应被藏起或移出视口。 */
+            XTableWidget_setRowCount(&table, 20);
+            XTableWidget_scrollToItem(&table, 19, 1);
+            after = XWidget_geometry(cellWidget);
+            XAPI_EXPECT(!XWidget_isVisible(cellWidget) ||
+                        after.y != before.y,
+                        "挂件随滚动重摆/藏起（scrollContentsBy relayout）");
+            XTableWidget_setRowCount(&table, 3);
+            /* 无头环境视口保持构造默认 100x30（xasa_layout 随首次
+               show 触发），row2(y=72) 在视口外被正确藏起：断言几何
+               与 visualItemRect 一致即可（可见性=视口裁剪口径）。 */
+            {
+                XRect fin = XWidget_geometry(cellWidget);
+                XRect want = XTableWidget_visualItemRect(&table,
+                    XTableWidget_item(&table, 2, 1));
+                XAPI_EXPECT(fin.x == want.x && fin.y == want.y &&
+                            fin.width == want.width &&
+                            fin.height == want.height,
+                            "滚回后挂件几何与 visualItemRect 一致");
+            }
+            XTableWidget_setCellWidget(&table, 0, 1, NULL);
+        }
+        /* ---- activated 发射与 setItem(NULL)（Qt 行为） ---- */
+        {
+            vsig_reset();
+            XTableWidget_setCurrentCell(&table, 1, 0);
+            vw_injectKey((XWidget*)&table, XEVENT_TYPE_KEY_PRESS,
+                         XKey_Return);
+            XAPI_EXPECT(g_sig.tblCellActivated >= 1 &&
+                        g_sig.tblItemActivated >= 1,
+                        "Return 触发 cellActivated/itemActivated（Qt 同）");
+        }
+        {
+            vsig_reset();
+            XTableWidget_setText(&table, 0, 0, "临时值");
+            XTableWidget_setItem(&table, 0, 0, NULL);
+            XAPI_EXPECT(xapi_cstr(XTableWidget_text(&table, 0, 0))[0] == '\0',
+                        "setItem(NULL) 清空该格（takeItem+delete 同）");
         }
         /* ---- takeItem（对标 takeItem：文本所有权转移） ---- */
         vsig_reset();
@@ -2701,11 +3261,32 @@ int xapi_views_run(void)
                         XTableWidget_indexFromItem(&table, cur, &hitCol) >= 0,
                         "indexFromItem 按地址反查行号");
         }
-        XAPI_EXPECT(XTableWidget_row(&table, 1) == 1 &&
-                    XTableWidget_row(&table, 99) == -1 &&
-                    XTableWidget_column(&table, 1) == 1 &&
-                    XTableWidget_column(&table, 99) == -1,
-                    "row/column 恒等映射（有效原样、越界 -1）");
+        {
+            /* Qt 真语义：row(item)/column(item) 位置反查（item 必须
+               来自本表格；外部位址/NULL 返回 -1）。 */
+            const XTableWidgetItem* it = XTableWidget_item(&table, 2, 1);
+            XTableWidgetItem foreign;
+            XMemset(&foreign, 0, sizeof(foreign));
+            XAPI_EXPECT(it != NULL &&
+                        XTableWidget_row(&table, it) == 2 &&
+                        XTableWidget_column(&table, it) == 1,
+                        "row(item)/column(item) 位置反查（Qt 同）");
+            XAPI_EXPECT(XTableWidget_row(&table, NULL) == -1 &&
+                        XTableWidget_column(&table, &foreign) == -1,
+                        "row/column 外部位址与 NULL 返回 -1");
+        }
+        {
+            /* 排序开关/持久编辑器转发（Qt 继承面在本层的显式转发）。 */
+            XTableWidget_setSortingEnabled(&table, true);
+            XAPI_EXPECT(XTableWidget_isSortingEnabled(&table),
+                        "setSortingEnabled/isSortingEnabled 往返");
+            XTableWidget_setSortingEnabled(&table, false);
+            XAPI_EXPECT(!XTableWidget_isSortingEnabled(&table),
+                        "排序开关复位");
+            XTableWidget_openPersistentEditor(&table, 0, 0);
+            XTableWidget_closePersistentEditor(&table, 0, 0);
+            XAPI_EXPECT(true, "open/closePersistentEditor 转发无崩溃");
+        }
         {
             XString* rowText = XTableWidget_itemFromIndex(&table, 0);
             XAPI_EXPECT(rowText != NULL,
@@ -2740,6 +3321,9 @@ int xapi_views_run(void)
         XAPI_EXPECT(strcmp(XAbstractItemModel_data_2(XTableWidget_model(&table),
                                                      0, 0), "") == 0,
                     "clearContents 同步内建模型为空");
+        XAPI_EXPECT(XTableWidget_currentRow(&table) == -1 &&
+                    XTableWidget_currentColumn(&table) == -1,
+                    "clearContents 复位当前格（selectionModel clear 同）");
         /* ---- clear：行列归零、表头一并清空（对标 clear） ---- */
         XTableWidget_setHorizontalHeaderLabels(&table, hLabels, 2);
         XTableWidget_clear(&table);
@@ -3032,6 +3616,27 @@ int xapi_views_run(void)
         XHeaderView_setModel(&header, NULL);
         XHeaderView_doItemsLayout(&header);
         XAPI_EXPECT(true, "setModel/doItemsLayout 调用无崩溃（承载/重绘）");
+        /* ---- 模型接线（对标 Qt 表头连接模型 headerDataChanged →
+         *      headerDataChanged 槽：模型表头数据落库驱动表头通知与
+         *      重绘；断言经表头句柄计数承载，重绘效果不在断言职责） */
+        {
+            XAbstractItemModel* hModel = XAbstractItemModel_create();
+            if (hModel) {
+                XAbstractItemModel_setDimension(hModel, 1, 3);
+                vsig_reset();
+                XHeaderView_setModel(&header, hModel);
+                XAbstractItemModel_setHeaderData_2(hModel, 1, 0, "接线列");
+                XAPI_EXPECT(g_sig.hvHeaderData == 1 &&
+                            g_sig.hvHDSection == 1,
+                            "模型 setHeaderData 经接线驱动表头 headerDataChanged(1)");
+                XHeaderView_setModel(&header, NULL);
+                vsig_reset();
+                XAbstractItemModel_setHeaderData_2(hModel, 1, 0, "解绑后");
+                XAPI_EXPECT(g_sig.hvHeaderData == 0,
+                            "解除关联后模型表头变化不再转发表头");
+            }
+            if (hModel) XClassDelete((XClass*)hModel);
+        }
         /* ---- reset（对标 reset 就地恢复缺省） ---- */
         XHeaderView_hideSection(&header, 0);
         XHeaderView_setSortIndicator(&header, 0, XHeaderViewSortOrder_Descending);

@@ -16,10 +16,25 @@
 #include "XWidget.h"
 #include "XImage.h"
 #include "XPainter.h"
+#include "XVarList.h"
 
 #if XWIDGET_ON
 
 /* ==================== 内部辅助 ==================== */
+
+/** @brief 发射携带 float 参数的信号（无连接时释放参数，防泄漏）。 */
+static void xgraphicsopacityeffect_emitFloat(XGraphicsOpacityEffect* self,
+                                             size_t signal, float value)
+{
+    XVarList* args = XVarList_Create(XVar(float, value));
+    if (!args) return;
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
 
 /** @brief Draw 槽位实现：源快照按 m_opacity 绘入输出画布。 */
 static void VXGraphicsOpacityEffect_draw(XGraphicsEffect* base,
@@ -93,9 +108,21 @@ void XGraphicsOpacityEffect_setOpacity(XGraphicsOpacityEffect* self,
     if (opacity > 1.0f) opacity = 1.0f;
     if (self->m_opacity == opacity) return;
     self->m_opacity = opacity;
-    /* 对标 Qt：setOpacity 实际变化即触发源重绘（opacityChanged 信号
-       本仓库未建立，随基类 enabledChanged 模式后续扩展）。 */
+    /* 对标 Qt：setOpacity 实际变化即触发源重绘并发射
+     * opacityChanged(opacity)（qgraphicseffect.cpp:1086-1101，update()
+     * 之后 emit；载荷为钳位后新值）。 */
     XGraphicsEffect_update(&self->m_base);
+    xgraphicsopacityeffect_emitFloat(
+        self, (size_t)XGraphicsOpacityEffect_opacityChanged_signal, opacity);
+}
+
+/* ==================== 信号 ==================== */
+
+void* XGraphicsOpacityEffect_opacityChanged_signal(
+    XGraphicsOpacityEffect* self, float opacity)
+{
+    (void)self; (void)opacity;
+    return (void*)(size_t)XGraphicsOpacityEffect_opacityChanged_signal;
 }
 
 #endif /* XWIDGET_ON */

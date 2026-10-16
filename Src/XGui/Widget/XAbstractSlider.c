@@ -12,7 +12,9 @@
  *               字段（长按重复 timer 为后续扩展项）；
  *             - 虚槽：StepBy（基类默认钳位步进 + 发射 valueChanged/
  *               sliderMoved）、SliderChange（默认仅刷新显示）、
- *               StepEnabled（按当前值边界返回位组合）；
+ *               StepEnabled（按当前值边界返回位组合）、Bound（取值
+ *               收敛点：基类钳位，子类可覆写为回绕，对标 Qt 私有
+ *               QAbstractSliderPrivate::bound 的虚函数覆写机制）；
  *             - 事件：event 转发父类、keyPressEvent（Up/Right 增、
  *               Down/Left 减、PageUp/PageDown 翻页、Home/End 边界，
  *               invertedControls 翻转方向，经 triggerAction 执行）、
@@ -29,6 +31,10 @@
 #include "XAbstractSlider.h"
 #include "XEvent.h"
 #include "XWidget_Protected.h"
+#if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
+#include "XStyleHints.h"
+#include "XGuiApplication.h"
+#endif /* XSTYLEHINTS_ON && XGUIAPPLICATION_ON */
 #if XWINDOWEVENT_ON
 #include "XWindowEvent.h"
 #endif /* XWINDOWEVENT_ON */
@@ -42,6 +48,7 @@ static void VXAbstractSlider_changeEvent(XWidget* self, XEvent* event);
 static void VXAbstractSlider_stepBy(XAbstractSlider* self, int steps);
 static void VXAbstractSlider_sliderChange(XAbstractSlider* self, int change);
 static int  VXAbstractSlider_stepEnabled(XAbstractSlider* self);
+static int  VXAbstractSlider_bound(XAbstractSlider* self, int val);
 static void VXAbstractSlider_copy(XAbstractSlider* self,
                                   const XAbstractSlider* other);
 static void VXAbstractSlider_move(XAbstractSlider* self,
@@ -100,14 +107,29 @@ static int xslider_clamp(const XAbstractSlider* self, int value)
     return value;
 }
 
-/** @brief 溢出安全的加法：以 int64 累加后钳位到范围（对标 Qt
- *         QAbstractSliderPrivate::overflowSafeAdd）。 */
+/** @brief bound 虚槽默认实现：钳位（对标 QAbstractSliderPrivate::bound）。 */
+static int VXAbstractSlider_bound(XAbstractSlider* self, int val)
+{
+    if (!self) return val;
+    return xslider_clamp(self, val);
+}
+
+int XAbstractSlider_bound_base(XAbstractSlider* self, int val)
+{
+    if (!self) return val;
+    return XClassGetVirtualFunc(self, EXAbstractSlider_Bound,
+                                int(*)(XAbstractSlider*, int))(self, val);
+}
+
+/** @brief 溢出安全的加法（对标 Qt QAbstractSliderPrivate::
+ *         overflowSafeAdd）：仅处理 int 溢出回绕，**不做范围钳位**——
+ *         钳位/回绕由调用点的 bound 虚槽统一负责（Qt 同构）。 */
 static int xslider_overflowSafeAdd(const XAbstractSlider* self, int add)
 {
     int64_t newValue = (int64_t)self->m_value + (int64_t)add;
     if (add > 0 && newValue < self->m_value) newValue = self->m_max;
     else if (add < 0 && newValue > self->m_value) newValue = self->m_min;
-    return xslider_clamp(self, (int)newValue);
+    return (int)newValue;
 }
 
 /* ==================== 事件虚函数 ==================== */
@@ -203,40 +225,102 @@ static void VXAbstractSlider_timerEvent(XObject* self, XTimerEvent* event)
     }
 }
 
-/** @brief 滚轮事件：角度增量累积，每 120 角度=1 单步（余数保留），
- *         invertedControls 翻转方向；经 stepBy 虚槽执行（对标
- *         QAbstractSlider::wheelEvent 的简化实现）。 */
+/** @brief 滚轮单步行数（对标 QApplication::wheelScrollLines，缺省 3）：
+ *         读 XStyleHints；风格提示不可用时回退 Qt 默认 3。 */
+static int xslider_wheelScrollLines(void)
+{
+#if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
+    XStyleHints* hints = XGuiApplication_styleHints();
+    if (hints) {
+        int lines = XStyleHints_wheelScrollLines(hints);
+        if (lines > 0) return lines;
+    }
+#endif /* XSTYLEHINTS_ON && XGUIAPPLICATION_ON */
+    return 3;
+}
+
+/** @brief 滚轮步进（对标 QAbstractSliderPrivate::scrollByDelta
+ *         qabstractslider.cpp:668-725）：
+ *         - Ctrl/Shift：整页滚动（qBound 到 ±pageStep）并清零累积器；
+ *         - 普通：一格滚轮（angleDelta 120）= wheelScrollLines 个单步
+ *           （Qt 缺省 3，此前框架仅 1 步）；不足一步的余数跨事件累积，
+ *           方向反转时清零；单次滚动不超过一页；
+ *         - invertedControls 翻转方向；末尾 position = bound(
+ *           overflowSafeAdd(steps)) 后 triggerAction(SliderMove) 提交。
+ *  @return true=已消费（值发生变化），false=忽略。 */
+static bool xslider_scrollByDelta(XAbstractSlider* self, int delta,
+                                  XKeyboardModifiers modifiers)
+{
+    int stepsToScroll;
+    int pageStep;
+    int singleStep;
+    int prevValue;
+    if (!self) return false;
+    pageStep = self->m_pageStep;
+    singleStep = self->m_singleStep > 0 ? self->m_singleStep : 1;
+    if (modifiers & (XKeyboardModifier_ControlModifier |
+                     XKeyboardModifier_ShiftModifier)) {
+        /* 整页滚动：与增量大小无关，累积器清零（对标 Qt 的 Ctrl/Shift
+         * 分支——SH_SpinBox_StepModifier 在 QAbstractSlider 无对应项）。 */
+        stepsToScroll = delta >= 0 ? pageStep : -pageStep;
+        self->m_wheelDeltaRemainder = 0;
+    } else {
+        int offset = delta / 120;      /* 一格滚轮 = 1 offset。 */
+        int stepsToScrollF;
+        if (offset == 0) return false;
+        stepsToScrollF = xslider_wheelScrollLines() * offset * singleStep;
+        /* 方向反转：丢弃上一次累积（对标 Qt 的 offset_accumulated=0）。 */
+        if (self->m_wheelDeltaRemainder != 0 &&
+            ((self->m_wheelDeltaRemainder > 0) != (stepsToScrollF > 0)))
+            self->m_wheelDeltaRemainder = 0;
+        self->m_wheelDeltaRemainder += stepsToScrollF;
+        /* 单次滚动不超过一页（qBound）。 */
+        stepsToScroll = self->m_wheelDeltaRemainder;
+        if (stepsToScroll > pageStep) stepsToScroll = pageStep;
+        if (stepsToScroll < -pageStep) stepsToScroll = -pageStep;
+        self->m_wheelDeltaRemainder -= stepsToScroll;
+        if (stepsToScroll == 0) return false;  /* 仅累积不足一步。 */
+    }
+    if (self->m_invertedControls) stepsToScroll = -stepsToScroll;
+    if (stepsToScroll == 0) return false;
+    prevValue = self->m_value;
+    XAbstractSlider_setSliderPosition(
+        self, XAbstractSlider_bound_base(
+                  self, xslider_overflowSafeAdd(self, stepsToScroll)));
+    XAbstractSlider_triggerAction(self,
+                                  XAbstractSliderSliderAction_Move);
+    return self->m_value != prevValue;
+}
+
+/** @brief 滚轮事件：择轴（angleDelta.y 优先）后转调 scrollByDelta
+ *         （对标 QAbstractSlider::wheelEvent qabstractslider.cpp:733）。 */
 static void VXAbstractSlider_wheelEvent(XWidget* self, XEvent* event)
 {
     XAbstractSlider* slider = (XAbstractSlider*)self;
-    int steps = 0;
     if (!slider || !event || XEvent_type(event) != XEVENT_TYPE_WHEEL) return;
 #if XWINDOWEVENT_ON
     {
         XWheelEvent* we = (XWheelEvent*)event;
         XPoint delta = XWheelEvent_angleDelta(we);
-        int dy = (delta.y != 0) ? delta.y : delta.x;
-        slider->m_wheelDeltaRemainder += dy;
-        steps = slider->m_wheelDeltaRemainder / 120;
-        slider->m_wheelDeltaRemainder -= steps * 120;
-        if (slider->m_invertedControls) steps = -steps;
+        /* Qt wheelEvent：angleDelta.y 非零走竖直，否则走水平；scrollByDelta
+         * 开头再对水平轴取负（“in Qt scrolling to the right gives
+         * negative values”，qabstractslider.cpp:672-674）——Qt 实测：水平
+         * 滑块 x=+120 使 value 减小、竖直滑块 y=+120 使 value 增大。 */
+        int dy = (delta.y != 0) ? delta.y : -delta.x;
+        XKeyboardModifiers mods = XWheelEvent_modifiers(we);
+        bool consumed = xslider_scrollByDelta(slider, dy, mods);
+        if (!consumed) {
+            /* 高分辨率滚轮：angleDelta 可能为 0，回落 pixelDelta。 */
+            XPoint pixel = XWheelEvent_pixelDelta(we);
+            int pd = (pixel.y != 0) ? pixel.y : pixel.x;
+            if (pd != 0) consumed = xslider_scrollByDelta(slider, pd, mods);
+        }
+        if (consumed) XEvent_accept(event);
+        else XEvent_ignore(event);
     }
+#else
+    XEvent_ignore(event);
 #endif /* XWINDOWEVENT_ON */
-    if (steps != 0) {
-        /* 对标 Qt：滚轮经 triggerAction 执行（发射 actionTriggered，
-         * 依赖该信号做联动的代码才能收到）。 */
-        while (steps > 0) {
-            XAbstractSlider_triggerAction(
-                slider, (int)XAbstractSliderSliderAction_SingleStepAdd);
-            --steps;
-        }
-        while (steps < 0) {
-            XAbstractSlider_triggerAction(
-                slider, (int)XAbstractSliderSliderAction_SingleStepSub);
-            ++steps;
-        }
-    }
-    XEvent_accept(event);
 }
 
 /** @brief 变更事件：禁用时清除重复动作并抬起滑块，再转发父类（对标
@@ -267,7 +351,7 @@ static void VXAbstractSlider_stepBy(XAbstractSlider* self, int steps)
     int newValue;
     if (!self) return;
     newValue = xslider_overflowSafeAdd(self, steps);
-    newValue = xslider_clamp(self, newValue);
+    newValue = XAbstractSlider_bound_base(self, newValue);
     if (newValue == self->m_value) return;
     self->m_value = newValue;
     self->m_position = newValue;
@@ -387,7 +471,8 @@ XVtable* XAbstractSlider_class_init(void)
     void* protectedSlots[] = {
         VXAbstractSlider_stepBy,
         VXAbstractSlider_sliderChange,
-        VXAbstractSlider_stepEnabled
+        VXAbstractSlider_stepEnabled,
+        VXAbstractSlider_bound
     };
 
     XVTABLE_INIT_DEFAULT(XAbstractSlider)
@@ -457,6 +542,11 @@ void XAbstractSlider_setOrientation(XAbstractSlider* self, int orientation)
         return;
     self->m_orientation = (uint8_t)orientation;
     XWidget_update((XWidget*)self);
+    /* 对标 Qt setOrientation (qabstractslider.cpp:264-277) 末尾的
+     * updateGeometry()：方向切换影响 sizeHint，须通知布局重算
+     * （sizePolicy().transposed() 转置依赖 XWidget 层尚缺的
+     * sizePolicy 基础设施，此处只补 Qt 同形的 updateGeometry）。 */
+    XWidget_updateGeometry((XWidget*)self);
 }
 
 int XAbstractSlider_minimum(const XAbstractSlider* self)
@@ -579,7 +669,9 @@ int XAbstractSlider_sliderPosition(const XAbstractSlider* self)
 void XAbstractSlider_setSliderPosition(XAbstractSlider* self, int position)
 {
     if (!self) return;
-    position = xslider_clamp(self, position);
+    /* 对标 Qt：setSliderPosition 先经 bound 收敛（qdial 的 wrapping
+     * 回绕即由 QDialPrivate::bound 覆写在此生效）。 */
+    position = XAbstractSlider_bound_base(self, position);
     if (position == self->m_position) return;
     self->m_position = position;
     if (!self->m_tracking) XWidget_update((XWidget*)self);
@@ -624,7 +716,8 @@ void XAbstractSlider_setValue(XAbstractSlider* self, int value)
 {
     bool emitValueChanged;
     if (!self) return;
-    value = xslider_clamp(self, value);
+    /* 对标 Qt：setValue 先经 bound 收敛（qdial.cpp:498 口径）。 */
+    value = XAbstractSlider_bound_base(self, value);
     if (self->m_value == value && self->m_position == value) return;
     emitValueChanged = (value != self->m_value);
     self->m_value = value;

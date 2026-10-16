@@ -557,6 +557,59 @@ void XTableWidget_itemAt(const XTableWidget* self, int x, int y,
 void XTableWidget_sortItems(XTableWidget* self, int column, int order);
 
 /**
+ * @brief 开关排序跟随（对标 setSortingEnabled 转发基类）。
+ * @param self   目标表格控件指针。
+ * @param enable true=排序跟随开启。
+ * @return 无返回值。
+ * @note 对齐 Qt QTableWidget::setSortingEnabled 直接继承 QTableView
+ *       的语义；C 无继承语法，本层显式转发 XTableView 同名 API。
+ *       已知差异：Qt 排序开启时 setItem 触发按序自动插入/重排
+ *       （QTableModel::setItem 的 sorted insertion+moveRows）；本框架
+ *       该联动未实现，sortItems 手动排序语义一致。
+ */
+void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable);
+/**
+ * @brief 查询排序跟随开关（对标 isSortingEnabled 转发基类）。
+ * @param self 目标表格控件指针。
+ * @return 排序跟随开启返回 true；NULL 返回 false。
+ */
+bool XTableWidget_isSortingEnabled(const XTableWidget* self);
+
+/**
+ * @brief 打开单元格持久编辑器（对标 openPersistentEditor 转发基类）。
+ * @param self   目标表格控件指针。
+ * @param row    行号。
+ * @param column 列号。
+ * @return 无返回值。
+ * @note 对齐 Qt QTableWidget::openPersistentEditor(item)→
+ *       QAbstractItemView::openPersistentEditor(index)；编辑器体系未建
+ *       时基类为安全空操作。
+ */
+void XTableWidget_openPersistentEditor(XTableWidget* self,
+                                       int row, int column);
+/**
+ * @brief 关闭单元格持久编辑器（对标 closePersistentEditor 转发基类）。
+ * @param self   目标表格控件指针。
+ * @param row    行号。
+ * @param column 列号。
+ * @return 无返回值。
+ */
+void XTableWidget_closePersistentEditor(XTableWidget* self,
+                                        int row, int column);
+/**
+ * @brief 查询单元格持久编辑器是否打开（对标 isPersistentEditorOpen
+ *        转发基类；与 open/close 配对成三件套，同 Qt QTableWidget
+ *        openPersistentEditor/closePersistentEditor/
+ *        isPersistentEditorOpen(item) → 基类 index 形态的转发）。
+ * @param self   目标表格控件指针。
+ * @param row    行号。
+ * @param column 列号。
+ * @return 打开返回 true；未打开、越界或 self 为空返回 false。
+ */
+bool XTableWidget_isPersistentEditorOpen(const XTableWidget* self,
+                                         int row, int column);
+
+/**
  * @brief 输出全部选中单元格坐标（对标 selectedIndexes）。
  *
  *        平铺模型为单选语义：统计带 per-cell selected 标记的单元格；
@@ -656,34 +709,28 @@ XString* XTableWidget_takeItem(XTableWidget* self, int row, int column);
 int XTableWidget_indexFromItem(const XTableWidget* self,
                                const XTableWidgetItem* item, int* column);
 
-/* ===== 索引反查/编辑（对标 row/column/editItem/itemFromIndex/items 恒等承载形态） ===== */
+/* ===== 索引反查/编辑（对标 row/column/editItem/itemFromIndex/items） ===== */
 
 /**
- * @brief 列号恒等反查（对标 column 的恒等承载形态）。
+ * @brief 条目所在列反查（对标 QTableWidget::column(item)）。
  *
- *        本体系无独立列属性对象（XTableWidgetItem 内嵌于单元格存储），
- *        简化为恒等映射：有效列号原样返回。
- *
- * @param self   目标表格控件指针。
- * @param column 列号。
- * @return 有效列（0 <= column < columnCount）返回 column 本身；
- *         越界或 self 为 NULL 返回 -1。
- * @note 恒等简化：与 indexFromItem 的坐标承载一致（索引即坐标）；
- *       列宽等列属性经基类 XTableView 承载查询。
+ * @param self  目标表格控件指针。
+ * @param item  单元格条目借用指针（由 XTableWidget_item 取得或内部
+ *              指针；指针必须来自本表格，外部位址返回 -1）。
+ * @return 条目所在列；未命中（越界/外部位址/NULL）返回 -1。
  */
-int XTableWidget_column(const XTableWidget* self, int column);
+int XTableWidget_column(const XTableWidget* self,
+                        const XTableWidgetItem* item);
 
 /**
- * @brief 行号恒等反查（对标 row 的恒等承载形态）。
- *
- *        同 column：恒等映射，有效行号原样返回。
+ * @brief 条目所在行反查（对标 QTableWidget::row(item)）。
  *
  * @param self 目标表格控件指针。
- * @param row  行号。
- * @return 有效行（0 <= row < rowCount）返回 row 本身；
- *         越界或 self 为 NULL 返回 -1。
+ * @param item 单元格条目借用指针（必须来自本表格；外部位址返回 -1）。
+ * @return 条目所在行；未命中返回 -1。
  */
-int XTableWidget_row(const XTableWidget* self, int row);
+int XTableWidget_row(const XTableWidget* self,
+                     const XTableWidgetItem* item);
 
 /**
  * @brief 触发单元格编辑（对标 editItem；编辑触发句柄预留）。

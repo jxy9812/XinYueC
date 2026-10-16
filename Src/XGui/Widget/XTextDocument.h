@@ -300,9 +300,12 @@ bool XTextDocument_isModified(const XTextDocument* self);
  */
 void XTextDocument_setModified(XTextDocument* self, bool m);
 /** @brief 查询修订计数（对标 revision()；每次内容变化递增）。
- * @details Qt 仅在撤销启用时保证递增；本库快照制撤销恒递增——简化。
+ * @details Qt 语义（qtextdocument_p.cpp:1256 adjustDocumentChangesAndCursors
+ *          的 `++revision`）：按内容编辑次数递增，setModified 不影响；
+ *          clear() 经 init 复位到 0（qtextdocument_p.cpp:162）。Qt 文档
+ *          另注明仅在撤销启用时保证递增；本库快照制撤销恒递增——简化。
  * @param self 目标文档。
- * @return 修订计数。
+ * @return 修订计数；clear 后归 0。
  */
 int XTextDocument_revision(const XTextDocument* self);
 /** @brief 查询行数（对标 lineCount）。

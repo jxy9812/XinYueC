@@ -21,6 +21,8 @@ extern "C" {
 	void XModbusCommEventTest();
 	void XModbusAduTest();
 	void XModbusPublicApiTest(XVariant* data);
+	void XModbusServerCoverageTest(XVariant* data);
+	int XModbusCoverageTest_run(void);
 	void XDataFrameCommTest();
 	void TJCHMICommTest();
 

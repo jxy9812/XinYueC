@@ -257,6 +257,9 @@ void XPushButton_setFlat(XPushButton* self, bool flat);
  *             当前菜单相同或 self/menu 为 NULL 时按 Qt 语义处理：
  *             - self 为 NULL 直接无操作；
  *             - menu 为 NULL 表示解除当前菜单关联；
+ *             - 关联时按 UniqueConnection 语义建立 pressed→弹层桥
+ *               （对标 qpushbutton.cpp:521-547 的 popupPressed 连接），
+ *               按下即弹出菜单；aboutToHide 时恢复按钮按下态；
  *             - 替换后刷新几何与重绘，供绘制路径显示菜单箭头。
  * @param      self 按钮对象。
  * @param      menu 要关联的弹出菜单（借用指针）；NULL 解除关联。
@@ -266,9 +269,9 @@ void XPushButton_setMenu(XPushButton* self, XMenu* menu);
 XMenu* XPushButton_menu(const XPushButton* self);
 /**
  * @brief      显示关联菜单（对标 QPushButton::showMenu，qpushbutton.h:51）。
- * @details    无菜单或无有效按下上下文字段时直接返回；当前无平台弹层
- *             实现，设置为按下状态并重绘以表达弹层前的视觉状态，平台
- *             菜单层接入后应在此处打开菜单并在关闭时恢复 m_down。
+ * @details    对标 qpushbutton.cpp:560-568 showMenu→popupPressed：进入
+ *             按下态后经 XMenu_popup 在按钮正下方弹出关联菜单，菜单收起
+ *             （aboutToHide）时恢复按钮状态；无菜单或按钮禁用时无操作。
  * @param      self 按钮对象。
  */
 void XPushButton_showMenu(XPushButton* self);

@@ -73,6 +73,12 @@ typedef struct XAbstractScrollArea
     uint8_t m_sbWidgetCount;   /**< 附加控件数量（硬上限 8，见 addScrollBarWidget）。 */
     uint8_t m_sizeAdjustPolicy; /**< 尺寸自适应策略（XAbstractScrollAreaSizeAdjustPolicy；
                                     默认 AdjustIgnored）。 */
+    /* [内存治理 2026-10-15] 视口边距四向 px（setViewportMargins 承载；
+       滚动区量级小 px 值收 int16_t）。 */
+    int16_t m_marginLeft;      /**< 视口左边距 px（默认 0）。 */
+    int16_t m_marginTop;       /**< 视口上边距 px（默认 0）。 */
+    int16_t m_marginRight;     /**< 视口右边距 px（默认 0）。 */
+    int16_t m_marginBottom;    /**< 视口下边距 px（默认 0）。 */
     XSize m_sizeHintCache;     /**< AdjustToContentsOnFirstShow 的尺寸提示缓存（内部）。 */
     bool m_sizeHintCached;     /**< 尺寸提示缓存是否有效（内部）。 */
 } XAbstractScrollArea;
@@ -129,9 +135,23 @@ void XAbstractScrollArea_setHorizontalScrollBarPolicy(
  */
 XScrollBarPolicy XAbstractScrollArea_horizontalScrollBarPolicy(
     const XAbstractScrollArea* self);
-/** @brief 设置右下角控件（对标 setCornerWidget；控件归调用方）。 */
+/** @brief 设置右下角控件（对标 setCornerWidget；Qt 同接管语义：新件
+ *         reparent 归本控件并 show，同槽旧件隐藏不销毁，随后重排）。
+ */
 void XAbstractScrollArea_setCornerWidget(XAbstractScrollArea* self,
                                          XWidget* widget);
+/** @brief 设置视口边距（对标 QAbstractScrollArea::setViewportMargins，
+ *         qabstractscrollarea.h:71-72）。
+ * @details 视口/滚动条/角件在收边后的矩形内排布；负值钳 0，变更即
+ *          立即重排。轻量等价物：Qt 侧为 protected 面并配 QMargins
+ *          重载，本框架单 API 承载四向 px。
+ * @param self 目标滚动区域；NULL 无操作。
+ * @param left/top/right/bottom 四向边距 px。
+ * @return 无返回值。
+ */
+void XAbstractScrollArea_setViewportMargins(XAbstractScrollArea* self,
+                                            int left, int top,
+                                            int right, int bottom);
 /** @brief 查询右下角控件（对标 cornerWidget()）。 */
 /**
  * @brief      获取角落控件。

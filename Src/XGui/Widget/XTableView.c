@@ -338,6 +338,7 @@ static void VXTableView_move(XTableView* self, XTableView* other)
 
 void XTableView_setColumnWidth(XTableView* self, int column, int width)
 {
+    int old = 0;
     if (!self || column < 0) return;
     if (column >= self->m_colCapacity) {
         int cap = self->m_colCapacity > 0 ? self->m_colCapacity : 4;
@@ -348,8 +349,21 @@ void XTableView_setColumnWidth(XTableView* self, int column, int width)
         if (!w) return;
         self->m_colWidths = w;
         self->m_colCapacity = cap;
+    } else {
+        old = self->m_colWidths[column]; /* 扩容新槽未初始化，基准取 0。 */
     }
+    /* [根修 2026-10-15] 列宽变更差量同步滚动内容宽：此前只写视图列宽
+     * 数组，m_contentWidth 滞留旧值——外层「表随视口」按新视口均分列
+     * 宽后，旧内容宽与新视口错位，AsNeeded 误亮双条（Modbus 主站页
+     * 实测 tblContent=1071 > 视口 776）。按单列差量递推，与派生层
+     * （XTableWidget 表头带+Σ列宽）的内容宽口径天然一致、互不覆盖。 */
     self->m_colWidths[column] = width;
+    if (old != width) {
+        XAbstractScrollArea* area = (XAbstractScrollArea*)&self->m_base;
+        XAbstractScrollArea_setContentSize(
+            area, area->m_contentWidth + (width - old),
+            area->m_contentHeight);
+    }
 }
 
 int XTableView_columnWidth(const XTableView* self, int column)

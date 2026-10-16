@@ -1,10 +1,11 @@
 ﻿/**
  * @file       XTabWidget.c
  * @brief      XTabWidget 选项卡容器实现（对标 Qt 6.8 QTabWidget 子集）。
- * @details    页签条固定在顶部（高 XTABBAR_TAB_H），页容器占其余区域；
- *             每页是一个内部 XWidget（页内容控件以它为 parent 放入，
- *             借用记录于 m_clients 便于 indexOf）。切页 = 显示当前页
- *             容器 + 隐藏其余（XWidget_setVisible）。
+ * @details    页签条随 tabPosition 摆放（North/South/West/East，高
+ *             XTABBAR_TAB_H），页容器占其余区域；每页是一个内部
+ *             XWidget（页内容控件以它为 parent 放入，借用记录于
+ *             m_clients 便于 indexOf；removeTab 时摘还调用方，页容器
+ *             延迟销毁）。切页 = 显示当前页容器 + 隐藏其余。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "CXinYueConfig.h"
@@ -27,44 +28,84 @@ static void VXTabWidget_copy(XTabWidget* self, const XTabWidget* other);
 static void VXTabWidget_move(XTabWidget* self, XTabWidget* other);
 static void xtabwidget_currentChangedForward(void* sender, XVarList* args);
 static void xtabwidget_emitIntForward(XTabWidget* self);
+static void xtabwidget_tabMovedForward(void* sender, XVarList* args);
 static void xtabwidget_tabBarClickedForward(void* sender, XVarList* args);
 static void xtabwidget_tabBarDoubleClickedForward(void* sender, XVarList* args);
 static void xtabwidget_tabCloseRequestedForward(void* sender, XVarList* args);
 
 /* ==================== 内部辅助 ==================== */
 
-/** @brief 分配页容器与页签几何。 */
+/** @brief 分配页容器与页签几何（随 tabPosition 摆放，对标
+ *  QTabWidgetPrivate::updateTabBarPosition → setUpLayout）。 */
 static void xtabwidget_layout(XTabWidget* self)
 {
     int w = XWidget_width((XWidget*)self);
     int h = XWidget_height((XWidget*)self);
     int barH;
+    int barX = 0;
+    int barY = 0;
+    int barW;
+    int pageX = 0;
+    int pageY = 0;
+    int pageW;
     int pageH;
     int i;
     {   /* 页签条高度由 XTabBar 统一提供：溢出滚动模式恒单行(24)，
-           否则按换行布局行数计（此前本地复算与滚动模式会漂移）。 */
+           否则按换行布局行数计（此前本地复算与滚动模式会漂移）。
+           autoHide 且单页时条已隐藏（xtabbar_autoHideTabs），页面区
+           占满全高（对标 Qt setUpLayout 随条显隐重算）。 */
         barH = XTabBar_barHeightHint(&self->m_tabBar, w);
         if (barH < 1) barH = 24; /* 24 = XTABBAR_TAB_H 兜底。 */
+        if (self->m_tabBar.m_autoHide && self->m_tabBar.m_count <= 1)
+            barH = 0;
     }
-    pageH = h - barH;
+    barW = w;
+    pageW = w;
+    pageH = h;
+    /* 页签条四向摆放（North/South 横条占行，West/East 以页签条高为
+       条带宽占竖条——XTabBar 当前仅有水平绘制模式，West/East 为
+       几何生效的简化承载，对标 Qt 的东西向页签形状绘制未接入）。 */
+    switch (self->m_tabPosition) {
+    case 1: /* South：条在底，页占上余。 */
+        barY = h - barH;
+        pageH = h - barH;
+        break;
+    case 2: /* West：条贴左缘竖条，页占右余。 */
+        barW = barH;
+        pageX = barH;
+        pageW = w - barH;
+        break;
+    case 3: /* East：条贴右缘竖条，页占左余。 */
+        barX = w - barH;
+        barW = barH;
+        pageW = w - barH;
+        break;
+    default: /* North：条在顶，页占下余。 */
+        pageH = h - barH;
+        break;
+    }
+    if (pageW < 1) pageW = 1;
     if (pageH < 1) pageH = 1;
-    XWidget_setGeometry((XWidget*)&self->m_tabBar, 0, 0, w, barH);
+    XWidget_setGeometry((XWidget*)&self->m_tabBar, barX, barY, barW, barH);
     for (i = 0; i < self->m_count; ++i) {
         if (self->m_pages[i])
-            XWidget_setGeometry(self->m_pages[i], 0, barH, w, pageH);
+            XWidget_setGeometry(self->m_pages[i], pageX, pageY, pageW, pageH);
         /* 用户内容控件（client）必须铺满页容器，否则停留在默认几何
            (0,0,100,30)，子控件坐标越界导致 childAt 命中失败、鼠标
            事件永远到不了内容（对标 QStackedLayout 填满几何语义）。 */
         if (self->m_clients[i])
-            XWidget_setGeometry(self->m_clients[i], 0, 0, w, pageH);
+            XWidget_setGeometry(self->m_clients[i], 0, 0, pageW, pageH);
     }
     /* 角部件（对标 QTabWidget 角部件）：上两角置于页签条行内，按其
        当前尺寸放置（超出时截断），高度以页签条高为上限；Qt 以
        sizeHint 并在样式中为页签预留空间，此处未接入预留逻辑，页签
-       可能与角部件重叠。下两角为预留位：仅承载，不参与布局。 */
+       可能与角部件重叠。South 时随条行沉底；West/East 维持顶行
+       （竖条行内承载为预留语义）。下两角为预留位：仅承载，不参与
+       布局。 */
     {
         XWidget* tl = self->m_cornerWidgets[XTABWIDGET_CORNER_TOPLEFT];
         XWidget* tr = self->m_cornerWidgets[XTABWIDGET_CORNER_TOPRIGHT];
+        int cornerY = (self->m_tabPosition == 1) ? barY : 0;
         int cw;
         int ch;
         if (tl) {
@@ -73,7 +114,7 @@ static void xtabwidget_layout(XTabWidget* self)
             if (cw < 1) cw = 1;
             if (cw > w) cw = w;
             if (ch > barH) ch = barH;
-            XWidget_setGeometry(tl, 0, 0, cw, ch);
+            XWidget_setGeometry(tl, 0, cornerY, cw, ch);
         }
         if (tr) {
             cw = XWidget_width(tr);
@@ -81,7 +122,7 @@ static void xtabwidget_layout(XTabWidget* self)
             if (cw < 1) cw = 1;
             if (cw > w) cw = w;
             if (ch > barH) ch = barH;
-            XWidget_setGeometry(tr, w - cw, 0, cw, ch);
+            XWidget_setGeometry(tr, w - cw, cornerY, cw, ch);
         }
     }
 }
@@ -144,6 +185,46 @@ static XTabWidget* xtabwidget_ownerOf(void* sender)
     XWidget* owner = bar ? XWidget_parentWidget(bar) : NULL;
 
     return owner ? (XTabWidget*)owner : NULL;
+}
+
+/** @brief 页签条 tabMoved 转发槽：页/内容平行数组随换位重排（对标
+ *  QTabWidgetPrivate::tabMoved，qtabwidget.cpp:771-777：stack 页从
+ *  from 摘除再插入 to；setMovable 打开拖拽后页签序与页数组序才能
+ *  保持一致）。不转发信号——换位致当前索引变化时页签条自身补发的
+ *  currentChanged 经既有转发槽同步容器当前页（对标 QTabBar::moveTab
+ *  尾部 qtabbar.cpp:2087-2089）。 */
+static void xtabwidget_tabMovedForward(void* sender, XVarList* args)
+{
+    XTabWidget* self = xtabwidget_ownerOf(sender);
+    int from = 0;
+    int to = 0;
+    XWidget* page;
+    XWidget* client;
+    if (!self || !args) return;
+    XVarList_start(args);
+    from = XVarList_arg(args, int);
+    to = XVarList_arg(args, int);
+    if (from < 0 || to < 0 || from >= self->m_count || to >= self->m_count ||
+        from == to)
+        return;
+    page = self->m_pages[from];
+    client = self->m_clients[from];
+    if (from < to) {
+        XMemmove(&self->m_pages[from], &self->m_pages[from + 1],
+                 sizeof(XWidget*) * (size_t)(to - from));
+        XMemmove(&self->m_clients[from], &self->m_clients[from + 1],
+                 sizeof(XWidget*) * (size_t)(to - from));
+    } else {
+        XMemmove(&self->m_pages[to + 1], &self->m_pages[to],
+                 sizeof(XWidget*) * (size_t)(from - to));
+        XMemmove(&self->m_clients[to + 1], &self->m_clients[to],
+                 sizeof(XWidget*) * (size_t)(from - to));
+    }
+    self->m_pages[to] = page;
+    self->m_clients[to] = client;
+    self->m_currentIndex = self->m_tabBar.m_currentIndex;
+    xtabwidget_layout(self);
+    xtabwidget_showCurrent(self);
 }
 
 /** @brief 转发页签单击（tabClicked → tabBarClicked(int)）。 */
@@ -337,6 +418,11 @@ void XTabWidget_init(XTabWidget* self, XWidget* parent, XWidgetFlags flags)
                       (size_t)XTabBar_currentChanged_signal(
                           &self->m_tabBar, 0),
                       xtabwidget_currentChangedForward);
+    /* 对标 qtabwidget.cpp:725-726：连接 QTabBar::tabMoved → 页数组随
+       换位重排（setMovable 打开后拖拽换位页签序/页序才能一致）。 */
+    XObject_connect_2((XObject*)&self->m_tabBar,
+                      (size_t)XTabBar_tabMoved_signal(&self->m_tabBar, 0, 0),
+                      xtabwidget_tabMovedForward);
     XObject_connect_2((XObject*)&self->m_tabBar,
                       (size_t)XTabBar_tabBarClicked_signal(
                           &self->m_tabBar, 0),
@@ -376,8 +462,9 @@ int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
                          const XString* label)
 {
     if (!self || !page || !label) return -1;
-    if (index < 0) index = 0;
-    if (index > self->m_count) index = self->m_count;
+    /* 对标 QStackedLayout::insertWidget（qstackedlayout.cpp:192-194）：
+       负数/越界索引一律追加到末尾（此前负数插最前）。 */
+    if (index < 0 || index > self->m_count) index = self->m_count;
     {
         /* 扩容。 */
         XWidget** pages;
@@ -413,12 +500,12 @@ int XTabWidget_insertTab(XTabWidget* self, int index, XWidget* page,
         ++self->m_count;
         (void)XTabBar_insertTab(&self->m_tabBar, index, label);
         xtabwidget_layout(self);
-        /* TabBar 内部首项添加不发射 currentChanged——显式同步两侧。 */
-        if (self->m_currentIndex < 0) {
+        /* 页签条首项经 setCurrentIndex 走发射路径（对标 qtabbar.cpp:
+           968-969），转发槽已同步 m_currentIndex 与页显隐；此处对无
+           订阅者路径兜底同步一次。 */
+        if (self->m_currentIndex != self->m_tabBar.m_currentIndex)
             self->m_currentIndex = self->m_tabBar.m_currentIndex;
-            xtabwidget_showCurrent(self);
-        }
-        else xtabwidget_showCurrent(self);
+        xtabwidget_showCurrent(self);
         return index;
     }
 }
@@ -436,12 +523,20 @@ void XTabWidget_removeTab(XTabWidget* self, int index)
 {
     if (!self || index < 0 || index >= self->m_count) return;
     if (self->m_pages[index]) {
-        /* 删除可能处于对象自身事件/信号发射帧（如页签信号槽内调本
-           函数或 clear），同步 deinit+free 即 UAF——延迟回收；先摘
-           除父链，使基类析构对页内子控件的级联不与本 deferred 事件
-           竞争（对标 Qt deleteLater 语义）。页容器创建时已按堆登记
-           分配器（见 insertTab），延迟删除经 XClass_delete_base 归
-           还堆存储。 */
+        /* 对标 QTabWidget::removeTab（qtabwidget.cpp:627-632）→
+           QStackedWidget::removeWidget（qstackedwidget.cpp:149-163）：
+           页内容控件"not deleted but simply removed … causing it to
+           be hidden"——先经 XWidget_setParent(NULL) 把调用方页控件
+           摘出页容器（转独立顶层并隐藏，所有权归还调用方），否则
+           页容器析构经 XObject 基类级联会连带销毁调用方控件，页指针
+           即成悬垂（与本头文件"页控件不销毁，由调用方管理"契约相
+           反）。页容器本体仍延迟回收：删除可能处于对象自身事件/信号
+           发射帧（如页签信号槽内调本函数或 clear），同步 deinit+free
+           即 UAF（对标 Qt deleteLater 语义）；创建时已按堆登记分配
+           器（见 insertTab），延迟删除经 XClass_delete_base 归还堆
+           存储。 */
+        if (self->m_clients[index])
+            XWidget_setParent(self->m_clients[index], NULL, 0);
         XWidget_setParent(self->m_pages[index], NULL, 0);
         XObject_deleteLater((XObject*)self->m_pages[index]);
     }
@@ -626,11 +721,13 @@ bool XTabWidget_isTabVisible(const XTabWidget* self, int index)
 
 void XTabWidget_setTabBarAutoHide(XTabWidget* self, bool enable)
 {
-    if (self) {
-        self->m_tabBar.m_autoHide = enable;
-        XWidget_setVisible((XWidget*)&self->m_tabBar,
-                           !enable || XTabBar_count(&self->m_tabBar) > 1);
-    }
+    if (!self) return;
+    /* 对标 QTabBar::setAutoHide（qtabbar.cpp:2743-2749）：显隐随
+       count>1 重算的真路径在页签条（insertTab/removeTab 亦各自重算，
+       qtabbar.cpp:999/1082）；容器侧随后重排——页签条行隐去后页面
+       区须占满全高。 */
+    XTabBar_setAutoHide(&self->m_tabBar, enable);
+    xtabwidget_layout(self);
 }
 bool XTabWidget_tabBarAutoHide(const XTabWidget* self)
 {
@@ -645,7 +742,12 @@ int XTabWidget_tabPosition(const XTabWidget* self)
 
 void XTabWidget_setTabPosition(XTabWidget* self, int position)
 {
-    if (self && position >= 0 && position <= 3) self->m_tabPosition = position;
+    if (!self || position < 0 || position > 3) return;
+    if (self->m_tabPosition == (uint32_t)position) return;
+    self->m_tabPosition = (uint32_t)position;
+    /* 对标 QTabWidget::setTabPosition（qtabwidget.cpp:1001-1008）：
+       setter 立即经 updateTabBarPosition → setUpLayout 重排。 */
+    xtabwidget_layout(self);
 }
 
 bool XTabWidget_tabsClosable(const XTabWidget* self)
@@ -771,10 +873,6 @@ void* XTabWidget_currentChanged_signal(XTabWidget* self, int index)
 {
     (void)index;
     return (void*)(size_t)XTabWidget_currentChanged_signal;
-}
-void* XTabWidget_tabClicked_signal(XTabWidget* self)
-{
-    return (void*)(size_t)XTabWidget_tabClicked_signal;
 }
 
 void* XTabWidget_tabCloseRequested_signal(XTabWidget* self)

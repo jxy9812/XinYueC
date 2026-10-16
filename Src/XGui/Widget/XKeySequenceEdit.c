@@ -13,6 +13,7 @@
 #include "XVarList.h"
 #include "XPainter.h"
 #include "XGuiConfig.h"
+#include "XPrintf.h" /* setKeySequence 超长截断告警（对标 Qt qWarning）。 */
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
@@ -479,8 +480,26 @@ const XKeySequence* XKeySequenceEdit_keySequence(const XKeySequenceEdit* self)
 void XKeySequenceEdit_setKeySequence(XKeySequenceEdit* self,
                                      const XKeySequence* sequence)
 {
+    int desired;
+    int keyNum;
     if (!self || !sequence) return;
+    desired = sequence->count > 0 ? sequence->count : 0;
+    /* 对标 qkeysequenceedit.cpp:241 setKeySequence：相同序列早退（不
+     * 发射 keySequenceChanged，resetState 亦不扰动捕获态）。 */
+    if (self->m_sequence.count == desired &&
+        XMemcmp(self->m_sequence.combos, sequence->combos,
+                sizeof(XKeyCombination) * (size_t)desired) == 0)
+        return;
+    /* 对标 qkeysequenceedit.cpp:243-247：超出 maximumSequenceLength 时
+     * 告警并截断到上限（keyNum = min(desiredCount, max)）。 */
+    keyNum = desired > self->m_maxLength ? self->m_maxLength : desired;
+    if (desired > self->m_maxLength) {
+        XPrintf("QKeySequenceEdit: setting a key sequence of length %d "
+                "when maximumSequenceLength is %d, truncating.\n",
+                desired, (int)self->m_maxLength);
+    }
     self->m_sequence = *sequence;
+    self->m_sequence.count = keyNum;
     xkse_emitChanged(self);
     XWidget_update((XWidget*)self);
 }
@@ -502,6 +521,21 @@ void XKeySequenceEdit_setMaximumSequenceLength(XKeySequenceEdit* self, int count
 {
     if (!self || count < 1 || count > XKEYSEQUENCEEDIT_MAX_LENGTH) return;
     self->m_maxLength = count;
+    /* 对标 qkeysequenceedit.cpp:198-206 setMaximumSequenceLength：已捕获
+     * 序列超出新上限时截断到 count 并清零被丢弃的分组（d->keyNum = count
+     * + key[i] 复位）；Qt 的 rebuildKeySequence 仅重建序列值不发射信号
+     * （qkeysequenceedit_p.h:39-41），本实现同口径不发射。不收缩则
+     * m_sequence.count 恒 >= 新上限，后续按键的 count < maxLength 判定
+     * 恒假、捕获永久封死。 */
+    if (self->m_sequence.count > count) {
+        int i;
+        for (i = count; i < self->m_sequence.count; ++i) {
+            self->m_sequence.combos[i].modifiers = XKeyboardModifier_NoModifier;
+            self->m_sequence.combos[i].key = 0;
+        }
+        self->m_sequence.count = count;
+        XWidget_update((XWidget*)self);
+    }
 }
 
 bool XKeySequenceEdit_isClearButtonEnabled(const XKeySequenceEdit* self)
@@ -516,26 +550,14 @@ void XKeySequenceEdit_setClearButtonEnabled(XKeySequenceEdit* self, bool enable)
     XWidget_update((XWidget*)self);
 }
 
-/* ============ 捕获态控制（对标 Qt 6.7+ capturing API） ============ */
+/* ============ 捕获态控制（自造面：Qt 6.8 无任何 capturing 公开 API；
+   startCapturing/isCapturing 保留供捕获态机重武装/查询，stop/cancel
+   两个零消费者自造口已随冗余面清理移除） ============ */
 
 void XKeySequenceEdit_startCapturing(XKeySequenceEdit* self)
 {
     if (!self) return;
     xkse_startCapture(self);
-}
-
-void XKeySequenceEdit_stopCapturing(XKeySequenceEdit* self)
-{
-    if (!self) return;
-    xkse_finishEditing(self);
-    xkse_stopCapture(self);
-}
-
-void XKeySequenceEdit_cancelCapturing(XKeySequenceEdit* self)
-{
-    if (!self) return;
-    XKeySequenceEdit_clear(self);
-    xkse_stopCapture(self);
 }
 
 bool XKeySequenceEdit_isCapturing(const XKeySequenceEdit* self)

@@ -72,6 +72,11 @@ void XModbusClient_init(XModbusClient* client) {
 
     // 初始化成员变量
     client->m_timeout = 1000; // 对齐 Qt QModbusClient 默认 1000 毫秒
+    client->m_serialTransactions = false;
+    client->m_serialQueue = NULL;
+    client->m_serialQueueCap = 0;
+    client->m_serialQueueHead = 0;
+    client->m_serialQueueCount = 0;
     client->m_numberOfRetries = 3; // 默认3次
     client->m_timeoutTimer= XTIMER_INVALID_ID;
     client->m_poolMap = NULL;
@@ -514,6 +519,98 @@ void XModbusClient_setTimeout(XModbusClient* client, size_t newTimeout) {
     if (!client || client->m_timeout == newTimeout) return;
     client->m_timeout = newTimeout;
     XModbusClient_timeoutChanged_signal(client, newTimeout);
+}
+
+void XModbusClient_setSerialTransactions(XModbusClient* client, bool enable)
+{
+    if (!client || client->m_serialTransactions == enable) return;
+    client->m_serialTransactions = enable;
+    if (enable) {
+        /* 队列仅在单事务模式开启期间存在（按需分配），关闭即销毁释放。 */
+        client->m_serialQueueCap = 32;
+        client->m_serialQueue = XMemory_malloc(
+            sizeof(struct XModbusSerialSend) * (size_t)client->m_serialQueueCap,
+            XCLASS_DEFAULT_MEMORY_TYPE);
+        client->m_serialQueueHead = 0;
+        client->m_serialQueueCount = 0;
+    } else {
+        XModbusClient_serialQueueClear(client,
+            XModbusDevice_TimeoutError, "single-transaction disabled");
+        if (client->m_serialQueue) {
+            XMemory_free(client->m_serialQueue, XCLASS_DEFAULT_MEMORY_TYPE);
+            client->m_serialQueue = NULL;
+        }
+        client->m_serialQueueCap = 0;
+        client->m_serialQueueHead = 0;
+        client->m_serialQueueCount = 0;
+    }
+}
+
+bool XModbusClient_serialQueuePush(XModbusClient* client,
+    struct XModbusRequest* ownedRequest, struct XModbusReply* reply,
+    int serverAddress)
+{
+    struct XModbusSerialSend* slot;
+    int idx;
+    if (!client || !client->m_serialQueue ||
+        client->m_serialQueueCount >= client->m_serialQueueCap)
+        return false;
+    idx = (client->m_serialQueueHead + client->m_serialQueueCount) %
+          client->m_serialQueueCap;
+    slot = &client->m_serialQueue[idx];
+    slot->request = ownedRequest;
+    slot->reply = reply;
+    slot->serverAddress = serverAddress;
+    ++client->m_serialQueueCount;
+    return true;
+}
+
+bool XModbusClient_serialQueuePop(XModbusClient* client,
+    struct XModbusRequest** outRequest, struct XModbusReply** outReply,
+    int* outServerAddress)
+{
+    struct XModbusSerialSend* slot;
+    if (!client || client->m_serialQueueCount <= 0) return false;
+    slot = &client->m_serialQueue[client->m_serialQueueHead];
+    *outRequest = slot->request;
+    *outReply = slot->reply;
+    *outServerAddress = slot->serverAddress;
+    slot->request = NULL;
+    slot->reply = NULL;
+    client->m_serialQueueHead = (client->m_serialQueueHead + 1) %
+        client->m_serialQueueCap;
+    --client->m_serialQueueCount;
+    return true;
+}
+
+int XModbusClient_serialQueueCount(const XModbusClient* client)
+{
+    return client ? client->m_serialQueueCount : 0;
+}
+
+void XModbusClient_serialQueueClear(XModbusClient* client,
+    XModbusDevice_Error error, const char* errorMsg)
+{
+    int i;
+    if (!client) return;
+    for (i = 0; i < client->m_serialQueueCount; ++i) {
+        struct XModbusSerialSend* slot = &client->m_serialQueue[
+            (client->m_serialQueueHead + i) % client->m_serialQueueCap];
+        if (slot->reply) {
+            XModbusReply_setError(slot->reply, error, errorMsg);
+            XModbusReply_setState(slot->reply, XModbusReply_State_Timeout);
+        }
+        if (slot->request) XClassDelete(slot->request);
+        slot->request = NULL;
+        slot->reply = NULL;
+    }
+    client->m_serialQueueHead = 0;
+    client->m_serialQueueCount = 0;
+}
+
+bool XModbusClient_serialTransactions(const XModbusClient* client)
+{
+    return client ? client->m_serialTransactions != false : false;
 }
 
 int16_t XModbusClient_numberOfRetries(const XModbusClient* client) {

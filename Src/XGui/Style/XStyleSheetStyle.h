@@ -39,6 +39,42 @@ typedef struct XStyleSheetStyleSource
  *        边框并回落底层 XWindowsStyle/XFusionStyle。未命中或未设置
  *        样式表时行为与底层样式完全一致。
  */
+/* ---- 渲染规则缓存槽（多槽直映；对标 QStyleSheetStyle renderRule
+ *      缓存按控件哈希复用，替代旧单槽近似）：键=(对象指针, vtable 类
+ *      指针, 状态)，槽=键哈希直映，失效=代次计数（invalidateRenderCache
+ *      与源条目环形替换处整体推进）。类指针入键可挡跨类地址复用；
+ *      同类同址复用的暴露窗口与旧单槽同源（XObject 无代次字段），
+ *      风险口径登记。 ---- */
+#define XSSS_RENDER_CACHE_SLOTS 256
+typedef struct XsssRenderCacheEntry
+{
+    const XObject* m_obj;           /**< 键：对象指针（NULL=空槽）。 */
+    const void* m_class;            /**< 键：vtable 类指针（防跨类复用）。 */
+    uint32_t m_state;               /**< 键：状态位。 */
+    uint32_t m_gen;                 /**< 登记代次（≠当前代次=死槽）。 */
+    const XCssStyleRule* m_rule;    /**< 命中规则（可指进源条目规则数组）。 */
+    const XCssSelector* m_sel;      /**< 命中选择器。 */
+    uint32_t m_weight;              /**< 命中权重（order+spec*0x100+
+                                         (origin+depth)*0x100000）。 */
+} XsssRenderCacheEntry;
+
+/* ---- 未声明属性负结论直映哈希：键=(对象指针, 类指针, 状态, 属性
+ *      id) → 「该键的级联赢家规则未声明此属性」。槽命中后 findDecl
+ *      未声明的属性，旧行为每查必回落全源扫描（结果恒为同赢家）——
+ *      paint 逐帧同属性重复查询全付扫描价（实测占 28.5% 调用总账；
+ *      4 槽环形备忘对未声明属性 >4 的控件仍逐帧抖动）。冲突覆写只
+ *      损备忘不损正确性（命中须全键+代次复核）；失效=代次与渲染缓
+ *      存同步推进。对标 Qt renderRule 命中后属性查询不再触级联。 ---- */
+#define XSSS_ABSENT_SLOTS 1024
+typedef struct XsssAbsentEntry
+{
+    const XObject* m_obj;           /**< 键：对象指针。 */
+    const void* m_class;            /**< 键：vtable 类指针。 */
+    uint32_t m_state;               /**< 键：状态位。 */
+    uint32_t m_id;                  /**< 键：属性 id。 */
+    uint32_t m_gen;                 /**< 登记代次（≠当前=死槽）。 */
+} XsssAbsentEntry;
+
 typedef struct XStyleSheetStyle
 {
     XWindowsStyle m_base;      /**< 基类成员；必须是第一个。 */
@@ -52,9 +88,6 @@ typedef struct XStyleSheetStyle
      *      源条目自身随文本内容变化自然失配、随环形替换淘汰，随本对象
      *      析构释放 ---- */
     XStyleSheetStyleSource* m_sources; /**< 源缓存条目数组（对象拥有）。 */
-    const XObject* m_cacheObj;      /**< 缓存对象指针。 */
-    const XCssStyleRule* m_cacheRule; /**< 缓存命中规则。 */
-    const XCssSelector* m_cacheSel;  /**< 缓存命中选择器。 */
     XCssStyleSheet m_sheet;    /**< 解析后的规则表（对象拥有；级联中的
                                     应用级源——经 XStyle_installStyleSheet
                                     装在全局默认样式对象里时即全局表）。 */
@@ -68,11 +101,12 @@ typedef struct XStyleSheetStyle
      *      （matchRule，qcssparser.cpp；无 importance 轨道），故「缓存
      *      规则=最高权重且同权取后」与完整级联在任一属性上的裁决等价，
      *      命中直返规则内声明即可 ---- */
-    uint32_t m_cacheState;          /**< 缓存状态位。 */
-    uint32_t m_cacheWeight;         /**< 缓存命中权重（order+spec*0x100+
-                                         (origin+depth)*0x100000）。 */
+    XsssRenderCacheEntry m_rcache[XSSS_RENDER_CACHE_SLOTS]; /**< 渲染
+                                        规则缓存（直映槽组，见上注）。 */
+    uint32_t m_rcacheGen;      /**< 渲染缓存代次（失效即 ++）。 */
+    XsssAbsentEntry m_acache[XSSS_ABSENT_SLOTS]; /**< 未声明属性负结论。 */
+    uint32_t m_acacheGen;      /**< 负结论哈希代次（与渲染缓存同步）。 */
     bool m_sourceOwned;        /**< m_source 是否由本对象拥有（析构时释放）。 */
-    bool m_cacheValid;              /**< 缓存是否有效。 */
 } XStyleSheetStyle;
 
 XVtable* XStyleSheetStyle_class_init(void);

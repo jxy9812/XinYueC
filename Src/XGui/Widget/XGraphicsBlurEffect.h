@@ -5,9 +5,9 @@
  * @details    继承 XGraphicsEffect，对源快照做简化盒式模糊：水平+垂直
  *             两趟 3 点盒式均值（等效 3x3 盒式卷积核）。与 Qt 的差异：
  *             Qt 6 按 blurRadius 采用与半径相关的高斯/指数近似核，本实
- *             现为固定 3x3 盒式核（等效模糊半径约 2px），blurRadius 属
- *             性仅作 API 对齐保留，不改变核尺寸；blurHints 未建模。
- *             boundingRectFor 按两趟各外扩 1px 生长源矩形。
+ *             现为固定 3x3 盒式核（等效模糊半径约 2px），blurRadius/
+ *             blurHints 属性仅作 API 对齐保留（含变化信号），不改变核
+ *             尺寸。boundingRectFor 按两趟各外扩 1px 生长源矩形。
  * @note       模块总开关 XWIDGET_ON 有效（效果由 XWidget 承载）。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -28,15 +28,34 @@ XCLASS_DEFINE_BEGING(XGraphicsBlurEffect)
 XCLASS_DEFINE_EXTEND_END(XGraphicsBlurEffect, XGraphicsEffect)
 
 /**
+ * @brief      模糊质量提示（对标 QGraphicsBlurEffect::BlurHint，位值一致：
+ *             qgraphicseffect.h:125-129）。
+ */
+typedef enum XGraphicsBlurEffectBlurHint
+{
+    XGraphicsBlurEffectHint_Performance = 0x00, /**< 更快模糊（默认）。 */
+    XGraphicsBlurEffectHint_Quality     = 0x01, /**< 更高质量模糊。 */
+    XGraphicsBlurEffectHint_Animation   = 0x02 /**< 动画半径模糊。 */
+} XGraphicsBlurEffectBlurHint;
+
+/** @brief 模糊提示标志组合（对标 BlurHints QFlags；位或组合承载）。 */
+typedef int XGraphicsBlurEffectBlurHints;
+
+/**
  * @brief      XGraphicsBlurEffect 模糊效果对象；m_class 必须是第一个成员。
  * @details    m_blurRadius 为 Qt API 对齐属性（对标 blurRadius，默认 1.0）；
- *             实际模糊核固定为 3x3 盒式（见文件头"与 Qt 的差异"）。
+ *             m_blurHints 同为 API 对齐属性（对标 blurHints，默认
+ *             PerformanceHint，qgraphicseffect.cpp 文档口径）；实际模糊核
+ *             固定为 3x3 盒式（见文件头"与 Qt 的差异"）。
  */
 typedef struct XGraphicsBlurEffect
 {
     XGraphicsEffect m_base; /**< 基类成员；必须是第一个。 */
     float m_blurRadius;     /**< 模糊半径（对标 blurRadius；默认 1.0；
                                  当前实现不改变固定 3x3 盒式核）。 */
+    int m_blurHints;        /**< 模糊质量提示（XGraphicsBlurEffectBlurHint
+                                 位或组合；默认 PerformanceHint；固定核下
+                                 不改变渲染，仅 API 对齐存储）。 */
 } XGraphicsBlurEffect;
 
 /**
@@ -77,6 +96,46 @@ float XGraphicsBlurEffect_blurRadius(const XGraphicsBlurEffect* self);
  */
 void XGraphicsBlurEffect_setBlurRadius(XGraphicsBlurEffect* self,
                                        float radius);
+
+/**
+ * @brief      获取模糊质量提示（对标 QGraphicsBlurEffect::blurHints）。
+ * @param      self 目标效果；可为 NULL。
+ * @return     XGraphicsBlurEffectBlurHint 位或组合；无效返回
+ *             PerformanceHint。
+ */
+XGraphicsBlurEffectBlurHints XGraphicsBlurEffect_blurHints(
+    const XGraphicsBlurEffect* self);
+/**
+ * @brief      设置模糊质量提示（对标 QGraphicsBlurEffect::setBlurHints）。
+ * @details    仅作 API 对齐存储（实际模糊核固定 3x3 盒式）；实际变化时
+ *             发射 blurHintsChanged（对标 Qt setter；Qt 不触发重绘）。
+ * @param      self 目标效果。
+ * @param      hints XGraphicsBlurEffectBlurHint 位或组合。
+ * @return     无返回值。
+ */
+void XGraphicsBlurEffect_setBlurHints(XGraphicsBlurEffect* self,
+                                      XGraphicsBlurEffectBlurHints hints);
+
+/* ==================== 信号（对标 QGraphicsBlurEffect signals） ==================== */
+
+/**
+ * @brief      模糊半径变化信号（对标 QGraphicsBlurEffect::
+ *             blurRadiusChanged(qreal)；setBlurRadius 实际变化时发射）。
+ * @param      self 目标效果；NULL 仅作信号标识占位。
+ * @param      radius 新模糊半径。
+ * @return     信号标识（函数自身地址，用作 XObject_connect 信号参数）。
+ */
+void* XGraphicsBlurEffect_blurRadiusChanged_signal(
+    XGraphicsBlurEffect* self, float radius);
+/**
+ * @brief      模糊提示变化信号（对标 QGraphicsBlurEffect::
+ *             blurHintsChanged(BlurHints)；setBlurHints 实际变化时发射）。
+ * @param      self 目标效果；NULL 仅作信号标识占位。
+ * @param      hints 新模糊提示组合。
+ * @return     信号标识（函数自身地址，用作 XObject_connect 信号参数）。
+ */
+void* XGraphicsBlurEffect_blurHintsChanged_signal(
+    XGraphicsBlurEffect* self, XGraphicsBlurEffectBlurHints hints);
 
 #endif /* XWIDGET_ON */
 

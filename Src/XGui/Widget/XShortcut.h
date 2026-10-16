@@ -254,10 +254,14 @@ XShortcut* XShortcut_match(int key, XShortcutContext context,
                            XWidget* focusWidget);
 
 /**
- * @brief      触发快捷键：发射 activated 信号。
+ * @brief      触发快捷键：无歧义发射 activated，有歧义改发
+ *             activatedAmbiguously（对标 QShortcutMap 派发语义）。
  * @details    XGui 扩展入口（对标 QShortcut 内部激活语义）：供按键
- *             路径调用方在 XShortcut_match 命中后触发；本实现不区分
- *             歧义，恒发射 activated()。
+ *             路径调用方在 XShortcut_match 命中后触发。发射前以本快
+ *             捷键父控件为焦点代理重放 context 过滤：同键命中多个启
+ *             用快捷键时对每个命中者发射 activatedAmbiguously()（不
+ *             发 activated，对标 Qt 歧义派发）；无歧义对 self 发射
+ *             activated()。
  * @param      self 目标快捷键对象；可为 NULL。
  * @return     无返回值。
  */
@@ -276,7 +280,9 @@ void* XShortcut_activated_signal(XShortcut* self);
 /**
  * @brief      快捷键歧义激活信号（对标 QShortcut::activatedAmbiguously；
  *             空参，args=NULL 发射）。
- * @details    本实现未建模多快捷键歧义，信号保留供调用方连接。
+ * @details    同一键序列在同上下文命中多个启用快捷键时，由
+ *             XShortcut_activate 对每个命中者发射（此时不发射
+ *             activated，对标 Qt 歧义派发语义）。
  * @param      self 发射信号的对象；可为 NULL。
  * @return     不透明的 activatedAmbiguously 信号标识。
  */

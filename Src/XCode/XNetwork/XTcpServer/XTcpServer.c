@@ -2,8 +2,8 @@
 // Copyright (C) 2026 Your Project Authors
 // SPDX-License-Identifier: MIT OR LGPL-3.0-only
 //
-// C ?????? Qt6 QTcpServer?????? XObject??
-// ?? XDeviceNetwork.h ??? TCP ????? API?
+// C 语言实现 Qt6 QTcpServer，继承自 XObject。
+// 基于 XNetwork_platform 提供的 TCP 服务器 API。
 
 #include "XTcpServer.h"
 #include "XTcpSocket.h"
@@ -36,7 +36,7 @@ static void xtcpserver_closeAcceptedSocket(XTcpServer* server, XDeviceNetworkSoc
 	XVarList_delete(input);
 }
 
-// ==================== ????????? ====================
+// ==================== 内部虚函数前向声明 ====================
 
 static void VXTcpServer_deinit(XTcpServer* server);
 static bool VXTcpServer_event(XTcpServer* server, XEvent* e);
@@ -44,7 +44,7 @@ static bool VXTcpServer_HasPendingConnections(const XTcpServer* server);
 static XTcpSocket* VXTcpServer_NextPendingConnection(XTcpServer* server);
 static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle);
 
-// ==================== ???????????====================
+// ==================== 虚函数表初始化 ====================
 
 XVtable* XTcpServer_class_init(void)
 {
@@ -56,31 +56,31 @@ XVtable* XTcpServer_class_init(void)
 		VXTcpServer_IncomingConnection
 	};
 	XVTABLE_ADD_FUNC_LIST_DEFAULT(table);
-	// ????
+	// 重载析构
 	XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXTcpServer_deinit);
-	// ??????
+	// 重载事件处理
 	XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VXTcpServer_event);
 	XCLASS_SHOW_SIZE_DEFAULT(XTcpServer);
 	return XVTABLE_DEFAULT;
 }
 
-// ==================== ??????? ====================
+// ==================== 内部虚函数实现 ====================
 
 /**
- * @brief ???????
- * @note ?? XEVENT_TYPE_SOCK_ACT ??,???????????????
+ * @brief 事件处理虚函数
+ * @note 处理 XEVENT_TYPE_SOCK_ACT 事件，当服务器套接字可读时接受新连接
  */
 static bool VXTcpServer_event(XTcpServer* server, XEvent* e)
 {
 	if (!server || !e) return false;
 
-	// ??????????????
+	// 处理套接字活动事件
 	if (e->m_type == XEVENT_TYPE_SOCK_ACT) {
 		XEventSockAct* sockAct = (XEventSockAct*)e;
 
-		// ????????(?????)
+		// 检查是否为读事件（新连接到达）
 		if (sockAct->actType & XSocketActType_Accept) {
-			// ????????,???
+			// 如果暂停接受连接，不处理
 			if (server->pauseAccepting) {
 				return true;
 			}
@@ -96,23 +96,23 @@ static bool VXTcpServer_event(XTcpServer* server, XEvent* e)
 				if (output) XVarList_delete(output);
 
 				if (!accepted || !XSocketDescriptor_isValid(XSocketDescriptor_fromIntptr(clientHandle))) {
-				// ??????????????
+				// 没有更多连接可接受
 				return true;
 			}
 
-			// ??????????
+			// 调用虚函数处理新连接
 			XTcpServer_incomingConnection_base(server, clientHandle);
 				(void)xtcpserver_control(server, XDeviceNetworkCommand_ContinueAccept, NULL, NULL);
 		}
 		return true;
 	}
 	else if (e->m_type == XEVENT_TYPE_SOCK_CLOSE) {
-		// ????????
+		// 服务器套接字关闭
 		server->listening = false;
 		return true;
 	}
 
-	// ????????
+	// 调用父类事件处理
 	return XClass_Parent(XObject, EXObject_Event, bool (*)(XObject*, XEvent*))((XObject*)server, e);
 }
 
@@ -127,9 +127,9 @@ static XTcpSocket* VXTcpServer_NextPendingConnection(XTcpServer* server)
 	if (!server || !server->pendingConnections) return NULL;
 	if (XVector_size_base(server->pendingConnections) <= 0) return NULL;
 
-	// ?????????
+	// 取出队首元素
 	XTcpSocket* sock = XVector_At_Base(server->pendingConnections, 0, XTcpSocket*);
-	// ??????
+	// 移除队首
 	XVector_removeAt_base(server->pendingConnections, 0);
 	return sock;
 }
@@ -158,12 +158,12 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 			XClassDelete(server->errorString);
 		}
 		server->errorString = XString_create_utf8("Failed to create socket object");
-		// ????????
+		// 关闭不接受的句柄
 			xtcpserver_closeAcceptedSocket(server, handle);
 		return;
 	}
 
-	// ????????(????? XDeviceNetworkContext ????????)
+	// 设置描述符和状态（内部会创建 XNetworkSocketPrivate 并注册到事件循环）
 	if (!XAbstractSocket_setSocketDescriptor_base(
 			(XAbstractSocket*)socket, handle,
 			XAbstractSocket_ConnectedState,
@@ -178,27 +178,27 @@ static void VXTcpServer_IncomingConnection(XTcpServer* server, intptr_t handle)
 		return;
 	}
 
-	// ??????????
+	// 设置为服务器的子对象
 	XObject_setParent((XObject*)socket, (XObject*)server);
 
-	// ?????????(? lastAcceptedAddr/lastAcceptedPort ??)
+	// 设置对端地址和端口（从 lastAcceptedAddr/lastAcceptedPort 获取）
 	XAbstractSocket_setPeerAddress((XAbstractSocket*)socket, &server->lastAcceptedAddr);
 	XAbstractSocket_setPeerPort((XAbstractSocket*)socket, server->lastAcceptedPort);
 
-	// ??????????
+	// 添加到待处理连接队列
 	XTcpServer_addPendingConnection(server, socket);
 }
 
-// ==================== ???? ====================
+// ==================== 析构函数 ====================
 
 static void VXTcpServer_deinit(XTcpServer* server)
 {
 	if (!server) return;
-	// ?????(??????? fd)
+	// 关闭服务器（会清理 d_ptr）
 	//XCoreApplication_sendPostedEvents(server, 0);
 	XTcpServer_close(server);
 	//XCoreApplication_sendPostedEvents(server,0);
-	// ?????????
+	// 清理待处理连接队列
 	if (server->pendingConnections) {
 		int64_t count = XVector_size_base(server->pendingConnections);
 		int64_t i;
@@ -213,33 +213,33 @@ static void VXTcpServer_deinit(XTcpServer* server)
 		server->pendingConnections = NULL;
 	}
 
-	// ???????????
+	// 清理错误字符串
 	if (server->errorString) {
 		XClassDelete(server->errorString);
 		server->errorString = NULL;
 	}
 
-	// ??????(close ???? serverAddress,???? deinit ????)
+	// 释放地址结构（close 中已重置 serverAddress，这里再次 deinit 是安全的）
 	XClassDeinit(&server->serverAddress);
 	XClassDeinit(&server->lastAcceptedAddr);
 	
-	// ??????
+	// 释放代理资源
 	XClassDeinit(&server->proxy);
 	
-	// ??????(XObject ? XClass)
+	// 调用父类析构（XObject → XClass）
 	XClass_Deinit_Parent(XObject, server);
 }
 
-// ==================== ???????? ====================
+// ==================== 构造与析构 ====================
 
 void XTcpServer_init(XTcpServer* server)
 {
 	if (!server) return;
 
-	// ????????
+	// 初始化基类
 	XObject_init(&server->base);
 
-	// ????????
+	// 初始化成员
 	server->m_deviceFd = XFD_INVALID;
 	//server->serverHandle = XSocketDescriptor_Invalid();
 	XHostAddress_init(&server->serverAddress);
@@ -254,11 +254,11 @@ void XTcpServer_init(XTcpServer* server)
 	XNetworkProxy_init(&server->proxy);
 	server->incomingSocketFactory = NULL;
 	server->incomingSocketFactoryContext = NULL;
-	// ????????????????????
+	// 初始化临时存储的客户端地址
 	XHostAddress_init(&server->lastAcceptedAddr);
 	server->lastAcceptedPort = 0;
 
-	// ??????
+	// 设置虚函数表
 	XClassSetVtable(server, XTcpServer);
 }
 
@@ -272,7 +272,7 @@ XTcpServer* XTcpServer_create_ex(XMemoryType memory)
 	return server;
 }
 
-// ==================== ???? ====================
+// ==================== 核心功能 ====================
 
 bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t port)
 {
@@ -282,7 +282,7 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	if (!server) return false;
 	if (server->listening) return false;
 
-	// ??????
+	// 使用默认地址
 	XHostAddress listenAddr;
 	XHostAddress_init(&listenAddr);
 	if (address) {
@@ -313,10 +313,10 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	XClassDeinit(&server->serverAddress);
 	XClassCopy(&server->serverAddress, &listenAddr);
 	XClassDeinit(&listenAddr);
-	/* ???(? XAbstractSocket socketGetBoolProperty ??): memset+XVariant_init
-	 * ? vtable, ?? XVariant_setValue_null ? XClassDeinit ?????
-	 * ? memset+XVariant_clear ?????????--ASan ???? listen
-	 * ?? 4B int ??(XVariant.c:443 XMalloc_System)? */
+	/* 判定口径(同 XAbstractSocket socketGetBoolProperty 用法): memset+
+	 * XVariant_init 已含 vtable, 等价 XVariant_setValue_null 加 XClassDeinit
+	 * 的净态; 二者与 memset+XVariant_clear 清理等价——ASan 实测 listen
+	 * 路径有 4B int 溢出(XVariant.c:443 XMalloc_System)。 */
 	memset(&value, 0, sizeof(value));
 	XVariant_init(&value, NULL, 0, XVariantType_NULL);
 	if (!XDevice_getProperty(server->m_deviceFd, (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
@@ -330,7 +330,7 @@ bool XTcpServer_listen(XTcpServer* server, const XHostAddress* address, uint16_t
 	server->listening = true;
 	server->pauseAccepting = false;
 
-	/* ?????? Accept(serverCreate ???,accept ????????) */
+	/* 恢复继续 Accept(serverCreate 时暂停, accept 通道此时放行) */
 	if (!xtcpserver_control(server, XDeviceNetworkCommand_ContinueAccept, NULL, NULL)) {
 		XTcpServer_close(server);
 		return false;
@@ -357,7 +357,7 @@ bool XTcpServer_isListening(const XTcpServer* server)
 	return server->listening;
 }
 
-// ==================== ???? ====================
+// ==================== 连接管理 ====================
 
 void XTcpServer_setMaxPendingConnections(XTcpServer* server, int numConnections)
 {
@@ -403,14 +403,14 @@ const XHostAddress* XTcpServer_serverAddress(const XTcpServer* server)
 	return &server->serverAddress;
 }
 
-// ==================== ????????? ====================
+// ==================== 套接字描述符 ====================
 
 intptr_t XTcpServer_socketDescriptor(const XTcpServer* server)
 {
 	XVariant value;
 	if (!server || server->m_deviceFd == XFD_INVALID) return -1;
-	/* ???: init ? vtable + setValue_null ????(????????,
-	 * NativeHandle ptr ???????? 8B)? */
+	/* 净态: init 含 vtable + setValue_null 双保险(指针取原值,
+	 * NativeHandle ptr 槽位按最大对齐 8B)。 */
 	memset(&value, 0, sizeof(value));
 	XVariant_init(&value, NULL, 0, XVariantType_NULL);
 	if (!XDevice_getProperty(server->m_deviceFd, XDeviceProperty_NativeHandle, &value)) {
@@ -432,7 +432,7 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 	if (!server) return false;
 	if (socketDescriptor < 0) return false;
 
-	// ???????,???
+	// 如果已经在监听，先关闭
 	if (server->listening) {
 		XTcpServer_close(server);
 	}
@@ -446,7 +446,7 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 	options.m_owner = server;
 	server->m_deviceFd = XDevice_open(XDeviceType_Socket, &options.m_base, &error);
 	if (server->m_deviceFd == XFD_INVALID) return false;
-	/* ???: init ? vtable + setValue_null ????(? XTcpServer_listen)? */
+	/* 净态: init 含 vtable + setValue_null 等价口径(同 XTcpServer_listen)。 */
 	memset(&value, 0, sizeof(value));
 	XVariant_init(&value, NULL, 0, XVariantType_NULL);
 	if (!XDevice_getProperty(server->m_deviceFd, (XDeviceProperty)XDeviceNetworkProperty_LocalPort, &value)) {
@@ -465,7 +465,7 @@ bool XTcpServer_setSocketDescriptor(XTcpServer* server, intptr_t socketDescripto
 	return true;
 }
 
-// ==================== ???? ====================
+// ==================== 连接处理 ====================
 
 bool XTcpServer_waitForNewConnection(XTcpServer* server, int msec, bool* timedOut)
 {
@@ -476,25 +476,25 @@ bool XTcpServer_waitForNewConnection(XTcpServer* server, int msec, bool* timedOu
 
 	if (timedOut) *timedOut = false;
 
-	// ?????????,????
+	// 如果已有待处理连接，直接返回
 	if (XTcpServer_hasPendingConnections_base(server)) {
 		return true;
 	}
 
-	// ?? msec == 0,???,????
+	// 如果 msec == 0，非阻塞，直接返回
 	if (msec == 0) {
 		if (timedOut) *timedOut = true;
 		return false;
 	}
 
-	// ???????????
+	// 使用事件循环等待新连接
 	uint64_t startTime = XDateTime_currentMSecsSinceEpoch();
 	
 	while (!XTcpServer_hasPendingConnections_base(server)) {
-		// ????
+		// 处理事件
 		XCoreApplication_processEvents(XEventLoop_AllEvents);
 		
-		// ???????
+		// 检查超时
 		if (msec > 0) {
 			uint64_t elapsed = XDateTime_currentMSecsSinceEpoch() - startTime;
 			if (elapsed >= (uint64_t)msec) {
@@ -521,7 +521,7 @@ XTcpSocket* XTcpServer_nextPendingConnection_base(XTcpServer* server)
 		XTcpSocket*(*)(XTcpServer*))(server);
 }
 
-// ==================== ?????? ====================
+// ==================== 错误处理 ====================
 
 XAbstractSocket_SocketError XTcpServer_serverError(const XTcpServer* server)
 {
@@ -534,7 +534,7 @@ char* XTcpServer_errorString(const XTcpServer* server)
 	if (!server) return NULL;
 	if (!server->errorString) return NULL;
 
-	// ???????????
+	// 返回新分配的字符串副本
 	const char* str = XString_toUtf8(server->errorString);
 	if (!str) return NULL;
 
@@ -546,7 +546,7 @@ char* XTcpServer_errorString(const XTcpServer* server)
 	return result;
 }
 
-// ==================== ???? ====================
+// ==================== 接受控制 ====================
 
 void XTcpServer_pauseAccepting(XTcpServer* server)
 {
@@ -560,14 +560,14 @@ void XTcpServer_resumeAccepting(XTcpServer* server)
 	server->pauseAccepting = false;
 }
 
-// ==================== ???? ====================
+// ==================== 代理设置 ====================
 
 void XTcpServer_setProxy(XTcpServer* server, const XNetworkProxy* proxy)
 {
 	if (!server || !proxy) return;
-	// ??????????????
+	// 先释放旧的代理资源
 	XClassDeinit(&server->proxy);
-	// ??????????????
+	// 重新初始化并深拷贝
 	XNetworkProxy_init(&server->proxy);
 	server->proxy.type = proxy->type;
 	server->proxy.capabilities = proxy->capabilities;
@@ -589,7 +589,7 @@ XNetworkProxy* XTcpServer_proxy(const XTcpServer* server)
 	return (XNetworkProxy*)&server->proxy;
 }
 
-// ==================== ???????????====================
+// ==================== 受保护的虚函数 ====================
 
 void XTcpServer_incomingConnection_base(XTcpServer* server, intptr_t handle)
 {
@@ -605,27 +605,27 @@ void XTcpServer_addPendingConnection(XTcpServer* server, XTcpSocket* socket)
 	if (!server || !socket) return;
 	if (!server->pendingConnections) return;
 
-	// ?????????????????
+	// 检查是否超过最大连接数
 	currentCount = XVector_size_base(server->pendingConnections);
 	if (currentCount >= server->maxPendingConnections) {
-		// ????????????????????
+		// 超过最大连接数，关闭新连接
 		XAbstractSocket_close_base((XAbstractSocket*)socket);
 		XObject_deinitLater((XObject*)socket);
 		return;
 	}
 
-	// ????????
+	// 添加到队列
 	sock = socket;
 	XVector_push_back_1_base(server->pendingConnections, &sock);
 
-	// ??? newConnection ?????t 6.8 ?????
+	// 发射 newConnection 信号（Qt 6.8 行为）
 	XTcpServer_newConnection_signal(server);
 
-	// ?? pendingConnectionAvailable ??
+	// 发射 pendingConnectionAvailable 信号
 	XTcpServer_pendingConnectionAvailable_signal(server);
 }
 
-// ==================== ???? ====================
+// ==================== 信号实现 ====================
 
 void* XTcpServer_newConnection_signal(XTcpServer* server)
 {

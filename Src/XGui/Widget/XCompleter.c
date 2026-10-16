@@ -3,8 +3,11 @@
  * @brief      补全对象实现（对标 Qt 6.8 QCompleter 核心公共 API）。
  * @details    与同名头文件的公共 API 一一对应；前缀匹配从模型
  *             completionColumn 列逐行读取文本并按 filterMode 过滤，
- *             命中列表存储于 m_matches，信号按 Qt 发射点发射
- *             highlighted 系列（activated 系列保留供调用方触发）。
+ *             命中列表存储于 m_matches，信号按 Qt 发射点发射：
+ *             highlighted 系列在命中首项变化时发射（rebuild）、
+ *             activated 系列在弹层候选被采纳（点击）时成对发射
+ *             （对标 QCompleterPrivate::_q_complete，qcompleter.cpp:
+ *             869-876）。
  * @author     XinYueC 团队
  */
 
@@ -511,6 +514,31 @@ void XCompleter_setPopup(XCompleter* self, XWidget* popup)
 
 /* ---------- 默认弹层（对标 QCompleter popup；懒建于首次匹配） ---------- */
 
+/** @brief 发射 activated 信号对（对标 QCompleterPrivate::_q_complete 的
+ *  采纳分支，qcompleter.cpp:869-876：else 分支成对 emit activated(index)
+ *  + activated(completion)；本库以 (row,col) 平铺承载 index）。 */
+static void xc_emitActivated(XCompleter* self, int row)
+{
+    XString* completion;
+    int col;
+    if (!self || row < 0) return;
+    col = self->m_completionColumn;
+    xcompleter_emitIntSignal(self,
+                             (size_t)XCompleter_activatedIndex_signal(
+                                 self, row, col),
+                             row);
+    completion = XCompleter_currentCompletion(self);
+    if (completion) {
+        xcompleter_emitTextSignal(self,
+                                  (size_t)XCompleter_activated_signal,
+                                  completion);
+        xcompleter_emitTextSignal(self,
+                                  (size_t)XCompleter_textActivated_signal,
+                                  completion);
+        XClassDelete((XClass*)completion);
+    }
+}
+
 /** @brief 补全弹层点击槽：行号 -> 候选文本 -> 写回编辑框并隐藏。 */
 static void xc_popupClickedSlot(XObject* receiver, XVarList* args)
 {
@@ -522,6 +550,11 @@ static void xc_popupClickedSlot(XObject* receiver, XVarList* args)
     if (row < 0) return;
     XCompleter_setCurrentRow(self, row);
     text = XCompleter_currentCompletion(self);
+    /* 对标 Qt _q_complete 采纳分支：点击行即候选采纳，成对发射
+       activated(index)/activated(completion)（qcompleter.cpp:869-876）。
+       此前仅回写编辑框，调用方无从得知哪条候选被采纳（activated 系列零
+       发射点）。 */
+    xc_emitActivated(self, row);
     editor = self->m_widget;
     /* 写回编辑框（默认弹层服务于 XLineEdit 场景；其余编辑控件仅发
        activated 信号供调用方接线）。 */
@@ -869,13 +902,12 @@ bool XCompleter_setCurrentRow(XCompleter* self, int row)
     int count;
     if (!self) return false;
     count = XCompleter_completionCount(self);
+    /* 对标 QCompletionModel::setCurrentRow（qcompleter.cpp:256-269）：
+       row<0 或 row>=matchCount 一律返回 false——环绕只发生在弹层按键
+       导航层（XLineControl complete 的 Up/Down 分支已自带 wrap），不在
+       setCurrentRow 内取模。调用方以返回值区分「设置成功」与「越界」。 */
     if (count <= 0) return false;
-    if (row < 0 || row >= count) {
-        if (!self->m_wrapAround) return false;
-        /* 环绕归一：负值从末项往前，超出从首项继续。 */
-        row %= count;
-        if (row < 0) row += count;
-    }
+    if (row < 0 || row >= count) return false;
     xcompleter_applyCurrentRow(self, row);
     /* 当前候选行变化即时同步弹层视觉高亮（弹层可见时高亮条随
        Down/Up 推进逐行移动，对标 Qt 弹层 currentIndex 联动）。 */

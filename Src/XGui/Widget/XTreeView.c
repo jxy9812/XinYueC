@@ -54,6 +54,33 @@ static void xtv_emitInt(XTreeView* self, size_t signal, int value)
     }
 }
 
+/** @brief 发射三 int 信号（载荷逻辑号/旧值/新值，对标 columnResized）。 */
+static void xtv_emitInt3(XTreeView* self, size_t signal, int a, int b, int c)
+{
+    XVarList* arguments = XVarList_Create(XVar(int, a), XVar(int, b),
+                                          XVar(int, c));
+    if (!arguments) return;
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(arguments);
+    }
+}
+
+/** @brief 发射双 int 信号（载荷旧列数/新列数，对标 columnCountChanged）。 */
+static void xtv_emitInt2(XTreeView* self, size_t signal, int a, int b)
+{
+    XVarList* arguments = XVarList_Create(XVar(int, a), XVar(int, b));
+    if (!arguments) return;
+    if (((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, arguments, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(arguments);
+    }
+}
+
 /** @brief 查询模型行数（无模型返回 0）。 */
 static int xtv_modelRows(const XTreeView* self)
 {
@@ -171,6 +198,14 @@ static void xtv_syncColumnStates(XTreeView* self, int count)
                     sizeof(int) * (size_t)(count - old));
         }
         self->m_columnStateCount = count;
+        /* 对标 Qt QTreeView::columnCountChanged 槽（qtreeview.h 受
+         * 保护槽，qheaderview sectionCountChanged 驱动；本实现以列
+         * 状态表长度变化为触发口径——按列访问超出模型列数的扩表同
+         * 样构成列数变化）。 */
+        xtv_emitInt2(self,
+                     (size_t)XTreeView_columnCountChanged_signal(self, old,
+                                                                 count),
+                     old, count);
     } else {
         if (self->m_columnHidden) XFree_System(self->m_columnHidden);
         if (self->m_columnWidths) XFree_System(self->m_columnWidths);
@@ -710,13 +745,22 @@ bool XTreeView_isColumnHidden(const XTreeView* self, int column)
 void XTreeView_setColumnWidth(XTreeView* self, int column, int width)
 {
     int need;
+    int oldWidth;
     if (!self || column < 0 || width < 0) return;
     need = xtv_modelCols(self);
     if (column + 1 > need) need = column + 1;
     xtv_syncColumnStates(self, need);
     if (column >= self->m_columnStateCount || !self->m_columnWidths) return;
-    if (self->m_columnWidths[column] != width) {
+    oldWidth = self->m_columnWidths[column];
+    if (oldWidth != width) {
         self->m_columnWidths[column] = width;
+        /* 对标 Qt QTreeView::columnResized 槽（qtreeview.h 受保护槽，
+         * qheaderview sectionResized 驱动；本实现列宽由视图自持，以
+         * setColumnWidth 实际变化为发射点）。 */
+        xtv_emitInt3(self,
+                     (size_t)XTreeView_columnResized_signal(self, column,
+                                                            oldWidth, width),
+                     column, oldWidth, width);
         XWidget_update((XWidget*)self);
     }
 }
@@ -989,6 +1033,26 @@ void* XTreeView_collapsed_signal(XTreeView* self, int row)
 {
     (void)self; (void)row;
     return (void*)(size_t)XTreeView_collapsed_signal;
+}
+
+void* XTreeView_columnResized_signal(XTreeView* self, int column, int oldSize,
+                                     int newSize)
+{
+    (void)self; (void)column; (void)oldSize; (void)newSize;
+    /* 真实发射点：XTreeView_setColumnWidth（列宽实际变化时；对标 Qt
+     * qheaderview sectionResized → QTreeView::columnResized 受保护槽
+     * 链路，本项目收敛为视图自发射）。 */
+    return (void*)(size_t)XTreeView_columnResized_signal;
+}
+
+void* XTreeView_columnCountChanged_signal(XTreeView* self, int oldCount,
+                                          int newCount)
+{
+    (void)self; (void)oldCount; (void)newCount;
+    /* 真实发射点：xtv_syncColumnStates（列状态表长度实际变化时；对标
+     * Qt qheaderview sectionCountChanged → QTreeView::columnCountChanged
+     * 受保护槽链路）。 */
+    return (void*)(size_t)XTreeView_columnCountChanged_signal;
 }
 
 static bool VXTreeView_indexAt(const XAbstractItemView* view, int x, int y,

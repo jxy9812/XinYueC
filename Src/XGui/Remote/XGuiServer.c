@@ -236,7 +236,8 @@ typedef struct XgsEncJob {
  */
 typedef struct XgsSession {
     struct XgsSession*   next;              /**< 会话链(仅 GUI 线程)。 */
-    int                  id;                /**< 会话 id(>0, 单调)。 */
+    int                  id;                /**< 会话 id(>0; 空闲池复用,
+                                                 断连重连下稳定小值)。 */
     XGuiServer*          owner;             /**< 归属服务器(借用)。 */
     XIODevice*           device;            /**< 传输设备(借用或拥有)。 */
     bool                 ownDevice;         /**< true=拥有设备(close+delete)。 */
@@ -394,7 +395,12 @@ typedef struct XGuiServerPrivate
     XgsSession*            sessionHead;     /**< 活跃会话链(仅 GUI 线程)。 */
     int                    sessionCount;    /**< 活跃会话数。 */
     int                    maxSessions;     /**< 最大并发会话数。 */
-    int                    nextSessionId;   /**< 会话 id 分配器。 */
+    int                    nextSessionId;   /**< 会话 id 分配器(空闲池空时
+                                                 递增取新)。 */
+    int*                   freeSessionIds;  /**< 已关闭会话回收的 id 空闲表
+                                                 (GUI 线程单访问; 最小者复用)。 */
+    int                    freeSessionIdCount; /**< freeSessionIds 有效个数。 */
+    int                    freeSessionIdCap;   /**< freeSessionIds 容量。 */
     XGuiRemoteAuthServerStore auth;         /**< 认证凭据与失败策略(2026-10-04
                                                  收编原 authMethod/passwordHash/
                                                  hasPassword 三散字段; 实现主体
@@ -2752,10 +2758,16 @@ static void xgs_sendUdpOffer(XGuiServer* self, XgsSession* s)
                                               buf, n);
         return;
     }
-    do {
-        XRandomGenerator_fillSecure(rb, sizeof(rb));
-        s->udpToken = XGuiRemoteProto_getU32(rb);
-    } while (s->udpToken == 0); /* 0=通道未绑定哨兵值, 规避。 */
+    /* token 仅在会话首次报价时定版: 重发 OFFER(MODE(1) 重建/重连)
+     * 必须复用既有凭据——每次重随机会让客户端在途 BIND(token A) 撞上
+     * 新 token(B) 恒被拒, 与客户端 5s 重试构成永不收敛的死循环
+     * (2026-10-12 真机 UDP 绑定全 refused 根修)。 */
+    if (s->udpToken == 0) {
+        do {
+            XRandomGenerator_fillSecure(rb, sizeof(rb));
+            s->udpToken = XGuiRemoteProto_getU32(rb);
+        } while (s->udpToken == 0); /* 0=通道未绑定哨兵值, 规避。 */
+    }
     {
         XGuiRemoteMsgUdpOffer offer;
         uint8_t buf[16];
@@ -3343,6 +3355,11 @@ static void xgs_udpRecv(void* user, uint8_t channel, uint8_t msgType,
     if (!s || s->closed || !s->owner) return;
     if (channel != XGUI_REMOTE_UDP_CHANNEL_INPUT) return;
     if (s->state != XGUI_REMOTE_STATE_STREAMING) return;
+    /* [2026-10-12 真机断连循环根修] UDP 合法数据报计入对端活动:
+     * 旁路激活后帧/输入/心跳全走 UDP、TCP 静默, 而 lastPeerActivityMs
+     * 原先只在 TCP 读侧刷新——resource 档 pingTimeout(30s) 必然误判
+     * 死链 BYE, 客户端周期性重连(会话号滚动/镜像反复重建)。 */
+    s->lastPeerActivityMs = xgs_nowMs();
     {
         /* [wake] 段③载体戳: 通道读完成时刻(探针关闭/通道解绑=0 跳过)。 */
         XGuiServer* owner = (XGuiServer*)s->owner;
@@ -3911,7 +3928,25 @@ static XgsSession* xgs_sessionCreate(XGuiServer* self, XIODevice* device,
     XgsSession* s = (XgsSession*)XMalloc_System(sizeof(XgsSession));
     if (!s) return NULL;
     XMemset(s, 0, sizeof(XgsSession));
-    s->id = d->nextSessionId++;
+    /* [2026-10-12 会话号回收] 优先复用已关闭会话释放的最小 id——断连
+     * 重连场景下日志/统计里的会话号稳定小值, 不再随重连次数单调膨胀;
+     * 空闲池空才递增 nextSessionId 取新号。id 值域语义不变(>0, 仍唯一:
+     * 活跃会话间不重号——同一时刻一个 id 只会在池中或挂在会话上)。 */
+    if (d->freeSessionIdCount > 0) {
+        int best = 0, bi = 0, i;
+        best = d->freeSessionIds[0];
+        bi = 0;
+        for (i = 1; i < d->freeSessionIdCount; ++i) {
+            if (d->freeSessionIds[i] < best) {
+                best = d->freeSessionIds[i];
+                bi = i;
+            }
+        }
+        s->id = best;
+        d->freeSessionIds[bi] = d->freeSessionIds[--d->freeSessionIdCount];
+    } else {
+        s->id = d->nextSessionId++;
+    }
     s->owner = self;
     s->device = device;
     s->ownDevice = ownDevice;
@@ -4050,6 +4085,21 @@ static void xgs_sessionClose(XGuiServer* self, XgsSession* s,
     XMutex_delete(s->m_qMutex);
     s->m_qMutex = NULL;
     /* (摘链已前置到函数头, 2026-10-05 重入守卫配套。) */
+    /* [2026-10-12 会话号回收] id 回空闲池(断连重连场景下会话号稳定小值,
+     * 复用分配在 xgs_sessionCreate; GUI 线程单访问, 池容量随量增长)。 */
+    {
+        if (d->freeSessionIdCount >= d->freeSessionIdCap) {
+            int newCap = d->freeSessionIdCap ? d->freeSessionIdCap * 2 : 8;
+            int* np = (int*)XRealloc_System(d->freeSessionIds,
+                                            (size_t)newCap * sizeof(int));
+            if (np) {
+                d->freeSessionIds = np;
+                d->freeSessionIdCap = newCap;
+            }
+        }
+        if (d->freeSessionIdCount < d->freeSessionIdCap)
+            d->freeSessionIds[d->freeSessionIdCount++] = id;
+    }
     XFree_System(s);
     XGuiServer_clientDisconnected_signal(self, id, emitReason);
 }
@@ -4152,6 +4202,13 @@ static void VXGuiServer_deinit(XGuiServer* self)
             XFree_System(d->tlsKeyFile);
             d->tlsKeyFile = NULL;
         }
+        /* [2026-10-12 会话号回收] 空闲 id 池随对象收尾。 */
+        if (d->freeSessionIds) {
+            XFree_System(d->freeSessionIds);
+            d->freeSessionIds = NULL;
+        }
+        d->freeSessionIdCount = 0;
+        d->freeSessionIdCap = 0;
         XFree_System(d);
         self->m_d = NULL;
     }
@@ -4280,15 +4337,32 @@ int XGuiServer_attachTransport(XGuiServer* self, XIODevice* device)
     XGuiServerPrivate* d;
     XgsSession* s;
     if (!self || !(d = (XGuiServerPrivate*)self->m_d)) return -1;
-    if (!device || !XIODevice_isOpen(device)) return -1;
-    if (d->sessionCount >= d->maxSessions) return -1;
-    if (!xgs_ensurePump(self)) return -1;
+    if (!device || !XIODevice_isOpen(device)) {
+        fprintf(stderr, "[xgs-attach] reject: device null/closed\n");
+        return -1;
+    }
+    if (d->sessionCount >= d->maxSessions) {
+        fprintf(stderr, "[xgs-attach] reject: session limit (%d)\n", d->sessionCount);
+        return -1;
+    }
+    if (!xgs_ensurePump(self)) {
+        fprintf(stderr, "[xgs-attach] fail: ensurePump\n");
+        return -1;
+    }
     s = xgs_sessionCreate(self, device, false);
-    if (!s) return -1;
-    if (!xgs_sessionStartWorker(s) || !xgs_sessionSendBanner(s)) {
+    if (!s) {
+        fprintf(stderr, "[xgs-attach] fail: sessionCreate\n");
+        return -1;
+    }
+    bool workerOk = xgs_sessionStartWorker(s);
+    bool bannerOk = workerOk ? xgs_sessionSendBanner(s) : false;
+    if (!workerOk || !bannerOk) {
+        fprintf(stderr, "[xgs-attach] fail: startWorker=%d banner=%d\n",
+                workerOk ? 1 : 0, bannerOk ? 1 : 0);
         xgs_sessionClose(self, s, -1, (int)XGUI_REMOTE_BYE_PROTOCOL_ERROR);
         return -1;
     }
+    fprintf(stderr, "[xgs-attach] session attached id=%d\n", (int)s->id);
     return s->id;
 }
 

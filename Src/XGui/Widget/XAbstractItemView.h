@@ -265,9 +265,12 @@ XAbstractItemView* XAbstractItemView_create_ex(XMemoryType memory,
  * @brief 设置当前单元格（对标 setCurrentIndex；SelectCurrent 语义）。
  *
  *        选区联动：选择模型已挂接时同步其当前索引；选择模式非 NoSelection
- *        且 (row,column) 有效时同时选中该单元格（同 Qt 的 current 变更
- *        携带 Select 命令）。无选择模型（未懒创建/被外部置空）时仅更新
- *        视图自身当前索引。
+ *        且 (row,column) 有效时按模式分派选择命令（同 Qt 的
+ *        setCurrentIndex(index) → selectionCommand(index, nullptr)）：
+ *        MultiSelection 走 Toggle 语义（已选中则取消、未选中则追加，
+ *        不清空既有选择）；其余模式走 ClearAndSelect（先清空旧选区再
+ *        选中当前项）。无选择模型（未懒创建/被外部置空）时仅更新视图
+ *        自身当前索引。
  *
  * @param self 目标视图指针。
  * @param row 行号（-1=无当前项，仅同步清除选择模型当前索引）。
@@ -316,6 +319,20 @@ void XAbstractItemView_reset(XAbstractItemView* self);
  *       update，滚动条范围仍由派生视图维护。
  */
 void XAbstractItemView_doItemsLayout(XAbstractItemView* self);
+/**
+ * @brief 按索引局部刷新（对标 QAbstractItemView::update(const
+ *        QModelIndex&)，qabstractitemview.h:214）。
+ *
+ *        语义（对齐 Qt 6.8）：取条目可视矩形（虚分派 visualRect），与
+ *        视口相交才请求一次局部重绘（Qt 同款相交门禁，避免不可见条目
+ *        的无效脏区）；视口未懒建时退化为整控件重绘请求（本库收敛）。
+ *
+ * @param self 目标视图指针。
+ * @param row 行号（<0 忽略）。
+ * @param col 列号（<0 忽略）。
+ * @return 无返回值。
+ */
+void XAbstractItemView_update(XAbstractItemView* self, int row, int col);
 
 /* ==================== 选择属性 ==================== */
 

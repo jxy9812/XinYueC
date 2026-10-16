@@ -2156,6 +2156,10 @@ static void xgc_dispatchFrame(XGuiClient* self, XGuiRemoteMsgType type,
     }
     case XGUI_REMOTE_MSG_PONG: {
         uint64_t ts = 0;
+        /* [2026-10-12 真机断连循环根修·补] PONG 亦计入对端活动: UDP 激活
+         * 后帧走旁路, 服务端 PING/PONG 仍走 TCP——保活往返本身即对端存活
+         * 证据, 不计入则 pingTimeout 在无帧变化画面下恒超时。 */
+        d->m_lastPeerFrameMs = (uint64_t)xgc_nowMs();
         if (XGuiRemoteProto_decPing(payload, len, &ts) && d->m_pingAwait &&
             ts == d->m_pingSentTs) {
             int64_t rtt = xgc_nowMs() - (int64_t)ts;
@@ -2272,6 +2276,10 @@ static void xgc_udpRecv(void* user, uint8_t channel, uint8_t msgType,
     d = (XGuiClientPrivate*)self->m_d;
     if (channel != XGUI_REMOTE_UDP_CHANNEL_FRAME) return;
     d->m_udpLastFrameMs = xgc_nowMs();
+    /* [2026-10-12 真机断连循环根修·客户端侧] UDP 合法帧计入对端活动:
+     * 旁路激活后 TCP 静默, m_lastPeerFrameMs 原先只在 TCP 读侧刷新,
+     * pingTimeout 恒误判死链→周期性 teardown 重连(与服务端侧同款)。 */
+    d->m_lastPeerFrameMs = (uint64_t)d->m_udpLastFrameMs;
     {
         /* [wake] 段③载体戳: 通道读完成→解码入队完成(探针关闭=0 跳过)。 */
         uint64_t arriveUs = XGuiRemoteUdp_wakeProfOn()

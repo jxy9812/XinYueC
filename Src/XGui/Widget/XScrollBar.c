@@ -505,6 +505,12 @@ void XScrollBar_init_2(XScrollBar* self, int orientation,
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
     XAbstractSlider_setOrientation((XAbstractSlider*)self, orientation);
+    /* 对标 QScrollBarPrivate::init (qscrollbar.cpp:345)：
+     * invertedControls = true（"since the scrollbar is inverted by
+     * default"）——裸滚动条自带的滚轮方向因此与基类缺省相反（Qt
+     * scrollByDelta 末尾按 invertedControls 取负）。XAbstractScrollArea
+     * 的滚轮走自身 wheelEvent（不经本虚槽），不受影响。 */
+    XAbstractSlider_setInvertedControls((XAbstractSlider*)self, true);
     /* 对标文档默认值：0..99、singleStep 1、pageStep 10、value 0
        （基类默认一致，此处显式声明意图）。 */
     hint.width = 15;

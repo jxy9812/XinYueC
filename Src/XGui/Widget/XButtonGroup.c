@@ -457,6 +457,16 @@ void XButtonGroup_addButton(XButtonGroup* self, XAbstractButton* button,
     if (!self || !button ||
         xbgroup_indexOf(self, button) >= 0) return;
     if (!self->m_buttons || !self->m_ids) return;
+    /* 对标 Qt qbuttongroup.cpp:205-224 addButton：按钮已属于其它组时
+       先从原组整体摘除（原组桥断连、成员/id 表移除、tracked 选中复位，
+       按钮 group() 承载随 removeButton 清空），再登记进本组；同组重复
+       addButton 仍是无操作（Qt 亦不重复加入）。 */
+    {
+        XButtonGroup* previous =
+            (XButtonGroup*)XAbstractButton_group(button);
+        if (previous && previous != self)
+            XButtonGroup_removeButton(previous, button);
+    }
     /* 对标 Qt：id < 0 时按负序自动分配（-1、-2、…）。 */
     if (id < 0) {
         /* 对标 Qt：自动 id 从 -2 起按负序递减（mapping 最小值决定）。 */
@@ -540,6 +550,12 @@ void XButtonGroup_setId(XButtonGroup* self, XAbstractButton* button, int id)
 {
     int index;
     if (!self || !self->m_ids) return;
+    /* 对标 Qt qbuttongroup.cpp:283-289 setId：id == -1 是"无此按钮"的
+       保留哨兵（id()/checkedId() 以 -1 表示未登记），禁止写入；否则
+       成员会被写成与"未登记"不可区分的 -1，idToggled/idClicked 随之以
+       -1 发射。成员校验按本库既有约定保持（Qt 不校验成员，本库更严，
+       不致错）。 */
+    if (id == -1) return;
     index = xbgroup_indexOf(self, button);
     if (index < 0) return;
     *(int*)XVector_at_base(self->m_ids, index) = id;

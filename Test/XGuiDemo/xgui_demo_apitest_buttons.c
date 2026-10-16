@@ -1,7 +1,8 @@
 /* xgui_demo_apitest_buttons.c —— 控件 API 测试族：buttons。
  *
  * 覆盖控件（对标 Qt 6.8.3）：XAbstractButton / XPushButton / XCheckBox /
- * XRadioButton / XToolButton / XCommandLinkButton / XButtonGroup。
+ * XRadioButton / XToolButton / XCommandLinkButton / XButtonGroup /
+ * XToolBox / XActionGroup。
  *
  * 测试口径（见 xgui_demo_apitest.h 契约）：
  *  - 属性 setter/getter 往返一致；文档默认值确定的直接断言，不确定的
@@ -20,6 +21,7 @@
 
 #if XWIDGET_ON && XABSTRACTBUTTON_ON
 #include "XAbstractButton.h"
+#include "XShortcut.h"
 #include "XVector.h"
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
@@ -40,6 +42,12 @@
 #endif
 #if XABSTRACTBUTTON_ON && XBUTTONGROUP_ON
 #include "XButtonGroup.h"
+#endif
+#if XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON
+#include "XToolBox.h"
+#endif
+#if XWIDGET_ON && XACTION_ON
+#include "XActionGroup.h"
 #endif
 
 #include <string.h>
@@ -145,6 +153,40 @@ static void btn_tbTriggeredSlot(XObject* receiver, XVarList* args)
     XVarList_args_1(args, XAction*, act);
     ++g_tbTriggered;
     g_tbLastAction = (XAction*)act;
+}
+
+/** @brief XPushButton 菜单桥路 aboutToShow/aboutToHide 计数。 */
+static int g_pbMenuShow;
+static int g_pbMenuHide;
+
+static void btn_pbMenuShowSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    ++g_pbMenuShow;
+}
+
+static void btn_pbMenuHideSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    ++g_pbMenuHide;
+}
+
+static void btn_pbMenuReset(void)
+{
+    g_pbMenuShow = 0;
+    g_pbMenuHide = 0;
+}
+
+/** @brief XToolBox currentChanged(int) 计数与最近索引。 */
+static int g_toolBoxChanged;
+static int g_toolBoxLastIndex;
+
+static void btn_toolBoxChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, int, index);
+    ++g_toolBoxChanged;
+    g_toolBoxLastIndex = index;
 }
 
 /** @brief XButtonGroup 八信号计数与最近参数。 */
@@ -529,20 +571,40 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(XAbstractButton_isDown(&b),
                     "AbstractButton 重复 animateClick 保持按下态");
 
-        /* ---- shortcut 文本承载往返（触发体系未建，头文件已注明） ---- */
+        /* ---- shortcut：文本承载往返 + XShortcut 注册/触发（对标
+         *      qabstractbutton.cpp:536-556 grabShortcut + :917-929
+         *      Shortcut 事件触发按钮；激活经 activated→click） ---- */
+        btnsig_reset();
         XAbstractButton_setShortcut_2(&b, "Ctrl+S");
         sc = XAbstractButton_shortcut(&b);
         XAPI_EXPECT(sc && strcmp(xapi_u8(sc), "Ctrl+S") == 0,
                     "AbstractButton setShortcut_2 文本往返");
+        {
+            XShortcut* sc2 = XShortcut_match(XKey_S,
+                                             XShortcutContext_WindowShortcut,
+                                             (XWidget*)&b);
+            XAPI_EXPECT(sc2 != NULL,
+                        "AbstractButton setShortcut 注册全局快捷键（XShortcut_match 命中）");
+            XShortcut_activate(sc2);
+            XAPI_EXPECT(g_btnSig.clicked == 1,
+                        "AbstractButton 快捷键激活触发按钮 click()");
+        }
         s = XString_create_utf8("Ctrl+O");
         XAbstractButton_setShortcut(&b, s);
         XClassDelete((XClass*)s);
         sc = XAbstractButton_shortcut(&b);
         XAPI_EXPECT(sc && strcmp(xapi_u8(sc), "Ctrl+O") == 0,
                     "AbstractButton setShortcut(XString) 文本往返");
+        XAPI_EXPECT(XShortcut_match(XKey_S, XShortcutContext_WindowShortcut,
+                                    (XWidget*)&b) == NULL &&
+                    XShortcut_match(XKey_O, XShortcutContext_WindowShortcut,
+                                    (XWidget*)&b) != NULL,
+                    "AbstractButton 换键后旧快捷键注销、新键登记");
         XAbstractButton_setShortcut(&b, NULL);
-        XAPI_EXPECT(XAbstractButton_shortcut(&b) == NULL,
-                    "AbstractButton setShortcut(NULL) 清除承载");
+        XAPI_EXPECT(XAbstractButton_shortcut(&b) == NULL &&
+                    XShortcut_match(XKey_O, XShortcutContext_WindowShortcut,
+                                    (XWidget*)&b) == NULL,
+                    "AbstractButton setShortcut(NULL) 清除承载并注销绑定");
 
         /* ---- NULL 安全与信号标识（self=NULL 只返回标识不发射） ---- */
         XAPI_EXPECT(XAbstractButton_text(NULL) == NULL &&
@@ -621,22 +683,49 @@ int xapi_buttons_run(void)
                     "PushButton 宏别名 setDown/isDown 往返");
         XPushButton_setDown(&pb, false);
 
-        /* ---- menu/setMenu/showMenu（无平台弹层，showMenu 只置按下态） ---- */
+        /* ---- menu/setMenu/showMenu：pressed→弹层桥 + showMenu 真弹层
+         *      （对标 qpushbutton.cpp:521-568；无头环境经直发鼠标按下
+         *      驱动弹层（popupPressed 需 down=true，同 Qt），Esc 直投
+         *      菜单收层并恢复按钮 down，aboutToShow/aboutToHide 计数） ---- */
+        btn_pbMenuReset();
+        XObject_connect_1((XObject*)&menu,
+                          XSignal(XMenu_aboutToShow_signal),
+                          (XObject*)&menu, btn_pbMenuShowSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)&menu,
+                          XSignal(XMenu_aboutToHide_signal),
+                          (XObject*)&menu, btn_pbMenuHideSlot,
+                          XConnectionType_Direct);
         XPushButton_setMenu(&pb, &menu);
         XAPI_EXPECT(XPushButton_menu(&pb) == &menu,
                     "PushButton setMenu 借用指针往返");
+        btn_injectPress((XWidget*)&pb, 5, 5);
+        XAPI_EXPECT(g_pbMenuShow == 1 && XPushButton_isDown(&pb),
+                    "PushButton 菜单按钮按下即弹出关联菜单（popupPressed 桥）");
+        btn_injectKey((XWidget*)&menu, XEVENT_TYPE_KEY_PRESS, XKey_Escape);
+        XAPI_EXPECT(g_pbMenuHide == 1 && !XPushButton_isDown(&pb),
+                    "PushButton 菜单收起（Esc）恢复按钮按下态（aboutToHide 桥）");
+        btn_injectRelease((XWidget*)&pb, 5, 5);
+        /* 解除关联后按压恢复普通点击，不再弹层。 */
         XPushButton_setMenu(&pb, NULL);
         XAPI_EXPECT(XPushButton_menu(&pb) == NULL,
                     "PushButton setMenu(NULL) 解除关联");
+        btn_pbMenuReset();
+        btnsig_reset();
+        btn_injectPress((XWidget*)&pb, 5, 5);
+        btn_injectRelease((XWidget*)&pb, 5, 5);
+        XAPI_EXPECT(g_pbMenuShow == 0 && g_btnSig.clicked == 1,
+                    "PushButton 解除菜单后按压恢复普通点击不弹层");
+        /* 无菜单 showMenu 无操作。 */
         XPushButton_showMenu(&pb);
         XAPI_EXPECT(!XPushButton_isDown(&pb),
                     "PushButton 无菜单时 showMenu 无操作");
-        XPushButton_setMenu(&pb, &menu);
-        XPushButton_showMenu(&pb);
-        XAPI_EXPECT(XPushButton_isDown(&pb),
-                    "PushButton showMenu 进入按下态（对标 Qt setDown(true)）");
-        XPushButton_setMenu(&pb, NULL);
-        XPushButton_setDown(&pb, false);
+        XObject_disconnect_1((XObject*)&menu,
+                             XSignal(XMenu_aboutToShow_signal),
+                             (XObject*)&menu, btn_pbMenuShowSlot);
+        XObject_disconnect_1((XObject*)&menu,
+                             XSignal(XMenu_aboutToHide_signal),
+                             (XObject*)&menu, btn_pbMenuHideSlot);
 
         /* ---- hitButton 按控件矩形命中（无主题资源时近似） ---- */
         XPoint_init(&p, 5, 5);
@@ -747,13 +836,22 @@ int xapi_buttons_run(void)
                     g_cbStateChanged == n,
                     "CheckBox setCheckState 同值不重发 checkStateChanged");
 
-        /* ---- 三态 toggle 循环 (state+1)%3（对标 Qt nextCheckState） ---- */
+        /* ---- toggle() 非虚：setChecked(!checked)，三态下只在
+         *      Unchecked↔Checked 间跳变（对标 qabstractbutton.cpp:843-851，
+         *      QCheckBox 未重载 toggle；(state+1)%3 循环只在点击路径
+         *      nextCheckState，qcheckbox.cpp:347-356） ---- */
         XCheckBox_toggle(&cb);
         XAPI_EXPECT(XCheckBox_checkState(&cb) == XCheckState_Unchecked,
                     "CheckBox 三态 toggle Checked→Unchecked");
         XCheckBox_toggle(&cb);
+        XAPI_EXPECT(XCheckBox_checkState(&cb) == XCheckState_Checked,
+                    "CheckBox toggle 只在 Unchecked↔Checked 间跳（不经 Partial）");
+        XCheckBox_click(&cb);
+        XAPI_EXPECT(XCheckBox_checkState(&cb) == XCheckState_Unchecked,
+                    "CheckBox 点击路径仍按三态循环 Checked→Unchecked");
+        XCheckBox_click(&cb);
         XAPI_EXPECT(XCheckBox_checkState(&cb) == XCheckState_PartiallyChecked,
-                    "CheckBox 三态 toggle Unchecked→PartiallyChecked");
+                    "CheckBox 点击路径 Unchecked→PartiallyChecked");
 
         /* ---- setTristate(false) 只关三态标志（Qt 6.8.3 setTristate 仅
          *      置 d->tristate，不触碰状态）：PartiallyChecked 期间 checked
@@ -785,6 +883,18 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(XCheckBox_isChecked(&cb) &&
                     XCheckBox_checkState(&cb) == XCheckState_Checked,
                     "CheckBox setChecked(true) 同步为 Checked");
+
+        /* ---- setChecked 同值早退路径仍经 checkStateSet 虚槽（对标
+         *      qabstractbutton.cpp:584-593）：PartiallyChecked 下
+         *      setChecked(true) 清 noChange 并重新发布 Checked ---- */
+        XCheckBox_setCheckState(&cb, XCheckState_PartiallyChecked);
+        btn_cbReset();
+        XCheckBox_setChecked(&cb, true);
+        XAPI_EXPECT(XCheckBox_checkState(&cb) == XCheckState_Checked,
+                    "CheckBox setChecked(true) 同值早退路径清 noChange");
+        XAPI_EXPECT(g_cbStateChanged == 1 &&
+                    g_cbLastState == (int)XCheckState_Checked,
+                    "CheckBox 同值早退路径经 checkStateSet 重发 checkStateChanged");
 
         /* ---- 继承宏别名抽查：down 往返 ---- */
         XCheckBox_setDown(&cb, true);
@@ -1144,6 +1254,25 @@ int xapi_buttons_run(void)
             XAPI_EXPECT(msh.width == h2.width && msh.height == h2.height,
                         "CommandLinkButton minimumSizeHint=sizeHint");
         }
+        /* ---- heightForWidth：策略位开启 + 描述窄宽度折行增高（对标
+         *      qcommandlinkbutton.h:41 + qcommandlinkbutton.cpp:184-187/
+         *      :309-317；折行为 ceil 估算的轻量等价） ---- */
+        {
+            XWidgetSizePolicy policy = XWidget_sizePolicy((XWidget*)&cl);
+            int hWide;
+            int hNarrow;
+            XAPI_EXPECT(XWidgetSizePolicy_hasHeightForWidth(&policy),
+                        "CommandLinkButton 尺寸策略 heightForWidth 位开启");
+            XCommandLinkButton_setDescription_2(&cl,
+                "这是一段比较长的描述文本用于验证按可用宽度折行的高度计算");
+            hWide = XCommandLinkButton_heightForWidth(&cl, 4000);
+            hNarrow = XCommandLinkButton_heightForWidth(&cl, 60);
+            XAPI_EXPECT(hWide > 0 && hNarrow > hWide,
+                        "CommandLinkButton 描述窄宽度折行使 heightForWidth 增高");
+            XAPI_EXPECT(XWidget_heightForWidth((XWidget*)&cl, 60) == hNarrow,
+                        "CommandLinkButton heightForWidth 经 XWidget 基础设施生效");
+            XCommandLinkButton_setDescription(&cl, NULL);
+        }
         d = XString_create_utf8("XString 描述");
         XCommandLinkButton_setDescription(&cl, d);
         XClassDelete((XClass*)d);
@@ -1328,6 +1457,12 @@ int xapi_buttons_run(void)
                     XButtonGroup_button(&grp, 42) == (XAbstractButton*)b1 &&
                     XButtonGroup_button(&grp, 10) == NULL,
                     "ButtonGroup setId 覆盖旧 id 映射");
+        /* ---- setId 拒绝保留哨兵 -1（对标 qbuttongroup.cpp:283-289：
+         *      -1 表示"无此按钮"，写入会使 id()/checkedId() 与未登记
+         *      不可区分） ---- */
+        XButtonGroup_setId(&grp, (XAbstractButton*)b1, -1);
+        XAPI_EXPECT(XButtonGroup_id(&grp, (XAbstractButton*)b1) == 42,
+                    "ButtonGroup setId(-1) 被拒绝且原 id 保持");
 
         /* ---- 重复 addButton 为无操作（Qt: 已在组内不再加入） ---- */
         XButtonGroup_addButton(&grp, (XAbstractButton*)b1, 5);
@@ -1362,6 +1497,39 @@ int xapi_buttons_run(void)
         XAPI_EXPECT(count == 1,
                     "ButtonGroup removeButton 后成员数=1");
 
+        /* ---- addButton 迁移：按钮已属它组时先从原组整体摘除
+         *      （对标 qbuttongroup.cpp:205-224 previous->removeButton） ---- */
+        {
+            XButtonGroup grpB;
+            XButtonGroup_init(&grpB, NULL);
+            btn_grpReset();
+            XButtonGroup_addButton(&grpB, (XAbstractButton*)b1, 7);
+            XAPI_EXPECT(XAbstractButton_group((XAbstractButton*)b1) ==
+                            (void*)&grpB,
+                        "ButtonGroup 迁移后按钮 group() 指向新组");
+            members = XButtonGroup_buttons(&grp);
+            count = members ? (int64_t)XVector_size_base(
+                                   (const XContainer*)members) : 0;
+            XAPI_EXPECT(count == 0,
+                        "ButtonGroup 迁移后原组成员表已移除该按钮");
+            XAPI_EXPECT(XButtonGroup_checkedButton(&grp) == NULL,
+                        "ButtonGroup 迁移后原组 tracked 选中复位");
+            /* 原组桥已随 removeButton 断连：点击不再转发为原组信号。 */
+            XAbstractButton_click((XAbstractButton*)b1);
+            XAPI_EXPECT(g_grp.btnClicked == 0,
+                        "ButtonGroup 迁移后原组桥不再转发点击");
+            /* 新组桥接管转发，id 用迁移时指定的 7。 */
+            btn_grpConnect((XObject*)&grpB);
+            btn_grpReset();
+            XAbstractButton_click((XAbstractButton*)b1);
+            XAPI_EXPECT(g_grp.btnClicked == 1 &&
+                        g_grp.lastBtnClicked == (XAbstractButton*)b1,
+                        "ButtonGroup 新组桥转发 buttonClicked(b1)");
+            XAPI_EXPECT(g_grp.idClicked == 1 && g_grp.lastIdClicked == 7,
+                        "ButtonGroup 新组 idClicked 携带迁移指定的 id=7");
+            XClassDeinit(&grpB);
+        }
+
         /* 析构次序：先组（桥断连需按钮存活），后按钮。 */
         XClassDeinit(&grp);
         XClassDelete(b1);
@@ -1369,6 +1537,165 @@ int xapi_buttons_run(void)
         XClassDeinit(&outsider);
     }
 #endif /* XBUTTONGROUP_ON */
+
+#if XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON
+    /* ================================================================
+     * 8. XToolBox：禁用条目两侧语义 + 前插后当前页跟随（对标 Qt 6.8
+     *    qtoolbox.cpp:308-352/387-403/544-571）。
+     * ================================================================ */
+    {
+        XToolBox box;
+        XWidget* p1 = XWidget_create(NULL, 0);
+        XWidget* p2 = XWidget_create(NULL, 0);
+        XWidget* p3 = XWidget_create(NULL, 0);
+        XWidget* p0;
+
+        XToolBox_init(&box, NULL, 0);
+        XWidget_setGeometry((XWidget*)&box, 0, 0, 160, 220);
+        /* 页面固定 50 高：使页头/内容区几何可预算（页头 22px）。 */
+        XWidget_resize(p1, 160, 50);
+        XWidget_resize(p2, 160, 50);
+        XWidget_resize(p3, 160, 50);
+        XObject_connect_1((XObject*)&box,
+                          XSignal(XToolBox_currentChanged_signal),
+                          (XObject*)&box, btn_toolBoxChangedSlot,
+                          XConnectionType_Direct);
+        XToolBox_insertItem(&box, 0, p1, "一");
+        XToolBox_insertItem(&box, 1, p2, "二");
+        XToolBox_insertItem(&box, 2, p3, "三");
+        XAPI_EXPECT(XToolBox_currentIndex(&box) == 0 &&
+                    XToolBox_currentWidget(&box) == p1,
+                    "ToolBox 首个插入项成为当前页");
+
+        /* ---- setItemEnabled 禁用当前页：自动下移到最近启用页并发
+         *      currentChanged（对标 qtoolbox.cpp:544-571） ---- */
+        g_toolBoxChanged = 0;
+        g_toolBoxLastIndex = -1;
+        XToolBox_setItemEnabled(&box, 0, false);
+        XAPI_EXPECT(XToolBox_currentIndex(&box) == 1 &&
+                    XToolBox_currentWidget(&box) == p2 &&
+                    g_toolBoxChanged == 1 && g_toolBoxLastIndex == 1,
+                    "ToolBox 禁用当前页自动切换到最近启用页并发 currentChanged");
+
+        /* ---- setCurrentIndex 不拦截禁用条目（Qt 只拦越界与同页，
+         *      qtoolbox.cpp:387-403） ---- */
+        XToolBox_setCurrentIndex(&box, 2);
+        XAPI_EXPECT(XToolBox_currentIndex(&box) == 2 &&
+                    XToolBox_currentWidget(&box) == p3,
+                    "ToolBox setCurrentIndex 允许落在禁用条目");
+
+        /* ---- 点击路径对禁用页头拦截（对标页头按钮 setEnabled(false)
+         *      后 clicked 不发射）：current=2，内容区 [66,116)，页头
+         *      index0=[0,22) index1=[22,44) ---- */
+        g_toolBoxChanged = 0;
+        btn_injectPress((XWidget*)&box, 5, 5);
+        XAPI_EXPECT(XToolBox_currentIndex(&box) == 2 && g_toolBoxChanged == 0,
+                    "ToolBox 点击禁用页头不切页");
+        btn_injectPress((XWidget*)&box, 5, 30);
+        XAPI_EXPECT(XToolBox_currentIndex(&box) == 1 && g_toolBoxChanged == 1,
+                    "ToolBox 点击启用页头正常切页");
+        btn_injectRelease((XWidget*)&box, 5, 30);
+
+        /* ---- 前插后当前页按同一控件的新索引重选（对标
+         *      qtoolbox.cpp:337-344：index <= oldindex 时重选并
+         *      发 currentChanged） ---- */
+        g_toolBoxChanged = 0;
+        g_toolBoxLastIndex = -1;
+        p0 = XWidget_create(NULL, 0);
+        XWidget_resize(p0, 160, 50);
+        XToolBox_insertItem(&box, 0, p0, "零");
+        XAPI_EXPECT(XToolBox_currentIndex(&box) == 2 &&
+                    XToolBox_currentWidget(&box) == p2 &&
+                    g_toolBoxChanged == 1 && g_toolBoxLastIndex == 2,
+                    "ToolBox 前插后当前页跟随控件新索引重选并发 currentChanged");
+
+        /* 页面控件归调用方：先删页（摘出父链）再析构工具箱。 */
+        XClassDelete(p0);
+        XClassDelete(p1);
+        XClassDelete(p2);
+        XClassDelete(p3);
+        XClassDeinit(&box);
+    }
+#endif /* XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON */
+
+#if XWIDGET_ON && XACTION_ON
+    /* ================================================================
+     * 9. XActionGroup：ExclusionPolicy 三态策略 + visible 转发 +
+     *    addAction 返回值与便捷重载（对标 Qt 6.8 qactiongroup.h:21-54）。
+     * ================================================================ */
+    {
+        XActionGroup* grp = XActionGroup_create(NULL);
+        XAction* a1 = XAction_create();
+        XAction* a2 = XAction_create();
+        XAction* created;
+        XAction* late;
+
+        XAction_setCheckable(a1, true);
+        XAction_setCheckable(a2, true);
+        XAPI_EXPECT(XActionGroup_exclusionPolicy(grp) ==
+                        XActionGroupExclusionPolicy_Exclusive &&
+                    XActionGroup_isExclusive(grp),
+                    "ActionGroup 默认 exclusionPolicy=Exclusive");
+        XAPI_EXPECT(XActionGroup_isVisible(grp),
+                    "ActionGroup 默认 visible=true");
+        XAPI_EXPECT(XActionGroup_addAction(grp, a1) == a1,
+                    "ActionGroup addAction 返回动作本身（对标 QAction* 返回）");
+        created = XActionGroup_addAction_2(grp, "新建");
+        XAPI_EXPECT(created != NULL &&
+                    strcmp(xapi_u8(XAction_text_const(created)), "新建") == 0,
+                    "ActionGroup addAction_2 新建动作并入组（对标 addAction(text)）");
+        XActionGroup_addAction(grp, a2);
+        {
+            XVector* acts = XActionGroup_actions(grp);
+            XAPI_EXPECT(acts && XVector_size_base(
+                            (const XContainer*)acts) == 3,
+                        "ActionGroup 三成员入组");
+            if (acts) XClassDelete((XClass*)acts);
+        }
+
+        /* ---- Exclusive：新选中自动取消旧选中 ---- */
+        XActionGroup_setCheckedAction(grp, a1);
+        XActionGroup_setCheckedAction(grp, a2);
+        XAPI_EXPECT(XAction_isChecked(a2) && !XAction_isChecked(a1),
+                    "ActionGroup Exclusive 互斥取消旧选中");
+        /* ---- None：成员独立选中 ---- */
+        XActionGroup_setExclusionPolicy(grp,
+                                        XActionGroupExclusionPolicy_None);
+        XAPI_EXPECT(!XActionGroup_isExclusive(grp),
+                    "ActionGroup setExclusionPolicy(None) 等价非互斥");
+        XActionGroup_setCheckedAction(grp, a1);
+        XAPI_EXPECT(XAction_isChecked(a1) && XAction_isChecked(a2),
+                    "ActionGroup None 策略允许双选中");
+        /* ---- ExclusiveOptional：至多一个，互斥联动同 Exclusive ---- */
+        XActionGroup_setExclusionPolicy(
+            grp, XActionGroupExclusionPolicy_ExclusiveOptional);
+        XAPI_EXPECT(XActionGroup_isExclusive(grp) &&
+                    XActionGroup_exclusionPolicy(grp) ==
+                        XActionGroupExclusionPolicy_ExclusiveOptional,
+                    "ActionGroup ExclusiveOptional 往返且计为互斥");
+        XActionGroup_setCheckedAction(grp, a1);
+        XAPI_EXPECT(XAction_isChecked(a1) && !XAction_isChecked(a2),
+                    "ActionGroup ExclusiveOptional 互斥取消旧选中");
+
+        /* ---- visible 转发到全部成员（对标 Q_PROPERTY visible） ---- */
+        XActionGroup_setVisible(grp, false);
+        XAPI_EXPECT(!XActionGroup_isVisible(grp) &&
+                    !XAction_isVisible(a1) && !XAction_isVisible(a2) &&
+                    !XAction_isVisible(created),
+                    "ActionGroup setVisible(false) 转发到全部成员");
+        late = XActionGroup_addAction_3(grp, NULL, "后加");
+        XAPI_EXPECT(late != NULL && !XAction_isVisible(late),
+                    "ActionGroup addAction_3 新成员继承组隐藏态（对标 addAction(icon,text)）");
+        XActionGroup_setVisible(grp, true);
+        XAPI_EXPECT(XAction_isVisible(a1) && XAction_isVisible(late),
+                    "ActionGroup setVisible(true) 成员跟随恢复");
+
+        /* created/late 以组为父级联释放；散动作手动回收。 */
+        XClassDelete(grp);
+        XClassDelete(a1);
+        XClassDelete(a2);
+    }
+#endif /* XWIDGET_ON && XACTION_ON */
 
 #else /* XWIDGET_ON && XABSTRACTBUTTON_ON */
 

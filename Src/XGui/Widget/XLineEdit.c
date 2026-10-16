@@ -16,7 +16,6 @@
  *             - 水平滚动偏移 m_viewOffset 的钳位（光标→X 取控制器
  *               cursorToX，像素守恒留壳）；
  *             - 上下文菜单弹出与生命周期（菜单动作槽指控制器操作）；
- *             - 平台层 IME 直投的全局焦点登记 g_focusedLineEdit；
  *             - 信号转发：控制器 textChanged/textEdited/
  *               cursorPositionChanged/selectionChanged/inputRejected/
  *               accepted/editingFinished 唯一发射点经壳转接为公开信号。
@@ -71,11 +70,6 @@
 #if XTABLEWIDGET_ON
 #include "XCompleter.h"
 #endif /* XTABLEWIDGET_ON */
-
-/** @brief 当前聚焦的 XLineEdit（全局；IME CommitString 直投目标；
- *         mousePress 聚焦时登记，失焦与析构时反注册，保证访问器
- *         XLineEdit_focusedLineEdit 不返回悬挂指针）。 */
-static XLineEdit* g_focusedLineEdit = NULL;
 
 /* 光标竖线宽度与文本估算度量（每字符 8px，与点阵默认一致） */
 #define XLINEEDIT_CURSOR_W 1
@@ -896,7 +890,6 @@ static void VXLineEdit_mousePressEvent(XWidget* self, XEvent* event)
        对标 Qt：QLineEdit 点击路径从不 setFocusPolicy（qlineedit.cpp
        mousePressEvent 仅 d->control->moveCursor 等编辑结算）。 */
     XWidget_setFocus((XWidget*)edit);
-    g_focusedLineEdit = edit;
     pos = XMouseEvent_position(me);
     /* 三击：双击窗口期内且按点邻近双击点 → 全选并结束（对标 Qt
        mousePressEvent 的 tripleClick 分支，qlineedit.cpp:1516-1520；
@@ -1136,9 +1129,6 @@ static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
     XFocusReason reason = XFocusReason_Other;
     if (!edit || !event ||
         XEvent_type(event) != XEVENT_TYPE_FOCUS_OUT) return;
-    /* 失焦即反注册全局聚焦登记（登记语义=当前聚焦；防失焦后 IME
-       直投到非聚焦对象，也收窄悬挂窗口）。 */
-    if (g_focusedLineEdit == edit) g_focusedLineEdit = NULL;
 #if XWINDOWEVENT_ON
     reason = XFocusEvent_reason((XFocusEvent*)event);
 #endif /* XWINDOWEVENT_ON */
@@ -1152,7 +1142,12 @@ static void VXLineEdit_focusOutEvent(XWidget* self, XEvent* event)
             XLineControl_deselect(edit->m_control);
         XLineControl_setBlinkingCursorEnabled(edit->m_control, false);
     }
-    if (edit->m_finishedPending) {
+    if (edit->m_finishedPending || edit->m_finishOnFocusOut) {
+        /* m_finishOnFocusOut：Qt 视图 delegate 编辑器语义（FocusOut 无条件
+           commitData+closeEditor，不问有无编辑）；m_finishedPending：裸
+           QLineEdit 语义（仅编辑过的失焦才发）。两路共用 hasAcceptableInput/
+           fixup 门禁（qabstractitemdelegate.cpp:460 与 qlineedit.cpp:1939
+           的合并口径）。 */
         edit->m_finishedPending = false;
         /* 对标 Qt d->edited && (hasAcceptableInput()||fixup())：不可
            接受时先交控制器 fixup 修复，修复后仍不可接受则不发射
@@ -1465,10 +1460,6 @@ static void VXLineEdit_timerEvent(XObject* object, XTimerEvent* event)
 static void VXLineEdit_deinit(XLineEdit* self)
 {
     if (!self) return;
-    /* 反注册全局聚焦登记：本对象析构后 g_focusedLineEdit 不得残留
-       悬挂指针（否则 XLineEdit_focusedLineEdit() 返回已释放对象，
-       且地址复用时 IME 直投误投）。 */
-    if (g_focusedLineEdit == self) g_focusedLineEdit = NULL;
     xlineedit_disarmTripleClick(self);
     if (self->m_control) {
         /* 先关闪烁再删控制器：销毁聚焦中的编辑框时 FOCUS_OUT 由基类
@@ -1505,6 +1496,7 @@ static void VXLineEdit_copy(XLineEdit* self, const XLineEdit* other)
     self->m_alignment = other->m_alignment;
     self->m_clearButtonEnabled = other->m_clearButtonEnabled;
     self->m_finishedPending = other->m_finishedPending;
+    self->m_finishOnFocusOut = other->m_finishOnFocusOut;
     self->m_textMargins = other->m_textMargins;
     XLineEdit_setMaxLength(self, XLineEdit_maxLength(other));
     XLineEdit_setEchoMode(self, XLineEdit_echoMode(other));
@@ -1574,6 +1566,7 @@ static void VXLineEdit_move(XLineEdit* self, XLineEdit* other)
     self->m_alignment = other->m_alignment;
     self->m_clearButtonEnabled = other->m_clearButtonEnabled;
     self->m_finishedPending = other->m_finishedPending;
+    self->m_finishOnFocusOut = other->m_finishOnFocusOut;
     self->m_textMargins = other->m_textMargins;
     self->m_validator = other->m_validator;
     self->m_validatorUserData = other->m_validatorUserData;
@@ -1891,6 +1884,7 @@ void XLineEdit_init(XLineEdit* self, XWidget* parent, XWidgetFlags flags)
     self->m_validatorUserData = NULL;
     self->m_clearButtonEnabled = false;
     self->m_finishedPending = false;
+    self->m_finishOnFocusOut = false;
     XMargins_init(&self->m_textMargins, 0, 0, 0, 0);
     /* 内置 action 槽：结构体成员数组，XWidget_init 只清基类部分；不初始化
        的话 m_actionCount 为堆残留垃圾，首帧绘制会解引用野指针（Debug CRT
@@ -2145,6 +2139,12 @@ void XLineEdit_setClearButtonEnabled(XLineEdit* self, bool enable)
     self->m_clearButtonEnabled = enable;
     XWidget_update((XWidget*)self);
     xlineedit_updateSizeHints(self);
+}
+
+void XLineEdit_setFinishOnFocusOut(XLineEdit* self, bool enable)
+{
+    if (!self || self->m_finishOnFocusOut == enable) return;
+    self->m_finishOnFocusOut = enable;
 }
 
 void XLineEdit_setValidator(XLineEdit* self, XLineEditValidatorFunc validator,
@@ -2644,11 +2644,6 @@ void* XLineEdit_inputRejected_signal(XLineEdit* self)
 {
     (void)self;
     return (void*)(size_t)XLineEdit_inputRejected_signal;
-}
-
-XLineEdit* XLineEdit_focusedLineEdit(void)
-{
-    return g_focusedLineEdit;
 }
 
 #endif /* XWIDGET_ON && XLINEEDIT_ON */

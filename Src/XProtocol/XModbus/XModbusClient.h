@@ -32,6 +32,16 @@ XCLASS_DEFINE_END(XModbusClient)
  * @details 封装了Modbus主站/客户端的核心功能，用于向从站发送读写请求。
  *          这是一个抽象基类，具体的通信后端（如RTU/TCP）需由子类实现。
  */
+/* [单事务模式 2026-10-15] 单事务发送等待队列元素：等待空闲槽上线的
+ * 请求（串行开关置位且在途>0 时入队，前序完成后按序发出）。队列仅在
+ * 单事务模式开启期间由 XModbusClient_setSerialTransactions 创建，
+ * 关闭模式即销毁释放内存。 */
+struct XModbusSerialSend {
+    struct XModbusRequest* request; /**< 请求（所有权入队转移，随 Reply 释放）。 */
+    struct XModbusReply* reply;     /**< 关联 Reply（完成时向调用方通告）。 */
+    int serverAddress;              /**< 从机地址。 */
+};
+
 typedef struct XModbusClient {
     XModbusDevice m_base;           ///< 继承自XModbusDevice基类
     size_t m_timeout;               ///< 请求超时时间（毫秒）
@@ -44,6 +54,16 @@ typedef struct XModbusClient {
     int16_t m_maxReconnectAttempts;     ///< 最大重连次数（-1表示无限）
     size_t m_reconnectInterval;        ///< 重连间隔（毫秒）
     XTimerId m_reconnectTimer;      ///< 重连定时器ID
+    /* [单事务模式 2026-10-15] 串行发送开关（对标 Qt Modbus 单连接单事务
+     * 从机场景）：置位后，上一请求在途时新请求进入传输层发送队列排队，
+     * 前序完成后按 FIFO 发出——单事务从机（远程 IO 等）忙时丢弃交叠
+     * 请求，pipelining 并发会丢写帧。默认关=pipelining 多事务（规范
+     * 允许，多事务从机零回归）。 */
+    bool m_serialTransactions;      /**< 单事务串行发送开关（默认 false）。 */
+    struct XModbusSerialSend* m_serialQueue; /**< 发送等待队列（循环缓冲）。 */
+    int m_serialQueueCap;           /**< 队列容量（元素数）。 */
+    int m_serialQueueHead;          /**< 队头下标。 */
+    int m_serialQueueCount;         /**< 队内元素数。 */
 } XModbusClient;
 
 
@@ -232,6 +252,29 @@ void XModbusClient_setTimeout(XModbusClient* client, size_t newTimeout);
 * @return 重试次数
 */
 int16_t XModbusClient_numberOfRetries(const XModbusClient* client);
+
+/** @brief 设置单事务串行发送开关（传输层在途>0 时新请求排队等空闲槽）。
+ *  @note 须在连接建立前设置；默认关闭（pipelining）。 */
+void XModbusClient_setSerialTransactions(XModbusClient* client, bool enable);
+/** @brief 查询单事务串行发送开关。 */
+bool XModbusClient_serialTransactions(const XModbusClient* client);
+
+/** @brief 单事务发送队列入队（request 所有权入队转移；成功后随 Reply
+ *  生命周期释放）。队列仅在单事务模式开启期间由
+ *  XModbusClient_setSerialTransactions 创建/销毁。 */
+bool XModbusClient_serialQueuePush(XModbusClient* client,
+    struct XModbusRequest* ownedRequest, struct XModbusReply* reply,
+    int serverAddress);
+/** @brief 单事务发送队列出队：取队头请求（调用方负责上线/释放）。 */
+bool XModbusClient_serialQueuePop(XModbusClient* client,
+    struct XModbusRequest** outRequest, struct XModbusReply** outReply,
+    int* outServerAddress);
+/** @brief 单事务发送队列元素数。 */
+int XModbusClient_serialQueueCount(const XModbusClient* client);
+/** @brief 清空单事务发送队列：排队 Reply 以 error 完成告知调用方，
+ *  排队 Request 随即释放。 */
+void XModbusClient_serialQueueClear(XModbusClient* client,
+    XModbusDevice_Error error, const char* errorMsg);
 
 /**
 * @brief 设置请求重试次数

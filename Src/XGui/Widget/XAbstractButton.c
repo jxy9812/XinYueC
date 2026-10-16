@@ -9,8 +9,10 @@
 #include "XAbstractButton.h"
 
 #include "XAlgorithm.h"
+#include "XStringUtils.h"
 #include "XAbstractButton_Protected.h"
 #include "XButtonGroup.h"
+#include "XShortcut.h"
 #include "XWidget_Protected.h"
 #if XWINDOW_ON && XACCESSIBLE_ON
 #include "XPlatformAccessibility.h" /* [无障碍补全] StateChanged 通知。 */
@@ -186,6 +188,110 @@ static void abstractbutton_setDownFromInput(XAbstractButton* self, bool down)
         XAbstractButton_pressed_signal(self);
     else
         XAbstractButton_released_signal(self);
+}
+
+/* ==================== 快捷键绑定（对标 Qt grabShortcut 登记） ==================== */
+
+/* 快捷键激活槽（Qt QEvent::Shortcut → animateClick 的等价路径；无头/
+ * 无定时器循环环境退化为同步 click，见 setShortcut 处注释）。 */
+static void abstractbutton_shortcutActivatedSlot(XObject* receiver,
+                                                 XVarList* args)
+{
+    (void)args;
+    if (receiver)
+        XAbstractButton_click((XAbstractButton*)receiver);
+}
+
+/** @brief 回收 setShortcut 注册的 XShortcut 绑定（断连后删除，删除路径
+ *         自动从全局注册表注销）。 */
+static void abstractbutton_shortcutDetach(XAbstractButton* self)
+{
+    XShortcut* binding;
+
+    if (!self || !self->m_shortcutBinding)
+        return;
+    binding = (XShortcut*)self->m_shortcutBinding;
+    XObject_disconnect_1((XObject*)binding,
+                         XSignal(XShortcut_activated_signal),
+                         (XObject*)self,
+                         abstractbutton_shortcutActivatedSlot);
+    XClassDelete((XClass*)binding);
+    self->m_shortcutBinding = NULL;
+}
+
+/**
+ * @brief      从快捷键文本解析单键键码（Qt QKeySequence 全量解析的轻量等价物）。
+ * @details    取末个 '+' 之后的键名段：单字节 ASCII 直接用码位（XKey 的
+ *             0x20..0x7e 与 ASCII 对齐），"F1".."F12" 映射功能键码；修饰
+ *             前缀（Ctrl+/Alt+/Shift+/Meta+）不参与匹配——XShortcut 注册
+ *             表以单键码匹配（XShortcut_match），修饰位无承载，依赖按键
+ *             路径的 ShortcutOverride 询问让文本编辑控件优先。无法解析
+ *             返回 0（调用方不注册）。
+ */
+static int abstractbutton_shortcutKeyFromUtf8(const char* utf8)
+{
+    static const struct
+    {
+        const char* name;
+        int key;
+    } kNamedKeys[] = {
+        { "F1", XKey_F1 },   { "F2", XKey_F2 },   { "F3", XKey_F3 },
+        { "F4", XKey_F4 },   { "F5", XKey_F5 },   { "F6", XKey_F6 },
+        { "F7", XKey_F7 },   { "F8", XKey_F8 },   { "F9", XKey_F9 },
+        { "F10", XKey_F10 }, { "F11", XKey_F11 }, { "F12", XKey_F12 },
+    };
+    const char* segment;
+    int64_t i;
+    size_t length;
+
+    if (!utf8)
+        return 0;
+    /* 取最后一个 '+' 之后的段（无 '+' 用整串）。 */
+    segment = NULL;
+    for (i = 0; utf8[i] != '\0'; ++i) {
+        if (utf8[i] == '+')
+            segment = &utf8[i + 1];
+    }
+    if (!segment || *segment == '\0')
+        segment = utf8;
+    if (*segment == '\0')
+        return 0;
+    length = XStrlen(segment);
+    if (length == 1 && (unsigned char)segment[0] >= 0x20u &&
+        (unsigned char)segment[0] <= 0x7eu) {
+        return (int)(unsigned char)segment[0];
+    }
+    for (i = 0; i < (int64_t)(sizeof(kNamedKeys) / sizeof(kNamedKeys[0]));
+         ++i) {
+        if (XStrcmp(kNamedKeys[i].name, segment) == 0)
+            return kNamedKeys[i].key;
+    }
+    return 0;
+}
+
+/** @brief 按当前文本承载重建 XShortcut 绑定（Qt grabShortcut 的等价登记）。 */
+static void abstractbutton_shortcutAttach(XAbstractButton* self)
+{
+    int key;
+    XShortcut* binding;
+
+    abstractbutton_shortcutDetach(self);
+    if (!self->m_shortcut)
+        return;
+    key = abstractbutton_shortcutKeyFromUtf8(XString_toUtf8(self->m_shortcut));
+    if (key == 0)
+        return;
+    /* 无父级登记（不进 XObject 父子链，生命周期完全由按钮管理）；
+     * create 路径自动注册进全局注册表。 */
+    binding = XShortcut_create_2_ex(XCLASS_DEFAULT_MEMORY_TYPE, key, NULL);
+    if (!binding)
+        return;
+    XObject_connect_1((XObject*)binding,
+                      XSignal(XShortcut_activated_signal),
+                      (XObject*)self,
+                      abstractbutton_shortcutActivatedSlot,
+                      XConnectionType_Direct);
+    self->m_shortcutBinding = binding;
 }
 
 static void abstractbutton_refresh(XAbstractButton* self)
@@ -458,11 +564,13 @@ void XAbstractButton_setCheckable(XAbstractButton* self, bool checkable)
         return;
 
     self->m_checkable = checkable;
-    /* 与现有 QPushButton 语义一致：关闭时静默清空 checked。 */
-    if (!checkable && self->m_checked) {
+    /*
+     * 对标 Qt 6.8.3 qabstractbutton.cpp:560-568：关闭 checkable 只静默
+     * 置 checked=false，不回调 checkStateSet 虚槽、不发 toggled（中间
+     * 态同步由下次 setChecked 的早退路径补做）。
+     */
+    if (!checkable)
         self->m_checked = false;
-        XAbstractButton_checkStateSet_base(self);
-    }
     XWidget_update((XWidget*)self);
 }
 
@@ -475,11 +583,22 @@ void XAbstractButton_setChecked(XAbstractButton* self, bool checked)
 {
     bool old;
 
-    if (!self || !self->m_checkable)
+    if (!self)
         return;
     old = self->m_checked;
-    if (old == checked)
+    /*
+     * 对标 Qt 6.8.3 qabstractbutton.cpp:584-593：!checkable 与新旧值
+     * 相同两条早退路径都先走 checkStateSet() 虚槽再返回，让派生类同步
+     * 中间态（QCheckBox 借此清 noChange 并按 publishedState 去重发布
+     * checkStateChanged；blockRefresh 门控由 XCheckBox 槽内自持的
+     * m_blockRefresh 承担，与 Qt 把标志放在 QAbstractButtonPrivate 的
+     * 净效果一致）。互斥组 tracked 反选拒绝的守卫早退仍静默返回，
+     * 不回调虚槽（同 Qt）。
+     */
+    if (!self->m_checkable || old == checked) {
+        XAbstractButton_checkStateSet_base(self);
         return;
+    }
     if (!checked && old) {
         /* 对标 Qt：互斥组内**当前选中**按钮不可经 setChecked(false)
            反选（qabstractbutton.cpp——守卫只保护组 tracked 的
@@ -511,9 +630,16 @@ void XAbstractButton_setChecked(XAbstractButton* self, bool checked)
 
 void XAbstractButton_toggle(XAbstractButton* self)
 {
-    if (!self || !self->m_checkable)
+    /*
+     * 对标 Qt 6.8.3 qabstractbutton.cpp:843-851：toggle() 是非虚槽，
+     * 直接 setChecked(!checked)（QCheckBox 未重载 toggle，三态复选框
+     * 的 toggle 只在 Unchecked↔Checked 间跳变）；(state+1)%3 三态循环
+     * 仅属于 nextCheckState 虚槽（点击/自动重复路径，qcheckbox.cpp:
+     * 347-356）。不可选中按钮由 setChecked 内部早退拦截。
+     */
+    if (!self)
         return;
-    XAbstractButton_nextCheckState_base(self);
+    XAbstractButton_setChecked(self, !self->m_checked);
 }
 
 bool XAbstractButton_isDown(const XAbstractButton* self)
@@ -606,9 +732,16 @@ void XAbstractButton_setShortcut(XAbstractButton* self,
         XClassDelete((XClass*)self->m_shortcut);
     self->m_shortcut = copy;
     /*
-     * Qt 在此同时 grabShortcut 注册全局快捷键；本实现只保存文本承载，
-     * 不注册、不触发（快捷键触发体系未建），也无视觉变化需要刷新。
+     * 对标 Qt 6.8.3 qabstractbutton.cpp:536-545：setShortcut 同时
+     * grabShortcut 注册全局快捷键，按键命中激活时触发按钮
+     * （qabstractbutton.cpp:917-929 走 animateClick；本实现 activated
+     * →同步 click()，适配无定时器循环的无头/嵌入式环境）。注册表为
+     * 单键码模型：文本按末段解析单键（"Ctrl+S"→XKey_S；修饰位不参与
+     * 匹配，编辑控件优先由按键路径 ShortcutOverride 询问保证），
+     * '&' 助记符与 '&&' 转义涉及全按钮族文本绘制/测量链路，近似边界
+     * 保留（见头文件 @note）。
      */
+    abstractbutton_shortcutAttach(self);
 }
 
 void XAbstractButton_setShortcut_2(XAbstractButton* self, const char* utf8)
@@ -1046,8 +1179,9 @@ static void VXAbstractButton_copy(XAbstractButton* self,
     self->m_autoRepeatInterval = other->m_autoRepeatInterval;
     self->m_repeatTimer = XTIMER_INVALID_ID;
     self->m_animateTimer = XTIMER_INVALID_ID;
-    /* 快捷键文本为对象拥有，深拷贝；组承载为借用不透明指针，拷贝体
-     * 不继承登记关系（对齐 Qt：新按钮不属于任何 QButtonGroup）。 */
+    /* 快捷键文本为对象拥有，深拷贝；组承载与快捷键绑定均不随拷贝
+     * 继承（对齐 Qt：新按钮不属于任何 QButtonGroup，也无 grabShortcut
+     * 登记）。 */
     if (self->m_shortcut) {
         XClassDelete((XClass*)self->m_shortcut);
         self->m_shortcut = NULL;
@@ -1055,6 +1189,7 @@ static void VXAbstractButton_copy(XAbstractButton* self,
     self->m_shortcut = other->m_shortcut
                            ? XString_create_copy(other->m_shortcut)
                            : NULL;
+    self->m_shortcutBinding = NULL;
     self->m_group = NULL;
 }
 
@@ -1094,7 +1229,11 @@ static void VXAbstractButton_move(XAbstractButton* self,
     self->m_autoRepeatInterval = other->m_autoRepeatInterval;
     self->m_repeatTimer = XTIMER_INVALID_ID;
     self->m_animateTimer = XTIMER_INVALID_ID;
-    /* 快捷键文本所有权随移动转移；组承载不随移动继承。 */
+    /* 快捷键文本所有权随移动转移；快捷键绑定的 activated 连接以按钮
+     * 对象为接收者，不可随移动换主，就地回收（与组承载同口径不继承）。
+     */
+    abstractbutton_shortcutDetach(self);
+    abstractbutton_shortcutDetach(other);
     self->m_shortcut = other->m_shortcut;
     other->m_shortcut = NULL;
     self->m_group = NULL;
@@ -1118,6 +1257,7 @@ static void VXAbstractButton_deinit(XAbstractButton* self)
 
     abstractbutton_stopRepeatTimer(self);
     abstractbutton_stopAnimateTimer(self);
+    abstractbutton_shortcutDetach(self);
     if (self->m_text) {
         XClassDelete((XClass*)self->m_text);
         self->m_text = NULL;
@@ -1229,8 +1369,9 @@ void XAbstractButton_init(XAbstractButton* self, XWidget* parent,
     self->m_autoRepeatInterval = 100;
     self->m_repeatTimer = XTIMER_INVALID_ID;
     self->m_animateTimer = XTIMER_INVALID_ID;
-    /* 快捷键文本承载默认未设置；按钮组承载默认未登记。 */
+    /* 快捷键文本承载默认未设置（绑定未注册）；按钮组承载默认未登记。 */
     self->m_shortcut = NULL;
+    self->m_shortcutBinding = NULL;
     self->m_group = NULL;
     XWidget_setForegroundRole((XWidget*)self,
                               XPaletteColorRole_ButtonText);

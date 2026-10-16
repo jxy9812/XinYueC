@@ -177,15 +177,14 @@ XWidget* XMainWindow_menuWidget(const XMainWindow* self);
 void XMainWindow_setMenuWidget(XMainWindow* self, XWidget* menuWidget);
 #if XMENU_ON
 /** @brief 新建停靠面板/工具栏右键弹出菜单（对标 createPopupMenu）。
- * @details 新建空 XMenu 并把父对象设为本主窗口（未释放时随主窗口析构
- *          级联销毁）。
+ * @details 新建 XMenu 并把父对象设为本主窗口（未释放时随主窗口析构
+ *          级联销毁）；随菜单填充各工具栏/停靠面板的 toggleViewAction
+ *          （XMenu_insertAction 借用挂接，动作本体仍归原控件，Qt 同
+ *          语义）。
  * @param self 目标主窗口；可为 NULL。
  * @return 新建的 XMenu 指针，所有权归调用方，必须用 XClassDelete
- *         释放；self 为 NULL 或分配失败时返回 NULL。
- * @note 与 Qt 差异：Qt 会向菜单填充各停靠面板/工具栏的 toggleViewAction，
- *       并在无可填充项时返回 nullptr；XMenu 没有“加入已有 XAction”的
- *       接口（XMenu_addAction 只按文本新建动作），故本实现返回空菜单且
- *       除分配失败外不返回 NULL，填充交给调用方。
+ *         释放；self 为 NULL 或分配失败时返回 NULL（Qt 在无可填充项
+ *         时返回 nullptr 的口径未对标：无工具栏/停靠面板时返回空菜单）。
  */
 XMenu* XMainWindow_createPopupMenu(XMainWindow* self);
 #endif /* XMENU_ON */

@@ -104,6 +104,9 @@
 #include "XSystem.h"
 #include "XDateTime.h"        /* present 限频计时：单调毫秒（约束文档时间源规则） */
 #include "XPrintf.h"          /* [wprof] flush per-leg profiling summary line */
+#if defined(__GLIBC__) && defined(__linux__)
+#include <execinfo.h>         /* [rprof] 大失效 backtrace 归因（诊断门控） */
+#endif
 #include "XStyle.h"           /* XStyle_invalidateStyleSheetRenderCache（setStyleSheet 缓存失效联动，deferred#4） */
 #if XSTYLE_ON
 #include "XCssStyleSheet.h"   /* qproperty-* 声明结构与解析（setStyleSheet 应用链的动态属性写入） */
@@ -179,6 +182,34 @@ volatile unsigned long g_postPaintCount;
 extern volatile unsigned long g_exposeEvtCount;
 volatile unsigned long g_postPaintCount;
 volatile unsigned long g_flushBsCount;
+
+/* [rprof] 区域尺寸画像状态（XGPU_W_FRAME_PROF 同门控，2026-10-14）。
+ * 脏区架构的量化口：入队侧（update*→addDirtyRegion，本文件前部——
+ * 故独立于文件尾部的 wprof 状态体在此提前定义）按裁剪后矩形累计像素
+ * 并记录最大单笔失效的控件类名；帧侧（flushBackingStore）按 whole
+ * 区域统计矩形像素和与包围盒。触摸阵发的「谁在刷整件」直接读 enq
+ * 归因，无需抓帧猜。汇总打印与复位在 wprof 3s 窗口内一并完成。 */
+typedef struct XWidgetRprofState
+{
+    unsigned long long enqPix;         /**< 入队像素累计（裁剪后）。 */
+    long enqHits;                      /**< 入队矩形笔数。 */
+    unsigned long long maxEnqPix;      /**< 最大单笔失效像素。 */
+    const char* maxEnqSrc;             /**< 最大单笔的控件类名（借用）。 */
+    int maxEnqW;                       /**< 最大单笔宽。 */
+    int maxEnqH;                       /**< 最大单笔高。 */
+    long frmHits;                      /**< 帧数（flush 携带区域）。 */
+    unsigned long long frmSumPix;      /**< 帧区域矩形像素和累计。 */
+    unsigned long long frmBboxPix;     /**< 帧包围盒像素累计。 */
+    unsigned long long maxFrmSumPix;   /**< 最大帧像素和。 */
+    unsigned long long maxFrmBboxPix;  /**< 最大帧包围盒像素。 */
+    int btPrinted;                     /**< 本窗大失效 backtrace 已打。 */
+    long srcExpose;                    /**< EXPOSE 整窗 flush 帧数。 */
+    long srcEvt;                       /**< PAINT 区域帧数。 */
+    long srcDirty;                     /**< 脏区回退帧数。 */
+    long srcFull;                      /**< 脏区空整窗兜底帧数。 */
+} XWidgetRprofState;
+volatile int g_xgui_rprofFlushSrc = 0; /**< EXPOSE→flush 来源旗（诊断）。 */
+static XWidgetRprofState xwidget_rprof;
 
 #if XWIDGET_ON
 
@@ -1219,6 +1250,9 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
     const XRegion* source;
     XRegion sourceCopy;
     bool copiedSource;
+    /* [rprof] 门提前到入队循环前解析：首笔失效也计入归因（函数尾部
+       的帧链戳沿用同一门状态，不多付一次解析）。 */
+    int rprofOn = xwidget_wprof_gate();
     if (!self || !region || !self->m_updatesEnabled) return;
     self->m_contentCacheDirty = true;
     /* 保留层失效联动：update/updateRect/updateRegion/repaint 全部经此
@@ -1248,6 +1282,67 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
         if (!XRect_isEmpty(&clipped)) {
             XRect translated = XRect_translated(&clipped, offset.x, offset.y);
             XRegion_addRect(&top->m_dirty, &translated);
+            /* [rprof] 入队归因：只在画像门开启时付类名/最大值维护成本。 */
+            if (rprofOn) {
+                unsigned long long pix =
+                    (unsigned long long)clipped.width *
+                    (unsigned long long)clipped.height;
+                int rprofBtHit = 0;
+                xwidget_rprof.enqPix += pix;
+                xwidget_rprof.enqHits += 1;
+                if (pix > xwidget_rprof.maxEnqPix) {
+                    XVtable* vt = XClassGetVtable(self);
+                    xwidget_rprof.maxEnqPix = pix;
+                    xwidget_rprof.maxEnqSrc =
+                        (vt && vt->m_name) ? vt->m_name : "?";
+                    xwidget_rprof.maxEnqW = clipped.width;
+                    xwidget_rprof.maxEnqH = clipped.height;
+                }
+                /* 大失效调用点归因（诊断态）：单笔≥窗面积一半时打一次
+                   backtrace（走当前栈，非 ptrace；每 3s 窗最多一笔）。
+                   backtrace_symbols 需 malloc——诊断路径可接受。 */
+                /* 阈值可调（XGUI_RPROF_BT_MIN_PIX）：缺省=半窗。 */
+                {
+                    static int btMinPix = -1;
+                    if (btMinPix < 0)
+                    {
+                        const char* bm =
+                            XSystem_environment("XGUI_RPROF_BT_MIN_PIX");
+                        btMinPix = bm && *bm ? (int)atoi(bm) : 0;
+                    }
+                    if (btMinPix > 0)
+                        rprofBtHit = pix >= (unsigned long long)btMinPix;
+                }
+                if (rprofBtHit && !xwidget_rprof.btPrinted) {
+                    void* bt[12];
+                    int bn = backtrace(bt, 12);
+                    char** syms = backtrace_symbols(bt, bn);
+                    int bi;
+                    const XWidget* anc;
+                    xwidget_rprof.btPrinted = 1;
+                    fprintf(stderr, "[rprof] full-enqueue %s %dx%d from:\n",
+                            xwidget_rprof.maxEnqSrc ? xwidget_rprof.maxEnqSrc
+                                                    : "?",
+                            clipped.width, clipped.height);
+                    /* 控件身份链：地址+几何+类名，沿父四层——基类虚表
+                       名相同（都叫 XWidget）时靠地址/几何区分本体。 */
+                    for (anc = self; anc; anc = (const XWidget*)XObject_parent((XObject*)anc)) {
+                        XVtable* avt = XClassGetVtable(anc);
+                        fprintf(stderr, "[rprof]   self %p %dx%d%+d%+d %s q=%d vis=%d\n",
+                                (const void*)anc, anc->m_windowRect.width,
+                                anc->m_windowRect.height, anc->m_windowRect.x,
+                                anc->m_windowRect.y,
+                                (avt && avt->m_name) ? avt->m_name : "?",
+                                XWidget_attrTest(&anc->m_attributes,
+                                                 XWidgetAttribute_FocusOwnerQuiet),
+                                anc->m_visible);
+                    }
+                    for (bi = 0; bi < bn && bi < 12; ++bi)
+                        fprintf(stderr, "[rprof]   #%d %s\n", bi,
+                                syms ? syms[bi] : "?");
+                    free(syms);
+                }
+            }
         }
     }
     if (copiedSource)
@@ -1263,7 +1358,7 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
        span since the previous flush exit settles as gap (event-loop idle
        and other events between frames). Later enqueues of the same frame
        keep the earliest stamp. */
-    if (xwidget_wprof_gate())
+    if (rprofOn)
     {
         int64_t nowNs = XDateTime_currentNSecsSinceEpoch();
         if (xwidget_wprofFlushEndNs != 0)
@@ -1828,14 +1923,24 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
     if (target &&
         (XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS ||
          XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK)) {
-        XWidgetFocusPolicy policy = XWidget_focusPolicy(target);
+        /* 对标 Qt：viewport 等命中靶的焦点判定沿 focusProxy 链解析
+         * （qabstractscrollarea.cpp:272 viewport->setFocusProxy(q)——
+         * 点击视口时以滚动区自身的策略位为准，proxy 靶 NoFocus 不致
+         * 移焦死路）。 */
+        XWidget* focusProbe = XWidget_deepestFocusProxy(target);
+        XWidgetFocusPolicy policy = XWidget_focusPolicy(
+            focusProbe ? focusProbe : target);
         if ((policy & XWidgetFocusPolicy_ClickFocus) != 0)
-            XWidget_setFocusReason(target, XFocusReason_Mouse);
+            XWidget_setFocusReason(focusProbe ? focusProbe : target,
+                                   XFocusReason_Mouse);
     } else if (target && XEvent_type(event) == XEVENT_TYPE_WHEEL) {
-        XWidgetFocusPolicy policy = XWidget_focusPolicy(target);
+        XWidget* focusProbe = XWidget_deepestFocusProxy(target);
+        XWidgetFocusPolicy policy = XWidget_focusPolicy(
+            focusProbe ? focusProbe : target);
         if ((policy & XWidgetFocusPolicy_WheelFocus) ==
             XWidgetFocusPolicy_WheelFocus)
-            XWidget_setFocusReason(target, XFocusReason_Mouse);
+            XWidget_setFocusReason(focusProbe ? focusProbe : target,
+                                   XFocusReason_Mouse);
     }
     w = target;
     while (w) {
@@ -2997,8 +3102,14 @@ static void XWidget_paintEvent_default(XWidget* self, XEvent* event)
     if (!self->m_autoFillBackground) return;
     pe = (XPaintEvent*)event;
     palette = XWidget_palette(self);
+    /* [根修 2026-10-15] 按控件背景角色取色（对标 Qt 
+       QWidget::paintEvent 的 autoFillBackground→backgroundRole 语义）：
+       此前硬编码 Window 角色——QAbstractScrollArea 视口按 Qt 定版用
+       Base 角色（qabstractscrollarea.cpp:252），角色被硬编后滚动暴露
+       区填充与页面白底有色差，视口底色修复无处落地。默认角色仍为
+       Window，存量控件逐位不变。 */
     color = XPalette_color(&palette, XPaletteColorGroup_Active,
-                           XPaletteColorRole_Window);
+                           XWidget_backgroundRole(self));
     rect = XPaintEvent_rect(pe);
     offset = XWidget_paintOffset(self);
     rect.x += offset.x;
@@ -3061,11 +3172,19 @@ static void XWidget_noopEvent_default(XWidget* self, XEvent* event)
  * @details 样式层 HasFocus 焦点框（dotted frame）只在重绘时呈现——
  *          此前默认槽为空操作，Tab 移动焦点后新旧焦点控件都不重绘，
  *          焦点框要等无关重绘才出现甚至永不出现（问题 #13 键盘焦点
- *          完全不可见的另一半根因）。 */
+ *          完全不可见的另一半根因）。
+ *          FocusOwnerQuiet 宿主（滚区/条目视图族，paintEvent 不读
+ *          HasFocus，焦点视觉=当前格高亮的子矩形路径）跳过整件
+ *          update——真机大表每次点击聚焦/失焦各免一次视口带整刷
+ *          （脏区收窄 2026-10-15，与 setFocusReason 宿主补 update
+ *          循环同一豁免语义）。 */
 static void XWidget_focusEvent_default(XWidget* self, XEvent* event)
 {
     (void)event;
-    if (self) XWidget_update(self);
+    if (self &&
+        !XWidget_attrTest(&self->m_attributes,
+                          XWidgetAttribute_FocusOwnerQuiet))
+        XWidget_update(self);
 }
 
 /* ==================== XWidgetWindow 桥接窗口类 ==================== */
@@ -3158,6 +3277,10 @@ static bool VXWidgetWindow_event(XWidgetWindow* self, XEvent* event)
         XRegion_init(&region);
         rect = XWidget_rect(top);
         XRegion_addRect(&region, &rect);
+        {
+            extern volatile int g_xgui_rprofFlushSrc;
+            g_xgui_rprofFlushSrc = 1;
+        }
         XWidget_flushBackingStore(top, &region);
         XRegion_deinit(&region);
         XEvent_accept(event);
@@ -3615,6 +3738,9 @@ static void XFocusProxy_register(XWidget* owner)
     XMemset(e, 0, sizeof(XFocusProxyEntry));
     e->owner = owner;
     e->proxy = owner->m_focusProxy;
+    if ((intptr_t)owner > 0x7f0000000000ULL && (intptr_t)owner < 0x800000000000ULL)
+        fprintf(stderr, "[FPX] register owner=%p (STACK RANGE!) proxy=%p\n",
+                (void*)owner, (void*)owner->m_focusProxy);
     e->next = g_focusProxyEntries;
     if (g_focusProxyEntries) g_focusProxyEntries->prev = e;
     g_focusProxyEntries = e;
@@ -6248,7 +6374,9 @@ void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
         {
             XFocusProxyEntry* entry;
             for (entry = g_focusProxyEntries; entry; entry = entry->next)
-                if (XWidget_deepestFocusProxy(entry->owner) == oldFocus)
+                if (XWidget_deepestFocusProxy(entry->owner) == oldFocus &&
+                    !XWidget_attrTest(&entry->owner->m_attributes,
+                                      XWidgetAttribute_FocusOwnerQuiet))
                     XWidget_update(entry->owner);
         }
     }
@@ -6262,11 +6390,15 @@ void XWidget_setFocusReason(XWidget* self, XFocusReason reason)
     XClassDeinit(&event);
 #endif /* XWINDOWEVENT_ON */
     /* 复合控件容器补 update（持焦侧）：同失焦侧口径——焦点靶是代理
-     * 子控件时宿主容器画布同步重绘，聚焦环得以画出。 */
+     * 子控件时宿主容器画布同步重绘，聚焦环得以画出。FocusOwnerQuiet
+     * 宿主（滚区/条目视图族，paintEvent 不读 HasFocus）跳过：焦点视觉
+     * 由当前格高亮等子矩形路径自管，整件补 update 是纯浪费。 */
     {
         XFocusProxyEntry* entry;
         for (entry = g_focusProxyEntries; entry; entry = entry->next)
-            if (XWidget_deepestFocusProxy(entry->owner) == focusTarget)
+            if (XWidget_deepestFocusProxy(entry->owner) == focusTarget &&
+                !XWidget_attrTest(&entry->owner->m_attributes,
+                                  XWidgetAttribute_FocusOwnerQuiet))
                 XWidget_update(entry->owner);
     }
 }
@@ -8390,11 +8522,51 @@ static void xwidget_wprof_add(int leg, int64_t startNs)
                     xwidget_wprof.hits[i], ms[i]);
         }
         XPrintf("\n");
+        /* [rprof] 区域尺寸画像行：帧侧 frm=帧数 sumAvg/sumMax=帧区域
+           矩形像素和（实际绘制+提交面积） bboxAvg/bboxMax=包围盒像素；
+           入队侧 enq=失效矩形笔数 avg/max=单笔像素 max 归因到控件类名
+           ——「谁在刷整件」直接读这一行。像素×4≈RGB32 字节、×2≈RGB16。 */
+        XPrintf("[rprof] frm=%ld sumAvg=%llu sumMax=%llu bboxAvg=%llu bboxMax=%llu | enq=%ld avg=%llu max=%llu@%s(%dx%d)\n",
+                xwidget_rprof.frmHits,
+                xwidget_rprof.frmHits
+                    ? xwidget_rprof.frmSumPix /
+                      (unsigned long long)xwidget_rprof.frmHits : 0ull,
+                xwidget_rprof.maxFrmSumPix,
+                xwidget_rprof.frmHits
+                    ? xwidget_rprof.frmBboxPix /
+                      (unsigned long long)xwidget_rprof.frmHits : 0ull,
+                xwidget_rprof.maxFrmBboxPix,
+                xwidget_rprof.enqHits,
+                xwidget_rprof.enqHits
+                    ? xwidget_rprof.enqPix /
+                      (unsigned long long)xwidget_rprof.enqHits : 0ull,
+                xwidget_rprof.maxEnqPix,
+                xwidget_rprof.maxEnqSrc ? xwidget_rprof.maxEnqSrc : "?",
+                xwidget_rprof.maxEnqW, xwidget_rprof.maxEnqH);
         for (i = 0; i < XW_WPROF_SLOT_COUNT; ++i)
         {
             xwidget_wprof.ns[i] = 0;
             xwidget_wprof.hits[i] = 0;
         }
+        xwidget_rprof.enqPix = 0;
+        xwidget_rprof.enqHits = 0;
+        xwidget_rprof.maxEnqPix = 0;
+        xwidget_rprof.maxEnqSrc = NULL;
+        xwidget_rprof.maxEnqW = 0;
+        xwidget_rprof.maxEnqH = 0;
+        xwidget_rprof.frmHits = 0;
+        xwidget_rprof.frmSumPix = 0;
+        xwidget_rprof.frmBboxPix = 0;
+        xwidget_rprof.maxFrmSumPix = 0;
+        xwidget_rprof.maxFrmBboxPix = 0;
+        xwidget_rprof.btPrinted = 0;
+        XPrintf("[rprof2] src evt=%ld dirty=%ld expose=%ld full=%ld\n",
+                xwidget_rprof.srcEvt, xwidget_rprof.srcDirty,
+                xwidget_rprof.srcExpose, xwidget_rprof.srcFull);
+        xwidget_rprof.srcEvt = 0;
+        xwidget_rprof.srcDirty = 0;
+        xwidget_rprof.srcExpose = 0;
+        xwidget_rprof.srcFull = 0;
         xwidget_wprof.lastPrintNs = nowNs;
     }
 }
@@ -8538,6 +8710,25 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         XRegion_addRect(&whole, &contents);
     }
  #else
+    /* [rprof] 帧区域来源分账（XGPU_W_FRAME_PROF 门控）：expose=EXPOSE
+       整窗，evt=PAINT 携带区域，dirty=脏区包围盒回退，full=脏区空整窗
+       兜底（首显/resize 域），gpu=降级整窗抬升。稳态出现 expose/full
+       高占比即「区域生产侧没活干、flush 侧自造整窗」的直接证据。 */
+    if (xwidget_wprof.on)
+    {
+        extern volatile int g_xgui_rprofFlushSrc;
+        if (g_xgui_rprofFlushSrc == 1)
+        {
+            xwidget_rprof.srcExpose += 1;
+            g_xgui_rprofFlushSrc = 0;
+        }
+        else if (region && region->count > 0)
+            xwidget_rprof.srcEvt += 1;
+        else if (top->m_dirty.count > 0)
+            xwidget_rprof.srcDirty += 1;
+        else
+            xwidget_rprof.srcFull += 1;
+    }
     if (region && region->count > 0)
         XRegion_copy(region, &whole);
     else if (top->m_dirty.count > 0)
@@ -8630,6 +8821,27 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
         }
         wholeBbox.width = maxRx1 - wholeBbox.x;
         wholeBbox.height = maxRy1 - wholeBbox.y;
+    }
+    /* [rprof] 帧侧画像：矩形像素和=本帧实际绘制/提交面积，包围盒=
+       带宽上限（多矩形拆分前的表面裁剪口径）。两值差距大即「同帧
+       多点失效」，包围盒接近整窗即「触摸阵发提交税」的直接证据。 */
+    if (xwidget_wprof.on && whole.count > 0)
+    {
+        unsigned long long sumPix = 0;
+        unsigned long long bboxPix =
+            (unsigned long long)wholeBbox.width *
+            (unsigned long long)wholeBbox.height;
+        int r;
+        for (r = 0; r < whole.count; ++r)
+            sumPix += (unsigned long long)whole.rects[r].width *
+                      (unsigned long long)whole.rects[r].height;
+        xwidget_rprof.frmSumPix += sumPix;
+        xwidget_rprof.frmBboxPix += bboxPix;
+        xwidget_rprof.frmHits += 1;
+        if (sumPix > xwidget_rprof.maxFrmSumPix)
+            xwidget_rprof.maxFrmSumPix = sumPix;
+        if (bboxPix > xwidget_rprof.maxFrmBboxPix)
+            xwidget_rprof.maxFrmBboxPix = bboxPix;
     }
     /*
      * paint 事件携带的是入队时的脏区快照。先从当前脏区移除本次将要

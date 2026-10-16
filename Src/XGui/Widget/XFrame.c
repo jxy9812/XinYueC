@@ -7,8 +7,9 @@
  *               EXWidget_ChangeEvent / EXClass_Copy / EXClass_Move；
  *             - 样式与几何：m_frameStyle 保存 Shape|Shadow 组合值；
  *               setFrameStyle/Shape/Shadow 统一刷新尺寸策略（未显式调用
- *               XWidget_setSizePolicy 时按形状接管）、sizeHint 与几何，
- *               并重算边框宽度（对标 Qt QFrame::setFrameStyle 语义）；
+ *               XWidget_setSizePolicy 时按形状接管）与几何，并重算边框
+ *               宽度（对标 Qt QFrame::setFrameStyle 语义；不写 sizeHint，
+ *               HLine/VLine 特例由 XFrame_sizeHint 现场计算）；
  *             - frameWidth 计算按 Qt SE_ShapedFrameContents 规则：
  *               NoFrame=0；Box/HLine/VLine Plain=lineWidth、Raised/Sunken=
  *               2*lineWidth+midLineWidth；WinPanel=2；Panel=lineWidth；
@@ -617,13 +618,11 @@ XFrameShadow XFrame_frameShadow(const XFrame* self)
 void XFrame_setFrameStyle(XFrame* self, int style)
 {
     XWidgetSizePolicy policy;
-    XSize hint;
-    int shape;
     if (!self) return;
     /* 未显式设定过尺寸策略时按形状接管（对标 Qt WA_WState_OwnSizePolicy）。 */
     if (!XWidget_testAttribute(&self->m_base,
                                XWidgetAttribute_WState_OwnSizePolicy)) {
-        shape = style & XFrameStyleMask_Shape;
+        int shape = style & XFrameStyleMask_Shape;
         switch (shape) {
         case XFrameShape_HLine:
             policy = XWidgetSizePolicy_create_ex(XWidgetSizePolicy_Minimum,
@@ -647,15 +646,11 @@ void XFrame_setFrameStyle(XFrame* self, int style)
     }
     /* Qt 6.8 stores QFramePrivate::frameStyle through short(style). */
     self->m_frameStyle = (int)(short)style;
-    /* sizeHint：HLine=(-1,3)、VLine=(3,-1)、其余保持基类（-1,-1 默认）。 */
-    shape = self->m_frameStyle & XFrameStyleMask_Shape;
-    if (shape == XFrameShape_HLine)
-        XSize_init(&hint, -1, 3);
-    else if (shape == XFrameShape_VLine)
-        XSize_init(&hint, 3, -1);
-    else
-        XSize_init(&hint, -1, -1);
-    XWidget_setSizeHint(&self->m_base, &hint);
+    /* 对标 Qt：setFrameStyle 从不写 sizeHint（qframe.cpp:306-323 仅尺寸
+       策略/样式/update/updateFrameWidth）；HLine/VLine 特例由
+       XFrame_sizeHint 按形状现场计算（qframe.cpp:464-478），其余形状
+       透传控件存储的 sizeHint——已设置自定义 sizeHint 的派生帧控件
+       （如 XLcdNumber 的 (10+9*digits,23)）调用本函数不再丢提示。 */
     XWidget_updateGeometry(&self->m_base);
     XWidget_update(&self->m_base);
     XFrame_updateFrameWidth(self);

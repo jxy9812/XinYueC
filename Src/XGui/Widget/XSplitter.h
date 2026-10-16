@@ -49,12 +49,17 @@ typedef struct XSplitter
     int* m_sizes;               /**< 页尺寸意图（对标 Qt sizer；0=未设定，
                                      全零时布局均分；拖动/setSizes 落位
                                      后写入，容器缩放按此比例重排）。 */
+    int* m_stretch;             /**< 逐页拉伸因子（对标 QSizePolicy stretch，
+                                     qsplitter.cpp:1751-1762 写入子控件
+                                     sizePolicy 的轻量等价承载；0=未设定
+                                     默认，未设定页参与布局时按此加权）。 */
     /* [内存治理 2026-10-11] 短整型：折叠/尺寸数组容量收 int16_t；
        dragIndex 有 -1 哨兵（-1=无拖动），用 int16_t 保留符号；
        分隔条宽度小 px 值收 uint16_t；方向 1/2 收 uint8_t。 */
     int16_t m_collapsibleCap;   /**< 折叠数组容量。 */
     int16_t m_dragIndex;        /**< 正在拖动的分隔条索引（-1 无）。 */
     int16_t m_sizesCap;         /**< 页尺寸意图数组容量。 */
+    int16_t m_stretchCap;       /**< 拉伸因子数组容量。 */
     uint16_t m_handleWidth;     /**< 分隔条宽度（默认 5）。 */
     uint8_t m_orientation;      /**< 方向（1=水平 2=垂直，默认水平）。 */
     /* [内存治理 2026-10-11] 标志位字：2 个 bool 合并 1 字。 */
@@ -202,9 +207,16 @@ int XSplitter_handleWidth(const XSplitter* self);
  * @brief      设置把手宽度。
  */
 void XSplitter_setHandleWidth(XSplitter* self, int width);
-/** @brief XSplitterset拉伸Factor（对标 Qt 同名接口）。
+/** @brief XSplitterset拉伸Factor（对标 QSplitter::setStretchFactor，
+ *         qsplitter.cpp:1751-1762）。
+ * @details 越界索引早退（Qt 同 `index <= -1 || index >= size`）。Qt 把
+ *          stretch 写入子控件 QSizePolicy 并在下一次布局经
+ *          getWidgetSize 以 `sizer *= sf` 加权（qsplitter.cpp:327-344）；
+ *          本框架无 sizePolicy 管线，轻量等价物为逐页 stretch 数组：
+ *          未设定尺寸意图（未拖动/未 setSizes）的页在布局时按
+ *          stretch 加权分配（全 0 退化为均分），setter 立即重排。
  * @param self 目标控件指针。
- * @param index 索引（0 起）。
+ * @param index 索引（0 起；越界为无操作）。
  * @param stretch 拉伸因子。
  * @return 无返回值。
  */

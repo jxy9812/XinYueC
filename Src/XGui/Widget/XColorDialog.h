@@ -57,12 +57,14 @@ typedef struct XColorDialog
 {
     XDialog m_base;               /**< 基类成员；必须是第一个。 */
     XColor m_currentColor;        /**< 当前颜色（默认白；对标 currentColor）。 */
-    XColor m_selectedColor;       /**< 最近一次接受的颜色（对标 selectedColor）。 */
+    XColor m_selectedColor;       /**< 最近一次接受的颜色（对标 selectedColor；
+                                       done(非 Accepted) 后为无效色，对标
+                                       QColorDialog::done 的 QColor() 复位）。 */
     XColorDialogOptions m_options;/**< 选项位集；默认 0。 */
-    XColor m_customColors[16];    /**< 自定义颜色表（对标 customColor/customCount）。 */
-    XColor m_standardColors[48];  /**< 标准颜色表（对标 standardColor）。 */
-    uint8_t m_customCount;        /**< 自定义颜色数量（setCustomColor 硬上限 16）。 */
-    uint8_t m_standardCount;      /**< 标准颜色数量（setStandardColor 硬上限 48）。 */
+    XObject* m_openReceiver;      /**< open_2 暂存的槽属主（对标
+                                       receiverToDisconnectOnClose）。 */
+    XSlotFunc1 m_openMember;      /**< open_2 暂存的槽（对标
+                                       memberToDisconnectOnClose）。 */
 } XColorDialog;
 
 /**
@@ -176,13 +178,16 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
  */
 XColor XColorDialog_getColor_2(XColor initial, XWidget* parent,
                                const char* title, XColorDialogOptions options);
-/** @brief 自定义颜色数量（对标 customCount；QColorDialog 内置 16 个自定义槽位）。 */
+/** @brief 自定义颜色数量（对标 customCount；Qt 恒 16，本库按已设槽
+ *         计数——表为进程级共享存储，见 setCustomColor 注）。 */
 int XColorDialog_customCount(const XColorDialog* self);
-/** @brief 指定自定义颜色（对标 setCustomColor）。 */
+/** @brief 指定自定义颜色（对标 setCustomColor；表为进程级共享存储
+ *         ——Qt 四函数为 static，自定义颜色全进程共享，本库保留
+ *         per-instance API 形态但存储同口径共享）。 */
 void XColorDialog_setCustomColor(XColorDialog* self, int index, XColor color);
 /** @brief 查询自定义颜色（对标 customColor；越界返回黑色）。 */
 XColor XColorDialog_customColor(const XColorDialog* self, int index);
-/** @brief 指定标准颜色（对标 setStandardColor）。 */
+/** @brief 指定标准颜色（对标 setStandardColor；进程级共享存储）。 */
 void XColorDialog_setStandardColor(XColorDialog* self, int index, XColor color);
 /** @brief 查询标准颜色（对标 standardColor；越界返回黑色）。 */
 XColor XColorDialog_standardColor(const XColorDialog* self, int index);
@@ -190,19 +195,30 @@ XColor XColorDialog_standardColor(const XColorDialog* self, int index);
  * @note 无模态事件循环，仅显示并记录。 */
 void XColorDialog_open(XColorDialog* self);
 /**
- * @brief      以窗口模态打开对话框，并把完成信号连接到 receiver 的槽
- *             （对标 QColorDialog 继承的 QDialog::open(QObject
- *             *receiver, const char *member) 重载形态；命名按数字后缀
- *             约定 _2，与 XMessageBox_open_2 同款先例）。
- * @details    member 等价连接 finished(int)（载荷：结果码 int；Qt 的
- *             open(receiver,member) 即连接 finished，QColorDialog 无
- *             buttonClicked 类信号故无需载荷分派位）。连接经
- *             XObject_connect_1 建立（Direct），生命周期遵循 XObject
- *             连接规则，如需提前解除由调用方 XObject_disconnect_1
- *             断开（Qt 关闭路径同样不断开 open 连接）。
+ * @brief      关闭收口（对标 QColorDialog::done，qcolordialog.cpp:
+ *             2303-2316）：result==Accepted 时 selectedColor=currentColor
+ *             并发射 colorSelected；否则 selectedColor 复位为无效色。
+ *             随后解除 open_2 建立的连接（对标
+ *             receiverToDisconnectOnClose 的关闭断开）。C 无虚函数，
+ *             沿用 XWizard_done 的同名漏斗惯例；确定/取消按钮槽即走
+ *             本函数。
+ * @param      self 目标对话框；NULL 时函数不执行任何操作。
+ * @param      result 结果码（1=Accepted，0=Rejected，其他=自定义码）。
+ * @return     无返回值。
+ */
+void XColorDialog_done(XColorDialog* self, int result);
+/**
+ * @brief      以窗口模态打开对话框，并把 colorSelected 信号连接到
+ *             receiver 的槽（对标 QColorDialog::open(QObject*,
+ *             const char* member)，qcolordialog.cpp:2179-2186：连接的
+ *             是 colorSelected(QColor) 而非 finished；关闭时经
+ *             XColorDialog_done 自动断开，对标
+ *             receiverToDisconnectOnClose 语义）。命名按数字后缀约定
+ *             _2，与 XMessageBox_open_2 同款先例。
  * @param      self 目标对话框；NULL 或 member 空时不执行任何操作。
  * @param      receiver 槽所属对象；可为 NULL（此时不连接，仅显示）。
- * @param      member 槽函数（签名 void (*)(XObject*, XVarList*)）。
+ * @param      member 槽函数（签名 void (*)(XObject*, XVarList*)，
+ *             载荷为 XColor 值）。
  * @return     无返回值。
  */
 void XColorDialog_open_2(XColorDialog* self, XObject* receiver,

@@ -119,6 +119,31 @@ static void xsp_setSizesAt(XSplitter* self, int index, int value)
     self->m_sizes[index] = value;
 }
 
+/** @brief 记录页拉伸因子（负值拒绝；补 0 哨兵定式同上）。 */
+static void xsp_setStretchAt(XSplitter* self, int index, int value)
+{
+    if (!self || index < 0 || value < 0) return;
+    if (index >= self->m_stretchCap) {
+        int newCap = index + 8;
+        int* p = (int*)XRealloc_System(self->m_stretch,
+                                       (size_t)newCap * sizeof(int));
+        int i;
+        if (!p) return;
+        for (i = self->m_stretchCap; i < newCap; ++i) p[i] = 0;
+        self->m_stretch = p;
+        self->m_stretchCap = newCap;
+    }
+    self->m_stretch[index] = value;
+}
+
+/** @brief 读取页拉伸因子；数组未就绪或越界按未设定（0）处理。 */
+static int xsp_stretchAt(const XSplitter* self, int index)
+{
+    if (!self || !self->m_stretch || index < 0 || index >= self->m_stretchCap)
+        return 0;
+    return self->m_stretch[index];
+}
+
 static void xsp_layout(XSplitter* self)
 {
     int count = xsp_childCount(self);
@@ -131,24 +156,43 @@ static void xsp_layout(XSplitter* self)
     int curTotal = 0;
     int unset = 0;
     int weightLen;
+    int stretchSum = 0;
     if (!self || count <= 0) return;
     len = xsp_contentLen(self);
-    /* 意图统计：全零=首次布局均分；部分设定时未设定页取均分基准、
-       已设定页按意图比例分摊余量（混合形态=已定尺寸后新挂页，新页
-       不再被压成 0 宽，三种形态总分配恒为 len）。 */
+    /* 意图统计：全零=首次布局均分（或按 stretch 加权，见下）；部分
+       设定时未设定页取均分基准、已设定页按意图比例分摊余量（混合
+       形态=已定尺寸后新挂页，新页不再被压成 0 宽，三种形态总分配
+       恒为 len）。 */
     for (i = 0; i < count; ++i) {
         if (xsp_sizesAt(self, i) > 0) curTotal += xsp_sizesAt(self, i);
         else ++unset;
     }
     perPage = len / (count > 0 ? count : 1);
     weightLen = len - unset * perPage;
+    /* 拉伸因子（对标 QSplitterLayoutStruct::getWidgetSize 的
+       `sizer *= sf` 加权，qsplitter.cpp:338-341 的轻量等价）：未设定
+       意图的页存在非 0 stretch 时，未设定池改按 sf 比例分配（对标
+       doResize 的 noStretchFactorsSet 分支，qsplitter.cpp:455-465：
+       任一页 sf!=0 才启用加权；0 因子页不参与 extra 分摊）。 */
+    for (i = 0; i < count; ++i) {
+        if (xsp_sizesAt(self, i) <= 0 && xsp_stretchAt(self, i) > 0)
+            stretchSum += xsp_stretchAt(self, i);
+    }
     for (i = 0; i < count; ++i) {
         XWidget* child = xsp_childAt(self, i);
         XRect r;
         int sizer = xsp_sizesAt(self, i);
-        int size = (sizer > 0)
-            ? (int)(((long long)weightLen * sizer) / curTotal)
-            : perPage;
+        int size;
+        if (sizer > 0) {
+            size = (int)(((long long)weightLen * sizer) / curTotal);
+        } else if (stretchSum > 0) {
+            int sf = xsp_stretchAt(self, i);
+            size = (sf > 0)
+                ? (int)(((long long)perPage * unset * sf) / stretchSum)
+                : 0;
+        } else {
+            size = perPage;
+        }
         if (!child) continue;
         /* 几何分配不依赖当前可见性：子控件在隐藏时也需要正确尺寸，
          * 否则 show 后因 0x0 仍不可见（对标 QSplitterPrivate::layoutChildren）。 */
@@ -555,6 +599,11 @@ static void VX_splitter_deinit(XSplitter* self)
         self->m_sizes = NULL;
         self->m_sizesCap = 0;
     }
+    if (self->m_stretch) {
+        XFree_System(self->m_stretch);
+        self->m_stretch = NULL;
+        self->m_stretchCap = 0;
+    }
     XClass_Deinit_Parent(XFrame, (XFrame*)self);
 }
 
@@ -846,11 +895,13 @@ void XSplitter_setHandleWidth(XSplitter* self, int width)
 
 void XSplitter_setStretchFactor(XSplitter* self, int index, int stretch)
 {
-    /* 对标 Qt：stretch 因子参与尺寸分配；第一版布局为均分，
-       stretch 仅存储于折叠数组的扩展语义之外（无可见行为差异）。 */
-    (void)self;
-    (void)index;
-    (void)stretch;
+    if (!self || stretch < 0) return;
+    /* 对标 qsplitter.cpp:1754-1755：越界索引早退（含负数）。 */
+    if (index < 0 || index >= xsp_childCount(self)) return;
+    xsp_setStretchAt(self, index, stretch);
+    /* Qt 写 sizePolicy 后由下一轮布局生效；本框架布局为直调式，
+       setter 立即重排（同 setOrientation/setHandleWidth 口径）。 */
+    xsp_layout(self);
 }
 
 void XSplitter_refresh(XSplitter* self)

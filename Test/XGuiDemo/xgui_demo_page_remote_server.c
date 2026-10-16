@@ -259,9 +259,15 @@ static XGuiRemoteProfileId rs_profileFromCombo(void)
 static const char* rs_profileName(XGuiRemoteProfileId id)
 {
     switch (id) {
-    case XGUI_REMOTE_PROFILE_RESOURCE: return "resource";
-    case XGUI_REMOTE_PROFILE_LATENCY:  return "latency";
-    default:                           return "performance";
+    case XGUI_REMOTE_PROFILE_RESOURCE:
+        return "\xE8\xB5\x84\xE6\xBA\x90\xE4\xBC\x98\xE5\x85\x88";
+        /* 资源优先 */
+    case XGUI_REMOTE_PROFILE_LATENCY:
+        return "\xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF\x9F";
+        /* 低延迟 */
+    default:
+        return "\xE6\x80\xA7\xE8\x83\xBD\xE4\xBC\x98\xE5\x85\x88";
+        /* 性能优先 */
     }
 }
 
@@ -275,7 +281,9 @@ static XGuiRemoteAuthMethod rs_authFromCombo(void)
 
 static const char* rs_authName(XGuiRemoteAuthMethod m)
 {
-    return m == XGUI_REMOTE_AUTH_SHA256_CHALLENGE ? "sha256" : "none";
+    return m == XGUI_REMOTE_AUTH_SHA256_CHALLENGE
+               ? "SHA256 \xE6\x8C\x91\xE6\x88\x98"   /* SHA256 挑战 */
+               : "\xE6\x97\xA0\xE8\xAE\xA4\xE8\xAF\x81"; /* 无认证 */
 }
 
 /** @brief 会话认证状态串（2026-10-04 加法式: 逐在册会话标注 匿名/已认证）。 */
@@ -1056,9 +1064,15 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     rs_buildLabelAt("\xE6\xA1\xA3\xE4\xBD\x8D", 170, 74, 40, &s_rs.m_capProfile); /* 档位 */
     s_rs.m_profileCombo = XComboBox_create(s_rs.m_root, 0);
     if (!s_rs.m_profileCombo) return s_rs.m_root;
-    XComboBox_addItem_2(s_rs.m_profileCombo, "performance");
-    XComboBox_addItem_2(s_rs.m_profileCombo, "resource");
-    XComboBox_addItem_2(s_rs.m_profileCombo, "latency");
+    XComboBox_addItem_2(s_rs.m_profileCombo,
+                        "\xE6\x80\xA7\xE8\x83\xBD\xE4\xBC\x98\xE5\x85\x88");
+                        /* 性能优先 */
+    XComboBox_addItem_2(s_rs.m_profileCombo,
+                        "\xE8\xB5\x84\xE6\xBA\x90\xE4\xBC\x98\xE5\x85\x88");
+                        /* 资源优先 */
+    XComboBox_addItem_2(s_rs.m_profileCombo,
+                        "\xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF\x9F");
+                        /* 低延迟 */
     XComboBox_setCurrentIndex(s_rs.m_profileCombo, 0);
     XWidget_setGeometry((XWidget*)s_rs.m_profileCombo, 214, 72, 134, 24);
     XObject_connect_2((XObject*)s_rs.m_profileCombo,
@@ -1114,8 +1128,12 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     rs_buildLabelAt("\xE8\xAE\xA4\xE8\xAF\x81", 12, 164, 40, &s_rs.m_capAuth); /* 认证 */
     s_rs.m_authCombo = XComboBox_create(s_rs.m_root, 0);
     if (!s_rs.m_authCombo) return s_rs.m_root;
-    XComboBox_addItem_2(s_rs.m_authCombo, "none");
-    XComboBox_addItem_2(s_rs.m_authCombo, "sha256");
+    XComboBox_addItem_2(s_rs.m_authCombo,
+                        "\xE6\x97\xA0\xE8\xAE\xA4\xE8\xAF\x81");
+                        /* 无认证 */
+    XComboBox_addItem_2(s_rs.m_authCombo,
+                        "SHA256 \xE6\x8C\x91\xE6\x88\x98");
+                        /* SHA256 挑战 */
     XComboBox_setCurrentIndex(s_rs.m_authCombo, 0);
     XWidget_setGeometry((XWidget*)s_rs.m_authCombo, 56, 162, 150, 24);
     XObject_connect_2((XObject*)s_rs.m_authCombo,

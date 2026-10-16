@@ -7,7 +7,7 @@
  *             - StandardButton 位标志（Ok..RestoreDefaults，**位值与
  *               Qt 逐项一致**，含 FirstButton/LastButton）；
  *             - ButtonLayout 枚举（Win/Mac/Kde/Gnome/Android，数值对齐；
- *               第一版排布不区分布局，统一右对齐横排）；
+ *               排布按 WinLayout 角色序，orientation 区分横/纵排）；
  *             - addButton 三重载（控件+角色 / 文本+角色创建
  *               QPushButton / 标准按钮枚举）；removeButton/clear；
  *             - buttons/buttonRole/setStandardButtons/standardButtons/
@@ -94,8 +94,8 @@ typedef enum XDialogButtonBoxStandardButton
 } XDialogButtonBoxStandardButton;
 
 /** @brief 按钮排布风格（对标 QDialogButtonBox::ButtonLayout，数值一致）。
- *         单值使用，不按位组合；第一版排布不区分布局，统一右对齐横排
- *         （仅记录风格值）。 */
+ *         单值使用，不按位组合；排布统一按 WinLayout 角色序（风格值
+ *         仅记录，Qt 风格差异的分组细节未复刻）。 */
 typedef enum XDialogButtonBoxLayout
 {
     XDialogButtonBoxLayout_WinLayout = 0,     /**< Windows 风格排布。 */
@@ -169,6 +169,10 @@ XDialogButtonBox* XDialogButtonBox_create_ex(XMemoryType memory,
 /**
  * @brief      设置按钮排布方向（对标 QDialogButtonBox::setOrientation；
  *             数值复用 XAbstractSliderOrientation：1=水平、2=垂直）。
+ * @details    方向参与排布解算（对标 Qt initLayout 按 orientation 建
+ *             水平/垂直盒，qdialogbuttonbox.cpp:136-161）：水平=主轴
+ *             横排右对齐、垂直=主轴纵排底对齐，交叉轴居中，
+ *             centerButtons 时主轴居中；角色序两种方向共用。
  * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
  * @param      orientation 方向数值（1=水平、2=垂直）。
  * @return     无返回值。

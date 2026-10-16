@@ -123,31 +123,21 @@ bool XKeySequenceEdit_isClearButtonEnabled(const XKeySequenceEdit* self);
  */
 void XKeySequenceEdit_setClearButtonEnabled(XKeySequenceEdit* self, bool enable);
 
-/* ==================== 捕获态控制（对标 Qt 6.7+ capturing API） ============ */
+/* ==================== 捕获态控制（自造面：Qt 6.8.3 无 capturing
+   公开 API；仅保留有消费者的进入/查询两口） ============ */
 
 /**
- * @brief      程序化进入捕获态（对标 startCapturing）。
+ * @brief      程序化进入捕获态（自造口；捕获通常由获得焦点自动发起，
+ *             对标 Qt「recording is initiated when the widget receives
+ *             the focus」）。
  *
- * @details    捕获通常由获得焦点自动发起（对标 Qt「recording is initiated
- *             when the widget receives the focus」）；本接口供 Esc 退出/
- *             空闲超时后重新武装捕获（等价用户再次点击控件）。
+ * @details    供 Esc 退出/空闲超时后重新武装捕获（等价用户再次点击
+ *             控件）。
  */
 void XKeySequenceEdit_startCapturing(XKeySequenceEdit* self);
 
 /**
- * @brief      结束捕获并提交（对标 stopCapturing）：有序列时发射
- *             editingFinished，随后退出捕获态。
- */
-void XKeySequenceEdit_stopCapturing(XKeySequenceEdit* self);
-
-/**
- * @brief      取消捕获并清空序列（对标 cancelCapturing；Esc 按键路径
- *             同款语义：清空且不录 Esc）。
- */
-void XKeySequenceEdit_cancelCapturing(XKeySequenceEdit* self);
-
-/**
- * @brief      查询捕获态（对标 isRecording）。
+ * @brief      查询捕获态。
  * @return     true=捕获中；self 为 NULL 时返回 false。
  */
 bool XKeySequenceEdit_isCapturing(const XKeySequenceEdit* self);

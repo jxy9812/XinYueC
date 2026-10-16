@@ -45,6 +45,17 @@ static void xcolordialog_emitColor(XColorDialog* self, size_t signal,
     }
 }
 
+/* 自定义/标准颜色表：进程级共享存储（对标 Qt QColorDialog::customCount/
+ * customColor/setCustomColor/standardColor/setStandardColor 五函数的
+ * static 语义，qcolordialog.h:60-64——自定义颜色全进程共享）。本库
+ * 保留 per-instance API 形态（已定版的形态决策），但存储由 per-instance
+ * 字段改为文件级静态表：多对话框实例读写同一份表，与 Qt 行为一致。
+ * 零初始化即全零 rgba（无效色/black 语义，XColor_create() 同值）。 */
+static XColor g_xcdCustomColors[16];
+static XColor g_xcdStandardColors[48];
+static int g_xcdCustomCount;   /**< 已设自定义槽计数（高水位 +1）。 */
+static int g_xcdStandardCount; /**< 已设标准槽计数（高水位 +1）。 */
+
 /* ==================== 类与实例生命周期 ==================== */
 
 XVtable* XColorDialog_class_init(void)
@@ -401,7 +412,7 @@ static void VXColorSwatch_mousePressEvent(XWidget* self, XEvent* event)
             int r = pos.y / ch;
             if (c >= 0 && c < XCD_GRID_COLS && r >= 0 && r < XCD_GRID_ROWS) {
                 int idx = r * XCD_GRID_COLS + c;
-                if (idx < sw->m_owner->m_standardCount) {
+                if (idx < g_xcdStandardCount) { /* 进程级共享表高水位。 */
                     sw->m_selected = idx;
                     XColorDialog_setCurrentColor(
                         sw->m_owner,
@@ -443,17 +454,16 @@ static void xcd_acceptSlot(XObject* receiver, XVarList* args)
 {
     (void)args;
     if (!receiver) return;
-    /* 对标 QColorDialog::accept：selectedColor = currentColor 并发射
-     * colorSelected（经既有信号函数完成）。 */
-    XColorDialog_colorSelected_signal((XColorDialog*)receiver,
-                                      ((XColorDialog*)receiver)->m_currentColor);
-    XDialog_accept((XDialog*)receiver);
+    /* 对标 QColorDialog::accept = done(Accepted)：selectedColor =
+     * currentColor 并发射 colorSelected（漏斗内完成）。 */
+    XColorDialog_done((XColorDialog*)receiver, (int)XDialogCode_Accepted);
 }
 
 static void xcd_rejectSlot(XObject* receiver, XVarList* args)
 {
     (void)args;
-    if (receiver) XDialog_reject((XDialog*)receiver);
+    if (receiver) XColorDialog_done((XColorDialog*)receiver,
+                                    (int)XDialogCode_Rejected);
 }
 
 XColor XColorDialog_getColor(XColor initial, XWidget* parent,
@@ -650,43 +660,48 @@ void* XColorDialog_colorSelected_signal(XColorDialog* self, XColor color)
 }
 
 
-/* ==================== Task 2.21 回检补齐：自定义/标准颜色 ============== */
+/* ==================== Task 2.21 回检补齐：自定义/标准颜色 ==============
+ * 存储为文件级静态表（对标 Qt 五函数 static 语义，见文件头部注）；
+ * self 仅承担 NULL 门面（任一实例读写同一份进程级表）。 */
 
 int XColorDialog_customCount(const XColorDialog* self)
 {
-    return self ? self->m_customCount : 0;
+    (void)self;
+    return g_xcdCustomCount;
 }
 
 void XColorDialog_setCustomColor(XColorDialog* self, int index, XColor color)
 {
     if (!self || index < 0 || index >= 16) return;
-    self->m_customColors[index] = color;
-    if (index >= self->m_customCount)
-        self->m_customCount = (uint8_t)(index + 1);
+    g_xcdCustomColors[index] = color;
+    if (index >= g_xcdCustomCount)
+        g_xcdCustomCount = index + 1;
 }
 
 XColor XColorDialog_customColor(const XColorDialog* self, int index)
 {
     XColor black;
     XColor_init_rgb(&black, 0, 0, 0, 0);
-    if (!self || index < 0 || index >= 16) return black;
-    return self->m_customColors[index];
+    (void)self;
+    if (index < 0 || index >= 16) return black;
+    return g_xcdCustomColors[index];
 }
 
 void XColorDialog_setStandardColor(XColorDialog* self, int index, XColor color)
 {
     if (!self || index < 0 || index >= 48) return;
-    self->m_standardColors[index] = color;
-    if (index >= self->m_standardCount)
-        self->m_standardCount = (uint8_t)(index + 1);
+    g_xcdStandardColors[index] = color;
+    if (index >= g_xcdStandardCount)
+        g_xcdStandardCount = index + 1;
 }
 
 XColor XColorDialog_standardColor(const XColorDialog* self, int index)
 {
     XColor black;
     XColor_init_rgb(&black, 0, 0, 0, 0);
-    if (!self || index < 0 || index >= 48) return black;
-    return self->m_standardColors[index];
+    (void)self;
+    if (index < 0 || index >= 48) return black;
+    return g_xcdStandardColors[index];
 }
 
 void XColorDialog_open(XColorDialog* self)
@@ -695,16 +710,57 @@ void XColorDialog_open(XColorDialog* self)
     XWidget_show((XWidget*)self);
 }
 
+void XColorDialog_done(XColorDialog* self, int result)
+{
+    if (!self) return;
+    /* 对标 QColorDialog::done（qcolordialog.cpp:2303-2316）：Accepted
+     * → selectedColor=currentColor 并发射 colorSelected；否则
+     * selectedColor 复位为失效色（QColor() 等价物）——实例复用第二次
+     * 取消后 selectedColor() 不再是上一次 accept 的旧值。 */
+    if (result == (int)XDialogCode_Accepted) {
+        self->m_selectedColor = self->m_currentColor;
+        xcolordialog_emitColor(self,
+                               (size_t)XColorDialog_colorSelected_signal,
+                               self->m_selectedColor);
+    } else {
+        self->m_selectedColor = XColor_create();
+    }
+    XDialog_done(&self->m_base, result);
+    /* 对标 receiverToDisconnectOnClose：open_2 建立的 colorSelected
+     * 连接在关闭收口时自动断开。 */
+    if (self->m_openReceiver && self->m_openMember) {
+        XObject_disconnect_1((XObject*)self,
+                             (size_t)XColorDialog_colorSelected_signal,
+                             self->m_openReceiver, self->m_openMember);
+    }
+    self->m_openReceiver = NULL;
+    self->m_openMember = NULL;
+}
+
 void XColorDialog_open_2(XColorDialog* self, XObject* receiver,
                          XSlotFunc1 member)
 {
     if (!self || !member) return;
-    /* member 等价连接 finished(int)（对标 QDialog::open(receiver,
-     * member) 连接 finished；QColorDialog 无 buttonClicked 类信号，
-     * 故无需 XMessageBox_open_2 的载荷分派位）。 */
+    /* 重复 open 防叠连（XMessageBox_open_2 同款）：旧记录尚存时先按
+     * 旧载荷断开旧连接（disconnect_1 只移除首个匹配，直接叠连会残留
+     * 旧连接，receiver 每次收口被多路误触发）。 */
+    if (self->m_openReceiver || self->m_openMember) {
+        XObject_disconnect_1((XObject*)self,
+                             (size_t)XColorDialog_colorSelected_signal,
+                             self->m_openReceiver, self->m_openMember);
+        self->m_openReceiver = NULL;
+        self->m_openMember = NULL;
+    }
+    self->m_openReceiver = receiver;
+    self->m_openMember = member;
+    /* 对标 QColorDialog::open（qcolordialog.cpp:2179-2186）：连接
+     * colorSelected(QColor)（Qt 文档同："connects its colorSelected()
+     * signal to the slot"），非 finished——挂 colorSelected 承载的
+     * 接收槽经 open_2 打开后能收到颜色载荷。关闭自动断开由
+     * XColorDialog_done 承担。 */
     if (receiver) {
         XObject_connect_1((XObject*)self,
-                          (size_t)XDialog_finished_signal,
+                          (size_t)XColorDialog_colorSelected_signal,
                           receiver, member, XConnectionType_Direct);
     }
     /* 对标 QDialog::open：窗口模态显示并立即返回（XMessageBox_open_2

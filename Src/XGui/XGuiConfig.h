@@ -214,7 +214,11 @@
  * 曾定 15（A33 实测每落地步 ~28ms 是全布局+合成+差带的固有成本，30
  * 档连续快拖仍 80%，15 档减半），60 档要求以账本差带裁冗为前提）。 */
 #ifndef XGUI_RESIZE_REPAINT_MAX_FPS
-#define XGUI_RESIZE_REPAINT_MAX_FPS 60
+/* [2026-10-14 降档 60→30] Modbus 页等重内容页（40 子件+表格逐帧重排）
+ * 拖拽改尺寸每落地帧全布局+合成成本高，A33 档 60fps 快拖 CPU 过载
+ * （历史注释：30 档连续快拖仍 80%、15 档减半）；取 30 档=跟手不步进
+ * 且 CPU 减半。桌面端无感（WM 改尺寸不经此路径）。 */
+#define XGUI_RESIZE_REPAINT_MAX_FPS 30
 #endif
 #ifndef XGUI_PRESENT_MAX_FPS
 #define XGUI_PRESENT_MAX_FPS 0
@@ -593,9 +597,11 @@
 #endif
 /* 桌面/嵌入式形态开关（XVIRTUALKEYBOARD_DESKTOP_ON，默认 1）：1=守护
  * 自动弹+贴底弹层（焦点边沿自动弹出/跟随）；0=守护停用，仅显式
- * XVirtualKeyboard_popup/总开关控制。选区手柄/影子输入控件不在范围。 */
+ * XVirtualKeyboard_popup/总开关控制。选区手柄/影子输入控件不在范围。
+ * [2026-10-14 调试期临时关闭] 悬浮键盘遮挡表格交互影响失焦收框调试，
+ * 调通后恢复为 1。 */
 #ifndef XVIRTUALKEYBOARD_DESKTOP_ON
-#define XVIRTUALKEYBOARD_DESKTOP_ON 1
+#define XVIRTUALKEYBOARD_DESKTOP_ON 0
 #endif
 /* 拼音词组库（IME V2 外挂词组，XPinyinPhrase TU）：词组查询与
  * 文件加载。依赖 XKEYBOARD_IME_ON 与 XFILE_ON（词库为运行期文件资产，

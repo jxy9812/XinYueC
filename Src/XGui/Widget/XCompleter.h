@@ -12,9 +12,10 @@
  *               completionRole/setCompletionRole（仅存储）、
  *               modelSorting/setModelSorting（声明排序模型后，StartsWith
  *               前缀过滤可用二分定位候选区间）、
- *               wrapAround/setWrapAround（默认 true，setCurrentRow 越界
- *               按环绕归一）、popup/setPopup（弹出列表为自绘非部件承载，
- *               仅保存借用指针，@note）、widget/setWidget（借用）；
+ *               wrapAround/setWrapAround（默认 true；环绕由消费方导航层
+ *               承载，setCurrentRow 越界一律返回 false）、popup/setPopup
+ *               （弹出列表为自绘非部件承载，仅保存借用指针，@note）、
+ *               widget/setWidget（借用）；
  *             - 结果：complete() 重建完成列表、completionCount()、
  *               completionModel()（无代理模型，返回底层模型借用，@note）、
  *               setCurrentRow()（返回是否成功）、currentCompletion/
@@ -23,7 +24,8 @@
  *               签名差异见声明处 @note）；
  *             - 信号：activated(text)/textActivated(text)/
  *               highlighted(text)/textHighlighted(text)/
- *               highlightedRow(int)/activatedIndex(row,col) 简化。
+ *               highlightedRow(int)/activatedIndex(row,col) 简化；
+ *               activated 系列在弹层候选采纳（行点击）时成对发射。
  * @note       枚举数值裁决：Qt 6.8.3 qcompleter.h 中 CompletionMode
  *             实际顺序为 PopupCompletion=0、UnfilteredPopupCompletion=1、
  *             InlineCompletion=2（本头文件按 Qt 源码对齐，任务书初稿
@@ -330,9 +332,11 @@ XCompleterModelSorting XCompleter_modelSorting(const XCompleter* self);
 
 /**
  * @brief      设置补全列表是否首尾环绕（对标 QCompleter::setWrapAround）。
- * @details    Qt 默认 true（补全列表在末项继续到首行）；本实现把该语义
- *             落在 setCurrentRow 的越界归一上（XGui 无弹出视图承载
- *             键盘导航，@note）。
+ * @details    Qt 默认 true（补全列表在末项继续到首行）；环绕语义由消费
+ *             方承载——setCurrentRow 本身不环绕（Qt QCompletionModel 对
+ *             越界行号一律返回 false，qcompleter.cpp:256-269），编辑器
+ *             键盘导航层（XLineControl complete 的 Up/Down 分支）按本
+ *             开关自行回绕目标行。
  * @param      self 目标补全对象；可为 NULL。
  * @param      wrap true 启用环绕，false 关闭。
  * @return     无返回值。
@@ -453,16 +457,14 @@ int XCompleter_completionCount(const XCompleter* self);
  * @details    成功时把 currentRow 置为 row，并把 currentCompletion 更新
  *             为该项的补全文本（等价 Qt 由 currentIndex/pathFromIndex
  *             派生 currentCompletion 的效果）。
- *             越界语义：wrapAround 为 true（默认）时按候选数量取模归一
- *             （row<0 从末项往前、row>=count 回到首项），对齐 Qt 补全列表
- *             首尾环绕的导航语义；wrapAround 为 false 时越界返回 false
- *             且不改动状态。@note Qt 的 setCurrentRow 本身不环绕，环绕
- *             发生在弹出视图的按键导航中；XGui 无弹出视图，故把环绕
- *             语义直接落在本函数（见 wrapAround）。
+ *             越界语义对齐 Qt QCompletionModel（qcompleter.cpp:256-269）：
+ *             row<0 或 row>=候选数 一律返回 false 且不改动状态——环绕
+ *             只发生在弹层按键导航层（消费方按 wrapAround 自行回绕），
+ *             本函数不取模归一，调用方可用返回值区分「设置成功」与
+ *             「越界被拒」。
  * @param      self 目标补全对象；可为 NULL。
- * @param      row 目标完成列表行号（0 基；可越界，按 wrapAround 处理）。
- * @return     设置成功返回 true；self 为 NULL、无候选或未启用环绕且
- *             越界返回 false。
+ * @param      row 目标完成列表行号（0 基；须在 [0, 候选数) 内）。
+ * @return     设置成功返回 true；self 为 NULL、无候选或越界返回 false。
  */
 bool XCompleter_setCurrentRow(XCompleter* self, int row);
 
@@ -541,6 +543,9 @@ XWidget* XCompleter_popup(const XCompleter* self);
 
 /**
  * @brief      补全激活信号（对标 QCompleter::activated(const QString&)）。
+ * @details    发射点：弹层候选被采纳（默认弹层行点击）时与
+ *             activatedIndex 成对发射（对标 _q_complete 采纳分支，
+ *             qcompleter.cpp:869-876）。
  * @param      self 发射信号的对象；可为 NULL。
  * @param      text 激活的补全文本借用指针。
  * @return     不透明的 activated 信号标识。
@@ -549,6 +554,7 @@ void* XCompleter_activated_signal(XCompleter* self, const XString* text);
 
 /**
  * @brief      补全文本激活信号（与 activated 等价，兼容旧命名习惯）。
+ * @details    发射点同 activated（弹层候选采纳路径，成对发射）。
  * @param      self 发射信号的对象；可为 NULL。
  * @param      text 激活的补全文本借用指针。
  * @return     不透明的 textActivated 信号标识。

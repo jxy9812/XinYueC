@@ -442,6 +442,7 @@ void XLcdNumber_init(XLcdNumber* self, XWidget* parent, XWidgetFlags flags)
 void XLcdNumber_init_2(XLcdNumber* self, unsigned numDigits,
                        XWidget* parent, XWidgetFlags flags)
 {
+    XWidgetSizePolicy policy;
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
     XFrame_init(&self->m_base, parent, flags);
@@ -460,6 +461,14 @@ void XLcdNumber_init_2(XLcdNumber* self, unsigned numDigits,
     self->m_digitCount = (int)numDigits;
     xlcd_resetString(self);
     xlcd_updateSizeHint(self);
+    /* 对标 QLCDNumberPrivate::init 末行 setSizePolicy(Minimum,Minimum)
+       （qlcdnumber.cpp:330）：保持 sizeHint 不被布局拉伸；setSizePolicy
+       置 OwnSizePolicy 属性，此后 setFrameStyle 的形状接管不再覆盖
+       （与 Qt WA_WState_OwnSizePolicy 同口径）。 */
+    policy = XWidgetSizePolicy_create_ex(XWidgetSizePolicy_Minimum,
+                                         XWidgetSizePolicy_Minimum,
+                                         XWidgetSizePolicyControl_DefaultType);
+    XWidget_setSizePolicyFull((XWidget*)self, &policy);
 }
 
 XLcdNumber* XLcdNumber_create_ex(XMemoryType memory, XWidget* parent,
@@ -506,21 +515,42 @@ int XLcdNumber_digitCount(const XLcdNumber* self)
 
 void XLcdNumber_setDigitCount(XLcdNumber* self, int numDigits)
 {
-    char buf[XLCDNUMBER_STR_MAX];
-    bool of = false;
+    char oldStr[XLCDNUMBER_STR_MAX];
+    unsigned char oldPoints[XLCDNUMBER_STR_MAX];
+    int oldCount;
+    int dif;
+    int i;
+    bool doDisplay;
     if (!self) return;
     /* 对标 Qt：0..99 之外钳位（Qt 侧输出警告）。 */
     if (numDigits > 99) numDigits = 99;
     if (numDigits < 0) numDigits = 0;
     if (numDigits == self->m_digitCount) return;
+    oldCount = self->m_digitCount;
+    XMemcpy(oldStr, self->m_digitStr, (size_t)oldCount + 1);
+    XMemcpy(oldPoints, self->m_points, (size_t)oldCount);
     self->m_digitCount = numDigits;
-    /* 对标 Qt：位数变化后按当前值与进制重新裁剪显示。 */
-    if (self->m_mode == (int)XLcdNumberMode_Dec)
-        xlcd_formatDec(self->m_value, numDigits, buf, sizeof(buf), &of);
-    else
-        xlcd_formatInt((int)self->m_value, self->m_mode, numDigits,
-                       buf, sizeof(buf), &of);
-    xlcd_internalSetString(self, buf);
+    /* 对标 QLCDNumber::setDigitCount（qlcdnumber.cpp:379-405）：保持既有
+       显示串——扩容在左端插空格、收缩取 right(numDigits)；display 设定
+       过非数值内容（如 "12:34"）后改位数不再按 m_value 重格式化置 0。
+       仅「原位数==0」时才 display(value())（qlcdnumber.cpp:383,400）。 */
+    doDisplay = (oldCount == 0);
+    if (numDigits > oldCount) {
+        dif = numDigits - oldCount;
+        XMemset(self->m_digitStr, ' ', (size_t)dif);
+        XMemcpy(self->m_digitStr + dif, oldStr, (size_t)oldCount);
+        self->m_digitStr[numDigits] = '\0';
+        for (i = 0; i < numDigits; ++i)
+            self->m_points[i] = (i >= dif) ? oldPoints[i - dif] : 0;
+    } else {
+        dif = oldCount - numDigits;
+        XMemcpy(self->m_digitStr, oldStr + dif, (size_t)numDigits);
+        self->m_digitStr[numDigits] = '\0';
+        for (i = 0; i < numDigits; ++i)
+            self->m_points[i] = oldPoints[i + dif];
+    }
+    if (doDisplay)
+        XLcdNumber_display_3(self, self->m_value);
     xlcd_updateSizeHint(self);
     XWidget_update((XWidget*)self);
 }

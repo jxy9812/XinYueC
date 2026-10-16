@@ -11,23 +11,6 @@ void XContainer_init(XContainer* Object, size_t typeSize, bool cow)
 	Object->m_typeSize = typeSize;
 	Object->m_useCow = cow;
 }
-bool XContainer_isEmpty_base(const XContainer* Object)
-{
-	if (ISNULL(Object, "")|| ISNULL(XClassGetVtable(Object), ""))
-		return true;
-	typedef bool (*funcPtr)(const XContainer* );
-	//void* p = XClassGetVirtualFunc(Object, XContainer_Empty, funcPtr);
-	return XClassGetVirtualFunc(Object, EXContainer_IsEmpty,funcPtr)(Object);
-}
-
-size_t XContainer_size_base(const  XContainer* Object)
-{
-	if (ISNULL(Object, "") || ISNULL(XClassGetVtable(Object), ""))
-		return 0;
-	typedef size_t(*funcPtr)(const XContainer*);
-	return XClassGetVirtualFunc(Object, EXContainer_Size, funcPtr)(Object);
-}
-
 size_t XContainer_capacity_base(const  XContainer* Object)
 {
 	if (ISNULL(Object, "") || ISNULL(XClassGetVtable(Object), ""))

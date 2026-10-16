@@ -1541,6 +1541,18 @@ int XWizard_nextId(const XWizard* self)
 void XWizard_done(XWizard* self, int result)
 {
     if (!self) return;
+    /* 对标 Qt 6.8.3 QWizard::done（qwizard.cpp "canceling is allowed
+     * even when currentPage()->isComplete() is false" 注释段）：
+     * 取消（Rejected）先 d->reset()（复位全部页面的初始化/访问史并回
+     * 到起始页——本库 XWizard_restart 即 reset+switchToPage 等价物）
+     * 再收口，取消后向导回到已知状态、连续 exec 不见上次残留
+     * currentId；接受（Accepted）先过 validateCurrentPage 门，校验
+     * 失败直接 return 不关窗（finish 不再绕过页面校验）。 */
+    if (result == (int)XDialogCode_Rejected)
+        XWizard_restart(self);
+    else if (result == (int)XDialogCode_Accepted &&
+             !XWizard_validateCurrentPage(self))
+        return;
     XDialog_done((XDialog*)self, result);
 }
 

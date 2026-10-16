@@ -238,10 +238,28 @@ XScrollArea* XScrollArea_create_ex(XMemoryType memory, XWidget* parent,
 void XScrollArea_setWidget(XScrollArea* self, XWidget* widget)
 {
     XWidget* viewport;
+    XWidget* old;
     if (!self || !widget) return;
     viewport = XAbstractScrollArea_viewport(self);
     if (!viewport) return;
     if (self->m_widget == widget) return;
+    /* 对标 QScrollArea::setWidget（qscrollarea.cpp:231-252）首行
+       `delete d->widget`：内容控件所有权移交滚动区，装新件前销毁
+       旧件（XClassDelete 对栈对象仅反初始化，分配器归属安全）。 */
+    old = self->m_widget;
+    if (old) {
+        self->m_widget = NULL;
+        XClassDelete((XClass*)old);
+    }
+    /* 对标 qscrollarea.cpp:239-240：换件即复位滚动位置。 */
+    {
+        XScrollBar* hsb = XAbstractScrollArea_horizontalScrollBar(
+            (const XAbstractScrollArea*)self);
+        XScrollBar* vsb = XAbstractScrollArea_verticalScrollBar(
+            (const XAbstractScrollArea*)self);
+        if (hsb) XScrollBar_setValue(hsb, 0);
+        if (vsb) XScrollBar_setValue(vsb, 0);
+    }
     XWidget_setParent(widget, viewport, 0);
     XWidget_setVisible(widget, true);
     self->m_widget = widget;

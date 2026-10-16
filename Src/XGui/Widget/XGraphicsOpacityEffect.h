@@ -7,6 +7,11 @@
  *             的 source-over 合成等价于预乘 ARGB 各通道按 opacity 线性
  *             缩放。默认 opacity=0.7（对标 Qt qgraphicseffect_p.h 构造
  *             缺省，Qt 6.8.3 源码实证）。
+ * @note       不支持项：QGraphicsOpacityEffect::opacityMask()/
+ *             setOpacityMask(QBrush)/opacityMaskChanged 未建模——Qt 以
+ *             QBrush 作掩码，XGui 尚无笔刷/掩码抽象（Graphics/ 下仅有
+ *             XImage/XBitmap/XColorSpace 等），依赖缺失基础设施，待
+ *             笔刷抽象入库后补齐。
  * @note       模块总开关 XWIDGET_ON 有效（效果由 XWidget 承载）。
  * @author     XinYueC 团队
  ******************************************************************************/
@@ -74,6 +79,18 @@ float XGraphicsOpacityEffect_opacity(const XGraphicsOpacityEffect* self);
  */
 void XGraphicsOpacityEffect_setOpacity(XGraphicsOpacityEffect* self,
                                        float opacity);
+
+/* ==================== 信号（对标 QGraphicsOpacityEffect signals） ==================== */
+
+/**
+ * @brief      不透明度变化信号（对标 QGraphicsOpacityEffect::
+ *             opacityChanged(qreal)；setOpacity 实际变化时发射）。
+ * @param      self 目标效果；NULL 仅作信号标识占位。
+ * @param      opacity 新不透明度（钳位后 0~1）。
+ * @return     信号标识（函数自身地址，用作 XObject_connect 信号参数）。
+ */
+void* XGraphicsOpacityEffect_opacityChanged_signal(
+    XGraphicsOpacityEffect* self, float opacity);
 
 #endif /* XWIDGET_ON */
 

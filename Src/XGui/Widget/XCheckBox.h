@@ -139,7 +139,10 @@ XCheckBox* XCheckBox_create_ex(XMemoryType memory, XWidget* parent,
 #define XCheckBox_isChecked(self)  XAbstractButton_isChecked((const XAbstractButton*)(self))
 /** @brief 设置是否选中（对标 QAbstractButton::setChecked；会经 checkStateSet 槽同步三态）。 */
 #define XCheckBox_setChecked(self, checked)  XAbstractButton_setChecked((XAbstractButton*)(self), (checked))
-/** @brief 切换选中状态（对标 QAbstractButton::toggle；经 nextCheckState 槽，三态时循环）。 */
+/** @brief 切换选中状态（对标 QAbstractButton::toggle：非虚槽
+ *         setChecked(!checked)，qabstractbutton.cpp:843-851；三态下只在
+ *         Unchecked↔Checked 间跳变，(state+1)%3 循环只在点击路径
+ *         nextCheckState，qcheckbox.cpp:347-356）。 */
 #define XCheckBox_toggle(self)  XAbstractButton_toggle((XAbstractButton*)(self))
 
 /** @brief 查询按下面板状态（对标 QAbstractButton::isDown）。 */

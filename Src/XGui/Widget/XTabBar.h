@@ -41,7 +41,10 @@ typedef struct XTabBar
     XString** m_tabAccessibleNames;  /**< 各项无障碍名称（平行数组；对象拥有）。 */
     XString** m_tabIcons;            /**< 各项图标路径（平行数组；对象拥有）。 */
     XString** m_tabData;             /**< 各项数据（平行数组；对象拥有）。 */
-    XAbstractButton** m_tabButtons;  /**< 各项角按钮（平行数组；借用）。 */
+    XAbstractButton** m_tabButtons;  /**< 各项右角按钮（RightSide 槽；平行
+                                          数组；reparent 归本控件）。 */
+    XAbstractButton** m_tabLeftButtons; /**< 各项左角按钮（LeftSide 槽；
+                                             平行数组；reparent 归本控件）。 */
     bool*   m_tabVisible;            /**< 各项可见（平行数组；默认 true）。 */
     /* [内存治理 2026-10-11] 标志位字（对标 XObject uint32_t 位域风格）：
        9 个 bool + 3 个小值域枚举（elide 0..3 / 移除行为 0..2 / 形状 0..1）
@@ -109,14 +112,15 @@ int XTabBar_addTab(XTabBar* self, const XString* text);
 int XTabBar_addTab_2(XTabBar* self, const char* text);
 /** @brief 插入页签（XString 主版本；对标 QTabBar::insertTab）。
  * @param self 目标控件指针。
- * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param index 索引（0 起；负数/越界一律追加到末尾，对标 Qt
+ *        validIndex 判据 qtabbar.cpp:957-959）。
  * @param text 借用 XString*；不能为 NULL。
  * @return 插入位置索引；参数无效时返回 -1。
  */
 int XTabBar_insertTab(XTabBar* self, int index, const XString* text);
 /** @brief 插入页签（UTF-8 兼容重载，转发主版本）。
  * @param self 目标控件指针。
- * @param index 索引（0 起，负数插最前、超出追加）。
+ * @param index 索引（0 起；负数/越界一律追加到末尾，对标 Qt）。
  * @param text UTF-8 文本；不能为 NULL。
  * @return 插入位置索引；参数无效时返回 -1。
  */
@@ -429,15 +433,45 @@ void XTabBar_setAccessibleTabName_2(XTabBar* self, int index,
 const XString* XTabBar_accessibleTabName(const XTabBar* self, int index);
 /** @brief 读取页签无障碍名称（UTF-8 借用；无内容时返回空串）。 */
 const char* XTabBar_accessibleTabName_2(const XTabBar* self, int index);
-/** @brief 设置页签角按钮（对标 setTabButton；借用，不拥有）。
+/** @brief 角按钮槽位枚举码（对标 QTabBar::ButtonPosition）。
+ * @details 0=LeftSide（页签左角），1=RightSide（页签右角）。
+ */
+#define XTABBAR_BUTTON_LEFTSIDE   0
+#define XTABBAR_BUTTON_RIGHTSIDE  1
+
+/** @brief 设置页签角按钮（对标 QTabBar::setTabButton(int,ButtonPosition,
+ *         QWidget*)，qtabbar.cpp:2791-2815）。
+ * @details 接管语义（Qt 同）：按钮 reparent 为本控件子控件并 show，
+ *          同槽位旧按钮隐藏（不销毁，仍挂本控件父子链）；removeTab
+ *          移除页签时该页签的两槽位按钮经 deleteLater 延迟销毁。本
+ *          控件销毁时按钮随父子链级联释放。
+ * @param self 目标控件；传入 NULL 或页签号越界时函数不执行任何操作。
+ * @param index 页签号。
+ * @param position 槽位（XTABBAR_BUTTON_LEFTSIDE/RIGHTSIDE）。
+ * @param button 按钮指针；可为 NULL（隐藏并清空该槽位）。
+ * @return 无返回值。
+ */
+void XTabBar_setTabButtonAt(XTabBar* self, int index, int position,
+                            XAbstractButton* button);
+/** @brief 读取页签角按钮（对标 QTabBar::tabButton(int,ButtonPosition)）。
+ * @param self 目标控件；NULL 或页签号越界返回 NULL。
+ * @param index 页签号。
+ * @param position 槽位（XTABBAR_BUTTON_LEFTSIDE/RIGHTSIDE）。
+ * @return 按钮借用指针；该槽位未设置时返回 NULL，不得释放。
+ */
+XAbstractButton* XTabBar_tabButtonAt(const XTabBar* self, int index,
+                                     int position);
+/** @brief 设置页签右角按钮（RightSide 槽便捷版；语义同
+ *         setTabButtonAt(RightSide)，对标 Qt 关闭按钮默认槽位）。
  * @param self 目标控件。
  * @param index 页签号。
- * @param button 按钮借用指针；可为 NULL（清除）。
+ * @param button 按钮指针；可为 NULL（隐藏并清空该槽位）。
  * @return 无返回值。
  */
 void XTabBar_setTabButton(XTabBar* self, int index,
                           XAbstractButton* button);
-/** @brief 读取页签角按钮。 @param self 目标控件。 @param index 页签号。 @return 借用指针。 */
+/** @brief 读取页签右角按钮（RightSide 槽便捷版）。
+ *  @param self 目标控件。 @param index 页签号。 @return 借用指针。 */
 XAbstractButton* XTabBar_tabButton(const XTabBar* self, int index);
 /** @brief 设置页签数据（XString 主版本；对标 setTabData）。
  * @param self 目标控件。

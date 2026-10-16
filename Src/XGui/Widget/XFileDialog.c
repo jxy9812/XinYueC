@@ -51,6 +51,13 @@
 
 #include "XFileDialog.h"
 #include "XWidget_Protected.h"
+/* accept 校验的 itemNotFound/itemAlreadyExists 提示弹窗（对标 Qt
+ * QFileDialogPrivate 的 QMessageBox 用法）：依赖与 XMessageBox.h 同款
+ * 门（缺一裁剪配置时静默跳过弹窗，仅保留「不关窗」语义）。 */
+#if XMESSAGEBOX_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON
+#include "XMessageBox.h"
+#define XFF_POPUP_ON 1
+#endif
 
 #if XFILE_ON && XDIR_ON
 /* W10 表头段点击排序（实例级虚表接管承载；定义在真实弹窗组装区）：
@@ -171,7 +178,6 @@ static void VXFileDialog_deinit(XFileDialog* self)
         self->m_selectedFiles = NULL;
     }
     xfiledialog_freeString(&self->m_directoryUrl);
-    xfiledialog_freeString(&self->m_filter);
     xfiledialog_freeString(&self->m_selectedMimeTypeFilter);
     if (self->m_mimeTypeFilters) {
         XClassDelete((XClass*)self->m_mimeTypeFilters);
@@ -208,7 +214,11 @@ void XFileDialog_init(XFileDialog* self, XWidget* parent, XWidgetFlags flags)
     XClassSetVtable(self, XFileDialog);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
-    self->m_fileMode = XFileDialog_ExistingFile;
+    /* 对标 Qt 6.8.3 QFileDialogPrivate::init（qfiledialog.cpp:2921
+     * `q->setFileMode(QFileDialog::AnyFile)`）与 fileMode 属性文档
+     * （qfiledialog.cpp:1678 "By default, this property is set to
+     * AnyFile"）：默认 AnyFile。 */
+    self->m_fileMode = XFileDialog_AnyFile;
     self->m_acceptMode = XFileDialog_AcceptOpen;
     self->m_viewMode = XFileDialogViewMode_Detail;
     self->m_options = 0;
@@ -240,7 +250,7 @@ void XFileDialog_setFileMode(XFileDialog* self, XFileDialogFileMode mode)
 { if (self) self->m_fileMode = mode; }
 
 XFileDialogFileMode XFileDialog_fileMode(const XFileDialog* self)
-{ return self ? self->m_fileMode : XFileDialog_ExistingFile; }
+{ return self ? self->m_fileMode : XFileDialog_AnyFile; }
 
 void XFileDialog_setAcceptMode(XFileDialog* self, XFileDialogAcceptMode mode)
 { if (self) self->m_acceptMode = mode; }
@@ -2265,8 +2275,206 @@ static void xff_searchChanged(XObject* receiver, XVarList* args)
     xff_refresh(dlg);
 }
 
-/** @brief 确定槽：结算文件名（默认后缀补全）→ 选中列表 → 发射
- *  fileSelected → accept（对标 QFileDialog::accept 结算路径）。 */
+/* ---------- accept 校验与结算（对标 QFileDialog::accept） ---------- */
+
+/** @brief 路径存在性（对标 QFileInfo::exists；XFileInfo 静态查询）。 */
+static bool xff_pathExists(const XString* path)
+{
+    return path ? XFileInfo_exists_static(path) : false;
+}
+
+/** @brief 路径是否目录（对标 QFileInfo::isDir）。 */
+static bool xff_pathIsDir(const XString* path)
+{
+    XFileInfo* info;
+    bool isDir = false;
+    if (!path) return false;
+    info = XFileInfo_create_2(path);
+    if (info) {
+        isDir = XFileInfo_isDir(info);
+        XClassDelete((XClass*)info);
+    }
+    return isDir;
+}
+
+/** @brief 取路径末段文件名（弹出文案用；对标 QFileInfo::fileName）。 */
+static XString* xff_baseName(const XString* path)
+{
+    const char* utf8;
+    const char* slash;
+    if (!path) return XString_create();
+    utf8 = XString_toUtf8(path);
+    slash = utf8 ? XStrrchr(utf8, '/') : NULL;
+    return XString_create_utf8(slash ? slash + 1 : (utf8 ? utf8 : ""));
+}
+
+/** @brief 「条目未找到」提示（对标 QFileDialogPrivate::itemNotFound，
+ *  qfiledialog.cpp:2694-2708：QMessageBox::warning(q, windowTitle,
+ *  "%1\nFile/Directory not found.\nPlease verify the correct ... name
+ *  was given.")）。仅真实 GUI 会话（对话框带文件名行编辑）弹窗；
+ *  实例化 API 路径无问询 UI，静默跳过——「不关窗」语义由调用方
+ *  return 保证，本函数只承担提示呈现。 */
+static void xff_itemNotFound(XFileDialog* dlg, const XString* path,
+                             bool dirMode)
+{
+#ifdef XFF_POPUP_ON
+    XString* name;
+    XString* msg;
+    const XString* title;
+    if (!dlg || !xff_childByName(&dlg->m_base, XFF_NAME_NAMEEDIT)) return;
+    name = xff_baseName(path);
+    msg = XString_create_fmt_utf8(
+        "%s\n%s未找到。\n请核实给出的%s名称是否正确。",
+        name ? XString_toUtf8(name) : "",
+        dirMode ? "目录" : "文件",
+        dirMode ? "目录" : "文件");
+    title = XWidget_windowTitle((const XWidget*)dlg);
+    XMessageBox_warning((XWidget*)dlg,
+                        (title && XString_toUtf8(title)) ?
+                            XString_toUtf8(title) : "提示",
+                        msg ? XString_toUtf8(msg) : "",
+                        (int)XDialogButtonBoxStandard_Ok);
+    if (name) XClassDelete((XClass*)name);
+    if (msg) XClassDelete((XClass*)msg);
+#else
+    (void)dlg; (void)path; (void)dirMode;
+#endif
+}
+
+/** @brief 覆盖确认（对标 QFileDialogPrivate::itemAlreadyExists，
+ *  qfiledialog.cpp:2711-2724：QMessageBox::warning Yes|No、默认 No，
+ *  返回是否覆盖）。无问询 UI（实例化 API 路径或弹窗模块裁剪）时
+ *  按已确认处理放行——Qt 自身无控件路径（!usingWidgets 的 accept
+ *  分支）本就无条件收口，拒绝放行会使无头 AcceptSave 恒不可用。 */
+static bool xff_itemAlreadyExists(XFileDialog* dlg, const XString* path)
+{
+#ifdef XFF_POPUP_ON
+    XString* name;
+    XString* msg;
+    const XString* title;
+    if (dlg && xff_childByName(&dlg->m_base, XFF_NAME_NAMEEDIT)) {
+        XDialogButtonBoxStandardButton res;
+        name = xff_baseName(path);
+        msg = XString_create_fmt_utf8(
+            "%s 已存在。\n要替换它吗？",
+            name ? XString_toUtf8(name) : "");
+        title = XWidget_windowTitle((const XWidget*)dlg);
+        res = XMessageBox_warning_2(
+            (XWidget*)dlg,
+            (title && XString_toUtf8(title)) ? XString_toUtf8(title) : "提示",
+            msg ? XString_toUtf8(msg) : "",
+            (int)XDialogButtonBoxStandard_Yes |
+                (int)XDialogButtonBoxStandard_No,
+            XDialogButtonBoxStandard_No);
+        if (name) XClassDelete((XClass*)name);
+        if (msg) XClassDelete((XClass*)msg);
+        return res == XDialogButtonBoxStandard_Yes;
+    }
+#else
+    (void)dlg; (void)path;
+#endif
+    return true;
+}
+
+/** @brief 结算收口（对标 QFileDialogPrivate::emitFilesSelected
+ *  （qfiledialog.cpp:686-692：恒发 filesSelected(files)、仅当
+ *  files.size()==1 补发 fileSelected(first)）+ QDialog::accept）。 */
+static void xff_emitAndAccept(XFileDialog* self, XStringList* files)
+{
+    int64_t cnt = files ? XStringList_size_base((const XContainer*)files) : 0;
+    XFileDialog_filesSelected_signal(self, files);
+    if (cnt == 1) {
+        XString* first =
+            (XString*)XStringList_at_base((const XVector*)files, 0);
+        XFileDialog_fileSelected_signal(self, first);
+    }
+    XDialog_accept(&self->m_base);
+}
+
+void XFileDialog_accept(XFileDialog* self)
+{
+    XStringList* files;
+    int64_t n;
+    if (!self) return;
+    files = self->m_selectedFiles;
+    n = files ? XStringList_size_base((const XContainer*)files) : 0;
+    if (n <= 0) return; /* 对标 Qt：files.isEmpty() → return 不收口。 */
+    if (self->m_fileMode == XFileDialog_Directory) {
+        XString* fn = (XString*)XStringList_at_base((const XVector*)files, 0);
+        /* 对标 Qt Directory 分支（qfiledialog.cpp:2729-2743）：不存在
+         * → itemNotFound 并 return；非目录 → return 不收口。 */
+        if (!xff_pathExists(fn)) {
+            xff_itemNotFound(self, fn, true);
+            return;
+        }
+        if (!xff_pathIsDir(fn)) return;
+        xff_emitAndAccept(self, files);
+        return;
+    }
+    if (self->m_fileMode == XFileDialog_AnyFile) {
+        XString* fn = (XString*)XStringList_at_base((const XVector*)files, 0);
+        XStringList* single;
+        if (xff_pathIsDir(fn)) {
+            /* 对标 Qt：结算名是目录即转入该目录，return 不收口。 */
+            XFileDialog_setDirectory(self, fn);
+            return;
+        }
+        /* Qt 对不存在名另有 per-dir maxNameLength 检查
+         * （qfiledialog.cpp:2756-2759）；框架无平台名长查询基础设施，
+         * 不做（记录）。 */
+        if (!xff_pathExists(fn) ||
+            (self->m_options &
+                 (XFileDialogOptions)XFileDialog_DontConfirmOverwrite) ||
+            self->m_acceptMode == XFileDialog_AcceptOpen) {
+            /* 无需覆盖确认：Qt 载荷口径为单元素列表（files.first()）。 */
+            single = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+            if (single) {
+                XString* copy = xfiledialog_dupString(fn);
+                if (copy)
+                    XStringList_push_back_move_base((XVector*)single, copy);
+                xff_emitAndAccept(self, single);
+                XClassDelete((XClass*)single);
+            }
+            return;
+        }
+        /* 已存在且要求确认：过 itemAlreadyExists 询问，Yes 才收口。 */
+        if (xff_itemAlreadyExists(self, fn)) {
+            single = XStringList_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+            if (single) {
+                XString* copy = xfiledialog_dupString(fn);
+                if (copy)
+                    XStringList_push_back_move_base((XVector*)single, copy);
+                xff_emitAndAccept(self, single);
+                XClassDelete((XClass*)single);
+            }
+        }
+        return;
+    }
+    /* ExistingFile / ExistingFiles（qfiledialog.cpp:2778-2796）：逐个
+     * 校验存在性，任一不存在即 itemNotFound 并 return 不关窗；命中
+     * 目录则转入并 return。全部通过后 emitFilesSelected(files)（多选
+     * 只有 filesSelected，单选补发 fileSelected）。 */
+    {
+        int64_t i;
+        for (i = 0; i < n; ++i) {
+            XString* fn =
+                (XString*)XStringList_at_base((const XVector*)files, i);
+            if (!xff_pathExists(fn)) {
+                xff_itemNotFound(self, fn, false);
+                return;
+            }
+            if (xff_pathIsDir(fn)) {
+                XFileDialog_setDirectory(self, fn);
+                return;
+            }
+        }
+        xff_emitAndAccept(self, files);
+    }
+}
+
+/** @brief 确定槽：结算文件名（默认后缀补全）→ 选中列表 → 转发
+ *  XFileDialog_accept 分模式校验/信号/收口（对标 QFileDialog::accept
+ *  结算路径；OK 按钮 clicked 的 Direct 槽）。 */
 static void xff_acceptSlot(XObject* receiver, XVarList* args)
 {
     XFileDialog* dlg = (XFileDialog*)receiver;
@@ -2305,13 +2513,12 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
         if (!chosen && dlg->m_directory)
             chosen = xfiledialog_dupString(dlg->m_directory);
         if (chosen) {
-            /* 对标 QFileDialog::accept：fileSelected 随确认发射（目录
-             * 模式载荷为选定目录）。 */
             XFileDialog_selectFile(dlg, chosen);
-            XFileDialog_fileSelected_signal(dlg, chosen);
             XClassDelete((XClass*)chosen);
         }
-        XDialog_accept(&dlg->m_base);
+        /* 校验+信号+收口统一走 accept 漏斗（Qt Directory 分支：
+         * emitFilesSelected + QDialog::accept）。 */
+        XFileDialog_accept(dlg);
         return;
     }
     nameEdit = (XLineEdit*)xff_childByName(&dlg->m_base, XFF_NAME_NAMEEDIT);
@@ -2343,11 +2550,10 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
             if (dlg->m_selectedFiles)
                 XStringList_clear_base((XContainer*)dlg->m_selectedFiles);
             XFileDialog_selectFile(dlg, path);
-            XFileDialog_fileSelected_signal(dlg, path);
             XClassDelete((XClass*)path);
         }
     }
-    XDialog_accept(&dlg->m_base);
+    XFileDialog_accept(dlg);
 }
 
 static void xff_rejectSlot(XObject* receiver, XVarList* args)
@@ -3545,15 +3751,18 @@ void XFileDialog_selectUrl(XFileDialog* self, const XString* url)
         XStringList_push_back_base(self->m_selectedFiles, (XString*)url);
 }
 
-void XFileDialog_setFilter(XFileDialog* self, const XString* filter)
+void XFileDialog_setFilter(XFileDialog* self, int filters)
 {
+    /* 对标 QFileDialog::setFilter(QDir::Filters)（qfiledialog.h:94-95）：
+     * 存目录枚举位标志（XDirFilter 位域），非文本通配过滤器——文本
+     * 过滤器走 setNameFilter/setNameFilters。 */
     if (!self) return;
-    xfiledialog_freeString(&self->m_filter); self->m_filter = xfiledialog_dupString(filter);
+    self->m_dirFilters = filters;
 }
 
-XString* XFileDialog_filter(const XFileDialog* self)
+int XFileDialog_filter(const XFileDialog* self)
 {
-    return self ? xfiledialog_dupString(self->m_filter) : XString_create();
+    return self ? self->m_dirFilters : 0;
 }
 
 void XFileDialog_setMimeTypeFilters(XFileDialog* self,

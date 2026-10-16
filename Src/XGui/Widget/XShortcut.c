@@ -202,6 +202,49 @@ void XShortcut_unregister(XShortcut* self)
     XVector_remove_base(s_shortcutRegistry, index, 1);
 }
 
+/** @brief context 过滤谓词（对标 QShortcutMap 的可达性判定）：
+ *         Application 恒匹配；Window 限焦点控件与快捷键父级同顶层；
+ *         WidgetWithChildren 限焦点控件为父级自身或其后代；Widget 仅
+ *         父级自身。供 match 与歧义计数共用。 */
+static bool xshortcut_accepts(const XShortcut* sc, int key,
+                              const XWidget* focusWidget)
+{
+    const XWidget* w;
+    if (!sc || !sc->m_enabled || sc->m_key != key) return false;
+    if (sc->m_context == XShortcutContext_ApplicationShortcut)
+        return true;
+    if (!focusWidget) return false;
+    if (sc->m_context == XShortcutContext_WindowShortcut) {
+        XWidget* shortcutTop = NULL;
+        if (sc->m_parentWidget) {
+            if (!((XObject*)sc->m_parentWidget)->m_is_widget)
+                return true; /* 非控件父级：同 legacy 无主宽松口径。 */
+            shortcutTop = XWidget_topLevelWidget(
+                (XWidget*)sc->m_parentWidget);
+        }
+        /* 无父级的快捷键不限定窗口（legacy 宽松口径，回归 219a
+         * 契约）；有父级时要求焦点控件同顶层（对标 Qt
+         * WindowShortcut 的活动窗口语义）。 */
+        if (!shortcutTop)
+            return true;
+        return XWidget_topLevelWidget((XWidget*)focusWidget) == shortcutTop;
+    }
+    if (sc->m_context == XShortcutContext_WidgetWithChildrenShortcut) {
+        if (!sc->m_parentWidget) return false;
+        w = focusWidget;
+        while (w) {
+            if (w == (const XWidget*)sc->m_parentWidget)
+                return true;
+            w = (const XWidget*)XObject_parent((const XObject*)w);
+        }
+        return false;
+    }
+    if (sc->m_context == XShortcutContext_WidgetShortcut &&
+        (const XObject*)focusWidget == sc->m_parentWidget)
+        return true;
+    return false;
+}
+
 XShortcut* XShortcut_match(int key, XShortcutContext context,
                            XWidget* focusWidget)
 {
@@ -213,50 +256,67 @@ XShortcut* XShortcut_match(int key, XShortcutContext context,
     for (i = 0; i < n; ++i) {
         XShortcut** item =
             (XShortcut**)XVector_at_base(s_shortcutRegistry, i);
-        XShortcut* sc;
-        const XWidget* w;
         if (!item) continue;
-        sc = *item;
-        if (!sc || !sc->m_enabled || sc->m_key != key) continue;
-        /* context 过滤（对标 QShortcutMap 的可达性判定）：
-         * Application 恒匹配；Window 限焦点控件与快捷键父级同顶层；
-         * WidgetWithChildren 限焦点控件为父级自身或其后代；
-         * Widget 仅父级自身。 */
-        if (sc->m_context == XShortcutContext_ApplicationShortcut)
-            return sc;
-        if (!focusWidget) continue;
-        if (sc->m_context == XShortcutContext_WindowShortcut) {
-            XWidget* shortcutTop = sc->m_parentWidget
-                ? XWidget_topLevelWidget(sc->m_parentWidget) : NULL;
-            /* 无父级的快捷键不限定窗口（legacy 宽松口径，回归 219a
-             * 契约）；有父级时要求焦点控件同顶层（对标 Qt
-             * WindowShortcut 的活动窗口语义）。 */
-            if (!shortcutTop ||
-                XWidget_topLevelWidget(focusWidget) == shortcutTop)
-                return sc;
-            continue;
-        }
-        if (sc->m_context == XShortcutContext_WidgetWithChildrenShortcut) {
-            if (!sc->m_parentWidget) continue;
-            w = focusWidget;
-            while (w) {
-                if ((const XWidget*)w ==
-                    (const XWidget*)sc->m_parentWidget)
-                    return sc;
-                w = (const XWidget*)XObject_parent((const XObject*)w);
-            }
-            continue;
-        }
-        if (sc->m_context == XShortcutContext_WidgetShortcut &&
-            (XObject*)focusWidget == sc->m_parentWidget)
-            return sc;
+        if (xshortcut_accepts(*item, key, focusWidget)) return *item;
     }
+    return NULL;
+}
+
+/** @brief 统计同键在焦点代理视角下的命中数（歧义判定用）。 */
+static int xshortcut_countMatches(int key, const XWidget* focusWidget)
+{
+    int64_t i;
+    int64_t n;
+    int count = 0;
+    if (!s_shortcutRegistry) return 0;
+    n = XVector_size_base((const XContainer*)s_shortcutRegistry);
+    for (i = 0; i < n; ++i) {
+        XShortcut** item =
+            (XShortcut**)XVector_at_base(s_shortcutRegistry, i);
+        if (item && xshortcut_accepts(*item, key, focusWidget))
+            ++count;
+    }
+    return count;
+}
+
+/** @brief 歧义重放的焦点代理：取本快捷键父控件（Widget/Window/
+ *         WidgetWithChildren 三类上下文的可达性都以父级为锚，以父级
+ *         代焦点重放与真实焦点判定一致；父级非控件/无父级返回 NULL，
+ *         Application 类上下文不受焦点影响）。 */
+static XWidget* xshortcut_focusProxy(const XShortcut* self)
+{
+    XObject* parent;
+    if (!self) return NULL;
+    parent = self->m_parentWidget;
+    if (parent && parent->m_is_widget) return (XWidget*)parent;
     return NULL;
 }
 
 void XShortcut_activate(XShortcut* self)
 {
+    XWidget* focusProxy;
+    int matches;
     if (!self) return;
+    /* 对标 Qt QShortcutMap：同一键序列在同上下文命中多个启用快捷键时
+     * 改派 activatedAmbiguously（对每个命中者发射）且不发 activated
+     * （QShortcut::activatedAmbiguously 语义；此前本实现恒发
+     * activated，歧义信号零发射点）。 */
+    focusProxy = xshortcut_focusProxy(self);
+    matches = xshortcut_countMatches(self->m_key, focusProxy);
+    if (matches > 1) {
+        int64_t i;
+        int64_t n;
+        n = XVector_size_base((const XContainer*)s_shortcutRegistry);
+        for (i = 0; i < n; ++i) {
+            XShortcut** item =
+                (XShortcut**)XVector_at_base(s_shortcutRegistry, i);
+            if (item && xshortcut_accepts(*item, self->m_key, focusProxy))
+                xshortcut_emitVoidSignal(
+                    *item, (size_t)XShortcut_activatedAmbiguously_signal);
+        }
+        return;
+    }
+    /* 无歧义（含 self 禁用等无命中退化）按原语义发射 activated。 */
     xshortcut_emitVoidSignal(self, (size_t)XShortcut_activated_signal);
 }
 

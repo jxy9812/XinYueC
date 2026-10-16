@@ -116,6 +116,36 @@ XColor XGraphicsDropShadowEffect_color(const XGraphicsDropShadowEffect* self);
 void XGraphicsDropShadowEffect_setColor(XGraphicsDropShadowEffect* self,
                                         XColor color);
 
+/* ==================== 信号（对标 QGraphicsDropShadowEffect signals） ==================== */
+
+/**
+ * @brief      投影偏移变化信号（对标 QGraphicsDropShadowEffect::
+ *             offsetChanged(QPointF)；setOffset 实际变化时发射）。
+ * @param      self 目标效果；NULL 仅作信号标识占位。
+ * @param      offset 新偏移。
+ * @return     信号标识（函数自身地址，用作 XObject_connect 信号参数）。
+ */
+void* XGraphicsDropShadowEffect_offsetChanged_signal(
+    XGraphicsDropShadowEffect* self, XPointF offset);
+/**
+ * @brief      模糊半径变化信号（对标 QGraphicsDropShadowEffect::
+ *             blurRadiusChanged(qreal)；setBlurRadius 实际变化时发射）。
+ * @param      self 目标效果；NULL 仅作信号标识占位。
+ * @param      radius 新模糊半径。
+ * @return     信号标识（函数自身地址，用作 XObject_connect 信号参数）。
+ */
+void* XGraphicsDropShadowEffect_blurRadiusChanged_signal(
+    XGraphicsDropShadowEffect* self, float radius);
+/**
+ * @brief      投影颜色变化信号（对标 QGraphicsDropShadowEffect::
+ *             colorChanged(QColor)；setColor 实际变化时发射）。
+ * @param      self 目标效果；NULL 仅作信号标识占位。
+ * @param      color 新颜色值拷贝。
+ * @return     信号标识（函数自身地址，用作 XObject_connect 信号参数）。
+ */
+void* XGraphicsDropShadowEffect_colorChanged_signal(
+    XGraphicsDropShadowEffect* self, XColor color);
+
 #endif /* XWIDGET_ON */
 
 #endif /* XGRAPHICSDROPSHADOWEFFECT_H */

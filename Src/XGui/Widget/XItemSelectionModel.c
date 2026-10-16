@@ -25,6 +25,43 @@ static void xism_emitChanged(XItemSelectionModel* self)
     }
 }
 
+static void xism_emitVoid(XItemSelectionModel* self, size_t signal)
+{
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, NULL, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    }
+}
+
+static void xism_emitInt2(XItemSelectionModel* self, size_t signal, int a,
+                          int b)
+{
+    XVarList* args = XVarList_Create(XVar(int, a), XVar(int, b));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self, signal, args, NULL, NULL,
+                           XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
+static void xism_emitCurrentChanged(XItemSelectionModel* self, int row,
+                                    int col, int prevRow, int prevCol)
+{
+    XVarList* args = XVarList_Create(XVar(int, row), XVar(int, col),
+                                     XVar(int, prevRow),
+                                     XVar(int, prevCol));
+    if (!args) return;
+    if (self && ((XObject*)self)->m_signalSlot) {
+        XObject_emitSignal((XObject*)self,
+                           (size_t)XItemSelectionModel_currentChanged_signal,
+                           args, NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    } else {
+        XVarList_delete(args);
+    }
+}
+
 static void VXItemSelectionModel_deinit(XItemSelectionModel* self)
 {
     if (!self) return;
@@ -53,6 +90,8 @@ static void VXItemSelectionModel_copy(XItemSelectionModel* self,
         int v = XVector_At_Base(other->m_selected, (int64_t)i, int);
         XVector_push_back_1_base(self->m_selected, &v);
     }
+    /* 绑定模型为借用指针，浅拷贝即可（同 XHeaderView m_model 范式）。 */
+    self->m_model = other->m_model;
     self->m_currentRow = other->m_currentRow;
     self->m_currentCol = other->m_currentCol;
 }
@@ -67,9 +106,11 @@ static void VXItemSelectionModel_move(XItemSelectionModel* self,
                                                (XObject*)other);
     if (self->m_selected) XClassDelete(self->m_selected);
     self->m_selected = other->m_selected;
+    self->m_model = other->m_model;
     self->m_currentRow = other->m_currentRow;
     self->m_currentCol = other->m_currentCol;
     other->m_selected = XVector_Create(int);
+    other->m_model = NULL;
     other->m_currentRow = -1;
     other->m_currentCol = -1;
 }
@@ -146,6 +187,75 @@ bool XItemSelectionModel_isSelected(const XItemSelectionModel* self,
     return false;
 }
 
+bool XItemSelectionModel_selectRange(XItemSelectionModel* self, int topRow,
+                                     int leftCol, int bottomRow,
+                                     int rightCol)
+{
+    int r;
+    int c;
+    int startCount;
+    bool changed = false;
+    if (!self || !self->m_selected) return false;
+    /* 区间归一（对标 QItemSelectionRange 的 topLeft/bottomRight 收敛）。 */
+    if (topRow > bottomRow) { int t = topRow; topRow = bottomRow; bottomRow = t; }
+    if (leftCol > rightCol) { int t = leftCol; leftCol = rightCol; rightCol = t; }
+    if (topRow < 0 || leftCol < 0) return false;
+    startCount = (int)XVector_size_base((const XContainer*)self->m_selected);
+    for (r = topRow; r <= bottomRow; ++r) {
+        for (c = leftCol; c <= rightCol; ++c) {
+            int enc = XISM_ENC(r, c);
+            int i;
+            int n = (int)XVector_size_base(
+                (const XContainer*)self->m_selected);
+            bool found = false;
+            for (i = 0; i < n; ++i) {
+                if (XVector_At_Base(self->m_selected, (int64_t)i, int) ==
+                    enc) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                XVector_push_back_1_base(self->m_selected, &enc);
+                changed = true;
+            }
+        }
+    }
+    /* 单次发射（对标 Qt select(range, Select) 一次 selectionChanged）。 */
+    if (changed &&
+        (int)XVector_size_base((const XContainer*)self->m_selected) !=
+            startCount)
+        xism_emitChanged(self);
+    return changed;
+}
+
+bool XItemSelectionModel_selectRow(XItemSelectionModel* self, int row)
+{
+    XAbstractItemModel* model;
+    if (!self || row < 0) return false;
+    model = self->m_model;
+    if (!model) return false;
+    if (row >= XAbstractItemModel_rowCount(model)) return false;
+    if (XAbstractItemModel_columnCount(model) <= 0) return false;
+    return XItemSelectionModel_selectRange(self, row, 0, row,
+                                           XAbstractItemModel_columnCount(
+                                               model) - 1);
+}
+
+bool XItemSelectionModel_selectColumn(XItemSelectionModel* self, int column)
+{
+    XAbstractItemModel* model;
+    if (!self || column < 0) return false;
+    model = self->m_model;
+    if (!model) return false;
+    if (column >= XAbstractItemModel_columnCount(model)) return false;
+    if (XAbstractItemModel_rowCount(model) <= 0) return false;
+    return XItemSelectionModel_selectRange(self, 0, column,
+                                           XAbstractItemModel_rowCount(model)
+                                               - 1,
+                                           column);
+}
+
 bool XItemSelectionModel_clear(XItemSelectionModel* self)
 {
     int n;
@@ -155,6 +265,18 @@ bool XItemSelectionModel_clear(XItemSelectionModel* self)
     XVector_clear_base(self->m_selected);
     xism_emitChanged(self);
     return true;
+}
+
+bool XItemSelectionModel_clearSelection(XItemSelectionModel* self)
+{
+    /* 对标 Qt clearSelection：仅清选择集合、保留当前索引（本库既有
+     * clear 的行为即此语义，此处为 Qt 命名对齐别名）。 */
+    return XItemSelectionModel_clear(self);
+}
+
+bool XItemSelectionModel_hasSelection(const XItemSelectionModel* self)
+{
+    return XItemSelectionModel_selectedCount(self) > 0;
 }
 
 int XItemSelectionModel_selectedCount(const XItemSelectionModel* self)
@@ -178,12 +300,38 @@ bool XItemSelectionModel_selectedAt(const XItemSelectionModel* self,
     return true;
 }
 
+void XItemSelectionModel_setModel(XItemSelectionModel* self,
+                                  XAbstractItemModel* model)
+{
+    if (self) self->m_model = model;
+}
+
+XAbstractItemModel* XItemSelectionModel_model(const XItemSelectionModel* self)
+{ return self ? self->m_model : NULL; }
+
 void XItemSelectionModel_setCurrentIndex(XItemSelectionModel* self,
                                          int row, int col)
 {
+    int prevRow;
+    int prevCol;
     if (!self) return;
+    prevRow = self->m_currentRow;
+    prevCol = self->m_currentCol;
+    if (row == prevRow && col == prevCol) return;
     self->m_currentRow = row;
     self->m_currentCol = col;
+    /* 对标 QItemSelectionModel::setCurrentIndex 的发射序：
+     * currentChanged(current, previous) 先行，行/列分别变化时再发射
+     * currentRowChanged/currentColumnChanged（载荷为当前/前值）。 */
+    xism_emitCurrentChanged(self, row, col, prevRow, prevCol);
+    if (row != prevRow)
+        xism_emitInt2(self,
+                      (size_t)XItemSelectionModel_currentRowChanged_signal,
+                      row, prevRow);
+    if (col != prevCol)
+        xism_emitInt2(self,
+                      (size_t)XItemSelectionModel_currentColumnChanged_signal,
+                      col, prevCol);
 }
 
 int XItemSelectionModel_currentRow(const XItemSelectionModel* self)
@@ -197,6 +345,32 @@ void* XItemSelectionModel_selectionChanged_signal(
 {
     xism_emitChanged(self);
     return (void*)(size_t)XItemSelectionModel_selectionChanged_signal;
+}
+
+void* XItemSelectionModel_currentChanged_signal(XItemSelectionModel* self,
+                                                int row, int col, int prevRow,
+                                                int prevCol)
+{
+    xism_emitCurrentChanged(self, row, col, prevRow, prevCol);
+    return (void*)(size_t)XItemSelectionModel_currentChanged_signal;
+}
+
+void* XItemSelectionModel_currentRowChanged_signal(XItemSelectionModel* self,
+                                                   int row, int prevRow)
+{
+    xism_emitInt2(self,
+                  (size_t)XItemSelectionModel_currentRowChanged_signal,
+                  row, prevRow);
+    return (void*)(size_t)XItemSelectionModel_currentRowChanged_signal;
+}
+
+void* XItemSelectionModel_currentColumnChanged_signal(
+    XItemSelectionModel* self, int col, int prevCol)
+{
+    xism_emitInt2(self,
+                  (size_t)XItemSelectionModel_currentColumnChanged_signal,
+                  col, prevCol);
+    return (void*)(size_t)XItemSelectionModel_currentColumnChanged_signal;
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */

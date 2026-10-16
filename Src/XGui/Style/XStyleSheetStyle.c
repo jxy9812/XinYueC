@@ -1126,11 +1126,13 @@ static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
  *  - 淘汰=环形替换（容量 XSSS_SOURCE_CACHE_SIZE ≥ 单次收集触及的
  *    槽位上限 1+XSSS_MAX_CASCADE_SOURCES，保证单次收集走查内不会
  *    替换掉本次已收集条目——收集到的规则指针在走查期间恒有效）；
- *  - 替换在用条目前先失效渲染规则缓存（m_cacheRule/m_cacheSel 指进
- *    被替换条目的规则数组，悬空指针必须先行切断）；
+ *  - 替换在用条目前先失效渲染规则缓存（多槽条目 m_rule/m_sel 指进
+ *    被替换条目的规则数组，悬空指针必须先行切断，代次推进即切断）；
  *  - XStyleSheetStyle_setStyleSheet 只失效渲染缓存、不清源缓存（应用
  *    级表变化与控件源互不牵连）；本对象析构经 xsss_sourceCacheClear
  *    全量释放。 */
+static void xsss_rcache_invalidate_all(XStyleSheetStyle* self);
+
 static const XCssStyleSheet* xsss_sourceSheet(XStyleSheetStyle* self,
                                               const XString* text)
 {
@@ -1168,7 +1170,8 @@ static const XCssStyleSheet* xsss_sourceSheet(XStyleSheetStyle* self,
     {
         bool wasInUse = e->m_inUse;
         if (wasInUse) {
-            self->m_cacheValid = false; /* 渲染缓存可能指进被替换条目。 */
+            /* 渲染缓存可能指进被替换条目：代次推进全表失效。 */
+            xsss_rcache_invalidate_all(self);
             XClassDelete((XClass*)e->m_text);
             XCssStyleSheet_clear(&e->m_sheet);
         } else {
@@ -1277,6 +1280,68 @@ static int xsss_collectSources(XStyleSheetStyle* self, const XObject* obj,
  *
  *  @param outSel/outWeight 可选出参（缓存回填用）。
  */
+/* ---- 渲染规则多槽缓存（xasa_decideBars 式收口：两处查询点共用
+ *      一份键/失效口径）。键=(对象指针, vtable 类指针, 状态)，直映
+ *      槽，代次失效 O(1)。 ---- */
+
+/** @brief 探槽：命中返回槽；未中返回 NULL（outFree 给插入槽）。 */
+static XsssRenderCacheEntry* xsss_rcache_find(XStyleSheetStyle* self,
+                                              const XObject* obj,
+                                              uint32_t state)
+{
+    uint32_t h;
+    if (!self || !obj) return NULL;
+    h = (uint32_t)(uintptr_t)obj >> 4u;
+    h ^= h >> 16u;
+    h = h * 2654435761u;
+    h ^= (uint32_t)(uintptr_t)XClassGetVtable((XClass*)obj) >> 4u;
+    h ^= state * 0x9E3779B9u;
+    return &self->m_rcache[h & (XSSS_RENDER_CACHE_SLOTS - 1u)];
+}
+
+/** @brief 查缓存：命中（键全符且代次相同）回填三元组并返回 true。 */
+static bool xsss_rcache_get(XStyleSheetStyle* self, const XObject* obj,
+                            uint32_t state, const XCssStyleRule** outRule,
+                            const XCssSelector** outSel, uint32_t* outWeight)
+{
+    XsssRenderCacheEntry* e = xsss_rcache_find(self, obj, state);
+    if (!e || e->m_obj != obj || e->m_gen != self->m_rcacheGen ||
+        e->m_state != state ||
+        e->m_class != XClassGetVtable((XClass*)obj))
+        return false;
+    *outRule = e->m_rule;
+    *outSel = e->m_sel;
+    *outWeight = e->m_weight;
+    return true;
+}
+
+/** @brief 回填缓存槽（覆盖式；扫描结果恒为该键当前正确值）。 */
+static void xsss_rcache_put(XStyleSheetStyle* self, const XObject* obj,
+                            uint32_t state, const XCssStyleRule* rule,
+                            const XCssSelector* sel, uint32_t weight)
+{
+    XsssRenderCacheEntry* e;
+    if (!self || !obj) return;
+    e = xsss_rcache_find(self, obj, state);
+    if (!e) return;
+    e->m_obj = obj;
+    e->m_class = XClassGetVtable((XClass*)obj);
+    e->m_state = state;
+    e->m_gen = self->m_rcacheGen;
+    e->m_rule = rule;
+    e->m_sel = sel;
+    e->m_weight = weight;
+}
+
+/** @brief 整体失效：代次 ++ 即全表死槽（槽内容不清，惰性覆写）。 */
+static void xsss_rcache_invalidate_all(XStyleSheetStyle* self)
+{
+    if (self) {
+        ++self->m_rcacheGen;
+        ++self->m_acacheGen; /* 负结论与渲染缓存同步失效。 */
+    }
+}
+
 static const XCssStyleRule* xsss_scanRules(XStyleSheetStyle* self,
                                            const XObject* obj, uint32_t state,
                                            const char* pseudoElementWant,
@@ -1336,23 +1401,52 @@ static const XCssDeclaration* xsss_lookup(XStyleSheetStyle* self,
      * R-29 时代的「全表无 !important 才直返」保守门禁随批一对齐删除：
      * Qt 语义下 importance 不参与裁决，缓存规则（回填口径=同权取后，
      * 与扫描 tie-break 一致）内 findDecl 与全源扫描结果恒等价。 */
-    if (self->m_cacheValid && self->m_cacheObj == obj &&
-        self->m_cacheState == state) {
-        d = self->m_cacheRule ? xsss_findDecl(self->m_cacheRule, id) : NULL;
-        if (d) return d;
-        /* 缓存规则未声明该属性 → 回落全源扫描。 */
+    {
+        XsssRenderCacheEntry* e = xsss_rcache_find(self, obj, state);
+        if (e && e->m_obj == obj && e->m_gen == self->m_rcacheGen &&
+            e->m_state == state &&
+            e->m_class == XClassGetVtable((XClass*)obj)) {
+            d = e->m_rule ? xsss_findDecl(e->m_rule, id) : NULL;
+            if (d) return d;
+            /* 未声明 → 负结论哈希直答；未登记才全源扫描证实（同键同
+               代次恒为同赢家）后登记。 */
+            {
+                uint32_t h = (uint32_t)(uintptr_t)obj >> 4u;
+                XsssAbsentEntry* a;
+                h ^= h >> 16u;
+                h = h * 2654435761u;
+                h ^= (uint32_t)(uintptr_t)e->m_class >> 4u;
+                h ^= state * 0x9E3779B9u;
+                h ^= (uint32_t)id * 0x85EBCA6Bu;
+                a = &self->m_acache[h & (XSSS_ABSENT_SLOTS - 1u)];
+                if (a->m_obj == obj && a->m_class == e->m_class &&
+                    a->m_state == state && a->m_id == (uint32_t)id &&
+                    a->m_gen == self->m_acacheGen)
+                    return NULL; /* 已证未声明：直答。 */
+                {
+                    const XCssStyleRule* rescanned =
+                        xsss_scanRules(self, obj, state, NULL, NULL, NULL);
+                    if (rescanned == e->m_rule) {
+                        a->m_obj = obj;
+                        a->m_class = e->m_class;
+                        a->m_state = state;
+                        a->m_id = (uint32_t)id;
+                        a->m_gen = self->m_acacheGen;
+                        return NULL;
+                    }
+                    /* 规则被换（防御路径）：整槽重填。 */
+                    xsss_rcache_put(self, obj, state, rescanned, NULL, 0);
+                    return rescanned ? xsss_findDecl(rescanned, id) : NULL;
+                }
+            }
+        }
     }
     {
         const XCssSelector* sel = NULL;
         uint32_t w = 0;
         const XCssStyleRule* rule =
             xsss_scanRules(self, obj, state, NULL, &sel, &w);
-        self->m_cacheObj = obj;
-        self->m_cacheState = state;
-        self->m_cacheRule = rule;
-        self->m_cacheSel = sel;
-        self->m_cacheWeight = w;
-        self->m_cacheValid = true;
+        xsss_rcache_put(self, obj, state, rule, sel, w);
         return rule ? xsss_findDecl(rule, id) : NULL;
     }
 }
@@ -2570,11 +2664,7 @@ static void VXStyleSheetStyle_deinit(XStyleSheetStyle* self)
 void XStyleSheetStyle_invalidateRenderCache(XStyleSheetStyle* self)
 {
     if (!self) return;
-    self->m_cacheValid = false;
-    self->m_cacheObj = NULL;
-    self->m_cacheRule = NULL;
-    self->m_cacheSel = NULL;
-    self->m_cacheWeight = 0;
+    xsss_rcache_invalidate_all(self); /* 多槽代次推进，全表惰性失效。 */
 }
 
 bool XStyleSheetStyle_setStyleSheet(XStyleSheetStyle* self, const char* css)
@@ -3738,20 +3828,20 @@ static const XCssStyleRule* xg3_winningRule(XStyleSheetStyle* self,
                                             const XObject* obj,
                                             uint32_t state)
 {
-    if (self->m_cacheValid && self->m_cacheObj == obj &&
-        self->m_cacheState == state)
-        return self->m_cacheRule;
+    {
+        const XCssStyleRule* cachedRule = NULL;
+        const XCssSelector* cachedSel = NULL;
+        uint32_t cachedWeight = 0;
+        if (xsss_rcache_get(self, obj, state, &cachedRule, &cachedSel,
+                            &cachedWeight))
+            return cachedRule;
+    }
     {
         const XCssSelector* sel = NULL;
         uint32_t w = 0;
         const XCssStyleRule* rule =
             xsss_scanRules(self, obj, state, NULL, &sel, &w);
-        self->m_cacheObj = obj;
-        self->m_cacheState = state;
-        self->m_cacheRule = rule;
-        self->m_cacheSel = sel;
-        self->m_cacheWeight = w;
-        self->m_cacheValid = true;
+        xsss_rcache_put(self, obj, state, rule, sel, w);
         return rule;
     }
 }

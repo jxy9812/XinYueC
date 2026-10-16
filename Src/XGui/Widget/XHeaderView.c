@@ -7,6 +7,7 @@
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
+#include "XAbstractItemModel.h"
 #include "XMemory.h"
 #include "XVarList.h"
 #include "XMap.h"
@@ -15,6 +16,8 @@
 #include "XCursor.h"
 
 #if XWIDGET_ON && XTABLEWIDGET_ON
+
+static void xhv_modelHeaderDataChangedSlot(XObject* receiver, XVarList* args);
 
 /** @brief 区间尺寸硬上限（对标 Qt qheaderview.cpp 的 maxSizeSection=1048575）。 */
 #define XHEADERVIEW_SECTION_SIZE_LIMIT 1048575
@@ -1622,8 +1625,28 @@ void XHeaderView_setOffsetToSectionPosition(XHeaderView* self, int index)
 
 void XHeaderView_setModel(XHeaderView* self, void* model)
 {
-    /* 不透明承载：仅保存借用指针，表头独立于模型，不触发重建或信号。 */
-    if (self) self->m_model = model;
+    /* 对标 Qt QHeaderView::setModel 的信号接线：模型 headerDataChanged
+     * 信号 → 表头 headerDataChanged 槽（驱动段文本变化后的重绘）。模型
+     * 仍为借用指针（表头不拥有）；model 须为 XAbstractItemModel 或其
+     * 派生（供信号接线），NULL 解除关联。信号标识经 XSignal 取令牌
+     * （NULL 发送方不触发发射）。 */
+    if (!self) return;
+    if (self->m_model && self->m_model != model) {
+        XObject_disconnect_1(
+            (XObject*)self->m_model,
+            XSignal(XAbstractItemModel_headerDataChanged_signal),
+            (XObject*)self, xhv_modelHeaderDataChangedSlot);
+    }
+    self->m_model = model;
+    if (model) {
+        /* 发送方信号槽管理器由 connect 内部懒建（XObject_connect_1），
+         * 不以其是否已存在为门（新建模型尚未连接任何信号时同样要接）。 */
+        XObject_connect_1(
+            (XObject*)model,
+            XSignal(XAbstractItemModel_headerDataChanged_signal),
+            (XObject*)self, xhv_modelHeaderDataChangedSlot,
+            XConnectionType_Direct);
+    }
 }
 
 XWidget* XHeaderView_viewport(XHeaderView* self)
@@ -1722,11 +1745,38 @@ void* XHeaderView_geometriesChanged_signal(XHeaderView* self)
     return (void*)(size_t)XHeaderView_geometriesChanged_signal;
 }
 
+/** @brief 模型 headerDataChanged(orientation,first,last) 信号槽：转发
+ *         表头同名句柄（载荷收敛为单段号）并请求重绘（对标 Qt
+ *         QHeaderView::headerDataChanged 槽的段重绘效果）。 */
+static void xhv_modelHeaderDataChangedSlot(XObject* receiver, XVarList* args)
+{
+    XHeaderView* header = (XHeaderView*)receiver;
+    int orientation;
+    int first;
+    int last;
+    if (!header || !args) return;
+    XVarList_start(args);
+    orientation = XVarList_arg(args, int);
+    first = XVarList_arg(args, int);
+    last = XVarList_arg(args, int);
+    /* 对标 Qt 槽体：段区间失效重绘（本库无文本承载，收敛为区间一次
+     * 整段重绘请求）；载荷经既有单 int 句柄转发（单段口径取 first）。 */
+    (void)orientation;
+    (void)last;
+    XHeaderView_headerDataChanged_signal(header, first);
+}
+
 void* XHeaderView_headerDataChanged_signal(XHeaderView* self, int section)
 {
-    (void)section;
-    /* 模型表头数据变化的 XTableWidget 转发路径未接线：句柄预留，
-     * 暂无发射点（对标 Qt 同名公开槽，本项目载荷收敛为单 int）。 */
+    /* 真实发射点：XHeaderView_setModel 接线的模型 headerDataChanged
+     * 转发槽（连接方亦可调用本句柄手动发射；对标 Qt 同名公开槽，本
+     * 项目载荷收敛为单 int）。NULL 发送方不发射（XSignal 令牌取值
+     * 以 NULL 调用本句柄，须短路）。 */
+    if (self) {
+        xhv_emitInt(self, (size_t)XHeaderView_headerDataChanged_signal,
+                    section);
+        XWidget_update((XWidget*)self);
+    }
     return (void*)(size_t)XHeaderView_headerDataChanged_signal;
 }
 

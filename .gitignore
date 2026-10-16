@@ -499,3 +499,8 @@ Library/freetype/Makefile
 Library/freetype/include/freetype/config/ftmodule.h
 Library/freetype/docs/
 Library/freetype/builds/
+
+# 抓帧/性能取证产物（会话调试残留，勿入库）
+*.xwd
+*.ppm
+gmon.out

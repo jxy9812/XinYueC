@@ -130,7 +130,16 @@ static void xdb_bridgeClickedSlot(XObject* receiver, XVarList* args)
     self = bridge->m_box;
     button = bridge->m_button;
     (void)args;
+    /* 角色须在发射 clicked 之前取定（对标 Qt 注释 "Can't fetch this
+     * *after* emitting clicked"，qdialogbuttonbox.cpp:871-874：clicked
+     * 的槽可能删按钮/改角色，clicked 与角色信号应按点击当时的角色
+     * 原子地成组发射）。 */
     role = (int)XDialogButtonBox_buttonRole(self, button);
+    /* 对标 Qt 6.8.3 QDialogButtonBoxPrivate::handleButtonClicked
+     * （qdialogbuttonbox.cpp:868-895）：先发射 clicked(button)，后按
+     * 角色发射 accepted/rejected/helpRequested——依赖先收 clicked 再
+     * 收角色信号的槽方与时序一致。 */
+    xdb_emitButton(self, (size_t)XDialogButtonBox_clicked_signal, button);
     if (role == (int)XDialogButtonBoxRole_AcceptRole ||
         role == (int)XDialogButtonBoxRole_YesRole)
         xdb_emitVoid(self, (size_t)XDialogButtonBox_accepted_signal);
@@ -139,7 +148,6 @@ static void xdb_bridgeClickedSlot(XObject* receiver, XVarList* args)
         xdb_emitVoid(self, (size_t)XDialogButtonBox_rejected_signal);
     else if (role == (int)XDialogButtonBoxRole_HelpRole)
         xdb_emitVoid(self, (size_t)XDialogButtonBox_helpRequested_signal);
-    xdb_emitButton(self, (size_t)XDialogButtonBox_clicked_signal, button);
 }
 
 /* @param deferred true=事件循环归还后回收（运行期 API 路径：桥挂在
@@ -265,23 +273,43 @@ static void xdb_relayout(XDialogButtonBox* self)
     int gap = 8;
     int total;
     int x;
+    int y;
+    bool vertical;
     if (!self || !self->m_buttons) return;
     n = XVector_size_base((const XContainer*)self->m_buttons);
     if (n <= 0) return;
+    /* 对标 Qt QDialogButtonBoxPrivate::initLayout
+     * （qdialogbuttonbox.cpp:136-161）：按 orientation 建
+     * QHBoxLayout/QVBoxLayout——水平主轴右对齐/垂直主轴底对齐
+     * （同一对齐策略沿主轴镜像），交叉轴居中；centerButtons 时主轴
+     * 居中。WinLayout 角色序两种方向共用。 */
+    vertical = (self->m_orientation == 2); /* 1=水平 2=垂直（见头文件）。 */
     /* WinLayout 角色序布局序列（Qt 按钮不再按插入序横排）。 */
     order = (XAbstractButton**)XMalloc_System(
         (size_t)n * sizeof(XAbstractButton*));
     if (!order) return;
     n = xdb_winLayoutOrder(self, order, n);
-    total = (int)n * bw + (int)(n > 0 ? n - 1 : 0) * gap;
-    x = self->m_center ? (w - total) / 2 : w - total - 4;
-    if (x < 4) x = 4;
+    total = (int)n * (vertical ? bh : bw) +
+            (int)(n > 0 ? n - 1 : 0) * gap;
+    if (vertical) {
+        y = self->m_center ? (h - total) / 2 : h - total - 4;
+        if (y < 4) y = 4;
+        x = (w - bw) / 2;
+        if (x < 0) x = 0;
+    } else {
+        x = self->m_center ? (w - total) / 2 : w - total - 4;
+        if (x < 4) x = 4;
+        y = (h - bh) / 2;
+    }
     for (i = 0; i < n; ++i) {
         XRect r;
-        XRect_init(&r, x, (h - bh) / 2, bw, bh);
+        XRect_init(&r, x, y, bw, bh);
         if (order[i])
             XWidget_setGeometryRect((XWidget*)order[i], &r);
-        x += bw + gap;
+        if (vertical)
+            y += bh + gap;
+        else
+            x += bw + gap;
     }
     /* 对标 Qt 模态对话框内 Tab 焦点链不越出对话框的窗口级语义：Qt
      * 的 QDialog 是独立原生窗口，QApplicationPrivate::focusNextPrev
@@ -590,8 +618,49 @@ void XDialogButtonBox_setStandardButtons(
     XDialogButtonBox* self, int buttons)
 {
     int i;
+    int64_t j;
+    int64_t n;
     if (!self) return;
-    XDialogButtonBox_clear(self);
+    /* 对标 Qt 6.8.3 QDialogButtonBox::setStandardButtons
+     * （qdialogbuttonbox.cpp:820-830，注释 "Clear out all the old
+     * standard buttons, then recreate them"）：只
+     * qDeleteAll(standardButtonMap.keys()) 即只删除标准按钮；用户经
+     * addButton(button, role) 登记的自定义按钮在 buttonLists 里原样
+     * 保留。此前走 clear() 把用户按钮一并摘父移出，混合使用两种
+     * addButton 的对话框重设标准按钮后用户按钮消失（对齐修复）。 */
+    if (self->m_bridges && self->m_buttons) {
+        n = XVector_size_base((const XContainer*)self->m_bridges);
+        for (j = n - 1; j >= 0; --j) {
+            XAbstractButton** btn;
+            int* stdVal = self->m_standards
+                      ? (int*)XVector_at_base(self->m_standards, j)
+                      : NULL;
+            XDBBridge** bp =
+                (XDBBridge**)XVector_at_base(self->m_bridges, j);
+            btn = self->m_buttons
+                      ? (XAbstractButton**)XVector_at_base(self->m_buttons, j)
+                      : NULL;
+            if (!stdVal || *stdVal == 0)
+                continue; /* 用户按钮：保留成员资格与父级。 */
+            xdb_bridgeDestroyDeferred(bp ? *bp : NULL, true);
+            XVector_remove_base(self->m_bridges, j, 1);
+            if (self->m_buttons)
+                XVector_remove_base(self->m_buttons, j, 1);
+            if (self->m_roles)
+                XVector_remove_base(self->m_roles, j, 1);
+            if (self->m_standards)
+                XVector_remove_base(self->m_standards, j, 1);
+            if (btn && *btn) {
+                /* 摘除即解除显式焦点链残留（见 xdb_unlinkFocus 注）。 */
+                xdb_unlinkFocus(*btn);
+                /* 盒自建标准按钮归盒所有（§8.0g6 同 clear 口径）：
+                 * deleteLater 纪律——确认按钮正处于自身 clicked 发射
+                 * 帧内（槽内重设标准按钮）时同步删 UAF。 */
+                XObject_deleteLater((XObject*)*btn);
+            }
+        }
+        xdb_relayout(self);
+    }
     for (i = 0; i < XDB_STANDARD_COUNT; ++i) {
         if (g_xdbStandards[i].standard & buttons)
             XDialogButtonBox_addButton_3(

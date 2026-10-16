@@ -241,11 +241,21 @@ static XGuiRemoteProfileId rc_profileFromCombo(void)
 static const char* rc_profileName(XGuiRemoteProfileId id)
 {
     switch (id) {
-    case XGUI_REMOTE_PROFILE_PERFORMANCE: return "performance";
-    case XGUI_REMOTE_PROFILE_RESOURCE:    return "resource";
-    case XGUI_REMOTE_PROFILE_LATENCY:     return "latency";
-    case XGUI_REMOTE_PROFILE_AUTO:        return "auto";
-    default:                              return "custom";
+    case XGUI_REMOTE_PROFILE_PERFORMANCE:
+        return "\xE6\x80\xA7\xE8\x83\xBD\xE4\xBC\x98\xE5\x85\x88";
+        /* 性能优先 */
+    case XGUI_REMOTE_PROFILE_RESOURCE:
+        return "\xE8\xB5\x84\xE6\xBA\x90\xE4\xBC\x98\xE5\x85\x88";
+        /* 资源优先 */
+    case XGUI_REMOTE_PROFILE_LATENCY:
+        return "\xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF\x9F";
+        /* 低延迟 */
+    case XGUI_REMOTE_PROFILE_AUTO:
+        return "\xE8\x87\xAA\xE5\x8A\xA8";
+        /* 自动 */
+    default:
+        return "\xE8\x87\xAA\xE5\xAE\x9A\xE4\xB9\x89";
+        /* 自定义 */
     }
 }
 
@@ -543,6 +553,9 @@ static void rc_onDisconnected(XObject* sender, XVarList* args)
                 snprintf(buf, sizeof(buf), "断开(reason=%d), 自动重连中…",
                          reason);
             rc_report(buf);
+            /* [2026-10-12 联调诊断] 断链原因走 stdout 供无人值守矩阵取证。 */
+            XPrintf("XGuiWindowDemo: remote-client disconnected reason=%d\n",
+                    reason);
         }
     }
     /* RS-d 改造: 断开即回「未连接」视图态——控件尺寸复位为视图区宿主
@@ -682,9 +695,15 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     rc_buildLabelAt("\xE6\xA1\xA3\xE4\xBD\x8D", RC_COL_X, 172, 40, &s_rc.m_capProfile); /* 档位 */
     s_rc.m_profileCombo = XComboBox_create(s_rc.m_root, 0);
     if (!s_rc.m_profileCombo) return s_rc.m_root;
-    XComboBox_addItem_2(s_rc.m_profileCombo, "performance");
-    XComboBox_addItem_2(s_rc.m_profileCombo, "resource");
-    XComboBox_addItem_2(s_rc.m_profileCombo, "latency");
+    XComboBox_addItem_2(s_rc.m_profileCombo,
+                        "\xE6\x80\xA7\xE8\x83\xBD\xE4\xBC\x98\xE5\x85\x88");
+                        /* 性能优先 */
+    XComboBox_addItem_2(s_rc.m_profileCombo,
+                        "\xE8\xB5\x84\xE6\xBA\x90\xE4\xBC\x98\xE5\x85\x88");
+                        /* 资源优先 */
+    XComboBox_addItem_2(s_rc.m_profileCombo,
+                        "\xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF\x9F");
+                        /* 低延迟 */
     XComboBox_setCurrentIndex(s_rc.m_profileCombo, 0);
     XWidget_setGeometry((XWidget*)s_rc.m_profileCombo, RC_COL_X + 32, 170,
                         124, 24);
@@ -721,8 +740,12 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     rc_buildLabelAt("\xE8\xAE\xA4\xE8\xAF\x81", RC_COL_X, 234, 40, &s_rc.m_capAuth); /* 认证 */
     s_rc.m_authCombo = XComboBox_create(s_rc.m_root, 0);
     if (!s_rc.m_authCombo) return s_rc.m_root;
-    XComboBox_addItem_2(s_rc.m_authCombo, "none");
-    XComboBox_addItem_2(s_rc.m_authCombo, "sha256");
+    XComboBox_addItem_2(s_rc.m_authCombo,
+                        "\xE6\x97\xA0\xE8\xAE\xA4\xE8\xAF\x81");
+                        /* 无认证 */
+    XComboBox_addItem_2(s_rc.m_authCombo,
+                        "SHA256 \xE6\x8C\x91\xE6\x88\x98");
+                        /* SHA256 挑战 */
     XComboBox_setCurrentIndex(s_rc.m_authCombo, 0);
     XWidget_setGeometry((XWidget*)s_rc.m_authCombo, RC_COL_X + 32, 232,
                         124, 24);

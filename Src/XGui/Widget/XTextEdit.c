@@ -24,6 +24,7 @@
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
+#include "XStyle.h" /* setCursorWidth(-1) 的 PM_TextCursorWidth 样式度量。 */
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTEDIT_ON
 
@@ -1972,10 +1973,22 @@ bool XTextEdit_backgroundVisible(const XTextEdit* self)
 { return self ? XPlainTextEdit_backgroundVisible(self->m_editor) : true; }
 void XTextEdit_setCursorWidth(XTextEdit* self, int width)
 {
-    if (!self || width <= 0) return;
-    self->m_cursorWidth = width;
+    int effective;
+    if (!self || width < -1) return;
+    /* 对标 QWidgetTextControl::setCursorWidth（qwidgettextcontrol.cpp:
+     * 2469-2476）：-1 = 样式度量 PM_TextCursorWidth——壳先解析为有效值
+     * 再存储/下发，getter 反映生效宽度而非 -1 哨兵。 */
+    effective = width;
+    if (effective == -1) {
+#if XSTYLE_ON
+        effective = XStyle_pixelMetric(XStyle_defaultStyle(),
+                                       (int)XStylePM_TextCursorWidth, NULL);
+#endif
+        if (effective <= 0) effective = 1;
+    }
+    self->m_cursorWidth = effective;
     /* 对标 Qt：光标宽度随属性即时生效（下发内嵌编辑器渲染）。 */
-    XPlainTextEdit_setCursorWidth(self->m_editor, width);
+    XPlainTextEdit_setCursorWidth(self->m_editor, effective);
 }
 int XTextEdit_cursorWidth(const XTextEdit* self) { return self ? self->m_cursorWidth : 1; }
 /* ==================== 光标几何与查找（对标 QPlainTextEdit 同组 API） ==== */

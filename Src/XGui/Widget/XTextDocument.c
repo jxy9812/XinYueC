@@ -435,13 +435,16 @@ void XTextDocument_clear(XTextDocument* self)
     /* 对标 QTextDocument::clear（d->clear()）：清块内容 + 清标题元信息
      * （title.clear()）+ 清资源表（resources.clear()）+ 清撤销/重做栈
      * （UndoAndRedoStacks）+ modified 复位（私有直置，不发
-     * modificationChanged——Qt 同口径）；随后经 xtd_changed 发射内容变化
-     * 与块数变化信号。 */
+     * modificationChanged——Qt 同口径）；修订计数随 init 复位（Qt
+     * QTextDocumentPrivate::init 的 `revision = -1`，随后初始块插入使
+     * revision 归 0，qtextdocument_p.cpp:162）；随后经 xtd_changed 发射
+     * 内容变化与块数变化信号。 */
     xtd_clearBlocksOnly(self);
     if (self->m_title) XString_assign_utf8(self->m_title, "");
     xtd_clearResources(self);
     xtd_clearUndoRedoArrays(self);
     self->m_modifiedFlag = false;
+    self->m_modified = 0;
     xtd_notifyUndoRedo(self);
     xtd_changedCore(self, false);
 }

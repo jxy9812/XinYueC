@@ -266,6 +266,13 @@ typedef enum XWidgetAttribute
                                                 *   内按下时装饰模块让位树派发——用于贴边
                                                 *   停靠的分割条/把手类控件（未声明的内容
                                                 *   区维持 WM parity 带内接管口径）。 */
+    XWidgetAttribute_FocusOwnerQuiet         = 131, /**< 焦点变化免宿主补 update（非 Qt 对标，
+                                                *   脏区收窄 2026-10-15）：声明本位的焦点
+                                                *   代理宿主，其 paintEvent 不读 HasFocus
+                                                *   态（滚区/条目视图族——焦点视觉由当前
+                                                *   格高亮等子矩形路径自管），焦点迁移时
+                                                *   setFocusReason 的宿主补 update 循环
+                                                *   跳过它，免整件失效进顶层脏区。 */
     XWidgetAttribute_AttributeCount          = 132  /**< 属性计数（保留位上限）。 */
 } XWidgetAttribute;
 

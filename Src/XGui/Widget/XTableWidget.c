@@ -44,6 +44,8 @@ static void xtw_updateContentSize(XTableWidget* self);
 static bool xtw_ensureVHeaders(XTableWidget* self, int count);
 /** @brief 挂载部件表：按 (row,col) 查找条目下标；无则返回 -1。 */
 static int xtw_cwFind(const XTableWidget* self, int row, int col);
+/** @brief 重摆全部挂件（滚动/结构变化后；实现见单元格挂载节）。 */
+static void xtw_cellWidgetRelayout(XTableWidget* self);
 
 /** @brief 确保行指针数组容量（保留现有行内容；成功 true）。 */
 static bool xtw_ensureRows(XTableWidget* self, int rows)
@@ -172,12 +174,6 @@ static void xtw_cwRemoveAt(XTableWidget* self, int i)
     self->m_cellWidgetCount--;
 }
 
-/** @brief 全部解除挂载（部件为借用，仅解除关联不销毁）。 */
-static void xtw_cwClear(XTableWidget* self)
-{
-    if (self) self->m_cellWidgetCount = 0;
-}
-
 /** @brief 行插入后平移挂载表：行号 >= row 的条目行号加一。 */
 static void xtw_cwOnRowInserted(XTableWidget* self, int row)
 {
@@ -197,27 +193,37 @@ static void xtw_cwOnColumnInserted(XTableWidget* self, int column)
             self->m_cellWidgets[i].column++;
 }
 
-/** @brief 行删除后平移挂载表：row 行条目解除，>row 行条目行号减一。 */
+/** @brief 行删除后平移挂载表：row 行挂件解除并 deleteLater（所有权归表），
+ *         >row 行条目行号减一。 */
 static void xtw_cwOnRowRemoved(XTableWidget* self, int row)
 {
     int i;
     if (!self) return;
     for (i = self->m_cellWidgetCount - 1; i >= 0; --i) {
-        if (self->m_cellWidgets[i].row == row) xtw_cwRemoveAt(self, i);
-        else if (self->m_cellWidgets[i].row > row)
+        if (self->m_cellWidgets[i].row == row) {
+            XWidget* old = self->m_cellWidgets[i].widget;
+            xtw_cwRemoveAt(self, i);
+            if (old) XObject_deleteLater((XObject*)old);
+        } else if (self->m_cellWidgets[i].row > row) {
             self->m_cellWidgets[i].row--;
+        }
     }
 }
 
-/** @brief 列删除后平移挂载表：column 列条目解除，>column 列条目列号减一。 */
+/** @brief 列删除后平移挂载表：column 列挂件解除并 deleteLater（同上），
+ *         >column 列条目列号减一。 */
 static void xtw_cwOnColumnRemoved(XTableWidget* self, int column)
 {
     int i;
     if (!self) return;
     for (i = self->m_cellWidgetCount - 1; i >= 0; --i) {
-        if (self->m_cellWidgets[i].column == column) xtw_cwRemoveAt(self, i);
-        else if (self->m_cellWidgets[i].column > column)
+        if (self->m_cellWidgets[i].column == column) {
+            XWidget* old = self->m_cellWidgets[i].widget;
+            xtw_cwRemoveAt(self, i);
+            if (old) XObject_deleteLater((XObject*)old);
+        } else if (self->m_cellWidgets[i].column > column) {
             self->m_cellWidgets[i].column--;
+        }
     }
 }
 
@@ -257,23 +263,48 @@ static void xtw_shiftColumnsLeft(XTableWidget* self, int column)
     }
 }
 
-/** @brief 行数收缩：解除行号 >= keepRows 的挂载条目。 */
+/** @brief 行数收缩：行号 >= keepRows 的挂件解除并 deleteLater（所有权归表，
+ *         对标 Qt 模型行删除时 releaseEditor）。 */
 static void xtw_cwTruncateRows(XTableWidget* self, int keepRows)
 {
     int i;
     if (!self) return;
-    for (i = self->m_cellWidgetCount - 1; i >= 0; --i)
-        if (self->m_cellWidgets[i].row >= keepRows) xtw_cwRemoveAt(self, i);
+    for (i = self->m_cellWidgetCount - 1; i >= 0; --i) {
+        if (self->m_cellWidgets[i].row < keepRows) continue;
+        {
+            XWidget* old = self->m_cellWidgets[i].widget;
+            xtw_cwRemoveAt(self, i);
+            if (old) XObject_deleteLater((XObject*)old);
+        }
+    }
 }
 
-/** @brief 列数收缩：解除列号 >= keepColumns 的挂载条目。 */
+/** @brief 列数收缩：列号 >= keepColumns 的挂件解除并 deleteLater（同上）。 */
 static void xtw_cwTruncateColumns(XTableWidget* self, int keepColumns)
 {
     int i;
     if (!self) return;
-    for (i = self->m_cellWidgetCount - 1; i >= 0; --i)
-        if (self->m_cellWidgets[i].column >= keepColumns)
+    for (i = self->m_cellWidgetCount - 1; i >= 0; --i) {
+        if (self->m_cellWidgets[i].column < keepColumns) continue;
+        {
+            XWidget* old = self->m_cellWidgets[i].widget;
             xtw_cwRemoveAt(self, i);
+            if (old) XObject_deleteLater((XObject*)old);
+        }
+    }
+}
+
+/** @brief 全部挂件解除并 deleteLater（clear/clearContents 模型 reset 路径，
+ *         对标 Qt QAbstractItemView::reset 的逐编辑器 releaseEditor）。 */
+static void xtw_cwReleaseAll(XTableWidget* self)
+{
+    int i;
+    if (!self) return;
+    for (i = self->m_cellWidgetCount - 1; i >= 0; --i) {
+        XWidget* old = self->m_cellWidgets[i].widget;
+        xtw_cwRemoveAt(self, i);
+        if (old) XObject_deleteLater((XObject*)old);
+    }
 }
 
 /** @brief 发射 (int,int) 双整型信号（cellClicked/currentCellChanged）。 */
@@ -468,6 +499,9 @@ void XTableWidget_setRowCount(XTableWidget* self, int rows)
     self->m_rows = rows;
     if (self->m_base.m_base.m_currentRow >= rows) self->m_base.m_base.m_currentRow = rows - 1;
     xtw_updateContentSize(self);
+    /* 行数变化改变内容高/滚动范围：挂件随视口重摆（滚入恢复显示、
+       滚出藏起），与 scrollContentsBy 同一口径。 */
+    xtw_cellWidgetRelayout(self);
     XWidget_update((XWidget*)self);
     /* 内建模型维度同步（根因：setColumnCount/insertRow/removeRow 等
        均同步模型，唯本函数漏发——先 setColumnCount 后 setRowCount 的
@@ -567,6 +601,7 @@ void XTableWidget_removeRow(XTableWidget* self, int row)
     self->m_rows--;
     xtw_cwOnRowRemoved(self, row); /* 挂载表随行号平移/解除。 */
     xtw_updateContentSize(self);
+    xtw_cellWidgetRelayout(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -580,6 +615,7 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
     xtw_shiftColumnsLeft(self, column); /* 释放被删列文本并左移补位（对标 Qt）。 */
     xtw_cwOnColumnRemoved(self, column); /* 挂载表随列号平移/解除。 */
     xtw_updateContentSize(self);
+    xtw_cellWidgetRelayout(self);
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, self->m_rows,
@@ -588,14 +624,42 @@ void XTableWidget_removeColumn(XTableWidget* self, int column)
 
 /* ==================== 单元格 ==================== */
 
+/** @brief 单格矩形失效：几何与 paintEvent 的格子映射同式（列 x=行号
+ *  列宽+前列累计-横滚偏移、行 y=表头带+行累计-竖滚偏移）。paintEvent
+ *  本就按脏矩形裁剪绘制与可视行遍历，此处收窄失效面即可让轮询逐格
+ *  改值等高频路径不再整表重绘。 */
+static void xtw_updateCell(const XTableWidget* self, int row, int column)
+{
+    XRect cell;
+    if (!self || row < 0 || column < 0 || column >= self->m_columns)
+        return;
+    XRect_init(&cell,
+               xtw_colX(self, column) - xtw_hOffset(self),
+               self->m_headerHeight
+                   + row * (int)self->m_base.m_rowHeight
+                   - xtw_vOffset(self),
+               self->m_base.m_colWidths[column],
+               (int)self->m_base.m_rowHeight);
+    XWidget_updateRect((XWidget*)self, &cell);
+}
+
 void XTableWidget_setItem(XTableWidget* self, int row, int column,
                           const XTableWidgetItem* item)
 {
     XTableWidgetItem* cell = xtw_cell(self, row, column);
-    if (!cell || !item) return;
+    if (!cell) return;
+    /* 对标 Qt setItem(item=NULL)=takeItem+delete：NULL 清空该格内容。
+       重复同内容幂等由调用方语义承担（Qt 同名 item 直接 return 对应
+       本体系的值拷贝模型）。 */
     if (cell->text) {
         XClassDelete((XClass*)cell->text);
         cell->text = NULL;
+    }
+    if (!item) {
+        xtw_updateCell(self, row, column);
+        if (self->m_model)
+            XAbstractItemModel_setData(self->m_model, row, column, NULL);
+        return;
     }
     if (item->text)
         cell->text = XString_create_copy(item->text);
@@ -603,7 +667,7 @@ void XTableWidget_setItem(XTableWidget* self, int row, int column,
     cell->foreground = item->foreground;
     cell->background = item->background;
     cell->checkState = item->checkState;
-    XWidget_update((XWidget*)self);
+    xtw_updateCell(self, row, column);
     if (self->m_model)
         XAbstractItemModel_setData(self->m_model, row, column, item->text);
 }
@@ -672,7 +736,21 @@ void XTableWidget_setCurrentCell(XTableWidget* self, int row, int column)
         xtw_emit0(self,
             (size_t)XTableWidget_itemSelectionChanged_signal);
     }
-    XWidget_update((XWidget*)self);
+    /* 单格失效（脏区收窄 2026-10-15）：当前格/选区高亮只影响新旧两格
+       矩形，此前整表 update 在真机大表（视口带 ~380KB RGB565）上把
+       每次点击拖成整带重绘+差带提交（触摸阵发 sys 大头之一）。矩形在
+       scrollToItem 之后取——滚出视口的格 visualRect 为空即跳过；行号
+       列/表头带不含当前格态，无需并入。 */
+    {
+        XRect rect = XTableWidget_visualItemRect(self,
+            xtw_cell(self, prevR, prevC));
+        if (!XRect_isEmpty(&rect))
+            XWidget_updateRect((XWidget*)self, &rect);
+        rect = XTableWidget_visualItemRect(self,
+            xtw_cell(self, row, column));
+        if (!XRect_isEmpty(&rect))
+            XWidget_updateRect((XWidget*)self, &rect);
+    }
 }
 
 int XTableWidget_currentRow(const XTableWidget* self) { return self ? self->m_base.m_base.m_currentRow : -1; }
@@ -694,29 +772,97 @@ void XTableWidget_setCurrentItem(XTableWidget* self, int row, int column)
     XTableWidget_setCurrentCell(self, row, column);
 }
 
-/* ==================== 单元格部件挂载（借用语义） ==================== */
+/* ==================== 单元格部件挂载（对标 setCellWidget：表接管摆位） ==================== */
+
+/** @brief 摆放挂件到 (row,col) 单元格可视矩形（viewport 局部坐标）。
+ *  @details 对标 Qt setIndexWidget 的 widget->setGeometry(visualRect)：
+ *           visualItemRect 返回表格局部坐标；viewport 在表格内自 (0,0)
+ *           起（xasa_layout 恒定），表格局部坐标即 viewport 局部坐标。
+ *           行/列超界或格滚出视口时不摆并隐藏（滚动路径统一重摆）。 */
+static void xtw_cellWidgetPlace(XTableWidget* self, int row, int column)
+{
+    XWidget* viewport;
+    XWidget* widget;
+    XRect rect;
+    int vh;
+    if (!self || row < 0 || row >= self->m_rows ||
+        column < 0 || column >= self->m_columns) return;
+    widget = (XWidget*)XTableWidget_cellWidget(self, row, column);
+    if (!widget) return;
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
+    if (!viewport) return;
+    vh = XWidget_height(viewport);
+    rect = XTableWidget_visualItemRect(self, xtw_cell(self, row, column));
+    /* 顶入表头带或底越视口：藏起（同 xtw_cellWidgetRelayout 口径）。 */
+    if (rect.width <= 0 || rect.height <= 0 ||
+        rect.y < self->m_headerHeight || rect.y >= vh) {
+        XWidget_setVisible(widget, false);
+        return;
+    }
+    XWidget_setGeometryRect(widget, &rect);
+    XWidget_setVisible(widget, true);
+}
+
+/** @brief 重摆全部挂件（滚动/结构变化后调用；不可见格隐藏，可摆的摆位）。 */
+static void xtw_cellWidgetRelayout(XTableWidget* self)
+{
+    XWidget* viewport;
+    int vh;
+    int i;
+    if (!self) return;
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
+    if (!viewport) return;
+    vh = XWidget_height(viewport);
+    for (i = 0; i < self->m_cellWidgetCount; ++i) {
+        int row = self->m_cellWidgets[i].row;
+        int col = self->m_cellWidgets[i].column;
+        XWidget* widget = self->m_cellWidgets[i].widget;
+        XRect rect;
+        if (!widget) continue;
+        if (row < 0 || row >= self->m_rows ||
+            col < 0 || col >= self->m_columns) {
+            XWidget_setVisible(widget, false); /* 越界挂件藏起。 */
+            continue;
+        }
+        rect = XTableWidget_visualItemRect(self, xtw_cell(self, row, col));
+        /* 顶入表头带（含整行滚出上缘）或底越视口：藏起。Qt 由视口
+           裁剪（视口不含表头）；本框架视口覆盖表头带，重叠即改藏，
+           视觉等价且防挂件盖住表头文字。 */
+        if (rect.width <= 0 || rect.height <= 0 ||
+            rect.y < self->m_headerHeight || rect.y >= vh) {
+            XWidget_setVisible(widget, false);
+            continue;
+        }
+        XWidget_setGeometryRect(widget, &rect);
+        XWidget_setVisible(widget, true);
+    }
+}
 
 void XTableWidget_setCellWidget(XTableWidget* self, int row, int column,
                                 XWidget* widget)
 {
-    int idx;
+    XWidget* viewport;
+    XWidget* old;
     if (!self || !xtw_cell(self, row, column)) return;
-    idx = xtw_cwFind(self, row, column);
-    if (!widget) {
-        /* NULL 等价 removeCellWidget。 */
-        if (idx >= 0) xtw_cwRemoveAt(self, idx);
-        return;
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)self);
+    if (!viewport) return;
+    old = (XWidget*)XTableWidget_cellWidget(self, row, column);
+    if (old == widget) return; /* 同指针幂等（Qt 同）。 */
+    if (old) {
+        /* 对标 Qt：同格重挂时旧件 deleteLater（挂件生命周期归表）。 */
+        xtw_cwRemoveAt(self, xtw_cwFind(self, row, column));
+        XObject_deleteLater((XObject*)old);
     }
-    if (idx >= 0) {
-        /* 重复挂载覆盖旧指针（旧部件仅解除关联，不被删除）。 */
-        self->m_cellWidgets[idx].widget = widget;
-        return;
-    }
+    if (!widget) return; /* NULL 等价 removeCellWidget。 */
     if (!xtw_cwReserve(self, self->m_cellWidgetCount + 1)) return;
     self->m_cellWidgets[self->m_cellWidgetCount].row = row;
     self->m_cellWidgets[self->m_cellWidgetCount].column = column;
     self->m_cellWidgets[self->m_cellWidgetCount].widget = widget;
     self->m_cellWidgetCount++;
+    /* 对标 Qt setIndexWidget：接管所有权（reparent 到视口）+摆位+显示。 */
+    XWidget_setParent(widget, viewport, 0);
+    xtw_cellWidgetPlace(self, row, column);
+    XWidget_setVisible(widget, true);
 }
 
 XWidget* XTableWidget_cellWidget(const XTableWidget* self, int row, int column)
@@ -728,9 +874,13 @@ XWidget* XTableWidget_cellWidget(const XTableWidget* self, int row, int column)
 void XTableWidget_removeCellWidget(XTableWidget* self, int row, int column)
 {
     int idx;
+    XWidget* old;
     if (!self) return;
     idx = xtw_cwFind(self, row, column);
-    if (idx >= 0) xtw_cwRemoveAt(self, idx);
+    if (idx < 0) return;
+    old = self->m_cellWidgets[idx].widget;
+    xtw_cwRemoveAt(self, idx);
+    if (old) XObject_deleteLater((XObject*)old); /* 所有权归表（Qt 同）。 */
 }
 
 /* ==================== 表头 ==================== */
@@ -876,6 +1026,43 @@ void XTableWidget_sortItems(XTableWidget* self, int column, int order)
     XWidget_update((XWidget*)self);
 }
 
+void XTableWidget_setSortingEnabled(XTableWidget* self, bool enable)
+{
+    /* 对齐 Qt QTableWidget::setSortingEnabled=继承 QTableView 同名。 */
+    XTableView_setSortingEnabled(&self->m_base, enable);
+}
+
+bool XTableWidget_isSortingEnabled(const XTableWidget* self)
+{
+    return self ? XTableView_isSortingEnabled(&self->m_base) : false;
+}
+
+void XTableWidget_openPersistentEditor(XTableWidget* self,
+                                       int row, int column)
+{
+    /* 对齐 Qt openPersistentEditor(item)→openPersistentEditor(index)。 */
+    if (!self || row < 0 || column < 0) return;
+    XAbstractItemView_openPersistentEditor(&self->m_base.m_base,
+                                           row, column);
+}
+
+void XTableWidget_closePersistentEditor(XTableWidget* self,
+                                        int row, int column)
+{
+    if (!self || row < 0 || column < 0) return;
+    XAbstractItemView_closePersistentEditor(&self->m_base.m_base,
+                                            row, column);
+}
+
+bool XTableWidget_isPersistentEditorOpen(const XTableWidget* self,
+                                         int row, int column)
+{
+    /* 对齐 Qt isPersistentEditorOpen(item)→isPersistentEditorOpen(index)。 */
+    if (!self || row < 0 || column < 0) return false;
+    return XAbstractItemView_isPersistentEditorOpen(&self->m_base.m_base,
+                                                    row, column);
+}
+
 void XTableWidget_clear(XTableWidget* self)
 {
     int i;
@@ -923,7 +1110,7 @@ void XTableWidget_clear(XTableWidget* self)
     self->m_base.m_base.m_currentColumn = -1;
     self->m_selectionRow = -1;      /* 选区跟踪一并复位。 */
     self->m_selectionColumn = -1;
-    xtw_cwClear(self);              /* 挂载条目全部解除（借用部件不销毁）。 */
+    xtw_cwReleaseAll(self);         /* 挂件所有权归表：全部解除并 deleteLater（Qt 同）。 */
     XWidget_update((XWidget*)self);
     if (self->m_model)
         XAbstractItemModel_setDimension(self->m_model, 0, 0);
@@ -933,6 +1120,9 @@ void XTableWidget_clearContents(XTableWidget* self)
 {
     int i;
     if (!self) return;
+    /* 挂件所有权归表：clearContents 触发模型 reset，对标 Qt reset()
+       逐编辑器 releaseEditor（deleteLater），后再清单元格文本。 */
+    xtw_cwReleaseAll(self);
     for (i = 0; i < self->m_rows; ++i) {
         int k;
         if (!self->m_cells[i]) continue;
@@ -956,6 +1146,12 @@ void XTableWidget_clearContents(XTableWidget* self)
             for (c = 0; c < self->m_columns; ++c)
                 XAbstractItemModel_setData(self->m_model, r, c, NULL);
     }
+    /* 对标 Qt clearContents 的 selectionModel()->clear()：per-cell 选中
+       标记已随单元格清零，当前格/选区跟踪一并复位（维度保持不变）。 */
+    self->m_base.m_base.m_currentRow = -1;
+    self->m_base.m_base.m_currentColumn = -1;
+    self->m_selectionRow = -1;
+    self->m_selectionColumn = -1;
 }
 
 void XTableWidget_scrollToItem(XTableWidget* self, int row, int column)
@@ -1199,16 +1395,22 @@ int XTableWidget_indexFromItem(const XTableWidget* self,
 
 /* ==================== 索引反查/编辑（对标 row/column/editItem/itemFromIndex/items） ==================== */
 
-int XTableWidget_column(const XTableWidget* self, int column)
+int XTableWidget_column(const XTableWidget* self,
+                        const XTableWidgetItem* item)
 {
-    if (!self || column < 0 || column >= self->m_columns) return -1;
-    return column; /* 恒等映射：索引即坐标（见头文件 @note）。 */
+    int col;
+    /* 对标 Qt column(item)=index(item).column()：按内嵌地址查表反查。 */
+    if (!self || !item) return -1;
+    XTableWidget_indexFromItem(self, item, &col);
+    return col;
 }
 
-int XTableWidget_row(const XTableWidget* self, int row)
+int XTableWidget_row(const XTableWidget* self,
+                     const XTableWidgetItem* item)
 {
-    if (!self || row < 0 || row >= self->m_rows) return -1;
-    return row; /* 恒等映射：索引即坐标（见头文件 @note）。 */
+    /* 对标 Qt row(item)=index(item).row()。 */
+    if (!self || !item) return -1;
+    return XTableWidget_indexFromItem(self, item, NULL);
 }
 
 void XTableWidget_editItem(XTableWidget* self, int row, int column)
@@ -1616,7 +1818,11 @@ static void VX_tableWidget_scrollContentsBy(XAbstractScrollArea* self,
                                             int dx, int dy)
 {
     (void)dx; (void)dy;
-    if (self) XWidget_update((XWidget*)self);
+    if (!self) return;
+    /* 滚动后重摆挂件（对标 Qt updateGeometries 的 editor 联动）：
+       滚出视口的藏起，滚入的摆位显示。 */
+    xtw_cellWidgetRelayout((XTableWidget*)self);
+    XWidget_update((XWidget*)self);
 }
 
 /** @brief 坐标 → 单元格（返回行列；表头/越界返回 -1）。 */
@@ -1708,9 +1914,14 @@ static void VX_tableWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
         XEVENT_TYPE_MOUSE_BUTTON_DBL_CLICK) return;
     xtw_cellAt(tw, XMouseEvent_position(me).x, XMouseEvent_position(me).y,
                &row, &col);
-    if (row >= 0 && col >= 0)
+    if (row >= 0 && col >= 0) {
+        /* 对标 Qt mouseDoubleClickEvent：先基类 doubleClicked(row,col)
+           再 QTableWidget 层 cellDoubleClicked/itemDoubleClicked。 */
+        XAbstractItemView_doubleClicked_signal(&tw->m_base.m_base,
+                                               row, col);
         xtw_emitCellSignal(tw,
             (size_t)XTableWidget_cellDoubleClicked_signal, row, col);
+    }
     XEvent_accept(event);
 }
 
@@ -1738,6 +1949,24 @@ static void VX_tableWidget_keyPressEvent(XWidget* self, XEvent* event)
     case XKey_Down:  row = row < tw->m_rows - 1 ? row + 1 : row; break;
     case XKey_Left:  col = col > 0 ? col - 1 : 0; break;
     case XKey_Right: col = col < tw->m_columns - 1 ? col + 1 : col; break;
+    case XKey_Return:
+    case XKey_Enter:
+        /* 对标 QAbstractItemView::keyPressEvent：Return/Enter 在有效
+           当前格上触发 activated（itemActivated/cellActivated 此前
+           全库零发射）。无当前格或越界忽略（Qt 同：invalid index
+           不发）。 */
+        row = tw->m_base.m_base.m_currentRow;
+        col = tw->m_base.m_base.m_currentColumn;
+        if (row >= 0 && col >= 0 && row < tw->m_rows &&
+            col < tw->m_columns && xtw_cell(tw, row, col)) {
+            xtw_emitItemSignal(tw,
+                (size_t)XTableWidget_itemActivated_signal,
+                xtw_cell(tw, row, col));
+            xtw_emitCellSignal(tw,
+                (size_t)XTableWidget_cellActivated_signal, row, col);
+        }
+        XEvent_accept(event);
+        return;
     default: return;
     }
     XTableWidget_setCurrentCell(tw, row, col);

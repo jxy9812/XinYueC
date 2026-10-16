@@ -374,8 +374,12 @@ typedef struct XGuiRemoteFrameReader {
                                   feed 返回 >0 后有效; 原值来自线上帧头
                                   单字节 head[4], 0..255 原样往返, 收窄)。 */
     uint8_t  headerBuf[XGUI_REMOTE_FRAME_HEADER_BYTES]; /**< 帧头攒字节缓冲。 */
-    int8_t   headerGot;      /**< 已攒帧头字节数(0..5; -1=粘性协议错误
-                                  哨兵, 必须有符号)。 */
+    int      headerGot;      /**< 队头消费游标(攒帧头期 0..5; 帧交付后
+                                  =已消费总长 5+payloadLen, 直至下圈压实
+                                  归零——MB 级可达, 禁收窄 int8_t!
+                                  [2026-10-12 根修] c9bcb93c 瘦身误收窄,
+                                  大帧溢出为负命中 -1 粘性协议错误哨兵,
+                                  客户端 2s 断链循环; -1=粘性协议错误)。 */
 } XGuiRemoteFrameReader;
 
 /** @brief 初始化帧读取器(零分配; 首帧到来时才按需分配负载缓冲)。 */

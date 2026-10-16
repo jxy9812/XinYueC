@@ -874,6 +874,10 @@ void XTestMenu_XModbusTest(XTestMenu* root)
         XAction* action = XTestMenu_addAction(menu, "公共 API 回归测试");
         XTestMenu_setActionFunction(action, XModbusPublicApiTest);
     }
+    {
+        XAction* action = XTestMenu_addAction(menu, "服务端 FC 全量覆盖测试（含远程 IO 掉线回归锁）");
+        XTestMenu_setActionFunction(action, XModbusServerCoverageTest);
+    }
     XTestMenu_addMenu(root, menu);
     {
         XAction* action = XTestMenu_addAction(menu, "RtuSerialClient测试");

@@ -401,7 +401,7 @@ typedef struct DemoWin
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[17]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码演示、页 16=软件更新，2026-10-11 双页并入扩列 17）。 */
+    XPushButton     m_pageNav[19]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码、页 16=软件更新、页 17/18=Modbus 主站/从站，2026-10-13 扩列 19）。 */
 #endif
 #if XBUTTONGROUP_ON
     XButtonGroup    m_navGroup;    /**< 页面钮互斥组：当前页按钮保持选中高亮（主题 :checked 态）。 */
@@ -434,7 +434,7 @@ typedef struct DemoWin
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
     XWidget         m_pageTabs;    /**< 页面 4：容器与窗口演示容器。 */
     XWidget         m_pageChart;   /**< 页面 12：图表演示容器（自选项卡页打散独立）。 */
-    XWidget*        m_extPages[12]; /**< 页面 5~16：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构）。 */
+    XWidget*        m_extPages[14]; /**< 页面 5~18：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构；下标 12/13=Modbus 主站/从站页 2026-10-13 双页拆分）。 */
 #endif
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
@@ -1315,7 +1315,7 @@ static const char* demo_page_name(int index);
  *          =页 12（图表演示，内置页无 autotest 契约）恒 NULL 跳过。 */
 static void demo_ext_pages_autotest(DemoWin* demo)
 {
-    int (*const kTests[12])(XWidget*) = {
+    int (*const kTests[14])(XWidget*) = {
         demo_page_views_autotest, demo_page_dialogs_autotest,
         demo_page_advanced_autotest, demo_page_effects_autotest,
         demo_page_keyboard_autotest, demo_page_remote_server_autotest,
@@ -1324,11 +1324,13 @@ static void demo_ext_pages_autotest(DemoWin* demo)
         demo_page_network_autotest, /* 2026-10-06 网络设置页。 */
         demo_page_overlay_settings_autotest, /* 2026-10-06 悬浮窗设置页。 */
         demo_page_qrcode_autotest, /* 2026-10-08 二维码演示页。 */
-        demo_page_update_autotest /* 2026-10-07 软件更新页。 */
+        demo_page_update_autotest, /* 2026-10-07 软件更新页。 */
+        demo_page_modbus_master_autotest, /* 2026-10-13 Modbus 主站页。 */
+        demo_page_modbus_slave_autotest /* 2026-10-13 Modbus 从站页。 */
     };
     int total = 0;
     int exti;
-    for (exti = 0; exti < 12; ++exti) {
+    for (exti = 0; exti < 14; ++exti) {
         int failures;
         if (!demo->m_extPages[exti] || !kTests[exti])
             continue; /* 页面模块被裁剪/无契约，跳过 */
@@ -1627,7 +1629,7 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[17] = {
+    static const char* const kNames[19] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
@@ -1644,9 +1646,11 @@ static const char* demo_page_name(int index)
         "\xE7\xBD\x91\xE7\xBB\x9C\xE8\xAE\xBE\xE7\xBD\xAE",  /* 网络设置(2026-10-06 系统设置) */
         "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE\xE7\xBD\xAE", /* 悬浮窗设置(2026-10-06 系统设置) */
         "\xE4\xBA\x8C\xE7\xBB\xB4\xE7\xA0\x81\xE6\xBC\x94\xE7\xA4\xBA",  /* 二维码演示(2026-10-08 控件类) */
-        "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0" /* 软件更新(2026-10-07 系统设置) */
+        "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0", /* 软件更新(2026-10-07 系统设置) */
+        "Modbus \xE4\xB8\xBB\xE7\xAB\x99", /* Modbus 主站(2026-10-13) */
+        "Modbus \xE4\xBB\x8E\xE7\xAB\x99" /* Modbus 从站(2026-10-13) */
     };
-    if (index < 0 || index > 16)
+    if (index < 0 || index > 18)
         return kNames[0];
     return kNames[index];
 }
@@ -1665,7 +1669,7 @@ static const char* demo_page_name(int index)
 #define DEMO_NAV_TB_MAX  320   /**< 上下停靠面板高上限（换行页面钮自动抬高至此）。 */
 #define DEMO_NAV_STRIP_W 8     /**< 收起贴边分割条细条厚。 */
 #define DEMO_NAV_CAT_N   3     /**< 一级分类数（=kNavGroups 项数）。 */
-#define DEMO_NAV_PAGE_N  17    /**< 页面数。 */
+#define DEMO_NAV_PAGE_N  19    /**< 页面数（2026-10-13 +Modbus 主站/从站页 17/18）。 */
 #define DEMO_NAV_HEAD_N  5     /**< 单分类最多子分组标题数（标签池容量）。 */
 #define DEMO_NAV_PAGE_H    24  /**< 页面钮高（竖版）。 */
 #define DEMO_NAV_PAGE_PITCH 26 /**< 页面钮行距（竖版）。 */
@@ -1708,7 +1712,9 @@ static const DemoNavItem kNavSystemItems[] = {
 /** @brief 远程类条目。 */
 static const DemoNavItem kNavRemoteItems[] = {
     { "\xE8\xBF\x9C\xE7\xA8\x8B\xE7\xAA\x97\xE5\x8F\xA3", 10 },             /* 远程窗口 */
-    { "\xE8\xBF\x9C\xE7\xA8\x8B\xE5\xAE\xA2\xE6\x88\xB7\xE7\xAB\xAF", 11 }  /* 远程客户端 */
+    { "\xE8\xBF\x9C\xE7\xA8\x8B\xE5\xAE\xA2\xE6\x88\xB7\xE7\xAB\xAF", 11 }, /* 远程客户端 */
+    { "Modbus \xE4\xB8\xBB\xE7\xAB\x99", 17 },  /* Modbus 主站(2026-10-13) */
+    { "Modbus \xE4\xBB\x8E\xE7\xAB\x99", 18 }   /* Modbus 从站(2026-10-13) */
 };
 
 /** @brief 一级分类表（手风琴数据源；条目内 page=-1 为子分组标题）。 */
@@ -2135,7 +2141,12 @@ static void demo_layout_content(DemoWin* self)
     int top;
     int left = 12;
     int right = 12;
-    int bottom = 28;
+    /* [根修 2026-10-15] 底边距 28→26（=状态栏高度）：原 28 使内容区底边
+     * (height-28=572) 与状态栏上沿(574) 之间留 2px 死带——页面内容
+     * （如 Modbus 页写/值行）滚动位 0 时底部 2px 探入死带，滚动后该带
+     * 内像素位于所有控件矩形之外永不再重绘=永久碎片（昆仑通态实测
+     * 放大取证）。对齐后内容区底边与状态栏上沿严丝合缝。 */
+    int bottom = 26;
     int contentWidth;
     int contentHeight;
     if (!self) return;
@@ -2346,6 +2357,12 @@ static void demo_layout_content(DemoWin* self)
         demo_page_qrcode_adapt(self->m_extPages[10]); /* 2026-10-08 二维码页。 */
     if (self->m_extPages[11])
         demo_page_update_adapt(self->m_extPages[11]); /* 2026-10-07 软件更新页。 */
+    XPrintf("XGuiWindowDemo: layout ext12=%p ext13=%p\n",
+            (void*)self->m_extPages[12], (void*)self->m_extPages[13]);
+    if (self->m_extPages[12])
+        demo_page_modbus_master_adapt(self->m_extPages[12]); /* 2026-10-14 Modbus 主站页滚动承载。 */
+    if (self->m_extPages[13])
+        demo_page_modbus_slave_adapt(self->m_extPages[13]); /* 2026-10-14 Modbus 从站页。 */
     /* 远程服务器页（2026-10-06 补入统一漏斗）：此前只在 resizeEvent
      * 单独调用，切页路径漏跑——XStackedLayout StackOne 只给当前页
      * 分配几何，resize 落在别的页时本页根保持陈旧尺寸，adapt 算出
@@ -2379,7 +2396,7 @@ static void demo_switchPage(DemoWin* self, int index)
     }
 #endif
     if (index < 0) index = 0;
-    if (index > 16) index = 16; /* 2026-10-11: 页 15(二维码)/页 16(软件更新) 双页入列。 */
+    if (index > 18) index = 18; /* 2026-10-13 页 17/18=Modbus 主站/从站双页入列。 */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 导航面板手风琴随页展开所在分类（程序化切页 --page/autotest 与
@@ -2644,6 +2661,18 @@ static void demo_nav16Slot(XObject* receiver, XVarList* args)
 {
     (void)args;
     demo_switchPage((DemoWin*)receiver, 16);
+}
+
+static void demo_nav17Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 17);
+}
+
+static void demo_nav18Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 18);
 }
 
 /** @brief 扩展页状态回调：转发到主窗状态栏（xgui_demo_pages.h 契约适配）。 */
@@ -3227,16 +3256,14 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
         XGuiDemo_debugLog(dbg);
     }
 #endif
-    /* 交互按下即整帧重绘：子控件形态对话框（消息框/进度条等覆盖层）
-       局部脏区重绘在其内部布局微移后会留下旧帧残影（实测消息框点击
-       后图标/文字双影，两份内容纵向错位 ~45px）。按下频率低，整帧
-       成本可接受；随后 paintTree 全量重画覆盖层新帧，旧帧残影清除。 */
-    {
-        XRect fullDirty;
-        XRect_init(&fullDirty, 0, 0,
-                   XWidget_width(&demo->m_base), XWidget_height(&demo->m_base));
-        XWidget_updateRect(&demo->m_base, &fullDirty);
-    }
+    /* 【按压整帧重绘已拆除（脏区架构战役 2026-10-15）】原「交互按下即
+       整帧重绘」是子件形态对话框布局微移残影的粗放兜底：任意一次按压
+       （含触屏点按空白区）都把整窗拖成全窗重绘+提交，真机 RGB565
+       1024x600 上=1.2MB/帧 memcpy+cacheflush，触摸阵发 sys 100% 的
+       直接元凶。残影根因框架已收口——XWidget_recomputeGeometry 对
+       move/resize 的旧+新矩形双失效（生效可见门控），show/hide 走
+       setVisible 双向 update；按压局部脏区已足够消除双影（消息框/
+       进度条覆盖层 Xvfb 目验回归）。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
     {
         XPoint position = XMouseEvent_position(mouse);
@@ -3458,13 +3485,13 @@ static DemoWin* DemoWin_create(void)
      * 下标 7=页 12（图表演示，内置页）恒 NULL 占位。 ---- */
     {
         int exti;
-        XWidget* (*const kExtBuilders[12])(XWidget*, DemoPageStatusFn, void*) = {
+        XWidget* (*const kExtBuilders[14])(XWidget*, DemoPageStatusFn, void*) = {
 #if XINYUE_EMBEDDED
             /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
              * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
              * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
             NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-            NULL, NULL
+            NULL, NULL, NULL, NULL
 #else
             demo_page_views_build, demo_page_dialogs_build,
             demo_page_advanced_build, demo_page_effects_build,
@@ -3474,10 +3501,12 @@ static DemoWin* DemoWin_create(void)
             demo_page_network_build, /* 2026-10-06 网络设置页（系统设置）。 */
             demo_page_overlay_settings_build, /* 2026-10-06 悬浮窗设置页。 */
             demo_page_qrcode_build, /* 2026-10-08 二维码演示页（控件类）。 */
-            demo_page_update_build /* 2026-10-07 软件更新页（系统设置）。 */
+            demo_page_update_build, /* 2026-10-07 软件更新页（系统设置）。 */
+            demo_page_modbus_master_build, /* 2026-10-13 Modbus 主站页。 */
+            demo_page_modbus_slave_build /* 2026-10-13 Modbus 从站页。 */
 #endif
         };
-        for (exti = 0; exti < 12; ++exti) {
+        for (exti = 0; exti < 14; ++exti) {
 #if XCHARTS_ON
             if (exti == 7) {
                 /* 页 12（图表演示）内置页在此占位入栈：保证「堆叠下标=
@@ -3559,7 +3588,7 @@ static DemoWin* DemoWin_create(void)
                       XConnectionType_Direct);
     XWidget_show(&self->m_navCollapseBtn);
     {
-        static void (*const kNavSlots[17])(XObject*, XVarList*) = {
+        static void (*const kNavSlots[19])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
             demo_nav4Slot, demo_nav5Slot, demo_nav6Slot, demo_nav7Slot,
             demo_nav8Slot, demo_nav9Slot, demo_nav10Slot, demo_nav11Slot,
@@ -3567,7 +3596,9 @@ static DemoWin* DemoWin_create(void)
             demo_nav13Slot, /* 2026-10-06 网络设置入列。 */
             demo_nav14Slot, /* 2026-10-06 悬浮窗设置入列。 */
             demo_nav15Slot, /* 2026-10-08 二维码演示入列。 */
-            demo_nav16Slot  /* 2026-10-07 软件更新入列（2026-10-11 双页并入移至页 16）。 */
+            demo_nav16Slot, /* 2026-10-07 软件更新入列（2026-10-11 双页并入移至页 16）。 */
+            demo_nav17Slot, /* 2026-10-13 Modbus 主站入列。 */
+            demo_nav18Slot  /* 2026-10-13 Modbus 从站入列。 */
         };
         int i;
 #if XBUTTONGROUP_ON

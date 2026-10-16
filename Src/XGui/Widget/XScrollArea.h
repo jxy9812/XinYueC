@@ -61,7 +61,11 @@ XScrollArea* XScrollArea_create_ex(XMemoryType memory, XWidget* parent,
 
 /* ==================== 内容管理（对标 QScrollArea public API） ==================== */
 
-/** @brief 设置内容控件（接管所有权并 reparent 到视口；对标 setWidget）。 */
+/** @brief 设置内容控件（接管所有权并 reparent 到视口；对标 setWidget）。
+ * @details 所有权移交（Qt 同，qscrollarea.cpp:231-252 首行
+ *          `delete d->widget`）：已有内容控件在装入新件前被销毁；
+ *          同指针幂等忽略；widget 为 NULL 时无操作（Qt 同）；滚动
+ *          位置复位归零。 */
 /**
  * @brief      设置内容控件（对标 setWidget）。
  */

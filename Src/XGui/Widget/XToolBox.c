@@ -333,6 +333,13 @@ static void VX_toolBox_mousePressEvent(XWidget* self, XEvent* event)
         XEvent_ignore(event);
         return;
     }
+    /* 对标 Qt：禁用条目的页头按钮 setEnabled(false)（setItemEnabled
+     * 链），点击不发射 clicked 也不切页；程序化 setCurrentIndex 不受此
+     * 限（ setCurrentIndex 无 enabled 拦截）。 */
+    if (!XToolBox_isItemEnabled(box, index)) {
+        XEvent_ignore(event);
+        return;
+    }
     XToolBox_setCurrentIndex(box, index);
     XEvent_accept(event);
 }
@@ -431,6 +438,18 @@ int XToolBox_insertItem(XToolBox* self, int index, XWidget* widget,
     else {
         XWidget_setVisible(widget, false);
         xtb2_layout(self);
+        /* 对标 Qt qtoolbox.cpp:337-344 insertItem：插入位于当前页之前
+         * （index <= 当前控件的新索引）时，按同一控件的新索引重选一次
+         * 并发射 currentChanged；否则 m_currentIndex 数值不变但对应
+         * 另一条目，currentWidget/currentIndex 与可见页脱节。 */
+        {
+            XWidget* current = XToolBox_currentWidget(self);
+            int newIndex = current ? XToolBox_indexOf(self, current) : -1;
+            if (current && newIndex >= 0 && index <= newIndex) {
+                self->m_currentIndex = -1; /* 触发 change（同 Qt 置空 currentPage）。 */
+                XToolBox_setCurrentIndex(self, newIndex);
+            }
+        }
     }
     return actual;
 }
@@ -636,6 +655,34 @@ void XToolBox_setItemEnabled(XToolBox* self, int index, bool enabled)
     if (item && *item) {
         (*item)->enabled = enabled;
         XWidget_update((XWidget*)self);
+        /* 对标 Qt qtoolbox.cpp:544-571 setItemEnabled：禁用当前页时向下
+         * /向上找最近的启用页并切换（伴随 currentChanged）；找不到启用
+         * 页时维持现状（Qt 的 setCurrentIndex(原索引) 被同页早退吸收）。
+         */
+        if (!enabled && index == self->m_currentIndex) {
+            int up = index;
+            int down = index;
+            int count = XToolBox_count(self);
+            int target = -1;
+            while (up > 0 || down < count - 1) {
+                if (down < count - 1) {
+                    ++down;
+                    if (XToolBox_isItemEnabled(self, down)) {
+                        target = down;
+                        break;
+                    }
+                }
+                if (up > 0) {
+                    --up;
+                    if (XToolBox_isItemEnabled(self, up)) {
+                        target = up;
+                        break;
+                    }
+                }
+            }
+            if (target >= 0)
+                XToolBox_setCurrentIndex(self, target);
+        }
     }
 }
 
@@ -674,7 +721,11 @@ void XToolBox_setCurrentIndex(XToolBox* self, int index)
         return;
     if (index == self->m_currentIndex) return;
     item = (XToolBoxItem**)XVector_at_base(self->m_items, index);
-    if (!item || !*item || !(*item)->enabled) return;
+    /* 对标 Qt qtoolbox.cpp:387-403 setCurrentIndex：只拦截越界与同页，
+       不检查条目 enabled（程序化切换允许落在禁用条目上）；点击路径对
+       禁用条目的拦截在 mousePressEvent（对标 Qt 页头按钮
+       setEnabled(false) 后 clicked 不发射）。 */
+    if (!item || !*item) return;
     old = self->m_currentIndex;
     self->m_currentIndex = index;
     if (old >= 0) {

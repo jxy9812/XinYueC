@@ -133,6 +133,18 @@ static void VXErrorMessage_deinit(XErrorMessage* self)
         XClassDelete(self->m_message);
         self->m_message = NULL;
     }
+    if (self->m_currentType) {
+        XClassDelete((XClass*)self->m_currentType);
+        self->m_currentType = NULL;
+    }
+    if (self->m_doNotShow) {
+        XClassDelete((XClass*)self->m_doNotShow);
+        self->m_doNotShow = NULL;
+    }
+    if (self->m_doNotShowType) {
+        XClassDelete((XClass*)self->m_doNotShowType);
+        self->m_doNotShowType = NULL;
+    }
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
@@ -171,6 +183,9 @@ void XErrorMessage_init(XErrorMessage* self, XWidget* parent, XWidgetFlags flags
     Set_Class_IsHeap(self, false);
     self->m_doneShown = true;
     self->m_message = XString_create();
+    self->m_currentType = XString_create();
+    self->m_doNotShow = XStringList_create();
+    self->m_doNotShowType = XStringList_create();
     /* 账本 #5 根修：创建即按内容收口固定尺寸（XWidget_init 的有父分
      * 支预置子控件默认 100x30 曾让横幅只剩 30px 高、100px 宽），显示
      * 时 showEvent 再按真实装饰态重算。 */
@@ -187,17 +202,98 @@ XErrorMessage* XErrorMessage_create_ex(XMemoryType memory, XWidget* parent, XWid
     return self;
 }
 
+/* ==================== "不再显示" 抑制链（对标 QErrorMessagePrivate
+ *                     isMessageToBeShown / doNotShow / doNotShowType） ==== */
+
+/** @brief 抑制表含指定文本（空表安全）。 */
+static bool xerr_contains(const XStringList* list, const char* text)
+{
+    int64_t i;
+    int64_t n;
+    if (!list || !text || !text[0]) return false;
+    n = XStringList_size_base((const XContainer*)list);
+    for (i = 0; i < n; ++i) {
+        const XString* e = (const XString*)
+            XStringList_at_base((const XVector*)list, i);
+        if (e && XString_toUtf8(e) &&
+            XStrcmp(XString_toUtf8(e), text) == 0)
+            return true;
+    }
+    return false;
+}
+
+/** @brief 抑制表追加文本（去重）。 */
+static void xerr_append(XStringList* list, const char* text)
+{
+    XString* copy;
+    if (!list || !text || !text[0]) return;
+    if (xerr_contains(list, text)) return;
+    copy = XString_create_utf8(text);
+    if (!copy) return;
+    XStringList_push_back_move_base((XVector*)list, copy);
+}
+
+/** @brief 该消息是否应显示（对标 QErrorMessagePrivate::
+ *         isMessageToBeShown，qerrormessage.cpp:376-381）：空消息不
+ *         显示；type 空按消息文本维度查 doNotShow，type 非空按类型
+ *         维度查 doNotShowType。 */
+static bool xerr_isMessageToBeShown(const XErrorMessage* self,
+                                    const char* msg, const char* type)
+{
+    if (!self || !msg || !msg[0]) return false;
+    if (type && type[0])
+        return !xerr_contains(self->m_doNotShowType, type);
+    return !xerr_contains(self->m_doNotShow, msg);
+}
+
 void XErrorMessage_showMessage(XErrorMessage* self, const char* msg)
 {
+    XErrorMessage_showMessage_2(self, msg, "");
+}
+
+void XErrorMessage_showMessage_2(XErrorMessage* self, const char* msg,
+                                 const char* type)
+{
     if (!self || !msg) return;
+    /* 对标 QErrorMessage::showMessage(message, type)
+     * （qerrormessage.cpp:389-402）：已抑制的消息不再弹出、不改当前
+     * 态。（Qt 另有 pending 队列承载 qtHandler 的异步日志消息；本库
+     * 无消息处理器设施，直接显示为轻量等价，队列未复刻。） */
+    if (!xerr_isMessageToBeShown(self, msg, type)) return;
     if (!self->m_message) self->m_message = XString_create();
     if (self->m_message)
         XString_assign_utf8(self->m_message, msg ? msg : "");
+    if (!self->m_currentType) self->m_currentType = XString_create();
+    if (self->m_currentType)
+        XString_assign_utf8(self->m_currentType, type ? type : "");
     /* 对标 QMessageBox::setText 末尾 updateSize：文本变化重算固定尺寸
      * （消息文本实测宽参与宽度，见 xerr_updateSize），再显示；显示时
      * showEvent 亦按真实装饰态复算。 */
     xerr_updateSize(self);
     XWidget_show((XWidget*)self);
+}
+
+void XErrorMessage_done(XErrorMessage* self, int result)
+{
+    if (!self) return;
+    /* 对标 QErrorMessage::done（qerrormessage.cpp:283-306）：复选框
+     * 等价位为 false（"不再显示"）时，type 空记消息文本、type 非空记
+     * 类型；随后框架内不再弹出。Qt 收口后清 currentMessage/currentType
+     * 内部态；本库 m_message 兼作横幅显示文本与 currentMessage() 读数，
+     * 保留不清（记录）。 */
+    if (!self->m_doneShown) {
+        const char* type = (self->m_currentType &&
+                            XString_toUtf8(self->m_currentType))
+                               ? XString_toUtf8(self->m_currentType)
+                               : "";
+        if (!type[0] && self->m_message && XString_toUtf8(self->m_message)) {
+            xerr_append(self->m_doNotShow,
+                        XString_toUtf8(self->m_message));
+        } else if (type[0]) {
+            xerr_append(self->m_doNotShowType, type);
+        }
+    }
+    XDialog_done(&self->m_base, result);
 }
 
 const char* XErrorMessage_currentMessage(const XErrorMessage* self)

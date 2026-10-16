@@ -8,7 +8,9 @@
  *               全部由基类提供，本文件不再重复实现；
  *             - 本类只实现 QPushButton 特有部分：
  *               - autoDefault/default/flat 三态与父对话框链自动解析；
- *               - setMenu/menu/showMenu 菜单关联（平台弹层未接入）；
+ *               - setMenu/menu/showMenu 菜单关联：pressed→弹层桥与
+ *                 showMenu 真弹层（对标 qpushbutton.cpp:521-568，菜单
+ *                 收起经 aboutToHide 恢复按钮按下态）；
  *               - sizeHint/minimumSizeHint 与 drawContents 绘制入口；
  *               - 键盘 Return/Enter 在默认或 autoDefault 生效时触发 click，
  *                 Space/Escape 等按键交基类处理；
@@ -22,9 +24,9 @@
  *             - 不依赖任何平台 API；嵌入式由 XPUSHBUTTON_ON 裁剪，且
  *               依赖 XABSTRACTBUTTON_ON（基类裁剪时本类一并裁剪）。
  * @note       近似边界：显式 QButtonGroup 登记未实现；同一父控件的
- *             autoExclusive 互斥已由基类按 Qt 规则处理；样式 bevel、快捷键
- *             与真实平台菜单弹层未实现；菜单关联接口按 Qt 借用语义提供，
- *             showMenu 仅同步按下状态并重绘，不进入阻塞式弹层循环。
+ *             autoExclusive 互斥已由基类按 Qt 规则处理；样式 bevel 与
+ *             快捷键未实现；菜单关联为借用语义，弹层经 XMenu_popup 非
+ *             阻塞弹出（Qt showMenu 文档的阻塞语义由调用方事件循环承担）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XPushButton.h"
@@ -49,6 +51,10 @@
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
 
 /* ==================== 内部工具 ==================== */
+
+/* 菜单桥槽（定义在菜单节；copy/move/deinit 先行引用）。 */
+static void pushbutton_menuHideSlot(XObject* receiver, XVarList* args);
+static void pushbutton_popupPressedSlot(XObject* receiver, XVarList* args);
 
 /** @brief 从控件调色板读取颜色；调色板裁剪时回退黑色。 */
 static uint32_t pushbutton_color(const XPushButton* self,
@@ -235,11 +241,40 @@ static void VXPushButton_move(XPushButton* self, XPushButton* other)
     XClass_Parent(XAbstractButton, EXClass_Move,
                   void(*)(XAbstractButton*, XAbstractButton*))(
                       (XAbstractButton*)self, (XAbstractButton*)other);
+    /* 菜单接线的连接接收者是按钮对象本身，不可随移动换主：先拆双方
+     * 接线，转移指针后按 self 重连（对标 C++ 移动后重挂 lambda 的语义）。
+     */
+    if (self->m_menu) {
+        XObject_disconnect_1((XObject*)self->m_menu,
+                             XSignal(XMenu_aboutToHide_signal),
+                             (XObject*)self, pushbutton_menuHideSlot);
+        XObject_disconnect_1((XObject*)self,
+                             XSignal(XAbstractButton_pressed_signal),
+                             (XObject*)self, pushbutton_popupPressedSlot);
+    }
+    if (other->m_menu) {
+        XObject_disconnect_1((XObject*)other->m_menu,
+                             XSignal(XMenu_aboutToHide_signal),
+                             (XObject*)other, pushbutton_menuHideSlot);
+        XObject_disconnect_1((XObject*)other,
+                             XSignal(XAbstractButton_pressed_signal),
+                             (XObject*)other, pushbutton_popupPressedSlot);
+    }
     self->m_flat = other->m_flat;
     self->m_defaultButton = other->m_defaultButton;
     self->m_autoDefault = other->m_autoDefault;
     self->m_menu = other->m_menu;
     other->m_menu = NULL;
+    if (self->m_menu) {
+        XObject_connect_1((XObject*)self->m_menu,
+                          XSignal(XMenu_aboutToHide_signal),
+                          (XObject*)self, pushbutton_menuHideSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)self,
+                          XSignal(XAbstractButton_pressed_signal),
+                          (XObject*)self, pushbutton_popupPressedSlot,
+                          XConnectionType_Direct);
+    }
     other->m_flat = false;
     other->m_defaultButton = false;
     other->m_autoDefault = XPushButtonAutoDefault_Auto;
@@ -248,6 +283,14 @@ static void VXPushButton_move(XPushButton* self, XPushButton* other)
 static void VXPushButton_deinit(XPushButton* self)
 {
     if (!self) return;
+    if (self->m_menu) {
+        XObject_disconnect_1((XObject*)self->m_menu,
+                             XSignal(XMenu_aboutToHide_signal),
+                             (XObject*)self, pushbutton_menuHideSlot);
+        XObject_disconnect_1((XObject*)self,
+                             XSignal(XAbstractButton_pressed_signal),
+                             (XObject*)self, pushbutton_popupPressedSlot);
+    }
     self->m_menu = NULL;
     XClass_Deinit_Parent(XAbstractButton, (XAbstractButton*)self);
 }
@@ -367,10 +410,59 @@ void XPushButton_setFlat(XPushButton* self, bool flat)
 
 /* ==================== 菜单（对标 QPushButton setMenu/menu/showMenu） ==================== */
 
+/* 菜单收起槽：对标 QPushButtonPrivate::popupPressed 内 aboutToHide→
+ * setDown(false) 恢复（SingleShotConnection 语义由先断后连等价承担）。 */
+static void pushbutton_menuHideSlot(XObject* receiver, XVarList* args)
+{
+    XPushButton* self = (XPushButton*)receiver;
+
+    (void)args;
+    if (self)
+        XAbstractButton_setDown((XAbstractButton*)self, false);
+}
+
+/* pressed→弹层桥（对标 QPushButtonPrivate::popupPressed，qpushbutton.cpp
+ * :569+：!down||!menu 早退后弹层；press 路径 down 已由输入链置位）。 */
+static void pushbutton_popupPressedSlot(XObject* receiver, XVarList* args)
+{
+    XPushButton* self = (XPushButton*)receiver;
+
+    (void)args;
+    if (!self || !self->m_menu)
+        return;
+    if (!XAbstractButton_isDown((XAbstractButton*)self))
+        return;
+    if (!XWidget_isEnabled((XWidget*)self))
+        return;
+    XPushButton_showMenu(self);
+}
+
 void XPushButton_setMenu(XPushButton* self, XMenu* menu)
 {
     if (!self || self->m_menu == menu) return;
+    /* 对标 Qt qpushbutton.cpp:521-547：pressed→popupPressed 以
+     * UniqueConnection 建立（先断后连防重入）；菜单侧 aboutToHide 恢复
+     * 按钮按下态。Qt 另把 menuAction 挂进按钮 action 列表，本库按钮无
+     * action 列表，等价职责（菜单归按钮触发）由本桥承担。 */
+    if (self->m_menu) {
+        XObject_disconnect_1((XObject*)self->m_menu,
+                             XSignal(XMenu_aboutToHide_signal),
+                             (XObject*)self, pushbutton_menuHideSlot);
+        XObject_disconnect_1((XObject*)self,
+                             XSignal(XAbstractButton_pressed_signal),
+                             (XObject*)self, pushbutton_popupPressedSlot);
+    }
     self->m_menu = menu;
+    if (menu) {
+        XObject_connect_1((XObject*)menu,
+                          XSignal(XMenu_aboutToHide_signal),
+                          (XObject*)self, pushbutton_menuHideSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)self,
+                          XSignal(XAbstractButton_pressed_signal),
+                          (XObject*)self, pushbutton_popupPressedSlot,
+                          XConnectionType_Direct);
+    }
     pushbutton_refreshSizeHint(self);
     XWidget_updateGeometry((XWidget*)self);
     XWidget_update((XWidget*)self);
@@ -383,12 +475,29 @@ XMenu* XPushButton_menu(const XPushButton* self)
 
 void XPushButton_showMenu(XPushButton* self)
 {
+    XPoint local;
+    XPoint global;
+    XPoint pos;
+
     if (!self || !self->m_menu) return;
     if (!XWidget_isEnabled((XWidget*)self)) return;
-    /* 对标 Qt QPushButton::showMenu 的 setDown(true)：只进入按下状态并
-       重绘，不发 pressed 信号；平台弹层接入后应在此打开菜单并在关闭时
-       恢复 down。 */
+    /* 对标 Qt qpushbutton.cpp:560-568 showMenu→popupPressed：setDown(true)
+     * 后弹层；aboutToHide 时恢复 down（同 XToolButton_showMenu 口径）。
+     * 弹出位置取按钮全局坐标正下方（对标 adjustedMenuPosition 的按钮
+     * 下方对齐）。 */
     XAbstractButton_setDown((XAbstractButton*)self, true);
+    XObject_disconnect_1((XObject*)self->m_menu,
+                         XSignal(XMenu_aboutToHide_signal),
+                         (XObject*)self, pushbutton_menuHideSlot);
+    XObject_connect_1((XObject*)self->m_menu,
+                      XSignal(XMenu_aboutToHide_signal),
+                      (XObject*)self, pushbutton_menuHideSlot,
+                      XConnectionType_Direct);
+    XPoint_init(&local, 0, 0);
+    global = XWidget_mapToGlobal((XWidget*)self, &local);
+    XPoint_init(&pos, global.x,
+                global.y + XWidget_height((XWidget*)self));
+    XMenu_popup(self->m_menu, &pos);
 }
 
 /* ==================== 尺寸（对标 QPushButton sizeHint/minimumSizeHint） ==================== */

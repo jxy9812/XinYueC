@@ -9,16 +9,20 @@
  *               - description 描述文本属性（拥有 XString，copy/move/deinit
  *                 经 XClass_Parent 先调 XPushButton 基类槽位再处理本字段）；
  *               - 构造默认图标尺寸 20x20（对标 qcommandlinkbutton.cpp:189）、
- *                 尺寸策略 Preferred/Preferred + PushButton（对标 :185）；
+ *                 尺寸策略 Preferred/Preferred + PushButton +
+ *                 heightForWidth 位（对标 :184-187），heightForWidth 按
+ *                 描述折行行数计算（对标 :309-317；折行以
+ *                 ceil(描述宽/可用宽) 轻量等价 QTextLayout）；
  *               - drawContents 绘制 Window 背景 + 左侧大图标 + 标题/描述
  *                 双行文本（双行块垂直居中，描述使用次要角色色）+
  *                 右侧大号右向箭头（对标 SP_CommandLink→SP_ArrowRight）；
  *               - 重载 ContentChanged 刷新双行 sizeHint；
  *             - 不依赖任何平台 API；嵌入式由 XCOMMANDLINKBUTTON_ON 裁剪，
  *               且依赖 XPUSHBUTTON_ON。
- * @note       近似边界：heightForWidth（描述按宽度换行计算高度）未实现，
- *             按固定双行高度返回 sizeHint；SP_CommandLink 标准图标未以
- *             图标对象接入（drawContents 以 14x14 实心右向三角直接绘制）。
+ * @note       近似边界：heightForWidth 的描述折行为 ceil 除法估算（Qt
+ *             经 QTextLayout 逐行断词），逐词断行边界可能有出入；SP_CommandLink
+ *             标准图标未以图标对象接入（drawContents 以 14x14 实心右向
+ *             三角直接绘制）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XCommandLinkButton.h"
@@ -144,6 +148,77 @@ static void commandlink_refreshSizeHint(XCommandLinkButton* self)
     hint = commandlink_computeSizeHint(self);
     XWidget_setSizeHint((XWidget*)self, &hint);
     XWidget_setMinimumSizeHint((XWidget*)self, &hint);
+}
+
+/* ==================== 按宽度算高（对标 QCommandLinkButton::heightForWidth） ==================== */
+
+/**
+ * @brief      描述文本在给定控件宽度下占用的行高总和。
+ * @details    Qt 经 QTextLayout 精确折行（qcommandlinkbutton.cpp:197-218
+ *             descriptionHeight）；本库 Painter 无公开折行测量入口，取
+ *             轻量等价：可用宽度 = 控件宽 - 左缘（边距+图标+间距）-
+ *             右侧（箭头+边距），行数 = ceil(描述宽/可用宽)（至少一行），
+ *             行高用控件字体的点阵行高。空描述返回 0。
+ */
+static int commandlink_descriptionHeight(const XCommandLinkButton* self,
+                                         int width)
+{
+    XSize iconSize;
+    XFont font;
+    const char* desc;
+    int descWidth;
+    int avail;
+    int lines;
+    int lineHeight;
+
+    if (!self) return 0;
+    desc = self->m_description ? XString_toUtf8(self->m_description) : NULL;
+    if (!desc || desc[0] == '\0') return 0;
+    iconSize = commandlink_iconSize(self);
+    font = XWidget_font((XWidget*)self);
+    descWidth = XPainter_textWidth(&font, desc);
+    lineHeight = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    avail = width - COMMANDLINK_MARGIN * 2 - iconSize.width -
+            COMMANDLINK_ICON_SPACING - COMMANDLINK_ARROW_WIDTH;
+    if (avail < lineHeight) avail = lineHeight; /* 极窄宽度按一行兜底。 */
+    lines = (descWidth + avail - 1) / avail;
+    if (lines < 1) lines = 1;
+    return lines * lineHeight;
+}
+
+/**
+ * @brief      XWidget heightForWidth 回调（对标 Qt heightForWidth，
+ *             qcommandlinkbutton.cpp:309-317）。
+ * @details    高度 = max(标题行 + 上下边距 + 描述折行高,
+ *             图标高 + 上下边距)，与 computeSizeHint 的双行高度公式同源，
+ *             仅把描述行高换成按宽度折行的行数。
+ */
+static int commandlink_heightForWidthHandler(XWidget* widget, int width,
+                                             void* userData)
+{
+    XCommandLinkButton* self = (XCommandLinkButton*)widget;
+    XFont font;
+    int lineHeight;
+    int height;
+    int minHeight;
+
+    (void)userData;
+    if (!self || width < 0) return -1;
+    font = XWidget_font(widget);
+    lineHeight = XPainter_textHeight(&font);
+    XClassDeinit(&font);
+    height = COMMANDLINK_MARGIN + lineHeight + COMMANDLINK_MARGIN +
+             commandlink_descriptionHeight(self, width);
+    minHeight = commandlink_iconSize(self).height + COMMANDLINK_MARGIN * 2;
+    if (height < minHeight) height = minHeight;
+    return height;
+}
+
+int XCommandLinkButton_heightForWidth(const XCommandLinkButton* self,
+                                      int width)
+{
+    return XWidget_heightForWidth((const XWidget*)self, width);
 }
 
 /* ==================== 描述文本（对标 QCommandLinkButton description） ==================== */
@@ -494,11 +569,16 @@ void XCommandLinkButton_init(XCommandLinkButton* self, XWidget* parent,
     XClassSetVtable(self, XCommandLinkButton);
     self->m_description = XString_create();
     /* 对标 Qt 6.8 QCommandLinkButtonPrivate::init：尺寸策略
-       Preferred/Preferred + PushButton，图标尺寸 20x20。 */
+       Preferred/Preferred + PushButton 且 heightForWidth 位开启
+       （qcommandlinkbutton.cpp:184-187），图标尺寸 20x20。 */
     policy = XWidgetSizePolicy_create_ex(XWidgetSizePolicy_Preferred,
                                          XWidgetSizePolicy_Preferred,
                                          XWidgetSizePolicyControl_PushButton);
+    XWidgetSizePolicy_setHeightForWidth(&policy, true);
     XWidget_setSizePolicyFull((XWidget*)self, &policy);
+    XWidget_setHeightForWidthHandler((XWidget*)self,
+                                     commandlink_heightForWidthHandler,
+                                     NULL);
     XSize_init(&iconSize, 20, 20);
     XAbstractButton_setIconSize((XAbstractButton*)self, &iconSize);
     commandlink_refreshSizeHint(self);

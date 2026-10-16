@@ -58,7 +58,13 @@ static void xte_userTimeChangedForward(XObject* receiver, XVarList* args)
 
 /* ==================== 生命周期 ==================== */
 
-void XTimeEdit_init(XTimeEdit* self, XWidget* parent, XWidgetFlags flags)
+/** @brief 构造公共体（对标 QDateTimeEdit(variant, QMetaType::QTime,
+ *         parent) 受保护构造 + QTimeEdit 构造体内的 connect）：初值由
+ *         initialTime 携带，无效/NULL 回退 QDATETIMEEDIT_TIME_MIN
+ *         （00:00:00.000）构造默认；构造期直赋不发射（Qt 构造语义，
+ *         连接在初值落定后建立）。 */
+static void xte_initCommon(XTimeEdit* self, XWidget* parent,
+                           XWidgetFlags flags, const XTime* initialTime)
 {
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
@@ -74,12 +80,17 @@ void XTimeEdit_init(XTimeEdit* self, XWidget* parent, XWidgetFlags flags)
     /* 初始值=QDATETIMEEDIT_TIME_MIN 落在 QDATETIMEEDIT_DATE_INITIAL
      * 载体上（2000-01-01 00:00:00.000；对标 init 的
      * value=dateTimeValue(DATE_INITIAL, TIME_MIN) 分支；构造期直赋
-     * 不发射）。 */
+     * 不发射）。带时间构造（对标 QTimeEdit(QTime,QWidget*)，
+     * qdatetimeedit.cpp:1644-1648）传入有效时间时以其为初值，无效
+     * 时间同 Qt 回退 TIME_MIN。 */
     XDate_setDate(&self->m_base.m_dateTime.m_date, 2000, 1, 1);
-    XTime_setHMS(&self->m_base.m_dateTime.m_time, 0, 0, 0, 0);
+    if (initialTime && XTime_isValid(initialTime))
+        self->m_base.m_dateTime.m_time = *initialTime;
+    else
+        XTime_setHMS(&self->m_base.m_dateTime.m_time, 0, 0, 0, 0);
     /* 对标 init 的 setDisplayFormat(defaultTimeFormat)：纯时间段格式
-     * 触发基类收窄——日期范围收到当前值日期（2000-01-01），时间范围
-     * 保持 00:00:00.000..23:59:59.999（同一天）。 */
+       触发基类收窄——日期范围收到当前值日期（2000-01-01），时间范围
+       保持 00:00:00.000..23:59:59.999（同一天）。 */
     XDateTimeEdit_setDisplayFormat(&self->m_base, "HH:mm:ss");
     /* 对标构造函数体内的 connect（值变化全路径转发发射）。 */
     XObject_connect_1((XObject*)self,
@@ -88,12 +99,34 @@ void XTimeEdit_init(XTimeEdit* self, XWidget* parent, XWidgetFlags flags)
                       XConnectionType_Direct);
 }
 
+void XTimeEdit_init(XTimeEdit* self, XWidget* parent, XWidgetFlags flags)
+{
+    xte_initCommon(self, parent, flags, NULL);
+}
+
+void XTimeEdit_init_2(XTimeEdit* self, const XTime* time, XWidget* parent,
+                      XWidgetFlags flags)
+{
+    xte_initCommon(self, parent, flags, time);
+}
+
 XTimeEdit* XTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
                                XWidgetFlags flags)
 {
     XTimeEdit* self = (XTimeEdit*)XMemory_malloc(sizeof(*self), memory);
     if (!self) return NULL;
     XTimeEdit_init(self, parent, flags);
+    Set_Class_Memory(self, memory);
+    Set_Class_IsHeap(self, true);
+    return self;
+}
+
+XTimeEdit* XTimeEdit_create_ex_2(XMemoryType memory, const XTime* time,
+                                 XWidget* parent, XWidgetFlags flags)
+{
+    XTimeEdit* self = (XTimeEdit*)XMemory_malloc(sizeof(*self), memory);
+    if (!self) return NULL;
+    XTimeEdit_init_2(self, time, parent, flags);
     Set_Class_Memory(self, memory);
     Set_Class_IsHeap(self, true);
     return self;

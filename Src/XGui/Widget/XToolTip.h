@@ -44,8 +44,10 @@ extern "C" {
  *             安全退化：仅存储状态不显示。
  * @param      x 提示框左上角 X 坐标（屏幕/窗口坐标由控件体系解释）。
  * @param      y 提示框左上角 Y 坐标。
- * @param      text 提示文本借用指针；可为 NULL 表示空文本（等价
- *             hideText 语义）。
+ * @param      text 提示文本借用指针；NULL 或零长度 XString 均视为空
+ *             文本（等价 hideText 语义，对标 Qt text.isEmpty() 分支）。
+ *             与当前已显示提示文本相同且关联控件未变时不移动不重摆
+ *             （对标 QTipLabel::tipChanged 复用判定）。
  * @param      widget 关联控件借用指针；可为 NULL（对标 QToolTip 的
  *             QWidget* w 默认 nullptr）。
  * @param      rect 屏幕矩形借用指针（用于放置策略）；可为 NULL。
@@ -60,7 +62,8 @@ void XToolTip_showText(int x, int y, const XString* text, XWidget* widget,
  * @brief      显示工具提示（UTF-8 兼容重载，转发主版本）。
  * @param      x 提示框左上角 X 坐标。
  * @param      y 提示框左上角 Y 坐标。
- * @param      utf8 以 '\0' 结尾的 UTF-8 提示文本；可为 NULL。
+ * @param      utf8 以 '\0' 结尾的 UTF-8 提示文本；NULL 或空串均视为
+ *             空文本（等价 hideText 语义）。
  * @param      widget 关联控件借用指针；可为 NULL。
  * @param      rect 屏幕矩形借用指针；可为 NULL。
  * @param      msecShowTime 显示时长（毫秒）；<0 表示系统默认。
@@ -99,8 +102,12 @@ XFont XToolTip_font(void);
 
 /**
  * @brief      设置提示字体（对标 QToolTip::setFont）。
- * @details    深拷贝存储；若全局提示控件已创建则同步应用。
- * @param      font 源字体借用指针；可为 NULL（恢复默认字体）。
+ * @details    深拷贝存储；若全局提示控件已创建则同步应用。Qt 入参为
+ *             引用无 NULL 概念（无条件赋值，qtooltip.cpp:570-573）；
+ *             本实现的 NULL 扩展语义为显式忽略并保持原状态——需表达
+ *             Qt「默认构造 QFont 回落应用默认字体」语义时，传默认
+ *             构造 XFont 即可。
+ * @param      font 源字体借用指针；可为 NULL（忽略，状态不变）。
  * @return     无返回值。
  */
 void XToolTip_setFont(const XFont* font);
@@ -113,8 +120,12 @@ XPalette XToolTip_palette(void);
 
 /**
  * @brief      设置提示调色板（对标 QToolTip::setPalette）。
- * @details    深拷贝存储；若全局提示控件已创建则同步应用。
- * @param      palette 源调色板借用指针；可为 NULL（恢复默认调色板）。
+ * @details    深拷贝存储；若全局提示控件已创建则同步应用。Qt 入参为
+ *             引用无 NULL 概念（无条件赋值，qtooltip.cpp:558-563）；
+ *             本实现的 NULL 扩展语义为显式忽略并保持原状态——需表达
+ *             Qt「默认构造 QPalette 回落默认配色」语义时，传
+ *             XPalette_create() 默认值即可。
+ * @param      palette 源调色板借用指针；可为 NULL（忽略，状态不变）。
  * @return     无返回值。
  */
 void XToolTip_setPalette(const XPalette* palette);

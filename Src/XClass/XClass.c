@@ -4,14 +4,12 @@
 #include"XString.h"
 #include"XPrintf.h"
 #include<string.h>
-bool ArgIsNULL(const void* args/*参数数值*/, const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/)
+/* 报告慢路径：仅 ArgIsNULL 内联快路径判空命中（参数确为 NULL）时
+   到达，打印诊断后返回 true（=参数为空）。 */
+bool ArgIsNULL_report(const char* argsName/*参数名字*/, const char* str/*附加参数*/, const char* funcName/*函数名字*/, const char* filePath/*所在文件路径*/, int line/*所在行号*/)
 {
-	if (args == NULL)
-	{
-		XERROR_PRINTF("%s\n参数:%s是NULL\t函数名:%s\n文件路径:%s\n正在编译文件的行号:%d\n", str, argsName, funcName, filePath, line);
-		return true;
-	}
-	return false;
+	XERROR_PRINTF("%s\n参数:%s是NULL\t函数名:%s\n文件路径:%s\n正在编译文件的行号:%d\n", str, argsName, funcName, filePath, line);
+	return true;
 }
 
 void XClass_deinit_base(XClass* object)

@@ -6,9 +6,9 @@
  *             - 文本与图标：text/setText、icon/setIcon、iconSize/setIconSize；
  *             - 状态属性：checkable/checked、down、autoRepeat、
  *               autoExclusive；
- *             - 快捷键与按钮组：setShortcut/shortcut（快捷键文本承载，
- *               触发体系未建）、group（按钮组不透明承载，按钮组体系
- *               未建）；
+ *             - 快捷键与按钮组：setShortcut/shortcut（文本承载 + 经
+ *               XShortcut 注册表登记单键绑定，激活时触发 click）、group
+ *               （按钮组不透明承载）；
  *             - 激活行为：click、animateClick，以及鼠标/键盘按下与释放期间
  *               的状态和信号联动；
  *             - 保护虚函数：checkStateSet、nextCheckState、hitButton、以及
@@ -91,6 +91,7 @@ struct XAbstractButton
     int          m_autoRepeatDelay;    /**< 首次自动重复前的延迟，单位为毫秒；由调用方整数原样保存（非正值由定时器侧降级）。 */
     int          m_autoRepeatInterval; /**< 自动重复间隔，单位为毫秒；由调用方整数原样保存（非正值由定时器侧降级）。 */
     XString*     m_shortcut;           /**< 快捷键文本承载（对标 QAbstractButton::shortcut）；对象拥有，NULL 表示未设置。 */
+    void*        m_shortcutBinding;    /**< setShortcut 注册的 XShortcut 绑定（对标 Qt grabShortcut 登记位；对象拥有并在换键/消亡时回收，NULL 表示未注册）。 */
     void*        m_group;              /**< 所属按钮组不透明承载（对标 QAbstractButton::group）；按钮组体系未建，仅存储位。 */
     uint8_t      m_checkable : 1;      /**< 是否允许选中；false 时 setChecked/toggle 不改变选中状态。 */
     uint8_t      m_checked : 1;        /**< 当前选中状态；只有 m_checkable 为 true 时具有按钮语义。 */
@@ -260,6 +261,11 @@ void XAbstractButton_setChecked(XAbstractButton* self, bool checked);
 
 /**
  * @brief      反转按钮选中状态（对标 QAbstractButton::toggle）。
+ * @details    非虚槽，直接 setChecked(!checked)（对标
+ *             qabstractbutton.cpp:843-851；QCheckBox 未重载 toggle）。
+ *             三态复选框的 toggle 因此只在 Unchecked↔Checked 间跳变；
+ *             (state+1)%3 三态循环只在 nextCheckState 虚槽（点击/自动
+ *             重复路径）。
  * @param      self 待操作的按钮对象；可为 NULL，NULL 时不执行操作。
  * @return     无返回值；不可选中按钮不改变状态；状态变化时等价于调用
  *             XAbstractButton_setChecked 的反向值并发射 toggled。
@@ -354,15 +360,21 @@ void XAbstractButton_setAutoExclusive(XAbstractButton* self, bool exclusive);
 
 /**
  * @brief      使用 XString 设置按钮快捷键文本（对标 QAbstractButton::setShortcut）。
- * @details    函数深拷贝 shortcut，不取得调用方字符串所有权；Qt 中
- *             setShortcut 同时通过 grabShortcut 注册全局快捷键并在按键
- *             时触发按钮，本实现只保存快捷键文本承载位，不做任何注册
- *             或触发。
- * @note       快捷键触发体系未建：本接口按对标接口存在性提供，设置的
- *             文本不参与事件分发；触发体系接入后由本类内部消费该承载。
+ * @details    函数深拷贝 shortcut，不取得调用方字符串所有权；对标 Qt
+ *             qabstractbutton.cpp:536-545，setShortcut 同时向 XShortcut
+ *             全局注册表登记单键绑定，按键匹配命中并激活时触发本按钮
+ *             click()（Qt 走 animateClick，见 qabstractbutton.cpp:917-929；
+ *             本实现为同步 click，适配无定时器循环的无头/嵌入式环境）。
+ *             键码解析取文本末段单键（"Ctrl+S"→XKey_S，支持单字节 ASCII
+ *             与 F1..F12 名）；组合键修饰位不在 XShortcut 单键模型内，
+ *             按裸键码登记，文本编辑控件的按键优先由按键路径的
+ *             ShortcutOverride 询问保证。
+ * @note       文本 '&' 助记符与 '&&' 转义未实现（涉及全按钮族文本绘制
+ *             与测量链路，近似边界保留）；无法解析出单键的文本只保存
+ *             承载、不注册。
  * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
- * @param      shortcut 快捷键文本借用指针；可为 NULL 表示清除，函数返回
- *             后调用方仍可释放或修改源对象。
+ * @param      shortcut 快捷键文本借用指针；可为 NULL 表示清除（同时注销
+ *             绑定），函数返回后调用方仍可释放或修改源对象。
  * @return     无返回值；内存分配失败或 self 为 NULL 时保持原快捷键文本
  *             不变。
  */
@@ -372,8 +384,7 @@ void XAbstractButton_setShortcut(XAbstractButton* self,
 /**
  * @brief      使用 UTF-8 字符串设置按钮快捷键文本（UTF-8 兼容重载）。
  * @details    utf8 按 UTF-8 解码为 XString 后转发
- *             XAbstractButton_setShortcut；NULL 按清除处理。
- * @note       同 setShortcut：仅文本承载，快捷键触发体系未建。
+ *             XAbstractButton_setShortcut；NULL 按清除处理（同注销绑定）。
  * @param      self 待修改的按钮对象；可为 NULL，NULL 时不执行操作。
  * @param      utf8 以 '\0' 结尾的 UTF-8 快捷键文本；可为 NULL 表示清除，
  *             由调用方借用且函数不会修改。

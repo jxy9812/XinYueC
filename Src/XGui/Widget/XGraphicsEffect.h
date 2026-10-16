@@ -51,14 +51,25 @@ XCLASS_DEFINE_END(XGraphicsEffect)  /* 自动续号（=父槽总数+3）；注�
     导致 OVERLOAD 索引越界。 */
 
 /**
- * @brief      源变更标志位（对标 QGraphicsEffect::ChangeFlag 数值语义）。
+ * @brief      源变更标志位（对标 QGraphicsEffect::ChangeFlag，位值逐项
+ *             一致：qgraphicseffect.h:31-37）。
  */
 typedef enum XGraphicsEffectChangeFlag
 {
-    XGraphicsEffectChange_ContentsChanged = 1 << 0, /**< 源内容变化（对标
-        QGraphicsEffect::ContentsChanged）。 */
-    XGraphicsEffectChange_GeometryChanged = 1 << 1  /**< 源几何变化（对标
-        QGraphicsEffect::GeometryChanged）。 */
+    XGraphicsEffectChange_SourceAttached = 0x1,             /**< 效果已挂接到源。 */
+    XGraphicsEffectChange_SourceDetached = 0x2,             /**< 效果已从源摘除。 */
+    XGraphicsEffectChange_SourceBoundingRectChanged = 0x4,  /**< 源包围盒变化。 */
+    XGraphicsEffectChange_SourceInvalidated = 0x8,          /**< 源外观已失效。 */
+    /* 兼容别名：挂接路径（XWidget_setGraphicsEffect，XWidget.c:9128，
+       不在本批白名单）以 ContentsChanged|GeometryChanged 触发
+       sourceChanged；两别名均映射 SourceAttached——挂接语义=源附着，
+       位或后即单发 SourceAttached，Qt 派生效果按位分派语义正确。 */
+    XGraphicsEffectChange_ContentsChanged =
+        XGraphicsEffectChange_SourceAttached,               /**< 已废弃别名
+        （原 1<<0）：等价 SourceAttached。 */
+    XGraphicsEffectChange_GeometryChanged =
+        XGraphicsEffectChange_SourceAttached                /**< 已废弃别名
+        （原 1<<1）：等价 SourceAttached。 */
 } XGraphicsEffectChangeFlag;
 
 /**
@@ -186,8 +197,9 @@ void XGraphicsEffect_setSource(XGraphicsEffect* self, XWidget* source);
  *             分派到 SourceChanged 槽位）。
  *
  * @details    基类默认实现转 update() 请求重绘；派生效果可覆盖。
- *             XWidget_setGraphicsEffect 挂接效果时以
- *             ContentsChanged|GeometryChanged 触发，保证效果安装即重绘。
+ *             XWidget_setGraphicsEffect 挂接效果时以 SourceAttached
+ *             触发（兼容别名 ContentsChanged|GeometryChanged 同值），
+ *             保证效果安装即重绘。
  *
  * @param      self 目标效果；可为 NULL。
  * @param      flags XGraphicsEffectChangeFlag 位或组合。

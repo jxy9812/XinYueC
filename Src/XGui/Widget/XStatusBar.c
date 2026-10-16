@@ -12,6 +12,7 @@
 #include "XPainter.h"
 #include "XVarList.h"
 #include "XGuiConfig.h"
+#include <string.h> /* strcmp：showMessage 同文早退比对。 */
 
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
@@ -476,22 +477,37 @@ static void xsb_hideOrShow(XStatusBar* self, bool haveMessage)
 void XStatusBar_showMessage(XStatusBar* self, const char* utf8, int timeout)
 {
     const char* s;
+    const char* cur;
     if (!self) return;
     s = (utf8 && utf8[0]) ? utf8 : NULL;
     if (!s) {
         XStatusBar_clearMessage(self);
         return;
     }
-    if (!self->m_currentMessage) self->m_currentMessage = XString_create();
-    if (self->m_currentMessage)
-        XString_assign_utf8(self->m_currentMessage, s);
-    self->m_tempTimeout = timeout;
+    /* 对标 qstatusbar.cpp:494-503：定时器分支先于同文早退执行——
+       timeout<=0 须取消仍在跑的自动清除定时器（此前缺 else 分支，
+       showMessage("a",5000) 后 showMessage("b",0) 仍会在剩余定时内
+       被清空）。 */
     if (timeout > 0) {
         if (self->m_messageTimer != XTIMER_INVALID_ID)
             XObject_killTimer((XObject*)self, self->m_messageTimer);
         self->m_messageTimer = XObject_startTimer_ms(
             (XObject*)self, (unsigned)timeout, XTimerType_CoarseTimer);
+    } else if (self->m_messageTimer != XTIMER_INVALID_ID) {
+        XObject_killTimer((XObject*)self, self->m_messageTimer);
+        self->m_messageTimer = XTIMER_INVALID_ID;
     }
+    /* 对标 qstatusbar.cpp:504-505：同文早退不重发 messageChanged。 */
+    cur = self->m_currentMessage ? XString_toUtf8(self->m_currentMessage)
+                                 : "";
+    if (cur && cur[0] && strcmp(cur, s) == 0) {
+        self->m_tempTimeout = timeout;
+        return;
+    }
+    if (!self->m_currentMessage) self->m_currentMessage = XString_create();
+    if (self->m_currentMessage)
+        XString_assign_utf8(self->m_currentMessage, s);
+    self->m_tempTimeout = timeout;
     xsb_hideOrShow(self, true);
     XStatusBar_messageChanged_signal(self, XString_toUtf8(self->m_currentMessage));
     XWidget_update((XWidget*)self);

@@ -44,6 +44,10 @@ static void VXDial_changeEvent(XWidget* self, XEvent* event);
 static void VXDial_copy(XDial* self, const XDial* other);
 static void VXDial_move(XDial* self, XDial* other);
 
+/* ==================== 前置声明 ==================== */
+static int xdial_notchCount(const XDial* self);
+static int VXDial_bound(XDial* self, int val);
+
 /* ==================== 内部辅助 ==================== */
 
 /** @brief 取指定角色颜色为 ARGB32；无调色板能力时回退纯黑。 */
@@ -182,7 +186,13 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
             opt.m_state |= XStyleState_MouseOver;
         opt.m_dialWrapping = dial->m_wrapping;
         opt.m_notchesVisible = dial->m_notchesVisible;
-        opt.m_notchSize = XDial_notchSize(dial);
+        /* 刻度数换算：XCommonStyle.c:1374 目前按“刻度数”消费
+         * m_notchSize（其内部按 i/notchCount 均分角度），而 Qt 侧该字段
+         * 是 tickInterval（qdial.cpp:103）。此处显式换算为
+         * (max+ns-1-min)/ns（= QStyleHelper::calcLines 的 notches），
+         * 使几何与 Qt 一致；待样式层切到 tickInterval 口径后可去掉
+         * 本换算。 */
+        opt.m_notchSize = xdial_notchCount(dial);
         opt.m_pageStep = XAbstractSlider_pageStep(
             (const XAbstractSlider*)dial);
         opt.m_sliderMin = XAbstractSlider_minimum(
@@ -218,18 +228,19 @@ static void VXDial_paintEvent(XWidget* self, XEvent* event)
 
         /* 1) 刻度线：窗口文本色，从 (r-bigLine) 到 r（对标
          *    QStyleHelper::calcLines + SC_DialTickmarks）。 */
-        notchCount = XDial_notchSize(dial);
+        notchCount = xdial_notchCount(dial);
         if (dial->m_notchesVisible && notchCount > 0) {
             int smallLine = bigLine / 2;
             int pageStep = XAbstractSlider_pageStep(
                 (const XAbstractSlider*)dial);
+            /* 刻度间隔（tickInterval，= notchSize）：大线判定按
+             * (ns × i) % pageStep，与 QStyleHelper::calcLines
+             * (qstylehelper.cpp:222) 同构。 */
+            int ns = XDial_notchSize(dial);
             XPainter_setPen(&painter, windowText);
             for (i = 0; i <= notchCount; ++i) {
-                /* 区分大线/小线（对标 calcLines：i==0 或 pageStep 倍数
-                 * 画大线，其余画小线）。 */
                 bool big = (i == 0) ||
-                    (pageStep > 0 &&
-                     ((notchCount * i) % pageStep) == 0);
+                    (((ns * i) % (pageStep ? pageStep : 1)) == 0);
                 int inner = big ? (br2 - bigLine)
                                 : (br2 - 1 - smallLine);
                 int outer = big ? br2 : (br2 - 1);
@@ -458,8 +469,6 @@ static void VXDial_move(XDial* self, XDial* other)
 
 /* ==================== 生命周期 ==================== */
 
-static void VXDial_stepBy(XDial* self, int steps);
-
 XVtable* XDial_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XDial)
@@ -470,7 +479,7 @@ XVtable* XDial_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent, VXDial_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent, VXDial_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ChangeEvent, VXDial_changeEvent);
-    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSlider_StepBy, VXDial_stepBy);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractSlider_Bound, VXDial_bound);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Copy, VXDial_copy);
     XVTABLE_OVERLOAD_DEFAULT(EXClass_Move, VXDial_move);
 
@@ -510,7 +519,11 @@ double XDial_notchTarget(const XDial* self)
 
 void XDial_setNotchTarget(XDial* self, double target)
 {
-    if (!self || target <= 0.0 || self->m_notchTarget == target) return;
+    /* 对标 QDial::setNotchTarget (qdial.cpp:355-359)：只赋值 + update，
+     * 不做范围校验（setNotchTarget(0) 时 notchSize 退化为 singleStep×1，
+     * 负值由 notchSize 换算自行收敛）。此前 target<=0 直接 return，
+     * 调用方设 0 后读回旧值且无任何反馈。 */
+    if (!self || self->m_notchTarget == target) return;
     self->m_notchTarget = target;
     XWidget_update((XWidget*)self);
 }
@@ -527,25 +540,6 @@ void XDial_setNotchesVisible(XDial* self, bool visible)
     XWidget_update((XWidget*)self);
 }
 
-/** @brief 步进（对标 QDial::stepBy）：wrapping=true 时越过端点回绕
- *  到另一端（此前与普通滑块同为端点钳位，回绕语义缺失）。 */
-static void VXDial_stepBy(XDial* self, int steps)
-{
-    int minimum = XAbstractSlider_minimum((const XAbstractSlider*)self);
-    int maximum = XAbstractSlider_maximum((const XAbstractSlider*)self);
-    int range = maximum - minimum + 1;
-    int value;
-    if (!self || steps == 0 || range <= 0) return;
-    if (!self->m_wrapping) {
-        XAbstractSlider_stepBy_base((XAbstractSlider*)self, steps);
-        return;
-    }
-    value = XAbstractSlider_value((const XAbstractSlider*)self);
-    value = minimum + (value - minimum + steps) % range;
-    if (value < minimum) value += range;
-    XAbstractSlider_setValue((XAbstractSlider*)self, value);
-}
-
 bool XDial_wrapping(const XDial* self)
 {
     return self ? self->m_wrapping : false;
@@ -558,21 +552,95 @@ void XDial_setWrapping(XDial* self, bool on)
     XWidget_update((XWidget*)self);
 }
 
+/** @brief 四舍五入（对标 Qt qRound：floor(v+0.5)）。 */
+static int xdial_qRound(double v)
+{
+    return (int)((v >= 0.0) ? (v + 0.5) : (v - 0.5));
+}
+
+/** @brief 刻度间隔值（对标 QDial::notchSize qdial.cpp:346-363）。
+ *  @details 量纲为**范围单位**（不是刻度数），且恒为 singleStep 的非零
+ *           倍数——Qt 由 initStyleOption (qdial.cpp:103) 赋给
+ *           option->tickInterval，绘制端按 i += tickInterval 遍历。
+ *           换算步骤与 Qt 逐行同构：
+ *           1) 弧长 l = round(r × (wrapping ? 6 : 5) × π / 6)；
+ *           2) pageStep 段占全程时按比例收缩；
+ *           3) 换算到单步弧长 l = max(l × singleStep / pageStep, 1)；
+ *           4) l = max(round(target / l), 1)；
+ *           5) 返回 singleStep × l。 */
 int XDial_notchSize(const XDial* self)
 {
-    /* 刻度数 = 行程像素 / notchTarget（对标 QDial 的近似算法）。 */
-    int pixels = (XWidget_width((XWidget*)self) <
-                  XWidget_height((XWidget*)self)
-                      ? XWidget_width((XWidget*)self)
-                      : XWidget_height((XWidget*)self));
-    int range = XAbstractSlider_maximum((const XAbstractSlider*)self) -
-                XAbstractSlider_minimum((const XAbstractSlider*)self);
-    if (range <= 0 || pixels <= 0) return 0;
-    {
-        int count = (int)(range * 1.0 / (self ? self->m_notchTarget : 3.7));
-        (void)pixels;
-        return count > 1 ? count : 0;
-    }
+    const XAbstractSlider* base = (const XAbstractSlider*)self;
+    int minimum, maximum, pageStep, singleStep;
+    int w, h, pixels;
+    int l;                       /* 全程 int 运算（Qt 同，qBound 语义） */
+    double r;
+    if (!self) return 0;
+    minimum = XAbstractSlider_minimum(base);
+    maximum = XAbstractSlider_maximum(base);
+    pageStep = XAbstractSlider_pageStep(base);
+    singleStep = XAbstractSlider_singleStep(base);
+    if (singleStep <= 0) singleStep = 1;
+    w = XWidget_width((XWidget*)self);
+    h = XWidget_height((XWidget*)self);
+    pixels = w < h ? w : h;      /* 弧半径基准（qMin(width,height)）。 */
+    r = pixels / 2.0;
+    if (r <= 0.0) return singleStep;
+    l = xdial_qRound(r * (self->m_wrapping ? 6.0 : 5.0) *
+                     3.14159265358979323846 / 6.0);
+    if (maximum > minimum + pageStep)
+        /* int64 中间量防 l*pageStep 溢出（Qt 同式，无溢出保护）。 */
+        l = xdial_qRound((double)((int64_t)l * pageStep) /
+                         (double)(maximum - minimum));
+    l = l * singleStep / (pageStep ? pageStep : 1);
+    if (l < 1) l = 1;
+    l = xdial_qRound(self->m_notchTarget / (double)l);
+    if (l < 1) l = 1;
+    return singleStep * l;
+}
+
+/** @brief 刻度个数（对标 QStyleHelper::calcLines 的 notches：
+ *         (maximum + tickInterval - 1 - minimum) / tickInterval，
+ *         qstylehelper.cpp:207）。绘制端按此均分角度遍历。 */
+static int xdial_notchCount(const XDial* self)
+{
+    int ns = XDial_notchSize(self);
+    int minimum = XAbstractSlider_minimum((const XAbstractSlider*)self);
+    int maximum = XAbstractSlider_maximum((const XAbstractSlider*)self);
+    int notches;
+    if (ns <= 0) return 0;
+    notches = (maximum + ns - 1 - minimum) / ns;
+    return notches > 0 ? notches : 0;
+}
+
+/** @brief 基类 bound 缺省语义的本地等价（纯钳位；对应
+ *         QAbstractSliderPrivate::bound 的非 wrapping 分支）。 */
+static int xdial_plainBound(const XDial* self, int val)
+{
+    const XAbstractSlider* base = (const XAbstractSlider*)self;
+    int minimum = XAbstractSlider_minimum(base);
+    int maximum = XAbstractSlider_maximum(base);
+    if (val < minimum) return minimum;
+    if (val > maximum) return maximum;
+    return val;
+}
+
+/** @brief bound 覆写：wrapping=true 时越界回绕（对标
+ *         QDialPrivate::bound qdial.cpp:47-63）。经基类 bound 虚槽生效，
+ *         故 setValue/setSliderPosition/triggerAction/stepBy/滚轮全链路
+ *         自动环绕（此前仅 stepBy 一条路径回绕，键鼠路径仍钳位）。 */
+static int VXDial_bound(XDial* self, int val)
+{
+    const XAbstractSlider* base = (const XAbstractSlider*)self;
+    int minimum, maximum;
+    if (!self || !self->m_wrapping) return xdial_plainBound(self, val);
+    minimum = XAbstractSlider_minimum(base);
+    maximum = XAbstractSlider_maximum(base);
+    if (val >= minimum && val <= maximum) return val;
+    if (minimum == maximum) return minimum;
+    val = minimum + ((val - minimum) % (maximum - minimum));
+    if (val < minimum) val += maximum - minimum;
+    return val;
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON */

@@ -56,8 +56,9 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
         result = XMqttTcpServerProcess_run();
     } else if (strcmp(name, "xmqtt-tcp-client") == 0) {
         result = XMqttTcpClientProcess_run();
-    } else if (strcmp(name, "xmqtt-tcp-interop") == 0) {
-        result = XMqttTcpInteropTest_run();
+    } else if (strcmp(name, "modbus-server-fc") == 0) {
+        /* [补充 2026-10-15] Modbus 服务端 FC 全量覆盖（含远程 IO 掉线回归锁） */
+        result = XModbusCoverageTest_run();
     } else {
         return XConsoleResult_UnknownCommand;
     }
@@ -174,7 +175,7 @@ static int xtest_execute(XConsoleShell* shell, XConsoleShellSession* session,
     if (argc == 1 && strcmp(argv[0], "list") == 0) {
         return xtest_write(shell,
                            "Test commands:\n"
-                           "  Test xprocess\n"
+                           "  Test modbus-server-fc\n"
                            "  Test xconsole-shell\n"
                            "  Test xconsole-shell-backend\n"
                            "  Test ssh-telnet-client\n"

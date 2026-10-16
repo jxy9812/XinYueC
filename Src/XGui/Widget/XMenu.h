@@ -67,6 +67,13 @@ typedef struct XMenu
     XString*     m_title;                 /**< 菜单标题（对标 QMenu::title）；对象拥有。 */
     XString*     m_icon;                  /**< 菜单图标路径（对标 QMenu::icon）；对象拥有；可为 NULL。 */
     XVector*     m_actions;               /**< 动作列表（XAction*，对标 QMenu::actions）；对象拥有。 */
+    XVector*     m_actionOwned;           /**< 逐项所有权标记（bool，与 m_actions
+                                           对齐；true=addAction/addMenu 等
+                                           便捷路径自建（菜单拥有，析构/
+                                           clear 级联删除），false=
+                                           insertAction 注入的外部动作
+                                           （仅借用，不取所有权，对标
+                                           QWidget::addAction））。 */
     XAction*     m_menuAction;            /**< 代表本菜单的动作（对标 QMenu::menuAction）；懒创建。 */
     XMenu*       m_parentMenu;            /**< 父菜单借用指针；NULL 表示顶层菜单。 */
     XAction*     m_defaultAction;         /**< 默认动作（对标 QMenu::defaultAction）；借用指针。 */
@@ -219,6 +226,41 @@ XAction* XMenu_addSection(XMenu* self, const XString* text);
  * @return     新建的节动作指针；失败返回 NULL。
  */
 XAction* XMenu_addSection_2(XMenu* self, const char* utf8);
+/**
+ * @brief      加入已有动作（对标 QMenu 经 `using QWidget::addAction`
+ *             继承的 addAction(QAction*)，qmenu.h:42 + qwidget.h:559-563）。
+ * @details    等价 insertAction(NULL, action)：追加到末尾。动作仅为
+ *             借用——菜单不取得所有权（Qt 同），析构/clear 不删除该
+ *             动作；动作被外部释放时经 destroyed 自摘出列表。这是把
+ *             XToolBar/XActionGroup 现成动作复用进菜单的标准途径。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      action 已有动作借用指针；不能为 NULL。
+ * @return     无返回值。
+ */
+void XMenu_addActionAction(XMenu* self, XAction* action);
+/**
+ * @brief      在 before 动作之前插入已有动作（对标 QMenu::insertAction，
+ *             即 QWidget::insertAction，qwidget.h:559-563）。
+ * @details    before 为 NULL 或不在菜单内时等价追加（Qt 同 pos<0 分支）；
+ *             动作已在菜单内时先摘除再插入（移动语义，对标 Qt 的
+ *             contains+removeAction 口径）。借用语义：菜单不取得所有
+ *             权，removeAction 摘除后所有权仍归调用方。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      before 参考动作借用指针；可为 NULL。
+ * @param      action 已有动作借用指针；不能为 NULL。
+ * @return     无返回值。
+ */
+void XMenu_insertAction(XMenu* self, XAction* before, XAction* action);
+/**
+ * @brief      从菜单摘除动作但不释放（对标 QMenu::removeAction，即
+ *             QWidget::removeAction）。
+ * @details    仅把动作移出菜单列表并清理触发转发挂接；不删除对象，
+ *             所有权归还调用方。动作不在菜单内时为无操作。
+ * @param      self 目标菜单对象；可为 NULL。
+ * @param      action 目标动作借用指针；可为 NULL。
+ * @return     无返回值。
+ */
+void XMenu_removeAction(XMenu* self, XAction* action);
 /**
  * @brief      在 before 动作之前插入子菜单（对标 QMenu::insertMenu）。
  * @details    before 为 NULL 时等价追加；子菜单所有权转移给本菜单。

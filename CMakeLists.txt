@@ -7,6 +7,7 @@ project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
 # （否则 -D 仅入缓存为 UNINITIALIZED，不产生编译定义，"裁剪构建"实际全量编译。）
 option(XGUI_ON "XGui 模块总开关（默认开；-DXGUI_ON=0 关闭）" ON)
 foreach(_xsw XGUI_ON XGPU_ON XIMAGEIOPLUGIN_ON XSVGICON_ON XPIXMAPCACHE_ON XMOVIE_ON
+             XVIRTUALKEYBOARD_DESKTOP_ON
              XPLATFORM_FBDEV_ON XPLATFORM_FBINPUT_ON XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
              XGUI_BACKINGSTORE_RENDER_MODE XGUI_BACKINGSTORE_BUFFER_COUNT)
     if(DEFINED ${_xsw})
@@ -862,6 +863,7 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_overlay_settings.c"
     "./Test/XGuiDemo/xgui_demo_page_qrcode.c"
     "./Test/XGuiDemo/xgui_demo_page_update.c"
+    "./Test/XGuiDemo/xgui_demo_page_modbus.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
     "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
     "./Test/XGuiDemo/xgui_demo_apitest_input.c"

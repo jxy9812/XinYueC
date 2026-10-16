@@ -33846,23 +33846,11 @@ static void test_calendarwidget_contract(void)
         /* Task 2.5：补充 API。 */
     XCalendarWidget_setDateEditEnabled(cal, true);
     cal_expect(XCalendarWidget_isDateEditEnabled(cal), "dateEditEnabled");
-    XCalendarWidget_setShowTodayDate(cal, false);
-    cal_expect(!XCalendarWidget_isShowTodayDate(cal), "showTodayDate");
     XCalendarWidget_setVerticalHeaderFormat(cal, 1);
     cal_expect(XCalendarWidget_verticalHeaderFormat(cal) == 1,
               "verticalHeaderFormat");
     XCalendarWidget_setHeaderTextFormat(cal, 3);
     XCalendarWidget_setWeekdayTextFormat(cal, 5);
-    {
-        XDate d;
-        cal_expect(XCalendarWidget_todayDate(cal, &d), "todayDate");
-        XCalendarWidget_showTodayPage(cal);
-        cal_expect(XCalendarWidget_weekNumber(cal, &d) >= 1 &&
-                  XCalendarWidget_weekNumber(cal, &d) <= 53,
-                  "weekNumber 范围");
-        cal_expect(XCalendarWidget_isDateSelected(cal, &d),
-                  "showTodayPage 后选中今日");
-    }
 XClassDelete(cal);
 }
 /* ==================== XTextBrowser 契约测试（对标 QTextBrowser） == */

@@ -48,8 +48,11 @@ typedef struct XScrollBar
        （0/1）合并 1 字。 */
     uint32_t m_dragging : 1;      /**< 滑块拖动中。 */
     uint32_t m_showButtons : 1;   /**< 显示两端步进按钮（对标
-                                      QScrollBar 按钮；默认 false=transient
-                                      风格无按钮）。 */
+                                      QScrollBar 的 SH_ScrollBar_Transient
+                                      非 transient 形态；默认 false=
+                                      transient 风格无按钮，经
+                                      XScrollBar_setShowButtons 可显式
+                                      打开）。 */
     uint32_t m_activeSub : 1;     /**< 按下按钮（对标 activeSubControls）。 */
     uint32_t m_activeIsAdd : 1;   /**< 按下的是 AddLine（1）或 SubLine（0）。 */
     uint32_t m_scrollBarFlagsUnused : 28; /**< 保留位。 */
@@ -94,6 +97,29 @@ XScrollBar* XScrollBar_create_ex_2(XMemoryType memory, int orientation,
  * @brief      创建标准右键上下文菜单（对标 QScrollBar::createStandardContextMenu）。
  */
 XMenu* XScrollBar_createStandardContextMenu(XScrollBar* self);
+
+/* ==================== 两端步进按钮（Qt 无同名 API） ==================== */
+
+/**
+ * @brief      设置是否绘制/命中两端步进按钮。
+ * @details    QScrollBar 无此公开 setter——Qt 侧由样式 transient 语义决定
+ *             （QScrollBarPrivate::init 取
+ *             style()->styleHint(QStyle::SH_ScrollBar_Transient,...) 的
+ *             取反，qscrollbar.cpp:345）。XStyleHints 尚无 transient
+ *             提示字段，本框架以显式 setter 等价提供：关闭（缺省）即
+ *             transient（无按钮），开启则绘制 Sub/AddLine 按钮并纳入
+ *             命中测试与 XStyleOption 的 m_scrollSubLine/m_scrollAddLine。
+ * @param      self 滚动条对象；可为 NULL。
+ * @param      show true 显示两端步进按钮。
+ * @return     无返回值。
+ */
+void XScrollBar_setShowButtons(XScrollBar* self, bool show);
+/**
+ * @brief      查询两端步进按钮显隐（缺省 false=transient 无按钮）。
+ * @param      self 滚动条对象；可为 NULL。
+ * @return     true 表示两端步进按钮可见；self 为 NULL 时返回 false。
+ */
+bool XScrollBar_showButtons(const XScrollBar* self);
 
 /* ==================== 父类 API 宏转发（对齐库内 XDial 惯例） ==================== */
 

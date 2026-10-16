@@ -79,7 +79,6 @@ typedef struct XCalendarWidget
     uint8_t m_gridVisible : 1; /**< 网格线（默认 false）。 */
     uint8_t m_navBarVisible : 1; /**< 导航栏（默认 true）。 */
     uint8_t m_dateEditEnabled : 1; /**< 日期编辑框（默认 false；存储）。 */
-    uint8_t m_showTodayDate : 1;  /**< 今日按钮（默认 true）。 */
 } XCalendarWidget;
 
 /** @brief X日历控件classinit（对标 Qt 同名接口）。
@@ -181,13 +180,6 @@ void XCalendarWidget_setNavigationBarVisible(XCalendarWidget* self, bool visible
 void XCalendarWidget_setDateEditEnabled(XCalendarWidget* self, bool enable);
 /** @brief 查询日期编辑框。 @param self 目标控件。 @return 启用返回 true。 */
 bool XCalendarWidget_isDateEditEnabled(const XCalendarWidget* self);
-/** @brief 计算日期所在周数（对标 QCalendarWidget::weekNumber；简化：ISO 周 1..53 估算）。
- * @param self 目标控件。
- * @param date 日期借用指针。
- * @return 周数；参数无效返回 -1。
- */
-int XCalendarWidget_weekNumber(const XCalendarWidget* self,
-                               const XDate* date);
 /** @brief 设置表头文本格式位（QTextCharFormat 简化为位集）。
  * @param self 目标控件。
  * @param fmt 格式位。
@@ -200,21 +192,6 @@ void XCalendarWidget_setHeaderTextFormat(XCalendarWidget* self, int fmt);
  * @return 无返回值。
  */
 void XCalendarWidget_setWeekdayTextFormat(XCalendarWidget* self, int fmt);
-/** @brief 查询日期是否被选中（对标 isDateSelected）。
- * @param self 目标控件。
- * @param date 日期借用指针。
- * @return 选中返回 true。
- */
-bool XCalendarWidget_isDateSelected(const XCalendarWidget* self,
-                                    const XDate* date);
-/** @brief 设置今日按钮可见（对标 setShowTodayDate）。
- * @param self 目标控件。
- * @param show true 显示。
- * @return 无返回值。
- */
-void XCalendarWidget_setShowTodayDate(XCalendarWidget* self, bool show);
-/** @brief 查询今日按钮可见。 @param self 目标控件。 @return 显示返回 true。 */
-bool XCalendarWidget_isShowTodayDate(const XCalendarWidget* self);
 /** @brief 设置垂直表头格式（对标 setVerticalHeaderFormat）。
  * @param self 目标控件。
  * @param format 格式码（0=ISO 周数，1=无）。
@@ -224,17 +201,6 @@ void XCalendarWidget_setVerticalHeaderFormat(XCalendarWidget* self,
                                              int format);
 /** @brief 查询垂直表头格式。 @param self 目标控件。 @return 格式码。 */
 int XCalendarWidget_verticalHeaderFormat(const XCalendarWidget* self);
-/** @brief 今日日期（对标 QCalendarWidget::todayDate）。
- * @param self 目标控件。
- * @param out 输出日期。
- * @return 成功返回 true。
- */
-bool XCalendarWidget_todayDate(const XCalendarWidget* self, XDate* out);
-/** @brief 跳转今日页（对标 showToday）。
- * @param self 目标控件。
- * @return 无返回值。
- */
-void XCalendarWidget_showTodayPage(XCalendarWidget* self);
 /** @brief 查询表头文本格式位（对标 QCalendarWidget::headerTextFormat）。
  * @param self 目标控件；传入 NULL 时返回 0。
  * @return 格式位（QTextCharFormat 简化为位集；0=默认）。

@@ -393,6 +393,12 @@ static void VXComboBox_deinit(XComboBox* self)
     if (!self) return;
     /* 先解除弹窗模态抓取（内部引用弹窗指针，须先于删除视图执行）。 */
     xcombo_releaseGrab(self);
+    /* 行编辑框为组合框所有（setEditable/setLineEdit 契约「组合框销毁时
+       释放」；父链不代删子控件——XTextEdit m_editor 同款显式删除）。 */
+    if (self->m_lineEdit) {
+        XClassDelete((XClass*)self->m_lineEdit);
+        self->m_lineEdit = NULL;
+    }
     if (self->m_placeholderText) {
         XClassDelete((XClass*)self->m_placeholderText);
         self->m_placeholderText = NULL;
@@ -1217,6 +1223,9 @@ typedef struct XComboPopupView
 } XComboPopupView;
 
 static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event);
+static void VXComboPopupView_mouseMoveEvent(XWidget* self, XEvent* event);
+static int xcomboPopupView_rowAtY(const XComboPopupView* view, int y);
+static void xcombo_emitHighlightedPair(XComboBox* self, int row);
 static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event);
 static void VXComboPopupView_keyPressEvent(XWidget* self, XEvent* event);
 static void VXComboPopupView_paintEvent(XWidget* self, XEvent* event);
@@ -1256,6 +1265,38 @@ static void VXComboPopupView_mousePressEvent(XWidget* self, XEvent* event)
         return;
     }
     XClass_Parent(XListView, EXWidget_MousePressEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+}
+
+/** @brief 移动：悬停行命中即置视图当前行并发射 highlighted 对（对标
+ *  QComboBoxPrivateContainer::eventFilter 的 MouseMove 分支——视图内
+ *  indexAt 命中即 view->setCurrentIndex，经 currentChanged →
+ *  emitHighlighted 成对发射；qcombobox.cpp eventFilter MouseMove）。 */
+static void VXComboPopupView_mouseMoveEvent(XWidget* self, XEvent* event)
+{
+    XComboPopupView* view = (XComboPopupView*)self;
+    XMouseEvent* me;
+    XPoint pos;
+    int row;
+    if (!view || !event ||
+        XEvent_type(event) != XEVENT_TYPE_MOUSE_MOVE) {
+        XClass_Parent(XListView, EXWidget_MouseMoveEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        return;
+    }
+    me = (XMouseEvent*)event;
+    pos = XMouseEvent_position(me);
+    row = xcomboPopupView_rowAtY(view, pos.y);
+    if (row >= 0 && view->m_owner) {
+        int cur = XAbstractItemView_currentRow((XAbstractItemView*)view);
+        if (row != cur) {
+            XAbstractItemView_setCurrentIndex((XAbstractItemView*)view,
+                                              row,
+                                              view->m_owner->m_modelColumn);
+            xcombo_emitHighlightedPair(view->m_owner, row);
+        }
+    }
+    XClass_Parent(XListView, EXWidget_MouseMoveEvent,
                   void (*)(XWidget*, XEvent*))(self, event);
 }
 
@@ -1326,6 +1367,21 @@ static void VXComboPopupView_mouseReleaseEvent(XWidget* self, XEvent* event)
     XEvent_accept(event);
 }
 
+/** @brief 发射 highlighted(int) + textHighlighted(const char*) 信号对
+ *  （对标 QComboBoxPrivate::emitHighlighted，qcombobox.cpp:1411-1419；
+ *  越界行守卫对标 index.isValid() 早退）。 */
+static void xcombo_emitHighlightedPair(XComboBox* self, int row)
+{
+    const char* text;
+    if (!self || row < 0 || row >= self->m_itemCount) return;
+    text = XComboBox_itemText_2(self, row);
+    xcombo_emitInt(self,
+                   (size_t)XComboBox_highlighted_signal(self, row), row);
+    xcombo_emitText(self,
+                    (size_t)XComboBox_textHighlighted_signal(self, text),
+                    text);
+}
+
 /** @brief 键盘：Esc 收层（复扫-5 N1 残1）；导航/激活键转发基类后补
  *  弹层表面重绘上屏（复扫-5 N2 残2）。
  * @note  弹层存活期间键盘抓取以本视图为派发起点（xcombo_popupShow 的
@@ -1365,11 +1421,20 @@ static void VXComboPopupView_keyPressEvent(XWidget* self, XEvent* event)
         XEvent_accept(event);
         return;
     }
-    /* 导航（Up/Down/PageUp/PageDown/Home/End）与激活（Return/Enter）
-     * 仍由基类实现：行移动钳制/选择同步/activated 发射（activated →
-     * xcombo_viewActivatedSlot 回填收层）语义不变，此处不做第二实现。 */
-    XClass_Parent(XListView, EXWidget_KeyPressEvent,
-                  void (*)(XWidget*, XEvent*))(self, event);
+    {
+        /* 对标 Qt：弹层视图 currentChanged → emitHighlighted（1076）。
+           导航行变化时成对发射 highlighted/textHighlighted。 */
+        int rowBefore = XAbstractItemView_currentRow(
+            (XAbstractItemView*)view);
+        XClass_Parent(XListView, EXWidget_KeyPressEvent,
+                      void (*)(XWidget*, XEvent*))(self, event);
+        if (view->m_owner) {
+            int rowAfter = XAbstractItemView_currentRow(
+                (XAbstractItemView*)view);
+            if (rowAfter != rowBefore)
+                xcombo_emitHighlightedPair(view->m_owner, rowAfter);
+        }
+    }
     /* 基类未接受（空模型/越界钳制为 ignore）不补绘；Return/Enter 已由
        activated 联动收层（弹层已隐藏）亦无需补绘。 */
     if (!XEvent_isAccepted(event)) return;
@@ -1461,6 +1526,8 @@ static XVtable* XComboPopupView_class_init(void)
     XVTABLE_INHERIT_XCLASS(XListView);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
                              VXComboPopupView_mousePressEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseMoveEvent,
+                             VXComboPopupView_mouseMoveEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseReleaseEvent,
                              VXComboPopupView_mouseReleaseEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
@@ -1674,6 +1741,36 @@ int XComboBox_currentIndex(const XComboBox* self)
 {
     return self ? self->m_currentIndex : -1;
 }
+
+/** @brief 当前项变更的统一出口（对标 QComboBoxPrivate::setCurrentIndex 尾
+ *  部 + emitCurrentIndexChanged，qcombobox.cpp:2157-2185/1421-1431）：行编
+ *  辑回填 → currentIndexChanged(index) → currentTextChanged(text)。
+ *  去重判定（indexChanged）由调用方承担；可编辑回填对标
+ *  qcombobox.cpp:2165-2171（itemText 写回行编辑，分叉态收敛）。 */
+static void xcombo_changeCurrentIndex(XComboBox* self, int index)
+{
+    if (!self) return;
+    /* 可编辑时程序化置当前项回填内嵌编辑框（对标 Qt
+     * QComboBoxPrivate::updateLineEdit）：currentText 分叉态口径
+     * 「程序化置当前项后一致」（见 xcombo_editTextSource 注），回填后
+     * 编辑框与当前项文本同步、分叉态收敛，currentTextChanged 载荷才
+     * 能取到当前项文本而非残留编辑文本。须在发射前回填。 */
+    if (self->m_editable && self->m_lineEdit) {
+        const char* itemText =
+            (index >= 0 && index < self->m_itemCount &&
+             self->m_items[index])
+                ? XString_toUtf8(self->m_items[index]) : "";
+        const char* edit = XLineEdit_text(self->m_lineEdit);
+        if (!edit || XStrcmp(edit, itemText ? itemText : "") != 0)
+            XLineEdit_setText(self->m_lineEdit,
+                              itemText ? itemText : "");
+    }
+    xcombo_emitInt(self, (size_t)XComboBox_currentIndexChanged_signal(self, index), index);
+    xcombo_emitText(self, (size_t)XComboBox_currentTextChanged_signal(
+                            self, XComboBox_currentText_2(self)),
+                    XComboBox_currentText_2(self));
+    XWidget_update((XWidget*)self);
+}
 /** @brief 可编辑模式下取行编辑显示值作为 currentText 来源（分叉态）。
  * @note  对标 Qt 6.8 文档 currentText 语义：editable 时 "current text
  *  is the value displayed by the line edit"。本封装只在编辑框文本与
@@ -1753,30 +1850,16 @@ void XComboBox_setCurrentIndex(XComboBox* self, int index)
     int old;
     if (!self) return;
     if (index < -1) index = -1;
-    if (index >= self->m_itemCount) index = self->m_itemCount - 1;
+    /* 对标 qcombobox.cpp:2150-2152 setCurrentIndex：index>=0 时以
+     * model->index(index,...) 构造——越界行号给出无效模型索引，
+     * QComboBoxPrivate::setCurrentIndex 置 currentIndex 为无效
+     * （currentIndex() 读 -1），并经 emitCurrentIndexChanged 发射
+     * currentIndexChanged(-1)/currentTextChanged("")。不钳位到末项。 */
+    if (index >= self->m_itemCount) index = -1;
     old = self->m_currentIndex;
     if (index == old) return;
     self->m_currentIndex = index;
-    /* 可编辑时程序化置当前项回填内嵌编辑框（对标 Qt
-     * QComboBoxPrivate::updateLineEdit）：currentText 分叉态口径
-     * 「程序化置当前项后一致」（见 xcombo_editTextSource 注），回填后
-     * 编辑框与当前项文本同步、分叉态收敛，currentTextChanged 载荷才
-     * 能取到当前项文本而非残留编辑文本。须在发射前回填。 */
-    if (self->m_editable && self->m_lineEdit) {
-        const char* itemText =
-            (index >= 0 && index < self->m_itemCount &&
-             self->m_items[index])
-                ? XString_toUtf8(self->m_items[index]) : "";
-        const char* edit = XLineEdit_text(self->m_lineEdit);
-        if (!edit || XStrcmp(edit, itemText ? itemText : "") != 0)
-            XLineEdit_setText(self->m_lineEdit,
-                              itemText ? itemText : "");
-    }
-    xcombo_emitInt(self, (size_t)XComboBox_currentIndexChanged_signal(self, index), index);
-    xcombo_emitText(self, (size_t)XComboBox_currentTextChanged_signal(
-                            self, XComboBox_currentText_2(self)),
-                    XComboBox_currentText_2(self));
-    XWidget_update((XWidget*)self);
+    xcombo_changeCurrentIndex(self, index);
 }
 
 void XComboBox_setCurrentText(XComboBox* self, const XString* text)
@@ -1819,6 +1902,9 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
        超出项数则追加到尾部）。 */
     if (index < 0) index = 0;
     if (index > self->m_itemCount) index = self->m_itemCount;
+    /* 对标 qcombobox.cpp:2310-2312 insertItem：钳位后 index>=maxCount
+       直接返回（容量满时不插入、不从尾部挤掉既有条目）。 */
+    if (index >= self->m_maxCount) return;
     if (self->m_itemCount >= self->m_itemCapacity) {
         int newCap = self->m_itemCapacity > 0 ? self->m_itemCapacity * 2 : 8;
         grown = (XString**)XRealloc_System(self->m_items,
@@ -1853,15 +1939,19 @@ void XComboBox_insertItem(XComboBox* self, int index, const XString* text)
     if (self->m_itemData) self->m_itemData[index] = NULL;
     if (self->m_itemIcons) self->m_itemIcons[index] = NULL;
     ++self->m_itemCount;
-    /* 对标 Qt：插入后超出 maxCount 时从尾部裁剪。 */
+    /* 对标 Qt：插入不自动改变 currentIndex（首项插入也保持 -1，
+       由调用方显式 setCurrentIndex）。仅当插入位置在当前项之前
+       时当前项索引右移（Qt d->inserting 抑制 rowsInserted 发射，
+       persistent index 静默平移——须先于尾部裁剪，否则裁剪后的
+       索引右移可能越过 m_itemCount-1 越界）。 */
+    if (index <= self->m_currentIndex) ++self->m_currentIndex;
+    /* 对标 qcombobox.cpp:2346：插入后超出 maxCount 时从尾部裁剪
+       （removeRows(itemCount-1, ...)；裁剪经 removeItem 的 rowsRemoved
+       语义调整当前项并发射对信号）。 */
     if (self->m_itemCount > self->m_maxCount) {
         while (self->m_itemCount > self->m_maxCount)
             XComboBox_removeItem(self, self->m_itemCount - 1);
     }
-    /* 对标 Qt：插入不自动改变 currentIndex（首项插入也保持 -1，
-       由调用方显式 setCurrentIndex）。仅当插入位置在当前项之前
-       时当前项索引右移。 */
-    if (index <= self->m_currentIndex) ++self->m_currentIndex;
     XWidget_update((XWidget*)self);
 }
 void XComboBox_insertItem_2(XComboBox* self, int index, const char* text)
@@ -1922,7 +2012,9 @@ void XComboBox_insertSeparator(XComboBox* self, int index)
 void XComboBox_removeItem(XComboBox* self, int index)
 {
     XString* removed;
+    int oldCurrent;
     if (!self || index < 0 || index >= self->m_itemCount) return;
+    oldCurrent = self->m_currentIndex;
     removed = self->m_items[index];
     XMemmove(&self->m_items[index], &self->m_items[index + 1],
              sizeof(XString*) * (size_t)(self->m_itemCount - index - 1));
@@ -1940,30 +2032,92 @@ void XComboBox_removeItem(XComboBox* self, int index)
     }
     --self->m_itemCount;
     XClassDelete((XClass*)removed);
-    if (self->m_currentIndex >= self->m_itemCount)
-        self->m_currentIndex = self->m_itemCount - 1;
-    XWidget_update((XWidget*)self);
+    /* 对标 QComboBoxPrivate::rowsRemoved（qcombobox.cpp:1155-1185）：
+     * 移除引发的当前项变化经 emitCurrentIndexChanged 发射对信号。 */
+    if (self->m_itemCount == 0) {
+        /* 模型清空：setCurrentIndex(无效) → currentIndex=-1（1170-1173）。 */
+        if (self->m_currentIndex != -1) {
+            self->m_currentIndex = -1;
+            xcombo_changeCurrentIndex(self, -1);
+        }
+    } else if (index < oldCurrent) {
+        /* 当前项在移除点之后：行号左移（Qt persistent index 自动平移，
+         * 1180-1183 发射）。 */
+        --self->m_currentIndex;
+        xcombo_changeCurrentIndex(self, self->m_currentIndex);
+    } else if (index == oldCurrent && oldCurrent >= 0) {
+        /* 当前项被移除：Qt 重选 min(count-1, max(indexBeforeChange,0))
+         * （1175-1178）——即移除点处的后继项。 */
+        int re = self->m_itemCount - 1;
+        if (re > index) re = index;
+        if (re < 0) re = 0;
+        self->m_currentIndex = re;
+        xcombo_changeCurrentIndex(self, re);
+    }
+    /* index > oldCurrent：当前项在移除点之前，不受影响不发射（Qt 同）。 */
     xcombo_updateSizeHint(self); /* [sizeHint] 随内容刷新。 */
+    XWidget_update((XWidget*)self);
+}
+
+/** @brief 条目文本变更后的当前项联动（对标 QComboBoxPrivate::dataChanged
+ *  qcombobox.cpp:1088-1115：变更行覆盖当前项时，可编辑走行编辑回填——
+ *  行编辑 textChanged 已连接 editTextChanged/currentTextChanged
+ *  （1850-1851），非可编辑走 updateCurrentText）。changed=false（同文本
+ *  重设）时不动：QLineEdit::setText 与 updateCurrentText（2919-2927）均
+ *  按等值去重，不产生信号。 */
+static void xcombo_itemTextChanged(XComboBox* self, int index, bool changed)
+{
+    const char* newText;
+    if (!self || !changed) return;
+    if (index < 0 || index >= self->m_itemCount) return;
+    if (index != self->m_currentIndex) return;
+    newText = self->m_items[index] ? XString_toUtf8(self->m_items[index])
+                                   : "";
+    if (self->m_editable && self->m_lineEdit) {
+        /* 行编辑回填：textChanged 转发槽发 editTextChanged；currentText
+         * 分叉态随之收敛（Qt 由 dataChanged→lineEdit->setText 承担）。 */
+        const char* edit = XLineEdit_text(self->m_lineEdit);
+        if (!edit || XStrcmp(edit, newText ? newText : "") != 0)
+            XLineEdit_setText(self->m_lineEdit, newText ? newText : "");
+    }
+    xcombo_emitText(self,
+                    (size_t)XComboBox_currentTextChanged_signal(
+                        self, newText ? newText : ""),
+                    newText ? newText : "");
 }
 
 void XComboBox_setItemText(XComboBox* self, int index, const XString* text)
 {
+    const char* oldText;
+    bool changed;
     if (!self || !text || index < 0 || index >= self->m_itemCount) return;
+    oldText = self->m_items[index] ? XString_toUtf8(self->m_items[index])
+                                   : "";
+    changed = XStrcmp(oldText, XString_toUtf8(text)) != 0;
     XString_assign(self->m_items[index], text);
+    xcombo_itemTextChanged(self, index, changed);
     XWidget_update((XWidget*)self);
 }
 void XComboBox_setItemText_2(XComboBox* self, int index, const char* text)
 {
+    const char* oldText;
+    bool changed;
     if (!self || !text || index < 0 || index >= self->m_itemCount) return;
+    oldText = self->m_items[index] ? XString_toUtf8(self->m_items[index])
+                                   : "";
+    changed = XStrcmp(oldText, text) != 0;
     XString_assign_utf8(self->m_items[index], text);
     xcombo_updateSizeHint(self); /* [sizeHint] 文本宽变化随刷新。 */
+    xcombo_itemTextChanged(self, index, changed);
     XWidget_update((XWidget*)self);
 }
 
 void XComboBox_clear(XComboBox* self)
 {
     int i;
+    bool hadCurrent;
     if (!self) return;
+    hadCurrent = (self->m_currentIndex != -1);
     for (i = 0; i < self->m_itemCount; ++i) {
         if (self->m_items[i]) XClassDelete((XClass*)self->m_items[i]);
         if (self->m_itemData && self->m_itemData[i]) {
@@ -1977,8 +2131,14 @@ void XComboBox_clear(XComboBox* self)
     }
     self->m_itemCount = 0;
     self->m_currentIndex = -1;
-    XWidget_update((XWidget*)self);
+    /* 对标 QComboBox::clear（qcombobox.cpp:2935 removeRows）→ rowsRemoved
+     * 模型空分支（qcombobox.cpp:1170-1173）setCurrentIndex(无效)：发射
+     * currentIndexChanged(-1)/currentTextChanged("")；原无当前项则
+     * indexChanged=false 不发射（QComboBoxPrivate::setCurrentIndex 去重）。 */
+    if (hadCurrent)
+        xcombo_changeCurrentIndex(self, -1);
     xcombo_updateSizeHint(self); /* [sizeHint] 清空随刷新。 */
+    XWidget_update((XWidget*)self);
 }
 
 /* ==================== 弹出与选择 ==================== */
@@ -2137,14 +2297,20 @@ static void xcombo_completionRefresh(XComboBox* self, const char* prefix)
         return;
     }
     /* 高亮：上次补全行仍命中则粘滞，否则首个命中（对标 completer
-       currentRow 跟随）。 */
-    if (self->m_completionRow < 0 ||
-        self->m_completionRow >= self->m_itemCount ||
-        XListView_isRowHidden(view, self->m_completionRow))
-        self->m_completionRow = (int16_t)first;
-    XAbstractItemView_setCurrentIndex((XAbstractItemView*)view,
-                                      self->m_completionRow,
-                                      self->m_modelColumn);
+       currentRow 跟随）。高亮行变化成对发射 highlighted 对（Qt：
+       弹层视图 currentChanged → emitHighlighted，qcombobox.cpp:1076）。 */
+    {
+        int prevRow = self->m_completionRow;
+        if (self->m_completionRow < 0 ||
+            self->m_completionRow >= self->m_itemCount ||
+            XListView_isRowHidden(view, self->m_completionRow))
+            self->m_completionRow = (int16_t)first;
+        XAbstractItemView_setCurrentIndex((XAbstractItemView*)view,
+                                          self->m_completionRow,
+                                          self->m_modelColumn);
+        if (self->m_completionRow != prevRow)
+            xcombo_emitHighlightedPair(self, self->m_completionRow);
+    }
     self->m_completionActive = true;
     if (!self->m_popupVisible)
         xcombo_popupShow(self, matches);
@@ -2192,6 +2358,10 @@ static void xcombo_completionNavigate(XComboBox* self, int step)
     self->m_completionRow = (int16_t)row;
     XAbstractItemView_setCurrentIndex((XAbstractItemView*)view, row,
                                       self->m_modelColumn);
+    /* 对标 Qt：补全弹层（与全量弹层同一容器视图）的 currentChanged →
+       emitHighlighted（qcombobox.cpp:1076）——键盘移动高亮行同样成对
+       发射 highlighted/textHighlighted。 */
+    xcombo_emitHighlightedPair(self, row);
     XWidget_update((XWidget*)view);
     /* 补主动上屏：弹层为独立顶层窗口无宿主帧泵，异步 PAINT 不保证
        上屏（复扫-5 N2 残2 同家族；先例 xcombo_popupReposition）。 */

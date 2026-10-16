@@ -509,6 +509,23 @@ void XTreeView_dataChanged(XTreeView* self, int topRow, int leftCol,
 void* XTreeView_expanded_signal(XTreeView* self, int row);
 /** @brief collapsed(int) 信号（行由展开变折叠时发射；载荷：行号）。 */
 void* XTreeView_collapsed_signal(XTreeView* self, int row);
+/**
+ * @brief columnResized(int,int,int) 信号句柄（对标 QTreeView::
+ *        columnResized 受保护槽；载荷：列号、原宽、新宽）。
+ * @note Qt 中为受保护槽（由内部表头 sectionResized 驱动；Qt 6.8.3
+ *       qtreeview.h 无同名信号）；本实现列宽由视图自持，以
+ *       setColumnWidth 实际变化为发射点，C 无访问分区故公开承载。
+ */
+void* XTreeView_columnResized_signal(XTreeView* self, int column,
+                                     int oldSize, int newSize);
+/**
+ * @brief columnCountChanged(int,int) 信号句柄（对标 QTreeView::
+ *        columnCountChanged 受保护槽；载荷：原列数、新列数）。
+ * @note Qt 中为受保护槽（由表头 sectionCountChanged 驱动）；本实现以
+ *       列状态表与模型列数（或按列访问需求）同步的长度变化为发射点。
+ */
+void* XTreeView_columnCountChanged_signal(XTreeView* self, int oldCount,
+                                          int newCount);
 
 #ifdef __cplusplus
 }

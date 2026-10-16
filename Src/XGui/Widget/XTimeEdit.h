@@ -70,6 +70,21 @@ XVtable* XTimeEdit_class_init(void);
  * @return     无返回值。
  */
 void XTimeEdit_init(XTimeEdit* self, XWidget* parent, XWidgetFlags flags);
+/**
+ * @brief      以初始时间构造 XTimeEdit（对标 QTimeEdit(QTime,QWidget*)，
+ *             qdatetimeedit.cpp:1644-1648）。
+ * @details    构造语义同 XTimeEdit_init，仅初值改由 time 携带：有效
+ *             时间直接作为初值（构造期直赋不发射，对标 Qt 把 time 传
+ *             入基类构造）；无效时间（含 NULL）同 Qt 回退
+ *             QDATETIMEEDIT_TIME_MIN（00:00:00.000）。
+ * @param      self 目标控件指针；传入 NULL 时函数不执行任何操作。
+ * @param      time 初始时间借用指针；可为 NULL 或无效（回退默认）。
+ * @param      parent 父控件指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     无返回值。
+ */
+void XTimeEdit_init_2(XTimeEdit* self, const XTime* time, XWidget* parent,
+                      XWidgetFlags flags);
 #define XTimeEdit_create(parent, flags) XTimeEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, (parent), (flags))
 /**
  * @brief      堆构造 XTimeEdit（XMalloc+Set_Class_Memory+Set_Class_IsHeap
@@ -81,6 +96,22 @@ void XTimeEdit_init(XTimeEdit* self, XWidget* parent, XWidgetFlags flags);
  */
 XTimeEdit* XTimeEdit_create_ex(XMemoryType memory, XWidget* parent,
                                XWidgetFlags flags);
+/** @brief 堆构造便捷宏：以初始时间调用 XTimeEdit_create_ex_2（对标
+ *         QTimeEdit(QTime,QWidget*)）。 */
+#define XTimeEdit_create_2(time, parent, flags) \
+    XTimeEdit_create_ex_2(XCLASS_DEFAULT_MEMORY_TYPE, (time), (parent), (flags))
+/**
+ * @brief      以初始时间堆构造 XTimeEdit（对标 QTimeEdit(QTime,
+ *             QWidget*)）。
+ * @param      memory XMemory 内存类型。
+ * @param      time 初始时间借用指针；可为 NULL 或无效（回退默认
+ *             00:00:00.000）。
+ * @param      parent 父控件指针；可为 NULL。
+ * @param      flags 窗口标志位组合。
+ * @return     新对象指针；内存分配失败返回 NULL。
+ */
+XTimeEdit* XTimeEdit_create_ex_2(XMemoryType memory, const XTime* time,
+                                 XWidget* parent, XWidgetFlags flags);
 /** @brief 析构调度入口宏（复用基类 XDateTimeEdit 的 deinit 链）。 */
 
 /* ==================== 信号 ==================== */

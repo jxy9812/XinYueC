@@ -4,7 +4,8 @@
  * @details    提供水平/垂直进度条：范围与当前值（setValue 越界钳位并
  *             发射 valueChanged 信号；setMinimum/setMaximum 单独设置
  *             端点，对标 QProgressBar 同名槽）、外观翻转、百分比/数值
- *             文本格式串（%p 百分比、%v 当前值、%m 最大值；setFormat/
+ *             文本格式串（%p 百分比、%v 当前值、%m 总步数
+ *             maximum-minimum；setFormat/
  *             resetFormat）、文本可见性与对齐，以及垂直文本方向
  *             （textDirection：TopToBottom/BottomToTop，垂直绘制时按
  *             方向旋转 90°）。绘制走 XPainter：凹陷凹槽（调色板 Dark/
@@ -75,7 +76,10 @@ XCLASS_DEFINE_EXTEND_END(XProgressBar, XWidget)
  *             - m_alignment：文本对齐（默认水平居中|垂直居中，对标
  *               alignment）；
  *             - m_format：文本格式串（默认 "%p%"；%p 百分比、%v 当前
- *               值、%m 最大值，对标 setFormat）。
+ *               值、%m 总步数 maximum-minimum，对标 setFormat）。
+ *             - 复位态：value 落到 minimum 之下（reset 置 minimum-1，
+ *               INT_MIN 下限时置 INT_MIN），text() 返回空串，对标 Qt
+ *               的“未开始”哨兵。
  *             调用者不得手工修改字段；一律走公开 API。
  */
 typedef struct XProgressBar
@@ -185,8 +189,10 @@ int XProgressBar_maximum(const XProgressBar* self);
 
 /**
  * @brief      设置进度范围（对标 QProgressBar::setRange）。
- * @details    min > max 时自动交换；范围变化后当前值按新范围钳位并
- *             触发重绘（值实际变化时发射 valueChanged）。
+ * @details    min > max 时 maximum 收敛为 min（qMax 语义）；范围变化时
+ *             当前值落到新范围外（value < min-1 或 value > max）则走
+ *             reset()（置 minimum-1、不发 valueChanged），否则仅重绘。
+ *             setRange(0, 0) 进入不确定进度（busy）模式。
  * @param      self 进度条对象；可为 NULL。
  * @param      min  新下限。
  * @param      max  新上限。
@@ -216,15 +222,18 @@ void XProgressBar_setMaximum(XProgressBar* self, int maximum);
 
 /**
  * @brief      查询当前进度值（对标 QProgressBar::value）。
+ * @details    复位态（reset 之后）返回 minimum-1，可用
+ *             "value < minimum" 判定“尚未开始”，与 Qt 一致。
  * @param      self 进度条对象；可为 NULL。
- * @return     当前值（已钳位在范围内）；self 为 NULL 时返回 0。
+ * @return     当前值；self 为 NULL 时返回 0。
  */
 int XProgressBar_value(const XProgressBar* self);
 
 /**
  * @brief      设置当前进度值（对标 QProgressBar::setValue）。
- * @details    越界值钳位到 [min, max]；值实际变化时发射
- *             valueChanged(int) 并触发重绘。
+ * @details    越界值钳位到 [min, max]（busy 模式 setRange(0,0) 下接受
+ *             任意值，不钳位）；值实际变化时发射 valueChanged(int) 并
+ *             触发重绘。
  * @param      self  进度条对象；可为 NULL。
  * @param      value 新进度值。
  * @return     无返回值。
@@ -232,9 +241,10 @@ int XProgressBar_value(const XProgressBar* self);
 void XProgressBar_setValue(XProgressBar* self, int value);
 
 /**
- * @brief      重置进度值到下限并重绘（对标 QProgressBar::reset）。
- * @details    同时清空格式化文本缓存；不发 valueChanged（对标 Qt：
- *             reset 后 value == minimum 但不发射信号）。
+ * @brief      重置进度（对标 QProgressBar::reset）。
+ * @details    值置为 minimum-1（minimum==INT_MIN 时置 INT_MIN），表示
+ *             “未开始”的复位态——text() 据此返回空串，value() 可经
+ *             "value < minimum" 判定复位；不发射 valueChanged。
  * @param      self 进度条对象；可为 NULL。
  * @return     无返回值。
  */
@@ -325,8 +335,8 @@ void XProgressBar_setAlignment(XProgressBar* self, int alignment);
  * @brief      查询文本格式串（内部缓冲借用指针；对标 QProgressBar::
  *             format）。
  * @param      self 进度条对象；不可为 NULL。
- * @return     格式串借用指针（"%p" 百分比 / "%v" 值 / "%m" 最大值）；
- *             self 为 NULL 时返回默认 "%p%"。
+ * @return     格式串借用指针（"%p" 百分比 / "%v" 值 / "%m" 总步数
+ *             maximum-minimum）；self 为 NULL 时返回默认 "%p%"。
  */
 const char* XProgressBar_format(const XProgressBar* self);
 
@@ -349,6 +359,8 @@ void XProgressBar_resetFormat(XProgressBar* self);
 
 /**
  * @brief      生成当前格式化文本（按 m_format 替换 %p/%v/%m）。
+ * @details    对标 QProgressBar::text：复位态（value < minimum）与
+ *             不确定进度（setRange(0,0)）返回空串。
  * @param      self    进度条对象；可为 NULL。
  * @param      out     输出缓冲；不可为 NULL。
  * @param      outSize 输出缓冲大小（含 NUL）；不足时截断。

@@ -10994,8 +10994,8 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
             &g_glyphAlphaCache[g_glyphAlphaIndex[bucket] - 1u];
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
-            entry->m_scaleKey == scaleKey &&
-            entry->m_originX == originX && entry->m_originY == originY)
+            entry->m_scaleKey == scaleKey)
+            /* 实验 B：键去位置化（Qt 对齐）——比对移除 */
         {
             entry->m_stamp = ++g_glyphAlphaCacheStamp;
             return entry;
@@ -11006,8 +11006,8 @@ static PainterGlyphAlphaCacheEntry* painterGlyphAlphaCacheFind(
         PainterGlyphAlphaCacheEntry* entry = &g_glyphAlphaCache[i];
         if (entry->m_valid && entry->m_face == face &&
             entry->m_codepoint == codepoint &&
-            entry->m_scaleKey == scaleKey &&
-            entry->m_originX == originX && entry->m_originY == originY)
+            entry->m_scaleKey == scaleKey)
+            /* 实验 B：键去位置化——比对移除 */
         {
             entry->m_stamp = ++g_glyphAlphaCacheStamp;
             g_glyphAlphaIndex[bucket] = (uint16_t)(i + 1);
@@ -11215,6 +11215,28 @@ static void painterGlyphAlphaBlend(XPainter* painter, const uint8_t* alpha,
                     uint32_t dg;
                     uint32_t db;
                     if (coverage == 0u) continue;
+                    /* [perf 2026-10-15] 不透明目标快捷路径：da==255 时
+                       反预乘恒等（dr=sRGB）、dpR=dr、outA=255、末端
+                       反/再预乘均恒等——通式的 2~4 次硬件除法（÷da、
+                       ÷outA）全部消去，每像素仅剩 6 次乘加；算式与
+                       通式逐位等价（mul255v(x,255)=x、(x*255+127)/255
+                       =x 的整数恒等式，见下注）。窗口 backing store
+                       恒不透明，文本混合几乎全程走本分支。 */
+                    stored = dst[x];
+                    da = (stored >> 24u) & 0xffu;
+                    if (da == 255u)
+                    {
+                        pa = mul255v(coverage, sa);
+                        ia = 255u - pa;
+                        dst[x] = 0xFF000000u |
+                            ((mul255v(sr, pa) +
+                              mul255v((stored >> 16u) & 0xffu, ia)) << 16u) |
+                            ((mul255v(sg, pa) +
+                              mul255v((stored >> 8u) & 0xffu, ia)) << 8u) |
+                            (mul255v(sb, pa) +
+                             mul255v(stored & 0xffu, ia));
+                        continue;
+                    }
                     /* 旧逐像素语义：像素颜色 = (ink.rgb 不变,
                        alpha = ink.alpha * cov / 255)，再按 SourceOver
                        合成（目标经 XImage_pixel 反预乘读入、结果反预乘
@@ -11224,8 +11246,6 @@ static void painterGlyphAlphaBlend(XPainter* painter, const uint8_t* alpha,
                     spG2 = mul255v(sg, pa);
                     spB2 = mul255v(sb, pa);
                     ia = 255u - pa;
-                    stored = dst[x];
-                    da = (stored >> 24u) & 0xffu;
                     if (da == 0u)
                     {
                         dr = dg = db = 0u;

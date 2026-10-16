@@ -4,12 +4,17 @@
  * @details    覆盖 XLabel / XFrame / XGroupBox / XLcdNumber / XProgressBar
  *             五个控件类的公开 API（对标 Qt 6.8.3 同名控件）：
  *             - 属性 setter/getter 往返一致；
- *             - Qt 6.8.3 对齐默认值（有文档依据的直接断言，无依据的写
- *               注释不硬断言防误报）；
+ *             - Qt 6.8.3 对齐默认值（有文档依据的直接断言，无依据的
+ *               写注释不硬断言防误报）；
  *             - 信号发射与状态迁移（valueChanged/toggled/clicked/
  *               overflow/linkActivated/linkHovered 经 XObject_event_base
  *               直发合成事件或槽调用触发，与真实输入同路径）；
- *             - 边界（空串/NULL/0/极大值/重复 set/未 show 直接调 API）。
+ *             - 边界（空串/NULL/0/极大值/重复 set/未 show 直接调 API）；
+ *             - display 批修复回归（labels_batchFixups）：XLabel buddy
+ *               destroyed 自摘、XLcdNumber 尺寸策略/位数收缩保持显示串、
+ *               XToolTip 空文本隐藏与同文复用、XShortcut 同键歧义改派
+ *               activatedAmbiguously、图形效果属性变化信号与 ChangeFlag
+ *               位值对齐、XTimeEdit 带时间构造。
  *             全套件无头运行：所有控件栈上构造、从不 show（契约
  *             「控件不 show 也可调绝大多数 API」口径），坐标一律控件
  *             本地坐标。
@@ -43,6 +48,20 @@
 
 #if XWIDGET_ON && XPROGRESSBAR_ON
 #include "XProgressBar.h"
+#endif
+
+/* ---- display 批修复回归所需（XToolTip/XShortcut/图形效果/XTimeEdit） ---- */
+#if XWIDGET_ON
+#include "XShortcut.h"
+#include "XToolTip.h"
+#include "XGraphicsEffect.h"
+#include "XGraphicsBlurEffect.h"
+#include "XGraphicsDropShadowEffect.h"
+#include "XGraphicsOpacityEffect.h"
+#endif
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON
+#include "XTimeEdit.h"
 #endif
 
 /* ==================== 共享：合成鼠标事件注入（与真实输入同路径） ==================== */
@@ -958,6 +977,431 @@ static int labels_progress(void)
 
 #endif /* XWIDGET_ON && XPROGRESSBAR_ON */
 
+/* ==================== display 批修复回归（对标 Qt 6.8.3 行为） ==================== */
+
+#if XWIDGET_ON
+
+/* ---- XShortcut 歧义信号捕获 ---- */
+static int g_lbl_scActivated = 0;
+static int g_lbl_scAmbiguous = 0;
+
+static void labels_scActivatedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args; /* activated() 空参。 */
+    ++g_lbl_scActivated;
+}
+
+static void labels_scAmbiguousSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args; /* activatedAmbiguously() 空参。 */
+    ++g_lbl_scAmbiguous;
+}
+
+/* ---- 图形效果属性信号捕获 ---- */
+static int g_lbl_blurRadiusChanged = 0;
+static float g_lbl_blurRadiusValue = -1.0f;
+static int g_lbl_blurHintsChanged = 0;
+static int g_lbl_blurHintsValue = -1;
+static int g_lbl_dsOffsetChanged = 0;
+static XPointF g_lbl_dsOffsetValue;
+static int g_lbl_dsRadiusChanged = 0;
+static float g_lbl_dsRadiusValue = -1.0f;
+static int g_lbl_dsColorChanged = 0;
+static uint32_t g_lbl_dsColorValue = 0;
+static int g_lbl_opacityChanged = 0;
+static float g_lbl_opacityValue = -1.0f;
+
+static void labels_blurRadiusSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, float, v);
+    g_lbl_blurRadiusValue = v;
+    ++g_lbl_blurRadiusChanged;
+}
+
+static void labels_blurHintsSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, int, h);
+    g_lbl_blurHintsValue = h;
+    ++g_lbl_blurHintsChanged;
+}
+
+static void labels_dsOffsetSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, XPointF, v);
+    g_lbl_dsOffsetValue = v;
+    ++g_lbl_dsOffsetChanged;
+}
+
+static void labels_dsRadiusSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, float, v);
+    g_lbl_dsRadiusValue = v;
+    ++g_lbl_dsRadiusChanged;
+}
+
+static void labels_dsColorSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, XColor, c);
+    g_lbl_dsColorValue = XColor_rgba(&c);
+    ++g_lbl_dsColorChanged;
+}
+
+static void labels_opacitySlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    XVarList_args_1(args, float, v);
+    g_lbl_opacityValue = v;
+    ++g_lbl_opacityChanged;
+}
+
+static int labels_batchFixups(void)
+{
+    int failures = 0;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    /* ------------------------------------------------------------
+     * 1. XLabel::setBuddy 伙伴 destroyed 自摘（对标 QLabel QPointer
+     *    语义，qlabel.cpp:1126-1137）：伙伴先亡 buddy() 自动置空。
+     * ------------------------------------------------------------ */
+    {
+        XLabel lbl;
+        XWidget* b1 = XWidget_create(NULL, 0);
+        XWidget* b2 = XWidget_create(NULL, 0);
+        XLabel_init(&lbl, NULL, 0);
+        XLabel_setBuddy(&lbl, b1);
+        XAPI_EXPECT(XLabel_buddy(&lbl) == b1, "XLabel setBuddy/b1 往返");
+        XLabel_setBuddy(&lbl, b2);
+        XAPI_EXPECT(XLabel_buddy(&lbl) == b2, "XLabel setBuddy 换绑到 b2");
+        XClassDelete((XClass*)b1); /* 旧伙伴销毁不得污染现绑定 */
+        XAPI_EXPECT(XLabel_buddy(&lbl) == b2,
+                    "XLabel 旧伙伴销毁不影响现绑定（换绑已断连）");
+        XClassDelete((XClass*)b2); /* 现伙伴销毁 → 自动置空 */
+        XAPI_EXPECT(XLabel_buddy(&lbl) == NULL,
+                    "XLabel 伙伴销毁后 buddy() 自动置空（QPointer 语义）");
+        XClassDeinit(&lbl);
+    }
+#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
+#if XWIDGET_ON && XFRAME_ON && XLCDNUMBER_ON
+    /* ------------------------------------------------------------
+     * 2. XLcdNumber 默认尺寸策略 Minimum/Minimum（对标
+     *    QLCDNumberPrivate::init 末行，qlcdnumber.cpp:330）+
+     *    setFrameStyle 不再冲掉 sizeHint（与 XFrame 修复联动）+
+     *    setDigitCount 保持显示串（qlcdnumber.cpp:379-405）。
+     * ------------------------------------------------------------ */
+    {
+        XLcdNumber lcd;
+        XWidgetSizePolicy policy;
+        XSize hint;
+        XLcdNumber_init(&lcd, NULL, 0);
+        policy = XWidget_sizePolicy((XWidget*)&lcd.m_base);
+        XAPI_EXPECT(XWidgetSizePolicy_horizontalPolicy(&policy) ==
+                        XWidgetSizePolicy_Minimum &&
+                    XWidgetSizePolicy_verticalPolicy(&policy) ==
+                        XWidgetSizePolicy_Minimum,
+                    "XLcdNumber 默认尺寸策略=Minimum/Minimum（qlcdnumber.cpp:330）");
+        hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
+        XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
+                    "XLcdNumber 默认 sizeHint=(64,23)（5 位公式）");
+        XLcdNumber_setFrameStyle(&lcd,
+                                 (int)XFrameShape_Box |
+                                     (int)XFrameShadow_Raised);
+        hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
+        XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
+                    "XLcdNumber setFrameStyle 后 sizeHint 不被冲掉");
+        /* 形状特例仍按现场计算（HLine=(-1,3)），改回 Box 恢复存储值。 */
+        XLcdNumber_setFrameShape(&lcd, XFrameShape_HLine);
+        hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
+        XAPI_EXPECT(hint.width == -1 && hint.height == 3,
+                    "XLcdNumber HLine 特例 sizeHint=(-1,3) 现场计算");
+        XLcdNumber_setFrameShape(&lcd, XFrameShape_Box);
+        hint = XWidget_sizeHint((XWidget*)&lcd.m_base);
+        XAPI_EXPECT(hint.width == 10 + 9 * (5 + 1) && hint.height == 23,
+                    "XLcdNumber 改回 Box 后 sizeHint 恢复存储值");
+        /* setDigitCount 保持显示串：display 设定非数值内容 "12:34"
+         * （冒号合法）后扩容左端插空格、收缩右对齐截取，不再按
+         * m_value 重格式化（Qt: "   12:34" 口径）。 */
+        XLcdNumber_display(&lcd, "12:34");
+        XAPI_EXPECT(XLcdNumber_value(&lcd) == 0.0,
+                    "XLcdNumber display(\"12:34\") 整串解析失败置 0");
+        XLcdNumber_setDigitCount(&lcd, 7);
+        XAPI_EXPECT(strcmp(lcd.m_digitStr, "  12:34") == 0,
+                    "XLcdNumber setDigitCount(7) 扩容左端插空格保持 12:34");
+        XLcdNumber_setDigitCount(&lcd, 3);
+        XAPI_EXPECT(strcmp(lcd.m_digitStr, ":34") == 0,
+                    "XLcdNumber setDigitCount(3) 收缩右对齐截取 :34");
+        /* 原位数为 0 时按 value() 重显（qlcdnumber.cpp:383,400）。 */
+        XLcdNumber_setDigitCount(&lcd, 0);
+        XLcdNumber_setDigitCount(&lcd, 5);
+        XAPI_EXPECT(strcmp(lcd.m_digitStr, "    0") == 0,
+                    "XLcdNumber 0 位扩展回按 value 重显（value=0）");
+        XClassDeinit(&lcd);
+    }
+#endif /* XWIDGET_ON && XFRAME_ON && XLCDNUMBER_ON */
+
+#if XWIDGET_ON
+    /* ------------------------------------------------------------
+     * 3. XToolTip 空文本等价 hideText（qtooltip.cpp:439-446）+ 同
+     *    文本复用不重摆（qtooltip.cpp:402-414,444-455；提示位置无
+     *    公开 getter，不移动属性由实现保证，此处断言可观察面）。
+     * ------------------------------------------------------------ */
+    {
+        XString* empty = XString_create();
+        XToolTip_hideText();
+        XToolTip_showText_2(10, 10, "前置文本", NULL, NULL, -1);
+        XAPI_EXPECT(XToolTip_isVisible(), "ToolTip showText 后可见（前置）");
+        /* 零长度 XString（非 NULL）走隐藏路径。 */
+        XToolTip_showText(20, 20, empty, NULL, NULL, -1);
+        XAPI_EXPECT(!XToolTip_isVisible() && XToolTip_text() == NULL,
+                    "ToolTip showText(零长度 XString) 等价 hideText");
+        /* showText_2 空串同路径。 */
+        XToolTip_showText_2(30, 30, "", NULL, NULL, -1);
+        XAPI_EXPECT(!XToolTip_isVisible(),
+                    "ToolTip showText_2(空串) 等价 hideText");
+        /* 同文本重复 showText：保持可见且文本不变（复用分支）。 */
+        XToolTip_showText_2(11, 12, "同文", NULL, NULL, -1);
+        XToolTip_showText_2(50, 60, "同文", NULL, NULL, -1);
+        {
+            XString* txt = XToolTip_text();
+            XAPI_EXPECT(XToolTip_isVisible() && txt &&
+                            XString_equals_utf8(txt, "同文",
+                                                XChar_CaseSensitive),
+                        "ToolTip 同文本重复 showText 复用不重摆");
+            if (txt) XClassDelete((XClass*)txt);
+        }
+        /* 换文本后正常更新（复用判定失效 → 移动重摆）。 */
+        XToolTip_showText_2(70, 80, "换文", NULL, NULL, -1);
+        {
+            XString* txt = XToolTip_text();
+            XAPI_EXPECT(XToolTip_isVisible() && txt &&
+                            XString_equals_utf8(txt, "换文",
+                                                XChar_CaseSensitive),
+                        "ToolTip 换文本后更新显示");
+            if (txt) XClassDelete((XClass*)txt);
+        }
+        /* setFont(NULL)/setPalette(NULL)=显式忽略保持原状态（头文件
+         * 口径与实现一致，消除「恢复默认」文档自相矛盾；Qt 引用入参
+         * 无 NULL 概念，见 XToolTip_setFont 注释）。 */
+        {
+            XFont f;
+            XFont got;
+            XFont_init(&f);
+            XFont_setPixelSize(&f, 21);
+            XToolTip_setFont(&f);
+            XToolTip_setFont(NULL);
+            got = XToolTip_font();
+            XAPI_EXPECT(XFont_pixelSize(&got) == 21,
+                        "ToolTip setFont(NULL) 忽略保持原字体（头文件口径）");
+            XClassDeinit((XClass*)&got);
+            XClassDeinit((XClass*)&f);
+        }
+#if XPALETTE_ON
+        {
+            XPalette pal = XToolTip_palette();
+            XColor c = XColor_create_argb(0xFF010203u);
+            XPalette_setColor(&pal, XPaletteColorGroup_Active,
+                              XPaletteColorRole_Window, c);
+            XToolTip_setPalette(&pal);
+            XToolTip_setPalette(NULL);
+            {
+                XPalette gotPal = XToolTip_palette();
+                XColor wc = XPalette_color(&gotPal,
+                                           XPaletteColorGroup_Active,
+                                           XPaletteColorRole_Window);
+                XAPI_EXPECT(XColor_equals(&wc, &c),
+                            "ToolTip setPalette(NULL) 忽略保持原调色板");
+            }
+        }
+#endif /* XPALETTE_ON */
+        XToolTip_hideText();
+        XClassDelete((XClass*)empty);
+    }
+#endif /* XWIDGET_ON */
+
+#if XWIDGET_ON && XFRAME_ON /* XEvent.h（XKey 枚举）随 XFRAME_ON 引入 */
+    /* ------------------------------------------------------------
+     * 4. XShortcut 同键歧义改派 activatedAmbiguously（对标 Qt
+     *    QShortcutMap；QShortcutMap 同键命中多个启用快捷键时不发
+     *    activated）。用 WidgetShortcut + 专用宿主隔离注册表残留。
+     * ------------------------------------------------------------ */
+    {
+        XWidget* host = XWidget_create(NULL, 0);
+        XShortcut* sc1;
+        XShortcut* sc2;
+        g_lbl_scActivated = 0;
+        g_lbl_scAmbiguous = 0;
+        sc1 = XShortcut_create_2((int)XKey_F7, (XObject*)host);
+        sc2 = XShortcut_create_2((int)XKey_F7, (XObject*)host);
+        XShortcut_setContext(sc1, XShortcutContext_WidgetShortcut);
+        XShortcut_setContext(sc2, XShortcutContext_WidgetShortcut);
+        XObject_connect_1((XObject*)sc1,
+                          XSignal(XShortcut_activated_signal),
+                          (XObject*)sc1, labels_scActivatedSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)sc1,
+                          XSignal(XShortcut_activatedAmbiguously_signal),
+                          (XObject*)sc1, labels_scAmbiguousSlot,
+                          XConnectionType_Direct);
+        XObject_connect_1((XObject*)sc2,
+                          XSignal(XShortcut_activatedAmbiguously_signal),
+                          (XObject*)sc2, labels_scAmbiguousSlot,
+                          XConnectionType_Direct);
+        XShortcut_activate(sc1);
+        XAPI_EXPECT(g_lbl_scActivated == 0 && g_lbl_scAmbiguous == 2,
+                    "Shortcut 同键双命中：改发 activatedAmbiguously×2 且不发 activated");
+        XClassDelete((XClass*)sc2);
+        XShortcut_activate(sc1);
+        XAPI_EXPECT(g_lbl_scActivated == 1 && g_lbl_scAmbiguous == 2,
+                    "Shortcut 歧义消解后 activate 恢复发 activated");
+        XClassDelete((XClass*)sc1);
+        XClassDelete((XClass*)host);
+    }
+#endif /* XWIDGET_ON && XFRAME_ON */
+
+#if XWIDGET_ON
+    /* ------------------------------------------------------------
+     * 5. 图形效果属性变化信号（对标 qgraphicseffect.h:146-147/203-205/
+     *    233）+ ChangeFlag 位值对齐（qgraphicseffect.h:31-37）。
+     * ------------------------------------------------------------ */
+    XAPI_EXPECT((int)XGraphicsEffectChange_SourceAttached == 0x1 &&
+                (int)XGraphicsEffectChange_SourceDetached == 0x2 &&
+                (int)XGraphicsEffectChange_SourceBoundingRectChanged ==
+                    0x4 &&
+                (int)XGraphicsEffectChange_SourceInvalidated == 0x8 &&
+                XGraphicsEffectChange_ContentsChanged ==
+                    XGraphicsEffectChange_SourceAttached &&
+                XGraphicsEffectChange_GeometryChanged ==
+                    XGraphicsEffectChange_SourceAttached,
+                "GraphicsEffect ChangeFlag 位值对齐 Qt（旧别名=SourceAttached）");
+    {
+        XGraphicsBlurEffect* blur = XGraphicsBlurEffect_create();
+        XGraphicsDropShadowEffect* ds = XGraphicsDropShadowEffect_create();
+        XGraphicsOpacityEffect* op = XGraphicsOpacityEffect_create();
+        if (blur) {
+            XObject_connect_1(
+                (XObject*)blur,
+                XSignal(XGraphicsBlurEffect_blurRadiusChanged_signal),
+                (XObject*)blur, labels_blurRadiusSlot,
+                XConnectionType_Direct);
+            XObject_connect_1(
+                (XObject*)blur,
+                XSignal(XGraphicsBlurEffect_blurHintsChanged_signal),
+                (XObject*)blur, labels_blurHintsSlot,
+                XConnectionType_Direct);
+            XAPI_EXPECT(XGraphicsBlurEffect_blurHints(blur) ==
+                            (int)XGraphicsBlurEffectHint_Performance,
+                        "BlurEffect 默认 blurHints=PerformanceHint（Qt 默认）");
+            XGraphicsBlurEffect_setBlurRadius(blur, 5.0f);
+            XAPI_EXPECT(g_lbl_blurRadiusChanged == 1 &&
+                            g_lbl_blurRadiusValue == 5.0f,
+                        "BlurEffect setBlurRadius 发 blurRadiusChanged(5.0)");
+            XGraphicsBlurEffect_setBlurRadius(blur, 5.0f);
+            XAPI_EXPECT(g_lbl_blurRadiusChanged == 1,
+                        "BlurEffect 同值 setBlurRadius 不重复发射");
+            XGraphicsBlurEffect_setBlurHints(
+                blur, (int)XGraphicsBlurEffectHint_Quality |
+                          (int)XGraphicsBlurEffectHint_Animation);
+            XAPI_EXPECT(g_lbl_blurHintsChanged == 1 &&
+                            g_lbl_blurHintsValue ==
+                                ((int)XGraphicsBlurEffectHint_Quality |
+                                 (int)XGraphicsBlurEffectHint_Animation) &&
+                            XGraphicsBlurEffect_blurHints(blur) ==
+                                ((int)XGraphicsBlurEffectHint_Quality |
+                                 (int)XGraphicsBlurEffectHint_Animation),
+                        "BlurEffect setBlurHints 发 blurHintsChanged 且往返");
+            XClassDelete((XClass*)blur);
+        }
+        if (ds) {
+            XPointF off;
+            XColor color;
+            off.x = 2.0f;
+            off.y = 3.0f;
+            XObject_connect_1(
+                (XObject*)ds,
+                XSignal(XGraphicsDropShadowEffect_offsetChanged_signal),
+                (XObject*)ds, labels_dsOffsetSlot, XConnectionType_Direct);
+            XObject_connect_1(
+                (XObject*)ds,
+                XSignal(XGraphicsDropShadowEffect_blurRadiusChanged_signal),
+                (XObject*)ds, labels_dsRadiusSlot, XConnectionType_Direct);
+            XObject_connect_1(
+                (XObject*)ds,
+                XSignal(XGraphicsDropShadowEffect_colorChanged_signal),
+                (XObject*)ds, labels_dsColorSlot, XConnectionType_Direct);
+            XGraphicsDropShadowEffect_setOffset(ds, off);
+            XAPI_EXPECT(g_lbl_dsOffsetChanged == 1 &&
+                            g_lbl_dsOffsetValue.x == 2.0f &&
+                            g_lbl_dsOffsetValue.y == 3.0f,
+                        "DropShadowEffect setOffset 发 offsetChanged((2,3))");
+            XGraphicsDropShadowEffect_setBlurRadius(ds, 4.0f);
+            XAPI_EXPECT(g_lbl_dsRadiusChanged == 1 &&
+                            g_lbl_dsRadiusValue == 4.0f,
+                        "DropShadowEffect setBlurRadius 发 blurRadiusChanged(4.0)");
+            color = XColor_create_argb(0x11223344u);
+            XGraphicsDropShadowEffect_setColor(ds, color);
+            XAPI_EXPECT(g_lbl_dsColorChanged == 1 &&
+                            g_lbl_dsColorValue == 0x11223344u,
+                        "DropShadowEffect setColor 发 colorChanged(0x11223344)");
+            XClassDelete((XClass*)ds);
+        }
+        if (op) {
+            XGraphicsOpacityEffect_setOpacity(op, 0.5f);
+            XAPI_EXPECT(g_lbl_opacityChanged == 1 &&
+                            g_lbl_opacityValue == 0.5f,
+                        "OpacityEffect setOpacity(0.5) 发 opacityChanged(0.5)");
+            XGraphicsOpacityEffect_setOpacity(op, 5.0f);
+            XAPI_EXPECT(g_lbl_opacityChanged == 2 &&
+                            g_lbl_opacityValue == 1.0f,
+                        "OpacityEffect setOpacity 钳位后发 opacityChanged(1.0)");
+            XGraphicsOpacityEffect_setOpacity(op, 1.0f);
+            XAPI_EXPECT(g_lbl_opacityChanged == 2,
+                        "OpacityEffect 同值 setOpacity 不重复发射");
+            XClassDelete((XClass*)op);
+        }
+    }
+#endif /* XWIDGET_ON */
+
+#if XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON
+    /* ------------------------------------------------------------
+     * 6. XTimeEdit 带时间构造重载（对标 QTimeEdit(QTime,QWidget*)，
+     *    qdatetimeedit.cpp:1644-1648）：无效时间回退 00:00:00.000。
+     * ------------------------------------------------------------ */
+    {
+        XTimeEdit te;
+        XTime t = XTime_create_time(10, 20, 30, 0);
+        XTime bad = XTime_create(); /* 无效时间（m_msecs=-1）。 */
+        XTimeEdit_init_2(&te, &t, NULL, 0);
+        XAPI_EXPECT(XDateTimeEdit_time(&te.m_base).m_msecs == t.m_msecs,
+                    "TimeEdit init_2(10:20:30) 初值往返");
+        XClassDeinit(&te);
+        XTimeEdit_init_2(&te, &bad, NULL, 0);
+        XAPI_EXPECT(XDateTimeEdit_time(&te.m_base).m_msecs == 0,
+                    "TimeEdit init_2(无效时间) 回退 00:00:00.000（TIME_MIN）");
+        XClassDeinit(&te);
+        XTimeEdit_init_2(&te, NULL, NULL, 0);
+        XAPI_EXPECT(XDateTimeEdit_time(&te.m_base).m_msecs == 0,
+                    "TimeEdit init_2(NULL) 回退默认初值");
+        XClassDeinit(&te);
+        {
+            XTimeEdit* tep = XTimeEdit_create_2(&t, NULL, 0);
+            XAPI_EXPECT(tep != NULL &&
+                            XDateTimeEdit_time(&tep->m_base).m_msecs ==
+                                t.m_msecs,
+                        "TimeEdit create_2 带时间堆构造往返");
+            if (tep) XClassDelete((XClass*)tep);
+        }
+    }
+#endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON */
+
+    return failures;
+}
+
+#endif /* XWIDGET_ON */
+
 /* ==================== 族入口 ==================== */
 
 int xapi_labels_run(void)
@@ -978,6 +1422,9 @@ int xapi_labels_run(void)
 #endif
 #if XWIDGET_ON && XPROGRESSBAR_ON
     failures += labels_progress();
+#endif
+#if XWIDGET_ON
+    failures += labels_batchFixups();
 #endif
 
     XPrintf("XGuiApiTest: [显示族 labels] %s\n",

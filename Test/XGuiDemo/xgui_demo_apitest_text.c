@@ -2,7 +2,9 @@
  * @file       xgui_demo_apitest_text.c
  * @brief      控件 API 测试族：text（XTextEdit/XPlainTextEdit/XTextBrowser/
  *             XTextDocument/XCompleter/XKeySequenceEdit 六控件公开 API
- *             全量断言，对标 Qt 6.8.3）。
+ *             全量断言，对标 Qt 6.8.3）；另含 XComboBox/XFontComboBox
+ *             对齐修复回归段（input 族测试文件不在 text 批白名单，
+ *             跨控件断言按批约定落在本文件）。
  * @details    契约见 xgui_demo_apitest.h：逐断言 XAPI_EXPECT 输出
  *             "XGuiApiTest: [PASS]/[FAIL] 中文描述"，局部 int failures
  *             计数，入口返回失败数。断言维度：
@@ -48,6 +50,10 @@
 #define APITEXT_DOC_ON       (XTEXTDOCUMENT_ON)
 #define APITEXT_COMPLETER_ON (XWIDGET_ON && XTABLEWIDGET_ON)
 #define APITEXT_KSE_ON       (XWIDGET_ON && XKEYSEQUENCEEDIT_ON)
+/* XComboBox/XFontComboBox 回归段（text 批修复承载；input 族测试文件不在
+ * 本批白名单，跨控件对齐断言按批约定落在本文件）。 */
+#define APITEXT_COMBO_ON     (XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON)
+#define APITEXT_FCB_ON       (APITEXT_COMBO_ON && XFONTCOMBOBOX_ON)
 
 #if APITEXT_TEXTEDIT_ON
 #include "XTextEdit.h"
@@ -61,9 +67,19 @@
 #if APITEXT_COMPLETER_ON
 #include "XCompleter.h"
 #include "XAbstractItemModel.h"
+#include "XListWidget.h"
+#if XLINEEDIT_ON
+#include "XLineEdit.h"
+#endif
 #endif
 #if APITEXT_KSE_ON
 #include "XKeySequenceEdit.h"
+#endif
+#if APITEXT_COMBO_ON
+#include "XComboBox.h"
+#endif
+#if APITEXT_FCB_ON
+#include "XFontComboBox.h"
 #endif
 
 #if defined(APITEXT_ANY_ON)
@@ -71,7 +87,8 @@
 #endif
 #define APITEXT_ANY_ON \
     (APITEXT_TEXTEDIT_ON || APITEXT_BROWSER_ON || APITEXT_DOC_ON || \
-     APITEXT_COMPLETER_ON || APITEXT_KSE_ON)
+     APITEXT_COMPLETER_ON || APITEXT_KSE_ON || APITEXT_COMBO_ON || \
+     APITEXT_FCB_ON)
 
 /* ==================== 公共注入工具（与真实输入同路径） =============== */
 
@@ -245,9 +262,18 @@ static int ttxt_run_text_edit(void)
     XTextEdit_setCursorWidth(te, 3);
     XAPI_EXPECT(XTextEdit_cursorWidth(te) == 3,
                 "XTextEdit: setCursorWidth(3) 往返");
-    XTextEdit_setCursorWidth(te, 0); /* 边界：<=0 被忽略 */
-    XAPI_EXPECT(XTextEdit_cursorWidth(te) == 3,
-                "XTextEdit: setCursorWidth(0) 越界值被忽略");
+    /* 对标 QWidgetTextControl::setCursorWidth（qwidgettextcontrol.cpp:
+     * 2469-2476）：0 与正值原样接受；-1 = 样式度量 PM_TextCursorWidth
+     * （本库该度量为 dpiScaled(1)，恒 1）。仅 <-1 拒绝。 */
+    XTextEdit_setCursorWidth(te, 0);
+    XAPI_EXPECT(XTextEdit_cursorWidth(te) == 0,
+                "XTextEdit: setCursorWidth(0) 原样接受（Qt 口径）");
+    XTextEdit_setCursorWidth(te, -1);
+    XAPI_EXPECT(XTextEdit_cursorWidth(te) == 1,
+                "XTextEdit: setCursorWidth(-1) 解析为样式光标宽 1");
+    XTextEdit_setCursorWidth(te, -7); /* 边界：<-1 拒绝 */
+    XAPI_EXPECT(XTextEdit_cursorWidth(te) == 1,
+                "XTextEdit: setCursorWidth(-7) 越界值被忽略");
     XTextEdit_setCursorWidth(te, 1);
     XTextEdit_setFontFamily(te, "SimSun");
     XAPI_EXPECT(strcmp(xapi_cstr(XTextEdit_fontFamily(te)), "SimSun") == 0,
@@ -687,9 +713,18 @@ static int ttxt_run_plain_text_edit(void)
     XPlainTextEdit_setCursorWidth(pte, 2);
     XAPI_EXPECT(XPlainTextEdit_cursorWidth(pte) == 2,
                 "XPlainTextEdit: setCursorWidth(2) 往返");
-    XPlainTextEdit_setCursorWidth(pte, 0); /* 边界：<=0 忽略 */
-    XAPI_EXPECT(XPlainTextEdit_cursorWidth(pte) == 2,
-                "XPlainTextEdit: setCursorWidth(0) 越界被忽略");
+    /* 对标 QWidgetTextControl::setCursorWidth（qwidgettextcontrol.cpp:
+     * 2469-2476）：0 原样接受；-1 = 样式度量 PM_TextCursorWidth（本库
+     * 该度量为 dpiScaled(1)，恒 1）。仅 <-1 拒绝。 */
+    XPlainTextEdit_setCursorWidth(pte, 0);
+    XAPI_EXPECT(XPlainTextEdit_cursorWidth(pte) == 0,
+                "XPlainTextEdit: setCursorWidth(0) 原样接受（Qt 口径）");
+    XPlainTextEdit_setCursorWidth(pte, -1);
+    XAPI_EXPECT(XPlainTextEdit_cursorWidth(pte) == 1,
+                "XPlainTextEdit: setCursorWidth(-1) 解析为样式光标宽 1");
+    XPlainTextEdit_setCursorWidth(pte, -7); /* 边界：<-1 拒绝 */
+    XAPI_EXPECT(XPlainTextEdit_cursorWidth(pte) == 1,
+                "XPlainTextEdit: setCursorWidth(-7) 越界值被忽略");
     XPlainTextEdit_setCursorWidth(pte, 1);
     XPlainTextEdit_setCenterCursor(pte, true);
     XPlainTextEdit_setCenterOnScroll(pte, true);
@@ -942,7 +977,16 @@ static int g_xtbSrcChanged;     /**< sourceChanged 计数。 */
 static int g_xtbHistChanged;    /**< historyChanged 计数。 */
 static int g_xtbBackAv;         /**< backwardAvailable 计数。 */
 static int g_xtbFwdAv;          /**< forwardAvailable 计数。 */
+static int g_xtbAnchorClicked;  /**< anchorClicked 计数。 */
 static char g_xtbLastSrc[64];   /**< 最近一次 sourceChanged 载荷。 */
+
+/** @brief anchorClicked 计数槽。 */
+static void ttxt_slotXtbAnchorClicked(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    ++g_xtbAnchorClicked;
+}
 
 /** @brief sourceChanged(const QUrl&) 载荷捕获槽（XString* 承载）。 */
 static void ttxt_slotXtbSourceChanged(XObject* receiver, XVarList* args)
@@ -1006,6 +1050,10 @@ static int ttxt_run_text_browser(void)
                       (size_t)XTextBrowser_forwardAvailable_signal(NULL,
                                                                    false),
                       (XObject*)b, ttxt_slotXtbFwdAv,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)b,
+                      (size_t)XTextBrowser_anchorClicked_signal(NULL, NULL),
+                      (XObject*)b, ttxt_slotXtbAnchorClicked,
                       XConnectionType_Direct);
 
     /* ---- 1. Qt 对齐默认值（QTextBrowser 构造态）。 ---- */
@@ -1078,10 +1126,16 @@ static int ttxt_run_text_browser(void)
                 "XTextBrowser: historyUrl(-1) 越界返回空串");
     g_xtbSrcChanged = 0;
     XTextBrowser_reload(b);
+    /* 对标 QTextBrowser::reload（qtextbrowser.cpp:785-791）：重走 setSource
+     * 完整加载路径（sourceChanged 重发 + 视口复位），而非仅重发信号空转。 */
     XAPI_EXPECT(g_xtbSrcChanged == 1,
-                "XTextBrowser: reload 重发 sourceChanged（无加载通道）");
+                "XTextBrowser: reload 重走加载路径重发 sourceChanged");
     XAPI_EXPECT(strcmp(g_xtbLastSrc, "xtb://q1") == 0,
                 "XTextBrowser: reload 载荷为当前源 q1");
+    /* 对标 doSetSource 同源早退（qtextbrowser.cpp:748-751）：栈顶同 URL
+     * 不重复压历史条目。 */
+    XAPI_EXPECT(g_xtbHistChanged == 3,
+                "XTextBrowser: reload 同源不重复压历史（栈顶早退）");
     XTextBrowser_clearHistory(b);
     XAPI_EXPECT(XTextBrowser_backwardHistoryCount(b) == 0 &&
                 XTextBrowser_forwardHistoryCount(b) == 0,
@@ -1089,7 +1143,19 @@ static int ttxt_run_text_browser(void)
     XAPI_EXPECT(g_xtbHistChanged == 4,
                 "XTextBrowser: historyChanged 共 4 次"
                 "（3 次 setSource 追加 + clearHistory；backward/forward/"
-                "home 历史内移动不追加不发射）");
+                "home 历史内移动不追加不发射；reload 同源不追加）");
+    /* reload 历史稳定性回归：新源压栈后 reload 保持历史计数不变。 */
+    g_xtbHistChanged = 0;
+    XTextBrowser_setSource(b, "xtb://r1");
+    XAPI_EXPECT(g_xtbHistChanged == 1 &&
+                XTextBrowser_backwardHistoryCount(b) == 1,
+                "XTextBrowser: 新源 setSource 追加历史（reload 对照基线）");
+    XTextBrowser_reload(b);
+    XAPI_EXPECT(g_xtbHistChanged == 1 &&
+                XTextBrowser_backwardHistoryCount(b) == 1 &&
+                strcmp(xapi_cstr(XTextBrowser_source(b)), "xtb://r1") == 0,
+                "XTextBrowser: reload 同源重载且历史计数不变");
+    XTextBrowser_clearHistory(b);
 
     /* ---- 3. 链接开关与搜索路径。 ---- */
     XTextBrowser_setOpenLinks(b, false);
@@ -1155,6 +1221,55 @@ static int ttxt_run_text_browser(void)
                         ((XTextEdit*)b)->m_editor ? (XWidget*)((XTextEdit*)b)->m_editor
                                                   : (XWidget*)b),
                     "XTextBrowser: cursorRect 委托编辑器同口径（行高=字体度量）");
+    }
+
+    /* ---- 5. 链接点击：anchorClicked 与 openLinks 解耦（对标
+     * QTextBrowserPrivate::activateAnchor，qtextbrowser.cpp:202-213：
+     * openLinks=false 先发 anchorClicked 再 return，导航不执行）。 ---- */
+    XTextBrowser_setHtml(b, "<p><a href=\"xtb://linkA\">LinkA text</a></p>");
+    if (b->m_base.m_editor) {
+        XPoint hit;
+        bool haveHit = false;
+        int x;
+        int y;
+        /* 命中锚点的本地坐标：几何随字体度量，按栅格扫描 anchorAt 取
+         * 首个命中点（headless 稳定口）。 */
+        for (y = 2; y < 80 && !haveHit; y += 4) {
+            for (x = 2; x < 200 && !haveHit; x += 4) {
+                XString* a;
+                XPoint_init(&hit, x, y);
+                a = XTextBrowser_anchorAt(b, &hit);
+                if (a && XString_size_base((const XContainer*)a) > 0)
+                    haveHit = true;
+                if (a) XClassDelete((XClass*)a);
+            }
+        }
+        XAPI_EXPECT(haveHit,
+                    "XTextBrowser: setHtml 锚点可被 anchorAt 命中（注入前提）");
+        if (haveHit) {
+            XMouseEvent me;
+            /* openLinks=false：anchorClicked 仍发射，且不触发导航。 */
+            XTextBrowser_setOpenLinks(b, false);
+            g_xtbAnchorClicked = 0;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, hit);
+            XObject_event_base((XObject*)b->m_base.m_editor, (XEvent*)&me);
+            XAPI_EXPECT(g_xtbAnchorClicked == 1,
+                        "XTextBrowser: openLinks=false 点击仍发 anchorClicked");
+            XAPI_EXPECT(strcmp(xapi_cstr(XTextBrowser_source(b)),
+                               "xtb://r1") == 0,
+                        "XTextBrowser: openLinks=false 点击不导航（源不变）");
+            /* openLinks=true：anchorClicked 发射且按源导航。 */
+            XTextBrowser_setOpenLinks(b, true);
+            g_xtbAnchorClicked = 0;
+            XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                             XMouseButton_LeftButton, 0, hit);
+            XObject_event_base((XObject*)b->m_base.m_editor, (XEvent*)&me);
+            XAPI_EXPECT(g_xtbAnchorClicked == 1 &&
+                        strcmp(xapi_cstr(XTextBrowser_source(b)),
+                               "xtb://linkA") == 0,
+                        "XTextBrowser: openLinks=true 点击发 anchorClicked 并导航");
+        }
     }
 
     XClassDelete((XClass*)b);
@@ -1401,7 +1516,27 @@ static int ttxt_run_text_document(void)
     XMemset(&fmt, 0, sizeof(fmt));
     XTextDocument_setDefaultFormat(d, &fmt); /* 还原全局默认格式 */
 
-    /* ---- 10. clear 复位（对标 QTextDocument::clear）。 ---- */
+    /* ---- 10. 修订计数 revision（对标 QTextDocument::revision 语义：
+     * Qt 按内容编辑次数递增（qtextdocument_p.cpp:1256 ++revision），
+     * setModified 不影响；clear 经 init 复位到 0（:162）。 ---- */
+    XTextDocument_setPlainText(d, "rev");
+    XAPI_EXPECT(XTextDocument_revision(d) == 1,
+                "XTextDocument: 单次内容编辑 revision=1（每次编辑递增）");
+    {
+        int rev1 = XTextDocument_revision(d);
+        XTextDocument_appendText(d, "!", NULL);
+        XAPI_EXPECT(XTextDocument_revision(d) == rev1 + 1,
+                    "XTextDocument: 追加编辑 revision 递增（对标 Qt 语义）");
+        XTextDocument_setModified(d, false);
+        XAPI_EXPECT(XTextDocument_revision(d) == rev1 + 1,
+                    "XTextDocument: setModified(false) 不复位 revision");
+    }
+    XTextDocument_clear(d);
+    XAPI_EXPECT(XTextDocument_revision(d) == 0,
+                "XTextDocument: clear 复位 revision（Qt init 语义）");
+
+    /* ---- 11. clear 复位（对标 QTextDocument::clear）。 ---- */
+    XTextDocument_setPlainText(d, "to clear");
     XTextDocument_clear(d);
     XAPI_EXPECT(XTextDocument_isEmpty(d) && XTextDocument_blockCount(d) == 1,
                 "XTextDocument: clear 回到单空块且 isEmpty=true");
@@ -1421,6 +1556,10 @@ static int ttxt_run_text_document(void)
 /* ==================== XCompleter：补全对象（对标 QCompleter） ======== */
 
 static int g_xcomHighlighted; /**< highlighted(text) 计数。 */
+static int g_xcomActivated;   /**< activated(text) 计数。 */
+static int g_xcomTextAct;     /**< textActivated 计数。 */
+static int g_xcomActIdx;      /**< activatedIndex 计数。 */
+static int g_xcomActIdxRow;   /**< activatedIndex 最近载荷行号。 */
 
 /** @brief highlighted 计数槽（载荷 XString* 仅计数）。 */
 static void ttxt_slotComHighlighted(XObject* receiver, XVarList* args)
@@ -1428,6 +1567,30 @@ static void ttxt_slotComHighlighted(XObject* receiver, XVarList* args)
     (void)receiver;
     (void)args;
     ++g_xcomHighlighted;
+}
+
+/** @brief activated 计数槽。 */
+static void ttxt_slotComActivated(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    ++g_xcomActivated;
+}
+
+/** @brief textActivated 计数槽。 */
+static void ttxt_slotComTextActivated(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    ++g_xcomTextAct;
+}
+
+/** @brief activatedIndex 计数槽（载荷 int 行号）。 */
+static void ttxt_slotComActivatedIndex(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++g_xcomActIdx;
+    if (args) g_xcomActIdxRow = XVarList_arg(args, int);
 }
 
 /** @brief 建立 6 行 2 列词条模型（列 0 词条/列 1 类别）。 */
@@ -1550,15 +1713,19 @@ static int ttxt_run_completer(void)
     if (s) XClassDelete((XClass*)s);
     XAPI_EXPECT(XCompleter_currentIndex(c) == 1,
                 "XCompleter: 行切换后源模型索引同步为 1");
-    XAPI_EXPECT(XCompleter_setCurrentRow(c, -1) &&
+    /* 越界语义对齐 Qt QCompletionModel::setCurrentRow（qcompleter.cpp:
+     * 256-269）：row<0 或 row>=候选数一律返回 false 且不改状态——环绕
+     * 职责在弹层按键导航层（消费方按 wrapAround 自行回绕），不在本
+     * 函数取模；调用方以返回值区分「设置成功」与「越界被拒」。 */
+    XAPI_EXPECT(!XCompleter_setCurrentRow(c, -1) &&
                 XCompleter_currentRow(c) == 1,
-                "XCompleter: setCurrentRow(-1) 环绕到末项（wrapAround）");
-    XAPI_EXPECT(XCompleter_setCurrentRow(c, 2) &&
-                XCompleter_currentRow(c) == 0,
-                "XCompleter: setCurrentRow(2) 回绕到首项");
+                "XCompleter: setCurrentRow(-1) 越界返回 false 状态不变");
+    XAPI_EXPECT(!XCompleter_setCurrentRow(c, 2) &&
+                XCompleter_currentRow(c) == 1,
+                "XCompleter: setCurrentRow(2) 越界返回 false 状态不变");
     XCompleter_setWrapAround(c, false);
     XAPI_EXPECT(!XCompleter_setCurrentRow(c, 5) &&
-                XCompleter_currentRow(c) == 0,
+                XCompleter_currentRow(c) == 1,
                 "XCompleter: 关环绕后越界返回 false 且状态不变");
     XCompleter_setWrapAround(c, true);
 
@@ -1677,6 +1844,63 @@ static int ttxt_run_completer(void)
         if (dir) XClassDelete((XClass*)dir);
         if (file) XClassDelete((XClass*)file);
     }
+
+#if XLINEEDIT_ON
+    /* ---- 9. activated 系列发射点（弹层候选采纳；对标 QCompleterPrivate::
+     * _q_complete 采纳分支 qcompleter.cpp:869-876：成对发射 activated
+     * (index)/activated(completion)）。此前 activated 系列零发射点。 ---- */
+    {
+        XLineEdit* editor = XLineEdit_create(NULL, 0);
+        XCompleter* c2 = XCompleter_create(NULL);
+        XAbstractItemModel* m2 = ttxt_make_word_model();
+        XWidget* popup;
+        if (editor && c2 && m2) {
+            XCompleter_setModel(c2, m2);
+            XCompleter_setWidget(c2, (XWidget*)editor);
+            XObject_connect_1((XObject*)c2,
+                              (size_t)XCompleter_activated_signal(c2, NULL),
+                              (XObject*)c2, ttxt_slotComActivated,
+                              XConnectionType_Direct);
+            XObject_connect_1((XObject*)c2,
+                              (size_t)XCompleter_textActivated_signal(c2,
+                                                                      NULL),
+                              (XObject*)c2, ttxt_slotComTextActivated,
+                              XConnectionType_Direct);
+            XObject_connect_1((XObject*)c2,
+                              (size_t)XCompleter_activatedIndex_signal(c2,
+                                                                       0, 0),
+                              (XObject*)c2, ttxt_slotComActivatedIndex,
+                              XConnectionType_Direct);
+            XCompleter_setCompletionPrefix_2(c2, "Ope"); /* 命中 2 条。 */
+            XCompleter_complete(c2);
+            popup = XCompleter_popup(c2);
+            XAPI_EXPECT(popup != NULL,
+                        "XCompleter: complete 后默认弹层就绪（采纳前提）");
+            g_xcomActivated = 0;
+            g_xcomTextAct = 0;
+            g_xcomActIdx = 0;
+            g_xcomActIdxRow = -1;
+            /* 弹层行 1 点击（经 itemClicked 公开信号触发采纳路径）。 */
+            XListWidget_itemClicked_signal((XListWidget*)popup, 1);
+            XAPI_EXPECT(g_xcomActivated == 1 && g_xcomTextAct == 1,
+                        "XCompleter: 弹层采纳成对发射 activated/"
+                        "textActivated");
+            XAPI_EXPECT(g_xcomActIdx == 1 && g_xcomActIdxRow == 1,
+                        "XCompleter: 弹层采纳发射 activatedIndex(row=1)");
+            XAPI_EXPECT(strcmp(XLineEdit_text(editor),
+                               "Open Directory") == 0,
+                        "XCompleter: 采纳行回写编辑框（Open Directory）");
+            XAPI_EXPECT(!XWidget_isVisible(popup),
+                        "XCompleter: 采纳后弹层收起");
+            XCompleter_hidePopup(c2);
+        } else {
+            XAPI_EXPECT(false, "XCompleter: activated 路径建模失败");
+        }
+        if (m2) XClassDelete(m2);
+        if (c2) XClassDelete(c2);
+        if (editor) XClassDelete((XClass*)editor);
+    }
+#endif /* XLINEEDIT_ON */
 
     XClassDelete(c);
     XClassDelete(model);
@@ -1831,14 +2055,32 @@ static int ttxt_run_key_sequence_edit(void)
                     "XKeySequenceEdit: setKeySequence 双组合往返");
         XAPI_EXPECT(g_xkseChanged == 1,
                     "XKeySequenceEdit: setKeySequence 发射变化信号");
+        /* 对标 qkeysequenceedit.cpp:241：相同序列早退（不发射信号，
+         * 不重复通知）。 */
+        XKeySequenceEdit_setKeySequence(k, &manual);
+        XAPI_EXPECT(g_xkseChanged == 1 &&
+                    XKeySequenceEdit_keySequence(k)->count == 2,
+                    "XKeySequenceEdit: 相同序列 setKeySequence 早退不发射");
         g_xkseChanged = 0;
         XKeySequenceEdit_setKeySequence(k, NULL); /* 边界：NULL 忽略 */
         XAPI_EXPECT(g_xkseChanged == 0 &&
                     XKeySequenceEdit_keySequence(k)->count == 2,
                     "XKeySequenceEdit: setKeySequence(NULL) 无操作");
+        /* 对标 qkeysequenceedit.cpp:243-247：超出 maximumSequenceLength
+         * 告警并截断到上限（keyNum = min(desired, max)）。 */
+        XKeySequenceEdit_clear(k);
+        XKeySequenceEdit_setMaximumSequenceLength(k, 1);
+        g_xkseChanged = 0;
+        XKeySequenceEdit_setKeySequence(k, &manual);
+        seq = XKeySequenceEdit_keySequence(k);
+        XAPI_EXPECT(seq && seq->count == 1 &&
+                    seq->combos[0].key == (int)XKey_O,
+                    "XKeySequenceEdit: 超长 setKeySequence 截断到上限");
+        XAPI_EXPECT(g_xkseChanged == 1,
+                    "XKeySequenceEdit: 超长截断后仍发射变化信号");
     }
 
-    /* ---- 4. 序列最大长度（截断与越界忽略）。 ---- */
+    /* ---- 4. 序列最大长度（截断/收缩与越界忽略）。 ---- */
     XKeySequenceEdit_clear(k);
     XKeySequenceEdit_setMaximumSequenceLength(k, 2);
     XAPI_EXPECT(XKeySequenceEdit_maximumSequenceLength(k) == 2,
@@ -1848,6 +2090,24 @@ static int ttxt_run_key_sequence_edit(void)
     ttxt_key((XWidget*)k, XKey_C, XKeyboardModifier_ControlModifier);
     XAPI_EXPECT(XKeySequenceEdit_keySequence(k)->count == 2,
                 "XKeySequenceEdit: 超出最大长度的组合被截断");
+    /* 对标 qkeysequenceedit.cpp:198-206：上限收缩把已捕获序列截断到
+     * count（keyNum = count，被丢弃分组清零）；rebuildKeySequence 仅
+     * 重建序列值不发射信号（qkeysequenceedit_p.h:39-41）。不收缩则
+     * count 恒 >= 新上限，后续按键永久无法追加。 */
+    g_xkseChanged = 0;
+    XKeySequenceEdit_setMaximumSequenceLength(k, 1);
+    seq = XKeySequenceEdit_keySequence(k);
+    XAPI_EXPECT(seq && seq->count == 1 &&
+                seq->combos[0].key == (int)XKey_A,
+                "XKeySequenceEdit: 收缩上限截断既有长序列到 1 组");
+    XAPI_EXPECT(g_xkseChanged == 0,
+                "XKeySequenceEdit: 上限收缩不发射 keySequenceChanged");
+    XKeySequenceEdit_setMaximumSequenceLength(k, 4);
+    ttxt_key((XWidget*)k, XKey_C, XKeyboardModifier_ControlModifier);
+    XAPI_EXPECT(XKeySequenceEdit_keySequence(k)->count == 2,
+                "XKeySequenceEdit: 收缩后恢复上限可继续追加");
+    XKeySequenceEdit_clear(k);
+    XKeySequenceEdit_setMaximumSequenceLength(k, 2);
     XKeySequenceEdit_setMaximumSequenceLength(k, 0);
     XKeySequenceEdit_setMaximumSequenceLength(k, 9);
     XAPI_EXPECT(XKeySequenceEdit_maximumSequenceLength(k) == 2,
@@ -1901,6 +2161,302 @@ static int ttxt_run_key_sequence_edit(void)
 }
 #endif /* APITEXT_KSE_ON */
 
+#if APITEXT_COMBO_ON
+
+/* ==================== XComboBox：组合框对齐修复回归 ================== */
+
+static int g_xcbCurIdx;       /**< currentIndexChanged 计数。 */
+static int g_xcbCurIdxLast;   /**< currentIndexChanged 最近载荷。 */
+static int g_xcbCurText;      /**< currentTextChanged 计数。 */
+static char g_xcbCurTextLast[64]; /**< currentTextChanged 最近载荷。 */
+static int g_xcbHl;           /**< highlighted(int) 计数。 */
+static int g_xcbHlRow;        /**< highlighted 最近载荷行。 */
+static int g_xcbTextHl;       /**< textHighlighted 计数。 */
+
+/** @brief currentIndexChanged 计数槽。 */
+static void ttxt_slotCbCurIdx(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++g_xcbCurIdx;
+    if (args) g_xcbCurIdxLast = XVarList_arg(args, int);
+}
+
+/** @brief currentTextChanged 计数槽（捕获载荷）。 */
+static void ttxt_slotCbCurText(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++g_xcbCurText;
+    g_xcbCurTextLast[0] = '\0';
+    if (args) {
+        XVarList_args_1(args, const char*, t);
+        if (t) snprintf(g_xcbCurTextLast, sizeof(g_xcbCurTextLast), "%s", t);
+    }
+}
+
+/** @brief highlighted 计数槽。 */
+static void ttxt_slotCbHl(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++g_xcbHl;
+    if (args) g_xcbHlRow = XVarList_arg(args, int);
+}
+
+/** @brief textHighlighted 计数槽。 */
+static void ttxt_slotCbTextHl(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    (void)args;
+    ++g_xcbTextHl;
+}
+
+/** @brief XComboBox 对齐修复回归（本批 findings 2-5）。 */
+static int ttxt_run_combo(void)
+{
+    int failures = 0;
+    XComboBox* cb = XComboBox_create(NULL, 0);
+    if (!cb) {
+        XAPI_EXPECT(false, "XComboBox: 实例创建失败");
+        return 1;
+    }
+    XObject_connect_1((XObject*)cb,
+                      (size_t)XComboBox_currentIndexChanged_signal(cb, 0),
+                      (XObject*)cb, ttxt_slotCbCurIdx,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)cb,
+                      (size_t)XComboBox_currentTextChanged_signal(cb, NULL),
+                      (XObject*)cb, ttxt_slotCbCurText,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)cb,
+                      (size_t)XComboBox_highlighted_signal(cb, 0),
+                      (XObject*)cb, ttxt_slotCbHl,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)cb,
+                      (size_t)XComboBox_textHighlighted_signal(cb, NULL),
+                      (XObject*)cb, ttxt_slotCbTextHl,
+                      XConnectionType_Direct);
+
+    /* ---- 1. setCurrentIndex 越界 = 无当前项（对标 qcombobox.cpp:
+     * 2150-2155 越界模型索引无效 → currentIndex=-1 并发射）。 ---- */
+    XComboBox_addItem_2(cb, "A");
+    XComboBox_addItem_2(cb, "B");
+    XComboBox_addItem_2(cb, "C");
+    XComboBox_setCurrentIndex(cb, 1);
+    XAPI_EXPECT(XComboBox_currentIndex(cb) == 1 && g_xcbCurIdx == 1,
+                "ComboBox: setCurrentIndex(1) 生效发射 currentIndexChanged");
+    g_xcbCurIdx = 0;
+    g_xcbCurText = 0;
+    XComboBox_setCurrentIndex(cb, 99);
+    XAPI_EXPECT(XComboBox_currentIndex(cb) == -1 && g_xcbCurIdx == 1 &&
+                g_xcbCurIdxLast == -1,
+                "ComboBox: setCurrentIndex 越界置无当前项并发射 -1（Qt）");
+    XAPI_EXPECT(g_xcbCurText == 1 &&
+                strcmp(g_xcbCurTextLast, "") == 0,
+                "ComboBox: 越界置空发射 currentTextChanged(\"\")");
+
+    /* ---- 2. clear/removeItem 的当前项信号（对标 qcombobox.cpp:
+     * 1155-1185 rowsRemoved / 2935 clear）。 ---- */
+    XComboBox_clear(cb);
+    XAPI_EXPECT(g_xcbCurIdx == 1 && XComboBox_currentIndex(cb) == -1,
+                "ComboBox: 无当前项时 clear 不重复发射（indexChanged 去重）");
+    XComboBox_addItem_2(cb, "A");
+    XComboBox_addItem_2(cb, "B");
+    XComboBox_addItem_2(cb, "C");
+    XComboBox_setCurrentIndex(cb, 2);
+    g_xcbCurIdx = 0;
+    g_xcbCurIdxLast = -9;
+    XComboBox_removeItem(cb, 0); /* 当前项在移除点之后 → 行号左移 */
+    {
+        XString* it1 = XComboBox_itemText(cb, 1);
+        XAPI_EXPECT(XComboBox_currentIndex(cb) == 1 && g_xcbCurIdx == 1 &&
+                    g_xcbCurIdxLast == 1 &&
+                    it1 && strcmp(xapi_cstr(it1), "C") == 0,
+                    "ComboBox: removeItem 左移当前项并发射 currentIndexChanged");
+        if (it1) XClassDelete((XClass*)it1);
+    }
+    g_xcbCurIdx = 0;
+    XComboBox_removeItem(cb, 1); /* 移除当前项 → 重选后继 min(count-1,idx) */
+    XAPI_EXPECT(XComboBox_currentIndex(cb) == 0 && g_xcbCurIdx == 1 &&
+                g_xcbCurIdxLast == 0,
+                "ComboBox: 移除当前项重选后继并发射（Qt rowsRemoved）");
+    g_xcbCurText = 0;
+    XComboBox_removeItem(cb, 0); /* 移除唯一项 → 清空发射 -1/"" */
+    XAPI_EXPECT(XComboBox_currentIndex(cb) == -1 && g_xcbCurIdx == 1 &&
+                g_xcbCurIdxLast == -1 && g_xcbCurText == 1 &&
+                strcmp(g_xcbCurTextLast, "") == 0,
+                "ComboBox: 清空性移除发射 currentIndexChanged(-1)/Text(\"\")");
+
+    /* ---- 3. setItemText 当前项联动（对标 dataChanged，1088-1115）。 -- */
+    XComboBox_addItem_2(cb, "Alpha");
+    XComboBox_addItem_2(cb, "Beta");
+    XComboBox_setCurrentIndex(cb, 1);
+    g_xcbCurText = 0;
+    XComboBox_setItemText_2(cb, 1, "Beta2");
+    XAPI_EXPECT(g_xcbCurText == 1 &&
+                strcmp(g_xcbCurTextLast, "Beta2") == 0,
+                "ComboBox: setItemText 命中当前项发射 currentTextChanged");
+    XComboBox_setItemText_2(cb, 1, "Beta2"); /* 同文本幂等 */
+    XAPI_EXPECT(g_xcbCurText == 1,
+                "ComboBox: 同文本 setItemText 幂等不发射（setText 去重）");
+    XComboBox_setItemText_2(cb, 0, "Alpha2"); /* 非当前项 */
+    XAPI_EXPECT(g_xcbCurText == 1,
+                "ComboBox: 非当前项 setItemText 不发 currentTextChanged");
+
+    /* ---- 4. insertItem 满容量（对标 qcombobox.cpp:2310-2312 前置
+     * return + 2346 尾裁剪经 rowsRemoved 信号链）。 ---- */
+    XComboBox_clear(cb);
+    XComboBox_setMaxCount(cb, 3);
+    XComboBox_addItem_2(cb, "A");
+    XComboBox_addItem_2(cb, "B");
+    XComboBox_addItem_2(cb, "C");
+    XComboBox_setCurrentIndex(cb, 2);
+    g_xcbCurIdx = 0;
+    XComboBox_insertItem_2(cb, 3, "D"); /* 追加时容量满 → 直接返回 */
+    {
+        XString* it2 = XComboBox_itemText(cb, 2);
+        XAPI_EXPECT(XComboBox_count(cb) == 3 && g_xcbCurIdx == 0 &&
+                    it2 && strcmp(xapi_cstr(it2), "C") == 0,
+                    "ComboBox: 满容量追加直接返回（不插入不挤占，Qt 前置 return）");
+        if (it2) XClassDelete((XClass*)it2);
+    }
+    XComboBox_insertItem_2(cb, 0, "Z"); /* 头插：尾项被裁，当前项重选 */
+    {
+        XString* it0 = XComboBox_itemText(cb, 0);
+        XString* it2 = XComboBox_itemText(cb, 2);
+        XAPI_EXPECT(XComboBox_count(cb) == 3 &&
+                    it0 && strcmp(xapi_cstr(it0), "Z") == 0 &&
+                    it2 && strcmp(xapi_cstr(it2), "B") == 0,
+                    "ComboBox: 满容量头插从尾部裁剪（Qt removeRows 语义）");
+        if (it0) XClassDelete((XClass*)it0);
+        if (it2) XClassDelete((XClass*)it2);
+    }
+    XAPI_EXPECT(XComboBox_currentIndex(cb) == 2 && g_xcbCurIdx == 1 &&
+                g_xcbCurIdxLast == 2,
+                "ComboBox: 满容量头插的尾裁剪经 removeItem 发射对信号");
+    XComboBox_setMaxCount(cb, 2147483647);
+
+    /* ---- 5. highlighted/textHighlighted 发射点（对标
+     * QComboBoxPrivateContainer MouseMove → view setCurrentIndex →
+     * currentChanged → emitHighlighted，qcombobox.cpp:1076/1411）。 ---- */
+    XComboBox_clear(cb);
+    XComboBox_addItem_2(cb, "H1");
+    XComboBox_addItem_2(cb, "H2");
+    XComboBox_addItem_2(cb, "H3");
+    XComboBox_showPopup_base(cb);
+    XAPI_EXPECT(XComboBox_popupVisible(cb),
+                "ComboBox: showPopup 弹层可见（hover 注入前提）");
+    {
+        XListView* view = XComboBox_view(cb);
+        XMouseEvent me;
+        XPoint pos;
+        g_xcbHl = 0;
+        g_xcbHlRow = -1;
+        g_xcbTextHl = 0;
+        XPoint_init(&pos, 5, 25); /* 行高 20 → 悬停第 1 行。 */
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_MOVE,
+                         XMouseButton_NoButton, 0, pos);
+        XObject_event_base((XObject*)view, (XEvent*)&me);
+        XAPI_EXPECT(g_xcbHl == 1 && g_xcbHlRow == 1,
+                    "ComboBox: 弹层悬停发射 highlighted(1)");
+        XAPI_EXPECT(g_xcbTextHl == 1,
+                    "ComboBox: 弹层悬停成对发射 textHighlighted");
+    }
+    XComboBox_hidePopup_base(cb);
+
+    XClassDelete((XClass*)cb);
+    XPrintf("XGuiApiTest: [XComboBox] %s\n",
+            failures == 0 ? "PASS" : "FAIL");
+    return failures;
+}
+#endif /* APITEXT_COMBO_ON */
+
+#if APITEXT_FCB_ON
+
+/* ==================== XFontComboBox：可编辑与字体信号回归 ============ */
+
+static int g_fcbFontChanged;      /**< currentFontChanged 计数。 */
+static char g_fcbFamily[64];      /**< currentFontChanged 最近载荷。 */
+
+/** @brief currentFontChanged 计数槽（捕获族名载荷）。 */
+static void ttxt_slotFcbFontChanged(XObject* receiver, XVarList* args)
+{
+    (void)receiver;
+    ++g_fcbFontChanged;
+    g_fcbFamily[0] = '\0';
+    if (args) {
+        XVarList_args_1(args, const char*, t);
+        if (t) snprintf(g_fcbFamily, sizeof(g_fcbFamily), "%s", t);
+    }
+}
+
+/** @brief XFontComboBox 对齐修复回归（本批 finding 6）。 */
+static int ttxt_run_fontcombo(void)
+{
+    int failures = 0;
+    XFontComboBox* f = XFontComboBox_create(NULL, 0);
+    if (!f) {
+        XAPI_EXPECT(false, "XFontComboBox: 实例创建失败");
+        return 1;
+    }
+    XObject_connect_1((XObject*)f,
+                      (size_t)XFontComboBox_currentFontChanged_signal(f,
+                                                                      NULL),
+                      (XObject*)f, ttxt_slotFcbFontChanged,
+                      XConnectionType_Direct);
+
+    /* ---- 1. 构造态 editable=true（对标 qfontcombobox.cpp:403）。 ---- */
+    XAPI_EXPECT(XComboBox_isEditable((XComboBox*)f),
+                "FontComboBox: 构造后可编辑（QFontComboBox setEditable(true)）");
+    XAPI_EXPECT(XComboBox_lineEdit((XComboBox*)f) != NULL,
+                "FontComboBox: 构造后内嵌编辑框就绪");
+    XAPI_EXPECT(XComboBox_count((XComboBox*)f) >= 1 &&
+                XFontComboBox_currentFamily(f)[0] != '\0',
+                "FontComboBox: populate 后族列表非空且有当前项");
+
+    /* ---- 2. 程序化 setCurrentFamily → currentFontChanged 一次（经
+     * currentTextChanged 连接通路；同族重复 set 去重不发射）。 ---- */
+    XComboBox_addItem_2((XComboBox*)f, "XTextBatchFamily");
+    g_fcbFontChanged = 0;
+    XFontComboBox_setCurrentFamily(f, "XTextBatchFamily");
+    XAPI_EXPECT(g_fcbFontChanged == 1 &&
+                strcmp(g_fcbFamily, "XTextBatchFamily") == 0,
+                "FontComboBox: setCurrentFamily 经连接通路发射 "
+                "currentFontChanged");
+    XFontComboBox_setCurrentFamily(f, "XTextBatchFamily");
+    XAPI_EXPECT(g_fcbFontChanged == 1,
+                "FontComboBox: 同族重复 setCurrentFamily 不发射（槽内去重）");
+
+    /* ---- 3. 用户弹层选择路径 → currentFontChanged（finding 6 主旨：
+     * 此前仅程序化路径发信号，弹层选择零通知）。 ---- */
+    {
+        XListView* view = XComboBox_view((XComboBox*)f);
+        XMouseEvent me;
+        XPoint pos;
+        XString* fam0;
+        XPoint_init(&pos, 5, 5); /* 行高 20 → 第 0 行。 */
+        g_fcbFontChanged = 0;
+        g_fcbFamily[0] = '\0';
+        XComboBox_showPopup_base((XComboBox*)f);
+        XMouseEvent_init(&me, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                         XMouseButton_LeftButton, 0, pos);
+        XObject_event_base((XObject*)view, (XEvent*)&me);
+        fam0 = XComboBox_itemText((XComboBox*)f, 0);
+        XAPI_EXPECT(g_fcbFontChanged == 1 && fam0 &&
+                    strcmp(g_fcbFamily, xapi_cstr(fam0)) == 0,
+                    "FontComboBox: 弹层选字体发射 currentFontChanged"
+                    "（载荷=选中族名）");
+        if (fam0) XClassDelete((XClass*)fam0);
+        XAPI_EXPECT(XComboBox_currentIndex((XComboBox*)f) == 0,
+                    "FontComboBox: 弹层选择置当前项 0");
+        XComboBox_hidePopup_base((XComboBox*)f);
+    }
+
+    XClassDelete((XClass*)f);
+    XPrintf("XGuiApiTest: [XFontComboBox] %s\n",
+            failures == 0 ? "PASS" : "FAIL");
+    return failures;
+}
+#endif /* APITEXT_FCB_ON */
+
 /* ==================== 族入口（契约：xgui_demo_apitest.h） ============ */
 
 int xapi_text_run(void)
@@ -1926,6 +2482,12 @@ int xapi_text_run(void)
 #endif
 #if APITEXT_KSE_ON
     failures += ttxt_run_key_sequence_edit();
+#endif
+#if APITEXT_COMBO_ON
+    failures += ttxt_run_combo();
+#endif
+#if APITEXT_FCB_ON
+    failures += ttxt_run_fontcombo();
 #endif
 #if !APITEXT_ANY_ON
     /* 文本族模块整体裁剪时的哨兵：无断言可跑，报告跳过。 */

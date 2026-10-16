@@ -296,7 +296,23 @@ void XContainer_init(XContainer* object, size_t typeSize,bool cow);
  * @param object XContainer实例指针（const修饰，不可修改）
  * @return 元素数量（size_t类型）
  */
-size_t XContainer_size_base(const XContainer* object);
+/* [perf 2026-10-15] 快路径内联：常态（对象与 vtable 均非 NULL）零调用
+   开销直达虚槽——旧 extern 版本连同 4 次 ISNULL 参数判空每次都是真
+   调用（单基准 8 秒 2400 万次）。诊断语义与旧实现逐位一致（打印归属
+   本文件的实现处，与旧行为相同）；空指针慢路径仍走 ArgIsNULL_report。 */
+static inline size_t XContainer_size_base(const XContainer* object)
+{
+	typedef size_t(*funcPtr)(const XContainer*);
+	if (object != (void*)0 && XClassGetVtable((XClass*)object) != (void*)0)
+		return XClassGetVirtualFunc(object, EXContainer_Size, funcPtr)(object);
+	if (object != (void*)0)
+		ArgIsNULL_report("XClassGetVtable(object)", "", "XContainer_size_base",
+			"XContainer.c", __LINE__);
+	else
+		ArgIsNULL_report("object", "", "XContainer_size_base",
+			"XContainer.c", __LINE__);
+	return 0;
+}
 
 /**
  * @brief 判断容器是否为空的基础实现
@@ -304,7 +320,19 @@ size_t XContainer_size_base(const XContainer* object);
  * @param object XContainer实例指针（const修饰，不可修改）
  * @return 布尔值（true为空，false为非空）
  */
-bool XContainer_isEmpty_base(const XContainer* object);
+static inline bool XContainer_isEmpty_base(const XContainer* object)
+{
+	typedef bool (*funcPtr)(const XContainer*);
+	if (object != (void*)0 && XClassGetVtable((XClass*)object) != (void*)0)
+		return XClassGetVirtualFunc(object, EXContainer_IsEmpty, funcPtr)(object);
+	if (object != (void*)0)
+		ArgIsNULL_report("XClassGetVtable(object)", "", "XContainer_isEmpty_base",
+			"XContainer.c", __LINE__);
+	else
+		ArgIsNULL_report("object", "", "XContainer_isEmpty_base",
+			"XContainer.c", __LINE__);
+	return true;
+}
 
 /**
  * @brief 获取容器容量的基础实现

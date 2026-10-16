@@ -16,8 +16,8 @@
  *             嵌入式裁剪由 XGuiConfig.h 的 XCOMMANDLINKBUTTON_ON 控制，且
  *             依赖 XPUSHBUTTON_ON（父类裁剪时本类一并裁剪）；绘制使用
  *             XPainter，不依赖任何平台 API。
- * @note       近似边界：QCommandLinkButton 的 heightForWidth（描述按宽度
- *             换行计算高度）未实现，本类按固定双行高度返回 sizeHint；
+ * @note       近似边界：heightForWidth 的描述折行为 ceil 除法估算（Qt
+ *             经 QTextLayout 逐行断词，见 XCommandLinkButton_heightForWidth）；
  *             SP_CommandLink 标准图标未接入（无图标时只绘制文本）；
  *             快捷键与样式 bevel 未实现。详细说明见 XGui.md。
  * @author     XinYueC 团队
@@ -71,7 +71,8 @@ XVtable* XCommandLinkButton_class_init(void);
  * @details    先初始化 XPushButton 基类（含 QAbstractButton/QPushButton 默认值），
  *             再挂 XCommandLinkButton 虚表并设置 QCommandLinkButton 默认值：
  *             描述为空、图标尺寸 20x20（对标 qcommandlinkbutton.cpp:189）、
- *             尺寸策略 Preferred/Preferred + PushButton（对标 :185）。
+ *             尺寸策略 Preferred/Preferred + PushButton + heightForWidth
+ *             位（对标 :184-187）。
  * @param      self   待初始化对象；不可为 NULL。
  * @param      parent 父控件借用指针；可为 NULL。
  * @param      flags  窗口标志（可传 0 表示 Widget 类型）。
@@ -218,6 +219,22 @@ void XCommandLinkButton_setDescription_2(XCommandLinkButton* self,
 XSize XCommandLinkButton_sizeHint(const XCommandLinkButton* self);
 /** @brief 查询最小建议尺寸（对标 QCommandLinkButton::minimumSizeHint；Qt 中直接返回 sizeHint()）。 */
 XSize XCommandLinkButton_minimumSizeHint(const XCommandLinkButton* self);
+
+/**
+ * @brief      按宽度计算建议高度（对标 QCommandLinkButton::heightForWidth，
+ *             qcommandlinkbutton.h:41 / qcommandlinkbutton.cpp:309-317）。
+ * @details    高度 = max(标题行 + 上下边距 + 描述按可用宽度折行的行高,
+ *             图标高 + 上下边距)。折行以 ceil(描述宽/可用宽) 估算行数
+ *             （Qt 经 QTextLayout 精确断词，行边界可能有出入）；width < 0
+ *             或 self 为 NULL 返回 -1。构造时已置尺寸策略 heightForWidth
+ *             位（对标 qcommandlinkbutton.cpp:185-186），布局经
+ *             XWidget_heightForWidth 透明生效。
+ * @param      self 命令链接按钮对象；可为 NULL。
+ * @param      width 可用宽度（像素）；<0 返回 -1。
+ * @return     该宽度下的建议高度；无效输入返回 -1。
+ */
+int XCommandLinkButton_heightForWidth(const XCommandLinkButton* self,
+                                      int width);
 
 /* ==================== 离屏绘制入口（对标 QCommandLinkButton::paintEvent 内容） ==================== */
 

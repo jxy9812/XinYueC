@@ -168,11 +168,22 @@ void XToolTip_showText(int x, int y, const XString* text, XWidget* widget,
                        const XRect* rect, int msecShowTime)
 {
     (void)rect;
-    if (!text) {
-        /* 空文本等价 hideText（对标 QToolTip::hideText 的实现方式）。 */
+    if (!text || XContainer_size_base((const XContainer*)text) == 0) {
+        /* 空文本等价 hideText（对标 QToolTip::showText 的
+         * text.isEmpty() 分支，qtooltip.cpp:439-446：空文本隐藏当前
+         * 提示并返回；NULL 与零长度 XString 同路径）。 */
         XToolTip_hideText();
         return;
     }
+    /* 对标 Qt 复用分支（qtooltip.cpp:444-455）+ QTipLabel::tipChanged
+     * （qtooltip.cpp:402-411）：提示已可见且文本相同、关联控件相同
+     * （rect 本实现未建模，等价空 rect → tipChanged 返 false）时直接
+     * 返回不移动不重摆——文档口径「text 与当前提示相同则提示不移动」
+     * （qtooltip.cpp:437-439）。 */
+    if (s_tooltipVisible && s_tooltipText &&
+        XString_equals(s_tooltipText, text, XChar_CaseSensitive) &&
+        s_tooltipRelatedWidget == widget)
+        return;
     xtooltip_ensureWidget();
     if (!s_tooltipWidget) {
         /* 无窗口环境：仅存储状态，安全退化不显示。 */
@@ -257,6 +268,11 @@ XFont XToolTip_font(void)
 void XToolTip_setFont(const XFont* font)
 {
     XFont temp;
+    /* NULL 处理口径（头文件同文）：忽略并保持原状态。Qt 的
+     * setFont(const QFont&) 为引用入参无 NULL 概念（qtooltip.cpp:570-573
+     * 无条件赋值，默认构造 QFont 即回落应用字体）；本实现的 NULL 扩展
+     * 语义取「显式忽略」分支——不做隐藏的复位副作用，调用方以默认
+     * 构造 XFont 传参即可表达 Qt 的回落语义。 */
     if (!font) return;
     XFont_init(&temp);
     XClassCopy(&temp, font);
@@ -287,6 +303,11 @@ XPalette XToolTip_palette(void)
 void XToolTip_setPalette(const XPalette* palette)
 {
 #if XPALETTE_ON
+    /* NULL 处理口径（头文件同文）：忽略并保持原状态。Qt 的
+     * setPalette(const QPalette&) 为引用入参无 NULL 概念
+     * （qtooltip.cpp:558-563 无条件赋值，默认构造 QPalette 即回落
+     * 默认配色）；本实现的 NULL 扩展语义取「显式忽略」分支——调用方
+     * 以 XPalette_create() 默认值传参即可表达 Qt 的回落语义。 */
     if (!palette) return;
     if (!s_tooltipPaletteSet) {
         XPalette_init_default(&s_tooltipPalette);

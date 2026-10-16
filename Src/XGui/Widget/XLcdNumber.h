@@ -173,8 +173,11 @@ void XLcdNumber_setSmallDecimalPoint(XLcdNumber* self, bool on);
 int XLcdNumber_digitCount(const XLcdNumber* self);
 /**
  * @brief      设置位数并重绘（对标 QLCDNumber::setDigitCount）。
- * @details    位数变化后按当前数值与进制重新裁剪显示串，并更新尺寸
- *             建议与重绘；超出 0..99 按边界钳位（对标 Qt 侧警告+钳位）。
+ * @details    保持既有显示串：扩容在左端插空格、收缩右对齐截取（对标
+ *             qlcdnumber.cpp:379-405，display 设定过非数值内容如
+ *             "12:34" 后改位数不再按数值重格式化）；仅原位数为 0 时按
+ *             当前数值重显。更新尺寸建议与重绘；超出 0..99 按边界钳位
+ *             （对标 Qt 侧警告+钳位）。
  * @param      self 目标控件指针；可为 NULL。
  * @param      numDigits 新位数；负数取 0，大于 99 取 99。
  * @return     无返回值；self 为 NULL 或位数未变化时保持原状态。

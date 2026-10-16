@@ -229,10 +229,11 @@ static void xtb_emitText(XTextBrowser* self, size_t signal, const char* text)
 }
 
 /** @brief 基类 linkActivated → 浏览器导航语义转发槽（预览态链接路径）。
- * @details 对标 QTextBrowser 链接点击链路：先发 anchorClicked(url)；
- *          openExternalLinks 开启时交平台服务按桌面方式打开，否则在
- *          openLinks 默认语义下以该 URL 触发 setSource 导航（与编辑器
- *          事件过滤器路径 VX_browser_eventFilter 同一套决策）。 */
+ * @details 对标 QTextBrowserPrivate::activateAnchor（qtextbrowser.cpp:
+ *          202-213）：恒先发 anchorClicked(url)（openLinks=false 只发不
+ *          导航，anchorClicked 与导航解耦）；openLinks 开启时才按
+ *          openExternalLinks 外开 / setSource 导航分派（与编辑器事件
+ *          过滤器路径 VX_browser_eventFilter 同一套决策，两路一致）。 */
 static void xtb_linkActivatedForward(XObject* receiver, XVarList* args)
 {
     XTextBrowser* browser = (XTextBrowser*)receiver;
@@ -242,13 +243,14 @@ static void xtb_linkActivatedForward(XObject* receiver, XVarList* args)
     url = (link && XString_toUtf8(link)) ? XString_toUtf8(link) : "";
     if (!url[0]) return;
     xtb_emitText(browser, (size_t)XTextBrowser_anchorClicked_signal, url);
+    if (!browser->m_openLinks) return; /* Qt：!openLinks 发完即返回。 */
     if (browser->m_openExternalLinks) {
         XPlatformServices* svc = XPlatformServices_create();
         if (svc) {
             XPlatformServices_openUrl_2(svc, url);
             XClassDelete((XClass*)svc);
         }
-    } else if (browser->m_openLinks) {
+    } else {
         XTextBrowser_setSource(browser, url);
     }
 }
@@ -278,25 +280,29 @@ static bool VX_browser_eventFilter(XObject* self, XObject* watched,
         XMouseEvent* me = (XMouseEvent*)event;
         XString* anchor;
         const char* url;
-        if (!browser->m_openLinks) return false;
         anchor = XTextBrowser_anchorAt(browser, &me->m_position);
         if (!anchor) return false;
         url = XString_toUtf8(anchor);
         if (url && url[0]) {
+            /* 对标 QTextBrowserPrivate::activateAnchor（qtextbrowser.cpp:
+             * 202-213）：anchorClicked 与导航解耦——openLinks=false 时仍
+             * 发射 anchorClicked 后返回，不丢弃观察点。 */
             xtb_emitText(browser,
                          (size_t)XTextBrowser_anchorClicked_signal(browser,
                                                                    url),
                          url);
-            if (browser->m_openExternalLinks) {
-                /* 外链开关：交平台服务按桌面方式打开（不作为源导航）。 */
-                XPlatformServices* svc = XPlatformServices_create();
-                if (svc) {
-                    XPlatformServices_openUrl_2(svc, url);
-                    XClassDelete((XClass*)svc);
+            if (browser->m_openLinks) {
+                if (browser->m_openExternalLinks) {
+                    /* 外链开关：交平台服务按桌面方式打开（不作为源导航）。 */
+                    XPlatformServices* svc = XPlatformServices_create();
+                    if (svc) {
+                        XPlatformServices_openUrl_2(svc, url);
+                        XClassDelete((XClass*)svc);
+                    }
+                } else {
+                    /* 对标 openLinks 默认：链接作为浏览源触发导航。 */
+                    XTextBrowser_setSource(browser, url);
                 }
-            } else {
-                /* 对标 openLinks 默认：链接作为浏览源触发导航。 */
-                XTextBrowser_setSource(browser, url);
             }
         }
         XClassDelete(anchor);
@@ -493,6 +499,16 @@ static void xtb_setSourceInternal(XTextBrowser* self, const char* url,
         xtb_updateNavigationState(self);
         return;
     }
+    /* 对标 QTextBrowser::doSetSource 同源早退（qtextbrowser.cpp:748-751）：
+     * 栈顶已是同 URL（reload 场景）时重走加载但不重复压历史条目、不截
+     * forward 分支——reload 完整重载而历史栈保持稳定。 */
+    if (self->m_historyIndex >= 0) {
+        const XString* top = xtb_history_entry(self, self->m_historyIndex);
+        if (top && XString_equals(top, self->m_source, XChar_CaseSensitive)) {
+            xtb_updateNavigationState(self);
+            return;
+        }
+    }
     /* 新导航清掉 forward 历史（对标 Qt：重新访问旧地址时
        forward 条目被截断并释放，避免环形覆盖泄漏）。 */
     for (li = self->m_historyIndex + 1; li < self->m_historyCount; ++li) {
@@ -558,10 +574,18 @@ void XTextBrowser_home(XTextBrowser* self)
 }
 void XTextBrowser_reload(XTextBrowser* self)
 {
+    XString* urlCopy;
     if (!self) return;
-    /* 修正：此前误将 XString* 直接当 const char* 传入。 */
-    xtb_emitStr(self, (size_t)XTextBrowser_sourceChanged_signal,
-                self->m_source ? XString_toUtf8(self->m_source) : "");
+    if (!self->m_source) return;
+    urlCopy = XString_create_copy(self->m_source);
+    if (!urlCopy) return;
+    /* 对标 QTextBrowser::reload（qtextbrowser.cpp:785-791）：取当前源后
+     * 清 currentURL 重走 setSource 完整加载路径（本实现为重发
+     * sourceChanged + 视口复位 + 历史结算），而非仅重发信号空转；
+     * 同源早退（xtb_setSourceInternal 内 doSetSource 口径）保证栈顶同
+     * URL 不重复压历史条目。 */
+    xtb_setSourceInternal(self, XString_toUtf8(urlCopy), true);
+    XClassDelete((XClass*)urlCopy);
 }
 
 void* XTextBrowser_sourceChanged_signal(XTextBrowser* self, const char* url)

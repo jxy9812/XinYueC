@@ -26,6 +26,7 @@ static void XModbusTcpClient_attemptReconnect(XModbusTcpClient* client);
 
 // =============== 槽函数声明 ===============
 static void XModbusTcpClient_onReadyRead(XObject* receiver, XVarList* args);
+static void xmodbusTcpClient_tryFlushSerialQueue(XModbusTcpClient* client);
 static void XModbusTcpClient_onConnected(XObject* receiver, XVarList* args);
 static void XModbusTcpClient_onDisconnected(XObject* receiver, XVarList* args);
 static void XModbusTcpClient_onErrorOccurred(XObject* receiver, XVarList* args);
@@ -359,6 +360,7 @@ static void VXModbusTcpClient_close(XModbusDevice* device)
         XByteArray_clear_base(client->m_receiveBuffer);
     }
     clearAllPendingRequests(client, XModbusDevice_ConnectionError, "Device closed");
+    XModbusClient_serialQueueClear(&client->m_base, XModbusDevice_ConnectionError, "Device closed");
 
     if (socket) {
         XAbstractSocket_disconnectFromHost_base(socket);
@@ -393,6 +395,30 @@ static XModbusReply* VXModbusTcpClient_sendRawRequest(XModbusClient* baseClient,
         reply = XModbusClient_createReply_ref(baseClient, request, serverAddress);
 
     if (!reply) return NULL;
+
+    /* [单事务模式 2026-10-15] 串行开关置位且仍有请求在途时，新请求入
+     * 发送等待队列（FIFO）——远程 IO 类单事务从机忙于应答上一请求时
+     * 会丢弃交叠请求（写帧尤甚），排队等空闲槽按序上线。Reply 立即
+     * 返回（Waiting 态，无超时定时器——未上线不计时），空闲槽由
+     * xmodbusTcpClient_tryFlushSerialQueue 在每次完成后补发。 */
+    if (XModbusClient_serialTransactions(baseClient) &&
+        XModbusTcpClient_hasPendingRequests(client)) {
+        if (!XModbusClient_serialQueuePush(baseClient,
+                (XModbusRequest*)request, reply, serverAddress)) {
+            /* 队列满：回退为立即发送（保底不丢请求，仅可能从机侧竞争） */
+            uint16_t fallbackTid = XModbusTcpClient_nextTransactionId(client);
+            XModbusReply_setState(reply, XModbusReply_State_Requesting);
+            if (!buildAndSendRequest(client, reply, fallbackTid,
+                                     reply->m_request, serverAddress)) {
+                XModbusReply_deleteLater(reply);
+                return NULL;
+            }
+            XModbusReply_setState(reply, XModbusReply_State_Waiting);
+            return reply;
+        }
+        XModbusReply_setState(reply, XModbusReply_State_Waiting);
+        return reply;
+    }
 
     // 获取事务ID
     uint16_t transactionId = XModbusTcpClient_nextTransactionId(client);
@@ -546,6 +572,8 @@ static void processReceivedFrame(XModbusTcpClient* client)
         //XPrintf("触发结束信号\n");
         XModbusReply_setState(reply, XModbusReply_State_Finished);
     }
+    /* [单事务模式 2026-10-15] 本批帧处理完毕：在途清空则补发发送队列队头 */
+    xmodbusTcpClient_tryFlushSerialQueue(client);
 }
 
 // =============== 超时处理 ===============
@@ -600,6 +628,36 @@ static void handleRequestTimeout(XModbusTcpClient* client, uint16_t transactionI
 
     XHashMap_remove_base(client->m_pendingRequests, &transactionId);
     //deletePendingRequest(pending);
+    /* 终态释放了在途槽：单事务队列补发队头 */
+    xmodbusTcpClient_tryFlushSerialQueue(client);
+}
+
+/** @brief 单事务模式空闲槽补发：在途为空且发送队列非空时出队队头
+ *  上线（新事务 ID）。串行开关关闭/队空为 no-op。 */
+static void xmodbusTcpClient_tryFlushSerialQueue(XModbusTcpClient* client)
+{
+    if (!client || !XModbusClient_serialTransactions(&client->m_base))
+        return;
+    if (XModbusClient_serialQueueCount(&client->m_base) <= 0)
+        return;
+    if (XModbusTcpClient_hasPendingRequests(client))
+        return; /* 仍有在途：等本轮完成再补发 */
+
+    struct XModbusRequest* request = NULL;
+    struct XModbusReply* reply = NULL;
+    int serverAddress = 0;
+    if (!XModbusClient_serialQueuePop(&client->m_base, &request, &reply,
+                                      &serverAddress))
+        return;
+    uint16_t transactionId = XModbusTcpClient_nextTransactionId(client);
+    XModbusReply_setState(reply, XModbusReply_State_Requesting);
+    if (!buildAndSendRequest(client, reply, transactionId, request,
+                             serverAddress)) {
+        /* 上线失败：以超时终态完成该 Reply（调用方按既有超时语义收口） */
+        XModbusReply_setError(reply, XModbusDevice_TimeoutError,
+                              "serial queue send failed");
+        XModbusReply_setState(reply, XModbusReply_State_Timeout);
+    }
 }
 
 // =============== 定时器事件处理 ===============
@@ -782,6 +840,7 @@ static void XModbusTcpClient_onDisconnected(XObject* receiver, XVarList* args)
     }
 
     clearAllPendingRequests(client, XModbusDevice_ConnectionError, "Connection lost");
+    XModbusClient_serialQueueClear(&client->m_base, XModbusDevice_ConnectionError, "Connection lost");
 
     XModbusDevice_setState((XModbusDevice*)client, XModbusDevice_UnconnectedState);
 
@@ -824,6 +883,7 @@ static void VXModbusTcpClient_deinit(XModbusTcpClient* client)
     }
   
     clearAllPendingRequests(client, XModbusDevice_ConnectionError, "Connection lost");
+    XModbusClient_serialQueueClear(&client->m_base, XModbusDevice_ConnectionError, "Connection lost");
 
     // 容器会自动调用 pendingRequestDeinit 释放元素
     if (client->m_pendingRequests) {

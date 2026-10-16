@@ -153,7 +153,8 @@ typedef struct XLabelLinkRange
  *               LinksAccessibleByMouse=4）；
  *             - m_pixmap：像素图（值类型，隐式共享）；m_picture：
  *               绘图记录（拥有，setPicture 深拷贝入）；m_movie：
- *               影片（借用）；m_buddy：助记符伙伴控件（借用，快捷键
+ *               影片（借用）；m_buddy：助记符伙伴控件（借用，destroyed
+ *               连接自动置空；快捷键
  *               关联未实现的受限项）；
  *             - m_textControl：文本控制器（拥有，XTextControl 实例）。
  *               对标 Qt QLabel 内持 QWidgetTextControl：光标/选区
@@ -390,12 +391,16 @@ int XLabel_heightForWidth(const XLabel* self, int width);
 
 /* ==================== 伙伴与链接（对标 QLabel） ==================== */
 
-/** @brief 返回伙伴控件（对标 QLabel::buddy；借用指针，无返回 NULL）。 */
+/** @brief 返回伙伴控件（对标 QLabel::buddy；借用指针，无返回 NULL；
+ *         伙伴控件销毁时自动置空——QPointer 语义等价）。 */
 XWidget* XLabel_buddy(const XLabel* self);
 /**
  * @brief      设置伙伴控件（对标 QLabel::setBuddy）。
- * @details    存储借用指针；文本 '&' 助记符生成快捷键为受限未实现项，
- *             仅保留伙伴关系与 Qt 一致的读写语义。
+ * @details    存储借用指针，并与伙伴控件建立 destroyed 连接（对标 Qt
+ *             QPointer<QWidget> 持有 + QLabelPrivate::buddyDeleted 自摘，
+ *             qlabel.cpp:1126-1137）：伙伴先于标签销毁时 buddy() 自动
+ *             返回 NULL，不产生悬垂指针。文本 '&' 助记符生成快捷键为
+ *             受限未实现项，仅保留伙伴关系与 Qt 一致的读写语义。
  */
 void XLabel_setBuddy(XLabel* self, XWidget* buddy);
 

@@ -25,6 +25,7 @@
 
 static void xfcb_fontSampleFree(XFontComboBox* self);
 static void xfcb_systemSampleFree(XFontComboBox* self);
+static void xfcb_emitText(XFontComboBox* self, size_t signal, const char* text);
 
 /* ==================== 样例文本表（族名/书写系统 → 样例文本） ==================== */
 
@@ -369,6 +370,28 @@ XVtable* XFontComboBox_class_init(void)
     return XVTABLE_DEFAULT;
 }
 
+/** @brief 转发槽：基类 currentTextChanged → currentFontChanged（对标
+ *  QFontComboBox 构造连接 qfontcombobox.cpp:412-414 currentTextChanged →
+ *  QFontComboBoxPrivate::currentChanged）。当前文本与既记族名不同才发射
+ *  （对应对标实现 currentFont.families().first() != text 的去重，352-359）。
+ *  用户经弹层/键入/程序化三条路径的当前文本变化由此统一收口。 */
+static void xfcb_currentTextChangedSlot(XObject* receiver, XVarList* args)
+{
+    XFontComboBox* self = (XFontComboBox*)receiver;
+    const char* text = NULL;
+    if (args) {
+        XVarList_args_1(args, const char*, t);
+        text = t;
+    }
+    if (!self) return;
+    if (!text) text = XComboBox_currentText_2((XComboBox*)self);
+    if (XStrcmp(XFontComboBox_currentFamily(self), text) == 0) return;
+    xfcb_emitText(self,
+                  (size_t)XFontComboBox_currentFontChanged_signal(
+                      self, text),
+                  text);
+}
+
 void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
                         XWidgetFlags flags)
 {
@@ -378,6 +401,9 @@ void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
     XClassSetVtable(self, XFontComboBox);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
+    /* 对标 qfontcombobox.cpp:403 QFontComboBox 构造：setEditable(true)——
+       字体组合框恒可编辑（缺省 false 使 isEditable 语义与 Qt 相反）。 */
+    XComboBox_setEditable((XComboBox*)self, true);
     self->m_filters = (int)XFontComboBoxFilter_AllFonts;
     self->m_writingSystem = (int)XFontComboBoxWritingSystem_Any;
     XFont_init(&self->m_displayFont);
@@ -388,6 +414,14 @@ void XFontComboBox_init(XFontComboBox* self, XWidget* parent,
     self->m_systemSampleCount = 0;
     self->m_systemSampleCap = 0;
     xfcb_populate(self);
+    /* 对标 qfontcombobox.cpp:412-416：currentTextChanged → currentChanged
+       （用户选字体时发 currentFontChanged 的通路）；在 populate 置当前项
+       之后连接，初始填充不触发信号（Qt 同序）。 */
+    XObject_connect_1((XObject*)self,
+                      (size_t)XComboBox_currentTextChanged_signal(
+                          (XComboBox*)self, NULL),
+                      (XObject*)self, xfcb_currentTextChangedSlot,
+                      XConnectionType_Direct);
 }
 
 XFontComboBox* XFontComboBox_create_ex(XMemoryType memory, XWidget* parent,
@@ -553,11 +587,21 @@ void XFontComboBox_setCurrentFamily(XFontComboBox* self, const char* family)
         text = XComboBox_itemText_2(self, i);
         if (!text) continue;
         if (XStrcmp(text, family) == 0) {
-            XComboBox_setCurrentIndex(self, i);
-            xfcb_emitText(self,
-                          (size_t)XFontComboBox_currentFontChanged_signal(
-                              self, family),
-                          family);
+            /* 对标 Qt：setCurrentFont → setCurrentText → setEditable 态
+               setCurrentIndex；currentFontChanged 经构造连接的
+               currentTextChanged → currentChanged 通路发射（qfontcombobox.
+               cpp:412-416）——同族重复 set 不发射（槽内按族名去重）。 */
+            if (XComboBox_currentIndex((XComboBox*)self) == i) {
+                /* 同行号但编辑文本已分叉（用户键入未采纳）时回填收敛：
+                   setCurrentIndex 去重不发射，此处仅收敛显示文本。 */
+                const char* edit = XComboBox_lineEdit((XComboBox*)self)
+                    ? XLineEdit_text(XComboBox_lineEdit((XComboBox*)self))
+                    : NULL;
+                if (edit && XStrcmp(edit, family) != 0)
+                    XComboBox_setEditText_2((XComboBox*)self, family);
+                return;
+            }
+            XComboBox_setCurrentIndex((XComboBox*)self, i);
             return;
         }
     }

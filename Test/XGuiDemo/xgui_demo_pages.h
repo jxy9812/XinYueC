@@ -161,6 +161,34 @@ void demo_page_update_adapt(XWidget* page);
  *        斥（须在主窗口析构前调用；页面未构建/引擎未启动时零操作）。 */
 void demo_page_update_shutdown(void);
 
+/** @brief 构建 Modbus 主站调试页（TCP/串口 RTU 双通道连接、从站地址、
+ *         远程 IO 模块适配[输入/输出点数]、轮询引擎与 IO 点位网格）。
+ *         XModbus 模块或控件裁剪时返回 NULL（2026-10-12 追加，
+ *         2026-10-13 双页拆分改两函数）。 */
+XWidget* demo_page_modbus_master_build(XWidget* parent,
+                                       DemoPageStatusFn status, void* user);
+
+/** @brief Modbus 主站页自测（非阻塞；不发起真实网络/串口请求，验控件
+ *         存在、构建后未连接、标签-输入框几何不相交）。 */
+int demo_page_modbus_master_autotest(XWidget* page);
+
+/** @brief Modbus 主站页自适应重排（绝对定位布局，当前无自适应需求）。 */
+void demo_page_modbus_master_adapt(XWidget* page);
+
+/** @brief 构建 Modbus 从站调试页（TCP 监听/串口 RTU、本站地址、点数
+ *         配置、启动/停止，数据面板=XTableWidget 段表：DO/DI 内嵌
+ *         CheckBox 点击即写数据区、IR/HR 内嵌 LineEdit 回车提交，
+ *         可手动调整供主站读走；2026-10-13 双页拆分新增）。 */
+XWidget* demo_page_modbus_slave_build(XWidget* parent,
+                                      DemoPageStatusFn status, void* user);
+
+/** @brief Modbus 从站页自测（非阻塞；验控件存在、数据面板就绪、
+ *         构建后未监听、标签-输入框几何不相交）。 */
+int demo_page_modbus_slave_autotest(XWidget* page);
+
+/** @brief Modbus 从站页自适应重排（绝对定位布局，当前无自适应需求）。 */
+void demo_page_modbus_slave_adapt(XWidget* page);
+
 /**
  * @brief 主窗口性能悬浮层访问器（悬浮窗设置页专用；主文件实现）。
  * @param user build 回调透传的主窗口指针（DemoWin*）。

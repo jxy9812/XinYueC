@@ -44,6 +44,7 @@
 #include "XAlgorithm.h"
 #include "XWidget_Protected.h"
 #include "XWindowEvent.h"
+#include "XStyle.h" /* setCursorWidth(-1) 的 PM_TextCursorWidth 样式度量。 */
 #include <stdint.h>
 
 #if XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON
@@ -1768,7 +1769,20 @@ bool XPlainTextEdit_canPaste(const XPlainTextEdit* self)
 
 void XPlainTextEdit_setCursorWidth(XPlainTextEdit* self, int width)
 {
-    if (!self || width <= 0) return;
+    if (!self) return;
+    if (width == -1) {
+        /* 对标 QWidgetTextControl::setCursorWidth（qwidgettextcontrol.cpp:
+         * 2469-2476）：-1 = 样式度量 PM_TextCursorWidth。 */
+#if XSTYLE_ON
+        width = XStyle_pixelMetric(XStyle_defaultStyle(),
+                                   (int)XStylePM_TextCursorWidth, NULL);
+#endif
+        if (width <= 0) width = 1; /* 样式不可用时回退缺省 1（绘制口径）。 */
+    } else if (width < -1) {
+        /* 其余负值拒绝（Qt 原样存储但绘制侧无意义；控制器渲染侧本就有
+         * `m_cursorWidth > 0 ? : 1` 的下限守卫）。 */
+        return;
+    }
     if (self->m_control) XTextControl_setCursorWidth(self->m_control, width);
     XWidget_update((XWidget*)self);
 }

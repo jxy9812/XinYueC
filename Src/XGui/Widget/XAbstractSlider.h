@@ -24,8 +24,10 @@
  *               sliderReleased/rangeChanged/actionTriggered；
  *             - 事件：keyPressEvent（Up/Right 单步增、Down/Left 单步减、
  *               PageUp 页增、PageDown 页减、Home 到最小、End 到最大，
- *               invertedControls 翻转方向）、wheelEvent（滚轮 120 角度=
- *               1 单步，余数累积）、timerEvent/changeEvent 转发父类。
+ *               invertedControls 翻转方向）、wheelEvent（对标 Qt
+ *               scrollByDelta：一格滚轮 = wheelScrollLines（缺省 3）
+ *               个单步、单次不超一页、方向反转清零、Ctrl/Shift 整页）、
+ *               timerEvent/changeEvent 转发父类。
  * @note       模块总开关 XABSTRACTSLIDER_ON 定义于 XGuiConfig.h；=0 时
  *             裁剪全部公共 API。依赖 XWIDGET_ON、XWINDOWEVENT_ON（滚轮）。
  * @author     XinYueC 团队
@@ -90,11 +92,12 @@ typedef int XAbstractSliderStepEnabled;
 /* ==================== 虚函数表（StepBy/SliderChange/StepEnabled 追加在 XWidget 槽位之后） ==================== */
 
 /** @brief XAbstractSlider 虚函数表枚举：继承 XWidget 全部槽位后追加
- *  StepBy/SliderChange/StepEnabled 三个新槽（保持既有槽位数值不变）。 */
+ *  StepBy/SliderChange/StepEnabled/Bound 四个新槽（保持既有槽位数值不变）。 */
 XCLASS_DEFINE_BEGING(XAbstractSlider)
 XCLASS_DEFINE_ENUM(XAbstractSlider, StepBy) = XCLASS_VTABLE_GET_SIZE(XWidget),
 XCLASS_DEFINE_ENUM(XAbstractSlider, SliderChange),
 XCLASS_DEFINE_ENUM(XAbstractSlider, StepEnabled),
+XCLASS_DEFINE_ENUM(XAbstractSlider, Bound),
 XCLASS_DEFINE_END(XAbstractSlider)
 
 /**
@@ -316,6 +319,18 @@ void XAbstractSlider_sliderChange_base(XAbstractSlider* self, int change);
  * @return     步进使能位组合（XAbstractSliderStepEnabled）。
  */
 int XAbstractSlider_stepEnabled_base(XAbstractSlider* self);
+/**
+ * @brief      取值收敛虚槽（对标 QAbstractSliderPrivate::bound）。
+ * @details    setValue / setSliderPosition / triggerAction / stepBy 的
+ *             统一收敛点：基类默认把值钳位到 [min, max]；子类可重载
+ *             为回绕语义（对标 QDialPrivate::bound 的 wrapping 分支），
+ *             从而使 setValue/setSliderPosition/triggerAction/滚轮全
+ *             链路自动环绕（而非仅 stepBy 一条路径）。
+ * @param      self 滑块对象；可为 NULL。
+ * @param      val  待收敛的原始值。
+ * @return     收敛后的合法值。
+ */
+int XAbstractSlider_bound_base(XAbstractSlider* self, int val);
 
 /* ==================== 信号 ==================== */
 

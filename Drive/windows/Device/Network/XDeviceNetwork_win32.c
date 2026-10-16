@@ -1,12 +1,12 @@
 /**
  * @file XDeviceNetwork_win32.c
- * @brief Windows ??????(IOCP ?? I/O)
+ * @brief Windows 平台网络实现（IOCP 异步 I/O）
  */
- /* ====== ???? ====== */
+ /* ====== 配置文件 ====== */
 #include "XNetwork_config.h"
 #if defined(XNETWORK_USE_PLATFORM_API) &&defined(_WIN32) 
 
- /* ====== Windows ????????????? ======*/
+ /* ====== Windows 宏定义必须在所有头文件之前 ======*/
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -17,7 +17,7 @@
 
 
 
-/* ====== ????? ====== */
+/* ====== 项目头文件 ====== */
 #include "XDeviceNetwork.h"
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
@@ -35,7 +35,7 @@
 #include "XFileDescriptor.h"
 #include "XAbstractNetIoRing.h"
 
-/* ====== Windows SDK ??? ====== */
+/* ====== Windows SDK 头文件 ====== */
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <iphlpapi.h>
@@ -56,13 +56,13 @@ typedef enum XMulticastOp {
     XMC_SetTtl, XMC_GetTtl, XMC_SetLoop, XMC_GetLoop
 } XMulticastOp;
 
-/* ???????????,??????????? */
+/* 本文件内后置实现的钩子，不属于公共头文件契约。 */
 void XDeviceNetwork_socketDisconnect(XFd fd);
 int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle socketHandle,
     XMulticastOp operation, void* argument);
 
 /* =========================================================================
- * ????????(???? SDK)
+ * 手动定义缺失的宏（兼容旧版 SDK）
  * ========================================================================= */
 
 #ifndef SO_UPDATE_CONNECT_CONTEXT
@@ -82,7 +82,7 @@ int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle socketHandle,
 #endif
 
 #ifndef GAA_FLAG_INCLUDE_GATEWAYS
-#define GAA_FLAG_INCLUDE_GATEWAYS 0x0040 /* ? SDK ??:GAA ???????? */
+#define GAA_FLAG_INCLUDE_GATEWAYS 0x0040 /* 旧 SDK 兜底：GAA 默认不返回网关。 */
 #endif
 static PIP_ADAPTER_ADDRESSES current = 0;
 
@@ -170,7 +170,7 @@ bool XDeviceNetwork_icmpEcho(const XHostAddress* address, uint16_t identifier,
     return result;
 }
 /* =========================================================================
- * ConnectEx ????? GUID
+ * ConnectEx 函数指针及 GUID
  * ========================================================================= */
 
 #ifndef WSAID_CONNECTEX
@@ -218,14 +218,14 @@ typedef void(PASCAL* LPFN_GETACCEPTEXSOCKADDRS)(
     );
 
 /* =========================================================================
- * ?????
+ * 内部宏定义
  * ========================================================================= */
 
 #define XNETWORK_READ_BUFFER_SIZE  8192
 #define XNETWORK_WRITE_BUFFER_SIZE 8192
 
  /* =========================================================================
-  * ????
+  * 全局状态
   * ========================================================================= */
 
 static LONG    g_wsaRefCount = 0;
@@ -236,13 +236,13 @@ static LPFN_GETACCEPTEXSOCKADDRS g_GetAcceptExSockaddrs = NULL;
 
 
 /* =========================================================================
- * IOCP ????
+ * IOCP 辅助函数
  * ========================================================================= */
 
 static HANDLE iocp_get(void)
 {
     if (!g_iocp) {
-        /* ??? XEventDispatcher ???? IOCP ?? */
+        /* 尝试从 XEventDispatcher 获取全局 IOCP 端口 */
         g_iocp = IOCP_getGlobalPort();
     }
     return g_iocp;
@@ -257,7 +257,7 @@ static bool iocp_assoc(HANDLE handle, XObject* key)
 }
 
 /* =========================================================================
- * ????????
+ * 地址转换辅助函数
  * ========================================================================= */
 
 static void addr2sa(const XHostAddress* addr, uint16_t port,
@@ -296,7 +296,7 @@ static void sa2addr(const struct sockaddr_storage* ss, XHostAddress* addr, uint1
 }
 
 /* =========================================================================
- * ?????
+ * 平台初始化
  * ========================================================================= */
 
 void XDeviceNetwork_ensureInit(void)
@@ -305,7 +305,7 @@ void XDeviceNetwork_ensureInit(void)
         WSADATA wsaData;
         WSAStartup(MAKEWORD(2, 2), &wsaData);
 
-        /* ???????? */
+        /* 获取扩展函数指针 */
         SOCKET tempSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (tempSock != INVALID_SOCKET) {
             DWORD bytesReturned;
@@ -313,19 +313,19 @@ void XDeviceNetwork_ensureInit(void)
             GUID guidAcceptEx = WSAID_ACCEPTEX;
             GUID guidGetAcceptExSockaddrs = WSAID_GETACCEPTEXSOCKADDRS;
 
-            /* ?? ConnectEx */
+            /* 获取 ConnectEx */
             WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                 &guidConnectEx, sizeof(guidConnectEx),
                 &g_ConnectEx, sizeof(g_ConnectEx),
                 &bytesReturned, NULL, NULL);
 
-            /* ?? AcceptEx */
+            /* 获取 AcceptEx */
             WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                 &guidAcceptEx, sizeof(guidAcceptEx),
                 &g_AcceptEx, sizeof(g_AcceptEx),
                 &bytesReturned, NULL, NULL);
 
-            /* ?? GetAcceptExSockaddrs */
+            /* 获取 GetAcceptExSockaddrs */
             WSAIoctl(tempSock, SIO_GET_EXTENSION_FUNCTION_POINTER,
                 &guidGetAcceptExSockaddrs, sizeof(guidGetAcceptExSockaddrs),
                 &g_GetAcceptExSockaddrs, sizeof(g_GetAcceptExSockaddrs),
@@ -362,7 +362,7 @@ char* XDeviceNetwork_errorString(int errorCode)
     FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
         NULL, errorCode, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
         buf, 256, NULL);
-    buf[255] = '\0'; /* FormatMessageA ?????????? NUL,??????? */
+    buf[255] = '\0'; /* FormatMessageA 在消息填满时可能不补 NUL，强制截断终止。 */
     return buf;
 }
 
@@ -407,55 +407,55 @@ bool XDeviceNetwork_getNetworkCounters(uint64_t* rxBytes, uint64_t* txBytes)
 }
 
 /* =========================================================================
- * ?????????(?????? + Win32 ??)
+ * 套接字私有数据结构（平台无关基类 + Win32 扩展）
  * ========================================================================= */
 
 typedef struct XDeviceNetworkContextWin32 {
-    XDeviceNetworkContext base;             /**< ???:?????? (owner/xfd/notifiers) */
-    SOCKET socket;                          ///< Windows SOCKET ??
-    HANDLE namedPipe;                       ///< Windows named-pipe ???
+    XDeviceNetworkContext base;             /**< 第一位：平台无关基类 (owner/xfd/notifiers) */
+    SOCKET socket;                          ///< Windows SOCKET 句柄。
+    HANDLE namedPipe;                       ///< Windows 命名管道句柄。
 
-    /* ???? */
+    /* 状态标志 */
     bool readPending;
     bool writePending;
     bool connectPending;
     bool autoRead;
-    bool isServer;                          ///< ?????????
-    bool acceptPending;                     ///< ??????? Accept
-    volatile LONG pendingIocpOperations;    ///< ??????:???? + ?????????
-    volatile LONG deletePending;            ///< ?????????,??????????
+    bool isServer;                          ///< 是否为服务器套接字。
+    bool acceptPending;                     ///< 是否有待处理的 Accept。
+    volatile LONG pendingIocpOperations;    ///< 在途 IOCP 计数: 发起 + 完成两侧同步递减。
+    volatile LONG deletePending;            ///< 拆除已挂起标记, 防重复拆除竞态。
 
 
-    /* UDP ???? */
+    /* UDP 来源地址 */
     struct sockaddr_in6 fromAddr;
     int fromAddrLen;
 
-    /* IOCP ??? */
+    /* IOCP 上下文 */
     XEventContext_IOCP readContext;
     XEventContext_IOCP writeContext;
     union {
-        XEventContext_IOCP connectContext;  ///< ????????
-        XEventContext_IOCP acceptContext;   ///< ??? AcceptEx ???
+        XEventContext_IOCP connectContext;  ///< 客户端连接上下文。
+        XEventContext_IOCP acceptContext;   ///< 服务端 AcceptEx 上下文。
     };
 
-    /* ????? */
+    /* 待连接信息 */
     XHostAddress pendingPeerAddr;
     uint16_t pendingPeerPort;
 
-    /* ??????(???? acceptBuffer,???? readBuffer/writeBuffer)*/
+    /* 缓冲区联合体（服务器用 acceptBuffer，客户端用 readBuffer/writeBuffer）*/
     union {
         struct {
             char readBuffer[XNETWORK_READ_BUFFER_SIZE];
             char writeBuffer[XNETWORK_WRITE_BUFFER_SIZE];
         };
         struct {
-            char acceptBuffer[sizeof(struct sockaddr_in6) * 2 + 32]; ///< AcceptEx ???
-            SOCKET acceptSocket;                    ///< AcceptEx ??????
+            char acceptBuffer[sizeof(struct sockaddr_in6) * 2 + 32]; ///< AcceptEx 地址双缓冲。
+            SOCKET acceptSocket;                    ///< AcceptEx 落地的新套接字。
         };
     };
 } XDeviceNetworkContextWin32;
 
-/* ????? */
+/* 便捷转换宏 */
 #define W32(p) ((XDeviceNetworkContextWin32*)(p))
 
 static bool w32_has_stream_handle(const XDeviceNetworkContextWin32* priv)
@@ -538,7 +538,7 @@ static void syncSocketEndpoints(XDeviceNetworkContext* priv)
 }
 
 /* =========================================================================
- * ??????
+ * 私有数据管理
  * ========================================================================= */
 
 XDeviceNetworkContext* XDeviceNetwork_createContext(void)
@@ -586,7 +586,7 @@ intptr_t XDeviceNetwork_socketDescriptor(XFd xfd)
 }
 
 /* =========================================================================
- * ??????
+ * 异步读取启动
  * ========================================================================= */
 
 static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
@@ -638,25 +638,25 @@ static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
     }
 
     if (result == 0) {
-        /* ????:?????? readContext,dispatchCQEntry ????????
-         * ??? NULL ? bytesTransferred,processOneCompletion ? bytes=0 ???? FIN?
-         * bytesTransferred=0 ??? close(????),dispatchCQEntry ?? SockClose ??? */
+        /* 立即完成：把字节数写入 readContext，dispatchCQEntry 才能读到正确值。
+         * 之前传 NULL 给 bytesTransferred，processOneCompletion 时 bytes=0 被误判为 FIN。
+         * bytesTransferred=0 仍表示 close（正常关闭），dispatchCQEntry 仍走 SockClose 路径。 */
         p->readContext.finishedBytes = bytesTransferred;
         p->readPending = true;
     }
     else if (WSAGetLastError() == WSA_IO_PENDING) {
-        /* ???? */
+        /* 异步等待 */
         p->readPending = true;
     }
     else {
-        /* ?? */
+        /* 错误 */
         p->readPending = false;
         abandonSocketIocpOperation(p, &p->readContext);
     }
 }
 
 /* =========================================================================
- * ??????
+ * 异步写入启动
  * ========================================================================= */
 
 static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64_t len,
@@ -729,7 +729,7 @@ static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
 }
 
 /* =========================================================================
- * ??????
+ * 核心操作实现
  * ========================================================================= */
 
 uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
@@ -1046,7 +1046,7 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
     }
     if (sockAct->actType & XSocketActType_Connect) {
         p->connectPending = false;
-        /* ??????????(ConnectEx ??? SO_ERROR ??) */
+        /* 检查连接是否真正成功（ConnectEx 失败时 SO_ERROR 非零） */
         int soError = 0;
         int soLen = sizeof(soError);
         getsockopt(p->socket, SOL_SOCKET, SO_ERROR, (char*)&soError, &soLen);
@@ -1148,7 +1148,7 @@ void XDeviceNetwork_socketSetReadBufferSize(XFd xfd, int64_t size)
 }
 
 /* =========================================================================
- * ??????
+ * 异步读取状态
  * ========================================================================= */
 
 const char* XDeviceNetwork_socketReadBuffer(XFd xfd)
@@ -1185,7 +1185,7 @@ void XDeviceNetwork_socketContinueRead(XFd xfd, bool isUdp)
 }
 
 /* =========================================================================
- * ?? Accept(?? API:????????)
+ * 异步 Accept（公开 API：启动首次异步接受）
  * ========================================================================= */
 
 bool XDeviceNetwork_serverAccept(XFd xfd)
@@ -1227,7 +1227,7 @@ bool XDeviceNetwork_serverAccept(XFd xfd)
 }
 
 /* =========================================================================
- * TCP ???
+ * TCP 服务器
  * ========================================================================= */
 
 XDeviceNetworkServerHandle XDeviceNetwork_serverCreate(XFd deviceFd, const XHostAddress* addr, uint16_t port,
@@ -1373,7 +1373,7 @@ XDeviceNetworkSocketHandle XDeviceNetwork_serverGetAcceptedSocket(XFd xfd,
 }
 
 /* =========================================================================
- * DNS ??
+ * DNS 查询
  * ========================================================================= */
 
 XVector* XDeviceNetwork_lookupName(const XString* name)
@@ -1400,7 +1400,7 @@ XVector* XDeviceNetwork_lookupName(const XString* name)
     XContainerSetDataMoveMethod(vec, XClass_move_base);
     XContainerSetDataCopyMethod(vec, XClass_copy_base);
     XContainerSetDataDeinitMethod(vec, XClass_deinit_base);
-    /* ??????,?????? */
+    /* 遍历解析结果，填充地址向量 */
     struct addrinfo* p = result;
     while (p) {
         XHostAddress addr;
@@ -1430,7 +1430,7 @@ XString* XDeviceNetwork_localHostName(void)
 }
 
 /* =========================================================================
- * ??????
+ * 网络接口枚举
  * ========================================================================= */
 
 XDeviceNetworkInterfaceIterator XDeviceNetwork_enumInterfacesBegin(void)
@@ -1438,7 +1438,7 @@ XDeviceNetworkInterfaceIterator XDeviceNetwork_enumInterfacesBegin(void)
     PIP_ADAPTER_ADDRESSES adapterAddresses = NULL;
     ULONG size = 0;
 
-    /* ?????? */
+    /* 获取所需大小 */
     GetAdaptersAddresses(AF_UNSPEC, GAA_FLAG_INCLUDE_PREFIX, NULL, NULL, &size);
 
     adapterAddresses = (PIP_ADAPTER_ADDRESSES)XMalloc_System(size);
@@ -1466,11 +1466,11 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
 
     if (current == NULL) return NULL;
 
-    /* ?? XNetworkInterface ?? */
+    /* 创建 XNetworkInterface 对象 */
     XNetworkInterface* iface = XNetworkInterface_create();
     if (!iface) return NULL;
 
-    /* ?? - AdapterName ? ASCII/ANSI ??(?? GUID),?? GBK ?? */
+    /* 名称 - AdapterName 是 ASCII/ANSI 编码（网卡 GUID），使用 GBK 转换 */
     //char nameBuf[1024] = {0};
     //WideCharToMultiByte(CP_ACP, 0, current->AdapterName, -1, nameBuf, sizeof(nameBuf), NULL, NULL);
    //printf("%s\n",nameBuf);
@@ -1483,14 +1483,14 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
     iface->m_index = (int)current->IfIndex;
     iface->m_mtu = (int)current->Mtu;
 
-    /* ???? (MAC) */
+    /* 硬件地址 (MAC) */
     if (current->PhysicalAddressLength > 0 && current->PhysicalAddressLength <= 32) {
         char macStr[64];
         int pos = 0;
         for (ULONG i = 0; i < current->PhysicalAddressLength; i++) {
             pos += sprintf(macStr + pos, "%02X:", current->PhysicalAddress[i]);
         }
-        if (pos > 0) macStr[pos - 1] = '\0'; /* ??????? */
+        if (pos > 0) macStr[pos - 1] = '\0'; /* 移除最后的冒号 */
         if (iface->m_hardwareAddress)
             XString_assign_fmt_utf8(iface->m_hardwareAddress, macStr);
         else
@@ -1498,7 +1498,7 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
         //iface->m_hardwareAddress = XString_create_fmt_utf8(macStr);
     }
 
-    /* ?? */
+    /* 标志 */
     if (current->OperStatus == IfOperStatusUp) {
         iface->m_flags |= XNetworkInterface_IsUp | XNetworkInterface_IsRunning;
     }
@@ -1518,7 +1518,7 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
 
     iface->m_isValid = true;
 
-    /* ?? IP ???? */
+    /* 获取 IP 地址条目 */
     PIP_ADAPTER_UNICAST_ADDRESS ua = current->FirstUnicastAddress;
     while (ua) {
         XNetworkAddressEntry entry;
@@ -1529,7 +1529,7 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
         sa2addr((struct sockaddr_storage*)ua->Address.lpSockaddr, &addr, NULL);
         XNetworkAddressEntry_setIp(&entry, &addr);
 
-        /* ?????? */
+        /* 计算子网掩码 */
         uint8_t prefixLen = ua->OnLinkPrefixLength;
         if (ua->Address.lpSockaddr->sa_family == AF_INET) {
             uint32_t maskVal = prefixLen >= 32 ? 0xFFFFFFFF : htonl(0xFFFFFFFF << (32 - prefixLen));
@@ -1574,20 +1574,20 @@ void XDeviceNetwork_enumInterfacesEnd(XDeviceNetworkInterfaceIterator iter)
     if (iter) {
         XFree_System(iter);
     }
-    /* ?????? */
+    /* 重置静态变量 */
     //extern PIP_ADAPTER_ADDRESSES current;
     current = NULL;
 }
 
 /* =========================================================================
- * ????(DHCP / ?? IP)
+ * 网卡配置（DHCP / 静态 IP）
  * =========================================================================
- * ??? IP Helper(GetAdaptersAddresses ????? IfIndex ??);
- * ??? netsh(interface ip ???)--Windows ?????????,
- * ? CREATE_NO_WINDOW ????????????;????????
+ * 查询走 IP Helper（GetAdaptersAddresses 单遍遍历按 IfIndex 命中）；
+ * 设置经 netsh（interface ip 上下文）——Windows 官方脚本化配置通路，
+ * 以 CREATE_NO_WINDOW 子进程执行并按退出码判定；需要管理员权限。
  */
 
-/** @brief UTF-16 ? UTF-8 ???(XMalloc_System ??;???? NULL)? */
+/** @brief UTF-16 → UTF-8 堆拷贝（XMalloc_System 分配；失败返回 NULL）。 */
 static wchar_t* netIfDupWide(const char* utf8)
 {
     int chars;
@@ -1604,7 +1604,7 @@ static wchar_t* netIfDupWide(const char* utf8)
     return wide;
 }
 
-/** @brief ??????????? IfIndex ??(GAA ????????)? */
+/** @brief 单遍枚举所有适配器并按 IfIndex 命中（GAA 缓冲由调用方释放）。 */
 static PIP_ADAPTER_ADDRESSES netIfFindAdapter(uint32_t ifIndex,
                                               PIP_ADAPTER_ADDRESSES* buffer)
 {
@@ -1612,8 +1612,8 @@ static PIP_ADAPTER_ADDRESSES netIfFindAdapter(uint32_t ifIndex,
     ULONG rc;
     PIP_ADAPTER_ADDRESSES head;
     *buffer = NULL;
-    /* INCLUDE_GATEWAYS ??:GAA ????? FirstGatewayAddress(??
-       ???????);INCLUDE_PREFIX ???????? */
+    /* INCLUDE_GATEWAYS 必带：GAA 默认不返回 FirstGatewayAddress（网关
+       恒空的实测根因）；INCLUDE_PREFIX 供前缀掩码展开。 */
     GetAdaptersAddresses(AF_UNSPEC,
                          GAA_FLAG_INCLUDE_PREFIX | GAA_FLAG_INCLUDE_GATEWAYS,
                          NULL, NULL, &size);
@@ -1637,7 +1637,7 @@ static PIP_ADAPTER_ADDRESSES netIfFindAdapter(uint32_t ifIndex,
     return NULL;
 }
 
-/** @brief ????????? netsh ???(UTF-8 ??),??????? */
+/** @brief 以隐藏窗口执行一条 netsh 命令行（UTF-8 参数），按退出码判定。 */
 static bool netIfRunNetsh(const char* argumentsUtf8)
 {
     wchar_t* args = netIfDupWide(argumentsUtf8);
@@ -1659,7 +1659,7 @@ static bool netIfRunNetsh(const char* argumentsUtf8)
     if (!CreateProcessW(NULL, commandLine, NULL, NULL, FALSE,
                         CREATE_NO_WINDOW, NULL, NULL, &startup, &process))
         return false;
-    /* ??????(????????;???????,??????)? */
+    /* 等待应用完成（地址切换通常秒级；超时按失败收口，进程随之遗弃）。 */
     if (WaitForSingleObject(process.hProcess, 15000) == WAIT_OBJECT_0) {
         DWORD exitCode = 1;
         if (GetExitCodeProcess(process.hProcess, &exitCode) &&
@@ -1671,7 +1671,7 @@ static bool netIfRunNetsh(const char* argumentsUtf8)
     return ok;
 }
 
-/** @brief netsh name= ????:???????,????? */
+/** @brief netsh name= 参数消毒：剔除内嵌双引号，防拆参数。 */
 static wchar_t* netIfSanitizeName(const wchar_t* name)
 {
     size_t i;
@@ -1688,7 +1688,7 @@ static wchar_t* netIfSanitizeName(const wchar_t* name)
     return out;
 }
 
-/** @brief ? ifIndex ?? `name="<???>"` ??;???? NULL? */
+/** @brief 按 ifIndex 组装 `name="<连接名>"` 片段；失败返回 NULL。 */
 static wchar_t* netIfNameArgument(uint32_t ifIndex)
 {
     PIP_ADAPTER_ADDRESSES buffer = NULL;
@@ -1739,7 +1739,7 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
         (adapter->Flags & IP_ADAPTER_DHCP_ENABLED) != 0;
     outConfig->operUp = (adapter->OperStatus == IfOperStatusUp);
     outConfig->friendlyName = XString_create_utf16(adapter->FriendlyName);
-    /* ?? IPv4 ???? + ???????(?????? XHostAddress)? */
+    /* 首个 IPv4 单播地址 + 前缀展开的掩码（主机字节序入 XHostAddress）。 */
     for (unicast = adapter->FirstUnicastAddress; unicast;
          unicast = unicast->Next) {
         if (unicast->Address.lpSockaddr &&
@@ -1756,7 +1756,7 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
             break;
         }
     }
-    /* ?? IPv6 ???? + ????(???;???????????)? */
+    /* 首个 IPv6 单播地址 + 前缀长度（预填用；页内全列表另经接口枚举）。 */
     for (unicast = adapter->FirstUnicastAddress; unicast;
          unicast = unicast->Next) {
         if (unicast->Address.lpSockaddr &&
@@ -1770,7 +1770,7 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
             break;
         }
     }
-    /* ?? IPv4 / IPv6 ????? */
+    /* 首个 IPv4 / IPv6 默认网关。 */
     for (gateway = adapter->FirstGatewayAddress; gateway;
          gateway = gateway->Next) {
         if (!gateway->Address.lpSockaddr) continue;
@@ -1788,8 +1788,8 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
         if (haveV4Gw && haveV6Gw)
             break;
     }
-    /* DHCP ???(GAA ???????,? GetAdaptersInfo ?????
-       ??;??? DHCP ????? 0.0.0.0 ??? null ??)? */
+    /* DHCP 服务器（GAA 结构不含该字段，经 GetAdaptersInfo 按接口索引
+       补齐；未启用 DHCP 或服务器为 0.0.0.0 时保持 null 地址）。 */
     {
         PIP_ADAPTER_INFO infoList = NULL;
         ULONG infoSize = 0;
@@ -1884,13 +1884,13 @@ bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address
                                   nameUtf8, sizeof(nameUtf8), NULL, NULL);
     XFree_System(name);
     if (written <= 0) return false;
-    /* ?? + ?? + ??(???? none ??,netsh ??=????)? */
+    /* 地址 + 掩码 + 网关（空网关以 none 占位，netsh 语义=不设网关）。 */
     _snprintf(command, sizeof(command) - 1,
               "interface ip set address %s static %s %s %s",
               nameUtf8, ipv4Address, ipv4Netmask,
               (ipv4Gateway && ipv4Gateway[0]) ? ipv4Gateway : "none");
     if (!netIfRunNetsh(command)) return false;
-    /* DNS:?/?/????? */
+    /* DNS：主/备/清空三态。 */
     if (dnsPrimary && dnsPrimary[0]) {
         _snprintf(command, sizeof(command) - 1,
                   "interface ip set dnsservers %s static %s primary",
@@ -1928,8 +1928,8 @@ bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
                                   nameUtf8, sizeof(nameUtf8), NULL, NULL);
     XFree_System(name);
     if (written <= 0) return false;
-    /* ??????(ipv6 ? set address;???? netsh ??????
-     * ??)?????? SLAAC/????? */
+    /* 追加静态地址（ipv6 无 set address；已存在时 netsh 报错→按失败
+     * 上报）。不影响既有 SLAAC/临时地址。 */
     _snprintf(command, sizeof(command) - 1,
               "interface ipv6 add address %s %s/%d",
               nameUtf8, ipv6Address, prefixLength);
@@ -1944,7 +1944,7 @@ bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
 }
 
 /* =========================================================================
- * ???(???2?API)
+ * 多播组（精简为2个API）
  * ========================================================================= */
 
 bool XDeviceNetwork_multicastGroup(XDeviceNetworkSocketHandle sock, bool join,
@@ -2044,12 +2044,12 @@ int XDeviceNetwork_multicastOp(XDeviceNetworkSocketHandle sock, XMulticastOp op,
 }
 
 /* =========================================================================
- * UDP ??
+ * UDP 特有
  * ========================================================================= */
 
- /* XDeviceNetwork_hasPendingDatagrams ? XDeviceNetwork_pendingDatagramSize ???
-  * ??:? IOCP ?????,??????? ringBuffer,
-  * ??? XIODevice_bytesAvailable ??????? */
+ /* XDeviceNetwork_hasPendingDatagrams 和 XDeviceNetwork_pendingDatagramSize 已移除
+  * 原因：在 IOCP 异步模型中，数据已被读取到 ringBuffer，
+  * 请使用 XIODevice_bytesAvailable 检查待读取数据 */
 
 bool XDeviceNetwork_platformGetLastDatagramSender(XFd xfd,
     XHostAddress* srcAddr, uint16_t* srcPort)
@@ -2057,7 +2057,7 @@ bool XDeviceNetwork_platformGetLastDatagramSender(XFd xfd,
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     if (!priv) return false;
 
-    /* ? wp->fromAddr ??????? */
+    /* 从 wp->fromAddr 获取发送者信息 */
     const XDeviceNetworkContextWin32* wp = (const XDeviceNetworkContextWin32*)priv;
 
     if (wp->fromAddrLen <= 0) {
@@ -2072,14 +2072,14 @@ bool XDeviceNetwork_platformGetLastDatagramSender(XFd xfd,
 }
 
 /* =========================================================================
- * ????(????????)
+ * 代理隧道（已移至应用层实现）
  * ========================================================================= */
- /* ??:XDeviceNetwork_socks5Connect?XDeviceNetwork_httpConnect?XDeviceNetwork_socks5Bind?
+ /* 注意：XDeviceNetwork_socks5Connect、XDeviceNetwork_httpConnect、XDeviceNetwork_socks5Bind、
   * XDeviceNetwork_serverCreateWithProxy?XDeviceNetwork_serverAcceptWithProxy
-  * ???????????????,?? XNetworkProxy ???????? */
+  * 这些代理相关函数已从平台层移除，请在 XNetworkProxy 模块或应用层实现 */
 
   /* =========================================================================
-   * ??????(Windows)
+   * 系统代理获取（Windows）
    * ========================================================================= */
 
 #include <winhttp.h>
@@ -2091,7 +2091,7 @@ bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outPr
 
     XNetworkProxy_init(outProxy);
 
-    /* 1. ???? WinHttpGetProxyForUrl (WPAD) */
+    /* 1. 尝试使用 WinHttpGetProxyForUrl (WPAD) */
     HINTERNET hSession = WinHttpOpen(L"XinYueC/1.0",
         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME,
@@ -2106,10 +2106,10 @@ bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outPr
             if (urlStr) MultiByteToWideChar(CP_UTF8, 0, urlStr, -1, wideUrl, 1024);
         }
 
-        /* ?? IE ???? */
+        /* 获取 IE 代理设置 */
         if (WinHttpGetDefaultProxyConfiguration(&proxyInfo)) {
             if (proxyInfo.lpszProxy && wcslen(proxyInfo.lpszProxy) > 0) {
-                /* ??????? "host:port" */
+                /* 解析代理字符串 "host:port" */
                 char proxyHost[256] = { 0 };
                 WideCharToMultiByte(CP_UTF8, 0, proxyInfo.lpszProxy, -1,
                     proxyHost, sizeof(proxyHost), NULL, NULL);
@@ -2140,7 +2140,7 @@ bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outPr
         }
     }
 
-    /* 2. ???????? */
+    /* 2. 回退到注册表读取 */
     HKEY hKey;
     if (RegOpenKeyExA(HKEY_CURRENT_USER,
         "Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings",
@@ -2157,7 +2157,7 @@ bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outPr
 
             if (RegQueryValueExA(hKey, "ProxyServer", NULL, NULL,
                 (LPBYTE)proxyServer, &size) == ERROR_SUCCESS) {
-                /* ?? "protocol=host:port" ? "host:port" ?? */
+                /* 解析 "protocol=host:port" 或 "host:port" 格式 */
                 char* eq = strchr(proxyServer, '=');
                 char* proxyStr = eq ? (eq + 1) : proxyServer;
 
@@ -2180,14 +2180,14 @@ bool XDeviceNetwork_getSystemProxy(const XString* queryUrl, XNetworkProxy* outPr
 }
 
 /* =========================================================================
- * GSSAPI ??(Windows SSPI)
+ * GSSAPI 认证（Windows SSPI）
  * ========================================================================= */
 
 #define SECURITY_WIN32
 #include <security.h>
 #include <sspi.h>
 
- /* GSSAPI ????? */
+ /* GSSAPI 上下文结构 */
 typedef struct {
     CredHandle credHandle;
     CtxtHandle ctxtHandle;
@@ -2229,7 +2229,7 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
 
     WinGssapiContext* ctx = (WinGssapiContext*)*context;
 
-    /* ????,?????? */
+    /* 首次调用，初始化上下文 */
     if (!ctx) {
         ctx = (WinGssapiContext*)XMalloc_System(sizeof(WinGssapiContext));
         if (!ctx) return -1;
@@ -2238,7 +2238,7 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
         SecInvalidateHandle(&ctx->credHandle);
         SecInvalidateHandle(&ctx->ctxtHandle);
 
-        /* ?????? */
+        /* 获取默认凭据 */
         TimeStamp expiry;
         SECURITY_STATUS status = AcquireCredentialsHandleA(
             NULL, "Negotiate", SECPKG_CRED_OUTBOUND,
@@ -2258,7 +2258,7 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
         *context = ctx;
     }
 
-    /* ??????? */
+    /* 准备输入缓冲区 */
     SecBufferDesc inDesc = { 0 };
     SecBuffer inBuf = { 0 };
     if (inputToken && XByteArray_size_base(inputToken) > 0) {
@@ -2270,7 +2270,7 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
         inBuf.pvBuffer = (void*)XByteArray_data(inputToken);
     }
 
-    /* ??????? */
+    /* 准备输出缓冲区 */
     SecBufferDesc outDesc = { 0 };
     SecBuffer outBuf = { 0 };
     BYTE outTokenBuf[4096];
@@ -2282,7 +2282,7 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
     outBuf.cbBuffer = sizeof(outTokenBuf);
     outBuf.pvBuffer = outTokenBuf;
 
-    /* ???????? */
+    /* 初始化安全上下文 */
     ULONG attr = 0;
     TimeStamp expiry;
     SECURITY_STATUS status;
@@ -2305,7 +2305,7 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
     }
 
     if (status == SEC_E_OK) {
-        /* ???? */
+        /* 认证完成 */
         if (outBuf.cbBuffer > 0) {
             XByteArray_resize_base(outputToken, outBuf.cbBuffer);
             memcpy(XByteArray_data(outputToken), outTokenBuf, outBuf.cbBuffer);
@@ -2318,7 +2318,7 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
         return 0;
     }
     else if (status == SEC_I_CONTINUE_NEEDED) {
-        /* ???? */
+        /* 需要继续 */
         if (outBuf.cbBuffer > 0) {
             XByteArray_resize_base(outputToken, outBuf.cbBuffer);
             memcpy(XByteArray_data(outputToken), outTokenBuf, outBuf.cbBuffer);
@@ -2327,7 +2327,7 @@ int XDeviceNetwork_gssapiAuth(const XString* serviceName,
         return 1;
     }
 
-    /* ?? */
+    /* 失败 */
     XDeviceNetwork_gssapiRelease(context);
     return -1;
 }
