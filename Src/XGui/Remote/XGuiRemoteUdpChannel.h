@@ -275,6 +275,10 @@ uint64_t XGuiRemoteUdpChannel_rxDatagrams(const XGuiRemoteUdpChannel* channel);
 /** @brief 累计丢弃输入数(序号跳进/缓存逐出; LAN 常态为 0)。 */
 uint64_t XGuiRemoteUdpChannel_droppedInputs(
         const XGuiRemoteUdpChannel* channel);
+/** @brief 客户端侧: FRAME 缺口累计(在途丢失数据报数; 重建即清零。
+ *         计数增量 ⇒ 帧洞, 客户端泵据此发 FB_REQUEST 全量自愈)。 */
+uint64_t XGuiRemoteUdpChannel_rxLostFrames(
+        const XGuiRemoteUdpChannel* channel);
 
 #endif /* XGUI_REMOTE_ON */
 

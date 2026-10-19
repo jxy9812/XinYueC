@@ -1030,11 +1030,12 @@ int xapi_views_run(void)
         XAPI_EXPECT(XAbstractItemView_autoScrollMargin(&view) == 16,
                     "默认 autoScrollMargin=16（Qt 缺省）");
         /* 本库缺省 16x16；Qt iconSize 为样式相关值，不硬对标 Qt。 */
-        XAPI_EXPECT(XAbstractItemView_iconWidth(&view) == 16 &&
-                    XAbstractItemView_iconHeight(&view) == 16,
-                    "默认 iconSize=16x16（本库缺省）");
-        XAPI_EXPECT(XAbstractItemView_keyboardSearch(&view),
-                    "默认 keyboardSearch 开启（本库缺省）");
+        {
+            int iw16 = 0, ih16 = 0;
+            XAbstractItemView_iconSize(&view, &iw16, &ih16);
+            XAPI_EXPECT(iw16 == 16 && ih16 == 16,
+                        "默认 iconSize=16x16（本库缺省）");
+        }
         XAPI_EXPECT(!XAbstractItemView_tabKeyNavigation(&view),
                     "默认 tabKeyNavigation=false（Qt 缺省）");
         XAPI_EXPECT(XAbstractItemView_showDropIndicator(&view),
@@ -1063,9 +1064,12 @@ int xapi_views_run(void)
         XAPI_EXPECT(XAbstractItemView_model(&view) == NULL &&
                     XAbstractItemView_selectionModel(&view) != NULL,
                     "初始无模型、选择模型已就绪");
-        XAPI_EXPECT(XAbstractItemView_rootRow(&view) == -1 &&
-                    XAbstractItemView_rootColumn(&view) == -1,
-                    "初始根索引无效（-1）");
+        {
+            int rootR = 0, rootC = 0;
+            XAbstractItemView_rootIndex(&view, &rootR, &rootC);
+            XAPI_EXPECT(rootR == -1 && rootC == -1,
+                        "初始根索引无效（-1）");
+        }
 
         /* ---- 属性往返 ---- */
         XAbstractItemView_setSelectionMode(&view,
@@ -1133,10 +1137,9 @@ int xapi_views_run(void)
                     "setTabKeyNavigation 往返");
         /* ---- setIconSize 往返 + iconSizeChanged 信号 ---- */
         XAbstractItemView_setIconSize(&view, 24, 28);
-        XAPI_EXPECT(XAbstractItemView_iconWidth(&view) == 24 &&
-                    XAbstractItemView_iconHeight(&view) == 28,
-                    "setIconSize(24,28) 往返");
         XAbstractItemView_iconSize(&view, &w, &h);
+        XAPI_EXPECT(w == 24 && h == 28,
+                    "setIconSize(24,28) 往返");
         XAPI_EXPECT(w == 24 && h == 28,
                     "iconSize 双输出查询与单项 getter 同源");
         XAPI_EXPECT(g_sig.iconSizeChanged == 1 && g_sig.icW == 24 &&
@@ -1144,13 +1147,8 @@ int xapi_views_run(void)
                     "图标尺寸变化发射 iconSizeChanged(24,28)");
         XAbstractItemView_setIconSize(&view, 0, 0);
         XAbstractItemView_setIconSize(&view, 24, 28);
-        XAPI_EXPECT(XAbstractItemView_iconWidth(&view) == 24 &&
-                    g_sig.iconSizeChanged == 1,
+        XAPI_EXPECT(g_sig.iconSizeChanged == 1,
                     "非正尺寸拒绝、同值重复设置不重复发信号");
-        XAbstractItemView_setKeyboardSearch(&view, false);
-        XAbstractItemView_setKeyboardSearch(&view, true);
-        XAPI_EXPECT(XAbstractItemView_keyboardSearch(&view),
-                    "setKeyboardSearch 往返");
 
         /* ---- 模型挂接与当前索引（对标 setModel/setCurrentIndex） ---- */
         XAbstractItemView_setModel(&view, model);
@@ -1210,17 +1208,24 @@ int xapi_views_run(void)
         XAbstractItemView_setCurrentIndex(&view, 2, 1);
         XAbstractItemView_setRootIndex(&view, 1, 1);
         XAbstractItemView_reset(&view);
-        XAPI_EXPECT(XAbstractItemView_currentRow(&view) == -1 &&
-                    XAbstractItemView_rootRow(&view) == -1,
-                    "reset 复位当前索引与根索引");
+        {
+            int rr = 0, rc = 0;
+            XAbstractItemView_rootIndex(&view, &rr, &rc);
+            XAPI_EXPECT(XAbstractItemView_currentRow(&view) == -1 &&
+                        rr == -1 && rc == -1,
+                        "reset 复位当前索引与根索引");
+        }
         XAPI_EXPECT(XItemSelectionModel_selectedCount(
                         XAbstractItemView_selectionModel(&view)) == 0,
                     "reset 清空全部选中");
         /* ---- 根索引预留状态（rootIndex 平铺恒 (0,0)——头文件口径） ---- */
         XAbstractItemView_setRootIndex(&view, 2, 1);
-        XAPI_EXPECT(XAbstractItemView_rootRow(&view) == 2 &&
-                    XAbstractItemView_rootColumn(&view) == 1,
-                    "setRootIndex 存储根偏移（树预留）");
+        {
+            int sr = 0, sc = 0;
+            XAbstractItemView_rootIndex(&view, &sr, &sc);
+            XAPI_EXPECT(sr == 2 && sc == 1,
+                        "setRootIndex 存储根偏移（树预留）");
+        }
         r = -9;
         c = -9;
         XAPI_EXPECT(XAbstractItemView_rootIndex(&view, &r, &c) &&
@@ -1361,19 +1366,15 @@ int xapi_views_run(void)
         /* ---- 键盘搜索（对标 keyboardSearch 前缀渐进匹配） ---- */
         vsig_reset();
         XAbstractItemView_setCurrentIndex(&view, -1, -1);
-        XAPI_EXPECT(XAbstractItemView_keyboardSearch_2(&view, "ga") &&
+        XAPI_EXPECT(XAbstractItemView_keyboardSearch(&view, "ga") &&
                     XAbstractItemView_currentRow(&view) == 2,
                     "keyboardSearch(\"ga\") 前缀命中 gamma（行 2）");
-        XAPI_EXPECT(!XAbstractItemView_keyboardSearch_2(&view, ""),
+        XAPI_EXPECT(!XAbstractItemView_keyboardSearch(&view, ""),
                     "keyboardSearch(\"\") 仅重置前缀并返回 false");
         XAbstractItemView_setCurrentIndex(&view, 2, 0);
-        XAPI_EXPECT(XAbstractItemView_keyboardSearch_2(&view, "be") &&
+        XAPI_EXPECT(XAbstractItemView_keyboardSearch(&view, "be") &&
                     XAbstractItemView_currentRow(&view) == 1,
                     "累积前缀无命中回退本次文本并环形命中 beta");
-        XAbstractItemView_setKeyboardSearch(&view, false);
-        XAPI_EXPECT(!XAbstractItemView_keyboardSearch_2(&view, "be"),
-                    "开关关闭时 keyboardSearch 返回 false");
-        XAbstractItemView_setKeyboardSearch(&view, true);
 
         /* ---- 委托承载（对标 itemDelegate 族与解析优先级） ---- */
         XAPI_EXPECT(XAbstractItemView_itemDelegate(&view) == NULL,

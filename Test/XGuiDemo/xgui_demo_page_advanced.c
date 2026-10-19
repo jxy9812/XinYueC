@@ -4,8 +4,9 @@
  *             主窗口-停靠族的可视化演示，独立翻译单元）。
  * @details    实现契约头 xgui_demo_pages.h 中的
  *             demo_page_advanced_build / demo_page_advanced_autotest：
- *             - build：在 parent 下手工 setGeometry 装配（内容区约
- *               760x480，勿重叠，子控件逐一 XWidget_show）：
+ *             - build：页根挂垂直盒布局器容器化装配（2026-10-17，
+ *               原页内 setGeometry 手写排布退场；固定高复刻原行高，
+ *               行距用单条目行盒底边距近似），子控件逐一 XWidget_show：
  *                 XTextEdit      富文本样例（粗体/斜体 <i> 合成倾斜
  *                                §8.0g11/font color/span 背景/无序列表，
  *                                setHtml + setRichPreview(true) 只读
@@ -54,6 +55,8 @@
 
 #include "XPrintf.h"
 #include "xgui_demo_pages.h"
+#include "XBoxLayout.h" /* 页内布局容器化：根垂直盒+双列/行嵌套盒近似原手写排布。 */
+#include "XWidget.h"    /* 底部弹簧控件（XWidget_create_ex，推 SizeGrip 贴右缘）。 */
 
 #if XWIDGET_ON
 
@@ -259,8 +262,8 @@ typedef struct AdvState
     XLabel* kseStatus;                 /**< 捕获状态行。 */
     XLabel* shortcutStatus;            /**< 快捷键触发状态行。 */
 #endif
-    /* 2026-10-03 自适应重排登记（原为 build 局部变量，adapt 需随根
-     * 几何重排双列布局；特性裁剪时保持 NULL，adapt 逐项判空）。 */
+    /* 2026-10-03 自适应重排登记（原为 build 局部变量；2026-10-17 页内
+     * 布局容器化后 adapt 空实现，几何全交页根 XBoxLayout 分配）。 */
     XPushButton* insertButton;         /**< 「键入文本」按钮（左列首行右）。 */
     XLabel* topHint;                   /**< 橡皮筋提示行（左列）。 */
     XLabel* completerCaption;          /**< 「补全输入」标题。 */
@@ -269,6 +272,20 @@ typedef struct AdvState
     XPushButton* splashButton;         /**< 「显示启动画面」按钮（右列）。 */
     XPushButton* mainWinButton;        /**< 「打开主窗口」按钮（右列）。 */
     XLabel* rightHint;                 /**< 主窗口说明（右列）。 */
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    /* 2026-10-17 页内布局容器化：布局器对象随页常驻（addLayout 借用
+     * 不取所有权，栈/临时对象会悬挂；demo 单实例 build 一次装配，
+     * 随进程退出回收，与 s_adv 其余静态件口径一致）。 */
+    XBoxLayout rootLayout;   /**< 页根垂直布局器（双列区伸展+底部行贴底）。 */
+    XBoxLayout contentRow;   /**< 双列水平行盒（左列+右列，45/55 伸缩）。 */
+    XBoxLayout leftCol;      /**< 左列垂直布局器（富文本/补全/快捷键捕获）。 */
+    XBoxLayout topRow;       /**< 左列首行（编辑器伸展+键入钮顶对齐列）。 */
+    XBoxLayout btnCol;       /**< 「键入文本」按钮单条目列盒（左缘 12px）。 */
+    XBoxLayout rightCol;     /**< 右列垂直布局器（左缘 24/顶缘 36 边距）。 */
+    XBoxLayout bottomRow;    /**< 底部行盒（弹簧推 SizeGrip 贴右下角）。 */
+    XBoxLayout colRows[14];  /**< 单条目行盒池（左 7+右 6 简单行，底边距=行距）。 */
+    int rowCount;            /**< 行盒池游标（adv_rowAdd 递增）。 */
+#endif
 } AdvState;
 
 static AdvState s_adv;
@@ -303,6 +320,58 @@ static void adv_setToolTip(XWidget* widget, const char* text)
     XClassDelete((XClass*)tip);
 }
 #endif
+
+/* ==================== 页内布局容器化装配工具 ====================== */
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+/** @brief 显式首选尺寸（与 setFixed 对齐——部分控件缓存 sizeHint 缺席
+ *         或偏离固定尺寸，行盒协商高度会失真；显式 hint 后 qGeomCalc
+ *         首选=固定，行高像素级确定）。 */
+static void adv_setHint(XWidget* w, int width, int height)
+{
+    XSize hint;
+    if (!w) return;
+    XSize_init(&hint, width, height);
+    XWidget_setSizeHint(w, &hint);
+}
+
+/** @brief 列尾弹簧：水平可扩展/垂直最小。双职责——①交叉轴（宽度）
+ *         max 经可扩展子项放开（否则列 max=最窄固定行宽，双列伸缩
+ *         分配退化为「窄列钉在最小值」）；②stretch=1 吸收列内全部
+ *         竖向多余空间（qGeomCalc 无伸展条目时按条目均摊，固定尺
+ *         寸件在摊薄格内垂直居中，行距观感失真）。 */
+static void adv_springAdd(XBoxLayout* col)
+{
+    XWidget* spring;
+    if (!col) return;
+    spring = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                               (XWidget*)s_adv.page, 0);
+    if (!spring) return;
+    XWidget_setSizePolicy(spring, XWidgetSizePolicy_Expanding,
+                          XWidgetSizePolicy_Minimum);
+    XWidget_show(spring); /* 隐藏件会被布局按空条目跳过。 */
+    XBoxLayout_addWidget(col, spring);
+    XBoxLayout_setStretchFactorWidget(col, spring, 1);
+}
+
+/** @brief 单条目行盒装配：控件装入行盒（底边距=行距——布局器无逐条
+ *         目间距 API，用 setContentsMargins 近似原手写行距），行盒经
+ *         addLayout 借挂列布局器。行盒对象存 s_adv.colRows（addLayout
+ *         借用不取所有权，须随页常驻；池满静默丢弃，池容量按装配
+ *         上限预留）。 */
+static void adv_rowAdd(XBoxLayout* col, XWidget* w, int rowGap)
+{
+    XBoxLayout* row;
+    if (!col || !w) return;
+    if (s_adv.rowCount >= (int)(sizeof(s_adv.colRows) /
+                                sizeof(s_adv.colRows[0])))
+        return;
+    row = &s_adv.colRows[s_adv.rowCount++];
+    XBoxLayout_init(row, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)row, 0, 0, 0, rowGap);
+    XBoxLayout_addWidget(row, w);
+    XBoxLayout_addLayout(col, (XLayout*)row);
+}
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 
 /* ==================== 槽：XTextEdit 程序化插入 ==================== */
 #if ADV_TEXTEDIT_ON
@@ -682,7 +751,7 @@ static AdvPage* AdvPage_create(XWidget* parent)
 
 /* ==================== 页面装配（契约接口） ======================== */
 
-/** @brief 构建高级控件页（布局手工 setGeometry，内容区 776x472）。 */
+/** @brief 构建高级控件页（页根挂垂直盒布局器容器化装配）。 */
 XWidget* demo_page_advanced_build(XWidget* parent,
                                   DemoPageStatusFn status, void* user)
 {
@@ -700,7 +769,10 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     s_adv.textEdit = XTextEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                          (XWidget*)page, 0);
     if (s_adv.textEdit) {
-        XWidget_setGeometry((XWidget*)s_adv.textEdit, 12, 8, 300, 180);
+        /* 原手写 (12,8,300,180)→adapt (12,8,左列宽-124,232)：原点交
+         * 根布局边距、宽交行盒伸展、高固定 232 复刻 adapt 落位值
+         * （样例 7 行完整呈现所需，目验二轮挂项口径）。 */
+        XWidget_setFixedHeight((XWidget*)s_adv.textEdit, 232);
         XTextEdit_setHtml(s_adv.textEdit, ADV_RICH_HTML);
         XTextEdit_setRichPreview(s_adv.textEdit, true);
 #if ADV_TOOLTIP_ON
@@ -719,7 +791,10 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         s_adv.insertButton = insertButton;
         if (insertButton) {
             XPushButton_setText_2(insertButton, "键入文本");
-            XWidget_setGeometry((XWidget*)insertButton, 324, 8, 110, 26);
+            /* 原手写 (324,8,110,26)→adapt (100x26)：固定尺寸复刻 adapt
+             * 落位值；原点/顶对齐交 btnCol 行盒（编辑器右缘 +12px）。 */
+            XWidget_setFixedWidth((XWidget*)insertButton, 100);
+            XWidget_setFixedHeight((XWidget*)insertButton, 26);
 #if ADV_TEXTEDIT_ON
             XObject_connect_1((XObject*)insertButton,
                               (size_t)XPushButton_clicked_signal(NULL, false),
@@ -743,7 +818,9 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         if (hint) {
             XLabel_setText_2(hint,
                              "页面空白处按住左键拖拽 → 橡皮筋选框（松开隐藏）");
-            XWidget_setGeometry((XWidget*)hint, 12, 196, 430, 18);
+            /* 原手写 (12,196,430,18)：高固定 18 复刻原行高；宽交左列
+             * 布局器铺满（XLabel 不裁剪溢出文本，窄窗表现不劣于旧版）。 */
+            XWidget_setFixedHeight((XWidget*)hint, 18);
             XWidget_show((XWidget*)hint);
         }
     }
@@ -773,7 +850,10 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     s_adv.completerEdit = XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                               (XWidget*)page, 0);
     if (s_adv.completerEdit) {
-        XWidget_setGeometry((XWidget*)s_adv.completerEdit, 12, 244, 220, 26);
+        /* 原手写 (12,244,220,26)：固定尺寸复刻原行宽行高（左缘交列
+         * 布局器——盒式布局交叉轴无对齐位时水平方向默认左贴齐）。 */
+        XWidget_setFixedWidth((XWidget*)s_adv.completerEdit, 220);
+        XWidget_setFixedHeight((XWidget*)s_adv.completerEdit, 26);
         XLineEdit_setPlaceholderText(s_adv.completerEdit,
                                      "输入前缀（试 Ope）");
         /* 接通补全器（对标 QLineEdit::setCompleter）：此前补全器为
@@ -796,7 +876,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         s_adv.completerCaption = caption;
         if (caption) {
             XLabel_setText_2(caption, "补全输入:");
-            XWidget_setGeometry((XWidget*)caption, 12, 224, 120, 18);
+            XWidget_setFixedHeight((XWidget*)caption, 18);
             XWidget_show((XWidget*)caption);
         }
     }
@@ -807,7 +887,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
                                              (XWidget*)page, 0);
     if (s_adv.completerStatus) {
         XLabel_setText_2(s_adv.completerStatus, "补全: 输入前缀查看候选");
-        XWidget_setGeometry((XWidget*)s_adv.completerStatus, 12, 276, 430, 18);
+        XWidget_setFixedHeight((XWidget*)s_adv.completerStatus, 18);
         XWidget_show((XWidget*)s_adv.completerStatus);
     }
 #endif
@@ -820,14 +900,16 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         s_adv.kseCaption = caption;
         if (caption) {
             XLabel_setText_2(caption, "快捷键捕获（点击后按键，试 Ctrl+O）:");
-            XWidget_setGeometry((XWidget*)caption, 12, 304, 320, 18);
+            XWidget_setFixedHeight((XWidget*)caption, 18);
             XWidget_show((XWidget*)caption);
         }
     }
     s_adv.kse = XKeySequenceEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                            (XWidget*)page, 0);
     if (s_adv.kse) {
-        XWidget_setGeometry((XWidget*)s_adv.kse, 12, 324, 240, 28);
+        /* 原手写 (12,324,240,28)：固定尺寸复刻原行宽行高。 */
+        XWidget_setFixedWidth((XWidget*)s_adv.kse, 240);
+        XWidget_setFixedHeight((XWidget*)s_adv.kse, 28);
         XObject_connect_1(
             (XObject*)s_adv.kse,
             (size_t)XKeySequenceEdit_keySequenceChanged_signal(NULL, NULL),
@@ -845,7 +927,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
                                        (XWidget*)page, 0);
     if (s_adv.kseStatus) {
         XLabel_setText_2(s_adv.kseStatus, "尚未捕获快捷键");
-        XWidget_setGeometry((XWidget*)s_adv.kseStatus, 12, 358, 430, 18);
+        XWidget_setFixedHeight((XWidget*)s_adv.kseStatus, 18);
         XWidget_show((XWidget*)s_adv.kseStatus);
     }
 #endif
@@ -869,12 +951,13 @@ XWidget* demo_page_advanced_build(XWidget* parent,
                                            (XWidget*)page, 0);
         s_adv.shortcutCaption = caption;
         if (caption) {
-            /* 右缘收口：说明文案按实测字形宽（约 21px/汉字）控制在
-             * 起点 x=324 → 764px 之内（XLabel 不裁剪溢出文本）；备注
-             * "单键码承载"挪至状态行初始文案。 */
+            /* 文案按实测字形宽（约 21px/汉字）控制在一行之内的口径
+             * 保持（XLabel 不裁剪溢出文本）；备注 "单键码承载" 挪至
+             * 状态行初始文案。原手写 (324,44,320,18)：高固定 18，原点
+             * 交右列布局器（列顶 36px 边距复刻原列首下沉）。 */
             XLabel_setText_2(caption,
                              "全局快捷键: 按 T 触发 (对标 Ctrl+T)");
-            XWidget_setGeometry((XWidget*)caption, 324, 44, 320, 18);
+            XWidget_setFixedHeight((XWidget*)caption, 18);
             XWidget_show((XWidget*)caption);
         }
     }
@@ -883,7 +966,7 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     if (s_adv.shortcutStatus) {
         XLabel_setText_2(s_adv.shortcutStatus,
                          "XShortcut 未触发 (键 T, 单键码承载)");
-        XWidget_setGeometry((XWidget*)s_adv.shortcutStatus, 324, 66, 320, 18);
+        XWidget_setFixedHeight((XWidget*)s_adv.shortcutStatus, 18);
         XWidget_show((XWidget*)s_adv.shortcutStatus);
     }
 #endif
@@ -894,7 +977,9 @@ XWidget* demo_page_advanced_build(XWidget* parent,
                                               (XWidget*)page, 0);
     if (s_adv.focusTarget) {
         XPushButton_setText_2(s_adv.focusTarget, "焦点框目标按钮");
-        XWidget_setGeometry((XWidget*)s_adv.focusTarget, 324, 96, 150, 30);
+        /* 原手写 (324,96,150,30)：固定尺寸复刻原行宽行高。 */
+        XWidget_setFixedWidth((XWidget*)s_adv.focusTarget, 150);
+        XWidget_setFixedHeight((XWidget*)s_adv.focusTarget, 30);
 #if ADV_TOOLTIP_ON
         adv_setToolTip((XWidget*)s_adv.focusTarget,
                        "XFocusFrame 环绕的目标控件");
@@ -904,8 +989,10 @@ XWidget* demo_page_advanced_build(XWidget* parent,
     s_adv.focusFrame = XFocusFrame_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                              (XWidget*)page, 0);
     if (s_adv.focusFrame) {
+        /* 原手写几何 (322,94,154,34) 退场：setWidget 后框架自贴合
+         * 目标几何外扩 2px（XFOCUSFRAME_MARGIN），并经 30ms 跟随定时
+         * 器随布局重排贴移（XFocusFrame.c 轮询定式），不参与布局。 */
         XFocusFrame_setWidget(s_adv.focusFrame, (XWidget*)s_adv.focusTarget);
-        XWidget_setGeometry((XWidget*)s_adv.focusFrame, 322, 94, 154, 34);
         XWidget_show((XWidget*)s_adv.focusFrame);
     }
 #endif /* ADV_FOCUSFRAME_ON */
@@ -917,7 +1004,10 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         s_adv.splashButton = splashButton;
         if (splashButton) {
             XPushButton_setText_2(splashButton, "显示启动画面");
-            XWidget_setGeometry((XWidget*)splashButton, 500, 96, 130, 28);
+            /* 原手写 (500,96,130,28)→adapt (rcX,136,130,28)：固定尺寸
+             * 复刻 adapt 落位值，原点交右列布局器（焦点框行下 10px）。 */
+            XWidget_setFixedWidth((XWidget*)splashButton, 130);
+            XWidget_setFixedHeight((XWidget*)splashButton, 28);
             XObject_connect_1((XObject*)splashButton,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)page, adv_btnSplashSlot,
@@ -938,7 +1028,10 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         s_adv.mainWinButton = mainWinButton;
         if (mainWinButton) {
             XPushButton_setText_2(mainWinButton, "打开主窗口");
-            XWidget_setGeometry((XWidget*)mainWinButton, 324, 140, 150, 28);
+            /* 原手写 (324,140,150,28)→adapt (rcX,176,150,28)：固定尺寸
+             * 复刻 adapt 落位值，原点交右列布局器（启动画面钮下 12px）。 */
+            XWidget_setFixedWidth((XWidget*)mainWinButton, 150);
+            XWidget_setFixedHeight((XWidget*)mainWinButton, 28);
             XObject_connect_1((XObject*)mainWinButton,
                               (size_t)XPushButton_clicked_signal(NULL, false),
                               (XObject*)page, adv_btnMainWindowSlot,
@@ -958,11 +1051,11 @@ XWidget* demo_page_advanced_build(XWidget* parent,
                                         (XWidget*)page, 0);
         s_adv.rightHint = hint;
         if (hint) {
-            /* 右缘收口：避免 XMainWindow 长词（wordWrap 仅空格断行）
-             * 溢出，改用无空格短句（约 250px，止于 486+250=736）。 */
+            /* 文案口径保持：无空格短句（wordWrap 仅空格断行，原手写
+             * (486,136,250,54) 三行带 → 布局器铺满右列宽后一行可容，
+             * 自然行高交布局器 heightForWidth 协商）。 */
             XLabel_setText_2(hint, "菜单/中央标签/左右停靠面板");
             XLabel_setWordWrap(hint, true);
-            XWidget_setGeometry((XWidget*)hint, 486, 136, 250, 54);
             XWidget_show((XWidget*)hint);
         }
     }
@@ -970,16 +1063,15 @@ XWidget* demo_page_advanced_build(XWidget* parent,
 
 #if ADV_SIZEGRIP_ON
     /* ---- XSizeGrip：页面右下角（真实拖拽由真人验证）。 ---- */
-    /* 装配锚定实际内容区（demo_layout_content：窗口 800x600 时内容区
-     * 776x472——2026-10-03 双行分组导航使内容顶 78→100）右下角
-     * (760,456)：窗口系落点 (772,556+sysbarH) 与旧内容区 (760,478) 的
-     * 落点完全一致（100+456 = 78+478 = 556），与根控件 FPS 浮层的
-     * 重叠关系不变；旧值 (736,456) 按 760x480 设计稿摆位，曾沉入浮层
-     * 之下被盖压（2026-09-25 页7 SizeGrip 攻坚）。 */
+    /* 原手写贴角 (760,456,16,16)→adapt (rootW-16,rootH-16)：2026-10-17
+     * 容器化后由底部行盒贴底 + 弹簧推右复刻贴角（16x16 固定尺寸，
+     * autotest 尺寸断言口径不变）；与根控件 FPS 浮层的重叠关系不变
+     * （2026-09-25 页7 SizeGrip 攻坚：沉入浮层之下被盖压旧账）。 */
     s_adv.sizeGrip = XSizeGrip_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                          (XWidget*)page);
     if (s_adv.sizeGrip) {
-        XWidget_setGeometry((XWidget*)s_adv.sizeGrip, 760, 456, 16, 16);
+        XWidget_setFixedWidth((XWidget*)s_adv.sizeGrip, 16);
+        XWidget_setFixedHeight((XWidget*)s_adv.sizeGrip, 16);
 #if ADV_TOOLTIP_ON
         adv_setToolTip((XWidget*)s_adv.sizeGrip,
                        "XSizeGrip：拖动调整顶层窗口尺寸");
@@ -997,90 +1089,115 @@ XWidget* demo_page_advanced_build(XWidget* parent,
         XWidget_hide((XWidget*)s_adv.band); /* 初始隐藏，按下拖拽时显示。 */
 #endif
 
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    /* ---- 页内布局容器化（2026-10-17）：页根挂垂直盒布局器统一分配
+     * 几何（原页内 setGeometry 手写排布全部退场）。观感对齐改造前
+     * 截图：根边距 (12,8,12,8) 复刻原手写原点 (12,8)；行距用单条目
+     * 行盒底边距近似（kbd 页同款定式）；左列 45/右列 55 伸缩近似原
+     * adapt 的 45% 宽左列；右列左缘 24px/顶缘 36px 边距复刻原列间距
+     * 与列首下沉；SizeGrip 由底部行盒（弹簧 stretch=1 推右）贴右下
+     * 角。XFocusFrame/XRubberBand 为瞬态覆盖件，不参与布局（前者随
+     * 目标自贴合，后者由鼠标事件驱动）。 ---- */
+    /* 显式首选尺寸与 setFixed 对齐（理由见 adv_setHint @details）。 */
+    adv_setHint((XWidget*)s_adv.textEdit, 196, 232);
+    adv_setHint((XWidget*)s_adv.insertButton, 100, 26);
+    adv_setHint((XWidget*)s_adv.topHint, 0, 18);
+    adv_setHint((XWidget*)s_adv.completerCaption, 0, 18);
+    adv_setHint((XWidget*)s_adv.completerEdit, 220, 26);
+    adv_setHint((XWidget*)s_adv.completerStatus, 0, 18);
+    adv_setHint((XWidget*)s_adv.kseCaption, 0, 18);
+    adv_setHint((XWidget*)s_adv.kse, 240, 28);
+    adv_setHint((XWidget*)s_adv.kseStatus, 0, 18);
+    adv_setHint((XWidget*)s_adv.shortcutCaption, 0, 18);
+    adv_setHint((XWidget*)s_adv.shortcutStatus, 0, 18);
+    adv_setHint((XWidget*)s_adv.focusTarget, 150, 30);
+    adv_setHint((XWidget*)s_adv.splashButton, 130, 28);
+    adv_setHint((XWidget*)s_adv.mainWinButton, 150, 28);
+    adv_setHint((XWidget*)s_adv.rightHint, 0, 18);
+    adv_setHint((XWidget*)s_adv.sizeGrip, 16, 16);
+    XBoxLayout_init(&s_adv.rootLayout, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&s_adv.rootLayout, 12, 8, 12, 8);
+    /* 双列区：左列 45 / 右列 55（≈原 adapt leftColW=rootW*45%）。 */
+    XBoxLayout_init(&s_adv.contentRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_adv.leftCol, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_init(&s_adv.rightCol, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&s_adv.rightCol, 24, 36, 0, 0);
+    XBoxLayout_addLayout(&s_adv.contentRow, (XLayout*)&s_adv.leftCol);
+    XBoxLayout_addLayout(&s_adv.contentRow, (XLayout*)&s_adv.rightCol);
+    XBoxLayout_setStretch(&s_adv.contentRow, 0, 45);
+    XBoxLayout_setStretch(&s_adv.contentRow, 1, 55);
+    /* 左列首行：编辑器伸展铺宽 + 键入钮经单条目列盒顶对齐（盒式布
+     * 局交叉轴垂直方向默认居中，列盒把余量留在主轴末尾=钮下方）。 */
+    XBoxLayout_init(&s_adv.topRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_adv.btnCol, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&s_adv.btnCol, 12, 0, 0, 0);
+    if (s_adv.textEdit) {
+        XBoxLayout_addWidget(&s_adv.topRow, (XWidget*)s_adv.textEdit);
+        XBoxLayout_setStretch(&s_adv.topRow, 0, 1);
+    }
+    if (s_adv.insertButton)
+        XBoxLayout_addWidget(&s_adv.btnCol, (XWidget*)s_adv.insertButton);
+    XBoxLayout_addLayout(&s_adv.topRow, (XLayout*)&s_adv.btnCol);
+    XLayout_setContentsMargins((XLayout*)&s_adv.topRow, 0, 0, 0, 8);
+    XBoxLayout_addLayout(&s_adv.leftCol, (XLayout*)&s_adv.topRow);
+    /* 左列其余行（行距≈原 adapt y 差：248/276/296/328/356/378/410）。 */
+    s_adv.rowCount = 0;
+    if (s_adv.topHint)
+        adv_rowAdd(&s_adv.leftCol, (XWidget*)s_adv.topHint, 8);
+    if (s_adv.completerCaption)
+        adv_rowAdd(&s_adv.leftCol, (XWidget*)s_adv.completerCaption, 4);
+    if (s_adv.completerEdit)
+        adv_rowAdd(&s_adv.leftCol, (XWidget*)s_adv.completerEdit, 6);
+    if (s_adv.completerStatus)
+        adv_rowAdd(&s_adv.leftCol, (XWidget*)s_adv.completerStatus, 8);
+    if (s_adv.kseCaption)
+        adv_rowAdd(&s_adv.leftCol, (XWidget*)s_adv.kseCaption, 4);
+    if (s_adv.kse)
+        adv_rowAdd(&s_adv.leftCol, (XWidget*)s_adv.kse, 4);
+    if (s_adv.kseStatus)
+        adv_rowAdd(&s_adv.leftCol, (XWidget*)s_adv.kseStatus, 0);
+    adv_springAdd(&s_adv.leftCol);
+    /* 右列（行距≈原 adapt y 差：44/66/96/136/176）。 */
+    if (s_adv.shortcutCaption)
+        adv_rowAdd(&s_adv.rightCol, (XWidget*)s_adv.shortcutCaption, 4);
+    if (s_adv.shortcutStatus)
+        adv_rowAdd(&s_adv.rightCol, (XWidget*)s_adv.shortcutStatus, 12);
+    if (s_adv.focusTarget)
+        adv_rowAdd(&s_adv.rightCol, (XWidget*)s_adv.focusTarget, 10);
+    if (s_adv.splashButton)
+        adv_rowAdd(&s_adv.rightCol, (XWidget*)s_adv.splashButton, 12);
+    if (s_adv.mainWinButton)
+        adv_rowAdd(&s_adv.rightCol, (XWidget*)s_adv.mainWinButton, 8);
+    if (s_adv.rightHint)
+        adv_rowAdd(&s_adv.rightCol, (XWidget*)s_adv.rightHint, 0);
+    adv_springAdd(&s_adv.rightCol);
+    /* 底部行：弹簧推 SizeGrip 贴右缘（行高=手柄 16 固定）。 */
+    XBoxLayout_init(&s_adv.bottomRow, XBoxLayoutDirection_LeftToRight);
+    adv_springAdd(&s_adv.bottomRow);
+    if (s_adv.sizeGrip)
+        XBoxLayout_addWidget(&s_adv.bottomRow, (XWidget*)s_adv.sizeGrip);
+    /* 根装配：双列区伸展铺满（列内多余高度由列尾弹簧吸收，行盒保
+     * 持首选高），底部行固定高贴底——挂页根即激活（attachWidget→
+     * activate），此后随 XStackedLayout 重贴根几何经 resize→
+     * XLayout_activate 自动重排。 */
+    XBoxLayout_addLayout(&s_adv.rootLayout, (XLayout*)&s_adv.contentRow);
+    XBoxLayout_setStretch(&s_adv.rootLayout, 0, 1);
+    XBoxLayout_addLayout(&s_adv.rootLayout, (XLayout*)&s_adv.bottomRow);
+    XWidget_setLayout((XWidget*)page, (XLayout*)&s_adv.rootLayout);
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
+
     return (XWidget*)page;
 }
 
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：双列布局随根几何伸缩。
- * @details 左列（富文本/键入钮/橡皮筋提示/补全/快捷键捕获）宽随根宽
- *          45% 伸缩（240..320），右列（全局快捷键/焦点框/启动画面/
- *          主窗口）起点随左列宽联动，窄窗不再溢出裁剪；SizeGrip 恒贴
- *          右下角。由 demo_layout_content 全路径调用；page 与登记根
- *          不符时静默返回。注意右下角与 FPS 性能悬浮层（半透明、不
- *          消费鼠标）视觉重叠为浮层旧账，拖拽命中不受影响。 */
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：保留签名，空实现。
+ * @details 2026-10-17 页内布局容器化：几何分配全权移交页根 XBoxLayout
+ *          （build 一次装配）——XStackedLayout 重贴根几何时经
+ *          resize→XLayout_activate 自动重排，左列 45/右列 55 伸缩、
+ *          SizeGrip 贴右下角等原 adapt 语义由布局器持续保持，本函数
+ *          无事可做；主文件 demo_layout_content 调用点保持不动。 */
 void demo_page_advanced_adapt(XWidget* page)
 {
-    int rootW;
-    int rootH;
-    int leftColW;
-    int rcX;
-    int rcW;
-    if (!page || page != (XWidget*)s_adv.page) return;
-    rootW = XWidget_width(page);
-    rootH = XWidget_height(page);
-    (void)rootH;
-    if (rootW < 200) return;
-    leftColW = rootW * 45 / 100;
-    if (leftColW < 240) leftColW = 240;
-    if (leftColW > 320) leftColW = 320;
-    rcX = 12 + leftColW + 24;
-    rcW = rootW - rcX - 12;
-    if (rcW < 160) return; /* 过窄不重排（保持装配几何，宁可裁右）。 */
-    /* 左列：富文本高度=样例 7 行完整呈现所需（行高 28px 口径 ×7≈196+
-       边框余量），其下各行 y 以 ty=编辑器底+8 联动下移——固定 180 高时
-       底部行横切半字（目验二轮挂项），而单纯加高又会压住下方行
-       （三轮实证），唯一正解=整块联动。 */
-    {
-        int teH = 232;
-        int ty;
-        if (s_adv.textEdit)
-            XWidget_setGeometry((XWidget*)s_adv.textEdit, 12, 8,
-                                leftColW - 124, teH);
-        ty = 8 + teH + 8; /* =248 */
-        if (s_adv.insertButton)
-            XWidget_setGeometry((XWidget*)s_adv.insertButton,
-                                12 + leftColW - 112, 8, 100, 26);
-        if (s_adv.topHint)
-            XWidget_setGeometry((XWidget*)s_adv.topHint, 12, ty,
-                                leftColW + 110 < rootW - 24 ? leftColW + 110
-                                                            : rootW - 24, 18);
-        if (s_adv.completerCaption)
-            XWidget_setGeometry((XWidget*)s_adv.completerCaption, 12, ty + 28,
-                                120, 18);
-        if (s_adv.completerEdit)
-            XWidget_setGeometry((XWidget*)s_adv.completerEdit, 12, ty + 48,
-                                220, 26);
-        if (s_adv.completerStatus)
-            XWidget_setGeometry((XWidget*)s_adv.completerStatus, 12, ty + 80,
-                                leftColW + 110, 18);
-        if (s_adv.kseCaption)
-            XWidget_setGeometry((XWidget*)s_adv.kseCaption, 12, ty + 108,
-                                leftColW + 20, 18);
-        if (s_adv.kse)
-            XWidget_setGeometry((XWidget*)s_adv.kse, 12, ty + 128, 240, 28);
-        if (s_adv.kseStatus)
-            XWidget_setGeometry((XWidget*)s_adv.kseStatus, 12, ty + 162,
-                                leftColW + 110, 18);
-    }
-    /* 右列。 */
-    if (s_adv.shortcutCaption)
-        XWidget_setGeometry((XWidget*)s_adv.shortcutCaption, rcX, 44, rcW, 18);
-    if (s_adv.shortcutStatus)
-        XWidget_setGeometry((XWidget*)s_adv.shortcutStatus, rcX, 66, rcW, 18);
-    if (s_adv.focusTarget)
-        XWidget_setGeometry((XWidget*)s_adv.focusTarget, rcX, 96, 150, 30);
-    if (s_adv.focusFrame)
-        XWidget_setGeometry((XWidget*)s_adv.focusFrame, rcX - 2, 94, 154, 34);
-    if (s_adv.splashButton)
-        XWidget_setGeometry((XWidget*)s_adv.splashButton, rcX, 136, 130, 28);
-    if (s_adv.mainWinButton)
-        XWidget_setGeometry((XWidget*)s_adv.mainWinButton, rcX, 176, 150, 28);
-    if (s_adv.rightHint)
-        XWidget_setGeometry((XWidget*)s_adv.rightHint, rcX + 140, 136,
-                            rcW - 140, 54);
-    /* SizeGrip 贴右下角。 */
-    if (s_adv.sizeGrip)
-        XWidget_setGeometry((XWidget*)s_adv.sizeGrip,
-                            rootW - 16, rootH - 16, 16, 16);
+    (void)page;
 }
 
 /* ==================== 页面自测（契约接口） ======================== */

@@ -1,5 +1,6 @@
 ﻿#include "XTableWidget.h"
 #include "XStringUtils.h"
+#include <string.h>
 #include "XVector.h"
 
 #include "XAlgorithm.h"
@@ -24,6 +25,10 @@
 static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_mousePressEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event);
+static bool VX_tableWidget_visualRect(const XAbstractItemView* self,
+                                      int row, int col, XRect* out);
+static bool VX_tableWidget_shouldEdit(const XAbstractItemView* self,
+                                      int row, int col);
 static void VX_tableWidget_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_keyPressEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_scrollContentsBy(XAbstractScrollArea* self,
@@ -334,6 +339,54 @@ static void xtw_emitItemSignal(XTableWidget* self, size_t signal,
         XVarList_delete(args);
 }
 
+static void xtw_updateCell(const XTableWidget* self, int row, int column);
+
+/** @brief 模型 dataChanged→itemChanged/cellChanged 转发槽。
+ *  对标 QTableWidget 构造的 connections：model dataChanged→
+ *  QTableWidgetPrivate::emitItemChanged（qtablewidget.cpp:1631-1632），
+ *  槽内先 itemChanged(item) 后 cellChanged(row,col)（:1691-1697）。
+ *  一切落模型的数据变化（setItem/setText/takeItem/编辑提交链
+ *  setItemText→模型 setData）由此**单源**转出；此前「编辑路径建立后
+ *  应在此发射 cellChanged/itemChanged」的欠账一并闭环。 */
+static void xtw_modelDataChangedSlot(XObject* receiver, XVarList* args)
+{
+    XTableWidget* self = (XTableWidget*)receiver;
+    int row = -1;
+    int col = -1;
+    if (!self || !args) return;
+    /* [args_N 遮蔽陷阱] 解包整段放块内，同块取值拷出。 */
+    {
+        XVarList_args_2(args, int, vr, int, vc);
+        row = vr;
+        col = vc;
+    }
+    /* 模型→单元格文本同步：编辑提交链（基类 setItemText→模型 setData）
+     * 只落模型，而本控件是「cell+模型」双存储（setItem/setText 双写
+     * 维护一致）；Qt 里 QTableModel 即唯一存储、setData 落库显示即变。
+     * 桥在此补同步（差量幂等，setItem/setText 直写后再同步同值早退），
+     * 且**先于信号发射**——cellChanged 消费方（落库槽）读 cell 文本
+     * 必须已是新值。 */
+    if (self->m_model) {
+        XTableWidgetItem* cell = xtw_cell(self, row, col);
+        const char* text = XAbstractItemModel_data_2(self->m_model,
+                                                     row, col);
+        if (cell && text) {
+            const char* cur;
+            if (!cell->text) cell->text = XString_create();
+            cur = cell->text ? XString_toUtf8(cell->text) : NULL;
+            if (!cur || strcmp(cur, text) != 0) {
+                if (cell->text)
+                    XString_assign_utf8(cell->text, text);
+                xtw_updateCell(self, row, col);
+            }
+        }
+    }
+    xtw_emitItemSignal(self, (size_t)XTableWidget_itemChanged_signal,
+                       xtw_cell(self, row, col));
+    xtw_emitCellSignal(self, (size_t)XTableWidget_cellChanged_signal,
+                       row, col);
+}
+
 /** @brief 发射无载荷信号。 */
 static void xtw_emit0(XTableWidget* self, size_t signal)
 {
@@ -360,6 +413,10 @@ XVtable* XTableWidget_class_init(void)
                              VX_tableWidget_mousePressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_MouseDoubleClickEvent,
                              VX_tableWidget_mouseDoubleClickEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
+                             VX_tableWidget_visualRect);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_ShouldEdit,
+                             VX_tableWidget_shouldEdit);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_KeyPressEvent,
                              VX_tableWidget_keyPressEvent);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractScrollArea_ScrollContentsBy,
@@ -434,6 +491,13 @@ void XTableWidget_init(XTableWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_model = XAbstractItemModel_create();
     if (self->m_model)
         XAbstractItemView_setModel(&self->m_base.m_base, self->m_model);
+    /* 对标 Qt：model dataChanged→itemChanged/cellChanged 转发连接
+       （qtablewidget.cpp:1631-1632）；槽首参=receiver=本表格。 */
+    if (self->m_model)
+        XObject_connect_1((XObject*)self->m_model,
+                          (size_t)XAbstractItemModel_dataChanged_signal,
+                          (XObject*)self, xtw_modelDataChangedSlot,
+                          XConnectionType_Direct);
     XClassSetVtable(self, XTableWidget);
     Set_Class_Memory(self, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(self, false);
@@ -656,6 +720,7 @@ void XTableWidget_setItem(XTableWidget* self, int row, int column,
         cell->text = NULL;
     }
     if (!item) {
+        cell->itemFlags = 0; /* 清空即恢复缺省（可编辑），同全字段重置。 */
         xtw_updateCell(self, row, column);
         if (self->m_model)
             XAbstractItemModel_setData(self->m_model, row, column, NULL);
@@ -667,6 +732,7 @@ void XTableWidget_setItem(XTableWidget* self, int row, int column,
     cell->foreground = item->foreground;
     cell->background = item->background;
     cell->checkState = item->checkState;
+    cell->itemFlags = item->itemFlags;
     xtw_updateCell(self, row, column);
     if (self->m_model)
         XAbstractItemModel_setData(self->m_model, row, column, item->text);
@@ -678,6 +744,22 @@ const XTableWidgetItem* XTableWidget_item(const XTableWidget* self,
     return xtw_cell(self, row, column);
 }
 
+uint32_t XTableWidget_itemFlags(const XTableWidget* self, int row,
+                                int column)
+{
+    const XTableWidgetItem* cell = xtw_cell(self, row, column);
+    return cell ? cell->itemFlags : 0;
+}
+
+void XTableWidget_setItemFlags(XTableWidget* self, int row, int column,
+                               uint32_t flags)
+{
+    XTableWidgetItem* cell = xtw_cell(self, row, column);
+    if (!cell || cell->itemFlags == flags) return;
+    cell->itemFlags = flags;
+    xtw_updateCell(self, row, column);
+}
+
 void XTableWidget_setText(XTableWidget* self, int row, int column,
                           const char* utf8)
 {
@@ -686,12 +768,17 @@ void XTableWidget_setText(XTableWidget* self, int row, int column,
     if (!cell->text) cell->text = XString_create();
     if (cell->text)
         XString_assign_utf8(cell->text, utf8);
-    xtw_emitCellSignal(self, (size_t)XTableWidget_cellChanged_signal,
-                       row, column);
-    xtw_emitItemSignal(self, (size_t)XTableWidget_itemChanged_signal, cell);
     XWidget_update((XWidget*)self);
-    if (self->m_model)
+    /* cellChanged/itemChanged 改经模型 dataChanged 桥单源转发
+     * （xtw_modelDataChangedSlot），此处直发会与桥双发。 */
+    if (self->m_model) {
         XAbstractItemModel_setData_2(self->m_model, row, column, utf8);
+    } else {
+        xtw_emitCellSignal(self, (size_t)XTableWidget_cellChanged_signal,
+                           row, column);
+        xtw_emitItemSignal(self,
+                           (size_t)XTableWidget_itemChanged_signal, cell);
+    }
 }
 
 const char* XTableWidget_text(const XTableWidget* self, int row, int column)
@@ -1364,12 +1451,17 @@ XString* XTableWidget_takeItem(XTableWidget* self, int row, int column)
     if (!cell || !cell->text) return NULL;
     taken = cell->text;
     cell->text = NULL; /* 所有权移交调用方（以 XClassDelete 释放）。 */
-    xtw_emitCellSignal(self, (size_t)XTableWidget_cellChanged_signal,
-                       row, column);
-    xtw_emitItemSignal(self, (size_t)XTableWidget_itemChanged_signal, cell);
     XWidget_update((XWidget*)self);
-    if (self->m_model)
+    /* cellChanged/itemChanged 改经模型 dataChanged 桥单源转发
+     * （xtw_modelDataChangedSlot），此处直发会与桥双发。 */
+    if (self->m_model) {
         XAbstractItemModel_setData_2(self->m_model, row, column, "");
+    } else {
+        xtw_emitCellSignal(self, (size_t)XTableWidget_cellChanged_signal,
+                           row, column);
+        xtw_emitItemSignal(self,
+                           (size_t)XTableWidget_itemChanged_signal, cell);
+    }
     return taken;
 }
 
@@ -1919,10 +2011,58 @@ static void VX_tableWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
            再 QTableWidget 层 cellDoubleClicked/itemDoubleClicked。 */
         XAbstractItemView_doubleClicked_signal(&tw->m_base.m_base,
                                                row, col);
+        /* DoubleClicked 触发位（对标 Qt QAbstractItemView::
+           mouseDoubleClickEvent：emit doubleClicked 后按触发位
+           edit(index, DoubleClicked, event)——本覆写不经基类事件路径，
+           判定在此补齐；此前缺失 ⇒ 表格族双击编辑永不触发）。
+           edit(row,col) 自带 NoEditTriggers/itemsEditable/单编辑器会话
+           门禁，此处只判触发位（两参 edit 语义=AllEditTriggers 强制）。 */
+        if (tw->m_base.m_base.m_editTriggers &
+                XAbstractItemViewEditTrigger_DoubleClicked)
+            XAbstractItemView_edit(&tw->m_base.m_base, row, col);
         xtw_emitCellSignal(tw,
             (size_t)XTableWidget_cellDoubleClicked_signal, row, col);
     }
     XEvent_accept(event);
+}
+
+/** @brief 条目几何（基类 edit()/滚动对位等内部路径的坐标来源）。
+ *  对标 QTableView::visualRect：表格局部坐标，含行号列宽（headerWidth）
+ *  与表头高（headerHeight）偏移、实际列宽/行高、滚动偏移；越界/滚出
+ *  视口的条目回空矩形（同 Qt 不可见条目无条目矩形）。基类缺省是
+ *  (col*80,row*24) 占位版——此前委托编辑器几何全靠它 ⇒ 错位。 */
+static bool VX_tableWidget_visualRect(const XAbstractItemView* self,
+                                      int row, int col, XRect* out)
+{
+    const XTableWidget* tw = (const XTableWidget*)self;
+    XRect rect;
+    if (!tw || !out || row < 0 || col < 0 ||
+        row >= tw->m_rows || col >= tw->m_columns)
+        return false;
+    XRect_init(&rect,
+               xtw_colX(tw, col) - xtw_hOffset(tw),
+               tw->m_headerHeight + row * (int)tw->m_base.m_rowHeight
+                   - xtw_vOffset(tw),
+               tw->m_base.m_colWidths[col],
+               (int)tw->m_base.m_rowHeight);
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    *out = rect;
+    return true;
+}
+
+/** @brief 条目可编辑判定（对标 Qt model flags(index)&ItemIsEditable）：
+ *  视图总闸 m_itemsEditable 与 per-item ItemIsEditable flags 合取；
+ *  itemFlags==0 视为缺省可编辑（兼容既有建表路径，见结构注）。 */
+static bool VX_tableWidget_shouldEdit(const XAbstractItemView* self,
+                                      int row, int col)
+{
+    const XTableWidget* tw = (const XTableWidget*)self;
+    const XTableWidgetItem* cell;
+    if (!tw || !tw->m_base.m_base.m_itemsEditable) return false;
+    cell = xtw_cell(tw, row, col);
+    if (!cell) return false;
+    return cell->itemFlags == 0 ||
+           (cell->itemFlags & XTableWidgetItemFlag_ItemIsEditable);
 }
 
 /** @brief 键盘：方向键移动当前单元格（对标 QTableView 键盘导航）。 */
@@ -1976,6 +2116,10 @@ static void VX_tableWidget_keyPressEvent(XWidget* self, XEvent* event)
 static void VX_tableWidget_paintEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_mousePressEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event);
+static bool VX_tableWidget_visualRect(const XAbstractItemView* self,
+                                      int row, int col, XRect* out);
+static bool VX_tableWidget_shouldEdit(const XAbstractItemView* self,
+                                      int row, int col);
 static void VX_tableWidget_mouseMoveEvent(XWidget* self, XEvent* event);
 static void VX_tableWidget_keyPressEvent(XWidget* self, XEvent* event);
 /** @brief 调色板取色助手。 */

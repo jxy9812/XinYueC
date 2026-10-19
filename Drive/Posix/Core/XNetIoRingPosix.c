@@ -47,6 +47,7 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/eventfd.h>
+#include <sys/utsname.h>
 #if XNET_BUILD_EPOLL
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
@@ -954,11 +955,33 @@ void XNetIoRingPosix_init(XNetIoRingPosix* ring) {
     XClassSetVtable(ring, XNetIoRingPosix);
 
     /* 运行时回退链：优先 io_uring（Linux 5.1+ 内核）；io_uring_setup
-     * 失败（-ENOSYS 等，如 4.x 内核）自动回退 epoll。 */
+     * 失败（-ENOSYS 等，如 4.x 内核）自动回退 epoll。
+     * [2026-10-16 版本门(用户裁定)] 「明确声明支持 io_uring 的内核才用
+     * io_uring」：uname 版本号 >= 5.10（io_uring 成熟 LTS 基线，发行版
+     * 声明支持）才尝试；早期内核（如 5.2.9 MCGS 定制版——CONNECT 操作
+     * 码被裁、epoll 回退引擎 CONNECT 又缺 connect() 执行的旧账已另修）
+     * 直接落 epoll，不再依赖半残 io_uring + 操作级兜底，换板不再各自
+     * 踩坑。XNET_FORCE_IOURING=1 可越过版本门强制 io_uring（调试用）。 */
 #if XNET_BUILD_IO_URING
-    if (ioSetupRing(ring)) {
-        ring->m_mode = XNET_MODE_IOURING;
-        enabled = true;
+    {
+        int ioAllowed = 0;
+        const char* force = getenv("XNET_FORCE_IOURING");
+        if (force && force[0] == '1') {
+            ioAllowed = 1;
+        } else {
+            struct utsname uts;
+            if (uname(&uts) == 0) {
+                int major = 0, minor = 0;
+                sscanf(uts.release, "%d.%d", &major, &minor);
+                ioAllowed = (major > 5) || (major == 5 && minor >= 10);
+            } else {
+                ioAllowed = 1; /* 版本号不可得：维持原行为（setup 探测把关） */
+            }
+        }
+        if (ioAllowed && ioSetupRing(ring)) {
+            ring->m_mode = XNET_MODE_IOURING;
+            enabled = true;
+        }
     }
 #endif
 #if XNET_BUILD_EPOLL
@@ -1072,6 +1095,28 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
         }
         op->sqe = *sqe;
         op->ctx = ctx;
+        /* [2026-10-16 根修] epoll 引擎 CONNECT 伪 SQE 此前从未执行
+         * connect(): SQE 挂起后 epExecutePending 只 getsockopt(SO_ERROR)
+         * ——socket 从未发起连接, SO_ERROR 恒 0 → res=0 假完成 → 上层
+         * 假连接(写被丢弃/读 0 字节被误判对端 FIN) → 断线重连死循环。
+         * 昆仑通态 A33 5.2.9 真机 Modbus 主站「断线重连中」实证; 同机
+         * 裸 connect()/wget 全通。真内核 io_uring 后端的 IORING_OP_CONNECT
+         * 又被该定制内核拒绝(实测 -EINVAL), 两条后端都栽在此缺。此处补
+         * connect() 执行: EINPROGRESS 照旧注册 EPOLLOUT 挂起(既有
+         * SO_ERROR 判定语义闭合), 立即失败则直接完成报错。 */
+        if (sqe->opcode == IORING_OP_CONNECT) {
+            int rc = connect(sqe->fd, (const struct sockaddr*)(uintptr_t)sqe->addr,
+                             (socklen_t)sqe->off);
+            if (rc != 0 && errno != EINPROGRESS) {
+                processOneCompletion(self, -errno,
+                                     (void*)(uintptr_t)sqe->user_data);
+                XFree_System(op);
+                (void)toSubmit;
+                return;
+            }
+            /* rc==0(本机即时完成)或 EINPROGRESS: 照旧挂起, EPOLLOUT 就绪
+             * 后由 epExecutePending 以 SO_ERROR 判定真实结果。 */
+        }
         op->next = ring->m_pendingHead;
         ring->m_pendingHead = op;
 #if XNET_EPOLL_IO_DEBUG

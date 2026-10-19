@@ -196,6 +196,7 @@
 #include "XVarList.h"
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 #include "XStackedLayout.h"
+#include "XBoxLayout.h"
 #endif
 
 #if XLCDNUMBER_ON
@@ -303,6 +304,12 @@
 #define XGUI_DEMO_IDLE_OVERLAY_MS 1000
 #endif
 
+/* chrome 高度单一事实源（布局化 chrome 2026-10-17）：品牌条/状态条
+ * 高度只在此定义；内容区顶=CSD 保留边距(demo_sysbarH)+品牌条高，由根
+ * 垂直布局自动分配，任何布局点不得手写坐标偏移。 */
+#define DEMO_BRAND_H  40
+#define DEMO_STATUS_H 26
+
 /* ==================== 状态栏标签子类 ==================== */
 
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
@@ -364,6 +371,67 @@ void DemoStatusLabel_init(DemoStatusLabel* self, XWidget* parent,
     XClassSetVtable(self, DemoStatusLabel);
 }
 
+static void demo_draw_checker(XPainter* painter, int x0, int y0,
+                              int cols, int rows, int cell);
+
+/* ==================== 品牌条子类（蓝底+棋盘格+标题文字一体） ==== */
+
+XCLASS_DEFINE_BEGING(DemoBrandBar)
+XCLASS_DEFINE_EXTEND_END(DemoBrandBar, XLabel)
+
+/** @brief 品牌条：自带深蓝底与棋盘格装饰的品牌标题条（demo 自定义
+ *          chrome，非框架标题条），文本由 XLabel 绘制管线接管。 */
+typedef struct DemoBrandBar
+{
+    XLabel m_base; /**< XLabel 基类；必须是第一个成员。 */
+} DemoBrandBar;
+
+/** @brief 绘制事件：树内按自身几何先铺品牌底色与棋盘格，再画标题文字。 */
+static void VDemoBrandBar_paintEvent(XWidget* self, XEvent* event)
+{
+    XImage* image;
+    XPoint offset;
+    XPainter painter;
+    XRect rect;
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    image = XWidget_paintImage(self);
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    XRect_init(&rect, 0, 0, XWidget_width(self), XWidget_height(self));
+    XPainter_fillRect(&painter, &rect, 0xff1f4e79u);
+    demo_draw_checker(&painter,
+                      XWidget_width(self) - 24 - 8, 8, 2, 2, 12);
+    XLabel_drawContents((XLabel*)self, &painter);
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
+/** @brief 初始化品牌条类虚函数表。 */
+XVtable* DemoBrandBar_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(DemoBrandBar)
+    XVTABLE_INHERIT_XCLASS(XLabel);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent,
+                             VDemoBrandBar_paintEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 初始化品牌条（文本/字体沿用 XLabel 接口；高度由布局固定）。 */
+void DemoBrandBar_init(DemoBrandBar* self, XWidget* parent,
+                       XWidgetFlags flags)
+{
+    if (!self) return;
+    XLabel_init(&self->m_base, parent, flags);
+    XClassSetVtable(self, DemoBrandBar);
+}
+
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
 
 /* ==================== 演示窗口子类 ==================== */
@@ -397,11 +465,34 @@ typedef struct DemoWin
 #endif
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    XLabel          m_titleLabel; /**< 顶部标题栏文本（深蓝背景，白字）。 */
+    DemoBrandBar    m_brandBar; /**< 顶部品牌条（蓝底+棋盘格+标题文字一体；
+                                  *   布局化 chrome：根垂直布局首段，高度
+                                  *   DEMO_BRAND_H 固定）。 */
+    XWidget         m_contentHost; /**< 内容区宿主（根布局中段伸展；页面
+                                  *   堆叠/浮动导航面板/悬浮层的父）。 */
+    XBoxLayout      m_rootLayout; /**< 根垂直布局（品牌条/中段宿主/状态栏
+                                  *   三段；contentsMargins.top=CSD 保留
+                                  *   边距，边框开关只更新这一处）。 */
+    XWidget         m_midHost;    /**< 中段宿主（根布局伸展段）。 */
+    XBoxLayout      m_midHostLayout; /**< 中段容器布局（单项：框架分割条
+                                  *   stretch 铺满）。 */
+#if XSPLITTER_ON
+    XSplitter       m_navSplitter; /**< [XSplitter 迁移 2026-10-17] 中段
+                                  *   框架分割条（Qt QSplitter 语义）：
+                                  *   [导航面板|内容区]，换边=setOrientation
+                                  *   +条目顺序翻转，拖拽/手柄/方向光标/
+                                  *   手柄点击信号由框架接管，替代原四方向
+                                  *   盒式布局器+DemoSplitter 组合。 */
+#endif
+    bool            m_statusBarVisible; /**< 状态栏可见（窗口设置页开关；
+                                          *   隐藏时布局自动收回其空间）。 */
+    int             m_lastContentW; /**< 帧泵兜底门：上次页内排布时内容区
+                                  *   宽（-1=未排布）。 */
+    int             m_lastContentH; /**< 上次页内排布时内容区高。 */
     DemoStatusLabel m_statusLabel; /**< 底部状态栏（自带深色底，白字）。 */
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
-    XPushButton     m_pageNav[19]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码、页 16=软件更新、页 17/18=Modbus 主站/从站，2026-10-13 扩列 19）。 */
+    XPushButton     m_pageNav[20]; /**< 页面切换按钮（下标=页索引；挂在浮动导航面板活动分类下，装配见 DemoWin_create；页 15=二维码、页 16=软件更新、页 17/18=Modbus 主站/从站，2026-10-13 扩列 19）。 */
 #endif
 #if XBUTTONGROUP_ON
     XButtonGroup    m_navGroup;    /**< 页面钮互斥组：当前页按钮保持选中高亮（主题 :checked 态）。 */
@@ -422,9 +513,11 @@ typedef struct DemoWin
     int             m_navDock;       /**< 停靠边 0=左 1=右 2=上 3=下（默认左）。 */
     bool            m_navCollapsed;  /**< 收起贴边态（细条=分割条本身）。 */
     int             m_navCategory;   /**< 当前展开分类（kNavGroups 下标）。 */
-    int             m_navWidth;      /**< 面板宽（左右停靠；分割条可拖 140..380）。 */
-    int             m_navTBH;        /**< 面板高（上下停靠；分割条可拖 92..320）。 */
-    XWidget*        m_navSplit;      /**< 分割条：拖动调尺寸/双击收起/收起单击展开。 */
+    int             m_navWidth;      /**< 面板宽记忆值（左右停靠；拖拽后
+                                      *   navUpdatePanel 起始从分割器回读
+                                      *   同步，钳位 140..380）。 */
+    int             m_navTBH;        /**< 面板高记忆值（上下停靠；同步口径
+                                      *   92..320）。 */
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     XStackedLayout  m_stackLayout; /**< 主内容堆叠布局（15 个演示页面）。 */
@@ -434,7 +527,28 @@ typedef struct DemoWin
     XWidget         m_pageInputs;  /**< 页面 3：输入控件演示容器。 */
     XWidget         m_pageTabs;    /**< 页面 4：容器与窗口演示容器。 */
     XWidget         m_pageChart;   /**< 页面 12：图表演示容器（自选项卡页打散独立）。 */
-    XWidget*        m_extPages[14]; /**< 页面 5~18：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构；下标 12/13=Modbus 主站/从站页 2026-10-13 双页拆分）。 */
+    XWidget*        m_extPages[15]; /**< 页面 5~18：扩展页根（xgui_demo_pages.h 契约，5+下标=页索引，下标 7=内置图表页占位恒 NULL；堆对象随父链级联析构；下标 12/13=Modbus 主站/从站页 2026-10-13 双页拆分）。[懒分配 2026-10-19] 语义更新：注册期=空占位壳（XWidget_create 堆对象，仅保「堆叠下标=页索引」与几何分支口径），首显经 demo_ext_ensureBuilt 同位换入真页根后槽位才指真根；构建回落（裁剪）时槽位清空=旧「跳过注册」口径。 */
+    bool            m_extBuilt[15]; /**< [懒分配 2026-10-19] 扩展页已构建/已尝试标记（demo_ext_ensureBuilt 幂等守卫）：false=槽位仍是注册期占位壳；true=已换真页根或已裁剪回落。全量懒分配策略=常驻不销毁，置位后无复位路径（页活到进程退出，与现状销毁语义一致）。 */
+    /* 页 3/4/12 布局容器化（2026-10-17）：页内排布改由盒式布局管理，
+     * demo_layout_content 对应手写坐标段删除。嵌套行/列布局器按借用
+     * 指针挂入父布局（XBoxLayout_addLayout 不取所有权），故全部作为
+     * DemoWin 成员持有，生命周期与页面控件同随窗口。 */
+    XBoxLayout      m_inputsLayout;   /**< 页 3 根纵向布局（顶行铺满+状态行贴底）。 */
+    XBoxLayout      m_inputsTopRow;   /**< 页 3 顶行横向布局（左分组框列+右输入列）。 */
+    XBoxLayout      m_inputsLeftCol;  /**< 页 3 左列纵向布局（分组框+多行编辑余高）。 */
+    XBoxLayout      m_inputsRightCol; /**< 页 3 右列纵向布局（下拉/旋钮/数码管/日期时间族）。 */
+    XBoxLayout      m_groupBoxLayout; /**< 页 3 分组框内纵向布局（顶边距 24 近似标题区）。 */
+    XBoxLayout      m_comboRow;       /**< 页 3 下拉/字体行横向布局。 */
+    XBoxLayout      m_dialRow;        /**< 页 3 旋钮/联动进度行横向布局。 */
+    XBoxLayout      m_lcdRow;         /**< 页 3 数码管/滚动条行横向布局。 */
+    XBoxLayout      m_tabsLayout;     /**< 页 4 根纵向布局（页签容器 stretch 铺满+状态行贴底）。 */
+    XBoxLayout      m_framePageLayout;/**< 页 4「框架」页签纵向布局（菜单栏/工具栏/状态栏三段）。 */
+    XBoxLayout      m_wePageLayout;   /**< 页 4「向导错误」页签启动器钮行横向布局。 */
+    XBoxLayout      m_scrollTabPageLayout; /**< 页 4「滚动」包装页填充布局（内容件随包装页铺满，撤手写 (10,10,300,150)）。 */
+    XBoxLayout      m_calTabPageLayout;    /**< 页 4「日历」包装页填充布局（撤手写 (10,10,280,200)）。 */
+    XBoxLayout      m_stackWTabPageLayout; /**< 页 4「堆叠组」包装页填充布局（撤手写 (10,10,200,100)）。 */
+    XBoxLayout      m_chartLayout;    /**< 页 12 根纵向布局（钮行顶置+图表视图铺满）。 */
+    XBoxLayout      m_chartBtnRow;    /**< 页 12 图表切换钮行横向布局。 */
 #endif
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
@@ -722,7 +836,8 @@ static void demo_performance_anchorBottomRight(DemoWin* self)
     base = (XWidget*)&self->m_base;
     geo = XPerformanceOverlay_geometry(&self->m_performanceOverlay);
     x = XWidget_width(base) - geo.width;
-    y = XWidget_height(base) - geo.height - 26;
+    y = XWidget_height(base) - geo.height -
+        (self->m_statusBarVisible ? DEMO_STATUS_H : 0);
     if (x < 0) x = 0;
     if (y < 0) y = 0;
     XPerformanceOverlay_setPosition(&self->m_performanceOverlay, x, y);
@@ -816,12 +931,30 @@ static void demo_drawStaticScene(DemoWin* self, XPainter* painter, int w, int h)
     XPainter_setFont(painter, &painterFont);
     XClassDeinit(&painterFont);
 
-    demo_fill_rect(painter, 0, 0, w, h, 0xfff4f6f8u);       /* 窗口背景 */
-    demo_fill_rect(painter, 0, demo_sysbarH(self), w, 40, 0xff1f4e79u); /* 标题栏基底 */
-    /* 棋盘格装饰（恢复，用户裁定保留）：贴右对齐（块宽 24 + 右缘 8），
-     * y 随系统栏高度动态（demo_sysbarH）。 */
-    demo_draw_checker(painter, w - 24 - 8, demo_sysbarH(self) + 8, 2, 2, 12);
-    /* 导航为浮动面板（子控件自绘），静态基底不再画导航带分隔线。 */
+    {
+        /* [皮肤深浅联动 2026-10-18] 窗口背景随颜色方案翻深浅：深色皮肤
+         * 下取应用调色板 Window 角色（对标 qt_fusionPalette 深底），
+         * 浅色维持品牌底 #F4F6F8。原硬编码浅底在深色皮肤下=全窗浅底，
+         * 而文字已随调色板翻浅 → 标题/行标/勾选框/下拉框文字与浅底
+         * 同色不可见（10-18 真机截图实证；导航/状态栏/按钮因自绘深底
+         * 幸免）。 */
+        uint32_t bg = 0xfff4f6f8u;
+#if XPALETTE_ON
+        XStyleHints* hints = XGuiApplication_styleHints();
+        if (hints && XStyleHints_colorScheme(hints) ==
+                         XStyleHintsColorScheme_Dark) {
+            XPalette pal = XGuiApplication_palette();
+            XColor winBg = XPalette_color(&pal, XPaletteColorGroup_Current,
+                                          XPaletteColorRole_Window);
+            bg = 0xff000000u | ((uint32_t)(winBg.m_comp1 & 0xff) << 16) |
+                 ((uint32_t)(winBg.m_comp2 & 0xff) << 8) |
+                 (uint32_t)(winBg.m_comp3 & 0xff);
+        }
+#endif
+        demo_fill_rect(painter, 0, 0, w, h, bg);       /* 窗口背景 */
+    }
+    /* 标题带/棋盘格由 DemoBrandBar 子控件自绘（布局化 chrome），静态
+     * 基底只剩窗口背景。导航为浮动面板（子控件自绘）。 */
     /* 状态栏底色由 DemoStatusLabel 子控件自带（要盖在越界内容之上，
      * 不能画在根背景里）。 */
     /* 标题文本由 m_titleLabel 子控件绘制（深蓝底白字），静态场景不再重复画。 */
@@ -982,7 +1115,6 @@ static bool g_idleGate = true;
 /** @brief 按 Qt QWidget::update() 语义合并待绘区域，不同步强制整树重绘。 */
 static void demo_input_autotest(DemoWin* self);
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-static void demo_layout_chrome(DemoWin* self);
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
 static void demo_layout_content(DemoWin* self);
@@ -1308,6 +1440,158 @@ static void demo_input_autotest(DemoWin* self)
 /* 前向声明：本函数定义在 demo_page_name 之前。 */
 static const char* demo_page_name(int index);
 
+/* ==================== 扩展页全量懒分配（2026-10-19） ====================
+ * 策略=全量懒分配（评审定版）：14 个扩展页统一「首显构建 + 常驻不销
+ * 毁」——Top-6 重页折算收益 ≈6.10MB 已超全懒一半，多省 ≈4.54MB，且免
+ * 「哪些页懒」清单维护；常驻策略销毁风险零触发（与现状同：页活到进
+ * 程退出，demo 无页级析构钩子）。注册期只建空占位壳写入 m_extPages
+ * 槽位本身（main 尾部几何分支查 m_extPages[0..11] 任一非空才取
+ * 1000x700，槽位空会落 520x360 污染量化对照），真页根推迟到首显由
+ * demo_ext_ensureBuilt 同位换入。工程要点落位：
+ *  ① CLI autostart 豁免（红线）：--remote-server/--remote-client 预置
+ *     时对应远程页在事件循环前 ensureBuilt（main 内，否则 autostart 守
+ *     卫 s_rs.m_ready/s_rc.m_ready 恒假=被控端静默不监听）；
+ *  ② 大表格收编（阻断项）：主文件大表格构建+挂接移入 exti0 真建后钩
+ *     子 demo_ext_viewsBigTableHook（views 页 CHILD_ADDED 拦截收编机制
+ *     不变），否则懒建后页 5 大表格消失；
+ *  ③ 内建 autotest 效果页留证段先建再测（防证据静默缺失）；
+ *  ⑤ 切页契约：demo_switchPage 在 setCurrentIndex 前确保目标页已建；
+ *     autotest 调度先建再测。销毁语义与现状一致（既有 deleteLater/
+ *     断链定式不触碰），仅占位壳退役走 XObject_deleteLater 仓库定式。
+ */
+
+/** @brief 扩展页构建注册表（[懒分配 2026-10-19] 自 DemoWin_create 局部
+ *         kExtBuilders 提升为文件级：注册循环查表建占位壳，
+ *         demo_ext_ensureBuilt 查表真建，autotest 调度查表甄别裁剪槽）。
+ *         下标=页索引-5，下标 7=页 12（图表演示，内置页）恒 NULL 占位。 */
+XWidget* (*const g_extBuilders[15])(XWidget*, DemoPageStatusFn, void*) = {
+#if XINYUE_EMBEDDED
+    /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
+     * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
+     * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+    NULL, NULL, NULL, NULL, NULL
+#else
+    demo_page_views_build, demo_page_dialogs_build,
+    demo_page_advanced_build, demo_page_effects_build,
+    demo_page_keyboard_build, demo_page_remote_server_build,
+    demo_page_remote_client_build, /* 2026-10-02 追加第 7 扩展页。 */
+    NULL, /* 页 12（图表演示）内置页占位。 */
+    demo_page_network_build, /* 2026-10-06 网络设置页（系统设置）。 */
+    demo_page_overlay_settings_build, /* 2026-10-06 悬浮窗设置页。 */
+    demo_page_qrcode_build, /* 2026-10-08 二维码演示页（控件类）。 */
+    demo_page_update_build, /* 2026-10-07 软件更新页（系统设置）。 */
+    demo_page_modbus_master_build, /* 2026-10-13 Modbus 主站页。 */
+    demo_page_modbus_slave_build, /* 2026-10-13 Modbus 从站页。 */
+    demo_page_window_settings_build /* 2026-10-17 窗口设置页（系统设置）。 */
+#endif
+};
+
+/* 前向声明：扩展页状态回调定义在导航槽段（demo_nav19Slot 之后）。 */
+static void demo_ext_page_status(void* user, const char* text);
+
+#if XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+/** @brief exti0（条目视图页）真建后钩子：大表格构建+挂接收编。
+ * @details [懒分配 2026-10-19·工程要点②] 原段在 DemoWin_create 内「if
+ *          (m_extPages[0]) 组装大表格挂条目视图页根」——懒分配下注册
+ *          期槽位是空占位壳且 if 无回落分支，真建推迟后大表格将凭空消
+ *          失（views autotest 仅断言页内小表格不会红，但页 5 功能回归）。
+ *          本钩子在 demo_ext_ensureBuilt 真建 exti0 后调用：以真页根为
+ *          父 XTableWidget_init，views 页根控件子类的 CHILD_ADDED 拦截
+ *          （xgui_demo_page_views.c views_adoptBigTable，buildDone 置位
+ *          后新增子即大表格）自动收编进小表格行——机制与原「build 完成
+ *          后主文件后挂」完全同路径。摆位/列宽逻辑逐式照搬原段。 */
+static void demo_ext_viewsBigTableHook(DemoWin* self)
+{
+    if (!self || !self->m_extPages[0])
+        return; /* 真页根缺席（裁剪回落）：零操作。 */
+    XTableWidget_init(&self->m_tableWidget, self->m_extPages[0], 0);
+    demo_set_widget_default_font((XWidget*)&self->m_tableWidget);
+    XTableWidget_setRowCount(&self->m_tableWidget, 5);
+    XTableWidget_setColumnCount(&self->m_tableWidget, 4);
+    {
+        static const char* const th[] = {"名称", "类型", "大小", "修改时间"};
+        static const char* const thv[] = {"1", "2", "3", "4", "5"};
+        XTableWidget_setHorizontalHeaderLabels(&self->m_tableWidget, th, 4);
+        XTableWidget_setVerticalHeaderLabels(&self->m_tableWidget, thv, 5);
+    }
+    {
+        static const char* const cells[5][4] = {
+            {"XWidget.h", "头文件", "48 KB", "2026-09-12"},
+            {"XPainter.c", "源文件", "210 KB", "2026-09-11"},
+            {"XGuiDemo", "可执行", "1.2 MB", "2026-09-12"},
+            {"XGui.md", "文档", "88 KB", "2026-09-10"},
+            {"assets", "目录", "--", "2026-09-01"} };
+        int r;
+        int c;
+        for (r = 0; r < 5; ++r)
+            for (c = 0; c < 4; ++c)
+                XTableWidget_setText(&self->m_tableWidget, r, c, cells[r][c]);
+    }
+    XTableWidget_setCurrentCell(&self->m_tableWidget, 0, 0);
+    /* 列宽随根宽定版：默认均分把「类型/大小」挤到滚动条带下（目验
+       二轮挂项「头文件」末字半切）。可视宽=表格宽−纵向条带 12，列合
+       计须 ≤ 可视宽；宽根（面板收起 776→表格 372）用内容定宽
+       128/72/60/112=372 恰满，窄根（面板展开表格 ~196）按比例收
+       缩保「名称+类型」两主列可读，时间列让横向滚动。定版由 views 页
+       根 resizeEvent（views_bigTableRefit）随堆叠几何分配承接。 */
+    XWidget_show((XWidget*)&self->m_tableWidget);
+}
+#endif /* XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
+/** @brief 确保扩展页 exti 已真实构建（[懒分配 2026-10-19] 首显构建入口，
+ *         幂等；全量懒分配唯一建页路径）。
+ * @details 首调把注册期占位壳同位换入真页根：insertWidget 推位 +
+ *          removeWidget 的 VXStackedLayout_takeAt 对 oldCurrent 补偿
+ *          （index<oldCurrent → oldCurrent-1），堆叠下标=页索引与当前
+ *          页全程稳定；槽位改指真根（adapt/autotest 契约口径）。构建
+ *          返回 NULL（裁剪回落，如键盘页 XKEYBOARD_ON=0）时槽位清空，
+ *          与旧注册期「NULL 跳过注册」口径一致，占位壳留堆叠保下标。
+ *          常驻不销毁：已尝试（成功或回落）即短路，无二次构建。占位
+ *          壳退役走 XObject_deleteLater 仓库定式（堆对象，removeWidget
+ *          已隐藏并置 parent=NULL）。调用方：demo_switchPage（首显）、
+ *          内建 autotest 效果页留证段、main 的 CLI autostart 豁免与键
+ *          盘无头钩子豁免。 */
+static void demo_ext_ensureBuilt(DemoWin* self, int exti)
+{
+    XWidget* placeholder;
+    XWidget* real;
+    if (!self || exti < 0 || exti >= 15)
+        return;
+    if (!g_extBuilders[exti])
+        return; /* 裁剪注册表/内置图表页占位槽：零操作。 */
+    if (self->m_extBuilt[exti])
+        return; /* 已建/已尝试：常驻不销毁，零开销短路。 */
+    placeholder = self->m_extPages[exti];
+    self->m_extBuilt[exti] = true; /* 先置位：build 内布局激活/回调重入防递归。 */
+    real = g_extBuilders[exti]((XWidget*)&self->m_base,
+                               demo_ext_page_status, self);
+    if (!real) {
+        /* 裁剪回落：槽位清空=旧「跳过注册」口径（adapt/autotest 判空
+           跳过）；占位壳留在堆叠，保「堆叠下标=页索引」不漂移。 */
+        self->m_extPages[exti] = NULL;
+        return;
+    }
+    self->m_extPages[exti] = real;
+    if (placeholder &&
+        XStackedLayout_indexOf(&self->m_stackLayout, placeholder) >= 0) {
+        XStackedLayout_insertWidget(&self->m_stackLayout, 5 + exti, real);
+        XStackedLayout_removeWidget(&self->m_stackLayout, placeholder);
+        /* 占位壳已隐藏并摘出容器（removeWidget 置 parent=NULL）：
+           XObject_deleteLater 延迟释放（仓库定式；XObject 析构清挂起
+           事件，进程退出前未泵两序皆安全）。 */
+        XObject_deleteLater((XObject*)placeholder);
+    } else {
+        /* 占位壳缺席（理论不可达，防御分支）：末尾追加兜底，页功能
+           不受损（堆叠下标可能漂移，仅注册链异常时可达）。 */
+        XStackedLayout_addWidget(&self->m_stackLayout, real);
+    }
+#if XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    if (exti == 0)
+        demo_ext_viewsBigTableHook(self); /* 工程要点②：大表格收编。 */
+#endif
+}
+
 /** @brief 扩展页（5~15）图形界面自动化验证调度。
  * @details 逐页切换并调用页面自带的 autotest（xgui_demo_pages.h 契约：
  *          事件注入 + getter 断言，全程非阻塞），汇总失败数；任一失败
@@ -1315,7 +1599,7 @@ static const char* demo_page_name(int index);
  *          =页 12（图表演示，内置页无 autotest 契约）恒 NULL 跳过。 */
 static void demo_ext_pages_autotest(DemoWin* demo)
 {
-    int (*const kTests[14])(XWidget*) = {
+    int (*const kTests[15])(XWidget*) = {
         demo_page_views_autotest, demo_page_dialogs_autotest,
         demo_page_advanced_autotest, demo_page_effects_autotest,
         demo_page_keyboard_autotest, demo_page_remote_server_autotest,
@@ -1326,15 +1610,21 @@ static void demo_ext_pages_autotest(DemoWin* demo)
         demo_page_qrcode_autotest, /* 2026-10-08 二维码演示页。 */
         demo_page_update_autotest, /* 2026-10-07 软件更新页。 */
         demo_page_modbus_master_autotest, /* 2026-10-13 Modbus 主站页。 */
-        demo_page_modbus_slave_autotest /* 2026-10-13 Modbus 从站页。 */
+        demo_page_modbus_slave_autotest, /* 2026-10-13 Modbus 从站页。 */
+        demo_page_window_settings_autotest /* 2026-10-17 窗口设置页。 */
     };
     int total = 0;
     int exti;
-    for (exti = 0; exti < 14; ++exti) {
+    for (exti = 0; exti < 15; ++exti) {
         int failures;
-        if (!demo->m_extPages[exti] || !kTests[exti])
-            continue; /* 页面模块被裁剪/无契约，跳过 */
+        if (!kTests[exti] || !g_extBuilders[exti])
+            continue; /* 无契约/裁剪占位槽（内置图表页等），跳过 */
+        /* [懒分配 2026-10-19·工程要点⑤] 先建再测：懒分配下页根首显才
+           真建，demo_switchPage 内部先 ensureBuilt 同位换入真页根再
+           setCurrentIndex，此处槽位已指真根。 */
         demo_switchPage(demo, 5 + exti);
+        if (!demo->m_extPages[exti])
+            continue; /* 构建回落（裁剪配置返回 NULL）：同旧「槽位 NULL 跳过」。 */
         failures = kTests[exti](demo->m_extPages[exti]);
         XPrintf("XGuiAutoTest: 扩展页%d(%s) %s\n", 5 + exti,
                 demo_page_name(5 + exti),
@@ -1349,6 +1639,11 @@ static void demo_ext_pages_autotest(DemoWin* demo)
 #endif /* XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON */
 
 static bool demo_framePumpBody(void* userData);
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
+    XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+static void demo_navUpdatePanel(DemoWin* self);
+static void demo_layout_content(DemoWin* self);
+#endif
 
 /** @brief autotest 截图落盘目录：POSIX/安卓 /tmp；Windows 用 %TEMP%/%TMP%
  *  （"/tmp/..." 在 Windows 解析为当前盘根 \tmp，CI 换盘符即失效——walk 轮
@@ -1400,6 +1695,23 @@ static bool demo_framePumpBody(void* userData)
     /* --remote-client CLI 预置的首帧自动连接（2026-10-02 追加; 同闸门
        口径, 内部自带终态标记）。 */
     demo_page_remote_client_autostart();
+    /* [布局化 chrome 兜底门 2026-10-17] contentHost 几何由根布局
+     * activation 异步落位（resize/边框开关/状态栏显隐/切停靠），页内
+     * 排布与导航面板须跟随——每帧尺寸差检查（同值零成本）兜住一切
+     * 来源，防 autotest 注入点击落在陈旧几何上。 */
+    {
+        int cw = XWidget_width(&demo->m_contentHost);
+        int ch = XWidget_height(&demo->m_contentHost);
+        if (cw != demo->m_lastContentW || ch != demo->m_lastContentH) {
+            demo->m_lastContentW = cw;
+            demo->m_lastContentH = ch;
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
+    XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+            demo_navUpdatePanel(demo);
+            demo_layout_content(demo);
+#endif
+        }
+    }
     /* 交互空闲闸门（XGUI_DEMO_IDLE_GATE，默认开）：常态下帧泵不再逐轮
        强制重绘——对标 Qt「无脏区不重绘」。事件驱动的局部更新本就经
        XWidget_addDirtyRegion -> XWidget_postPaintEvent 异步闭环自足，
@@ -1438,7 +1750,12 @@ static bool demo_framePumpBody(void* userData)
                     XPrintf("XGuiAutoTest: 交互后截图 %s\n", shotPath);
             }
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-            /* 切到效果页：repaint 异步投递，本帧只切页，隔两帧再截图。 */
+            /* 切到效果页：repaint 异步投递，本帧只切页，隔两帧再截图。
+               [懒分配 2026-10-19·工程要点③] 留证前先建：懒分配下效果
+               页未显不建，只查槽位会让证据静默缺失——「autotest 先建
+               再测」覆盖内建交互 autotest 本段（ensureBuilt 幂等，
+               demo_ext_pages_autotest 已建过则零开销）。 */
+            demo_ext_ensureBuilt(demo, 3);
             if (demo->m_extPages[3]) {
                 demo_switchPage(demo, 8);
                 demo->m_staticSceneDirty = true;
@@ -1448,7 +1765,10 @@ static bool demo_framePumpBody(void* userData)
         }
         else if (demo->m_autoTestFrames >= 7) {
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-            /* 效果页留证：启用态效果与无效果基线同屏，供集成阶段像素对照。 */
+            /* 效果页留证：启用态效果与无效果基线同屏，供集成阶段像素对照。
+               [懒分配 2026-10-19·工程要点③] 同帧 5 口径：留证截图前确保
+               效果页已真实构建（幂等短路，防证据静默缺失）。 */
+            demo_ext_ensureBuilt(demo, 3);
             if (demo->m_extPages[3]) {
                 XImage* fxDevice = XWidget_paintImage(&demo->m_base);
                 char fxPath[260];
@@ -1629,7 +1949,7 @@ static void demo_set_status(DemoWin* self, const char* text)
 /** @brief 页面名称表（与导航按钮一一对应，中文）。 */
 static const char* demo_page_name(int index)
 {
-    static const char* const kNames[19] = {
+    static const char* const kNames[20] = {
         "\xE6\x8C\x89\xE9\x92\xAE\xE6\xBC\x94\xE7\xA4\xBA", /* 按钮演示 */
         "\xE9\x80\x89\xE6\x8B\xA9\xE6\xBC\x94\xE7\xA4\xBA", /* 选择演示 */
         "\xE5\xA0\x86\xE5\x8F\xA0\xE6\xBC\x94\xE7\xA4\xBA", /* 堆叠演示 */
@@ -1648,9 +1968,10 @@ static const char* demo_page_name(int index)
         "\xE4\xBA\x8C\xE7\xBB\xB4\xE7\xA0\x81\xE6\xBC\x94\xE7\xA4\xBA",  /* 二维码演示(2026-10-08 控件类) */
         "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0", /* 软件更新(2026-10-07 系统设置) */
         "Modbus \xE4\xB8\xBB\xE7\xAB\x99", /* Modbus 主站(2026-10-13) */
-        "Modbus \xE4\xBB\x8E\xE7\xAB\x99" /* Modbus 从站(2026-10-13) */
+        "Modbus \xE4\xBB\x8E\xE7\xAB\x99", /* Modbus 从站(2026-10-13) */
+        "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE" /* 窗口设置(2026-10-17 系统设置) */
     };
-    if (index < 0 || index > 18)
+    if (index < 0 || index > 19)
         return kNames[0];
     return kNames[index];
 }
@@ -1664,12 +1985,15 @@ static const char* demo_page_name(int index)
  * 菜单第一级、页面钮即第二级（子分组标题为不可点的分组提示行）。
  * 内容区几何（demo_layout_content）按面板占位自动避让；resize/停靠/
  * 收起/切页统一走 demo_navUpdatePanel。 */
-#define DEMO_NAV_PANEL_W 176   /**< 左右停靠面板默认宽（分割条可拖 140..380）。 */
+#define DEMO_NAV_PANEL_W 176   /**< 左右停靠面板默认宽（可拖范围由框架
+                                *   getRange 按 smartMin 应用前钳位，2026-10-18
+                                *   原 140..380 静态带已废——带外记忆冻结曾致
+                                *   帧泵重申掰回=拖拽闪烁）。 */
 #define DEMO_NAV_TB_H    100   /**< 上下停靠面板默认高（分割条可拖 92..320）。 */
 #define DEMO_NAV_TB_MAX  320   /**< 上下停靠面板高上限（换行页面钮自动抬高至此）。 */
 #define DEMO_NAV_STRIP_W 8     /**< 收起贴边分割条细条厚。 */
 #define DEMO_NAV_CAT_N   3     /**< 一级分类数（=kNavGroups 项数）。 */
-#define DEMO_NAV_PAGE_N  19    /**< 页面数（2026-10-13 +Modbus 主站/从站页 17/18）。 */
+#define DEMO_NAV_PAGE_N  20    /**< 页面数（2026-10-17 +窗口设置页 19）。 */
 #define DEMO_NAV_HEAD_N  5     /**< 单分类最多子分组标题数（标签池容量）。 */
 #define DEMO_NAV_PAGE_H    24  /**< 页面钮高（竖版）。 */
 #define DEMO_NAV_PAGE_PITCH 26 /**< 页面钮行距（竖版）。 */
@@ -1706,7 +2030,8 @@ static const DemoNavItem kNavControlsItems[] = {
 static const DemoNavItem kNavSystemItems[] = {
     { "\xE7\xBD\x91\xE7\xBB\x9C\xE8\xAE\xBE\xE7\xBD\xAE", 13 },             /* 网络设置 */
     { "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE\xE7\xBD\xAE", 14 }, /* 悬浮窗设置 */
-    { "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0", 16 }              /* 软件更新（2026-10-07 关于→软件更新；2026-10-11 双页并入移至页 16） */
+    { "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0", 16 },             /* 软件更新（2026-10-07 关于→软件更新；2026-10-11 双页并入移至页 16） */
+    { "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE", 19 }              /* 窗口设置（2026-10-17） */
 };
 
 /** @brief 远程类条目。 */
@@ -1758,18 +2083,18 @@ static int demo_navCategoryForPage(int page)
  *          自动抬高面板高（下限钳位）。 */
 static void demo_navUpdatePanel(DemoWin* self)
 {
-    int top;
     int w;
     int h;
-    int pw;
-    int ph;
-    int px;
-    int py;
+    int bottomH;
     int i;
     int y;
+    int head;
     int rowsNeeded;
+    int pw;
+    int ph;
+    XLayout* mid = NULL;
+    (void)mid; /* [XSplitter 迁移] 中段布局器已退役，占位防未用告警。 */
     if (!self) return;
-    top = 40 + demo_sysbarH(self);
     w = XWidget_width(&self->m_base);
     h = XWidget_height(&self->m_base);
     if (w < 1) w = 1;
@@ -1778,8 +2103,7 @@ static void demo_navUpdatePanel(DemoWin* self)
         self->m_navDock = 0;
     if (self->m_navCategory < 0 || self->m_navCategory >= DEMO_NAV_CAT_N)
         self->m_navCategory = 0;
-    /* 横版展开时按页面钮换行数自动抬高面板高（下限钳位；须在面板
-     * 几何落位前定版，ph/py 随之取新值）。 */
+    /* 横版展开时按页面钮换行数自动抬高面板高（下限钳位）。 */
     rowsNeeded = 1;
     if (self->m_navDock >= 2) {
         int x = 24;
@@ -1804,265 +2128,312 @@ static void demo_navUpdatePanel(DemoWin* self)
         if (self->m_navTBH < needed)
             self->m_navTBH = needed;
     }
-    if (self->m_navDock <= 1) {           /* 左/右：竖版，占满标题栏以下 */
-        pw = self->m_navWidth;
-        ph = h - top - 26;
-        px = (self->m_navDock == 0) ? 0 : w - pw;
-        py = top;
-    } else {                              /* 上/下：横版条带 */
-        pw = w;
-        ph = self->m_navTBH;
-        px = 0;
-        py = (self->m_navDock == 2) ? top : h - 26 - ph;
-    }
-    if (self->m_navCollapsed) {
-        /* 收起：面板整隐，贴边 8px 分割条细条=展开把手（单击复原）。 */
-        XWidget_hide(&self->m_navPanel);
-#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
-        XWidget_hide((XWidget*)&self->m_navScroll);
-#endif
-        if (self->m_navDock == 0)
-            XWidget_setGeometry(self->m_navSplit, 0, top, 8, h - top - 26);
-        else if (self->m_navDock == 1)
-            XWidget_setGeometry(self->m_navSplit, w - 8, top, 8, h - top - 26);
-        else if (self->m_navDock == 2)
-            XWidget_setGeometry(self->m_navSplit, 0, top, w, 8);
+    bottomH = self->m_statusBarVisible ? DEMO_STATUS_H : 0;
+    /* [XSplitter 迁移 2026-10-17] 中段=框架分割条（替代四方向盒式布局
+     * +DemoSplitter 组合）：方向随停靠（左右=水平 1/上下=垂直 2），条目
+     * 顺序=停靠侧（面板左/上=索引 0，右/下=索引 1），面板尺寸=setSizes
+     * 比例意图（拖拽由框架手柄原生接管并记忆，随窗缩放保比例，对标
+     * Qt）；收起=面板零宽、把手贴窗口缘。 */
+#if XSPLITTER_ON
+    {
+        int pi = XSplitter_indexOf(&self->m_navSplitter,
+                                   (XWidget*)&self->m_navPanel);
+        bool wantFirst;
+        int total;
+        int navSize;
+        int sizes[2];
+        /* 记忆值（m_navWidth/m_navTBH）只由 splitterMoved 信号（真实
+         * 拖拽）更新，此处每次 resize 重申 px 定宽意图——setSizes 是
+         * 比例语义，若不重申，窗口变宽时面板会按旧比例涨宽。 */
+        {
+            int orient = (self->m_navDock <= 1) ? 1 : 2;
+            if (XSplitter_orientation(&self->m_navSplitter) != orient)
+                XSplitter_setOrientation(&self->m_navSplitter, orient);
+        }
+        wantFirst = (self->m_navDock == 0 || self->m_navDock == 2);
+        pi = XSplitter_indexOf(&self->m_navSplitter,
+                               (XWidget*)&self->m_navPanel);
+        if (pi >= 0 && ((pi == 0) != wantFirst)) {
+            /* 换侧：insertWidget 已按 Qt 语义支持「已在内则移到新位」
+             * （qsplitter.cpp insertWidget 的 list.move），直接按位插入
+             * 即可，无需摘出/重挂。 */
+            XSplitter_insertWidget(&self->m_navSplitter,
+                                   wantFirst ? 0 : 1,
+                                   (XWidget*)&self->m_navPanel);
+        }
+        if (self->m_navCollapsed)
+            XWidget_hide(&self->m_navPanel);
         else
-            XWidget_setGeometry(self->m_navSplit, 0, h - 26 - 8, w, 8);
-        XWidget_raise(self->m_navSplit);
-        XWidget_show(self->m_navSplit);
-    } else {
-        XWidget_setGeometry(&self->m_navPanel, px, py, pw, ph);
-        XWidget_raise(&self->m_navPanel);
-        XWidget_show(&self->m_navPanel);
-        if (self->m_navDock <= 1) {
-            /* 竖版展开：标题行 + 纵列一级分类钮 + 活动分类条目展开
-             * （页面钮缩进 16px；子分组标题行更窄更淡，仅分组提示）。
-             * 标题行以下整体装滚动容器（2026-10-11）：内容超高时垂直
-             * 条 AsNeeded 自动出现；分类钮/子分组标题/页面钮的父随态
-             * 切换——竖版挂 content（滚动坐标域），横版回挂面板。 */
-            int head;
-            int scrollTop = 30; /* 标题行高（title 5..27 + 间隙）。 */
-            int scrollH = ph - scrollTop;
-            XWidget_setGeometry(&self->m_navTitle, 8, 5, 60, 22);
-            XWidget_show(&self->m_navTitle);
-            XPushButton_setText_2(&self->m_navDockBtn,
-                                  "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
-            XWidget_setGeometry(&self->m_navDockBtn, pw - 100, 5, 46, 22);
-            XWidget_show(&self->m_navDockBtn);
-            XPushButton_setText_2(&self->m_navCollapseBtn,
-                                  "\xE6\x94\xB6\xE8\xB5\xB7"); /* 收起 */
-            XWidget_setGeometry(&self->m_navCollapseBtn, pw - 52, 5, 44, 22);
-            XWidget_show(&self->m_navCollapseBtn);
-#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
-            if (scrollH < 1) scrollH = 1;
-            XWidget_setGeometry((XWidget*)&self->m_navScroll, 0, scrollTop,
-                                pw, scrollH);
-            XWidget_show((XWidget*)&self->m_navScroll);
-            XWidget_raise((XWidget*)&self->m_navScroll);
-            /* 布局前先按竖版父域（content）排版：先回挂再量高。
-               [系统设置/远程消失根修 2026-10-11] 三个一级分类钮须全部
-               回挂——原实现只回挂 [0]（控件），[1]/[2] 仍挂面板却按
-               content 域坐标定位（y=454/482），被不透明滚动区整体盖住，
-               两分类从导航面板消失（用户实测）。横竖版来回切换亦须对称
-               回挂，防跨态残留。 */
-            for (i = 0; i < DEMO_NAV_CAT_N; ++i)
-                XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
-                                       self->m_navContent);
-#endif
-            y = 0; /* y 从此为 content 域坐标（滚动容器内容高）。 */
-            head = 0;
-            for (i = 0; i < DEMO_NAV_CAT_N; ++i) {
-                int p;
-                XWidget_setGeometry(&self->m_navCatBtns[i], 8, y, pw - 16, 26);
-                XWidget_show(&self->m_navCatBtns[i]);
-                y += 28;
-                if (i != self->m_navCategory)
-                    continue;
-                for (p = 0; p < kNavGroups[i].count; ++p) {
-                    const DemoNavItem* item = &kNavGroups[i].items[p];
-                    if (item->page < 0) {
-                        /* 子分组标题行：标签池轮转，超出池容量按页面行。 */
-                        if (head < DEMO_NAV_HEAD_N) {
-                            XLabel* label = &self->m_navHeadLabels[head++];
-                            XLabel_setText_2(label, item->caption);
-                            XLabel_setTextPixelSize(label, 12);
-                            XWidget_setGeometry((XWidget*)label, 10, y + 3,
-                                                pw - 20, 14);
-                            XWidget_show((XWidget*)label);
-                        }
-                        y += DEMO_NAV_HEAD_PITCH;
-                        continue;
-                    }
-                    XWidget_setGeometry(&self->m_pageNav[item->page], 24, y,
-                                        pw - 40, DEMO_NAV_PAGE_H);
-                    XWidget_show(&self->m_pageNav[item->page]);
-                    y += DEMO_NAV_PAGE_PITCH;
-                }
-            }
-#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
-            /* content 高=内容总高（超出视口即出滚动条）；页钮 reparent
-               一次到位（分类钮已在上文回挂，页钮/标题在此统一挂）。 */
-            for (i = 0; i < DEMO_NAV_PAGE_N; ++i) {
-                if (XWidget_parentWidget((XWidget*)&self->m_pageNav[i]) !=
-                    self->m_navContent)
-                    XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
-                                           self->m_navContent);
-            }
-            for (i = 0; i < DEMO_NAV_HEAD_N; ++i) {
-                XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
-                                       self->m_navContent);
-            }
-            XWidget_resize(self->m_navContent, pw, y > 1 ? y : 1);
-#endif
-            /* 池内未用到的标题标签隐藏（分类切换后残留防串行）。 */
-            for (i = head; i < DEMO_NAV_HEAD_N; ++i)
-                XWidget_hide((XWidget*)&self->m_navHeadLabels[i]);
-            for (i = 0; i < DEMO_NAV_PAGE_N; ++i) {
-                if (demo_navCategoryForPage(i) != self->m_navCategory)
-                    XWidget_hide(&self->m_pageNav[i]);
-            }
+            XWidget_show(&self->m_navPanel);
+        /* 尺寸意图：收起=[0,1]（setSizes 比例语义下 0 意图=面板归零、
+         * 把手贴缘；0,0 会被当全未设定均分故取 1 兜底）；展开=记忆值，
+         * 内容侧余量。 */
+        pi = XSplitter_indexOf(&self->m_navSplitter,
+                               (XWidget*)&self->m_navPanel);
+        total = (self->m_navDock <= 1)
+                    ? XWidget_width(&self->m_navSplitter)
+                    : XWidget_height(&self->m_navSplitter);
+        /* [无损尺寸 2026-10-17] setSizes 内部按 contentLen（总宽-手柄
+         * 宽×（页数-1)）归一落位——传入总和必须与之同口径，否则每轮
+         * 回读-重写都损失 ~3px（面板 176 一路衰到 139，按钮位移把
+         * 固定坐标的换边点击顶进收起钮=「右停靠面板消失」假象）。 */
+        total -= 8 * (XSplitter_count(&self->m_navSplitter) - 1);
+        if (total < 128) total = 128;
+        navSize = self->m_navCollapsed
+                      ? 0
+                      : (self->m_navDock <= 1 ? self->m_navWidth
+                                              : self->m_navTBH);
+        if (navSize > total - 72) navSize = total - 72;
+        if (navSize < 0) navSize = 0;
+        if (self->m_navCollapsed) {
+            /* [⑤右修复 2026-10-18] 收起零宽放面板本位（原硬编码 {0,1}
+             * 无视位次：右停靠（pi=1）点收起钮把内容页归零=页面内容整
+             * 体消失+带落左缘+贴缘把手被 W 带吞=永久死态）。 */
+            if (pi < 0) pi = 0;
+            sizes[pi] = 0;
+            sizes[1 - pi] = 1;
+        } else if (pi == 0) {
+            sizes[0] = navSize;
+            sizes[1] = total - navSize;
         } else {
-            /* 横版展开：标题行 + 一级分类钮一行 + 活动分类页面钮换行
-             * 铺放（子分组标题省略——横版条带纵向空间有限；换行数已在
-             * 函数头部预算并抬高面板高）。滚动容器不参与（2026-10-11）：
-             * 隐藏并令子控件回挂面板。 */
-            int bw = (pw - 16) / DEMO_NAV_CAT_N;
-            int p;
-            int x;
-            int row;
-#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
-            XWidget_hide((XWidget*)&self->m_navScroll);
-            for (i = 0; i < DEMO_NAV_CAT_N; ++i)
-                XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
-                                       &self->m_navPanel);
-            for (i = 0; i < DEMO_NAV_PAGE_N; ++i)
-                XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
-                                       &self->m_navPanel);
-            for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
-                XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
-                                       &self->m_navPanel);
+            sizes[0] = total - navSize;
+            sizes[1] = navSize;
+        }
+        /* [⑥修复 2026-10-18] 重申钳底：非收起态双页意图均不得 ≤0——
+         * 缩窗瞬间重申/布局与陈旧 total 交错曾算出 0 宽意图（setSizes
+         * [0,1] 收起签名）被 movedSlot 固化为收起态且持续劣化。 */
+        if (!self->m_navCollapsed) {
+            if (sizes[0] < 1) sizes[0] = 1;
+            if (sizes[1] < 1) sizes[1] = 1;
+        }
+        XSplitter_setSizes(&self->m_navSplitter, sizes, 2);
+        /* [⑤左修复 2026-10-18] HitEdgeBand 让位例外按最深命中件自身
+         * 属性判（XWindowDecoration.c :1879-1885），部件模型下贴缘命中
+         * 件=把手子件（属性声明在 navSplitter 上够不着）——此处把属性
+         * 补挂到把手（navUpdatePanel 每轮覆盖把手创建时机），收起态贴
+         * 缘把手 [0,8) 不再被 CSD W 向改尺寸带吞（唯一展开入口）。 */
+        {
+            XSplitterHandle* h = XSplitter_handle(&self->m_navSplitter, 0);
+            if (h)
+                XWidget_setAttribute((XWidget*)h,
+                                     XWidgetAttribute_HitEdgeBand, true);
+        }
+    }
 #endif
-            if (bw > 120) bw = 120;
-            if (bw < 56) bw = 56;
-            XWidget_setGeometry(&self->m_navTitle, 8, 4, 60, 22);
-            XWidget_show(&self->m_navTitle);
-            XPushButton_setText_2(&self->m_navDockBtn,
-                                  "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
-            XWidget_setGeometry(&self->m_navDockBtn, pw - 100, 4, 46, 22);
-            XWidget_show(&self->m_navDockBtn);
-            XPushButton_setText_2(&self->m_navCollapseBtn,
-                                  "\xE6\x94\xB6\xE8\xB5\xB7"); /* 收起 */
-            XWidget_setGeometry(&self->m_navCollapseBtn, pw - 52, 4, 44, 22);
-            XWidget_show(&self->m_navCollapseBtn);
-            for (i = 0; i < DEMO_NAV_CAT_N; ++i) {
-                XWidget_setGeometry(&self->m_navCatBtns[i], 8 + i * bw, 30,
-                                    bw - 4, 26);
-                XWidget_show(&self->m_navCatBtns[i]);
-            }
-            for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
-                XWidget_hide((XWidget*)&self->m_navHeadLabels[i]);
-            x = 24;
-            row = 0;
-            for (p = 0; p < kNavGroups[self->m_navCategory].count; ++p) {
-                const DemoNavItem* item =
-                    &kNavGroups[self->m_navCategory].items[p];
-                int bwid;
-                if (item->page < 0)
-                    continue; /* 横版不显示子分组标题。 */
-                bwid = demo_utf8_chars(item->caption) * 17 + 12;
-                if (bwid < 64) bwid = 64;
-                if (x + bwid > pw - 16 && x > 24) {
-                    x = 24;
-                    ++row;
+    pw = XWidget_width(&self->m_navPanel);
+    ph = XWidget_height(&self->m_navPanel);
+    if (self->m_navDock <= 1) {
+        int head;
+        int scrollTop = 30; /* 标题行高（title 5..27 + 间隙）。 */
+        int scrollH = ph - scrollTop;
+        XWidget_setGeometry(&self->m_navTitle, 8, 5, 60, 22);
+        XWidget_show(&self->m_navTitle);
+        XPushButton_setText_2(&self->m_navDockBtn,
+                              "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
+        XWidget_setGeometry(&self->m_navDockBtn, pw - 100, 5, 46, 22);
+        XWidget_show(&self->m_navDockBtn);
+        XPushButton_setText_2(&self->m_navCollapseBtn,
+                              "\xE6\x94\xB6\xE8\xB5\xB7"); /* 收起 */
+        XWidget_setGeometry(&self->m_navCollapseBtn, pw - 52, 5, 44, 22);
+        XWidget_show(&self->m_navCollapseBtn);
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+        if (scrollH < 1) scrollH = 1;
+        XWidget_setGeometry((XWidget*)&self->m_navScroll, 0, scrollTop,
+                            pw, scrollH);
+        XWidget_show((XWidget*)&self->m_navScroll);
+        XWidget_raise((XWidget*)&self->m_navScroll);
+        for (i = 0; i < DEMO_NAV_CAT_N; ++i)
+            XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
+                                   self->m_navContent);
+        for (i = 0; i < DEMO_NAV_PAGE_N; ++i) {
+            if (XWidget_parentWidget((XWidget*)&self->m_pageNav[i]) !=
+                self->m_navContent)
+                XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
+                                       self->m_navContent);
+        }
+        for (i = 0; i < DEMO_NAV_HEAD_N; ++i) {
+            XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
+                                   self->m_navContent);
+        }
+#endif
+        y = 0; /* y 从此为 content 域坐标（滚动容器内容高）。 */
+        head = 0;
+        for (i = 0; i < DEMO_NAV_CAT_N; ++i) {
+            int p;
+            XWidget_setGeometry(&self->m_navCatBtns[i], 8, y, pw - 16, 26);
+            XWidget_show(&self->m_navCatBtns[i]);
+            y += 28;
+            if (i != self->m_navCategory)
+                continue;
+            for (p = 0; p < kNavGroups[i].count; ++p) {
+                const DemoNavItem* item = &kNavGroups[i].items[p];
+                if (item->page < 0) {
+                    if (head < DEMO_NAV_HEAD_N) {
+                        XLabel* label = &self->m_navHeadLabels[head++];
+                        XLabel_setText_2(label, item->caption);
+                        XLabel_setTextPixelSize(label, 12);
+                        XWidget_setGeometry((XWidget*)label, 10, y + 3,
+                                            pw - 20, 14);
+                        XWidget_show((XWidget*)label);
+                    }
+                    y += DEMO_NAV_HEAD_PITCH;
+                    continue;
                 }
-                XWidget_setGeometry(&self->m_pageNav[item->page], x,
-                                    62 + row * 28, bwid, 26);
+                XWidget_setGeometry(&self->m_pageNav[item->page], 24, y,
+                                    pw - 40, DEMO_NAV_PAGE_H);
                 XWidget_show(&self->m_pageNav[item->page]);
-                x += bwid + 6;
-            }
-            for (i = 0; i < DEMO_NAV_PAGE_N; ++i) {
-                if (demo_navCategoryForPage(i) != self->m_navCategory)
-                    XWidget_hide(&self->m_pageNav[i]);
+                y += DEMO_NAV_PAGE_PITCH;
             }
         }
-        /* 分割条贴面板内缘（拖动调尺寸/双击收起）。 */
-        if (self->m_navDock == 0)
-            XWidget_setGeometry(self->m_navSplit, px + pw, py, 5, ph);
-        else if (self->m_navDock == 1)
-            XWidget_setGeometry(self->m_navSplit, px - 5, py, 5, ph);
-        else if (self->m_navDock == 2)
-            XWidget_setGeometry(self->m_navSplit, 0, py + ph, w, 5);
-        else
-            XWidget_setGeometry(self->m_navSplit, 0, py - 5, w, 5);
-        XWidget_raise(self->m_navSplit);
-        XWidget_show(self->m_navSplit);
-    }
-    DemoSplitter_setState(self->m_navSplit, self->m_navDock,
-                          self->m_navCollapsed);
-    /* 分类钮选中态随展开分类同步（互斥组反选其余）。 */
-    XAbstractButton_setChecked(
-        (XAbstractButton*)&self->m_navCatBtns[self->m_navCategory], true);
-    self->m_staticSceneDirty = true;
-    demo_repaint(self);
-    /* 导航 chrome 的 raise（resize 拖拽经 resizeEvent 逐帧进入本函数）
-       会把弹出的屏幕键盘压回自己之下——子控件浮层形态的 Z 序只有弹出
-       时刻一次 raise，绘制按子控件向量序，异步守护 tick（200ms）只救
-       得了拖动结束、帧内必被下一次 chrome raise 再压回。收尾对已弹出
-       面板同步抬回（帧内最后一步），使「chrome 低于输入面板」在每一
-       帧成立。peek 不惰性创建单例：键盘从未启用的会话零开销。 */
-    {
-        XVirtualKeyboard* kb;
-#if XGUI_PERFORMANCE_OVERLAY_ON && XFRAME_ON && XLABEL_ON
-        /* 性能浮层随 chrome 同步抬层（2026-10-06 用户口径：悬浮窗层级
-           高于导航面板/分割条）：本函数每次 chrome raise 都会把浮层压
-           回之下，左上/左中等与导航重叠的预设位被按钮盖字（拖动起点
-           的单次 raise 只保拖动期）。先抬浮层再抬已弹出键盘，帧内
-           收尾恒成立「主窗内容 < 性能浮层 < 屏幕键盘」。 */
-        XWidget_raise((XWidget*)&self->m_performanceOverlay);
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+        XWidget_resize(self->m_navContent, pw, y > 1 ? y : 1);
 #endif
-        kb = XGuiApplication_virtualKeyboardPeek();
-        if (kb && XVirtualKeyboard_popupVisible(kb))
-            XWidget_raise((XWidget*)kb);
-    }
-}
-
-/** @brief 分割条回调：查询受控尺寸（左右=面板宽，上下=面板高）。 */
-static int demo_navSplitSizeFor(void* owner)
-{
-    DemoWin* self = (DemoWin*)owner;
-    if (!self) return 0;
-    return (self->m_navDock <= 1) ? self->m_navWidth : self->m_navTBH;
-}
-
-/** @brief 分割条回调：应用拖出的新尺寸（钳位后重排面板与内容区）。 */
-static void demo_navSplitApplySize(void* owner, int size)
-{
-    DemoWin* self = (DemoWin*)owner;
-    if (!self) return;
-    if (self->m_navDock <= 1) {
-        if (size < 140) size = 140;
-        if (size > 380) size = 380;
-        if (size == self->m_navWidth) return;
-        self->m_navWidth = size;
+        for (i = head; i < DEMO_NAV_HEAD_N; ++i)
+            XWidget_hide((XWidget*)&self->m_navHeadLabels[i]);
+        for (i = 0; i < DEMO_NAV_PAGE_N; ++i) {
+            if (demo_navCategoryForPage(i) != self->m_navCategory)
+                XWidget_hide(&self->m_pageNav[i]);
+        }
     } else {
-        if (size < 92) size = 92;
-        if (size > 320) size = 320;
-        if (size == self->m_navTBH) return;
-        self->m_navTBH = size;
+        /* 横版展开：标题行+一级分类钮一行+活动分类页面钮换行铺放。 */
+        int bw = (pw - 16) / DEMO_NAV_CAT_N;
+        int p;
+        int x;
+        int row;
+#if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON
+        XWidget_hide((XWidget*)&self->m_navScroll);
+        for (i = 0; i < DEMO_NAV_CAT_N; ++i)
+            XWidget_setParentPlain((XWidget*)&self->m_navCatBtns[i],
+                                   &self->m_navPanel);
+        for (i = 0; i < DEMO_NAV_PAGE_N; ++i)
+            XWidget_setParentPlain((XWidget*)&self->m_pageNav[i],
+                                   &self->m_navPanel);
+        for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
+            XWidget_setParentPlain((XWidget*)&self->m_navHeadLabels[i],
+                                   &self->m_navPanel);
+#endif
+        if (bw > 120) bw = 120;
+        if (bw < 56) bw = 56;
+        XWidget_setGeometry(&self->m_navTitle, 8, 4, 60, 22);
+        XWidget_show(&self->m_navTitle);
+        XPushButton_setText_2(&self->m_navDockBtn,
+                              "\xE6\x8D\xA2\xE8\xBE\xB9"); /* 换边 */
+        XWidget_setGeometry(&self->m_navDockBtn, pw - 100, 4, 46, 22);
+        XWidget_show(&self->m_navDockBtn);
+        XPushButton_setText_2(&self->m_navCollapseBtn,
+                              "\xE6\x94\xB6\xE8\xB5\xB7"); /* 收起 */
+        XWidget_setGeometry(&self->m_navCollapseBtn, pw - 52, 4, 44, 22);
+        XWidget_show(&self->m_navCollapseBtn);
+        for (i = 0; i < DEMO_NAV_CAT_N; ++i) {
+            XWidget_setGeometry(&self->m_navCatBtns[i], 8 + i * bw, 30,
+                                bw - 4, 26);
+            XWidget_show(&self->m_navCatBtns[i]);
+        }
+        for (i = 0; i < DEMO_NAV_HEAD_N; ++i)
+            XWidget_hide((XWidget*)&self->m_navHeadLabels[i]);
+        x = 24;
+        row = 0;
+        for (p = 0; p < kNavGroups[self->m_navCategory].count; ++p) {
+            const DemoNavItem* item =
+                &kNavGroups[self->m_navCategory].items[p];
+            int bwid;
+            if (item->page < 0)
+                continue; /* 横版不显示子分组标题。 */
+            bwid = demo_utf8_chars(item->caption) * 17 + 12;
+            if (bwid < 64) bwid = 64;
+            if (x + bwid > pw - 16 && x > 24) {
+                x = 24;
+                ++row;
+            }
+            XWidget_setGeometry(&self->m_pageNav[item->page], x,
+                                62 + row * 28, bwid, 26);
+            XWidget_show(&self->m_pageNav[item->page]);
+            x += bwid + 6;
+        }
+        for (i = 0; i < DEMO_NAV_PAGE_N; ++i) {
+            if (demo_navCategoryForPage(i) != self->m_navCategory)
+                XWidget_hide(&self->m_pageNav[i]);
+        }
     }
-    demo_navUpdatePanel(self);
-    demo_layout_content(self);
 }
 
-/** @brief 分割条回调：双击收起 / 收起态单击展开。 */
-static void demo_navSplitToggle(void* owner)
+/** @brief 分割条手柄点击槽（XSplitter handleClicked 信号）：双击=收起/
+ *  展开切换；空闲点击=仅收起态展开（Qt 双击折叠交互位 + 保留 demo
+ *  「收起态单击细条展开」习惯；XSplitter 只发信号不内置折叠策略，
+ *  面板零宽几何由 navUpdatePanel 的 setSizes 意图落位）。 */
+static void demo_navSplitHandleSlot(XObject* receiver, XVarList* args)
 {
-    DemoWin* self = (DemoWin*)owner;
-    if (!self) return;
-    self->m_navCollapsed = !self->m_navCollapsed;
-    demo_navUpdatePanel(self);
-    demo_layout_content(self);
+    DemoWin* self = (DemoWin*)receiver;
+    if (!self || !args) return;
+    XVarList_args_2(args, int, index, int, doubleClick);
+    (void)index;
+    if (doubleClick) {
+        self->m_navCollapsed = !self->m_navCollapsed;
+        demo_navUpdatePanel(self);
+        demo_layout_content(self);
+    } else if (self->m_navCollapsed) {
+        self->m_navCollapsed = false;
+        demo_navUpdatePanel(self);
+        demo_layout_content(self);
+    }
+}
+
+/** @brief 分割条拖拽落位槽（splitterMoved 信号，仅真实拖拽触发）：把
+ *  拖后尺寸写入记忆值（拖合法值全采纳），供换边恢复与 px 定宽重申。
+ *  [记忆带放开 2026-10-18] 原 140..380/92..320 带内才采纳=带外记忆
+ *  冻结，帧泵重申按旧记忆把拖拽结果掰回=第二处闪烁源（与框架 getRange
+ *  缺 smartMin 钳位同病）；拖拽合法区间已由框架 getRange 应用前钳定，
+ *  此处如实记忆即可（0=折叠仍拒绝，见下）。 */
+static void demo_navSplitMovedSlot(XObject* receiver, XVarList* args)
+{
+    DemoWin* self = (DemoWin*)receiver;
+    int cs[2] = {0, 0};
+    int pi;
+    if (!self || !args) return;
+    XVarList_args_2(args, int, pos, int, index);
+    (void)index;
+    pi = XSplitter_indexOf(&self->m_navSplitter,
+                           (XWidget*)&self->m_navPanel);
+    if (self->m_navCollapsed) {
+        /* [④修复 2026-10-18] 收起态把手拖拽=回拖展开通道（配合装饰层
+         * HitEdgeBand 沿父链让位：贴缘把手在收起态可按可拖）。把位揭示
+         * 的面板空间过迟滞阈值（40，对标 adjustPos Threshold）即展开并
+         * 以揭示宽度为新记忆；未过阈回推重申（死区，免内容被隐性吸走
+         * ——拖拽先按光标落位、此处逐事件顶回）。 */
+        int total = (self->m_navDock <= 1)
+                        ? XWidget_width(&self->m_navSplitter)
+                        : XWidget_height(&self->m_navSplitter);
+        int space;
+        if (pi < 0) return;
+        space = (pi == 0) ? pos
+                          : total - XSplitter_handleWidth(&self->m_navSplitter) - pos;
+        if (space >= 40) {
+            if (self->m_navDock <= 1)
+                self->m_navWidth = space;
+            else
+                self->m_navTBH = space;
+            self->m_navCollapsed = false;
+        }
+        demo_navUpdatePanel(self);
+        return;
+    }
+    if (pi < 0) return;
+    XSplitter_sizes(&self->m_navSplitter, cs, 2);
+    if (cs[pi] <= 0) {
+        /* 拖到零宽=转折叠态（Qt farMin 折叠的简化，免迟滞）：否则拖到
+         0 后重申仍按旧记忆落位=0↔记忆宽逐帧掰回（左缘同款闪烁）。
+         展开走既有 handleClicked/收起钮路径，恢复记忆宽度。 */
+        if (!self->m_navCollapsed) {
+            self->m_navCollapsed = true;
+            demo_navUpdatePanel(self);
+        }
+        return;
+    }
+    if (self->m_navDock <= 1)
+        self->m_navWidth = cs[pi];
+    else
+        self->m_navTBH = cs[pi];
+    demo_layout_content(self); /* 内容区自适应随面板新尺寸重排。 */
 }
 
 /** @brief 分类钮点击（m_navCatGroup idClicked）：切换手风琴展开分类。 */
@@ -2100,240 +2471,22 @@ static void demo_navCollapseSlot(XObject* receiver, XVarList* args)
 }
 #endif /* 浮动导航面板门 */
 
-#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-/** @brief 按当前窗口尺寸更新标题栏/状态栏标签几何（resize 时调用）。
- * @details 标题栏基底位于 (0,0,w,40)、状态栏基底位于 (0,h-26,w,26)，
- *          文本标签必须跟随窗口尺寸重新定位，否则改变窗口大小后状态栏
- *          文本会与底部黑色矩形错位或超出可视区域。 */
-static void demo_layout_chrome(DemoWin* self)
-{
-    int width;
-    int height;
-    int labelWidth;
-
-    if (!self) return;
-    width = XWidget_width(&self->m_base);
-    height = XWidget_height(&self->m_base);
-    if (width < 0) width = 0;
-    if (height < 0) height = 0;
-    labelWidth = width > 16 ? width - 16 : 0;
-    XWidget_setGeometry((XWidget*)&self->m_titleLabel, 16,
-                        demo_sysbarH(self),
-                        labelWidth, 40);
-    /* 状态栏是自带底色的整条子控件，几何必须覆盖整个状态条区域。 */
-    if (height >= 26)
-        XWidget_setGeometry((XWidget*)&self->m_statusLabel, 0,
-                            height - 26, width, 26);
-}
-#endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
-
-/** @brief 按当前窗口尺寸重新分配主内容区几何（切换页面/resize 时调用）。
- * @details 内容区=标题栏(40+系统栏)与状态栏(26)之间的完整区域再留 8px
- *          呼吸边，按浮动导航面板占位避让（左右停靠让宽、上下停靠让
- *          高、收起让细条，口径与 demo_navUpdatePanel 同源）——
- *          800x600 无面板时内容区 776x494，贴左展开时 600x494。
- *          各页面内部布局全部按本函数给定的根几何自适应摆位。 */
+/** @brief 扩展页自适应重排统一漏斗（切页/resize/startup/停靠切换全路径调用）。
+ * @details [布局化 chrome 三段 2026-10-17] 主内容堆叠已托管到 contentHost
+ *          （装配段 XWidget_setLayout，页面 addWidget 时自动重挂为
+ *          contentHost 子）：页面矩形由框架随 contentHost 尺寸变化自动
+ *          分配（宿主自身坐标 + contentsMargins 12/8/12/0 呼吸边），
+ *          品牌条/状态栏/CSD/导航面板/分割条让位全部由根布局链分段完成。
+ *          原手动 setGeometry（矩形按窗口坐标解释，页面压盖品牌条——
+ *          DDE 探针实测错位 y=68=CSD 28+品牌 40）与导航避让块（面板已
+ *          是中段布局条目、contentHost 尺寸已扣其占位，再避=双重计入；
+ *          收起 8px 细条与底部状态栏 26px 同理）整体删除。堆叠几何随
+ *          contentHost resize 自动重激活（XWidget_recomputeGeometry），
+ *          切页由 setCurrentIndex 回贴既有几何——本函数只分发扩展页
+ *          adapt：各页按当前根几何重排（登记表下标=页索引-5）。 */
 static void demo_layout_content(DemoWin* self)
 {
-    XRect content;
-    int width;
-    int height;
-    int top;
-    int left = 12;
-    int right = 12;
-    /* [根修 2026-10-15] 底边距 28→26（=状态栏高度）：原 28 使内容区底边
-     * (height-28=572) 与状态栏上沿(574) 之间留 2px 死带——页面内容
-     * （如 Modbus 页写/值行）滚动位 0 时底部 2px 探入死带，滚动后该带
-     * 内像素位于所有控件矩形之外永不再重绘=永久碎片（昆仑通态实测
-     * 放大取证）。对齐后内容区底边与状态栏上沿严丝合缝。 */
-    int bottom = 26;
-    int contentWidth;
-    int contentHeight;
     if (!self) return;
-    width = XWidget_width(&self->m_base);
-    height = XWidget_height(&self->m_base);
-    top = 40 + demo_sysbarH(self);
-#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
-    XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    {
-        /* 浮动导航面板占位避让（三态：展开/收起细条/停靠边）。 */
-        int navW = self->m_navCollapsed
-                       ? DEMO_NAV_STRIP_W
-                       : (self->m_navDock <= 1 ? self->m_navWidth : 0);
-        int navH = self->m_navCollapsed
-                       ? DEMO_NAV_STRIP_W
-                       : (self->m_navDock >= 2 ? self->m_navTBH : 0);
-        if (self->m_navDock == 0) left += navW;
-        if (self->m_navDock == 1) right += navW;
-        if (self->m_navDock == 2) top += navH;
-        if (self->m_navDock == 3) bottom += navH;
-    }
-#endif
-    contentWidth = width - left - right;
-    contentHeight = height - top - 8 - bottom;
-    if (contentWidth < 0) contentWidth = 0;
-    if (contentHeight < 0) contentHeight = 0;
-    XRect_init(&content, left, top + 8, contentWidth, contentHeight);
-    XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayout,
-                                 &content);
-#if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
-    XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
-    /* 页面 3：输入控件族（2026-10-03 选项卡打散归位）——左列 GroupBox
-     * 四件（单行/微调/滑块/进度）+ 多行编辑，右列下拉/字体/旋钮/数码管/
-     * 滚动条/日期时间族；两列宽随内容区自适应，小窗口不溢出。 */
-    {
-        int colW = contentWidth / 2 - 16;
-        int rx;
-        int rw;
-        if (colW < 240) colW = 240;
-        if (colW > 320) colW = 320;
-        rx = 12 + colW + 16;
-        /* 右列宽以页面根（contentWidth）右缘反推：页面几何是页面局部
-           坐标，基准必须与根宽同源——首轮收口误用窗口宽 width（含导航
-           面板占位），贴左面板时右列溢出根 188px（目验二轮 page3 字体
-           框截断根因）。 */
-        rw = contentWidth - rx - 4;
-        if (rw < 200) rw = 200;
-        XWidget_setGeometry((XWidget*)&self->m_groupBox,
-                            12, 8, colW, 210);
-        {
-            XRect inner = XGroupBox_contentsRect(&self->m_groupBox);
-            int innerW = inner.width - 24;
-            if (innerW < 80) innerW = 80;
-            XWidget_setGeometry((XWidget*)&self->m_lineEdit,
-                                inner.x + 12, inner.y + 8, innerW, 26);
-            XWidget_setGeometry((XWidget*)&self->m_spinBox,
-                                inner.x + 12, inner.y + 48, innerW, 26);
-            XWidget_setGeometry((XWidget*)&self->m_slider,
-                                inner.x + 12, inner.y + 92, innerW, 28);
-            XWidget_setGeometry((XWidget*)&self->m_progressBar,
-                                inner.x + 12, inner.y + 138, innerW, 24);
-        }
-#if XWIDGET_ON && XPLAINTEXTEDIT_ON
-        /* 多行编辑填充左列余下高度。 */
-        XWidget_setGeometry((XWidget*)&self->m_plainEdit,
-                            12, 226, colW,
-                            contentHeight - 226 - 34 > 80
-                                ? contentHeight - 226 - 34 : 80);
-#endif
-#if XWIDGET_ON && XCOMBOBOX_ON && XABSTRACTSLIDER_ON && XDIAL_ON && \
-    XPROGRESSBAR_ON && XLCDNUMBER_ON && XSCROLLBAR_ON
-        /* 右列：下拉/字体行、旋钮联动行、数码管/滚动条行。 */
-        XWidget_setGeometry((XWidget*)&self->m_comboBox, rx, 8, 150, 26);
-        XWidget_setGeometry((XWidget*)&self->m_fontCombo, rx + 158, 8,
-                            rw - 158, 28);
-        XWidget_setGeometry((XWidget*)&self->m_dial, rx, 44, 60, 60);
-        XWidget_setGeometry((XWidget*)&self->m_dialProgress,
-                            rx + 70, 62, rw - 70, 20);
-        XWidget_setGeometry((XWidget*)&self->m_lcd, rx, 112, 160, 60);
-        XWidget_setGeometry((XWidget*)&self->m_scrollBar,
-                            rx + 170, 112, 24, 64);
-#endif
-#if XWIDGET_ON && XDATETIMEEDIT_ON && XDATEEDIT_ON && XTIMEEDIT_ON
-        /* 右列：日期时间三件套。 */
-        XWidget_setGeometry((XWidget*)&self->m_dtEdit, rx, 184, rw, 28);
-        XWidget_setGeometry((XWidget*)&self->m_dateEdit, rx, 220, rw, 28);
-        XWidget_setGeometry((XWidget*)&self->m_timeEdit, rx, 256, rw, 28);
-#endif
-        /* 状态行贴本页底部（宽度随内容区）。 */
-        XWidget_setGeometry((XWidget*)&self->m_inputStatus,
-                            12, contentHeight - 30, contentWidth - 12, 24);
-    }
-#endif
-#if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON && XCOMBOBOX_ON && \
-    XABSTRACTSLIDER_ON && XDIAL_ON && XPROGRESSBAR_ON
-    {
-        /* 页面 4：容器与窗口（选项卡瘦身后 9 签）——页签容器填满页。 */
-        int w4 = contentWidth - 24;
-        if (w4 < 120) w4 = 120;
-        XWidget_setGeometry((XWidget*)&self->m_tabWidget,
-                            12, 8, w4, contentHeight - 40);
-        XWidget_setGeometry((XWidget*)&self->m_tabStatus,
-                            12, 8 + contentHeight - 40 + 8,
-                            contentWidth, 24);
-    }
-#endif
-#if XWIDGET_ON && XCHARTS_ON && XPUSHBUTTON_ON
-    /* 页面 12：图表演示（2026-10-03 自选项卡页独立）——切换钮行顶置，
-     * 图表视图填充其余全部区域，随窗口缩放。 */
-    {
-        int bw = (contentWidth - 24 - 4 * 8) / 5;
-        int i;
-        if (bw > 84) bw = 84;
-        if (bw < 48) bw = 48;
-        for (i = 0; i < 5; ++i) {
-            XPushButton* b = (i == 0) ? &self->m_btnLegend
-                          : (i == 1) ? &self->m_btnGrid
-                          : (i == 2) ? &self->m_btnTitle
-                          : (i == 3) ? &self->m_btnSeries
-                                     : &self->m_btnRange;
-            XWidget_setGeometry((XWidget*)b, 12 + i * (bw + 8), 8, bw, 24);
-        }
-        /* 图表铺满；FPS 悬浮层已改自由拖动（见 demo_performance_init），
-           与图表重叠由用户拖避（2026-10-03 用户质问「这边为啥要空着」：
-           撤销右缘 218px HUD 让位带，图表视图恢复铺满内容区）。 */
-        XWidget_setGeometry((XWidget*)&self->m_chartView,
-                            12, 38, contentWidth - 24, contentHeight - 46);
-    }
-#endif
-#if XWIDGET_ON && XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    /* 条目视图页补充大表格（自选项卡页打散归位）：贴小表格右侧，
-       宽随页面根自适应且右缘收口在 rootW-8（目验 page5 挂项：类型列
-       在窗口右缘被裁的根因=宽度公式溢出收口）；行高让底部横滚条。 */
-    if (self->m_extPages[0]) {
-        int rootW = XWidget_width(self->m_extPages[0]);
-        int rootH = XWidget_height(self->m_extPages[0]);
-        /* 双档位摆位：宽根（rootW≥652=404+4 列最小 240+边 8，面板收
-           起/无面板）贴小表格右侧同行；窄根（面板展开 rootW≈600，
-           404 起只剩 ~196 宽装不下 4 列）下移到小表格下方占满整行
-           （小表格底 306 → 大表格 314..，状态行之上）——四轮目验：
-           窄根挤列只够名称列，正解是换行铺满而非挤列。 */
-        int tx;
-        int tyy;
-        int tw;
-        int th = 124;
-        if (rootW >= 652) {
-            tx = 404;
-            tyy = 182;
-            tw = rootW - 404 - 8;
-            if (tw < 120) tw = 120;
-        } else {
-            tx = 8;
-            tyy = 314;
-            tw = rootW - 16;
-            th = rootH - 314 - 40;
-            if (th < 100) th = 100;
-            if (tyy + th > rootH - 36) th = rootH - 36 - tyy;
-        }
-        XWidget_setGeometry((XWidget*)&self->m_tableWidget,
-                            tx, tyy, tw, th);
-        /* 列宽随可视宽（表格宽−纵条带 12）分配：宽根全 4 列恰满，
-           窄根保「名称+类型」主列、其余列横滚可达。 */
-        {
-            int view = tw - 12;
-            if (view >= 372) {
-                XTableView_setColumnWidth((XTableView*)&self->m_tableWidget,
-                                          0, 128);
-                XTableView_setColumnWidth((XTableView*)&self->m_tableWidget,
-                                          1, 72);
-                XTableView_setColumnWidth((XTableView*)&self->m_tableWidget,
-                                          2, 60);
-                XTableView_setColumnWidth((XTableView*)&self->m_tableWidget,
-                                          3, 112);
-            } else if (view >= 200) {
-                int c0 = view * 62 / 100;
-                XTableView_setColumnWidth((XTableView*)&self->m_tableWidget,
-                                          0, c0);
-                XTableView_setColumnWidth((XTableView*)&self->m_tableWidget,
-                                          1, view - c0);
-                XTableView_setColumnWidth((XTableView*)&self->m_tableWidget,
-                                          2, 60);
-                XTableView_setColumnWidth((XTableView*)&self->m_tableWidget,
-                                          3, 112);
-            }
-        }
-    }
-#endif
     /* 扩展页自适应重排（xgui_demo_pages.h 契约）：内容区几何随 CSD
      * 系统栏/窗口尺寸/导航面板占位变化，各页按当前根几何重排——本函数
      * 在切页/resize/startup/停靠切换全路径执行；登记表下标=页索引-5
@@ -2357,18 +2510,21 @@ static void demo_layout_content(DemoWin* self)
         demo_page_qrcode_adapt(self->m_extPages[10]); /* 2026-10-08 二维码页。 */
     if (self->m_extPages[11])
         demo_page_update_adapt(self->m_extPages[11]); /* 2026-10-07 软件更新页。 */
-    XPrintf("XGuiWindowDemo: layout ext12=%p ext13=%p\n",
-            (void*)self->m_extPages[12], (void*)self->m_extPages[13]);
+    /* [性能 2026-10-17] 摘除 Modbus 调试打印 layout ext12/ext13——本
+     * 漏斗每 resize 步必跑，控制台写在拖拽期是纯开销。 */
     if (self->m_extPages[12])
         demo_page_modbus_master_adapt(self->m_extPages[12]); /* 2026-10-14 Modbus 主站页滚动承载。 */
     if (self->m_extPages[13])
         demo_page_modbus_slave_adapt(self->m_extPages[13]); /* 2026-10-14 Modbus 从站页。 */
+    if (self->m_extPages[14])
+        demo_page_window_settings_adapt(self->m_extPages[14]); /* 2026-10-17 窗口设置页。 */
     /* 远程服务器页（2026-10-06 补入统一漏斗）：此前只在 resizeEvent
      * 单独调用，切页路径漏跑——XStackedLayout StackOne 只给当前页
      * 分配几何，resize 落在别的页时本页根保持陈旧尺寸，adapt 算出
-     * 全页错位（用户实测：服务地址行 95px 窄条悬页中）。本函数先
-     * 重贴堆叠几何（上方 setGeometry_base）再跑 adapt，切页/resize/
-     * startup/停靠全路径根尺寸都新鲜。 */
+     * 全页错位（用户实测：服务地址行 95px 窄条悬页中）。切页路径
+     * setCurrentIndex 已回贴堆叠既有几何（三段托管后=contentHost
+     * 局部），本漏斗随后跑 adapt，切页/resize/startup/停靠全路径
+     * 根尺寸都新鲜。 */
     demo_page_remote_server_adaptWidth();
 }
 
@@ -2396,7 +2552,7 @@ static void demo_switchPage(DemoWin* self, int index)
     }
 #endif
     if (index < 0) index = 0;
-    if (index > 18) index = 18; /* 2026-10-13 页 17/18=Modbus 主站/从站双页入列。 */
+    if (index > 19) index = 19; /* 2026-10-17 页 19=窗口设置入列。 */
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 导航面板手风琴随页展开所在分类（程序化切页 --page/autotest 与
@@ -2406,6 +2562,12 @@ static void demo_switchPage(DemoWin* self, int index)
         demo_navUpdatePanel(self);
     }
 #endif
+    /* [懒分配 2026-10-19·工程要点⑤] 切页契约：目标扩展页在 setCurrentIndex
+       前确保真实构建（首显构建唯一常规入口；exti=index-5，负值/越界/裁
+       剪占位槽由 demo_ext_ensureBuilt 自守卫零操作；已建幂等短路=常驻
+       不销毁）。堆叠下标=页索引由注册期占位壳保持，换入真页根后本函数
+       既有几何回贴/adapt/整页刷新链路照旧。 */
+    demo_ext_ensureBuilt(self, index - 5);
     XStackedLayout_setCurrentIndex(&self->m_stackLayout, index);
 #if XBUTTONGROUP_ON && XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON
     /* 导航钮选中态随页同步：点击切页（clicked 槽走此处，重设同值幂等）
@@ -2534,9 +2696,15 @@ static void demo_chartRangeSlot(XObject* receiver, XVarList* args)
 }
 #endif /* XCHARTS_ON */
 
-/** @brief 把紧凑内容控件包进页容器（页容器铺满 tab 页，内容保持
- *         自身几何；对标 Qt 页容器+布局的分层语义）。返回页容器。 */
-static XWidget* demo_wrapTabPage(DemoWin* self, XWidget* content)
+/** @brief 把内容控件包进页容器（页容器挂填充布局随 tab 页铺满，
+ *         内容件由布局接管几何——对标 Qt 页容器+布局分层语义；
+ *         [布局容器化 2026-10-17] 原「包装页无布局+内容件手写
+ *         (10,10,...) 固定几何」会使内容件停留在包装页被
+ *         XTabWidget 摆位前的旧坐标（目验：滚动区盖住页签条）。
+ *         layout 由调用方传入成员（一控件一布局），NULL 时不挂。
+ *         返回页容器。 */
+static XWidget* demo_wrapTabPage(DemoWin* self, XWidget* content,
+                                 XBoxLayout* layout)
 {
     XWidget* page;
     if (!self || !content) return content;
@@ -2547,6 +2715,11 @@ static XWidget* demo_wrapTabPage(DemoWin* self, XWidget* content)
     Set_Class_Memory(page, XCLASS_DEFAULT_MEMORY_TYPE);
     Set_Class_IsHeap(page, true);
     XWidget_setParent(content, page, 0);
+    if (layout) {
+        XBoxLayout_init(layout, XBoxLayoutDirection_TopToBottom);
+        XBoxLayout_addWidget(layout, content);
+        XWidget_setLayout(page, (XLayout*)layout);
+    }
     XWidget_show(content);
     XWidget_show(page);
     return page;
@@ -2675,6 +2848,13 @@ static void demo_nav18Slot(XObject* receiver, XVarList* args)
     demo_switchPage((DemoWin*)receiver, 18);
 }
 
+/** @brief 页面 19（窗口设置）导航槽（2026-10-17 系统设置入列）。 */
+static void demo_nav19Slot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    demo_switchPage((DemoWin*)receiver, 19);
+}
+
 /** @brief 扩展页状态回调：转发到主窗状态栏（xgui_demo_pages.h 契约适配）。 */
 static void demo_ext_page_status(void* user, const char* text)
 {
@@ -2721,8 +2901,9 @@ void demo_main_overlay_applyPreset(void* user, int preset)
         int x;
         int y;
         geo = XPerformanceOverlay_geometry(&win->m_performanceOverlay);
-        top = demo_sysbarH(win) + 40 + 8;
-        bottomLimit = XWidget_height(&win->m_base) - 26 - 8;
+        top = demo_sysbarH(win) + DEMO_BRAND_H + 8;
+        bottomLimit = XWidget_height(&win->m_base) -
+                      (win->m_statusBarVisible ? DEMO_STATUS_H : 0) - 8;
         x = geo.x;
         y = geo.y;
         if (x < 8) x = 8;
@@ -2752,6 +2933,64 @@ void demo_main_overlay_applyPreset(void* user, int preset)
     (void)user; (void)preset;
 }
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && ... */
+
+/* ==================== 窗口设置页访问器（xgui_demo_pages.h 契约） ==== */
+
+void* demo_main_toplevel(void* user)
+{
+    DemoWin* win = (DemoWin*)user;
+    if (!win) return NULL;
+    return (void*)&win->m_base;
+}
+
+bool demo_main_setStatusBarVisible(void* user, bool visible)
+{
+    DemoWin* win = (DemoWin*)user;
+    if (!win || win->m_statusBarVisible == visible) return visible;
+    win->m_statusBarVisible = visible;
+    /* 布局化 chrome：显隐即布局隐藏条目，空间自动收放。 */
+    XWidget_setVisible((XWidget*)&win->m_statusLabel, visible);
+    demo_main_refreshChrome(user);
+    return visible;
+}
+
+bool demo_main_statusBarVisible(void* user)
+{
+    DemoWin* win = (DemoWin*)user;
+    if (!win) return false;
+    return win->m_statusBarVisible;
+}
+
+void demo_main_sceneInvalidate(void* user)
+{
+    DemoWin* win = (DemoWin*)user;
+    if (!win) return;
+    win->m_staticSceneDirty = true;
+    demo_repaint(win);
+}
+
+void demo_main_refreshChrome(void* user)
+{
+    DemoWin* win = (DemoWin*)user;
+    if (!win) return;
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_ON
+    /* CSD 保留边距=根布局 contentsMargins.top（单一出处）：边框开关
+     * 收放边距后更新之，品牌条/内容区/状态栏三段由布局自动重排。 */
+    XLayout_setContentsMargins(&win->m_rootLayout,
+                               0, demo_sysbarH(win), 0, 0);
+    XLayout_activate((XLayout*)&win->m_rootLayout);
+#endif
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    /* 右下自动悬浮层锚定随内容区段收放（用户预设定位时不抢位）。 */
+    demo_performance_anchorBottomRight(win);
+#endif
+#if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
+    XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* 导航面板/页内排布随内容区段重排（面板 py 相对 contentHost=0）。 */
+    demo_navUpdatePanel(win);
+    demo_layout_content(win);
+#endif
+}
 
 #if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
     XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
@@ -3086,8 +3325,15 @@ static void VDemoWin_resizeEvent(XWidget* self, XEvent* event)
     XClass_Parent(XWidget, EXWidget_ResizeEvent,
                   void(*)(XWidget*, XEvent*))(self, event);
     demo->m_staticSceneDirty = true;
-#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    demo_layout_chrome(self);
+#if XWIDGET_ON && XLAYOUT_ON
+    /* [跟随延迟兜底 2026-10-18] 显式重解算后再做 demo 侧排布：RESIZE 派
+       发前平台路径已激活根布局（XWidget_applyWindowGeometry 平台路径
+       布局激活，与 recomputeGeometry 对称），此处 updateGeometry 使
+       demo_navUpdatePanel/demo_layout_content 读到的 contentHost 几何
+       恒为本帧激活值，不再依赖帧泵下一轮兜底（晚一拍）。沿父链
+       invalidate+activate 幂等（XLayout.c:1140-1144），与平台激活双调
+       用无害；失效先于激活顺序由 updateGeometry 内部保证。 */
+    XWidget_updateGeometry(self);
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
@@ -3244,6 +3490,50 @@ static void VDemoWin_mousePressEvent(XWidget* self, XEvent* event)
     demo_log("XGuiWindowDemo: mousePress button=%d buttons=0x%x pos=(%d,%d)\n",
              (int)XMouseEvent_button(mouse), (unsigned)XMouseEvent_buttons(mouse),
              (int)XMouseEvent_position(mouse).x, (int)XMouseEvent_position(mouse).y);
+    /* [命中探针 2026-10-19] XGUI_DEMO_HITPROBE=1：根收到按下时打印
+       childAt 结果与扩展页槽位/占位壳矩形——XTEST 黑盒点击不可达的
+       现场归因（评审目验失败项①），常态零开销。 */
+    if (XSystem_environment("XGUI_DEMO_HITPROBE")) {
+        XPoint probe;
+        XWidget* hit;
+        int exti;
+        XPoint_init(&probe, XMouseEvent_position(mouse).x,
+                    XMouseEvent_position(mouse).y);
+        hit = XWidget_childAt(&demo->m_base, &probe);
+        demo_log("HITPROBE childAt=%p isWidget=%d\n", (void*)hit,
+                 hit ? (int)XObject_isWidgetType((XObject*)hit) : -1);
+        { /* 命中链回溯：逐层打印 rect/visible，定位错位层。 */
+            XObject* it = (XObject*)hit;
+            int depth = 0;
+            while (it && it->m_is_widget && depth < 8) {
+                XWidget* w = (XWidget*)it;
+                demo_log("HITPROBE chain[%d] %p rect=(%d,%d %dx%d) "
+                         "hidden=%d vis=%d\n", depth, (void*)w,
+                         w->m_windowRect.x, w->m_windowRect.y,
+                         w->m_windowRect.width, w->m_windowRect.height,
+                         XWidget_testAttribute(w,
+                             XWidgetAttribute_WState_Hidden) ? 1 : 0,
+                         XWidget_isVisible(w) ? 1 : 0);
+                it = XObject_parent(it);
+                ++depth;
+            }
+        }
+        for (exti = 0; exti < 15; ++exti) {
+            XWidget* page = demo->m_extPages[exti];
+            if (page)
+                demo_log("HITPROBE ext[%d] rect=(%d,%d %dx%d) vis=%d built=%d\n",
+                         exti, page->m_windowRect.x, page->m_windowRect.y,
+                         page->m_windowRect.width, page->m_windowRect.height,
+                         XWidget_isVisible(page) ? 1 : 0,
+                         demo->m_extBuilt[exti] ? 1 : 0);
+        }
+        demo_log("HITPROBE navPanel rect=(%d,%d %dx%d) vis=%d\n",
+                 demo->m_navPanel.m_windowRect.x,
+                 demo->m_navPanel.m_windowRect.y,
+                 demo->m_navPanel.m_windowRect.width,
+                 demo->m_navPanel.m_windowRect.height,
+                 XWidget_isVisible((XWidget*)&demo->m_navPanel) ? 1 : 0);
+    }
 #if defined(__ANDROID__)
     { /* 安卓验证通道：stdout 不可见，鼠标事件到达即打 logcat。 */
         extern void XGuiDemo_debugLog(const char* text);
@@ -3427,6 +3717,9 @@ static DemoWin* DemoWin_create(void)
        二维码页引入）。几何/缩进/对齐字段与原处一致；稍后的可见性
        调整与 show 不受提前影响（show 原处保留）。 */
     DemoStatusLabel_init(&self->m_statusLabel, &self->m_base, 0);
+    self->m_statusBarVisible = true; /* 窗口设置页开关的初值（默认显示）。 */
+    self->m_lastContentW = -1; /* 帧泵兜底门：强制首轮页内排布。 */
+    self->m_lastContentH = -1;
     demo_set_widget_default_font((XWidget*)&self->m_statusLabel);
     XLabel_setText_2((XLabel*)&self->m_statusLabel, "就绪");
     XLabel_setTextPixelSize((XLabel*)&self->m_statusLabel, 14);
@@ -3437,38 +3730,84 @@ static DemoWin* DemoWin_create(void)
     XLabel_setIndent((XLabel*)&self->m_statusLabel, 16);
     XWidget_setForegroundRole((XWidget*)&self->m_statusLabel,
                               XPaletteColorRole_HighlightedText);
-    XWidget_setGeometry((XWidget*)&self->m_statusLabel, 0, 334, 520, 26);
+    XWidget_setFixedHeight((XWidget*)&self->m_statusLabel, DEMO_STATUS_H);
 #endif
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     demo_performance_init(self);
 #endif
-#if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    /* 顶部标题栏文本（深蓝背景由静态场景绘制，白字覆盖其上）。
-       Bold：合成粗体样张——标题是界面里最合适加粗的层级。 */
-    XLabel_init(&self->m_titleLabel, &self->m_base, 0);
-    demo_set_widget_default_font((XWidget*)&self->m_titleLabel);
+#if XWIDGET_ON && XFRAME_ON && XLABEL_ON && XLAYOUT_ON && XLAYOUT_ON
+    /* ---- 布局化 chrome（2026-10-17）：根垂直布局三段----
+     * [品牌条 40 固定][内容区伸展][状态栏 26 固定]；CSD 保留边距=
+     * contentsMargins.top（边框开关只更新这一处）。Bold：合成粗体
+     * 样张——标题是界面里最合适加粗的层级。 */
+    DemoBrandBar_init(&self->m_brandBar, &self->m_base, 0);
+    demo_set_widget_default_font((XWidget*)&self->m_brandBar);
     {
-        XFont titleFont = XWidget_font((XWidget*)&self->m_titleLabel);
+        XFont titleFont = XWidget_font((XWidget*)&self->m_brandBar);
         XFont_setBold(&titleFont, true);
-        XWidget_setFont((XWidget*)&self->m_titleLabel, &titleFont);
+        XWidget_setFont((XWidget*)&self->m_brandBar, &titleFont);
         XClassDeinit(&titleFont);
     }
-    XLabel_setText_2(&self->m_titleLabel, "XGui 控件演示");
-    XLabel_setTextPixelSize(&self->m_titleLabel, 18);
-    XLabel_setAlignment(&self->m_titleLabel,
+    XLabel_setText_2((XLabel*)&self->m_brandBar, "XGui 控件演示");
+    XLabel_setTextPixelSize((XLabel*)&self->m_brandBar, 18);
+    XLabel_setAlignment((XLabel*)&self->m_brandBar,
                         XAlignment_Left | XAlignment_VCenter);
-    XWidget_setForegroundRole((XWidget*)&self->m_titleLabel,
+    XLabel_setIndent((XLabel*)&self->m_brandBar, 16);
+    XWidget_setForegroundRole((XWidget*)&self->m_brandBar,
                               XPaletteColorRole_HighlightedText);
-    XWidget_setGeometry((XWidget*)&self->m_titleLabel, 16, 0, 420, 40);
-    XWidget_show((XWidget*)&self->m_titleLabel);
+    XWidget_setFixedHeight((XWidget*)&self->m_brandBar, DEMO_BRAND_H);
+    XWidget_show((XWidget*)&self->m_brandBar);
+
+    XBoxLayout_init(&self->m_rootLayout, XBoxLayoutDirection_TopToBottom);
+    XWidget_init(&self->m_midHost, &self->m_base, 0);
+    /* [Qt 对齐 2026-10-18] 中段宿主=根布局伸展段，缺省 sizePolicy 改双向
+     * Expanding：XSplitter 引入 sizeHint/minimumSizeHint 后 midHost 的
+     * 布局 hint 首次有了有效值（分割条页 hint 合计），缺省 Preferred 使
+     * 根布局按 hint 落尺寸、余量整段留白——放大/最大化后中段（导航+
+     * 内容）停在旧尺寸不跟随（10-18 真机实证；品牌/状态横平移不受影响）。 */
+    XWidget_setSizePolicy(&self->m_midHost,
+                          XWidgetSizePolicy_Expanding,
+                          XWidgetSizePolicy_Expanding);
+    XWidget_init(&self->m_contentHost, &self->m_midHost, 0);
+    /* [XSplitter 迁移 2026-10-17] 中段=框架分割条：midHost 单项容器布
+     * 局托管分割条；面板/内容区在导航装配段作为分割条子页挂入。 */
+    XBoxLayout_init(&self->m_midHostLayout, XBoxLayoutDirection_TopToBottom);
+#if XSPLITTER_ON
+    XSplitter_init(&self->m_navSplitter, &self->m_midHost, 0);
+    XSplitter_setHandleWidth(&self->m_navSplitter, 8);
+    XWidget_setAttribute((XWidget*)&self->m_navSplitter,
+                         XWidgetAttribute_HitEdgeBand, true);
+    XWidget_show((XWidget*)&self->m_navSplitter);
+    XBoxLayout_addWidget(&self->m_midHostLayout,
+                         (XWidget*)&self->m_navSplitter);
+    XBoxLayout_setStretch(&self->m_midHostLayout, 0, 1);
+#endif
+    XBoxLayout_addWidget(&self->m_rootLayout, (XWidget*)&self->m_brandBar);
+    XBoxLayout_addWidget(&self->m_rootLayout, &self->m_midHost);
+    XBoxLayout_addWidget(&self->m_rootLayout,
+                         (XWidget*)&self->m_statusLabel);
+    XBoxLayout_setStretch(&self->m_rootLayout, 1, 1);
+    XLayout_setContentsMargins((XLayout*)&self->m_rootLayout,
+                               0, demo_sysbarH(self), 0, 0);
+    XWidget_setLayout(&self->m_base, (XLayout*)&self->m_rootLayout);
+    XWidget_setLayout(&self->m_midHost, (XLayout*)&self->m_midHostLayout);
 #endif
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
     /* 主内容堆叠：三个演示页面容器（可见性由 XStackedLayout 管理）。 */
     XStackedLayout_init(&self->m_stackLayout);
-    XWidget_init(&self->m_pageButtons, &self->m_base, 0);
-    XWidget_init(&self->m_pageChoices, &self->m_base, 0);
-    XWidget_init(&self->m_pageStacked, &self->m_base, 0);
-    XWidget_init(&self->m_pageInputs, &self->m_base, 0);
+    /* [布局化 chrome 三段 2026-10-17] 堆叠托管到 contentHost（上次
+     * 尝试回退的「不消费避让边距」已由框架侧 VXStackedLayout_setGeometry
+     * 消费 contentsMargins 根修）：下方 addWidget 经 XLayout_linkItem
+     * 自动把页面重挂为 contentHost 子，矩形由宿主以自身坐标 (0,0,w,h)
+     * 激活分配——原手动 setGeometry 按窗口坐标解释（页面压盖品牌条，
+     * DDE 探针实测错位 y=68=CSD 28+品牌 40）连同避让双重计入一并消除。
+     * 呼吸边 12/8/12/0（上 8px 呼吸，底=0 因 contentHost 底已贴状态栏）。 */
+    XWidget_setLayout(&self->m_contentHost, (XLayout*)&self->m_stackLayout);
+    XLayout_setContentsMargins((XLayout*)&self->m_stackLayout, 12, 8, 12, 0);
+    XWidget_init(&self->m_pageButtons, &self->m_contentHost, 0);
+    XWidget_init(&self->m_pageChoices, &self->m_contentHost, 0);
+    XWidget_init(&self->m_pageStacked, &self->m_contentHost, 0);
+    XWidget_init(&self->m_pageInputs, &self->m_contentHost, 0);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageButtons);
     XStackedLayout_addWidget(&self->m_stackLayout,
@@ -3477,53 +3816,44 @@ static DemoWin* DemoWin_create(void)
                              (XWidget*)&self->m_pageStacked);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageInputs);
-    XWidget_init(&self->m_pageTabs, &self->m_base, 0);
+    XWidget_init(&self->m_pageTabs, &self->m_contentHost, 0);
     XStackedLayout_addWidget(&self->m_stackLayout,
                              (XWidget*)&self->m_pageTabs);
-    /* ---- 页面 5~16：扩展页注册（xgui_demo_pages.h 契约，堆根随父级联
-     * 析构）；裁剪配置下 build 返回 NULL 则跳过注册。下标=页索引-5，
-     * 下标 7=页 12（图表演示，内置页）恒 NULL 占位。 ---- */
+    /* ---- 页面 5~16：扩展页注册（xgui_demo_pages.h 契约）。[懒分配
+     * 2026-10-19] 改惰性：注册期只建空占位壳入栈（真页根推迟到首显，
+     * 由 demo_ext_ensureBuilt 同位换入，见文件级 g_extBuilders 注）。
+     * 下标=页索引-5，下标 7=页 12（图表演示，内置页）恒 NULL 占位。 ---- */
     {
         int exti;
-        XWidget* (*const kExtBuilders[14])(XWidget*, DemoPageStatusFn, void*) = {
-#if XINYUE_EMBEDDED
-            /* 嵌入式（F407 外扩堆 1008KB）：全部扩展页暂不预建——键盘页的
-             * 拼音引擎+虚拟键盘控件树为最大内存户；性能悬浮窗演示优先，
-             * 键盘页待后备存储静态绑定（extbuf 640KB 方案）后接回。 */
-            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-            NULL, NULL, NULL, NULL
-#else
-            demo_page_views_build, demo_page_dialogs_build,
-            demo_page_advanced_build, demo_page_effects_build,
-            demo_page_keyboard_build, demo_page_remote_server_build,
-            demo_page_remote_client_build, /* 2026-10-02 追加第 7 扩展页。 */
-            NULL, /* 页 12（图表演示）内置页占位。 */
-            demo_page_network_build, /* 2026-10-06 网络设置页（系统设置）。 */
-            demo_page_overlay_settings_build, /* 2026-10-06 悬浮窗设置页。 */
-            demo_page_qrcode_build, /* 2026-10-08 二维码演示页（控件类）。 */
-            demo_page_update_build, /* 2026-10-07 软件更新页（系统设置）。 */
-            demo_page_modbus_master_build, /* 2026-10-13 Modbus 主站页。 */
-            demo_page_modbus_slave_build /* 2026-10-13 Modbus 从站页。 */
-#endif
-        };
-        for (exti = 0; exti < 14; ++exti) {
+        for (exti = 0; exti < 15; ++exti) {
 #if XCHARTS_ON
             if (exti == 7) {
                 /* 页 12（图表演示）内置页在此占位入栈：保证「堆叠下标=
                    页索引」连续——后随扩展页（网络设置/悬浮窗设置）恰落
                    堆叠序 13/14；曾把图表页挪到扩展页之后入栈，两新页
                    顶掉了它的序号（--page 13/14 截图错页实证）。 */
-                XWidget_init(&self->m_pageChart, &self->m_base, 0);
+                XWidget_init(&self->m_pageChart, &self->m_contentHost, 0);
                 XStackedLayout_addWidget(&self->m_stackLayout,
                                          &self->m_pageChart);
                 continue;
             }
 #endif
-            if (!kExtBuilders[exti])
+            if (!g_extBuilders[exti])
                 continue;
-            self->m_extPages[exti] =
-                kExtBuilders[exti]((XWidget*)&self->m_base,
-                                   demo_ext_page_status, self);
+            /* [懒分配 2026-10-19·工程要点④] 占位壳必须写入 m_extPages
+             * 槽位本身，非仅 XStackedLayout.addWidget：main 尾部窗口几
+             * 何分支查 m_extPages[0..11] 任一非空才取 1000x700，槽位空
+             * 会落 520x360——无头一致性采集（XGUI_DEMO_WINDOW_SIZE）与
+             * 量化对照的后备存储 RSS 全面漂移（评审实验已以临时 OR 门
+             * +PNG 1000x700 解析复核）。占位壳=堆上空 XWidget（零子树，
+             * 常驻成本可忽略；懒分配省的是页内容重树）。
+             * 注册父必须 m_base（真窗口），勿改挂 contentHost：与真页
+             * 根同口径（真根 build 亦以 m_base 为构造父，随后由
+             * insertWidget 的 XLayout_linkItem 重挂 contentHost）；部分
+             * 页面把 parent 当「主窗顶层」用（远程页 m_topLevel→
+             * XGuiServer_host 的 isWindow 门；挂 contentHost 即监听静
+             * 默失败=autotest 3 FAIL 回归实证 2026-10-17）。 */
+            self->m_extPages[exti] = XWidget_create((XWidget*)&self->m_base, 0);
             if (self->m_extPages[exti])
                 XStackedLayout_addWidget(&self->m_stackLayout,
                                          self->m_extPages[exti]);
@@ -3588,7 +3918,7 @@ static DemoWin* DemoWin_create(void)
                       XConnectionType_Direct);
     XWidget_show(&self->m_navCollapseBtn);
     {
-        static void (*const kNavSlots[19])(XObject*, XVarList*) = {
+        static void (*const kNavSlots[20])(XObject*, XVarList*) = {
             demo_nav0Slot, demo_nav1Slot, demo_nav2Slot, demo_nav3Slot,
             demo_nav4Slot, demo_nav5Slot, demo_nav6Slot, demo_nav7Slot,
             demo_nav8Slot, demo_nav9Slot, demo_nav10Slot, demo_nav11Slot,
@@ -3598,7 +3928,8 @@ static DemoWin* DemoWin_create(void)
             demo_nav15Slot, /* 2026-10-08 二维码演示入列。 */
             demo_nav16Slot, /* 2026-10-07 软件更新入列（2026-10-11 双页并入移至页 16）。 */
             demo_nav17Slot, /* 2026-10-13 Modbus 主站入列。 */
-            demo_nav18Slot  /* 2026-10-13 Modbus 从站入列。 */
+            demo_nav18Slot, /* 2026-10-13 Modbus 从站入列。 */
+            demo_nav19Slot  /* 2026-10-17 窗口设置入列。 */
         };
         int i;
 #if XBUTTONGROUP_ON
@@ -3655,16 +3986,29 @@ static DemoWin* DemoWin_create(void)
     self->m_navCategory = 0;   /* 默认展开「控件」 */
     self->m_navWidth = DEMO_NAV_PANEL_W;
     self->m_navTBH = DEMO_NAV_TB_H;
+#if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
+    /* [编译健全性 2026-10-18] 成员声明在 overlay 宏域内（DemoWin :462），
+       使用处须同宏域护栏——此前 overlay=0 裁剪构建编不过
+       （m_overlayPinned 未声明），阻塞嵌入式裁剪与无 HUD 回归验证。 */
     self->m_overlayPinned = false; /* 悬浮层默认自动锚右下（用户预设后挂起）。 */
-    {
-        /* 分割条：贴面板内缘拖动调宽/高，双击收起，收起态单击展开。 */
-        static const DemoSplitterCallbacks kNavSplitCbs = {
-            demo_navSplitSizeFor, demo_navSplitApplySize, demo_navSplitToggle
-        };
-        self->m_navSplit = DemoSplitter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
-                                                  &self->m_base, 0,
-                                                  &kNavSplitCbs, self);
-    }
+#endif
+#if XSPLITTER_ON
+    /* [XSplitter 迁移 2026-10-17] 面板+内容挂入分割条（默认顺序=左停靠
+     * [面板|内容]；换侧顺序由 navUpdatePanel 经 insertWidget 翻转）；
+     * content 侧 stretch=1 兜底吃满余下；手柄点击信号接双击收起/展开
+     * 与收起态空闲点击展开（见 demo_navSplitHandleSlot）。 */
+    XSplitter_addWidget(&self->m_navSplitter, (XWidget*)&self->m_navPanel);
+    XSplitter_addWidget(&self->m_navSplitter, &self->m_contentHost);
+    XSplitter_setStretchFactor(&self->m_navSplitter, 1, 1);
+    XObject_connect_1((XObject*)&self->m_navSplitter,
+                      (size_t)XSplitter_handleClicked_signal(NULL, 0, 0),
+                      (XObject*)self, demo_navSplitHandleSlot,
+                      XConnectionType_Direct);
+    XObject_connect_1((XObject*)&self->m_navSplitter,
+                      (size_t)XSplitter_splitterMoved_signal(NULL, 0, 0),
+                      (XObject*)self, demo_navSplitMovedSlot,
+                      XConnectionType_Direct);
+#endif
     demo_navUpdatePanel(self);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
@@ -3991,22 +4335,29 @@ static DemoWin* DemoWin_create(void)
                       (XObject*)self, demo_tab_changedSlot,
                       XConnectionType_Direct);
 #if XSCROLLAREA_ON && XABSTRACTSCROLLAREA_ON && XFRAME_ON && XLABEL_ON
-    /* 页签 0：XScrollArea。 */
+    /* 页签 0：XScrollArea（包装页挂 m_scrollTabPageLayout 填充布局，
+       2026-10-17 撤手写 (10,10,300,150)——原手写使滚动区停留在包装页
+       未摆位前的坐标，目验盖住页签条）。内容加高到 30 行保证填充后
+       视口仍可滚动（滚动演示语义保持）。 */
     XScrollArea_init(&self->m_scrollArea, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_scrollArea, 10, 10, 300, 150);
     {
         XLabel* big = XLabel_create((XWidget*)&self->m_scrollArea, 0);
-        XLabel_setText_2(big, "滚动内容\n第二行\n第三行\n第四行\n第五行\n第六行");
-        XWidget_resize(big, 260, 200);
+        XLabel_setText_2(big,
+            "滚动内容\n第二行\n第三行\n第四行\n第五行\n第六行\n"
+            "第七行\n第八行\n第九行\n第十行\n第十一行\n第十二行\n"
+            "第十三行\n第十四行\n第十五行\n第十六行\n第十七行\n第十八行\n"
+            "第十九行\n第二十行\n第二一行\n第二二行\n第二三行\n第二四行\n"
+            "第二五行\n第二六行\n第二七行\n第二八行\n第二九行\n第三十行");
+        XWidget_resize(big, 260, 620);
         XScrollArea_setWidget(&self->m_scrollArea, (XWidget*)big);
     }
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 0,
-                               demo_wrapTabPage(self, (XWidget*)&self->m_scrollArea), "滚动");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_scrollArea,
+                                                &self->m_scrollTabPageLayout), "滚动");
 #endif
 #if XSPLITTER_ON && XFRAME_ON && XLABEL_ON
-    /* 页签 1：XSplitter。 */
+    /* 页签 1：XSplitter（几何由 XTabWidget 分配）。 */
     XSplitter_init(&self->m_splitter, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_splitter, 10, 10, 300, 150);
     {
         XLabel* left = XLabel_create((XWidget*)&self->m_splitter, 0);
         XLabel* right = XLabel_create((XWidget*)&self->m_splitter, 0);
@@ -4021,9 +4372,8 @@ static DemoWin* DemoWin_create(void)
                                (XWidget*)&self->m_splitter, "分割");
 #endif
 #if XTOOLBOX_ON && XFRAME_ON && XLABEL_ON
-    /* 页签 2：XToolBox。 */
+    /* 页签 2：XToolBox（几何由 XTabWidget 分配）。 */
     XToolBox_init(&self->m_toolBox, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_toolBox, 10, 10, 200, 150);
     {
         XLabel* a = XLabel_create((XWidget*)&self->m_toolBox, 0);
         XLabel* b = XLabel_create((XWidget*)&self->m_toolBox, 0);
@@ -4052,38 +4402,51 @@ static DemoWin* DemoWin_create(void)
             self->m_editMenu = XMenuBar_addMenu_2(&self->m_menuBar, "编辑");
             if (self->m_fileMenu) XMenu_addAction_2(self->m_fileMenu, "退出");
             if (self->m_editMenu) XMenu_addAction_2(self->m_editMenu, "全选");
-            XWidget_setGeometry((XWidget*)&self->m_menuBar, 0, 0, 300, 26);
             XWidget_show((XWidget*)&self->m_menuBar);
             XToolBar_init(&self->m_toolBar, mbPage, 0);
             XToolBar_addAction_2(&self->m_toolBar, "新建");
             XToolBar_addAction_2(&self->m_toolBar, "保存");
-            XWidget_setGeometry((XWidget*)&self->m_toolBar, 0, 30, 300, 34);
             XWidget_show((XWidget*)&self->m_toolBar);
+            /* 框架页布局容器化（2026-10-17）：菜单栏/工具栏/状态栏三段
+               纵向布局接管（行高对标改造前手写值 26/34/24，段间距 4）；
+               页容器几何由 XTabWidget 统一分配（原 setGeometry 撤销）。 */
+            XBoxLayout_init(&self->m_framePageLayout,
+                            XBoxLayoutDirection_TopToBottom);
+            XBoxLayout_addWidget(&self->m_framePageLayout,
+                                 (XWidget*)&self->m_menuBar);
+            XWidget_setFixedHeight((XWidget*)&self->m_menuBar, 26);
+            XBoxLayout_addWidget(&self->m_framePageLayout,
+                                 (XWidget*)&self->m_toolBar);
+            XWidget_setFixedHeight((XWidget*)&self->m_toolBar, 34);
 #if XSTATUSBAR_ON && XLABEL_ON
             /* 状态栏并入框架页（页底）。 */
             XStatusBar_init(&self->m_sb, mbPage, 0);
-            XWidget_setGeometry((XWidget*)&self->m_sb, 10, 74, 350, 24);
             XLabel_init(&self->m_sbLabel, (XWidget*)&self->m_sb, 0);
             XLabel_setText_2(&self->m_sbLabel, "普通区标签");
             XStatusBar_addWidget(&self->m_sb, (XWidget*)&self->m_sbLabel, 1);
+            XBoxLayout_addWidget(&self->m_framePageLayout,
+                                 (XWidget*)&self->m_sb);
+            XWidget_setFixedHeight((XWidget*)&self->m_sb, 24);
             XWidget_show((XWidget*)&self->m_sb);
 #endif
-            XWidget_setGeometry(mbPage, 0, 0, 400, 290);
+            XLayout_setSpacing((XLayout*)&self->m_framePageLayout, 4);
+            XBoxLayout_addStretch(&self->m_framePageLayout, 1); /* 余高留底部（三段固定高）。 */
+            XWidget_setLayout(mbPage, (XLayout*)&self->m_framePageLayout);
             (void)XTabWidget_insertTab_2(&self->m_tabWidget, 3, mbPage, "框架");
         }
     }
 #endif
 #if XCALENDARWIDGET_ON
-    /* 页签 4：XCalendarWidget。 */
+    /* 页签 4：XCalendarWidget（包装页挂 m_calTabPageLayout 填充布局，
+       2026-10-17 撤手写 (10,10,280,200)，见页签 0 注）。 */
     XCalendarWidget_init(&self->m_calendar, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_calendar, 10, 10, 280, 200);
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 4,
-                               demo_wrapTabPage(self, (XWidget*)&self->m_calendar), "日历");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_calendar,
+                                                &self->m_calTabPageLayout), "日历");
 #endif
 #if XTEXTBROWSER_ON
-    /* 页签 5：XTextBrowser。 */
+    /* 页签 5：XTextBrowser（几何由 XTabWidget 分配）。 */
     XTextBrowser_init(&self->m_textBrowser, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_textBrowser, 10, 10, 300, 150);
     XPlainTextEdit_setPlainText(self->m_textBrowser.m_base.m_editor,
         "帮助内容\n第二段\n第三段");
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 5,
@@ -4093,9 +4456,8 @@ static DemoWin* DemoWin_create(void)
     XWidget_show((XWidget*)&self->m_textBrowser);
 #endif
 #if XMDIAREA_ON && XFRAME_ON && XLABEL_ON
-    /* 页签 6：XMdiArea。 */
+    /* 页签 6：XMdiArea（几何由 XTabWidget 分配）。 */
     XMdiArea_init(&self->m_mdiArea, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_mdiArea, 10, 10, 350, 200);
     {
         XLabel* m0 = XLabel_create((XWidget*)&self->m_mdiArea, 0);
         XLabel* m1 = XLabel_create((XWidget*)&self->m_mdiArea, 0);
@@ -4111,14 +4473,19 @@ static DemoWin* DemoWin_create(void)
     XWidget_show((XWidget*)&self->m_mdiArea); /* 直插型页签显式 show */
 #endif
 #if XSTACKEDWIDGET_ON && XBUTTONGROUP_ON && XCHECKBOX_ON && XLAYOUT_STACKED_ON
-    /* 页签 7：XStackedWidget + XButtonGroup。 */
+    /* 页签 7：XStackedWidget + XButtonGroup（包装页挂
+       m_stackWTabPageLayout 填充布局，2026-10-17 撤容器手写
+       (10,10,200,100)，见页签 0 注）。 */
     XStackedWidget_init(&self->m_stackedW, (XWidget*)&self->m_tabWidget, 0);
-    XWidget_setGeometry((XWidget*)&self->m_stackedW, 10, 10, 200, 100);
     XButtonGroup_init(&self->m_btnGroup, NULL);
     XCheckBox_init(&self->m_bgBtn0, (XWidget*)&self->m_stackedW, 0);
     XCheckBox_init(&self->m_bgBtn1, (XWidget*)&self->m_stackedW, 0);
     XAbstractButton_setText_2((XAbstractButton*)&self->m_bgBtn0, "选项 A");
     XAbstractButton_setText_2((XAbstractButton*)&self->m_bgBtn1, "选项 B");
+    /* 两勾选框保留手写摆位：XStackedWidget 自挂内部 XStackedLayout，
+       外层不能再装盒式布局（一控件一布局）；且勾选框是普通子控件而非
+       堆叠页（XStackedWidget_addWidget 会使其变成互斥页签，语义不合），
+       无布局承载可迁移（外层容器几何已由布局接管，此处为容器内局部）。 */
     XWidget_setGeometry((XWidget*)&self->m_bgBtn0, 10, 10, 120, 24);
     XWidget_setGeometry((XWidget*)&self->m_bgBtn1, 10, 40, 120, 24);
     XButtonGroup_addButton(&self->m_btnGroup, (XAbstractButton*)&self->m_bgBtn0, 0);
@@ -4129,7 +4496,8 @@ static DemoWin* DemoWin_create(void)
        QTabWidget::insertTab——index 超过当前页签数时按 Qt 语义收缩为
        "追加"，乱序调用会使实际位次与字面 index 对调。 */
     (void)XTabWidget_insertTab_2(&self->m_tabWidget, 7,
-                               demo_wrapTabPage(self, (XWidget*)&self->m_stackedW), "堆叠组");
+                               demo_wrapTabPage(self, (XWidget*)&self->m_stackedW,
+                                                &self->m_stackWTabPageLayout), "堆叠组");
 #endif
 #if (defined(XWIZARD_ON) && XWIZARD_ON) || (defined(XERRORMESSAGE_ON) && XERRORMESSAGE_ON)
     /* 页签 8「向导错误」：XWizard + XErrorMessage 同页（流程/提示窗口
@@ -4148,16 +4516,22 @@ static DemoWin* DemoWin_create(void)
             Set_Class_IsHeap(wePage, true);
 #if XWIDGET_ON && XSTATUSBAR_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && \
     XWIZARD_ON && XERRORMESSAGE_ON
-            /* 启动器按钮（各 150x28，页签左上 (8,8)/(168,8)）：点「打
-               开向导」弹向导、点「显示错误提示」弹提示条（槽见
-               demo_wizOpenSlot/demo_errShowSlot）。门控与结构体字段/
-               槽函数三处同款，裁剪配置下整组一齐缺席。 */
+            /* 启动器按钮（各固定 150x28）：点「打开向导」弹向导、点
+               「显示错误提示」弹提示条（槽见 demo_wizOpenSlot/
+               demo_errShowSlot）。门控与结构体字段/槽函数三处同款，
+               裁剪配置下整组一齐缺席。 */
+            /* 页签内排布布局容器化（2026-10-17）：钮行横向布局接管
+               （边距 8,8,0,0+段间距 10 对标改造前手写 (8,8)/(168,8)）。 */
+            XBoxLayout_init(&self->m_wePageLayout,
+                            XBoxLayoutDirection_LeftToRight);
             XPushButton_init(&self->m_weOpenWizardBtn, wePage, 0);
             demo_set_widget_default_font((XWidget*)&self->m_weOpenWizardBtn);
             XAbstractButton_setText_2((XAbstractButton*)&self->m_weOpenWizardBtn,
                                       "打开向导");
-            XWidget_setGeometry((XWidget*)&self->m_weOpenWizardBtn,
-                                8, 8, 150, 28);
+            XWidget_setFixedWidth((XWidget*)&self->m_weOpenWizardBtn, 150);
+            XWidget_setFixedHeight((XWidget*)&self->m_weOpenWizardBtn, 28);
+            XBoxLayout_addWidget(&self->m_wePageLayout,
+                                 (XWidget*)&self->m_weOpenWizardBtn);
             XObject_connect_1((XObject*)&self->m_weOpenWizardBtn,
                               (size_t)XAbstractButton_clicked_signal(
                                   (XAbstractButton*)&self->m_weOpenWizardBtn,
@@ -4169,8 +4543,15 @@ static DemoWin* DemoWin_create(void)
             demo_set_widget_default_font((XWidget*)&self->m_weShowErrBtn);
             XAbstractButton_setText_2((XAbstractButton*)&self->m_weShowErrBtn,
                                       "显示错误提示");
-            XWidget_setGeometry((XWidget*)&self->m_weShowErrBtn,
-                                168, 8, 150, 28);
+            XWidget_setFixedWidth((XWidget*)&self->m_weShowErrBtn, 150);
+            XWidget_setFixedHeight((XWidget*)&self->m_weShowErrBtn, 28);
+            XBoxLayout_addWidget(&self->m_wePageLayout,
+                                 (XWidget*)&self->m_weShowErrBtn);
+            XLayout_setContentsMargins((XLayout*)&self->m_wePageLayout,
+                                       8, 8, 0, 0);
+            XLayout_setSpacing((XLayout*)&self->m_wePageLayout, 10);
+            XBoxLayout_addStretch(&self->m_wePageLayout, 1); /* 余宽留行尾。 */
+            XWidget_setLayout(wePage, (XLayout*)&self->m_wePageLayout);
             XObject_connect_1((XObject*)&self->m_weShowErrBtn,
                               (size_t)XAbstractButton_clicked_signal(
                                   (XAbstractButton*)&self->m_weShowErrBtn,
@@ -4226,41 +4607,11 @@ static DemoWin* DemoWin_create(void)
     }
 #endif
 #if XTABLEWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
-    /* 大表格：打散归位条目视图页（页签 20 表格撤销）——挂条目视图页
-       根，贴其小表格右侧（几何在 demo_layout_content 随根自适应）；
-       条目视图页被裁剪时回落主窗（不挂 tab）。 */
-    if (self->m_extPages[0]) {
-        XTableWidget_init(&self->m_tableWidget, self->m_extPages[0], 0);
-        demo_set_widget_default_font((XWidget*)&self->m_tableWidget);
-        XTableWidget_setRowCount(&self->m_tableWidget, 5);
-        XTableWidget_setColumnCount(&self->m_tableWidget, 4);
-        {
-            static const char* const th[] = {"名称", "类型", "大小", "修改时间"};
-            static const char* const thv[] = {"1", "2", "3", "4", "5"};
-            XTableWidget_setHorizontalHeaderLabels(&self->m_tableWidget, th, 4);
-            XTableWidget_setVerticalHeaderLabels(&self->m_tableWidget, thv, 5);
-        }
-        {
-            static const char* const cells[5][4] = {
-                {"XWidget.h", "头文件", "48 KB", "2026-09-12"},
-                {"XPainter.c", "源文件", "210 KB", "2026-09-11"},
-                {"XGuiDemo", "可执行", "1.2 MB", "2026-09-12"},
-                {"XGui.md", "文档", "88 KB", "2026-09-10"},
-                {"assets", "目录", "--", "2026-09-01"} };
-            int r;
-            int c;
-            for (r = 0; r < 5; ++r)
-                for (c = 0; c < 4; ++c)
-                    XTableWidget_setText(&self->m_tableWidget, r, c, cells[r][c]);
-        }
-        XTableWidget_setCurrentCell(&self->m_tableWidget, 0, 0);
-        /* 列宽随根宽定版：默认均分把「类型/大小」挤到滚动条带下（目验
-           二轮挂项「头文件」末字半切）。可视宽=表格宽−纵向条带 12，
-           列合计须 ≤ 可视宽；宽根（面板收起 776→表格 372）用内容定宽
-           128/72/60/112=372 恰满，窄根（面板展开表格 ~196）按比例收
-           缩保「名称+类型」两主列可读，时间列让横向滚动。 */
-        XWidget_show((XWidget*)&self->m_tableWidget);
-    }
+    /* 大表格（m_tableWidget）：[懒分配 2026-10-19·工程要点②] 原地组装
+       段已收编进 exti0（条目视图页）真建后钩子 demo_ext_viewsBigTable
+       Hook（demo_ext_ensureBuilt 内调用）——懒分配下注册期槽位是空占
+       位壳且原 if 无回落分支，留在此处会让页 5 大表格在懒建后凭空消失
+       （views 页 CHILD_ADDED 拦截收编机制不变，摆位/列宽逐式照搬）。 */
 #endif
 #if XCHARTS_ON
     /* ---- 页面 12：图表演示（2026-10-03 自选项卡页独立成页；
@@ -4356,11 +4707,19 @@ static DemoWin* DemoWin_create(void)
         XAbstractButton_setText_2((XAbstractButton*)&self->m_btnTitle, texts[2]);
         XAbstractButton_setText_2((XAbstractButton*)&self->m_btnSeries, texts[3]);
         XAbstractButton_setText_2((XAbstractButton*)&self->m_btnRange, texts[4]);
-        XWidget_setGeometry((XWidget*)&self->m_btnLegend, 5, 5, 52, 22);
-        XWidget_setGeometry((XWidget*)&self->m_btnGrid, 62, 5, 52, 22);
-        XWidget_setGeometry((XWidget*)&self->m_btnTitle, 119, 5, 52, 22);
-        XWidget_setGeometry((XWidget*)&self->m_btnSeries, 176, 5, 52, 22);
-        XWidget_setGeometry((XWidget*)&self->m_btnRange, 233, 5, 52, 22);
+        /* 钮行布局容器化（2026-10-17）：固定 84x24 对标改造前
+           demo_layout_content 均布上限值（bw=clamp(...,48,84)），
+           行内排布由 m_chartBtnRow 接管（装配见本函数尾段）。 */
+        XWidget_setFixedWidth((XWidget*)&self->m_btnLegend, 84);
+        XWidget_setFixedHeight((XWidget*)&self->m_btnLegend, 24);
+        XWidget_setFixedWidth((XWidget*)&self->m_btnGrid, 84);
+        XWidget_setFixedHeight((XWidget*)&self->m_btnGrid, 24);
+        XWidget_setFixedWidth((XWidget*)&self->m_btnTitle, 84);
+        XWidget_setFixedHeight((XWidget*)&self->m_btnTitle, 24);
+        XWidget_setFixedWidth((XWidget*)&self->m_btnSeries, 84);
+        XWidget_setFixedHeight((XWidget*)&self->m_btnSeries, 24);
+        XWidget_setFixedWidth((XWidget*)&self->m_btnRange, 84);
+        XWidget_setFixedHeight((XWidget*)&self->m_btnRange, 24);
         XObject_connect_1((XObject*)&self->m_btnLegend,
                           (size_t)XAbstractButton_clicked_signal((XAbstractButton*)&self->m_btnLegend, false),
                           (XObject*)self, demo_chartLegendSlot, XConnectionType_Direct);
@@ -4407,6 +4766,150 @@ static DemoWin* DemoWin_create(void)
         XLayoutItem_setGeometry_base((XLayoutItem*)&self->m_stackLayoutInner,
                                      &inner);
     }
+    /* ---- 页 3/4/12 布局容器化装配（2026-10-17）：页内排布由各页根
+     * 容器挂盒式布局自管，demo_layout_content 对应手写坐标段删除。
+     * 行高/边距/间距均对标改造前手写值；固定尺寸经 setFixedHeight/
+     * Width 声明，伸缩语义经 setStretch 表达；嵌套行/列布局器按借用
+     * 指针挂父（对象为 DemoWin 成员，见结构体注释）。 ---- */
+#if XWIDGET_ON && XGROUPBOX_ON && XLINEEDIT_ON && XSPINBOX_ON && \
+    XABSTRACTSLIDER_ON && XSLIDER_ON && XPROGRESSBAR_ON
+    /* 页 3 装配：分组框内纵向布局（XGroupBox 无布局感知，VBox+顶边距
+       24 近似标题区；行高 26/26/28/24、边距 12,24,12,8、段距 16 对标
+       改造前 contentsRect 手写摆位）。 */
+    XBoxLayout_init(&self->m_groupBoxLayout, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_addWidget(&self->m_groupBoxLayout, (XWidget*)&self->m_lineEdit);
+    XWidget_setFixedHeight((XWidget*)&self->m_lineEdit, 26);
+    XBoxLayout_addWidget(&self->m_groupBoxLayout, (XWidget*)&self->m_spinBox);
+    XWidget_setFixedHeight((XWidget*)&self->m_spinBox, 26);
+    XBoxLayout_addWidget(&self->m_groupBoxLayout, (XWidget*)&self->m_slider);
+    XWidget_setFixedHeight((XWidget*)&self->m_slider, 28);
+    XBoxLayout_addWidget(&self->m_groupBoxLayout,
+                         (XWidget*)&self->m_progressBar);
+    XWidget_setFixedHeight((XWidget*)&self->m_progressBar, 24);
+    XBoxLayout_addStretch(&self->m_groupBoxLayout, 1); /* 余高留底部（子件固定高防均摊推移）。 */
+    XLayout_setContentsMargins((XLayout*)&self->m_groupBoxLayout,
+                               12, 24, 12, 8);
+    XLayout_setSpacing((XLayout*)&self->m_groupBoxLayout, 16);
+    /* SetNoConstraint：阻止 activate 把布局最小尺寸写回宿主（否则覆盖
+       下方 setFixed 尺寸，分组框塌回首选宽 240）。 */
+    XLayout_setSizeConstraint((XLayout*)&self->m_groupBoxLayout,
+                              XLayoutSizeConstraint_SetNoConstraint);
+    XWidget_setLayout((XWidget*)&self->m_groupBox,
+                      (XLayout*)&self->m_groupBoxLayout);
+    /* 分组框定宽定高：对标改造前 colW=clamp(宽/2-16,240,320)、高 210。 */
+    XWidget_setFixedWidth((XWidget*)&self->m_groupBox, 288);
+    XWidget_setFixedHeight((XWidget*)&self->m_groupBox, 210);
+    /* 左列：分组框 + 多行编辑（stretch 填左列余高，段距 8 对标原
+       分组框底 218 → 多行编辑顶 226）。 */
+    XBoxLayout_init(&self->m_inputsLeftCol, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_addWidget(&self->m_inputsLeftCol, (XWidget*)&self->m_groupBox);
+    XLayout_setSpacing((XLayout*)&self->m_inputsLeftCol, 8);
+#if XWIDGET_ON && XPLAINTEXTEDIT_ON
+    XBoxLayout_addWidget(&self->m_inputsLeftCol, (XWidget*)&self->m_plainEdit);
+    XBoxLayout_setStretch(&self->m_inputsLeftCol, 1, 1);
+#endif
+    /* 右列：下拉/字体行、旋钮联动行、数码管/滚动条行、日期时间族
+       （段距 8 对标原 36→44→104→112→176→184 行距）。 */
+    XBoxLayout_init(&self->m_inputsRightCol, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&self->m_inputsRightCol, 8);
+#if XWIDGET_ON && XCOMBOBOX_ON && XABSTRACTSLIDER_ON && XDIAL_ON && \
+    XPROGRESSBAR_ON && XLCDNUMBER_ON && XSCROLLBAR_ON
+    XBoxLayout_init(&self->m_comboRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidget(&self->m_comboRow, (XWidget*)&self->m_comboBox);
+    XWidget_setFixedWidth((XWidget*)&self->m_comboBox, 150);
+    XWidget_setFixedHeight((XWidget*)&self->m_comboBox, 26);
+    XBoxLayout_addWidgetEx(&self->m_comboRow, (XWidget*)&self->m_fontCombo,
+                           1, 0); /* 字体下拉吃行内余宽。 */
+    XWidget_setFixedHeight((XWidget*)&self->m_fontCombo, 28);
+    XLayout_setSpacing((XLayout*)&self->m_comboRow, 8);
+    XBoxLayout_addLayout(&self->m_inputsRightCol, (XLayout*)&self->m_comboRow);
+    XBoxLayout_init(&self->m_dialRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidget(&self->m_dialRow, (XWidget*)&self->m_dial);
+    XWidget_setFixedWidth((XWidget*)&self->m_dial, 60);
+    XWidget_setFixedHeight((XWidget*)&self->m_dial, 60);
+    XBoxLayout_addWidgetEx(&self->m_dialRow, (XWidget*)&self->m_dialProgress,
+                           1, XAlignment_VCenter); /* 进度条行内垂直居中。 */
+    XWidget_setFixedHeight((XWidget*)&self->m_dialProgress, 20);
+    XLayout_setSpacing((XLayout*)&self->m_dialRow, 10);
+    XBoxLayout_addLayout(&self->m_inputsRightCol, (XLayout*)&self->m_dialRow);
+    XBoxLayout_init(&self->m_lcdRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidgetEx(&self->m_lcdRow, (XWidget*)&self->m_lcd, 0,
+                           XAlignment_Top); /* 顶对齐对标原同行 y=112。 */
+    XWidget_setFixedWidth((XWidget*)&self->m_lcd, 160);
+    XWidget_setFixedHeight((XWidget*)&self->m_lcd, 60);
+    XBoxLayout_addWidget(&self->m_lcdRow, (XWidget*)&self->m_scrollBar);
+    XWidget_setFixedWidth((XWidget*)&self->m_scrollBar, 24);
+    XWidget_setFixedHeight((XWidget*)&self->m_scrollBar, 64);
+    XBoxLayout_addStretch(&self->m_lcdRow, 1); /* 余宽留行尾（两件固定宽）。 */
+    XLayout_setSpacing((XLayout*)&self->m_lcdRow, 10);
+    XBoxLayout_addLayout(&self->m_inputsRightCol, (XLayout*)&self->m_lcdRow);
+#endif
+#if XWIDGET_ON && XDATETIMEEDIT_ON && XDATEEDIT_ON && XTIMEEDIT_ON
+    /* 日期时间三件套：固定高 28，宽度随右列铺满。 */
+    XBoxLayout_addWidget(&self->m_inputsRightCol, (XWidget*)&self->m_dtEdit);
+    XWidget_setFixedHeight((XWidget*)&self->m_dtEdit, 28);
+    XBoxLayout_addWidget(&self->m_inputsRightCol, (XWidget*)&self->m_dateEdit);
+    XWidget_setFixedHeight((XWidget*)&self->m_dateEdit, 28);
+    XBoxLayout_addWidget(&self->m_inputsRightCol, (XWidget*)&self->m_timeEdit);
+    XWidget_setFixedHeight((XWidget*)&self->m_timeEdit, 28);
+#endif
+    /* 余高留右列底部（各行固定高，防 qGeomCalc 把余量均摊进行距）。 */
+    XBoxLayout_addStretch(&self->m_inputsRightCol, 1);
+    /* 顶行：左列固定宽（随分组框 288）+ 右列 stretch 吃余宽（段距 16
+       对标原左列右缘 12+colW → 右列起点 rx=12+colW+16）。 */
+    XBoxLayout_init(&self->m_inputsTopRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addLayout(&self->m_inputsTopRow,
+                         (XLayout*)&self->m_inputsLeftCol);
+    XBoxLayout_addLayoutEx(&self->m_inputsTopRow,
+                           (XLayout*)&self->m_inputsRightCol, 1);
+    XLayout_setSpacing((XLayout*)&self->m_inputsTopRow, 16);
+    /* 页根：顶行 stretch 铺满 + 状态行固定高贴底（边距 12,8,4,6/段距 4
+       对标原 y8 起、右缘收 4、状态行 y=高-30 h24、上缝 4）。 */
+    XBoxLayout_init(&self->m_inputsLayout, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_addLayout(&self->m_inputsLayout,
+                         (XLayout*)&self->m_inputsTopRow);
+    XBoxLayout_setStretch(&self->m_inputsLayout, 0, 1);
+    XBoxLayout_addWidget(&self->m_inputsLayout,
+                         (XWidget*)&self->m_inputStatus);
+    XWidget_setFixedHeight((XWidget*)&self->m_inputStatus, 24);
+    XLayout_setContentsMargins((XLayout*)&self->m_inputsLayout, 12, 8, 4, 6);
+    XLayout_setSpacing((XLayout*)&self->m_inputsLayout, 4);
+    XWidget_setLayout(&self->m_pageInputs, (XLayout*)&self->m_inputsLayout);
+#endif
+#if XWIDGET_ON && XTABWIDGET_ON && XTABBAR_ON && XCOMBOBOX_ON && \
+    XABSTRACTSLIDER_ON && XDIAL_ON && XPROGRESSBAR_ON && XFRAME_ON && \
+    XLABEL_ON
+    /* 页 4 装配：页签容器 stretch 铺满 + 状态行固定高贴底（边距
+       12,8,12,0/段距 8 对标原页签 12,8,宽-24 与状态行 y=高-24 h24）。 */
+    XBoxLayout_init(&self->m_tabsLayout, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_addWidget(&self->m_tabsLayout, (XWidget*)&self->m_tabWidget);
+    XBoxLayout_setStretch(&self->m_tabsLayout, 0, 1);
+    XBoxLayout_addWidget(&self->m_tabsLayout, (XWidget*)&self->m_tabStatus);
+    XWidget_setFixedHeight((XWidget*)&self->m_tabStatus, 24);
+    XLayout_setContentsMargins((XLayout*)&self->m_tabsLayout, 12, 8, 12, 0);
+    XLayout_setSpacing((XLayout*)&self->m_tabsLayout, 8);
+    XWidget_setLayout(&self->m_pageTabs, (XLayout*)&self->m_tabsLayout);
+#endif
+#if XWIDGET_ON && XCHARTS_ON && XPUSHBUTTON_ON
+    /* 页 12 装配：切换钮行顶置（钮固定 84x24、段距 8）+ 图表视图
+       stretch 铺满余区（边距 12,8,12,8/段距 6 对标原钮行 y8 h24、
+       图表 y38 铺到高-8）。 */
+    XBoxLayout_init(&self->m_chartBtnRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidget(&self->m_chartBtnRow, (XWidget*)&self->m_btnLegend);
+    XBoxLayout_addWidget(&self->m_chartBtnRow, (XWidget*)&self->m_btnGrid);
+    XBoxLayout_addWidget(&self->m_chartBtnRow, (XWidget*)&self->m_btnTitle);
+    XBoxLayout_addWidget(&self->m_chartBtnRow, (XWidget*)&self->m_btnSeries);
+    XBoxLayout_addWidget(&self->m_chartBtnRow, (XWidget*)&self->m_btnRange);
+    XBoxLayout_addStretch(&self->m_chartBtnRow, 1); /* 余宽留行尾（五钮固定宽）。 */
+    XLayout_setSpacing((XLayout*)&self->m_chartBtnRow, 8);
+    XBoxLayout_init(&self->m_chartLayout, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_addLayout(&self->m_chartLayout, (XLayout*)&self->m_chartBtnRow);
+    XBoxLayout_addWidget(&self->m_chartLayout, (XWidget*)&self->m_chartView);
+    XBoxLayout_setStretch(&self->m_chartLayout, 1, 1);
+    XLayout_setContentsMargins((XLayout*)&self->m_chartLayout, 12, 8, 12, 8);
+    XLayout_setSpacing((XLayout*)&self->m_chartLayout, 6);
+    XWidget_setLayout(&self->m_pageChart, (XLayout*)&self->m_chartLayout);
+#endif
     /* 经 demo_switchPage 落初始页：导航钮 checked 高亮/状态栏/内容区
        几何三件同步（直呼 setCurrentIndex 会漏高亮，2026-10-03 目验
        page0 挂项根因）。 */
@@ -4924,6 +5427,23 @@ int xgui_demo_main(int argc, char* argv[])
        （fbdev 上首帧标题缺失的嫌疑之一）；与子控件同族默认字体。 */
     demo_set_widget_default_font(&win->m_base);
 #endif
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    /* [懒分配 2026-10-19·工程要点①·红线] CLI autostart 豁免：
+     * --remote-server/--remote-client 预置时对应远程页在事件循环前
+     * 真建。链路：--remote-server→remoteCli.enabled（:5081 附近解析）→
+     * cliDefaults 存 s_rsCli/s_rcCli（:5137 附近）→framePump 每帧调
+     * autostart（remote_server.c 守卫 if(!s_rs.m_ready||!s_rsCli.enabled)
+     * return，m_ready 在 build 尾置位；客户端同构）——懒分配下页面未显
+     * 不建则 m_ready 恒假，autostart 先于「不静默报告」返回，被控端将
+     * 静默不监听。此处 ensureBuilt 后 m_ready 就绪，首帧 autostart 走
+     * 既有 UI 启动路径（host 需后备存储就绪，内部自带重试/终态标记）。
+     * 裁剪配置下 builder 契约桩返回 NULL，槽位清空，autostart 桩自身
+     * 零操作，两道防线语义一致。 */
+    if (remoteCli.enabled)
+        demo_ext_ensureBuilt(win, 5); /* 页 10 远程窗口设置（exti 5）。 */
+    if (remoteClientCli.enabled)
+        demo_ext_ensureBuilt(win, 6); /* 页 11 远程客户端设置（exti 6）。 */
+#endif
 
     win->m_screenshotPath = screenshotPath;
     win->m_screenshotFrames = 0;
@@ -4986,7 +5506,15 @@ int xgui_demo_main(int argc, char* argv[])
 #endif
     /* 键盘页无头截图钩子（Tools/VirtualKeyboard/style_check.py；环境变量缺省时
        零操作）：几何定版后、事件循环前同步弹出——守护轮询 200ms 在
-       --screenshot 3 帧内到不了，钩子不依赖定时器边沿。 */
+       --screenshot 3 帧内到不了，钩子不依赖定时器边沿。
+       [懒分配 2026-10-19] 无头自动化豁免：XGUI_KB_* 环境族在位时先真
+       建键盘页（exti 4，页 9）再调钩子——懒分配下页 9 未显不建，钩子
+       首行 s_kbd.page 判空整体零操作，风格检查动态层会全空；环境族缺
+       省时 requested() 恒假，维持全量懒分配口径零开销。 */
+#if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
+    if (demo_page_keyboard_headless_requested())
+        demo_ext_ensureBuilt(win, 4);
+#endif
     demo_page_keyboard_headless_hook();
 #if defined(__linux__) && XGUI_ON && XPLATFORM_FBDEV_ON
     if (fbPanelW > 0 && fbPanelH > 0 &&
@@ -5007,7 +5535,7 @@ int xgui_demo_main(int argc, char* argv[])
     }
 #endif
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
-    demo_layout_chrome(win);
+    demo_main_refreshChrome(win);
 #endif
 #if XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XFRAME_ON && \
     XLABEL_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON
@@ -5137,9 +5665,25 @@ int xgui_demo_main(int argc, char* argv[])
 
     /* 4) 清理：窗口销毁自动拆除原生窗口；应用单例回收集成层。 */
     demo_stopTimers(win);
+    /* [退出段 UAF 根修 2026-10-19·目验失败项②] 页面收尾三连必须先于
+     * 全部成员 XClassDeinit（尤其 :5755 附近 XClassDeinit(&m_navSplitter)
+     * ——[XSplitter 迁移 2026-10-17] 后导航分割器是内容区祖先，其
+     * VX_splitter_deinit 会级联 delete 整个内容子树，含远程客户端页的
+     * XGuiClient 与会话条）。原顺序：分割器级联先释放 client（堆子），
+     * 随后同轮级联里的会话条 VX_xrb_deinit 仍持 d->m_client 悬垂指针
+     * 走 XObject_disconnect_1（XObject.c:649 读已释放连接向量）——
+     * ASan heap-use-after-free 实证（--page 10/11/18 与 --autotest 退
+     * 出段稳定复现，改动前后 A/B 同源，非懒分配引入）。提前到成员
+     * deinit 之前：client 尚存活时 setClient(NULL) 解绑四信号 + 断链 +
+     * deleteLater（deferred 事件由级联 XObject_deinit 清挂起，两序皆
+     * 安全，见 XObject.c:583），会话条 deinit 见 m_client==NULL 整段
+     * 跳过；server unhost+close 解除 present 登记同理前移。 */
+    demo_page_remote_server_shutdown();
+    demo_page_remote_client_shutdown();
+    demo_page_update_shutdown();
 #if XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XClassDeinit((XLabel*)&win->m_statusLabel);
-    XClassDeinit(&win->m_titleLabel);
+    XClassDeinit(&win->m_brandBar);
 #endif
 #if XWIDGET_ON && XPUSHBUTTON_ON
     XClassDeinit(&win->m_button);
@@ -5221,6 +5765,11 @@ int xgui_demo_main(int argc, char* argv[])
         XClassDeinit(&win->m_navCollapseBtn);
         XClassDeinit(&win->m_navDockBtn);
         XClassDeinit(&win->m_navTitle);
+#if XSPLITTER_ON
+        /* 分割器内部 sizes/stretch/collapsible 数组为堆分配，须显式
+           deinit 回收（vx 分割器 deinit 释放）。 */
+        XClassDeinit((XWidget*)&win->m_navSplitter);
+#endif
     }
 #endif
 #if XCHARTS_ON
@@ -5247,15 +5796,9 @@ int xgui_demo_main(int argc, char* argv[])
         }
     }
 #endif
-    /* 远程窗口设置页收尾: unhost + close + deleteLater（仓库约定; 须在
-       主窗口析构前, 解除 present 回调登记并停全部会话）。 */
-    demo_page_remote_server_shutdown();
-    /* 远程客户端页收尾: 断链 + deleteLater（2026-10-02 追加; 须在主
-       窗口析构前——client 为窗口子对象, 级联析构兜底两序皆安全）。 */
-    demo_page_remote_client_shutdown();
-    /* 软件更新页收尾: 停泵 + 引擎 deinit + 队列互斥回收（2026-10-07
-       追加; 须在主窗口析构前——UI 线程调用, 契约只禁回调内调用）。 */
-    demo_page_update_shutdown();
+    /* 远程双页与软件更新页收尾已前移至本段开头（[退出段 UAF 根修
+       2026-10-19]，须先于 m_navSplitter 等成员级联 deinit，见 :5669
+       附近注）。 */
 #if XMENUBAR_ON && XMENU_ON && XTOOLBAR_ON && XACTION_ON
     /* 页八：addMenu_2 返回的堆菜单归调用方（XMenuBar.h 口径），且为
        无父顶层弹窗——win 级联只回收菜单栏本体，触及不到它们；窗口

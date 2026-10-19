@@ -35,6 +35,7 @@
 
 #include "XAlgorithm.h"
 #include "XWindow_Protected.h"
+#include "XWindowRotation.h" /* 内容旋转换算（0/90/180/270 轴判定）。 */
 #include "XWidget_Protected.h" /* XWidget_appFocusWidget（防 C4013 隐式声明，指针截断）。 */
 #include "XObject_Protected.h"
 #include "XAccessible.h"
@@ -127,6 +128,17 @@ struct XWindowPrivate
     uint8_t m_visibility;               /**< 可见性枚举；存 XWindowVisibility（0..5），默认 Hidden。 */
     uint8_t m_modality;                 /**< 模态；存 XWindowModality（0..2），默认 NonModal。 */
     uint8_t m_contentOrientation;       /**< 内容方向；存 XScreenOrientation（0..8），默认 Primary。 */
+    int16_t m_contentRotation;          /**< 内容旋转请求角（0/90/180/270，默认 0=不转）。
+                                             「有效」角度由
+                                             XWindow_contentRotationDegrees
+                                             内纯算（平台能力闸），本字段
+                                             只存请求值、无回写。
+                                             【类型更正 2026-10-18】必须是
+                                             >=9 位有符号：270 装不进
+                                             uint8_t（截断成 14，270° 静默
+                                             变无效角且不报错）。评审稿
+                                             写的 uint8_t 是错的，按可存
+                                             四个合法值改为 int16_t。 */
     uint8_t m_hasMask : 1;              /**< 是否存在已设置的遮罩。 */
     uint8_t m_visible : 1;              /**< 是否可见（对标 isVisible）。 */
     uint8_t m_exposed : 1;              /**< 是否已暴露（对标 isExposed）。 */
@@ -578,6 +590,7 @@ void XWindow_init(XWindow* self)
     self->m_data->m_visibility = XWindowVisibility_Hidden;
     self->m_data->m_devicePixelRatio = 1.0f;
     self->m_data->m_contentOrientation = XScreenOrientation_Primary;
+    self->m_data->m_contentRotation = 0;
     self->m_data->m_opacity = 1.0f;
     self->m_data->m_minimumSize.width = 0;
     self->m_data->m_minimumSize.height = 0;
@@ -756,6 +769,7 @@ static void VXWindow_copy(XWindow* self, const XWindow* other)
     target->m_format = source->m_format;
     target->m_devicePixelRatio = source->m_devicePixelRatio;
     target->m_contentOrientation = source->m_contentOrientation;
+    target->m_contentRotation = source->m_contentRotation;
     target->m_opacity = source->m_opacity;
     target->m_minimumSize = source->m_minimumSize;
     target->m_maximumSize = source->m_maximumSize;
@@ -1263,6 +1277,74 @@ XScreenOrientation XWindow_contentOrientation(const XWindow* self)
 float XWindow_devicePixelRatio(const XWindow* self)
 { return self && self->m_data ? self->m_data->m_devicePixelRatio : 1.0f; }
 
+/* ==================== 内容旋转（2026-10-18 新增） ==================== */
+
+bool XWindow_rotationSupported(const XWindow* self)
+{
+    if (!self || !self->m_data) return false;
+    /* dpr>1 恒不支持：present 的物理放大腿与旋转换算口径互斥（内容会缩在
+       左上角、其余留旧像素）。降级为 0° 而非报错，与 getter 纯算口径
+       一致——条件（dpr 回落 1.0）后来满足时自动恢复旋转。 */
+    if (self->m_data->m_devicePixelRatio > 1.0f) return false;
+#if XPLATFORMNATIVEWINDOW_ON
+    return XPlatformNativeWindow_rotationSupported(self);
+#else
+    return false;
+#endif
+}
+
+int XWindow_contentRotationDegrees(const XWindow* self)
+{
+    int req;
+    if (!self || !self->m_data) return 0;
+    req = (int)self->m_data->m_contentRotation;
+    /* 有效角纯算、无回写：请求 0 或平台支持时返回请求角，否则 0。 */
+    if (req == 0) return 0;
+    return XWindow_rotationSupported(self) ? req : 0;
+}
+
+bool XWindow_rotationSwapsAxes(int deg)
+{
+    return XWindow_rotationSwapsAxesInline(deg);
+}
+
+bool XWindow_setContentRotation(XWindow* self, int deg)
+{
+    int norm;
+    XWindowPrivate* data;
+    if (!self || !(data = self->m_data)) return false;
+    if (!XWindow_rotationNormalize(deg, &norm)) return false;
+    if (norm != 0 && !XWindow_rotationSupported(self)) return false;
+    if (data->m_contentRotation == (int16_t)norm) return true;
+    data->m_contentRotation = (int16_t)norm;
+    XWindow_contentRotationChanged_signal(self, norm);
+    /* 刻意不同步触发重绘：层级不倒置（XWindow 低层不回调 XWidget 高层），
+       由 XWidget_setContentRotation 置整帧脏闩 + 入脏区，下一帧 PAINT
+       自然消费（含 CSD 标题栏条带，见 XWidget.c flushBackingStore）。 */
+    return true;
+}
+
+XRect XWindow_screenFootprint(const XWindow* self)
+{
+    XRect out;
+    int W, H;
+    if (!self || !self->m_data) { XRect_init(&out, 0, 0, 0, 0); return out; }
+    {
+        XRect geom = XWindow_geometry(self);
+        W = geom.width;
+        H = geom.height;
+        /* 原点不随旋转变：只对调宽高轴。 */
+        XRect_init(&out, geom.x, geom.y, W, H);
+    }
+    if (XWindow_rotationSwapsAxes(XWindow_contentRotationDegrees(self)))
+    {
+        int t = out.width;
+        out.width = out.height;
+        out.height = t;
+    }
+    return out;
+}
+
 void XWindow_setDevicePixelRatio_internal(XWindow* self, float ratio)
 {
     /* 框架内部推送口（screen dpr 信号→遍历 allWindows 的运行期补线）：
@@ -1447,6 +1529,38 @@ extern bool XPlatformNativeWindow_setTransientParent(XWindow* window,
                                                      XWindow* parent);
 #endif
 
+/* [弹窗随转·方案A 2026-10-18] 瞬态弹层旋转继承（私有，仅本翻译单元）：
+   从 XWindow_setTransientParent 抽出，供 show 路径（XWindow_setVisible）
+   复用。背景：弹层原生柄一次建、隐藏不销毁（XWidget_setVisible 仅
+   visible && !m_windowHandle 才建柄），下拉/菜单重开不再经过
+   XWidget_createWindow→setTransientParent，继承点只跑一次——owner 在
+   收起期间旋转换角后重开弹层仍带首开时刻的旧角（10-18 用户实测：0°
+   首开→主窗转 270°→重开，弹窗恒 170x82 正置错位）。show 路径对已建柄
+   瞬态族重跑本函数后，「owner 旋转角变更以重开弹层生效」的口径才真正
+   成立。角度无变化时等值短路，零扰动。 */
+static void xwin_inheritTransientRotation(XWindow* self)
+{
+    XWindowPrivate* data;
+    XWindow* parent;
+    int16_t prevRot;
+    if (!self || !(data = self->m_data)) return;
+    parent = data->m_transientParent;
+    prevRot = data->m_contentRotation;
+    data->m_contentRotation =
+        (int16_t)(parent && parent->m_data
+                      ? parent->m_data->m_contentRotation
+                      : 0);
+    /* 已建柄的迟到继承：旋转角变化后重跑一次平台 resize——resize 路径
+       的 applyRotationFootprint 会按新角对调原生 footprint（posix 平台
+       setGeometry 去重按「逻辑几何+已应用旋转角」双维比对，角变不放
+       行短路，见 XPlatformNativeWindow_posix.c 方案B），present 旋转拷
+       贝/输入 UnmapPoint 均按窗现查角，同帧随新角生效。未建柄时零额外
+       动作：建柄路径按现查角取 footprint，天然正确。 */
+    if (data->m_created && data->m_contentRotation != prevRot)
+        XWindow_resize_2(self, data->m_geometry.width,
+                         data->m_geometry.height);
+}
+
 void XWindow_setTransientParent(XWindow* self, XWindow* parent)
 {
     XWindowPrivate* data;
@@ -1459,6 +1573,17 @@ void XWindow_setTransientParent(XWindow* self, XWindow* parent)
     }
     changed = data->m_transientParent != parent;
     data->m_transientParent = parent;
+    /* [旋转继承 2026-10-18] 弹层继承瞬态父的内容旋转角：m_contentRotation
+       每窗独立（缺省 0=不转），下拉/菜单等弹窗不继承时在已旋转的主窗
+       上呈正置错位（10-18 用户实测截图）。继承后弹窗自动走同一套
+       footprint 对调/present 旋转拷贝/输入 UnmapPoint 链（均按窗读取
+       XWindow_contentRotationDegrees）。弹层为瞬态对象：owner 旋转角
+       变更以重开弹层生效，不做打开态同步。
+       [弹窗随转·方案A 2026-10-18] 继承+已建柄重跑 resize 抽为
+       xwin_inheritTransientRotation；「以重开生效」此前不成立——重开不
+       经过本函数（柄隐藏不销毁），现由 XWindow_setVisible 的 show 路径
+       对已建柄 Popup/ToolTip 补跑。 */
+    xwin_inheritTransientRotation(self);
     /* Qt 6.8：无条件发射 transientParentChanged。 */
     XWindow_transientParentChanged_signal(self, parent);
     (void)changed;
@@ -2150,6 +2275,18 @@ void XWindow_setVisible(XWindow* self, bool visible)
             return;
         if (visible) XWindow_createHandle(self);
     }
+    /* [弹窗随转·方案A 2026-10-18] show 路径旋转重继承：瞬态族（Popup/
+       ToolTip，平台 override-redirect 弹层集合 Popup/ToolTip/SplashScreen
+       的弹层子集）且 owner 非空时补跑继承——弹层柄一次建、隐藏不销毁，
+       重开不再经过 XWidget_createWindow→setTransientParent，owner 在收
+       起期间旋转换角后必须在此补继承，否则弹窗 footprint/present/输入
+       三链按旧角（恒首开时刻值）显影。首开路径 setTransientParent 已在
+       建柄前继承过同一角，此处等值短路零扰动。 */
+    if (visible &&
+        (XWindow_type(self) == XWindowType_Popup ||
+         XWindow_type(self) == XWindowType_ToolTip) &&
+        data->m_transientParent)
+        xwin_inheritTransientRotation(self);
     if (visible) {
         XWindow_sendEvent(self, XEVENT_TYPE_SHOW);
         data->m_exposed = true;
@@ -2553,6 +2690,14 @@ void* XWindow_contentOrientationChanged_signal(XWindow* self,
     XWindow_emit(self, (size_t)XWindow_contentOrientationChanged_signal,
                  XVarList_Create(XVar(XScreenOrientation, orientation)));
     return (void*)(size_t)XWindow_contentOrientationChanged_signal;
+}
+
+void* XWindow_contentRotationChanged_signal(XWindow* self, int degrees)
+{
+    if (!self) return (void*)(size_t)XWindow_contentRotationChanged_signal;
+    XWindow_emit(self, (size_t)XWindow_contentRotationChanged_signal,
+                 XVarList_Create(XVar(int, degrees)));
+    return (void*)(size_t)XWindow_contentRotationChanged_signal;
 }
 
 void* XWindow_focusObjectChanged_signal(XWindow* self, XObject* object)

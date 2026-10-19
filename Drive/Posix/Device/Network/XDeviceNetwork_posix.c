@@ -81,6 +81,14 @@
 #define XNETWORK_WRITE_BUFFER_SIZE 8192
 #define XNETWORK_IO_PENDING_RESULT INT64_MIN
 
+/* [2026-10-16 io_uring CONNECT 能力门] 昆仑通态 A33(5.2.9 MCGS 定制内核)
+ * 实测 IORING_OP_CONNECT 完成恒 res=-EINVAL——操作被内核拒绝, socket 从未
+ * 发起 connect(SO_ERROR 恒 0), 上层按假成功空转(Modbus 主站「断线重连中」、
+ * XUpgrade 引擎 HTTP 超时, 而同机裸 connect()/wget 全通)。置门后该进程内
+ * 所有 TCP connect 走同步非阻塞回退分支(EINPROGRESS 语义, 与非 io_uring
+ * 平台既有路径同款)。同型先例: accept FAST_POLL 僵死的 EPOLL 能力门。 */
+static int g_ioConnectBroken = 0; /* 0=未知/可用, -1=内核拒绝(CONNECT 门) */
+
 /* ICMP Echo 报文头固定为 type、code、checksum、identifier、sequence。 */
 #define XNETWORK_ICMP_HEADER_SIZE 8u
 
@@ -426,6 +434,7 @@ typedef struct XDeviceNetworkContextPosix {
     bool readPending;
     bool writePending;
     bool connectPending;
+    unsigned char peekByte; /* 假 EOF 复核的 MSG_PEEK 单字节(2026-10-16)。 */
     bool autoRead;
     bool isServer;                          /**< 是否为服务器套接字 */
     bool acceptPending;                     /**< 是否有待处理的 Accept */
@@ -826,6 +835,21 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
     if (sockType == XDeviceNetwork_Tcp) {
 
 #ifdef __linux__
+        /* [io_uring CONNECT 能力门 2026-10-16] 内核已拒绝过该操作时直接走
+         * 同步回退，不再重复提交注定 -EINVAL 的 SQE。 */
+        if (g_ioConnectBroken) {
+            int ret = connect(p->socket, (struct sockaddr*)&p->connectAddress,
+                              p->connectAddressLength);
+            if (ret == 0 || errno == EINPROGRESS) {
+                p->base.m_connected = true;
+                p->connectPending = false;
+                syncSocketEndpoints(priv);
+                startAsyncRead(priv, false);
+                return true;
+            }
+            close(p->socket); p->socket = -1;
+            return false;
+        }
         /* 发起 io_uring 异步连接（对标 Windows ConnectEx） */
         memset(&p->connectContext, 0, sizeof(p->connectContext));
         p->connectContext.base.type = XEventContextType_Type_Socket;
@@ -1052,10 +1076,70 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
         fprintf(stderr, "[XDEVNET] READ done res=%lld autoRead=%d\n",
                 (long long)p->readContext.base.result, (int)p->autoRead);
 #endif
+        /* [2026-10-16 假 EOF 复核] 昆仑通态 A33(5.2.9)实测: 新建连接上
+         * 收到一条 result=0/finishedBytes=0 的读完成(0~350ms 内), 按_EOF
+         * 处理即断链——Modbus 主站「连上即断线重连」循环, 而同机裸
+         * socket 连接+闲置+收发全通(疑内核边缘事件语义, 与无 FAST_POLL
+         * accept 僵死同族)。复核 MSG_PEEK: EAGAIN=连接活着(误报, 重挂
+         * 读维持会话); pr==0=真 EOF(照旧断链); pr>0=有数据待读(重挂读
+         * 把数据读进来)。 */
+        if (p->readContext.base.result == 0 &&
+            p->readContext.base.finishedBytes == 0 && p->socket >= 0) {
+            /* [2026-10-16 connect 型 socket 同步读兜底] A33 5.2.9 内核对
+             * outbound connect socket 的 io_uring RECV 恒完成 0 字节
+             * (假 EOF), 但数据实际到达(MSG_PEEK pr>0 实证, 裸 recv 可读)。
+             * 复核分类: pr>0=同步 recv 把数据读进 readBuffer 交付上层;
+             * EAGAIN=活着无数据, 重挂读; pr==0=真对端 FIN, 照旧断链。 */
+            int pr = (int)recv(p->socket, &p->peekByte, 1,
+                               MSG_PEEK | MSG_DONTWAIT);
+            if (pr > 0) {
+                ssize_t n = recv(p->socket, p->readBuffer,
+                                 XNETWORK_READ_BUFFER_SIZE, MSG_DONTWAIT);
+                if (n > 0) {
+                    p->readContext.base.result = (int64_t)n;
+                    p->readContext.base.finishedBytes = (size_t)n;
+                    return true;
+                }
+            }
+            if (pr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                if (!p->readPending) startAsyncRead(priv, false);
+                return true;
+            }
+            /* pr==0(真 FIN)或 recv 其他错误: 照旧按断链走。 */
+        }
         return p->readContext.base.finishedBytes > 0;
     }
     if (sockAct->actType & XSocketActType_Write) {
         p->writePending = false;
+        /* [2026-10-16 connect 型 socket 写同步兜底] A33 5.2.9 内核对
+         * outbound connect socket 的 io_uring WRITEV 完成恒 res=-1——
+         * 数据根本未发出(XDEVNET event W 实证), 上层却按入队长度认定
+         * 已写, 请求全部石沉大海(Modbus 轮询超时/XUpgrade HTTP 超时)。
+         * res<0 时同步 write() 补发(非阻塞小帧必全量; EAGAIN 重挂),
+         * accept 型 socket 与正常内核不受影响(result>=0 走原路径)。 */
+        {
+            int64_t wres = p->writeContext.base.result;
+            size_t total = p->writeContext.base.finishedBytes;
+            if (wres < 0 && wres != XNETWORK_IO_PENDING_RESULT &&
+                p->socket >= 0 && total > 0 &&
+                total <= XNETWORK_WRITE_BUFFER_SIZE) {
+                ssize_t n;
+                do {
+                    n = write(p->socket, p->writeBuffer, total);
+                } while (n < 0 && errno == EINTR);
+                if (n > 0) {
+                    p->writeContext.base.result = (int64_t)n;
+                    p->writeContext.base.finishedBytes = (size_t)n;
+                    return true;
+                }
+                if (n < 0 && errno == EAGAIN) {
+                    startAsyncWrite(priv, p->writeBuffer, (int64_t)total,
+                                    NULL, 0, false);
+                    return true;
+                }
+                /* 其他错误: 落到原路径(短写续传判 sent>0 不命中)。 */
+            }
+        }
         /* [2026-10-03 互联测试指挥官修复归因] 短写续传: 非阻塞 SEND 部分
          * 完成时(res>0 且 <len), 残余字节原被静默丢弃——TCP 流自此去同步,
          * 接收端从半帧中段解析后续帧(真机 MCGS 资源档 tile 流实证: 客户端
@@ -1080,6 +1164,30 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
         int soError = 0;
         socklen_t soLen = sizeof(soError);
         getsockopt(p->socket, SOL_SOCKET, SO_ERROR, &soError, &soLen);
+        /* [io_uring CONNECT 能力门 2026-10-16] cqe res<0 且 SO_ERROR==0 =
+         * 内核拒绝操作(5.2.9 MCGS 内核 IORING_OP_CONNECT 恒 -EINVAL)——
+         * connect() 从未发起, 原逻辑查 SO_ERROR=0 误判假成功。置全局门并
+         * 就地回退裸 connect(非阻塞 EINPROGRESS 语义)。真实对端拒绝
+         * (ECONNREFUSED 等)时 SO_ERROR 同值非 0, 仍走下方常规失败分支。 */
+        {
+            int64_t ioRes = p->connectContext.base.result;
+            if (ioRes < 0 && ioRes != XNETWORK_IO_PENDING_RESULT &&
+                ioRes != -ECANCELED && ioRes != -ENOENT && soError == 0) {
+                int ret;
+                g_ioConnectBroken = -1;
+                ret = connect(p->socket, (struct sockaddr*)&p->connectAddress,
+                              p->connectAddressLength);
+                if (ret == 0 || errno == EINPROGRESS) {
+                    p->base.m_connected = true;
+                    syncSocketEndpoints(priv);
+                    /* first read started by XDeviceNetwork_socketContinueRead
+                     * in event handler */
+                } else {
+                    p->base.m_connected = false;
+                }
+                return true;
+            }
+        }
         if (soError == 0) {
             p->base.m_connected = true;
             syncSocketEndpoints(priv);

@@ -37,6 +37,7 @@
 #include "XPlatformDisplayDriver.h"
 #include "XPlatformNativeWindow.h"
 #include "XWindow.h"
+#include "XWindowRotation.h" /* fbdev 内容旋转换算（footprint 覆盖判据 + 逐像素 R⁻¹ 搬运）。 */
 #include "XGuiApplication.h" /* topLevelWindows：fbdev 遮挡剔除取 Z 序。 */
 
 #if XGUI_ON && XPLATFORM_FBDEV_ON
@@ -62,6 +63,9 @@ static bool g_xpbsFbFirstPresent = true;
  *  语义不变。pan 失败不回滚（下帧同缓冲重写，账本仍成立）。 */
 static XRegion g_xpbsFbBackDirty;
 static bool g_xpbsFbBackDirtyInit = false;
+/** @brief 账本所属的旋转角（2026-10-18 新增；换角帧据此重映射账本）。 */
+static int g_xpbsFbRot = 0;
+static bool g_xpbsFbRotInit = false;
 
 /**
  * @brief      显示驱动 cache 同步 + 一次性失败诊断。
@@ -133,48 +137,135 @@ static bool xpbs_cacheSyncRangeWarnOnce(const XPlatformDisplayDriverOps* ops,
 /** @brief 单脏矩形遮挡切分工作集上限（超出降级为按原矩形上屏）。 */
 #define XPBS_OCCL_WORK_MAX 32
 
-/** @brief 把一个已按图像/面板范围裁剪的窗口局部矩形按行 memcpy 进 fb
- *  映射（原 xpbs_presentToDisplayDriver 脏区循环体的矩形部分，抽出
- *  供遮挡剔除后的多条带复用）。调用方保证 wx0>=off->x、wy0>=off->y、
- *  fb 坐标已入面板界。 */
-static void xpbs_presentRectRows(const XImage* image, const XPoint* off,
-                                 const XPoint* origin,
-                                 const XPlatformDisplayInfo* info,
-                                 int writeIndex, const uint8_t* srcBase,
-                                 size_t pixelBytes, int imgBpl,
-                                 int wx0, int wy0, int wx1, int wy1,
-                                 size_t* outSyncLo, size_t* outSyncHi,
-                                 bool* outSyncAny)
+/**
+ * @brief 本帧整幅写区是否覆盖整块面板（整屏快转判据的尺寸项）。
+ * @details 【R12 2026-10-18】旋转后窗口在屏幕上的占位是**对调后**的
+ *          footprint：90/270 时覆盖判据按 height↔width 互换，否则会
+ *          误判（真旋转窗口未盖满却被当盖满 → 跳过差带同步 → 翻页
+ *          回跳陈旧内容）。
+ */
+static bool xpbs_rotationCoversPanel(int rot, const XImage* image,
+                                     const XPlatformDisplayInfo* info)
 {
-    const uint8_t* src;
-    uint8_t* dst;
-    uint8_t* dstLast;
-    size_t rowBytes;
-    int fx0 = wx0 + origin->x;
-    int fy0 = wy0 + origin->y;
-    int y;
-    (void)image;
-    src = srcBase + (int64_t)(wy0 - off->y) * imgBpl +
-          (int64_t)(wx0 - off->x) * (int64_t)pixelBytes;
-    dst = (uint8_t*)info->m_frameBuffer +
-          (size_t)(writeIndex * info->m_height + fy0) * info->m_stride +
-          (size_t)fx0 * pixelBytes;
-    dstLast = dst + (size_t)(wy1 - 1 - wy0) * info->m_stride +
-              (size_t)(wx1 - wx0) * pixelBytes;
-    rowBytes = (size_t)(wx1 - wx0) * pixelBytes;
-    for (y = wy0; y < wy1; ++y)
+    int w = XImage_width(image);
+    int h = XImage_height(image);
+    if (XWindow_rotationSwapsAxes(rot)) { int t = w; w = h; h = t; }
+    return w >= info->m_width && h >= info->m_height;
+}
+
+/**
+ * @brief 把一个已按图像/面板范围裁剪的窗口局部矩形搬进 fb 映射
+ *  （原 xpbs_presentToDisplayDriver 脏区循环体的矩形部分，抽出供遮挡
+ *  剔除后的多条带复用）。调用方保证 wx0>=off->x、wy0>=off->y、fb 坐标
+ *  已入面板界。
+ * @param      rot  内容旋转角（0/90/180/270；2026-10-18 新增）。非 0 时
+ *                  逐像素反查源（转置/翻转），写入跨度与同步账本按**实际
+ *                  旋转后落笔范围**重算——直接沿用未旋转路径的
+ *                  dst/dstLast 推导会在真机留下上一角度拖影（R11）。
+ * @param      logW 整窗逻辑宽、logH 整窗逻辑高（旋转换算基准；rot==0 时
+ *                  不用）。窗口局部矩形恒为逻辑坐标，原点不随旋转变。
+ */
+static void xpbs_presentRectRowsRot(const XImage* image, const XPoint* off,
+                                    const XPoint* origin,
+                                    const XPlatformDisplayInfo* info,
+                                    int writeIndex, const uint8_t* srcBase,
+                                    size_t pixelBytes, int imgBpl,
+                                    int wx0, int wy0, int wx1, int wy1,
+                                    int rot, int logW, int logH,
+                                    size_t* outSyncLo, size_t* outSyncHi,
+                                    bool* outSyncAny)
+{
+    int devX0, devY0, devX1, devY1;
+    int dy;
+    /* [跨平台编译修 2026-10-19] any/lo/hi 提到函数层作用域：原声明在
+       rot!=0 的内层块，而 for 循环与收尾合并点都在块外——X11 树 gcc
+       宽容通过，armel gcc-12 严格报 undeclared（部署门抓出）。 */
+    size_t lo = 0, hi = 0;
+    bool any = false;
+    if (rot == 0)
     {
-        XMemcpy(dst, src, rowBytes);
-        src += imgBpl;
-        dst += info->m_stride;
+        const uint8_t* src;
+        uint8_t* dst;
+        uint8_t* dstLast;
+        size_t rowBytes;
+        int fx0 = wx0 + origin->x;
+        int fy0 = wy0 + origin->y;
+        int y;
+        (void)image;
+        src = srcBase + (int64_t)(wy0 - off->y) * imgBpl +
+              (int64_t)(wx0 - off->x) * (int64_t)pixelBytes;
+        dst = (uint8_t*)info->m_frameBuffer +
+              (size_t)(writeIndex * info->m_height + fy0) * info->m_stride +
+              (size_t)fx0 * pixelBytes;
+        dstLast = dst + (size_t)(wy1 - 1 - wy0) * info->m_stride +
+                  (size_t)(wx1 - wx0) * pixelBytes;
+        rowBytes = (size_t)(wx1 - wx0) * pixelBytes;
+        for (y = wy0; y < wy1; ++y)
+        {
+            XMemcpy(dst, src, rowBytes);
+            src += imgBpl;
+            dst += info->m_stride;
+        }
+        /* 记录本矩形实际写入的 fb 字节范围（含行距间隙），供收窄同步。 */
+        if (outSyncLo && outSyncHi && outSyncAny)
+        {
+            if (!*outSyncAny || (size_t)(dst - rowBytes) < *outSyncLo)
+                *outSyncLo = (size_t)(dst - rowBytes);
+            if (!*outSyncAny || (size_t)dstLast > *outSyncHi)
+                *outSyncHi = (size_t)dstLast;
+            *outSyncAny = true;
+        }
+        return;
     }
-    /* 记录本矩形实际写入的 fb 字节范围（含行距间隙），供收窄同步。 */
-    if (outSyncLo && outSyncHi && outSyncAny)
+    /* 旋转：逻辑矩形正变换到设备 footprint 矩形，再逐设备像素 R⁻¹
+       反查源。源范围由调用方保证（图像范围 ∩ 窗口范围已裁）。 */
     {
-        if (!*outSyncAny || (size_t)(dst - rowBytes) < *outSyncLo)
-            *outSyncLo = (size_t)(dst - rowBytes);
-        if (!*outSyncAny || (size_t)dstLast > *outSyncHi)
-            *outSyncHi = (size_t)dstLast;
+        int rw = wx1 - wx0;
+        int rh = wy1 - wy0;
+        int rx, ry, rwOut, rhOut;
+        XWindow_rotationMapRect(rot, logW, logH, &wx0, &wy0, &rw, &rh,
+                                &rx, &ry, &rwOut, &rhOut);
+        devX0 = rx + origin->x;
+        devY0 = ry + origin->y;
+        devX1 = devX0 + rwOut;
+        devY1 = devY0 + rhOut;
+        if (devX0 < 0) devX0 = 0;
+        if (devY0 < 0) devY0 = 0;
+        if (devX1 > info->m_width) devX1 = info->m_width;
+        if (devY1 > info->m_height) devY1 = info->m_height;
+    }
+    for (dy = devY0; dy < devY1; ++dy)
+    {
+        uint8_t* dstRow = (uint8_t*)info->m_frameBuffer +
+            (size_t)(writeIndex * info->m_height + dy) * info->m_stride;
+        int dx;
+        for (dx = devX0; dx < devX1; ++dx)
+        {
+            int lx = 0, ly = 0;
+            const uint8_t* p;
+            XWindow_rotationUnmapPoint(rot, logW, logH, dx - origin->x,
+                                       dy - origin->y, &lx, &ly);
+            if (lx < wx0 || lx >= wx1 || ly < wy0 || ly >= wy1) continue;
+            p = srcBase + (int64_t)(ly - off->y) * imgBpl +
+                (int64_t)(lx - off->x) * (int64_t)pixelBytes;
+            XMemcpy(dstRow + (size_t)dx * pixelBytes, p, pixelBytes);
+            /* 同步账本按实际逐像素落笔范围累加（R11）。 */
+            {
+                size_t a = (size_t)((uint8_t*)info->m_frameBuffer +
+                    (size_t)(writeIndex * info->m_height + dy) *
+                        info->m_stride + (size_t)dx * pixelBytes) -
+                    (size_t)(uintptr_t)info->m_frameBuffer;
+                size_t b = a + pixelBytes;
+                if (!any || a < lo) lo = a;
+                if (!any || b > hi) hi = b;
+                any = true;
+            }
+        }
+    }
+    if (any && outSyncLo && outSyncHi && outSyncAny)
+    {
+        if (!*outSyncAny || lo < *outSyncLo) *outSyncLo = lo;
+        if (!*outSyncAny || hi > *outSyncHi) *outSyncHi = hi;
         *outSyncAny = true;
     }
 }
@@ -242,6 +333,9 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
     size_t syncLo = 0;
     size_t syncHi = 0;
     bool syncAny = false;
+    int rot = 0;      /* 窗口内容有效旋转角（2026-10-18）。 */
+    int logW = 0;     /* 整窗逻辑宽高（旋转换算基准）。 */
+    int logH = 0;
     if (!ops || !image || !image->m_data || !region) return false;
     /* 直写仅当后备格式即面板扫描格式（preferred==面板 → true）。 */
     if (!ops->formatNegotiate(XImage_format(image), &panel) ||
@@ -263,6 +357,20 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
         return false;
     pixelBytes = (size_t)((XImageFormat_bitDepth(panel) + 7) / 8);
     if (pixelBytes == 0) return false;
+    /* 内容旋转（2026-10-18）：有效角每帧现查窗口（纯读，无缓存——窗口
+       几何不变的 0↔180 切换刷不到任何平台缓存）；整窗逻辑宽高取窗口
+       几何（旋转换算基准），绝不用图像尺寸（攒批子图按批次外接矩形
+       分配，尺寸≠窗口宽高）。 */
+    if (window)
+    {
+        XRect geometry = XWindow_geometry(window);
+        rot = XWindow_contentRotationDegrees(window);
+        logW = geometry.width;
+        logH = geometry.height;
+        if (logW <= 0) logW = XImage_width(image);
+        if (logH <= 0) logH = XImage_height(image);
+    }
+    if (logW <= 0 || logH <= 0) return false;
     srcBase = XImage_constBits(image);
     imgBpl = XImage_bytesPerLine(image);
     if (!srcBase || imgBpl <= 0) return false;
@@ -336,7 +444,10 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
                     int gx1;
                     int gy1;
                     if (!above || !XWindow_isVisible(above)) continue;
-                    g = XWindow_geometry(above);
+                    /* 【R12 2026-10-18】用 footprint 而非逻辑几何：弹层
+                       内容旋转后屏幕占位是宽高对调后的矩形，按逻辑矩形剔除
+                       会错位剔除。 */
+                    g = XWindow_screenFootprint(above);
                     gx1 = g.x + g.width;
                     gy1 = g.y + g.height;
                     if (g.x < 0) { g.width += g.x; g.x = 0; }
@@ -370,6 +481,17 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
      * 先把整段映射清零，同屏前任应用的残留不外泄。 */
     if (info.m_doubleBuffered)
     {
+        /* 【R12 2026-10-18】换角帧：账本 g_xpbsFbBackDirty 存的是**上一
+           角度**的 fb 坐标，直接用于本帧差带同步会把上一角度的条带搬到
+           当前写区（真机拖影：旋转后偶尔残留上一角度内容）。矩形从旧角
+           映到新角不是单次 MapRect 能表达的（跨 90/270 还要换轴基准），
+           故换角那一帧按「首帧」处置：清零整段映射 + 清空账本，下一帧
+           起账本即当前角度的正确账。代价=换角一次整屏 memset（换角是
+           人工低频动作，可接受）；0° ↔ 0° 不入本分支（逐位零回归）。 */
+        if (g_xpbsFbRotInit && g_xpbsFbRot != rot)
+            g_xpbsFbFirstPresent = true;
+        g_xpbsFbRot = rot;
+        g_xpbsFbRotInit = true;
         if (g_xpbsFbFirstPresent)
         {
             memset((uint8_t*)info.m_frameBuffer, 0, info.m_frameBufferSize);
@@ -397,14 +519,18 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
                     const XRect* rect = &region->rects[i];
                     if (!rect || rect->width <= 0 || rect->height <= 0)
                         continue;
+                    /* 【R12 2026-10-18】旋转后「本帧写区是否盖满面板」
+                       判据改按 footprint：90/270 时窗口在屏幕上的占位是
+                       对调后的矩形，用未旋转的逻辑尺寸会误判为未盖满
+                       （多余的差带同步，正确性无损）或反之。 */
                     if (rect->x <= off->x && rect->y <= off->y &&
                         rect->x + rect->width >=
                             off->x + XImage_width(image) &&
                         rect->y + rect->height >=
                             off->y + XImage_height(image) &&
                         off->x <= 0 && off->y <= 0 &&
-                        XImage_width(image) >= info.m_width &&
-                        XImage_height(image) >= info.m_height)
+                        xpbs_rotationCoversPanel(rot, image,
+                                                 &info))
                     {
                         coversPanel = true;
                         break;
@@ -740,22 +866,24 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
                 {
                     const XRect* r = &work[wi2];
                     if (r->width <= 0 || r->height <= 0) continue;
-                    xpbs_presentRectRows(image, off, origin, &info,
+                    xpbs_presentRectRowsRot(image, off, origin, &info,
                                          writeIndex, srcBase, pixelBytes,
                                          imgBpl,
                                          r->x - origin->x,
                                          r->y - origin->y,
                                          r->x - origin->x + r->width,
                                          r->y - origin->y + r->height,
+                                         rot, logW, logH,
                                          &syncLo, &syncHi, &syncAny);
                 }
                 continue;
             }
             /* 截断降级：落到底部按未剔除原矩形整块上屏。 */
         }
-        xpbs_presentRectRows(image, off, origin, &info, writeIndex,
+        xpbs_presentRectRowsRot(image, off, origin, &info, writeIndex,
                              srcBase, pixelBytes, imgBpl,
                              wx0, wy0, wx1, wy1,
+                             rot, logW, logH,
                              &syncLo, &syncHi, &syncAny);
     }
     /* 差带账本更新：本帧落笔的脏矩形（剔除前面板裁剪版）成为下一帧

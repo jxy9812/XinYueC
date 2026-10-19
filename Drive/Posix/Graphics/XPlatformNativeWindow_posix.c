@@ -58,6 +58,7 @@
 #include "XGeometry.h"
 #include "XMemory.h"
 #include "XPlatformDisplayDriver.h" /* 单屏互斥检查（XPLATFORM_FBDEV_ON=0 时为空头）。 */
+#include "XWindowRotation.h" /* 内容旋转换算（0/90/180/270 轴判定 + 点/矩形正逆变换）。 */
 #include <stdio.h>
 
 /* Xlib 与 XinYueC 公共层存在以下命名冲突：
@@ -306,6 +307,29 @@ typedef struct XWNPendingEntry
                                             逐字段一致：强制 dpr>1 时在
                                             setGeometry 记账处已出框换算，
                                             dpr==1.0f 即逻辑直通同旧值）。 */
+    int m_appliedRotation;             /**< 最近一次落地/记账几何所用的内
+                                            容旋转角（[弹窗随转·方案B
+                                            2026-10-18] setGeometry 去重
+                                            第二维）：「逻辑几何不变而角
+                                            变」（弹层锚点不变的重开场景）
+                                            若仍按纯逻辑去重会短路掉
+                                            applyRotationFootprint 的
+                                            footprint 重对调，弹窗停在旧
+                                            角的宽高。create 记账/setGeometry
+                                            落地与挂起记账/entry 释放四处
+                                            同步维护；缺省 0 与缺省角一致。 */
+    unsigned long m_pendingGeomStampMs; /**< 挂起几何记账时刻（单调毫秒；
+                                            [挂起防滞留 2026-10-18] 装饰
+                                            改尺寸手势 RELEASE 在注入/裁
+                                            剪边界偶发丢失（XWindowDecoration
+                                            「新按压=新手势清残留」注自证
+                                            此前科）时 m_deferGeometry 卡
+                                            真，其后程序化几何（最大化/
+                                            复原回推）只记账不落地。配置
+                                            事件到手时按本戳判滞留并强制
+                                            批内落地；0=无挂起语义由
+                                            m_hasPendingGeom 承担，本戳
+                                            仅在记账时刷新。 */
 } XWNPendingEntry;
 
 /** @brief 每进程 X11 连接状态。 */
@@ -1373,6 +1397,42 @@ static float xpwn_dprForGeometry(const XRect* logical)
         if (!first) first = g_xpwnScreens[i];
     }
     return first ? XScreen_devicePixelRatio(first) : xpwn_screenForcedDpr();
+}
+
+/** @brief 单调时钟毫秒（挂起几何滞留判定用；与 xpw_clipMonotonicMs
+ *         同口径，重复实现因二者定义位置分属文件两段、互不依赖）。 */
+static unsigned long xpwn_monotonicMs(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long)ts.tv_sec * 1000ul +
+           (unsigned long)ts.tv_nsec / 1000000ul;
+}
+
+static void xpwn_applyPendingGeometry(XWNPendingEntry* entry);
+/* 前置声明：ConfigureNotify 入口的挂起防滞留检查（:35 事件段）调用
+   本函数，而其定义在 setGeometry 段（文件后部）。 */
+
+/**
+ * @brief      把【原生/设备】几何按窗口内容旋转角对调宽高（2026-10-18 新增）。
+ * @details    原生 X 窗口与后备图缓冲都必须等于**旋转后的设备 footprint**：
+ *              否则 XPutImage 按 drawable 尺寸静默截断（无报错），屏幕上
+ *              直接少一条内容（fbdev 侧同样静默钳位）。逻辑几何仍存
+ *              m_client（对照/去重/事件口径），只在此处对调喂给
+ *              XCreateWindow/XMoveResizeWindow/挂起记账的物理尺寸。
+ *              原点（x/y）不随旋转变。0° 时逐位不变（对调分支不进）。
+ * @param      window 目标窗口；可为 NULL（恒不动作）。
+ * @param      geom   待出框的原生几何（就地修改 width/height）。
+ */
+static void xpwn_applyRotationFootprint(XWindow* window, XRect* geom)
+{
+    int t;
+    if (!window || !geom) return;
+    if (!XWindow_rotationSwapsAxes(XWindow_contentRotationDegrees(window)))
+        return;
+    t = geom->width;
+    geom->width = geom->height;
+    geom->height = t;
 }
 
 /**
@@ -2690,6 +2750,75 @@ static void xpwn_blitRectScaled(const XImage* src, const XRect* srectP,
     }
 }
 
+/**
+ * @brief      把后备缓冲的一个【逻辑】矩形按旋转角转置/翻转写入设备
+ *             上屏缓冲（2026-10-18 新增，与 xpwn_copyRectDirect/
+ *             copyRect24/blitRectScaled 同族并列）。
+ * @details    目标区 dstRect 恒取源矩形的**正变换像**（轴对齐，面积守恒），
+ *             逐像素用 R⁻¹ 反查源逻辑坐标 —— 与
+ *             XWindow_rotationMapRect/UnmapPoint 严格互逆。
+ *             180° 走「直拷 + 倒行倒列」快路径；90/270 走双循环转置。
+ *             RGB16(565) 构建恒不进入本函数
+ *             （xpwn_canRotateDirect 恒 false）。
+ * @param      src       源后备缓冲（ARGB32 小端 [B,G,R,A]，4 字节/像素）。
+ * @param      srect     源逻辑矩形（**缓冲坐标** = 逻辑坐标 - srcOff）。
+ * @param      dst       设备上屏缓冲（32 位直拷布局）。
+ * @param      dstBpl    设备缓冲行跨度（字节）。
+ * @param      dstRect   设备目标矩形（窗口坐标域，与 srect 正变换一致）。
+ * @param      rot       旋转角（90/180/270；0 不应进入）。
+ * @param      W,H       整窗逻辑宽高（旋转换算的基准尺寸）。
+ */
+static void xpwn_copyRectRotated(const XImage* src, const XRect* srect,
+                                 uint8_t* dst, int dstBpl,
+                                 const XRect* dstRect, int rot, int W, int H)
+{
+    const uint8_t* sbuf;
+    int bpl;
+    int row, col;
+    if (!src || !srect || !dst || !dstRect) return;
+    if (dstBpl <= 0 || srect->width <= 0 || srect->height <= 0) return;
+    sbuf = XImage_constBits(src);
+    bpl = XImage_bytesPerLine(src);
+    if (!sbuf || bpl <= 0) return;
+    if (rot == 180) {
+        /* 快路径：倒行**且倒列**，4 字节/像素直拷。
+           【目验修 2026-10-18】上一稿只倒行不倒列（srow/drow 同向前移），
+           实测呈现成上下镜像而非 180° 旋转（B180 对 y→H-1-y 的 MAE=0.599、
+           对真旋转 (x,y)→(W-1-x,H-1-y) 的 MAE=15.239；角标 x 轴未翻）。
+           180° = 行序与列序同时反向：源行取尾行起、列由行末向前推进。 */
+        for (row = 0; row < dstRect->height; ++row) {
+            const uint8_t* srow = sbuf +
+                (int64_t)(srect->y + srect->height - 1 - row) * bpl +
+                ((int64_t)srect->x + srect->width) * 4 - 4;
+            uint8_t* drow = dst + (int64_t)(dstRect->y + row) * dstBpl +
+                            (int64_t)dstRect->x * 4;
+            int c = srect->width;
+            while (c-- > 0) {
+                XMemcpy(drow, srow, 4);
+                drow += 4;
+                srow -= 4; /* 倒列：源列由右向左推进（180° 真旋转）。 */
+            }
+        }
+        return;
+    }
+    /* 90/270：双循环转置（目标逐像素 R⁻¹ 反查源，源越界即跳过）。 */
+    for (row = 0; row < dstRect->height; ++row) {
+        uint8_t* drow = dst + (int64_t)(dstRect->y + row) * dstBpl +
+                        (int64_t)dstRect->x * 4;
+        int dy = dstRect->y + row;
+        for (col = 0; col < dstRect->width; ++col) {
+            int dx = dstRect->x + col;
+            int lx = 0, ly = 0;
+            XWindow_rotationUnmapPoint(rot, W, H, dx, dy, &lx, &ly);
+            if (lx < srect->x || lx >= srect->x + srect->width ||
+                ly < srect->y || ly >= srect->y + srect->height)
+                continue;
+            XMemcpy(drow + (int64_t)col * 4,
+                    sbuf + (int64_t)ly * bpl + (int64_t)lx * 4, 4);
+        }
+    }
+}
+
 /* ==================== 键鼠翻译工具（X11 -> 无关键码） ==================== */
 
 /**
@@ -2705,13 +2834,82 @@ static void xpwn_eventPosToLogical(const XWNPendingEntry* entry,
                                    XPoint* local, XPoint* global)
 {
     float dpr;
+    int rot;
     if (!entry || !local || !global) return;
     dpr = xpwn_dprForGeometry(&entry->m_client);
-    if (dpr == 1.0f) return;
-    local->x = xpwn_physicalToLogical(local->x, dpr);
-    local->y = xpwn_physicalToLogical(local->y, dpr);
-    global->x = xpwn_physicalToLogical(global->x, dpr);
-    global->y = xpwn_physicalToLogical(global->y, dpr);
+    if (dpr != 1.0f) {
+        local->x = xpwn_physicalToLogical(local->x, dpr);
+        local->y = xpwn_physicalToLogical(local->y, dpr);
+        global->x = xpwn_physicalToLogical(global->x, dpr);
+        global->y = xpwn_physicalToLogical(global->y, dpr);
+    }
+    rot = entry->m_window
+        ? XWindow_contentRotationDegrees(entry->m_window) : 0;
+    if (rot != 0) {
+        int W = entry->m_client.width;
+        int H = entry->m_client.height;
+        int lx = local->x;
+        int ly = local->y;
+        /* [命中区同源 2026-10-19] 旋转换算基准 W/H 不得裸用 m_client：
+           m_client 记账是「逻辑轴」，但换角+改几何的过渡期它要等
+           ConfigureNotify 异步回环才刷新（present 路径同坑已修，见
+           preparePresentImage 注释「90° 重影根因」）；demo 页
+           setContentRotation 不改外框时（0/180 同 footprint）甚至
+           永不回环。unmap 的 W/H 必须是整窗**逻辑**宽高——按当前角
+           把 m_client 的宽高轴归位（swapsAxes 时对调；对调是自逆
+           变换，稳态与过渡期都得到逻辑轴尺寸）。与绘制正变换
+           （present 用 imgW/imgH=后备缓冲恒逻辑尺寸）同源同轴。 */
+        if (XWindow_rotationSwapsAxes(rot)) {
+            W = entry->m_client.height;
+            H = entry->m_client.width;
+        }
+        XWindow_rotationUnmapPoint(rot, W, H, local->x, local->y, &lx, &ly);
+        local->x = lx;
+        local->y = ly;
+    }
+}
+
+/**
+ * @brief      XDND 拖放位置入框（物理→逻辑；2026-10-18 新增）。
+ * @details    XDND 的 XdndPosition 报文坐标是**根坐标**（data.l[2] 打包），
+ *             不经 xpwn_eventPosToLogical：既有实现连 dpr 都未换算
+ *             （本函数同时补上该缺陷）。顺序固定「先减窗口原点得设备
+ *             窗口局部，再 R⁻¹」——旋转只对调宽高、原点不变，故减完
+ *             原点即设备窗口局部。R⁻¹ **不钳位**：越界坐标由消费方
+ *             自行处置。入框在**唯一的报文坐标写入点**（XdndPosition）
+ *             做一次：DRAG_ENTER/DRAG_LEAVE 复用 m_dragPosition 的已
+ *             入框值，若在那两处再入框会二次减原点。
+ */
+static void xpwn_eventPosToLogicalXdnd(const XWNPendingEntry* entry,
+                                       XPoint* pos)
+{
+    float dpr;
+    int rot;
+    int W, H, lx, ly;
+    if (!entry || !pos || !entry->m_window) return;
+    pos->x -= entry->m_client.x;
+    pos->y -= entry->m_client.y;
+    dpr = xpwn_dprForGeometry(&entry->m_client);
+    if (dpr != 1.0f) {
+        pos->x = xpwn_physicalToLogical(pos->x, dpr);
+        pos->y = xpwn_physicalToLogical(pos->y, dpr);
+    }
+    rot = XWindow_contentRotationDegrees(entry->m_window);
+    if (rot == 0) return;
+    /* [命中区同源 2026-10-19] 同 xpwn_eventPosToLogical：W/H 按当前角
+       归位到逻辑轴（m_client 过渡期旧值经 swapsAxes 对调自逆归位），
+       不得裸用 m_client。 */
+    W = entry->m_client.width;
+    H = entry->m_client.height;
+    if (XWindow_rotationSwapsAxes(rot)) {
+        W = entry->m_client.height;
+        H = entry->m_client.width;
+    }
+    lx = pos->x;
+    ly = pos->y;
+    XWindow_rotationUnmapPoint(rot, W, H, pos->x, pos->y, &lx, &ly);
+    pos->x = lx;
+    pos->y = ly;
 }
 
 /** @brief 把 X11 KeySym 翻译为与平台无关的按键码（XKey 枚举或 ASCII 码位）。
@@ -3339,6 +3537,20 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             int oldY = entry->m_client.y;
             bool sizeChanged;
             bool posChanged;
+            /* [挂起防滞留 2026-10-18] 手势期挂起几何若因 RELEASE 丢失
+               （m_deferGeometry 卡真）滞留超阈值，随本配置事件强制批
+               内落地——其后程序化几何切换（最大化/复原回推 setGeometry）
+               在挂起臂下只记账，滞留会让新几何永远排在旧挂起之后等不
+               到消费者。只落地挂起值、**不解** m_deferGeometry 臂（臂
+               的生死归装饰手势层：XWindowDecoration 既有「新按压=新手
+               势清残留」与 toggleMaximize 的 endInteractions 兜底）；
+               正常手势步间隔 ≤ 一帧，100ms 阈值不会误伤活手势的挂起批。
+               卡死期无任何后续几何事件的极端场景仍无检查点（present
+               批内消费 :6940 与本检查双口覆盖日常路径）。 */
+            if (entry->m_hasPendingGeom &&
+                entry->m_pendingGeomStampMs != 0 &&
+                xpwn_monotonicMs() - entry->m_pendingGeomStampMs > 100)
+                xpwn_applyPendingGeometry(entry);
             /* 先更新本后端记录，再注入几何变化：setGeometry 去重比对以
                此为准，从源头切断「setGeometry -> ConfigureNotify ->
                handleGeometryChange -> setGeometry」回环。 */
@@ -3350,6 +3562,10 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                口径，dpr==1.0f 直通逐位一致。 */
             dpr = xpwn_dprForGeometry(&entry->m_client);
             client = xpwn_rectPhysicalToLogical(&native, dpr);
+            /* 内容旋转：入框物理矩形按旋转角对调回逻辑矩形（原点不变），
+               必须在 sizeChanged 判定与 m_client 落盘之前——两者以及随后的
+               handleGeometryChange 都要拿到逻辑值。 */
+            xpwn_applyRotationFootprint(entry->m_window, &client);
             sizeChanged = (client.width != entry->m_client.width ||
                            client.height != entry->m_client.height);
             posChanged = (client.x != entry->m_client.x ||
@@ -3822,6 +4038,12 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                 unsigned long packed = (unsigned long)ev->xclient.data.l[2];
                 entry->m_dragPosition.x = (short)(packed >> 16);
                 entry->m_dragPosition.y = (short)(packed & 0xffffu);
+                /* XDND 第二通道坐标入框（2026-10-18）：报文是根坐标，
+                   本路不经 xpwn_eventPosToLogical——既有实现连 dpr 都
+                   未换算，一并修正（减原点 → dpr → R⁻¹）。入框在**唯一
+                   的报文坐标写入点**做一次：DRAG_ENTER/DRAG_LEAVE 复用
+                   本字段的已入框值，若在那两处再入框会二次减原点。 */
+                xpwn_eventPosToLogicalXdnd(entry, &entry->m_dragPosition);
                 accepted = entry->m_dragTarget != None &&
                     XWindowSystemInterface_handleDropEvent(
                         entry->m_window, XEVENT_TYPE_DRAG_MOVE,
@@ -5067,6 +5289,8 @@ bool XPlatformNativeWindow_create(XWindow* window)
     nativeGeom = xpwn_rectLogicalToPhysical(&geom, dpr);
     nativeGeom.width = xpwn_logicalToPhysical(w, dpr);
     nativeGeom.height = xpwn_logicalToPhysical(h, dpr);
+    /* 内容旋转：原生窗取旋转后的设备 footprint（原点不变）。 */
+    xpwn_applyRotationFootprint(window, &nativeGeom);
     memset(&attr, 0, sizeof(attr));
     attr.background_pixel = 0u;
     attr.border_pixel = 0u;
@@ -5164,6 +5388,10 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_window = window;
     entry->m_gc = XCreateGC(g_xpwnDisplay, xwin, 0, NULL);
     entry->m_client = geom;
+    /* [弹窗随转·方案B 2026-10-18] 建窗 footprint（上方
+       xpwn_applyRotationFootprint）按本角对调，随记账，供 setGeometry
+       双维去重比对。 */
+    entry->m_appliedRotation = XWindow_contentRotationDegrees(window);
     entry->m_visual = entryVisual;
     entry->m_depth = entryDepth;
     /* WM_NORMAL_HINTS（USPosition|USSize|PMinSize|PMaxSize，映射前生
@@ -5403,6 +5631,8 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
     nativeGeom.height = attrs.height;
     dpr = xpwn_dprForGeometry(&nativeGeom);
     logicalGeom = xpwn_rectPhysicalToLogical(&nativeGeom, dpr);
+    /* 内容旋转：外部挂接的原生尺寸按旋转角对调回逻辑尺寸。 */
+    xpwn_applyRotationFootprint(window, &logicalGeom);
     entry->m_client = logicalGeom;
     XSelectInput(g_xpwnDisplay, entry->m_win,
                  ExposureMask | StructureNotifyMask | FocusChangeMask |
@@ -5457,6 +5687,12 @@ static void xpwn_releaseNativeEntry(XWNPendingEntry* entry,
     entry->m_visual = NULL;
     entry->m_depth = 0;
     entry->m_client = (XRect){0, 0, 0, 0};
+    /* [弹窗随转·方案B 2026-10-18] 槽位释放归零（缺省角），防上一窗口的
+       已应用角污染下一窗口（复用槽位）的首轮去重比对。 */
+    entry->m_appliedRotation = 0;
+    /* [挂起防滞留 2026-10-18] 挂起戳同步归零（m_hasPendingGeom 为滞留
+       判定的主闸，本戳只是防陈旧 0 值误判的辅助）。 */
+    entry->m_pendingGeomStampMs = 0;
     memset(entry->m_keyPressed, 0, sizeof(entry->m_keyPressed));
     entry->m_lastPressTime = 0;
     entry->m_lastPressButton = XMouseButton_NoButton;
@@ -5515,11 +5751,18 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_win) return false;
     /* 去重：与最近一次记录/应用的几何一致则跳过（防 ConfigureNotify
-       回环）。比对恒逻辑口径（m_client 入框记账，见 ConfigureNotify）。 */
+       回环）。比对恒逻辑口径（m_client 入框记账，见 ConfigureNotify）。
+       [弹窗随转·方案B 2026-10-18] 去重加「已应用旋转角」第二维：弹层
+       重开锚点不变时逻辑几何逐字段相等，纯逻辑去重会短路掉下方
+       applyRotationFootprint 的 footprint 重对调（角变而 X 窗宽高不
+       换）；角相等才短路。主窗无回归面：0↔180 footprint 本就不对调、
+       XMoveResizeWindow 同值幂等；0↔90/270 主窗改角必伴逻辑几何变化，
+       去重本就不命中。 */
     if (geometry->x == entry->m_client.x &&
         geometry->y == entry->m_client.y &&
         geometry->width == entry->m_client.width &&
-        geometry->height == entry->m_client.height)
+        geometry->height == entry->m_client.height &&
+        XWindow_contentRotationDegrees(window) == entry->m_appliedRotation)
         return true;
     w = geometry->width < 1 ? 1 : geometry->width;
     h = geometry->height < 1 ? 1 : geometry->height;
@@ -5531,7 +5774,14 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     nativeGeom = xpwn_rectLogicalToPhysical(geometry, dpr);
     nativeGeom.width = xpwn_logicalToPhysical(w, dpr);
     nativeGeom.height = xpwn_logicalToPhysical(h, dpr);
+    /* 内容旋转：原生窗/挂起记账一律存旋转后的物理尺寸（footprint），
+       m_client 仍存逻辑（去重比对与事件口径）。 */
+    xpwn_applyRotationFootprint(window, &nativeGeom);
     entry->m_client = *geometry;
+    /* [弹窗随转·方案B 2026-10-18] 记账本次实际采用的旋转角（立即落地与
+       挂起记账两路共用本行；挂起路 footprint 已烘进 m_pendingGeom，角随
+       记账值走）。 */
+    entry->m_appliedRotation = XWindow_contentRotationDegrees(window);
     if (entry->m_deferGeometry) {
         /* 拖拽改尺寸手势期：只记账不落窗，几何由 present 与整窗内容同批
            落地（根因见 deferGeometry 注）。挂起值存钳边后【物理】口径，
@@ -5543,6 +5793,7 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
         entry->m_pendingGeom.width = nativeGeom.width;
         entry->m_pendingGeom.height = nativeGeom.height;
         entry->m_hasPendingGeom = true;
+        entry->m_pendingGeomStampMs = xpwn_monotonicMs();
         return true;
     }
     /* 立即路径作废可能残留的挂起几何（解挂后的即时几何已覆盖其语义）。 */
@@ -6169,6 +6420,24 @@ bool XPlatformNativeWindow_setTransientParent(XWindow* window,
        EWMH 合规 WM 依此保持弹层恒在 owner 之上。 */
     XSetTransientForHint(g_xpwnDisplay, entry->m_win, ownerWin);
     XRaiseWindow(g_xpwnDisplay, entry->m_win);
+    /* [旋转继承 2026-10-18] 迟到登记的弹层同样吃内容旋转 footprint：
+       m_contentRotation 已由 XWindow_setTransientParent 自 owner 继承，
+       此处按新角对调原生宽高并落地（对标主窗创建路径
+       applyRotationFootprint；弹层建柄晚于 setTransientParent 时，
+       创建期未换算——XPutImage 按 drawable 静默截断=弹窗呈正置）。 */
+    {
+        XRect nat = entry->m_client;
+        int devW = 0;
+        int devH = 0;
+        int rot = XWindow_contentRotationDegrees(window);
+        XWindow_rotationDeviceSize(rot, nat.width, nat.height, &devW, &devH);
+        if (devW != nat.width || devH != nat.height) {
+            nat.width = devW;
+            nat.height = devH;
+            XMoveResizeWindow(g_xpwnDisplay, entry->m_win,
+                              nat.x, nat.y, nat.width, nat.height);
+        }
+    }
     XFlush(g_xpwnDisplay);
     return true;
 }
@@ -6569,6 +6838,50 @@ cleanup:
 
 /* ==================== 上屏（平台后端提供） ==================== */
 
+/**
+ * @brief      软件内容旋转的平台能力判据（纯读、无副作用）。
+ * @details    与 xpwn_preparePresentImage 的直拷判据同源，但**不依赖已
+ *             准备的描述符**——按 entry 的视觉/深度与显示字节序直接判，
+ *             使 XWindow_setContentRotation 在首帧之前也能得到一致答复。
+ *             「尚未建连」按乐观口径返回 true（请求角照常落盘；连接建立
+ *             后由 getter 逐帧按真实能力计算有效角，见 D1 纯算设计）。
+ * @note       2026-10-18 新增：RGB16(565) 构建恒不支持——565 旋转需额外
+ *             查表实现，本层不提供，避免误走 4 字节/像素读越界。
+ */
+static bool xpwn_canRotateDirect(const XWNPendingEntry* entry)
+{
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+    (void)entry;
+    return false;
+#else
+    Visual* visual;
+    int depth;
+    if (!g_xpwnDisplay) return true; /* 未建连：乐观（见本函数 @details）。 */
+    visual = entry && entry->m_visual ? entry->m_visual : g_xpwnVisual;
+    depth = entry && entry->m_depth ? entry->m_depth : g_xpwnDepth;
+    if (!visual) return false;
+    /* 24/32 位深 + 标准 BGRA8888 掩码 + 小端字节序 = 直拷布局
+       （ARGB32 小端内存布局 [B,G,R,A]，契约见 XPlatformNativeWindow.h）。
+       真 24 位视觉（bits_per_pixel==24）不满足直拷，其重排路径无旋转实现。 */
+    if (depth != 24 && depth != 32) return false;
+    if (ImageByteOrder(g_xpwnDisplay) != LSBFirst) return false;
+    return visual->red_mask == 0x00ff0000u &&
+           visual->green_mask == 0x0000ff00u &&
+           visual->blue_mask == 0x000000ffu;
+#endif
+}
+
+bool XPlatformNativeWindow_rotationSupported(const XWindow* window)
+{
+    if (!window) return false;
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    /* fbdev 单屏模式：X11 段整体不参与编译，能力由 fbdev 直写侧回答。 */
+    if (XPlatformDisplayDriver_active())
+        return XPlatformBackingStore_rotationCapable();
+#endif
+    return xpwn_canRotateDirect(xpwn_findByXWindow(window));
+}
+
 static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
                                       int imgW, int imgH)
 {
@@ -6676,6 +6989,8 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     int bufBpl;
     int imgW, imgH;
     int presW, presH;
+    int rot;
+    int logW, logH, devW, devH;
     float dpr;
     int i;
     bool any = false;
@@ -6695,8 +7010,30 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
        XPutImage 提交；dpr 按窗口当前逻辑几何所在屏查询，dpr==1.0f
        全链直拷与原路径逐位一致。 */
     dpr = xpwn_dprForGeometry(&entry->m_client);
-    presW = xpwn_logicalToPhysical(imgW, dpr);
-    presH = xpwn_logicalToPhysical(imgH, dpr);
+    /* 内容旋转（2026-10-18）：有效角每帧现查（无缓存——缓存会被
+       setGeometry 的去重早退短路，0↔180 永刷不到，见 XWindow.c 注）。
+       逻辑宽高（旋转换算基准）**恒取被读后备缓冲的 imgW/imgH**：契约
+       「后备缓冲恒逻辑尺寸」，两者常态相等；换角+改几何的过渡期
+       m_client 要等 ConfigureNotify 异步回环才更新（实测 0→90：几何
+       已换、m_client 仍旧值的窗口期内用 m_client 映射会以旧尺寸出描述
+       符，XPutImage 被服务器按 drawable 裁剪，窗口 43.5% 像素永远停
+       在换角前内容——目验 90° 重影根因），取 imgW/imgH 则映射与被读
+       像素天然一致，不依赖回环时序。offset 只用于读源，绝不参与轴
+       判定（攒批子图按批次外接矩形分配）。 */
+    rot = XWindow_contentRotationDegrees(window);
+    logW = imgW;
+    logH = imgH;
+    XWindow_rotationDeviceSize(rot, logW, logH, &devW, &devH);
+    /* 描述符尺寸：rot>0 蕴含 dpr==1（rotationSupported 的 dpr 闸，
+       见 XWindow_rotationSupported），logicalToPhysical 恒等，描述符
+       恒为旋转后的设备 footprint；0° 时与原路径逐位一致。 */
+    if (rot != 0) {
+        presW = devW;
+        presH = devH;
+    } else {
+        presW = xpwn_logicalToPhysical(imgW, dpr);
+        presH = xpwn_logicalToPhysical(imgH, dpr);
+    }
 #if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
     /* RGB16 模式契约：后备缓冲即 RGB16/565。非 RGB16 输入属配置错配，
        拒绝上屏（copyRect16 按 2 字节/像素搬运，误拷 4 字节缓冲会越界）。 */
@@ -6730,6 +7067,47 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     for (i = 0; i < rectCount; ++i) {
         XRect srect;
         XRect drect;
+        if (rot != 0) {
+            /* 四步裁剪（2026-10-18）：①按逻辑整窗 (logW,logH) 裁窗口
+               矩形；②与源覆盖 [off, off+imgW)×[off, off+imgH) 求交
+               （攒批子图只覆盖批次外接矩形，缺此步转置 blit 反查源会
+               读到批次缓冲分配之外）；③正变换映射到设备；④按设备
+               footprint (devW,devH) 裁。 */
+            XRect wrect;
+            XRect devRect;
+            XRect cut;
+            wrect.x = rects[i].x;
+            wrect.y = rects[i].y;
+            wrect.width = rects[i].width;
+            wrect.height = rects[i].height;
+            cut = wrect;
+            if (!xpwn_clipRectToImage(&cut, logW, logH, &cut)) continue;
+            cut.x += off->x;
+            cut.y += off->y;
+            if (!xpwn_clipRectToImage(&cut, imgW, imgH, &cut)) continue;
+            cut.x -= off->x;
+            cut.y -= off->y;
+            wrect = cut;
+            srect.x = wrect.x - off->x;
+            srect.y = wrect.y - off->y;
+            srect.width = wrect.width;
+            srect.height = wrect.height;
+            XWindow_rotationMapRect(rot, logW, logH, &wrect.x, &wrect.y,
+                                    &wrect.width, &wrect.height,
+                                    &devRect.x, &devRect.y,
+                                    &devRect.width, &devRect.height);
+            if (!xpwn_clipRectToImage(&devRect, devW, devH, &devRect))
+                continue;
+            if (!direct) continue; /* 非直拷布局无旋转实现：能力闸已
+                                     降级为 0°，此处为防御性跳过。 */
+            xpwn_copyRectRotated(image, &srect, buffer, bufBpl, &devRect,
+                                 rot, logW, logH);
+            XPutImage(g_xpwnDisplay, entry->m_win, entry->m_gc, ximg,
+                      srect.x, srect.y, devRect.x, devRect.y,
+                      (unsigned)devRect.width, (unsigned)devRect.height);
+            any = true;
+            continue;
+        }
         srect.x = rects[i].x - off->x;
         srect.y = rects[i].y - off->y;
         srect.width = rects[i].width;

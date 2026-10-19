@@ -15,6 +15,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <errno.h>
+#include <sys/socket.h>
 /* 单调时长统一经 XDateTime（约束文档「外部依赖约束」时间源规则：
  * Src/ 禁止直呼 QueryPerformanceCounter/clock_gettime 等平台时间源）。 */
 #include "XDateTime.h"
@@ -145,6 +147,25 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
         (entry->m_events & XSocketActType_Read) &&
         entry->m_sourceType == XAbstractNetIoRing_Source_NativeIO &&
         xabstractnetioring_is_socket_fd(entry)) {
+        /* [2026-10-16 假 EOF 复核] 昆仑通态 A33(5.2.9 定制内核)实测:
+         * 新建 connect 型 socket 上读到 0 字节完成(连接后 0~350ms 内),
+         * 但对端健在(同机裸 socket 连接+闲置 2s+收发全通), 按对端 FIN
+         * 处理即误断——Modbus 主站「连上即断线重连」循环、XUpgrade 引擎
+         * HTTP 超时(wget 却通)同征。MSG_PEEK 复核: EAGAIN=连接活着
+         * (内核边缘事件语义误报, 丢弃 CLOSE、完成事件照常下发, 由设备
+         * 层重挂读); pr==0 才是真 FIN(照旧发关闭)。与桌面/其他平台
+         * 真关闭语义零变化(真关闭时 PEEK 恒返 0)。 */
+        {
+            int pfd = (int)entry->m_fd;
+            unsigned char peekByte;
+            int pr = (int)recv(pfd, &peekByte, 1, MSG_PEEK | MSG_DONTWAIT);
+            if (pr != 0) {
+                /* pr<0 且非 EAGAIN(如 EBADF)=fd 已失效, 同样不当作对端
+                 * FIN; EAGAIN=连接活着; pr>0=对端有数据待读(更非关闭)。
+                 * 丢弃 CLOSE, 完成事件走常规路径下发, 设备层重挂读。 */
+                return;
+            }
+        }
         XEventSockClose* closeEvent = XEventSockClose_create(entry->m_fd);
         if (closeEvent) {
             ((XEvent*)closeEvent)->m_posted = true;

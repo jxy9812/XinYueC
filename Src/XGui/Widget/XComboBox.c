@@ -2227,6 +2227,17 @@ static void xcombo_popupShow(XComboBox* self, int rows)
     if (!self || !self->m_popupView) return;
     view = self->m_popupView;
     if (rows < 1) rows = 1;
+    /* [弹窗随转·opener 焦点 2026-10-18] 弹出前置 combo 持焦（对齐 Qt：
+       QComboBox 点击弹出后自身持焦点，qcombobox.cpp popup 打开时
+       d->comboBox()->setFocus()）：本控件默认 NoFocus（init :3606，
+       不进 Tab 序），press 集中移焦不生效——弹层建柄（下方
+       XWidget_show）的 owner 解析在 focusWindow（X11 平台层焦点依赖
+       WM FocusIn，Xvfb/无 WM 恒缺）与 appFocusWidget（控件层焦点）
+       两路全空时放弃 owner，连锁=弹层不继承 opener 内容旋转角（重开
+       恒持首开角）且 Z 序失保护。显式 setFocus 直写控件层焦点，不改
+       Tab 序（NoFocus 策略位保持），建柄 owner 解析的 appFocusWidget
+       回退（XWidget_createWindow 弹窗随转·owner 兜底）由此接通。 */
+    XWidget_setFocus((XWidget*)self);
     xcombo_popupReposition(self, rows);
     self->m_popupVisible = true;
     xcombo_emitInt(self, (size_t)XComboBox_popupShown_signal(self), 0);

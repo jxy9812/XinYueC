@@ -40,6 +40,7 @@
 #include "XObject.h"
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XBoxLayout.h"
 #include "XLabel.h"
 #include "XLineEdit.h"
 #include "XPushButton.h"
@@ -54,22 +55,21 @@
 
 /*
  * 控件段宏守卫：页面依赖 XRcode（库内无裁剪宏，头文件恒在）+ 图像/
- * 像素图/编解码 + 四件控件。任一被裁剪时降级为契约桩（build 返回
- * NULL、autotest 返回 -1），主文件可无条件链接。
+ * 像素图/编解码 + 四件控件；2026-10-17 容器化后排布由 XBoxLayout
+ * 承载，再一并依赖 XLAYOUT/XLAYOUT_BOX。任一被裁剪时降级为契约桩
+ * （build 返回 NULL、autotest 返回 -1），主文件可无条件链接。
  */
 #if XWIDGET_ON && XLABEL_ON && XLINEEDIT_ON && XPUSHBUTTON_ON && \
-    XCHECKBOX_ON && XPIXMAP_ON
+    XCHECKBOX_ON && XPIXMAP_ON && XLAYOUT_ON && XLAYOUT_BOX_ON
 
 /* ==================== 布局常量 ==================== */
 
-/** @brief 页面装配基线（内容区 776x458 设计稿；adapt 只重排预览）。 */
-#define QR_IN_X         12     /**< 输入行 x。 */
-#define QR_IN_Y         44     /**< 输入行 y。 */
+/** @brief 页面装配基线（2026-10-17 容器化：页内坐标排布改由根布局器
+ *         承载，此处只保留控件宽高常量；段间节奏在 build 装配段用
+ *         addSpacing 近似原设计稿）。 */
 #define QR_EDIT_W       420    /**< 输入框宽。 */
-#define QR_CTRL_H       26     /**< 输入行/按钮行高。 */
-#define QR_PREVIEW_SIZE 300    /**< 预览图边长（正方形）。 */
-#define QR_PREVIEW_X    12     /**< 预览 x。 */
-#define QR_PREVIEW_Y    150    /**< 预览 y（内嵌图行下方）。 */
+#define QR_CTRL_H       26     /**< 输入行高。 */
+#define QR_PREVIEW_SIZE 300    /**< 预览图边长（正方形；外框 +8 余量）。 */
 #define QR_QUIET_ZONE   4      /**< 二维码四周静区（模块数）。 */
 #define QR_MODULE_PX    8      /**< 每模块渲染像素。 */
 #define QR_DEFAULT_TEXT "https://xinyuec.demo/qr" /**< 缺省演示文本。 */
@@ -112,6 +112,12 @@ static struct
                                    **   XLabel_pixmap→XPixmap_toImage 往返
                                    **   会搅乱像素行（2026-10-08 实测，图
                                    **   形库待查），保存直接走本 XImage。） */
+
+    /* ---- 布局器（2026-10-17 容器化；build 装配段挂根，静态自持） ---- */
+    XBoxLayout   m_rootLayout;     /**< 根垂直布局器（页内唯一 setLayout）。 */
+    XBoxLayout   m_inputRow;       /**< 内容输入行（水平）。 */
+    XBoxLayout   m_logoRow;        /**< 内嵌图行（水平）。 */
+    XBoxLayout   m_previewRow;     /**< 预览+保存行（水平）。 */
 } s_qr;
 
 /* ==================== 前置声明 ==================== */
@@ -533,22 +539,6 @@ static void qr_saveSlot(XObject* sender, XVarList* args)
     }
 }
 
-/* ==================== 布局自适应 ==================== */
-
-/** @brief 预览标签按根几何重排（契约 adapt；窄窗保持装配值）。 */
-static void qr_relayout(void)
-{
-    if (!s_qr.m_ready) return;
-    if (!s_qr.m_root) return;
-    if (XWidget_width(s_qr.m_root) < 480 ||
-        XWidget_height(s_qr.m_root) < 380)
-        return;
-    if (s_qr.m_previewLabel)
-        XWidget_setGeometry((XWidget*)s_qr.m_previewLabel, QR_PREVIEW_X,
-                            QR_PREVIEW_Y, QR_PREVIEW_SIZE + 8,
-                            QR_PREVIEW_SIZE + 8);
-}
-
 /* ==================== 无头自动化钩子 ==================== */
 
 /** @brief 无头截图/回归钩子：环境变量直驱编码（无模态对话框）。
@@ -619,7 +609,7 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
                          "\xE4\xBA\x8C\xE7\xBB\xB4\xE7\xA0\x81\xE6\xBC\x94"
                          "\xE7\xA4\xBA"); /* 二维码演示 */
         XLabel_setTextPixelSize(s_qr.m_titleLabel, 15);
-        XWidget_setGeometry((XWidget*)s_qr.m_titleLabel, 12, 8, 300, 24);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_titleLabel, 24);
         XWidget_show((XWidget*)s_qr.m_titleLabel);
     }
 
@@ -628,14 +618,14 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
     if (s_qr.m_capContent) {
         XLabel_setText_2(s_qr.m_capContent,
                          "\xE5\x86\x85\xE5\xAE\xB9"); /* 内容 */
-        XWidget_setGeometry((XWidget*)s_qr.m_capContent, 12, QR_IN_Y + 4,
-                            40, 22);
+        XWidget_setFixedWidth((XWidget*)s_qr.m_capContent, 40);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_capContent, 22);
         XWidget_show((XWidget*)s_qr.m_capContent);
     }
     s_qr.m_contentEdit = XLineEdit_create(s_qr.m_root, 0);
     if (!s_qr.m_contentEdit) return s_qr.m_root;
-    XWidget_setGeometry((XWidget*)s_qr.m_contentEdit, QR_IN_X + 48,
-                        QR_IN_Y, QR_EDIT_W, QR_CTRL_H);
+    XWidget_setFixedWidth((XWidget*)s_qr.m_contentEdit, QR_EDIT_W);
+    XWidget_setFixedHeight((XWidget*)s_qr.m_contentEdit, QR_CTRL_H);
     XLineEdit_setPlaceholderText(
         s_qr.m_contentEdit,
         "\xE8\xAF\xB7\xE8\xBE\x93\xE5\x85\xA5\xE6\x96\x87\xE6\x9C\xAC"
@@ -651,9 +641,8 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
         XPushButton_setText_2(s_qr.m_generateBtn,
                               "\xE7\x94\x9F\xE6\x88\x90\xE4\xBA\x8C\xE7\xBB"
                               "\xB4\xE7\xA0\x81"); /* 生成二维码 */
-        XWidget_setGeometry((XWidget*)s_qr.m_generateBtn,
-                            QR_IN_X + 48 + QR_EDIT_W + 8, QR_IN_Y - 2,
-                            110, QR_CTRL_H + 4);
+        XWidget_setFixedWidth((XWidget*)s_qr.m_generateBtn, 110);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_generateBtn, 30);
         XObject_connect_2((XObject*)s_qr.m_generateBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           qr_generateSlot);
@@ -667,8 +656,8 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
                                   "\xE5\x86\x85\xE5\xB5\x8C\xE4\xB8\xAD\xE5"
                                   "\xBF\x83\xE5\x9B\xBE\xE7\x89\x87");
                                   /* 内嵌中心图片 */
-        XWidget_setGeometry((XWidget*)s_qr.m_logoCheck, 12, QR_IN_Y + 36,
-                            120, 22);
+        XWidget_setFixedWidth((XWidget*)s_qr.m_logoCheck, 120);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_logoCheck, 22);
         XObject_connect_2((XObject*)s_qr.m_logoCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           qr_logoToggledSlot);
@@ -679,8 +668,8 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
         XPushButton_setText_2(s_qr.m_logoPickBtn,
                               "\xE9\x80\x89\xE6\x8B\xA9\xE5\x9B\xBE\xE7\x89"
                               "\x87\xE2\x80\xA6"); /* 选择图片… */
-        XWidget_setGeometry((XWidget*)s_qr.m_logoPickBtn, 140,
-                            QR_IN_Y + 34, 96, 26);
+        XWidget_setFixedWidth((XWidget*)s_qr.m_logoPickBtn, 96);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_logoPickBtn, 26);
         XObject_connect_2((XObject*)s_qr.m_logoPickBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           qr_logoPickSlot);
@@ -693,8 +682,7 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
                          "\xE6\x9C\xAA\xE9\x80\x89\xE6\x8B\xA9");
                          /* 内嵌图：未选择 */
         XLabel_setTextPixelSize(s_qr.m_logoPathLabel, 12);
-        XWidget_setGeometry((XWidget*)s_qr.m_logoPathLabel, 244,
-                            QR_IN_Y + 38, 520, 20);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_logoPathLabel, 20);
         XWidget_show((XWidget*)s_qr.m_logoPathLabel);
     }
 
@@ -707,9 +695,10 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
                      "\xA8\xE6\xAD\xA4"); /* 生成的二维码显示在此 */
     XLabel_setAlignment(s_qr.m_previewLabel,
                         XAlignment_Center | XAlignment_VCenter);
-    XWidget_setGeometry((XWidget*)s_qr.m_previewLabel, QR_PREVIEW_X,
-                        QR_PREVIEW_Y, QR_PREVIEW_SIZE + 8,
-                        QR_PREVIEW_SIZE + 8);
+    XWidget_setFixedWidth((XWidget*)s_qr.m_previewLabel,
+                          QR_PREVIEW_SIZE + 8);
+    XWidget_setFixedHeight((XWidget*)s_qr.m_previewLabel,
+                           QR_PREVIEW_SIZE + 8);
     XWidget_show((XWidget*)s_qr.m_previewLabel);
 
     /* ---- 保存按钮（预览右侧） ---- */
@@ -718,9 +707,8 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
         XPushButton_setText_2(s_qr.m_saveBtn,
                               "\xE4\xBF\x9D\xE5\xAD\x98 PNG\xE2\x80\xA6");
                               /* 保存 PNG… */
-        XWidget_setGeometry((XWidget*)s_qr.m_saveBtn,
-                            QR_PREVIEW_X + QR_PREVIEW_SIZE + 24,
-                            QR_PREVIEW_Y, 130, 30);
+        XWidget_setFixedWidth((XWidget*)s_qr.m_saveBtn, 130);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_saveBtn, 30);
         XObject_connect_2((XObject*)s_qr.m_saveBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           qr_saveSlot);
@@ -735,10 +723,60 @@ XWidget* demo_page_qrcode_build(XWidget* parent,
         XLabel_setTextPixelSize(s_qr.m_statusLabel, 13);
         XLabel_setAlignment(s_qr.m_statusLabel,
                             XAlignment_Left | XAlignment_Top);
-        XWidget_setGeometry((XWidget*)s_qr.m_statusLabel, 12,
-                            QR_PREVIEW_Y + QR_PREVIEW_SIZE + 20, 740, 24);
+        XWidget_setFixedHeight((XWidget*)s_qr.m_statusLabel, 24);
         XWidget_show((XWidget*)s_qr.m_statusLabel);
     }
+
+    /* ---- 布局装配（2026-10-17 容器化）：根垂直布局四段----
+     * [标题][输入行][内嵌图行][预览行][状态行]；段间 addSpacing 近似
+     * 原设计稿节奏（12/6/44/12），行内小间距用行级 addSpacing，行高
+     * 由各控件固定高承载（预览 308 固定方框，保存钮固定高贴行顶）。 */
+    XBoxLayout_init(&s_qr.m_rootLayout, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_qr.m_rootLayout, 0);
+    XLayout_setContentsMargins((XLayout*)&s_qr.m_rootLayout, 12, 8, 12, 8);
+    XBoxLayout_addWidget(&s_qr.m_rootLayout, (XWidget*)s_qr.m_titleLabel);
+    XBoxLayout_addSpacing(&s_qr.m_rootLayout, 12);
+    /* 内容输入行：标题 | 8 | 输入框 | 8 | 生成钮。 */
+    XBoxLayout_init(&s_qr.m_inputRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_qr.m_inputRow, 0);
+    XBoxLayout_addWidget(&s_qr.m_inputRow, (XWidget*)s_qr.m_capContent);
+    XBoxLayout_addSpacing(&s_qr.m_inputRow, 8);
+    XBoxLayout_addWidget(&s_qr.m_inputRow, (XWidget*)s_qr.m_contentEdit);
+    XBoxLayout_addSpacing(&s_qr.m_inputRow, 8);
+    XBoxLayout_addWidget(&s_qr.m_inputRow, (XWidget*)s_qr.m_generateBtn);
+    /* 行尾伸展：余量留行尾，保持行内左对齐原节奏。 */
+    XBoxLayout_addStretch(&s_qr.m_inputRow, 1);
+    XBoxLayout_addLayout(&s_qr.m_rootLayout, (XLayout*)&s_qr.m_inputRow);
+    XBoxLayout_addSpacing(&s_qr.m_rootLayout, 6);
+    /* 内嵌图行：开关 | 8 | 选图钮 | 8 | 路径展示（伸展铺满）。 */
+    XBoxLayout_init(&s_qr.m_logoRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_qr.m_logoRow, 0);
+    XBoxLayout_addWidget(&s_qr.m_logoRow, (XWidget*)s_qr.m_logoCheck);
+    XBoxLayout_addSpacing(&s_qr.m_logoRow, 8);
+    XBoxLayout_addWidget(&s_qr.m_logoRow, (XWidget*)s_qr.m_logoPickBtn);
+    XBoxLayout_addSpacing(&s_qr.m_logoRow, 8);
+    /* 路径展示（伸展铺满；固定高 20 默认贴行顶）。 */
+    XBoxLayout_addWidgetEx(&s_qr.m_logoRow, (XWidget*)s_qr.m_logoPathLabel,
+                           1, 0);
+    XBoxLayout_addLayout(&s_qr.m_rootLayout, (XLayout*)&s_qr.m_logoRow);
+    XBoxLayout_addSpacing(&s_qr.m_rootLayout, 44);
+    /* 预览行：预览方框 | 16 | 保存钮（固定高 30 默认贴行顶）。 */
+    XBoxLayout_init(&s_qr.m_previewRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_qr.m_previewRow, 0);
+    XBoxLayout_addWidget(&s_qr.m_previewRow, (XWidget*)s_qr.m_previewLabel);
+    XBoxLayout_addSpacing(&s_qr.m_previewRow, 16);
+    /* 保存钮显式贴顶对齐（无对齐时本布局器垂直默认居中，与原稿
+       「与预览顶边平齐」不符）。 */
+    XBoxLayout_addWidgetEx(&s_qr.m_previewRow, (XWidget*)s_qr.m_saveBtn,
+                           0, XAlignment_Top);
+    /* 行尾伸展：余量留行尾，保持行内左对齐原节奏。 */
+    XBoxLayout_addStretch(&s_qr.m_previewRow, 1);
+    XBoxLayout_addLayout(&s_qr.m_rootLayout, (XLayout*)&s_qr.m_previewRow);
+    XBoxLayout_addSpacing(&s_qr.m_rootLayout, 12);
+    XBoxLayout_addWidget(&s_qr.m_rootLayout,
+                         (XWidget*)s_qr.m_statusLabel);
+    XBoxLayout_addStretch(&s_qr.m_rootLayout, 1);
+    XWidget_setLayout(s_qr.m_root, (XLayout*)&s_qr.m_rootLayout);
 
     s_qr.m_ready = true;
     /* 装配完成即按缺省文本出图——切进本页即有可见预览。 */
@@ -823,11 +861,13 @@ int demo_page_qrcode_autotest(XWidget* page)
     return failures;
 }
 
-/** @brief 页面自适应重排（契约 adapt；同 network 页口径）。 */
+/** @brief 页面自适应重排（契约 adapt）。 */
 void demo_page_qrcode_adapt(XWidget* page)
 {
+    /* 2026-10-17 容器化：页内排布全部交给根布局器（预览方框固定尺寸，
+     * 状态行随内容排布），此处不再做任何手写几何；契约签名保留
+     * （主文件调用点不动）。 */
     (void)page;
-    qr_relayout();
 }
 
 #else /* 裁剪桩 */

@@ -89,6 +89,8 @@ struct XGuiRemoteUdpChannel {
     uint32_t txSeqFrame;                 /**< FRAME 发送序号(服务端)。 */
     uint32_t txSeqInput;                 /**< INPUT 发送序号(客户端)。 */
     uint32_t rxFramesSeen;               /**< FRAME 已见最大序号(客户端丢旧)。 */
+    bool     rxFramesAny;                /**< FRAME 至少收下其一(首包不计缺口)。 */
+    uint64_t rxLostFrames;               /**< FRAME 缺口累计(客户端丢帧恢复判据)。 */
     uint32_t rxExpectInput;              /**< INPUT 期望序号(服务端)。 */
     int64_t  gapSinceMs;                 /**< INPUT 缺口开启时刻(0=无缺口)。 */
 
@@ -452,6 +454,15 @@ static void xudp_parseStream(XGuiRemoteUdpChannel* c, int64_t nowMs)
                 if (c->cfg.role == XGUI_REMOTE_UDP_ROLE_CLIENT) {
                     /* 最新帧优先: 重复/乱序旧帧直接丢(设计稿 §4.1)。 */
                     if ((int32_t)(seq - c->rxFramesSeen) > 0) {
+                        /* [2026-10-16 丢帧缺口记账] 首包后的 seq 跳变=在途
+                         * 丢失——FRAME 无重传缓存, 洞在静态区永不自愈
+                         * (真机残影实证)。只记账不重传: 客户端泵按计数
+                         * 增量发 FB_REQUEST 全量, 复用服务端「整窗重绘+
+                         * 分轮 forceTcp」既有自愈, 精准且零稳态成本。 */
+                        if (c->rxFramesAny)
+                            c->rxLostFrames +=
+                                    (uint64_t)(seq - c->rxFramesSeen - 1);
+                        c->rxFramesAny = true;
                         c->rxFramesSeen = seq;
                         c->lastFrameRecvMs = nowMs;
                         if (c->cfg.onRecv)
@@ -629,6 +640,8 @@ void XGuiRemoteUdpChannel_bindSession(XGuiRemoteUdpChannel* c, uint32_t token,
     c->txSeqFrame = 0;
     c->txSeqInput = 0;
     c->rxFramesSeen = 0;
+    c->rxFramesAny = false;
+    c->rxLostFrames = 0;
     c->rxExpectInput = 0;
     c->gapSinceMs = 0;
     c->lastRecvMs = INT64_MAX;
@@ -680,6 +693,8 @@ void XGuiRemoteUdpChannel_setActive(XGuiRemoteUdpChannel* c, bool active)
         c->txSeqFrame = 0;
         c->txSeqInput = 0;
         c->rxFramesSeen = 0;
+        c->rxFramesAny = false;
+        c->rxLostFrames = 0;
         c->rxExpectInput = 0;
         c->gapSinceMs = 0;
         c->lastFrameSendMs = INT64_MAX;
@@ -884,6 +899,11 @@ uint64_t XGuiRemoteUdpChannel_rxDatagrams(const XGuiRemoteUdpChannel* c)
 uint64_t XGuiRemoteUdpChannel_droppedInputs(const XGuiRemoteUdpChannel* c)
 {
     return c ? c->droppedInputs : 0;
+}
+
+uint64_t XGuiRemoteUdpChannel_rxLostFrames(const XGuiRemoteUdpChannel* c)
+{
+    return c ? c->rxLostFrames : 0;
 }
 
 /* ==================== [wake] 事件循环响应延迟探针(消息层) ================= */

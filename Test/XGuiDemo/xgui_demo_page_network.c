@@ -38,6 +38,7 @@
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XWidget.h"
+#include "XBoxLayout.h"
 #include "XLabel.h"
 #include "XCheckBox.h"
 #include "XLineEdit.h"
@@ -50,21 +51,24 @@
 
 /*
  * 控件段宏守卫：枚举与配置依赖 XNetwork + XNetworkInterface 模块，
- * 页面控件依赖 Label/ComboBox/LineEdit/PushButton/CheckBox。任一被
- * 裁剪时降级为契约桩（build 返回 NULL、autotest 返回 -1），主文件可
- * 无条件链接。
+ * 页面控件依赖 Label/ComboBox/LineEdit/PushButton/CheckBox；2026-10-17
+ * 容器化后排布由 XBoxLayout 承载，再一并依赖 XLAYOUT/XLAYOUT_BOX。
+ * 任一被裁剪时降级为契约桩（build 返回 NULL、autotest 返回 -1），
+ * 主文件可无条件链接。
  */
 #if XNETWORK_ON && XNETWORK_INTERFACE_ON && XWIDGET_ON && \
     XLABEL_ON && XCOMBOBOX_ON && XLINEEDIT_ON && XPUSHBUTTON_ON && \
-    XCHECKBOX_ON
+    XCHECKBOX_ON && XLAYOUT_ON && XLAYOUT_BOX_ON
 
 /* ==================== 布局常量 ==================== */
 
-/** @brief 页根装配基线（776x458 内容区设计稿；adapt 只钉底两行）。 */
-#define NET_CAP_X      12     /**< 字段标题列 x。 */
-#define NET_FIELD_X    96     /**< 输入控件列 x。 */
+/** @brief 页面装配基线（2026-10-17 容器化：页内坐标排布改由根布局器
+ *         承载，此处只保留列宽/控件高常量；段间节奏在 build 装配段用
+ *         addSpacing 近似原设计稿 776x458 的间距）。 */
+#define NET_CAP_W      80     /**< 字段标题列宽。 */
 #define NET_FIELD_W    300    /**< 输入控件宽。 */
-#define NET_ROW_H      32     /**< 配置字段行距。 */
+#define NET_BTN_W      110    /**< 应用按钮宽。 */
+#define NET_ROOTITEM_V6ROW 6  /**< 根布局中 IPv6 行条目索引（装配序）。 */
 
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
 
@@ -126,6 +130,17 @@ static struct
     char       m_v6All[1400];  /**< 全部 IPv6 地址文本（'\n' 连接，展开视图）。 */
     int        m_v6Count;      /**< IPv6 地址总数。 */
     bool       m_v6Expanded;   /**< true=展开视图（编辑区让位隐藏）。 */
+
+    /* ---- 布局器（2026-10-17 容器化；build 装配段挂根，静态自持） ---- */
+    XBoxLayout m_rootLayout;   /**< 根垂直布局器（页内唯一 setLayout）。 */
+    XBoxLayout m_adapterRow;   /**< 网卡选择行（水平：标题+下拉+刷新）。 */
+    XBoxLayout m_v6Row;        /**< IPv6 行（水平：折叠单行+展开开关）。 */
+    XBoxLayout m_modeRow;      /**< 模式行（水平：IPv4/IPv6 两组开关）。 */
+    XBoxLayout m_fieldCols;    /**< 静态字段双列容器（水平）。 */
+    XBoxLayout m_v4Col;        /**< 左列 IPv4 五行（垂直）。 */
+    XBoxLayout m_v6Col;        /**< 右列 IPv6 三行（垂直）。 */
+    XBoxLayout m_v4Rows[5];    /**< IPv4 字段行布局器（标题+编辑）。 */
+    XBoxLayout m_v6Rows[3];    /**< IPv6 字段行布局器（标题+编辑）。 */
 } s_net;
 
 /* ==================== 内部辅助 ==================== */
@@ -370,224 +385,24 @@ static void net_updateV6Label(void)
     XLabel_setText_2(s_net.m_v6Label, line);
 }
 
-/** @brief 按 v6 展开态重排页面（折叠=编辑视图；展开=全列表让位视图）。
- *  @details 展开时信息区/编辑区整体隐藏，全列表占内容区（每行一个地
- *           址）；窗口过矮按行高截断显示（计数仍完整可见于收起行）。
- *           信息区高度随实际行数自适应（回现行数驱动），模式行/字段区
- *           整体随信息区下缘联动，避免固定 5 行高在小行数平台留大空档。 */
+/** @brief 按 v6 展开态切换页面形态（折叠=编辑视图；展开=全列表让位）。
+ *  @details 2026-10-17 容器化：不再手写任何几何——折叠/展开只切换
+ *           控件显隐、信息区固定高（行数×16+8，回填行数驱动）与根
+ *           布局中 IPv6 行的伸展因子，其余全部交给布局器：窗口宽窄、
+ *           矮高均由 stretch/固定尺寸自适应（原「宽版/窄版」两套手写
+ *           排布由同一布局结构承载）；显隐变更后经
+ *           XWidget_updateGeometry 激活根布局重排（本框架子控件显隐
+ *           不自动失效父布局）。展开态 IPv6 列表释放固定高、由伸展
+ *           因子占满信息区腾出的全部空间（随窗口伸缩，替代原按根高
+ *           截断行数的手写算法）。 */
 static void net_relayout(void)
 {
     XWidget* root = s_net.m_root;
-    int rootW;
-    int rootH;
-    int i;
     int infoH;
-    int yV6;
-    int yMode;
-    int yField;
+    int i;
     if (!root) return;
-    rootW = XWidget_width(root);
-    rootH = XWidget_height(root);
-    if (rootW < 360 || rootH < 300) return; /* 过窄保持装配几何。 */
-    if (s_net.m_statusLabel)
-        XWidget_setGeometry(s_net.m_statusLabel, 12, rootH - 22,
-                            rootW - 24, 22);
-    /* 信息区行高 16px + 上下 8px 余量；未回填按设计稿 5 行兜底。 */
-    infoH = (s_net.m_infoLines > 0) ? s_net.m_infoLines * 16 + 8 : 104;
-    yV6 = 80 + infoH + 4;  /* IPv6 行基线（信息区下缘 +4px）。 */
-    yMode = yV6 + 32;      /* 模式行基线。 */
-    yField = yMode + 42;   /* 静态字段起始基线。 */
-    if (!s_net.m_v6Expanded && rootW >= 700) {
-        /* ---- 折叠·宽版：信息区一行 v6 + 双列编辑区（IPv4 左 / IPv6 右） ---- */
-        if (s_net.m_infoLabel) {
-            XWidget_setGeometry(s_net.m_infoLabel, 12, 80, rootW - 24, infoH);
-            XWidget_show((XWidget*)s_net.m_infoLabel);
-        }
-        if (s_net.m_v6Label)
-            XWidget_setGeometry(s_net.m_v6Label, 12, yV6, rootW - 24, 20);
-        if (s_net.m_v6ExpandCheck)
-            XWidget_setGeometry((XWidget*)s_net.m_v6ExpandCheck,
-                                rootW - 176, yV6 - 2, 164, 22);
-        /* 模式行：IPv4 左 / IPv6 右，两枚开关互不联动。 */
-        if (s_net.m_capV4Mode)
-            XWidget_setGeometry((XWidget*)s_net.m_capV4Mode, 12, yMode + 4, 80, 22);
-        if (s_net.m_v4ModeCombo)
-            XWidget_setGeometry((XWidget*)s_net.m_v4ModeCombo, 96, yMode + 2, 150, 26);
-        if (s_net.m_applyBtn)
-            XWidget_setGeometry((XWidget*)s_net.m_applyBtn, 254, yMode, 110, 30);
-        if (s_net.m_capV6Mode)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Mode, 420, yMode + 4, 80, 22);
-        if (s_net.m_v6ModeCombo)
-            XWidget_setGeometry((XWidget*)s_net.m_v6ModeCombo, 504, yMode + 2, 140, 26);
-        if (s_net.m_applyV6Btn)
-            XWidget_setGeometry((XWidget*)s_net.m_applyV6Btn, 652, yMode, 110, 30);
-        /* 左列：IPv4 静态五件。 */
-        for (i = 0; i < 5; ++i) {
-            XLabel** cap = &s_net.m_capIp;
-            XLineEdit** edit = &s_net.m_ipEdit;
-            int y = yField + i * 26;
-            if (i == 1) { cap = &s_net.m_capMask; edit = &s_net.m_maskEdit; }
-            else if (i == 2) { cap = &s_net.m_capGw; edit = &s_net.m_gwEdit; }
-            else if (i == 3) { cap = &s_net.m_capDns1; edit = &s_net.m_dns1Edit; }
-            else if (i == 4) { cap = &s_net.m_capDns2; edit = &s_net.m_dns2Edit; }
-            if (*cap)
-                XWidget_setGeometry((XWidget*)*cap, 12, y + 2, 80, 20);
-            if (*edit)
-                XWidget_setGeometry((XWidget*)*edit, 96, y, 300, 22);
-        }
-        /* 右列：IPv6 静态三件（地址 / 前缀 / 网关）。 */
-        if (s_net.m_capV6Addr)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Addr, 420, yField + 2, 100, 20);
-        if (s_net.m_v6AddrEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6AddrEdit, 524, yField, 264, 24);
-        if (s_net.m_capV6Prefix)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Prefix, 420, yField + 32, 36, 20);
-        if (s_net.m_v6PrefixEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6PrefixEdit, 460, yField + 30, 64, 24);
-        if (s_net.m_capV6Gw)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Gw, 420, yField + 62, 60, 20);
-        if (s_net.m_v6GwEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6GwEdit, 484, yField + 60, 304, 24);
-        /* 双列整体显形（从展开态返回时恢复）。 */
-        if (s_net.m_capV4Mode) XWidget_show((XWidget*)s_net.m_capV4Mode);
-        if (s_net.m_v4ModeCombo) XWidget_show((XWidget*)s_net.m_v4ModeCombo);
-        if (s_net.m_applyBtn) XWidget_show((XWidget*)s_net.m_applyBtn);
-        if (s_net.m_capV6Mode) XWidget_show((XWidget*)s_net.m_capV6Mode);
-        if (s_net.m_v6ModeCombo) XWidget_show((XWidget*)s_net.m_v6ModeCombo);
-        if (s_net.m_applyV6Btn) XWidget_show((XWidget*)s_net.m_applyV6Btn);
-        for (i = 0; i < 5; ++i) {
-            XLabel** cap = &s_net.m_capIp;
-            XLineEdit** edit = &s_net.m_ipEdit;
-            if (i == 1) { cap = &s_net.m_capMask; edit = &s_net.m_maskEdit; }
-            else if (i == 2) { cap = &s_net.m_capGw; edit = &s_net.m_gwEdit; }
-            else if (i == 3) { cap = &s_net.m_capDns1; edit = &s_net.m_dns1Edit; }
-            else if (i == 4) { cap = &s_net.m_capDns2; edit = &s_net.m_dns2Edit; }
-            if (*cap) XWidget_show((XWidget*)*cap);
-            if (*edit) XWidget_show((XWidget*)*edit);
-        }
-        if (s_net.m_capV6Addr) XWidget_show((XWidget*)s_net.m_capV6Addr);
-        if (s_net.m_v6AddrEdit) XWidget_show((XWidget*)s_net.m_v6AddrEdit);
-        if (s_net.m_capV6Prefix) XWidget_show((XWidget*)s_net.m_capV6Prefix);
-        if (s_net.m_v6PrefixEdit) XWidget_show((XWidget*)s_net.m_v6PrefixEdit);
-        if (s_net.m_capV6Gw) XWidget_show((XWidget*)s_net.m_capV6Gw);
-        if (s_net.m_v6GwEdit) XWidget_show((XWidget*)s_net.m_v6GwEdit);
-        if (s_net.m_infoLabel) XWidget_show((XWidget*)s_net.m_infoLabel);
-        if (s_net.m_hintLabel)
-            XWidget_setGeometry(s_net.m_hintLabel, 12, rootH - 44,
-                                rootW - 24, 20);
-        net_updateV6Label();
-    } else if (!s_net.m_v6Expanded) {
-        /* ---- 折叠·窄版（rootW<700，如导航面板展开占位）：模式行堆叠,
-         * IPv4/IPv6 字段纵排（前缀与网关同行），窄根不裁列。 ---- */
-        if (s_net.m_infoLabel) {
-            XWidget_setGeometry(s_net.m_infoLabel, 12, 80, rootW - 24, infoH);
-            XWidget_show((XWidget*)s_net.m_infoLabel);
-        }
-        if (s_net.m_v6Label)
-            XWidget_setGeometry(s_net.m_v6Label, 12, yV6, rootW - 24, 20);
-        if (s_net.m_v6ExpandCheck)
-            XWidget_setGeometry((XWidget*)s_net.m_v6ExpandCheck,
-                                rootW - 176, yV6 - 2, 164, 22);
-        if (s_net.m_capV4Mode)
-            XWidget_setGeometry((XWidget*)s_net.m_capV4Mode, 12, yMode + 4, 80, 22);
-        if (s_net.m_v4ModeCombo)
-            XWidget_setGeometry((XWidget*)s_net.m_v4ModeCombo, 96, yMode + 2, 130, 26);
-        if (s_net.m_applyBtn)
-            XWidget_setGeometry((XWidget*)s_net.m_applyBtn, 232, yMode, 100, 30);
-        if (s_net.m_capV6Mode)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Mode, 12, yMode + 34, 80, 22);
-        if (s_net.m_v6ModeCombo)
-            XWidget_setGeometry((XWidget*)s_net.m_v6ModeCombo, 96, yMode + 32, 130, 26);
-        if (s_net.m_applyV6Btn)
-            XWidget_setGeometry((XWidget*)s_net.m_applyV6Btn, 232, yMode + 30, 100, 30);
-        for (i = 0; i < 5; ++i) {
-            XLabel** cap = &s_net.m_capIp;
-            XLineEdit** edit = &s_net.m_ipEdit;
-            int y = yMode + 72 + i * 24;
-            if (i == 1) { cap = &s_net.m_capMask; edit = &s_net.m_maskEdit; }
-            else if (i == 2) { cap = &s_net.m_capGw; edit = &s_net.m_gwEdit; }
-            else if (i == 3) { cap = &s_net.m_capDns1; edit = &s_net.m_dns1Edit; }
-            else if (i == 4) { cap = &s_net.m_capDns2; edit = &s_net.m_dns2Edit; }
-            if (*cap)
-                XWidget_setGeometry((XWidget*)*cap, 12, y + 2, 80, 20);
-            if (*edit)
-                XWidget_setGeometry((XWidget*)*edit, 96, y, rootW - 120, 22);
-        }
-        /* IPv6 静态三件紧随 IPv4 五件之后（原固定 398 与 DNS 末行重叠）。 */
-        if (s_net.m_capV6Addr)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Addr, 12, yMode + 198, 100, 20);
-        if (s_net.m_v6AddrEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6AddrEdit, 116, yMode + 196,
-                                rootW - 140, 24);
-        if (s_net.m_capV6Prefix)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Prefix, 12, yMode + 228, 36, 20);
-        if (s_net.m_v6PrefixEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6PrefixEdit, 52, yMode + 226, 64, 24);
-        if (s_net.m_capV6Gw)
-            XWidget_setGeometry((XWidget*)s_net.m_capV6Gw, 140, yMode + 228, 60, 20);
-        if (s_net.m_v6GwEdit)
-            XWidget_setGeometry((XWidget*)s_net.m_v6GwEdit, 204, yMode + 226,
-                                rootW - 228, 24);
-        if (s_net.m_capV4Mode) XWidget_show((XWidget*)s_net.m_capV4Mode);
-        if (s_net.m_v4ModeCombo) XWidget_show((XWidget*)s_net.m_v4ModeCombo);
-        if (s_net.m_applyBtn) XWidget_show((XWidget*)s_net.m_applyBtn);
-        if (s_net.m_capV6Mode) XWidget_show((XWidget*)s_net.m_capV6Mode);
-        if (s_net.m_v6ModeCombo) XWidget_show((XWidget*)s_net.m_v6ModeCombo);
-        if (s_net.m_applyV6Btn) XWidget_show((XWidget*)s_net.m_applyV6Btn);
-        for (i = 0; i < 5; ++i) {
-            XLabel** cap = &s_net.m_capIp;
-            XLineEdit** edit = &s_net.m_ipEdit;
-            if (i == 1) { cap = &s_net.m_capMask; edit = &s_net.m_maskEdit; }
-            else if (i == 2) { cap = &s_net.m_capGw; edit = &s_net.m_gwEdit; }
-            else if (i == 3) { cap = &s_net.m_capDns1; edit = &s_net.m_dns1Edit; }
-            else if (i == 4) { cap = &s_net.m_capDns2; edit = &s_net.m_dns2Edit; }
-            if (*cap) XWidget_show((XWidget*)*cap);
-            if (*edit) XWidget_show((XWidget*)*edit);
-        }
-        if (s_net.m_capV6Addr) XWidget_show((XWidget*)s_net.m_capV6Addr);
-        if (s_net.m_v6AddrEdit) XWidget_show((XWidget*)s_net.m_v6AddrEdit);
-        if (s_net.m_capV6Prefix) XWidget_show((XWidget*)s_net.m_capV6Prefix);
-        if (s_net.m_v6PrefixEdit) XWidget_show((XWidget*)s_net.m_v6PrefixEdit);
-        if (s_net.m_capV6Gw) XWidget_show((XWidget*)s_net.m_capV6Gw);
-        if (s_net.m_v6GwEdit) XWidget_show((XWidget*)s_net.m_v6GwEdit);
-        if (s_net.m_infoLabel) XWidget_show((XWidget*)s_net.m_infoLabel);
-        if (s_net.m_hintLabel)
-            XWidget_setGeometry(s_net.m_hintLabel, 12, rootH - 44,
-                                rootW - 24, 20);
-        net_updateV6Label();
-    } else {
-        /* ---- 展开：全列表让位视图（信息/编辑区隐藏） ---- */
-        int lineH = 18;
-        int maxLines = (rootH - 74 - 46 - 8) / lineH;
-        int shown = s_net.m_v6Count > 0 ? s_net.m_v6Count : 1;
-        char list[1500];
-        if (shown > maxLines) shown = maxLines > 0 ? maxLines : 1;
-        if (shown < 2) shown = 2; /* 单地址也保持两行列表视区（观感一致）。 */
-        /* 列表文本按显示行数截断（逐行取 m_v6All 前缀）。 */
-        {
-            const char* p = s_net.m_v6All;
-            int lines = 1;
-            size_t len = 0;
-            list[0] = '\0';
-            if (s_net.m_v6Count <= 0) snprintf(list, sizeof(list), "-");
-            else while (p && *p && lines <= shown) {
-                const char* nl = strchr(p, '\n');
-                size_t seg = nl ? (size_t)(nl - p) : strlen(p);
-                if (sizeof(list) - len > seg + 2) {
-                    snprintf(list + len, sizeof(list) - len, "%s%.*s",
-                             (lines > 1) ? "\n" : "", (int)seg, p);
-                    len = strlen(list);
-                }
-                if (!nl) break;
-                p = nl + 1;
-                ++lines;
-            }
-            if (s_net.m_v6Count > shown) {
-                size_t len = strlen(list);
-                snprintf(list + len, sizeof(list) - len, "\n\xE2\x80\xA6");
-                /* …（窗口过矮截断提示） */
-            }
-        }
+    if (s_net.m_v6Expanded) {
+        /* ---- 展开：全列表让位视图（信息/编辑区隐藏，列表占内容区） ---- */
         if (s_net.m_infoLabel) XWidget_hide((XWidget*)s_net.m_infoLabel);
         if (s_net.m_capV4Mode) XWidget_hide((XWidget*)s_net.m_capV4Mode);
         if (s_net.m_v4ModeCombo) XWidget_hide((XWidget*)s_net.m_v4ModeCombo);
@@ -613,17 +428,61 @@ static void net_relayout(void)
         if (s_net.m_v6GwEdit) XWidget_hide((XWidget*)s_net.m_v6GwEdit);
         if (s_net.m_hintLabel) XWidget_hide((XWidget*)s_net.m_hintLabel);
         if (s_net.m_v6Label) {
-            XLabel_setTextPixelSize(s_net.m_v6Label, 12);
-            XWidget_setGeometry(s_net.m_v6Label, 12, 74, rootW - 24,
-                                shown * lineH + 8);
-            XWidget_show(s_net.m_v6Label);
-            XLabel_setText_2(s_net.m_v6Label, list);
+            /* 释放折叠态固定高，伸展因子接管（行高随窗口自适应）。 */
+            XWidget_setMinimumHeight((XWidget*)s_net.m_v6Label, 0);
+            XWidget_setMaximumHeight((XWidget*)s_net.m_v6Label,
+                                     XWIDGET_MAX_SIZE);
+            XLabel_setText_2(s_net.m_v6Label,
+                             s_net.m_v6Count > 0 ? s_net.m_v6All : "-");
         }
-        if (s_net.m_v6ExpandCheck)
-            XWidget_setGeometry((XWidget*)s_net.m_v6ExpandCheck,
-                                12, 74 + shown * lineH + 12, 180, 24);
+        if (s_net.m_v6ExpandCheck) {
+            /* 同步释放行内开关固定高：行的交叉轴上限=子项上限最小值，
+               开关不释放则整行被钉在 22px，列表让位视图无法伸展。 */
+            XWidget_setMinimumHeight((XWidget*)s_net.m_v6ExpandCheck, 0);
+            XWidget_setMaximumHeight((XWidget*)s_net.m_v6ExpandCheck,
+                                     XWIDGET_MAX_SIZE);
+        }
+        /* IPv6 行在根布局中升为伸展条目（占标题/状态之外全部高度）。 */
+        XBoxLayout_setStretch(&s_net.m_rootLayout, NET_ROOTITEM_V6ROW, 1);
+        XWidget_updateGeometry(root);
         return;
     }
+    /* ---- 折叠：编辑视图整体显形 + 标准行高 ---- */
+    /* 信息区行高 16px + 上下 8px 余量；未回填按设计稿 5 行兜底。 */
+    infoH = (s_net.m_infoLines > 0) ? s_net.m_infoLines * 16 + 8 : 104;
+    if (s_net.m_infoLabel)
+        XWidget_setFixedHeight((XWidget*)s_net.m_infoLabel, infoH);
+    if (s_net.m_v6Label)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6Label, 20);
+    if (s_net.m_v6ExpandCheck)
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6ExpandCheck, 22);
+    if (s_net.m_infoLabel) XWidget_show((XWidget*)s_net.m_infoLabel);
+    if (s_net.m_capV4Mode) XWidget_show((XWidget*)s_net.m_capV4Mode);
+    if (s_net.m_v4ModeCombo) XWidget_show((XWidget*)s_net.m_v4ModeCombo);
+    if (s_net.m_applyBtn) XWidget_show((XWidget*)s_net.m_applyBtn);
+    if (s_net.m_capV6Mode) XWidget_show((XWidget*)s_net.m_capV6Mode);
+    if (s_net.m_v6ModeCombo) XWidget_show((XWidget*)s_net.m_v6ModeCombo);
+    if (s_net.m_applyV6Btn) XWidget_show((XWidget*)s_net.m_applyV6Btn);
+    for (i = 0; i < 5; ++i) {
+        XLabel** cap = &s_net.m_capIp;
+        XLineEdit** edit = &s_net.m_ipEdit;
+        if (i == 1) { cap = &s_net.m_capMask; edit = &s_net.m_maskEdit; }
+        else if (i == 2) { cap = &s_net.m_capGw; edit = &s_net.m_gwEdit; }
+        else if (i == 3) { cap = &s_net.m_capDns1; edit = &s_net.m_dns1Edit; }
+        else if (i == 4) { cap = &s_net.m_capDns2; edit = &s_net.m_dns2Edit; }
+        if (*cap) XWidget_show((XWidget*)*cap);
+        if (*edit) XWidget_show((XWidget*)*edit);
+    }
+    if (s_net.m_capV6Addr) XWidget_show((XWidget*)s_net.m_capV6Addr);
+    if (s_net.m_v6AddrEdit) XWidget_show((XWidget*)s_net.m_v6AddrEdit);
+    if (s_net.m_capV6Prefix) XWidget_show((XWidget*)s_net.m_capV6Prefix);
+    if (s_net.m_v6PrefixEdit) XWidget_show((XWidget*)s_net.m_v6PrefixEdit);
+    if (s_net.m_capV6Gw) XWidget_show((XWidget*)s_net.m_capV6Gw);
+    if (s_net.m_v6GwEdit) XWidget_show((XWidget*)s_net.m_v6GwEdit);
+    if (s_net.m_hintLabel) XWidget_show((XWidget*)s_net.m_hintLabel);
+    XBoxLayout_setStretch(&s_net.m_rootLayout, NET_ROOTITEM_V6ROW, 0);
+    net_updateV6Label();
+    XWidget_updateGeometry(root);
 }
 
 /** @brief 「展开全部 IPv6 / 收起」开关槽：切态 → 重排。 */
@@ -1055,8 +914,9 @@ static void net_applySlot(XObject* receiver, XVarList* args)
 
 /* ==================== 装配 ==================== */
 
-/** @brief 组装一行「标题 + 单行编辑」。 */
-static void net_buildField(const char* caption, int y, XLabel** outCap,
+/** @brief 组装一行「标题 + 单行编辑」（只建件与固定尺寸；入列装配见
+ *         net_addFieldRow）。 */
+static void net_buildField(const char* caption, XLabel** outCap,
                            XLineEdit** outEdit)
 {
     if (outCap && outEdit) {
@@ -1064,17 +924,35 @@ static void net_buildField(const char* caption, int y, XLabel** outCap,
         XLineEdit* edit = XLineEdit_create(s_net.m_root, 0);
         if (cap) {
             XLabel_setText_2(cap, caption);
-            XWidget_setGeometry((XWidget*)cap, NET_CAP_X, y + 2, 80, 22);
+            XWidget_setFixedWidth((XWidget*)cap, NET_CAP_W);
+            XWidget_setFixedHeight((XWidget*)cap, 20);
             XWidget_show((XWidget*)cap);
         }
         if (edit) {
-            XWidget_setGeometry((XWidget*)edit, NET_FIELD_X, y,
-                                NET_FIELD_W, 24);
+            XWidget_setFixedWidth((XWidget*)edit, NET_FIELD_W);
+            XWidget_setFixedHeight((XWidget*)edit, 22);
             XWidget_show((XWidget*)edit);
         }
         *outCap = cap;
         *outEdit = edit;
     }
+}
+
+/** @brief 把「标题+编辑」行装进列布局器（行布局器入登记表静态自持）。 */
+static void net_addFieldRow(XBoxLayout* col, XBoxLayout* row,
+                            XLabel* cap, XLineEdit* edit)
+{
+    if (!col || !row) return;
+    XBoxLayout_init(row, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)row, 4);
+    if (cap)
+        XBoxLayout_addWidget(row, (XWidget*)cap);
+    if (edit)
+        XBoxLayout_addWidget(row, (XWidget*)edit);
+    /* 行尾伸展：吸收行宽于内容之外的余量（本布局器把无 stretch 条目
+       的主轴余量均摊到条目前，行尾加 stretch 才能保持左对齐排布）。 */
+    XBoxLayout_addStretch(row, 1);
+    XBoxLayout_addLayout(col, (XLayout*)row);
 }
 
 /** @brief 无头截图/自动化钩子前置声明（定义在 build 之后）。 */
@@ -1098,7 +976,7 @@ XWidget* demo_page_network_build(XWidget* parent,
                      "\xE7\xBD\x91\xE7\xBB\x9C\xE8\xAE\xBE\xE7\xBD\xAE");
                      /* 网络设置 */
     XLabel_setTextPixelSize(s_net.m_titleLabel, 15);
-    XWidget_setGeometry((XWidget*)s_net.m_titleLabel, 12, 8, 300, 24);
+    XWidget_setFixedHeight((XWidget*)s_net.m_titleLabel, 24);
     XWidget_show((XWidget*)s_net.m_titleLabel);
 
     /* ---- 网卡选择行 ---- */
@@ -1106,12 +984,13 @@ XWidget* demo_page_network_build(XWidget* parent,
     if (s_net.m_capAdapter) {
         XLabel_setText_2(s_net.m_capAdapter,
                          "\xE7\xBD\x91\xE5\x8D\xA1"); /* 网卡 */
-        XWidget_setGeometry((XWidget*)s_net.m_capAdapter, 12, 44, 40, 22);
+        XWidget_setFixedWidth((XWidget*)s_net.m_capAdapter, 40);
+        XWidget_setFixedHeight((XWidget*)s_net.m_capAdapter, 22);
         XWidget_show((XWidget*)s_net.m_capAdapter);
     }
     s_net.m_adapterCombo = XComboBox_create(s_net.m_root, 0);
     if (!s_net.m_adapterCombo) return s_net.m_root;
-    XWidget_setGeometry((XWidget*)s_net.m_adapterCombo, 56, 42, 500, 26);
+    XWidget_setFixedHeight((XWidget*)s_net.m_adapterCombo, 26);
     XObject_connect_2((XObject*)s_net.m_adapterCombo,
                       XSignal(XComboBox_activated_signal),
                       net_adapterActivatedSlot);
@@ -1120,14 +999,16 @@ XWidget* demo_page_network_build(XWidget* parent,
     if (s_net.m_refreshBtn) {
         XPushButton_setText_2(s_net.m_refreshBtn,
                               "\xE5\x88\xB7\xE6\x96\xB0"); /* 刷新 */
-        XWidget_setGeometry((XWidget*)s_net.m_refreshBtn, 568, 42, 64, 26);
+        XWidget_setFixedWidth((XWidget*)s_net.m_refreshBtn, 64);
+        XWidget_setFixedHeight((XWidget*)s_net.m_refreshBtn, 26);
         XObject_connect_2((XObject*)s_net.m_refreshBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           net_refreshSlot);
         XWidget_show((XWidget*)s_net.m_refreshBtn);
     }
 
-    /* ---- 信息展示区（5 行：模式/IPv4/DNS/DHCP/MAC） ---- */
+    /* ---- 信息展示区（5 行：模式/IPv4/DNS/DHCP/MAC；高度随回填行数
+     *         在 net_relayout 里以固定高自适应） ---- */
     s_net.m_infoLabel = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_infoLabel) return s_net.m_root;
     XLabel_setText_2(s_net.m_infoLabel,
@@ -1136,7 +1017,7 @@ XWidget* demo_page_network_build(XWidget* parent,
     XLabel_setTextPixelSize(s_net.m_infoLabel, 13);
     XLabel_setAlignment(s_net.m_infoLabel,
                         XAlignment_Left | XAlignment_Top);
-    XWidget_setGeometry((XWidget*)s_net.m_infoLabel, 12, 80, 660, 104);
+    XWidget_setFixedHeight((XWidget*)s_net.m_infoLabel, 104);
     XWidget_show((XWidget*)s_net.m_infoLabel);
 
     /* ---- IPv6 地址区（折叠一行/展开全列表）+ 展开开关 ---- */
@@ -1146,15 +1027,15 @@ XWidget* demo_page_network_build(XWidget* parent,
     XLabel_setTextPixelSize(s_net.m_v6Label, 12);
     XLabel_setAlignment(s_net.m_v6Label,
                         XAlignment_Left | XAlignment_Top);
-    XWidget_setGeometry((XWidget*)s_net.m_v6Label, 12, 188, 660, 20);
+    XWidget_setFixedHeight((XWidget*)s_net.m_v6Label, 20);
     XWidget_show((XWidget*)s_net.m_v6Label);
     s_net.m_v6ExpandCheck = XCheckBox_create(s_net.m_root, 0);
     if (s_net.m_v6ExpandCheck) {
         XAbstractButton_setText_2((XAbstractButton*)s_net.m_v6ExpandCheck,
                                   "\xE5\xB1\x95\xE5\xBC\x80\xE5\x85\xA8"
                                   "\xE9\x83\xA8 IPv6"); /* 展开全部 IPv6 */
-        XWidget_setGeometry((XWidget*)s_net.m_v6ExpandCheck, 488, 186,
-                            164, 22);
+        XWidget_setFixedWidth((XWidget*)s_net.m_v6ExpandCheck, 164);
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6ExpandCheck, 22);
         XObject_connect_2((XObject*)s_net.m_v6ExpandCheck,
                           XSignal(XAbstractButton_toggled_signal),
                           net_v6ExpandSlot);
@@ -1165,7 +1046,8 @@ XWidget* demo_page_network_build(XWidget* parent,
     s_net.m_capV4Mode = XLabel_create(s_net.m_root, 0);
     if (s_net.m_capV4Mode) {
         XLabel_setText_2(s_net.m_capV4Mode, "IPv4");
-        XWidget_setGeometry((XWidget*)s_net.m_capV4Mode, 12, 224, 80, 22);
+        XWidget_setFixedWidth((XWidget*)s_net.m_capV4Mode, 80);
+        XWidget_setFixedHeight((XWidget*)s_net.m_capV4Mode, 22);
         XWidget_show((XWidget*)s_net.m_capV4Mode);
     }
     s_net.m_v4ModeCombo = XComboBox_create(s_net.m_root, 0);
@@ -1176,7 +1058,8 @@ XWidget* demo_page_network_build(XWidget* parent,
     XComboBox_addItem_2(s_net.m_v4ModeCombo,
                         "\xE9\x9D\x99\xE6\x80\x81 IP"); /* 静态 IP */
     XComboBox_setCurrentIndex(s_net.m_v4ModeCombo, 0);
-    XWidget_setGeometry((XWidget*)s_net.m_v4ModeCombo, 96, 222, 150, 26);
+    XWidget_setFixedWidth((XWidget*)s_net.m_v4ModeCombo, 150);
+    XWidget_setFixedHeight((XWidget*)s_net.m_v4ModeCombo, 26);
     XObject_connect_2((XObject*)s_net.m_v4ModeCombo,
                       XSignal(XComboBox_activated_signal),
                       net_v4ModeSlot);
@@ -1186,7 +1069,8 @@ XWidget* demo_page_network_build(XWidget* parent,
         XPushButton_setText_2(s_net.m_applyBtn,
                               "\xE5\xBA\x94\xE7\x94\xA8\xE9\x85\x8D"
                               "\xE7\xBD\xAE"); /* 应用配置 */
-        XWidget_setGeometry((XWidget*)s_net.m_applyBtn, 254, 220, 110, 30);
+        XWidget_setFixedWidth((XWidget*)s_net.m_applyBtn, NET_BTN_W);
+        XWidget_setFixedHeight((XWidget*)s_net.m_applyBtn, 30);
         XObject_connect_2((XObject*)s_net.m_applyBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           net_applySlot);
@@ -1197,7 +1081,8 @@ XWidget* demo_page_network_build(XWidget* parent,
     s_net.m_capV6Mode = XLabel_create(s_net.m_root, 0);
     if (s_net.m_capV6Mode) {
         XLabel_setText_2(s_net.m_capV6Mode, "IPv6");
-        XWidget_setGeometry((XWidget*)s_net.m_capV6Mode, 420, 224, 80, 22);
+        XWidget_setFixedWidth((XWidget*)s_net.m_capV6Mode, 80);
+        XWidget_setFixedHeight((XWidget*)s_net.m_capV6Mode, 22);
         XWidget_show((XWidget*)s_net.m_capV6Mode);
     }
     s_net.m_v6ModeCombo = XComboBox_create(s_net.m_root, 0);
@@ -1209,7 +1094,8 @@ XWidget* demo_page_network_build(XWidget* parent,
                         "\xE6\x89\x8B\xE5\x8A\xA8\xE8\xBF\xBD\xE5\x8A"
                         "\xA0"); /* 手动追加 */
     XComboBox_setCurrentIndex(s_net.m_v6ModeCombo, 0);
-    XWidget_setGeometry((XWidget*)s_net.m_v6ModeCombo, 504, 222, 140, 26);
+    XWidget_setFixedWidth((XWidget*)s_net.m_v6ModeCombo, 140);
+    XWidget_setFixedHeight((XWidget*)s_net.m_v6ModeCombo, 26);
     XObject_connect_2((XObject*)s_net.m_v6ModeCombo,
                       XSignal(XComboBox_activated_signal),
                       net_v6ModeSlot);
@@ -1218,7 +1104,8 @@ XWidget* demo_page_network_build(XWidget* parent,
     if (s_net.m_applyV6Btn) {
         XPushButton_setText_2(s_net.m_applyV6Btn,
                               "\xE5\xBA\x94\xE7\x94\xA8 IPv6"); /* 应用 IPv6 */
-        XWidget_setGeometry((XWidget*)s_net.m_applyV6Btn, 652, 220, 110, 30);
+        XWidget_setFixedWidth((XWidget*)s_net.m_applyV6Btn, NET_BTN_W);
+        XWidget_setFixedHeight((XWidget*)s_net.m_applyV6Btn, 30);
         XObject_connect_2((XObject*)s_net.m_applyV6Btn,
                           XSignal(XAbstractButton_clicked_signal),
                           net_applyV6Slot);
@@ -1226,14 +1113,14 @@ XWidget* demo_page_network_build(XWidget* parent,
     }
 
     /* ---- 左列：IPv4 静态五件 ---- */
-    net_buildField("IP", 262, &s_net.m_capIp, &s_net.m_ipEdit);
+    net_buildField("IP", &s_net.m_capIp, &s_net.m_ipEdit);
     net_buildField("\xE5\xAD\x90\xE7\xBD\x91\xE6\x8E\xA9\xE7\xA0\x81",
-                   288, &s_net.m_capMask, &s_net.m_maskEdit); /* 子网掩码 */
+                   &s_net.m_capMask, &s_net.m_maskEdit); /* 子网掩码 */
     net_buildField("\xE9\xBB\x98\xE8\xAE\xA4\xE7\xBD\x91\xE5\x85\xB3",
-                   314, &s_net.m_capGw, &s_net.m_gwEdit); /* 默认网关 */
-    net_buildField("\xE9\xA6\x96\xE9\x80\x89 DNS", 340,
+                   &s_net.m_capGw, &s_net.m_gwEdit); /* 默认网关 */
+    net_buildField("\xE9\xA6\x96\xE9\x80\x89 DNS",
                    &s_net.m_capDns1, &s_net.m_dns1Edit); /* 首选 DNS */
-    net_buildField("\xE5\xA4\x87\xE7\x94\xA8 DNS", 366,
+    net_buildField("\xE5\xA4\x87\xE7\x94\xA8 DNS",
                    &s_net.m_capDns2, &s_net.m_dns2Edit); /* 备用 DNS */
     net_setV4EditsEnabled(false); /* 初值来自选中网卡（初始 DHCP 态置灰）。 */
 
@@ -1242,45 +1129,51 @@ XWidget* demo_page_network_build(XWidget* parent,
     if (s_net.m_capV6Addr) {
         XLabel_setText_2(s_net.m_capV6Addr,
                          "IPv6 \xE5\x9C\xB0\xE5\x9D\x80"); /* IPv6 地址 */
-        XWidget_setGeometry((XWidget*)s_net.m_capV6Addr, 420, 264, 100, 20);
+        XWidget_setFixedWidth((XWidget*)s_net.m_capV6Addr, 100);
+        XWidget_setFixedHeight((XWidget*)s_net.m_capV6Addr, 20);
         XWidget_show((XWidget*)s_net.m_capV6Addr);
     }
     s_net.m_v6AddrEdit = XLineEdit_create(s_net.m_root, 0);
     if (!s_net.m_v6AddrEdit) return s_net.m_root;
-    XWidget_setGeometry((XWidget*)s_net.m_v6AddrEdit, 524, 262, 264, 24);
+    XWidget_setFixedWidth((XWidget*)s_net.m_v6AddrEdit, 264);
+    XWidget_setFixedHeight((XWidget*)s_net.m_v6AddrEdit, 24);
     XWidget_show((XWidget*)s_net.m_v6AddrEdit);
     s_net.m_capV6Prefix = XLabel_create(s_net.m_root, 0);
     if (s_net.m_capV6Prefix) {
         XLabel_setText_2(s_net.m_capV6Prefix,
                          "\xE5\x89\x8D\xE7\xBC\x80"); /* 前缀 */
-        XWidget_setGeometry((XWidget*)s_net.m_capV6Prefix, 420, 294, 36, 20);
+        XWidget_setFixedWidth((XWidget*)s_net.m_capV6Prefix, 36);
+        XWidget_setFixedHeight((XWidget*)s_net.m_capV6Prefix, 20);
         XWidget_show((XWidget*)s_net.m_capV6Prefix);
     }
     s_net.m_v6PrefixEdit = XLineEdit_create(s_net.m_root, 0);
     if (s_net.m_v6PrefixEdit) {
         XLineEdit_setText(s_net.m_v6PrefixEdit, "64");
-        XWidget_setGeometry((XWidget*)s_net.m_v6PrefixEdit, 460, 292, 64, 24);
+        XWidget_setFixedWidth((XWidget*)s_net.m_v6PrefixEdit, 64);
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6PrefixEdit, 24);
         XWidget_show((XWidget*)s_net.m_v6PrefixEdit);
     }
     s_net.m_capV6Gw = XLabel_create(s_net.m_root, 0);
     if (s_net.m_capV6Gw) {
         XLabel_setText_2(s_net.m_capV6Gw,
                          "\xE7\xBD\x91\xE5\x85\xB3"); /* 网关 */
-        XWidget_setGeometry((XWidget*)s_net.m_capV6Gw, 420, 324, 60, 20);
+        XWidget_setFixedWidth((XWidget*)s_net.m_capV6Gw, 60);
+        XWidget_setFixedHeight((XWidget*)s_net.m_capV6Gw, 20);
         XWidget_show((XWidget*)s_net.m_capV6Gw);
     }
     s_net.m_v6GwEdit = XLineEdit_create(s_net.m_root, 0);
     if (s_net.m_v6GwEdit) {
-        XWidget_setGeometry((XWidget*)s_net.m_v6GwEdit, 484, 322, 304, 24);
+        XWidget_setFixedWidth((XWidget*)s_net.m_v6GwEdit, 304);
+        XWidget_setFixedHeight((XWidget*)s_net.m_v6GwEdit, 24);
         XWidget_show((XWidget*)s_net.m_v6GwEdit);
     }
     net_setV6EditsEnabled(false); /* IPv6 模式初始=自动获取（右列置灰）。 */
 
-    /* ---- 提示 + 状态行（adapt 钉底；提示语按平台配置能力动态回填） ---- */
+    /* ---- 提示 + 状态行（提示语按平台配置能力动态回填） ---- */
     s_net.m_hintLabel = XLabel_create(s_net.m_root, 0);
     if (s_net.m_hintLabel) {
         XLabel_setTextPixelSize(s_net.m_hintLabel, 12);
-        XWidget_setGeometry((XWidget*)s_net.m_hintLabel, 12, 452, 660, 20);
+        XWidget_setFixedHeight((XWidget*)s_net.m_hintLabel, 20);
         XWidget_show((XWidget*)s_net.m_hintLabel);
         net_updateHint();
     }
@@ -1288,10 +1181,108 @@ XWidget* demo_page_network_build(XWidget* parent,
     if (!s_net.m_statusLabel) return s_net.m_root;
     XLabel_setText_2(s_net.m_statusLabel,
                      "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
-    XWidget_setGeometry((XWidget*)s_net.m_statusLabel, 12, 474, 660, 22);
+    XWidget_setFixedHeight((XWidget*)s_net.m_statusLabel, 22);
     XWidget_show((XWidget*)s_net.m_statusLabel);
 
-    /* ---- 统一重排（折叠视图定版）+ 首轮枚举回填。 ---- */
+    /* ---- 布局装配（2026-10-17 容器化）：根垂直布局七段----
+     * [标题][网卡行][信息区][IPv6 行][模式行][双列字段][伸展+提示/状态]；
+     * 段间 addSpacing 近似原设计稿节奏（10/12/4/10/12），行内小间距用
+     * 行级 addSpacing，行高由各控件固定高承载，宽度伸缩交给 stretch。 */
+    XBoxLayout_init(&s_net.m_rootLayout, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_net.m_rootLayout, 0);
+    XLayout_setContentsMargins((XLayout*)&s_net.m_rootLayout, 12, 8, 12, 0);
+    XBoxLayout_addWidget(&s_net.m_rootLayout,
+                         (XWidget*)s_net.m_titleLabel); /* 条目 0 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 10);    /* 条目 1 */
+    /* 网卡行：标题 | 4 | 下拉(伸展铺满) | 12 | 刷新。 条目 2 */
+    XBoxLayout_init(&s_net.m_adapterRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_adapterRow, 0);
+    XBoxLayout_addWidget(&s_net.m_adapterRow, (XWidget*)s_net.m_capAdapter);
+    XBoxLayout_addSpacing(&s_net.m_adapterRow, 4);
+    XBoxLayout_addWidget(&s_net.m_adapterRow,
+                         (XWidget*)s_net.m_adapterCombo);
+    XBoxLayout_setStretch(&s_net.m_adapterRow, 2, 1);
+    XBoxLayout_addSpacing(&s_net.m_adapterRow, 12);
+    XBoxLayout_addWidget(&s_net.m_adapterRow,
+                         (XWidget*)s_net.m_refreshBtn);
+    XBoxLayout_addLayout(&s_net.m_rootLayout,
+                         (XLayout*)&s_net.m_adapterRow);
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 3 */
+    XBoxLayout_addWidget(&s_net.m_rootLayout,
+                         (XWidget*)s_net.m_infoLabel); /* 条目 4 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 4);     /* 条目 5 */
+    /* IPv6 行：折叠单行(伸展) | 4 | 展开开关。 条目 6=NET_ROOTITEM_V6ROW
+       （单行标签不设对齐=填满整格：展开态释放固定高后由伸展因子撑满，
+       折叠态受 20px 固定高约束，两态皆正确）。 */
+    XBoxLayout_init(&s_net.m_v6Row, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_v6Row, 0);
+    XBoxLayout_addWidgetEx(&s_net.m_v6Row, (XWidget*)s_net.m_v6Label, 1, 0);
+    XBoxLayout_addSpacing(&s_net.m_v6Row, 4);
+    XBoxLayout_addWidget(&s_net.m_v6Row,
+                         (XWidget*)s_net.m_v6ExpandCheck);
+    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_v6Row);
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 10);    /* 条目 7 */
+    /* 模式行：IPv4 标题|4|下拉|8|应用 · 56 · IPv6 标题|4|下拉|8|应用。
+       条目 8 */
+    XBoxLayout_init(&s_net.m_modeRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_modeRow, 0);
+    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_capV4Mode);
+    XBoxLayout_addSpacing(&s_net.m_modeRow, 4);
+    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_v4ModeCombo);
+    XBoxLayout_addSpacing(&s_net.m_modeRow, 8);
+    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_applyBtn);
+    XBoxLayout_addSpacing(&s_net.m_modeRow, 56);
+    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_capV6Mode);
+    XBoxLayout_addSpacing(&s_net.m_modeRow, 4);
+    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_v6ModeCombo);
+    XBoxLayout_addSpacing(&s_net.m_modeRow, 8);
+    XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_applyV6Btn);
+    /* 行尾伸展：窄根（导航占位）下模式行余量留在行尾，不均摊进条目前。 */
+    XBoxLayout_addStretch(&s_net.m_modeRow, 1);
+    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_modeRow);
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 9 */
+    /* 双列字段：左 IPv4 五行（列距 4）· 24 · 右 IPv6 三行（列距 6）。
+       条目 10 */
+    XBoxLayout_init(&s_net.m_fieldCols, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_fieldCols, 0);
+    XBoxLayout_init(&s_net.m_v4Col, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_net.m_v4Col, 4);
+    net_addFieldRow(&s_net.m_v4Col, &s_net.m_v4Rows[0],
+                    s_net.m_capIp, s_net.m_ipEdit);
+    net_addFieldRow(&s_net.m_v4Col, &s_net.m_v4Rows[1],
+                    s_net.m_capMask, s_net.m_maskEdit);
+    net_addFieldRow(&s_net.m_v4Col, &s_net.m_v4Rows[2],
+                    s_net.m_capGw, s_net.m_gwEdit);
+    net_addFieldRow(&s_net.m_v4Col, &s_net.m_v4Rows[3],
+                    s_net.m_capDns1, s_net.m_dns1Edit);
+    net_addFieldRow(&s_net.m_v4Col, &s_net.m_v4Rows[4],
+                    s_net.m_capDns2, s_net.m_dns2Edit);
+    XBoxLayout_init(&s_net.m_v6Col, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_net.m_v6Col, 6);
+    net_addFieldRow(&s_net.m_v6Col, &s_net.m_v6Rows[0],
+                    s_net.m_capV6Addr, s_net.m_v6AddrEdit);
+    net_addFieldRow(&s_net.m_v6Col, &s_net.m_v6Rows[1],
+                    s_net.m_capV6Prefix, s_net.m_v6PrefixEdit);
+    net_addFieldRow(&s_net.m_v6Col, &s_net.m_v6Rows[2],
+                    s_net.m_capV6Gw, s_net.m_v6GwEdit);
+    XBoxLayout_addLayout(&s_net.m_fieldCols, (XLayout*)&s_net.m_v4Col);
+    XBoxLayout_addSpacing(&s_net.m_fieldCols, 24);
+    XBoxLayout_addLayout(&s_net.m_fieldCols, (XLayout*)&s_net.m_v6Col);
+    /* 列尾/列内伸展：宽根下双列保持左对齐（余量留行尾不均摊）、右列
+       三行在列高富余时保持 6px 行距顶对齐。 */
+    XBoxLayout_addStretch(&s_net.m_v4Col, 1);
+    XBoxLayout_addStretch(&s_net.m_v6Col, 1);
+    XBoxLayout_addStretch(&s_net.m_fieldCols, 1);
+    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_fieldCols);
+    XBoxLayout_addStretch(&s_net.m_rootLayout, 1);     /* 条目 11 */
+    XBoxLayout_addWidget(&s_net.m_rootLayout,
+                         (XWidget*)s_net.m_hintLabel); /* 条目 12 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 2);     /* 条目 13 */
+    XBoxLayout_addWidget(&s_net.m_rootLayout,
+                         (XWidget*)s_net.m_statusLabel); /* 条目 14 */
+    XWidget_setLayout(s_net.m_root, (XLayout*)&s_net.m_rootLayout);
+
+    /* ---- 统一切换（折叠视图定版）+ 首轮枚举回填。 ---- */
     net_relayout();
     net_refreshAdapters();
 
@@ -1316,24 +1307,10 @@ static void net_page_network_headless_hook(void)
 
 void demo_page_network_adapt(XWidget* page)
 {
-    int rootW;
-    int rootH;
-    if (!page || page != s_net.m_root) return;
-    rootW = XWidget_width(page);
-    rootH = XWidget_height(page);
-    if (rootW < 360 || rootH < 300) return; /* 过窄保持装配几何。 */
-    /* 选择行随根宽收放（右缘留刷新钮位）；其余由 net_relayout 统一
-     * 分配（折叠/展开双态各自的几何与显隐）。 */
-    if (s_net.m_adapterCombo) {
-        int comboW = rootW - 56 - 84;
-        if (comboW < 200) comboW = 200;
-        XWidget_setGeometry((XWidget*)s_net.m_adapterCombo, 56, 42,
-                            comboW, 26);
-    }
-    if (s_net.m_refreshBtn)
-        XWidget_setGeometry((XWidget*)s_net.m_refreshBtn, rootW - 72, 42,
-                            64, 26);
-    net_relayout();
+    /* 2026-10-17 容器化：页内排布全部交给根布局器（随根几何自动重排，
+     * 折叠/展开形态见 net_relayout），此处不再做任何手写几何；
+     * 契约签名保留（主文件调用点不动）。 */
+    (void)page;
 }
 
 /* ==================== autotest ==================== */

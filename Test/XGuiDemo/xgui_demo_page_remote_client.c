@@ -9,19 +9,22 @@
  *             页面内容（2026-10-03 RS-d 结构性改造: 左视图/右控制列——
  *             镜像视图进页面容器布局, 本地控件全部可达; 旧版全页镜像
  *             盖死设置控件的缺陷见 build/xgui-remote-live/run_pairs.sh
- *             RS-d 阻塞记录）：
- *              - 视图区（页内 (0,0) 504x458, 普通容器控件）: XGuiClient
- *                1:1 镜像视图宿主。FB_META 后客户端 setFixedSize(远端
- *                尺寸)（冻结语义保留）, 超出宿主的部分经绘制裁剪
+ *             RS-d 阻塞记录。2026-10-17 布局容器化: 页内手写坐标排布
+ *             全部删除, 几何改由页根盒式布局协商, 见装配段与 adapt
+ *             空实现注记）：
+ *              - 视图区（页根水平布局左段, 伸缩占满余宽, 普通容器控件）:
+ *                XGuiClient 1:1 镜像视图宿主。FB_META 后客户端
+ *                setFixedSize(远端尺寸)（冻结语义保留, 布局按最值约束
+ *                放行溢出）, 超出宿主的部分经绘制裁剪
  *                （XWidget_paintTree 祖先矩形交集）与命中隔离
  *                （XWidget_childAt 矩形链）收窄到宿主矩形——不覆盖任何
  *                本地控件; 断开后把视图复位为宿主尺寸, 占位文本
  *                （「未连接远端服务器」）在视图区可见;
- *              - 控制列（页内 x=516..768）: IP/端口/连接/断开/档位/TLS/
- *                认证/口令/「模拟触摸」/实时统计, 全部本地可达; 口令经
- *                XGuiClient_setAccessPassword/clearAccessPassword 接入
- *                连接流程（2026-10-04 访问口令: 空输入=显式清除, 连接
- *                自动适配服务端挑战要求, 要求认证而无口令快速失败）;
+ *              - 控制列（定宽容器, 垂直盒布局贴右）: IP/端口/连接/断开/
+ *                档位/TLS/认证/口令/「模拟触摸」/实时统计, 全部本地可达;
+ *                口令经 XGuiClient_setAccessPassword/clearAccessPassword
+ *                接入连接流程（2026-10-04 访问口令: 空输入=显式清除,
+ *                连接自动适配服务端挑战要求, 要求认证而无口令快速失败）;
  *              - 悬浮会话工具条（XRemoteSessionBar, 页根子控件吸附视图
  *                区顶部居中）: 连接期浮现, 断开即隐藏——「连上后怎么
  *                退出」的 UI 入口（断开不杀进程不退出应用）; 展开态
@@ -61,6 +64,7 @@
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XWidget.h"
+#include "XBoxLayout.h" /* 页面布局容器(2026-10-17 布局容器化: 几何协商唯一入口)。 */
 #include "XLabel.h"
 #include "XCheckBox.h"
 #include "XLineEdit.h"
@@ -83,16 +87,16 @@
 #if XGUI_REMOTE_ON && XWIDGET_ON && XPUSHBUTTON_ON && \
     XLABEL_ON && XCHECKBOX_ON && XLINEEDIT_ON && XCOMBOBOX_ON
 
-/* ==================== 布局常量（2026-10-03 RS-d 改造: 左视图/右控制列） === */
+/* ==================== 布局常量（2026-10-17 布局容器化收口） ============ */
 
-/** @brief 视图区宽（页内 (0,0) 起; 504+8 间隙+252 控制列 ≤ 页宽 776）。 */
+/** @brief 视图区设计宽（悬浮会话条初始附着矩形用; 运行期几何由页根
+ *         水平布局协商——视图段伸缩吃掉全部余宽, 不再锚此常量）。 */
 #define RC_VIEW_W 504
-/** @brief 视图区高（页高 ~458 全高——800x600 镜像 1:1 超出部分经
- *         祖先矩形链裁剪, 不越出视图区, 不覆盖本地控件）。 */
+/** @brief 视图区设计高（会话条初始附着矩形用; 800x600 镜像 1:1 超出
+ *         部分经祖先矩形链裁剪, 不越出视图区, 不覆盖本地控件）。 */
 #define RC_VIEW_H 458
-/** @brief 控制列左缘（页内 x）。 */
-#define RC_COL_X 516
-/** @brief 控制列宽。 */
+/** @brief 控制列定宽（布局化后=列容器固定宽; 分割条回调仍按此报默认
+ *         列宽, 拖宽语义随 adapt 收空一并冻结）。 */
 #define RC_COL_W 252
 
 /* ==================== CLI 初始默认值（进程级, build 前预置） ============ */
@@ -153,8 +157,12 @@ static struct
     int          m_touchCount;/**< 已发送触摸轮数。 */
 
     /* ---- 客户端与运行态 ---- */
-    XWidget*    m_viewHost;   /**< 视图区宿主（页根子控件; 镜像视图 1:1
-                               *   超出部分的绘制/命中收窄矩形, 2026-10-03）。 */
+    XWidget*    m_viewHost;   /**< 视图区宿主（页根水平布局左段; 镜像视图
+                               *   1:1 超出部分的绘制/命中收窄矩形,
+                               *   2026-10-03）。 */
+    XWidget*    m_col;        /**< 控制列容器（2026-10-17 布局容器化: 列内
+                               *   控件统一挂此容器, 容器显隐=整列收展,
+                               *   分割条收起/展开的承载点）。 */
     XRemoteSessionBar* m_sessionBar; /**< 悬浮会话工具条（页根子控件,
                                *   连接期浮现/断开隐藏; 断开=「退出会话
                                *   不退出应用」入口, 2026-10-03）。 */
@@ -164,6 +172,19 @@ static struct
     bool        m_colCollapsed; /**< 控制列收起态（细条单击展开）。 */
     XWidget*    m_topLevel;   /**< 主窗口顶层（借用; build 时的 parent）。 */
     XGuiRemoteProfileId m_profile; /**< 界面档位（连接后经 PROFILE_SET 协商）。 */
+
+    /* ---- 布局器（2026-10-17 布局容器化; 静态自持——布局树按指针借用
+     *      子布局, 须与页面单例同生命周期, build 入口 memset 复位） ---- */
+    XBoxLayout m_layRoot;       /**< 页根水平布局: 视图区|分割条|控制列。 */
+    XBoxLayout m_layView;       /**< 视图区宿主垂直布局: 镜像视图铺满。 */
+    XBoxLayout m_layCol;        /**< 控制列垂直布局（统计区置顶+表单）。 */
+    XBoxLayout m_layRowIp;      /**< 行: IP 标题+编辑框。 */
+    XBoxLayout m_layRowPort;    /**< 行: 端口标题+编辑框。 */
+    XBoxLayout m_layRowBtn;     /**< 行: 连接+断开按钮。 */
+    XBoxLayout m_layRowProfile; /**< 行: 档位标题+组合框。 */
+    XBoxLayout m_layRowTls;     /**< 行: TLS+UDP 开关。 */
+    XBoxLayout m_layRowAuth;    /**< 行: 认证标题+组合框。 */
+    XBoxLayout m_layRowPwd;     /**< 行: 口令标题+编辑框。 */
 
     /* ---- 基准采样辅助（XGUI_REMOTE_BENCH_STATS=1 启用; 2026-10-02
      *      延迟基准追加: 定时拉 statisticsExtended 打 stderr, 供
@@ -192,11 +213,25 @@ static void rc_splitToggle(void* owner);
 /** @brief 实时统计多行区整体刷新前置声明(定时回调先行引用)。 */
 static void rc_refreshStatsLabel(void);
 
+/** @brief 悬浮会话条视图矩形跟随（2026-10-17 布局容器化配套）。
+ *  @details adapt 收空后无页内重排口, 会话条附着矩形改按视图区宿主
+ *           实测几何轻同步（1s 统计定时器 + 连接达成时调用）; 收起球
+ *           已被用户拖动时 attachView 内部不摆位, 不抢用户摆放。 */
+static void rc_syncSessionBarView(void)
+{
+    XRect viewRect;
+    if (!s_rc.m_sessionBar || !s_rc.m_viewHost) return;
+    XRect_init(&viewRect, 0, 0, XWidget_width(s_rc.m_viewHost),
+               XWidget_height(s_rc.m_viewHost));
+    XRemoteSessionBar_attachView(s_rc.m_sessionBar, &viewRect);
+}
+
 /** @brief 统计/UDP 状态刷新定时回调(2026-10-04): 1s 轻刷统计区。 */
 static void rc_statsTimerCb(void* userData, XTimerData* timer)
 {
     (void)userData; (void)timer;
     rc_refreshStatsLabel();
+    rc_syncSessionBarView(); /* 布局化后视图区随窗口缩放, 附着矩形跟随。 */
 }
 
 static void rc_benchStatsCb(void* userData, XTimerData* timer)
@@ -531,6 +566,9 @@ static void rc_onConnected(XObject* sender, XVarList* args)
     /* 连接达成即按界面档位请求一次协商(服务端允许时 PROFILE_RESULT/FB_META)。 */
     if (s_rc.m_client)
         XGuiClient_requestProfileId(s_rc.m_client, s_rc.m_profile);
+    /* 会话条展开吸附用矩形按视图区实测几何刷新（本槽先于会话条内部
+     * connected 槽执行, 吸附落点即正确; 布局容器化后 adapt 不再重排）。 */
+    rc_syncSessionBarView();
     rc_refreshStateLabel();
     rc_refreshStatsLabel();
 }
@@ -596,16 +634,34 @@ static void rc_onError(XObject* sender, XVarList* args)
 
 /* ==================== 构建 ==================== */
 
-/** @brief 组装一行「标签 + 输入控件」。 */
-static void rc_buildLabelAt(const char* text, int x, int y, int w, XLabel** out)
+/** @brief 建字段标题标签（布局化后不定坐标: 定宽定高, 由行盒横向排）。 */
+static XLabel* rc_buildCapLabel(const char* text, int capW)
 {
-    XLabel* label = XLabel_create(s_rc.m_root, 0);
+    XLabel* label = XLabel_create(s_rc.m_col, 0);
     if (label) {
         XLabel_setText_2(label, text);
-        XWidget_setGeometry((XWidget*)label, x, y, w, 22);
+        XWidget_setFixedWidth((XWidget*)label, capW);
+        XWidget_setFixedHeight((XWidget*)label, 22);
         XWidget_show((XWidget*)label);
     }
-    if (out) *out = label;
+    return label;
+}
+
+/** @brief 组装一行「字段标题 + 输入控件」挂入控制列布局（旧装配口径:
+ *         字段定宽 220 落在列内 +32 起——IP 标题 28 宽 + 4px 间距,
+ *         CJK 标题 32 宽贴 0 间距, 两式行宽均恰为 252; 字段带伸缩
+ *         因子, 列若加宽由字段吸收余量）。 */
+static void rc_addCapRow(XBoxLayout* row, const char* text, int capW,
+                         int rowSpacing, XLabel** outCap, XWidget* field)
+{
+    XLabel* cap = rc_buildCapLabel(text, capW);
+    XBoxLayout_init(row, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)row, rowSpacing);
+    XBoxLayout_addWidget(row, (XWidget*)cap);
+    XBoxLayout_addWidget(row, field);
+    XBoxLayout_setStretch(row, 1, 1);
+    XBoxLayout_addLayout(&s_rc.m_layCol, (XLayout*)row);
+    if (outCap) *outCap = cap;
 }
 
 XWidget* demo_page_remote_client_build(XWidget* parent,
@@ -627,73 +683,83 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     /* ---- 视图区宿主（RS-d 改造: 镜像视图进页面容器, 1:1 超出部分经
      *     祖先矩形链收窄——绘制裁剪 XWidget_paintTree / 命中隔离
      *     XWidget_childAt 均按父链矩形, 无需遮罩; 先建=z 底, 后建控件
-     *     全在其上, 本地控件永不被镜像覆盖）。 ---- */
+     *     全在其上, 本地控件永不被镜像覆盖。布局容器化: 几何由页根
+     *     水平布局左段伸缩协商, 不再手写坐标）。 ---- */
     s_rc.m_viewHost = XWidget_create(s_rc.m_root, 0);
     if (!s_rc.m_viewHost) return s_rc.m_root;
-    XWidget_setGeometry(s_rc.m_viewHost, 0, 0, RC_VIEW_W, RC_VIEW_H);
     XWidget_show(s_rc.m_viewHost);
 
-    /* ---- 标题 + 连接状态行（控制列顶部） ---- */
+    /* ---- 控制列容器（2026-10-17 布局容器化: 列内控件统一挂此容器,
+     *     容器定宽贴右; 显隐即整列收展——分割条双击收起/单击展开的
+     *     承载点, 见 rc_splitToggle）。 ---- */
+    s_rc.m_col = XWidget_create(s_rc.m_root, 0);
+    if (!s_rc.m_col) return s_rc.m_root;
+    XWidget_show(s_rc.m_col);
+
+    /* ---- 标题 + 连接状态行（控制列顶部; 布局容器化: 定高行, 宽随列）。 ---- */
     {
-        XLabel* title = NULL;
-        rc_buildLabelAt("\xE8\xBF\x9C\xE7\xA8\x8B\xE5\xAE\xA2\xE6\x88\xB7"
-                        "\xE7\xAB\xAF\xE8\xAE\xBE\xE7\xBD\xAE",
-                        RC_COL_X, 8, RC_COL_W, &title); /* 远程客户端设置 */
+        XLabel* title = XLabel_create(s_rc.m_col, 0);
+        if (title) {
+            XLabel_setText_2(title, "\xE8\xBF\x9C\xE7\xA8\x8B\xE5\xAE\xA2\xE6\x88\xB7"
+                            "\xE7\xAB\xAF\xE8\xAE\xBE\xE7\xBD\xAE");
+                            /* 远程客户端设置 */
+            XLabel_setTextPixelSize(title, 15);
+            XWidget_setFixedHeight((XWidget*)title, 22);
+            XWidget_show((XWidget*)title);
+        }
         s_rc.m_titleLabel = title;
-        if (title) XLabel_setTextPixelSize(title, 15);
     }
-    s_rc.m_stateLabel = XLabel_create(s_rc.m_root, 0);
+    s_rc.m_stateLabel = XLabel_create(s_rc.m_col, 0);
     if (!s_rc.m_stateLabel) return s_rc.m_root;
     XLabel_setText_2(s_rc.m_stateLabel, "连接状态: 未连接");
-    XWidget_setGeometry((XWidget*)s_rc.m_stateLabel, RC_COL_X, 36,
-                        RC_COL_W, 22);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_stateLabel, 22);
     XWidget_show((XWidget*)s_rc.m_stateLabel);
 
-    /* ---- IP / 端口 ---- */
-    rc_buildLabelAt("IP", RC_COL_X, 68, 28, &s_rc.m_capIp);
-    s_rc.m_hostEdit = XLineEdit_create(s_rc.m_root, 0);
+    /* ---- IP / 端口（标题+字段行装配见布局装配段） ---- */
+    s_rc.m_hostEdit = XLineEdit_create(s_rc.m_col, 0);
     if (!s_rc.m_hostEdit) return s_rc.m_root;
     XLineEdit_setText(s_rc.m_hostEdit, "127.0.0.1");
-    XWidget_setGeometry((XWidget*)s_rc.m_hostEdit, RC_COL_X + 32, 66, 124, 24);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_hostEdit, 220);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_hostEdit, 24);
     XObject_connect_2((XObject*)s_rc.m_hostEdit,
                       XSignal(XLineEdit_textEdited_signal),
                       rc_configChangedSlot);
     XWidget_show((XWidget*)s_rc.m_hostEdit);
 
-    rc_buildLabelAt("\xE7\xAB\xAF\xE5\x8F\xA3", RC_COL_X, 98, 40, &s_rc.m_capPort); /* 端口 */
-    s_rc.m_portEdit = XLineEdit_create(s_rc.m_root, 0);
+    s_rc.m_portEdit = XLineEdit_create(s_rc.m_col, 0);
     if (!s_rc.m_portEdit) return s_rc.m_root;
     XLineEdit_setText(s_rc.m_portEdit, "46000");
-    XWidget_setGeometry((XWidget*)s_rc.m_portEdit, RC_COL_X + 32, 96, 124, 24);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_portEdit, 220);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_portEdit, 24);
     XObject_connect_2((XObject*)s_rc.m_portEdit,
                       XSignal(XLineEdit_textEdited_signal),
                       rc_configChangedSlot);
     XWidget_show((XWidget*)s_rc.m_portEdit);
 
-    /* ---- 连接 / 断开按钮 ---- */
-    s_rc.m_connectBtn = XPushButton_create(s_rc.m_root, 0);
+    /* ---- 连接 / 断开按钮（定宽同排, 装配见布局装配段） ---- */
+    s_rc.m_connectBtn = XPushButton_create(s_rc.m_col, 0);
     if (!s_rc.m_connectBtn) return s_rc.m_root;
     XPushButton_setText_2(s_rc.m_connectBtn,
                           "\xE8\xBF\x9E\xE6\x8E\xA5"); /* 连接 */
-    XWidget_setGeometry((XWidget*)s_rc.m_connectBtn, RC_COL_X, 130, 80, 28);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_connectBtn, 80);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_connectBtn, 28);
     XObject_connect_2((XObject*)s_rc.m_connectBtn,
                       XSignal(XAbstractButton_clicked_signal), rc_connectSlot);
     XWidget_show((XWidget*)s_rc.m_connectBtn);
 
-    s_rc.m_disconnectBtn = XPushButton_create(s_rc.m_root, 0);
+    s_rc.m_disconnectBtn = XPushButton_create(s_rc.m_col, 0);
     if (!s_rc.m_disconnectBtn) return s_rc.m_root;
     XPushButton_setText_2(s_rc.m_disconnectBtn,
                           "\xE6\x96\xAD\xE5\xBC\x80"); /* 断开 */
-    XWidget_setGeometry((XWidget*)s_rc.m_disconnectBtn, RC_COL_X + 88, 130,
-                        80, 28);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_disconnectBtn, 80);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_disconnectBtn, 28);
     XObject_connect_2((XObject*)s_rc.m_disconnectBtn,
                       XSignal(XAbstractButton_clicked_signal),
                       rc_disconnectSlot);
     XWidget_show((XWidget*)s_rc.m_disconnectBtn);
 
     /* ---- 档位 ---- */
-    rc_buildLabelAt("\xE6\xA1\xA3\xE4\xBD\x8D", RC_COL_X, 172, 40, &s_rc.m_capProfile); /* 档位 */
-    s_rc.m_profileCombo = XComboBox_create(s_rc.m_root, 0);
+    s_rc.m_profileCombo = XComboBox_create(s_rc.m_col, 0);
     if (!s_rc.m_profileCombo) return s_rc.m_root;
     XComboBox_addItem_2(s_rc.m_profileCombo,
                         "\xE6\x80\xA7\xE8\x83\xBD\xE4\xBC\x98\xE5\x85\x88");
@@ -705,40 +771,40 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
                         "\xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF\x9F");
                         /* 低延迟 */
     XComboBox_setCurrentIndex(s_rc.m_profileCombo, 0);
-    XWidget_setGeometry((XWidget*)s_rc.m_profileCombo, RC_COL_X + 32, 170,
-                        124, 24);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_profileCombo, 220);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_profileCombo, 26);
     XObject_connect_2((XObject*)s_rc.m_profileCombo,
                       XSignal(XComboBox_activated_signal), rc_profileSlot);
     XWidget_show((XWidget*)s_rc.m_profileCombo);
 
-    /* ---- TLS 开关（与服务器页对等选项） ---- */
-    s_rc.m_tlsCheck = XCheckBox_create(s_rc.m_root, 0);
+    /* ---- TLS 开关（与服务器页对等选项; 定宽, UDP 开关同行伸缩） ---- */
+    s_rc.m_tlsCheck = XCheckBox_create(s_rc.m_col, 0);
     if (!s_rc.m_tlsCheck) return s_rc.m_root;
     XAbstractButton_setText_2((XAbstractButton*)s_rc.m_tlsCheck,
                               "TLS \xE5\x8A\xA0\xE5\xAF\x86"); /* TLS 加密 */
-    XWidget_setGeometry((XWidget*)s_rc.m_tlsCheck, RC_COL_X, 202, 96, 24);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_tlsCheck, 96);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_tlsCheck, 24);
     XObject_connect_2((XObject*)s_rc.m_tlsCheck,
                       XSignal(XAbstractButton_toggled_signal),
                       rc_configChangedSlot);
     XWidget_show((XWidget*)s_rc.m_tlsCheck);
 
     /* ---- UDP 低延迟旁路开关(2026-10-04 加法式; 默认开, 运行期可切;
-     *     与 TLS 同排右段, 不叠印) ---- */
-    s_rc.m_udpCheck = XCheckBox_create(s_rc.m_root, 0);
+     *     与 TLS 同排右段伸缩, 不叠印) ---- */
+    s_rc.m_udpCheck = XCheckBox_create(s_rc.m_col, 0);
     if (!s_rc.m_udpCheck) return s_rc.m_root;
     XAbstractButton_setText_2((XAbstractButton*)s_rc.m_udpCheck,
                               "UDP \xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF"
                               "\x9F");
                               /* UDP 低延迟 */
     XAbstractButton_setChecked((XAbstractButton*)s_rc.m_udpCheck, true);
-    XWidget_setGeometry((XWidget*)s_rc.m_udpCheck, RC_COL_X + 100, 202, 152, 24);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_udpCheck, 24);
     XObject_connect_2((XObject*)s_rc.m_udpCheck,
                       XSignal(XAbstractButton_toggled_signal), rc_udpSlot);
     XWidget_show((XWidget*)s_rc.m_udpCheck);
 
     /* ---- 认证方式 + 口令（与服务器页对等选项） ---- */
-    rc_buildLabelAt("\xE8\xAE\xA4\xE8\xAF\x81", RC_COL_X, 234, 40, &s_rc.m_capAuth); /* 认证 */
-    s_rc.m_authCombo = XComboBox_create(s_rc.m_root, 0);
+    s_rc.m_authCombo = XComboBox_create(s_rc.m_col, 0);
     if (!s_rc.m_authCombo) return s_rc.m_root;
     XComboBox_addItem_2(s_rc.m_authCombo,
                         "\xE6\x97\xA0\xE8\xAE\xA4\xE8\xAF\x81");
@@ -747,19 +813,18 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
                         "SHA256 \xE6\x8C\x91\xE6\x88\x98");
                         /* SHA256 挑战 */
     XComboBox_setCurrentIndex(s_rc.m_authCombo, 0);
-    XWidget_setGeometry((XWidget*)s_rc.m_authCombo, RC_COL_X + 32, 232,
-                        124, 24);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_authCombo, 220);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_authCombo, 26);
     XObject_connect_2((XObject*)s_rc.m_authCombo,
                       XSignal(XComboBox_activated_signal),
                       rc_configChangedSlot);
     XWidget_show((XWidget*)s_rc.m_authCombo);
 
-    rc_buildLabelAt("\xE5\x8F\xA3\xE4\xBB\xA4", RC_COL_X, 264, 40, &s_rc.m_capPassword); /* 口令 */
-    s_rc.m_passwordEdit = XLineEdit_create(s_rc.m_root, 0);
+    s_rc.m_passwordEdit = XLineEdit_create(s_rc.m_col, 0);
     if (!s_rc.m_passwordEdit) return s_rc.m_root;
     XLineEdit_setEchoMode(s_rc.m_passwordEdit, XLineEditEchoMode_Password);
-    XWidget_setGeometry((XWidget*)s_rc.m_passwordEdit, RC_COL_X + 32, 262,
-                        124, 24);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_passwordEdit, 220);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_passwordEdit, 24);
     XObject_connect_2((XObject*)s_rc.m_passwordEdit,
                       XSignal(XLineEdit_textEdited_signal),
                       rc_configChangedSlot);
@@ -767,26 +832,28 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
 
     /* ---- 模拟触摸联调断言辅助（INPUT_TOUCH 序列直发远端; RS-d 改造后
      *     控制列固定可达——不再被全页镜像盖死）。 ---- */
-    s_rc.m_touchBtn = XPushButton_create(s_rc.m_root, 0);
+    s_rc.m_touchBtn = XPushButton_create(s_rc.m_col, 0);
     if (!s_rc.m_touchBtn) return s_rc.m_root;
     XPushButton_setText_2(s_rc.m_touchBtn,
                           "\xE6\xA8\xA1\xE6\x8B\x9F\xE8\xA7\xA6\xE6\x91\xB8");
                           /* 模拟触摸 */
-    XWidget_setGeometry((XWidget*)s_rc.m_touchBtn, RC_COL_X, 298, 150, 32);
+    XWidget_setFixedWidth((XWidget*)s_rc.m_touchBtn, 150);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_touchBtn, 32);
     XObject_connect_2((XObject*)s_rc.m_touchBtn,
                       XSignal(XAbstractButton_clicked_signal), rc_touchSlot);
     XWidget_show((XWidget*)s_rc.m_touchBtn);
 
-    s_rc.m_touchLabel = XLabel_create(s_rc.m_root, 0);
+    s_rc.m_touchLabel = XLabel_create(s_rc.m_col, 0);
     if (!s_rc.m_touchLabel) return s_rc.m_root;
     XLabel_setText_2(s_rc.m_touchLabel,
                      "\xE6\xA8\xA1\xE6\x8B\x9F\xE8\xA7\xA6\xE6\x91\xB8: 0 \xE8\xBD\xAE");
                      /* 模拟触摸: 0 轮 */
-    XWidget_setGeometry((XWidget*)s_rc.m_touchLabel, RC_COL_X, 336, RC_COL_W, 22);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_touchLabel, 22);
     XWidget_show((XWidget*)s_rc.m_touchLabel);
 
-    /* ---- 实时统计多行区（控制列底部） ---- */
-    s_rc.m_statsLabel = XLabel_create(s_rc.m_root, 0);
+    /* ---- 实时统计多行区（布局化后置控制列顶, 见布局装配段; 2026-10-03
+     *     裁定「选中的信息放到首行」——贴底时右半被 FPS 悬浮层盖住）。 ---- */
+    s_rc.m_statsLabel = XLabel_create(s_rc.m_col, 0);
     if (!s_rc.m_statsLabel) return s_rc.m_root;
     XLabel_setText_2(s_rc.m_statsLabel, "\xE5\xAE\xA2\xE6\x88\xB7\xE7\xAB\xAF: "
                      "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5"); /* 客户端: 未连接 */
@@ -795,18 +862,17 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     XLabel_setTextPixelSize(s_rc.m_statsLabel, 13);
     XLabel_setAlignment(s_rc.m_statsLabel,
                         XAlignment_Left | XAlignment_Top);
-    XWidget_setGeometry((XWidget*)s_rc.m_statsLabel, RC_COL_X, 364,
-                        RC_COL_W, 88);
+    XWidget_setFixedHeight((XWidget*)s_rc.m_statsLabel, 88);
     XWidget_show((XWidget*)s_rc.m_statsLabel);
 
     /* ---- 客户端对象: 父挂视图区宿主（RS-d 改造; 对象树级联析构兜底）。
-     *     初始=宿主尺寸 → 占位文本充满视图区。默认 FIT 模式下 FB_META
-     *     不再改几何: 远端画面按 contain 信箱缩放进本视图区(2026-10-04
-     *     视图适配缩放); 1:1 模式才恢复 setFixedSize(远端尺寸) 旧口径。 ---- */
+     *     几何由视图区宿主垂直布局铺满协商（布局容器化, 不再手写坐标）:
+     *     占位文本充满视图区。默认 FIT 模式下 FB_META 不再改几何: 远端
+     *     画面按 contain 信箱缩放进本视图区(2026-10-04 视图适配缩放);
+     *     1:1 模式才恢复 setFixedSize(远端尺寸) 旧口径(布局按最值约束
+     *     放行, 溢出经祖先矩形链裁剪)。 ---- */
     s_rc.m_client = XGuiClient_create(s_rc.m_viewHost, 0);
     if (s_rc.m_client) {
-        XWidget_setGeometry((XWidget*)s_rc.m_client, 0, 0,
-                            RC_VIEW_W, RC_VIEW_H);
         XGuiClient_setAutoReconnect(s_rc.m_client, false, 1000); /* 连接时再开。 */
         XObject_connect_2((XObject*)s_rc.m_client,
                           XSignal(XGuiClient_connected_signal), rc_onConnected);
@@ -821,7 +887,9 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     }
 
     /* ---- 悬浮会话工具条（页根子控件, z 顶; 连接期浮现/断开隐藏,
-     *     断开=「退出会话不退出应用」的 UI 入口, 2026-10-03）。 ---- */
+     *     断开=「退出会话不退出应用」的 UI 入口, 2026-10-03）。附着
+     *     矩形初始给设计值, 运行期由 rc_syncSessionBarView 按视图区
+     *     宿主实测几何轻同步（布局容器化后 adapt 不再重排）。 ---- */
     s_rc.m_sessionBar = XRemoteSessionBar_create(s_rc.m_root, 0);
     if (s_rc.m_sessionBar) {
         XRect viewRect;
@@ -831,8 +899,8 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
         XWidget_hide((XWidget*)s_rc.m_sessionBar); /* 未连接: 隐藏。 */
     }
 
-    /* ---- 分割条：视图区/控制列之间（拖动调列宽, 双击收列,
-     *     收起后细条单击展开）。 ---- */
+    /* ---- 分割条：视图区/控制列之间（双击收列/单击展开; 布局容器化后
+     *     定宽 6px 参与页根水平布局, 拖宽语义随 adapt 收空一并冻结）。 */
     {
         static const DemoSplitterCallbacks kRcSplitCbs = {
             rc_splitSizeFor, rc_splitApplySize, rc_splitToggle
@@ -842,7 +910,93 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
         s_rc.m_split = DemoSplitter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                               s_rc.m_root, 1,
                                               &kRcSplitCbs, &s_rc);
+        if (s_rc.m_split) {
+            XWidget_setFixedWidth(s_rc.m_split, 6);
+            XWidget_show(s_rc.m_split);
+        }
     }
+
+    /* ---- 页面布局装配（2026-10-17 布局容器化: 页内不再手写坐标,
+     *     几何全部由盒式布局协商; 装配式参照 xgui_window_demo 页根
+     *     布局——内容段 setStretch 铺满, 固定高条目贴边）。 ---- */
+    /* 视图区宿主垂直布局: 镜像视图单条目伸缩铺满（1:1 定径时布局按
+     * 最值约束放行, 溢出仍经祖先矩形链裁剪）。 */
+    XBoxLayout_init(&s_rc.m_layView, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_rc.m_layView, 0);
+    XLayout_setContentsMargins((XLayout*)&s_rc.m_layView, 0, 0, 0, 0);
+    if (s_rc.m_client)
+        XBoxLayout_addWidget(&s_rc.m_layView, (XWidget*)s_rc.m_client);
+    XBoxLayout_setStretch(&s_rc.m_layView, 0, 1);
+    XWidget_setLayout(s_rc.m_viewHost, (XLayout*)&s_rc.m_layView);
+    /* 控制列垂直布局: 实时统计块置顶（2026-10-03 裁定「选中的信息放到
+     * 首行」——贴底时右半被 FPS 悬浮层盖住）, 其后标题/状态行/配置
+     * 表单/联调辅助; 行距 8、顶缘 8 对齐旧 adapt 纵向节奏。 */
+    XBoxLayout_init(&s_rc.m_layCol, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_rc.m_layCol, 8);
+    XLayout_setContentsMargins((XLayout*)&s_rc.m_layCol, 0, 8, 0, 0);
+    if (s_rc.m_statsLabel)
+        XBoxLayout_addWidget(&s_rc.m_layCol, (XWidget*)s_rc.m_statsLabel);
+    if (s_rc.m_titleLabel)
+        XBoxLayout_addWidget(&s_rc.m_layCol, (XWidget*)s_rc.m_titleLabel);
+    if (s_rc.m_stateLabel)
+        XBoxLayout_addWidget(&s_rc.m_layCol, (XWidget*)s_rc.m_stateLabel);
+    rc_addCapRow(&s_rc.m_layRowIp, "IP", 28, 4, &s_rc.m_capIp,
+                 (XWidget*)s_rc.m_hostEdit);
+    rc_addCapRow(&s_rc.m_layRowPort,
+                 "\xE7\xAB\xAF\xE5\x8F\xA3", 32, 0, &s_rc.m_capPort, /* 端口 */
+                 (XWidget*)s_rc.m_portEdit);
+    /* 连接/断开按钮行: 定宽并排左贴（旧装配: 88px 步进）, 行尾伸缩
+     * 空白吸收余量——qGeomCalc 会把行内富余均匀摊进条目空档, 无空白
+     * 则按钮间距被撑开（与旧装配不符）。 */
+    XBoxLayout_init(&s_rc.m_layRowBtn, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_rc.m_layRowBtn, 8);
+    XBoxLayout_addWidget(&s_rc.m_layRowBtn, (XWidget*)s_rc.m_connectBtn);
+    XBoxLayout_addWidget(&s_rc.m_layRowBtn, (XWidget*)s_rc.m_disconnectBtn);
+    XBoxLayout_addStretch(&s_rc.m_layRowBtn, 1);
+    XBoxLayout_addLayout(&s_rc.m_layCol, (XLayout*)&s_rc.m_layRowBtn);
+    rc_addCapRow(&s_rc.m_layRowProfile,
+                 "\xE6\xA1\xA3\xE4\xBD\x8D", 32, 0,                  /* 档位 */
+                 &s_rc.m_capProfile, (XWidget*)s_rc.m_profileCombo);
+    /* TLS+UDP 开关行: TLS 定宽 96, UDP 伸缩占行内余宽 148（旧装配同排
+     * 右段; 96+8+148=252 恰满, 无需行尾空白）。 */
+    XBoxLayout_init(&s_rc.m_layRowTls, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_rc.m_layRowTls, 8);
+    XBoxLayout_addWidget(&s_rc.m_layRowTls, (XWidget*)s_rc.m_tlsCheck);
+    XBoxLayout_addWidget(&s_rc.m_layRowTls, (XWidget*)s_rc.m_udpCheck);
+    XBoxLayout_setStretch(&s_rc.m_layRowTls, 1, 1);
+    XBoxLayout_addLayout(&s_rc.m_layCol, (XLayout*)&s_rc.m_layRowTls);
+    rc_addCapRow(&s_rc.m_layRowAuth,
+                 "\xE8\xAE\xA4\xE8\xAF\x81", 32, 0,                  /* 认证 */
+                 &s_rc.m_capAuth, (XWidget*)s_rc.m_authCombo);
+    rc_addCapRow(&s_rc.m_layRowPwd,
+                 "\xE5\x8F\xA3\xE4\xBB\xA4", 32, 0,                  /* 口令 */
+                 &s_rc.m_capPassword, (XWidget*)s_rc.m_passwordEdit);
+    if (s_rc.m_touchBtn)
+        XBoxLayout_addWidget(&s_rc.m_layCol, (XWidget*)s_rc.m_touchBtn);
+    if (s_rc.m_touchLabel)
+        XBoxLayout_addWidget(&s_rc.m_layCol, (XWidget*)s_rc.m_touchLabel);
+    /* 列尾伸缩空白: 吸收列高富余并钉住内容节奏——qGeomCalc 把主轴
+     * 富余均匀摊进条目空档(含链首), 无空白则 8px 行距被均匀撑大、
+     * 统计块离开列顶(与旧 adapt 顶置口径不符)。 */
+    XBoxLayout_addStretch(&s_rc.m_layCol, 1);
+    /* 控制列容器: 定宽贴右, 收展=容器显隐（rc_splitToggle）; 列内
+     * 垂直布局挂容器——容器几何随页根布局到位后内部自动级联激活。 */
+    if (s_rc.m_col) {
+        XWidget_setFixedWidth(s_rc.m_col, RC_COL_W);
+        XWidget_setLayout(s_rc.m_col, (XLayout*)&s_rc.m_layCol);
+    }
+    /* 页根水平布局: 视图区伸缩 | 6px 间隙 | 分割条(定宽 6) | 控制列
+     * (定宽 RC_COL_W), 右缘留 8px——旧 adapt 横向节奏
+     * (hostW=colX-12, colX=rootW-colW-8) 的布局化等价。 */
+    XBoxLayout_init(&s_rc.m_layRoot, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_rc.m_layRoot, 0);
+    XLayout_setContentsMargins((XLayout*)&s_rc.m_layRoot, 0, 0, 8, 0);
+    XBoxLayout_addWidget(&s_rc.m_layRoot, s_rc.m_viewHost);
+    XBoxLayout_addSpacing(&s_rc.m_layRoot, 6);
+    XBoxLayout_addWidget(&s_rc.m_layRoot, s_rc.m_split);
+    XBoxLayout_addWidget(&s_rc.m_layRoot, s_rc.m_col);
+    XBoxLayout_setStretch(&s_rc.m_layRoot, 0, 1); /* 视图区吃掉全部余宽。 */
+    XWidget_setLayout(s_rc.m_root, (XLayout*)&s_rc.m_layRoot);
 
     /* ---- 虚拟键盘接管（历史记录）: RC 页曾在此全局关断应用虚拟键盘
      *     单例的 autoPopup（「点编辑框自动弹键盘/点空白自动收起」失效,
@@ -911,6 +1065,8 @@ static int rc_splitSizeFor(void* owner)
 static void rc_splitApplySize(void* owner, int size)
 {
     (void)owner;
+    /* 布局容器化(2026-10-17): 列宽由控制列容器定宽承担, 拖宽不再改排;
+     * 状态照记, adapt 调用点按契约保留（空实现）。 */
     if (size < 236) size = 236;
     if (size > 420) size = 420;
     if (size == s_rc.m_colW) return;
@@ -922,162 +1078,30 @@ static void rc_splitToggle(void* owner)
 {
     (void)owner;
     s_rc.m_colCollapsed = !s_rc.m_colCollapsed;
+    /* 布局容器化收口: 控制列容器显隐即整列收展——隐藏条目在盒式布局
+     * 按 0 尺寸参与分配, 视图区(伸缩段)自动占满余宽; 显隐经
+     * updateGeometry 触发页根布局重激活, 无需手工重排。分割条内部
+     * 收起态在此同步（决定单击语义=展开 vs 拖拽, 旧 adapt 每次重排
+     * setState 的等价搬迁）。 */
+    if (s_rc.m_split)
+        DemoSplitter_setState(s_rc.m_split, 1, s_rc.m_colCollapsed);
+    if (s_rc.m_col) {
+        if (s_rc.m_colCollapsed) XWidget_hide(s_rc.m_col);
+        else XWidget_show(s_rc.m_col);
+    }
     demo_page_remote_client_adapt(s_rc.m_root);
 }
 
-/** @brief 控制列整体显隐（收起/展开时统一切换）。 */
-static void rc_setColumnVisible(bool visible)
-{
-    XWidget* widgets[16];
-    int i;
-    widgets[0] = (XWidget*)s_rc.m_titleLabel;
-    widgets[1] = (XWidget*)s_rc.m_capIp;
-    widgets[2] = (XWidget*)s_rc.m_capPort;
-    widgets[3] = (XWidget*)s_rc.m_capProfile;
-    widgets[4] = (XWidget*)s_rc.m_capAuth;
-    widgets[5] = (XWidget*)s_rc.m_capPassword;
-    widgets[6] = (XWidget*)s_rc.m_stateLabel;
-    widgets[7] = (XWidget*)s_rc.m_hostEdit;
-    widgets[8] = (XWidget*)s_rc.m_portEdit;
-    widgets[9] = (XWidget*)s_rc.m_connectBtn;
-    widgets[10] = (XWidget*)s_rc.m_disconnectBtn;
-    widgets[11] = (XWidget*)s_rc.m_profileCombo;
-    widgets[12] = (XWidget*)s_rc.m_tlsCheck;
-    widgets[13] = (XWidget*)s_rc.m_authCombo;
-    widgets[14] = (XWidget*)s_rc.m_passwordEdit;
-    widgets[15] = (XWidget*)s_rc.m_touchBtn;
-    for (i = 0; i < 16; ++i)
-        if (widgets[i]) {
-            if (visible) XWidget_show(widgets[i]);
-            else XWidget_hide(widgets[i]);
-        }
-    if (s_rc.m_touchLabel) {
-        if (visible) XWidget_show((XWidget*)s_rc.m_touchLabel);
-        else XWidget_hide((XWidget*)s_rc.m_touchLabel);
-    }
-    if (s_rc.m_statsLabel) {
-        if (visible) XWidget_show((XWidget*)s_rc.m_statsLabel);
-        else XWidget_hide((XWidget*)s_rc.m_statsLabel);
-    }
-}
-
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：镜像区伸缩+控制列贴右。
- * @details 旧布局按 760 设计稿硬编码（视图区 504 宽、控制列 x=516），
- *          窗口缩放后既留大片空档又被裁；改为控制列（RC_COL_W 宽）恒
- *          贴右缘，镜像视图区宿主占其余全部宽高，悬浮会话条跟随视图
- *          矩形，实时统计块贴列底。由 demo_layout_content 全路径调用；
- *          page 与登记根不符时静默返回。 */
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：2026-10-17 布局容器化
+ * @details 页内手写坐标排布已全部删除, 几何改由页根盒式布局协商：
+ *          视图区=伸缩段吃掉全部余宽/高, 控制列=定宽容器贴右, 分割条
+ *          =定宽 6px 条目, 镜像视图由视图宿主垂直布局铺满（FIT 随宿主
+ *          缩放/1:1 定径放行溢出）; 悬浮会话条附着矩形由
+ *          rc_syncSessionBarView 轻同步。本函数保留签名、实现收空——
+ *          主文件 demo_layout_content 与分割条回调调用点按契约不动。 */
 void demo_page_remote_client_adapt(XWidget* page)
 {
-    int rootW;
-    int rootH;
-    int hostW;
-    int hostH;
-    int colX;
-    int colW;
-    XRect viewRect;
-    if (!page || page != s_rc.m_root) return;
-    rootW = XWidget_width(page);
-    rootH = XWidget_height(page);
-    if (rootW < 420 || rootH < 300) return; /* 过窄保持装配几何。 */
-    colW = s_rc.m_colW;
-    if (s_rc.m_colCollapsed) {
-        /* 收起：控制列整隐，镜像区占满，右缘 8px 细条单击展开。 */
-        colX = rootW - 8;
-        hostW = colX - 12;
-        if (hostW < 240) hostW = 240;
-        rc_setColumnVisible(false);
-    } else {
-        colX = rootW - colW - 8;
-        if (colX < 180) colX = 180; /* 保底视图区宽度。 */
-        hostW = colX - 12;
-        if (hostW < 240) hostW = 240;
-        rc_setColumnVisible(true);
-    }
-    hostH = rootH;
-    /* 镜像视图区宿主占左半全部（1:1 超出部分经祖先矩形链收窄）。 */
-    XWidget_setGeometry(s_rc.m_viewHost, 0, 0, hostW, hostH);
-    /* 控制列贴右（字段标题随列）。布局纵向序（用户 2026-10-03 裁定
-     * 「选中的信息放到首行」）：实时统计块置顶（贴底时右半被 FPS 悬浮
-     * 层盖住），其后为标题/状态行与配置表单。 */
-    if (s_rc.m_statsLabel)
-        XWidget_setGeometry((XWidget*)s_rc.m_statsLabel, colX, 8,
-                            colW, 88);
-    if (s_rc.m_titleLabel)
-        XWidget_setGeometry((XWidget*)s_rc.m_titleLabel, colX, 104,
-                            colW, 22);
-    if (s_rc.m_stateLabel)
-        XWidget_setGeometry((XWidget*)s_rc.m_stateLabel, colX, 132,
-                            colW, 22);
-    if (s_rc.m_capIp)
-        XWidget_setGeometry((XWidget*)s_rc.m_capIp, colX, 164, 28, 22);
-    if (s_rc.m_capPort)
-        XWidget_setGeometry((XWidget*)s_rc.m_capPort, colX, 194, 40, 22);
-    if (s_rc.m_capProfile)
-        XWidget_setGeometry((XWidget*)s_rc.m_capProfile, colX, 268, 40, 22);
-    if (s_rc.m_capAuth)
-        XWidget_setGeometry((XWidget*)s_rc.m_capAuth, colX, 330, 40, 22);
-    if (s_rc.m_capPassword)
-        XWidget_setGeometry((XWidget*)s_rc.m_capPassword, colX, 360, 40, 22);
-    if (s_rc.m_hostEdit)
-        XWidget_setGeometry((XWidget*)s_rc.m_hostEdit, colX + 32, 162,
-                            colW - 32, 24);
-    if (s_rc.m_portEdit)
-        XWidget_setGeometry((XWidget*)s_rc.m_portEdit, colX + 32, 192,
-                            colW - 32, 24);
-    if (s_rc.m_connectBtn)
-        XWidget_setGeometry((XWidget*)s_rc.m_connectBtn, colX, 226, 80, 28);
-    if (s_rc.m_disconnectBtn)
-        XWidget_setGeometry((XWidget*)s_rc.m_disconnectBtn, colX + 88, 226,
-                            80, 28);
-    if (s_rc.m_profileCombo)
-        XWidget_setGeometry((XWidget*)s_rc.m_profileCombo, colX + 32, 266,
-                            colW - 32, 26);
-    if (s_rc.m_tlsCheck)
-        XWidget_setGeometry((XWidget*)s_rc.m_tlsCheck, colX, 298, 96, 24);
-    /* UDP 低延迟旁路开关随列重排（2026-10-04 修: 此前只有 build 装配
-     * 几何 (RC_COL_X+100,202)——RC_COL_X=516 在默认 600 根宽下已越出
-     * 页面, 重排后列内同位又是端口编辑框, 双重叠印/不可见（用户实测
-     * 「没加进布局」）。与 TLS 同排右段; TLS 宽回装配同款 96; 列宽拖
-     * 至 200 下限时本开关文本轻微裁切, 与页面窄列裁切口径一致。 */
-    if (s_rc.m_udpCheck)
-        XWidget_setGeometry((XWidget*)s_rc.m_udpCheck, colX + 104, 298,
-                            colW - 104, 24);
-    if (s_rc.m_authCombo)
-        XWidget_setGeometry((XWidget*)s_rc.m_authCombo, colX + 32, 328,
-                            colW - 32, 26);
-    if (s_rc.m_passwordEdit)
-        XWidget_setGeometry((XWidget*)s_rc.m_passwordEdit, colX + 32, 358,
-                            colW - 32, 24);
-    if (s_rc.m_touchBtn)
-        XWidget_setGeometry((XWidget*)s_rc.m_touchBtn, colX, 394, 150, 32);
-    if (s_rc.m_touchLabel)
-        XWidget_setGeometry((XWidget*)s_rc.m_touchLabel, colX, 432,
-                            colW, 22);
-    /* 分割条：展开=控制列左缘 6px；收起=右缘 8px 细条（单击展开）。
-     * setState 必须每次重排同步——分割条内部收起态决定单击语义
-     * （展开 vs 拖拽），漏同步则细条单击永远进不了展开分支。 */
-    if (s_rc.m_split) {
-        if (s_rc.m_colCollapsed)
-            XWidget_setGeometry(s_rc.m_split, rootW - 8, 0, 8, rootH);
-        else
-            XWidget_setGeometry(s_rc.m_split, colX - 6, 0, 6, rootH);
-        DemoSplitter_setState(s_rc.m_split, 1, s_rc.m_colCollapsed);
-        XWidget_show(s_rc.m_split);
-    }
-    /* 镜像几何: 未连接=占位撑满视图区; 已连接 FIT 模式同样撑满——
-     * FIT 信箱变换按控件现尺寸重算, 若连接后不再随视图区缩放, 拉伸
-     * 窗口时镜像停在连接时刻尺寸、右侧留白(用户实测 2026-10-06);
-     * 1:1 模式保持 FB_META 定径(setFixedSize 远端尺寸)不动。 */
-    if (s_rc.m_client &&
-        (XGuiClient_state(s_rc.m_client) == XGUI_REMOTE_STATE_DISCONNECTED ||
-         XGuiClient_viewFitMode(s_rc.m_client) == XGUI_CLIENT_VIEW_FIT))
-        XWidget_setGeometry((XWidget*)s_rc.m_client, 0, 0, hostW, hostH);
-    /* 悬浮会话条跟随视图矩形（RS-d 附着语义）。 */
-    if (s_rc.m_sessionBar) {
-        XRect_init(&viewRect, 0, 0, hostW, hostH);
-        XRemoteSessionBar_attachView(s_rc.m_sessionBar, &viewRect);
-    }
+    (void)page; /* 布局容器接管几何: 无需手工重排（签名契约保留）。 */
 }
 
 /* ==================== 首帧自动连接（--remote-client 预置） ============= */
@@ -1147,11 +1171,15 @@ int demo_page_remote_client_autotest(XWidget* page)
               "远程客户端页: 悬浮条初始隐藏收起且已绑定客户端");
     RC_EXPECT(XRemoteSessionBar_disconnectButton(s_rc.m_sessionBar) != NULL,
               "远程客户端页: 悬浮条断开按钮就位(连上后退出会话入口)");
-    /* 「模拟触摸」按钮可达性: 控制列 x 恒在视图区宿主右缘之外（与
-     * 视图区矩形无重叠——旧版全页镜像盖死缺陷的回归锁；视图区宽度
-     * 自适应后以宿主实际几何为准，不再锚 504 设计稿常量）。 */
-    RC_EXPECT(XWidget_x(s_rc.m_touchBtn) >= XWidget_width(s_rc.m_viewHost),
-              "远程客户端页: 模拟触摸按钮在视图区之外(可达)");
+    /* 「模拟触摸」按钮可达性: 布局容器化后不再断言页内坐标（几何由
+     * 布局协商, 旧断言 XWidget_x>=视图区宽随之失效）——改为断言控件
+     * 可见、挂控制列容器、且布局协商出的尺寸有效(>0)。 */
+    RC_EXPECT(XWidget_isVisible((XWidget*)s_rc.m_touchBtn) &&
+                  XObject_parent((XObject*)s_rc.m_touchBtn) ==
+                      (XObject*)s_rc.m_col &&
+                  XWidget_width((XWidget*)s_rc.m_touchBtn) > 0 &&
+                  XWidget_height((XWidget*)s_rc.m_touchBtn) > 0,
+              "远程客户端页: 模拟触摸按钮可见挂列且尺寸有效(可达)");
 
     /* ---- 初始默认值 ---- */
     RC_EXPECT(strcmp(XLineEdit_text(s_rc.m_hostEdit), "127.0.0.1") == 0,

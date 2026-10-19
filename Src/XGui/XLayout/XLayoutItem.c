@@ -721,13 +721,30 @@ XLayoutItem* XLayoutItem_createSpacerItem(const XSize* size,
 
 /* ==================== 虚函数调度函数（跨对象类型安全转发） ==================== */
 
+/* ==================== 虚函数调度函数（跨对象类型安全转发） ==================== */
+
+/* [度量缓存 2026-10-17] 布局类条目的三级尺寸度量（hint/min/max）在分发
+ * 处统一走 XLayout 缓存（-1 哨兵=未缓存；失效清理由 XLayout_invalidate
+ * 承担——含向祖先布局级联）。对标 Qt QLayout 的 totalMin/Max 缓存语义：
+ * resize 级联中同一布局被父级/自身反复查询（堆叠布局一次 minimumSize
+ * 遍历全部页面根整树），缓存把每步 N 次整树遍历收敛为 1 次。非布局
+ * 条目（控件/空白）不缓存。const 仅用于写缓存字段，不改变行为语义。 */
+
 XSize XLayoutItem_sizeHint_base(const XLayoutItem* self)
 {
     XSize out;
     XSize_init(&out, 0, 0);
     if (!self || !XClassGetVtable(self)) return out;
-    return XClassGetVirtualFunc(self, EXLayoutItem_SizeHint,
-                                XSize(*)(const XLayoutItem*))(self);
+    {
+        XLayout* lay = XLayoutItem_layout_base(self);
+        if (lay && lay->m_cachedHint.width >= 0)
+            return lay->m_cachedHint;
+        out = XClassGetVirtualFunc(self, EXLayoutItem_SizeHint,
+                                   XSize(*)(const XLayoutItem*))(self);
+        if (lay)
+            lay->m_cachedHint = out;
+    }
+    return out;
 }
 
 XSize XLayoutItem_minimumSize_base(const XLayoutItem* self)
@@ -735,8 +752,16 @@ XSize XLayoutItem_minimumSize_base(const XLayoutItem* self)
     XSize out;
     XSize_init(&out, 0, 0);
     if (!self || !XClassGetVtable(self)) return out;
-    return XClassGetVirtualFunc(self, EXLayoutItem_MinimumSize,
-                                XSize(*)(const XLayoutItem*))(self);
+    {
+        XLayout* lay = XLayoutItem_layout_base(self);
+        if (lay && lay->m_cachedMin.width >= 0)
+            return lay->m_cachedMin;
+        out = XClassGetVirtualFunc(self, EXLayoutItem_MinimumSize,
+                                   XSize(*)(const XLayoutItem*))(self);
+        if (lay)
+            lay->m_cachedMin = out;
+    }
+    return out;
 }
 
 XSize XLayoutItem_maximumSize_base(const XLayoutItem* self)
@@ -744,8 +769,16 @@ XSize XLayoutItem_maximumSize_base(const XLayoutItem* self)
     XSize out;
     XSize_init(&out, XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
     if (!self || !XClassGetVtable(self)) return out;
-    return XClassGetVirtualFunc(self, EXLayoutItem_MaximumSize,
-                                XSize(*)(const XLayoutItem*))(self);
+    {
+        XLayout* lay = XLayoutItem_layout_base(self);
+        if (lay && lay->m_cachedMax.width >= 0)
+            return lay->m_cachedMax;
+        out = XClassGetVirtualFunc(self, EXLayoutItem_MaximumSize,
+                                   XSize(*)(const XLayoutItem*))(self);
+        if (lay)
+            lay->m_cachedMax = out;
+    }
+    return out;
 }
 
 XLayoutExpandingDirections XLayoutItem_expandingDirections_base(

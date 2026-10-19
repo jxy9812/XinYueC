@@ -16,6 +16,15 @@
  *               仅承载段几何（正式渲染由 XTableView 统一完成，XGui.md
  *               §8.1 声明边界），本页以公开几何 API 自绘段带作可视化。
  *
+ *             【页内摆位布局容器化（2026-10-17）】页内排布原为 build/
+ *             adapt 手写 setGeometry 坐标，现改为根控件挂盒式布局器自管
+ *             （根纵向 = 小节标题行 + 视图行 + 小表格段 + 底部弹性 +
+ *             状态行贴底，行/列嵌套对标原坐标间距）。主文件挂到本页根
+ *             的大表格（m_tableWidget，自选项卡页打散归位）经根控件
+ *             CHILD_ADDED 事件收编进小表格行（贴其右侧、宽随根，列宽
+ *             随可视宽定版），对应主文件 demo_layout_content 手写摆位段
+ *             删除；demo_page_views_adapt 退化为空实现（契约调用点保留）。
+ *
  *             【绘制偏移补偿（夜三起默认直绘，旧快照路径降为回退开关）】
  *             本库 paintEvent 契约：paintImage 为顶层后备存储（或离屏
  *             重定向目标），绘制前必须按 XWidget_paintOffset 平移到控
@@ -65,6 +74,9 @@
 #include "XHeaderView.h"
 #include "XPainter.h"
 #include "XWidget_Protected.h" /* XWidget_paintImage/paintOffset 绘制闭环入口。 */
+#endif
+#if XWIDGET_ON && XTABLEWIDGET_ON && XLAYOUT_ON
+#include "XBoxLayout.h" /* 页内摆位容器化：根/行/列盒式布局器（2026-10-17）。 */
 #endif
 
 /* 条目视图族（模型/列表/树/表格/表头）统一由 XWIDGET_ON && XTABLEWIDGET_ON
@@ -454,6 +466,16 @@ static struct
     DemoViewsTreeWidget tree;   /**< 两级树（设备→网卡/串口…）。 */
     DemoViewsHeaderView header; /**< 独立表头（几何承载 + 段带可视化）。 */
     XTableWidget table;         /**< 2 列 3 行小表格。 */
+#if XLAYOUT_ON
+    XBoxLayout rootBox;         /**< 页面根纵向布局器（页内摆位自管）。 */
+    XBoxLayout capRow;          /**< 小节标题行（水平，列构型同视图行）。 */
+    XBoxLayout viewsRow;        /**< 视图行（水平：列表/视图/树/表头）。 */
+    XBoxLayout midSection;      /**< 小表格段（纵向：标题 + 小表格行）。 */
+    XBoxLayout fileRow;         /**< 小表格行（水平：小表格+大表格余宽）。 */
+    XTableWidget* bigTable;     /**< 主文件后挂大表格（m_tableWidget 借用）。 */
+    bool bigTableAdopted;       /**< 大表格已收编进 fileRow 守卫。 */
+    bool buildDone;             /**< build 装配完成守卫（其后新增子=大表格）。 */
+#endif
 } g_views;
 
 /** @brief 交互反馈：写页面状态 Label 并经回调向主窗口状态栏上报。 */
@@ -465,6 +487,106 @@ static void views_setState(const char* text)
 #else
     (void)text;
 #endif
+}
+
+/* ==================== 页面根控件子类（大表格收编载体，2026-10-17） ====================
+ *
+ * 主文件 DemoWin_create 在本页 build 之后才把大表格（m_tableWidget）
+ * 以本页根为父挂入（自选项卡页打散归位），而契约只有 build/adapt/
+ * autotest 三个入口、adapt 已退化为空实现——故以根控件子类的事件
+ * 入口拦截 CHILD_ADDED，把 build 完成后新增的子控件（即大表格）收编
+ * 进小表格行（贴其右侧、stretch 吃余宽），列宽随根宽定版（对标原
+ * demo_layout_content「条目视图页补充大表格」段的摆位/列宽逻辑，该段
+ * 已自主文件删除）。事件拦截写法与 XGroupBox.c VXGroupBox_event 同型
+ * （本框架子对象事件经事件入口分派而不走 EXObject_ChildEvent 槽位）。
+ */
+
+XCLASS_DEFINE_BEGING(DemoViewsRootWidget)
+XCLASS_DEFINE_EXTEND_END(DemoViewsRootWidget, XWidget)
+
+/** @brief 页面根控件子类（m_base 必须是第一个成员）。 */
+typedef struct DemoViewsRootWidget
+{
+    XWidget m_base; /**< 基类成员；必须是第一个。 */
+} DemoViewsRootWidget;
+
+#if XLAYOUT_ON
+/** @brief 大表格列宽随可视宽定版（逐式对标原 demo_layout_content 段：
+ *         可视宽≥372 四列定宽恰满；≥200 保「名称+类型」主列比例，其余
+ *         列横滚可达；<200 不动（原窄根换行铺位已由布局器静态摆位取
+ *         代，此处行为与原段一致=维持上次列宽）。 */
+static void views_bigTableRefit(void)
+{
+    XTableWidget* table = g_views.bigTable;
+    int view;
+    if (!g_views.bigTableAdopted || !table) return;
+    /* 大表格宽 = 根宽 − 左右缘 16 − 小表格 380 − 段距 16（fileRow 摆位
+     * 式，与原段 tx=404/tw=rootW-412 逐像素同源）；可视宽再让纵条带 12。 */
+    view = XWidget_width(g_views.root) - 412 - 12;
+    if (view >= 372) {
+        XTableView_setColumnWidth((XTableView*)table, 0, 128);
+        XTableView_setColumnWidth((XTableView*)table, 1, 72);
+        XTableView_setColumnWidth((XTableView*)table, 2, 60);
+        XTableView_setColumnWidth((XTableView*)table, 3, 112);
+    } else if (view >= 200) {
+        int c0 = view * 62 / 100;
+        XTableView_setColumnWidth((XTableView*)table, 0, c0);
+        XTableView_setColumnWidth((XTableView*)table, 1, view - c0);
+        XTableView_setColumnWidth((XTableView*)table, 2, 60);
+        XTableView_setColumnWidth((XTableView*)table, 3, 112);
+    }
+}
+
+/** @brief 收编主文件后挂的本页子控件（大表格）：插到小表格之后，stretch
+ *         吃行内余宽（宽随页面根自适应）；[撑满改造 2026-10-17] 撤
+ *         h124 固定高——原定高防内容 sizeHint(~186) 顶高行挤偏小表格，
+ *         现行高由根布局 stretch 分配（小表格段 1 份弹性高），sizeHint
+ *         不再驱动行高，两表随行撑满（固定高反而被居中留缝）。 */
+static void views_adoptBigTable(XObject* child)
+{
+    if (g_views.bigTableAdopted || !child || !child->m_is_widget) return;
+    g_views.bigTable = (XTableWidget*)child;
+    XBoxLayout_insertWidgetEx(&g_views.fileRow, 1, (XWidget*)child, 1, 0);
+    g_views.bigTableAdopted = true;
+    views_bigTableRefit();
+}
+#endif /* XLAYOUT_ON */
+
+/** @brief 根控件事件入口：build 装配完成后新增的子控件即主文件大表格。 */
+static bool VDemoViewsRootWidget_event(XWidget* self, XEvent* event)
+{
+    bool result;
+    result = XClass_Parent(XWidget, EXObject_Event,
+                           bool (*)(XObject*, XEvent*))((XObject*)self,
+                                                        event);
+#if XLAYOUT_ON
+    if (g_views.buildDone && event &&
+        XEvent_type(event) == XEVENT_TYPE_CHILD_ADDED)
+        views_adoptBigTable(XChildEvent_child((const XChildEvent*)event));
+#endif
+    return result;
+}
+
+/** @brief 根控件尺寸变化：重定大表格列宽（本槽派发于根布局 activate
+ *         之前，故列宽按根宽预测式换算——与 fileRow 摆位式同源）。 */
+static void VDemoViewsRootWidget_resizeEvent(XWidget* self, XEvent* event)
+{
+    XClass_Parent(XWidget, EXWidget_ResizeEvent,
+                  void (*)(XWidget*, XEvent*))((XWidget*)self, event);
+#if XLAYOUT_ON
+    views_bigTableRefit();
+#endif
+}
+
+/** @brief 初始化 DemoViewsRootWidget 类虚函数表。 */
+XVtable* DemoViewsRootWidget_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(DemoViewsRootWidget)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXObject_Event, VDemoViewsRootWidget_event);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VDemoViewsRootWidget_resizeEvent);
+    return XVTABLE_DEFAULT;
 }
 
 /* ==================== 信号槽（void f(XObject*, XVarList*) 定式） ==================== */
@@ -535,18 +657,19 @@ static void views_tableClickedSlot(XObject* receiver, XVarList* args)
     views_setState(buf);
 }
 
-/* ==================== 构建（手工几何风格，内容区 760x480） ==================== */
+/* ==================== 构建（布局容器化装配，2026-10-17） ==================== */
 
 #if XWIDGET_ON && XLABEL_ON
-/** @brief 小节标题标签统一装配（左对齐垂直居中，14px）。 */
+/** @brief 小节标题标签统一装配（左对齐垂直居中，14px；固定高 18，宽随
+ *         行布局器伸缩——原 x/y/w 手写坐标由 build 装配段的列构型取代）。 */
 static void views_makeCaption(XLabel* label, XWidget* parent,
-                              int x, int y, int w, const char* text)
+                              const char* text)
 {
     XLabel_init(label, parent, 0);
     XLabel_setText_2(label, text);
     XLabel_setTextPixelSize(label, 14);
     XLabel_setAlignment(label, XAlignment_Left | XAlignment_VCenter);
-    XWidget_setGeometry((XWidget*)label, x, y, w, 18);
+    XWidget_setFixedHeight((XWidget*)label, 18);
     XWidget_show((XWidget*)label);
 }
 #endif
@@ -559,11 +682,18 @@ XWidget* demo_page_views_build(XWidget* parent,
     g_views.status = status;
     g_views.user = user;
 
-    /* 页面根控件：堆创建，父子链级联析构（契约口径）。 */
-    root = XWidget_create(parent, 0);
+    /* 页面根控件：子类堆创建，父子链级联析构（契约口径）——子类事件
+       入口收编主文件后挂的大表格（见 DemoViewsRootWidget 节注）。
+       页面几何由堆叠布局分配、页内由根布局器重排，不再手写 setGeometry。 */
+    root = (XWidget*)XMemory_malloc(sizeof(DemoViewsRootWidget),
+                                    XCLASS_DEFAULT_MEMORY_TYPE);
     if (!root) return NULL;
+    XMemset(root, 0, sizeof(DemoViewsRootWidget));
+    XWidget_init(root, parent, 0);
+    XClassSetVtable(root, DemoViewsRootWidget);
+    Set_Class_Memory(root, XCLASS_DEFAULT_MEMORY_TYPE);
+    Set_Class_IsHeap(root, true);
     g_views.root = root;
-    XWidget_setGeometry(root, 0, 0, 760, 480);
 
     /* 自定义模型：静态自持，once 守卫（非控件不入级联析构链）。 */
     if (!g_views.modelReady) {
@@ -572,16 +702,12 @@ XWidget* demo_page_views_build(XWidget* parent,
     }
 
 #if XWIDGET_ON && XLABEL_ON
-    /* 小节标题（XListWidget 顶部 y=6 一行）。 */
-    views_makeCaption(&g_views.capList, root, 8, 6, 200,
-                      "XListWidget（点击选择）");
-    views_makeCaption(&g_views.capView, root, 224, 6, 196,
-                      "XListView＋自定义模型");
-    views_makeCaption(&g_views.capTree, root, 436, 6, 160, "XTreeWidget");
-    views_makeCaption(&g_views.capHeader, root, 612, 6, 140,
-                      "XHeaderView（几何）");
-    views_makeCaption(&g_views.capTable, root, 8, 160, 380,
-                      "XTableWidget（2 列 3 行）");
+    /* 小节标题（固定高 18 一行；宽度随列布局器伸缩）。 */
+    views_makeCaption(&g_views.capList, root, "XListWidget（点击选择）");
+    views_makeCaption(&g_views.capView, root, "XListView＋自定义模型");
+    views_makeCaption(&g_views.capTree, root, "XTreeWidget");
+    views_makeCaption(&g_views.capHeader, root, "XHeaderView（几何）");
+    views_makeCaption(&g_views.capTable, root, "XTableWidget（2 列 3 行）");
 #endif
 
     /* ---- XListWidget：文本条目列表（对标 QListWidget addItem）。 ---- */
@@ -590,7 +716,6 @@ XWidget* demo_page_views_build(XWidget* parent,
     XListWidget_addItem_2((XListWidget*)&g_views.list, "香蕉");
     XListWidget_addItem_2((XListWidget*)&g_views.list, "樱桃");
     XListWidget_addItem_2((XListWidget*)&g_views.list, "榴莲");
-    XWidget_setGeometry((XWidget*)&g_views.list, 8, 28, 200, 118);
     XObject_connect_1((XObject*)&g_views.list,
                       (size_t)XListWidget_itemClicked_signal(NULL, 0),
                       (XObject*)&g_views.list, views_listClickedSlot,
@@ -601,7 +726,6 @@ XWidget* demo_page_views_build(XWidget* parent,
     DemoViewsListView_init(&g_views.view, root, 0);
     XAbstractItemView_setModel((XAbstractItemView*)&g_views.view,
                                &g_views.model.m_base);
-    XWidget_setGeometry((XWidget*)&g_views.view, 224, 28, 196, 118);
     XObject_connect_1((XObject*)&g_views.view,
                       (size_t)XAbstractItemView_clicked_signal(NULL, 0, 0),
                       (XObject*)&g_views.view, views_viewClickedSlot,
@@ -638,18 +762,11 @@ XWidget* demo_page_views_build(XWidget* parent,
                                         headerLabels, 2);
         }
     }
-    /* 列 0 固定宽（名称列省略根修）：缺省两列全 0=自动均摊，adapt
-     * 后树宽 w3=120（800x600＋默认贴左面板 176 → rootW=600 →
-     * usable=548 → w3=22%）时列 0 带 0..60；子行「网卡/串口」
-     * depth=1，文本起点=indent(20)×1+12=32，预算 60-32=28px < 全宽
-     * 32px（2×1em，outline 12pt→16px），被 xtw_drawColumn0Text 右
-     * 省略成「网.../串...」（顶层行文本起点 28，「设备/外设」预算
-     * 32px 恰满临界）。固定 80 后子行预算 48px 出全字，状态列自动
-     * 铺满余量 40px（「在线」起点 84、宽 32 至 116 ≤ 120 不裁）。
-     * 可行区间 [64,80]（64=子行全字下限，80=状态列「在线」上限），
-     * 110 会把状态列挤到 10px 令其消失，取 80。 */
+    /* 列 0 固定宽（名称列省略根修）：缺省两列全 0=自动均摊，原 adapt
+     * 树列定宽 176（=80+84+12，名称列 80 + 状态列让开纵向滚动条带，
+     * 目验二轮挂项「在线/就绪」出全字的下限，宽窄根两档 adapt 均落此
+     * 下限）——容器化后以 setFixedWidth(176) 等价定版。 */
     XTreeView_setColumnWidth((XTreeView*)&g_views.tree, 0, 80);
-    XWidget_setGeometry((XWidget*)&g_views.tree, 436, 28, 160, 130);
     XObject_connect_1((XObject*)&g_views.tree,
                       (size_t)XTreeWidget_itemClicked_signal(NULL, 0),
                       (XObject*)&g_views.tree, views_treeClickedSlot,
@@ -670,7 +787,6 @@ XWidget* demo_page_views_build(XWidget* parent,
                           (XHeaderView*)&g_views.header, 0),
                       (XObject*)&g_views.header, views_headerClickedSlot,
                       XConnectionType_Direct);
-    XWidget_setGeometry((XWidget*)&g_views.header, 612, 28, 140, 26);
     XWidget_show((XWidget*)&g_views.header);
 
     /* ---- XTableWidget：2 列 3 行小表格（对标 QTableWidget
@@ -691,7 +807,6 @@ XWidget* demo_page_views_build(XWidget* parent,
     XTableWidget_setText(&g_views.table, 2, 1, "8");
     XTableView_setColumnWidth((XTableView*)&g_views.table, 0, 130);
     XTableView_setColumnWidth((XTableView*)&g_views.table, 1, 130);
-    XWidget_setGeometry((XWidget*)&g_views.table, 8, 182, 380, 124);
     XObject_connect_1((XObject*)&g_views.table,
                       (size_t)XTableWidget_cellClicked_signal(NULL),
                       (XObject*)&g_views.table, views_tableClickedSlot,
@@ -705,65 +820,86 @@ XWidget* demo_page_views_build(XWidget* parent,
     XLabel_setTextPixelSize(&g_views.stateLabel, 14);
     XLabel_setAlignment(&g_views.stateLabel,
                         XAlignment_Left | XAlignment_VCenter);
-    XWidget_setGeometry((XWidget*)&g_views.stateLabel, 8, 440, 744, 28);
     XWidget_show((XWidget*)&g_views.stateLabel);
 #endif
+
+#if XLAYOUT_ON
+    /* ---- 根纵向布局器装配（间距/边距对标改造前手写坐标）：
+     * 根 = 小节标题行 + 视图行 + 小表格段 + 底部弹性 + 状态行贴底。
+     * 原坐标：标题行 y6 h18、视图行 y28 h118~130、小表格段 y160 起
+     * （标题 h18 + 段距 4 + 表格 h124）、状态行贴底 h28、x8 两缘。 ---- */
+    /* 小节标题行：四列构型与视图行同构（列表/视图/表头伸缩 27、树列
+     * 定宽 176 对齐），段距 12 对标原 x1→x2→x3→x4 步进 12。 */
+    XBoxLayout_init(&g_views.capRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidgetEx(&g_views.capRow, (XWidget*)&g_views.capList,
+                           27, 0);
+    XBoxLayout_addWidgetEx(&g_views.capRow, (XWidget*)&g_views.capView,
+                           27, 0);
+    XBoxLayout_addWidgetEx(&g_views.capRow, (XWidget*)&g_views.capTree,
+                           0, 0);
+    XWidget_setFixedWidth((XWidget*)&g_views.capTree, 176);
+    XBoxLayout_addWidgetEx(&g_views.capRow, (XWidget*)&g_views.capHeader,
+                           27, 0);
+    XLayout_setSpacing((XLayout*)&g_views.capRow, 12);
+    /* 视图行：列表/视图/树随行高撑满（横向伸缩 27/树定宽 176；
+     * [撑满改造 2026-10-17] 撤 h118/h130 固定高与 strut——下方余高
+     * 原被根布局空白段吞掉=页面下半大片留白，现视图行与小表格段
+     * 各吃 1 份弹性高，页面纵向全利用）；表头 h26 保持紧凑顶对齐。 */
+    XBoxLayout_init(&g_views.viewsRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidgetEx(&g_views.viewsRow, (XWidget*)&g_views.list,
+                           27, 0);
+    XBoxLayout_addWidgetEx(&g_views.viewsRow, (XWidget*)&g_views.view,
+                           27, 0);
+    XBoxLayout_addWidgetEx(&g_views.viewsRow, (XWidget*)&g_views.tree,
+                           0, 0);
+    XWidget_setFixedWidth((XWidget*)&g_views.tree, 176);
+    XBoxLayout_addWidgetEx(&g_views.viewsRow, (XWidget*)&g_views.header,
+                           27, XAlignment_Top);
+    XWidget_setFixedHeight((XWidget*)&g_views.header, 26);
+    XLayout_setSpacing((XLayout*)&g_views.viewsRow, 12);
+    /* 小表格段：小表格定宽 380、高随段撑满（[撑满改造] 撤 h124 固定高）
+     * + 主文件后挂大表格收编进行内余宽双向撑满（段距 16 对标原大表格
+     * x=404=8+380+16）。 */
+    XBoxLayout_init(&g_views.fileRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidget(&g_views.fileRow, (XWidget*)&g_views.table);
+    XWidget_setFixedWidth((XWidget*)&g_views.table, 380);
+    XLayout_setSpacing((XLayout*)&g_views.fileRow, 16);
+    XBoxLayout_init(&g_views.midSection, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_addWidget(&g_views.midSection, (XWidget*)&g_views.capTable);
+    XBoxLayout_addLayout(&g_views.midSection, (XLayout*)&g_views.fileRow);
+    XLayout_setSpacing((XLayout*)&g_views.midSection, 4);
+    /* 页根：段距 4、边距 8,6,8,4；[撑满改造 2026-10-17] 余高不再留
+     * 空白段——视图行与小表格段各吃 1 份弹性高（1:1）纵向撑满页面，
+     * 状态行固定高贴底（对标原 y=rootH-32 h28）。 */
+    XBoxLayout_init(&g_views.rootBox, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_addLayout(&g_views.rootBox, (XLayout*)&g_views.capRow);
+    XBoxLayout_addLayout(&g_views.rootBox, (XLayout*)&g_views.viewsRow);
+    XBoxLayout_addLayout(&g_views.rootBox, (XLayout*)&g_views.midSection);
+    XBoxLayout_setStretchFactorLayout(&g_views.rootBox,
+                                      (XLayout*)&g_views.viewsRow, 1);
+    XBoxLayout_setStretchFactorLayout(&g_views.rootBox,
+                                      (XLayout*)&g_views.midSection, 1);
+    XBoxLayout_addWidget(&g_views.rootBox, (XWidget*)&g_views.stateLabel);
+    XWidget_setFixedHeight((XWidget*)&g_views.stateLabel, 28);
+    XLayout_setContentsMargins((XLayout*)&g_views.rootBox, 8, 6, 8, 4);
+    XLayout_setSpacing((XLayout*)&g_views.rootBox, 4);
+    XWidget_setLayout(root, (XLayout*)&g_views.rootBox);
+    g_views.buildDone = true;
+#endif /* XLAYOUT_ON */
 
     XWidget_show(root);
     return root;
 }
 
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：随根几何伸缩。
- * @details 顶行四列（列表/模型视图/树/表头）按根宽比例展开（27/27/22/
- *          其余），小节标题跟随；小表格与状态行位置不变（状态行贴底、
- *          宽随根）；大表格（主文件 m_tableWidget，挂同根）由主文件重
- *          排，两者以 x=404 为界互不重叠。由 demo_layout_content 全
- *          路径调用；page 与登记根不符时静默返回。 */
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：布局容器化后空实现。
+ * @details 2026-10-17 起页内排布由根控件挂盒式布局器自管（装配见
+ *          demo_page_views_build），几何随堆叠布局分配的根尺寸自动
+ *          重排，本函数不再手写坐标；主文件 demo_layout_content 的
+ *          契约调用点原样保留，大表格摆位/列宽逻辑已迁入本文件
+ *          （DemoViewsRootWidget 节）。page 与登记根不符时亦无操作。 */
 void demo_page_views_adapt(XWidget* page)
 {
-    int rootW;
-    int rootH;
-    int usable;
-    int w1;
-    int w2;
-    int w3;
-    int w4;
-    int x1;
-    int x2;
-    int x3;
-    int x4;
-    if (!page || page != g_views.root) return;
-    rootW = XWidget_width(page);
-    rootH = XWidget_height(page);
-    if (rootW < 360) return; /* 过窄保持装配几何。 */
-    usable = rootW - 16 - 36; /* 左右缘 8+8 与三个列间 12。 */
-    w1 = usable * 27 / 100;
-    w2 = usable * 27 / 100;
-    w3 = usable * 22 / 100;
-    /* 树列下限 176：名称列固定 80 + 状态列需让开纵向滚动条带（~12px）
-       才能出全「在线/就绪」（目验二轮挂项），176=80+84+12。 */
-    if (w3 < 176) w3 = 176;
-    w4 = usable - w1 - w2 - w3;
-    if (w4 < 90) w4 = 90; /* 表头列保底（段0/段1 可视）。 */
-    x1 = 8;
-    x2 = x1 + w1 + 12;
-    x3 = x2 + w2 + 12;
-    x4 = x3 + w3 + 12;
-#if XWIDGET_ON && XLABEL_ON
-    /* 小节标题跟随各列。 */
-    XWidget_setGeometry(&g_views.capList, x1, 6, w1, 18);
-    XWidget_setGeometry(&g_views.capView, x2, 6, w2, 18);
-    XWidget_setGeometry(&g_views.capTree, x3, 6, w3, 18);
-    XWidget_setGeometry(&g_views.capHeader, x4, 6, w4, 18);
-#endif
-    XWidget_setGeometry((XWidget*)&g_views.list, x1, 28, w1, 118);
-    XWidget_setGeometry((XWidget*)&g_views.view, x2, 28, w2, 118);
-    XWidget_setGeometry((XWidget*)&g_views.tree, x3, 28, w3, 130);
-    XWidget_setGeometry((XWidget*)&g_views.header, x4, 28, w4, 26);
-    XWidget_setGeometry((XWidget*)&g_views.table, 8, 182, 380, 124);
-    /* 状态行贴底。 */
-    XWidget_setGeometry((XWidget*)&g_views.stateLabel, 8,
-                        rootH - 32, rootW - 16, 28);
+    (void)page;
 }
 
 /* ==================== 自动测试（事件注入 + getter 断言） ==================== */

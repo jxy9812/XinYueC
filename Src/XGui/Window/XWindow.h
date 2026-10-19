@@ -650,6 +650,54 @@ XScreenOrientation XWindow_contentOrientation(const XWindow* self);
  */
 float XWindow_devicePixelRatio(const XWindow* self);
 
+/* ==================== 内容旋转（0/90/180/270，2026-10-18 新增） ==================== */
+
+/**
+ * @brief      设置窗口内容旋转角（顺时针；0/90/180/270 有效）。
+ * @details    只落请求角并（角度变化时）发射 contentRotationChanged；
+ *             **不改几何**（外框对调归调用方/demo，见 XWindow_screenFootprint），
+ *             **不发同步重绘指令**——上层 XWidget_setContentRotation 负责置
+ *             整帧脏闩并入脏区，等下一帧 PAINT 自然消费（避免 XWindow 低层
+ *             回调 XWidget 高层造成层级倒置）。
+ *             非法角度或平台不支持（见 XWindow_rotationSupported）时返回
+ *             false 且**不改状态、不发信号**。
+ * @param      self 目标窗口；可为 NULL。
+ * @param      deg  请求角度（0/90/180/270）。
+ * @return      接受请求返回 true；入参非法/角度非法/平台不支持返回 false。
+ */
+bool XWindow_setContentRotation(XWindow* self, int deg);
+
+/**
+ * @brief      返回窗口**有效**内容旋转角。
+ * @details    有效角在 getter 内纯算：请求角为 0 或平台支持时返回请求角，
+ *             否则返回 0。**无回写、无副作用**——平台能力后来满足时自动
+ *             恢复，无需任何重建逻辑。
+ * @param      self 目标窗口；可为 NULL。
+ * @return      有效角度（0/90/180/270）；入参非法返回 0。
+ */
+int XWindow_contentRotationDegrees(const XWindow* self);
+
+/**
+ * @brief      返回窗口在屏幕上的实际占位矩形（footprint）。
+ * @details    逻辑几何的 x/y **原样保留**（旋转不移动原点），width/height
+ *             按 90/270 对调（0/180 与逻辑几何逐字段相同）。命中测试
+ *             （fbdev 触摸）与窗口定位一律用本结果，不用 XWindow_geometry。
+ * @param      self 目标窗口；可为 NULL。
+ * @return      占位矩形；入参非法返回零矩形。
+ */
+XRect XWindow_screenFootprint(const XWindow* self);
+
+/**
+ * @brief      查询该旋转角是否对调宽高轴（90/270 为 true）。
+ * @details    公开薄封装（实现见 XWindowRotation.h 的 inline 单一实现），
+ *             供调用方在**设置几何之前**决定用哪套尺寸口径做钳位/对调
+ *             （demo 窗口设置页即按此先对调 avail 再钳位，见 R2），
+ *             保证与平台层 footprint 对调共用同一条规则。
+ * @param      deg 角度（0/90/180/270；其他值按不换轴处理）。
+ * @return      对调宽高轴返回 true。
+ */
+bool XWindow_rotationSwapsAxes(int deg);
+
 /* ==================== 窗口状态 ==================== */
 
 /**
@@ -1366,6 +1414,8 @@ void* XWindow_visibilityChanged_signal(XWindow* self, XWindowVisibility visibili
 void* XWindow_activeChanged_signal(XWindow* self);
 /** @brief 内容方向变化信号（对标 QWindow::contentOrientationChanged）。 @param self 目标窗口。 @param orientation 新内容方向。 */
 void* XWindow_contentOrientationChanged_signal(XWindow* self, XScreenOrientation orientation);
+/** @brief 内容旋转角变化信号（2026-10-18 新增）。 @param self 目标窗口。 @param degrees 新有效角度（0/90/180/270）。 */
+void* XWindow_contentRotationChanged_signal(XWindow* self, int degrees);
 /** @brief 焦点对象变化信号（对标 QWindow::focusObjectChanged）。 @param self 目标窗口。 @param object 新焦点对象；可为 NULL。 */
 void* XWindow_focusObjectChanged_signal(XWindow* self, XObject* object);
 /** @brief 不透明度变化信号（对标 QWindow::opacityChanged）。 @param self 目标窗口。 @param opacity 新不透明度。 */

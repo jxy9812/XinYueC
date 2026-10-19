@@ -356,6 +356,19 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
                                    const XRegion* region,
                                    const XPoint* offset);
 
+/**
+ * @brief      查询平台是否支持对本窗口做软件内容旋转（0/90/180/270）。
+ * @details    纯读、无副作用。X11：上屏描述符为 32 位直拷布局（ARGB32
+ *             小端 [B,G,R,A]，契约见本文件顶注）时支持；RGB16(565) 构建
+ *             与真 24 位视觉不支持（前者本层不做 565 旋转，后者直拷
+ *             布局不成立）。fbdev：零拷贝（缓冲已落在 fb 映射内、中间
+ *             无可转的帧）不支持。Win32/Android/无后端：恒 false——
+ *             XWindow_setContentRotation 据此返回 false，调用方置灰 UI。
+ * @param      window 目标窗口借用指针；可为 NULL。
+ * @return     支持返回 true；否则 false。
+ */
+bool XPlatformNativeWindow_rotationSupported(const XWindow* window);
+
 /* ==================== 原生连接（平台后端提供） ==================== */
 
 /**

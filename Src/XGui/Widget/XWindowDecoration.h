@@ -66,6 +66,23 @@ extern "C" {
 bool XWindowDecoration_activeFor(const XWidget* top);
 
 /**
+ * @brief      按给定 flags 预测顶层是否由框架绘制窗口装饰（activeFor
+ *             的 flags 覆盖变体）。
+ * @details    XWidget_setWindowFlags 动态路径专用：抑制位先于
+ *             XWindow_setFlags 落位，此刻窗口侧 m_flags 仍旧值——经
+ *             activeFor 读到陈旧 Frameless 位会把「恢复边框」误判为
+ *             不装饰，Motif hints 按 DECOR_ALL 下发，强制 CSD 下系统
+ *             标题栏出现且不恢复（DDE 实测 2026-10-17）。本变体用
+ *             调用方的新 flags 判定，消除该竞态。判定内核与 activeFor
+ *             同一实现（类型白名单/Frameless 位/策略模式/fbdev Auto
+ *             探测逐条一致）。
+ * @param      top 顶层控件；可为 NULL。
+ * @param      flags 待落位的新窗口标志（控件侧口径，含类型位）。
+ * @return     由框架绘制返回 true。
+ */
+bool XWindowDecoration_activeForFlags(const XWidget* top, XWindowFlags flags);
+
+/**
  * @brief      返回装饰保留边距（标题条计入顶部，其余为零）。
  * @details    条高取被装饰顶层挂载的标题条控件实际高度；条控件尚未
  *             承载（布局期预测）时回退 XTitleBar_defaultHeight，保证

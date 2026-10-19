@@ -416,16 +416,69 @@ static void XBoxLayout_qGeomCalc(XBoxGeom* chain, int start, int count,
     }
 
     if (space < cMin + sumSpacing) {
-        /* 空间不足最小总宽：按最小逐项给满（保留本项目既有语义）。 */
+        /* [亏缺按比 2026-10-17 v2 固定条目优先] 空间不足最小总和时：
+         * ①固定尺寸条目（min>0 且 max<=min，如状态栏 26/品牌条 40/
+         *   停靠面板 min=max）优先全额给满——窗口缩小不得压缩这类
+         *   条目（用户裁定：底部状态栏存在时高度必须固定）；
+         * ②余量由可伸缩条目按最小占比缩配消化（Qt 靠父控件裁切兜底
+         *   溢出，XGui 画模无父级裁切，「按最小逐项给满」的溢出物直
+         *   接覆盖相邻控件——下停靠导航条盖状态栏 DDE 实证）；
+         * ③固定条目自身都放不下时（极端矮窗）退回全员按比兜底。
+         * 末位可伸缩非空条目吸收舍入余量保证总和精确贴合；间距保
+         * 持原值（量小且维持视觉节奏）。 */
+        int fixedSum = 0;
+        int flexMinSum = 0;
+        int remSpace;
         int p = pos;
+        int lastFlex = -1;
         for (i = start; i < start + count; ++i) {
             XBoxGeom* data = &chain[i];
+            if (data->empty || data->min <= 0)
+                continue;
+            if (data->max <= data->min)
+                fixedSum += data->min;
+            else
+                flexMinSum += data->min;
+        }
+        remSpace = space - sumSpacing - fixedSum;
+        if (remSpace < 0) {   /* 固定条目都放不下：全员按比兜底。 */
+            fixedSum = 0;
+            flexMinSum = cMin;
+            remSpace = space - sumSpacing;
+        }
+        if (remSpace < 0) remSpace = 0;
+        for (i = start; i < start + count; ++i) {
+            if (!chain[i].empty && chain[i].min > 0 &&
+                chain[i].max > chain[i].min)
+                lastFlex = i;
+        }
+        for (i = start; i < start + count; ++i) {
+            XBoxGeom* data = &chain[i];
+            bool allocatedFixed;
             data->done = true;
-            data->size = data->min;
+            allocatedFixed = fixedSum > 0 && !data->empty && data->min > 0 &&
+                             data->max <= data->min;
+            if (data->empty || data->min <= 0)
+                data->size = 0;
+            else if (allocatedFixed)
+                data->size = data->min;   /* 固定条目全额。 */
+            else if (flexMinSum <= 0)
+                data->size = 0;
+            else if (i == lastFlex)
+                data->size = remSpace;    /* 末位吸收舍入余量。 */
+            else
+                data->size = (int)(((long long)data->min * remSpace) /
+                                   flexMinSum);
+            if (data->size < 0) data->size = 0;
             data->pos = p;
-            p += data->min;
+            p += data->size;
             if (!data->empty)
                 p += data->spacing;
+            if (!allocatedFixed) {   /* 固定份已从 remSpace 预扣，勿二次扣。 */
+                remSpace -= data->size;
+                if (remSpace < 0)
+                    remSpace = 0;
+            }
         }
         return;
     }

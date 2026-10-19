@@ -81,6 +81,11 @@ static void xtabwidget_layout(XTabWidget* self)
         pageW = w - barH;
         break;
     default: /* North：条在顶，页占下余。 */
+        /* [根修 2026-10-17] pageY 必须=barH：此前漏置（pageY 恒 0），
+         * 页容器从条下 0 位起排=与页签条重叠（对标 Qt setUpLayout
+         * North 的 QRect(0, barH, w, h-barH)；目验：日历签月头嵌进
+         * 条行、滚动签白底整块盖条）。South/West/East 三分支本就正确。 */
+        pageY = barH;
         pageH = h - barH;
         break;
     }

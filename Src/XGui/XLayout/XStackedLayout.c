@@ -145,18 +145,27 @@ static XSize VXStackedLayout_minimumSize(const XLayoutItem* item)
 static void VXStackedLayout_setGeometry(XLayout* layout, const XRect* rect)
 {
     XStackedLayout* self = (XStackedLayout*)layout;
+    XRect inner;
     int i;
     if (!self || !rect) return;
-    self->m_base.m_base.m_geometry = *rect;
+    /* 消费 contentsMargins（对标 Qt QStackedLayout::setGeometry 以
+     * contentsRect 分配给页面）：此前直用外接矩形，托管挂接
+     * （XWidget_setLayout）下宿主以自身坐标 (0,0,w,h) 激活
+     * （XLayout_activate），布局边距被无视——主内容堆叠挂 contentHost
+     * 时 12/8 呼吸边失效（历史回退「不消费避让边距」的真因）。未设
+     * 边距的布局（-1→解析 0）行为不变；m_geometry 存内缩后矩形，使
+     * setCurrentIndex 的几何重放（切页回贴新当前页）同口径。 */
+    inner = XLayout_contentsRectForRect(layout, rect);
+    self->m_base.m_base.m_geometry = inner;
     if (self->m_stackingMode == XStackedLayoutStackOne) {
         XWidget* widget = XStackedLayout_currentWidget(self);
         if (widget)
-            XWidget_setGeometryRect(widget, rect);
+            XWidget_setGeometryRect(widget, &inner);
     } else {
         for (i = 0; i < self->m_base.m_itemCount; ++i) {
             XWidget* widget = XStackedLayout_widget(self, i);
             if (widget)
-                XWidget_setGeometryRect(widget, rect);
+                XWidget_setGeometryRect(widget, &inner);
         }
     }
     self->m_base.m_isDirty = 0;

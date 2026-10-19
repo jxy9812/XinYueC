@@ -10,8 +10,11 @@
  *              ④ 无效果基线：同款三控件原样渲染（按钮/标签/复选框，
  *                与①②③同尺寸，供集成阶段截图像素差分对照）。
  *             每个效果组配"启用效果/禁用效果"一对切换按钮与组标题/
- *             状态 Label；切换经信号槽走 Direct 连接，与主文件手工
- *             setGeometry 几何风格一致（页面内容区约 760x480）。
+ *             状态 Label；切换经信号槽走 Direct 连接。页内装配走布局
+ *             容器（2026-10-17 容器化）：页根挂垂直盒两行栅格（行盒=
+ *             水平盒两格 stretch 均分；格容器定高 224，格内垂直盒=
+ *             标题/状态/样例 + 伸缩 + 按钮行贴底），页面内容区约
+ *             760x480 设计口径由边距/间距/定尺复刻。
  *
  *             效果对象所有权（对标 Qt QWidget::setGraphicsEffect 语义，
  *             见 XWidget.h m_graphicsEffect 注释与 XWidget.c 实现）：
@@ -38,6 +41,7 @@
 #include "XObject.h"
 #include "XGuiConfig.h"
 #include "XWidget.h"
+#include "XBoxLayout.h" /* 页内布局容器化：页根垂直盒 + 行盒/格盒嵌套。 */
 #include "XGraphicsEffect.h"
 #include "XGraphicsOpacityEffect.h"
 #include "XGraphicsBlurEffect.h"
@@ -59,10 +63,14 @@
 
 /* ==================== 页面几何常量（内容区约 760x480） ==================== */
 
-/* 2x2 组格：格尺寸 364x224，列 x=12/384，行 y=12/244，组间 8px。 */
-#define FX_PAGE_MARGIN   12  /**< 页面外边距。 */
-#define FX_CELL_X2       384 /**< 第二列组原点 x。 */
-#define FX_CELL_Y2       244 /**< 第二行组原点 y。 */
+/* [布局容器化 2026-10-17] 2x2 组格原点/列位手写坐标（CELL_X2=384/
+ * CELL_Y2=244）退场：栅格改由页根垂直盒表达——边距 12 + 行/列间距 8
+ * 精确复刻原行列原点（12+224+8=244、12+364+8=384）；列宽由行盒内两
+ * 格 stretch 均分（原格宽 364 ≈ (760-2*12-8)/2），格高保持 224 定尺
+ * （格容器 setFixedHeight，纵向不随页根伸缩，多余空间留页底=原观感）。 */
+#define FX_PAGE_MARGIN   12  /**< 页面外边距 = 行/列间距（原 2x2 栅格口径）。 */
+#define FX_CELL_GAP       8  /**< 行/列间距（原列原点 384=12+364+8 推得）。 */
+#define FX_CELL_HEIGHT  224  /**< 格容器固定高（原格纵向包络 12..236）。 */
 
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ======== */
 
@@ -107,6 +115,18 @@ static struct
     XPushButton* m_g3Button;/**< 基线按钮（对照组①）。 */
     XLabel*      m_g3Label; /**< 基线标签（对照组②，同款边框底色）。 */
     XCheckBox*   m_g3Check; /**< 基线复选框（对照组③）。 */
+
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    /* 页内布局容器（2026-10-17 容器化）：布局器须随页常驻
+     * （XWidget_setLayout 仅存借用指针不取所有权），全部存入本静态
+     * 登记表；行盒/按钮行盒经 XBoxLayout_addLayout 借挂父盒（借用
+     * 不取所有权），格垂直盒经 XWidget_setLayout 挂格容器。 */
+    XBoxLayout m_rootLayout;     /**< 页根垂直盒（两行栅格）。 */
+    XBoxLayout m_rowLayouts[2];  /**< 行水平盒池（每行两格 stretch 均分）。 */
+    XBoxLayout m_cellLayouts[4]; /**< 格垂直盒池（标题/状态/样例/伸缩/按钮行）。 */
+    XBoxLayout m_btnRows[3];     /**< 启/禁按钮行水平盒池（组①②③）。 */
+    XWidget*   m_cells[4];       /**< 格容器（setFixedHeight 复刻原 224 格高）。 */
+#endif
 } s_page;
 
 /* ==================== 内部辅助 ==================== */
@@ -272,39 +292,45 @@ static void fx_g2OffSlot(XObject* receiver, XVarList* args)
 
 /**
  * @brief      装配一个效果组的标题/状态行与一对切换按钮。
- * @param      cx 组格原点 x；cy 组格原点 y。
+ * @details    [布局容器化 2026-10-17] 原手工 setGeometry（cx/cy 原点
+ *             推算）退场：控件只留定尺（标题定高 20、状态行定高 16、
+ *             切换钮定尺 110x30），原点/行宽交格内垂直盒布局器分配。
+ * @param      cell 格容器（控件挂其下，由格盒排布）。
  * @param      titleText 组标题。
  * @param      pTitle/pState 输出标题/状态 Label 指针。
  * @param      pOn/pOff 输出启用/禁用按钮指针。
  * @param      onSlot/offSlot 启用/禁用 clicked 槽。
  * @return     成功返回 true；任一控件创建失败返回 false。
  */
-static bool fx_buildGroup(int cx, int cy, const char* titleText,
+static bool fx_buildGroup(XWidget* cell, const char* titleText,
                           XLabel** pTitle, XLabel** pState,
                           XPushButton** pOn, XPushButton** pOff,
                           void (*onSlot)(XObject*, XVarList*),
                           void (*offSlot)(XObject*, XVarList*))
 {
-    XLabel* title = XLabel_create((XWidget*)s_page.m_root, 0);
-    XLabel* state = XLabel_create((XWidget*)s_page.m_root, 0);
-    XPushButton* on = XPushButton_create((XWidget*)s_page.m_root, 0);
-    XPushButton* off = XPushButton_create((XWidget*)s_page.m_root, 0);
+    XLabel* title = XLabel_create(cell, 0);
+    XLabel* state = XLabel_create(cell, 0);
+    XPushButton* on = XPushButton_create(cell, 0);
+    XPushButton* off = XPushButton_create(cell, 0);
     if (!title || !state || !on || !off) return false;
 
     XLabel_setText_2(title, titleText);
     XLabel_setTextPixelSize(title, 14);
     XLabel_setAlignment(title, XAlignment_Left | XAlignment_VCenter);
-    XWidget_setGeometry((XWidget*)title, cx + 8, cy + 6, 348, 20);
+    /* 原手写 (cx+8,cy+6,348,20) → 定高 20（宽随格宽伸展），原点交格
+     * 盒边距 (8,6,8,12)。 */
+    XWidget_setFixedHeight((XWidget*)title, 20);
     XWidget_show((XWidget*)title);
 
     XLabel_setText_2(state, "效果未启用");
     XLabel_setTextPixelSize(state, 12);
     XLabel_setAlignment(state, XAlignment_Left | XAlignment_VCenter);
-    XWidget_setGeometry((XWidget*)state, cx + 8, cy + 30, 348, 16);
+    XWidget_setFixedHeight((XWidget*)state, 16);
     XWidget_show((XWidget*)state);
 
     XPushButton_setText_2(on, "启用效果");
-    XWidget_setGeometry((XWidget*)on, cx + 8, cy + 182, 110, 30);
+    XWidget_setFixedWidth((XWidget*)on, 110);
+    XWidget_setFixedHeight((XWidget*)on, 30);
     XObject_connect_1((XObject*)on,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)s_page.m_root, onSlot,
@@ -312,7 +338,8 @@ static bool fx_buildGroup(int cx, int cy, const char* titleText,
     XWidget_show((XWidget*)on);
 
     XPushButton_setText_2(off, "禁用效果");
-    XWidget_setGeometry((XWidget*)off, cx + 128, cy + 182, 110, 30);
+    XWidget_setFixedWidth((XWidget*)off, 110);
+    XWidget_setFixedHeight((XWidget*)off, 30);
     XObject_connect_1((XObject*)off,
                       (size_t)XPushButton_clicked_signal(NULL, false),
                       (XObject*)s_page.m_root, offSlot,
@@ -325,6 +352,41 @@ static bool fx_buildGroup(int cx, int cy, const char* titleText,
     *pOff = off;
     return true;
 }
+
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+/**
+ * @brief      格垂直盒装配（组①②③共用）：标题/状态/样例 + 伸缩 +
+ *             启/禁按钮行贴底（组④无按钮行，由 build 直接装配）。
+ * @details    格盒边距 (8,6,8,12) 复刻原 (cx+8,cy+6) 原点与格底余量
+ *             （224-212=12）；条目间距 4 复刻原标题-状态行间隙
+ *             （30-26）；按钮行间距 10 复刻原 Off 列位（On 右缘 +10）；
+ *             伸缩空白把按钮行压贴格底（原按钮行 y=格+182=224-12-30）。
+ *             格盒挂格容器（m_cells[celli] 定高 224）。
+ */
+static void fx_cellAssemble(int celli, XLabel* title, XLabel* state,
+                            XWidget* sample,
+                            XPushButton* on, XPushButton* off)
+{
+    XBoxLayout* cellBox = &s_page.m_cellLayouts[celli];
+    XBoxLayout* btnRow = &s_page.m_btnRows[celli]; /* 组①②③=0..2 一一对应。 */
+    XBoxLayout_init(cellBox, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)cellBox, 8, 6, 8, 12);
+    XLayout_setSpacing((XLayout*)cellBox, 4);
+    if (title) XBoxLayout_addWidget(cellBox, (XWidget*)title);
+    if (state) XBoxLayout_addWidget(cellBox, (XWidget*)state);
+    if (sample) XBoxLayout_addWidget(cellBox, sample);
+    XBoxLayout_addStretch(cellBox, 1);
+    if (on && off)
+    {
+        XBoxLayout_init(btnRow, XBoxLayoutDirection_LeftToRight);
+        XLayout_setSpacing((XLayout*)btnRow, 10);
+        XBoxLayout_addWidget(btnRow, (XWidget*)on);
+        XBoxLayout_addWidget(btnRow, (XWidget*)off);
+        XBoxLayout_addLayout(cellBox, (XLayout*)btnRow);
+    }
+    XWidget_setLayout(s_page.m_cells[celli], (XLayout*)cellBox);
+}
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 
 #if XPALETTE_ON
 /**
@@ -348,14 +410,15 @@ static void fx_labelFillBackground(XLabel* label)
 
 /**
  * @brief      装配"带底色/边框样式"的样例标签（组②样例与组④基线同款）。
- * @param      x/y/w/h 几何（页面局部坐标）。
+ * @param      cell 格容器（标签挂其下，由格盒排布）。
+ * @param      w/h 定尺（原手写 w/h；原点交格内布局器）。
  * @param      text 标签文本。
  * @return     标签指针；创建失败返回 NULL。
  */
-static XLabel* fx_buildStyledLabel(int x, int y, int w, int h,
+static XLabel* fx_buildStyledLabel(XWidget* cell, int w, int h,
                                    const char* text)
 {
-    XLabel* label = XLabel_create((XWidget*)s_page.m_root, 0);
+    XLabel* label = XLabel_create(cell, 0);
     if (!label) return (XLabel*)0;
     XLabel_setText_2(label, text);
     XLabel_setAlignment(label, XAlignment_Center);
@@ -366,7 +429,8 @@ static XLabel* fx_buildStyledLabel(int x, int y, int w, int h,
 #if XPALETTE_ON
     fx_labelFillBackground(label);
 #endif
-    XWidget_setGeometry((XWidget*)label, x, y, w, h);
+    XWidget_setFixedWidth((XWidget*)label, w);
+    XWidget_setFixedHeight((XWidget*)label, h);
     XWidget_show((XWidget*)label);
     return label;
 }
@@ -393,140 +457,179 @@ XWidget* demo_page_effects_build(XWidget* parent,
     s_page.m_root = XWidget_create(parent, 0);
     if (!s_page.m_root) return (XWidget*)0;
 
-    /* 组①：透明度效果 + 样例按钮（左上）。 */
-    s_page.m_g0Sample = XPushButton_create((XWidget*)s_page.m_root, 0);
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    /* ---- 页内布局容器化（2026-10-17）：页根挂垂直盒两行栅格，原页内
+     * setGeometry 手写排布全部退场。观感对齐改造前截图：页根边距 12 +
+     * 行间距 8 精确复刻原行列原点（12/244、12/384）；行盒两格 stretch
+     * 均分列宽（原格宽 364≈(760-24-8)/2）；格容器定高 224（纵向不伸
+     * 缩，多余空间留页底=原观感）；格盒边距 (8,6,8,12)/间距 4 复刻
+     * 原标题 (cx+8,cy+6) 原点与行间隙；样例定尺（按钮 180x40/标签
+     * 220x52/复选框 220x26）与按钮对 110x30 保持原值。 ---- */
+    XBoxLayout_init(&s_page.m_rootLayout, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&s_page.m_rootLayout,
+                               FX_PAGE_MARGIN, FX_PAGE_MARGIN,
+                               FX_PAGE_MARGIN, FX_PAGE_MARGIN);
+    XLayout_setSpacing((XLayout*)&s_page.m_rootLayout, FX_CELL_GAP);
+    XBoxLayout_init(&s_page.m_rowLayouts[0], XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_page.m_rowLayouts[0], FX_CELL_GAP);
+    XBoxLayout_init(&s_page.m_rowLayouts[1], XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_page.m_rowLayouts[1], FX_CELL_GAP);
+#endif
+
+    /* 组①：透明度效果 + 样例按钮（左上格）。 */
+    s_page.m_cells[0] = XWidget_create((XWidget*)s_page.m_root, 0);
+    if (!s_page.m_cells[0]) return s_page.m_root;
+    XWidget_setFixedHeight(s_page.m_cells[0], FX_CELL_HEIGHT);
+    s_page.m_g0Sample = XPushButton_create(s_page.m_cells[0], 0);
     if (!s_page.m_g0Sample ||
-        !fx_buildGroup(FX_PAGE_MARGIN, FX_PAGE_MARGIN,
+        !fx_buildGroup(s_page.m_cells[0],
                        "① 透明度 XGraphicsOpacityEffect",
                        &s_page.m_g0Title, &s_page.m_g0State,
                        &s_page.m_g0On, &s_page.m_g0Off,
                        fx_g0OnSlot, fx_g0OffSlot))
         return s_page.m_root;
     XPushButton_setText_2(s_page.m_g0Sample, "透明按钮");
-    XWidget_setGeometry((XWidget*)s_page.m_g0Sample,
-                        FX_PAGE_MARGIN + 24, FX_PAGE_MARGIN + 58, 180, 40);
+    XWidget_setFixedWidth((XWidget*)s_page.m_g0Sample, 180);
+    XWidget_setFixedHeight((XWidget*)s_page.m_g0Sample, 40);
     XWidget_show((XWidget*)s_page.m_g0Sample);
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    fx_cellAssemble(0, s_page.m_g0Title, s_page.m_g0State,
+                    (XWidget*)s_page.m_g0Sample,
+                    s_page.m_g0On, s_page.m_g0Off);
+    XBoxLayout_addWidget(&s_page.m_rowLayouts[0], s_page.m_cells[0]);
+#endif
 
-    /* 组②：模糊效果 + 样例标签（右上，Box 边框 + 底色）。 */
-    if (!fx_buildGroup(FX_CELL_X2, FX_PAGE_MARGIN,
+    /* 组②：模糊效果 + 样例标签（右上格，Box 边框 + 底色）。 */
+    s_page.m_cells[1] = XWidget_create((XWidget*)s_page.m_root, 0);
+    if (!s_page.m_cells[1]) return s_page.m_root;
+    XWidget_setFixedHeight(s_page.m_cells[1], FX_CELL_HEIGHT);
+    s_page.m_g1Sample = fx_buildStyledLabel(
+        s_page.m_cells[1], 220, 52, "模糊标签");
+    if (!s_page.m_g1Sample ||
+        !fx_buildGroup(s_page.m_cells[1],
                        "② 模糊 XGraphicsBlurEffect（3x3 盒式核）",
                        &s_page.m_g1Title, &s_page.m_g1State,
                        &s_page.m_g1On, &s_page.m_g1Off,
                        fx_g1OnSlot, fx_g1OffSlot))
         return s_page.m_root;
-    s_page.m_g1Sample = fx_buildStyledLabel(
-        FX_CELL_X2 + 24, FX_PAGE_MARGIN + 54, 220, 52, "模糊标签");
-    if (!s_page.m_g1Sample) return s_page.m_root;
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    fx_cellAssemble(1, s_page.m_g1Title, s_page.m_g1State,
+                    (XWidget*)s_page.m_g1Sample,
+                    s_page.m_g1On, s_page.m_g1Off);
+    XBoxLayout_addWidget(&s_page.m_rowLayouts[0], s_page.m_cells[1]);
+    /* 首行装配完成：两格 stretch 均分列宽，行盒借挂页根垂直盒。 */
+    XBoxLayout_setStretch(&s_page.m_rowLayouts[0], 0, 1);
+    XBoxLayout_setStretch(&s_page.m_rowLayouts[0], 1, 1);
+    XBoxLayout_addLayout(&s_page.m_rootLayout,
+                         (XLayout*)&s_page.m_rowLayouts[0]);
+#endif
 
-    /* 组③：投影效果 + 样例复选框（左下）。 */
-    s_page.m_g2Sample = XCheckBox_create((XWidget*)s_page.m_root, 0);
+    /* 组③：投影效果 + 样例复选框（左下格）。 */
+    s_page.m_cells[2] = XWidget_create((XWidget*)s_page.m_root, 0);
+    if (!s_page.m_cells[2]) return s_page.m_root;
+    XWidget_setFixedHeight(s_page.m_cells[2], FX_CELL_HEIGHT);
+    s_page.m_g2Sample = XCheckBox_create(s_page.m_cells[2], 0);
     if (!s_page.m_g2Sample ||
-        !fx_buildGroup(FX_PAGE_MARGIN, FX_CELL_Y2,
+        !fx_buildGroup(s_page.m_cells[2],
                        "③ 投影 XGraphicsDropShadowEffect",
                        &s_page.m_g2Title, &s_page.m_g2State,
                        &s_page.m_g2On, &s_page.m_g2Off,
                        fx_g2OnSlot, fx_g2OffSlot))
         return s_page.m_root;
     XCheckBox_setText_2(s_page.m_g2Sample, "投影复选框");
-    XWidget_setGeometry((XWidget*)s_page.m_g2Sample,
-                        FX_PAGE_MARGIN + 24, FX_CELL_Y2 + 62, 220, 26);
+    XWidget_setFixedWidth((XWidget*)s_page.m_g2Sample, 220);
+    XWidget_setFixedHeight((XWidget*)s_page.m_g2Sample, 26);
     XWidget_show((XWidget*)s_page.m_g2Sample);
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    fx_cellAssemble(2, s_page.m_g2Title, s_page.m_g2State,
+                    (XWidget*)s_page.m_g2Sample,
+                    s_page.m_g2On, s_page.m_g2Off);
+    XBoxLayout_addWidget(&s_page.m_rowLayouts[1], s_page.m_cells[2]);
+#endif
 
-    /* 组④：无效果基线（右下；三控件同款同尺寸，永不挂效果，
+    /* 组④：无效果基线（右下格；三控件同款同尺寸，永不挂效果，
        供集成阶段截图像素对照）。 */
-    s_page.m_g3Title = XLabel_create((XWidget*)s_page.m_root, 0);
-    s_page.m_g3State = XLabel_create((XWidget*)s_page.m_root, 0);
+    s_page.m_cells[3] = XWidget_create((XWidget*)s_page.m_root, 0);
+    if (!s_page.m_cells[3]) return s_page.m_root;
+    XWidget_setFixedHeight(s_page.m_cells[3], FX_CELL_HEIGHT);
+    s_page.m_g3Title = XLabel_create(s_page.m_cells[3], 0);
+    s_page.m_g3State = XLabel_create(s_page.m_cells[3], 0);
     if (!s_page.m_g3Title || !s_page.m_g3State) return s_page.m_root;
     XLabel_setText_2(s_page.m_g3Title, "④ 无效果基线（像素对照）");
     XLabel_setTextPixelSize(s_page.m_g3Title, 14);
     XLabel_setAlignment(s_page.m_g3Title, XAlignment_Left | XAlignment_VCenter);
-    XWidget_setGeometry((XWidget*)s_page.m_g3Title,
-                        FX_CELL_X2 + 8, FX_CELL_Y2 + 6, 348, 20);
+    XWidget_setFixedHeight((XWidget*)s_page.m_g3Title, 20);
     XWidget_show((XWidget*)s_page.m_g3Title);
     XLabel_setText_2(s_page.m_g3State, "原样渲染，无效果挂接");
     XLabel_setTextPixelSize(s_page.m_g3State, 12);
     XLabel_setAlignment(s_page.m_g3State, XAlignment_Left | XAlignment_VCenter);
-    XWidget_setGeometry((XWidget*)s_page.m_g3State,
-                        FX_CELL_X2 + 8, FX_CELL_Y2 + 30, 348, 16);
+    XWidget_setFixedHeight((XWidget*)s_page.m_g3State, 16);
     XWidget_show((XWidget*)s_page.m_g3State);
 
-    s_page.m_g3Button = XPushButton_create((XWidget*)s_page.m_root, 0);
+    s_page.m_g3Button = XPushButton_create(s_page.m_cells[3], 0);
     if (!s_page.m_g3Button) return s_page.m_root;
     XPushButton_setText_2(s_page.m_g3Button, "透明按钮");
-    XWidget_setGeometry((XWidget*)s_page.m_g3Button,
-                        FX_CELL_X2 + 24, FX_CELL_Y2 + 52, 180, 40);
+    XWidget_setFixedWidth((XWidget*)s_page.m_g3Button, 180);
+    XWidget_setFixedHeight((XWidget*)s_page.m_g3Button, 40);
     XWidget_show((XWidget*)s_page.m_g3Button);
 
     s_page.m_g3Label = fx_buildStyledLabel(
-        FX_CELL_X2 + 24, FX_CELL_Y2 + 100, 220, 52, "模糊标签");
+        s_page.m_cells[3], 220, 52, "模糊标签");
     if (!s_page.m_g3Label) return s_page.m_root;
 
-    s_page.m_g3Check = XCheckBox_create((XWidget*)s_page.m_root, 0);
+    s_page.m_g3Check = XCheckBox_create(s_page.m_cells[3], 0);
     if (!s_page.m_g3Check) return s_page.m_root;
     XCheckBox_setText_2(s_page.m_g3Check, "投影复选框");
-    XWidget_setGeometry((XWidget*)s_page.m_g3Check,
-                        FX_CELL_X2 + 24, FX_CELL_Y2 + 160, 220, 26);
+    XWidget_setFixedWidth((XWidget*)s_page.m_g3Check, 220);
+    XWidget_setFixedHeight((XWidget*)s_page.m_g3Check, 26);
     XWidget_show((XWidget*)s_page.m_g3Check);
+
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    /* 格④垂直盒：标题/状态/三基线控件 + 伸缩（无按钮行，同原装配）。 */
+    XBoxLayout_init(&s_page.m_cellLayouts[3], XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&s_page.m_cellLayouts[3],
+                               8, 6, 8, 12);
+    XLayout_setSpacing((XLayout*)&s_page.m_cellLayouts[3], 4);
+    XBoxLayout_addWidget(&s_page.m_cellLayouts[3],
+                         (XWidget*)s_page.m_g3Title);
+    XBoxLayout_addWidget(&s_page.m_cellLayouts[3],
+                         (XWidget*)s_page.m_g3State);
+    XBoxLayout_addWidget(&s_page.m_cellLayouts[3],
+                         (XWidget*)s_page.m_g3Button);
+    XBoxLayout_addWidget(&s_page.m_cellLayouts[3],
+                         (XWidget*)s_page.m_g3Label);
+    XBoxLayout_addWidget(&s_page.m_cellLayouts[3],
+                         (XWidget*)s_page.m_g3Check);
+    XBoxLayout_addStretch(&s_page.m_cellLayouts[3], 1);
+    XWidget_setLayout(s_page.m_cells[3],
+                      (XLayout*)&s_page.m_cellLayouts[3]);
+    XBoxLayout_addWidget(&s_page.m_rowLayouts[1], s_page.m_cells[3]);
+    /* 次行装配完成：两格 stretch 均分列宽，行盒借挂页根垂直盒；
+       页根最后挂根盒（attach 即激活，全页几何一次到位）。 */
+    XBoxLayout_setStretch(&s_page.m_rowLayouts[1], 0, 1);
+    XBoxLayout_setStretch(&s_page.m_rowLayouts[1], 1, 1);
+    XBoxLayout_addLayout(&s_page.m_rootLayout,
+                         (XLayout*)&s_page.m_rowLayouts[1]);
+    XWidget_setLayout(s_page.m_root, (XLayout*)&s_page.m_rootLayout);
+#endif
 
     s_page.m_ready = true;
     return s_page.m_root;
 }
 
-/** @brief 自适应重排（xgui_demo_pages.h 契约）：双列栅格随根宽伸缩。
- * @details 组栅格原点按 760/776 设计稿定版，窄内容区（导航面板展开时
- *          根宽 ~576）下右列越界裁剪；改为列宽取根宽一半（下限 264），
- *          标题/状态行宽随列宽收缩；右列「启用/禁用效果」按钮对装配
- *          定版（cx=FX_CELL_X2，adapt 原不重排按钮），仅当 Off 右缘
- *          384+128+110=622 越过根宽-8 时整对按装配间距 120 左移收口、
- *          Off 右缘贴根宽-8（2026-10-03 目验挂项：导航展开时窗口
- *          x=800 处右边框被裁），宽根宽几何与装配一致、观感不动。
- *          行纵向保持 12/244 原点（组③钮底 456 在 494 高内容区内）。
- *          由 demo_layout_content 全路径调用；page 与登记根不符时静
- *          默返回。 */
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：空实现体。
+ * @details [布局容器化 2026-10-17] 原手工重排（列宽取根宽一半、右列
+ *          按钮对越界左移收口、标题/状态行宽随列宽收缩的逐控件
+ *          setGeometry）整体退场：2x2 栅格由页根垂直盒 + 行盒两格
+ *          stretch 均分布局器随根宽自适应（列宽=（根宽-边距-间距）/
+ *          2，标题/状态行宽随格宽、按钮行保持定尺左排），根尺寸变化
+ *          经布局器自动重激活（XWidget_recomputeGeometry 的
+ *          resize→activate 联动），无需手工重排。契约签名保留（主
+ *          文件 demo_layout_content 调用点不动），page 与登记根不符
+ *          亦无副作用。 */
 void demo_page_effects_adapt(XWidget* page)
 {
-    int rootW;
-    int cellW;
-    int x2;
-    int onX;
-    int offX;
-    if (!page || page != s_page.m_root) return;
-    rootW = XWidget_width(page);
-    if (rootW < 560) return; /* 过窄保持装配几何。 */
-    cellW = rootW / 2 - 24;
-    if (cellW < 264) cellW = 264;
-    x2 = 12 + cellW + 24;
-    if (x2 + cellW > rootW - 8)
-        x2 = rootW - 8 - cellW;
-    /* 右列启/禁按钮对收口：与右缘无冲突时保持装配几何（392/512）。 */
-    onX = FX_CELL_X2 + 8;
-    offX = FX_CELL_X2 + 128;
-    if (offX + 110 > rootW - 8)
-    {
-        offX = rootW - 8 - 110;
-        onX = offX - 120;
-    }
-    XWidget_setGeometry((XWidget*)s_page.m_g1On, onX,
-                        FX_PAGE_MARGIN + 182, 110, 30);
-    XWidget_setGeometry((XWidget*)s_page.m_g1Off, offX,
-                        FX_PAGE_MARGIN + 182, 110, 30);
-    /* 标题/状态行宽随列宽收缩（右列重定位）。 */
-    XWidget_setGeometry((XWidget*)s_page.m_g0Title, 12 + 8, 12 + 6,
-                        cellW - 16, 20);
-    XWidget_setGeometry((XWidget*)s_page.m_g0State, 12 + 8, 12 + 30,
-                        cellW - 16, 16);
-    XWidget_setGeometry((XWidget*)s_page.m_g1Title, x2 + 8, 12 + 6,
-                        cellW - 16, 20);
-    XWidget_setGeometry((XWidget*)s_page.m_g1State, x2 + 8, 12 + 30,
-                        cellW - 16, 16);
-    XWidget_setGeometry((XWidget*)s_page.m_g2Title, 12 + 8, 244 + 6,
-                        cellW - 16, 20);
-    XWidget_setGeometry((XWidget*)s_page.m_g2State, 12 + 8, 244 + 30,
-                        cellW - 16, 16);
-    XWidget_setGeometry((XWidget*)s_page.m_g3Title, x2 + 8, 244 + 6,
-                        cellW - 16, 20);
-    XWidget_setGeometry((XWidget*)s_page.m_g3State, x2 + 8, 244 + 30,
-                        cellW - 16, 16);
+    (void)page;
 }
 
 /* ==================== 契约实现：页面自测 ==================== */

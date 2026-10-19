@@ -50,6 +50,7 @@
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XWidget.h"
+#include "XBoxLayout.h" /* 页面布局容器化（2026-10-17): 根列+行盒式布局器。 */
 #include "XLabel.h"
 #include "XCheckBox.h"
 #include "XLineEdit.h"
@@ -72,11 +73,12 @@
 #if XGUI_REMOTE_ON && XWIDGET_ON && XPUSHBUTTON_ON && \
     XLABEL_ON && XCHECKBOX_ON && XLINEEDIT_ON && XCOMBOBOX_ON
 
-/* ==================== 页面几何常量（内容区约 760x480） ====================
- * 2026-10-03 目验收口：800x600 + 左停靠导航面板(176)时页面根仅 600 宽，
- * 全部控件以「列右缘 = rootW-8 = 592」反推收窄，800x600 与更窄窗口不溢出。 */
-
-#define RS_PAGE_COL2_X   480  /**< 右列原点 x（状态/待生效提示）。 */
+/* ==================== 页面布局（内容区约 760x480） ====================
+ * 2026-10-17 布局容器化: 页内手写坐标（setGeometry/adapt 重排）全部
+ * 移除, 改由根列 XBoxLayout + 8 条行盒式布局器管理——控件固定尺寸
+ * （setFixedWidth/Height 保持原行高）+ setStretch 伸缩语义近似原稿:
+ * 边距 (12,8,8,12) 行距 8, 末字段/档位下拉/UDP 开关等 stretch 铺满,
+ * 会话状态区 stretch 吃满纵轴余量, 服务地址行固定高 24 贴底。 */
 
 /* ==================== 服务地址行（本机 IP 枚举; 2026-10-02 增强） ======== */
 
@@ -165,6 +167,20 @@ void demo_page_remote_server_cliDefaults(const DemoRemoteServerCliOptions* opts)
 static struct
 {
     XWidget*         m_root;        /**< 页面根控件（契约返回值；堆对象）。 */
+    /* ---- 页面布局器（2026-10-17 容器化; 原位对象存于本静态表）:
+     *     布局器经 XWidget_setLayout/addLayout 只借挂不取所有权, 内部
+     *     条目数组堆分配——重复 build 前须按 m_layoutsInited 显式反
+     *     初始化（build 入口防御）, demo 当前单次构建常态不走。 ---- */
+    XBoxLayout       m_layoutRoot;  /**< 根列布局器（TopToBottom, 挂根）。 */
+    XBoxLayout       m_rowHeader;   /**< 标题行: 标题(伸缩) + 服务状态(右锚)。 */
+    XBoxLayout       m_rowToggle;   /**< 开关行: 启用开关 + 待生效提示(右锚)。 */
+    XBoxLayout       m_rowPort;     /**< 端口/档位行: 档位下拉伸缩贴右。 */
+    XBoxLayout       m_rowTls;      /**< TLS/UDP 行: UDP 开关伸缩。 */
+    XBoxLayout       m_rowCert;     /**< 证书/私钥行: 两框对半伸缩。 */
+    XBoxLayout       m_rowAuth;     /**< 认证/口令行: 两框对半 + 应用钮定宽。 */
+    XBoxLayout       m_rowPing;     /**< RemotePing 行: 计数标签伸缩。 */
+    XBoxLayout       m_rowEcho;     /**< 回显行: 回显框伸缩 + 双钮定宽。 */
+    bool             m_layoutsInited; /**< 布局器已 init(重复 build 防御依据)。 */
     DemoPageStatusFn m_status;      /**< 主窗口状态栏反馈回调（借用）。 */
     void*            m_user;        /**< 回调上下文（主窗口指针，借用）。 */
     char             m_lastStatus[160]; /**< 最近一次反馈文本（自测断言用）。 */
@@ -193,8 +209,8 @@ static struct
     XLabel*    m_pendingLabel;/**< 待生效提示行。 */
     XLabel*    m_sessionLabel;/**< 会话状态多行（监听/会话数/事件/错误）。 */
 
-    /* ---- 行标签（2026-10-06 响应式重排: 原建后即弃无法随根宽挪位,
-     *   纳入成员后 rs_adaptLayout 全控件重排可达）。 ---- */
+    /* ---- 行标签（2026-10-06 纳入成员; 2026-10-17 起几何由行布局器
+     *   管理——固定 40x22, 随窗口拉伸自动就位, 无需手工重排）。 ---- */
     XLabel*    m_capPort;    /**< 「端口」行标签。 */
     XLabel*    m_capProfile; /**< 「档位」行标签。 */
     XLabel*    m_capCert;    /**< 「证书」行标签。 */
@@ -223,13 +239,14 @@ static struct
     char        m_lastEvent[96];  /**< 最近事件文本。 */
     char        m_lastError[96];  /**< 最近错误文本。 */
     int         m_sessionLines;   /**< 会话状态块行数(refresh 统计 '\n';
-                                     *   0=未知按 4 行——响应式定高依据,
+                                     *   0=未知按 4 行——2026-10-17 起仅作
+                                     *   诊断计数(高度由布局器伸缩自适应),
                                      *   监听态 9 行/停止态 4 行)。 */
 } s_rs;
 
 /* ==================== 内部辅助 ==================== */
 
-static void rs_adaptLayout(void); /* 前向: 会话块行数变化即重排(2026-10-06)。 */
+static void rs_adaptLayout(void); /* 前向: 2026-10-17 起空实现, 调用点保留。 */
 
 /** @brief 向主窗口状态栏反馈并登记最近文本（autotest 断言用）。 */
 static void rs_report(const char* text)
@@ -364,8 +381,9 @@ static void rs_refreshSessionLabel(void)
         for (p = buf; *p; ++p)
             if (*p == '\n') ++lines;
         if (lines != s_rs.m_sessionLines) {
-            /* 行数变化(未创建 4/停止 4/监听 9): 高度是响应式定死的,
-             * 不重排则多出行整行裁掉(用户截图「档位」行半裁实证)。 */
+            /* 行数变化(未创建 4/停止 4/监听 9): 2026-10-17 布局容器化后
+             * 会话区高度由根列布局器伸缩自适应, 行数仅记诊断计数;
+             * rs_adaptLayout 已是空实现, 调用点保留作时序锚。 */
             s_rs.m_sessionLines = lines;
             rs_adaptLayout();
         }
@@ -429,34 +447,17 @@ static void rs_refreshStateLabel(void)
     XLabel_setText_2(s_rs.m_stateLabel, buf);
 }
 
-/** @brief 服务地址行位置自适应（2026-10-06 改: 底部整幅行随根高锚底）。
- *  @details 摆位=(12, rootH-36, rootW-24, 24): 默认根 600x432 时即
- *           (12,396), 与 [2026-10-06 修] 定版的底部整幅行重合; 根高
- *           变化时始终贴底缘 12px, 会话状态多行区在其上方伸展。
- *           宽度=rootW-24, 窗口足够宽时 2+ IP 一行放下。根宽未知
- *           （构建期未布局）时保持现几何。rs_refreshAddrLabel 与
- *           rs_adaptLayout 双路触发, 幂等可频繁调。 */
-static void rs_adaptAddrLabelWidth(void)
-{
-    int rootW, rootH;
-    if (!s_rs.m_addrLabel || !s_rs.m_root) return;
-    rootW = XWidget_width(s_rs.m_root);
-    rootH = XWidget_height(s_rs.m_root);
-    if (rootW <= 40 || rootH <= 40) return;
-    XWidget_setGeometry((XWidget*)s_rs.m_addrLabel,
-                        12, rootH - 36, rootW - 24, 24);
-}
 /** @brief 服务地址行刷新（2026-10-02 增强: 「服务地址: <本机IP>:<端口>」）。
  *  @details 本机 IP 走仓内现有 XNetworkInterface API（getifaddrs 封装）;
  *           多地址时全部列出供选择; 端口或地址变更时重调（端口取编辑
- *           框现值, 监听中显示系统分配实际端口）。 */
+ *           框现值, 监听中显示系统分配实际端口）。2026-10-17 容器化:
+ *           宽度/位置改由根列布局器横向铺满管理, 本函数只刷文本。 */
 static void rs_refreshAddrLabel(void)
 {
     char addrs[256];
     char buf[384];
     int port;
     if (!s_rs.m_addrLabel) return;
-    rs_adaptAddrLabelWidth(); /* 宽度先随当前根宽自适应, 再按新宽折行排版。 */
     port = (s_rs.m_server && XGuiServer_isListening(s_rs.m_server))
                ? (int)XGuiServer_serverPort(s_rs.m_server)
                : rs_portFromEdit();
@@ -465,146 +466,27 @@ static void rs_refreshAddrLabel(void)
     XLabel_setText_2(s_rs.m_addrLabel, buf);
 }
 
-/** @brief 页面全控件响应式重排（2026-10-06: 用户「拉伸放大窗口后好多
- *  空位置」根修——页面原为 600 宽设计稿定死坐标, 宽窗右侧/下方全空）。
- *  @details 口径: 行标签与左列字段 x 固定, 每行末字段拉伸贴右缘
- *           (rootW-8 收口); 证书/私钥、认证/口令两对行以 mid 对半分;
- *           按钮右锚; 行距随根高均布拉伸（只放不压, k>=基稿）, 会话
- *           状态多行区自然高 88 恰贴底部地址行上方, 拉宽/拉高只伸展
- *           不留白。宽度下限钳 40 防负, mid 下限 170 保两对行不交叠。
- *           幂等可频繁调。 */
+/** @brief 页面全控件响应式重排（2026-10-17 布局容器化后为空实现）。
+ *  @details 历史职责（根宽/根高驱动的逐控件 setGeometry 重排, 含
+ *           行距纵轴均布、mid 对半、底部地址行锚定）已全部移交根列
+ *           + 行盒式布局器：控件固定尺寸（setFixedWidth/Height）与
+ *           setStretch 伸缩因子静态声明布局意图, 窗口拉伸由布局器
+ *           自动解算, 本函数保留签名作契约空壳（主文件
+ *           demo_layout_content 与页内 rs_refreshSessionLabel 调用点
+ *           不动）。服务地址行原 rs_adaptAddrLabelWidth 一并裁撤,
+ *           其「随根宽伸缩」语义由该行在根列中的横向铺满承担。 */
 static void rs_adaptLayout(void)
 {
-    int w, h, right, mid, addrY, sessTop, sessH;
-    int k1000, y40, y72, y104, y132, y160, y200, y238;
-    int sessNeed;
-    if (!s_rs.m_ready || !s_rs.m_root) return;
-    w = XWidget_width(s_rs.m_root);
-    h = XWidget_height(s_rs.m_root);
-    if (w <= 40 || h <= 40) return;
-    right = w - 8;
-    mid = 12 + (right - 116 - 12) / 2;
-    if (mid < 170) mid = 170;
-    addrY = h - 36;
-
-    /* 纵向均布（2026-10-06 补: 用户「拉大窗口后好多空位置」含纵轴——
-     * 行距随根高拉伸, 余量摊进行距而非池在页尾; 会话状态区按实际行数
-     * 定高(22px/行, refresh 统计 '\n'; 监听态 9 行=198px——曾按 4 行
-     * 88px 定高把 UDP/最近事件/最近错误三行整行裁掉, 用户截图实证)。
-     * k>=1000 只放不压: 窗口比基稿矮时保持原行距, 靠会话区高度钳底。
-     * 基稿锚点 8..274 对应 k=1000。 */
-    sessNeed = 22 * (s_rs.m_sessionLines > 0 ? s_rs.m_sessionLines : 4) + 10;
-    sessTop = addrY - 10 - sessNeed;
-    if (sessTop < 274) sessTop = 274;
-    k1000 = ((sessTop - 8) * 1000) / (274 - 8);
-    if (k1000 < 1000) k1000 = 1000;
-    y40  = 8 + 32 * k1000 / 1000;
-    y72  = 8 + 64 * k1000 / 1000;
-    y104 = 8 + 96 * k1000 / 1000;
-    y132 = 8 + 124 * k1000 / 1000;
-    y160 = 8 + 152 * k1000 / 1000;
-    y200 = 8 + 192 * k1000 / 1000;
-    y238 = 8 + 230 * k1000 / 1000;
-
-    /* 顶部: 标题固定, 状态标签右锚（顶行不参与纵stretch）。 */
-    if (s_rs.m_stateLabel)
-        XWidget_setGeometry((XWidget*)s_rs.m_stateLabel,
-                            right - 104, 10, 104, 22);
-
-    /* 启用开关行: 待生效提示右锚。 */
-    if (s_rs.m_srvToggle)
-        XWidget_setGeometry((XWidget*)s_rs.m_srvToggle, 12, y40, 200, 24);
-    if (s_rs.m_pendingLabel)
-        XWidget_setGeometry((XWidget*)s_rs.m_pendingLabel,
-                            right - 112, y40, 112, 22);
-
-    /* 端口行: 端口段定宽, 档位下拉拉伸贴右缘。 */
-    if (s_rs.m_portEdit)
-        XWidget_setGeometry((XWidget*)s_rs.m_portEdit, 56, y72, 90, 24);
-    if (s_rs.m_capPort)
-        XWidget_setGeometry((XWidget*)s_rs.m_capPort, 12, y72 + 2, 40, 22);
-    if (s_rs.m_capProfile)
-        XWidget_setGeometry((XWidget*)s_rs.m_capProfile,
-                            170, y72 + 2, 40, 22);
-    if (s_rs.m_profileCombo)
-        XWidget_setGeometry((XWidget*)s_rs.m_profileCombo,
-                            214, y72, (right - 214) > 40 ? right - 214 : 40, 24);
-
-    /* TLS/UDP 行: UDP 开关吃掉行内剩余宽。 */
-    if (s_rs.m_tlsCheck)
-        XWidget_setGeometry((XWidget*)s_rs.m_tlsCheck, 12, y104, 220, 24);
-    if (s_rs.m_udpCheck)
-        XWidget_setGeometry((XWidget*)s_rs.m_udpCheck,
-                            240, y104, (right - 240) > 40 ? right - 240 : 40, 24);
-
-    /* 证书/私钥行: mid 对半。 */
-    if (s_rs.m_capCert)
-        XWidget_setGeometry((XWidget*)s_rs.m_capCert, 12, y132 + 2, 40, 22);
-    if (s_rs.m_certEdit)
-        XWidget_setGeometry((XWidget*)s_rs.m_certEdit,
-                            56, y132, (mid - 72) > 40 ? mid - 72 : 40, 24);
-    if (s_rs.m_capKey)
-        XWidget_setGeometry((XWidget*)s_rs.m_capKey, mid, y132 + 2, 40, 22);
-    if (s_rs.m_keyEdit)
-        XWidget_setGeometry((XWidget*)s_rs.m_keyEdit,
-                            mid + 44, y132,
-                            (right - mid - 44) > 40 ? right - mid - 44 : 40, 24);
-
-    /* 认证/口令行: 同 mid 对半, 口令框止于应用按钮左 12px。 */
-    if (s_rs.m_capAuth)
-        XWidget_setGeometry((XWidget*)s_rs.m_capAuth, 12, y160 + 2, 40, 22);
-    if (s_rs.m_authCombo)
-        XWidget_setGeometry((XWidget*)s_rs.m_authCombo,
-                            56, y160, (mid - 72) > 40 ? mid - 72 : 40, 24);
-    if (s_rs.m_capPwd)
-        XWidget_setGeometry((XWidget*)s_rs.m_capPwd, mid, y160 + 2, 40, 22);
-    if (s_rs.m_passwordEdit)
-        XWidget_setGeometry((XWidget*)s_rs.m_passwordEdit,
-                            mid + 44, y160,
-                            (right - 116 - mid - 44) > 40
-                                ? right - 116 - mid - 44 : 40, 24);
-    if (s_rs.m_applyBtn)
-        XWidget_setGeometry((XWidget*)s_rs.m_applyBtn,
-                            right - 104, y160, 104, 28);
-
-    /* RemotePing 行: 计数标签拉伸。 */
-    if (s_rs.m_pingBtn)
-        XWidget_setGeometry((XWidget*)s_rs.m_pingBtn, 12, y200, 180, 30);
-    if (s_rs.m_pingLabel)
-        XWidget_setGeometry((XWidget*)s_rs.m_pingLabel,
-                            204, y200 + 4,
-                            (right - 204) > 40 ? right - 204 : 40, 22);
-
-    /* 回显行: 回显框止于设口令按钮左 12px, 双按钮右锚。 */
-    if (s_rs.m_capEcho)
-        XWidget_setGeometry((XWidget*)s_rs.m_capEcho, 12, y238 + 2, 40, 22);
-    if (s_rs.m_echoEdit)
-        XWidget_setGeometry((XWidget*)s_rs.m_echoEdit,
-                            56, y238,
-                            (right - 232 - 56) > 40 ? right - 232 - 56 : 40, 24);
-    if (s_rs.m_setPwdBtn)
-        XWidget_setGeometry((XWidget*)s_rs.m_setPwdBtn,
-                            right - 220, y238, 104, 28);
-    if (s_rs.m_clearPwdBtn)
-        XWidget_setGeometry((XWidget*)s_rs.m_clearPwdBtn,
-                            right - 104, y238, 104, 28);
-
-    /* 会话状态多行区: 恰贴地址行上方, 宽随根。 */
-    if (s_rs.m_sessionLabel)
-    {
-        sessH = addrY - 10 - sessTop;
-        if (sessH < 40) sessH = 40;
-        XWidget_setGeometry((XWidget*)s_rs.m_sessionLabel,
-                            12, sessTop, w - 24, sessH);
-    }
-
-    /* 服务地址行: 贴底整幅（几何唯一来源=rs_adaptAddrLabelWidth）。 */
-    rs_adaptAddrLabelWidth();
+    (void)s_rs; /* 空实现: 布局器接管全部页内几何（防告警占位）。 */
 }
 
+/** @brief 契约自适应入口（2026-10-17 布局容器化后为空实现体）。
+ *  @details 主文件 demo_layout_content 在切页/resize/startup/停靠全
+ *           路径调用本函数（调用点不动）——页内几何已整体移交根列 +
+ *           行盒式布局器（根控件 resize 即自动 activate 解算）, 无需
+ *           任何手工重排; 签名与调用约定保持 xgui_demo_pages.h 契约。 */
 void demo_page_remote_server_adaptWidth(void)
 {
-    rs_adaptLayout();
 }
 
 /** @brief 输入回显 → 窗口标题同步（2026-10-02 增强: 联调断言辅助）。
@@ -952,16 +834,20 @@ static void rs_onFbMeta(XObject* sender, XVarList* args)
 
 /* ==================== 构建 ==================== */
 
-/** @brief 组装一行「标签 + 输入控件」。 */
-static void rs_buildLabelAt(const char* text, int x, int y, int w, XLabel** out)
+/** @brief 组装行内「标签」条目（2026-10-17 布局容器化版）。
+ *  @details 几何由行布局器管理: 固定 40x22（原稿行标签口径）, 行内
+ *           以 VCenter 条目对齐在 24/28px 行高中垂直居中（原稿
+ *           y+2 摆法）。调用方随即将其 addWidget 进所属行布局器。 */
+static XLabel* rs_buildRowLabel(const char* text)
 {
     XLabel* label = XLabel_create(s_rs.m_root, 0);
     if (label) {
         XLabel_setText_2(label, text);
-        XWidget_setGeometry((XWidget*)label, x, y, w, 22);
+        XWidget_setFixedWidth((XWidget*)label, 40);
+        XWidget_setFixedHeight((XWidget*)label, 22);
         XWidget_show((XWidget*)label);
     }
-    if (out) *out = label;
+    return label;
 }
 
 XWidget* demo_page_remote_server_build(XWidget* parent,
@@ -969,7 +855,20 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
 {
     /* demo 单实例：重复 build 前清空登记表（旧页面随旧父链析构;
      * CLI 预置 s_rsCli 不清, 由 demo_page_remote_server_cliDefaults
-     * 显式重置）。 */
+     * 显式重置）。2026-10-17 布局容器化: 布局器为 s_rs 内原位对象,
+     * memset 前须先反初始化上一轮布局器（释放内部条目数组堆块并从
+     * 旧根控件摘挂; demo 当前单次构建, 此路径常态不走）。 */
+    if (s_rs.m_layoutsInited) {
+        XClassDeinit((XClass*)&s_rs.m_layoutRoot);
+        XClassDeinit((XClass*)&s_rs.m_rowHeader);
+        XClassDeinit((XClass*)&s_rs.m_rowToggle);
+        XClassDeinit((XClass*)&s_rs.m_rowPort);
+        XClassDeinit((XClass*)&s_rs.m_rowTls);
+        XClassDeinit((XClass*)&s_rs.m_rowCert);
+        XClassDeinit((XClass*)&s_rs.m_rowAuth);
+        XClassDeinit((XClass*)&s_rs.m_rowPing);
+        XClassDeinit((XClass*)&s_rs.m_rowEcho);
+    }
     memset(&s_rs, 0, sizeof(s_rs));
     s_rs.m_status = status;
     s_rs.m_user = user;
@@ -979,80 +878,126 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     s_rs.m_root = XWidget_create(parent, 0);
     if (!s_rs.m_root) return (XWidget*)0;
 
-    /* ---- 标题 + 单行服务状态 ---- */
+    /* ---- 页面布局器装配（2026-10-17 容器化根修: 删除页内全部
+     *     setGeometry 手写坐标, 几何意图静态声明——根列 TopToBottom
+     *     边距 (12,8,8,12) 行距 8 复刻原稿纵轴节律（基稿行锚
+     *     8/40/72/104/132/160/200/238/274 与底行贴底缘 12）, 8 条行
+     *     布局器按 addLayout 顺序入列, 会话状态区 stretch 吃满纵轴
+     *     余量、服务地址行固定高 24 殿后贴底。行内控件尺寸用
+     *     setFixedWidth/Height 定格原稿宽高, 伸缩语义用
+     *     setStretchFactorWidget（=按控件取索引的 setStretch）声明。 ---- */
+    XBoxLayout_init(&s_rs.m_layoutRoot, XBoxLayoutDirection_TopToBottom);
+    XBoxLayout_init(&s_rs.m_rowHeader, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_rs.m_rowToggle, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_rs.m_rowPort, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_rs.m_rowTls, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_rs.m_rowCert, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_rs.m_rowAuth, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_rs.m_rowPing, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_init(&s_rs.m_rowEcho, XBoxLayoutDirection_LeftToRight);
+    s_rs.m_layoutsInited = true;
+    XLayout_setContentsMargins((XLayout*)&s_rs.m_layoutRoot, 12, 8, 8, 12);
+    XLayout_setSpacing((XLayout*)&s_rs.m_layoutRoot, 8);
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_rowHeader);
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_rowToggle);
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_rowPort);
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_rowTls);
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_rowCert);
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_rowAuth);
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_rowPing);
+    XBoxLayout_addLayout(&s_rs.m_layoutRoot, (XLayout*)&s_rs.m_rowEcho);
+    XWidget_setLayout(s_rs.m_root, (XLayout*)&s_rs.m_layoutRoot);
+    /* 行内间距近似原稿字段间隙: 密排行 4（标签-框），疏排行 8/12。 */
+    XLayout_setSpacing((XLayout*)&s_rs.m_rowHeader, 8);
+    XLayout_setSpacing((XLayout*)&s_rs.m_rowToggle, 8);
+    XLayout_setSpacing((XLayout*)&s_rs.m_rowPort, 4);
+    XLayout_setSpacing((XLayout*)&s_rs.m_rowTls, 8);
+    XLayout_setSpacing((XLayout*)&s_rs.m_rowCert, 4);
+    XLayout_setSpacing((XLayout*)&s_rs.m_rowAuth, 4);
+    XLayout_setSpacing((XLayout*)&s_rs.m_rowPing, 12);
+    XLayout_setSpacing((XLayout*)&s_rs.m_rowEcho, 4);
+
+    /* ---- 标题 + 单行服务状态（标题行: 标题吃行内伸缩贴左, 状态
+     *     定宽 104 右锚——原稿 right-104 摆法的伸缩等价）。 ---- */
     {
-        XLabel* title = NULL;
-        rs_buildLabelAt("\xE8\xBF\x9C\xE7\xA8\x8B\xE7\xAA\x97\xE5\x8F\xA3"
-                        "\xE6\x9C\x8D\xE5\x8A\xA1\xE8\xAE\xBE\xE7\xBD\xAE",
-                        12, 8, 240, &title); /* 远程窗口服务设置 */
-        if (title) XLabel_setTextPixelSize(title, 16);
+        XLabel* title = XLabel_create(s_rs.m_root, 0);
+        if (title) {
+            XLabel_setText_2(title,
+                             "\xE8\xBF\x9C\xE7\xA8\x8B\xE7\xAA\x97\xE5\x8F\xA3"
+                             "\xE6\x9C\x8D\xE5\x8A\xA1\xE8\xAE\xBE\xE7\xBD\xAE");
+                             /* 远程窗口服务设置 */
+            XLabel_setTextPixelSize(title, 16);
+            XWidget_setFixedHeight((XWidget*)title, 22);
+            XWidget_show((XWidget*)title);
+            XBoxLayout_addWidget(&s_rs.m_rowHeader, (XWidget*)title);
+            XBoxLayout_setStretch(&s_rs.m_rowHeader, 0, 1);
+        }
     }
     s_rs.m_stateLabel = XLabel_create(s_rs.m_root, 0);
     if (!s_rs.m_stateLabel) return s_rs.m_root;
     XLabel_setText_2(s_rs.m_stateLabel, "已停止");
-    XWidget_setGeometry((XWidget*)s_rs.m_stateLabel,
-                        RS_PAGE_COL2_X, 10, 104, 22);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_stateLabel, 104);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_stateLabel, 22);
     XWidget_show((XWidget*)s_rs.m_stateLabel);
+    XBoxLayout_addWidget(&s_rs.m_rowHeader, (XWidget*)s_rs.m_stateLabel);
 
     /* ---- 服务地址行（2026-10-02 增强: 「服务地址: <本机IP>:<端口>」;
-     *     2026-10-03 目验收口: 行宽按 rootW-8-480=112 会在「192.16」处
-     *     截断, 右列 y72 无邻位冲突, 行原点收至 x=160 挪出 424px 宽,
-     *     800x600(导航展开根宽 600)与更窄窗口均完整可见;
-     *     2026-10-04 多 IP 自适应宽度（用户裁定「用布局自动调整宽度,
-     *     窗口足够宽时一行放下全部」）: 枚举逗号连接 2+ IP 后定宽必
- *     右缘裁切——宽度改运行期随根宽伸缩（rs_adaptAddrLabelWidth:
- *     rootW-8-360, 下限 80）, 刷新与主窗 resizeEvent 双路触发;
- *     纵向向上扩成 (360,40,?,56) 折行区（40..72 段 x<480 无邻位,
- *     底缘 96 不触 y=104 的 TLS/UDP 行）, wordWrap 窄窗折行兜底,
- *     底对齐使单行时视觉仍锚在端口/档位行。容量口径（目验实测
- *     默认字号行高 ~22px）: 56px 高容纳 2 行——默认 800 窗
- *     (232px 宽) 2 行=464px ≥ 2 IP 全文 ~390px, 窗口更宽则一行
- *     放下更多; 极窄窗（下限 80px 宽）长地址尾部仍裁切, 与页面
- *     「更窄窗口随列宽裁切」既有口径一致。已知角: 折行首行
- *     (y52..74) 与待生效提示 (480,40,112,22) 在 x≥480 段有 ~10px
- *     叠带, 仅「2+ IP 且配置待生效」并发时可能出现, 瞬态可接受。 ---- */
+     *     2026-10-04 多 IP 自适应宽度; 2026-10-17 容器化: 根列末条目
+     *     横向铺满整幅（根边距 12/8 收口）+ 固定高 24 贴底, 原手工
+     *     「随根宽伸缩 + 锚底」语义由布局器承担, 左下对齐保持。 ---- */
     s_rs.m_addrLabel = XLabel_create(s_rs.m_root, 0);
     if (!s_rs.m_addrLabel) return s_rs.m_root;
     XLabel_setText_2(s_rs.m_addrLabel, "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x9C\xB0"
                      "\xE5\x9D\x80: -"); /* 服务地址: - */
-    /* 摆位=端口(12..146)/档位(170..348)同行右侧空段（360..592）：
-     * 首版收口把地址行挪到 (160,72) 与档位下拉框矩形相交（目验二轮
-     * 实证叠印），改贴行内空段，右缘 592=rootW-8 恰收口。 */
-    XWidget_setGeometry((XWidget*)s_rs.m_addrLabel,
-                        360, 40, 232, 56); /* 初值; 首次刷新即自适应。 */
-    XLabel_setWordWrap(s_rs.m_addrLabel, true);
+    /* wordWrap 不开（沿用原稿窄窗「随列宽裁切」口径）: 行高固定 24
+     * 只容单行, 折行也会竖裁; 且竖列布局器对 hfw(随宽变高)条目的
+     * 首选高替换路径会把它按 0 高参与分配（实测: 开 wrap 后本行被
+     * 挤出根底缘 12px 整行半裁）, 关掉即恢复满算。 */
     XLabel_setAlignment(s_rs.m_addrLabel,
                         XAlignment_Left | XAlignment_Bottom);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_addrLabel, 24);
     XWidget_show((XWidget*)s_rs.m_addrLabel);
+    /* 入列时机: 会话状态区创建后追加（根列顺序 = …回显行 → 会话区 →
+     * 本行贴底）, 见下方会话状态区段。 */
 
-    /* ---- 远程服务开关（启动/停止主控） ---- */
+    /* ---- 远程服务开关（启动/停止主控; 定宽 200, 待生效提示右锚） ---- */
     s_rs.m_srvToggle = XCheckBox_create(s_rs.m_root, 0);
     if (!s_rs.m_srvToggle) return s_rs.m_root;
     XAbstractButton_setText_2((XAbstractButton*)s_rs.m_srvToggle,
                               "\xE5\x90\xAF\xE7\x94\xA8\xE8\xBF\x9C"
                               "\xE7\xA8\x8B\xE6\x9C\x8D\xE5\x8A\xA1"
                               "\xE5\x99\xA8"); /* 启用远程服务器 */
-    XWidget_setGeometry((XWidget*)s_rs.m_srvToggle, 12, 40, 200, 24);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_srvToggle, 200);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_srvToggle, 24);
     XObject_connect_2((XObject*)s_rs.m_srvToggle,
                       XSignal(XAbstractButton_toggled_signal),
                       rs_srvToggleSlot);
     XWidget_show((XWidget*)s_rs.m_srvToggle);
+    XBoxLayout_addWidget(&s_rs.m_rowToggle, (XWidget*)s_rs.m_srvToggle);
+    XBoxLayout_setStretch(&s_rs.m_rowToggle, 0, 1);
 
-    /* ---- 待生效提示行（显式生效时机反馈; 2026-10-03 收口: 列宽按
-     *     rootW-8=592 反推 480..592=112, 全文 ~344px 于更窄窗口内随
-     *     列宽裁切但组件不越窗。 ---- */
+    /* ---- 待生效提示行（显式生效时机反馈; 定宽 112 右锚, VCenter
+     *     在 24px 行高居中——原稿 y40 同锚顶摆法的近似）。 ---- */
     s_rs.m_pendingLabel = XLabel_create(s_rs.m_root, 0);
     if (!s_rs.m_pendingLabel) return s_rs.m_root;
-    XWidget_setGeometry((XWidget*)s_rs.m_pendingLabel,
-                        RS_PAGE_COL2_X, 40, 112, 22);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_pendingLabel, 112);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_pendingLabel, 22);
     XWidget_show((XWidget*)s_rs.m_pendingLabel);
+    XBoxLayout_addWidgetEx(&s_rs.m_rowToggle, (XWidget*)s_rs.m_pendingLabel,
+                           0, XLayoutAlignment_VCenter);
 
-    /* ---- 端口 / 档位 ---- */
-    rs_buildLabelAt("\xE7\xAB\xAF\xE5\x8F\xA3", 12, 74, 40, &s_rs.m_capPort); /* 端口 */
+    /* ---- 端口 / 档位（标签定宽 40 VCenter, 端口框定宽 90, 档位段
+     *     前以 16px 固定间隔近似原稿 24px 字段间隙, 档位下拉伸缩贴
+     *     根右缘——原稿 right-214 摆法）。 ---- */
+    s_rs.m_capPort = rs_buildRowLabel(
+        "\xE7\xAB\xAF\xE5\x8F\xA3"); /* 端口 */
+    XBoxLayout_addWidgetEx(&s_rs.m_rowPort, (XWidget*)s_rs.m_capPort,
+                           0, XLayoutAlignment_VCenter);
     s_rs.m_portEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_portEdit) return s_rs.m_root;
     XLineEdit_setText(s_rs.m_portEdit, "46000");
-    XWidget_setGeometry((XWidget*)s_rs.m_portEdit, 56, 72, 90, 24);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_portEdit, 90);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_portEdit, 24);
     /* textChanged(非 textEdited): 虚拟键盘提交走 setText 不发 textEdited
      * (用户编辑语义区分), 服务地址行刷新须两条路径都覆盖; 刷新幂等,
      * 程序性 setText(autotest/CLI 预置)多刷一次无害。 */
@@ -1060,8 +1005,13 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                       XSignal(XLineEdit_textChanged_signal),
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_portEdit);
+    XBoxLayout_addWidget(&s_rs.m_rowPort, (XWidget*)s_rs.m_portEdit);
+    XBoxLayout_addSpacing(&s_rs.m_rowPort, 16); /* 原稿端口段↔档位段间隙。 */
 
-    rs_buildLabelAt("\xE6\xA1\xA3\xE4\xBD\x8D", 170, 74, 40, &s_rs.m_capProfile); /* 档位 */
+    s_rs.m_capProfile = rs_buildRowLabel(
+        "\xE6\xA1\xA3\xE4\xBD\x8D"); /* 档位 */
+    XBoxLayout_addWidgetEx(&s_rs.m_rowPort, (XWidget*)s_rs.m_capProfile,
+                           0, XLayoutAlignment_VCenter);
     s_rs.m_profileCombo = XComboBox_create(s_rs.m_root, 0);
     if (!s_rs.m_profileCombo) return s_rs.m_root;
     XComboBox_addItem_2(s_rs.m_profileCombo,
@@ -1074,24 +1024,29 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                         "\xE4\xBD\x8E\xE5\xBB\xB6\xE8\xBF\x9F");
                         /* 低延迟 */
     XComboBox_setCurrentIndex(s_rs.m_profileCombo, 0);
-    XWidget_setGeometry((XWidget*)s_rs.m_profileCombo, 214, 72, 134, 24);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_profileCombo, 24);
     XObject_connect_2((XObject*)s_rs.m_profileCombo,
                       XSignal(XComboBox_activated_signal), rs_profileSlot);
     XWidget_show((XWidget*)s_rs.m_profileCombo);
+    XBoxLayout_addWidget(&s_rs.m_rowPort, (XWidget*)s_rs.m_profileCombo);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowPort,
+                                      (XWidget*)s_rs.m_profileCombo, 1);
 
-    /* ---- TLS 开关 + 证书/私钥路径（2026-10-03 收口: 证书 56..348 与
-     *     私钥 372..584 成对收窄, 行右缘=584 不越 rootW-8=592 —— 800x600
-     *     导航展开根宽 600 时私钥框 414+300=714 右边框被窗口右缘裁切
-     *     的根修; 更窄窗口同行收窄口径。 ---- */
+    /* ---- TLS 开关 + 证书/私钥路径（TLS 定宽 220; UDP 开关伸缩吃掉
+     *     行内剩余宽——原稿 x240→右缘摆法; 证书/私钥两框对半伸缩
+     *     （原稿 mid 对半）, 「私钥」标签前 8px 固定间隔近似原稿 16px
+     *     段间隙。 ---- */
     s_rs.m_tlsCheck = XCheckBox_create(s_rs.m_root, 0);
     if (!s_rs.m_tlsCheck) return s_rs.m_root;
     XAbstractButton_setText_2((XAbstractButton*)s_rs.m_tlsCheck,
                               "TLS \xE5\x8A\xA0\xE5\xAF\x86"); /* TLS 加密 */
-    XWidget_setGeometry((XWidget*)s_rs.m_tlsCheck, 12, 104, 220, 24);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_tlsCheck, 220);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_tlsCheck, 24);
     XObject_connect_2((XObject*)s_rs.m_tlsCheck,
                       XSignal(XAbstractButton_toggled_signal),
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_tlsCheck);
+    XBoxLayout_addWidget(&s_rs.m_rowTls, (XWidget*)s_rs.m_tlsCheck);
 
     /* ---- UDP 低延迟旁路开关(2026-10-04 加法式; 默认开, 运行期可切) ---- */
     s_rs.m_udpCheck = XCheckBox_create(s_rs.m_root, 0);
@@ -1101,31 +1056,53 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                               "\x9F\xE9\x80\x9A\xE9\x81\x93");
                               /* UDP 低延迟通道 */
     XAbstractButton_setChecked((XAbstractButton*)s_rs.m_udpCheck, true);
-    XWidget_setGeometry((XWidget*)s_rs.m_udpCheck, 240, 104, 240, 24);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_udpCheck, 24);
     XObject_connect_2((XObject*)s_rs.m_udpCheck,
                       XSignal(XAbstractButton_toggled_signal), rs_udpSlot);
     XWidget_show((XWidget*)s_rs.m_udpCheck);
+    XBoxLayout_addWidget(&s_rs.m_rowTls, (XWidget*)s_rs.m_udpCheck);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowTls,
+                                      (XWidget*)s_rs.m_udpCheck, 1);
 
-    rs_buildLabelAt("\xE8\xAF\x81\xE4\xB9\xA6", 12, 134, 40, &s_rs.m_capCert); /* 证书 */
+    s_rs.m_capCert = rs_buildRowLabel(
+        "\xE8\xAF\x81\xE4\xB9\xA6"); /* 证书 */
+    XBoxLayout_addWidgetEx(&s_rs.m_rowCert, (XWidget*)s_rs.m_capCert,
+                           0, XLayoutAlignment_VCenter);
     s_rs.m_certEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_certEdit) return s_rs.m_root;
-    XWidget_setGeometry((XWidget*)s_rs.m_certEdit, 56, 132, 292, 24);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_certEdit, 24);
     XObject_connect_2((XObject*)s_rs.m_certEdit,
                       XSignal(XLineEdit_textEdited_signal),
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_certEdit);
+    XBoxLayout_addWidget(&s_rs.m_rowCert, (XWidget*)s_rs.m_certEdit);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowCert,
+                                      (XWidget*)s_rs.m_certEdit, 1);
+    XBoxLayout_addSpacing(&s_rs.m_rowCert, 8); /* 原稿证书段↔私钥段间隙。 */
 
-    rs_buildLabelAt("\xE7\xA7\x81\xE9\x92\xA5", 356, 134, 40, &s_rs.m_capKey); /* 私钥 */
+    s_rs.m_capKey = rs_buildRowLabel(
+        "\xE7\xA7\x81\xE9\x92\xA5"); /* 私钥 */
+    XBoxLayout_addWidgetEx(&s_rs.m_rowCert, (XWidget*)s_rs.m_capKey,
+                           0, XLayoutAlignment_VCenter);
     s_rs.m_keyEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_keyEdit) return s_rs.m_root;
-    XWidget_setGeometry((XWidget*)s_rs.m_keyEdit, 400, 132, 184, 24);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_keyEdit, 24);
     XObject_connect_2((XObject*)s_rs.m_keyEdit,
                       XSignal(XLineEdit_textEdited_signal),
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_keyEdit);
+    XBoxLayout_addWidget(&s_rs.m_rowCert, (XWidget*)s_rs.m_keyEdit);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowCert,
+                                      (XWidget*)s_rs.m_keyEdit, 1);
 
-    /* ---- 认证方式 + 口令 ---- */
-    rs_buildLabelAt("\xE8\xAE\xA4\xE8\xAF\x81", 12, 164, 40, &s_rs.m_capAuth); /* 认证 */
+    /* ---- 认证方式 + 口令 + 「应用配置」（认证/口令两框对半伸缩
+     *     （原稿 mid 对半）; 口令框与应用钮之间 8px 固定间隔近似原稿
+     *     12px 收口; 应用钮定宽 104 右锚——2026-10-03 收口的满贴文案
+     *     宽度口径, 行高 28 以按钮为准）。 ---- */
+    s_rs.m_capAuth = rs_buildRowLabel(
+        "\xE8\xAE\xA4\xE8\xAF\x81"); /* 认证 */
+    XBoxLayout_addWidgetEx(&s_rs.m_rowAuth, (XWidget*)s_rs.m_capAuth,
+                           0, XLayoutAlignment_VCenter);
     s_rs.m_authCombo = XComboBox_create(s_rs.m_root, 0);
     if (!s_rs.m_authCombo) return s_rs.m_root;
     XComboBox_addItem_2(s_rs.m_authCombo,
@@ -1135,63 +1112,90 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                         "SHA256 \xE6\x8C\x91\xE6\x88\x98");
                         /* SHA256 挑战 */
     XComboBox_setCurrentIndex(s_rs.m_authCombo, 0);
-    XWidget_setGeometry((XWidget*)s_rs.m_authCombo, 56, 162, 150, 24);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_authCombo, 24);
     XObject_connect_2((XObject*)s_rs.m_authCombo,
                       XSignal(XComboBox_activated_signal),
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_authCombo);
+    XBoxLayout_addWidget(&s_rs.m_rowAuth, (XWidget*)s_rs.m_authCombo);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowAuth,
+                                      (XWidget*)s_rs.m_authCombo, 1);
+    XBoxLayout_addSpacing(&s_rs.m_rowAuth, 8); /* 原稿认证段↔口令段间隙。 */
 
-    rs_buildLabelAt("\xE5\x8F\xA3\xE4\xBB\xA4", 220, 164, 40, &s_rs.m_capPwd); /* 口令 */
+    s_rs.m_capPwd = rs_buildRowLabel(
+        "\xE5\x8F\xA3\xE4\xBB\xA4"); /* 口令 */
+    XBoxLayout_addWidgetEx(&s_rs.m_rowAuth, (XWidget*)s_rs.m_capPwd,
+                           0, XLayoutAlignment_VCenter);
     s_rs.m_passwordEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_passwordEdit) return s_rs.m_root;
     XLineEdit_setEchoMode(s_rs.m_passwordEdit, XLineEditEchoMode_Password);
-    XWidget_setGeometry((XWidget*)s_rs.m_passwordEdit, 264, 162, 188, 24);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_passwordEdit, 24);
     XObject_connect_2((XObject*)s_rs.m_passwordEdit,
                       XSignal(XLineEdit_textEdited_signal),
                       rs_configChangedSlot);
     XWidget_show((XWidget*)s_rs.m_passwordEdit);
+    XBoxLayout_addWidget(&s_rs.m_rowAuth, (XWidget*)s_rs.m_passwordEdit);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowAuth,
+                                      (XWidget*)s_rs.m_passwordEdit, 1);
+    XBoxLayout_addSpacing(&s_rs.m_rowAuth, 8); /* 原稿口令框↔应用钮间隙。 */
 
-    /* ---- 「应用配置」（2026-10-03 收口: 按钮右缘=rootW-8, 800x600
-     *     导航展开根宽 600 时原 480+200=680 越缘, 全角文案「应用配置」
-     *     被截为「应用配」——收窄为 104 满贴文案(4 汉字×16+8 padding)。 ---- */
+    /* ---- 「应用配置」（定宽 104 满贴文案(4 汉字×16+8 padding)右锚;
+     *     监听中点击=重启监听生效。 ---- */
     s_rs.m_applyBtn = XPushButton_create(s_rs.m_root, 0);
     if (!s_rs.m_applyBtn) return s_rs.m_root;
     XPushButton_setText_2(s_rs.m_applyBtn,
                           "\xE5\xBA\x94\xE7\x94\xA8\xE9\x85\x8D\xE7\xBD"
                           "\xAE"); /* 应用配置 */
-    XWidget_setGeometry((XWidget*)s_rs.m_applyBtn,
-                        RS_PAGE_COL2_X, 160, 104, 28);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_applyBtn, 104);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_applyBtn, 28);
     XObject_connect_2((XObject*)s_rs.m_applyBtn,
                       XSignal(XAbstractButton_clicked_signal), rs_applySlot);
     XWidget_show((XWidget*)s_rs.m_applyBtn);
+    XBoxLayout_addWidget(&s_rs.m_rowAuth, (XWidget*)s_rs.m_applyBtn);
 
-    /* ---- RemotePing 联调断言辅助（本地点击与远程注入点击同路 +1） ---- */
+    /* ---- RemotePing 联调断言辅助（本地点击与远程注入点击同路 +1;
+     *     按钮定宽 180 高 30, 计数标签 VCenter 伸缩——原稿 12px 间隙
+     *     由行距 12 承担）。 ---- */
     s_rs.m_pingBtn = XPushButton_create(s_rs.m_root, 0);
     if (!s_rs.m_pingBtn) return s_rs.m_root;
     XPushButton_setText_2(s_rs.m_pingBtn, "RemotePing");
-    XWidget_setGeometry((XWidget*)s_rs.m_pingBtn, 12, 200, 180, 30);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_pingBtn, 180);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_pingBtn, 30);
     XObject_connect_2((XObject*)s_rs.m_pingBtn,
                       XSignal(XAbstractButton_clicked_signal), rs_pingSlot);
     XWidget_show((XWidget*)s_rs.m_pingBtn);
+    XBoxLayout_addWidget(&s_rs.m_rowPing, (XWidget*)s_rs.m_pingBtn);
 
     s_rs.m_pingLabel = XLabel_create(s_rs.m_root, 0);
     if (!s_rs.m_pingLabel) return s_rs.m_root;
     XLabel_setText_2(s_rs.m_pingLabel, "RemotePing \xE8\xAE\xA1\xE6\x95"
                      "\xB0: 0"); /* RemotePing 计数: 0 */
-    XWidget_setGeometry((XWidget*)s_rs.m_pingLabel, 204, 204, 244, 22);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_pingLabel, 22);
     XWidget_show((XWidget*)s_rs.m_pingLabel);
+    XBoxLayout_addWidgetEx(&s_rs.m_rowPing, (XWidget*)s_rs.m_pingLabel,
+                           0, XLayoutAlignment_VCenter);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowPing,
+                                      (XWidget*)s_rs.m_pingLabel, 1);
 
     /* ---- 输入回显（联调断言辅助; 2026-10-02 增强）: 每次内容变化同步
      *     主窗口标题——客户端窗口标题随 FB_META 跟随, 供键盘往返用
-     *     字符串断言。 ---- */
-    rs_buildLabelAt("\xE5\x9B\x9E\xE6\x98\xBE", 12, 242, 40, &s_rs.m_capEcho); /* 回显 */
+     *     字符串断言。回显框伸缩, 设/清口令双钮定宽 104 右锚, 钮间
+     *     4px 固定间隔与 4px 行距合成原稿 12px 间隙。 ---- */
+    s_rs.m_capEcho = rs_buildRowLabel(
+        "\xE5\x9B\x9E\xE6\x98\xBE"); /* 回显 */
+    XBoxLayout_addWidgetEx(&s_rs.m_rowEcho, (XWidget*)s_rs.m_capEcho,
+                           0, XLayoutAlignment_VCenter);
     s_rs.m_echoEdit = XLineEdit_create(s_rs.m_root, 0);
     if (!s_rs.m_echoEdit) return s_rs.m_root;
-    XWidget_setGeometry((XWidget*)s_rs.m_echoEdit, 56, 240, 300, 24);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_echoEdit, 24);
     XObject_connect_2((XObject*)s_rs.m_echoEdit,
                       XSignal(XLineEdit_textChanged_signal),
                       rs_echoChangedSlot);
     XWidget_show((XWidget*)s_rs.m_echoEdit);
+    XBoxLayout_addWidget(&s_rs.m_rowEcho, (XWidget*)s_rs.m_echoEdit);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_rowEcho,
+                                      (XWidget*)s_rs.m_echoEdit, 1);
+    XBoxLayout_addSpacing(&s_rs.m_rowEcho, 4); /* 原稿回显框↔设口令钮间隙。 */
 
     /* ---- 设口令/清口令（2026-10-04 访问口令加法式扩展: 运行期即时
      *     生效于新会话, 存量会话不断; 与「应用配置」监听期路径并存,
@@ -1200,22 +1204,29 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
     if (!s_rs.m_setPwdBtn) return s_rs.m_root;
     XPushButton_setText_2(s_rs.m_setPwdBtn,
                           "\xE8\xAE\xBE\xE5\x8F\xA3\xE4\xBB\xA4"); /* 设口令 */
-    XWidget_setGeometry((XWidget*)s_rs.m_setPwdBtn, 364, 238, 104, 28);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_setPwdBtn, 104);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_setPwdBtn, 28);
     XObject_connect_2((XObject*)s_rs.m_setPwdBtn,
                       XSignal(XAbstractButton_clicked_signal), rs_setPwdSlot);
     XWidget_show((XWidget*)s_rs.m_setPwdBtn);
+    XBoxLayout_addWidget(&s_rs.m_rowEcho, (XWidget*)s_rs.m_setPwdBtn);
+    XBoxLayout_addSpacing(&s_rs.m_rowEcho, 4); /* 原稿双钮间隙。 */
 
     s_rs.m_clearPwdBtn = XPushButton_create(s_rs.m_root, 0);
     if (!s_rs.m_clearPwdBtn) return s_rs.m_root;
     XPushButton_setText_2(s_rs.m_clearPwdBtn,
                           "\xE6\xB8\x85\xE5\x8F\xA3\xE4\xBB\xA4"); /* 清口令 */
-    XWidget_setGeometry((XWidget*)s_rs.m_clearPwdBtn, 476, 238, 104, 28);
+    XWidget_setFixedWidth((XWidget*)s_rs.m_clearPwdBtn, 104);
+    XWidget_setFixedHeight((XWidget*)s_rs.m_clearPwdBtn, 28);
     XObject_connect_2((XObject*)s_rs.m_clearPwdBtn,
                       XSignal(XAbstractButton_clicked_signal),
                       rs_clearPwdSlot);
     XWidget_show((XWidget*)s_rs.m_clearPwdBtn);
+    XBoxLayout_addWidget(&s_rs.m_rowEcho, (XWidget*)s_rs.m_clearPwdBtn);
 
-    /* ---- 会话状态多行区（2026-10-03 收口: 宽随行右缘=584 收窄。 ---- */
+    /* ---- 会话状态多行区（根列 stretch 条目: 吃满回显行与服务地址行
+     *     之间全部纵轴余量, 宽随根横向铺满——原稿「恰贴地址行上方,
+     *     宽随根」口径; 行数增长由布局器自适应, 无需手工定高）。 ---- */
     s_rs.m_sessionLabel = XLabel_create(s_rs.m_root, 0);
     if (!s_rs.m_sessionLabel) return s_rs.m_root;
     XLabel_setText_2(s_rs.m_sessionLabel,
@@ -1223,8 +1234,12 @@ XWidget* demo_page_remote_server_build(XWidget* parent,
                      "\xE6\x9C\xAA\xE5\x90\xAF\xE5\x8A\xA8"); /* 服务状态: 未启动 */
     XLabel_setAlignment(s_rs.m_sessionLabel,
                         XAlignment_Left | XAlignment_Top);
-    XWidget_setGeometry((XWidget*)s_rs.m_sessionLabel, 12, 274, 572, 150);
     XWidget_show((XWidget*)s_rs.m_sessionLabel);
+    XBoxLayout_addWidget(&s_rs.m_layoutRoot, (XWidget*)s_rs.m_sessionLabel);
+    XBoxLayout_setStretchFactorWidget(&s_rs.m_layoutRoot,
+                                      (XWidget*)s_rs.m_sessionLabel, 1);
+    /* 服务地址行殿后入列（根列末条目, 固定高 24 贴底, 见前文创建段）。 */
+    XBoxLayout_addWidget(&s_rs.m_layoutRoot, (XWidget*)s_rs.m_addrLabel);
 
     /* ---- 服务对象: 父挂主窗口顶层（对象树级联析构兜底）, 惰性 host。 */
     s_rs.m_server = XGuiServer_create((XObject*)parent);

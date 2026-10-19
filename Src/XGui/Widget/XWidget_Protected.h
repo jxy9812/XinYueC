@@ -262,6 +262,26 @@ XWidget* XWidget_widgetForWindow(const XWindow* window);
  */
 bool XWidget_replayPressAtGlobal(const XMouseEvent* src, const XPoint* global);
 
+/* ==================== 跨顶层坐标换算（2026-10-18 新增） ==================== */
+
+/**
+ * @brief      跨顶层窗口换算坐标（一步到位，替代 mapToGlobal→
+ *             mapFromGlobal 复合往返）。
+ * @details    两窗旋转角不同时，复合往返会把起点窗的旋转信息抵消两次
+ *             （mapToGlobal 做 R_from，mapFromGlobal 再对目标窗做
+ *             R⁻¹_to，中间还隔原点加减），旋转信息彻底失真——鼠标抓取
+ *             跨顶层改道、触摸抓取跨顶层改道、右键菜单全局坐标三处必须
+ *             走本函数。实现：R_fromTop(L) → -origin_from → +origin_to
+ *             → R⁻¹_toTop → -offset_to，全程在设备全局坐标域走。
+ *             rot==0 时全链退化为原点加减，逐位不变。
+ * @param      fromTop 源顶层控件（借用）；可为 NULL（跳过源侧换算）。
+ * @param      toTop   目标顶层控件（借用）；可为 NULL（跳过目标侧换算）。
+ * @param      fromLocalLogical 源控件本地**逻辑**坐标；可为 NULL。
+ * @return      目标控件本地逻辑坐标；入参非法返回 (0,0)。
+ */
+XPoint XWidget_mapAcrossTopLevel(XWidget* fromTop, XWidget* toTop,
+                                 const XPoint* fromLocalLogical);
+
 /* ==================== 应用模态（对标 QApplication activeModalWidget） ==================== */
 
 /**

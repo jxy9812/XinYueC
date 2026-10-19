@@ -207,14 +207,33 @@ static XLayout* VXLayout_layout(const XLayoutItem* item)
     return (XLayout*)item;
 }
 
-/** @brief XLayout 失效：标记脏并向全部子条目传播失效率（子布局递归）。 */
+/** @brief XLayout 失效：标记脏并向全部子条目传播失效率（子布局递归）。
+ * @details [度量缓存 2026-10-17] 失效同时清三级尺寸缓存（对标 Qt
+ *          QLayout::invalidate 清 totalMin/Max）；并沿父布局链向上清
+ *          祖先缓存（对标 Qt invalidate 级联父布局）——子控件尺寸提示
+ *          变化后祖先布局的合计度量同步陈旧须一并清除。向上段只清
+ *          祖先自身（缓存+脏位）**不再回入向下级联**：否则 父失效→
+ *          遍历子条目→子失效→回父 死循环栈溢出（启动段错误实证）。 */
 static void VXLayout_invalidate(XLayout* self)
 {
     int i;
     if (!self) return;
     self->m_isDirty = 1;
+    XSize_init(&self->m_cachedMin, -1, -1);
+    XSize_init(&self->m_cachedMax, -1, -1);
+    XSize_init(&self->m_cachedHint, -1, -1);
     for (i = 0; i < self->m_itemCount; ++i)
         XLayoutItem_invalidate_base(self->m_items[i]);
+    {
+        XLayout* p = self->m_parentLayout;
+        while (p) {
+            p->m_isDirty = 1;
+            XSize_init(&p->m_cachedMin, -1, -1);
+            XSize_init(&p->m_cachedMax, -1, -1);
+            XSize_init(&p->m_cachedHint, -1, -1);
+            p = p->m_parentLayout;
+        }
+    }
 }
 
 /** @brief XLayout 通用几何分配：内容矩形整块交给每个子条目，
@@ -423,6 +442,7 @@ void XLayout_init(XLayout* self)
     XSize_init(&self->m_cachedMin, -1, -1);
     XSize_init(&self->m_cachedMax, -1, -1);
     XSize_init(&self->m_cachedHint, -1, -1);
+    XRect_init(&self->m_activateRect, 0, 0, 0, 0);
     self->m_isDirty = 1;
 }
 
@@ -1106,9 +1126,36 @@ bool XLayout_activate(XLayout* self)
     if (!self) return false;
     w = XLayout_parentWidget(self);
     if (!w) return false;
+    /* 以控件客户区（自身坐标）为分配矩形。 */
+    r = XWidget_geometry(w);
+    r.x = 0;
+    r.y = 0;
+    /* [幂等早退 2026-10-17] 已激活+几何未变+未失效 → 跳过全量度量与
+     * 分配（对标 Qt QLayout::activate 的 activated 早退）。一次窗口
+     * resize 经根→中段→堆叠→页根级联，同一级布局被重复 activate 且
+     * 传入相同矩形（demo_navUpdatePanel 双激活/updateGeometry 循环等），
+     * 每次重复都全量重算尺寸度量——布局度量占拖拽 resize 步耗时大头
+     * （堆叠布局一次 minimumSize 遍历全部 20 页根整树）。几何变化/
+     * invalidate 均强制重解算（m_isDirty 由失效路径置位）。 */
+    if (self->m_activated && !self->m_isDirty &&
+        self->m_activateRect.x == r.x && self->m_activateRect.y == r.y &&
+        self->m_activateRect.width == r.width &&
+        self->m_activateRect.height == r.height)
+        return true;
     /* 按尺寸约束把布局尺寸写回挂接控件（对标 QLayout::activate）。 */
     switch (self->m_sizeConstraint) {
     case XLayoutSizeConstraint_SetDefault:
+        /* [Qt 对齐 2026-10-17] SetDefault 不做尺寸回写——Qt
+         * QLayout::activate 的 default 约束是 no-op（仅显式
+         * SetMinimumSize/SetFixedSize 等才写回）。此前 SetDefault 与
+         * SetMinimumSize 合并回写，级联后果：堆叠布局把 20 页最大
+         * 合计最小尺寸写成 contentHost 显式 min → 中段布局 min 膨胀
+         * → 根布局把 40+692+26=758 写成窗口 PMinSize → 平台侧
+         * XWindow_setMinMaxSize 夹紧把活窗口撑到 758 → 根重分布时
+         * mid 最小 692 顶穿可用 664，状态栏被挤出窗口、下停靠导航
+         * 条盖住状态栏（DDE 探针链实证）。约束级联本就不该跨层
+         * 传播：分配不足时由父布局分布裁决。 */
+        break;
     case XLayoutSizeConstraint_SetMinimumSize: {
         XSize min = XLayoutItem_minimumSize_base((XLayoutItem*)self);
         XWidget_setMinimumSize(w, min.width, min.height);
@@ -1136,11 +1183,9 @@ bool XLayout_activate(XLayout* self)
     default:
         break;
     }
-    /* 以控件客户区（自身坐标）为分配矩形重新解算。 */
-    r = XWidget_geometry(w);
-    r.x = 0;
-    r.y = 0;
+    /* 按分配矩形重新解算（r 已在函数头取定）。 */
     XLayoutItem_setGeometry_base((XLayoutItem*)self, &r);
+    self->m_activateRect = r;
     return true;
 }
 

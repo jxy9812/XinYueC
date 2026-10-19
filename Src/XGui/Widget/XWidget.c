@@ -77,6 +77,7 @@
 #if XWINDOWSYSTEMINTERFACE_ON && XWINDOW_ON && XWINDOWEVENT_ON
 #include "XWindowSystemInterface.h"
 #endif
+#include "XWindowRotation.h" /* 内容旋转换算（mapToGlobal/mapFromGlobal 偏移链）。 */
 #endif /* XWINDOWEVENT_ON */
 #include "XGuiApplication.h"
 #if XSTYLEHINTS_ON && XGUIAPPLICATION_ON
@@ -572,8 +573,10 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
         XPoint pos = XTouchEvent_position(sub);
         XPoint local;
         if (grabTop && grabTop != top) {
-            XPoint global = XWidget_mapToGlobal(top, &pos);
-            pos = XWidget_mapFromGlobal(grabTop, &global);
+            /* 跨顶层改道走单点 helper（2026-10-18）：mapToGlobal→
+               mapFromGlobal 复合往返在两窗旋转角不同时会把旋转信息抵消
+               两次（见 XWidget_mapAcrossTopLevel 注）。 */
+            pos = XWidget_mapAcrossTopLevel(top, grabTop, &pos);
         }
         local.x = pos.x - off.x;
         local.y = pos.y - off.y;
@@ -1082,6 +1085,27 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top)
             if ((XWindow_flags(window) & typeMask) == XWindowType_Popup ||
                 (XWindow_flags(window) & typeMask) == XWindowType_Tool) {
                 XWindow* fw = XGuiApplication_focusWindow();
+                /* [弹窗随转·owner 兜底 2026-10-18] focusWindow（XWindow
+                   层）为空时再取控件层焦点（appFocusWidget）的顶层：
+                   X11 平台窗口焦点依赖 WM FocusIn（Xvfb/无 WM/首帧前
+                   恒缺），而鼠标 press 的集中移焦（dispatchPointerEvent
+                   按 ClickFocus 位 setFocusReason）早于弹层建柄把
+                   g_focusWidget 置为 opener——「开弹层的人刚被点击」
+                   时控件层焦点必然就位（对标 Qt：QComboBoxPrivate-
+                   Container 的窗口 transientParent 由 widget 父子关系
+                   保证，与平台焦点无关；本框架弹层无父控件，以控件层
+                   焦点作 opener 源是同义替身）。owner 缺失的连锁后果=
+                   弹层不继承 opener 内容旋转角（重开恒持首开角，10-18
+                   目验①实锚：demo 弹窗 170x82+376+449 恒不随转）+Z 序
+                   失保护。两路皆空才维持无 owner（改前口径）。 */
+                if (!fw) {
+                    XWidget* focusW = XWidget_appFocusWidget();
+                    XWidget* focusTop =
+                        focusW ? XWidget_topLevelWidget(focusW) : NULL;
+                    if (focusTop && focusTop->m_windowHandle &&
+                        (XWidget*)window != focusTop->m_windowHandle)
+                        fw = (XWindow*)focusTop->m_windowHandle;
+                }
                 if (fw && fw != window)
                     XWindow_setTransientParent(window, fw);
             }
@@ -1840,8 +1864,8 @@ static bool XWidget_dispatchPointerEvent(XWidget* top, XEvent* event)
              * 坐标换算到抓取窗口的坐标系后转投，使点击其它窗口也能送达
              * 抓取控件（对标 QWidget::grabMouse 的全局语义；平台
              * XGrabPointer 可能因映射时序未生效，此路由作可靠兜底）。 */
-            XPoint global = XWidget_mapToGlobal(top, &pos);
-            XPoint local = XWidget_mapFromGlobal(grabTop, &global);
+            /* 跨顶层改道走单点 helper（2026-10-18，见上注）。 */
+            XPoint local = XWidget_mapAcrossTopLevel(top, grabTop, &pos);
             XWidget_eventSetPosition(event, &local);
             return XWidget_dispatchPointerEvent(grabTop, event);
         }
@@ -4485,9 +4509,15 @@ void XWidget_setWindowFlags(XWidget* self, XWidgetFlags flags)
         /* CSD 抑制位预置：必须先于下方 XWindow_setFlags 刷新平台 hints
          * （X11 侧按该位把 FramelessWindowHint 折入 _MOTIF_WM_HINTS 组
          * 装），动态改 flags 后抑制状态即时生效；本块尾部
-         * XWindowDecoration_syncWindow 随后兜底重算保留边距。 */
-        XWindow_setCsdFrameSuppressed((XWindow*)self->m_windowHandle,
-                                      XWindowDecoration_activeFor(self));
+         * XWindowDecoration_syncWindow 随后兜底重算保留边距。
+         * [2026-10-17 抑制位竞态根修] 判定用 activeForFlags（新 flags）：
+         * 此刻窗口侧 m_flags 仍旧值，activeFor 读到陈旧 Frameless 位
+         * 会把「恢复边框」误判为不装饰 → hints 按 DECOR_ALL 下发，
+         * 强制 CSD 下系统标题栏出现且 syncWindow 的事后纠偏不重写
+         * hints 即永不恢复（DDE 实测；kwin 时序侥幸不显）。 */
+        XWindow_setCsdFrameSuppressed(
+            (XWindow*)self->m_windowHandle,
+            XWindowDecoration_activeForFlags(self, (XWindowFlags)flags));
         XWindow_setFlags((XWindow*)self->m_windowHandle,
                          (XWindowFlags)flags);
         XWindowDecoration_syncWindow(self);
@@ -4691,13 +4721,20 @@ static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
         XSize oldSize;
         XSize_init(&size, self->m_windowRect.width, self->m_windowRect.height);
         XSize_init(&oldSize, old.width, old.height);
-        XResizeEvent_init(&event, XEVENT_TYPE_RESIZE, &size, &oldSize);
-        XWidget_sendEvent(self, (XEvent*)&event);
-        XClassDeinit(&event);
 #if XLAYOUT_ON
+        /* [Qt 对齐 2026-10-18] 布局激活先于 RESIZE 事件派发（对标
+           QWidget::event(QEvent::Resize) 先 layout->activate() 再进
+           resizeEvent 虚槽）：原先激活排在 sendEvent 之后，子类
+           resizeEvent 处理器（demo 导航/页内排布）读到的是激活前的
+           陈旧子几何，同步跟随全部扑空、只能等 ~1fps 帧泵兜底=最大化
+           后内容延迟 1~2s 才跟随（10-18 真机实证）。activate 幂等，
+           派发后不再重复调用。 */
         if (self->m_layout)
             XLayout_activate(self->m_layout);
 #endif /* XLAYOUT_ON */
+        XResizeEvent_init(&event, XEVENT_TYPE_RESIZE, &size, &oldSize);
+        XWidget_sendEvent(self, (XEvent*)&event);
+        XClassDeinit(&event);
     }
     /* 新旧矩形一并失效（对标 Qt setGeometry_sys 的双失效语义）：
        控件移动/缩放后，旧位置像素由父层背景重绘，不再留下残影。
@@ -4713,6 +4750,16 @@ static void XWidget_recomputeGeometry(XWidget* self, const XRect* oldRect)
             XRect dirty = XRect_united(&old, &self->m_windowRect);
             /* 经 addDirtyRegion 联动父链与兄弟交叠保留层。 */
             XWidget_updateRect(parent, &dirty);
+        } else if (sizeChanged) {
+            /* [顶层防残影 2026-10-17] 顶层（parent==NULL）此前直接跳过
+             * 失效——CSD 标题栏/状态栏/HUD 等顶层绘制物的旧位置像素没
+             * 有任何失效者，拖边 resize 的跳帧步与整窗重绘之间一旦出现
+             * 「几何已变而无整窗覆盖」间隙，旧像素永留（DDE 拖边阶梯
+             * 残影实证）。对标 Qt qwidgetrepaintmanager resize 双保险
+             * （新 rect+父窗口旧 expose 区都标脏），顶层自失效 旧∪新。
+             * 仅 resize 补：move 保持免重绘直提优化（拖移性能路径）。 */
+            XRect dirty = XRect_united(&old, &self->m_windowRect);
+            XWidget_updateRect(self, &dirty);
         }
     }
     /* 几何变化联动自身与祖先保留层（缓存尺寸/内容随几何失效；父级
@@ -4772,6 +4819,21 @@ void XWidget_updateGeometry(XWidget* self)
     XWidget* parent;
     if (!self) return;
 #if XLAYOUT_ON
+    /* [度量缓存 2026-10-17] 先失效再激活（对标 Qt QWidget::updateGeometry
+     * → invalidateSizeHints 沿父链清缓存 + layout->invalidate()）：
+     * 本控件尺寸提示变化（文本/字体/尺寸约束）使**每一级祖先控件的
+     * 布局**合计度量缓存陈旧——invalidate 只沿 m_parentLayout（嵌套
+     * 布局）与子条目级联，跨控件边界（页根布局→中段→根布局分属不同
+     * 控件）不传播，故沿父控件链逐级失效。随后 activate 的幂等早退
+     * 据 m_isDirty 强制重解算——若只 activate 不失效，早退会带着旧
+     * 缓存跳过本应重算的度量。 */
+    {
+        XWidget* w;
+        for (w = self; w; w = XWidget_parentWidget(w)) {
+            if (w->m_layout)
+                XLayout_invalidate(w->m_layout);
+        }
+    }
     if (self->m_layout) {
         XLayout_activate(self->m_layout);
         return;
@@ -5039,12 +5101,31 @@ void XWidget_setMinimumSize(XWidget* self, int w, int h)
     }
 #endif /* XWINDOW_ON */
     if (self->m_windowRect.width < minW || self->m_windowRect.height < minH) {
-        resized = XWidget_testAttribute(self, XWidgetAttribute_Resized);
-        XWidget_resize(self,
-                       self->m_windowRect.width < minW ? minW : self->m_windowRect.width,
-                       self->m_windowRect.height < minH ? minH : self->m_windowRect.height);
-        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, resized);
+        /* [约束归布局 2026-10-17] 布局托管控件（自身或父级挂布局）不
+         * 自动 grow：尺寸分配是父布局的职权（对标 Qt——QWidget::
+         * setMinimumSize 只存储约束，几何经 updateGeometry 由父布局
+         * 重排决定）。此前自动 resize 与布局分配打架：布局激活的
+         * SetDefault 回写把布局合计最小尺寸强加宿主（横停靠时
+         * midHost 被撑到 692>606 分配值），状态栏被顶出窗口、导航
+         * 条盖住状态栏（DDE 拖边目验实证）。无布局控件保留 grow
+         * 便利（独立控件无分配者）。 */
+        XWidget* layParent = XWidget_parentWidget(self);
+        bool managed = self->m_layout != NULL ||
+                       (layParent && layParent->m_layout != NULL);
+        if (!managed) {
+            resized = XWidget_testAttribute(self, XWidgetAttribute_Resized);
+            XWidget_resize(self,
+                           self->m_windowRect.width < minW ? minW : self->m_windowRect.width,
+                           self->m_windowRect.height < minH ? minH : self->m_windowRect.height);
+            XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, resized);
+        }
     }
+    /* [度量缓存 2026-10-17] 尺寸约束变化触发所在布局失效+重排（对标 Qt
+     * setMinimumSize→updateGeometrySize→layout invalidate）：约束参与
+     * 布局度量（min/max 参与 collectGeom 钳位），不通知则布局幂等早退
+     * 跳过重分布——demo_navUpdatePanel「先 activate 后 setMin/Max 再
+     * activate」的二次激活即被早退吞掉，下停靠导航条错位实证。 */
+    XWidget_updateGeometry(self);
 }
 
 void XWidget_setMinimumSizeSize(XWidget* self, const XSize* size)
@@ -5092,12 +5173,21 @@ void XWidget_setMaximumSize(XWidget* self, int w, int h)
     }
 #endif /* XWINDOW_ON */
     if (self->m_windowRect.width > maxW || self->m_windowRect.height > maxH) {
-        resized = XWidget_testAttribute(self, XWidgetAttribute_Resized);
-        XWidget_resize(self,
-                       self->m_windowRect.width > maxW ? maxW : self->m_windowRect.width,
-                       self->m_windowRect.height > maxH ? maxH : self->m_windowRect.height);
-        XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, resized);
+        /* [约束归布局 2026-10-17] 同 setMinimumSize：托管控件 shrink
+         * 也归父布局重排决定，不在此同步强改几何。 */
+        XWidget* layParent = XWidget_parentWidget(self);
+        bool managed = self->m_layout != NULL ||
+                       (layParent && layParent->m_layout != NULL);
+        if (!managed) {
+            resized = XWidget_testAttribute(self, XWidgetAttribute_Resized);
+            XWidget_resize(self,
+                           self->m_windowRect.width > maxW ? maxW : self->m_windowRect.width,
+                           self->m_windowRect.height > maxH ? maxH : self->m_windowRect.height);
+            XWidget_attrSet(&self->m_attributes, XWidgetAttribute_Resized, resized);
+        }
     }
+    /* [度量缓存 2026-10-17] 同 setMinimumSize：约束变化通知布局重排。 */
+    XWidget_updateGeometry(self);
 }
 
 void XWidget_setMaximumSizeSize(XWidget* self, const XSize* size)
@@ -5193,7 +5283,13 @@ void XWidget_setSizeHint(XWidget* self, const XSize* hint)
 void XWidget_setMinimumSizeHint(XWidget* self, const XSize* hint)
 {
     if (!self || !hint) return;
+    if (self->m_minimumSizeHint.width == hint->width &&
+        self->m_minimumSizeHint.height == hint->height)
+        return;
     self->m_minimumSizeHint = *hint;
+    /* [度量缓存 2026-10-17] 尺寸提示变化通知布局失效重排（对标 Qt
+     * QWidget::setMinimumSizeHint→updateGeometry）。 */
+    XWidget_updateGeometry(self);
 }
 
 int XWidget_heightForWidth(const XWidget* self, int width)
@@ -5394,10 +5490,26 @@ XWidget* XWidget_childAt(const XWidget* self, const XPoint* point)
         if (widget->m_isWindow ||
             XWidget_testAttribute(widget, XWidgetAttribute_WState_Hidden))
             continue;
+        /* [命中坐标系再修 2026-10-19] m_windowRect 为**父相对矩形**
+         * （XWidget.h:565 契约；绘制链按父系逐层平移即证）。上一版
+         * 「窗口绝对系根修」（同日早前）把父相对矩形当窗口系用：
+         * containment 与递归传参都不做层间换算——嵌套偏移（导航面板=
+         * 中段分割器内两级 (0,0)/(0,30) + 内容区 (0,68) 一级）下命中
+         * 点逐层错位，XTEST 实测导航钮/内容区按钮/从站页全部落空、
+         * 按下冒泡到窗口根（XGuiWindowDemo 目验失败项①根因；探针实
+         * 证：点击窗内 (70,180) 命中真实窗位 y≈269 的分组标签）。修=
+         * containment 仍用当前系点对子矩形（同系无错），递归前把点
+         * 平移进子坐标系（parent相对语义下的标准 childAt）。原「从站
+         * 页滚动内容 XTableWidget 双击不命中」若仍复现，属滚动内容
+         * m_windowRect 未随滚动偏移维护的独立几何问题，不应以全局坐
+         * 标系错配为代价绕行。 */
         if (!XRect_contains(&widget->m_windowRect, point->x, point->y)) continue;
-        local.x = point->x - widget->m_windowRect.x;
-        local.y = point->y - widget->m_windowRect.y;
-        deep = XWidget_childAt(widget, &local);
+        {
+            XPoint childPoint;
+            childPoint.x = point->x - widget->m_windowRect.x;
+            childPoint.y = point->y - widget->m_windowRect.y;
+            deep = XWidget_childAt(widget, &childPoint);
+        }
         if (deep) return deep;
         return widget;
     }
@@ -5679,6 +5791,17 @@ XWindow* XWidget_windowHandle(const XWidget* self)
 
 /* ==================== 坐标映射 ==================== */
 
+/**
+ * @brief      取顶层控件的窗口内容有效旋转角（纯读；无窗口句柄或未建窗
+ *             时按 0 处理，映射逐位不变）。
+ */
+static int xwidget_windowRotation(const XWidget* top)
+{
+    const XWidget* t = top;
+    if (!t || !t->m_windowHandle) return 0;
+    return XWindow_contentRotationDegrees((XWindow*)t->m_windowHandle);
+}
+
 XPoint XWidget_mapToGlobal(const XWidget* self, const XPoint* local)
 {
     XPoint out;
@@ -5692,6 +5815,16 @@ XPoint XWidget_mapToGlobal(const XWidget* self, const XPoint* local)
     }
     top = XWidget_topLevel(self);
     if (top) {
+        /* 内容旋转（2026-10-18）：窗口局部 → 设备窗口局部（正变换 R）
+           → 加窗口原点。全局坐标口径 = 设备全局（物理）坐标；原点不随
+           旋转变，只在偏移链插一步。rot==0 时 R 恒等，逐位不变。 */
+        int rot = xwidget_windowRotation(top);
+        if (rot != 0) {
+            int W = top->m_windowRect.width;
+            int H = top->m_windowRect.height;
+            XWindow_rotationMapPoint(rot, W, H, out.x, out.y,
+                                     &out.x, &out.y);
+        }
         if (top->m_windowHandle)
             out = XWindow_mapToGlobal((XWindow*)top->m_windowHandle, &out);
         else {
@@ -5711,11 +5844,20 @@ XPoint XWidget_mapFromGlobal(const XWidget* self, const XPoint* global)
     out = *global;
     top = XWidget_topLevel(self);
     if (top) {
+        int rot;
         if (top->m_windowHandle)
             out = XWindow_mapFromGlobal((XWindow*)top->m_windowHandle, &out);
         else {
             out.x -= top->m_windowRect.x;
             out.y -= top->m_windowRect.y;
+        }
+        /* 减原点之后是**设备窗口局部**，再施加 R⁻¹ 回逻辑局部。 */
+        rot = xwidget_windowRotation(top);
+        if (rot != 0) {
+            int W = top->m_windowRect.width;
+            int H = top->m_windowRect.height;
+            XWindow_rotationUnmapPoint(rot, W, H, out.x, out.y,
+                                       &out.x, &out.y);
         }
     }
     {
@@ -5724,6 +5866,118 @@ XPoint XWidget_mapFromGlobal(const XWidget* self, const XPoint* global)
         out.y -= offset.y;
     }
     return out;
+}
+
+/**
+ * @brief      跨顶层窗口换算坐标（2026-10-18 新增，保护接口）。
+ * @details    跨顶层改道处**不得**用 mapToGlobal→mapFromGlobal 复合往返：
+ *             两个窗口的旋转角不同时，往返会把起点窗的旋转信息抵消两次
+ *             （mapToGlobal 做 R_from，mapFromGlobal 又对 to 窗做 R⁻¹_to，
+ *             中间还隔了原点加减），旋转信息彻底失真。本函数一步到位：
+ *               R_fromTop(L) → -origin_from → +origin_to → R⁻¹_toTop
+ *             ——全程在设备全局坐标域走，两个角的差恰好被正确处理一次。
+ * @param      fromTop        源顶层控件；可为 NULL（退化为纯偏移换算）。
+ * @param      toTop          目标顶层控件；可为 NULL。
+ * @param      fromLocalLogical 源控件本地**逻辑**坐标。
+ * @return     目标控件本地逻辑坐标；入参非法返回 (0,0)。
+ */
+XPoint XWidget_mapAcrossTopLevel(XWidget* fromTop, XWidget* toTop,
+                                 const XPoint* fromLocalLogical)
+{
+    XPoint out;
+    XPoint_init(&out, 0, 0);
+    if (!fromLocalLogical) return out;
+    out = *fromLocalLogical;
+    if (fromTop) {
+        int rot;
+        XPoint acc = XWidget_accumulateOffset(fromTop);
+        out.x += acc.x;
+        out.y += acc.y;
+        rot = xwidget_windowRotation(fromTop);
+        if (rot != 0) {
+            int W = fromTop->m_windowRect.width;
+            int H = fromTop->m_windowRect.height;
+            XWindow_rotationMapPoint(rot, W, H, out.x, out.y, &out.x, &out.y);
+        }
+        out.x -= fromTop->m_windowRect.x;
+        out.y -= fromTop->m_windowRect.y;
+    }
+    if (toTop) {
+        int rot;
+        out.x += toTop->m_windowRect.x;
+        out.y += toTop->m_windowRect.y;
+        rot = xwidget_windowRotation(toTop);
+        if (rot != 0) {
+            int W = toTop->m_windowRect.width;
+            int H = toTop->m_windowRect.height;
+            XWindow_rotationUnmapPoint(rot, W, H, out.x, out.y, &out.x, &out.y);
+        }
+        {
+            XPoint acc = XWidget_accumulateOffset(toTop);
+            out.x -= acc.x;
+            out.y -= acc.y;
+        }
+    }
+    return out;
+}
+
+/* ==================== 内容旋转转发（2026-10-18 新增） ==================== */
+
+/**
+ * @brief 整帧脏闩（单次消费）：flushBackingStore 下一次取帧区域时按**整窗**
+ *        矩形（含 CSD 标题栏条带）而非 m_contentsRect。
+ * @details 换角（尤其 0↔180，几何不变、footprint 不变、无 Expose）后旧角
+ *          像素仍留在后备图上，必须强制整帧重画。桌面 FULL 分支会丢弃传入
+ *          region 重置为 m_contentsRect（该矩形已被 m_contentsMargins 扣掉
+ *          标题栏条带），只靠 XWidget_updateRect 入脏无法覆盖条带；DIRECT/
+ *          PARTIAL 分支则需在 XRegion_copy 之上叠加本闩。
+ */
+static XWidget* g_xwidgetForceFullFrameFor = NULL;
+
+bool XWidget_setContentRotation(XWidget* self, int deg)
+{
+    XWidget* top;
+    XWindow* handle;
+    bool accepted;
+    if (!self) return false;
+    top = XWidget_topLevel(self);
+    if (!top || !(handle = (XWindow*)top->m_windowHandle)) return false;
+    accepted = XWindow_setContentRotation(handle, deg);
+    if (!accepted) return false;
+    /* 置闩 + 入脏（含标题栏条带的整窗矩形），下一帧 PAINT 自然消费。
+       归零（deg=0）同样置闩：回 0° 后的旧角残留与换角对称存在。
+       ⚠ 脏区与闩矩形必须用**窗口局部坐标** (0,0,w,h)：flush 的 whole 域
+       是局部的（m_contentsRect 亦为局部），而 m_windowRect 携带窗口全局
+       位置（实测 x=40,y=40）——误用它会让 PAINT 区域整体右下偏移 40px，
+       左/上 40 条带（CSD 标题栏）永远画不到（目验 ⑤⑥ 的顶部残留根因）。
+       【目验修 2026-10-18】闩必须**按窗口归属**：全局单闩会被换角窗口
+       之外的任何一次 flush（同屏另一顶层窗口，例如刚关掉的方向下拉
+       弹层）顺手消费掉，真正的主窗整帧帧永远等不到闩 → 标题栏/边距
+       条带留旧角内容且持久不重绘（目验 ⑥：0°→180°→0° 后顶部 26 行
+       与左侧条带残留，+2.5s/+6.0s 采样一致）。只在闩归属窗口自己的
+       flush 里消费，其余窗口的 flush 不动闩。
+       【同角重复调用也置闩 2026-10-18 目验补】换角+改几何的序列里，
+       几何引发的局部重绘可能以**布局过渡态**的子控件位置落笔（实测
+       0→90：chrome 被以中间布局位置画进缓冲 y≈90 处并持久留屏，后续
+       小区域重绘不再覆盖该区域）。调用方在 setGeometry 之后再次调用
+       本函数（同角），即可拿到布局稳定后的整帧，抹平过渡态残迹。 */
+    g_xwidgetForceFullFrameFor = top;
+    {
+        XRect fullLocal;
+        XRect_init(&fullLocal, 0, 0, top->m_windowRect.width,
+                   top->m_windowRect.height);
+        XWidget_updateRect(top, &fullLocal);
+    }
+    return true;
+}
+
+int XWidget_contentRotationDegrees(const XWidget* self)
+{
+    XWidget* top;
+    if (!self) return 0;
+    top = XWidget_topLevel(self);
+    if (!top || !top->m_windowHandle) return 0;
+    return XWindow_contentRotationDegrees((XWindow*)top->m_windowHandle);
 }
 
 XPoint XWidget_mapToParent(const XWidget* self, const XPoint* local)
@@ -8706,6 +8960,9 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
     XRegion_init(&whole);
  #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_FULL
     {
+        /* m_contentsRect 已被 m_contentsMargins 扣掉 CSD 标题栏条带；
+           换角整帧覆盖统一在下方「整帧脏闩」单点完成（FULL/DIRECT 同点，
+           见 g_xwidgetForceFullFrameFor 注）。 */
         contents = top->m_contentsRect;
         XRegion_addRect(&whole, &contents);
     }
@@ -8789,6 +9046,47 @@ void XWidget_flushBackingStore(XWidget* self, const XRegion* region)
             XRegion_addRect(&whole, &contents);
             g_xgui_degradedFramePending = 0;
         }
+    }
+    /* 【整帧脏闩·统一点 2026-10-18】换角（0↔180 几何不变、无 Expose）后
+       必须整帧重画，否则旧角像素长留。此处**必须在 region/脏区分支与降级
+       帧块之后**覆盖：
+        - FULL 分支丢传入 region 重置为 m_contentsRect（已扣掉 CSD 标题栏
+          条带），DIRECT 分支 region 非空时原样复制 region——两条路都画不到
+          条带；只靠 XWidget_updateRect 入脏也不行（PAINT region 未必含
+          条带，实测 build-direct=RENDER_MODE_1(DIRECT) 下 region 恒非空，
+          分支内闩点永远不命中 → 标题栏留旧角内容且持久不重绘）；
+        - 降级帧块会把 whole 改回 contentsRect，同样不能压过整帧诉求。
+       闩按窗口归属（别的顶层 flush 不消费）、单次消费。
+       入脏用的 m_windowRect 是含条带的整窗矩形：paintTree+装饰都吃 whole，
+       随后 present 在 FULL 模式恒整窗提交、DIRECT 模式按本 region 提交。 */
+    if (g_xwidgetForceFullFrameFor == top)
+    {
+        g_xwidgetForceFullFrameFor = NULL;
+        XRegion_clear(&whole);
+        /* 窗口**局部**整窗矩形（whole 域为局部，见 setContentRotation 注）。 */
+        XRect_init(&contents, 0, 0, top->m_windowRect.width,
+                   top->m_windowRect.height);
+        XRegion_addRect(&whole, &contents);
+    }
+    /* 【旋转态强制整帧 2026-10-19】top 有效角≠0 时本 flush 抬升为整帧
+       （与上方换角闩同点覆盖，位于降级帧块之后）：90/180/270 的局部提
+       交链（present 旋转映射按 region 逐矩形出设备矩形）在弹层开合/
+       局部失效场景实测三症——①弹层开态拼接撕裂（FPS 面板/状态文本多
+       副本、新旧 FPS 值同屏、静止不自愈，目验⑤a/⑤c 实锚）；②弹层收
+       起后弹窗区残影持久不回绘（⑤c）；③旋转态主窗控件局部重绘呈现丢
+       失（「窗口方向」combo 旋转态呈现区空白、paintEvent 完整执行而像
+       素不落，目验 B 组主诉）。rot≠0 属特殊显示模式（横竖屏切换），
+       正确性优先，交互驱动的 flush 频率下整帧代价可接受（换角闩同口
+       径）；paintTree 整帧重绘+present 整幅映射后屏幕恒为纯新帧，三症
+       同源消除。0° 直通零改动（不走本分支，恒原路局部提交）。 */
+    if (top->m_windowHandle &&
+        XWindow_contentRotationDegrees(
+            (XWindow*)top->m_windowHandle) != 0)
+    {
+        XRegion_clear(&whole);
+        XRect_init(&contents, 0, 0, top->m_windowRect.width,
+                   top->m_windowRect.height);
+        XRegion_addRect(&whole, &contents);
     }
     /* 本帧呈现区域包围盒（whole 定稿后一次收拢，三处共用）：两遍求
        bbox——单遍增量版在后续矩形把 sc.x/sc.y 左/上拉走时 x+width
@@ -9750,10 +10048,40 @@ void XWidget_applyWindowGeometry(XWidget* self, const XRect* geometry,
         XResizeEvent event;
         XSize size;
         XSize_init(&size, geometry->width, geometry->height);
+#if XLAYOUT_ON
+        /* [平台路径布局激活 2026-10-18] 布局激活先于 RESIZE 事件派发，
+           镜像程序化路径 recomputeGeometry 的修复（XWidget.c:4704-4712，
+           对标 QWidget::event(Resize) 先 layout->activate() 再进
+           resizeEvent 虚槽）：本函数是平台 ConfigureNotify 路径
+           （posix ConfigureNotify → handleGeometryChange → RESIZE →
+           VXWidgetWindow_event:3265-3271 → 本函数）的唯一几何同步点，
+           此前只写矩形+派发事件——外部 resize/最大化/复原后根布局不
+           激活，子几何停在旧矩形，首个全窗 PAINT 画「旧子几何+新窗尺
+           寸」，修正帧只能寄生于 HUD 悬浮层 setText→updateGeometry 的
+           偶发激活链（HUD 空闲心跳 1s+统计窗 250ms ⇒ 空闲期最迟
+           ~1.25s 才跟随；HUD 裁剪/冻结时更久，10-18 DDE 真机实测
+           1~2s）。activate 幂等早退（XLayout.c:1140-1144）保证与
+           recomputeGeometry/帧泵链双重激活无害。 */
+        if (self->m_layout)
+            XLayout_activate(self->m_layout);
+#endif /* XLAYOUT_ON */
         XResizeEvent_init(&event, XEVENT_TYPE_RESIZE, &size, oldSize);
         XWidget_sendEvent(self, (XEvent*)&event);
         XClassDeinit(&event);
     }
+#if XLAYOUT_ON
+    /* [顶层跟随失效 2026-10-18] 仅 sizeChanged 时顶层自失效 旧∪新，镜
+       像 recomputeGeometry 顶层分支（XWidget.c:4732-4742）：平台路径
+       此前零失效，无自定义 resizeEvent 的应用顶层在根布局激活后，子
+       控件各自 updateRect 之外的留白沟槽无失效者。move-only 保持不失
+       效：对齐拖移免重绘直提优化（recomputeGeometry :4739 同口径）。
+       可见性门控与镜像一致：隐藏顶层几何变化不产生脏区，显示路径有
+       完整失效兜底。 */
+    if (sizeChanged && self->m_visible) {
+        XRect dirty = XRect_united(&old, &self->m_windowRect);
+        XWidget_updateRect(self, &dirty);
+    }
+#endif /* XLAYOUT_ON */
 }
 
 void XWidget_applyWindowVisibility(XWidget* self, bool visible)

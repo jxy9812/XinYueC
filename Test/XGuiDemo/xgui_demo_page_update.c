@@ -44,6 +44,7 @@
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XWidget.h"
+#include "XBoxLayout.h" /* 页内布局容器化：根垂直盒+行/列嵌套盒统一分配几何。 */
 #include "XLabel.h"
 #include "XComboBox.h"
 #include "XLineEdit.h"
@@ -76,13 +77,9 @@ extern int XUpgradeApplyStub_main(int argc, char* argv[]);
 
 /* ==================== 布局常量 ==================== */
 
-/** @brief 页根装配基线（776x458 内容区设计稿；adapt 钉底两行）。 */
-#define UPD_FIELD_X    116    /**< 版本/策略信息列 x。 */
-#define UPD_BAR_X      76     /**< 进度条列 x。 */
-#define UPD_ROW_PITCH  30     /**< 进度条行距。 */
-#define UPD_URL_Y      148    /**< 服务器地址行 y（策略区与进度条区之间）。 */    /**< 服务器地址行 y（策略区与进度条区之间）。 */
-#define UPD_BAR_Y0     184    /**< 进度条首行 y。 */
-#define UPD_BTN_Y      312    /**< 决策+安装单行 y（检查/跳过/远程版本/安装）。 */
+/* 页根装配基线常量（UPD_FIELD_X/UPD_BAR_X/UPD_ROW_PITCH/UPD_URL_Y/
+ * UPD_BAR_Y0/UPD_BTN_Y）随 2026-10-17 页内布局容器化退场：几何分配
+ * 全权移交页根 XBoxLayout（嵌套行/列盒边距复刻 776x458 设计稿间距）。 */
 
 /** @brief 事件队列容量（listener 后台线程生产、UI 泵消费；满丢最旧）。 */
 #define UPD_QUEUE_CAP  8
@@ -127,9 +124,29 @@ static struct
     XComboBox*   m_remoteCombo;/**< 远程版本下拉（检查后回填目录条目）。 */
     XPushButton* m_installBtn; /**< 安装所选版本（installVersion 显式降级/重装）。 */
 
-    /* ---- 提示 + 状态行（adapt 钉底） ---- */
+    /* ---- 提示 + 状态行（容器化后由根盒垂直弹簧钉底） ---- */
     XLabel*    m_hintLabel;    /**< 演示口径说明行。 */
     XLabel*    m_statusLabel;  /**< 事件/结果反馈行。 */
+
+    /* ---- 页内布局容器（2026-10-17 容器化：几何分配全权移交布局器；
+     *      盒对象为值成员随页常驻——XWidget_setLayout 按借用挂根不取
+     *      所有权，包裹盒池容量按装配上限预留，池满静默丢弃） ---- */
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    XBoxLayout m_rootLayout;   /**< 页根垂直盒（统一分配全页几何）。 */
+    XBoxLayout m_titleRow;     /**< 标题行（标题+弹簧+程序版本右锚定）。 */
+    XBoxLayout m_versionRow;   /**< 当前版本行（标题列+列表伸展）。 */
+    XBoxLayout m_policyRow;    /**< 策略行（标题列+策略文本伸展）。 */
+    XBoxLayout m_urlRow;       /**< 服务器行（标题列+地址输入伸展）。 */
+    XBoxLayout m_barsCol;      /**< 四段进度条列。 */
+    XBoxLayout m_barRows[4];   /**< 各段行盒（标题列+进度条伸展）。 */
+    XBoxLayout m_buttonRow;    /**< 决策+安装单行。 */
+    XBoxLayout m_wrapPool[14]; /**< 单条目包裹盒池（盒边距复刻原手写间距/行内错位下沉）。 */
+    int        m_wrapCount;    /**< 包裹盒池游标。 */
+    XWidget*   m_titleSpring;  /**< 标题行水平弹簧（程序版本推右缘）。 */
+    XWidget*   m_barsGap;      /**< 进度条列与决策行间固定空隙（16px，复刻原间距）。 */
+    XWidget*   m_vSpring;      /**< 根垂直弹簧（吃掉多余高度，钉底两行）。 */
+    XWidget*   m_hintGap;      /**< 提示行与状态行间固定空隙（2px，复刻原行距）。 */
+#endif
 
     /* ---- 跨线程事件队列（listener 后台线程 → UI 泵） ---- */
     XMutex*    m_queueMutex;   /**< 队列互斥（XLock_NonRecursive）。 */
@@ -860,6 +877,31 @@ static void upd_installSelSlot(XObject* receiver, XVarList* args)
 
 /* ==================== 装配 ==================== */
 
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+/** @brief 条目包裹盒：把控件装入单条目水平盒（四边边距=原手写排布的
+ *  右侧间距与行内错位下沉：条目落 x=0、顶边距即下沉量、右边距即与后
+ *  随条目的间距），再按序挂入父布局器。
+ *  @details 盒方向取水平：盒式布局器尺寸协商对垂直盒把左右边距计入
+ *           主轴（XBoxLayout_calcMetrics），水平包裹盒的宽提示才等于
+ *           「控件宽+右边距」，行内水平间距不占行高。盒对象为页内静
+ *           态池的值成员（XBoxLayout_addLayout 借用不取所有权，须随页
+ *           常驻）；池满静默丢弃。 */
+static void upd_wrapAdd(XBoxLayout* parent, XWidget* w,
+                        int l, int t, int r, int b)
+{
+    XBoxLayout* box;
+    if (!parent || !w) return;
+    if (s_upd.m_wrapCount >= (int)(sizeof(s_upd.m_wrapPool) /
+                                   sizeof(s_upd.m_wrapPool[0])))
+        return;
+    box = &s_upd.m_wrapPool[s_upd.m_wrapCount++];
+    XBoxLayout_init(box, XBoxLayoutDirection_LeftToRight);
+    XLayout_setContentsMargins((XLayout*)box, l, t, r, b);
+    XBoxLayout_addWidget(box, w);
+    XBoxLayout_addLayout(parent, (XLayout*)box);
+}
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
+
 XWidget* demo_page_update_build(XWidget* parent,
                                 DemoPageStatusFn status, void* user)
 {
@@ -887,7 +929,9 @@ XWidget* demo_page_update_build(XWidget* parent,
                      "\xE8\xBD\xAF\xE4\xBB\xB6\xE6\x9B\xB4\xE6\x96\xB0");
                      /* 软件更新 */
     XLabel_setTextPixelSize(s_upd.m_titleLabel, 15);
-    XWidget_setGeometry((XWidget*)s_upd.m_titleLabel, 12, 8, 300, 24);
+    /* 原手写 (12,8,300,24)→固定尺寸复刻，原点交标题行布局器。 */
+    XWidget_setFixedWidth((XWidget*)s_upd.m_titleLabel, 300);
+    XWidget_setFixedHeight((XWidget*)s_upd.m_titleLabel, 24);
     XWidget_show((XWidget*)s_upd.m_titleLabel);
 
     /* ---- 程序版本（标题行右侧；XCoreApplication applicationName/
@@ -898,7 +942,10 @@ XWidget* demo_page_update_build(XWidget* parent,
     s_upd.m_progVerLabel = XLabel_create(s_upd.m_root, 0);
     if (s_upd.m_progVerLabel) {
         XLabel_setTextPixelSize(s_upd.m_progVerLabel, 12);
-        XWidget_setGeometry((XWidget*)s_upd.m_progVerLabel, 320, 10, 332, 20);
+        /* 原手写 (320,10,332,20)→adapt 右锚定 (rootW-344,10)：固定尺寸
+         * 复刻，原点交标题行布局器（行弹簧推右缘，行高 24 居中 → y=10）。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_progVerLabel, 332);
+        XWidget_setFixedHeight((XWidget*)s_upd.m_progVerLabel, 20);
         XWidget_show((XWidget*)s_upd.m_progVerLabel);
     }
 
@@ -911,7 +958,9 @@ XWidget* demo_page_update_build(XWidget* parent,
         XLabel_setText_2(s_upd.m_capVersion,
                          "\xE5\xBD\x93\xE5\x89\x8D\xE7\x89\x88\xE6\x9C\xAC");
                          /* 当前版本 */
-        XWidget_setGeometry((XWidget*)s_upd.m_capVersion, 12, 44, 96, 22);
+        /* 原手写 (12,44,96,22)→固定尺寸复刻，原点交版本行标题列。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_capVersion, 96);
+        XWidget_setFixedHeight((XWidget*)s_upd.m_capVersion, 22);
         XWidget_show((XWidget*)s_upd.m_capVersion);
     }
     s_upd.m_versionLabel = XLabel_create(s_upd.m_root, 0);
@@ -919,8 +968,9 @@ XWidget* demo_page_update_build(XWidget* parent,
     XLabel_setTextPixelSize(s_upd.m_versionLabel, 13);
     XLabel_setAlignment(s_upd.m_versionLabel,
                         XAlignment_Left | XAlignment_Top);
-    XWidget_setGeometry((XWidget*)s_upd.m_versionLabel, UPD_FIELD_X, 42,
-                        640, 40);
+    /* 原手写 (116,42,640,40)→行内伸展铺宽（adapt 同语义：宽随根收放），
+     * 行高 40 固定，原点交版本行布局器。 */
+    XWidget_setFixedHeight((XWidget*)s_upd.m_versionLabel, 40);
     XWidget_show((XWidget*)s_upd.m_versionLabel);
 
     /* ---- 策略显示（最近策略/灰度 + 窗口/宽限期回显） ---- */
@@ -928,7 +978,9 @@ XWidget* demo_page_update_build(XWidget* parent,
     if (s_upd.m_capPolicy) {
         XLabel_setText_2(s_upd.m_capPolicy,
                          "\xE7\xAD\x96\xE7\x95\xA5"); /* 策略 */
-        XWidget_setGeometry((XWidget*)s_upd.m_capPolicy, 12, 92, 96, 22);
+        /* 原手写 (12,92,96,22)→固定尺寸复刻，原点交策略行标题列。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_capPolicy, 96);
+        XWidget_setFixedHeight((XWidget*)s_upd.m_capPolicy, 22);
         XWidget_show((XWidget*)s_upd.m_capPolicy);
     }
     s_upd.m_policyLabel = XLabel_create(s_upd.m_root, 0);
@@ -936,8 +988,9 @@ XWidget* demo_page_update_build(XWidget* parent,
     XLabel_setTextPixelSize(s_upd.m_policyLabel, 13);
     XLabel_setAlignment(s_upd.m_policyLabel,
                         XAlignment_Left | XAlignment_Top);
-    XWidget_setGeometry((XWidget*)s_upd.m_policyLabel, UPD_FIELD_X, 90,
-                        640, 54);
+    /* 原手写 (116,90,640,54)→行内伸展铺宽（宽随根收放），行高 54 固定
+     * （三行策略文本），原点交策略行布局器。 */
+    XWidget_setFixedHeight((XWidget*)s_upd.m_policyLabel, 54);
     XWidget_show((XWidget*)s_upd.m_policyLabel);
 
     /* ---- 服务器地址行（引擎启动前可编辑，{channel} 占位） ---- */
@@ -945,8 +998,10 @@ XWidget* demo_page_update_build(XWidget* parent,
     if (s_upd.m_urlCap) {
         XLabel_setText_2(s_upd.m_urlCap,
                          "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8"); /* 服务器 */
-        XWidget_setGeometry((XWidget*)s_upd.m_urlCap, 12, UPD_URL_Y + 3,
-                            96, 22);
+        /* 原手写 (12,UPD_URL_Y+3,96,22)→固定尺寸复刻（顶边距 +3 下沉
+         * 交包裹盒），原点交服务器行标题列。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_urlCap, 96);
+        XWidget_setFixedHeight((XWidget*)s_upd.m_urlCap, 22);
         XWidget_show((XWidget*)s_upd.m_urlCap);
     }
     s_upd.m_urlEdit = XLineEdit_create(s_upd.m_root, 0);
@@ -958,18 +1013,20 @@ XWidget* demo_page_update_build(XWidget* parent,
             XLineEdit_setText(s_upd.m_urlEdit, initial);
         }
     }
-    XWidget_setGeometry((XWidget*)s_upd.m_urlEdit, UPD_FIELD_X, UPD_URL_Y,
-                        640, 24);
+    /* 原手写 (116,UPD_URL_Y,640,24)→行内伸展铺宽（宽随根收放），行高
+     * 24 固定，原点交服务器行布局器。 */
+    XWidget_setFixedHeight((XWidget*)s_upd.m_urlEdit, 24);
     XWidget_show((XWidget*)s_upd.m_urlEdit);
 
     /* ---- 四段进度条（下载/校验/解包/激活；Progress 事件驱动） ---- */
     for (i = 0; i < 4; ++i) {
-        int y = UPD_BAR_Y0 + i * UPD_ROW_PITCH;
         s_upd.m_phaseCap[i] = XLabel_create(s_upd.m_root, 0);
         if (s_upd.m_phaseCap[i]) {
             XLabel_setText_2(s_upd.m_phaseCap[i], kPhaseCaps[i]);
-            XWidget_setGeometry((XWidget*)s_upd.m_phaseCap[i], 12, y + 3,
-                                56, 20);
+            /* 原手写 (12,y+3,56,20)→固定尺寸复刻（顶边距 +3 下沉交包裹
+             * 盒），原点交各段行盒标题列。 */
+            XWidget_setFixedWidth((XWidget*)s_upd.m_phaseCap[i], 56);
+            XWidget_setFixedHeight((XWidget*)s_upd.m_phaseCap[i], 20);
             XWidget_show((XWidget*)s_upd.m_phaseCap[i]);
         }
         s_upd.m_phaseBar[i] = XProgressBar_create(s_upd.m_root, 0);
@@ -977,8 +1034,9 @@ XWidget* demo_page_update_build(XWidget* parent,
             XProgressBar_setRange(s_upd.m_phaseBar[i], 0, 100);
             XProgressBar_setValue(s_upd.m_phaseBar[i], 0);
             XProgressBar_setTextVisible(s_upd.m_phaseBar[i], true);
-            XWidget_setGeometry((XWidget*)s_upd.m_phaseBar[i], UPD_BAR_X, y,
-                                680, 22);
+            /* 原手写 (76,y,680,22)→行内伸展铺宽（adapt 同语义：宽随根
+             * 收放），行高 22 固定，原点交各段行盒布局器。 */
+            XWidget_setFixedHeight((XWidget*)s_upd.m_phaseBar[i], 22);
             XWidget_show((XWidget*)s_upd.m_phaseBar[i]);
         }
     }
@@ -990,8 +1048,9 @@ XWidget* demo_page_update_build(XWidget* parent,
         XPushButton_setText_2(s_upd.m_checkBtn,
                               "\xE6\xA3\x80\xE6\x9F\xA5\xE6\x9B\xB4\xE6"
                               "\x96\xB0"); /* 检查更新 */
-        XWidget_setGeometry((XWidget*)s_upd.m_checkBtn, 12, UPD_BTN_Y,
-                            104, 30);
+        /* 原手写 (12,UPD_BTN_Y,104,30)→固定尺寸复刻，原点交决策行布局器。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_checkBtn, 104);
+        XWidget_setFixedHeight((XWidget*)s_upd.m_checkBtn, 30);
         XObject_connect_2((XObject*)s_upd.m_checkBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           upd_checkSlot);
@@ -1002,8 +1061,10 @@ XWidget* demo_page_update_build(XWidget* parent,
         XPushButton_setText_2(s_upd.m_skipBtn,
                               "\xE8\xB7\xB3\xE8\xBF\x87\xE6\xAD\xA4\xE7"
                               "\x89\x88\xE6\x9C\xAC"); /* 跳过此版本 */
-        XWidget_setGeometry((XWidget*)s_upd.m_skipBtn, 124, UPD_BTN_Y,
-                            96, 30);
+        /* 原手写 (124,UPD_BTN_Y,96,30)→固定尺寸复刻，原点交决策行布局器
+         * （与检查钮 8px 间距交包裹盒右边距）。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_skipBtn, 96);
+        XWidget_setFixedHeight((XWidget*)s_upd.m_skipBtn, 30);
         XObject_connect_2((XObject*)s_upd.m_skipBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           upd_skipSlot);
@@ -1017,22 +1078,28 @@ XWidget* demo_page_update_build(XWidget* parent,
         XLabel_setText_2(s_upd.m_remoteCap,
                          "\xE8\xBF\x9C\xE7\xA8\x8B\xE7\x89\x88\xE6\x9C"
                          "\xAC"); /* 远程版本 */
-        XWidget_setGeometry((XWidget*)s_upd.m_remoteCap, 230, UPD_BTN_Y + 5,
-                            64, 20);
+        /* 原手写 (230,UPD_BTN_Y+5,64,20)→固定尺寸复刻（顶边距 +5 下沉
+         * 交包裹盒），原点交决策行布局器。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_remoteCap, 64);
+        XWidget_setFixedHeight((XWidget*)s_upd.m_remoteCap, 20);
         XWidget_show((XWidget*)s_upd.m_remoteCap);
     }
     s_upd.m_remoteCombo = XComboBox_create(s_upd.m_root, 0);
     if (!s_upd.m_remoteCombo) return s_upd.m_root;
-    XWidget_setGeometry((XWidget*)s_upd.m_remoteCombo, 300,
-                        UPD_BTN_Y + 2, 268, 26);
+    /* 原手写 (300,UPD_BTN_Y+2,268,26)→固定尺寸复刻（顶边距 +2 下沉交
+     * 包裹盒），原点交决策行布局器。 */
+    XWidget_setFixedWidth((XWidget*)s_upd.m_remoteCombo, 268);
+    XWidget_setFixedHeight((XWidget*)s_upd.m_remoteCombo, 26);
     XWidget_show((XWidget*)s_upd.m_remoteCombo);
     s_upd.m_installBtn = XPushButton_create(s_upd.m_root, 0);
     if (s_upd.m_installBtn) {
         XPushButton_setText_2(s_upd.m_installBtn,
                               "\xE5\xAE\x89\xE8\xA3\x85\xE6\x89\x80\xE9\x80"
                               "\x89\xE7\x89\x88\xE6\x9C\xAC"); /* 安装所选版本 */
-        XWidget_setGeometry((XWidget*)s_upd.m_installBtn, 578,
-                            UPD_BTN_Y, 128, 30);
+        /* 原手写 (578,UPD_BTN_Y,128,30)→固定尺寸复刻，原点交决策行布局器
+         * （行尾余量留主轴末尾，同原固定排布）。 */
+        XWidget_setFixedWidth((XWidget*)s_upd.m_installBtn, 128);
+        XWidget_setFixedHeight((XWidget*)s_upd.m_installBtn, 30);
         XObject_connect_2((XObject*)s_upd.m_installBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           upd_installSelSlot);
@@ -1056,15 +1123,126 @@ XWidget* demo_page_update_build(XWidget* parent,
                      "\xE7\xBB\x9F\xE4\xB8\xB4\xE6\x97\xB6\xE7\x9B\xAE"
                      "\xE5\xBD\x95");
                      /* 服务器地址在输入行设置（首次启动后锁定）；引擎懒启动，工作区在系统临时目录 */
-        XWidget_setGeometry((XWidget*)s_upd.m_hintLabel, 12, 414, 752, 20);
+        /* 原手写 (12,414,752,20)→根盒铺宽（宽随根收放）+ 垂直弹簧钉底，
+         * 行高 20 固定（底边距 2 复刻与状态行行距）。 */
+        XWidget_setFixedHeight((XWidget*)s_upd.m_hintLabel, 20);
         XWidget_show((XWidget*)s_upd.m_hintLabel);
     }
     s_upd.m_statusLabel = XLabel_create(s_upd.m_root, 0);
     if (!s_upd.m_statusLabel) return s_upd.m_root;
     XLabel_setText_2(s_upd.m_statusLabel,
                      "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
-    XWidget_setGeometry((XWidget*)s_upd.m_statusLabel, 12, 436, 752, 22);
+    /* 原手写 (12,436,752,22)→根盒末条目铺宽贴底（adapt rootH-22 同语义，
+     * 根盒底边距 0），行高 22 固定。 */
+    XWidget_setFixedHeight((XWidget*)s_upd.m_statusLabel, 22);
     XWidget_show((XWidget*)s_upd.m_statusLabel);
+
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    /* ---- 页内布局容器化（2026-10-17）：页根挂垂直盒布局器统一分配
+     * 几何（原页内 setGeometry 手写排布全部退场）。观感对齐改造前
+     * 截图（776x458 内容区设计稿）：根边距 (12,8,12,0) 复刻原手写
+     * 原点 (12,8) 与状态行贴底；行距用水平行盒底边距近似（advanced
+     * 页同款定式）：标题行底 10、版本行底 8、策略行底 4、服务器行底
+     * 12、进度条行距 8（原 30 行距-22 条高）；进度条列与决策行间距
+     * 16、提示/状态行距 2 用固定高空隙条复刻（垂直盒的底边距按
+     * XBoxLayout_calcMetrics 计入宽提示，不用作行距）；信息标题列
+     * （96/56 宽）+8px 包裹盒右边距复刻信息列 x=116/进度条 x=76；标
+     * 题行水平弹簧把程序版本推右缘（复刻 adapt 右锚定 rootW-344）；
+     * 根盒垂直弹簧吃掉多余高度把提示/状态两行钉底（复刻 adapt
+     * rootH-44 / rootH-22）；决策行水平间距 8/10/6/10 与行内错位下沉
+     * （远程版本 +5、下拉 +2）经水平包裹盒边距复刻。挂页根即激活
+     * （attachWidget→activate），此后随 XStackedLayout 重贴根几何经
+     * resize→XLayout_activate 自动重排。 ---- */
+    XBoxLayout_init(&s_upd.m_rootLayout, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&s_upd.m_rootLayout, 12, 8, 12, 0);
+    /* 标题行：标题 300x24 + 弹簧 + 程序版本 332x20（行高 24 居中下沉
+     * 2px 复刻原 y=10）。 */
+    XBoxLayout_init(&s_upd.m_titleRow, XBoxLayoutDirection_LeftToRight);
+    XBoxLayout_addWidget(&s_upd.m_titleRow, (XWidget*)s_upd.m_titleLabel);
+    s_upd.m_titleSpring = XWidget_create(s_upd.m_root, 0);
+    if (s_upd.m_titleSpring) {
+        XWidget_show(s_upd.m_titleSpring); /* 隐藏件会被布局按空条目跳过。 */
+        XBoxLayout_addWidget(&s_upd.m_titleRow, s_upd.m_titleSpring);
+        XBoxLayout_setStretch(&s_upd.m_titleRow, 1, 1);
+    }
+    XBoxLayout_addWidget(&s_upd.m_titleRow, (XWidget*)s_upd.m_progVerLabel);
+    XLayout_setContentsMargins((XLayout*)&s_upd.m_titleRow, 0, 0, 0, 10);
+    /* 当前版本行：标题列（22+顶 2+底 16=行高 40：交叉轴装满行盒才不
+     * 触发居中，顶边距 +2 即复刻原 y=+2 顶对齐列表首行）+ 列表伸展。 */
+    XBoxLayout_init(&s_upd.m_versionRow, XBoxLayoutDirection_LeftToRight);
+    upd_wrapAdd(&s_upd.m_versionRow, (XWidget*)s_upd.m_capVersion,
+                0, 2, 8, 16);
+    XBoxLayout_addWidget(&s_upd.m_versionRow, (XWidget*)s_upd.m_versionLabel);
+    XBoxLayout_setStretch(&s_upd.m_versionRow, 1, 1);
+    XLayout_setContentsMargins((XLayout*)&s_upd.m_versionRow, 0, 0, 0, 8);
+    /* 策略行：同版本行定式（标题列 22+2+30=行高 54=策略三行）。 */
+    XBoxLayout_init(&s_upd.m_policyRow, XBoxLayoutDirection_LeftToRight);
+    upd_wrapAdd(&s_upd.m_policyRow, (XWidget*)s_upd.m_capPolicy,
+                0, 2, 8, 30);
+    XBoxLayout_addWidget(&s_upd.m_policyRow, (XWidget*)s_upd.m_policyLabel);
+    XBoxLayout_setStretch(&s_upd.m_policyRow, 1, 1);
+    XLayout_setContentsMargins((XLayout*)&s_upd.m_policyRow, 0, 0, 0, 4);
+    /* 服务器行：标题列（顶边距 +3 复刻原 UPD_URL_Y+3 下沉）+ 输入行伸展。 */
+    XBoxLayout_init(&s_upd.m_urlRow, XBoxLayoutDirection_LeftToRight);
+    upd_wrapAdd(&s_upd.m_urlRow, (XWidget*)s_upd.m_urlCap, 0, 3, 8, 0);
+    XBoxLayout_addWidget(&s_upd.m_urlRow, (XWidget*)s_upd.m_urlEdit);
+    XBoxLayout_setStretch(&s_upd.m_urlRow, 1, 1);
+    XLayout_setContentsMargins((XLayout*)&s_upd.m_urlRow, 0, 0, 0, 12);
+    /* 四段进度条列：各段行盒=标题列（顶边距 +3 同原 y+3 下沉）+ 条伸展；
+     * 行距复刻原 30（标题列下沉后 23 高 + 行盒底 7）。 */
+    XBoxLayout_init(&s_upd.m_barsCol, XBoxLayoutDirection_TopToBottom);
+    for (i = 0; i < 4; ++i) {
+        XBoxLayout_init(&s_upd.m_barRows[i], XBoxLayoutDirection_LeftToRight);
+        upd_wrapAdd(&s_upd.m_barRows[i], (XWidget*)s_upd.m_phaseCap[i],
+                    0, 3, 8, 0);
+        XBoxLayout_addWidget(&s_upd.m_barRows[i],
+                             (XWidget*)s_upd.m_phaseBar[i]);
+        XBoxLayout_setStretch(&s_upd.m_barRows[i], 1, 1);
+        XLayout_setContentsMargins((XLayout*)&s_upd.m_barRows[i],
+                                   0, 0, 0, i < 3 ? 7 : 0);
+        XBoxLayout_addLayout(&s_upd.m_barsCol, (XLayout*)&s_upd.m_barRows[i]);
+    }
+    /* 决策+安装单行：水平间距 8/10/6/10 与行内错位下沉经包裹盒边距
+     * 复刻（远程版本 20+5+5=30、下拉 26+2+2=30 装满行高防居中）；
+     * 安装钮后余量留主轴末尾（同原固定排布不右锚定）。 */
+    XBoxLayout_init(&s_upd.m_buttonRow, XBoxLayoutDirection_LeftToRight);
+    upd_wrapAdd(&s_upd.m_buttonRow, (XWidget*)s_upd.m_checkBtn, 0, 0, 8, 0);
+    upd_wrapAdd(&s_upd.m_buttonRow, (XWidget*)s_upd.m_skipBtn, 0, 0, 10, 0);
+    upd_wrapAdd(&s_upd.m_buttonRow, (XWidget*)s_upd.m_remoteCap, 0, 5, 6, 5);
+    upd_wrapAdd(&s_upd.m_buttonRow, (XWidget*)s_upd.m_remoteCombo,
+                0, 2, 10, 2);
+    XBoxLayout_addWidget(&s_upd.m_buttonRow, (XWidget*)s_upd.m_installBtn);
+    /* 根装配：以上行/列按序入根盒；进度条列→决策行间 16px、提示→状态
+     * 行间 2px 用固定高空隙条复刻；垂直弹簧吃掉全部多余高度，提示/状
+     * 态两行钉底。 */
+    XBoxLayout_addLayout(&s_upd.m_rootLayout, (XLayout*)&s_upd.m_titleRow);
+    XBoxLayout_addLayout(&s_upd.m_rootLayout, (XLayout*)&s_upd.m_versionRow);
+    XBoxLayout_addLayout(&s_upd.m_rootLayout, (XLayout*)&s_upd.m_policyRow);
+    XBoxLayout_addLayout(&s_upd.m_rootLayout, (XLayout*)&s_upd.m_urlRow);
+    XBoxLayout_addLayout(&s_upd.m_rootLayout, (XLayout*)&s_upd.m_barsCol);
+    s_upd.m_barsGap = XWidget_create(s_upd.m_root, 0);
+    if (s_upd.m_barsGap) {
+        XWidget_show(s_upd.m_barsGap); /* 隐藏件会被布局按空条目跳过。 */
+        XWidget_setFixedHeight(s_upd.m_barsGap, 16);
+        XBoxLayout_addWidget(&s_upd.m_rootLayout, s_upd.m_barsGap);
+    }
+    XBoxLayout_addLayout(&s_upd.m_rootLayout, (XLayout*)&s_upd.m_buttonRow);
+    s_upd.m_vSpring = XWidget_create(s_upd.m_root, 0);
+    if (s_upd.m_vSpring) {
+        XWidget_show(s_upd.m_vSpring); /* 隐藏件会被布局按空条目跳过。 */
+        XBoxLayout_addWidget(&s_upd.m_rootLayout, s_upd.m_vSpring);
+        XBoxLayout_setStretch(&s_upd.m_rootLayout, 7, 1);
+    }
+    XBoxLayout_addWidget(&s_upd.m_rootLayout, (XWidget*)s_upd.m_hintLabel);
+    s_upd.m_hintGap = XWidget_create(s_upd.m_root, 0);
+    if (s_upd.m_hintGap) {
+        XWidget_show(s_upd.m_hintGap); /* 隐藏件会被布局按空条目跳过。 */
+        XWidget_setFixedHeight(s_upd.m_hintGap, 2);
+        XBoxLayout_addWidget(&s_upd.m_rootLayout, s_upd.m_hintGap);
+    }
+    XBoxLayout_addWidget(&s_upd.m_rootLayout, (XWidget*)s_upd.m_statusLabel);
+    XWidget_setLayout(s_upd.m_root, (XLayout*)&s_upd.m_rootLayout);
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 
     /* ---- 跨线程事件队列 + UI 泵定时器（懒启动成功才 start） ---- */
     s_upd.m_queueMutex = XMutex_create(XLock_NonRecursive);
@@ -1084,55 +1262,16 @@ XWidget* demo_page_update_build(XWidget* parent,
 
 /* ==================== 自适应重排（xgui_demo_pages.h 契约） ============ */
 
+/** @brief 自适应重排（xgui_demo_pages.h 契约）：保留签名，空实现。
+ *  @details 2026-10-17 页内布局容器化：几何分配全权移交页根 XBoxLayout
+ *           （build 一次装配）——XStackedLayout 重贴根几何时经
+ *           resize→XLayout_activate 自动重排，信息列/进度条随根宽收放、
+ *           提示/状态两行钉底、程序版本行右锚定等原 adapt 语义由布局器
+ *           持续保持，本函数无事可做；主文件 demo_layout_content 调用点
+ *           保持不动。 */
 void demo_page_update_adapt(XWidget* page)
 {
-    int rootW;
-    int rootH;
-    int i;
-    if (!page || page != s_upd.m_root) return;
-    rootW = XWidget_width(page);
-    rootH = XWidget_height(page);
-    if (rootW < 360 || rootH < 300) return; /* 过窄保持装配几何。 */
-    /* 信息列与进度条随根宽收放；提示/状态两行钉底（同网络页契约）。 */
-    if (s_upd.m_progVerLabel)
-        XWidget_setGeometry((XWidget*)s_upd.m_progVerLabel,
-                            rootW - 344, 10, 332, 20);
-    if (s_upd.m_versionLabel)
-        XWidget_setGeometry((XWidget*)s_upd.m_versionLabel, UPD_FIELD_X, 42,
-                            rootW - UPD_FIELD_X - 12, 40);
-    if (s_upd.m_policyLabel)
-        XWidget_setGeometry((XWidget*)s_upd.m_policyLabel, UPD_FIELD_X, 90,
-                            rootW - UPD_FIELD_X - 12, 54);
-    for (i = 0; i < 4; ++i) {
-        int y = UPD_BAR_Y0 + i * UPD_ROW_PITCH;
-        if (s_upd.m_phaseBar[i])
-            XWidget_setGeometry((XWidget*)s_upd.m_phaseBar[i], UPD_BAR_X, y,
-                                rootW - UPD_BAR_X - 12, 22);
-    }
-    /* 服务器地址行与 build 同一常量口径（行 y=UPD_URL_Y，宽随根宽收放）；
-     * 缺此段时 resize 后条回旧位 152 压住 URL 行（2026-10-07 布局遮挡根因）。 */
-    if (s_upd.m_urlCap)
-        XWidget_setGeometry((XWidget*)s_upd.m_urlCap, 12, UPD_URL_Y + 3,
-                            96, 22);
-    if (s_upd.m_urlEdit)
-        XWidget_setGeometry((XWidget*)s_upd.m_urlEdit, UPD_FIELD_X, UPD_URL_Y,
-                            rootW - UPD_FIELD_X - 12, 24);
-    /* 决策+安装单行与 build 同常量口径（固定排布，窄根不重排）。 */
-    if (s_upd.m_remoteCap)
-        XWidget_setGeometry((XWidget*)s_upd.m_remoteCap, 230, UPD_BTN_Y + 5,
-                            64, 20);
-    if (s_upd.m_remoteCombo)
-        XWidget_setGeometry((XWidget*)s_upd.m_remoteCombo, 300,
-                            UPD_BTN_Y + 2, 268, 26);
-    if (s_upd.m_installBtn)
-        XWidget_setGeometry((XWidget*)s_upd.m_installBtn, 578,
-                            UPD_BTN_Y, 128, 30);
-    if (s_upd.m_hintLabel)
-        XWidget_setGeometry((XWidget*)s_upd.m_hintLabel, 12, rootH - 44,
-                            rootW - 24, 20);
-    if (s_upd.m_statusLabel)
-        XWidget_setGeometry((XWidget*)s_upd.m_statusLabel, 12, rootH - 22,
-                            rootW - 24, 22);
+    (void)page;
 }
 
 /* ==================== 退出清理（xgui_demo_pages.h 契约） ============== */

@@ -33,6 +33,7 @@
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XWidget.h"
+#include "XBoxLayout.h"
 #include "XLabel.h"
 #include "XCheckBox.h"
 #include "XComboBox.h"
@@ -41,11 +42,14 @@
 #include "xgui_demo_pages.h"
 
 /*
- * 控件段宏守卫：悬浮层编译开关 + CheckBox/ComboBox/PushButton/Label。
- * 任一被裁剪时降级为契约桩（build 返回 NULL、autotest 返回 -1）。
+ * 控件段宏守卫：悬浮层编译开关 + CheckBox/ComboBox/PushButton/Label；
+ * 2026-10-17 容器化后排布由 XBoxLayout 承载，再一并依赖
+ * XLAYOUT/XLAYOUT_BOX。任一被裁剪时降级为契约桩（build 返回 NULL、
+ * autotest 返回 -1）。
  */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON && \
-    XCHECKBOX_ON && XCOMBOBOX_ON && XPUSHBUTTON_ON
+    XCHECKBOX_ON && XCOMBOBOX_ON && XPUSHBUTTON_ON && XLAYOUT_ON && \
+    XLAYOUT_BOX_ON
 
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
 
@@ -93,6 +97,13 @@ static struct
     XLabel*      m_statusLabel;  /**< 操作结果行（钉底）。 */
 
     bool         m_syncing;      /**< 回读同步中（抑制状态行刷屏）。 */
+
+    /* ---- 布局器（2026-10-17 容器化；build 装配段挂根，静态自持） ---- */
+    XBoxLayout   m_rootLayout;   /**< 根垂直布局器（页内唯一 setLayout）。 */
+    XBoxLayout   m_rowsRow;      /**< 「显示数据」五行开关行（水平）。 */
+    XBoxLayout   m_memRow;       /**< 「内存行」两组下拉行（水平）。 */
+    XBoxLayout   m_posRow;       /**< 「位置」预设+开关行（水平）。 */
+    XBoxLayout   m_styleRow;     /**< 「外观」字号+开关行（水平）。 */
 } s_ov;
 
 /* ==================== 内部辅助 ==================== */
@@ -368,27 +379,27 @@ static void ov_resetSlot(XObject* receiver, XVarList* args)
 
 /* ==================== 装配 ==================== */
 
-/** @brief 组装一个分组标题行（13px 小字）。 */
-static XLabel* ov_buildCaption(const char* text, int x, int y)
+/** @brief 组装一个分组标题（13px 小字；高度固定 20，宽度随文字）。 */
+static XLabel* ov_buildCaption(const char* text)
 {
     XLabel* label = XLabel_create(s_ov.m_root, 0);
     if (label) {
         XLabel_setText_2(label, text);
         XLabel_setTextPixelSize(label, 13);
-        XWidget_setGeometry((XWidget*)label, x, y, 320, 20);
+        XWidget_setFixedHeight((XWidget*)label, 20);
         XWidget_show((XWidget*)label);
     }
     return label;
 }
 
-/** @brief 组装一个开关复选框。 */
-static XCheckBox* ov_buildCheck(const char* text, int x, int y, int w,
-                                XSlotFunc2 slot)
+/** @brief 组装一个开关复选框（宽 w 高 22）。 */
+static XCheckBox* ov_buildCheck(const char* text, int w, XSlotFunc2 slot)
 {
     XCheckBox* check = XCheckBox_create(s_ov.m_root, 0);
     if (check) {
         XAbstractButton_setText_2((XAbstractButton*)check, text);
-        XWidget_setGeometry((XWidget*)check, x, y, w, 22);
+        XWidget_setFixedWidth((XWidget*)check, w);
+        XWidget_setFixedHeight((XWidget*)check, 22);
         if (slot)
             XObject_connect_2((XObject*)check,
                               XSignal(XAbstractButton_toggled_signal), slot);
@@ -420,31 +431,32 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
                      "\xE6\x82\xAC\xE6\xB5\xAE\xE7\xAA\x97\xE8\xAE\xBE"
                      "\xE7\xBD\xAE"); /* 悬浮窗设置 */
     XLabel_setTextPixelSize(s_ov.m_titleLabel, 15);
-    XWidget_setGeometry((XWidget*)s_ov.m_titleLabel, 12, 8, 300, 24);
+    XWidget_setFixedHeight((XWidget*)s_ov.m_titleLabel, 24);
     XWidget_show((XWidget*)s_ov.m_titleLabel);
 
     /* ---- 显示数据 ---- */
     s_ov.m_capRows = ov_buildCaption(
-        "\xE6\x98\xBE\xE7\xA4\xBA\xE6\x95\xB0\xE6\x8D\xAE", 12, 40);
-    s_ov.m_fpsCheck = ov_buildCheck("FPS", 24, 64, 90, ov_fpsSlot);
+        "\xE6\x98\xBE\xE7\xA4\xBA\xE6\x95\xB0\xE6\x8D\xAE");
+    s_ov.m_fpsCheck = ov_buildCheck("FPS", 90, ov_fpsSlot);
     s_ov.m_frameCheck = ov_buildCheck(
-        "\xE5\xB8\xA7\xE8\x80\x97\xE6\x97\xB6", 124, 64, 110,
+        "\xE5\xB8\xA7\xE8\x80\x97\xE6\x97\xB6", 110,
         ov_frameSlot); /* 帧耗时 */
-    s_ov.m_sysCheck = ov_buildCheck("CPU/GPU", 244, 64, 120, ov_sysSlot);
+    s_ov.m_sysCheck = ov_buildCheck("CPU/GPU", 120, ov_sysSlot);
     s_ov.m_netCheck = ov_buildCheck(
-        "\xE7\xBD\x91\xE7\xBB\x9C", 374, 64, 100, ov_netSlot); /* 网络 */
+        "\xE7\xBD\x91\xE7\xBB\x9C", 100, ov_netSlot); /* 网络 */
     s_ov.m_memCheck = ov_buildCheck(
-        "\xE5\x86\x85\xE5\xAD\x98", 484, 64, 100, ov_memSlot); /* 内存 */
+        "\xE5\x86\x85\xE5\xAD\x98", 100, ov_memSlot); /* 内存 */
 
     /* ---- 内存行 ---- */
     s_ov.m_capMem = ov_buildCaption(
-        "\xE5\x86\x85\xE5\xAD\x98\xE8\xA1\x8C", 12, 96); /* 内存行 */
+        "\xE5\x86\x85\xE5\xAD\x98\xE8\xA1\x8C"); /* 内存行 */
     s_ov.m_capMemDisp = XLabel_create(s_ov.m_root, 0);
     if (s_ov.m_capMemDisp) {
         XLabel_setText_2(s_ov.m_capMemDisp,
                          "\xE6\x98\xBE\xE7\xA4\xBA\xE7\xA7\x8D\xE7\xB1"
                          "\xBB"); /* 显示种类 */
-        XWidget_setGeometry((XWidget*)s_ov.m_capMemDisp, 24, 122, 64, 22);
+        XWidget_setFixedWidth((XWidget*)s_ov.m_capMemDisp, 64);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_capMemDisp, 22);
         XWidget_show((XWidget*)s_ov.m_capMemDisp);
     }
     s_ov.m_memDispCombo = XComboBox_create(s_ov.m_root, 0);
@@ -456,7 +468,8 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
     XComboBox_addItem_2(s_ov.m_memDispCombo,
                         "\xE4\xB8\xA4\xE8\x80\x85\xE9\x83\xBD\xE6\x98\xBE"
                         "\xE7\xA4\xBA"); /* 两者都显示 */
-    XWidget_setGeometry((XWidget*)s_ov.m_memDispCombo, 94, 120, 170, 26);
+    XWidget_setFixedWidth((XWidget*)s_ov.m_memDispCombo, 170);
+    XWidget_setFixedHeight((XWidget*)s_ov.m_memDispCombo, 26);
     XObject_connect_2((XObject*)s_ov.m_memDispCombo,
                       XSignal(XComboBox_activated_signal), ov_memDispSlot);
     XWidget_show((XWidget*)s_ov.m_memDispCombo);
@@ -465,7 +478,8 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
         XLabel_setText_2(s_ov.m_capMemSrc,
                          "\xE6\x95\xB0\xE6\x8D\xAE\xE6\x9D\xA5\xE6\xBA"
                          "\x90"); /* 数据来源 */
-        XWidget_setGeometry((XWidget*)s_ov.m_capMemSrc, 296, 122, 64, 22);
+        XWidget_setFixedWidth((XWidget*)s_ov.m_capMemSrc, 64);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_capMemSrc, 22);
         XWidget_show((XWidget*)s_ov.m_capMemSrc);
     }
     s_ov.m_memSrcCombo = XComboBox_create(s_ov.m_root, 0);
@@ -478,20 +492,22 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
     XComboBox_addItem_2(s_ov.m_memSrcCombo,
                         "\xE5\xBA\x93\xE5\x86\x85\xE5\x86\x85\xE5\xAD\x98");
                         /* 库内内存 */
-    XWidget_setGeometry((XWidget*)s_ov.m_memSrcCombo, 366, 120, 190, 26);
+    XWidget_setFixedWidth((XWidget*)s_ov.m_memSrcCombo, 190);
+    XWidget_setFixedHeight((XWidget*)s_ov.m_memSrcCombo, 26);
     XObject_connect_2((XObject*)s_ov.m_memSrcCombo,
                       XSignal(XComboBox_activated_signal), ov_memSrcSlot);
     XWidget_show((XWidget*)s_ov.m_memSrcCombo);
 
     /* ---- 位置 ---- */
     s_ov.m_capPos = ov_buildCaption(
-        "\xE4\xBD\x8D\xE7\xBD\xAE", 12, 152); /* 位置 */
+        "\xE4\xBD\x8D\xE7\xBD\xAE"); /* 位置 */
     s_ov.m_capPreset = XLabel_create(s_ov.m_root, 0);
     if (s_ov.m_capPreset) {
         XLabel_setText_2(s_ov.m_capPreset,
                          "\xE9\xA2\x84\xE8\xAE\xBE\xE4\xBD\x8D\xE7\xBD"
                          "\xAE"); /* 预设位置 */
-        XWidget_setGeometry((XWidget*)s_ov.m_capPreset, 24, 178, 64, 22);
+        XWidget_setFixedWidth((XWidget*)s_ov.m_capPreset, 64);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_capPreset, 22);
         XWidget_show((XWidget*)s_ov.m_capPreset);
     }
     s_ov.m_presetCombo = XComboBox_create(s_ov.m_root, 0);
@@ -515,25 +531,27 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
     XComboBox_addItem_2(s_ov.m_presetCombo,
                         "\xE5\x8F\xB3\xE4\xB8\x8B");   /* 右下 */
     XComboBox_setCurrentIndex(s_ov.m_presetCombo, 8);
-    XWidget_setGeometry((XWidget*)s_ov.m_presetCombo, 94, 176, 170, 26);
+    XWidget_setFixedWidth((XWidget*)s_ov.m_presetCombo, 170);
+    XWidget_setFixedHeight((XWidget*)s_ov.m_presetCombo, 26);
     XObject_connect_2((XObject*)s_ov.m_presetCombo,
                       XSignal(XComboBox_activated_signal), ov_presetSlot);
     XWidget_show((XWidget*)s_ov.m_presetCombo);
     s_ov.m_fixedCheck = ov_buildCheck(
-        "\xE5\x9B\xBA\xE5\xAE\x9A\xE4\xBD\x8D\xE7\xBD\xAE", 300, 178,
-        110, ov_fixedSlot); /* 固定位置 */
+        "\xE5\x9B\xBA\xE5\xAE\x9A\xE4\xBD\x8D\xE7\xBD\xAE", 110,
+        ov_fixedSlot); /* 固定位置 */
     s_ov.m_movableCheck = ov_buildCheck(
-        "\xE5\x85\x81\xE8\xAE\xB8\xE6\x8B\x96\xE5\x8A\xA8", 420, 178,
-        110, ov_movableSlot); /* 允许拖动 */
+        "\xE5\x85\x81\xE8\xAE\xB8\xE6\x8B\x96\xE5\x8A\xA8", 110,
+        ov_movableSlot); /* 允许拖动 */
 
     /* ---- 外观 ---- */
     s_ov.m_capStyle = ov_buildCaption(
-        "\xE5\xA4\x96\xE8\xA7\x82", 12, 208); /* 外观 */
+        "\xE5\xA4\x96\xE8\xA7\x82"); /* 外观 */
     s_ov.m_capFont = XLabel_create(s_ov.m_root, 0);
     if (s_ov.m_capFont) {
         XLabel_setText_2(s_ov.m_capFont,
                          "\xE5\xAD\x97\xE5\x8F\xB7"); /* 字号 */
-        XWidget_setGeometry((XWidget*)s_ov.m_capFont, 24, 234, 64, 22);
+        XWidget_setFixedWidth((XWidget*)s_ov.m_capFont, 64);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_capFont, 22);
         XWidget_show((XWidget*)s_ov.m_capFont);
     }
     s_ov.m_fontCombo = XComboBox_create(s_ov.m_root, 0);
@@ -544,13 +562,14 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
     XComboBox_addItem_2(s_ov.m_fontCombo, "16");
     XComboBox_addItem_2(s_ov.m_fontCombo, "18");
     XComboBox_setCurrentIndex(s_ov.m_fontCombo, 3);
-    XWidget_setGeometry((XWidget*)s_ov.m_fontCombo, 94, 232, 120, 26);
+    XWidget_setFixedWidth((XWidget*)s_ov.m_fontCombo, 120);
+    XWidget_setFixedHeight((XWidget*)s_ov.m_fontCombo, 26);
     XObject_connect_2((XObject*)s_ov.m_fontCombo,
                       XSignal(XComboBox_activated_signal), ov_fontSlot);
     XWidget_show((XWidget*)s_ov.m_fontCombo);
     s_ov.m_autofitCheck = ov_buildCheck(
         "\xE8\x87\xAA\xE9\x80\x82\xE5\xBA\x94\xE5\xB0\xBA\xE5\xAF\xB8",
-        240, 234, 140, ov_autofitSlot); /* 自适应尺寸 */
+        140, ov_autofitSlot); /* 自适应尺寸 */
 
     /* ---- 操作与反馈 ---- */
     s_ov.m_resetBtn = XPushButton_create(s_ov.m_root, 0);
@@ -558,7 +577,8 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
     XPushButton_setText_2(s_ov.m_resetBtn,
                           "\xE5\xA4\x8D\xE4\xBD\x8D\xE9\xBB\x98\xE8\xAE"
                           "\xA4"); /* 复位默认 */
-    XWidget_setGeometry((XWidget*)s_ov.m_resetBtn, 12, 272, 110, 30);
+    XWidget_setFixedWidth((XWidget*)s_ov.m_resetBtn, 110);
+    XWidget_setFixedHeight((XWidget*)s_ov.m_resetBtn, 30);
     XObject_connect_2((XObject*)s_ov.m_resetBtn,
                       XSignal(XAbstractButton_clicked_signal), ov_resetSlot);
     XWidget_show((XWidget*)s_ov.m_resetBtn);
@@ -574,15 +594,97 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
                          "\x8B\xE8\xA7\x92");
                          /* 改动即时生效；选预设位置后窗口缩放不再自动贴右下角 */
         XLabel_setTextPixelSize(s_ov.m_hintLabel, 12);
-        XWidget_setGeometry((XWidget*)s_ov.m_hintLabel, 12, 312, 660, 20);
+        XWidget_setFixedHeight((XWidget*)s_ov.m_hintLabel, 20);
         XWidget_show((XWidget*)s_ov.m_hintLabel);
     }
     s_ov.m_statusLabel = XLabel_create(s_ov.m_root, 0);
     if (!s_ov.m_statusLabel) return s_ov.m_root;
     XLabel_setText_2(s_ov.m_statusLabel,
                      "\xE5\xB0\xB1\xE7\xBB\xAA"); /* 就绪 */
-    XWidget_setGeometry((XWidget*)s_ov.m_statusLabel, 12, 336, 660, 22);
+    XWidget_setFixedHeight((XWidget*)s_ov.m_statusLabel, 22);
     XWidget_show((XWidget*)s_ov.m_statusLabel);
+
+    /* ---- 布局装配（2026-10-17 容器化）：根垂直布局六组----
+     * [标题][显示数据][内存行][位置][外观][复位+伸展+提示/状态贴底]；
+     * 段间 addSpacing 近似原设计稿节奏（8/4/10/4/6/4/6/4/14），行内
+     * 间距用行级 spacing/加间距，行高由各控件固定高承载。 */
+    XBoxLayout_init(&s_ov.m_rootLayout, XBoxLayoutDirection_TopToBottom);
+    XLayout_setSpacing((XLayout*)&s_ov.m_rootLayout, 0);
+    XLayout_setContentsMargins((XLayout*)&s_ov.m_rootLayout, 12, 8, 12, 8);
+    XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_titleLabel);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 8);
+    XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_capRows);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 4);
+    /* 显示数据行：行左缩进 12（对齐原 x=24 起排），五开关等距 10。 */
+    XBoxLayout_init(&s_ov.m_rowsRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_ov.m_rowsRow, 10);
+    XLayout_setContentsMargins((XLayout*)&s_ov.m_rowsRow, 12, 0, 0, 0);
+    XBoxLayout_addWidget(&s_ov.m_rowsRow, (XWidget*)s_ov.m_fpsCheck);
+    XBoxLayout_addWidget(&s_ov.m_rowsRow, (XWidget*)s_ov.m_frameCheck);
+    XBoxLayout_addWidget(&s_ov.m_rowsRow, (XWidget*)s_ov.m_sysCheck);
+    XBoxLayout_addWidget(&s_ov.m_rowsRow, (XWidget*)s_ov.m_netCheck);
+    XBoxLayout_addWidget(&s_ov.m_rowsRow, (XWidget*)s_ov.m_memCheck);
+    /* 行尾伸展：余量留行尾，保持行内左对齐原节奏。 */
+    XBoxLayout_addStretch(&s_ov.m_rowsRow, 1);
+    XBoxLayout_addLayout(&s_ov.m_rootLayout, (XLayout*)&s_ov.m_rowsRow);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 10);
+    XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_capMem);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 4);
+    /* 内存行：显示种类|6|下拉 · 32 · 数据来源|6|下拉（VC 对齐 26 行高）。 */
+    XBoxLayout_init(&s_ov.m_memRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_ov.m_memRow, 0);
+    XLayout_setContentsMargins((XLayout*)&s_ov.m_memRow, 12, 0, 0, 0);
+    XBoxLayout_addWidget(&s_ov.m_memRow, (XWidget*)s_ov.m_capMemDisp);
+    XBoxLayout_addSpacing(&s_ov.m_memRow, 6);
+    XBoxLayout_addWidget(&s_ov.m_memRow, (XWidget*)s_ov.m_memDispCombo);
+    XBoxLayout_addSpacing(&s_ov.m_memRow, 32);
+    XBoxLayout_addWidget(&s_ov.m_memRow, (XWidget*)s_ov.m_capMemSrc);
+    XBoxLayout_addSpacing(&s_ov.m_memRow, 6);
+    XBoxLayout_addWidget(&s_ov.m_memRow, (XWidget*)s_ov.m_memSrcCombo);
+    /* 行尾伸展：余量留行尾，保持行内左对齐原节奏。 */
+    XBoxLayout_addStretch(&s_ov.m_memRow, 1);
+    XBoxLayout_addLayout(&s_ov.m_rootLayout, (XLayout*)&s_ov.m_memRow);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 6);
+    XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_capPos);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 4);
+    /* 位置行：预设位置|6|下拉 · 36 · 固定|10 · 允许拖动。 */
+    XBoxLayout_init(&s_ov.m_posRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_ov.m_posRow, 0);
+    XLayout_setContentsMargins((XLayout*)&s_ov.m_posRow, 12, 0, 0, 0);
+    XBoxLayout_addWidget(&s_ov.m_posRow, (XWidget*)s_ov.m_capPreset);
+    XBoxLayout_addSpacing(&s_ov.m_posRow, 6);
+    XBoxLayout_addWidget(&s_ov.m_posRow, (XWidget*)s_ov.m_presetCombo);
+    XBoxLayout_addSpacing(&s_ov.m_posRow, 36);
+    XBoxLayout_addWidget(&s_ov.m_posRow, (XWidget*)s_ov.m_fixedCheck);
+    XBoxLayout_addSpacing(&s_ov.m_posRow, 10);
+    XBoxLayout_addWidget(&s_ov.m_posRow, (XWidget*)s_ov.m_movableCheck);
+    /* 行尾伸展：余量留行尾，保持行内左对齐原节奏。 */
+    XBoxLayout_addStretch(&s_ov.m_posRow, 1);
+    XBoxLayout_addLayout(&s_ov.m_rootLayout, (XLayout*)&s_ov.m_posRow);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 6);
+    XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_capStyle);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 4);
+    /* 外观行：字号|6|下拉 · 26 · 自适应尺寸。 */
+    XBoxLayout_init(&s_ov.m_styleRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_ov.m_styleRow, 0);
+    XLayout_setContentsMargins((XLayout*)&s_ov.m_styleRow, 12, 0, 0, 0);
+    XBoxLayout_addWidget(&s_ov.m_styleRow, (XWidget*)s_ov.m_capFont);
+    XBoxLayout_addSpacing(&s_ov.m_styleRow, 6);
+    XBoxLayout_addWidget(&s_ov.m_styleRow, (XWidget*)s_ov.m_fontCombo);
+    XBoxLayout_addSpacing(&s_ov.m_styleRow, 26);
+    XBoxLayout_addWidget(&s_ov.m_styleRow,
+                           (XWidget*)s_ov.m_autofitCheck);
+    /* 行尾伸展：余量留行尾，保持行内左对齐原节奏。 */
+    XBoxLayout_addStretch(&s_ov.m_styleRow, 1);
+    XBoxLayout_addLayout(&s_ov.m_rootLayout, (XLayout*)&s_ov.m_styleRow);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 14);
+    XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_resetBtn);
+    XBoxLayout_addStretch(&s_ov.m_rootLayout, 1);
+    XBoxLayout_addWidget(&s_ov.m_rootLayout, (XWidget*)s_ov.m_hintLabel);
+    XBoxLayout_addSpacing(&s_ov.m_rootLayout, 6);
+    XBoxLayout_addWidget(&s_ov.m_rootLayout,
+                         (XWidget*)s_ov.m_statusLabel);
+    XWidget_setLayout(s_ov.m_root, (XLayout*)&s_ov.m_rootLayout);
 
     /* ---- 控件初值 ← 悬浮层当前态 ---- */
     ov_syncFromOverlay();
@@ -595,18 +697,10 @@ XWidget* demo_page_overlay_settings_build(XWidget* parent,
 
 void demo_page_overlay_settings_adapt(XWidget* page)
 {
-    int rootW;
-    int rootH;
-    if (!page || page != s_ov.m_root) return;
-    rootW = XWidget_width(page);
-    rootH = XWidget_height(page);
-    if (rootW < 360 || rootH < 300) return; /* 过窄保持装配几何。 */
-    if (s_ov.m_hintLabel)
-        XWidget_setGeometry((XWidget*)s_ov.m_hintLabel, 12, rootH - 56,
-                            rootW - 24, 20);
-    if (s_ov.m_statusLabel)
-        XWidget_setGeometry((XWidget*)s_ov.m_statusLabel, 12, rootH - 30,
-                            rootW - 24, 22);
+    /* 2026-10-17 容器化：页内排布全部交给根布局器（提示/状态行经
+     * stretch 贴底、随根几何自动重排），此处不再做任何手写几何；
+     * 契约签名保留（主文件调用点不动）。 */
+    (void)page;
 }
 
 /* ==================== autotest ==================== */

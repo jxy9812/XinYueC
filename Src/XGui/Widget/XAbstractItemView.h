@@ -151,6 +151,7 @@ typedef struct XFont XFont;
 XCLASS_DEFINE_BEGING(XAbstractItemView)
 XCLASS_DEFINE_ENUM(XAbstractItemView, IndexAt) = XCLASS_VTABLE_GET_SIZE(XAbstractScrollArea),
 XCLASS_DEFINE_ENUM(XAbstractItemView, VisualRect),
+XCLASS_DEFINE_ENUM(XAbstractItemView, ShouldEdit),
 XCLASS_DEFINE_END(XAbstractItemView)
 
 /**
@@ -209,14 +210,13 @@ typedef struct XAbstractItemView
     uint8_t m_searchPrefixLen;       /**< 前缀长度（不含 NUL；0=无前缀；容量 64，实际 ≤63）。 */
     uint8_t m_alternatingRowColors : 1; /**< 交替行色（默认 false）。 */
     uint8_t m_autoScroll : 1;        /**< 自动滚动（默认 true）。 */
-    uint8_t m_keyboardSearch : 1;    /**< 键盘搜索开关（默认 true）。 */
     uint8_t m_tabKeyNavigation : 1;  /**< Tab 键焦点导航（默认 false）。 */
     uint8_t m_showDropIndicator : 1; /**< 是否显示拖放指示器（默认 true）。 */
     uint8_t m_dragEnabled : 1;       /**< 允许拖出条目（默认 false）。 */
     uint8_t m_dragDropOverwriteMode : 1; /**< 拖放覆盖模式（基类默认 false，见 Qt 文档）。 */
     uint8_t m_editCommitted : 1;     /**< 本次编辑会话已提交（commitData 幂等门禁；对标 Qt 提交/回退分支判定）。 */
     uint8_t m_editClosing : 1;       /**< 编辑器关闭流程进行中（抑制编辑器失焦回调重入）。 */
-    uint8_t m_itemsEditable : 1;     /**< 条目可编辑门禁（对标 model flags ItemIsEditable 的视图侧承载；默认 false 保持既有行为）。 */
+    uint8_t m_itemsEditable : 1;     /**< 条目可编辑总闸（视图侧；缺省 false。细化判定经 ShouldEdit 虚槽——表格派生叠加 per-item ItemIsEditable flags，对标 Qt model flags&view editTriggers 的合取）。 */
     /* 键盘搜索累积状态（每视图实例承载；对标 Qt keyboardSearch 的
      * 视图私有 m_keyboardSearchPrefix/时间戳——此前为全库共享静态缓冲，
      * 多视图交替键入时互相污染前缀）。 */
@@ -694,24 +694,10 @@ void* XAbstractItemView_indexWidget(const XAbstractItemView* self,
 /* ==================== 键盘与导航（对标 QAbstractItemView） ==================== */
 
 /**
- * @brief 设置键盘搜索开关（对标 setKeyboardSearch）。
- *
- *        键盘搜索指直接键入文字时按前缀渐进匹配并跳转到对应条目。
- *        行为本体见 XAbstractItemView_keyboardSearch_2。
- *
- * @param self 目标视图指针。
- * @param enable true 启用（默认）。
- * @return 无返回值。
- */
-void XAbstractItemView_setKeyboardSearch(XAbstractItemView* self, bool enable);
-/**
- * @brief 查询键盘搜索开关（对标 keyboardSearch 状态语义）。
- * @param self 目标视图指针。
- * @return 启用返回 true。
- */
-bool XAbstractItemView_keyboardSearch(const XAbstractItemView* self);
-/**
- * @brief 键盘搜索行为本体（对标 Qt 6.8 keyboardSearch(const QString&)）。
+ * @brief 键盘搜索（对标 Qt 6.8 keyboardSearch(const QString&)）。
+ *        [10-19 对齐] 原同名开关 getter 与 keyboardSearch_2 后缀变体
+ *        删除，行为本体收编至 Qt 名（Qt keyboardSearch 无开关，按键
+ *        路径无条件进入搜索）。
  *
  *        语义：2000ms 内连续调用时将 text 追加为累积前缀（超时则重置为
  *        text）；随后从当前行的下一行起（环形回绕）在当前列逐行取模型
@@ -721,15 +707,15 @@ bool XAbstractItemView_keyboardSearch(const XAbstractItemView* self);
  *
  * @param self 目标视图指针。
  * @param text 本次键入的文本；NULL 或空串仅重置累积前缀。
- * @return 命中并移动当前索引返回 true；无模型、开关关闭或未命中返回 false。
+ * @return 命中并移动当前索引返回 true；无模型或未命中返回 false。
  *
  * @note 简化：累积前缀为本视图实例状态（m_searchPrefix，对标 Qt 的
  *       视图私有前缀成员），容量 XABSTRACTITEMVIEW_SEARCH_CAPACITY
  *       字节，超出容量的追加字符被丢弃；interval 固定 2000ms
  *       （Qt 可经 keyboardInputInterval 配置，本库暂不承载）。
  */
-bool XAbstractItemView_keyboardSearch_2(XAbstractItemView* self,
-                                        const char* text);
+bool XAbstractItemView_keyboardSearch(XAbstractItemView* self,
+                                      const char* text);
 /**
  * @brief 设置 Tab 键焦点导航（对标 setTabKeyNavigation）。
  *
@@ -1074,10 +1060,6 @@ void XAbstractItemView_clearSelection(XAbstractItemView* self);
  * @return 无返回值（由选择模型发射 selectionChanged）。
  */
 void XAbstractItemView_selectAll(XAbstractItemView* self);
-/** @brief 读取根索引行（预留树）。 @param self 目标视图指针。 @return 根行；-1=根。 */
-int XAbstractItemView_rootRow(const XAbstractItemView* self);
-/** @brief 读取根索引列。 @param self 目标视图指针。 @return 根列；-1=根。 */
-int XAbstractItemView_rootColumn(const XAbstractItemView* self);
 /** @brief 设置根索引（预留树；当前扁平模型仅存根偏移）。
  * @param self 目标视图指针。
  * @param row 根行；-1=根。
@@ -1128,10 +1110,6 @@ bool XAbstractItemView_visualRect(const XAbstractItemView* self,
  * @return 无返回值（变化时发射 iconSizeChanged）。
  */
 void XAbstractItemView_setIconSize(XAbstractItemView* self, int w, int h);
-/** @brief 查询图标宽。 @param self 目标视图指针。 @return 宽。 */
-int XAbstractItemView_iconWidth(const XAbstractItemView* self);
-/** @brief 查询图标高。 @param self 目标视图指针。 @return 高。 */
-int XAbstractItemView_iconHeight(const XAbstractItemView* self);
 /**
  * @brief 查询图标尺寸（双输出组合查询；对标 iconSize() 的 QSize 承载）。
  * @param self 目标视图指针。
@@ -1139,7 +1117,6 @@ int XAbstractItemView_iconHeight(const XAbstractItemView* self);
  * @param outHeight 输出高（可空；self 为空置 0）。
  * @return 无返回值。
  *
- * @note 组合 getter：与 iconWidth/iconHeight 单项查询同一字段
  *       （m_iconW/m_iconH，默认 16x16）；尺寸变化经 setIconSize
  *       发射 iconSizeChanged。
  */

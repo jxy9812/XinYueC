@@ -9,12 +9,16 @@
  * 页 17 = 主站（Master）：通道选择（TCP/串口 RTU）→ 连接参数 → 从站地址 →
  *          远程 IO 模块适配（输入/输出点数）→ 连接/断开 → 轮询周期 →
  *          状态行 + IO 点位网格（输入只读指示、输出点击翻转写线圈）。
- * 页 18 = 从站（Server）：通道选择（TCP 监听/串口 RTU）→ 参数 → 本站地址
- *          → 点数配置 → 启动/停止 → **数据面板**（可手动调整）：
- *          XTableWidget 段表——线圈 DO/离散输入 DI 用内嵌 XCheckBox
- *          点击即写数据区；输入/保持寄存器 IR/HR 用内嵌 XLineEdit 回车
- *          提交写数据区（XModbusServer_setData2 即时生效+dataWritten
- *          计数），主站可随即读走，构成端到端联调闭环。
+ * 页 18 = 从站（Server）：参数合并行（通道/监听端口/串口/本站地址，串口
+ *          项随通道显隐）→ 启动/停止 → **全宽纵向四段式数据区**：
+ *          段① DI（标题+点数 SpinBox+按点数重建+DI全开/全关 + 换行灯格）、
+ *          段② DO（同构）、段③ IR/HR 两表上下堆叠铺满整宽（行内编辑回车/
+ *          失焦提交 XModbusServer_setData2 即时生效+dataWritten 计数），
+ *          主站可随即读走，构成端到端联调闭环。
+ *          [10-18 二次追加·滚动条纪律] 全页唯一滚动条=页根竖滚区：
+ *          DI/DO 灯格放不下换行往下放（对标主站页 IO 网格换行口径，
+ *          宿主高=行数×行高随宽度重算）；寄存器表列宽自适应铺满表宽、
+ *          16 行全展开；内容超高只出整页右侧一条竖滚条，任何子段无滚动条。
  *
  * 主站「远程 IO 模块」适配语义：把远端从站当作远程 IO 模块——
  *   输入点 = 离散输入（DiscreteInputs，只读轮询显示）；
@@ -32,10 +36,15 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#if !defined(_WIN32)
+#include <sys/socket.h> /* [CLOSE-WAIT 根修 2026-10-19] MSG_PEEK 死链探测。 */
+#include <errno.h>
+#endif
 #include "XGuiConfig.h"
 #include "XPrintf.h"
 #include "XObject.h"
 #include "XWidget.h"
+#include "XBoxLayout.h" /* [布局容器化 2026-10-17] 页内排布改盒式布局器管理。 */
 #include "XScrollArea.h"
 #include "XAbstractScrollArea.h"
 #include "XLabel.h"
@@ -46,6 +55,7 @@
 #include "XSpinBox.h"
 #include "XTimer.h"
 #include "XTableWidget.h"
+#include "XItemDelegate.h"
 #include "XWidget_Protected.h"
 #include "XCoreApplication.h" /* paintImage/paintOffset（DI 指示灯自绘）。 */
 #include "XSystem.h"
@@ -68,7 +78,8 @@
 #include "XModbusRtuSerialServer.h"
 #include "XDeviceSerialPort.h"
 #endif
-#define MB_PAGE_ENABLED (XWIDGET_ON && XLABEL_ON && XCOMBOBOX_ON && \
+#define MB_PAGE_ENABLED (XLAYOUT_ON && XLAYOUT_BOX_ON && XWIDGET_ON && \
+                         XLABEL_ON && XCOMBOBOX_ON && \
                          XLINEEDIT_ON && XPUSHBUTTON_ON && XCHECKBOX_ON && \
                          XSPINBOX_ON && XTABLEWIDGET_ON)
 #else
@@ -80,9 +91,23 @@
 /* ==================== 布局常量 ==================== */
 #define MB_ROW_H        24      /* 标准行高。 */
 
-/* 数据面板行容量（DI/DO 各段上限；IR/HR 寄存器表行数）。 */
-#define MB_SLAVE_MAX_POINTS 64
-#define MB_SLAVE_REG_ROWS   16
+/* 数据面板行容量（DI/DO 各段上限；IR/HR 寄存器表行数）。
+ * [10-18 三次追加 2026-10-18] 寄存器个数改可调：MB_SLAVE_REG_ROWS 降格为
+ * 「默认行数」，上限 MB_SLAVE_REG_MAX_ROWS=256（每表数量 SpinBox 1..256，
+ * 变更走 setValueCount 保值 + setRowCount 同步，见 mb_slaveApplyRegCounts）。 */
+#define MB_SLAVE_MAX_POINTS     64
+#define MB_SLAVE_REG_ROWS       16
+#define MB_SLAVE_REG_MAX_ROWS   256
+
+/* [10-18 二次追加·滚动条纪律] 常量再瘦身：单行灯格滚动壳高
+ * （MB_SLAVE_LAMP_ROW_H）、数据区固定段高估算（MB_SLAVE_DATA_CHROME_H）、
+ * 表最小可见高（MB_SLAVE_MIN_REG_H）随「滚动壳删除 + 表满高全展开 +
+ * 两遍试摆删除」一并作废；只留表最小宽与视口兜底宽两个下限值。 */
+/* [实测校正 2026-10-18] 140 → 180：表内除地址/值两列外还有行号列
+ * （XTW_HEADER_W=40），140 宽装不下「行号+地址+值」，
+ * 值列（行内编辑框）被挤到可视区外（实测表内出横滚条、值列不可见）。 */
+#define MB_REG_MIN_COL_W       180   /* 寄存器表最小宽（视口未定时兜底）。 */
+#define MB_SLAVE_MIN_AVAIL_W   320   /* 数据区最小可用宽（视口未定时兜底）。 */
 
 /* ==================== DI 指示灯格（圆圈+编号自绘） ==================== */
 
@@ -201,11 +226,103 @@ static void MbDiLamp_setOn(MbDiLamp* self, bool on)
 
 #endif /* XPAINTER_ON */
 
-/** @brief 数据面板行控件（从站 cellWidget 与主站寄存器表共用）。 */
-typedef struct MbSlaveRow {
-    XCheckBox*      bit;              /* DO/DI 行：勾选=值 1。 */
-    XLineEdit*      reg;              /* IR/HR 行：十进制 0..65535。 */
-} MbSlaveRow;
+/* ==================== 从站自绘开关灯格（可点、无连接门控） ====================
+ * [四区同屏 2026-10-18] 从站 DI/DO 复用自绘圆圈画法（照搬 MbDiLamp），但
+ * 基类换 XCheckBox——物理上可点，且不挂 MbDoLamp 那道硬编码的
+ * `s_mb.device` 连接门控（:415 实读）：需求要求「单机可调」，启动前
+ * 点灯即写本地数据区。画法与 MbDiLamp 逐行同款，仅前缀 DI/DO 可变。 */
+
+#if XWIDGET_ON && XCHECKBOX_ON && XABSTRACTBUTTON_ON && XPAINTER_ON
+XCLASS_DEFINE_BEGING(MbSwLamp)
+XCLASS_DEFINE_EXTEND_END(MbSwLamp, XCheckBox)
+
+/** @brief 从站开关灯格：绿=1 红=0 圆圈 + 「DI/DOoo」编号；单击翻转。 */
+typedef struct MbSwLamp
+{
+    XCheckBox m_base;   /**< XCheckBox 基类（checkable 点击链路）；第一成员。 */
+    int    m_index;     /**< 点编号（DIoo/DOoo 文本）。 */
+    char   m_prefix[3]; /**< "DI" 或 "DO"（含结尾 NUL）。 */
+} MbSwLamp;
+
+/** @brief 绘制：圆圈（checked 绿/未勾红）+ 编号（照搬 MbDiLamp 画法）。
+ *  [2026-10-13 坑位复用] drawEllipse_2 走 brush 填充+pen 描边，必须先
+ *  setBrush——默认 NoBrush 时只描边（截图空心白圈实证）。 */
+static void VMbSwLamp_paintEvent(XWidget* self, XEvent* event)
+{
+    MbSwLamp* lamp = (MbSwLamp*)self;
+    XImage* image;
+    XPoint offset;
+    XPainter painter;
+    XRect rect;
+    uint32_t color;
+    if (!self || !event || XEvent_type(event) != XEVENT_TYPE_PAINT) return;
+    image = XWidget_paintImage(self);
+    if (!image) return;
+    XPainter_init(&painter, NULL);
+    if (!XPainter_begin_image(&painter, image)) {
+        XPainter_deinit(&painter);
+        return;
+    }
+    offset = XWidget_paintOffset(self);
+    if (offset.x != 0 || offset.y != 0)
+        XPainter_translate(&painter, (float)offset.x, (float)offset.y);
+    XRect_init(&rect, 0, 0, XWidget_width(self), XWidget_height(self));
+    color = XCheckBox_isChecked(lamp) ? 0xff2ecc40u : 0xffe03434u;
+    {
+        float cx = rect.x + 9.0f;
+        float cy = rect.y + rect.height / 2.0f;
+        XPainter_setBrush(&painter, color);
+        XPainter_setPen(&painter, 0xff202020u);
+        XPainter_drawEllipse_2(&painter, cx, cy, 7.0f, 7.0f);
+    }
+    {
+        XFont font;
+        XRect trect;
+        char text[12];
+        snprintf(text, sizeof(text), "%s%02d", lamp->m_prefix, lamp->m_index);
+        XFont_init(&font);
+        mb_apply_default_font(&font, 13);
+        XPainter_setFont(&painter, &font);
+        XRect_init(&trect, rect.x + 22, rect.y,
+                   rect.width - 22, rect.height);
+        XPainter_drawTextRect(&painter, &trect,
+                              XPAINTER_TEXT_ALIGN_LEFT |
+                              XPAINTER_TEXT_ALIGN_VCENTER,
+                              text, color);
+    }
+    XPainter_end(&painter);
+    XPainter_deinit(&painter);
+}
+
+XVtable* MbSwLamp_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(MbSwLamp)
+    XVTABLE_INHERIT_XCLASS(XCheckBox);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_PaintEvent, VMbSwLamp_paintEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 创建并挂父（prefix 传 "DI"/"DO"）。 */
+static void MbSwLamp_init(MbSwLamp* self, XWidget* parent, int index,
+                          const char* prefix)
+{
+    if (!self) return;
+    XMemset(self, 0, sizeof(*self));
+    XCheckBox_init(&self->m_base, parent, 0);
+    XClassSetVtable(self, MbSwLamp);
+    self->m_index = index;
+    self->m_prefix[0] = prefix ? prefix[0] : 'D';
+    self->m_prefix[1] = prefix && prefix[1] ? prefix[1] : 'I';
+    self->m_prefix[2] = '\0';
+    /* [禁令 D-6 2026-10-18] 此处及全仓任何地方都**不得**对本类调
+     * XAbstractButton_setAutoExclusive，也**不得**把灯格加入任何
+     * XButtonGroup：64 个灯格是同父兄弟，autoExclusive 一开，
+     * setChecked(true) 末尾（XAbstractButton.c:620-621）会把同父全部
+     * 已勾兄弟置 false（:328-345），64 格将互相熄灭。当前安全**仅因**
+     * XAbstractButton_init 路径未给该位赋真值，属「恰好没踩」。 */
+    XWidget_show((XWidget*)self);
+}
+#endif /* XWIDGET_ON && XCHECKBOX_ON && XABSTRACTBUTTON_ON && XPAINTER_ON */
 
 /* ==================== 主站页状态 ==================== */
 
@@ -219,10 +336,27 @@ typedef enum {
 
 /** @brief 主站侧状态容器（单实例静态，页生命周期=进程）。 */
 typedef struct MbMaster {
-    XWidget*        root;             /* 页面根（堆叠布局分配几何）。 */
-    XScrollArea*    scroll;           /* 内容滚动区（铺满根，widgetResizable）。 */
-    XWidget*        body;             /* 内容容器（绝对定位原承载坐标不变）。 */
-    XWidget*        pageRoot;         /* 页面根（scroll 的父级，堆叠布局分配几何）。 */
+    XWidget*        root;             /* 控件挂载父级（=pageRoot=内容根）。 */
+    XWidget*        pageRoot;         /* 内容根（layRoot 宿主；几何由 scroll 承载）。 */
+    XScrollArea*    scroll;           /* 整页竖滚区（页宿主内，唯一滚动条）。 */
+    XWidget*        pageHost;         /* 页宿主（堆叠条目；resize 铺满 scroll）。 */
+    int             viewportH;        /* scroll 视口高快照（显示行折算用）。 */
+    /* [布局容器化 2026-10-17] 页内排布全权移交盒式布局器：页根纵列+
+     * 行/列子布局器。子布局经 addLayout 按借用指针挂入父布局器，
+     * 对象寿命须覆盖页面生命周期——全部落在本静态容器。 */
+    XBoxLayout      layRoot;          /* 页根纵向主布局（表格伸缩贴底）。 */
+    XBoxLayout      layChannel;       /* 通道行。 */
+    XBoxLayout      layServer;        /* TCP 参数行。 */
+    XBoxLayout      laySerial;        /* 串口参数行（随通道显隐）。 */
+    XBoxLayout      layUnit;          /* 从站地址+单事务行。 */
+    XBoxLayout      layIo;            /* 输入/输出点数行。 */
+    XBoxLayout      layPoll;          /* 轮询+连接行。 */
+    XBoxLayout      layGridIn;        /* 输入点列（节标题+网格宿主）。 */
+    XBoxLayout      layGridOut;       /* 输出点列（标题行+网格宿主）。 */
+    XBoxLayout      layGridOutTitle;  /* 输出点标题行（标题+全开/全关）。 */
+    XBoxLayout      layGrid;          /* 点位双列行。 */
+    XBoxLayout      layRegEdit;       /* 寄存器读参数行。 */
+    XBoxLayout      layRegWrite;      /* 寄存器写参数行。 */
     int             regCols;          /* 寄存器表列组数（1..4，随视口宽自适应）。 */
     int             regDispRows;      /* 寄存器表当前显示行数。 */
     XComboBox*      channelCombo;     /* 通道：TCP/串口。 */
@@ -243,8 +377,7 @@ typedef struct MbMaster {
     XComboBox*      regTableCombo;    /* IR/HR 选择。 */
     XSpinBox*       regAddrSpin;      /* 起始地址。 */
     XSpinBox*       regCountSpin;     /* 数量(1..16)。 */
-    XTableWidget*   regTable;         /* 数据表（16 进制显示，cellWidget 编辑）。 */
-    MbSlaveRow      regRows[MB_SLAVE_REG_ROWS];  /* 行内嵌编辑控件。 */
+    XTableWidget*   regTable;         /* 数据表（16 进制显示；[10-19 框架编辑器迁移] 编辑走框架委托编辑器，手工 cellWidget 临时框退役）。 */
     XLineEdit*      regWriteValue;    /* 写值框（16 进制）。 */
     XSpinBox*       regWriteAddr;     /* 写地址。 */
     bool            regSuppress;      /* 回填抑制。 */
@@ -254,6 +387,20 @@ typedef struct MbMaster {
     XLabel*         statLabel;        /* 统计行（请求/错误）。 */
     XWidget*        inGridHost;       /* 输入点网格宿主。 */
     XWidget*        outGridHost;      /* 输出点网格宿主。 */
+    /* [布局容器化 2026-10-17] 节标题/栏名引用（build 装配进对应布局行）。 */
+    XLabel*         ioLbl;            /* 「远程 IO 模块」节标题。 */
+    XLabel*         inLbl;            /* 「输入点」标签。 */
+    XLabel*         outLbl;           /* 「输出点」标签。 */
+    XLabel*         pollLbl;          /* 「轮询(ms)」标签。 */
+    XLabel*         diTitleLbl;       /* 「输入点状态(只读)」标题。 */
+    XLabel*         doTitleLbl;       /* 「输出点(点击翻转)」标题。 */
+    XLabel*         regTitleLbl;      /* 「寄存器读写(16进制)」标题。 */
+    XLabel*         startLbl;         /* 「起始」标签。 */
+    XLabel*         countLbl;         /* 「数量」标签。 */
+    XLabel*         writeLbl;         /* 「写」标签。 */
+    XLabel*         valueLbl;         /* 「值」标签。 */
+    XPushButton*    regReadBtn;       /* 读按钮（行内联动重排）。 */
+    XPushButton*    regWriteBtn;      /* 写入按钮（行内联动重排）。 */
     /* 引擎对象（通道切换重建）。 */
     XModbusDevice*  device;           /* 当前设备（TcpClient 或 RtuSerialClient）。 */
     XModbusReply*   pendingReply;     /* 在途读请求（finished 后 deleteLater）。 */
@@ -291,14 +438,31 @@ typedef struct MbMaster {
 
 /** @brief 从站侧状态容器。 */
 typedef struct MbSlave {
-    XWidget*        root;             /* 页面根（堆叠布局分配几何）。 */
-    XScrollArea*    scroll;           /* 内容滚动区（铺满根）。 */
-    XWidget*        body;             /* 内容容器。 */
-    XWidget*        pageRoot;         /* 页面根（scroll 的父级）。 */
+    XWidget*        root;             /* 控件挂载父级（=pageRoot=内容根）。 */
+    XWidget*        pageRoot;         /* 内容根（layRoot 宿主；堆叠几何由 scroll 承载）。 */
+    /* [10-18 二次追加·整页竖滚] 返回给页堆叠的页根=scroll（只竖滚），
+     * 内容件=内容根（宽随视口、高按内容首选，见 fitScrollContent）。 */
+    XScrollArea*    scroll;           /* 整页竖滚区（页堆叠条目，唯一滚动条）。 */
+    /* [布局容器化 2026-10-17] 同主站页：行/列布局器落静态容器。 */
+    XBoxLayout      layRoot;          /* 内容根纵向主布局。 */
+    /* [10-18 用户追加规格④ 参数行合并] 通道/监听端口/串口(随通道显隐)/
+     * 本站地址并一行：隐藏控件条目在主轴分配中取 0 宽（isEmpty⇒size=0，
+     * XBoxLayout.c:461 + XLayoutItem.c:229），TCP/串口切换行内自折叠。 */
+    XBoxLayout      layChannel;       /* 参数合并行（通道/端口/串口/本站地址）。 */
+    XBoxLayout      layStart;         /* 启动/状态/统计行（页根上部不动）。 */
+    /* [全宽纵向四段式 2026-10-18] 数据区：layData（TopToBottom）直接
+     * 平铺六条目——DI 标题行/DI 灯格宿主/DO 标题行/DO 灯格宿主/IR 表/
+     * HR 表。两标题行是**未绑控件的子布局**（addLayout 合法）；宿主与
+     * 两表是控件条目，不再套「列容器」中间层（每层只有「控件+自己的
+     * 布局」一跳，规避 activate 不级联与内层坐标系错位的实测坑）。 */
+    XBoxLayout      layData;          /* 数据区纵向主布局（恒纵向，无双档）。 */
+    XBoxLayout      layDiTitle;       /* DI 标题行（标题+点数 SpinBox+按点数重建+DI全开/全关）。 */
+    XBoxLayout      layDoTitle;       /* DO 标题行（标题+点数 SpinBox+按点数重建+全开/全关）。 */
+    XWidget*        dataArea;         /* 数据区容器（页根条目 3）。 */
     XComboBox*      channelCombo;     /* 通道：TCP 监听/串口。 */
-    XLabel*         tcpLbl;           /* TCP 行标签（随通道显隐）。 */
+    XLabel*         tcpLbl;           /* 监听端口标签（随通道显隐）。 */
     XLineEdit*      tcpPortEdit;      /* TCP: 监听端口。 */
-    XLabel*         serialLbl;        /* 串口行标签（随通道显隐）。 */
+    XLabel*         serialLbl;        /* 串口标签（随通道显隐）。 */
     XLineEdit*      serialNameEdit;   /* 串口: 设备名。 */
     XComboBox*      serialBaudCombo;  /* 串口: 波特率。 */
     XSpinBox*       unitSpin;         /* 本站地址(1..247)。 */
@@ -307,27 +471,88 @@ typedef struct MbSlave {
     XPushButton*    startBtn;         /* 启动/停止。 */
     XLabel*         stateLabel;       /* 状态行。 */
     XLabel*         statLabel;        /* 请求计数行。 */
-    /* 数据面板（可手动调整）。 */
-    XTableWidget*   dataTable;        /* 数据表（地址+值两列）。 */
-    XComboBox*      tableCombo;       /* 当前编辑表：DO/DI/IR/HR。 */
-    XPushButton*    applyBtn;         /* 「按点数重建面板」按钮。 */
-    MbSlaveRow      rows[MB_SLAVE_REG_ROWS > MB_SLAVE_MAX_POINTS
-                             ? MB_SLAVE_REG_ROWS : MB_SLAVE_MAX_POINTS];
-    /* 引擎对象。 */
+    /* [10-18 用户追加规格⑤] 「按点数重建」拆两枚，分置①②首行紧挨
+     * 各自点数 SpinBox；原独立重建行删除。槽分立（sender 不可信契约）
+     * 但共用同一实现（重建按两个 SpinBox 全量解算，见 mb_slaveApplyCounts）。 */
+    XPushButton*    applyDiBtn;       /* 段①「按点数重建(输入)」。 */
+    XPushButton*    applyDoBtn;       /* 段②「按点数重建(输出)」。 */
+    XPushButton*    applyIrBtn;       /* 段③「按点数重建」(IR) [10-19]。 */
+    XPushButton*    applyHrBtn;       /* 段④「按点数重建」(HR) [10-19]。 */
+    XPushButton*    diAllOnBtn;       /* DI 全开（本地批量置 DiscreteInputs）。 */
+    XPushButton*    diAllOffBtn;      /* DI 全关。 */
+    XPushButton*    allOnBtn;         /* DO 全开。 */
+    XPushButton*    allOffBtn;        /* DO 全关。 */
+    /* 灯格区：DI/DO 各一块裸宿主直接作 layData 控件条目（滚动壳随
+     * [10-18 二次追加] 删除），灯格按「可见列数」换行铺进宿主（C7：
+     * 裸 XWidget 在布局里 sizeHint 回落 0 ⇒ 定尺+显式 sizeHint 双落）。 */
+    XWidget*        diGridHost;       /* DI 换行灯格宿主（宽=列数×单元宽）。 */
+    XWidget*        doGridHost;       /* DO 换行灯格宿主（高=行数×单元高）。 */
+    MbSwLamp*       diCells[MB_SLAVE_MAX_POINTS];  /* DI 灯格。 */
+    MbSwLamp*       doCells[MB_SLAVE_MAX_POINTS];  /* DO 灯格。 */
+    /* 寄存器区：IR/HR 两张常驻表，各 2 列 × 16 行，值列常驻 XLineEdit
+     * （一次挂载、从不叠加 ⇒ editingFinished 的 sender 恒等于该框自身，
+     * 槽内按 sender 指针反查行号可靠）。 */
+    /* [10-18 三次追加 2026-10-18] 寄存器区按线圈段同款布局重做：每表一条
+     * 段标题行（未绑控件的子布局，addLayout 合法——与 layDiTitle/layDoTitle
+     * 同款、同坑位规避）+ 数量 SpinBox（1..256，变更走
+     * mb_slaveApplyRegCounts：setValueCount 保值 + setRowCount 同步）。 */
+    XBoxLayout      layIrTitle;       /* IR 段标题行（「输入寄存器 IR」+数量）。 */
+    XBoxLayout      layHrTitle;       /* HR 段标题行（「保持寄存器 HR」+数量）。 */
+    XLabel*         irTitleLbl;       /* IR 段标题（autotest 纵向次序断言用）。 */
+    XLabel*         hrTitleLbl;       /* HR 段标题（同上）。 */
+    XSpinBox*       irCountSpin;      /* IR 数量(1..256)。 */
+    XSpinBox*       hrCountSpin;      /* HR 数量(1..256)。 */
+    int             irCount;          /* IR 当前生效行数（Spin 变更的副本）。 */
+    int             hrCount;          /* HR 当前生效行数（同上）。 */
+    XTableWidget*   irTable;          /* 输入寄存器表。 */
+    XTableWidget*   hrTable;          /* 保持寄存器表。 */
+    /* [10-19 框架编辑器迁移] 行观察态皆纯文本 item，常驻编辑框行数组
+     * （irRows/hrRows）退役——编辑由框架委托编辑器承载（表级
+     * setItemsEditable），提交落库走 cellChanged 桥（见
+     * mb_slaveRegCellChangedAt）。 */
+    /* 视口快照（幂等门控用；壳宽预算 ioBudgetW 随滚动壳删除）。 */
+    int             gridCols;         /* 灯格可见列数 = 段宽/单元宽（宽度驱动）。 */
+    int             gridPts;          /* 上次重建时的 max(点数)，点数变化触发重建。 */
+    /* 引擎对象（常驻：停止只断连不销毁 ⇒ 停止期间仍可单机调点位）。 */
     XModbusServer*  server;           /* TcpServer 或 RtuSerialServer。 */
+    bool            listening;        /* 监听中（与 server 存在解耦）。 */
+    /* [CLOSE-WAIT 根修 2026-10-19] 死链巡检定时器（1s）：对端 FIN 的
+     * EOF 在 IO 环→XAbstractSocket 事件层被吞（0 字节读只 ContinueRead，
+     * 不发 readyRead/disconnected/不置错，XAbstractSocket.c 读事件分支），
+     * 服务端 onClientDisconnected 永不触发 ⇒ accepted fd 成 CLOSE-WAIT。
+     * 框架三处修复点（XAbstractSocket.c/XNetIoRingPosix.c/
+     * XAbstractNetIoRing.c）均在并行 lane 未提交改动中，不可动；本页以
+     * 公开 API 自巡检回收（见 mb_slaveSweepDeadClients）。 */
+    XTimer*         reapTimer;        /* 死链巡检定时器（页根子对象级联析构）。 */
     /* 数据表类型键。 */
     XModbusRegisterType inEnum, outEnum, irEnum, hrEnum;
-    /* 数据区副本（重挂/面板重建用）。 */
+    /* [保值 2026-10-18] 四张数据单元的缓存指针。map 只在 server 建好时
+     * 挂一次；「按点数重建」/再次启动只调 setValueCount 改容量，**不再
+     * 重建 map**——重建会把 map 里已有的值全部丢掉（实测：本地已点亮的
+     * DO00/DO03/DI01 在按「按点数重建」后全退回红）。换通道销毁 server
+     * 时一并置 NULL。[16点读回根修 2026-10-19] DI/DO 位单元首建即满容
+     * 量 64 且不再 resize（位类型运行态扩容不生效，见 rebuildMap 注释）；
+     * IR/HR 仍走 setValueCount（寄存器路径实测正常）。 */
+    XModbusDataUnit*   unitIn;          /* DiscreteInputs 单元（64 位满容量）。 */
+    XModbusDataUnit*   unitCoil;        /* Coils 单元（64 位满容量）。 */
+    XModbusDataUnit*   unitIr;          /* InputRegisters 单元。 */
+    XModbusDataUnit*   unitHr;          /* HoldingRegisters 单元。 */
+    /* 数据区副本（重挂/重建灯格用）。 */
     int             inCount;
     int             outCount;
     unsigned        writeEvents;      /* dataWritten 事件计数。 */
-    int             panelSuppress;    /* 面板程序化回填时抑制回调环。 */
-    int             bitEchoSuppress;  /* [全开掉线根修 2026-10-15] 主站写
-        → dataWritten 回显 setChecked 时抑制 toggled 槽的整列差异写回：
-        回显逐格 setChecked 期间，未更新格仍是旧态，toggled 槽的全列
-        扫描会把旧态写回数据区，把主站刚写的值整批冲掉（昆仑通态实测：
-        全开数秒后整体掉回 OFF——master 页 coilSyncBack 同款防护，从站
-        页此前缺失）。 */
+    /* [四区同屏 2026-10-18] 三个抑制标志——定性不同，勿混：
+     *  - localWriteSuppress：**必需**。VXModbusServer_writeData 尾部
+     *    无条件发 dataWritten（XModbusServer.c:942），本端 setData2 若不
+     *    抑制即回环震荡（点灯→dataWritten→回填→toggled→再写）。
+     *  - bitEchoSuppress / regEchoSuppress：**防御性冗余，非必需**。
+     *    灯格侧有 setChecked 同值早退不 emit（XAbstractButton.c:597-601）
+     *    + 槽内差量判断必然早退；编辑框侧程序化 setText 根本不发
+     *    editingFinished（发射点仅 XLineControl.c:3611 Return 与
+     *    XLineEdit.c:1166 focus-out）。保留仅为双保险，防后人误删。 */
+    int             localWriteSuppress;
+    int             bitEchoSuppress;
+    int             regEchoSuppress;
 } MbSlave;
 
 static MbMaster s_mb;
@@ -421,9 +646,11 @@ static void MbDoLamp_init(MbDoLamp* self, XWidget* parent, int index)
 
 /* ==================== 工具 ==================== */
 
-/** @brief 构建一行标签（统一 13px 参数行小字；标题/栏名调用点覆盖字号）。 */
-static void mb_buildLabelAt(XWidget* parent, const char* text, int x, int y,
-                            int w, XLabel** out)
+/** @brief 构建一行标签（统一 13px 参数行小字；标题/栏名调用点覆盖字号）。
+ *  [布局容器化 2026-10-17] 手写坐标改固定尺寸：定宽 w、定高 22，
+ *  摆位交由调用点的盒式布局行按序分配。 */
+static void mb_buildLabel(XWidget* parent, const char* text, int w,
+                          XLabel** out)
 {
     XLabel* label = XLabel_create(parent, 0);
     if (label) {
@@ -431,14 +658,15 @@ static void mb_buildLabelAt(XWidget* parent, const char* text, int x, int y,
         /* [2026-10-13 重叠根修] 参数行标签统一 13px 小字：默认 16px 下
          * 3~4 字标签实际渲染宽超预留列宽，文本右缘压进同行输入框。 */
         XLabel_setTextPixelSize(label, 13);
-        XWidget_setGeometry((XWidget*)label, x, y, w, 22);
+        XWidget_setFixedWidth((XWidget*)label, w);
+        XWidget_setFixedHeight((XWidget*)label, 22);
         XWidget_show((XWidget*)label);
     }
     if (out) *out = label;
 }
 
 /** @brief 通道下拉（TCP 网络 / 串口 RTU）。 */
-static XComboBox* mb_buildChannelCombo(XWidget* parent, int x, int y, int w)
+static XComboBox* mb_buildChannelCombo(XWidget* parent, int w)
 {
     XComboBox* combo = XComboBox_create(parent, 0);
     if (combo) {
@@ -447,14 +675,15 @@ static XComboBox* mb_buildChannelCombo(XWidget* parent, int x, int y, int w)
         XComboBox_addItem_2(combo,
                 "\xE4\xB8\xB2\xE5\x8F\xA3 RTU");      /* 串口 RTU */
         XComboBox_setCurrentIndex(combo, 0);
-        XWidget_setGeometry((XWidget*)combo, x, y, w, 24);
+        XWidget_setFixedWidth((XWidget*)combo, w);
+        XWidget_setFixedHeight((XWidget*)combo, 24);
         XWidget_show((XWidget*)combo);
     }
     return combo;
 }
 
 /** @brief 波特率下拉（默认 9600）。 */
-static XComboBox* mb_buildBaudCombo(XWidget* parent, int x, int y, int w)
+static XComboBox* mb_buildBaudCombo(XWidget* parent, int w)
 {
     static const char* const kBauds[] = {
         "1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"
@@ -465,19 +694,21 @@ static XComboBox* mb_buildBaudCombo(XWidget* parent, int x, int y, int w)
     for (i = 0; i < (int)(sizeof(kBauds) / sizeof(kBauds[0])); ++i)
         XComboBox_addItem_2(combo, kBauds[i]);
     XComboBox_setCurrentIndex(combo, 3); /* 9600。 */
-    XWidget_setGeometry((XWidget*)combo, x, y, w, 24);
+    XWidget_setFixedWidth((XWidget*)combo, w);
+    XWidget_setFixedHeight((XWidget*)combo, 24);
     XWidget_show((XWidget*)combo);
     return combo;
 }
 
-static XSpinBox* mb_buildSpin(XWidget* parent, int x, int y, int w,
+static XSpinBox* mb_buildSpin(XWidget* parent, int w,
                               int min, int max, int val)
 {
     XSpinBox* spin = XSpinBox_create(parent, 0);
     if (spin) {
         XSpinBox_setRange(spin, min, max);
         XSpinBox_setValue(spin, val);
-        XWidget_setGeometry((XWidget*)spin, x, y, w, 24);
+        XWidget_setFixedWidth((XWidget*)spin, w);
+        XWidget_setFixedHeight((XWidget*)spin, 24);
         XWidget_show((XWidget*)spin);
     }
     return spin;
@@ -496,28 +727,36 @@ static void mb_masterOnReply(XObject* sender, XVarList* args);
 static void mb_masterPollTimerCb(void* userData, XTimerData* timer);
 /** @brief 轮询周期输入变化：即时改写运行中定时器周期（下一拍生效）。 */
 static void mb_masterPollPeriodSlot(XObject* sender, XVarList* args);
-static void mb_slaveBitSlot(XObject* sender, XVarList* args);
-static void mb_slaveRegSlot(XObject* sender, XVarList* args);
+/* [四区同屏 2026-10-18] 本页所有「带索引/方向」的信号槽一律**按索引硬编
+ *  码**（sender 在本框架派发时不可信，见 mb_slaveSetBitFromArgs 注释），
+ *  不再做 sender 指针反查。 */
+
 static void mb_masterStateSlot(XObject* sender, XVarList* args);
 static void mb_masterWriteCoil(int index, bool on);
 static void mb_masterDoAutoSlot(void* userData, XTimerData* timer);
 static void mb_masterWriteReplyDone(XObject* sender, XVarList* args);
 static void mb_masterDisconnectAutoSlot(void* userData, XTimerData* timer);
 static void mb_masterRegBuildRows(int dispRows);
-static void mb_masterRegRowSlot(XObject* sender, XVarList* args);
+static void mb_masterRegReadSlot(XObject* sender, XVarList* args);
 static void mb_masterRegReplyDone(XObject* sender, XVarList* args);
-static void mb_masterRegDblSlot(XObject* sender, XVarList* args);
+/* [10-19 框架编辑器迁移] cellChanged 桥槽：编辑提交（含规范化回写/
+ * 地址列防误改回写）落库，见实现处注释。 */
+static void mb_masterRegCellChanged(XObject* receiver, XVarList* args);
 static void mb_masterSingleTxSlot(XObject* sender, XVarList* args);
 
-/** @brief 寄存器表行重建：清旧 cellWidget，按数量建 16 进制编辑框。 */
-static void mb_masterRegEditCommit(int row);
 /* ==================== 寄存器表动态列组（视口宽自适应） ====================
  * 行优先映射：显示序 i=row*regCols+colGroup，寄存器地址=起始+i（横向
- * 连续递增，与阅读顺序一致）。regRows[i] 语义=显示序 i 的编辑槽，
- * 挂载格=(i/regCols, 1+i%regCols)。列组宽=地址列 90+值列 80=170，
+ * 连续递增，与阅读顺序一致）。编辑=框架委托编辑器（表级
+ * setItemsEditable+cellChanged 桥），挂载格=(i/regCols, 1+i%regCols)。
+ * 列组宽=地址列 90+值列 80=170，
  * 组数=clamp((视口宽-行号列(字段实读 40)-值列余 20)/170, 1, 4)。 */
 #define MB_REG_GROUP_W   170
 #define MB_REG_MAX_COLS  4
+/* [布局容器化 2026-10-17] 页根纵向布局里寄存器表的装配 y 起点（上方
+ * 行高+间距求和 ≈458，取原紧凑档 434 补偿串口行占位使显示行数与
+ * 改造前一致）；FillRows 据此估算视口可容纳行数。原 adapt 双档
+ * curTabY 随 adapt 置空一并移除。 */
+#define MB_REG_TABLE_Y   434
 /* [2026-10-14 显示行上限独立] 显示行是空行占位、不占寄存器编辑槽
  * （regRows[] 槽序=寄存器序，仍以 MB_SLAVE_REG_ROWS=16 为界）——
  * 此前误用 16 钳显示行，高窗口下表格下方留大片空白不肯补行。 */
@@ -578,9 +817,14 @@ static void mb_masterRegApplyColWidths(void)
     int g;
     if (!s_mb.regTable || s_mb.regCols < 1) return;
     tableW = XWidget_width((XWidget*)s_mb.regTable) - mb_regGutterW();
-    if (tableW < 2 * s_mb.regCols) tableW = 2 * s_mb.regCols; /* 防负/零。 */
+    /* [布局容器化 2026-10-17] 页根布局首次激活前表宽未定（0），按装配
+     * 组宽（地址 90/值 80）兜底出可读列宽；首次 resize 由页根
+     * resizeEvent 重解算（见 MbMasterRoot）。 */
+    if (tableW < MB_REG_GROUP_W * s_mb.regCols)
+        tableW = MB_REG_GROUP_W * s_mb.regCols;
     addrW = tableW * 9 / (17 * s_mb.regCols);
     valW = tableW * 8 / (17 * s_mb.regCols);
+
     for (g = 0; g < s_mb.regCols; ++g) {
         XTableView_setColumnWidth(&s_mb.regTable->m_base, 2 * g, addrW);
         XTableView_setColumnWidth(&s_mb.regTable->m_base, 2 * g + 1, valW);
@@ -595,11 +839,17 @@ static int mb_masterRegFillRows(int cols)
 {
     int count = s_mb.regCountSpin ? XSpinBox_value(s_mb.regCountSpin) : 8;
     int needRows = (count + cols - 1) / cols;
-    int availH = s_mb.pageRoot ? XWidget_height(s_mb.pageRoot) : 0;
+    /* [10-19 对齐从站] 高度来源=scroll 视口高快照（mb_masterOnFit 刷
+     * 新）；快照未就绪回退页根高。 */
+    int availH = s_mb.viewportH > 0
+                     ? s_mb.viewportH
+                     : (s_mb.pageRoot ? XWidget_height(s_mb.pageRoot) : 0);
     int availRows;
     int dispRows;
     if (availH < 46) availH = 46;
-    availRows = (availH - 502 - 12 - mb_regHeadH()) / mb_regRowH();
+    /* [布局容器化 2026-10-17] 表格 y 起点取布局装配常量（原 adapt 双档
+     * curTabY 随 adapt 置空移除）。 */
+    availRows = (availH - MB_REG_TABLE_Y - 12 - mb_regHeadH()) / mb_regRowH();
     if (availRows < 1) availRows = 1;
     if (availRows > MB_REG_MAX_DISP_ROWS) availRows = MB_REG_MAX_DISP_ROWS;
     if (needRows < 1) needRows = 1;
@@ -614,14 +864,22 @@ static void mb_masterRegBuildRows(int dispRows)
     int rows = dispRows;
     int i;
     if (!s_mb.regTable) return;
-    /* [对齐 Qt] 重建前先提交在编辑的挂载框（Qt 改模型前 delegate
-     * commitData+closeEditor；否则 clearContents 静默丢弃用户输入，
-     * 且失焦的 editingFinished 到 RowSlot 时 sender 已脱管匹配不上）。 */
-    for (i = 0; i < MB_SLAVE_REG_ROWS; ++i)
-        if (s_mb.regRows[i].reg)
-            mb_masterRegEditCommit(i);
+    /* [对齐 Qt] 重建前先收敛编辑会话（Qt 改模型前 delegate commitData+
+     * closeEditor；否则 clearContents 静默丢弃用户输入）。[10-19 框架
+     * 编辑器迁移] 挂载框退役后=关框架编辑器（NoHint=提交分支）——提交
+     * 经桥到 cellChanged 落库后画布才重建。 */
+    if (XAbstractItemView_isEditing(&s_mb.regTable->m_base.m_base))
+        XAbstractItemView_closeEditor(
+            &s_mb.regTable->m_base.m_base,
+            s_mb.regTable->m_base.m_base.m_editor,
+            XItemDelegateEndEditHint_NoHint);
+    /* 初建回显抑制：**先置位再 clearContents**——clearContents 逐格
+     * 清模型会发 dataChanged→桥→cellChanged，「地址防误改回写」会把
+     * 0x0000+slot 填进刚清空的格（含空行,且 setText 无只读 flags=
+     * 部分地址可编辑的源头），值格回写 0x0000=残留乱序（实测 1→2→3→4
+     * 列组收敛期每轮叠加）。closeEditor(提交) 需真落库故仍在其前。 */
+    s_mb.regSuppress = true;
     XTableWidget_clearContents(s_mb.regTable);
-    for (i = 0; i < MB_SLAVE_REG_ROWS; ++i) s_mb.regRows[i].reg = NULL;
     if (rows > MB_REG_MAX_DISP_ROWS) rows = MB_REG_MAX_DISP_ROWS;
     if (rows < 1) rows = 1;
     /* 动态列组：列数随视口宽自适应（列头「地址/值」×N 组）；行数由
@@ -658,6 +916,10 @@ static void mb_masterRegBuildRows(int dispRows)
                      XSpinBox_value(s_mb.regAddrSpin) + i);
             XMemset(&item, 0, sizeof(item));
             item.text = XString_create_utf8(addr);
+            /* [10-19 对齐 Qt] 地址列只读（flags 去 ItemIsEditable），
+             * 双击地址格不进编辑；原防误改回写保留为双保险。 */
+            item.itemFlags = XTableWidgetItemFlag_ItemIsSelectable |
+                             XTableWidgetItemFlag_ItemIsEnabled;
             XTableWidget_setItem(s_mb.regTable, row, 2 * g, &item);
             XClassDelete((XClass*)item.text);
             snprintf(val, sizeof(val), "0x0000");
@@ -666,133 +928,131 @@ static void mb_masterRegBuildRows(int dispRows)
             XTableWidget_setItem(s_mb.regTable, row, 2 * g + 1, &item);
             XClassDelete((XClass*)item.text);
         }
+        /* [10-19 对齐 Qt item flags] total 之外的空行占位格无 item,
+         * itemFlags=0=缺省可编辑——空地址格双击会出编辑器。显式补设
+         * 地址列只读 flags（值列保持缺省可编辑,空值格允许直接键入）。 */
+        for (i = total; i < rows * s_mb.regCols; ++i) {
+            int g = i % s_mb.regCols;
+            row = i / s_mb.regCols;
+            XTableWidget_setItemFlags(s_mb.regTable, row, 2 * g,
+                XTableWidgetItemFlag_ItemIsSelectable |
+                XTableWidgetItemFlag_ItemIsEnabled);
+        }
         (void)kAddrHead;
     }
+    s_mb.regSuppress = false;
 }
 
-/** @brief 双击值格：进入编辑（该格挂临时 XLineEdit，预填当前值全选）。 */
-static void mb_masterRegEditBegin(int slot)
-{
-    XLineEdit* edit;
-    const XTableWidgetItem* item;
-    char val[8] = "0x0000";
-    int row;
-    int col;
-    if (!s_mb.regTable || slot < 0 || slot >= MB_SLAVE_REG_ROWS) return;
-    if (s_mb.regCols < 1) s_mb.regCols = 1;
-    row = slot / s_mb.regCols;
-    col = 2 * (slot % s_mb.regCols) + 1;
-    /* 单编辑器口径（Qt 视图同）：先提交其它槽的挂载编辑。 */
-    {
-        int i;
-        for (i = 0; i < MB_SLAVE_REG_ROWS; ++i)
-            if (i != slot && s_mb.regRows[i].reg)
-                mb_masterRegEditCommit(i);
-    }
-    if (s_mb.regRows[slot].reg) return; /* 已在编辑。 */
-    fprintf(stderr, "[MB] Begin slot=%d row=%d col=%d\n", slot, row, col);
-#ifdef MB_BISECT_NO_EDITOR
-    return; /* 二分排查：不挂临时编辑框。 */
-#endif
-    item = XTableWidget_item(s_mb.regTable, row, col);
-    if (item && item->text) {
-        const char* cur = XString_toUtf8(item->text);
-        if (cur && cur[0]) snprintf(val, sizeof(val), "%s", cur);
-    }
-    /* 转文本：移除挂载编辑（若有），清值格 item。 */
-    XTableWidget_removeCellWidget(s_mb.regTable, row, col);
-    {
-        XTableWidgetItem blank;
-        XMemset(&blank, 0, sizeof(blank));
-        blank.text = XString_create_utf8("");
-        XTableWidget_setItem(s_mb.regTable, row, col, &blank);
-        XClassDelete((XClass*)blank.text);
-    }
-    edit = XLineEdit_create(s_mb.root, 0);
-    if (!edit) return;
-    XLineEdit_setText(edit, val);
-    /* 全选由编辑框默认焦点行为覆盖；挂入表格并显示。 */
-    XTableWidget_setCellWidget(s_mb.regTable, row, col, (XWidget*)edit);
-    XWidget_show((XWidget*)edit);
-    /* 双击编辑语义：编辑框主动取焦（Qt edit→editor->setFocus 同；
-     * 双击的 PRESS 先于挂载抵达表格，须显式补焦点触发虚拟键盘）。 */
-    XWidget_setFocus((XWidget*)edit);
-    /* [对齐 Qt] editingFinished 两路共发：Return 或失焦确认（Qt 表格
-     * delegate 编辑器 FocusOut→commitData+closeEditor 语义）。开启
-     * finishOnFocusOut 后无改动失焦也收框（裸 QLineEdit 仅编辑过的
-     * 失焦才发，不合视图编辑器场景）。 */
-    XLineEdit_setFinishOnFocusOut(edit, true);
-    XObject_connect_1((XObject*)edit,
-                      (size_t)XLineEdit_editingFinished_signal(edit),
-                      (XObject*)s_mb.root, mb_masterRegRowSlot,
-                      XConnectionType_Direct);
-    s_mb.regRows[slot].reg = edit;
-}
+/* [10-19 框架编辑器迁移] 原手工挂框链（mb_masterRegEditBegin/RowSlot/
+ * DblSlot，10-13/10-14 两轮根修的对象）整建制退役——编辑改由框架委托
+ * 编辑器承担：双击（缺省 DoubleClicked 触发位）→edit()→内嵌行编辑器
+ * （样式表 XItemLineEditor 规则着色），回车/失焦提交经基类
+ * setItemText→模型 dataChanged 桥发 cellChanged 到
+ * mb_masterRegCellChanged 落库。 */
 
-/** @brief 编辑提交：解析 16 进制→写模块→转回文本显示。 */
-static void mb_masterRegEditCommit(int row)
+/** @brief 寄存器值格/地址格提交槽（cellChanged 桥驱动）。
+ *  - 值列（col 奇）：16 进制解析→clamp→写模块（含单事务写让路，
+ *    deferred 分支不回写文本=等回读 Fill 修正）→"0x%04X" 规范化差量
+ *    回写（"abc"/越界提交后显示收敛）；
+ *  - 地址列（col 偶）：防误改回写（itemsEditable 为视图级开关，两列
+ *    皆可双击编辑=Qt 缺省 item flags 语义；地址格提交后按行号重写
+ *    正确地址，已正确时早退）。
+ *  regSuppress（回填/初建/规范化回写）置位期间早退断环；本地写模块
+ *  段沿用原 Commit 的 reqCount/errCount 记账与写让路语义。 */
+static void mb_masterRegCellChanged(XObject* receiver, XVarList* args)
 {
-    fprintf(stderr, "[MB] Commit row=%d\n", row);
-    XLineEdit* edit = s_mb.regRows[row].reg;
-    long val;
-    const char* text;
-    char hex[8];
-    XTableWidgetItem item;
-    if (!edit) return;
-    text = XLineEdit_text(edit);
-    val = text ? strtol(text, NULL, 16) : 0;
-    if (val < 0) val = 0;
-    if (val > 0xFFFF) val = 0xFFFF;
-    /* 写模块（回车=确认写；HR 可写，IR 写通常被模块拒——由应答体现）。 */
-    if (s_mb.device) {
-        XModbusDataUnit* unit;
-        XModbusReply* reply;
-        int table = s_mb.regTableCombo
-                        ? XComboBox_currentIndex(s_mb.regTableCombo) : 1;
-        unit = XModbusDataUnit_create_ex(
-            XCLASS_DEFAULT_MEMORY_TYPE,
-            table == 0 ? XModbusInputRegisters : XModbusHoldingRegisters,
-            (uint16_t)(XSpinBox_value(s_mb.regAddrSpin) + row), 1);
-        if (unit) {
-            XModbusDataUnit_setValue(unit, 0, (uint16_t)val);
-            /* [写让路+单事务 2026-10-15] 同单点翻转：单事务模式下在途
-               读先让路暂存（后写胜出），回读完成空闲槽补发。 */
-            if (s_mb.singleTxMode && s_mb.pendingReply) {
-                if (s_mb.deferredWriteUnit)
-                    XClassDelete(s_mb.deferredWriteUnit);
-                s_mb.deferredWriteUnit = unit;
-                return;
+    int row = -1;
+    int col = -1;
+    (void)receiver;
+    if (!args) return;
+    {
+        XVarList_args_2(args, int, vr, int, vc);
+        row = vr;
+        col = vc;
+    }
+    if (!s_mb.regTable || row < 0 || row >= MB_SLAVE_REG_ROWS || col < 0 ||
+        col >= 2 * s_mb.regCols)
+        return;
+    if (s_mb.regSuppress) return;
+    {
+        int g = col / 2;
+        int slot = row * s_mb.regCols + g;
+        char hex[12];
+        if (slot < 0 || slot >= MB_SLAVE_REG_ROWS) return;
+        if ((col % 2) == 0) {
+            snprintf(hex, sizeof(hex), "0x%04X",
+                     (unsigned)(XSpinBox_value(s_mb.regAddrSpin) + slot));
+            if (strcmp(XTableWidget_text(s_mb.regTable, row, col), hex) != 0) {
+                s_mb.regSuppress = true;
+                XTableWidget_setText(s_mb.regTable, row, col, hex);
+                s_mb.regSuppress = false;
             }
-            reply = XModbusClient_sendWriteRequest(
-                (XModbusClient*)s_mb.device, unit,
-                XSpinBox_value(s_mb.unitSpin));
-            XClassDelete(unit);
-            if (reply) {
-                ++s_mb.reqCount;
-                s_mb.regPendingWriteReply = reply;
-                XObject_connect_1((XObject*)reply,
-                                  (size_t)XModbusReply_finished_signal(reply),
-                                  (XObject*)s_mb.root, mb_masterRegReplyDone,
-                                  XConnectionType_Direct);
-            } else {
-                ++s_mb.errCount;
+            return;
+        }
+        {
+            const char* text = XTableWidget_text(s_mb.regTable, row, col);
+            long val = text ? strtol(text, NULL, 16) : 0;
+            if (val < 0) val = 0;
+            if (val > 0xFFFF) val = 0xFFFF;
+            /* 写模块（回车=确认写；HR 可写，IR 写通常被模块拒——由应答
+               体现）。 */
+            if (s_mb.device) {
+                XModbusDataUnit* unit;
+                XModbusReply* reply;
+                int table = s_mb.regTableCombo
+                                ? XComboBox_currentIndex(s_mb.regTableCombo)
+                                : 1;
+                unit = XModbusDataUnit_create_ex(
+                    XCLASS_DEFAULT_MEMORY_TYPE,
+                    table == 0 ? XModbusInputRegisters
+                               : XModbusHoldingRegisters,
+                    (uint16_t)(XSpinBox_value(s_mb.regAddrSpin) + slot), 1);
+                if (unit) {
+                    XModbusDataUnit_setValue(unit, 0, (uint16_t)val);
+                    /* [写让路+单事务 2026-10-15] 同单点翻转：单事务模式
+                       下在途读先让路暂存（后写胜出），回读完成空闲槽
+                       补发；deferred 分支直接返回——文本保持用户原输入，
+                       等回读 Fill 修正。 */
+                    if (s_mb.singleTxMode && s_mb.pendingReply) {
+                        if (s_mb.deferredWriteUnit)
+                            XClassDelete(s_mb.deferredWriteUnit);
+                        s_mb.deferredWriteUnit = unit;
+                        return;
+                    }
+                    reply = XModbusClient_sendWriteRequest(
+                        (XModbusClient*)s_mb.device, unit,
+                        XSpinBox_value(s_mb.unitSpin));
+                    XClassDelete(unit);
+                    if (reply) {
+                        ++s_mb.reqCount;
+                        s_mb.regPendingWriteReply = reply;
+                        XObject_connect_1(
+                            (XObject*)reply,
+                            (size_t)XModbusReply_finished_signal(reply),
+                            (XObject*)s_mb.root, mb_masterRegReplyDone,
+                            XConnectionType_Direct);
+                    } else {
+                        ++s_mb.errCount;
+                    }
+                }
+            }
+            /* 规范化回写（差量）：编辑提交的原始文本收敛为 %04X 口径。 */
+            snprintf(hex, sizeof(hex), "0x%04lX", (unsigned long)val);
+            if (strcmp(XTableWidget_text(s_mb.regTable, row, col), hex) != 0) {
+                s_mb.regSuppress = true;
+                XTableWidget_setText(s_mb.regTable, row, col, hex);
+                s_mb.regSuppress = false;
             }
         }
     }
-    /* 转回文本显示（槽序 row=显示序 i：行 i/regCols、值列 1+i%regCols）。 */
-    XMemset(&item, 0, sizeof(item));
-    snprintf(hex, sizeof(hex), "0x%04lX", (unsigned long)val);
-    item.text = XString_create_utf8(hex);
-    XTableWidget_setItem(s_mb.regTable,
-                         row / s_mb.regCols, 2 * (row % s_mb.regCols) + 1,
-                         &item);
-    XClassDelete((XClass*)item.text);
-    XTableWidget_removeCellWidget(
-        s_mb.regTable, row / s_mb.regCols, 2 * (row % s_mb.regCols) + 1);
-    s_mb.regRows[row].reg = NULL;
 }
 
-/** @brief 寄存器面板：读 IR/HR 回填 16 进制表。 */
+
+/** @brief 寄存器面板：读 IR/HR 回填 16 进制表。
+ *  [10-19 框架编辑器迁移] 原双路（手工框开着→setText 编辑框）随挂载框
+ *  退役——统一写值格文本 item；框架编辑器开着时同 Qt 语义（数据变化
+ *  不回写编辑器，提交以编辑器内容为准）。regSuppress 包全程：setItem
+ *  经模型桥发 cellChanged，落库槽须早退（回读不是用户编辑）。 */
 static void mb_masterRegFill(XModbusReply* reply)
 {
     const XModbusDataUnit* result = XModbusReply_result_const(reply);
@@ -808,11 +1068,6 @@ static void mb_masterRegFill(XModbusReply* reply)
         int g = i % s_mb.regCols;
         int row = i / s_mb.regCols;
         int col = 2 * g + 1;
-        if (s_mb.regRows[i].reg) { /* 编辑中：更新编辑框内容。 */
-            snprintf(text, sizeof(text), "0x%04X", v);
-            XLineEdit_setText(s_mb.regRows[i].reg, text);
-            continue;
-        }
         snprintf(text, sizeof(text), "0x%04X", v);
         /* [脏区 2026-10-15] 同值跳过：setItem 已收窄为单格矩形失效，
            此处再免掉无变化写入——稳态轮询值不变时零像素失效，只有
@@ -908,43 +1163,6 @@ static void mb_masterRegWriteSlot(XObject* sender, XVarList* args)
     }
 }
 
-/** @brief 行编辑回车槽：按 sender 定位行提交。 */
-static void mb_masterRegRowSlot(XObject* sender, XVarList* args)
-{
-    int i;
-    (void)args;
-    (void)sender;
-    /* [根修 2026-10-14] 不按 sender 匹配：editingFinished 的发射者
-     * 可能不是 regRows 登记的编辑框（页面 BuildRows 的常驻框与本路径
-     * 挂载的临时框同格叠加，Return 的 accepted 链会路由到常驻框）。
-     * 按「当前聚焦的行编辑框」定位：失焦确认时焦点已迁走，用
-     * Commit 全量扫描（regRows 内非 NULL 者本函数语义=该行提交）。 */
-    for (i = 0; i < MB_SLAVE_REG_ROWS; ++i) {
-        if (s_mb.regRows[i].reg) {
-            mb_masterRegEditCommit(i);
-            return;
-        }
-    }
-}
-
-/** @brief 双击槽：值列(row,col=1) 进入编辑。 */
-static void mb_masterRegDblSlot(XObject* sender, XVarList* args)
-{
-    (void)sender;
-    if (args) {
-        /* [根修 2026-10-13] XVarList_args_N 在块内声明 const 同名变量，
-         * 会遮蔽块外预置的 row/col（块外恒 -1）——判定必须整段放进
-         * 本块（解包变量的作用域只在块内）。 */
-        XVarList_args_2(args, int, row, int, col);
-        /* 动态列组：值列 col=2g+1（g=组序）→ 槽序=row*regCols+g。 */
-        if (col >= 1 && row >= 0 && row < MB_SLAVE_REG_ROWS) {
-            int g = (col - 1) / 2;
-            if (g < s_mb.regCols)
-                mb_masterRegEditBegin(row * s_mb.regCols + g);
-        }
-    }
-}
-
 /** @brief 寄存器读回归槽：程序化点「读」。 */
 static void mb_masterRegReadAutoSlot(void* userData, XTimerData* timer)
 {
@@ -952,18 +1170,40 @@ static void mb_masterRegReadAutoSlot(void* userData, XTimerData* timer)
     mb_masterRegReadSlot(NULL, NULL);
 }
 
-/** @brief 寄存器 Reply 完成：读回答回填；写应答回收。 */
+/** @brief 寄存器 Reply 完成：读回答回填；写应答回收。
+ *  [根修 2026-10-18] 原实现按 `sender == regPendingReply` 认领——但本框架
+ *  派发槽时 sender 并非发射方（从站页实测收到的是页根，见
+ *  mb_slaveSetBitFromArgs 注释），恒等判断永不命中 ⇒ FC3/FC4 应答即使
+ *  线上携带正确数据，mb_masterRegFill 也从不执行，寄存器表格恒 0x0000
+ *  （评审④最后残留缺陷；同文件里灯格回填 mb_masterOnReply 不看 sender，
+ *  所以位方向一直是好的——两路行为差异正是铁证）。改为与 mb_masterOnReply
+ *  同款：不看 sender，按挂载槽位认领（读在途优先，写应答仅在无读在途时
+ *  认领），并把 sender 匹配保留为快路径。 */
 static void mb_masterRegReplyDone(XObject* sender, XVarList* args)
 {
+    XModbusReply* reply = NULL;
+    bool isRead = false;
     (void)args;
-    if (sender == (XObject*)s_mb.regPendingReply) {
-        mb_masterRegFill((XModbusReply*)sender);
-        s_mb.regPendingReply = NULL;
-        XObject_deleteLater(sender);
-    } else if (sender == (XObject*)s_mb.regPendingWriteReply) {
-        s_mb.regPendingWriteReply = NULL;
-        XObject_deleteLater(sender);
+    if (sender && sender == (XObject*)s_mb.regPendingReply) {
+        reply = s_mb.regPendingReply;
+        isRead = true;
+    } else if (sender && sender == (XObject*)s_mb.regPendingWriteReply) {
+        reply = s_mb.regPendingWriteReply;
+    } else if (s_mb.regPendingReply) {
+        /* sender 不可信：按挂载槽位认领（读在途优先）。 */
+        reply = s_mb.regPendingReply;
+        isRead = true;
+    } else if (s_mb.regPendingWriteReply) {
+        reply = s_mb.regPendingWriteReply;
     }
+    if (!reply) return;
+    if (isRead) {
+        mb_masterRegFill(reply);
+        s_mb.regPendingReply = NULL;
+    } else {
+        s_mb.regPendingWriteReply = NULL;
+    }
+    XObject_deleteLater((XObject*)reply);
 }
 
 /** @brief 表类型切换/起始地址/数量变化：重建行（显示行与 adapt 同
@@ -1178,16 +1418,14 @@ static void mb_masterSingleTxSlot(XObject* sender, XVarList* args)
     }
 }
 
-/** @brief 输出全开/全关：逐格置勾选态并写模块（sender=allOnBtn 判向）。 */
-static void mb_masterAllSlot(XObject* sender, XVarList* args)
+/** @brief 输出全开/全关：逐格置勾选态并写模块。
+ *  [根修 2026-10-18] 原实现 `sender == allOnBtn` 判向——同上，sender 非发射
+ *  方，判向恒为假 ⇒ 全开被当成全关。拆成两个互不相似的槽，方向写死在
+ *  编译期（与从站页 mb_slaveDoSetAll 同款）。 */
+static void mb_masterDoSetAll(bool on)
 {
-    bool on;
     int i;
-    (void)args;
-    fprintf(stderr, "[ALL] slot on=%d device=%p\n",
-            (int)(sender == (XObject*)s_mb.allOnBtn), (void*)s_mb.device);
     if (!s_mb.device) return;
-    on = (sender == (XObject*)s_mb.allOnBtn);
     s_mb.coilSyncBack = true; /* 批量置位不触发差量写。 */
     for (i = 0; i < s_mb.outCount && i < MB_SLAVE_MAX_POINTS; ++i) {
         if (s_mb.outCells[i]) {
@@ -1233,6 +1471,18 @@ static void mb_masterAllSlot(XObject* sender, XVarList* args)
             ++s_mb.errCount;
         }
     }
+}
+
+static void mb_masterAllOnSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_masterDoSetAll(true);
+}
+
+static void mb_masterAllOffSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_masterDoSetAll(false);
 }
 
 /** @brief 输出点翻转：写单线圈。 */
@@ -1738,12 +1988,67 @@ static void mb_masterChannelSlot(XObject* sender, XVarList* args)
 }
 
 /* ================================================================
- * 页 18：从站（Server）
- * ================================================================ */
+ * 页 18：从站（Server）——全宽纵向四段式 2026-10-18
+ *         [10-18 二次追加] 滚动条纪律 + 参数行合并 + 重建拆两
+ * ================================================================
+ * 返回给页堆叠的页根 = scroll（XScrollArea，水平条 AlwaysOff、竖条
+ * AsNeeded——全页唯一滚动条）；内容件 = 内容根（root/pageRoot），
+ * 宽恒跟随视口（水平跟随不滚）、高=内容首选高（超高由竖滚条承担，
+ * 见 mb_slaveFitScrollContent）。内容根条目自上而下：
+ *   layRoot(TopToBottom)
+ *     ├─ 标题行        「Modbus 从站调试」
+ *     ├─ layChannel    参数合并行：通道/监听端口/串口(随通道显隐)/本站地址
+ *     ├─ layStart      启动/已停止/写事件行（页根上部不动）
+ *     └─ dataArea      数据区（layData, TopToBottom）恒纵向单列：
+ *         ├─ layDiTitle  「输入点 DI」+ 点数 SpinBox + 按点数重建(输入)
+ *         │              + DI全开 + DI全关
+ *         ├─ diGridHost  DI 圆圈换行铺排（放不下换行往下放一行，宿主
+ *         │              宽=列数×单元宽、高=行数×单元高随宽度重算）
+ *         ├─ layDoTitle  「输出点 DO」+ 点数 SpinBox + 按点数重建(输出)
+ *         │              + 全开 + 全关
+ *         ├─ doGridHost  DO 圆圈换行铺排（同上）
+ *         ├─ layIrTitle  「输入寄存器 IR」+ 数量 SpinBox(1..256)
+ *         │              [10-18 三次追加]
+ *         ├─ irTable     IR 表（上下堆叠，见 applyRegGeometry 注释；
+ *         │              行数=irCount，满高全展开+列宽自适应铺满）
+ *         ├─ layHrTitle  「保持寄存器 HR」+ 数量 SpinBox(1..256)
+ *         │              [10-18 三次追加]
+ *         └─ hrTable     HR 表（同 irTable 口径，行数=hrCount）
+ * 契约要点（逐条落在注释里，防后人改回旧口径）：
+ *  1. 子布局只经 setLayout 绑到**控件**上，绝不 addLayout 进已绑控件的
+ *     布局（XLayout.c:179-186 会解绑宿主）；行布局内的控件条目不
+ *     reparent（C3）——标题行控件/灯格宿主/两表创建时父即 dataArea。
+ *  2. 灯格**按索引硬编码槽**（toggled 的 sender 派发不可信，见
+ *     mb_slaveSetBitFromArgs 注释）；寄存器编辑框**按 sender 指针反查**
+ *     （editingFinished/textChanged 经 XLineEdit 以 self 为发射对象出栈，
+ *     XSignalSlot.c:295 派发传发射对象 ⇒ 常驻框的 sender 恒等于该框自身，
+ *     本页每框只挂一次、从不叠加；[10-18 三次追加] 行数 1..256 可变后
+ *     逐行硬编码槽不可行，改 IR/HR 各一枚共享槽按指针反查行号）。
+ *  3. 三个抑制标志的定性不同，见 MbSlave 结构体注释，勿混。
+ *  4. server 常驻：停止只断连不销毁 ⇒ 停止期间仍可单机调点位。
+ *  5. [滚动条纪律] DI/DO/表格任何子段一律不得出现滚动条：灯格换行
+ *     （diScroll/doScroll 壳已删）、表满高全展开+列宽铺满；内容超高
+ *     只由 scroll 的竖滚条承担。
+ *  6. [10-19 框架编辑器迁移] 寄存器值格改走框架委托编辑器（表级
+ *     setItemsEditable+DoubleClicked 触发），常驻挂框/页面侧重摆/
+ *     逐框审计整建制退役——编辑器几何/可见性/生命周期由框架视图管理。
+ */
 
-static void mb_slaveRefreshPanel(void);
+static void mb_slaveSyncViewport(void);
+static void mb_slaveRebuildGrids(void);
+static void mb_slaveApplyRegGeometry(int availW);
+static void mb_slaveEchoAll(void);
+static void mb_slaveFitScrollContent(XScrollArea* area);
+static XWidget* mb_slaveCreateScroll(XWidget* parent);
+/* [10-19 框架编辑器迁移] 寄存器区可调行数；编辑/落库走框架委托编辑器
+ * + cellChanged 桥（槽见双击链区域声明）。 */
+static void mb_slaveMountRegRow(XTableWidget* tbl, int i);
+static void mb_slaveApplyRegCounts(void);
 
-/** @brief 从站数据表重挂（点数变化/启动时）：四表按配置尺寸注册。 */
+/** @brief 从站数据区：首次建 map 并挂四张单元；其后只调 setValueCount
+ *         改容量（**保值**：不重建 map ⇒ 已写入的点位值不丢）。
+ *  [根因修复 2026-10-18] 旧实现每次都新建 map + setMap_ref，实测点一次
+ *  「按点数重建」或再点一次「启动」，本地写入的灯格/寄存器值全部归零。 */
 static void mb_slaveRebuildMap(void)
 {
     XModbusDataUnitMap* map;
@@ -1757,45 +2062,272 @@ static void mb_slaveRebuildMap(void)
     s_mbSlave.outEnum = XModbusCoils;
     s_mbSlave.irEnum = XModbusInputRegisters;
     s_mbSlave.hrEnum = XModbusHoldingRegisters;
+    /* 已有单元：只改容量，值保留。[10-18 三次追加] IR/HR 两单元并入同
+     * 一保值分支（数量 SpinBox 1..256 变更走这里：setValueCount 等量/
+     * 增量重设不重建 map ⇒ 已写入的寄存器值不丢）。
+     * [16点读回根修 2026-10-19] DI/DO 两张**位单元不再 resize**：实测
+     * XModbusDataUnit_setValueCount 对位类型（XBitArray_resize 路径）的
+     * 运行态扩容不生效——首建 8 后 setValueCount(16/24) map 仍按 8 判
+     * 界，q≥9 的 FC1/FC2 全吃 IllegalDataAddress（TCP 写出端剥 0x80 位
+     * 后线上伪装成「FC+ec 短帧」，主站 16 点轮询即 100% 错误率、显示停
+     * 在初始全红；裸客户端 q=8 OK/q=9 起全挂、env 16/24 与运行时点
+     * 「按点数重建」两条路径复现一致）。对策：位单元首建即按满容量
+     * MB_SLAVE_MAX_POINTS 建足（见下），此后等量 setValueCount 亦无必要
+     * ——地址 0..63 常开，「按点数重建」只改 UI/回显口径，map 永不重建
+     * ⇒ 保值语义不变；主站按其配置点数读取全有效，超卖点读 0（等价
+     * 「未配置点=0」）。寄存器（XVector 路径）扩容实测正常，照旧。 */
+    if (s_mbSlave.unitIn && s_mbSlave.unitCoil &&
+        s_mbSlave.unitIr && s_mbSlave.unitHr) {
+        XModbusDataUnit_setValueCount(s_mbSlave.unitIr,
+                                      (size_t)(s_mbSlave.irCount > 0
+                                                  ? s_mbSlave.irCount : 1));
+        XModbusDataUnit_setValueCount(s_mbSlave.unitHr,
+                                      (size_t)(s_mbSlave.hrCount > 0
+                                                  ? s_mbSlave.hrCount : 1));
+        return;
+    }
     map = XModbusDataUnitMap_create();
     if (!map) return;
+    /* [16点读回根修 2026-10-19] 位单元首建即满容量 64（理由见上方保值
+     * 分支注释——位类型运行态扩容不生效，不再依赖）；IR/HR 按当前数量。 */
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusDiscreteInputs, 0,
-                                     (size_t)(s_mbSlave.inCount > 0
-                                                  ? s_mbSlave.inCount : 1));
+                                     (size_t)MB_SLAVE_MAX_POINTS);
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.inEnum, unit);
         XClassDelete(unit);
+        s_mbSlave.unitIn = unit;
     }
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusCoils, 0,
-                                     (size_t)(s_mbSlave.outCount > 0
-                                                  ? s_mbSlave.outCount : 1));
+                                     (size_t)MB_SLAVE_MAX_POINTS);
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.outEnum, unit);
         XClassDelete(unit);
+        s_mbSlave.unitCoil = unit;
     }
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusInputRegisters, 0,
-                                     MB_SLAVE_REG_ROWS);
+                                     (size_t)(s_mbSlave.irCount > 0
+                                                  ? s_mbSlave.irCount : 1));
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.irEnum, unit);
         XClassDelete(unit);
+        s_mbSlave.unitIr = unit;
     }
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusHoldingRegisters, 0,
-                                     MB_SLAVE_REG_ROWS);
+                                     (size_t)(s_mbSlave.hrCount > 0
+                                                  ? s_mbSlave.hrCount : 1));
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.hrEnum, unit);
         XClassDelete(unit);
+        s_mbSlave.unitHr = unit;
     }
     XModbusServer_setMap_ref_base(s_mbSlave.server, map); /* Ref: 移交所有权。 */
 }
 
-/** @brief 从站写事件（主站改写数据区）：计数 + 面板回显。 */
+/** @brief server 被销毁/换通道时清缓存指针（避免悬垂）。 */
+static void mb_slaveDropUnits(void)
+{
+    s_mbSlave.unitIn = NULL;
+    s_mbSlave.unitCoil = NULL;
+    s_mbSlave.unitIr = NULL;
+    s_mbSlave.unitHr = NULL;
+}
+
+/** @brief 本地单点差量写：灯格翻转 / 编辑框提交的唯一写路径。
+ *  [本地-远端防打架 2026-10-18] writeData 尾部无条件发 dataWritten
+ *  （XModbusServer.c:942），故必须夹 localWriteSuppress；另「值已相同
+ *  则不写」把本地点击的回写量压到 1 格（旧的整列扫描已随灯格方案
+ *  删除——那正是「全开数秒后整体掉回 OFF」的根因）。 */
+static void mb_slaveSetBit(XModbusRegisterType type, int index, bool want)
+{
+    uint16_t cur = 0;
+    if (!s_mbSlave.server || index < 0) return;
+    if (!XModbusServer_data2(s_mbSlave.server, type, (uint16_t)index, &cur))
+        return;
+    if ((cur != 0) == want) return;
+    s_mbSlave.localWriteSuppress = 1;
+    XModbusServer_setData2(s_mbSlave.server, type, (uint16_t)index,
+                           want ? 1u : 0u);
+    s_mbSlave.localWriteSuppress = 0;
+}
+
+/** @brief 寄存器值格/地址格提交核心（cellChanged 桥驱动）。
+ *  [10-19 框架编辑器迁移] 编辑改走框架委托编辑器（表级
+ *  setItemsEditable+缺省 DoubleClicked 触发位，双击出内嵌行编辑框，
+ *  回车/失焦提交经基类 setItemText→模型 setData→dataChanged 桥发
+ *  cellChanged），本槽即该桥的 demo 侧落库端：
+ *  - col==1：十进制 0..65535 解析→写数据区（差量早退）→规范化文本
+ *    差量回写（"abc"/越界提交后显示收敛为合法值）；
+ *  - col==0：地址列防误改回写（itemsEditable 是视图级开关，两列皆可
+ *    双击编辑=Qt 缺省 item flags 语义；地址格被提交后按行号重写正确
+ *    文本，地址文本已正确时早退）。
+ *  - 本地 IR 保持可写（[R14 2026-10-18] writeData 不判表只读性，FC4
+ *    只读是**主站侧**协议约束，与「单机可调」语义一致）。
+ *  规范化/地址回写经 XTableWidget_setText 再入本槽：regEchoSuppress
+ *  置位早退断环；本地写 map 段用 localWriteSuppress 掐 dataWritten
+ *  回声（写事件计数语义=网络写，勿混）。 */
+static void mb_slaveRegCellChangedAt(XModbusRegisterType type, int row,
+                                     int col);
+
+/** @brief cellChanged 桥两槽（IR/HR 各一枚，表类型编译期写死；
+ *  行/列号取自信号载荷，无需逐行硬编码槽）。 */
+static void mb_slaveIrCellChanged(XObject* receiver, XVarList* args);
+static void mb_slaveHrCellChanged(XObject* receiver, XVarList* args);
+
+/** @brief 值格提交核心实现（语义见前向声明处注释）。 */
+static void mb_slaveRegCellChangedAt(XModbusRegisterType type, int row,
+                                     int col)
+{
+    XTableWidget* tbl;
+    char buf[12];
+    if (!s_mbSlave.server) return;
+    if (row < 0 || row >= MB_SLAVE_REG_MAX_ROWS) return;
+    tbl = (type == XModbusInputRegisters) ? s_mbSlave.irTable
+                                          : s_mbSlave.hrTable;
+    if (!tbl) return;
+    if (col == 0) {
+        /* 地址列防误改回写：文本已正确早退（setText 会再入本槽，靠
+         * 差量+suppress 双重断环）。 */
+        snprintf(buf, sizeof(buf), "0x%04X", row);
+        if (strcmp(XTableWidget_text(tbl, row, 0), buf) != 0) {
+            s_mbSlave.regEchoSuppress = 1;
+            XTableWidget_setText(tbl, row, 0, buf);
+            s_mbSlave.regEchoSuppress = 0;
+        }
+        return;
+    }
+    if (col != 1) return;
+    {
+        const char* text = XTableWidget_text(tbl, row, 1);
+        int want = text ? atoi(text) : 0;
+        uint16_t cur = 0;
+        if (want < 0) want = 0;
+        if (want > 65535) want = 65535;
+        if (!s_mbSlave.regEchoSuppress &&
+            XModbusServer_data2(s_mbSlave.server, type, (uint16_t)row,
+                                &cur) &&
+            cur != (uint16_t)want) {
+            s_mbSlave.localWriteSuppress = 1;
+            XModbusServer_setData2(s_mbSlave.server, type, (uint16_t)row,
+                                   (uint16_t)want);
+            s_mbSlave.localWriteSuppress = 0;
+        }
+        /* 规范化回写（差量）：编辑提交的原始文本（如 "007"/"99999"）
+         * 收敛为 %u 口径，与数据区读回一致。 */
+        snprintf(buf, sizeof(buf), "%u", (unsigned)want);
+        if (strcmp(XTableWidget_text(tbl, row, 1), buf) != 0) {
+            s_mbSlave.regEchoSuppress = 1;
+            XTableWidget_setText(tbl, row, 1, buf);
+            s_mbSlave.regEchoSuppress = 0;
+        }
+    }
+}
+
+static void mb_slaveIrCellChanged(XObject* receiver, XVarList* args)
+{
+    int row = -1;
+    int col = -1;
+    (void)receiver;
+    if (!args) return;
+    {
+        XVarList_args_2(args, int, vr, int, vc);
+        row = vr;
+        col = vc;
+    }
+    mb_slaveRegCellChangedAt(XModbusInputRegisters, row, col);
+}
+
+static void mb_slaveHrCellChanged(XObject* receiver, XVarList* args)
+{
+    int row = -1;
+    int col = -1;
+    (void)receiver;
+    if (!args) return;
+    {
+        XVarList_args_2(args, int, vr, int, vc);
+        row = vr;
+        col = vc;
+    }
+    mb_slaveRegCellChangedAt(XModbusHoldingRegisters, row, col);
+}
+
+/** @brief 四组全刷回显（数据区→控件）：DI/DO 灯格 + IR/HR 编辑框。
+ *  [四区同屏 2026-10-18] 下拉互斥切换已删 ⇒ 主站写来的变化四组全刷。
+ *  两个 echoSuppress 是**防御性冗余**：灯格侧 setChecked 同值早退不
+ *  emit（XAbstractButton.c:597-601）且槽内差量判断必然早退；编辑框侧
+ *  程序化 setText 根本不发 editingFinished。保留只为双保险。 */
+static void mb_slaveEchoAll(void)
+{
+    int i;
+    if (!s_mbSlave.server) return;
+    s_mbSlave.bitEchoSuppress = 1;
+    for (i = 0; i < s_mbSlave.inCount && i < MB_SLAVE_MAX_POINTS; ++i) {
+        uint16_t v = 0;
+        if (s_mbSlave.diCells[i] &&
+            XModbusServer_data2(s_mbSlave.server, s_mbSlave.inEnum,
+                                (uint16_t)i, &v))
+            XAbstractButton_setChecked((XAbstractButton*)s_mbSlave.diCells[i],
+                                       v != 0);
+    }
+    for (i = 0; i < s_mbSlave.outCount && i < MB_SLAVE_MAX_POINTS; ++i) {
+        uint16_t v = 0;
+        if (s_mbSlave.doCells[i] &&
+            XModbusServer_data2(s_mbSlave.server, s_mbSlave.outEnum,
+                                (uint16_t)i, &v))
+            XAbstractButton_setChecked((XAbstractButton*)s_mbSlave.doCells[i],
+                                       v != 0);
+    }
+    s_mbSlave.bitEchoSuppress = 0;
+    s_mbSlave.regEchoSuppress = 1;
+    /* [10-19 框架编辑器迁移] 回显单路：统一写值列**文本 item**——
+     * 值格无常驻框；框架编辑器开着时 Qt 同语义（数据变化不回写编辑器，
+     * 提交以编辑器内容为准）。 */
+    for (i = 0; i < s_mbSlave.irCount && i < MB_SLAVE_REG_MAX_ROWS; ++i) {
+        uint16_t v = 0;
+        char text[8];
+        if (!XModbusServer_data2(s_mbSlave.server, s_mbSlave.irEnum,
+                                 (uint16_t)i, &v))
+            continue;
+        snprintf(text, sizeof(text), "%u", (unsigned)v);
+        {
+            XTableWidgetItem item;
+            XMemset(&item, 0, sizeof(item));
+            item.text = XString_create_utf8(text);
+            XTableWidget_setItem(s_mbSlave.irTable, i, 1, &item);
+            XClassDelete((XClass*)item.text);
+        }
+    }
+    for (i = 0; i < s_mbSlave.hrCount && i < MB_SLAVE_REG_MAX_ROWS; ++i) {
+        uint16_t v = 0;
+        char text[8];
+        if (!XModbusServer_data2(s_mbSlave.server, s_mbSlave.hrEnum,
+                                 (uint16_t)i, &v))
+            continue;
+        snprintf(text, sizeof(text), "%u", (unsigned)v);
+        {
+            XTableWidgetItem item;
+            XMemset(&item, 0, sizeof(item));
+            item.text = XString_create_utf8(text);
+            XTableWidget_setItem(s_mbSlave.hrTable, i, 1, &item);
+            XClassDelete((XClass*)item.text);
+        }
+    }
+    s_mbSlave.regEchoSuppress = 0;
+}
+
+/** @brief 从站写事件（主站改写数据区）：计数 + 四区回显。 */
 static void mb_slaveOnDataWritten(XObject* sender, XVarList* args)
 {
     (void)sender; (void)args;
+    /* [语义修正 2026-10-18] **先**查本地写抑制**再**计数：writeData 对
+     * 本端 setData2 与远端网络写都会发 dataWritten（XModbusServer.c:942
+     * 无条件发），若先计数，build 期回显/重建等内部 map 操作也会 +N，
+     * 计数器语义变成「写事件」而非「网络写事件」（评审⑥：启动即 3、
+     * 按点数重建再 +3）。抑制期内=本端写：不计数、也不回显。 */
+    if (s_mbSlave.localWriteSuppress) return;
     ++s_mbSlave.writeEvents;
     if (s_mbSlave.statLabel) {
         char buf[64];
@@ -1804,354 +2336,609 @@ static void mb_slaveOnDataWritten(XObject* sender, XVarList* args)
                  s_mbSlave.writeEvents); /* 写事件: n */
         XLabel_setText_2(s_mbSlave.statLabel, buf);
     }
-    /* 面板回显：主站写入的数据区变化同步到编辑控件
-     * （panelSuppress 抑制本端程序化 setData 的回调环）。 */
-    if (!s_mbSlave.panelSuppress) {
-        int table = s_mbSlave.tableCombo
-                        ? XComboBox_currentIndex(s_mbSlave.tableCombo) : 0;
-        int i;
-        if (table <= 1) {
-            int count = (table == 0) ? s_mbSlave.outCount : s_mbSlave.inCount;
-            XModbusRegisterType type =
-                (table == 0) ? XModbusCoils : XModbusDiscreteInputs;
-            /* [全开掉线根修 2026-10-15] 回显逐格 setChecked 会同步触发
-               toggled 槽，槽内全列扫描会把未更新格的旧态写回数据区
-               （FC15 写 8 线圈后模型被冲成部分旧态=全开数秒后整体掉
-               OFF 的根因）。回显期间抑制位行 toggled 回写。 */
-            s_mbSlave.bitEchoSuppress = 1;
-            for (i = 0; i < count && i < MB_SLAVE_MAX_POINTS; ++i) {
-                uint16_t v = 0;
-                if (s_mbSlave.rows[i].bit) {
-                    XModbusServer_data2(s_mbSlave.server, type,
-                                        (uint16_t)i, &v);
-                    XCheckBox_setChecked(s_mbSlave.rows[i].bit, v != 0);
-                }
-            }
-            s_mbSlave.bitEchoSuppress = 0;
-        } else {
-            XModbusRegisterType type =
-                (table == 2) ? XModbusInputRegisters
-                             : XModbusHoldingRegisters;
-            for (i = 0; i < MB_SLAVE_REG_ROWS; ++i) {
-                uint16_t v = 0;
-                char text[8];
-                if (s_mbSlave.rows[i].reg) {
-                    XModbusServer_data2(s_mbSlave.server, type,
-                                        (uint16_t)i, &v);
-                    snprintf(text, sizeof(text), "%u", (unsigned)v);
-                    XLineEdit_setText(s_mbSlave.rows[i].reg, text);
-                }
-            }
-        }
-    }
+    mb_slaveEchoAll();
 }
 
-/** @brief 按当前下拉选表重建数据面板行（cellWidget 内嵌编辑控件）。 */
-static void mb_slaveRebuildPanel(void)
+/** @brief 灯格翻转：按「索引硬编码」槽派发。
+ *  [根因 2026-10-18] 本框架把 slot 作为**接收者侧**连接登记后，派发时传
+ *  给槽的 sender 并非发射方自身——实测点 DO 灯格，mb_slaveLampToggled 收
+ *  到的 sender 是**页根**（geometry=12,8 792x598 = pageRoot，vtable 也不是
+ *  MbSwLamp），故「按 sender 指针反查行号」永远查不到 ⇒ 本地点灯/编辑
+ *  一律写不进数据区（评审④/③ 的现象）。页 17 的 DO 灯格早就用
+ *  mb_masterDoSlot0..15 逐点槽绕开了这一点，本页改为同一写法：
+ *  一格一个槽、行号编译期写死，sender 是什么都不影响。 */
+static void mb_slaveSetBitFromArgs(XModbusRegisterType type, int index,
+                                   XVarList* args)
 {
-    int table = s_mbSlave.tableCombo
-                    ? XComboBox_currentIndex(s_mbSlave.tableCombo) : 0;
-    int rows = 0;
-    int i;
-    char addr[12];
-    if (!s_mbSlave.dataTable) return;
-
-    /* 释放旧行控件（setCellWidget 所有权归表，clearContents 清）。 */
-    XTableWidget_clearContents(s_mbSlave.dataTable);
-    for (i = 0; i < (int)(sizeof(s_mbSlave.rows) / sizeof(s_mbSlave.rows[0]));
-         ++i) {
-        s_mbSlave.rows[i].bit = NULL;
-        s_mbSlave.rows[i].reg = NULL;
-    }
-
-    switch (table) {
-    case 0: rows = s_mbSlave.outCount; break;  /* DO 线圈。 */
-    case 1: rows = s_mbSlave.inCount; break;   /* DI 离散输入。 */
-    default: rows = MB_SLAVE_REG_ROWS; break;  /* IR/HR 寄存器。 */
-    }
-    if (rows > MB_SLAVE_MAX_POINTS) rows = MB_SLAVE_MAX_POINTS;
-    XTableWidget_setRowCount(s_mbSlave.dataTable, rows > 0 ? rows : 1);
-
-    for (i = 0; i < rows; ++i) {
-        XTableWidgetItem item;
-        snprintf(addr, sizeof(addr), "0x%04X", i);
-        /* 第 0 列：地址（只读文本）。 */
-        XMemset(&item, 0, sizeof(item));
-        item.text = XString_create_utf8(addr);
-        XTableWidget_setItem(s_mbSlave.dataTable, i, 0, &item);
-        XClassDelete((XClass*)item.text);
-        if (table <= 1) {
-            /* 位表：内嵌 CheckBox，勾选即写数据区。 */
-            XCheckBox* box = XCheckBox_create(s_mbSlave.root, 0);
-            if (!box) continue;
-            XCheckBox_setChecked(box, false);
-            XTableWidget_setCellWidget(s_mbSlave.dataTable, i, 1,
-                                       (XWidget*)box);
-            XWidget_show((XWidget*)box);
-            XObject_connect_1((XObject*)box,
-                              (size_t)XAbstractButton_toggled_signal(
-                                  (XAbstractButton*)box, false),
-                              (XObject*)s_mbSlave.root, mb_slaveBitSlot,
-                              XConnectionType_Direct);
-            s_mbSlave.rows[i].bit = box;
-        } else {
-            /* 寄存器表：内嵌 LineEdit，回车提交。 */
-            XLineEdit* edit = XLineEdit_create(s_mbSlave.root, 0);
-            if (!edit) continue;
-            XLineEdit_setText(edit, "0");
-            XTableWidget_setCellWidget(s_mbSlave.dataTable, i, 1,
-                                       (XWidget*)edit);
-            XWidget_show((XWidget*)edit);
-            XObject_connect_1((XObject*)edit,
-                              (size_t)XLineEdit_editingFinished_signal(edit),
-                              (XObject*)s_mbSlave.root, mb_slaveRegSlot,
-                              XConnectionType_Direct);
-            s_mbSlave.rows[i].reg = edit;
-        }
-    }
-}
-
-/** @brief 位行勾选同步：全列扫描差异写数据区（朴素口径，64 行微秒级）。
- *  @note  XCheckBox toggled 信号携带 checked 但不带行号，cellWidget 无
- *         per-item userdata 通道，采用整列轮询把面板状态写穿到数据区。 */
-static void mb_slaveSyncBitsFromPanel(int table)
-{
-    int i;
-    XModbusRegisterType type =
-        (table == 0) ? XModbusCoils : XModbusDiscreteInputs;
-    int count = (table == 0) ? s_mbSlave.outCount : s_mbSlave.inCount;
-    if (!s_mbSlave.server) return;
-    for (i = 0; i < count && i < MB_SLAVE_MAX_POINTS; ++i) {
-        uint16_t cur = 0;
-        bool want;
-        if (!s_mbSlave.rows[i].bit) continue;
-        want = XAbstractButton_isChecked((const XAbstractButton*)
-                                             s_mbSlave.rows[i].bit);
-        XModbusServer_data2(s_mbSlave.server, type, (uint16_t)i, &cur);
-        if ((cur != 0) != want) {
-            s_mbSlave.panelSuppress = 1;
-            XModbusServer_setData2(s_mbSlave.server, type, (uint16_t)i,
-                                   want ? 1u : 0u);
-            s_mbSlave.panelSuppress = 0;
-        }
-    }
-}
-
-/** @brief 寄存器行回车提交：全行扫描差异写数据区。 */
-static void mb_slaveSyncRegsFromPanel(int table)
-{
-    int i;
-    XModbusRegisterType type =
-        (table == 2) ? XModbusInputRegisters : XModbusHoldingRegisters;
-    if (!s_mbSlave.server) return;
-    for (i = 0; i < MB_SLAVE_REG_ROWS; ++i) {
-        uint16_t cur = 0;
-        int want;
-        const char* text;
-        if (!s_mbSlave.rows[i].reg) continue;
-        text = XLineEdit_text(s_mbSlave.rows[i].reg);
-        want = text ? atoi(text) : 0;
-        if (want < 0) want = 0;
-        if (want > 65535) want = 65535;
-        XModbusServer_data2(s_mbSlave.server, type, (uint16_t)i, &cur);
-        if (cur != (uint16_t)want) {
-            s_mbSlave.panelSuppress = 1;
-            XModbusServer_setData2(s_mbSlave.server, type, (uint16_t)i,
-                                   (uint16_t)want);
-            s_mbSlave.panelSuppress = 0;
-        }
-    }
-}
-
-/** @brief 面板整表回填（数据区→控件；主站写事件后调用）。 */
-static void mb_slaveRefreshPanel(void)
-{
-    int table = s_mbSlave.tableCombo
-                    ? XComboBox_currentIndex(s_mbSlave.tableCombo) : 0;
-    int i;
-    if (!s_mbSlave.dataTable || !s_mbSlave.server) return;
-    if (table <= 1) {
-        int count = (table == 0) ? s_mbSlave.outCount : s_mbSlave.inCount;
-        XModbusRegisterType type =
-            (table == 0) ? XModbusCoils : XModbusDiscreteInputs;
-        for (i = 0; i < count && i < MB_SLAVE_MAX_POINTS; ++i) {
-            uint16_t v = 0;
-            if (s_mbSlave.rows[i].bit) {
-                XModbusServer_data2(s_mbSlave.server, type, (uint16_t)i, &v);
-                XCheckBox_setChecked(s_mbSlave.rows[i].bit, v != 0);
-            }
-        }
-    } else {
-        XModbusRegisterType type =
-            (table == 2) ? XModbusInputRegisters : XModbusHoldingRegisters;
-        for (i = 0; i < MB_SLAVE_REG_ROWS; ++i) {
-            uint16_t v = 0;
-            char text[8];
-            if (s_mbSlave.rows[i].reg) {
-                XModbusServer_data2(s_mbSlave.server, type, (uint16_t)i, &v);
-                snprintf(text, sizeof(text), "%u", (unsigned)v);
-                XLineEdit_setText(s_mbSlave.rows[i].reg, text);
-            }
-        }
-    }
-}
-
-/** @brief 表类型切换槽：重建面板+回填。 */
-static void mb_slaveTableSlot(XObject* sender, XVarList* args)
-{
-    (void)sender; (void)args;
-    mb_slaveRebuildPanel();
-    mb_slaveRefreshPanel();
-}
-
-/** @brief 位行勾选统一槽。 */
-static void mb_slaveBitSlot(XObject* sender, XVarList* args)
-{
-    int table = s_mbSlave.tableCombo
-                    ? XComboBox_currentIndex(s_mbSlave.tableCombo) : 0;
-    (void)sender;
-    if (s_mbSlave.bitEchoSuppress) {
-        /* 回显 setChecked 触发的 toggled：模型已是目标值，仅同步勾选
-           视觉——不得回写数据区（否则旧态冲掉主站刚写的新值）。 */
-        return;
-    }
+    bool on = false;
     if (args) {
         XVarList_args_1(args, bool, checked);
-        (void)checked;
+        on = checked;
     }
-    mb_slaveSyncBitsFromPanel(table);
+    mb_slaveSetBit(type, index, on);
 }
 
-/** @brief 寄存器行回车统一槽。 */
-static void mb_slaveRegSlot(XObject* sender, XVarList* args)
+#define MB_SLAVE_DI_SLOT(n) \
+    static void mb_slaveLampDiSlot##n(XObject* s, XVarList* a) \
+    { (void)s; mb_slaveSetBitFromArgs(XModbusDiscreteInputs, n, a); }
+#define MB_SLAVE_DO_SLOT(n) \
+    static void mb_slaveLampDoSlot##n(XObject* s, XVarList* a) \
+    { (void)s; mb_slaveSetBitFromArgs(XModbusCoils, n, a); }
+
+MB_SLAVE_DI_SLOT(0)  MB_SLAVE_DI_SLOT(1)  MB_SLAVE_DI_SLOT(2)
+MB_SLAVE_DI_SLOT(3)  MB_SLAVE_DI_SLOT(4)  MB_SLAVE_DI_SLOT(5)
+MB_SLAVE_DI_SLOT(6)  MB_SLAVE_DI_SLOT(7)  MB_SLAVE_DI_SLOT(8)
+MB_SLAVE_DI_SLOT(9)  MB_SLAVE_DI_SLOT(10) MB_SLAVE_DI_SLOT(11)
+MB_SLAVE_DI_SLOT(12) MB_SLAVE_DI_SLOT(13) MB_SLAVE_DI_SLOT(14)
+MB_SLAVE_DI_SLOT(15) MB_SLAVE_DI_SLOT(16) MB_SLAVE_DI_SLOT(17)
+MB_SLAVE_DI_SLOT(18) MB_SLAVE_DI_SLOT(19) MB_SLAVE_DI_SLOT(20)
+MB_SLAVE_DI_SLOT(21) MB_SLAVE_DI_SLOT(22) MB_SLAVE_DI_SLOT(23)
+MB_SLAVE_DI_SLOT(24) MB_SLAVE_DI_SLOT(25) MB_SLAVE_DI_SLOT(26)
+MB_SLAVE_DI_SLOT(27) MB_SLAVE_DI_SLOT(28) MB_SLAVE_DI_SLOT(29)
+MB_SLAVE_DI_SLOT(30) MB_SLAVE_DI_SLOT(31) MB_SLAVE_DI_SLOT(32)
+MB_SLAVE_DI_SLOT(33) MB_SLAVE_DI_SLOT(34) MB_SLAVE_DI_SLOT(35)
+MB_SLAVE_DI_SLOT(36) MB_SLAVE_DI_SLOT(37) MB_SLAVE_DI_SLOT(38)
+MB_SLAVE_DI_SLOT(39) MB_SLAVE_DI_SLOT(40) MB_SLAVE_DI_SLOT(41)
+MB_SLAVE_DI_SLOT(42) MB_SLAVE_DI_SLOT(43) MB_SLAVE_DI_SLOT(44)
+MB_SLAVE_DI_SLOT(45) MB_SLAVE_DI_SLOT(46) MB_SLAVE_DI_SLOT(47)
+MB_SLAVE_DI_SLOT(48) MB_SLAVE_DI_SLOT(49) MB_SLAVE_DI_SLOT(50)
+MB_SLAVE_DI_SLOT(51) MB_SLAVE_DI_SLOT(52) MB_SLAVE_DI_SLOT(53)
+MB_SLAVE_DI_SLOT(54) MB_SLAVE_DI_SLOT(55) MB_SLAVE_DI_SLOT(56)
+MB_SLAVE_DI_SLOT(57) MB_SLAVE_DI_SLOT(58) MB_SLAVE_DI_SLOT(59)
+MB_SLAVE_DI_SLOT(60) MB_SLAVE_DI_SLOT(61) MB_SLAVE_DI_SLOT(62)
+MB_SLAVE_DI_SLOT(63)
+
+MB_SLAVE_DO_SLOT(0)  MB_SLAVE_DO_SLOT(1)  MB_SLAVE_DO_SLOT(2)
+MB_SLAVE_DO_SLOT(3)  MB_SLAVE_DO_SLOT(4)  MB_SLAVE_DO_SLOT(5)
+MB_SLAVE_DO_SLOT(6)  MB_SLAVE_DO_SLOT(7)  MB_SLAVE_DO_SLOT(8)
+MB_SLAVE_DO_SLOT(9)  MB_SLAVE_DO_SLOT(10) MB_SLAVE_DO_SLOT(11)
+MB_SLAVE_DO_SLOT(12) MB_SLAVE_DO_SLOT(13) MB_SLAVE_DO_SLOT(14)
+MB_SLAVE_DO_SLOT(15) MB_SLAVE_DO_SLOT(16) MB_SLAVE_DO_SLOT(17)
+MB_SLAVE_DO_SLOT(18) MB_SLAVE_DO_SLOT(19) MB_SLAVE_DO_SLOT(20)
+MB_SLAVE_DO_SLOT(21) MB_SLAVE_DO_SLOT(22) MB_SLAVE_DO_SLOT(23)
+MB_SLAVE_DO_SLOT(24) MB_SLAVE_DO_SLOT(25) MB_SLAVE_DO_SLOT(26)
+MB_SLAVE_DO_SLOT(27) MB_SLAVE_DO_SLOT(28) MB_SLAVE_DO_SLOT(29)
+MB_SLAVE_DO_SLOT(30) MB_SLAVE_DO_SLOT(31) MB_SLAVE_DO_SLOT(32)
+MB_SLAVE_DO_SLOT(33) MB_SLAVE_DO_SLOT(34) MB_SLAVE_DO_SLOT(35)
+MB_SLAVE_DO_SLOT(36) MB_SLAVE_DO_SLOT(37) MB_SLAVE_DO_SLOT(38)
+MB_SLAVE_DO_SLOT(39) MB_SLAVE_DO_SLOT(40) MB_SLAVE_DO_SLOT(41)
+MB_SLAVE_DO_SLOT(42) MB_SLAVE_DO_SLOT(43) MB_SLAVE_DO_SLOT(44)
+MB_SLAVE_DO_SLOT(45) MB_SLAVE_DO_SLOT(46) MB_SLAVE_DO_SLOT(47)
+MB_SLAVE_DO_SLOT(48) MB_SLAVE_DO_SLOT(49) MB_SLAVE_DO_SLOT(50)
+MB_SLAVE_DO_SLOT(51) MB_SLAVE_DO_SLOT(52) MB_SLAVE_DO_SLOT(53)
+MB_SLAVE_DO_SLOT(54) MB_SLAVE_DO_SLOT(55) MB_SLAVE_DO_SLOT(56)
+MB_SLAVE_DO_SLOT(57) MB_SLAVE_DO_SLOT(58) MB_SLAVE_DO_SLOT(59)
+MB_SLAVE_DO_SLOT(60) MB_SLAVE_DO_SLOT(61) MB_SLAVE_DO_SLOT(62)
+MB_SLAVE_DO_SLOT(63)
+
+static XSlotFunc1 const kDiLampSlots[MB_SLAVE_MAX_POINTS] = {
+    mb_slaveLampDiSlot0,  mb_slaveLampDiSlot1,  mb_slaveLampDiSlot2,
+    mb_slaveLampDiSlot3,  mb_slaveLampDiSlot4,  mb_slaveLampDiSlot5,
+    mb_slaveLampDiSlot6,  mb_slaveLampDiSlot7,  mb_slaveLampDiSlot8,
+    mb_slaveLampDiSlot9,  mb_slaveLampDiSlot10, mb_slaveLampDiSlot11,
+    mb_slaveLampDiSlot12, mb_slaveLampDiSlot13, mb_slaveLampDiSlot14,
+    mb_slaveLampDiSlot15, mb_slaveLampDiSlot16, mb_slaveLampDiSlot17,
+    mb_slaveLampDiSlot18, mb_slaveLampDiSlot19, mb_slaveLampDiSlot20,
+    mb_slaveLampDiSlot21, mb_slaveLampDiSlot22, mb_slaveLampDiSlot23,
+    mb_slaveLampDiSlot24, mb_slaveLampDiSlot25, mb_slaveLampDiSlot26,
+    mb_slaveLampDiSlot27, mb_slaveLampDiSlot28, mb_slaveLampDiSlot29,
+    mb_slaveLampDiSlot30, mb_slaveLampDiSlot31, mb_slaveLampDiSlot32,
+    mb_slaveLampDiSlot33, mb_slaveLampDiSlot34, mb_slaveLampDiSlot35,
+    mb_slaveLampDiSlot36, mb_slaveLampDiSlot37, mb_slaveLampDiSlot38,
+    mb_slaveLampDiSlot39, mb_slaveLampDiSlot40, mb_slaveLampDiSlot41,
+    mb_slaveLampDiSlot42, mb_slaveLampDiSlot43, mb_slaveLampDiSlot44,
+    mb_slaveLampDiSlot45, mb_slaveLampDiSlot46, mb_slaveLampDiSlot47,
+    mb_slaveLampDiSlot48, mb_slaveLampDiSlot49, mb_slaveLampDiSlot50,
+    mb_slaveLampDiSlot51, mb_slaveLampDiSlot52, mb_slaveLampDiSlot53,
+    mb_slaveLampDiSlot54, mb_slaveLampDiSlot55, mb_slaveLampDiSlot56,
+    mb_slaveLampDiSlot57, mb_slaveLampDiSlot58, mb_slaveLampDiSlot59,
+    mb_slaveLampDiSlot60, mb_slaveLampDiSlot61, mb_slaveLampDiSlot62,
+    mb_slaveLampDiSlot63
+};
+static XSlotFunc1 const kDoLampSlots[MB_SLAVE_MAX_POINTS] = {
+    mb_slaveLampDoSlot0,  mb_slaveLampDoSlot1,  mb_slaveLampDoSlot2,
+    mb_slaveLampDoSlot3,  mb_slaveLampDoSlot4,  mb_slaveLampDoSlot5,
+    mb_slaveLampDoSlot6,  mb_slaveLampDoSlot7,  mb_slaveLampDoSlot8,
+    mb_slaveLampDoSlot9,  mb_slaveLampDoSlot10, mb_slaveLampDoSlot11,
+    mb_slaveLampDoSlot12, mb_slaveLampDoSlot13, mb_slaveLampDoSlot14,
+    mb_slaveLampDoSlot15, mb_slaveLampDoSlot16, mb_slaveLampDoSlot17,
+    mb_slaveLampDoSlot18, mb_slaveLampDoSlot19, mb_slaveLampDoSlot20,
+    mb_slaveLampDoSlot21, mb_slaveLampDoSlot22, mb_slaveLampDoSlot23,
+    mb_slaveLampDoSlot24, mb_slaveLampDoSlot25, mb_slaveLampDoSlot26,
+    mb_slaveLampDoSlot27, mb_slaveLampDoSlot28, mb_slaveLampDoSlot29,
+    mb_slaveLampDoSlot30, mb_slaveLampDoSlot31, mb_slaveLampDoSlot32,
+    mb_slaveLampDoSlot33, mb_slaveLampDoSlot34, mb_slaveLampDoSlot35,
+    mb_slaveLampDoSlot36, mb_slaveLampDoSlot37, mb_slaveLampDoSlot38,
+    mb_slaveLampDoSlot39, mb_slaveLampDoSlot40, mb_slaveLampDoSlot41,
+    mb_slaveLampDoSlot42, mb_slaveLampDoSlot43, mb_slaveLampDoSlot44,
+    mb_slaveLampDoSlot45, mb_slaveLampDoSlot46, mb_slaveLampDoSlot47,
+    mb_slaveLampDoSlot48, mb_slaveLampDoSlot49, mb_slaveLampDoSlot50,
+    mb_slaveLampDoSlot51, mb_slaveLampDoSlot52, mb_slaveLampDoSlot53,
+    mb_slaveLampDoSlot54, mb_slaveLampDoSlot55, mb_slaveLampDoSlot56,
+    mb_slaveLampDoSlot57, mb_slaveLampDoSlot58, mb_slaveLampDoSlot59,
+    mb_slaveLampDoSlot60, mb_slaveLampDoSlot61, mb_slaveLampDoSlot62,
+    mb_slaveLampDoSlot63
+};
+
+
+/** @brief 输出全开/全关（从站侧）：本地数据区逐点差量写。
+ *  [sender 不可信 2026-10-18] 原实现用 `sender == allOnBtn` 判方向——与灯格
+ *  同源的缺陷（槽收到的 sender 不是按钮本身），实测该判别恒为假 ⇒ 全开被
+ *  当成全关。改为两个**互不相似**的槽，方向写死在编译期。 */
+static void mb_slaveDoSetAll(bool on)
 {
-    int table = s_mbSlave.tableCombo
-                    ? XComboBox_currentIndex(s_mbSlave.tableCombo) : 0;
-    (void)sender; (void)args;
-    mb_slaveSyncRegsFromPanel(table);
+    int i;
+    if (!s_mbSlave.server) return;
+    s_mbSlave.bitEchoSuppress = 1;
+    for (i = 0; i < s_mbSlave.outCount && i < MB_SLAVE_MAX_POINTS; ++i)
+        if (s_mbSlave.doCells[i])
+            XAbstractButton_setChecked((XAbstractButton*)s_mbSlave.doCells[i],
+                                       on);
+    s_mbSlave.bitEchoSuppress = 0;
+    for (i = 0; i < s_mbSlave.outCount && i < MB_SLAVE_MAX_POINTS; ++i)
+        if (s_mbSlave.doCells[i])
+            mb_slaveSetBit(XModbusCoils, i, on);
 }
 
-/** @brief 「按点数重建」按钮槽（点数 SpinBox 调整后应用）。 */
-static void mb_slaveApplySlot(XObject* sender, XVarList* args)
+static void mb_slaveAllOnSlot(XObject* sender, XVarList* args)
 {
     (void)sender; (void)args;
-    s_mbSlave.inCount = s_mbSlave.inCountSpin
-                            ? XSpinBox_value(s_mbSlave.inCountSpin) : 8;
-    s_mbSlave.outCount = s_mbSlave.outCountSpin
-                             ? XSpinBox_value(s_mbSlave.outCountSpin) : 8;
-    if (s_mbSlave.inCount > MB_SLAVE_MAX_POINTS)
-        s_mbSlave.inCount = MB_SLAVE_MAX_POINTS;
-    if (s_mbSlave.outCount > MB_SLAVE_MAX_POINTS)
-        s_mbSlave.outCount = MB_SLAVE_MAX_POINTS;
-    if (s_mbSlave.server) mb_slaveRebuildMap();
-    mb_slaveRebuildPanel();
-    mb_slaveRefreshPanel();
+    mb_slaveDoSetAll(true);
 }
 
-/** @brief 从站启动/停止。 */
-static void mb_slaveStartStop(void)
+static void mb_slaveAllOffSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_slaveDoSetAll(false);
+}
+
+/** @brief 输入全开/全关（从站侧）：与 mb_slaveDoSetAll 完全对称，目标
+ *  换成 DiscreteInputs（[全宽纵向四段式 2026-10-18] DI 标题行新增「DI
+ *  全开/全关」）。先 setChecked 再逐点 mb_slaveSetBit（localWriteSuppress
+ *  包住 setData2，掐断 dataWritten 回声——防打架机制原样保留）。 */
+static void mb_slaveDiSetAll(bool on)
+{
+    int i;
+    if (!s_mbSlave.server) return;
+    s_mbSlave.bitEchoSuppress = 1;
+    for (i = 0; i < s_mbSlave.inCount && i < MB_SLAVE_MAX_POINTS; ++i)
+        if (s_mbSlave.diCells[i])
+            XAbstractButton_setChecked((XAbstractButton*)s_mbSlave.diCells[i],
+                                       on);
+    s_mbSlave.bitEchoSuppress = 0;
+    for (i = 0; i < s_mbSlave.inCount && i < MB_SLAVE_MAX_POINTS; ++i)
+        mb_slaveSetBit(XModbusDiscreteInputs, i, on);
+}
+
+static void mb_slaveDiAllOnSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_slaveDiSetAll(true);
+}
+
+static void mb_slaveDiAllOffSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_slaveDiSetAll(false);
+}
+
+/** @brief 初始化一行寄存器行（地址+值两格文本 item）。
+ *  [10-19 框架编辑器迁移] 值格不再常驻挂 XLineEdit——观察态两格皆纯
+ *  文本（观感对齐主站/Qt：平时无编辑框）；编辑走框架委托编辑器（表级
+ *  setItemsEditable+缺省 DoubleClicked 触发位，双击出内嵌行编辑框，
+ *  回车/失焦提交经模型 dataChanged 桥发 cellChanged 落库，见
+ *  mb_slaveRegCellChangedAt）。build 期 0..N 与「数量 SpinBox 扩容
+ *  补行」共用同一初始化；新行值随 applyRegCounts 尾部 echoAll 从 map
+ *  回显（已填值不丢）。 */
+static void mb_slaveMountRegRow(XTableWidget* tbl, int i)
+{
+    char addr[12];
+    XTableWidgetItem item;
+    if (!tbl || i < 0 || i >= MB_SLAVE_REG_MAX_ROWS) return;
+    snprintf(addr, sizeof(addr), "0x%04X", i);
+    XMemset(&item, 0, sizeof(item));
+    item.text = XString_create_utf8(addr);
+    /* [10-19 对齐 Qt] 地址列只读：item 级 flags 去 ItemIsEditable
+     * （0=缺省可编辑的兼容约定，故显式给「可选+可用」组合）——
+     * 双击地址格不再进入编辑。 */
+    item.itemFlags = XTableWidgetItemFlag_ItemIsSelectable |
+                     XTableWidgetItemFlag_ItemIsEnabled;
+    XTableWidget_setItem(tbl, i, 0, &item);
+    XClassDelete((XClass*)item.text);
+    XMemset(&item, 0, sizeof(item));
+    item.text = XString_create_utf8("0");
+    XTableWidget_setItem(tbl, i, 1, &item);
+    XClassDelete((XClass*)item.text);
+}
+
+/** @brief 建一张寄存器表（2 列 × 当前行数，观察态纯文本）。
+ *  [10-19 框架编辑器迁移] 表尾开视图级编辑门禁（对标 Qt item 缺省
+ *  flags 含 ItemIsEditable；框架以视图开关承载，缺省 false 保持既有
+ *  行为）并连 cellChanged→数据区落库槽（changedSlot 编译期定 IR/HR）。
+ *  [常驻挂载 2026-10-18→已退役] 行数变化仍走 mb_slaveApplyRegCounts
+ *  （扩容补行/收缩缩表），不整表重建。
+ *  [10-18 三次追加] IR/HR 标识由**段标题行**承载（layIrTitle/layHrTitle）；
+ *  表头口径随双击编辑更新为「值(双击编辑/回车生效)」。 */
+static void mb_slaveBuildRegTable(XWidget* parent, XTableWidget** outTable,
+                                  int rowCount, XSlotFunc1 changedSlot)
+{
+    static const char* const kHead[2] = {
+        "\xE5\x9C\xB0\xE5\x9D\x80",             /* 地址 */
+        "\xE5\x80\xBC(\xE5\x8F\x8C\xE5\x87\xBB\xE7\xBC\x96\xE8\xBE\x91/"
+        "\xE5\x9B\x9E\xE8\xBD\xA6\xE7\x94\x9F\xE6\x95\x88)" /* 值(双击编辑/回车生效) */
+    };
+    XTableWidget* tbl;
+    int i;
+    if (!parent || !outTable || !changedSlot) return;
+    if (rowCount < 1) rowCount = 1;
+    if (rowCount > MB_SLAVE_REG_MAX_ROWS) rowCount = MB_SLAVE_REG_MAX_ROWS;
+    tbl = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, 0);
+    if (!tbl) return;
+    XTableWidget_setColumnCount(tbl, 2);
+    XTableWidget_setHorizontalHeaderLabels(tbl, kHead,
+            (int)(sizeof(kHead) / sizeof(kHead[0])));
+    XTableWidget_setRowCount(tbl, rowCount);
+    for (i = 0; i < rowCount; ++i)
+        mb_slaveMountRegRow(tbl, i);
+    XAbstractItemView_setItemsEditable(&tbl->m_base.m_base, true);
+    XObject_connect_1((XObject*)tbl,
+                      (size_t)XTableWidget_cellChanged_signal(
+                          (XTableWidget*)NULL),
+                      (XObject*)s_mbSlave.root, changedSlot,
+                      XConnectionType_Direct);
+    XWidget_show((XWidget*)tbl);
+    *outTable = tbl;
+}
+
+/** @brief 灯格重建：DI/DO 各按「可见列数=段宽/单元宽」**换行铺排**。
+ *  [10-18 二次追加·滚动条纪律] 旧「单行横排 + 横向滚动壳」删除——放不下
+ *  换行往下放一行（对标主站页 IO 网格 (i%cols,i/cols) 换行口径
+ *  ：1369-1385），宿主宽=列数×单元宽、高=行数×单元高随宽度重算；超高
+ *  部分由整页竖滚区承担，DI/DO 子段不出滚动条。列数由 syncViewport
+ *  解算（宽度驱动），点数由 SpinBox/重建按钮驱动，两者任一变化才重建。
+ *  [R2 2026-10-18] 宿主仍须显式定尺**外加显式 sizeHint**：裸 XWidget 的
+ *  sizeHint 初值 (-1,-1)（XWidget.c:3612）在布局度量里回退成 0（C7）；
+ *  宿主作为 layData 条目参与「内容根首选高」求和（整页竖滚的内容高
+ *  依赖该合计），不定 hint 会把内容首选高算矮。 */
+static void mb_slaveRebuildGrids(void)
+{
+    int i;
+    int cols;
+    int diRows;
+    int doRows;
+    if (!s_mbSlave.diGridHost || !s_mbSlave.doGridHost) return;
+    for (i = 0; i < MB_SLAVE_MAX_POINTS; ++i) {
+        if (s_mbSlave.diCells[i]) {
+            XClassDelete((XClass*)s_mbSlave.diCells[i]);
+            s_mbSlave.diCells[i] = NULL;
+        }
+        if (s_mbSlave.doCells[i]) {
+            XClassDelete((XClass*)s_mbSlave.doCells[i]);
+            s_mbSlave.doCells[i] = NULL;
+        }
+    }
+    /* 行数=ceil(点数/列数)；0 点时保一行兜底（布局里裸宿主 0 高会被
+     * 度量回退成不可见）。宽/高与显式 sizeHint 同步落，见函数头注释。 */
+    cols = s_mbSlave.gridCols > 0 ? s_mbSlave.gridCols : 1;
+    diRows = (s_mbSlave.inCount + cols - 1) / cols;
+    doRows = (s_mbSlave.outCount + cols - 1) / cols;
+    if (diRows < 1) diRows = 1;
+    if (doRows < 1) doRows = 1;
+    {
+        XSize hint;
+        XWidget_setFixedWidth(s_mbSlave.diGridHost, cols * MB_CELL_W);
+        XWidget_setFixedHeight(s_mbSlave.diGridHost, diRows * MB_CELL_H);
+        XSize_init(&hint, cols * MB_CELL_W, diRows * MB_CELL_H);
+        XWidget_setSizeHint(s_mbSlave.diGridHost, &hint);
+        XWidget_setFixedWidth(s_mbSlave.doGridHost, cols * MB_CELL_W);
+        XWidget_setFixedHeight(s_mbSlave.doGridHost, doRows * MB_CELL_H);
+        XSize_init(&hint, cols * MB_CELL_W, doRows * MB_CELL_H);
+        XWidget_setSizeHint(s_mbSlave.doGridHost, &hint);
+    }
+    for (i = 0; i < s_mbSlave.inCount && i < MB_SLAVE_MAX_POINTS; ++i) {
+        MbSwLamp* cell = (MbSwLamp*)XMalloc_System(sizeof(MbSwLamp));
+        if (!cell) break;
+        MbSwLamp_init(cell, s_mbSlave.diGridHost, i, "DI");
+        XWidget_setGeometry((XWidget*)cell,
+                            (i % cols) * MB_CELL_W,
+                            (i / cols) * MB_CELL_H,
+                            MB_CELL_W - 4, MB_CELL_H - 4);
+        XObject_connect_1((XObject*)cell,
+                          (size_t)XAbstractButton_toggled_signal(
+                              (XAbstractButton*)cell, false),
+                          (XObject*)s_mbSlave.root, kDiLampSlots[i],
+                          XConnectionType_Direct);
+        s_mbSlave.diCells[i] = cell;
+    }
+    for (i = 0; i < s_mbSlave.outCount && i < MB_SLAVE_MAX_POINTS; ++i) {
+        MbSwLamp* cell = (MbSwLamp*)XMalloc_System(sizeof(MbSwLamp));
+        if (!cell) break;
+        MbSwLamp_init(cell, s_mbSlave.doGridHost, i, "DO");
+        XWidget_setGeometry((XWidget*)cell,
+                            (i % cols) * MB_CELL_W,
+                            (i / cols) * MB_CELL_H,
+                            MB_CELL_W - 4, MB_CELL_H - 4);
+        XObject_connect_1((XObject*)cell,
+                          (size_t)XAbstractButton_toggled_signal(
+                              (XAbstractButton*)cell, false),
+                          (XObject*)s_mbSlave.root, kDoLampSlots[i],
+                          XConnectionType_Direct);
+        s_mbSlave.doCells[i] = cell;
+    }
+}
+
+/** @brief 单表列宽重摆：地址:值 = 45%:55%（表宽变化时差量同步列宽）。 */
+static void mb_slaveApplyRegColWidths(XTableWidget* tbl, int w)
+{
+    int addrW;
+    if (!tbl) return;
+    if (w <= 0) w = XWidget_width((XWidget*)tbl);
+    if (w <= 0) w = MB_REG_MIN_COL_W;
+    /* 行号列（XTW_HEADER_W=40）也占表宽，必须先扣掉，否则 45%/55% 的
+     * 地址/值切分会把值列挤出可视区（实测值列被裁、表内出横滚条）。 */
+    {
+        int gutter = (int)tbl->m_headerWidth;
+        int body = w - gutter;
+        if (body < 20) body = 20;
+        addrW = body * 45 / 100;
+        if (addrW < 30) addrW = 30;
+        XTableView_setColumnWidth(&tbl->m_base, 0, addrW);
+        XTableView_setColumnWidth(&tbl->m_base, 1, body - addrW);
+    }
+}
+
+
+/** @brief 寄存器表几何：IR/HR **上下堆叠**平铺进 layData，满高全展开。
+ *  @details [上下堆叠而非并排的理由 2026-10-18] 并排各占一半须引入水平
+ *           中间容器 + 两层嵌套布局，且本框架实测 XTableWidget 在盒式
+ *           布局条目里不贡献可分配宽（旧宽档 irTable/hrTable 宽恒 0 的
+ *           实测口径），每表还得按列容器宽定尺——几何链长、坑位多。
+ *           上下堆叠把两表直接平铺进 layData（每层只有「控件+自己的
+ *           布局」一跳），表宽直接 = dataArea 宽，与既有「定尺 +
+ *           invalidate + activate + setGeometry」套路完全同构，实现最简。
+ *           [10-18 二次追加·滚动条纪律] 旧「两遍法按视口余高对半」删除：
+ *           表不再抢视口高度，高度恒= 水平表头高 + 16×统一行高（16 行
+ *           全展开、行数 16 不变），垂直超出由整页竖滚区承担；表内无
+ *           内容溢出 ⇒ 不出竖滚条，列宽仍按 地址:值=45:55 差量同步铺满
+ *           表宽（行号列先扣）⇒ 不出横滚条。 */
+static void mb_slaveApplyRegGeometry(int availW)
+{
+    XTableWidget* tabs[2];
+    int i;
+    int w;
+    int h;
+    tabs[0] = s_mbSlave.irTable;
+    tabs[1] = s_mbSlave.hrTable;
+    if (!tabs[0] && !tabs[1]) return;
+    w = availW > 0 ? availW : MB_SLAVE_MIN_AVAIL_W;
+    if (w < MB_REG_MIN_COL_W) w = MB_REG_MIN_COL_W;
+    for (i = 0; i < 2; ++i) {
+        int rows;
+        if (!tabs[i]) continue;
+        /* 满高 = 水平表头高 + 当前行数×统一行高（[10-18 三次追加] 行数
+         * = irCount/hrCount 可调，读实际行数不抄常量；行高默认 24、
+         * 表头高同理，读实际值）。 */
+        rows = XTableWidget_rowCount(tabs[i]);
+        h = (int)tabs[i]->m_headerHeight +
+            XTableView_rowHeight(&tabs[i]->m_base) * rows;
+        XWidget_setFixedWidth((XWidget*)tabs[i], w);
+        XWidget_setFixedHeight((XWidget*)tabs[i], h);
+    }
+    /* setFixed 不失效布局（activate 会幂等早退），必须显式 invalidate。 */
+    XLayout_invalidate((XLayout*)&s_mbSlave.layData);
+    XLayout_activate((XLayout*)&s_mbSlave.layData);
+    /* 显式落几何：保留 activate 摆出的 x/y，只回写定尺宽高（实测本框
+     * 架 activate 有幂等早退路径，可能不把新定尺落到 widget 上）。 */
+    for (i = 0; i < 2; ++i) {
+        XTableWidget* tbl = tabs[i];
+        int rows;
+        if (!tbl) continue;
+        rows = XTableWidget_rowCount(tbl);
+        h = (int)tbl->m_headerHeight +
+            XTableView_rowHeight(&tbl->m_base) * rows;
+        XWidget_setGeometry((XWidget*)tbl,
+                            XWidget_x((XWidget*)tbl),
+                            XWidget_y((XWidget*)tbl), w, h);
+        mb_slaveApplyRegColWidths(tbl, w);
+    }
+}
+
+
+/** @brief 视口解算（幂等；build 末尾 / 内容根 resize / adapt 三入口共用，
+ *  重复无害）。
+ *  [全宽纵向四段式 2026-10-18] 双档（宽档横排/紧凑档纵排）与翻转逻辑
+ *  整体删除——数据区恒纵向单列铺满整宽，无档位可言。
+ *  [10-18 二次追加] 灯格**可见列数** = 段宽/单元宽（随宽度自动增减），
+ *  列数或点数变化才重建（换行铺排，宿主高随行数重算）；表几何每拍
+ *  跟随段宽（满高全展开 + 列宽铺满）。无独立滚动壳，无逐拍壳宽跟随。 */
+static void mb_slaveSyncViewport(void)
+{
+    static int s_printed = 0;
+    int availW;
+    int cols;
+    int maxPts;
+    int rawW;
+    if (!s_mbSlave.dataArea) return;
+    /* 先激活页根布局再读数据区几何（基类 resize 路径的激活在事件
+     * 派发之后，此处读宽须先行——同主站 MbMasterRoot 写法）。 */
+    if (XWidget_layout(s_mbSlave.pageRoot))
+        XLayout_activate(XWidget_layout(s_mbSlave.pageRoot));
+    rawW = XWidget_width((XWidget*)s_mbSlave.dataArea);
+    availW = rawW;
+    /* 只防 0/负与未定尺兜底，真实几何优先（同旧口径）。 */
+    if (availW < MB_SLAVE_MIN_AVAIL_W) availW = MB_SLAVE_MIN_AVAIL_W;
+    /* 可见列数 = 宽度 / 单元宽（至少 1 列；宽度收紧时换行加行）。 */
+    cols = availW / MB_CELL_W;
+    if (cols < 1) cols = 1;
+    maxPts = (s_mbSlave.inCount > s_mbSlave.outCount) ? s_mbSlave.inCount
+                                                      : s_mbSlave.outCount;
+    /* [R11 实测校正 2026-10-18] 首见**成规模**视口时打一条实测口径。
+     * 门槛 rawW>200：堆叠布局首拍给的是控件默认尺寸（autotest 实测
+     * vp=100x30），那时尚未就位，打出来无校正价值。 */
+    if (!s_printed && rawW > 200) {
+        s_printed = 1;
+        XPrintf("XGuiWindowDemo: mbSlave vp=%dx%d avail=%d"
+                " cols=%d pts=%d\n",
+                s_mbSlave.pageRoot ? XWidget_width(s_mbSlave.pageRoot) : 0,
+                s_mbSlave.pageRoot ? XWidget_height(s_mbSlave.pageRoot) : 0,
+                rawW, cols, maxPts);
+    }
+    /* 幂等门控：只有列数或点数真变了才重建灯格（避免每次 resize 全量
+     * 重建；表几何由 applyRegGeometry 每拍跟随，不经重建）。 */
+    if (cols != s_mbSlave.gridCols || maxPts != s_mbSlave.gridPts) {
+        s_mbSlave.gridCols = cols;
+        s_mbSlave.gridPts = maxPts;
+        mb_slaveRebuildGrids();
+        mb_slaveEchoAll();
+    }
+    mb_slaveApplyRegGeometry(availW);
+    /* [10-18 二次追加] 换行行数/表定尺变化都会改内容首选高——整页竖滚
+     * 的内容高与滚动范围在此收敛（fit 内 setGeometry 无变化即幂等早退，
+     * 不会与 resize 入口成环；内容高是视口宽的纯函数，不振荡）。 */
+    mb_slaveFitScrollContent(s_mbSlave.scroll);
+}
+
+/** @brief 通道连接参数重刷（每次启动都跑 ⇒ 改端口后立即生效）。
+ *  [泄漏修 2026-10-18] setConnectionParameter_move 两分支皆**所有权转移**
+ *  （XModbusDevice.c:139-152：槽非空走 XClassMove，空走 XVariant_create_
+ *  move），而 XVariant 是堆对象（XVariant.c:53-59 Set_Class_IsHeap）⇒
+ *  转移后必须显式删外壳，否则每点一次「启动」漏一个。不用 _ref：那支
+ *  是「删旧值+直接存指针」的借用语义，调用方还得保活。 */
+static void mb_slaveApplyChannelParams(void)
+{
+    XModbusServer* srv = s_mbSlave.server;
+    int channel = s_mbSlave.channelCombo
+                    ? XComboBox_currentIndex(s_mbSlave.channelCombo) : 0;
+    XVariant* var = NULL;
+    if (!srv) return;
+    XModbusServer_setServerAddress(srv, XSpinBox_value(s_mbSlave.unitSpin));
+#if XMODBUS_TCP_ON
+    if (channel == 0) {
+        int port = s_mbSlave.tcpPortEdit
+                       ? atoi(XLineEdit_text(s_mbSlave.tcpPortEdit)) : 15020;
+        if (port <= 0 || port > 65535) port = 15020;
+        var = XVariant_create_int(port);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(
+                (XModbusDevice*)srv,
+                XModbusDevice_NetworkPortParameter, var);
+            XClassDelete((XClass*)var);
+            var = NULL;
+        }
+    }
+#endif
+#if XMODBUS_RTU_ON
+    if (channel == 1) {
+        const char* name = s_mbSlave.serialNameEdit
+                ? XLineEdit_text(s_mbSlave.serialNameEdit) : "/dev/ttyS1";
+        int baud = 9600;
+        if (s_mbSlave.serialBaudCombo)
+            baud = atoi(XComboBox_currentText(s_mbSlave.serialBaudCombo));
+        if (baud <= 0) baud = 9600;
+        var = XString_toVariant(XString_create_utf8(name));
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(
+                (XModbusDevice*)srv,
+                XModbusDevice_SerialPortNameParameter, var);
+            XClassDelete((XClass*)var);
+            var = NULL;
+        }
+        var = XVariant_create_int(baud);
+        if (var) {
+            XModbusDevice_setConnectionParameter_move(
+                (XModbusDevice*)srv,
+                XModbusDevice_SerialBaudRateParameter, var);
+            XClassDelete((XClass*)var);
+            var = NULL;
+        }
+    }
+#endif
+    (void)var;
+}
+
+/** @brief 建常驻 server 对象（幂等）：建对象即挂 map/接信号/刷参数。
+ *  [常驻 2026-10-18] 写路径不需连接态——setData2 → writeData 只判
+ *  server/unit/map/键/地址，全程不看 device state ⇒ 建好未监听也能
+ *  单机点灯改寄存器。 */
+static void mb_slaveEnsureServer(void)
 {
     int channel = s_mbSlave.channelCombo
-                      ? XComboBox_currentIndex(s_mbSlave.channelCombo) : 0;
+                    ? XComboBox_currentIndex(s_mbSlave.channelCombo) : 0;
     XModbusServer* srv = NULL;
-    XVariant* var;
-
-    if (s_mbSlave.server) {
-        XModbusDevice_disconnectDevice((XModbusDevice*)s_mbSlave.server);
-        XObject_deleteLater((XObject*)s_mbSlave.server);
-        s_mbSlave.server = NULL;
-        if (s_mbSlave.stateLabel)
-            XLabel_setText_2(s_mbSlave.stateLabel,
-                             "\xE5\xB7\xB2\xE5\x81\x9C\xE6\xAD\xA2"); /* 已停止 */
-        XPushButton_setText_2(s_mbSlave.startBtn,
-                              "\xE5\x90\xAF\xE5\x8A\xA8"); /* 启动 */
-        return;
-    }
-
-    s_mbSlave.inCount = s_mbSlave.inCountSpin
-                            ? XSpinBox_value(s_mbSlave.inCountSpin) : 8;
-    s_mbSlave.outCount = s_mbSlave.outCountSpin
-                             ? XSpinBox_value(s_mbSlave.outCountSpin) : 8;
-    if (s_mbSlave.inCount > MB_SLAVE_MAX_POINTS)
-        s_mbSlave.inCount = MB_SLAVE_MAX_POINTS;
-    if (s_mbSlave.outCount > MB_SLAVE_MAX_POINTS)
-        s_mbSlave.outCount = MB_SLAVE_MAX_POINTS;
-
+    if (s_mbSlave.server) return;
 #if XMODBUS_TCP_ON
     if (channel == 0) {
         XModbusTcpServer* ts = XModbusTcpServer_create_ex(
             XCLASS_DEFAULT_MEMORY_TYPE);
-        if (!ts) return;
-        srv = (XModbusServer*)ts;
-        {
-            int port = s_mbSlave.tcpPortEdit
-                           ? atoi(XLineEdit_text(s_mbSlave.tcpPortEdit))
-                           : 15020;
-            if (port <= 0 || port > 65535) port = 15020;
-            var = XVariant_create_int(port);
-            if (var) {
-                XModbusDevice_setConnectionParameter_move(
-                    (XModbusDevice*)srv,
-                    XModbusDevice_NetworkPortParameter, var);
-                var = NULL;
-            }
-        }
+        if (ts) srv = (XModbusServer*)ts;
     }
 #endif
 #if XMODBUS_RTU_ON
     if (channel == 1) {
         XModbusRtuSerialServer* rs = XModbusRtuSerialServer_create_ex(
             XCLASS_DEFAULT_MEMORY_TYPE);
-        if (!rs) return;
-        srv = (XModbusServer*)rs;
-        {
-            const char* name = s_mbSlave.serialNameEdit
-                ? XLineEdit_text(s_mbSlave.serialNameEdit) : "/dev/ttyS1";
-            int baud = 9600;
-            if (s_mbSlave.serialBaudCombo)
-                baud = atoi(XComboBox_currentText(s_mbSlave.serialBaudCombo));
-            if (baud <= 0) baud = 9600;
-            var = XString_toVariant(XString_create_utf8(name));
-            if (var) {
-                XModbusDevice_setConnectionParameter_move(
-                    (XModbusDevice*)srv,
-                    XModbusDevice_SerialPortNameParameter, var);
-                var = NULL;
-            }
-            var = XVariant_create_int(baud);
-            if (var) {
-                XModbusDevice_setConnectionParameter_move(
-                    (XModbusDevice*)srv,
-                    XModbusDevice_SerialBaudRateParameter, var);
-                var = NULL;
-            }
-        }
+        if (rs) srv = (XModbusServer*)rs;
     }
 #endif
     if (!srv) return;
-
-    XModbusServer_setServerAddress(srv, XSpinBox_value(s_mbSlave.unitSpin));
     s_mbSlave.server = srv;
     mb_slaveRebuildMap();
     XObject_connect_1((XObject*)srv,
                       (size_t)XModbusServer_dataWritten_signal(NULL, 0, 0, 0),
                       (XObject*)s_mbSlave.root, mb_slaveOnDataWritten,
                       XConnectionType_Direct);
-    if (XModbusDevice_connectDevice((XModbusDevice*)srv)) {
+    mb_slaveApplyChannelParams();
+}
+
+/** @brief 从站启动/停止（server 常驻，停止只断连不销毁）。 */
+static void mb_slaveStartStop(void)
+{
+    if (s_mbSlave.listening) {
+        XModbusDevice_disconnectDevice((XModbusDevice*)s_mbSlave.server);
+        s_mbSlave.listening = false;
+        if (s_mbSlave.stateLabel)
+            XLabel_setText_2(s_mbSlave.stateLabel,
+                             "\xE5\xB7\xB2\xE5\x81\x9C\xE6\xAD\xA2"); /* 已停止 */
+        if (s_mbSlave.startBtn)
+            XPushButton_setText_2(s_mbSlave.startBtn,
+                                  "\xE5\x90\xAF\xE5\x8A\xA8");  /* 启动 */
+        return;
+    }
+    s_mbSlave.inCount = s_mbSlave.inCountSpin
+                            ? XSpinBox_value(s_mbSlave.inCountSpin) : 8;
+    s_mbSlave.outCount = s_mbSlave.outCountSpin
+                             ? XSpinBox_value(s_mbSlave.outCountSpin) : 8;
+    if (s_mbSlave.inCount > MB_SLAVE_MAX_POINTS)
+        s_mbSlave.inCount = MB_SLAVE_MAX_POINTS;
+    if (s_mbSlave.outCount > MB_SLAVE_MAX_POINTS)
+        s_mbSlave.outCount = MB_SLAVE_MAX_POINTS;
+    mb_slaveSyncViewport();
+    if (s_mbSlave.server) mb_slaveRebuildMap();
+    mb_slaveEnsureServer();
+    if (!s_mbSlave.server) return;
+    /* 每次启动重刷参数：修「改端口/波特率后不生效」。 */
+    mb_slaveApplyChannelParams();
+    if (XModbusDevice_connectDevice((XModbusDevice*)s_mbSlave.server)) {
+        s_mbSlave.listening = true;
         if (s_mbSlave.stateLabel)
             XLabel_setText_2(s_mbSlave.stateLabel,
                              "\xE7\x9B\x91\xE5\x90\xAC\xE4\xB8\xAD");
                              /* 监听中 */
-        XPushButton_setText_2(s_mbSlave.startBtn,
-                              "\xE5\x81\x9C\xE6\xAD\xA2"); /* 停止 */
-        mb_slaveRefreshPanel();
+        if (s_mbSlave.startBtn)
+            XPushButton_setText_2(s_mbSlave.startBtn,
+                                  "\xE5\x81\x9C\xE6\xAD\xA2");  /* 停止 */
+        mb_slaveEchoAll();
     } else {
-        XObject_deleteLater((XObject*)srv);
-        s_mbSlave.server = NULL;
+        /* [R12 行为变更 2026-10-18] 不再 deleteLater：失败保留对象，
+         * 用户改端口可直接重试；停止期间数据区仍在（可继续单机调）。 */
+        s_mbSlave.listening = false;
         if (s_mbSlave.stateLabel)
             XLabel_setText_2(s_mbSlave.stateLabel,
                              "\xE5\x90\xAF\xE5\x8A\xA8\xE5\xA4\xB1\xE8\xB4\xA5");
                              /* 启动失败 */
+        if (s_mbSlave.startBtn)
+            XPushButton_setText_2(s_mbSlave.startBtn,
+                                  "\xE5\x90\xAF\xE5\x8A\xA8");  /* 启动 */
     }
 }
 
@@ -2162,8 +2949,8 @@ static void mb_slaveStartSlot(XObject* sender, XVarList* args)
     mb_slaveStartStop();
 }
 
-/** @brief 从站通道切换槽：参数行（含标签）可见性。 */
-static void mb_slaveChannelSlot(XObject* sender, XVarList* args)
+/** @brief 从站通道切换槽：参数行（含标签）可见性 + 重建引擎对象。 */
+static void mb_slaveOnChannelChanged(XObject* sender, XVarList* args)
 {
     int idx;
     (void)sender; (void)args;
@@ -2179,11 +2966,282 @@ static void mb_slaveChannelSlot(XObject* sender, XVarList* args)
         XWidget_setVisible((XWidget*)s_mbSlave.serialNameEdit, idx == 1);
     if (s_mbSlave.serialBaudCombo)
         XWidget_setVisible((XWidget*)s_mbSlave.serialBaudCombo, idx == 1);
+    if (s_mbSlave.server) {
+        /* 监听中不允许换通道（引擎类型已定型，否则要重连）。 */
+        if (s_mbSlave.listening) return;
+        /* [C16/R13 2026-10-18] 框架侧「发送方析构是否摘除接收方连接」
+         * **未验证**（XObject.c:131-135 只释放自身 m_signalSlot；:89-125
+         * 是事件过滤器表，不是信号反向索引）⇒ 不依赖框架语义，显式
+         * 断开后再 deleteLater。 */
+        XObject_disconnect_1((XObject*)s_mbSlave.server,
+                             (size_t)XModbusServer_dataWritten_signal(
+                                 NULL, 0, 0, 0),
+                             (XObject*)s_mbSlave.root,
+                             mb_slaveOnDataWritten);
+        XObject_deleteLater((XObject*)s_mbSlave.server);
+        s_mbSlave.server = NULL;
+        mb_slaveDropUnits();   /* map 随 server 释放，缓存指针必须清。 */
+    }
+    mb_slaveEnsureServer();
+    mb_slaveSyncViewport();
 }
+
+/** @brief 「按点数重建」公共实现（点数 SpinBox 调整后应用）。
+ *  [10-18 用户追加规格⑤] 单按钮拆成 DI/DO 两枚后，本实现被两个分立槽
+ *  共用：重建天然按两个 SpinBox 全量解算——mb_slaveRebuildMap 保值语义
+ *  （不重建 map）原样保留。[16点读回根修 2026-10-19] DI/DO 位单元已满
+ *  容量建足，本路径不再 resize 位单元（根因见 rebuildMap 注释），点数
+ *  只影响灯格行数与回显范围。 */
+static void mb_slaveApplyCounts(void)
+{
+    s_mbSlave.inCount = s_mbSlave.inCountSpin
+                            ? XSpinBox_value(s_mbSlave.inCountSpin) : 8;
+    s_mbSlave.outCount = s_mbSlave.outCountSpin
+                             ? XSpinBox_value(s_mbSlave.outCountSpin) : 8;
+    if (s_mbSlave.inCount > MB_SLAVE_MAX_POINTS)
+        s_mbSlave.inCount = MB_SLAVE_MAX_POINTS;
+    if (s_mbSlave.outCount > MB_SLAVE_MAX_POINTS)
+        s_mbSlave.outCount = MB_SLAVE_MAX_POINTS;
+    if (s_mbSlave.server) mb_slaveRebuildMap();
+    /* 点数变 → 行数可能变 → 灯格重建（幂等门控在 syncViewport 内）。 */
+    mb_slaveSyncViewport();
+    mb_slaveEchoAll();
+}
+
+/** @brief 段①「按点数重建(输入)」槽：与段②槽互不相似（sender 不可信
+ *  契约——方向/身份写死在槽身份里，不靠 sender 判别）。 */
+static void mb_slaveApplyDiSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_slaveApplyCounts();
+}
+
+/** @brief 段②「按点数重建(输出)」槽。 */
+static void mb_slaveApplyDoSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_slaveApplyCounts();
+}
+
+/** @brief IR/HR 数量 SpinBox 变更（[10-18 三次追加]）：1..256，变更走
+ *  setValueCount 保值语义（mb_slaveRebuildMap 已把四单元全量并入保值
+ *  分支）+ 表 setRowCount 同步 + 新行补文本行，已填值不丢。
+ *  @details [10-19 框架编辑器迁移] 行观察态皆纯文本，扩缩容只剩行数
+ *           同步：扩容新行 mb_slaveMountRegRow 写地址+初值，随后
+ *           echoAll 从 map 回显（收缩前写进 map 的值随扩容回来——
+ *           「已填值不丢」的闭环）；收缩由框架 setRowCount 缩表，无
+ *           挂件指针要清。
+ *           槽分立两枚（sender 不可信契约，同 applyDi/applyDo 口径）。 */
+static void mb_slaveApplyRegCounts(void)
+{
+    int newIr = s_mbSlave.irCountSpin
+                    ? XSpinBox_value(s_mbSlave.irCountSpin) : MB_SLAVE_REG_ROWS;
+    int newHr = s_mbSlave.hrCountSpin
+                    ? XSpinBox_value(s_mbSlave.hrCountSpin) : MB_SLAVE_REG_ROWS;
+    XTableWidget* tabs[2];
+    int counts[2];
+    int t;
+    if (newIr < 1) newIr = 1;
+    if (newIr > MB_SLAVE_REG_MAX_ROWS) newIr = MB_SLAVE_REG_MAX_ROWS;
+    if (newHr < 1) newHr = 1;
+    if (newHr > MB_SLAVE_REG_MAX_ROWS) newHr = MB_SLAVE_REG_MAX_ROWS;
+    tabs[0] = s_mbSlave.irTable;   tabs[1] = s_mbSlave.hrTable;
+    counts[0] = newIr;             counts[1] = newHr;
+    /* 先改 map 容量（保值）再动表：新行回显时值已可读。 */
+    if (s_mbSlave.server) mb_slaveRebuildMap();
+    for (t = 0; t < 2; ++t) {
+        XTableWidget* tbl = tabs[t];
+        int oldRows;
+        int i;
+        if (!tbl) continue;
+        oldRows = XTableWidget_rowCount(tbl);
+        XTableWidget_setRowCount(tbl, counts[t]);
+        if (counts[t] > oldRows) {
+            for (i = oldRows; i < counts[t]; ++i)
+                mb_slaveMountRegRow(tbl, i);
+        }
+    }
+    s_mbSlave.irCount = newIr;
+    s_mbSlave.hrCount = newHr;
+    mb_slaveEchoAll();       /* 新行从 map 回显；旧行刷新保值结果。 */
+    /* 行数变化 ⇒ 表满高定尺与整页内容高都要重收敛（applyRegGeometry 读
+     * 实际行数；syncViewport 幂等，重复无害）。 */
+    mb_slaveSyncViewport();
+}
+
+/** @brief IR 数量 SpinBox 槽。 */
+static void mb_slaveIrCountSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_slaveApplyRegCounts();
+}
+
+/** @brief HR 数量 SpinBox 槽。 */
+static void mb_slaveHrCountSlot(XObject* sender, XVarList* args)
+{
+    (void)sender; (void)args;
+    mb_slaveApplyRegCounts();
+}
+
+#if !defined(_WIN32) && XMODBUS_TCP_ON
+/** @brief [CLOSE-WAIT 根修 2026-10-19] 死链客户端判定+回收（removeIf 谓词）。
+ *  @details 探测手法与 posix 后端 EOF 复核同款（XDeviceNetwork_posix.c
+ *           「假 EOF 复核」MSG_PEEK 分支）：对 fd 做 recv(MSG_PEEK|
+ *           MSG_DONTWAIT)——**不消费字节**，与 io 环在途读无竞态：
+ *           pr>0=有数据待读（false，交给正常 readyRead 路径）；
+ *           pr<0 且 EAGAIN/EWOULDBLOCK=连接存活空闲（false）；
+ *           pr==0=对端真 FIN（true，回收）；其余硬错误（ECONNRESET/
+ *           ENOTSOCK/EBADF 等，含已 close 残留表项）一并回收。
+ *           回收动作逐条镜像框架 XModbusTcpServer_onClientDisconnected
+ *           +releaseClientSocket（全部公开 API）：摘映射表（return true
+ *           交 removeIf）→断开本 socket 到 server 的信号→发
+ *           modbusClientDisconnected（公开契约保持）→close+脱离父链+
+ *           deleteLater（XTcpServer_incomingConnection 把 socket 挂为
+ *           服务器子对象，只 close 不脱链会随断连累积到服务器销毁）。 */
+static bool mb_slaveDeadClientPred(const void* pvKey, void* pvValue,
+                                   void* args)
+{
+    XTcpSocket* client = *(XTcpSocket* const*)pvKey;
+    XModbusServer* server = (XModbusServer*)args;
+    intptr_t fd;
+    ssize_t pr;
+    unsigned char b;
+    (void)pvValue;
+    if (!client || !server) return false;
+    fd = XTcpSocket_socketDescriptor_base((XAbstractSocket*)client);
+    if (fd <= 0) return false; /* 未持描述符（理论不达），保守不回收。 */
+    pr = recv((int)fd, &b, 1, MSG_PEEK | MSG_DONTWAIT);
+    if (pr > 0) return false;              /* 有数据：活链，交正常路径。 */
+    if (pr < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        return false;                      /* 空闲活链。 */
+    /* 真 FIN（pr==0）或硬错误：回收。 */
+    XObject_disconnect_1((XObject*)client, 0, (XObject*)server, NULL);
+    XModbusTcpServer_modbusClientDisconnected_signal((XModbusTcpServer*)server,
+                                                     client);
+    XTcpSocket_close_base((XIODevice*)client);
+    XObject_setParent((XObject*)client, NULL);
+    XObject_deleteLater((XObject*)client);
+    return true;
+}
+
+/** @brief 死链巡检定时器回调（1s 周期）：仅 TCP 服务器有意义（串口
+ *  服务器无 m_connectedClients，强转读即垃圾——以通道是否 TCP 判别，
+ *  server 类型恒随通道在 ensureServer 定型）。表空时 removeIf 零开销。 */
+static void mb_slaveSweepDeadClientsCb(void* userData, XTimerData* timer)
+{
+    XModbusServer* server = s_mbSlave.server;
+    XModbusTcpServer* tcp;
+    (void)userData; (void)timer;
+    if (!server || !s_mbSlave.channelCombo ||
+        XComboBox_currentIndex(s_mbSlave.channelCombo) != 0)
+        return;
+    tcp = (XModbusTcpServer*)server;
+    if (!tcp->m_connectedClients) return;
+    XMapBase_removeIf_base((XMapBase*)tcp->m_connectedClients,
+                           mb_slaveDeadClientPred, server);
+}
+#endif /* !_WIN32 && XMODBUS_TCP_ON */
 
 /* ================================================================
  * 页面构建
  * ================================================================ */
+
+/* ==================== 页根控件（表随视口重解算） ====================
+ * [布局容器化 2026-10-17] adapt 置空后，寄存器表「列组随视口宽/显示
+ * 行随视口高」的持续保持改由页根 resize 承接：先显式激活页根布局器
+ * （基类 resize 路径的布局激活在事件派发之后，此处读表宽须先行），
+ * 再按原 adapt 口径重解算表格内部——仅列宽/行数，不涉子件坐标。 */
+static void mb_masterRegSyncViewport(void)
+{
+    int cols;
+    int dispRows;
+    if (!s_mb.regTable) return;
+    cols = mb_masterRegColCount();
+    dispRows = mb_masterRegFillRows(cols);
+    if (s_mb.regDispRows != dispRows || s_mb.regCols != cols)
+        mb_masterRegBuildRows(dispRows);
+    else
+        mb_masterRegApplyColWidths();
+}
+
+XCLASS_DEFINE_BEGING(MbMasterRoot)
+XCLASS_DEFINE_EXTEND_END(MbMasterRoot, XWidget)
+
+/** @brief 主站页宿主：堆叠条目（页根）。resize 后铺满整页竖滚区
+ *  scroll（滚动壳自身 resize 再驱动内容宽高收敛）。[10-19 对齐从站]
+ *  旧口径「页根直铺+表格 stretch 钳入余高」作废：显示不全由页级竖滚
+ *  条承担（屏 1024x600 显示不全的主诉）。 */
+typedef struct MbMasterRoot
+{
+    XWidget m_base;      /**< XWidget 基类；必须是第一个成员。 */
+} MbMasterRoot;
+
+static void VMbMasterRoot_resizeEvent(XWidget* self, XEvent* event)
+{
+    XWidget* scroll;
+    (void)event;
+    if (!self) return;
+    scroll = s_mb.scroll ? (XWidget*)s_mb.scroll : NULL;
+    if (scroll) {
+        XWidget_setGeometry(scroll, 0, 0, XWidget_width(self),
+                            XWidget_height(self));
+    }
+}
+
+XVtable* MbMasterRoot_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(MbMasterRoot)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VMbMasterRoot_resizeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 构建主站页宿主（堆叠条目；scroll 在 build 内挂其下）。 */
+static XWidget* mb_masterCreateRoot(XWidget* parent)
+{
+    MbMasterRoot* root = (MbMasterRoot*)XMalloc_System(sizeof(MbMasterRoot));
+    if (!root) return (XWidget*)0;
+    XMemset(root, 0, sizeof(*root));
+    XWidget_init(&root->m_base, parent, 0);
+    XClassSetVtable(root, MbMasterRoot);
+    return &root->m_base;
+}
+
+typedef struct MbSlaveScroll MbSlaveScroll;
+static void mb_slaveScrollSetOnFit(XWidget* scroll,
+                                   void (*onFit)(MbSlaveScroll*));
+
+/** @brief 主站 fit 收敛回调：内容布局 activate + 显示行解算（行数随
+ *  视口高折算，变化由主调补第二遍 fit 收敛）。 */
+static void mb_masterOnFit(MbSlaveScroll* scroll)
+{
+    XWidget* vp;
+    (void)scroll;
+
+    if (XWidget_layout(s_mb.root))
+        XLayout_activate(XWidget_layout(s_mb.root));
+    vp = XAbstractScrollArea_viewport((XAbstractScrollArea*)s_mb.scroll);
+    s_mb.viewportH = vp ? XWidget_height(vp) : 0;
+    mb_masterRegSyncViewport();
+}
+
+/** @brief [布局容器化 2026-10-17] 行/列布局装配定式：初始化并按序挂入
+ *  父布局器（间距 4 对齐原 22/24 行高节奏；挂入次序=装配次序）。 */
+static void mb_rowInit(XBoxLayout* row, XBoxLayout* parent,
+                       XBoxLayoutDirection dir)
+{
+    XBoxLayout_init(row, dir);
+    XLayout_setSpacing((XLayout*)row, 4);
+    XBoxLayout_addLayout(parent, (XLayout*)row);
+}
+
+/** @brief [布局容器化 2026-10-17] 水平行左对齐收口：本框架布局器把
+ *  行内多余空间均匀摊进行距（含链首/链尾），末尾补 stretch 条目把
+ *  余量吃满——控件贴左成组，观感同改造前手写坐标。 */
+static void mb_rowPack(XBoxLayout* row)
+{
+    XBoxLayout_addStretch(row, 1);
+}
 
 XWidget* demo_page_modbus_master_build(XWidget* parent,
                                        DemoPageStatusFn statusFn, void* user)
@@ -2197,66 +3255,72 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
 
     if (!parent) return (XWidget*)0;
     {
-        /* [滚动承载 2026-10-14] 页面 root=堆叠布局分配几何（随窗口缩放）；
-         * 内部套 ScrollArea（铺满 root，widgetResizable）+ 内容容器 body。
-         * 全部控件原坐标继续挂在 body 上——高度不足时出竖滚动条，底部
-         * 控件（寄存器表等）始终可达。s_mb.root 指向 body，后续创建
-         * 代码零改动。 */
-        XWidget* pageRoot = XWidget_create(parent, 0);
-        if (!pageRoot) return (XWidget*)0;
-        s_mb.scroll = XScrollArea_create(pageRoot, 0);
-        if (!s_mb.scroll) { XClassDelete((XClass*)pageRoot); return (XWidget*)0; }
-        XScrollArea_setWidgetResizable(s_mb.scroll, false);
-        s_mb.body = XWidget_create(NULL, 0);
-        /* [滚动残影根修 2026-10-15] body 持 Base 底色+autofill：滚动移动
-           body 后，其矩形内一切增量重绘先由 body 自身底色擦除（含表格
-           下方无控件覆盖带）——残影=旧位置像素无人清。视口 autofill 在
-           增量路径存在父/子绘序倒挂（视口底色盖表格内容，实验实证），
-           故底色挂 body 不挂视口。 */
-        XWidget_setBackgroundRole(s_mb.body, XPaletteColorRole_Base);
-        XWidget_setAutoFillBackground(s_mb.body, true);
-        if (!s_mb.body) { XClassDelete((XClass*)pageRoot); return (XWidget*)0; }
-        XScrollArea_setWidget(s_mb.scroll, s_mb.body);
-        XWidget_setGeometry((XWidget*)pageRoot, 0, 0, 740, 624);
+        /* [10-19 对齐从站] 堆叠条目 = 页宿主（MbMasterRoot,普通 XWidget
+         * 条目——堆叠对 XScrollArea 条目的几何分配异常(实测只给
+         * 184x150 且不再重摆),故滚动壳**内嵌页宿主内部**绕开）;页宿主
+         * resize 铺满 scroll,scroll fit 驱动内容根(pageRoot)宽高。 */
+        XWidget* pageHost = mb_masterCreateRoot(parent);
+        XWidget* scrollRoot;
+        XWidget* pageRoot;
+        if (!pageHost) return (XWidget*)0;
+        scrollRoot = mb_slaveCreateScroll(pageHost);
+        if (!scrollRoot) {
+            XObject_deleteLater(pageHost);
+            return (XWidget*)0;
+        }
+        pageRoot = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                                     scrollRoot, 0); /* 内容根(普通件)。 */
+        if (!pageRoot) {
+            XObject_deleteLater(scrollRoot);
+            XObject_deleteLater(pageHost);
+            return (XWidget*)0;
+        }
+        s_mb.pageHost = pageHost;
+        s_mb.scroll = (XScrollArea*)scrollRoot;
         s_mb.pageRoot = pageRoot;
-        /* 控件挂载基准=body（s_mb.root 转指 body，后续创建代码零改动）；
-         * build 返回 pageRoot（堆叠布局向它分配几何）。 */
-        s_mb.root = s_mb.body;
+        s_mb.root = pageRoot;
+        mb_slaveScrollSetOnFit(scrollRoot, mb_masterOnFit);
     }
 
-    mb_buildLabelAt(s_mb.root,
-                    "Modbus \xE4\xB8\xBB\xE7\xAB\x99\xE8\xB0\x83\xE8\xAF\x95",
-                    12, 8, 300, &title); /* Modbus 主站调试 */
-    if (title) XLabel_setTextPixelSize(title, 16);
+    /* 页根纵向主布局：边距近似原装配 12/8；寄存器表 stretch 铺满余高
+     * （原 adapt「表随视口拉满」的布局化承接）。 */
+    XBoxLayout_init(&s_mb.layRoot, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&s_mb.layRoot, 12, 8, 12, 8);
+    XLayout_setSpacing((XLayout*)&s_mb.layRoot, 4);
 
-    /* 连接参数区。 */
-    mb_buildLabelAt(s_mb.root,
-                    "\xE9\x80\x9A\xE9\x81\x93", 12, 44, 56, NULL); /* 通道 */
-    s_mb.channelCombo = mb_buildChannelCombo(s_mb.root, 72, 42, 160);
+    /* 标题行。 */
+    mb_buildLabel(s_mb.root,
+                  "Modbus \xE4\xB8\xBB\xE7\xAB\x99\xE8\xB0\x83\xE8\xAF\x95",
+                  300, &title); /* Modbus 主站调试 */
+    if (title) {
+        XLabel_setTextPixelSize(title, 16);
+        XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)title);
+    }
+
+    /* 连接参数区：通道行。 */
+    mb_rowInit(&s_mb.layChannel, &s_mb.layRoot,
+               XBoxLayoutDirection_LeftToRight);
+    {
+        XLabel* lbl = NULL;
+        mb_buildLabel(s_mb.root, "\xE9\x80\x9A\xE9\x81\x93", 56, &lbl);
+                        /* 通道 */
+        if (lbl) XBoxLayout_addWidget(&s_mb.layChannel, (XWidget*)lbl);
+    }
+    s_mb.channelCombo = mb_buildChannelCombo(s_mb.root, 160);
+    if (s_mb.channelCombo)
+        XBoxLayout_addWidget(&s_mb.layChannel, (XWidget*)s_mb.channelCombo);
+    mb_rowPack(&s_mb.layChannel);
     XObject_connect_2((XObject*)s_mb.channelCombo,
                       XSignal(XComboBox_activated_signal),
                       mb_masterChannelSlot);
-    /* [单事务模式 2026-10-15] TCP 通道专用多选框：勾选后写请求不与在途
-     * 轮询读流水线并发——在途未完成时写排队（后写胜出），回读完成后
-     * 补发。适配仅支持单事务处理的远程 IO 模块/从机。仅 TCP 模式显示
-     * （RTU 串口本身即单事务半双工）。 */
-    s_mb.singleTxCheck = XCheckBox_create(s_mb.root, 0);
-    if (s_mb.singleTxCheck) {
-        XAbstractButton_setText_2((XAbstractButton*)s_mb.singleTxCheck,
-                                "\xE5\x8D\x95\xE4\xBA\x8B\xE5\x8A\xA1\xE6\xA8\xA1\xE5\xBC\x8F");
-        /* 单事务模式 */
-        XWidget_setGeometry((XWidget*)s_mb.singleTxCheck, 172, 102, 190, 24);
-        XObject_connect_1((XObject*)s_mb.singleTxCheck,
-                          (size_t)XAbstractButton_toggled_signal(
-                              (XAbstractButton*)s_mb.singleTxCheck, false),
-                          (XObject*)s_mb.root, mb_masterSingleTxSlot,
-                          XConnectionType_Direct);
-        XWidget_show((XWidget*)s_mb.singleTxCheck);
-    }
 
-    mb_buildLabelAt(s_mb.root,
-                    "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8",
-                    12, 74, 64, &s_mb.tcpLbl); /* 服务器 */
+    /* TCP 参数行（随通道显隐）。 */
+    mb_rowInit(&s_mb.layServer, &s_mb.layRoot,
+               XBoxLayoutDirection_LeftToRight);
+    mb_buildLabel(s_mb.root, "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8",
+                  64, &s_mb.tcpLbl); /* 服务器 */
+    if (s_mb.tcpLbl)
+        XBoxLayout_addWidget(&s_mb.layServer, (XWidget*)s_mb.tcpLbl);
     s_mb.tcpAddrEdit = XLineEdit_create(s_mb.root, 0);
     if (s_mb.tcpAddrEdit) {
         /* [联调] env XGUI_DEMO_MB_HOST 预置服务器地址（真机远程 IO 直连）。 */
@@ -2266,8 +3330,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                               (hostEnv && hostEnv[0]) ? hostEnv
                                                       : "127.0.0.1");
         }
-        XWidget_setGeometry((XWidget*)s_mb.tcpAddrEdit, 80, 72, 130, 24);
+        XWidget_setFixedWidth((XWidget*)s_mb.tcpAddrEdit, 130);
+        XWidget_setFixedHeight((XWidget*)s_mb.tcpAddrEdit, 24);
         XWidget_show((XWidget*)s_mb.tcpAddrEdit);
+        XBoxLayout_addWidget(&s_mb.layServer, (XWidget*)s_mb.tcpAddrEdit);
     }
     s_mb.tcpPortEdit = XLineEdit_create(s_mb.root, 0);
     if (s_mb.tcpPortEdit) {
@@ -2277,53 +3343,118 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
             XLineEdit_setText(s_mb.tcpPortEdit,
                               (portEnv && portEnv[0]) ? portEnv : "15020");
         }
-        XWidget_setGeometry((XWidget*)s_mb.tcpPortEdit, 218, 72, 66, 24);
+        XWidget_setFixedWidth((XWidget*)s_mb.tcpPortEdit, 66);
+        XWidget_setFixedHeight((XWidget*)s_mb.tcpPortEdit, 24);
         XWidget_show((XWidget*)s_mb.tcpPortEdit);
+        XBoxLayout_addWidget(&s_mb.layServer, (XWidget*)s_mb.tcpPortEdit);
     }
-    mb_buildLabelAt(s_mb.root,
-                    "\xE4\xB8\xB2\xE5\x8F\xA3", 12, 74, 56, &s_mb.serialLbl);
+    mb_rowPack(&s_mb.layServer);
+
+    /* 串口参数行（随通道显隐；本框架布局器不因隐藏折叠条目，隐藏行
+     * 保留占位——通道切换不扰动下方行的行距节奏）。 */
+    mb_rowInit(&s_mb.laySerial, &s_mb.layRoot,
+               XBoxLayoutDirection_LeftToRight);
+    mb_buildLabel(s_mb.root, "\xE4\xB8\xB2\xE5\x8F\xA3", 56, &s_mb.serialLbl);
                     /* 串口 */
-    if (s_mb.serialLbl)
+    if (s_mb.serialLbl) {
         XWidget_setVisible((XWidget*)s_mb.serialLbl, false);
+        XBoxLayout_addWidget(&s_mb.laySerial, (XWidget*)s_mb.serialLbl);
+    }
     s_mb.serialNameEdit = XLineEdit_create(s_mb.root, 0);
     if (s_mb.serialNameEdit) {
         XLineEdit_setText(s_mb.serialNameEdit, "/dev/ttyS1");
-        XWidget_setGeometry((XWidget*)s_mb.serialNameEdit, 80, 72, 130, 24);
+        XWidget_setFixedWidth((XWidget*)s_mb.serialNameEdit, 130);
+        XWidget_setFixedHeight((XWidget*)s_mb.serialNameEdit, 24);
         XWidget_setVisible((XWidget*)s_mb.serialNameEdit, false);
+        XBoxLayout_addWidget(&s_mb.laySerial, (XWidget*)s_mb.serialNameEdit);
     }
-    s_mb.serialBaudCombo = mb_buildBaudCombo(s_mb.root, 218, 72, 80);
+    s_mb.serialBaudCombo = mb_buildBaudCombo(s_mb.root, 80);
     XWidget_setVisible((XWidget*)s_mb.serialBaudCombo, false);
+    if (s_mb.serialBaudCombo)
+        XBoxLayout_addWidget(&s_mb.laySerial, (XWidget*)s_mb.serialBaudCombo);
+    mb_rowPack(&s_mb.laySerial);
 
-    mb_buildLabelAt(s_mb.root,
-                    "\xE4\xBB\x8E\xE7\xAB\x99\xE5\x9C\xB0\xE5\x9D\x80",
-                    12, 104, 80, NULL); /* 从站地址 */
-    s_mb.unitSpin = mb_buildSpin(s_mb.root, 96, 102, 60, 1, 247, 1);
+    /* [单事务模式 2026-10-15] TCP 通道专用多选框：勾选后写请求不与在途
+     * 轮询读流水线并发——在途未完成时写排队（后写胜出），回读完成后
+     * 补发。适配仅支持单事务处理的远程 IO 模块/从机。仅 TCP 模式显示
+     * （RTU 串口本身即单事务半双工）。装配进从站地址行（原 y=102 同行
+     * 摆位的布局化近似）。 */
+    s_mb.singleTxCheck = XCheckBox_create(s_mb.root, 0);
+    if (s_mb.singleTxCheck) {
+        XAbstractButton_setText_2((XAbstractButton*)s_mb.singleTxCheck,
+                                "\xE5\x8D\x95\xE4\xBA\x8B\xE5\x8A\xA1\xE6\xA8\xA1\xE5\xBC\x8F");
+        /* 单事务模式 */
+        XWidget_setFixedWidth((XWidget*)s_mb.singleTxCheck, 190);
+        XWidget_setFixedHeight((XWidget*)s_mb.singleTxCheck, 24);
+        XObject_connect_1((XObject*)s_mb.singleTxCheck,
+                          (size_t)XAbstractButton_toggled_signal(
+                              (XAbstractButton*)s_mb.singleTxCheck, false),
+                          (XObject*)s_mb.root, mb_masterSingleTxSlot,
+                          XConnectionType_Direct);
+        XWidget_show((XWidget*)s_mb.singleTxCheck);
+    }
 
-    /* 远程 IO 模块适配。 */
-    mb_buildLabelAt(s_mb.root,
-                    "\xE8\xBF\x9C\xE7\xA8\x8B IO \xE6\xA8\xA1\xE5\x9D\x97",
-                    12, 134, 130, NULL); /* 远程 IO 模块 */
-    mb_buildLabelAt(s_mb.root,
-                    "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9",
-                    12, 162, 60, NULL); /* 输入点 */
+    /* 从站地址+单事务模式行。 */
+    mb_rowInit(&s_mb.layUnit, &s_mb.layRoot, XBoxLayoutDirection_LeftToRight);
+    {
+        XLabel* lbl = NULL;
+        mb_buildLabel(s_mb.root,
+                      "\xE4\xBB\x8E\xE7\xAB\x99\xE5\x9C\xB0\xE5\x9D\x80",
+                      80, &lbl); /* 从站地址 */
+        if (lbl) XBoxLayout_addWidget(&s_mb.layUnit, (XWidget*)lbl);
+    }
+    s_mb.unitSpin = mb_buildSpin(s_mb.root, 60, 1, 247, 1);
+    if (s_mb.unitSpin)
+        XBoxLayout_addWidget(&s_mb.layUnit, (XWidget*)s_mb.unitSpin);
+    XBoxLayout_addSpacing(&s_mb.layUnit, 12);
+    if (s_mb.singleTxCheck)
+        XBoxLayout_addWidget(&s_mb.layUnit, (XWidget*)s_mb.singleTxCheck);
+    mb_rowPack(&s_mb.layUnit);
+
+    /* 远程 IO 模块适配：节标题独立成行。 */
+    mb_buildLabel(s_mb.root,
+                  "\xE8\xBF\x9C\xE7\xA8\x8B IO \xE6\xA8\xA1\xE5\x9D\x97",
+                  130, &s_mb.ioLbl); /* 远程 IO 模块 */
+    if (s_mb.ioLbl)
+        XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)s_mb.ioLbl);
+
+    /* 输入/输出点数行。 */
+    mb_rowInit(&s_mb.layIo, &s_mb.layRoot, XBoxLayoutDirection_LeftToRight);
+    mb_buildLabel(s_mb.root, "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9",
+                  60, &s_mb.inLbl); /* 输入点 */
+    if (s_mb.inLbl)
+        XBoxLayout_addWidget(&s_mb.layIo, (XWidget*)s_mb.inLbl);
     {
         const char* inEnv = XSystem_environment("XGUI_DEMO_MB_IN");
-        s_mb.inCountSpin = mb_buildSpin(s_mb.root, 76, 160, 60, 0, 64,
+        s_mb.inCountSpin = mb_buildSpin(s_mb.root, 60, 0, 64,
                                         (inEnv && inEnv[0]) ? atoi(inEnv) : 8);
     }
-    mb_buildLabelAt(s_mb.root,
-                    "\xE8\xBE\x93\xE5\x87\xBA\xE7\x82\xB9",
-                    162, 162, 60, NULL); /* 输出点 */
+    if (s_mb.inCountSpin)
+        XBoxLayout_addWidget(&s_mb.layIo, (XWidget*)s_mb.inCountSpin);
+    XBoxLayout_addSpacing(&s_mb.layIo, 22);
+    mb_buildLabel(s_mb.root, "\xE8\xBE\x93\xE5\x87\xBA\xE7\x82\xB9",
+                  60, &s_mb.outLbl); /* 输出点 */
+    if (s_mb.outLbl)
+        XBoxLayout_addWidget(&s_mb.layIo, (XWidget*)s_mb.outLbl);
     {
         const char* outEnv = XSystem_environment("XGUI_DEMO_MB_OUT");
-        s_mb.outCountSpin = mb_buildSpin(s_mb.root, 226, 160, 60, 0, 64,
+        s_mb.outCountSpin = mb_buildSpin(s_mb.root, 60, 0, 64,
                                          (outEnv && outEnv[0]) ? atoi(outEnv)
                                                                : 8);
     }
-    mb_buildLabelAt(s_mb.root,
-                    "\xE8\xBD\xAE\xE8\xAF\xA2(ms)",
-                    12, 192, 80, NULL); /* 轮询(ms) */
-    s_mb.pollSpin = mb_buildSpin(s_mb.root, 96, 190, 70, 10, 5000, 1000);
+    if (s_mb.outCountSpin)
+        XBoxLayout_addWidget(&s_mb.layIo, (XWidget*)s_mb.outCountSpin);
+    mb_rowPack(&s_mb.layIo);
+
+    /* 轮询+连接行。 */
+    mb_rowInit(&s_mb.layPoll, &s_mb.layRoot, XBoxLayoutDirection_LeftToRight);
+    mb_buildLabel(s_mb.root, "\xE8\xBD\xAE\xE8\xAF\xA2(ms)",
+                  80, &s_mb.pollLbl); /* 轮询(ms) */
+    if (s_mb.pollLbl)
+        XBoxLayout_addWidget(&s_mb.layPoll, (XWidget*)s_mb.pollLbl);
+    s_mb.pollSpin = mb_buildSpin(s_mb.root, 70, 10, 5000, 1000);
+    if (s_mb.pollSpin)
+        XBoxLayout_addWidget(&s_mb.layPoll, (XWidget*)s_mb.pollSpin);
     XObject_connect_1((XObject*)s_mb.pollSpin,
                       (size_t)XSpinBox_valueChanged_signal(
                           (XSpinBox*)NULL),
@@ -2338,80 +3469,120 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                 XSpinBox_setValue(s_mb.pollSpin, pv);
         }
     }
-
+    XBoxLayout_addSpacing(&s_mb.layPoll, 40);
     s_mb.connectBtn = XPushButton_create(s_mb.root, 0);
     if (s_mb.connectBtn) {
         XPushButton_setText_2(s_mb.connectBtn,
                               "\xE8\xBF\x9E\xE6\x8E\xA5"); /* 连接 */
-        XWidget_setGeometry((XWidget*)s_mb.connectBtn, 252, 188, 90, 28);
+        XWidget_setFixedWidth((XWidget*)s_mb.connectBtn, 90);
+        XWidget_setFixedHeight((XWidget*)s_mb.connectBtn, 28);
         XObject_connect_2((XObject*)s_mb.connectBtn,
                           XSignal(XAbstractButton_clicked_signal),
                           mb_masterConnectSlot);
         XWidget_show((XWidget*)s_mb.connectBtn);
+        XBoxLayout_addWidget(&s_mb.layPoll, (XWidget*)s_mb.connectBtn);
     }
+    mb_rowPack(&s_mb.layPoll);
 
+    /* 状态/统计两行（定高 22 铺满行宽，文本左对齐=原 360 宽标签观感）。 */
     s_mb.stateLabel = XLabel_create(s_mb.root, 0);
     if (s_mb.stateLabel) {
         XLabel_setText_2(s_mb.stateLabel,
                          "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5"); /* 未连接 */
-        XWidget_setGeometry((XWidget*)s_mb.stateLabel, 12, 224, 360, 22);
+        XWidget_setFixedHeight((XWidget*)s_mb.stateLabel, 22);
         XWidget_show((XWidget*)s_mb.stateLabel);
+        XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)s_mb.stateLabel);
     }
     s_mb.statLabel = XLabel_create(s_mb.root, 0);
     if (s_mb.statLabel) {
         XLabel_setText_2(s_mb.statLabel,
                          "\xE8\xAF\xB7\xE6\xB1\x82: 0  \xE9\x94\x99\xE8\xAF"
                          "\xAF: 0"); /* 请求: 0 错误: 0 */
-        XWidget_setGeometry((XWidget*)s_mb.statLabel, 12, 248, 360, 22);
+        XWidget_setFixedHeight((XWidget*)s_mb.statLabel, 22);
         XWidget_show((XWidget*)s_mb.statLabel);
+        XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)s_mb.statLabel);
     }
 
-    /* 输入点网格（只读指示）。 */
-    mb_buildLabelAt(s_mb.root,
-                    "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9\xE7\x8A\xB6\xE6\x80"
-                    "\x81(\xE5\x8F\xAA\xE8\xAF\xBB)",
-                    12, 278, 180, NULL); /* 输入点状态(只读) */
+    /* 点位双列行：左=输入（只读指示），右=输出（点击翻转）；两列 360
+     * 定宽对齐原装配（原 x=12/400 双列摆位的布局化近似），列距 28 同原。
+     * 输出标题行内标题靠左、全开/全关经 addStretch 贴列右（原
+     * x=564/636 摆位的布局化近似）。 */
+    mb_rowInit(&s_mb.layGrid, &s_mb.layRoot, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_mb.layGrid, 28);
+
+    /* 输入点列（只读指示）。 */
+    mb_buildLabel(s_mb.root,
+                  "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9\xE7\x8A\xB6\xE6\x80"
+                  "\x81(\xE5\x8F\xAA\xE8\xAF\xBB)",
+                  180, &s_mb.diTitleLbl); /* 输入点状态(只读) */
+    mb_rowInit(&s_mb.layGridIn, &s_mb.layGrid,
+               XBoxLayoutDirection_TopToBottom);
+    if (s_mb.diTitleLbl)
+        XBoxLayout_addWidget(&s_mb.layGridIn, (XWidget*)s_mb.diTitleLbl);
     s_mb.inGridHost = XWidget_create(s_mb.root, 0);
     if (s_mb.inGridHost) {
-        XWidget_setGeometry((XWidget*)s_mb.inGridHost, 12, 300, 360, 132);
-        XWidget_show((XWidget*)s_mb.inGridHost);
+        /* 定宽 360/定高 84（3 行点位，原紧凑档口径；网格单元坐标仍由
+         * mb_masterRebuildGrids 按点数布点——表格内部口径不变）。 */
+        XWidget_setFixedWidth(s_mb.inGridHost, 360);
+        XWidget_setFixedHeight(s_mb.inGridHost, 84);
+        XWidget_show(s_mb.inGridHost);
+        XBoxLayout_addWidget(&s_mb.layGridIn, s_mb.inGridHost);
     }
-    /* 输出点网格（点击翻转）。 */
-    mb_buildLabelAt(s_mb.root,
-                    "\xE8\xBE\x93\xE5\x87\xBA\xE7\x82\xB9(\xE7\x82\xB9"
-                    "\xE5\x87\xBB\xE7\xBF\xBB\xE8\xBD\xAC)",
-                    400, 278, 160, NULL); /* 输出点(点击翻转) */
+
+    /* 输出点列（点击翻转）。 */
+    mb_rowInit(&s_mb.layGridOut, &s_mb.layGrid,
+               XBoxLayoutDirection_TopToBottom);
+    mb_buildLabel(s_mb.root,
+                  "\xE8\xBE\x93\xE5\x87\xBA\xE7\x82\xB9(\xE7\x82\xB9"
+                  "\xE5\x87\xBB\xE7\xBF\xBB\xE8\xBD\xAC)",
+                  160, &s_mb.doTitleLbl); /* 输出点(点击翻转) */
+    mb_rowInit(&s_mb.layGridOutTitle, &s_mb.layGridOut,
+               XBoxLayoutDirection_LeftToRight);
+    if (s_mb.doTitleLbl)
+        XBoxLayout_addWidget(&s_mb.layGridOutTitle, (XWidget*)s_mb.doTitleLbl);
+    XBoxLayout_addStretch(&s_mb.layGridOutTitle, 1);
     s_mb.allOnBtn = XPushButton_create(s_mb.root, 0);
     if (s_mb.allOnBtn) {
         XPushButton_setText_2(s_mb.allOnBtn,
                               "\xE5\x85\xA8\xE5\xBC\x80"); /* 全开 */
-        XWidget_setGeometry((XWidget*)s_mb.allOnBtn, 564, 276, 64, 24);
+        XWidget_setFixedWidth((XWidget*)s_mb.allOnBtn, 64);
+        XWidget_setFixedHeight((XWidget*)s_mb.allOnBtn, 24);
         XObject_connect_2((XObject*)s_mb.allOnBtn,
                           XSignal(XAbstractButton_clicked_signal),
-                          mb_masterAllSlot);
+                          mb_masterAllOnSlot);
         XWidget_show((XWidget*)s_mb.allOnBtn);
+        XBoxLayout_addWidget(&s_mb.layGridOutTitle, (XWidget*)s_mb.allOnBtn);
     }
     s_mb.allOffBtn = XPushButton_create(s_mb.root, 0);
     if (s_mb.allOffBtn) {
         XPushButton_setText_2(s_mb.allOffBtn,
                               "\xE5\x85\xA8\xE5\x85\xB3"); /* 全关 */
-        XWidget_setGeometry((XWidget*)s_mb.allOffBtn, 636, 276, 64, 24);
+        XWidget_setFixedWidth((XWidget*)s_mb.allOffBtn, 64);
+        XWidget_setFixedHeight((XWidget*)s_mb.allOffBtn, 24);
         XObject_connect_2((XObject*)s_mb.allOffBtn,
                           XSignal(XAbstractButton_clicked_signal),
-                          mb_masterAllSlot);
+                          mb_masterAllOffSlot);
         XWidget_show((XWidget*)s_mb.allOffBtn);
+        XBoxLayout_addWidget(&s_mb.layGridOutTitle, (XWidget*)s_mb.allOffBtn);
     }
     s_mb.outGridHost = XWidget_create(s_mb.root, 0);
     if (s_mb.outGridHost) {
-        XWidget_setGeometry((XWidget*)s_mb.outGridHost, 400, 300, 360, 132);
-        XWidget_show((XWidget*)s_mb.outGridHost);
+        XWidget_setFixedWidth(s_mb.outGridHost, 360);
+        XWidget_setFixedHeight(s_mb.outGridHost, 84);
+        XWidget_show(s_mb.outGridHost);
+        XBoxLayout_addWidget(&s_mb.layGridOut, s_mb.outGridHost);
     }
+    mb_rowPack(&s_mb.layGrid);
 
-    /* ---- 寄存器读写面板（IR/HR，16 进制） ---- */
-    mb_buildLabelAt(s_mb.root,
-                    "\xE5\xAF\x84\xE5\xAD\x98\xE5\x99\xA8\xE8\xAF\xBB\xE5\x86\x99"
-                    "(16\xE8\xBF\x9B\xE5\x88\xB6)",
-                    12, 444, 220, NULL); /* 寄存器读写(16进制) */
+    /* ---- 寄存器读写面板（IR/HR，16 进制）：读参数行 ---- */
+    mb_rowInit(&s_mb.layRegEdit, &s_mb.layRoot,
+               XBoxLayoutDirection_LeftToRight);
+    mb_buildLabel(s_mb.root,
+                  "\xE5\xAF\x84\xE5\xAD\x98\xE5\x99\xA8\xE8\xAF\xBB\xE5\x86\x99"
+                  "(16\xE8\xBF\x9B\xE5\x88\xB6)",
+                  220, &s_mb.regTitleLbl); /* 寄存器读写(16进制) */
+    if (s_mb.regTitleLbl)
+        XBoxLayout_addWidget(&s_mb.layRegEdit, (XWidget*)s_mb.regTitleLbl);
     s_mb.regTableCombo = XComboBox_create(s_mb.root, 0);
     if (s_mb.regTableCombo) {
         XComboBox_addItem_2(s_mb.regTableCombo,
@@ -2421,23 +3592,34 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                 "HR \xE4\xBF\x9D\xE6\x8C\x81\xE5\xAF\x84\xE5\xAD\x98\xE5\x99\xA8");
                 /* HR 保持寄存器 */
         XComboBox_setCurrentIndex(s_mb.regTableCombo, 1);
-        XWidget_setGeometry((XWidget*)s_mb.regTableCombo, 240, 442, 170, 24);
+        XWidget_setFixedWidth((XWidget*)s_mb.regTableCombo, 170);
+        XWidget_setFixedHeight((XWidget*)s_mb.regTableCombo, 24);
         XObject_connect_2((XObject*)s_mb.regTableCombo,
                           XSignal(XComboBox_activated_signal),
                           mb_masterRegComboSlot);
         XWidget_show((XWidget*)s_mb.regTableCombo);
+        XBoxLayout_addWidget(&s_mb.layRegEdit,
+                             (XWidget*)s_mb.regTableCombo);
     }
-    mb_buildLabelAt(s_mb.root,
-                    "\xE8\xB5\xB7\xE5\xA7\x8B", 420, 444, 40, NULL); /* 起始 */
-    s_mb.regAddrSpin = mb_buildSpin(s_mb.root, 464, 442, 60, 0, 65535, 0);
+    mb_buildLabel(s_mb.root, "\xE8\xB5\xB7\xE5\xA7\x8B", 40, &s_mb.startLbl);
+                    /* 起始 */
+    if (s_mb.startLbl)
+        XBoxLayout_addWidget(&s_mb.layRegEdit, (XWidget*)s_mb.startLbl);
+    s_mb.regAddrSpin = mb_buildSpin(s_mb.root, 60, 0, 65535, 0);
+    if (s_mb.regAddrSpin)
+        XBoxLayout_addWidget(&s_mb.layRegEdit, (XWidget*)s_mb.regAddrSpin);
     XObject_connect_1((XObject*)s_mb.regAddrSpin,
                       (size_t)XSpinBox_valueChanged_signal(
                           (XSpinBox*)NULL),
                       (XObject*)s_mb.root, mb_masterRegComboSlot,
                       XConnectionType_Direct);
-    mb_buildLabelAt(s_mb.root,
-                    "\xE6\x95\xB0\xE9\x87\x8F", 534, 444, 40, NULL); /* 数量 */
-    s_mb.regCountSpin = mb_buildSpin(s_mb.root, 578, 442, 56, 1, 16, 8);
+    mb_buildLabel(s_mb.root, "\xE6\x95\xB0\xE9\x87\x8F", 40, &s_mb.countLbl);
+                    /* 数量 */
+    if (s_mb.countLbl)
+        XBoxLayout_addWidget(&s_mb.layRegEdit, (XWidget*)s_mb.countLbl);
+    s_mb.regCountSpin = mb_buildSpin(s_mb.root, 56, 1, 16, 8);
+    if (s_mb.regCountSpin)
+        XBoxLayout_addWidget(&s_mb.layRegEdit, (XWidget*)s_mb.regCountSpin);
     XObject_connect_1((XObject*)s_mb.regCountSpin,
                       (size_t)XSpinBox_valueChanged_signal(
                           (XSpinBox*)NULL),
@@ -2448,37 +3630,59 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
         if (rb) {
             XPushButton_setText_2(rb,
                     "\xE8\xAF\xBB"); /* 读 */
-            XWidget_setGeometry((XWidget*)rb, 644, 440, 56, 26);
+            XWidget_setFixedWidth((XWidget*)rb, 56);
+            XWidget_setFixedHeight((XWidget*)rb, 26);
             XObject_connect_2((XObject*)rb,
                               XSignal(XAbstractButton_clicked_signal),
                               mb_masterRegReadSlot);
             XWidget_show((XWidget*)rb);
+            XBoxLayout_addWidget(&s_mb.layRegEdit, (XWidget*)rb);
+            s_mb.regReadBtn = rb;
         }
     }
-    /* 第二行：写地址+写值+写入 */
-    mb_buildLabelAt(s_mb.root,
-                    "\xE5\x86\x99", 12, 476, 30, NULL); /* 写 */
-    s_mb.regWriteAddr = mb_buildSpin(s_mb.root, 46, 474, 60, 0, 65535, 0);
-    mb_buildLabelAt(s_mb.root,
-                    "\xE5\x80\xBC", 116, 476, 30, NULL); /* 值 */
+    mb_rowPack(&s_mb.layRegEdit);
+
+    /* 写参数行：写地址+写值+写入。 */
+    mb_rowInit(&s_mb.layRegWrite, &s_mb.layRoot,
+               XBoxLayoutDirection_LeftToRight);
+    mb_buildLabel(s_mb.root, "\xE5\x86\x99", 30, &s_mb.writeLbl); /* 写 */
+    if (s_mb.writeLbl)
+        XBoxLayout_addWidget(&s_mb.layRegWrite, (XWidget*)s_mb.writeLbl);
+    s_mb.regWriteAddr = mb_buildSpin(s_mb.root, 60, 0, 65535, 0);
+    if (s_mb.regWriteAddr)
+        XBoxLayout_addWidget(&s_mb.layRegWrite, (XWidget*)s_mb.regWriteAddr);
+    mb_buildLabel(s_mb.root, "\xE5\x80\xBC", 30, &s_mb.valueLbl); /* 值 */
+    if (s_mb.valueLbl)
+        XBoxLayout_addWidget(&s_mb.layRegWrite, (XWidget*)s_mb.valueLbl);
     s_mb.regWriteValue = XLineEdit_create(s_mb.root, 0);
     if (s_mb.regWriteValue) {
         XLineEdit_setText(s_mb.regWriteValue, "0x0000");
-        XWidget_setGeometry((XWidget*)s_mb.regWriteValue, 150, 474, 100, 24);
+        XWidget_setFixedWidth((XWidget*)s_mb.regWriteValue, 100);
+        XWidget_setFixedHeight((XWidget*)s_mb.regWriteValue, 24);
         XWidget_show((XWidget*)s_mb.regWriteValue);
+        XBoxLayout_addWidget(&s_mb.layRegWrite,
+                             (XWidget*)s_mb.regWriteValue);
     }
     {
         XPushButton* wb = XPushButton_create(s_mb.root, 0);
         if (wb) {
             XPushButton_setText_2(wb,
                     "\xE5\x86\x99\xE5\x85\xA5"); /* 写入 */
-            XWidget_setGeometry((XWidget*)wb, 264, 472, 70, 26);
+            XWidget_setFixedWidth((XWidget*)wb, 70);
+            XWidget_setFixedHeight((XWidget*)wb, 26);
             XObject_connect_2((XObject*)wb,
                               XSignal(XAbstractButton_clicked_signal),
                               mb_masterRegWriteSlot);
             XWidget_show((XWidget*)wb);
+            XBoxLayout_addWidget(&s_mb.layRegWrite, (XWidget*)wb);
+            s_mb.regWriteBtn = wb;
         }
     }
+    mb_rowPack(&s_mb.layRegWrite);
+
+    /* 寄存器表：页根布局末条目 stretch 铺满余高（原 adapt「表随视口
+     * 拉满」的布局化承接；列宽/显示行的视口自适应由页根 resizeEvent
+     * 保持）。 */
     s_mb.regTable = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                            s_mb.root, 0);
     if (s_mb.regTable) {
@@ -2487,23 +3691,32 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
             "\xE5\x80\xBC(16\xE8\xBF\x9B\xE5\x88\xB6,\xE5\x9B\xDE\xE8\xBD\xA6\xE5\x86\x99\xE5\x85\xA5)"
                 /* 值(16进制,回车写入) */
         };
-        XWidget_setGeometry((XWidget*)s_mb.regTable, 12, 502, 740, 190);
         XTableWidget_setColumnCount(s_mb.regTable, 2);
         XTableWidget_setHorizontalHeaderLabels(s_mb.regTable, kHead,
                 (int)(sizeof(kHead) / sizeof(kHead[0])));
         XTableWidget_setRowCount(s_mb.regTable, MB_SLAVE_REG_ROWS);
         XWidget_show((XWidget*)s_mb.regTable);
-        /* [根修 2026-10-13] 双击信号连接必须在表格创建之后：原先连接
-         * 写在创建前（s_mb.regTable 尚为 NULL），connect 空挂——信号
-         * 照发、无人接收，双击编辑永不触发。只连双击（Qt QTableWidget
-         * 默认 editTriggers=DoubleClicked；此前 cellClicked 同连一槽
-         * 致单击即开编辑框且多框并存，与 Qt 语义相悖）。 */
+        XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)s_mb.regTable);
+        /* [10-19 框架编辑器迁移] 编辑走框架委托编辑器：表级门禁开
+         * （两列皆可双击编辑=Qt 缺省 item flags 语义）+cellChanged→
+         * 落库槽（连接必须在表格创建之后——10-13 根修教训沿用）。
+         * 原手工「cellDoubleClicked→挂临时 XLineEdit」链（EditBegin/
+         * EditCommit/RowSlot/DblSlot，10-13/10-14 两轮根修对象）
+         * 整建制退役。 */
+        XAbstractItemView_setItemsEditable(&s_mb.regTable->m_base.m_base,
+                                           true);
         XObject_connect_1((XObject*)s_mb.regTable,
-                          (size_t)XTableWidget_cellDoubleClicked_signal(
+                          (size_t)XTableWidget_cellChanged_signal(
                               (XTableWidget*)NULL),
-                          (XObject*)s_mb.root, mb_masterRegDblSlot,
+                          (XObject*)s_mb.root, mb_masterRegCellChanged,
                           XConnectionType_Direct);
     }
+    /* 装配收口：内容根挂布局器；内容根作 scroll 内容件（水平 AlwaysOff,
+     * 竖条 AsNeeded=全页唯一滚动条；超高由竖滚承担）。 */
+    XWidget_setLayout(s_mb.pageRoot, (XLayout*)&s_mb.layRoot);
+    XAbstractScrollArea_setHorizontalScrollBarPolicy(
+        (XAbstractScrollArea*)s_mb.scroll, XScrollBarPolicy_AlwaysOff);
+    XScrollArea_setWidget(s_mb.scroll, s_mb.pageRoot);
     /* [程序化数量] env XGUI_DEMO_MB_COUNT=n：数量 SpinBox 置 n 并触发
        重建（动态列/行的程序化验证通道）。 */
     {
@@ -2590,180 +3803,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
             }
         }
     }
-    return s_mb.pageRoot;
-}
-
-XWidget* demo_page_modbus_slave_build(XWidget* parent,
-                                      DemoPageStatusFn statusFn, void* user)
-{
-    XLabel* title = NULL;
-    int i;
-    (void)statusFn; (void)user;
-
-    XMemset(&s_mbSlave, 0, sizeof(s_mbSlave));
-    s_mbSlave.inCount = 8;
-    s_mbSlave.outCount = 8;
-
-    if (!parent) return (XWidget*)0;
-    {
-        /* [滚动承载 2026-10-14] 同主站页：root=页面根，ScrollArea+body 承载。 */
-        XWidget* pageRoot = XWidget_create(parent, 0);
-        if (!pageRoot) return (XWidget*)0;
-        s_mbSlave.scroll = XScrollArea_create(pageRoot, 0);
-        if (!s_mbSlave.scroll) { XClassDelete((XClass*)pageRoot); return (XWidget*)0; }
-        XScrollArea_setWidgetResizable(s_mbSlave.scroll, false);
-        s_mbSlave.body = XWidget_create(NULL, 0);
-        /* [滚动残影根修 2026-10-15] 同主站页：body 持 Base 底色+autofill。 */
-        XWidget_setBackgroundRole(s_mbSlave.body, XPaletteColorRole_Base);
-        XWidget_setAutoFillBackground(s_mbSlave.body, true);
-        if (!s_mbSlave.body) { XClassDelete((XClass*)pageRoot); return (XWidget*)0; }
-        XScrollArea_setWidget(s_mbSlave.scroll, s_mbSlave.body);
-        XWidget_setGeometry((XWidget*)pageRoot, 0, 0, 740, 624);
-        s_mbSlave.pageRoot = pageRoot;
-        s_mbSlave.root = s_mbSlave.body;
-    }
-
-    mb_buildLabelAt(s_mbSlave.root,
-                    "Modbus \xE4\xBB\x8E\xE7\xAB\x99\xE8\xB0\x83\xE8\xAF\x95",
-                    12, 8, 300, &title); /* Modbus 从站调试 */
-    if (title) XLabel_setTextPixelSize(title, 16);
-
-    /* 连接参数区。 */
-    mb_buildLabelAt(s_mbSlave.root,
-                    "\xE9\x80\x9A\xE9\x81\x93", 12, 44, 56, NULL); /* 通道 */
-    s_mbSlave.channelCombo = mb_buildChannelCombo(s_mbSlave.root, 72, 42, 160);
-    XObject_connect_2((XObject*)s_mbSlave.channelCombo,
-                      XSignal(XComboBox_activated_signal),
-                      mb_slaveChannelSlot);
-
-    mb_buildLabelAt(s_mbSlave.root,
-                    "\xE7\x9B\x91\xE5\x90\xAC\xE7\xAB\xAF\xE5\x8F\xA3",
-                    12, 74, 84, &s_mbSlave.tcpLbl); /* 监听端口 */
-    s_mbSlave.tcpPortEdit = XLineEdit_create(s_mbSlave.root, 0);
-    if (s_mbSlave.tcpPortEdit) {
-        XLineEdit_setText(s_mbSlave.tcpPortEdit, "15020");
-        XWidget_setGeometry((XWidget*)s_mbSlave.tcpPortEdit, 100, 72, 100, 24);
-        XWidget_show((XWidget*)s_mbSlave.tcpPortEdit);
-    }
-    mb_buildLabelAt(s_mbSlave.root,
-                    "\xE4\xB8\xB2\xE5\x8F\xA3", 12, 74, 56, &s_mbSlave.serialLbl);
-                    /* 串口 */
-    if (s_mbSlave.serialLbl)
-        XWidget_setVisible((XWidget*)s_mbSlave.serialLbl, false);
-    s_mbSlave.serialNameEdit = XLineEdit_create(s_mbSlave.root, 0);
-    if (s_mbSlave.serialNameEdit) {
-        XLineEdit_setText(s_mbSlave.serialNameEdit, "/dev/ttyS1");
-        XWidget_setGeometry((XWidget*)s_mbSlave.serialNameEdit, 80, 72, 130, 24);
-        XWidget_setVisible((XWidget*)s_mbSlave.serialNameEdit, false);
-    }
-    s_mbSlave.serialBaudCombo = mb_buildBaudCombo(s_mbSlave.root, 218, 72, 80);
-    XWidget_setVisible((XWidget*)s_mbSlave.serialBaudCombo, false);
-
-    mb_buildLabelAt(s_mbSlave.root,
-                    "\xE6\x9C\xAC\xE7\xAB\x99\xE5\x9C\xB0\xE5\x9D\x80",
-                    12, 104, 80, NULL); /* 本站地址 */
-    s_mbSlave.unitSpin = mb_buildSpin(s_mbSlave.root, 96, 102, 60, 1, 247, 1);
-
-    mb_buildLabelAt(s_mbSlave.root,
-                    "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9",
-                    12, 134, 60, NULL); /* 输入点 */
-    s_mbSlave.inCountSpin = mb_buildSpin(s_mbSlave.root, 76, 132, 60, 0, 64, 8);
-    mb_buildLabelAt(s_mbSlave.root,
-                    "\xE8\xBE\x93\xE5\x87\xBA\xE7\x82\xB9",
-                    162, 134, 60, NULL); /* 输出点 */
-    s_mbSlave.outCountSpin = mb_buildSpin(s_mbSlave.root, 226, 132, 60, 0, 64, 8);
-
-    s_mbSlave.startBtn = XPushButton_create(s_mbSlave.root, 0);
-    if (s_mbSlave.startBtn) {
-        XPushButton_setText_2(s_mbSlave.startBtn,
-                              "\xE5\x90\xAF\xE5\x8A\xA8"); /* 启动 */
-        XWidget_setGeometry((XWidget*)s_mbSlave.startBtn, 12, 162, 90, 28);
-        XObject_connect_2((XObject*)s_mbSlave.startBtn,
-                          XSignal(XAbstractButton_clicked_signal),
-                          mb_slaveStartSlot);
-        XWidget_show((XWidget*)s_mbSlave.startBtn);
-    }
-    s_mbSlave.stateLabel = XLabel_create(s_mbSlave.root, 0);
-    if (s_mbSlave.stateLabel) {
-        XLabel_setText_2(s_mbSlave.stateLabel,
-                         "\xE5\xB7\xB2\xE5\x81\x9C\xE6\xAD\xA2"); /* 已停止 */
-        XWidget_setGeometry((XWidget*)s_mbSlave.stateLabel, 116, 166, 120, 22);
-        XWidget_show((XWidget*)s_mbSlave.stateLabel);
-    }
-    s_mbSlave.statLabel = XLabel_create(s_mbSlave.root, 0);
-    if (s_mbSlave.statLabel) {
-        XLabel_setText_2(s_mbSlave.statLabel,
-                         "\xE5\x86\x99\xE4\xBA\x8B\xE4\xBB\xB6: 0");
-                         /* 写事件: 0 */
-        XWidget_setGeometry((XWidget*)s_mbSlave.statLabel, 250, 166, 150, 22);
-        XWidget_show((XWidget*)s_mbSlave.statLabel);
-    }
-
-    /* ---- 数据面板（可手动调整） ---- */
-    mb_buildLabelAt(s_mbSlave.root,
-                    "\xE6\x95\xB0\xE6\x8D\xAE\xE9\x9D\xA2\xE6\x9D\xBF"
-                    "(\xE5\x8F\xAF\xE6\x89\x8B\xE5\x8A\xA8\xE4\xBF\xAE"
-                    "\xE6\x94\xB9)",
-                    12, 196, 220, NULL); /* 数据面板(可手动修改) */
-    mb_buildLabelAt(s_mbSlave.root,
-                    "\xE8\xA1\xA8", 300, 198, 30, NULL); /* 表 */
-    s_mbSlave.tableCombo = XComboBox_create(s_mbSlave.root, 0);
-    if (s_mbSlave.tableCombo) {
-        XComboBox_addItem_2(s_mbSlave.tableCombo,
-                "DO \xE7\xBA\xBF\xE5\x9C\x88");           /* DO 线圈 */
-        XComboBox_addItem_2(s_mbSlave.tableCombo,
-                "DI \xE7\xA6\xBB\xE6\x95\xA3\xE8\xBE\x93\xE5\x85\xA5");
-                /* DI 离散输入 */
-        XComboBox_addItem_2(s_mbSlave.tableCombo,
-                "IR \xE8\xBE\x93\xE5\x85\xA5\xE5\xAF\x84\xE5\xAD\x98\xE5\x99\xA8");
-                /* IR 输入寄存器 */
-        XComboBox_addItem_2(s_mbSlave.tableCombo,
-                "HR \xE4\xBF\x9D\xE6\x8C\x81\xE5\xAF\x84\xE5\xAD\x98\xE5\x99\xA8");
-                /* HR 保持寄存器 */
-        XComboBox_setCurrentIndex(s_mbSlave.tableCombo, 0);
-        XWidget_setGeometry((XWidget*)s_mbSlave.tableCombo, 334, 194, 180, 24);
-        XObject_connect_2((XObject*)s_mbSlave.tableCombo,
-                          XSignal(XComboBox_activated_signal),
-                          mb_slaveTableSlot);
-        XWidget_show((XWidget*)s_mbSlave.tableCombo);
-    }
-    s_mbSlave.applyBtn = XPushButton_create(s_mbSlave.root, 0);
-    if (s_mbSlave.applyBtn) {
-        XPushButton_setText_2(s_mbSlave.applyBtn,
-                              "\xE6\x8C\x89\xE7\x82\xB9\xE6\x95\xB0\xE9\x87"
-                              "\x8D\xE5\xBB\xBA"); /* 按点数重建 */
-        XWidget_setGeometry((XWidget*)s_mbSlave.applyBtn, 524, 192, 110, 26);
-        XObject_connect_2((XObject*)s_mbSlave.applyBtn,
-                          XSignal(XAbstractButton_clicked_signal),
-                          mb_slaveApplySlot);
-        XWidget_show((XWidget*)s_mbSlave.applyBtn);
-    }
-
-    s_mbSlave.dataTable = XTableWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, s_mbSlave.root, 0);
-    if (s_mbSlave.dataTable) {
-        static const char* const kHead[] = {
-            "\xE5\x9C\xB0\xE5\x9D\x80",               /* 地址 */
-            "\xE5\x80\xBC(\xE7\x82\xB9\xE5\x87\xBB/\xE5\x9B\x9E\xE8\xBD\xA6\xE7\x94\x9F\xE6\x95\x88)"
-                /* 值(点击/回车生效) */
-        };
-        XWidget_setGeometry((XWidget*)s_mbSlave.dataTable, 12, 224, 622, 330);
-        XTableWidget_setColumnCount(s_mbSlave.dataTable, 2);
-        XTableWidget_setHorizontalHeaderLabels(s_mbSlave.dataTable, kHead,
-                (int)(sizeof(kHead) / sizeof(kHead[0])));
-        XWidget_show((XWidget*)s_mbSlave.dataTable);
-    }
-    mb_slaveRebuildPanel();
-
-    /* [端到端联调入口] env XGUI_DEMO_MB_AUTOSTART=slave：构建后程序化
-     * 启动监听（XAbstractButton_click 走完整激活流程；回环联调用）。 */
-    {
-        const char* autoRole = XSystem_environment("XGUI_DEMO_MB_AUTOSTART");
-        if (autoRole && strcmp(autoRole, "slave") == 0 && s_mbSlave.startBtn) {
-            XAbstractButton_click((XAbstractButton*)s_mbSlave.startBtn);
-            XPrintf("XGuiWindowDemo: modbus autostart slave done\n");
-        }
-    }
-    return s_mbSlave.pageRoot;
+    /* [10-19 对齐从站] 堆叠条目=页宿主(几何由堆叠分配;scroll 在其内
+     * 铺满)。返回内容根会使页宿主永不在堆叠、几何永不分配(实测
+     * scroll 卡 184x150)。 */
+    return (XWidget*)s_mb.pageHost;
 }
 
 int demo_page_modbus_master_autotest(XWidget* page)
@@ -2777,15 +3820,728 @@ int demo_page_modbus_master_autotest(XWidget* page)
         if (!s_mb.inCountSpin || !s_mb.outCountSpin || !s_mb.pollSpin)
             ++failures;
         if (s_mb.device) ++failures; /* 构建后应未连接。 */
-        /* [重叠回归断言] 同行标签与输入框几何不得相交。 */
-        {
-            XRect rl, rc;
-            rl = XWidget_geometry((XWidget*)s_mb.tcpLbl);
-            rc = XWidget_geometry((XWidget*)s_mb.tcpAddrEdit);
-            if (rl.x + rl.width > rc.x) ++failures;
+        /* [布局容器化 2026-10-17] 原几何相交断言改容器口径：行标签可见、
+         * 输入框随布局分得非零尺寸、父子关系挂页根（坐标排布已移交
+         * 布局器，读坐标不再构成契约）。 */
+        if (!s_mb.tcpLbl || !XWidget_isVisible((XWidget*)s_mb.tcpLbl))
+            ++failures;
+        if (!s_mb.tcpAddrEdit ||
+            XWidget_width((XWidget*)s_mb.tcpAddrEdit) <= 0 ||
+            XWidget_height((XWidget*)s_mb.tcpAddrEdit) <= 0 ||
+            XWidget_parentWidget((XWidget*)s_mb.tcpAddrEdit) !=
+                s_mb.pageRoot) /* [10-19] 挂内容根(page=堆叠条目=页宿主)。 */
+            ++failures;
+        /* ---- [10-19 框架编辑器迁移] 编辑器开合/提交端到端回归锁 ----
+         * edit(0,1) 开值格编辑器 → 改文本 → 直发 Return（拦截→委托
+         * commit/close 链）→ 断言会话关闭+16 进制规范化回写（未连接，
+         * 写模块段由 device 判空跳过，只走规范化回写）；地址列防误改
+         * 回写同验。 */
+        if (s_mb.regTable) {
+            XAbstractItemView* iv = &s_mb.regTable->m_base.m_base;
+            if (!XAbstractItemView_itemsEditable(iv)) ++failures;
+            /* [10-19 对齐 Qt item flags] 地址列只读：edit() 门禁拒绝
+             * （首格=有数据格;末行地址格=空占位格,两态都必须拒绝）。 */
+            if (XAbstractItemView_edit(iv, 0, 0)) ++failures;
+            if (XAbstractItemView_edit(
+                    iv, XTableWidget_rowCount(s_mb.regTable) - 1, 0))
+                ++failures;
+            /* 全地址格(偶数列×全行)flags 巡检:必须显式只读。 */
+            {
+                int rr = XTableWidget_rowCount(s_mb.regTable);
+                int cc = 2 * s_mb.regCols;
+                int r, c;
+                for (r = 0; r < rr; ++r)
+                    for (c = 0; c < cc; c += 2) {
+                        uint32_t f = XTableWidget_itemFlags(
+                            s_mb.regTable, r, c);
+                        if ((f & XTableWidgetItemFlag_ItemIsEditable) ||
+                            f == 0)
+                            ++failures; /* 地址格必须显式只读。 */
+                    }
+            }
+            if (XAbstractItemView_edit(iv, 0, 1) && iv->m_editor) {
+                XKeyEvent* ke = XKeyEvent_create_ex(
+                    XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_KEY_PRESS,
+                    (int)XKey_Return, 0);
+                XLineEdit_setText((XLineEdit*)iv->m_editor, "7b");
+                if (ke) {
+                    XObject_event_base((XObject*)iv->m_editor,
+                                       (XEvent*)ke);
+                    XClassDelete((XEvent*)ke);
+                }
+                if (XAbstractItemView_isEditing(iv)) ++failures;
+                {
+                    const char* cellText =
+                        XTableWidget_text(s_mb.regTable, 0, 1);
+                    if (!cellText || strcmp(cellText, "0x007B") != 0)
+                        ++failures;
+                }
+                /* 地址列防误改：写坏文本→桥回写正确地址。 */
+                XTableWidget_setText(s_mb.regTable, 0, 0, "0xDEAD");
+                {
+                    const char* addrText =
+                        XTableWidget_text(s_mb.regTable, 0, 0);
+                    char want[12];
+                    snprintf(want, sizeof(want), "0x%04X",
+                             (unsigned)XSpinBox_value(s_mb.regAddrSpin));
+                    if (!addrText || strcmp(addrText, want) != 0)
+                        ++failures;
+                }
+            } else {
+                ++failures;
+            }
         }
         return failures;
     }
+}
+
+
+XCLASS_DEFINE_BEGING(MbSlaveRoot)
+XCLASS_DEFINE_EXTEND_END(MbSlaveRoot, XWidget)
+
+/** @brief 从站内容根控件：resize 后先激活页根布局再重解算四区档位。
+ *  [10-18 二次追加] 本件退居 scroll 内容件（页堆叠条目= scroll），
+ *  宽由 fitScrollContent 设为视口宽——本钩子随之被触发（setGeometry
+ *  内部先 activate 再派发 RESIZE），完成换行灯格/表几何重解算。 */
+typedef struct MbSlaveRoot
+{
+    XWidget m_base;      /**< XWidget 基类；必须是第一个成员。 */
+} MbSlaveRoot;
+
+static void VMbSlaveRoot_resizeEvent(XWidget* self, XEvent* event)
+{
+    (void)event;
+    if (!self) return;
+    if (XWidget_layout(self))
+        XLayout_activate(XWidget_layout(self));
+    mb_slaveSyncViewport();
+}
+
+XVtable* MbSlaveRoot_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(MbSlaveRoot)
+    XVTABLE_INHERIT_XCLASS(XWidget);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent, VMbSlaveRoot_resizeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 构建从站内容根（带 resize 重解算钩子的 XWidget 子类实例）。 */
+static XWidget* mb_slaveCreateRoot(XWidget* parent)
+{
+    MbSlaveRoot* root = (MbSlaveRoot*)XMalloc_System(sizeof(MbSlaveRoot));
+    if (!root) return (XWidget*)0;
+    XMemset(root, 0, sizeof(*root));
+    XWidget_init(&root->m_base, parent, 0);
+    XClassSetVtable(root, MbSlaveRoot);
+    return &root->m_base;
+}
+
+/* ==================== 整页竖滚区（全页唯一滚动条） ====================
+ * [10-18 二次追加·滚动条纪律] 页根包一个只竖滚的 XScrollArea 挂入页
+ * 堆叠：水平条 AlwaysOff、竖条 AsNeeded（默认）；内容宽恒=视口宽
+ * （水平跟随不滚），内容高=内容首选高（超高只出右侧一条竖滚条）。
+ * widgetResizable 必须保持 false：resizable=true 会把内容几何钉成
+ * 视口尺寸（XScrollArea.c:40-45），内容永远不超视口 ⇒ 竖滚无从发生；
+ * 改由本子类 resizeEvent 自管内容宽高（resizable=false 时基类按内容
+ * 自身尺寸排版并 setContentSize，本钩子随后重定宽高+刷新滚动范围）。 */
+XCLASS_DEFINE_BEGING(MbSlaveScroll)
+XCLASS_DEFINE_EXTEND_END(MbSlaveScroll, XScrollArea)
+
+typedef struct MbSlaveScroll
+{
+    XScrollArea m_base;  /**< XScrollArea 基类；必须是第一个成员。 */
+    /* [10-19 主站接入] fit 收敛后的页回调（主站：内容布局 activate +
+     * 表显示行解算——行数变化改内容首选高，回调返回后主调再补一遍
+     * fit 收敛；从站不设=NULL，行数解算走内容根 resizeEvent 既有链）。 */
+    void (*onFit)(struct MbSlaveScroll* scroll);
+} MbSlaveScroll;
+
+/** @brief 整页竖滚承载：内容宽=视口宽、高=内容首选高，两遍收敛。
+ *  @details 第一遍 activate 可能触发内容根 resize→syncViewport→灯格
+ *           换行行数变化（宿主高变）⇒ 首选高已陈旧；第二遍清合计
+ *           缓存重读（XLayout 缓存须显式 invalidate，setFixed/setSizeHint
+ *           均不清——同 applyRegGeometry 实测口径），两遍后列数必然
+ *           稳定（列数只随视口宽），高度精确。 */
+static void mb_slaveFitScrollContent(XScrollArea* area)
+{
+    XWidget* viewport;
+    XWidget* content;
+    int vw;
+    int vh;
+    int pass;
+    if (!area) return;
+    viewport = XAbstractScrollArea_viewport((XAbstractScrollArea*)area);
+    content = XScrollArea_widget(area);
+    if (!viewport || !content) return;
+    vw = XWidget_width(viewport);
+    vh = XWidget_height(viewport);
+    if (vw < 1) return;   /* 视口未就位（堆叠未给几何）不猜。 */
+    XWidget_setFixedWidth(content, vw);
+    for (pass = 0; pass < 2; ++pass) {
+        XSize hint;
+        XSize minHint;
+        if (XWidget_layout(content))
+            XLayout_invalidate(XWidget_layout(content));
+        /* 有布局 ⇒ 布局合计首选/合计最小。[合计首选缺口 2026-10-18]
+         * 无显式 sizeHint 的**定尺寸**条目（满高寄存器表）在合计首选里
+         * 记 0（XLayoutItem.c:169-174 回退链 sizeHint<0→minSizeHint<0→0
+         * 再被 max 钳位），而合计最小把 min=max 的定尺寸条目按实高累计
+         * ——两者取大才是「所有条目都不被裁」的内容高。 */
+        hint = XWidget_sizeHint(content);
+        minHint = XWidget_minimumSizeHint(content);
+        if (minHint.height > hint.height) hint.height = minHint.height;
+        if (minHint.width > hint.width) hint.width = minHint.width;
+        if (hint.width < 1) hint.width = vw;
+        if (hint.height < 1) hint.height = vh > 0 ? vh : 1;
+        XWidget_setFixedHeight(content, hint.height);
+        /* setGeometry 内部先 activate 布局再派发 RESIZE（XWidget.c:
+         * 4703-4715），内容根 resizeEvent 随之跑 syncViewport。 */
+        XWidget_setGeometry(content, 0, 0, hint.width, hint.height);
+        if (XWidget_layout(content))
+            XLayout_activate(XWidget_layout(content));
+    }
+    /* 内容尺寸驱动滚动范围（同 XScrollArea.c:62-64 口径；宽=视口宽 ⇒
+     * 水平恒无滚动需求，hPolicy=AlwaysOff 再加一道保险）。 */
+    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)area, vw,
+        XWidget_height(content) > vh ? XWidget_height(content) : vh);
+    /* 页回调（可空）：主站在此 activate 内容布局+解算显示行，随后由
+     * resizeEvent 补第二遍 fit 收敛行数变化的实测高（同从站两遍定式）。 */
+    {
+        MbSlaveScroll* shell = (MbSlaveScroll*)area;
+        if (shell && shell->onFit) shell->onFit(shell);
+    }
+}
+
+static void VMbSlaveScroll_resizeEvent(XWidget* self, XEvent* event)
+{
+    if (!self) return;
+    /* 先跑基类（视口/滚动条/内容件随新尺寸重排），再按新视口宽重定
+     * 内容宽高；onFit 中解算行数的页（主站）随后补第二遍 fit 收敛
+     * 实测高。 */
+    XClass_Parent(XScrollArea, EXWidget_ResizeEvent,
+                  XWidgetEventSlot)(self, event);
+    mb_slaveFitScrollContent((XScrollArea*)self);
+    {
+        MbSlaveScroll* shell = (MbSlaveScroll*)self;
+        if (shell->onFit) {
+            shell->onFit(shell);
+            mb_slaveFitScrollContent((XScrollArea*)self);
+        }
+    }
+}
+
+XVtable* MbSlaveScroll_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(MbSlaveScroll)
+    XVTABLE_INHERIT_XCLASS(XScrollArea);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ResizeEvent,
+                             VMbSlaveScroll_resizeEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 设置滚动壳 fit 收敛后的页回调（主站接入用；内部完整类型）。 */
+static void mb_slaveScrollSetOnFit(XWidget* scroll,
+                                   void (*onFit)(MbSlaveScroll* scroll))
+{
+    if (!scroll) return;
+    ((MbSlaveScroll*)scroll)->onFit = onFit;
+}
+
+/** @brief 构建整页竖滚区（带内容重承载钩子的 XScrollArea 子类实例）。 */
+static XWidget* mb_slaveCreateScroll(XWidget* parent)
+{
+    MbSlaveScroll* scroll =
+        (MbSlaveScroll*)XMalloc_System(sizeof(MbSlaveScroll));
+    if (!scroll) return (XWidget*)0;
+    XMemset(scroll, 0, sizeof(*scroll));
+    XScrollArea_init(&scroll->m_base, parent, 0);
+    XClassSetVtable(scroll, MbSlaveScroll);
+    return (XWidget*)scroll;
+}
+
+XWidget* demo_page_modbus_slave_build(XWidget* parent,
+                                      DemoPageStatusFn statusFn, void* user)
+{
+    XLabel* title = NULL;
+    (void)statusFn; (void)user;
+
+    XMemset(&s_mbSlave, 0, sizeof(s_mbSlave));
+    s_mbSlave.inCount = 8;
+    s_mbSlave.outCount = 8;
+    /* [10-18 三次追加] 寄存器默认行数 16（SpinBox 1..256 可调）。 */
+    s_mbSlave.irCount = MB_SLAVE_REG_ROWS;
+    s_mbSlave.hrCount = MB_SLAVE_REG_ROWS;
+
+    if (!parent) return (XWidget*)0;
+    {
+        /* [10-18 二次追加] 页堆叠条目 = scroll（整页竖滚区，见
+         * MbSlaveScroll 注释）；内容根（root/pageRoot）作 scroll 内容件，
+         * 页内排布由其 XBoxLayout 分配（build 一次装配，resize→activate
+         * 自动重排 + 重解算档位）。 */
+        XWidget* scrollRoot = mb_slaveCreateScroll(parent);
+        XWidget* pageRoot;
+        if (!scrollRoot) return (XWidget*)0;
+        pageRoot = mb_slaveCreateRoot(scrollRoot);
+        if (!pageRoot) {
+            XObject_deleteLater(scrollRoot);
+            return (XWidget*)0;
+        }
+        s_mbSlave.scroll = (XScrollArea*)scrollRoot;
+        s_mbSlave.pageRoot = pageRoot;
+        s_mbSlave.root = pageRoot;
+    }
+
+    /* 内容根纵向主布局：边距 12/8/12/8，间距 4；条目 3 = dataArea。
+     * [10-18 二次追加] 内容高=布局首选高（fitScrollContent 依此定高），
+     * 无 stretch 条目——全部段高确定（行高 24 + 满高表），超高由竖滚。 */
+    XBoxLayout_init(&s_mbSlave.layRoot, XBoxLayoutDirection_TopToBottom);
+    XLayout_setContentsMargins((XLayout*)&s_mbSlave.layRoot, 12, 8, 12, 8);
+    XLayout_setSpacing((XLayout*)&s_mbSlave.layRoot, 4);
+
+    /* 条目 0：标题行。 */
+    mb_buildLabel(s_mbSlave.root,
+                  "Modbus \xE4\xBB\x8E\xE7\xAB\x99\xE8\xB0\x83\xE8\xAF\x95",
+                  300, &title); /* Modbus 从站调试 */
+    if (title) {
+        XLabel_setTextPixelSize(title, 16);
+        XBoxLayout_addWidget(&s_mbSlave.layRoot, (XWidget*)title);
+    }
+
+    /* 条目 1：参数合并行（[10-18 用户追加规格④] 原通道/监听端口/串口/
+     * 本站地址四行并一行——右边太空）。随通道显隐的控件条目在隐藏时
+     * 主轴分配取 0 宽（XLayoutItem.c:229 isEmpty ⇒ XBoxLayout.c:461
+     * size=0），TCP/串口切换行内自折叠，不占位。 */
+    mb_rowInit(&s_mbSlave.layChannel, &s_mbSlave.layRoot,
+               XBoxLayoutDirection_LeftToRight);
+    {
+        XLabel* lbl = NULL;
+        mb_buildLabel(s_mbSlave.root, "\xE9\x80\x9A\xE9\x81\x93", 56, &lbl);
+                        /* 通道 */
+        if (lbl) XBoxLayout_addWidget(&s_mbSlave.layChannel, (XWidget*)lbl);
+    }
+    s_mbSlave.channelCombo = mb_buildChannelCombo(s_mbSlave.root, 120);
+    if (s_mbSlave.channelCombo)
+        XBoxLayout_addWidget(&s_mbSlave.layChannel,
+                             (XWidget*)s_mbSlave.channelCombo);
+    XBoxLayout_addSpacing(&s_mbSlave.layChannel, 12);
+    mb_buildLabel(s_mbSlave.root,
+                  "\xE7\x9B\x91\xE5\x90\xAC\xE7\xAB\xAF\xE5\x8F\xA3",
+                  84, &s_mbSlave.tcpLbl); /* 监听端口 */
+    if (s_mbSlave.tcpLbl)
+        XBoxLayout_addWidget(&s_mbSlave.layChannel,
+                             (XWidget*)s_mbSlave.tcpLbl);
+    s_mbSlave.tcpPortEdit = XLineEdit_create(s_mbSlave.root, 0);
+    if (s_mbSlave.tcpPortEdit) {
+        XLineEdit_setText(s_mbSlave.tcpPortEdit, "15020");
+        XWidget_setFixedWidth((XWidget*)s_mbSlave.tcpPortEdit, 100);
+        XWidget_setFixedHeight((XWidget*)s_mbSlave.tcpPortEdit, 24);
+        XWidget_show((XWidget*)s_mbSlave.tcpPortEdit);
+        XBoxLayout_addWidget(&s_mbSlave.layChannel,
+                             (XWidget*)s_mbSlave.tcpPortEdit);
+    }
+    mb_buildLabel(s_mbSlave.root, "\xE4\xB8\xB2\xE5\x8F\xA3", 56,
+                  &s_mbSlave.serialLbl); /* 串口 */
+    if (s_mbSlave.serialLbl) {
+        XWidget_setVisible((XWidget*)s_mbSlave.serialLbl, false);
+        XBoxLayout_addWidget(&s_mbSlave.layChannel,
+                             (XWidget*)s_mbSlave.serialLbl);
+    }
+    s_mbSlave.serialNameEdit = XLineEdit_create(s_mbSlave.root, 0);
+    if (s_mbSlave.serialNameEdit) {
+        XLineEdit_setText(s_mbSlave.serialNameEdit, "/dev/ttyS1");
+        XWidget_setFixedWidth((XWidget*)s_mbSlave.serialNameEdit, 130);
+        XWidget_setFixedHeight((XWidget*)s_mbSlave.serialNameEdit, 24);
+        XWidget_setVisible((XWidget*)s_mbSlave.serialNameEdit, false);
+        XBoxLayout_addWidget(&s_mbSlave.layChannel,
+                             (XWidget*)s_mbSlave.serialNameEdit);
+    }
+    s_mbSlave.serialBaudCombo = mb_buildBaudCombo(s_mbSlave.root, 80);
+    if (s_mbSlave.serialBaudCombo) {
+        XWidget_setVisible((XWidget*)s_mbSlave.serialBaudCombo, false);
+        XBoxLayout_addWidget(&s_mbSlave.layChannel,
+                             (XWidget*)s_mbSlave.serialBaudCombo);
+    }
+    XBoxLayout_addSpacing(&s_mbSlave.layChannel, 12);
+    {
+        XLabel* lbl = NULL;
+        mb_buildLabel(s_mbSlave.root,
+                      "\xE6\x9C\xAC\xE7\xAB\x99\xE5\x9C\xB0\xE5\x9D\x80",
+                      80, &lbl); /* 本站地址 */
+        if (lbl) XBoxLayout_addWidget(&s_mbSlave.layChannel, (XWidget*)lbl);
+    }
+    s_mbSlave.unitSpin = mb_buildSpin(s_mbSlave.root, 60, 1, 247, 1);
+    if (s_mbSlave.unitSpin)
+        XBoxLayout_addWidget(&s_mbSlave.layChannel,
+                             (XWidget*)s_mbSlave.unitSpin);
+    mb_rowPack(&s_mbSlave.layChannel);
+    XObject_connect_2((XObject*)s_mbSlave.channelCombo,
+                      XSignal(XComboBox_activated_signal),
+                      mb_slaveOnChannelChanged);
+
+    /* 条目 2：启动/状态/统计行（按钮 28、标签 22；页根上部不动）。 */
+    mb_rowInit(&s_mbSlave.layStart, &s_mbSlave.layRoot,
+               XBoxLayoutDirection_LeftToRight);
+    s_mbSlave.startBtn = XPushButton_create(s_mbSlave.root, 0);
+    if (s_mbSlave.startBtn) {
+        XPushButton_setText_2(s_mbSlave.startBtn,
+                              "\xE5\x90\xAF\xE5\x8A\xA8"); /* 启动 */
+        XWidget_setFixedWidth((XWidget*)s_mbSlave.startBtn, 90);
+        XWidget_setFixedHeight((XWidget*)s_mbSlave.startBtn, 28);
+        XObject_connect_2((XObject*)s_mbSlave.startBtn,
+                          XSignal(XAbstractButton_clicked_signal),
+                          mb_slaveStartSlot);
+        XWidget_show((XWidget*)s_mbSlave.startBtn);
+        XBoxLayout_addWidget(&s_mbSlave.layStart,
+                             (XWidget*)s_mbSlave.startBtn);
+    }
+    XBoxLayout_addSpacing(&s_mbSlave.layStart, 10);
+    s_mbSlave.stateLabel = XLabel_create(s_mbSlave.root, 0);
+    if (s_mbSlave.stateLabel) {
+        XLabel_setText_2(s_mbSlave.stateLabel,
+                         "\xE5\xB7\xB2\xE5\x81\x9C\xE6\xAD\xA2"); /* 已停止 */
+        XWidget_setFixedWidth((XWidget*)s_mbSlave.stateLabel, 120);
+        XWidget_setFixedHeight((XWidget*)s_mbSlave.stateLabel, 22);
+        XWidget_show((XWidget*)s_mbSlave.stateLabel);
+        XBoxLayout_addWidget(&s_mbSlave.layStart,
+                             (XWidget*)s_mbSlave.stateLabel);
+    }
+    XBoxLayout_addSpacing(&s_mbSlave.layStart, 10);
+    s_mbSlave.statLabel = XLabel_create(s_mbSlave.root, 0);
+    if (s_mbSlave.statLabel) {
+        XLabel_setText_2(s_mbSlave.statLabel,
+                         "\xE5\x86\x99\xE4\xBA\x8B\xE4\xBB\xB6: 0");
+                         /* 写事件: 0 */
+        XWidget_setFixedWidth((XWidget*)s_mbSlave.statLabel, 150);
+        XWidget_setFixedHeight((XWidget*)s_mbSlave.statLabel, 22);
+        XWidget_show((XWidget*)s_mbSlave.statLabel);
+        XBoxLayout_addWidget(&s_mbSlave.layStart,
+                             (XWidget*)s_mbSlave.statLabel);
+    }
+    mb_rowPack(&s_mbSlave.layStart);
+
+    /* ---- 条目 3：数据区（全宽纵向四段式）----
+     * dataArea 走「控件 + setLayout」路径；layData 恒纵向，八条目平铺：
+     * DI 标题行/DI 灯格宿主/DO 标题行/DO 灯格宿主/IR 标题行/IR 表/
+     * HR 标题行/HR 表。四条标题行都是未绑控件的子布局（addLayout 合法）；
+     * 宿主与两表是控件条目，不再
+     * 套「列容器」中间层（每层只有「控件+自己的布局」一跳，规避
+     * activate 不级联与内层坐标系错位的实测坑，见 applyRegGeometry
+     * 注释）。[10-18 二次追加] 无 stretch 条目、无滚动壳：段高全部
+     * 确定（标题行 24 + 宿主 行数×22 + 满高表），超高由整页竖滚承担。 */
+    s_mbSlave.dataArea = XWidget_create(s_mbSlave.root, 0);
+    if (s_mbSlave.dataArea) {
+        XBoxLayout_init(&s_mbSlave.layData, XBoxLayoutDirection_TopToBottom);
+        XLayout_setSpacing((XLayout*)&s_mbSlave.layData, 4);
+        XWidget_setLayout(s_mbSlave.dataArea, (XLayout*)&s_mbSlave.layData);
+        XWidget_show(s_mbSlave.dataArea);
+        XBoxLayout_addWidget(&s_mbSlave.layRoot, s_mbSlave.dataArea);
+
+        /* ---- 段① DI：标题行（标题+点数 SpinBox+按点数重建(输入)
+         * +DI全开/DI全关）---- 行内控件创建时父即 dataArea（C3：行布局
+         * 控件条目不 reparent，挂接时 linkItem 见父子一致则不动）。 */
+        mb_rowInit(&s_mbSlave.layDiTitle, &s_mbSlave.layData,
+                   XBoxLayoutDirection_LeftToRight);
+        {
+            XLabel* lbl = NULL;
+            mb_buildLabel(s_mbSlave.dataArea,
+                          "\xE8\xBE\x93\xE5\x85\xA5\xE7\x82\xB9 DI"
+                          "(\xE7\x82\xB9\xE5\x87\xBB\xE7\xBD\xAE\xE4\xB8\x8D)",
+                          180, &lbl); /* 输入点 DI(点击置位) */
+            if (lbl)
+                XBoxLayout_addWidget(&s_mbSlave.layDiTitle,
+                                     (XWidget*)lbl);
+        }
+        /* [联调 2026-10-19] env XGUI_DEMO_MB_SLAVE_IN/OUT 预置从站点数
+         * （回环联调复现 16 点混合态用；缺省仍 8，同主站 IN/OUT 先例）。 */
+        {
+            const char* env = XSystem_environment("XGUI_DEMO_MB_SLAVE_IN");
+            int v = (env && env[0]) ? atoi(env) : 8;
+            if (v < 0 || v > 64) v = 8;
+            s_mbSlave.inCountSpin = mb_buildSpin(s_mbSlave.dataArea, 60,
+                                                 0, 64, v);
+        }
+        if (s_mbSlave.inCountSpin)
+            XBoxLayout_addWidget(&s_mbSlave.layDiTitle,
+                                 (XWidget*)s_mbSlave.inCountSpin);
+        /* [10-18 用户追加规格⑤] 按点数重建(输入)：紧挨点数 SpinBox，
+         * 与段②按钮分立双槽（sender 不可信契约，见 applyCounts 注释）。 */
+        s_mbSlave.applyDiBtn = XPushButton_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.applyDiBtn) {
+            XPushButton_setText_2(s_mbSlave.applyDiBtn,
+                                  "\xE6\x8C\x89\xE7\x82\xB9\xE6\x95\xB0\xE9\x87"
+                                  "\x8D\xE5\xBB\xBA"); /* 按点数重建 */
+            XWidget_setFixedWidth((XWidget*)s_mbSlave.applyDiBtn, 110);
+            XWidget_setFixedHeight((XWidget*)s_mbSlave.applyDiBtn, 26);
+            XObject_connect_2((XObject*)s_mbSlave.applyDiBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              mb_slaveApplyDiSlot);
+            XWidget_show((XWidget*)s_mbSlave.applyDiBtn);
+            XBoxLayout_addWidget(&s_mbSlave.layDiTitle,
+                                 (XWidget*)s_mbSlave.applyDiBtn);
+        }
+        s_mbSlave.diAllOnBtn = XPushButton_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.diAllOnBtn) {
+            XPushButton_setText_2(s_mbSlave.diAllOnBtn,
+                                  "DI\xE5\x85\xA8\xE5\xBC\x80"); /* DI全开 */
+            XWidget_setFixedWidth((XWidget*)s_mbSlave.diAllOnBtn, 72);
+            XWidget_setFixedHeight((XWidget*)s_mbSlave.diAllOnBtn, 24);
+            XObject_connect_2((XObject*)s_mbSlave.diAllOnBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              mb_slaveDiAllOnSlot);
+            XWidget_show((XWidget*)s_mbSlave.diAllOnBtn);
+            XBoxLayout_addWidget(&s_mbSlave.layDiTitle,
+                                 (XWidget*)s_mbSlave.diAllOnBtn);
+        }
+        s_mbSlave.diAllOffBtn = XPushButton_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.diAllOffBtn) {
+            XPushButton_setText_2(s_mbSlave.diAllOffBtn,
+                                  "DI\xE5\x85\xA8\xE5\x85\xB3"); /* DI全关 */
+            XWidget_setFixedWidth((XWidget*)s_mbSlave.diAllOffBtn, 72);
+            XWidget_setFixedHeight((XWidget*)s_mbSlave.diAllOffBtn, 24);
+            XObject_connect_2((XObject*)s_mbSlave.diAllOffBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              mb_slaveDiAllOffSlot);
+            XWidget_show((XWidget*)s_mbSlave.diAllOffBtn);
+            XBoxLayout_addWidget(&s_mbSlave.layDiTitle,
+                                 (XWidget*)s_mbSlave.diAllOffBtn);
+        }
+        mb_rowPack(&s_mbSlave.layDiTitle);
+
+        /* 段① 第二行：DI 灯格宿主（[10-18 二次追加·滚动条纪律] 滚动壳
+         * 删除——圆圈换行铺排放得下整宽，宿主尺寸由 rebuild 按列数/
+         * 行数重算；此处先给单行初始定尺防首拍度量回落 0（C7）。 */
+        s_mbSlave.diGridHost = XWidget_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.diGridHost) {
+            XSize hint;
+            XWidget_setFixedWidth(s_mbSlave.diGridHost, 8 * MB_CELL_W);
+            XWidget_setFixedHeight(s_mbSlave.diGridHost, MB_CELL_H);
+            XSize_init(&hint, 8 * MB_CELL_W, MB_CELL_H);
+            XWidget_setSizeHint(s_mbSlave.diGridHost, &hint);
+            XWidget_show(s_mbSlave.diGridHost);
+            XBoxLayout_addWidget(&s_mbSlave.layData, s_mbSlave.diGridHost);
+        }
+
+        /* ---- 段② DO：标题行（标题+点数 SpinBox+按点数重建(输出)
+         * +全开/全关）---- */
+        mb_rowInit(&s_mbSlave.layDoTitle, &s_mbSlave.layData,
+                   XBoxLayoutDirection_LeftToRight);
+        {
+            XLabel* lbl = NULL;
+            mb_buildLabel(s_mbSlave.dataArea,
+                          "\xE8\xBE\x93\xE5\x87\xBA\xE7\x82\xB9 DO"
+                          "(\xE7\x82\xB9\xE5\x87\xBB\xE7\xBF\xBB\xE8\xBD\xAC)",
+                          180, &lbl); /* 输出点 DO(点击翻转) */
+            if (lbl)
+                XBoxLayout_addWidget(&s_mbSlave.layDoTitle,
+                                     (XWidget*)lbl);
+        }
+        /* [联调 2026-10-19] env XGUI_DEMO_MB_SLAVE_OUT 同上（输出点数）。 */
+        {
+            const char* env = XSystem_environment("XGUI_DEMO_MB_SLAVE_OUT");
+            int v = (env && env[0]) ? atoi(env) : 8;
+            if (v < 0 || v > 64) v = 8;
+            s_mbSlave.outCountSpin = mb_buildSpin(s_mbSlave.dataArea, 60,
+                                                  0, 64, v);
+        }
+        if (s_mbSlave.outCountSpin)
+            XBoxLayout_addWidget(&s_mbSlave.layDoTitle,
+                                 (XWidget*)s_mbSlave.outCountSpin);
+        /* [10-18 用户追加规格⑤] 按点数重建(输出)：与段①按钮分立双槽。 */
+        s_mbSlave.applyDoBtn = XPushButton_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.applyDoBtn) {
+            XPushButton_setText_2(s_mbSlave.applyDoBtn,
+                                  "\xE6\x8C\x89\xE7\x82\xB9\xE6\x95\xB0\xE9\x87"
+                                  "\x8D\xE5\xBB\xBA"); /* 按点数重建 */
+            XWidget_setFixedWidth((XWidget*)s_mbSlave.applyDoBtn, 110);
+            XWidget_setFixedHeight((XWidget*)s_mbSlave.applyDoBtn, 26);
+            XObject_connect_2((XObject*)s_mbSlave.applyDoBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              mb_slaveApplyDoSlot);
+            XWidget_show((XWidget*)s_mbSlave.applyDoBtn);
+            XBoxLayout_addWidget(&s_mbSlave.layDoTitle,
+                                 (XWidget*)s_mbSlave.applyDoBtn);
+        }
+        s_mbSlave.allOnBtn = XPushButton_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.allOnBtn) {
+            XPushButton_setText_2(s_mbSlave.allOnBtn,
+                                  "\xE5\x85\xA8\xE5\xBC\x80"); /* 全开 */
+            XWidget_setFixedWidth((XWidget*)s_mbSlave.allOnBtn, 64);
+            XWidget_setFixedHeight((XWidget*)s_mbSlave.allOnBtn, 24);
+            XObject_connect_2((XObject*)s_mbSlave.allOnBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              mb_slaveAllOnSlot);
+            XWidget_show((XWidget*)s_mbSlave.allOnBtn);
+            XBoxLayout_addWidget(&s_mbSlave.layDoTitle,
+                                 (XWidget*)s_mbSlave.allOnBtn);
+        }
+        s_mbSlave.allOffBtn = XPushButton_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.allOffBtn) {
+            XPushButton_setText_2(s_mbSlave.allOffBtn,
+                                  "\xE5\x85\xA8\xE5\x85\xB3"); /* 全关 */
+            XWidget_setFixedWidth((XWidget*)s_mbSlave.allOffBtn, 64);
+            XWidget_setFixedHeight((XWidget*)s_mbSlave.allOffBtn, 24);
+            XObject_connect_2((XObject*)s_mbSlave.allOffBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              mb_slaveAllOffSlot);
+            XWidget_show((XWidget*)s_mbSlave.allOffBtn);
+            XBoxLayout_addWidget(&s_mbSlave.layDoTitle,
+                                 (XWidget*)s_mbSlave.allOffBtn);
+        }
+        mb_rowPack(&s_mbSlave.layDoTitle);
+
+        /* 段② 第二行：DO 灯格宿主（同段①口径：无滚动壳，换行铺排）。 */
+        s_mbSlave.doGridHost = XWidget_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.doGridHost) {
+            XSize hint;
+            XWidget_setFixedWidth(s_mbSlave.doGridHost, 8 * MB_CELL_W);
+            XWidget_setFixedHeight(s_mbSlave.doGridHost, MB_CELL_H);
+            XSize_init(&hint, 8 * MB_CELL_W, MB_CELL_H);
+            XWidget_setSizeHint(s_mbSlave.doGridHost, &hint);
+            XWidget_show(s_mbSlave.doGridHost);
+            XBoxLayout_addWidget(&s_mbSlave.layData, s_mbSlave.doGridHost);
+        }
+
+        /* ---- 段③ 寄存器区：IR/HR 上下堆叠平铺进 layData（选择理由见
+         * applyRegGeometry 注释：并排须水平中间容器+两层嵌套，且本框架
+         * 表格在盒式布局条目不贡献可分配宽；上下堆叠表宽直接=整宽，
+         * 套路同构、实现最简）。[10-18 二次追加] 无 stretch 条目：表
+         * 满高全展开，几何由 syncViewport 每拍定尺重解算驱动，垂直超出
+         * 由整页竖滚承担。[10-18 三次追加] 每表配段标题行（「输入寄存器
+         * IR」/「保持寄存器 HR」+数量 SpinBox 1..256）——按线圈段同款
+         * 「未绑控件子布局」定式（layDiTitle/layDoTitle 已验证同款可行，
+         * 行内控件创建时父即 dataArea，C3）。---- */
+        mb_rowInit(&s_mbSlave.layIrTitle, &s_mbSlave.layData,
+                   XBoxLayoutDirection_LeftToRight);
+        mb_buildLabel(s_mbSlave.dataArea,
+                      "\xE8\xBE\x93\xE5\x85\xA5\xE5\xAF\x84\xE5\xAD\x98\xE5"
+                      "\x99\xA8 IR", 150,
+                      &s_mbSlave.irTitleLbl); /* 输入寄存器 IR */
+        if (s_mbSlave.irTitleLbl)
+            XBoxLayout_addWidget(&s_mbSlave.layIrTitle,
+                                 (XWidget*)s_mbSlave.irTitleLbl);
+        s_mbSlave.irCountSpin = mb_buildSpin(s_mbSlave.dataArea, 64, 1,
+                                             MB_SLAVE_REG_MAX_ROWS,
+                                             MB_SLAVE_REG_ROWS);
+        if (s_mbSlave.irCountSpin) {
+            XBoxLayout_addWidget(&s_mbSlave.layIrTitle,
+                                 (XWidget*)s_mbSlave.irCountSpin);
+            XObject_connect_1((XObject*)s_mbSlave.irCountSpin,
+                              (size_t)XSpinBox_valueChanged_signal(
+                                  (XSpinBox*)NULL),
+                              (XObject*)s_mbSlave.root,
+                              mb_slaveIrCountSlot,
+                              XConnectionType_Direct);
+        }
+        /* [10-19 用户反馈] 寄存器区补「按点数重建」：与数量 SpinBox 同槽
+         * （mb_slaveApplyRegCounts：setValueCount 保值+扩缩容挂件同步），
+         * SpinBox 即时生效，按钮=显式触发点（数量框改动遗漏时的兜底）。 */
+        s_mbSlave.applyIrBtn = XPushButton_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.applyIrBtn) {
+            XPushButton_setText_2(s_mbSlave.applyIrBtn,
+                                  "\xE6\x8C\x89\xE7\x82\xB9\xE6\x95\xB0\xE9\x87"
+                                  "\x8D\xE5\xBB\xBA"); /* 按点数重建 */
+            XWidget_setFixedWidth((XWidget*)s_mbSlave.applyIrBtn, 110);
+            XWidget_setFixedHeight((XWidget*)s_mbSlave.applyIrBtn, 26);
+            XObject_connect_2((XObject*)s_mbSlave.applyIrBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              mb_slaveIrCountSlot);
+            XWidget_show((XWidget*)s_mbSlave.applyIrBtn);
+            XBoxLayout_addWidget(&s_mbSlave.layIrTitle,
+                                 (XWidget*)s_mbSlave.applyIrBtn);
+        }
+        mb_rowPack(&s_mbSlave.layIrTitle);
+        mb_slaveBuildRegTable(s_mbSlave.dataArea, &s_mbSlave.irTable,
+                              s_mbSlave.irCount, mb_slaveIrCellChanged);
+        if (s_mbSlave.irTable)
+            XBoxLayout_addWidget(&s_mbSlave.layData,
+                                 (XWidget*)s_mbSlave.irTable);
+        mb_rowInit(&s_mbSlave.layHrTitle, &s_mbSlave.layData,
+                   XBoxLayoutDirection_LeftToRight);
+        mb_buildLabel(s_mbSlave.dataArea,
+                      "\xE4\xBF\x9D\xE6\x8C\x81\xE5\xAF\x84\xE5\xAD\x98\xE5"
+                      "\x99\xA8 HR", 150,
+                      &s_mbSlave.hrTitleLbl); /* 保持寄存器 HR */
+        if (s_mbSlave.hrTitleLbl)
+            XBoxLayout_addWidget(&s_mbSlave.layHrTitle,
+                                 (XWidget*)s_mbSlave.hrTitleLbl);
+        s_mbSlave.hrCountSpin = mb_buildSpin(s_mbSlave.dataArea, 64, 1,
+                                             MB_SLAVE_REG_MAX_ROWS,
+                                             MB_SLAVE_REG_ROWS);
+        if (s_mbSlave.hrCountSpin) {
+            XBoxLayout_addWidget(&s_mbSlave.layHrTitle,
+                                 (XWidget*)s_mbSlave.hrCountSpin);
+            XObject_connect_1((XObject*)s_mbSlave.hrCountSpin,
+                              (size_t)XSpinBox_valueChanged_signal(
+                                  (XSpinBox*)NULL),
+                              (XObject*)s_mbSlave.root,
+                              mb_slaveHrCountSlot,
+                              XConnectionType_Direct);
+        }
+        /* [10-19 用户反馈] HR 段同款「按点数重建」。 */
+        s_mbSlave.applyHrBtn = XPushButton_create(s_mbSlave.dataArea, 0);
+        if (s_mbSlave.applyHrBtn) {
+            XPushButton_setText_2(s_mbSlave.applyHrBtn,
+                                  "\xE6\x8C\x89\xE7\x82\xB9\xE6\x95\xB0\xE9\x87"
+                                  "\x8D\xE5\xBB\xBA"); /* 按点数重建 */
+            XWidget_setFixedWidth((XWidget*)s_mbSlave.applyHrBtn, 110);
+            XWidget_setFixedHeight((XWidget*)s_mbSlave.applyHrBtn, 26);
+            XObject_connect_2((XObject*)s_mbSlave.applyHrBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              mb_slaveHrCountSlot);
+            XWidget_show((XWidget*)s_mbSlave.applyHrBtn);
+            XBoxLayout_addWidget(&s_mbSlave.layHrTitle,
+                                 (XWidget*)s_mbSlave.applyHrBtn);
+        }
+        mb_rowPack(&s_mbSlave.layHrTitle);
+        mb_slaveBuildRegTable(s_mbSlave.dataArea, &s_mbSlave.hrTable,
+                              s_mbSlave.hrCount, mb_slaveHrCellChanged);
+        if (s_mbSlave.hrTable)
+            XBoxLayout_addWidget(&s_mbSlave.layData,
+                                 (XWidget*)s_mbSlave.hrTable);
+    }
+
+    /* 装配收口：内容根挂布局器；scroll 装内容件并定滚动纪律（水平条
+     * AlwaysOff，竖条默认 AsNeeded=全页唯一滚动条）。此后堆叠布局重贴
+     * scroll 几何即经 MbSlaveScroll resizeEvent→fitScrollContent→内容根
+     * resize→activate 自动重排 + 重解算档位。 */
+    XWidget_setLayout(s_mbSlave.pageRoot, (XLayout*)&s_mbSlave.layRoot);
+    XAbstractScrollArea_setHorizontalScrollBarPolicy(
+        (XAbstractScrollArea*)s_mbSlave.scroll, XScrollBarPolicy_AlwaysOff);
+    XScrollArea_setWidget(s_mbSlave.scroll, s_mbSlave.root); /* 收编内容件。 */
+    /* 常驻 server：建好即挂 map/接信号/刷参数 ⇒ 启动前就能单机点灯、
+     * 改寄存器（写路径不依赖连接态）。 */
+    mb_slaveEnsureServer();
+#if !defined(_WIN32) && XMODBUS_TCP_ON
+    /* [CLOSE-WAIT 根修 2026-10-19] 死链巡检定时器（1s，页根子对象级联
+     * 析构；回调内自守卫：非 TCP 服务器即空转）。 */
+    if (!s_mbSlave.reapTimer) {
+        s_mbSlave.reapTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+        if (s_mbSlave.reapTimer) {
+            XTimer_setInterval(s_mbSlave.reapTimer, 1000);
+            XTimer_setTimerCallback(s_mbSlave.reapTimer,
+                                    mb_slaveSweepDeadClientsCb);
+            XTimer_setUserData(s_mbSlave.reapTimer, NULL);
+            XObject_setParent((XObject*)s_mbSlave.reapTimer,
+                              (XObject*)s_mbSlave.root);
+            XTimer_start_base(s_mbSlave.reapTimer);
+        }
+    }
+#endif
+    /* 尾拍含整页竖滚首拍（syncViewport 收口调 fitScrollContent；视口
+     * 未就位时自退避，show/resize 路径再收敛）。 */
+    mb_slaveSyncViewport();
+
+    /* [端到端联调入口] env XGUI_DEMO_MB_AUTOSTART=slave：构建后程序化
+     * 启动监听（XAbstractButton_click 走完整激活流程；回环联调用）。 */
+    {
+        const char* autoRole = XSystem_environment("XGUI_DEMO_MB_AUTOSTART");
+        if (autoRole && strcmp(autoRole, "slave") == 0 && s_mbSlave.startBtn) {
+            XAbstractButton_click((XAbstractButton*)s_mbSlave.startBtn);
+            XPrintf("XGuiWindowDemo: modbus autostart slave done\n");
+        }
+    }
+    /* [10-18 二次追加] 页堆叠挂 scroll（整页竖滚区），内容件=内容根。 */
+    return (XWidget*)s_mbSlave.scroll;
 }
 
 int demo_page_modbus_slave_autotest(XWidget* page)
@@ -2795,97 +4551,414 @@ int demo_page_modbus_slave_autotest(XWidget* page)
         int failures = 0;
         if (!s_mbSlave.channelCombo || !s_mbSlave.startBtn)
             ++failures;
-        if (!s_mbSlave.dataTable || !s_mbSlave.tableCombo)
+        /* [常驻 2026-10-18] 原 `if (s_mbSlave.server) ++failures;` 已不
+         * 成立：build 末尾 ensureServer，server != NULL 是**期望**状态，
+         * 须改验 listening（构建后未监听）。 */
+        if (s_mbSlave.listening) ++failures;
+        /* [布局容器化 2026-10-17] 同主站页：断言 isVisible+尺寸>0+父子
+         * 关系（原坐标相交断言随布局容器化移除）。
+         * [10-18 二次追加] page 入参=整页竖滚区（scroll），行内控件的
+         * 父级是内容根 s_mbSlave.root（scroll 内容件）。 */
+        if (!s_mbSlave.tcpLbl ||
+            !XWidget_isVisible((XWidget*)s_mbSlave.tcpLbl))
             ++failures;
-        if (s_mbSlave.server) ++failures;
+        if (!s_mbSlave.tcpPortEdit ||
+            XWidget_width((XWidget*)s_mbSlave.tcpPortEdit) <= 0 ||
+            XWidget_height((XWidget*)s_mbSlave.tcpPortEdit) <= 0 ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.tcpPortEdit) !=
+                s_mbSlave.root)
+            ++failures;
+        /* ---- 四区存在（滚动壳 diScroll/doScroll 随 10-18 二次追加删除，
+         *         字段已不存在——编译期锁死不复生）---- */
+        if (!s_mbSlave.diGridHost || !s_mbSlave.doGridHost ||
+            !s_mbSlave.irTable || !s_mbSlave.hrTable) ++failures;
+        /* ---- 挂载链（确定性，与布局度量无关）----
+         * [10-18 二次追加·整页竖滚] scroll 内容件=内容根；灯格宿主与
+         * 两表直接平铺进 layData，父级= dataArea；参数合并行控件父级=
+         * 内容根；「按点数重建」两枚直挂 dataArea。 */
+        if (!s_mbSlave.scroll ||
+            XScrollArea_widget(s_mbSlave.scroll) != s_mbSlave.root)
+            ++failures;
+        if (!s_mbSlave.dataArea ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.dataArea) !=
+                s_mbSlave.root)
+            ++failures;
+        if (!s_mbSlave.diGridHost ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.diGridHost) !=
+                s_mbSlave.dataArea) ++failures;
+        if (!s_mbSlave.doGridHost ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.doGridHost) !=
+                s_mbSlave.dataArea) ++failures;
+        if (!s_mbSlave.irTable ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.irTable) !=
+                s_mbSlave.dataArea) ++failures;
+        if (!s_mbSlave.hrTable ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.hrTable) !=
+                s_mbSlave.dataArea) ++failures;
+        if (!s_mbSlave.inCountSpin ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.inCountSpin) !=
+                s_mbSlave.dataArea) ++failures;
+        if (!s_mbSlave.outCountSpin ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.outCountSpin) !=
+                s_mbSlave.dataArea) ++failures;
+        if (!s_mbSlave.applyDiBtn || !s_mbSlave.applyDoBtn ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.applyDiBtn) !=
+                s_mbSlave.dataArea ||
+            XWidget_parentWidget((XWidget*)s_mbSlave.applyDoBtn) !=
+                s_mbSlave.dataArea) ++failures;
+        if (!s_mbSlave.diAllOnBtn || !s_mbSlave.diAllOffBtn ||
+            !s_mbSlave.allOnBtn || !s_mbSlave.allOffBtn) ++failures;
+        /* ---- 滚动条纪律（[10-18 二次追加] 全页唯一滚动条=scroll 竖条：
+         *         水平条必须 AlwaysOff；策略读的是存储值，与布局无关）---- */
+        if (!s_mbSlave.scroll ||
+            XAbstractScrollArea_horizontalScrollBarPolicy(
+                (XAbstractScrollArea*)s_mbSlave.scroll) !=
+                XScrollBarPolicy_AlwaysOff)
+            ++failures;
+        /* ---- 新布局视口快照：列数/点数解算已被首拍 syncViewport 落位
+         *         （build 末尾必调）---- */
+        if (s_mbSlave.gridCols < 1 || s_mbSlave.gridPts < 1) ++failures;
+        /* ---- 换行灯格宿主尺寸公式（读 maximumSize：min=max 立即写入，
+         *         与布局是否激活无关）----
+         * [10-18 二次追加] 宽=列数×单元宽、高=ceil(点数/列数)×单元高
+         * （放不下换行往下放一行，无滚动壳）。 */
+        if (s_mbSlave.diGridHost && s_mbSlave.doGridHost) {
+            int cols = s_mbSlave.gridCols > 0 ? s_mbSlave.gridCols : 1;
+            int diRows = (s_mbSlave.inCount + cols - 1) / cols;
+            int doRows = (s_mbSlave.outCount + cols - 1) / cols;
+            if (diRows < 1) diRows = 1;
+            if (doRows < 1) doRows = 1;
+            if (XWidget_maximumSize((XWidget*)s_mbSlave.diGridHost).width !=
+                    cols * MB_CELL_W ||
+                XWidget_maximumSize((XWidget*)s_mbSlave.diGridHost).height !=
+                    diRows * MB_CELL_H)
+                ++failures;
+            if (XWidget_maximumSize((XWidget*)s_mbSlave.doGridHost).width !=
+                    cols * MB_CELL_W ||
+                XWidget_maximumSize((XWidget*)s_mbSlave.doGridHost).height !=
+                    doRows * MB_CELL_H)
+                ++failures;
+        } else {
+            ++failures;
+        }
+        /* ---- 两表确已装配（rowCount/columnCount 判别力强且与布局度量
+         *         无关；表本身不带定宽，故不读 maximumSize）
+         * [10-18 三次追加] 行数断言改对 irCount/hrCount 副本（默认 16，
+         * SpinBox 1..256 可调）。---- */
+        if (s_mbSlave.irTable &&
+            XTableWidget_rowCount(s_mbSlave.irTable) != s_mbSlave.irCount)
+            ++failures;
+        if (s_mbSlave.irTable && XTableWidget_columnCount(s_mbSlave.irTable) != 2)
+            ++failures;
+        if (s_mbSlave.hrTable &&
+            XTableWidget_rowCount(s_mbSlave.hrTable) != s_mbSlave.hrCount)
+            ++failures;
+        if (s_mbSlave.hrTable && XTableWidget_columnCount(s_mbSlave.hrTable) != 2)
+            ++failures;
+        if (s_mbSlave.irTable == s_mbSlave.hrTable) ++failures; /* 两表独立 */
+        /* ---- [10-18 三次追加] 段标题行：标签+数量 SpinBox 就位、范围
+         *         1..256、默认 16；四段纵向次序不倒（DI/DO 宿主 → IR 标题
+         *         → IR 表 → HR 标题 → HR 表；同在 dataArea 坐标系可直接
+         *         比 y——兼锁旧「标题与表对调」缺陷不复生）。---- */
+        if (!s_mbSlave.irTitleLbl || !s_mbSlave.hrTitleLbl ||
+            !s_mbSlave.irCountSpin || !s_mbSlave.hrCountSpin)
+            ++failures;
+        if (s_mbSlave.irTitleLbl &&
+            XWidget_parentWidget((XWidget*)s_mbSlave.irTitleLbl) !=
+                s_mbSlave.dataArea) ++failures;
+        if (s_mbSlave.hrTitleLbl &&
+            XWidget_parentWidget((XWidget*)s_mbSlave.hrTitleLbl) !=
+                s_mbSlave.dataArea) ++failures;
+        if (s_mbSlave.irCountSpin &&
+            XWidget_parentWidget((XWidget*)s_mbSlave.irCountSpin) !=
+                s_mbSlave.dataArea) ++failures;
+        if (s_mbSlave.hrCountSpin &&
+            XWidget_parentWidget((XWidget*)s_mbSlave.hrCountSpin) !=
+                s_mbSlave.dataArea) ++failures;
+        if (s_mbSlave.irCountSpin &&
+            (XSpinBox_minimum(s_mbSlave.irCountSpin) != 1 ||
+             XSpinBox_maximum(s_mbSlave.irCountSpin) !=
+                 MB_SLAVE_REG_MAX_ROWS ||
+             XSpinBox_value(s_mbSlave.irCountSpin) != MB_SLAVE_REG_ROWS))
+            ++failures;
+        if (s_mbSlave.hrCountSpin &&
+            (XSpinBox_minimum(s_mbSlave.hrCountSpin) != 1 ||
+             XSpinBox_maximum(s_mbSlave.hrCountSpin) !=
+                 MB_SLAVE_REG_MAX_ROWS ||
+             XSpinBox_value(s_mbSlave.hrCountSpin) != MB_SLAVE_REG_ROWS))
+            ++failures;
+        if (s_mbSlave.doGridHost && s_mbSlave.irTitleLbl &&
+            s_mbSlave.irTable && s_mbSlave.hrTitleLbl && s_mbSlave.hrTable) {
+            int yDo = XWidget_y((XWidget*)s_mbSlave.doGridHost);
+            int yIrT = XWidget_y((XWidget*)s_mbSlave.irTitleLbl);
+            int yIr = XWidget_y((XWidget*)s_mbSlave.irTable);
+            int yHrT = XWidget_y((XWidget*)s_mbSlave.hrTitleLbl);
+            int yHr = XWidget_y((XWidget*)s_mbSlave.hrTable);
+            if (!(yDo < yIrT && yIrT < yIr && yIr < yHrT && yHrT < yHr))
+                ++failures;
+        } else {
+            ++failures;
+        }
+        /* ---- 表满高全展开 + 列宽铺满表宽（[10-18 二次追加·滚动条纪律]）----
+         * 高 = 表头高 + 当前行数×统一行高（[10-18 三次追加] 行数=副本，
+         * 垂直超出由整页竖滚承担）；地址:值 两列宽合计 = 表宽 - 行号列
+         * （表内无横滚条空间）。 */
         {
-            XRect rl, rc;
-            rl = XWidget_geometry((XWidget*)s_mbSlave.tcpLbl);
-            rc = XWidget_geometry((XWidget*)s_mbSlave.tcpPortEdit);
-            if (rl.x + rl.width > rc.x) ++failures;
+            XTableWidget* tabs[2];
+            int ti;
+            tabs[0] = s_mbSlave.irTable;
+            tabs[1] = s_mbSlave.hrTable;
+            for (ti = 0; ti < 2; ++ti) {
+                XTableWidget* tbl = tabs[ti];
+                XSize mx;
+                int fullH;
+                int bodyW;
+                int colSum;
+                int rows;
+                if (!tbl) { ++failures; continue; }
+                rows = XTableWidget_rowCount(tbl);
+                mx = XWidget_maximumSize((XWidget*)tbl);
+                fullH = (int)tbl->m_headerHeight +
+                        XTableView_rowHeight(&tbl->m_base) * rows;
+                if (mx.height != fullH || mx.width < MB_REG_MIN_COL_W)
+                    ++failures;
+                bodyW = mx.width - (int)tbl->m_headerWidth;
+                colSum = XTableView_columnWidth(&tbl->m_base, 0) +
+                         XTableView_columnWidth(&tbl->m_base, 1);
+                if (bodyW > 0 && colSum != bodyW) ++failures;
+            }
+        }
+        /* ---- [10-19 框架编辑器迁移] 两表编辑门禁已开且值格无常驻框 ----
+         * 观察态纯文本（用户反馈的核心观感）；编辑门禁=表级
+         * setItemsEditable(true)，IR/HR 各自独立。 */
+        if (!s_mbSlave.irTable || !s_mbSlave.hrTable ||
+            !XAbstractItemView_itemsEditable(&s_mbSlave.irTable->m_base.m_base) ||
+            !XAbstractItemView_itemsEditable(&s_mbSlave.hrTable->m_base.m_base))
+            ++failures;
+        if (XTableWidget_cellWidget(s_mbSlave.irTable, 0, 1) ||
+            XTableWidget_cellWidget(s_mbSlave.hrTable, 0, 1))
+            ++failures;
+        /* [10-19 对齐 Qt item flags] 地址列只读：edit() 门禁直接拒绝；
+         * 值列照常可编辑。 */
+        if (XAbstractItemView_edit(&s_mbSlave.irTable->m_base.m_base,
+                                   0, 0) ||
+            XAbstractItemView_edit(&s_mbSlave.hrTable->m_base.m_base,
+                                   0, 0))
+            ++failures;
+        if (!XAbstractItemView_edit(&s_mbSlave.irTable->m_base.m_base,
+                                    0, 1))
+            ++failures;
+        XAbstractItemView_closeEditor(
+            &s_mbSlave.irTable->m_base.m_base,
+            s_mbSlave.irTable->m_base.m_base.m_editor,
+            XItemDelegateEndEditHint_NoHint);
+        /* ---- [10-19 框架编辑器迁移] 编辑器开合/提交端到端回归锁 ----
+         * 程序化 edit() 开 IR[2] 编辑器 → 改文本 → 直发 Return（编辑器
+         * 键盘拦截→委托 commitData/closeEditor 链）→ 断言会话关闭+
+         * 数据区落库+单元格文本同步。 */
+        {
+            XAbstractItemView* iv = &s_mbSlave.irTable->m_base.m_base;
+            uint16_t savedProbe = 0;
+            uint16_t nowProbe = 0;
+            XModbusServer_data2(s_mbSlave.server, XModbusInputRegisters,
+                                2, &savedProbe);
+            if (XAbstractItemView_edit(iv, 2, 1) && iv->m_editor) {
+                XKeyEvent* ke = XKeyEvent_create_ex(
+                    XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_KEY_PRESS,
+                    (int)XKey_Return, 0);
+                XLineEdit_setText((XLineEdit*)iv->m_editor, "555");
+                if (ke) {
+                    XObject_event_base((XObject*)iv->m_editor,
+                                       (XEvent*)ke);
+                    XClassDelete((XEvent*)ke);
+                }
+                if (XAbstractItemView_isEditing(iv)) ++failures;
+                if (!XModbusServer_data2(s_mbSlave.server,
+                                         XModbusInputRegisters, 2,
+                                         &nowProbe) || nowProbe != 555)
+                    ++failures;
+                {
+                    const char* cellText =
+                        XTableWidget_text(s_mbSlave.irTable, 2, 1);
+                    if (!cellText || strcmp(cellText, "555") != 0)
+                        ++failures;
+                }
+                /* 还原。 */
+                XModbusServer_setData2(s_mbSlave.server,
+                                       XModbusInputRegisters, 2,
+                                       savedProbe);
+                XTableWidget_setText(s_mbSlave.irTable, 2, 1, "0");
+            } else {
+                ++failures;
+            }
+        }
+        /* ---- 灯格按点数建成（默认 8 点）---- */
+        if (s_mbSlave.inCount > 0 && !s_mbSlave.diCells[0]) ++failures;
+        if (s_mbSlave.outCount > 0 && !s_mbSlave.doCells[0]) ++failures;
+        /* ---- 单机可调前提：数据宿主就绪但未监听 ---- */
+        if (!s_mbSlave.server) ++failures;
+        /* ---- [CLOSE-WAIT 根修 2026-10-19] 死链巡检定时器已挂（页根
+         *         子对象；回调自守卫，非 TCP 通道空转）---- */
+#if !defined(_WIN32) && XMODBUS_TCP_ON
+        if (!s_mbSlave.reapTimer) ++failures;
+#endif
+        /* ---- 灯格写路径（评审④ 断点回归锁）----
+         * 框架派发槽时给出的 sender 不是发射方（实测是页根），故本页全部
+         * 索引槽都按「编译期行号」取参；此处直接调 mb_slaveSetBit 走同一条
+         * 写路径，验证「本地点灯 → 数据区」这一段（值进 map 即主站可读）。 */
+        if (s_mbSlave.server && s_mbSlave.outCount > 3) {
+            uint16_t saved = 0, now = 0;
+            if (XModbusServer_data2(s_mbSlave.server, XModbusCoils, 3, &saved)) {
+                mb_slaveSetBit(XModbusCoils, 3, true);
+                if (!XModbusServer_data2(s_mbSlave.server, XModbusCoils, 3,
+                                         &now) || now != 1)
+                    ++failures;
+                /* [10-18 用户追加规格⑤ 保值回归锁] 点「按点数重建(输出)」
+                 * （编译期槽直调，走与按钮同一写路径）后值必须保留——
+                 * mb_slaveRebuildMap 的 setValueCount 保值语义不允许被
+                 * 新布局破坏；随后换行行数按新点数重算。 */
+                s_mbSlave.outCountSpin
+                    ? XSpinBox_setValue(s_mbSlave.outCountSpin, 10) : 0;
+                mb_slaveApplyDoSlot(NULL, NULL);
+                if (!XModbusServer_data2(s_mbSlave.server, XModbusCoils, 3,
+                                         &now) || now != 1)
+                    ++failures;
+                {
+                    int cols = s_mbSlave.gridCols > 0 ? s_mbSlave.gridCols : 1;
+                    int doRows = (s_mbSlave.outCount + cols - 1) / cols;
+                    if (doRows < 1) doRows = 1;
+                    if (!s_mbSlave.doGridHost ||
+                        XWidget_maximumSize((XWidget*)s_mbSlave.doGridHost)
+                                .height != doRows * MB_CELL_H)
+                        ++failures;
+                }
+                mb_slaveSetBit(XModbusCoils, 3, saved != 0);
+                /* 还原点数：经段②槽走同一重建路径（幂等）。 */
+                s_mbSlave.outCountSpin
+                    ? XSpinBox_setValue(s_mbSlave.outCountSpin, 8) : 0;
+                mb_slaveApplyDoSlot(NULL, NULL);
+            } else {
+                ++failures;
+            }
+        }
+        /* ---- 本地写入通路（端到端断点回归锁，[10-19 框架编辑器迁移]）----
+         * 覆盖「提交文本 → cellChanged 桥 → 寄存器堆」这段：setText 驱动
+         * （与编辑器回车提交同一条模型落库链：setItemText→模型 setData→
+         * dataChanged 桥→cellChanged 槽）→ data2 读回断言。IR/HR 各验
+         * 一次，同时锁死两表桥接槽「表与行号」不串（HR 写不动 IR 区，
+         * 反之亦然）。不依赖编辑器焦点/回车投递。 */
+        if (s_mbSlave.server && s_mbSlave.irTable && s_mbSlave.hrTable) {
+            int k;
+            XTableWidget* tabs[2] = { s_mbSlave.irTable, s_mbSlave.hrTable };
+            XModbusRegisterType types[2] = { XModbusInputRegisters,
+                                             XModbusHoldingRegisters };
+            for (k = 0; k < 2; ++k) {
+                uint16_t saved = 0;
+                uint16_t now = 0;
+                uint16_t other = 0;
+                char back[8];
+                if (!XModbusServer_data2(s_mbSlave.server, types[k],
+                                         3, &saved)) {
+                    ++failures;
+                    continue;
+                }
+                XTableWidget_setText(tabs[k], 3, 1, "1234");
+                if (!XModbusServer_data2(s_mbSlave.server, types[k],
+                                         3, &now) || now != 1234)
+                    ++failures;
+                /* 串槽检查：本表提交不得写到另一张表的寄存器区。 */
+                if (XModbusServer_data2(s_mbSlave.server, types[1 - k],
+                                        3, &other) && other == 1234 &&
+                    saved != 1234)
+                    ++failures;
+                /* 还原：setData2 落库 + setText 同步文本（槽差量早退）。 */
+                XModbusServer_setData2(s_mbSlave.server, types[k], 3, saved);
+                snprintf(back, sizeof(back), "%u", (unsigned)saved);
+                XTableWidget_setText(tabs[k], 3, 1, back);
+            }
+        }
+        /* ---- [10-19 框架编辑器迁移] 观察态无框；编辑器几何/可见性/生命
+         * 周期由框架视图管理，原「逐框审计/摆位跟随」机制随常驻框退役，
+         * 无对应断言（编辑器开合走 XAbstractItemView_edit 框架路径）。 */
+        /* ---- [10-18 三次追加] 数量扩缩容 + 保值 + 表内滚动回归 ----
+         * IR[2]=4321（setText 驱动，与编辑提交同链）→ 扩到 64 行：
+         * rowCount 同步、值不丢、新行回显 map 值；扩容后表满高 > 视口
+         * ⇒ 竖滚条有行程，滚动条置中/复原（框架 scrollContentsBy 路径）；
+         * 收缩回 16：值仍在 map。最后还原 IR[2]。 */
+        if (s_mbSlave.server && s_mbSlave.irCountSpin && s_mbSlave.irTable) {
+            uint16_t savedIr2 = 0;
+            XScrollBar* vsb;
+            if (!XModbusServer_data2(s_mbSlave.server,
+                                     XModbusInputRegisters, 2, &savedIr2)) {
+                ++failures;
+                savedIr2 = 0;
+            }
+            XTableWidget_setText(s_mbSlave.irTable, 2, 1, "4321");
+            XSpinBox_setValue(s_mbSlave.irCountSpin, 64);
+            mb_slaveApplyRegCounts(); /* 与 valueChanged 槽同一路径，幂等。 */
+            {
+                uint16_t now = 0;
+                const char* newCell;
+                if (XTableWidget_rowCount(s_mbSlave.irTable) != 64 ||
+                    !XModbusServer_data2(s_mbSlave.server,
+                                         XModbusInputRegisters, 2, &now) ||
+                    now != 4321)
+                    ++failures;
+                /* 新行（63）回显 map 值（未写过 ⇒ "0"）——「已填值不丢」
+                 * 与新行初始化的闭环。 */
+                newCell = XTableWidget_text(s_mbSlave.irTable, 63, 1);
+                if (!newCell || strcmp(newCell, "0") != 0)
+                    ++failures;
+            }
+            vsb = XAbstractScrollArea_verticalScrollBar(
+                      (XAbstractScrollArea*)s_mbSlave.irTable);
+            if (vsb && XScrollBar_maximum(vsb) > 0) {
+                XScrollBar_setValue(vsb, XScrollBar_maximum(vsb) / 2);
+                XScrollBar_setValue(vsb, 0);
+            }
+            XSpinBox_setValue(s_mbSlave.irCountSpin, MB_SLAVE_REG_ROWS);
+            mb_slaveApplyRegCounts();
+            {
+                uint16_t now = 0;
+                if (XTableWidget_rowCount(s_mbSlave.irTable) !=
+                        MB_SLAVE_REG_ROWS ||
+                    !XModbusServer_data2(s_mbSlave.server,
+                                         XModbusInputRegisters, 2, &now) ||
+                    now != 4321)
+                    ++failures;
+            }
+            /* 还原 IR[2] 原值与单元格文本。 */
+            XModbusServer_setData2(s_mbSlave.server, XModbusInputRegisters,
+                                   2, savedIr2);
+            {
+                char back[8];
+                snprintf(back, sizeof(back), "%u", (unsigned)savedIr2);
+                XTableWidget_setText(s_mbSlave.irTable, 2, 1, back);
+            }
         }
         return failures;
     }
 }
 
-void demo_page_modbus_master_adapt(XWidget* page)
-{
-    /* [滚动承载 2026-10-14] ScrollArea 铺满页面根（根几何由堆叠布局随
-     * 窗口/导航占位分配）；body 保持装配宽度、内容需求高度（52+8+
-     * 240+32+250+20+44+28+190+12=≈784），高度不足时出竖滚动条——底部
-     * 寄存器表始终可达（滚动经 scrollContentsBy 重摆挂件链已通）。 */
-    int pw;
-    int ph;
-    if (page != s_mb.pageRoot || !s_mb.scroll) return;
-    pw = XWidget_width(page);
-    ph = XWidget_height(page);
-    if (pw <= 0 || ph <= 0) return;
-    XWidget_setGeometry((XWidget*)s_mb.scroll, 0, 0, pw, ph);
-    /* body：宽随视口（控件绝对坐标按 740 装配，视口更宽时留白）、
-       高=内容需求 784（视口不足即出滚动条）。resizable 关闭——本框架
-       的 resizable 会把 content 硬拉成视口尺寸（无 Qt sizeHint 语义），
-       内容超出部分反而不可达。 */
-    XWidget_setGeometry(s_mb.body, 0, 0, pw > 740 ? pw : 740, 784);
-    /* [动态行列 2026-10-14] 列组数随视口宽、行数拉满视口高：
-       需求行=ceil(数量/列组)；显示行=max(需求行, 视口可容纳行数) 钳
-       16 槽——表格高度填满主界面底部（空行占位），页面竖滚动条消失；
-       窗口极矮（视口容纳行 < 需求行）时内容超高，滚动兜底仍会出现。
-       [表随视口 2026-10-14] 表宽=pw-24（不钳 740）——窄窗表格随视口
-       收缩、列组可降到 1；其余控件仍按 body 740 横滚兜底。
-       [次序 2026-10-14] 几何先行：列组数读表宽，旧次序（先重建后
-       setGeometry）拿的是上一拍宽度，首建时为 0；行列不变仅宽变时
-       只重摆列宽，免整表重建（拖拽每帧只走轻路径）。 */
-    {
-        int cols;
-        int dispRows;
-        int tableW;
-        int tableH;
-        int contentH;
-        tableW = pw - 24;
-        if (tableW < mb_regGutterW() + MB_REG_GROUP_W / 2)
-            tableW = mb_regGutterW() + MB_REG_GROUP_W / 2;
-        XWidget_setGeometry((XWidget*)s_mb.regTable, 12, 502, tableW,
-                            mb_regHeadH() + (s_mb.regDispRows > 0 ?
-                                      s_mb.regDispRows : 1) * mb_regRowH());
-        cols = mb_masterRegColCount();
-        dispRows = mb_masterRegFillRows(cols);
-        if (s_mb.regDispRows != dispRows || s_mb.regCols != cols)
-            mb_masterRegBuildRows(dispRows);
-        else
-            mb_masterRegApplyColWidths();
-        tableH = mb_regHeadH() + dispRows * mb_regRowH();
-        contentH = 502 + tableH + 12;
-        /* [根修 2026-10-14] body 高度随表格内容走（≥784 装配下限）——
-         * 此前钉死 784，表随视口拉高后表格底部被 body 裁掉：视口再高
-         * 也只画 (784-502-28)/22≈11 行，下方留白还挂着滚动条。 */
-        {
-            int bodyW = pw > 740 ? pw : 740;
-            int contentW = bodyW > 12 + tableW ? bodyW : 12 + tableW;
-            XWidget_setGeometry(s_mb.body, 0, 0, bodyW,
-                                contentH > 784 ? contentH : 784);
-            XWidget_setGeometry((XWidget*)s_mb.regTable, 12, 502, tableW,
-                                tableH);
-            /* 内容宽=max(body 宽, 表右缘)——其余控件按 740 横滚兜底可达，
-               表随视口收缩时不把内容宽拖小。 */
-            XAbstractScrollArea_setContentSize(
-                (XAbstractScrollArea*)s_mb.scroll, contentW, contentH);
-        }
-    }
-}
-
+/** @brief 从站页自适应重排（xgui_demo_pages.h 契约）：转发视口解算。
+ *  @details [四区同屏 2026-10-18] 档位判定改由 mb_slaveSyncViewport 统一
+ *          承担（build 末尾 / 页根 resizeEvent / 本函数三入口，幂等）。
+ *          旧版「定宽 622/定高 330」硬口径随 dataTable 删除作废。 */
 void demo_page_modbus_slave_adapt(XWidget* page)
 {
-    /* 同主站页：内容需求高度 224+8+330+12≈574。 */
-    int pw;
-    int ph;
-    if (page != s_mbSlave.pageRoot || !s_mbSlave.scroll) return;
-    pw = XWidget_width(page);
-    ph = XWidget_height(page);
-    if (pw <= 0 || ph <= 0) return;
-    XWidget_setGeometry((XWidget*)s_mbSlave.scroll, 0, 0, pw, ph);
-    XWidget_setGeometry(s_mbSlave.body, 0, 0, pw > 740 ? pw : 740, 574);
-    XAbstractScrollArea_setContentSize((XAbstractScrollArea*)s_mbSlave.scroll,
-                                       pw > 740 ? pw : 740, 574);
+    (void)page;
+    mb_slaveSyncViewport();
+}
+
+/** @brief 主站页自适应重排（xgui_demo_pages.h 契约）：保留签名，空实现。
+ * @details [布局容器化 2026-10-17] 页内几何分配全权移交页根 XBoxLayout
+ *          （build 一次装配）——XStackedLayout 重贴根几何时经
+ *          resize→XLayout_activate 自动重排，寄存器表列组/显示行随视
+ *          口的自适应由页根 resizeEvent（MbMasterRoot）承接，本函数
+ *          无事可做；主文件 demo_layout_content 调用点保持不动。 */
+void demo_page_modbus_master_adapt(XWidget* page)
+{
+    (void)page;
 }
 
 #else /* !MB_PAGE_ENABLED */

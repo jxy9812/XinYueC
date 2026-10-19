@@ -25,8 +25,10 @@
  *               设备报告值即像素直通——部分触摸屏 abs info 本就输出
  *               屏幕坐标；纯 MT 屏缺 ABS_X/ABS_Y 轴时以
  *               ABS_MT_POSITION 范围为归一基准）；
- *             - 命中目标窗口 XGuiApplication_topLevelAt（全局坐标反查
- *               顶层，主点取触点列表首点）后经
+ *             - 命中目标窗口 xpfi_windowAt 自持遍历 allWindows（全局
+ *               像素按 XWindow_screenFootprint 反查顶层，主点取触点列表
+ *               首点；**不用** XGuiApplication_topLevelAt——它用逻辑矩形
+ *               比面板像素，旋转 footprint 对调后判定错误）后经
  *               XWindowSystemInterface_handleTouchPoints_ex 注入多点
  *               触摸（对标 QWindowSystemInterface::handleTouchEvent 的
  *               QEventPoint 列表形态；控件级命中/per-id 触摸抓取/
@@ -71,7 +73,10 @@
 
 #include "XAbstractEventDispatcher.h"
 #include "XWindowSystemInterface.h"
+#include "XWindowRotation.h" /* 命中 footprint 与窗口局部坐标的 R⁻¹ 逆变换。 */
 #include "XWidget.h" /* mouseGrabber/windowHandle：按住拖出窗口界的注入。 */
+#include "XVector.h"   /* XGuiApplication_allWindows 窗口登记表自持遍历。 */
+#include "XGuiApplication.h" /* allWindows：命中测试自持遍历（不用 topLevelAt）。 */
 #include "XSystem.h"
 
 /* ==================== 进程级驱动状态（静态，无堆分配） ==================== */
@@ -260,24 +265,68 @@ static void xpfi_normalizePoint(int rawX, int rawY, int* outX, int* outY)
 
 /**
  * @brief      全局像素坐标命中顶层窗口并换算出窗口局部坐标。
+ * @details    命中测试**自持遍历**（2026-10-18）：不走
+ *             XGuiApplication_topLevelAt——它内部用逻辑矩形
+ *             XRect_contains 比面板像素，footprint 对调后会拒绝真实
+ *             footprint 的下缘、接受面板上不属于本窗的区域；该函数还有
+ *             X11 侧调用方，改它会波及无关平台，故在本驱动内自持遍历
+ *             allWindows 并按 XWindow_screenFootprint 判定。
+ *             局部坐标：先减原点得**设备窗口局部**（原点不随旋转变，
+ *             减法只用原点），再施加 R⁻¹ 得逻辑局部。R⁻¹ **不钳位**：
+ *             负坐标域合法（按住拖出窗界的拖拽流依赖），-1 式自然
+ *             连续外插（90° 下 sx=-1→ly=H）。
  * @return     命中的顶层窗口（借用指针）；无命中返回 false。
  */
 static bool xpfi_windowAt(int x, int y, XWindow** outWindow, XPoint* outLocal)
 {
+    XWindow* fallback = NULL;
+    XVector* windows;
+    int64_t i;
     XPoint global;
-    XWindow* window;
-    XRect geometry;
     global.x = x;
     global.y = y;
-    window = XGuiApplication_topLevelAt(&global);
-    if (!window) return false;
-    geometry = XWindow_geometry(window);
+    windows = XGuiApplication_allWindows();
+    if (!windows) return false;
+    /* 后登记的窗口视为更上层：倒序遍历，与 topLevelAt 口径一致。 */
+    for (i = (int64_t)XVector_size_base((const XContainer*)windows) - 1;
+         i >= 0; --i)
+    {
+        XWindow* w = XVector_At_Base(windows, i, XWindow*);
+        XRect footprint;
+        int rot, W, H, lx, ly;
+        if (!w) continue;
+        if (XWindow_parent(w, XWindowAncestor_ExcludeTransients) != NULL)
+            continue;
+        footprint = XWindow_screenFootprint(w);
+        if (!XRect_contains(&footprint, x, y)) continue;
+        if (XWindow_isVisible(w)) { fallback = w; break; }
+        if (!fallback) fallback = w;
+    }
+    XClassDelete((XClass*)windows);
+    if (!fallback) return false;
     if (outLocal)
     {
+        XRect geometry = XWindow_geometry(fallback);
+        int W = geometry.width;
+        int H = geometry.height;
+        int rot = XWindow_contentRotationDegrees(fallback);
+        /* [跨平台编译修 2026-10-19] lx/ly 声明在 if 内（armel gcc-12
+           C89 混合声明更严：X11 构建树见过的代码在 fbdev 树才编）。 */
+        int lx = 0;
+        int ly = 0;
         outLocal->x = x - geometry.x;
         outLocal->y = y - geometry.y;
+        if (rot != 0)
+        {
+            lx = outLocal->x;
+            ly = outLocal->y;
+            XWindow_rotationUnmapPoint(rot, W, H, outLocal->x, outLocal->y,
+                                       &lx, &ly);
+            outLocal->x = lx;
+            outLocal->y = ly;
+        }
     }
-    *outWindow = window;
+    *outWindow = fallback;
     return true;
 }
 
@@ -485,10 +534,27 @@ static void xpfi_commitFrame(uint32_t timestampMs)
         if (!window) return;
     }
     geometry = XWindow_geometry(window);
-    for (i = 0; i < count; ++i)
+    /* 窗口局部 = 全局 - 原点（得设备窗口局部，原点不随旋转变），
+       其后 R⁻¹ 回逻辑局部（2026-10-18）。R⁻¹ 不钳位：越界负坐标合法，
+       拖出窗界的拖拽流依赖（处理器自行钳制）。此路覆盖鼠标抓取兜底
+       分支（命中失败后按 grabber 改靶）。 */
     {
-        points[i].m_position.x = points[i].m_globalPosition.x - geometry.x;
-        points[i].m_position.y = points[i].m_globalPosition.y - geometry.y;
+        int rot = XWindow_contentRotationDegrees(window);
+        for (i = 0; i < count; ++i)
+        {
+            int lx, ly;
+            points[i].m_position.x =
+                points[i].m_globalPosition.x - geometry.x;
+            points[i].m_position.y =
+                points[i].m_globalPosition.y - geometry.y;
+            if (rot == 0) continue;
+            lx = points[i].m_position.x;
+            ly = points[i].m_position.y;
+            XWindow_rotationUnmapPoint(rot, geometry.width, geometry.height,
+                                       lx, ly, &lx, &ly);
+            points[i].m_position.x = lx;
+            points[i].m_position.y = ly;
+        }
     }
     if ((pressedCount > 0) + (releasedCount > 0) + (updatedCount > 0) > 1)
     {

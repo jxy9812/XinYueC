@@ -451,6 +451,34 @@ static bool xpbs_bufferSizeValid(const XSize* size, size_t bufferSize)
 static XPlatformBackingStorePresentFn g_xpbsAnyPresent;
 static void* g_xpbsAnyPresentData;
 
+/**
+ * @brief      零拷贝（native 缓冲）模式使用计数（2026-10-18 新增）。
+ * @details    m_nativeBufferMode 是**实例**字段，而旋转能力判据是
+ *             fbdev 直写侧的全局能力；取「是否存在任一零拷贝实例」为
+ *             保守口径：真零拷贝下 painter 直接写 fb 显存，中间没有
+ *             可转的帧，宁可降级不转也不能半转。
+ */
+static int g_xpbsNativeBufferUsers = 0;
+
+/** @brief 零拷贝模式计数增减（与 m_nativeBufferMode 落盘同步调用）。 */
+static void xpbs_nativeBufferUsersAdjust(int delta)
+{
+    g_xpbsNativeBufferUsers += delta;
+    if (g_xpbsNativeBufferUsers < 0) g_xpbsNativeBufferUsers = 0;
+}
+
+bool XPlatformBackingStore_rotationCapable(void)
+{
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    /* 无活动显示驱动：fbdev 直写路径整体不参与（回落平台提交），
+       旋转判据交由平台层回答，本函数恒 true（不额外降级）。 */
+    if (!XPlatformDisplayDriver_active()) return true;
+    return g_xpbsNativeBufferUsers == 0;
+#else
+    return true;
+#endif
+}
+
 /** @brief 全局通知登记 thunk（公开 setter 落点, 避免声明顺序前向）。 */
 void xpbs_setGlobalPresentCallbackThunk(
         XPlatformBackingStorePresentFn callback, void* userData)
@@ -1132,6 +1160,7 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
                     XImage_init(&self->m_image2);
 #endif
                     self->m_nativeBufferMode = true;
+                    xpbs_nativeBufferUsersAdjust(1);
                     /* native 与软件单缓冲降级互斥：native 架接优先。 */
                     self->m_softwareSingleBuffer = false;
                     /* native 与 D1 容量化互斥：DIB 视图非容量存储视图。 */
@@ -1160,12 +1189,14 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         /* 驱动拒绝该尺寸（罕见）：native 标志复位，走自分配路径。
            恒 NULL 驱动（fbdev）在此闩住，后续 resize 短路整个探测
            分支（含徒劳的整窗深拷贝快照）。 */
+        if (self->m_nativeBufferMode) xpbs_nativeBufferUsersAdjust(-1);
         self->m_nativeBufferMode = false;
         self->m_nativeBufferNoBuf = true;
     }
     if (self->m_nativeBufferMode && w > 0 && h > 0)
     {
         /* 驱动拒绝该尺寸（罕见）：回落自分配前清标志。 */
+        xpbs_nativeBufferUsersAdjust(-1);
         self->m_nativeBufferMode = false;
     }
 #endif

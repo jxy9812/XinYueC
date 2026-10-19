@@ -415,6 +415,18 @@ bool XPlatformBackingStoreDriver_create(void** outState, XWindow* window);
 void XPlatformBackingStoreDriver_destroy(void* nativeState);
 
 /**
+ * @brief      查询当前是否允许做 fbdev 软件内容旋转（纯读、无副作用）。
+ * @details    fbdev 直写路径下「真零拷贝」时 painter 直接写面板显存，
+ *             中间不存在可转的帧（本层拿到的是 fb 映射本身），旋转语义
+ *             无法成立 → 返回 false。软件缓冲（影子帧）路径返回 true，
+ *             旋转在 xpbs_presentRectRowsRotated 中完成。
+ *             X11 侧不消费本函数（走
+ *             XPlatformNativeWindow_rotationSupported 的直拷判据）。
+ * @return     可旋转返回 true；零拷贝或无活动显示驱动返回 false。
+ */
+bool XPlatformBackingStore_rotationCapable(void);
+
+/**
  * @brief      登记原生目标窗口（对标 setNativeTargetWindow）。
  * @details    Win32 后端把它视为 HWND，flush 时作为 BitBlt 目标；其它
  *             平台仅记录借用指针。nativeWindow 为 NULL 表示清除。

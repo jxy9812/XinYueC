@@ -63,6 +63,7 @@
 #include <stdio.h>  /* snprintf: 标题定版缓存写入(2026-10-02 标题跟随修复)。 */
 #include <string.h> /* strcmp: 标题变化比对(同修复)。 */
 #include <stdlib.h> /* strtol: MemAvailable 解析(2026-10-06 OOM 根修)。 */
+#include <malloc.h> /* malloc_trim: 会话关闭归还 glibc arena 高水位(2026-10-16)。 */
 #include "XGeometry.h"
 #include "XWidget.h"
 #include "XWidget_Protected.h" /* widgetForWindow: 弹层顶层控件反查(2026-10-06)。 */
@@ -4101,6 +4102,14 @@ static void xgs_sessionClose(XGuiServer* self, XgsSession* s,
             d->freeSessionIds[d->freeSessionIdCount++] = id;
     }
     XFree_System(s);
+    /* [2026-10-16 会话回收内存归还] glibc arena 高水位不自动收缩: 会话期
+     * 影子/编码队列/帧大块的水位在 free 后滞留为碎片(56MB 板实测每会话
+     * ~950KB VM 滞留不还, 多会话反复建拆即累积推高总量触发 OOM)。
+     * 会话关闭是低频事件, 主动 trim 归还空闲尾页。 */
+    {
+        extern int malloc_trim(size_t);
+        (void)malloc_trim(0);
+    }
     XGuiServer_clientDisconnected_signal(self, id, emitReason);
 }
 
@@ -4342,8 +4351,31 @@ int XGuiServer_attachTransport(XGuiServer* self, XIODevice* device)
         return -1;
     }
     if (d->sessionCount >= d->maxSessions) {
-        fprintf(stderr, "[xgs-attach] reject: session limit (%d)\n", d->sessionCount);
-        return -1;
+        /* [2026-10-16 抢占式会话] 会话满时踢最旧会话再收新连接, 不再直接
+         * 拒绝——此前客户端断线重连若撞上服务端旧会话未清的窗口期
+         * (假 EOF 误断残留/半开会话等保活超时前), 新连接一律被
+         * 「session limit」拒绝, 观感=「有时候连不上」; 商用远控
+         * (向日葵/ToDesk)均为新连接抢占语义。最旧=sessionHead 链尾
+         * (头插法, 尾为最早建会话)。 */
+        XgsSession* oldest = d->sessionHead;
+        XgsSession* it;
+        for (it = d->sessionHead; it; it = it->next) {
+            oldest = it; /* 链尾=最早建会话(头插法)。 */
+        }
+        if (oldest) {
+            fprintf(stderr,
+                    "[xgs-attach] preempt oldest session id=%d (limit %d)\n",
+                    (int)oldest->id, d->maxSessions);
+            /* BYE_SESSION_LIMIT 随 BYE 发给旧端: 客户端据此停止自动重连
+             * (被抢占语义, 防新旧客户端互相抢占乒乓)。 */
+            xgs_sessionClose(self, oldest, -1,
+                             (int)XGUI_REMOTE_BYE_SESSION_LIMIT);
+        }
+        if (d->sessionCount >= d->maxSessions) {
+            fprintf(stderr, "[xgs-attach] reject: session limit (%d)\n",
+                    d->sessionCount);
+            return -1;
+        }
     }
     if (!xgs_ensurePump(self)) {
         fprintf(stderr, "[xgs-attach] fail: ensurePump\n");

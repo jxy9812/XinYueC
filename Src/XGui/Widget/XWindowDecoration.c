@@ -449,15 +449,36 @@ static XCursorShape xwd_resizeCursorShape(int zone)
 
 /** @brief 悬停边缘改尺寸光标反馈（仅原生窗；fbdev 无系统光标）。
  *  命中边缘带切换对应尺寸光标，离带还原 Arrow；形状键去重，同形状
- *  零开销。手势中不调用（保持手势起始形状，对标原生 WM）。 */
-static void xwd_updateEdgeCursor(XWindowDecorationState* st, int zone)
+ *  零开销。手势中不调用（保持手势起始形状，对标原生 WM）。
+ *  [子件光标解析 2026-10-18] 离带（zone==0）不再无条件 Arrow：单窗架
+ *  构下控件级光标（分割器把手 SizeVer/SizeHor 等经 XWidget_setCursor
+ *  存部件层）会被悬停移动的 Arrow 重定义覆盖（目验①：把手上方恒
+ *  left_ptr）——最深命中件沿父链找首个声明 SetCursor 的部件，用其光
+ *  标形状；无声明回落 Arrow。 */
+static void xwd_updateEdgeCursor(XWindowDecorationState* st, int zone,
+                                 const XPoint* pos)
 {
     XCursor cursor;
     XCursorShape shape;
     int key;
     if (!st || !st->m_top || !st->m_window) return;
     if (!XWindow_isNativeWindowAttached(st->m_window)) return;
-    shape = zone ? xwd_resizeCursorShape(zone) : XCursor_Arrow;
+    if (zone) {
+        shape = xwd_resizeCursorShape(zone);
+    } else {
+        shape = XCursor_Arrow;
+        if (pos) {
+            XWidget* w = XWidget_childAt(st->m_top, pos);
+            while (w && w != (XWidget*)st->m_top) {
+                if (XWidget_testAttribute(w, XWidgetAttribute_SetCursor)) {
+                    XCursor c = XWidget_cursor(w);
+                    shape = XCursor_shape(&c);
+                    break;
+                }
+                w = XWidget_parentWidget(w);
+            }
+        }
+    }
     key = (int)shape + 1;
     if (st->m_edgeCursor == key) return;
     st->m_edgeCursor = key;
@@ -1616,21 +1637,14 @@ static void xwd_activateButton(XWindowDecorationState* st, int sc)
 
 /* ==================== 公共 API ==================== */
 
-bool XWindowDecoration_activeFor(const XWidget* top)
+/** @brief 装饰判定内核（activeFor/activeForFlags 共用）：按给定 flags
+ *  与原生窗挂接态预测，读侧一律不经窗口（窗口侧 m_flags 在
+ *  setWindowFlags 动态路径滞后于控件侧，见 activeForFlags 注）。 */
+static bool xwd_activeForImpl(const XWidget* top, XWindowFlags flags,
+                              bool nativeAttached)
 {
-    XWindow* win;
-    XWindowFlags flags;
-    bool nativeAttached;
     XPlatformThemeDecorationMode mode;
     int type;
-    if (!top || !top->m_isWindow) return false;
-    /* 句柄未建（显示前的布局期）也能预测：flags 取控件侧副本（建窗
-     * 时原样同步），未创建恒视为未挂原生窗——否则 marginsFor 在布局
-     * 期返回 0，子控件按零边距排布后 show 再变 24 也不重排（CSD 下
-     * autotest 页签点击落空根因）。 */
-    win = top->m_windowHandle;
-    flags = win ? XWindow_flags(win) : (XWindowFlags)top->m_windowFlags;
-    nativeAttached = win ? XWindow_isNativeWindowAttached(win) : false;
     /* 装饰归属问平台策略抽象（原 xwd_forceMode 的 XGUI_CSD 环境变量
      * 解析与优先级逻辑迁入 XPlatformThemeDecoration_effectiveMode，
      * 消除双份事实源）：Framework=强制框架自绘、System=交 WM、
@@ -1665,7 +1679,42 @@ bool XWindowDecoration_activeFor(const XWidget* top)
             return true;
     }
 #endif
+    /* (void)top：保留形参对称性（状态查询类扩展位），当前判定只用
+     * flags/挂接态。 */
+    (void)top;
     return false;
+}
+
+bool XWindowDecoration_activeFor(const XWidget* top)
+{
+    XWindow* win;
+    XWindowFlags flags;
+    bool nativeAttached;
+    if (!top || !top->m_isWindow) return false;
+    /* 句柄未建（显示前的布局期）也能预测：flags 取控件侧副本（建窗
+     * 时原样同步），未创建恒视为未挂原生窗——否则 marginsFor 在布局
+     * 期返回 0，子控件按零边距排布后 show 再变 24 也不重排（CSD 下
+     * autotest 页签点击落空根因）。 */
+    win = top->m_windowHandle;
+    flags = win ? XWindow_flags(win) : (XWindowFlags)top->m_windowFlags;
+    nativeAttached = win ? XWindow_isNativeWindowAttached(win) : false;
+    return xwd_activeForImpl(top, flags, nativeAttached);
+}
+
+bool XWindowDecoration_activeForFlags(const XWidget* top, XWindowFlags flags)
+{
+    XWindow* win;
+    bool nativeAttached;
+    if (!top || !top->m_isWindow) return false;
+    /* [2026-10-17 抑制位竞态根修] 按调用方给定 flags 预测（窗口侧
+     * m_flags 尚未同步的 setWindowFlags 动态路径专用）：XWidget_
+     * setWindowFlags 里抑制位先于 XWindow_setFlags 落位，若经 activeFor
+     * 读窗口侧旧值，Frameless→正常翻转时读到陈旧 Frameless 位误判
+     * 「不装饰」，Motif hints 按 DECOR_ALL 下发=强制 CSD 下系统标题栏
+     * 出现且不再恢复（DDE 实测；kwin 因装饰切换时序侥幸不显）。 */
+    win = top->m_windowHandle;
+    nativeAttached = win ? XWindow_isNativeWindowAttached(win) : false;
+    return xwd_activeForImpl(top, flags, nativeAttached);
 }
 
 XMargins XWindowDecoration_marginsFor(const XWidget* top)
@@ -2160,7 +2209,7 @@ bool XWindowDecoration_handlePointer(XWidget* top, XEvent* event)
          * 叠区）即切尺寸形状，否则 press 是缩放而光标仍是箭头的反馈错
          * 位（真机实测左上/右上角）。CSD 无原生帧，装饰层自补（原生窗
          * 口径；fbdev 无系统光标内部早退）。 */
-        xwd_updateEdgeCursor(st, xwd_resizeZoneAt(top, &pos, barH));
+        xwd_updateEdgeCursor(st, xwd_resizeZoneAt(top, &pos, barH), &pos);
         /* 三分流（MOVE）：移入/移经用户按钮放行，让按钮收到自身 MOVE
          *（按住态跟随/悬停效果）；装饰侧悬停/武装位同步清零防残像。 */
         if (pos.y >= 0 && pos.y < barH &&

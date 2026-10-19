@@ -110,6 +110,31 @@ static const char* const xgui_demo_theme_css =
     " border: 1px solid #D5DBE2;"
     " border-radius: 4px; } "
 
+    /* ==================== XItemLineEditor：委托内嵌行编辑器 ==================== */
+    /* [10-19 框架编辑器对齐] XAbstractItemView 缺省委托编辑器（XLineEdit
+     * 派生，见 XItemDelegate.c）。QSS 元素名按 vtable 名严格匹配
+     * （xsss_className），派生类命中不了 XLineEdit 规则 ⇒ 编辑器退化成
+     * 「仅 1px 边线、无底色」的透明框（单元格选中色/原文本透出）。
+     * 对标 Qt：QStyledItemDelegate 的编辑器本就是 QLineEdit，
+     * QLineEdit{...} 规则天然命中——此处补同款四态规则即还原该语义；
+     * 「样式表引擎基类链匹配」记为框架对齐项另案。 */
+    "XItemLineEditor {"
+    " background-color: #FFFFFF;"
+    " border: 1px solid #5A6572;"
+    " border-radius: 4px; } "
+    "XItemLineEditor:hover {"
+    " background-color: #FFFFFF;"
+    " border: 1px solid #2E7CE8;"
+    " border-radius: 4px; } "
+    "XItemLineEditor:focus {"
+    " background-color: #FFFFFF;"
+    " border: 1px solid #1A66D0;"
+    " border-radius: 4px; } "
+    "XItemLineEditor:disabled {"
+    " background-color: #F0F2F5;"
+    " border: 1px solid #D5DBE2;"
+    " border-radius: 4px; } "
+
     /* ==================== XComboBox / XSpinBox：描边（不设底色）+ 步进按钮框 ==================== */
     /* 复杂控件的箭头/步进按钮列由底层样式先绘：任何不透明底色的
      * 后置填充都会把它们抹掉——故容器只覆描边与圆角；步进按钮用

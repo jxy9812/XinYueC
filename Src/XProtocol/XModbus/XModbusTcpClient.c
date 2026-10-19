@@ -817,7 +817,7 @@ static void XModbusTcpClient_onConnected(XObject* receiver, XVarList* args)
     (void)args;
     XModbusTcpClient* client = (XModbusTcpClient*)receiver;
     if (!client) return;
-
+    
     // 连接成功，重置重连计数器
     XModbusClient* baseClient = (XModbusClient*)client;
     baseClient->m_reconnectAttempts = 0;
@@ -834,7 +834,7 @@ static void XModbusTcpClient_onDisconnected(XObject* receiver, XVarList* args)
     (void)args;
     XModbusTcpClient* client = (XModbusTcpClient*)receiver;
     if (!client) return;
-
+    
     if (client->m_receiveBuffer) {
         XByteArray_clear_base(client->m_receiveBuffer);
     }

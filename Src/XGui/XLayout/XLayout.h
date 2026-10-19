@@ -121,6 +121,9 @@ typedef struct XLayout
     XSize               m_cachedMin;       /**< 最小尺寸缓存（失效后由子类重算）。 */
     XSize               m_cachedMax;       /**< 最大尺寸缓存。 */
     XSize               m_cachedHint;      /**< 首选尺寸缓存。 */
+    XRect               m_activateRect;    /**< 上次 activate 的分配矩形（幂等早退比对用；
+                                            *   与 m_geometry 区分：堆叠布局 m_geometry
+                                            *   存 margins 内缩后矩形，此字段存外接矩形）。 */
     uint32_t            m_isDirty : 1;     /**< 尺寸缓存失效标志。 */
     uint32_t            m_activated : 1;   /**< 已成功激活标志。 */
     uint32_t            m_enabled : 1;     /**< 布局启用标志（默认 true）。 */

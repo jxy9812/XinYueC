@@ -17,6 +17,8 @@
 static void VXAbstractItemView_deinit(XAbstractItemView* self);
 static bool VXAbstractItemView_visualRect(const XAbstractItemView* self,
                                           int row, int col, XRect* out);
+static bool VXAbstractItemView_shouldEdit(const XAbstractItemView* self,
+                                          int row, int col);
 static void VXAbstractItemView_focusInEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_mousePressEvent(XWidget* self, XEvent* event);
 static void VXAbstractItemView_mouseReleaseEvent(XWidget* self,
@@ -233,6 +235,8 @@ XVtable* XAbstractItemView_class_init(void)
                              VXAbstractItemView_indexAt);
     XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_VisualRect,
                              VXAbstractItemView_visualRect);
+    XVTABLE_OVERLOAD_DEFAULT(EXAbstractItemView_ShouldEdit,
+                             VXAbstractItemView_shouldEdit);
     return XVTABLE_DEFAULT;
 }
 
@@ -264,8 +268,7 @@ void XAbstractItemView_init(XAbstractItemView* self, XWidget* parent,
     self->m_rootCol = -1;
     self->m_iconW = 16; /* 小像素值，int16 承载。 */
     self->m_iconH = 16;
-    self->m_keyboardSearch = true;
-    self->m_tabKeyNavigation = false;
+        self->m_tabKeyNavigation = false;
     self->m_autoScrollMargin = 16;
     self->m_showDropIndicator = true;
     self->m_defaultDropAction = 0; /* 0=IgnoreAction，对标 Qt::IgnoreAction。 */
@@ -576,8 +579,16 @@ bool XAbstractItemView_edit(XAbstractItemView* self, int row, int column)
      * 触发时判定不通过（NoEditTriggers 直接失败）。 */
     if (self->m_editTriggers ==
         XAbstractItemViewEditTrigger_NoEditTriggers) return false;
-    /* 对标 model flags ItemIsEditable 门禁（本库以视图开关承载）。 */
-    if (!self->m_itemsEditable) return false;
+    /* 对标 model flags ItemIsEditable 门禁：经 ShouldEdit 虚槽判定
+     * （基类缺省=视图总闸；表格派生叠加 per-item ItemIsEditable
+     * flags，同格已在编辑判定之前）。 */
+    {
+        bool (*shouldEdit)(const XAbstractItemView*, int, int) =
+            (bool (*)(const XAbstractItemView*, int, int))
+            XVtableGetFunc(XClassGetVtable((XClass*)self),
+                           EXAbstractItemView_ShouldEdit, void*);
+        if (!shouldEdit || !shouldEdit(self, row, column)) return false;
+    }
     /* 同格已在编辑：直接成功（同 Qt 重复 edit(index) 语义）。 */
     if (self->m_editor && self->m_editRow == row &&
         self->m_editCol == column)
@@ -1055,11 +1066,6 @@ void* XAbstractItemView_indexWidget(const XAbstractItemView* self,
 
 /* ==================== 键盘与导航 ==================== */
 
-void XAbstractItemView_setKeyboardSearch(XAbstractItemView* self, bool enable)
-{ if (self) self->m_keyboardSearch = enable; }
-bool XAbstractItemView_keyboardSearch(const XAbstractItemView* self)
-{ return self ? self->m_keyboardSearch : true; }
-
 /* ==================== 键盘搜索（对标 keyboardSearch 行为本体） ==================== */
 
 /* 键盘搜索累积前缀（简化语义，见头文件 @note）：
@@ -1118,8 +1124,8 @@ static int xaiv_searchHitRow(const XAbstractItemView* self, int col)
     return -1;
 }
 
-bool XAbstractItemView_keyboardSearch_2(XAbstractItemView* self,
-                                        const char* text)
+bool XAbstractItemView_keyboardSearch(XAbstractItemView* self,
+                                      const char* text)
 {
     size_t textLen;
     int64_t nowMs;
@@ -1130,7 +1136,6 @@ bool XAbstractItemView_keyboardSearch_2(XAbstractItemView* self,
         xaiv_searchReset(self);
         return false;
     }
-    if (!self->m_keyboardSearch) return false;
     textLen = XStrlen(text);
     nowMs = XDateTime_currentMSecsSinceEpoch();
     if (self->m_searchPrefixLen > 0 &&
@@ -1580,12 +1585,6 @@ void XAbstractItemView_selectAll(XAbstractItemView* self)
     }
 }
 
-int XAbstractItemView_rootRow(const XAbstractItemView* self)
-{ return self ? self->m_rootRow : -1; }
-
-int XAbstractItemView_rootColumn(const XAbstractItemView* self)
-{ return self ? self->m_rootCol : -1; }
-
 void XAbstractItemView_setRootIndex(XAbstractItemView* self, int row, int col)
 {
     if (!self) return;
@@ -1646,6 +1645,17 @@ static bool VXAbstractItemView_visualRect(const XAbstractItemView* self,
     return true;
 }
 
+/** @brief 条目可编辑判定（edit() 门禁；对标 Qt model flags(index) &
+ *  ItemIsEditable——本库经派生视图虚槽细化：基类缺省=视图级总闸
+ *  m_itemsEditable，表格派生叠加 per-item ItemIsEditable flags）。 */
+static bool VXAbstractItemView_shouldEdit(const XAbstractItemView* self,
+                                          int row, int col)
+{
+    (void)row;
+    (void)col;
+    return self ? self->m_itemsEditable : false;
+}
+
 bool XAbstractItemView_visualRect(const XAbstractItemView* self,
                                   int row, int col, XRect* out)
 {
@@ -1677,12 +1687,6 @@ void XAbstractItemView_setIconSize(XAbstractItemView* self, int w, int h)
     }
     XWidget_update((XWidget*)self);
 }
-
-int XAbstractItemView_iconWidth(const XAbstractItemView* self)
-{ return self ? self->m_iconW : 0; }
-
-int XAbstractItemView_iconHeight(const XAbstractItemView* self)
-{ return self ? self->m_iconH : 0; }
 
 void XAbstractItemView_iconSize(const XAbstractItemView* self,
                                 int* outWidth, int* outHeight)
@@ -2136,11 +2140,10 @@ static void VXAbstractItemView_keyPressEvent(XWidget* self, XEvent* event)
             XEvent_accept(event);
             return;
         }
-        if (view->m_keyboardSearch) {
-            text[0] = (char)key;
-            text[1] = '\0';
-            XAbstractItemView_keyboardSearch_2(view, text);
-        }
+        /* Qt keyPressEvent 无开关：可打印键一律进 keyboardSearch。 */
+        text[0] = (char)key;
+        text[1] = '\0';
+        XAbstractItemView_keyboardSearch(view, text);
         XEvent_accept(event);
         return;
     }

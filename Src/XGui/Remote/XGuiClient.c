@@ -344,6 +344,7 @@ typedef struct XGuiClientPrivate {
     int64_t    m_udpRetryMs;         /**< 下次自动重建请求时刻(5s 冷却)。 */
     int64_t    m_udpLastFrameMs;     /**< 最近 FRAME 收下(丢帧恢复判据)。 */
     int64_t    m_udpFullReqMs;       /**< 上次断流全量刷新请求时刻。 */
+    uint64_t   m_udpLostSeen;        /**< 已处置的 FRAME 缺口计数快照。 */
 
     /* ---- 首帧 FB_REQUEST 与视口通告(2026-10-05 方案③④; 全部 GUI 线程) ---- */
     bool     m_fbReqSent;          /**< 本连接已发过首个 FB_REQUEST(发过即止;
@@ -1289,6 +1290,7 @@ static void xgc_teardown(XGuiClient* self, XGuiRemoteByeReason reason,
     d->m_udpToken = 0;
     d->m_udpRetryMs = 0;
     d->m_udpLastFrameMs = INT64_MAX;
+    d->m_udpLostSeen = 0;
 
     /* 方案③(2026-10-05): 会话级 FB_REQUEST 状态复位——重连=新连接,
      * 首个 FB_META 自然重发; 视口通告基线一并复位; 首帧探针收尾
@@ -1351,6 +1353,10 @@ static void xgc_teardown(XGuiClient* self, XGuiRemoteByeReason reason,
     }
     xgc_emit(self, (size_t)XGuiClient_disconnected_signal,
              XVarList_Create(XVar(int, reason)));
+    /* [2026-10-16 抢占语义] 服务端 BYE_SESSION_LIMIT=会话被其他客户端
+     * 抢占: 停止自动重连(重连会反过来抢占对方, 两端乒乓), 由用户手动
+     * 再连。其余断链原因维持既有自动重连。 */
+    if (reason == XGUI_REMOTE_BYE_SESSION_LIMIT) return;
     xgc_scheduleReconnect(self);
 }
 
@@ -2533,15 +2539,39 @@ static bool xgc_pollPump(void* userData)
                         XPrintf( "XGuiClient: udp fallback "
                                 "(silence>3000ms)\n");
                 } else {
+                    /* [2026-10-16 丢帧缺口恢复] FRAME 通道无重传: 数据报
+                     * 在途丢失即帧洞, 而涓流帧(秒时钟/HUD ~1fps)令下方
+                     * 「4s 全静默」判据永不成立, 残影滞留至该区重绘
+                     * (真机 Modbus 页实证)。缺口计数增量 ⇒ FB_REQUEST
+                     * (mode=1) 全量自愈: 服务端同步整窗重绘+分轮
+                     * forceTcp 全量, 静态屏亦确定闭合。3s 限频(服务端
+                     * 另有 1s 合并窗), 4s 静默兜底保留并存。 */
+                    uint64_t lost =
+                        XGuiRemoteUdpChannel_rxLostFrames(d->m_udp);
                     /* 单向丢帧恢复: 服务端帧活性(PONG msAgo<2s)而本端
                      * FRAME 静默 >4s ⇒ FB_REQUEST 全量刷新(10s 限频)。 */
                     uint32_t srvMsAgo =
                         XGuiRemoteUdpChannel_pongFrameMsAgo(d->m_udp);
-                    if (xgc_fbReqAllowed(d) &&
-                        d->m_udpLastFrameMs != INT64_MAX &&
-                        now - d->m_udpLastFrameMs > 4000 &&
-                        srvMsAgo != 0xFFFFFFFFu && srvMsAgo < 2000 &&
-                        now - d->m_udpFullReqMs > 10000) {
+                    bool request = false;
+                    if (lost != d->m_udpLostSeen &&
+                        now - d->m_udpFullReqMs > 3000) {
+                        request = true;
+                        if (xgc_benchTraceOn())
+                            XPrintf("XGuiClient: udp gap recovery "
+                                    "FB_REQUEST (lost +%llu)\n",
+                                    (unsigned long long)
+                                        (lost - d->m_udpLostSeen));
+                    } else if (xgc_fbReqAllowed(d) &&
+                               d->m_udpLastFrameMs != INT64_MAX &&
+                               now - d->m_udpLastFrameMs > 4000 &&
+                               srvMsAgo != 0xFFFFFFFFu && srvMsAgo < 2000 &&
+                               now - d->m_udpFullReqMs > 10000) {
+                        request = true;
+                        if (xgc_benchTraceOn())
+                            XPrintf( "XGuiClient: udp frame-loss "
+                                    "recovery FB_REQUEST\n");
+                    }
+                    if (request && xgc_fbReqAllowed(d)) {
                         XGuiRemoteMsgFbRequest req;
                         uint8_t rbuf[16];
                         size_t rlen;
@@ -2555,10 +2585,9 @@ static bool xgc_pollPump(void* userData)
                                           rbuf, rlen);
                         }
                         d->m_udpFullReqMs = now;
-                        if (xgc_benchTraceOn())
-                            XPrintf( "XGuiClient: udp frame-loss "
-                                    "recovery FB_REQUEST\n");
                     }
+                    if (request)
+                        d->m_udpLostSeen = lost; /* 两路共口节流快照。 */
                 }
             } else if (d->m_udpWanted &&
                        udpState != XGUI_REMOTE_UDP_STATE_ACTIVE &&
@@ -3393,6 +3422,7 @@ void XGuiClient_init(XGuiClient* self, XWidget* parent, XWidgetFlags flags)
     d->m_udpWanted = true;
     d->m_udpState = (int)XGUI_REMOTE_UDP_STATE_OFF;
     d->m_udpLastFrameMs = INT64_MAX;
+    d->m_udpLostSeen = 0;
     /* 首帧 FB_REQUEST/视口通告(方案③④; 2026-10-05)。探针开关 env 定版
      * (XGUI_REMOTE_FIRSTFRAME_PROF=1; 探针纪律: 交付前可关)。 */
     d->m_fbReqSent = false;

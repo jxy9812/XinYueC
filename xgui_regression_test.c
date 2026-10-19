@@ -30624,8 +30624,12 @@ static void test_splitter_contract(void)
         XSplitter* sp2 = XSplitter_create_2(2, NULL, 0);
         sp_expect(saved != NULL, "saveState 生成状态");
         if (saved) {
-            sp_expect(!XSplitter_restoreState(sp2, saved),
-                      "restoreState 恢复失败（页数不匹配应失败）");
+            /* [Qt 钳位语义 2026-10-18] restoreState 按实际页数钳位消费
+             * （qsplitter.cpp:1712-1732）：sp2 零页，逐实际页循环 0 次，
+             * 方向/handleWidth/childrenCollapsible 无条件恢复 → true。
+             * 旧「页数不匹配即失败」契约随 restoreState 修订翻转。 */
+            sp_expect(XSplitter_restoreState(sp2, saved),
+                      "restoreState 页数不匹配按 Qt 钳位成功（qsplitter.cpp:1712-1732）");
             XClassDelete(saved);
         }
         XClassDelete(sp2);
@@ -33005,7 +33009,7 @@ static void test_phase32_p2_contract(void)
         XAbstractItemView_selectAll(iv);             /* NoSelection:安全 */
         XAbstractItemView_scrollToHint(iv, 0, 0,
                                        XAbstractItemViewScrollHint_EnsureVisible);
-        XAbstractItemView_keyboardSearch_2(iv, "ab");
+        XAbstractItemView_keyboardSearch(iv, "ab");
         p32_expect(1, "aiv2: 批次二行为 API 调用安全");
         XClassDelete(iv);
     }

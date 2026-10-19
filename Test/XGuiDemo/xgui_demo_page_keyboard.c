@@ -54,6 +54,7 @@
 #include "XVirtualKeyboard.h"
 #include "XSystem.h" /* XSystem_environment：环境变量唯一入口。 */
 #include "XLineEdit.h"
+#include "XBoxLayout.h" /* 页内布局容器化：垂直盒根布局 + 行盒近似行距。 */
 #include "XVarList.h"
 #if XKEYBOARD_IME_ON
 #include "XPinyinTable.h" /* 首候选对照（find 零拷贝借用）。 */
@@ -92,6 +93,13 @@ typedef struct KbdPageState
     int returnPressedCount;     /**< 编辑框 returnPressed 信号计数。 */
     int readyCount;             /**< 键盘 ready 信号计数。 */
     int cancelCount;            /**< 键盘 cancel 信号计数。 */
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    XBoxLayout rootLayout;      /**< 页根垂直布局器（XWidget_setLayout
+                                     仅存指针不取所有权——布局器须随
+                                     页常驻，存文件级静态结构）。 */
+    XBoxLayout rowLayouts[5];   /**< 单条目行盒池（≤4 编辑框+说明行；
+                                     底边距复刻原手写 8px 行距）。 */
+#endif
 } KbdPageState;
 
 static KbdPageState s_kbd;
@@ -238,11 +246,38 @@ static bool kbd_firstCandidateIs(const XVirtualKeyboard* kb, const char* utf8)
 
 /* ==================== 页面装配（契约接口） ======================== */
 
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+/** @brief 单条目行盒装配：控件装入水平行盒（底边距=行距——布局器无
+ *         逐条目间距 API，用 setContentsMargins 近似原手写 8px 行距；
+ *         行盒须取水平方向——calcMetrics 对垂直盒主/交叉轴边距记账
+ *         互换，顶底边距只有水平盒才计入高度度量），行盒经 addLayout
+ *         借挂页根垂直布局器。行盒对象存 s_kbd.rowLayouts（addLayout
+ *         借用不取所有权，须随页常驻）。 */
+static void kbd_rowAdd(int* rowi, XWidget* w, int rowGap)
+{
+    XBoxLayout* row;
+    if (!w || *rowi >= (int)(sizeof(s_kbd.rowLayouts) /
+                             sizeof(s_kbd.rowLayouts[0])))
+        return;
+    row = &s_kbd.rowLayouts[(*rowi)++];
+    XBoxLayout_init(row, XBoxLayoutDirection_LeftToRight);
+    XLayout_setContentsMargins((XLayout*)row, 0, 0, 0, rowGap);
+    XBoxLayout_addWidget(row, w);
+    /* 控件后弹性空白吃掉行内主轴余量：固定宽控件在行盒首轮即定稿，
+       无弹性条目时余量按 qGeomCalc 收尾段摊进首/中/尾（控件被摊离
+       左缘呈居中态），弹性条目 stretch=1 独占余量保控件贴左（对齐
+       改造前 x=12 手写观感）。 */
+    XBoxLayout_addStretch(row, 1);
+    XBoxLayout_addLayout(&s_kbd.rootLayout, (XLayout*)row);
+}
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
+
 /** @brief 构建键盘页：编辑框在上、键盘 autoPopup 常备（初始隐藏）。 */
 XWidget* demo_page_keyboard_build(XWidget* parent,
                                   DemoPageStatusFn status, void* user)
 {
     XWidget* page;
+    XWidget* hintRow = NULL;    /**< 说明行控件（两门控分支归一，装配段用）。 */
     if (!parent) return NULL;
     page = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, parent, 0);
     if (!page) return NULL;
@@ -255,7 +290,10 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
      *     默认）。 ---- */
     s_kbd.editor = XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
     if (s_kbd.editor) {
-        XWidget_setGeometry((XWidget*)s_kbd.editor, 12, 8, 420, 28);
+        /* 几何交页根布局器分配（原手写 12,8,420,28 → 固定宽 420/高
+           28，原点与行距由根布局边距/行盒边距复刻）。 */
+        XWidget_setFixedWidth((XWidget*)s_kbd.editor, 420);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editor, 28);
         XLineEdit_setPlaceholderText(s_kbd.editor,
                                      "默认框：无提示位 → 键盘主布局（main）");
         XObject_connect_1((XObject*)s_kbd.editor,
@@ -270,7 +308,8 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     s_kbd.editorDigits =
         XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
     if (s_kbd.editorDigits) {
-        XWidget_setGeometry((XWidget*)s_kbd.editorDigits, 12, 44, 420, 28);
+        XWidget_setFixedWidth((XWidget*)s_kbd.editorDigits, 420);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editorDigits, 28);
         XWidget_setInputMethodHints((XWidget*)s_kbd.editorDigits,
                                     XInputMethodHint_DigitsOnly);
         XLineEdit_setPlaceholderText(s_kbd.editorDigits,
@@ -283,7 +322,8 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     s_kbd.editorLatin =
         XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
     if (s_kbd.editorLatin) {
-        XWidget_setGeometry((XWidget*)s_kbd.editorLatin, 12, 80, 420, 28);
+        XWidget_setFixedWidth((XWidget*)s_kbd.editorLatin, 420);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editorLatin, 28);
         XWidget_setInputMethodHints((XWidget*)s_kbd.editorLatin,
                                     XInputMethodHint_LatinOnly);
         XLineEdit_setPlaceholderText(s_kbd.editorLatin,
@@ -294,7 +334,8 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     /* ---- 第二输入框（演示守护 tick 焦点跟随重绑时组串自动复位）。 ---- */
     s_kbd.editor2 = XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
     if (s_kbd.editor2) {
-        XWidget_setGeometry((XWidget*)s_kbd.editor2, 12, 116, 420, 28);
+        XWidget_setFixedWidth((XWidget*)s_kbd.editor2, 420);
+        XWidget_setFixedHeight((XWidget*)s_kbd.editor2, 28);
         XLineEdit_setPlaceholderText(s_kbd.editor2,
                                      "点击第二个输入框 → 键盘跟随重绑（拼音组串复位）");
         XWidget_show((XWidget*)s_kbd.editor2);
@@ -308,7 +349,8 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
             /* 高度按 heightForWidth 实算（对齐 QLabel::heightForWidth
              * 口径）：固定 40px 只装三行，第四行被裁半（2026-10-01 用
              * 户实机报告 D2，user-report-label-clip.png 实锚）；文本与
-             * wordWrap 先置再算，宽 420 与几何一致。 */
+             * wordWrap 先置再算，宽 420 与固定宽一致（x/y 交页根布局
+             * 器分配）。 */
             int hintH;
             XLabel_setText_2(hint,
                              "三框并列演示 hints 自动切键盘：默认框=主布局 / 数字框=12 键数字盘 / "
@@ -316,8 +358,9 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
                              "空格 / 点 chip / 1-9 上屏 → 回车=原字母 → 退格先删组串");
             XLabel_setWordWrap(hint, true);
             hintH = XLabel_heightForWidth(hint, 420);
-            XWidget_setGeometry((XWidget*)hint, 12, 152, 420,
-                                hintH > 0 ? hintH : 40);
+            XWidget_setFixedWidth((XWidget*)hint, 420);
+            XWidget_setFixedHeight((XWidget*)hint, hintH > 0 ? hintH : 40);
+            hintRow = (XWidget*)hint;
             XWidget_show((XWidget*)hint);
         }
     }
@@ -325,14 +368,50 @@ XWidget* demo_page_keyboard_build(XWidget* parent,
     {
         XLineEdit* hint = XLineEdit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, page, 0);
         if (hint) {
-            XWidget_setGeometry((XWidget*)hint, 12, 152, 420, 28);
+            XWidget_setFixedWidth((XWidget*)hint, 420);
+            XWidget_setFixedHeight((XWidget*)hint, 28);
             XLineEdit_setText(hint,
                               "默认/数字/英文三框自动切键盘；拼音：中/EN 切换 → 空格/1-9 上屏");
             XLineEdit_setReadOnly(hint, true);
+            hintRow = (XWidget*)hint;
             XWidget_show((XWidget*)hint);
         }
     }
 #endif /* XLABEL_ON && XFRAME_ON */
+
+    /* ---- 页内布局容器化：页根挂垂直盒布局器统一分配几何（原页内
+       setGeometry 手写排布全部退场）。观感对齐改造前截图：边距
+       (12,8,12,8) 复刻原手写原点 (12,8)；行距 8px 用行盒底边距近似
+       （布局器无逐条目间距 API，末行不留）；各框固定宽 420/高 28
+       （说明行高按 heightForWidth 实算），不设伸缩因子——多余空间留
+       主轴末尾。XVirtualKeyboard 为应用单例顶层弹层（不挂本页），
+       不参与页内布局。 ---- */
+#if XLAYOUT_ON && XLAYOUT_BOX_ON
+    {
+        int rowi = 0;
+        const int rowGap = 8; /* 原手写行距：44-8-28=8，依此近似。 */
+        XBoxLayout_init(&s_kbd.rootLayout, XBoxLayoutDirection_TopToBottom);
+        XLayout_setContentsMargins((XLayout*)&s_kbd.rootLayout,
+                                   12, 8, 12, 8);
+        if (s_kbd.editor)
+            kbd_rowAdd(&rowi, (XWidget*)s_kbd.editor, rowGap);
+        if (s_kbd.editorDigits)
+            kbd_rowAdd(&rowi, (XWidget*)s_kbd.editorDigits, rowGap);
+        if (s_kbd.editorLatin)
+            kbd_rowAdd(&rowi, (XWidget*)s_kbd.editorLatin, rowGap);
+        if (s_kbd.editor2)
+            kbd_rowAdd(&rowi, (XWidget*)s_kbd.editor2, rowGap);
+        if (hintRow)
+            kbd_rowAdd(&rowi, hintRow, 0);
+        /* 末尾弹性空白吸收页面余量：行盒均固定高（max==hint），按
+           qGeomCalc 口径首轮即定稿、其 stretch 不参与分摊——无弹性
+           条目时余量会摊进条目间距与首尾（行距被撑大），弹性条目
+           stretch=1 独占余量，条目区保持顶部紧排（对齐改造前观感；
+           库内同款 XColorDialog 按钮行 addStretch 先例）。 */
+        XBoxLayout_addStretch(&s_kbd.rootLayout, 1);
+        XWidget_setLayout(page, (XLayout*)&s_kbd.rootLayout);
+    }
+#endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
 
     /* ---- XVirtualKeyboard：应用默认面板单例（XGuiApplication 拥有，
        随应用析构；不再自建）。迁移根因（双面板叠挂）：XWidget 按下位
@@ -478,6 +557,28 @@ static void kbd_dumpGeometry(XVirtualKeyboard* kb)
                 composing, phys, XWidget_height((XWidget*)kb), cand,
                 kb->m_candidatePage + 1, pageCount);
     }
+}
+
+bool demo_page_keyboard_headless_requested(void)
+{
+    /* [懒分配 2026-10-19] 无头自动化豁免查询：XGUI_KB_* 环境族任一在
+     * 位即请求键盘页真建（主文件在调 headless_hook 前据此
+     * demo_ext_ensureBuilt——懒分配下页 9 未显不建，钩子首行 s_kbd.page
+     * 判空会整体零操作）。取「非空即请求」而非『==1』：MODE/LAYOUT/
+     * COMPOSE/PANEL 等携带枚举值（textlower/pinyin/ni/float…）。
+     * BANDPAGE/PHYSKEY 亦入族（同属风格检查自动化注入口）。 */
+    static const char* const kKbEnvNames[] = {
+        "XGUI_KB_AUTOSHOW", "XGUI_KB_MODE",    "XGUI_KB_CHINESE",
+        "XGUI_KB_COMPOSE",  "XGUI_KB_PRESS_LABEL", "XGUI_KB_CLOSE",
+        "XGUI_KB_DUMP",     "XGUI_KB_LAYOUT",  "XGUI_KB_PANEL",
+        "XGUI_KB_BANDPAGE", "XGUI_KB_PHYSKEY"
+    };
+    size_t i;
+    for (i = 0; i < sizeof(kKbEnvNames) / sizeof(kKbEnvNames[0]); ++i) {
+        const char* v = XSystem_environment(kKbEnvNames[i]);
+        if (v && v[0]) return true;
+    }
+    return false;
 }
 
 void demo_page_keyboard_headless_hook(void)
@@ -1014,6 +1115,12 @@ int demo_page_keyboard_autotest(XWidget* page)
 {
     (void)page;
     return 0;
+}
+
+bool demo_page_keyboard_headless_requested(void)
+{
+    /* 开关关闭降级：恒假（页面不会构建，主文件豁免分支自然短路）。 */
+    return false;
 }
 
 void demo_page_keyboard_headless_hook(void)

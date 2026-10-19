@@ -864,6 +864,7 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_qrcode.c"
     "./Test/XGuiDemo/xgui_demo_page_update.c"
     "./Test/XGuiDemo/xgui_demo_page_modbus.c"
+    "./Test/XGuiDemo/xgui_demo_page_window.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
     "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
     "./Test/XGuiDemo/xgui_demo_apitest_input.c"

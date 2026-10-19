@@ -49,8 +49,15 @@
 #endif
 #if XWIDGET_ON && XFRAME_ON && XSPLITTER_ON
 #include "XSplitter.h"
+#include "XSplitterHandle.h" /* [rename 2026-10-18] handle() 返回把手部件
+                             * 完整类型，几何经 XWidget_geometry 读回。 */
+#if XSTYLE_ON
+#include "XStyle.h" /* [对齐 2026-10-18] PM_SplitterWidth 哨兵回落断言。 */
 #endif
-#if XBYTEARRAY_ON
+#endif
+#if XByteArray_ON /* [死宏修正 2026-10-18] 误拼 XBYTEARRAY_ON 使本块与
+                   * F 区 8 条快照断言从未编译（审计 1018 登记），改回
+                   * XByteArray.h:33 的正确拼写。 */
 #include "XByteArray.h"
 #endif
 #if XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && \
@@ -1455,8 +1462,7 @@ static int containers_splitter(void)
     int setBuf[2];
     int lo;
     int hi;
-    XRect handleRect;
-#if XBYTEARRAY_ON
+#if XByteArray_ON /* [死宏修正 2026-10-18] 同 ：53，恢复 F 区编译。 */
     XByteArray* saved;
     XByteArray garbage;
 #endif
@@ -1474,6 +1480,12 @@ static int containers_splitter(void)
                 "XSplitter 默认方向=水平(1)（Qt 同）");
     XAPI_EXPECT(XSplitter_opaqueResize(&sp),
                 "XSplitter 默认 opaqueResize=true（Qt 同）");
+    XSplitter_setOpaqueResize(&sp, false);
+    XAPI_EXPECT(!XSplitter_opaqueResize(&sp),
+                "XSplitter setOpaqueResize(false) 往返（非透明拖动已接线）");
+    XSplitter_setOpaqueResize(&sp, true);
+    XAPI_EXPECT(XSplitter_opaqueResize(&sp),
+                "XSplitter setOpaqueResize(true) 复原默认");
     XAPI_EXPECT(XSplitter_childrenCollapsible(&sp),
                 "XSplitter 默认 childrenCollapsible=true（Qt 同）");
     XAPI_EXPECT(XSplitter_count(&sp) == 0, "XSplitter 空分割器 count=0");
@@ -1517,6 +1529,12 @@ static int containers_splitter(void)
     XSplitter_sizes(&sp, sizes, 2);
     XAPI_EXPECT(sizes[0] == 210 && sizes[1] == 420,
                 "XSplitter setSizes(NULL/0/负 count) 为无操作（边界）");
+    /* [Qt 对齐 2026-10-18] sizes 出参契约（qsplitter.cpp:1560-1574）：
+       count 超过页数时完全不写入，其余槽位保持调用方原值。 */
+    sizes[2] = 7;
+    XSplitter_sizes(&sp, sizes, 3);
+    XAPI_EXPECT(sizes[2] == 7,
+                "XSplitter sizes count>页数不写入（Qt 同契约）");
     setBuf[0] = 300;
     setBuf[1] = 300;
     XSplitter_setSizes(&sp, setBuf, 2);
@@ -1526,28 +1544,52 @@ static int containers_splitter(void)
                 "XSplitter refresh 重算布局回归均分（Qt refresh 对标）");
 
     /* ================================================================
-     * C. 把手几何与拖动范围（对标 handle/getRange；可折叠页最小贡献
-     *    0，不可折叠页以当前尺寸代理最小值——头文件口径）。
+     * C. 把手几何与拖动范围（对标 handle/getRange；每页最小贡献统一
+     *    qSmartMinSize，对标 qsplitter.cpp:541-554）。[rename 2026-10-18]
+     *    handle 改 Qt 形返回 XSplitterHandle*（qsplitter.h:67），矩形
+     *    经 XWidget_geometry(把手) 读回，期望值不变。
      * ================================================================ */
-    XAPI_EXPECT(XSplitter_handle(&sp, 0, &handleRect) &&
-                    handleRect.width == XSplitter_handleWidth(&sp) &&
-                    handleRect.x == XWidget_x(&w1) + XWidget_width(&w1),
-                "XSplitter handle(0) 位于页 0 几何之后宽=handleWidth");
-    XAPI_EXPECT(!XSplitter_handle(&sp, 1, &handleRect),
-                "XSplitter handle(1) 越界（两页仅 0 号分隔点）返回 false");
-    XAPI_EXPECT(!XSplitter_handle(&sp, -1, NULL),
-                "XSplitter handle 负索引返回 false（边界）");
+    {
+        XSplitterHandle* hp = XSplitter_handle(&sp, 0);
+        XAPI_EXPECT(hp != NULL &&
+                        XWidget_x((XWidget*)hp) ==
+                            XWidget_x(&w1) + XWidget_width(&w1) &&
+                        XWidget_width((XWidget*)hp) ==
+                            XSplitter_handleWidth(&sp),
+                    "XSplitter handle(0) 位于页 0 几何之后宽=handleWidth");
+    }
+    XAPI_EXPECT(XSplitter_handle(&sp, 1) == NULL,
+                "XSplitter handle(1) 越界（两页仅 0 号分隔点）返回 NULL");
+    XAPI_EXPECT(XSplitter_handle(&sp, -1) == NULL,
+                "XSplitter handle 负索引返回 NULL（边界）");
     XAPI_EXPECT(XSplitter_getRange(&sp, 0, &lo, &hi) && lo == 0 && hi == 630,
                 "XSplitter getRange(0) 可折叠双页范围 [0,630]");
     XSplitter_setCollapsible(&sp, 0, false);
     XAPI_EXPECT(!XSplitter_isCollapsible(&sp, 0) &&
                     XSplitter_isCollapsible(&sp, 1),
                 "XSplitter setCollapsible 逐页覆写生效");
-    XAPI_EXPECT(XSplitter_getRange(&sp, 0, &lo, &hi) && lo == 315 && hi == 630,
-                "XSplitter 页 0 不可折叠后拖动下限=其当前尺寸 315");
+    /* [Qt 对齐 2026-10-18] 最小贡献一律 qSmartMinSize（qsplitter.cpp:
+       541-554）：可折叠/不可折叠页同判据，不可折叠页不再叠加「当前
+       尺寸」代理。本族几何断言在无头环境整体失配（顶层构造页带
+       Hidden 位、不参与布局与 getRange 贡献，基线中同族 630/315 断言
+       即因此失败），故先显式 show 再验 smartMin 贡献，验完复位。 */
+    XWidget_setVisible(&w1, true);
+    XAPI_EXPECT(XSplitter_getRange(&sp, 0, &lo, &hi) && lo == 0,
+                "XSplitter 不可折叠页下限同为 smartMin（页 0 未设最小尺寸→0）");
+    XWidget_setMinimumSize(&w1, 100, 0);
+    XAPI_EXPECT(XSplitter_getRange(&sp, 0, &lo, &hi) && lo == 100,
+                "XSplitter getRange 下限取该页 smartMin=100");
+    XWidget_setMinimumSize(&w1, 0, 0);
+    XWidget_setVisible(&w1, false);
     XSplitter_setChildrenCollapsible(&sp, false);
     XAPI_EXPECT(!XSplitter_isCollapsible(&sp, 1),
                 "XSplitter setChildrenCollapsible(false) 全局回退生效");
+    /* [Qt 对齐 2026-10-18] 越界索引告警 + 早退（qsplitter.cpp:
+       1040-1043）：页数之外的覆写不再静默成功。 */
+    XSplitter_setCollapsible(&sp, 9, true);
+    XAPI_EXPECT(!XSplitter_isCollapsible(&sp, 9),
+                "XSplitter setCollapsible 越界索引早退（不落覆写）");
+    XSplitter_setCollapsible(&sp, -1, true);
     XSplitter_setChildrenCollapsible(&sp, true);
     XSplitter_setCollapsible(&sp, 0, true);
 
@@ -1584,11 +1626,37 @@ static int containers_splitter(void)
     XAPI_EXPECT(XSplitter_handleWidth(&sp) == 8,
                 "XSplitter setHandleWidth(8) 往返");
     XSplitter_setHandleWidth(&sp, 5);
+    /* [对齐 2026-10-18] -1=样式哨兵（PM_SplitterWidth 回落，qsplitter.cpp:
+     * 1614-1629）：回落值与样式查询自比（本应用缺省 Fusion，dpiScaled(4)，
+     * 不硬编码）；<-1 拒绝、显式值保持。 */
+#if XSTYLE_ON
+    XSplitter_setHandleWidth(&sp, -1);
+    XAPI_EXPECT(XSplitter_handleWidth(&sp) ==
+                    XStyle_pixelMetric(XStyle_defaultStyle(),
+                                       XStylePM_SplitterWidth, NULL),
+                "XSplitter setHandleWidth(-1) 哨兵回落样式 PM_SplitterWidth");
+    XSplitter_setHandleWidth(&sp, 5);
+    XSplitter_setHandleWidth(&sp, -2);
+    XAPI_EXPECT(XSplitter_handleWidth(&sp) == 5,
+                "XSplitter setHandleWidth(<-1) 拒绝（保持显式 5）");
+#endif
+    XSplitter_setHandleWidth(&sp, 5);
 
     /* ================================================================
      * F. 状态序列化（对标 saveState/restoreState 版本化快照）。
+     *    [死宏修正 2026-10-18] 本块守卫由误拼 XBYTEARRAY_ON 改回
+     *    XByteArray_ON，8 条断言自此真正编译执行（审计 1018 登记：
+     *    此前整块从未参与编译）。
      * ================================================================ */
-#if XBYTEARRAY_ON
+#if XByteArray_ON
+    /* [显式 show 定式 2026-10-18] 同 C 区（:1558-1566）：顶层构造页带
+     * Hidden 位、不参与布局，快照内尺寸/恢复后尺寸断言会整体失配——
+     * 先显式 show 双页并 refresh 走布局，验完复位（子页显隐不自动驱动
+     * 分割器重排，见 F3 注）。show 后均分口径：640 宽 - 相邻槽位 1 条
+     * 把手 5 = 635 可分，整除归 317、末页吸收余量 318。 */
+    XWidget_setVisible(&w1, true);
+    XWidget_setVisible(&w3, true);
+    XSplitter_refresh(&sp);
     saved = XSplitter_saveState(&sp);
     XAPI_EXPECT(saved != NULL &&
                     strncmp((const char*)XByteArray_constData(saved), "XSP",
@@ -1600,8 +1668,10 @@ static int containers_splitter(void)
     XAPI_EXPECT(XSplitter_orientation(&sp) == 1,
                 "XSplitter restoreState 恢复快照内方向=水平");
     XSplitter_sizes(&sp, sizes, 2);
-    XAPI_EXPECT(sizes[0] == 315 && sizes[1] == 315,
-                "XSplitter restoreState 恢复快照内尺寸均分");
+    XAPI_EXPECT(sizes[0] == 317 && sizes[1] == 318,
+                "XSplitter restoreState 恢复快照内尺寸均分（635=317+318 末页吸收余量）");
+    XWidget_setVisible(&w1, false);
+    XWidget_setVisible(&w3, false);
     XAPI_EXPECT(!XSplitter_restoreState(&sp, NULL),
                 "XSplitter restoreState(NULL) 返回 false（Qt 同）");
     XByteArray_init(&garbage, false);
@@ -1609,8 +1679,29 @@ static int containers_splitter(void)
     XAPI_EXPECT(!XSplitter_restoreState(&sp, &garbage),
                 "XSplitter restoreState 损坏快照返回 false（Qt 同）");
     XClassDeinit(&garbage);
+    /* [Qt 对齐 2026-10-18] 截断快照（魔数对但长度不足）返回 false，
+       不越界读（此前仅凭 3 字节魔数即按下标读满头+页尺寸）。 */
+    XByteArray_init(&garbage, false);
+    XByteArray_append_utf8(&garbage, "XSP001002");
+    XAPI_EXPECT(!XSplitter_restoreState(&sp, &garbage),
+                "XSplitter restoreState 截断快照返回 false（长度校验）");
+    XClassDeinit(&garbage);
+    /* [Qt 对齐 2026-10-18] 快照字段补齐：把手宽 + 子页可折叠随快照
+       往返（对标 qsplitter.cpp:1642-1679 的 saveState 字段集）。 */
+    XSplitter_setHandleWidth(&sp, 7);
+    XSplitter_setChildrenCollapsible(&sp, false);
     if (saved) XClassDelete((XClass*)saved);
-#endif /* XBYTEARRAY_ON */
+    saved = XSplitter_saveState(&sp);
+    XSplitter_setHandleWidth(&sp, 5);
+    XSplitter_setChildrenCollapsible(&sp, true);
+    XAPI_EXPECT(saved != NULL && XSplitter_restoreState(&sp, saved) &&
+                    XSplitter_handleWidth(&sp) == 7 &&
+                    !XSplitter_childrenCollapsible(&sp),
+                "XSplitter 快照往返恢复 handleWidth/childrenCollapsible");
+    XSplitter_setHandleWidth(&sp, 5);
+    XSplitter_setChildrenCollapsible(&sp, true);
+    if (saved) XClassDelete((XClass*)saved);
+#endif /* XByteArray_ON */
     /* splitterMoved 信号发射点为分隔条拖动；内部把手拖动交互路径为
      * 预留项（头文件 @note），无头环境不硬断言发射，仅验证信号标识。 */
     XAPI_EXPECT(XSplitter_splitterMoved_signal(&sp, 100, 0) != NULL,
@@ -1651,6 +1742,80 @@ static int containers_splitter(void)
         XAPI_EXPECT(s2[0] == 315 && s2[1] == 315,
                     "XSplitter stretch 全 0 退化为均分");
         XClassDeinit(&sp2); /* w4/w5 栈子控件随级联 deinit。 */
+    }
+
+    /* ================================================================
+     * F3. 空间不足回落 + 隐藏页把手条带（[Qt 语义 2026-10-18] 冒烟根修
+     *     两条，均以比例/相对量断言，不依赖控件实际像素尺寸——本族几何
+     *     断言在本环境整体失配（见基线）。
+     * ================================================================ */
+    {
+        XSplitter sp3;
+        XWidget a1;
+        XWidget a2;
+        XRect band;
+        int got2[2];
+        XWidget_init(&a1, NULL, 0);
+        XWidget_init(&a2, NULL, 0);
+        XSplitter_init(&sp3, NULL, 0);
+        XWidget_setGeometry((XWidget*)&sp3, 0, 0, 400, 300);
+        XSplitter_addWidget(&sp3, &a1);
+        XSplitter_addWidget(&sp3, &a2);
+        XWidget_setVisible(&a1, true);
+        XWidget_setVisible(&a2, true);
+        /* 对页最小宽（784）远超可用总长：意图若被 smartMin 顶起再等比
+         * 分摊，调用方给的定宽值会被压缩（冒烟：面板 176→115/145）。本例
+         * 取 rawSum=110+285=395=contentLen(400-5)，回落路径下页 0 应拿回
+         * 自己的定宽 110；旧语义会算成 395*110/(110+784)=48。 */
+        {
+            int want[2];
+            want[0] = 110;
+            want[1] = 285;
+            XSplitter_setSizes(&sp3, want, 2);
+            XSplitter_sizes(&sp3, got2, 2);
+        }
+        XAPI_EXPECT(got2[0] == 110,
+                    "XSplitter 空间不足时调用方定宽不被对页 smartMin 等比压缩");
+        /* 隐藏页：紧邻把手条带保留在窗口缘，可见页从条带之后起排（收起
+         * 态点边缘可展开 = 冒烟 ③ 的根修）。子页 hide/show(由隐转显) 两
+         * 方向均不自动驱动分割器重排（Qt 经 childEvent/Show-Hide 通知→
+         * LayoutRequest 异步重排，qwidget.cpp:8405-8411/:8344-8348，
+         * 属 missingInXgui 登记项、事件链阶段落地），故两方向均以显式
+         * refresh 走布局，与 demo 收起路径（navUpdatePanel→setSizes）等价。
+         * [rename 2026-10-18] 把手条带即把手部件几何，经
+         * XWidget_geometry 读回，期望值不变。 */
+        XWidget_hide(&a1);
+        XSplitter_refresh(&sp3);
+        {
+            XSplitterHandle* hp = XSplitter_handle(&sp3, 0);
+            bool bandOk = hp != NULL;
+            if (hp) band = XWidget_geometry((XWidget*)hp);
+            XAPI_EXPECT(bandOk && band.x == 0 &&
+                            band.width == XSplitter_handleWidth(&sp3),
+                        "XSplitter 隐藏页后紧邻把手条带保留在窗口缘（x=0 宽=handleWidth）");
+        }
+        XAPI_EXPECT(XWidget_x(&a2) == XSplitter_handleWidth(&sp3),
+                    "XSplitter 隐藏页后可见页从把手条带之后起排（条带不被盖住）");
+        /* 隐藏页位于**末槽**（右/下停靠的等价格式）：条带必须由前一槽
+         * 承接并落在控件**内侧**，否则可见页铺满全轴把条带顶出控件，收起
+         * 态点边缘无效（冒烟：右/下停靠收起后右缘/底缘灰行 0、点击
+         * 4/3 次全无效）。 */
+        XWidget_show(&a1);
+        XSplitter_refresh(&sp3);
+        XWidget_hide(&a2);
+        XSplitter_refresh(&sp3);
+        {
+            XSplitterHandle* hp = XSplitter_handle(&sp3, 0);
+            bool bandOk = hp != NULL;
+            int axis = XWidget_width((XWidget*)&sp3);
+            if (hp) band = XWidget_geometry((XWidget*)hp);
+            XAPI_EXPECT(bandOk &&
+                            band.x + band.width == axis,
+                        "XSplitter 隐藏页位于末槽时条带落在控件末端内侧（可点可拖）");
+            XAPI_EXPECT(XWidget_width(&a1) + XWidget_x(&a1) == band.x,
+                        "XSplitter 末槽隐藏页：可见页让出末端条带");
+        }
+        XClassDeinit(&sp3);
     }
 
     /* ================================================================

@@ -11,6 +11,22 @@
  *    build 时登记，autotest 时使用；
  *  - autotest 入参 page 与登记的根控件不符时返回 -1（防错页调用）。
  *
+ * 懒分配契约（[全量懒分配 2026-10-19]）：
+ *  - build 不再在主窗口创建期调用——注册期主文件只建空占位壳写入
+ *    m_extPages 槽位（保「堆叠下标=页索引」与窗口几何分支口径），真页
+ *    根推迟到首显，由主文件 demo_ext_ensureBuilt 查文件级构建注册表
+ *    g_extBuilders 同位换入；
+ *  - 「首显」入口三族：demo_switchPage（用户/CLI --page/autotest 切
+ *    页）、内建 autotest 效果页留证段、CLI autostart 豁免（远程双页在
+ *    --remote-server/--remote-client 预置时事件循环前真建，否则页内
+ *    autostart 守卫 m_ready 恒假=被控端静默不监听）；
+ *  - 常驻不销毁：ensureBuilt 幂等（已建/已尝试即短路），页活到进程退
+ *    出——销毁语义与现状一致，各页既有 deleteLater/断链退出清理定式
+ *    不变；
+ *  - build 时机从「窗口创建期」推迟到「首显期」，页内 build 不得依赖
+ *    「其余页已建」的顺序假设（各页 static 自持结构本就互不引用，
+ *    2026-10-19 全量扫描确认无跨页耦合）。
+ *
  * autotest 口径（与主文件 demo_input_autotest 一致）：
  *  - 事件经 XObject_event_base 直发（与真实输入同路径）；
  *  - 断言输出 XPrintf("XGuiAutoTest: [PASS] 中文描述\n") / [FAIL]；
@@ -176,18 +192,38 @@ int demo_page_modbus_master_autotest(XWidget* page);
 void demo_page_modbus_master_adapt(XWidget* page);
 
 /** @brief 构建 Modbus 从站调试页（TCP 监听/串口 RTU、本站地址、点数
- *         配置、启动/停止，数据面板=XTableWidget 段表：DO/DI 内嵌
- *         CheckBox 点击即写数据区、IR/HR 内嵌 LineEdit 回车提交，
- *         可手动调整供主站读走；2026-10-13 双页拆分新增）。 */
+ *         配置、启动/停止）。数据区为**四块面板同屏常驻**：DI/DO 为自绘
+ *         灯格（MbSwLamp，圆圈+编号，单击即写数据区，无主站亦可单机调）；
+ *         IR/HR 为双 XTableWidget 行内编辑（回车/失焦提交）。每块面板的
+ *         内容在自身空间不足时由该面板自带滚动条承载，面板本身永不被
+ *         裁切、永不隐藏。2026-10-18 四区同屏重构（原单表 + DO/DI/IR/HR
+ *         下拉互斥切换）。 */
 XWidget* demo_page_modbus_slave_build(XWidget* parent,
                                       DemoPageStatusFn status, void* user);
 
-/** @brief Modbus 从站页自测（非阻塞；验控件存在、数据面板就绪、
- *         构建后未监听、标签-输入框几何不相交）。 */
+/** @brief Modbus 从站页自测（非阻塞；验四区存在与挂载链、滚动壳固定
+ *         尺寸、两表装配且互相独立、灯格已建、数据宿主就绪（server
+ *         常驻）但未监听、标签-输入框几何不相交）。 */
 int demo_page_modbus_slave_autotest(XWidget* page);
 
-/** @brief Modbus 从站页自适应重排（绝对定位布局，当前无自适应需求）。 */
+/** @brief Modbus 从站页自适应重排：视口宽不足以并排放下「两灯格区 +
+ *         两寄存器表」时切紧凑档（纵向堆叠），否则宽档（灯格列 +
+ *         寄存器列横排，IR/HR 并排）；转发页内 mb_slaveSyncViewport
+ *         （与 build 末尾、页根 resizeEvent 构成三个幂等入口）。 */
 void demo_page_modbus_slave_adapt(XWidget* page);
+
+/** @brief 构建窗口设置页（系统设置：皮肤/边框(标题栏)/状态栏/最大化/
+ *         窗口方向/鼠标光标显示 + 复位默认；改动即时生效）。控件或样式/
+ *         调色板段被裁剪时返回 NULL，主文件跳过注册（2026-10-17 追加）。 */
+XWidget* demo_page_window_settings_build(XWidget* parent,
+                                         DemoPageStatusFn status, void* user);
+
+/** @brief 窗口设置页自测（非阻塞；逐项切换并断言框架 getter 回读，
+ *         结束恢复默认态）。 */
+int demo_page_window_settings_autotest(XWidget* page);
+
+/** @brief 窗口设置页自适应重排（说明/状态行贴底；同上契约）。 */
+void demo_page_window_settings_adapt(XWidget* page);
 
 /**
  * @brief 主窗口性能悬浮层访问器（悬浮窗设置页专用；主文件实现）。
@@ -207,6 +243,39 @@ void* demo_main_overlay(void* user);
  *          优先，窗口缩放不抢位置）。
  */
 void demo_main_overlay_applyPreset(void* user, int preset);
+
+/**
+ * @brief 主窗口顶层控件访问器（窗口设置页专用；主文件实现）。
+ * @param user build 回调透传的主窗口指针（DemoWin*）。
+ * @return 顶层控件（DemoWin.m_base）借用指针；未就绪时 NULL。
+ */
+void* demo_main_toplevel(void* user);
+
+/**
+ * @brief 主窗口底部状态栏显隐（窗口设置页专用；主文件实现）。
+ * @details 显隐同步收放内容区底部 26px 预留并重排悬浮层锚定。
+ * @return 切换后状态栏是否可见。
+ */
+bool demo_main_setStatusBarVisible(void* user, bool visible);
+
+/** @brief 查询主窗口底部状态栏当前可见性（窗口设置页自测断言用）。 */
+bool demo_main_statusBarVisible(void* user);
+
+/**
+ * @brief 静态场景缓存失效并整窗重绘（窗口设置页皮肤切换专用；主文件实现）。
+ * @details 皮肤换表+方案联动只影响后续绘制：主窗静态基底（窗口背景/
+ *          标题栏带）带缓存，必须显式失效重建才能翻色。
+ */
+void demo_main_sceneInvalidate(void* user);
+
+/**
+ * @brief 主窗 chrome 全量重排（窗口设置页边框开关专用；主文件实现）。
+ * @details 边框动态开关只经框架 setFrameMargins 收放 CSD 保留边距，
+ *          demo 蓝条文字几何/内容区避让/静态基底不会自发重排——本
+ *          访问器一条龙：悬浮层重锚 + chrome/内容区重排 + 静态场景
+ *          失效 + 整窗重绘。状态栏显隐与边框开关共用。
+ */
+void demo_main_refreshChrome(void* user);
 
 /** @brief 键盘页无头截图钩子（Tools/VirtualKeyboard/style_check.py 风格自动化专用；
  *         其余页面无此契约）。环境变量全部缺省时零操作、零开销：
@@ -237,6 +306,18 @@ void demo_main_overlay_applyPreset(void* user, int preset);
  *  调用点=主文件窗口几何定版之后、事件循环之前（弹出几何一次到位，
  *  不依赖定时器边沿）。
  */
+/**
+ * @brief      键盘页无头自动化请求查询（[懒分配 2026-10-19] 新增豁免
+ *             契约；其余页面无此契约）。
+ * @details    XGUI_KB_* 环境族（见 headless_hook 注）任一非空即返回真：
+ *             懒分配下页 9 首显才真建，主文件须在调 headless_hook 前
+ *             据此 ensureBuilt（钩子首行 s_kbd.page 判空，未建时整体零
+ *             操作=风格检查动态层全空）。环境族全缺省返回假——维持全
+ *             量懒分配口径，常态零开销。开关裁剪时恒假。
+ * @return     是否请求键盘页无头自动化（需先真建页面）。
+ */
+bool demo_page_keyboard_headless_requested(void);
+
 void demo_page_keyboard_headless_hook(void);
 
 /**

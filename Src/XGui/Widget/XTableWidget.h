@@ -37,15 +37,30 @@ XCLASS_DEFINE_EXTEND_END(XTableWidget, XTableView)
  *        直接内嵌存储于表格行数组；text 超长截断，前景/背景色为
  *        0 时回退调色板默认色。
  */
+/* 条目标志位（对标 Qt 6.8 Qt::ItemFlag 数值与语义子集）。
+ * [10-19 对齐] 零值约定：itemFlags==0 视为「缺省可编辑」（既有建表
+ * 路径 memset 归零后行为不变，同 Qt 缺省 flags 含 ItemIsEditable）；
+ * 需要只读条目（如表格地址列）显式设不带 ItemIsEditable 的组合。 */
+typedef enum XTableWidgetItemFlag
+{
+    XTableWidgetItemFlag_ItemIsSelectable   = 1,      /**< 可选中。 */
+    XTableWidgetItemFlag_ItemIsEditable     = 1 << 1, /**< 可编辑（双击/F2 进编辑器门禁）。 */
+    XTableWidgetItemFlag_ItemIsDragEnabled  = 1 << 2, /**< 可拖（暂未消费，占位对齐）。 */
+    XTableWidgetItemFlag_ItemIsDropEnabled  = 1 << 3, /**< 可放（暂未消费，占位对齐）。 */
+    XTableWidgetItemFlag_ItemIsUserCheckable = 1 << 4,/**< 可勾选（预留）。 */
+    XTableWidgetItemFlag_ItemIsEnabled      = 1 << 5  /**< 可用（禁用态预留）。 */
+} XTableWidgetItemFlag;
+
 typedef struct XTableWidgetItem
 {
     XString* text;            /**< 显示文本（对象拥有）。 */
     uint32_t foreground;      /**< 前景色 ARGB；0=使用调色板默认。 */
     uint32_t background;      /**< 背景色 ARGB；0=使用调色板默认。 */
     /* [内存治理 2026-10-11] 标志位字：selected 并入 1 位；勾选态
-       0..2（XItemCheckState）收 uint8_t。 */
+       0..2（XItemCheckState）收 uint8_t。[10-19 对齐] itemFlags 启用
+       （原保留位）：0=缺省可编辑，见 XTableWidgetItemFlag 注。 */
     uint32_t selected : 1;    /**< 是否选中。 */
-    uint32_t itemFlagsUnused : 31; /**< 保留位。 */
+    uint32_t itemFlags : 31;  /**< 条目标志位（XTableWidgetItemFlag 位组合）。 */
     uint8_t checkState;       /**< 勾选态：0 未选/1 部分/2 选中。 */
 } XTableWidgetItem;
 
@@ -232,6 +247,18 @@ void XTableWidget_setItem(XTableWidget* self, int row, int column,
  */
 const XTableWidgetItem* XTableWidget_item(const XTableWidget* self,
                                           int row, int column);
+
+/** @brief 读条目标志位（对标 QTableWidgetItem::flags）。
+ *  @return XTableWidgetItemFlag 位组合；0=缺省（可编辑）。坐标越界返回 0。 */
+uint32_t XTableWidget_itemFlags(const XTableWidget* self, int row,
+                                int column);
+
+/** @brief 设置条目标志位（对标 QTableWidgetItem::setFlags）。
+ *  @note 需要只读条目：设不含 ItemIsEditable 的组合（如
+ *        ItemIsSelectable|ItemIsEnabled）；0=恢复缺省可编辑。
+ *        setItem 值拷贝会随 item->itemFlags 覆盖。 */
+void XTableWidget_setItemFlags(XTableWidget* self, int row, int column,
+                               uint32_t flags);
 
 /**
  * @brief 设置单元格文本（快捷接口）。
@@ -743,9 +770,10 @@ int XTableWidget_row(const XTableWidget* self,
  * @param row    行号。
  * @param column 列号。
  * @return 无返回值。
- * @note 句柄预留：编辑器体系未建（委托 createEditor/提交回写尚未
- *       实现，见 XAbstractItemView_edit @note），判定后当前无编辑器
- *       可开；编辑路径建立后应在此发射 cellChanged/itemChanged。
+ * @note 编辑器体系已建：转发基类 XAbstractItemView_edit（触发位+
+ *       m_itemsEditable 门禁，委托缺省编辑器为内嵌行编辑框）；编辑
+ *       提交经基类 setItemText→模型 setData→dataChanged 桥
+ *       （xtw_modelDataChangedSlot）发射 cellChanged/itemChanged。
  */
 void XTableWidget_editItem(XTableWidget* self, int row, int column);
 

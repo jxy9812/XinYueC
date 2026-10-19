@@ -1177,6 +1177,35 @@ XPoint XWidget_mapTo(const XWidget* self, const XWidget* target, const XPoint* l
 /** @brief 从 target 控件坐标映射到本控件（对标 QWidget::mapFrom）。 */
 XPoint XWidget_mapFrom(const XWidget* self, const XWidget* source, const XPoint* local);
 
+/* ==================== 窗口内容旋转（2026-10-18 新增） ==================== */
+
+/**
+ * @brief      设置顶层窗口的内容旋转角（0/90/180/270，顺时针）。
+ * @details    转发到 XWindow_setContentRotation（只落请求角 + 发信号），
+ *             本函数额外负责**重绘节奏**：置整帧脏闩并把整窗矩形
+ *             （含 CSD 标题栏条带，m_contentsRect 已被边距扣掉）入脏区，
+ *             等下一帧 PAINT 自然消费。刻意**不**同步调 flushBackingStore：
+ *              - 层级不倒置（XWindow 低层不回调 XWidget 高层）；
+ *              - 避开 flush 的 `!m_isWindow` / `!m_visible` 两个守卫
+ *                （未建窗/隐藏时脏区自然积压，show 时与既有整窗 update
+ *                一起补上）；
+ *              - 不在 setter 里跑 paintEvent + present。
+ *             返回 false 表示平台不支持或角度非法（此时无任何副作用）。
+ * @param      self 目标控件（取其顶层窗口）；可为 NULL。
+ * @param      deg   请求角度。
+ * @return      生效返回 true；入参非法/平台不支持返回 false。
+ */
+bool XWidget_setContentRotation(XWidget* self, int deg);
+
+/**
+ * @brief      返回顶层窗口的**有效**内容旋转角（0/90/180/270）。
+ * @details    转发 XWindow_contentRotationDegrees（纯读：平台不支持时
+ *             返回 0，条件后来满足自动恢复）。
+ * @param      self 目标控件；可为 NULL。
+ * @return      有效角度；入参非法返回 0。
+ */
+int XWidget_contentRotationDegrees(const XWidget* self);
+
 /* ==================== 可见性与窗口状态（对标 QWidget） ==================== */
 
 /** @brief 查询生效可见状态（对标 QWidget::isVisible）。 */

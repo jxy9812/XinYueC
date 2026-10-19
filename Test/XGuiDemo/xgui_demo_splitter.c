@@ -215,6 +215,20 @@ void DemoSplitter_setState(XWidget* self, int edge, bool collapsed)
     if (!sp) return;
     sp->m_edge = edge;
     sp->m_collapsed = collapsed;
+#if XCURSOR_ON
+    /* [光标随向 2026-10-17] 换停靠边后条向改变（竖↔横），拖拽光标须
+     * 同步 SizeHor/SizeVer——此前仅创建时设置一次，上下停靠仍显示
+     * 横向拖宽光标。 */
+    {
+        XCursor* cursor = XCursor_create_shape(
+            demoSplitter_verticalBar(edge) ? XCursor_SizeHor
+                                           : XCursor_SizeVer);
+        if (cursor) {
+            XWidget_setCursor(&sp->m_base, cursor);
+            XClassDelete(cursor);
+        }
+    }
+#endif
     XWidget_update(self);
 }
 

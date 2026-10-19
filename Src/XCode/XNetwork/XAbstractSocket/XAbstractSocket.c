@@ -487,7 +487,7 @@ void XAbstractSocket_setSocketState(XAbstractSocket* sock, XAbstractSocket_Socke
         // 无论从哪个状态转换到 ConnectedState，都发出 connected 信号
         XAbstractSocket_connected_signal(sock);
     }
-    else if (state == XAbstractSocket_UnconnectedState && oldState != XAbstractSocket_UnconnectedState) 
+    else if (state == XAbstractSocket_UnconnectedState && oldState != XAbstractSocket_UnconnectedState)
     {
         ((XIODevice*)sock)->m_openMode = XIODevice_NotOpen;
         XAbstractSocket_disconnected_signal(sock);

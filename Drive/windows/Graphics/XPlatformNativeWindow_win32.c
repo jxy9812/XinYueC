@@ -4163,6 +4163,14 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
                                    const XRegion* region,
                                    const XPoint* offset)
 {
+
+/* 内容旋转能力（2026-10-18）：本轮未实现软件旋转路径，恒不支持——
+   XWindow_setContentRotation 返回 false，调用方据此置灰 UI（D7/R18）。 */
+bool XPlatformNativeWindow_rotationSupported(const XWindow* window)
+{
+    (void)window;
+    return false;
+}
     XWNPendingEntry* entry;
     XPoint zero;
     const XPoint* off;
