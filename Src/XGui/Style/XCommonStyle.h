@@ -9,6 +9,8 @@
  */
 #ifndef XCOMMONSTYLE_H
 #define XCOMMONSTYLE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,4 +64,7 @@ XCommonStyle* XCommonStyle_create_ex(XMemoryType memory);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCOMMONSTYLE_H */

@@ -33,6 +33,8 @@
  ******************************************************************************/
 #ifndef XFILEDIALOG_H
 #define XFILEDIALOG_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -881,5 +883,7 @@ void* XFileDialog_directoryUrlEntered_signal(XFileDialog* self,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XFILEDIALOG_H */

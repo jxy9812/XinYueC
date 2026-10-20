@@ -44,6 +44,8 @@
  ******************************************************************************/
 #ifndef XPINYINENGINE_H
 #define XPINYINENGINE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -423,4 +425,7 @@ const char* XPinyinEngine_commitString(const XPinyinEngine* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPINYINENGINE_H */

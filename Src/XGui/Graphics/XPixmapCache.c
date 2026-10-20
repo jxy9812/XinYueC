@@ -10,6 +10,8 @@
  *             5. 序列号原子分配，哈希不再依赖未初始化的死字段。
  *             6. insert 覆盖旧字符串键时使用内部无锁路径，避免递归上锁。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPixmapCache.h"
 
 /* XPIXMAPCACHE_ON=0 时整体裁剪：全局像素图缓存不可用，引用侧
@@ -628,3 +630,5 @@ void XPixmapCache_clear(void)
     cacheLockRelease();
 }
 #endif /* XPIXMAPCACHE_ON */
+
+#endif /* XGUI_ON */

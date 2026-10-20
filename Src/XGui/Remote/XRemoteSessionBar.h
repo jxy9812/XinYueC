@@ -34,6 +34,8 @@
  */
 #ifndef XREMOTESESSIONBAR_H
 #define XREMOTESESSIONBAR_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -215,4 +217,7 @@ struct XLabel* XRemoteSessionBar_statsLabel(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XREMOTESESSIONBAR_H */

@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XRICHSTRING_H
 #define XRICHSTRING_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -182,4 +184,7 @@ const XString* XRichString_text(const XRichString* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XRICHSTRING_H */

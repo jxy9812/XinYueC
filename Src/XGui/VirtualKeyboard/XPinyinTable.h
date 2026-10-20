@@ -30,6 +30,8 @@
  ******************************************************************************/
 #ifndef XPINYINTABLE_H
 #define XPINYINTABLE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -200,4 +202,7 @@ bool XPinyinTable_hasSyllableDigitsPrefix(const char* digits, int len);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPINYINTABLE_H */

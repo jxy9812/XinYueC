@@ -22,6 +22,8 @@
  */
 #ifndef XCALENDARWIDGET_H
 #define XCALENDARWIDGET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -307,5 +309,7 @@ void* XCalendarWidget_selectionChanged_signal(XCalendarWidget* self);
 void* XCalendarWidget_currentPageChanged_signal(XCalendarWidget* self, int year, int month);
 
 #endif /* XWIDGET_ON && XCALENDARWIDGET_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XCALENDARWIDGET_H */

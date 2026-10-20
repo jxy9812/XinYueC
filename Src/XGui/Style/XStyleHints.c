@@ -3,6 +3,8 @@
  * @brief      XStyleHints 平台风格提示类实现（对标 Qt 6.8 QStyleHints）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XStyleHints.h"
 
 #include "XAlgorithm.h"
@@ -478,3 +480,5 @@ void* XStyleHints_colorSchemeChanged_signal(XStyleHints* self, XStyleHintsColorS
 }
 
 #endif /* XSTYLEHINTS_ON */
+
+#endif /* XGUI_ON */

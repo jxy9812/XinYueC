@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XDialogButtonBox.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -754,3 +756,5 @@ void* XDialogButtonBox_rejected_signal(XDialogButtonBox* self)
 
 
 #endif /* XWIDGET_ON && XPUSHBUTTON_ON && XDIALOGBUTTONBOX_ON */
+
+#endif /* XGUI_ON */

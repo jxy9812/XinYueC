@@ -2,6 +2,8 @@
  * @file       XSqlRelation.c
  * @brief      SQL 外键关系描述类实现。
  */
+#if XSQL_ON
+
 #include "XSqlRelation.h"
 
 #include <string.h>
@@ -126,3 +128,5 @@ XString* XSqlRelation_tableName(const XSqlRelation* relation) { return relation 
 XString* XSqlRelation_indexColumn(const XSqlRelation* relation) { return relation && relation->m_indexColumn ? XString_create_copy(relation->m_indexColumn) : XString_create(); }
 XString* XSqlRelation_displayColumn(const XSqlRelation* relation) { return relation && relation->m_displayColumn ? XString_create_copy(relation->m_displayColumn) : XString_create(); }
 bool XSqlRelation_isValid(const XSqlRelation* relation) { return relation && relation->m_tableName && relation->m_indexColumn && relation->m_displayColumn && XString_length_base(relation->m_tableName) && XString_length_base(relation->m_indexColumn) && XString_length_base(relation->m_displayColumn); }
+
+#endif /* XSQL_ON */

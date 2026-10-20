@@ -31,6 +31,8 @@
  *                 1012 处裁 0), 悬浮球以叠矩形圆角近似绘制。
  * @author     XinYueC 团队
  */
+#if XGUI_ON
+
 #include "XRemoteSessionBar.h"
 #if XWIDGET_ON && XGUI_REMOTE_ON
 
@@ -946,3 +948,5 @@ struct XLabel* XRemoteSessionBar_statsLabel(const XRemoteSessionBar* self)
 }
 
 #endif /* XWIDGET_ON && XGUI_REMOTE_ON */
+
+#endif /* XGUI_ON */

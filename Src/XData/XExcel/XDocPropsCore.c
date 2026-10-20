@@ -1,4 +1,6 @@
-﻿#include "XDocPropsCore.h"
+﻿#if XEXCEL_ON
+
+#include "XDocPropsCore.h"
 #include "XMemory.h"
 #include "XMap.h"
 #include "XFile.h"
@@ -307,3 +309,5 @@ bool XDocPropsCore_loadFromXmlData(XDocPropsCore* self, const uint8_t* data, siz
     if (!ok) XDocPropsCore_clear_properties(self);
     return ok;
 }
+
+#endif /* XEXCEL_ON */

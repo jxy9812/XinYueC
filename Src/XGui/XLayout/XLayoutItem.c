@@ -14,6 +14,8 @@
  *             本文件不依赖任何平台 API，嵌入式可用。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XLayoutItem.h"
 
 #include "XAlgorithm.h"
@@ -888,3 +890,5 @@ void XLayoutItem_setAlignment(XLayoutItem* self, XLayoutAlignments alignment)
 }
 
 #endif /* XLAYOUT_ON */
+
+#endif /* XGUI_ON */

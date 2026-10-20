@@ -2,6 +2,8 @@
  * @file       XSqlQuery.c
  * @brief      SQL 查询类实现。
  */
+#if XSQL_ON
+
 #include "XSqlQuery.h"
 
 #include <string.h>
@@ -300,3 +302,5 @@ void XSqlQuery_finish(XSqlQuery* query)
     XSqlResult_setActive_base(query->m_result, false);
 }
 bool XSqlQuery_nextResult(XSqlQuery* query) { return query && query->m_result && XSqlResult_isActive(query->m_result) && XSqlResult_nextResult_base(query->m_result); }
+
+#endif /* XSQL_ON */

@@ -10,6 +10,8 @@
  ******************************************************************************/
 #ifndef XVALUEAXIS_H
 #define XVALUEAXIS_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -75,4 +77,7 @@ void XValueAxis_setGridVisible(XValueAxis* self, bool visible);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVALUEAXIS_H */

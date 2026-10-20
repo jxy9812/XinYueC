@@ -14,6 +14,8 @@
  *             状态翻转（action.toggled 镜像回按钮）；按钮自身不做二次
  *             翻转，最终选中状态与动作一致。
  */
+#if XGUI_ON
+
 #include "XToolButton.h"
 
 #include "XAlgorithm.h"
@@ -975,3 +977,5 @@ void* XToolButton_triggered_signal(XToolButton* self, XAction* action)
 
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
+
+#endif /* XGUI_ON */

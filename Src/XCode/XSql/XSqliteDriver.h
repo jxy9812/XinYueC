@@ -7,6 +7,8 @@
 #ifndef XSQLITEDRIVER_H
 #define XSQLITEDRIVER_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -35,5 +37,7 @@ bool XSqliteDriver_register(void);
 /* XClass create API default-memory wrappers. */
 #undef XSqliteDriver_create
 #define XSqliteDriver_create() XSqliteDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLITEDRIVER_H */

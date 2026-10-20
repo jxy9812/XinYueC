@@ -16,6 +16,8 @@
  *             的 XWidget/XAction/XString/XPainter 抽象层，不依赖任何
  *             平台 API。
  */
+#if XGUI_ON
+
 #include "XMenu.h"
 
 #include "XAlgorithm.h"
@@ -1922,3 +1924,5 @@ bool XMenu_isTearOffMenuVisible(const XMenu* self)
 
 
 #endif /* XWIDGET_ON && XMENU_ON */
+
+#endif /* XGUI_ON */

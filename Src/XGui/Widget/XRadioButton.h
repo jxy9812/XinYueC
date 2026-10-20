@@ -26,6 +26,8 @@
  ******************************************************************************/
 #ifndef XRADIOBUTTON_H
 #define XRADIOBUTTON_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -203,4 +205,7 @@ void XRadioButton_drawContents(XRadioButton* self, XPainter* painter);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XRADIOBUTTON_H */

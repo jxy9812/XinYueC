@@ -42,6 +42,8 @@
  ******************************************************************************/
 #ifndef XPLATFORMINTEGRATION_H
 #define XPLATFORMINTEGRATION_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -627,4 +629,7 @@ void XPlatformIntegration_setStyleHints(XPlatformIntegration* self,
 #endif
 
 #endif /* XPLATFORMINTEGRATION_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XPLATFORMINTEGRATION_H */

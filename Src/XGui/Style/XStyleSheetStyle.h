@@ -1,5 +1,7 @@
 ﻿#ifndef XSTYLESHEETSTYLE_H
 #define XSTYLESHEETSTYLE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -312,4 +314,7 @@ bool XCssParseLength(const char* value, int* out);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSTYLESHEETSTYLE_H */

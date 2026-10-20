@@ -9,6 +9,8 @@
  ******************************************************************************/
 #ifndef XITEMSELECTIONMODEL_H
 #define XITEMSELECTIONMODEL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -188,4 +190,7 @@ void* XItemSelectionModel_currentColumnChanged_signal(
 }
 #endif
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XITEMSELECTIONMODEL_H */

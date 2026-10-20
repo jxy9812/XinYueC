@@ -1,4 +1,6 @@
-﻿#include "XPieSlice.h"
+﻿#if XGUI_ON
+
+#include "XPieSlice.h"
 
 #include "XAlgorithm.h"
 #include "XString.h"
@@ -566,3 +568,5 @@ int XPieSlice_labelFontSize(const XPieSlice* self)
 { return self ? self->m_labelFontSize : 0; }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

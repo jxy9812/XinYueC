@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XButtonGroup.h"
 #include "XMemory.h"
 #include "XVarList.h"
@@ -131,6 +133,7 @@ static void xbgroup_bridgeClickedSlot(XObject* receiver, XVarList* args);
 static void xbgroup_bridgePressedSlot(XObject* receiver, XVarList* args);
 static void xbgroup_bridgeReleasedSlot(XObject* receiver, XVarList* args);
 static void xbgroup_bridgeToggledSlot(XObject* receiver, XVarList* args);
+static void xbgroup_bridgeDestroyedSlot(XObject* receiver, XVarList* args);
 
 static XBGroupBridge* xbgroup_bridgeCreate(XButtonGroup* group,
                                            XAbstractButton* button)
@@ -173,6 +176,16 @@ static void xbgroup_bridgeDestroyDeferred(XBGroupBridge* bridge, bool deferred)
     XObject_disconnect_1((XObject*)bridge->m_button,
                          XSignal(XAbstractButton_toggled_signal),
                          (XObject*)bridge, xbgroup_bridgeToggledSlot);
+    /* [UAF 根修 2026-10-19] 按钮侧 destroyed 连接也须在此断开：桥析构
+       时遍历 bindSignalList，若残留该连接（发送者=按钮已析构 → 连接
+       对象已随其连接表释放）即读悬垂指针（实测崩点 XSignalSlot.c:98
+       读 conn->signal，AV c0000005）。按钮已亡时该连接已由按钮自身的
+       信号槽析构摘除（不可再对其调 disconnect），故按 m_buttonDead 闸控。 */
+    if (!bridge->m_buttonDead && bridge->m_button) {
+        XObject_disconnect_1((XObject*)bridge->m_button,
+                             XSignal(XObject_destroyed_signal),
+                             (XObject*)bridge, xbgroup_bridgeDestroyedSlot);
+    }
     if (deferred)
         XObject_deleteLater((XObject*)bridge);
     else
@@ -346,14 +359,13 @@ static XBGroupBridge* xbgroup_connectButton(XButtonGroup* self,
                       XSignal(XObject_destroyed_signal),
                       (XObject*)bridge, xbgroup_bridgeDestroyedSlot,
                       XConnectionType_Direct);
-    /* 组自身 destroyed 也接入本槽：组亡时组内存尚存（destroyed 在
-       deinit 尾部发射），槽内置 groupDead 并断开按钮侧连接，堵住
-       "组先亡、按钮后亡"窗口期内按钮 destroyed 再次入槽触达悬垂
-       组数据的路径。 */
-    XObject_connect_1((XObject*)self,
-                      XSignal(XObject_destroyed_signal),
-                      (XObject*)bridge, xbgroup_bridgeDestroyedSlot,
-                      XConnectionType_Direct);
+    /* [UAF 根修 2026-10-19] 原实现此处还把「组自身 destroyed」接入本槽
+       （6 条连接），桥析构只断 4 条 → 残留两条 destroyed 连接：组析构
+       时组侧那条的发送者连接表已随组析构释放，桥再遍历 bindSignalList
+       即读已释放的 XConnection（实测崩点 XSignalSlot.c:98 读
+       conn->signal，AV c0000005）。「组先亡、按钮后亡」窗口期改由组
+       析构侧统一处理（VX_buttonGroup_deinit 先断各桥的按钮侧
+       destroyed 连接），不再需要组→桥这条连接。 */
     return bridge;
 }
 
@@ -635,3 +647,5 @@ void* XButtonGroup_idToggled_signal(XButtonGroup* self, int id, bool checked)
 }
 
 #endif /* XABSTRACTBUTTON_ON && XBUTTONGROUP_ON */
+
+#endif /* XGUI_ON */

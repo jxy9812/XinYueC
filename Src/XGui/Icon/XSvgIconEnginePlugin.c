@@ -4,6 +4,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XSvgIconEnginePlugin.h"
 #include "XSvgIconEngine.h"
 
@@ -72,3 +74,4 @@ XSvgIconEnginePlugin* XSvgIconEnginePlugin_create(void)
 }
 #endif /* XSVGICON_ON */
 
+#endif /* XGUI_ON */

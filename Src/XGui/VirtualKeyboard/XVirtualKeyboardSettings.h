@@ -15,6 +15,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDSETTINGS_H
 #define XVIRTUALKEYBOARDSETTINGS_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -614,4 +616,7 @@ void* XVirtualKeyboardSettings_userDataReset_signal(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDSETTINGS_H */

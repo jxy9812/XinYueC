@@ -3,6 +3,8 @@
  * @brief      XDrawing 绘图容器类实现
  *             对齐 QXlsx::Drawing 全部功能
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XDrawing.h"
 #include "XMemory.h"
 #include "XByteArray.h"
@@ -156,3 +158,5 @@ bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath) {
     if (xmlData) XClassDelete(xmlData);
     return result;
 }
+
+#endif /* XEXCEL_ON */

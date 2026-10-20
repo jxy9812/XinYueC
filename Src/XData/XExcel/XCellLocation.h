@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XCELLLOCATION_H
 #define XCELLLOCATION_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -66,4 +68,7 @@ void XCellLocation_init_ex(XCellLocation* self, int row, int col, XCell* cell);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XCELLLOCATION_H */

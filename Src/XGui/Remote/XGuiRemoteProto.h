@@ -17,6 +17,8 @@
  */
 #ifndef XGUIREMOTEPROTO_H
 #define XGUIREMOTEPROTO_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1139,5 +1141,7 @@ bool XGuiRemoteProto_decError(const uint8_t* payload, size_t len,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUIREMOTEPROTO_H */

@@ -6,6 +6,8 @@
  *             具体 SSL 后端；特殊平台传输和公钥加密均通过抽象接口访问。
  *             TLS 关闭时 XSslSocket 按普通 TCP 套接字工作。
  */
+#if XSQL_ON
+
 #include "XSqlMySqlClient.h"
 
 #include <limits.h>
@@ -2666,3 +2668,5 @@ const XSqlMySqlClientApi* XSqlMySqlClient_defaultApi(void)
 {
     return &g_xmysql_client_api;
 }
+
+#endif /* XSQL_ON */

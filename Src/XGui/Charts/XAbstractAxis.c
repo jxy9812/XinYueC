@@ -3,6 +3,8 @@
  * @brief      XAbstractAxis 抽象坐标轴基类实现（对标 QAbstractAxis）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XAbstractAxis.h"
 
 #include "XAlgorithm.h"
@@ -311,3 +313,5 @@ void* XAbstractAxis_reverseChanged_signal(XAbstractAxis* self, bool reverse)
 }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

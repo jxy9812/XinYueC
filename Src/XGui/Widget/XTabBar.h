@@ -9,6 +9,8 @@
  ******************************************************************************/
 #ifndef XTABBAR_H
 #define XTABBAR_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -507,5 +509,7 @@ void XTabBar_moveTab(XTabBar* self, int from, int to);
 }
 #endif
 #endif /* XWIDGET_ON && XTABBAR_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XTABBAR_H */

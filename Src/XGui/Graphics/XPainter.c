@@ -13,6 +13,8 @@
  *             XPainter 自身是值样式上下文（不持有图像/图片所有权），
  *             save()/restore() 通过内部动态状态栈保存与恢复 XPainterState。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XSystem.h"
 
 #include "XAlgorithm.h"
@@ -5891,7 +5893,12 @@ static bool painterGlyphContoursAlphaCoverage(
 static uint32_t painterGradientColorAt(const XPainterGradient* g, float t);
 
 /* 渐变路径 GPU 快速路径：覆盖图光栅化 + 256 级 LUT → drawGradientAlpha
-   （方向 B fillPath 原生化核心，设计详见 docs/xgui/gradient-fillpath-native-design.md）。 */
+   （方向 B fillPath 原生化核心，设计详见 docs/xgui/gradient-fillpath-native-design.md）。
+   [2026-10-18 裁剪守卫] 本函数引用 m_gpuActive/m_gpuBackend（结构体成员
+   随 XPLATFORMINTEGRATION_ON && XGPU_ON 消失，XPainter.h:589-592），定义
+   必须同守卫——桌面 GPU 构建（两开关恒 1）代码逐位不变；唯一调用点在
+   XPAINTER_PATH_ON 分支内（无 GPU 构建本就裁空）。 */
+#if XPLATFORMINTEGRATION_ON && XGPU_ON
 static bool painterGpuFillPathGradient(
     XPainter* self, const PainterPathFillContour* contours,
     int contourCount, const XRect* bounds,
@@ -5980,6 +5987,7 @@ static bool painterGpuFillPathGradient(
         return ok;
     }
 }
+#endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
 
 static int painter8x16FloorInt(float value);
 static int painter8x16CeilInt(float value);
@@ -18197,3 +18205,5 @@ void XPainter_boundingRect(XPainter* self, const XRect* rect, int flags,
 }
 
 #endif /* XPAINTER_TEXTLAYOUT_ON */
+
+#endif /* XGUI_ON */

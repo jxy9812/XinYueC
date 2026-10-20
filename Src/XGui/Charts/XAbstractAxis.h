@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XABSTRACT_AXIS_H
 #define XABSTRACT_AXIS_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -185,4 +187,7 @@ void* XAbstractAxis_reverseChanged_signal(XAbstractAxis* self, bool reverse);
 }
 #endif
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XABSTRACT_AXIS_H */

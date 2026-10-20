@@ -3,6 +3,8 @@
  * @brief      XVirtualKeyboardPlatformInputContext 实现（面板驱动面）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -221,3 +223,5 @@ void XVirtualKeyboardPlatformInputContext_update(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

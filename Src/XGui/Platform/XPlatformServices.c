@@ -2,6 +2,8 @@
  * @file       XPlatformServices.c
  * @brief      平台服务对象实现。
  ****************************************************************************/
+#if XGUI_ON
+
 #include "XPlatformServices.h"
 
 #include "XAlgorithm.h"
@@ -40,3 +42,5 @@ bool XPlatformServices_openUrl_2(XPlatformServices* self, const char* url)
     return ok;
 }
 #endif
+
+#endif /* XGUI_ON */

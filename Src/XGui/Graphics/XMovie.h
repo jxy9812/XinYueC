@@ -11,6 +11,8 @@
  */
 #ifndef XMOVIE_H
 #define XMOVIE_H
+
+#if XGUI_ON
 #include "XGuiConfig.h"
 
 /* 模块开关 XMOVIE_ON 定义于 XGuiConfig.h；置 0 时本文件整体裁剪。
@@ -434,5 +436,7 @@ void* XMovie_frameChanged_signal(XMovie* self, int frameNumber);
 #undef XMovie_create
 #define XMovie_create() XMovie_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #endif /* XMOVIE_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XMOVIE_H */

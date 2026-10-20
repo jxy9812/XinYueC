@@ -28,6 +28,8 @@
 #ifndef XABSTRACTBUTTON_H
 #define XABSTRACTBUTTON_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -487,5 +489,7 @@ void* XAbstractButton_toggled_signal(XAbstractButton* self, bool checked);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XABSTRACTBUTTON_H */

@@ -24,6 +24,8 @@
  */
 #ifndef XDATEEDIT_H
 #define XDATEEDIT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -102,5 +104,7 @@ XDateEdit* XDateEdit_create_ex(XMemoryType memory, XWidget* parent,
 void* XDateEdit_userDateChanged_signal(XDateEdit* self, const XDate* date);
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XDATEEDIT_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XDATEEDIT_H */

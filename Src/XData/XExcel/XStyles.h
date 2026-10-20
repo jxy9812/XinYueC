@@ -5,6 +5,8 @@
  ******************************************************************************/
 #ifndef XSTYLES_H
 #define XSTYLES_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -129,4 +131,7 @@ bool XStyles_loadFromXmlFile(XStyles* self, const XString* filePath);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XSTYLES_H */

@@ -33,6 +33,8 @@
  */
 #ifndef XMESSAGEBOX_H
 #define XMESSAGEBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -613,5 +615,7 @@ void XMessageBox_aboutQt(XWidget* parent, const XString* title);
 XIcon* XMessageBox_standardIcon(int icon);
 
 #endif /* XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XMESSAGEBOX_H */

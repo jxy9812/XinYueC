@@ -1,4 +1,6 @@
-﻿#include "XZipReader.h"
+﻿#if XEXCEL_ON
+
+#include "XZipReader.h"
 #include "XMemory.h"
 #include "XCrc.h"
 #include "XFile.h"
@@ -269,3 +271,5 @@ XByteArray* XZipReader_fileData(const XZipReader* self, const XString* fileName)
     }
     return NULL;
 }
+
+#endif /* XEXCEL_ON */

@@ -21,6 +21,8 @@
  */
 #ifndef XGUIREMOTEUDPCHANNEL_H
 #define XGUIREMOTEUDPCHANNEL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -285,5 +287,7 @@ uint64_t XGuiRemoteUdpChannel_rxLostFrames(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUIREMOTEUDPCHANNEL_H */

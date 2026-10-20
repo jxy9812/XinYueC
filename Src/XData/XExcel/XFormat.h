@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XFORMAT_H
 #define XFORMAT_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1091,4 +1093,7 @@ bool XFormat_notEquals(const XFormat* a, const XFormat* b);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XFORMAT_H */

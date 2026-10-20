@@ -19,6 +19,8 @@
 #ifndef XGPURENDERDRIVER_H
 #define XGPURENDERDRIVER_H
 
+#if XGUI_ON
+
 #include <stdbool.h>
 #include <stdint.h>
 #include "XGuiConfig.h"
@@ -367,5 +369,7 @@ const XGpuRenderDriverProcs* XGpuRenderDriver_procs(XGpuRenderDriverType type);
 void XGpuRenderDriver_gl_setPointerGrabQuery(int (*query)(void));
 
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XGPURENDERDRIVER_H */

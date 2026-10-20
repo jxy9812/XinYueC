@@ -16,6 +16,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDINPUTENGINE_PROTECTED_H
 #define XVIRTUALKEYBOARDINPUTENGINE_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -114,4 +116,7 @@ XVirtualKeyboardTrace* XVirtualKeyboardTrace_create_engine(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDINPUTENGINE_PROTECTED_H */

@@ -9,6 +9,8 @@
  ******************************************************************************/
 #ifndef XABSTRACTBARSERIES_H
 #define XABSTRACTBARSERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -258,4 +260,7 @@ void* XAbstractBarSeries_barsetsRemoved_signal(XAbstractBarSeries* self,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XABSTRACTBARSERIES_H */

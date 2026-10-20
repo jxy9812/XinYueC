@@ -23,6 +23,8 @@
  *             - listVersions：枚举 versions/<comp>/ 子目录，顺序未定义。
  */
 
+#if XUPGRADE_ON
+
 #include "XUpgradeStoreDir.h"
 
 #include "xupgrade_shared.h" /* 模块内部共享小工具（xups_*） */
@@ -674,3 +676,5 @@ XUpgradeStore* XUpgradeStoreDir_create_ex(XMemoryType memory, const char* instal
     Set_Class_IsHeap(store, true);
     return &store->m_parent;
 }
+
+#endif /* XUPGRADE_ON */

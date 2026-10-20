@@ -37,6 +37,8 @@
  */
 #ifndef XSPLITTER_H
 #define XSPLITTER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -305,5 +307,7 @@ void* XSplitter_handleClicked_signal(XSplitter* self, int index,
 }
 #endif
 #endif /* XWIDGET_ON && XFRAME_ON && XSPLITTER_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XSPLITTER_H */

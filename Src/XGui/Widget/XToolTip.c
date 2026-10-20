@@ -7,6 +7,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XToolTip.h"
 #include "XMemory.h"
 #include "XVarList.h"
@@ -322,3 +324,5 @@ void XToolTip_setPalette(const XPalette* palette)
 }
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */

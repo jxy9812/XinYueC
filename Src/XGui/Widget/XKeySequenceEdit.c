@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XKeySequenceEdit.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
@@ -615,3 +617,5 @@ void* XKeySequenceEdit_editingFinished_signal(XKeySequenceEdit* self)
 
 
 #endif /* XWIDGET_ON && XKEYSEQUENCEEDIT_ON */
+
+#endif /* XGUI_ON */

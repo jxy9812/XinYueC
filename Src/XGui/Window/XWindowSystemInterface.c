@@ -18,6 +18,8 @@
  *             依赖 XGUIAPPLICATION_ON / XWINDOW_ON / XWINDOWEVENT_ON。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XWindowSystemInterface.h"
 
 #include "XAlgorithm.h"
@@ -891,3 +893,5 @@ void XWindowSystemInterface_flushWindowSystemEvents(XEventLoopProcessEventsFlags
 }
 
 #endif /* XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON && XWINDOWEVENT_ON */
+
+#endif /* XGUI_ON */

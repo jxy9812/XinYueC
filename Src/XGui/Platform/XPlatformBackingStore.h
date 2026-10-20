@@ -33,6 +33,8 @@
  ******************************************************************************/
 #ifndef XPLATFORMBACKINGSTORE_H
 #define XPLATFORMBACKINGSTORE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -615,4 +617,7 @@ void XPlatformBackingStoreDriver_presentTile(void* nativeState,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPLATFORMBACKINGSTORE_H */

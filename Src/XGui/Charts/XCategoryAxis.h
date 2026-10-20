@@ -10,6 +10,8 @@
  ******************************************************************************/
 #ifndef XCATEGORYAXIS_H
 #define XCATEGORYAXIS_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -76,4 +78,7 @@ void* XCategoryAxis_countChanged_signal(XCategoryAxis* self, int count);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCATEGORYAXIS_H */

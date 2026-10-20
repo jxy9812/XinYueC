@@ -21,6 +21,8 @@
 #ifndef XGUI_REMOTE_CODEC_NEON_H
 #define XGUI_REMOTE_CODEC_NEON_H
 
+#if XGUI_ON
+
 #include <stdint.h>
 #include <string.h>
 
@@ -142,5 +144,7 @@ static inline size_t xrc_neon_run_count(const uint8_t* scan,
 }
 
 #endif /* XRC_NEON_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XGUI_REMOTE_CODEC_NEON_H */

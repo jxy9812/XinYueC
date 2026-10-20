@@ -1,5 +1,7 @@
 ﻿#ifndef XSTYLE_H
 #define XSTYLE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -525,4 +527,7 @@ void XStyle_invalidateStyleSheetRenderCache(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSTYLE_H */

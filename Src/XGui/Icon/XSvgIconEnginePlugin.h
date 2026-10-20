@@ -8,6 +8,8 @@
  */
 #ifndef XSVGICONENGINEPLUGIN_H
 #define XSVGICONENGINEPLUGIN_H
+
+#if XGUI_ON
 #include "XGuiConfig.h"
 #if XSVGICON_ON
 #ifdef __cplusplus
@@ -36,4 +38,7 @@ XSvgIconEnginePlugin* XSvgIconEnginePlugin_create(void);
 }
 #endif
 #endif /* XSVGICON_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XSVGICONENGINEPLUGIN_H */

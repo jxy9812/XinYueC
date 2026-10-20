@@ -4,6 +4,38 @@
 
 #if XMEMORY_VARIABLEPOOL_ON
 
+/* ===== 泄漏取证（2026-10-19）：全局池按尺寸档的 malloc/free 配对计数 =====
+ * 裸机上 SYSTEM 槽 = 本全局池，lwip/SDK 的 pbuf 全从这里进出。
+ * 「某档 malloc 数 - free 数」持续增长 = 该尺寸有配对缺失。
+ * 开销：每笔分配/释放两次整数比较，XMEMORY_HISTO_FREE_ON=0 时零成本。 */
+#if XMEMORY_HISTO_FREE_ON
+static unsigned long xvh_alloc_n[7];   /* 32/64/128/256/512/1024/>1024 */
+static unsigned long xvh_free_n[7];
+
+static unsigned xvh_bin(size_t size)
+{
+    if (size <= 32u)   return 0;
+    if (size <= 64u)   return 1;
+    if (size <= 128u)  return 2;
+    if (size <= 256u)  return 3;
+    if (size <= 512u)  return 4;
+    if (size <= 1024u) return 5;
+    return 6;
+}
+
+void xmemory_histo_alloc_note(size_t size) { xvh_alloc_n[xvh_bin(size)]++; }
+void xmemory_histo_free_note(size_t size)  { xvh_free_n[xvh_bin(size)]++; }
+
+bool XVariablePool_leak_stats(unsigned bin, unsigned long* outAlloc, unsigned long* outFree)
+{
+    if (bin >= 7u) return false;
+    if (outAlloc) *outAlloc = xvh_alloc_n[bin];
+    if (outFree)  *outFree  = xvh_free_n[bin];
+    return xvh_alloc_n[bin] != xvh_free_n[bin];
+}
+#endif
+/* ===== 泄漏取证结束 ===== */
+
 #define XVARIABLEPOOL_BLOCK_ALLOCATED ((size_t)1u)
 #define XVARIABLEPOOL_BLOCK_SIZE_MASK (~(size_t)1u)
 #define XVARIABLEPOOL_BLOCK_MAGIC UINT32_C(0x58565042)
@@ -1037,7 +1069,13 @@ void* XVariablePool_global_malloc(size_t size)
 {
     if (!xvariablepool_global_ensure())
         return NULL;
-    return XVariablePool_malloc(xvariablepool_global_pool, size);
+    {
+        void* p = XVariablePool_malloc(xvariablepool_global_pool, size);
+#if XMEMORY_HISTO_FREE_ON
+        if (p) xmemory_histo_alloc_note(XVariablePool_getMaxUserSize(xvariablepool_global_pool, p));
+#endif
+        return p;
+    }
 }
 
 void* XVariablePool_global_calloc(size_t count, size_t size)
@@ -1058,6 +1096,12 @@ void XVariablePool_global_free(void* ptr)
 {
     if (!xvariablepool_global_inited)
         return;
+#if XMEMORY_HISTO_FREE_ON
+    /* 泄漏取证：free 路径拿不到用户申请的 size，用块的容量近似（同一块的
+     * alloc/free 两次查询结果一致，配对统计不受影响）。malloc/free 在本
+     * 函数对进出，能覆盖 SYSTEM 槽（裸机=全局可变池）的全部流量。 */
+    xmemory_histo_free_note(XVariablePool_getMaxUserSize(xvariablepool_global_pool, ptr));
+#endif
     XVariablePool_free(xvariablepool_global_pool, ptr);
 }
 

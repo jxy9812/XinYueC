@@ -30,6 +30,8 @@
  *             置 0 时本文件实现体整体裁剪。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPlatformIntegration.h"
 
 #include "XAlgorithm.h"
@@ -820,3 +822,5 @@ void XPlatformIntegration_setStyleHints(XPlatformIntegration* self,
 }
 
 #endif /* XPLATFORMINTEGRATION_ON */
+
+#endif /* XGUI_ON */

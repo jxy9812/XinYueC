@@ -536,7 +536,11 @@ XVector* XThreadData_takePostedEvents(void)
     XPostEvent pe = { 0 };
     while (XLockFreeQueue_receive_base(&td->m_tryPostEventList, &pe))
     {
-        XVector_push_back_1_base(local, &pe);
+        /* 出队即接管所有权：本地批次扩容失败时必须就地丢弃，
+         * 否则事件对象与接收者的 posted_events 计数一起泄漏
+         * （池耗尽的小内存平台上这是持续泄漏路径）。 */
+        if (!XVector_push_back_1_base(local, &pe))
+            XThreadData_discardPostedEvent(&pe);
     }
 
     // 关键：稳定降序排序 (对标 Qt 6.8 QPostEventList::addEvent 使用 std::upper_bound)

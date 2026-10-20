@@ -13,6 +13,8 @@
  *             回调并透传 ud）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XTextMenu.h"
 
 #if XTEXTMENU_ON
@@ -215,3 +217,5 @@ XMenu* XTextMenu_createStandard(const XTextMenuOps* ops)
 }
 
 #endif /* XTEXTMENU_ON */
+
+#endif /* XGUI_ON */

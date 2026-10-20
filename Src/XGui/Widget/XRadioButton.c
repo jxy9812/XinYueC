@@ -22,6 +22,8 @@
  *             登记仍是裁剪项。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XRadioButton.h"
 
 #include "XAlgorithm.h"
@@ -442,3 +444,5 @@ XRadioButton* XRadioButton_create_ex(XMemoryType memory, XWidget* parent,
 }
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XRADIOBUTTON_ON */
+
+#endif /* XGUI_ON */

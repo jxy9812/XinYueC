@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XABSTRACTOOXMLFILE_H
 #define XABSTRACTOOXMLFILE_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -93,4 +95,7 @@ const XString* XAbstractOOXmlFile_filePath(const XAbstractOOXmlFile* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XABSTRACTOOXMLFILE_H */

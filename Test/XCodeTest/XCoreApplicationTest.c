@@ -500,6 +500,125 @@ static void test_postEvent_compress_multi(void)
     XPrintf("  [通过] 多类型事件压缩正常\n");
 }
 
+/* ==================== 测试 21: sendPostedEvents 所有权/泄漏探针 ==================== */
+/* 事件对象所有权收口验证（ESP8266 慢速泄漏排查的桌面闸门）：
+ *  - postEvent/tryPostEvent 成功后队列接管事件；
+ *  - sendPostedEvents 派发、过滤回队、removePostedEvents 丢弃后，
+ *    事件对象必须释放，接收者 posted_events 计数必须归零；
+ *  - 稳态循环下系统分配器在用字节不得随迭代增长。 */
+static void test_sendPostedEvents_ownership(void)
+{
+    const int warmup = 500;
+    const int rounds = 20000;
+    int i;
+    XMemoryStatistics before, after;
+    TestReceiver* recv = TestReceiver_create();
+    TestReceiver* other = TestReceiver_create();
+    XThreadData* td = XThreadData_current();
+
+    XPrintf("\n===== [测试 21] sendPostedEvents 所有权/泄漏探针 =====\n");
+    assert(recv && other && td);
+
+    /* 先清空套件前序用例遗留的投递（如 deleteLater 的 DeferredDelete），
+     * 否则末尾「队列必须为空」的断言会被无关事件干扰。 */
+    XCoreApplication_removePostedEvents(NULL, 0);
+
+    /* 1) 定向投递：每轮派发后计数归零（无未释放事件） */
+    for (i = 0; i < warmup; ++i) {
+        XEvent* e = XEvent_create(XEVENT_TYPE_USER);
+        XCoreApplication_postEvent((XObject*)recv, e, 0);
+        XCoreApplication_sendPostedEvents((XObject*)recv, 0);
+    }
+    assert(recv->receivedCount == warmup);
+    assert(XAtomic_load_int32(&((XObject*)recv)->m_posted_events,
+                              XAtomic_MemoryOrder_Relaxed) == 0);
+
+    /* 2) 接收者不匹配：事件留在队列（计数保持 1），removePostedEvents 后归零 */
+    {
+        XEvent* e = XEvent_create(XEVENT_TYPE_USER);
+        XCoreApplication_postEvent((XObject*)other, e, 0);
+        XCoreApplication_sendPostedEvents((XObject*)recv, 0);
+        assert(XAtomic_load_int32(&((XObject*)other)->m_posted_events,
+                                  XAtomic_MemoryOrder_Relaxed) == 1);
+        XCoreApplication_removePostedEvents((XObject*)other, 0);
+        assert(XAtomic_load_int32(&((XObject*)other)->m_posted_events,
+                                  XAtomic_MemoryOrder_Relaxed) == 0);
+    }
+
+    /* 3) DeferredDelete 顶层不可派发 → 重新入队，计数保持 1；
+     *    显式 remove 后归零（覆盖重新投递路径与失败回滚的所有权收口） */
+    {
+        XDeferredDeleteEvent* dde = XDeferredDeleteEvent_create(true, 0, 0);
+        XCoreApplication_postEvent((XObject*)recv, (XEvent*)dde, 0);
+        XCoreApplication_sendPostedEvents((XObject*)recv, 0);
+        assert(XAtomic_load_int32(&((XObject*)recv)->m_posted_events,
+                                  XAtomic_MemoryOrder_Relaxed) == 1);
+        XCoreApplication_removePostedEvents((XObject*)recv,
+                                            XEVENT_TYPE_DEFERRED_DELETE);
+        assert(XAtomic_load_int32(&((XObject*)recv)->m_posted_events,
+                                  XAtomic_MemoryOrder_Relaxed) == 0);
+    }
+
+    /* 4) 稳态循环：队列取空 + 排序 + 派发 + 容器释放全链路 */
+    before = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+    for (i = 0; i < rounds; ++i) {
+        XEvent* e = XEvent_create(XEVENT_TYPE_USER);
+        XCoreApplication_postEvent((XObject*)recv, e, 0);
+        XCoreApplication_sendPostedEvents((XObject*)recv, 0);
+    }
+    after = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+    XPrintf("  稳态 %d 轮: system %zu -> %zu 字节 (差值 %+lld), 接收=%d\n",
+            rounds, before.systemBytes, after.systemBytes,
+            (long long)after.systemBytes - (long long)before.systemBytes,
+            recv->receivedCount);
+    assert(recv->receivedCount == warmup + rounds);
+    assert(XAtomic_load_int32(&((XObject*)recv)->m_posted_events,
+                              XAtomic_MemoryOrder_Relaxed) == 0);
+    assert(XContainerSize(&td->m_postEventList) == 0);
+    assert(XLockFreeQueue_size_base(&td->m_tryPostEventList) == 0);
+    if (before.systemBytes != 0) {
+        /* 系统堆记账为在用字节：稳态下不应随轮次增长（留 256B 抖动）。 */
+        assert(after.systemBytes <= before.systemBytes + 256);
+    }
+
+    /* 5) ESP8266 泵的真实路径：tryPostEvent（无锁队列）→
+     *    processEvents（dispatcher 取队列/派发）。同样要求在稳态下零增长。 */
+    before = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+    for (i = 0; i < rounds; ++i) {
+        XEvent* e = XEvent_create(XEVENT_TYPE_USER);
+        if (!XCoreApplication_tryPostEvent((XObject*)recv, e, 0))
+            XClassDelete(e);
+        XCoreApplication_processEvents(0);
+    }
+    after = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+    XPrintf("  泵路径 %d 轮: system %zu -> %zu 字节 (差值 %+lld), 接收=%d\n",
+            rounds, before.systemBytes, after.systemBytes,
+            (long long)after.systemBytes - (long long)before.systemBytes,
+            recv->receivedCount);
+    assert(recv->receivedCount == warmup + rounds * 2);
+    assert(XAtomic_load_int32(&((XObject*)recv)->m_posted_events,
+                              XAtomic_MemoryOrder_Relaxed) == 0);
+    assert(XContainerSize(&td->m_postEventList) == 0);
+    assert(XLockFreeQueue_size_base(&td->m_tryPostEventList) == 0);
+    if (before.systemBytes != 0)
+        assert(after.systemBytes <= before.systemBytes + 256);
+
+    /* 6) 空泵：无事件时 processEvents 只做取队列/容器释放，必须零增长 */
+    before = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+    for (i = 0; i < rounds; ++i)
+        XCoreApplication_processEvents(0);
+    after = XMemory_statistics(XMEMORY_TYPE_SYSTEM);
+    XPrintf("  空泵   %d 轮: system %zu -> %zu 字节 (差值 %+lld)\n",
+            rounds, before.systemBytes, after.systemBytes,
+            (long long)after.systemBytes - (long long)before.systemBytes);
+    if (before.systemBytes != 0)
+        assert(after.systemBytes <= before.systemBytes + 256);
+
+    XClassDelete(recv);
+    XClassDelete(other);
+    XPrintf("  [通过] 事件对象派发/丢弃后全部释放，计数与队列归零\n");
+}
+
 /* ==================== 主测试入口 ==================== */
 void XCoreApplicationTest(XVariant* variant)
 {
@@ -528,6 +647,7 @@ void XCoreApplicationTest(XVariant* variant)
     test_forwardEvent();
     test_eventDispatcher_mainThread();
     test_postEvent_compress_multi();
+    test_sendPostedEvents_ownership();
 
     XPrintf("\n========================================\n");
     XPrintf("  所有 XCoreApplication 测试通过！\n");
@@ -542,4 +662,11 @@ void XTestMenu_XCoreApplicationTest(XTestMenu* root)
         XAction* action = XTestMenu_addAction(menu, "Qt 对齐测试");
         XTestMenu_setActionFunction(action, XCoreApplicationTest);
     }
+}
+
+/* 无头入口：main.c --test send-posted-events 直接跑所有权/泄漏探针
+ * （ESP8266 慢速泄漏排查用，避免启动交互 shell）。 */
+void XCoreApplicationTest_runSendPostedEventsProbe(void)
+{
+    test_sendPostedEvents_ownership();
 }

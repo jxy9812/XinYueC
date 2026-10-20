@@ -2,6 +2,8 @@
  * @file       XMovie.c
  * @brief      XMovie 单帧/动画读取控制实现。
  */
+#if XGUI_ON
+
 #include "XMovie.h"
 
 /* XMOVIE_ON=0 时整体裁剪：影片播放 API 不可见，XLabel 侧按回退模式
@@ -823,3 +825,5 @@ void* XMovie_frameChanged_signal(XMovie* self, int frameNumber)
     return (void*)(size_t)XMovie_frameChanged_signal;
 }
 #endif /* XMOVIE_ON */
+
+#endif /* XGUI_ON */

@@ -9,6 +9,8 @@
  ******************************************************************************/
 #ifndef XSPLINESERIES_H
 #define XSPLINESERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -51,4 +53,7 @@ XSplineSeries* XSplineSeries_create_ex(XMemoryType memory);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSPLINESERIES_H */

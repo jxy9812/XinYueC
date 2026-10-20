@@ -1,4 +1,6 @@
 ﻿/*****************************************************************************/
+#if XGUI_ON
+
 #include "XImageCodecInternal.h"
 #include "XMemory.h"
 
@@ -66,3 +68,5 @@ bool XImageCodecInternal_appendBytes(XByteArray* out,
 }
 
 #endif /* XIMAGECODEC_ON */
+
+#endif /* XGUI_ON */

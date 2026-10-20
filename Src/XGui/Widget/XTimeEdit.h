@@ -25,6 +25,8 @@
  */
 #ifndef XTIMEEDIT_H
 #define XTIMEEDIT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -131,5 +133,7 @@ XTimeEdit* XTimeEdit_create_ex_2(XMemoryType memory, const XTime* time,
 void* XTimeEdit_userTimeChanged_signal(XTimeEdit* self, const XTime* time);
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XTIMEEDIT_H */

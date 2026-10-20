@@ -13,6 +13,8 @@
  ******************************************************************************/
 #ifndef XTABLEWIDGET_H
 #define XTABLEWIDGET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1018,4 +1020,7 @@ void* XTableWidget_itemSelectionChanged_signal(XTableWidget* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XTABLEWIDGET_H */

@@ -1,5 +1,7 @@
 ﻿#ifndef XTABLEVIEW_H
 #define XTABLEVIEW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -357,4 +359,7 @@ void XTableView_selectColumn(XTableView* self, int column);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XTABLEVIEW_H */

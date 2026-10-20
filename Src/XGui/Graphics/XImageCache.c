@@ -23,6 +23,8 @@
  *             同步原语。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageCache.h"
 
 #if XIMAGECACHE_ON && XIMAGECACHE_MAX_BYTES > 0
@@ -272,3 +274,5 @@ void XImageCache_stats(size_t* outBytes, int* outCount)
 }
 
 #endif /* XIMAGECACHE_ON && XIMAGECACHE_MAX_BYTES > 0 */
+
+#endif /* XGUI_ON */

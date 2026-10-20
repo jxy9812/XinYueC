@@ -7,6 +7,8 @@
 #ifndef XICONENGINE_H
 #define XICONENGINE_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -232,5 +234,7 @@ void XIconEngine_virtualHook_base(const XIconEngine* self, int id, void* data);
 
 #undef XIconEngine_create
 #define XIconEngine_create() XIconEngine_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XICONENGINE_H */

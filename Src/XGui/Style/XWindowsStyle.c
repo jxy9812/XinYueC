@@ -1,4 +1,6 @@
-﻿#include "XWindowsStyle.h"
+﻿#if XGUI_ON
+
+#include "XWindowsStyle.h"
 
 #include "XAlgorithm.h"
 #include "XMemory.h"
@@ -144,3 +146,5 @@ static int VXWindowsStyle_pixelMetric(XStyle* self, int pm,
 }
 
 #endif /* XSTYLE_ON */
+
+#endif /* XGUI_ON */

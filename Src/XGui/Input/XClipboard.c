@@ -3,6 +3,8 @@
  * @brief      XClipboard 剪贴板类实现（对标 Qt 6.8 QClipboard）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XClipboard.h"
 
 #include "XAlgorithm.h"
@@ -742,3 +744,5 @@ void* XClipboard_dataChanged_signal(XClipboard* self)
 }
 
 #endif /* XCLIPBOARD_ON */
+
+#endif /* XGUI_ON */

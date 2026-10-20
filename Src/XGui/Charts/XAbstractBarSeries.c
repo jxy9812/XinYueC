@@ -7,6 +7,8 @@
  * @note       模块总开关 XCHARTS_ON。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XAbstractBarSeries.h"
 
 #include "XAlgorithm.h"
@@ -680,3 +682,5 @@ void* XAbstractBarSeries_barsetsRemoved_signal(XAbstractBarSeries* self,
 }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

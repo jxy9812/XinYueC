@@ -3,6 +3,8 @@
  * @brief      XCellFormula 单元格公式类实现
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XCellFormula.h"
 #include "XMemory.h"
 #include <stdlib.h>
@@ -160,3 +162,5 @@ void XCellFormula_setText_utf8(XCellFormula* self, const char* text)
     XCellFormula_setText(self, s);
     if (s) XClassDelete(s);
 }
+
+#endif /* XEXCEL_ON */

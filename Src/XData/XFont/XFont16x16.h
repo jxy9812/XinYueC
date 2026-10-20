@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XFONT16X16_H
 #define XFONT16X16_H
+
+#if XFONT_FREETYPE_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -29,4 +31,7 @@ bool XFont16x16_register(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XFONT_FREETYPE_ON */
+
 #endif /* XFONT16X16_H */

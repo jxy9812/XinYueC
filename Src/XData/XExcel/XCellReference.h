@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XCELLREFERENCE_H
 #define XCELLREFERENCE_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -200,5 +202,7 @@ static inline bool XCellReference_notEquals(const XCellReference* a, const XCell
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
 
 #endif /* XCELLREFERENCE_H */

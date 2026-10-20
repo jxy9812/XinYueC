@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XToolBar.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
@@ -1026,3 +1028,5 @@ void* XToolBar_iconSizeChanged_signal(XToolBar* self, int width, int height)
 
 
 #endif /* XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON */
+
+#endif /* XGUI_ON */

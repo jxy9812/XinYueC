@@ -14,6 +14,8 @@
  *              只通过 XImageCodecInternal_decodeBmp/encodeBmp 对外暴露，
  *              统一由 XImageCodec.c 的 XImageCodec_decode/encode 分发。
  */
+#if XGUI_ON
+
 #include "XImageCodec_config.h"
 
 #include "XAlgorithm.h"
@@ -890,3 +892,5 @@ bool XImageCodecInternal_encodeDib(const XImage* image, XByteArray* out)
 
 #endif /* XIMAGECODEC_BMP_ON */
 #endif /* XIMAGECODEC_ON */
+
+#endif /* XGUI_ON */

@@ -22,6 +22,13 @@ typedef enum XDeviceConsoleCommand
     XDeviceConsoleCommand_Count                              /**< 控制台命令数量边界，不是有效命令。 */
 } XDeviceConsoleCommand;
 
+/** @brief 控制台设备专有属性。 */
+typedef enum XDeviceConsoleProperty
+{
+    XDeviceConsoleProperty_Echo = XDeviceProperty_Count, /**< 终端输入是否回显，值为 bool。 */
+    XDeviceConsoleProperty_Count                         /**< 控制台属性数量边界，不是有效属性。 */
+} XDeviceConsoleProperty;
+
 /** @brief 控制台设备打开选项；当前仅使用通用基类选项。 */
 typedef struct XDeviceConsoleOpenOptions
 {
@@ -33,6 +40,8 @@ typedef struct XDeviceConsoleContext
 {
     XDeviceContext m_base; /**< 通用设备上下文，必须是第一个成员。 */
     XFd m_backendFd;       /**< 平台标准输入后端句柄；仅设备内部借用。 */
+    uint16_t m_echo : 1;    /**< 最近一次设置后的输入回显状态；供属性读回。 */
+    uint16_t _reserved : 15;/**< 保留位，必须初始化为 0。 */
 } XDeviceConsoleContext;
 
 /** @brief XDeviceConsole 类虚函数表；继承 XDevice，不新增虚槽。 */
@@ -63,6 +72,8 @@ bool XDeviceConsole_register(void);
 #define XDeviceConsole_write   XDevice_write
 #define XDeviceConsole_flush   XDevice_flush
 #define XDeviceConsole_control XDevice_control
+/** @brief 读取设备最近一次错误码；复用父类门面。 */
+#define XDeviceConsole_lastError XDevice_lastError
 
 /**
  * @brief 打开当前进程的标准输入控制台设备。

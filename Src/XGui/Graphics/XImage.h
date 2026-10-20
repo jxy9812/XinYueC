@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XIMAGE_H
 #define XIMAGE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1059,5 +1061,7 @@ const char* XImage_formatToStr_2(XImageFormat format);
 /* XClass create API default-memory wrappers. */
 #undef XImage_create
 #define XImage_create() XImage_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XIMAGE_H */

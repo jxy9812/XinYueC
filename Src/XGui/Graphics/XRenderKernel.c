@@ -10,6 +10,8 @@
  *             GUI 单线程访问，无锁（与 XPainter 既有静态缓存同纪律）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XRenderKernel.h"
 
 #if XPAINTER_ON
@@ -81,3 +83,5 @@ const XRenderKernelOps* XRenderKernel_forFormat(XImageFormat format)
 }
 
 #endif /* XPAINTER_ON */
+
+#endif /* XGUI_ON */

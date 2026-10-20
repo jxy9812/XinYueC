@@ -12,6 +12,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XGraphicsBlurEffect.h"
 
 #include "XGuiConfig.h"
@@ -199,3 +201,5 @@ void* XGraphicsBlurEffect_blurHintsChanged_signal(
 }
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */

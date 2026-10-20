@@ -175,12 +175,15 @@ void XDeviceNetwork_poll(void);
 /**
  * @brief 获取当前线程最近一次平台网络错误码。
  * @return 当前线程最近一次平台网络调用的错误码；没有错误时返回 0。
+ * @note 返回的是平台原生错误码（POSIX errno / Win32 WSA 错误），与框架
+ *       XDeviceError 编号空间无关；已打开设备的错误码请用
+ *       XDevice_lastError(fd) 读取，配套描述见 XDeviceNetwork_errorString。
  */
-int XDeviceNetwork_lastError(void);
+int XDeviceNetwork_platformLastError(void);
 
 /**
  * @brief 将平台错误码转换为可读字符串。
- * @param errorCode XDeviceNetwork_lastError 或平台后端返回的错误码。
+ * @param errorCode XDeviceNetwork_platformLastError 或平台后端返回的错误码。
  * @return 成功返回新分配的 NUL 结尾错误描述，调用方必须使用 XFree_System
  *         释放；分配失败返回 NULL。
  */
@@ -504,6 +507,13 @@ XDeviceNetwork* XDeviceNetwork_create(void);
 #define XDeviceNetwork_write   XDevice_write
 #define XDeviceNetwork_flush   XDevice_flush
 #define XDeviceNetwork_control XDevice_control
+/**
+ * @brief 读取设备最近一次错误码；复用父类门面。
+ * @details 值为双段编号：平台原生码（<XDEVICE_ERROR_FRAMEWORK_BASE，可用
+ *          XDeviceNetwork_errorString 解释）或 XDeviceError 枚举。
+ * @note 线程级平台错误码（无需 fd）请用 XDeviceNetwork_platformLastError。
+ */
+#define XDeviceNetwork_lastError XDevice_lastError
 
 /* 属性便捷 API；实现统一转发到 XDevice_getProperty/setProperty。 */
 /** @param fd 网络设备句柄；@param value 输出套接字类型；@return 成功返回 true。 */

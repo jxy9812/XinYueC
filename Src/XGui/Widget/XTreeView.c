@@ -3,6 +3,8 @@
  * @brief      XTreeView 树视图实现（扁平 model 第一列渲染）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XTreeView.h"
 
 #include "XAlgorithm.h"
@@ -1399,3 +1401,5 @@ static void VXTreeView_paintEvent(XWidget* self, XEvent* event)
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

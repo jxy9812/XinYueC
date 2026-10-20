@@ -3,6 +3,8 @@
  * @brief      XCellReference 单元格引用类实现（对标 QXlsx::CellReference）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XCellReference.h"
 #include <string.h>
 
@@ -260,3 +262,5 @@ void XCellReference_init_str_utf8(XCellReference* self, const char* cell)
         parseCellReference(cell, &self->m_row, &self->m_column);
     }
 }
+
+#endif /* XEXCEL_ON */

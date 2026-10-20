@@ -4,6 +4,8 @@
  *             现（对标 Qt 6.8 QVirtualKeyboardAbstractInputMethod）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -467,3 +469,5 @@ void* XVirtualKeyboardAbstractInputMethod_selectionListsChanged_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

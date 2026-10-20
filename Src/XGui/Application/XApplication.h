@@ -19,6 +19,8 @@
  ******************************************************************************/
 #ifndef XAPPLICATION_H
 #define XAPPLICATION_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -354,4 +356,7 @@ void XApplication_setAutoSipEnabled(bool enabled);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XAPPLICATION_H */

@@ -10,6 +10,8 @@
  *   XReadSax_readSheetXml()             - SAX解析sheet XML数据
  *   XReadSax_readSheetFromZip()         - 从ZIP读取指定sheet
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XReadSax.h"
 #include "XZipReader.h"
 #include "XXmlStreamReader.h"
@@ -357,3 +359,5 @@ bool XReadSax_readSheetFromZip(const XString* zipPath,
     XClassDelete(xmlData);
     return ok;
 }
+
+#endif /* XEXCEL_ON */

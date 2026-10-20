@@ -3,6 +3,8 @@
  * @brief      XConditionalFormatting 条件格式类实现（对标 QXlsx::ConditionalFormatting）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XConditionalFormatting.h"
 #include "XMemory.h"
 
@@ -323,3 +325,5 @@ XConditionalFormatting_Rule* XConditionalFormatting_rule(const XConditionalForma
     if (!self || !self->m_rules || index < 0 || (size_t)index >= XVector_size_base(self->m_rules)) return NULL;
     return (XConditionalFormatting_Rule*)XVector_at_base(self->m_rules, (size_t)index);
 }
+
+#endif /* XEXCEL_ON */

@@ -4,6 +4,8 @@
  *             候选模型/locale 工厂注册表/长按重复）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -784,3 +786,5 @@ void* XVirtualKeyboardInputEngine_wordCandidateListVisibleHintChanged_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

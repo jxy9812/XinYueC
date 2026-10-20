@@ -1,4 +1,6 @@
-﻿#include "XCommonStyle.h"
+﻿#if XGUI_ON
+
+#include "XCommonStyle.h"
 #include "XStringUtils.h"
 #include "XAlgorithm.h"
 #include "XMemory.h"
@@ -4536,3 +4538,5 @@ XCommonStyle* XCommonStyle_create_ex(XMemoryType memory)
 }
 
 #endif /* XSTYLE_ON */
+
+#endif /* XGUI_ON */

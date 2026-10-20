@@ -9,6 +9,8 @@
  */
 #ifndef XIMAGEPLUGINREGISTRY_H
 #define XIMAGEPLUGINREGISTRY_H
+
+#if XGUI_ON
 #include "XGuiConfig.h"
 #if XIMAGEIOPLUGIN_ON
 
@@ -211,4 +213,7 @@ XStringList* XImagePluginRegistry_imageFormatsForMimeType_2(const char* mimeType
 }
 #endif
 #endif /* XIMAGEIOPLUGIN_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XIMAGEPLUGINREGISTRY_H */

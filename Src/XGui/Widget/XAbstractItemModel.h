@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XABSTRACTITEMMODEL_H
 #define XABSTRACTITEMMODEL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -361,4 +363,7 @@ void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XABSTRACTITEMMODEL_H */

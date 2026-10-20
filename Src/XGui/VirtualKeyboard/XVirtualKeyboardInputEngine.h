@@ -37,6 +37,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDINPUTENGINE_H
 #define XVIRTUALKEYBOARDINPUTENGINE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -511,4 +513,7 @@ void* XVirtualKeyboardInputEngine_wordCandidateListVisibleHintChanged_signal(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDINPUTENGINE_H */

@@ -1,4 +1,6 @@
-﻿#include "XSqliteDriver.h"
+﻿#if XSQL_ON
+
+#include "XSqliteDriver.h"
 
 #include <string.h>
 
@@ -1301,3 +1303,5 @@ bool XSqliteDriver_register(void)
     }
     return true;
 }
+
+#endif /* XSQL_ON */

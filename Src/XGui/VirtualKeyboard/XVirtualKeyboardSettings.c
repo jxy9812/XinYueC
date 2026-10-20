@@ -3,6 +3,8 @@
  * @brief      XVirtualKeyboardSettings 虚拟键盘设置单例实现。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -734,3 +736,5 @@ void* XVirtualKeyboardSettings_userDataReset_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

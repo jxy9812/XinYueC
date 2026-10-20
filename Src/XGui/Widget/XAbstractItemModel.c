@@ -3,6 +3,8 @@
  * @brief      XAbstractItemModel 条目模型实现（内存二维模型）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XAbstractItemModel.h"
 
 #include "XAlgorithm.h"
@@ -604,3 +606,5 @@ void* XAbstractItemModel_layoutChanged_signal(XAbstractItemModel* self)
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

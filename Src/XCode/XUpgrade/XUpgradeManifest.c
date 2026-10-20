@@ -16,6 +16,8 @@
  *             用 Win32、POSIX 等平台 API。
  */
 
+#if XUPGRADE_ON
+
 #include "XUpgradeManifest.h"
 
 #include <string.h>
@@ -1240,3 +1242,5 @@ bool XUpgradeManifest_parseCatalog(XUpgradeCatalog* out, const char* jsonUtf8,
         XMemset(out, 0, sizeof(*out));
     return ok;
 }
+
+#endif /* XUPGRADE_ON */

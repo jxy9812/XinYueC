@@ -2,6 +2,8 @@
  * @file       XSqlError.c
  * @brief      SQL 错误信息类实现。
  */
+#if XSQL_ON
+
 #include "XSqlError.h"
 
 #include <string.h>
@@ -162,3 +164,5 @@ bool XSqlError_equals(const XSqlError* left, const XSqlError* right)
         || (left->m_errorCode && right->m_errorCode
             && XString_equals(left->m_errorCode, right->m_errorCode, XChar_CaseSensitive));
 }
+
+#endif /* XSQL_ON */

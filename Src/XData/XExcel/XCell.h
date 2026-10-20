@@ -10,6 +10,8 @@
  ******************************************************************************/
 #ifndef XCELL_H
 #define XCELL_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -287,4 +289,7 @@ bool XCell_isDateType(XCell_CellType cellType, const XFormat* format);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XCELL_H */

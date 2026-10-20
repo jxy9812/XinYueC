@@ -6,6 +6,8 @@
  *             透明色以及 64^4 颜色编码范围；所有动态存储使用项目内存
  *             接口，不调用平台 API 或标准 C 内存分配函数。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageCodecInternal.h"
 #include "XStringUtils.h"
 
@@ -1313,3 +1315,5 @@ bool XImageCodecInternal_encodeXpmNamed(const XImage* image, const char* name,
 }
 
 #endif /* XIMAGECODEC_ON && XIMAGECODEC_XPM_ON */
+
+#endif /* XGUI_ON */

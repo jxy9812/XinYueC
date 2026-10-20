@@ -15,6 +15,8 @@
 #ifndef XABSTRACTSCROLLAREA_PROTECTED_H
 #define XABSTRACTSCROLLAREA_PROTECTED_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,4 +41,7 @@ void XAbstractScrollArea_resizeEvent_base(XAbstractScrollArea* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XABSTRACTSCROLLAREA_PROTECTED_H */

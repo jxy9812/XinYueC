@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XBARSERIES_H
 #define XBARSERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -57,4 +59,7 @@ uint32_t XBarSeries_color(const XBarSeries* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XBARSERIES_H */

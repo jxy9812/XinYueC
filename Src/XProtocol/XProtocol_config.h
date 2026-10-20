@@ -93,6 +93,21 @@ extern "C" {
 #define XPLC_ON 1
 #endif
 
+/** @brief XLink 私有应用层协议（XLink：帧编解码 + 双向对称会话） */
+#ifndef XLINK_ON
+#define XLINK_ON 1
+#endif
+
+/** @brief XNtp 协议（SNTP 客户端：应用内校时，供无 ntpd 的最小固件使用） */
+#ifndef XNTP_ON
+#define XNTP_ON 1
+#endif
+
+/** @brief XDdns 协议（动态域名解析客户端：厂商抽象 + 阿里云解析实现） */
+#ifndef XDDNS_ON
+#define XDDNS_ON 1
+#endif
+
 /* 引入各协议子配置文件 */
 #include "XCan_config.h"
 #include "XModbus_config.h"
@@ -102,6 +117,9 @@ extern "C" {
 #include "XSsh_config.h"
 #include "XTelnet_config.h"
 #include "XPlc_config.h"
+#include "XNtp_config.h"
+#include "XDdns_config.h"
+#include "XLink_config.h"
 
 #endif /* XPROTOCOL_ON */
 

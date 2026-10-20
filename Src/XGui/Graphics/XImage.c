@@ -3,6 +3,8 @@
  * @brief      XImage 图像类实现（对标 Qt 6.8 QImage）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImage.h"
 #include "XStringUtils.h"
 
@@ -5921,3 +5923,5 @@ XPaintDevice* XImage_paintDevice(XImage* self)
     return &self->m_data->m_paintDevice;
 }
 #endif /* XPAINTDEVICE_ON */
+
+#endif /* XGUI_ON */

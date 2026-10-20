@@ -17,6 +17,8 @@
  *              只通过 XImageCodecInternal_decodePng/encodePng 对外暴露，
  *              统一由 XImageCodec.c 的 XImageCodec_decode/encode 分发。
  */
+#if XGUI_ON
+
 #include "XImageCodec_config.h"
 #include "XStringUtils.h"
 
@@ -1639,3 +1641,5 @@ bool XImageCodecInternal_encodePngDescription(const XImage* image,
 
 #endif /* XIMAGECODEC_PNG_ON */
 #endif /* XIMAGECODEC_ON */
+
+#endif /* XGUI_ON */

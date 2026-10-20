@@ -4,11 +4,12 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
+#include "XFreeRTOSCompat.h"
 #if XSYNC_ON
 #if XWAITCONDITION_ON
 // FreeRTOS平台具体结构体定义
 struct XWaitCondition {
-    SemaphoreHandle_t sem;
+    xSemaphoreHandle sem;
     volatile int32_t wait_count;
 #if defined(configSUPPORT_STATIC_ALLOCATION)&&configSUPPORT_STATIC_ALLOCATION
     StaticSemaphore_t sem_buf;
@@ -69,8 +70,8 @@ bool XWaitCondition_wait(XWaitCondition* cond, XMutex* mutex, int32_t timeout) {
     XMutex_unlock(mutex);
 
     // 等待信号量（超时转换为FreeRTOS ticks）
-    TickType_t ticks = (timeout == -1) ? portMAX_DELAY : pdMS_TO_TICKS(timeout);
-    BaseType_t result = xSemaphoreTake(cond->sem, ticks);
+    portTickType ticks = (timeout == -1) ? portMAX_DELAY : pdMS_TO_TICKS(timeout);
+    portBASE_TYPE result = xSemaphoreTake(cond->sem, ticks);
 
     // 重新获取互斥锁
     XMutex_lock(mutex);

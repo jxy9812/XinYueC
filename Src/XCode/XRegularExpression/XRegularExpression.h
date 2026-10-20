@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XRegularExpression.h
  * @brief Qt 6.8 QRegularExpression 对齐实现的公共 API。
  * @details 底层使用 Library/pcre2 的 16-bit PCRE2 API，字符串统一使用 UTF-16。
@@ -6,11 +6,14 @@
 #ifndef XREGULAREXPRESSION_H
 #define XREGULAREXPRESSION_H
 
+#include "CXinYueConfig.h"
+
+#if XRegularExpression_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "CXinYueConfig.h"
 #if !defined(XREGULAREXPRESSION_API_H) && XRegularExpression_ON
 #define XREGULAREXPRESSION_API_H
 
@@ -711,5 +714,7 @@ XRegularExpression_MatchOptions XRegularExpressionMatchIterator_matchOptions(con
 #define XRegularExpressionMatch_create() XRegularExpressionMatch_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XRegularExpressionMatchIterator_create
 #define XRegularExpressionMatchIterator_create() XRegularExpressionMatchIterator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XRegularExpression_ON */
 
 #endif /* XREGULAREXPRESSION_H */

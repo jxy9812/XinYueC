@@ -4,6 +4,8 @@
  *             QPlatformNativeInterface）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPlatformNativeInterface.h"
 #include "XStringUtils.h"
 
@@ -587,3 +589,5 @@ void* XPlatformNativeInterface_nativeResourceFunctionForContext_2(
 }
 
 #endif /* XPLATFORMNATIVEINTERFACE_ON: 守卫扩至全文件,XGUI_ON=0 连带裁剪时实现整体不编 */
+
+#endif /* XGUI_ON */

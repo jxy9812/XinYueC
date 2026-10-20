@@ -29,6 +29,8 @@
  ******************************************************************************/
 #ifndef XCHECKBOX_H
 #define XCHECKBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -265,4 +267,7 @@ void XCheckBox_drawContents(XCheckBox* self, XPainter* painter);
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */
 /* ==================== 信号 ==================== */
+
+#endif /* XGUI_ON */
+
 #endif /* XCHECKBOX_H */

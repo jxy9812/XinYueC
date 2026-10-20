@@ -2,6 +2,8 @@
  * @file       XPerformanceOverlay.c
  * @brief      XGui 性能悬浮层控件实现。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPerformanceOverlay.h"
 #include "XStringUtils.h"
 
@@ -1206,3 +1208,5 @@ static bool performanceOverlay_drawContent(XWidget* widget,
 }
 
 #endif /* XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
+#endif /* XGUI_ON */

@@ -2,6 +2,8 @@
  * @file       XSqlResult.c
  * @brief      SQL 查询结果抽象类实现。
  */
+#if XSQL_ON
+
 #include "XSqlResult.h"
 
 #include <string.h>
@@ -432,3 +434,5 @@ bool XSqlResult_nextResult_base(XSqlResult* result) { return result && !XClassIs
 void* XSqlResult_handle_base(XSqlResult* result) { return result && !XClassIsVtableNull(result) ? XClassGetVirtualFunc(result, EXSqlResult_Handle, void*(*)(XSqlResult*))(result) : NULL; }
 void XSqlResult_clear(XSqlResult* result) { if (!result) return; XSqlResult_detachFromResultSet_base(result); xsql_result_clear_bindings(result); if (result->m_lastQuery) { XClassDelete(result->m_lastQuery); result->m_lastQuery = NULL; } if (result->m_executedQuery) { XClassDelete(result->m_executedQuery); result->m_executedQuery = NULL; } XSqlRecord_clear(&result->m_record); XClassDeinit(&result->m_lastError); XSqlError_init(&result->m_lastError); XVariant_setValue_null(&result->m_lastInsertId); result->m_at = XSqlLocation_BeforeFirstRow; result->m_size = -1; result->m_numRowsAffected = -1; result->m_active = false; result->m_select = false; }
 void XSqlResult_resetBindCount(XSqlResult* result) { if (result) result->m_bindCount = 0; }
+
+#endif /* XSQL_ON */

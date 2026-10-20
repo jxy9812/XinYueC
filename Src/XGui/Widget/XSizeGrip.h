@@ -8,6 +8,8 @@
  */
 #ifndef XSIZEGRIP_H
 #define XSIZEGRIP_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,4 +65,7 @@ XSizeGrip* XSizeGrip_create_ex(XMemoryType memory, XWidget* parent);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSIZEGRIP_H */

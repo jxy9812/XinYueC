@@ -3,6 +3,8 @@
  * @brief      XIcon 图标类实现（对标 Qt 6.8 QIcon）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XSystem.h"
 #include "XStringUtils.h"
 
@@ -1798,3 +1800,5 @@ void XIcon_setFallbackThemeName(const XString* name)
     XIcon_replaceString_2(&g_iconFallbackThemeName, name);
     XIconScaledPixmapCache_clear();
 }
+
+#endif /* XGUI_ON */

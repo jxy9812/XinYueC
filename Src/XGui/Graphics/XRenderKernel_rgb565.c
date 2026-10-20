@@ -25,6 +25,8 @@
  *             本内核以契约为准。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XRenderKernel.h"
 
 #if XPAINTER_ON && XRENDERKERNEL_RGB565_ON
@@ -313,3 +315,5 @@ void XRenderKernel_registerRgb565(void)
 }
 
 #endif /* XPAINTER_ON && XRENDERKERNEL_RGB565_ON */
+
+#endif /* XGUI_ON */

@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XStackedWidget.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -195,3 +197,5 @@ void* XStackedWidget_widgetRemoved_signal(XStackedWidget* self, int index)
 }
 
 #endif /* XWIDGET_ON && XFRAME_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON && XSTACKEDWIDGET_ON */
+
+#endif /* XGUI_ON */

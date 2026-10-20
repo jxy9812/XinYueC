@@ -17,6 +17,8 @@
  ******************************************************************************/
 #ifndef XOFFSCREENSURFACE_H
 #define XOFFSCREENSURFACE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -147,5 +149,7 @@ bool XOffscreenSurface_isValid(const XOffscreenSurface* self);
 XWindowSurfaceType XOffscreenSurface_surfaceType(const XOffscreenSurface* self);
 
 #endif /* XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XOFFSCREENSURFACE_H */

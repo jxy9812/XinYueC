@@ -2,6 +2,8 @@
  * @file       XSqlGlobal.c
  * @brief      SQL 公共枚举辅助函数。
  */
+#if XSQL_ON
+
 #include "XSqlGlobal.h"
 
 #include "XStringUtils.h" /* strcmp 直出改经 XStrcmp（外部依赖约束） */
@@ -55,3 +57,5 @@ XSqlDriverType XSqlDriverType_fromName_utf8(const char* name)
         return XSqlDriverType_Custom;
     return XSqlDriverType_Unknown;
 }
+
+#endif /* XSQL_ON */

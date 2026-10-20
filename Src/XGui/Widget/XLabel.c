@@ -38,6 +38,8 @@
  *             本模块不依赖任何平台 API，嵌入式可用；绘制全部走 XPainter。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XLabel.h"
 #include "XStringUtils.h"
 #include "XTextUtf8.h"
@@ -1067,7 +1069,14 @@ static void label_clearContents(XLabel* self)
         XClassDelete(self->m_picture);
         self->m_picture = NULL;
     }
-    XClassDeinit(&self->m_pixmap);
+    /* [2026-10-20 启动即报错根修·框架侧防线] m_pixmap 是内嵌值类型：
+     * 标签尚未 XLabel_init 时其虚表为空，XClassDeinit 会走进
+     * 「虚表为 NULL」的报告分支（XClass.c ArgIsNULL_report）刷错误——
+     * 典型触发：控件在初始化完成前就收到信号（如选项卡插入页签即发
+     * currentChanged，槽写尚未初始化的状态标签）。虚表为空即视为
+     * 从未初始化，无需析构。 */
+    if (!XClassIsVtableNull(&self->m_pixmap))
+        XClassDeinit(&self->m_pixmap);
     self->m_movie = NULL;
     self->m_isTextLabel = false;
     self->m_pressedLink = -1;
@@ -3195,3 +3204,5 @@ void XLabel_drawContents(XLabel* self, XPainter* painter)
 }
 
 #endif /* XWIDGET_ON && XFRAME_ON && XLABEL_ON */
+
+#endif /* XGUI_ON */

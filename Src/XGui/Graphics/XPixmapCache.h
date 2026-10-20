@@ -13,6 +13,8 @@
  ******************************************************************************/
 #ifndef XPIXMAPCACHE_H
 #define XPIXMAPCACHE_H
+
+#if XGUI_ON
 #include "XGuiConfig.h"
 #if XPIXMAPCACHE_ON
 #ifdef __cplusplus
@@ -199,4 +201,7 @@ void XPixmapCache_clear();
 }
 #endif
 #endif /* XPIXMAPCACHE_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XPIXMAPCACHE_H */

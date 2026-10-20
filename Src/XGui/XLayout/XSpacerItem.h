@@ -35,6 +35,8 @@
  ******************************************************************************/
 #ifndef XSPACERITEM_H
 #define XSPACERITEM_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -146,4 +148,7 @@ XWidgetSizePolicy XSpacerItem_sizePolicy(const XSpacerItem* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSPACERITEM_H */

@@ -14,6 +14,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDOBSERVER_H
 #define XVIRTUALKEYBOARDOBSERVER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -90,4 +92,7 @@ void* XVirtualKeyboardObserver_layoutChanged_signal(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDOBSERVER_H */

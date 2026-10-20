@@ -6,6 +6,8 @@
  ****************************************************************************/
 #ifndef XACCESSIBLE_H
 #define XACCESSIBLE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -83,4 +85,7 @@ XAccessible* XAccessible_childAtIndex(const XAccessible* self, size_t index);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XACCESSIBLE_H */

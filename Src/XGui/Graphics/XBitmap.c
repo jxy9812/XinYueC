@@ -3,6 +3,8 @@
  * @brief      XBitmap 单色位图类实现（对标 Qt 6.8 QBitmap）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XBitmap.h"
 
 #include "XAlgorithm.h"
@@ -371,3 +373,5 @@ XPaintDevice* XBitmap_paintDevice(XBitmap* self)
     return XPixmap_paintDevice((XPixmap*)self);
 }
 #endif /* XPAINTDEVICE_ON */
+
+#endif /* XGUI_ON */

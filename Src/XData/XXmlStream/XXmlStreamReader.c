@@ -4,6 +4,8 @@
  * @author     XinYueC 团队
  * @note       提供 SAX 风格的前向只读 XML 解析功能，完整实现所有 Token 类型
  ******************************************************************************/
+#if XXmlStream_ON
+
 #include "XXmlStreamReader.h"
 #include "XString.h"
 #include "XStringList.h"
@@ -4991,3 +4993,5 @@ XXmlStreamEntityResolver* XXmlStreamReader_entityResolver(const XXmlStreamReader
     XXmlStreamReaderPrivate* d = (XXmlStreamReaderPrivate*)((const char*)self + sizeof(XXmlStreamReader));
     return d->m_entityResolver;
 }
+
+#endif /* XXmlStream_ON */

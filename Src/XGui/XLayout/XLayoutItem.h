@@ -31,6 +31,8 @@
  ******************************************************************************/
 #ifndef XLAYOUTITEM_H
 #define XLAYOUTITEM_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -283,4 +285,7 @@ void XLayoutItem_setAlignment(XLayoutItem* self, XLayoutAlignments alignment);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XLAYOUTITEM_H */

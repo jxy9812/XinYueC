@@ -26,6 +26,8 @@
 #ifndef XMYSQL_SHARED_MEMORY_H
 #define XMYSQL_SHARED_MEMORY_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -119,5 +121,7 @@ bool XMySqlSharedMemory_write(XMySqlSharedMemory* shared, const void* data,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XSQL_ON */
 
 #endif /* XMYSQL_SHARED_MEMORY_H */

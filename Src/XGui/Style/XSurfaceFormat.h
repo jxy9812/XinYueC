@@ -15,6 +15,8 @@
  ******************************************************************************/
 #ifndef XSURFACEFORMAT_H
 #define XSURFACEFORMAT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -416,4 +418,7 @@ bool XSurfaceFormat_equals(const XSurfaceFormat* lhs, const XSurfaceFormat* rhs)
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSURFACEFORMAT_H */

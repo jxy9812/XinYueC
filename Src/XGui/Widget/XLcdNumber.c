@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XLcdNumber.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -714,3 +716,5 @@ void* XLcdNumber_overflow_signal(XLcdNumber* self)
 }
 
 #endif /* XWIDGET_ON && XFRAME_ON && XLCDNUMBER_ON */
+
+#endif /* XGUI_ON */

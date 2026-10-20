@@ -22,6 +22,8 @@
  */
 #ifndef XGUIREMOTEAUTH_H
 #define XGUIREMOTEAUTH_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -153,5 +155,7 @@ bool XGuiRemoteAuth_clientComputeResponse(const char* passwordUtf8,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUIREMOTEAUTH_H */

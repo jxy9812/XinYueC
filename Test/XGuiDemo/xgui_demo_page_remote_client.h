@@ -47,9 +47,18 @@ void demo_page_remote_client_cliDefaults(
  *         完成后零开销）。 */
 void demo_page_remote_client_autostart(void);
 
-/** @brief 程序退出清理：断链 + deleteLater（仓库约定；未启用时零操作。
- *         须在主窗口析构前调用）。 */
+/** @brief 程序退出清理：断链 + deleteLater + 停表释放（仓库约定；
+ *         未启用时零操作）。须在主窗口析构前调用）。 */
 void demo_page_remote_client_shutdown(void);
+
+/** @brief 页面隐藏时暂停本页定时器（2026-10-20 退出段 UAF 根修）：
+ *         统计/基准定时器的回调会写页内控件，页面切离后控件可能已
+ *         失效，定时器仍被周期派发即写悬垂控件崩溃。主文件在
+ *         demo_switchPage 切离本页时调用。 */
+void demo_page_remote_client_pause(void);
+
+/** @brief 页面重新显示时恢复本页定时器（与 pause 成对）。 */
+void demo_page_remote_client_resume(void);
 
 #else /* !XGUI_REMOTE_ON：裁剪配置下全部零操作（契约符号常在）。 */
 
@@ -67,6 +76,8 @@ typedef struct DemoRemoteClientCliOptions
 #define demo_page_remote_client_cliDefaults(opts) ((void)(opts))
 #define demo_page_remote_client_autostart()       ((void)0)
 #define demo_page_remote_client_shutdown()        ((void)0)
+#define demo_page_remote_client_pause()           ((void)0)
+#define demo_page_remote_client_resume()          ((void)0)
 
 #endif /* XGUI_REMOTE_ON */
 

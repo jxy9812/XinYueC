@@ -34,6 +34,8 @@
  ******************************************************************************/
 #ifndef XABSTRACTSLIDER_H
 #define XABSTRACTSLIDER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -353,5 +355,7 @@ void* XAbstractSlider_actionTriggered_signal(XAbstractSlider* self,
 }
 #endif
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XABSTRACTSLIDER_H */

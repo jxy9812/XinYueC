@@ -33,6 +33,8 @@
  ******************************************************************************/
 #ifndef XPLATFORMNATIVEINTERFACE_H
 #define XPLATFORMNATIVEINTERFACE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -351,4 +353,7 @@ void* XPlatformNativeInterface_windowPropertyChanged_signal(
 #endif
 
 #endif /* XPLATFORMNATIVEINTERFACE_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XPLATFORMNATIVEINTERFACE_H */

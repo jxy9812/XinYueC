@@ -1,4 +1,6 @@
-﻿#include "XAbstractSeries.h"
+﻿#if XGUI_ON
+
+#include "XAbstractSeries.h"
 
 #include "XAlgorithm.h"
 #include "XValueAxis.h"
@@ -276,3 +278,5 @@ void* XAbstractSeries_useOpenGLChanged_signal(XAbstractSeries* self)
 { (void)self; return (void*)(size_t)XAbstractSeries_useOpenGLChanged_signal; }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

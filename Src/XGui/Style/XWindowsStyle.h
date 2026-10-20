@@ -10,6 +10,8 @@
  */
 #ifndef XWINDOWSSTYLE_H
 #define XWINDOWSSTYLE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -75,4 +77,7 @@ int XWindowsStyle_styleHint(XWindowsStyle* self, int hint,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XWINDOWSSTYLE_H */

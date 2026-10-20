@@ -9,6 +9,8 @@
  *             按当前角度反解 value 实时提交（tracking），释放结束。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #include "XAlgorithm.h"
@@ -644,3 +646,5 @@ static int VXDial_bound(XDial* self, int val)
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON && XDIAL_ON */
+
+#endif /* XGUI_ON */

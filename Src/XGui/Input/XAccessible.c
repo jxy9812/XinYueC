@@ -2,6 +2,8 @@
  * @file       XAccessible.c
  * @brief      XAccessible 可访问节点实现；无平台 API。
  ****************************************************************************/
+#if XGUI_ON
+
 #include "XAccessible.h"
 #include "XMemory.h"
 
@@ -319,3 +321,5 @@ XAccessible* XAccessible_childAtIndex(const XAccessible* self, size_t index)
 }
 
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
+
+#endif /* XGUI_ON */

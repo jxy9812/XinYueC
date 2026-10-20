@@ -3,6 +3,8 @@
  * @brief      XInputMethod 输入法类实现（对标 Qt 6.8 QInputMethod）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XInputMethod.h"
 
 #include "XAlgorithm.h"
@@ -493,3 +495,5 @@ void* XInputMethod_inputDirectionChanged_signal(XInputMethod* self,
 }
 
 #endif /* XINPUTMETHOD_ON */
+
+#endif /* XGUI_ON */

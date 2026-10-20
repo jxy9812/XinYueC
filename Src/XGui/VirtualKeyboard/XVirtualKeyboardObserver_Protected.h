@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDOBSERVER_PROTECTED_H
 #define XVIRTUALKEYBOARDOBSERVER_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,4 +35,7 @@ void XVirtualKeyboardObserver_invalidateLayout(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDOBSERVER_PROTECTED_H */

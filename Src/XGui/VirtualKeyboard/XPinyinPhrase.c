@@ -32,6 +32,8 @@
  *             Ime 的无库外依赖注记不受影响。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPinyinPhrase.h"
 
 #if XKEYBOARD_IME_PHRASE_ON
@@ -1082,3 +1084,5 @@ bool XPinyinPhrase_find(const uint16_t* syllableIds, int32_t count,
 }
 
 #endif /* XKEYBOARD_IME_PHRASE_ON */
+
+#endif /* XGUI_ON */

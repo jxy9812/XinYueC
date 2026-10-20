@@ -16,6 +16,8 @@
  ******************************************************************************/
 #ifndef XITEMDELEGATE_H
 #define XITEMDELEGATE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -180,4 +182,7 @@ void* XItemDelegate_closeEditor_signal(XItemDelegate* self, XWidget* editor,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XITEMDELEGATE_H */

@@ -20,6 +20,8 @@
  *             本文件实现体整体裁剪。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XWindowEvent.h"
 
 #include "XAlgorithm.h"
@@ -1275,3 +1277,5 @@ int XTabletEvent_pointerType(const XTabletEvent* event)
 }
 
 #endif /* XWINDOWEVENT_ON */
+
+#endif /* XGUI_ON */

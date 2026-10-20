@@ -7,6 +7,8 @@
 #ifndef XFONTFACE_PROTECTED_H
 #define XFONTFACE_PROTECTED_H
 
+#if XFONT_FREETYPE_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -33,5 +35,7 @@ bool XFontBitmapFace_fileLoadGlyph(const XFont* self, uint32_t codepoint,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XFONT_FREETYPE_ON */
 
 #endif /* XFONTFACE_PROTECTED_H */

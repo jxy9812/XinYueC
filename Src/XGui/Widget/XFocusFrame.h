@@ -9,6 +9,8 @@
  */
 #ifndef XFOCUSFRAME_H
 #define XFOCUSFRAME_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -68,4 +70,7 @@ XWidget* XFocusFrame_widget(const XFocusFrame* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XFOCUSFRAME_H */

@@ -3,6 +3,8 @@
  * @brief      XWorksheet 工作表类实现（对标 QXlsx::Worksheet）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XWorksheet.h"
 #include "XWorkbook.h"
 #include "XMemory.h"
@@ -2548,3 +2550,5 @@ bool XWorksheet_writeString_utf8(XWorksheet* self, int row, int column, const ch
     if (s) XClassDelete(s);
     return result;
 }
+
+#endif /* XEXCEL_ON */

@@ -121,6 +121,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARD_H
 #define XVIRTUALKEYBOARD_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -979,4 +981,7 @@ void* XVirtualKeyboard_buttonActivated_signal(XVirtualKeyboard* self, int32_t bu
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARD_H */

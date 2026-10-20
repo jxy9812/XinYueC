@@ -17,6 +17,8 @@
  ******************************************************************************/
 #ifndef XPALETTE_H
 #define XPALETTE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -174,4 +176,7 @@ typedef struct XPalette
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPALETTE_H */

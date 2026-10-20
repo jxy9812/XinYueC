@@ -3,6 +3,8 @@
  * @brief      XCellRange 单元格范围类实现（对标 QXlsx::CellRange）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XCellRange.h"
 #include <string.h>
 
@@ -235,3 +237,5 @@ XCellRange XCellRange_create_str_utf8(const char* range)
     if (s) XClassDelete(s);
     return result;
 }
+
+#endif /* XEXCEL_ON */

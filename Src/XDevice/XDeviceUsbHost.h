@@ -114,10 +114,15 @@ typedef enum XDeviceUsbProcessResult
     XDeviceUsbProcessResult_Event = 1    /**< 至少分发了一个事件。 */
 } XDeviceUsbProcessResult;
 
-/** @brief USB 控制器和设备的通用错误。 */
+/**
+ * @brief USB 控制器和设备的通用错误。
+ * @details 继承 XDeviceError 的错误码空间：首项取父类的数量枚举值
+ *          XDeviceError_Count，其后依次递增，因此本枚举的取值都不小于
+ *          XDeviceError_Count，可据此区分错误归属父类还是 USB 扩展域。
+ */
 typedef enum XDeviceUsbError
 {
-    XDeviceUsbError_None = 0,            /**< 无错误。 */
+    XDeviceUsbError_None = XDeviceError_Count, /**< 无错误。 */
     XDeviceUsbError_InvalidArgument,     /**< 参数非法。 */
     XDeviceUsbError_NotOpen,             /**< 尚未打开。 */
     XDeviceUsbError_AlreadyOpen,         /**< 已经打开。 */
@@ -344,6 +349,14 @@ bool XDeviceUsbHost_register(void);
 #define XDeviceUsbHost_control XDevice_control
 #define XDeviceUsbHost_read    XDevice_read
 #define XDeviceUsbHost_write   XDevice_write
+/**
+ * @brief 读取设备最近一次错误码。
+ * @details USB 细分错误码（XDeviceUsbError）继承父类编号空间，已由设备层
+ *          直接写入父类 XDeviceContext.m_lastError，复用父类门面即可取得。
+ * @param fd 已打开的 USB Host 设备描述符。
+ * @return 错误码，取自 XDeviceError / XDeviceUsbError 编号空间。
+ */
+#define XDeviceUsbHost_lastError XDevice_lastError
 /* ============================================================================
  * XDeviceUsbHost 命令与属性
  * ============================================================================ */
@@ -383,7 +396,6 @@ typedef enum XDeviceUsbCommand
     XDeviceUsbCommand_ProcessEvents,                  /**< 处理事件。in: int32_t 超时。 */
     XDeviceUsbCommand_Features,                       /**< 查询能力。out: XDeviceUsbFeatures*。 */
     XDeviceUsbCommand_Handle,                         /**< 查询原生句柄。out: XDeviceUsbNativeHandle*。 */
-    XDeviceUsbCommand_LastError,                      /**< 查询最近一次错误。out: XDeviceUsbError*。 */
     XDeviceUsbCommand_NativeError,                    /**< 查询平台原生错误码。out: int32_t*。 */
     XDeviceUsbCommand_ClearError,                     /**< 清除错误状态。in/out 均为 NULL。 */
     XDeviceUsbCommand_Count                           /**< 命令数量边界，不是有效命令。 */
@@ -613,13 +625,6 @@ XDeviceUsbFeatures XDeviceUsbHost_features(XFd fd);
  * @return 借用句柄；无效返回 XDEVICE_USB_INVALID_NATIVE_HANDLE。
  */
 XDeviceUsbNativeHandle XDeviceUsbHost_handle(XFd fd);
-
-/**
- * @brief 获取设备最近一次通用错误。
- * @param fd 已打开的 USB Host 设备描述符。
- * @return 错误值；句柄无效返回 XDeviceUsbError_InvalidArgument。
- */
-XDeviceUsbError XDeviceUsbHost_lastError(XFd fd);
 
 /**
  * @brief 获取设备最近一次平台原生错误码。

@@ -20,6 +20,8 @@
  ******************************************************************************/
 #ifndef XWIZARD_H
 #define XWIZARD_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -714,5 +716,7 @@ void* XWizard_helpRequested_signal(XWizard* self);
 void* XWizard_customButtonClicked_signal(XWizard* self, int which);
 
 #endif /* XWIDGET_ON && XDIALOG_ON && XWIZARD_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XWIZARD_H */

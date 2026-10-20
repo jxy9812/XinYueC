@@ -1,4 +1,6 @@
-﻿#include "XSplineSeries.h"
+﻿#if XGUI_ON
+
+#include "XSplineSeries.h"
 
 #include "XAlgorithm.h"
 #include "XXYSeries.h"
@@ -44,3 +46,5 @@ XSplineSeries* XSplineSeries_create_ex(XMemoryType memory)
 }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

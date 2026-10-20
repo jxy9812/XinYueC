@@ -3,6 +3,8 @@
  * @brief      XColorSpace 色彩空间值类型实现
  * @note       本文件只处理不持有堆资源的色彩空间元数据，便于 C99 值复制。
  */
+#if XGUI_ON
+
 #include "XColorSpace.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
@@ -628,3 +630,5 @@ XColorTransform XColorSpace_transformationToColorSpace(
     if (target) result.m_target = *target;
     return result;
 }
+
+#endif /* XGUI_ON */

@@ -18,6 +18,8 @@
  ******************************************************************************/
 #ifndef XSPINBOX_H
 #define XSPINBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -208,4 +210,7 @@ void* XSpinBox_textChanged_signal(XSpinBox* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSPINBOX_H */

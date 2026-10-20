@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XRubberBand.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
@@ -128,3 +130,5 @@ XRubberBandShape XRubberBand_shape(const XRubberBand* self)
 }
 
 #endif /* XWIDGET_ON && XRUBBERBAND_ON */
+
+#endif /* XGUI_ON */

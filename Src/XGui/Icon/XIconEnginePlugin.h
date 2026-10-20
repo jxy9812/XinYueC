@@ -5,6 +5,8 @@
 #ifndef XICONENGINEPLUGIN_H
 #define XICONENGINEPLUGIN_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -130,5 +132,7 @@ XIconEngine* XIconEnginePlugin_createEngineForFile(const char* fileName);
 #undef XIconEnginePlugin_create
 #define XIconEnginePlugin_create() \
     XIconEnginePlugin_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XICONENGINEPLUGIN_H */

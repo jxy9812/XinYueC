@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XSIMPLEOOXMLFILE_H
 #define XSIMPLEOOXMLFILE_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -84,4 +86,7 @@ bool XSimpleOOXmlFile_loadFromXmlFile(XSimpleOOXmlFile* self, const XString* fil
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

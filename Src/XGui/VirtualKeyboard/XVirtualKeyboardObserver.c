@@ -3,6 +3,8 @@
  * @brief      XVirtualKeyboardObserver 键盘布局观察器实现。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -173,3 +175,5 @@ void* XVirtualKeyboardObserver_layoutChanged_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

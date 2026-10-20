@@ -3,6 +3,8 @@
  * @brief      XFont 字库后端抽象类、注册表和解析器实现。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XFONT_FREETYPE_ON
+
 #include "XFontFace.h"
 #include "XFont.h"
 #include "XFontFace_Protected.h"
@@ -335,3 +337,5 @@ int XFontFace_bitmapGlyphRowBytes_base(const XFontFace* self,
         int(*)(const XFontFace*, const XFont*, const XFontGlyphDsc*, int))
         (self, font, dsc, bpp);
 }
+
+#endif /* XFONT_FREETYPE_ON */

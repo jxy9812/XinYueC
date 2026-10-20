@@ -2,6 +2,8 @@
  * @file       XSqlIndex.c
  * @brief      SQL 索引描述类实现。
  */
+#if XSQL_ON
+
 #include "XSqlIndex.h"
 
 #include <string.h>
@@ -191,3 +193,5 @@ bool XSqlIndex_append_2(XSqlIndex* index, const XSqlField* field, bool descendin
 bool XSqlIndex_append(XSqlIndex* index, const XSqlField* field) { return XSqlIndex_append_2(index, field, false); }
 bool XSqlIndex_isDescending(const XSqlIndex* index, int fieldIndex) { return index && fieldIndex >= 0 && (size_t)fieldIndex < index->m_sortCount && index->m_descending[fieldIndex]; }
 void XSqlIndex_setDescending(XSqlIndex* index, int fieldIndex, bool descending) { if (index && fieldIndex >= 0 && (size_t)fieldIndex < index->m_sortCount) index->m_descending[fieldIndex] = descending; }
+
+#endif /* XSQL_ON */

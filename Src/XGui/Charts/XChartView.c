@@ -1,4 +1,6 @@
-﻿#include "XChartView.h"
+﻿#if XGUI_ON
+
+#include "XChartView.h"
 #include "XStringUtils.h"
 
 #include "XAlgorithm.h"
@@ -2834,3 +2836,5 @@ void XChartView_updateChart(XChartView* self)
 }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

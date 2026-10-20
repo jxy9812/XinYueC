@@ -24,6 +24,8 @@
  */
 #ifndef XTOOLBAR_H
 #define XTOOLBAR_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -256,5 +258,7 @@ void* XToolBar_topLevelChanged_signal(XToolBar* self, bool topLevel);
 }
 #endif
 #endif /* XWIDGET_ON && XACTION_ON && XTOOLBUTTON_ON && XTOOLBAR_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XTOOLBAR_H */

@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDDICTIONARYMANAGER_PROTECTED_H
 #define XVIRTUALKEYBOARDDICTIONARYMANAGER_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -37,4 +39,7 @@ void XVirtualKeyboardDictionary_init(XVirtualKeyboardDictionary* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDDICTIONARYMANAGER_PROTECTED_H */

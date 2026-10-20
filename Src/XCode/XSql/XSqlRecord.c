@@ -2,6 +2,8 @@
  * @file       XSqlRecord.c
  * @brief      SQL 记录类实现。
  */
+#if XSQL_ON
+
 #include "XSqlRecord.h"
 
 #include <string.h>
@@ -355,3 +357,5 @@ bool XSqlRecord_equals(const XSqlRecord* left, const XSqlRecord* right)
         if (!XSqlField_equals(left->m_fields[i], right->m_fields[i])) return false;
     return true;
 }
+
+#endif /* XSQL_ON */

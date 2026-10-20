@@ -1,4 +1,6 @@
-﻿#include "XTableWidget.h"
+﻿#if XGUI_ON
+
+#include "XTableWidget.h"
 #include "XStringUtils.h"
 #include <string.h>
 #include "XVector.h"
@@ -2136,3 +2138,5 @@ static uint32_t xtw_color(const XTableWidget* self, XPaletteColorRole role)
 }
 
 #endif /* XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

@@ -1,4 +1,6 @@
-﻿#include "XCssStyleSheet.h"
+﻿#if XGUI_ON
+
+#include "XCssStyleSheet.h"
 #include "XStringUtils.h"
 #include "XAlgorithm.h"
 #include "XMemory.h"
@@ -1410,3 +1412,5 @@ bool XCssStyleSheet_parse(XCssStyleSheet* sheet, const char* css)
 }
 
 #endif /* XSTYLE_ON */
+
+#endif /* XGUI_ON */

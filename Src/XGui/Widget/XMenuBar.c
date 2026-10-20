@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XMenuBar.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
@@ -950,3 +952,5 @@ void* XMenuBar_platformMenuBar(const XMenuBar* self)
 }
 
 #endif /* XWIDGET_ON && XMENU_ON && XMENUBAR_ON */
+
+#endif /* XGUI_ON */

@@ -1,4 +1,6 @@
-﻿#include "XTextDocument.h"
+﻿#if XGUI_ON
+
+#include "XTextDocument.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
 #include "XObject.h"
@@ -2583,3 +2585,5 @@ char* XTextDocument_convertFromPlainText(const char* plain, int mode)
 }
 
 #endif /* XTEXTDOCUMENT_ON */
+
+#endif /* XGUI_ON */

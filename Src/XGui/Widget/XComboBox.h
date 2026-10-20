@@ -44,6 +44,8 @@
  ******************************************************************************/
 #ifndef XCOMBOBOX_H
 #define XCOMBOBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -734,5 +736,7 @@ void* XComboBox_popupHidden_signal(XComboBox* self);
 }
 #endif
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XCOMBOBOX_H */

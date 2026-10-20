@@ -13,6 +13,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XFocusFrame.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
@@ -286,3 +288,5 @@ XWidget* XFocusFrame_widget(const XFocusFrame* self)
 }
 
 #endif /* XWIDGET_ON && XFOCUSFRAME_ON */
+
+#endif /* XGUI_ON */

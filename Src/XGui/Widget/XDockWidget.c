@@ -1,4 +1,6 @@
-﻿#include "XDockWidget.h"
+﻿#if XGUI_ON
+
+#include "XDockWidget.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
 #include "XMemory.h"
@@ -1401,3 +1403,5 @@ void* XDockWidget_dockLocationChanged_signal(XDockWidget* self, int area)
 
 
 #endif /* XWIDGET_ON && XDOCKWIDGET_ON */
+
+#endif /* XGUI_ON */

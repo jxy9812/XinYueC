@@ -6,6 +6,8 @@
 #ifndef XFONTBITMAPFACE_H
 #define XFONTBITMAPFACE_H
 
+#if XFONT_FREETYPE_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -46,5 +48,7 @@ const XFontFace* XFontBitmapFace_fileFace(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XFONT_FREETYPE_ON */
 
 #endif /* XFONTBITMAPFACE_H */

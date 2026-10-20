@@ -16,6 +16,8 @@
  */
 #ifndef XABSTRACTSCROLLAREA_H
 #define XABSTRACTSCROLLAREA_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -253,5 +255,7 @@ void XAbstractScrollArea_setSizeAdjustPolicy(
 }
 #endif
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XABSTRACTSCROLLAREA_H */

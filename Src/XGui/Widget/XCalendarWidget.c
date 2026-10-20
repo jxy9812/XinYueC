@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XCalendarWidget.h"
 #include "XStringUtils.h"
 #include "XStyle.h"
@@ -1384,3 +1386,5 @@ void XCalendarWidget_showToday(XCalendarWidget* self)
 }
 
 #endif /* XWIDGET_ON && XCALENDARWIDGET_ON */
+
+#endif /* XGUI_ON */

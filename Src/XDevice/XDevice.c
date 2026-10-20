@@ -398,6 +398,8 @@ XFd XDevice_openClass(const char* className, const XDeviceOpenOptions* opts, int
 
 	ctx = XDevice_dispatchOpen(device, effectiveOpts, err);
 	if (!ctx) {
+		/* 子类可能已通过 *err 透传平台原生错误码（<XDEVICE_ERROR_FRAMEWORK_BASE）
+		 * 或给出框架码；仅当子类未填（0）时才给通用 IoFail。 */
 		if (err && *err == 0) *err = (int)XDeviceError_IoFail;
 		return XFD_INVALID;
 	}
@@ -466,7 +468,9 @@ int64_t XDevice_read(XFd fd, void* buffer, int64_t size)
 		return -1;
 	}
 	ret = XDevice_dispatchRead(ctx->m_device, ctx, buffer, size);
-	if (ret < 0) ctx->m_lastError = (int16_t)XDeviceError_IoFail;
+	/* 子类虚函数可能已写入更精确的错误（平台原生码或框架码），仅在未填时兜底。 */
+	if (ret < 0 && ctx->m_lastError == (int16_t)XDeviceError_None)
+		ctx->m_lastError = (int16_t)XDeviceError_IoFail;
 	return ret;
 }
 
@@ -483,7 +487,8 @@ int64_t XDevice_write(XFd fd, const void* data, int64_t size)
 		return -1;
 	}
 	ret = XDevice_dispatchWrite(ctx->m_device, ctx, data, size);
-	if (ret < 0) ctx->m_lastError = (int16_t)XDeviceError_IoFail;
+	if (ret < 0 && ctx->m_lastError == (int16_t)XDeviceError_None)
+		ctx->m_lastError = (int16_t)XDeviceError_IoFail;
 	return ret;
 }
 
@@ -497,7 +502,8 @@ int64_t XDevice_seek(XFd fd, int64_t offset, XDeviceSeekWhence whence)
 		return XDeviceFile_legacySeek(fd, offset, (XSeekWhence)whence);
 	if (!ctx) return -1;
 	ret = XDevice_dispatchSeek(ctx->m_device, ctx, offset, (int)whence);
-	if (ret < 0) ctx->m_lastError = (int16_t)XDeviceError_IoFail;
+	if (ret < 0 && ctx->m_lastError == (int16_t)XDeviceError_None)
+		ctx->m_lastError = (int16_t)XDeviceError_IoFail;
 	return ret;
 }
 

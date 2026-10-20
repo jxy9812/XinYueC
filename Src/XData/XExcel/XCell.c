@@ -3,6 +3,8 @@
  * @brief      XCell 单元格类实现（对标 QXlsx::Cell）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XCell.h"
 #include "XMemory.h"
 #include "XUtility.h"
@@ -170,3 +172,5 @@ void XCell_setValue_utf8(XCell* self, const char* value)
     XCell_setValue(self, s);
     if (s) XClassDelete(s);
 }
+
+#endif /* XEXCEL_ON */

@@ -1,4 +1,6 @@
-﻿#include "XStyle.h"
+﻿#if XGUI_ON
+
+#include "XStyle.h"
 #include "XStringUtils.h"
 #include "XAlgorithm.h"
 #include "XCommonStyle.h"
@@ -783,3 +785,5 @@ void XStyle_invalidateStyleSheetRenderCache(void)
 }
 
 #endif /* XSTYLE_ON */
+
+#endif /* XGUI_ON */

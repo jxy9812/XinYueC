@@ -4,6 +4,8 @@
  *             轻量子集）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPlatformWindow.h"
 
 #include "XAlgorithm.h"
@@ -330,3 +332,5 @@ bool XPlatformWindow_removeProperty_2(XPlatformWindow* self, const char* name)
 }
 
 #endif /* XPLATFORMWINDOW_ON */
+
+#endif /* XGUI_ON */

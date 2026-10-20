@@ -18,6 +18,8 @@
  *             实现体整体裁剪。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XScreen.h"
 #include "XMemory.h"
 
@@ -1040,3 +1042,5 @@ void* XScreen_refreshRateChanged_signal(XScreen* self, float refreshRate)
 }
 
 #endif /* XSCREEN_ON */
+
+#endif /* XGUI_ON */

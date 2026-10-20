@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XSplashScreen.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -254,3 +256,5 @@ void* XSplashScreen_messageChanged_signal(XSplashScreen* self,
 }
 
 #endif /* XWIDGET_ON && XSPLASHSCREEN_ON */
+
+#endif /* XGUI_ON */

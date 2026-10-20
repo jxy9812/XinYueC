@@ -7,6 +7,8 @@
 #ifndef XREGULAREXPRESSIONVALIDATOR_H
 #define XREGULAREXPRESSIONVALIDATOR_H
 
+#if XRegularExpression_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -130,5 +132,7 @@ XRegularExpressionValidator_State XRegularExpressionValidator_validate_utf8(
 #undef XRegularExpressionValidator_create
 #define XRegularExpressionValidator_create() \
 	XRegularExpressionValidator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL)
+
+#endif /* XRegularExpression_ON */
 
 #endif /* XREGULAREXPRESSIONVALIDATOR_H */

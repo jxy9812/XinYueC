@@ -22,7 +22,8 @@ static int g_lwipDeviceCount;
 #endif /* XNETWORK_USE_LWIP */
 
 
-/* 所选平台在自己的 .c 中实现这些钩子；它们不是 XDeviceNetwork 公共 API。 */
+/* 所选平台在自己的 .c 中实现这些钩子；它们不是 XDeviceNetwork 公共 API。
+ * XDeviceNetwork_platformLastError 已在 XDeviceNetwork.h 声明（公共 API）。 */
 XDeviceNetworkContext* XDeviceNetwork_createContext(void);
 void XDeviceNetwork_deleteContext(XDeviceNetworkContext* context);
 intptr_t XDeviceNetwork_socketDescriptor(XFd fd);
@@ -133,6 +134,19 @@ static void setAnyAddress(XHostAddress* address, XDeviceNetworkProtocol protocol
 static bool setContextError(XDeviceNetworkContext* ctx, int error)
 {
     if (ctx) ctx->m_base.m_lastError = (int16_t)error;
+    return false;
+}
+
+/**
+ * @brief 记录平台网络错误：原生错误码直接透传进 m_lastError。
+ * @details m_lastError 的编号分两段（见 XDEVICE_ERROR_FRAMEWORK_BASE）：
+ *          平台原生错误码（errno / Win32 WSA 错误）落在 [1, 基址) 透传段，
+ *          与框架码互不冲突，XDevice_lastError 一个 API 即可读出，随后用
+ *          XDeviceNetwork_errorString 解释。
+ */
+static bool setContextPlatformError(XDeviceNetworkContext* ctx)
+{
+    if (ctx) ctx->m_base.m_lastError = (int16_t)XDeviceNetwork_platformLastError();
     return false;
 }
 
@@ -338,7 +352,9 @@ static XDeviceContext* VXDeviceNetwork_open(XDevice* self, const XDeviceOpenOpti
         XFd_free(ctx->m_base.m_fd);
         XDeviceNetwork_deleteContext(ctx);
         XDeviceNetwork_cleanup();
-        if (err) *err = (int)XDeviceError_IoFail;
+        /* 平台原生错误码透传出参（<XDEVICE_ERROR_FRAMEWORK_BASE 段），
+         * 调用方可用 XDeviceNetwork_errorString 解释。 */
+        if (err) *err = XDeviceNetwork_platformLastError();
         return NULL;
     }
 
@@ -402,7 +418,7 @@ static int64_t VXDeviceNetwork_read(XDevice* self, XDeviceContext* handle, void*
     if (!readBuffer) return -1;
     result = XDeviceNetwork_socketRead(ctx->m_base.m_fd, buffer, size,
         toNetworkSocketType(ctx->m_socketType), readBuffer);
-    if (result < 0) ctx->m_base.m_lastError = (int16_t)XDeviceError_IoFail;
+    if (result < 0) setContextPlatformError(ctx);
     return result;
 }
 
@@ -427,7 +443,7 @@ static int64_t VXDeviceNetwork_write(XDevice* self, XDeviceContext* handle, cons
     }
     result = XDeviceNetwork_socketWrite(ctx->m_base.m_fd, data, size,
         toNetworkSocketType(ctx->m_socketType), destination, ctx->m_peerPort, writeBuffer);
-    if (result < 0) ctx->m_base.m_lastError = (int16_t)XDeviceError_IoFail;
+    if (result < 0) setContextPlatformError(ctx);
     return result;
 }
 
@@ -986,7 +1002,7 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
         XVarList_start(arguments);
         option = XVarList_arg(arguments, int);
         result = XDeviceNetwork_socketGetOption(ctx->m_base.m_fd, option);
-        if (!result) return setContextError(ctx, XDeviceError_IoFail);
+        if (!result) return setContextPlatformError(ctx);
         memcpy(out->data, result, sizeof(int));
         XVarList_start(out);
         return true;
@@ -1003,7 +1019,7 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
         if (!address && !port)
             return setContextError(ctx, XDeviceError_InvalidArgument);
         if (!XDeviceNetwork_platformGetLastDatagramSender(ctx->m_base.m_fd, address, port)) {
-            return setContextError(ctx, XDeviceError_IoFail);
+            return setContextPlatformError(ctx);
         }
         XVarList_start(out);
         return true;
@@ -1039,7 +1055,7 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
             return setContextError(ctx, XDeviceError_InvalidArgument);
         written = XDeviceNetwork_socketWrite(ctx->m_base.m_fd, data, size,
             XDeviceNetwork_Udp, address, port, NULL);
-        if (written < 0) return setContextError(ctx, XDeviceError_IoFail);
+        if (written < 0) return setContextPlatformError(ctx);
         memcpy(out->data, &written, sizeof(written));
         XVarList_start(out);
         return true;
@@ -1059,7 +1075,7 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
         descriptor = XDeviceNetwork_socketDescriptor(ctx->m_base.m_fd);
         if (descriptor < 0 || !group ||
             !XDeviceNetwork_multicastGroup(descriptor, join, group, interfaceIndex))
-            return setContextError(ctx, XDeviceError_IoFail);
+            return setContextPlatformError(ctx);
         return true;
     }
     case XDeviceNetworkCommand_SetMulticastInterface:
@@ -1072,7 +1088,7 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
         interfaceIndex = XVarList_arg(arguments, uint32_t);
         descriptor = XDeviceNetwork_socketDescriptor(ctx->m_base.m_fd);
         if (descriptor < 0 || XDeviceNetwork_multicastOp(descriptor, XMC_SetIf, &interfaceIndex) != 0)
-            return setContextError(ctx, XDeviceError_IoFail);
+            return setContextPlatformError(ctx);
         return true;
     }
     case XDeviceNetworkCommand_GetMulticastInterface:
@@ -1087,7 +1103,7 @@ static bool VXDeviceNetwork_control(XDevice* self, XDeviceContext* handle, uint3
             return setContextError(ctx, XDeviceError_InvalidArgument);
         descriptor = XDeviceNetwork_socketDescriptor(ctx->m_base.m_fd);
         if (descriptor < 0 || XDeviceNetwork_multicastOp(descriptor, XMC_GetIf, interfaceIndex) != 0)
-            return setContextError(ctx, XDeviceError_IoFail);
+            return setContextPlatformError(ctx);
         XVarList_start(out);
         return true;
     }

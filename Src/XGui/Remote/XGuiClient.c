@@ -27,6 +27,8 @@
  *             全在 GUI 线程(poll 回调), 无内部线程。
  * @author     XinYueC 团队
  */
+#if XGUI_ON
+
 #include "XGuiClient.h"
 #if XGUI_REMOTE_ON
 
@@ -3899,3 +3901,5 @@ void* XGuiClient_errorOccurred_signal(XGuiClient* self, int errorCode)
 }
 
 #endif /* XGUI_REMOTE_ON */
+
+#endif /* XGUI_ON */

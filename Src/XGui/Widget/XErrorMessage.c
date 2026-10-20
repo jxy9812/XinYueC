@@ -1,4 +1,6 @@
-﻿#include "XErrorMessage.h"
+﻿#if XGUI_ON
+
+#include "XErrorMessage.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XPainter.h"
@@ -321,3 +323,5 @@ bool XErrorMessage_isDoneShown(const XErrorMessage* self)
 
 
 #endif /* XWIDGET_ON && XDIALOG_ON && XERRORMESSAGE_ON */
+
+#endif /* XGUI_ON */

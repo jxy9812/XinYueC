@@ -8,6 +8,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XTextEdit.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
@@ -2413,3 +2415,5 @@ void* XTextEdit_linkActivated_signal(XTextEdit* self, const char* url)
 }
 
 #endif /* XTEXTEDIT_ON */
+
+#endif /* XGUI_ON */

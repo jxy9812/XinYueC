@@ -10,6 +10,8 @@
  *             失焦提交关闭）对标 QStyledItemDelegate::eventFilter。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XItemDelegate.h"
 
 #include "XLineEdit.h"
@@ -345,3 +347,5 @@ void* XItemDelegate_closeEditor_signal(XItemDelegate* self, XWidget* editor,
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

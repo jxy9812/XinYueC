@@ -14,6 +14,8 @@
  *             value==minimum 且设置特殊值文本时整段显示特殊值文本。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
 
@@ -1190,3 +1192,5 @@ void* XSpinBox_textChanged_signal(XSpinBox* self)
 
 
 #endif /* XWIDGET_ON && XSPINBOX_ON && XLINEEDIT_ON && XABSTRACTSPINBOX_ON */
+
+#endif /* XGUI_ON */

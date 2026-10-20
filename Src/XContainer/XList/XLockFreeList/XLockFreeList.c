@@ -62,10 +62,16 @@ static void XLockFreeList_init_with_memory(XLockFreeList* this_list,
 /* =========================================================================
  *  Hazard Pointer 子系统（本文件内部使用）
  * ========================================================================= */
+/* [2026-10-18 嵌入式防呆] 容量宏加 #ifndef：ESP8266 等小内存目标可经
+ * 编译选项收缩 HP/退休链表（128 线程槽对单线程 GUI 固件是纯浪费）。 */
+#ifndef XLFL_HP_MAX_THREADS
 #define XLFL_HP_MAX_THREADS   128
+#endif
 #define XLFL_HP_PER_THREAD    3
 #define XLFL_RETIRE_THRESHOLD 64
+#ifndef XLFL_RETIRE_CAPACITY
 #define XLFL_RETIRE_CAPACITY  256
+#endif
 
 typedef struct XLFL_HPRec {
     XAtomic_Uintptr hp[XLFL_HP_PER_THREAD];

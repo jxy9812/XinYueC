@@ -4,6 +4,8 @@
  * @author     XinYueC 团队
  * @note       提供像素格式的位深度、Alpha 通道判断等辅助函数
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageFormat.h"
 #include "CXinYueConfig.h"
 #include <stddef.h>
@@ -442,3 +444,5 @@ XImageFormat XImageFormat_toImageFormat(XPixelFormat format)
     }
     return XImageFormat_Invalid;
 }
+
+#endif /* XGUI_ON */

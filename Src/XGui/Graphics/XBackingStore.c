@@ -3,6 +3,8 @@
  * @brief      XBackingStore 后备存储类实现（对标 Qt 6.8 QBackingStore）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XBackingStore.h"
 
 #include "XAlgorithm.h"
@@ -302,3 +304,5 @@ bool XBackingStore_hasStaticContents(const XBackingStore* self)
 }
 
 #endif /* XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON && XPLATFORMINTEGRATION_ON */
+
+#endif /* XGUI_ON */

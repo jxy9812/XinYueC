@@ -2,6 +2,7 @@
 #include "XFileDescriptor.h"
 #include "XMemory.h"
 #include "XVarList.h"
+#include "XVariant.h"
 #include <string.h>
 
 /* 现有平台文件后端负责创建和操作终端私有状态。 */
@@ -24,6 +25,10 @@ static int64_t VXDeviceConsole_write(XDevice* self, XDeviceContext* handle,
 static bool VXDeviceConsole_flush(XDevice* self, XDeviceContext* handle);
 static bool VXDeviceConsole_control(XDevice* self, XDeviceContext* handle,
     uint32_t command, const XVarList* in, XVarList* out);
+static bool VXDeviceConsole_setProperty(XDevice* self, XDeviceContext* handle,
+    uint32_t property, const XVariant* value);
+static bool VXDeviceConsole_getProperty(XDevice* self, XDeviceContext* handle,
+    uint32_t property, XVariant* value);
 
 static XDeviceConsoleContext* consoleContext(XDeviceContext* handle)
 {
@@ -45,6 +50,8 @@ XVtable* XDeviceConsole_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Read, VXDeviceConsole_read);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Write, VXDeviceConsole_write);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Flush, VXDeviceConsole_flush);
+    XVTABLE_OVERLOAD_DEFAULT(EXDevice_SetProperty, VXDeviceConsole_setProperty);
+    XVTABLE_OVERLOAD_DEFAULT(EXDevice_GetProperty, VXDeviceConsole_getProperty);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Control, VXDeviceConsole_control);
     XCLASS_SET_CLASS_NAME_DEFAULT("console");
     XCLASS_SHOW_SIZE_DEFAULT(XDeviceConsole);
@@ -160,13 +167,29 @@ static bool VXDeviceConsole_flush(XDevice* self, XDeviceContext* handle)
     return XDeviceFile_legacyFlush(context->m_backendFd);
 }
 
+/**
+ * @brief 设置终端输入回显并缓存结果，供 Echo 属性读回。
+ * @param context 设备上下文。
+ * @param enabled 是否回显。
+ * @return 设置成功返回 true。
+ */
+static bool consoleApplyEcho(XDeviceConsoleContext* context, bool enabled)
+{
+    bool result;
+    if (!context || context->m_backendFd == XFD_INVALID) return false;
+    result = XDeviceFile_legacySetStandardInputEcho(context->m_backendFd, enabled);
+    context->m_base.m_lastError = (int16_t)(result ? XDeviceError_None :
+        XDeviceError_IoFail);
+    if (result) context->m_echo = enabled ? 1 : 0;
+    return result;
+}
+
 static bool VXDeviceConsole_control(XDevice* self, XDeviceContext* handle,
     uint32_t command, const XVarList* in, XVarList* out)
 {
     XDeviceConsoleContext* context = consoleContext(handle);
     XVarList* input = (XVarList*)in;
     bool enabled;
-    bool result;
     (void)self;
     if (!context || context->m_backendFd == XFD_INVALID ||
         command != XDeviceConsoleCommand_SetEcho || !input || out ||
@@ -174,10 +197,44 @@ static bool VXDeviceConsole_control(XDevice* self, XDeviceContext* handle,
         return consoleSetError(context, XDeviceError_InvalidArgument);
     XVarList_start(input);
     enabled = XVarList_arg(input, bool);
-    result = XDeviceFile_legacySetStandardInputEcho(context->m_backendFd, enabled);
-    context->m_base.m_lastError = (int16_t)(result ? XDeviceError_None :
-        XDeviceError_IoFail);
-    return result;
+    return consoleApplyEcho(context, enabled);
+}
+
+/**
+ * @brief 设置控制台属性；当前只支持 Echo。
+ */
+static bool VXDeviceConsole_setProperty(XDevice* self, XDeviceContext* handle,
+    uint32_t property, const XVariant* value)
+{
+    XDeviceConsoleContext* context = consoleContext(handle);
+    (void)self;
+    if (!context || !value) return consoleSetError(context, XDeviceError_InvalidArgument);
+    switch (property) {
+    case XDeviceConsoleProperty_Echo:
+        return consoleApplyEcho(context, XVariant_toBool(value));
+    default:
+        return consoleSetError(context, XDeviceError_NotSupported);
+    }
+}
+
+/**
+ * @brief 读取控制台属性；当前只支持 Echo。
+ * @details Echo 返回最近一次成功设置的回显状态（平台未提供回读终端状态的
+ *          统一接口，故以设备侧缓存为准）。
+ */
+static bool VXDeviceConsole_getProperty(XDevice* self, XDeviceContext* handle,
+    uint32_t property, XVariant* value)
+{
+    XDeviceConsoleContext* context = consoleContext(handle);
+    (void)self;
+    if (!context || !value) return false;
+    switch (property) {
+    case XDeviceConsoleProperty_Echo:
+        XVariant_setValue_bool(value, context->m_echo != 0);
+        return true;
+    default:
+        return false;
+    }
 }
 
 XFd XDeviceConsole_openStandardInput(int* error)

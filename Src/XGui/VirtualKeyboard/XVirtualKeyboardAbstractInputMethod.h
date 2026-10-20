@@ -29,6 +29,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDABSTRACTINPUTMETHOD_H
 #define XVIRTUALKEYBOARDABSTRACTINPUTMETHOD_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -410,4 +412,7 @@ void* XVirtualKeyboardAbstractInputMethod_selectionListsChanged_signal(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDABSTRACTINPUTMETHOD_H */

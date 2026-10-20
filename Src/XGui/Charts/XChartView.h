@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XCHARTVIEW_H
 #define XCHARTVIEW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -151,4 +153,7 @@ XChartView_RubberBands XChartView_rubberBand(const XChartView* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCHARTVIEW_H */

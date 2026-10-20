@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XREADSAX_H
 #define XREADSAX_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -106,4 +108,7 @@ bool XReadSax_readSheetFromZip(const XString* zipPath,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

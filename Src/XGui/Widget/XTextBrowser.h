@@ -14,6 +14,8 @@
  */
 #ifndef XTEXTBROWSER_H
 #define XTEXTBROWSER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -284,4 +286,7 @@ void* XTextBrowser_highlighted_signal(XTextBrowser* self, const char* url);
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON && XTEXTBROWSER_ON */
 /* ==================== 信号 ==================== */
+
+#endif /* XGUI_ON */
+
 #endif /* XTEXTBROWSER_H */

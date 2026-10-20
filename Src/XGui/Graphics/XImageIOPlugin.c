@@ -2,6 +2,8 @@
  * @file       XImageIOPlugin.c
  * @brief      XImageIOPlugin 图像 I/O 插件抽象类实现。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageIOPlugin.h"
 
 #include "XAlgorithm.h"
@@ -72,3 +74,5 @@ XStringList* XImageIOPlugin_nameFilters_base(const XImageIOPlugin* self)
 XStringList* XImageIOPlugin_mimeTypes_base(const XImageIOPlugin* self)
 { return self && XClassGetVtable(self) ? XClassGetVirtualFunc(self, EXImageIOPlugin_MimeTypes,
     XStringList*(*)(const XImageIOPlugin*))(self) : NULL; }
+
+#endif /* XGUI_ON */

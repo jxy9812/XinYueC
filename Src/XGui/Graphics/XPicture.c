@@ -3,6 +3,8 @@
  * @brief      XPicture 绘图指令记录与回放类实现（对标 Qt 6.8 QPicture）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPicture.h"
 #include "XStringUtils.h"
 
@@ -2773,3 +2775,5 @@ XPaintDevice* XPicture_paintDevice(XPicture* self)
     return &self->m_data->m_paintDevice;
 }
 #endif /* XPAINTDEVICE_ON */
+
+#endif /* XGUI_ON */

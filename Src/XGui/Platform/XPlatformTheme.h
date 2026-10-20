@@ -10,6 +10,8 @@
  ****************************************************************************/
 #ifndef XPLATFORMTHEME_H
 #define XPLATFORMTHEME_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -161,4 +163,7 @@ XPlatformThemeDecorationMode XPlatformThemeDecoration_effectiveMode(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif

@@ -289,4 +289,7 @@
 #define XFONT_DEFAULT_ITALIC 0
 #endif
 
+/* freetype 后端开关由 XFontFt_config.h 承载，随本配置头一并生效。 */
+#include "XFontFt_config.h"
+
 #endif /* XFONT_CONFIG_H */

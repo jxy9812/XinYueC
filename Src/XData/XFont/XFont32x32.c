@@ -1,4 +1,6 @@
 /* Generated from LVGL fmt_txt font data. The runtime has no LVGL dependency. */
+#if XFONT_FREETYPE_ON
+
 #include "XFont32x32.h"
 
 #if XFONT_BUILTIN_32X32_ON
@@ -117638,3 +117640,5 @@ bool XFont32x32_register(void)
     return XFontBitmapFace_registerProvider(&g_xfont32x32_provider);
 }
 #endif /* XFONT_BUILTIN_32X32_ON */
+
+#endif /* XFONT_FREETYPE_ON */

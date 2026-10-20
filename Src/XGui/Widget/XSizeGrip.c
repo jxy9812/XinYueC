@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XSizeGrip.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
@@ -250,3 +252,5 @@ XSizeGrip* XSizeGrip_create_ex(XMemoryType memory, XWidget* parent)
 }
 
 #endif /* XWIDGET_ON && XSIZEGRIP_ON */
+
+#endif /* XGUI_ON */

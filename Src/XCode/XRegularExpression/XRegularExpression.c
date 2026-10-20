@@ -3,6 +3,8 @@
  * @brief Qt 6.8 QRegularExpression 对齐实现。
  */
 
+#if XRegularExpression_ON
+
 #include "XRegularExpression.h"
 #include "XMemory.h"
 #include "XAtomic.h"
@@ -1471,3 +1473,5 @@ XRegularExpressionMatchIterator* XRegularExpression_globalMatch_utf8(const XRegu
     XClassDelete(value);
     return result;
 }
+
+#endif /* XRegularExpression_ON */

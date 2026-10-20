@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XWORKBOOK_H
 #define XWORKBOOK_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -388,4 +390,7 @@ bool XWorkbook_loadFromXmlData(XWorkbook* self, const uint8_t* data, size_t len)
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XWORKBOOK_H */

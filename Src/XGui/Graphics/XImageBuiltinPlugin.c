@@ -4,6 +4,8 @@
  * @note       插件把 XImageCodec 的格式发现、解码与编码能力包装成 Qt 风格
  *             图像插件，供 XImagePluginRegistry 统一发现和创建处理器。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageBuiltinPlugin.h"
 
 /* XIMAGEIOPLUGIN_ON=0 时整体裁剪：内置插件不参与构建，注册表与
@@ -1138,3 +1140,5 @@ XImageIOPlugin* XImageBuiltinPlugin_instance(void)
 }
 
 #endif /* XIMAGEIOPLUGIN_ON */
+
+#endif /* XGUI_ON */

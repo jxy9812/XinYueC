@@ -6,6 +6,8 @@
  *             派生控件实现。本实现只使用 XinYueC 的 XWidget、XObject
  *             和 XClass 抽象层，不调用 Win32、POSIX、Qt 或其他平台 API。
  */
+#if XGUI_ON
+
 #include "XAbstractButton.h"
 
 #include "XAlgorithm.h"
@@ -1401,3 +1403,5 @@ XAbstractButton* XAbstractButton_create_ex(XMemoryType memory,
 }
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON */
+
+#endif /* XGUI_ON */

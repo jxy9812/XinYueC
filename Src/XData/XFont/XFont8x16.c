@@ -1,4 +1,6 @@
 ﻿/* Generated from the legacy 8x16 source table in LVGL fmt_txt layout. */
+#if XFONT_FREETYPE_ON
+
 #include "XFont8x16.h"
 
 #if XFONT_BUILTIN_8X16_ON
@@ -427,3 +429,5 @@ bool XFont8x16_register(void)
     return XFontBitmapFace_registerProvider(&g_xfont8x16_provider);
 }
 #endif /* XFONT_BUILTIN_8X16_ON */
+
+#endif /* XFONT_FREETYPE_ON */

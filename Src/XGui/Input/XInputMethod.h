@@ -28,6 +28,8 @@
  ******************************************************************************/
 #ifndef XINPUTMETHOD_H
 #define XINPUTMETHOD_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -458,4 +460,7 @@ void* XInputMethod_inputDirectionChanged_signal(XInputMethod* self,
 #endif
 
 #endif /* XINPUTMETHOD_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XINPUTMETHOD_H */

@@ -16,6 +16,8 @@
 #ifndef XABSTRACTBUTTON_PROTECTED_H
 #define XABSTRACTBUTTON_PROTECTED_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -157,5 +159,7 @@ void XAbstractButton_contentChanged_base(XAbstractButton* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XABSTRACTBUTTON_PROTECTED_H */

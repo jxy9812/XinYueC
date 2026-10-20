@@ -2,6 +2,8 @@
  * @file       XSqlRelationalDelegate.c
  * @brief      SQL 关系模型委托的无界面核心实现。
  */
+#if XSQL_ON
+
 #include "XSqlRelationalDelegate.h"
 
 #include <string.h>
@@ -40,3 +42,5 @@ bool XSqlRelationalDelegate_setModelData(XSqlRelationalTableModel* model, int ro
                                                       XSqlItemDataRole_Edit);
 }
 XSqlTableModel* XSqlRelationalDelegate_createEditorModel(const XSqlRelationalTableModel* model, int column) { return XSqlRelationalTableModel_relationModel(model, column); }
+
+#endif /* XSQL_ON */

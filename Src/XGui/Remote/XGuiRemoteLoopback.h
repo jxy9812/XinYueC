@@ -27,6 +27,8 @@
  */
 #ifndef XGUIREMOTELOOPBACK_H
 #define XGUIREMOTELOOPBACK_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -121,5 +123,7 @@ void XGuiRemoteLoopbackDevice_shutdown(XGuiRemoteLoopbackDevice* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUIREMOTELOOPBACK_H */

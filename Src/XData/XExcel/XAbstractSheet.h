@@ -10,6 +10,8 @@
  ******************************************************************************/
 #ifndef XABSTRACTSHEET_H
 #define XABSTRACTSHEET_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -194,4 +196,7 @@ XDrawing* XAbstractSheet_drawing(const XAbstractSheet* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XABSTRACTSHEET_H */

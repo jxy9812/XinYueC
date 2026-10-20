@@ -21,6 +21,8 @@
  *             语义）、XPainter（度量与绘制）、XCompleter（补全联动）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XLineControl.h"
 
 #include "XMemory.h"
@@ -4551,3 +4553,5 @@ void XLineControl_internalRemove_public(XLineControl* self, int pos)
 { XLineControl_internalRemove(self, pos); }
 
 #endif /* XLINECONTROL_ON */
+
+#endif /* XGUI_ON */

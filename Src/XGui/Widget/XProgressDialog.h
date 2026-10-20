@@ -23,6 +23,8 @@
  ******************************************************************************/
 #ifndef XPROGRESSDIALOG_H
 #define XPROGRESSDIALOG_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -351,5 +353,7 @@ void XProgressDialog_open_2(XProgressDialog* self, XObject* receiver,
 void* XProgressDialog_canceled_signal(XProgressDialog* self);
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XPROGRESSDIALOG_H */

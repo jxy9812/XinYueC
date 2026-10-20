@@ -18,6 +18,8 @@
  ******************************************************************************/
 #ifndef XTREEWIDGET_H
 #define XTREEWIDGET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -649,4 +651,7 @@ void XTreeWidget_setColumnCount(XTreeWidget* self, int count);
 }
 #endif
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XTREEWIDGET_H */

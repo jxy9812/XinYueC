@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XPaintDevice.h"
 
 #if XPAINTDEVICE_ON
@@ -139,3 +141,5 @@ int XPaintDevice_depth(const XPaintDevice* self)
 }
 
 #endif /* XPAINTDEVICE_ON */
+
+#endif /* XGUI_ON */

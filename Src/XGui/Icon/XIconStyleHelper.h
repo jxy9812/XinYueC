@@ -10,6 +10,8 @@
 #ifndef XICONSTYLEHELPER_H
 #define XICONSTYLEHELPER_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,5 +41,7 @@ void XIconStyleHelper_apply(XIconMode mode, const XPixmap* base, XPixmap* out);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XICONSTYLEHELPER_H */

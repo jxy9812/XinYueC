@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XABSTRACTSERIES_H
 #define XABSTRACTSERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -165,4 +167,7 @@ int XAbstractSeries_attachedAxes(const XAbstractSeries* self,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XABSTRACTSERIES_H */

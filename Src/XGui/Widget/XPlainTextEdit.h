@@ -38,6 +38,8 @@
  */
 #ifndef XPLAINTEXTEDIT_H
 #define XPLAINTEXTEDIT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -564,5 +566,7 @@ void* XPlainTextEdit_updateRequest_signal(XPlainTextEdit* self,
 void* XPlainTextEdit_selectionChanged_signal(XPlainTextEdit* self);
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XPLAINTEXTEDIT_H */

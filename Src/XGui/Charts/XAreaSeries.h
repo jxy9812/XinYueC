@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XAREASERIES_H
 #define XAREASERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -158,4 +160,7 @@ const char* XAreaSeries_pointLabelsFont_2(const XAreaSeries* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XAREASERIES_H */

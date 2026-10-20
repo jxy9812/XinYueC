@@ -331,15 +331,17 @@ static void XMultiPool_initGlobal(void) {
      * 否则小容量 FreeRTOS 堆在首个 XCoreApplication 初始化即耗尽）。
      * add_pool 失败时子池已由其内部按所有权就地释放，此处检查返回值
      * 仅记录失败：档位/容量配置不匹配会使对应档位的分配返回 NULL。 */
-    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(32,  XMP_GLOBAL_C32)))
+    /* 块数为 0 = 该档位在本平台显式关闭（如 ESP8266 裁剪档 XMP_GLOBAL_C512=0，
+     * 省下 8×~520B arena），不是错误：跳过建池即可，不要打失败日志。 */
+    if (XMP_GLOBAL_C32  && !XMultiPool_add_pool(global_pool, XFixedPool_create(32,  XMP_GLOBAL_C32)))
         XERROR_PRINTF("XMultiPool,全局池32B档注册失败\n");
-    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(64,  XMP_GLOBAL_C64)))
+    if (XMP_GLOBAL_C64  && !XMultiPool_add_pool(global_pool, XFixedPool_create(64,  XMP_GLOBAL_C64)))
         XERROR_PRINTF("XMultiPool,全局池64B档注册失败\n");
-    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(128, XMP_GLOBAL_C128)))
+    if (XMP_GLOBAL_C128 && !XMultiPool_add_pool(global_pool, XFixedPool_create(128, XMP_GLOBAL_C128)))
         XERROR_PRINTF("XMultiPool,全局池128B档注册失败\n");
-    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(256, XMP_GLOBAL_C256)))
+    if (XMP_GLOBAL_C256 && !XMultiPool_add_pool(global_pool, XFixedPool_create(256, XMP_GLOBAL_C256)))
         XERROR_PRINTF("XMultiPool,全局池256B档注册失败\n");
-    if (!XMultiPool_add_pool(global_pool, XFixedPool_create(512, XMP_GLOBAL_C512)))
+    if (XMP_GLOBAL_C512 && !XMultiPool_add_pool(global_pool, XFixedPool_create(512, XMP_GLOBAL_C512)))
         XERROR_PRINTF("XMultiPool,全局池512B档注册失败\n");
     //XMultiPool_add_pool(global_pool, XFixedPool_create(1024, 32));
     //XMultiPool_add_pool(global_pool, XFixedPool_create(2048, 32));

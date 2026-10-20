@@ -1,11 +1,15 @@
 ﻿#include"XIOTest.h"
 #include"XSerialPort.h"
+#include"XSerialPortInfo.h"
 #include"XMemory.h"
 #include"XTestMenu.h"
 #include"XAction.h"
 #include"XCoreApplication.h"
 #include"XPrintf.h"
+#include"XVector.h"
+#include"XString.h"
 static void XSerialPortTest();
+static void XSerialPortInfoTest();
 
 static void readyRead_slot(XObject* sender, XObject* receiver, void* args)
 {
@@ -52,6 +56,46 @@ void XSerialPortTest()
     XCoreApplication_exec();*/
 }
 
+/**
+ * @brief 枚举本机串口并打印各端口的静态信息。
+ */
+static void XSerialPortInfoTest()
+{
+    XSerialPortInfoList* list = XSerialPortInfo_availablePorts();
+    size_t count;
+    size_t i;
+    if (!list)
+    {
+        XPrintf("枚举串口失败\n");
+        return;
+    }
+    count = XVector_size_base((const XContainer*)list);
+    XPrintf("可用串口 %d 个\n", (int)count);
+    for (i = 0; i < count; ++i)
+    {
+        /* 列表元素是指针，XVector_at_base 给的是槽地址，需再解引用一层。 */
+        XSerialPortInfo** slot = (XSerialPortInfo**)XVector_at_base(list, (int64_t)i);
+        XSerialPortInfo* info = slot ? *slot : NULL;
+        const XString* name;
+        const XString* description;
+        if (!info) continue;
+        name = XSerialPortInfo_portName(info);
+        description = XSerialPortInfo_description(info);
+        XPrintf("  %s  描述=%s  VID=%04X PID=%04X %s\n",
+                name ? XString_toUtf8(name) : "(null)",
+                description ? XString_toUtf8(description) : "(无)",
+                XSerialPortInfo_vendorId(info),
+                XSerialPortInfo_productId(info),
+                XSerialPortInfo_isBusy(info) ? "占用中" : "空闲");
+    }
+    for (i = 0; i < count; ++i)
+    {
+        XSerialPortInfo** slot = (XSerialPortInfo**)XVector_at_base(list, (int64_t)i);
+        if (slot && *slot) XClassDelete(*slot);
+    }
+    XClassDelete(list);
+}
+
 void XTestMenu_XSerialPortTest(XTestMenu* root)
 {
     XTestMenu* menu = XTestMenu_create("XSerialPort(串口)");
@@ -59,5 +103,9 @@ void XTestMenu_XSerialPortTest(XTestMenu* root)
     {
         XAction* action = XTestMenu_addAction(menu, "主测试");
         XTestMenu_setActionFunction(action, XSerialPortTest);
+    }
+    {
+        XAction* action = XTestMenu_addAction(menu, "枚举串口");
+        XTestMenu_setActionFunction(action, XSerialPortInfoTest);
     }
 }

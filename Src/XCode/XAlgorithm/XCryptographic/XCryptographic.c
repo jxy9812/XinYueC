@@ -5,6 +5,8 @@
  * 支持的算法：MD4, MD5, SHA-1, SHA-224/256/384/512, SHA3, Keccak, Blake2
  */
 
+#if XCryptographic_ON
+
 #include "XCryptographic.h"
 #include "XByteArray.h"
 #include "XMemory.h"
@@ -11286,3 +11288,5 @@ cleanup:
 }
 
 #endif /* XCRYPTOGRAPHIC_RSA_ON */
+
+#endif /* XCryptographic_ON */

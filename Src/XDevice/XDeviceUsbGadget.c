@@ -8,6 +8,7 @@
  * ========================================================================== */
 #include "XDeviceUsbGadget.h"
 #include "XVarList.h"
+#include "XVariant.h"
 #include "XMemory.h"
 #include "XFileDescriptor.h"
 #include <string.h>
@@ -65,51 +66,35 @@ static XDeviceContext* VXDeviceUsbGadget_open(XDevice* self, const XDeviceOpenOp
 static void VXDeviceUsbGadget_close(XDevice* self, XDeviceContext* handle);
 static bool VXDeviceUsbGadget_control(XDevice* self, XDeviceContext* handle,
                                       uint32_t command, const XVarList* in, XVarList* out);
+static bool VXDeviceUsbGadget_getProperty(XDevice* self, XDeviceContext* handle,
+                                         uint32_t property, XVariant* value);
 
 static XDeviceUsbGadgetContext* usbDeviceContext(XDeviceContext* handle)
 {
     return (XDeviceUsbGadgetContext*)handle;
 }
 
-static XDeviceError usbDeviceMapError(XDeviceUsbError error)
-{
-    switch (error) {
-    case XDeviceUsbError_None:              return XDeviceError_None;
-    case XDeviceUsbError_InvalidArgument:   return XDeviceError_InvalidArgument;
-    case XDeviceUsbError_NotOpen:           return XDeviceError_NotOpen;
-    case XDeviceUsbError_AlreadyOpen:       return XDeviceError_AlreadyOpen;
-    case XDeviceUsbError_Busy:              return XDeviceError_Busy;
-    case XDeviceUsbError_Timeout:           return XDeviceError_Timeout;
-    case XDeviceUsbError_Disconnected:      return XDeviceError_Closed;
-    case XDeviceUsbError_Unsupported:       return XDeviceError_NotSupported;
-    case XDeviceUsbError_Resource:          return XDeviceError_OutOfMemory;
-    case XDeviceUsbError_Stall:             return XDeviceError_IoFail;
-    case XDeviceUsbError_PermissionDenied:  return XDeviceError_IoFail;
-    case XDeviceUsbError_NoDevice:          return XDeviceError_NotFound;
-    case XDeviceUsbError_Controller:        return XDeviceError_IoFail;
-    case XDeviceUsbError_Io:                return XDeviceError_IoFail;
-    case XDeviceUsbError_Interrupted:       return XDeviceError_IoFail;
-    case XDeviceUsbError_Unknown:           return XDeviceError_IoFail;
-    default:                                return XDeviceError_IoFail;
-    }
-}
+/*
+ * 错误码语义：XDeviceUsbError 继承 XDeviceError 的编号空间（首项取
+ * XDeviceError_Count），USB 细分错误码直接作为通用错误码写入父类
+ * XDeviceContext.m_lastError，无需映射；XDevice_getProperty 门面对
+ * XDeviceProperty_LastError 从该变量兜底返回，USB 域取值自然透出。
+ */
 
 static void usbDeviceSetError(XDeviceUsbGadgetContext* context)
 {
-    XDeviceError error;
     if (!context) return;
     if (context->m_backendController)
-        error = usbDeviceMapError(XDeviceUsbGadget_platformLastError(context->m_backendController));
+        context->m_base.m_lastError =
+            (int16_t)XDeviceUsbGadget_platformLastError(context->m_backendController);
     else
-        error = XDeviceError_IoFail;
-    context->m_base.m_lastError = (int16_t)error;
+        context->m_base.m_lastError = (int16_t)XDeviceUsbError_Unknown;
 }
 
 static void usbDeviceSetOpenError(int* error, int platformError)
 {
     if (!error) return;
-    *error = platformError > 0 ? (int)usbDeviceMapError((XDeviceUsbError)platformError)
-                               : (int)XDeviceError_IoFail;
+    *error = platformError > 0 ? (int)platformError : (int)XDeviceError_IoFail;
 }
 
 XVtable* XDeviceUsbGadget_class_init(void)
@@ -119,6 +104,7 @@ XVtable* XDeviceUsbGadget_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Open, VXDeviceUsbGadget_open);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Close, VXDeviceUsbGadget_close);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Control, VXDeviceUsbGadget_control);
+    XVTABLE_OVERLOAD_DEFAULT(EXDevice_GetProperty, VXDeviceUsbGadget_getProperty);
     XCLASS_SET_CLASS_NAME_DEFAULT("usbgadget");
     XCLASS_SHOW_SIZE_DEFAULT(XDeviceUsbGadget);
     return XVTABLE_DEFAULT;
@@ -469,16 +455,6 @@ static bool VXDeviceUsbGadget_control(XDevice* self, XDeviceContext* handle, uin
         ok = true;
         break;
     }
-    case XDeviceUsbGadgetCommand_LastError: {
-        XDeviceUsbError* slot;
-        if (input || !output || output->m_size != sizeof(slot)) break;
-        XVarList_start(output);
-        slot = XVarList_arg(output, XDeviceUsbError*);
-        if (!slot) break;
-        *slot = XDeviceUsbGadget_platformLastError(context->m_backendController);
-        ok = true;
-        break;
-    }
     case XDeviceUsbGadgetCommand_NativeError: {
         int32_t* slot;
         if (input || !output || output->m_size != sizeof(slot)) break;
@@ -502,6 +478,40 @@ static bool VXDeviceUsbGadget_control(XDevice* self, XDeviceContext* handle, uin
     if (ok) context->m_base.m_lastError = (int16_t)XDeviceError_None;
     else usbDeviceSetError(context);
     return ok;
+}
+
+/**
+ * @brief 读取 USB Device/Gadget 设备属性。
+ * @details 把 XDeviceUsbGadgetProperty_* 属性接到平台后端，使属性枚举不再是
+ *          死代码：与等价的 XDeviceUsbGadgetCommand_* 取值同源，只是改用属性
+ *          通路。
+ *
+ *          LastError 不在此处理：USB 细分错误码已由 usbDeviceSetError 直接
+ *          写入父类 XDeviceContext.m_lastError（XDeviceUsbError 继承
+ *          XDeviceError 编号空间，无需映射），GetProperty 返回 false 后由
+ *          XDevice_getProperty 门面统一从父类变量兜底返回。
+ */
+static bool VXDeviceUsbGadget_getProperty(XDevice* self, XDeviceContext* handle,
+                                          uint32_t property, XVariant* value)
+{
+    XDeviceUsbGadgetContext* context = usbDeviceContext(handle);
+    (void)self;
+    if (!context || !value || !context->m_backendController) return false;
+    switch (property) {
+    case XDeviceUsbGadgetProperty_State:
+        XVariant_setValue_int(value, (int)XDeviceUsbGadget_platformStatus(context->m_backendController));
+        return true;
+    case XDeviceUsbGadgetProperty_Features:
+        XVariant_setValue_uint32(value,
+            (uint32_t)XDeviceUsbGadget_platformFeatures(context->m_backendController));
+        return true;
+    case XDeviceUsbGadgetProperty_NativeHandle:
+        XVariant_setValue_ptr(value,
+            (void*)(intptr_t)XDeviceUsbGadget_platformHandle(context->m_backendController));
+        return true;
+    default:
+        return false;
+    }
 }
 
 /* ============================================================================
@@ -750,18 +760,6 @@ XDeviceUsbNativeHandle XDeviceUsbGadget_handle(XFd fd)
     XDeviceUsbGadget_control(fd, XDeviceUsbGadgetCommand_Handle, NULL, output);
     XVarList_delete(output);
     return handle;
-}
-
-XDeviceUsbError XDeviceUsbGadget_lastError(XFd fd)
-{
-    XVarList* output;
-    XDeviceUsbError error = XDeviceUsbError_None;
-    XDeviceUsbError* slot = &error;
-    output = XVarList_Create(XVar(XDeviceUsbError*, slot));
-    if (!output) return XDeviceUsbError_Unknown;
-    XDeviceUsbGadget_control(fd, XDeviceUsbGadgetCommand_LastError, NULL, output);
-    XVarList_delete(output);
-    return error;
 }
 
 int32_t XDeviceUsbGadget_nativeError(XFd fd)

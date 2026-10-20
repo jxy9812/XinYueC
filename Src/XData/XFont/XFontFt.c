@@ -9,6 +9,8 @@
  *             家族锁存（§3.1）、FT_Outline_Decompose→XFontOutlineSink
  *             与 26.6→设计单位度量换算（§2.3/§1.2 闭合公式）、env 首读。
  ******************************************************************************/
+#if XFONT_FREETYPE_ON
+
 #include "XFontFt.h"
 #include "XFont.h"
 #include "XFontFace_Protected.h"
@@ -1428,3 +1430,5 @@ const XFontFace* XFontFt_fileFace(const char* family)
 }
 
 #endif /* XFONT_FT_ON */
+
+#endif /* XFONT_FREETYPE_ON */

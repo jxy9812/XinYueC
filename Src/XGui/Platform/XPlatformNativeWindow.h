@@ -38,6 +38,8 @@
  ******************************************************************************/
 #ifndef XPLATFORMNATIVEWINDOW_H
 #define XPLATFORMNATIVEWINDOW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -387,4 +389,7 @@ void* XPlatformNativeWindow_nativeConnection(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPLATFORMNATIVEWINDOW_H */

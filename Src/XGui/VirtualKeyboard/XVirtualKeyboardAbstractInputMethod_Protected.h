@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDABSTRACTINPUTMETHOD_PROTECTED_H
 #define XVIRTUALKEYBOARDABSTRACTINPUTMETHOD_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,4 +47,7 @@ void XVirtualKeyboardAbstractInputMethod_setInputContext(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDABSTRACTINPUTMETHOD_PROTECTED_H */

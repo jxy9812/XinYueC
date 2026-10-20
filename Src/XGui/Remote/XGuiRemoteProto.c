@@ -13,6 +13,8 @@
  *                 不校验(XGuiRemote.md §3.4 冻结口径)。
  * @author     XinYueC 团队
  */
+#if XGUI_ON
+
 #include "XGuiRemoteProto.h"
 #if XGUI_REMOTE_ON
 
@@ -1312,3 +1314,5 @@ bool XGuiRemoteProto_decError(const uint8_t* payload, size_t len,
 }
 
 #endif /* XGUI_REMOTE_ON */
+
+#endif /* XGUI_ON */

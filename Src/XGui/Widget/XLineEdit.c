@@ -32,6 +32,8 @@
  *             迁移前一致）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
 
@@ -2770,3 +2772,5 @@ XMenu* XLineEdit_createStandardContextMenu(XLineEdit* self)
     return XTextMenu_createStandard(&ops);
 }
 #endif /* XMENU_ON */
+
+#endif /* XGUI_ON */

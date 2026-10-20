@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XDateTimeEdit.h"
 #include "XStringUtils.h"
 #include "XPrintf.h"         /* 弹层收层路径诊断日志（缺陷④定位） */
@@ -4087,3 +4089,5 @@ void XDateTimeEdit_setSelectedSection(XDateTimeEdit* self, int section)
 
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
+
+#endif /* XGUI_ON */

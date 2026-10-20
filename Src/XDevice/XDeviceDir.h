@@ -78,6 +78,8 @@ bool XDeviceDir_register(void);
         (const XDeviceOpenOptions*)(options), (error))
 #define XDeviceDir_close   XDevice_close
 #define XDeviceDir_control XDevice_control
+/** @brief 读取设备最近一次错误码；复用父类门面。 */
+#define XDeviceDir_lastError XDevice_lastError
 
 /**
  * @brief 按路径打开目录设备。

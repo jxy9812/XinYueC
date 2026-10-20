@@ -65,6 +65,8 @@
  ******************************************************************************/
 #ifndef XPINYINPHRASE_H
 #define XPINYINPHRASE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -221,4 +223,7 @@ bool XPinyinPhrase_find(const uint16_t* syllableIds, int32_t count,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPINYINPHRASE_H */

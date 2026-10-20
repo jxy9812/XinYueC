@@ -5,6 +5,8 @@
 #ifndef XIMAGEIOPLUGIN_H
 #define XIMAGEIOPLUGIN_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -117,5 +119,7 @@ XStringList* XImageIOPlugin_nameFilters_base(const XImageIOPlugin* self);
 
 #undef XImageIOPlugin_create
 #define XImageIOPlugin_create() XImageIOPlugin_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif

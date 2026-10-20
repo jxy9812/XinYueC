@@ -7,6 +7,8 @@
 #ifndef XSQLERROR_H
 #define XSQLERROR_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -119,5 +121,7 @@ bool XSqlError_equals(const XSqlError* left, const XSqlError* right);
 /* XClass create API default-memory wrappers. */
 #undef XSqlError_create
 #define XSqlError_create(...) XSqlError_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLERROR_H */

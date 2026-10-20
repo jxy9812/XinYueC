@@ -13,6 +13,8 @@
  ******************************************************************************/
 #ifndef XGRAPHICSBLUREFFECT_H
 #define XGRAPHICSBLUREFFECT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -138,5 +140,7 @@ void* XGraphicsBlurEffect_blurHintsChanged_signal(
     XGraphicsBlurEffect* self, XGraphicsBlurEffectBlurHints hints);
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XGRAPHICSBLUREFFECT_H */

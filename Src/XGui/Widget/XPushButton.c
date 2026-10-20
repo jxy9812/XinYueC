@@ -29,6 +29,8 @@
  *             阻塞弹出（Qt showMenu 文档的阻塞语义由调用方事件循环承担）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPushButton.h"
 
 #include "XAlgorithm.h"
@@ -781,3 +783,5 @@ XVtable* XPushButton_class_init(void)
 }
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON */
+
+#endif /* XGUI_ON */

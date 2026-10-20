@@ -65,6 +65,8 @@
  *             平台/加速器变体覆盖）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XRenderKernel.h"
 
 #if XPAINTER_ON && (XRENDERKERNEL_RGB32_ON || XRENDERKERNEL_RGBX8888_ON || XRENDERKERNEL_RGBA8888_ON || XRENDERKERNEL_ARGB32_ON)
@@ -941,3 +943,5 @@ void XRenderKernel_registerRgb32(void)
 }
 
 #endif /* XPAINTER_ON && (RGB32/RGBX8888/RGBA8888/ARGB32 族开关) */
+
+#endif /* XGUI_ON */

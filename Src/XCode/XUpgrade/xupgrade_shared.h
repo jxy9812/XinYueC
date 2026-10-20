@@ -12,6 +12,8 @@
 #ifndef XUPGRADE_SHARED_H
 #define XUPGRADE_SHARED_H
 
+#if XUPGRADE_ON
+
 #include "XUpgrade.h"         /* XUPGRADE_VERSION_MAX/XUPGRADE_DETAIL_MAX */
 #include "XUpgradePackage.h"  /* XUPGRADE_SHA256_BIN_SIZE */
 #include "XMemory.h"          /* XMemcpy */
@@ -203,5 +205,7 @@ static inline int xups_sha256_bytes(const unsigned char* data, size_t len,
     XCryptographicHash_deinit(&hash);
     return 1;
 }
+
+#endif /* XUPGRADE_ON */
 
 #endif /* XUPGRADE_SHARED_H */

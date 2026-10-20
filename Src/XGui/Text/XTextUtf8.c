@@ -10,6 +10,8 @@
  *             按共享层契约返回 0。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XTextUtf8.h"
 #include "XGuiConfig.h"
 
@@ -51,3 +53,5 @@ size_t XTextUtf8_nextBoundary(const char* s, size_t pos)
 }
 
 #endif /* XTEXTUTF8_ON */
+
+#endif /* XGUI_ON */

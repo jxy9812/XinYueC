@@ -43,6 +43,8 @@
  ******************************************************************************/
 #ifndef XLINEEDIT_H
 #define XLINEEDIT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -868,4 +870,7 @@ void* XLineEdit_inputRejected_signal(XLineEdit* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XLINEEDIT_H */

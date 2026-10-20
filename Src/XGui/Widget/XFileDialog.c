@@ -11,6 +11,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XStringUtils.h"  /* strtok 直出改经可重入分词器（外部依赖约束） */
 #include "XGuiConfig.h"
 #include "XString.h"
@@ -3930,3 +3932,5 @@ void* XFileDialog_proxyModel(const XFileDialog* self)
 }
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#endif /* XGUI_ON */

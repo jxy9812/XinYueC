@@ -144,6 +144,15 @@ target_include_directories(mbedtls PRIVATE ${MBEDTLS_PRIVATE_INCS})
 
 # 启用 XSsl mbedTLS 后端（传播给链接方）
 target_compile_definitions(mbedtls PUBLIC XSSL_USE_MBEDTLS)
+# mbedtls 平台层直接引用 XCryptographic 类型；其公共头以 #if XCryptographic_ON
+# 作守卫。与核心库对齐，强制包含 CXinYueConfig.h 保证开关默认值可见。
+if(MSVC)
+    target_compile_options(mbedtls PRIVATE
+        "/FI${PROJECT_SOURCE_DIR}/Src/CXinYueConfig.h")
+else()
+    target_compile_options(mbedtls PRIVATE
+        "-include" "${PROJECT_SOURCE_DIR}/Src/CXinYueConfig.h")
+endif()
 # ChaCha20 统一走纯 C 软件路径。chacha20_neon.h 在检测到 NEON 内建
 # （__ARM_NEON，安卓/ARM64 交叉均成立）时会按 MULTIBLOCK>=1 跳过
 # chacha20.c 内的软件版 mbedtls_chacha20_update，而对应的 NEON 多块

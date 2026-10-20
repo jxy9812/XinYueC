@@ -13,6 +13,8 @@
  */
 #ifndef XTEXTEDIT_H
 #define XTEXTEDIT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -910,5 +912,7 @@ bool XTextEdit_overwriteMode(const XTextEdit* self);
  */
 void XTextEdit_moveCursor(XTextEdit* self, int operation, int mode);
 #endif /* XTEXTEDIT_H */
+
+#endif /* XGUI_ON */
 
 #endif /* XTEXTEDIT_ON */

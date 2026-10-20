@@ -2,6 +2,8 @@
  * @file       XPlatformTheme.c
  * @brief      平台无关主题快照实现。
  ****************************************************************************/
+#if XGUI_ON
+
 #include "XPlatformTheme.h"
 #include "XStringUtils.h"
 #include "XSystem.h"
@@ -146,3 +148,5 @@ XPlatformThemeDecorationMode XPlatformThemeDecoration_effectiveMode(void)
     return XPlatformThemeDecoration_Auto;
 #endif
 }
+
+#endif /* XGUI_ON */

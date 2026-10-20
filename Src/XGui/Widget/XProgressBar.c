@@ -22,6 +22,8 @@
  *             （由 XWidget 基类提供）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XProgressBar.h"
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
@@ -762,3 +764,5 @@ void* XProgressBar_valueChanged_signal(XProgressBar* self, int value)
 
 
 #endif /* XWIDGET_ON && XPROGRESSBAR_ON */
+
+#endif /* XGUI_ON */

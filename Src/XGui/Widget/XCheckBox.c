@@ -25,6 +25,8 @@
  *             stateChanged(int) 信号未实现；hitButton 按 indicator 矩形。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XCheckBox.h"
 
 #include "XAlgorithm.h"
@@ -600,3 +602,5 @@ XCheckBox* XCheckBox_create_ex(XMemoryType memory, XWidget* parent,
 
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */
+
+#endif /* XGUI_ON */

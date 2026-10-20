@@ -5,6 +5,8 @@
  *             （GB2312 全集 XFO1 数据）随自研轮廓字实现整体删除；轮廓
  *             字形供货由 FT 文件后端（XFontFt）承担，此处仅装配点阵。
  ******************************************************************************/
+#if XFONT_FREETYPE_ON
+
 #include "XFont8x16.h"
 #include "XFont16x16.h"
 #include "XFont32x32.h"
@@ -20,3 +22,5 @@ void XFontFace_registerBuiltinProviders(void)
     (void)XFont32x32_register();
 #endif /* XFONT_BUILTIN_32X32_ON */
 }
+
+#endif /* XFONT_FREETYPE_ON */

@@ -14,6 +14,8 @@
  *             缓冲）提供，落盘与目录编排属 XUpgradeEngine/XUpgradeStore。
  */
 
+#if XUPGRADE_ON
+
 #include "XUpgradePackage.h"
 
 #include "xupgrade_shared.h" /* 模块内部共享小工具（xups_*） */
@@ -532,3 +534,5 @@ XUpgradeError XUpgradePackage_verify(const uint8_t* bytes, size_t size)
     }
     return XUpgradeError_Ok;
 }
+
+#endif /* XUPGRADE_ON */

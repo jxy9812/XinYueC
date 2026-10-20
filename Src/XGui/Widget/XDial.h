@@ -14,6 +14,8 @@
  ******************************************************************************/
 #ifndef XDIAL_H
 #define XDIAL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -115,4 +117,7 @@ int XDial_notchSize(const XDial* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XDIAL_H */

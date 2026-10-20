@@ -8,6 +8,8 @@
  *             延迟销毁）。切页 = 显示当前页容器 + 隐藏其余。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #include "XAlgorithm.h"
@@ -952,3 +954,5 @@ void* XTabWidget_tabBarDoubleClicked_signal(XTabWidget* self)
 
 
 #endif /* XWIDGET_ON && XTABBAR_ON && XTABWIDGET_ON */
+
+#endif /* XGUI_ON */

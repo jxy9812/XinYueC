@@ -2,6 +2,8 @@
  * @file       XSqlRelationalTableModel.c
  * @brief      SQL 关系表模型实现。
  */
+#if XSQL_ON
+
 #include "XSqlRelationalTableModel.h"
 
 #include <string.h>
@@ -457,3 +459,5 @@ static bool VXSqlRelationalTableModel_insertRowIntoTable(XSqlTableModel* base,
 }
 static void VXSqlRelationalTableModel_revertRow(XSqlRelationalTableModel* model, int row) { if (model) XClass_Parent(XSqlTableModel, EXSqlTableModel_RevertRow, void(*)(XSqlTableModel*, int))(&model->m_parent, row); }
 void XSqlRelationalTableModel_revertRow(XSqlRelationalTableModel* model, int row) { if (model && !XClassIsVtableNull(model)) XClassGetVirtualFunc(model, EXSqlTableModel_RevertRow, void(*)(XSqlRelationalTableModel*, int))(model, row); }
+
+#endif /* XSQL_ON */

@@ -1,4 +1,4 @@
-﻿#请求CAMKE的最小构建版本
+#请求CAMKE的最小构建版本
 cmake_minimum_required(VERSION 3.5)
 #设置项目名称
 project(Xin_Yue_C VERSION 0.1 LANGUAGES C)
@@ -282,6 +282,10 @@ if(NOT CMAKE_CROSSCOMPILING OR NOT XINYUE_PLATFORM_FREERTOS)
     list(FILTER DRIVE_FILE EXCLUDE REGEX ".*/FreeRTOS/.*")
     list(FILTER DRIVE_FILE EXCLUDE REGEX ".*/STM32/.*")
 endif()
+# Espressif/ESP8266 移植层（2026-10-16 入库）：源文件依赖 ESP-IDF SDK 头
+# （c_types.h 等），桌面/MSVC 编译期即缺头报错；其构建入口是 esp8266/
+# 子工程（独立根 CMakeLists + 自带 toolchain），不与本根 glob 共存。
+list(FILTER DRIVE_FILE EXCLUDE REGEX ".*/Espressif/.*")
 # android_main.c 是 demo APK 的 NativeActivity 壳接线（引用 demo 入口
 # xgui_window_demo_main，定义 ANativeActivity_onCreate），归 xguidemo
 # 目标所有（该目标已显式登记此文件）；留在框架库里会让动态库
@@ -291,6 +295,23 @@ if(ANDROID)
 endif()
 add_library(${EXPORT_NAME}S  STATIC  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE})
 add_library(${EXPORT_NAME}  SHARED  ${SRC_FILE} ${DRIVE_FILE} ${LIBRARY_FILE} ${PUBLIC_HDRS})
+
+# ESP8266 移植给大量 .h/.c 补了 #if MODULE_ON 文件顶部守卫，开关默认值在
+# CXinYueConfig.h（及其拉入的模块 config）。桌面原先没有强制包含，TU 首行
+# 的 #if 因宏未定义按 0 求值，整文件被裁空（实测 mbedtls 引用
+# XCryptographic 类型失败）。与 ESP8266 的 -include ESP8266Minimal.h 对齐，
+# 对核心库目标强制包含 CXinYueConfig.h；第三方纯 C 库不受影响。
+function(xinyue_force_include_config target)
+    if(MSVC)
+        target_compile_options(${target} PRIVATE
+            "/FI${CMAKE_CURRENT_LIST_DIR}/Src/CXinYueConfig.h")
+    else()
+        target_compile_options(${target} PRIVATE
+            "-include" "${CMAKE_CURRENT_LIST_DIR}/Src/CXinYueConfig.h")
+    endif()
+endfunction()
+xinyue_force_include_config(${EXPORT_NAME}S)
+xinyue_force_include_config(${EXPORT_NAME})
 
 # ==================== 外部库（以静态库方式构建，合并到 XinYueC 动态库中）====================
 # 注意：外部库（lwip/zlib/fatfs）内部引用了 XinYueC 核心符号（XMalloc_*、XCrc32_*、
@@ -601,6 +622,7 @@ ${TEST_FILE}
 set_target_properties(${EXPORT_NAME}_Static PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Static"
 )
+xinyue_force_include_config(${EXPORT_NAME}_Static)
 # Windows(MSVC): 数学函数内置在 C 运行时，线程使用 Drive/windows 的 Win32 实现，无需链接 m/pthread
 # Unix(Linux/macOS/BSD): 需链接数学库 m 与线程库 pthread（对应 Drive/Posix 实现，源码已用
 #                         __linux__/__APPLE__/__BSD__ 宏守护，仅在这些平台编译）
@@ -623,6 +645,7 @@ ${TEST_FILE}
 set_target_properties(${EXPORT_NAME}_Dynamic PROPERTIES
     OUTPUT_NAME "${EXPORT_NAME}_Dynamic"
 )
+xinyue_force_include_config(${EXPORT_NAME}_Dynamic)
 if(UNIX)
     target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
 else()
@@ -714,6 +737,7 @@ else()
     target_link_libraries(XGuiRemoteAuth_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
 endif()
 endif() # XGUI_ON && NOT WIN32（认证矩阵测试）
+
 
 # ==================== XGuiRemote 自适应降档阶梯测试(perf9 路4) ====================
 # 独立可执行(自带 main): (a) XGuiRemoteAdapt.h 纯状态机单元(阶梯映射/迟滞/
@@ -865,6 +889,7 @@ add_executable(XGuiWindowDemo_Test
     "./Test/XGuiDemo/xgui_demo_page_update.c"
     "./Test/XGuiDemo/xgui_demo_page_modbus.c"
     "./Test/XGuiDemo/xgui_demo_page_window.c"
+    "./Test/XGuiDemo/xgui_demo_page_timeddns.c"
     "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
     "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
     "./Test/XGuiDemo/xgui_demo_apitest_input.c"

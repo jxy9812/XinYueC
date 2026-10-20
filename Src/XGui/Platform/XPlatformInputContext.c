@@ -18,6 +18,8 @@
  *             置 0 时本文件实现体整体裁剪。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPlatformInputContext.h"
 
 #include "XAlgorithm.h"
@@ -670,3 +672,5 @@ XRectF XPlatformInputContext_keyboardRectangle_static(void)
 }
 
 #endif /* XPLATFORMINPUTCTX_ON */
+
+#endif /* XGUI_ON */

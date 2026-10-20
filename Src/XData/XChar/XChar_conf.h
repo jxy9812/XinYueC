@@ -53,7 +53,7 @@ extern "C" {
 /* 系统API模式默认开启；Android 虽属 __linux__，但 bionic 无 iconv 实现，
    必须排除在系统API模式之外；FreeRTOS/裸机同样无系统转换 API
    （XCharFreeRTOS.c 强制校验），二者均由下方自动检测回落文件映射表模式。 */
-#if !defined(__ANDROID__) && !defined(__FreeRTOS__)
+#if !defined(__ANDROID__) && !defined(__FreeRTOS__) && !defined(XCHAR_NO_SYSTEM_GBK)
  #define XCHAR_USE_SYSTEM_GBK    /* 系统API模式 */
 #endif
 

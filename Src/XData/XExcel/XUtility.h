@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XUTILITY_H
 #define XUTILITY_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -155,4 +157,7 @@ XString XUtility_convertSharedFormula(const XString* rootFormula, const XCellRef
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

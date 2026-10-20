@@ -4,6 +4,8 @@
  * @author     XinYueC
  * @note       输出 UTF-8 编码的 XML，并支持写入内存缓冲区或关联设备。
  ******************************************************************************/
+#if XXmlStream_ON
+
 #include "XXmlStreamWriter.h"
 #include "XString.h"
 #include "XByteArray.h"
@@ -2138,3 +2140,5 @@ XIODevice* XXmlStreamWriter_device(const XXmlStreamWriter* self)
 {
     return self? self->m_device:NULL;
 }
+
+#endif /* XXmlStream_ON */

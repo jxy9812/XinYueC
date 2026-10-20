@@ -126,6 +126,8 @@ typedef enum XSerialPort_Error
  * @brief 串口设备打开选项。
  * @details m_base.m_target 为串口名称；本结构必须通过
  *          XDeviceSerialPortOpenOptions_init 初始化后再覆盖所需字段。
+ *          m_enumerate 为 1 时进入枚举模式：只建立用于查询本机可用串口的设备
+ *          上下文，不打开任何具体端口，m_base.m_target 可以为 NULL。
  */
 typedef struct XDeviceSerialPortOpenOptions
 {
@@ -137,7 +139,8 @@ typedef struct XDeviceSerialPortOpenOptions
     uint32_t m_parity      : 3;              /**< 校验方式。 */
     uint32_t m_stopBits    : 2;              /**< 停止位。 */
     uint32_t m_flowControl : 2;              /**< 流控方式。 */
-    uint32_t m_reserved    : 21;             /**< 保留位，必须为 0。 */
+    uint32_t m_enumerate   : 1;              /**< 枚举模式：只建立枚举上下文，不打开端口。 */
+    uint32_t m_reserved    : 20;             /**< 保留位，必须为 0。 */
     int64_t m_readBufferSize;                /**< 接收缓冲上限提示，单位字节。 */
 } XDeviceSerialPortOpenOptions;
 
@@ -147,6 +150,86 @@ typedef struct XDeviceSerialPortOpenOptions
  * @note 函数会把整个结构体重置为默认值，调用前已有内容将被覆盖。
  */
 void XDeviceSerialPortOpenOptions_init(XDeviceSerialPortOpenOptions* options);
+
+/* ============================================================================
+ * 串口枚举：属性值类型、平台采集回调与便捷 API
+ * ============================================================================ */
+
+/**
+ * @brief 串口条目快照。
+ * @details XDeviceSerialPortProperty_AvailablePorts 属性的元素类型。字符串成员
+ *          为 UTF-8，由所属列表拥有。
+ */
+typedef struct XDeviceSerialPortPortInfo
+{
+    const char* m_portName;      /**< 端口名（如 "COM3"、"/dev/ttyUSB0"）；不可为 NULL。 */
+    const char* m_description;   /**< 人类可读描述；平台不支持时为 NULL。 */
+    const char* m_manufacturer;  /**< 厂商名；平台不支持时为 NULL。 */
+    const char* m_serialNumber;  /**< 序列号；平台不支持时为 NULL。 */
+    uint32_t    m_vendorId;      /**< USB 厂商 ID；0 表示未知或非 USB 设备。 */
+    uint32_t    m_productId;     /**< USB 产品 ID；0 表示未知或非 USB 设备。 */
+    bool        m_busy;          /**< 端口是否已被其它进程占用。 */
+} XDeviceSerialPortPortInfo;
+
+/**
+ * @brief 串口列表。
+ * @details XDeviceSerialPortProperty_AvailablePorts 属性的值类型。
+ */
+typedef struct XDeviceSerialPortPortList
+{
+    size_t m_count;                     /**< 条目数。 */
+    XDeviceSerialPortPortInfo* m_ports; /**< 条目数组；与列表同生命周期。 */
+} XDeviceSerialPortPortList;
+
+/**
+ * @brief 平台串口采集回调。
+ * @param port 当前条目；借用，回调返回后失效。
+ * @param userData 平台后端原样传入的借用数据；可为 NULL。
+ * @return 返回 false 表示提前终止枚举。
+ * @note 该回调只供平台后端实现 XDeviceSerialPort 的私有枚举钩子时使用；
+ *       业务代码不直接调用。
+ */
+typedef bool (*XDeviceSerialPortPortCollector)(void* userData, const XDeviceSerialPortPortInfo* port);
+
+/**
+ * @brief 释放串口列表及其条目字符串。
+ * @param list 待释放的列表；可为 NULL。
+ * @note 只用于释放 XDeviceSerialPort_availablePorts 返回的自有列表；
+ *       作为属性值借用的列表由设备上下文释放，不得用本函数释放。
+ */
+void XDeviceSerialPortPortList_delete(XDeviceSerialPortPortList* list);
+
+/* ============================================================================
+ * XDeviceSerialPort 便捷 API（统一通过 XFd 门面）
+ * ============================================================================ */
+
+/** @brief 复用 XDevice 的打开、关闭与控制门面；参数契约与父类 API 相同。 */
+#define XDeviceSerialPort_open(options, error) \
+    XDevice_openClass("serial", (const XDeviceOpenOptions*)(options), (error))
+#define XDeviceSerialPort_close   XDevice_close
+#define XDeviceSerialPort_control XDevice_control
+#define XDeviceSerialPort_read    XDevice_read
+#define XDeviceSerialPort_write   XDevice_write
+#define XDeviceSerialPort_getProperty    XDevice_getProperty
+#define XDeviceSerialPort_setProperty    XDevice_setProperty
+#define XDeviceSerialPort_queryProperty  XDevice_queryProperty
+/**
+ * @brief 刷新串口缓冲；等待平台把已提交的写数据全部发完。
+ * @param fd 已打开的串口描述符；借用。
+ * @return 平台确认发送完成返回 true；失败返回 false。
+ */
+#define XDeviceSerialPort_flush XDevice_flush
+/** @brief 读取设备最近一次错误码；复用父类门面。 */
+#define XDeviceSerialPort_lastError XDevice_lastError
+
+/**
+ * @brief 列出本机当前可用的串口。
+ * @details 便捷 API：内部读取 XDeviceSerialPortProperty_AvailablePorts 属性，
+ *          返回一份由调用方拥有的列表副本。
+ * @param fd 已打开的串口设备描述符；须以枚举模式打开（打开选项 m_enumerate=1）。
+ * @return 新分配的列表，需用 XDeviceSerialPortPortList_delete 释放；失败返回 NULL。
+ */
+XDeviceSerialPortPortList* XDeviceSerialPort_availablePorts(XFd fd);
 
 /** @brief 串口设备专有属性，从父类设备属性空间继续分配。 */
 typedef enum XDeviceSerialPortProperty
@@ -177,6 +260,8 @@ typedef enum XDeviceSerialPortProperty
         /**< 只读，值为 XSerialPort_PinoutSignal 位组合。 */,
     XDeviceSerialPortProperty_Error
         /**< 只读，值为 XSerialPort_Error。 */,
+    XDeviceSerialPortProperty_AvailablePorts
+        /**< 只读，值为借用 XDeviceSerialPortPortList*；列出本机可用串口。列表由设备上下文持有，设备关闭后失效。 */,
     XDeviceSerialPortProperty_Count
         /**< 串口属性数量边界，不可传给属性 API。 */
 } XDeviceSerialPortProperty;
@@ -202,6 +287,7 @@ typedef struct XDeviceSerialPortContext
     XRingBuffer* m_readBuffer;                /**< 已完成的异步读取数据，由上下文拥有。 */
     XRingBuffer* m_writeBuffer;               /**< 等待异步写入的数据，由上下文拥有。 */
     const void* m_platformData;               /**< 平台配置借用指针。 */
+    XDeviceSerialPortPortList m_availablePorts; /**< AvailablePorts 属性的借用缓存；由上下文拥有。 */
     int64_t m_readBufferSize;                 /**< 接收缓冲上限提示。 */
     int64_t m_pendingWriteBytes;              /**< 已提交但尚未完成的写入字节数。 */
     int32_t m_baudRate;                       /**< 当前波特率。 */
@@ -215,7 +301,7 @@ typedef struct XDeviceSerialPortContext
     uint32_t m_breakEnabled      : 1;         /**< Break 已设置状态。 */
     uint32_t m_openMode          : 13;        /**< XIODeviceBaseMode 位组合。 */
     uint32_t m_flags             : 2;         /**< XDeviceOpenFlag 位组合。 */
-    uint32_t m_reserved          : 1;         /**< 保留位，必须为 0。 */
+    uint32_t m_enumerate         : 1;         /**< 枚举模式：只建立枚举上下文，未打开具体端口。 */
 } XDeviceSerialPortContext;
 
 /** @brief XDeviceSerialPort 虚函数表；继承 XDevice，不新增虚槽。 */

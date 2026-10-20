@@ -6,6 +6,8 @@
  ****************************************************************************/
 #ifndef XPLATFORMFONTDATABASE_H
 #define XPLATFORMFONTDATABASE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -86,4 +88,7 @@ bool XPlatformFontDatabaseDriver_collect(XVector* families);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif

@@ -7,6 +7,8 @@
 #ifndef XSQLDATABASE_H
 #define XSQLDATABASE_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -477,5 +479,7 @@ XSqlDriver* XSqlDatabase_driver(const XSqlDatabase* database);
 #define XSqlDatabase_create() XSqlDatabase_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XSqlDriverCreator_create
 #define XSqlDriverCreator_create(...) XSqlDriverCreator_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLDATABASE_H */

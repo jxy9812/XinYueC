@@ -1019,7 +1019,14 @@ static void VXAbstractSocket_ConnectToHost(XAbstractSocket* self, const char* ho
         }
         XClassDelete(hostStr);
 
-        XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
+        /* A connected UDP socket completes immediately at the platform layer
+         * and never raises a connect event, so waiting for one would leave the
+         * socket stuck in ConnectingState forever. TCP still transitions
+         * through ConnectingState until its connect event arrives. */
+        if (self->socketType == XAbstractSocket_UdpSocket)
+            XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectedState);
+        else
+            XAbstractSocket_setSocketState(self, XAbstractSocket_ConnectingState);
     }
 }
 

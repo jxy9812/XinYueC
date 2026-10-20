@@ -2,6 +2,8 @@
  * @file       XSqlDriverPlugin.c
  * @brief      SQL 驱动插件抽象类实现。
  */
+#if XSQL_ON
+
 #include "XSqlDriverPlugin.h"
 
 #include <string.h>
@@ -28,3 +30,5 @@ void XSqlDriverPlugin_init(XSqlDriverPlugin* plugin)
 }
 XSqlDriverPlugin* XSqlDriverPlugin_create_ex(XMemoryType memory) { XSqlDriverPlugin* plugin = (XSqlDriverPlugin*)XMemory_malloc(sizeof(XSqlDriverPlugin), memory); if (!plugin) return NULL; XSqlDriverPlugin_init(plugin); Set_Class_Memory(plugin, memory); Set_Class_IsHeap(plugin, true); return plugin; }
 XSqlDriver* XSqlDriverPlugin_create_base(XSqlDriverPlugin* plugin, const char* key) { return plugin && !XClassIsVtableNull(plugin) ? XClassGetVirtualFunc(plugin, EXSqlDriverPlugin_Create, XSqlDriver*(*)(XSqlDriverPlugin*, const char*))(plugin, key) : NULL; }
+
+#endif /* XSQL_ON */

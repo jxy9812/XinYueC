@@ -17,6 +17,8 @@
  ******************************************************************************/
 #ifndef XLISTVIEW_H
 #define XLISTVIEW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -403,4 +405,7 @@ void* XListView_indexesMoved_signal(XListView* self, const int* rows,
 }
 #endif
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XLISTVIEW_H */

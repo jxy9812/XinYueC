@@ -325,7 +325,10 @@ static int64_t VXFileDevice_skipData(XFileDevice* device, int64_t maxSize)
  * mmap 跟踪: 维护 address -> size 映射
  * 注: 真实 Qt 用 QFileEnginePrivate 跟踪, 这里使用进程级简单线性表
  * ============================================================================ */
+/* [2026-10-18 嵌入式防呆] #ifndef：小内存目标可收缩 mmap 跟踪表。 */
+#ifndef XFILE_MMAP_TRACK_MAX
 #define XFILE_MMAP_TRACK_MAX 32
+#endif
 typedef struct XFileMmapEntry { void* addr; int64_t size; bool inUse; } XFileMmapEntry;
 static XFileMmapEntry g_mmapEntries[XFILE_MMAP_TRACK_MAX] = {0};
 

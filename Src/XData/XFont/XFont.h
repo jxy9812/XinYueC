@@ -1,4 +1,4 @@
-﻿/******************************************************************************
+/******************************************************************************
  * @file       XFont.h
  * @brief      XFont 字体类（对标 Qt 6.8 QFont）
  * @author     XinYueC 团队
@@ -6,6 +6,9 @@
  ******************************************************************************/
 #ifndef XFONT_H
 #define XFONT_H
+
+#include "XFontFt_config.h"
+#if XFONT_FREETYPE_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -615,5 +618,7 @@ void XFont_swap(XFont* a, XFont* b);
 #undef XFont_create
 #define XFont_create() \
 	XFont_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, -1, -1, false)
+
+#endif /* XFONT_FREETYPE_ON */
 
 #endif /* XFONT_H */

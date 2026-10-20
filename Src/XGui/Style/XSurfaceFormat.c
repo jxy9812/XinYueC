@@ -11,6 +11,8 @@
  *             本文件实现体整体裁剪。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XSurfaceFormat.h"
 #include "XMemory.h"
 #include "XGuiConfig.h"
@@ -360,3 +362,5 @@ bool XSurfaceFormat_equals(const XSurfaceFormat* lhs, const XSurfaceFormat* rhs)
 }
 
 #endif /* XSURFACEFORMAT_ON */
+
+#endif /* XGUI_ON */

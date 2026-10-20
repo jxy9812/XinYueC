@@ -3,6 +3,8 @@
  * @brief      XMediaFile 媒体文件类实现
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XMediaFile.h"
 #include "XCryptographic.h"
 #include "XMemory.h"
@@ -124,3 +126,5 @@ void XMediaFile_hashKey(const XMediaFile* self, uint8_t** outKey, size_t* outLen
     *outKey = key;
     *outLen = digestSize;
 }
+
+#endif /* XEXCEL_ON */

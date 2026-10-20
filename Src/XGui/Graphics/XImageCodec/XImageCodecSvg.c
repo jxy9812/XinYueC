@@ -17,6 +17,8 @@
  *              统一由 XImageCodec.c 的 XImageCodec_decode/encode 分发。
  * @author     XinYueC 团队
  */
+#if XGUI_ON
+
 #include "XImageCodec_config.h"
 
 #include "XStringUtils.h"
@@ -3532,3 +3534,5 @@ bool XImageCodecInternal_encodeSvg(const XImage* image, XByteArray* out)
 
 #endif /* XIMAGECODEC_SVG_ON */
 #endif /* XIMAGECODEC_ON */
+
+#endif /* XGUI_ON */

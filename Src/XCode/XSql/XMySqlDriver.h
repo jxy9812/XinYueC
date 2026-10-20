@@ -7,6 +7,8 @@
 #ifndef XMYSQLDRIVER_H
 #define XMYSQLDRIVER_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -52,5 +54,7 @@ const XSqlMySqlClientApi* XMySqlDriver_clientApi(void);
 /* XClass create API default-memory wrappers. */
 #undef XMySqlDriver_create
 #define XMySqlDriver_create() XMySqlDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XSQL_ON */
 
 #endif /* XMYSQLDRIVER_H */

@@ -6,6 +6,8 @@
  *             存储、白色索引 0/黑色索引 1 和项目 XMalloc_System 内存接口，
  *             不调用平台 API，所有扫描都限制在输入缓冲区边界内。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageCodecInternal.h"
 #include "XStringUtils.h"
 
@@ -319,3 +321,5 @@ bool XImageCodecInternal_encodeXbmNamed(const XImage* image, const char* name,
 }
 
 #endif /* XIMAGECODEC_ON && XIMAGECODEC_XBM_ON */
+
+#endif /* XGUI_ON */

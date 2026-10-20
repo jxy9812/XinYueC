@@ -25,6 +25,8 @@
  *             三角直接绘制）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XCommandLinkButton.h"
 
 #include "XAlgorithm.h"
@@ -599,3 +601,5 @@ XCommandLinkButton* XCommandLinkButton_create_ex(XMemoryType memory,
 }
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XPUSHBUTTON_ON && XCOMMANDLINKBUTTON_ON */
+
+#endif /* XGUI_ON */

@@ -20,6 +20,8 @@
  ******************************************************************************/
 #ifndef XGRAPHICSEFFECT_H
 #define XGRAPHICSEFFECT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -275,5 +277,7 @@ bool XGraphicsEffect_drawWidget(XGraphicsEffect* self, XWidget* widget,
 void XGraphicsEffect_blurBox3(XImage* image, const XRect* rect);
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XGRAPHICSEFFECT_H */

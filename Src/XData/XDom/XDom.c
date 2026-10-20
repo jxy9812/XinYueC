@@ -1,4 +1,6 @@
-﻿#include "XDom.h"
+﻿#if XDOM_ON
+
+#include "XDom.h"
 
 #include "XMemory.h"
 #include "XXmlStreamReader.h"
@@ -4490,3 +4492,5 @@ XByteArray* XDomDocument_toByteArray(const XDomDocument* self, int indent)
     XClassDelete(text);
     return result;
 }
+
+#endif /* XDOM_ON */

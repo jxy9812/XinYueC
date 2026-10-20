@@ -19,6 +19,8 @@
  ******************************************************************************/
 #ifndef XWINDOW_H
 #define XWINDOW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1436,4 +1438,7 @@ void* XWindow_transientParentChanged_signal(XWindow* self, XWindow* transientPar
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XWINDOW_H */

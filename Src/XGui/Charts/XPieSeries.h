@@ -1,5 +1,7 @@
 ﻿#ifndef XPIESERIES_H
 #define XPIESERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -232,4 +234,7 @@ void* XPieSeries_sumChanged_signal(XPieSeries* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPIESERIES_H */

@@ -20,6 +20,8 @@
  ******************************************************************************/
 #ifndef XGROUPBOX_H
 #define XGROUPBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -262,5 +264,7 @@ void* XGroupBox_toggled_signal(XGroupBox* self, bool checked);
 }
 #endif
 #endif /* XWIDGET_ON && XGROUPBOX_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XGROUPBOX_H */

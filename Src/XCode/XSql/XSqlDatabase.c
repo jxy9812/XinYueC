@@ -2,6 +2,8 @@
  * @file       XSqlDatabase.c
  * @brief      SQL 数据库连接、静态驱动注册和驱动创建器实现。
  */
+#if XSQL_ON
+
 #include "XSqlDatabase.h"
 #include "XSqlQuery.h"
 #include "XMySqlDriver.h"
@@ -552,3 +554,5 @@ XThread* XSqlDatabase_thread(const XSqlDatabase* database)
         ? XObject_thread((const XObject*)database->m_d->m_driver) : NULL;
 }
 XSqlDriver* XSqlDatabase_driver(const XSqlDatabase* database) { return database && database->m_d && xsql_database_thread_allowed(database->m_d) ? database->m_d->m_driver : NULL; }
+
+#endif /* XSQL_ON */

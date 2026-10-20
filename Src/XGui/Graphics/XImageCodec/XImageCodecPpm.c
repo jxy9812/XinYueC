@@ -5,6 +5,8 @@
  *              支持 ASCII 与二进制变体；编码按 Qt 子类型分别输出 PBM P4、
  *              PGM P5 或 PPM P6。所有分配使用项目内存接口，不依赖平台 API。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageCodecInternal.h"
 #include "XStringUtils.h"
 
@@ -396,3 +398,5 @@ bool XImageCodecInternal_encodePpm(const XImage* image, XByteArray* out)
 }
 
 #endif /* XIMAGECODEC_ON && XIMAGECODEC_PPM_ON */
+
+#endif /* XGUI_ON */

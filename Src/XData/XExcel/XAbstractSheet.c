@@ -1,4 +1,6 @@
-﻿#include "XAbstractSheet.h"
+﻿#if XEXCEL_ON
+
+#include "XAbstractSheet.h"
 #include "XMemory.h"
 #include <stdlib.h>
 
@@ -56,3 +58,5 @@ void XAbstractSheet_setSheetType(XAbstractSheet* self, XAbstractSheet_SheetType 
 int XAbstractSheet_sheetId(const XAbstractSheet* self) { return self ? self->m_sheetId : -1; }
 XWorkbook* XAbstractSheet_workbook(const XAbstractSheet* self) { return self ? self->m_workbook : NULL; }
 XDrawing* XAbstractSheet_drawing(const XAbstractSheet* self) { return self ? self->m_drawing : NULL; }
+
+#endif /* XEXCEL_ON */

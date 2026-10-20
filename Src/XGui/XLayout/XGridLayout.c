@@ -21,6 +21,8 @@
  *             本文件不依赖任何平台 API，嵌入式可用。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XGridLayout.h"
 
 #include "XAlgorithm.h"
@@ -1668,3 +1670,5 @@ XGridLayoutOriginCorner XGridLayout_originCorner(const XGridLayout* self)
 }
 
 #endif /* XLAYOUT_ON && XLAYOUT_GRID_ON */
+
+#endif /* XGUI_ON */

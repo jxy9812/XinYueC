@@ -1,4 +1,6 @@
-﻿#include "XUtility.h"
+﻿#if XEXCEL_ON
+
+#include "XUtility.h"
 #include <string.h>
 #include <math.h>
 #include <ctype.h>
@@ -391,3 +393,5 @@ XString XUtility_convertSharedFormula(const XString* rootFormula, const XCellRef
     }
     return result;
 }
+
+#endif /* XEXCEL_ON */

@@ -11,6 +11,8 @@
  */
 #ifndef XIMAGECODEC_INTERNAL_H
 #define XIMAGECODEC_INTERNAL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -537,4 +539,7 @@ bool XImageCodecInternal_encodeIco(const XImage* image, XByteArray* out);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XIMAGECODEC_INTERNAL_H */

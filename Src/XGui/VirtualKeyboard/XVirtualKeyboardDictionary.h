@@ -14,6 +14,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDDICTIONARY_H
 #define XVIRTUALKEYBOARDDICTIONARY_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -112,4 +114,7 @@ void* XVirtualKeyboardDictionary_contentsChanged_signal(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDDICTIONARY_H */

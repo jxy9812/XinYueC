@@ -1,4 +1,6 @@
-﻿#include "XXYSeries.h"
+﻿#if XGUI_ON
+
+#include "XXYSeries.h"
 
 #include "XAlgorithm.h"
 #include "XString.h"
@@ -1353,3 +1355,5 @@ void XXYSeries_clearPointsConfiguration(XXYSeries* self)
 { XXYSeries_clearPointConfiguration(self, -1); }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

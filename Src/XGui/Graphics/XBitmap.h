@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XBITMAP_H
 #define XBITMAP_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -185,5 +187,7 @@ XPaintDevice* XBitmap_paintDevice(XBitmap* self);
 /* XClass create API default-memory wrappers. */
 #undef XBitmap_create
 #define XBitmap_create() XBitmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XBITMAP_H */

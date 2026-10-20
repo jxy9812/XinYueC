@@ -503,6 +503,11 @@ void XTestMenu_XUdpSocketTest(XTestMenu* root)
     XTestMenu* menu = XTestMenu_create("XUdpSocket(UDP套接字)");
     XTestMenu_addMenu(root, menu);
     {
+        /* 定向收发红线测试（驱动 UDP 目的地址/connect/源地址修复） */
+        XAction* action = XTestMenu_addAction(menu, "定向收发与源地址校验回归");
+        XTestMenu_setActionFunction(action, XUdpDirectedTest);
+    }
+    {
         XAction* action = XTestMenu_addAction(menu, "基本收发测试");
         XTestMenu_setActionFunction(action, XUdpSocketBasicTest);
     }

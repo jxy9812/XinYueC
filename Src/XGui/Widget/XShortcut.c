@@ -7,6 +7,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XShortcut.h"
 #include "XWidget.h"
 #include "XMemory.h"
@@ -335,3 +337,5 @@ void* XShortcut_activatedAmbiguously_signal(XShortcut* self)
 }
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */

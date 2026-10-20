@@ -24,6 +24,8 @@ bool XDeviceSerialPort_platformSetProperty(XFd fd, uint32_t property, const XVar
 bool XDeviceSerialPort_platformGetProperty(XFd fd, uint32_t property, XVariant* value);
 bool XDeviceSerialPort_platformControl(XFd fd, uint32_t command,
                                        const XVarList* in, XVarList* out);
+bool XDeviceSerialPort_platformEnumeratePorts(XDeviceSerialPortPortCollector collector,
+                                              void* userData);
 
 static XDeviceContext* VXDeviceSerialPort_open(XDevice* self,
     const XDeviceOpenOptions* options, int* error);
@@ -62,6 +64,148 @@ static bool serialSetError(XDeviceSerialPortContext* context,
         context->m_base.m_lastError = (int16_t)deviceError;
     }
     return false;
+}
+
+/* ============================================================================
+ * 串口列表：条目字符串的深拷贝、释放与复制
+ * ============================================================================ */
+
+/**
+ * @brief 复制一个 UTF-8 字符串到系统堆。
+ * @param text 源字符串；可为 NULL。
+ * @return 新分配的副本（调用方用 XFree_System 释放）；text 为 NULL 时返回 NULL。
+ */
+static char* serialPortDup(const char* text)
+{
+    size_t length;
+    char* copy;
+    if (!text) return NULL;
+    length = strlen(text);
+    copy = (char*)XMalloc_System(length + 1);
+    if (!copy) return NULL;
+    memcpy(copy, text, length + 1);
+    return copy;
+}
+
+/**
+ * @brief 释放串口列表的条目数组与条目字符串。
+ * @param list 列表；可为 NULL。
+ */
+static void serialPortFreeList(XDeviceSerialPortPortList* list)
+{
+    size_t i;
+    if (!list) return;
+    for (i = 0; i < list->m_count; ++i) {
+        XDeviceSerialPortPortInfo* port = &list->m_ports[i];
+        if (port->m_portName) XFree_System((void*)port->m_portName);
+        if (port->m_description) XFree_System((void*)port->m_description);
+        if (port->m_manufacturer) XFree_System((void*)port->m_manufacturer);
+        if (port->m_serialNumber) XFree_System((void*)port->m_serialNumber);
+    }
+    if (list->m_ports) XFree_System(list->m_ports);
+    list->m_ports = NULL;
+    list->m_count = 0;
+}
+
+/**
+ * @brief 深拷贝一个串口列表。
+ * @param source 源列表；可为 NULL。
+ * @return 新分配的列表（调用方用 XDeviceSerialPortPortList_delete 释放）；
+ *         source 为 NULL 或分配失败时返回 NULL。
+ */
+static XDeviceSerialPortPortList* serialPortCopyList(const XDeviceSerialPortPortList* source)
+{
+    XDeviceSerialPortPortList* copy;
+    size_t i;
+    if (!source) return NULL;
+    copy = (XDeviceSerialPortPortList*)XCalloc_System(1, sizeof(*copy));
+    if (!copy) return NULL;
+    if (source->m_count == 0) return copy;
+    copy->m_ports = (XDeviceSerialPortPortInfo*)XCalloc_System(source->m_count,
+                                                               sizeof(XDeviceSerialPortPortInfo));
+    if (!copy->m_ports) { XFree_System(copy); return NULL; }
+    for (i = 0; i < source->m_count; ++i) {
+        const XDeviceSerialPortPortInfo* from = &source->m_ports[i];
+        XDeviceSerialPortPortInfo* to = &copy->m_ports[i];
+        to->m_portName = serialPortDup(from->m_portName);
+        to->m_description = serialPortDup(from->m_description);
+        to->m_manufacturer = serialPortDup(from->m_manufacturer);
+        to->m_serialNumber = serialPortDup(from->m_serialNumber);
+        to->m_vendorId = from->m_vendorId;
+        to->m_productId = from->m_productId;
+        to->m_busy = from->m_busy;
+    }
+    copy->m_count = source->m_count;
+    return copy;
+}
+
+/**
+ * @brief 平台枚举过程中的临时收集状态。
+ */
+typedef struct XSerialPortCollectState
+{
+    XDeviceSerialPortPortInfo* m_ports;
+    size_t m_count;
+    size_t m_capacity;
+} XSerialPortCollectState;
+
+/**
+ * @brief 平台枚举回调：把一个条目深拷贝进收集状态。
+ * @param userData XSerialPortCollectState*。
+ * @param port 当前条目；借用。
+ * @return false 表示内存不足、提前终止枚举。
+ */
+static bool serialPortCollect(void* userData, const XDeviceSerialPortPortInfo* port)
+{
+    XSerialPortCollectState* state = (XSerialPortCollectState*)userData;
+    XDeviceSerialPortPortInfo* target;
+    if (!state || !port || !port->m_portName) return true;
+    if (state->m_count >= state->m_capacity) {
+        size_t capacity = state->m_capacity ? state->m_capacity * 2 : 8;
+        XDeviceSerialPortPortInfo* grown = (XDeviceSerialPortPortInfo*)XRealloc_System(
+            state->m_ports, capacity * sizeof(XDeviceSerialPortPortInfo));
+        if (!grown) return false;
+        state->m_ports = grown;
+        state->m_capacity = capacity;
+    }
+    target = &state->m_ports[state->m_count];
+    memset(target, 0, sizeof(*target));
+    target->m_portName = serialPortDup(port->m_portName);
+    if (!target->m_portName) return false;
+    target->m_description = serialPortDup(port->m_description);
+    target->m_manufacturer = serialPortDup(port->m_manufacturer);
+    target->m_serialNumber = serialPortDup(port->m_serialNumber);
+    target->m_vendorId = port->m_vendorId;
+    target->m_productId = port->m_productId;
+    target->m_busy = port->m_busy;
+    ++state->m_count;
+    return true;
+}
+
+/**
+ * @brief 刷新设备上下文里的可用串口缓存。
+ * @param context 设备上下文。
+ * @return 枚举成功返回 true；失败时缓存为空。
+ */
+static bool serialPortRefreshPorts(XDeviceSerialPortContext* context)
+{
+    XSerialPortCollectState state;
+    if (!context) return false;
+    serialPortFreeList(&context->m_availablePorts);
+    memset(&state, 0, sizeof(state));
+    if (!XDeviceSerialPort_platformEnumeratePorts(serialPortCollect, &state)) {
+        /* 枚举中断：释放已收集条目，缓存保持为空。 */
+        if (state.m_ports) {
+            XDeviceSerialPortPortList partial;
+            partial.m_count = state.m_count;
+            partial.m_ports = state.m_ports;
+            serialPortFreeList(&partial);
+        }
+        return false;
+    }
+    context->m_availablePorts.m_count = state.m_count;
+    context->m_availablePorts.m_ports = state.m_ports;
+    return true;
 }
 
 static bool validDataBits(int value)
@@ -151,11 +295,14 @@ XDeviceSerialPort* XDeviceSerialPort_create(void)
 static bool validOpenOptions(const XDeviceSerialPortOpenOptions* options)
 {
     int mode;
-    if (!options || !options->m_base.m_target || options->m_baudRate <= 0 ||
+    bool enumerate;
+    if (!options || options->m_baudRate <= 0 ||
         !validDataBits(options->m_dataBits) || !validParity(options->m_parity) ||
         !validStopBits(options->m_stopBits) || !validFlowControl(options->m_flowControl) ||
         options->m_readBufferSize <= 0)
         return false;
+    enumerate = options->m_enumerate != 0;
+    if (!enumerate && !options->m_base.m_target) return false;
     mode = options->m_base.m_openMode;
     return (mode & (XIODevice_ReadOnly | XIODevice_WriteOnly)) != 0;
 }
@@ -204,6 +351,7 @@ static XDeviceContext* VXDeviceSerialPort_open(XDevice* self,
     context->m_stopBits = options->m_stopBits;
     context->m_flowControl = options->m_flowControl;
     context->m_readBufferSize = options->m_readBufferSize;
+    context->m_enumerate = options->m_enumerate ? 1 : 0;
     context->m_error = XSerialPort_NoError;
     context->m_readBuffer = XRingBuffer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 2048);
     context->m_writeBuffer = XRingBuffer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 2048);
@@ -220,6 +368,14 @@ static XDeviceContext* VXDeviceSerialPort_open(XDevice* self,
         XDeviceSerialPort_platformDeleteContext(context);
         if (error) *error = XDeviceError_OutOfMemory;
         return NULL;
+    }
+
+    /* 枚举模式不打开任何具体端口，只保留上下文供查询可用串口属性。 */
+    if (context->m_enumerate) {
+        context->m_base.m_state = XDeviceState_Active;
+        context->m_base.m_lastError = XDeviceError_None;
+        if (error) *error = XDeviceError_None;
+        return &context->m_base;
     }
 
     if (!XDeviceSerialPort_platformOpen(context->m_base.m_fd, options->m_base.m_target)) {
@@ -243,6 +399,7 @@ static void VXDeviceSerialPort_close(XDevice* self, XDeviceContext* handle)
     (void)self;
     if (!context) return;
     XDeviceSerialPort_platformClose(context->m_base.m_fd);
+    serialPortFreeList(&context->m_availablePorts);
     deleteBuffers(context);
     XDeviceSerialPort_platformDeleteContext(context);
 }
@@ -465,6 +622,10 @@ static bool VXDeviceSerialPort_getProperty(XDevice* self, XDeviceContext* handle
         return XDeviceSerialPort_platformGetProperty(context->m_base.m_fd, property, value);
     case XDeviceSerialPortProperty_Error:
         XVariant_setValue_int(value, context->m_error); return true;
+    case XDeviceSerialPortProperty_AvailablePorts:
+        if (!serialPortRefreshPorts(context)) return false;
+        XVariant_setValue_ptr(value, (void*)&context->m_availablePorts);
+        return true;
     default:
         return false;
     }
@@ -543,6 +704,33 @@ bool XDeviceSerialPort_register(void)
     return true;
 }
 
+void XDeviceSerialPortPortList_delete(XDeviceSerialPortPortList* list)
+{
+    if (!list) return;
+    serialPortFreeList(list);
+    XFree_System(list);
+}
+
+XDeviceSerialPortPortList* XDeviceSerialPort_availablePorts(XFd fd)
+{
+    XVariant value;
+    void** reference;
+    const XDeviceSerialPortPortList* borrowed;
+    XDeviceSerialPortPortList* copy;
+
+    memset(&value, 0, sizeof(value));
+    XVariant_init(&value, NULL, 0, XVariantType_NULL);
+    if (!XDevice_getProperty(fd, XDeviceSerialPortProperty_AvailablePorts, &value)) {
+        XClassDeinit((XClass*)&value);
+        return NULL;
+    }
+    reference = (void**)XVariant_toRef(&value, XVariantType_Ptr);
+    borrowed = reference ? (const XDeviceSerialPortPortList*)(*reference) : NULL;
+    copy = borrowed ? serialPortCopyList(borrowed) : NULL;
+    XClassDeinit((XClass*)&value);
+    return copy;
+}
+
 #else
 
 void XDeviceSerialPortOpenOptions_init(XDeviceSerialPortOpenOptions* options)
@@ -550,5 +738,11 @@ void XDeviceSerialPortOpenOptions_init(XDeviceSerialPortOpenOptions* options)
     if (options) memset(options, 0, sizeof(*options));
 }
 bool XDeviceSerialPort_register(void) { return false; }
+void XDeviceSerialPortPortList_delete(XDeviceSerialPortPortList* list) { (void)list; }
+XDeviceSerialPortPortList* XDeviceSerialPort_availablePorts(XFd fd)
+{
+    (void)fd;
+    return NULL;
+}
 
 #endif /* XSERIALPORT_ON */

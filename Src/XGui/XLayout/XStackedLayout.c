@@ -5,6 +5,8 @@
  *             切换、StackOne/StackAll 可见性、尺寸协商和 heightForWidth
  *             均按 Qt 6.8 源码实现。该布局不引入平台 API。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XStackedLayout.h"
 
 #include "XAlgorithm.h"
@@ -482,3 +484,5 @@ void* XStackedLayout_widgetRemoved_signal(XStackedLayout* self, int index)
 }
 
 #endif /* XLAYOUT_ON && XLAYOUT_STACKED_ON */
+
+#endif /* XGUI_ON */

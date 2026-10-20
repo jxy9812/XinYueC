@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XToolBox.h"
 #include "XStringUtils.h"
 #include "XString.h"
@@ -771,3 +773,5 @@ void* XToolBox_currentChanged_signal(XToolBox* self, int index)
 
 
 #endif /* XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON */
+
+#endif /* XGUI_ON */

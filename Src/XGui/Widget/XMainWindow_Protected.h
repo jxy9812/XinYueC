@@ -9,6 +9,8 @@
  ******************************************************************************/
 #ifndef XMAINWINDOW_PROTECTED_H
 #define XMAINWINDOW_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -68,4 +70,7 @@ int XMainWindow_finishDrop(XMainWindow* self, XWidget* dock,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XMAINWINDOW_PROTECTED_H */

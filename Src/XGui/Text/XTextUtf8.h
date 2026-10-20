@@ -12,6 +12,8 @@
  ******************************************************************************/
 #ifndef XTEXTUTF8_H
 #define XTEXTUTF8_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,4 +61,7 @@ size_t XTextUtf8_nextBoundary(const char* s, size_t pos);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XTEXTUTF8_H */

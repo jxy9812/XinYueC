@@ -10,6 +10,8 @@
  *             XPainter 转回软件光栅，保证行为不变。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XSystem.h"
 
 #include "XAlgorithm.h"
@@ -1231,3 +1233,5 @@ bool XGpuRenderBackend_presentToWindow(XGpuRenderBackend* self)
 }
 
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+
+#endif /* XGUI_ON */

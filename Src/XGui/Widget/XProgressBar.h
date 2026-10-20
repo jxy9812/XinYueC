@@ -23,6 +23,8 @@
  ******************************************************************************/
 #ifndef XPROGRESSBAR_H
 #define XPROGRESSBAR_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -382,5 +384,7 @@ void* XProgressBar_valueChanged_signal(XProgressBar* self, int value);
 }
 #endif
 #endif /* XWIDGET_ON && XPROGRESSBAR_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XPROGRESSBAR_H */

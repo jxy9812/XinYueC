@@ -21,6 +21,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XPlainTextEdit.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
@@ -2144,3 +2146,5 @@ void* XPlainTextEdit_selectionChanged_signal(XPlainTextEdit* self)
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XPLAINTEXTEDIT_ON */
+
+#endif /* XGUI_ON */

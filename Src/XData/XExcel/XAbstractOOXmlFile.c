@@ -1,4 +1,6 @@
-﻿#include "XAbstractOOXmlFile.h"
+﻿#if XEXCEL_ON
+
+#include "XAbstractOOXmlFile.h"
 #include "XMemory.h"
 #include <stdlib.h>
 
@@ -32,3 +34,5 @@ void XAbstractOOXmlFile_setFilePath(XAbstractOOXmlFile* self, const XString* pat
 
 const XString* XAbstractOOXmlFile_filePath(const XAbstractOOXmlFile* self)
 { return (self && self->m_filePath) ? self->m_filePath : NULL; }
+
+#endif /* XEXCEL_ON */

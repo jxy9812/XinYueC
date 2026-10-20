@@ -1,10 +1,13 @@
-﻿/**
+/**
  * @file XCryptographicHash.h
  * @brief XCryptographic 哈希、HMAC 与高速哈希公共 API。
  */
 
 #ifndef XCRYPTOGRAPHICHASH_H
 #define XCRYPTOGRAPHICHASH_H
+
+#include "CXinYueConfig.h"
+#if XCryptographic_ON
 
 #include "XByteArrayView.h"
 #include <stdbool.h>
@@ -406,5 +409,7 @@ void XCryptographic_hmacAbort(XCryptographic_HmacOperation* operation);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XCryptographic_ON */
 
 #endif /* XCRYPTOGRAPHICHASH_H */

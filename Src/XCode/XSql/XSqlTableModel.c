@@ -2,6 +2,8 @@
  * @file       XSqlTableModel.c
  * @brief      SQL 表模型实现。
  */
+#if XSQL_ON
+
 #include "XSqlTableModel.h"
 
 #include <string.h>
@@ -814,3 +816,5 @@ void* XSqlTableModel_beforeDelete_signal(XSqlTableModel* model, int row)
                 XVarList_create(2, sizeof(int), &row), NULL, NULL,
                 XEVENT_PRIORITY_NORMAL);
 }
+
+#endif /* XSQL_ON */

@@ -24,6 +24,8 @@
  ******************************************************************************/
 #ifndef XBACKINGSTORE_H
 #define XBACKINGSTORE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -295,4 +297,7 @@ bool XBackingStore_hasStaticContents(const XBackingStore* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XBACKINGSTORE_H */

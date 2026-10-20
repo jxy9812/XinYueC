@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XTHEME_H
 #define XTHEME_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -100,4 +102,7 @@ bool XTheme_loadFromXmlFile(XTheme* self, const XString* filePath);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

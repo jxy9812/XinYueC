@@ -13,6 +13,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDINPUTCONTEXT_PROTECTED_H
 #define XVIRTUALKEYBOARDINPUTCONTEXT_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -116,4 +118,7 @@ XVirtualKeyboardInputEngine* XVirtualKeyboardInputContext_instanceEngine(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDINPUTCONTEXT_PROTECTED_H */

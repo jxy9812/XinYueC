@@ -16,6 +16,8 @@
  ******************************************************************************/
 #ifndef XIMAGECODEC_H
 #define XIMAGECODEC_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -191,5 +193,7 @@ void XImageCodecAnimation_delete(XImageCodecAnimation* animation);
 #endif
 
 #endif /* XIMAGECODEC_ON */
+
+#endif /* XGUI_ON */
 
 #endif

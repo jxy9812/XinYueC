@@ -14,6 +14,8 @@
 #ifndef XUPGRADE_TRUST_PUBKEY_H
 #define XUPGRADE_TRUST_PUBKEY_H
 
+#if XUPGRADE_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -55,5 +57,7 @@ static const uint8_t XUpgrade_trustPubkeySec1[XUPGRADE_TRUST_PUBKEY_SEC1_SIZE] =
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XUPGRADE_ON */
 
 #endif /* XUPGRADE_TRUST_PUBKEY_H */

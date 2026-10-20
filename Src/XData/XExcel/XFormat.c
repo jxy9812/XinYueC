@@ -3,6 +3,8 @@
  * @brief      XFormat 单元格格式类实现（对标 QXlsx::Format）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XFormat.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -1160,3 +1162,5 @@ const char* XFormat_fontName_utf8(const XFormat* self)
     const XString* s = XFormat_fontName(self);
     return s ? XString_toUtf8(s) : NULL;
 }
+
+#endif /* XEXCEL_ON */

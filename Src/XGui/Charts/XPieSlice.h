@@ -1,5 +1,7 @@
 ﻿#ifndef XPIESLICE_H
 #define XPIESLICE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -358,4 +360,7 @@ const char* XPieSlice_labelFont_2(const XPieSlice* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPIESLICE_H */

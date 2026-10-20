@@ -25,6 +25,8 @@
  ******************************************************************************/
 #ifndef XBOXLAYOUT_H
 #define XBOXLAYOUT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -341,4 +343,7 @@ bool XBoxLayout_setStretchFactorLayout(XBoxLayout* self, XLayout* child,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XBOXLAYOUT_H */

@@ -1,4 +1,6 @@
 ﻿/** @file XPlatformAccessibility.c @brief 公共辅助功能桥接实现，无平台 API。 */
+#if XGUI_ON
+
 #include "XPlatformAccessibility.h"
 
 /* 可达性桥接依赖 XWindow/XAccessible 类型体系;上游关闭时整个实现
@@ -129,3 +131,5 @@ void XPlatformAccessibility_cleanup(const XPlatformAccessibility* self)
 }
 
 #endif /* XWINDOW_ON && XACCESSIBLE_ON */
+
+#endif /* XGUI_ON */

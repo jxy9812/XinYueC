@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XMEDIAFILE_H
 #define XMEDIAFILE_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -141,4 +143,7 @@ void XMediaFile_hashKey(const XMediaFile* self, uint8_t** outKey, size_t* outLen
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XMEDIAFILE_H */

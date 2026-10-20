@@ -1,4 +1,6 @@
-﻿#include "XFusionStyle.h"
+﻿#if XGUI_ON
+
+#include "XFusionStyle.h"
 
 #include "XAlgorithm.h"
 #include "XMemory.h"
@@ -597,3 +599,5 @@ void XFusionStyle_installDefault(void)
 }
 
 #endif /* XSTYLE_ON */
+
+#endif /* XGUI_ON */

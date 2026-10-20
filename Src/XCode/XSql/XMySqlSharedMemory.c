@@ -35,6 +35,8 @@
  *   服务器读完后置 status=0 并发送 'S'。
  *   每条通道独立，互不阻塞，支持任意方向连续多块大包传输。
  */
+#if XSQL_ON
+
 #include "XMySqlSharedMemory.h"
 
 #include "XDeviceFile.h"
@@ -405,3 +407,5 @@ bool XMySqlSharedMemory_write(XMySqlSharedMemory* shared, const void* data,
     }
     return true;
 }
+
+#endif /* XSQL_ON */

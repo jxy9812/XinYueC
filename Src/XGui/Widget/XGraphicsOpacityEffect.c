@@ -9,6 +9,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XGraphicsOpacityEffect.h"
 
 #include "XGuiConfig.h"
@@ -126,3 +128,5 @@ void* XGraphicsOpacityEffect_opacityChanged_signal(
 }
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */

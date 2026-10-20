@@ -1,4 +1,6 @@
-﻿#include "XStyleSheetStyle.h"
+﻿#if XGUI_ON
+
+#include "XStyleSheetStyle.h"
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
@@ -4893,3 +4895,5 @@ static void xg3_ruleImageDraw(XStyleSheetStyle* self, const XObject* obj,
 /* ==================== ===== G3 新增区 结束 ==================== */
 
 #endif /* XSTYLE_ON */
+
+#endif /* XGUI_ON */

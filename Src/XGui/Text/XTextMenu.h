@@ -31,6 +31,8 @@
 #ifndef XTEXTMENU_H
 #define XTEXTMENU_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -99,4 +101,7 @@ XMenu* XTextMenu_createStandard(const XTextMenuOps* ops);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XTEXTMENU_H */

@@ -5,6 +5,8 @@
  ******************************************************************************/
 #ifndef XDATAVALIDATION_H
 #define XDATAVALIDATION_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -300,4 +302,7 @@ XCellRange* XDataValidation_ranges(const XDataValidation* self, int* count);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

@@ -22,6 +22,8 @@
  */
 #ifndef XSCROLLBAR_H
 #define XSCROLLBAR_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -151,4 +153,7 @@ bool XScrollBar_showButtons(const XScrollBar* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSCROLLBAR_H */

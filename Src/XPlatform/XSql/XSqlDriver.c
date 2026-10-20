@@ -2,6 +2,8 @@
  * @file       XSqlDriver.c
  * @brief      SQL 驱动抽象类实现。
  */
+#if XSQL_ON
+
 #include "XSqlDriver.h"
 
 #include "XByteArray.h"
@@ -352,3 +354,5 @@ void* XSqlDriver_notification_signal(XSqlDriver* driver, const XString* name,
                                 sizeof(const XVariant*), &payload), NULL, NULL,
                 XEVENT_PRIORITY_NORMAL);
 }
+
+#endif /* XSQL_ON */

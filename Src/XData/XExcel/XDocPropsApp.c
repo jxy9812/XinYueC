@@ -1,4 +1,6 @@
-﻿#include "XDocPropsApp.h"
+﻿#if XEXCEL_ON
+
+#include "XDocPropsApp.h"
 #include <stdio.h>
 
 #include <string.h>
@@ -368,3 +370,5 @@ bool XDocPropsApp_loadFromXmlData(XDocPropsApp* self, const uint8_t* data, size_
     }
     return ok;
 }
+
+#endif /* XEXCEL_ON */

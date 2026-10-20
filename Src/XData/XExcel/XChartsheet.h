@@ -5,6 +5,8 @@
  ******************************************************************************/
 #ifndef XCHARTSHEET_H
 #define XCHARTSHEET_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -79,4 +81,7 @@ bool XChartsheet_loadFromXmlData(XChartsheet* self, const uint8_t* data, size_t 
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

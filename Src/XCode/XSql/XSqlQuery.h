@@ -6,6 +6,8 @@
 #ifndef XSQLQUERY_H
 #define XSQLQUERY_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -309,5 +311,7 @@ bool XSqlQuery_nextResult(XSqlQuery* query);
 /* XClass create API default-memory wrappers. */
 #undef XSqlQuery_create
 #define XSqlQuery_create() XSqlQuery_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLQUERY_H */

@@ -3,6 +3,8 @@
  * @brief      XCellLocation 单元格位置类实现
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XCellLocation.h"
 #include <stdlib.h>
 
@@ -40,3 +42,5 @@ void XCellLocation_init_ex(XCellLocation* self, int row, int col, XCell* cell)
         self->m_cell = cell;
     }
 }
+
+#endif /* XEXCEL_ON */

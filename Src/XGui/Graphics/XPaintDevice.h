@@ -21,6 +21,8 @@
  */
 #ifndef XPAINTDEVICE_H
 #define XPAINTDEVICE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -240,4 +242,7 @@ int XPaintDevice_metric(const XPaintDevice* self, int metric);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPAINTDEVICE_H */

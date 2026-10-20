@@ -7,6 +7,8 @@
  * @note       模块总开关 XCHARTS_ON。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XBarSet.h"
 
 #include "XAlgorithm.h"
@@ -963,3 +965,5 @@ void* XBarSet_selectedBarsChanged_signal(XBarSet* self, const int* indexes,
 }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

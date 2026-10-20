@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file XCryptographic.h
  * @brief 加密算法与哈希类（哈希部分对齐 Qt 6.8 QCryptographicHash）
  *
@@ -24,6 +24,9 @@
 
 #ifndef XCRYPTOGRAPHIC_H
 #define XCRYPTOGRAPHIC_H
+
+#include "CXinYueConfig.h"
+#if XCryptographic_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -1345,5 +1348,7 @@ bool XCryptographic_rsaVerifyHash(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XCryptographic_ON */
 
 #endif /* XCRYPTOGRAPHIC_H */

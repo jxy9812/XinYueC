@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XFontComboBox.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
@@ -625,3 +627,5 @@ void* XFontComboBox_currentFontChanged_signal(
 }
 
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */
+
+#endif /* XGUI_ON */

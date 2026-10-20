@@ -42,6 +42,8 @@
  */
 #ifndef XWINDOWDECORATION_H
 #define XWINDOWDECORATION_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -243,4 +245,7 @@ void XWindowDecoration_restoreExposeStrips(const XRect* oldG,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XWINDOWDECORATION_H */

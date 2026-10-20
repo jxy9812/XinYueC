@@ -8,7 +8,7 @@
  *               仅包装 XThread_run_base + vTaskDelete(NULL)；
  *             - start：xTaskCreate（栈字节→字换算，下限 configMINIMAL_STACK_SIZE），
  *               优先级经 mapPriority 线性映射到 configMAX_PRIORITIES；
- *             - wait：轮询 m_finished（公共层收尾置位）+ eTaskGetState，
+ *             - wait：轮询 m_finished（公共层收尾置位），
  *               tick 粒度休眠——不再依赖完成信号量，线程扩展结构随新
  *               架构取消（对象由公共层按 sizeof(XThread) 分配）；
  *             - terminate：vTaskDelete 外部删除；
@@ -29,6 +29,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "CXinYueConfig.h"
+#include "XFreeRTOSCompat.h"
 #include <stdint.h>
 #if XSYNC_ON
 #if XTHREAD_ON
@@ -59,8 +60,8 @@ static void ThreadFunction(void* arg)
 }
 
 // 优先级映射（FreeRTOS：0 最低，configMAX_PRIORITIES-1 最高）
-static UBaseType_t mapPriority(XThread_Priority priority) {
-	UBaseType_t maxPriority = configMAX_PRIORITIES - 1;
+static portBASE_TYPE mapPriority(XThread_Priority priority) {
+	portBASE_TYPE maxPriority = configMAX_PRIORITIES - 1;
 	switch (priority) {
 	case XThread_IdlePriority:			return 0;
 	case XThread_LowestPriority:		return maxPriority / 6;
@@ -80,15 +81,15 @@ bool XThread_start(XThread* thread)
 		return false; // 对象无效或已启动
 	}
 	// 栈大小换算：FreeRTOS 单位为字；下限为空闲任务栈
-	uint32_t stackWords = thread->m_stackSize / sizeof(StackType_t);
+	uint32_t stackWords = thread->m_stackSize / sizeof(portSTACK_TYPE);
 	if (stackWords < configMINIMAL_STACK_SIZE) {
 		stackWords = configMINIMAL_STACK_SIZE;
 	}
-	TaskHandle_t taskHandle = NULL;
-	BaseType_t result = xTaskCreate(
+	xTaskHandle taskHandle = NULL;
+	portBASE_TYPE result = xTaskCreate(
 		ThreadFunction,
 		"XThread",
-		(UBaseType_t)stackWords,
+		(portBASE_TYPE)stackWords,
 		thread,
 		mapPriority(XThread_priority(thread)),
 		&taskHandle
@@ -105,11 +106,13 @@ bool XThread_wait(XThread* thread, uint32_t time)
 	if (!thread || thread->m_handle == 0) {
 		return false;
 	}
-	TickType_t start = xTaskGetTickCount();
-	TickType_t timeout = (time == UINT32_MAX) ? portMAX_DELAY : pdMS_TO_TICKS(time);
+	portTickType start = xTaskGetTickCount();
+	portTickType timeout = (time == UINT32_MAX) ? portMAX_DELAY : pdMS_TO_TICKS(time);
 	while (!thread->m_finished) {
-		eTaskState state = eTaskGetState((TaskHandle_t)thread->m_handle);
-		if (state == eDeleted || state == eInvalid) {
+		/* V7.5.2 没有 xTaskGetState / eTaskState（V9 才引入），无法查询任务
+		   运行态。改用 XThread 自有的 m_finished 标志——它由公共层在入口与
+		   收尾处置位，语义等价且不依赖内核私有状态。 */
+		if (thread->m_finished) {
 			return true;
 		}
 		if (timeout != portMAX_DELAY &&
@@ -134,8 +137,7 @@ bool XThread_isRunning(const XThread* thread)
 	if (!thread || thread->m_handle == 0) {
 		return false;
 	}
-	eTaskState state = eTaskGetState((TaskHandle_t)thread->m_handle);
-	return (state != eDeleted) && (state != eInvalid);
+	return !thread->m_finished;
 }
 
 XThread_Priority XThread_priority(const XThread* thread)
@@ -158,7 +160,7 @@ void XThread_setPriority(XThread* thread, XThread_Priority priority)
 	}
 	thread->m_priority = priority;
 	if (thread->m_handle != 0) {
-		vTaskPrioritySet((TaskHandle_t)thread->m_handle, mapPriority(priority));
+		vTaskPrioritySet((xTaskHandle)thread->m_handle, mapPriority(priority));
 	}
 }
 
@@ -174,7 +176,7 @@ bool XThread_terminate(XThread* thread)
 	if (!thread || thread->m_handle == 0 || !XThread_isRunning(thread)) {
 		return false;
 	}
-	vTaskDelete((TaskHandle_t)thread->m_handle);
+	vTaskDelete((xTaskHandle)thread->m_handle);
 	thread->m_finished = true;
 	return true;
 }
@@ -273,11 +275,11 @@ XHandle XThread_currentThreadId() {
  * 清扫回收、不得当作空闲槽认领。
  */
 #define XTHREAD_TLS_REGISTRY_CAPACITY 8
-#define XTHREAD_TLS_TASK_DEAD ((TaskHandle_t)1)	/* 槽位标记：任务已删除待清扫；TCB 为堆对齐指针，取值恒不为 1 */
+#define XTHREAD_TLS_TASK_DEAD ((xTaskHandle)1)	/* 槽位标记：任务已删除待清扫；TCB 为堆对齐指针，取值恒不为 1 */
 
 typedef struct
 {
-	TaskHandle_t task;	/**< NULL=空闲槽；XTHREAD_TLS_TASK_DEAD=待清扫；其余=存活任务句柄 */
+	xTaskHandle task;	/**< NULL=空闲槽；XTHREAD_TLS_TASK_DEAD=待清扫；其余=存活任务句柄 */
 	XThreadData* data;	/**< 该任务登记的收养 XThreadData（仅 m_isAdopted 数据入表） */
 } XThreadTlsEntry;
 
@@ -317,7 +319,7 @@ static void XThreadStorage_drainDead(void)
  * 只把登记项标记为待清扫，不做任何释放（调用点可能处于内核临界区）。 */
 void XThreadStorage_taskCleanup(void* taskHandle)
 {
-	TaskHandle_t task = (TaskHandle_t)taskHandle;
+	xTaskHandle task = (xTaskHandle)taskHandle;
 	size_t i;
 
 	if (!task || task == XTHREAD_TLS_TASK_DEAD)
@@ -340,7 +342,7 @@ void XThreadStorage_taskCleanup(void* taskHandle)
 
 void XThreadStorage_set(void* p)
 {
-	TaskHandle_t task = xTaskGetCurrentTaskHandle();
+	xTaskHandle task = xTaskGetCurrentTaskHandle();
 	if (!task)
 		return;
 
@@ -397,7 +399,7 @@ void* XThreadStorage_get(void)
 	if (g_tlsDeadPending)	/* 延迟清扫：回收已删除任务的收养数据 */
 		XThreadStorage_drainDead();
 
-	TaskHandle_t task = xTaskGetCurrentTaskHandle();
+	xTaskHandle task = xTaskGetCurrentTaskHandle();
 	return task ? pvTaskGetThreadLocalStoragePointer(task, XTHREAD_TLS_INDEX)
 	            : NULL;
 }

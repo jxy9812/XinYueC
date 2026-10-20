@@ -1,4 +1,6 @@
-﻿#include "XTableView.h"
+﻿#if XGUI_ON
+
+#include "XTableView.h"
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
@@ -1231,3 +1233,5 @@ static void VXTableView_paintEvent(XWidget* self, XEvent* event)
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

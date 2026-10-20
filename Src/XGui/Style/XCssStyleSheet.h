@@ -1,5 +1,7 @@
 ﻿#ifndef XCSSSTYLESHEET_H
 #define XCSSSTYLESHEET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -456,4 +458,7 @@ const char* XCssProperty_name(XCssProperty id);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCSSSTYLESHEET_H */

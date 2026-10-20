@@ -1,4 +1,6 @@
-﻿#include "XZipWriter.h"
+﻿#if XEXCEL_ON
+
+#include "XZipWriter.h"
 #include "XMemory.h"
 #include "XCrc.h"
 #include "XFile.h"
@@ -358,3 +360,5 @@ open_failed:
     if (file) XClassDelete((XClass*)file);
     return false;
 }
+
+#endif /* XEXCEL_ON */

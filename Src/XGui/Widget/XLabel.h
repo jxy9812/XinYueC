@@ -47,6 +47,8 @@
  ******************************************************************************/
 #ifndef XLABEL_H
 #define XLABEL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -488,4 +490,7 @@ void XLabel_drawContents(XLabel* self, XPainter* painter);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XLABEL_H */

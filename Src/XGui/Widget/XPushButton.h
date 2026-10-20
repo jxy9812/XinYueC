@@ -38,6 +38,8 @@
  ******************************************************************************/
 #ifndef XPUSHBUTTON_H
 #define XPUSHBUTTON_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -316,4 +318,7 @@ void XPushButton_drawContents(XPushButton* self, XPainter* painter);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPUSHBUTTON_H */

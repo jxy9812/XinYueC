@@ -2,6 +2,8 @@
  * @file       XIconEngine.c
  * @brief      XIconEngine 图标引擎抽象类实现。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XIconEngine.h"
 
 #include "XAlgorithm.h"
@@ -234,3 +236,5 @@ void XIconEngine_scaledPixmap_base(const XIconEngine* self, const XSize* size, X
 { if (out) { XPixmap_init(out); if (self && XClassGetVtable(self)) XClassGetVirtualFunc(self, EXIconEngine_ScaledPixmap, void(*)(const XIconEngine*,const XSize*,XIconMode,XIconState,float,XPixmap*))(self,size,mode,state,scale,out); } }
 void XIconEngine_virtualHook_base(const XIconEngine* self, int id, void* data)
 { if (self && XClassGetVtable(self)) XClassGetVirtualFunc(self, EXIconEngine_VirtualHook, void(*)(const XIconEngine*,int,void*))(self,id,data); }
+
+#endif /* XGUI_ON */

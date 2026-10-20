@@ -110,6 +110,8 @@ XFd XDeviceFile_openStandardInput(int* error);
     XDevice_open(XDeviceType_File, (const XDeviceOpenOptions*)(options), (error))
 #define XDeviceFile_close XDevice_close
 #define XDeviceFile_control XDevice_control
+/** @brief 读取设备最近一次错误码；复用父类门面。 */
+#define XDeviceFile_lastError XDevice_lastError
 
 /**
  * @brief 文件定位基准。

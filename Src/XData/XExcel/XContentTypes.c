@@ -3,6 +3,8 @@
  * @brief      XContentTypes OOXML 内容类型管理实现（对标 QXlsx::ContentTypes）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XContentTypes.h"
 #include <string.h>
 #include "XByteArray.h"
@@ -467,3 +469,5 @@ void XContentTypes_addWorksheetName_utf8(XContentTypes* self, const char* name)
     XContentTypes_addWorksheetName(self, value);
     if (value) XClassDelete(value);
 }
+
+#endif /* XEXCEL_ON */

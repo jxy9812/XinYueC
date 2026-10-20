@@ -6,17 +6,25 @@
 //
 // 虚函数调度入口 + 平台默认实现。
 #include "XAbstractNetIoRing.h"
+/* 以下三个头供守卫之外的唤醒延迟探针使用（见文件末的说明），必须留在环开关
+   门控之外；否则 XAbstractNetIoRing_ON=0 时探针仍在编译却看不到声明。 */
+#include "XFileDescriptor.h"
+#include "XDateTime.h"
+#include <stdlib.h>
 #if XAbstractNetIoRing_ON
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XCoreApplication.h"
-#include "XFileDescriptor.h"
 #include "XDevice.h"
 #include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+#if !defined(_WIN32) && !defined(__ESP8266__)
+/* POSIX 专用：MSG_DONTWAIT/MSG_PEEK 取自 sys/socket.h；
+   Windows 侧走 winsock2.h（仅 MSG_PEEK），假 EOF 规避段另有平台闸。
+   ESP8266（NONOS SDK）无 BSD socket 头，同样排除。 */
 #include <sys/socket.h>
+#endif
 /* 单调时长统一经 XDateTime（约束文档「外部依赖约束」时间源规则：
  * Src/ 禁止直呼 QueryPerformanceCounter/clock_gettime 等平台时间源）。 */
 #include "XDateTime.h"
@@ -155,7 +163,15 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
          * (内核边缘事件语义误报, 丢弃 CLOSE、完成事件照常下发, 由设备
          * 层重挂读); pr==0 才是真 FIN(照旧发关闭)。与桌面/其他平台
          * 真关闭语义零变化(真关闭时 PEEK 恒返 0)。 */
-        {
+#if !defined(_WIN32)
+        /* [平台闸 2026-10-19] 仅 POSIX 生效：Windows 侧 winsock2.h
+           无 MSG_DONTWAIT（套接字非阻塞由 ioctlsocket 设），且该假
+           EOF 现象出自嵌入式定制内核，桌面 Win32 从未复现——Windows
+           保持原语义（0 字节完成即判对端关闭），不引入 PEEK 复核段。 */
+#if !defined(__ESP8266__)
+        {   /* 假 EOF PEEK 复核需要 BSD socket 语义；ESP8266 无此头，
+               且该现象出自嵌入式定制内核、桌面从未复现——ESP8266 直接
+               保留原语义（同 Windows 的处理）。 */
             int pfd = (int)entry->m_fd;
             unsigned char peekByte;
             int pr = (int)recv(pfd, &peekByte, 1, MSG_PEEK | MSG_DONTWAIT);
@@ -166,6 +182,8 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
                 return;
             }
         }
+#endif /* __ESP8266__ */
+#endif
         XEventSockClose* closeEvent = XEventSockClose_create(entry->m_fd);
         if (closeEvent) {
             ((XEvent*)closeEvent)->m_posted = true;
@@ -445,7 +463,10 @@ XAbstractNetIoRing* XAbstractNetIoRing_createPlatform(void) {
  * 查询恒 0, 调用方(XGuiServer/XGuiClient/XGuiRemoteUdpChannel, 不随
  * 环开关裁剪)仍可安全链接。
  * ================================================================ */
+/* [2026-10-18 嵌入式防呆] #ifndef：小内存目标可收缩剖析槽位。 */
+#ifndef XNETIORING_PROF_FD_SLOTS
 #define XNETIORING_PROF_FD_SLOTS 64
+#endif
 typedef struct XNetIoRingProfSlot {
     const void* owner;   /**< 套接字属主对象(XFd 表 desc->object; NULL 空槽)。 */
     uint64_t lastRecvUs; /**< 最近一次 >0 字节读完成时刻（单调 µs）。 */

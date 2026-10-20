@@ -6,6 +6,7 @@ extern "C" {
 #include"CXinYueConfig.h"
 #include "XTestMenu.h"
 #include"XClass.h"
+#include "XVariant.h"
 #include "XProcessTest.h"
 #include "XConsoleShellTest.h"
 #include "XConsoleShellBackendTest.h"
@@ -28,6 +29,10 @@ void XTestMenu_XRandomGeneratorTest(XTestMenu* root);
 /** @brief 添加 XAction（对标 Qt 6.8 QAction）全量测试菜单。 */
 void XTestMenu_XActionTest(XTestMenu* root);
 void XTestMenu_XCoreApplicationTest(XTestMenu* root);
+/** @brief XCoreApplication Qt 对齐全量测试（无头入口，供 main --test 调度）。 */
+void XCoreApplicationTest(XVariant* variant);
+/** @brief 无头运行 sendPostedEvents 所有权/泄漏探针（ESP8266 泄漏排查桌面闸门）。 */
+void XCoreApplicationTest_runSendPostedEventsProbe(void);
 void XTestMenu_XCommandLineParserTest(XTestMenu* root);
 /**
  * @brief 添加 XRegularExpression Qt 6.8 全量测试菜单。

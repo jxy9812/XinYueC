@@ -27,6 +27,8 @@
  */
 #ifndef XLCDNUMBER_H
 #define XLCDNUMBER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -334,5 +336,7 @@ void* XLcdNumber_overflow_signal(XLcdNumber* self);
 }
 #endif
 #endif /* XWIDGET_ON && XFRAME_ON && XLCDNUMBER_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XLCDNUMBER_H */

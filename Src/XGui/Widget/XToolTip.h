@@ -18,6 +18,8 @@
  */
 #ifndef XTOOLTIP_H
 #define XTOOLTIP_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -134,4 +136,7 @@ void XToolTip_setPalette(const XPalette* palette);
 }
 #endif
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XTOOLTIP_H */

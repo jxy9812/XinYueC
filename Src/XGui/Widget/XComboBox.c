@@ -24,6 +24,8 @@
  *             发射；editTextChanged 仅可编辑模式编辑变化时发射。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
 
@@ -2654,3 +2656,5 @@ int XComboBox_iconSize(const XComboBox* self)
 { return self ? self->m_iconSize : 0; }
 
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */
+
+#endif /* XGUI_ON */

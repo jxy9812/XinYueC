@@ -1,4 +1,6 @@
-﻿#include "XCategoryAxis.h"
+﻿#if XGUI_ON
+
+#include "XCategoryAxis.h"
 
 #include "XAlgorithm.h"
 #include "XMemory.h"
@@ -168,3 +170,5 @@ void XCategoryAxis_deinit_impl(XCategoryAxis* self)
 }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

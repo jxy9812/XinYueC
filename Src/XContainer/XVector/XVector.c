@@ -896,6 +896,10 @@ XVector* XVector_create_ex(XMemoryType memory, size_t typeSize, bool useCow)
     if (ISNULL(typeSize, ""))
         return NULL;
     XVector* this_vector = XMemory_malloc(sizeof(XVector), memory);
+    if (this_vector == NULL)
+        return NULL;   /* OOM：XVector_init(NULL) 会写 NULL+4 触发 StoreProhibited
+                        * （ESP8266 真机 Fatal exception 29 epc1=0x40216b45，
+                        *   excvaddr=0x4，见 build/arduino_final 合体固件证据链） */
     XVector_init(this_vector, typeSize, useCow);
     Set_Class_Memory(this_vector, memory); Set_Class_IsHeap(this_vector, true);
     return this_vector;

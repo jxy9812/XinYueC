@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDSELECTIONLISTMODEL_PROTECTED_H
 #define XVIRTUALKEYBOARDSELECTIONLISTMODEL_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -80,4 +82,7 @@ int XVirtualKeyboardSelectionListModel_activeItem(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDSELECTIONLISTMODEL_PROTECTED_H */

@@ -33,6 +33,8 @@
 #ifndef XIMAGECACHE_H
 #define XIMAGECACHE_H
 
+#if XGUI_ON
+
 #include "XGuiConfig.h"
 #include <stdbool.h>
 #include <stddef.h>
@@ -115,5 +117,7 @@ void XImageCache_stats(size_t* outBytes, int* outCount);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XIMAGECACHE_H */

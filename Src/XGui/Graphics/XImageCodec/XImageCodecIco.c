@@ -6,6 +6,8 @@
  *             单幅图像，因此读取目录中的首个条目。支持嵌入 PNG 与常见
  *             1/4/8/24/32 位无压缩 DIB，编码统一写出一个 32 位 DIB 条目。
  */
+#if XGUI_ON
+
 #include "XImageCodec_config.h"
 
 #include "XAlgorithm.h"
@@ -380,3 +382,5 @@ bool XImageCodecInternal_encodeIco(const XImage* image, XByteArray* out)
 }
 
 #endif /* XIMAGECODEC_ON && XIMAGECODEC_ICO_ON */
+
+#endif /* XGUI_ON */

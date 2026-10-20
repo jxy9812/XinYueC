@@ -16,6 +16,8 @@
  *             标题对齐仅水平分量（Left/HCenter/Right）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XGroupBox.h"
 
 #include "CXinYueConfig.h"
@@ -689,3 +691,5 @@ void* XGroupBox_toggled_signal(XGroupBox* self, bool checked)
 
 
 #endif /* XWIDGET_ON && XGROUPBOX_ON */
+
+#endif /* XGUI_ON */

@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XDRAWINGANCHOR_H
 #define XDRAWINGANCHOR_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -172,4 +174,7 @@ bool XDrawingAnchor_loadFromXml(XDrawingAnchor* self, void* reader);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

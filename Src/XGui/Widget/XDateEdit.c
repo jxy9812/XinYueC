@@ -11,6 +11,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XDateEdit.h"
 #include "XMemory.h"
 #include "XObject.h"
@@ -115,3 +117,5 @@ void* XDateEdit_userDateChanged_signal(XDateEdit* self, const XDate* date)
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XDATEEDIT_ON */
+
+#endif /* XGUI_ON */

@@ -11,6 +11,8 @@
  */
 #ifndef XWINDOWDECORATION_PROTECTED_H
 #define XWINDOWDECORATION_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -39,4 +41,7 @@ void XWindowDecoration_notifyTopDestroyed(XWidget* top);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XWINDOWDECORATION_PROTECTED_H */

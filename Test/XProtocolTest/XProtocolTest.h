@@ -16,6 +16,15 @@ extern "C" {
 	void XTestMenu_XMqttTest(XTestMenu* root);
 	void XTestMenu_XCanTest(XTestMenu* root);
 
+	//XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通；实现于 XLinkTest.c）
+	void XTestMenu_XLinkTest(XTestMenu* root);
+
+	//XNtp SNTP 客户端（应用内校时；实现于 XNtpTest.c）
+	void XTestMenu_XNtpTest(XTestMenu* root);
+
+	//XDdns 动态域名解析客户端（厂商抽象 + 阿里云；实现于 XDdnsTest.c）
+	void XTestMenu_XDdnsTest(XTestMenu* root);
+
 	void XModbusRtuSerialClientTest();
 	void XModbusTcpClientTest();
 	void XModbusCommEventTest();

@@ -10,6 +10,8 @@
  ******************************************************************************/
 #ifndef XTABWIDGET_H
 #define XTABWIDGET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -328,4 +330,7 @@ void* XTabWidget_tabBarClicked_signal(XTabWidget* self);
  *             可释放对象，也不得解引用。
  */
 void* XTabWidget_tabBarDoubleClicked_signal(XTabWidget* self);
+
+#endif /* XGUI_ON */
+
 #endif /* XTABWIDGET_H */

@@ -333,7 +333,8 @@ void XDeviceNetwork_poll(void)
 {
 }
 
-int XDeviceNetwork_lastError(void)
+/* 公共层平台错误钩子：POSIX 域即 errno。 */
+int XDeviceNetwork_platformLastError(void)
 {
     return errno;
 }
@@ -444,6 +445,12 @@ typedef struct XDeviceNetworkContextPosix {
     socklen_t fromAddrLen;
 
     /* io_uring 异步 I/O 上下文（对标 Windows XEventContext_IOCP） */
+    /* UDP datagram destination for io_uring SENDTO. io_uring keeps the
+     * referenced sockaddr alive until the request completes, so it must
+     * live in this long-lived context, not on startAsyncWrite's stack. */
+    struct sockaddr_storage destAddr;
+    socklen_t destAddrLen;
+    bool destAddrValid;
     XEventContext_IO readContext;
     XEventContext_IO writeContext;
     union {
@@ -648,10 +655,19 @@ static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
         int destLen;
         addr2sa(destAddr, destPort, &dest, &destLen);
 
-        sqe->opcode = IORING_OP_SEND;
-        sqe->addr = (uint64_t)(uintptr_t)p->writeBuffer;
+        /* io_uring reads sqe->addr as the sockaddr for SENDTO and sqe->off as
+         * its length (same layout liburing's io_uring_prep_sendto produces).
+         * The sockaddr must stay valid until completion: keep it in the
+         * per-socket context instead of the local `dest` copy. */
+        memcpy(&p->destAddr, &dest, sizeof(dest));
+        p->destAddrLen = (socklen_t)destLen;
+        p->destAddrValid = true;
+
+        sqe->opcode = IORING_OP_SENDTO;
+        sqe->addr = (uint64_t)(uintptr_t)&p->destAddr;
         sqe->len = (unsigned)len;
         /* 对于 UDP 目标地址，使用 sendmsg 更合适，此处简化使用 send */
+        sqe->off = (uint32_t)p->destAddrLen;
         sqe->flags = 0;
     } else {
         sqe->opcode = IORING_OP_SEND;
@@ -886,8 +902,21 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
     }
 
     if (sockType == XDeviceNetwork_Udp) {
+        /* Connect the UDP socket for real. This is what makes send()/recv()
+         * usable without SENDTO/RECVMSG: the kernel routes every datagram to
+         * the connected peer and silently drops datagrams from anyone else,
+         * which is exactly the source filtering an NTP client needs. It also
+         * keeps working on kernels older than 5.12, where IORING_OP_RECVMSG
+         * (the only way to read the source address of an unconnected
+         * datagram) is not available yet. */
+        int ret = connect(p->socket, (struct sockaddr*)&p->connectAddress,
+                          p->connectAddressLength);
+        if (ret != 0 && errno != EINPROGRESS) {
+            close(p->socket); p->socket = -1; return false;
+        }
         p->base.m_connected = true;
         p->connectPending = false;
+        syncSocketEndpoints(priv);
         startAsyncRead(priv, true);
         return true;
     }
@@ -1790,10 +1819,23 @@ bool XDeviceNetwork_platformGetLastDatagramSender(XFd xfd,
     XDeviceNetworkContext* priv = (XDeviceNetworkContext*)XDevice_handle(xfd);
     XDeviceNetworkContextPosix* p = P32(priv);
     if (!p) return false;
-    struct sockaddr_in* sin = (struct sockaddr_in*)&p->fromAddr;
-    if (srcAddr) XHostAddress_setAddressIPv4(srcAddr, sin->sin_addr.s_addr);
-    if (srcPort) *srcPort = ntohs(sin->sin_port);
-    return true;
+
+    /* A connected UDP socket only ever accepts datagrams from its peer: the
+     * kernel filters the others. Report that peer as the sender.
+     *
+     * For an unconnected socket the true source address would require
+     * IORING_OP_RECVMSG (Linux 5.12+), which this driver does not use, so
+     * there is nothing trustworthy to report. Return false instead of the
+     * previously returned uninitialised bytes of p->fromAddr. */
+    if (p->base.m_connected && p->connectAddress.ss_family != 0) {
+        uint16_t port = 0;
+        XHostAddress addr;
+        sa2addr(&p->connectAddress, &addr, &port);
+        if (srcAddr) XClassCopy(srcAddr, &addr);
+        if (srcPort) *srcPort = port;
+        return true;
+    }
+    return false;
 }
 
 /* =========================================================================

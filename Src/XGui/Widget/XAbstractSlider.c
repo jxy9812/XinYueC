@@ -25,6 +25,8 @@
  *               sliderReleased/rangeChanged/actionTriggered。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 #if XWIDGET_ON && XABSTRACTSLIDER_ON
 
@@ -896,3 +898,5 @@ void* XAbstractSlider_actionTriggered_signal(XAbstractSlider* self,
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON */
+
+#endif /* XGUI_ON */

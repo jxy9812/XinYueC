@@ -36,6 +36,8 @@
  ******************************************************************************/
 #ifndef XFRAME_H
 #define XFRAME_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -304,5 +306,7 @@ void XFrame_drawFrame(XFrame* self, XPainter* painter);
 void XFrame_initStyleOption(XFrame* self, XFrameStyleOption* option);
 
 #endif /* XWIDGET_ON && XFRAME_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XFRAME_H */

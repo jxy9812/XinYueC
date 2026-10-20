@@ -9,6 +9,8 @@
  ******************************************************************************/
 #ifndef XWINDOW_PROTECTED_H
 #define XWINDOW_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -162,4 +164,7 @@ bool XWindow_rotationSupported(const XWindow* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XWINDOW_PROTECTED_H */

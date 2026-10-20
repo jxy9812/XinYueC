@@ -17,6 +17,8 @@
  */
 #ifndef XGUIREMOTECODEC_H
 #define XGUIREMOTECODEC_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -124,5 +126,7 @@ uint32_t XGuiRemoteCodec_tileHash(const uint8_t* pixels, size_t bytes);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUIREMOTECODEC_H */

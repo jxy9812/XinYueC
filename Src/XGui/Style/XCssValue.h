@@ -16,6 +16,8 @@
  ******************************************************************************/
 #ifndef XCSSVALUE_H
 #define XCSSVALUE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -172,4 +174,7 @@ bool XCssParseBackgroundPosition(const char* value, double* outX, double* outY, 
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCSSVALUE_H */

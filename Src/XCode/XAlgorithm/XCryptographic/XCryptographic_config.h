@@ -21,7 +21,14 @@
  *          XMEMORY_TYPE_HYBRID。
  */
 #ifndef XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE
-#define XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE XMEMORY_TYPE_HYBRID
+/* 2026-10-15：默认从 HYBRID 改为 SYSTEM。
+ * 原因：全局 MultiPool 的 512B 档对「恰好占满档位容量」的请求返回 NULL
+ * （实测 512B 失败、257..400 与 513+ 成功，探针见 Test/XProtocolTest/
+ * XDdnsTest.c），而 XCryptographicHash_addData 对缓冲扩容失败是静默跳过
+ * ——表现为长消息哈希悄悄返回空输入摘要（da39a3ee...），阿里云 POP 签名
+ * 即踩中此坑。哈希输入缓冲是临时对象且长度不可预估，走系统堆最稳妥；
+ * MultiPool 修复后可改回。 */
+#define XCRYPTOGRAPHIC_HASH_MEMORY_POOL_TYPE XMEMORY_TYPE_SYSTEM
 #endif
 
 /** @brief 启用 SHA-256 摘要算法。 */
@@ -396,6 +403,234 @@
 /** @brief 启用 X448（Montgomery）密钥协商。 */
 #ifndef XCRYPTOGRAPHIC_X448_ON
 #define XCRYPTOGRAPHIC_X448_ON 1
+#endif
+
+/**
+ * @brief 哈希算法裁剪矩阵。
+ * @details 每个算法一个独立开关，默认全部开启。关闭后对应算法在
+ *          XCryptographicHash 的算法分发表里不可达，其实现函数随之成为
+ *          无引用代码段，由链接期的 --gc-sections 回收（编译已开启
+ *          -ffunction-sections / -fdata-sections）。因此无需改动各算法
+ *          的实现代码。
+ *
+ * @note 被其它模块直接引用的算法不要关闭：XHashMap / XString /
+ *       XRecursiveLockState / XCommandLineParser 依赖 XxHash64。
+ */
+/** @brief ApHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_APHASH
+#define XCRYPTOGRAPHIC_HASH_APHASH 1
+#endif
+/** @brief BkdrHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BKDRHASH
+#define XCRYPTOGRAPHIC_HASH_BKDRHASH 1
+#endif
+/** @brief Blake2b_160。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BLAKE2B_160
+#define XCRYPTOGRAPHIC_HASH_BLAKE2B_160 1
+#endif
+/** @brief Blake2b_256。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BLAKE2B_256
+#define XCRYPTOGRAPHIC_HASH_BLAKE2B_256 1
+#endif
+/** @brief Blake2b_384。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BLAKE2B_384
+#define XCRYPTOGRAPHIC_HASH_BLAKE2B_384 1
+#endif
+/** @brief Blake2b_512。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BLAKE2B_512
+#define XCRYPTOGRAPHIC_HASH_BLAKE2B_512 1
+#endif
+/** @brief Blake2s_128。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BLAKE2S_128
+#define XCRYPTOGRAPHIC_HASH_BLAKE2S_128 1
+#endif
+/** @brief Blake2s_160。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BLAKE2S_160
+#define XCRYPTOGRAPHIC_HASH_BLAKE2S_160 1
+#endif
+/** @brief Blake2s_224。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BLAKE2S_224
+#define XCRYPTOGRAPHIC_HASH_BLAKE2S_224 1
+#endif
+/** @brief Blake2s_256。 */
+#ifndef XCRYPTOGRAPHIC_HASH_BLAKE2S_256
+#define XCRYPTOGRAPHIC_HASH_BLAKE2S_256 1
+#endif
+/** @brief CityHash64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_CITYHASH64
+#define XCRYPTOGRAPHIC_HASH_CITYHASH64 1
+#endif
+/** @brief Djb2。 */
+#ifndef XCRYPTOGRAPHIC_HASH_DJB2
+#define XCRYPTOGRAPHIC_HASH_DJB2 1
+#endif
+/** @brief ElfHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_ELFHASH
+#define XCRYPTOGRAPHIC_HASH_ELFHASH 1
+#endif
+/** @brief FarmHash64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_FARMHASH64
+#define XCRYPTOGRAPHIC_HASH_FARMHASH64 1
+#endif
+/** @brief FastHash64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_FASTHASH64
+#define XCRYPTOGRAPHIC_HASH_FASTHASH64 1
+#endif
+/** @brief Fnv1a_64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_FNV1A_64
+#define XCRYPTOGRAPHIC_HASH_FNV1A_64 1
+#endif
+/** @brief HighwayHash64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_HIGHWAYHASH64
+#define XCRYPTOGRAPHIC_HASH_HIGHWAYHASH64 1
+#endif
+/** @brief JsHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_JSHASH
+#define XCRYPTOGRAPHIC_HASH_JSHASH 1
+#endif
+/** @brief Keccak_224。 */
+#ifndef XCRYPTOGRAPHIC_HASH_KECCAK_224
+#define XCRYPTOGRAPHIC_HASH_KECCAK_224 1
+#endif
+/** @brief Keccak_256。 */
+#ifndef XCRYPTOGRAPHIC_HASH_KECCAK_256
+#define XCRYPTOGRAPHIC_HASH_KECCAK_256 1
+#endif
+/** @brief Keccak_384。 */
+#ifndef XCRYPTOGRAPHIC_HASH_KECCAK_384
+#define XCRYPTOGRAPHIC_HASH_KECCAK_384 1
+#endif
+/** @brief Keccak_512。 */
+#ifndef XCRYPTOGRAPHIC_HASH_KECCAK_512
+#define XCRYPTOGRAPHIC_HASH_KECCAK_512 1
+#endif
+/** @brief Lookup3。 */
+#ifndef XCRYPTOGRAPHIC_HASH_LOOKUP3
+#define XCRYPTOGRAPHIC_HASH_LOOKUP3 1
+#endif
+/** @brief Md4。 */
+#ifndef XCRYPTOGRAPHIC_HASH_MD4
+#define XCRYPTOGRAPHIC_HASH_MD4 1
+#endif
+/** @brief Md5。 */
+#ifndef XCRYPTOGRAPHIC_HASH_MD5
+#define XCRYPTOGRAPHIC_HASH_MD5 1
+#endif
+/** @brief MetroHash64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_METROHASH64
+#define XCRYPTOGRAPHIC_HASH_METROHASH64 1
+#endif
+/** @brief MumHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_MUMHASH
+#define XCRYPTOGRAPHIC_HASH_MUMHASH 1
+#endif
+/** @brief Murmur3_32。 */
+#ifndef XCRYPTOGRAPHIC_HASH_MURMUR3_32
+#define XCRYPTOGRAPHIC_HASH_MURMUR3_32 1
+#endif
+/** @brief OneAtATime。 */
+#ifndef XCRYPTOGRAPHIC_HASH_ONEATATIME
+#define XCRYPTOGRAPHIC_HASH_ONEATATIME 1
+#endif
+/** @brief Pearson。 */
+#ifndef XCRYPTOGRAPHIC_HASH_PEARSON
+#define XCRYPTOGRAPHIC_HASH_PEARSON 1
+#endif
+/** @brief PjwHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_PJWHASH
+#define XCRYPTOGRAPHIC_HASH_PJWHASH 1
+#endif
+/** @brief RealSha3_224。 */
+#ifndef XCRYPTOGRAPHIC_HASH_REALSHA3_224
+#define XCRYPTOGRAPHIC_HASH_REALSHA3_224 1
+#endif
+/** @brief RealSha3_256。 */
+#ifndef XCRYPTOGRAPHIC_HASH_REALSHA3_256
+#define XCRYPTOGRAPHIC_HASH_REALSHA3_256 1
+#endif
+/** @brief RealSha3_384。 */
+#ifndef XCRYPTOGRAPHIC_HASH_REALSHA3_384
+#define XCRYPTOGRAPHIC_HASH_REALSHA3_384 1
+#endif
+/** @brief RealSha3_512。 */
+#ifndef XCRYPTOGRAPHIC_HASH_REALSHA3_512
+#define XCRYPTOGRAPHIC_HASH_REALSHA3_512 1
+#endif
+/** @brief Ripemd160。 */
+#ifndef XCRYPTOGRAPHIC_HASH_RIPEMD160
+#define XCRYPTOGRAPHIC_HASH_RIPEMD160 1
+#endif
+/** @brief RsHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_RSHASH
+#define XCRYPTOGRAPHIC_HASH_RSHASH 1
+#endif
+/** @brief SdbmHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SDBMHASH
+#define XCRYPTOGRAPHIC_HASH_SDBMHASH 1
+#endif
+/** @brief Sha1。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA1
+#define XCRYPTOGRAPHIC_HASH_SHA1 1
+#endif
+/** @brief Sha224。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA224
+#define XCRYPTOGRAPHIC_HASH_SHA224 1
+#endif
+/** @brief Sha256。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA256
+#define XCRYPTOGRAPHIC_HASH_SHA256 1
+#endif
+/** @brief Sha384。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA384
+#define XCRYPTOGRAPHIC_HASH_SHA384 1
+#endif
+/** @brief Sha3_224。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA3_224
+#define XCRYPTOGRAPHIC_HASH_SHA3_224 1
+#endif
+/** @brief Sha3_256。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA3_256
+#define XCRYPTOGRAPHIC_HASH_SHA3_256 1
+#endif
+/** @brief Sha3_384。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA3_384
+#define XCRYPTOGRAPHIC_HASH_SHA3_384 1
+#endif
+/** @brief Sha3_512。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA3_512
+#define XCRYPTOGRAPHIC_HASH_SHA3_512 1
+#endif
+/** @brief Sha512。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SHA512
+#define XCRYPTOGRAPHIC_HASH_SHA512 1
+#endif
+/** @brief SipHash24。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SIPHASH24
+#define XCRYPTOGRAPHIC_HASH_SIPHASH24 1
+#endif
+/** @brief SpookyHash64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SPOOKYHASH64
+#define XCRYPTOGRAPHIC_HASH_SPOOKYHASH64 1
+#endif
+/** @brief SuperFastHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_SUPERFASTHASH
+#define XCRYPTOGRAPHIC_HASH_SUPERFASTHASH 1
+#endif
+/** @brief T1ha2。 */
+#ifndef XCRYPTOGRAPHIC_HASH_T1HA2
+#define XCRYPTOGRAPHIC_HASH_T1HA2 1
+#endif
+/** @brief ThomasWang64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_THOMASWANG64
+#define XCRYPTOGRAPHIC_HASH_THOMASWANG64 1
+#endif
+/** @brief WyHash。 */
+#ifndef XCRYPTOGRAPHIC_HASH_WYHASH
+#define XCRYPTOGRAPHIC_HASH_WYHASH 1
+#endif
+/** @brief XxHash64。 */
+#ifndef XCRYPTOGRAPHIC_HASH_XXHASH64
+#define XCRYPTOGRAPHIC_HASH_XXHASH64 1
 #endif
 
 #endif /* XCRYPTOGRAPHIC_CONFIG_H */

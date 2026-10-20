@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XICON_H
 #define XICON_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -663,5 +665,7 @@ void XIcon_setFallbackThemeName_2(const char* name);
 /* XClass create API default-memory wrappers. */
 #undef XIcon_create
 #define XIcon_create() XIcon_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XICON_H */

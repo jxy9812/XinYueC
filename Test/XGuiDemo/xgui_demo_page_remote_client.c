@@ -194,6 +194,11 @@ static struct
     XTimer*    m_statsTimer;  /**< 统计/UDP 状态刷新定时器(2026-10-04 加法式:
                                    *   UDP 建链/回退状态无事件驱动刷新口,
                                    *   1s 周期轻刷统计区)。 */
+    bool       m_timersPaused; /**< 定时器已随页隐藏暂停（2026-10-20 UAF
+                                 *   根修：定时器回调写页内统计标签，切离本页
+                                 *   后页控件可能已失效，1s 周期回调写悬垂
+                                 *   标签即崩——实测「进入本页→切到别的页」
+                                 *   约 1s 后必崩）。 */
 } s_rc;
 
 /* 分割条回调前置声明（定义在 adapt 段；装配点在其之前使用）。 */
@@ -1032,12 +1037,18 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
     rc_refreshStatsLabel();
 
     /* ---- 统计/UDP 状态刷新定时器(2026-10-04 加法式): UDP 建链/回退无
-     *      事件刷新口, 1s 周期轻刷统计区(未连接时空转近零成本)。 ---- */
+     *      事件刷新口, 1s 周期轻刷统计区(未连接时空转近零成本)。
+     *      [2026-10-20 退出段 UAF 根修] 定时器挂页根之下（随页根级联
+     *      析构）：回调写页内统计标签，页控件一旦释放而定时器仍在跑，
+     *      1s 周期回调即写悬垂标签 → 读取访问权限冲突（崩点
+     *      XLabel_setText 读 self->m_text）。挂页根后定时器与标签同生
+     *      共死，不可能再写已释放控件。 ---- */
     s_rc.m_statsTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
     if (s_rc.m_statsTimer) {
         XTimer_setInterval(s_rc.m_statsTimer, 1000);
         XTimer_setTimerCallback(s_rc.m_statsTimer, rc_statsTimerCb);
         XTimer_setUserData(s_rc.m_statsTimer, NULL);
+        XObject_setParent((XObject*)s_rc.m_statsTimer, (XObject*)s_rc.m_root);
         XTimer_start_base(s_rc.m_statsTimer);
     }
 
@@ -1049,6 +1060,7 @@ XWidget* demo_page_remote_client_build(XWidget* parent,
             XTimer_setInterval(s_rc.m_benchTimer, 250);
             XTimer_setTimerCallback(s_rc.m_benchTimer, rc_benchStatsCb);
             XTimer_setUserData(s_rc.m_benchTimer, NULL);
+            XObject_setParent((XObject*)s_rc.m_benchTimer, (XObject*)s_rc.m_root);
             XTimer_start_base(s_rc.m_benchTimer);
         }
     }
@@ -1124,8 +1136,55 @@ void demo_page_remote_client_autostart(void)
 
 /* ==================== 退出清理 ==================== */
 
+/* ---- 定时器随页可见性启停（2026-10-20 退出段 UAF 根修）----
+ * 本页两个定时器的回调都会写页内控件（统计标签 / 基准采样输出）。
+ * 页面切离后其控件可能已失效，而定时器仍以 1s/250ms 周期被事件循环
+ * 派发 → 回调写已释放控件 → 读取访问权限冲突（崩点
+ * XLabel_setText 读 self->m_text，self=已释放 XLabel）。
+ * 口径：定时器只在「本页为当前页」时运行（demo_switchPage 在
+ * 切离/切入本页时调 pause/resume）。 */
+static void rc_pauseTimers(void)
+{
+    if (s_rc.m_timersPaused) return;
+    if (s_rc.m_statsTimer) XTimer_stop_base(s_rc.m_statsTimer);
+    if (s_rc.m_benchTimer) XTimer_stop_base(s_rc.m_benchTimer);
+    s_rc.m_timersPaused = true;
+}
+
+static void rc_resumeTimers(void)
+{
+    if (!s_rc.m_timersPaused) return;
+    if (s_rc.m_statsTimer) XTimer_start_base(s_rc.m_statsTimer);
+    if (s_rc.m_benchTimer) XTimer_start_base(s_rc.m_benchTimer);
+    s_rc.m_timersPaused = false;
+}
+
+void demo_page_remote_client_pause(void)
+{
+    rc_pauseTimers();
+}
+
+void demo_page_remote_client_resume(void)
+{
+    rc_resumeTimers();
+}
+
 void demo_page_remote_client_shutdown(void)
 {
+    /* 先停本页自有定时器：回调会写页内统计标签，而页控件随窗口级联
+     * 析构释放——定时器不摘即在窗口拆除后仍被派发，回调写已释放标签
+     * 即崩（2026-10-20 根修）。定时器已挂页根之下（随页根级联析构），
+     * 此处只停表并置空指针，不得 XClassDelete（否则与级联析构重复
+     * 释放）。 */
+    if (s_rc.m_statsTimer) {
+        XTimer_stop_base(s_rc.m_statsTimer);
+        s_rc.m_statsTimer = NULL;
+    }
+    if (s_rc.m_benchTimer) {
+        XTimer_stop_base(s_rc.m_benchTimer);
+        s_rc.m_benchTimer = NULL;
+    }
+    s_rc.m_timersPaused = true;
     if (!s_rc.m_client) return;
     s_rc.m_shuttingDown = true; /* 断链信号将到达, 此后状态只留静态副本。 */
     /* 悬浮条先解绑（信号连接持有本页/客户端借用, 随后客户端

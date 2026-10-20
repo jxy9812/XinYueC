@@ -27,6 +27,8 @@
  */
 #ifndef XMENUBAR_H
 #define XMENUBAR_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -244,4 +246,7 @@ void* XMenuBar_hovered_signal(XMenuBar* self, XAction* action);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XMENUBAR_H */

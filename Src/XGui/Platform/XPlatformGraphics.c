@@ -2,6 +2,8 @@
  * @file       XPlatformGraphics.c
  * @brief      平台图形公共对象实现；不包含任何平台图形 API。
  ****************************************************************************/
+#if XGUI_ON
+
 #include "XPlatformGraphics.h"
 
 #if XPLATFORMINTEGRATION_ON
@@ -213,3 +215,5 @@ void* XPlatformOffscreenSurface_getProcAddress(
 }
 
 #endif /* XPLATFORMINTEGRATION_ON */
+
+#endif /* XGUI_ON */

@@ -4,12 +4,13 @@
 #include "FreeRTOS.h"
 #include "semphr.h"
 #include "task.h"
+#include "XFreeRTOSCompat.h"
 #if XSYNC_ON
 #if XSEMAPHORE_ON
 
 // FreeRTOS平台具体结构体定义（参考XWaitConditionFreeRTOS.c）
 struct XSemaphore {
-    SemaphoreHandle_t handle;         // FreeRTOS信号量句柄
+    xSemaphoreHandle handle;         // FreeRTOS信号量句柄
     volatile int32_t available_count; // 手动维护计数（FreeRTOS原生不提供查询接口）
 };
 

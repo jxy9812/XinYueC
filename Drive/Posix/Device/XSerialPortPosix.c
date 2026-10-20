@@ -10,13 +10,21 @@
 #include "XString.h"
 #include "XSerialPort.h"
 #include "XRingBuffer.h"
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <stdio.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 #ifndef CRTSCTS
 #define CRTSCTS 0
@@ -291,6 +299,199 @@ bool XDeviceSerialPort_platformControl(XFd fd, uint32_t command,
     }
     return command == XDeviceSerialPortCommand_HandleEvent ||
            command == XDeviceCommand_Cancel;
+}
+
+/* ==================================================================== */
+/* 串口枚举：扫描 /sys/class/tty，解析 USB 设备属性                        */
+/* ==================================================================== */
+
+/** @brief 单次枚举最多上报的端口数。 */
+#define POSIX_SERIAL_MAX_PORTS 64
+/** @brief 端口名（/sys/class/tty 下的条目名）最大长度。 */
+#define POSIX_SERIAL_MAX_NAME  64
+/** @brief sysfs 属性文件的读取缓冲长度。 */
+#define POSIX_SERIAL_ATTR_MAX  256
+
+/**
+ * @brief 读取整个属性文件并去掉尾部换行。
+ * @param path 文件路径。
+ * @param buffer 接收缓冲。
+ * @param capacity 缓冲容量（字节）。
+ * @return 读到的字符数（不含结尾 '\0'）；失败返回 -1。
+ */
+static int posixReadAttr(const char* path, char* buffer, size_t capacity)
+{
+    int fd;
+    ssize_t count;
+    if (!path || !buffer || capacity == 0) return -1;
+    fd = open(path, O_RDONLY);
+    if (fd < 0) return -1;
+    count = read(fd, buffer, capacity - 1);
+    close(fd);
+    if (count < 0) return -1;
+    buffer[count] = '\0';
+    while (count > 0 && (buffer[count - 1] == '\n' || buffer[count - 1] == '\r'))
+        buffer[--count] = '\0';
+    return (int)count;
+}
+
+/**
+ * @brief 从设备目录向上查找所属的 USB 设备目录（含 idVendor 的那级）。
+ * @param deviceDir 设备的 device 符号链接解析后的绝对路径。
+ * @param outDir 输出 USB 设备目录。
+ * @param capacity 输出缓冲容量。
+ * @return 找到返回 true。
+ * @note USB 转串口设备的 tty 节点挂在 USB 接口之下，USB 设备属性（idVendor、
+ *       manufacturer 等）位于再上一级，故需沿目录链向上回溯。
+ */
+static bool posixFindUsbDeviceDir(const char* deviceDir, char* outDir, size_t capacity)
+{
+    char current[PATH_MAX];
+    int level;
+    if (!deviceDir || !outDir || capacity == 0) return false;
+    if (!realpath(deviceDir, current)) return false;
+    for (level = 0; level < 8; ++level) {
+        char probe[PATH_MAX];
+        char* slash;
+        snprintf(probe, sizeof(probe), "%s/idVendor", current);
+        if (access(probe, R_OK) == 0) {
+            strncpy(outDir, current, capacity - 1);
+            outDir[capacity - 1] = '\0';
+            return true;
+        }
+        slash = strrchr(current, '/');
+        if (!slash || slash == current) break;
+        *slash = '\0';
+    }
+    return false;
+}
+
+/**
+ * @brief 探测端口是否已被占用。
+ * @param devicePath 设备路径（/dev/xxx）。
+ * @return 已被占用返回 true。
+ * @note 探测方式是以 O_NONBLOCK 打开后立即关闭；少数 USB 转串口设备会在
+ *       端口重新打开时复位，这是本实现的已知代价。
+ */
+static bool posixPortIsBusy(const char* devicePath)
+{
+    int fd = open(devicePath, O_RDWR | O_NONBLOCK | O_NOCTTY);
+    bool busy = false;
+    if (fd < 0) {
+        busy = (errno == EBUSY || errno == EACCES);
+    } else {
+        close(fd);
+    }
+    return busy;
+}
+
+/**
+ * @brief 判断某个 tty 是否为真实串口（排除虚拟控制台等纯软件设备）。
+ * @param name /sys/class/tty 下的条目名。
+ * @param deviceOut 设备的 device 符号链接解析结果。
+ * @param capacity 输出缓冲容量。
+ * @return 是真实串口返回 true。
+ */
+static bool posixIsRealSerial(const char* name, char* deviceOut, size_t capacity)
+{
+    char deviceLink[PATH_MAX];
+    char resolved[PATH_MAX];
+    snprintf(deviceLink, sizeof(deviceLink), "/sys/class/tty/%s/device", name);
+    if (!realpath(deviceLink, resolved)) return false;
+    /* 虚拟控制台、pty 等位于 /sys/devices/virtual 之下，不是串口。 */
+    if (strncmp(resolved, "/sys/devices/virtual/", 21) == 0) return false;
+    strncpy(deviceOut, resolved, capacity - 1);
+    deviceOut[capacity - 1] = '\0';
+    return true;
+}
+
+bool XDeviceSerialPort_platformEnumeratePorts(XDeviceSerialPortPortCollector collector, void* userData)
+{
+    DIR* dir;
+    struct dirent* item;
+    char names[POSIX_SERIAL_MAX_PORTS][POSIX_SERIAL_MAX_NAME];
+    size_t nameCount = 0;
+    size_t i;
+
+    if (!collector) return false;
+    dir = opendir("/sys/class/tty");
+    if (!dir) return false;
+
+    while ((item = readdir(dir)) != NULL) {
+        if (item->d_name[0] == '.') continue;
+        if (nameCount >= POSIX_SERIAL_MAX_PORTS) break;
+        if (strlen(item->d_name) >= POSIX_SERIAL_MAX_NAME) continue;
+        strncpy(names[nameCount], item->d_name, POSIX_SERIAL_MAX_NAME - 1);
+        names[nameCount][POSIX_SERIAL_MAX_NAME - 1] = '\0';
+        ++nameCount;
+    }
+    closedir(dir);
+
+    /* readdir 顺序不确定，按名字排序保证输出稳定。 */
+    for (i = 1; i < nameCount; ++i) {
+        char key[POSIX_SERIAL_MAX_NAME];
+        size_t j = i;
+        strncpy(key, names[i], sizeof(key));
+        while (j > 0 && strcmp(names[j - 1], key) > 0) {
+            strncpy(names[j], names[j - 1], POSIX_SERIAL_MAX_NAME);
+            names[j][POSIX_SERIAL_MAX_NAME - 1] = '\0';
+            --j;
+        }
+        strncpy(names[j], key, POSIX_SERIAL_MAX_NAME);
+        names[j][POSIX_SERIAL_MAX_NAME - 1] = '\0';
+    }
+
+    for (i = 0; i < nameCount; ++i) {
+        char devicePath[PATH_MAX];
+        char deviceDir[PATH_MAX];
+        char usbDir[PATH_MAX];
+        char portName[PATH_MAX];
+        char description[POSIX_SERIAL_ATTR_MAX];
+        char manufacturer[POSIX_SERIAL_ATTR_MAX];
+        char serialNumber[POSIX_SERIAL_ATTR_MAX];
+        char vendorId[32];
+        char productId[32];
+        XDeviceSerialPortPortInfo info;
+
+        if (!posixIsRealSerial(names[i], deviceDir, sizeof(deviceDir))) continue;
+
+        snprintf(portName, sizeof(portName), "/dev/%s", names[i]);
+        snprintf(devicePath, sizeof(devicePath), "%s", portName);
+
+        description[0] = '\0';
+        manufacturer[0] = '\0';
+        serialNumber[0] = '\0';
+        vendorId[0] = '\0';
+        productId[0] = '\0';
+
+        if (posixFindUsbDeviceDir(deviceDir, usbDir, sizeof(usbDir))) {
+            char attributePath[PATH_MAX];
+            snprintf(attributePath, sizeof(attributePath), "%s/idVendor", usbDir);
+            posixReadAttr(attributePath, vendorId, sizeof(vendorId));
+            snprintf(attributePath, sizeof(attributePath), "%s/idProduct", usbDir);
+            posixReadAttr(attributePath, productId, sizeof(productId));
+            snprintf(attributePath, sizeof(attributePath), "%s/manufacturer", usbDir);
+            posixReadAttr(attributePath, manufacturer, sizeof(manufacturer));
+            snprintf(attributePath, sizeof(attributePath), "%s/product", usbDir);
+            posixReadAttr(attributePath, description, sizeof(description));
+            snprintf(attributePath, sizeof(attributePath), "%s/serial", usbDir);
+            posixReadAttr(attributePath, serialNumber, sizeof(serialNumber));
+        }
+
+        memset(&info, 0, sizeof(info));
+        info.m_portName = portName;
+        info.m_description = description[0] ? description : NULL;
+        info.m_manufacturer = manufacturer[0] ? manufacturer : NULL;
+        info.m_serialNumber = serialNumber[0] ? serialNumber : NULL;
+        info.m_vendorId = (uint32_t)strtoul(vendorId, NULL, 16);
+        info.m_productId = (uint32_t)strtoul(productId, NULL, 16);
+        info.m_busy = posixPortIsBusy(devicePath);
+
+        if (!collector(userData, &info)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 #endif

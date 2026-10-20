@@ -17,6 +17,8 @@
  */
 #ifndef XMDIAREA_H
 #define XMDIAREA_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -411,5 +413,7 @@ void* XMdiArea_subWindowActivated_signal(XMdiArea* self,
                                          XMdiSubWindow* window);
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XMDIAREA_H */

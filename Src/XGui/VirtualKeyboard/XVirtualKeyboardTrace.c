@@ -4,6 +4,8 @@
  *             面；识别引擎本轮 N-A）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -466,3 +468,5 @@ void* XVirtualKeyboardTrace_opacityChanged_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

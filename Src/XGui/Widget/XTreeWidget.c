@@ -3,6 +3,8 @@
  * @brief      XTreeWidget 树控件实现（树条目 + 递归渲染）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XTreeWidget.h"
 
 #include "XAlgorithm.h"
@@ -2503,3 +2505,5 @@ static void VXTreeWidget_scrollContentsBy(XAbstractScrollArea* area, int dx,
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

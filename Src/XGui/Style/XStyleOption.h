@@ -1,5 +1,7 @@
 ﻿#ifndef XSTYLEOPTION_H
 #define XSTYLEOPTION_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -866,4 +868,7 @@ void XStyleOptionTitleBar_init(XStyleOptionTitleBar* option, int type);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSTYLEOPTION_H */

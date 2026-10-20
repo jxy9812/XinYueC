@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XPLATFORMDRAG_H
 #define XPLATFORMDRAG_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -87,4 +89,7 @@ XPlatformDragResult XPlatformDrag_exec(XPlatformDrag* self,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif

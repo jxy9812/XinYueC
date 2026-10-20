@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XLINESERIES_H
 #define XLINESERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -48,4 +50,7 @@ XLineSeries* XLineSeries_create_ex(XMemoryType memory);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XLINESERIES_H */

@@ -53,6 +53,8 @@
  ******************************************************************************/
 #ifndef XLINECONTROL_H
 #define XLINECONTROL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1057,4 +1059,7 @@ void* XLineControl_editFocusChange_signal(XLineControl* self, bool moving);
 }
 #endif
 #endif /* XLINECONTROL_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XLINECONTROL_H */

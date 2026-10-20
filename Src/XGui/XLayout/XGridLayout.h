@@ -38,6 +38,8 @@
  ******************************************************************************/
 #ifndef XGRIDLAYOUT_H
 #define XGRIDLAYOUT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -498,4 +500,7 @@ XGridLayoutOriginCorner XGridLayout_originCorner(const XGridLayout* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XGRIDLAYOUT_H */

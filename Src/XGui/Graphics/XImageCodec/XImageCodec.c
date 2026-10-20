@@ -11,6 +11,8 @@
  *              各格式 XIMAGECODEC_BMP_ON / PNG_ON / JPEG_ON / GIF_ON /
  *              PPM_ON / XBM_ON / SVG_ON / ICO_ON）。
  */
+#if XGUI_ON
+
 #include "XImageCodec.h"
 #include "XStringUtils.h"
 
@@ -682,3 +684,5 @@ void XImageCodecAnimation_delete(XImageCodecAnimation* animation)
 #endif /* XIMAGECODEC_GIF_ON && XIMAGECODEC_GIF_ANIM_ON */
 
 #endif /* XIMAGECODEC_ON */
+
+#endif /* XGUI_ON */

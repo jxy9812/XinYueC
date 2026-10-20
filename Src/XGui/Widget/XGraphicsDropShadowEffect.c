@@ -13,6 +13,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XGraphicsDropShadowEffect.h"
 
 #include "XGuiConfig.h"
@@ -374,3 +376,5 @@ void* XGraphicsDropShadowEffect_colorChanged_signal(
 }
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */

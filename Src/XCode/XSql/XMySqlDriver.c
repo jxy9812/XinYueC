@@ -5,6 +5,8 @@
  *             期间存在；因此 XSqlResult 的复制、移动和随机定位不依赖
  *             第三方客户端的结果对象生命周期。
  */
+#if XSQL_ON
+
 #include "XMySqlDriver.h"
 
 #include <stdlib.h>
@@ -1760,3 +1762,5 @@ bool XMySqlDriver_register(void)
     }
     return true;
 }
+
+#endif /* XSQL_ON */

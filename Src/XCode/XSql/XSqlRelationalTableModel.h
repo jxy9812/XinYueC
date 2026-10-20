@@ -7,6 +7,8 @@
 #ifndef XSQLRELATIONALTABLEMODEL_H
 #define XSQLRELATIONALTABLEMODEL_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -170,5 +172,7 @@ void XSqlRelationalTableModel_revertRow(XSqlRelationalTableModel* model, int row
 /* XClass create API default-memory wrappers. */
 #undef XSqlRelationalTableModel_create
 #define XSqlRelationalTableModel_create(...) XSqlRelationalTableModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLRELATIONALTABLEMODEL_H */

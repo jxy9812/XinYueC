@@ -8,6 +8,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XGuiConfig.h"
 #include "XString.h"
 #include "XMemory.h"
@@ -771,3 +773,5 @@ void XColorDialog_open_2(XColorDialog* self, XObject* receiver,
 }
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#endif /* XGUI_ON */

@@ -4,6 +4,8 @@
  *             XPinyinEngine 状态机；Qt pinyin 插件形态对齐）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON && XKEYBOARD_IME_ON
@@ -345,3 +347,5 @@ XVirtualKeyboardPinyinInputMethod_factory(void)
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

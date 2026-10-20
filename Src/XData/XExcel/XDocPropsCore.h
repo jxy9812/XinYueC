@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XDOCPROPSCORE_H
 #define XDOCPROPSCORE_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -96,4 +98,7 @@ bool XDocPropsCore_loadFromXmlFile(XDocPropsCore* self, const XString* filePath)
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

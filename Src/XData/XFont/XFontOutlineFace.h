@@ -6,6 +6,8 @@
 #ifndef XFONTOUTLINEFACE_H
 #define XFONTOUTLINEFACE_H
 
+#if XFONT_FREETYPE_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,5 +47,7 @@ bool XFontOutlineFace_registerProvider(const XFontOutlineProvider* provider);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XFONT_FREETYPE_ON */
 
 #endif /* XFONTOUTLINEFACE_H */

@@ -19,6 +19,8 @@
 #ifndef XRENDERKERNEL_H
 #define XRENDERKERNEL_H
 
+#if XGUI_ON
+
 #include "XGuiConfig.h"
 
 #if XPAINTER_ON
@@ -80,4 +82,7 @@ const XRenderKernelOps* XRenderKernel_forFormat(XImageFormat format);
 #endif
 
 #endif /* XPAINTER_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XRENDERKERNEL_H */

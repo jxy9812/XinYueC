@@ -13,6 +13,8 @@
  ******************************************************************************/
 #ifndef XSCREEN_H
 #define XSCREEN_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -666,4 +668,7 @@ void* XScreen_refreshRateChanged_signal(XScreen* self, float refreshRate);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSCREEN_H */

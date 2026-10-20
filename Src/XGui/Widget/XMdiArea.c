@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XMdiArea.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -1359,3 +1361,5 @@ void XMdiArea_activatePreviousSubWindow(XMdiArea* self)
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSCROLLAREA_ON && XMDIAREA_ON */
+
+#endif /* XGUI_ON */

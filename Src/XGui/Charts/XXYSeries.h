@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XXYSERIES_H
 #define XXYSERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -356,4 +358,7 @@ void XXYSeries_clearPointsConfiguration(XXYSeries* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XXYSERIES_H */

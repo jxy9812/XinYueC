@@ -8,10 +8,10 @@
 #if XMUTEX_ON
 
 // PlatformPrivate 结构体定义
-// 对于FreeRTOS，我们使用 SemaphoreHandle_t 来持有互斥信号量
+// 对于FreeRTOS，我们使用 xSemaphoreHandle 来持有互斥信号量
 typedef struct PlatformPrivate
 {
-    SemaphoreHandle_t mutex;
+    xSemaphoreHandle mutex;
 } PlatformPrivate;
 
 // 声明外部函数，这些函数在 XMutex.c 中被调用

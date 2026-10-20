@@ -61,6 +61,8 @@
  ******************************************************************************/
 #ifndef XWIDGET_H
 #define XWIDGET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -2117,5 +2119,7 @@ void* XWidget_windowIconTextChanged_signal(XWidget* self, const XString* text);
 void* XWidget_customContextMenuRequested_signal(XWidget* self, const XPoint* pos);
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XWIDGET_H */

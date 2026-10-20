@@ -73,6 +73,22 @@ bool XCoreApplication_compressEvent(XEvent* event, XObject* receiver, void* post
         return false;
     }
 
+    /* 对标 Qt 6.8 QApplication::compressEvent（qapplication.cpp:792-827）：
+       LayoutRequest 与同接收者队列中已有 LayoutRequest 合并（纯通知事件
+       无负载，后者覆盖前者即可）——子控件批量显隐/布局级联失效在单拍内
+       多次 post 时只派发一次，activate 幂等早退兜底剩余重复。 */
+    if (event->m_type == XEVENT_TYPE_LAYOUT_REQUEST) {
+        for (size_t i = 0; i < XVector_size_base(postList); ++i) {
+            XPostEvent* pe = (XPostEvent*)XVector_at_base(postList, i);
+            if (pe && pe->m_event && pe->m_event->m_type == XEVENT_TYPE_LAYOUT_REQUEST
+                && pe->m_receiver == receiver) {
+                XClassDelete(event);
+                return true;
+            }
+        }
+        return false;
+    }
+
     return false;
 }
 
@@ -611,7 +627,12 @@ void XCoreApplication_sendPostedEvents(XObject* receiver, XEventType eventType)
 
                 /* 重新添加到线程数据的 postEventList */
                 XMutex_lock(data->m_mutex);
-                XVector_push_back_1_base(&data->m_postEventList, &pe_copy);
+                if (!XVector_push_back_1_base(&data->m_postEventList, &pe_copy)) {
+                    /* 入队失败：把事件挂回原条目，末尾 push_front_list
+                     * 会统一 discard（释放事件并回退 posted_events），
+                     * 否则事件对象与计数双双泄漏。 */
+                    ePost->m_event = pe_copy.m_event;
+                }
                 XAtomic_store_bool(&data->m_canWait, false, XAtomic_MemoryOrder_Release);
                 XMutex_unlock(data->m_mutex);
                 continue;

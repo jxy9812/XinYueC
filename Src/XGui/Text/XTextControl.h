@@ -34,6 +34,8 @@
  */
 #ifndef XTEXTCONTROL_H
 #define XTEXTCONTROL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -808,4 +810,7 @@ void* XTextControl_modificationChanged_signal(XTextControl* self, bool m);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XTEXTCONTROL_H */

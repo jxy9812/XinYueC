@@ -16,6 +16,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDSELECTIONLISTMODEL_H
 #define XVIRTUALKEYBOARDSELECTIONLISTMODEL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -210,4 +212,7 @@ void* XVirtualKeyboardSelectionListModel_itemSelected_signal(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDSELECTIONLISTMODEL_H */

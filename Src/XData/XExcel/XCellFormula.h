@@ -10,6 +10,8 @@
  ******************************************************************************/
 #ifndef XCELLFORMULA_H
 #define XCELLFORMULA_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -193,4 +195,7 @@ bool XCellFormula_notEquals(const XCellFormula* a, const XCellFormula* b);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XCELLFORMULA_H */

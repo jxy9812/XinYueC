@@ -42,6 +42,8 @@
  ******************************************************************************/
 #ifndef XWINDOWEVENT_H
 #define XWINDOWEVENT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -940,4 +942,7 @@ int XTabletEvent_pointerType(const XTabletEvent* event);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XWINDOWEVENT_H */

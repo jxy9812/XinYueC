@@ -25,6 +25,8 @@
  *             拖动方向由基类键盘/滚轮处理。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 #if XWIDGET_ON && XABSTRACTSLIDER_ON && XSLIDER_ON
 
@@ -564,3 +566,5 @@ void XSlider_setTickInterval(XSlider* self, int interval)
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON && XSLIDER_ON */
+
+#endif /* XGUI_ON */

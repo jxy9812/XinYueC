@@ -3,6 +3,8 @@
  * @brief      XVirtualKeyboardPlainInputMethod 拉丁直通输入法实现。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -116,3 +118,5 @@ XVirtualKeyboardPlainInputMethod_factory(void)
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

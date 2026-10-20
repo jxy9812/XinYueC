@@ -13,6 +13,8 @@
  *              XImageCodec.c 的 XImageCodec_decode / encode / decodeAnimation
  *              分发。
  */
+#if XGUI_ON
+
 #include "XImageCodec_config.h"
 
 #include "XAlgorithm.h"
@@ -746,3 +748,5 @@ gif_encode_done:
 
 #endif /* XIMAGECODEC_GIF_ON */
 #endif /* XIMAGECODEC_ON */
+
+#endif /* XGUI_ON */

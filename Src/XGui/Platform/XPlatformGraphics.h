@@ -8,6 +8,8 @@
  ****************************************************************************/
 #ifndef XPLATFORMGRAPHICS_H
 #define XPLATFORMGRAPHICS_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -327,4 +329,7 @@ void* XPlatformOffscreenSurface_getProcAddress(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPLATFORMGRAPHICS_H */

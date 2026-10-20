@@ -35,6 +35,8 @@
  ******************************************************************************/
 #ifndef XLAYOUT_H
 #define XLAYOUT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -560,4 +562,7 @@ void XLayout_invalidate(XLayout* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XLAYOUT_H */

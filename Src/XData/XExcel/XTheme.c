@@ -1,4 +1,6 @@
-﻿#include "XTheme.h"
+﻿#if XEXCEL_ON
+
+#include "XTheme.h"
 #include "XMemory.h"
 #include "XFile.h"
 #include "XByteArray.h"
@@ -100,3 +102,5 @@ bool XTheme_loadFromXmlFile(XTheme* self, const XString* filePath) {
     if (allData) XClassDelete(allData);
     return result;
 }
+
+#endif /* XEXCEL_ON */

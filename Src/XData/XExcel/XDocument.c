@@ -3,6 +3,8 @@
  * @brief      XDocument 文档主类实现（对标 QXlsx::Document）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XPrintf.h"
 #include "XDocument.h"
 #include "XMemory.h"
@@ -2386,3 +2388,5 @@ const XString* XDocument_documentProperty_utf8(const XDocument* self, const char
     if (s) XClassDelete(s);
     return result;
 }
+
+#endif /* XEXCEL_ON */

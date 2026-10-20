@@ -5,6 +5,8 @@
  *             解析主题文件，并按需保持宽高比缩放；SVG 支持由 XGui 图像
  *             编解码配置裁剪。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XIconThemeEngine.h"
 
 #include "XAlgorithm.h"
@@ -697,3 +699,5 @@ void XIconThemeEngine_init_2(XIconThemeEngine* self, const char* iconName)
     XIconThemeEngine_init(self, name);
     if (name) XClassDelete((XClass*)name);
 }
+
+#endif /* XGUI_ON */

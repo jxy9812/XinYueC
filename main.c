@@ -16,6 +16,7 @@
 #include "XStringList.h"
 #include "XPrintf.h"
 #include "XDeviceTest.h"
+#include "XIOTest.h"
 #include "XDeviceFileTest.h"
 #include "XDeviceNetworkTest.h"
 #include "XDeviceSerialPortTest.h"
@@ -26,9 +27,13 @@
 #include "XCryptographicPrimitiveTest.h"
 #include "XSslTest.h"
 #include "XProtocolTest.h"
+#include "XLinkTest.h"
+#include "XNtpTest.h"
+#include "XDdnsTest.h"
 #include "XDataTest.h"
 #include "XPropertyTest.h"
 #include "XTestCommand.h"
+#include "XCodeTest.h"
 #include "XUpgrade.h"
 #if XCONSOLE_SHELL_ON && XCONSOLE_SHELL_COMMAND_ON && XCONSOLE_SHELL_IO_ON && \
     XCONSOLE_SHELL_ASYNC_ON
@@ -52,10 +57,24 @@ static int main_run_test_path(const char* testPath)
     }
     if (strcmp(testPath, "esp8266-unit") == 0)
         return XESP8266WifiTest_runUnit();
+#if DEMOTEST_ON
+    if (strcmp(testPath, "eventloop") == 0) {
+        /* sendPostedEvents 所有权/泄漏探针（ESP8266 慢速泄漏排查桌面闸门）。 */
+        XCoreApplicationTest_runSendPostedEventsProbe();
+        return 0;
+    }
+    if (strcmp(testPath, "xcore-application") == 0) {
+        XCoreApplicationTest(NULL);
+        return 0;
+    }
+#endif
     if (strcmp(testPath, "xdevice-file") == 0)
         return XDeviceFileTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xdevice-network") == 0)
         return XDeviceNetworkTest_runAll() ? 0 : 1;
+    /* UDP 定向收发红线：驱动 UDP 目的地址/connect/源地址修复的回归闸门。 */
+    if (strcmp(testPath, "udp-directed") == 0)
+        return XUdpDirectedTest_run() == 0 ? 0 : 1;
     if (strcmp(testPath, "xdevice-serial-port") == 0)
         return XDeviceSerialPortTest_runAll() ? 0 : 1;
     if (strcmp(testPath, "xdata") == 0)
@@ -91,6 +110,41 @@ static int main_run_test_path(const char* testPath)
         return XMqttTcpClientProcess_run() ? 0 : 1;
     if (strcmp(testPath, "xmqtt-tcp-interop") == 0)
         return XMqttTcpInteropTest_run() ? 0 : 1;
+#if XPROTOCOL_ON && XLINK_ON
+    /* XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通）全量回归。 */
+    if (strcmp(testPath, "xlink") == 0)
+        return XLinkTest_run() == 0 ? 0 : 1;
+    /* 质量门禁：内存泄漏 / 性能基准 / 边界与对抗。 */
+    if (strcmp(testPath, "xlink-quality") == 0)
+        return XLinkQualityTest_run() == 0 ? 0 : 1;
+    /* 功能 + 质量合并闸门（发布前跑这一个即可）。 */
+    if (strcmp(testPath, "xlink-all") == 0)
+        return (XLinkTest_run() == 0 && XLinkQualityTest_run() == 0) ? 0 : 1;
+    if (strcmp(testPath, "xlink-codec") == 0) {
+        XLinkCodecTest();
+        return 0;
+    }
+    if (strcmp(testPath, "xlink-session") == 0) {
+        XLinkSessionTest();
+        return 0;
+    }
+#endif
+#if XPROTOCOL_ON && XNTP_ON
+    /* XNtp SNTP 客户端全量回归（离线：进程内模拟 NTP 服务器）。 */
+    if (strcmp(testPath, "ntp") == 0)
+        return XNtpTest_run() == 0 ? 0 : 1;
+    /* 真实网络校时联调（对 ntp.aliyun.com 发真实请求）。 */
+    if (strcmp(testPath, "ntp-real") == 0)
+        return XNtpRealTest_run() == 0 ? 0 : 1;
+#endif
+#if XPROTOCOL_ON && XDDNS_ON
+    /* XDdns 动态域名解析全量回归（离线：本地 mock 服务器扮演阿里云）。 */
+    if (strcmp(testPath, "ddns") == 0)
+        return XDdnsTest_run() == 0 ? 0 : 1;
+    /* 真实网络全链路联调（凭据经 XDNS_AKID/XDNS_SECRET 环境变量传入）。 */
+    if (strcmp(testPath, "ddns-real") == 0)
+        return XDdnsRealTest_run() == 0 ? 0 : 1;
+#endif
 #if DEMOTEST_ON && XS7_ON
     if (strcmp(testPath, "xs7-unit") == 0)
         return XS7Test_runAll() ? 0 : 1;
@@ -111,7 +165,12 @@ static int main_run_test_path(const char* testPath)
         bool cryptographic = XCryptographicPrimitiveTest_runAll();
         bool ssl = XSslTest_runAll();
         bool mqtt = XMqttTest_runAll();
-        return esp8266 && deviceFile && deviceNetwork && deviceSerialPort && data && process && shell && backend && clients && cryptographic && ssl && mqtt ? 0 : 1;
+        bool ok = esp8266 && deviceFile && deviceNetwork && deviceSerialPort && data && process && shell && backend && clients && cryptographic && ssl && mqtt;
+#if XPROTOCOL_ON && XLINK_ON
+        /* XLink 私有协议回归并入全量闸门。 */
+        ok = ok && (XLinkTest_run() == 0);
+#endif
+        return ok ? 0 : 1;
     }
     XPrintf("未知测试命令: %s\n", testPath);
     return 1;

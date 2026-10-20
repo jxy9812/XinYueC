@@ -2,6 +2,8 @@
  * @file       XIconEnginePlugin.c
  * @brief      XIconEnginePlugin 图标引擎插件工厂实现。
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XIconEnginePlugin.h"
 
 #include "XAlgorithm.h"
@@ -182,3 +184,5 @@ XStringList* XIconEnginePlugin_keys_base(const XIconEnginePlugin* self)
     return XClassGetVirtualFunc(self, EXIconEnginePlugin_Keys,
         XStringList*(*)(const XIconEnginePlugin*))(self);
 }
+
+#endif /* XGUI_ON */

@@ -2,6 +2,8 @@
  * @file       XImagePluginRegistry.c
  * @brief      XImageIOPlugin 源码级注册表实现。
  */
+#if XGUI_ON
+
 #include "XImagePluginRegistry.h"
 
 /* XIMAGEIOPLUGIN_ON=0 时整体裁剪：插件注册表不可用，XImageReader/
@@ -1068,3 +1070,5 @@ XStringList* XImagePluginRegistry_imageFormatsForMimeType_2(const char* mimeType
 }
 
 #endif /* XIMAGEIOPLUGIN_ON */
+
+#endif /* XGUI_ON */

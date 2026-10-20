@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XCONTENTTYPES_H
 #define XCONTENTTYPES_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -234,4 +236,7 @@ bool XContentTypes_loadFromXmlFile(XContentTypes* self, const XString* filePath)
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XCONTENTTYPES_H */

@@ -14,6 +14,8 @@
  *             XGUIAPPLICATION_ON。置 0 时本文件实现整体裁剪。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XApplication.h"
 #include "XStyle.h"
 
@@ -632,3 +634,5 @@ void XApplication_setAutoSipEnabled(bool enabled)
 }
 
 #endif /* XAPPLICATION_ON && XGUIAPPLICATION_ON */
+
+#endif /* XGUI_ON */

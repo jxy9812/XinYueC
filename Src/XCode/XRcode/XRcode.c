@@ -1,4 +1,6 @@
-﻿#include "XRcode.h"
+﻿#if XRCODE_ON
+
+#include "XRcode.h"
 #include <string.h>
 #include "XPrintf.h"
 #include "XMemory.h"
@@ -753,3 +755,5 @@ static int get_penalty_count(XRcode* qr) {
     penalty += (diff / 5) * 10;
     return penalty;
 }
+
+#endif /* XRCODE_ON */

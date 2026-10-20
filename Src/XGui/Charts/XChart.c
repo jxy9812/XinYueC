@@ -1,4 +1,6 @@
-﻿#include "XChart.h"
+﻿#if XGUI_ON
+
+#include "XChart.h"
 
 #include "XAlgorithm.h"
 #include "XString.h"
@@ -1750,3 +1752,5 @@ const char* XChart_titleFont_2(const XChart* self)
 { return XChart_titleFontFamily_2(self); }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

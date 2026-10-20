@@ -1,4 +1,6 @@
-﻿#include "XValueAxis.h"
+﻿#if XGUI_ON
+
+#include "XValueAxis.h"
 #include "XMemory.h"
 
 #include "XAlgorithm.h"
@@ -109,3 +111,5 @@ void XValueAxis_deinit_impl(XValueAxis* self)
 }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

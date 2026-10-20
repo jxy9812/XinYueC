@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XZIPWRITER_H
 #define XZIPWRITER_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -72,4 +74,7 @@ bool XZipWriter_close(XZipWriter* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

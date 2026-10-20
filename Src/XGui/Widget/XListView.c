@@ -11,6 +11,8 @@
  *             数组参与绘制与命中跳过（数组模式参照 XTreeView 行状态表）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XListView.h"
 
 #include "XAlgorithm.h"
@@ -794,3 +796,5 @@ void* XListView_indexesMoved_signal(XListView* self, const int* rows,
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

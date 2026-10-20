@@ -5,6 +5,8 @@
  *             地公共信号）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -890,3 +892,5 @@ void* XVirtualKeyboardInputContext_keyEventRequested_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

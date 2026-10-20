@@ -4,6 +4,8 @@
  *             /学习 N-A）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -173,3 +175,5 @@ void* XVirtualKeyboardDictionary_contentsChanged_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

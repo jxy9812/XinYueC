@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XIMAGEWRITER_H
 #define XIMAGEWRITER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -356,5 +358,7 @@ XStringList* XImageWriter_imageFormatsForMimeType_2(const char* mimeType);
 /* XClass create API default-memory wrappers. */
 #undef XImageWriter_create
 #define XImageWriter_create() XImageWriter_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XIMAGEWRITER_H */

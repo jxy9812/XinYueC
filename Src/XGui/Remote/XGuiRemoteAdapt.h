@@ -21,6 +21,8 @@
 #ifndef XGUI_REMOTE_ADAPT_H
 #define XGUI_REMOTE_ADAPT_H
 
+#if XGUI_ON
+
 #include <stdint.h>
 #include <stddef.h>
 
@@ -148,5 +150,7 @@ static inline int xgui_remote_adapt_feed(XGuiRemoteAdapt* a, int baseFps,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUI_REMOTE_ADAPT_H */

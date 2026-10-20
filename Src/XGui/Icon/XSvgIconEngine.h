@@ -13,6 +13,8 @@
  */
 #ifndef XSVGICONENGINE_H
 #define XSVGICONENGINE_H
+
+#if XGUI_ON
 #include "XGuiConfig.h"
 #if XSVGICON_ON
 #ifdef __cplusplus
@@ -56,4 +58,7 @@ XSvgIconEngine* XSvgIconEngine_create_2(const char* utf8FileName);
 }
 #endif
 #endif /* XSVGICON_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XSVGICONENGINE_H */

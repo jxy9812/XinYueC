@@ -1,4 +1,6 @@
-﻿#include "XNumFormatParser.h"
+﻿#if XEXCEL_ON
+
+#include "XNumFormatParser.h"
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,3 +54,5 @@ bool XNumFormatParser_isDateTime(const XString* formatCode)
     }
     return false;
 }
+
+#endif /* XEXCEL_ON */

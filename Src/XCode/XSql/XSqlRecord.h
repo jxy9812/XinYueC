@@ -6,6 +6,8 @@
 #ifndef XSQLRECORD_H
 #define XSQLRECORD_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -124,5 +126,7 @@ bool XSqlRecord_equals(const XSqlRecord* left, const XSqlRecord* right);
 /* XClass create API default-memory wrappers. */
 #undef XSqlRecord_create
 #define XSqlRecord_create() XSqlRecord_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLRECORD_H */

@@ -9,6 +9,8 @@
  ******************************************************************************/
 #ifndef XLAYOUTITEM_PROTECTED_H
 #define XLAYOUTITEM_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,4 +56,7 @@ XSpacerItem* XLayoutItem_spacerItem_base(const XLayoutItem* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XLAYOUTITEM_PROTECTED_H */

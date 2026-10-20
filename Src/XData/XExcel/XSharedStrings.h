@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XSHAREDSTRINGS_H
 #define XSHAREDSTRINGS_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -151,4 +153,7 @@ bool XSharedStrings_loadFromXmlFile(XSharedStrings* self, const XString* filePat
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XSHAREDSTRINGS_H */

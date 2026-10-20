@@ -19,6 +19,8 @@
  */
 #ifndef XBUTTONGROUP_H
 #define XBUTTONGROUP_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -147,4 +149,7 @@ void* XButtonGroup_idToggled_signal(XButtonGroup* self, int id, bool checked);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XBUTTONGROUP_H */

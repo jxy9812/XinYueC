@@ -3,6 +3,8 @@
  * @brief      XPalette 调色板值类型实现（对标 Qt 6.8 QPalette）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPalette.h"
 
 #if XPALETTE_ON
@@ -362,3 +364,5 @@ bool XPalette_isEqual(const XPalette* a, const XPalette* b)
 }
 
 #endif /* XPALETTE_ON */
+
+#endif /* XGUI_ON */

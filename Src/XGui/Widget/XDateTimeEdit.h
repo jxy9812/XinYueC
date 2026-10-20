@@ -37,6 +37,8 @@
  */
 #ifndef XDATETIMEEDIT_H
 #define XDATETIMEEDIT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -488,5 +490,7 @@ void* XDateTimeEdit_timeChanged_signal(XDateTimeEdit* self,
  * this, &QDateEdit::userDateChanged) 语义）。 */
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XDATETIMEEDIT_H */

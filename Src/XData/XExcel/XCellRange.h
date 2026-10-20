@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XCELLRANGE_H
 #define XCELLRANGE_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -272,4 +274,7 @@ void XCellRange_setFullRange(XCellRange* self, int firstRow, int firstCol, int l
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XCELLRANGE_H */

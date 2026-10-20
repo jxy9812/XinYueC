@@ -1,6 +1,8 @@
 ﻿#ifndef XICONTHEMEINTERNAL_H
 #define XICONTHEMEINTERNAL_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -58,5 +60,7 @@ XString* XIconInternal_resolveThemeIconName(const char* name);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XICONTHEMEINTERNAL_H */

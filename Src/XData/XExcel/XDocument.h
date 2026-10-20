@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XDOCUMENT_H
 #define XDOCUMENT_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 
@@ -712,4 +714,7 @@ bool XDocument_changeImage(XDocument* self, int imageIndex, const XString* newIm
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XDOCUMENT_H */

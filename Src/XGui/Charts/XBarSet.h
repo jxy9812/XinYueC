@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XBARSET_H
 #define XBARSET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -252,4 +254,7 @@ void* XBarSet_selectedBarsChanged_signal(XBarSet* self, const int* indexes,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XBARSET_H */

@@ -11,6 +11,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XCompleter.h"
 #include "XListWidget.h"
 #include "XLineEdit.h"
@@ -1029,3 +1031,5 @@ void* XCompleter_activatedIndex_signal(XCompleter* self, int row, int col)
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

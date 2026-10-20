@@ -9,6 +9,8 @@
 #ifndef XICONSCALEDPIXMAPCACHE_H
 #define XICONSCALEDPIXMAPCACHE_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,5 +61,7 @@ void XIconScaledPixmapCache_clear(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XICONSCALEDPIXMAPCACHE_H */

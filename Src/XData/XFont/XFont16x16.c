@@ -1,4 +1,6 @@
 /* Generated from LVGL fmt_txt font data. The runtime has no LVGL dependency. */
+#if XFONT_FREETYPE_ON
+
 #include "XFont16x16.h"
 
 #if XFONT_BUILTIN_16X16_ON
@@ -39547,3 +39549,5 @@ bool XFont16x16_register(void)
     return XFontBitmapFace_registerProvider(&g_xfont16x16_provider);
 }
 #endif /* XFONT_BUILTIN_16X16_ON */
+
+#endif /* XFONT_FREETYPE_ON */

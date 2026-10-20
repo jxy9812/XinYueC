@@ -11,6 +11,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XTitleBar.h"
 #include "XTitleBar_Protected.h"
 #include "XWidget_Protected.h"
@@ -441,3 +443,5 @@ void XTitleBar_armReleaseVerify(XTitleBar* self)
 }
 
 #endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */
+
+#endif /* XGUI_ON */

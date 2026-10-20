@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XDRAWING_H
 #define XDRAWING_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -76,4 +78,7 @@ bool XDrawing_loadFromXmlFile(XDrawing* self, const XString* filePath);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

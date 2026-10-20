@@ -2,6 +2,8 @@
  * @file       XSqlField.c
  * @brief      SQL 字段描述类实现。
  */
+#if XSQL_ON
+
 #include "XSqlField.h"
 
 #include <string.h>
@@ -214,3 +216,5 @@ bool XSqlField_equals(const XSqlField* left, const XSqlField* right)
         && left->m_generated == right->m_generated
         && left->m_autoValue == right->m_autoValue;
 }
+
+#endif /* XSQL_ON */

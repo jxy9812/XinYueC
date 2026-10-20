@@ -14,6 +14,8 @@
  ******************************************************************************/
 #ifndef XGRAPHICSDROPSHADOWEFFECT_H
 #define XGRAPHICSDROPSHADOWEFFECT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -147,5 +149,7 @@ void* XGraphicsDropShadowEffect_colorChanged_signal(
     XGraphicsDropShadowEffect* self, XColor color);
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XGRAPHICSDROPSHADOWEFFECT_H */

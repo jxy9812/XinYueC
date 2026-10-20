@@ -225,6 +225,21 @@ int demo_page_window_settings_autotest(XWidget* page);
 /** @brief 窗口设置页自适应重排（说明/状态行贴底；同上契约）。 */
 void demo_page_window_settings_adapt(XWidget* page);
 
+/** @brief 构建时钟与 DDNS 页（系统设置：NTP 应用内校时[服务器/立即校时/
+ *         自动校时/偏移时延状态] + 动态域名解析[阿里云凭据/域名记录/
+ *         IPv6 开关/立即检查/自动检查/当前与推送 IP 状态]）。
+ *         XNTP_ON 与 XDDNS_ON 均关闭时返回 NULL，主文件跳过注册
+ *         （2026-10-16 追加页 19）。 */
+XWidget* demo_page_timeddns_build(XWidget* parent,
+                                  DemoPageStatusFn status, void* user);
+
+/** @brief 时钟与 DDNS 页自测（非阻塞；不触真实网络——NTP 清服务器触发
+ *         NoServer、DDNS 无凭据触发 NoConfig，均即时失败路径）。 */
+int demo_page_timeddns_autotest(XWidget* page);
+
+/** @brief 时钟与 DDNS 页自适应重排（两状态区随根高伸缩；同上契约）。 */
+void demo_page_timeddns_adapt(XWidget* page);
+
 /**
  * @brief 主窗口性能悬浮层访问器（悬浮窗设置页专用；主文件实现）。
  * @param user build 回调透传的主窗口指针（DemoWin*）。

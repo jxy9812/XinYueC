@@ -3,6 +3,8 @@
  * @brief      XRichString 富文本字符串类实现
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XRichString.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -454,3 +456,5 @@ void XRichString_addFragment_utf8(XRichString* self, const char* text, const XFo
     XRichString_addFragment(self, s, format);
     if (s) XClassDelete(s);
 }
+
+#endif /* XEXCEL_ON */

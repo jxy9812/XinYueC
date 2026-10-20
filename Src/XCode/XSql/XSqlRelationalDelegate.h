@@ -7,6 +7,8 @@
 #ifndef XSQLRELATIONALDELEGATE_H
 #define XSQLRELATIONALDELEGATE_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -89,5 +91,7 @@ XSqlTableModel* XSqlRelationalDelegate_createEditorModel(const XSqlRelationalTab
 /* XClass create API default-memory wrappers. */
 #undef XSqlRelationalDelegate_create
 #define XSqlRelationalDelegate_create() XSqlRelationalDelegate_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLRELATIONALDELEGATE_H */

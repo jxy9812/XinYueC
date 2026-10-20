@@ -34,6 +34,8 @@
  *             类型。本文件不依赖任何平台 API，嵌入式可用。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XBoxLayout.h"
 
 #include "XAlgorithm.h"
@@ -1529,3 +1531,5 @@ void XBoxLayout_addSpacerItem(XBoxLayout* self, XSpacerItem* item)
 #endif /* XLAYOUT_SPACER_ON */
 
 #endif /* XLAYOUT_ON && XLAYOUT_BOX_ON */
+
+#endif /* XGUI_ON */

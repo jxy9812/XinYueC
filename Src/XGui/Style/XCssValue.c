@@ -7,6 +7,8 @@
  *             字符分类/串比较经 XStringUtils，块拷贝/清零经 XMemory。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XCssValue.h"
 
 #if XSTYLE_ON
@@ -545,3 +547,5 @@ bool XCssParseBackgroundPosition(const char* value, double* outX, double* outY, 
 }
 
 #endif /* XSTYLE_ON */
+
+#endif /* XGUI_ON */

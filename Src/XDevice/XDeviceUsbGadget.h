@@ -314,6 +314,14 @@ bool XDeviceUsbGadget_register(void);
     XDevice_openClass("usbgadget", (const XDeviceOpenOptions*)(options), (error))
 #define XDeviceUsbGadget_close   XDevice_close
 #define XDeviceUsbGadget_control XDevice_control
+/**
+ * @brief 读取设备最近一次错误码。
+ * @details USB 细分错误码（XDeviceUsbError）继承父类编号空间，已由设备层
+ *          直接写入父类 XDeviceContext.m_lastError，复用父类门面即可取得。
+ * @param fd 已打开的 USB Device/Gadget 设备描述符。
+ * @return 错误码，取自 XDeviceError / XDeviceUsbError 编号空间。
+ */
+#define XDeviceUsbGadget_lastError XDevice_lastError
 
 /* ============================================================================
  * 设备专有属性 / 命令
@@ -349,7 +357,6 @@ typedef enum XDeviceUsbGadgetCommand
     XDeviceUsbGadgetCommand_RemoteWakeup,                     /**< 请求远程唤醒。in/out 均为 NULL。 */
     XDeviceUsbGadgetCommand_Features,                         /**< 查询能力。out: XDeviceUsbGadgetFeatures*。 */
     XDeviceUsbGadgetCommand_Handle,                           /**< 查询原生句柄。out: XDeviceUsbNativeHandle*。 */
-    XDeviceUsbGadgetCommand_LastError,                        /**< 查询最近错误。out: XDeviceUsbError*。 */
     XDeviceUsbGadgetCommand_NativeError,                      /**< 查询平台原生错误码。out: int32_t*。 */
     XDeviceUsbGadgetCommand_ClearError,                       /**< 清除错误。in/out 均为 NULL。 */
     XDeviceUsbGadgetCommand_Count                             /**< 命令数量边界。 */
@@ -401,8 +408,6 @@ XDeviceUsbGadgetFeatures XDeviceUsbGadget_features(XFd fd);
 bool XDeviceUsbGadget_hasFeature(XFd fd, XDeviceUsbGadgetFeature feature);
 /** @brief 获取后端原生句柄。 @param fd 已打开的 USB Device/Gadget 描述符。 @return 借用句柄；无效返回 XDEVICE_USB_INVALID_NATIVE_HANDLE。 */
 XDeviceUsbNativeHandle XDeviceUsbGadget_handle(XFd fd);
-/** @brief 获取控制器最近一次通用错误。 @param fd 已打开的 USB Device/Gadget 描述符。 @return 错误值。 */
-XDeviceUsbError XDeviceUsbGadget_lastError(XFd fd);
 /** @brief 获取控制器最近一次平台原生错误码。 @param fd 已打开的 USB Device/Gadget 描述符。 @return 平台错误码；无错误返回 0。 */
 int32_t XDeviceUsbGadget_nativeError(XFd fd);
 /** @brief 清除控制器错误状态。 @param fd 已打开的 USB Device/Gadget 描述符。 @return 无。 */

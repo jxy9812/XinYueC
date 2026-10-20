@@ -13,6 +13,8 @@
  ******************************************************************************/
 #ifndef XCURSOR_H
 #define XCURSOR_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -305,4 +307,7 @@ typedef struct XCursor
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCURSOR_H */

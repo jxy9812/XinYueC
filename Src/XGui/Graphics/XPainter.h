@@ -14,6 +14,8 @@
  ******************************************************************************/
 #ifndef XPAINTER_H
 #define XPAINTER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -2043,4 +2045,7 @@ XPainterLayoutDirection XPainter_layoutDirection(const XPainter* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPAINTER_H */

@@ -10,6 +10,8 @@
  *             服务层收敛为"内部缓冲承载的借用指针/空串"，判定语义不变。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XTextClipboard.h"
 
 #if XTEXTCLIPBOARD_ON
@@ -114,3 +116,5 @@ const char* XTextClipboard_getText(void)
 }
 
 #endif /* XTEXTCLIPBOARD_ON */
+
+#endif /* XGUI_ON */

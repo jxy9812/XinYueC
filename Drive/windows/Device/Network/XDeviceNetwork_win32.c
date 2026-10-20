@@ -349,7 +349,8 @@ void XDeviceNetwork_poll(void)
 {
 }
 
-int XDeviceNetwork_lastError(void)
+/* 公共层平台错误钩子：Win32 域即 WSA 错误码。 */
+int XDeviceNetwork_platformLastError(void)
 {
     return WSAGetLastError();
 }
@@ -874,8 +875,19 @@ bool XDeviceNetwork_socketConnect(XFd xfd, const XString* hostName,
     }
 
     if (sockType == XDeviceNetwork_Udp) {
+        /* Connect the UDP socket for real. This makes send()/recv() work
+         * without WSASendTo, and lets the kernel drop datagrams from any
+         * source other than the peer - the source filtering a client such as
+         * NTP needs before trusting a reply. UDP connect never blocks and
+         * does not report failure for an unreachable peer, so a successful
+         * return is expected. */
+        if (connect(p->socket, (struct sockaddr*)&destAddr, destLen) != 0) {
+            closesocket(p->socket); p->socket = INVALID_SOCKET;
+            return false;
+        }
         p->base.m_connected = true;
         p->connectPending = false;
+        syncSocketEndpoints(priv);
         startAsyncRead(priv, true);
         return true;
     }

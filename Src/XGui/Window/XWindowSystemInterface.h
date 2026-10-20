@@ -27,6 +27,8 @@
  ******************************************************************************/
 #ifndef XWINDOWSYSTEMINTERFACE_H
 #define XWINDOWSYSTEMINTERFACE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -533,4 +535,7 @@ void XWindowSystemInterface_flushWindowSystemEvents(XEventLoopProcessEventsFlags
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XWINDOWSYSTEMINTERFACE_H */

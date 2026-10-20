@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XMessageBox.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -1573,3 +1575,5 @@ XIcon* XMessageBox_standardIcon(int icon)
 }
 
 #endif /* XWIDGET_ON && XDIALOGBUTTONBOX_ON && XPUSHBUTTON_ON && XLABEL_ON && XMESSAGEBOX_ON */
+
+#endif /* XGUI_ON */

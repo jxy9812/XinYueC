@@ -24,6 +24,8 @@
  *             平台 API，嵌入式可用。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XLayout.h"
 
 #include "XAlgorithm.h"
@@ -31,6 +33,7 @@
 #include "XLayoutItem_Protected.h"
 #include "XWidget.h"
 #include "XMemory.h"
+#include "XCoreApplication.h" /* invalidate 收口向宿主 post LayoutRequest（Qt 对齐）。 */
 
 #if XLAYOUT_ON
 
@@ -213,7 +216,13 @@ static XLayout* VXLayout_layout(const XLayoutItem* item)
  *          祖先缓存（对标 Qt invalidate 级联父布局）——子控件尺寸提示
  *          变化后祖先布局的合计度量同步陈旧须一并清除。向上段只清
  *          祖先自身（缓存+脏位）**不再回入向下级联**：否则 父失效→
- *          遍历子条目→子失效→回父 死循环栈溢出（启动段错误实证）。 */
+ *          遍历子条目→子失效→回父 死循环栈溢出（启动段错误实证）。
+ *          [LayoutRequest 2026-10-20 对齐 Qt QLayout::invalidate→update]
+ *          收尾按 QLayout::update 语义把顶层布局标未激活并向**宿主控件**
+ *          post LayoutRequest（队列事件，压缩器去重，下一拍 activate）——
+ *          子控件显隐/尺寸提示变更经此自动重排，调用方无需手工
+ *          updateGeometry。宿主未定（嵌套中间层布局）只置未激活继续
+ *          上溯，与 Qt 一致。 */
 static void VXLayout_invalidate(XLayout* self)
 {
     int i;
@@ -232,6 +241,31 @@ static void VXLayout_invalidate(XLayout* self)
             XSize_init(&p->m_cachedMax, -1, -1);
             XSize_init(&p->m_cachedHint, -1, -1);
             p = p->m_parentLayout;
+        }
+    }
+    /* 对标 QLayout::update（qlayout.cpp:971-984）：while (layout &&
+     * activated) —— 自底向上只在「激活链完整」时逐级置未激活，到顶层
+     * 布局才向宿主控件投递 LayoutRequest。任一层未激活（装配期/已失效）
+     * 即整链不投递，与 Qt 一致；激活早退（XLayout_activate）以 m_isDirty
+     * 兜底，压缩器去重重复投递。 */
+    {
+        XLayout* l = self;
+        while (l && l->m_activated) {
+            l->m_activated = 0;
+            if (!l->m_parentLayout) {
+                XWidget* mw = l->m_parentWidget;
+                if (mw && XCoreApplication_instance()) {
+                    XEvent* ev = XEvent_create_ex(
+                        XCLASS_DEFAULT_MEMORY_TYPE,
+                        XEVENT_TYPE_LAYOUT_REQUEST);
+                    if (ev) {
+                        if (!XCoreApplication_tryPostEvent((XObject*)mw, ev, 0))
+                            XClassDelete((XClass*)ev);
+                    }
+                }
+                break;
+            }
+            l = l->m_parentLayout;
         }
     }
 }
@@ -1235,3 +1269,5 @@ void XLayout_addWidget(XLayout* self, XWidget* widget)
 }
 
 #endif /* XLAYOUT_ON */
+
+#endif /* XGUI_ON */

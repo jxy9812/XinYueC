@@ -1,4 +1,6 @@
-﻿#include "XAreaSeries.h"
+﻿#if XGUI_ON
+
+#include "XAreaSeries.h"
 
 #include "XAlgorithm.h"
 #include "XAbstractSeries.h"
@@ -239,3 +241,5 @@ const char* XAreaSeries_pointLabelsFont_2(const XAreaSeries* self)
 { return XAreaSeries_pointLabelsFontFamily_2(self); }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

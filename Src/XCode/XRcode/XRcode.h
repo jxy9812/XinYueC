@@ -1,5 +1,8 @@
-﻿#ifndef XRCODE_H
+#ifndef XRCODE_H
 #define XRCODE_H
+
+#include "CXinYueConfig.h"
+#if XRCODE_ON
 
 #include "XByteArray.h"
 
@@ -83,5 +86,7 @@ void XRcode_print_matrix(const XRcode* qr);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XRCODE_ON */
 
 #endif // XRCODE_H

@@ -202,6 +202,33 @@ bool XDeviceSerialPort_platformControl(XFd fd, uint32_t command,
     return command == XDeviceSerialPortCommand_HandleEvent || command == XDeviceCommand_Cancel;
 }
 
+/* STM32 的 USART 通道由芯片型号固定，不存在运行时枚举；此处上报与
+ * XDeviceSerialPortStm32Config.m_portNumber 有效取值一致的固定端口表。 */
+bool XDeviceSerialPort_platformEnumeratePorts(XDeviceSerialPortPortCollector collector, void* userData)
+{
+    static const struct {
+        const char* m_name;
+        const char* m_description;
+    } kPorts[] = {
+        { "USART1", "STM32 USART1" },
+        { "USART2", "STM32 USART2" },
+        { "USART3", "STM32 USART3" },
+        { "USART6", "STM32 USART6" }
+    };
+    size_t count = sizeof(kPorts) / sizeof(kPorts[0]);
+    size_t i;
+    if (!collector) return false;
+    for (i = 0; i < count; ++i) {
+        XDeviceSerialPortPortInfo info;
+        memset(&info, 0, sizeof(info));
+        info.m_portName = kPorts[i].m_name;
+        info.m_description = kPorts[i].m_description;
+        info.m_busy = false;
+        if (!collector(userData, &info)) return false;
+    }
+    return true;
+}
+
 #elif defined(XSERIALPORT_USE_STM32)
 
 XDeviceSerialPortContext* XDeviceSerialPort_platformCreateContext(void) { return NULL; }
@@ -214,5 +241,6 @@ bool XDeviceSerialPort_platformFlush(XFd fd) { (void)fd; return false; }
 bool XDeviceSerialPort_platformSetProperty(XFd fd, uint32_t property, const XVariant* value) { (void)fd; (void)property; (void)value; return false; }
 bool XDeviceSerialPort_platformGetProperty(XFd fd, uint32_t property, XVariant* value) { (void)fd; (void)property; (void)value; return false; }
 bool XDeviceSerialPort_platformControl(XFd fd, uint32_t command, const XVarList* input, XVarList* output) { (void)fd; (void)command; (void)input; (void)output; return false; }
+bool XDeviceSerialPort_platformEnumeratePorts(XDeviceSerialPortPortCollector collector, void* userData) { (void)collector; (void)userData; return false; }
 
 #endif

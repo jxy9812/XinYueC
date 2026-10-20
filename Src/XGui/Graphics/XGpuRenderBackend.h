@@ -17,6 +17,8 @@
 #ifndef XGPURENDERBACKEND_H
 #define XGPURENDERBACKEND_H
 
+#if XGUI_ON
+
 #include <stdbool.h>
 #include <stdint.h>
 #include "XGuiConfig.h"
@@ -345,5 +347,7 @@ bool XGpuRenderBackend_readbackRect(XGpuRenderBackend* self, XImage* target,
 void XGpuRenderBackend_endFrame(XGpuRenderBackend* self);
 
 #endif /* XPLATFORMINTEGRATION_ON && XGPU_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XGPURENDERBACKEND_H */

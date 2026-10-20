@@ -19,6 +19,8 @@
  *               转发，Return/失焦触发）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
 
@@ -998,3 +1000,5 @@ void* XAbstractSpinBox_editingFinished_signal(XAbstractSpinBox* self)
 
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON */
+
+#endif /* XGUI_ON */

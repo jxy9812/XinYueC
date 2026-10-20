@@ -3,6 +3,8 @@
  * @brief      XHeaderView 表头视图实现。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XHeaderView.h"
 
 #include "XAlgorithm.h"
@@ -1781,3 +1783,5 @@ void* XHeaderView_headerDataChanged_signal(XHeaderView* self, int section)
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

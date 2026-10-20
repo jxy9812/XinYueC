@@ -21,6 +21,8 @@
  *             字形覆盖率调制等价 Qt BYTE_MUL。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XRenderKernel.h"
 
 #if XPAINTER_ON && XRENDERKERNEL_RGB555_ON
@@ -305,3 +307,5 @@ void XRenderKernel_registerRgb555(void)
 }
 
 #endif /* XPAINTER_ON && XRENDERKERNEL_RGB555_ON */
+
+#endif /* XGUI_ON */

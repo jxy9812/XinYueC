@@ -118,6 +118,8 @@
  *               画新位（A33 FPS 5.9），见 xkb_compactDragMovePresent。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
 
@@ -5939,3 +5941,5 @@ void* XVirtualKeyboard_buttonActivated_signal(XVirtualKeyboard* self, int32_t bu
 }
 
 #endif /* XWIDGET_ON && XKEYBOARD_ON */
+
+#endif /* XGUI_ON */

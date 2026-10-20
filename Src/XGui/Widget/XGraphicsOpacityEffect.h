@@ -17,6 +17,8 @@
  ******************************************************************************/
 #ifndef XGRAPHICSOPACITYEFFECT_H
 #define XGRAPHICSOPACITYEFFECT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -93,5 +95,7 @@ void* XGraphicsOpacityEffect_opacityChanged_signal(
     XGraphicsOpacityEffect* self, float opacity);
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XGRAPHICSOPACITYEFFECT_H */

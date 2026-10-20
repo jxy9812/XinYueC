@@ -1,4 +1,6 @@
-﻿#include "XScatterSeries.h"
+﻿#if XGUI_ON
+
+#include "XScatterSeries.h"
 
 #include "XAlgorithm.h"
 #include "XXYSeries.h"
@@ -57,3 +59,5 @@ uint32_t XScatterSeries_borderColor(const XScatterSeries* self)
 { return self ? self->m_borderColor : 0; }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

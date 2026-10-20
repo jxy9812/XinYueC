@@ -10,6 +10,8 @@
  */
 #ifndef XRUBBERBAND_H
 #define XRUBBERBAND_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -55,4 +57,7 @@ XRubberBandShape XRubberBand_shape(const XRubberBand* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XRUBBERBAND_H */

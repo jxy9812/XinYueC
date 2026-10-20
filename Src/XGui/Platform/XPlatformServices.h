@@ -6,6 +6,8 @@
  ****************************************************************************/
 #ifndef XPLATFORMSERVICES_H
 #define XPLATFORMSERVICES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -28,4 +30,7 @@ bool XPlatformServicesDriver_openUrl(const char* url);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif

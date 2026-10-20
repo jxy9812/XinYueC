@@ -27,6 +27,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDPINYININPUTMETHOD_H
 #define XVIRTUALKEYBOARDPINYININPUTMETHOD_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -92,4 +94,7 @@ XVirtualKeyboardPinyinInputMethod_factory(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDPINYININPUTMETHOD_H */

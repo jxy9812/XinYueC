@@ -4,6 +4,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XSvgIconEngine.h"
 
 /* XSVGICON_ON=0 时整体裁剪：引擎无自动注册、全仓无外部引用，
@@ -174,3 +176,4 @@ XSvgIconEngine* XSvgIconEngine_create_2(const char* utf8FileName)
 }
 #endif /* XSVGICON_ON */
 
+#endif /* XGUI_ON */

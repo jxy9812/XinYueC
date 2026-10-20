@@ -7,6 +7,8 @@
 #ifndef XICONTHEMEENGINE_H
 #define XICONTHEMEENGINE_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -83,5 +85,7 @@ void XIconThemeEngine_init_2(XIconThemeEngine* self, const char* iconName);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XICONTHEMEENGINE_H */

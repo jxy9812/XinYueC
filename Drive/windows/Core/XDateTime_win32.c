@@ -98,4 +98,58 @@ int64_t XDateTime_currentSecsSinceEpoch(void) {
     return (int64_t)(since_unix_100ns / 10000000); // 10,000,000 * 100ns = 1s
 }
 
+/* 墙钟毫秒（系统实时时钟，含亚秒精度）：补「真实 UTC 时刻 + 毫秒精度」档，
+ * 供 NTP 等需要亚秒精度时间戳的场景。会随校时跳变，超时测量勿用。 */
+int64_t XDateTime_currentWallMSecsSinceEpoch(void) {
+    uint64_t since_unix_100ns = getUnixTimeIn100Ns();
+    return (int64_t)(since_unix_100ns / 10000); // 10,000 * 100ns = 1ms
+}
+
+/* 设置系统墙钟时间（时间同步校时用）。
+ * SetSystemTime 需要 SE_SYSTEMTIME_NAME 特权，普通桌面进程默认没有；未显式
+ * 启用时调用会失败（ERROR_NOT_ALL_ASSIGNED / ERROR_PRIVILEGE_NOT_HELD），
+ * 此处如实上报 false 让调用方退化为只读模式。
+ * 取值用 UTC：SetSystemTime 接收的是 UTC，而 GetSystemTime 返回本地时间，
+ * 两者不可混用。 */
+bool XDateTime_setSystemSecsSinceEpoch(int64_t secs) {
+    FILETIME ft;
+    ULARGE_INTEGER ull;
+    SYSTEMTIME st;
+
+    if (secs < 0) {
+        return false;
+    }
+    /* FILETIME 以 1601-01-01 为纪元、100ns 为单位。Unix 纪元偏移 11644473600 秒。 */
+    ull.QuadPart = (ULONGLONG)(secs + 11644473600LL) * 10000000ULL;
+    ft.dwLowDateTime = ull.LowPart;
+    ft.dwHighDateTime = ull.HighPart;
+    if (!FileTimeToSystemTime(&ft, &st)) {
+        return false;
+    }
+    return SetSystemTime(&st) != 0;
+}
+
+bool XDateTime_canSetSystemTime(void) {
+    HANDLE token = NULL;
+    LUID luid;
+    TOKEN_PRIVILEGES tp;
+    bool granted = false;
+
+    if (!OpenProcessToken(GetCurrentProcess(),
+                          TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token)) {
+        return false;
+    }
+    if (LookupPrivilegeValue(NULL, SE_SYSTEMTIME_NAME, &luid)) {
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Luid = luid;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        if (AdjustTokenPrivileges(token, FALSE, &tp, 0, NULL, NULL)) {
+            /* AdjustTokenPrivileges 即使部分失败也返回非零，必须查 GetLastError */
+            granted = (GetLastError() == ERROR_SUCCESS);
+        }
+    }
+    CloseHandle(token);
+    return granted;
+}
+
 #endif

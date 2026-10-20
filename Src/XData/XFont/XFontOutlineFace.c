@@ -7,6 +7,8 @@
  *             与纯 provider 注册两类。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XFONT_FREETYPE_ON
+
 #include "XFontOutlineFace.h"
 #include "XFont.h"
 #include "XFontFace_Protected.h"
@@ -171,3 +173,5 @@ bool XFontOutlineFace_registerProvider(const XFontOutlineProvider* provider)
     return true;
 #endif
 }
+
+#endif /* XFONT_FREETYPE_ON */

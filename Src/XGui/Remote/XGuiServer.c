@@ -37,6 +37,8 @@
  *                 XGUI_REMOTE_TLS=1 开启(冻结头无运行期 setter)。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XGuiServer.h"
 
 #if XGUI_REMOTE_ON
@@ -63,7 +65,13 @@
 #include <stdio.h>  /* snprintf: 标题定版缓存写入(2026-10-02 标题跟随修复)。 */
 #include <string.h> /* strcmp: 标题变化比对(同修复)。 */
 #include <stdlib.h> /* strtol: MemAvailable 解析(2026-10-06 OOM 根修)。 */
-#include <malloc.h> /* malloc_trim: 会话关闭归还 glibc arena 高水位(2026-10-16)。 */
+/* malloc_trim: 会话关闭归还 glibc arena 高水位(2026-10-16)。malloc_trim 是
+   glibc 专有，MSVC 下既无声明亦无定义（链接期 LNK2019），include 与调用处
+   必须共用同一开关。 */
+#if defined(__GLIBC__) && defined(__linux__)
+#include <malloc.h>
+#define XGUISERVER_HAVE_MALLOC_TRIM 1
+#endif
 #include "XGeometry.h"
 #include "XWidget.h"
 #include "XWidget_Protected.h" /* widgetForWindow: 弹层顶层控件反查(2026-10-06)。 */
@@ -4106,10 +4114,12 @@ static void xgs_sessionClose(XGuiServer* self, XgsSession* s,
      * 影子/编码队列/帧大块的水位在 free 后滞留为碎片(56MB 板实测每会话
      * ~950KB VM 滞留不还, 多会话反复建拆即累积推高总量触发 OOM)。
      * 会话关闭是低频事件, 主动 trim 归还空闲尾页。 */
+#if defined(XGUISERVER_HAVE_MALLOC_TRIM)
     {
         extern int malloc_trim(size_t);
         (void)malloc_trim(0);
     }
+#endif
     XGuiServer_clientDisconnected_signal(self, id, emitReason);
 }
 
@@ -4981,3 +4991,5 @@ void XGuiServer_kickSession(XGuiServer* self, int sessionId)
 }
 
 #endif /* XGUI_REMOTE_ON */
+
+#endif /* XGUI_ON */

@@ -10,6 +10,8 @@
  ******************************************************************************/
 #ifndef XTREEVIEW_H
 #define XTREEVIEW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -531,4 +533,7 @@ void* XTreeView_columnCountChanged_signal(XTreeView* self, int oldCount,
 }
 #endif
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XTREEVIEW_H */

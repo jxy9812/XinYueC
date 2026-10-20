@@ -8,6 +8,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XTextControl.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
@@ -5600,3 +5602,5 @@ XTextControl* XTextControl_create_ex(XMemoryType memory)
 }
 
 #endif /* XTEXTCONTROL_ON */
+
+#endif /* XGUI_ON */

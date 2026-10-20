@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XALIGNMENT_H
 #define XALIGNMENT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -45,4 +47,7 @@ typedef uint32_t XAlignments;
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XALIGNMENT_H */

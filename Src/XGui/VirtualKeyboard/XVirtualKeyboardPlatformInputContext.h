@@ -22,6 +22,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDPLATFORMINPUTCONTEXT_H
 #define XVIRTUALKEYBOARDPLATFORMINPUTCONTEXT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -136,4 +138,7 @@ void XVirtualKeyboardPlatformInputContext_update(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDPLATFORMINPUTCONTEXT_H */

@@ -7,6 +7,8 @@
 #ifndef XSQLDRIVERPLUGIN_H
 #define XSQLDRIVERPLUGIN_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -62,5 +64,7 @@ XSqlDriver* XSqlDriverPlugin_create_base(XSqlDriverPlugin* plugin, const char* k
 /* XClass create API default-memory wrappers. */
 #undef XSqlDriverPlugin_create
 #define XSqlDriverPlugin_create() XSqlDriverPlugin_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLDRIVERPLUGIN_H */

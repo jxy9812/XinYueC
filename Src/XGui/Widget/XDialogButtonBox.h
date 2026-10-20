@@ -24,6 +24,8 @@
  */
 #ifndef XDIALOGBUTTONBOX_H
 #define XDIALOGBUTTONBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -330,5 +332,7 @@ void* XDialogButtonBox_rejected_signal(XDialogButtonBox* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XDIALOGBUTTONBOX_H */

@@ -1,4 +1,6 @@
-﻿#include "XAbstractItemView.h"
+﻿#if XGUI_ON
+
+#include "XAbstractItemView.h"
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
@@ -2212,3 +2214,5 @@ void* XAbstractItemView_iconSizeChanged_signal(XAbstractItemView* self,
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

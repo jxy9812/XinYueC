@@ -7,6 +7,8 @@
 #ifndef XSQLFIELD_H
 #define XSQLFIELD_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -166,5 +168,7 @@ bool XSqlField_equals(const XSqlField* left, const XSqlField* right);
 #undef XSqlField_create
 #define XSqlField_create() \
 	XSqlField_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, XVariantType_NULL, NULL)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLFIELD_H */

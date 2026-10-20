@@ -20,6 +20,8 @@
  */
 #ifndef XGUICLIENT_H
 #define XGUICLIENT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -300,5 +302,7 @@ void* XGuiClient_errorOccurred_signal(XGuiClient* self, int errorCode);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUICLIENT_H */

@@ -7,6 +7,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XActionGroup.h"
 #include "XMemory.h"
 #include "XVarList.h"
@@ -559,3 +561,5 @@ void* XActionGroup_hovered_signal(XActionGroup* self, XAction* action)
 }
 
 #endif /* XWIDGET_ON && XACTION_ON */
+
+#endif /* XGUI_ON */

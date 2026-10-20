@@ -25,6 +25,8 @@
  ******************************************************************************/
 #ifndef XGUIAPPLICATION_H
 #define XGUIAPPLICATION_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -987,4 +989,7 @@ void* XGuiApplication_fontChanged_signal(XGuiApplication* app, XFont* font);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XGUIAPPLICATION_H */

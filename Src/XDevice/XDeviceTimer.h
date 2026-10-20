@@ -50,6 +50,7 @@ typedef enum XDeviceTimerProperty
     XDeviceTimerProperty_IntervalNs,       /**< 周期或延时，值为 XDuration，单位纳秒。 */
     XDeviceTimerProperty_Callback,         /**< 到期回调，值为 XDeviceTimerCallback。 */
     XDeviceTimerProperty_UserData,         /**< 回调用户数据，值为 void*，只借用不释放。 */
+    XDeviceTimerProperty_Active,           /**< 是否已加入后端队列等待触发，值为 bool。 */
     XDeviceTimerProperty_Count                             /**< 定时器属性数量边界，不是有效属性。 */
 } XDeviceTimerProperty;
 
@@ -127,6 +128,8 @@ bool XDeviceTimer_register(void);
 /** @brief 复用 XDevice 的通用设备操作；参数契约与父类 API 相同。 */
 #define XDeviceTimer_close   XDevice_close
 #define XDeviceTimer_control XDevice_control
+/** @brief 读取设备最近一次错误码；复用父类门面。 */
+#define XDeviceTimer_lastError XDevice_lastError
 
 /** @brief 启动定时器，内部发送 XDeviceTimerCommand_Start。 @param fd 已打开的定时器句柄。 @return 成功返回 true。 */
 bool XDeviceTimer_start(XFd fd);

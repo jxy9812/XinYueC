@@ -12,6 +12,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XTimeEdit.h"
 #include "XMemory.h"
 #include "XObject.h"
@@ -141,3 +143,5 @@ void* XTimeEdit_userTimeChanged_signal(XTimeEdit* self, const XTime* time)
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XDATETIMEEDIT_ON && XTIMEEDIT_ON */
+
+#endif /* XGUI_ON */

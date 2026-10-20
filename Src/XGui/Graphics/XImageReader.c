@@ -3,6 +3,8 @@
  * @brief      XImageReader 图像读取器实现（对标 Qt 6.8 QImageReader）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XSystem.h"
 #include "XStringUtils.h"
 
@@ -2394,3 +2396,5 @@ void XImageReader_setAllocationLimit(int mbLimit)
     if (mbLimit >= 0)
         g_imageReaderAllocationLimitMb = mbLimit;
 }
+
+#endif /* XGUI_ON */

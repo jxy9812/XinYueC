@@ -25,6 +25,8 @@
  */
 #ifndef XKEYSEQUENCEEDIT_H
 #define XKEYSEQUENCEEDIT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -195,5 +197,7 @@ void* XKeySequenceEdit_keySequenceChanged_signal(XKeySequenceEdit* self,
 void* XKeySequenceEdit_editingFinished_signal(XKeySequenceEdit* self);
 
 #endif /* XWIDGET_ON && XKEYSEQUENCEEDIT_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XKEYSEQUENCEEDIT_H */

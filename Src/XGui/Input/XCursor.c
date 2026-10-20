@@ -10,6 +10,8 @@
  *             实现体整体裁剪。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XCursor.h"
 #include "XMemory.h"
 
@@ -334,3 +336,5 @@ bool XCursor_equals(const XCursor* a, const XCursor* b)
     if (a->m_pixmap != b->m_pixmap) return false;
     return true;
 }
+
+#endif /* XGUI_ON */

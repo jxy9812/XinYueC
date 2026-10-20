@@ -25,6 +25,8 @@
 #ifndef XTEXTCLIPBOARD_H
 #define XTEXTCLIPBOARD_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -63,4 +65,7 @@ const char* XTextClipboard_getText(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XTEXTCLIPBOARD_H */

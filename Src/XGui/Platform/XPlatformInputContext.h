@@ -23,6 +23,8 @@
  ******************************************************************************/
 #ifndef XPLATFORMINPUTCONTEXT_H
 #define XPLATFORMINPUTCONTEXT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -405,4 +407,7 @@ XRectF XPlatformInputContext_keyboardRectangle_static(void);
 #endif
 
 #endif /* XPLATFORMINPUTCTX_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XPLATFORMINPUTCONTEXT_H */

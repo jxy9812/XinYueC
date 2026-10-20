@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XRELATIONSHIPS_H
 #define XRELATIONSHIPS_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -208,4 +210,7 @@ bool XRelationships_loadFromXmlData(XRelationships* self, const uint8_t* data, s
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif /* XRELATIONSHIPS_H */

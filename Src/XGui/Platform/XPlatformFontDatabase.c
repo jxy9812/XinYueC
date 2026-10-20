@@ -2,6 +2,8 @@
  * @file       XPlatformFontDatabase.c
  * @brief      平台无关字体家族快照实现。
  ****************************************************************************/
+#if XGUI_ON
+
 #include "XPlatformFontDatabase.h"
 #include "XStringUtils.h"
 
@@ -127,3 +129,5 @@ XVector* XPlatformFontDatabase_standardSizes(
 }
 
 #endif /* XPLATFORMINTEGRATION_ON */
+
+#endif /* XGUI_ON */

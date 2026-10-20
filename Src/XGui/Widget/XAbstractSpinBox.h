@@ -24,6 +24,8 @@
  ******************************************************************************/
 #ifndef XABSTRACTSPINBOX_H
 #define XABSTRACTSPINBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -316,5 +318,7 @@ void* XAbstractSpinBox_editingFinished_signal(XAbstractSpinBox* self);
 }
 #endif
 #endif /* XWIDGET_ON && XABSTRACTSPINBOX_ON && XLINEEDIT_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XABSTRACTSPINBOX_H */

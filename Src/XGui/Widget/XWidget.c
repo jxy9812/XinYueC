@@ -51,6 +51,8 @@
  *             接口按头文件回退语义退化为空实现或空指针，保证可裁剪编译。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XWidget.h"
 #include "XMemory.h"
 
@@ -107,6 +109,9 @@
 #include "XPrintf.h"          /* [wprof] flush per-leg profiling summary line */
 #if defined(__GLIBC__) && defined(__linux__)
 #include <execinfo.h>         /* [rprof] 大失效 backtrace 归因（诊断门控） */
+/* backtrace/backtrace_symbols 是 glibc 专有，MSVC 下无声明亦无定义：
+   include 与下方发射处必须共用此开关，否则隐式声明过编译、链接期 LNK2019。 */
+#define XWIDGET_HAVE_BACKTRACE 1
 #endif
 #include "XStyle.h"           /* XStyle_invalidateStyleSheetRenderCache（setStyleSheet 缓存失效联动，deferred#4） */
 #if XSTYLE_ON
@@ -377,6 +382,7 @@ static XWidgetWindow* XWidget_createWindow(XWidget* top);
 static void XWidget_destroyWindow(XWidget* top, bool defer);
 static void XWidget_sendEvent(XWidget* self, XEvent* event);
 static void XWidget_sendShowHide(XWidget* self, bool visible);
+static void xwidget_postLayoutRequest(XWidget* receiver);
 static void XWidget_clearFocusBase(XWidget* self, XFocusReason reason);
 static XWidget* XWidget_deepestFocusProxy(const XWidget* self);
 /** @brief 触摸事件槽入口（对标 QWidget::touchEvent 虚函数调用形态）。 */
@@ -664,6 +670,22 @@ static XEvent* XWidget_createPaintEvent(const XWidget* source)
     event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, XEVENT_TYPE_PAINT);
 #endif /* XWINDOWEVENT_ON */
     return event;
+}
+
+/** @brief 向控件投递 LayoutRequest（队列事件，对标 Qt postEvent(
+ *         parent, QEvent::LayoutRequest)）。压缩器合并同接收者重复项；
+ *         接收者随后在事件分发中 activate 自身布局（见 VXWidget_event）。
+ *         无应用实例（启动前/关闭后）或入队失败即丢弃事件，失效路径的
+ *         m_isDirty 兜底保证后续 activate 不早退。 */
+static void xwidget_postLayoutRequest(XWidget* receiver)
+{
+    XEvent* event;
+    if (!receiver || !XCoreApplication_instance()) return;
+    event = XEvent_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
+                             XEVENT_TYPE_LAYOUT_REQUEST);
+    if (!event) return;
+    if (!XCoreApplication_tryPostEvent((XObject*)receiver, event, 0))
+        XClassDelete((XClass*)event);
 }
 
 /** @brief 投递顶层控件绘制事件，并报告事件是否确实进入线程队列。 */
@@ -1311,6 +1333,7 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
                 unsigned long long pix =
                     (unsigned long long)clipped.width *
                     (unsigned long long)clipped.height;
+#ifdef XWIDGET_HAVE_BACKTRACE
                 int rprofBtHit = 0;
                 xwidget_rprof.enqPix += pix;
                 xwidget_rprof.enqHits += 1;
@@ -1366,6 +1389,7 @@ static void XWidget_addDirtyRegion(XWidget* self, const XRegion* region)
                                 syms ? syms[bi] : "?");
                     free(syms);
                 }
+#endif /* XWIDGET_HAVE_BACKTRACE */
             }
         }
     }
@@ -4394,6 +4418,16 @@ static bool VXWidget_event(XWidget* self, XEvent* event)
     case XEVENT_TYPE_HIDE:
         XWidget_hideEvent_base(self, event);
         return true;
+    case XEVENT_TYPE_LAYOUT_REQUEST:
+        /* [LayoutRequest 2026-10-20 对齐 QLayout::widgetEvent（qlayout.cpp:
+         * 548-551）] 布局失效收口/子控件显隐联动向**布局宿主**投递本事件，
+         * 宿主可见时 activate 自身布局（整树失效+重解算+几何写回）；
+         * 隐藏宿主跳过（Qt 同口径），待其 show 分支沿父链激活兜底。 */
+#if XLAYOUT_ON
+        if (self->m_layout && XWidget_isVisible(self))
+            XLayout_activate(self->m_layout);
+#endif
+        return true;
     case XEVENT_TYPE_LOCALE_CHANGE:
     case XEVENT_TYPE_LANGUAGE_CHANGE:
     case XEVENT_TYPE_LAYOUT_DIRECTION_CHANGE:
@@ -4829,6 +4863,12 @@ void XWidget_updateGeometry(XWidget* self)
      * 缓存跳过本应重算的度量。 */
     {
         XWidget* w;
+        /* [LayoutRequest 2026-10-20] 不按 Qt updateGeometry_helper 的
+         * isHidden 守卫跳过失效：Qt 的 activate 每次 LayoutRequest 都全量
+         * 重算，而本框架 activate 按「activated+几何未变」幂等早退，且
+         * show 沿父链的激活同样受早退约束——隐藏控件改尺寸提示后若不清
+         * 祖先缓存，show 时重算会命中陈旧合计度量（r1#4 exec 定尺实证）。
+         * 失效本身廉价（仅清缓存+置脏位），保持全量失效。 */
         for (w = self; w; w = XWidget_parentWidget(w)) {
             if (w->m_layout)
                 XLayout_invalidate(w->m_layout);
@@ -6070,9 +6110,13 @@ bool XWidget_isVisibleTo(const XWidget* self, const XWidget* ancestor)
 void XWidget_setVisible(XWidget* self, bool visible)
 {
     bool wasVisible;
+    bool wasHidden;
     if (!self) return;
     if (self->m_inShow) return;
     wasVisible = self->m_visible != 0;
+    /* 对标 Qt setVisible 的 WA_WState_Hidden 快照（qwidget.cpp:8343）：
+       show 分支用它判定「此前显式隐藏」→ 需通知父布局重排。 */
+    wasHidden = XWidget_testAttribute(self, XWidgetAttribute_WState_Hidden);
     if (self->m_isWindow) {
         /* 顶层控件：惰性创建桥接窗口后再映射/取消映射。 */
         if (visible && !self->m_windowHandle) {
@@ -6107,6 +6151,48 @@ void XWidget_setVisible(XWidget* self, bool visible)
     XPlatformAccessibility_notifyWidget(XAccessibleEvent_StateChanged, self);
 #endif
 #if XLAYOUT_ON
+    /* [LayoutRequest 2026-10-20 对齐 Qt QWidgetPrivate::setVisible]
+     * show 分支（qwidget.cpp:8343-8361）：此前显式隐藏的子控件转显示时
+     * 先按 updateGeometry_helper(true) 语义失效父布局，再激活自身布局，
+     * 最后沿「可见父链」同步激活各级父布局（in_show 保护防重入）——
+     * 首次显示即带正确几何，不等队列事件。hide 分支（qwidget.cpp:
+     * 8405-8411）：子控件转隐藏时父有布局则 invalidate（其收口已
+     * post LayoutRequest 重排），无布局且父可见直接 post LayoutRequest
+     * （无布局容器的子控件显隐同样要驱动窗口重绘）。顶层窗口不走此路
+     * （Qt 同样只对非顶层做父布局联动）。 */
+    if (!self->m_isWindow) {
+        XWidget* parent = XWidget_parentWidget(self);
+        if (parent) {
+            if (visible) {
+                if (wasHidden && parent->m_layout)
+                    XLayout_invalidate(parent->m_layout);
+                if (self->m_layout) {
+                    self->m_inShow = 1;
+                    XLayout_activate(self->m_layout);
+                    self->m_inShow = 0;
+                }
+                {
+                    /* 对标 qwidget.cpp:8354-8361 沿可见父链激活。 */
+                    XWidget* w = parent;
+                    while (w && XWidget_isVisible(w) && w->m_layout &&
+                           !w->m_inShow) {
+                        w->m_inShow = 1;
+                        XLayout_activate(w->m_layout);
+                        w->m_inShow = 0;
+                        if (XWidget_isWindow(w)) break;
+                        w = XWidget_parentWidget(w);
+                    }
+                }
+            } else {
+                if (parent->m_layout)
+                    XLayout_invalidate(parent->m_layout);
+                else if (XWidget_isVisible(parent))
+                    xwidget_postLayoutRequest(parent);
+            }
+        }
+    }
+    /* 自身布局激活：Qt show 分支无条件 layout->activate()（8351），
+     * 顶层窗口同样适用（窗口布局在映射前先解算，首帧内容正确）。 */
     if (visible && self->m_layout)
         XLayout_activate(self->m_layout);
 #endif /* XLAYOUT_ON */
@@ -10156,3 +10242,4 @@ void XWidget_setWindowTitle_2(XWidget* self, const char* utf8)
 
 #endif /* XWIDGET_ON */
 
+#endif /* XGUI_ON */

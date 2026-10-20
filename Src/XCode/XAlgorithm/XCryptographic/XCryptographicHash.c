@@ -1,4 +1,6 @@
-﻿#include "XCryptographicHash.h"
+﻿#if XCryptographic_ON
+
+#include "XCryptographicHash.h"
 #include "xxhash.h"
 #include "XByteArray.h"
 #include "XIODevice.h"
@@ -4422,3 +4424,5 @@ XByteArray* XCryptographicHash_hmac_3(
 
     return XCryptographicHash_hmac(keyData, keyLen, msgData, msgLen, method);
 }
+
+#endif /* XCryptographic_ON */

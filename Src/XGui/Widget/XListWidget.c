@@ -4,6 +4,8 @@
  *             行级部件挂载）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XListWidget.h"
 #include "XStringUtils.h"   /* XStrlen：GCC14 隐式声明即诊断（六文件惯用法清理连带） */
 
@@ -1004,3 +1006,5 @@ void* XListWidget_itemPressed_signal(XListWidget* self, int row)
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

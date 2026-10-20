@@ -15,6 +15,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDTRACE_H
 #define XVIRTUALKEYBOARDTRACE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -284,4 +286,7 @@ void* XVirtualKeyboardTrace_opacityChanged_signal(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDTRACE_H */

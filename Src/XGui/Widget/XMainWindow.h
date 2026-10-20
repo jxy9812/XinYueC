@@ -30,6 +30,8 @@
  ******************************************************************************/
 #ifndef XMAINWINDOW_H
 #define XMAINWINDOW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -581,5 +583,7 @@ void* XMainWindow_tabifiedDockWidgetActivated_signal(XMainWindow* self,
                                                      XWidget* dockWidget);
 
 #endif /* XWIDGET_ON && XMAINWINDOW_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XMAINWINDOW_H */

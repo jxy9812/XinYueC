@@ -21,6 +21,8 @@
  ******************************************************************************/
 #ifndef XCOLORDIALOG_H
 #define XCOLORDIALOG_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -244,5 +246,7 @@ void* XColorDialog_currentColorChanged_signal(XColorDialog* self, XColor color);
 void* XColorDialog_colorSelected_signal(XColorDialog* self, XColor color);
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XCOLORDIALOG_H */

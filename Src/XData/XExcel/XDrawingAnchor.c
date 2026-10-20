@@ -3,6 +3,8 @@
  * @brief      XDrawingAnchor 绘图锚点实现
  *             对齐 QXlsx::DrawingAnchor 全部功能
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XDrawingAnchor.h"
 #include "XDrawing.h"
 #include "XMemory.h"
@@ -360,3 +362,5 @@ bool XDrawingAnchor_loadFromXml(XDrawingAnchor* self, void* reader_) {
 
     return XDrawingAnchor_load_anchor_xml(self, reader);
 }
+
+#endif /* XEXCEL_ON */

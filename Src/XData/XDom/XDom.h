@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file       XDom.h
  * @brief      XML DOM 文档对象模型公开 API。
  * @details      对齐 Qt 6.8 的 QDomNode、QDomDocument、QDomElement 及其相关类型。
@@ -8,6 +8,9 @@
  */
 #ifndef XDOM_H
 #define XDOM_H
+
+#include "CXinYueConfig.h"
+#if XDOM_ON
 
 #ifdef __cplusplus
 extern "C" {
@@ -2188,5 +2191,7 @@ XDomNode* XDomProcessingInstruction_toNode(const XDomProcessingInstruction* self
 #define XDomDocument_create() XDomDocument_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #undef XDomImplementation_create
 #define XDomImplementation_create() XDomImplementation_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XDOM_ON */
 
 #endif

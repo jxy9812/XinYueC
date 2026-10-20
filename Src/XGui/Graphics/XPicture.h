@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XPICTURE_H
 #define XPICTURE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -564,5 +566,7 @@ XPaintDevice* XPicture_paintDevice(XPicture* self);
 #define XPicture_create() XPicture_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
 #define XPicture_create_copy_default(other) XPicture_create_copy((other), XCLASS_DEFAULT_MEMORY_TYPE)
 #define XPicture_create_move_default(other) XPicture_create_move((other), XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XPICTURE_H */

@@ -3,6 +3,8 @@
  * @brief      XItemSelectionModel 选择模型实现。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XItemSelectionModel.h"
 
 #include "XAlgorithm.h"
@@ -374,3 +376,5 @@ void* XItemSelectionModel_currentColumnChanged_signal(
 }
 
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */

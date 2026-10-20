@@ -7,6 +7,8 @@
 #ifndef XSQLGLOBAL_H
 #define XSQLGLOBAL_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -225,5 +227,7 @@ XSqlDriverType XSqlDriverType_fromName_utf8(const char* name);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLGLOBAL_H */

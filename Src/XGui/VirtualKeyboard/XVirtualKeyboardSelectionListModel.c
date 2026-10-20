@@ -4,6 +4,8 @@
  *             （引擎持有；视图=XVirtualKeyboard 候选带直接消费）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -274,3 +276,5 @@ void* XVirtualKeyboardSelectionListModel_itemSelected_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

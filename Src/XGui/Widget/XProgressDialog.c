@@ -10,6 +10,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XGuiConfig.h"
 #include "XString.h"
 #include "XMemory.h"
@@ -790,3 +792,5 @@ void* XProgressDialog_canceled_signal(XProgressDialog* self)
 }
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#endif /* XGUI_ON */

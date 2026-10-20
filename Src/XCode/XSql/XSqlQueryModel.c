@@ -2,6 +2,8 @@
  * @file       XSqlQueryModel.c
  * @brief      SQL 查询模型实现。
  */
+#if XSQL_ON
+
 #include "XSqlQueryModel.h"
 
 #include <string.h>
@@ -432,3 +434,5 @@ void* XSqlQueryModel_dataChanged_signal(XSqlQueryModel* model, int firstRow,
                                 sizeof(int), &lastRow, sizeof(int), &lastColumn),
                 NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
+
+#endif /* XSQL_ON */

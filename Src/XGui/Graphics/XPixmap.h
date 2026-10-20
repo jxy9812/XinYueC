@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XPIXMAP_H
 #define XPIXMAP_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -550,5 +552,7 @@ XPaintDevice* XPixmap_paintDevice(XPixmap* self);
 /* XClass create API default-memory wrappers. */
 #undef XPixmap_create
 #define XPixmap_create() XPixmap_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XPIXMAP_H */

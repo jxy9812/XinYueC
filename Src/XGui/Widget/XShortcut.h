@@ -25,6 +25,8 @@
  */
 #ifndef XSHORTCUT_H
 #define XSHORTCUT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -293,4 +295,7 @@ void* XShortcut_activatedAmbiguously_signal(XShortcut* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSHORTCUT_H */

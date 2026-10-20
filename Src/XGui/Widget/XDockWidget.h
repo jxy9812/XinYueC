@@ -24,6 +24,8 @@
  ******************************************************************************/
 #ifndef XDOCKWIDGET_H
 #define XDOCKWIDGET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -300,5 +302,7 @@ void* XDockWidget_dockLocationChanged_signal(XDockWidget* self, int area);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XDOCKWIDGET_H */

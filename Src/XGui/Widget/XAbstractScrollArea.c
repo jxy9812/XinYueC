@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XAbstractScrollArea.h"
 #include "XAbstractScrollArea_Protected.h"
 #include "XMemory.h"
@@ -828,3 +830,5 @@ XSize XAbstractScrollArea_minimumSizeHint(const XAbstractScrollArea* self)
 
 
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON */
+
+#endif /* XGUI_ON */

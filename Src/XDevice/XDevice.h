@@ -149,22 +149,43 @@ typedef enum XDeviceState
 } XDeviceState;
 
 /**
+ * @brief 框架错误码段基址。
+ * @details m_lastError 是单一 int16_t 错误通道，编号分两段共用：
+ *          - [1, XDEVICE_ERROR_FRAMEWORK_BASE)：平台原生错误码透传段。
+ *            POSIX errno（<200）、Win32 GetLastError（<16000）、WinSock WSA
+ *            错误（10000~11999）都落在此段，设备层失败时原样写入。
+ *          - [XDEVICE_ERROR_FRAMEWORK_BASE, 32767]：框架与子类错误码段。
+ *            XDeviceError 从基址起编号，子类错误域（XDeviceUsbError 等）从
+ *            XDeviceError_Count 接续。
+ *          判别方法：值 < XDEVICE_ERROR_FRAMEWORK_BASE 为平台原生码（查平台
+ *          手册），>= XDEVICE_ERROR_FRAMEWORK_BASE 减去基址即 XDeviceError
+ *          枚举值。0 表示无错误。
+ */
+#define XDEVICE_ERROR_FRAMEWORK_BASE 30000
+
+/**
  * @brief 设备错误码枚举。
+ * @details 取值为"XDEVICE_ERROR_FRAMEWORK_BASE + 枚举序号"，序号按自然递增
+ *          编号，便于子类错误域接续：子类自定义错误枚举的首项取
+ *          XDeviceError_Count，其后依次递增。
+ * @note XDeviceError_None 编号是基址本身（非 0）：m_lastError 为 0 表示无
+ *       错误，因此"无错误"不用占用枚举序号。枚举值只做相等比较。
  */
 typedef enum XDeviceError
 {
-    XDeviceError_None             = 0,  /**< 无错误。 */
-    XDeviceError_InvalidArgument  = -1, /**< 参数非法。 */
-    XDeviceError_InvalidDescriptor= -2, /**< 句柄非法或槽位已释放。 */
-    XDeviceError_OutOfMemory      = -3, /**< 内存不足。 */
-    XDeviceError_NotSupported     = -4, /**< 不支持该操作/属性/命令。 */
-    XDeviceError_NotFound         = -5, /**< 找不到指定类别或设备。 */
-    XDeviceError_AlreadyOpen      = -6, /**< 设备已经打开。 */
-    XDeviceError_NotOpen          = -7, /**< 设备未打开。 */
-    XDeviceError_Timeout          = -8, /**< 操作超时。 */
-    XDeviceError_IoFail           = -9, /**< 底层 I/O 失败。 */
-    XDeviceError_Closed           = -10,/**< 设备已关闭或正在关闭。 */
-    XDeviceError_Busy             = -11 /**< 设备忙。 */
+    XDeviceError_None = XDEVICE_ERROR_FRAMEWORK_BASE, /**< 无错误。 */
+    XDeviceError_InvalidArgument, /**< 参数非法。 */
+    XDeviceError_InvalidDescriptor,/**< 句柄非法或槽位已释放。 */
+    XDeviceError_OutOfMemory,     /**< 内存不足。 */
+    XDeviceError_NotSupported,    /**< 不支持该操作/属性/命令。 */
+    XDeviceError_NotFound,        /**< 找不到指定类别或设备。 */
+    XDeviceError_AlreadyOpen,     /**< 设备已经打开。 */
+    XDeviceError_NotOpen,         /**< 设备未打开。 */
+    XDeviceError_Timeout,         /**< 操作超时。 */
+    XDeviceError_IoFail,          /**< 底层 I/O 失败。 */
+    XDeviceError_Closed,          /**< 设备已关闭或正在关闭。 */
+    XDeviceError_Busy,            /**< 设备忙。 */
+    XDeviceError_Count            /**< 父类错误码数量（不含 None）；子类错误码从此值起编号。 */
 } XDeviceError;
 
 /* ============================================================================
@@ -212,7 +233,7 @@ typedef struct XDeviceContext
     uint16_t m_ioMode     : 1;          /**< I/O 模式（XDeviceIoMode）。 */
     uint16_t m_pendingOps : 8;          /**< 在途异步操作数。 */
     uint16_t m_reserved   : 4;          /**< 预留位，必须为 0。 */
-    int16_t  m_lastError;               /**< 最近一次错误码（XDeviceError）。 */
+    int16_t  m_lastError;               /**< 最近一次错误码；0=无错误，<XDEVICE_ERROR_FRAMEWORK_BASE 为平台原生码，>=基址为 XDeviceError 枚举。 */
     XFd      m_fd;                      /**< 持有本上下文的统一描述符；打开阶段可由子类预先绑定。 */
 } XDeviceContext;
 

@@ -9,6 +9,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XOffscreenSurface.h"
 #include "XGuiConfig.h"
 #include "XMemory.h"
@@ -94,3 +96,5 @@ XWindowSurfaceType XOffscreenSurface_surfaceType(const XOffscreenSurface* self)
 }
 
 #endif /* XWINDOW_ON && XSCREEN_ON && XSURFACEFORMAT_ON */
+
+#endif /* XGUI_ON */

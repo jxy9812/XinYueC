@@ -3,6 +3,8 @@
  * @brief Qt 6.8 QRegularExpressionValidator 对齐实现。
  */
 
+#if XRegularExpression_ON
+
 #include "XRegularExpressionValidator.h"
 #include "XMemory.h"
 #include <string.h>
@@ -159,3 +161,5 @@ XRegularExpressionValidator_State XRegularExpressionValidator_validate_utf8(
     XClassDelete(value);
     return state;
 }
+
+#endif /* XRegularExpression_ON */

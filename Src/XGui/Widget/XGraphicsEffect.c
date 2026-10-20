@@ -12,6 +12,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XGraphicsEffect.h"
 
 #include "XGuiConfig.h"
@@ -479,3 +481,5 @@ void* XGraphicsEffect_enabledChanged_signal(XGraphicsEffect* self, bool enabled)
 }
 
 #endif /* XWIDGET_ON */
+
+#endif /* XGUI_ON */

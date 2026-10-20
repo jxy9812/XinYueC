@@ -287,7 +287,7 @@ XHostInfo* XHostInfo_fromName(const XString* name) {
     XVector* addrVec = XDeviceNetwork_lookupName(name);
     if (!addrVec) {
         XHostInfo_setError(info, XHostInfo_HostNotFound);
-        int errCode = XDeviceNetwork_lastError();
+        int errCode = XDeviceNetwork_platformLastError();
         char* errStr = XDeviceNetwork_errorString(errCode);
         if (errStr) {
             info->m_errorString = XString_create_utf8(errStr);

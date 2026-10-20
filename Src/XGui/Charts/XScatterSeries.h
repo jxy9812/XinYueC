@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XSCATERSERIES_H
 #define XSCATERSERIES_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -70,4 +72,7 @@ uint32_t XScatterSeries_borderColor(const XScatterSeries* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSCATERSERIES_H */

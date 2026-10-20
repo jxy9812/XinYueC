@@ -1,4 +1,6 @@
-﻿#include "XExcelChart.h"
+﻿#if XEXCEL_ON
+
+#include "XExcelChart.h"
 #include "XAbstractSheet.h"
 #include "XMemory.h"
 #include "XFile.h"
@@ -607,3 +609,5 @@ void XExcelChart_setChartTitle_utf8(XExcelChart* self, const char* title)
     XExcelChart_setChartTitle(self, s);
     if (s) XClassDelete(s);
 }
+
+#endif /* XEXCEL_ON */

@@ -357,3 +357,19 @@ bool XVariablePool_global_isInited(void);
 #endif /* XMEMORY_VARIABLEPOOL_ON */
 
 #endif /* XVARIABLEPOOL_H */
+
+/* ===== 泄漏取证（2026-10-19）=====
+ * 全局池按尺寸档的 malloc/free 配对计数。裸机上 SYSTEM 槽 = 全局可变池，
+ * lwip/SDK 的 pbuf 全从这里进出，「alloc-free 差值」持续增长即该尺寸档
+ * 存在配对缺失。默认关闭（XMEMORY_HISTO_FREE_ON=0 时是空实现）。 */
+#ifndef XMEMORY_HISTO_FREE_ON
+#define XMEMORY_HISTO_FREE_ON 0
+#endif
+
+#if XMEMORY_HISTO_FREE_ON
+void xmemory_histo_alloc_note(size_t size);
+void xmemory_histo_free_note(size_t size);
+/* bin: 0..6 = <=32/<=64/<=128/<=256/<=512/<=1024/>1024。
+ * 返回 true 表示该档 alloc != free（疑似未配对）。 */
+bool XVariablePool_leak_stats(unsigned bin, unsigned long* outAlloc, unsigned long* outFree);
+#endif

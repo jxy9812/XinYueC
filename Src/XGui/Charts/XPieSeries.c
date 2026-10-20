@@ -1,4 +1,6 @@
-﻿#include "XPieSeries.h"
+﻿#if XGUI_ON
+
+#include "XPieSeries.h"
 
 #include "XAlgorithm.h"
 #include "XPieSlice.h"
@@ -533,3 +535,5 @@ int XPieSeries_slices(const XPieSeries* self, XPieSlice** out, int maxCount)
 }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

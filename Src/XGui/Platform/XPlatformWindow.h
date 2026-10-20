@@ -20,6 +20,8 @@
  ******************************************************************************/
 #ifndef XPLATFORMWINDOW_H
 #define XPLATFORMWINDOW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -253,4 +255,7 @@ bool XPlatformWindow_removeProperty_2(XPlatformWindow* self, const char* name);
 #endif
 
 #endif /* XPLATFORMWINDOW_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XPLATFORMWINDOW_H */

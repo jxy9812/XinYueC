@@ -6,8 +6,8 @@
  * @details 契约见 xgui_demo_pages.h（demo_page_modbus_master_build /
  *          demo_page_modbus_slave_build / autotest / adapt）。
  *
- * 页 17 = 主站（Master）：通道选择（TCP/串口 RTU）→ 连接参数 → 从站地址 →
- *          远程 IO 模块适配（输入/输出点数）→ 连接/断开 → 轮询周期 →
+ * 页 17 = 主站（Master）：连接参数合并行（通道/服务器或串口/从站地址/单事务）
+ *          → 远程 IO 模块适配（输入/输出点数）→ 连接/断开 → 轮询周期 →
  *          状态行 + IO 点位网格（输入只读指示、输出点击翻转写线圈）。
  * 页 18 = 从站（Server）：参数合并行（通道/监听端口/串口/本站地址，串口
  *          项随通道显隐）→ 启动/停止 → **全宽纵向四段式数据区**：
@@ -77,6 +77,7 @@
 #include "XModbusRtuSerialClient.h"
 #include "XModbusRtuSerialServer.h"
 #include "XDeviceSerialPort.h"
+#include "XSerialPortInfo.h" /* 串口下拉：每次弹出前重枚举本机端口。 */
 #endif
 #define MB_PAGE_ENABLED (XLAYOUT_ON && XLAYOUT_BOX_ON && XWIDGET_ON && \
                          XLABEL_ON && XCOMBOBOX_ON && \
@@ -345,10 +346,7 @@ typedef struct MbMaster {
      * 行/列子布局器。子布局经 addLayout 按借用指针挂入父布局器，
      * 对象寿命须覆盖页面生命周期——全部落在本静态容器。 */
     XBoxLayout      layRoot;          /* 页根纵向主布局（表格伸缩贴底）。 */
-    XBoxLayout      layChannel;       /* 通道行。 */
-    XBoxLayout      layServer;        /* TCP 参数行。 */
-    XBoxLayout      laySerial;        /* 串口参数行（随通道显隐）。 */
-    XBoxLayout      layUnit;          /* 从站地址+单事务行。 */
+    XBoxLayout      layParams;        /* 参数合并行（通道/服务器或串口/从站地址/单事务）。 */
     XBoxLayout      layIo;            /* 输入/输出点数行。 */
     XBoxLayout      layPoll;          /* 轮询+连接行。 */
     XBoxLayout      layGridIn;        /* 输入点列（节标题+网格宿主）。 */
@@ -364,7 +362,7 @@ typedef struct MbMaster {
     XLineEdit*      tcpAddrEdit;      /* TCP: 服务器地址。 */
     XLineEdit*      tcpPortEdit;      /* TCP: 端口。 */
     XLabel*         serialLbl;        /* 串口行标签（随通道显隐）。 */
-    XLineEdit*      serialNameEdit;   /* 串口: 设备名。 */
+    XComboBox*      serialNameCombo;  /* 串口: 设备名（下拉，每次弹出重枚举）。 */
     XComboBox*      serialBaudCombo;  /* 串口: 波特率。 */
     XSpinBox*       unitSpin;         /* 从站地址(1..247)。 */
     XSpinBox*       inCountSpin;      /* 远程 IO 输入点数(0..64)。 */
@@ -463,7 +461,7 @@ typedef struct MbSlave {
     XLabel*         tcpLbl;           /* 监听端口标签（随通道显隐）。 */
     XLineEdit*      tcpPortEdit;      /* TCP: 监听端口。 */
     XLabel*         serialLbl;        /* 串口标签（随通道显隐）。 */
-    XLineEdit*      serialNameEdit;   /* 串口: 设备名。 */
+    XComboBox*      serialNameCombo;  /* 串口: 设备名（下拉，每次弹出重枚举）。 */
     XComboBox*      serialBaudCombo;  /* 串口: 波特率。 */
     XSpinBox*       unitSpin;         /* 本站地址(1..247)。 */
     XSpinBox*       inCountSpin;      /* 输入点数。 */
@@ -699,6 +697,126 @@ static XComboBox* mb_buildBaudCombo(XWidget* parent, int w)
     XWidget_show((XWidget*)combo);
     return combo;
 }
+
+/* ==================== 串口名下拉（每次弹出前重枚举） ==================== */
+
+/** @details 设备名原为手输 XLineEdit；串口可用集合随插拔/占用动态变化，
+ *           改下拉后每次**打开下拉前**重读 XSerialPortInfo_availablePorts()
+ *           （Qt 惯例：QComboBox 子类重载 showPopup/或 popupShown 前 populate）。
+ *           本框架 XComboBox 无 showPopup 虚槽，弹层唯一入口是左键按下
+ *           （键盘仅上下改索引不弹层），故子类重载 mousePressEvent：左键
+ *           按下且弹层未开 → 先重枚举再交基类弹出。 */
+#if XMODBUS_RTU_ON
+XCLASS_DEFINE_BEGING(MbSerialCombo)
+XCLASS_DEFINE_EXTEND_END(MbSerialCombo, XComboBox)
+
+typedef struct MbSerialCombo
+{
+    XComboBox m_base; /**< XComboBox 基类；必须是第一个成员。 */
+} MbSerialCombo;
+
+/** @brief 释放 XSerialPortInfo_availablePorts() 返回的列表（元素逐个释放）。 */
+static void mb_serialPortInfoListFree(XSerialPortInfoList* list)
+{
+    size_t count;
+    size_t i;
+    if (!list) return;
+    count = XVector_size_base((const XContainer*)list);
+    for (i = 0; i < count; ++i) {
+        XSerialPortInfo** slot =
+            (XSerialPortInfo**)XVector_at_base(list, (int64_t)i);
+        if (slot && *slot) XClassDelete(*slot);
+    }
+    XClassDelete(list);
+}
+
+/** @brief 重枚举本机串口并重建条目；保持原选择（仍在则选回，否则选首项）。
+ *  @details 枚举失败（NULL）保留既有条目不动（宁可不刷新也不清空）；
+ *           枚举成功但为空列表时补一条当前文本兜底（旧默认 /dev/ttyS1
+ *           亦由此保留），避免组合框变空、连接参数读成空串。 */
+static void mb_serialComboRefresh(XComboBox* combo)
+{
+    XSerialPortInfoList* list;
+    XString* keep;
+    const char* keepText;
+    size_t count;
+    size_t i;
+    int idx;
+    if (!combo) return;
+    keep = XComboBox_currentText(combo); /* 自身副本，重填后可安全读取。 */
+    keepText = keep ? XString_toUtf8(keep) : "";
+    list = XSerialPortInfo_availablePorts();
+    if (!list) {
+        if (keep) XClassDelete(keep);
+        return;
+    }
+    XComboBox_clear(combo);
+    count = XVector_size_base((const XContainer*)list);
+    for (i = 0; i < count; ++i) {
+        XSerialPortInfo** slot =
+            (XSerialPortInfo**)XVector_at_base(list, (int64_t)i);
+        XSerialPortInfo* info = slot ? *slot : NULL;
+        const XString* name;
+        if (!info) continue;
+        name = XSerialPortInfo_portName(info);
+        if (name && XString_toUtf8(name) && XString_toUtf8(name)[0])
+            XComboBox_addItem_2(combo, XString_toUtf8(name));
+    }
+    mb_serialPortInfoListFree(list);
+    idx = (keepText && keepText[0])
+              ? XComboBox_findText_2(combo, keepText) : -1;
+    if (XComboBox_count(combo) <= 0)
+        XComboBox_addItem_2(combo,
+                            (keepText && keepText[0]) ? keepText
+                                                      : "/dev/ttyS1");
+    if (idx < 0 && XComboBox_count(combo) > 0) idx = 0;
+    XComboBox_setCurrentIndex(combo, idx);
+    if (keep) XClassDelete(keep);
+}
+
+/** @brief 左键按下：弹层将开未开时先重枚举（收起方向不刷）。 */
+static void VMbSerialCombo_mousePressEvent(XWidget* self, XEvent* event)
+{
+    MbSerialCombo* combo = (MbSerialCombo*)self;
+    if (combo && event &&
+        XEvent_type(event) == XEVENT_TYPE_MOUSE_BUTTON_PRESS &&
+        XMouseEvent_button((XMouseEvent*)event) == XMouseButton_LeftButton &&
+        !combo->m_base.m_popupVisible)
+        mb_serialComboRefresh(&combo->m_base);
+    XClass_Parent(XComboBox, EXWidget_MousePressEvent,
+                  XWidgetEventSlot)(self, event);
+}
+
+XVtable* MbSerialCombo_class_init(void)
+{
+    XVTABLE_INIT_DEFAULT(MbSerialCombo)
+    XVTABLE_INHERIT_XCLASS(XComboBox);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_MousePressEvent,
+                             VMbSerialCombo_mousePressEvent);
+    return XVTABLE_DEFAULT;
+}
+
+/** @brief 构建串口名下拉（含首轮枚举；初始项取当前可用串口）。 */
+static XComboBox* mb_buildSerialCombo(XWidget* parent, int w)
+{
+    MbSerialCombo* combo = (MbSerialCombo*)XMalloc_System(
+        sizeof(MbSerialCombo));
+    if (!combo) return NULL;
+    XMemset(combo, 0, sizeof(*combo));
+    XComboBox_init(&combo->m_base, parent, 0);
+    XClassSetVtable(combo, MbSerialCombo);
+    XWidget_setFixedWidth((XWidget*)combo, w);
+    XWidget_setFixedHeight((XWidget*)combo, 24);
+    XWidget_show((XWidget*)combo);
+    mb_serialComboRefresh(&combo->m_base); /* 首轮枚举（内置兜底默认名）。 */
+    if (XComboBox_count(&combo->m_base) <= 0) {
+        /* 首轮枚举失败/无串口：留默认名占位（连接侧同口径兜底）。 */
+        XComboBox_addItem_2(&combo->m_base, "/dev/ttyS1");
+        XComboBox_setCurrentIndex(&combo->m_base, 0);
+    }
+    return &combo->m_base;
+}
+#endif /* XMODBUS_RTU_ON */
 
 static XSpinBox* mb_buildSpin(XWidget* parent, int w,
                               int min, int max, int val)
@@ -1827,9 +1945,10 @@ static void mb_masterStartEngine(void)
         if (!cli) return;
         dev = (XModbusDevice*)cli;
         {
-            const char* name = s_mb.serialNameEdit
-                ? XLineEdit_text(s_mb.serialNameEdit) : "/dev/ttyS1";
+            const char* name = s_mb.serialNameCombo
+                ? XComboBox_currentText_2(s_mb.serialNameCombo) : "";
             int baud = 9600;
+            if (!name || !name[0]) name = "/dev/ttyS1";
             if (s_mb.serialBaudCombo)
                 baud = atoi(XComboBox_currentText(s_mb.serialBaudCombo));
             if (baud <= 0) baud = 9600;
@@ -1979,12 +2098,15 @@ static void mb_masterChannelSlot(XObject* sender, XVarList* args)
         XWidget_setVisible((XWidget*)s_mb.tcpPortEdit, idx == MB_MASTER_TCP);
     if (s_mb.serialLbl)
         XWidget_setVisible((XWidget*)s_mb.serialLbl, idx == MB_MASTER_RTU);
-    if (s_mb.serialNameEdit)
-        XWidget_setVisible((XWidget*)s_mb.serialNameEdit,
+    if (s_mb.serialNameCombo)
+        XWidget_setVisible((XWidget*)s_mb.serialNameCombo,
                            idx == MB_MASTER_RTU);
     if (s_mb.serialBaudCombo)
         XWidget_setVisible((XWidget*)s_mb.serialBaudCombo,
                            idx == MB_MASTER_RTU);
+    /* [LayoutRequest 2026-10-20] 显隐重排由框架接管：子控件 setVisible
+     * 现已按 Qt 对齐（hide→父布局 invalidate→收口 post LayoutRequest，
+     * show→沿可见父链同步激活），本页不再手工 updateGeometry。 */
 }
 
 /* ================================================================
@@ -2829,9 +2951,10 @@ static void mb_slaveApplyChannelParams(void)
 #endif
 #if XMODBUS_RTU_ON
     if (channel == 1) {
-        const char* name = s_mbSlave.serialNameEdit
-                ? XLineEdit_text(s_mbSlave.serialNameEdit) : "/dev/ttyS1";
+        const char* name = s_mbSlave.serialNameCombo
+                ? XComboBox_currentText_2(s_mbSlave.serialNameCombo) : "";
         int baud = 9600;
+        if (!name || !name[0]) name = "/dev/ttyS1";
         if (s_mbSlave.serialBaudCombo)
             baud = atoi(XComboBox_currentText(s_mbSlave.serialBaudCombo));
         if (baud <= 0) baud = 9600;
@@ -2962,8 +3085,8 @@ static void mb_slaveOnChannelChanged(XObject* sender, XVarList* args)
         XWidget_setVisible((XWidget*)s_mbSlave.tcpPortEdit, idx == 0);
     if (s_mbSlave.serialLbl)
         XWidget_setVisible((XWidget*)s_mbSlave.serialLbl, idx == 1);
-    if (s_mbSlave.serialNameEdit)
-        XWidget_setVisible((XWidget*)s_mbSlave.serialNameEdit, idx == 1);
+    if (s_mbSlave.serialNameCombo)
+        XWidget_setVisible((XWidget*)s_mbSlave.serialNameCombo, idx == 1);
     if (s_mbSlave.serialBaudCombo)
         XWidget_setVisible((XWidget*)s_mbSlave.serialBaudCombo, idx == 1);
     if (s_mbSlave.server) {
@@ -3297,30 +3420,30 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
         XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)title);
     }
 
-    /* 连接参数区：通道行。 */
-    mb_rowInit(&s_mb.layChannel, &s_mb.layRoot,
+    /* 连接参数合并行（[10-20 用户追加规格] 原通道/服务器/串口/从站地址
+     * 四行并一行——右边太空。随通道显隐的条目在隐藏时主轴取 0 宽
+     * （XLayoutItem isEmpty），行内自折叠不占位，TCP/串口互斥显示）。 */
+    mb_rowInit(&s_mb.layParams, &s_mb.layRoot,
                XBoxLayoutDirection_LeftToRight);
     {
         XLabel* lbl = NULL;
         mb_buildLabel(s_mb.root, "\xE9\x80\x9A\xE9\x81\x93", 56, &lbl);
                         /* 通道 */
-        if (lbl) XBoxLayout_addWidget(&s_mb.layChannel, (XWidget*)lbl);
+        if (lbl) XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)lbl);
     }
-    s_mb.channelCombo = mb_buildChannelCombo(s_mb.root, 160);
+    s_mb.channelCombo = mb_buildChannelCombo(s_mb.root, 140);
     if (s_mb.channelCombo)
-        XBoxLayout_addWidget(&s_mb.layChannel, (XWidget*)s_mb.channelCombo);
-    mb_rowPack(&s_mb.layChannel);
+        XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)s_mb.channelCombo);
+    XBoxLayout_addSpacing(&s_mb.layParams, 12);
     XObject_connect_2((XObject*)s_mb.channelCombo,
                       XSignal(XComboBox_activated_signal),
                       mb_masterChannelSlot);
 
-    /* TCP 参数行（随通道显隐）。 */
-    mb_rowInit(&s_mb.layServer, &s_mb.layRoot,
-               XBoxLayoutDirection_LeftToRight);
+    /* TCP 参数组（随通道显隐）。 */
     mb_buildLabel(s_mb.root, "\xE6\x9C\x8D\xE5\x8A\xA1\xE5\x99\xA8",
-                  64, &s_mb.tcpLbl); /* 服务器 */
+                  56, &s_mb.tcpLbl); /* 服务器 */
     if (s_mb.tcpLbl)
-        XBoxLayout_addWidget(&s_mb.layServer, (XWidget*)s_mb.tcpLbl);
+        XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)s_mb.tcpLbl);
     s_mb.tcpAddrEdit = XLineEdit_create(s_mb.root, 0);
     if (s_mb.tcpAddrEdit) {
         /* [联调] env XGUI_DEMO_MB_HOST 预置服务器地址（真机远程 IO 直连）。 */
@@ -3330,10 +3453,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                               (hostEnv && hostEnv[0]) ? hostEnv
                                                       : "127.0.0.1");
         }
-        XWidget_setFixedWidth((XWidget*)s_mb.tcpAddrEdit, 130);
+        XWidget_setFixedWidth((XWidget*)s_mb.tcpAddrEdit, 120);
         XWidget_setFixedHeight((XWidget*)s_mb.tcpAddrEdit, 24);
         XWidget_show((XWidget*)s_mb.tcpAddrEdit);
-        XBoxLayout_addWidget(&s_mb.layServer, (XWidget*)s_mb.tcpAddrEdit);
+        XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)s_mb.tcpAddrEdit);
     }
     s_mb.tcpPortEdit = XLineEdit_create(s_mb.root, 0);
     if (s_mb.tcpPortEdit) {
@@ -3343,48 +3466,56 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
             XLineEdit_setText(s_mb.tcpPortEdit,
                               (portEnv && portEnv[0]) ? portEnv : "15020");
         }
-        XWidget_setFixedWidth((XWidget*)s_mb.tcpPortEdit, 66);
+        XWidget_setFixedWidth((XWidget*)s_mb.tcpPortEdit, 62);
         XWidget_setFixedHeight((XWidget*)s_mb.tcpPortEdit, 24);
         XWidget_show((XWidget*)s_mb.tcpPortEdit);
-        XBoxLayout_addWidget(&s_mb.layServer, (XWidget*)s_mb.tcpPortEdit);
+        XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)s_mb.tcpPortEdit);
     }
-    mb_rowPack(&s_mb.layServer);
 
-    /* 串口参数行（随通道显隐；本框架布局器不因隐藏折叠条目，隐藏行
-     * 保留占位——通道切换不扰动下方行的行距节奏）。 */
-    mb_rowInit(&s_mb.laySerial, &s_mb.layRoot,
-               XBoxLayoutDirection_LeftToRight);
-    mb_buildLabel(s_mb.root, "\xE4\xB8\xB2\xE5\x8F\xA3", 56, &s_mb.serialLbl);
+    /* 串口参数组（随通道显隐，与 TCP 组互斥）。 */
+    mb_buildLabel(s_mb.root, "\xE4\xB8\xB2\xE5\x8F\xA3", 44, &s_mb.serialLbl);
                     /* 串口 */
     if (s_mb.serialLbl) {
         XWidget_setVisible((XWidget*)s_mb.serialLbl, false);
-        XBoxLayout_addWidget(&s_mb.laySerial, (XWidget*)s_mb.serialLbl);
+        XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)s_mb.serialLbl);
     }
-    s_mb.serialNameEdit = XLineEdit_create(s_mb.root, 0);
-    if (s_mb.serialNameEdit) {
-        XLineEdit_setText(s_mb.serialNameEdit, "/dev/ttyS1");
-        XWidget_setFixedWidth((XWidget*)s_mb.serialNameEdit, 130);
-        XWidget_setFixedHeight((XWidget*)s_mb.serialNameEdit, 24);
-        XWidget_setVisible((XWidget*)s_mb.serialNameEdit, false);
-        XBoxLayout_addWidget(&s_mb.laySerial, (XWidget*)s_mb.serialNameEdit);
+    /* 串口名下拉：每次弹出前经 XSerialPortInfo 重枚举（见 MbSerialCombo）。 */
+    s_mb.serialNameCombo = mb_buildSerialCombo(s_mb.root, 110);
+    if (s_mb.serialNameCombo) {
+        XWidget_setVisible((XWidget*)s_mb.serialNameCombo, false);
+        XBoxLayout_addWidget(&s_mb.layParams,
+                             (XWidget*)s_mb.serialNameCombo);
     }
-    s_mb.serialBaudCombo = mb_buildBaudCombo(s_mb.root, 80);
-    XWidget_setVisible((XWidget*)s_mb.serialBaudCombo, false);
-    if (s_mb.serialBaudCombo)
-        XBoxLayout_addWidget(&s_mb.laySerial, (XWidget*)s_mb.serialBaudCombo);
-    mb_rowPack(&s_mb.laySerial);
+    s_mb.serialBaudCombo = mb_buildBaudCombo(s_mb.root, 76);
+    if (s_mb.serialBaudCombo) {
+        XWidget_setVisible((XWidget*)s_mb.serialBaudCombo, false);
+        XBoxLayout_addWidget(&s_mb.layParams,
+                             (XWidget*)s_mb.serialBaudCombo);
+    }
+    XBoxLayout_addSpacing(&s_mb.layParams, 12);
+
+    /* 从站地址（两通道共用）。 */
+    {
+        XLabel* lbl = NULL;
+        mb_buildLabel(s_mb.root,
+                      "\xE4\xBB\x8E\xE7\xAB\x99\xE5\x9C\xB0\xE5\x9D\x80",
+                      80, &lbl); /* 从站地址 */
+        if (lbl) XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)lbl);
+    }
+    s_mb.unitSpin = mb_buildSpin(s_mb.root, 60, 1, 247, 1);
+    if (s_mb.unitSpin)
+        XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)s_mb.unitSpin);
 
     /* [单事务模式 2026-10-15] TCP 通道专用多选框：勾选后写请求不与在途
      * 轮询读流水线并发——在途未完成时写排队（后写胜出），回读完成后
      * 补发。适配仅支持单事务处理的远程 IO 模块/从机。仅 TCP 模式显示
-     * （RTU 串口本身即单事务半双工）。装配进从站地址行（原 y=102 同行
-     * 摆位的布局化近似）。 */
+     * （RTU 串口本身即单事务半双工）。 */
     s_mb.singleTxCheck = XCheckBox_create(s_mb.root, 0);
     if (s_mb.singleTxCheck) {
         XAbstractButton_setText_2((XAbstractButton*)s_mb.singleTxCheck,
                                 "\xE5\x8D\x95\xE4\xBA\x8B\xE5\x8A\xA1\xE6\xA8\xA1\xE5\xBC\x8F");
         /* 单事务模式 */
-        XWidget_setFixedWidth((XWidget*)s_mb.singleTxCheck, 190);
+        XWidget_setFixedWidth((XWidget*)s_mb.singleTxCheck, 150);
         XWidget_setFixedHeight((XWidget*)s_mb.singleTxCheck, 24);
         XObject_connect_1((XObject*)s_mb.singleTxCheck,
                           (size_t)XAbstractButton_toggled_signal(
@@ -3392,24 +3523,10 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
                           (XObject*)s_mb.root, mb_masterSingleTxSlot,
                           XConnectionType_Direct);
         XWidget_show((XWidget*)s_mb.singleTxCheck);
+        XBoxLayout_addSpacing(&s_mb.layParams, 12);
+        XBoxLayout_addWidget(&s_mb.layParams, (XWidget*)s_mb.singleTxCheck);
     }
-
-    /* 从站地址+单事务模式行。 */
-    mb_rowInit(&s_mb.layUnit, &s_mb.layRoot, XBoxLayoutDirection_LeftToRight);
-    {
-        XLabel* lbl = NULL;
-        mb_buildLabel(s_mb.root,
-                      "\xE4\xBB\x8E\xE7\xAB\x99\xE5\x9C\xB0\xE5\x9D\x80",
-                      80, &lbl); /* 从站地址 */
-        if (lbl) XBoxLayout_addWidget(&s_mb.layUnit, (XWidget*)lbl);
-    }
-    s_mb.unitSpin = mb_buildSpin(s_mb.root, 60, 1, 247, 1);
-    if (s_mb.unitSpin)
-        XBoxLayout_addWidget(&s_mb.layUnit, (XWidget*)s_mb.unitSpin);
-    XBoxLayout_addSpacing(&s_mb.layUnit, 12);
-    if (s_mb.singleTxCheck)
-        XBoxLayout_addWidget(&s_mb.layUnit, (XWidget*)s_mb.singleTxCheck);
-    mb_rowPack(&s_mb.layUnit);
+    mb_rowPack(&s_mb.layParams);
 
     /* 远程 IO 模块适配：节标题独立成行。 */
     mb_buildLabel(s_mb.root,
@@ -3787,6 +3904,21 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
             }
         }
     }
+    /* [串口模式截图联调] env XGUI_DEMO_MB_SERIAL=1：构建后把通道切到
+     * 串口 RTU（等价用户选择 combo 第 2 项，走 activated 槽完整路径），
+     * 供截图/回归验证串口参数行布局。 */
+    {
+        const char* serialEnv = XSystem_environment("XGUI_DEMO_MB_SERIAL");
+        if (serialEnv && serialEnv[0] && strcmp(serialEnv, "0") != 0 &&
+            s_mb.channelCombo) {
+            XComboBox_setCurrentIndex(s_mb.channelCombo, MB_MASTER_RTU);
+            mb_masterChannelSlot(NULL, NULL);
+            XPrintf("XGuiWindowDemo: modbus channel=RTU (serial mode) serial=%s\n",
+                    s_mb.serialNameCombo
+                        ? XComboBox_currentText_2(s_mb.serialNameCombo)
+                        : "(none)");
+        }
+    }
     /* [断开回归联调] env AUTOSTART=disconnect：连接后 5 秒程序化点断开
      * （XAbstractButton_click=用户点击等价路径；回归断开 UAF 用）。 */
     {
@@ -4146,14 +4278,12 @@ XWidget* demo_page_modbus_slave_build(XWidget* parent,
         XBoxLayout_addWidget(&s_mbSlave.layChannel,
                              (XWidget*)s_mbSlave.serialLbl);
     }
-    s_mbSlave.serialNameEdit = XLineEdit_create(s_mbSlave.root, 0);
-    if (s_mbSlave.serialNameEdit) {
-        XLineEdit_setText(s_mbSlave.serialNameEdit, "/dev/ttyS1");
-        XWidget_setFixedWidth((XWidget*)s_mbSlave.serialNameEdit, 130);
-        XWidget_setFixedHeight((XWidget*)s_mbSlave.serialNameEdit, 24);
-        XWidget_setVisible((XWidget*)s_mbSlave.serialNameEdit, false);
+    /* 串口名下拉：每次弹出前经 XSerialPortInfo 重枚举（见 MbSerialCombo）。 */
+    s_mbSlave.serialNameCombo = mb_buildSerialCombo(s_mbSlave.root, 130);
+    if (s_mbSlave.serialNameCombo) {
+        XWidget_setVisible((XWidget*)s_mbSlave.serialNameCombo, false);
         XBoxLayout_addWidget(&s_mbSlave.layChannel,
-                             (XWidget*)s_mbSlave.serialNameEdit);
+                             (XWidget*)s_mbSlave.serialNameCombo);
     }
     s_mbSlave.serialBaudCombo = mb_buildBaudCombo(s_mbSlave.root, 80);
     if (s_mbSlave.serialBaudCombo) {

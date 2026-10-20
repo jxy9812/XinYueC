@@ -23,6 +23,8 @@
  *             本实现只通过 XImageCodecInternal_decodeJpeg/encodeJpeg 对外暴露，
  *             统一由 XImageCodec.c 的 XImageCodec_decode/encode 分发。
  */
+#if XGUI_ON
+
 #include "XImageCodec_config.h"
 #include "XStringUtils.h"
 
@@ -3047,3 +3049,5 @@ done:
 
 #endif /* XIMAGECODEC_JPEG_ON */
 #endif /* XIMAGECODEC_ON */
+
+#endif /* XGUI_ON */

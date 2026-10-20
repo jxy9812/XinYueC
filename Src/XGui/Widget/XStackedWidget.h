@@ -18,6 +18,8 @@
  */
 #ifndef XSTACKEDWIDGET_H
 #define XSTACKEDWIDGET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -116,4 +118,7 @@ void* XStackedWidget_widgetRemoved_signal(XStackedWidget* self, int index);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSTACKEDWIDGET_H */

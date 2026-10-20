@@ -7,6 +7,8 @@
 #ifndef XSQLQUERYMODEL_H
 #define XSQLQUERYMODEL_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -259,5 +261,7 @@ void* XSqlQueryModel_dataChanged_signal(XSqlQueryModel* model, int firstRow,
 /* XClass create API default-memory wrappers. */
 #undef XSqlQueryModel_create
 #define XSqlQueryModel_create() XSqlQueryModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLQUERYMODEL_H */

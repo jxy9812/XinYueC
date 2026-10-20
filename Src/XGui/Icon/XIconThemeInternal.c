@@ -7,6 +7,8 @@
  *             hasThemeIcon 等入口共用。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XIconThemeInternal.h"
 #include "XStringUtils.h"
 
@@ -2638,3 +2640,5 @@ resolve_name_done:
     theme_stringListDelete(fallbackPaths);
     return result;
 }
+
+#endif /* XGUI_ON */

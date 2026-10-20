@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XScrollArea.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -436,3 +438,5 @@ XSize XScrollArea_sizeHint(const XScrollArea* self)
 
 
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && XSCROLLAREA_ON */
+
+#endif /* XGUI_ON */

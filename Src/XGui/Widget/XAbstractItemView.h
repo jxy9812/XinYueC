@@ -15,6 +15,8 @@
  */
 #ifndef XABSTRACTITEMVIEW_H
 #define XABSTRACTITEMVIEW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1150,4 +1152,7 @@ void* XAbstractItemView_iconSizeChanged_signal(XAbstractItemView* self,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XABSTRACTITEMVIEW_H */

@@ -7,6 +7,8 @@
 #ifndef XSQLDRIVER_H
 #define XSQLDRIVER_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -324,5 +326,7 @@ void* XSqlDriver_notification_signal(XSqlDriver* driver, const XString* name,
 /* XClass create API default-memory wrappers. */
 #undef XSqlDriver_create
 #define XSqlDriver_create(...) XSqlDriver_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLDRIVER_H */

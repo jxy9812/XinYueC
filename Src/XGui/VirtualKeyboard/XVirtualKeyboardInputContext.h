@@ -35,6 +35,8 @@
  ******************************************************************************/
 #ifndef XVIRTUALKEYBOARDINPUTCONTEXT_H
 #define XVIRTUALKEYBOARDINPUTCONTEXT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -533,4 +535,7 @@ void* XVirtualKeyboardInputContext_keyEventRequested_signal(
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XVIRTUALKEYBOARDINPUTCONTEXT_H */

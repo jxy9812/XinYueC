@@ -8,6 +8,8 @@
 #ifndef XGUICONFIG_H
 #define XGUICONFIG_H
 
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #ifndef XGUI_ON
@@ -1225,5 +1227,7 @@
 #ifndef XGUI_DOCK_TRACE
 #define XGUI_DOCK_TRACE 0
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUICONFIG_H */

@@ -20,6 +20,8 @@
  */
 #ifndef XSTATUSBAR_H
 #define XSTATUSBAR_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -143,5 +145,7 @@ void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text);
 }
 #endif
 #endif /* XWIDGET_ON && XSTATUSBAR_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XSTATUSBAR_H */

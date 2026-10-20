@@ -24,6 +24,8 @@
  */
 #ifndef XTITLEBAR_PROTECTED_H
 #define XTITLEBAR_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -101,4 +103,7 @@ int XTitleBar_activeSubControls(const XTitleBar* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XTITLEBAR_PROTECTED_H */

@@ -57,6 +57,41 @@ int64_t XDateTime_currentNSecsSinceEpoch(void);
 int64_t XDateTime_currentMSecsSinceEpoch(void);
 
 /**
+ * @brief 获取自 Unix 纪元 (1970-01-01T00:00:00 UTC) 以来的当前毫秒数（墙钟口径）。
+ * @return 当前的墙钟毫秒时间戳（含亚秒精度）。
+ * @note  与 XDateTime_currentMSecsSinceEpoch（单调时钟）不同，本函数读的是
+ *        系统实时时钟（POSIX CLOCK_REALTIME / Windows 系统时间），会随校时
+ *        发生跳变；但精度高于秒级截断的 currentSecsSinceEpoch。
+ * @note  供需要「真实 UTC 时刻 + 亚秒精度」的场景使用，典型如 NTP 客户端
+ *        构造与测量时间戳。 durations/超时测量仍必须使用单调钟接口。
+ */
+int64_t XDateTime_currentWallMSecsSinceEpoch(void);
+
+/**
+ * @brief 设置系统墙钟时间（影响整个操作系统的时间基准）。
+ * @param secs 目标 Unix 纪元秒（UTC 时区下的时刻）。
+ * @return 设置成功返回 true；权限不足、平台不支持或参数非法返回 false，
+ *         此时系统时间保持不变。
+ * @note  这是写操作，与本模块其余只读接口语义不同，仅供时间同步（如 NTP
+ *        校时）这类必须改动系统时钟的场景使用；常规时间测量请保持只读。
+ * @note  权限要求：POSIX 需 root 或 CAP_SYS_TIME；Windows 需
+ *        SE_SYSTEMTIME_NAME 特权。可先用 XDateTime_canSetSystemTime 探测。
+ * @warning 调整系统时钟会使所有依赖墙钟的时间戳发生跳变。注意本模块的
+ *          XDateTime_currentMSecsSinceEpoch 使用单调时钟，校时不会影响它，
+ *          因此定时器、心跳、超时测量不受影响；但依赖墙钟的业务（日志、
+ *          文件时间戳、证书有效期校验）会看到时间跳变。
+ */
+bool XDateTime_setSystemSecsSinceEpoch(int64_t secs);
+
+/**
+ * @brief 检测当前进程是否有权设置系统时间。
+ * @return 有权设置返回 true，否则返回 false。
+ * @note  供调用方在依赖校时前先做能力探测：返回 false 时应退化为「只读取
+ *        偏移量、由应用自行决策」，而不是反复尝试写入。
+ */
+bool XDateTime_canSetSystemTime(void);
+
+/**
  * @brief 获取自 Unix 纪元 (1970-01-01T00:00:00 UTC) 以来的当前秒数。
  * @return 当前的秒时间戳。
  */

@@ -7,6 +7,8 @@
 #ifndef XSQL_H
 #define XSQL_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,5 +34,7 @@ extern "C" {
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XSQL_ON */
 
 #endif /* XSQL_H */

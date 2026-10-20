@@ -16,6 +16,8 @@
  ******************************************************************************/
 #ifndef XSTYLEHINTS_H
 #define XSTYLEHINTS_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -214,4 +216,7 @@ void* XStyleHints_colorSchemeChanged_signal(XStyleHints* self, XStyleHintsColorS
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSTYLEHINTS_H */

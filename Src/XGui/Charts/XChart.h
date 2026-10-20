@@ -1,5 +1,7 @@
 ﻿#ifndef XCHART_H
 #define XCHART_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -546,4 +548,7 @@ const char* XChart_titleFont_2(const XChart* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCHART_H */

@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XZIPREADER_H
 #define XZIPREADER_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -69,4 +71,7 @@ XByteArray* XZipReader_fileData(const XZipReader* self, const XString* fileName)
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
+
 #endif

@@ -3,6 +3,8 @@
  * @brief      XFont 点阵字库具体类实现及文件后端适配。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XFONT_FREETYPE_ON
+
 #include "XFontBitmapFace.h"
 #include "XFont.h"
 #include "XFontFace_Protected.h"
@@ -351,3 +353,5 @@ const XFontFace* XFontBitmapFace_fileFace(void)
     }
     return &g_fileFace.m_class;
 }
+
+#endif /* XFONT_FREETYPE_ON */

@@ -3,6 +3,8 @@
  * @brief      XImageWriter 图像写入器实现（对标 Qt 6.8 QImageWriter）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageWriter.h"
 #include "XStringUtils.h"
 
@@ -1221,3 +1223,5 @@ XStringList* XImageWriter_imageFormatsForMimeType_2(const char* mimeType)
     if (value) XClassDelete((XClass*)value);
     return result;
 }
+
+#endif /* XGUI_ON */

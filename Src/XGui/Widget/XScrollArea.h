@@ -19,6 +19,8 @@
  */
 #ifndef XSCROLLAREA_H
 #define XSCROLLAREA_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -119,5 +121,7 @@ XSize XScrollArea_sizeHint(const XScrollArea* self);
 }
 #endif
 #endif /* XWIDGET_ON && XFRAME_ON && XSCROLLBAR_ON && XABSTRACTSCROLLAREA_ON && XSCROLLAREA_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XSCROLLAREA_H */

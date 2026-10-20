@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XIMAGEFORMAT_H
 #define XIMAGEFORMAT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -223,4 +225,7 @@ XImageFormat XImageFormat_toImageFormat(XPixelFormat format);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XIMAGEFORMAT_H */

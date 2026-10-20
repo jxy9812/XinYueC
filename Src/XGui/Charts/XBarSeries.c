@@ -1,4 +1,6 @@
-﻿#include "XBarSeries.h"
+﻿#if XGUI_ON
+
+#include "XBarSeries.h"
 
 #include "XAlgorithm.h"
 #include "XAbstractBarSeries.h"
@@ -51,3 +53,5 @@ uint32_t XBarSeries_color(const XBarSeries* self)
 { return self ? self->m_color : 0; }
 
 #endif /* XCHARTS_ON */
+
+#endif /* XGUI_ON */

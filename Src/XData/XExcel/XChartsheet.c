@@ -1,4 +1,6 @@
-﻿#include "XChartsheet.h"
+﻿#if XEXCEL_ON
+
+#include "XChartsheet.h"
 #include "XWorkbook.h"
 #include "XMemory.h"
 #include "XByteArray.h"
@@ -93,3 +95,5 @@ XChartsheet* XChartsheet_create_utf8(const char* sheetName, int sheetId, void* b
     if (s) XClassDelete(s);
     return result;
 }
+
+#endif /* XEXCEL_ON */

@@ -3,6 +3,8 @@
  * @brief      XIcon 缩放像素图缓存内部辅助实现。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XIconScaledPixmapCache.h"
 #include "XStringUtils.h"
 
@@ -101,3 +103,5 @@ void XIconScaledPixmapCache_clear(void)
     /* 像素图缓存裁剪时的回退路径：无缓存可清，退化为空操作。 */
 #endif /* XPIXMAPCACHE_ON */
 }
+
+#endif /* XGUI_ON */

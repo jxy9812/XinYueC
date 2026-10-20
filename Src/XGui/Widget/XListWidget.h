@@ -21,6 +21,8 @@
  ******************************************************************************/
 #ifndef XLISTWIDGET_H
 #define XLISTWIDGET_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -434,4 +436,7 @@ XAbstractItemModel* XListWidget_model(const XListWidget* self);
 }
 #endif
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XLISTWIDGET_H */

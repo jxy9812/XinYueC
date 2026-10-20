@@ -14,6 +14,8 @@
  ******************************************************************************/
 #ifndef XHEADERVIEW_H
 #define XHEADERVIEW_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -777,4 +779,7 @@ void* XHeaderView_headerDataChanged_signal(XHeaderView* self, int section);
 }
 #endif
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XHEADERVIEW_H */

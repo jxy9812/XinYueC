@@ -402,8 +402,17 @@ Tests/
 # ZCode 工具目录（工作流脚本/运行记录/集成脚本，工具资产不入仓库）
 .zcode/
 
+# 其他助手工具的会话记忆数据（不入仓库）
+.workbuddy/
+
 # 动态工作流运行产物
 *.mjs
+
+# ESP8266 固件编译产物与调试输出（构建可再生成，不入库）
+out_esp8266_*.bin
+xinyuec_console.bin*.bin
+nodemcu_build.html
+ipall.txt
 
 # ===== GPU 夜战工具目录（2026-09-25）：本地产物不入库，工作区保留 =====
 # vendored Vulkan 头不入库；导入库改为预编译入库（2026-09-27 双架构）：

@@ -11,6 +11,8 @@
  ******************************************************************************/
 #ifndef XPERFORMANCEOVERLAY_H
 #define XPERFORMANCEOVERLAY_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -328,4 +330,7 @@ void XPerformanceOverlay_draw(XPerformanceOverlay* self, XPainter* painter);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPERFORMANCEOVERLAY_H */

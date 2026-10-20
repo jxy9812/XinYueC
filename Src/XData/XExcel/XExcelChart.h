@@ -7,6 +7,8 @@
  ******************************************************************************/
 #ifndef XEXCELCHART_H
 #define XEXCELCHART_H
+
+#if XEXCEL_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -234,5 +236,7 @@ bool XExcelChart_saveToXmlData(XExcelChart* self, uint8_t** outData, size_t* out
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XEXCEL_ON */
 
 #endif /* XEXCELCHART_H */

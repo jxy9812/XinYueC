@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XIMAGEREADER_H
 #define XIMAGEREADER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -541,5 +543,7 @@ void XImageReader_setAllocationLimit(int mbLimit);
 /* XClass create API default-memory wrappers. */
 #undef XImageReader_create
 #define XImageReader_create() XImageReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XIMAGEREADER_H */

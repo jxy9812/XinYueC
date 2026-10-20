@@ -6,6 +6,8 @@
 #ifndef XSQLRELATION_H
 #define XSQLRELATION_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -161,5 +163,7 @@ bool XSqlRelation_isValid(const XSqlRelation* relation);
 /* XClass create API default-memory wrappers. */
 #undef XSqlRelation_create
 #define XSqlRelation_create() XSqlRelation_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLRELATION_H */

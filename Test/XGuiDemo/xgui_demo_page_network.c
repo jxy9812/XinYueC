@@ -390,11 +390,13 @@ static void net_updateV6Label(void)
  *           控件显隐、信息区固定高（行数×16+8，回填行数驱动）与根
  *           布局中 IPv6 行的伸展因子，其余全部交给布局器：窗口宽窄、
  *           矮高均由 stretch/固定尺寸自适应（原「宽版/窄版」两套手写
- *           排布由同一布局结构承载）；显隐变更后经
- *           XWidget_updateGeometry 激活根布局重排（本框架子控件显隐
- *           不自动失效父布局）。展开态 IPv6 列表释放固定高、由伸展
- *           因子占满信息区腾出的全部空间（随窗口伸缩，替代原按根高
- *           截断行数的手写算法）。 */
+ *           排布由同一布局结构承载）。展开态 IPv6 列表释放固定高、由
+ *           伸展因子占满信息区腾出的全部空间（随窗口伸缩，替代原按根
+ *           高截断行数的手写算法）。
+ *           [LayoutRequest 2026-10-20] 显隐/setStretch/固定高变更均由
+ *           框架自动失效父布局并排队重排（setVisible 显隐联动 +
+ *           VXLayout_invalidate 收口 post），原手工
+ *           XWidget_updateGeometry(root) redundant，已删。 */
 static void net_relayout(void)
 {
     XWidget* root = s_net.m_root;
@@ -444,7 +446,6 @@ static void net_relayout(void)
         }
         /* IPv6 行在根布局中升为伸展条目（占标题/状态之外全部高度）。 */
         XBoxLayout_setStretch(&s_net.m_rootLayout, NET_ROOTITEM_V6ROW, 1);
-        XWidget_updateGeometry(root);
         return;
     }
     /* ---- 折叠：编辑视图整体显形 + 标准行高 ---- */
@@ -482,7 +483,6 @@ static void net_relayout(void)
     if (s_net.m_hintLabel) XWidget_show((XWidget*)s_net.m_hintLabel);
     XBoxLayout_setStretch(&s_net.m_rootLayout, NET_ROOTITEM_V6ROW, 0);
     net_updateV6Label();
-    XWidget_updateGeometry(root);
 }
 
 /** @brief 「展开全部 IPv6 / 收起」开关槽：切态 → 重排。 */

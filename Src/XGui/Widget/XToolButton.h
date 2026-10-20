@@ -22,6 +22,8 @@
 #ifndef XTOOLBUTTON_H
 #define XTOOLBUTTON_H
 
+#if XGUI_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -294,5 +296,7 @@ XSize XToolButton_minimumSizeHint(const XToolButton* self);
 void* XToolButton_triggered_signal(XToolButton* self, XAction* action);
 
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XTOOLBUTTON_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XTOOLBUTTON_H */

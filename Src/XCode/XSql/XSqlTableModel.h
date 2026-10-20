@@ -7,6 +7,8 @@
 #ifndef XSQLTABLEMODEL_H
 #define XSQLTABLEMODEL_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -420,5 +422,7 @@ void* XSqlTableModel_beforeDelete_signal(XSqlTableModel* model, int row);
 /* XClass create API default-memory wrappers. */
 #undef XSqlTableModel_create
 #define XSqlTableModel_create(...) XSqlTableModel_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, __VA_ARGS__)
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLTABLEMODEL_H */

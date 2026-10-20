@@ -9,6 +9,8 @@
  *             源/线上格式不一致或 zlib 需要连续源时才触碰), 不引入任何模块级状态。
  * @author     XinYueC 团队
  */
+#if XGUI_ON
+
 #include "XGuiRemoteCodec.h"
 
 #if XGUI_REMOTE_ON
@@ -748,3 +750,5 @@ int XGuiRemoteCodec_decodeTile(const uint8_t* encoded, size_t encodedBytes,
 }
 
 #endif /* XGUI_REMOTE_ON */
+
+#endif /* XGUI_ON */

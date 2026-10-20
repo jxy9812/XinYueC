@@ -7,6 +7,8 @@
  *             响应点击。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 #include "XStringUtils.h"
 
@@ -1847,3 +1849,5 @@ void XTabBar_moveTab(XTabBar* self, int from, int to)
 }
 
 #endif /* XWIDGET_ON && XTABBAR_ON */
+
+#endif /* XGUI_ON */

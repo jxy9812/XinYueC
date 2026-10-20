@@ -1,4 +1,6 @@
-﻿#include "XStyles.h"
+﻿#if XEXCEL_ON
+
+#include "XStyles.h"
 
 #include "XByteArray.h"
 #include "XFile.h"
@@ -804,3 +806,5 @@ bool XStyles_loadFromXmlFile(XStyles* self, const XString* filePath)
     XClassDelete(data);
     return ok;
 }
+
+#endif /* XEXCEL_ON */

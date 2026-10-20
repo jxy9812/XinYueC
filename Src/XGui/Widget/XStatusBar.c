@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XStatusBar.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -577,3 +579,5 @@ void* XStatusBar_messageChanged_signal(XStatusBar* self, const char* text)
 
 
 #endif /* XWIDGET_ON && XSTATUSBAR_ON */
+
+#endif /* XGUI_ON */

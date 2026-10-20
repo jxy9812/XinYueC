@@ -30,6 +30,8 @@
  *               与 XWidget 默认绘制路径保持一致。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XFrame.h"
 
 #include "XAlgorithm.h"
@@ -874,3 +876,5 @@ static void XFrame_updateFrameWidth(XFrame* self)
 
 
 #endif /* XWIDGET_ON && XFRAME_ON */
+
+#endif /* XGUI_ON */

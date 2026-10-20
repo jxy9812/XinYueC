@@ -1,4 +1,6 @@
-﻿#include "XWizard.h"
+﻿#if XGUI_ON
+
+#include "XWizard.h"
 #include "XStringList.h"
 #include "XStringUtils.h"
 #include "XMemory.h"
@@ -1557,3 +1559,5 @@ void XWizard_done(XWizard* self, int result)
 }
 
 #endif /* XWIDGET_ON && XDIALOG_ON && XWIZARD_ON */
+
+#endif /* XGUI_ON */

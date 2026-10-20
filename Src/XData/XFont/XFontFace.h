@@ -7,6 +7,8 @@
 #ifndef XFONTFACE_H
 #define XFONTFACE_H
 
+#if XFONT_FREETYPE_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -261,5 +263,7 @@ int XFontFace_bitmapGlyphRowBytes_base(const XFontFace* self,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XFONT_FREETYPE_ON */
 
 #endif /* XFONTFACE_H */

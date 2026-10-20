@@ -7,7 +7,11 @@
 #include "XString.h"
 #include <string.h>
 
-#define DEFAULT_CHUNK_SIZE 4096
+#ifndef DEFAULT_CHUNK_SIZE
+#define DEFAULT_CHUNK_SIZE 4096   /* ESP8266 合体固件以 -DDEFAULT_CHUNK_SIZE=1024 覆盖：
+                                   * 4KB chunk 在 console init 后仅剩 ~2.6KB 堆时创建
+                                   * 失败（真机 post-init 崩溃链一环），1024 头寸足够 */
+#endif
 
 // --- Helper Functions ---
 

@@ -6,6 +6,8 @@
  */
 #ifndef XXMLSTREAMREADER_H
 #define XXMLSTREAMREADER_H
+
+#if XXmlStream_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -1525,5 +1527,7 @@ XXmlStreamEntityResolver* XXmlStreamReader_entityResolver(const XXmlStreamReader
 /* XClass create API default-memory wrappers. */
 #undef XXmlStreamReader_create
 #define XXmlStreamReader_create() XXmlStreamReader_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XXmlStream_ON */
 
 #endif /* XXMLSTREAMREADER_H */

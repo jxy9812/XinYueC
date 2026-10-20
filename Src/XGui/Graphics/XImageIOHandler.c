@@ -3,6 +3,8 @@
  * @brief      XImageIOHandler 图像 IO 处理器基类实现（对标 Qt 6.8 QImageIOHandler）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XImageIOHandler.h"
 
 #include "XAlgorithm.h"
@@ -407,3 +409,5 @@ bool XImageIOHandler_allocateImage(const XSize* size, XImageFormat format, XImag
     XImage_init_ex(image, size->width, size->height, format);
     return !XImage_isNull(image);
 }
+
+#endif /* XGUI_ON */

@@ -10,6 +10,8 @@
  ******************************************************************************/
 #ifndef XIMAGEBUILTINPLUGIN_H
 #define XIMAGEBUILTINPLUGIN_H
+
+#if XGUI_ON
 #include "XGuiConfig.h"
 #if XIMAGEIOPLUGIN_ON
 
@@ -31,4 +33,7 @@ XImageIOPlugin* XImageBuiltinPlugin_instance(void);
 }
 #endif
 #endif /* XIMAGEIOPLUGIN_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XIMAGEBUILTINPLUGIN_H */

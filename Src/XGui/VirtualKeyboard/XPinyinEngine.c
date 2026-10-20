@@ -42,6 +42,8 @@
  *             XKEYBOARD_IME_PHRASE_ON 引用。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPinyinEngine.h"
 
 #if XKEYBOARD_IME_ON
@@ -1017,3 +1019,5 @@ const XKeyboardButtonCtrl* XPinyinEngine_ctrlMap(void)
 }
 
 #endif /* XKEYBOARD_IME_ON */
+
+#endif /* XGUI_ON */

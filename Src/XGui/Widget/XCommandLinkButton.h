@@ -24,6 +24,8 @@
  ******************************************************************************/
 #ifndef XCOMMANDLINKBUTTON_H
 #define XCOMMANDLINKBUTTON_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -254,4 +256,7 @@ void XCommandLinkButton_drawContents(XCommandLinkButton* self,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCOMMANDLINKBUTTON_H */

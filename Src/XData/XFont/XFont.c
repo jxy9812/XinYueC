@@ -3,6 +3,8 @@
  * @brief      XFont 字体类实现（对标 Qt 6.8 QFont）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XFONT_FREETYPE_ON
+
 #include "XFont.h"
 #if XFONT_FILE_ON && (XFONT_LVGL8_FILE_ON || XFONT_FT_FACE_ON)
 #include "XFile.h"
@@ -1250,3 +1252,5 @@ void XFont_swap(XFont* a, XFont* b)
     XClassSetVtable(a, XFont);
     XClassSetVtable(b, XFont);
 }
+
+#endif /* XFONT_FREETYPE_ON */

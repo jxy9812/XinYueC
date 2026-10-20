@@ -27,6 +27,8 @@
  ******************************************************************************/
 #ifndef XTEXTDOCUMENT_H
 #define XTEXTDOCUMENT_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -494,4 +496,7 @@ void* XTextDocument_undoCommandAdded_signal(XTextDocument* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XTEXTDOCUMENT_H */

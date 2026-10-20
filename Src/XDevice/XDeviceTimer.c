@@ -25,6 +25,8 @@ static XDeviceContext* VXDeviceTimer_open(XDevice* self,
 static void VXDeviceTimer_close(XDevice* self, XDeviceContext* handle);
 static bool VXDeviceTimer_setProperty(XDevice* self, XDeviceContext* handle,
     uint32_t property, const XVariant* value);
+static bool VXDeviceTimer_getProperty(XDevice* self, XDeviceContext* handle,
+    uint32_t property, XVariant* value);
 static bool VXDeviceTimer_control(XDevice* self, XDeviceContext* handle,
     uint32_t command, const XVarList* in, XVarList* out);
 
@@ -129,6 +131,7 @@ XVtable* XDeviceTimer_class_init(void)
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Open, VXDeviceTimer_open);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Close, VXDeviceTimer_close);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_SetProperty, VXDeviceTimer_setProperty);
+    XVTABLE_OVERLOAD_DEFAULT(EXDevice_GetProperty, VXDeviceTimer_getProperty);
     XVTABLE_OVERLOAD_DEFAULT(EXDevice_Control, VXDeviceTimer_control);
     XCLASS_SET_CLASS_NAME_DEFAULT("timer");
     XCLASS_SHOW_SIZE_DEFAULT(XDeviceTimer);
@@ -423,6 +426,43 @@ static bool VXDeviceTimer_setProperty(XDevice* self, XDeviceContext* handle,
     }
     context->m_base.m_lastError = (int16_t)XDeviceError_None;
     return true;
+}
+
+/**
+ * @brief 读取定时器属性。
+ * @details 与 VXDeviceTimer_setProperty 对称：把上下文中已生效的定时器参数
+ *          原样读回，Callback 与 UserData 以借用指针形式返回。
+ */
+static bool VXDeviceTimer_getProperty(XDevice* self, XDeviceContext* handle,
+    uint32_t property, XVariant* value)
+{
+    XDeviceTimerContext* context = timerContext(handle);
+    union {
+        void* data;
+        XDeviceTimerCallback callback;
+    } callbackValue;
+    (void)self;
+    if (!context || !value) return false;
+    switch (property) {
+    case XDeviceTimerProperty_TimerType:
+        XVariant_setValue_int(value, (int)context->m_timerType);
+        return true;
+    case XDeviceTimerProperty_IntervalNs:
+        XVariant_setValue_int64(value, (int64_t)context->m_intervalNs);
+        return true;
+    case XDeviceTimerProperty_Callback:
+        callbackValue.callback = context->m_callback;
+        XVariant_setValue_ptr(value, callbackValue.data);
+        return true;
+    case XDeviceTimerProperty_UserData:
+        XVariant_setValue_ptr(value, context->m_userData);
+        return true;
+    case XDeviceTimerProperty_Active:
+        XVariant_setValue_bool(value, context->m_active != 0);
+        return true;
+    default:
+        return false;
+    }
 }
 
 static bool VXDeviceTimer_control(XDevice* self, XDeviceContext* handle,

@@ -8,6 +8,8 @@
 #ifndef XSQLMYSQLCLIENT_H
 #define XSQLMYSQLCLIENT_H
 
+#if XSQL_ON
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -224,5 +226,7 @@ const XSqlMySqlClientApi* XSqlMySqlClient_defaultApi(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XSQL_ON */
 
 #endif /* XSQLMYSQLCLIENT_H */

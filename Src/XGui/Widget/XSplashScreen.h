@@ -18,6 +18,8 @@
  */
 #ifndef XSPLASHSCREEN_H
 #define XSPLASHSCREEN_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -119,4 +121,7 @@ void* XSplashScreen_messageChanged_signal(XSplashScreen* self,
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSPLASHSCREEN_H */

@@ -13,6 +13,8 @@
 #ifndef XFONTFT_H
 #define XFONTFT_H
 
+#if XFONT_FREETYPE_ON
+
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -134,5 +136,7 @@ uint32_t XFontFt_hintMinPx(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XFONT_FREETYPE_ON */
 
 #endif /* XFONTFT_H */

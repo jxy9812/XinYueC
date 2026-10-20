@@ -12,6 +12,8 @@
  */
 #ifndef XDIALOG_H
 #define XDIALOG_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -228,5 +230,7 @@ void* XDialog_finished_signal(XDialog* self, int result);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XDIALOG_H */

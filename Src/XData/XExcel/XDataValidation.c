@@ -3,6 +3,8 @@
  * @brief      XDataValidation 数据验证类实现（对标 QXlsx::DataValidation）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XDataValidation.h"
 #include <stdlib.h>
 
@@ -217,3 +219,5 @@ XCellRange* XDataValidation_ranges(const XDataValidation* self, int* count) {
     if (count) *count = XDataValidation_rangesCount(self);
     return (self && self->m_ranges) ? (XCellRange*)XVector_data(self->m_ranges) : NULL;
 }
+
+#endif /* XEXCEL_ON */

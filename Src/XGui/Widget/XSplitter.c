@@ -13,6 +13,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XSplitter.h"
 #include "XSplitterHandle.h"
 #include "XRubberBand.h"
@@ -1552,3 +1554,5 @@ void* XSplitter_handleClicked_signal(XSplitter* self, int index,
 }
 
 #endif /* XWIDGET_ON && XFRAME_ON && XSPLITTER_ON */
+
+#endif /* XGUI_ON */

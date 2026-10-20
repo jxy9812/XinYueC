@@ -1011,6 +1011,10 @@ static void test_client_offline_error(void)
     XCoreApplication_processEvents(XEventLoop_AllEvents);
 }
 
+/* 本文件不 include XProtocolTest.h，聚合入口先调用后定义：C 未开隐式声明时
+   按 int() 假设，与下方 void(XVariant*) 定义冲突报 C2371。此处前置原型。 */
+void XModbusServerCoverageTest(XVariant* data);
+
 /** 服务端覆盖组聚合入口（注册于 XModbus 菜单）。 */
 int XModbusCoverageTest_run(void)
 {

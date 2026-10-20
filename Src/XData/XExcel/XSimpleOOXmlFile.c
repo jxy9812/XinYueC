@@ -1,4 +1,6 @@
-﻿#include "XSimpleOOXmlFile.h"
+﻿#if XEXCEL_ON
+
+#include "XSimpleOOXmlFile.h"
 #include "XMemory.h"
 #include "XFile.h"
 #include "XByteArray.h"
@@ -93,3 +95,5 @@ bool XSimpleOOXmlFile_loadFromXmlFile(XSimpleOOXmlFile* self, const XString* fil
     if (allData) XClassDelete(allData);
     return result;
 }
+
+#endif /* XEXCEL_ON */

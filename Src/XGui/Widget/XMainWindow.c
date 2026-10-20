@@ -1,4 +1,6 @@
-﻿#include "XMainWindow.h"
+﻿#if XGUI_ON
+
+#include "XMainWindow.h"
 #include "XMemory.h"
 #include "XEvent.h"
 #include "XGuiConfig.h"
@@ -2356,3 +2358,5 @@ bool XMainWindow_restoreState(XMainWindow* self, const XString* state)
 }
 
 #endif /* XWIDGET_ON && XMAINWINDOW_ON */
+
+#endif /* XGUI_ON */

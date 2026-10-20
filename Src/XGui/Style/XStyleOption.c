@@ -1,4 +1,6 @@
-﻿#include "XStyleOption.h"
+﻿#if XGUI_ON
+
+#include "XStyleOption.h"
 #include "XMemory.h"
 
 #include "XAlgorithm.h"
@@ -121,3 +123,5 @@ void XStyleOptionTitleBar_init(XStyleOptionTitleBar* option, int type)
 }
 
 #endif /* XSTYLE_ON */
+
+#endif /* XGUI_ON */

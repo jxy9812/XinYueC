@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XScrollBar.h"
 #include "XStyle.h"
 #include "XStyleOption.h"
@@ -595,3 +597,5 @@ XMenu* XScrollBar_createStandardContextMenu(XScrollBar* self)
 }
 
 #endif /* XWIDGET_ON && XABSTRACTSLIDER_ON && XSCROLLBAR_ON */
+
+#endif /* XGUI_ON */

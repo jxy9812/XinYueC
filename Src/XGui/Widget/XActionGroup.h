@@ -34,6 +34,8 @@
  */
 #ifndef XACTIONGROUP_H
 #define XACTIONGROUP_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -290,4 +292,7 @@ void* XActionGroup_hovered_signal(XActionGroup* self, XAction* action);
 }
 #endif
 #endif /* XWIDGET_ON && XACTION_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XACTIONGROUP_H */

@@ -20,6 +20,8 @@
  */
 #ifndef XTOOLBOX_H
 #define XTOOLBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -179,5 +181,7 @@ void* XToolBox_currentChanged_signal(XToolBox* self, int index);
 }
 #endif
 #endif /* XWIDGET_ON && XFRAME_ON && XTOOLBOX_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XTOOLBOX_H */

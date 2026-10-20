@@ -19,6 +19,8 @@
  ******************************************************************************/
 #ifndef XSLIDER_H
 #define XSLIDER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -146,4 +148,7 @@ void XSlider_setTickInterval(XSlider* self, int interval);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XSLIDER_H */

@@ -3,6 +3,8 @@
  * @brief      XMimeData 剪贴板 MIME 数据容器实现（对标 Qt 6.8 QMimeData）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XMimeData.h"
 
 #include "XAlgorithm.h"
@@ -645,3 +647,5 @@ bool XMimeData_removeFormat(XMimeData* self, const char* format)
 }
 
 #endif /* XMIMEDATA_ON */
+
+#endif /* XGUI_ON */

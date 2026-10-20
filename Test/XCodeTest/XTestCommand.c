@@ -16,6 +16,9 @@
 #include "XCryptographicPrimitiveTest.h"
 #include "XSslTest.h"
 #include "XProtocolTest.h"
+#include "XLinkTest.h"
+#include "XNtpTest.h"
+#include "XDdnsTest.h"
 #include "XSshTelnetClientTest.h"
 #include "XProcessTest.h"
 #include "XTestMenuTest.h"
@@ -59,6 +62,26 @@ static int xtest_run_named(XConsoleShell* shell, const char* name)
     } else if (strcmp(name, "modbus-server-fc") == 0) {
         /* [补充 2026-10-15] Modbus 服务端 FC 全量覆盖（含远程 IO 掉线回归锁） */
         result = XModbusCoverageTest_run();
+    } else if (strcmp(name, "xmqtt-tcp-interop") == 0) {
+        result = XMqttTcpInteropTest_run();
+#if XPROTOCOL_ON && XLINK_ON
+    /* XLink 私有应用层协议（控制进程 <-> GUI 进程 消息互通）。 */
+    } else if (strcmp(name, "xlink") == 0) {
+        result = XLinkTest_run() == 0;
+    /* 质量门禁：内存泄漏 / 性能基准 / 边界与对抗。 */
+    } else if (strcmp(name, "xlink-quality") == 0) {
+        result = XLinkQualityTest_run() == 0;
+#endif
+#if XPROTOCOL_ON && XNTP_ON
+    /* XNtp SNTP 客户端（应用内校时）。 */
+    } else if (strcmp(name, "ntp") == 0) {
+        result = XNtpTest_run() == 0;
+#endif
+#if XPROTOCOL_ON && XDDNS_ON
+    /* XDdns 动态域名解析客户端（厂商抽象 + 阿里云）。 */
+    } else if (strcmp(name, "ddns") == 0) {
+        result = XDdnsTest_run() == 0;
+#endif
     } else {
         return XConsoleResult_UnknownCommand;
     }
@@ -77,6 +100,10 @@ static int xtest_run_all(XConsoleShell* shell)
     bool ssl = XSslTest_runAll();
     bool mqtt = XMqttTest_runAll();
     bool result = process && shellTest && backend && protocolClients && cryptographic && ssl && mqtt;
+#if XPROTOCOL_ON && XLINK_ON
+    /* XLink 私有协议回归并入全量闸门。 */
+    result = result && (XLinkTest_run() == 0);
+#endif
     if (!xtest_write(shell, result ? "Test all PASS\n" : "Test all FAIL\n"))
         return XConsoleResult_IoError;
     return result ? XConsoleResult_Ok : XConsoleResult_Failed;

@@ -19,6 +19,8 @@
  ******************************************************************************/
 #ifndef XCLIPBOARD_H
 #define XCLIPBOARD_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -332,4 +334,7 @@ void* XClipboard_dataChanged_signal(XClipboard* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XCLIPBOARD_H */

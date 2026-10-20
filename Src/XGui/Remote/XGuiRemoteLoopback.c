@@ -15,6 +15,8 @@
  *                 仅经由共享块内的锁与存活标志。
  * @author     XinYueC 团队
  */
+#if XGUI_ON
+
 #include "XGuiRemoteLoopback.h"
 #if XGUI_REMOTE_ON
 
@@ -427,3 +429,5 @@ void XGuiRemoteLoopbackDevice_shutdown(XGuiRemoteLoopbackDevice* self)
 }
 
 #endif /* XGUI_REMOTE_ON */
+
+#endif /* XGUI_ON */

@@ -8,6 +8,8 @@
  ******************************************************************************/
 #ifndef XWIDGET_PROTECTED_H
 #define XWIDGET_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -296,4 +298,7 @@ XWidget* XWidget_applicationModalWidget(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XWIDGET_PROTECTED_H */

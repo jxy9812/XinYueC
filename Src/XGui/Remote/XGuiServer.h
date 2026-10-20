@@ -21,6 +21,8 @@
  */
 #ifndef XGUISERVER_H
 #define XGUISERVER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -483,5 +485,7 @@ void* XGuiServer_fbMetaChanged_signal(XGuiServer* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
 
 #endif /* XGUISERVER_H */

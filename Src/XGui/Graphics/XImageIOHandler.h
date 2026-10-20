@@ -6,6 +6,8 @@
  ******************************************************************************/
 #ifndef XIMAGEIOHANDLER_H
 #define XIMAGEIOHANDLER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -358,5 +360,7 @@ bool XImageIOHandler_checkAllocation(const XSize* size, XImageFormat format);
 /* XClass create API default-memory wrappers. */
 #undef XImageIOHandler_create
 #define XImageIOHandler_create() XImageIOHandler_create_ex(XCLASS_DEFAULT_MEMORY_TYPE)
+
+#endif /* XGUI_ON */
 
 #endif /* XIMAGEIOHANDLER_H */

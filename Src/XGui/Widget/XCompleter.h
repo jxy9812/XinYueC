@@ -38,6 +38,8 @@
  */
 #ifndef XCOMPLETER_H
 #define XCOMPLETER_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -601,4 +603,7 @@ void* XCompleter_activatedIndex_signal(XCompleter* self, int row, int col);
 }
 #endif
 #endif /* XWIDGET_ON && XTABLEWIDGET_ON */
+
+#endif /* XGUI_ON */
+
 #endif /* XCOMPLETER_H */

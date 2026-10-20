@@ -3,6 +3,8 @@
  * @brief      XWorkbook 工作簿类实现（对标 QXlsx::Workbook）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XWorkbook.h"
 #include "XWorksheet.h"
 #include "XChartsheet.h"
@@ -730,3 +732,5 @@ XAbstractSheet* XWorkbook_addSheet_utf8(XWorkbook* self, const char* name, XAbst
     if (s) XClassDelete(s);
     return result;
 }
+
+#endif /* XEXCEL_ON */

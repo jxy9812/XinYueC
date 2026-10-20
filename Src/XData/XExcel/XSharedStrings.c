@@ -1,4 +1,6 @@
-﻿#include "XSharedStrings.h"
+﻿#if XEXCEL_ON
+
+#include "XSharedStrings.h"
 #include "XXmlStreamReader.h"
 #include "XMemory.h"
 #include "XFile.h"
@@ -651,3 +653,5 @@ bool XSharedStrings_loadFromXmlFile(XSharedStrings* self, const XString* filePat
     XClassDelete(allData);
     return result;
 }
+
+#endif /* XEXCEL_ON */

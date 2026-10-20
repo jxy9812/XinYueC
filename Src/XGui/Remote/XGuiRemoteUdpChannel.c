@@ -23,6 +23,8 @@
  *                 重传缓存(角色创建时定版, 互斥使用)。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XGuiRemoteUdpChannel.h"
 
 #if XGUI_REMOTE_ON
@@ -1229,3 +1231,5 @@ void XGuiRemoteUdp_stageProfBytes(const char* tag, uint32_t n)
 }
 
 #endif /* XGUI_REMOTE_ON */
+
+#endif /* XGUI_ON */

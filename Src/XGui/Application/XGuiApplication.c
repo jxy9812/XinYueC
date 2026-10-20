@@ -44,6 +44,8 @@
  *             空实现/返回 NULL。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XGuiApplication.h"
 #include "XPlatformNativeWindow.h"
 
@@ -1952,3 +1954,5 @@ void* XGuiApplication_fontChanged_signal(XGuiApplication* app, XFont* font)
 }
 
 #endif /* XGUIAPPLICATION_ON */
+
+#endif /* XGUI_ON */

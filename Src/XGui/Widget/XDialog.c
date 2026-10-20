@@ -6,6 +6,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XDialog.h"
 #include "XMemory.h"
 #include "XEvent.h"
@@ -1429,3 +1431,5 @@ void* XDialog_finished_signal(XDialog* self, int result)
 
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#endif /* XGUI_ON */

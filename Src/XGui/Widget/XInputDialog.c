@@ -10,6 +10,8 @@
  * @author     XinYueC 团队
  */
 
+#if XGUI_ON
+
 #include "XInputDialog.h"
 
 #include "XGuiConfig.h"
@@ -1395,3 +1397,5 @@ void* XInputDialog_comboBoxTextValueSelected_signal(XInputDialog* self,
 }
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#endif /* XGUI_ON */

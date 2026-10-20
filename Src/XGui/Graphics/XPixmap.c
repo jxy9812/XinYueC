@@ -3,6 +3,8 @@
  * @brief      XPixmap 像素图类实现（对标 Qt 6.8 QPixmap）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XPixmap.h"
 
 #include "XAlgorithm.h"
@@ -1149,3 +1151,5 @@ XPaintDevice* XPixmap_paintDevice(XPixmap* self)
     return XImage_paintDevice(&d->m_image);
 }
 #endif /* XPAINTDEVICE_ON */
+
+#endif /* XGUI_ON */

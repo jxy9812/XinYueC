@@ -28,6 +28,8 @@
  *             会错位越界（对标 Qt qdrawhelper 的 24bpp 逐字节 store）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XRenderKernel.h"
 #include <stddef.h> /* size_t */
 #include <math.h>   /* pow：字形覆盖率 γ LUT 的惰性一次性构建 */
@@ -499,3 +501,5 @@ void XRenderKernel_registerRgb888(void)
 }
 
 #endif /* XPAINTER_ON && (XRENDERKERNEL_RGB888_ON || XRENDERKERNEL_BGR888_ON) */
+
+#endif /* XGUI_ON */

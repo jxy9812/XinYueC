@@ -7,6 +7,8 @@
  */
 #ifndef XPLATFORMACCESSIBILITY_H
 #define XPLATFORMACCESSIBILITY_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -134,4 +136,7 @@ void XPlatformAccessibilityDriver_processEvents(void* nativeState);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XPLATFORMACCESSIBILITY_H */

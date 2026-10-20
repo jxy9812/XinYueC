@@ -16,6 +16,8 @@
  * @note       模块开关 XGUI_REMOTE_ON 见 XGuiRemoteProto.h。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "XGuiRemoteAuth.h"
 
 #if XGUI_REMOTE_ON
@@ -241,3 +243,5 @@ bool XGuiRemoteAuth_clientComputeResponse(const char* passwordUtf8,
 }
 
 #endif /* XGUI_REMOTE_ON */
+
+#endif /* XGUI_ON */

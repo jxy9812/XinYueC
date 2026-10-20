@@ -15,6 +15,8 @@
  ******************************************************************************/
 #ifndef XLAYOUT_INTERNAL_H
 #define XLAYOUT_INTERNAL_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -165,4 +167,7 @@ XMargins XLayout_layoutMargins(const XLayout* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XLAYOUT_INTERNAL_H */

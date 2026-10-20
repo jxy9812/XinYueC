@@ -228,8 +228,22 @@ static void xmemory_system_free(void* ptr)
 #define XMEMORY_SLOT_SYSTEM {xmemory_system_malloc,xmemory_system_free,xmemory_system_realloc,xmemory_system_calloc}
 #elif defined(__FreeRTOS__)
 #include"FreeRTOS.h"
+/* 2 参槽包装：ReallocMethod/CallocMethod 是 2 参函数指针，而 isMalloc 实现为
+ * 3 参（末参 type）。经 2 参槽直接调 3 参实现时，xtensa 窗口化尾调用（jx）
+ * 会把 type 所在的 a4 复用为跳转目标寄存器 → isMalloc 读到垃圾 type →
+ * global_Memory[type] 越界 → 野指针跳转（ESP8266 真机：Fatal exception 0
+ * IllegalInstructionCause epc1=0xbaa9e7b8）。以 2 参包装承接槽调用，再以
+ * 普通 call 显式 3 参直调 isMalloc，type 正确经 a4 传递。 */
+static void* __attribute__((unused)) xmemory_realloc_slot(void* ptr, size_t size)
+{
+	return XMemory_realloc_isMalloc(ptr, size, XMEMORY_TYPE_SYSTEM);
+}
+static void* __attribute__((unused)) xmemory_calloc_slot(size_t count, size_t size)
+{
+	return XMemory_calloc_isMalloc(count, size, XMEMORY_TYPE_SYSTEM);
+}
 /* FreeRTOS：系统槽 = RTOS 堆（pvPortMalloc/vPortFree，heap_1~5 五选一提供实现） */
-#define XMEMORY_SLOT_SYSTEM { pvPortMalloc,vPortFree,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc }
+#define XMEMORY_SLOT_SYSTEM { pvPortMalloc,vPortFree,xmemory_realloc_slot,xmemory_calloc_slot }
 #else//裸机环境
 #if XMEMORY_VARIABLEPOOL_ON
 /* 裸机：无 RTOS 堆，系统槽默认接入全局可变池（.bss 静态 arena，零堆依赖），
@@ -239,7 +253,7 @@ static void xmemory_system_free(void* ptr)
 #else
 /* 裸机且可变池被裁：系统级分配不可用，固件需经 XMemory_setMethod 接入
  * 自定义后端（按槽位类型选择）。 */
-#define XMEMORY_SLOT_SYSTEM { NULL,NULL,XMemory_realloc_isMalloc,XMemory_calloc_isMalloc }
+#define XMEMORY_SLOT_SYSTEM { NULL,NULL,xmemory_realloc_slot,xmemory_calloc_slot }
 #endif
 #endif
 
@@ -266,6 +280,136 @@ static void xmemory_system_free(void* ptr)
 #define XMEMORY_SLOT_HYBRID XMEMORY_SLOT_SYSTEM
 #endif
 
+/* ============================================================================
+ * 分配尺寸直方图（XM_HISTO_ON，默认 0 = 不编译，零开销）
+ * ============================================================================
+ * 分档按多级池的块尺寸走（32/64/128/256/512/1024/+），溢出并入 "big" 桶。
+ * 只统计「申请次数」与「申请字节数」，不做 per-pointer 记账，因此不需要与
+ * free 侧对称，也就不干扰 XMemory 自身的账本。 */
+#ifndef XM_HISTO_ON
+#define XM_HISTO_ON 0
+#endif
+
+#if XM_HISTO_ON
+/* 末位桶 = >1024B */
+#define XMEMORY_HISTO_BINS 6
+static unsigned long xmemory_histo_count[XMEMORY_HISTO_BINS];
+static unsigned long xmemory_histo_bytes[XMEMORY_HISTO_BINS];
+static unsigned long xmemory_histo_fail[XMEMORY_HISTO_BINS];
+static size_t xmemory_histo_big = (size_t)-1;
+static unsigned long xmemory_histo_big_count;
+static unsigned long xmemory_histo_big_fail;
+
+/* 求档（溢出并入 XMEMORY_HISTO_BINS 这个「末位桶」下标）。成功与失败记账
+ * 共用同一函数，故失败必然落在与成功相同的档。 */
+static unsigned xmemory_histogram_bin(size_t size)
+{
+	unsigned b = 0;
+	size_t cap = 32;
+	while (cap < size && b + 1 < XMEMORY_HISTO_BINS) { cap <<= 1; ++b; }
+	return (cap < size) ? XMEMORY_HISTO_BINS : b;
+}
+
+static void xmemory_histogram_bump(size_t size)
+{
+	unsigned b = xmemory_histogram_bin(size);
+	if (b >= XMEMORY_HISTO_BINS) { xmemory_histo_big_count++; xmemory_histo_big += size; return; }
+	xmemory_histo_count[b]++;
+	xmemory_histo_bytes[b] += size;
+}
+
+/* 分配失败计数。XMultiPool_malloc 找不到档位或档位耗尽时直接 return NULL
+ * 且【不回退】可变池（XMultiPool.c:145-159），可变池 arena 用尽时同理。
+ * 不打这个计数就分不清「GUI 逐拍重绘失败」是池被打空还是别的原因。 */
+static void xmemory_histogram_bump_fail(size_t size)
+{
+	unsigned b = xmemory_histogram_bin(size);
+	if (b >= XMEMORY_HISTO_BINS) { xmemory_histo_big_fail++; return; }
+	xmemory_histo_fail[b]++;
+}
+
+/* 释放侧直方图（2026-10-19 泄漏定位）：free 路径拿不到原始 size，但
+ * XMultiPool/XVariablePool 都能回查块的实际大小，于是
+ * 「申请数 - 释放数」按尺寸档相减 = 每个尺寸档的净泄漏。
+ * 只有 XM_HISTO_ON 打开时才有额外开销。 */
+static unsigned long xmemory_histo_free_count[XMEMORY_HISTO_BINS];
+static unsigned long xmemory_histo_free_bytes[XMEMORY_HISTO_BINS];
+static unsigned long xmemory_histo_big_free_count;
+
+static void xmemory_histogram_bump_free(size_t size)
+{
+	unsigned b = xmemory_histogram_bin(size);
+	if (b >= XMEMORY_HISTO_BINS) { xmemory_histo_big_free_count++; return; }
+	xmemory_histo_free_count[b]++;
+	xmemory_histo_free_bytes[b] += size;
+}
+
+bool XMemory_histogram(unsigned int bin, unsigned long* outCount, unsigned long* outBytes)
+{
+	if (outCount) *outCount = 0;
+	if (outBytes) *outBytes = 0;
+	if (bin >= XMEMORY_HISTO_BINS) return false;
+	if (outCount) *outCount = xmemory_histo_count[bin];
+	if (outBytes) *outBytes = xmemory_histo_bytes[bin];
+	return xmemory_histo_count[bin] != 0;
+}
+
+unsigned long XMemory_histogram_fail(unsigned int bin)
+{
+	if (bin >= XMEMORY_HISTO_BINS) return xmemory_histo_big_fail;
+	return xmemory_histo_fail[bin];
+}
+
+bool XMemory_histogram_big(unsigned long* outCount, unsigned long* outBytes)
+{
+	if (outCount) *outCount = 0;
+	if (outBytes) *outBytes = 0;
+	if (outCount) *outCount = xmemory_histo_big_count;
+	if (outBytes) *outBytes = (unsigned long)xmemory_histo_big;
+	return xmemory_histo_big_count != 0;
+}
+
+bool XMemory_histogram_free(unsigned int bin, unsigned long* outCount, unsigned long* outBytes)
+{
+	if (outCount) *outCount = 0;
+	if (outBytes) *outBytes = 0;
+	if (bin >= XMEMORY_HISTO_BINS) return false;
+	if (outCount) *outCount = xmemory_histo_free_count[bin];
+	if (outBytes) *outBytes = xmemory_histo_free_bytes[bin];
+	return xmemory_histo_free_count[bin] != 0;
+}
+#else /* XM_HISTO_ON == 0 */
+
+bool XMemory_histogram(unsigned int bin, unsigned long* outCount, unsigned long* outBytes)
+{
+	(void)bin;
+	if (outCount) *outCount = 0;
+	if (outBytes) *outBytes = 0;
+	return false;
+}
+
+unsigned long XMemory_histogram_fail(unsigned int bin)
+{
+	(void)bin;
+	return 0;
+}
+
+bool XMemory_histogram_big(unsigned long* outCount, unsigned long* outBytes)
+{
+	if (outCount) *outCount = 0;
+	if (outBytes) *outBytes = 0;
+	return false;
+}
+
+bool XMemory_histogram_free(unsigned int bin, unsigned long* outCount, unsigned long* outBytes)
+{
+	(void)bin;
+	if (outCount) *outCount = 0;
+	if (outBytes) *outBytes = 0;
+	return false;
+}
+#endif /* XM_HISTO_ON */
+
 static XMemory global_Memory[] = {
 	XMEMORY_SLOT_SYSTEM,         /* [0] XMEMORY_TYPE_SYSTEM      */
 	XMEMORY_SLOT_MULTIPOOL,      /* [1] XMEMORY_TYPE_MULTIPOOL   */
@@ -278,21 +422,44 @@ static XMemory global_Memory[] = {
  * 双重清账（账本只能挂在一层）。 */
 void* XMemory_malloc(size_t size, XMemoryType type)
 {
-	return global_Memory[type].malloc(size);
+#if XM_HISTO_ON
+	/* 一次性尺寸直方图（默认 0 不编译）：分发层是全部 XMalloc_* 槽位的
+	 * 唯一收口，挂在这一层即可覆盖框架对象、lwip 与裸 malloc 的所有申请。
+	 * 固件侧用 XMemory_histogram_dump() 在启动后打一次，用真实分布回头调
+	 * XMP_GLOBAL_C32/C64/C128 的块数。 */
+	xmemory_histogram_bump(size);
+#endif
+	{
+		/* 槽位可能为空：裸机且可变池也被裁、未经 XMemory_setMethod 接入自定义
+		 * 后端时系统槽无堆可用（槽位表注释所述的唯一例外）。判空返回 NULL，
+		 * 让调用方走自己的兜底，而不是空函数指针跳转。 */
+		MallocMethod method = global_Memory[type].malloc;
+		void* p = method ? method(size) : NULL;
+#if XM_HISTO_ON
+		if (!p)
+			xmemory_histogram_bump_fail(size);
+#endif
+		return p;
+	}
 }
 void* XMemory_realloc(void* ptr, size_t size, XMemoryType type)
 {
-	return global_Memory[type].realloc(ptr, size);
+	ReallocMethod method = global_Memory[type].realloc;
+	return method ? method(ptr, size) : NULL;
 }
 
 void* XMemory_calloc(size_t count, size_t size, XMemoryType type)
 {
-	return global_Memory[type].calloc(count, size);
+	CallocMethod method = global_Memory[type].calloc;
+	return method ? method(count, size) : NULL;
 }
 
 void XMemory_free(void* ptr, XMemoryType type)
 {
-	global_Memory[type].free(ptr);
+	FreeMethod method = global_Memory[type].free;
+	if (method) {
+		method(ptr);
+	}
 }
 void* XMalloc_System(size_t size)
 {
@@ -523,12 +690,17 @@ void* XMemory_calloc_isMalloc(size_t count, size_t size, XMemoryType type)
 
 #if XMEMORY_HYBRID_ON
 static void* hybrid_malloc(size_t size) {
+#if XMEMORY_MULTIPOOL_ON
 	if (size <= XMEMORY_HYBRID_THRESHOLD) {
-		return XMemory_malloc(size, XMEMORY_TYPE_MULTIPOOL);
+		void* ptr = XMemory_malloc(size, XMEMORY_TYPE_MULTIPOOL);
+		// 快路径没命中（档位缺失或该档耗尽）时回退变量池：池化本该是加速，
+		// 不能因为池满就让分配硬失败（嵌入式小内存平台上这一条能直接掐死应用链）
+		if (ptr != NULL) {
+			return ptr;
+		}
 	}
-	else {
-		return XMalloc_System(size);
-	}
+#endif
+	return XMalloc_System(size);
 }
 
 static void hybrid_free(void* ptr)
@@ -539,6 +711,10 @@ static void hybrid_free(void* ptr)
 	// 利用 XMultiPool_is_from_pool 来判断指针来源
 	// 注意: 这里传入了全局池实例
 	if (XMultiPool_is_from_pool(XMultiPool_global(), ptr)) {
+#if XM_HISTO_ON
+		/* 释放侧直方图：回查块大小以定位净泄漏的尺寸档 */
+		xmemory_histogram_bump_free(XMultiPool_getMaxUserSize(XMultiPool_global(), ptr));
+#endif
 		XFree_MultiPool(ptr);
 		return;
 	}
@@ -548,6 +724,9 @@ static void hybrid_free(void* ptr)
 	// 池未初始化则不可能是其块
 	if (XVariablePool_global_isInited() &&
 	    XVariablePool_is_from_pool(XVariablePool_global(), ptr)) {
+#if XM_HISTO_ON
+		xmemory_histogram_bump_free(XVariablePool_getMaxUserSize(XVariablePool_global(), ptr));
+#endif
 		XFree_VariablePool(ptr);
 		return;
 	}
@@ -571,7 +750,18 @@ static void* hybrid_realloc(void* ptr, size_t size)
 		if (XMultiPool_is_from_pool(global_pool, ptr)) {
 			if (size <= XMEMORY_HYBRID_THRESHOLD) {
 				// 原块和新块都适合 XMultiPool
-				return XMultiPool_global_realloc(ptr, size);
+				void* new_ptr = XMultiPool_global_realloc(ptr, size);
+				if (new_ptr != NULL) {
+					return new_ptr;
+				}
+				// 池内 realloc 失败（耗尽）→ 回退变量池并搬运，原块释放
+				size_t old_user_size = XMultiPool_getMaxUserSize(global_pool, ptr);
+				new_ptr = XMalloc_System(size);
+				if (new_ptr != NULL) {
+					memcpy(new_ptr, ptr, (old_user_size < size) ? old_user_size : size);
+					XFree_MultiPool(ptr);
+				}
+				return new_ptr;
 			}
 			else {
 				// 原块来自 XMultiPool，但新块太大，需要迁移到系统堆
@@ -594,7 +784,18 @@ static void* hybrid_realloc(void* ptr, size_t size)
 		if (global_pool && XVariablePool_is_from_pool(global_pool, ptr)) {
 			if (size <= XMEMORY_HYBRID_THRESHOLD) {
 				// 原块和新块都留在可变池
-				return XVariablePool_global_realloc(ptr, size);
+				void* new_ptr = XVariablePool_global_realloc(ptr, size);
+				if (new_ptr != NULL) {
+					return new_ptr;
+				}
+				// 可变池 realloc 失败 → 回退系统堆并搬运，原块释放
+				size_t old_user_size = XVariablePool_getMaxUserSize(global_pool, ptr);
+				new_ptr = XMalloc_System(size);
+				if (new_ptr != NULL) {
+					memcpy(new_ptr, ptr, (old_user_size < size) ? old_user_size : size);
+					XFree_VariablePool(ptr);
+				}
+				return new_ptr;
 			}
 			else {
 				// 原块来自可变池，但新块太大，需要迁移到系统堆
@@ -618,8 +819,10 @@ static void* hybrid_realloc(void* ptr, size_t size)
 				// 对于系统堆的指针，无法知道确切大小，这是一个已知限制。
 				memcpy(new_ptr, ptr, size);
 				XFree_System(ptr);
+				return new_ptr;
 			}
-			return new_ptr;
+			// 池不可用 → 留在系统堆 realloc，不能丢原块后返回 NULL
+			return XRealloc_System(ptr, size);
 		}
 		else {
 			// 原块和新块都适合系统堆
@@ -633,11 +836,15 @@ static void* hybrid_calloc(size_t count, size_t size) {
 	if (count > SIZE_MAX / size) return NULL; // 防止溢出
 
 	size_t total_size = count * size;
+#if XMEMORY_MULTIPOOL_ON
 	if (total_size <= XMEMORY_HYBRID_THRESHOLD) {
-		return XMemory_calloc(count, size, XMEMORY_TYPE_MULTIPOOL);
+		void* ptr = XMemory_calloc(count, size, XMEMORY_TYPE_MULTIPOOL);
+		if (ptr != NULL) {
+			return ptr;
+		}
+		// 同 hybrid_malloc：池不可用时走慢路径，而不是返回 NULL
 	}
-	else {
-		return XCalloc_System(count, size);
-	}
+#endif
+	return XCalloc_System(count, size);
 }
 #endif /* XMEMORY_HYBRID_ON */

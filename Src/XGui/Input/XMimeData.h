@@ -15,6 +15,8 @@
  ******************************************************************************/
 #ifndef XMIMEDATA_H
 #define XMIMEDATA_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -293,4 +295,7 @@ bool XMimeData_removeFormat(XMimeData* self, const char* format);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XMIMEDATA_H */

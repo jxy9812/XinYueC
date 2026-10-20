@@ -8,6 +8,8 @@
  */
 #ifndef XFUSIONSTYLE_H
 #define XFUSIONSTYLE_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -67,4 +69,7 @@ void XFusionStyle_installDefault(void);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XFUSIONSTYLE_H */

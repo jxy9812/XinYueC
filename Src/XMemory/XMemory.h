@@ -404,6 +404,52 @@ XMemoryStatistics XMemory_statistics(XMemoryType type);
 XMemoryStatistics XMemory_statistics_2(XMemoryType type);
 
 /**
+* @brief 读取分配尺寸直方图的一档计数（嵌入式调池用）。
+* @details XM_HISTO_ON（默认 0）打开后，XMemory_malloc 会在分发层收口处
+*          按 32/64/128/256/512/1024 六个档累计「申请次数」与「申请字节
+*          数」，超过 1024B 的并入末位桶。用于按真机真实分布回头调
+*          XMP_GLOBAL_C32/C64/C128 的块数。
+* @param bin 档位序号 0..5（对应 <=32/64/128/256/512/1024 字节）。
+* @param outCount 输出：该档申请次数；可为 NULL。
+* @param outBytes 输出：该档申请字节数之和；可为 NULL。
+* @return 该档是否已有计数（true 表示 bin 合法且曾有分配）。
+* @note 宏裁剪（XM_HISTO_ON=0）时恒返回 false，不产生任何统计开销。
+*/
+bool XMemory_histogram(unsigned int bin, unsigned long* outCount, unsigned long* outBytes);
+
+/**
+* @brief 读取溢出桶（>1024 字节）的累计值。
+* @param outCount 输出：溢出申请次数；可为 NULL。
+* @param outBytes 输出：溢出申请字节数之和；可为 NULL。
+* @return 宏裁剪（XM_HISTO_ON=0）时恒返回 false。
+*/
+bool XMemory_histogram_big(unsigned long* outCount, unsigned long* outBytes);
+
+/**
+* @brief 读取分配失败的累计次数（与 XMemory_histogram 同档口径）。
+* @details 多级池找不到匹配档位或档位耗尽时直接返回 NULL 且不回退可变池
+*          （XMultiPool.c 的 XMultiPool_malloc）；可变池 arena 用尽时同理。
+*          这两个「静默打空」正是嵌入式固件偶发重绘/收发失败的头号原因，
+*          因此单独累计失败次数，与申请次数一起打出来即可直接定位是哪一档
+*          被打爆、该加块数还是该开回退。
+* @param bin 档位序号 0..5（对应 <=32/64/128/256/512/1024 字节）；传
+*             >=6 表示溢出桶（>1024 字节）。
+* @return 该档累计失败次数；宏裁剪（XM_HISTO_ON=0）时恒返回 0。
+*/
+unsigned long XMemory_histogram_fail(unsigned int bin);
+
+/**
+ * @brief 读取释放次数累计（与 XMemory_histogram 同档口径）。
+ * @details 「申请数 - 释放数」按档相减 = 该尺寸档的净泄漏量，用于定位
+ *          哪一类分配没有配对释放。
+ * @param bin 档位序号（0..XMEMORY_HISTO_BINS-1）。
+ * @param outCount 释放次数，可为 NULL。
+ * @param outBytes 释放字节数，可为 NULL。
+ * @return 该档是否有释放记录。
+ */
+bool XMemory_histogram_free(unsigned int bin, unsigned long* outCount, unsigned long* outBytes);
+
+/**
 * @brief 将指定字节序的数据流读取到内存缓冲区，并根据字节序转换
 * @details 用于跨平台/协议数据交互，自动处理字节序转换，确保内存数据符合当前系统字节序
 * @param[in]  src        输入数据源指针（待读取的字节流）

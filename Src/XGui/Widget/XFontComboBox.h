@@ -14,6 +14,8 @@
  */
 #ifndef XFONTCOMBOBOX_H
 #define XFONTCOMBOBOX_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -234,4 +236,7 @@ void* XFontComboBox_currentFontChanged_signal(XFontComboBox* self,
 
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XFONTCOMBOBOX_ON */
 /* ==================== 信号 ==================== */
+
+#endif /* XGUI_ON */
+
 #endif /* XFONTCOMBOBOX_H */

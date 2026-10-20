@@ -27,6 +27,8 @@
 #ifndef XINPUTDIALOG_H
 #define XINPUTDIALOG_H
 
+#if XGUI_ON
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -598,5 +600,7 @@ void* XInputDialog_comboBoxTextValueSelected_signal(XInputDialog* self,
 
 
 #endif /* XWIDGET_ON && XDIALOG_ON */
+
+#endif /* XGUI_ON */
 
 #endif /* XINPUTDIALOG_H */

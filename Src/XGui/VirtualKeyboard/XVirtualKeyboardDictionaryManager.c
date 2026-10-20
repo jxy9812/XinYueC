@@ -4,6 +4,8 @@
  *             （注册表/列表管理面；availableDictionaries 恒空）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include "CXinYueConfig.h"
 
 #if XVIRTUALKEYBOARD_ON
@@ -381,3 +383,5 @@ void* XVirtualKeyboardDictionaryManager_activeDictionariesChanged_signal(
 }
 
 #endif /* XVIRTUALKEYBOARD_ON */
+
+#endif /* XGUI_ON */

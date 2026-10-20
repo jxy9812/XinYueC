@@ -19,6 +19,8 @@
  *             引入 string.h 白名单外接口）。
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XGUI_ON
+
 #include <stddef.h> /* NULL（白名单：语言基础头，本 TU 无其他库外依赖）。 */
 #include "XPinyinTable.h"
 
@@ -1544,3 +1546,4 @@ bool XPinyinTable_hasSyllableDigitsPrefix(const char* digits, int len)
 
 #endif /* XKEYBOARD_IME_ON */
 
+#endif /* XGUI_ON */

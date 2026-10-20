@@ -3,6 +3,8 @@
  * @brief      XRelationships OOXML 关系类（对标 QXlsx::Relationships）
  * @author     XinYueC 团队
  ******************************************************************************/
+#if XEXCEL_ON
+
 #include "XRelationships.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -403,3 +405,5 @@ int XRelationships_lastAssignedRid(void) {
 int XRelationships_lastAssignedRidFor(const XRelationships* self) {
     return self ? self->m_lastAssignedRid : 0;
 }
+
+#endif /* XEXCEL_ON */

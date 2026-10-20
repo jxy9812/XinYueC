@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file CXinYueConfig.h
  * @brief XinYueC 全局配置公开头文件。
  * @details 汇总平台/字节序自动检测、调试输出配置、XPrintf 输出编码模式和各模块
@@ -167,9 +167,7 @@ extern "C" {
 /* ========================================================================== */
 /** @brief XConsoleShell 模块总开关；置 0 时裁剪整个 Shell 公共 API 和所有子功能。 */
 #ifndef XCONSOLE_SHELL_ON
-#ifndef XCONSOLE_SHELL_ON
 #define XCONSOLE_SHELL_ON 1
-#endif
 #endif
 #include"XConsoleShellConfig.h"
 
@@ -181,11 +179,28 @@ extern "C" {
 #define XTUI_ON 1
 #endif
 #include"XTuiConfig.h"
+/** @brief XExcel 模块（依赖 zlib / mbedtls）。 */
+#ifndef XEXCEL_ON
+#define XEXCEL_ON 1
+#endif
+/** @brief SQL 模块总开关；XSql/XSqliteDriver/XMySqlDriver 整体依赖 sqlite3 外部库，
+ *  嵌入式裁剪时置 0（驱动侧另需 XSqliteDriver_ON / XMySqlDriver_ON 之类子开关）。 */
+#ifndef XSQL_ON
+#define XSQL_ON 1
+#endif
 /* GUI 子开关集中由 Src/XGui/XGuiConfig.h 管理；这里不再定义 GUI 子宏。 */
 #ifndef XGUI_ON
 #define XGUI_ON 1
 #endif
 #include "XGui/XGuiConfig.h"
+
+/* 文件顶部以 #if XXX_ON 作守卫的模块，其开关默认值必须在守卫求值前可见。
+ * ESP8266 靠 -include ESP8266Minimal.h 拉入本文件；桌面由 CMake 对核心目标
+ * /FI CXinYueConfig.h 对齐同一路径。字体 FreeType 与自升级的默认值不在
+ * 本文件内，这里补拉对应配置，避免 #if XFONT_FREETYPE_ON / XUPGRADE_ON
+ * 在 TU 首行因宏未定义被静默裁成 0。 */
+#include "XFontFt_config.h"
+#include "XUpgrade_config.h"
 
 /* ========================================================================== */
 /*                               XPrintf 输出编码模式                               */
@@ -204,11 +219,28 @@ extern "C" {
 /*                                   算法模块开关                                   */
 /* ========================================================================== */
 /** @brief XBase64 算法模块开关；置 1 时启用 XBase64.h 公开的 Base64 编码/解码 API，置 0 时裁剪整个模块。 */
-#define XBase64_ON						1
+#ifndef XBase64_ON
+#define XBase64_ON 1
+#endif
 /** @brief XAbstractNetIoRing 网络 I/O 事件环模块开关；置 0 时裁剪整个模块公共 API 和实现。
  * @note 对齐 io_uring 的 SQ/CQ 抽象事件环，平台 I/O（IOCP/epoll 等）由平台子类实现；
  *       关闭后 XAbstractEventDispatcher 不再创建全局事件环，XFileDevice 的异步注册也随之失效。 */
-#define	XAbstractNetIoRing_ON					1
+/** @brief XML 流解析模块总开关；嵌入式裁剪可置 0。 */
+/** @brief QRCode 编码模块总开关；与控制台无关，嵌入式裁剪置 0。 */
+#ifndef XRCODE_ON
+#define XRCODE_ON 1
+#endif
+#ifndef XXmlStream_ON
+#define XXmlStream_ON 1
+#endif
+/** @brief DOM 模块总开关；依赖 XXmlStream，裁剪时两者需一并关闭。 */
+#ifndef XDOM_ON
+#define XDOM_ON 1
+#endif
+
+#ifndef XAbstractNetIoRing_ON
+#define XAbstractNetIoRing_ON 1
+#endif
 
 /* ========================================================================== */
 /*                                事件投递 无锁队列大小                                 */
@@ -273,4 +305,9 @@ int XPrintf_context(const char* label, const char* file, const char* function,
 #ifdef __cplusplus
 }
 #endif
+/** @brief 加密与哈希算法模块总开关。 */
+#ifndef XCryptographic_ON
+#define XCryptographic_ON 1
 #endif
+
+#endif /* CXINYUECONFIG_H */

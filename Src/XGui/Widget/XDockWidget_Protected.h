@@ -9,6 +9,8 @@
  ******************************************************************************/
 #ifndef XDOCKWIDGET_PROTECTED_H
 #define XDOCKWIDGET_PROTECTED_H
+
+#if XGUI_ON
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -41,4 +43,7 @@ XWidget* XDockWidget_host(const XDockWidget* self);
 #ifdef __cplusplus
 }
 #endif
+
+#endif /* XGUI_ON */
+
 #endif /* XDOCKWIDGET_PROTECTED_H */
