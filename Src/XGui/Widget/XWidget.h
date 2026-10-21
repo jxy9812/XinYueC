@@ -664,6 +664,14 @@ typedef struct XWidget
                                                  *   （拥有；NULL=未登记）。 */
     uint64_t                m_retainedStamp;   /**< 保留层最近访问时间戳
                                                  *   （LRU 淘汰序）。 */
+    void*                   m_sssStyleCache;   /**< QSS 控件身份规则表缓存
+                                                 *   块（XsssWidgetCache，
+                                                 *   见 XStyleSheetStyle.h；
+                                                 *   样式侧绘制查询路径懒分
+                                                 *   配、本控件拥有并随析构
+                                                 *   归还；键失配原位重填；
+                                                 *   NULL=未建。XWidget 仅管
+                                                 *   生命周期，不解释内容）。 */
 } XWidget;
 
 /* ==================== 类与实例生命周期 ==================== */

@@ -49,7 +49,7 @@ static void VXSqlError_deinit(XSqlError* error)
     error->m_driverText = NULL;
     error->m_databaseText = NULL;
     error->m_errorCode = NULL;
-    XClass_Deinit_Parent(XClass, error);
+    XClass_Deinit_Parent(XClass, (XClass*)error);
 }
 
 static void VXSqlError_copy(XSqlError* dest, const XSqlError* src)

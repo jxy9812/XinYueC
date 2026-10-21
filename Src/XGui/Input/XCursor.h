@@ -268,6 +268,108 @@ bool XCursor_applyToWindow(uintptr_t nativeWindowId, const XCursor* cursor);
  * @return     平台清除成功返回 true；无后端或窗口无效时静默 false。
  */
 bool XCursor_clearForWindow(uintptr_t nativeWindowId);
+
+/* ==================== 软件光标精灵（无硬件光标平台触摸跟随） ============ */
+
+/**
+ * @brief      内建经典箭头位图尺寸（软件精灵恒回落此位图绘制）。
+ * @details    精灵外接矩形在面板坐标里旋转 90/270 时宽高对调，上界
+ *             XCURSOR_SW_ARROW_H（平台备份缓冲按此定容）。
+ */
+#define XCURSOR_SW_ARROW_W 12 /**< 内建箭头位图宽（逻辑像素）。 */
+#define XCURSOR_SW_ARROW_H 19 /**< 内建箭头位图高（逻辑像素）。 */
+
+/**
+ * @brief      设置软件光标精灵运行时开关（对标 Qt fbdev/eglfs 无硬件
+ *             光标平台的软件绘制路径开关）。
+ * @details    默认开。只影响软件精灵是否绘制：平台硬件光标后端在位
+ *             （X11/Win32）时软件路径本就整体休眠，本开关额外提供
+ *             嵌入式板级逃生口。
+ * @param      enabled true 开（默认），false 关。
+ */
+void XCursor_setSoftwareCursorEnabled(bool enabled);
+
+/**
+ * @brief      返回软件光标精灵运行时开关当前值。
+ * @return     开返回 true（默认），关返回 false。
+ */
+bool XCursor_softwareCursorEnabled(void);
+
+/**
+ * @brief      当前是否应绘制软件光标精灵（激活总条件）。
+ * @details    四条件同时成立才返回 true：软件使能（默认开）&& 未安装
+ *             平台硬件光标后端（g_cursorBackend==NULL；fbdev 即此态，
+ *             X11/Win32 装了后端本函数恒 false，软件路径整体休眠）&&
+ *             已收到过触摸位置（XCursor_setPos 至少被调用一次）&&
+ *             当前有效形状非 Blank（隐藏）。有效形状取值顺序：
+ *             XGuiApplication_overrideCursor() 非空用之；否则用最近一次
+ *             XCursor_applyToWindow 记录的形状；再否则 Arrow。除 Blank
+ *             之外，其它形状绘制一律回落内建箭头位图（见
+ *             XCursor_swArrowBits）。
+ */
+bool XCursor_swActive(void);
+
+/**
+ * @brief      当前软件光标精灵外接矩形（逻辑坐标）。
+ * @details    左上角 = 光标位置 − 内建箭头热点，尺寸 = 内建箭头宽高；
+ *             与 XCursor_swActive 同源（未激活返回全零空矩形）。平台
+ *             呈现层按当前内容旋转把本矩形正变换到面板坐标落笔。
+ * @return     精灵外接矩形；未激活为 (0,0,0,0)。
+ */
+XRect XCursor_swRect(void);
+
+/**
+ * @brief      内建经典箭头位图（约 12x19，黑描边白填充）。
+ * @details    行主序 W*H 字节，每像素 2bit 值域按字节存储：
+ *             0=透明 / 1=黑 / 2=白；颜色到面板像素值的映射（RGB565
+ *             黑=0x0000 白=0xFFFF 等）由呈现层按位深实现。静态存储期，
+ *             调用方只借用。
+ * @return     位图数据指针（XCURSOR_SW_ARROW_W*XCURSOR_SW_ARROW_H 字节）。
+ */
+const uint8_t* XCursor_swArrowBits(void);
+
+/** @brief 返回内建箭头位图宽（= XCURSOR_SW_ARROW_W）。 */
+int XCursor_swArrowWidth(void);
+
+/** @brief 返回内建箭头位图高（= XCURSOR_SW_ARROW_H）。 */
+int XCursor_swArrowHeight(void);
+
+/**
+ * @brief      返回内建箭头热点（约 (1,1)，指尖正对箭头顶点）。
+ * @return     热点坐标（逻辑像素）。
+ */
+XPoint XCursor_swArrowHotSpot(void);
+
+/**
+ * @brief      记录软件光标位置 XCursor_pos 的参考坐标系（fbdev 触摸
+ *             喂给专用，对标 Qt 平台光标的位置屏幕归属）。
+ * @details    XCursor_pos 存的是「最近命中窗口」的局部坐标——原点/旋转
+ *             逐窗不同，软件精灵上屏必须按**喂给时的同一坐标系**正变换
+ *             到面板像素。输入后端每次 XCursor_setPos 喂位时同步记录本
+ *             系（窗口内容旋转角/整窗逻辑宽高/窗口全局原点）；fbdev 直
+ *             写的三条精灵重画路径（present 尾部/blitPanelRects/
+ *             blitSnapshotPanelRects/条带填色）经 XCursor_swPosFrame 取
+ *             同一系换算，精灵面板位置只随喂给变化——多顶层窗口交替
+ *             上屏、条带旁路直写不再把精灵画到换系错位处来回跳。未记
+ *             录时为恒等系（rot=0、宽高 0、原点 (0,0)；0° 换算与宽高
+ *             无关，面板坐标==逻辑坐标，与既有主窗全屏行为逐位一致）。
+ * @param      rot 窗口内容旋转角（0/90/180/270；非法角由呈现层归一）。
+ * @param      logW 整窗逻辑宽（旋转换算基准）。
+ * @param      logH 整窗逻辑高。
+ * @param      origin 窗口全局原点（面板像素坐标）；NULL 按 (0,0)。
+ */
+void XCursor_swSetPosFrame(int rot, int logW, int logH, const XPoint* origin);
+
+/**
+ * @brief      返回软件光标位置参考坐标系（见 XCursor_swSetPosFrame）。
+ * @param      outRot 内容旋转角出参；可为 NULL。
+ * @param      outLogW 整窗逻辑宽出参；可为 NULL。
+ * @param      outLogH 整窗逻辑高出参；可为 NULL。
+ * @param      outOrigin 窗口全局原点出参；可为 NULL。
+ */
+void XCursor_swPosFrame(int* outRot, int* outLogW, int* outLogH,
+                        XPoint* outOrigin);
+
 /** @brief 交换两个光标（对标 QCursor::swap）。
  * @param a 第一个光标；可为 NULL。
  * @param b 第二个光标；可为 NULL。

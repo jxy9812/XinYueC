@@ -25800,11 +25800,15 @@ static void test_abstractbutton_contract(void)
     expect_true(XAbstractButton_isInstance((const XObject*)&probe),
                 "XAbstractButton 登记派生类实例");
     XAbstractButton_setCheckable(&probe.m_base, true);
+    /* 对标 Qt 6.8.3 qabstractbutton.cpp:843-851：toggle() 为非虚槽，直接
+       setChecked(!checked)（经 checkStateSet 虚槽让派生类同步）；派生
+       nextCheckState 虚槽只在 click/空格/自动重复路径触发。9da82dcc 对
+       齐口径，本段随之迁移（2026-10-21 主线裁定 A）。 */
     XAbstractButton_toggle(&probe.m_base);
-    expect_true(probe.m_nextCheckStateCount == 1 &&
+    expect_true(XAbstractButton_isChecked(&probe.m_base) &&
                 probe.m_checkStateSetCount == 1 &&
-                XAbstractButton_isChecked(&probe.m_base),
-                "XAbstractButton 通过派生虚槽切换选中");
+                probe.m_nextCheckStateCount == 0,
+                "XAbstractButton toggle 非虚直切（经 checkStateSet 不经 nextCheckState）");
 
     probe.m_acceptHit = false;
     XMouseEvent_init(&mousePress, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
@@ -26444,14 +26448,19 @@ static void test_checkbox_contract(void)
     XCheckBox_setCheckState(&box, XCheckState_PartiallyChecked);
     expect_true(XCheckBox_checkState(&box) == XCheckState_PartiallyChecked,
                 "XCheckBox 可进入三态部分选中");
-    XCheckBox_toggle(&box);
-    expect_true(XCheckBox_checkState(&box) == XCheckState_Checked &&
-                XCheckBox_isChecked(&box),
-                "XCheckBox 三态切换到已选中");
+    /* 对标 Qt 6.8.3：toggle() 非虚（qabstractbutton.cpp:843-851），经
+       setChecked(!checked) 使三态框只在 Unchecked↔Checked 间跳变；
+       (state+1)%3 三态循环仅属点击路径 nextCheckState 虚槽
+       （qcheckbox.cpp:347-356）。9da82dcc 对齐口径，本段随之迁移
+       （2026-10-21 主线裁定 A）。 */
     XCheckBox_toggle(&box);
     expect_true(XCheckBox_checkState(&box) == XCheckState_Unchecked &&
                 !XCheckBox_isChecked(&box),
-                "XCheckBox 三态切换到未选中");
+                "XCheckBox 三态 toggle Partially→Unchecked（不经循环）");
+    XCheckBox_toggle(&box);
+    expect_true(XCheckBox_checkState(&box) == XCheckState_Checked &&
+                XCheckBox_isChecked(&box),
+                "XCheckBox toggle Unchecked→Checked");
     XClassDeinit(&box);
 }
 #endif /* XWIDGET_ON && XABSTRACTBUTTON_ON && XCHECKBOX_ON */
@@ -37187,6 +37196,550 @@ static void test_dialog_r4_defect_locks(void)
 #endif /* XWIDGET_ON && XCOMBOBOX_ON && XLINEEDIT_ON */
 }
 
+/* ==================== 对话框 r5 回归锁（取消崩溃根修） ====================
+ * 缺陷（2026-10-21 根修，Windows MSVC 必现/Linux 侥幸）：目录/文件对话框
+ * 静态便捷函数的取消路径在「取消钮 clicked(Direct)→reject→exec 退出」
+ * 的同一信号发射/事件派发栈窗口内同步删除对话框子树与布局句柄——
+ * ASan 实抓：下一记落在对话框区域的鼠标事件派发到已回收的取消钮
+ * （XWidget_accumulateOffset 读已释放内存）。根修契约（XFileDialog.c）：
+ *  1) 对话框子树（含按钮）改 XObject_deleteLater 延迟回收（DeferredDelete
+ *     loopLevel 语义对齐 Qt deleteLater，析构发生在控制权返回事件循环
+ *     之后的独立派发帧）；
+ *  2) 布局句柄与导航模型（addLayout 语义归调用方）登记到对话框析构帧
+ *     兑现（xff_pendingReclaim@VXFileDialog_deinit，排空后回收）；
+ *  3) 取消槽前置子树输入侧登记摘除（xff_detachInputRecursive，按压靶
+ *     X11 ButtonRelease state 带键位不清、隐藏即摘除纪律承担收口）；
+ *  4) 取消一律回传空串（头注与 :616 契约，返回值先于回收提取）。
+ * 本锁以「destroyed 信号探针」为可断言代理：便捷函数返回瞬间对话框
+ * 必须仍然存活（同步删除=缺陷态，探针已=1 必红）；显式排空
+ * DeferredDelete 后恰好兑现一次析构（延迟回收队列可观测）；进程内
+ * 再次打开同对话框并取消全程正常（登记表/浏览会话态无跨实例残留）。
+ * 取消注入用【投递事件】（XEventFunc→应用实例）而非定时器：exec 首
+ * 轮 processEvents 即派发（模态门已在循环前置位），先于
+ * xdlg_execShouldFinish 的 quitNow 判定——套件早前用例可能遗留
+ * lastWindowClosed 退出闩（XGuiApplication_removeWindow 策略），定时器
+ * 方案会被立即收场的 exec 抢先（实测 r5 轮 destroyed 恒 0 假红）。 */
+
+#if XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON
+
+/** @brief r5 destroyed 探针计数（每轮取消前清零）。 */
+static int s_r5DestroyedCount = 0;
+
+/** @brief r5 取消闭包重试计数（模态门未就绪时自重投上限）。 */
+static int s_r5ClosureRetries = 0;
+
+/** @brief r5 destroyed 探针槽（Direct，析构帧内同步计数）。 */
+static void r5_destroyedProbeSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    ++s_r5DestroyedCount;
+}
+
+/** @brief r5 取消闭包：exec 首轮 processEvents 派发——取应用模态门上的
+ *  对话框，按 objectName 定位取消钮（XFileDialog.c 组装常量，对标 Qt
+ *  对话框私有子对象命名），连线 destroyed 探针后程序化点击（与真人
+ *  点击同一 clicked(Direct) 发射帧）。模态门未就绪（理论不达：exec 在
+ *  进入循环前置位模态门）时重投递自身，上限 100 次防悬挂。 */
+static void r5_cancelClosure(XVarList* args)
+{
+    XWidget* modal;
+    XString name;
+    XObject* cancel;
+    (void)args;
+    modal = XWidget_applicationModalWidget();
+    if (!modal) {
+        XCoreApplication* app = XCoreApplication_instance();
+        if (++s_r5ClosureRetries <= 100 && app) {
+            XEventFunc* retry = XEventFunc_create(r5_cancelClosure, NULL, NULL);
+            if (retry)
+                XCoreApplication_postEvent((XObject*)app, (XEvent*)retry,
+                                           XEVENT_PRIORITY_NORMAL);
+        }
+        return;
+    }
+    XString_init(&name);
+    XString_assign_utf8(&name, "qt_file_dialog_cancel");
+    cancel = XObject_findChild((XObject*)modal, &name,
+                               XFindChildOption_DirectChildrenOnly);
+    XClassDeinit((XClass*)&name);
+    expect_true(cancel != NULL, "r5 模态对话框定位取消钮");
+    if (!cancel) {
+        /* 找不到取消钮（组装常量被改名的回归态）：Esc 口径强制收场，
+           保证锁红而不悬挂模态循环（后续轮内断言继续放大差异）。 */
+        XDialog_reject((XDialog*)modal);
+        return;
+    }
+    XObject_connect_2((XObject*)modal,
+                      (size_t)XObject_destroyed_signal,
+                      r5_destroyedProbeSlot);
+    XAbstractButton_click((XAbstractButton*)cancel);
+}
+
+/** @brief r5 单轮：开目录对话框→投递取消闭包→断言契约三联
+ *  （空串回传/返回后仍存活/排空后恰好一次析构）。 */
+static void test_dialog_r5_round(const char* tag)
+{
+    XString* dir = NULL;
+    XCoreApplication* app;
+    s_r5DestroyedCount = 0;
+    s_r5ClosureRetries = 0;
+    app = XCoreApplication_instance();
+    if (app) {
+        /* 取消闭包经投递事件注入：exec 首轮 processEvents 即派发
+         * （先于 quitNow/宿主终结的 shouldFinish 判定），取消确定性
+         * 收场——不存在「定时器未到 exec 已被环境闩收场」的假红。 */
+        XEventFunc* closure = XEventFunc_create(r5_cancelClosure, NULL, NULL);
+        if (closure)
+            XCoreApplication_postEvent((XObject*)app, (XEvent*)closure,
+                                       XEVENT_PRIORITY_NORMAL);
+    }
+    dir = XFileDialog_getExistingDirectory_2(NULL, tag, ".");
+    /* 契约①：取消一律回传空串（XFileDialog.h 头注与 :616 桩约定；
+     * 空串的 toUtf8 允许返回 NULL—— demo 便捷层同口径判空）。 */
+    expect_true(dir != NULL &&
+                    (XString_toUtf8(dir) == NULL ||
+                     XString_toUtf8(dir)[0] == '\0'),
+                "r5 取消回传空串（契约 :616）");
+    /* 契约②（本锁核心）：便捷函数返回瞬间对话框必须仍然存活——
+       旧缺陷在收尾现场同步删除（destroyed 探针已=1，此处必红）；
+       根修走 deleteLater，控制权返回后对象仍在延迟回收队列中。 */
+    expect_true(s_r5DestroyedCount == 0,
+                "r5 取消返回后对话框未同步删除（延迟回收队列在册）");
+    /* 显式排空 DeferredDelete（Qt 同名惯用法；测试栈无事件循环，
+       loopLevel==0 的事件需 explicit 请求才兑现）：析构发生在排空
+       派发帧，destroyed 恰好一次；布局句柄与导航模型随析构帧兑现
+       （xff_pendingReclaim），无泄漏无残留。 */
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    expect_true(s_r5DestroyedCount == 1,
+                "r5 排空后对话框恰好一次析构（延迟回收兑现）");
+    expect_true(XWidget_applicationModalWidget() == NULL,
+                "r5 模态门随取消解除");
+    if (dir) XClassDelete((XClass*)dir);
+}
+
+/** @brief 对话框 r5 猎捕缺陷回归锁（dialog-defects-r5 账本）：目录
+ *  对话框「点取消即崩」根修——延迟回收契约 + 进程内重开正常。 */
+static void test_dialog_r5_defect_locks(void)
+{
+#if XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON
+    bool quitOnLast;
+    if (!XCoreApplication_instance() && !XGuiApplication_instance())
+        (void)XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+    XApplication_setActiveModalWidget(NULL);
+    /* 无头/套件环境下对话框桥接窗常是唯一可见顶层：其延迟析构命中
+     * lastWindowClosed 退出策略会把 quitNow 闩死（后续 exec 一律立即
+     * shouldFinish 收场），污染本锁第二轮与其后的 exec 类用例——锁内
+     * 临时关闭策略，锁后按原值恢复（Qt 同名属性语义）。 */
+    quitOnLast = XGuiApplication_quitOnLastWindowClosed();
+    XGuiApplication_setQuitOnLastWindowClosed(false);
+    test_dialog_r5_round("r5 目录选择");
+    /* 契约③：取消返回后进程内再次打开同对话框正常（登记表 owner
+     * 校验/浏览会话态清空无跨实例残留；同步删除时代的悬垂登记在
+     * 此路径必触发 ASan）。 */
+    test_dialog_r5_round("r5 目录选择-重开");
+    XGuiApplication_setQuitOnLastWindowClosed(quitOnLast);
+#endif /* XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON */
+}
+#endif /* XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON */
+
+/* ==================== 对话框 r6 回归锁（确定路径输入侧摘除 + 登记覆写回收） ====================
+ * 缺陷甲（2026-10-21 补齐，r5 取消根修的同类洞留在确定路径）：确定
+ * 收口漏斗 xff_emitAndAccept 原版未像取消槽那样前置
+ * xff_detachInputRecursive——真实鼠标点确定钮后派发层按压靶
+ * （g_buttonDownWidget，qt_button_down 等价物）滞留指向确定钮
+ * （X11 ButtonRelease state 带已松键位，XWidget.c 按键全松判定不
+ * 成立），DeferredDelete 析构子树后下一记非合成 MOVE/RELEASE 经
+ * 按压靶改道直送悬垂靶（XWidget_accumulateOffset 读已释放内存）。
+ * 缺陷乙（同日补齐）：xff_pendingRegister 单槽直接覆写不回收旧
+ * 登记，同一宿主循环派发栈内连续便捷调用（无事件循环返回间隙，
+ * 前一轮 DeferredDelete 因 loopLevel 语义在后续嵌套 exec 内不兑现）
+ * 时，被覆写一轮的 6 布局句柄+导航模型泄漏。
+ * 观测手段（补 r5 锁对契约③「输入侧登记摘除」零观测的缺口）：
+ * r5 的 XAbstractButton_click 程序化点击不经派发层、不设按压靶，
+ * 撤销摘除或漏掉确定路径均不会使 r5 变红。本锁改用【派发层真实
+ * 按压注入】（XWindowSystemInterface_handleMouseEvent：与原生平台
+ * 按下同一条完整派发管线，m_synthesized=false，按压靶真实登记），
+ * 收口+排空析构后经存活探针顶层注入真实 MOVE——摘除缺失即派发层
+ * 把事件直送已析构对话框（ASan use-after-free 红线；修复态按压靶
+ * 已随「隐藏即摘除」清空，事件经 childAt 命中存活顶层，安全无红）。 */
+#if XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON
+
+#if XWINDOWEVENT_ON && XWINDOWSYSTEMINTERFACE_ON && XGUIAPPLICATION_ON && XWINDOW_ON
+#define R6_INJECTION_ON 1
+#endif
+
+/** @brief r6 destroyed 探针计数（每轮/每序列开始前清零）。 */
+static int s_r6DestroyedCount = 0;
+
+/** @brief r6 闭包重试计数（模态门未就绪时自重投上限）。 */
+static int s_r6ClosureRetries = 0;
+
+/** @brief r6-a 本轮收口按钮：false=取消钮（拒绝收口），true=确定钮
+ *  （接受收口，XFileDialog.c 组装常量 qt_file_dialog_ok）。 */
+static bool s_r6AcceptRound = false;
+
+/** @brief r6-a 摘除观测探针顶层（锁体创建、跨两轮存活；真实按压
+ *  基线收敛与收口析构后的观测 MOVE 通道）。 */
+static XWidget* s_r6ProbeHost = NULL;
+
+/** @brief r6-b 宿主对话框指针（退场闭包定位用）。 */
+static XDialog* s_r6ReclaimHostDlg = NULL;
+
+/** @brief r6 destroyed 探针槽（Direct，析构帧内同步计数）。 */
+static void r6_destroyedProbeSlot(XObject* sender, XVarList* args)
+{
+    (void)sender;
+    (void)args;
+    ++s_r6DestroyedCount;
+}
+
+#ifdef R6_INJECTION_ON
+/** @brief r6-a 基线收敛：在存活探针顶层完成一次「按下→全松释放」
+ *  对，把派发层按压靶收敛到确定 NULL。按压分支只写不读按压靶，
+ *  先按下即可安全覆写套件早前用例可能遗留的（悬垂）登记；全松
+ *  释放（m_buttons==NoButton）命中 XWidget.c 全松判定即清。本锁只
+ *  对「本轮收口之后」的残留在册负责，基线必须干净。 */
+static void r6_pressTargetBaselineReset(void)
+{
+    XWindow* win = s_r6ProbeHost ? XWidget_windowHandle(s_r6ProbeHost)
+                                 : NULL;
+    if (!win) return;
+    (void)XWindowSystemInterface_handleMouseEvent(
+        win, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+        XMouseButton_LeftButton, XMouseButton_LeftButton,
+        XKeyboardModifier_NoModifier, (XPoint){10, 10});
+    (void)XWindowSystemInterface_handleMouseEvent(
+        win, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+        XMouseButton_LeftButton, XMouseButton_NoButton,
+        XKeyboardModifier_NoModifier, (XPoint){10, 10});
+}
+#endif /* R6_INJECTION_ON */
+
+/** @brief r6-a 收口闭包：exec 首轮 processEvents 派发——先经窗口
+ *  系统接口向模态对话框注入【真实按压】（完整派发管线，按压靶登记
+ *  指向对话框子树成员；程序化点击不设按压靶，必须走本通道再造
+ *  根修前提），再程序化点击本轮收口按钮（与真人点击同一
+ *  clicked(Direct) 发射帧）。模态门未就绪（理论不达：exec 在进入
+ *  循环前置位模态门）时重投递自身，上限 100 次防悬挂。 */
+static void r6_closeClosure(XVarList* args)
+{
+    XWidget* modal;
+    XString name;
+    XObject* btn;
+    (void)args;
+    modal = XWidget_applicationModalWidget();
+    if (!modal) {
+        XCoreApplication* app = XCoreApplication_instance();
+        if (++s_r6ClosureRetries <= 100 && app) {
+            XEventFunc* retry = XEventFunc_create(r6_closeClosure, NULL, NULL);
+            if (retry)
+                XCoreApplication_postEvent((XObject*)app, (XEvent*)retry,
+                                           XEVENT_PRIORITY_NORMAL);
+        }
+        return;
+    }
+#ifdef R6_INJECTION_ON
+    {
+        XWindow* win = XWidget_windowHandle(modal);
+        bool injected = false;
+        expect_true(win != NULL, "r6 模态对话框桥接窗口句柄");
+        /* 主体行中部落点（避开按钮行与装饰条带）：命中对话框子树任
+         * 一成员即可——摘除纪律对子树逐控件生效，按压靶落在任一成员
+         * 上都应在收口摘除时随隐藏分支清空。 */
+        if (win)
+            injected = XWindowSystemInterface_handleMouseEvent(
+                win, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                XMouseButton_LeftButton, XMouseButton_LeftButton,
+                XKeyboardModifier_NoModifier, (XPoint){300, 240});
+        expect_true(injected, "r6 真实按压注入（派发层按压靶登记在册）");
+    }
+#endif /* R6_INJECTION_ON */
+    XString_init(&name);
+    XString_assign_utf8(&name, s_r6AcceptRound ? "qt_file_dialog_ok"
+                                               : "qt_file_dialog_cancel");
+    btn = XObject_findChild((XObject*)modal, &name,
+                            XFindChildOption_DirectChildrenOnly);
+    XClassDeinit((XClass*)&name);
+    expect_true(btn != NULL, "r6 定位收口按钮");
+    if (!btn) {
+        /* 收口钮缺失（组装常量被改名）：Esc 口径强制收场，保证锁红
+           而不悬挂模态循环（后续轮内断言继续放大差异）。 */
+        XDialog_reject((XDialog*)modal);
+        return;
+    }
+    XObject_connect_2((XObject*)modal,
+                      (size_t)XObject_destroyed_signal,
+                      r6_destroyedProbeSlot);
+    XAbstractButton_click((XAbstractButton*)btn);
+}
+
+/** @brief r6-a 单轮：基线收敛→真实按压注入→收口（取消/确定）→
+ *  契约断言（回传语义/返回后仍存活/排空后恰好一次析构/模态门解除）
+ *  →摘除观测（析构后经存活顶层注入真实 MOVE；摘除缺失即 ASan 红）。 */
+static void test_dialog_r6_round(const char* tag, bool acceptRound)
+{
+    XString* dir = NULL;
+    XCoreApplication* app;
+    s_r6DestroyedCount = 0;
+    s_r6ClosureRetries = 0;
+    s_r6AcceptRound = acceptRound;
+#ifdef R6_INJECTION_ON
+    r6_pressTargetBaselineReset();
+#endif
+    app = XCoreApplication_instance();
+    if (app) {
+        /* 收口闭包经投递事件注入：exec 首轮 processEvents 即派发
+         * （先于 shouldFinish 判定），收口确定性收场——不存在
+         * 「环境闩抢先收场」的假红（同 r5 取消注入口径）。 */
+        XEventFunc* closure = XEventFunc_create(r6_closeClosure, NULL, NULL);
+        if (closure)
+            XCoreApplication_postEvent((XObject*)app, (XEvent*)closure,
+                                       XEVENT_PRIORITY_NORMAL);
+    }
+    dir = XFileDialog_getExistingDirectory_2(NULL, tag, ".");
+    if (acceptRound) {
+        /* 确定收口：Directory 模式未点选子目录时确认恒取当前目录，
+           回传非空（XFileDialog.h 便捷契约）。 */
+        expect_true(dir != NULL && XString_toUtf8(dir) &&
+                        XString_toUtf8(dir)[0] != '\0',
+                    "r6 确定回传当前目录（非空契约）");
+    } else {
+        expect_true(dir != NULL &&
+                        (XString_toUtf8(dir) == NULL ||
+                         XString_toUtf8(dir)[0] == '\0'),
+                    "r6 取消回传空串（契约 :616）");
+    }
+    expect_true(s_r6DestroyedCount == 0,
+                "r6 收口返回后对话框未同步删除（延迟回收队列在册）");
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    expect_true(s_r6DestroyedCount == 1,
+                "r6 排空后对话框恰好一次析构（延迟回收兑现）");
+    expect_true(XWidget_applicationModalWidget() == NULL,
+                "r6 模态门随收口解除");
+#ifdef R6_INJECTION_ON
+    /* 契约③直接观测：此刻对话框子树已析构。若本轮收口（取消槽/
+     * 确定漏斗）未前置输入侧摘除，按压靶仍指已释放子树成员，本记
+     * MOVE 经 XWidget.c 按压靶改道直送悬垂靶（accumulateOffset 读
+     * 已释放内存，ASan 必红）；修复态按压靶已随隐藏分支清空，事件
+     * 走 childAt 命中存活探针顶层，安全。末记全松 RELEASE 卫生
+     * 收尾（正常态无残留，防御后续用例）。 */
+    {
+        XWindow* win = s_r6ProbeHost ? XWidget_windowHandle(s_r6ProbeHost)
+                                     : NULL;
+        if (win) {
+            (void)XWindowSystemInterface_handleMouseEvent(
+                win, XEVENT_TYPE_MOUSE_MOVE, XMouseButton_NoButton,
+                XMouseButton_LeftButton, XKeyboardModifier_NoModifier,
+                (XPoint){10, 10});
+            (void)XWindowSystemInterface_handleMouseEvent(
+                win, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                XMouseButton_LeftButton, XMouseButton_NoButton,
+                XKeyboardModifier_NoModifier, (XPoint){10, 10});
+        }
+    }
+#endif /* R6_INJECTION_ON */
+    if (dir) XClassDelete((XClass*)dir);
+}
+
+/** @brief 对话框 r6-a 猎捕缺陷回归锁（dialog-defects-r6 账本）：
+ *  取消/确定双收口路径的输入侧摘除契约，真实按压注入承担观测。 */
+static void test_dialog_r6_defect_locks(void)
+{
+#if XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON
+    bool quitOnLast;
+    if (!XCoreApplication_instance() && !XGuiApplication_instance())
+        (void)XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+    XApplication_setActiveModalWidget(NULL);
+    /* 探针顶层可见性/析构不触退出闩（同 r5 口径：锁内临时关闭，
+       锁后按原值恢复）。 */
+    quitOnLast = XGuiApplication_quitOnLastWindowClosed();
+    XGuiApplication_setQuitOnLastWindowClosed(false);
+#ifdef R6_INJECTION_ON
+    s_r6ProbeHost = XWidget_create(NULL, 0);
+    if (s_r6ProbeHost) {
+        XWidget_resize(s_r6ProbeHost, 240, 160);
+        XWidget_show(s_r6ProbeHost);
+    }
+#endif
+    test_dialog_r6_round("r6 目录选择-取消", false);
+    test_dialog_r6_round("r6 目录选择-确定", true);
+#ifdef R6_INJECTION_ON
+    if (s_r6ProbeHost) {
+        XClassDelete((XClass*)s_r6ProbeHost);
+        s_r6ProbeHost = NULL;
+    }
+#endif
+    XGuiApplication_setQuitOnLastWindowClosed(quitOnLast);
+#endif /* XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON */
+}
+
+/** @brief r6-b 宿主退场闭包：四连开完成后拒绝宿主对话框，结束其
+ *  exec 循环（loopLevel 落回 0，在册 DeferredDelete 方可兑现）。由
+ *  四连开闭包收尾时投递，宿主循环下一拍派发（此刻投递避免被嵌套
+ *  exec 提前消费）。 */
+static void r6_reclaimHostExitClosure(XVarList* args)
+{
+    (void)args;
+    if (s_r6ReclaimHostDlg)
+        XDialog_reject(s_r6ReclaimHostDlg);
+}
+
+/** @brief r6-b 取消闭包：定位当前模态文件对话框并程序化点取消
+ *  （各轮便捷 exec 首轮 processEvents 派发；模态门在循环前置位，
+ *  重试路径理论不达，上限 100 防悬挂）。 */
+static void r6_reclaimCancelClosure(XVarList* args)
+{
+    XWidget* modal;
+    XString name;
+    XObject* cancel;
+    (void)args;
+    modal = XWidget_applicationModalWidget();
+    if (!modal) {
+        XCoreApplication* app = XCoreApplication_instance();
+        if (++s_r6ClosureRetries <= 100 && app) {
+            XEventFunc* retry =
+                XEventFunc_create(r6_reclaimCancelClosure, NULL, NULL);
+            if (retry)
+                XCoreApplication_postEvent((XObject*)app, (XEvent*)retry,
+                                           XEVENT_PRIORITY_NORMAL);
+        }
+        return;
+    }
+    XString_init(&name);
+    XString_assign_utf8(&name, "qt_file_dialog_cancel");
+    cancel = XObject_findChild((XObject*)modal, &name,
+                               XFindChildOption_DirectChildrenOnly);
+    XClassDeinit((XClass*)&name);
+    expect_true(cancel != NULL, "r6-b 定位取消钮");
+    if (!cancel) {
+        XDialog_reject((XDialog*)modal);
+        return;
+    }
+    XObject_connect_2((XObject*)modal,
+                      (size_t)XObject_destroyed_signal,
+                      r6_destroyedProbeSlot);
+    XAbstractButton_click((XAbstractButton*)cancel);
+}
+
+/** @brief r6-b 四连开闭包：运行于宿主 XDialog exec 循环派发栈内
+ *  （loopLevel>=1）——同栈内连续四次便捷调用，各轮 exec 为嵌套
+ *  loopLevel+1：前一轮 teardown 登记的 DeferredDelete（eventLevel=
+ *  宿主层）既不满足 eventLevel>currentLevel 也非 loopLevel==0 哨兵
+ *  （XDeferredDeleteEvent_shouldDeliver），在后续嵌套 exec 内全程
+ *  不兑现——登记覆写回收缺失时，第 1~3 轮的布局句柄+导航模型各
+ *  7 对象随第 2~4 轮 teardown 覆写泄漏。destroyed 探针与析构本身
+ *  不受覆写影响（对话框对象走各自 deleteLater），泄漏须以内存统计
+ *  口径观测（锁体）。 */
+static void r6_reclaimHostClosure(XVarList* args)
+{
+    int i;
+    XCoreApplication* app = XCoreApplication_instance();
+    (void)args;
+    for (i = 0; i < 4; ++i) {
+        XString* dir;
+        if (app) {
+            XEventFunc* cancel =
+                XEventFunc_create(r6_reclaimCancelClosure, NULL, NULL);
+            if (cancel)
+                XCoreApplication_postEvent((XObject*)app, (XEvent*)cancel,
+                                           XEVENT_PRIORITY_NORMAL);
+        }
+        dir = XFileDialog_getExistingDirectory_2(NULL, "r6-b 覆写回收", ".");
+        expect_true(dir != NULL &&
+                        (XString_toUtf8(dir) == NULL ||
+                         XString_toUtf8(dir)[0] == '\0'),
+                    "r6-b 连开各轮取消回传空串");
+        if (dir) XClassDelete((XClass*)dir);
+    }
+    if (app) {
+        XEventFunc* exitClosure =
+            XEventFunc_create(r6_reclaimHostExitClosure, NULL, NULL);
+        if (exitClosure)
+            XCoreApplication_postEvent((XObject*)app, (XEvent*)exitClosure,
+                                       XEVENT_PRIORITY_NORMAL);
+    }
+}
+
+/** @brief 对话框 r6-b 回归锁：单槽登记覆写回收。暖机轮吸收首开
+ *  静态分配后取在用字节基线，宿主 exec 派发栈内四连开+排空析构，
+ *  覆写回收缺失时 3 轮×7 对象（6 布局句柄+导航模型）使在用字节
+ *  线性抬升（远超噪声带）；修复态覆写前即时回收旧登记，在用字节
+ *  回落基线（有界断言；统计宏裁剪时两侧快照恒零，断言退化为
+ *  恒真——结构序列仍由 destroyed 计数承担）。 */
+static void test_dialog_r6_pending_reclaim_lock(void)
+{
+#if XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON
+    XCoreApplication* app;
+    XDialog* host = NULL;
+    XMemoryStatistics snap0;
+    XMemoryStatistics snap1;
+    long inUse0;
+    long inUse1;
+    bool quitOnLast;
+    if (!XCoreApplication_instance() && !XGuiApplication_instance())
+        (void)XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+    app = XCoreApplication_instance();
+    XApplication_setActiveModalWidget(NULL);
+    quitOnLast = XGuiApplication_quitOnLastWindowClosed();
+    XGuiApplication_setQuitOnLastWindowClosed(false);
+    /* 暖机一轮（首开静态会话态/缓存计入基线）+ 排空析构。 */
+    s_r6DestroyedCount = 0;
+    s_r6ClosureRetries = 0;
+    if (app) {
+        XEventFunc* warm =
+            XEventFunc_create(r6_reclaimCancelClosure, NULL, NULL);
+        if (warm)
+            XCoreApplication_postEvent((XObject*)app, (XEvent*)warm,
+                                       XEVENT_PRIORITY_NORMAL);
+    }
+    {
+        XString* dir =
+            XFileDialog_getExistingDirectory_2(NULL, "r6-b 暖机", ".");
+        expect_true(dir != NULL &&
+                        (XString_toUtf8(dir) == NULL ||
+                         XString_toUtf8(dir)[0] == '\0'),
+                    "r6-b 暖机轮取消回传空串");
+        if (dir) XClassDelete((XClass*)dir);
+    }
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    expect_true(s_r6DestroyedCount == 1, "r6-b 暖机轮恰好一次析构");
+    s_r6DestroyedCount = 0;
+    snap0 = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
+    inUse0 = (long)(snap0.systemBytes + snap0.poolUsedBytes);
+    /* 宿主对话框 exec：四连开闭包与退场闭包均在宿主循环派发栈内
+     * 兑现（loopLevel>=1 前提，缺陷乙触发形态）。 */
+    host = XDialog_create(NULL, 0);
+    expect_true(host != NULL, "r6-b 宿主对话框创建");
+    s_r6ReclaimHostDlg = host;
+    if (host) {
+        XCoreApplication* app2 = XCoreApplication_instance();
+        if (app2) {
+            XEventFunc* closure =
+                XEventFunc_create(r6_reclaimHostClosure, NULL, NULL);
+            if (closure)
+                XCoreApplication_postEvent((XObject*)app2, (XEvent*)closure,
+                                           XEVENT_PRIORITY_NORMAL);
+        }
+        (void)XDialog_exec(host);
+        XClassDelete((XClass*)host);
+    }
+    s_r6ReclaimHostDlg = NULL;
+    /* 排空四轮 DeferredDelete（loopLevel==1 在册，此刻 loopLevel 已
+     * 落 0，shouldDeliver 首条件成立）——destroyed 探针应恰好 4 次
+     * （四轮各自建/收口/析构一次；护栏拒绝导致的开窗失败在此显红）。 */
+    XCoreApplication_sendPostedEvents(NULL, XEVENT_TYPE_DEFERRED_DELETE);
+    expect_true(s_r6DestroyedCount == 4, "r6-b 四连开各自恰好一次析构");
+    snap1 = XMemory_statistics_2(XMEMORY_TYPE_HYBRID);
+    inUse1 = (long)(snap1.systemBytes + snap1.poolUsedBytes);
+    expect_true(inUse1 - inUse0 < 1024,
+                "r6-b 登记覆写不泄漏（在用字节回落基线）");
+    XGuiApplication_setQuitOnLastWindowClosed(quitOnLast);
+#endif /* XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON */
+}
+#endif /* XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON */
+
+
 /** @brief Task 2.19b 对话框族公开类契约测试。 */
 static void test_dialog_task219b_contract(void)
 {
@@ -37227,14 +37780,16 @@ static void test_dialog_task219b_contract(void)
         expect_true(s != NULL && XString_isEmpty_base((XContainer*)s),
                     "t219b getExistingDirectory 空串");
         if (s) XClassDelete((XClass*)s);
-        /* 实例 roundtrip */
-        expect_true(XFileDialog_fileMode(dlg) ==
-                        XFileDialog_ExistingFile &&
+        /* 实例 roundtrip。对标 Qt 6.8.3：fileMode 默认 AnyFile
+           （QFileDialogPrivate::init qfiledialog.cpp:2921
+           setFileMode(AnyFile)）；9da82dcc 对齐口径，本段随之迁移
+           （2026-10-21 主线裁定 A；acceptMode/viewMode 默认不变）。 */
+        expect_true(XFileDialog_fileMode(dlg) == XFileDialog_AnyFile &&
                     XFileDialog_acceptMode(dlg) ==
                         XFileDialog_AcceptOpen &&
                     XFileDialog_viewMode(dlg) ==
                         XFileDialogViewMode_Detail,
-                    "t219b 文件对话框默认值");
+                    "t219b 文件对话框默认值（fileMode 默认 AnyFile，Qt 同）");
         XFileDialog_setFileMode(dlg, XFileDialog_ExistingFiles);
         XFileDialog_setAcceptMode(dlg, XFileDialog_AcceptSave);
         XFileDialog_setViewMode(dlg, XFileDialogViewMode_List);
@@ -38539,6 +39094,16 @@ int main(void)
     test_dialog_r3_defect_locks();
     /* 对话框 r4 猎捕缺陷回归锁（dialog-defects-r4 账本）。 */
     test_dialog_r4_defect_locks();
+    /* 对话框 r5 猎捕缺陷回归锁（取消崩溃根修：延迟回收契约）。 */
+    test_dialog_r5_defect_locks();
+#if XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON
+    /* 对话框 r6 猎捕缺陷回归锁（确定路径输入侧摘除：真实按压注入
+       观测，取消/确定双路）。 */
+    test_dialog_r6_defect_locks();
+    /* 对话框 r6-b 猎捕缺陷回归锁（单槽登记覆写回收：宿主派发栈内
+       四连开，内存统计口径）。 */
+    test_dialog_r6_pending_reclaim_lock();
+#endif /* XWIDGET_ON && XDIALOG_ON && XFILE_ON && XDIR_ON */
 #endif /* XWIDGET_ON */
     /* 终门必须在 test_xgui_widgets() 之后：控件族（XLineEditTest/
        XTouchMultiPointTest 等）经 expect_true 也计入 s_failures——

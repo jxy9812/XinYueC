@@ -601,16 +601,28 @@ static void rc_onDisconnected(XObject* sender, XVarList* args)
                     reason);
         }
     }
-    /* RS-d 改造: 断开即回「未连接」视图态——控件尺寸复位为视图区宿主
-     * 尺寸, 占位文本（「未连接远端服务器」, XGuiClient 占位绘制）落回
-     * 可视区; 悬浮条隐藏由工具条自身 disconnected 槽完成（悬浮条自管
+    /* RS-d 改造: 断开即回「未连接」视图态——控件缩回视图区宿主当前
+     * 可视尺寸, 占位文本（「未连接远端服务器」, XGuiClient 占位绘制）
+     * 落回可视区; 悬浮条隐藏由工具条自身 disconnected 槽完成（悬浮条自管
      * 理可见性）。重连达成后悬浮条随 connected 信号复现; 画面几何由
      * 视图适配模式决定（默认 FIT: 控件保持宿主几何、信箱缩放;
-     * 1:1: FB_META 后 setFixedSize(远端尺寸), 2026-10-04）。 */
-    if (s_rc.m_client && s_rc.m_viewHost)
-        XWidget_setFixedSize((XWidget*)s_rc.m_client,
-                             XWidget_width(s_rc.m_viewHost),
-                             XWidget_height(s_rc.m_viewHost));
+     * 1:1: FB_META 后 setFixedSize(远端尺寸), 2026-10-04）。
+     * [2026-10-19 根修] 复位改「解钉+缩回」而非 setFixedSize: 旧实现
+     * min=max=宿主当时尺寸的钳位在重连后永残留——FIT(默认)模式页根
+     * 布局从此无法随窗口 resize 改控件几何, 画面钉死在断开时刻的尺寸
+     * (真机 OOM 断链→自动重连→拖窗不跟随实证)。解钉后宿主可随后
+     * 自行 resize 精调(同 XGuiClient_setViewFitMode 1:1→FIT 分支);
+     * 1:1 的远端尺寸钳位由下次 FB_META 重新施加(XGuiClient.c FB_META
+     * 1:1 分支), 断开占位语义不变。 */
+    if (s_rc.m_client && s_rc.m_viewHost) {
+        int pw = XWidget_width(s_rc.m_viewHost);
+        int ph = XWidget_height(s_rc.m_viewHost);
+        XWidget_setMinimumSize((XWidget*)s_rc.m_client, 0, 0);
+        XWidget_setMaximumSize((XWidget*)s_rc.m_client,
+                               XWIDGET_MAX_SIZE, XWIDGET_MAX_SIZE);
+        if (pw > 0 && ph > 0)
+            XWidget_resize((XWidget*)s_rc.m_client, pw, ph);
+    }
     rc_refreshStateLabel();
     rc_refreshStatsLabel();
 }

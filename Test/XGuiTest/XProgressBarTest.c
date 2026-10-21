@@ -54,7 +54,12 @@ bool XProgressBarTest_runAll(void)
     XProgressBar_setMaximum(bar, 80);
     xp_expect(XProgressBar_minimum(bar) == 30 && XProgressBar_maximum(bar) == 80,
               "setMaximum(80) 上限生效、下限保持");
-    xp_expect(XProgressBar_value(bar) == 80, "setMaximum 后值钳位到新上限");
+    /* 对标 Qt 6.8.3 qprogressbar.cpp:320-331：setRange 收缩致当前值越界
+     * 时走 reset()（复位哨兵 value=minimum-1、不发 valueChanged），不钳
+     * 位（9da82dcc 对齐口径，本段随之迁移；此前钳到新上限与 Qt 相反）。
+     * 此处 value=150 > 新上限 80 → reset → value=30-1=29。 */
+    xp_expect(XProgressBar_value(bar) == 30 - 1,
+              "setMaximum 收缩致值越界 → 复位态 value=minimum-1");
     XProgressBar_setMinimum(bar, 300); /* 新下限 > 上限：上限抬升 */
     xp_expect(XProgressBar_minimum(bar) == 300 && XProgressBar_maximum(bar) == 300,
               "setMinimum 高于上限时上限抬升");
@@ -64,9 +69,11 @@ bool XProgressBarTest_runAll(void)
     XProgressBar_setRange(bar, 0, 200); /* 恢复标准范围 */
     XProgressBar_setValue(bar, 150);
 
-    /* 4. reset：回到 minimum。 */
+    /* 4. reset（对标 Qt 6.8.3 qprogressbar.cpp:225-232）：置 minimum-1
+     *    作「未开始」复位哨兵（text() 空串、不发 valueChanged）；9da82dcc
+     *    对齐口径，本段随之迁移（此前钳到 minimum 无法区分初始态）。 */
     XProgressBar_reset(bar);
-    xp_expect(XProgressBar_value(bar) == 0, "reset 回到 minimum");
+    xp_expect(XProgressBar_value(bar) == -1, "reset 置复位哨兵 minimum-1");
 
     /* 5. 方向与翻转。 */
     XProgressBar_setOrientation(bar, (int)XProgressBarOrientation_Vertical);

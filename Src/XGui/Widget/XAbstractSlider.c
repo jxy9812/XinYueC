@@ -244,9 +244,16 @@ static int xslider_wheelScrollLines(void)
 /** @brief 滚轮步进（对标 QAbstractSliderPrivate::scrollByDelta
  *         qabstractslider.cpp:668-725）：
  *         - Ctrl/Shift：整页滚动（qBound 到 ±pageStep）并清零累积器；
- *         - 普通：一格滚轮（angleDelta 120）= wheelScrollLines 个单步
- *           （Qt 缺省 3，此前框架仅 1 步）；不足一步的余数跨事件累积，
- *           方向反转时清零；单次滚动不超过一页；
+ *         - 普通：offset=delta/120（整格），一格滚轮 = wheelScrollLines
+ *           （Qt 缺省 3）×offset×singleStep 计步；不足一格（|delta|<120）
+ *           的增量不入账——本累加器为 int 整步口径，[2026-10-21 A/B 实
+ *           证] 改 Qt qreal 小数累积（sub-120 入账）会让部分页面滚动时
+ *           序漂移、揭开 modbus 从站演示页悬垂单元 UAF（autotest ASan
+ *           3/3 复现，归该页在办路线），故本偏差暂留并登记；方向反转
+ *           清零；单次滚动不超过一页；
+ *         - 越页钳位后余数只留整步残量（对标 offset_accumulated -=
+ *           int(offset_accumulated)，2026-10-21 自「减钳位值」改齐 Qt，
+ *           消除钳位残量泄入后续事件）；
  *         - invertedControls 翻转方向；末尾 position = bound(
  *           overflowSafeAdd(steps)) 后 triggerAction(SliderMove) 提交。
  *  @return true=已消费（值发生变化），false=忽略。 */
@@ -269,18 +276,19 @@ static bool xslider_scrollByDelta(XAbstractSlider* self, int delta,
     } else {
         int offset = delta / 120;      /* 一格滚轮 = 1 offset。 */
         int stepsToScrollF;
-        if (offset == 0) return false;
+        if (offset == 0) return false; /* 不足一格：不入账（见函数头）。 */
         stepsToScrollF = xslider_wheelScrollLines() * offset * singleStep;
         /* 方向反转：丢弃上一次累积（对标 Qt 的 offset_accumulated=0）。 */
         if (self->m_wheelDeltaRemainder != 0 &&
             ((self->m_wheelDeltaRemainder > 0) != (stepsToScrollF > 0)))
             self->m_wheelDeltaRemainder = 0;
         self->m_wheelDeltaRemainder += stepsToScrollF;
-        /* 单次滚动不超过一页（qBound）。 */
+        /* 单次滚动不超过一页（qBound）；Qt 尾部 offset_accumulated -=
+         * int(offset_accumulated) 在纯整步域恒等价于清零（无小数残量）。 */
         stepsToScroll = self->m_wheelDeltaRemainder;
         if (stepsToScroll > pageStep) stepsToScroll = pageStep;
         if (stepsToScroll < -pageStep) stepsToScroll = -pageStep;
-        self->m_wheelDeltaRemainder -= stepsToScroll;
+        self->m_wheelDeltaRemainder = 0;
         if (stepsToScroll == 0) return false;  /* 仅累积不足一步。 */
     }
     if (self->m_invertedControls) stepsToScroll = -stepsToScroll;

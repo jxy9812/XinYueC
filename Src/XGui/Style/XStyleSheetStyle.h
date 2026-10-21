@@ -41,41 +41,22 @@ typedef struct XStyleSheetStyleSource
  *        边框并回落底层 XWindowsStyle/XFusionStyle。未命中或未设置
  *        样式表时行为与底层样式完全一致。
  */
-/* ---- 渲染规则缓存槽（多槽直映；对标 QStyleSheetStyle renderRule
- *      缓存按控件哈希复用，替代旧单槽近似）：键=(对象指针, vtable 类
- *      指针, 状态)，槽=键哈希直映，失效=代次计数（invalidateRenderCache
- *      与源条目环形替换处整体推进）。类指针入键可挡跨类地址复用；
- *      同类同址复用的暴露窗口与旧单槽同源（XObject 无代次字段），
- *      风险口径登记。 ---- */
-#define XSSS_RENDER_CACHE_SLOTS 256
-typedef struct XsssRenderCacheEntry
-{
-    const XObject* m_obj;           /**< 键：对象指针（NULL=空槽）。 */
-    const void* m_class;            /**< 键：vtable 类指针（防跨类复用）。 */
-    uint32_t m_state;               /**< 键：状态位。 */
-    uint32_t m_gen;                 /**< 登记代次（≠当前代次=死槽）。 */
-    const XCssStyleRule* m_rule;    /**< 命中规则（可指进源条目规则数组）。 */
-    const XCssSelector* m_sel;      /**< 命中选择器。 */
-    uint32_t m_weight;              /**< 命中权重（order+spec*0x100+
-                                         (origin+depth)*0x100000）。 */
-} XsssRenderCacheEntry;
-
-/* ---- 未声明属性负结论直映哈希：键=(对象指针, 类指针, 状态, 属性
- *      id) → 「该键的级联赢家规则未声明此属性」。槽命中后 findDecl
- *      未声明的属性，旧行为每查必回落全源扫描（结果恒为同赢家）——
- *      paint 逐帧同属性重复查询全付扫描价（实测占 28.5% 调用总账；
- *      4 槽环形备忘对未声明属性 >4 的控件仍逐帧抖动）。冲突覆写只
- *      损备忘不损正确性（命中须全键+代次复核）；失效=代次与渲染缓
- *      存同步推进。对标 Qt renderRule 命中后属性查询不再触级联。 ---- */
-#define XSSS_ABSENT_SLOTS 1024
-typedef struct XsssAbsentEntry
-{
-    const XObject* m_obj;           /**< 键：对象指针。 */
-    const void* m_class;            /**< 键：vtable 类指针。 */
-    uint32_t m_state;               /**< 键：状态位。 */
-    uint32_t m_id;                  /**< 键：属性 id。 */
-    uint32_t m_gen;                 /**< 登记代次（≠当前=死槽）。 */
-} XsssAbsentEntry;
+/* ---- 控件身份规则表缓存（第三层；结构定义见下方
+ *      XStyleSheetStyle 主结构之后的 XsssWidgetRuleHit/XsssWidgetCache
+ *      ——依赖主结构类型，故后置）。对标 Qt QStyleSheetStyle 的
+ *      styleRulesCache/renderRulesCache 两级分解，qstylesheetstyle.cpp
+ *      styleRulesCache[obj] 与 renderRulesCache[obj][element]：身份
+ *      匹配（对象指针、类、伪元素形态、规则权重）在收集期一次定案，
+ *      状态裁剪（末段伪类、伪元素等值）延迟到查询期。等价性依据：
+ *      同 (样式实例,代次) 内全源扫描是纯函数（唯一变更点均先推进代
+ *      次——应用级 setStyleSheet、控件级 XWidget_setStyleSheet、源条
+ *      目环形替换），收集序=源序×规则序×选择器序，查询期按同序过滤
+ *      +同权取后（`>=`）即与逐查询全源扫描逐位等价。
+ *      块由控件持有（XWidget::m_sssStyleCache，void* 懒分配，控件析
+ *      构归还），样式侧零新表；键=(样式实例, 代次, 对象指针[由块归
+ *      属隐含], vtable 类指针)——状态不入键。已登记暴露（与 1015
+ *      rcache 同类、非新增）：objectName/动态属性运行期变更不触发失
+ *      效（收集期属性选择器一次性定案）。 ---- */
 
 typedef struct XStyleSheetStyle
 {
@@ -96,20 +77,40 @@ typedef struct XStyleSheetStyle
     int m_sourceCount;         /**< 已占用条目数。 */
     int m_sourceCapacity;      /**< 条目容量。 */
     int m_sourceCursor;        /**< 环形替换游标。 */
-    /* ---- 渲染规则缓存（对标 QStyleSheetStylePrivate::renderRules 的
-     *      单槽近似：按 (对象指针,状态) 缓存级联裁决的命中规则。
-     *      !important 语义对齐 Qt 6.8.3：只解析标志不参与裁决，权重 =
-     *      rule.order + specificity*0x100 + (origin+depth)*0x100000
-     *      （matchRule，qcssparser.cpp；无 importance 轨道），故「缓存
-     *      规则=最高权重且同权取后」与完整级联在任一属性上的裁决等价，
-     *      命中直返规则内声明即可 ---- */
-    XsssRenderCacheEntry m_rcache[XSSS_RENDER_CACHE_SLOTS]; /**< 渲染
-                                        规则缓存（直映槽组，见上注）。 */
-    uint32_t m_rcacheGen;      /**< 渲染缓存代次（失效即 ++）。 */
-    XsssAbsentEntry m_acache[XSSS_ABSENT_SLOTS]; /**< 未声明属性负结论。 */
-    uint32_t m_acacheGen;      /**< 负结论哈希代次（与渲染缓存同步）。 */
+    /* ---- 控件身份规则表代次（失效即 ++：应用级 setStyleSheet、控件
+     *      级 setStyleSheet 联动与源条目环形替换三处推进；全部控件侧
+     *      XsssWidgetCache 块以 (m_style, m_gen) 复核，失配即原块重填。
+     *      init 取全局唯一起始值，换样式实例后旧块即使地址复用也必
+     *      失配） ---- */
+    uint32_t m_gen;
     bool m_sourceOwned;        /**< m_source 是否由本对象拥有（析构时释放）。 */
 } XStyleSheetStyle;
+
+/* ---- 控件身份规则表缓存（第三层；设计契约见上方区注） ---- */
+#define XSSS_WIDGET_HITS_MAX 16
+typedef struct XsssWidgetRuleHit
+{
+    const XCssStyleRule* m_rule;   /**< 命中规则（指进源缓存条目规则数组）。 */
+    uint32_t m_weight;             /**< 命中权重（order+spec*0x100+
+                                        (origin+depth)*0x100000）。 */
+    uint32_t m_pseudoMask;         /**< 末段伪类约束（收集期不裁剪只记录；
+                                        查询期 (mask & 状态伪类)==mask 才命中）。 */
+    const XString* m_pseudoElem;   /**< 末段伪元素（借用；NULL=末段无伪
+                                        元素，普通属性查询路径）。 */
+} XsssWidgetRuleHit;
+
+typedef struct XsssWidgetCache
+{
+    const XStyleSheetStyle* m_style; /**< 键：样式实例指针（换实例必失配
+                                          重填；配合 init 的全局唯一起始
+                                          代次双防地址复用撞号）。 */
+    uint32_t m_gen;                  /**< 键：登记代次（≠当前代次=死块）。 */
+    const void* m_class;             /**< 键：vtable 类指针（防御位）。 */
+    int m_count;                     /**< 命中数；-1=超 XSSS_WIDGET_HITS_MAX
+                                          降级（查询回落即时全源扫描，
+                                          永不出错）。 */
+    XsssWidgetRuleHit m_hits[XSSS_WIDGET_HITS_MAX];
+} XsssWidgetCache;
 
 XVtable* XStyleSheetStyle_class_init(void);
 
@@ -145,11 +146,11 @@ XStyleSheetStyle* XStyleSheetStyle_create_ex(XMemoryType memory);
 bool XStyleSheetStyle_setStyleSheet(XStyleSheetStyle* self, const char* css);
 
 /**
- * @brief 失效渲染规则缓存（不触动规则表与控件源缓存）。
+ * @brief 失效控件身份规则表缓存（不触动规则表与控件源解析缓存）。
  *
- *        单槽缓存按 (对象,状态) 复用且 m_cacheRule 可指进控件源缓存
+ *        控件侧块按 (样式实例,代次) 复核且规则指针可指进控件源缓存
  *        条目内规则；控件级 setStyleSheet 改变级联输入后必须废弃，
- *        否则同对象同状态的连续第二次绘制按旧规则取色（deferred#4）。
+ *        否则同控件连续第二次绘制按旧规则取色（deferred#4）。
  *
  * @param self 目标样式指针。
  * @return 无返回值。
@@ -186,8 +187,9 @@ int XStyleSheetStyle_ruleCount(const XStyleSheetStyle* self);
  *        级联口径与属性查询一致（应用级 + 控件链多源、matchRule 权重
  *        取最高、同权取后），仅要求命中选择器末段的伪元素名与入参等值
  *        （大小写不敏感；Qt 的 QSS 子控件名约定全小写，对标
- *        Selector::pseudoElement() 读末段）。查询走即时全源扫描，不经
- *        渲染规则缓存。
+ *        Selector::pseudoElement() 读末段）。查询走控件身份规则表
+ *        （伪元素约束在过滤期裁决，键不含伪元素），与属性查询共用
+ *        同一份收集。
  *
  *        注：绘制端按子控件分派（对标 renderRule(w, opt, pseudoElement)
  *        把伪元素规则画到子控件上）不在本批，deferred——本接口先供

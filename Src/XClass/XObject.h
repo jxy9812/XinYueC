@@ -403,9 +403,17 @@ XConnection* XObject_connect_2(XObject* object, size_t signal, XSlotFunc2 slot_f
  * @brief 信号绑定辅助宏，用于生成信号标识
  * @param signal 信号函数名
  * @return 信号对应的标识值
- * @note 将信号函数转换为统一的标识格式，方便信号与槽的绑定
+ * @note 信号标识=信号函数自身地址（各 signal 函数体经 XEmitSignal 返回
+ *       `(void*)(size_t)(signal)`，与函数地址同值）。取地址直转不再经
+ *       兼容性函数指针做 NULL 调用：旧 `(void*(*)(XObject*))(signal)(NULL)`
+ *       调用形态在每个 signal 原型各异的连接点触发「function called
+ *       through a non-compatible type」告警（门禁构建日志 error 子串
+ *       扫描即被 errorOccurred/error_signal 等 error* 命名命中而误判
+ *       BUILD-FAIL，2026-10-21 根修）；且旧调用在 c=NULL 下仍会先行
+ *       执行函数体内的实参构造（如 XVarList_Create），凭空泄漏。地址
+ *       直转数值语义不变，零调用零副作用。
  */
-#define XSignal(signal)      ((size_t)((void*(*)(XObject*))(signal))(NULL))
+#define XSignal(signal)      ((size_t)(signal))
 
 /**
  * @brief 断开对象信号与接收者槽函数的连接（对标 Qt 6.8 QObject::disconnect）
@@ -468,9 +476,13 @@ void XObject_objectNameChanged_signal(XObject* object, const XString* objectName
  * @param ref_count 引用计数（可为 NULL）
  * @param priority 信号优先级
  * @return 信号标识
- * @note 自动检查对象有效性，立即发射信号，触发绑定的槽函数
+ * @note 自动检查对象有效性，立即发射信号，触发绑定的槽函数。实参
+ *       object 统一显式上行转换 `(XObject*)`（与守护分支同型）：各派生
+ *       类 signal 函数直传派生指针会在每个发射点触发 arg1 不兼容指针
+ *       告警（门禁构建日志 error 子串扫描被 error_signal/errorOccurred
+ *       等命名命中而误判 BUILD-FAIL，2026-10-21 根修）
  */
-#define XEmitSignal(object,signal,args,del,ref_count,priority) if(object&&((XObject*)object)->m_signalSlot)XObject_emitSignal(object,(size_t)(signal),args,del,ref_count,priority);return (void*)(size_t)(signal)
+#define XEmitSignal(object,signal,args,del,ref_count,priority) if(object&&((XObject*)object)->m_signalSlot)XObject_emitSignal((XObject*)(object),(size_t)(signal),args,del,ref_count,priority);return (void*)(size_t)(signal)
 
 /**
  * @brief 精简信号发射宏（队列模式，异步发射）

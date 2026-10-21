@@ -1014,6 +1014,23 @@ static XFontFtFamilySlot* XFontFt_fillFamilyInner(const char* family)
         slot->m_face.m_class.m_family = slot->m_family;
         ++g_ftFamilyCount;
         ++g_ftStats.m_familyFills;
+        /* 家族槽 face 注册进解析表（2026-10-20 字体热路径收编）：槽 face
+         * 是静态槽地址、进程期永稳（本文件家族槽节红线：face 常驻不
+         * Done），注册后 XFont_face 的 XFontFace_find(family, Outline)
+         * 直接命中同一指针——此前除本 fill 时刻外每次字形解析都要走满
+         * 「fileInfo→ensureFamilyWeighted→findFamily」探测链（含退避
+         * 时钟读与 strcmp 扫描），该链自此从已解析家族的热路径整体消
+         * 失。返回值逐位不变：命中面即原 fileFace 返回的同一静态
+         * face，下游各 memo（painter 度量/advance/alpha 缓存与 GPU
+         * glyphKey 的 face 通道）零扰动；加载行为零变化：face 的 m_ft
+         * 位分发不变（仍走 XFontFt_fileLoadGlyphScaled）。注册即按
+         * kind+family 替换语义（XFontFace_register），失败（表满）无
+         * 害——仅回落原探测链。只在填槽成功处注册：findFamily 失败路
+         * 径（缺文件/FT 拒载/槽满）保持「缺文件可重探」语义不注册。
+         * 注意：注册键=槽键（字重变体槽为带 -Bold 后缀的探测名），
+         * 基础家族名的字重变体映射仍由 ensureFamilyWeighted 承担，
+         * 行为与注册前一致（find 按家族串精确匹配，互不可见）。 */
+        (void)XFontFace_register(&slot->m_face.m_class);
         return slot;
     }
     return NULL; /* 全候选落空 = 缺文件：不锁存（时序自愈）。 */

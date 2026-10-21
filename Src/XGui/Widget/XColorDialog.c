@@ -25,6 +25,9 @@
 #include "XPushButton.h"       /* 确定/取消 */
 #include "XBoxLayout.h"        /* 对话框布局 */
 #include "XPainter.h"          /* 色块网格/预览块绘制 */
+#if XDIALOGBUTTONBOX_ON
+#include "XDialogButtonBox.h"  /* 标准按钮行（对标 QDialogButtonBox） */
+#endif
 
 #if XWIDGET_ON && XDIALOG_ON
 
@@ -60,10 +63,13 @@ static int g_xcdStandardCount; /**< 已设标准槽计数（高水位 +1）。 *
 
 /* ==================== 类与实例生命周期 ==================== */
 
+static void VXColorDialog_showEvent(XWidget* self, XEvent* event);
+
 XVtable* XColorDialog_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XColorDialog)
     XVTABLE_INHERIT_XCLASS(XDialog);
+    XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXColorDialog_showEvent);
     return XVTABLE_DEFAULT;
 }
 
@@ -156,6 +162,12 @@ XColorDialogOptions XColorDialog_options(const XColorDialog* self)
 #define XCD_GRID_COLS 8
 /** @brief 色块网格行数（对标 QColorDialog 标准色区 6 行布局）。 */
 #define XCD_GRID_ROWS 6
+/** @brief 预览块描边色（与 XDialog 面板边框同族的 1px 中性灰）。 */
+#define XCD_PREVIEW_BORDER_COLOR 0xFFB0B0B0u
+/** @brief 对话框宽度下限（r1 猎捕实证合格常量，仅兜底布局 hint）。 */
+#define XCD_MIN_WIDTH 320
+/** @brief 对话框高度下限（r1 猎捕实证合格常量，仅兜底布局 hint）。 */
+#define XCD_MIN_HEIGHT 340
 
 /** @brief GUI 环境探测：存在 XCoreApplication 实例才执行真实模态循环。 */
 static bool xcd_guiReady(void)
@@ -241,6 +253,82 @@ static void xcd_centerOnScreen(XWidget* w)
         if (g.width <= 0 || g.height <= 0) return;
         XWidget_move(w, g.x + (g.width - XWidget_width(w)) / 2,
                         g.y + (g.height - XWidget_height(w)) / 2);
+    }
+}
+
+/** @brief 按布局 sizeHint 定尺（对标 qcolordialog.cpp initWidgets 的
+ *  mainLay->setSizeConstraint(QLayout::SetFixedSize)——窗口恒随布局
+ *  sizeHint 吸附，尺寸是字体度量/边距/装饰条的函数，不再手写像素
+ *  预算）。
+ *  @details Windows Segoe UI 截图三连（旋入框半裁/按钮浮出窗外/预览
+ *           条突兀）根因：旧实现以 setFixedSize(max(hint,320x340)) 在
+ *           exec 预定期锁尺，而 XDialog 的 CSD 避让链
+ *           （xdlg_applyContentAvoidance）在 SHOW 时才把框架自绘标题
+ *           条高增量写入根布局顶边距——锁定高度不含条高，内容合计
+ *           =窗高+条高，qGeomCalc 亏缺分支让后段条目相互覆盖/越出底
+ *           缘。本函数两处调用收口：
+ *           - exec 预定尺（addDecorationTop=true）：布局顶边距尚未含
+ *             避让，显式外加装饰条高预测（XInputDialog exec 定尺同
+ *             款；建窗前按控件侧 flags 预测，XWindowDecoration
+ *             activeFor 契约）；
+ *           - SHOW 精修（addDecorationTop=false）：父类 showEvent 已
+ *             套用避让（增量在边距内），此刻 totalSizeHint 已含真实
+ *             条高与真实字模，直接定尺不再叠加——双重计数防护。
+ *           尺寸下限 320x340 保留 r1 猎捕合格常量（仅 hint 兜底，
+ *           hint 更大时恒取 hint）。 */
+static void xcd_applyLayoutSize(XColorDialog* dlg, bool addDecorationTop)
+{
+    XLayout* root;
+    XSize hint;
+    XMargins m;
+    int fw;
+    int fh;
+    int marginDelta;
+    if (!dlg) return;
+    root = XWidget_layout((XWidget*)dlg);
+    if (!root) return; /* 便捷函数外的裸实例（无内容布局）不干预。 */
+    hint = XLayout_totalSizeHint(root);
+    /* [竖向盒边距轴修正] XBoxLayout 合计度量恒把 l+r 记入主轴、t+b
+     * 记入交叉轴（XBoxLayout.c calcMetrics 的边距累计段），竖向根盒
+     * 在上下边距不对称（标题让位 28/CSD 避让增量 30——正是本对话框
+     * 的常态形态）时高度 hint 短计 (t+b)-(l+r)、宽度 hint 同额虚增。
+     * 对话框层按当前边距自愈（主轴实为高度），Windows 截图溢出的
+     * 隐性根因之一即此短计叠加避让增量后击穿 340 下限余量。耦合注
+     * 记：若 XBoxLayout 边距累计改为随方向取用，本修正须同步撤销。 */
+    m = XLayout_contentsMargins(root);
+    marginDelta = (m.top + m.bottom) - (m.left + m.right);
+    if (marginDelta > 0 &&
+        XBoxLayout_direction((XBoxLayout*)root) !=
+            XBoxLayoutDirection_LeftToRight) {
+        if (hint.height >= m.left + m.right)
+            hint.height += marginDelta;
+        if (hint.width >= m.top + m.bottom)
+            hint.width -= marginDelta;
+        if (hint.width < 0) hint.width = 0;
+    }
+    if (addDecorationTop)
+        hint.height += XDialog_decorationTopOffset(&dlg->m_base);
+    fw = hint.width > XCD_MIN_WIDTH ? hint.width : XCD_MIN_WIDTH;
+    fh = hint.height > XCD_MIN_HEIGHT ? hint.height : XCD_MIN_HEIGHT;
+    XWidget_setFixedSize((XWidget*)dlg, fw, fh);
+}
+
+/** @brief 显示事件：exec 预定尺后按真实装饰条高/真实字模复算一次
+ *  （幂等；XInputDialog showEvent 同款收口）。
+ *  @details 先链父类 showEvent——其居中与 CSD 避让链
+ *           （xdlg_applyContentAvoidance）把真实条高增量写入根布局
+ *           顶边距，返回后 totalSizeHint 即为含避让的最终需求；随后
+ *           setFixedSize 触发 resize→布局重解算，末尾按新尺寸重新
+ *           居中（自动居中不登记 Moved，居中合法）。 */
+static void VXColorDialog_showEvent(XWidget* self, XEvent* event)
+{
+    bool show = self && event &&
+                XEvent_type(event) == XEVENT_TYPE_SHOW;
+    XClass_Parent(XDialog, EXWidget_ShowEvent,
+                  void (*)(XWidget*, XEvent*))(self, event);
+    if (show) {
+        xcd_applyLayoutSize((XColorDialog*)self, false);
+        xcd_centerOnScreen(self);
     }
 }
 
@@ -371,14 +459,22 @@ static void VXColorSwatch_paintEvent(XWidget* self, XEvent* event)
             }
         }
     } else {
+        /* 单色预览块（对标 Qt QColorShower 预览框的 StyledPanel 观感）：
+           内缩 1px 填当前色 + 1px 中性描边（与 XDialog 面板边框同族灰，
+           克制不加渐变/阴影），预览色块不再与对话框底色融成一片。 */
         XRect full;
         XColor color = sw->m_owner
             ? sw->m_owner->m_currentColor : XColor_create();
-        full.x = 0;
-        full.y = 0;
-        full.width = w;
-        full.height = h;
+        full.x = 1;
+        full.y = 1;
+        full.width = w > 2 ? w - 2 : w;
+        full.height = h > 2 ? h - 2 : h;
         XPainter_fillRect(&painter, &full, XColor_rgba(&color));
+        XPainter_setPen(&painter, XCD_PREVIEW_BORDER_COLOR);
+        XPainter_drawLine(&painter, 0, 0, w - 1, 0);
+        XPainter_drawLine(&painter, 0, h - 1, w - 1, h - 1);
+        XPainter_drawLine(&painter, 0, 0, 0, h - 1);
+        XPainter_drawLine(&painter, w - 1, 0, w - 1, h - 1);
     }
     XPainter_end(&painter);
     XPainter_deinit(&painter);
@@ -515,6 +611,7 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
     }
     XLayout_setSpacing((XLayout*)root, 8);
     {
+        int labelH = 0; /* 标签实测行高（字体度量；旋入框/按钮行下限联动）。 */
         /* 标准色网格（8×6，可点击选色，对标 QColorDialog 标准色区）。 */
         XColorSwatch* grid = xcd_swatchCreate(dlg, true);
         if (grid) {
@@ -522,7 +619,12 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
             XWidget_setMinimumSize((XWidget*)grid, 224, 168);
             XBoxLayout_addWidget(root, (XWidget*)grid);
         }
-        /* R/G/B 分量行（对标 QColorDialog RGB 编辑区）。 */
+        /* R/G/B 分量行（对标 QColorDialog RGB 编辑区）。行高随字体
+         * 度量：XLabel 不向布局发布实测 sizeHint（布局条目读控件存
+         * 储位，标签族未回填），行高若只靠旋入框固定 24 下限则与字
+         * 体无关（放大度量下文本被行高压住）。标签实测行高
+         * （XLabel_sizeHint，随字模缩放）抬升旋入框下限，尺寸随字
+         * 体度量联动。 */
         rgbRow = XBoxLayout_create(XBoxLayoutDirection_LeftToRight, NULL);
         if (rgbRow) {
             static const char* const names[3] = { "R", "G", "B" };
@@ -537,14 +639,22 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                 XSpinBox* spin;
                 if (lb) {
                     XLabel_setText_2(lb, names[i]);
+                    if (i == 0) {
+                        /* 首列标签实测行高定行（三列同字体同值）。 */
+                        XSize lh = XLabel_sizeHint(lb);
+                        if (lh.height > labelH) labelH = lh.height;
+                    }
                     XBoxLayout_addWidget(rgbRow, (XWidget*)lb);
                 }
                 spin = XSpinBox_create((XWidget*)dlg, 0);
                 if (spin) {
+                    int spinMinH = labelH + 8 > 24 ? labelH + 8 : 24;
+                    int spinMinW = labelH * 3 > 72 ? labelH * 3 : 72;
                     XSpinBox_setRange(spin, 0, 255);
                     XSpinBox_setValue(spin, comps[i]);
                     xcd_setName((XObject*)spin, slots[i]);
-                    XWidget_setMinimumSize((XWidget*)spin, 72, 24);
+                    XWidget_setMinimumSize((XWidget*)spin,
+                                           spinMinW, spinMinH);
                     XBoxLayout_addWidget(rgbRow, (XWidget*)spin);
                     XObject_connect_1((XObject*)spin,
                                       (size_t)XSpinBox_valueChanged_signal,
@@ -564,6 +674,45 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
             }
         }
         if (!(options & (XColorDialogOptions)XColorDialog_NoButtons)) {
+#if XDIALOGBUTTONBOX_ON
+            /* 标准按钮行（对标 qcolordialog.cpp initWidgets：buttons =
+             * new QDialogButtonBox(q)，addButton(Ok)/addButton(Cancel)
+             * 后 clicked→accept/reject、ok->setDefault(true)；WinLayout
+             * 角色序右对齐与模态内 Tab 环链由盒内 xdb_relayout 承担，
+             * 按钮行作为布局条目参与 sizeHint 求和，随盒行高自动定
+             * 行，不再手写像素行）。 */
+            XDialogButtonBox* box =
+                XDialogButtonBox_create((XWidget*)dlg, 0);
+            if (box) {
+                XPushButton* ok = XDialogButtonBox_addButton_3(
+                    box, XDialogButtonBoxStandard_Ok);
+                XPushButton* cancel = XDialogButtonBox_addButton_3(
+                    box, XDialogButtonBoxStandard_Cancel);
+                /* 盒行尺寸入布局 hint：两钮 80x26 + 间距 8 + 盒边距
+                 * 8 → 最小 176x34（盒子控件无自报 sizeHint，显式给
+                 * 布局行高与行宽下限）；行高再随字体度量抬升（标签
+                 * 实测行高 + 上下盒边距 8，放大度量下按钮行不被压
+                 * 顶/贴底）。 */
+                XWidget_setMinimumSize((XWidget*)box, 176,
+                                       labelH + 12 > 34 ? labelH + 12 : 34);
+                if (ok) {
+                    xcd_setName((XObject*)ok, XCD_NAME_OK);
+                    XPushButton_setDefault(ok, true);
+                    XObject_connect_1((XObject*)ok,
+                                      (size_t)XAbstractButton_clicked_signal,
+                                      (XObject*)dlg, xcd_acceptSlot,
+                                      XConnectionType_Direct);
+                }
+                if (cancel) {
+                    xcd_setName((XObject*)cancel, XCD_NAME_CANCEL);
+                    XObject_connect_1((XObject*)cancel,
+                                      (size_t)XAbstractButton_clicked_signal,
+                                      (XObject*)dlg, xcd_rejectSlot,
+                                      XConnectionType_Direct);
+                }
+                XBoxLayout_addWidget(root, (XWidget*)box);
+            }
+#else
             XPushButton* ok = XPushButton_create((XWidget*)dlg, 0);
             XPushButton* cancel = XPushButton_create((XWidget*)dlg, 0);
             bar = XBoxLayout_create(XBoxLayoutDirection_LeftToRight, NULL);
@@ -571,7 +720,9 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                 XBoxLayout_addStretch(bar, 1);
                 if (ok) {
                     XAbstractButton_setText_2((XAbstractButton*)ok, "确定");
-                    XWidget_setMinimumSize((XWidget*)ok, 80, 28);
+                    XWidget_setMinimumSize(
+                        (XWidget*)ok, 80,
+                        labelH + 10 > 28 ? labelH + 10 : 28);
                     xcd_setName((XObject*)ok, XCD_NAME_OK);
                     XBoxLayout_addWidget(bar, (XWidget*)ok);
                     XObject_connect_1((XObject*)ok,
@@ -581,7 +732,9 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                 }
                 if (cancel) {
                     XAbstractButton_setText_2((XAbstractButton*)cancel, "取消");
-                    XWidget_setMinimumSize((XWidget*)cancel, 80, 28);
+                    XWidget_setMinimumSize(
+                        (XWidget*)cancel, 80,
+                        labelH + 10 > 28 ? labelH + 10 : 28);
                     xcd_setName((XObject*)cancel, XCD_NAME_CANCEL);
                     XBoxLayout_addWidget(bar, (XWidget*)cancel);
                     XObject_connect_1((XObject*)cancel,
@@ -599,24 +752,19 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
                 }
                 XBoxLayout_addLayout(root, (XLayout*)bar);
             }
+#endif /* XDIALOGBUTTONBOX_ON */
         }
     }
     /* 固定尺寸收口（指令② 同型：对标 qcolordialog.cpp 布局
-     * SetFixedSize 的「窗口吸附布局 sizeHint」语义）——setFixedSize
-     * （min=max）令 exec 期间用户拖边无效。尺寸 = max(布局实测
-     * totalSizeHint, 320x340)：320x340 为 r1 猎捕实证合格常量
-     * （a-90/91：48 色板 8x6 + RGB 行 + 预览条 + 确定/取消完整、四边
-     * 不贴边）；布局实测兜底显式 minimumSize 子控件（色板 224x168、
-     * RGB spinbox 72x24、预览 224x36）不被 320 宽下限压缩。CSD 装饰
-     * 高不在此预加：r1 演示环境（装饰态）340 高实测完整（避让链顶边
-     * 距增量由布局伸展余量吸收，截图底边距可见），预加即算大。 */
+     * SetFixedSize 的「窗口吸附布局 sizeHint」语义）——尺寸 =
+     * max(布局实测 totalSizeHint + 装饰条高预测, 320x340)。布局实测
+     * 覆盖显式 minimumSize 子控件（色板 224x168、RGB spinbox 72x24、
+     * 预览 224x36、按钮盒 176x34）与字体度量（标签行高随字模），任
+     * 何字体/DPI 下不溢出；装饰条高预测补 CSD 平台（Windows 框架自
+     * 绘标题条）SHOW 期写入根布局顶边距的增量，exec 首帧即合尺，
+     * SHOW 精修（VXColorDialog_showEvent）按真实条高兜底校正。 */
     XLayout_update((XLayout*)root);
-    {
-        XSize hint = XLayout_totalSizeHint((XLayout*)root);
-        int fw = hint.width > 320 ? hint.width : 320;
-        int fh = hint.height > 340 ? hint.height : 340;
-        XWidget_setFixedSize((XWidget*)dlg, fw, fh);
-    }
+    xcd_applyLayoutSize(dlg, true);
     xcd_centerOnScreen((XWidget*)dlg);
     /* 阻塞模态执行（复用 XDialog exec：应用模态 + Escape→reject）。 */
     accepted = XDialog_exec(&dlg->m_base) == 1;

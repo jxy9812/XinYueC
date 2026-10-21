@@ -6,6 +6,7 @@
 #if XFONT_FREETYPE_ON
 
 #include "XFont.h"
+#include "XFontFace.h" /* XFontFace_forgetFamily：家族串释放前清解析 memo 槽（防 ABA，2026-10-20） */
 #if XFONT_FILE_ON && (XFONT_LVGL8_FILE_ON || XFONT_FT_FACE_ON)
 #include "XFile.h"
 #include "XByteArray.h"
@@ -37,9 +38,64 @@ static XString* XFont_sharedDefaultFamily(void)
     return g_xfontSharedDefaultFamily;
 }
 
-static bool XFont_isSharedFamily(const XString* family)
+/* ========== 家族串驻留表（进程级 intern，2026-10-20 字体路径收编） ====
+   背景：XFont_setFamily 与拷贝链（painter save/restore、setFont、
+   XWidget_font 按值取字体、页面自绘每 paint 重建字体）此前对非默认
+   家族一律 XString_create_utf8/create_copy 深拷贝——每个副本都是新
+   XString 实例，其 UTF-8 解码缓存（XString_toUtf8，挂在 XString 对象
+   上）都是冷的，首次 XFont_family 即重解码+堆分配（gprof 25万
+   XString_toUtf8/帧的大头）。方案：进程级驻留表按内容去重，命中共享
+   同一 XString 指针；驻留串进程期持有、永不释放（与
+   g_xfontSharedDefaultFamily 同生命周期），全部释放/共享判定点经
+   XFont_isSharedFamily（现公开，供持有方替换家族指针后判定，见
+   XStyleSheetStyle xsss_applyFont）自动跳过删除——拷贝/移动/析构语义
+   与原先一致。表满（容量外新家族）回落原私有副本行为，行为面不变。
+   线程说明：同 sharedDefaultFamily——惰性填充，仅 GUI/字体使用线程
+   读写，与本模块其它静态缓存同一套单写者约定。
+   只读消费审计（2026-10-20）：m_family 的外部指针替换释放点唯一=
+   XStyleSheetStyle.c xsss_applyFont（本地工作字体被 setFamily 换出后
+   就地释放，已同步改用本判定）；XFont_family 只读 toUtf8，全工程无
+   对家族串的原地写持有方。 */
+#define XFONT_FAMILY_INTERN_MAX 8
+static XString* g_xfontFamilyIntern[XFONT_FAMILY_INTERN_MAX];
+static int g_xfontFamilyInternCount;
+
+static XString* XFont_internFamily(const char* family)
 {
-    return family != NULL && family == g_xfontSharedDefaultFamily;
+    int i;
+    for (i = 0; i < g_xfontFamilyInternCount; ++i)
+    {
+        const char* utf8 = XString_toUtf8(g_xfontFamilyIntern[i]);
+        if (utf8 && strcmp(utf8, family) == 0)
+            return g_xfontFamilyIntern[i];
+    }
+    if (g_xfontFamilyInternCount >= XFONT_FAMILY_INTERN_MAX)
+        return NULL; /* 表满：退回私有副本（原行为）。 */
+    {
+        XString* interned = XString_create_utf8(family);
+        if (!interned)
+            return NULL;
+        g_xfontFamilyIntern[g_xfontFamilyInternCount++] = interned;
+        return interned;
+    }
+}
+
+/* 判定 family 指针是否为进程期持有的共享串（默认家族单例或驻留表成
+   员）：true 时持有方不得 XClassDelete（删除即全进程同串悬空）。
+   XFont 全部释放/拷贝共享判定点（deinit/copy/move/setFamily）内部
+   均经此判定；外部在替换 XFont::m_family 指针后释放旧串前必须先经
+   本判定（探针比对单例的旧写法会误删驻留串）。 */
+bool XFont_isSharedFamily(const XString* family)
+{
+    int i;
+    if (!family)
+        return false;
+    if (family == g_xfontSharedDefaultFamily)
+        return true;
+    for (i = 0; i < g_xfontFamilyInternCount; ++i)
+        if (family == g_xfontFamilyIntern[i])
+            return true;
+    return false;
 }
 
 static int XFont_glyphRowBytes(const XFontGlyphDsc* dsc, int bpp)
@@ -192,7 +248,12 @@ static void VXFont_deinit(XFont* self)
 {
     if (!self) return;
     if (!XFont_isSharedFamily(self->m_family))
+    {
+        /* 私有家族串即将释放：先按指针清 XFont_face memo 槽（防 ABA）。
+           共享串（默认单例/驻留表成员）进程期持有不释放，槽永不错配。 */
+        XFontFace_forgetFamily(self->m_family);
         XClassDelete((XClass*)self->m_family);
+    }
     self->m_family = NULL;
     XClassDelete((XClass*)self->m_styleName);
     self->m_styleName = NULL;
@@ -210,7 +271,9 @@ static void VXFont_copy(XFont* dest, const XFont* src)
     {
         XString* oldFamily = dest->m_family;
         XString* oldStyle = dest->m_styleName;
-        /* 默认家族共享实例不可复制（进程内唯一，复制会破坏释放配对）。 */
+        /* 默认家族单例与家族串驻留表成员（2026-10-20）均为进程期共享
+           串，不可复制（进程内唯一，复制会破坏释放配对）——共享判定
+           一律走 XFont_isSharedFamily。 */
         if (XFont_isSharedFamily(src->m_family))
             dest->m_family = src->m_family;
         else
@@ -221,7 +284,11 @@ static void VXFont_copy(XFont* dest, const XFont* src)
                                 : NULL;
         if (oldFamily && oldFamily != dest->m_family &&
             !XFont_isSharedFamily(oldFamily))
+        {
+            /* 私有旧串即将释放：先清 XFont_face memo 槽（防 ABA）。 */
+            XFontFace_forgetFamily(oldFamily);
             XClassDelete((XClass*)oldFamily);
+        }
         if (oldStyle && oldStyle != dest->m_styleName)
             XClassDelete((XClass*)oldStyle);
     }
@@ -256,7 +323,11 @@ static void VXFont_move(XFont* dest, XFont* src)
         XFont_init(dest);
     /* 目标先释放原有字符串，再转移源字符串所有权。 */
     if (!XFont_isSharedFamily(dest->m_family))
+    {
+        /* 私有旧串即将释放：先清 XFont_face memo 槽（防 ABA）。 */
+        XFontFace_forgetFamily(dest->m_family);
         XClassDelete((XClass*)dest->m_family);
+    }
     XClassDelete((XClass*)dest->m_styleName);
     dest->m_family = src->m_family;
     dest->m_styleName = src->m_styleName;
@@ -939,7 +1010,11 @@ void XFont_setFamily(XFont* self, const char* family)
 {
     if (!self) return;
     if (!XFont_isSharedFamily(self->m_family))
+    {
+        /* 私有旧串即将释放：先清 XFont_face memo 槽（防 ABA）。 */
+        XFontFace_forgetFamily(self->m_family);
         XClassDelete((XClass*)self->m_family);
+    }
     self->m_family = NULL;
     if (family && family[0])
     {
@@ -949,7 +1024,15 @@ void XFont_setFamily(XFont* self, const char* family)
             strcmp(family, XFONT_DEFAULT_FAMILY) == 0)
             self->m_family = XFont_sharedDefaultFamily();
         else
-            self->m_family = XString_create_utf8(family);
+        {
+            /* 非默认家族走驻留表（2026-10-20，见 intern 表节注）：
+               同名家族进程期共享同一 XString——每 paint 重建字体与
+               painter save/restore/setFont 拷贝链不再重复建串，UTF-8
+               解码缓存随驻留串全进程热一次；表满回落私有副本。 */
+            self->m_family = XFont_internFamily(family);
+            if (!self->m_family)
+                self->m_family = XString_create_utf8(family);
+        }
     }
 }
 

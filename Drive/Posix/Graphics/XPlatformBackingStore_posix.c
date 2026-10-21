@@ -39,6 +39,9 @@
 #include "XWindow.h"
 #include "XWindowRotation.h" /* fbdev 内容旋转换算（footprint 覆盖判据 + 逐像素 R⁻¹ 搬运）。 */
 #include "XGuiApplication.h" /* topLevelWindows：fbdev 遮挡剔除取 Z 序。 */
+#if XCURSOR_ON
+#include "XCursor.h" /* 软件光标精灵：激活判定/逻辑外接矩形/内建箭头位图。 */
+#endif
 
 #if XGUI_ON && XPLATFORM_FBDEV_ON
 
@@ -311,6 +314,222 @@ static void xpbs_syncRectRows(const XPlatformDisplayInfo* info,
     }
 }
 
+/* ==================== 软件光标精灵（fbdev 无硬件光标平台触摸跟随） ===== */
+
+#if XCURSOR_ON
+
+/** @brief 精灵备份定容（内建箭头 12x19；旋转 90/270 外接对调 ≤19x19，
+ *  每像素最多 4 字节）。 */
+#define XPBS_SW_CURSOR_MAX 19
+
+/**
+ * @brief 精灵在画记录（备份像素 + 位置账，静态无堆；全 0 初始即无精灵）。
+ * @details 每次画精灵前先把外接矩形内现有面板像素备份于此，下一帧
+ *          呈现/旁路直写前从备份原样写回（恢复），使精灵不污染真实
+ *          内容；恢复只对 m_writeIndex 记录的缓冲做（精灵只画在一个
+ *          缓冲里，pan 成功后该缓冲即可见缓冲）。
+ */
+static struct
+{
+    bool m_active;     /**< 备份有效（精灵已画入 m_writeIndex 缓冲）。 */
+    int m_writeIndex;  /**< 精灵所在缓冲号（0/1；恢复只对该缓冲做）。 */
+    XRect m_rect;      /**< 面板坐标外接矩形（已钳入面板界）。 */
+    size_t m_pixelBytes; /**< 备份时的像深（字节）；失配即作废防错位。 */
+    size_t m_stride;     /**< 备份时的面板行距（字节）；失配即作废。 */
+    uint8_t m_pixels[XPBS_SW_CURSOR_MAX * XPBS_SW_CURSOR_MAX * 4];
+} g_xpbsSwCursor;
+
+/** @brief 像深支持判定：仅 2/3/4 字节（RGB565/RGB888/32 位布局）；
+ *  其余格式跳过绘制不崩（面板黑/白像素值按位深全 0/全 1 写，通道序
+ *  无关——RGB565 黑=0x0000 白=0xFFFF；32bpp 布局序不影响全 0/全 1）。 */
+static bool xpbs_swCursorDepthOk(size_t pixelBytes)
+{
+    return pixelBytes == 2 || pixelBytes == 3 || pixelBytes == 4;
+}
+
+/** @brief 单像素着色：非透明位写黑（全 0）或白（全 1）。 */
+static void xpbs_swCursorPixelWrite(uint8_t* px, size_t pixelBytes, bool white)
+{
+    size_t i;
+    for (i = 0; i < pixelBytes; ++i)
+        px[i] = white ? 0xFF : 0x00;
+}
+
+/**
+ * @brief      把精灵外接矩形的现有面板像素备份进静态缓冲（画前调用）。
+ * @param      rect 面板坐标外接矩形（调用方保证已入面板界且 ≤19x19）。
+ */
+static void xpbs_swCursorBackup(const XPlatformDisplayInfo* info,
+                                int writeIndex, const XRect* rect,
+                                size_t pixelBytes)
+{
+    int y;
+    for (y = 0; y < rect->height; ++y)
+    {
+        const uint8_t* src = (const uint8_t*)info->m_frameBuffer +
+            (size_t)(writeIndex * info->m_height + rect->y + y) *
+                info->m_stride +
+            (size_t)rect->x * pixelBytes;
+        XMemcpy(g_xpbsSwCursor.m_pixels +
+                    (size_t)y * (size_t)rect->width * pixelBytes,
+                src, (size_t)rect->width * pixelBytes);
+    }
+}
+
+/**
+ * @brief      从备份恢复精灵矩形（呈现/直写触碰 fb 之前调用）。
+ * @details    只对精灵所在缓冲恢复；像深/行距与备份时失配（模式切换
+ *            的防御路径）作废记录并放弃——陈旧备份写回会污染内容。
+ * @return     true 实际恢复了精灵矩形（调用方可据此续画）。
+ */
+static bool xpbs_swCursorRestoreAt(const XPlatformDisplayInfo* info,
+                                   int bufferIndex, size_t pixelBytes)
+{
+    const XRect* rect;
+    int y;
+    if (!g_xpbsSwCursor.m_active) return false;
+    if (g_xpbsSwCursor.m_writeIndex != bufferIndex)
+        return false; /* 精灵不在该缓冲（pan 失败帧的写缓冲侧无精灵）。 */
+    if (g_xpbsSwCursor.m_pixelBytes != pixelBytes ||
+        g_xpbsSwCursor.m_stride != info->m_stride)
+    {
+        g_xpbsSwCursor.m_active = false; /* 模式已变：备份不可信，作废。 */
+        return false;
+    }
+    rect = &g_xpbsSwCursor.m_rect;
+    for (y = 0; y < rect->height; ++y)
+    {
+        uint8_t* dst = (uint8_t*)info->m_frameBuffer +
+            (size_t)(bufferIndex * info->m_height + rect->y + y) *
+                info->m_stride +
+            (size_t)rect->x * pixelBytes;
+        XMemcpy(dst,
+                g_xpbsSwCursor.m_pixels +
+                    (size_t)y * (size_t)rect->width * pixelBytes,
+                (size_t)rect->width * pixelBytes);
+    }
+    return true;
+}
+
+/** @brief 恢复精灵（无论记录在哪一号缓冲——双缓冲直写两缓冲的旁路
+ *  路径用；精灵不在该缓冲时静默无事发生）。 */
+static bool xpbs_swCursorRestoreAny(const XPlatformDisplayInfo* info,
+                                    size_t pixelBytes)
+{
+    return xpbs_swCursorRestoreAt(info, g_xpbsSwCursor.m_writeIndex,
+                                  pixelBytes);
+}
+
+/** @brief 精灵在画状态作废（首帧/换角整段清零把精灵一并抹掉后调用）。 */
+static void xpbs_swCursorInvalidate(void)
+{
+    g_xpbsSwCursor.m_active = false;
+}
+
+/**
+ * @brief      把软件光标精灵画进指定缓冲并记录备份（pan 之后调用）。
+ * @details    逻辑外接矩形（XCursor_swRect）按当前内容旋转正变换到
+ *             面板矩形（rotationMapRect + 窗口全局原点，与
+ *             xpbs_presentRectRowsRot 的窗口局部→设备正变换同基准，
+ *             四方位逐位一致），先备份后逐像素落笔：面板像素经 R⁻¹
+ *             反查逻辑坐标得精灵局部下标，透明跳过、黑/白按位深写
+ *             全 0/全 1。每帧至多 12x19 像素读写，零堆零大 memcpy。
+ *             调用约定：本调用前必须已对可见缓冲做过恢复（精灵不再
+ *             在屏）；任一失败路径自动作废在画记录——精灵既已从屏上
+ *             清掉，陈旧记录会在两帧后用陈旧备份污染真实内容。
+ * @param      rot/logW/logH/origin 精灵位置参考坐标系——统一取喂给
+ *             时刻记录的 XCursor_swPosFrame（命中窗口旋转角/逻辑宽高/
+ *             全局原点；各重画路径同源，精灵面板位置只随喂给变化），
+ *             换算基准与 xpbs_presentRectRowsRot 的窗口局部→设备正变
+ *             换同口径。
+ * @param      outPanelRect 输出实际落笔的面板外接矩形（账本/cacheflush
+ *             记账用），可为 NULL。
+ * @return     true 已画（记录同步更新）。
+ */
+static bool xpbs_swCursorDraw(const XPlatformDisplayInfo* info, int writeIndex,
+                              size_t pixelBytes, int rot, int logW, int logH,
+                              const XPoint* origin, XRect* outPanelRect)
+{
+    XRect lrect;
+    XRect panel;
+    const uint8_t* bits;
+    int bw;
+    int bh;
+    int rx, ry, rw, rh;
+    int fx0, fy0, fx1, fy1;
+    int dx, dy;
+    if (!XCursor_swActive() || !xpbs_swCursorDepthOk(pixelBytes))
+    {
+        g_xpbsSwCursor.m_active = false; /* 隐藏/格式不支持：精灵下屏。 */
+        return false;
+    }
+    lrect = XCursor_swRect();
+    rw = lrect.width;
+    rh = lrect.height;
+    if (rw <= 0 || rh <= 0 ||
+        !XWindow_rotationNormalize(rot, &rx))
+    {
+        g_xpbsSwCursor.m_active = false;
+        return false;
+    }
+    XWindow_rotationMapRect(rot, logW, logH, &lrect.x, &lrect.y, &rw, &rh,
+                            &rx, &ry, &rw, &rh);
+    fx0 = rx + origin->x;
+    fy0 = ry + origin->y;
+    fx1 = fx0 + rw;
+    fy1 = fy0 + rh;
+    if (fx0 < 0) fx0 = 0;
+    if (fy0 < 0) fy0 = 0;
+    if (fx1 > info->m_width) fx1 = info->m_width;
+    if (fy1 > info->m_height) fy1 = info->m_height;
+    if (fx1 <= fx0 || fy1 <= fy0 ||
+        fx1 - fx0 > XPBS_SW_CURSOR_MAX || fy1 - fy0 > XPBS_SW_CURSOR_MAX)
+    {
+        g_xpbsSwCursor.m_active = false; /* 完全出面板界：精灵下屏。 */
+        return false;
+    }
+    bits = XCursor_swArrowBits();
+    bw = XCursor_swArrowWidth();
+    bh = XCursor_swArrowHeight();
+    panel.x = fx0;
+    panel.y = fy0;
+    panel.width = fx1 - fx0;
+    panel.height = fy1 - fy0;
+    xpbs_swCursorBackup(info, writeIndex, &panel, pixelBytes);
+    for (dy = fy0; dy < fy1; ++dy)
+    {
+        uint8_t* row = (uint8_t*)info->m_frameBuffer +
+            (size_t)(writeIndex * info->m_height + dy) * info->m_stride;
+        for (dx = fx0; dx < fx1; ++dx)
+        {
+            int lx = 0;
+            int ly = 0;
+            int sx;
+            int sy;
+            uint8_t v;
+            XWindow_rotationUnmapPoint(rot, logW, logH, dx - origin->x,
+                                       dy - origin->y, &lx, &ly);
+            sx = lx - lrect.x;
+            sy = ly - lrect.y;
+            if (sx < 0 || sx >= bw || sy < 0 || sy >= bh) continue;
+            v = bits[(size_t)sy * (size_t)bw + (size_t)sx];
+            if (v == 0) continue; /* 透明：保留底图。 */
+            xpbs_swCursorPixelWrite(row + (size_t)dx * pixelBytes,
+                                    pixelBytes, v == 2);
+        }
+    }
+    /* 记录在画状态（恢复目标=本缓冲）。 */
+    g_xpbsSwCursor.m_active = true;
+    g_xpbsSwCursor.m_writeIndex = writeIndex;
+    g_xpbsSwCursor.m_rect = panel;
+    g_xpbsSwCursor.m_pixelBytes = pixelBytes;
+    g_xpbsSwCursor.m_stride = info->m_stride;
+    if (outPanelRect) *outPanelRect = panel;
+    return true;
+}
+
+#endif /* XCURSOR_ON */
+
 static bool xpbs_presentToDisplayDriver(const XImage* image,
                                         const XRegion* region,
                                         const XPoint* offset,
@@ -357,6 +576,20 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
         return false;
     pixelBytes = (size_t)((XImageFormat_bitDepth(panel) + 7) / 8);
     if (pixelBytes == 0) return false;
+#if XCURSOR_ON
+    /* 软件光标精灵恢复（单点统一入口，严格先于一切「从可见缓冲读源
+     * 像素」的搬运与任何提前 return：下方差带账本行拷贝、native 零拷
+     * 贝早退、脏区落笔全在其后）。恢复目标=当前可见缓冲（写索引^1，
+     * 与 blitSnapshotPanelRects 同一不变式）；精灵不在该缓冲时静默。
+     * 恢复后精灵即不在屏，在画记录同步作废——本帧尾部重画成功才重建
+     * 记录；重画被早退/失败跳过也不会残留陈旧账（防两帧后陈旧备份
+     * 污染真实内容）。 */
+    xpbs_swCursorRestoreAt(&info,
+                           info.m_doubleBuffered ? (g_xpbsFbWriteIndex ^ 1)
+                                                 : 0,
+                           pixelBytes);
+    xpbs_swCursorInvalidate();
+#endif
     /* 内容旋转（2026-10-18）：有效角每帧现查窗口（纯读，无缓存——窗口
        几何不变的 0↔180 切换刷不到任何平台缓存）；整窗逻辑宽高取窗口
        几何（旋转换算基准），绝不用图像尺寸（攒批子图按批次外接矩形
@@ -496,6 +729,11 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
         {
             memset((uint8_t*)info.m_frameBuffer, 0, info.m_frameBufferSize);
             g_xpbsFbFirstPresent = false;
+#if XCURSOR_ON
+            xpbs_swCursorInvalidate(); /* 整段清零把精灵一并抹掉：在画
+                                          记录同步作废，防陈旧备份下帧
+                                          写回垃圾。 */
+#endif
             if (g_xpbsFbBackDirtyInit) XRegion_clear(&g_xpbsFbBackDirty);
             /* 清零也是写：行带同步范围扩到整段映射。 */
             syncLo = 0;
@@ -943,6 +1181,45 @@ static bool xpbs_presentToDisplayDriver(const XImage* image,
      * pan 失败不回滚（内容已在目标缓冲，下帧重试同号缓冲覆盖写）。 */
     if (ops->pan(writeIndex))
         g_xpbsFbWriteIndex ^= 1;
+#if XCURSOR_ON
+    /* 软件光标精灵重画（pan/写索引翻转之后单点挂载）：画入刚翻为可见
+     * 的缓冲（即本次 writeIndex），精灵随本帧内容一起浮现；备份/逐像
+     * 素落笔在 xpbs_swCursorDraw 内完成。变换用喂给参考系（XCursor_sw
+     * PosFrame：pos 记账在最近命中窗口的局部坐标系）而非「当前呈现窗
+     * 口」的 rot/logW/logH/origin——本窗≠命中窗时（手指停在 A 窗、
+     * HUD 类自续重绘的 B 窗每次 present）按本窗换算会把精灵画到错位
+     * 处（偏移=两窗原点/旋转差），两次呈现交替即来回跳；同参考系下
+     * 精灵面板位置只随喂给变化，多窗交替上屏位置恒一。 */
+    {
+        XRect swRect;
+        int srot = 0;
+        int slogW = 0;
+        int slogH = 0;
+        XPoint sorigin;
+        XCursor_swPosFrame(&srot, &slogW, &slogH, &sorigin);
+        if (xpbs_swCursorDraw(&info, writeIndex, pixelBytes, srot, slogW,
+                              slogH, &sorigin, &swRect))
+        {
+            /* 画在 cacheSync/pan 之后：精灵行带单独收窄同步一次（与上
+               方行带收窄口径一致，约 19 行亚毫秒级）。 */
+            size_t lo = (size_t)(writeIndex * info.m_height + swRect.y) *
+                            info.m_stride +
+                        (size_t)swRect.x * pixelBytes;
+            size_t hi = (size_t)(writeIndex * info.m_height + swRect.y +
+                                 swRect.height - 1) *
+                            info.m_stride +
+                        (size_t)(swRect.x + swRect.width) * pixelBytes;
+            xpbs_cacheSyncRangeWarnOnce(ops,
+                                        (uint8_t*)info.m_frameBuffer + lo,
+                                        hi - lo);
+            /* 精灵外接矩形并入差带账本（与上方账本更新同口径追加）：
+               下帧差带同步把该行带从可见缓冲搬入写入缓冲，跨缓冲内容
+               同步（pan 轮换后精灵不丢、旧位不残留）。 */
+            if (info.m_doubleBuffered)
+                XRegion_addRect(&g_xpbsFbBackDirty, &swRect);
+        }
+    }
+#endif
     return true;
 }
 
@@ -1019,6 +1296,10 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
     XImageFormat panel = XImageFormat_Invalid;
     size_t pixelBytes;
     int i;
+#if XCURSOR_ON
+    bool spriteHit = false; /* 填色条带命中精灵在画矩形（尾部续画依据）。 */
+    int swBuf = 0;          /* 精灵所在缓冲号（恢复前捕获）。 */
+#endif
     if (!ops || !ops->probe || !ops->probe(&info) || !info.m_frameBuffer ||
         info.m_stride == 0 || info.m_width < 1 || info.m_height < 1)
         return;
@@ -1026,6 +1307,48 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
         panel != XImageFormat_RGB16)
         return; /* 仅承诺与直写同款 RGB565 面板；其余格式维持旧行为。 */
     pixelBytes = 2;
+#if XCURSOR_ON
+    /* 软件光标精灵守护（先于本路径全部 fb 直写；与孪生路径 blitPanel
+     * Rects/present 头部恢复同纪律）：填色条带若与精灵在画矩形相交，
+     * 先把备份底图写回（真实内容归位）再落填色、在画记录同步作废——
+     * 否则精灵记录成陈旧账：下帧 present 顶部恢复把填色前内容写回可
+     * 见缓冲，精灵行带经差带账本同步又把备份内容搬入写入缓冲，暴露
+     * 条带在精灵矩形（≤12x19px）内长期回跳填色前内容。不相交则精灵
+     * 与账本原样保留（快照拖拽步期间可能无 present，不闪失）；尾部
+     * 按喂给参考系（XCursor_swPosFrame）续画，与三条重画路径同源。 */
+    if (g_xpbsSwCursor.m_active)
+    {
+        int j;
+        for (j = 0; j < count && !spriteHit; ++j)
+        {
+            const XRect* r = &rects[j];
+            int ix0;
+            int iy0;
+            int ix1;
+            int iy1;
+            if (!r || r->width <= 0 || r->height <= 0) continue;
+            ix0 = r->x > g_xpbsSwCursor.m_rect.x ? r->x
+                                                 : g_xpbsSwCursor.m_rect.x;
+            iy0 = r->y > g_xpbsSwCursor.m_rect.y ? r->y
+                                                 : g_xpbsSwCursor.m_rect.y;
+            ix1 = r->x + r->width < g_xpbsSwCursor.m_rect.x +
+                                        g_xpbsSwCursor.m_rect.width
+                      ? r->x + r->width
+                      : g_xpbsSwCursor.m_rect.x + g_xpbsSwCursor.m_rect.width;
+            iy1 = r->y + r->height < g_xpbsSwCursor.m_rect.y +
+                                         g_xpbsSwCursor.m_rect.height
+                      ? r->y + r->height
+                      : g_xpbsSwCursor.m_rect.y + g_xpbsSwCursor.m_rect.height;
+            if (ix1 > ix0 && iy1 > iy0) spriteHit = true;
+        }
+        if (spriteHit)
+        {
+            swBuf = g_xpbsSwCursor.m_writeIndex;
+            xpbs_swCursorRestoreAny(&info, pixelBytes);
+            xpbs_swCursorInvalidate();
+        }
+    }
+#endif
     for (i = 0; i < count; ++i)
     {
         const XRect* r = &rects[i];
@@ -1069,6 +1392,36 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
             }
         }
     }
+#if XCURSOR_ON
+    /* 软件光标精灵续画（条带填完之后；仅本路径刚恢复过的精灵才续画，
+     * 不新造——画失败时 xpbs_swCursorDraw 自动作废在画记录，无陈旧
+     * 账）：按喂给参考系画回精灵原缓冲，快照拖拽步（期间可能无
+     * present）精灵不消失；精灵行带收窄同步一次，与 blitPanelRects
+     * 续画同口径。 */
+    if (spriteHit)
+    {
+        XRect swRect;
+        int srot = 0;
+        int slogW = 0;
+        int slogH = 0;
+        XPoint sorigin;
+        XCursor_swPosFrame(&srot, &slogW, &slogH, &sorigin);
+        if (xpbs_swCursorDraw(&info, swBuf, pixelBytes, srot, slogW, slogH,
+                              &sorigin, &swRect))
+        {
+            size_t lo = (size_t)(swBuf * info.m_height + swRect.y) *
+                            info.m_stride +
+                        (size_t)swRect.x * pixelBytes;
+            size_t hi = (size_t)(swBuf * info.m_height + swRect.y +
+                                 swRect.height - 1) *
+                            info.m_stride +
+                        (size_t)(swRect.x + swRect.width) * pixelBytes;
+            xpbs_cacheSyncRangeWarnOnce(ops,
+                                        (uint8_t*)info.m_frameBuffer + lo,
+                                        hi - lo);
+        }
+    }
+#endif
 #else
     (void)rects; (void)count; (void)nativePixel;
 #endif
@@ -1099,6 +1452,10 @@ void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
     int imgW;
     int imgH;
     int i;
+#if XCURSOR_ON
+    bool swHadSprite = false; /* 恢复返回值：精灵是否原本在屏（续画依据）。 */
+    int swBuf = 0;            /* 精灵所在缓冲号（恢复前捕获）。 */
+#endif
     if (!src || !rects || count <= 0 || !origin) return;
     ops = XPlatformDisplayDriver_active();
     if (!ops || !ops->probe || !ops->probe(&info) || !info.m_frameBuffer ||
@@ -1116,6 +1473,12 @@ void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
     imgW = XImage_width(image);
     imgH = XImage_height(image);
     if (!srcBase || imgBpl <= 0) return;
+#if XCURSOR_ON
+    /* 软件光标精灵恢复（先于本路径全部 fb 直写）：让位条带落笔若盖住
+       精灵，恢复先把真实底图还原，条带照常覆盖；返回值作续画依据。 */
+    swBuf = g_xpbsSwCursor.m_writeIndex;
+    swHadSprite = xpbs_swCursorRestoreAny(&info, pixelBytes);
+#endif
     for (i = 0; i < count; ++i)
     {
         const XRect* r = &rects[i];
@@ -1174,6 +1537,38 @@ void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
             }
         }
     }
+#if XCURSOR_ON
+    /* 软件光标精灵续画（条带写完之后）：精灵原本在屏才续画（不新造；
+     * 画失败时 xpbs_swCursorDraw 自动作废在画记录，无陈旧账）。本路径
+     * 无窗口上下文（只有源后备缓冲与全局落点），变换用喂给参考系
+     * （XCursor_swPosFrame）而非旧实现的恒等系（rot=0/原点 (0,0)）——
+     * pos 记账在最近命中窗口的局部坐标系，命中窗口原点非零/旋转非零
+     * （对话框/键盘拖拽让位路径）时恒等换算把精灵画到错位的面板坐标
+     * （偏移=窗口原点/未旋转），与按命中窗换算的呈现路径交替来回跳。 */
+    if (swHadSprite)
+    {
+        XRect swRect;
+        int srot = 0;
+        int slogW = 0;
+        int slogH = 0;
+        XPoint sorigin;
+        XCursor_swPosFrame(&srot, &slogW, &slogH, &sorigin);
+        if (xpbs_swCursorDraw(&info, swBuf, pixelBytes, srot, slogW, slogH,
+                              &sorigin, &swRect))
+        {
+            size_t lo = (size_t)(swBuf * info.m_height + swRect.y) *
+                            info.m_stride +
+                        (size_t)swRect.x * pixelBytes;
+            size_t hi = (size_t)(swBuf * info.m_height + swRect.y +
+                                 swRect.height - 1) *
+                            info.m_stride +
+                        (size_t)(swRect.x + swRect.width) * pixelBytes;
+            xpbs_cacheSyncRangeWarnOnce(ops,
+                                        (uint8_t*)info.m_frameBuffer + lo,
+                                        hi - lo);
+        }
+    }
+#endif
 #else
     (void)src; (void)rects; (void)count; (void)origin;
 #endif
@@ -1201,6 +1596,9 @@ bool XPlatformBackingStore_blitSnapshotPanelRects(const XImage* snapshot,
     size_t syncLo = 0;
     size_t syncHi = 0;
     bool syncAny = false;
+#if XCURSOR_ON
+    bool swHadSprite = false; /* 恢复返回值：精灵是否原本在屏（续画依据）。 */
+#endif
     if (!snapshot || !snapshot->m_data || !rects || count <= 0 || !origin)
         return false;
     ops = XPlatformDisplayDriver_active();
@@ -1226,6 +1624,12 @@ bool XPlatformBackingStore_blitSnapshotPanelRects(const XImage* snapshot,
      * 下一次 present 的写入缓冲，故可见面=写索引^1（pan 成功翻转换号、
      * pan 失败不换号，两种演化下不变式均成立）；单缓冲面板恒 0 号。 */
     visIndex = info.m_doubleBuffered ? (g_xpbsFbWriteIndex ^ 1) : 0;
+#if XCURSOR_ON
+    /* 软件光标精灵恢复（先于本路径全部 fb 直写）：拖动条带若盖住精灵，
+       先把备份底图写回，条带照常覆盖（恢复顺序先于落笔才不脏账）；
+       返回值作翻页后续画依据。 */
+    swHadSprite = xpbs_swCursorRestoreAt(&info, visIndex, pixelBytes);
+#endif
     /* 弹层遮挡剔除收集：与 present 直写同款（登记序在本窗之后的可见
      * 顶层=更高层）。拖动窗口扫过高层弹层时被覆盖行带不落笔，弹层像
      * 素不被窗口快照洗掉（present 遮挡剔除语义的快照版对齐）。 */
@@ -1479,6 +1883,39 @@ bool XPlatformBackingStore_blitSnapshotPanelRects(const XImage* snapshot,
      * 的欠账由拖动结束的真实整窗 PAINT→flush→present 差带同步补齐。
      * pan 失败不回滚（可见性不变式不依赖本调用，见 visIndex 注）。 */
     ops->pan(visIndex);
+#if XCURSOR_ON
+    /* 软件光标精灵续画（写完/翻页之后）：变换同样用喂给参考系（
+     * XCursor_swPosFrame）而非按 selfWindow 现查几何——拖拽步内窗口
+     * 原点已前移（pos 记账在步前几何），按现几何正变换每步自带一步
+     * 滞后偏移，与 present/旁路续画交替时即来回跳；喂给参考系下精灵
+     * 面板位置恒=手指面板位置、只随喂给变化，三条重画路径同源零跳
+     * 变。精灵原本在屏才续画；画失败时 xpbs_swCursorDraw 自动作废在
+     * 画记录。 */
+    if (swHadSprite)
+    {
+        XRect swRect;
+        int srot = 0;
+        int slogW = 0;
+        int slogH = 0;
+        XPoint sorigin;
+        XCursor_swPosFrame(&srot, &slogW, &slogH, &sorigin);
+        if (xpbs_swCursorDraw(&info, visIndex, pixelBytes, srot, slogW,
+                              slogH, &sorigin, &swRect))
+        {
+            /* 画在 cacheflush/pan 之后：精灵行带单独收窄同步一次。 */
+            size_t lo = (size_t)(visIndex * info.m_height + swRect.y) *
+                            info.m_stride +
+                        (size_t)swRect.x * pixelBytes;
+            size_t hi = (size_t)(visIndex * info.m_height + swRect.y +
+                                 swRect.height - 1) *
+                            info.m_stride +
+                        (size_t)(swRect.x + swRect.width) * pixelBytes;
+            xpbs_cacheSyncRangeWarnOnce(ops,
+                                        (uint8_t*)info.m_frameBuffer + lo,
+                                        hi - lo);
+        }
+    }
+#endif
     return true;
 #else
     /* 非 fbdev 构建：no-op，调用方回落既有 flush 提交路径。 */

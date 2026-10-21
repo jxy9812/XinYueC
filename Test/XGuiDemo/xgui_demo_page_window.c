@@ -24,8 +24,9 @@
  *              - 窗口方向四方位：0° 横屏/90° 竖屏/180° 倒置横屏/270°
  *                倒置竖屏=窗口外框几何旋转（90°/270° 宽高对调；0° 基准
  *                尺寸懒捕获共用；按主屏可用几何钳位防越屏）；
- *              - 鼠标光标：XGuiApplication 覆盖光标栈压入 Blank（隐藏）/
- *                restoreOverrideCursor 弹出（恢复显示）；
+ *              - 鼠标光标：XGuiApplication 覆盖光标栈——勾选=清空栈
+ *                （确保 Blank override 出栈，fbdev 软件精灵恢复跟随）、
+ *                取消勾选=压入 Blank（隐藏，幂等防栈堆积）；
  *              - 「复位默认」一键恢复（全部控件回默认态并重新应用）。
  *
  *             autotest 口径：全程非阻塞，直呼槽/真实控件路径，逐项切换
@@ -531,7 +532,10 @@ static void wn_orientSlot(XObject* receiver, XVarList* args)
     wn_report(buf);
 }
 
-/** @brief 鼠标光标显隐：覆盖光标栈压 Blank / 弹出恢复。 */
+/** @brief 鼠标光标显隐：覆盖光标栈压 Blank（隐藏）/ 清空栈（恢复显示）。
+ * @details fbdev 触摸跟随软件精灵的有效形状取覆盖栈顶（XCursor.c
+ *          xcursor_swEffectiveShape：非空 override 优先，Blank=停画），
+ *          本页是全库唯一覆盖栈用户，开关即屏上光标真实显隐。 */
 static void wn_mouseSlot(XObject* receiver, XVarList* args)
 {
     bool show;
@@ -539,14 +543,23 @@ static void wn_mouseSlot(XObject* receiver, XVarList* args)
     if (!s_wn.m_mouseCheck || s_wn.m_syncing) return;
     show = XAbstractButton_isChecked((XAbstractButton*)s_wn.m_mouseCheck);
     if (show) {
-        XGuiApplication_restoreOverrideCursor();
+        /* 显示=确保 Blank override 清除：栈深不定（他处/历史压栈），
+           逐层弹出直至空，有效形状回落窗口最近形状，精灵恢复跟随。 */
+        while (XGuiApplication_overrideCursor())
+            XGuiApplication_restoreOverrideCursor();
         wn_report("\xE5\xB7\xB2\xE6\x98\xBE\xE7\xA4\xBA\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87");
     } else {
-        XCursor blank;
-        XCursor_init(&blank);
-        XCursor_setShape(&blank, XCursor_Blank);
-        XGuiApplication_setOverrideCursor(&blank);
-        XClassDeinit(&blank);
+        /* 隐藏=压 Blank；栈顶已是 Blank 则幂等跳过，防重复取消勾选
+           把栈越压越深（复位/回读按 override==NULL 判显示态）。 */
+        if (!XGuiApplication_overrideCursor() ||
+            XCursor_shape(XGuiApplication_overrideCursor()) !=
+                XCursor_Blank) {
+            XCursor blank;
+            XCursor_init(&blank);
+            XCursor_setShape(&blank, XCursor_Blank);
+            XGuiApplication_setOverrideCursor(&blank);
+            XClassDeinit(&blank);
+        }
         wn_report("\xE5\xB7\xB2\xE9\x9A\x90\xE8\x97\x8F\xE9\xBC\xA0\xE6\xA0\x87\xE5\x85\x89\xE6\xA0\x87");
     }
 }

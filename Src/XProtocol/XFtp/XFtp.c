@@ -356,7 +356,7 @@ static void VXFtp_deinit(XFtp* ftp)
 
     // 释放命令队列
     if (ftp->m_pendingCommands) {
-        for (size_t i = 0; i < XVector_size_base(ftp->m_pendingCommands); i++) {
+        for (size_t i = 0; i < XContainer_size_base((const XContainer*)ftp->m_pendingCommands); i++) {
             XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, i, XFtpCommand);
             if (cmd) XClassDelete(cmd);
         }
@@ -577,7 +577,7 @@ static void ftp_pi_disconnected_handler(XObject* receiver, XVarList* args)
         if (ftp->m_currentCommand) {
             ftp_pi_handleError(ftp, 0,
                 ftp->m_errorString ? XString_toUtf8(ftp->m_errorString) : "Control connection closed");
-        } else if (ftp->m_pendingCommands && XVector_size_base(ftp->m_pendingCommands) > 0) {
+        } else if (ftp->m_pendingCommands && XContainer_size_base((const XContainer*)ftp->m_pendingCommands) > 0) {
             ftp_failQueuedCommands(ftp);
             XFtp_done_signal(ftp, true);
         }
@@ -609,7 +609,7 @@ static void ftp_pi_error_handler(XObject* receiver, XVarList* args)
     if (ftp->m_currentCommand) {
         ftp_pi_handleError(ftp, 0,
             ftp->m_errorString ? XString_toUtf8(ftp->m_errorString) : "Control connection error");
-    } else if (ftp->m_pendingCommands && XVector_size_base(ftp->m_pendingCommands) > 0) {
+    } else if (ftp->m_pendingCommands && XContainer_size_base((const XContainer*)ftp->m_pendingCommands) > 0) {
         ftp_failQueuedCommands(ftp);
         XFtp_done_signal(ftp, true);
     }
@@ -1005,7 +1005,7 @@ static void ftp_failQueuedCommands(XFtp* ftp)
     for (;;) {
         XFtpCommand* cmd = NULL;
         XMutex_lock(ftp->m_commandMutex);
-        if (XVector_size_base(ftp->m_pendingCommands) > 0) {
+        if (XContainer_size_base((const XContainer*)ftp->m_pendingCommands) > 0) {
             cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
             XVector_remove_base(ftp->m_pendingCommands, 0, 1);
         }
@@ -1132,7 +1132,7 @@ static bool ftp_hasQueuedCommand(XFtp* ftp, XFtpCommand_Type type)
 
     bool found = false;
     XMutex_lock(ftp->m_commandMutex);
-    for (size_t i = 0; i < XVector_size_base(ftp->m_pendingCommands); i++) {
+    for (size_t i = 0; i < XContainer_size_base((const XContainer*)ftp->m_pendingCommands); i++) {
         XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, i, XFtpCommand);
         if (cmd && cmd->m_command == type) {
             found = true;
@@ -1170,9 +1170,9 @@ static int ftp_queueCommand(XFtp* ftp, XFtpCommand* cmd)
         return -1;
     }
     XMutex_lock(ftp->m_commandMutex);
-    size_t before = XVector_size_base(ftp->m_pendingCommands);
+    size_t before = XContainer_size_base((const XContainer*)ftp->m_pendingCommands);
     XVector_push_back_1_base(ftp->m_pendingCommands, &cmd);
-    bool queued = XVector_size_base(ftp->m_pendingCommands) == before + 1;
+    bool queued = XContainer_size_base((const XContainer*)ftp->m_pendingCommands) == before + 1;
     XMutex_unlock(ftp->m_commandMutex);
     int id = cmd->m_id;
     if (!queued) XClassDelete(cmd);
@@ -1211,7 +1211,7 @@ static void ftp_pi_startNextCommand(XFtp* ftp)
     if (!ftp->m_pendingCommands) return;
 
     XMutex_lock(ftp->m_commandMutex);
-    if (XVector_size_base(ftp->m_pendingCommands) == 0) {
+    if (XContainer_size_base((const XContainer*)ftp->m_pendingCommands) == 0) {
         XMutex_unlock(ftp->m_commandMutex);
         return;
     }
@@ -1955,7 +1955,7 @@ static void ftp_pi_finishCommand(XFtp* ftp, int code, const char* text)
 
     // 从队列移除第一个命令
     XMutex_lock(ftp->m_commandMutex);
-    if (ftp->m_pendingCommands && XVector_size_base(ftp->m_pendingCommands) > 0) {
+    if (ftp->m_pendingCommands && XContainer_size_base((const XContainer*)ftp->m_pendingCommands) > 0) {
         XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
         if (cmd) XClassDelete(cmd);
         XVector_remove_base(ftp->m_pendingCommands, 0, 1);
@@ -1970,7 +1970,7 @@ static void ftp_pi_finishCommand(XFtp* ftp, int code, const char* text)
     (void)text;
 
     // 检查是否所有命令完成
-    if (!ftp->m_pendingCommands || XVector_size_base(ftp->m_pendingCommands) == 0) {
+    if (!ftp->m_pendingCommands || XContainer_size_base((const XContainer*)ftp->m_pendingCommands) == 0) {
         XFtp_done_signal(ftp, ftp->m_error != XFtp_Error_NoError);
     } else {
         ftp_pi_startNextCommand(ftp);
@@ -2171,7 +2171,7 @@ static void ftp_pi_handleError(XFtp* ftp, int code, const char* text)
 
     // 从队列移除当前命令并推进到下一个（否则队列卡死）
     XMutex_lock(ftp->m_commandMutex);
-    if (ftp->m_pendingCommands && XVector_size_base(ftp->m_pendingCommands) > 0) {
+    if (ftp->m_pendingCommands && XContainer_size_base((const XContainer*)ftp->m_pendingCommands) > 0) {
         XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
         if (cmd) XClassDelete(cmd);
         XVector_remove_base(ftp->m_pendingCommands, 0, 1);
@@ -2180,7 +2180,7 @@ static void ftp_pi_handleError(XFtp* ftp, int code, const char* text)
     ftp->m_rawCommand = 0;
     XMutex_unlock(ftp->m_commandMutex);
 
-    if (!ftp->m_pendingCommands || XVector_size_base(ftp->m_pendingCommands) == 0) {
+    if (!ftp->m_pendingCommands || XContainer_size_base((const XContainer*)ftp->m_pendingCommands) == 0) {
         XFtp_done_signal(ftp, true);
     } else if (ftp->m_state == XFtp_State_Unconnected ||
                ftp->m_state == XFtp_State_Connecting) {
@@ -2434,7 +2434,7 @@ static void ftp_dtp_finishTransfer(XFtp* ftp)
                                         ftp->m_error != XFtp_Error_NoError);
             /* 从队列移除第一个命令 */
             XMutex_lock(ftp->m_commandMutex);
-            if (ftp->m_pendingCommands && XVector_size_base(ftp->m_pendingCommands) > 0) {
+            if (ftp->m_pendingCommands && XContainer_size_base((const XContainer*)ftp->m_pendingCommands) > 0) {
                 XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
                 if (cmd) XClassDelete(cmd);
                 XVector_remove_base(ftp->m_pendingCommands, 0, 1);
@@ -2443,7 +2443,7 @@ static void ftp_dtp_finishTransfer(XFtp* ftp)
             ftp->m_rawCommand = 0;
             XMutex_unlock(ftp->m_commandMutex);
             /* 检查是否所有命令完成 */
-            if (!ftp->m_pendingCommands || XVector_size_base(ftp->m_pendingCommands) == 0) {
+            if (!ftp->m_pendingCommands || XContainer_size_base((const XContainer*)ftp->m_pendingCommands) == 0) {
                 XFtp_done_signal(ftp, ftp->m_error != XFtp_Error_NoError);
             } else {
                 ftp_pi_startNextCommand(ftp);
@@ -2831,7 +2831,7 @@ XFtpCommand_Type XFtp_currentCommand(const XFtp* ftp)
 bool XFtp_hasPendingCommands(const XFtp* ftp)
 {
     if (!ftp || !ftp->m_pendingCommands) return false;
-    return XVector_size_base(ftp->m_pendingCommands) > 0;
+    return XContainer_size_base((const XContainer*)ftp->m_pendingCommands) > 0;
 }
 
 // =============== API ===============
@@ -3193,7 +3193,7 @@ void XFtp_abort(XFtp* ftp)
 
     XVector* canceled = XVector_Create(XFtpCommand*);
     XMutex_lock(ftp->m_commandMutex);
-    while (XVector_size_base(ftp->m_pendingCommands) > 0) {
+    while (XContainer_size_base((const XContainer*)ftp->m_pendingCommands) > 0) {
         XFtpCommand* cmd = XVEC_GET(ftp->m_pendingCommands, 0, XFtpCommand);
         XVector_remove_base(ftp->m_pendingCommands, 0, 1);
         if (canceled) XVector_push_back_1_base(canceled, &cmd);

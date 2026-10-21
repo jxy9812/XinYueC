@@ -301,6 +301,48 @@ XPlatformWindow* XPlatformIntegration_createPlatformWindow(
 #endif /* XPLATFORMWINDOW_ON */
 }
 
+/** @brief      回收与指定平台窗口对象关联的登记（对标 Qt 6.8.3
+ *              QWindowPrivate::destroy 的 `delete std::exchange(platformWindow,
+ *              nullptr)`，qwindow.cpp:2112）。
+ *  @details    r6-b 回归锁根修（2026-10-21）：XWindow_destroy 此前只拆
+ *              XWindow→平台窗口方向借用指针，登记表元素从未在窗口销毁
+ *              期兑现回收，每个「建柄→销毁」周期泄漏一个 XPlatformWindow
+ *              （对象+私有块+属性表共 312B，实测 12 轮线性抬升）。本函数
+ *              仅回收【登记表在册】的句柄对象：查无此人（测试注入的伪
+ *              句柄/外部转移对象）不动不删，所有权语义不变；foreign 句柄
+ *              不经此回收（对齐 QWindow::destroy 的 isForeignWindow 提前
+ *              返回，外部原生窗口生命周期不归本层）。调用方须先摘除
+ *              XWindow 侧借用指针再调用（Qt 同序：先置空后删除，防析构
+ *              重入）。窗体重建（destroy 后再 show）由 XWindow_createHandle
+ *              的 `!m_platform` 分支按需重建，语义对标 Qt create() after
+ *              destroy()。
+ *  @param      self 目标集成层；可为 NULL。
+ *  @param      pw 待回收平台窗口句柄。
+ *  @return     true=已从登记表摘除并回收；false=非本层登记（未动）。 */
+bool XPlatformIntegration_releasePlatformWindow(XPlatformIntegration* self,
+                                                XPlatformWindow* pw)
+{
+#if XPLATFORMWINDOW_ON
+    size_t i;
+    size_t n;
+    if (!self || !self->m_data || !pw || !self->m_data->m_platformWindows)
+        return false;
+    n = XVector_size_base((const XContainer*)self->m_data->m_platformWindows);
+    for (i = 0; i < n; ++i) {
+        if (XVector_At_Base(self->m_data->m_platformWindows, (int64_t)i,
+                            XPlatformWindow*) == pw) {
+            XVector_remove_base(self->m_data->m_platformWindows, (int64_t)i, 1);
+            XClassDelete(pw);
+            return true;
+        }
+    }
+    return false;
+#else /* !XPLATFORMWINDOW_ON */
+    (void)self; (void)pw;
+    return false;
+#endif /* XPLATFORMWINDOW_ON */
+}
+
 XPlatformWindow* XPlatformIntegration_createForeignWindow(
         XPlatformIntegration* self, XWindow* window, XWindowId nativeHandle)
 {

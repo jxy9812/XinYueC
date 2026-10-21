@@ -78,6 +78,9 @@
 #include "XVector.h"   /* XGuiApplication_allWindows 窗口登记表自持遍历。 */
 #include "XGuiApplication.h" /* allWindows：命中测试自持遍历（不用 topLevelAt）。 */
 #include "XSystem.h"
+#if XCURSOR_ON
+#include "XCursor.h" /* 软件光标精灵：触摸位置喂给 XCursor_setPos。 */
+#endif
 
 /* ==================== 进程级驱动状态（静态，无堆分配） ==================== */
 
@@ -330,6 +333,83 @@ static bool xpfi_windowAt(int x, int y, XWindow** outWindow, XPoint* outLocal)
     return true;
 }
 
+#if XCURSOR_ON
+/**
+ * @brief      记录软件光标位置的参考坐标系=指定窗口（命中/抓取窗口）
+ *             的内容旋转角+整窗逻辑宽高+全局原点。
+ * @details    XCursor_pos 存的是该窗口的局部坐标（原点/旋转逐窗不同），
+ *             呈现层（XPlatformBackingStore_posix.c 的 fbdev 直写各精
+ *             灵重画路径）经 XCursor_swPosFrame 取同一坐标系把精灵正
+ *             变换到面板像素——精灵面板位置只随本喂给变化，与「哪个
+ *             窗口恰好在上屏」无关（HUD 类自续重绘的其它顶层窗口交替
+ *             present、条带旁路直写都不再把精灵画到换系错位处来回跳）。
+ *             先记系后喂位：任何观察者见到的 (pos, frame) 恒同源。
+ */
+static void xpfi_cursorRecordWindowFrame(XWindow* window)
+{
+    XRect geometry;
+    XPoint origin;
+    if (!window) return;
+    geometry = XWindow_geometry(window);
+    XPoint_init(&origin, geometry.x, geometry.y);
+    XCursor_swSetPosFrame(XWindow_contentRotationDegrees(window),
+                          geometry.width, geometry.height, &origin);
+}
+
+/**
+ * @brief      把面板像素坐标换算成全局逻辑坐标喂给软件光标精灵。
+ * @details    变换口径与事件分发一致（xpfi_windowAt 同源）：命中窗口先
+ *             减窗口原点再施加 R⁻¹（XWindow_rotationUnmapPoint，不钳
+ *             位），0° 旋转时面板坐标==逻辑坐标；命中失败回退显式鼠标
+ *             抓取窗口（同一换算），再失败面板坐标直通（启动早期窗口
+ *             未建的正常时序）。每次喂位同步记录参考坐标系（命中/抓取
+ *             窗口系或恒等系，见 xpfi_cursorRecordWindowFrame）。
+ *             XCursor_setPos 首次调用即点亮精灵的
+ *             「已收到触摸位置」激活条件；X11/Win32 有硬件光标后端，
+ *             精灵在 XCursor_swActive 内整体休眠，此处照常喂不碍事。
+ */
+static void xpfi_cursorFeedPanelPoint(int px, int py)
+{
+    XWindow* window = NULL;
+    XPoint local;
+    local.x = px;
+    local.y = py;
+    if (xpfi_windowAt(px, py, &window, &local) && window)
+    {
+        xpfi_cursorRecordWindowFrame(window);
+        XCursor_setPos(local.x, local.y);
+        return;
+    }
+    {
+        XWidget* grabber = XWidget_mouseGrabber();
+        window = grabber ? XWidget_windowHandle(grabber) : NULL;
+    }
+    if (window)
+    {
+        XRect geometry = XWindow_geometry(window);
+        int rot = XWindow_contentRotationDegrees(window);
+        int lx = px - geometry.x;
+        int ly = py - geometry.y;
+        if (rot != 0)
+        {
+            int ux = lx;
+            int uy = ly;
+            XWindow_rotationUnmapPoint(rot, geometry.width, geometry.height,
+                                       lx, ly, &ux, &uy);
+            lx = ux;
+            ly = uy;
+        }
+        xpfi_cursorRecordWindowFrame(window);
+        XCursor_setPos(lx, ly);
+        return;
+    }
+    /* 无窗口：面板坐标直通（rot==0 恒等价）；参考坐标系同步复位恒等
+     * （呈现层 0° 换算与宽高/原点无关，按面板坐标取精灵）。 */
+    XCursor_swSetPosFrame(0, 0, 0, NULL);
+    XCursor_setPos(px, py);
+}
+#endif /* XCURSOR_ON */
+
 /**
  * @brief      按状态过滤收集触点子集（混合帧拆分注入用）。
  * @details    从 commitFrame 收集好的整帧触点列表中摘出指定状态的点，
@@ -519,6 +599,13 @@ static void xpfi_commitFrame(uint32_t timestampMs)
     }
     if (count == 0)
         return; /* 本帧无任何触点变化（含悬空移动）：不注入。 */
+#if XCURSOR_ON
+    /* 软件光标精灵位置喂给（主点=列表首点，与下方命中测试同点）：
+     * 按下/移动/抬起各沿收集到的坐标在此统一换算喂入（抬起沿保留末位
+     * 坐标即照常更新一次）；先于注入命中早退，滑出窗界的帧精灵照跟。 */
+    xpfi_cursorFeedPanelPoint(points[0].m_globalPosition.x,
+                              points[0].m_globalPosition.y);
+#endif
     /* 目标窗口：主点（列表首点）全局坐标命中顶层。 */
     if (!xpfi_windowAt(points[0].m_globalPosition.x,
                        points[0].m_globalPosition.y, &window, NULL))

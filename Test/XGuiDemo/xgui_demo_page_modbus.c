@@ -2700,6 +2700,12 @@ static void mb_slaveBuildRegTable(XWidget* parent, XTableWidget** outTable,
     XTableWidget_setHorizontalHeaderLabels(tbl, kHead,
             (int)(sizeof(kHead) / sizeof(kHead[0])));
     XTableWidget_setRowCount(tbl, rowCount);
+    /* [1019 晨 用户指令·表格零滚动条] 同主站寄存器表:AlwaysOff,
+     * 尺寸自适应交由布局容器(表满高全展开,滚动壳纪律不变)。 */
+    XAbstractScrollArea_setVerticalScrollBarPolicy(
+        (XAbstractScrollArea*)tbl, XScrollBarPolicy_AlwaysOff);
+    XAbstractScrollArea_setHorizontalScrollBarPolicy(
+        (XAbstractScrollArea*)tbl, XScrollBarPolicy_AlwaysOff);
     for (i = 0; i < rowCount; ++i)
         mb_slaveMountRegRow(tbl, i);
     XAbstractItemView_setItemsEditable(&tbl->m_base.m_base, true);
@@ -3812,6 +3818,15 @@ XWidget* demo_page_modbus_master_build(XWidget* parent,
         XTableWidget_setHorizontalHeaderLabels(s_mb.regTable, kHead,
                 (int)(sizeof(kHead) / sizeof(kHead[0])));
         XTableWidget_setRowCount(s_mb.regTable, MB_SLAVE_REG_ROWS);
+        /* [1019 晨 用户指令·表格零滚动条] 表内竖/横滚条 AlwaysOff:尺寸
+         * 自适应交由布局容器+fit 收敛链(显示行随视口折算),溢出由全页
+         * 唯一竖滚条兜底——拉伸改窗不再出现表内滚动条。 */
+        XAbstractScrollArea_setVerticalScrollBarPolicy(
+            (XAbstractScrollArea*)s_mb.regTable,
+            XScrollBarPolicy_AlwaysOff);
+        XAbstractScrollArea_setHorizontalScrollBarPolicy(
+            (XAbstractScrollArea*)s_mb.regTable,
+            XScrollBarPolicy_AlwaysOff);
         XWidget_show((XWidget*)s_mb.regTable);
         XBoxLayout_addWidget(&s_mb.layRoot, (XWidget*)s_mb.regTable);
         /* [10-19 框架编辑器迁移] 编辑走框架委托编辑器：表级门禁开

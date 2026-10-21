@@ -378,9 +378,12 @@ static void xdns_fail(XDdnsClient* self, XDdnsError error)
     d->m_lastError = (uint32_t)error;
     d->m_state = (uint32_t)XDdnsClientState_Failed;
     errArg = (int)error;
-    XEmitSignal(self, XDdnsClient_checkFailed_signal,
-                XVarList_Create(XVar(int, errArg)),
-                NULL, NULL, XEVENT_PRIORITY_NORMAL);
+    /* void 返回函数内不可用 XEmitSignal（宏尾 return 带值），按宏展开
+     * 语义直呼（守卫+上行转换同 XEmitSignal，2026-10-21 告警根修）。 */
+    if (self && ((XObject*)self)->m_signalSlot)
+        XObject_emitSignal((XObject*)self, (size_t)XDdnsClient_checkFailed_signal,
+                           XVarList_Create(XVar(int, errArg)),
+                           NULL, NULL, XEVENT_PRIORITY_NORMAL);
 }
 
 /* xdns_emit_ip 定义在信号小节（带 XString 参数删除器，见文件尾部）。 */

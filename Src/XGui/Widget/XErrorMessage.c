@@ -236,13 +236,20 @@ static void xerr_append(XStringList* list, const char* text)
 }
 
 /** @brief 该消息是否应显示（对标 QErrorMessagePrivate::
- *         isMessageToBeShown，qerrormessage.cpp:376-381）：空消息不
- *         显示；type 空按消息文本维度查 doNotShow，type 非空按类型
- *         维度查 doNotShowType。 */
+ *         isMessageToBeShown，qerrormessage.cpp:376-381）：type 空按
+ *         消息文本维度查 doNotShow，type 非空按类型维度查
+ *         doNotShowType。
+ * @warning 与 Qt 的偏差（本库契约，双侧测试锁共载）：空串消息**参与
+ *          显示**——r1#5 缺陷锁（XGuiRegression_Test「空消息落宽下限
+ *          锚点 300」）与 apitest menus 族「showMessage(空串) 置空消
+ *          息」都要求空串走应用路径（清当前消息并重算固定尺寸回落
+ *          300x40 下限）；Qt 在 isMessageToBeShown 对空串直接短路。
+ *          NULL 仍为无操作（同 apitest「showMessage(NULL) 为无操作」
+ *          锁）。 */
 static bool xerr_isMessageToBeShown(const XErrorMessage* self,
                                     const char* msg, const char* type)
 {
-    if (!self || !msg || !msg[0]) return false;
+    if (!self || !msg) return false;
     if (type && type[0])
         return !xerr_contains(self->m_doNotShowType, type);
     return !xerr_contains(self->m_doNotShow, msg);

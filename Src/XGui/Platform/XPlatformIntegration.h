@@ -280,6 +280,20 @@ XPlatformWindow* XPlatformIntegration_createPlatformWindow(
         XPlatformIntegration* self, XWindow* window);
 
 /**
+ * @brief      回收登记表内的平台窗口句柄对象（对标 Qt 6.8.3
+ *             QWindowPrivate::destroy 的 `delete std::exchange(platformWindow,
+ *             nullptr)`）。
+ * @details    仅回收【本层登记表在册】的句柄：查无此人的句柄（测试注入
+ *             伪句柄等）不动不删；调用方须先摘除 XWindow 侧借用指针再调
+ *             用（先置空后删除，防析构重入，Qt 同序）。
+ * @param      self 目标对象；可为 NULL。
+ * @param      pw 待回收平台窗口句柄。
+ * @return     true=已摘除并回收；false=非本层登记或入参非法（未动）。
+ */
+bool XPlatformIntegration_releasePlatformWindow(XPlatformIntegration* self,
+                                                XPlatformWindow* pw);
+
+/**
  * @brief      为外部原生句柄创建平台窗口（对标 createForeignWindow）。
  * @details    Linux X11 与 Windows Win32 后端将现有句柄挂接到 XWindow，且不
  *             取得外部窗口的销毁所有权；无系统窗口连接时返回 NULL。

@@ -10833,7 +10833,7 @@ typedef struct PainterGlyphAdvanceEntry
     bool m_valid;
 } PainterGlyphAdvanceEntry;
 
-#define PAINTER_GLYPH_ADVANCE_SETS 256
+#define PAINTER_GLYPH_ADVANCE_SETS 1024
 #define PAINTER_GLYPH_ADVANCE_WAYS 2
 
 static PainterGlyphAdvanceEntry

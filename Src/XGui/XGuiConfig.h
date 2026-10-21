@@ -600,10 +600,13 @@
 /* 桌面/嵌入式形态开关（XVIRTUALKEYBOARD_DESKTOP_ON，默认 1）：1=守护
  * 自动弹+贴底弹层（焦点边沿自动弹出/跟随）；0=守护停用，仅显式
  * XVirtualKeyboard_popup/总开关控制。选区手柄/影子输入控件不在范围。
- * [2026-10-14 调试期临时关闭] 悬浮键盘遮挡表格交互影响失焦收框调试，
- * 调通后恢复为 1。 */
+ * [2026-10-14 调试期临时关闭→2026-10-21 恢复默认 1] 当初为「悬浮键盘
+ * 遮挡表格交互影响失焦收框调试」临时压 0，注释即约明「调通后恢复为
+ * 1」；压 0 期间守护轮询整体停摆（xkb_startGuard 早退），XKeyboardTest
+ * ⑦ 守护边沿矩阵与 r1#4d 点击弹层时序锁（XGuiRegression_Test 既有断
+ * 言）整批红。现按原注释恢复默认 1，由守护矩阵自身承载遮挡语义。 */
 #ifndef XVIRTUALKEYBOARD_DESKTOP_ON
-#define XVIRTUALKEYBOARD_DESKTOP_ON 0
+#define XVIRTUALKEYBOARD_DESKTOP_ON 1
 #endif
 /* 拼音词组库（IME V2 外挂词组，XPinyinPhrase TU）：词组查询与
  * 文件加载。依赖 XKEYBOARD_IME_ON 与 XFILE_ON（词库为运行期文件资产，

@@ -215,6 +215,16 @@ bool XFontFace_register(XFontFace* face);
  */
 const XFontFace* XFont_face(const XFont* font);
 
+struct XString;
+/**
+ * @brief 家族串释放前清槽钩（XFont_face 会话 memo 防 ABA，2026-10-20）。
+ * @details 按 XString 指针清除 XFont_face 解析 memo 中以该串为键的全部
+ *          占用槽；必须在私有家族串 XClassDelete 之前调用（共享串进程期
+ *          持有不释放，无需调用）。NULL 为空操作。
+ * @param family 即将释放的家族串指针。
+ */
+void XFontFace_forgetFamily(const struct XString* family);
+
 /** @brief 查询 face 的后端种类。 */
 XFontFaceKind XFontFace_kind(const XFontFace* self);
 

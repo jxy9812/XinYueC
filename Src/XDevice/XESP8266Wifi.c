@@ -630,7 +630,7 @@ void* XESP8266Wifi_error_signal(XESP8266Wifi* device, int errorCode, const char*
         char* msg = len ? XMalloc_System(len + 1) : NULL;
         if (msg) strcpy(msg, errorMsg);
         XVarList* list = XVarList_Create(XVar(int, errorCode), XVar(char*, msg));
-        XObject_emitSignal(device, XESP8266Wifi_error_signal, list, error_signal_data_delete, NULL, XEVENT_PRIORITY_NORMAL);
+        XObject_emitSignal((XObject*)device, (size_t)XESP8266Wifi_error_signal, list, error_signal_data_delete, NULL, XEVENT_PRIORITY_NORMAL);
     }
     return XESP8266Wifi_error_signal;
 }

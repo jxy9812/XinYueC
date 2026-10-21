@@ -9,9 +9,11 @@
  *             triggerAction 全部动作 + actionTriggered、stepBy/stepEnabled
  *             虚槽、setRepeatAction/repeatAction、键盘步进（Up/Right/
  *             Down/Left/PageUp/PageDown/Home/End 与 invertedControls
- *             翻转）、滚轮步进（120=1 步、余数累积、invertedControls
- *             翻转）、刻度 API、鼠标交互（handle 拖动/凹槽跳转/释放
- *             提交）、拷贝/移动（XClassCopy/XClassMove）。
+ *             翻转）、滚轮步进（Qt scrollByDelta：一格滚轮 =
+ *             wheelScrollLines(3) 单步、方向反转清零、单次 qBound 一页、
+ *             int 整步口径不足一格不入账、invertedControls 翻转）、刻度
+ *             API、鼠标交互（handle 拖动/凹槽跳转/释放提交）、拷贝/
+ *             移动（XClassCopy/XClassMove）。
  * @author     XinYueC 团队
  ******************************************************************************/
 #include "XSliderTest.h"
@@ -397,21 +399,32 @@ bool XSliderTest_runAll(void)
     sl_expect(XAbstractSlider_value(base) == 50, "invertedControls PageDown 页增");
     XAbstractSlider_setInvertedControls(base, false);
 
-    /* 12. 滚轮步进（120 角度=1 单步，余数累积）。 */
+    /* 12. 滚轮步进（对标 Qt 6.8.3 qabstractslider.cpp:668-725
+     *    scrollByDelta：一格滚轮 = wheelScrollLines（缺省 3）×singleStep
+     *    个单步，方向反转清零，单次滚动 qBound 到一页。9da82dcc 对齐口
+     *    径，本段随之迁移。与 Qt 的已登记偏差：累加器为 int 整步口径，
+     *    不足一格（|delta|<120）的增量不入账（Qt offset_accumulated 为
+     *    qreal 小数累积）——改 qreal 曾揭开 modbus 演示页悬垂单元 UAF
+     *    （autotest ASan 3/3），偏差暂留（XAbstractSlider.c 函数头）。 */
     XAbstractSlider_setValue(base, 50);
     sl_wheel(base, 120);
-    sl_expect(XAbstractSlider_value(base) == 51, "滚轮 +120 = 1 步");
+    sl_expect(XAbstractSlider_value(base) == 53,
+              "滚轮 +120 = wheelScrollLines(3) 单步");
     sl_wheel(base, 240);
-    sl_expect(XAbstractSlider_value(base) == 53, "滚轮 +240 = 2 步");
-    sl_wheel(base, -60); /* 余数 -60，不足一步 */
-    sl_expect(XAbstractSlider_value(base) == 53, "滚轮 -60 余数累积");
-    sl_wheel(base, -60); /* 余数 -120 → -1 步 */
-    sl_expect(XAbstractSlider_value(base) == 52, "滚轮余数累积成步");
+    sl_expect(XAbstractSlider_value(base) == 58,
+              "滚轮 +240 累计 6 步被 qBound 到一页 5");
+    sl_wheel(base, -60); /* 不足一格：不入账（int 整步口径，见上） */
+    sl_expect(XAbstractSlider_value(base) == 58,
+              "滚轮 -60 不足一格不入账（已登记偏差）");
+    sl_wheel(base, -60); /* 同上 */
+    sl_expect(XAbstractSlider_value(base) == 58,
+              "滚轮 -60 不累积不步进");
     /* invertedControls 翻转滚轮方向。 */
     XAbstractSlider_setInvertedControls(base, true);
     XAbstractSlider_setValue(base, 50);
     sl_wheel(base, 120);
-    sl_expect(XAbstractSlider_value(base) == 49, "invertedControls 滚轮反向");
+    sl_expect(XAbstractSlider_value(base) == 47,
+              "invertedControls 滚轮反向 -3 步");
     XAbstractSlider_setInvertedControls(base, false);
 
     /* 13. stepBy/stepEnabled 虚槽。 */

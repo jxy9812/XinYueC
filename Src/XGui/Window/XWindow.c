@@ -1014,6 +1014,31 @@ void XWindow_destroy(XWindow* self)
         data->m_platform = NULL;
         data->m_platformWindowLinked = false;
     }
+    /* r6-b 回归锁根修（2026-10-21）：集成层登记的平台窗口对象随窗口
+     * 销毁兑现回收——此前只拆 XWindow→平台窗口方向借用指针，登记表
+     * 元素滞留到集成层析构，每个「建柄→销毁」周期净泄漏一个
+     * XPlatformWindow（对象+私有块+属性表共 312B，探针 12 轮线性
+     * 实证）。对齐 Qt 6.8.3 QWindowPrivate::destroy（qwindow.cpp:2112
+     * `delete std::exchange(platformWindow, nullptr)`）：先摘本侧借用
+     * 指针再回收（防平台窗口析构重入，Qt 同序）；foreign 句柄已由上
+     * 一分支摘除不入此路（QWindow::destroy 的 isForeignWindow 提前
+     * 返回同款）。登记表查无此人（注入伪句柄/外部转移对象）时
+     * releasePlatformWindow 不动不删，仅同步摘借用指针，所有权语义
+     * 不变。销毁后再 show 由 createHandle 的 `!m_platform` 分支按需
+     * 重建（对标 Qt create() after destroy()）。 */
+    else if (data->m_platform && data->m_platformWindowLinked) {
+        XWindowPlatform* ownedHandle = data->m_platform;
+        data->m_platform = NULL;
+        data->m_platformWindowLinked = false;
+#if XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON
+        {
+            XGuiApplication* app = XGuiApplication_instance();
+            if (app && app->m_platformIntegration)
+                (void)XPlatformIntegration_releasePlatformWindow(
+                    app->m_platformIntegration, (XPlatformWindow*)ownedHandle);
+        }
+#endif /* XGUIAPPLICATION_ON && XPLATFORMINTEGRATION_ON */
+    }
 #endif /* XPLATFORMWINDOW_ON */
     data->m_created = false;
     data->m_winId = 0;

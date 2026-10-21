@@ -2549,7 +2549,7 @@ static bool append_input_data(XXmlStreamReaderPrivate* d, const char* data, size
     if (d->m_error == XXmlStream_PrematureEndOfDocumentError) {
         d->m_error = XXmlStream_NoError;
         d->m_type = XXmlStream_NoToken;
-        if (d->m_errorString) XString_clear_base(d->m_errorString);
+        if (d->m_errorString) XContainer_clear_base((XContainer*)d->m_errorString);
     }
     return true;
 }

@@ -1770,7 +1770,7 @@ const char* XNetworkProxyHandshake_errorMessage(const XProxyHandshakeContext* ct
         return "Unknown error";
     }
     
-    if (ctx->errorMessage && XString_size_base(ctx->errorMessage) > 0) {
+    if (ctx->errorMessage && XContainer_size_base((const XContainer*)ctx->errorMessage) > 0) {
         return XString_toUtf8(ctx->errorMessage);
     }
     

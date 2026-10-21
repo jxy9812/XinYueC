@@ -500,7 +500,7 @@ static void xprocess_reset_start_state(XProcess* self)
     self->m_stdoutClosed = false;
     self->m_stderrClosed = false;
     self->m_stdinClosed = false;
-    if (self->m_errorString) XString_clear_base(self->m_errorString);
+    if (self->m_errorString) XContainer_clear_base((XContainer*)self->m_errorString);
 }
 
 bool XProcess_start(XProcess* self, const XString* program,

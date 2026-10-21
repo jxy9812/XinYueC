@@ -159,6 +159,105 @@ static void xfiledialog_emitList(XFileDialog* self, size_t signal,
     }
 }
 
+#if XFILE_ON && XDIR_ON
+/* ==================== 布局句柄集与排空后回收登记 ====================
+ * （取消崩溃根修 2026-10-21：静态便捷路径的收尾不得在取消/确定槽
+ * 尚未返回、输入派发仍以本对话框子树为靶的栈窗口内同步删除任何
+ * 子树对象——ASan 实抓：取消钮在 xff_teardown 同步删除后，控制权
+ * 带着事件循环回到派发层，下一记落在对话框区域的鼠标事件派发到
+ * 已释放的取消钮，XWidget_accumulateOffset 读已释放内存 UAF；
+ * Windows MSVC 消息时序必现，Linux 视鼠标落点侥幸。回收一律延迟：
+ *  - 对话框子树（含确定/取消钮）走 XObject_deleteLater（DeferredDelete
+ *    事件的 loopLevel 语义对齐 Qt deleteLater，析构发生在控制权返回
+ *    事件循环后的独立派发帧，与 XDialog_exec DeleteOnClose 同机制）；
+ *  - 布局句柄与导航模型不随对话框子树级联（addLayout 语义归调用方
+ *    删除，见 XFFLayouts 注记），经下方登记表挂到对话框析构帧兑现：
+ *    VXFileDialog_deinit 是析构级联第一个子类帧（先于基类与子控件
+ *    级联），此刻对话框与全部子控件仍存活，删除序安全——根布局
+ *    先行（其 releaseItems 清子行 m_parentLayout 反指针
+ *    XLayout.c:352-353、VXLayout_deinit 清对话框 m_layout 反指针
+ *    XLayout.c:367-368）→ 子行布局 → 导航模型（导航窗格视图析构
+ *    不解引用借用模型，VXAbstractItemView_deinit 无 m_model 触碰）。
+ * 串行不变量：静态便捷路径同一时刻至多一个模态对话框（xff_execActive
+ * 护栏），登记表单槽即可；owner 指针校验保证非本对话框的析构（嵌套
+ * 早退 teardown 判空路径/显式实例用户直删）不误回收他人句柄。 */
+
+/** @brief 布局句柄集：顶层布局 + 子行布局均由调用方删除（addLayout
+ *  子布局不归父布局所有，对标 QLayout 所有权语义）。收尾改为随对话框
+ *  析构帧延迟回收（登记于下方 s_xffPendingDlg，不再于 teardown 现场
+ *  删除）。 */
+typedef struct XFFLayouts
+{
+    XBoxLayout* root;     /**< 顶层垂直布局。 */
+    XBoxLayout* navRow;   /**< 地址行（后退 + 上级按钮 + 标签 + 目录下拉 + 搜索框）。 */
+    XBoxLayout* bodyRow;  /**< 主体行（导航窗格 + 文件列表树）。 */
+    XBoxLayout* filterRow;/**< 过滤器行（标签 + 下拉）。 */
+    XBoxLayout* nameRow;  /**< 文件名行（标签 + 编辑）。 */
+    XBoxLayout* bar;      /**< 按钮行。 */
+    XAbstractItemModel* navModel; /**< 导航窗格模型（视图不拥有，须自删）。
+                                       文件列表树（XTreeWidget）用内建
+                                       桥模型，无外部 model 需回收。 */
+} XFFLayouts;
+
+/** @brief 排空后回收登记表（单槽 + owner 校验，见上方块注）。 */
+static XFileDialog* s_xffPendingDlg = NULL;
+static XBoxLayout* s_xffPendingLayouts[6] = {0}; /**< [0]=root，[1..5]=子行。 */
+static XAbstractItemModel* s_xffPendingNavModel = NULL;
+
+/** @brief 对话框析构帧兑现登记：回收布局句柄与导航模型。仅当登记
+ *  owner 即本次析构对话框时兑现（VXFileDialog_deinit 调用；删除序
+ *  与反指针清理依据见上方块注）。 */
+static void xff_pendingReclaim(XFileDialog* dying)
+{
+    int i;
+    if (!dying || s_xffPendingDlg != dying) return;
+    if (s_xffPendingLayouts[0])
+        XClassDelete((XLayout*)s_xffPendingLayouts[0]);
+    for (i = 1; i < 6; ++i) {
+        if (s_xffPendingLayouts[i])
+            XClassDelete((XLayout*)s_xffPendingLayouts[i]);
+    }
+    if (s_xffPendingNavModel)
+        XClassDelete((XClass*)s_xffPendingNavModel);
+    s_xffPendingDlg = NULL;
+    for (i = 0; i < 6; ++i) s_xffPendingLayouts[i] = NULL;
+    s_xffPendingNavModel = NULL;
+}
+
+/** @brief teardown 登记：布局句柄与导航模型移交登记表，随对话框
+ *  析构帧回收（时序与安全性见上方块注）。覆写前先回收旧登记
+ *  （2026-10-21 单槽覆写泄漏补丁）：同一槽/函数内连续两次便捷调用
+ *  （无事件循环返回间隙）时，前一对话框的 DeferredDelete 因
+ *  loopLevel 语义在后一对话框的嵌套 exec 内不兑现
+ *  （XDeferredDeleteEvent_shouldDeliver：eventLevel>currentLevel 与
+ *  loopLevel==0 哨兵两条件均不成立——登记帧自身运行于 loopLevel>=1
+ *  的宿主循环派发栈内），直接覆写登记会使前一对话框的析构帧
+ *  owner 失配跳过回收，其 6 个布局句柄+导航模型共 7 对象泄漏（每
+ *  多开一次泄漏前一轮的）。此处回收的是「已收口在册但析构帧未兑
+ *  现」的旧登记：其对话框此刻必然仍存活（DeferredDelete 在册正是
+ *  未析构的凭据）且已隐藏（teardown 前收口完成），立即删除其布局
+ *  句柄/导航模型安全——布局删除仅清子行 m_parentLayout 与对话框
+ *  m_layout 反指针（XLayout.c:352-353/367-368，随后析构帧读到
+ *  NULL 空转），导航模型为导航窗格视图的借用方（视图析构不解引
+ *  用，见上方块注）；回收后置空登记表，本对话框登记落表即唯一在
+ *  册。 */
+static void xff_pendingRegister(XFileDialog* dlg, const XFFLayouts* ls)
+{
+    if (!dlg || !ls) return;
+    if (s_xffPendingDlg && s_xffPendingDlg != dlg)
+        xff_pendingReclaim(s_xffPendingDlg);
+    s_xffPendingDlg = dlg;
+    s_xffPendingLayouts[0] = ls->root;
+    s_xffPendingLayouts[1] = ls->navRow;
+    s_xffPendingLayouts[2] = ls->bodyRow;
+    s_xffPendingLayouts[3] = ls->filterRow;
+    s_xffPendingLayouts[4] = ls->nameRow;
+    s_xffPendingLayouts[5] = ls->bar;
+    s_xffPendingNavModel = ls->navModel;
+}
+
+#endif /* XFILE_ON && XDIR_ON */
+
 /* ==================== 类与实例生命周期 ==================== */
 
 /** @brief 释放对话框自有拥有字段，再委托父类。 */
@@ -197,6 +296,12 @@ static void VXFileDialog_deinit(XFileDialog* self)
         XClassDelete((XClass*)self->m_supportedSchemes);
         self->m_supportedSchemes = NULL;
     }
+#if XFILE_ON && XDIR_ON
+    /* 排空后回收：静态便捷路径收尾登记的布局句柄与导航模型随本对话框
+     * 析构帧兑现（取消崩溃根修；登记/删除序与 owner 校验见
+     * s_xffPendingDlg 块注）。owner 非本对话框（无登记/他人登记）时空转。 */
+    xff_pendingReclaim(self);
+#endif
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
@@ -2378,9 +2483,45 @@ static bool xff_itemAlreadyExists(XFileDialog* dlg, const XString* path)
     return true;
 }
 
+/** @brief 递归隐藏子树（输入侧摘除，先子后父）：框架以「隐藏即
+ *  摘除」纪律在 setVisible(false) 现场清理焦点/鼠标抓取/隐式抓取
+ *  （qt_button_down 口径按压靶）等指向【本控件】的静态登记
+ *  （XWidget.c setVisible 隐藏分支 identity 摘除）；容器隐藏只经
+ *  propagateVisibility 翻转子控件生效可见位，不做子控件粒度的登记
+ *  摘除。平台 ButtonRelease 的 X11 state 仍携带已松开按键位（core
+ *  协议实测 Xvfb state=0x100），派发层的按键全松判定不成立，按压靶
+ *  在整次点击后长期滞留——故对话框关闭前先逐控件隐藏（此刻子控件
+ *  仍生效可见，隐藏分支真实触发），确保随后延迟回收子树时事件层无
+ *  任何输入侧静态登记再指向子树成员。必须在 m_visible 仍为 1 时
+ *  调用（父对话框未隐藏）；先子后父保证每个控件的隐藏分支都在其
+ *  自身 oldVisible=1 的现场执行。 */
+static void xff_detachInputRecursive(XWidget* w)
+{
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!w) return;
+    children = XObject_children((XObject*)w);
+    n = children ? XVector_size_base(children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, i);
+        if (child && child->m_is_widget && !child->m_is_window)
+            xff_detachInputRecursive((XWidget*)child);
+    }
+    XWidget_setVisible(w, false);
+}
+
 /** @brief 结算收口（对标 QFileDialogPrivate::emitFilesSelected
  *  （qfiledialog.cpp:686-692：恒发 filesSelected(files)、仅当
- *  files.size()==1 补发 fileSelected(first)）+ QDialog::accept）。 */
+ *  files.size()==1 补发 fileSelected(first)）+ QDialog::accept）。
+ *  全部收口路径（确定钮 clicked→xff_acceptSlot、文件双击
+ *  xff_viewDoubleClicked→xff_acceptSlot、Directory 确认）的唯一
+ *  漏斗：XDialog_accept 前置子树输入侧登记摘除，与取消收口
+ *  （xff_rejectSlot）同纪律——确定槽同样运行在真实按压的发射帧内
+ *  （按压靶此刻正指向确定钮/文件树条目），对话框关闭+延迟回收后
+ *  事件层不得再有登记指向子树成员（X11 ButtonRelease state 带已松
+ *  键位使派发层全松判定不成立，按压靶滞留，见 xff_detachInputRecursive
+ *  注）。视觉无感：同一次派发内随即关闭对话框，无中间帧。 */
 static void xff_emitAndAccept(XFileDialog* self, XStringList* files)
 {
     int64_t cnt = files ? XStringList_size_base((const XContainer*)files) : 0;
@@ -2390,6 +2531,7 @@ static void xff_emitAndAccept(XFileDialog* self, XStringList* files)
             (XString*)XStringList_at_base((const XVector*)files, 0);
         XFileDialog_fileSelected_signal(self, first);
     }
+    xff_detachInputRecursive(&self->m_base.m_base);
     XDialog_accept(&self->m_base);
 }
 
@@ -2558,28 +2700,32 @@ static void xff_acceptSlot(XObject* receiver, XVarList* args)
     XFileDialog_accept(dlg);
 }
 
+/* xff_detachInputRecursive 定义上移至 xff_emitAndAccept（确定收口唯一
+ * 漏斗）之前：2026-10-21 确定路径输入侧摘除补齐——根修原版只在取消槽
+ * 前置摘除，真实鼠标点确定钮/文件双击收口留下同类按压靶悬垂洞
+ * （XWidget.c:1926-1930 取悬垂按压靶直送 accumulateOffset），收口
+ * 纪律与注释见 xff_emitAndAccept 前的 xff_detachInputRecursive。 */
+
 static void xff_rejectSlot(XObject* receiver, XVarList* args)
 {
     (void)args;
-    if (receiver) XDialog_reject((XDialog*)receiver);
+    if (receiver) {
+        /* 取消收口（对标 QDialog::reject = done(Rejected)）前置子树
+         * 输入侧登记摘除：取消槽运行在取消钮 clicked(Direct) 发射帧
+         * 内（按压靶此刻正指向取消钮），对话框关闭+延迟回收后事件层
+         * 不得再有登记指向子树成员（见 xff_detachInputRecursive 注）。
+         * 视觉无感：同一次派发内随即关闭对话框，无中间帧。 */
+        xff_detachInputRecursive(&((XFileDialog*)receiver)->m_base.m_base);
+        XDialog_reject((XDialog*)receiver);
+    }
 }
 
 /* ---------- 对话框组装与执行 ---------- */
 
-/** @brief 布局句柄集：顶层布局 + 子行布局均由调用方删除（addLayout
- *  子布局不归父布局所有，对标 QLayout 所有权语义）。 */
-typedef struct XFFLayouts
-{
-    XBoxLayout* root;     /**< 顶层垂直布局。 */
-    XBoxLayout* navRow;   /**< 地址行（后退 + 上级按钮 + 标签 + 目录下拉 + 搜索框）。 */
-    XBoxLayout* bodyRow;  /**< 主体行（导航窗格 + 文件列表树）。 */
-    XBoxLayout* filterRow;/**< 过滤器行（标签 + 下拉）。 */
-    XBoxLayout* nameRow;  /**< 文件名行（标签 + 编辑）。 */
-    XBoxLayout* bar;      /**< 按钮行。 */
-    XAbstractItemModel* navModel; /**< 导航窗格模型（视图不拥有，须自删）。
-                                       文件列表树（XTreeWidget）用内建
-                                       桥模型，无外部 model 需回收。 */
-} XFFLayouts;
+/* 布局句柄集 XFFLayouts 与排空后回收登记表（s_xffPendingDlg/
+ * xff_pendingRegister/xff_pendingReclaim）定义于文件头部
+ * 「布局句柄集与排空后回收登记」区（VXFileDialog_deinit 析构帧之前，
+ * 取消崩溃根修 2026-10-21）。 */
 
 /** @brief 组装文件对话框并填充起始目录列表（对标 Qt 非原生
  *  QFileDialog 的 ui 组装；子控件经 objectName 标识）。Win10 风格：
@@ -3074,12 +3220,13 @@ static XFileDialog* xff_buildDialog(XWidget* parent, const XString* caption,
     return dlg;
 }
 
-/** @brief 收尾：先回收树实例虚表接管（须在树析构前还原指向），
- *  再删布局（不随控件析构）与对话框；浏览会话状态（后退栈/搜索
- *  前缀/排序态）随收尾清空，防跨对话框残留。 */
+/** @brief 收尾：对话框子树（含确定/取消钮）与布局句柄、导航模型一律
+ *  延迟回收（取消崩溃根修，见文件头「布局句柄集与排空后回收登记」块注）；
+ *  浏览会话状态（后退栈/搜索前缀/排序态）随收尾即时清空——对话框已
+ *  隐藏且退出模态在册，会话语义已终结，防跨对话框残留。 */
 static void xff_teardown(XFileDialog* dlg, XFFLayouts* ls)
 {
-    /* 入口判空（gdb 实抓 SIGSEGV 三连复现：XClass_delete_base
+    /* 入口判空护栏原样保留（gdb 实抓 SIGSEGV 三连复现：XClass_delete_base
      * (object=0x1) ← xff_teardown(dlg=0x0) XFileDialog.c:2831 ←
      * getExistingDirectory :3139）：嵌套模态早退（xff_runDialog 重入
      * 护栏以 *outDlg=NULL 拒绝）时 ls 尚未装配、持未初始化栈垃圾，
@@ -3088,17 +3235,23 @@ static void xff_teardown(XFileDialog* dlg, XFFLayouts* ls)
      * dlg=NULL 的构建失败路径经查无泄漏：xff_buildDialog 入口先清零
      * ls，两处失败返回均在任何布局创建之前，无可回收句柄。 */
     if (!dlg || !ls) return;
-#if XFILE_ON && XDIR_ON
+    /* 树实例虚表接管还原须在树析构前：延迟回收下此刻树仍存活，还原
+     * 实例指向 + 释放克隆表安全；对话框稍后经 DeferredDelete 析构。 */
     xff_sortViewUninstall();
-#endif
-    if (ls->root) XClassDelete((XLayout*)ls->root);
-    if (ls->navRow) XClassDelete((XLayout*)ls->navRow);
-    if (ls->bodyRow) XClassDelete((XLayout*)ls->bodyRow);
-    if (ls->filterRow) XClassDelete((XLayout*)ls->filterRow);
-    if (ls->nameRow) XClassDelete((XLayout*)ls->nameRow);
-    if (ls->bar) XClassDelete((XLayout*)ls->bar);
-    if (dlg) XClassDelete((XClass*)dlg);
-    if (ls->navModel) XClassDelete((XClass*)ls->navModel);
+    /* 延迟回收：布局句柄与导航模型登记到对话框析构帧（排空后回收），
+     * 对话框子树（含按钮）走 XObject_deleteLater——同步删除会在取消/
+     * 确定槽尚未返回、事件派发仍以本子树为靶的窗口内回收控件，下一记
+     * 落在对话框区域的输入事件即派发到已释放内存（ASan 实抓：取消钮
+     * 释放后 XWidget_accumulateOffset UAF，Windows 必现/Linux 侥幸）。
+     * DeferredDelete 的 loopLevel 语义保证析构发生在控制权返回事件循环
+     * 之后，析构帧内经 VXFileDialog_deinit→xff_pendingReclaim 兑现
+     * 布局/模型（删除序见登记块注）。返回值已在调用方于本函数之前
+     * 提取，删除时机不影响结果回读（对标 Qt QDialog::exec 返回后
+     * QObject 树的延迟消亡）。 */
+    xff_pendingRegister(dlg, ls);
+    XObject_deleteLater((XObject*)dlg);
+    /* 浏览会话态即时清空（原同步删除路径同位清空，语义不变；不再
+     * 依赖对话框消亡时机）。 */
     xff_browsingStateReset();
 }
 

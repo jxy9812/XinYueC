@@ -617,6 +617,12 @@ static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
 #endif
 }
 
+/* 本机 linux-libc-dev 的 io_uring UAPI 无 SENDTO 枚举（新内核才入库）：
+ * SEND 自 5.11 起支持 addr=对端地址，语义等价。 */
+#ifndef IORING_OP_SENDTO
+#define IORING_OP_SENDTO IORING_OP_SEND
+#endif
+
 /* =========================================================================
  * 异步写入启动（对标 Windows startAsyncWrite）
  * ========================================================================= */
@@ -668,6 +674,8 @@ static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
         sqe->len = (unsigned)len;
         /* 对于 UDP 目标地址，使用 sendmsg 更合适，此处简化使用 send */
         sqe->off = (uint32_t)p->destAddrLen;
+        /* SENDTO 新路径读 off 取地址长度，SEND+addr 老路径读 addr2，两者都写 */
+        sqe->addr2 = (uint64_t)p->destAddrLen;
         sqe->flags = 0;
     } else {
         sqe->opcode = IORING_OP_SEND;

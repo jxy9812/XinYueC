@@ -3669,6 +3669,8 @@ void XWidget_init(XWidget* self, XWidget* parent, XWidgetFlags flags)
     self->m_accessibleDescription = NULL;
     self->m_windowRole = NULL;
     self->m_styleSheet = NULL;
+    /* QSS 控件身份规则表块：绘制查询路径由样式侧懒分配，此处仅置空。 */
+    self->m_sssStyleCache = NULL;
     self->m_inputMethodHints = 0;
     self->m_windowState = XWindowState_NoState;
     self->m_windowModality = XWindowModality_NonModal;
@@ -3913,6 +3915,12 @@ static void VXWidget_deinit(XWidget* self)
     XWidget_freeString(&self->m_accessibleDescription);
     XWidget_freeString(&self->m_windowRole);
     XWidget_freeString(&self->m_styleSheet);
+    /* QSS 控件身份规则表块归还（块内规则指针为样式侧借用、不通知样式；
+     * 块仅在本控件的绘制查询中被样式侧消费，析构后无人再触及）。 */
+    if (self->m_sssStyleCache) {
+        XFree_System(self->m_sssStyleCache);
+        self->m_sssStyleCache = NULL;
+    }
 #if XCURSOR_ON
     if (self->m_cursor) {
         XClassDelete((XClass*)self->m_cursor);
@@ -4071,6 +4079,12 @@ static void VXWidget_copy(XWidget* self, const XWidget* other)
     self->m_accessibleDescription = XWidget_copyString(other->m_accessibleDescription);
     self->m_windowRole = XWidget_copyString(other->m_windowRole);
     self->m_styleSheet = XWidget_copyString(other->m_styleSheet);
+    /* QSS 控件身份规则表块：先释放自身旧块，不继承源块（样式实例/代
+     * 次按目标控件身份重填，防跨样式悬垂）——拷贝件懒重建。 */
+    if (self->m_sssStyleCache) {
+        XFree_System(self->m_sssStyleCache);
+        self->m_sssStyleCache = NULL;
+    }
     self->m_inputMethodHints = other->m_inputMethodHints;
     /* 惰性调色板拷贝：源有自定义调色板才深拷贝，否则保持 NULL 回落全局
        （copy 构造路径 self 恒 NULL 起步，store 内自管分配；XPALETTE_OFF
@@ -4124,6 +4138,10 @@ static void VXWidget_move(XWidget* self, XWidget* other)
     self->m_accessibleDescription = other->m_accessibleDescription; other->m_accessibleDescription = NULL;
     self->m_windowRole = other->m_windowRole;     other->m_windowRole = NULL;
     self->m_styleSheet = other->m_styleSheet;     other->m_styleSheet = NULL;
+    /* QSS 控件身份规则表块所有权转移（目标旧块已在上方 VXWidget_deinit
+     * 归还；键=(样式,代次,类) 与控件身份解耦、随块平移仍有效）。 */
+    self->m_sssStyleCache = other->m_sssStyleCache;
+    other->m_sssStyleCache = NULL;
     self->m_inputMethodHints = other->m_inputMethodHints; other->m_inputMethodHints = 0;
     XFocusProxy_unregisterOwner(other);
     self->m_focusProxy = other->m_focusProxy; other->m_focusProxy = NULL;
@@ -7936,7 +7954,12 @@ XFont XWidget_font(const XWidget* self)
 {
     /* 深拷贝语义（Phase 3.2 裁定）：XFont 值拷贝共享 XString 指针且
        无引用计数，浅拷贝会在任一持有方 deinit 后留下悬空指针（UAF）。
-       返回独立副本，调用方使用后必须 XClassDeinit。 */
+       返回独立副本，调用方使用后必须 XClassDeinit。
+       （2026-10-20 家族串驻留收编注：共享判定由 XFont 内部
+       XFont_isSharedFamily 承担——驻留/默认家族串在 XClassCopy 内
+       走指针共享、deinit 自动跳删，本契约的"调用方必须 deinit"不变
+       且对私有串仍是深拷贝接管；勿据此把本函数改回结构体浅赋值，
+       非驻留家族串的 UAF 理由原样成立。） */
     XFont out;
     XFont_init(&out);
     if (!self)

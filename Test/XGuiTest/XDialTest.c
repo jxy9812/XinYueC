@@ -46,11 +46,15 @@ bool XDialTest_runAll(void)
     XDial_setWrapping(dial, false);
     XDial_setNotchesVisible(dial, false);
 
-    /* 4. notchSize：随范围与 target 变化。 */
+    /* 4. notchSize（对标 Qt 6.8.3 qdial.cpp:346-363：notchSize=刻度间隔
+     *    值，恒为 singleStep 的非零倍数；notchTarget 越小 → 间隔越小 →
+     *    刻度数越多。9da82dcc 已按 Qt 将量纲自「刻度数」改为「间隔值」
+     *    （刻度数语义对非 0 起点量程全错位），本段随之迁移。 */
     {
         int n1 = XDial_notchSize(dial);
         XDial_setNotchTarget(dial, 1.0);
-        dl_expect(XDial_notchSize(dial) > n1, "notchTarget 越小刻度越多");
+        dl_expect(XDial_notchSize(dial) < n1,
+                  "notchTarget 越小刻度间隔越小（刻度数越多，Qt 间隔量纲）");
         XDial_setNotchTarget(dial, 10.0);
     }
 

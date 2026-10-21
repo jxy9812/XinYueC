@@ -1206,7 +1206,7 @@ static bool xmysql_parse_handshake(XSqlMySqlClient* client, XByteArray* payload,
                                    const char* password, uint8_t* responseSequence)
 {
     const uint8_t* data = XByteArray_data(payload);
-    const uint8_t* end = data + XByteArray_size_base(payload);
+    const uint8_t* end = data + XContainer_size_base((const XContainer*)payload);
     const uint8_t* cursor = data;
     const uint8_t* pluginData;
     const uint8_t* pluginName;
@@ -1217,7 +1217,7 @@ static bool xmysql_parse_handshake(XSqlMySqlClient* client, XByteArray* payload,
     uint8_t authLength = 0;
     uint32_t clientCapabilities;
     XByteArray* response = NULL;
-    if (!client || !payload || !data || XByteArray_size_base(payload) < 5 || *cursor++ != 0x0au)
+    if (!client || !payload || !data || XContainer_size_base((const XContainer*)payload) < 5 || *cursor++ != 0x0au)
         return false;
     while (cursor < end && *cursor) ++cursor;
     if (cursor >= end || (size_t)(end - cursor) < 15) return false;
@@ -1351,9 +1351,9 @@ static bool xmysql_client_handshake(XSqlMySqlClient* client, const char* databas
     uint8_t sequence = 0;
     bool ok = false;
     if (!xmysql_client_read_packet(client, &payload, &sequence)) goto done;
-    if (!payload || XByteArray_size_base(payload) == 0) goto done;
+    if (!payload || XContainer_size_base((const XContainer*)payload) == 0) goto done;
     if (XByteArray_data(payload)[0] == 0xffu) {
-        xmysql_parse_error(client, XByteArray_data(payload), XByteArray_size_base(payload),
+        xmysql_parse_error(client, XByteArray_data(payload), XContainer_size_base((const XContainer*)payload),
                             XSqlErrorType_ConnectionError);
         goto done;
     }
@@ -1863,7 +1863,7 @@ static bool xmysql_client_open(XSqlMySqlClient* client, const char* database,
     }
     if (!useSharedMemory
         && !XTcpSocket_waitForConnected_base(client->m_socket, client->m_connectTimeout)) {
-        socketError = XTcpSocket_errorString(client->m_socket);
+        socketError = XTcpSocket_errorString((const XAbstractSocket*)client->m_socket);
         xmysql_set_error(client, "Unable to connect to MySQL server",
                          socketError ? XString_toUtf8(socketError) : "", 0,
                          XSqlErrorType_ConnectionError);
@@ -2188,10 +2188,10 @@ static bool xmysql_read_result(XSqlMySqlClient* client, XByteArray* first,
     int field;
     if (output) *output = NULL;
     result = xmysql_result_create();
-    if (!client || !payload || !result || XByteArray_size_base(payload) == 0) goto fail;
+    if (!client || !payload || !result || XContainer_size_base((const XContainer*)payload) == 0) goto fail;
     data = XByteArray_data(payload);
     if (data[0] == 0xffu) {
-        xmysql_parse_error(client, data, XByteArray_size_base(payload),
+        xmysql_parse_error(client, data, XContainer_size_base((const XContainer*)payload),
                            XSqlErrorType_StatementError);
         goto fail;
     }
@@ -2204,26 +2204,26 @@ static bool xmysql_read_result(XSqlMySqlClient* client, XByteArray* first,
         XClassDelete(payload);
         payload = NULL;
         if (!xmysql_client_read_packet(client, &payload, &sequence)
-            || XByteArray_size_base(payload) == 0) goto fail;
+            || XContainer_size_base((const XContainer*)payload) == 0) goto fail;
         data = XByteArray_data(payload);
         if (data[0] == 0xffu) {
-            xmysql_parse_error(client, data, XByteArray_size_base(payload),
+            xmysql_parse_error(client, data, XContainer_size_base((const XContainer*)payload),
                                XSqlErrorType_StatementError);
             goto fail;
         }
         if (data[0] != 0x00u) goto fail;
-        xmysql_client_parse_ok(result, data, XByteArray_size_base(payload));
+        xmysql_client_parse_ok(result, data, XContainer_size_base((const XContainer*)payload));
         XClassDelete(payload);
         *output = result;
         return true;
     }
     if (data[0] == 0x00u) {
-        xmysql_client_parse_ok(result, data, XByteArray_size_base(payload));
+        xmysql_client_parse_ok(result, data, XContainer_size_base((const XContainer*)payload));
         XClassDelete(payload);
         *output = result;
         return true;
     }
-    if (!xmysql_read_lenenc(&data, XByteArray_data(payload) + XByteArray_size_base(payload),
+    if (!xmysql_read_lenenc(&data, XByteArray_data(payload) + XContainer_size_base((const XContainer*)payload),
                             &columnCount, &isNull) || isNull || columnCount > INT_MAX
         || !xmysql_result_allocate_fields(result, (size_t)columnCount)) goto fail;
     XClassDelete(payload);
@@ -2231,34 +2231,34 @@ static bool xmysql_read_result(XSqlMySqlClient* client, XByteArray* first,
     for (field = 0; field < (int)columnCount; ++field) {
         if (!xmysql_client_read_packet(client, &payload, &sequence)
             || !xmysql_result_parse_field(result, field, XByteArray_data(payload),
-                                          XByteArray_size_base(payload))) goto fail;
+                                          XContainer_size_base((const XContainer*)payload))) goto fail;
         XClassDelete(payload);
         payload = NULL;
     }
     if (!xmysql_client_read_packet(client, &payload, &sequence)) goto fail;
-    if (!(XByteArray_size_base(payload) > 0 && XByteArray_data(payload)[0] == 0xfeu)) goto fail;
-    if (XByteArray_size_base(payload) < 9)
+    if (!(XContainer_size_base((const XContainer*)payload) > 0 && XByteArray_data(payload)[0] == 0xfeu)) goto fail;
+    if (XContainer_size_base((const XContainer*)payload) < 9)
         xmysql_result_parse_eof(result, XByteArray_data(payload),
-                                XByteArray_size_base(payload));
+                                XContainer_size_base((const XContainer*)payload));
     XClassDelete(payload);
     payload = NULL;
     result->m_select = true;
     for (;;) {
         if (!xmysql_client_read_packet(client, &payload, &sequence)) goto fail;
         data = XByteArray_data(payload);
-        if (XByteArray_size_base(payload) < 9 && data[0] == 0xfeu) {
-            xmysql_result_parse_eof(result, data, XByteArray_size_base(payload));
+        if (XContainer_size_base((const XContainer*)payload) < 9 && data[0] == 0xfeu) {
+            xmysql_result_parse_eof(result, data, XContainer_size_base((const XContainer*)payload));
             XClassDelete(payload);
             payload = NULL;
             break;
         }
         if (data[0] == 0xffu) {
-            xmysql_parse_error(client, data, XByteArray_size_base(payload),
+            xmysql_parse_error(client, data, XContainer_size_base((const XContainer*)payload),
                                XSqlErrorType_StatementError);
             goto fail;
         }
-        if (binaryRows ? !xmysql_result_append_binary_row(result, data, XByteArray_size_base(payload))
-                       : !xmysql_result_append_row(result, data, XByteArray_size_base(payload))) goto fail;
+        if (binaryRows ? !xmysql_result_append_binary_row(result, data, XContainer_size_base((const XContainer*)payload))
+                       : !xmysql_result_append_row(result, data, XContainer_size_base((const XContainer*)payload))) goto fail;
         XClassDelete(payload);
         payload = NULL;
     }

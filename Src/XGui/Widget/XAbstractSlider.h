@@ -136,7 +136,11 @@ typedef struct XAbstractSlider
     int  m_singleStep;               /**< 单步步进（setter 原样保存，保持 int）。 */
     int  m_repeatActionThreshold;    /**< 长按重复初始延迟（毫秒；timer 后续扩展）。 */
     int  m_repeatActionTime;         /**< 长按重复间隔（毫秒；timer 后续扩展）。 */
-    int  m_wheelDeltaRemainder;      /**< 内部：滚轮角度累积余数（内部累加器，保持 int）。 */
+    int  m_wheelDeltaRemainder;      /**< 内部：滚轮整步累积余数（int 步进
+                                          累加器；与 Qt offset_accumulated
+                                          qreal 口径的差异=不足一格(120)
+                                          的增量不入账，见
+                                          xslider_scrollByDelta 注）。 */
     uint8_t m_orientation;           /**< 方向（XAbstractSliderOrientation 0..1；
                                           setOrientation 校验后写入）。 */
     uint8_t m_repeatAction;          /**< 长按重复动作（XAbstractSliderSliderAction

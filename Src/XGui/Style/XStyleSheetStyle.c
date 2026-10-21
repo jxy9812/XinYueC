@@ -998,6 +998,17 @@ static bool xsss_attrsMatch(const XCssBasicSelector* sel, const XObject* obj)
     return true;
 }
 
+/** @brief 伪元素等值判定（字符串口径；have==NULL 仅当 want==NULL 命中。
+ *         收集期记录的 XString* 与查询期 want 共用此一处分档）。 */
+static bool xsss_pseudoElemTextMatches(const XString* have, const char* want)
+{
+    const char* s;
+    if (!have) return want == NULL;
+    if (!want) return false;
+    s = XString_toUtf8(have);
+    return s && XStrcasecmp(s, want) == 0;
+}
+
 /** @brief 末段伪元素判定（对标 Selector::pseudoElement() 只读末段：
  *         want==NULL 要求末段无伪元素（普通属性查询路径，Qt
  *         declarationsForNode 跳过带伪元素的规则）；want 非空要求末段
@@ -1006,11 +1017,7 @@ static bool xsss_attrsMatch(const XCssBasicSelector* sel, const XObject* obj)
 static bool xsss_pseudoElementMatches(const XCssBasicSelector* last,
                                       const char* want)
 {
-    const char* have;
-    if (!last->m_pseudoElement) return want == NULL;
-    if (!want) return false;
-    have = XString_toUtf8(last->m_pseudoElement);
-    return have && XStrcasecmp(have, want) == 0;
+    return xsss_pseudoElemTextMatches(last->m_pseudoElement, want);
 }
 
 /** @brief 单段基础选择器匹配（元素名=类名、#id 列表、伪类、属性全列）。 */
@@ -1031,7 +1038,7 @@ static bool xsss_basicMatches(const XCssBasicSelector* sel,
     return xsss_attrsMatch(sel, obj);
 }
 
-/** @brief 选择器链匹配（逐字对标 qcssparser.cpp
+/** @brief 选择器链匹配核心（逐字对标 qcssparser.cpp
  *         StyleSelector::selectorMatches 的右→左 do-while 走查）。
  *
  *  末段在 obj 上匹配（伪类按 obj 状态求值；其余段伪类一律忽略，
@@ -1043,20 +1050,35 @@ static bool xsss_basicMatches(const XCssBasicSelector* sel,
  *    XObject_previousSibling 前走（Qt 的 previousSiblingNode 为恒空桩、
  *    '+'/'~' 永不命中，本库按兄弟导航线 API 提供真实实现——行为超出
  *    而非偏离 Qt，对齐 QCss 遍历意图）。
- *  pseudoElementWant 见 xsss_pseudoElementMatches（只约束末段）。 */
-static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
-                                 uint32_t statePseudos,
-                                 const char* pseudoElementWant)
+ *  pseudoElementWant 见 xsss_pseudoElementMatches（只约束末段）。
+ *
+ *  收集模式（collectMode，身份规则表填充专用）：末段伪类恒按
+ *  XSSS_PSEUDOS_ANY（不裁剪只记录）且跳过伪元素判定——两个谓词延迟
+ *  到查询期重放（xsss_widgetRule），其余走查（含前段 ANY、导航与重
+ *  试语义）与本函数普通模式逐字一致；outLast 带回末段供记录伪类掩
+ *  码与伪元素。导航不受影响的不变量：末段在 obj 上只判一次、失败即
+ *  整链失败（无末段重试），故末段两谓词的淘汰不改变前段导航轨迹。 */
+static bool xsss_selectorMatchesImpl(const XCssSelector* sel,
+                                     const XObject* obj,
+                                     uint32_t statePseudos,
+                                     const char* pseudoElementWant,
+                                     bool collectMode,
+                                     const XCssBasicSelector** outLast)
 {
     const XObject* cur;
     int i;
     bool match;
     if (!sel || sel->m_basicCount <= 0) return false;
+    if (outLast)
+        *outLast = &sel->m_basics[sel->m_basicCount - 1];
     if (sel->m_basicCount == 1) {
         /* 单段链：relationToPrev==None，无导航。 */
-        return xsss_basicMatches(&sel->m_basics[0], obj, statePseudos) &&
-               xsss_pseudoElementMatches(&sel->m_basics[0],
-                                         pseudoElementWant);
+        return xsss_basicMatches(&sel->m_basics[0], obj,
+                                 collectMode ? XSSS_PSEUDOS_ANY
+                                             : statePseudos) &&
+               (collectMode ||
+                xsss_pseudoElementMatches(&sel->m_basics[0],
+                                          pseudoElementWant));
     }
     i = sel->m_basicCount - 1;
     cur = obj;
@@ -1066,9 +1088,11 @@ static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
          * 失败可沿导航继续重试（段 i 与 i+1 的关系存于本库后段的
          * m_relationToPrev）。 */
         match = xsss_basicMatches(&sel->m_basics[i], cur,
-                                  i == sel->m_basicCount - 1 ? statePseudos
-                                                             : XSSS_PSEUDOS_ANY);
-        if (match && i == sel->m_basicCount - 1 &&
+                                  i == sel->m_basicCount - 1
+                                      ? (collectMode ? XSSS_PSEUDOS_ANY
+                                                     : statePseudos)
+                                      : XSSS_PSEUDOS_ANY);
+        if (match && i == sel->m_basicCount - 1 && !collectMode &&
             !xsss_pseudoElementMatches(&sel->m_basics[i],
                                        pseudoElementWant))
             match = false; /* 末段伪元素不符按未命中处理（可重试仅限
@@ -1115,6 +1139,15 @@ static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
     return match;
 }
 
+/** @brief 选择器链匹配（普通模式；见 xsss_selectorMatchesImpl）。 */
+static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
+                                 uint32_t statePseudos,
+                                 const char* pseudoElementWant)
+{
+    return xsss_selectorMatchesImpl(sel, obj, statePseudos,
+                                    pseudoElementWant, false, NULL);
+}
+
 /* ==================== 级联多源收集与解析缓存 ==================== */
 
 /** @brief 控件级样式表源解析缓存：按源文本内容等值查找，未命中则解析
@@ -1128,12 +1161,12 @@ static bool xsss_selectorMatches(const XCssSelector* sel, const XObject* obj,
  *  - 淘汰=环形替换（容量 XSSS_SOURCE_CACHE_SIZE ≥ 单次收集触及的
  *    槽位上限 1+XSSS_MAX_CASCADE_SOURCES，保证单次收集走查内不会
  *    替换掉本次已收集条目——收集到的规则指针在走查期间恒有效）；
- *  - 替换在用条目前先失效渲染规则缓存（多槽条目 m_rule/m_sel 指进
- *    被替换条目的规则数组，悬空指针必须先行切断，代次推进即切断）；
+ *  - 替换在用条目前先失效控件身份规则表（块内 m_rule 指进被替换条目
+ *    的规则数组，悬空指针必须先行切断，代次推进即切断）；
  *  - XStyleSheetStyle_setStyleSheet 只失效渲染缓存、不清源缓存（应用
  *    级表变化与控件源互不牵连）；本对象析构经 xsss_sourceCacheClear
  *    全量释放。 */
-static void xsss_rcache_invalidate_all(XStyleSheetStyle* self);
+static void xsss_widgetCacheGenBump(XStyleSheetStyle* self);
 
 static const XCssStyleSheet* xsss_sourceSheet(XStyleSheetStyle* self,
                                               const XString* text)
@@ -1172,8 +1205,8 @@ static const XCssStyleSheet* xsss_sourceSheet(XStyleSheetStyle* self,
     {
         bool wasInUse = e->m_inUse;
         if (wasInUse) {
-            /* 渲染缓存可能指进被替换条目：代次推进全表失效。 */
-            xsss_rcache_invalidate_all(self);
+            /* 控件身份规则表可能指进被替换条目：代次推进全量失效。 */
+            xsss_widgetCacheGenBump(self);
             XClassDelete((XClass*)e->m_text);
             XCssStyleSheet_clear(&e->m_sheet);
         } else {
@@ -1280,68 +1313,16 @@ static int xsss_collectSources(XStyleSheetStyle* self, const XObject* obj,
  *    declarationsForNode 跳过伪元素规则——旧实现伪元素规则误配基础
  *    控件，本批修正）；非 NULL=伪元素查询路径（末段伪元素须等值）。
  *
- *  @param outSel/outWeight 可选出参（缓存回填用）。
+ *  @param outSel/outWeight 可选出参（回退路径用：身份规则表降级块与
+ *         非控件对象的逐查询扫描；主路径经 xsss_widgetRule）。
  */
-/* ---- 渲染规则多槽缓存（xasa_decideBars 式收口：两处查询点共用
- *      一份键/失效口径）。键=(对象指针, vtable 类指针, 状态)，直映
- *      槽，代次失效 O(1)。 ---- */
-
-/** @brief 探槽：命中返回槽；未中返回 NULL（outFree 给插入槽）。 */
-static XsssRenderCacheEntry* xsss_rcache_find(XStyleSheetStyle* self,
-                                              const XObject* obj,
-                                              uint32_t state)
+/** @brief 整体失效：代次 ++ 即全部控件身份规则表死块（块内容不清，
+ *         惰性重填；块本体由控件持有、控件析构归还）。三处推进点：
+ *         应用级 setStyleSheet、控件级 setStyleSheet（经
+ *         XStyle_invalidateStyleSheetRenderCache）、源条目环形替换。 */
+static void xsss_widgetCacheGenBump(XStyleSheetStyle* self)
 {
-    uint32_t h;
-    if (!self || !obj) return NULL;
-    h = (uint32_t)(uintptr_t)obj >> 4u;
-    h ^= h >> 16u;
-    h = h * 2654435761u;
-    h ^= (uint32_t)(uintptr_t)XClassGetVtable((XClass*)obj) >> 4u;
-    h ^= state * 0x9E3779B9u;
-    return &self->m_rcache[h & (XSSS_RENDER_CACHE_SLOTS - 1u)];
-}
-
-/** @brief 查缓存：命中（键全符且代次相同）回填三元组并返回 true。 */
-static bool xsss_rcache_get(XStyleSheetStyle* self, const XObject* obj,
-                            uint32_t state, const XCssStyleRule** outRule,
-                            const XCssSelector** outSel, uint32_t* outWeight)
-{
-    XsssRenderCacheEntry* e = xsss_rcache_find(self, obj, state);
-    if (!e || e->m_obj != obj || e->m_gen != self->m_rcacheGen ||
-        e->m_state != state ||
-        e->m_class != XClassGetVtable((XClass*)obj))
-        return false;
-    *outRule = e->m_rule;
-    *outSel = e->m_sel;
-    *outWeight = e->m_weight;
-    return true;
-}
-
-/** @brief 回填缓存槽（覆盖式；扫描结果恒为该键当前正确值）。 */
-static void xsss_rcache_put(XStyleSheetStyle* self, const XObject* obj,
-                            uint32_t state, const XCssStyleRule* rule,
-                            const XCssSelector* sel, uint32_t weight)
-{
-    XsssRenderCacheEntry* e;
-    if (!self || !obj) return;
-    e = xsss_rcache_find(self, obj, state);
-    if (!e) return;
-    e->m_obj = obj;
-    e->m_class = XClassGetVtable((XClass*)obj);
-    e->m_state = state;
-    e->m_gen = self->m_rcacheGen;
-    e->m_rule = rule;
-    e->m_sel = sel;
-    e->m_weight = weight;
-}
-
-/** @brief 整体失效：代次 ++ 即全表死槽（槽内容不清，惰性覆写）。 */
-static void xsss_rcache_invalidate_all(XStyleSheetStyle* self)
-{
-    if (self) {
-        ++self->m_rcacheGen;
-        ++self->m_acacheGen; /* 负结论与渲染缓存同步失效。 */
-    }
+    if (self) ++self->m_gen;
 }
 
 static const XCssStyleRule* xsss_scanRules(XStyleSheetStyle* self,
@@ -1387,70 +1368,139 @@ static const XCssStyleRule* xsss_scanRules(XStyleSheetStyle* self,
     return bestRule;
 }
 
+/* ---- 控件身份规则表（第三层缓存；结构契约见 XStyleSheetStyle.h 注）
+ *      主路径：每 (控件,样式,代次) 收集一次全量身份命中，状态裁剪延
+ *      迟到查询期——消灭 1015 版「负结论确认重扫」与逐属性重复扫描。 ---- */
+
+/** @brief 收集态全源走查：与 xsss_scanRules 同一走查序，但末段伪类
+ *         恒按 XSSS_PSEUDOS_ANY（不裁剪只记录掩码）、末段伪元素不淘
+ *         汰只记录；逐命中选择器登记 {规则,权重,末段伪类掩码,末段伪
+ *         元素}。收集序=源序×规则序×选择器序（查询期同序过滤+`>=`
+ *         同权取后，与逐 (状态,伪元素) 全源扫描逐位等价，证明见头文
+ *         件结构注与 xsss_selectorMatchesImpl 不变量注）。
+ *
+ *  @return 命中选择器总数（可能超 max）；仅前 max 条落表。 */
+static int xsss_scanRulesCollect(XStyleSheetStyle* self, const XObject* obj,
+                                 XsssWidgetRuleHit* hits, int max)
+{
+    const XCssStyleSheet* sheets[XSSS_MAX_CASCADE_SOURCES];
+    int depths[XSSS_MAX_CASCADE_SOURCES];
+    int count = xsss_collectSources(self, obj, sheets, depths);
+    int n = 0;
+    int s;
+    for (s = 0; s < count; ++s) {
+        const XCssStyleSheet* sheet = sheets[s];
+        uint32_t originDepth =
+            (uint32_t)(XSSS_ORIGIN_INLINE + depths[s]) * 0x100000u;
+        int ri;
+        for (ri = 0; ri < sheet->m_ruleCount; ++ri) {
+            const XCssStyleRule* rule = &sheet->m_rules[ri];
+            int si;
+            for (si = 0; si < rule->m_selectorCount; ++si) {
+                const XCssSelector* sel = &rule->m_selectors[si];
+                const XCssBasicSelector* last = NULL;
+                if (!xsss_selectorMatchesImpl(sel, obj, 0, NULL, true,
+                                              &last))
+                    continue;
+                if (n < max) {
+                    hits[n].m_rule = rule;
+                    hits[n].m_weight = (uint32_t)ri +
+                        (uint32_t)sel->m_specificity * 0x100u + originDepth;
+                    hits[n].m_pseudoMask = last->m_pseudoClasses;
+                    hits[n].m_pseudoElem = last->m_pseudoElement;
+                }
+                ++n;
+            }
+        }
+    }
+    return n;
+}
+
+/** @brief 取（必要时懒建/重填）控件身份规则表块。
+ *
+ *  键三重校验 (样式实例, 代次, vtable)，失配即原块重填（定长块原位
+ *  复用，免分配抖动）；obj 非控件（含 NULL）返回 NULL，调用方回落
+ *  逐查询全源扫描（与 1015 版 rcache 的 obj==NULL 短路同口径）。
+ *  块由控件持有（XWidget::m_sssStyleCache），样式侧零新表。重填期
+ *  间源条目环形替换会推进代次：本块随即失配、下次查询重填；本次走
+ *  查内收集到的规则指针受 XSSS_SOURCE_CACHE_SIZE ≥ 单次收集触及槽
+ *  位上限的容量保证恒有效（见 xsss_sourceSheet 容量注）。 */
+static XsssWidgetCache* xsss_widgetCache(XStyleSheetStyle* self,
+                                         const XObject* obj)
+{
+    XWidget* w;
+    XsssWidgetCache* c;
+    if (!self || !obj || !XObject_isWidgetType(obj)) return NULL;
+    w = (XWidget*)obj;
+    c = (XsssWidgetCache*)w->m_sssStyleCache;
+    if (c && c->m_style == self && c->m_gen == self->m_gen &&
+        c->m_class == XClassGetVtable((XClass*)obj))
+        return c;
+    if (!c) {
+        c = (XsssWidgetCache*)XMalloc_System(sizeof(*c));
+        if (!c) return NULL; /* OOM：永久回落即时扫描，永不出错。 */
+        w->m_sssStyleCache = c;
+    }
+    c->m_style = self;
+    c->m_gen = self->m_gen;
+    c->m_class = XClassGetVtable((XClass*)obj);
+    c->m_count = xsss_scanRulesCollect(self, obj, c->m_hits,
+                                       XSSS_WIDGET_HITS_MAX);
+    if (c->m_count > XSSS_WIDGET_HITS_MAX) c->m_count = -1; /* 降级标记。 */
+    return c;
+}
+
+/** @brief 控件身份规则表查询：过滤期裁剪末段伪类与伪元素，同序同权
+ *         取后。与 xsss_scanRules(self, obj, state, want, ·, ·) 逐位
+ *         等价（集合代数证明见 XStyleSheetStyle.h 结构注）；块不可用
+ *         （obj 非控件/OOM/超容量降级）时回落即时全源扫描保底。 */
+static const XCssStyleRule* xsss_widgetRule(XStyleSheetStyle* self,
+                                            const XObject* obj,
+                                            uint32_t state,
+                                            const char* pseudoElementWant)
+{
+    XsssWidgetCache* c;
+    const XCssStyleRule* bestRule = NULL;
+    uint32_t bestWeight = 0;
+    uint32_t ps;
+    int i;
+    if (!self) return NULL;
+    c = xsss_widgetCache(self, obj);
+    if (!c || c->m_count < 0)
+        return xsss_scanRules(self, obj, state, pseudoElementWant, NULL,
+                              NULL);
+    ps = xsss_statePseudos(state);
+    for (i = 0; i < c->m_count; ++i) {
+        const XsssWidgetRuleHit* hit = &c->m_hits[i];
+        if ((hit->m_pseudoMask & ps) != hit->m_pseudoMask) continue;
+        if (!xsss_pseudoElemTextMatches(hit->m_pseudoElem,
+                                        pseudoElementWant))
+            continue;
+        if (!bestRule || hit->m_weight >= bestWeight) {
+            bestRule = hit->m_rule;
+            bestWeight = hit->m_weight;
+        }
+    }
+    return bestRule;
+}
+
 /**
  * @brief 在级联全源（应用级 + 控件自身 + 祖先 sheets）中查最优先命中
- *        的声明。带单槽渲染规则缓存：缓存规则=该 (对象,状态) 下的级联
- *        赢家（与扫描裁决同口径回填），缓存命中时规则内 findDecl 即
- *        完整级联在该属性上的结果，未声明该属性再回落全源扫描。
+ *        的声明。主路径=控件身份规则表（xsss_widgetRule）：过滤期裁
+ *        决出该 (对象,状态) 的级联赢家后规则内 findDecl——赢家=最高
+ *        权重且同权取后（与扫描裁决同口径），未声明该属性即负结论直
+ *        答 NULL。1015 版的「负结论哈希+确认重扫」两段（逐帧最热扫
+ *        描）随 rcache/acache 退役一并消除：赢家查询本身已不再是全源
+ *        扫描，负结论无需独立登记。
  */
 static const XCssDeclaration* xsss_lookup(XStyleSheetStyle* self,
                                           const XObject* obj, uint32_t state,
                                           XCssProperty id)
 {
-    const XCssDeclaration* d;
+    const XCssStyleRule* rule;
     if (!self) return NULL;
-    /* 缓存命中：同一 (对象,状态) 复用缓存规则。
-     * R-29 时代的「全表无 !important 才直返」保守门禁随批一对齐删除：
-     * Qt 语义下 importance 不参与裁决，缓存规则（回填口径=同权取后，
-     * 与扫描 tie-break 一致）内 findDecl 与全源扫描结果恒等价。 */
-    {
-        XsssRenderCacheEntry* e = xsss_rcache_find(self, obj, state);
-        if (e && e->m_obj == obj && e->m_gen == self->m_rcacheGen &&
-            e->m_state == state &&
-            e->m_class == XClassGetVtable((XClass*)obj)) {
-            d = e->m_rule ? xsss_findDecl(e->m_rule, id) : NULL;
-            if (d) return d;
-            /* 未声明 → 负结论哈希直答；未登记才全源扫描证实（同键同
-               代次恒为同赢家）后登记。 */
-            {
-                uint32_t h = (uint32_t)(uintptr_t)obj >> 4u;
-                XsssAbsentEntry* a;
-                h ^= h >> 16u;
-                h = h * 2654435761u;
-                h ^= (uint32_t)(uintptr_t)e->m_class >> 4u;
-                h ^= state * 0x9E3779B9u;
-                h ^= (uint32_t)id * 0x85EBCA6Bu;
-                a = &self->m_acache[h & (XSSS_ABSENT_SLOTS - 1u)];
-                if (a->m_obj == obj && a->m_class == e->m_class &&
-                    a->m_state == state && a->m_id == (uint32_t)id &&
-                    a->m_gen == self->m_acacheGen)
-                    return NULL; /* 已证未声明：直答。 */
-                {
-                    const XCssStyleRule* rescanned =
-                        xsss_scanRules(self, obj, state, NULL, NULL, NULL);
-                    if (rescanned == e->m_rule) {
-                        a->m_obj = obj;
-                        a->m_class = e->m_class;
-                        a->m_state = state;
-                        a->m_id = (uint32_t)id;
-                        a->m_gen = self->m_acacheGen;
-                        return NULL;
-                    }
-                    /* 规则被换（防御路径）：整槽重填。 */
-                    xsss_rcache_put(self, obj, state, rescanned, NULL, 0);
-                    return rescanned ? xsss_findDecl(rescanned, id) : NULL;
-                }
-            }
-        }
-    }
-    {
-        const XCssSelector* sel = NULL;
-        uint32_t w = 0;
-        const XCssStyleRule* rule =
-            xsss_scanRules(self, obj, state, NULL, &sel, &w);
-        xsss_rcache_put(self, obj, state, rule, sel, w);
-        return rule ? xsss_findDecl(rule, id) : NULL;
-    }
+    rule = xsss_widgetRule(self, obj, state, NULL);
+    return rule ? xsss_findDecl(rule, id) : NULL;
 }
 
 /* ==================== 底层样式回落 ==================== */
@@ -1881,17 +1931,15 @@ static void xsss_applyFont(XStyleSheetStyle* self, const XObject* obj,
     }
     if (changed) XPainter_setFont(painter, &font);
     /* 工作字体被 setFamily 替换出的自建家族串就地释放：画家经
-     * VXFont_copy 已深拷贝接管，本地不释放即每次绘制漏一串（LSan
-     * 实证，QSS font 简写/font-family 路径）。两种情形不可释——
-     * 未替换（指针=初值，仍与画家当前字体共享）；共享默认家族单例
-     * （XFont_isSharedFamily 为 XFont.c 私有，以 XFont_init 探针取
-     * 单例指针比对）。 */
-    if (font.m_family != famOrig) {
-        XFont probe;
-        XFont_init(&probe);
-        if (font.m_family != probe.m_family)
-            XClassDelete((XClass*)font.m_family);
-    }
+     * VXFont_copy 已深拷贝接管（驻留家族共享同一串），本地不释放即
+     * 每次绘制漏一串（LSan 实证，QSS font 简写/font-family 路径）。
+     * 不可释情形=共享串：未替换（指针=初值，仍与画家当前字体共享）
+     * 与进程期共享串（默认家族单例 + 家族串驻留表成员，2026-10-20
+     * 驻留收编）——一律经 XFont_isSharedFamily 判定（已公开），原
+     * XFont_init 探针只识别默认单例，驻留收编后会误删驻留串令全进程
+     * 同家族字体悬空。 */
+    if (font.m_family != famOrig && !XFont_isSharedFamily(font.m_family))
+        XClassDelete((XClass*)font.m_family);
 }
 
 /** @brief 应用文本装饰（绘制前：作用于画家字体——完整对标 Qt
@@ -2631,12 +2679,18 @@ XVtable* XStyleSheetStyle_class_init(void)
 
 void XStyleSheetStyle_init(XStyleSheetStyle* self)
 {
+    static uint32_t g_xsssInstanceGen = 0; /* 全局实例代次序（每次 init
+                                            * 单调推进，永不复用）。 */
     if (!self) return;
     XMemset(self, 0, sizeof(*self));
     XWindowsStyle_init(&self->m_base);
     XClassSetVtable(self, XStyleSheetStyle);
     XCssStyleSheet_init(&self->m_sheet);
     self->m_source = NULL;
+    /* 全局唯一起始代次：换样式实例（全新 installStyleSheet 建新对象）
+     * 后，旧控件块即使落在新实例地址复用上也会因 m_gen 失配重填——
+     * m_style 指针比对之外的第二道防线（旧实例代次不复现）。 */
+    self->m_gen = ++g_xsssInstanceGen;
 }
 
 XStyleSheetStyle* XStyleSheetStyle_create_ex(XMemoryType memory)
@@ -2666,7 +2720,7 @@ static void VXStyleSheetStyle_deinit(XStyleSheetStyle* self)
 void XStyleSheetStyle_invalidateRenderCache(XStyleSheetStyle* self)
 {
     if (!self) return;
-    xsss_rcache_invalidate_all(self); /* 多槽代次推进，全表惰性失效。 */
+    xsss_widgetCacheGenBump(self); /* 代次推进，全部控件块惰性失效。 */
 }
 
 bool XStyleSheetStyle_setStyleSheet(XStyleSheetStyle* self, const char* css)
@@ -2674,7 +2728,7 @@ bool XStyleSheetStyle_setStyleSheet(XStyleSheetStyle* self, const char* css)
     bool ok;
     if (!self) return false;
     ok = XCssStyleSheet_parse(&self->m_sheet, css);
-    /* 应用级规则表变化 → 渲染规则缓存失效（控件级源解析缓存与本表
+    /* 应用级规则表变化 → 控件身份规则表失效（控件级源解析缓存与本表
      * 互不牵连，不随本次失效）。 */
     XStyleSheetStyle_invalidateRenderCache(self);
     return ok;
@@ -2709,13 +2763,11 @@ const XCssStyleRule* XStyleSheetStyle_styleRuleForPseudoElement(
     const char* pseudoElement)
 {
     if (!self || !widget) return NULL;
-    /* 查询路径：即时全源扫描（不经渲染规则缓存，见头文件口径）；
-     * 绘制端按子控件分派（对标 renderRule(w, opt, pseudoElement)）
-     * deferred，本接口先服务查询/诊断与后续分派接入。 */
-    return xsss_scanRules(self, (const XObject*)widget, state,
-                          (pseudoElement && *pseudoElement) ? pseudoElement
-                                                            : NULL,
-                          NULL, NULL);
+    /* 查询与属性查询共用同一份控件身份规则表：伪元素约束在过滤期裁
+     * 决（键不含伪元素），级联口径一致。 */
+    return xsss_widgetRule(self, (const XObject*)widget, state,
+                           (pseudoElement && *pseudoElement) ? pseudoElement
+                                                             : NULL);
 }
 
 bool XStyleSheetStyle_hasStyleRuleForPseudoElement(
@@ -3327,9 +3379,8 @@ static void xsss2_dispatchSubControls(XStyleSheetStyle* self, int cc,
         if (!xsss2_subControlPresent(cc, option, specs[i].m_sc)) continue;
         if (!xsss2_subControlRect(cc, option, specs[i].m_sc, &r)) continue;
         rects[count] = r;
-        rules[count] = xsss_scanRules(self, (const XObject*)widget,
-                                      option->m_state, specs[i].m_name,
-                                      NULL, NULL);
+        rules[count] = xsss_widgetRule(self, (const XObject*)widget,
+                                       option->m_state, specs[i].m_name);
         ++count;
     }
     /* 二趟：命中规则的子件绘制 chrome（背景/边框/圆角），painter
@@ -3824,28 +3875,14 @@ static const XImage* xg3_slotImage(XSSS3ImageSlot* slot, const char* url)
 }
 
 /** @brief 当前 (对象,状态) 的级联最高权重规则（镜像 xsss_lookup 的
- *         缓存回填口径；供按名取声明——opacity/icon-size 等无名表
- *         属性走声明原名扫描）。 */
+ *         裁决口径；供按名取声明——opacity/icon-size 等无名表属性走
+ *         声明原名扫描）。统一收口控件身份规则表（旧版镜像
+ *         rcache_get/put 的 sel/weight 读后即弃，随之消除）。 */
 static const XCssStyleRule* xg3_winningRule(XStyleSheetStyle* self,
                                             const XObject* obj,
                                             uint32_t state)
 {
-    {
-        const XCssStyleRule* cachedRule = NULL;
-        const XCssSelector* cachedSel = NULL;
-        uint32_t cachedWeight = 0;
-        if (xsss_rcache_get(self, obj, state, &cachedRule, &cachedSel,
-                            &cachedWeight))
-            return cachedRule;
-    }
-    {
-        const XCssSelector* sel = NULL;
-        uint32_t w = 0;
-        const XCssStyleRule* rule =
-            xsss_scanRules(self, obj, state, NULL, &sel, &w);
-        xsss_rcache_put(self, obj, state, rule, sel, w);
-        return rule;
-    }
+    return xsss_widgetRule(self, obj, state, NULL);
 }
 
 /** @brief 按声明原名（大小写不敏感）取值文本（无名表属性消费口：

@@ -415,10 +415,25 @@ XThreadData* XThreadData_lockPostEventList(XObject* receiver)
     }
 }
 
-void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority) 
+void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority)
 {
     if (!event)
         return;
+
+    /* 濒死接收者拒收（UAF 根修 2026-10-21）：m_was_deleted 于析构入口
+     * 置位（XObject.c VXObject_deinit），早于 destroyed 信号发射与在途
+     * 事件清队——destroyed 槽（如键盘面板 xkb_hostDestroyedSlot 收层）
+     * 或级联析构帧内向濒死对象补投的事件，清队已过、在途队列必残留
+     * 悬垂接收者（实测 ASan：test_lineedit_context_menu_contract 删除
+     * 的控件被 r1#4d 的 processEvents 读 m_is_deleting_children 堆
+     * UAF；非 ASan 下读到的已释放内存随机决定投递与否=门禁偶现根
+     * 因）。与分发层投递侧 m_is_deleting_children 跳过判据
+     * （XAbstractEventDispatcher.c VXAbstractEventDispatcher_processEvents）
+     * 同源，杜绝悬垂入队。事件就地丢弃（与无 td 路径同口径）。 */
+    if (receiver && receiver->m_was_deleted) {
+        XClassDelete(event);
+        return;
+    }
 
     XThreadData* td = XThreadData_lockPostEventList(receiver);
     if (!td)
@@ -457,6 +472,13 @@ void XThreadData_postEvent(XObject* receiver, XEvent* event, int priority)
 bool XThreadData_tryPostEvent(XObject* receiver, XEvent* event, int priority)
 {
     if (!receiver || !event) return false;
+
+    /* 濒死接收者拒收（UAF 根修 2026-10-21）：机理与守卫依据见
+     * XThreadData_postEvent 同名注——destroyed 槽向濒死宿主补投
+     * LayoutRequest 残留悬垂接收者（ASan 实证），入队即拒。事件
+     * 所有权归调用方（与下方入队失败路径同口径：不就地删除）。 */
+    if (receiver->m_was_deleted)
+        return false;
 
     XThreadData* td = XObject_threadData(receiver);
     if (!td) return false;

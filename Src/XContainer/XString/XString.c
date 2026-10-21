@@ -498,10 +498,17 @@ bool XString_pop_front_base(XString* str) {
 
 const char* XString_toUtf8(const XString* str)
 {
-    if (!str || XString_isEmpty_base(str)) return NULL;
+    /* 缓存命中前置（2026-10-20 绘制路径 UTF-8 解码快路 P0）：命中检查
+       原在 isEmpty_base 之后，绘制热路径每次命中白付一次虚分派
+       （XContainer_isEmpty_base 经 vtable 派发，XContainer.h）。语义
+       不变：Utf8 槽非空 ⇒ 此前某次转换成功写入（唯一写点在下方正常
+       转换路径，写入时串必非空），内容变更必经 XString_deinitCache
+       连缓存数组一并释放置 m_cache=NULL（见本文件 deinitCache），故
+       命中结果与原判定序恒等；空串与 vtable 未就绪对象仍走原路径。 */
+    if (str && str->m_cache && str->m_cache[XStringCache_Utf8].m_data)
+        return str->m_cache[XStringCache_Utf8].m_data;
 
-    // 缓存已存在则直接返回
-    if (str->m_cache&& str->m_cache[XStringCache_Utf8].m_data) return str->m_cache[XStringCache_Utf8].m_data;
+    if (!str || XString_isEmpty_base(str)) return NULL;
 
     // 计算所需UTF-8缓冲区大小（不包含结束符）
     int64_t utf8_len = XChar_toUtf8Stream(XString_cdata(str), XString_length_base(str), NULL, 0);
@@ -528,6 +535,9 @@ const char* XString_toUtf8(const XString* str)
 
 size_t XString_toUtf8_length(const XString* str)
 {
+    /* 同 toUtf8：命中前置，纯命中调用免虚分派（快路 P0）。 */
+    if (str && str->m_cache && str->m_cache[XStringCache_Utf8].m_data)
+        return str->m_cache[XStringCache_Utf8].m_length;
     if (!str || XString_isEmpty_base(str))
         return 0;
     if (XString_toUtf8(str))

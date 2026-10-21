@@ -37,6 +37,73 @@ static bool g_ftProbeFailedWarned;
 #define XFONT_FILE_PROBE_BACKOFF_MS 500
 static int64_t g_fileProbeBackoffMs; /* 0=无退避；>0=上次全落空时刻。 */
 
+/* ========== 字体面会话直映 memo（2026-10-20 绘制路径 UTF-8 解码快路 P1）====
+   XFont_face 位于逐字形热路径（软件 outline 绘制每字符 2+ 次：gridfit
+   探测 + alpha 缓存探测，XPainter painterDrawOutlineGlyphSoftwareAA），
+   而家族解析结果对同 (家族串, 策略) 进程期恒定：注册表项与 FT 家族槽
+   face 均进程期同存同亡（XFontFt 槽 blob/face 不逐出；注册仅一次性——
+   builtin 静态表 + FT 槽首次装载，无同族重复注册站点），且家族 XString
+   只整体替换不原地改（XFont.h m_family 契约）。故函数头部按键直取，
+   命中零 XFont_family 解码、零注册表线性 strcmp、零文件探测。
+   仅缓存两条稳定成功路径：注册表命中与 FT fileFace 命中；NULL、探测
+   退避窗回落、位图兜底等时变路径不落表——字库文件晚落盘自动转正语义
+   保持。
+   失效闭环（防 ABA）：家族 XString 引用计数共享、释放后地址可复用，
+   故 XFont 全部私有家族串释放点（VXFont_deinit / VXFont_copy /
+   VXFont_move / XFont_setFamily）在 XClassDelete 之前先经
+   XFontFace_forgetFamily 按指针清槽；共享串（默认族单例 + 驻留表成员）
+   进程期持有不释放，槽永不失效、无需清理。
+   线程说明：face 解析单线程语义（同 g_fileProbeBackoffMs 一套单写者
+   约定），静态表无需加锁；若未来引入并发绘制或运行时重注册/槽淘汰，
+   本表需 revisit。 */
+#define XFONT_FACE_MEMO_SLOTS 16
+typedef struct XFontFaceMemoSlot
+{
+    const XString* m_fam;    /* 键：XFont::m_family 指针（NULL=无字体对象）。 */
+    uint32_t m_strategy;     /* 键：XFont::m_styleStrategy。 */
+    const XFontFace* m_face; /* 值：非 NULL 即槽占用（缓存面恒为有效指针）。 */
+} XFontFaceMemoSlot;
+static XFontFaceMemoSlot g_faceMemo[XFONT_FACE_MEMO_SLOTS];
+static size_t g_faceMemoNext; /* 轮转替换位：16 槽环形直映，无 LRU。 */
+
+static const XFontFace* XFontFace_memoProbe(const XString* fam,
+                                            uint32_t strategy)
+{
+    size_t i;
+    for (i = 0; i < XFONT_FACE_MEMO_SLOTS; ++i)
+    {
+        const XFontFaceMemoSlot* s = &g_faceMemo[i];
+        if (s->m_face && s->m_fam == fam && s->m_strategy == strategy)
+            return s->m_face;
+    }
+    return NULL;
+}
+
+static void XFontFace_memoFill(const XString* fam, uint32_t strategy,
+                               const XFontFace* face)
+{
+    XFontFaceMemoSlot* s;
+    if (!face)
+        return; /* 只缓存稳定成功路径；NULL 结果保持时变重探语义。 */
+    s = &g_faceMemo[g_faceMemoNext];
+    g_faceMemoNext = (g_faceMemoNext + 1) % XFONT_FACE_MEMO_SLOTS;
+    s->m_fam = fam;
+    s->m_strategy = strategy;
+    s->m_face = face;
+}
+
+/* 家族串指针即将 XClassDelete 前的清槽钩（防 ABA，见上节注）：按指针
+   匹配清除全部占用槽；NULL 为空操作（NULL 键非常堆指针，无 ABA）。 */
+void XFontFace_forgetFamily(const XString* family)
+{
+    size_t i;
+    if (!family)
+        return;
+    for (i = 0; i < XFONT_FACE_MEMO_SLOTS; ++i)
+        if (g_faceMemo[i].m_face && g_faceMemo[i].m_fam == family)
+            g_faceMemo[i].m_face = NULL;
+}
+
 /* Built-in faces are linked according to XFont_config.h and registered on the
    first face lookup, keeping startup cost out of applications that do not use
    fonts. */
@@ -193,14 +260,31 @@ static const XFontFace* XFontFace_first(XFontFaceKind kind)
 
 const XFontFace* XFont_face(const XFont* font)
 {
-    const char* family = font ? XFont_family(font) : XFONT_DEFAULT_FAMILY;
+    /* P1 memo 探测前移：键 = (m_family 指针, m_styleStrategy)，先于
+       XFont_family 的 UTF-8 解码取键——命中时家族解码、注册表线性
+       strcmp、FT/位图文件探测全部短路（逐字形热路径主体收益）。
+       语义不变：memo 只缓存确定性成功路径，命中值 ≡ 重走全路径返回值
+       （前提见 g_faceMemo 节注）。 */
+    const XString* memoFam = font ? font->m_family : NULL;
+    const XFontFace* memo = XFontFace_memoProbe(
+        memoFam, font ? font->m_styleStrategy
+                      : (uint32_t)XFont_PreferDefault);
+    const char* family;
     const XFontFace* bitmap;
     const XFontFace* outline;
     XFontBitmapInfo bitmapFileInfo;
-    int strategy = font ? XFont_styleStrategy(font) : XFont_PreferDefault;
-    bool forceOutline = (strategy & XFont_ForceOutline) != 0;
-    bool preferOutline = forceOutline ||
-                         ((strategy & XFont_PreferOutline) != 0);
+    int strategy;
+    bool forceOutline;
+    bool preferOutline;
+
+    if (memo)
+        return memo;
+
+    family = font ? XFont_family(font) : XFONT_DEFAULT_FAMILY;
+    strategy = font ? XFont_styleStrategy(font) : XFont_PreferDefault;
+    forceOutline = (strategy & XFont_ForceOutline) != 0;
+    preferOutline = forceOutline ||
+                    ((strategy & XFont_PreferOutline) != 0);
 
     if (!family || !family[0])
         family = XFONT_DEFAULT_FAMILY;
@@ -209,15 +293,23 @@ const XFontFace* XFont_face(const XFont* font)
 
     bitmap = XFontFace_find(family, XFontFace_Bitmap);
     outline = XFontFace_find(family, XFontFace_Outline);
-    if (preferOutline)
+    /* 注册表命中（稳定成功路径之一）：回填 memo 后返回。判定序与原
+       逐条 return 完全一致：preferOutline 优先轮廓 → 位图（非
+       forceOutline）→ 轮廓。 */
     {
-        if (outline)
-            return outline;
+        const XFontFace* regHit = NULL;
+        if (preferOutline && outline)
+            regHit = outline;
+        else if (bitmap && !forceOutline)
+            regHit = bitmap;
+        else if (outline)
+            regHit = outline;
+        if (regHit)
+        {
+            XFontFace_memoFill(memoFam, (uint32_t)strategy, regHit);
+            return regHit;
+        }
     }
-    if (bitmap && !forceOutline)
-        return bitmap;
-    if (outline)
-        return outline;
 
     /* A path or an unknown family can be resolved by the file backends. */
     memset(&bitmapFileInfo, 0, sizeof(bitmapFileInfo));
@@ -243,7 +335,14 @@ const XFontFace* XFont_face(const XFont* font)
         XFontOutlineInfo outlineFileInfo;
         memset(&outlineFileInfo, 0, sizeof(outlineFileInfo));
         if (XFontFt_fileInfo(font, &outlineFileInfo))
-            return XFontFt_fileFace(family);
+        {
+            /* FT fileFace 命中（稳定成功路径之二）：家族槽 face 进程期
+               常驻，回填 memo（fileInfo 已成功 ⇒ 槽必在；fileFace 万一
+               返回 NULL 时 memoFill 空操作，返回值与原路径逐位一致）。 */
+            const XFontFace* ftFace = XFontFt_fileFace(family);
+            XFontFace_memoFill(memoFam, (uint32_t)strategy, ftFace);
+            return ftFace;
+        }
     }
     /* FT 探测失败（缺文件/魔数不符/解析锁存/家族槽满/init 失败）：
        落位图回退，进程期只发一行 stderr 警告（XFont_face 位于逐字形

@@ -261,6 +261,18 @@ const char* XFont_family(const XFont* self);
 void XFont_setFamily(XFont* self, const char* family);
 
 /**
+ * @brief      判定家族串指针是否为进程期持有的共享串（2026-10-20 公开）。
+ * @param family 家族串对象指针；可为 NULL（返回 false）。
+ * @return      true=默认家族单例或驻留表成员（进程期持有、永不释放），
+ *              持有方不得 XClassDelete——删除即全进程同串悬空。
+ * @note        供外部在直接替换 XFont::m_family 指针后、释放被换出旧串
+ *              前判定（XStyleSheetStyle xsss_applyFont 模式）；XFont 自
+ *              身全部释放/拷贝共享判定点（deinit/copy/move/setFamily）
+ *              内部均已过此判定，无需调用方重复处理。
+ */
+bool XFont_isSharedFamily(const XString* family);
+
+/**
  * @brief      获取样式名称
  * @param self 目标 XFont 对象指针
  * @return     样式名称字符串

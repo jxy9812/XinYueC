@@ -19,6 +19,10 @@
 #include "XBitmap.h"
 #include "XPixmap.h"
 
+#if XGUIAPPLICATION_ON
+#include "XGuiApplication.h" /* overrideCursor：软件精灵有效形状查询。 */
+#endif
+
 #if XCURSOR_ON
 
 /* ==================== 进程级状态 ==================== */
@@ -29,6 +33,77 @@ static XPoint g_cursorPos = {0, 0};
 /** @brief 平台光标后端（由平台原生窗口后端注册；NULL 表示无后端）。 */
 static const XCursorPlatformBackend* g_cursorBackend = NULL;
 
+/* ==================== 软件光标精灵（无硬件光标平台触摸跟随） ======== */
+
+/** @brief 软件精灵运行时开关（默认开；板级可用 setSoftware... 关闭）。 */
+static bool g_cursorSwEnabled = true;
+
+/** @brief 是否已收到过触摸位置（XCursor_setPos 首次调用即置位；精灵
+ *  激活条件之一——位置未知的精灵画在 (0,0) 属视觉垃圾）。 */
+static bool g_cursorSwHasPos = false;
+
+/** @brief 最近一次 XCursor_applyToWindow 记录的形状（XWidget/window
+ *  setCursor 接线在 fbdev 无后端时仅存储不生效，这里补一份形状账，
+ *  供无 override 时的有效形状回退；clearForWindow 复位为 Arrow）。 */
+static XCursorShape g_cursorSwLastShape = XCursor_Arrow;
+
+/** @brief 软件光标位置参考坐标系（XCursor_swSetPosFrame 维护，全 0 初始
+ *  即恒等系；语义详见 XCursor.h 同名注释）。pos 与本系必须成对更新：
+ *  呈现层按本系把 pos 正变换到面板像素，任一侧单独换新即精灵错位/多
+ *  路径跳变。 */
+static int g_cursorSwFrameRot = 0;
+static int g_cursorSwFrameLogW = 0;
+static int g_cursorSwFrameLogH = 0;
+static XPoint g_cursorSwFrameOrigin = {0, 0};
+
+/**
+ * @brief  内建经典箭头位图（12x19，黑描边白填充，热点约 (1,1)）。
+ * @details 行主序，每像素 2bit 值域按字节存储：0=透明/1=黑/2=白。
+ *          形状为经典 X11 left_ptr 口径：左侧竖直黑描边、内部白色
+ *          三角箭头、右下小尾巴；平台呈现层按面板位深把 1/2 映射为
+ *          黑/白像素值（RGB565 黑=0x0000 白=0xFFFF 等）。
+ */
+static const uint8_t g_cursorSwArrowBits[XCURSOR_SW_ARROW_W *
+                                         XCURSOR_SW_ARROW_H] = {
+    /* #........... */
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* ##.......... */
+    1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* #o#......... */
+    1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* #oo#........ */
+    1, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+    /* #ooo#....... */
+    1, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0,
+    /* #oooo#...... */
+    1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0,
+    /* #ooooo#..... */
+    1, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* #oooooo#.... */
+    1, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0,
+    /* #ooooooo#... */
+    1, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0,
+    /* #oooooooo#.. */
+    1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0,
+    /* #ooooooooo#. */
+    1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0,
+    /* #ooooo#####. */
+    1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 0,
+    /* #oo#oo#..... */
+    1, 2, 2, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* #o##oo#..... */
+    1, 2, 1, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* ##.#oo#..... */
+    1, 1, 0, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* ...#oo#..... */
+    0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0, 0,
+    /* ....#oo#.... */
+    0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0,
+    /* ....#oo#.... */
+    0, 0, 0, 0, 1, 2, 2, 1, 0, 0, 0, 0,
+    /* .....##..... */
+    0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0};
+
 void XCursor_installPlatformBackend(const XCursorPlatformBackend* backend)
 {
     g_cursorBackend = backend;
@@ -36,6 +111,13 @@ void XCursor_installPlatformBackend(const XCursorPlatformBackend* backend)
 
 bool XCursor_applyToWindow(uintptr_t nativeWindowId, const XCursor* cursor)
 {
+    /* 软件精灵形状账：apply 即记录（先于无后端早退——fbdev 无后端时
+       本调用恒 false，但形状账正是为该态服务的）。NULL 光标=清除语义，
+       账复位 Arrow（与 unsetCursor 恢复默认箭头同义）。 */
+    if (cursor)
+        g_cursorSwLastShape = cursor->m_shape;
+    else
+        g_cursorSwLastShape = XCursor_Arrow;
     /* 平台应用光标（XDefineCursor 路径）；无后端/窗口无效时静默 false。 */
     if (!g_cursorBackend || !g_cursorBackend->m_applyWindowCursor ||
         nativeWindowId == 0)
@@ -45,10 +127,101 @@ bool XCursor_applyToWindow(uintptr_t nativeWindowId, const XCursor* cursor)
 
 bool XCursor_clearForWindow(uintptr_t nativeWindowId)
 {
+    g_cursorSwLastShape = XCursor_Arrow; /* 清除即回默认箭头账。 */
     if (!g_cursorBackend || !g_cursorBackend->m_clearWindowCursor ||
         nativeWindowId == 0)
         return false;
     return g_cursorBackend->m_clearWindowCursor(nativeWindowId);
+}
+
+/* ---- 软件精灵公共 API ---- */
+
+void XCursor_setSoftwareCursorEnabled(bool enabled)
+{
+    g_cursorSwEnabled = enabled;
+}
+
+bool XCursor_softwareCursorEnabled(void)
+{
+    return g_cursorSwEnabled;
+}
+
+/**
+ * @brief      软件精灵当前有效形状（override 优先，形状账次之）。
+ * @details    除 Blank 隐藏外，其它形状（含 Bitmap/Custom）绘制一律
+ *             回落内建箭头位图——嵌入式软件精灵不做逐形状位图集。
+ */
+static XCursorShape xcursor_swEffectiveShape(void)
+{
+#if XGUIAPPLICATION_ON
+    const XCursor* overrideCursor = XGuiApplication_overrideCursor();
+    if (overrideCursor) return XCursor_shape(overrideCursor);
+#endif
+    return g_cursorSwLastShape;
+}
+
+bool XCursor_swActive(void)
+{
+    if (!g_cursorSwEnabled) return false;
+    if (g_cursorBackend) return false; /* 硬件后端在位：软件路径整体休眠。 */
+    if (!g_cursorSwHasPos) return false; /* 未知位置不画（防 (0,0) 垃圾）。 */
+    return xcursor_swEffectiveShape() != XCursor_Blank;
+}
+
+XRect XCursor_swRect(void)
+{
+    XRect rect;
+    XPoint pos;
+    XPoint hotSpot;
+    XRect_init(&rect, 0, 0, 0, 0);
+    if (!XCursor_swActive()) return rect; /* 未激活：全零空矩形。 */
+    pos = XCursor_pos();
+    hotSpot = XCursor_swArrowHotSpot();
+    XRect_init(&rect, pos.x - hotSpot.x, pos.y - hotSpot.y,
+               XCURSOR_SW_ARROW_W, XCURSOR_SW_ARROW_H);
+    return rect;
+}
+
+const uint8_t* XCursor_swArrowBits(void)
+{
+    return g_cursorSwArrowBits;
+}
+
+int XCursor_swArrowWidth(void)
+{
+    return XCURSOR_SW_ARROW_W;
+}
+
+int XCursor_swArrowHeight(void)
+{
+    return XCURSOR_SW_ARROW_H;
+}
+
+XPoint XCursor_swArrowHotSpot(void)
+{
+    XPoint hotSpot;
+    XPoint_init(&hotSpot, 1, 1);
+    return hotSpot;
+}
+
+void XCursor_swSetPosFrame(int rot, int logW, int logH, const XPoint* origin)
+{
+    g_cursorSwFrameRot = rot;
+    g_cursorSwFrameLogW = logW;
+    g_cursorSwFrameLogH = logH;
+    if (origin)
+        g_cursorSwFrameOrigin = *origin;
+    else
+        XPoint_init(&g_cursorSwFrameOrigin, 0, 0);
+}
+
+void XCursor_swPosFrame(int* outRot, int* outLogW, int* outLogH,
+                        XPoint* outOrigin)
+{
+    if (outRot) *outRot = g_cursorSwFrameRot;
+    if (outLogW) *outLogW = g_cursorSwFrameLogW;
+    if (outLogH) *outLogH = g_cursorSwFrameLogH;
+    if (outOrigin) *outOrigin = g_cursorSwFrameOrigin;
 }
 
 /* ==================== 资源复制辅助 ==================== */
@@ -274,6 +447,9 @@ void XCursor_setPos(int x, int y)
 {
     g_cursorPos.x = x;
     g_cursorPos.y = y;
+    /* 软件精灵「已收到位置」资格：首次调用即置位（对外的 pos/setPos
+     * 语义不变，只多记一份内部账）。 */
+    g_cursorSwHasPos = true;
     /* 平台后端转发原生定位（X11 XWarpPointer）；失败静默，缓存已同步。 */
     if (g_cursorBackend && g_cursorBackend->m_warpPos)
         (void)g_cursorBackend->m_warpPos(x, y);
