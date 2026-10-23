@@ -47,6 +47,9 @@
 #include "XCoreApplication.h"
 #include "XGuiApplication.h"
 #include "XScreen.h" /* availableGeometry（弹层屏幕适配）。 */
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+#include "XPlatformDisplayDriver.h" /* 屏缺席时面板框回退（XWindow.c xwin_screenRect 同源口径；XWindowDecoration.c 同层先例）。 */
+#endif
 #include "XColor.h"
 
 /* 弹出列表几何常量 */
@@ -2163,6 +2166,29 @@ static void xcombo_clearRowHidden(XComboBox* self)
  *  翻到组合框上方并把高度收缩到较大一侧）：下方剩余空间不足所需高度时
  *  改定位到组合框上方；高度钳到 min(所需高, max(下方空间, 上方空间))；
  *  x/y 钳进可用区。靠屏底的组合框弹出后条目不再溢出屏幕不可选。 */
+/* [弹窗随转·屏缺席回退 2026-10-22] XScreen 未接线（fbdev 无窗口系统
+ * 环境）时 screenAt/primaryScreen 恒 NULL——屏幕适配整块被跳过、弹层
+ * 永不翻面/钳高（真机 armel-fbdev 探针实证 screen=(nil)）。几何事实
+ * 源回退到显示驱动面板框：XWindow.c xwin_screenRect 既定口径「面板即
+ * 屏幕」，XWindowDecoration.c 为同层包含 XPlatformDisplayDriver.h 先
+ * 例。成功返回 true 并写 *out（未旋转面板框，逻辑域换算由调用方按
+ * opener 旋转角统一换轴）。 */
+static bool xcombo_fallbackScreenRect(XRect* out)
+{
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    const XPlatformDisplayDriverOps* ops = XPlatformDisplayDriver_active();
+    XPlatformDisplayInfo info;
+    if (ops && ops->probe && ops->probe(&info) &&
+        info.m_width > 0 && info.m_height > 0)
+    {
+        XRect_init(out, 0, 0, info.m_width, info.m_height);
+        return true;
+    }
+#else
+    (void)out;
+#endif
+    return false;
+}
 static void xcombo_popupReposition(XComboBox* self, int rows)
 {
     XListView* view;
@@ -2172,22 +2198,81 @@ static void xcombo_popupReposition(XComboBox* self, int rows)
     int wantH;
     XScreen* screen;
     XRect avail;
+    bool haveAvail;
     int belowSpace;
     int aboveSpace;
     if (!self || !self->m_popupView) return;
+    XRect_init(&avail, 0, 0, 0, 0); /* 探针防未初始化（screen NULL 时）。 */
     view = self->m_popupView;
     XWidget_setWindowFlags((XWidget*)view, (XWidgetFlags)XWindowType_Popup);
     origin.x = 0;
     origin.y = XWidget_height((XWidget*)self);
-    g = XWidget_mapToGlobal((XWidget*)self, &origin);
+    /* [弹窗随转·逻辑全局 2026-10-22] 弹层顶层窗几何必须用**逻辑全局**坐
+       标。XWidget_mapToGlobal 自 2026-10-18 旋转战役起返回**设备全局**
+       坐标（窗口局部先做旋转正变换 R 再加原点，供 fbinput 输入/光标链
+       使用；XWidget.c:5863 注明口径）；本函数把返回值当逻辑几何直接
+       setGeometryRect，0° 时 R 恒等逐位一致，90/270° 则把弹层放到设备
+       坐标处（真机昆仑通态实测：弹层错位到 geom=(687,284)，footprint
+       恰压 combo 列——点开的释放沿误中弹层行再次换角，弹层闪现即逝、
+       后续触控被错位弹层抓取吞掉）。此处改自持父链累加逻辑偏移 +
+       顶层逻辑原点（与 XWidget_accumulateOffset 同口径，不施 R）：
+       rot==0 时与 mapToGlobal 逐位一致；mapToGlobal 既有契约不动。
+       【勘误 2026-10-22】原注「下方 screenAt/availableGeometry 亦逻辑域
+       口径，随之归位」与事实不符：屏对象不随窗口旋转（XScreen.c 全文
+       无旋转感知；fbdev 登记恒为未旋转面板框，XPlatformFramebuffer_
+       posix.c 屏注册处），下方钳位已改按逻辑域换算，见下。 */
+    XPoint_init(&g, 0, 0);
+    {
+        XWidget* top = XWidget_topLevelWidget((XWidget*)self);
+        const XWidget* w = (const XWidget*)self;
+        while (w && !w->m_isWindow) {
+            g.x += w->m_windowRect.x;
+            g.y += w->m_windowRect.y;
+            w = (const XWidget*)XObject_parent((XObject*)w);
+        }
+        if (top) {
+            g.x += top->m_windowRect.x;
+            g.y += top->m_windowRect.y;
+        }
+    }
+    g.x += origin.x;
+    g.y += origin.y;
     XListView_setRowHeight(view, XCOMBOBOX_ITEM_H);
     wantH = rows * XCOMBOBOX_ITEM_H + 2;
+    /* [弹窗随转·逻辑域可见范围 2026-10-22] avail 是屏对象自身的未旋转
+       矩形，而 g/弹层几何是 opener 逻辑全局域——90/270 两域轴对调，原
+       样钳位即混域：1024x600 面板转竖屏后拿 avail(1024x600) 管
+       600x1024 逻辑域，下半屏 belowSpace=600-g.y 变负无谓翻面、弹高被
+       钳到 600-comboY（可见逻辑域实际 1024-comboY）、横向钳位恒不生
+       效。屏缺席时回退显示驱动面板框（xcombo_fallbackScreenRect）。取
+       得未旋转矩形后按 opener 顶层有效旋转角换轴（旋转只对调宽高、原
+       点不随转，XWindowRotation.h 口径；与 demo wn_orientApply 的 R2
+       钳位同源），得「当前窗口逻辑域可见范围」再参与翻面/钳高。弹层
+       旋转继承 opener（XWindow show 路径重继承），换轴依据即 opener
+       角；rot==0 恒等零扰动。 */
     screen = XGuiApplication_screenAt(&g);
     if (!screen)
         screen = XGuiApplication_primaryScreen();
+    haveAvail = false;
     if (screen)
     {
         avail = XScreen_availableGeometry(screen);
+        haveAvail = true;
+    }
+    else
+    {
+        haveAvail = xcombo_fallbackScreenRect(&avail);
+    }
+    if (haveAvail)
+    {
+        if (XWindow_rotationSwapsAxes(
+                XWidget_contentRotationDegrees(
+                    XWidget_topLevelWidget((XWidget*)self))))
+        {
+            int t = avail.width;
+            avail.width = avail.height;
+            avail.height = t;
+        }
         belowSpace = avail.y + avail.height - g.y;
         aboveSpace = g.y - XWidget_height((XWidget*)self) - avail.y;
         /* 高度收缩：优先下方；下方不足且上方更宽裕则翻到上方。 */
@@ -2213,6 +2298,22 @@ static void xcombo_popupReposition(XComboBox* self, int rows)
     XRect_init(&r, g.x, g.y,
                XWidget_width((XWidget*)self),
                wantH);
+    {
+        /* 诊断探针（XGUI_ROT_DEBUG=1 开启；弹层逻辑域换轴验收用，
+         * stderr，与 XWindow.c 探针同模式，收口保留环境门控）。 */
+        static signed char dbg = -1;
+        if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+        if (dbg)
+            fprintf(stderr,
+                    "[ROT] combo popup: rot=%d screen=%p haveAvail=%d "
+                    "avail=(%d,%d %dx%d) "
+                    "g=(%d,%d) rect=(%d,%d %dx%d)\n",
+                    XWidget_contentRotationDegrees(
+                        XWidget_topLevelWidget((XWidget*)self)),
+                    (void*)screen, (int)haveAvail,
+                    avail.x, avail.y, avail.width, avail.height,
+                    g.x, g.y, r.x, r.y, r.width, r.height);
+    }
     XWidget_setGeometryRect((XWidget*)view, &r);
     /* 独立顶层窗口无宿主帧泵：补全过滤态改尺寸后主动补一帧
        （show 路径由 xcombo_popupShow 负责首帧）。 */

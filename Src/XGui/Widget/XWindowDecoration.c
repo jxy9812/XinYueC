@@ -23,6 +23,7 @@
 #include "XPlatformBackingStore.h"
 #include "XImage.h" /* 拖动快照离屏图像（窗口本地全幅；XImage_reinit_ex 复用分配） */
 #include "XWindow_Protected.h"
+#include "XWindowRotation.h" /* B 域条带基：rotationMapRect 正映射（像素下标口径单一实现点） */
 #include "XCursor.h" /* 边缘改尺寸悬停光标：标准形状经 XWidget_setCursor 生效链 */
 #include "XPlatformTheme.h"
 #include "XPlatformNativeWindow.h" /* 拖拽平台指针抓取：指针出窗仍持续投递 MOVE（软件重路由的出窗盲区兜底） */
@@ -607,11 +608,78 @@ static int xwd_rectListSubtract(XRect* work, int wn, int cap,
     return nn;
 }
 
+/** @brief 窗口逻辑几何 → 屏上占位 footprint（面板设备域，B 域正映射）。
+ *  @details 【B 域条带基 2026-10-22】与 present 直写原点迁移
+ *           （xpbs_topLevelDeviceRect）同域收口：fbdev 面板在位时按整
+ *           窗逻辑几何对**桌面逻辑域**（90/270 换轴后的面板宽高）做
+ *           rotationMapRect 正映射——非原点窗（对话框）的面板占位不再
+ *           是「原点不变仅对调宽高」的旧口径（A 域），90° 逻辑
+ *           (100,200 400x300) 正确映射 (524,100 300x400)。rot=0 恒等
+ *           返回（与旧值逐字段一致，rot=0 行为不变的硬保障）；无面板
+ *           （桌面 WM）时维持旧 A 域口径（原点不变仅对调宽高）——该
+ *           环境条带消费方 fill 本就 no-op，X11 行为逐位不变。消费方
+ *           全部为面板坐标域条带账本（restoreExposeStrips/
+ *           clearOutsideWindow），与 restorePanelRects（面板落笔矩形
+ *           +B 域锚点逆查）配套。oldG/newG 是几何快照（不一定任何窗
+ *           口的现几何），不能走 XWindow_screenFootprint（其 A 域旧口
+ *           径另有消费方，不在此翻转），故按传入旋转角逐矩形换算。 */
+static XRect xwd_footprintRect(int rot, const XRect* g)
+{
+    XRect out;
+    XRect panel;
+    if (!g)
+    {
+        XRect_init(&out, 0, 0, 0, 0);
+        return out;
+    }
+    out = *g;
+    if (rot == 0) return out;
+    if (xwd_panelRect(NULL, &panel))
+    {
+        /* B 域：桌面逻辑域尺寸=面板换轴（90/270）或同源（180），整窗
+         * 逻辑几何正映射定面板设备矩形（xpbs_topLevelDeviceRect 同
+         * 式）。 */
+        int W = XWindow_rotationSwapsAxes(rot) ? panel.height : panel.width;
+        int H = XWindow_rotationSwapsAxes(rot) ? panel.width : panel.height;
+        int ox = 0;
+        int oy = 0;
+        int ow = 0;
+        int oh = 0;
+        XWindow_rotationMapRect(rot, W, H, &g->x, &g->y, &g->width,
+                                &g->height, &ox, &oy, &ow, &oh);
+        XRect_init(&out, ox, oy, ow, oh);
+    }
+    else if (XWindow_rotationSwapsAxes(rot))
+    {
+        /* 无 fbdev 面板（桌面 WM）：旧 A 域口径兜底（原点不变仅对调
+         * 宽高），X11 行为逐位不变。 */
+        int t = out.width;
+        out.width = out.height;
+        out.height = t;
+    }
+    return out;
+}
+
 /** @brief 拖拽移动/改尺寸让位条带归位还原（拖动对话框白块根修
  *  2026-10-05）：本窗从 oldG 让出到 newG 的条带按「谁住着还谁」还原
  *  ——条带与其他可见顶层几何的交集自各归属顶层的后备缓冲直搬两缓冲
  *  （Z 序低→高遍历，高层覆写，与 present 遮挡剔除同 Z 约定），裸露
  *  面板余部（真桌面暴露）维持旧实现填桌面底色。
+ *  2026-10-21 旋转条带基根修：oldG/newG 先按本窗内容旋转角换算成屏
+ *  上占位 footprint，差带/命中交/扣除/余部全程在**面板坐标**域进行——
+ *  旋转窗在屏上的占位是 footprint 而非逻辑矩形，旧实现把逻辑几何当面
+ *  板矩形，非方形旋转窗错位：footprint 内逻辑矩形之外的条带（如
+ *  1024×600 面板转 90° 主窗逻辑 600×1024 时 x∈[600,1024) 带）既不
+ *  blit 也无 expose 兜底，被 fillPanelRects 洗成桌面色且松手无自愈。
+ *  归属还原按归属窗自身旋转角分流：rot=0 走 blitPanelRects 原行拷贝
+ *  （逐字节不变）；rot≠0 走 restorePanelRects 目标锚定逆变换（条带已
+ *  是面板坐标，逐设备像素反查归属窗逻辑帧）。expose 兜底与被占顶层
+ *  注入保持逻辑几何（expose 域=窗口本地逻辑坐标，与旋转无关）。
+ *  2026-10-22 B 域条带基收口：footprint 换算迁 xpbs_topLevelDevice
+ *  Rect 同式正映射（xwd_footprintRect，面板设备域）——present 直写原
+ *  点已迁 B 域，本通道若仍按「原点不换仅对调宽高」的 A 域算条带，90°
+ *  拖非原点装饰窗（对话框）时让位带按旧逻辑位擦/还原错带。rot=0 恒
+ *  等、无面板桌面兜底旧口径，两环境逐位不变。
  *  @details 旧实现无条件把让位条带填桌面底色：弹层拖动场景条带住着
  *  父窗内容，每步被洗成桌面色（真机白块，松手 clearOutsideWindow 的
  *  扣除+整窗 expose 才擦平）。归属顶层还原不走 present/翻页（blit
@@ -631,10 +699,18 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
     int wn = 0;
     int i;
     int n;
+    int rot;
+    XRect oldF;
+    XRect newF;
     bool truncated = false;
     XVector* tops;
     if (!oldG || !newG || !self) return;
-    n = xwd_exposeStrips(oldG, newG, strips);
+    /* 【旋转条带基 2026-10-21】面板带=footprint 差带：rot=0/180 时
+     * footprint 与几何逐字段一致（恒等退化），90/270 才对调宽高。 */
+    rot = XWindow_contentRotationDegrees(self);
+    oldF = xwd_footprintRect(rot, oldG);
+    newF = xwd_footprintRect(rot, newG);
+    n = xwd_exposeStrips(&oldF, &newF, strips);
     for (i = 0; i < n && wn < 12; ++i) work[wn++] = strips[i];
     tops = XGuiApplication_topLevelWindows();
     if (tops)
@@ -645,21 +721,32 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
         {
             XWindow* other = *(XWindow**)XVector_at_base(tops, (int64_t)ti);
             XRect og;
+            XRect fo;
             int hitCount = 0;
             int wi;
             if (!other || other == self || !XWindow_isVisible(other))
                 continue;
             og = XWindow_geometry(other);
-            /* 收集本顶层与余部条带的交集（面板坐标）。 */
+            /* 【B 域条带基 2026-10-22】他窗占位按其自身旋转角正映射面板
+             * 设备矩形（xwd_footprintRect 内 fbdev 在位走 B 域、rot=0
+             * 恒等；无面板桌面维持旧 screenFootprint 口径）——与
+             * present/输入命中的 B 域落板同域，A 域旧口径在 90° 下对非
+             * 原点他窗取旧逻辑位，条带交集还原/扣除全错带。 */
+            fo = xwd_footprintRect(XWindow_contentRotationDegrees(other),
+                                   &og);
+            /* 收集本顶层与余部条带的交集（面板坐标；旋转态按屏上占位
+             * footprint 而非逻辑矩形——90/270 占位宽高对调，逻辑矩形
+             * 会漏掉 footprint 内逻辑矩形之外的占位、又虚报逻辑矩形内
+             * 不在屏上的部分）。 */
             for (wi = 0; wi < wn && hitCount < 12; ++wi)
             {
                 const XRect* r = &work[wi];
-                int ix0 = r->x > og.x ? r->x : og.x;
-                int iy0 = r->y > og.y ? r->y : og.y;
-                int ix1 = r->x + r->width < og.x + og.width
-                              ? r->x + r->width : og.x + og.width;
-                int iy1 = r->y + r->height < og.y + og.height
-                              ? r->y + r->height : og.y + og.height;
+                int ix0 = r->x > fo.x ? r->x : fo.x;
+                int iy0 = r->y > fo.y ? r->y : fo.y;
+                int ix1 = r->x + r->width < fo.x + fo.width
+                              ? r->x + r->width : fo.x + fo.width;
+                int iy1 = r->y + r->height < fo.y + fo.height
+                              ? r->y + r->height : fo.y + fo.height;
                 if (ix1 > ix0 && iy1 > iy0)
                 {
                     XRect_init(&hits[hitCount], ix0, iy0, ix1 - ix0,
@@ -669,8 +756,9 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
             }
             if (hitCount > 0)
             {
-                /* 归位还原：自归属顶层后备缓冲直搬（图像坐标=条带-窗
-                 * 全局原点，与 present fbOrigin 同口径）。 */
+                /* 归位还原：自归属顶层后备缓冲直搬（rot=0 图像坐标=条
+                 * 带-窗全局原点，与 present fbOrigin 同口径；rot≠0 条
+                 * 带已是面板坐标，见下方分流）。 */
                 /* 桥接窗口→归属顶层控件直查（虚表同一性）：此前经
                  * XApplication_topLevelWidgets 反查，在仅创建
                  * XGuiApplication（XApplication 基层未初始化，g_xapp
@@ -688,11 +776,27 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
                         pbs ? XPlatformBackingStore_paintDevice(pbs) : NULL;
                     if (pbs && img)
                     {
-                        XPoint origin;
-                        XPoint_init(&origin, og.x, og.y);
-                        XPlatformBackingStore_blitPanelRects(pbs, hits,
-                                                             hitCount,
-                                                             &origin);
+                        if (XWindow_contentRotationDegrees(other) != 0)
+                        {
+                            /* 旋转态：条带已是面板坐标（B 域
+                             * footprint 基差带），目标锚定逆变换落板
+                             * （入口内参考原点=归属窗面板设备原点，与
+                             * present 同域；2026-10-22 收口）。
+                             * blitPanelRects 前向映射契约（矩形=窗口局
+                             * 部逻辑坐标，正变换定落笔区）刻意不动——
+                             * 键盘整窗直提路矩形=整窗逻辑几何，依赖前
+                             * 向变换落到 footprint。 */
+                            XPlatformBackingStore_restorePanelRects(
+                                pbs, hits, hitCount);
+                        }
+                        else
+                        {
+                            XPoint origin;
+                            XPoint_init(&origin, og.x, og.y);
+                            XPlatformBackingStore_blitPanelRects(pbs, hits,
+                                                                 hitCount,
+                                                                 &origin);
+                        }
                     }
                     else
                     {
@@ -709,9 +813,11 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
                     }
                 }
             }
-            /* 从余部扣除本顶层矩形（后续归属与桌面余部不再含它）。 */
+            /* 从余部扣除本顶层屏上占位（后续归属与桌面余部不再含它；
+             * 旋转态按 footprint 扣除——逻辑矩形会漏扣/虚扣，留幻影
+             * 面板余部被洗成桌面色）。 */
             {
-                int sub = xwd_rectListSubtract(work, wn, 12, &og);
+                int sub = xwd_rectListSubtract(work, wn, 12, &fo);
                 if (sub < 0)
                 {
                     truncated = true;
@@ -722,9 +828,11 @@ static void xwd_restoreExposeStrips(const XRect* oldG, const XRect* newG,
         }
         XClassDelete(tops);
     }
-    /* 裸露面板余部=真桌面暴露：维持旧实现填桌面底色两缓冲。截断降级
-     * 不填色（绝不洗其他窗），已处理归属的还原已落地，残带留待松手
-     * clearOutsideWindow 清扫自愈。 */
+    /* 裸露面板余部=真桌面暴露：维持旧实现填桌面底色两缓冲（余部已随
+     * 条带基 footprint 化为面板坐标：rot=0/180 与逻辑坐标同域、数值
+     * 逐字段不变；90/270 落在真实占位之外，不再把 footprint 内逻辑矩
+     * 形之外的活内容洗成底色）。截断降级不填色（绝不洗其他窗），已处
+     * 理归属的还原已落地，残带留待松手 clearOutsideWindow 清扫自愈。 */
     if (!truncated)
         XPlatformBackingStore_fillPanelRects(work, wn, XWD_DESKTOP_PIXEL);
 }
@@ -756,11 +864,20 @@ void XWindowDecoration_restoreExposeStrips(const XRect* oldG,
  *  它们洗成桌面底色（真机拖动对话框全屏白屏实证）。改为逐顶层矩形
  *  扣除：裸露面板余部填底色，被占部分注入 expose 由归属顶层自行
  *  重绘（expose 处理=整窗直提，一次即可）。工作集溢出降级为「不填
- *  色、已见顶层走 expose」，绝不洗别的窗。 */
+ *  色、已见顶层走 expose」，绝不洗别的窗。
+ *  2026-10-21 旋转条带基根修：四条让位带与逐顶层扣除全部按屏上占位
+ *  footprint 在面板坐标域计算（本窗按自窗旋转角换算、他窗按
+ *  XWindow_screenFootprint）——旧实现拿设备面板矩形对逻辑几何做差，
+ *  90/270 非方形窗出「footprint 内逻辑矩形外」的幻影带（1024×600 面
+ *  板转 90° 主窗逻辑 600×1024 时 x∈[600,1024) 全高带），扣除又用逻
+ *  辑矩形挡不住真实占位，把旋转主窗活内容洗成桌面色且松手无自愈。
+ *  rot=0/180 时 footprint 与几何逐字段一致，全部算式恒等退化（行为
+ *  逐字节不变）。 */
 static void xwd_clearOutsideWindow(XWindowDecorationState* st)
 {
     XRect panel;
     XRect g;
+    XRect fo;
     XRect bands[4];
     XRect work[12];
     int wn = 0;
@@ -769,12 +886,17 @@ static void xwd_clearOutsideWindow(XWindowDecorationState* st)
     XVector* tops;
     if (!xwd_panelRect(st, &panel)) return;
     g = XWidget_geometry(st->m_top);
-    XRect_init(&bands[0], panel.x, panel.y, g.x - panel.x, panel.height);
-    XRect_init(&bands[1], g.x + g.width, panel.y,
-               panel.x + panel.width - (g.x + g.width), panel.height);
-    XRect_init(&bands[2], g.x, panel.y, g.width, g.y - panel.y);
-    XRect_init(&bands[3], g.x, g.y + g.height, g.width,
-               panel.y + panel.height - (g.y + g.height));
+    /* 【旋转条带基 2026-10-21】本窗让位带=面板矩形 \ 本窗屏上占位
+     * footprint（rot=0/180 恒等退化，四条带算式逐字段不变）。 */
+    fo = xwd_footprintRect(
+        st->m_window ? XWindow_contentRotationDegrees(st->m_window) : 0,
+        &g);
+    XRect_init(&bands[0], panel.x, panel.y, fo.x - panel.x, panel.height);
+    XRect_init(&bands[1], fo.x + fo.width, panel.y,
+               panel.x + panel.width - (fo.x + fo.width), panel.height);
+    XRect_init(&bands[2], fo.x, panel.y, fo.width, fo.y - panel.y);
+    XRect_init(&bands[3], fo.x, fo.y + fo.height, fo.width,
+               panel.y + panel.height - (fo.y + fo.height));
     for (i = 0; i < 4; ++i)
     {
         if (bands[i].width > 0 && bands[i].height > 0 && wn < 12)
@@ -789,12 +911,19 @@ static void xwd_clearOutsideWindow(XWindowDecorationState* st)
         {
             XWindow* other = *(XWindow**)XVector_at_base(tops, (int64_t)ti);
             XRect og;
+            XRect fsub;
             int oi;
             bool anyHit = false;
             if (!other || other == st->m_window || !XWindow_isVisible(other))
                 continue;
             og = XWindow_geometry(other);
-            /* 扣除：work 各矩形 \ 本顶层矩形（上下左右四条带切分）。 */
+            /* 【B 域条带基 2026-10-22】扣除域同 restoreExposeStrips：按
+             * 他窗自身旋转角正映射面板设备矩形（xwd_footprintRect），
+             * 与 present 落板/本窗让位带同域。 */
+            fsub = xwd_footprintRect(XWindow_contentRotationDegrees(other),
+                                     &og);
+            /* 扣除：work 各矩形 \ 本顶层屏上占位 footprint（上下左右
+             * 四条带切分；expose 注入仍按逻辑几何，见下方 local 域）。 */
             for (oi = 0; oi < wn && !truncated; ++oi)
             {
                 XRect next[12];
@@ -802,10 +931,12 @@ static void xwd_clearOutsideWindow(XWindowDecorationState* st)
                 const XRect* r = &work[oi];
                 int rx1 = r->x + r->width;
                 int ry1 = r->y + r->height;
-                int ix0 = r->x > og.x ? r->x : og.x;
-                int iy0 = r->y > og.y ? r->y : og.y;
-                int ix1 = rx1 < og.x + og.width ? rx1 : og.x + og.width;
-                int iy1 = ry1 < og.y + og.height ? ry1 : og.y + og.height;
+                int ix0 = r->x > fsub.x ? r->x : fsub.x;
+                int iy0 = r->y > fsub.y ? r->y : fsub.y;
+                int ix1 = rx1 < fsub.x + fsub.width ? rx1
+                                                    : fsub.x + fsub.width;
+                int iy1 = ry1 < fsub.y + fsub.height ? ry1
+                                                     : fsub.y + fsub.height;
                 if (ix1 <= ix0 || iy1 <= iy0)
                 {
                     /* 不相交：整段保留。 */
@@ -1286,6 +1417,10 @@ static void xwd_applyMove(XWindowDecorationState* st, int dx, int dy)
         XPlatformBackingStore* snapPbs;
         XPoint origin;
         bool ok;
+        /* 入参保持逻辑域契约（矩形=逻辑几何、origin=逻辑左上）；
+         * rot≠0 的面板落笔原点由入口内部正映射迁 B 域
+         * （xpbs_topLevelDeviceRect，与 present 直写同域，2026-10-22
+         * 收口）——调用方不再自行换域，勿在此「修正」回平台侧。 */
         XPoint_init(&origin, newG.x, newG.y);
         ok = XPlatformBackingStore_blitSnapshotPanelRects(
             &st->m_dragSnap, &newG, 1, &origin, st->m_window);
@@ -1545,7 +1680,26 @@ static void xwd_openSystemMenu(XWindowDecorationState* st,
                           (XObject*)menu, xwd_closeSlot,
                           XConnectionType_Direct);
     }
-    global = XWidget_mapToGlobal(st->m_top, localPos);
+    /* [弹窗随转·逻辑全局 2026-10-22] mapToGlobal 返回设备全局（旋转正
+       变换后），XMenu_popup→setGeometryRect 需逻辑全局——90/270 下系统
+       菜单错位（同 XComboBox xcombo_popupReposition 根修）。自持父链累
+       加逻辑偏移+顶层逻辑原点，rot==0 与 mapToGlobal 逐位一致。 */
+    XPoint_init(&global, 0, 0);
+    {
+        XWidget* topW = XWidget_topLevelWidget(st->m_top);
+        const XWidget* w = (const XWidget*)st->m_top;
+        while (w && !w->m_isWindow) {
+            global.x += w->m_windowRect.x;
+            global.y += w->m_windowRect.y;
+            w = (const XWidget*)XObject_parent((XObject*)w);
+        }
+        if (topW) {
+            global.x += topW->m_windowRect.x;
+            global.y += topW->m_windowRect.y;
+        }
+    }
+    global.x += localPos->x;
+    global.y += localPos->y;
     XMenu_popup(menu, &global);
 }
 

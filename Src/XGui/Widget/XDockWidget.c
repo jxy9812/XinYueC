@@ -192,6 +192,50 @@ static bool xdw_titleHit(const XDockWidget* dock, const XPoint* pos)
 }
 
 /**
+ * @brief      控件局部点 → 逻辑全局坐标（浮动顶层落位/拖动跟指专用）。
+ * @details    [弹窗随转·逻辑全局 2026-10-22] XWidget_mapToGlobal 自
+ *             旋转战役起返回**设备全局**坐标（XWidget.c:5863 契约：
+ *             窗口局部先施旋转正变换 R 再加顶层原点，供 fbinput 输入/
+ *             光标链使用）；而浮动态顶层经 XWidget_move 落位的几何账本
+ *             （m_windowRect → XWindow_setGeometry → 平台 setGeometry）
+ *             是**逻辑全局**域——XWindow.c:1929 立契「瞬态弹层顶层几何
+ *             账本恒逻辑全局」，X11 平台层弹层落位门
+ *             （XPlatformNativeWindow_posix.c Popup+rot≠0+瞬态父）把
+ *             Popup 几何按逻辑全局再施一次正变换，喂设备值即双重变换
+ *             错位；fbdev 无窗口系统环境下窗口按逻辑域落面板。同族收
+ *             口（XComboBox xcombo_popupReposition/XMenu 子菜单/
+ *             XDateTimeEdit 日历弹层，2026-10-22）均改父链逻辑累加，
+ *             本函数同口径：父链逻辑偏移累加（与 XWidget_accumulateOffset
+ *             同式，不施 R）+顶层逻辑原点+局部点。rot==0 时与
+ *             mapToGlobal 逐位一致；mapToGlobal 既有契约不动。宿主落
+ *             点链（hoverDrop/finishDrop→xmw_dropAreaAt 的
+ *             mapFromGlobal）仍吃设备全局，调用方各自取域。
+ * @param      w 起始控件；可为 NULL。
+ * @param      local 控件局部点；可为 NULL。
+ * @return     逻辑全局坐标；入参 NULL 返回 (0,0)。
+ */
+static XPoint xdw_logicalGlobal(const XWidget* w, const XPoint* local)
+{
+    XPoint g;
+    XWidget* top;
+    XPoint_init(&g, 0, 0);
+    if (!w || !local) return g;
+    top = XWidget_topLevelWidget((XWidget*)w);
+    while (w && !w->m_isWindow) {
+        g.x += w->m_windowRect.x;
+        g.y += w->m_windowRect.y;
+        w = (const XWidget*)XObject_parent((XObject*)w);
+    }
+    if (top) {
+        g.x += top->m_windowRect.x;
+        g.y += top->m_windowRect.y;
+    }
+    g.x += local->x;
+    g.y += local->y;
+    return g;
+}
+
+/**
  * @brief      广播可见性变化并联动宿主与切换动作。
  * @details    对标 Qt：QDockWidget::visibilityChanged 随真实显隐发射，
  *             同时按 QDockWidgetPrivate::syncViewAction 同步
@@ -619,8 +663,15 @@ static void VX_dockWidget_mousePressEvent(XWidget* self, XEvent* event)
             (dock->m_features & XDockWidgetFeature_Floatable) != 0 &&
             (XMouseEvent_modifiers(me) &
              XKeyboardModifier_ControlModifier) != 0;
-        dock->m_dragOffset.x = g.x - XWidget_x(self);
-        dock->m_dragOffset.y = g.y - XWidget_y(self);
+        /* [弹窗随转·逻辑全局 2026-10-22] m_dragOffset 语义=抓取点相对
+         * 浮动窗口原点的偏移，只供 mouseMoveEvent 的 XWidget_move 跟指
+         * 方程（逻辑域，见 xdw_logicalGlobal 注）；按设备全局 mapToGlobal
+         * 与逻辑账本 x/y 混域相减，rot≠0 下 R 换轴后偏移失真。 */
+        {
+            XPoint lg = xdw_logicalGlobal(self, &pos);
+            dock->m_dragOffset.x = lg.x - XWidget_x(self);
+            dock->m_dragOffset.y = lg.y - XWidget_y(self);
+        }
         dock->m_pressGlobal = g; /* 释放时与当前点比较过滤原地单击 */
         XWidget_raise(self); /* 对标 Qt：拖动前激活提升浮动窗口 */
         /* 全局鼠标抓取：指针拖出窗口后事件仍转投本控件（win32 普通
@@ -645,7 +696,13 @@ static void VX_dockWidget_mousePressEvent(XWidget* self, XEvent* event)
         dock->m_ctrlDrag =
             (XMouseEvent_modifiers(me) &
              XKeyboardModifier_ControlModifier) != 0;
+        /* [弹窗随转·域注 2026-10-22] 停靠态 m_dragOffset 只供脱靠阈值
+         * 判定（mouseMoveEvent 的 g−m_dragOffset，两侧同为设备全局）；
+         * 脱靠成顶层后偏移在 784 段按逻辑域重算，跨态不共用域。 */
         dock->m_dragOffset = XWidget_mapToGlobal(self, &pos);
+        /* 脱靠后释放的落位阈值过滤（g−m_pressGlobal）同域基准：此前
+         * 本分支未置 m_pressGlobal，拖出释放与陈旧值比较。 */
+        dock->m_pressGlobal = armG;
         XWidget_grabMouse(self);
         XEvent_accept(event);
         return;
@@ -697,15 +754,19 @@ static void VX_dockWidget_mouseDoubleClickEvent(XWidget* self, XEvent* event)
  *             浮动 QDockWidget 移动顶层窗口）；停靠态拖动越过阈值先
  *             脱靠（setFloating(true)）再继续跟随；浮动拖动期间衔接
  *             宿主落点指示器。
- * @details    跟随坐标经控件局部点 mapToGlobal 求全局（事件全局坐标
- *             在 win32 普通移动消息中不携带），脱靠后窗口原位映射，
- *             抓取点相对窗口的偏移保持不变。脱靠调用走内部实现体
- *             （不消费 undockedGeometry，对标 Qt startDrag→unplug 用
- *             当前几何原地脱靠，qdockwidget.cpp:767；公共 setFloating
- *             才恢复 undockedGeometry，qdockwidget.cpp:1465）。浮动拖
- *             动的每次移动在 XWidget_move 之后调用
- *             XMainWindow_hoverDrop 更新宿主落点指示器（对标
- *             qdockwidget.cpp:1051-1052：!ctrlDrag 时
+ * @details    跟随坐标双域分流（[弹窗随转·逻辑全局 2026-10-22]）：
+ *             跟指落位经 xdw_logicalGlobal 求**逻辑全局**（浮动态顶层
+ *             XWidget_move 的账本域，同 XComboBox 弹层收口；事件全局
+ *             坐标在 win32 普通移动消息中不携带），脱靠后窗口按逻辑
+ *             原位映射，抓取点相对窗口的偏移保持不变；脱靠阈值与宿主
+ *             落点链（hoverDrop/finishDrop→xmw_dropAreaAt 的
+ *             mapFromGlobal）仍吃 mapToGlobal 的**设备全局**。脱靠调
+ *             用走内部实现体（不消费 undockedGeometry，对标 Qt
+ *             startDrag→unplug 用当前几何原地脱靠，qdockwidget.cpp:
+ *             767；公共 setFloating 才恢复 undockedGeometry，
+ *             qdockwidget.cpp:1465）。浮动拖动的每次移动在
+ *             XWidget_move 之后调用 XMainWindow_hoverDrop 更新宿主落
+ *             点指示器（对标 qdockwidget.cpp:1051-1052：!ctrlDrag 时
  *             mwlayout->hover(widgetItem, globalPos)）；Ctrl 拖动
  *             （m_ctrlDrag）与无宿主时跳过。
  * @param      self 目标控件。
@@ -723,6 +784,7 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
     }
     if (dock->m_dragging) {
         XPoint g;
+        XPoint lg;
         me = (XMouseEvent*)event;
         if (!(XMouseEvent_buttons(me) & XMouseButton_LeftButton)) {
             /* 按键已释放：安全终止拖动；浮动态顺带按当前位置收尾
@@ -742,6 +804,8 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
         {
             XPoint local = XMouseEvent_position(me);
             g = XWidget_mapToGlobal(self, &local);
+            /* 跟指落位域：逻辑全局（顶层账本域，见函数 @details）。 */
+            lg = xdw_logicalGlobal(self, &local);
         }
         /* 移动压缩（对标 Qt 鼠标事件压缩，QWidgetWindow 聚合移动）：
          * 拖动跟随是绝对定位，高频移动（真实游戏鼠标 1kHz、远端批量
@@ -779,14 +843,15 @@ static void VX_dockWidget_mouseMoveEvent(XWidget* self, XEvent* event)
              * 跟随中断、释放时回归停靠判定因 !m_dragging 早退。 */
             dock->m_dragging = true;
             XWidget_grabMouse(self);
-            /* 脱靠窗口已映射到拖出前屏幕位置：重算抓取偏移保持
-             * 抓取点相对窗口不动。 */
-            dock->m_dragOffset.x = g.x - XWidget_x(self);
-            dock->m_dragOffset.y = g.y - XWidget_y(self);
+            /* 脱靠窗口已按逻辑全局映射到拖出前位置：重算抓取偏移
+             * （逻辑域，与跟指方程同域）保持抓取点相对窗口不动。 */
+            dock->m_dragOffset.x = lg.x - XWidget_x(self);
+            dock->m_dragOffset.y = lg.y - XWidget_y(self);
         }
-        XWidget_move(self, g.x - dock->m_dragOffset.x,
-                     g.y - dock->m_dragOffset.y);
-        XDW_TRACE("move global=(%d,%d) win=(%d,%d)", g.x, g.y,
+        XWidget_move(self, lg.x - dock->m_dragOffset.x,
+                     lg.y - dock->m_dragOffset.y);
+        XDW_TRACE("move global=(%d,%d) logical=(%d,%d) win=(%d,%d)",
+                  g.x, g.y, lg.x, lg.y,
                   XWidget_x(self), XWidget_y(self));
         if (dock->m_floating && dock->m_host && !dock->m_ctrlDrag) {
             /* 拖动中衔接宿主落点预览（qdockwidget.cpp:1051-1052）。 */
@@ -1121,9 +1186,16 @@ static void xdw_setFloatingImpl(XDockWidget* self, bool floating,
      * 复位 m_floating 并发射信号（回归契约，apitest D 段口径），
      * 提前返回会同时吞掉状态翻转与信号。 */
     /* 记录当前几何与全局位置（对标 Qt：浮动时窗口保持屏幕位置尺寸）。
-     * 必须在重设父对象前完成，子控件坐标经父链映射才有意义。 */
+     * 必须在重设父对象前完成，子控件坐标经父链映射才有意义。
+     * [弹窗随转·逻辑全局 2026-10-22] 落位值走 xdw_logicalGlobal 的**逻
+     * 辑全局**（浮动顶层 XWidget_move 账本域；X11 平台层弹层落位门把
+     * Popup 几何按逻辑全局再施正变换，喂 mapToGlobal 的设备全局即双
+     * 重变换错位——同 XComboBox/XMenu/XDateTimeEdit 收口），不施 R：
+     * rot==0 与 mapToGlobal 逐位一致，90/270 旋转态按逻辑域落位。下方
+     * undockedGeometry 恢复分支同域（浮动态快照取自 XWidget_x/y 账本，
+     * resizeEvent 记录处，逻辑全局）。 */
     XPoint_init(&origin, 0, 0);
-    globalPos = XWidget_mapToGlobal(selfw, &origin);
+    globalPos = xdw_logicalGlobal(selfw, &origin);
     w = XWidget_width(selfw);
     h = XWidget_height(selfw);
     wasVisible = XWidget_isVisible(selfw);

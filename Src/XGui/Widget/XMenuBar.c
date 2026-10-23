@@ -170,7 +170,26 @@ static void xmb_bridgeTriggeredSlot(XObject* receiver, XVarList* args)
         XPoint g;
         local.x = r.x;
         local.y = r.y + r.height;
-        g = XWidget_mapToGlobal((XWidget*)bar, &local);
+        /* [弹窗随转·逻辑全局 2026-10-22] mapToGlobal 返回设备全局（旋转
+           正变换后），XMenu_popup→setGeometryRect 需逻辑全局——90/270 下
+           菜单错位（同 XComboBox xcombo_popupReposition 根修）。自持父链
+           累加逻辑偏移+顶层逻辑原点，rot==0 与 mapToGlobal 逐位一致。 */
+        XPoint_init(&g, 0, 0);
+        {
+            XWidget* top = XWidget_topLevelWidget((XWidget*)bar);
+            const XWidget* w = (const XWidget*)bar;
+            while (w && !w->m_isWindow) {
+                g.x += w->m_windowRect.x;
+                g.y += w->m_windowRect.y;
+                w = (const XWidget*)XObject_parent((XObject*)w);
+            }
+            if (top) {
+                g.x += top->m_windowRect.x;
+                g.y += top->m_windowRect.y;
+            }
+        }
+        g.x += local.x;
+        g.y += local.y;
         XMenu_popup(menu, &g);
     }
     if (args)

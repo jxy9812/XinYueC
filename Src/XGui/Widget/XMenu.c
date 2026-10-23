@@ -706,7 +706,26 @@ static void xmenu_popupSubmenu(XMenu* self, XAction* action)
     geo = XMenu_actionGeometry(self, action);
     local.x = geo.x + geo.width;
     local.y = geo.y;
-    global = XWidget_mapToGlobal((XWidget*)self, &local);
+    /* [弹窗随转·逻辑全局 2026-10-22] mapToGlobal 返回设备全局（旋转正变
+       换后），XMenu_popup→setGeometryRect 需逻辑全局——90/270 下子菜单
+       错位（同 XComboBox xcombo_popupReposition 根修）。自持父链累加逻
+       辑偏移+顶层逻辑原点，rot==0 与 mapToGlobal 逐位一致。 */
+    XPoint_init(&global, 0, 0);
+    {
+        XWidget* top = XWidget_topLevelWidget((XWidget*)self);
+        const XWidget* w = (const XWidget*)self;
+        while (w && !w->m_isWindow) {
+            global.x += w->m_windowRect.x;
+            global.y += w->m_windowRect.y;
+            w = (const XWidget*)XObject_parent((XObject*)w);
+        }
+        if (top) {
+            global.x += top->m_windowRect.x;
+            global.y += top->m_windowRect.y;
+        }
+    }
+    global.x += local.x;
+    global.y += local.y;
     xmenu_setPtrProp(self, XMENU_PROP_OPEN_SUB, sub);
     XMenu_popup(sub, &global);
 }

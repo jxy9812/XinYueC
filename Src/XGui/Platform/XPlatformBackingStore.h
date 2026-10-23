@@ -418,15 +418,40 @@ void XPlatformBackingStoreDriver_destroy(void* nativeState);
 
 /**
  * @brief      查询当前是否允许做 fbdev 软件内容旋转（纯读、无副作用）。
- * @details    fbdev 直写路径下「真零拷贝」时 painter 直接写面板显存，
- *             中间不存在可转的帧（本层拿到的是 fb 映射本身），旋转语义
- *             无法成立 → 返回 false。软件缓冲（影子帧）路径返回 true，
- *             旋转在 xpbs_presentRectRowsRotated 中完成。
+ * @details    【2026-10-21 定稿】fbdev 直写侧具备切换能力=恒可旋转：
+ *             fbdev 影子缓冲架构下 painter 恒画逻辑朝向软件帧（平台
+ *             getNativeBuffer 恒 NULL），present 行写路径自带四方位
+ *             R⁻¹ 变换（xpbs_presentRectRowsRot），有帧可转；旋转态实
+ *             例由旋转切换钩子
+ *             （XPlatformBackingStore_windowRotationChanged）保证不落
+ *             在零拷贝模式。「实例当前是否零拷贝」不再参与全局能力
+ *             回答，留给 present 路径按窗口角度分流。
  *             X11 侧不消费本函数（走
- *             XPlatformNativeWindow_rotationSupported 的直拷判据）。
- * @return     可旋转返回 true；零拷贝或无活动显示驱动返回 false。
+ *             XPlatformNativeWindow_rotationSupported 的直拷判据），
+ *             win32/android 侧在各自 rotationSupported 恒 false，不经
+ *             过本函数。
+ * @return     恒返回 true（能力分流的其余判据由调用分支把守）。
  */
 bool XPlatformBackingStore_rotationCapable(void);
+
+/**
+ * @brief      窗口内容旋转变化通知（平台契约扩展，非 Qt API；窗口层
+ *             在旋转角落盘后调用，2026-10-21 定稿）。
+ * @details    按窗口指针查活跃实例注册表，把该窗口的后备存储实例在
+ *             「零拷贝（native 缓冲）↔ 带缓冲」两模式间切换：旋转≠0
+ *             时零拷贝实例切出（painter 需要逻辑朝向中间帧供 present
+ *             做 R⁻¹ 变换，真零拷贝无帧可转）；回 0° 时因旋转切出的实
+ *             例重跑一次 resize 重新探测零拷贝接入。实例副本
+ *             （m_windowRotation）同步落盘，供 resize 的零拷贝探测闸
+ *             使用（公共层不反向引用 XWindow）。fbdev 影子缓冲架构下
+ *             实例恒不处于零拷贝模式，本通知为账面维护 + 契约完备性，
+ *             常规路径零改动。调用方保证 window 非 NULL、degrees 已归
+ *             一（0/90/180/270）；GUI 线程调用。
+ * @param      window 旋转变化的窗口（借用）；NULL 时 no-op。
+ * @param      degrees 归一后的新内容旋转角（0/90/180/270）。
+ */
+void XPlatformBackingStore_windowRotationChanged(XWindow* window,
+                                                 int degrees);
 
 /**
  * @brief      登记原生目标窗口（对标 setNativeTargetWindow）。
@@ -461,6 +486,23 @@ void XPlatformBackingStoreDriver_surfaceResized(void* nativeState,
  *             窗口系统负责重铺，本调用为 no-op。
  */
 void XPlatformBackingStore_requestPanelClear(void);
+
+/**
+ * @brief      请求一次软件光标精灵的可见缓冲内原位搬运（fbdev 触摸
+ *             跟随专用，平台契约扩展非 Qt API；2026-10-21）。
+ * @details    空白处 tap/拖动不产生控件脏区→无 present→精灵原地不动，
+ *             要等下一次 UI 重绘（如 1Hz HUD）才跟进（跟随延迟根因）。
+ *             fbinput 输入泵在帧提交处检测到光标面板坐标变化后同步直调
+ *             本接口，在当前可见缓冲内完成一次精灵原位搬运：恢复旧外接
+ *             矩形（备份写回）→ 新外接矩形存备份 → 画新位。铁律=脏区
+ *             级触发：全部 fb 写严格限于新旧两个精灵外接矩形（各
+ *             ≤12x19，旋转 90/270 外接对调 ≤19x19）范围内；不 pan、不
+ *             触发控件重绘、不进差带账本——下帧 present 的既有恢复纪
+ *             律（顶部恢复+账本差带同步）与本调用原子更新的在画记录自
+ *             然衔接。位置未变/精灵不可见（Blank/未激活）/非 fbdev 直
+ *             写面板时 no-op。桌面平台 no-op；X11/win32 零影响。
+ */
+void XPlatformBackingStore_requestCursorMotionRefresh(void);
 
 /**
  * @brief      立即把面板坐标的若干矩形填成指定原生像素色（fbdev 高频
@@ -499,10 +541,47 @@ void XPlatformBackingStore_fillPanelRects(const XRect* rects, int count,
  * @param      origin 源窗口全局（面板）原点：图像坐标 = 矩形坐标 -
  *             origin（与 present 直写 fbOrigin 同口径；主窗口恒
  *             (0,0)）。
+ * @note       旋转自洽（2026-10-21）：源窗口内容旋转≠0 时其后备图像是
+ *             逻辑朝向帧，条带按 R⁻¹ 变换落板（正变换定 footprint 落
+ *             笔区+逐设备像素反查源，与 present 直写同口径）；rot=0 原
+ *             行拷贝逐字节不变。
  */
 void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
                                           const XRect* rects, int count,
                                           const XPoint* origin);
+
+/**
+ * @brief      立即把源后备缓冲的已合成内容按「面板落笔矩形」目标锚定
+ *             逆变换搬进面板两缓冲（fbdev 让位条带归位还原的旋转态配
+ *             套入口；2026-10-21 旋转条带基根修，非 Qt API）。
+ * @details    与 blitPanelRects 的刻意差异：rects 语义=**面板坐标落笔
+ *             区**（调用方按 footprint 域算好的面板条带，如
+ *             footprint(oldG)/footprint(newG) 差带与 footprint(other)
+ *             的交集），本入口逐设备像素经 UnmapPoint 反查源窗口逻辑
+ *             帧后拷贝——条带在面板上的位置已知，缺的只是「该位置住
+ *             着源窗哪块内容」的逆查。blitPanelRects 的前向映射契约
+ *             （矩形=窗口局部逻辑坐标、正变换定落笔区）保持不动：键
+ *             盘整窗直提路（矩形=整窗逻辑几何）继续走它。其余契约与
+ *             blitPanelRects 完全同款：同步写入可见与后台两缓冲（双
+ *             缓冲不失步）、不触碰差带账本与翻页状态、无 pan、无
+ *             cacheSync、软件光标精灵恢复/续画同纪律；源图像格式≠面
+ *             板扫描格式时 no-op；桌面平台 no-op。源窗口/几何缺席按
+ *             原点 (0,0)、恒等变换（逐像素拷贝）处理；面板界钳制兜底。
+ * @param      src 源后备存储（其 paintDevice 图像为搬运源）；可 NULL。
+ * @param      rects 面板坐标矩形数组（可 NULL/count<=0）。
+ * @param      count 矩形数。
+ * @note       旋转自洽（2026-10-21）：源窗口内容旋转≠0 时其后备图像
+ *             是逻辑朝向帧，落笔区逐设备像素反查源（与 present 直写
+ *             同口径的逆变换）。旋转=0 时调用方应继续走
+ *             blitPanelRects（原行拷贝路径逐字节不变）；本入口 rot=0
+ *             逐像素恒等，结果一致但非行拷贝。
+ * @note       B 域锚点（2026-10-22）：源窗口内容旋转≠0 时逆查参考原
+ *             点取其面板设备原点（xpbs_topLevelDeviceRect 正映射，与
+ *             present 直写落笔域同域），非逻辑左上——非原点旋转窗的
+ *             条带逆查按旧逻辑位会整体平移错位。rot=0 恒等零回归。
+ */
+void XPlatformBackingStore_restorePanelRects(XPlatformBackingStore* src,
+                                             const XRect* rects, int count);
 
 /**
  * @brief      把快照图像按面板坐标矩形直搬进 fb 当前可见缓冲（fbdev
@@ -531,6 +610,18 @@ void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
  * @param      origin     窗口全局（面板）原点。
  * @param      selfWindow 拖动中的顶层窗口（遮挡剔除 Z 序基准；可 NULL
  *                        表示不做遮挡剔除）。
+ * @note       旋转自洽（2026-10-21）：selfWindow 内容旋转≠0 时快照是
+ *             逻辑朝向帧，条带按 R⁻¹ 变换落笔（与 present 直写同口
+ *             径）；高层弹层遮挡剔除按 screenFootprint 收集（与
+ *             present 的 R12 同款，rot=0 恒等零回归）。rot=0 原行拷贝
+ *             逐字节不变。
+ * @note       B 域快照原点（2026-10-22）：selfWindow 内容旋转≠0 时落
+ *             笔原点在其面板设备矩形左上（xpbs_topLevelDeviceRect 正
+ *             映射，与 present 直写同域）；调用方 rects/origin 仍按逻
+ *             辑域契约传（矩形=逻辑几何、origin=逻辑左上），本入口内
+ *             部平移对齐。旧 A 域原点会把快照按旧逻辑位落板（90° 拖
+ *             非原点装饰窗拖动中错位、松手 PAINT 跳位）。rot=0 恒等
+ *             零回归。
  * @return     true=已直写并提交（cacheSync+pan 完成）；false=未触碰 fb
  *             （调用方回落既有 flush 提交路径）。
  */

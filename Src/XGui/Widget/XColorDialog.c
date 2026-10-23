@@ -221,14 +221,18 @@ static void xcd_centerOnScreen(XWidget* w)
     if (parent && w->m_isWindow) {
         XWidget* ptop = XWidget_topLevelWidget(parent);
         if (ptop && ptop != w) {
-            XPoint origin;
             XPoint po;
             int dw = XWidget_width(w);
             int dh = XWidget_height(w);
             int tw = XWidget_width(ptop);
             int th = XWidget_height(ptop);
-            XPoint_init(&origin, 0, 0);
-            po = XWidget_mapToGlobal(ptop, &origin);
+            /* [弹窗随转·逻辑全局 2026-10-22] mapToGlobal 返回设备全局
+               （旋转正变换后），对话框顶层窗 XWidget_move 需逻辑全局——
+               90/270 下对话框错位（同 XComboBox xcombo_popupReposition
+               根修）。父顶层的逻辑全局原点即其 m_windowRect 原点，
+               rot==0 与 mapToGlobal(ptop,0) 逐位一致。 */
+            po.x = ptop->m_windowRect.x;
+            po.y = ptop->m_windowRect.y;
             XWidget_move(w, tw > dw ? po.x + (tw - dw) / 2 : po.x,
                             th > dh ? po.y + (th - dh) / 2 : po.y);
             return;

@@ -1306,16 +1306,37 @@ float XWindow_devicePixelRatio(const XWindow* self)
 
 bool XWindow_rotationSupported(const XWindow* self)
 {
+    int supported;
     if (!self || !self->m_data) return false;
     /* dpr>1 恒不支持：present 的物理放大腿与旋转换算口径互斥（内容会缩在
        左上角、其余留旧像素）。降级为 0° 而非报错，与 getter 纯算口径
        一致——条件（dpr 回落 1.0）后来满足时自动恢复旋转。 */
     if (self->m_data->m_devicePixelRatio > 1.0f) return false;
-#if XPLATFORMNATIVEWINDOW_ON
-    return XPlatformNativeWindow_rotationSupported(self);
-#else
-    return false;
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    /* fbdev 直写构建：原生窗口层整体落 Unsupported 桩（Linux 无 X11 时
+       XPlatformNativeWindow_posix.c 的 X11 实现编译出局），其
+       rotationSupported 恒 false 会错杀 fbdev 直写路径——能力权威在
+       显示驱动+后备存储（rotationCapable 含「旋转态切带缓冲」模式
+       切换），驱动在位即由存储侧回答。 */
+    if (XPlatformDisplayDriver_active())
+    {
+        supported = XPlatformBackingStore_rotationCapable();
+    }
+    else
 #endif
+#if XPLATFORMNATIVEWINDOW_ON
+    supported = XPlatformNativeWindow_rotationSupported(self);
+#else
+    supported = false;
+#endif
+    {
+        /* 诊断探针（XGUI_ROT_DEBUG=1 开启；设备能力链排查用，stderr）。 */
+        static signed char dbg = -1;
+        if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+        if (dbg) fprintf(stderr, "[ROT] rotationSupported: dpr=%.3f -> %d\n",
+                         (double)self->m_data->m_devicePixelRatio, supported);
+    }
+    return supported;
 }
 
 int XWindow_contentRotationDegrees(const XWindow* self)
@@ -1343,6 +1364,13 @@ bool XWindow_setContentRotation(XWindow* self, int deg)
     if (data->m_contentRotation == (int16_t)norm) return true;
     data->m_contentRotation = (int16_t)norm;
     XWindow_contentRotationChanged_signal(self, norm);
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
+    /* 【旋转模式切换 2026-10-21 定稿】通知后备存储层按窗口切换实例模式：
+       旋转≠0 的实例切出零拷贝（native 缓冲）进带缓冲（present 侧 R⁻¹
+       行写需要逻辑朝向中间帧），回 0° 重新探测接入。fbdev 影子缓冲架
+       构下实例恒不在零拷贝模式，通知为账面维护零扰动。 */
+    XPlatformBackingStore_windowRotationChanged(self, norm);
+#endif
     /* 刻意不同步触发重绘：层级不倒置（XWindow 低层不回调 XWidget 高层），
        由 XWidget_setContentRotation 置整帧脏闩 + 入脏区，下一帧 PAINT
        自然消费（含 CSD 标题栏条带，见 XWidget.c flushBackingStore）。 */
@@ -1463,6 +1491,14 @@ static void xwin_applySoftwareWindowState(XWindow* self,
             data->m_normalGeometryValid = true;
         }
         if (xwin_screenRect(self, &target)) {
+            /* 旋转感知最大化（2026-10-22 用户需求「全屏换向保持全屏」）：
+               内容旋转换轴时最大化目标取对调后的逻辑矩形，footprint 恰
+               铺满面板。 */
+            if (XWindow_rotationSwapsAxes(XWindow_contentRotationDegrees(self))) {
+                int t = target.width;
+                target.width = target.height;
+                target.height = t;
+            }
             XWindow_setGeometry_rect(self, &target);
 #if XGUI_ON && XPLATFORM_FBDEV_ON
             /* 窗口级几何变化必须回推控件层：桌面 X11 由 ConfigureNotify
@@ -1582,8 +1618,30 @@ static void xwin_inheritTransientRotation(XWindow* self)
        贝/输入 UnmapPoint 均按窗现查角，同帧随新角生效。未建柄时零额外
        动作：建柄路径按现查角取 footprint，天然正确。 */
     if (data->m_created && data->m_contentRotation != prevRot)
+    {
         XWindow_resize_2(self, data->m_geometry.width,
                          data->m_geometry.height);
+#if XBACKINGSTORE_ON && XPLATFORMBACKINGSTORE_ON
+        /* 【旋转模式切换 2026-10-21】弹层继承换角同样通知后备存储层
+           （与 XWindow_setContentRotation 同口径）：已建柄弹层的既有
+           实例按新角切换零拷贝/带缓冲模式。 */
+        XPlatformBackingStore_windowRotationChanged(
+            self, (int)data->m_contentRotation);
+#endif
+    }
+    {
+        /* 诊断探针（XGUI_ROT_DEBUG=1 开启；弹层随转链排查用，stderr）。 */
+        static signed char dbg = -1;
+        if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+        if (dbg)
+            fprintf(stderr,
+                    "[WN] inheritRot win=%p type=%d rot %d -> %d "
+                    "geom=(%d,%d %dx%d)\n",
+                    (void*)self, (int)XWindow_type(self), (int)prevRot,
+                    (int)data->m_contentRotation, data->m_geometry.x,
+                    data->m_geometry.y, data->m_geometry.width,
+                    data->m_geometry.height);
+    }
 }
 
 void XWindow_setTransientParent(XWindow* self, XWindow* parent)
@@ -1868,6 +1926,14 @@ static void XWindow_setGeometryFields(XWindow* self, int posx, int posy,
         nativeGeom.y = posy;
         nativeGeom.width = w;
         nativeGeom.height = h;
+        /* [弹层落位域·平台分流 2026-10-22] 瞬态弹层（Popup）顶层几何的
+           账本口径恒为**逻辑全局**（XComboBox xcombo_popupReposition/
+           XWindowDecoration 系统菜单的父链累加定位契约，fbdev 真机实
+           测正确，不得回退）；X11 原生窗 x/y 是设备全局坐标，90/180/
+           270 旋转态弹层的落位锚点换算在**平台层 setGeometry 去重之后**
+           进行（XPlatformNativeWindow_posix.c：去重/回环防护必须吃逻辑
+           值，换算放在去重之后才不会把设备锚点回灌成逻辑账本形成旋转
+           游走回环）。本层零改动，仅注释立契。 */
         XPlatformNativeWindow_setGeometry(self, &nativeGeom);
     }
 #endif /* XPLATFORMNATIVEWINDOW_ON */
@@ -2279,6 +2345,23 @@ void XWindow_setVisible(XWindow* self, bool visible)
     if (!self || !(data = self->m_data)) return;
     old = data->m_visible;
     if (visible != old) {
+        {
+            /* 诊断探针（XGUI_ROT_DEBUG=1 开启；弹层生命周期排查用）。 */
+            static signed char dbg = -1;
+            if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+            if (dbg)
+            {
+                XRect fp = XWindow_screenFootprint(self);
+                fprintf(stderr,
+                        "[WN] setVisible win=%p type=%d vis=%d rot=%d "
+                        "geom=(%d,%d %dx%d) fp=(%d,%d %dx%d)\n",
+                        (void*)self, (int)XWindow_type(self), visible ? 1 : 0,
+                        (int)XWindow_contentRotationDegrees(self),
+                        data->m_geometry.x, data->m_geometry.y,
+                        data->m_geometry.width, data->m_geometry.height,
+                        fp.x, fp.y, fp.width, fp.height);
+            }
+        }
         data->m_visible = visible;
         XWindow_visibleChanged_signal(self, visible);
         XWindow_updateVisibility(self);
@@ -2336,7 +2419,13 @@ void XWindow_setVisible(XWindow* self, bool visible)
         XVector* tops = XGuiApplication_topLevelWindows();
         if (tops)
         {
-            XRect hiddenRect = XWindow_geometry(self);
+            /* [旋转随转·footprint 化 2026-10-22] 隐藏矩形/相交判定/恢复
+               expose 全链改**设备 footprint** 口径：90/270 下窗口在屏占
+               位是宽高对调矩形，按逻辑几何相交会把恢复区/铺底区落到错
+               位设备矩形（真机旋转态弹层关闭后残影）。expose 仍投**under
+               窗口局部逻辑**矩形（handleExposeEvent 契约），由设备交矩形
+               按 under 现查角 R⁻¹ 回逻辑（rot=0 恒等，逐位同旧口径）。 */
+            XRect hiddenRect = XWindow_screenFootprint(self);
             XWindow* restored = NULL;
             XRect restoredRect;
             size_t wi;
@@ -2348,7 +2437,7 @@ void XWindow_setVisible(XWindow* self, bool visible)
                 if (!under || under == self || !XWindow_isVisible(under))
                     continue;
                 {
-                    XRect underRect = XWindow_geometry(under);
+                    XRect underRect = XWindow_screenFootprint(under);
                     int ix0 = hiddenRect.x > underRect.x ? hiddenRect.x : underRect.x;
                     int iy0 = hiddenRect.y > underRect.y ? hiddenRect.y : underRect.y;
                     int ix1 = hiddenRect.x + hiddenRect.width <
@@ -2363,11 +2452,42 @@ void XWindow_setVisible(XWindow* self, bool visible)
                     {
                         XRegion expose;
                         XRect local;
+                        XRect geom = XWindow_geometry(under);
+                        int rot = XWindow_contentRotationDegrees(under);
+                        int ldx = ix0 - underRect.x;
+                        int ldy = iy0 - underRect.y;
+                        int ldw = ix1 - ix0;
+                        int ldh = iy1 - iy0;
                         XRegion_init(&expose);
-                        local.x = ix0 - underRect.x;
-                        local.y = iy0 - underRect.y;
-                        local.width = ix1 - ix0;
-                        local.height = iy1 - iy0;
+                        /* 设备交矩形 → under 局部逻辑矩形（MapRect 逆）：
+                           90: x=dy,y=H-dx-dw,w=dh,h=dw；180: x=W-dx-dw,
+                           y=H-dy-dh；270: x=W-dy-dh,y=dx,w=dh,h=dw。 */
+                        switch (rot) {
+                        case 90:
+                            local.x = ldy;
+                            local.y = geom.height - ldx - ldw;
+                            local.width = ldh;
+                            local.height = ldw;
+                            break;
+                        case 180:
+                            local.x = geom.width - ldx - ldw;
+                            local.y = geom.height - ldy - ldh;
+                            local.width = ldw;
+                            local.height = ldh;
+                            break;
+                        case 270:
+                            local.x = geom.width - ldy - ldh;
+                            local.y = ldx;
+                            local.width = ldh;
+                            local.height = ldw;
+                            break;
+                        default:
+                            local.x = ldx;
+                            local.y = ldy;
+                            local.width = ldw;
+                            local.height = ldh;
+                            break;
+                        }
                         XRegion_addRect(&expose, &local);
                         XWindowSystemInterface_handleExposeEvent(under,
                                                                  &expose);
@@ -2387,6 +2507,20 @@ void XWindow_setVisible(XWindow* self, bool visible)
             {
                 XRect bands[4];
                 int bn = 0;
+                {
+                    /* 诊断探针（XGUI_ROT_DEBUG=1）：hide 恢复路径的矩形
+                       口径（逻辑几何 vs footprint）与恢复层。 */
+                    static signed char dbg = -1;
+                    if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+                    if (dbg)
+                        fprintf(stderr,
+                                "[WN] hideRestore hid win=%p rect=(%d,%d "
+                                "%dx%d) -> under=%p rot=%d\n",
+                                (void*)self, hiddenRect.x, hiddenRect.y,
+                                hiddenRect.width, hiddenRect.height,
+                                (void*)restored,
+                                (int)XWindow_contentRotationDegrees(self));
+                }
                 if (hiddenRect.x < restoredRect.x)
                     XRect_init(&bands[bn++], hiddenRect.x, hiddenRect.y,
                                restoredRect.x - hiddenRect.x,

@@ -424,7 +424,6 @@ void XToolButton_setPopupMode(XToolButton* self, XToolButtonPopupMode mode)
 
 void XToolButton_showMenu(XToolButton* self)
 {
-    XPoint local;
     XPoint global;
     XPoint pos;
 
@@ -443,9 +442,25 @@ void XToolButton_showMenu(XToolButton* self)
                       (XObject*)self, toolbutton_menuHideSlot,
                       XConnectionType_Direct);
     /* 菜单在按钮左下方弹出（对标 QToolButton::showMenu 的按钮下方对齐）；
-     * 用按钮全局坐标 + 高度计算弹出位置，避免出现在屏幕左上角。 */
-    XPoint_init(&local, 0, 0);
-    global = XWidget_mapToGlobal((XWidget*)self, &local);
+     * 用按钮全局坐标 + 高度计算弹出位置，避免出现在屏幕左上角。
+     * [弹窗随转·逻辑全局 2026-10-22] mapToGlobal 返回设备全局（旋转正变
+     * 换后），XMenu_popup→setGeometryRect 需逻辑全局——90/270 下菜单错
+     * 位（同 XComboBox xcombo_popupReposition 根修）。自持父链累加逻辑
+     * 偏移+顶层逻辑原点，rot==0 与 mapToGlobal 逐位一致。 */
+    XPoint_init(&global, 0, 0);
+    {
+        XWidget* top = XWidget_topLevelWidget((XWidget*)self);
+        const XWidget* w = (const XWidget*)self;
+        while (w && !w->m_isWindow) {
+            global.x += w->m_windowRect.x;
+            global.y += w->m_windowRect.y;
+            w = (const XWidget*)XObject_parent((XObject*)w);
+        }
+        if (top) {
+            global.x += top->m_windowRect.x;
+            global.y += top->m_windowRect.y;
+        }
+    }
     XPoint_init(&pos, global.x,
                 global.y + XWidget_height((XWidget*)self));
     XMenu_popup(self->m_menu, &pos);

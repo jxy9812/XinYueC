@@ -411,15 +411,19 @@ static int wn_orientApply(int deg, int* outW, int* outH)
     int availW = 4096;
     int availH = 4096;
     int bw, bh, w, h, x, y;
-    if (!top) return;
-    if (XWidget_isMaximized(top)) {
-        /* 最大化态几何由窗口状态接管：先还原再换向（不还原则换向只改
-           旋转角、外框被窗口状态覆盖，屏幕上毫无变化）。 */
-        s_wn.m_syncing = true;
+    bool wasMax;
+    if (!top) return 0; /* 无顶层=探测必败（原裸 return 非零值返回 UB，告警修）。 */
+    wasMax = XWidget_isMaximized(top);
+    if (wasMax) {
+        /* 最大化（全屏）态换向保持全屏（2026-10-22 用户需求）：归位软件
+           状态后换向，换向经 showMaximized 取旋转感知的最大化几何
+           （90/270 目标=对调屏矩形，footprint 恰铺满面板），最大化标志
+           与勾选框全程保持。 */
         XWidget_showNormal(top);
+        s_wn.m_syncing = true;
         if (s_wn.m_maxCheck)
             XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
-                                       false);
+                                       true);
         s_wn.m_syncing = false;
     }
     /* 平台支持探测（2026-10-18）：setter 返回 false 时下拉框置灰并给
@@ -437,6 +441,9 @@ static int wn_orientApply(int deg, int* outW, int* outH)
         }
         if (!s_wn.m_rotationSupported && s_wn.m_orientCombo)
             XWidget_setEnabled((XWidget*)s_wn.m_orientCombo, false);
+        fprintf(stderr, "[WN] rot probe: supported=%d top=%p handle=%p\n",
+                (int)s_wn.m_rotationSupported, (void*)top,
+                top ? top->m_windowHandle : NULL);
     }
     screen = XGuiApplication_primaryScreen();
     if (screen) {
@@ -474,13 +481,24 @@ static int wn_orientApply(int deg, int* outW, int* outH)
        700x1000 而上屏描述符 1000x700，整屏错乱）。0/180 不换轴才对
        顺序不敏感。旋转由平台层 present/输入按角换算（footprint 对调
        在 XPlatformNativeWindow 侧自动完成），本页不手动对调几何。
-       返回 false=平台不支持（win32/android/RGB16/fbdev 零拷贝），此时
-       连几何也一并跳过（外框维持 0° 基准），由调用方给出说明文案。 */
+       返回 false=平台不支持（win32/android 恒不支持；fbdev 直写侧
+       2026-10-21 定稿起恒可旋转——影子缓冲架构 present 侧 R⁻¹ 行写
+       有帧可转），此时连几何也一并跳过（外框维持 0° 基准），由调用方
+       给出说明文案。 */
     if (!XWidget_setContentRotation(top, deg))
     {
         if (outW) *outW = w;
         if (outH) *outH = h;
         return 0; /* 0 = 平台不支持（槽据此置灰说明）。 */
+    }
+    if (wasMax) {
+        /* 最大化（全屏）：几何交给旋转感知的软件最大化（目标=对调屏
+           矩形，footprint 恰铺满面板），w/h 钳制结果不参与。 */
+        XWidget_showMaximized(top);
+        XWidget_setContentRotation(top, deg); /* 同角二次置闩（全帧重画）。 */
+        if (outW) *outW = w;
+        if (outH) *outH = h;
+        return 1;
     }
     x = XWidget_x(top);
     y = XWidget_y(top);
@@ -518,8 +536,9 @@ static void wn_orientSlot(XObject* receiver, XVarList* args)
     if (index < 0 || index > 3) index = 0;
     if (!wn_orientApply(index * 90, &w, &h))
     {
-        /* 平台不支持软件旋转（win32/android/RGB16/fbdev 零拷贝）：
-           下拉框已在探测阶段置灰，这里给明确说明而非静默无反应。 */
+        /* 平台不支持软件旋转（win32/android；fbdev 2026-10-21 定稿起
+           恒可旋转）：下拉框已在探测阶段置灰，这里给明确说明而非静默
+           无反应。 */
         wn_report("\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81\xE5\x86\x85\xE5\xAE\xB9\xE6\x97\x8B\xE8\xBD\xAC\xEF\xBC\x8C\xE5\x8F\xAF\xE7\x94\xA8\xE6\x88\xB7\xE7\xAB\xAF\xE5\x8F\xA3\xE6\x94\xAF\xE6\x8C\x81");
         return;
     }

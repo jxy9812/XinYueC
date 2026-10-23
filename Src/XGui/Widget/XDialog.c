@@ -226,7 +226,6 @@ static void xdlg_centerToParentWindow(XDialog* self)
          * xid_centerOnScreen 的无父分支（2026-10-03 两套居中合并为
          * 这一套漏斗后的能力保全）。 */
         XPoint po;
-        XPoint origin;
         XWidget* ptop;
         parent = XWidget_parentWidget(selfw);
         ptop = parent ? XWidget_topLevelWidget(parent) : NULL;
@@ -246,8 +245,13 @@ static void xdlg_centerToParentWindow(XDialog* self)
             XWidget_setAttribute(selfw, XWidgetAttribute_Moved, false);
             return;
         }
-        XPoint_init(&origin, 0, 0);
-        po = XWidget_mapToGlobal(ptop, &origin);
+        /* [弹窗随转·逻辑全局 2026-10-22] mapToGlobal 返回设备全局（旋转
+           正变换后），对话框顶层窗 XWidget_move 需逻辑全局——90/270 下对
+           话框错位（同 XComboBox xcombo_popupReposition 根修）。父顶层的
+           逻辑全局原点即其 m_windowRect 原点（父链累加在顶层即终止），
+           rot==0 与 mapToGlobal(ptop,0) 逐位一致。 */
+        po.x = ptop->m_windowRect.x;
+        po.y = ptop->m_windowRect.y;
         dw = XWidget_width(selfw);
         dh = XWidget_height(selfw);
         tw = XWidget_width(ptop);

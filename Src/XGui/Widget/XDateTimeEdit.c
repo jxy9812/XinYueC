@@ -26,6 +26,9 @@
 #include "XCoreApplication.h"
 #include "XGuiApplication.h"   /* 主屏查询/焦点窗口（弹层翻转与焦点回交） */
 #include "XScreen.h"           /* 屏幕几何（弹层贴边超屏翻转） */
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+#include "XPlatformDisplayDriver.h" /* 屏缺席时面板框回退（XWindow.c xwin_screenRect 同源口径；XWindowDecoration.c 同层先例）。 */
+#endif
 #include "XPainter.h"          /* 弹层时间设定行文本绘制/量宽 */
 #include "XStyle.h"
 #include "XStyleOption.h"
@@ -2689,6 +2692,27 @@ static XdtPopupMode xdt_popupMode(const XDateTimeEdit* self)
  *         QDateTimeEditPrivate::positionCalendarPopup 的 LTR 锚点：
  *         弹层左缘贴控件左缘）、横向钳入主屏（对标 QComboBox 弹层的
  *         屏幕边界处理）、超下缘翻转到控件上方。 */
+/* [弹窗随转·屏缺席回退 2026-10-22] XScreen 未接线（fbdev 无窗口系统环
+ * 境）时 primaryScreen 恒 NULL——贴边/翻转判据整块被跳过（真机
+ * armel-fbdev 探针实证）。几何事实源回退到显示驱动面板框：XWindow.c
+ * xwin_screenRect 既定口径「面板即屏幕」。成功返回 true 并写 *out
+ * （未旋转面板框，逻辑域换算由调用方按 opener 旋转角统一换轴）。 */
+static bool xdt_fallbackScreenRect(XRect* out)
+{
+#if XGUI_ON && XPLATFORM_FBDEV_ON
+    const XPlatformDisplayDriverOps* ops = XPlatformDisplayDriver_active();
+    XPlatformDisplayInfo info;
+    if (ops && ops->probe && ops->probe(&info) &&
+        info.m_width > 0 && info.m_height > 0)
+    {
+        XRect_init(out, 0, 0, info.m_width, info.m_height);
+        return true;
+    }
+#else
+    (void)out;
+#endif
+    return false;
+}
 static void xdt_popupReposition(XDateTimeEdit* self)
 {
     XWidget* popup;
@@ -2722,14 +2746,49 @@ static void xdt_popupReposition(XDateTimeEdit* self)
     impl->m_rowY = impl->m_hasTimeRow ? rowY : 0;
     origin.x = 0;
     origin.y = selfH;
-    g = XWidget_mapToGlobal((XWidget*)self, &origin);
+    /* [弹窗随转·逻辑全局 2026-10-22] mapToGlobal 返回设备全局（旋转正变
+       换后），日历弹层 setGeometryRect 需逻辑全局——90/270 下按设备坐标
+       落弹层即错位（同 XComboBox xcombo_popupReposition 根修）。自持父
+       链累加逻辑偏移+顶层逻辑原点，rot==0 与 mapToGlobal 逐位一致。 */
+    XPoint_init(&g, 0, 0);
+    {
+        XWidget* top = XWidget_topLevelWidget((XWidget*)self);
+        const XWidget* w = (const XWidget*)self;
+        while (w && !w->m_isWindow) {
+            g.x += w->m_windowRect.x;
+            g.y += w->m_windowRect.y;
+            w = (const XWidget*)XObject_parent((XObject*)w);
+        }
+        if (top) {
+            g.x += top->m_windowRect.x;
+            g.y += top->m_windowRect.y;
+        }
+    }
+    g.x += origin.x;
+    g.y += origin.y;
     XMemset(&sg, 0, sizeof(sg));
     {
+        /* [弹窗随转·逻辑域可见范围 2026-10-22] 屏对象不随窗口旋转
+           （XScreen.c 全文无旋转感知；fbdev 登记恒为未旋转面板框），
+           sg 是未旋转面板框而 g/弹层几何是 opener 逻辑全局域——90/270
+           两域轴对调，原样钳位/翻面即混域（1024x600 面板转竖屏后 y 钳
+           到 600、贴底判据提前翻面）。屏缺席时回退显示驱动面板框
+           （xdt_fallbackScreenRect）。取得未旋转矩形后按 opener 顶层
+           有效旋转角换轴（旋转只对调宽高、原点不随转，XWindowRotation.h
+           口径；与 demo wn_orientApply 的 R2 钳位同源）得「当前窗口逻
+           辑域可见范围」。弹层旋转继承 opener（XWindow show 路径重继
+           承），换轴依据即 opener 角；rot==0 恒等零扰动。 */
         XScreen* screen = XGuiApplication_primaryScreen();
-        if (screen) {
-            sg = XScreen_geometry(screen);
-            haveScreen = sg.width > 0 && sg.height > 0;
+        if (!screen)
+            xdt_fallbackScreenRect(&sg);
+        if (XWindow_rotationSwapsAxes(
+                XWidget_contentRotationDegrees(
+                    XWidget_topLevelWidget((XWidget*)self)))) {
+            int t = sg.width;
+            sg.width = sg.height;
+            sg.height = t;
         }
+        haveScreen = sg.width > 0 && sg.height > 0;
     }
     x = g.x; /* 对标 Qt LTR 锚点：弹层左缘贴控件左缘（箭头贴右时由
                 横向钳位保证不超屏）。 */

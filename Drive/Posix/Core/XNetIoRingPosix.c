@@ -246,6 +246,29 @@ static void processOneCompletion(XAbstractNetIoRing* self, int64_t res,
         cqEntry.m_sourceType = XAbstractNetIoRing_Source_NativeIO;
         cqEntry.m_fdType = XFd_type(ctx->fd);
 
+        /* [2026-10-23 对端 FIN 误丢根修] 调度层假 EOF 复核此前拿
+         * entry->m_fd（XFd fd 表槽位号）当 OS fd 做 MSG_PEEK——两者是
+         * 两个编号空间且常不相等（本套接字实测槽位 2 / OS fd 8），PEEK
+         * 打到无关 fd（如 stderr）恒 ENOTSOCK≠0，真对端 FIN 被当假 EOF
+         * 丢弃，SOCK_CLOSE 永不下发（epoll 引擎 xmqtt-tcp-api 断开三例
+         * 实证）。此处对流式套接字完成把真实 OS fd 带上（Type_Socket
+         * 上下文按契约皆为 XEventContext_IO，socket 槽即 OS fd，网络
+         * 设备四处提交点均填）；非流式（数据报 0 长报文不是 FIN）或
+         * 上下文缺失时置 -1，调度层跳过关闭判定。 */
+        cqEntry.m_osFd = -1;
+        if (res == 0 && ctx->type == XEventContextType_Type_Socket &&
+            ctx->eventMask == XSocketActType_Read) {
+            XEventContext_IO* ioCtx = (XEventContext_IO*)ctx;
+            int osFd = (int)XSocketDescriptor_toIntptr(ioCtx->socket);
+            int soType = 0;
+            socklen_t soLen = sizeof(soType);
+            if (osFd >= 0 &&
+                getsockopt(osFd, SOL_SOCKET, SO_TYPE,
+                           &soType, &soLen) == 0 &&
+                soType == SOCK_STREAM)
+                cqEntry.m_osFd = osFd;
+        }
+
         /* XSocketActType 事件掩码直接使用 ctx->eventMask（与 Windows 不同，
          * io_uring 下 eventMask 由调用者直接设置为 XSocketActType 值） */
         cqEntry.m_events = ctx->eventMask;
@@ -503,6 +526,18 @@ static void ioDeinitCleanup(XNetIoRingPosix* posix) {
  * ================================================================ */
 #if XNET_BUILD_EPOLL
 
+/** @brief 提交方向归类：SEND/SENDMSG/CONNECT 出向（EPOLLOUT），其余入向。
+ *  @note  [2026-10-22 NTP 应答超时根修] SENDMSG（定向数据报，msg_name 携带
+ *         目的地址）此前未列入出向——epoll 引擎三处方向判定（submitSqe/
+ *         epRearmInterest/epTakePending）都会把它当入向挂 EPOLLIN，
+ *         OUT 就绪永不上报，定向发送永久滞留。统一本入口避免三处漂移。 */
+static unsigned xnetEpollDirection(unsigned opcode) {
+    if (opcode == IORING_OP_SEND || opcode == IORING_OP_SENDMSG ||
+        opcode == IORING_OP_CONNECT)
+        return XNET_EPOLL_WANT_OUT;
+    return XNET_EPOLL_WANT_IN;
+}
+
 /** @brief 从挂起链中按 fd 与兴趣方向摘除一个请求（无则 NULL）。 */
 static XNetPendingOp* epTakePending(XNetIoRingPosix* posix, int fd,
                                     int wantOut) {
@@ -510,11 +545,7 @@ static XNetPendingOp* epTakePending(XNetIoRingPosix* posix, int fd,
     while (*pp) {
         XNetPendingOp* op = *pp;
         if (op->sqe.fd == fd) {
-            unsigned want = (op->sqe.opcode == IORING_OP_SEND ||
-                             op->sqe.opcode == IORING_OP_CONNECT)
-                                ? XNET_EPOLL_WANT_OUT
-                                : XNET_EPOLL_WANT_IN;
-            if (want == wantOut) {
+            if (xnetEpollDirection(op->sqe.opcode) == wantOut) {
                 *pp = op->next;
                 return op;
             }
@@ -542,8 +573,7 @@ static void epRearmInterest(XNetIoRingPosix* posix, int fd) {
     struct epoll_event ev;
     for (op = posix->m_pendingHead; op; op = op->next) {
         if (op->sqe.fd != fd) continue;
-        if (op->sqe.opcode == IORING_OP_SEND ||
-            op->sqe.opcode == IORING_OP_CONNECT)
+        if (xnetEpollDirection(op->sqe.opcode) == XNET_EPOLL_WANT_OUT)
             wantOut = 1;
         else
             wantIn = 1;
@@ -573,6 +603,13 @@ static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
         break;
     case IORING_OP_RECVMSG:
         res = recvmsg(sqe->fd, (struct msghdr*)(uintptr_t)sqe->addr, 0);
+        break;
+    case IORING_OP_SENDMSG:
+        /* [2026-10-22 NTP 应答超时根修] 定向数据报执行：msghdr 的 msg_name
+         * 携带目的地址（sqe->addr 指向驻留在 socket 上下文中的 msghdr）。
+         * 与 RECVMSG 对称，也是 SEND 携带目的地址这一 6.x 契约的全内核
+         * （5.1+）等价替代——epoll 引擎由此获得定向发送能力。 */
+        res = sendmsg(sqe->fd, (struct msghdr*)(uintptr_t)sqe->addr, 0);
         break;
     case IORING_OP_SEND:
         res = send(sqe->fd, (const void*)(uintptr_t)sqe->addr, sqe->len,
@@ -1066,20 +1103,62 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
         case IORING_OP_ASYNC_CANCEL: {
             XNetPendingOp** pp = &ring->m_pendingHead;
             XEventContext* target = (XEventContext*)(uintptr_t)sqe->addr;
+            bool flushed = false;
             while (*pp) {
                 XNetPendingOp* victim = *pp;
                 if (victim->ctx == target) {
                     *pp = victim->next;
-                    epoll_ctl(ring->m_epollFd, EPOLL_CTL_DEL,
-                              victim->sqe.fd, NULL);
+                    /* [2026-10-23 关闭丢写根修] SEND 类挂起请求在取消前先
+                     * 冲刷：io_uring 后端 SQE 提交即入内核，关闭路径
+                     * waitForCancel 泵事件期间在途写照常发出、取消落空；
+                     * epoll 后端挂在应用侧，原实现直接丢弃 = 数据静默丢失
+                     * ——MQTT 客户端 DISCONNECT 包与服务端 CONNACK 拒绝
+                     * 应答在「提交写后立即断开」时序下从未上线（epoll 引擎
+                     * xmqtt-tcp-api 断开三例稳定失败实证，io_uring 同套件
+                     * 全绿掩盖）。此时对端 fd 仍打开（断开先取消后 close），
+                     * 同步补发一次：成功则以真实字节数完成（写回 ctx->
+                     * result 唤醒 waitForCancel），EAGAIN/错误才落回取消
+                     * 语义（真积压背压场景与旧行为一致）。 */
+                    if (victim->sqe.opcode == IORING_OP_SEND ||
+                        victim->sqe.opcode == IORING_OP_SENDMSG) {
+                        ssize_t sent;
+                        errno = 0;
+                        /* MSG_NOSIGNAL 与设备层 SENDMSG 提交的 sqe->msg_flags
+                         * （XDeviceNetwork_posix.c:722）对齐——对端 RST 后
+                         * 补发不引入 SIGPIPE 杀进程风险。 */
+                        if (victim->sqe.opcode == IORING_OP_SENDMSG)
+                            sent = sendmsg(victim->sqe.fd,
+                                           (struct msghdr*)(uintptr_t)
+                                               victim->sqe.addr, MSG_NOSIGNAL);
+                        else
+                            sent = send(victim->sqe.fd,
+                                        (const void*)(uintptr_t)
+                                            victim->sqe.addr,
+                                        victim->sqe.len, MSG_NOSIGNAL);
+                        if (sent >= 0) {
+                            flushed = true;
+                            epRearmInterest(ring, victim->sqe.fd);
+                            processOneCompletion(self, (int64_t)sent,
+                                                 (void*)(uintptr_t)
+                                                     victim->sqe.user_data);
+                            XFree_System(victim);
+                            break;
+                        }
+                    }
+                    /* [2026-10-23] 原无条件 EPOLL_CTL_DEL 会连坐同 fd 其余
+                     * 挂起请求（如 RECV）的兴趣致其饿死——统一走按挂起链
+                     * 方向并集重铸（无挂起时内部即 DEL）。 */
+                    epRearmInterest(ring, victim->sqe.fd);
                     XFree_System(victim);
                     break;
                 }
                 pp = &victim->next;
             }
-            if (target) target->result = -ECANCELED;
-            processOneCompletion(self, target ? 0 : -ENOENT,
-                                 (void*)(uintptr_t)sqe->user_data);
+            if (!flushed) {
+                if (target) target->result = -ECANCELED;
+                processOneCompletion(self, target ? 0 : -ENOENT,
+                                     (void*)(uintptr_t)sqe->user_data);
+            }
             return;
         }
         default:
@@ -1125,8 +1204,7 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
 #endif
 
         memset(&ev, 0, sizeof(ev));
-        ev.events = (sqe->opcode == IORING_OP_SEND ||
-                     sqe->opcode == IORING_OP_CONNECT)
+        ev.events = (xnetEpollDirection(sqe->opcode) == XNET_EPOLL_WANT_OUT)
                         ? XNET_EPOLL_OUT_INTEREST
                         : XNET_EPOLL_IN_INTEREST;
         ev.data.fd = sqe->fd;

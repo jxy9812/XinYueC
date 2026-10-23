@@ -45,6 +45,8 @@
 #include "XComboBox.h"
 #include "XPushButton.h"
 #include "XHostAddress.h"
+#include "XCoreApplication.h"
+#include "XEventLoop.h"
 #include "XNetworkInterface.h"
 #include "XSystem.h" /* XSystem_environment: 环境变量唯一入口。 */
 #include "xgui_demo_pages.h"
@@ -1400,6 +1402,15 @@ int demo_page_network_autotest(XWidget* page)
     XAbstractButton_setChecked((XAbstractButton*)s_net.m_v6ExpandCheck,
                                true);
     net_v6ExpandSlot(NULL, NULL);
+    /* [LayoutRequest 队列重排 2026-10-21] df83fd26 起显隐/伸展因子变更
+     * 由框架失效收口 post LayoutRequest（队列事件，下一拍 activate）；
+     * 展开分支内释放固定高的约束 setter 会同步激活父布局一次，但该次
+     * 解算发生在 setStretch 之前（伸展因子未生效，自由高全归行尾伸展
+     * 条目，IPv6 行只得固有高 27px）——断言几何前必须先泵一轮事件让
+     * 排队重排落地（Qt 同口径：QTRY_* 先 processEvents 再比几何）。
+     * 折叠分支 show 路径沿可见父链同步激活兜底，泵入是让两态断言
+     * 同走「切换→队列重排完成」契约，不依赖激活时机细节。 */
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
     NET_EXPECT(s_net.m_v6Expanded &&
                    XWidget_height(s_net.m_v6Label) > 30 &&
                    !XWidget_isVisible((XWidget*)s_net.m_v4ModeCombo),
@@ -1407,6 +1418,7 @@ int demo_page_network_autotest(XWidget* page)
     XAbstractButton_setChecked((XAbstractButton*)s_net.m_v6ExpandCheck,
                                false);
     net_v6ExpandSlot(NULL, NULL);
+    XCoreApplication_processEvents(XEventLoop_AllEvents);
     NET_EXPECT(!s_net.m_v6Expanded &&
                    XWidget_isVisible((XWidget*)s_net.m_v4ModeCombo) &&
                    XWidget_height(s_net.m_v6Label) <= 30,

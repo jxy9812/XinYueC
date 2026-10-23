@@ -627,6 +627,20 @@ void XPlatformBackingStore_blitPanelRects(XPlatformBackingStore* src,
     (void)origin;
 }
 
+/* Destination-anchored inverse restore of yielded strips (rotated-drag
+ * companion entry, 2026-10-21). fbdev-only semantics (real implementation
+ * lives in the posix backend); on Windows the window system re-covers
+ * exposed regions, so this stays a no-op per the header contract
+ * ("desktop platforms: no-op") -- link stub, same policy as
+ * blitPanelRects above. */
+void XPlatformBackingStore_restorePanelRects(XPlatformBackingStore* src,
+                                             const XRect* rects, int count)
+{
+    (void)src;
+    (void)rects;
+    (void)count;
+}
+
 /* Drag-snapshot blit for the window-decoration drag path (2026-10-06).
  * fbdev-only semantics (writes the visible fb buffer directly); on Windows
  * the window system re-covers exposed regions and drags flush through the

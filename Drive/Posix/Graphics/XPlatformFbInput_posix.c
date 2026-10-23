@@ -78,6 +78,7 @@
 #include "XVector.h"   /* XGuiApplication_allWindows 窗口登记表自持遍历。 */
 #include "XGuiApplication.h" /* allWindows：命中测试自持遍历（不用 topLevelAt）。 */
 #include "XSystem.h"
+#include "XPlatformBackingStore.h" /* 光标面板坐标变化的原位搬运请求（fbdev 直写侧）。 */
 #if XCURSOR_ON
 #include "XCursor.h" /* 软件光标精灵：触摸位置喂给 XCursor_setPos。 */
 #endif
@@ -267,6 +268,50 @@ static void xpfi_normalizePoint(int rawX, int rawY, int* outX, int* outY)
 }
 
 /**
+ * @brief      把顶层窗**逻辑全局**几何矩形经旋转正映射为**面板设备**
+ *             矩形（B 域；2026-10-22 弹层面板位根修输入侧配套）。
+ * @details    XPlatformBackingStore_posix.c xpbs_topLevelDeviceRect 的
+ *             同口径孪生（hit/局部换算/光标参考系与直写落笔必须同域，
+ *             弹层「显示位=点击命中位」才成立）。口径：顶层窗几何 xy=
+ *             桌面逻辑全局位（XComboBox/XMenu 等定位层逻辑域喂入），
+ *             桌面逻辑域=面板宽高换轴（90/270）或同源（0/180）；
+ *             XWindow_screenFootprint 保持 A 域旧口径不翻转（hideRestore/
+ *             装饰拖拽等消费方继续用）。rot=0 恒等（逐字节零回归）。
+ * @param      rot  窗口内容有效旋转角。
+ * @param      geometry  窗口逻辑全局几何。
+ * @param      info  面板 probe 信息（m_width/m_height=物理扫描宽高）。
+ * @param      out   输出面板设备矩形（不钳面板界）。
+ */
+static void xpfi_topLevelDeviceRect(int rot, const XRect* geometry,
+                                    const XPlatformDisplayInfo* info,
+                                    XRect* out)
+{
+    int deskW;
+    int deskH;
+    int rx = geometry->x;
+    int ry = geometry->y;
+    int rw = geometry->width;
+    int rh = geometry->height;
+    int ox = 0;
+    int oy = 0;
+    int ow = 0;
+    int oh = 0;
+    if (XWindow_rotationSwapsAxes(rot))
+    {
+        deskW = info->m_height;
+        deskH = info->m_width;
+    }
+    else
+    {
+        deskW = info->m_width;
+        deskH = info->m_height;
+    }
+    XWindow_rotationMapRect(rot, deskW, deskH, &rx, &ry, &rw, &rh,
+                            &ox, &oy, &ow, &oh);
+    XRect_init(out, ox, oy, ow, oh);
+}
+
+/**
  * @brief      全局像素坐标命中顶层窗口并换算出窗口局部坐标。
  * @details    命中测试**自持遍历**（2026-10-18）：不走
  *             XGuiApplication_topLevelAt——它内部用逻辑矩形
@@ -286,6 +331,15 @@ static bool xpfi_windowAt(int x, int y, XWindow** outWindow, XPoint* outLocal)
     XVector* windows;
     int64_t i;
     XPoint global;
+    /* 【B 域命中 2026-10-22】面板 probe 一次取宽高（与 xpfi_normalizePoint
+       同源）：rot≠0 顶层窗命中矩形须按旋转正映射面板域算（与直写落笔
+       同域）。probe 失败回退 A 域 screenFootprint（=旧行为）。 */
+    const XPlatformDisplayDriverOps* probeOps = XPlatformDisplayDriver_active();
+    XPlatformDisplayInfo probeInfo;
+    bool havePanel = false;
+    memset(&probeInfo, 0, sizeof(probeInfo));
+    if (probeOps && probeOps->probe && probeOps->probe(&probeInfo))
+        havePanel = true;
     global.x = x;
     global.y = y;
     windows = XGuiApplication_allWindows();
@@ -300,7 +354,16 @@ static bool xpfi_windowAt(int x, int y, XWindow** outWindow, XPoint* outLocal)
         if (!w) continue;
         if (XWindow_parent(w, XWindowAncestor_ExcludeTransients) != NULL)
             continue;
-        footprint = XWindow_screenFootprint(w);
+        rot = XWindow_contentRotationDegrees(w);
+        if (rot != 0 && havePanel)
+        {
+            XRect wg = XWindow_geometry(w);
+            xpfi_topLevelDeviceRect(rot, &wg, &probeInfo, &footprint);
+        }
+        else
+        {
+            footprint = XWindow_screenFootprint(w);
+        }
         if (!XRect_contains(&footprint, x, y)) continue;
         if (XWindow_isVisible(w)) { fallback = w; break; }
         if (!fallback) fallback = w;
@@ -313,12 +376,25 @@ static bool xpfi_windowAt(int x, int y, XWindow** outWindow, XPoint* outLocal)
         int W = geometry.width;
         int H = geometry.height;
         int rot = XWindow_contentRotationDegrees(fallback);
+        /* 【B 域局部 2026-10-22】局部换算减**设备原点**（正映射 footprint
+           左上）而非逻辑 geometry.xy：与命中矩形/直写落笔同域。R⁻¹ 基准
+           仍取窗口自身逻辑宽高（own-basis 旋转与桌面旋转在窗内逐点同
+           变换）。rot=0 或 probe 缺席时设备原点==逻辑 xy，逐位不变。 */
+        int originX = geometry.x;
+        int originY = geometry.y;
+        if (rot != 0 && havePanel)
+        {
+            XRect dfp;
+            xpfi_topLevelDeviceRect(rot, &geometry, &probeInfo, &dfp);
+            originX = dfp.x;
+            originY = dfp.y;
+        }
         /* [跨平台编译修 2026-10-19] lx/ly 声明在 if 内（armel gcc-12
            C89 混合声明更严：X11 构建树见过的代码在 fbdev 树才编）。 */
         int lx = 0;
         int ly = 0;
-        outLocal->x = x - geometry.x;
-        outLocal->y = y - geometry.y;
+        outLocal->x = x - originX;
+        outLocal->y = y - originY;
         if (rot != 0)
         {
             lx = outLocal->x;
@@ -352,6 +428,24 @@ static void xpfi_cursorRecordWindowFrame(XWindow* window)
     if (!window) return;
     geometry = XWindow_geometry(window);
     XPoint_init(&origin, geometry.x, geometry.y);
+    {
+        /* 【B 域光标参考系 2026-10-22】rot≠0 时喂**设备原点**（正映射，
+         * 与 xpfi_topLevelDeviceRect 命中/局部换算、直写落笔同域）：精灵
+         * 呈现侧按 origin+R·pos 正变换，喂逻辑 xy 会把精灵画到弹层旧逻
+         * 辑位。probe 缺席回退逻辑 xy（=旧行为）；rot=0 恒等逐位不变。 */
+        const XPlatformDisplayDriverOps* ops =
+            XPlatformDisplayDriver_active();
+        XPlatformDisplayInfo info;
+        int rot = XWindow_contentRotationDegrees(window);
+        memset(&info, 0, sizeof(info));
+        if (rot != 0 && ops && ops->probe && ops->probe(&info))
+        {
+            XRect dfp;
+            xpfi_topLevelDeviceRect(rot, &geometry, &info, &dfp);
+            origin.x = dfp.x;
+            origin.y = dfp.y;
+        }
+    }
     XCursor_swSetPosFrame(XWindow_contentRotationDegrees(window),
                           geometry.width, geometry.height, &origin);
 }
@@ -372,12 +466,29 @@ static void xpfi_cursorFeedPanelPoint(int px, int py)
 {
     XWindow* window = NULL;
     XPoint local;
+    /* [SWC 探针 2026-10-23] 喂位一行账（面板点→窗口→局部→参考系）；
+     * XGUI_SWCURSOR_DEBUG=1 开，默认零成本。 */
+    static signed char swcDbg = -1;
+    if (swcDbg < 0) swcDbg = (getenv("XGUI_SWCURSOR_DEBUG") != NULL);
     local.x = px;
     local.y = py;
     if (xpfi_windowAt(px, py, &window, &local) && window)
     {
         xpfi_cursorRecordWindowFrame(window);
         XCursor_setPos(local.x, local.y);
+        if (swcDbg)
+        {
+            int frot = 0;
+            int flogW = 0;
+            int flogH = 0;
+            XPoint forigin;
+            XCursor_swPosFrame(&frot, &flogW, &flogH, &forigin);
+            fprintf(stderr,
+                    "[SWC] feed panel=(%d,%d) win=%p local=(%d,%d) "
+                    "frame rot=%d logW=%d logH=%d org=(%d,%d)\n",
+                    px, py, (void*)window, local.x, local.y, frot, flogW,
+                    flogH, forigin.x, forigin.y);
+        }
         return;
     }
     {
@@ -388,25 +499,76 @@ static void xpfi_cursorFeedPanelPoint(int px, int py)
     {
         XRect geometry = XWindow_geometry(window);
         int rot = XWindow_contentRotationDegrees(window);
-        int lx = px - geometry.x;
-        int ly = py - geometry.y;
+        /* 【B 域光标喂位 2026-10-22】同 xpfi_windowAt 局部换算口径：减
+           设备原点（正映射）而非逻辑 xy；rot=0/probe 缺席逐位不变。 */
+        int originX = geometry.x;
+        int originY = geometry.y;
         if (rot != 0)
         {
-            int ux = lx;
-            int uy = ly;
-            XWindow_rotationUnmapPoint(rot, geometry.width, geometry.height,
-                                       lx, ly, &ux, &uy);
-            lx = ux;
-            ly = uy;
+            const XPlatformDisplayDriverOps* ops =
+                XPlatformDisplayDriver_active();
+            XPlatformDisplayInfo info;
+            memset(&info, 0, sizeof(info));
+            if (ops && ops->probe && ops->probe(&info))
+            {
+                XRect dfp;
+                xpfi_topLevelDeviceRect(rot, &geometry, &info, &dfp);
+                originX = dfp.x;
+                originY = dfp.y;
+            }
         }
-        xpfi_cursorRecordWindowFrame(window);
-        XCursor_setPos(lx, ly);
-        return;
+        {
+            int lx = px - originX;
+            int ly = py - originY;
+            if (rot != 0)
+            {
+                int ux = lx;
+                int uy = ly;
+                XWindow_rotationUnmapPoint(rot, geometry.width, geometry.height,
+                                           lx, ly, &ux, &uy);
+                lx = ux;
+                ly = uy;
+            }
+            xpfi_cursorRecordWindowFrame(window);
+            XCursor_setPos(lx, ly);
+            return;
+        }
     }
     /* 无窗口：面板坐标直通（rot==0 恒等价）；参考坐标系同步复位恒等
      * （呈现层 0° 换算与宽高/原点无关，按面板坐标取精灵）。 */
     XCursor_swSetPosFrame(0, 0, 0, NULL);
     XCursor_setPos(px, py);
+}
+
+/* 原位搬运触发的面板坐标判重簿记（上次触发时主点的面板像素位）：空白
+ * 处 tap/拖动不产生控件脏区→无 present→精灵原地不动（跟随延迟根因
+ * 2026-10-21）。帧提交喂位后检测面板坐标变化即同步直调
+ * XPlatformBackingStore_requestCursorMotionRefresh（可见缓冲内原位搬
+ * 运，只碰新旧两个 ≤12x19 精灵外接矩形）：泵跑在事件循环 poll 回调=
+ * 主线程，present 只发生在事件派发/绘制调用栈内，单线程设计下 poll
+ * 相不可能与 present 在途重叠——同步直调无重入，无需投递一拍（下一
+ * 拍必达的底线以本拍即达满足）。触发侧只做坐标判重，「光标激活/位置
+ * 未变/首帧前/pan 失败态」等全部守卫在 backing store 侧权威复判。 */
+static bool s_xpfiCursorMotionInited = false; /**< 尚无已触发的面板坐标。 */
+static int  s_xpfiCursorMotionX = 0;          /**< 上次触发时主点面板 X。 */
+static int  s_xpfiCursorMotionY = 0;          /**< 上次触发时主点面板 Y。 */
+
+/**
+ * @brief      喂位后按需请求一次精灵原位搬运（主点面板坐标变化才触发）。
+ * @details    帧界折叠的纯 UPDATE 帧不经本函数（不注入即不喂位）——拖
+ *             动时搬运频率随 25ms 帧界钳自然限频，与注入/重排同拍；沿
+ *             帧与圈界尾注帧照常即时触发。搬运频率上限=注入帧率，无每
+ *             事件放大。
+ */
+static void xpfi_cursorRequestMotionRefresh(int px, int py)
+{
+    if (s_xpfiCursorMotionInited && s_xpfiCursorMotionX == px &&
+        s_xpfiCursorMotionY == py)
+        return; /* 面板坐标未变：精灵面板位置只随喂给变化，无事可做。 */
+    s_xpfiCursorMotionInited = true;
+    s_xpfiCursorMotionX = px;
+    s_xpfiCursorMotionY = py;
+    XPlatformBackingStore_requestCursorMotionRefresh();
 }
 #endif /* XCURSOR_ON */
 
@@ -605,6 +767,13 @@ static void xpfi_commitFrame(uint32_t timestampMs)
      * 坐标即照常更新一次）；先于注入命中早退，滑出窗界的帧精灵照跟。 */
     xpfi_cursorFeedPanelPoint(points[0].m_globalPosition.x,
                               points[0].m_globalPosition.y);
+    /* 空白处 tap/拖动跟随延迟根修（2026-10-21）：交互控件帧随重绘
+     * present 自然跟手，空白处帧无脏区→无 present→精灵原地不动。喂位
+     * 后检测主点面板坐标变化即同步请求一次可见缓冲内原位搬运（fbdev
+     * 直写侧权威复判激活/位置/首帧/pan 失败态；X11/win32 有硬件光标时
+     * 该调用 no-op，零影响）。 */
+    xpfi_cursorRequestMotionRefresh(points[0].m_globalPosition.x,
+                                    points[0].m_globalPosition.y);
 #endif
     /* 目标窗口：主点（列表首点）全局坐标命中顶层。 */
     if (!xpfi_windowAt(points[0].m_globalPosition.x,
@@ -616,17 +785,99 @@ static void xpfi_commitFrame(uint32_t timestampMs)
            一小段就不再跟手（用户真机实测 2026-09-28）。局部坐标按窗
            口原点换算（越界为负值合法，处理器自行钳制）。 */
         XWidget* grabber = XWidget_mouseGrabber();
-        if (!grabber) return; /* 按下沿保留至下帧重试；抬起沿已消费。 */
+        if (!grabber)
+        {
+            /* 诊断探针（XGUI_ROT_DEBUG=1；命中失败且无抓取=丢帧）。 */
+            static signed char dbg = -1;
+            if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+            if (dbg)
+                fprintf(stderr,
+                        "[ROT] fbinput DROP panel=(%d,%d) edges p=%d r=%d "
+                        "u=%d: no hit window, no grabber\n",
+                        points[0].m_globalPosition.x,
+                        points[0].m_globalPosition.y, pressedCount,
+                        releasedCount, updatedCount);
+            return; /* 按下沿保留至下帧重试；抬起沿已消费。 */
+        }
         window = XWidget_windowHandle(grabber);
-        if (!window) return;
+        if (!window)
+        {
+            static signed char dbg2 = -1;
+            if (dbg2 < 0) dbg2 = (getenv("XGUI_ROT_DEBUG") != NULL);
+            if (dbg2)
+                fprintf(stderr,
+                        "[ROT] fbinput DROP panel=(%d,%d): grabber %p has "
+                        "no window handle\n",
+                        points[0].m_globalPosition.x,
+                        points[0].m_globalPosition.y, (void*)grabber);
+            return;
+        }
+    }
+    {
+        /* 诊断探针（XGUI_ROT_DEBUG=1；每个注入帧的命中/派发链一行）。
+           【B 域探针 2026-10-22】fp 记命中所用面板域矩形（rot≠0 正映射，
+           与 xpfi_windowAt 同口径）；geom 仍记逻辑全局几何。 */
+        static signed char dbg = -1;
+        if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+        if (dbg)
+        {
+            XRect fp;
+            XRect geom = XWindow_geometry(window);
+            int probeRot = XWindow_contentRotationDegrees(window);
+            if (probeRot != 0)
+            {
+                const XPlatformDisplayDriverOps* probeOps =
+                    XPlatformDisplayDriver_active();
+                XPlatformDisplayInfo probeInfo;
+                memset(&probeInfo, 0, sizeof(probeInfo));
+                if (probeOps && probeOps->probe &&
+                    probeOps->probe(&probeInfo))
+                    xpfi_topLevelDeviceRect(probeRot, &geom, &probeInfo,
+                                            &fp);
+                else
+                    fp = XWindow_screenFootprint(window);
+            }
+            else
+            {
+                fp = XWindow_screenFootprint(window);
+            }
+            fprintf(stderr,
+                    "[ROT] fbinput frame panel=(%d,%d) edges p=%d r=%d "
+                    "u=%d -> win=%p type=%d vis=%d rot=%d "
+                    "geom=(%d,%d %dx%d) fp=(%d,%d %dx%d)\n",
+                    points[0].m_globalPosition.x,
+                    points[0].m_globalPosition.y, pressedCount,
+                    releasedCount, updatedCount, (void*)window,
+                    (int)XWindow_type(window), XWindow_isVisible(window) ? 1 : 0,
+                    probeRot, geom.x, geom.y,
+                    geom.width, geom.height, fp.x, fp.y, fp.width, fp.height);
+        }
     }
     geometry = XWindow_geometry(window);
-    /* 窗口局部 = 全局 - 原点（得设备窗口局部，原点不随旋转变），
-       其后 R⁻¹ 回逻辑局部（2026-10-18）。R⁻¹ 不钳位：越界负坐标合法，
-       拖出窗界的拖拽流依赖（处理器自行钳制）。此路覆盖鼠标抓取兜底
-       分支（命中失败后按 grabber 改靶）。 */
+    /* 窗口局部 = 面板全局 - 设备原点，其后 R⁻¹ 回逻辑局部（2026-10-18；
+       【B 域局部 2026-10-22】rot≠0 时设备原点=几何正映射面板位
+       （xpfi_topLevelDeviceRect，与命中/直写落笔同域）——减逻辑 xy 会把
+       弹层显位处的触摸换算成错位局部坐标（点显处不选中）。rot=0 设备
+       原点==逻辑 xy 逐位不变。R⁻¹ 不钳位：越界负坐标合法，拖出窗界的
+       拖拽流依赖（处理器自行钳制）。此路覆盖鼠标抓取兜底分支（命中失
+       败后按 grabber 改靶）；本局部 geometry 随后传入 xpfi_collectState
+       （混合帧拆分同口径）。 */
     {
         int rot = XWindow_contentRotationDegrees(window);
+        if (rot != 0)
+        {
+            const XPlatformDisplayDriverOps* geomOps =
+                XPlatformDisplayDriver_active();
+            XPlatformDisplayInfo geomInfo;
+            memset(&geomInfo, 0, sizeof(geomInfo));
+            if (geomOps && geomOps->probe && geomOps->probe(&geomInfo))
+            {
+                XRect dfp;
+                xpfi_topLevelDeviceRect(rot, &geometry, &geomInfo, &dfp);
+                geometry.x = dfp.x;
+                geometry.y = dfp.y;
+            }
+        }
         for (i = 0; i < count; ++i)
         {
             int lx, ly;
@@ -660,6 +911,16 @@ static void xpfi_commitFrame(uint32_t timestampMs)
         XTouchPoint sub[XPFI_SLOT_COUNT];
         XpfiTouchSlot* subSlots[XPFI_SLOT_COUNT];
         int n;
+        {
+            /* 诊断探针（XGUI_ROT_DEBUG=1）：混合帧拆分注入账。 */
+            static signed char dbg = -1;
+            if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+            if (dbg)
+                fprintf(stderr,
+                        "[ROT] fbinput mixed frame: split END/UPDATE/BEGIN "
+                        "(p=%d r=%d u=%d)\n", pressedCount, releasedCount,
+                        updatedCount);
+        }
         /* 1) 抬起沿：TOUCH_END（关旧序列；框架按事件携带 id 摘抓取）。 */
         n = xpfi_collectState(points, slots, count,
                               XTOUCHPOINT_STATE_RELEASED, &geometry, sub,
@@ -704,7 +965,25 @@ static void xpfi_commitFrame(uint32_t timestampMs)
                               : XEVENT_TYPE_TOUCH_UPDATE);
     if (!XWindowSystemInterface_handleTouchPoints_ex(window, type, points,
                                                      count, timestampMs))
+    {
+        /* 诊断探针（XGUI_ROT_DEBUG=1）：投递失败（参数/分配）。 */
+        static signed char dbg = -1;
+        if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+        if (dbg)
+            fprintf(stderr,
+                    "[ROT] fbinput INJECT FAILED type=%d count=%d\n",
+                    (int)type, count);
         return; /* 投递失败（参数/分配）：按下沿保留，下帧重试。 */
+    }
+    {
+        /* 诊断探针（XGUI_ROT_DEBUG=1）：单态帧注入成功。 */
+        static signed char dbg = -1;
+        if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+        if (dbg)
+            fprintf(stderr,
+                    "[ROT] fbinput injected type=%d count=%d win=%p\n",
+                    (int)type, count, (void*)window);
+    }
     /* 注入成功的簿记：按下沿消费、坐标落位；抬起槽保持 injected=false
      * 与原落点（lastX/lastY 留作下个接触序列的初值无碍，按下沿会覆写）。 */
     for (i = 0; i < count; ++i)
@@ -1081,6 +1360,10 @@ void XPlatformFbInput_unregister(void)
     g_xpfiMtProtocol = false;
     memset(g_xpfiSlots, 0, sizeof(g_xpfiSlots)); /* 全槽复位（含沿标记）。 */
     g_xpfiCurrentSlot = 0;
+#if XCURSOR_ON
+    s_xpfiCursorMotionInited = false; /* 原位搬运判重簿记复位（重注册首
+                                         帧必触发一次对位）。 */
+#endif
 }
 
 bool XPlatformFbInput_isAvailable(void)

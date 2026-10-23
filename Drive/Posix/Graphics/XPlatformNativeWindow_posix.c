@@ -273,6 +273,15 @@ typedef struct XWNPendingEntry
     int m_presentBytesPerLine;  /**< 描述符对应的缓冲行跨度。 */
     bool m_presentDirect;       /**< 是否可以按后备缓冲原生布局直拷（ARGB32
                                      模式为 BGRA8888；RGB16 模式为 565）。 */
+    bool m_presentArgb32To565;  /**< ARGB32 源 → depth-16/565 视觉重排模式
+                                    （2026-10-21 16 位根窗弹层上屏根修）：
+                                    #58/59 弹层降视觉根修把瞬态弹层按屏幕
+                                    默认视觉（16 位根窗=565）建窗，present
+                                    需把 ARGB32 后备帧逐像素打包 565 落入
+                                    描述符缓冲；false=既有直拷/24 位重排
+                                    两模式（逐字节不变）。RGB16 构建恒
+                                    false（该构建弹层不改选视觉，见
+                                    create 的 #if 分支）。 */
     XRect m_client;      /**< 本后端最近一次记录的客户端几何（去重用；
                               逻辑像素口径：X 事件/请求坐标按 dpr 入框
                               ÷dpr 记账、出框 ×dpr 落地，dpr==1.0f 全链
@@ -618,6 +627,7 @@ static void xpwn_releasePresentImage(XWNPendingEntry* entry)
     entry->m_presentHeight = 0;
     entry->m_presentBytesPerLine = 0;
     entry->m_presentDirect = false;
+    entry->m_presentArgb32To565 = false;
 }
 
 /* 出站 XDND 会话只在 XPlatformDrag_exec 的同步调用期间存在。X11 的
@@ -2648,6 +2658,47 @@ static void xpwn_copyRect24(const XImage* src, const XRect* srect,
     }
 }
 
+/** @brief 把 ARGB32 后备帧逐像素打包 RGB565 落入 depth-16 视觉的
+ *         XPutImage 描述符缓冲（2026-10-21 16 位根窗弹层上屏根修）。
+ *  @details #58/59 弹层降视觉根修在「屏幕默认深度=16」的根窗上把瞬态
+ *           弹层/对话框按 depth-16/565 默认视觉建窗，此前 present 对
+ *           「depth-16 视觉 + ARGB32 源」无转换路径：direct 判定按
+ *           32 位/像素落空后无条件走 xpwn_copyRect24（3 字节/像素重排），
+ *           XPutImage 却按 16 位 ZPixmap（2 字节/像素 565）读缓冲——
+ *           3 字节布局被错位译码，弹层内容成洋红乱码（16 位根窗实证；
+ *           24/32 位根窗不走弹层降视觉分支，零涉及）。本函数按视觉
+ *           565 掩码（R 高 5/G 中 6/B 低 5 位）打包为小端 16 位单元，
+ *           Alpha 丢弃（弹层帧不透明）。行跨度按 2 字节/像素换算，
+ *           与 xpwn_preparePresentImage 的 16 位模式 bufBpl=imgW*2 配对。 */
+#if !XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+static void xpwn_copyRect16FromArgb32(const XImage* src, const XRect* srect,
+                                      uint8_t* dst, int dstBpl)
+{
+    const uint8_t* sbuf;
+    int bpl;
+    int row;
+    int col;
+    if (!src || !srect || !dst || dstBpl <= 0) return;
+    sbuf = XImage_constBits(src);
+    bpl = XImage_bytesPerLine(src);
+    if (!sbuf || bpl <= 0) return;
+    for (row = 0; row < srect->height; ++row) {
+        const uint8_t* srow = sbuf + (int64_t)(srect->y + row) * bpl +
+                              (int64_t)srect->x * 4;
+        uint8_t* drow = dst + (int64_t)(srect->y + row) * dstBpl +
+                        (int64_t)srect->x * 2;
+        for (col = 0; col < srect->width; ++col) {
+            unsigned b = srow[col * 4 + 0];
+            unsigned g = srow[col * 4 + 1];
+            unsigned r = srow[col * 4 + 2];
+            unsigned v = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+            drow[col * 2 + 0] = (uint8_t)(v & 0xffu);        /* 低字节 */
+            drow[col * 2 + 1] = (uint8_t)((v >> 8) & 0xffu); /* 高字节 */
+        }
+    }
+}
+#endif /* !XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16 */
+
 #if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
 /** @brief 把 RGB16（565，2 字节/像素）后备缓冲的一行/一矩形直拷进
  *         depth-16 ZPixmap 上屏缓冲。
@@ -2693,12 +2744,17 @@ static bool xpwn_copyRect16(const XImage* src, const XRect* srect,
  * @param      srectP 物理脏区（缓冲空间；逻辑脏区 ×dpr 同 round 函数）。
  * @param      dst 物理上屏缓冲（pw×ph）。
  * @param      dstBpl 物理缓冲行跨度。
- * @param      direct 目标是否 32 位直拷布局（false=24 位重排）。
+ * @param      direct 目标是否 32 位直拷布局（false=24 位重排或 565 重排，
+ *                    按 to565 分流）。
+ * @param      to565  目标为 depth-16/565 视觉描述符（2026-10-21 16 位根
+ *                    窗弹层根修）：ARGB32 源逐像素打包 565（2 字节/像
+ *                    素，xpwn_copyRect16FromArgb32 同编码）。仅非 RGB16
+ *                    构建可能出现；与 direct 互斥（to565 优先）。
  * @param      dpr 强制设备像素比（>1.0f）。
  */
 static void xpwn_blitRectScaled(const XImage* src, const XRect* srectP,
                                 uint8_t* dst, int dstBpl, bool direct,
-                                float dpr)
+                                bool to565, float dpr)
 {
     const uint8_t* sbuf;
     int bpl;
@@ -2721,6 +2777,7 @@ static void xpwn_blitRectScaled(const XImage* src, const XRect* srectP,
         srow = sbuf + (int64_t)sy * bpl;
 #if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
         (void)direct; /* RGB16 构建恒 565 直拷布局（非直拷已拒绝上屏）。 */
+        (void)to565;
         drow = dst + (int64_t)(srectP->y + row) * dstBpl +
                (int64_t)srectP->x * 2;
         for (col = 0; col < srectP->width; ++col) {
@@ -2731,7 +2788,7 @@ static void xpwn_blitRectScaled(const XImage* src, const XRect* srectP,
         }
 #else
         drow = dst + (int64_t)(srectP->y + row) * dstBpl +
-               (int64_t)srectP->x * (direct ? 4 : 3);
+               (int64_t)srectP->x * (direct ? 4 : (to565 ? 2 : 3));
         for (col = 0; col < srectP->width; ++col) {
             int sx = (int)((float)(srectP->x + col) / dpr);
             if (sx > imgW - 1) sx = imgW - 1;
@@ -2740,6 +2797,13 @@ static void xpwn_blitRectScaled(const XImage* src, const XRect* srectP,
                 drow[col * 4 + 1] = srow[sx * 4 + 1];
                 drow[col * 4 + 2] = srow[sx * 4 + 2];
                 drow[col * 4 + 3] = srow[sx * 4 + 3];
+            } else if (to565) {
+                unsigned b = srow[sx * 4 + 0];
+                unsigned g = srow[sx * 4 + 1];
+                unsigned r = srow[sx * 4 + 2];
+                unsigned v = ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3);
+                drow[col * 2 + 0] = (uint8_t)(v & 0xffu);
+                drow[col * 2 + 1] = (uint8_t)((v >> 8) & 0xffu);
             } else {
                 drow[col * 3 + 0] = srow[sx * 4 + 0]; /* B */
                 drow[col * 3 + 1] = srow[sx * 4 + 1]; /* G */
@@ -2858,8 +2922,24 @@ static void xpwn_eventPosToLogical(const XWNPendingEntry* entry,
            永不回环。unmap 的 W/H 必须是整窗**逻辑**宽高——按当前角
            把 m_client 的宽高轴归位（swapsAxes 时对调；对调是自逆
            变换，稳态与过渡期都得到逻辑轴尺寸）。与绘制正变换
-           （present 用 imgW/imgH=后备缓冲恒逻辑尺寸）同源同轴。 */
-        if (XWindow_rotationSwapsAxes(rot)) {
+           （present 用 imgW/imgH=后备缓冲恒逻辑尺寸）同源同轴。
+           【稳态二次对调根修 2026-10-21】m_client 的记账链（create
+           :5636 / setGeometry :5780 / ConfigureNotify :3573）落盘前
+           已统一经 xpwn_applyRotationFootprint 对调回**逻辑轴**——
+           稳态下它本来就是逻辑宽高，再无条件 swapsAxes 对调会把基准
+           换成 footprint 宽高：UnmapPoint(90) 的 ny=H−1−x 用 footprint
+           高（=逻辑宽）作设备 x 域基准，逻辑 y 整体偏移
+           −(footprintH−logicalH)、设备 x≥逻辑宽的全带映射为负 y 死区
+           （90° 后整窗点击落空、弹层选项/复位默认不可达的实测根因，
+           :100 点 (712,410)→pos=(370,−73) 实证）。现按几何代际区分：
+           m_appliedRotation==rot（记账已按现角归位，稳态）直接用
+           m_client；仅代际落后（m_appliedRotation!=rot，换角后
+           setGeometry/ConfigureNotify 尚未记账的过渡窗口期，m_client
+           仍是旧角逻辑=现设备 footprint 的轴对调值）才保留对调归位
+           旧口径（该窗口期旧口径恰与现设备空间一致，2026-10-19 注的
+           过渡期场景不受影响）。 */
+        if (entry->m_appliedRotation != rot &&
+            XWindow_rotationSwapsAxes(rot)) {
             W = entry->m_client.height;
             H = entry->m_client.width;
         }
@@ -2898,10 +2978,14 @@ static void xpwn_eventPosToLogicalXdnd(const XWNPendingEntry* entry,
     if (rot == 0) return;
     /* [命中区同源 2026-10-19] 同 xpwn_eventPosToLogical：W/H 按当前角
        归位到逻辑轴（m_client 过渡期旧值经 swapsAxes 对调自逆归位），
-       不得裸用 m_client。 */
+       不得裸用 m_client。
+       【稳态二次对调根修 2026-10-21】同 xpwn_eventPosToLogical 的代际
+       闸：m_appliedRotation==rot（记账已按现角归位）直用 m_client 逻辑
+       轴；仅代际落后（过渡窗口期）保留对调归位，口径与主入框路一致。 */
     W = entry->m_client.width;
     H = entry->m_client.height;
-    if (XWindow_rotationSwapsAxes(rot)) {
+    if (entry->m_appliedRotation != rot &&
+        XWindow_rotationSwapsAxes(rot)) {
         W = entry->m_client.height;
         H = entry->m_client.width;
     }
@@ -3571,6 +3655,15 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
             posChanged = (client.x != entry->m_client.x ||
                           client.y != entry->m_client.y);
             entry->m_client = client;
+            /* 【输入代际同步 2026-10-21】m_client 已按现角归位为逻辑轴
+               （上方 applyRotationFootprint），输入路 UnmapPoint 基准的
+               代际标记（m_appliedRotation，见 xpwn_eventPosToLogical）
+               随之对齐现角——否则「换角未伴 setGeometry」窗口期收到
+               配置事件后，代际仍报旧角、输入路误走过渡对调口径，稳态
+               二次对调复活。仅同步代际不触碰 setGeometry 去重语义
+               （本分支不改原生窗几何，无回环面）。 */
+            entry->m_appliedRotation =
+                XWindow_contentRotationDegrees(entry->m_window);
             /* 尺寸状态机回写 + Resize 注入：handleGeometryChange 内部
                先 XWindow_setGeometry_rect（resize 槽内可读新尺寸，Qt
                语义）再同步派发 Resize——控件层 applyWindowGeometry→
@@ -5634,6 +5727,9 @@ bool XPlatformNativeWindow_attachForeign(XWindow* window, XWindowId nativeId)
     /* 内容旋转：外部挂接的原生尺寸按旋转角对调回逻辑尺寸。 */
     xpwn_applyRotationFootprint(window, &logicalGeom);
     entry->m_client = logicalGeom;
+    /* 【输入代际同步 2026-10-21】m_client 已按现角归位，代际标记对齐
+       （同 ConfigureNotify 分支注；外部挂接窗常规 rot=0，防御对齐）。 */
+    entry->m_appliedRotation = XWindow_contentRotationDegrees(window);
     XSelectInput(g_xpwnDisplay, entry->m_win,
                  ExposureMask | StructureNotifyMask | FocusChangeMask |
                  KeyPressMask | KeyReleaseMask | ButtonPressMask |
@@ -5774,6 +5870,49 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     nativeGeom = xpwn_rectLogicalToPhysical(geometry, dpr);
     nativeGeom.width = xpwn_logicalToPhysical(w, dpr);
     nativeGeom.height = xpwn_logicalToPhysical(h, dpr);
+    /* [弹层落位域·X11 2026-10-22] 瞬态弹层落位锚点换算：控件层弹层定
+       位契约是**逻辑全局**坐标（XComboBox xcombo_popupReposition/
+       XWindowDecoration 系统菜单 2026-10-22 收口口径——父链逻辑偏移
+       累加+顶层逻辑原点；fbdev 无窗口系统环境下窗口按逻辑域落面板，
+       该契约真机昆仑通态实测正确，**不得回退**）。X11 原生窗 x/y 则
+       是**设备全局**坐标：X 服务器不感知内容旋转，旋转窗在屏占位是
+       对调 footprint，弹层要出现在 opener 旁必须以「opener 原点 +
+       旋转正变换（弹层逻辑局部矩形，XWindowRotation.h MapRect 像素
+       下标口径，与 present/输入同源）」为落位锚点。两个位置约束：
+       ①在**去重之后**——去重/回环防护（上方早退与 ConfigureNotify 入
+       框记账）恒吃逻辑值，先换算会把设备锚点经 echo 回灌成逻辑账本，
+       每次 ConfigureNotify 再施一次正变换，弹层绕 opener 原点 90° 步
+       进游走（实测 (330,376)→(622,330)→(668,622)→(376,668) 四位循
+       环）；②在 **applyRotationFootprint 之前**——MapRect 入口宽高
+       必须是逻辑口径（outX=H-y-h 的 H 与 h 都按逻辑值算，footprint
+       对调后再换算会把 82x170 当 170x82 用，锚点 x 偏 (h-w)——实测
+       622→534）。门=类型 Popup + 非零有效旋转角 + 有瞬态父；0° 恒
+       等、fbdev 走 Unsupported 桩无此路径、主窗/对话框（非 Popup）零
+       涉及。宽高不在此改动——footprint 对调由其后 applyRotationFoot-
+       print 完成。m_client/去重账本仍存逻辑全局，echo 记账口径不变。 */
+    if (XWindow_type(window) == XWindowType_Popup)
+    {
+        XWindow* opener = XWindow_transientParent(window);
+        int rotPop = XWindow_contentRotationDegrees(window);
+        if (rotPop != 0 && opener)
+        {
+            XRect local;
+            XRect dev;
+            local.x = nativeGeom.x - XWindow_x(opener);
+            local.y = nativeGeom.y - XWindow_y(opener);
+            local.width = nativeGeom.width;
+            local.height = nativeGeom.height;
+            XWindow_rotationMapRect(rotPop,
+                                    XWindow_width(opener),
+                                    XWindow_height(opener),
+                                    &local.x, &local.y,
+                                    &local.width, &local.height,
+                                    &dev.x, &dev.y,
+                                    &dev.width, &dev.height);
+            nativeGeom.x = XWindow_x(opener) + dev.x;
+            nativeGeom.y = XWindow_y(opener) + dev.y;
+        }
+    }
     /* 内容旋转：原生窗/挂起记账一律存旋转后的物理尺寸（footprint），
        m_client 仍存逻辑（去重比对与事件口径）。 */
     xpwn_applyRotationFootprint(window, &nativeGeom);
@@ -6877,7 +7016,22 @@ bool XPlatformNativeWindow_rotationSupported(const XWindow* window)
 #if XGUI_ON && XPLATFORM_FBDEV_ON
     /* fbdev 单屏模式：X11 段整体不参与编译，能力由 fbdev 直写侧回答。 */
     if (XPlatformDisplayDriver_active())
-        return XPlatformBackingStore_rotationCapable();
+    {
+        bool capable = XPlatformBackingStore_rotationCapable();
+        {
+            /* 诊断探针（XGUI_ROT_DEBUG=1；能力链排查用，stderr）。 */
+            static signed char dbg = -1;
+            if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+            if (dbg) fprintf(stderr, "[ROT] xpwn: driver active, capable=%d\n",
+                             (int)capable);
+        }
+        return capable;
+    }
+    {
+        static signed char dbg = -1;
+        if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+        if (dbg) fprintf(stderr, "[ROT] xpwn: driver NULL -> canRotateDirect\n");
+    }
 #endif
     return xpwn_canRotateDirect(xpwn_findByXWindow(window));
 }
@@ -6891,6 +7045,7 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
     int bufBpl;
     int wantBpl = 0; /* 0 = 交由 XCreateImage 按 bitmap_pad 自算行跨度。 */
     bool direct;
+    bool to565 = false; /* ARGB32→565 重排模式（16 位根窗弹层，见下）。 */
     /* 按窗口实际视觉/深度准备上屏描述符（#58/59 弹层上屏根修配套：
        瞬态弹层以屏幕默认视觉/深度创建，present 必须生成同深度的
        XImage，否则 XPutImage BadMatch。未登记时回落进程选定视觉，
@@ -6943,13 +7098,44 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
        ARGB32 小端内存布局 [B,G,R,A] 相同）。24 位深含 32 位填充的视觉
        也能直拷（高 8 位 Alpha 被服务器忽略）。真 24 位视觉（弹层默认
        视觉根修改选后）bits_per_pixel==24 → direct=false → 走
-       xpwn_copyRect24 重排（ARGB32 源缓冲，合法）。 */
+       xpwn_copyRect24 重排（ARGB32 源缓冲，合法）。
+       【16 位根窗弹层根修 2026-10-21】#58/59 降视觉根修在默认深度=16
+       的根窗上把弹层按 depth-16/565 视觉建窗：bits_per_pixel==16，
+       direct 落空——此前无条件落 xpwn_copyRect24（3 字节/像素布局），
+       XPutImage 按 2 字节/像素 565 错位译码 = 洋红乱码。此处识别
+       「16 位/565 掩码 + 小端」视觉为独立重排模式（to565）：描述符
+       缓冲按 2 字节/像素配容，present 侧走
+       xpwn_copyRect16FromArgb32 逐像素打包。24/32 位视觉路径判定与
+       缓冲口径逐字节不变。 */
     direct = ximg->bits_per_pixel == 32 && ximg->byte_order == LSBFirst &&
              ImageByteOrder(g_xpwnDisplay) == LSBFirst &&
              visual->red_mask == 0x00ff0000u &&
              visual->green_mask == 0x0000ff00u &&
              visual->blue_mask == 0x000000ffu;
-    bufBpl = direct ? imgW * 4 : (imgW * 3 + 3) & ~3;
+    to565 = !direct &&
+            ximg->bits_per_pixel == 16 && ximg->byte_order == LSBFirst &&
+            ImageByteOrder(g_xpwnDisplay) == LSBFirst &&
+            visual->red_mask == 0x0000f800u &&
+            visual->green_mask == 0x000007e0u &&
+            visual->blue_mask == 0x0000001fu;
+    /* 【复核根修 2026-10-22】to565 行跨度以描述符创建后的**实测值**为
+       准（bufBpl = ximg->bytes_per_line）。此前 `if (to565) wantBpl =
+       imgW*2` 写在 XCreateImage 之后是死代码——本构建（非 RGB16）下
+       行跨度实参恒为 0（wantBpl=imgW*2 的预置块在 RGB16 分支内，此
+       处编译剔除），XCreateImage 自算值按 bitmap_pad=32 圆整为
+       (imgW*2+3)&~3：奇数宽窗口（Xvfb :97 16 位实证 w=101 → 204 ≠
+       imgW*2=202；偶宽恒相等）若仍按 imgW*2 配容/换行，XPutImage 按
+       描述符跨度逐行读取 → 每行错位 1 像素的斜切花屏 + 末行越过缓冲
+       尾 ~2*(imgH-1) 字节的堆越界读。同步 bufBpl 后分配尺寸、转换器
+       （copyRect16FromArgb32/blitRectScaled-to565）与 present 全链同
+       跨口径，自洽；圆整垫字节不参与像素（XPutImage 只读行内 w*2 字
+       节）。⚠ 不可改成把 wantBpl=imgW*2 提前传参「修」——同一实验表
+       明本机 libX11 对非 4 字节对齐 pin（202）直接返回 NULL（偶宽
+       164/200 可用），届时奇宽弹层将完全不 paints。偶宽时
+       bytes_per_line == imgW*2，路径逐字节不变。 */
+    bufBpl = direct ? imgW * 4
+                    : (to565 ? ximg->bytes_per_line
+                             : (imgW * 3 + 3) & ~3);
 #endif
     if (bufBpl <= 0 || (size_t)imgH > SIZE_MAX / (size_t)bufBpl) {
         ximg->data = NULL;
@@ -6970,6 +7156,7 @@ static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
     entry->m_presentHeight = imgH;
     entry->m_presentBytesPerLine = bufBpl;
     entry->m_presentDirect = direct;
+    entry->m_presentArgb32To565 = to565;
     return true;
 }
 
@@ -7124,7 +7311,7 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
             XRect srectP = xpwn_rectLogicalToPhysical(&srect, dpr);
             XRect drectP = xpwn_rectLogicalToPhysical(&drect, dpr);
             xpwn_blitRectScaled(image, &srectP, buffer, bufBpl, direct,
-                                dpr);
+                                entry->m_presentArgb32To565, dpr);
             XPutImage(g_xpwnDisplay, entry->m_win, entry->m_gc, ximg,
                       srectP.x, srectP.y, drectP.x, drectP.y,
                       (unsigned)srectP.width, (unsigned)srectP.height);
@@ -7141,7 +7328,16 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
                       srect.x, srect.y, drect.x, drect.y,
                       (unsigned)srect.width, (unsigned)srect.height);
         } else {
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
+            /* RGB16 构建非直拷视觉已在 xpwn_preparePresentImage 拒绝
+               （描述符准备失败 → 本分支不可达）。 */
             xpwn_copyRect24(image, &srect, buffer, bufBpl);
+#else
+            if (entry->m_presentArgb32To565)
+                xpwn_copyRect16FromArgb32(image, &srect, buffer, bufBpl);
+            else
+                xpwn_copyRect24(image, &srect, buffer, bufBpl);
+#endif
             XPutImage(g_xpwnDisplay, entry->m_win, entry->m_gc, ximg,
                       srect.x, srect.y, drect.x, drect.y,
                       (unsigned)srect.width, (unsigned)srect.height);

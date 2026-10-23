@@ -224,6 +224,19 @@ struct XPlatformBackingStore
     bool m_externalBuffers;                   /**< 是否使用外部缓冲。 */
     bool m_nativeBufferMode;                  /**< 绘制缓冲 = 平台共享内存（DIB），单缓冲。 */
     bool m_nativeBufferNoBuf;                 /**< 驱动已证实无 native 缓冲（恒 NULL）：resize 不再做徒劳深拷贝快照。 */
+    bool m_nativeDroppedByRotation;           /**< 零拷贝模式因窗口旋转被切出（2026-10-21）：
+                                                    区别于驱动恒 NULL 的闩
+                                                    （m_nativeBufferNoBuf）——回 0° 时
+                                                    据此重跑一次 resize 重新探测零拷贝，
+                                                    驱动闩不受影响。 */
+    int m_windowRotation;                     /**< 绑定窗口当前内容旋转角（2026-10-21）：
+                                                    旋转切换钩子落盘（公共层不反向
+                                                    引用 XWindow，resize 的零拷贝探测
+                                                    闸读本副本）。0=缺省直写态。 */
+    XPlatformBackingStore* m_nextStore;       /**< 活跃实例注册表链（2026-10-21）：
+                                                    旋转切换钩子按窗口指针查实例；
+                                                    create 入链、delete 摘链，GUI
+                                                    线程单线程访问。 */
     bool m_softwareSingleBuffer;              /**< 软件侧单缓冲降级：活动显示驱动自带
                                                 双缓冲（fbdev 直写层逐帧轮换硬件
                                                 缓冲并 pan），软件第二缓冲冗余——
@@ -453,10 +466,20 @@ static void* g_xpbsAnyPresentData;
 
 /**
  * @brief      零拷贝（native 缓冲）模式使用计数（2026-10-18 新增）。
- * @details    m_nativeBufferMode 是**实例**字段，而旋转能力判据是
- *             fbdev 直写侧的全局能力；取「是否存在任一零拷贝实例」为
- *             保守口径：真零拷贝下 painter 直接写 fb 显存，中间没有
- *             可转的帧，宁可降级不转也不能半转。
+ * @details    m_nativeBufferMode 是**实例**字段；本计数=当前处于零拷贝
+ *             模式的实例数（登记/摘除与模式翻转同步，见
+ *             xpbs_nativeBufferUsersAdjust 与旋转切换钩子）。
+ *             【2026-10-21 定稿改版】旋转能力**不再**以本计数作保守门：
+ *             旧口径「存在任一零拷贝实例即不可旋转」描述的是 painter
+ *             直写 fb 显存、无中间帧可转的世界；fbdev 影子缓冲架构下
+ *             painter 恒画逻辑朝向的软件帧（getNativeBuffer 恒 NULL，
+ *             见 XPlatformBackingStore_posix.c），present 侧 R⁻¹ 行写
+ *             路径（xpbs_presentRectRowsRot）天然有帧可转，故
+ *             rotationCapable 改答「fbdev 直写侧具备切换能力=恒可旋
+ *             转」，「实例当前是否零拷贝」留给 present 路径按窗口角度
+ *             分流（旋转变化时经
+ *             XPlatformBackingStore_windowRotationChanged 把受影响实
+ *             例切出零拷贝模式，本计数随之增减保持账实相符）。
  */
 static int g_xpbsNativeBufferUsers = 0;
 
@@ -469,14 +492,14 @@ static void xpbs_nativeBufferUsersAdjust(int delta)
 
 bool XPlatformBackingStore_rotationCapable(void)
 {
-#if XGUI_ON && XPLATFORM_FBDEV_ON
-    /* 无活动显示驱动：fbdev 直写路径整体不参与（回落平台提交），
-       旋转判据交由平台层回答，本函数恒 true（不额外降级）。 */
-    if (!XPlatformDisplayDriver_active()) return true;
-    return g_xpbsNativeBufferUsers == 0;
-#else
+    /* fbdev 直写侧具备切换能力=恒可旋转（2026-10-21 定稿）：
+     * - 有活动显示驱动：present 行写路径自带四方位 R⁻¹ 变换；旋转态
+     *   实例由旋转切换钩子保证不落在零拷贝模式（有中间帧可转）；
+     * - 无活动显示驱动：fbdev 直写路径整体不参与（回落平台提交），
+     *   旋转判据交由平台层回答，本函数恒 true（不额外降级）。
+     * 平台侧 RGB16(565)/直拷视觉等其余判据仍由
+     * XPlatformNativeWindow_rotationSupported 的各自分支把守。 */
     return true;
-#endif
 }
 
 /** @brief 全局通知登记 thunk（公开 setter 落点, 避免声明顺序前向）。 */
@@ -485,6 +508,64 @@ void xpbs_setGlobalPresentCallbackThunk(
 {
     g_xpbsAnyPresent = callback;
     g_xpbsAnyPresentData = userData;
+}
+
+/* ==================== 旋转模式切换（2026-10-21 定稿） ====================
+ * 旋转≠0 的实例必须走带缓冲路径（painter 画逻辑朝向软件帧，present 时
+ * R⁻¹ 变换落板）；0° 实例维持零拷贝直写。真零拷贝（native 缓冲）实例
+ * 的 painter 直接写平台共享存储、无中间帧可转，故窗口旋转变化时把该
+ * 窗口的实例切出零拷贝（重建软件双缓冲），回 0° 再重新探测接入。fbdev
+ * 影子缓冲架构下实例恒不处于零拷贝模式，钩子为账面维护 + 面向「提供
+ * native 缓冲的平台」的契约完备性，常规路径零改动。 */
+
+/** @brief 活跃实例注册表链头（GUI 线程单线程；create 入链 delete 摘链）。 */
+static XPlatformBackingStore* g_xpbsStoreList = NULL;
+
+/**
+ * @brief      把实例从零拷贝模式切出到带缓冲路径（重建软件双缓冲）。
+ * @details    m_image 此前架在驱动 native 存储上（外部、单缓冲、
+ *             m_image2 为空）：只清标志会让交替帧落在无数据缓冲上——
+ *             走一次完整 resize 重建（setBuffers 同款 m_size.width=-1
+ *             强制重建技巧；快照+左上重叠回拷保住既有内容）。旋转闸
+ *             （m_windowRotation!=0）保证重建不再探测零拷贝；驱动恒
+ *             NULL 闩（m_nativeBufferNoBuf）不置位，回 0° 可重新接入。
+ */
+static void xpbs_dropNativeBufferMode(XPlatformBackingStore* self)
+{
+    XSize size;
+    xpbs_nativeBufferUsersAdjust(-1);
+    self->m_nativeBufferMode = false;
+    self->m_nativeDroppedByRotation = true;
+    size = self->m_size;
+    self->m_size.width = -1;
+    XPlatformBackingStore_resize(self, &size);
+}
+
+void XPlatformBackingStore_windowRotationChanged(XWindow* window, int degrees)
+{
+    XPlatformBackingStore* it;
+    if (!window) return;
+    for (it = g_xpbsStoreList; it; it = it->m_nextStore)
+    {
+        if (it->m_window != window) continue;
+        it->m_windowRotation = degrees;
+        if (degrees != 0)
+        {
+            /* 旋转态：零拷贝实例切出（带缓冲、可转）。 */
+            if (it->m_nativeBufferMode)
+                xpbs_dropNativeBufferMode(it);
+        }
+        else if (it->m_nativeDroppedByRotation)
+        {
+            /* 回 0°：因旋转切出的实例重跑 resize 重新探测零拷贝接入；
+               驱动不给（fbdev 恒 NULL）则照常自分配，闩语义不变。 */
+            XSize size;
+            it->m_nativeDroppedByRotation = false;
+            size = it->m_size;
+            it->m_size.width = -1;
+            XPlatformBackingStore_resize(it, &size);
+        }
+    }
 }
 
 /** @brief 调用 present 回调并隔离回调期间的区域生命周期（防重入）。 */
@@ -716,6 +797,11 @@ XPlatformBackingStore* XPlatformBackingStore_create(XWindow* window)
     store->m_nativeState = nativeState;
     store->m_capacityMode = false;
     store->m_nativeBufferNoBuf = false;
+    store->m_nativeDroppedByRotation = false;
+    store->m_windowRotation = 0;
+    /* 入活跃实例注册表（旋转切换钩子按窗口指针查实例；GUI 线程）。 */
+    store->m_nextStore = g_xpbsStoreList;
+    g_xpbsStoreList = store;
     XImage_init(&store->m_capacityImage);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     XImage_init(&store->m_capacityImage2);
@@ -750,7 +836,22 @@ XPlatformBackingStore* XPlatformBackingStore_create(XWindow* window)
 
 void XPlatformBackingStore_delete(XPlatformBackingStore* self)
 {
+    XPlatformBackingStore** link;
     if (!self) return;
+    /* 摘注册表链（旋转切换钩子不得再触达即将释放的实例）。 */
+    for (link = &g_xpbsStoreList; *link; link = &(*link)->m_nextStore)
+    {
+        if (*link == self)
+        {
+            *link = self->m_nextStore;
+            self->m_nextStore = NULL;
+            break;
+        }
+    }
+    /* 零拷贝计数随实例销毁落账（销毁即放弃 native 存储，与 resize
+       回落路径同口径）。 */
+    if (self->m_nativeBufferMode)
+        xpbs_nativeBufferUsersAdjust(-1);
     if (self->m_nativeState)
     {
         XPlatformBackingStoreDriver_destroy(self->m_nativeState);
@@ -1113,7 +1214,15 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
        真提供 native 缓冲的驱动不受此闩影响（首次仍走完整探测）。 */
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
     if (w > 0 && h > 0 && self->m_nativeState && !self->m_externalBuffers &&
-        !self->m_nativeBufferNoBuf)
+        !self->m_nativeBufferNoBuf &&
+        /* 旋转闸（2026-10-21）：旋转态实例不探测零拷贝——真零拷贝下
+           painter 直写平台共享存储、无中间帧可转（present 的 R⁻¹ 行写
+           路径需要逻辑朝向软件帧）。窗口角读旋转切换钩子落盘的实例副
+           本（m_windowRotation），公共层不反向引用 XWindow。因旋转切出
+           的实例靠 m_nativeDroppedByRotation 区分，驱动恒 NULL 闩
+           （m_nativeBufferNoBuf）不在此处置位，回 0° 后重跑 resize 可
+           重新接入零拷贝。 */
+        self->m_windowRotation == 0)
     {
         /* 关键顺序：getNativeBuffer 内部会释放旧 DIB，必须先把旧内容
            深拷贝快照（XClassCopy 是 COW 共享，不解决悬垂），再查询新缓冲。 */

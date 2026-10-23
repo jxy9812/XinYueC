@@ -15,6 +15,9 @@
 #include "XCursor.h"
 #include "XMemory.h"
 
+#include <stdio.h> /* [SWC 探针] fprintf（XGUI_SWCURSOR_DEBUG 诊断）。 */
+#include <stdlib.h> /* [SWC 探针] getenv。 */
+
 #include "XAlgorithm.h"
 #include "XBitmap.h"
 #include "XPixmap.h"
@@ -118,6 +121,16 @@ bool XCursor_applyToWindow(uintptr_t nativeWindowId, const XCursor* cursor)
         g_cursorSwLastShape = cursor->m_shape;
     else
         g_cursorSwLastShape = XCursor_Arrow;
+    {
+        /* [SWC 探针 2026-10-23] 形状账变更一行账（精灵隐藏/变 形 的排查
+         * 入口；XGUI_SWCURSOR_DEBUG=1 开）。 */
+        static signed char swcDbg = -1;
+        if (swcDbg < 0) swcDbg = (getenv("XGUI_SWCURSOR_DEBUG") != NULL);
+        if (swcDbg)
+            fprintf(stderr, "[SWC] shape-account -> %d (win=%p hasCursor=%d)\n",
+                    (int)g_cursorSwLastShape, (void*)nativeWindowId,
+                    cursor ? 1 : 0);
+    }
     /* 平台应用光标（XDefineCursor 路径）；无后端/窗口无效时静默 false。 */
     if (!g_cursorBackend || !g_cursorBackend->m_applyWindowCursor ||
         nativeWindowId == 0)
@@ -128,6 +141,14 @@ bool XCursor_applyToWindow(uintptr_t nativeWindowId, const XCursor* cursor)
 bool XCursor_clearForWindow(uintptr_t nativeWindowId)
 {
     g_cursorSwLastShape = XCursor_Arrow; /* 清除即回默认箭头账。 */
+    {
+        /* [SWC 探针 2026-10-23] 形状账变更一行账（同 applyToWindow）。 */
+        static signed char swcDbg = -1;
+        if (swcDbg < 0) swcDbg = (getenv("XGUI_SWCURSOR_DEBUG") != NULL);
+        if (swcDbg)
+            fprintf(stderr, "[SWC] shape-account -> 0 (clear win=%p)\n",
+                    (void*)nativeWindowId);
+    }
     if (!g_cursorBackend || !g_cursorBackend->m_clearWindowCursor ||
         nativeWindowId == 0)
         return false;

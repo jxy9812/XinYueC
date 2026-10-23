@@ -172,13 +172,28 @@ static void VXAbstractNetIoRing_dispatchCQEntry(XAbstractNetIoRing* self,
         {   /* 假 EOF PEEK 复核需要 BSD socket 语义；ESP8266 无此头，
                且该现象出自嵌入式定制内核、桌面从未复现——ESP8266 直接
                保留原语义（同 Windows 的处理）。 */
-            int pfd = (int)entry->m_fd;
-            unsigned char peekByte;
-            int pr = (int)recv(pfd, &peekByte, 1, MSG_PEEK | MSG_DONTWAIT);
-            if (pr != 0) {
-                /* pr<0 且非 EAGAIN(如 EBADF)=fd 已失效, 同样不当作对端
-                 * FIN; EAGAIN=连接活着; pr>0=对端有数据待读(更非关闭)。
-                 * 丢弃 CLOSE, 完成事件走常规路径下发, 设备层重挂读。 */
+            /* [2026-10-23 对端 FIN 误丢根修] PEEK 必须用引擎随 CQ 条目
+             * 带来的真实 OS fd（m_osFd）。旧实现拿 entry->m_fd——XFd
+             * fd 表槽位号——当 OS fd，两者编号空间不同且常不相等，PEEK
+             * 打到无关 fd（实测打中 stderr 恒 ENOTSOCK=-1≠0），一切真
+             * 对端 FIN 都被当假 EOF 丢弃，SOCK_CLOSE 永不下发（epoll
+             * 引擎 xmqtt-tcp-api 断开三例稳定复现实证）。
+             * m_osFd<0（数据报 0 长报文/上下文缺失/其他引擎）＝不适用
+             * 关闭判定：按普通 0 字节读完成下发，由设备层既有复核路径
+             * （用自身 p->socket，编号正确）决定重挂读。 */
+            if (entry->m_osFd >= 0) {
+                unsigned char peekByte;
+                int pr = (int)recv(entry->m_osFd, &peekByte, 1,
+                                   MSG_PEEK | MSG_DONTWAIT);
+                if (pr != 0) {
+                    /* pr<0 且非 EAGAIN(如 EBADF)=fd 已失效, 同样不当作对端
+                     * FIN; EAGAIN=连接活着; pr>0=对端有数据待读(更非关闭)。
+                     * 丢弃 CLOSE, 完成事件走常规路径下发, 设备层重挂读。 */
+                    return;
+                }
+            }
+            else {
+                /* 引擎未带 OS fd（数据报 0 长报文等）：不判关闭。 */
                 return;
             }
         }

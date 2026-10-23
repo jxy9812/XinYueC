@@ -445,12 +445,22 @@ typedef struct XDeviceNetworkContextPosix {
     socklen_t fromAddrLen;
 
     /* io_uring 异步 I/O 上下文（对标 Windows XEventContext_IOCP） */
-    /* UDP datagram destination for io_uring SENDTO. io_uring keeps the
-     * referenced sockaddr alive until the request completes, so it must
+    /* UDP datagram destination for directed sends. The engine (io_uring
+     * SENDMSG / epoll sendmsg / sync sendto fallback) keeps the referenced
+     * sockaddr/msghdr alive until the request completes, so they must
      * live in this long-lived context, not on startAsyncWrite's stack. */
     struct sockaddr_storage destAddr;
     socklen_t destAddrLen;
     bool destAddrValid;
+    /* 定向发送的 msghdr/iovec（IORING_OP_SENDMSG 与 epoll 引擎共用），
+     * 与 destAddr 同理须驻留到完成回收之后。 */
+    struct msghdr destMsgHdr;
+    struct iovec destIov;
+    /* [2026-10-22 NTP 根修] UDP 接收的源地址捕获：RECVMSG 载荷（msg_name
+     * 指向 fromAddr），与 dest 同理驻留本上下文；完成后 fromAddrLen 记录
+     * 最近一报来源长度，供 platformGetLastDatagramSender 上报。 */
+    struct msghdr fromMsgHdr;
+    struct iovec fromIov;
     XEventContext_IO readContext;
     XEventContext_IO writeContext;
     union {
@@ -575,7 +585,6 @@ static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
 #ifdef __linux__
     XDeviceNetworkContextPosix* p = P32(priv);
     if (!p || p->readPending || p->socket < 0) return;
-    (void)isUdp;
 
     memset(&p->readContext, 0, sizeof(p->readContext));
     p->readContext.base.type = XEventContextType_Type_Socket;
@@ -594,13 +603,30 @@ static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
     sqe->user_data = (uint64_t)(uintptr_t)&p->readContext.base;
 
     if (isUdp) {
-        p->fromAddrLen = sizeof(p->fromAddr);
+        /* [2026-10-22 NTP 根修] UDP 用 RECVMSG 捕获来源地址：msg_name 指向
+         * 驻留上下文的 fromAddr，完成后由 socketHandleEvent 把 msg_namelen
+         * 收编进 fromAddrLen，供 platformGetLastDatagramSender 上报真实
+         * 来源。旧实现用 RECV（无源地址），无连接 socket 的应答服务器
+         * 永远拿不到对端地址（XNtpTest 回环 mock 全线失败的根因之一）。
+         * 注意 fromAddrLen 不在此清零——本函数在每次 ContinueRead 重挂
+         * 时都会执行，而重挂发生在 readyRead 派发【之前】，先清零会把
+         * 刚完成那一报的来源抹掉（GLS 恒报不可知 → 应答服务器向端口 0
+         * 回发 → sendmsg EINVAL）。语义=「最近一报来源」，只在同步兜底
+         * 读（来源不可知）与上下文创建时归零。 */
+        memset(&p->fromIov, 0, sizeof(p->fromIov));
+        p->fromIov.iov_base = p->readBuffer;
+        p->fromIov.iov_len = XNETWORK_READ_BUFFER_SIZE;
+        memset(&p->fromMsgHdr, 0, sizeof(p->fromMsgHdr));
+        p->fromMsgHdr.msg_name = &p->fromAddr;
+        p->fromMsgHdr.msg_namelen = sizeof(p->fromAddr);
+        p->fromMsgHdr.msg_iov = &p->fromIov;
+        p->fromMsgHdr.msg_iovlen = 1;
+
         sqe->opcode = IORING_OP_RECVMSG;
-        /* 简化：使用 RECV 并额外记录发送者 */
-        sqe->opcode = IORING_OP_RECV;
-        sqe->addr = (uint64_t)(uintptr_t)p->readBuffer;
-        sqe->len = XNETWORK_READ_BUFFER_SIZE;
-        sqe->flags = 0;
+        sqe->addr = (uint64_t)(uintptr_t)&p->fromMsgHdr;
+#if XNET_HAS_IO_URING_HDR
+        sqe->msg_flags = 0;
+#endif
     } else {
         sqe->opcode = IORING_OP_RECV;
         sqe->addr = (uint64_t)(uintptr_t)p->readBuffer;
@@ -610,7 +636,8 @@ static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
     submitSqe(1);
     p->readPending = true;
 #if XDEVNET_IO_DEBUG
-    fprintf(stderr, "[XDEVNET] submit RECV fd=%d\n", p->socket);
+    fprintf(stderr, "[XDEVNET] submit op=%d fd=%d\n",
+            (int)sqe->opcode, p->socket);
 #endif
 #else
     (void)priv; (void)isUdp;
@@ -625,10 +652,28 @@ static void startAsyncRead(XDeviceNetworkContext* priv, bool isUdp)
 
 /* =========================================================================
  * 异步写入启动（对标 Windows startAsyncWrite）
+ *
+ * [2026-10-22 NTP 应答超时根修] 旧实现提交 IORING_OP_SEND 时把 sockaddr
+ * 写进 sqe->addr（数据缓冲槽）、把地址长度写进 sqe->off/addr2 槽——而
+ * io_uring_sqe 中 off 与 addr2 是同一联合槽（后写覆盖前写），内核
+ * io_send_setup 实际读取的 addr_len 槽从未被写。内核对 addr2 伪指针做
+ * move_addr_to_kernel 恒 -EINVAL，CQE 报错、报文从未上线。一切「无连接
+ * UDP + 显式目标地址」发送（NTP 校时、udp-directed 用例一）双平台全灭；
+ * 已连接 socket 的纯 send（用例二）不受影响，故 Modbus/TCP 既往全绿掩盖。
+ * 独立裸环实验（6.18.38 内核）三布局对照钉死：正确契约应为
+ * addr=数据缓冲 + addr2=sockaddr指针 + addr_len 槽=长度；但 SEND 携带
+ * 目的地址是 6.x 才入库的契约，老内核（5.11~5.19 SEND 存在而定向不支持）
+ * 无解。故定向发送统一改走 IORING_OP_SENDMSG（自 io_uring 5.1 首日即
+ * 有，msg_name=目的地址，单一契约覆盖全内核矩阵），msghdr/iovec 驻留
+ * 上下文直到完成回收。本机回环 SENDMSG 实测收发一致。
  * ========================================================================= */
 
-static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64_t len,
-                             const XHostAddress* destAddr, uint16_t destPort, bool isUdp)
+/* 核心：以显式 sockaddr 提交定向写（dest 非空=UDP 定向 SENDMSG；
+ * dest 为空=普通 SEND，覆盖 TCP 与已连接 UDP）。 */
+static void startAsyncWriteCore(XDeviceNetworkContext* priv, const void* data,
+                                int64_t len,
+                                const struct sockaddr_storage* dest,
+                                socklen_t destLen)
 {
 #ifdef __linux__
     XDeviceNetworkContextPosix* p = P32(priv);
@@ -656,28 +701,28 @@ static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
     sqe->fd = p->socket;
     sqe->user_data = (uint64_t)(uintptr_t)&p->writeContext.base;
 
-    if (isUdp && destAddr) {
-        struct sockaddr_storage dest;
-        int destLen;
-        addr2sa(destAddr, destPort, &dest, &destLen);
-
-        /* io_uring reads sqe->addr as the sockaddr for SENDTO and sqe->off as
-         * its length (same layout liburing's io_uring_prep_sendto produces).
-         * The sockaddr must stay valid until completion: keep it in the
-         * per-socket context instead of the local `dest` copy. */
-        memcpy(&p->destAddr, &dest, sizeof(dest));
-        p->destAddrLen = (socklen_t)destLen;
+    if (dest) {
+        /* 定向数据报：载荷、sockaddr、msghdr 全部驻留长命上下文。 */
+        memcpy(&p->destAddr, dest, sizeof(p->destAddr));
+        p->destAddrLen = destLen;
         p->destAddrValid = true;
 
-        sqe->opcode = IORING_OP_SENDTO;
-        sqe->addr = (uint64_t)(uintptr_t)&p->destAddr;
-        sqe->len = (unsigned)len;
-        /* 对于 UDP 目标地址，使用 sendmsg 更合适，此处简化使用 send */
-        sqe->off = (uint32_t)p->destAddrLen;
-        /* SENDTO 新路径读 off 取地址长度，SEND+addr 老路径读 addr2，两者都写 */
-        sqe->addr2 = (uint64_t)p->destAddrLen;
-        sqe->flags = 0;
+        memset(&p->destIov, 0, sizeof(p->destIov));
+        p->destIov.iov_base = p->writeBuffer;
+        p->destIov.iov_len = (size_t)len;
+        memset(&p->destMsgHdr, 0, sizeof(p->destMsgHdr));
+        p->destMsgHdr.msg_name = &p->destAddr;
+        p->destMsgHdr.msg_namelen = p->destAddrLen;
+        p->destMsgHdr.msg_iov = &p->destIov;
+        p->destMsgHdr.msg_iovlen = 1;
+
+        sqe->opcode = IORING_OP_SENDMSG;
+        sqe->addr = (uint64_t)(uintptr_t)&p->destMsgHdr;
+#if XNET_HAS_IO_URING_HDR
+        sqe->msg_flags = MSG_NOSIGNAL; /* 真内核 SENDMSG 的 flags 槽 */
+#endif
     } else {
+        p->destAddrValid = false; /* 普通写：同步兜底不得再引用旧目的。 */
         sqe->opcode = IORING_OP_SEND;
         sqe->addr = (uint64_t)(uintptr_t)p->writeBuffer;
         sqe->len = (unsigned)len;
@@ -686,8 +731,26 @@ static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
     submitSqe(1);
     p->writePending = true;
 #if XDEVNET_IO_DEBUG
-    fprintf(stderr, "[XDEVNET] submit SEND fd=%d len=%lld\n", p->socket, (long long)len);
+    fprintf(stderr, "[XDEVNET] submit op=%d fd=%d len=%lld\n",
+            (int)sqe->opcode, p->socket, (long long)len);
 #endif
+#else
+    (void)priv; (void)data; (void)len; (void)dest; (void)destLen;
+#endif
+}
+
+static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64_t len,
+                             const XHostAddress* destAddr, uint16_t destPort, bool isUdp)
+{
+#ifdef __linux__
+    struct sockaddr_storage dest;
+    int destLen;
+    if (isUdp && destAddr) {
+        addr2sa(destAddr, destPort, &dest, &destLen);
+        startAsyncWriteCore(priv, data, len, &dest, (socklen_t)destLen);
+    } else {
+        startAsyncWriteCore(priv, data, len, NULL, 0);
+    }
 #else
     (void)priv; (void)data; (void)len; (void)destAddr; (void)destPort; (void)isUdp;
 #endif
@@ -1109,6 +1172,11 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
 #endif
     if (sockAct->actType & XSocketActType_Read) {
         p->readPending = false;
+        /* [2026-10-22 NTP 根修] RECVMSG 完成后收编来源地址长度：内核把
+         * 实际来源长度回写进 msg_namelen（msg_name 为空=TCP RECV 臂，
+         * 跳过）。platformGetLastDatagramSender 据此上报真实来源。 */
+        if (p->fromMsgHdr.msg_name)
+            p->fromAddrLen = p->fromMsgHdr.msg_namelen;
 #if XDEVNET_IO_DEBUG
         fprintf(stderr, "[XDEVNET] READ done res=%lld autoRead=%d\n",
                 (long long)p->readContext.base.result, (int)p->autoRead);
@@ -1133,6 +1201,9 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
                 ssize_t n = recv(p->socket, p->readBuffer,
                                  XNETWORK_READ_BUFFER_SIZE, MSG_DONTWAIT);
                 if (n > 0) {
+                    /* 同步兜底读未捕获来源：失效上一报的来源记录，宁可
+                       上报「不可知」也不误报旧来源。 */
+                    p->fromAddrLen = 0;
                     p->readContext.base.result = (int64_t)n;
                     p->readContext.base.finishedBytes = (size_t)n;
                     return true;
@@ -1153,7 +1224,10 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
          * 数据根本未发出(XDEVNET event W 实证), 上层却按入队长度认定
          * 已写, 请求全部石沉大海(Modbus 轮询超时/XUpgrade HTTP 超时)。
          * res<0 时同步 write() 补发(非阻塞小帧必全量; EAGAIN 重挂),
-         * accept 型 socket 与正常内核不受影响(result>=0 走原路径)。 */
+         * accept 型 socket 与正常内核不受影响(result>=0 走原路径)。
+         * [2026-10-22 NTP 根修顺带] 定向数据报(writePending 提交时带
+         * destAddr)同步兜底必须走 sendto——无连接 UDP 上 write() 恒
+         * EDESTADDRREQ, 兜底自身即失败, 与主路径同族错置。 */
         {
             int64_t wres = p->writeContext.base.result;
             size_t total = p->writeContext.base.finishedBytes;
@@ -1162,7 +1236,13 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
                 total <= XNETWORK_WRITE_BUFFER_SIZE) {
                 ssize_t n;
                 do {
-                    n = write(p->socket, p->writeBuffer, total);
+                    if (p->destAddrValid)
+                        n = sendto(p->socket, p->writeBuffer, total,
+                                   MSG_NOSIGNAL,
+                                   (const struct sockaddr*)&p->destAddr,
+                                   p->destAddrLen);
+                    else
+                        n = write(p->socket, p->writeBuffer, total);
                 } while (n < 0 && errno == EINTR);
                 if (n > 0) {
                     p->writeContext.base.result = (int64_t)n;
@@ -1170,8 +1250,12 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
                     return true;
                 }
                 if (n < 0 && errno == EAGAIN) {
-                    startAsyncWrite(priv, p->writeBuffer, (int64_t)total,
-                                    NULL, 0, false);
+                    /* [2026-10-22 NTP 根修顺带] 重挂保留原目的地址：
+                     * 定向数据报按原 sockaddr 重提（SENDMSG）；普通写
+                     * 走 NULL（纯 SEND）。 */
+                    startAsyncWriteCore(priv, p->writeBuffer, (int64_t)total,
+                                        p->destAddrValid ? &p->destAddr : NULL,
+                                        p->destAddrLen);
                     return true;
                 }
                 /* 其他错误: 落到原路径(短写续传判 sent>0 不命中)。 */
@@ -1183,14 +1267,17 @@ bool XDeviceNetwork_socketHandleEvent(XFd xfd, void* event)
          * 镜像出现整体错位碎片+大面积黑洞, 见 build/xgui-remote-mcgs/
          * run_1003_174826/clt_view0.png; 桌面回环因 send 缓冲充裕几乎不出
          * 现短写, io_uring 用例既往全绿掩盖此缺陷)。此处对残余重提
-         * startAsyncWrite 续传, 语义=完全写完才叫完成。 */
+         * startAsyncWrite 续传, 语义=完全写完才叫完成。
+         * [2026-10-22 NTP 根修顺带] 续传保留原目的：数据报虽不短写，
+         * 分支按 destAddrValid 透传 dest，语义闭合。 */
         {
             int64_t sent = p->writeContext.base.result;
             size_t total = p->writeContext.base.finishedBytes;
             if (sent > 0 && (size_t)sent < total) {
-                startAsyncWrite(priv, p->writeBuffer + sent,
-                                (int64_t)(total - (size_t)sent),
-                                NULL, 0, false);
+                startAsyncWriteCore(priv, p->writeBuffer + sent,
+                                    (int64_t)(total - (size_t)sent),
+                                    p->destAddrValid ? &p->destAddr : NULL,
+                                    p->destAddrLen);
             }
         }
         return true;
@@ -1375,7 +1462,16 @@ void XDeviceNetwork_socketContinueWrite(XFd xfd, XRingBuffer* ringBuffer, bool i
     char tempBuf[XNETWORK_WRITE_BUFFER_SIZE];
     size_t got = XRingBuffer_read(rb, tempBuf, chunk);
     if (got > 0) {
-        startAsyncWrite(priv, tempBuf, (int64_t)got, NULL, 0, isUdp);
+        /* [2026-10-22 NTP 根修顺带] 续写目的与 VXDeviceNetwork_write 同源
+         * （m_hasPeerAddress ? peer : NULL）——旧代码丢 dest，无连接 UDP
+         * 挂起残余重提时退化为无目标 SEND，恒 EDESTADDRREQ。 */
+        const XHostAddress* dest = NULL;
+        uint16_t destPort = 0;
+        if (isUdp && priv->m_hasPeerAddress) {
+            dest = &priv->m_peerAddress;
+            destPort = priv->m_peerPort;
+        }
+        startAsyncWrite(priv, tempBuf, (int64_t)got, dest, destPort, isUdp);
     }
 }
 
@@ -1831,10 +1927,27 @@ bool XDeviceNetwork_platformGetLastDatagramSender(XFd xfd,
     /* A connected UDP socket only ever accepts datagrams from its peer: the
      * kernel filters the others. Report that peer as the sender.
      *
-     * For an unconnected socket the true source address would require
-     * IORING_OP_RECVMSG (Linux 5.12+), which this driver does not use, so
-     * there is nothing trustworthy to report. Return false instead of the
-     * previously returned uninitialised bytes of p->fromAddr. */
+     * [2026-10-22 NTP 根修] 无连接 socket 的来源上报：UDP 读臂已改用
+     * RECVMSG（msg_name 指向驻留的 fromAddr），每报完成后 fromAddrLen
+     * 即内核回写的实际来源长度——据此 sa2addr 上报真实来源，替代旧实现
+     * 「无来源可报 → 恒 false」。RECVMSG 是 5.1 起的基础操作，全内核
+     * 矩阵可用；老于该矩阵的同步兜底读路径已把 fromAddrLen 清零，此处
+     * 自然回落 false（上层按「来源不可知」处理，不再反悔已读字节）。 */
+    if (p->fromAddrLen > 0) {
+        uint16_t port = 0;
+        XHostAddress addr;
+        struct sockaddr_storage sa;
+        socklen_t copyLen = p->fromAddrLen;
+        memset(&sa, 0, sizeof(sa));
+        if (copyLen > (socklen_t)sizeof(sa)) copyLen = (socklen_t)sizeof(sa);
+        memcpy(&sa, &p->fromAddr, copyLen);
+        XHostAddress_init(&addr);
+        sa2addr(&sa, &addr, &port);
+        if (srcAddr) XClassCopy(srcAddr, &addr);
+        if (srcPort) *srcPort = port;
+        XClassDeinit(&addr);
+        return true;
+    }
     if (p->base.m_connected && p->connectAddress.ss_family != 0) {
         uint16_t port = 0;
         XHostAddress addr;

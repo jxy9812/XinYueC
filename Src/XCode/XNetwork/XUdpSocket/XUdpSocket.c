@@ -91,23 +91,33 @@ int64_t XUdpSocket_readDatagram(XUdpSocket* sock, char* data, int64_t maxSize,
                                  XHostAddress* address, uint16_t* port)
 {
     if (!sock || !data || maxSize <= 0) return -1;
-    
+
     /* 使用父类 XAbstractSocket 的 read 方法读取数据 */
     int64_t bytesRead = XAbstractSocket_read(&sock->base, data, maxSize);
-    
+
     if (bytesRead <= 0) return bytesRead;
-    
-    /* 获取发送者地址信息 */
+
+    /* 获取发送者地址信息。
+     * [2026-10-22 NTP 根修顺带] 发送者信息是尽力而为的附属输出：平台链路
+     * （RECV 无源地址捕获、内核无来源记录等）报「来源不可知」时，不得把
+     * 已成功读到的数据报反悔成 -1——旧实现此处 return -1，报文字节已被
+     * 读走却对调用方谎报失败，一切「回包要写回来源地址」的用法（NTP/
+     * DNS 式应答服务器、XNtpTest 回环 mock）读包恒失败。对齐 QUdpSocket
+     * 语义：来源不可知时地址保持空、返回字节数。 */
     if (address || port) {
         XVarList* output = XVarList_Create(XVar(XHostAddress*, address), XVar(uint16_t*, port));
-        if (!output) return -1;
-        if (!xudpsocket_control(sock, XDeviceNetworkCommand_GetLastDatagramSender, NULL, output)) {
+        if (output) {
+            if (!xudpsocket_control(sock, XDeviceNetworkCommand_GetLastDatagramSender, NULL, output)) {
+                if (address) XHostAddress_init(address);
+                if (port) *port = 0;
+            }
             XVarList_delete(output);
-            return -1;
+        } else {
+            if (address) XHostAddress_init(address);
+            if (port) *port = 0;
         }
-        XVarList_delete(output);
     }
-    
+
     return bytesRead;
 }
 

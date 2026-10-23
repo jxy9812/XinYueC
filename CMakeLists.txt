@@ -265,10 +265,15 @@ list(REMOVE_ITEM TEST_FILE
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/XGuiKeyboardDragTest.c")
 # bold_ab_tool 同理：自带 main 的粗体真字体 A/B 离屏验证（xgui_font_bold_ab
-# 目标，2026-10-08 字重变体战役新增；本次漏加本剔除致 all 目标再次断链
+# 目标，2026-10-08 字重变体战役新增；当时漏加本剔除致 all 目标再次断链
 # ——同一坑第二次踩， TEST_FILE 剔除三查已写入构建协议），不得卷入主程序。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XGuiTest/bold_ab_tool.c")
+# xntp_min_repro 同理：自带 main 的 XNtp 最小复现独立可执行
+# （XNtpMinRepro_Test 目标，2026-10-22 NTP 应答超时根修车道诊断工具），
+# 不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xntp_min_repro.c")
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
 # portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
@@ -652,6 +657,18 @@ else()
     target_link_libraries(${EXPORT_NAME}_Dynamic ${EXPORT_NAME} mbedtls lwip zlib fatfs pcre2 sqlite freetype)
 endif()
 endif() # XGUI_ON（demo 可执行排除）
+
+# ==================== XNtp 最小复现程序（独立可执行） ====================
+# 「应答超时」根修车道诊断工具：绕开 GUI 直连 ntp.aliyun.com，
+# stderr 分阶段探针（DNS/裸 POSIX 对照/XNtpClient 全链路心跳）。
+add_executable(XNtpMinRepro_Test
+    "./Test/XProtocolTest/xntp_min_repro.c"
+)
+if(UNIX)
+    target_link_libraries(XNtpMinRepro_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(XNtpMinRepro_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
 
 # ==================== XFtp 端到端真服务器联调测试 ====================
 # 独立可执行文件 ftp_e2e_test.exe，搭配 ftp_test_server.py 跑完整 FTP 协议测试
