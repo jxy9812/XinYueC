@@ -54,16 +54,32 @@
 #include <unistd.h>
 
 /* 强制 epoll 时不编译 io_uring 引擎（头存在也不编译）。
- * Android 强制 epoll：安卓 seccomp 过滤器把 io_uring_setup（x86_64 系统调
- * 用号 425）列为禁用项，运行时直连 SIGSYS 崩溃（WSA 实测）；且内核头虽
- * 在 NDK sysroot 中存在，运行期任何 API 级别都未放行 io_uring。 */
+ * [2026-10-24 安卓双引擎] Android 与 Linux 桌面同口径：io_uring/epoll
+ * 双引擎都编译，运行时由 init 回退链自动选择（内核版本门 ≥5.10 +
+ * io_uring_setup 探测）。历史背景：曾因 seccomp 处置不一（bionic 白名单
+ * 返回 ENOSYS 可优雅回退；WSA 等定制策略 SECCOMP_RET_TRAP 直发 SIGSYS）
+ * 在安卓强制 epoll；现探测改为 SIGSYS handler + siglongjmp 兜底，两派
+ * 策略都安全落地 epoll，不再需要编译期一刀切。 */
 #if XNET_HAS_IO_URING_HDR && \
-    !(defined(XNET_FORCE_EPOLL) && XNET_FORCE_EPOLL) && !defined(__ANDROID__)
+    !(defined(XNET_FORCE_EPOLL) && XNET_FORCE_EPOLL)
 #define XNET_BUILD_IO_URING 1
 #else
 #define XNET_BUILD_IO_URING 0
 #endif
 #define XNET_BUILD_EPOLL 1 /* epoll 引擎恒编译（io_uring 失败的运行时回退） */
+
+#if defined(__ANDROID__) && XNET_BUILD_IO_URING
+/**
+ * @brief  安卓平台的 io_uring_setup 包装（seccomp 处置差异的收口点）。
+ * @details 安卓 seccomp 对被禁系统调用的处置分两派：bionic 白名单策略返回
+ *          ENOSYS（可优雅回退 epoll）；WSA 等定制策略 SECCOMP_RET_TRAP 直发
+ *          SIGSYS 杀进程（真机实测）。本包装前置 SIGSYS handler +
+ *          siglongjmp 兜底，两派都安全落 epoll。
+ * @note    实现位于**平台层** Drive/Android/Core/XNetIoRingAndroid.c——
+ *          共享的 POSIX 驱动不该内联安卓的 seccomp 行为。
+ */
+int XAndroid_netIoUringSetup(unsigned entries, struct io_uring_params* params);
+#endif
 
 #if !XNET_HAS_IO_URING_HDR
 /* ================================================================

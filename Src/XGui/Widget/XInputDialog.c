@@ -10,11 +10,11 @@
  * @author     XinYueC 团队
  */
 
-#if XGUI_ON
-
-#include "XInputDialog.h"
 
 #include "XGuiConfig.h"
+
+#if XGUI_ON
+#include "XInputDialog.h"
 #include "XString.h"
 #include "XStringList.h"
 #include "XMemory.h"
@@ -41,8 +41,87 @@
 #if XWIDGET_ON && XDIALOG_ON
 
 #include "XWidget_Protected.h"
+#include "XObject.h"          /* XObject_deleteLater/XObject_children：
+                               * 取消崩溃根修（2026-10-21，XFileDialog
+                               * xff_teardown 同款移植）延迟回收与子树
+                               * 输入侧摘除依赖。 */
+#include "XVector.h"          /* XVector_size_base/at_base：子树遍历。 */
 
 /* ==================== 内部辅助 ==================== */
+
+/* ---------- 取消崩溃根修（2026-10-21，XFileDialog 同款移植） ----------
+ * 静态便捷路径的收尾不得在取消/确定槽尚未返回、输入派发仍以本对话框
+ * 子树为靶的栈窗口内同步删除任何子树对象——XFileDialog 侧 ASan 实抓：
+ * 取消钮在收尾同步删除后，控制权带着事件循环回到派发层，下一记落在
+ * 对话框区域的鼠标事件（释放/移动）经 g_buttonDownWidget 按压靶派发
+ * 到已释放按钮，XWidget_accumulateOffset 读已释放内存 UAF（Windows
+ * MSVC 消息时序必现）。两条纪律：
+ *  1. 收口槽（确定/取消）前置子树输入侧摘除（xid_detachInputRecursive：
+ *     子树逐控件显式隐藏，隐藏分支清焦点/抓取/按压靶/触点表登记）；
+ *  2. 对话框子树走 XObject_deleteLater（DeferredDelete 的 loopLevel
+ *     语义保证析构发生在控制权返回事件循环之后），布局句柄（root/bar，
+ *     addLayout 子布局不归父布局所有，对标 QLayout 所有权语义）经
+ *     下方登记表挂到 VXInputDialog_deinit 析构帧兑现（析构级联第一个
+ *     子类帧，此刻子控件仍存活，根布局先行删除清子行 m_parentLayout
+ *     反指针后再删子行，删除序安全）。
+ * 串行不变量：便捷路径同一时刻至多一个模态对话框，登记表单槽即可；
+ * owner 指针校验保证非本对话框的析构不误回收他人句柄。
+ * open_2 复用路径不受影响：收口槽摘除以 !m_openReceiver 守卫——open_2
+ * 的对话框 done 后仍存活可复开，子树显式隐藏会使其复开呈现空面板。 */
+
+/** @brief 子树输入侧登记摘除：先子后父逐控件显式隐藏（隐藏分支在
+ *  各自 oldVisible=1 现场执行，清按钮按压靶/焦点/抓取/触点表）。
+ *  须在父对话框尚未隐藏时调用；跳过子窗（弹层另行收口）。 */
+static void xid_detachInputRecursive(XWidget* w)
+{
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!w) return;
+    children = XObject_children((XObject*)w);
+    n = children ? XVector_size_base(children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, i);
+        if (child && child->m_is_widget && !child->m_is_window)
+            xid_detachInputRecursive((XWidget*)child);
+    }
+    XWidget_setVisible(w, false);
+}
+
+/** @brief 排空后回收登记表（单槽 + owner 校验，见上方块注）。 */
+static XInputDialog* s_xidPendingDlg = NULL;
+static XBoxLayout* s_xidPendingLayouts[2] = {0}; /**< [0]=root，[1]=bar。 */
+
+/** @brief 对话框析构帧兑现登记：回收布局句柄（根布局先行清子行
+ *  反指针，再删子行；见上方块注删除序）。仅当登记 owner 即本次
+ *  析构对话框时兑现（VXInputDialog_deinit 调用）。 */
+static void xid_pendingReclaim(XInputDialog* dying)
+{
+    int i;
+    if (!dying || s_xidPendingDlg != dying) return;
+    for (i = 0; i < 2; ++i) {
+        if (s_xidPendingLayouts[i])
+            XClassDelete((XLayout*)s_xidPendingLayouts[i]);
+        s_xidPendingLayouts[i] = NULL;
+    }
+    s_xidPendingDlg = NULL;
+}
+
+/** @brief teardown 登记：布局句柄移交登记表随对话框析构帧回收
+ *  （时序与安全性见上方块注）。覆写前先回收旧登记（同槽连续两次
+ *  便捷调用、前一 DeferredDelete 尚未兑现时防其句柄泄漏——旧登记
+ *  对话框此刻仍存活且已隐藏，立即删其布局句柄安全：删除仅清反
+ *  指针，其析构帧读到 NULL 空转）。 */
+static void xid_pendingRegister(XInputDialog* dlg, XBoxLayout* root,
+                                XBoxLayout* bar)
+{
+    if (!dlg) return;
+    if (s_xidPendingDlg && s_xidPendingDlg != dlg)
+        xid_pendingReclaim(s_xidPendingDlg);
+    s_xidPendingDlg = dlg;
+    s_xidPendingLayouts[0] = root;
+    s_xidPendingLayouts[1] = bar;
+}
 
 /** @brief 释放并清空拥有型 XString 字段。 */
 static void xinputdialog_freeString(XString** slot)
@@ -140,6 +219,12 @@ static void VXInputDialog_deinit(XInputDialog* self)
         XClassDelete((XClass*)self->m_comboBoxItems);
         self->m_comboBoxItems = NULL;
     }
+#if XWIDGET_ON && XDIALOG_ON
+    /* 排空后回收：静态便捷路径收尾登记的布局句柄随本对话框析构帧
+     * 兑现（取消崩溃根修；登记/删除序与 owner 校验见文件头块注）。
+     * owner 非本对话框（无登记/他人登记）时空转。 */
+    xid_pendingReclaim(self);
+#endif
     XClass_Deinit_Parent(XDialog, (XDialog*)self);
 }
 
@@ -427,7 +512,18 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args);
 static void xid_rejectSlot(XObject* receiver, XVarList* args)
 {
     (void)args;
-    if (receiver) XDialog_reject((XDialog*)receiver);
+    if (receiver) {
+        /* 取消收口（对标 QDialog::reject = done(Rejected)）前置子树
+         * 输入侧摘除：取消槽运行在取消钮 clicked(Direct) 发射帧内
+         * （按压靶此刻正指向取消钮），对话框延迟回收后事件层不得再
+         * 有登记指向子树成员（见文件头取消崩溃根修块注）。open_2
+         * 复用路径跳过摘除：对话框 done 后仍存活可复开，子树显式
+         * 隐藏会使复开呈现空面板。 */
+        if (!((XInputDialog*)receiver)->m_openReceiver)
+            xid_detachInputRecursive(
+                &((XInputDialog*)receiver)->m_base.m_base);
+        XDialog_reject((XDialog*)receiver);
+    }
     /* open_2 连接收口：reject→done 发射 finished 时连接仍在（receiver
      * 恰回调一次），收口后断开，防连接与记录跨关闭存活（XMessageBox
      * 按钮点击路径同款）。 */
@@ -684,13 +780,14 @@ static bool xid_execDialog(XInputDialog* dlg, int w, int h)
     return rc == 1; /* 对标 QDialog::Accepted。 */
 }
 
-/** @brief 收尾：先删布局（不随控件析构）再删对话框（子控件随对象树
- *  递归销毁，对标 Qt 父子所有权）。 */
+/** @brief 收尾：对话框子树与布局句柄一律延迟回收（取消崩溃根修，
+ *  见文件头块注）。返回值已由调用方于本函数之前提取，删除时机不
+ *  影响结果回读（对标 Qt QDialog::exec 返回后 QObject 树的延迟消亡）。 */
 static void xid_teardown(XInputDialog* dlg, XBoxLayout* root, XBoxLayout* bar)
 {
-    if (root) XClassDelete((XLayout*)root);
-    if (bar) XClassDelete((XLayout*)bar);
-    if (dlg) XClassDelete((XClass*)dlg);
+    if (!dlg) return;
+    xid_pendingRegister(dlg, root, bar);
+    XObject_deleteLater((XObject*)dlg);
 }
 
 /** @brief open_2 信号选择→信号地址（对标 Qt signalForMember 候选信号
@@ -813,6 +910,12 @@ static void xid_acceptSlot(XObject* receiver, XVarList* args)
         break;
     }
     }
+    /* 确定收口前置子树输入侧摘除（与取消收口同纪律：确定槽同样运行
+     * 在真实按压的发射帧内；open_2 复用路径守卫跳过，见 xid_rejectSlot
+     * 注）。确认信号发射在前（对标 Qt done 前发 *ValueSelected）、
+     * 摘除贴着 XDialog_accept。 */
+    if (!dlg->m_openReceiver)
+        xid_detachInputRecursive(&dlg->m_base.m_base);
     XDialog_accept(&dlg->m_base);
     /* open_2 连接收口：accept→done 发射 finished 时连接仍在（receiver
      * 恰回调一次），收口后断开（XMessageBox 按钮点击路径同款）。 */

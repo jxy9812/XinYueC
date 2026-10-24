@@ -1,4 +1,5 @@
 #include "XDeviceConsole.h"
+#if XDEVICE_ON && XDEVICE_CONSOLE_ON
 #include "XFileDescriptor.h"
 #include "XMemory.h"
 #include "XVarList.h"
@@ -265,3 +266,5 @@ XFd XDeviceConsole_backendFd(XFd fd)
         return XFD_INVALID;
     return consoleContext(handle)->m_backendFd;
 }
+
+#endif /* device switch */

@@ -471,6 +471,12 @@ typedef struct XVirtualKeyboard
     uint8_t m_t9TapIdx : 3;                    /**< 九键英文多击组内循环位次。 */
     bool m_popovers;                   /**< 按压放大气泡开关。 */
     bool m_autoPopup;                  /**< 自动弹出开关（XGui 扩展，默认 true）。 */
+    bool m_autoPopupEditableOnly;      /**< 自动弹「仅编辑控件」降级模式（XGui
+                                            * 扩展，默认 false）：置位后即使
+                                            * m_autoPopup=false（应用全权接管），
+                                            * 按下落点**受支持编辑控件**时仍弹
+                                            * 面板；其余区域照旧不弹（保住
+                                            * 「触摸点击不被键盘打断」）。 */
     bool m_popped;                     /**< 弹层可见状态。 */
     bool m_pressArmed;                 /**< 按下触发武装位（滑动出键即取消）。 */
     int8_t  m_pressedTool : 3;  /* -1=未按压（哨兵）、0..3=槽位 */                 /**< 按下中工具栏槽位（0..3，按压武
@@ -843,14 +849,47 @@ void XVirtualKeyboard_setAutoPopup(XVirtualKeyboard* self, bool on);
  */
 bool XVirtualKeyboard_autoPopup(const XVirtualKeyboard* self);
 /**
+ * @brief      设置自动弹的「仅编辑控件」降级模式（XGui 扩展）。
+ * @details    解决的问题：应用把 m_autoPopup 全局关断时（autoPopup=false
+ *             = 应用全权接管，按下路径与守护轮询一并停），**该页的输入框
+ *             也点不出键盘**——而应用本意只是「触摸点按钮/列表不被屏幕
+ *             键盘打断」，输入框仍需键盘。置位本模式后：即使
+ *             m_autoPopup=false，指针按下落点为**要文本键盘的控件**时
+ *             仍弹出/重绑面板——判据=三编辑控件（XLineEdit/XPlainTextEdit/
+ *             XTextEdit）或「WA14 且 inputMethodHints 非 None」的字段壳
+ *             类（如日期时间壳 DigitsOnly），且 isEnabled && 总开关开；
+ *             落点为非编辑区域（页面空白/按钮/标签/**远端镜像画面**）
+ *             照旧**不弹**，且已弹层时收层（dismiss 语义不变）。面板自身
+ *             按键不受影响（键盘按键不误触收起）。
+ *             口径边界：①只放宽**按下路径**，守护轮询仍随 autoPopup=false
+ *             停摆（焦点边沿不弹——本模式的语义是「点输入框才弹」）；
+ *             ②m_autoPopup=true 时本标记不参与（编辑/非编辑照常分流）；
+ *             ③不改变 autoPopup 既有语义（false=全权接管），故既有
+ *             「autoPopup=false 令单例惰性化」的防 UAF 前提不受影响。
+ * @param      self 目标键盘；可为 NULL。
+ * @param      on true 开启降级模式，false 关闭（回到「全不弹」口径）。
+ * @return     无返回值。
+ */
+void XVirtualKeyboard_setAutoPopupEditableOnly(XVirtualKeyboard* self,
+                                               bool on);
+/**
+ * @brief      查询「仅编辑控件」降级模式（XGui 扩展）。
+ * @param      self 键盘对象借用指针；可为 NULL。
+ * @return     置位返回 true；self 为 NULL 返回 false。
+ */
+bool XVirtualKeyboard_autoPopupEditableOnly(const XVirtualKeyboard* self);
+/**
  * @brief      按下位置驱动通知（XGui 扩展；自动弹收主判据，标准触摸 UX）。
  * @details    由 XWidget_dispatchPointerEvent 的 PRESS 汇聚点经
  *             XGuiApplication_virtualKeyboardNotifyPress 转发调用（默认
  *             面板单例；XWidget 核心不依赖键盘类型）。契约：
  *             - hit 为键盘面板自身（或其子控件）→ 无操作（键盘自身按
  *               键 PRESS 不受影响，弹出态按键照常输入）；
- *             - hit 为受支持编辑框且 isEnabled && WA_InputMethodEnabled
- *               && 总开关开（判据与守护 tick accept 全等）→ popup(hit)
+ *             - hit 为**要文本键盘的控件**（三编辑控件，或 WA14 且
+ *               inputMethodHints 非 None 的字段壳类；仅开 WA14 而
+ *               hints=None 的控件——如远端镜像控件只转发物理键盘——不算）
+ *               且 isEnabled && WA_InputMethodEnabled && 总开关开（判据
+ *               与守护 tick accept 全等）→ popup(hit)
  *               弹出/重绑；已弹且同框则保持（不重放 hints，保住面板内
  *               手动模式切换）；
  *             - 其余（页面空白/按钮/标签等非编辑区域）→ 弹层可见则

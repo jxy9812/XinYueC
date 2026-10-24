@@ -45,6 +45,7 @@
 #include "XString.h"
 #include "XPrintf.h"
 #include "XRingBuffer.h"
+#include "XWindowRotation.h" /* 安卓内容旋转换算（与 posix/win32 同源口径）。 */
 
 #include <android/native_activity.h>
 #include <android/native_window.h>
@@ -98,6 +99,23 @@ typedef struct XPadTouchEvent
     uint32_t timestampMs;                /**< AMotionEvent_getEventTime（ns→ms）。 */
 } XPadTouchEvent;
 
+/** @brief 待注入键盘帧（翻译已完成，渲染线程直投 WSI）。
+ *  @details [2026-10-24 安卓键盘接入] AKEY 事件此前被 onInputEvent 的
+ *           MOTION 早退整类丢弃（物理键盘/adb input text 打字全无反应的
+ *           根因）。翻译在 UI 线程就地完成后入队（值拷贝，跨线程安全）；
+ *           key 用 X11 同款「字母大写归一」口径（0x41-0x5A），大小写由
+ *           Shift 修饰位表达——XLineControl 非合成路径（扫描码/时间戳
+ *           非零）据此派生文本。 */
+typedef struct XPadKeyEvent
+{
+    int32_t type;          /**< XEVENT_TYPE_KEY_PRESS / KEY_RELEASE。 */
+    int32_t key;           /**< XKey 码位（ASCII 恒等 + XKey_* 专码）。 */
+    int32_t modifiers;     /**< XKeyboardModifiers 位掩码。 */
+    int32_t scanCode;      /**< AKeyEvent_getScanCode（未知为 0）。 */
+    uint32_t timestampMs;  /**< AKeyEvent_getEventTime（ns→ms，恒非 0）。 */
+    bool autoRepeat;       /**< DOWN 重复（ACTION_MULTIPLE 归并入此）。 */
+} XPadKeyEvent;
+
 /** @brief 坐标空间标定分支（设计 §4.3 探针：不预设 origin/raw 的测量
  *  口径——Android 文档称物理 px，但 WSA/模拟器实测历史分叉，运行期用
  *  getWindowFrameSize 与 ANativeWindow 尺寸比对二选一，结果打日志）。 */
@@ -127,7 +145,9 @@ typedef struct XPadState
        完整触点列表，按压与否按帧 count>0 直读；双击亦改由框架层手势
        状态机统一判定（平台合成 DBL_CLICK 已撤销）。 */
     XRingBuffer m_touchQueue;         /**< 事件队列。 */
+    XRingBuffer m_keyQueue;           /**< 键盘事件队列（XPadKeyEvent 整帧）。 */
     bool m_queueReady;                /**< 队列已初始化。 */
+    int m_keyModifiers;               /**< 当前修饰键位（键盘帧维护；queryKeyboardModifiers 口径）。 */
 
     /* MOVE 帧逐点状态缓存（对标 Win32 WM_POINTER 修复）：Android 的
        MOVE 动作不指明变化触点（Win32 每条消息自带变化 id），全帧
@@ -164,7 +184,7 @@ static XPadState g_xpad = {
     PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_COND_INITIALIZER,
     false, false, false, false,
-    { 0 }, false,
+    { 0 }, { 0 }, false, 0,
     { { 0 } }, 0,
     /* DPI/标定默认：dpr=1、PHYSICAL、scale=1 —— 全部安全退化为现网
        dpr=1 行为（JNI 读数失败时的兜底链，设计 §10-13）。 */
@@ -184,8 +204,10 @@ static int g_xpadHeight = 0;
 #define XPAD_MAX_WINDOWS 8
 typedef struct XPadLayer
 {
-    XWindow* win;              /**< 登记的顶层窗口。 */
+    XWindow* win;              /**< 登记的图层窗口。 */
     XPoint pos;                /**< 窗口位置（setGeometry 下发，主窗 (0,0)）。 */
+    XPoint devPos;             /**< 设备轴原点（表面逻辑坐标）：旋转态弹层按
+                                   opener 正变换换算，0° 时恒等于 pos。 */
     bool visible;              /**< setVisible 状态。 */
     const XImage* lastImage;   /**< 最近一次 present 的图像（借用，弹层叠加用）。 */
 } XPadLayer;
@@ -530,6 +552,169 @@ static void xpad_drawImage(ANativeWindow_Buffer* buf, const XImage* image,
 }
 
 /**
+ * @brief  计算各图层在**设备轴**（表面逻辑坐标）下的原点。
+ * @details [弹层落位域·安卓 2026-10-24] 契约与 posix(X11) / win32 同源：
+ *          控件层给弹层（Popup）定位用的是**逻辑全局**坐标
+ *          （XComboBox xcombo_popupReposition / 系统菜单：父链逻辑偏移
+ *          累加 + 顶层逻辑原点），而旋转窗在屏上的占位是**对调后的设备
+ *          footprint**——弹层要贴着 opener 出现，必须以
+ *          「opener 设备原点 + 旋转正变换（弹层逻辑局部矩形，
+ *          XWindowRotation.h MapRect 像素下标口径，与 present/输入同源）」
+ *          为落位锚点，否则弹层落在旧角度对应的位置、甚至跑出窗口外
+ *          （用户实测：切到 90° 后方向下拉浮在页面中间，点不到）。
+ *
+ *          0° 时恒等（devPos = pos），非弹层图层恒等（旋转只对调宽高，
+ *          **原点不随旋转变**——XWindowRotation.h 的基石）。
+ * @note   调用方须持 g_xpad.m_mutex（本函数不自行加锁）。
+ */
+static void xpad_updateDeviceOrigins(void)
+{
+    int i;
+    /* 第一遍：默认恒等（主窗/普通图层/0° 弹层）。 */
+    for (i = 0; i < g_xpadWindowCount; ++i) {
+        g_xpadWindows[i].devPos = g_xpadWindows[i].pos;
+    }
+    /* 第二遍：弹层按 opener 正变换换算（opener 先于弹层登记，故其
+       devPos 已是最终值；嵌套弹层按登记序逐级成立）。 */
+    for (i = 0; i < g_xpadWindowCount; ++i) {
+        XPadLayer* layer = &g_xpadWindows[i];
+        XWindow* win = layer->win;
+        XWindow* opener;
+        XPadLayer* ol;
+        XPoint openerDev;
+        int rot, localX, localY, lw, lh, devX, devY, devW, devH;
+        if (!win) continue;
+        rot = XWindow_contentRotationDegrees(win);
+        if (rot == 0) continue;
+        if (XWindow_type(win) != XWindowType_Popup) continue;
+        opener = XWindow_transientParent(win);
+        if (!opener) continue;
+        ol = xpad_findLayer(opener);
+        openerDev = ol ? ol->devPos
+                        : (XPoint){ XWindow_x(opener), XWindow_y(opener) };
+        /* 弹层逻辑局部矩形（相对 opener 原点）。 */
+        localX = layer->pos.x - XWindow_x(opener);
+        localY = layer->pos.y - XWindow_y(opener);
+        /* 弹层逻辑尺寸：优先用已提交图像的逻辑宽高（与 present 侧绘制
+           同源），无图像时回落窗口逻辑几何。 */
+        if (layer->lastImage) {
+            lw = XImage_width(layer->lastImage);
+            lh = XImage_height(layer->lastImage);
+        }
+        else {
+            lw = XWindow_width(win);
+            lh = XWindow_height(win);
+        }
+        if (lw <= 0 || lh <= 0) continue;
+        devX = devY = devW = devH = 0;
+        XWindow_rotationMapRect(rot, XWindow_width(opener),
+                                XWindow_height(opener),
+                                &localX, &localY, &lw, &lh,
+                                &devX, &devY, &devW, &devH);
+        layer->devPos.x = openerDev.x + devX;
+        layer->devPos.y = openerDev.y + devY;
+    }
+}
+
+/**
+ * @brief  把图像按旋转角转置后画进 surface（安卓内容旋转接入 2026-10-24）。
+ * @details 口径与桌面（posix fbdev 直写 / win32 present）严格同源：
+ *          - 源图是**逻辑轴**图像（w=逻辑宽，h=逻辑高）；
+ *          - 目标矩形是**对调后的设备 footprint**（90/270 时宽高互换）；
+ *          - 逐设备像素用 XWindow_rotationUnmapPoint 反查逻辑源坐标
+ *            （R⁻¹），与 present 侧 R⁻¹ 转置互为逆运算。
+ *          两者共用 XWindowRotation.h —— 呈现与命中两端口径逐位一致。
+ *          原点不随旋转变（窗口 x/y 保持），故目标矩形左上角 = pos。
+ * @param   rot   内容旋转角（0/90/180/270）。
+ * @param   scale 物理放大系数（presentScale；1.0 = 逐位直通）。
+ */
+static void xpad_drawImageRotated(ANativeWindow_Buffer* buf,
+                                  const XImage* image,
+                                  const XPoint* pos, int32_t winFmt,
+                                  float scale, int rot)
+{
+    const uint8_t* src;
+    size_t srcBpl;
+    int w, h, devW, devH;
+    int dx, dy;
+    int srcBpp;
+
+    if (!buf || !buf->bits || !image || rot == 0) return;
+    src = (const uint8_t*)XImage_constBits(image);
+    if (!src) return;
+    w = XImage_width(image);
+    h = XImage_height(image);
+    srcBpl = (size_t)XImage_bytesPerLine(image);
+    srcBpp = (XImage_format(image) == XImageFormat_RGB16) ? 2 : 4;
+    if (w <= 0 || h <= 0) return;
+    if (srcBpl < (size_t)w * (size_t)srcBpp) return;
+
+    /* 设备 footprint：90/270 时宽高对调（旋转只对调宽高，原点不变）。 */
+    XWindow_rotationDeviceSize(rot, w, h, &devW, &devH);
+    if (devW <= 0 || devH <= 0) return;
+
+    {
+        int step = (scale > 0.0f && scale != 1.0f) ? 1 : 1;
+        int dstW = (int)((float)devW * scale + 0.5f);
+        int dstH = (int)((float)devH * scale + 0.5f);
+        int x0 = pos->x;
+        int y0 = pos->y;
+        int x1 = x0 + dstW;
+        int y1 = y0 + dstH;
+        /* 目标域钳制（弹层可被拖出屏外）。 */
+        if (x0 < 0) x0 = 0;
+        if (y0 < 0) y0 = 0;
+        if (x1 > buf->width) x1 = buf->width;
+        if (y1 > buf->height) y1 = buf->height;
+        if (x1 <= x0 || y1 <= y0) return;
+        (void)step;
+
+        for (dy = y0; dy < y1; ++dy) {
+            /* 设备轴坐标（未放大）：R⁻¹ 反查逻辑源坐标。 */
+            int devY = (int)((float)(dy - pos->y) / scale);
+            uint8_t* drow = (uint8_t*)buf->bits +
+                            (size_t)dy * (size_t)buf->stride *
+                            (winFmt == WINDOW_FORMAT_RGB_565 ? 2u : 4u);
+            if (devY < 0 || devY >= devH) continue;
+            for (dx = x0; dx < x1; ++dx) {
+                int devX = (int)((float)(dx - pos->x) / scale);
+                int lx = 0, ly = 0;
+                const uint8_t* p;
+                if (devX < 0 || devX >= devW) continue;
+                XWindow_rotationUnmapPoint(rot, w, h, devX, devY, &lx, &ly);
+                if (lx < 0 || lx >= w || ly < 0 || ly >= h) continue;
+                p = src + (size_t)ly * srcBpl + (size_t)lx * (size_t)srcBpp;
+                if (winFmt == WINDOW_FORMAT_RGB_565) {
+                    uint8_t* d8 = drow + (size_t)dx * 2u;
+                    if (srcBpp == 2) {
+                        d8[0] = p[0];
+                        d8[1] = p[1];
+                    }
+                    else {
+                        uint8_t b8 = p[0];
+                        uint8_t g8 = p[1];
+                        uint8_t r8 = p[2];
+                        uint16_t px = (uint16_t)(((r8 >> 3) << 11) |
+                                                 ((g8 >> 2) << 5) |
+                                                 (b8 >> 3));
+                        d8[0] = (uint8_t)(px & 0xFF);
+                        d8[1] = (uint8_t)(px >> 8);
+                    }
+                }
+                else {
+                    /* 8888 窗口：ARGB32(B,G,R,A) → R,G,B,A 通道重排。 */
+                    uint8_t* d8 = drow + (size_t)dx * 4u;
+                    d8[0] = p[2];
+                    d8[1] = p[1];
+                    d8[2] = p[0];
+                    d8[3] = (srcBpp == 2) ? 0xFFu : p[3];
+                }
+            }
+        }
+    }
+}
+
+/**
  * @brief  XPlatformNativeWindow_present 的安卓实现：锁 surface、按脏区
  *         重排行、解锁提交。
  * @note   ANativeWindow 的 stride 是像素数且可能大于宽度，必须逐行拷。
@@ -612,15 +797,34 @@ static bool xpad_present(XWindow* window, const XImage* image,
      * dpr=1/WSA 逐位不变。后备存储保持逻辑尺寸零改动。
      */
     pthread_mutex_lock(&g_xpad.m_mutex);
+    /* 设备原点先行换算（弹层落位域）：旋转态弹层要按 opener 正变换落到
+       设备轴，0°/普通图层恒等。 */
+    xpad_updateDeviceOrigins();
     for (i = 0; i < g_xpadWindowCount; ++i) {
         XPadLayer* layer = &g_xpadWindows[i];
         if (layer->visible && layer->lastImage) {
             XPoint posPx;
             const XImage* img = layer->lastImage;
-            posPx.x = (int)((float)layer->pos.x * presentScale + 0.5f);
-            posPx.y = (int)((float)layer->pos.y * presentScale + 0.5f);
+            int rot;
+            /* 落位用**设备轴原点** devPos（旋转态弹层≠逻辑全局 pos）。 */
+            posPx.x = (int)((float)layer->devPos.x * presentScale + 0.5f);
+            posPx.y = (int)((float)layer->devPos.y * presentScale + 0.5f);
+            /* [实时取角 2026-10-24] 旋转角**每帧实时**取自窗口，不缓存：
+               安卓主窗几何由系统决定，setGeometry 未必被调用（真机实测
+               主窗全程无 setGeometry 日志），若只在 setGeometry 里记角，
+               主窗的角会永远停在 0 → 切了方向但画面不转。
+               弹层（Popup）已按 transientParent 继承主窗的角
+               （XWindow_setTransientParent → xwin_inheritTransientRotation），
+               故这里对所有图层统一实时取角，弹层与主窗同角同源。 */
+            rot = layer->win ? XWindow_contentRotationDegrees(layer->win) : 0;
             pthread_mutex_unlock(&g_xpad.m_mutex);
-            xpad_drawImage(&buf, img, &posPx, winFmt, presentScale);
+            if (rot != 0)
+                /* 内容旋转：逻辑帧按 R⁻¹ 转置后写进设备 footprint
+                   （与桌面 posix/win32 同源口径，XWindowRotation.h 唯一样本）。 */
+                xpad_drawImageRotated(&buf, img, &posPx, winFmt, presentScale,
+                                      rot);
+            else
+                xpad_drawImage(&buf, img, &posPx, winFmt, presentScale);
             pthread_mutex_lock(&g_xpad.m_mutex);
         }
     }
@@ -661,6 +865,8 @@ static void xpad_registerWindow(XWindow* window)
         g_xpadWindows[g_xpadWindowCount].win = window;
         g_xpadWindows[g_xpadWindowCount].pos.x = geom.x;
         g_xpadWindows[g_xpadWindowCount].pos.y = geom.y;
+        g_xpadWindows[g_xpadWindowCount].devPos.x = geom.x;
+        g_xpadWindows[g_xpadWindowCount].devPos.y = geom.y;
         g_xpadWindows[g_xpadWindowCount].visible = true;
         g_xpadWindows[g_xpadWindowCount].lastImage = NULL;
         ++g_xpadWindowCount;
@@ -829,17 +1035,26 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
 bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
 {
     /* 安卓主窗几何由系统决定；弹层（菜单/Popup）的位置经此处下发——
-       记录到图层表供 present 按位叠加。 */
+       记录到图层表供 present 按位叠加。
+       [内容旋转 2026-10-24 安卓旋转接入] 旋转角**不在此处缓存**：
+       安卓主窗几何由系统决定，setGeometry 未必被调用（真机实测主窗全程
+       无 setGeometry），缓存会停在 0°。present 与输入两侧都改为**每帧
+       实时**取 XWindow_contentRotationDegrees（弹层已按 transientParent
+       继承主窗的角），故此处只管位置。 */
     if (!window || !geometry) return false;
     pthread_mutex_lock(&g_xpad.m_mutex);
     {
         XPadLayer* layer = xpad_findLayer(window);
-        if (layer) { layer->pos.x = geometry->x; layer->pos.y = geometry->y; }
+        if (layer) {
+            layer->pos.x = geometry->x;
+            layer->pos.y = geometry->y;
+        }
     }
     pthread_mutex_unlock(&g_xpad.m_mutex);
-    XPAD_LOGI("setGeometry: win=%p pos=(%d,%d) size=%dx%d",
+    XPAD_LOGI("setGeometry: win=%p pos=(%d,%d) size=%dx%d rot=%d",
               (void*)window, geometry->x, geometry->y,
-              geometry->width, geometry->height);
+              geometry->width, geometry->height,
+              XWindow_contentRotationDegrees(window));
     return true;
 }
 
@@ -879,6 +1094,19 @@ bool XPlatformNativeWindow_setWindowState(XWindow* window,
         if (!logicalFrame && dpr > 0.0f) {
             fw = (int)((float)fw / dpr + 0.5f);
             fh = (int)((float)fh / dpr + 0.5f);
+        }
+        /* [旋转感知 2026-10-24] 90/270 时窗口的**逻辑**尺寸必须取对调后的
+           (fh, fw)：内容旋转的设备 footprint = 逻辑宽高对调（XWindowRotation.h
+           口径），只有逻辑尺寸 = (fh, fw) 时 footprint 才恰等于面板矩形
+           (fw, fh) → 内容铺满。沿用未对调的 (fw, fh) 会让 footprint 变成
+           另一个矩形 → 内容被裁、面板留黑（用户实测：最大化态切 90° 内容
+           只占半屏、右侧全黑；全屏态同理）。0/180 不换轴。
+           注：presentScale 是**屏级**系数（surfW / 屏逻辑宽），与窗口尺寸
+           无关，故换向后放大倍数保持一致，无需另算。 */
+        if (XWindow_rotationSwapsAxes(XWindow_contentRotationDegrees(window))) {
+            int t = fw;
+            fw = fh;
+            fh = t;
         }
         XRect_init(&target, 0, 0, fw, fh);
         XWindow_setGeometry_rect(window, &target);
@@ -928,6 +1156,21 @@ bool XPlatformNativeWindow_setSizeHints(XWindow* window)
     return true;
 }
 
+bool XPlatformNativeWindow_setTransientParent(XWindow* window, XWindow* parent)
+{
+    /* [安卓契约补齐 2026-10-24] 安卓无 WM，无 owner/瞬态父的 Z 序语义，
+     * 与 Unsupported 存根同口径：no-op 且返回 true（公共层据此视为已落地）。
+     *
+     * 缺这个实现的直接后果：全新配置目录链接 libxguidemo.so 必报
+     * "undefined symbol: XPlatformNativeWindow_setTransientParent"
+     * （引用点 Src/XGui/Window/XWindow.c 的 XWindow_setTransientParent，
+     *  守卫 XPLATFORMNATIVEWINDOW_ON=1，平台无关故各平台都需要）。
+     * 此前 x86_64 能链接是侥幸——其 libXinYueCS.a 是陈旧归档，符号来自
+     * 旧的 Unsupported 存根；一旦重新配置/全新目录即暴露。 */
+    (void)window; (void)parent;
+    return true;
+}
+
 bool XPlatformNativeWindow_setKeyboardGrabEnabled(XWindow* window, bool grab)
 { (void)window; (void)grab; return true; }
 
@@ -966,6 +1209,14 @@ XWindow* XPlatformNativeWindow_windowForWinId(XWindowId id)
 bool XPlatformNativeWindow_processPendingEvents(void)
 {
     bool had = false;
+    /* [2026-10-24 安卓无障碍接入] 每帧重建无障碍快照：demo 走
+       XCoreApplication_exec 循环（不经 XGuiApplication_processEvents），
+       故无障碍泵挂在平台层事件泵上——渲染线程、每帧、控件树安全。
+       快照供 Java 侧 AccessibilityNodeProvider 读取（TalkBack）。 */
+    {
+        extern void xa11y_pumpSnapshot(void);
+        xa11y_pumpSnapshot();
+    }
     pthread_mutex_lock(&g_xpad.m_mutex);
     /* Activity 已销毁后不再向框架注入任何事件（窗口树可能正在析构）。 */
     if (g_xpad.m_destroyed) {
@@ -1017,6 +1268,11 @@ bool XPlatformNativeWindow_processPendingEvents(void)
     {
         XPadLayer* targetLayer = NULL;
         int ti;
+        /* 设备原点先行换算：命中判定用的图层原点必须是**设备轴**原点
+           （旋转态弹层与主窗的 devPos 不同，见 xpad_updateDeviceOrigins）。
+           present 侧已算过一遍，这里再算一次以覆盖「首帧前注入」与
+           「弹层几何在两次 present 之间变更」两种情形（幂等、纯算）。 */
+        xpad_updateDeviceOrigins();
         for (ti = g_xpadWindowCount - 1; ti >= 0; --ti)
             if (g_xpadWindows[ti].visible) { targetLayer = &g_xpadWindows[ti]; break; }
         if (targetLayer) {
@@ -1129,8 +1385,8 @@ bool XPlatformNativeWindow_processPendingEvents(void)
                         /* BlueStacks 等报屏幕坐标，WSA 报窗口本地坐标——
                            按图层登记的窗口原点换算（原点 0 平台不受影响）；
                            单 surface 模型下表面坐标即全局坐标。 */
-                        pos.x = frame.pts[0].x - targetLayer->pos.x;
-                        pos.y = frame.pts[0].y - targetLayer->pos.y;
+                        pos.x = frame.pts[0].x - targetLayer->devPos.x;
+                        pos.y = frame.pts[0].y - targetLayer->devPos.y;
                         global.x = frame.pts[0].x;
                         global.y = frame.pts[0].y;
                         pthread_mutex_unlock(&g_xpad.m_mutex);
@@ -1149,11 +1405,36 @@ bool XPlatformNativeWindow_processPendingEvents(void)
                 /* 逐点填充触点负载：本地=帧坐标减图层原点（同上换算）；
                    global=表面坐标（单 surface 模型下即全局坐标，沿用旧
                    口径——CSD 拖拽锚依赖全局坐标算增量）；无压力 valuator
-                   按 1.0（XWindowEvent.h 契约）。 */
+                   按 1.0（XWindowEvent.h 契约）。
+                   [内容旋转 2026-10-24 安卓旋转接入] 帧坐标是**表面逻辑
+                   坐标**，减去图层原点后得到图层内的**设备轴**坐标；旋转
+                   态下还需经 R⁻¹ 回到内容坐标（与 present 侧 R⁻¹ 转置互为
+                   逆运算，同一 XWindowRotation.h 口径）。基准 W/H 取该
+                   图层图像的逻辑宽高——即整层逻辑尺寸，与 present 侧
+                   xpad_drawImageRotated 用的 w/h 完全一致。 */
                 for (i = 0; i < n; ++i) {
                     pts[i].m_id = frame.pts[i].id;
-                    pts[i].m_position.x = frame.pts[i].x - targetLayer->pos.x;
-                    pts[i].m_position.y = frame.pts[i].y - targetLayer->pos.y;
+                    pts[i].m_position.x = frame.pts[i].x - targetLayer->devPos.x;
+                    pts[i].m_position.y = frame.pts[i].y - targetLayer->devPos.y;
+                    /* 旋转角实时取自窗口（与 present 侧同源，避免两端口径分叉）。
+                       基准 W/H 取该图层图像的逻辑宽高——与 present 侧
+                       xpad_drawImageRotated 用的 w/h 完全一致。 */
+                    if (targetLayer->win &&
+                        XWindow_contentRotationDegrees(targetLayer->win) != 0 &&
+                        targetLayer->lastImage) {
+                        int rot = XWindow_contentRotationDegrees(targetLayer->win);
+                        int lw = XImage_width(targetLayer->lastImage);
+                        int lh = XImage_height(targetLayer->lastImage);
+                        int lx = 0, ly = 0;
+                        if (lw > 0 && lh > 0) {
+                            XWindow_rotationUnmapPoint(rot, lw, lh,
+                                                      pts[i].m_position.x,
+                                                      pts[i].m_position.y,
+                                                      &lx, &ly);
+                            pts[i].m_position.x = lx;
+                            pts[i].m_position.y = ly;
+                        }
+                    }
                     pts[i].m_globalPosition.x = frame.pts[i].x;
                     pts[i].m_globalPosition.y = frame.pts[i].y;
                     pts[i].m_pressure = 1.0f;
@@ -1183,6 +1464,35 @@ bool XPlatformNativeWindow_processPendingEvents(void)
             }
         }
     }
+
+    /* ---- 3. 键盘注入（[2026-10-24] 与触摸同通道：目标=最后可见图层；
+       帧翻译已在 UI 线程完成，这里只投递。整段在锁外调用 WSI，与
+       触摸段同一纪律。） ---- */
+    if (g_xpadWindowCount > 0) {
+        XWindow* keyTarget = NULL;
+        int ki;
+        for (ki = g_xpadWindowCount - 1; ki >= 0; --ki)
+            if (g_xpadWindows[ki].visible) { keyTarget = g_xpadWindows[ki].win; break; }
+        if (keyTarget) {
+            XPadKeyEvent keyFrame;
+            size_t keyGot;
+            while ((keyGot = XRingBuffer_read(&g_xpad.m_keyQueue, &keyFrame,
+                                              sizeof(keyFrame))) ==
+                   sizeof(keyFrame)) {
+                had = true;
+                pthread_mutex_unlock(&g_xpad.m_mutex);
+                XWindowSystemInterface_handleKeyEvent_ex(
+                    keyTarget, (XEventType)keyFrame.type, keyFrame.key,
+                    (XKeyboardModifiers)keyFrame.modifiers,
+                    keyFrame.autoRepeat, (uint32_t)keyFrame.scanCode,
+                    keyFrame.timestampMs);
+                XPAD_LOGI("inject key: type=%d key=0x%x mods=0x%x",
+                          (int)keyFrame.type, (unsigned)keyFrame.key,
+                          (unsigned)keyFrame.modifiers);
+                pthread_mutex_lock(&g_xpad.m_mutex);
+            }
+        }
+    }
     pthread_mutex_unlock(&g_xpad.m_mutex);
     return had;
 }
@@ -1198,9 +1508,13 @@ bool XPlatformNativeWindow_refreshScreenLogicalDpi(void)
     return true;
 }
 
+/* [2026-10-24 安卓剪贴板接入] 后端实现在 Drive/Android/Core/XClipboardAndroid.c
+   （JNI ClipboardManager 单格式文本），此处仅转发安装。 */
+void XAndroidClipboard_installBackend(void);
+
 void XPlatformNativeWindow_installClipboardBackend(void)
 {
-    /* 安卓剪贴板（JNI ClipboardManager）待后续批次。 */
+    XAndroidClipboard_installBackend();
 }
 
 bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
@@ -1211,8 +1525,10 @@ bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
     if (maxMilliseconds < 0) {
         pthread_mutex_lock(&g_xpad.m_mutex);
         while (!(g_xpad.m_queueReady &&
-                 XRingBuffer_available(&g_xpad.m_touchQueue) >=
-                     (size_t)sizeof(XPadTouchEvent)) &&
+                 (XRingBuffer_available(&g_xpad.m_touchQueue) >=
+                      (size_t)sizeof(XPadTouchEvent) ||
+                  XRingBuffer_available(&g_xpad.m_keyQueue) >=
+                      (size_t)sizeof(XPadKeyEvent))) &&
                !g_xpad.m_surfaceDirty && !g_xpad.m_destroyed)
             pthread_cond_wait(&g_xpad.m_cond, &g_xpad.m_mutex);
         pthread_mutex_unlock(&g_xpad.m_mutex);
@@ -1228,8 +1544,10 @@ bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
     pthread_mutex_lock(&g_xpad.m_mutex);
     rc = 0;
     while (!(g_xpad.m_queueReady &&
-             XRingBuffer_available(&g_xpad.m_touchQueue) >=
-                 (size_t)sizeof(XPadTouchEvent)) &&
+             (XRingBuffer_available(&g_xpad.m_touchQueue) >=
+                  (size_t)sizeof(XPadTouchEvent) ||
+              XRingBuffer_available(&g_xpad.m_keyQueue) >=
+                  (size_t)sizeof(XPadKeyEvent))) &&
            !g_xpad.m_surfaceDirty && !g_xpad.m_destroyed && rc == 0)
         rc = pthread_cond_timedwait(&g_xpad.m_cond, &g_xpad.m_mutex, &ts);
     pthread_mutex_unlock(&g_xpad.m_mutex);
@@ -1239,8 +1557,13 @@ bool XPlatformNativeWindow_waitForEvents(int maxMilliseconds)
 bool XPlatformNativeWindow_queryKeyboardModifiers(
         XKeyboardModifiers* outModifiers)
 {
-    (void)outModifiers;
-    return false;
+    /* [2026-10-24 平台补扫] 由键盘帧维护的修饰键位快照（物理键盘场景；
+       触摸为主时恒 NoModifier——与 win32 GetKeyState 通道语义对齐）。 */
+    if (!outModifiers) return false;
+    pthread_mutex_lock(&g_xpad.m_mutex);
+    *outModifiers = (XKeyboardModifiers)g_xpad.m_keyModifiers;
+    pthread_mutex_unlock(&g_xpad.m_mutex);
+    return true;
 }
 
 bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
@@ -1249,13 +1572,20 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     return xpad_present(window, image, region, offset);
 }
 
-/* 内容旋转能力（2026-10-18）：本轮未实现软件旋转路径，恒不支持——
-   XWindow_setContentRotation 返回 false，调用方据此置灰 UI（D7/R18）。 */
+/* 内容旋转能力（2026-10-24 安卓旋转接入）：安卓为软件渲染直写 surface，
+   旋转由 present 侧逐像素 R⁻¹ 转置实现（xpad_drawImageRotated），
+   无 X11 那种 visual/深度限制，故恒可旋转。
+   dpr>1 放行（本层自持，2026-10-24 从框架层下沉）：安卓的 presentScale 由
+   surface 实测推导（surfW/logicalW），与 dpr 解耦——旋转在**逻辑空间**
+   完成后再按 presentScale 放大到物理，两者正交，dpr 只影响放大倍数、
+   不影响旋转正确性，故 dpr>1 仍判支持（桌面 win32 / X11 直拷不缩放，
+   相反需降级 0°，见各自后端的同名函数）。 */
 bool XPlatformNativeWindow_rotationSupported(const XWindow* window)
 {
     (void)window;
-    return false;
+    return true;
 }
+
 
 void* XPlatformNativeWindow_nativeConnection(
         XPlatformNativeWindowConnectionType* outType)
@@ -1516,6 +1846,117 @@ void XPad_onNativeWindowDestroyed(void)
     if (old) ANativeWindow_release(old); /* 引用计数保证 present 中的对象存活 */
 }
 
+/** @brief AKEYCODE → XKey 码位翻译（对标 win32 xpwn_translateKey 码表）。
+ *  @details 字母恒大写（X11 同款归一：XKey_A..Z=0x41..0x5A，大小写经
+ *           Shift 修饰位表达）；数字/可打印 ASCII 恒等；功能键/方向键
+ *           走 XKey_* 专码。无法识别返回 XKey_None（事件整条丢弃）。
+ *           AKEYCODE_BACK 映射 XKey_Escape：壳层对输入恒 handled=1，
+ *           返回键无系统默认行为，给 Esc 语义（退弹层/关对话框）比
+ *           静默丢弃有用。 */
+static int xpad_translateKeyCode(int32_t keycode)
+{
+    switch (keycode) {
+    case AKEYCODE_SPACE:          return XKey_Space;
+    /* 剪贴板专键（AKEYCODE 语义即动作）：映射框架 Ctrl+C/X/V 快捷键位，
+       修饰位由调用方强制补 Control（xlc_matchCtrlLetter 依赖）。 */
+    case AKEYCODE_COPY:           return 'C';
+    case AKEYCODE_CUT:            return 'X';
+    case AKEYCODE_PASTE:          return 'V';
+    case AKEYCODE_ENTER:          return XKey_Enter;
+    case AKEYCODE_NUMPAD_ENTER:   return XKey_Enter;
+    case AKEYCODE_BACK:           return XKey_Escape;
+    case AKEYCODE_ESCAPE:         return XKey_Escape;
+    case AKEYCODE_DEL:            return XKey_Backspace;
+    case AKEYCODE_FORWARD_DEL:    return XKey_Delete;
+    case AKEYCODE_INSERT:         return XKey_Insert;
+    case AKEYCODE_MOVE_HOME:      return XKey_Home;
+    case AKEYCODE_MOVE_END:       return XKey_End;
+    case AKEYCODE_PAGE_UP:        return XKey_PageUp;
+    case AKEYCODE_PAGE_DOWN:      return XKey_PageDown;
+    case AKEYCODE_DPAD_LEFT:      return XKey_Left;
+    case AKEYCODE_DPAD_UP:        return XKey_Up;
+    case AKEYCODE_DPAD_RIGHT:     return XKey_Right;
+    case AKEYCODE_DPAD_DOWN:      return XKey_Down;
+    case AKEYCODE_TAB:            return XKey_Tab;
+    case AKEYCODE_SHIFT_LEFT:
+    case AKEYCODE_SHIFT_RIGHT:    return XKey_Shift;
+    case AKEYCODE_CTRL_LEFT:
+    case AKEYCODE_CTRL_RIGHT:     return XKey_Control;
+    case AKEYCODE_ALT_LEFT:
+    case AKEYCODE_ALT_RIGHT:      return XKey_Alt;
+    case AKEYCODE_META_LEFT:
+    case AKEYCODE_META_RIGHT:     return XKey_Meta;
+    case AKEYCODE_CAPS_LOCK:      return XKey_CapsLock;
+    case AKEYCODE_NUM_LOCK:       return XKey_NumLock;
+    case AKEYCODE_SCROLL_LOCK:    return XKey_ScrollLock;
+    /* 主键盘区标点：返回基础字形（Shift 变体由框架布局表派生）。 */
+    case AKEYCODE_COMMA:          return XKey_Comma;
+    case AKEYCODE_PERIOD:         return XKey_Period;
+    case AKEYCODE_MINUS:          return XKey_Minus;
+    case AKEYCODE_EQUALS:         return XKey_Equal;
+    case AKEYCODE_LEFT_BRACKET:   return XKey_BracketLeft;
+    case AKEYCODE_RIGHT_BRACKET:  return XKey_BracketRight;
+    case AKEYCODE_BACKSLASH:      return XKey_Backslash;
+    case AKEYCODE_SEMICOLON:      return XKey_Semicolon;
+    case AKEYCODE_APOSTROPHE:     return XKey_Apostrophe;
+    case AKEYCODE_SLASH:          return XKey_Slash;
+    case AKEYCODE_AT:             return XKey_At;
+    case AKEYCODE_PLUS:           return XKey_Plus;
+    case AKEYCODE_GRAVE:          return XKey_QuoteLeft;
+    case AKEYCODE_STAR:           return XKey_Asterisk;
+    case AKEYCODE_POUND:          return 0x23; /* '#'（ASCII 恒等区）。 */
+    /* 小键盘：数字/符号复用主键盘码位（KeypadModifier 由调用方补充）。 */
+    case AKEYCODE_NUMPAD_0:       return XKey_0;
+    case AKEYCODE_NUMPAD_1:       return XKey_1;
+    case AKEYCODE_NUMPAD_2:       return XKey_2;
+    case AKEYCODE_NUMPAD_3:       return XKey_3;
+    case AKEYCODE_NUMPAD_4:       return XKey_4;
+    case AKEYCODE_NUMPAD_5:       return XKey_5;
+    case AKEYCODE_NUMPAD_6:       return XKey_6;
+    case AKEYCODE_NUMPAD_7:       return XKey_7;
+    case AKEYCODE_NUMPAD_8:       return XKey_8;
+    case AKEYCODE_NUMPAD_9:       return XKey_9;
+    case AKEYCODE_NUMPAD_DIVIDE:  return XKey_Slash;
+    case AKEYCODE_NUMPAD_MULTIPLY:return XKey_Asterisk;
+    case AKEYCODE_NUMPAD_SUBTRACT:return XKey_Minus;
+    case AKEYCODE_NUMPAD_ADD:     return XKey_Plus;
+    case AKEYCODE_NUMPAD_DOT:     return XKey_Period;
+    case AKEYCODE_NUMPAD_COMMA:   return XKey_Comma;
+    case AKEYCODE_NUMPAD_EQUALS:  return XKey_Equal;
+    default:
+        /* 功能键 F1..F12（AKEYCODE_F1=131..F12=142）。 */
+        if (keycode >= AKEYCODE_F1 && keycode <= AKEYCODE_F12)
+            return XKey_F1 + (keycode - AKEYCODE_F1);
+        /* 字母（A=29..Z=54）与数字（0=7..9=16）：大写/ASCII 恒一口径。 */
+        if (keycode >= AKEYCODE_A && keycode <= AKEYCODE_Z)
+            return XKey_A + (keycode - AKEYCODE_A);
+        if (keycode >= AKEYCODE_0 && keycode <= AKEYCODE_9)
+            return XKey_0 + (keycode - AKEYCODE_0);
+        return XKey_None;
+    }
+}
+
+/** @brief AMETA_* 位 → XKeyboardModifiers 翻译。 */
+static int xpad_translateKeyModifiers(int32_t metaState, int32_t keycode,
+                                      int key)
+{
+    int modifiers = XKeyboardModifier_NoModifier;
+    if ((metaState & AMETA_SHIFT_ON) != 0)
+        modifiers |= XKeyboardModifier_ShiftModifier;
+    if ((metaState & AMETA_CTRL_ON) != 0)
+        modifiers |= XKeyboardModifier_ControlModifier;
+    if ((metaState & AMETA_ALT_ON) != 0)
+        modifiers |= XKeyboardModifier_AltModifier;
+    if ((metaState & AMETA_META_ON) != 0)
+        modifiers |= XKeyboardModifier_MetaModifier;
+    /* 小键盘键（NUMPAD_* 族）补 Keypad 标记，与 win32 VK 0x60-0x6f
+       同一约定（keyToText 按此位跳过 Shift 布局表）。 */
+    if (key != XKey_None &&
+        keycode >= AKEYCODE_NUMPAD_0 && keycode <= AKEYCODE_NUMPAD_EQUALS)
+        modifiers |= XKeyboardModifier_KeypadModifier;
+    return modifiers;
+}
+
 void XPad_onInputEvent(AInputEvent* event)
 {
     int32_t type = AInputEvent_getType(event);
@@ -1528,6 +1969,86 @@ void XPad_onInputEvent(AInputEvent* event)
     int n;
     int i;
     size_t written;
+
+    /* ---- 键盘分支（[2026-10-24 安卓键盘接入] 此前 KEY 事件整类丢弃，
+       物理键盘/adb input text 打字全无反应）: UI 线程就地翻译（码表 +
+       修饰位 + 时间戳 ns→ms），值拷贝入 m_keyQueue，渲染线程泵注入。 */
+    if (type == AINPUT_EVENT_TYPE_KEY) {
+        int32_t action = AKeyEvent_getAction(event);
+        int32_t keycode = AKeyEvent_getKeyCode(event);
+        int32_t metaState = AKeyEvent_getMetaState(event);
+        int32_t scanCode = AKeyEvent_getScanCode(event);
+        XPadKeyEvent keyFrame;
+        int key = xpad_translateKeyCode(keycode);
+        if (key == XKey_None) return; /* 未识别键（音量/媒体等）静默丢弃 */
+        keyFrame.key = key;
+        keyFrame.modifiers = xpad_translateKeyModifiers(metaState, keycode,
+                                                        key);
+        /* 剪贴板专键强制 Ctrl 修饰（框架复制/剪切/粘贴入口=Ctrl+字母）。 */
+        if (keycode == AKEYCODE_COPY || keycode == AKEYCODE_CUT ||
+            keycode == AKEYCODE_PASTE)
+            keyFrame.modifiers |= XKeyboardModifier_ControlModifier;
+        keyFrame.scanCode = scanCode;
+        keyFrame.timestampMs =
+            (uint32_t)(AKeyEvent_getEventTime(event) / 1000000LL);
+        if (keyFrame.timestampMs == 0)
+            keyFrame.timestampMs = 1; /* 非合成判据：时间戳/扫描码不双零 */
+        if (action == AKEY_EVENT_ACTION_UP) {
+            keyFrame.type = XEVENT_TYPE_KEY_RELEASE;
+            keyFrame.autoRepeat = false;
+        }
+        else {
+            /* DOWN 与 ACTION_MULTIPLE（系统连发合并帧）都按按下注入；
+               MULTIPLE 的 repeatCount 不逐条展开——框架按 autoRepeat
+               识别连发节奏，行编辑的删除/移动键自然连续。 */
+            keyFrame.type = XEVENT_TYPE_KEY_PRESS;
+            keyFrame.autoRepeat = (action == AKEY_EVENT_ACTION_MULTIPLE)
+                                      ? true
+                                      : AKeyEvent_getRepeatCount(event) > 0;
+        }
+        pthread_mutex_lock(&g_xpad.m_mutex);
+        if (!g_xpad.m_queueReady) {
+            XRingBuffer_init(&g_xpad.m_touchQueue, 512);
+            XRingBuffer_init(&g_xpad.m_keyQueue, 512);
+            g_xpad.m_queueReady = true;
+        }
+        /* 修饰键位跟踪（queryKeyboardModifiers 口径）：
+         * PRESS=以事件自带 metaState 全量重建（自校正）；修饰键自身的
+         * RELEASE 单独清位（metaState 在修饰键 UP 上是否含自身位因
+         * 设备而异，不能全量信任）。其余键的 RELEASE 不动位。 */
+        if (keyFrame.type == XEVENT_TYPE_KEY_PRESS) {
+            g_xpad.m_keyModifiers = keyFrame.modifiers;
+            if (key == XKey_Shift)
+                g_xpad.m_keyModifiers |= XKeyboardModifier_ShiftModifier;
+            else if (key == XKey_Control)
+                g_xpad.m_keyModifiers |= XKeyboardModifier_ControlModifier;
+            else if (key == XKey_Alt)
+                g_xpad.m_keyModifiers |= XKeyboardModifier_AltModifier;
+            else if (key == XKey_Meta)
+                g_xpad.m_keyModifiers |= XKeyboardModifier_MetaModifier;
+        }
+        else if (key == XKey_Shift)
+            g_xpad.m_keyModifiers &= ~XKeyboardModifier_ShiftModifier;
+        else if (key == XKey_Control)
+            g_xpad.m_keyModifiers &= ~XKeyboardModifier_ControlModifier;
+        else if (key == XKey_Alt)
+            g_xpad.m_keyModifiers &= ~XKeyboardModifier_AltModifier;
+        else if (key == XKey_Meta)
+            g_xpad.m_keyModifiers &= ~XKeyboardModifier_MetaModifier;
+        written = XRingBuffer_write(&g_xpad.m_keyQueue, &keyFrame,
+                                    sizeof(keyFrame));
+        if (written != sizeof(keyFrame)) {
+            XRingBuffer_reset(&g_xpad.m_keyQueue);
+            XPAD_LOGI("key queue: partial write %u/%u, reset & drop",
+                      (unsigned)written, (unsigned)sizeof(keyFrame));
+        }
+        pthread_cond_broadcast(&g_xpad.m_cond);
+        pthread_mutex_unlock(&g_xpad.m_mutex);
+        XPAD_LOGI("key frame: action=%d keycode=%d key=0x%x mods=0x%x",
+                  (int)action, (int)keycode, (unsigned)keyFrame.key,
+                  (unsigned)keyFrame.modifiers);
+        return;
+    }
 
     if (type != AINPUT_EVENT_TYPE_MOTION) return;
     /* origin 查询（JNI 往返）在锁外：不持 g_xpad.m_mutex 做 JNI（与
@@ -1549,6 +2070,7 @@ void XPad_onInputEvent(AInputEvent* event)
     pthread_mutex_lock(&g_xpad.m_mutex);
     if (!g_xpad.m_queueReady) {
         XRingBuffer_init(&g_xpad.m_touchQueue, 512);
+        XRingBuffer_init(&g_xpad.m_keyQueue, 512);
         g_xpad.m_queueReady = true;
     }
     dpr = g_xpad.m_dpr;

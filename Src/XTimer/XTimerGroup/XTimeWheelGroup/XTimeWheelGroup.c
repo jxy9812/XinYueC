@@ -71,6 +71,8 @@ static void delete_timer_node(XTimeWheelGroup* group, XListSNode* node)
  */
 static void sweep_cancelled_timers(XTimeWheelGroup* group)
 {
+    /* 2026-10-22 ESP8266 崩溃定位打点（定位后删）：进入 sweep 与 exchange
+     * 前后各一条，区分崩在 exchange 本身还是后续槽遍历。 */
     if (!XAtomic_exchange_bool(&group->m_hasCancelledTimers, false,
                                XAtomic_MemoryOrder_AcqRel))
         return;
@@ -393,6 +395,8 @@ static void process_timer_list(XTimeWheelGroup* group, XListSNode* head, size_t 
         if (timer->m_expire_ticks <= current_tick)
         {
             // 已到期，直接触发
+            /* 2026-10-22 ESP8266 崩溃定位打点：到期回调前后各打一条。
+             * XPrintf 在板上走 os_printf→putc1→UART0，与 uart0_puts 同通道。 */
             XTimerData_out(&timer->m_data);
 
             if ((!timer->m_data.m_isSingleShot) && (timer->m_data.m_interval > 0))

@@ -17,12 +17,14 @@
 
 #include <android/native_activity.h>
 #include <android/native_window.h>
+#include <android/asset_manager.h>
 #include <android/log.h>
 #include <pthread.h>
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/stat.h>
 
 /* 平台层接线（Drive/Android/Graphics/XPlatformWindowAndroid.c）。 */
 void XPad_onNativeWindowCreated(ANativeWindow* window);
@@ -45,6 +47,129 @@ void XAndroid_setMainActivity(jobject activity);
 extern int xgui_window_demo_main(int argc, char* argv[]);
 
 #define XPAD_LOG(...) ((void)__android_log_print(ANDROID_LOG_INFO, "XGuiDemo", __VA_ARGS__))
+
+/* ---- 外挂字库释放（2026-10-24）--------------------------------------
+ * 框架的 FT 轮廓字按编译期目录 XFONT_EXTERNAL_FT_FONT_DIR 查找
+ * <dir>/<family>.{ttf,otf,ttc}；安卓上该目录（默认 ../Library/XFont）
+ * 是构建机路径，设备上不存在 → FT 装载失败 → 回退位图字库 XFont8x16
+ * （仅 ASCII），表现为中文整片缺失/乱码（真机截图实证）。
+ * 修法：APK 打包时把字体放进 assets/fonts/，启动时经 AAssetManager
+ * 拷到应用私有目录 files/fonts/，编译期字体目录指向该目录
+ * （CMake 安卓分支注入 XFONT_EXTERNAL_FT_FONT_DIR）。
+ * 释放失败不阻断启动：框架会照常回退位图字库，行为与此前一致。 */
+#define XPAD_FONT_ASSET_DIR "fonts"
+#define XPAD_FONT_FILE     "XFontOutlineCommon.otf"
+
+/** @brief 递归建目录（mkdir -p 语义；已存在返回 true）。 */
+static bool xpad_mkdirs(const char* path)
+{
+    char buf[512];
+    size_t i;
+    size_t len;
+    if (!path || !path[0]) return false;
+    len = strlen(path);
+    if (len >= sizeof(buf)) return false;
+    memcpy(buf, path, len + 1u);
+    for (i = 1; i < len; ++i) {
+        if (buf[i] != '/') continue;
+        buf[i] = '\0';
+        if (mkdir(buf, 0755) != 0) {
+            /* 已是目录则不算失败（EEXIST）。 */
+            struct stat st;
+            if (stat(buf, &st) != 0 || !S_ISDIR(st.st_mode)) return false;
+        }
+        buf[i] = '/';
+    }
+    if (mkdir(buf, 0755) != 0) {
+        struct stat st;
+        if (stat(buf, &st) != 0 || !S_ISDIR(st.st_mode)) return false;
+    }
+    return true;
+}
+
+/** @brief 把 APK assets 里的字体释放到应用私有目录（幂等：已存在则跳过）。
+ *  @details 释放目标目录**直接取编译期的 XFONT_EXTERNAL_FT_FONT_DIR**
+ *           （CMake 安卓分支注入），与框架 FT 链的探测目录是同一个宏、
+ *           同一个值——两者分离过一次，导致「释放到了 A 目录、FT 去 B
+ *           目录找」→ 探测落空 → 回退位图字库（仅 ASCII）→ 中文整片
+ *           缺失（真机截图实证）。internalDataPath 仅作校验参考
+ *           （用户 0 下为 /data/user/0/<pkg>/files，与注入的
+ *           /data/data/<pkg>/files 同一 inode）。 */
+static void xpad_releaseFontAsset(ANativeActivity* activity)
+{
+    AAssetManager* mgr;
+    AAsset* asset;
+    const char* filesDir;
+    char dir[512];
+    char target[640];
+    FILE* out;
+    long size;
+    long got;
+    if (!activity || !activity->assetManager) return;
+    filesDir = activity->internalDataPath;
+    if (!filesDir || !filesDir[0]) {
+        XPAD_LOG("font: internalDataPath empty, skip");
+        return;
+    }
+    /* 释放目录 = 编译期注入的字体目录（与 FT 探测同源）。 */
+    snprintf(dir, sizeof(dir), "%s", XFONT_EXTERNAL_FT_FONT_DIR);
+    if (!xpad_mkdirs(dir)) {
+        XPAD_LOG("font: mkdir failed %s", dir);
+        return;
+    }
+    snprintf(target, sizeof(target), "%s/%s", dir, XPAD_FONT_FILE);
+    {
+        struct stat st;
+        if (stat(target, &st) == 0 && st.st_size > 0) {
+            XPAD_LOG("font: already released %s", target);
+            return;
+        }
+    }
+    mgr = activity->assetManager;
+    asset = AAssetManager_open(mgr, XPAD_FONT_ASSET_DIR "/" XPAD_FONT_FILE,
+                               AASSET_MODE_STREAMING);
+    if (!asset) {
+        XPAD_LOG("font: asset %s/%s not found in APK",
+                  XPAD_FONT_ASSET_DIR, XPAD_FONT_FILE);
+        return;
+    }
+    out = fopen(target, "wb");
+    if (!out) {
+        AAsset_close(asset);
+        XPAD_LOG("font: open %s failed", target);
+        return;
+    }
+    size = (long)AAsset_getLength(asset);
+    got = 0;
+    /* 逐块读出（单次读入量必须夹在 chunk 内）：原实现把「剩余总长」直接
+       当作 AAsset_read 的读入量传给 8KB 栈缓冲 → 3.5MB 字库直接踩爆栈
+       （真机 tombstone：SIGSEGV in memcpy ← StreamingZipInflater::read
+       ← AAsset_read ← ANativeActivity_onCreate）。size<=0（长度未知）时
+       按 EOF 收敛。 */
+    for (;;) {
+        char chunk[8192];
+        size_t want = sizeof(chunk);
+        int n;
+        if (size > 0) {
+            size_t remain = (size_t)(size - got);
+            if (remain == 0) break;
+            if (remain < want) want = remain;
+        }
+        n = (int)AAsset_read(asset, chunk, want);
+        if (n <= 0) break;
+        if (fwrite(chunk, 1, (size_t)n, out) != (size_t)n) break;
+        got += n;
+    }
+    fclose(out);
+    AAsset_close(asset);
+    if (got > 0 && (size <= 0 || got == size)) {
+        XPAD_LOG("font: released %s (%ld bytes)", target, got);
+    }
+    else {
+        XPAD_LOG("font: release incomplete %ld/%ld", got, size);
+        remove(target);
+    }
+}
 
 /* demo 侧诊断通道（xgui_window_demo.c 验证用）：stdout 不可见，转 logcat。 */
 void XGuiDemo_debugLog(const char* text)
@@ -305,6 +430,10 @@ void ANativeActivity_onCreate(ANativeActivity* activity, void* savedState,
         XAndroid_setJavaVm(activity->vm);
     XAndroid_setMainActivity(activity->clazz);
     XPad_setActivity(activity);
+
+    /* 外挂字库释放（2026-10-24）：必须在渲染线程起跑（demo_main 会立即
+       建控件并用字体）之前完成——否则首帧已回退位图字库，释放后也不重载。 */
+    xpad_releaseFontAsset(activity);
 
     InstallCallbacks(activity);
 

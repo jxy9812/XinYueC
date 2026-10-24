@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if XSERIALPORT_ON
+#if XDEVICE_ON && XDEVICE_SERIALPORT_ON
 
 /* 所选平台在自己的 .c 中实现这些钩子；它们不是公共 API。 */
 XDeviceSerialPortContext* XDeviceSerialPort_platformCreateContext(void);
@@ -745,4 +745,4 @@ XDeviceSerialPortPortList* XDeviceSerialPort_availablePorts(XFd fd)
     return NULL;
 }
 
-#endif /* XSERIALPORT_ON */
+#endif /* XDEVICE_SERIALPORT_ON */

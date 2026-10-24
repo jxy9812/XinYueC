@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "XDevice.h"
+#include "XDevice_config.h"
 #include "XHostAddress.h"
 #include "XFileDescriptor.h"
 #include "XNetworkProxy.h"
@@ -35,7 +36,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#if XNETWORK_ON
+#if XDEVICE_ON && XDEVICE_NETWORK_ON
 
 /**
  * @brief XNetworkInterface 的不完整类型声明。

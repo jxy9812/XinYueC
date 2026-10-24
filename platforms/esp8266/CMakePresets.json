@@ -1,0 +1,35 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "ESP8266 NONOS3 固件",
+      "description": "独立子工程：xtensa 交叉编译在 bash 管线内完成，CMake 只做编排（fw/flash/monitor）",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/../../build_esp",
+      "cacheVariables": {
+        "FW_COM_PORT": "auto"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "fw",
+      "displayName": "编译固件",
+      "configurePreset": "default",
+      "targets": ["fw"]
+    },
+    {
+      "name": "flash",
+      "displayName": "烧录到板子",
+      "configurePreset": "default",
+      "targets": ["flash"]
+    }
+  ]
+}

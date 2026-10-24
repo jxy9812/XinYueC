@@ -142,13 +142,16 @@ bool XWindow_isCsdFrameSuppressed(const XWindow* self);
 
 /**
  * @brief      查询当前平台是否支持对本窗口做软件内容旋转（框架内部接口）。
- * @details    纯读、无副作用。判据：
- *              - dpr > 1.0f 一律 false：present 的物理放大腿与旋转换算
- *                口径互斥（缩在左上角、其余留旧像素），直接降级 0°；
- *              - X11 查上屏描述符是否 32 位直拷布局（m_presentDirect 判据
- *                同 present）；RGB16(565) 构建与真 24 位视觉不提供
- *                软件旋转，返回 false；
- *              - fbdev 查零拷贝模式（原生缓冲直写时中间无可转的帧）。
+ * @details    纯读、无副作用。能力权威在**平台层**
+ *             （XPlatformNativeWindow_rotationSupported），由各后端按
+ *             自身 present 路径自持两条判据：
+ *              - 上屏通道是否具备：X11 查上屏描述符是否 32 位直拷布局
+ *                （m_presentDirect 判据同 present）；RGB16(565) 构建与
+ *                真 24 位视觉不提供软件旋转，返回 false；fbdev 查零拷贝
+ *                模式（原生缓冲直写时中间无可转的帧）；
+ *              - dpr 口径：present 的物理放大腿与旋转换算口径互斥时
+ *                降级 0°（桌面 win32/X11 直拷不缩放 → dpr>1 不支持；
+ *                安卓逻辑空间转置 + 独立物理放大，两者正交 → 放行）。
  *             本函数是 XWindow_contentRotationDegrees 计算「有效角度」
  *             的唯一能力入口：条件后来满足时 getter 自动恢复，无需回写。
  * @param      self 目标窗口；可为 NULL。

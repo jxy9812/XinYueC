@@ -3,7 +3,7 @@
 本目录是 XinYueC 在 ESP8266 上的平台层。目标硬件 **HW-364A**（NodeMCU 形态：
 ESP8266EX + CH340G USB 转串口 + 4MB Flash + 板载 0.96" OLED）。
 
-> **操作手册（构建/烧录/引脚/OLED/命令速查）见仓库根 `esp8266/PROGRESS.md`。**
+> **操作手册（构建/烧录/引脚/OLED/命令速查）见仓库根 `platforms/esp8266/docs/PROGRESS.md`。**
 > 本 README 只描述平台层代码的组织与状态。
 
 ## 现状总览（2026-10-18，全部真机验证）
@@ -18,7 +18,7 @@ ESP8266EX + CH340G USB 转串口 + 4MB Flash + 板载 0.96" OLED）。
 | **OLED 驱动**（SSD1315/SSD1306 I2C，图案上屏） | ✅ | `build/arduino_oled3/app.c` |
 | XinYueC 最小集清单（210 文件+裁剪头） | ✅ | `build/esp8266_console/` + `docs/esp8266_minimal_port.md` |
 | FreeRTOS V9 调度器 | ✅ 单独跑通；**最终不并入**（与 NONOS WiFi 结构互斥），代码保留由宏门控 | `Drive/FreeRTOS/portable/GCC/XTENSA_LX106/`（`XESP8266_FREERTOS_V9_ON` 默认 0） |
-| 内存分配 | ✅ 框架池：XVariablePool(.bss arena) + XMultiPool(小对象快路径) | `Src/XMemory/`（配置见 `esp8266/PROGRESS.md` §0 配方） |
+| 内存分配 | ✅ 框架池：XVariablePool(.bss arena) + XMultiPool(小对象快路径) | `Src/XMemory/`（配置见 `platforms/esp8266/docs/PROGRESS.md` §0 配方） |
 | XGui 显示集成 | ⏸️ 待 OLED 驱动合入 | `build/arduino_gui/`（配置档案已产出） |
 
 ## 运行时架构（定稿）
@@ -40,7 +40,7 @@ XCoreApplication 事件循环（一拍一循环）
   零碎片）+ `XMEMORY_VARIABLEPOOL_ON=1`（裸机 arena = .bss 静态缓冲），
   池档位按实际裁（`XMP_GLOBAL_C512=0`，`XMEMORY_HYBRID_THRESHOLD` 必须 ≤ 最大档位，
   否则 XMultiPool 找不到档位会直接返回 NULL 且不回退变量池）。
-- 完整配方与踩坑：仓库 `esp8266/PROGRESS.md` §0 / §3.5。
+- 完整配方与踩坑：仓库 `platforms/esp8266/docs/PROGRESS.md` §0 / §3.5。
 
 ## SDK 与构建体系（重要）
 
@@ -73,7 +73,7 @@ XCoreApplication 事件循环（一拍一循环）
 7. 固件身份标记（app_entry 打印独立字符），多固件混测区分归属；
 8. 长循环调 `pp_soft_wdt_feed()`（libpp），否则 ~8s 复位。
 
-详见 `esp8266/PROGRESS.md` §3。
+详见 `platforms/esp8266/docs/PROGRESS.md` §3。
 
 ## 引脚占用（实测确证，修正过卖家错误资料）
 
@@ -99,7 +99,7 @@ XCoreApplication 事件循环（一拍一循环）
 - init 序列（26B）：`AE D5 80 A8 3F D3 00 40 8D 14 20 00 A1 C8 DA 12 81 FF
   D9 F1 DB 40 A4 A6 2E AF`
 - 事务 = START + **0x78（地址字节，必发）** + 控制(0x00 命令/0x40 数据) + 数据 + STOP
-- **三大寄存器坑**（曾造成假 ACK/浮空，详见 `esp8266/PROGRESS.md` §4）：
+- **三大寄存器坑**（曾造成假 ACK/浮空，详见 `platforms/esp8266/docs/PROGRESS.md` §4）：
   1. 内部上拉 = IOMUX **bit7**（GPIO12/14: 0x60000804/0x0C），不是 0x60000328；
   2. FUNC 域在位[4:6]且重排：GPIO12-15 func=3 → mux 值 0x30（用 SDK
      `PIN_FUNC_SELECT` 公式），直接 `func<<4` 或 `func|0x80` 都错；
@@ -180,4 +180,4 @@ probe() 发 0xAE  →  判为"已初始化"  →  跳过 re-init  →  0xAF(开�
 结果：I2C 日志全对（`init NACK=0`、八页 `nack=0 ok`、`i2cErrs=0`、`flush done`），
 **但面板一直关着，屏幕全黑**。探针已改为发 `0xE0`(NOP)。
 
-详见 `esp8266/PROGRESS.md` §4.0。
+详见 `platforms/esp8266/docs/PROGRESS.md` §4.0。

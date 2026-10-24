@@ -1520,8 +1520,14 @@ XNetworkInterface* XDeviceNetwork_enumInterfacesNext(XDeviceNetworkInterfaceIter
     if (current->Flags & IP_ADAPTER_ADAPTER_FLAG_DHCP_ENABLED) {
         iface->m_flags |= XNetworkInterface_CanMulticast;
     }
-    if (current->IfType == IF_TYPE_ETHERNET_CSMACD || current->IfType == IF_TYPE_IEEE80211) {
+    if (current->IfType == IF_TYPE_ETHERNET_CSMACD) {
         iface->m_type = XNetworkInterface_Ethernet;
+        iface->m_flags |= XNetworkInterface_CanBroadcast | XNetworkInterface_CanMulticast;
+    }
+    else if (current->IfType == IF_TYPE_IEEE80211) {
+        /* 无线网卡单列（对齐 Qt 6.8.3：IF_TYPE_IEEE80211 → Ieee80211/Wifi，
+           此前误并入 Ethernet 会让无线口在界面上显示"以太网"）。 */
+        iface->m_type = XNetworkInterface_Wifi;
         iface->m_flags |= XNetworkInterface_CanBroadcast | XNetworkInterface_CanMulticast;
     }
     else if (current->IfType == IF_TYPE_SOFTWARE_LOOPBACK) {

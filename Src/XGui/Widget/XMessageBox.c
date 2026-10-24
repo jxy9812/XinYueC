@@ -5,7 +5,7 @@
  *             头文件 @note 与函数级 Doxygen 注释。
  * @author     XinYueC 团队
  */
-
+#include "XGuiConfig.h"
 #if XGUI_ON
 
 #include "XMessageBox.h"
@@ -13,11 +13,16 @@
 #include "XEvent.h"
 #include "XWindowEvent.h"
 #include "XCoreApplication.h"
-#include "XGuiConfig.h"
+
 
 #include "XAlgorithm.h"
 #include "XStringUtils.h"
 #include "XWidget_Protected.h"
+#include "XObject.h"          /* XObject_deleteLater/XObject_children：
+                               * 取消崩溃根修（2026-10-21，XFileDialog
+                               * xff_teardown 同款移植）延迟回收与子树
+                               * 输入侧摘除依赖。 */
+#include "XVector.h"          /* XVector_size_base/at_base：子树遍历。 */
 #include "XDialog.h"
 #include "XApplication.h"
 #include "XGuiApplication.h"
@@ -468,6 +473,29 @@ static void xmsg_openCleanup(XMessageBox* box)
     box->m_openButtonPayload = false;
 }
 
+/** @brief 子树输入侧登记摘除：先子后父逐控件显式隐藏（隐藏分支在
+ *  各自 oldVisible=1 现场执行，清按钮按压靶/焦点/抓取/触点表）。
+ *  取消崩溃根修（2026-10-21，XFileDialog xff_detachInputRecursive
+ *  同款移植）：静态便捷路径 exec 返回后对话框经 DeferredDelete 延迟
+ *  析构，事件层不得再持有指向子树成员的登记（否则下一记落在对话框
+ *  区域的鼠标事件派发到已释放按钮，UAF——Windows MSVC 必现）。
+ *  须在父对话框尚未隐藏时调用；跳过子窗（弹层另行收口）。 */
+static void xmsg_detachInputRecursive(XWidget* w)
+{
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!w) return;
+    children = XObject_children((XObject*)w);
+    n = children ? XVector_size_base(children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, i);
+        if (child && child->m_is_widget && !child->m_is_window)
+            xmsg_detachInputRecursive((XWidget*)child);
+    }
+    XWidget_setVisible(w, false);
+}
+
 /** @brief 按钮盒 clicked 收口：Show Details... 切换分支 + 记录点击、
  *         发射 buttonClicked、done(标准位值)。
  *  @details 对标 QMessageBoxPrivate::buttonClicked/setClickedButton
@@ -508,6 +536,12 @@ static void xmsg_clickedSlot(XObject* receiver, XVarList* args)
      * rejected 仅由 XDialog_done 发射，须先送达 open-receiver 再断开
      * （此前断开在 done 之前，finished 载荷的 receiver 永远收不到
      * 收口回调）。 */
+    /* 收口前置子树输入侧摘除（取消崩溃根修，见 xmsg_detachInputRecursive
+     * 注）：便捷 exec 路径收尾经 DeferredDelete 延迟析构本框，收口后
+     * 事件层不得再有登记指向子树成员。open_2 复用路径跳过摘除——
+     * 对话框 done 后仍存活可复开，子树显式隐藏会使复开呈现空面板。 */
+    if (!box->m_openReceiver)
+        xmsg_detachInputRecursive(&box->m_base.m_base);
     XDialog_done(&box->m_base, xmsg_execReturnCode(box, button));
     xmsg_openCleanup(box);
 }
@@ -1025,7 +1059,14 @@ static XDialogButtonBoxStandardButton xmsg_runStatic(
     /* 递归 exec 的 -1 防护（对标 exec()==-1 → Cancel）。 */
     if ((int)result == -1)
         result = XDialogButtonBoxStandard_Cancel;
-    XClassDelete(box);
+    /* 延迟回收（取消崩溃根修，见 xmsg_detachInputRecursive 注）：
+     * exec 返回仍处于按钮 clicked 发射帧内（按压靶正指向该钮），
+     * 同步删除后下一记落在对话框区域的鼠标事件即派发到已释放按钮
+     * （UAF，Windows MSVC 消息时序必现）；DeferredDelete 的
+     * loopLevel 语义保证析构发生在控制权返回事件循环之后，返回值
+     * 已在上方提取，删除时机不影响结果回读。本路径无外部布局句柄，
+     * 无需登记表（对照 XFileDialog/XInputDialog）。 */
+    XObject_deleteLater((XObject*)box);
     return result;
 }
 

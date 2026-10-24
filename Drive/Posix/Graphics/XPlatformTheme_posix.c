@@ -1,5 +1,7 @@
 #include "XPlatformTheme.h"
-#if XPLATFORMINTEGRATION_ON && defined(__linux__)
+/* [2026-10-24 平台补扫] 安卓不读 XDG 环境变量（沙箱无桌面壳），主题探测
+ * 由 Drive/Android/Graphics/XPlatformTheme_android.c（JNI uiMode）承担。 */
+#if XPLATFORMINTEGRATION_ON && defined(__linux__) && !defined(__ANDROID__)
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>

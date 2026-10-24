@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- XGuiWindowDemo 壳清单：主逻辑在 libxguidemo.so（ANativeActivity_onCreate）。
+     2026-10-24 安卓无障碍接入：Activity 由 android.app.NativeActivity 改为
+     自有子类 com.xinyuec.android.XGuiNativeActivity（继承 NativeActivity，
+     原生窗口/输入通道不变），仅多挂一层无障碍虚拟视图树宿主（TalkBack
+     需要 Java 侧 View 树）。故 hasCode 由 false 改为 true——APK 内含
+     classes.dex。
+     2026-10-24 分层修正：这几个 Java 类是**框架安卓平台层的 JNI 桥**（与
+     Drive/Android/ 下的 C 侧平台实现对应），已移至 Drive/Android/java/
+     并用平台包 com.xinyuec.android——不再寄生在应用包下。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.xinyuec.xguidemo"
+    android:versionCode="1"
+    android:versionName="0.1">
+
+    <!-- 网络：应用进程的 socket() 受 INTERNET 权限的 SELinux 门控，
+         缺失时 socket(AF_INET, SOCK_DGRAM/TCP) 一律 EACCES（2026-10-24
+         NTP「套接字创建/发送失败」根因；桌面 Linux/Win32 无此门）。 -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <!-- WiFi 扫描（XDeviceWiFi 安卓后端，2026-10-24）：前两个为普通权限；
+         扫描结果自 API 26 起需定位权限（运行时权限，缺失时结果恒空表——
+         测试/部署侧经 pm grant 或系统设置授权）。 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <!-- WiFi 连接（XDeviceWiFi 安卓后端，2026-10-24）：WifiNetworkSpecifier
+         + ConnectivityManager.requestNetwork 通道（XWifiConnector.java）需要
+         CHANGE_NETWORK_STATE；系统会弹确认框由用户同意后切网。 -->
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.DUMP"/>
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"/>
+    <uses-permission android:name="android.permission.READ_LOGS"/>
+    <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="28" />
+
+    <application
+        android:label="@string/app_name"
+        android:hasCode="true"
+        android:debuggable="true"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <activity
+            android:name="com.xinyuec.android.XGuiNativeActivity"
+            android:label="@string/app_name"
+            android:exported="true"
+            android:configChanges="orientation|keyboardHidden|screenSize">
+            <meta-data
+                android:name="android.app.lib_name"
+                android:value="xguidemo" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

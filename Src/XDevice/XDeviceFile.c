@@ -20,7 +20,7 @@ bool XDeviceFile_legacySetFileTime(XFd fd, XFileTime timeType, int64_t timeValue
 void* XDeviceFile_legacyMap(XFd fd, int64_t offset, int64_t size, int flags);
 bool XDeviceFile_legacyUnmap(void* addr, int64_t size);
 
-#if XFILE_ON
+#if XDEVICE_ON && XDEVICE_FILE_ON
 
 /* ============================================================================
  * 打开上下文

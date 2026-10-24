@@ -23,15 +23,13 @@
 extern "C" {
 #endif
 
-#ifndef XDEVICEUSBGADGET_ON
-#define XDEVICEUSBGADGET_ON 1
-#endif
-#if XDEVICEUSBGADGET_ON
+#if XDEVICE_ON && XDEVICE_USBGADGET_ON
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "XDeviceUsbHost.h"
+#include "XDevice_config.h"
 
 /* ============================================================================
  * 控制器状态 / 配置标志 / 能力
@@ -415,7 +413,7 @@ void XDeviceUsbGadget_clearError(XFd fd);
 /** @brief 获取 USB 通用错误的 UTF-8 描述。 @param error 错误值。 @return 静态 UTF-8 字符串；未知值返回 Unknown。 */
 const char* XDeviceUsbGadget_errorString(XDeviceUsbError error);
 
-#endif /* XDEVICEUSBGADGET_ON */
+#endif /* XDEVICE_USBGADGET_ON */
 
 #ifdef __cplusplus
 }

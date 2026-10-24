@@ -40,6 +40,17 @@
 #include "XCoreApplication.h" /* demo 缺省字库经 exe 目录解析外挂轮廓字库。 */
 #include "XString.h"         /* applicationVersion 注入（XUPGRADE_PRODUCT_VERSION）。 */
 #include "XGuiApplication.h"
+#include "XClipboard.h"
+#if defined(__ANDROID__)
+/* 平台补扫自检（--probe-platform）所需：主题/Services 驱动钩子、无线契约、
+ * 轮询睡眠与向量容器（头内部带模块开关守卫，桌面构建零影响）。 */
+#include "XPlatformTheme.h"
+#include "XPlatformServices.h"
+#include "XDeviceWiFi.h"
+#include "XNetworkWiFi.h"
+#include "XVector.h"
+#include "XThread.h"
+#endif
 #if XWIDGET_ON && XKEYBOARD_ON
 #include "XVirtualKeyboard.h" /* 键盘页单例面板 win 析构前摘挂（自包含声明，防 XVIRTUALKEYBOARD_ON=0 态缺声明）。 */
 #endif
@@ -455,6 +466,8 @@ typedef struct DemoWin
     int             m_screenshotFrames; /**< 截图模式已渲染帧数。 */
     bool            m_autoTest;         /**< 自动交互测试模式（第 4 页注入事件断言联动）。 */
     int             m_autoTestFrames;   /**< 自动测试已渲染帧数。 */
+    int             m_orientOpt;        /**< --orient：首帧切到的方向（-1=不切）。 */
+    bool            m_orientApplied;    /**< --orient 是否已应用（只跑一次）。 */
 #if XGUI_PERFORMANCE_OVERLAY_ON && XWIDGET_ON && XFRAME_ON && XLABEL_ON
     XPerformanceOverlay m_performanceOverlay; /**< 性能悬浮层控件。 */
     int             m_overlayAnchorW; /**< 上次锚定时的悬浮层宽度（尺寸自适应变化后触发重新锚定贴右边）。 */
@@ -746,7 +759,21 @@ static void demo_apply_default_font(XFont* font)
          * ——FT 链直连无后缀补 .ttf/.otf/.ttc 命中同目录对应文件
          * （[已移除] 原 XFO1 链同串补 .xfo），与起跑 cwd 无关；FT 探测
          * 失配时由 XFont_face 回退链兜底（一行 stderr 警告 → 注册链
-         * 首位位图 XFont8x16）。 */
+         * 首位位图 XFont8x16）。
+         * [安卓 2026-10-24] 上面的 <exeDir>/../Library/XFont 是**桌面**
+         * 布局的相对假设：安卓的 exeDir 是进程伪路径（app_process），
+         * 该路径不存在 → 直连路径失配 → 回退位图字库（仅 ASCII）→ 中文
+         * 整片缺失。安卓的字库由 android_main.c 从 APK assets 释放到应用
+         * 私有目录 fonts/，编译期目录宏 XFONT_EXTERNAL_FT_FONT_DIR 指向
+         * 该目录（CMake 安卓分支注入）。故安卓上**不**用 exeDir 直连，
+         * 改用家族名走编译期目录链（FT 按 <dir>/<family>.{ttf,otf,ttc} 找）。 */
+#if defined(__ANDROID__)
+        /* 安卓：家族名 + 编译期目录（CMake 注入 XFONT_EXTERNAL_FT_FONT_DIR） */
+        XFont_setFamily(font, XGUI_DEMO_DEFAULT_FONT_FAMILY);
+        if (exeDir)
+            XClassDelete((XClass*)exeDir);
+        return;
+#else
         if (exeDir &&
             snprintf(fontPath, sizeof(fontPath),
                      "%s/../Library/XFont/XFontOutlineCommon",
@@ -759,6 +786,7 @@ static void demo_apply_default_font(XFont* font)
         if (exeDir)
             XClassDelete((XClass*)exeDir);
         XFont_setFamily(font, XGUI_DEMO_DEFAULT_FONT_FAMILY);
+#endif
     }
 }
 
@@ -1611,6 +1639,13 @@ static void demo_ext_ensureBuilt(DemoWin* self, int exti)
  *          事件注入 + getter 断言，全程非阻塞），汇总失败数；任一失败
  *          退出非零。结束恢复第 4 页，保持交互后截图口径不变。下标 7
  *          =页 12（图表演示，内置页无 autotest 契约）恒 NULL 跳过。 */
+static int g_autotestPageOnly = -1; /**< --autotest-page 指定页号；-1=全量。 */
+
+/** @brief 扩展页自测调度。
+ * @details pageOnly 为 -1 时逐页全跑（历史口径）；>=0 时只跑该主页面号
+ *          （5..20 的扩展页；其它页号不跑并报一行说明）。专项页号存在的
+ *          原因：全量调度会在前置页（如 Modbus 从站）以存量崩溃中止，其
+ *          后的页永远测不到，卡死类缺陷因此长期无门禁。 */
 static void demo_ext_pages_autotest(DemoWin* demo)
 {
     int (*const kTests[16])(XWidget*) = {
@@ -1634,6 +1669,8 @@ static void demo_ext_pages_autotest(DemoWin* demo)
         int failures;
         if (!kTests[exti] || !g_extBuilders[exti])
             continue; /* 无契约/裁剪占位槽（内置图表页等），跳过 */
+        if (g_autotestPageOnly >= 0 && 5 + exti != g_autotestPageOnly)
+            continue; /* 专项页号：只跑点名的那一页。 */
         /* [懒分配 2026-10-19·工程要点⑤] 先建再测：懒分配下页根首显才
            真建，demo_switchPage 内部先 ensureBuilt 同位换入真页根再
            setCurrentIndex，此处槽位已指真根。 */
@@ -1704,6 +1741,32 @@ static bool demo_framePumpBody(void* userData)
     DemoWin* demo = (DemoWin*)userData;
     if (!demo || demo->m_closed)
         return false;
+    /* --orient N：首帧把顶层窗口切到指定方向（0/90/180/270）。
+       自动化验证入口——靠鼠标点下拉框的像素坐标太脆弱，换机器/换 DPI
+       就点空。只跑一次（m_orientApplied 标记），此后帧泵行为不变。
+       几何按 0° 基准对调（与窗口设置页 wn_orientApply 同口径），
+       旋转角先设、几何后设（平台层 footprint 对调读执行时刻的角）。 */
+    if (demo->m_orientOpt >= 0 && !demo->m_orientApplied) {
+        demo->m_orientApplied = true;
+        {
+            int deg = demo->m_orientOpt;
+            XWidget* top = (XWidget*)&demo->m_base;
+            int bw = XWidget_width(top);
+            int bh = XWidget_height(top);
+            if (bw < bh) { int t = bw; bw = bh; bh = t; }
+            if (XWidget_setContentRotation(top, deg)) {
+                int w = (deg == 90 || deg == 270) ? bh : bw;
+                int h = (deg == 90 || deg == 270) ? bw : bh;
+                XWidget_setGeometry(top, XWidget_x(top), XWidget_y(top), w, h);
+                XWidget_setContentRotation(top, deg);
+                demo->m_staticSceneDirty = true;
+                XPrintf("XGuiWindowDemo: --orient %d -> %dx%d\n", deg, w, h);
+            }
+            else {
+                XPrintf("XGuiWindowDemo: --orient %d 平台不支持\n", deg);
+            }
+        }
+    }
     /* --remote-server CLI 预置的首帧自动启动（须在空闲闸门前——闸门
        开启时本泵早退；内部自带终态标记, 完成后零开销）。 */
     demo_page_remote_server_autostart();
@@ -2555,18 +2618,30 @@ static void demo_switchPage(DemoWin* self, int index)
     /* 虚拟键盘 autoPopup 随页切换（2026-10-03 用户反馈键盘页点不弹的
        根因收口）：RC 页曾把单例 autoPopup 全局关断，离开 RC 页后键盘
        页等其余页面点击不弹。改为进入远程客户端页（index==11）时关断
-       （RC 页触摸点击不被屏幕键盘打断，唯一键盘入口=悬浮会话工具条
-       「键盘」钮），离开时恢复。关断/恢复取 oldIndex 在 setCurrentIndex
-       之前执行（XStackedLayout_currentIndex 读旧值）。单例惰性创建，
-       virtualKeyboard() 判空（裁剪配置=0 单例返回 NULL 自然空操作）。 */
+       （RC 页触摸点击不被屏幕键盘打断），离开时恢复。关断/恢复取 oldIndex
+       在 setCurrentIndex 之前执行（XStackedLayout_currentIndex 读旧值）。
+       单例惰性创建，virtualKeyboard() 判空（裁剪配置=0 单例返回 NULL 自然
+       空操作）。
+       [2026-10-25 用户反馈「RC 页点 IP/端口 输入框不弹屏幕键盘」]：
+       页级全关把**输入框**也一起关了（autoPopup=false=应用全权接管，按下
+       路径与守护一并停），但该页的 IP/端口/口令正是要键盘的输入位。改用
+       框架的「仅编辑控件」降级模式：autoPopup 仍关（按钮/列表/空白点按
+       不弹键盘，2026-10-03 的诉求保住），但**受支持编辑控件**落点仍弹
+       面板（编辑控件判据与 accept 全等）。 */
     {
         int oldIndex = XStackedLayout_currentIndex(&self->m_stackLayout);
         if (oldIndex != 11 && index == 11) {
             XVirtualKeyboard* kb = XGuiApplication_virtualKeyboard();
-            if (kb) XVirtualKeyboard_setAutoPopup(kb, false);
+            if (kb) {
+                XVirtualKeyboard_setAutoPopupEditableOnly(kb, true);
+                XVirtualKeyboard_setAutoPopup(kb, false);
+            }
         } else if (oldIndex == 11 && index != 11) {
             XVirtualKeyboard* kb = XGuiApplication_virtualKeyboard();
-            if (kb) XVirtualKeyboard_setAutoPopup(kb, true);
+            if (kb) {
+                XVirtualKeyboard_setAutoPopupEditableOnly(kb, false);
+                XVirtualKeyboard_setAutoPopup(kb, true);
+            }
         }
     }
 #endif
@@ -5119,6 +5194,7 @@ int xgui_demo_main(int argc, char* argv[])
     const char* styleOpt;
     int screenshotPage;
     int screenshotTab;
+    int orientOpt;      /* --orient：截图前切到的窗口方向（0/90/180/270）。 */
     bool autoTest;
     bool apiTestSuite;
     const char* apiTestFamily;
@@ -5229,6 +5305,7 @@ int xgui_demo_main(int argc, char* argv[])
     apiTestFamily = NULL;
     screenshotPage = 0;
     screenshotTab = -1;
+    orientOpt = -1;   /* 默认不切方向。 */
     memset(&remoteCli, 0, sizeof(remoteCli)); /* --remote-* 全默认。 */
     memset(&remoteClientCli, 0, sizeof(remoteClientCli)); /* --remote-client 族全默认。 */
     for (argi = 1; argi < argc; ++argi) {
@@ -5274,6 +5351,12 @@ int xgui_demo_main(int argc, char* argv[])
         else if (strcmp(argv[argi], "--tab") == 0) {
             screenshotTab = atoi(argv[++argi]);
         }
+        else if (strcmp(argv[argi], "--orient") == 0 && argi + 1 < argc) {
+            /* 窗口方向（0/90/180/270）：截图前先切到该角度。
+             * 自动化验证用——靠鼠标点下拉框的像素坐标太脆弱，
+             * 换台机器/换个 DPI 就点空。 */
+            orientOpt = atoi(argv[++argi]);
+        }
         else if (strncmp(argv[argi], "--style=", 8) == 0) {
             /* 样式矩阵开关：common=框架默认样式（无 CSS 覆盖）/
              * fusion=仅 Fusion / fusion-css=Fusion+样式表（缺省，历史口径）。 */
@@ -5287,6 +5370,13 @@ int xgui_demo_main(int argc, char* argv[])
                                 : argv[argi] + 10;
         }
         else if (strcmp(argv[argi], "--autotest") == 0) {
+            autoTest = true;
+        }
+        else if (strcmp(argv[argi], "--autotest-page") == 0 &&
+                 argi + 1 < argc) {
+            /* 专项页号：只跑该页的自测（全量调度会在前置页存量崩溃处
+               中止，其后各页永远测不到）。仍隐含 --autotest。 */
+            g_autotestPageOnly = atoi(argv[++argi]);
             autoTest = true;
         }
         else if (strcmp(argv[argi], "--remote-server") == 0) {
@@ -5391,6 +5481,201 @@ int xgui_demo_main(int argc, char* argv[])
         return 1;
     }
     demo_diag("phase: app created\n");
+#if defined(__ANDROID__)
+    /* --clipboard-test：剪贴板后端自检（写→回读→logcat 出证）。写在
+     * 应用创建后：installClipboardBackend 在 XGuiApplication 初始化内
+     * 完成，此刻 JNI 后端已就位。结果经 XGuiDemo_debugLog 进 logcat
+     * （tag=XGuiDemo），系统侧再以 `service call clipboard 2` 交叉验证。 */
+    for (argi = 1; argi < argc; ++argi) {
+        if (strcmp(argv[argi], "--clipboard-test") == 0) {
+            extern void XGuiDemo_debugLog(const char* text);
+            XClipboard* clip = XGuiApplication_clipboard();
+            XString* payload;
+            XString* back;
+            char msg[192];
+            if (!clip) {
+                XGuiDemo_debugLog("[CLIPTEST] FAIL no clipboard instance");
+                break;
+            }
+            payload = XString_create_utf8("xgui-clip-e2e-20261024");
+            XClipboard_setText(clip, payload, XClipboardMode_Clipboard);
+            back = XClipboard_text(clip, XClipboardMode_Clipboard);
+            snprintf(msg, sizeof(msg), "[CLIPTEST] readback=%s",
+                     back ? XString_toUtf8(back) : "(null)");
+            XGuiDemo_debugLog(msg);
+            if (payload) XClassDelete((XClass*)payload);
+            if (back) XClassDelete((XClass*)back);
+            break;
+        }
+    }
+#endif
+#if defined(__ANDROID__)
+    /* --probe-platform：平台补扫自检（主题/Services/WiFi），logcat 出证
+     * （tag=XGuiDemo，前缀 [PROBE]）。只读探针：openUrl 不实发（会跳出
+     * 应用），只报 isAvailable；WiFi 只扫描+查询连接。 */
+    for (argi = 1; argi < argc; ++argi) {
+        if (strcmp(argv[argi], "--probe-platform") == 0) {
+            extern void XGuiDemo_debugLog(const char* text);
+            bool probeDark = false;
+            char probeName[64];
+            XFd probeWifiFd;
+            char msg[256];
+            if (XPlatformThemeDriver_detect(&probeDark, probeName,
+                                            sizeof(probeName)))
+                snprintf(msg, sizeof(msg), "[PROBE] theme: dark=%d name=%s",
+                         (int)probeDark, probeName);
+            else
+                snprintf(msg, sizeof(msg),
+                         "[PROBE] theme: detect failed (fallback)");
+            XGuiDemo_debugLog(msg);
+            snprintf(msg, sizeof(msg), "[PROBE] services: url=%d",
+                     (int)XPlatformServicesDriver_isAvailable());
+            XGuiDemo_debugLog(msg);
+            probeWifiFd = XDeviceWiFi_open(NULL, NULL);
+            if (probeWifiFd != XFD_INVALID) {
+                uint32_t probeCaps = XDeviceWiFi_capabilities(probeWifiFd);
+                XVector* probeAdapters = NULL;
+                snprintf(msg, sizeof(msg),
+                         "[PROBE] wifi: open ok caps=0x%04x",
+                         (unsigned)probeCaps);
+                XGuiDemo_debugLog(msg);
+                if (XDeviceWiFi_enumAdapters(probeWifiFd, &probeAdapters) &&
+                    probeAdapters) {
+                    size_t ai;
+                    for (ai = 0; ai < XVector_size_base(probeAdapters); ++ai) {
+                        XDeviceWiFiAdapterInfo** slot =
+                            (XDeviceWiFiAdapterInfo**)
+                                XVector_at_base(probeAdapters, (int64_t)ai);
+                        if (slot && *slot && (*slot)->id) {
+                            const char* id = XString_toUtf8((*slot)->id);
+                            int waits = 0;
+                            XVector* networks = NULL;
+                            XDeviceWiFi_startScan(probeWifiFd, id);
+                            while (waits++ < 25 &&
+                                   XDeviceWiFi_scanState(probeWifiFd, id) ==
+                                       XDeviceWiFi_ScanRunning)
+                                XThread_msleep(200);
+                            snprintf(msg, sizeof(msg),
+                                     "[PROBE] wifi adapter=%s scanState=%d",
+                                     id,
+                                     (int)XDeviceWiFi_scanState(probeWifiFd,
+                                                                id));
+                            XGuiDemo_debugLog(msg);
+                            if (XDeviceWiFi_takeScanResults(probeWifiFd, id,
+                                                            &networks) &&
+                                networks) {
+                                size_t ni;
+                                snprintf(msg, sizeof(msg),
+                                         "[PROBE] wifi scan: %u nets",
+                                         (unsigned)XVector_size_base(networks));
+                                XGuiDemo_debugLog(msg);
+                                for (ni = 0;
+                                     ni < XVector_size_base(networks) &&
+                                     ni < 8;
+                                     ++ni) {
+                                    XDeviceWiFiNetworkInfo** nslot =
+                                        (XDeviceWiFiNetworkInfo**)
+                                            XVector_at_base(networks,
+                                                            (int64_t)ni);
+                                    if (nslot && *nslot) {
+                                        snprintf(msg, sizeof(msg),
+                                                 "[PROBE]  net[%u] ssid=%s"
+                                                 " sig=%d ch=%d sec=%d",
+                                                 (unsigned)ni,
+                                                 (*nslot)->ssid
+                                                     ? XString_toUtf8(
+                                                           (*nslot)->ssid)
+                                                     : "(hidden)",
+                                                 (*nslot)->signalStrength,
+                                                 (*nslot)->channel,
+                                                 (int)(*nslot)->security);
+                                        XGuiDemo_debugLog(msg);
+                                    }
+                                }
+                                XDeviceWiFi_freeNetworks(networks);
+                            } else {
+                                XGuiDemo_debugLog(
+                                    "[PROBE] wifi scan: no results"
+                                    " (定位权限缺失或无 AP)");
+                            }
+                        }
+                    }
+                    XDeviceWiFi_freeAdapters(probeAdapters);
+                }
+                {
+                    XDeviceWiFiConnectionInfo conn;
+                    memset(&conn, 0, sizeof(conn));
+                    if (XDeviceWiFi_queryConnection(probeWifiFd, "wlan0",
+                                                    &conn)) {
+                        snprintf(msg, sizeof(msg),
+                                 "[PROBE] wifi conn: ssid=%s sig=%d",
+                                 conn.ssid ? XString_toUtf8(conn.ssid)
+                                           : "(null)",
+                                 conn.signalStrength);
+                        XDeviceWiFi_freeConnectionInfo(&conn);
+                    } else {
+                        snprintf(msg, sizeof(msg),
+                                 "[PROBE] wifi conn: none");
+                    }
+                    XGuiDemo_debugLog(msg);
+                }
+                /* 连接/断开能力探测：走 L0 契约（与 UI 页同一设备同一层）。
+                 * 安卓的连接走 WifiNetworkSpecifier（系统弹窗确认），故
+                 * 这里只报"发起是否被受理"与"操作状态机"，不代用户确认。 */
+                {
+                    uint32_t probeCaps2 = XDeviceWiFi_capabilities(probeWifiFd);
+                    snprintf(msg, sizeof(msg),
+                             "[PROBE] wifi caps2=0x%04x (scan=%d connect=%d "
+                             "disconnect=%d profile=%d)",
+                             (unsigned)probeCaps2,
+                             (probeCaps2 & XDeviceWiFi_CapScan) ? 1 : 0,
+                             (probeCaps2 & XDeviceWiFi_CapConnect) ? 1 : 0,
+                             (probeCaps2 & XDeviceWiFi_CapDisconnect) ? 1 : 0,
+                             (probeCaps2 & XDeviceWiFi_CapProfile) ? 1 : 0);
+                    XGuiDemo_debugLog(msg);
+                    {
+                        /* 探针连**开放网络** XinYueAP（系统已保存、当前未连）：
+                         * 验证"查已存列表 → enableNetwork(netId, true) 立即
+                         * 切换"的经典路径（连接归系统持有）。选开放网络是为
+                         * 了免口令即可全链路走通。 */
+                        bool started = XDeviceWiFi_startConnect(
+                            probeWifiFd, "wlan0", "XinYueAP", NULL,
+                            XDeviceWiFi_SecurityOpen);
+                        snprintf(msg, sizeof(msg),
+                                 "[PROBE] wifi startConnect(受理=%d) state=%d",
+                                 started ? 1 : 0,
+                                 (int)XDeviceWiFi_connectState(probeWifiFd,
+                                                              "wlan0"));
+                        XGuiDemo_debugLog(msg);
+                        if (started) {
+                            int tw = 0;
+                            int st = (int)XDeviceWiFi_connectState(
+                                probeWifiFd, "wlan0");
+                            while (tw++ < 20 &&
+                                   st == (int)XDeviceWiFi_ConnectConnecting) {
+                                XThread_msleep(250);
+                                st = (int)XDeviceWiFi_connectState(
+                                    probeWifiFd, "wlan0");
+                            }
+                            snprintf(msg, sizeof(msg),
+                                     "[PROBE] wifi connect 终态=%d", st);
+                            XGuiDemo_debugLog(msg);
+                        }
+                        snprintf(msg, sizeof(msg),
+                                 "[PROBE] wifi disconnect(受理=%d)",
+                                 XDeviceWiFi_disconnect(probeWifiFd, "wlan0")
+                                     ? 1 : 0);
+                        XGuiDemo_debugLog(msg);
+                    }
+                }
+                XDeviceWiFi_close(probeWifiFd);
+            } else {
+                XGuiDemo_debugLog("[PROBE] wifi: open failed");
+            }
+            break;
+        }
+    }
+#endif
     /* 应用元数据走 XCoreApplication 库标准口（对标 Qt）：名称+出厂版本。
      * 版本此处仅为进程启动缺省——软件更新页构建时会把 applicationVersion
      * 同步为引擎激活版本（模拟真实产品"升级换二进制即换版本"），使标题行
@@ -5493,6 +5778,8 @@ int xgui_demo_main(int argc, char* argv[])
     win->m_screenshotFrames = 0;
     win->m_autoTest = autoTest;
     win->m_autoTestFrames = 0;
+    win->m_orientOpt = orientOpt;
+    win->m_orientApplied = false;
     if (autoTest)
         demo_switchPage(win, 3); /* 自动测试固定切第 4 页 */
 #if XWIDGET_ON && XLAYOUT_ON && XLAYOUT_STACKED_ON

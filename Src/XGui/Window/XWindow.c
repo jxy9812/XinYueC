@@ -1304,14 +1304,53 @@ float XWindow_devicePixelRatio(const XWindow* self)
 
 /* ==================== 内容旋转（2026-10-18 新增） ==================== */
 
+/**
+ * @brief      查询窗口是否支持软件内容旋转（框架内部能力入口）。
+ * @details    能力权威在**平台层**：各原生窗口后端自持两类判据——
+ *             ①上屏通道是否具备（X11 查 32 位直拷视觉；RGB16(565) 构建与
+ *             真 24 位视觉无旋转实现）；②dpr 口径——present 的物理放大腿
+ *             与旋转换算口径是否互斥。②与平台实现强相关，故框架层不
+ *             内联平台策略：
+ *               - 桌面 win32（SetDIBitsToDevice 直拷）/ X11（XPutImage
+ *                 直拷）上屏不带缩放，物理放大与逐像素转置叠加会算错 →
+ *                 dpr>1 判不支持，由调用方降级 0°；
+ *               - 安卓相反：旋转在**逻辑空间**完成（xpad_drawImageRotated
+ *                 逐像素 R⁻¹ 反查逻辑源坐标），再按实测 presentScale
+ *                 （surfW/logicalW）放大到物理，两者正交，dpr 只影响
+ *                 放大倍数、不影响旋转正确性 → dpr>1 仍支持。
+ *             历史本函数在窗口层内联 `#if defined(__ANDROID__)` 分支自答，
+ *             理由是「安卓构建里原始窗口层与 Unsupported 的桩同名、桩的
+ *             恒 false 会顶掉」——该理由已过期：桩的哨兵守卫明确排除安卓
+ *             （Drive/Unsupported/Graphics/XPlatformNativeWindow_unsupported.c
+ *             的 `#if ... || !defined(__ANDROID__)`），安卓构建里该符号
+ *             只有 Drive/Android 一处定义，无同名冲突；且安卓
+ *             XPLATFORMNATIVEWINDOW_ON 为 1（原生窗口层参与编译），
+ *             契约声明可见。
+ * @param      self 目标窗口；可为 NULL。
+ * @return     支持返回 true；入参非法或平台不支持返回 false。
+ */
 bool XWindow_rotationSupported(const XWindow* self)
 {
     int supported;
+    float dpr;
     if (!self || !self->m_data) return false;
-    /* dpr>1 恒不支持：present 的物理放大腿与旋转换算口径互斥（内容会缩在
-       左上角、其余留旧像素）。降级为 0° 而非报错，与 getter 纯算口径
-       一致——条件（dpr 回落 1.0）后来满足时自动恢复旋转。 */
-    if (self->m_data->m_devicePixelRatio > 1.0f) return false;
+    dpr = self->m_data->m_devicePixelRatio;
+    /* 原生窗口段（win32 / X11 / 安卓）：**优先**问平台自己的实现——
+       旋转能力（含各自的 dpr 口径）由该层回答；若先问驱动层，安卓会走
+       fbdev 分支而拿不到自己的判据。四个平台后端都实现了该符号
+       （posix 无 X11 时由 Unsupported 桩兜底），任何构建配置下链接均完整。 */
+    supported = XPlatformNativeWindow_rotationSupported(self);
+    if (supported)
+    {
+        {
+            /* 诊断探针（XGUI_ROT_DEBUG=1 开启；设备能力链排查用，stderr）。 */
+            static signed char dbg = -1;
+            if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+            if (dbg) fprintf(stderr, "[ROT] rotationSupported: dpr=%.3f -> %d\n",
+                             (double)dpr, supported);
+        }
+        return supported;
+    }
 #if XGUI_ON && XPLATFORM_FBDEV_ON
     /* fbdev 直写构建：原生窗口层整体落 Unsupported 桩（Linux 无 X11 时
        XPlatformNativeWindow_posix.c 的 X11 实现编译出局），其
@@ -1320,23 +1359,29 @@ bool XWindow_rotationSupported(const XWindow* self)
        切换），驱动在位即由存储侧回答。 */
     if (XPlatformDisplayDriver_active())
     {
-        supported = XPlatformBackingStore_rotationCapable();
+        bool capable = XPlatformBackingStore_rotationCapable();
+        /* fbdev 直写同为 1:1 直拷：dpr>1 与逐像素转置互斥。平台级 dpr
+           闸在各自的 rotationSupported 内（win32 / X11 / 安卓），本路
+           不经那些后端，故在此守同一闸（fbdev 屏 dpr 由 DPI override
+           决定，可能 >1）。 */
+        supported = (capable && dpr <= 1.0f) ? 1 : 0;
+        {
+            /* 诊断探针（XGUI_ROT_DEBUG=1；能力链排查用，stderr）。 */
+            static signed char dbg = -1;
+            if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
+            if (dbg) fprintf(stderr,
+                             "[ROT] xpwn: driver active, capable=%d dpr=%.3f -> %d\n",
+                             (int)capable, (double)dpr, (int)supported);
+        }
+        return supported;
     }
-    else
-#endif
-#if XPLATFORMNATIVEWINDOW_ON
-    supported = XPlatformNativeWindow_rotationSupported(self);
-#else
-    supported = false;
-#endif
     {
-        /* 诊断探针（XGUI_ROT_DEBUG=1 开启；设备能力链排查用，stderr）。 */
         static signed char dbg = -1;
         if (dbg < 0) dbg = (getenv("XGUI_ROT_DEBUG") != NULL);
-        if (dbg) fprintf(stderr, "[ROT] rotationSupported: dpr=%.3f -> %d\n",
-                         (double)self->m_data->m_devicePixelRatio, supported);
+        if (dbg) fprintf(stderr, "[ROT] xpwn: driver NULL -> canRotateDirect\n");
     }
-    return supported;
+#endif
+    return false;
 }
 
 int XWindow_contentRotationDegrees(const XWindow* self)
@@ -1344,9 +1389,16 @@ int XWindow_contentRotationDegrees(const XWindow* self)
     int req;
     if (!self || !self->m_data) return 0;
     req = (int)self->m_data->m_contentRotation;
-    /* 有效角纯算、无回写：请求 0 或平台支持时返回请求角，否则 0。 */
-    if (req == 0) return 0;
-    return XWindow_rotationSupported(self) ? req : 0;
+    /* 有效角度纯读、无回写：0 或平台不支持时返回 0。
+       [2026-10-24 安卓旋转接入] 此处**不再重复**查 XWindow_rotationSupported：
+       能力判定已在 XWindow_setContentRotation 入口把关（平台不支持时角根本
+       不会被写入），重复查询会引入二次判定差异，导致「写入了角、读出来
+       却是 0」这种自相矛盾的现象。
+       [2026-10-24 平台层归位] 原注释所据的「安卓构建里原生窗口层与
+       Unsupported 桩同名（rotationSupported）、查询结果取决于静态库成员
+       顺序」已不成立：桩的哨兵守卫明确排除安卓，该符号在安卓构建里只有
+       Drive/Android 一处定义。 */
+    return req;
 }
 
 bool XWindow_rotationSwapsAxes(int deg)

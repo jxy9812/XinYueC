@@ -224,12 +224,15 @@ bool XPlatformNativeWindow_dragFullWindows(void)
 }
 
 /* 内容旋转能力（2026-10-18）：无原生窗口后端即无上屏通道，恒不支持。
-   XWindow_setContentRotation 据此返回 false，调用方（下拉框等）置灰。 */
+   XWindow_setContentRotation 据此返回 false，调用方（下拉框等）置灰。
+   dpr 口径一并落在此处（2026-10-24 从框架层下沉）：无上屏通道即无所谓
+   物理放大与转置是否互斥，恒不支持即恒降级 0°。 */
 bool XPlatformNativeWindow_rotationSupported(const XWindow* window)
 {
     (void)window;
     return false;
 }
+
 
 /* ==================== 剪贴板后端安装（无平台后端：no-op） ====================
  * 无窗口系统即无跨进程 Selection/Clipboard 互通：安装退化为空操作，

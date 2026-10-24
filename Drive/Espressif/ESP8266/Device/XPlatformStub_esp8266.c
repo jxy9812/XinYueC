@@ -17,6 +17,18 @@
  * 届时这些存根需从构建中移除以免重复定义。
  */
 
+/* ⚠ include 顺序很重要：SDK 头必须【最先】引入。
+ * nonos_v305/include/c_types.h:106 有 `typedef unsigned char bool;`，而框架头
+ * （CXinYueConfig.h 等）会引入 <stdbool.h>（把 bool 定义为 _Bool）。若
+ * c_types.h 在 stdbool.h 之后才被解析，就报
+ * "two or more data types in declaration specifiers"。
+ * 因此本文件把 ets_sys.h 放在所有框架头之前。
+ *
+ * 只引 ets_sys.h（ETSTimer / ets_timer_* 的声明），【不要】引 osapi.h：
+ * osapi.h → os_type.h → c_types.h，会把 nonos 的 c_types.h 提前拉进来。
+ * 本 TU 只需要 1ms 定时器，直接用 SDK 的 ets_timer_* 即可。 */
+#include "ets_sys.h"
+
 #include "CXinYueConfig.h"   /* XPLATFORM_HAS_OS 守卫 */
 #include "XDateTime.h"
 #include "XDevice.h"
@@ -41,6 +53,73 @@ static XDateTime esp8266ZeroDateTime(void)
     return out;
 }
 
+/* ---------------------------------------------------------------------------
+ * 单调毫秒基准（2026-10-22 新增，随后按实测回退，见下）
+ * ---------------------------------------------------------------------------
+ * 背景：框架的定时器体系分两层——
+ *   · 精确定时器 → 调度器的 m_hrtimerGroup（红黑树）
+ *   · 普通/粗定时器（CoarseTimer）→ 全局 XTimeWheelGroup（时间轮，1ms 刻度）
+ * 时间轮的高分辨率时基就是 XDateTime_currentMSecsSinceEpoch()（见
+ * XTimeWheelGroup.c:673 的 setHighResTimeFunc）。
+ *
+ * 本平台原先让该函数返回 -1（"不可用"）⇒ 时间轮时基恒为负 ⇒
+ * **CoarseTimer 永远不会到期** ⇒ 框架的定时器（含 XConsoleShell_startAsync
+ * 注册的 10ms 串口轮询定时器）在 ESP8266 上从未工作过。
+ *
+ * 这就是当初 NONOS 移植版不得不绕开框架、自己每 5ms 手动
+ * XConsoleShell_notifyInput() 的原因（而 notifyInput 每次都要
+ * XEvent_create → 每秒 200 个事件 → arena 持续churn）。
+ *
+ * ⚠⚠ 2026-10-22 实测回退：把时基补上（1ms os_timer 累加，实测推进正常，
+ * 5422ms/5000ms）之后，**框架定时器路径一旦真正被触发就崩溃**：
+ *   Fatal exception 0(IllegalInstructionCause)
+ *   epc1=0x40201013, excvaddr=0x40266404
+ * - epc1 落在 XAtomic_exchange_bool（irom0 段首函数）+3 —— 跳进函数中段；
+ * - excvaddr 指向 rodata 区的数据符号（memp_SYS_TIMEOUT 一带）—— 野指针，
+ *   典型症状是【某个对象的 vtable 指向了数据段】；
+ * - 排除栈深：cont 栈 4KB→8KB 无效；
+ * - 排除调用频率：「每拍调 processEvents」与「有输入才调」**都崩**，
+ *   触发因素是【时基让 CoarseTimer 真正到期】，不是调用频率。
+ *
+ * 结论：框架的定时器/事件派发路径在 ESP8266 上有一条从未被运行过的分支
+ * （候选：XTimeWheelGroup 惰性单例的 vtable 手工赋值
+ * `XClassGetVtable(group) = XTimeWheelGroup_class_init();` 与 32 位/裸机下的
+ * 不兼容），在桌面端复现定位之前，**保持时基不可用**（返回 -1），
+ * 让框架定时器继续全哑，main.c 侧用 notifyInput 变通兜住串口。
+ *
+ * 复现指引（桌面端，见 PROGRESS §0-Y.6）：
+ *   建 XCoreApplication → XObject_startTimer_ms(obj, 10, XTimerType_CoarseTimer)
+ *   → 反复 XCoreApplication_processEvents(0)，观察是否在
+ *   XAtomic_exchange_bool 附近崩溃。
+ * --------------------------------------------------------------------------- */
+static volatile uint32_t s_xesp_ms = 0;      /* 单调毫秒计数 */
+static ETSTimer s_xesp_ms_timer;
+static int s_xesp_ms_armed = 0;               /* 用 int：c_types.h 的 bool 是 typedef，不是 stdbool */
+
+static void xesp_ms_tick(void* arg)
+{
+    (void)arg;
+    ++s_xesp_ms;
+}
+
+/* 2026-10-22 诊断：供 main.c 打印平台毫秒计数。定位完成后删除。 */
+uint32_t XPlatformStub_esp8266_ms(void)
+{
+    return s_xesp_ms;
+}
+
+void XPlatformStub_esp8266_timeInit(void)
+{
+    if (s_xesp_ms_armed)
+        return;
+    s_xesp_ms_armed = 1;
+    ets_timer_setfn(&s_xesp_ms_timer, xesp_ms_tick, NULL);
+    /* ets_timer_arm_new(timer, timeout, repeat, isMstimer)：isMstimer=1 →
+     * timeout 以【毫秒】计。1ms 周期重复。 */
+    ets_timer_arm_new(&s_xesp_ms_timer, 1, 1, 1);
+}
+
+
 XDateTime XDateTime_currentDateTime(void)
 {
     return esp8266ZeroDateTime();
@@ -59,7 +138,26 @@ int64_t XDateTime_currentNSecsSinceEpoch(void)
 
 int64_t XDateTime_currentMSecsSinceEpoch(void)
 {
-    return -1;
+    /* 2026-10-22：恢复返回有效单调毫秒。
+     *
+     * 框架的定时器体系分两层：
+     *   · 精确定时器 → 调度器的 m_hrtimerGroup（红黑树）
+     *   · 普通/粗定时器（CoarseTimer）→ 全局 XTimeWheelGroup（时间轮，1ms 刻度）
+     * 时间轮的高分辨率时基就是本函数（见 XTimeWheelGroup.c:673 的
+     * setHighResTimeFunc）。本平台原先返回 -1（"不可用"）⇒ 时间轮时基恒为负
+     * ⇒ **CoarseTimer 永远不会到期** ⇒ 框架的定时器（含 shell 注册的 10ms
+     * 串口轮询定时器）在 ESP8266 上从未工作过，移植版只能用 notifyInput
+     * 变通顶上（每秒 200 个 XEvent → arena churn）。
+     *
+     * 现在的形态：返回自 XPlatformStub_esp8266_timeInit() 起累加的单调毫秒，
+     * 与桌面端 XDateTime_currentMSecsSinceEpoch（GetTickCount64，单调开机
+     * 毫秒）语义一致——都是"单调时长"，不是 Unix 纪元。绝对时间
+     * （currentDateTime）在本平台依旧不可用（无 RTC/NTP），但时间轮只需要
+     * 增量。
+     *
+     * 详见 PROGRESS §0-Y.6 与本文件上方"单调毫秒基准"注释块。 */
+    (void)XPlatformStub_esp8266_timeInit;
+    return (int64_t)s_xesp_ms;
 }
 
 /* ==================== 文件 ==================== */

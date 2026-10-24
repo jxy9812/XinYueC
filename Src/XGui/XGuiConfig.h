@@ -7,10 +7,10 @@
  ****************************************************************************/
 #ifndef XGUICONFIG_H
 #define XGUICONFIG_H
-
+#include "CXinYueConfig.h"
 #if XGUI_ON
 
-#include "CXinYueConfig.h"
+
 
 #ifndef XGUI_ON
 #define XGUI_ON 1

@@ -51,6 +51,7 @@
  *             接口按头文件回退语义退化为空实现或空指针，保证可裁剪编译。
  * @author     XinYueC 团队
  ******************************************************************************/
+#include "XGuiConfig.h"
 #if XGUI_ON
 
 #include "XWidget.h"
@@ -562,6 +563,10 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
            activateImplicitTouchGrab 对非 Begin 早退——UPDATE/END 即使
            被接受也不新设抓取）。 */
         XWidget* recv = XWidget_dispatchInputAt(top, (XEvent*)sub);
+        /* 逐点坐标的平移在 XWidget_dispatchInputAt 内随主点一并完成（那里
+           才是逐接收者换算主点的地方）——见该函数内「触摸逐点坐标随接收者
+           增量平移」段：Qt 口径=整份事件随接收控件平移，主点与逐点列表同
+           一坐标空间。 */
         if (type == XEVENT_TYPE_TOUCH_BEGIN &&
             recv && XEvent_isAccepted((XEvent*)sub)) {
             const XTouchPoint* pts = XTouchEvent_points(sub);
@@ -571,13 +576,13 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
         }
     } else {
         /* 抓取直达：组内各点按其 grab 靶的顶层换算坐标后直投，不再按
-           命中测试分派（对标旧直达分支；多点时仅主点字段换算为靶局部
-           坐标，触点列表保持顶层局部/全局原值——与旧单点模型同一坐标
-           契约）。 */
+           命中测试分派（对标旧直达分支）；主点与逐点列表同口径换算为
+           靶局部坐标（Qt 同款：整份事件随靶平移）。 */
         XWidget* grabTop = XWidget_topLevel(target);
         XPoint off = XWidget_accumulateOffset(target);
         XPoint pos = XTouchEvent_position(sub);
         XPoint local;
+        int k;
         if (grabTop && grabTop != top) {
             /* 跨顶层改道走单点 helper（2026-10-18）：mapToGlobal→
                mapFromGlobal 复合往返在两窗旋转角不同时会把旋转信息抵消
@@ -587,6 +592,14 @@ static bool XWidget_dispatchTouchGroup(XWidget* top, const XEvent* source,
         local.x = pos.x - off.x;
         local.y = pos.y - off.y;
         XWidget_eventSetPosition((XEvent*)sub, &local);
+        /* 逐点同口径换算为靶局部（跨顶层改道时逐点同样先过跨顶层 helper）。 */
+        for (k = 0; k < count; ++k) {
+            XPoint p = sub->m_points[k].m_position;
+            if (grabTop && grabTop != top)
+                p = XWidget_mapAcrossTopLevel(top, grabTop, &p);
+            sub->m_points[k].m_position.x = p.x - off.x;
+            sub->m_points[k].m_position.y = p.y - off.y;
+        }
         XWidget_sendEvent(target, (XEvent*)sub);
     }
     accepted = XEvent_isAccepted((XEvent*)sub);
@@ -2236,8 +2249,10 @@ static XWidget* XWidget_dispatchInputAt(XWidget* top, XEvent* event)
     XWidget* target;
     XPoint pos;
     XWidget* w;
+    XPoint prevOff;
     if (!top || !event) return NULL;
     pos = XWidget_eventPosition(event);
+    XPoint_init(&prevOff, 0, 0);
     target = XWidget_childAt(top, &pos);
     if (!target) {
         const XRegion* topMask = &top->m_mask;
@@ -2253,6 +2268,29 @@ static XWidget* XWidget_dispatchInputAt(XWidget* top, XEvent* event)
         local.x = pos.x - off.x;
         local.y = pos.y - off.y;
         XWidget_eventSetPosition(event, &local);
+        /* 触摸逐点坐标随接收者同步平移（[2026-10-25 触摸坐标口径归一]
+           Qt 口径：整份事件随接收控件平移——主点与逐点列表**同一坐标空间**
+           （QPointerEvent 的点随 QWidgetWindow 的事件平移一并换算）。
+           此前只平移主点（XWidget_eventSetPosition 仅改主点字段），逐点
+           列表留顶层局部 → 消费逐点坐标的控件（如远控客户端把触摸点逆映射
+           成远端坐标）会整体偏一个「控件在顶层内的原点偏移」：安卓走触摸
+           通道偏、桌面走鼠标通道不偏。增量式（相对上一级）避免沿父链累减。 */
+        if (XEvent_type(event) == XEVENT_TYPE_TOUCH_BEGIN ||
+            XEvent_type(event) == XEVENT_TYPE_TOUCH_UPDATE ||
+            XEvent_type(event) == XEVENT_TYPE_TOUCH_END ||
+            XEvent_type(event) == XEVENT_TYPE_TOUCH_CANCEL) {
+            XTouchEvent* te = (XTouchEvent*)event;
+            int dx = prevOff.x - off.x;
+            int dy = prevOff.y - off.y;
+            int k;
+            if (dx || dy) {
+                for (k = 0; k < te->m_pointCount; ++k) {
+                    te->m_points[k].m_position.x += dx;
+                    te->m_points[k].m_position.y += dy;
+                }
+            }
+        }
+        prevOff = off;
         if (!XWidget_attrTest(&w->m_attributes, XWidgetAttribute_TransparentForMouseEvents)) {
             XWidget_sendEvent(w, event);
             if (XEvent_isAccepted(event)) return w;

@@ -48,6 +48,10 @@
 #include "XCoreApplication.h"
 #include "XEventLoop.h"
 #include "XNetworkInterface.h"
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+#include "XNetworkWiFi.h"  /* 无线业务层（值对象 + 会话管理） */
+#include "XTimer.h"        /* 无线扫描/连接状态轮询定时器 */
+#endif
 #include "XSystem.h" /* XSystem_environment: 环境变量唯一入口。 */
 #include "xgui_demo_pages.h"
 
@@ -70,7 +74,13 @@
 #define NET_CAP_W      80     /**< 字段标题列宽。 */
 #define NET_FIELD_W    300    /**< 输入控件宽。 */
 #define NET_BTN_W      110    /**< 应用按钮宽。 */
-#define NET_ROOTITEM_V6ROW 6  /**< 根布局中 IPv6 行条目索引（装配序）。 */
+/* 根布局中 IPv6 行条目索引（装配序；三分区标题 + 无线区上移后，
+ * IPv6 行落在条目 16——WiFi 分区整段被编译裁掉时少 8 个条目）。 */
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+#define NET_ROOTITEM_V6ROW 16
+#else
+#define NET_ROOTITEM_V6ROW 8
+#endif
 
 /* ==================== 页面内部控件登记（demo 单实例 static 自持） ==== */
 
@@ -84,7 +94,8 @@ static struct
     bool             m_ready;       /**< build 已完成且控件指针有效。 */
 
     /* ---- 网卡选择区 ---- */
-    XLabel*    m_titleLabel;   /**< 页标题。 */
+    XLabel*    m_titleLabel;   /**< 第一分区标题「网卡设置」（居中）。 */
+    XLabel*    m_ipTitle;      /**< 第三分区标题「IP 设置」（居中）。 */
     XLabel*    m_capAdapter;   /**< 「网卡」标题。 */
     XComboBox* m_adapterCombo; /**< 网卡下拉框（枚举所有接口）。 */
     XPushButton* m_refreshBtn; /**< 刷新按钮。 */
@@ -143,6 +154,27 @@ static struct
     XBoxLayout m_v6Col;        /**< 右列 IPv6 三行（垂直）。 */
     XBoxLayout m_v4Rows[5];    /**< IPv4 字段行布局器（标题+编辑）。 */
     XBoxLayout m_v6Rows[3];    /**< IPv6 字段行布局器（标题+编辑）。 */
+
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    /* ---- 无线（Wi-Fi）区 ---- */
+    XNetworkWiFi* m_wifi;             /**< 无线会话（L1 业务层）；页销毁时释放。 */
+    XVector*     m_wifiAdapters;      /**< 无线适配器列表（L1 值对象，容器拥有）。 */
+    XVector*     m_wifiNetworks;      /**< 扫描到的网络列表（L1 值对象，容器拥有）。 */
+    XLabel*      m_wifiTitle;         /**< 第二分区标题「WiFi 设置」（居中）。 */
+    XLabel*      m_wifiCap;           /**< 「无线」标题。 */
+    XComboBox*   m_wifiAdapterCombo;  /**< 无线适配器下拉。 */
+    XPushButton* m_wifiScanBtn;       /**< 「扫描」按钮。 */
+    XLabel*      m_wifiNetCap;        /**< 「网络」标题。 */
+    XComboBox*   m_wifiApCombo;       /**< 可见网络下拉。 */
+    XLabel*      m_wifiPassCap;       /**< 「口令」标题。 */
+    XLineEdit*   m_wifiPassEdit;      /**< 口令输入。 */
+    XPushButton* m_wifiConnectBtn;    /**< 「连接」按钮。 */
+    XPushButton* m_wifiDisconnectBtn; /**< 「断开」按钮。 */
+    XLabel*      m_wifiInfoLabel;     /**< 无线状态行（当前连接/扫描进度）。 */
+    XTimer*      m_wifiTimer;         /**< 扫描/连接状态轮询定时器（250ms）。 */
+    XBoxLayout   m_wifiRow;           /**< 无线适配器行（水平）。 */
+    XBoxLayout   m_wifiNetRow;        /**< 无线网络行（水平）。 */
+#endif
 } s_net;
 
 /* ==================== 内部辅助 ==================== */
@@ -572,15 +604,30 @@ static void net_updateHint(void)
 {
     if (!s_net.m_hintLabel) return;
     if (XNetworkInterface_configSupported())
+#if defined(__ANDROID__)
+        /* 安卓：IP 模式经 WifiConfiguration（系统服务）；对用户在系统里
+         * 连过的网络受配置所有权限制（切静态会被系统拒），IPv6 静态为
+         * 系统级不支持（AOSP StaticIpConfiguration 只有 v4）。 */
+        XLabel_setText_2(s_net.m_hintLabel,
+                         "\xE5\xAE\x89\xE5\x8D\x93\xEF\xBC\x9AIP \xE7\x94\xB1"
+                         "\xE7\xB3\xBB\xE7\xBB\x9F WiFi \xE7\xAE\xA1\xE7\x90\x86"
+                         "\xEF\xBC\x9B\xE9\x9D\x99\xE6\xE9\x85\x8D\xE7\xBD\xAE"
+                         "\xE4\xBB\x85\xE5\xAF\xB9\xE5\xBA\x94\xE7\x94\xA8\xE5\x88"
+                         "\x9B\xE5\xBB\xBA\xE7\x9A\x84\xE7\xBD\x91\xE7\xBB\x9C\xE7"
+                         "\x94\x9F\xE6\x95\x88\xEF\xBC\x9B\xE9\x9D\x99\xE6 IPv6"
+                         "\xE7\xB3\xBB\xE7\xBB\x9F\xE4\xB8\x8D\xE6\x94\xAF\xE6\x8C\x81");
+                         /* 安卓：IP 由系统 WiFi 管理；静态配置仅对应用创建的网络生效；静态 IPv6 系统不支持 */
+#else
         XLabel_setText_2(s_net.m_hintLabel,
                          "\xE5\xBA\x94\xE7\x94\xA8\xE7\xBB\x8F\xE7\xB3\xBB"
                          "\xE7\xBB\x9F netsh \xE9\x80\x9A\xE8\xB7\xAF"
                          "\xEF\xBC\x88\xE9\x9C\x80\xE7\xAE\xA1\xE7\x90\x86"
                          "\xE5\x91\x98\xE6\x9D\x83\xE9\x99\x90\xEF\xBC\x89"
                          "\xEF\xBC\x9B\xE5\x88\x87\xE6\x8D\xA2\xE4\xBC\x9A"
-                         "\xE7\x9F\xAD\xE6\x9A\x82\xE4\xB8\xAD\xE6\x96\xAD"
+                         "\xE7\x9F\x9F\xE6\x9A\x82\xE4\xB8\xAD\xE6\x96\xAD"
                          "\xE8\xAF\xA5\xE7\xBD\x91\xE5\x8D\xA1");
                          /* 应用经系统 netsh 通路（需管理员权限）；切换会短暂中断该网卡 */
+#endif
     else
         XLabel_setText_2(s_net.m_hintLabel,
                          "\xE5\xBD\x93\xE5\x89\x8D\xE5\xB9\xB3\xE5\x8F\xB0"
@@ -955,7 +1002,329 @@ static void net_addFieldRow(XBoxLayout* col, XBoxLayout* row,
        的主轴余量均摊到条目前，行尾加 stretch 才能保持左对齐排布）。 */
     XBoxLayout_addStretch(row, 1);
     XBoxLayout_addLayout(col, (XLayout*)row);
+
 }
+
+/* ==================== 无线（Wi-Fi）区 ====================
+ * 走 L1 业务层（XNetworkWiFi）：值语义 + 会话管理；扫描/连接是"发起即返回"
+ * 的异步形态，本页用 250ms 定时器轮询状态机（无线程）。
+ */
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+
+/** @brief 安全方式 → 短名（AP 列表与状态行共用）。 */
+static const char* net_wifiSecurityName(XDeviceWiFiSecurity security)
+{
+    switch (security) {
+    case XDeviceWiFi_SecurityOpen:          return "\xE5\xBC\x80\xE6\x94\xBE"; /* 开放 */
+    case XDeviceWiFi_SecurityWep:           return "WEP";
+    case XDeviceWiFi_SecurityWpaPsk:        return "WPA-PSK";
+    case XDeviceWiFi_SecurityWpa2Psk:       return "WPA2-PSK";
+    case XDeviceWiFi_SecurityWpa2Enterprise: return "WPA2-\xE4\xBC\x81\xE4\xB8\x9A"; /* 企业 */
+    case XDeviceWiFi_SecurityWpa3Sae:       return "WPA3-SAE";
+    default:                                return "\xE6\x9C\xAA\xE7\x9F\xA5"; /* 未知 */
+    }
+}
+
+/** @brief 无线区是否就绪（会话已打开）。 */
+static bool net_wifiReady(void)
+{
+    return s_net.m_wifi && XNetworkWiFi_isOpen(s_net.m_wifi);
+}
+
+/** @brief 取当前选中的无线适配器（借用指针；列表在页内存活）。 */
+static const XNetworkWiFiAdapter* net_wifiAdapter(void)
+{
+    int index;
+    if (!s_net.m_wifiAdapterCombo || !s_net.m_wifiAdapters) return NULL;
+    index = XComboBox_currentIndex(s_net.m_wifiAdapterCombo);
+    if (index < 0) return NULL;
+    if ((size_t)index >= XVector_size_base(s_net.m_wifiAdapters)) return NULL;
+    return (const XNetworkWiFiAdapter*)
+           XVector_at_base(s_net.m_wifiAdapters, (int64_t)index);
+}
+
+/** @brief 取当前选中的可见网络（借用指针；列表在页内存活）。 */
+static const XNetworkWiFiNetwork* net_wifiNetwork(void)
+{
+    int index;
+    if (!s_net.m_wifiApCombo || !s_net.m_wifiNetworks) return NULL;
+    index = XComboBox_currentIndex(s_net.m_wifiApCombo);
+    if (index < 0) return NULL;
+    if ((size_t)index >= XVector_size_base(s_net.m_wifiNetworks)) return NULL;
+    return (const XNetworkWiFiNetwork*)
+           XVector_at_base(s_net.m_wifiNetworks, (int64_t)index);
+}
+
+/** @brief 刷新无线状态行（当前连接快照）。 */
+static void net_wifiRefreshInfo(void)
+{
+    const XNetworkWiFiAdapter* adapter = net_wifiAdapter();
+    XNetworkWiFiConnection* connection;
+    char text[256];
+    if (!s_net.m_wifiInfoLabel) return;
+    if (!net_wifiReady() || !adapter) {
+        XLabel_setText_2(s_net.m_wifiInfoLabel,
+                         "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
+                         "\xE4\xB8\x8D\xE5\x8F\xAF\xE7\x94\xA8"); /* 无线：不可用 */
+        return;
+    }
+    connection = XNetworkWiFi_queryConnection(s_net.m_wifi, adapter);
+    if (!connection) {
+        XLabel_setText_2(s_net.m_wifiInfoLabel,
+                         "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
+                         "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5"); /* 无线：未连接 */
+        return;
+    }
+    {
+        const XString* ssid = XNetworkWiFiConnection_ssid(connection);
+        snprintf(text, sizeof(text),
+                 "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A%s  "
+                 "\xE4\xBF\xA1\xE5\x8F\xB7 %d  %s", /* 无线：<ssid>  信号 N  <加密> */
+                 ssid ? XString_toUtf8(ssid) : "-",
+                 XNetworkWiFiConnection_signalStrength(connection),
+                 net_wifiSecurityName(XNetworkWiFiConnection_security(connection)));
+        XLabel_setText_2(s_net.m_wifiInfoLabel, text);
+    }
+    XClassDelete(connection);
+}
+
+/** @brief 用扫描结果填 AP 下拉（旧列表先释放，新列表由页持有）。 */
+static void net_wifiFillNetworks(XVector* networks)
+{
+    size_t i;
+    size_t count;
+    if (s_net.m_wifiNetworks) {
+        XClassDelete((XClass*)s_net.m_wifiNetworks);
+        s_net.m_wifiNetworks = NULL;
+    }
+    if (networks)
+        s_net.m_wifiNetworks = networks;
+    if (s_net.m_wifiApCombo)
+        XComboBox_clear(s_net.m_wifiApCombo);
+    if (!networks) return;
+    count = XVector_size_base(networks);
+    for (i = 0; i < count; ++i) {
+        const XNetworkWiFiNetwork* net =
+            (const XNetworkWiFiNetwork*)XVector_at_base(networks, (int64_t)i);
+        const XString* ssid = XNetworkWiFiNetwork_ssid(net);
+        char text[192];
+        snprintf(text, sizeof(text), "%s  (%d%%, %s)",
+                 ssid ? XString_toUtf8(ssid)
+                      : "\xE9\x9A\x90\xE8\x97\x8F\xE7\xBD\x91\xE7\xBB\x9C", /* 隐藏网络 */
+                 XNetworkWiFiNetwork_signalStrength(net),
+                 net_wifiSecurityName(XNetworkWiFiNetwork_security(net)));
+        XComboBox_addItem_2(s_net.m_wifiApCombo, text);
+    }
+    if (count > 0)
+        XComboBox_setCurrentIndex(s_net.m_wifiApCombo, 0);
+}
+
+/** @brief 枚举无线适配器并填下拉（无线区初始化）。 */
+static void net_wifiRefreshAdapters(void)
+{
+    XVector* adapters;
+    size_t i;
+    size_t count;
+    if (!net_wifiReady()) return;
+    if (s_net.m_wifiAdapters) {
+        XClassDelete(s_net.m_wifiAdapters);
+        s_net.m_wifiAdapters = NULL;
+    }
+    adapters = XNetworkWiFi_adapters(s_net.m_wifi);
+    if (adapters)
+        s_net.m_wifiAdapters = adapters;
+    XComboBox_clear(s_net.m_wifiAdapterCombo);
+    if (!adapters) return;
+    count = XVector_size_base(adapters);
+    for (i = 0; i < count; ++i) {
+        const XNetworkWiFiAdapter* adapter =
+            (const XNetworkWiFiAdapter*)XVector_at_base(adapters, (int64_t)i);
+        const XString* name = XNetworkWiFiAdapter_name(adapter);
+        const XString* desc = XNetworkWiFiAdapter_description(adapter);
+        char text[256];
+        snprintf(text, sizeof(text), "%s%s%s",
+                 name ? XString_toUtf8(name) : "?",
+                 desc ? " - " : "", desc ? XString_toUtf8(desc) : "");
+        XComboBox_addItem_2(s_net.m_wifiAdapterCombo, text);
+    }
+    if (count > 0)
+        XComboBox_setCurrentIndex(s_net.m_wifiAdapterCombo, 0);
+}
+
+/** @brief 无线适配器选择变化：刷新当前连接信息。 */
+static void net_wifiAdapterSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    net_wifiRefreshInfo();
+}
+
+/** @brief 「扫描」：发起扫描并启动状态轮询。 */
+static void net_wifiScanSlot(XObject* receiver, XVarList* args)
+{
+    const XNetworkWiFiAdapter* adapter = net_wifiAdapter();
+    (void)receiver; (void)args;
+    if (!net_wifiReady() || !adapter) {
+        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE4\xB8\x8D\xE5\x8F\xAF"
+                   "\xE7\x94\xA8", NULL); /* 无线不可用 */
+        return;
+    }
+    if (!XNetworkWiFi_startScan(s_net.m_wifi, adapter)) {
+        net_report("\xE6\x89\xAB\xE6\x8F\x8F\xE5\x8F\x91\xE8\xB5\xB7"
+                   "\xE5\xA4\xB1\xE8\xB4\xA5", NULL); /* 扫描发起失败 */
+        return;
+    }
+    XLabel_setText_2(s_net.m_wifiInfoLabel,
+                     "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
+                     "\xE6\x89\xAB\xE6\x8F\x8F\xE4\xB8\xAD"); /* 无线：扫描中 */
+    XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, false);
+    if (s_net.m_wifiTimer && !XTimer_isRunning(s_net.m_wifiTimer))
+        XTimer_start_base(s_net.m_wifiTimer);
+}
+
+/** @brief 「连接」：用选中 AP + 口令发起连接并启动状态轮询。 */
+static void net_wifiConnectSlot(XObject* receiver, XVarList* args)
+{
+    const XNetworkWiFiAdapter* adapter = net_wifiAdapter();
+    const XNetworkWiFiNetwork* network = net_wifiNetwork();
+    const XString* ssid;
+    const char* password;
+    XDeviceWiFiSecurity security = XDeviceWiFi_SecurityWpa2Psk;
+    (void)receiver; (void)args;
+    if (!net_wifiReady() || !adapter) {
+        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE4\xB8\x8D\xE5\x8F\xAF"
+                   "\xE7\x94\xA8", NULL); /* 无线不可用 */
+        return;
+    }
+    if (!network) {
+        net_report("\xE8\xAF\xB7\xE5\x85\x88\xE9\x80\x89\xE6\x8B\xA9"
+                   "\xE6\x97\xA0\xE7\xBA\xBF\xE9\x80\x82\xE9\x85\x8D"
+                   "\xE5\x99\xA8", NULL); /* 请先选择无线适配器 */
+        return;
+    }
+    ssid = XNetworkWiFiNetwork_ssid(network);
+    if (!ssid) {
+        net_report("\xE6\x9C\xAA\xE7\x9F\xA5", NULL); /* 未知 */
+        return;
+    }
+    security = XNetworkWiFiNetwork_security(network);
+    password = s_net.m_wifiPassEdit ? XLineEdit_text(s_net.m_wifiPassEdit) : NULL;
+    if (!XNetworkWiFi_connect(s_net.m_wifi, adapter, XString_toUtf8(ssid),
+                              password, security)) {
+        /* 失败原因要说清楚：加密网络缺口令是最常见的一因（平台层如实
+           拒绝无凭据的加密连接），笼统报"连接发起失败"会让用户无从
+           下手（真机实测踩坑：AP 已选中但口令框空着）。 */
+        if (security != XDeviceWiFi_SecurityOpen &&
+            (!password || !password[0])) {
+            net_report("\xE8\xBF\x9E\xE6\x8E\xA5\xE5\x8F\x91\xE8\xB5\xB7"
+                       "\xE5\xA4\xB1\xE8\xB4\xA5\xEF\xBC\x9A"
+                       "\xE8\xAF\xB7\xE5\x85\x88\xE5\xA1\xAB\xE5\x8F\xA3"
+                       "\xE4\xBB\xA5", NULL); /* 连接发起失败：请先填口令 */
+        } else {
+            net_report("\xE8\xBF\x9E\xE6\x8E\xA5\xE5\x8F\x91\xE8\xB5\xB7"
+                       "\xE5\xA4\xB1\xE8\xB4\xA5", NULL); /* 连接发起失败 */
+        }
+        return;
+    }
+    XLabel_setText_2(s_net.m_wifiInfoLabel,
+                     "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
+                     "\xE8\xBF\x9E\xE6\x8E\xA5\xE4\xB8\xAD"); /* 无线：连接中 */
+    if (s_net.m_wifiTimer && !XTimer_isRunning(s_net.m_wifiTimer))
+        XTimer_start_base(s_net.m_wifiTimer);
+}
+
+/** @brief 「断开」：断开当前连接。 */
+static void net_wifiDisconnectSlot(XObject* receiver, XVarList* args)
+{
+    const XNetworkWiFiAdapter* adapter = net_wifiAdapter();
+    (void)receiver; (void)args;
+    if (!net_wifiReady() || !adapter) {
+        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE4\xB8\x8D\xE5\x8F\xAF"
+                   "\xE7\x94\xA8", NULL); /* 无线不可用 */
+        return;
+    }
+    if (!XNetworkWiFi_disconnect(s_net.m_wifi, adapter)) {
+        net_report("\xE6\x96\xAD\xE5\xBC\x80\xE5\xA4\xB1\xE8\xB4\xA5",
+                   NULL); /* 断开失败 */
+        return;
+    }
+    net_report("\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
+               "\xE6\x9C\xAA\xE8\xBF\x9E\xE6\x8E\xA5", NULL); /* 无线：未连接 */
+    net_wifiRefreshInfo();
+}
+
+/** @brief 状态轮询定时器回调（250ms）：收口扫描与连接状态机。 */
+static void net_wifiTimerCb(void* userData, XTimerData* timer)
+{
+    const XNetworkWiFiAdapter* adapter = net_wifiAdapter();
+    XDeviceWiFiConnectState connect;
+    XDeviceWiFiScanState scan;
+    (void)userData; (void)timer;
+    if (!net_wifiReady() || !adapter) return;
+
+    /* 连接状态优先（连接期间扫描状态机是空的）。 */
+    connect = XNetworkWiFi_connectState(s_net.m_wifi, adapter);
+    if (connect == XDeviceWiFi_ConnectConnecting) return;
+    if (connect == XDeviceWiFi_ConnectConnected) {
+        XTimer_stop_base(s_net.m_wifiTimer);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, true);
+        net_wifiRefreshInfo();
+        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE8\xBF\x9E\xE6\x8E\xA5"
+                   "\xE6\x88\x90\xE5\x8A\x9F", NULL); /* 无线连接成功 */
+        return;
+    }
+    if (connect == XDeviceWiFi_ConnectFailed) {
+        XTimer_stop_base(s_net.m_wifiTimer);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, true);
+        XLabel_setText_2(s_net.m_wifiInfoLabel,
+                         "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
+                         "\xE8\xBF\x9E\xE6\x8E\xA5\xE5\xA4\xB1\xE8\xB4\xA5"); /* 无线：连接失败 */
+        net_report("\xE6\x97\xA0\xE7\xBA\xBF\xE8\xBF\x9E\xE6\x8E\xA5"
+                   "\xE5\xA4\xB1\xE8\xB4\xA5", NULL); /* 无线连接失败 */
+        return;
+    }
+
+    scan = XNetworkWiFi_scanState(s_net.m_wifi, adapter);
+    if (scan == XDeviceWiFi_ScanRunning) return;
+    XTimer_stop_base(s_net.m_wifiTimer);
+    XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, true);
+    if (scan == XDeviceWiFi_ScanCompleted) {
+        XVector* networks = XNetworkWiFi_takeScanResults(s_net.m_wifi, adapter);
+        net_wifiFillNetworks(networks);
+        net_report("\xE6\x89\xAB\xE6\x8F\x8F\xE5\xAE\x8C\xE6\x88\x90",
+                   NULL); /* 扫描完成 */
+    } else {
+        XLabel_setText_2(s_net.m_wifiInfoLabel,
+                         "\xE6\x97\xA0\xE7\xBA\xBF\xEF\xBC\x9A"
+                         "\xE6\x89\xAB\xE6\x8F\x8F\xE5\xA4\xB1\xE8\xB4\xA5"); /* 无线：扫描失败 */
+        net_report("\xE6\x89\xAB\xE6\x8F\x8F\xE5\xA4\xB1\xE8\xB4\xA5",
+                   NULL); /* 扫描失败 */
+    }
+}
+
+/** @brief 页销毁：停表、关无线会话、释放无线列表（会话析构即归还设备）。 */
+static void net_wifiDestroyedSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    if (s_net.m_wifiTimer) {
+        XTimer_stop_base(s_net.m_wifiTimer);
+        s_net.m_wifiTimer = NULL;
+    }
+    if (s_net.m_wifiAdapters) {
+        XClassDelete(s_net.m_wifiAdapters);
+        s_net.m_wifiAdapters = NULL;
+    }
+    if (s_net.m_wifiNetworks) {
+        XClassDelete(s_net.m_wifiNetworks);
+        s_net.m_wifiNetworks = NULL;
+    }
+    if (s_net.m_wifi) {
+        XNetworkWiFi_close(s_net.m_wifi);
+        XClassDelete(s_net.m_wifi);
+        s_net.m_wifi = NULL;
+    }
+}
+
+#endif /* XNETWORK_ON && XDEVICE_WIFI_ON */
 
 /** @brief 无头截图/自动化钩子前置声明（定义在 build 之后）。 */
 static void net_page_network_headless_hook(void);
@@ -971,15 +1340,35 @@ XWidget* demo_page_network_build(XWidget* parent,
     s_net.m_root = XWidget_create(parent, 0);
     if (!s_net.m_root) return (XWidget*)0;
 
-    /* ---- 标题 ---- */
+    /* ---- 三分区标题（网卡设置 / WiFi 设置 / IP 设置；同款式居中） ---- */
     s_net.m_titleLabel = XLabel_create(s_net.m_root, 0);
     if (!s_net.m_titleLabel) return s_net.m_root;
     XLabel_setText_2(s_net.m_titleLabel,
-                     "\xE7\xBD\x91\xE7\xBB\x9C\xE8\xAE\xBE\xE7\xBD\xAE");
-                     /* 网络设置 */
+                     "\xE7\xBD\x91\xE5\x8D\xA1\xE8\xAE\xBE\xE7\xBD\xAE");
+                     /* 网卡设置 */
     XLabel_setTextPixelSize(s_net.m_titleLabel, 15);
+    XLabel_setAlignment(s_net.m_titleLabel, XAlignment_Center);
     XWidget_setFixedHeight((XWidget*)s_net.m_titleLabel, 24);
     XWidget_show((XWidget*)s_net.m_titleLabel);
+    s_net.m_ipTitle = XLabel_create(s_net.m_root, 0);
+    if (!s_net.m_ipTitle) return s_net.m_root;
+    XLabel_setText_2(s_net.m_ipTitle,
+                     "IP \xE8\xAE\xBE\xE7\xBD\xAE"); /* IP 设置 */
+    XLabel_setTextPixelSize(s_net.m_ipTitle, 15);
+    XLabel_setAlignment(s_net.m_ipTitle, XAlignment_Center);
+    XWidget_setFixedHeight((XWidget*)s_net.m_ipTitle, 24);
+    XWidget_show((XWidget*)s_net.m_ipTitle);
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    s_net.m_wifiTitle = XLabel_create(s_net.m_root, 0);
+    if (s_net.m_wifiTitle) {
+        XLabel_setText_2(s_net.m_wifiTitle,
+                         "WiFi \xE8\xAE\xBE\xE7\xBD\xAE"); /* WiFi 设置 */
+        XLabel_setTextPixelSize(s_net.m_wifiTitle, 15);
+        XLabel_setAlignment(s_net.m_wifiTitle, XAlignment_Center);
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiTitle, 24);
+        XWidget_show((XWidget*)s_net.m_wifiTitle);
+    }
+#endif
 
     /* ---- 网卡选择行 ---- */
     s_net.m_capAdapter = XLabel_create(s_net.m_root, 0);
@@ -1171,6 +1560,131 @@ XWidget* demo_page_network_build(XWidget* parent,
     }
     net_setV6EditsEnabled(false); /* IPv6 模式初始=自动获取（右列置灰）。 */
 
+    /* ---- 无线（Wi-Fi）区：适配器 + 扫描 · 网络 + 口令 + 连接/断开 ---- */
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    s_net.m_wifi = XNetworkWiFi_create();
+    if (s_net.m_wifi) {
+        int wifiError = 0;
+        if (!XNetworkWiFi_open(s_net.m_wifi, &wifiError)) {
+            /* 平台无无线能力或资源申请失败：无线入口如实禁用。 */
+            XClassDelete(s_net.m_wifi);
+            s_net.m_wifi = NULL;
+        }
+    }
+    s_net.m_wifiCap = XLabel_create(s_net.m_root, 0);
+    if (s_net.m_wifiCap) {
+        XLabel_setText_2(s_net.m_wifiCap,
+                         "\xE6\x97\xA0\xE7\xBA\xBF"); /* 无线 */
+        XWidget_setFixedWidth((XWidget*)s_net.m_wifiCap, 40);
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiCap, 22);
+        XWidget_show((XWidget*)s_net.m_wifiCap);
+    }
+    s_net.m_wifiAdapterCombo = XComboBox_create(s_net.m_root, 0);
+    if (!s_net.m_wifiAdapterCombo) return s_net.m_root;
+    XWidget_setFixedHeight((XWidget*)s_net.m_wifiAdapterCombo, 26);
+    XObject_connect_2((XObject*)s_net.m_wifiAdapterCombo,
+                      XSignal(XComboBox_activated_signal),
+                      net_wifiAdapterSlot);
+    XWidget_show((XWidget*)s_net.m_wifiAdapterCombo);
+    s_net.m_wifiScanBtn = XPushButton_create(s_net.m_root, 0);
+    if (s_net.m_wifiScanBtn) {
+        XPushButton_setText_2(s_net.m_wifiScanBtn,
+                              "\xE6\x89\xAB\xE6\x8F\x8F"); /* 扫描 */
+        XWidget_setFixedWidth((XWidget*)s_net.m_wifiScanBtn, 64);
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiScanBtn, 26);
+        XObject_connect_2((XObject*)s_net.m_wifiScanBtn,
+                          XSignal(XAbstractButton_clicked_signal),
+                          net_wifiScanSlot);
+        XWidget_show((XWidget*)s_net.m_wifiScanBtn);
+    }
+    {
+        s_net.m_wifiNetCap = XLabel_create(s_net.m_root, 0);
+        if (s_net.m_wifiNetCap) {
+            XLabel_setText_2(s_net.m_wifiNetCap,
+                             "\xE7\xBD\x91\xE7\xBB\x9C"); /* 网络 */
+            XWidget_setFixedWidth((XWidget*)s_net.m_wifiNetCap, 40);
+            XWidget_setFixedHeight((XWidget*)s_net.m_wifiNetCap, 22);
+            XWidget_show((XWidget*)s_net.m_wifiNetCap);
+        }
+        s_net.m_wifiApCombo = XComboBox_create(s_net.m_root, 0);
+        if (!s_net.m_wifiApCombo) return s_net.m_root;
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiApCombo, 26);
+        XWidget_show((XWidget*)s_net.m_wifiApCombo);
+        s_net.m_wifiPassCap = XLabel_create(s_net.m_root, 0);
+        if (s_net.m_wifiPassCap) {
+            XLabel_setText_2(s_net.m_wifiPassCap,
+                             "\xE5\x8F\xA3\xE4\xBB\xA4"); /* 口令 */
+            XWidget_setFixedWidth((XWidget*)s_net.m_wifiPassCap, 40);
+            XWidget_setFixedHeight((XWidget*)s_net.m_wifiPassCap, 22);
+            XWidget_show((XWidget*)s_net.m_wifiPassCap);
+        }
+        s_net.m_wifiPassEdit = XLineEdit_create(s_net.m_root, 0);
+        if (!s_net.m_wifiPassEdit) return s_net.m_root;
+        XWidget_setFixedWidth((XWidget*)s_net.m_wifiPassEdit, 140);
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiPassEdit, 24);
+        XWidget_show((XWidget*)s_net.m_wifiPassEdit);
+        s_net.m_wifiConnectBtn = XPushButton_create(s_net.m_root, 0);
+        if (s_net.m_wifiConnectBtn) {
+            XPushButton_setText_2(s_net.m_wifiConnectBtn,
+                                  "\xE8\xBF\x9E\xE6\x8E\xA5"); /* 连接 */
+            XWidget_setFixedWidth((XWidget*)s_net.m_wifiConnectBtn, 72);
+            XWidget_setFixedHeight((XWidget*)s_net.m_wifiConnectBtn, 26);
+            XObject_connect_2((XObject*)s_net.m_wifiConnectBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              net_wifiConnectSlot);
+            XWidget_show((XWidget*)s_net.m_wifiConnectBtn);
+        }
+        s_net.m_wifiDisconnectBtn = XPushButton_create(s_net.m_root, 0);
+        if (s_net.m_wifiDisconnectBtn) {
+            XPushButton_setText_2(s_net.m_wifiDisconnectBtn,
+                                  "\xE6\x96\xAD\xE5\xBC\x80"); /* 断开 */
+            XWidget_setFixedWidth((XWidget*)s_net.m_wifiDisconnectBtn, 72);
+            XWidget_setFixedHeight((XWidget*)s_net.m_wifiDisconnectBtn, 26);
+            XObject_connect_2((XObject*)s_net.m_wifiDisconnectBtn,
+                              XSignal(XAbstractButton_clicked_signal),
+                              net_wifiDisconnectSlot);
+            XWidget_show((XWidget*)s_net.m_wifiDisconnectBtn);
+        }
+    }
+    s_net.m_wifiInfoLabel = XLabel_create(s_net.m_root, 0);
+    if (s_net.m_wifiInfoLabel) {
+        XLabel_setTextPixelSize(s_net.m_wifiInfoLabel, 12);
+        XLabel_setAlignment(s_net.m_wifiInfoLabel,
+                            XAlignment_Left | XAlignment_Top);
+        XWidget_setFixedHeight((XWidget*)s_net.m_wifiInfoLabel, 20);
+        XWidget_show((XWidget*)s_net.m_wifiInfoLabel);
+        net_wifiRefreshInfo();
+    }
+    /* 状态轮询定时器：挂页根之下（随页根级联析构），回调只在扫描/连接
+       进行中跑，避免定时写已释放控件。 */
+    s_net.m_wifiTimer = XTimer_create_ex(XCLASS_DEFAULT_MEMORY_TYPE);
+    if (s_net.m_wifiTimer) {
+        XTimer_setInterval(s_net.m_wifiTimer, 250);
+        XTimer_setTimerCallback(s_net.m_wifiTimer, net_wifiTimerCb);
+        XTimer_setUserData(s_net.m_wifiTimer, NULL);
+        XObject_setParent((XObject*)s_net.m_wifiTimer, (XObject*)s_net.m_root);
+    }
+    /* 页销毁钩子：关无线会话（归还平台资源）并释放无线列表。 */
+    XObject_connect_2((XObject*)s_net.m_root,
+                      XSignal(XObject_destroyed_signal),
+                      net_wifiDestroyedSlot);
+    /* 无线不可用时如实禁用入口。 */
+    if (!net_wifiReady()) {
+        XWidget_setEnabled((XWidget*)s_net.m_wifiAdapterCombo, false);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiScanBtn, false);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiApCombo, false);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiPassEdit, false);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiConnectBtn, false);
+        XWidget_setEnabled((XWidget*)s_net.m_wifiDisconnectBtn, false);
+    } else {
+        net_wifiRefreshAdapters();
+        /* 状态行的首次快照要排在适配器枚举之后：构建前段那次调用时
+         * 列表还是空的（恒落「不可用」），且程序化 setCurrentIndex
+         * 不发 activated 信号，不会补触发。 */
+        net_wifiRefreshInfo();
+    }
+#endif /* XNETWORK_ON && XDEVICE_WIFI_ON */
+
     /* ---- 提示 + 状态行（提示语按平台配置能力动态回填） ---- */
     s_net.m_hintLabel = XLabel_create(s_net.m_root, 0);
     if (s_net.m_hintLabel) {
@@ -1186,16 +1700,17 @@ XWidget* demo_page_network_build(XWidget* parent,
     XWidget_setFixedHeight((XWidget*)s_net.m_statusLabel, 22);
     XWidget_show((XWidget*)s_net.m_statusLabel);
 
-    /* ---- 布局装配（2026-10-17 容器化）：根垂直布局七段----
-     * [标题][网卡行][信息区][IPv6 行][模式行][双列字段][伸展+提示/状态]；
-     * 段间 addSpacing 近似原设计稿节奏（10/12/4/10/12），行内小间距用
-     * 行级 addSpacing，行高由各控件固定高承载，宽度伸缩交给 stretch。 */
+    /* ---- 布局装配（2026-10-24 三分区）：根垂直布局----
+     * [网卡设置·标题][网卡行][信息区]·[WiFi 设置·标题][无线行][无线网络行]
+     * [无线状态行]·[IP 设置·标题][IPv6 行][模式行][双列字段][伸展+提示/状态]；
+     * 分区间 12 / 标题下 8 的间距节奏区分段落，行内小间距用行级
+     * addSpacing，行高由各控件固定高承载，宽度伸缩交给 stretch。 */
     XBoxLayout_init(&s_net.m_rootLayout, XBoxLayoutDirection_TopToBottom);
     XLayout_setSpacing((XLayout*)&s_net.m_rootLayout, 0);
     XLayout_setContentsMargins((XLayout*)&s_net.m_rootLayout, 12, 8, 12, 0);
     XBoxLayout_addWidget(&s_net.m_rootLayout,
                          (XWidget*)s_net.m_titleLabel); /* 条目 0 */
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 10);    /* 条目 1 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 8);     /* 条目 1 */
     /* 网卡行：标题 | 4 | 下拉(伸展铺满) | 12 | 刷新。 条目 2 */
     XBoxLayout_init(&s_net.m_adapterRow, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_net.m_adapterRow, 0);
@@ -1212,8 +1727,53 @@ XWidget* demo_page_network_build(XWidget* parent,
     XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 3 */
     XBoxLayout_addWidget(&s_net.m_rootLayout,
                          (XWidget*)s_net.m_infoLabel); /* 条目 4 */
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 4);     /* 条目 5 */
-    /* IPv6 行：折叠单行(伸展) | 4 | 展开开关。 条目 6=NET_ROOTITEM_V6ROW
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    /* ===== 第二分区：WiFi 设置（无线行/无线网络行/无线状态行） ===== */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 5：分区间距 */
+    XBoxLayout_addWidget(&s_net.m_rootLayout,
+                         (XWidget*)s_net.m_wifiTitle);  /* 条目 6 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 8);     /* 条目 7 */
+    /* 无线行：[无线] | 4 | 适配器下拉(伸展) | 12 | 扫描。 条目 8 */
+    XBoxLayout_init(&s_net.m_wifiRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_wifiRow, 0);
+    XBoxLayout_addWidget(&s_net.m_wifiRow, (XWidget*)s_net.m_wifiCap);
+    XBoxLayout_addSpacing(&s_net.m_wifiRow, 4);
+    XBoxLayout_addWidget(&s_net.m_wifiRow, (XWidget*)s_net.m_wifiAdapterCombo);
+    XBoxLayout_setStretch(&s_net.m_wifiRow, 2, 1);
+    XBoxLayout_addSpacing(&s_net.m_wifiRow, 12);
+    XBoxLayout_addWidget(&s_net.m_wifiRow, (XWidget*)s_net.m_wifiScanBtn);
+    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_wifiRow);
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 6);     /* 条目 9 */
+    /* 无线网络行：[网络] | 4 | AP 下拉(伸展) | 8 | [口令] | 4 | 口令输入
+       | 8 | 连接 | 6 | 断开。 条目 10 */
+    XBoxLayout_init(&s_net.m_wifiNetRow, XBoxLayoutDirection_LeftToRight);
+    XLayout_setSpacing((XLayout*)&s_net.m_wifiNetRow, 0);
+    XBoxLayout_addWidget(&s_net.m_wifiNetRow, (XWidget*)s_net.m_wifiNetCap);
+    XBoxLayout_addSpacing(&s_net.m_wifiNetRow, 4);
+    XBoxLayout_addWidget(&s_net.m_wifiNetRow, (XWidget*)s_net.m_wifiApCombo);
+    XBoxLayout_setStretch(&s_net.m_wifiNetRow, 2, 1);
+    XBoxLayout_addSpacing(&s_net.m_wifiNetRow, 8);
+    XBoxLayout_addWidget(&s_net.m_wifiNetRow, (XWidget*)s_net.m_wifiPassCap);
+    XBoxLayout_addSpacing(&s_net.m_wifiNetRow, 4);
+    XBoxLayout_addWidget(&s_net.m_wifiNetRow, (XWidget*)s_net.m_wifiPassEdit);
+    XBoxLayout_addSpacing(&s_net.m_wifiNetRow, 8);
+    XBoxLayout_addWidget(&s_net.m_wifiNetRow, (XWidget*)s_net.m_wifiConnectBtn);
+    XBoxLayout_addSpacing(&s_net.m_wifiNetRow, 6);
+    XBoxLayout_addWidget(&s_net.m_wifiNetRow,
+                         (XWidget*)s_net.m_wifiDisconnectBtn);
+    XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_wifiNetRow);
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 4);     /* 条目 11 */
+    XBoxLayout_addWidget(&s_net.m_rootLayout,
+                         (XWidget*)s_net.m_wifiInfoLabel); /* 条目 12 */
+#endif
+    /* ===== 第三分区：IP 设置（IPv6 行/模式行/双列字段） ===== */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 13：分区间距
+       （无线段裁剪时此间距兼作前一分区的收尾，条目数差 8 见
+       NET_ROOTITEM_V6ROW 的双值口径）。 */
+    XBoxLayout_addWidget(&s_net.m_rootLayout,
+                         (XWidget*)s_net.m_ipTitle);    /* 条目 14 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 8);     /* 条目 15 */
+    /* IPv6 行：折叠单行(伸展) | 4 | 展开开关。 条目 16=NET_ROOTITEM_V6ROW
        （单行标签不设对齐=填满整格：展开态释放固定高后由伸展因子撑满，
        折叠态受 20px 固定高约束，两态皆正确）。 */
     XBoxLayout_init(&s_net.m_v6Row, XBoxLayoutDirection_LeftToRight);
@@ -1223,9 +1783,9 @@ XWidget* demo_page_network_build(XWidget* parent,
     XBoxLayout_addWidget(&s_net.m_v6Row,
                          (XWidget*)s_net.m_v6ExpandCheck);
     XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_v6Row);
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 10);    /* 条目 7 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 10);    /* 条目 17 */
     /* 模式行：IPv4 标题|4|下拉|8|应用 · 56 · IPv6 标题|4|下拉|8|应用。
-       条目 8 */
+       条目 18 */
     XBoxLayout_init(&s_net.m_modeRow, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_net.m_modeRow, 0);
     XBoxLayout_addWidget(&s_net.m_modeRow, (XWidget*)s_net.m_capV4Mode);
@@ -1242,9 +1802,9 @@ XWidget* demo_page_network_build(XWidget* parent,
     /* 行尾伸展：窄根（导航占位）下模式行余量留在行尾，不均摊进条目前。 */
     XBoxLayout_addStretch(&s_net.m_modeRow, 1);
     XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_modeRow);
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 9 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 12);    /* 条目 19 */
     /* 双列字段：左 IPv4 五行（列距 4）· 24 · 右 IPv6 三行（列距 6）。
-       条目 10 */
+       条目 20 */
     XBoxLayout_init(&s_net.m_fieldCols, XBoxLayoutDirection_LeftToRight);
     XLayout_setSpacing((XLayout*)&s_net.m_fieldCols, 0);
     XBoxLayout_init(&s_net.m_v4Col, XBoxLayoutDirection_TopToBottom);
@@ -1276,12 +1836,12 @@ XWidget* demo_page_network_build(XWidget* parent,
     XBoxLayout_addStretch(&s_net.m_v6Col, 1);
     XBoxLayout_addStretch(&s_net.m_fieldCols, 1);
     XBoxLayout_addLayout(&s_net.m_rootLayout, (XLayout*)&s_net.m_fieldCols);
-    XBoxLayout_addStretch(&s_net.m_rootLayout, 1);     /* 条目 11 */
+    XBoxLayout_addStretch(&s_net.m_rootLayout, 1);     /* 条目 21 */
     XBoxLayout_addWidget(&s_net.m_rootLayout,
-                         (XWidget*)s_net.m_hintLabel); /* 条目 12 */
-    XBoxLayout_addSpacing(&s_net.m_rootLayout, 2);     /* 条目 13 */
+                         (XWidget*)s_net.m_hintLabel); /* 条目 22 */
+    XBoxLayout_addSpacing(&s_net.m_rootLayout, 2);     /* 条目 23 */
     XBoxLayout_addWidget(&s_net.m_rootLayout,
-                         (XWidget*)s_net.m_statusLabel); /* 条目 14 */
+                         (XWidget*)s_net.m_statusLabel); /* 条目 24 */
     XWidget_setLayout(s_net.m_root, (XLayout*)&s_net.m_rootLayout);
 
     /* ---- 统一切换（折叠视图定版）+ 首轮枚举回填。 ---- */
@@ -1328,7 +1888,8 @@ int demo_page_network_autotest(XWidget* page)
         return -1;
 
     /* ---- 控件登记完整 ---- */
-    NET_EXPECT(s_net.m_adapterCombo && s_net.m_refreshBtn &&
+    NET_EXPECT(s_net.m_titleLabel && s_net.m_ipTitle &&
+               s_net.m_adapterCombo && s_net.m_refreshBtn &&
                s_net.m_infoLabel && s_net.m_v4ModeCombo && s_net.m_applyBtn &&
                s_net.m_ipEdit && s_net.m_maskEdit && s_net.m_gwEdit &&
                s_net.m_dns1Edit && s_net.m_dns2Edit &&
@@ -1439,6 +2000,30 @@ int demo_page_network_autotest(XWidget* page)
         XComboBox_setCurrentIndex(s_net.m_v6ModeCombo, 0);
         net_v6ModeSlot(NULL, NULL);
     }
+
+    /* ---- 无线区：控件登记 + 会话一致性（**绝不真连接**，不触平台通路） ---- */
+#if XNETWORK_ON && XDEVICE_WIFI_ON
+    NET_EXPECT(s_net.m_wifiTitle && s_net.m_wifiCap &&
+               s_net.m_wifiAdapterCombo &&
+               s_net.m_wifiScanBtn && s_net.m_wifiApCombo &&
+               s_net.m_wifiPassEdit && s_net.m_wifiConnectBtn &&
+               s_net.m_wifiDisconnectBtn && s_net.m_wifiInfoLabel,
+               "网络设置页: 无线控件全部登记");
+    if (net_wifiReady()) {
+        NET_EXPECT(XNetworkWiFi_isOpen(s_net.m_wifi),
+                   "网络设置页: 无线会话已打开");
+        NET_EXPECT(XComboBox_count(s_net.m_wifiAdapterCombo) >= 1,
+                   "网络设置页: 无线适配器枚举非空");
+    } else {
+        NET_EXPECT(!XWidget_isEnabled((XWidget*)s_net.m_wifiScanBtn) &&
+                   !XWidget_isEnabled((XWidget*)s_net.m_wifiConnectBtn) &&
+                   !XWidget_isEnabled((XWidget*)s_net.m_wifiDisconnectBtn),
+                   "网络设置页: 无线不可用时入口如实置灰");
+    }
+    /* 无线状态行必有文本（未连接/不可用口径）。 */
+    NET_EXPECT(s_net.m_wifiInfoLabel != NULL,
+               "网络设置页: 无线状态行已登记");
+#endif
 
     /* ---- 能力探测可调用（值随平台，不断言） ---- */
     (void)XNetworkInterface_configSupported();

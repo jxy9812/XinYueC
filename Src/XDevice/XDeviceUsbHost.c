@@ -7,6 +7,7 @@
  *             公共层不依赖 libusb、WinUSB、SetupAPI、STM32 HAL 或 ESP-IDF。
  * ========================================================================== */
 #include "XDeviceUsbHost.h"
+#if XDEVICE_ON && XDEVICE_USBHOST_ON
 #include "XVarList.h"
 #include "XVariant.h"
 #include "XMemory.h"
@@ -1185,3 +1186,5 @@ const char* XDeviceUsbHost_errorString(XDeviceUsbError error)
     default:                               return "Unknown";
     }
 }
+
+#endif /* device switch */

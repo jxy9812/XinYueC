@@ -114,7 +114,8 @@ typedef struct XDeviceContext
     uint16_t m_ioMode     : 1;          /* XDeviceIoMode I/O 模式。 */
     uint16_t m_pendingOps : 8;          /* 在途异步操作数。 */
     uint16_t m_reserved   : 4;          /* 预留位，必须为 0。 */
-    int16_t  m_lastError;               /* 最近一次错误码（XDeviceError）。 */
+    int16_t  m_lastError;               /* 最近一次错误码；0=无错误，<XDEVICE_ERROR_FRAMEWORK_BASE 为平台原生码，>=基址为 XDeviceError 枚举。 */
+    XFd      m_fd;                      /* 持有本上下文的统一描述符；打开阶段可由子类预先绑定。 */
 } XDeviceContext;
 ```
 
@@ -153,13 +154,23 @@ bool XDevice_getProperty(XFd fd, XDeviceProperty property, XVariant* value);
 bool XDevice_queryProperty(XFd fd, XDeviceProperty property, XVariant* value);
 
 /* 设备命令 */
-bool XDevice_control(XFd fd, uint32_t command, const XVariant* in, XVariant* out);
+bool XDevice_control(XFd fd, uint32_t command, const XVarList* in, XVarList* out);
 
 /* 错误与设备对象 */
 int        XDevice_lastError(XFd fd);
 XDevice*   XDevice_class(XFd fd);
 XDeviceContext* XDevice_handle(XFd fd);
 ```
+
+> **命令载荷口径**（实现口径，与 `XDevice.h` 一致）：设备命令的 `in`/`out` 是
+> `XVarList*` 字节缓冲（**不是** XVariant——属性通道才用 XVariant，且只放标量）。
+> 打包用 `XVarList_Create(XVar(type, var))`（`XVar` 展开为 `sizeof(type), &var`，
+> 创建时把实参**拷贝**进缓冲）；读取用 `XVarList_start(list)` +
+> `XVarList_arg(list, type)`。出参按"传指针再解引用"约定：调用方把**自己变量
+> 的地址**放进列表，命令实现侧取出该指针后写入，实现侧再
+> `XVarList_start(out)` 复位读游标，调用方即可读回。
+> 需要"按实例区分"的查询（如带 adapterId 的状态查询）必须走命令通道，
+> 属性通道无法承载载荷。
 
 ### 5.1 打开选项
 
@@ -231,6 +242,16 @@ int64_t XDevice_read(XFd fd, void* buf, int64_t size)
 
 ### 8.1 内置设备
 
+设备开关统一在 **`Src/XDevice/XDevice_config.h`**（`XDevice_config.h`）：设备层总开关
+`XDEVICE_ON` 只在 `CXinYueConfig.h` 出现一次，各设备类另有独立开关
+（`XDEVICE_FILE_ON` / `XDEVICE_CONSOLE_ON` / `XDEVICE_DIR_ON` /
+`XDEVICE_NETWORK_ON` / `XDEVICE_SERIALPORT_ON` / `XDEVICE_TIMER_ON` /
+`XDEVICE_USBHOST_ON` / `XDEVICE_USBGADGET_ON` / `XDEVICE_WIFI_ON`），另有设备
+容量配置（如 `XDEVICE_WIFI_MAX_ADAPTERS`）。产品按形态（桌面全量 / 单片机裸机 /
+定制板）只需改这一个配置文件；依赖某设备的业务模块由该设备开关派生
+（如 `XFILE_ON = XDEVICE_ON && XDEVICE_FILE_ON`），设备裁掉时业务层一并裁掉，
+不产生未定义符号。
+
 | 类型 | 设备类 | 复用实现 |
 | --- | --- | --- |
 | File | `XDeviceFile` | `XDeviceFile_win32/posix/Fatfs` |
@@ -239,11 +260,21 @@ int64_t XDevice_read(XFd fd, void* buf, int64_t size)
 | Serial | `XDeviceSerialPort` | `XSerialPortWin32/Posix/STM32`（待迁移） |
 | Timer | `XDeviceTimer` | `XAbstractEventDispatcher` 定时器（待迁移） |
 | Socket | `XDeviceSocket` | `XNetwork`（Bind/Connect/Listen/Accept）（待迁移） |
+| WiFi | `XDeviceWiFi` | Native WiFi/WlanAPI（Windows）、nmcli（POSIX）、片上 SDK（ESP8266）；无线专有能力走 GetProperty/Control 虚槽（已接入 XDevice 门面） |
 
 ### 8.2 新设备
 
 每个新设备写一个设备类文件（如 `Src/XDevice/XDeviceGpio.*`），
 实现 `XDevice` 虚槽并注册类名，即可通过 `XDevice_openClass("gpio", ...)` 打开。
+
+- 设备类文件只写**平台无关部分**：虚函数表骨架、Open/Close、专有属性与命令的
+  分派，以及对外便捷 API（便捷 API 只做转发，落到父类的 `XDevice_getProperty`
+  / `XDevice_control`，不得直接调平台实现）；
+- 平台叶子实现放在各平台后端文件（`Drive/<平台>/.../XDevice<类名>_<平台>.c`），
+  以 `XDevice<类名>_platform*` 前缀命名，只被设备虚槽调用；
+- **注册入口**：`XDevice_openClass` 内按类名的懒注册分支（见 `XDevice.c`，
+  file/socket/serial/timer/dir/console/usbhost/usbgadget 各一行）——新增内置
+  设备按既有惯例追加一行；也可由调用方显式调用 `XDevice<类名>_register()`。
 
 ## 9. 迁移阶段
 
@@ -266,6 +297,7 @@ int64_t XDevice_read(XFd fd, void* buf, int64_t size)
 
 1. 所有设备统一使用 `XFd` 句柄，`XDevice_*` 为唯一公共入口。
 2. 新增设备只写设备类文件，不改 `XDevice` 核心。
+   （唯一例外：内置设备的懒注册分支按既有惯例逐个追加一行，见 8.2）
 3. 现有公共 API 在迁移期保持可用，迁移完成后删除旧 `XFd_alloc` 直调。
 4. 异步销毁顺序正确：CLOSING → 取消在途 IO → 注销事件源 → 屏蔽迟到事件 →
    关闭原生句柄 → 释放扩展上下文 → 回收槽位。

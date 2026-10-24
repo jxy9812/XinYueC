@@ -15,6 +15,8 @@
 #include "XAtomic.h"
 #include <string.h>
 
+#if XTHREAD_ON
+
 typedef struct XTaskSnapshot {
     XTaskInfo info;
     char name[32];
@@ -121,3 +123,5 @@ bool XTask_enumerateThreads(XTaskVisitor visitor, void* userData)
     }
     return true;
 }
+
+#endif /* XTHREAD_ON */

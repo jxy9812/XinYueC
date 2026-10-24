@@ -84,6 +84,25 @@ if(UNIX AND NOT APPLE)
     add_compile_definitions(_GNU_SOURCE)
 endif()
 
+# ==================== 禁止链接期相同代码折叠（ICF） ====================
+# 框架的**信号身份 = 信号函数地址**（XSignal(signal) = (size_t)(signal)，
+# XObject.h:416）：连接与发射两侧都以该地址为键。MSVC 的 /OPT:ICF 会把
+# **结构相同**的函数折叠成同一地址——而各类的信号函数恰恰是模板化的同构
+# 代码（"判空→emit(self, (size_t)自己, args)→返回自身地址"），
+# 于是 XScreen_primaryOrientationChanged_signal 与
+# XScreen_orientationChanged_signal 折叠成同一地址 → 两个信号共用一个
+# 身份 → 连接 A 也会收到 B 的发射（探针实证：priOr 与 or 同步翻倍，
+# rr 与 logDpi 同址），表现为「信号重复发射」类断言全红、同一处理器被
+# 跑两遍（弹层重定位跑两次 → 落位时好时坏；重复重绘 → 切换时闪烁；
+# 重复执行吃穿内存 → 池耗尽 → 崩栈）。
+# 代价仅为少量代码体积（放弃折叠），换来信号身份的前提成立。
+# ⚠ 勿当冗余删掉：症状是「偶发、看起来像随机」的行为缺陷，回归极难自证。
+# ⚠ 同类陷阱：GCC/LTO 的 -fipa-icf 同样会折叠「取自身地址」的函数。若将来
+# 开启 LTO，需同步加 -fno-ipa-icf（GCC）或等价手段。
+if(MSVC)
+    add_link_options(/OPT:NOICF)
+endif()
+
 #设置可执行文件的输出目录（可用 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=... 覆盖，
 #供 Release 门等旁路构建输出到独立目录，避免覆盖 bin/ 的既有产物）
 if(NOT CMAKE_RUNTIME_OUTPUT_DIRECTORY)
@@ -124,6 +143,18 @@ endif()
 # 定义：自研 XFO1 字库数据已删，轮廓字统一走 FT 外挂文件 + 位图回退。）
 if(ANDROID)
     add_compile_definitions(XPLATFORM_FBDEV_ON=1)
+    # 外挂 FT 轮廓字目录（2026-10-24）：安卓无文件系统可写工作目录，
+    # 字体由 android_main.c 启动时从 APK assets 释放到应用私有目录
+    # fonts/，此处注入该绝对路径供 FT 链查找。
+    # 不注入时框架回退默认的 "../Library/XFont"（构建机路径，设备上不存
+    # 在）→ 装载失败回退位图字库 XFont8x16（仅 ASCII）→ 中文整片缺失
+    # （真机截图实证）。
+    # 路径取 /data/data/<pkg>/files/fonts：Android 上 /data/data 是
+    # /data/user/0 的稳定入口（跨多用户设备同样成立），且与
+    # android_main.c 的释放目标同源（同一宏 XFONT_EXTERNAL_FT_FONT_DIR，
+    # 两处分离过一次导致「释放到 A、FT 找 B」→ 探测落空）。
+    add_compile_definitions(
+        XFONT_EXTERNAL_FT_FONT_DIR="/data/data/com.xinyuec.xguidemo/files/fonts")
 endif()
 # 强制 DPI（XGUI_FORCE_DPI，XGuiConfig.h 有 #ifndef 兜底 0）：命令行
 # -DXGUI_FORCE_DPI=2.0 调试缩放链/小屏放大画面。CMake -D 只建变量不自动
@@ -237,6 +268,14 @@ file(GLOB_RECURSE XGUI_REMOTE_AUTH_TEST_FILE "Test/XGuiTest/XGuiRemoteAuthTest.c
 if(XGUI_REMOTE_AUTH_TEST_FILE)
     list(REMOVE_ITEM TEST_FILE ${XGUI_REMOTE_AUTH_TEST_FILE})
 endif()
+# x_timer_coarse_repro 同理：自带 main 的 CoarseTimer（时间轮）最小复现
+# 探针（2026-10-22，定位 ESP8266 上框架定时器路径崩溃，见
+# platforms/esp8266/docs/PROGRESS.md §0-Y.6），与主程序双 main 冲突，必须剔除。
+file(GLOB_RECURSE XGUI_COARSE_REPRO_FILE
+    "Test/XGuiTest/x_timer_coarse_repro.c" )
+if(XGUI_COARSE_REPRO_FILE)
+    list(REMOVE_ITEM TEST_FILE ${XGUI_COARSE_REPRO_FILE})
+endif()
 # XGuiRemoteInputViewTest 同理：自带 main 的独立专项探针
 # （XGuiRemoteInputView_Test 目标，mcgs 战役输入路 2026-10-04），
 # 不得卷入主程序（与 main.c 重复定义 main）。
@@ -274,6 +313,11 @@ list(REMOVE_ITEM TEST_FILE
 # 不得卷入主程序（与 main.c 重复定义 main）。
 list(REMOVE_ITEM TEST_FILE
     "${CMAKE_CURRENT_LIST_DIR}/Test/XProtocolTest/xntp_min_repro.c")
+# xdevice_wifi_probe 同理：自带 main 的无线契约探针独立可执行
+# （XDeviceWiFiProbe 目标，2026-10-24 无线平台抽象 L0 实测工具），
+# 不得卷入主程序（与 main.c 重复定义 main）。
+list(REMOVE_ITEM TEST_FILE
+    "${CMAKE_CURRENT_LIST_DIR}/Test/XDeviceTest/xdevice_wifi_probe.c")
 file(GLOB_RECURSE DRIVE_FILE "Drive/*.c")
 # 桌面（非交叉）构建排除嵌入式移植层（2026-10-05 回归门修复）：FreeRTOS
 # portmacro.h/tasks.c 含 ARM CMSIS 内联汇编（mrs/msr basepri、isb），x86
@@ -288,7 +332,7 @@ if(NOT CMAKE_CROSSCOMPILING OR NOT XINYUE_PLATFORM_FREERTOS)
     list(FILTER DRIVE_FILE EXCLUDE REGEX ".*/STM32/.*")
 endif()
 # Espressif/ESP8266 移植层（2026-10-16 入库）：源文件依赖 ESP-IDF SDK 头
-# （c_types.h 等），桌面/MSVC 编译期即缺头报错；其构建入口是 esp8266/
+# （c_types.h 等），桌面/MSVC 编译期即缺头报错；其构建入口是 platforms/esp8266/
 # 子工程（独立根 CMakeLists + 自带 toolchain），不与本根 glob 共存。
 list(FILTER DRIVE_FILE EXCLUDE REGEX ".*/Espressif/.*")
 # android_main.c 是 demo APK 的 NativeActivity 壳接线（引用 demo 入口
@@ -528,6 +572,30 @@ target_link_libraries(${EXPORT_NAME} PRIVATE freetype)
 # 以子目录静态库方式集成，详见 Library/xxHash/CMakeLists.txt
 add_subdirectory(Library/xxHash)
 
+# ==================== 平台模板（platforms/）====================
+# ⚠ 2026-10-22 起，平台模板**不作为本根工程的子目录**（2026-10-24 迁入
+#   platforms/ 后结论不变）。
+#   实测把 ESP8266 模板 add_subdirectory 进来后，VS 的启动目标列表里会出现
+#   两个 esp8266_nonos_fw.slnx（VS 的 CMake 扩展对"同一工程被独立打开 + 又被
+#   父工程纳入"这种双份 .sln 识别不了），两个都点不动、无法切换执行。
+#   结论：platforms/esp8266/ 保持【独立子工程】，用下面的方式单独打开。
+#
+#   独立打开（推荐，VS 一键可用）：
+#       cmake -S platforms/esp8266 -B build_esp
+#       cmake --build build_esp                  # 构建固件
+#       cmake --build build_esp --target flash   # 烧录
+#       cmake --build build_esp --target monitor # 串口日志
+#   VS 里：File > Open > Folder... 选 platforms/esp8266/，或直接 Open
+#   build_esp\ 里的 .sln。
+#
+#   底层构建其实不依赖 CMake：直接
+#       bash platforms/esp8266/nonos/tools/build_fw_final.sh
+#   即可产出 platforms/esp8266/nonos/fw_final.bin（CMake 只是编排层）。
+#
+#   ⚠ platforms/android/ 只是打包脚本，没有 CMakeLists——安卓的编译由本文件
+#   的 xguidemo 目标承担，打包另跑 platforms/android/build_apk.sh。
+#   项目结构与边界见 platforms/README.md。
+
 # 链接 mbedTLS 静态库
 target_link_libraries(${EXPORT_NAME}S PRIVATE mbedtls)
 target_link_libraries(${EXPORT_NAME} PRIVATE mbedtls)
@@ -594,7 +662,8 @@ if(WIN32)
                            "headers/importlib (see Tools/windows/vulkan/make_vulkan_lib.bat)")
         endif()
     endif()
-    set(XINYUE_WIN32_LIBS advapi32 user32 gdi32 opengl32 imm32 shell32 ole32 uiautomationcore setupapi winusb cfgmgr32 hid)
+    # wlanapi：Native WiFi（XDeviceWiFi_win32.c 的无线枚举/扫描/连接通路）。
+    set(XINYUE_WIN32_LIBS advapi32 user32 gdi32 opengl32 imm32 shell32 ole32 uiautomationcore setupapi winusb cfgmgr32 hid wlanapi)
     if(XINYUE_WIN32_VULKAN_VAR)
         list(APPEND XINYUE_WIN32_LIBS ${XINYUE_WIN32_VULKAN_VAR})
     endif()
@@ -661,13 +730,27 @@ endif() # XGUI_ON（demo 可执行排除）
 # ==================== XNtp 最小复现程序（独立可执行） ====================
 # 「应答超时」根修车道诊断工具：绕开 GUI 直连 ntp.aliyun.com，
 # stderr 分阶段探针（DNS/裸 POSIX 对照/XNtpClient 全链路心跳）。
+# 仅 UNIX 构建：工具主体是 POSIX 裸套接字对照组（netdb.h/unistd.h 等），
+# Windows 下无对应头，2026-10-24 全量构建门修复（此前该目标在 Windows
+# 恒编译失败：netdb.h 找不到）。
+if(UNIX)
 add_executable(XNtpMinRepro_Test
     "./Test/XProtocolTest/xntp_min_repro.c"
 )
+target_link_libraries(XNtpMinRepro_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 无线契约探针（独立可执行） ====================
+# 无线平台抽象（L0）实测：枚举无线适配器 → 发起扫描 → 轮询扫描状态机 →
+# 取回结果清单 →（可选）连接并回读连接状态。无 GUI、无事件循环依赖，
+# 状态机以阻塞轮询驱动（与上层定时器轮询同形）。
+add_executable(XDeviceWiFiProbe
+    "./Test/XDeviceTest/xdevice_wifi_probe.c"
+)
 if(UNIX)
-    target_link_libraries(XNtpMinRepro_Test ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XDeviceWiFiProbe ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
-    target_link_libraries(XNtpMinRepro_Test ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+    target_link_libraries(XDeviceWiFiProbe ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 endif()
 
 # ==================== XFtp 端到端真服务器联调测试 ====================
@@ -943,8 +1026,13 @@ endif() # XGUI_ON AND NOT ANDROID
 # ==================== XGuiWindowDemo 安卓 APK 壳（共享库） ====================
 # NativeActivity 壳：android_main.c 生命周期接线 + 平台层（窗口/输入）。
 # demo main 重命名为 xgui_window_demo_main（__ANDROID__ 下）并入本目标，
-# 导出 ANativeActivity_onCreate。打包脚本（Tools/android/build_apk.sh）
-# 以 libxguidemo.so 为载体组 APK。
+# 导出 ANativeActivity_onCreate。打包脚本
+# （platforms/android/build_apk.sh）以 libxguidemo.so 为载体组 APK。
+#
+# 注意：2026-10-24 安卓模板迁入 platforms/android/ 后，**只搬了平台差异层**
+# （打包脚本 / 清单 / 资源 / 签名）。下面这些源文件是框架平台层与 demo 的
+# 公共部分，仍由本文件统管编译——不要因为"模板在 platforms/"就把它们也
+# 搬走，否则三个平台（桌面/安卓/ESP8266）的公共源码会分裂成多份副本。
 if(XGUI_ON AND ANDROID)
     add_library(xguidemo SHARED
         "./Drive/Android/android_main.c"
@@ -954,6 +1042,23 @@ if(XGUI_ON AND ANDROID)
         "./Test/XGuiDemo/xgui_demo_page_advanced.c"
         "./Test/XGuiDemo/xgui_demo_page_keyboard.c"
         "./Test/XGuiDemo/xgui_demo_page_effects.c"
+        # [安卓 demo 页补齐 2026-10-24] 下列 9 个扩展页与桌面
+        # XGuiWindowDemo_Test 目标同集：xgui_window_demo.c 无条件引用它们的
+        # build/adapt/shutdown 符号（守卫是 XGUI_REMOTE_ON 等特性宏，不是
+        # 平台宏），故安卓目标必须一并编译。此前本列表只列了 5 个基础页，
+        # 链接期报 undefined symbol: demo_page_remote_client_adapt 等 20+
+        # 个（arm64 全新配置目录必现；x86_64 侥幸能过是因为其 build.ninja
+        # 生成于工作区曾有完整列表的窗口期，重新配置即会同样失败）。
+        "./Test/XGuiDemo/xgui_demo_page_remote_server.c"
+        "./Test/XGuiDemo/xgui_demo_page_remote_client.c"
+        "./Test/XGuiDemo/xgui_demo_page_network.c"
+        "./Test/XGuiDemo/xgui_demo_page_overlay_settings.c"
+        "./Test/XGuiDemo/xgui_demo_page_qrcode.c"
+        "./Test/XGuiDemo/xgui_demo_page_update.c"
+        "./Test/XGuiDemo/xgui_demo_page_modbus.c"
+        "./Test/XGuiDemo/xgui_demo_page_window.c"
+        "./Test/XGuiDemo/xgui_demo_page_timeddns.c"
+        "./Test/XGuiDemo/xgui_demo_splitter.c"
         "./Test/XGuiDemo/xgui_demo_apitest_buttons.c"
         "./Test/XGuiDemo/xgui_demo_apitest_labels.c"
         "./Test/XGuiDemo/xgui_demo_apitest_input.c"
@@ -966,6 +1071,13 @@ if(XGUI_ON AND ANDROID)
     )
     target_link_libraries(xguidemo ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} mbedtls lwip zlib fatfs pcre2 sqlite ${EXPORT_NAME}S)
     target_link_libraries(xguidemo android log)
+    # [2026-10-24 安卓无障碍接入] 保活 JNI_OnLoad：链接参数含
+    # -Wl,--gc-sections，未被引用的符号（含 JNI_OnLoad）会被裁掉，
+    # ART 加载 .so 时找不到 JNI_OnLoad → RegisterNatives 不执行 →
+    # Java 侧 native 方法报 "No implementation found"（真机实证崩溃）。
+    # --undefined 把符号标记为外部引用，阻止裁剪。
+    target_link_options(xguidemo PRIVATE
+        "LINKER:--undefined=JNI_OnLoad")
 endif()
 
 # ==================== XGui 字库离屏巡检工具 ====================
@@ -1020,6 +1132,61 @@ if(UNIX)
     target_link_libraries(xgui_glyph_coverage_diff_tool ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
 else()
     target_link_libraries(xgui_glyph_coverage_diff_tool ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== CoarseTimer（时间轮）路径最小复现探针 ====================
+# 2026-10-22：定位 ESP8266 NONOS3 固件上"框架定时器路径"的崩溃
+# （Fatal exception 0 / epc1=XAtomic_exchange_bool+3 / excvaddr 指向 rodata
+#  数据符号 = 野指针/坏 vtable）。桌面端跑同一场景：
+#   · 崩 → 纯框架 bug，可直接 gdb 定位；
+#   · 不崩 → 与 32 位裸机路径相关。
+# 详见 platforms/esp8266/docs/PROGRESS.md §0-Y.6。
+add_executable(x_timer_coarse_repro
+    "./Test/XGuiTest/x_timer_coarse_repro.c"
+)
+if(UNIX)
+    target_link_libraries(x_timer_coarse_repro ${EXPORT_NAME}S ${XINYUE_UNIX_THREAD_LIBS} ${XINYUE_UNIX_EXTRA_LIBS} mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+else()
+    target_link_libraries(x_timer_coarse_repro ${EXPORT_NAME}S mbedtls lwip zlib fatfs pcre2 ${EXPORT_NAME}S)
+endif()
+
+# ==================== 测试/工具目标统一强制包含配置头 ====================
+# 布局分裂根修（2026-10-21）：核心库经 xinyue_force_include_config 强制
+# /FI CXinYueConfig.h，而本文件尾部的测试/工具可执行目标此前没有——
+# 它们的 TU 在首个 XGuiConfig.h 到达时 XGUI_ON 未定义，整个缺省定义体
+# 被跳空，XPAINTDEVICE_ON/XLAYOUT_ON 等影响 XWidget 结构体布局的宏与
+# 库 TU 取值不一致 → 同一二进制内两套 XWidget 布局（sizeof 552 vs 更
+# 小）。实测后果：测试 TU 读 m_sssStyleCache（库视图偏移 544）命中别
+# 的字段，析构/拷贝把运行期数据当指针 free → _CrtIsValidHeapPointer
+# 断言崩溃（xgui_regression_test 的 abstractbutton/frame 契约测试实
+# 锚）。凡链接核心库的可执行目标一律与库同口径强制包含，一次性闭环。
+set(XINYUE_EXEC_TARGETS
+    FtpE2E_Test
+    XUpgradeE2E_Test
+    XUpgradePack
+    XGuiRegression_Test
+    XGuiRemoteAuth_Test
+    XGuiRemoteAdapt_Test
+    XGuiDialogMove_Test
+    XGuiKeyboardDrag_Test
+    XGuiMirrorFidelity_Test
+    XLineControl_Acceptance_Test
+    XGuiRemoteInputView_Test
+    XGuiWindowDemo_Test
+    XGuiRemoteDemo_Test
+    xgui_font_scan_tool
+    xgui_font_bold_ab
+    XGuiGpu_Test
+    xgui_glyph_coverage_diff_tool
+    x_timer_coarse_repro
+)
+foreach(_tgt IN LISTS XINYUE_EXEC_TARGETS)
+    if(TARGET ${_tgt})
+        xinyue_force_include_config(${_tgt})
+    endif()
+endforeach()
+if(TARGET XGuiXdnd_Test)
+    xinyue_force_include_config(XGuiXdnd_Test)
 endif()
 
 #安装

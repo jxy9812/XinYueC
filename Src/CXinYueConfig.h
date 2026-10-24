@@ -134,11 +134,28 @@ extern "C" {
 /* ========================================================================== */
 /*                              XFile 文件系统模块总开关                               */
 /* ========================================================================== */
+/*                        设备层（XDevice 家族）总开关                        */
+/* ========================================================================== */
+/** @brief 设备层总开关；置 0 时整层统一设备抽象裁掉（各设备类与平台后端
+ *         一并不编译）。
+ * @details 设备域在本文件里**只保留这一个总开关**；各设备类的独立开关与
+ *          设备容量配置集中在 Src/XDevice/XDevice_config.h（XDevice_config.h）。
+ *          目的：同一套框架可按产品形态适配——桌面全量、单片机裸机精简、
+ *          只带若干外设的定制板——只需改设备配置文件，不必翻动框架总配置。
+ * @note   必须排在依赖设备的业务开关（XFILE_ON / XNETWORK_ON）之前：业务
+ *         开关的默认值由设备开关派生。 */
+#ifndef XDEVICE_ON
+#define XDEVICE_ON 1
+#endif
+#include"XDevice_config.h"
+
+/* ========================================================================== */
 /** @brief XFile 模块总开关；置 0 时裁剪整个 XFile 对外公开 API 及所有子功能。
  * @note 详细的子功能开关在 XFileSystem_config.h 中定义，如 XDIR_ON / XFILE_OBJECT_ON 等。
- *       关闭后若仍有其它模块无条件引用 XFile 符号，需同步裁剪对应依赖。 */
+ *       关闭后若仍有其它模块无条件引用 XFile 符号，需同步裁剪对应依赖。
+ * @details 依赖文件设备：设备被裁剪时业务层一并裁剪（避免未定义符号）。 */
 #ifndef XFILE_ON
-#define XFILE_ON 1
+#define XFILE_ON (XDEVICE_ON && XDEVICE_FILE_ON)
 #endif
 #include"XFileSystem_config.h"
 
@@ -147,9 +164,10 @@ extern "C" {
 /* ========================================================================== */
 /** @brief XNetwork 模块总开关；置 0 时裁剪整个 XNetwork 对外公开 API 及所有子功能。
  * @note 详细的子功能开关在 XNetwork_config.h 中定义，如 XNETWORK_TCPSERVER_ON 等。
- *       关闭后若仍有其它模块无条件引用 XNetwork 符号，需同步裁剪对应依赖。 */
+ *       关闭后若仍有其它模块无条件引用 XNetwork 符号，需同步裁剪对应依赖。
+ * @details 依赖网络设备：设备被裁剪时业务层一并裁剪（避免未定义符号）。 */
 #ifndef XNETWORK_ON
-#define XNETWORK_ON 1
+#define XNETWORK_ON (XDEVICE_ON && XDEVICE_NETWORK_ON)
 #endif
 #include"XNetwork_config.h"
 

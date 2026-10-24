@@ -7,6 +7,7 @@
  *             依赖 USB 标准描述符与端点传输。
  * ========================================================================== */
 #include "XDeviceUsbGadget.h"
+#if XDEVICE_ON && XDEVICE_USBGADGET_ON
 #include "XVarList.h"
 #include "XVariant.h"
 #include "XMemory.h"
@@ -783,3 +784,5 @@ const char* XDeviceUsbGadget_errorString(XDeviceUsbError error)
 {
     return XDeviceUsbHost_errorString(error);
 }
+
+#endif /* device switch */

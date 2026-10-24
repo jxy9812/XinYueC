@@ -51,8 +51,35 @@
 #include "XGuiApplication.h"
 #include "XCursor.h"
 #include "XBoxLayout.h"
+#include "XWindowDecoration.h"
+#include "XDateTime.h"
+#include "XListView.h"
+#include "XAbstractItemView.h"
+#include "XEvent.h"
 #include "xgui_demo_theme.h"
 #include "xgui_demo_pages.h"
+
+/* 原生样式断言（Windows 专项门禁；其它平台编译期整段出局）：
+ * 「显示边框」必须表现为「框架自绘条在、原生装饰不在」。框架强制 CSD
+ * 时原生窗按 WS_POPUP 组装，样式位仍可能残留 WS_CAPTION/WS_THICKFRAME
+ * 之类的装饰位——那正是系统标题栏与自绘条并存的物证，故直接读原生
+ * 样式断言，而不是只读框架侧 flags 回读（后者在双条时同样是干净的）。 */
+#ifdef _WIN32
+#include <windows.h>
+#define WN_HAS_NATIVE_STYLE_FN 1
+static int wn_nativeStyleBits(XWidget* top)
+{
+    XWindowId id;
+    DWORD style;
+    if (!top || !top->m_windowHandle) return -1;
+    id = XWindow_winId((XWindow*)top->m_windowHandle);
+    if (!id) return -1;
+    style = (DWORD)GetWindowLongPtrW((HWND)(uintptr_t)id, GWL_STYLE);
+    /* 返回装饰位集合（非零=存在原生标题栏/边框）。 */
+    return (int)(style & (WS_CAPTION | WS_THICKFRAME | WS_SYSMENU |
+                          WS_MINIMIZEBOX | WS_MAXIMIZEBOX));
+}
+#endif
 
 /*
  * 控件段宏守卫：Widget/Label/CheckBox/ComboBox/PushButton + 样式/调色板/
@@ -577,23 +604,25 @@ static int wn_orientApply(int deg, int* outW, int* outH)
         s_wn.m_syncing = false;
     }
     /* 平台支持探测（2026-10-18）：setter 返回 false 时下拉框置灰并给
-       说明文案，不让用户点了没反应。 */
+       说明文案，不让用户点了没反应。
+       [2026-10-23 改] 探测改为**只问能力、不实际换角**：原实现把窗口真
+       转到 90° 再转回，等于在没有配套几何变化的情况下跑两遍完整旋转
+       链路（切零拷贝缓冲、重建后备存储、整帧重传），在 win32 上会与
+       后续真正的换角流程叠加成重入风暴（实测自测跑到此步即中止）。
+       能力查询本身是纯读（XWindow_rotationSupported），无副作用。 */
     if (!s_wn.m_rotationProbed)
     {
         s_wn.m_rotationProbed = true;
-        /* 探测口径：setter 只在「平台不支持且角度非 0」时返回 false，故用
-           一个非 0 角试一次再立即还原到探测前的角度。build 阶段在首次
-           show 之前调用，此时无任何帧上屏，来回不产生可见闪烁。 */
-        {
-            int before = XWidget_contentRotationDegrees(top);
-            s_wn.m_rotationSupported = XWidget_setContentRotation(top, 90);
-            XWidget_setContentRotation(top, before);
-        }
+        s_wn.m_rotationSupported =
+            top && top->m_windowHandle
+                ? XWindow_rotationSupported((XWindow*)top->m_windowHandle)
+                : false;
         if (!s_wn.m_rotationSupported && s_wn.m_orientCombo)
             XWidget_setEnabled((XWidget*)s_wn.m_orientCombo, false);
         fprintf(stderr, "[WN] rot probe: supported=%d top=%p handle=%p\n",
                 (int)s_wn.m_rotationSupported, (void*)top,
                 top ? top->m_windowHandle : NULL);
+        fflush(stderr);
     }
     screen = XGuiApplication_primaryScreen();
     if (screen) {
@@ -1157,19 +1186,53 @@ int demo_page_window_settings_autotest(XWidget* page)
         bool frameBefore = (XWidget_windowFlags(top) &
                             (XWidgetFlags)XWindowType_FramelessWindowHint)
                            == 0;
-        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_frameCheck,
-                                   false);
-        wn_frameSlot(NULL, NULL);
+        /* 真实点击路径：勾选/取消必须经按钮的按压-释放派发帧触发槽
+           （toggled 在 mouseReleaseEvent 栈内发射），而不是先 setChecked
+           再直呼槽——后者绕开了「窗口 flags/几何在释放帧内被改动」这条
+           用户实际走到的路径，这正是双条与卡死长期测不出的原因。 */
+        XMouseEvent cme;
+        XPoint cpos;
+        XPoint_init(&cpos, 8, XWidget_height((XWidget*)s_wn.m_frameCheck) / 2);
+        XMouseEvent_init(&cme, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton, 0, cpos);
+        XObject_event_base((XObject*)s_wn.m_frameCheck, (XEvent*)&cme);
+        XMouseEvent_init(&cme, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                         XMouseButton_LeftButton, 0, cpos);
+        XObject_event_base((XObject*)s_wn.m_frameCheck, (XEvent*)&cme);
         WN_EXPECT((XWidget_windowFlags(top) &
                    (XWidgetFlags)XWindowType_FramelessWindowHint) != 0,
                   "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x9A\x90\xE8\x97\x8F\xE8\xBE\xB9\xE6\xA1\x86\xE7\x94\x9F\xE6\x95\x88(Frameless \xE4\xBD\x8D)");
-        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_frameCheck,
-                                   frameBefore);
-        wn_frameSlot(NULL, NULL);
-        WN_EXPECT(((XWidget_windowFlags(top) &
-                    (XWidgetFlags)XWindowType_FramelessWindowHint) == 0)
+        /* 去框态：框架装饰必须失活，自绘条不得残留（双条的另一半）。 */
+        WN_EXPECT(!XWindowDecoration_activeFor(top),
+                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x8E\xBB\xE6\xA1\x86\xE6\x80\x81\xE8\x87\xAA\xE7\xBB\x98\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F\xE5\xB7\xB2\xE5\xA4\xB1\xE6\xB4\xBB");
+        /* 再点一次：勾回（释放帧内同样要能回到稳定态，不得卡死）。 */
+        XMouseEvent_init(&cme, XEVENT_TYPE_MOUSE_BUTTON_PRESS,
+                         XMouseButton_LeftButton, 0, cpos);
+        XObject_event_base((XObject*)s_wn.m_frameCheck, (XEvent*)&cme);
+        XMouseEvent_init(&cme, XEVENT_TYPE_MOUSE_BUTTON_RELEASE,
+                         XMouseButton_LeftButton, 0, cpos);
+        XObject_event_base((XObject*)s_wn.m_frameCheck, (XEvent*)&cme);
+        WN_EXPECT((XWidget_windowFlags(top) &
+                   (XWidgetFlags)XWindowType_FramelessWindowHint) == 0,
+                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE5\x8E\x9F");
+        WN_EXPECT(XAbstractButton_isChecked((XAbstractButton*)s_wn.m_frameCheck)
                       == frameBefore,
                   "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE5\x8E\x9F");
+        /* 边框开态（强制 CSD）：框架条必须接管，且原生装饰位不得残留。
+           这两条合起来就是「不得同时出现系统标题栏与自定义标题栏」的
+           机器判据——只查 Frameless 位会被「位对了但原生样式没落地」
+           的假绿骗过（用户实测双条即此形态）。 */
+        if (frameBefore) {
+        WN_EXPECT(XWindowDecoration_activeFor(top),
+                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE8\xBE\xB9\xE6\xA1\x86\xE5\xBC\x80\xE6\x80\x81\xE6\xA1\x86\xE6\x9E\xB6\xE8\x87\xAA\xE7\xBB\x98\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F\xE7\x94\x9F\xE6\x95\x88");
+#ifdef WN_HAS_NATIVE_STYLE_FN
+        {
+            int bits = wn_nativeStyleBits(top);
+            WN_EXPECT(bits == 0,
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\xA1\x86\xE6\x9E\xB6\xE5\xBC\x80\xE6\x80\x81\xE6\x97\xA0\xE5\x8E\x9F\xE7\x94\x9F\xE8\xA3\x85\xE9\xA5\xB0\xE4\xBD\x8D(\xE5\x8D\x95\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F)");
+        }
+#endif
+        }
 
         /* ---- 状态栏：隐藏 → 访问器回读 → 复原 ---- */
         {
@@ -1234,6 +1297,26 @@ int demo_page_window_settings_autotest(XWidget* page)
                 WN_EXPECT(XWidget_width(top) == w0 &&
                               XWidget_height(top) == h0,
                           "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\xA8\xAA\xE5\xB1\x8F 0\xC2\xB0 \xE8\xBF\x98\xE5\x8E\x9F\xE5\x9F\xBA\xE5\x87\x86\xE5\xB0\xBA\xE5\xAF\xB8");
+            }
+            /* ---- 方向切换：再走一遍 90°/180°/270° 往返 ----
+               （与上方四方位循环同口径；此处只保留行为断言，不模拟弹层
+               打开/收起的 UI 时序——弹层模拟在同步自测栈内会与布局重排
+               叠加，属测试自身的稳定性问题，与产品行为无关。） */
+            {
+                int deg;
+                for (deg = 90; deg <= 270; deg += 90) {
+                    XComboBox_setCurrentIndex(s_wn.m_orientCombo, deg / 90);
+                    wn_orientSlot(NULL, NULL);
+                    WN_EXPECT(XWidget_contentRotationDegrees(top) == deg ||
+                                  !s_wn.m_rotationSupported,
+                              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\xBC\xB9\xE5\xB1\x82\xE9\x80\x89\xE6\x96\xB9\xE4\xBD\x8D\xE5\x90\x8E\xE6\x97\x8B\xE8\xBD\xAC\xE8\xA7\x92\xE7\x94\x9F\xE6\x95\x88");
+                    if (deg == 180)
+                        WN_EXPECT(XWidget_width(top) == w0 &&
+                                      XWidget_height(top) == h0,
+                                  "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: 180\xC2\xB0 \xE5\xAE\xBD\xE9\xAB\x98\xE4\xB8\x8E 0\xC2\xB0 \xE5\x90\x8C");
+                }
+                XComboBox_setCurrentIndex(s_wn.m_orientCombo, 0);
+                wn_orientSlot(NULL, NULL);
             }
         }
 

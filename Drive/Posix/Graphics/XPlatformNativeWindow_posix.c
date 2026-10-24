@@ -7049,6 +7049,10 @@ static bool xpwn_canRotateDirect(const XWNPendingEntry* entry)
 bool XPlatformNativeWindow_rotationSupported(const XWindow* window)
 {
     if (!window) return false;
+    /* dpr>1 降级（本层自持，2026-10-24 从框架层下沉）：X11 上屏走
+       XPutImage 直拷、不带缩放，物理放大与逐像素转置叠加会算错；
+       dpr 单源=XWindow_devicePixelRatio（窗口未就位时恒 1.0f）。 */
+    if (XWindow_devicePixelRatio(window) > 1.0f) return false;
 #if XGUI_ON && XPLATFORM_FBDEV_ON
     /* fbdev 单屏模式：X11 段整体不参与编译，能力由 fbdev 直写侧回答。 */
     if (XPlatformDisplayDriver_active())
@@ -7071,6 +7075,7 @@ bool XPlatformNativeWindow_rotationSupported(const XWindow* window)
 #endif
     return xpwn_canRotateDirect(xpwn_findByXWindow(window));
 }
+
 
 static bool xpwn_preparePresentImage(XWNPendingEntry* entry,
                                       int imgW, int imgH)
@@ -7247,9 +7252,10 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     logW = imgW;
     logH = imgH;
     XWindow_rotationDeviceSize(rot, logW, logH, &devW, &devH);
-    /* 描述符尺寸：rot>0 蕴含 dpr==1（rotationSupported 的 dpr 闸，
-       见 XWindow_rotationSupported），logicalToPhysical 恒等，描述符
-       恒为旋转后的设备 footprint；0° 时与原路径逐位一致。 */
+    /* 描述符尺寸：rot>0 蕴含 dpr==1（dpr 闸在本文件
+       XPlatformNativeWindow_rotationSupported 内，dpr>1 直接判不支持），
+       logicalToPhysical 恒等，描述符恒为旋转后的设备 footprint；
+       0° 时与原路径逐位一致。 */
     if (rot != 0) {
         presW = devW;
         presH = devH;

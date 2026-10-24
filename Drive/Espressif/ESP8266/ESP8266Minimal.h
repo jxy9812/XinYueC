@@ -44,6 +44,13 @@
 #define XNETWORK_ON 0
 #endif
 
+/* 无线（Wi-Fi）平台抽象：芯片 WiFi 由 NONOS SDK 直接驱动，尚未接入框架的
+ * XDeviceWiFi 契约（扫描/连接走 SDK 的 wifi_station_*），故先裁剪；接入后
+ * 与本文件一并加入 esp8266 固件的 cfg/filelist_final.txt。 */
+#ifndef XDEVICE_WIFI_ON
+#define XDEVICE_WIFI_ON 0
+#endif
+
 /* 应用层协议：Modbus/MQTT/DDNS/NTP 等一律不编译。 */
 #ifndef XPROTOCOL_ON
 #define XPROTOCOL_ON 0
@@ -139,8 +146,8 @@
 /* 串口设备层：stdio 控制台的传输由 XSerialPort 承载，其平台后端是
  * XSerialPortESP8266.c。不开 XIODevice / XSerialPort 的 Shell 传输后端
  * —— 那是给"把任意串口挂成额外会话"用的，单路控制台用不上。 */
-#ifndef XSERIALPORT_ON
-#define XSERIALPORT_ON 1
+#ifndef XDEVICE_SERIALPORT_ON
+#define XDEVICE_SERIALPORT_ON 1
 #endif
 
 /* 裁掉：设备类子命令（无对应驱动实现）。 */

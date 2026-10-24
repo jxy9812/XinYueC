@@ -1,4 +1,5 @@
 #include "XDeviceDir.h"
+#if XDEVICE_ON && XDEVICE_DIR_ON
 #include "XVarList.h"
 #include "XMemory.h"
 #include "XString.h"
@@ -159,3 +160,5 @@ bool XDeviceDir_readNext(XFd fd, XDirEntry* entry)
     XVarList_delete(output);
     return result;
 }
+
+#endif /* device switch */

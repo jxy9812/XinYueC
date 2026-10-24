@@ -176,6 +176,7 @@ XConsoleResult XConsoleShellTasks_platformProvider(
     (void)userData;
     (void)session;
     if (!shell || !emit) return XConsoleResult_InvalidArgument;
+#if XTHREAD_ON
     context.emit = emit;
     context.emitUserData = emitUserData;
     context.result = XConsoleResult_Ok;
@@ -187,6 +188,13 @@ XConsoleResult XConsoleShellTasks_platformProvider(
         !XConsoleShell_writeUtf8(shell, "tasks: 没有注册 XThread\n"))
         return XConsoleResult_IoError;
     return XConsoleResult_Ok;
+#else
+    /* 裸机单线程（XTHREAD_ON=0）：没有 XThread 对象，任务注册表整族退场
+     * （见 XTask.h 的守卫说明），本命令无快照可报。明确返回"不支持"，
+     * 而不是去调一个不存在的 XTask_enumerateThreads。 */
+    (void)context;
+    return XConsoleResult_NotSupported;
+#endif
 }
 
 const XConsoleCommand XConsoleShellTasks_command = {

@@ -29,7 +29,7 @@ static bool checkDevicePropertyInt(XFd fd, uint32_t property, int expected)
 
 bool XDeviceSerialPortTest_runAll(void)
 {
-#if !XSERIALPORT_ON
+#if !XDEVICE_SERIALPORT_ON
     puts("XDeviceSerialPort test: SKIP");
     return true;
 #elif !defined(__linux__) && !defined(__unix__) && !defined(__APPLE__)

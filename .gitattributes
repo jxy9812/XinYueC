@@ -61,3 +61,14 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+# ESP8266 构建管线（2026-10-23）：bash 的 `read -r` 会保留 CRLF 的 \r，
+# 导致拼出的每个 -I 路径都指向不存在的目录（报"头文件缺失/Invalid argument"，
+# 与真因毫无关联）。列表文件与 shell 脚本一律锁 LF。详见
+# platforms/esp8266/docs/PITFALLS.md A9/A10。
+# 2026-10-24 模板迁入 platforms/ 后路径前缀同步更新。
+platforms/esp8266/nonos/cfg/*.txt text eol=lf
+platforms/esp8266/nonos/tools/*.sh  text eol=lf
+platforms/esp8266/nonos/tools/*.py  text eol=lf
+# 安卓打包脚本同样是 bash 管线，CRLF 会让 `set -e` 脚本莫名失败
+platforms/android/*.sh text eol=lf

@@ -14,6 +14,9 @@ extern "C" {
 
 #include <stdbool.h>
 #include "XDevice.h"
+#include "XDevice_config.h"
+#if XDEVICE_ON && XDEVICE_CONSOLE_ON
+
 
 /** @brief 控制台设备专有控制命令。 */
 typedef enum XDeviceConsoleCommand
@@ -103,4 +106,5 @@ XFd XDeviceConsole_backendFd(XFd fd);
 }
 #endif
 
+#endif /* device switch */
 #endif /* XDEVICECONSOLE_H */

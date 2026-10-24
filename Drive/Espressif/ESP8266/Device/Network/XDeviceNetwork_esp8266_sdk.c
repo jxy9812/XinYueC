@@ -10,7 +10,7 @@
  *   （liblwip2-536.a + lwip-esp.o），SoftAP 的信标/关联/DHCP/收发全走它，
  *   没有任何开关可以卸掉。若再用 -D 重命名把仓库 lwip 挂进去，两套栈会互相
  *   踩 pbuf 引用计数——实测 `ASSERT: pbuf_free: p->ref > 0` → 死机 → 看门狗
- *   复位，呈"关联后定时重启"形态（esp8266/PROGRESS.md §5.3）。
+ *   复位，呈"关联后定时重启"形态（platforms/esp8266/docs/PROGRESS.md §5.3）。
  *
  * 因此本芯片的方案是：数据面完全交给 SDK 内部栈，本文件只用 SDK 公开 API
  *   （wifi_* 配置 SoftAP、espconn 做 TCP）翻译成框架接口。

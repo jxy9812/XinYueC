@@ -317,12 +317,31 @@ bool XMultiPool_is_from_pool(const XMultiPool* mp, const void* ptr) {
  * 全局池（静态模式 + XFixedPool_create 子池）
  * ============================================================================ */
 
-XMULTIPOOL_STATIC_DEFINE(global_pool, 5);
+/* 全局池容量宏：默认 5（桌面原值）；平台档案可覆盖（ESP8266=8）。 */
+#ifndef XMP_GLOBAL_SUB_POOL_CAPACITY
+#define XMP_GLOBAL_SUB_POOL_CAPACITY 5
+#endif
+
+#ifdef XMP_GLOBAL_INIT_CUSTOM
+/* 平台自实现装配模式：骨架容量经 XMP_GLOBAL_SUB_POOL_CAPACITY 参数化，
+ * 档位由平台函数（XMP_GLOBAL_INIT_CUSTOM，签名 void fn(XMultiPool*)）
+ * 经公共 API 装配。 */
+XMULTIPOOL_STATIC_DEFINE(global_pool, XMP_GLOBAL_SUB_POOL_CAPACITY);
 static bool global_pool_inited = false;
 
 static void XMultiPool_initGlobal(void) {
     if (global_pool_inited) return;
-    XMULTIPOOL_STATIC_INIT(global_pool, 5);
+    XMULTIPOOL_STATIC_INIT(global_pool, XMP_GLOBAL_SUB_POOL_CAPACITY);
+    XMP_GLOBAL_INIT_CUSTOM(global_pool);
+    global_pool_inited = true;
+}
+#else
+XMULTIPOOL_STATIC_DEFINE(global_pool, XMP_GLOBAL_SUB_POOL_CAPACITY);
+static bool global_pool_inited = false;
+
+static void XMultiPool_initGlobal(void) {
+    if (global_pool_inited) return;
+    XMULTIPOOL_STATIC_INIT(global_pool, XMP_GLOBAL_SUB_POOL_CAPACITY);
     XMultiPool_enable_power_of_two_mode(global_pool,
                                         XMP_GLOBAL_INITIAL_SIZE,
                                         XMP_GLOBAL_GROWTH_MULTIPLIER);
@@ -350,6 +369,7 @@ static void XMultiPool_initGlobal(void) {
 
     global_pool_inited = true;
 }
+#endif
 
 XMultiPool* XMultiPool_global(void) {
     if (!global_pool_inited) XMultiPool_initGlobal();

@@ -11,7 +11,7 @@
 #include "XVector.h"
 #include <string.h>
 
-#if XSERIALPORT_ON
+#if XDEVICE_SERIALPORT_ON
 
 /* ========================================================================== */
 /*                        内部工具函数                                         */
@@ -279,4 +279,4 @@ XSerialPortInfo* XSerialPortInfo_fromName(const char* name)
     return found;
 }
 
-#endif /* XSERIALPORT_ON */
+#endif /* XDEVICE_SERIALPORT_ON */

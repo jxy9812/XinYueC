@@ -1,0 +1,16 @@
+# ============================================================================
+# ESP8266 工具链目录（platforms/esp8266/external/）
+# ============================================================================
+# 仓库只提交【纯文本头文件】（nonos_v305/include，约 149KB），
+# 工具链与 Arduino 包体积过大（约 300MB），由 setup_deps.ps1 提示手动放置。
+#
+# 以下目录/文件属于外部二进制，不提交：
+platforms/esp8266/external/toolchain-xtensa/
+platforms/esp8266/external/arduino8266/
+platforms/esp8266/external/_download/
+platforms/esp8266/external/*.zip
+platforms/esp8266/external/*.7z
+
+# 保留：platforms/esp8266/external/nonos_v305/include/**  （约 149KB 纯文本，
+#       让模板在只有工具链的情况下即可编译，无需再找 NONOS SDK 头包）
+# 保留：platforms/esp8266/external/setup_deps.ps1         （依赖检查/安装脚本）

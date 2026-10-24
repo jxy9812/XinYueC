@@ -28,7 +28,19 @@
  * 最后才是 uart.h。 */
 #include <stdint.h>
 #include "c_types.h"          /* BIT() 宏的来源（uart_register.h 依赖它） */
-#include "esp8266/uart_register.h"
+/* uart_register.h 的位置随 SDK 布局而异：
+ *   - ESP8266 RTOS SDK / 部分 Arduino 包：esp8266/uart_register.h（子目录）
+ *   - Arduino NONOS 平面 SDK（本工程）：include/uart_register.h（扁平）
+ * 用 __has_include 自动选择，避免依赖构建脚本里额外放一个空壳 shim。 */
+#if defined(__has_include)
+#  if __has_include("esp8266/uart_register.h")
+#    include "esp8266/uart_register.h"
+#  else
+#    include "uart_register.h"
+#  endif
+#else
+#  include "esp8266/uart_register.h"
+#endif
 #include "uart.h"
 
 /* offset 必须是相对 UART0 基址的纯偏移。sdk 的 uart_register.h 里
@@ -58,13 +70,18 @@ static XDeviceSerialPortEsp8266Context* esp8266Context(XFd fd)
  * 因此链接期报 undefined。这里按 ESP8266 寄存器手册自行实现，签名与 uart.h
  * 中的声明保持一致。
  *
- * uart_register.h 只给了 TXFIFO_RST / RXFIFO_RST 两枚位定义，其余按手册补齐：
- *   UART_CONFL(0x09)  波特率分频值
- *   UART_CONF0(0x20)  bit0 TX_EN  bit1 RX_EN  bit6 OUT_EN
- *                     bit12 LINE_INV  bit13-14 STOP_BITS
- *                     bit17 RXFIFO_RST  bit18 TXFIFO_RST（后两者取自本 SDK 头文件）
- *   UART_CONF1(0x24)  bit0-1 WORD_LENGTH（0=5b 1=6b 2=7b 3=8b）
- *   UART_STATUS(0x1C) bit0-7 RXFIFO_CNT  bit16-23 TXFIFO_CNT
+ * ⚠ 2026-10-22 按手册修正位布局（真机实测：串口收到的字节全部错乱，
+ *   寄存器现场 CONF0=0x79 = 7 位数据 + 停止位错码）。此前版本把字长写进
+ *   UART_CONF1[1:0]、停止位写 CONF0[14:13]、清校验清 BIT(12)，并给 CONF0
+ *   OR 上了臆造的 TX_EN/RX_EN 位——全部错位。ESP8266 手册的 CONF0(0x20)：
+ *     bit0     UART_PARITY      （0=偶 1=奇；PARITY_EN=1 时才生效）
+ *     bit1     UART_PARITY_EN
+ *     bit3:2   UART_BIT_NUM     （0=5b 1=6b 2=7b 3=8b）
+ *     bit5:4   UART_STOP_BIT_NUM（0=1 位 1=1.5 位 2=2 位）
+ *     bit17    UART_RXFIFO_RST  bit18 UART_TXFIFO_RST（SDK 头文件给出）
+ *   uart_register.h 只给了 TXFIFO_RST / RXFIFO_RST 两枚位定义，其余按手册。
+ *   波特率分频在 UART_CLKDIV(0x14)。CONF1(0x24) 是 RX FIFO 阈值，与帧格式
+ *   无关——之前把字长写到那里完全无效，帧格式停留在 SDK 复位残留值上。
  */
 /* 以下均为相对 REG_UART_BASE(UART0) 的纯偏移（手册 uart_register.h）：
  *   CLKDIV 0x14  STATUS 0x1C  CONF0 0x20  CONF1 0x24
@@ -74,10 +91,10 @@ static XDeviceSerialPortEsp8266Context* esp8266Context(XFd fd)
 #define XUART_CONF0  0x20
 #define XUART_CONF1  0x24
 
-#define XUART_TX_EN      BIT(0)
-#define XUART_RX_EN      BIT(1)
-#define XUART_OUT_EN     BIT(6)
-#define XUART_STOP_SHIFT 13
+#define XUART_PARITY_SEL  BIT(0)
+#define XUART_PARITY_EN   BIT(1)
+#define XUART_BITNUM_SHIFT 2
+#define XUART_STOP_SHIFT   4
 /* TX FIFO 计数在 STATUS[23:16]。 */
 #define XUART_TXFIFO_CNT_MASK 0x00FF0000u
 
@@ -91,18 +108,19 @@ void UART_SetBaudrate(UART_Port uart_no, uint32 baud_rate)
 
 void UART_SetWordLength(UART_Port uart_no, UART_WordLength len)
 {
-    uint32_t conf1 = XESP8266_UART_REG(XUART_CONF1);
+    uint32_t conf0 = XESP8266_UART_REG(XUART_CONF0);
     (void)uart_no;
-    conf1 = (conf1 & ~0x3u) | ((uint32_t)len & 0x3u);
-    XESP8266_UART_REG(XUART_CONF1) = conf1;
+    conf0 = (conf0 & ~(0x3u << XUART_BITNUM_SHIFT)) |
+            (((uint32_t)len & 0x3u) << XUART_BITNUM_SHIFT);
+    XESP8266_UART_REG(XUART_CONF0) = conf0;
 }
 
 void UART_SetStopBits(UART_Port uart_no, UART_StopBits bit_num)
 {
     uint32_t conf0 = XESP8266_UART_REG(XUART_CONF0);
     (void)uart_no;
-    /* 停止位编码：1 -> 0，1.5 -> 1，2 -> 2（与 SDK uart.h 枚举取值一致）。 */
-    conf0 &= ~(3u << XUART_STOP_SHIFT);
+    /* 停止位编码（CONF0[5:4]）：1 -> 0，1.5 -> 1，2 -> 2。 */
+    conf0 &= ~(0x3u << XUART_STOP_SHIFT);
     conf0 |= ((uint32_t)bit_num & 0x3u) << XUART_STOP_SHIFT;
     XESP8266_UART_REG(XUART_CONF0) = conf0;
 }
@@ -111,21 +129,28 @@ void UART_SetParity(UART_Port uart_no, UART_ParityMode parity_mode)
 {
     uint32_t conf0 = XESP8266_UART_REG(XUART_CONF0);
     (void)uart_no;
-    /* SP parity 由 LINE_INV 控制；其余模式（本平台只用到 None）不置该位。 */
-    if (parity_mode == USART_Parity_Even || parity_mode == USART_Parity_Odd)
-        conf0 |= BIT(12);
-    else
-        conf0 &= ~BIT(12);
+    /* CONF0[1] = PARITY_EN，CONF0[0] = 奇偶选择（0=偶 1=奇）。 */
+    if (parity_mode == USART_Parity_Even || parity_mode == USART_Parity_Odd) {
+        conf0 |= XUART_PARITY_EN;
+        if (parity_mode == USART_Parity_Odd)
+            conf0 |= XUART_PARITY_SEL;
+        else
+            conf0 &= ~XUART_PARITY_SEL;
+    }
+    else {
+        conf0 &= ~(XUART_PARITY_EN | XUART_PARITY_SEL);
+    }
     XESP8266_UART_REG(XUART_CONF0) = conf0;
 }
 
 void UART_ResetFifo(UART_Port uart_no)
 {
+    /* 复位位是脉冲：置 1 后必须清 0，否则 FIFO 一直处于复位、永远发不出去。
+     * ⚠ 只动两枚复位位，不碰 CONF0 的帧格式位——旧版在这里 OR 臆造的
+     * TX_EN/RX_EN/OUT_EN（落在 PARITY 选择/使能位上），把帧格式写坏。 */
     uint32_t conf0 = XESP8266_UART_REG(XUART_CONF0);
     (void)uart_no;
-    /* 同时打开收发使能与输出，否则复位 FIFO 后 UART 会静默。
-     * 复位位是脉冲：置 1 后必须清 0，否则 FIFO 一直处于复位、永远发不出去。 */
-    conf0 |= XUART_TX_EN | XUART_RX_EN | XUART_OUT_EN | UART_TXFIFO_RST | UART_RXFIFO_RST;
+    conf0 |= UART_TXFIFO_RST | UART_RXFIFO_RST;
     XESP8266_UART_REG(XUART_CONF0) = conf0;
     conf0 &= ~(UART_TXFIFO_RST | UART_RXFIFO_RST);
     XESP8266_UART_REG(XUART_CONF0) = conf0;

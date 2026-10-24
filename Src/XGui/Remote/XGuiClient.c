@@ -3164,6 +3164,10 @@ static void VX_xgc_touchEvent(XWidget* self, XEvent* event)
     }
     msg.pointCount = (uint8_t)count;
     msg.timestampMs = (uint32_t)xgc_nowMs();
+    /* 触点坐标口径：框架触摸派发已把**主点与逐点列表一并**换算成接收
+       控件的局部坐标（[2026-10-25 触摸坐标口径归一]：整份事件随接收控件
+       平移，Qt 同款），与本控件的视图变换（FIT 逆映射，控件局部口径）
+       及鼠标路径同口径——直接用逐点坐标即可，无需再自行补偿。 */
     for (i = 0; i < count; ++i) {
         XGuiRemoteMsgTouchPoint* dst = &msg.points[i];
         const XTouchPoint* src = pts ? &pts[i] : NULL;
@@ -3175,7 +3179,7 @@ static void VX_xgc_touchEvent(XWidget* self, XEvent* event)
         dst->y = 0;
         xgc_viewToRemote(d, src ? src->m_position.x : 0,
                          src ? src->m_position.y : 0, &dst->x, &dst->y);
-        /* 主点缺失(未分配列表)时以主点字段兜底。 */
+        /* 主点缺失(未分配列表)时以主点字段兜底（主点已是控件局部）。 */
         if (!src && i == 0) {
             XPoint p = XTouchEvent_position(te);
             xgc_viewToRemote(d, p.x, p.y, &dst->x, &dst->y);

@@ -139,6 +139,47 @@ static inline void XWindow_rotationMapRect(int deg, int W, int H,
     }
 }
 
+/** @brief 逆变换：设备矩形 → 逻辑矩形（MapRect 的严格逆，轴对齐）。
+ *  @details 逐字段解 MapRect 正变换（90°: devX=H-y-h, devY=x, devW=h,
+ *           devH=w → x=devY, y=H-devX-devW, w=devH, h=devW），面积守恒。
+ *           @param W 整窗逻辑宽 @param H 整窗逻辑高（与 MapRect 同入口
+ *           宽高）。典型消费者：旋转态弹层 WM_SIZE 记账——弹层设备位置
+ *           是 setGeometry 锚定正变换的产物，与「逻辑全局」账本口径
+ *           分家，回灌前必须逆变换收回逻辑全局（win32 2026-10-24）。 */
+static inline void XWindow_rotationUnmapRect(int deg, int W, int H,
+                                             int inX, int inY,
+                                             int inW, int inH,
+                                             int* outX, int* outY,
+                                             int* outW, int* outH)
+{
+    switch (deg) {
+    case 90:
+        if (outX) *outX = inY;
+        if (outY) *outY = H - inX - inW;
+        if (outW) *outW = inH;
+        if (outH) *outH = inW;
+        return;
+    case 180:
+        if (outX) *outX = W - inX - inW;
+        if (outY) *outY = H - inY - inH;
+        if (outW) *outW = inW;
+        if (outH) *outH = inH;
+        return;
+    case 270:
+        if (outX) *outX = W - inY - inH;
+        if (outY) *outY = inX;
+        if (outW) *outW = inH;
+        if (outH) *outH = inW;
+        return;
+    default:
+        if (outX) *outX = inX;
+        if (outY) *outY = inY;
+        if (outW) *outW = inW;
+        if (outH) *outH = inH;
+        return;
+    }
+}
+
 #ifdef __cplusplus
 }
 #endif

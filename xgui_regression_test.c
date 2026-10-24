@@ -1,4 +1,4 @@
-/**
+﻿/**
  * @file        xgui_regression_test.c
  * @brief       XGui Qt 对齐统一自动回归测试（无平台 API、无菜单依赖）
  * @details     本文件是普通 XGui 功能的唯一自动化回归入口，集中覆盖图像、编解码、
@@ -38561,8 +38561,275 @@ static void test_style_engine_contract(void)
 }
 
 
+#if defined(_WIN32)
+/* ==================== win32 内容旋转端到端契约（TEMP-ROT-TEST） ====================
+ * 真实窗口 + 真实 present + 真实 SendInput 输入的闭环验证（2026-10-21
+ * win32 旋转接入的验收测试；需交互会话——SendInput/GetPixel 依赖活动
+ * 桌面，RDP 断连态下跳过失败项即为环境性）。验证三事：①present 按角
+ * 转置上屏（GetPixel 读窗口表面，蓝/红子件样本点逐角核对）；②原生
+ * footprint（WM_SIZE→框架逻辑几何按角对调，XWidget_width/height 互
+ * 调）；③输入 R⁻¹（SendInput 点击设备坐标，probe 按钮在逻辑轴收到
+ * clicked）。临时验收件：随 win32 旋转稳定后整体摘除或转正式套件。 */
+static volatile unsigned g_xrotClicked;
+
+static void xrot_clickSlot(XObject* receiver, XVarList* args)
+{
+    (void)receiver; (void)args;
+    g_xrotClicked = 1u;
+}
+
+static struct { DWORD pid; HWND found; wchar_t wantTitle[64]; } g_xrotEnumCtx;
+
+static BOOL CALLBACK xrot_enumProc(HWND hwnd, LPARAM lParam)
+{
+    DWORD wpid = 0;
+    wchar_t cls[64];
+    wchar_t title[64];
+    char clsUtf8[64] = {0};
+    char titleUtf8[128] = {0};
+    (void)lParam;
+    GetWindowThreadProcessId(hwnd, &wpid);
+    if (wpid != g_xrotEnumCtx.pid) return TRUE;
+    if (GetClassNameW(hwnd, cls, 64) <= 0) return TRUE;
+    title[0] = 0;
+    GetWindowTextW(hwnd, title, 64);
+    WideCharToMultiByte(CP_UTF8, 0, cls, -1, clsUtf8, 64, NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, title, -1, titleUtf8, 128, NULL, NULL);
+    fprintf(stderr, "[XROT-ENUM] hwnd=%p vis=%d cls=%s title=%s\n",
+            (void*)hwnd, (int)IsWindowVisible(hwnd), clsUtf8, titleUtf8);
+    if (!IsWindowVisible(hwnd)) return TRUE;
+    if (wcscmp(cls, L"XinYueCNativeWindowClass") != 0) return TRUE;
+    /* [2026-10-24] 同进程存在前序测试遗留的隐藏窗与弹层窗族：类名命中
+       不够，必须按标题精确匹配本测试窗口（XROT7Q），否则 TOPMOST/像素
+       取样/SendInput 全部落到别家窗口上（实测 6 项全红根因）。 */
+    if (g_xrotEnumCtx.wantTitle[0] &&
+        lstrcmpW(title, g_xrotEnumCtx.wantTitle) != 0) return TRUE;
+    g_xrotEnumCtx.found = hwnd;
+    return FALSE;
+}
+
+static HWND xrot_findOwnNativeWindow(void)
+{
+    g_xrotEnumCtx.pid = GetCurrentProcessId();
+    g_xrotEnumCtx.found = NULL;
+    lstrcpyW(g_xrotEnumCtx.wantTitle, L"XROT7Q");
+    EnumWindows(xrot_enumProc, 0);
+    return g_xrotEnumCtx.found;
+}
+
+static BOOL xrot_capturePixelScreen(int screenX, int screenY, COLORREF* out)
+{
+    HDC hdc;
+    COLORREF c;
+    hdc = GetDC(NULL);
+    if (!hdc) return FALSE;
+    c = GetPixel(hdc, screenX, screenY);
+    ReleaseDC(NULL, hdc);
+    if (c == CLR_INVALID) return FALSE;
+    *out = c;
+    return TRUE;
+}
+
+static BOOL xrot_pixelIs(COLORREF c, int r, int g, int b)
+{
+    return (int)GetRValue(c) == r && (int)GetGValue(c) == g &&
+           (int)GetBValue(c) == b;
+}
+
+static void xrot_sendClickAt(int screenX, int screenY)
+{
+    INPUT inputs[3];
+    int vw = GetSystemMetrics(SM_CXSCREEN);
+    int vh = GetSystemMetrics(SM_CYSCREEN);
+    if (vw <= 1 || vh <= 1) return;
+    memset(inputs, 0, sizeof(inputs));
+    inputs[0].type = INPUT_MOUSE;
+    inputs[0].mi.dwFlags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE;
+    inputs[0].mi.dx = (LONG)((int64_t)screenX * 65535 / (vw - 1));
+    inputs[0].mi.dy = (LONG)((int64_t)screenY * 65535 / (vh - 1));
+    inputs[1].type = INPUT_MOUSE;
+    inputs[1].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
+    inputs[2].type = INPUT_MOUSE;
+    inputs[2].mi.dwFlags = MOUSEEVENTF_LEFTUP;
+    SendInput(3, inputs, sizeof(INPUT));
+}
+
+static void xrot_pump(void)
+{
+    int i;
+    for (i = 0; i < 5; ++i) {
+        XPlatformNativeWindow_processPendingEvents();
+        Sleep(40);
+    }
+}
+
+static void test_win32_rotation_live(void)
+{
+    XWidget* top;
+    XWidget* child;
+    XPushButton* probe;
+    XWidget* topWidget;
+    XPalette pal;
+    HWND hwnd = NULL;
+    COLORREF c = 0;
+    RECT rc;
+    int clicks = 0;
+    int ox = 40, oy = 40; /* 窗口逻辑原点==屏幕原点（dpr=1、WS_POPUP 无 chrome）。 */
+    int supported;
+
+    /* dpr>1 与旋转互斥（能力闸）：此类环境直接跳过（打印而非失败）。 */
+    probe = XPushButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+    /* [2026-10-24] 顶层用裸 XWidget 而非 XFrame：本契约验证的是窗口级
+       旋转（present 转置 + 输入 R⁻¹ + 几何往返），控件类是偶然载体。
+       XFrame 的 paintEvent 重载只画边框、不含 autoFillBackground 填充
+       （框架把 autofill 放在默认 paintEvent 内，Qt 是引擎预填），红底
+       样本会取到未渲染的黑色——与本契约无关的框架课题，另案处理。 */
+    top = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, NULL, 0);
+    if (!top) { expect_true(0, "xrot: 顶层创建"); return; }
+    topWidget = top;
+    XWidget_setGeometry(topWidget, 40, 40, 400, 240);
+    {
+        XString* title = XString_create_utf8("XROT7Q");
+        XWidget_setWindowTitle(topWidget, title);
+        XClassDelete((XClass*)title);
+    }
+    pal = XWidget_palette(topWidget);
+    XPalette_setColor(&pal, XPaletteColorGroup_Current,
+                      XPaletteColorRole_Window, XColor_create_argb(0xFFFF0000u));
+    XWidget_setPalette(topWidget, &pal);
+    XWidget_setAutoFillBackground(topWidget, true);
+
+    child = XWidget_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, topWidget, 0);
+    if (child) {
+        XPalette cpal = XWidget_palette(child);
+        XPalette_setColor(&cpal, XPaletteColorGroup_Current,
+                          XPaletteColorRole_Window,
+                          XColor_create_argb(0xFF00FF00u));
+        XWidget_setPalette(child, &cpal);
+        XWidget_setAutoFillBackground(child, true);
+        XWidget_setGeometry(child, 0, 40, 200, 180);
+    }
+    probe = XPushButton_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, topWidget, 0);
+    if (probe) {
+        XAbstractButton_setText_2((XAbstractButton*)probe, "HIT");
+        if (topWidget)
+            XWidget_setGeometry((XWidget*)probe, 250, 100, 90, 30);
+        XObject_connect_1((XObject*)probe,
+                          (size_t)XAbstractButton_clicked_signal,
+                          (XObject*)probe, xrot_clickSlot,
+                          XConnectionType_Direct);
+    }
+    XWidget_show(topWidget);
+    if (child) XWidget_show(child);
+    if (probe) XWidget_show((XWidget*)probe);
+    XWidget_raise(topWidget);
+    xrot_pump();
+    hwnd = xrot_findOwnNativeWindow();
+    if (hwnd) SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    XWidget_repaint(topWidget);
+    xrot_pump();
+
+    /* ---- 0° 基线：逻辑 400×240，present 直拷 ---- */
+    supported = XWidget_contentRotationDegrees(topWidget) == 0;
+    expect_true(supported, "xrot: 初始 0°");
+    if (xrot_capturePixelScreen(ox + 100, oy + 100, &c))
+        expect_true(xrot_pixelIs(c, 0, 255, 0), "xrot 0°: 蓝件样本(100,100)");
+    if (xrot_capturePixelScreen(ox + 350, oy + 200, &c))
+        expect_true(xrot_pixelIs(c, 255, 0, 0), "xrot 0°: 红底样本(350,200)");
+
+    /* ---- 90°：逻辑 240×400（对调），present 转置，footprint 不变 ---- */
+    if (XWidget_setContentRotation(topWidget, 90)) {
+        XWidget_setGeometry(topWidget, 40, 40, 240, 400);
+        if (probe)
+            XWidget_setGeometry((XWidget*)probe, 20, 300, 120, 40);
+        XWidget_repaint(topWidget);
+        xrot_pump();
+        expect_true(XWidget_width(topWidget) == 240 &&
+                    XWidget_height(topWidget) == 400,
+                    "xrot 90°: 框架逻辑几何对调 240x400");
+        if (GetClientRect(hwnd, &rc))
+            expect_true((rc.right - rc.left) >= (rc.bottom - rc.top),
+                        "xrot 90°: 原生 footprint 保持横屏轴");
+    if (xrot_capturePixelScreen(ox + 199, oy + 100, &c))
+            expect_true(xrot_pixelIs(c, 0, 255, 0),
+                        "xrot 90°: 蓝件转置样本(199,100)");
+    if (xrot_capturePixelScreen(ox + 99, oy + 220, &c))
+            expect_true(xrot_pixelIs(c, 255, 0, 0),
+                        "xrot 90°: 红底转置样本(99,220)");
+
+        /* 输入 R⁻¹：probe 逻辑中心 (80,320) → 设备 (399-320, 80)。
+           屏幕点 = 窗口原点 + 设备偏移（WS_POPUP 客户区==窗口矩形）。 */
+        if (probe) {
+            GetWindowRect(hwnd, &rc);
+            g_xrotClicked = 0u;
+            xrot_sendClickAt(rc.left + (399 - 320), rc.top + 80);
+            xrot_pump();
+            clicks = (int)g_xrotClicked;
+            expect_true(clicks == 1,
+                        "xrot 90°: SendInput 点击经 R⁻¹ 命中 probe");
+        }
+        /* 回 0°：逻辑几何复原 + round-trip 像素复原。 */
+        if (probe)
+            XWidget_setGeometry((XWidget*)probe, 250, 100, 90, 30);
+        if (XWidget_setContentRotation(topWidget, 0)) {
+            XWidget_setGeometry(topWidget, 40, 40, 400, 240);
+            XWidget_repaint(topWidget);
+            xrot_pump();
+            expect_true(XWidget_width(topWidget) == 400 &&
+                        XWidget_height(topWidget) == 240,
+                        "xrot 0°: 逻辑几何复原 400x240");
+    if (xrot_capturePixelScreen(ox + 100, oy + 100, &c))
+                expect_true(xrot_pixelIs(c, 0, 255, 0),
+                            "xrot 0°: 蓝件样本复原");
+        }
+    } else {
+        expect_true(0, "xrot: 90° 被能力闸拒绝（dpr>1 环境性跳过项）");
+    }
+
+    XWidget_setVisible(topWidget, false);
+    if (probe) XClassDelete((XClass*)probe);
+    if (child) XClassDelete((XClass*)child);
+    XClassDelete((XClass*)top);
+    if (hwnd) SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    /* [2026-10-24] 清理后排空销毁消息链（WM_NCDESTROY→槽位归还等）：
+       本测试是全套件唯一创建真 TOPMOST 原生窗并注入真输入的用例，销毁
+       消息若泄入下一个测试的泵会与菜单测试的弹层激活链交叠（实测在
+       test_menu_* 区确定性 AV）。xrot_pump 即 processPendingEvents×5。 */
+    xrot_pump();
+    fprintf(stderr, "[XROT] live contract executed (s_failures=%d)\n",
+            s_failures);
+}
+#endif /* defined(_WIN32) */
+
 int main(void)
 {
+#if defined(_MSC_VER) && defined(_DEBUG)
+    /* 堆诊断与日志直通（2026-10-21）：①重定向下 stdout 缺省全缓冲，
+     * 测试进度与最终 PASS/FAIL 段全滞留缓冲、进程非正常退出时整段
+     * 丢失（“日志只有启动一行”假象）——切 _IONBF 即写即达；②CRT
+     * 断言/错误报告改走 stderr：缺省 _CRTDBG_MODE_WNDW 在无人值守
+     * 跑批时弹模态断言框挂死整条流水线（VXWidget_copy 处 _msize_dbg
+     * 断言实锚），stderr 落日志带表达式+文件：行口供；③
+     * XREGRESSION_HEAP_CHECK=1 时开启逐分配堆一致性校验
+     * （_CRTDBG_CHECK_ALWAYS_DF）：断言在踩踏现场引爆而非其后任意
+     * 一次 free（默认关闭——全量堆巡检 O(n²)，仅排查堆损坏时启用）。 */
+    setvbuf(stdout, NULL, _IONBF, 1024);
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED); /* TEMP-ROT-TEST: COM 前置验证。 */
+    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_DEBUG | _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+    {
+        const char* heapCheck = getenv("XREGRESSION_HEAP_CHECK");
+        if (heapCheck && heapCheck[0] && strcmp(heapCheck, "0") != 0)
+            _CrtSetDbgFlag(_CrtSetDbgFlag(_CRTDBG_REPORT_FLAG) |
+                           _CRTDBG_CHECK_ALWAYS_DF);
+    }
+#endif
     test_svg_target_size_rasterize();
     test_geometry_contract();
     test_pixmap_scroll_and_bitmap_alias();
@@ -39110,6 +39377,21 @@ int main(void)
        门序颠倒时该族失败从不进退出码（此前 FAILS=0 读数对控件族
        不可信）。 */
     test_xgui_widgets();
+#if defined(_WIN32)
+    /* [2026-10-24] xrot 是真窗口+真 present+真 SendInput 的实机契约，
+       **必须压轴**：①前序测试组会销毁应用单例（instance==NULL 断言见
+       各 contract 尾），无应用则平台集成层缺位、createHandle 落虚拟
+       WId——测试窗口永不建柄（实测 winHandle 非 NULL 但 EnumWindows
+       找不到原生 HWND，6 项全红），故此处保活护栏补建；②真 TOPMOST
+       原生窗的销毁消息链会泄入后续测试的消息泵，与菜单/弹层激活链交
+       叠成时序敏感 AV（实测 test_menu_* 区确定性 0xC0000005 两次），
+       压轴后无后续消费者。失败经 s_failures 照常进最终门。 */
+    if (!XGuiApplication_instance())
+        (void)XGuiApplication_create_ex(XCLASS_DEFAULT_MEMORY_TYPE, 0, NULL);
+    fprintf(stderr, "[MAIN] before xrot\n");
+    test_win32_rotation_live();
+    fprintf(stderr, "[MAIN] after xrot (s_failures=%d)\n", s_failures);
+#endif /* defined(_WIN32) */
     if (s_failures != 0) {
         XERROR_PRINTF("%d XGui regression test(s) failed\n", s_failures);
         return 1;

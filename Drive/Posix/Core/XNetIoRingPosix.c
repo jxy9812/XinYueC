@@ -48,6 +48,13 @@
 #include <sys/mman.h>
 #include <sys/eventfd.h>
 #include <sys/utsname.h>
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define XNET_AND_TRACE(...) \
+    __android_log_print(ANDROID_LOG_INFO, "XDevNet", __VA_ARGS__)
+#else
+#define XNET_AND_TRACE(...) do {} while (0)
+#endif
 #if XNET_BUILD_EPOLL
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
@@ -66,6 +73,17 @@
 #ifndef __NR_io_uring_enter
 #define __NR_io_uring_enter 426
 #endif
+
+#if defined(__ANDROID__)
+/* [2026-10-24 分层下沉] 安卓的 seccomp 处置差异（ENOSYS vs SIGSYS 直杀）
+ * 收口到平台层 Drive/Android/Core/XNetIoRingAndroid.c——共享驱动不该内联
+ * 安卓的 seccomp 行为。声明见 XNetIoRingPosix.h。 */
+#define guardedIoUringSetup XAndroid_netIoUringSetup
+#else
+static int guardedIoUringSetup(unsigned entries, struct io_uring_params* params) {
+    return (int)syscall(__NR_io_uring_setup, entries, params);
+}
+#endif /* __ANDROID__ */
 #endif /* XNET_BUILD_IO_URING */
 
 /* 单次 pollPlatform 最大处理的事件数，防止饿死其他任务 */
@@ -427,8 +445,7 @@ static bool ioSetupRing(XNetIoRingPosix* ring) {
     memset(&params, 0, sizeof(params));
     params.flags = 0;
 
-    int ringFd = (int)syscall(__NR_io_uring_setup,
-                              XNETIORING_POSIX_QUEUE_DEPTH, &params);
+    int ringFd = guardedIoUringSetup(XNETIORING_POSIX_QUEUE_DEPTH, &params);
     if (ringFd < 0) return false;
 
     /* [2026-10-12 MCGS 屏 accept 僵死根修] 能力门：内核无
@@ -635,6 +652,8 @@ static bool epExecutePending(XNetIoRingPosix* posix, XNetPendingOp* op,
 #if XNET_EPOLL_IO_DEBUG
     fprintf(stderr, "[XNET-EPOLL] exec op=%d fd=%d res=%zd errno=%d\n",
             (int)sqe->opcode, sqe->fd, res, errno);
+    XNET_AND_TRACE("epoll exec: op=%d fd=%d res=%zd errno=%d",
+                   (int)sqe->opcode, sqe->fd, (ssize_t)res, errno);
 #endif
     if (res < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
         /* [2026-10-03 互联测试指挥官修复归因] 摘除后未完成必须挂回链头:
@@ -1028,6 +1047,8 @@ void XNetIoRingPosix_init(XNetIoRingPosix* ring) {
     }
 #endif
     ((XAbstractNetIoRing*)ring)->m_enabled = enabled;
+    XNET_AND_TRACE("NetIoRing init: mode=%d enabled=%d",
+                   (int)ring->m_mode, (int)enabled);
 }
 
 XNetIoRingPosix* XNetIoRingPosix_create_ex(XMemoryType memory) {
@@ -1201,6 +1222,7 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
 #if XNET_EPOLL_IO_DEBUG
         fprintf(stderr, "[XNET-EPOLL] submit op=%d fd=%d\n",
                 (int)sqe->opcode, sqe->fd);
+        XNET_AND_TRACE("epoll submit: op=%d fd=%d", (int)sqe->opcode, sqe->fd);
 #endif
 
         memset(&ev, 0, sizeof(ev));
@@ -1216,6 +1238,8 @@ void XNetIoRingPosix_submitSqe(XNetIoRingPosix* ring, int toSubmit) {
                 epRearmInterest(ring, sqe->fd);
                 return;
             }
+            XNET_AND_TRACE("epoll ADD failed: op=%d fd=%d errno=%d",
+                           (int)sqe->opcode, sqe->fd, errno);
             ring->m_pendingHead = op->next;
             XFree_System(op);
             processOneCompletion(self, -errno,

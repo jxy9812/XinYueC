@@ -17,15 +17,13 @@
 extern "C" {
 #endif
 
-#ifndef XDEVICEUSBHOST_ON
-#define XDEVICEUSBHOST_ON 1
-#endif
-#if XDEVICEUSBHOST_ON
+#if XDEVICE_ON && XDEVICE_USBHOST_ON
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include "XDevice.h"
+#include "XDevice_config.h"
 
 struct XVarList;
 typedef struct XVarList XVarList;
@@ -647,7 +645,7 @@ void XDeviceUsbHost_clearError(XFd fd);
  */
 const char* XDeviceUsbHost_errorString(XDeviceUsbError error);
 
-#endif /* XDEVICEUSBHOST_ON */
+#endif /* XDEVICE_USBHOST_ON */
 
 #ifdef __cplusplus
 }

@@ -23,6 +23,51 @@ static unsigned xvh_bin(size_t size)
     return 6;
 }
 
+/* ===== 泄漏取证第二轮（2026-10-21）：分配指针环形记录表 =====
+ * 背景：XTX 环证明 TX pbuf 全部回调释放、XPB 环证明 RX pbuf 全部释放，
+ * 但 [leak] 直方图 ≤128 档仍净漏（=ping 数）。本环登记全局池最近 32 笔
+ * ≤512B 分配（指针+尺寸+分配序号），free 钩子按指针销账；
+ * XVariablePool_leak_ring_dump() 打印仍未销账条目（泄漏者身份证）。
+ * 判读：某指针连续两拍以上仍在 pending 表 → 该块从未被有效 free。
+ * ⚠ 取证专用：32×12B .bss；定案后随本宏一并裁掉。 */
+typedef struct XVPLeakEnt {
+    void*    p;
+    size_t   size;
+    unsigned long seq;
+    unsigned char state;   /* 1=在途 2=已销账 */
+} XVPLeakEnt;
+static XVPLeakEnt xvh_ring[32];
+static unsigned xvh_ring_wr;
+static unsigned long xvh_alloc_seq;
+
+static void xvh_ring_alloc(void* p, size_t size)
+{
+    XVPLeakEnt* e;
+    if (size > 512u || p == NULL) return;
+    e = &xvh_ring[xvh_ring_wr];
+    e->p = p;
+    e->size = size;
+    e->seq = xvh_alloc_seq++;
+    e->state = 1u;
+    xvh_ring_wr = (xvh_ring_wr + 1u) % 32u;
+}
+
+static void xvh_ring_free(void* p)
+{
+    int i;
+    if (p == NULL) return;
+    for (i = 0; i < 32; i++) {
+        int k = (int)xvh_ring_wr - 1 - i;
+        XVPLeakEnt* e;
+        if (k < 0) k += 32;
+        e = &xvh_ring[k];
+        if (e->state == 1u && e->p == p) {
+            e->state = 2u;
+            return;
+        }
+    }
+}
+
 void xmemory_histo_alloc_note(size_t size) { xvh_alloc_n[xvh_bin(size)]++; }
 void xmemory_histo_free_note(size_t size)  { xvh_free_n[xvh_bin(size)]++; }
 
@@ -32,6 +77,64 @@ bool XVariablePool_leak_stats(unsigned bin, unsigned long* outAlloc, unsigned lo
     if (outAlloc) *outAlloc = xvh_alloc_n[bin];
     if (outFree)  *outFree  = xvh_free_n[bin];
     return xvh_alloc_n[bin] != xvh_free_n[bin];
+}
+
+void XVariablePool_leak_ring_dump(void)
+{
+    /* 由胶水层 5s beat 调用：打印仍未销账的条目（泄漏候选）。
+     * 按约定 uart0_puts 已由胶水提供（lwip_dbg_puts 同款直写），此处
+     * 用 extern 声明避免 XVariablePool 依赖平台头。 */
+    extern void lwip_dbg_puts(const char* s);
+    char line[96];
+    unsigned o;
+    int i;
+    unsigned pend = 0;
+    static unsigned long s_lastDumpSeq;
+
+    for (i = 0; i < 32; i++)
+        if (xvh_ring[i].state == 1u) ++pend;
+    o = 0;
+    line[o++] = '['; line[o++] = 'x'; line[o++] = 'v'; line[o++] = 'r'; line[o++] = ']';
+    line[o++] = ' ';
+    line[o++] = 'p'; line[o++] = 'e'; line[o++] = 'n'; line[o++] = 'd'; line[o++] = '=';
+    { unsigned v = pend; char d[8]; int n = 0;
+      if (!v) line[o++] = '0';
+      while (v) { d[n++] = (char)('0' + v % 10); v /= 10; }
+      while (n) line[o++] = d[--n]; }
+    line[o++] = ' '; line[o++] = 's'; line[o++] = 'e'; line[o++] = 'q'; line[o++] = '=';
+    { unsigned long v = xvh_alloc_seq; char d[12]; int n = 0;
+      if (!v) line[o++] = '0';
+      while (v) { d[n++] = (char)('0' + v % 10); v /= 10; }
+      while (n) line[o++] = d[--n]; }
+    line[o++] = '\r'; line[o++] = '\n'; line[o] = 0;
+    lwip_dbg_puts(line);
+
+    /* 只在 pending 有变化时打明细，避免每拍刷屏 */
+    for (i = 0; i < 32; i++) {
+        XVPLeakEnt* e = &xvh_ring[(xvh_ring_wr + 31u - (unsigned)i) % 32u];
+        if (e->state != 1u || e->seq < s_lastDumpSeq) continue;
+        o = 0;
+        line[o++] = '['; line[o++] = 'x'; line[o++] = 'v'; line[o++] = 'r'; line[o++] = ']';
+        line[o++] = ' '; line[o++] = 'p'; line[o++] = '=';
+        { unsigned v = (unsigned)(unsigned long)e->p; int n = 0; char d[10];
+          line[o++] = '0'; line[o++] = 'x';
+          if (!v) line[o++] = '0';
+          while (v) { d[n++] = "0123456789abcdef"[v & 15u]; v >>= 4; }
+          while (n) line[o++] = d[--n]; }
+        line[o++] = ' '; line[o++] = 's'; line[o++] = 'z'; line[o++] = '=';
+        { unsigned v = (unsigned)e->size; int n = 0; char d[8];
+          if (!v) line[o++] = '0';
+          while (v) { d[n++] = (char)('0' + v % 10); v /= 10; }
+          while (n) line[o++] = d[--n]; }
+        line[o++] = ' '; line[o++] = 'q'; line[o++] = '=';
+        { unsigned long v = e->seq; int n = 0; char d[12];
+          if (!v) line[o++] = '0';
+          while (v) { d[n++] = (char)('0' + v % 10); v /= 10; }
+          while (n) line[o++] = d[--n]; }
+        line[o++] = '\r'; line[o++] = '\n'; line[o] = 0;
+        lwip_dbg_puts(line);
+    }
+    s_lastDumpSeq = xvh_alloc_seq;
 }
 #endif
 /* ===== 泄漏取证结束 ===== */
@@ -1072,7 +1175,10 @@ void* XVariablePool_global_malloc(size_t size)
     {
         void* p = XVariablePool_malloc(xvariablepool_global_pool, size);
 #if XMEMORY_HISTO_FREE_ON
-        if (p) xmemory_histo_alloc_note(XVariablePool_getMaxUserSize(xvariablepool_global_pool, p));
+        if (p) {
+            xmemory_histo_alloc_note(XVariablePool_getMaxUserSize(xvariablepool_global_pool, p));
+            xvh_ring_alloc(p, XVariablePool_getMaxUserSize(xvariablepool_global_pool, p));
+        }
 #endif
         return p;
     }
@@ -1099,8 +1205,14 @@ void XVariablePool_global_free(void* ptr)
 #if XMEMORY_HISTO_FREE_ON
     /* 泄漏取证：free 路径拿不到用户申请的 size，用块的容量近似（同一块的
      * alloc/free 两次查询结果一致，配对统计不受影响）。malloc/free 在本
-     * 函数对进出，能覆盖 SYSTEM 槽（裸机=全局可变池）的全部流量。 */
-    xmemory_histo_free_note(XVariablePool_getMaxUserSize(xvariablepool_global_pool, ptr));
+     * 函数对进出，能覆盖 SYSTEM 槽（裸机=全局可变池）的全部流量。
+     * 指针环同步销账：拿到 0（指针无效/块已释放）也记一次销账失败——
+     * 那正是静默丢弃的现场。 */
+    {
+        size_t user = XVariablePool_getMaxUserSize(xvariablepool_global_pool, ptr);
+        xmemory_histo_free_note(user);
+        xvh_ring_free(ptr);
+    }
 #endif
     XVariablePool_free(xvariablepool_global_pool, ptr);
 }

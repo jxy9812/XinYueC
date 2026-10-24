@@ -22,7 +22,7 @@ extern "C" {
 #include "XString.h"
 #include "XVector.h"
 #include "XDeviceSerialPort.h"
-#if XSERIALPORT_ON
+#if XDEVICE_SERIALPORT_ON
 
 /*XSerialPortInfo虚函数表*/
 //XSerialPortInfo 继承 XClass，未新增虚函数，仅重载 XClass 的 Copy/Move/Deinit
@@ -153,7 +153,7 @@ XSerialPortInfoList* XSerialPortInfo_availablePorts(void);
  */
 XSerialPortInfo* XSerialPortInfo_fromName(const char* name);
 
-#endif /* XSERIALPORT_ON */
+#endif /* XDEVICE_SERIALPORT_ON */
 
 #ifdef __cplusplus
 }

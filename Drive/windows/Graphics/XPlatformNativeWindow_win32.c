@@ -103,6 +103,7 @@
 
 #include "XWindow.h"
 #include "XWindow_Protected.h" /* CSD 抑制位读取（XWindow_isCsdFrameSuppressed，仅供平台层/内部实现）。 */
+#include "XWindowRotation.h" /* 内容旋转像素下标换算（与 posix 上屏/输入同源 inline）。 */
 #include "XWindowSystemInterface.h"
 #include "XWindowEvent.h"
 #include "XGuiApplication.h"
@@ -167,6 +168,24 @@ typedef struct XWNPendingEntry
     WNDPROC m_oldProc;   /**< 外部窗口子类化前的过程；内部窗口为 NULL。 */
     HCURSOR m_hcursor;   /**< 框架侧生效光标（LoadCursorW 共享句柄，不销毁）。 */
     bool m_cursorSet;    /**< 框架是否已接管窗口光标（WM_SETCURSOR 分流键）。 */
+    int m_appliedRotation; /**< 最近一次落地几何所用内容旋转角（0/90/180/
+                              270；setGeometry 去重第二维——角变而逻辑几何
+                              相等（0↔180）时仍须重落一次几何/重绘。 */
+    int m_presentLogW;     /**< 最近一次 present 的逻辑帧宽（0=尚无 present，
+                              输入 R⁻¹ 优先基准，与 present 严格同源——
+                              0↔90/270 换向原生 footprint 不变、无 WM_SIZE，
+                              m_client 会停在旧角口径，账本不可依赖）。 */
+    int m_presentLogH;     /**< 最近一次 present 的逻辑帧高（同上）。 */
+    int m_presentRot;      /**< 最近一次 present 的有效内容旋转角（同上；
+                              输入按「所见即所点」对上屏帧反查，换向过渡期
+                              （角已改、新帧未 present）点击落在旧帧口径，
+                              与可见内容一致而非与控件树一致——过渡仅一帧）。 */
+    bool m_fullscreenApplied; /**< 平台侧真全屏生效中（setWindowState 只
+                              保存/恢复一次，重复同步幂等）。 */
+    DWORD m_savedFsStyle;  /**< 进全屏前的 GWL_STYLE（退出恢复用）。 */
+    WINDOWPLACEMENT m_savedFsPlacement; /**< 进全屏前的窗口状态（退出恢复
+                              用；showCmd 退出时改写 SW_SHOWNORMAL，不隐性
+                              改可见性/最大化态，状态机归框架管）。 */
 #if XSCREEN_ON
     XScreen* m_screen;   /**< 后端侧指派屏簿记（非 dpr 缓存——dpr 单源仍是
                               XWindow_devicePixelRatio）；NULL=尚未指派。
@@ -590,7 +609,8 @@ static void xpwn_screenDpiChanged(HWND hwnd, UINT dpiX, UINT dpiY);
 static void xpwn_screensRefresh(void);
 static bool xpwn_primaryScreenNativeRect(RECT* out);
 static float xpwn_primaryScreenDpr(void);
-static void xpwn_mousePosToLogical(HWND hwnd, LPARAM lParam, bool isScreen,
+static void xpwn_mousePosToLogical(const XWNPendingEntry* entry, HWND hwnd,
+                                   LPARAM lParam, bool isScreen,
                                    XPoint* position, XPoint* globalPosition);
 
 /** @brief 把按窗口样式调整后的窗口矩形转换为客户端恰好等于目标几何。 */
@@ -611,6 +631,15 @@ static DWORD xpwn_windowStyle(const XWindow* window)
      * ZoneAt），任务栏/Alt-Tab 不受 WS_POPUP 影响（对标 Qt 无边框窗仍
      * 受 WM 管理语义）；无边框最大化的工作区钳制见 wndProc WM_GETMINMAXINFO。 */
     if (window && XWindow_isCsdFrameSuppressed(window))
+        return WS_POPUP;
+    /* 无边框提示（用户口径「显示边框」取消勾选）：与 CSD 抑制同款组装
+       ——WS_POPUP 去除 WS_CAPTION/WS_THICKFRAME，原生装饰整体消失。此前
+       本支只看 CSD 抑制位，FramelessWindowHint 在 Windows 上被静默忽略：
+       取消边框后原生标题栏仍在，与框架自绘条并存 = 用户实测的双标题栏。
+       判定读窗口侧 flags（XWindow_setFlags 先于本函数落位，见
+       XWidget_setWindowFlags 调用序）。 */
+    if (window && (XWindow_flags(window) &
+                   (XWindowFlags)XWindowType_FramelessWindowHint))
         return WS_POPUP;
     if (window && XWindow_type(window) == XWindowType_Tool)
     {
@@ -1179,6 +1208,54 @@ static bool xpwn_mouseExtraInfoFromPointer(void)
  *  @details    pointer 路不走 xpwn_mousePosToLogical：该 helper 吃消息
  *              LPARAM（客户/屏幕二口径），pointer 坐标在结构内且恒为
  *              屏幕物理像素，客户区出口经 ScreenToClient。 */
+/** @brief 指针客户坐标 → 逻辑内容坐标（R⁻¹，win32 旋转接入）。
+ *  @details 原生窗的物理 footprint 在 90/270 已按角对调（setGeometry），
+ *           Windows 报告的客户区指针坐标是**设备轴**；反查基准优先取
+ *           **最近一次 present 的逻辑宽高+角**（m_presentLogW/H/Rot，
+ *           2026-10-24 根修）：与 present 严格同源，且「所见即所点」——
+ *           0↔90/270 换向原生 footprint 不变、WM_SIZE 不来，m_client
+ *           记账停在旧角口径（代际补偿判据 m_appliedRotation!=rot 在
+ *           稳态恒假，修不得），上屏帧状态才是命中的唯一真值（安卓
+ *           present/输入统一 devPos 同一纪律）。present 基准缺位
+ *           （尚无帧上屏）才回退 m_client+代际补偿旧口径。全局坐标不
+ *           参与换算：装饰拖拽锚按全局系计算（与 dpr 出框同纪律）。
+ *           基准角==0（含 dpr>1 能力闸回落、RGB16 构建）时本函数为
+ *           空操作。 */
+static void xpwn_rotationClientToLogical(const XWNPendingEntry* entry,
+                                         XPoint* position)
+{
+    int rot;
+    int W, H, lx, ly;
+    if (!entry || !position) return;
+    if (entry->m_presentLogW > 0 && entry->m_presentLogH > 0) {
+        rot = entry->m_presentRot;
+        if (rot == 0) return; /* 上屏帧 0°：客户坐标即逻辑坐标。 */
+        W = entry->m_presentLogW;
+        H = entry->m_presentLogH;
+        XWindow_rotationUnmapPoint(rot, W, H, position->x, position->y,
+                                   &lx, &ly);
+        position->x = lx;
+        position->y = ly;
+        return;
+    }
+    rot = entry->m_window
+        ? XWindow_contentRotationDegrees(entry->m_window) : 0;
+    if (rot == 0) return;
+    /* 逻辑 W/H：m_client 记账恒逻辑轴（WM_SIZE 侧已按角对调回逻辑）。
+       仅当**代际落后**（换角已发生、m_client 还是旧角记的账）时才需按
+       swapsAxes 归位——与 posix xpwn_eventPosToLogical 同口径。 */
+    W = entry->m_client.width;
+    H = entry->m_client.height;
+    if (entry->m_appliedRotation != rot &&
+        XWindow_rotationSwapsAxes(rot)) {
+        W = entry->m_client.height;
+        H = entry->m_client.width;
+    }
+    XWindow_rotationUnmapPoint(rot, W, H, position->x, position->y, &lx, &ly);
+    position->x = lx;
+    position->y = ly;
+}
+
 static void xpwn_pointerPosToLogical(HWND hwnd, const POINT* ptPixelScreen,
                                      XPoint* position,
                                      XPoint* globalPosition)
@@ -1195,6 +1272,12 @@ static void xpwn_pointerPosToLogical(HWND hwnd, const POINT* ptPixelScreen,
     if (globalPosition) {
         globalPosition->x = xpwn_dprDiv(ptPixelScreen->x, dpr);
         globalPosition->y = xpwn_dprDiv(ptPixelScreen->y, dpr);
+    }
+    /* 触摸/笔命中内容：设备轴客户坐标 R⁻¹ 回逻辑轴（与鼠标漏斗同口径，
+       2026-10-21 win32 旋转接入；global 不换算，同鼠标纪律）。 */
+    {
+        XWNPendingEntry* entry = xpwn_findByNativeWindow(hwnd);
+        xpwn_rotationClientToLogical(entry, position);
     }
 }
 
@@ -1502,6 +1585,11 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             entry->m_client = (XRect){0, 0, 0, 0};
             entry->m_hcursor = NULL;
             entry->m_cursorSet = false;
+            entry->m_appliedRotation = 0; /* 旋转记账随槽位清零链复位。 */
+            entry->m_presentLogW = 0;     /* present 基准随槽位清零链复位。 */
+            entry->m_presentLogH = 0;
+            entry->m_presentRot = 0;
+            entry->m_fullscreenApplied = false; /* 全屏簿记随清零链复位。 */
 #if XSCREEN_ON
             entry->m_screen = NULL; /* R20-③：指派簿记随清零链一并复位。 */
 #endif
@@ -1567,14 +1655,78 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         if (!xpwn_getClientGeometry(hwnd, &client)) return 0;
         dpr = xpwn_outboundDpr(entry, NULL);
         client = xpwn_nativeRectToLogical(&client, dpr); /* dpr==1 直通。 */
+        /* 内容旋转：原生窗的物理 footprint 在 90/270 已按角对调（见
+           setGeometry），WM_SIZE 报告的是**设备轴**客户区——按角对调回
+           **逻辑轴**后再记账/出框，保证框架侧几何、m_client 去重比对与
+           demo 页「逻辑几何不变仅换角」契约三方一致（对标 posix
+           ConfigureNotify 的 m_client 恒逻辑口径）。此处与 setGeometry
+           的对调必须成对存在：只留一边会让记账与原生尺寸互相矛盾。 */
+        if (entry->m_window) {
+            int rot = XWindow_contentRotationDegrees(entry->m_window);
+            /* [弹层位置账本 2026-10-24] Popup 的设备位置是 setGeometry
+               锚定正变换的产物，与「逻辑全局」账本分家（主窗位置旋转
+               不变、无此问题）。设备位置直接回灌框架账本（弹层契约恒
+               逻辑全局，见 XWindow_setGeometryFields 分流注）会让继承
+               resize/重开以脏位置重锚——180° 实测弹层偏 (36,74)px=「下
+               拉飘」残余根因。此处按 opener 做锚定逆变换收回逻辑全局
+               （与 setGeometry 弹层块互为正逆，尺寸一并归位，代替下方
+               手动对调）；无 opener 的弹层从未被锚定，按原值记账。 */
+            if (rot != 0 &&
+                XWindow_type(entry->m_window) == XWindowType_Popup) {
+                XWindow* opener = XWindow_transientParent(entry->m_window);
+                if (opener) {
+                    int ox = XWindow_x(opener);
+                    int oy = XWindow_y(opener);
+                    XWindow_rotationUnmapRect(rot,
+                                              XWindow_width(opener),
+                                              XWindow_height(opener),
+                                              client.x - ox, client.y - oy,
+                                              client.width, client.height,
+                                              &client.x, &client.y,
+                                              &client.width, &client.height);
+                    client.x += ox;
+                    client.y += oy;
+                    rot = 0; /* 已整矩形归位，跳过下方手动对调。 */
+                }
+            }
+            if (XWindow_rotationSwapsAxes(rot)) {
+                int t = client.width;
+                client.width = client.height;
+                client.height = t;
+            }
+        }
         /* 先更新本后端记录（逻辑口径），再注入几何变化：setGeometry 去重
            比对以此为准，从源头切断「setGeometry -> WM_SIZE/MOVE ->
            handleGeometryChange -> setGeometry」回环（与 X11
            ConfigureNotify 处理同构）。 */
-        entry->m_client = client;
-        if (entry->m_window) {
-            XWindowSystemInterface_handleGeometryChange(
-                entry->m_window, &client);
+        {
+            bool sizeChanged = (client.width != entry->m_client.width ||
+                                client.height != entry->m_client.height);
+            bool posChanged = (client.x != entry->m_client.x ||
+                               client.y != entry->m_client.y);
+            entry->m_client = client;
+            if (entry->m_window) {
+                XWindowSystemInterface_handleGeometryChange(
+                    entry->m_window, &client);
+                /* [尺寸/移动收尾 2026-10-23 win32 对齐 posix] resized 后补一次
+                   整窗 PAINT（对标 posix ConfigureNotify 的 sizeChanged 分支）：
+                   SetWindowPos/ShowWindow 同步派发 WM_SIZE 时，重排链若没产生
+                   脏区（纯换角、纯尺寸收缩、子控件几何未变），present 会停在
+                   旧帧——旋转后整窗不刷新正是用户看到的「切方向就卡死」。
+                   移动同理：自绘窗口抑制了 WM_ERASEBKGND，旧位置像素没有任何
+                   失效者。用 PAINT 而非 EXPOSE：handleExposeEvent 会置
+                   m_exposed，隐藏窗口的几何事件会误标已暴露（posix 同教训）。
+                   同值重复事件由上面两个 changed 判定去重，零开销。 */
+                /* [2026-10-23] 此处不再补帧：win32 的 SetWindowPos 已同步
+                   派发 WM_PAINT 到客户区，框架的既有 flush 链会消费；额外
+                   注入 PAINT 会在**同步 setGeometry 调用栈内**再跑一遍整窗
+                   重绘 + present，旋转态下与后备存储重建叠加成重入长链
+                   （实测自测停在 wn_orientApply 的 setGeometry 内不再返回）。
+                   旋转后的整帧刷新由 XWidget_setContentRotation 的整帧脏闩
+                   （g_xwidgetForceFullFrameFor）负责，无需平台层插帧。 */
+                (void)sizeChanged;
+                (void)posChanged;
+            }
         }
         return 0;
     }
@@ -1773,10 +1925,11 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             XWindow_type(entry->m_window) == XWindowType_Tool &&
             DefWindowProcW(hwnd, WM_NCHITTEST, 0, lParam) == HTCAPTION) {
             XPoint position;
-            /* NC 消息 lParam 为屏幕坐标：R3 收拢点——客户区出口经
-               ScreenToClient（物理口径执行）后 ÷dpr（标题条位于负 y 带，
-               控件侧以 pos.y<0 识别）。 */
-            xpwn_mousePosToLogical(hwnd, lParam, true, &position, NULL);
+        /* NC 消息 lParam 为屏幕坐标：R3 收拢点——客户区出口经
+        ScreenToClient（物理口径执行）后 ÷dpr（标题条位于负 y 带，
+        控件侧以 pos.y<0 识别）。NC 命中为系统过程消费（设备轴语义），
+        不参与内容命中，rotationClientToLogical 豁免（entry=NULL）。 */
+        xpwn_mousePosToLogical(NULL, hwnd, lParam, true, &position, NULL);
             XWindowSystemInterface_handleMouseEvent(
                 entry->m_window,
                 msg == WM_NCLBUTTONDOWN
@@ -1834,7 +1987,7 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
                    系计算（缺省 (0,0) 会使按下锚失真、CSD 拖动首跳后自指
                    归零——拖动/缩放双双无效根因）。时间戳取 GetMessageTime
                    （消息入队时刻，Qt Windows 后端同源）。 */
-                xpwn_mousePosToLogical(hwnd, lParam, false,
+                xpwn_mousePosToLogical(entry, hwnd, lParam, false,
                                        &position, &globalPosition);
                 /* 按下集合：消息 wParam 的 MK_* 位并上触发键（释放时
                    wParam 不含本键，OR 不改变集合），与 X11 后端一致。 */
@@ -1856,7 +2009,7 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
             XPoint position;
             XPoint globalPosition;
             /* 移动消息 lParam 为客户区坐标：R3 收拢点（同按键路径）。 */
-            xpwn_mousePosToLogical(hwnd, lParam, false,
+            xpwn_mousePosToLogical(entry, hwnd, lParam, false,
                                    &position, &globalPosition);
             if (!entry->m_mouseInside) {
                 /* 指针首次进入客户区：先注入进入事件，再开启一次性离开
@@ -1898,7 +2051,7 @@ static LRESULT CALLBACK xpwn_wndProc(HWND hwnd, UINT msg,
         if (entry && entry->m_window) {
             /* 滚轮消息 lParam 为屏幕坐标：R3 收拢点——全局取 raw、客户区
                经 ScreenToClient（物理口径执行），两出口统一 ÷dpr。 */
-            xpwn_mousePosToLogical(hwnd, lParam, true,
+            xpwn_mousePosToLogical(entry, hwnd, lParam, true,
                                    &position, &globalPosition);
             delta = (short)HIWORD(wParam);
             angleDelta.x = 0;
@@ -2604,21 +2757,38 @@ static void xpwn_maintainScreenAssignment(XWNPendingEntry* entry)
     if (!xpwn_getClientGeometry(entry->m_hwnd, &native)) return;
     /* 口径检测含原点（原仅宽高：纯位置失真永不触发 heal——外部移动在
        首派期会被静默忽略）。物理实况 vs 簿记逻辑 × 现 dpr，逐字段比对
-       （xpwn_dprRound 全链唯一 round，R8-③）。 */
-    if (entry->m_client.width > 0 &&
-        native.x == xpwn_dprMul(entry->m_client.x, dpr) &&
-        native.y == xpwn_dprMul(entry->m_client.y, dpr) &&
-        native.width == xpwn_dprMul(entry->m_client.width, dpr) &&
-        native.height == xpwn_dprMul(entry->m_client.height, dpr))
-        return; /* 口径一致（含原点）：无需 heal。 */
+       （xpwn_dprRound 全链唯一 round，R8-③）。
+       [旋转感知 2026-10-24] 90/270 旋转态 m_client 恒逻辑轴、native 恒
+       设备轴，宽高必须先按角对调投影再比对——否则旋转窗跨屏时口径检测
+       恒失配，heal 把设备轴矩形当逻辑重落地、footprint 再对调一次，
+       窗口被压成对调形状（账本修真后必然暴露的坑，成对修）。 */
     {
+        int cw = entry->m_client.width;
+        int ch = entry->m_client.height;
+        int rot = XWindow_contentRotationDegrees(window);
+        XRect logical;
+        if (XWindow_rotationSwapsAxes(rot)) {
+            int t = cw; cw = ch; ch = t;
+        }
+        if (entry->m_client.width > 0 &&
+            native.x == xpwn_dprMul(entry->m_client.x, dpr) &&
+            native.y == xpwn_dprMul(entry->m_client.y, dpr) &&
+            native.width == xpwn_dprMul(cw, dpr) &&
+            native.height == xpwn_dprMul(ch, dpr))
+            return; /* 口径一致（含原点）：无需 heal。 */
         /* heal 采纳实况（账本归 XWindow、实况唯一真值）：以本函数头部
            取到的物理客户区按新 dpr 出框为落地口径。此前以陈旧账本
            XWindow_geometry 重落地，首派前的外部移动/落位调整（Windows
            工作区钳制、harness MoveWindow 等）会被「还原」而非「采纳」。
            重落地对实况幂等（logical×dpr==native），簿记经嵌套
-           WM_SIZE/WM_MOVE 链（handler 内维护已完成）自然收敛。 */
-        XRect logical = xpwn_nativeRectToLogical(&native, dpr);
+           WM_SIZE/WM_MOVE 链（handler 内维护已完成）自然收敛。
+           旋转态按角对调回逻辑轴再落地（与 WM_SIZE 记账同口径）。 */
+        logical = xpwn_nativeRectToLogical(&native, dpr);
+        if (XWindow_rotationSwapsAxes(rot)) {
+            int t = logical.width;
+            logical.width = logical.height;
+            logical.height = t;
+        }
         xpwn_setGeometryForced(window, &logical);
     }
 }
@@ -2643,6 +2813,13 @@ static bool xpwn_setGeometryForced(XWindow* window, const XRect* logical)
     if (!entry || !entry->m_hwnd) return false;
     dpr = xpwn_outboundDpr(entry, logical);
     native = xpwn_logicalRectToNative(logical, dpr);
+    /* 内容旋转 footprint：heal 重落地与常规 setGeometry 同口径（90/270
+       原生宽高对调），否则重落地会把旋转窗打回 0° footprint。 */
+    if (XWindow_rotationSwapsAxes(XWindow_contentRotationDegrees(window))) {
+        int t = native.width;
+        native.width = native.height;
+        native.height = t;
+    }
     xpwn_adjustWindowRect(window, &native, &rc);
     before = entry->m_client;
     SetWindowPos(entry->m_hwnd, NULL, rc.left, rc.top,
@@ -2704,7 +2881,8 @@ static float xpwn_primaryScreenDpr(void) { return 1.0f; }
  *              出口 ÷dpr。失败时坐标不被改写，按输入口径兜底（与既有
  *              分支同语义）。装饰层拖拽/改尺寸的增量锚按全局系计算
  *              （客户区系随窗口移动自指——posix 同教训）。 */
-static void xpwn_mousePosToLogical(HWND hwnd, LPARAM lParam, bool isScreen,
+static void xpwn_mousePosToLogical(const XWNPendingEntry* entry, HWND hwnd,
+                                   LPARAM lParam, bool isScreen,
                                    XPoint* position, XPoint* globalPosition)
 {
     POINT pt;
@@ -2727,6 +2905,9 @@ static void xpwn_mousePosToLogical(HWND hwnd, LPARAM lParam, bool isScreen,
         globalPosition->x = xpwn_dprDiv(global.x, dpr);
         globalPosition->y = xpwn_dprDiv(global.y, dpr);
     }
+    /* 内容旋转：设备轴客户坐标 R⁻¹ 回逻辑轴（NC 命中路径 position 归
+       消费方系统过程，不参与内容命中，由调用方传 NULL 豁免）。 */
+    xpwn_rotationClientToLogical(entry, position);
 }
 
 /* ==================== 事件泵（平台后端提供） ==================== */
@@ -3517,6 +3698,17 @@ bool XPlatformNativeWindow_create(XWindow* window)
        快照）；chrome 增量在 ×dpr 之后调用（物理口径）。 */
     createDpr = xpwn_outboundDpr(NULL, &geom);
     native = xpwn_logicalRectToNative(&geom, createDpr);
+    /* 内容旋转 footprint（对标 posix 建窗期 applyRotationFootprint）：
+       create 前已 setContentRotation 的窗口，原生 footprint 按角对调
+       （逻辑 700x1000 ↔ 设备 1000x700），内容在 present 层转置上屏。 */
+    {
+        int createRot = XWindow_contentRotationDegrees(window);
+        if (XWindow_rotationSwapsAxes(createRot)) {
+            int t = native.width;
+            native.width = native.height;
+            native.height = t;
+        }
+    }
     xpwn_adjustWindowRect(window, &native, &rc);
     /* Owner 归属（对标 qwindowswindow.cpp:784-786「Parent: Use transient
        parent for top levels」+ 921-923 传入 CreateWindowEx）：transient
@@ -3551,11 +3743,24 @@ bool XPlatformNativeWindow_create(XWindow* window)
     entry->m_screen = NULL;
 #endif
     /* 客户区簿记为逻辑口径：create 物理客户区 ÷ create 期 dpr（与请求
-       几何同空间，R8-③/R18）；读取失败按请求几何兜底。 */
+       几何同空间，R8-③/R18）；读取失败按请求几何兜底。旋转窗的原生
+       footprint 已按角对调（见上方 createRot 段），故此处再对调回逻辑轴
+       （与 WM_SIZE 侧同口径）。 */
     if (xpwn_getClientGeometry(hwnd, &client))
-        entry->m_client = xpwn_nativeRectToLogical(&client, createDpr);
+        client = xpwn_nativeRectToLogical(&client, createDpr);
     else
-        entry->m_client = geom;
+        client = geom;
+    entry->m_appliedRotation = XWindow_contentRotationDegrees(window);
+    entry->m_presentLogW = 0; /* 复用槽位防陈旧（正常路径 destroy 已清）。 */
+    entry->m_presentLogH = 0;
+    entry->m_presentRot = 0;
+    entry->m_fullscreenApplied = false;
+    if (XWindow_rotationSwapsAxes(entry->m_appliedRotation)) {
+        int t = client.width;
+        client.width = client.height;
+        client.height = t;
+    }
+    entry->m_client = client;
 #if XSCREEN_ON
     /* 创建即收敛屏幕指派/dpr 快照（+50 根因收口）：此前唯一播种口在
        WM_SIZE/WM_MOVE 处理器，而建窗期到达的 WM_SIZE/WM_MOVE 因 entry
@@ -3605,6 +3810,10 @@ void XPlatformNativeWindow_destroy(XWindow* window)
     entry->m_visible = false;
     entry->m_mouseInside = false;
     entry->m_client = (XRect){0, 0, 0, 0};
+    entry->m_presentLogW = 0; /* present 基准随销毁清零（槽位复用防陈旧）。 */
+    entry->m_presentLogH = 0;
+    entry->m_presentRot = 0;
+    entry->m_fullscreenApplied = false;
 #if XSCREEN_ON
     /* R20-②：指派簿记随槽位回池一并清零（与 WM_NCDESTROY 分支同口径；
        陈旧非 NULL 使复用槽新窗 outboundDpr 误走「已指派」分支）。 */
@@ -3675,6 +3884,75 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
     return true;
 }
 
+/** @brief  平台侧真全屏进/出（2026-10-24，对标 Qt QWindowsWindow::
+ *          setWindowState_sys 的 FullScreen 腿）。
+ *  @details SW_SHOWMAXIMIZED 只铺**工作区**——任务栏仍占一行，用户实测
+ *           「不算全屏」（Linux 走 WM 的 _NET_WM_STATE_FULLSCREEN 恒正
+ *           常，差异确属平台侧）。真全屏：进=保存 placement/样式 → 摘
+ *           WS_OVERLAPPEDWINDOW 换 WS_POPUP（去原生框，shell 前景全屏
+ *           检测的前提）→ SetWindowPos 贴满**整屏矩形**（rcMonitor，
+ *           非工作区）→ WM_SIZE 链按当前角回写框架账本（旋转态天然旋
+ *           转感知，与安卓平台侧 setWindowState 同责）。出=恢复样式 +
+ *           SetWindowPlacement（showCmd 改写 SW_SHOWNORMAL，不隐性改可
+ *           见性/最大化态，状态机归框架管）+ SWP_FRAMECHANGED 重算外框。
+ *           框架对原生窗不做全屏几何（软件路径仅无 WM 环境），平台是
+ *           唯一落地口；重复同步经 m_fullscreenApplied 幂等。 */
+static void xpwn_applyFullscreen(XWNPendingEntry* entry, bool enter)
+{
+    HWND hwnd = entry->m_hwnd;
+    if (!hwnd) return;
+    if (enter) {
+        WINDOWPLACEMENT placement;
+        MONITORINFO mi;
+        if (entry->m_fullscreenApplied) {
+            /* 重复进入幂等：最小化中先恢复可见并重贴整屏。 */
+            if (IsIconic(hwnd)) {
+                ShowWindow(hwnd, SW_SHOW);
+                mi.cbSize = sizeof(mi);
+                if (GetMonitorInfoW(
+                        MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST),
+                        &mi))
+                    SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left,
+                                 mi.rcMonitor.top,
+                                 mi.rcMonitor.right - mi.rcMonitor.left,
+                                 mi.rcMonitor.bottom - mi.rcMonitor.top,
+                                 SWP_NOACTIVATE | SWP_NOOWNERZORDER |
+                                     SWP_FRAMECHANGED);
+            }
+            return;
+        }
+        placement.length = sizeof(placement);
+        mi.cbSize = sizeof(mi);
+        if (!GetWindowPlacement(hwnd, &placement)) return;
+        if (!GetMonitorInfoW(
+                MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi))
+            return;
+        entry->m_savedFsPlacement = placement;
+        entry->m_savedFsStyle =
+            (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
+        SetWindowLongPtrW(hwnd, GWL_STYLE,
+                          (LONG_PTR)((entry->m_savedFsStyle &
+                                      ~WS_OVERLAPPEDWINDOW) |
+                                     WS_POPUP));
+        SetWindowPos(hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top,
+                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+        entry->m_fullscreenApplied = true;
+        if (IsIconic(hwnd)) ShowWindow(hwnd, SW_SHOW);
+        return;
+    }
+    if (!entry->m_fullscreenApplied) return;
+    entry->m_fullscreenApplied = false;
+    SetWindowLongPtrW(hwnd, GWL_STYLE, (LONG_PTR)entry->m_savedFsStyle);
+    entry->m_savedFsPlacement.length = sizeof(WINDOWPLACEMENT);
+    entry->m_savedFsPlacement.showCmd = SW_SHOWNORMAL;
+    SetWindowPlacement(hwnd, &entry->m_savedFsPlacement);
+    SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_NOOWNERZORDER | SWP_FRAMECHANGED);
+}
+
 /**
  * @brief      同步窗口状态到 Win32 原生窗口（对标 QPlatformWindow::setWindowState）。
  * @details    Qt 的 windows 平台插件在 setWindowState 里按状态选择
@@ -3683,6 +3961,8 @@ bool XPlatformNativeWindow_setVisible(XWindow* window, bool visible)
  *             取值一致：Minimized=0x1、Maximized=0x2、FullScreen=0x4）
  *             选择同一组命令。ShowWindow 同步派发 WM_SIZE，原生几何
  *             记录随之更新；框架侧的窗口几何经既有 WM_SIZE 通路回写。
+ *             全屏走 xpwn_applyFullscreen 真全屏（SW_SHOWMAXIMIZED 只铺
+ *             工作区、任务栏仍在——2026-10-24 根修）。
  *             仅对已创建的原生窗口生效，未创建时安全 no-op。
  * @param      window 目标窗口；可为 NULL。
  * @param      state  状态位掩码；0 恢复普通态。
@@ -3700,11 +3980,16 @@ bool XPlatformNativeWindow_setWindowState(XWindow* window, uint32_t state)
     if (state & 0x1u)
         ShowWindow(entry->m_hwnd, SW_MINIMIZE);
     else if (state & 0x4u)
-        ShowWindow(entry->m_hwnd, SW_SHOWMAXIMIZED);
-    else if (state & 0x2u)
+        xpwn_applyFullscreen(entry, true);
+    else if (state & 0x2u) {
+        xpwn_applyFullscreen(entry, false); /* 全屏中转最大化：先退出真全屏。 */
         ShowWindow(entry->m_hwnd, SW_MAXIMIZE);
-    else
-        ShowWindow(entry->m_hwnd, SW_RESTORE);
+    } else {
+        if (entry->m_fullscreenApplied)
+            xpwn_applyFullscreen(entry, false);
+        else
+            ShowWindow(entry->m_hwnd, SW_RESTORE);
+    }
     return true;
 }
 
@@ -3720,6 +4005,7 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
      * 仍属 TODO（见下）。 */
     XWNPendingEntry* entry;
     DWORD wantStyle;
+    DWORD haveStyle;
     DWORD exStyle;
     RECT rc;
     (void)flags;
@@ -3727,7 +4013,17 @@ bool XPlatformNativeWindow_setWindowFlags(XWindow* window, uint32_t flags)
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_hwnd) return false;
     wantStyle = xpwn_windowStyle(window);
-    if ((DWORD)GetWindowLongPtrW(entry->m_hwnd, GWL_STYLE) == wantStyle)
+    haveStyle = (DWORD)GetWindowLongPtrW(entry->m_hwnd, GWL_STYLE);
+    /* 可见位不进 xpwn_windowStyle（那是「装饰形态」的单一来源，展示与否
+       由 ShowWindow 管）：SetWindowLongPtr(GWL_STYLE, ...) 是**整体替换**，
+       直接写 wantStyle 会把 WS_VISIBLE 清掉——窗口当场消失，而框架侧
+       m_visible 仍为真，随后 setVisible(true) 因同值早退、ShowWindow 再不
+       被调用，窗口永久不回来（用户观感即「卡死」；2026-10-23 实测
+       style 0x94000000→0x84000000，vis 1→0）。故保留原可见位参与替换，
+       且判等比较也带上它，免得可见态下每次都比不相等而白跑一遍
+       SetWindowLongPtr+SetWindowPos。 */
+    wantStyle |= (haveStyle & WS_VISIBLE);
+    if (haveStyle == wantStyle)
         return true;
     exStyle = (DWORD)GetWindowLongPtrW(entry->m_hwnd, GWL_EXSTYLE);
     SetWindowLongPtrW(entry->m_hwnd, GWL_STYLE, (LONG_PTR)wantStyle);
@@ -3791,17 +4087,23 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     XRect native;
     RECT rc;
     float dpr;
+    int rot;
     if (!geometry) return false;
     if (!xpwn_ensureInstance()) return false;
     entry = xpwn_findByXWindow(window);
     if (!entry || !entry->m_hwnd) return false;
+    rot = XWindow_contentRotationDegrees(window);
     /* 去重：与最近一次记录/应用的客户端几何（逻辑口径）一致则跳过（防
        WM_SIZE/WM_MOVE 回环）。heal/屏移除迁移类同值重落地必须走
-       xpwn_setGeometryForced 豁免通道（R18），禁经本入口。 */
+       xpwn_setGeometryForced 豁免通道（R18），禁经本入口。
+       [旋转代际 2026-10-23] 去重加「已应用旋转角」：角变而逻辑几何相等
+       （0↔180）时也要重落一次，让整帧重绘闩与新角同帧生效；win32 不
+       对调原生宽高（见下方 footprint 说明），故本维度只做代际区分。 */
     if (geometry->x == entry->m_client.x &&
         geometry->y == entry->m_client.y &&
         geometry->width == entry->m_client.width &&
-        geometry->height == entry->m_client.height)
+        geometry->height == entry->m_client.height &&
+        rot == entry->m_appliedRotation)
     {
         /* 保险带：被去重吞掉的几何操作同样收敛屏幕指派/dpr 快照——
            create 期主修（xpwn_maintainScreenAssignment 直调）之外，
@@ -3812,14 +4114,93 @@ bool XPlatformNativeWindow_setGeometry(XWindow* window, const XRect* geometry)
     }
     dpr = xpwn_outboundDpr(entry, geometry);
     native = xpwn_logicalRectToNative(geometry, dpr);
+    /* [弹层落位域·win32 对齐 posix 2026-10-24] 瞬态弹层（组合框下拉等）
+       的原生落位：控件层给的是**逻辑全局**坐标（XComboBox
+       xcombo_popupReposition：父链逻辑偏移累加 + 顶层逻辑原点），而旋转窗
+       的原生 footprint 是对调后的设备矩形——弹层要贴着 opener 出现，必须
+       以「opener 逻辑原点 + 旋转正变换（弹层逻辑局部矩形，
+       XWindowRotation.h MapRect 像素下标口径，与 present/输入同源）」为
+       落位锚点。否则切方向后弹层落在旧角度对应的位置、甚至跑出窗口外，
+       用户看到的是「选项点不到/像卡死」。
+       与 posix（Drive/Posix/Graphics/XPlatformNativeWindow_posix.c
+       「弹层落位域·X11」段，2026-10-22 收口）**同序同源**：①在去重之后
+       （上方早退恒吃逻辑值，先换算会把设备锚点经 echo 回灌成逻辑账本，
+       弹层绕 opener 原点 90° 步进游走）；②在 footprint 对调之前（MapRect
+       入口宽高必须是逻辑值，对调后再换算会偏 (h-w)）。
+       门=类型 Popup + 非零有效旋转角 + 有瞬态父。
+       ⚠ 尺寸不在此改动：MapRect 出的是设备**位置**，设备**尺寸**由紧随其
+       后的 footprint 对调（90/270 宽高互换）统一给出——与 posix 的
+       applyRotationFootprint 同序同源，两侧必须成对。此前 win32 曾在此
+       额外采用 dev 宽高并跳过 footprint 对调（双重对调风险面），本次
+       统一收敛到 posix 形态：位置与尺寸各自单一来源，杜绝二次对调。 */
+    if (XWindow_type(window) == XWindowType_Popup)
+    {
+        XWindow* opener = XWindow_transientParent(window);
+        int rotPop = XWindow_contentRotationDegrees(window);
+        if (rotPop != 0 && opener)
+        {
+            XRect local;
+            XRect dev;
+            local.x = native.x - XWindow_x(opener);
+            local.y = native.y - XWindow_y(opener);
+            local.width = native.width;
+            local.height = native.height;
+            XWindow_rotationMapRect(rotPop,
+                                    XWindow_width(opener),
+                                    XWindow_height(opener),
+                                    &local.x, &local.y,
+                                    &local.width, &local.height,
+                                    &dev.x, &dev.y,
+                                    &dev.width, &dev.height);
+            native.x = XWindow_x(opener) + dev.x;
+            native.y = XWindow_y(opener) + dev.y;
+        }
+    }
+    /* 内容旋转 footprint（对标 posix setGeometry 的 applyRotationFootprint）：
+       逻辑几何恒为框架侧尺寸（90/270 时 700x1000），而**原生窗的物理
+       footprint 是对调后的设备尺寸**（1000x700）——旋转发生在 present 上屏
+       （逻辑帧逐设备像素 R⁻¹ 转置后画满原生客户区），原生窗本身不变形。
+       两侧口径必须成对：WM_SIZE 报告的是设备轴客户区，记账时按角对调回
+       逻辑轴（见该分支），否则 m_client 与 setGeometry 去重基准错位、
+       几何反复回灌。
+       ⚠ 勿因「窗口形状没变」而删掉此处对调：删掉后逻辑 700x1000 直接
+       成为原生物理尺寸，而旋转内容需要 1000x700 的设备空间 → 内容被裁
+       掉（用户实测「东西好多都没了」）。
+       ⚠ 弹层同样适用（与 posix 一致）：弹层的设备尺寸=其逻辑尺寸对调，
+       与上面的设备锚点成对，二者缺一即落位/尺寸错配。 */
+    if (XWindow_rotationSwapsAxes(rot)) {
+        int t = native.width;
+        native.width = native.height;
+        native.height = t;
+    }
+    entry->m_appliedRotation = rot;
     xpwn_adjustWindowRect(window, &native, &rc);
-    SetWindowPos(entry->m_hwnd, NULL, rc.left, rc.top,
-                 rc.right - rc.left, rc.bottom - rc.top,
-                 SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
-    /* SetWindowPos 同步派发 WM_SIZE/WM_MOVE，本后端记录已随之更新；
-       若消息被裁剪（例如窗口尚未显示），这里用名义几何兜底。 */
-    if (entry->m_client.width == 0)
-        entry->m_client = *geometry;
+    {
+        XRect before = entry->m_client;
+        SetWindowPos(entry->m_hwnd, NULL, rc.left, rc.top,
+                     rc.right - rc.left, rc.bottom - rc.top,
+                     SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+        /* SetWindowPos 同步派发 WM_SIZE/WM_MOVE，本后端记录已随之更新（
+           WM_SIZE 侧按当前角对调回逻辑轴）；消息被裁剪（窗口未显示）
+           或**根本不来**（0↔90/270 换向原生 footprint 不变，2026-10-24
+           取证实测：换向后无 WM_SIZE，m_client 停在 0° 旧账——输入 R⁻¹
+           反查镜像越界即「90° 点不动」根因）时，与 xpwn_setGeometryForced
+           同款名义兜底把账本收口到逻辑几何。真实落地后本式恰为幂等
+           （WM_SIZE 已按同口径记账，逐字段相等即跳过）。 */
+        if (entry->m_client.width == 0 ||
+            (entry->m_client.x == before.x && entry->m_client.y == before.y &&
+             entry->m_client.width == before.width &&
+             entry->m_client.height == before.height))
+            entry->m_client = *geometry;
+    }
+    /* present 基准随几何落地同步（2026-10-24）：只由 present 落账有个
+       盲区——回 0° 后备存储重接零拷贝、present 被旁路，基准停在上一个
+       旋转角（实测 270→0 后点击仍按 270 反查，0° 版「点不动」）。几何
+       落地即按现角+实际/名义逻辑客户尺寸落基准；旋转态随后续 present
+       每帧覆盖（同值幂等），0° 恒早退零扰动。 */
+    entry->m_presentRot = rot;
+    entry->m_presentLogW = entry->m_client.width;
+    entry->m_presentLogH = entry->m_client.height;
     return true;
 }
 
@@ -4159,13 +4540,87 @@ static bool xpwn_presentRect(XWNPendingEntry* entry, const XImage* image,
     return true;
 }
 
-/* 内容旋转能力（2026-10-18）：本轮未实现软件旋转路径，恒不支持——
-   XWindow_setContentRotation 返回 false，调用方据此置灰 UI（D7/R18）。 */
+/** @brief 旋转上屏：把逻辑缓冲的源脏区按角转置写进设备轴 DIB 后提交
+ *  （2026-10-21 win32 旋转接入，对标 posix xpwn_copyRectRotated +
+ *  四步裁剪；仅 32bpp 布局调用，RGB16 能力闸已降级 0°）。
+ *  @param srect 源（逻辑缓冲）脏区，含 offset 前偏移。
+ *  @param drect 设备（旋转后 footprint）目的矩形。 */
+static bool xpwn_presentRectRotated(XWNPendingEntry* entry,
+                                    const XImage* image,
+                                    const XRect* srect, const XRect* drect,
+                                    int rot, int logW, int logH)
+{
+    const uint8_t* sbuf;
+    int srcBpl;
+    uint8_t* buf;
+    BITMAPINFO bmi;
+    HDC hdc;
+    int w, h, row, col;
+    if (!entry || !entry->m_hwnd || !image || !srect || !drect) return false;
+    w = drect->width;
+    h = drect->height;
+    if (w <= 0 || h <= 0) return false;
+    sbuf = XImage_constBits(image);
+    srcBpl = XImage_bytesPerLine(image);
+    if (!sbuf || srcBpl <= 0) return false;
+    buf = (uint8_t*)XMalloc_Hybrid(XPWN_DIB_ROW_STRIDE(w) * (size_t)h);
+    if (!buf) return false;
+    /* 逐设备像素 R⁻¹ 反查逻辑源（与 posix 90/270 转置同式；源越界
+       （攒批子图不满整窗）跳过留黑，posix 同语义）。 */
+    for (row = 0; row < h; ++row) {
+        uint8_t* drow = buf + (size_t)row * XPWN_DIB_ROW_STRIDE(w);
+        int dy = drect->y + row;
+        for (col = 0; col < w; ++col) {
+            int dx = drect->x + col;
+            int lx = 0, ly = 0;
+            XWindow_rotationUnmapPoint(rot, logW, logH, dx, dy, &lx, &ly);
+            if (lx < srect->x || lx >= srect->x + srect->width ||
+                ly < srect->y || ly >= srect->y + srect->height)
+                continue;
+            XMemcpy(drow + (size_t)col * XPWN_PIXEL_BYTES,
+                    sbuf + (size_t)ly * (size_t)srcBpl +
+                           (size_t)lx * XPWN_PIXEL_BYTES,
+                    XPWN_PIXEL_BYTES);
+        }
+    }
+    memset(&bmi, 0, sizeof(bmi));
+    bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h; /* top-down：设备像素下标 y 向下。 */
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    bmi.bmiHeader.biCompression = BI_RGB;
+    hdc = GetDC(entry->m_hwnd);
+    if (!hdc) {
+        XFree_Hybrid(buf);
+        return false;
+    }
+    SetDIBitsToDevice(hdc, drect->x, drect->y, (DWORD)w, (DWORD)h,
+                      0, 0, 0, (UINT)h, buf, (BITMAPINFO*)&bmi,
+                      DIB_RGB_COLORS);
+    ReleaseDC(entry->m_hwnd, hdc);
+    XFree_Hybrid(buf);
+    return true;
+}
+
+/* 内容旋转能力（2026-10-21 win32 旋转接入，对标 posix 直拷口径）：
+   ARGB32(32bpp) DIB 上屏路径提供 180° 快路径 + 90/270° 逐像素转置；
+   RGB16(565) 构建无旋转实现，与 posix RGB16 同口径恒不支持。
+   dpr>1 降级（本层自持，2026-10-24 从框架层下沉）：present 走
+   SetDIBitsToDevice 直拷、不带缩放，物理放大与逐像素转置叠加会算错
+   （present 侧另有防御性归零 rot=0）；dpr 单源=XWindow_devicePixelRatio
+   （窗口未就位时恒 1.0f，即不降级）。 */
 bool XPlatformNativeWindow_rotationSupported(const XWindow* window)
 {
+#if XGUI_BACKINGSTORE_IMAGE_FORMAT_RGB16
     (void)window;
     return false;
+#else
+    if (XWindow_devicePixelRatio(window) > 1.0f) return false;
+    return true;
+#endif
 }
+
 
 bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
                                    const XRegion* region,
@@ -4182,6 +4637,8 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     int i;
     bool any = false;
     float scale;
+    int rot;
+    int logW, logH, devW, devH;
     if (!window || !image) return false;
     if (!xpwn_ensureInstance()) {
         return false;
@@ -4199,6 +4656,22 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
        单源=XWindow_devicePixelRatio（框架内部恒逻辑像素，缓冲即逻辑
        分辨率，物理放大全在平台 present 层）。 */
     scale = XWindow_devicePixelRatio(window);
+    /* 内容旋转（2026-10-21 win32 旋转接入，对标 posix）：有效角每帧
+       现查；逻辑宽高恒取后备缓冲 imgW/imgH（缓冲恒逻辑尺寸，换角+
+       改几何过渡期不依赖几何回环时序）。dpr>1 与旋转互斥（能力闸
+       上游已拒），防御归零保持单变量路径。 */
+    rot = XWindow_contentRotationDegrees(window);
+    if (rot != 0 && scale != 1.0f) rot = 0;
+    logW = imgW;
+    logH = imgH;
+    XWindow_rotationDeviceSize(rot, logW, logH, &devW, &devH);
+    /* present 基准落账（2026-10-24 旋转点击根修）：输入 R⁻¹ 与 present
+       严格同源——0↔90/270 换向原生 footprint 不变、WM_SIZE 不来，
+       m_client 停在旧角口径；上屏帧的逻辑宽高+角才是「所见」的唯一
+       真值。每帧落账（三整型写，无分支开销 concerns）。 */
+    entry->m_presentRot = rot;
+    entry->m_presentLogW = logW;
+    entry->m_presentLogH = logH;
 
     /* 裁剪脏区：region 为 NULL/空按整幅；offset 为缓冲相对窗口偏移。 */
     if (!offset) {
@@ -4219,6 +4692,39 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
     for (i = 0; i < rectCount; ++i) {
         XRect srect;
         XRect drect;
+        if (rot != 0) {
+            /* 四步裁剪 + 转置上屏（对标 posix 同名段）：①逻辑整窗裁剪
+               ②源覆盖求交 ③正变换映射设备 ④设备 footprint 裁剪。 */
+            XRect wrect;
+            XRect devRect;
+            XRect cut;
+            wrect.x = rects[i].x;
+            wrect.y = rects[i].y;
+            wrect.width = rects[i].width;
+            wrect.height = rects[i].height;
+            cut = wrect;
+            if (!xpwn_clipRectToImage(&cut, logW, logH, &cut)) continue;
+            cut.x += off->x;
+            cut.y += off->y;
+            if (!xpwn_clipRectToImage(&cut, imgW, imgH, &cut)) continue;
+            cut.x -= off->x;
+            cut.y -= off->y;
+            wrect = cut;
+            srect.x = wrect.x - off->x;
+            srect.y = wrect.y - off->y;
+            srect.width = wrect.width;
+            srect.height = wrect.height;
+            XWindow_rotationMapRect(rot, logW, logH, &wrect.x, &wrect.y,
+                                    &wrect.width, &wrect.height,
+                                    &devRect.x, &devRect.y,
+                                    &devRect.width, &devRect.height);
+            if (!xpwn_clipRectToImage(&devRect, devW, devH, &devRect))
+                continue;
+            if (xpwn_presentRectRotated(entry, image, &srect, &devRect,
+                                        rot, logW, logH))
+                any = true;
+            continue;
+        }
         srect.x = rects[i].x - off->x;
         srect.y = rects[i].y - off->y;
         srect.width = rects[i].width;

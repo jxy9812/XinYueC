@@ -7,6 +7,8 @@
 #include "XDeviceConsole.h"
 #include "XDeviceUsbHost.h"
 #include "XDeviceUsbGadget.h"
+#include "XDeviceWiFi.h"
+#include "XDevice_config.h"
 #include "XFileDescriptor.h"
 #include "XVariant.h"
 #include "XVarList.h"
@@ -346,39 +348,63 @@ XFd XDevice_openClass(const char* className, const XDeviceOpenOptions* opts, int
 	}
 	device = XDevice_find(className);
 	if (!device) {
+		/* 内置设备懒注册（与其它内置设备同惯例）。各分支按设备开关守卫：
+		 * 设备被裁剪时整段不编译，避免裁剪构建出现未定义符号。 */
+#if XDEVICE_ON && XDEVICE_FILE_ON
 		/* 内置文件设备支持懒注册，保证 XDevice_open(XDeviceType_File, ...) 开箱即用。 */
 		if (XStrcmp(className, "file") == 0) {
 			XDeviceFile_register();
 			device = XDevice_find(className);
 		}
+#endif
+#if XDEVICE_ON && XDEVICE_NETWORK_ON
 		if (!device && XStrcmp(className, "socket") == 0) {
 			XDeviceNetwork_register();
 			device = XDevice_find(className);
 		}
+#endif
+#if XDEVICE_ON && XDEVICE_SERIALPORT_ON
 		if (!device && XStrcmp(className, "serial") == 0) {
 			XDeviceSerialPort_register();
 			device = XDevice_find(className);
 		}
+#endif
+#if XDEVICE_ON && XDEVICE_TIMER_ON
 		if (!device && XStrcmp(className, "timer") == 0) {
 			XDeviceTimer_register();
 			device = XDevice_find(className);
 		}
+#endif
+#if XDEVICE_ON && XDEVICE_DIR_ON
 		if (!device && XStrcmp(className, "dir") == 0) {
 			XDeviceDir_register();
 			device = XDevice_find(className);
 		}
+#endif
+#if XDEVICE_ON && XDEVICE_CONSOLE_ON
 		if (!device && XStrcmp(className, "console") == 0) {
 			XDeviceConsole_register();
 			device = XDevice_find(className);
 		}
+#endif
+#if XDEVICE_ON && XDEVICE_USBHOST_ON
 		if (!device && XStrcmp(className, "usbhost") == 0) {
 			XDeviceUsbHost_register();
 			device = XDevice_find(className);
 		}
+#endif
+#if XDEVICE_ON && XDEVICE_USBGADGET_ON
 		if (!device && XStrcmp(className, "usbgadget") == 0) {
 			XDeviceUsbGadget_register();
 			device = XDevice_find(className);
 		}
+#endif
+#if XDEVICE_ON && XDEVICE_WIFI_ON
+		if (!device && XStrcmp(className, "wifi") == 0) {
+			XDeviceWiFi_register();
+			device = XDevice_find(className);
+		}
+#endif
 	}
 	if (!device) {
 		if (err) *err = (int)XDeviceError_NotFound;

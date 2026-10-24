@@ -360,16 +360,27 @@ bool XPlatformNativeWindow_present(XWindow* window, const XImage* image,
 
 /**
  * @brief      查询平台是否支持对本窗口做软件内容旋转（0/90/180/270）。
- * @details    纯读、无副作用。X11：上屏描述符为 32 位直拷布局（ARGB32
- *             小端 [B,G,R,A]，契约见本文件顶注）时支持；RGB16(565) 构建
- *             与真 24 位视觉不支持（前者本层不做 565 旋转，后者直拷
- *             布局不成立）。fbdev：零拷贝（缓冲已落在 fb 映射内、中间
- *             无可转的帧）不支持。Win32/Android/无后端：恒 false——
- *             XWindow_setContentRotation 据此返回 false，调用方置灰 UI。
- * @param      window 目标窗口借用指针；可为 NULL。
+ * @details    纯读、无副作用。**按窗口回答**，并自带该窗口的 dpr 口径
+ *             （dpr 单源=XWindow_devicePixelRatio）——dpr>1 是否降级由
+ *             各后端自持，因为判据取决于本平台 present 路径的物理放大腿
+ *             与逐像素转置是否互斥，属平台策略，框架层不内联：
+ *              - X11：上屏描述符为 32 位直拷布局（ARGB32 小端 [B,G,R,A]，
+ *                契约见本文件顶注）时支持；RGB16(565) 构建与真 24 位视觉
+ *                不支持（前者本层不做 565 旋转，后者直拷布局不成立）；
+ *                XPutImage 直拷不带缩放 → dpr>1 降级 0°；
+ *              - Win32：ARGB32 DIB 路径支持（180° 快路径 + 90/270° 逐
+ *                像素转置），RGB16(565) 构建不支持；SetDIBitsToDevice
+ *                直拷不带缩放 → dpr>1 降级 0°；
+ *              - Android：软件渲染直写 surface，旋转在逻辑空间完成后按
+ *                实测 presentScale 放大到物理，两者正交 → dpr>1 仍恒
+ *                支持；
+ *              - 无后端平台：恒 false——XWindow_setContentRotation 据此
+ *                返回 false，调用方置灰 UI。
+ * @param      window 目标窗口借用指针；可为 NULL（NULL 视为 dpr=1.0f）。
  * @return     支持返回 true；否则 false。
  */
 bool XPlatformNativeWindow_rotationSupported(const XWindow* window);
+
 
 /* ==================== 原生连接（平台后端提供） ==================== */
 

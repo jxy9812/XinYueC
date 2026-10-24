@@ -12,7 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if XNETWORK_ON && XNETWORK_ABSTRACT_SOCKET_ON
+#if XDEVICE_ON && XDEVICE_NETWORK_ON && XNETWORK_ABSTRACT_SOCKET_ON
 
 #if XNETWORK_USE_LWIP
 /* 前置声明：定义在文件底部（g_deviceNetwork 附近） */

@@ -1,4 +1,5 @@
 #include "XDeviceTimer.h"
+#if XDEVICE_ON && XDEVICE_TIMER_ON
 #include "XDeviceTimerPrivate.h"
 #include "XAbstractEventDispatcher.h"
 #include "XAbstractEventDispatcher_Protected.h" /* 解引用 m_d_ptr->m_hrtimerGroup（高精度定时器注册） */
@@ -554,3 +555,5 @@ bool XDeviceTimer_setUserData(XFd fd, void* userData)
     return timerSetVariant(fd, XDeviceTimerProperty_UserData, &userData,
         sizeof(userData), XVariantType_Ptr);
 }
+
+#endif /* device switch */

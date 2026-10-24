@@ -513,3 +513,11 @@ Library/freetype/builds/
 *.xwd
 *.ppm
 gmon.out
+
+# ===== ESP8266 移植战役的过程垃圾（2026-10-23 补）=====
+# 根目录一次性探针脚本与其输出留档（_cyc.py / _ping30.txt / ...）：
+#   都是当轮定位用的临时件，结论已沉淀进 platforms/esp8266/docs/，不入库。
+/_*.py
+/_*.txt
+probe_src/
+*.bak

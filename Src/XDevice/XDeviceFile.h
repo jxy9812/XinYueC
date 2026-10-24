@@ -33,6 +33,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "XDevice.h"
+#include "XDevice_config.h"
 #include "XDateTime.h"
 #include "XFileInfo.h"
 #include "XStorageInfo.h"  /* XStorageInfoData定义 */
@@ -40,7 +41,7 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#if XFILE_ON
+#if XDEVICE_ON && XDEVICE_FILE_ON
 
 /* 前向声明 */
 struct XString;

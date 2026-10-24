@@ -17,12 +17,10 @@
 extern "C" {
 #endif
 
-#ifndef XDEVICETIMER_ON
-#define XDEVICETIMER_ON 1
-#endif
-#if XDEVICETIMER_ON
+#if XDEVICE_ON && XDEVICE_TIMER_ON
 
 #include "XDevice.h"
+#include "XDevice_config.h"
 
 typedef struct XAbstractEventDispatcher XAbstractEventDispatcher;
 typedef struct XTimeWheelGroup XTimeWheelGroup;
@@ -147,7 +145,7 @@ bool XDeviceTimer_setCallback(XFd fd, XDeviceTimerCallback callback);
 /** @brief 设置回调用户数据；内部转发到 XDevice_setProperty。 @param fd 定时器句柄。 @param userData 用户指针，只借用。 @return 成功返回 true。 */
 bool XDeviceTimer_setUserData(XFd fd, void* userData);
 
-#endif /* XDEVICETIMER_ON */
+#endif /* XDEVICE_TIMER_ON */
 
 #ifdef __cplusplus
 }

@@ -9,6 +9,7 @@
 #define XDEVICESERIALPORT_H
 
 #include "XDevice.h"
+#include "XDevice_config.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -16,9 +17,6 @@
 extern "C" {
 #endif
 
-#ifndef XSERIALPORT_ON
-#define XSERIALPORT_ON 1
-#endif
 
 #if defined(XSERIALPORT_USE_PLATFORM_API) && defined(XSERIALPORT_USE_STM32)
 #error "XSERIALPORT_USE_PLATFORM_API and XSERIALPORT_USE_STM32 are mutually exclusive"

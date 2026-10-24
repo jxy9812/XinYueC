@@ -8,12 +8,15 @@
 #ifndef XNETWORKINTERFACE_H
 #define XNETWORKINTERFACE_H
 #include "XNetwork_config.h"
+#include "XDevice_config.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 #if XNETWORK_ON
 #if XNETWORK_INTERFACE_ON
+/* 网络接口业务层依赖网络设备（设备开关见 Src/XDevice/XDevice_config.h）。 */
+#if XDEVICE_ON && XDEVICE_NETWORK_ON
 
 #include "XClass.h"
 #include "XHostAddress.h"
@@ -404,6 +407,7 @@ bool XNetworkInterface_setStaticIpv6(int ifIndex, const char* ipv6Address,
  */
 void XNetworkInterface_swap(XNetworkInterface* iface1, XNetworkInterface* iface2);
 
+#endif /* XDEVICE_ON && XDEVICE_NETWORK_ON */
 #endif // XNETWORK_INTERFACE_ON
 #endif /* XNETWORK_ON */
 #ifdef __cplusplus

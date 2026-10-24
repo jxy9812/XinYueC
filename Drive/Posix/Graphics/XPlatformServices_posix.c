@@ -1,5 +1,8 @@
 #include "XPlatformServices.h"
-#if XPLATFORMINTEGRATION_ON && defined(__linux__)
+/* [2026-10-24 平台补扫] __ANDROID__ 亦定义 __linux__：xdg-open/fork 通道
+ * 与安卓沙箱无关，平台实现由 Drive/Android/Graphics/XPlatformServices_android.c
+ * 提供（JNI ACTION_VIEW），此处必须排除，否则两端重复定义 Driver 钩子。 */
+#if XPLATFORMINTEGRATION_ON && defined(__linux__) && !defined(__ANDROID__)
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/types.h>

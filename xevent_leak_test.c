@@ -3,7 +3,7 @@
  * @brief      事件派发框架泄漏复查（桌面端，ESP8266 "WiFi 变哑" 任务前置步骤）。
  * @details    背景：esp8266 完整固件 ping 前 2 分钟 0% 丢包，随后
  *             varPoolUsed 以 ~150-200B/5s 单调上涨直至收包分配失败。
- *             交接文档（esp8266/HANDOVER_2026-10-20.md §2.9/§3.1）怀疑
+ *             交接文档（platforms/esp8266/docs/HANDOVER_2026-10-20.md §2.9/§3.1）怀疑
  *             XConsoleShell_notifyInput → postEvent → sendPostedEvents
  *             这条框架路径每次分配的事件对象未被逐个释放。
  *

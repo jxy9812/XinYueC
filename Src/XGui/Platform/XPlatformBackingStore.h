@@ -428,8 +428,8 @@ void XPlatformBackingStoreDriver_destroy(void* nativeState);
  *             回答，留给 present 路径按窗口角度分流。
  *             X11 侧不消费本函数（走
  *             XPlatformNativeWindow_rotationSupported 的直拷判据），
- *             win32/android 侧在各自 rotationSupported 恒 false，不经
- *             过本函数。
+ *             win32/android 侧在各自 rotationSupported 里直接回答，
+ *             不经过本函数。
  * @return     恒返回 true（能力分流的其余判据由调用分支把守）。
  */
 bool XPlatformBackingStore_rotationCapable(void);

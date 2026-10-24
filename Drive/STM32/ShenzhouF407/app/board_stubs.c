@@ -15,6 +15,7 @@ typedef struct mbedtls_x509_crl mbedtls_x509_crl;
 #include "XPlatformBackingStore.h"
 #include "XPlatformNativeWindow.h"
 #include "XDeviceNetwork.h"
+#include "XDeviceWiFi.h"
 #include "XNetworkInterface.h"
 #include "XTypes.h"
 
@@ -382,6 +383,92 @@ bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
                                            const char* ipv6Gateway)
 {
     (void)ifIndex; (void)ipv6Address; (void)prefixLength; (void)ipv6Gateway;
+    return false;
+}
+
+/* ---------------- XDeviceWiFi 无线（本板无 802.11 驱动：不支持） -----------
+ * 只实现平台叶子函数（设备虚槽的落地实现）；功能入口一律经父类的
+ * XDevice_control / XDevice_getProperty 走统一调度。 */
+bool XDeviceWiFi_platformOpen(void)
+{
+    return false;
+}
+
+void XDeviceWiFi_platformClose(void)
+{
+}
+
+bool XDeviceWiFi_platformCapabilities(uint32_t* outCapabilities)
+{
+    if (!outCapabilities) return false;
+    *outCapabilities = 0;
+    return false;
+}
+
+bool XDeviceWiFi_platformEnumAdapters(XVector** outAdapters)
+{
+    if (!outAdapters) return false;
+    *outAdapters = XVector_Create(XDeviceWiFiAdapterInfo*);
+    return *outAdapters != NULL;
+}
+
+bool XDeviceWiFi_platformStartScan(const char* adapterId)
+{
+    (void)adapterId;
+    return false;
+}
+
+XDeviceWiFiScanState XDeviceWiFi_platformScanState(const char* adapterId)
+{
+    (void)adapterId;
+    return XDeviceWiFi_ScanIdle;
+}
+
+bool XDeviceWiFi_platformTakeScanResults(const char* adapterId,
+                                         XVector** outNetworks)
+{
+    (void)adapterId;
+    if (outNetworks) *outNetworks = NULL;
+    return false;
+}
+
+bool XDeviceWiFi_platformStartConnect(const char* adapterId, const char* ssid,
+                                      const char* passphrase,
+                                      XDeviceWiFiSecurity security)
+{
+    (void)adapterId; (void)ssid; (void)passphrase; (void)security;
+    return false;
+}
+
+XDeviceWiFiConnectState XDeviceWiFi_platformConnectState(const char* adapterId)
+{
+    (void)adapterId;
+    return XDeviceWiFi_ConnectIdle;
+}
+
+bool XDeviceWiFi_platformQueryConnection(const char* adapterId,
+                                         XDeviceWiFiConnectionInfo* outInfo)
+{
+    (void)adapterId;
+    if (outInfo) {
+        outInfo->ssid = NULL;
+        outInfo->bssid = NULL;
+        outInfo->signalStrength = -1;
+        outInfo->security = XDeviceWiFi_SecurityUnknown;
+        outInfo->state = XDeviceWiFi_ConnectIdle;
+    }
+    return false;
+}
+
+bool XDeviceWiFi_platformDisconnect(const char* adapterId)
+{
+    (void)adapterId;
+    return false;
+}
+
+bool XDeviceWiFi_platformForgetProfile(const char* adapterId, const char* ssid)
+{
+    (void)adapterId; (void)ssid;
     return false;
 }
 

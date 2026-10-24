@@ -1013,6 +1013,45 @@ static bool xkb_supportedTarget(const XWidget* target)
 #endif
 }
 
+/**
+ * @brief 判定控件是否**要文本键盘**（与 xkb_supportedTarget 的「可绑定」分流）。
+ * @details 三编辑控件（XLineEdit/XPlainTextEdit/XTextEdit）恒要；其余带
+ *          WA14 的控件**依 inputMethodHints 判**：明确 None（=不要文本
+ *          输入法）不算，带文本类提示位才算。两者分流的原因：
+ *          - WA14 单独开着**不代表要文本键盘**：远端镜像控件 XGuiClient
+ *            开 WA14 只为把物理键盘转发给远端（XGuiClient.c:3464-3467），
+ *            且显式把 hints 置 None——若只按 WA14 判，点了远端画面就会
+ *            弹出文本键盘（2026-10-25 用户实测：RC 页连上后点画面弹键盘）。
+ *          - 但 hints 带文本类提示位者正是 WA14 放行回退要覆盖的对象
+ *            （日期时间字段壳 XDateTimeEdit 的 DigitsOnly、密码框的
+ *            HiddenText 等），故此处按 hints 放行，行为与旧口径一致。
+ * @param      target 目标控件借用指针；可为 NULL。
+ * @return     true 该控件要文本键盘（点击应弹面板）；false 否。
+ */
+static bool xkb_wantsTextKeyboard(const XWidget* target)
+{
+    XVtable* vt;
+    if (!target) return false;
+    vt = XClassGetVtable(target);
+#if XLINEEDIT_ON
+    if (vt == XLineEdit_class_init()) return true;
+#endif
+#if XPLAINTEXTEDIT_ON
+    if (vt == XPlainTextEdit_class_init()) return true;
+#endif
+#if XTEXTEDIT_ON
+    if (vt == XTextEdit_class_init()) return true;
+#endif
+#if !XLINEEDIT_ON && !XPLAINTEXTEDIT_ON && !XTEXTEDIT_ON
+    (void)vt;
+    return true; /* 类型识别降级：与 supportedTarget 同口径（任意控件）。 */
+#else
+    if (!XWidget_testAttribute(target, XWidgetAttribute_InputMethodEnabled))
+        return false;
+    return XWidget_inputMethodHints(target) != XInputMethodHint_None;
+#endif
+}
+
 /** @brief 判定命中控件是否落在键盘面板子树内（notifyPress 豁免判据）。
  *  @details 沿父链上溯比对 self：面板自身或其子控件命中→true（键盘自
  *           身按键 PRESS 不驱动弹收，弹出态按键照常输入）。 */
@@ -3813,14 +3852,14 @@ static void xkb_guardTick(XVirtualKeyboard* self)
        → 边沿分支走 closePopup 路径（面板随开关收起）。 */
     focus = XWidget_appFocusWidget();
 #if XVIRTUALKEYBOARD_ON
-    accept = focus && xkb_supportedTarget(focus) &&
+    accept = focus && xkb_wantsTextKeyboard(focus) &&
              XWidget_isEnabled(focus) &&
              XWidget_testAttribute(
                  focus, XWidgetAttribute_InputMethodEnabled) &&
              XVirtualKeyboardSettings_keyboardEnabled(
                  XVirtualKeyboardSettings_instance());
 #else
-    accept = focus && xkb_supportedTarget(focus) &&
+    accept = focus && xkb_wantsTextKeyboard(focus) &&
              XWidget_isEnabled(focus) &&
              XWidget_testAttribute(
                  focus, XWidgetAttribute_InputMethodEnabled);
@@ -4743,6 +4782,7 @@ void XVirtualKeyboard_init(XVirtualKeyboard* self, XWidget* parent, XWidgetFlags
     self->m_shiftState = 0; /* 布局层 shift 展示态：小写。 */
     self->m_popovers = false;
     self->m_autoPopup = true;
+    self->m_autoPopupEditableOnly = false;
     self->m_popped = false;
     self->m_userCollapsed = false;
     self->m_selectedKey = XKEYBOARD_BUTTON_NONE;
@@ -5663,12 +5703,40 @@ bool XVirtualKeyboard_autoPopup(const XVirtualKeyboard* self)
     return self ? self->m_autoPopup : false;
 }
 
+void XVirtualKeyboard_setAutoPopupEditableOnly(XVirtualKeyboard* self,
+                                               bool on)
+{
+    if (!self) return;
+    self->m_autoPopupEditableOnly = on;
+}
+
+bool XVirtualKeyboard_autoPopupEditableOnly(const XVirtualKeyboard* self)
+{
+    return self ? self->m_autoPopupEditableOnly : false;
+}
+
 void XVirtualKeyboard_notifyPress(XVirtualKeyboard* self, XWidget* hit)
 {
 #if XVIRTUALKEYBOARD_DESKTOP_ON
     bool accept;
-    if (!self || !self->m_autoPopup) return; /* autoPopup 关=应用全权接管。 */
+    if (!self) return;
+    /* 面板自身按键优先放行（键盘按键不误触收起；提到 autoPopup 闸之前，
+       使「仅编辑控件」降级模式下点键盘键不会被当成非编辑区而收层）。 */
     if (xkb_insidePanel(self, hit)) return;  /* 键盘自身按键不受影响。 */
+    if (!self->m_autoPopup) {
+        /* autoPopup 关=应用全权接管（默认全不弹）。降级模式（editableOnly）
+           例外：仅**要文本键盘的控件**放行（判据见 xkb_wantsTextKeyboard：
+           三编辑控件 + WA14 且 hints 非 None 的字段壳类），其余区域照旧
+           不弹（保住「触摸点按钮/列表不被键盘打断」），已弹层时非编辑落点
+           仍收层。 */
+        if (!self->m_autoPopupEditableOnly) return;
+        if (!hit || !xkb_wantsTextKeyboard(hit) ||
+            !XWidget_isEnabled(hit) ||
+            !XWidget_testAttribute(hit, XWidgetAttribute_InputMethodEnabled)) {
+            if (self->m_popped) XVirtualKeyboard_closePopup(self);
+            return;
+        }
+    }
     /* 穿透归属上溯（与按下派发循环 XWidget.c:1529-1547 同口径：
        XWidget_attrTest(TransparentForMouseEvents) 跳过、沿父链上抛）。
        childAt 不跳
@@ -5681,11 +5749,13 @@ void XVirtualKeyboard_notifyPress(XVirtualKeyboard* self, XWidget* hit)
            XWidget_testAttribute(hit,
                                  XWidgetAttribute_TransparentForMouseEvents))
         hit = XWidget_parentWidget(hit);
-    /* accept 判据与守护 tick ②全等（supportedTarget=vtable 快路径 ∪
-       WA14 放行回退 &&enabled&&总开关）：同框 opt-out 编辑框按下不弹
-       （Qt inputMethodAccepted 口径），已弹则随非编辑分支幂等收层；
-       WA14 放行使 XDateEdit/XDateTimeEdit 字段壳按下即弹面板不闪退。 */
-    accept = hit && xkb_supportedTarget(hit) &&
+    /* accept 判据与守护 tick ②全等（要文本键盘=vtable 快路径 ∪
+       WA14 且 hints 非 None 的字段壳类 &&enabled&&总开关）：同框 opt-out
+       编辑框按下不弹（Qt inputMethodAccepted 口径），已弹则随非编辑分支
+       幂等收层；hints 放行使 XDateEdit/XDateTimeEdit 字段壳按下即弹面板
+       不闪退；而 WA14 单独开着（远端镜像控件只转发物理键盘、hints=None）
+       不再误弹文本键盘。 */
+    accept = hit && xkb_wantsTextKeyboard(hit) &&
              XWidget_isEnabled(hit) &&
              XWidget_testAttribute(hit, XWidgetAttribute_InputMethodEnabled);
 #if XVIRTUALKEYBOARD_ON

@@ -12,6 +12,13 @@
 
 /* ====== 项目头文件 ====== */
 #include "XDeviceNetwork.h"
+#if defined(__ANDROID__)
+/* 安卓：/proc/net 与 resolv.conf 应用域不可读，网络配置查询/设置走系统
+ * 服务桥（WifiManager/ConnectivityManager）。平台策略已下沉到
+ * Drive/Android/Device/Network/XDeviceNetwork_android.c（与 WiFi 后端同处
+ * 平台层），本驱动只保留基础实现与调用点。 */
+#include "XDeviceNetwork_android.h"
+#endif
 #include "XIODevice.h"
 #include "XIODevice_Protected.h"
 #include "XIODevicePrivate.h"
@@ -60,6 +67,16 @@
  * MCGS 真机会话 RECV 续传诊断, 编译期 -DXDEVNET_IO_DEBUG=1 重开。 */
 #ifndef XDEVNET_IO_DEBUG
 #define XDEVNET_IO_DEBUG 0
+#endif
+
+/* [2026-10-24 安卓 NTP 诊断] Android 上 fprintf(stderr) 进不了 logcat，
+ * 诊断走 __android_log_print（tag=XDevNet）；非安卓维持零开销。 */
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define XDEVNET_AND_TRACE(...) \
+    __android_log_print(ANDROID_LOG_INFO, "XDevNet", __VA_ARGS__)
+#else
+#define XDEVNET_AND_TRACE(...) do {} while (0)
 #endif
 
 #if XNET_USE_IO_URING  /* 探测宏来自 XNetIoRingPosix.h；epoll 回退用其伪 SQE 兼容层 */
@@ -763,6 +780,7 @@ static void startAsyncWrite(XDeviceNetworkContext* priv, const void* data, int64
 XDeviceNetworkContext* XDeviceNetwork_createContext(void)
 {
     XDeviceNetworkContextPosix* p = (XDeviceNetworkContextPosix*)XCalloc_System(1, sizeof(XDeviceNetworkContextPosix));
+    XDEVNET_AND_TRACE("createContext: p=%p", (void*)p);
     if (!p) return NULL;
 
     p->socket = -1;
@@ -824,6 +842,9 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
     (void)shareAddr;
 
     p->socket = socket(af, type, proto);
+    XDEVNET_AND_TRACE("bind: af=%d type=%d proto=%d socket=%d errno=%d",
+                      af, type, proto, (int)p->socket,
+                      p->socket < 0 ? errno : 0);
     if (p->socket < 0) return 0;
 
     setNonBlocking(p->socket);
@@ -838,6 +859,7 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
     addr2sa(address, port, &addrStorage, &addrLen);
 
     if (bind(p->socket, (struct sockaddr*)&addrStorage, addrLen) != 0) {
+        XDEVNET_AND_TRACE("bind: bind() failed errno=%d", errno);
         close(p->socket);
         p->socket = -1;
         return 0;
@@ -857,6 +879,7 @@ uint16_t XDeviceNetwork_socketBind(XFd xfd, const XHostAddress* address,
     p->base.m_connected = true;
 
     if (sockType == XDeviceNetwork_Udp) startAsyncRead(priv, true);
+    XDEVNET_AND_TRACE("bind: ok port=%u", (unsigned)actualPort);
     return actualPort;
 }
 
@@ -1139,9 +1162,17 @@ int64_t XDeviceNetwork_socketWrite(XFd xfd, const void* buf, int64_t len,
             len = XNETWORK_WRITE_BUFFER_SIZE;
         }
         startAsyncWrite(priv, buf, len, destAddr, destPort, sockType == XDeviceNetwork_Udp);
+#if XDEVNET_IO_DEBUG
+        XDEVNET_AND_TRACE("write: submitted len=%lld writePending=%d errno=%d",
+                          (long long)len, (int)p->writePending,
+                          p->writePending ? 0 : errno);
+#endif
         return len;
     }
 
+#if XDEVNET_IO_DEBUG
+    XDEVNET_AND_TRACE("write: busy, dropped len=%lld", (long long)len);
+#endif
     if (ringBuffer) {
         struct XRingBuffer* rb = (struct XRingBuffer*)ringBuffer;
         return (int64_t)XRingBuffer_write(rb, buf, (size_t)len);
@@ -2558,6 +2589,15 @@ bool XDeviceNetwork_queryInterfaceConfig(uint32_t ifIndex,
             XHostAddress_setAddressIPv4(&outConfig->dhcpServer, serverHost);
         }
     }
+#if defined(__ANDROID__)
+    /* 6) 安卓补充：上面 2)/4)/5) 的常规取数路径在安卓应用域全空
+     *    （/proc/net 被 SELinux 拒、无 /etc/resolv.conf、无 udhcpc）——
+     *    网关/DNS/DHCP 模式从系统服务取（WifiManager.getDhcpInfo +
+     *    ConnectivityManager.LinkProperties）。
+     *    平台策略已下沉到 Drive/Android/Device/Network/XDeviceNetwork_android.c，
+     *    此处只留调用（共享驱动不该知道安卓的取数细节）。 */
+    XAndroidNetwork_applyInterfaceConfig(outConfig, ifname);
+#endif /* __ANDROID__ */
     return true;
 }
 
@@ -2670,6 +2710,13 @@ static bool xdevnet_udhcpcPath(char* out, size_t cap)
 
 bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex)
 {
+#if defined(__ANDROID__)
+    /* 安卓：系统 WiFi 的 IP 模式在 WifiConfiguration 上（ipAssignment），
+     * 经 XNetAdapter 反射 updateNetwork。对用户在系统里连过的网络受
+     * 所有权限制（会被拒）；当前已是 DHCP（租约在）则目标态已达成。
+     * 平台实现见 Drive/Android/Device/Network/XDeviceNetwork_android.c。 */
+    return XAndroidNetwork_setDhcp(ifIndex);
+#else
     char ifname[IFNAMSIZ] = {0};
     char udhcpcPath[64];
     char pidPath[96];
@@ -2696,6 +2743,7 @@ bool XDeviceNetwork_setInterfaceDhcp(uint32_t ifIndex)
     /* 首进程在 -b 下拿到租约后台化后即退, 即时收割防僵尸。 */
     waitpid(pid, &status, 0);
     return true;
+#endif /* __ANDROID__ */
 }
 
 static bool xdevnet_ifreqAddr(const char* ifname, unsigned long req,
@@ -2767,12 +2815,22 @@ static void xdevnet_writeResolv(const char* dns1, const char* dns2)
     fclose(f);
 }
 
+
 bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address,
                                        const char* ipv4Netmask,
                                        const char* ipv4Gateway,
                                        const char* dnsPrimary,
                                        const char* dnsSecondary)
 {
+#if defined(__ANDROID__)
+    /* 安卓：静态 v4 经 WifiConfiguration（XNetAdapter 反射 updateNetwork，
+     * 受配置所有权限制）；掩码文本换算前缀长度（StaticIpConfiguration
+     * 用 prefixLength 而非掩码）。
+     * 平台实现见 Drive/Android/Device/Network/XDeviceNetwork_android.c。 */
+    return XAndroidNetwork_setStaticV4(ifIndex, ipv4Address, ipv4Netmask,
+                                          ipv4Gateway, dnsPrimary,
+                                          dnsSecondary);
+#else
     char ifname[IFNAMSIZ] = {0};
     struct in_addr in;
     uint32_t oldGw = 0;
@@ -2803,6 +2861,7 @@ bool XDeviceNetwork_setInterfaceStatic(uint32_t ifIndex, const char* ipv4Address
     }
     xdevnet_writeResolv(dnsPrimary, dnsSecondary);
     return true;
+#endif /* __ANDROID__ */
 }
 
 /* ---- [2026-10-06] IPv6 静态配置: v6 地址/网关必须走 rtnetlink
@@ -2852,6 +2911,13 @@ bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
                                            int prefixLength,
                                            const char* ipv6Gateway)
 {
+#if defined(__ANDROID__)
+    /* 安卓：AOSP 的 WiFi 静态 IP（StaticIpConfiguration）只支持 v4 地址，
+     * 系统 WiFi 设置页同样没有静态 IPv6 选项——系统级不支持，如实拒绝。
+     * 平台实现见 Drive/Android/Device/Network/XDeviceNetwork_android.c。 */
+    return XAndroidNetwork_setStaticIpv6(ifIndex, ipv6Address,
+                                          prefixLength, ipv6Gateway);
+#else
     uint8_t addr6[16];
     uint8_t gw6[16];
     char reqBuf[512];
@@ -2922,6 +2988,7 @@ bool XDeviceNetwork_setInterfaceStaticIpv6(uint32_t ifIndex,
         if (xdevnet_nl_talk(nlh) != 0) return false;
     }
     return true;
+#endif /* __ANDROID__ */
 }
 
 #endif /* XNETWORK_USE_PLATFORM_API && POSIX */

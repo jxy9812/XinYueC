@@ -621,6 +621,12 @@ static bool xcs_complete_apply(XConsoleShell* self, size_t start, size_t end,
     return true;
 }
 
+/* 2026-10-23 开关守卫修复：本函数是【历史回填与补全共用】的行重画，
+ * 原先被包进 XCONSOLE_SHELL_COMPLETION_ON 块（497..1212）内——关补全后
+ * feedByte 的历史回填路径链接失败（undefined reference）。在此临时闭合
+ * 守卫，让 redraw 始终编译；函数定义后恢复补全块的守卫。 */
+#endif /* XCONSOLE_SHELL_COMPLETION_ON */
+
 /* 清空当前行并重绘提示符和当前输入行；历史回填与补全共用。 */
 static void xcs_redraw_input_line(XConsoleShell* self)
 {
@@ -641,6 +647,8 @@ static void xcs_redraw_input_line(XConsoleShell* self)
     }
 #endif
 }
+
+#if XCONSOLE_SHELL_COMPLETION_ON /* 恢复补全块守卫（见上方 redraw 前的说明） */
 
 /* 列出歧义候选并重绘提示符与输入行。 */
 static void xcs_complete_show_candidates(XConsoleShell* self,

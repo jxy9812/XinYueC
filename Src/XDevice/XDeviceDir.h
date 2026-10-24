@@ -15,6 +15,9 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include "XDevice.h"
+#include "XDevice_config.h"
+#if XDEVICE_ON && XDEVICE_DIR_ON
+
 
 struct XString;
 typedef struct XString XString;
@@ -101,4 +104,5 @@ bool XDeviceDir_readNext(XFd fd, XDirEntry* entry);
 }
 #endif
 
+#endif /* device switch */
 #endif /* XDEVICEDIR_H */

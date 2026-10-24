@@ -15,6 +15,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* XTHREAD_ON：注册表 API 与 XThread 对象同生共死（详见下方守卫处的说明）。
+ * XSync_config.h 只定义开关宏、无其它依赖，include 安全。 */
+#include "XSync_config.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -59,13 +63,6 @@ typedef struct XTaskInfo {
 #endif
 
 /**
- * @brief XThread 的不完整类型声明。
- * @details 注册表只保存借用指针，不取得线程对象所有权；对象销毁前必须先
- *          调用 XTask_unregisterThread。
- */
-typedef struct XThread XThread;
-
-/**
  * @brief 任务快照遍历回调。
  * @param userData XTask_enumerateThreads 原样传入的调用方上下文；可为 NULL，
  *                 注册表不保存也不释放。
@@ -74,6 +71,30 @@ typedef struct XThread XThread;
  * @return 继续枚举返回 true；调用方取消、输出失败或不再需要快照时返回 false。
  */
 typedef bool (*XTaskVisitor)(void* userData, const XTaskInfo* info);
+
+/* ---------------------------------------------------------------------------
+ * 注册表 API 与 XThread 对象同生共死。
+ *
+ * XTHREAD_ON=0（裸机单线程）：框架没有 XThread 对象，注册表没有东西可登记
+ * ——XTask_registerThread 的入参就是 XThread*。此时整族注册表 API 一并
+ * 退场，XTaskInfo / XTaskState / XTaskVisitor 这套**平台无关的诊断契约**
+ * 保留（产品任务管理器可在自己的平台上提供同形快照，不必依赖 XThread）。
+ *
+ * 修复记录（2026-10-22）：此前 XTask.h 无条件声明、Src/XPlatform/XTask.c
+ * 无条件定义，注册表与 XThread 类型硬耦合，导致 XTHREAD_ON=0 时
+ *   - XTask.c 编译报 "invalid use of incomplete typedef 'XThread'"；
+ *   - XThread.c 里的 XThread_createMainThread 引用 XThread_class_init，
+ *     链接期报 undefined reference。
+ * 裸机移植必须能关掉线程功能，故把二者一并纳入 XTHREAD_ON 守卫。
+ * ------------------------------------------------------------------------- */
+#if XTHREAD_ON
+
+/**
+ * @brief XThread 的不完整类型声明。
+ * @details 注册表只保存借用指针，不取得线程对象所有权；对象销毁前必须先
+ *          调用 XTask_unregisterThread。
+ */
+typedef struct XThread XThread;
 
 /**
  * @brief 将一个 XThread 加入任务诊断注册表。
@@ -102,6 +123,8 @@ void XTask_unregisterThread(XThread* thread);
  *       Linux、Windows 或 RTOS 的原生任务列表，也不会分配堆内存。
  */
 bool XTask_enumerateThreads(XTaskVisitor visitor, void* userData);
+
+#endif /* XTHREAD_ON */
 
 #ifdef __cplusplus
 }

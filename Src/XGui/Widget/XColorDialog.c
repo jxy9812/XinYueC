@@ -8,9 +8,10 @@
  * @author     XinYueC 团队
  */
 
-#if XGUI_ON
+
 
 #include "XGuiConfig.h"
+#if XGUI_ON
 #include "XString.h"
 #include "XMemory.h"
 #include "XVarList.h"
@@ -33,6 +34,11 @@
 
 #include "XColorDialog.h"
 #include "XWidget_Protected.h"
+#include "XObject.h"          /* XObject_deleteLater/XObject_children：
+                               * 取消崩溃根修（2026-10-21，XFileDialog
+                               * xff_teardown 同款移植）延迟回收与子树
+                               * 输入侧摘除依赖。 */
+#include "XVector.h"          /* XVector_size_base/at_base：子树遍历。 */
 
 /* ==================== 内部辅助 ==================== */
 
@@ -64,12 +70,90 @@ static int g_xcdStandardCount; /**< 已设标准槽计数（高水位 +1）。 *
 /* ==================== 类与实例生命周期 ==================== */
 
 static void VXColorDialog_showEvent(XWidget* self, XEvent* event);
+static void VXColorDialog_deinit(XColorDialog* self);
+
+/* ---------- 取消崩溃根修（2026-10-21，XFileDialog 同款移植） ----------
+ * getColor 便捷路径在 exec 返回（仍处于取消/确定钮 clicked 发射帧内，
+ * 按压靶正指向该钮）同步删除对话框与布局：下一记落在对话框区域的
+ * 鼠标事件（物理释放/移动）经 g_buttonDownWidget 按压靶派发到已释放
+ * 按钮，UAF（XFileDialog 侧 ASan 实抓 XWidget_accumulateOffset，
+ * Windows MSVC 消息时序必现）。两条纪律：
+ *  1. 收口槽前置子树输入侧摘除（xcd_detachInputRecursive：子树逐控件
+ *     显式隐藏，隐藏分支清按压靶/焦点/抓取/触点表登记）；
+ *  2. 对话框子树走 XObject_deleteLater（DeferredDelete 的 loopLevel
+ *     语义保证析构发生在控制权返回事件循环之后）；root/rgbRow/bar
+ *     三个布局句柄（addLayout 子布局不归父布局所有，对标 QLayout
+ *     所有权语义）经登记表挂到 VXColorDialog_deinit 析构帧兑现
+ *     （根布局先行清子行 m_parentLayout 反指针后再删子行）。
+ * 串行不变量与 owner 校验同 XFileDialog s_xffPendingDlg 块注。 */
+
+/** @brief 子树输入侧登记摘除：先子后父逐控件显式隐藏（须在父对话框
+ *  尚未隐藏时调用）；跳过子窗（弹层另行收口）。 */
+static void xcd_detachInputRecursive(XWidget* w)
+{
+    const XVector* children;
+    size_t i;
+    size_t n;
+    if (!w) return;
+    children = XObject_children((XObject*)w);
+    n = children ? XVector_size_base(children) : 0;
+    for (i = 0; i < n; ++i) {
+        XObject* child = *(XObject**)XVector_at_base(children, i);
+        if (child && child->m_is_widget && !child->m_is_window)
+            xcd_detachInputRecursive((XWidget*)child);
+    }
+    XWidget_setVisible(w, false);
+}
+
+/** @brief 排空后回收登记表（单槽 + owner 校验，见上方块注）。 */
+static XColorDialog* s_xcdPendingDlg = NULL;
+static XBoxLayout* s_xcdPendingLayouts[3] = {0}; /**< [0]=root，[1]=rgbRow，[2]=bar。 */
+
+/** @brief 对话框析构帧兑现登记：回收布局句柄（根布局先行，见上方
+ *  块注删除序）。仅当登记 owner 即本次析构对话框时兑现。 */
+static void xcd_pendingReclaim(XColorDialog* dying)
+{
+    int i;
+    if (!dying || s_xcdPendingDlg != dying) return;
+    for (i = 0; i < 3; ++i) {
+        if (s_xcdPendingLayouts[i])
+            XClassDelete((XLayout*)s_xcdPendingLayouts[i]);
+        s_xcdPendingLayouts[i] = NULL;
+    }
+    s_xcdPendingDlg = NULL;
+}
+
+/** @brief teardown 登记：布局句柄移交登记表随对话框析构帧回收。
+ *  覆写前先回收旧登记（同槽连续两次便捷调用防句柄泄漏，旧登记
+ *  对话框此刻仍存活且已隐藏，删其布局句柄仅清反指针，安全）。 */
+static void xcd_pendingRegister(XColorDialog* dlg, XBoxLayout* root,
+                                XBoxLayout* rgbRow, XBoxLayout* bar)
+{
+    if (!dlg) return;
+    if (s_xcdPendingDlg && s_xcdPendingDlg != dlg)
+        xcd_pendingReclaim(s_xcdPendingDlg);
+    s_xcdPendingDlg = dlg;
+    s_xcdPendingLayouts[0] = root;
+    s_xcdPendingLayouts[1] = rgbRow;
+    s_xcdPendingLayouts[2] = bar;
+}
+
+/** @brief 释放对话框自有拥有字段，再委托父类。 */
+static void VXColorDialog_deinit(XColorDialog* self)
+{
+    if (!self) return;
+    /* 排空后回收：getColor 收尾登记的布局句柄随本对话框析构帧兑现
+     * （取消崩溃根修；owner 非本对话框时空转）。 */
+    xcd_pendingReclaim(self);
+    XClass_Deinit_Parent(XDialog, (XDialog*)self);
+}
 
 XVtable* XColorDialog_class_init(void)
 {
     XVTABLE_INIT_DEFAULT(XColorDialog)
     XVTABLE_INHERIT_XCLASS(XDialog);
     XVTABLE_OVERLOAD_DEFAULT(EXWidget_ShowEvent, VXColorDialog_showEvent);
+    XVTABLE_OVERLOAD_DEFAULT(EXClass_Deinit, VXColorDialog_deinit);
     return XVTABLE_DEFAULT;
 }
 
@@ -556,6 +640,10 @@ static void xcd_acceptSlot(XObject* receiver, XVarList* args)
 {
     (void)args;
     if (!receiver) return;
+    /* 确定收口前置子树输入侧摘除（取消崩溃根修，见类生命周期区块
+     * 注：确定槽同样运行在真实按压的发射帧内，延迟回收后事件层不得
+     * 再有登记指向子树成员）。 */
+    xcd_detachInputRecursive(&((XColorDialog*)receiver)->m_base.m_base);
     /* 对标 QColorDialog::accept = done(Accepted)：selectedColor =
      * currentColor 并发射 colorSelected（漏斗内完成）。 */
     XColorDialog_done((XColorDialog*)receiver, (int)XDialogCode_Accepted);
@@ -564,8 +652,15 @@ static void xcd_acceptSlot(XObject* receiver, XVarList* args)
 static void xcd_rejectSlot(XObject* receiver, XVarList* args)
 {
     (void)args;
-    if (receiver) XColorDialog_done((XColorDialog*)receiver,
-                                    (int)XDialogCode_Rejected);
+    if (receiver) {
+        /* 取消收口前置子树输入侧摘除（取消崩溃根修，见类生命周期区
+         * 块注）：取消槽运行在取消钮 clicked(Direct) 发射帧内（按压
+         * 靶此刻正指向取消钮），对话框延迟回收后事件层不得再有登记
+         * 指向子树成员。 */
+        xcd_detachInputRecursive(&((XColorDialog*)receiver)->m_base.m_base);
+        XColorDialog_done((XColorDialog*)receiver,
+                          (int)XDialogCode_Rejected);
+    }
 }
 
 XColor XColorDialog_getColor(XColor initial, XWidget* parent,
@@ -778,10 +873,11 @@ XColor XColorDialog_getColor(XColor initial, XWidget* parent,
             result = XColorDialog_selectedColor(dlg);
         else
             result = XColor_create(); /* 对标 Qt：取消返回失效颜色。 */
-        if (root) XClassDelete((XLayout*)root);
-        if (rgbRow) XClassDelete((XLayout*)rgbRow);
-        if (bar) XClassDelete((XLayout*)bar);
-        XClassDelete(dlg);
+        /* 延迟回收（取消崩溃根修，见类生命周期区块注）：返回值已在
+         * 上方提取，对话框与三个布局句柄的删除时机不影响结果回读
+         * （对标 Qt QDialog::exec 返回后 QObject 树的延迟消亡）。 */
+        xcd_pendingRegister(dlg, root, rgbRow, bar);
+        XObject_deleteLater((XObject*)dlg);
         return result;
     }
 }

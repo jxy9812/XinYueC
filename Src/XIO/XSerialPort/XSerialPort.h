@@ -14,7 +14,7 @@ extern "C" {
 #include<stdbool.h>
 #include"XIODevice.h"
 #include"XDeviceSerialPort.h"
-#if XSERIALPORT_ON
+#if XDEVICE_SERIALPORT_ON
 //XSerialPortDevice虚函数表
 //XSerialPort 仅继承 XIODevice，未新增虚函数，重载的虚函数在 XSerialPort.c 中实现
 XCLASS_DEFINE_BEGING(XSerialPort)
@@ -363,7 +363,7 @@ void* XSerialPort_breakEnabledChanged_signal(XSerialPort* port, bool enabled);
 
 
 
-#endif /* XSERIALPORT_ON */
+#endif /* XDEVICE_SERIALPORT_ON */
 
 #ifdef __cplusplus
 }

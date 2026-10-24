@@ -460,14 +460,38 @@ void XPlatformBackingStoreDriver_present(void* nativeState, XWindow* window,
     hwnd = xpbs_win32_targetHwnd(state, window);
     if (!hwnd) return;
     (void)offset; /* 窗口客户区坐标提交，偏移由提交目标窗口决定。 */
-#if XPLATFORMNATIVEWINDOW_ON
     /* R1：present 放大 scale 平台内部读取（共享契约签名零改动）；dpr
        单源=XWindow_devicePixelRatio（缓冲恒逻辑分辨率，物理放大全在
-       present 层）。 */
+       present 层）。**必须在旋转分支之前取**——下面判断「rot 与 dpr 互斥」
+       要用它；此前该赋值在旋转分支之后，旋转判断读到未初始化栈值，
+       几乎恒把 rot 归零，画面因而永不旋转（C4700 告警即此）。 */
+#if XPLATFORMNATIVEWINDOW_ON
     scale = XWindow_devicePixelRatio(window);
 #else
     (void)window;
     scale = 1.0f;
+#endif
+    /* [内容旋转上屏 2026-10-23] 本 Driver 是窗口真正的提交点（present
+       ≠ presentTile，后者只在少数路径用到），此前完全没有旋转处理：
+       窗口尺寸按逻辑几何换好了，画面却照原样贴上去——用户看到「切到
+       180° 没倒过来」「90° 只是变窄没转向」。旋转必须在提交处做：把
+       逻辑帧逐设备像素 R⁻¹ 反查后写满客户区（与
+       XPlatformNativeWindow_present 的 xpwn_presentRectRotated 同式）。
+       dpr>1 与旋转互斥（XWindow 能力闸已拒），此处防御性归零。 */
+#if XPLATFORMNATIVEWINDOW_ON
+    {
+        int rot = window ? XWindow_contentRotationDegrees(window) : 0;
+        if (rot != 0 && scale != 1.0f) rot = 0;
+        if (rot != 0) {
+            /* 旋转上屏复用窗口层已有的转置实现
+               （XPlatformNativeWindow_present 的 xpwn_presentRectRotated：
+               逻辑帧逐设备像素 R⁻¹ 反查 + 四步裁剪），不在此另写一份。
+               零拷贝 DIB 快路（下方 m_memDC 分支）持有的是逻辑朝向像素，
+               旋转态下不能直接 BitBlt——必须走转置路径。 */
+            XPlatformNativeWindow_present(window, image, region, offset);
+            return;
+        }
+    }
 #endif
 #if XGUI_BACKINGSTORE_RENDER_MODE != XGUI_BACKINGSTORE_RENDER_MODE_FULL
     /* 零拷贝模式：公共层在 resize 时经 getNativeBuffer 把绘制 XImage

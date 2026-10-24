@@ -143,6 +143,17 @@ void XVtable_push_back(XVtable* this_vtable, const void* func)
 	if (ISNULL(this_vtable, ""))
 		return;
 	XVtableEnlargeCapacity(this_vtable);
+	/* [越界哨兵 2026-10-21] stack 模式容量定死=类枚举 END；INHERIT 追加
+	 * 父槽超容量时此处原为静默越界写（毒化相邻类静态 vtable_data，呈现
+	 * 为无关类虚调用 AV）。改为响亮报告并放弃写入，肇事类当场现形。 */
+	if (this_vtable->m_isStack &&
+	    this_vtable->m_size >= this_vtable->m_capacity)
+	{
+		XERROR_PRINTF("文件:%s 函数:%s 行号:%d vtable stack 槽位溢出：size=%d capacity=%d（类枚举 END 与实际追加槽数不一致，检查父类虚槽新增后子类头文件是否同步）\n",
+			__FILE__, __func__, __LINE__,
+			(int)this_vtable->m_size, (int)this_vtable->m_capacity);
+		return;
+	}
 	char* ptr = (char*)this_vtable->m_data + this_vtable->m_size * sizeof(void*);
 	memcpy(ptr, &func, sizeof(void*));
 	++this_vtable->m_size;

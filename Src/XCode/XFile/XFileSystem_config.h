@@ -28,9 +28,10 @@ extern "C" {
 
 #if XFILE_ON
 
-/** @brief 目录操作模块开关；关闭后 XDir 相关 API 不编译。 */
+/** @brief 目录操作模块开关；关闭后 XDir 相关 API 不编译。
+ *  @details 目录业务层依赖目录设备（设备开关见 Src/XDevice/XDevice_config.h）。 */
 #ifndef XDIR_ON
-#define XDIR_ON 1
+#define XDIR_ON (XDEVICE_ON && XDEVICE_DIR_ON)
 #endif
 
 /** @brief 文件对象模块开关；关闭后 XFile 相关 API 不编译。 */
