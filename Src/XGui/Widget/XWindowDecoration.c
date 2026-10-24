@@ -23,6 +23,8 @@
 #include "XPlatformBackingStore.h"
 #include "XImage.h" /* 拖动快照离屏图像（窗口本地全幅；XImage_reinit_ex 复用分配） */
 #include "XWindow_Protected.h"
+#include "XWindowEvent.h" /* 同尺寸 RESIZE 回放（全屏翻转内容区重排踢） */
+#include "XWidget_Protected.h" /* XWidget_event_base：RESIZE 回放直投控件事件入口（同 XWidget.c XWidget_sendEvent 语义） */
 #include "XWindowRotation.h" /* B 域条带基：rotationMapRect 正映射（像素下标口径单一实现点） */
 #include "XCursor.h" /* 边缘改尺寸悬停光标：标准形状经 XWidget_setCursor 生效链 */
 #include "XPlatformTheme.h"
@@ -116,6 +118,12 @@ typedef struct XWindowDecorationState
                                 落位，见越阈还原处注）。 */
     bool m_resizing;       /**< 边缘改尺寸进行中。 */
     bool m_shaded;         /**< 最小化=卷起态（窗口只剩标题条）。 */
+    bool m_fullBarSuppressed; /**< 全屏条带抑制已应用账（窗口状态机通知链
+                                    的幂等账本）：FullScreen 进入时置位
+                                    （条隐藏+保留边距归零已落地），退出时
+                                    清位（条回归+边距恢复）。重复通知
+                                    （请求路径与 WM 回写路径各来一次）
+                                    经同值短路，显隐/重排只应用一次。 */
     XRect m_preShadeGeometry; /**< 卷起前的完整几何（展开恢复）。 */
     int m_resizeMask;      /**< 改尺寸方向位掩码（XWD_RZ_* 组合）。 */
     XPoint m_resizeAnchor; /**< 按下点（全局坐标；改尺寸增量=距按下点
@@ -147,6 +155,8 @@ static int g_xwdCapacity = 0;
  *  生效用；恒单调，成功直写一步加一，降级步不计）。定义前移至文件头：
  *  XWindowDecoration_dragSnapshotStepCount 访问器位于手势态查询区。 */
 static int g_xwdDragSnapStepCount = 0;
+
+static void xwd_windowStateChangedSlot(XObject* receiver, XVarList* args);
 
 /* ==================== 内部辅助：注册表 ==================== */
 
@@ -192,6 +202,22 @@ static XWindowDecorationState* xwd_ensureState(XWidget* top)
     XMemset(st, 0, sizeof(*st));
     st->m_top = top;
     st->m_window = top->m_windowHandle;
+    /* 【状态通知链接线 2026-10-23】装饰层消费窗口状态机：桥接窗口的
+     * windowStateChanged 信号直连本模块槽（receiver=顶层控件，连接
+     * 随任一端析构自动摘除）。此前状态变化到装饰层无任何通知链——
+     * showFullScreen 后条带显隐/保留边距决策点（stripHeight/
+     * marginsFor/ensureBar）读不到新状态，CSD 标题栏全屏不隐藏（真机
+     * 实测缺口）。接线后两条路径同源达装饰层：软件路径（fbdev 无原生
+     * 窗，XWindow_setWindowStates 尾部发射）与原生路径（X11 有 WM，
+     * WM 回写 _NET_WM_STATE 经 PropertyNotify→XWindow_reportWindow
+     * StateChanged 发射；无 WM 平台态不回写，由控件侧请求路径
+     * XWidget_setWindowState 的直呼通知补齐，见该函数）。槽内幂等
+     * （m_fullBarSuppressed 账），两路并发通知只应用一次。 */
+    if (st->m_window)
+        XObject_connect_1((XObject*)st->m_window,
+                          XSignal(XWindow_windowStateChanged_signal),
+                          (XObject*)top, xwd_windowStateChangedSlot,
+                          XConnectionType_Direct);
     return st;
 }
 
@@ -227,13 +253,39 @@ int XWindowDecoration_dragSnapshotStepCount(void)
 
 /* ==================== 内部辅助：判定与度量 ==================== */
 
+/** @brief 宿主顶层是否处于全屏态（FullScreen 窗口状态）。
+ *  @details 【全屏条带抑制 2026-10-23】装饰条带显隐/几何/命中的状态
+ *  单一事实源：窗口状态机（XWindow_setWindowStates 软件路径与
+ *  XWindow_reportWindowStateChanged 平台回写路径）落账的桥接窗口生效
+ *  状态。句柄缺席（建窗前布局预测期）回退控件侧状态副本——两份账在
+ *  XWidget_setWindowState 先写控件侧再同步桥接窗的时序下恒一致。
+ *  showFullScreen → 标题栏隐藏+内容铺满整个窗口（CSD 与系统条同
+ *  API 同行为）；showNormal/showMaximized 按 Qt 语义恢复。
+ *  @param      top 顶层控件；可为 NULL。
+ *  @return     FullScreen 态返回 true。
+ */
+static bool xwd_hostFullScreen(const XWidget* top)
+{
+    XWindow* win;
+    if (!top || !top->m_isWindow) return false;
+    win = top->m_windowHandle;
+    if (win)
+        return XWindow_windowState(win) == XWindowState_FullScreen;
+    return (top->m_windowState & (XWindowStates)XWindowState_FullScreen) != 0;
+}
+
 /** @brief 条带高度：标题条控件实际高度优先（自定义条可高/矮于默认），
  *  无条或条未定尺寸时回退 XTitleBar_defaultHeight（原 xwd_titleBarHeight
- *  的样式 PM 度量与最小钳制一并迁入该控件）。 */
+ *  的样式 PM 度量与最小钳制一并迁入该控件）。
+ *  全屏态（xwd_hostFullScreen）恒返回 0：条带让位整个窗口——保留边距
+ *  （marginsFor）归零使内容区铺满、输入拦截（handlePointer 的条带域）
+ *  整体失效、条带重绘（repaintStrip）空转，四个消费点同源此判定，
+ *  不存在「条已隐而边距仍占位」的中间态。 */
 static int xwd_stripHeight(const XWindowDecorationState* st)
 {
     int h;
     if (st && st->m_bar) {
+        if (xwd_hostFullScreen(st->m_top)) return 0; /* 全屏：条带让位。 */
         h = XWidget_height(st->m_bar);
         if (h > 0) return h;
     }
@@ -252,8 +304,9 @@ static int xwd_stripHeight(const XWindowDecorationState* st)
  *  漏斗重钉先于此发生，同值幂等，保底不依赖外部挂点（昆仑通态定版
  *  主路径同帧正确）；handlePointer 每次事件先经 xwd_ensureBar 兜底
  *  重钉（同值幂等，无变化零开销）。
- *  高度取条控件当前高度（用户自定条可显式定高），未定尺寸（新建控件
- *  0 高）回退 XTitleBar_defaultHeight。 */
+ *  高度口径：默认条恒 defaultHeight（新建子控件继承宿主几何，非 0
+ *  高度不可信，见函数内注）；自定义条取其显式定高，未定（0）回退
+ *  XTitleBar_defaultHeight。 */
 static void xwd_pinBarGeometry(XWindowDecorationState* st)
 {
     XWidget* top = st->m_top;
@@ -262,8 +315,18 @@ static void xwd_pinBarGeometry(XWindowDecorationState* st)
     int h;
     if (!top || !bar) return;
     w = XWidget_width(top);
-    h = XWidget_height(bar);
-    if (h <= 0) h = XTitleBar_defaultHeight();
+    /* 【高度口径收口 2026-10-23】默认条恒钉 defaultHeight：本框架新建
+     * 子控件继承宿主当前几何（实测首钉 h_cur=480/700=宿主创建期高度，
+     * X11 无 WM 时序），旧「高度非 0 即用户定高」判据把继承值钉成条
+     * 高——保留边距（marginsFor→stripHeight）/命中域（handlePointer
+     * barH）全被放大，且随建条时序漂移（fbdev 建条早于宿主定尺寸时
+     * h_cur=0 恰好回退默认，桌面时序则中招）。默认条高度没有合法的
+     * 第二来源，恒取 defaultHeight；自定义条保留显式定高（用户语义），
+     * 未定（0）回退默认。 */
+    if (bar == st->m_defaultBar || XWidget_height(bar) <= 0)
+        h = XTitleBar_defaultHeight();
+    else
+        h = XWidget_height(bar);
     XWidget_setGeometry(bar, 0, 0, w, h);
 }
 
@@ -298,15 +361,29 @@ static void xwd_ensureBar(XWindowDecorationState* st)
             st->m_defaultBar =
                 (XWidget*)XTitleBar_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                               st->m_top, 0);
-            if (st->m_defaultBar)
+            /* 全屏承载期新建的默认条不同步显形（全屏条带抑制生效中，
+             * 显形即叠画内容区）；退出全屏由 notifyWindowState 统一
+             * 恢复显形。 */
+            if (st->m_defaultBar && !xwd_hostFullScreen(st->m_top))
                 XWidget_show(st->m_defaultBar);
-        } else if (XWidget_testAttribute(st->m_defaultBar,
+        } else if (!xwd_hostFullScreen(st->m_top) &&
+                   XWidget_testAttribute(st->m_defaultBar,
                                          XWidgetAttribute_WState_Hidden)) {
-            /* 自定义条摘除后恢复默认条显形。 */
+            /* 自定义条摘除后恢复默认条显形。全屏抑制期跳过：全屏中
+             * handlePointer 兜底重钉会反复经过本函数，无此守卫会把
+             * notifyWindowState 隐藏的默认条逐事件重新点亮（条带复
+             * 活叠画全屏内容）。 */
             XWidget_setVisible(st->m_defaultBar, true);
         }
         st->m_bar = st->m_defaultBar;
     }
+    /* 【账实同步 2026-10-23】承载完成后按宿主当前状态对齐生效条的显隐
+     * 与抑制账：建条期宿主已是全屏（如 restoreGeometry 携 FullScreen
+     * 态先于建窗、自定义条在全屏中挂载）时，条以隐藏态出生且账本置位
+     * ——否则后续「退出全屏」通知因账同（false==false）短路，条永不
+     * 再现。常态同值幂等零开销（setVisible 同值短路）。 */
+    st->m_fullBarSuppressed = xwd_hostFullScreen(st->m_top);
+    XWidget_setVisible(st->m_bar, !st->m_fullBarSuppressed);
     xwd_pinBarGeometry(st);
 }
 
@@ -2473,6 +2550,91 @@ void XWindowDecoration_notifyAppearanceChanged(XWidget* top)
 {
     if (!top) return;
     if (XWindowDecoration_activeFor(top)) xwd_repaintStrip(top);
+}
+
+/* ==================== 窗口状态消费（全屏条带抑制 2026-10-23） ==================== */
+
+/** @brief windowStateChanged 信号槽：转派公共通知入口。
+ *  @details 接收者=登记装饰状态时的顶层控件（xwd_ensureState 接线）。
+ *  两路状态变化同源至此：软件路径（fbdev，XWindow_setWindowStates 尾
+ *  部发射）与原生路径（X11 有 WM，WM 属性回写经 XWindow_reportWindow
+ *  StateChanged 发射）。args 携带新状态，但槽内改读现值（xwd_host
+ *  FullScreen）——信号在途期间状态可能再变，以现值为准防陈旧应用。 */
+static void xwd_windowStateChangedSlot(XObject* receiver, XVarList* args)
+{
+    (void)args;
+    if (receiver) XWindowDecoration_notifyWindowState((XWidget*)receiver);
+}
+
+bool XWindowDecoration_notifyWindowState(XWidget* top)
+{
+    XWindowDecorationState* st;
+    bool full;
+    if (!top || !top->m_isWindow) return false;
+    if (!XWindowDecoration_activeFor(top)) return false;
+    st = xwd_stateFor(top);
+    /* 条未承载（建窗早期）：条显隐无处落地，等 syncWindow→ensureBar
+     * 的承载判定（建条分支已按全屏态跳过显形）。 */
+    if (!st || !st->m_bar) return false;
+    full = xwd_hostFullScreen(top);
+    if (full == st->m_fullBarSuppressed) return false; /* 幂等：重复通知同值短路。 */
+    st->m_fullBarSuppressed = full;
+    /* 手势/待定态先于任何几何·视觉切换终止（xwd_endInteractions 真机
+     * 教训同款：几何切换穿越抓取/锚点会把窗口甩飞）；最大化「还原待
+     * 定」不在 endInteractions 管辖（其为 PRESS 臂登记态），显式清账
+     * 解抓取——全屏翻转后待定锚已失效，残留会让后续 MOVE 误还原。 */
+    if (st->m_maxRestorePending) {
+        st->m_maxRestorePending = false;
+        XWidget_releaseMouse(st->m_top);
+        xwd_platformGrab(st, false);
+    }
+    xwd_endInteractions(st);
+    if (full) {
+        /* 进全屏：条隐藏（内容铺满整个窗口），卷起态作废（全屏几何
+         * 接管，展开基准不再适用；退出全屏按 showNormal/showMaximized
+         * 语义恢复，不回卷起）。 */
+        st->m_shaded = false;
+        XWidget_setVisible(st->m_bar, false);
+    } else {
+        /* 出全屏：条回归（showNormal→普通形态标题栏；showMaximized→
+         * 最大化形态标题栏在），重钉宽度（全屏期宿主宽可能已变）。 */
+        XWidget_setVisible(st->m_bar, true);
+    }
+    xwd_pinBarGeometry(st);
+    /* 保留边距重算落账（stripHeight 全屏归零/退出恢复条高）+ 变化整窗
+     * update（syncWindow 内边距变化分支）；抑制位/承载判定同函数兜底
+     * 刷新，与建窗/flags 变化共用同一收口。 */
+    XWindowDecoration_syncWindow(top);
+    /* 【同尺寸内容区重排踢 2026-10-24】装饰保留边距是状态应变量（全屏
+     * 归零/退出恢复条高），但**几何未变**的状态翻转（最大化↔全屏同面板
+     * 几何；X11 无 WM 平台态不落几何）没有 RESIZE 事件——resizeEvent
+     * 驱动的顶层自定义布局（XMainWindow xmw_layout、demo 内容区等）
+     * 不会重跑，内容区停在旧让位偏移（全屏底条留白/退出顶条叠盖、
+     * FullScreen→Maximized 直切后标题栏压品牌条=桌面实机复现 2a）。
+     * 此踢放在本函数（条显隐+边距翻转已落地之后）：请求路径
+     * （XWidget_setWindowState 直呼）与 WM 回写路径（signal 槽转派，
+     * 回写与 WM 几何 ConfigureNotify 先后时序不定）同源收口——任一路
+     * 径的翻转都保证布局按新边距至少重解算一次。回放同尺寸 RESIZE 走
+     * 既有唯一漏斗（resizeEvent 虚槽→自定义布局→syncBarGeometry 重钉），
+     * 布局全链同值幂等；几何真变的翻转此处回放与真实 RESIZE 等价重入，
+     * 无害。隐藏窗口跳过（show 分支沿父链激活布局兜底，同
+     * LAYOUT_REQUEST 口径；showNormal/showFullScreen 都是先 setState
+     * 后 setVisible，进全屏首跳由 show 兜底）。 */
+    if (XWidget_isVisible(top)) {
+        XResizeEvent replay;
+        XSize newSize;
+        XSize oldSize;
+        XSize_init(&newSize, XWidget_width(top), XWidget_height(top));
+        XSize_init(&oldSize, newSize.width, newSize.height);
+        XResizeEvent_init(&replay, XEVENT_TYPE_RESIZE, &newSize, &oldSize);
+        /* 直投控件事件入口（XWidget_event_base=XObject_event_base）：
+           与 XWidget.c 内部 XWidget_sendEvent 同一语义（栈区事件，
+           派发后原地复用，绕过 notify 过滤器——重排踢不是输入事件，
+           无过滤器消费诉求）。 */
+        XWidget_event_base(top, (XEvent*)&replay);
+        XClassDeinit(&replay);
+    }
+    return true;
 }
 
 #endif /* XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON */

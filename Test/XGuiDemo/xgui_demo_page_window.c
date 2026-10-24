@@ -39,6 +39,7 @@
 #include "XGuiConfig.h"
 #include "XPrintf.h"
 #include "XObject.h"
+#include "XSystem.h" /* 内存安全阀：XSystem_memoryInfo 读 MemAvailable（2026-10-23）。 */
 #include "XWidget.h"
 #include "XWindow.h"
 #include "XLabel.h"
@@ -226,6 +227,7 @@ static struct
     XCheckBox*   m_frameCheck;   /**< 显示边框(标题栏)。 */
     XCheckBox*   m_statusCheck;  /**< 显示状态栏。 */
     XCheckBox*   m_maxCheck;     /**< 最大化显示。 */
+    XCheckBox*   m_fullCheck;    /**< 全屏显示（CSD 标题栏一并隐藏）。 */
 
     /* ---- 方向与鼠标 ---- */
     XLabel*      m_capOrient;    /**< 「方向与鼠标」分组标题。 */
@@ -312,6 +314,9 @@ static void wn_syncFromWindow(void)
     if (s_wn.m_maxCheck)
         XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
                                    XWidget_isMaximized(top));
+    if (s_wn.m_fullCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                   XWidget_isFullScreen(top));
     /* 方向回读（2026-10-18）：改读**有效旋转角**，不再按宽高比推断
        （h>w 在 180° 下同样成立，会把 180/270 误打回 0/1；且 90° 下逻辑
        宽高是竖的，footprint 对调在平台层完成，本页读到的仍是逻辑值）。 */
@@ -387,23 +392,151 @@ static void wn_maxSlot(XObject* receiver, XVarList* args)
 {
     XWidget* top;
     bool max;
+    bool wasFull;
     (void)receiver; (void)args;
     top = wn_toplevel();
     if (!top || !s_wn.m_maxCheck || s_wn.m_syncing) return;
     max = XAbstractButton_isChecked((XAbstractButton*)s_wn.m_maxCheck);
+    wasFull = XWidget_isFullScreen(top);
+    if (max && wasFull) {
+        /* 全屏与最大化互斥（Qt WindowStates 语义）：静默清全屏勾选，
+           状态替换由 showMaximized 一步完成。 */
+        s_wn.m_syncing = true;
+        if (s_wn.m_fullCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                       false);
+        s_wn.m_syncing = false;
+    }
     if (max)
         XWidget_showMaximized(top);
     else
         XWidget_showNormal(top);
+    if (wasFull) {
+        /* 【FullScreen→Maximized 直切退出语义 2026-10-24】此槽翻掉的
+         * 全屏不经 wn_fullSlot 退出臂，其两笔收尾在此补齐：
+         * ①「显示边框(标题栏)」复选框恢复可用（全屏期被置灰；退出
+         *   全屏恢复可用=wn_fullSlot 同款，勾选值全程未被触碰按原值
+         *   生效）；
+         * ②chrome 快照重刷（demo 根布局 contentsMargins.top=
+         *   demo_sysbarH() 快照）：showMaximized 内装饰层已按退出全屏
+         *   恢复条带边距（标题栏回归），但 demo 布局消费的是快照值，
+         *   不重刷则内容停在旧让位偏移——标题栏压品牌条裁切（桌面
+         *   实机复现 2a 的页面侧余量；框架侧 RESIZE 回放踢只保证布
+         *   局按快照重跑，快照值仍须本调用更新）。
+         * 非 wasFull 的常态最大化往返边距未变，不进本分支零开销。 */
+        if (s_wn.m_frameCheck)
+            XWidget_setEnabled((XWidget*)s_wn.m_frameCheck, true);
+        demo_main_refreshChrome(s_wn.m_user);
+    }
     wn_report(max ? "\xE5\xB7\xB2\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE6\x98\xBE\xE7\xA4\xBA" : "\xE5\xB7\xB2\xE8\xBF\x98\xE5\x8E\x9F\xE6\x99\xAE\xE9\x80\x9A\xE5\x87\xA0\xE4\xBD\x95");
 }
 
+/** @brief 全屏切换（游戏式满屏：CSD 标题栏随全屏态隐藏，退出还原；
+ *  与最大化互斥；随旋转保持铺满——旋转感知几何交换覆盖 FullScreen）。 */
+static void wn_fullSlot(XObject* receiver, XVarList* args)
+{
+    XWidget* top;
+    bool full;
+    (void)receiver; (void)args;
+    top = wn_toplevel();
+    if (!top || !s_wn.m_fullCheck || s_wn.m_syncing) return;
+    full = XAbstractButton_isChecked((XAbstractButton*)s_wn.m_fullCheck);
+    if (full) {
+        s_wn.m_syncing = true;
+        if (s_wn.m_maxCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
+                                       false);
+        s_wn.m_syncing = false;
+        XWidget_showFullScreen(top);
+        /* 【全屏态边框复选框置灰 2026-10-23】全屏没有标题栏概念，「显示
+         * 边框(标题栏)」选项无意义：置灰禁用（Qt 全屏窗口也不提供边框
+         * 开关语义）。全屏期间勾选状态保持原值不被全屏改写（此处不动
+         * checked）；退出全屏恢复可用并按其勾选状态生效。 */
+        if (s_wn.m_frameCheck)
+            XWidget_setEnabled((XWidget*)s_wn.m_frameCheck, false);
+        /* 【chrome 快照重刷 2026-10-23】demo 根布局 contentsMargins.top
+         * =demo_sysbarH()（装饰条带高的快照）。全屏翻转改变条带高
+         * （stripHeight 全屏归零/退出恢复），快照必须随之重取，否则
+         * 布局停在旧让位偏移（全屏条位留白/退出顶条叠盖）——与
+         * wn_frameSlot 翻转 flags 后同调 refreshChrome 的既有约定一致
+         * （框架侧 RESIZE 重排踢只重跑布局解算，解算消费的是快照值）。
+         * demo 蓝条文字几何/内容区避让/静态基底一并重排。 */
+        demo_main_refreshChrome(s_wn.m_user);
+        wn_report("\xE5\xB7\xB2\xE5\x85\xA8\xE5\xB1\x8F\xEF\xBC\x88\xE6\xA0\x87\xE9\xA2\x98\xE6\xA0\x8F\xE9\x9A\x8F\xE5\x85\xA8\xE5\xB1\x8F\xE9\x9A\x90\xE8\x97\x8F\xEF\xBC\x8C\xE9\x9A\x8F\xE6\x97\x8B\xE8\xBD\xAC\xE9\x93\xBA\xE6\xBB\xA1\xEF\xBC\x89");
+    } else {
+        XWidget_showNormal(top);
+        /* 退出全屏：恢复边框复选框可用（勾选值全程未被全屏触碰，按其
+         * 原勾选状态生效）。 */
+        if (s_wn.m_frameCheck)
+            XWidget_setEnabled((XWidget*)s_wn.m_frameCheck, true);
+        demo_main_refreshChrome(s_wn.m_user); /* 快照重刷（同上）。 */
+        wn_report("\xE5\xB7\xB2\xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F");
+    }
+}
+
 /** @brief 窗口方向：横竖屏宽高对调（进竖屏存横屏尺寸；按屏钳位）。 */
+/** @brief 内存安全阀阈值（kB）：换向（角度真变化）前 MemAvailable 低于
+ *         该值即拒绝。默认 8192（8MB，覆盖换向重建峰值 + 全帧重绘 +
+ *         系统全局波动的余量）；环境变量 XGUI_ROT_MEM_FLOOR_KB 覆写
+ *         （0=关闭阀，供低内存对照实验）。阈值懒解析一次（GUI 线程
+ *         单线程，无竞态）。 */
+static int wn_memFloorKb(void)
+{
+    static int floorKb = -1;
+    if (floorKb < 0) {
+        const char* env = getenv("XGUI_ROT_MEM_FLOOR_KB");
+        long v = env ? strtol(env, NULL, 10) : 8192;
+        floorKb = v < 0 ? 0 : (int)(v > 1048576 ? 1048576 : v);
+    }
+    return floorKb;
+}
+
+static int wn_fullDemoMode(void); /* 全屏取证驱动档位（env
+                                   * XGUI_WN_FULL_DEMO；autotest 区定义，
+                                   * 构建尾取证驱动先于定义使用）。 */
+static bool wn_fullDemoHold(void); /* 全屏取证保持钩子（档位 1；autotest
+                                    * 区定义，构建尾先于定义使用）。 */
+static void wn_fullDemoTrampoline(XObject* receiver, XVarList* args); /* 取证
+                                    * 驱动排队蹦床（autotest 区定义，构建
+                                    * 尾先于定义使用）。 */
+static signed char s_wnFullDemoPending = 0; /* 蹦床一次性档位账（0=空转）。 */
+
+/** @brief 内存安全阀判定（2026-10-23）：MemAvailable 达不到阈值返回
+ *         false（拒绝换向）。查询口=XSystem_memoryInfo（复用既有
+ *         Drive 层 /proc/meminfo 封装，性能悬浮窗同源）；查询不可用
+ *         （无 OS/宏裁剪）按不拦处理——阀是低内存防 OOM 的保险丝，
+ *         不因平台无查询口而砍掉换向功能（打印一次性诊断留痕）。 */
+static bool wn_memFloorOk(void)
+{
+    static signed char queried = 0;
+    XSystemMemoryInfo info;
+    int floorKb = wn_memFloorKb();
+    if (floorKb == 0) return true;
+    if (!XSystem_memoryInfo(&info)) {
+        if (!queried) {
+            queried = 1;
+            fprintf(stderr, "[WN] mem floor: XSystem_memoryInfo unavailable, "
+                            "valve bypassed\n");
+        }
+        return true;
+    }
+    if (info.availableBytes < (uint64_t)floorKb * 1024u) {
+        fprintf(stderr, "[WN] mem floor: refuse rotation, avail=%llu kB < "
+                        "floor=%d kB\n",
+                (unsigned long long)(info.availableBytes / 1024u), floorKb);
+        return false;
+    }
+    return true;
+}
+
 /** @brief 窗口方向应用（0/90/180/270；基准=0° 横屏尺寸）。
  * @details 四方位只旋转窗口外框几何：0°/180° 同基准宽、90°/270° 宽高
  *          对调，按主屏可用几何钳位防越屏；最大化先还原（几何由窗口
  *          状态接管）。基准尺寸懒捕获（首次离开 0° 时若未存，按当前
- *          横向几何取正）。 */
+ *          横向几何取正）。
+ * @return  1=已应用；0=平台不支持；-1=内存安全阀拒绝（2026-10-23，
+ *          角度真变化且 MemAvailable 低于 wn_memFloorKb 阈值——不部分
+ *          生效、不留半初始化状态，内存回升后重试即可）。 */
 static int wn_orientApply(int deg, int* outW, int* outH)
 {
     XWidget* top = wn_toplevel();
@@ -412,13 +545,30 @@ static int wn_orientApply(int deg, int* outW, int* outH)
     int availH = 4096;
     int bw, bh, w, h, x, y;
     bool wasMax;
+    bool wasFull;
     if (!top) return 0; /* 无顶层=探测必败（原裸 return 非零值返回 UB，告警修）。 */
+    /* 内存安全阀（2026-10-23）：角度真变化才查——同角重应用（wn_orientApply
+       二次置闩路径）与页面构建期的能力探测（直呼 setter，不经本函数）
+       不受阀影响。拒绝发生在任何状态改动之前：不 showNormal、不设角、
+       不改几何，窗口保持当前方向原样（无半初始化态）。 */
+    if (deg != XWidget_contentRotationDegrees(top) && !wn_memFloorOk())
+        return -1;
     wasMax = XWidget_isMaximized(top);
-    if (wasMax) {
-        /* 最大化（全屏）态换向保持全屏（2026-10-22 用户需求）：归位软件
-           状态后换向，换向经 showMaximized 取旋转感知的最大化几何
-           （90/270 目标=对调屏矩形，footprint 恰铺满面板），最大化标志
-           与勾选框全程保持。 */
+    wasFull = XWidget_isFullScreen(top);
+    if (wasFull) {
+        /* 全屏态换向保持全屏（同最大化路径；旋转感知几何交换覆盖
+           FullScreen）：归位软件状态后换向，尾部重进全屏。 */
+        XWidget_showNormal(top);
+        s_wn.m_syncing = true;
+        if (s_wn.m_fullCheck)
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                       true);
+        s_wn.m_syncing = false;
+    } else if (wasMax) {
+        /* 最大化态换向保持最大化（2026-10-22 用户需求）：归位软件状态
+           后换向，换向经 showMaximized 取旋转感知的最大化几何（90/270
+           目标=对调屏矩形，footprint 恰铺满面板），最大化标志与勾选框
+           全程保持。 */
         XWidget_showNormal(top);
         s_wn.m_syncing = true;
         if (s_wn.m_maxCheck)
@@ -491,6 +641,14 @@ static int wn_orientApply(int deg, int* outW, int* outH)
         if (outH) *outH = h;
         return 0; /* 0 = 平台不支持（槽据此置灰说明）。 */
     }
+    if (wasFull) {
+        /* 全屏：几何交给旋转感知的软件全屏（目标=对调屏矩形，铺满）。 */
+        XWidget_showFullScreen(top);
+        XWidget_setContentRotation(top, deg); /* 同角二次置闩（全帧重画）。 */
+        if (outW) *outW = w;
+        if (outH) *outH = h;
+        return 1;
+    }
     if (wasMax) {
         /* 最大化（全屏）：几何交给旋转感知的软件最大化（目标=对调屏
            矩形，footprint 恰铺满面板），w/h 钳制结果不参与。 */
@@ -528,13 +686,24 @@ static void wn_orientSlot(XObject* receiver, XVarList* args)
     }; /* 横屏(0°)/竖屏(90°)/倒置横屏(180°)/倒置竖屏(270°) */
     char buf[96];
     int index;
+    int rc;
     int w = 0;
     int h = 0;
     (void)receiver; (void)args;
     if (!s_wn.m_orientCombo || s_wn.m_syncing) return;
     index = XComboBox_currentIndex(s_wn.m_orientCombo);
     if (index < 0 || index > 3) index = 0;
-    if (!wn_orientApply(index * 90, &w, &h))
+    rc = wn_orientApply(index * 90, &w, &h);
+    if (rc < 0)
+    {
+        /* 内存安全阀拒绝（2026-10-23）：明确文案而非静默，方向保持原样；
+           下拉框回读窗口当前角（m_syncing 抑制槽），选择不留在新档——
+           内存回升后重选即可再试。 */
+        wn_report("\xE5\x86\x85\xE5\xAD\x98\xE4\xB8\x8D\xE8\xB6\xB3\xEF\xBC\x8C\xE5\xB7\xB2\xE4\xBF\x9D\xE6\x8C\x81\xE5\xBD\x93\xE5\x89\x8D\xE6\x96\xB9\xE5\x90\x91");
+        wn_syncFromWindow();
+        return;
+    }
+    if (rc == 0)
     {
         /* 平台不支持软件旋转（win32/android；fbdev 2026-10-21 定稿起
            恒可旋转）：下拉框已在探测阶段置灰，这里给明确说明而非静默
@@ -597,6 +766,8 @@ static void wn_resetSlot(XObject* receiver, XVarList* args)
         XAbstractButton_setChecked((XAbstractButton*)s_wn.m_statusCheck, true);
     if (s_wn.m_maxCheck)
         XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck, false);
+    if (s_wn.m_fullCheck)
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, false);
     if (s_wn.m_orientCombo)
         XComboBox_setCurrentIndex(s_wn.m_orientCombo, 0);
     if (s_wn.m_mouseCheck)
@@ -611,17 +782,31 @@ static void wn_resetSlot(XObject* receiver, XVarList* args)
             flags &= (XWidgetFlags)~(XWidgetFlags)
                 XWindowType_FramelessWindowHint;
             XWidget_setWindowFlags(top, flags);
-            if (XWidget_isMaximized(top))
+            /* 【全屏复位 2026-10-24】复位默认含退出全屏（默认态无全
+               屏）：全屏态 isMaximized 为假（FullScreen 与 Maximized
+               互斥落账），旧判据漏全屏——复位后窗口滞留全屏且边框复
+               选框滞留置灰。showNormal 经装饰层恢复条带+边距，快照
+               由下方 setStatusBarVisible 内的 refreshChrome 重取。 */
+            if (XWidget_isMaximized(top) || XWidget_isFullScreen(top))
                 XWidget_showNormal(top);
+            /* 全屏期「显示边框」复选框被置灰：复位恢复可用（勾选值
+               由上方 syncing 段已强制回 true=显示，与默认态一致）。 */
+            if (s_wn.m_frameCheck)
+                XWidget_setEnabled((XWidget*)s_wn.m_frameCheck, true);
         }
     }
     demo_main_setStatusBarVisible(s_wn.m_user, true);
     /* 回 0°（含最大化还原 + 显式归零旋转角）。显式归零是必需的：复位
-       全程持 m_syncing，setCurrentIndex 不触发槽，旋转角不会自动落 0。 */
-    wn_orientApply(0, NULL, NULL);
+       全程持 m_syncing，setCurrentIndex 不触发槽，旋转角不会自动落 0。
+       【内存安全阀 2026-10-23】回 0° 同受阀约束（同为换向重建）；拒绝
+       时窗口保持旋转态，其余复位项照常生效，状态行如实报因而非「已
+       复位默认」。 */
+    if (wn_orientApply(0, NULL, NULL) < 0)
+        wn_report("\xE5\x86\x85\xE5\xAD\x98\xE4\xB8\x8D\xE8\xB6\xB3\xEF\xBC\x8C\xE5\xB7\xB2\xE4\xBF\x9D\xE6\x8C\x81\xE5\xBD\x93\xE5\x89\x8D\xE6\x96\xB9\xE5\x90\x91");
+    else
+        wn_report("\xE5\xB7\xB2\xE5\xA4\x8D\xE4\xBD\x8D\xE9\xBB\x98\xE8\xAE\xA4");
     XGuiApplication_restoreOverrideCursor();
     wn_syncFromWindow();
-    wn_report("\xE5\xB7\xB2\xE5\xA4\x8D\xE4\xBD\x8D\xE9\xBB\x98\xE8\xAE\xA4");
 }
 
 /* ==================== 装配工具 ==================== */
@@ -712,6 +897,7 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
     s_wn.m_statusCheck = wn_buildCheck("\xE6\x98\xBE\xE7\xA4\xBA\xE7\x8A\xB6\xE6\x80\x81\xE6\xA0\x8F", 150,
                                        wn_statusSlot);
     s_wn.m_maxCheck = wn_buildCheck("\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE6\x98\xBE\xE7\xA4\xBA", 190, wn_maxSlot);
+    s_wn.m_fullCheck = wn_buildCheck("\xE5\x85\xA8\xE5\xB1\x8F\xE6\x98\xBE\xE7\xA4\xBA", 150, wn_fullSlot);
 
     /* ---- 方向与鼠标 ---- */
     s_wn.m_capOrient = wn_buildCaption("\xE6\x96\xB9\xE5\x90\x91\xE4\xB8\x8E\xE9\xBC\xA0\xE6\xA0\x87");
@@ -796,6 +982,7 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
     XBoxLayout_addStretch(&s_wn.m_frameRow, 1); /* 吸收行尾余量保持左聚。 */
     XBoxLayout_addLayout(&s_wn.m_frameCol, (XLayout*)&s_wn.m_frameRow);
     XBoxLayout_addWidget(&s_wn.m_frameCol, (XWidget*)s_wn.m_maxCheck);
+    XBoxLayout_addWidget(&s_wn.m_frameCol, (XWidget*)s_wn.m_fullCheck);
     XBoxLayout_addLayout(&s_wn.m_rootLayout, (XLayout*)&s_wn.m_frameCol);
     XBoxLayout_addSpacing(&s_wn.m_rootLayout, 14);
     XBoxLayout_addWidget(&s_wn.m_rootLayout, (XWidget*)s_wn.m_capOrient);
@@ -825,6 +1012,34 @@ XWidget* demo_page_window_settings_build(XWidget* parent,
     wn_syncFromWindow();
 
     s_wn.m_ready = true;
+    /* 【全屏取证驱动 2026-10-23】env XGUI_WN_FULL_DEMO 分档驱动：
+     *   "1"=进全屏并保持（--screenshot 存「标题栏隐藏+内容铺满」帧）；
+     *   "2"=取消「显示边框」（FramelessWindowHint=off 形态，与全屏帧
+     *        逐像素对照的基准帧）；
+     *   "3"=进全屏再退出（存「退出还原」帧，与普通基线帧对照）。
+     * 时序关键：页面构建先于主文件启动尾的无条件 showNormal
+     * （xgui_window_demo.c show 块），此处同步直调会被其归位吞掉——
+     * 蹦床经 queued toggled 连接把应用时序推到事件循环首拍（show 后），
+     * 与用户点击同一 wn_fullSlot/wn_frameSlot 槽路径（XTEST 物理点击
+     * 在本环境命中层错位不可用，autotest HITPROBE 先例）。档位消费后
+     * 蹦床空转，连接保留无副作用。正常运行（无 env）零扰动。 */
+    if (wn_fullDemoMode() == 2) {
+        s_wnFullDemoPending = 2;
+        XObject_connect_1((XObject*)s_wn.m_frameCheck,
+                          XSignal(XAbstractButton_toggled_signal),
+                          (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
+                          XConnectionType_Queued);
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_frameCheck,
+                                   false); /* 触发 queued 蹦床。 */
+    } else if (wn_fullDemoMode() > 0) {
+        s_wnFullDemoPending = wn_fullDemoMode();
+        XObject_connect_1((XObject*)s_wn.m_fullCheck,
+                          XSignal(XAbstractButton_toggled_signal),
+                          (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
+                          XConnectionType_Queued);
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                   true); /* 触发 queued 蹦床。 */
+    }
     return s_wn.m_root;
 }
 
@@ -839,6 +1054,84 @@ void demo_page_window_settings_adapt(XWidget* page)
 }
 
 /* ==================== autotest ==================== */
+
+/** @brief 全屏取证驱动档位（env XGUI_WN_FULL_DEMO，进程级读一次缓存）。
+ *  @return 0=未置位（正常运行）；1=全屏保持；2=无边框形态；3=全屏往返。
+ *  @details 黑盒取证专用。档位 1 时窗口设置页 autotest 进全屏断言后
+ *  提前返回（停在全屏态，跳过退出与复位）；构建尾按档位自动驱动真实
+ *  槽路径（见 demo_page_window_settings_build 尾注）——供 --screenshot/
+ *  xwd 抓帧取证（全屏帧/无边框基准帧/退出还原帧）。正常回归不带该
+ *  env（档位 0），走完整往返。物理 XTEST 点击在本环境命中层错位不可
+ *  用（autotest HITPROBE 先例），页面级直呼槽是同 API 序列的替身驱动。 */
+static int wn_fullDemoMode(void)
+{
+    static signed char cached = -1;
+    if (cached < 0) {
+        const char* env = getenv("XGUI_WN_FULL_DEMO");
+        cached = 0;
+        if (env && env[0] && !env[1]) {
+            if (env[0] == '1') cached = 1;
+            else if (env[0] == '2') cached = 2;
+            else if (env[0] == '3') cached = 3;
+            else if (env[0] == '4') cached = 4; /* 直切最大化保持。 */
+            else if (env[0] == '5') cached = 5; /* 直切最大化再还原。 */
+        }
+    }
+    return cached;
+}
+
+/** @brief 全屏取证保持判定（autotest 提前返回档；仅档位 1 保持）。 */
+static bool wn_fullDemoHold(void)
+{
+    return wn_fullDemoMode() == 1;
+}
+
+/** @brief 取证驱动排队蹦床（一次性）：事件循环首拍（show 后）按档位
+ *  重放真实槽路径。构建期被主文件启动尾 showNormal 归位的状态在此
+ *  重新落地；消费后置账空转（连接保留，后续用户 toggle 零副作用）。 */
+static void wn_fullDemoTrampoline(XObject* receiver, XVarList* args)
+{
+    int mode = s_wnFullDemoPending;
+    (void)receiver; (void)args;
+    if (!mode) return;
+    s_wnFullDemoPending = 0;
+    if (mode == 1) {
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, true);
+        wn_fullSlot(NULL, NULL);
+    } else if (mode == 2) {
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_frameCheck,
+                                   false);
+        wn_frameSlot(NULL, NULL);
+    } else if (mode == 3) {
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, true);
+        wn_fullSlot(NULL, NULL);
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, false);
+        wn_fullSlot(NULL, NULL);
+    } else if (mode == 4 || mode == 5) {
+        /* 【直切序列 2026-10-24】tick1 进全屏，随后把蹦床改挂在最大化
+         * 勾选框的 queued toggled 上、勾选之——tick2 走 wn_maxSlot 真实
+         * 槽路径落地 FullScreen→Maximized 直切（2a 复现序列）。档位 4
+         * 停在直切态（标题栏回归+内容下移重排的取证帧）；档位 5 续排
+         * tick3 取消最大化还原普通。 */
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, true);
+        wn_fullSlot(NULL, NULL);
+        s_wnFullDemoPending = 41;
+        XObject_connect_1((XObject*)s_wn.m_maxCheck,
+                          XSignal(XAbstractButton_toggled_signal),
+                          (XObject*)s_wn.m_root, wn_fullDemoTrampoline,
+                          XConnectionType_Queued);
+        XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck, true);
+    } else if (mode == 41) {
+        wn_maxSlot(NULL, NULL); /* 直切：FullScreen→Maximized 一步替换。 */
+        if (wn_fullDemoMode() == 5) {
+            s_wnFullDemoPending = 51;
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
+                                       false);
+        }
+    } else if (mode == 51) {
+        wn_maxSlot(NULL, NULL); /* 直切后还原普通（最大化→普通）。 */
+    }
+}
 
 int demo_page_window_settings_autotest(XWidget* page)
 {
@@ -967,9 +1260,99 @@ int demo_page_window_settings_autotest(XWidget* page)
                                   XStyleHintsColorScheme_Dark,
                       "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\xB7\xB1\xE8\x89\xB2\xE7\x9A\xAE\xE8\x82\xA4\xE6\x96\xB9\xE6\xA1\x88\xE7\x94\x9F\xE6\x95\x88");
         }
+
+        /* ---- 全屏（2026-10-23）：普通态进全屏 → isFullScreen 回读 +
+         * 与最大化互斥回读 → 退出还原。CSD 标题栏随全屏隐藏（装饰层
+         * 窗口状态消费）由框架侧保证，本段锁定 API 序列的状态语义：
+         * 与用户勾选复选框同一条 wn_fullSlot 路径（XGUI_CSD 双模式
+         * 同跑，行为语义一致）。取证保持钩子：XGUI_WN_FULL_DEMO 非
+         * "0" 时停在全屏态提前返回（不退出不复位，供 --screenshot/
+         * xwd 抓全屏帧；正常回归不带该 env 走完整往返）。 ---- */
+        {
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                       true);
+            wn_fullSlot(NULL, NULL);
+            WN_EXPECT(XWidget_isFullScreen(top),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE8\xBF\x9B\xE5\x85\xA5\xE7\x94\x9F\xE6\x95\x88\x28\x69\x73\x46\x75\x6C\x6C\x53\x63\x72\x65\x65\x6E\x29");
+            WN_EXPECT(!XWidget_isMaximized(top),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE4\xB8\x8E\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE4\xBA\x92\xE6\x96\xA5\x28\x6D\x61\x78\x20\xE4\xBD\x8D\xE6\xB8\x85\xE9\x9B\xB6\x29");
+            /* 【全屏态边框复选框置灰 2026-10-23】置灰 + 勾选值保持。 */
+            WN_EXPECT(s_wn.m_frameCheck &&
+                          !XWidget_isEnabled((XWidget*)s_wn.m_frameCheck),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE6\x80\x81\xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE9\x80\x89\xE6\xA1\x86\xE7\xBD\xAE\xE7\x81\xB0\x28\x69\x73\x45\x6E\x61\x62\x6C\x65\x64\x3D\x66\x61\x6C\x73\x65\x29");
+            WN_EXPECT(s_wn.m_frameCheck &&
+                          XAbstractButton_isChecked(
+                              (XAbstractButton*)s_wn.m_frameCheck),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE6\x9C\x9F\xE9\x97\xB4\xE8\xBE\xB9\xE6\xA1\x86\xE5\x8B\xBE\xE9\x80\x89\xE4\xBF\x9D\xE6\x8C\x81\xE5\x8E\x9F\xE5\x80\xBC");
+            if (wn_fullDemoHold()) {
+                WN_EXPECT(!s_wn.m_fullCheck ||
+                              XAbstractButton_isChecked(
+                                  (XAbstractButton*)s_wn.m_fullCheck),
+                          "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE5\x8B\xBE\xE9\x80\x89\xE4\xBF\x9D\xE6\x8C\x81\x28\xE5\x8F\x96\xE8\xAF\x81\xE9\x92\xA9\xE5\xAD\x90\x29");
+                wn_report("\xE5\xB7\xB2\xE5\x85\xA8\xE5\xB1\x8F\xEF\xBC\x88\xE5\x8F\x96\xE8\xAF\x81\xE4\xBF\x9D\xE6\x8C\x81\xEF\xBC\x89");
+                return failures; /* 取证保持：停在全屏态，跳过退出与复位。 */
+            }
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                       false);
+            wn_fullSlot(NULL, NULL);
+            WN_EXPECT(!XWidget_isFullScreen(top),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F\xE8\xBF\x98\xE5\x8E\x9F\x28\x21\x69\x73\x46\x75\x6C\x6C\x53\x63\x72\x65\x65\x6E\x29");
+            WN_EXPECT(s_wn.m_frameCheck &&
+                          XWidget_isEnabled((XWidget*)s_wn.m_frameCheck),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F\xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE9\x80\x89\xE6\xA1\x86\xE6\x81\xA2\xE5\xA4\x8D\x28\x69\x73\x45\x6E\x61\x62\x6C\x65\x64\x3D\x74\x72\x75\x65\x29");
+
+            /* 最大化态进全屏（同尺寸状态替换路径：几何未变的 FullScreen
+             * 位翻转，装饰边距随状态重算+同尺寸重排）：先最大化，再全
+             * 屏，断言状态替换完成；再从全屏直还原（normalGeometry 链
+             * 完整性：退出回正常态而非最大化/全屏几何）。 */
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
+                                       true);
+            wn_maxSlot(NULL, NULL);
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                       true);
+            wn_fullSlot(NULL, NULL);
+            WN_EXPECT(XWidget_isFullScreen(top) && !XWidget_isMaximized(top),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\xE6\x80\x81\xE8\xBF\x9B\xE5\x85\xA8\xE5\xB1\x8F\x28\xE7\x8A\xB6\xE6\x80\x81\xE6\x9B\xBF\xE6\x8D\xA2\x29");
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                       false);
+            wn_fullSlot(NULL, NULL);
+            WN_EXPECT(!XWidget_isFullScreen(top) && !XWidget_isMaximized(top),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE7\x9B\xB4\xE8\xBF\x98\xE5\x8E\x9F\x28\xE5\x87\xA0\xE4\xBD\x95\xE5\x9B\x9E\xE6\xAD\xA3\xE5\xB8\xB8\xE6\x80\x81\x29");
+
+            /* 【FullScreen→Maximized 直切 2026-10-24（2a 回归锁定）】：
+               全屏态直点最大化（状态一步替换），此槽不经 wn_fullSlot
+               退出臂——直切后最大化落账、全屏清零、边框复选框恢复可
+               用；再取消最大化回普通态。 */
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck,
+                                       true);
+            wn_fullSlot(NULL, NULL);
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
+                                       true);
+            wn_maxSlot(NULL, NULL);
+            WN_EXPECT(XWidget_isMaximized(top) && !XWidget_isFullScreen(top),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE7\x9B\xB4\xE5\x88\x87\xE6\x9C\x80\xE5\xA4\xA7\xE5\x8C\x96\x28\xE7\x8A\xB6\xE6\x80\x81\xE6\x9B\xBF\xE6\x8D\xA2\x29");
+            WN_EXPECT(s_wn.m_frameCheck &&
+                          XWidget_isEnabled((XWidget*)s_wn.m_frameCheck),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE7\x9B\xB4\xE5\x88\x87\xE5\x90\x8E\xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE9\x80\x89\xE6\xA1\x86\xE6\x81\xA2\xE5\xA4\x8D\x28\x32\x61\x20\xE9\x80\x80\xE5\x87\xBA\xE8\xAF\xAD\xE4\xB9\x89\x29");
+            XAbstractButton_setChecked((XAbstractButton*)s_wn.m_maxCheck,
+                                       false);
+            wn_maxSlot(NULL, NULL);
+            WN_EXPECT(!XWidget_isMaximized(top) && !XWidget_isFullScreen(top),
+                      "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE7\x9B\xB4\xE5\x88\x87\xE5\x90\x8E\xE8\xBF\x98\xE5\x8E\x9F\xE6\x99\xAE\xE9\x80\x9A\xE6\x80\x81");
+        }
     }
 
     /* ---- 复位默认：全部回默认并断言 ---- */
+    /* 【复位从全屏态 2026-10-24】复位须覆盖全屏：先置全屏再复位，断言
+       复位退出全屏且边框复选框恢复可用（复位前全屏置灰中）。 */
+    XAbstractButton_setChecked((XAbstractButton*)s_wn.m_fullCheck, true);
+    wn_fullSlot(NULL, NULL);
+    wn_resetSlot(NULL, NULL);
+    WN_EXPECT(top && !XWidget_isFullScreen(top) && !XWidget_isMaximized(top),
+              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE6\x80\x81\xE5\xA4\x8D\xE4\xBD\x8D\xE9\x80\x80\xE5\x87\xBA\xE5\x85\xA8\xE5\xB1\x8F");
+    WN_EXPECT(s_wn.m_frameCheck &&
+                  XWidget_isEnabled((XWidget*)s_wn.m_frameCheck),
+              "\xE7\xAA\x97\xE5\x8F\xA3\xE8\xAE\xBE\xE7\xBD\xAE\xE9\xA1\xB5: \xE5\x85\xA8\xE5\xB1\x8F\xE6\x80\x81\xE5\xA4\x8D\xE4\xBD\x8D\xE5\x90\x8E\xE8\xBE\xB9\xE6\xA1\x86\xE5\xA4\x8D\xE9\x80\x89\xE6\xA1\x86\xE6\x81\xA2\xE5\xA4\x8D");
     wn_resetSlot(NULL, NULL);
     {
         XStyleHints* hints = XGuiApplication_styleHints();

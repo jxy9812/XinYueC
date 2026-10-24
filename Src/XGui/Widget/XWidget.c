@@ -6319,6 +6319,18 @@ void XWidget_setWindowState(XWidget* self, XWindowStates state)
     self->m_windowState = state;
     if (self->m_isWindow && self->m_windowHandle)
         XWindow_setWindowStates((XWindow*)self->m_windowHandle, state);
+#if XWIDGET_ON && XWINDOW_ON && XSTYLE_ON && XWINDOWEVENT_ON
+    /* 【全屏条带抑制 2026-10-23】状态落地通知装饰层（条显隐+保留边距
+     * 重算）：控件侧请求路径的直呼通知——软件路径（fbdev）与无 WM 平台
+     * 的本地状态翻转由此达装饰层（有 WM 的回写路径走 windowStateChanged
+     * 信号接线；该信号在上方 XWindow_setWindowStates 内已同步发射并经
+     * 槽应用过同一翻转，此处直呼经抑制账幂等短路，零重复应用）。
+     * 【2026-10-24 收口】同尺寸 RESIZE 回放（全屏翻转的内容区重排踢）
+     * 并入 XWindowDecoration_notifyWindowState 尾部——它是「条显隐+边距
+     * 翻转已落地」的唯一判定点，WM 回写路径（signal 槽转派）同享此踢，
+     * 本函数不再重复回放（否则直呼路径双跑幂等回放）。 */
+    XWindowDecoration_notifyWindowState(self);
+#endif
 }
 
 void XWidget_overrideWindowState(XWidget* self, XWindowStates state)

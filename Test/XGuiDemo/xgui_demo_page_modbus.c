@@ -2217,8 +2217,7 @@ static void mb_slaveRebuildMap(void)
                                      (size_t)MB_SLAVE_MAX_POINTS);
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.inEnum, unit);
-        XClassDelete(unit);
-        s_mbSlave.unitIn = unit;
+        XClassDelete(unit); /* map 已深拷贝，临时体即弃（缓存见下方统一取址）。 */
     }
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusCoils, 0,
@@ -2226,7 +2225,6 @@ static void mb_slaveRebuildMap(void)
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.outEnum, unit);
         XClassDelete(unit);
-        s_mbSlave.unitCoil = unit;
     }
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusInputRegisters, 0,
@@ -2235,7 +2233,6 @@ static void mb_slaveRebuildMap(void)
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.irEnum, unit);
         XClassDelete(unit);
-        s_mbSlave.unitIr = unit;
     }
     unit = XModbusDataUnit_create_ex(XCLASS_DEFAULT_MEMORY_TYPE,
                                      XModbusHoldingRegisters, 0,
@@ -2244,8 +2241,26 @@ static void mb_slaveRebuildMap(void)
     if (unit) {
         XMap_insert_base((XMapBase*)map, &s_mbSlave.hrEnum, unit);
         XClassDelete(unit);
-        s_mbSlave.unitHr = unit;
     }
+    /* [2026-10-23 UAF 根修] insert 走 XClass_copy_base 深拷贝：map 自持副本，
+     * 上面的临时 unit 已逐个 XClassDelete——旧代码却把这四份**已释放**的
+     * 临时指针缓存进 s_mbSlave.unitX，首建后缓存指针全部悬垂。ASAN 实证：
+     * 页面 build 首建 → 「按点数重建」路径走上方保值分支，setValueCount
+     * (unitIr) 读悬垂指针 heap-use-after-free abort（XModbusDataUnit.c:186
+     * ← rebuildMap，ASAN autotest 因此到不了其后的窗口页）。
+     * 对策：临时指针只负责 insert，缓存指针在四单元全部落位后按键取
+     * map 内部**活体**（取值口径对齐 server 侧 XModbusServer.c:920
+     * XMapBase_value_base）——保值分支 setValueCount 改容即改在 server
+     * 实际服务的单元上，「不重建 map ⇒ 值保留」的语义才真正成立。
+     * 取址放在全部 insert 之后：rb 树节点各自持 pair，不受后续插入搬移。 */
+    s_mbSlave.unitIn = (XModbusDataUnit*)XMap_value_base(
+                            (XMapBase*)map, &s_mbSlave.inEnum);
+    s_mbSlave.unitCoil = (XModbusDataUnit*)XMap_value_base(
+                            (XMapBase*)map, &s_mbSlave.outEnum);
+    s_mbSlave.unitIr = (XModbusDataUnit*)XMap_value_base(
+                            (XMapBase*)map, &s_mbSlave.irEnum);
+    s_mbSlave.unitHr = (XModbusDataUnit*)XMap_value_base(
+                            (XMapBase*)map, &s_mbSlave.hrEnum);
     XModbusServer_setMap_ref_base(s_mbSlave.server, map); /* Ref: 移交所有权。 */
 }
 

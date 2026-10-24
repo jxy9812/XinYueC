@@ -181,6 +181,24 @@ void XWindowDecoration_notifyActivation(XWindow* win);
 void XWindowDecoration_notifyAppearanceChanged(XWidget* top);
 
 /**
+ * @brief      顶层窗口状态变化通知（全屏条带抑制的统一消费入口）。
+ * @details    【全屏条带抑制 2026-10-23】窗口状态机的状态落地通知到
+ *             装饰层的收口：FullScreen 进入=标题条隐藏+保留边距归零
+ *             （内容区铺满整个窗口），退出=按 Qt 语义恢复（条回归）。
+ *             调用源三路同汇：①XWidget_setWindowState（控件侧请求，
+ *             覆盖 fbdev 软件路径与无 WM 平台的本地状态翻转，并在
+ *             同尺寸翻转时驱动内容区重排踢）；②桥接窗口
+ *             windowStateChanged 信号（xwd_ensureState 接线，覆盖
+ *             X11 有 WM 的 WM 回写路径）；③signal 槽转派。函数内
+ *             幂等（抑制账同值短路），重复通知只应用一次；未装饰/
+ *             条未承载恒返回 false（零开销短路）。
+ * @param      top 顶层控件；可为 NULL。
+ * @return     本次调用应用了显隐/边距翻转返回 true（消费方可据此
+ *             决定是否补内容区重排）；无变化或未装饰返回 false。
+ */
+bool XWindowDecoration_notifyWindowState(XWidget* top);
+
+/**
  * @brief      当前是否有任一装饰顶层处于手势进行态（拖拽移动/改尺寸）。
  * @details    只读查询：扫装饰注册表任一 m_dragging/m_resizing，零状态
  *             新增。消费方=demo 性能悬浮层手势期冻结（恒可用）；

@@ -606,6 +606,9 @@ static void xpwn_releaseNativeEntry(XWNPendingEntry* entry,
 /* EWMH 窗口状态回读（定义在 EWMH 窗口状态小节；PropertyNotify 分支
  * 用作 WM 状态回写 -> XWindow_reportWindowStateChanged 的换算入口）。 */
 static XWindowState xpwn_queryWmWindowState(Display* display, Window win);
+/* WM 在席判定（定义在 EWMH 窗口状态小节；PropertyNotify 分支用作
+ * 无 WM 会话的回声过滤闸）。 */
+static bool xpwn_wmPresent(void);
 static void xpw_clipIncrSweepIdle(void);
 
 static Atom g_xpwnXdndData;
@@ -4316,7 +4319,13 @@ static bool xpwn_dispatchEvent(const X11_XEvent* ev)
                  (ev->xproperty.atom == g_xpwnNetWmState ||
                   ev->xproperty.atom == g_xpwnWmState)) {
             entry = xpwn_findByNativeWindow(ev->xproperty.window);
-            if (entry && entry->m_window)
+            /* 【无 WM 回显过滤 2026-10-23】仅在席 WM 的属性回写才是
+             * 实测状态（XWindow_reportWindowStateChanged 契约：平台=
+             * WM 实测事实源）。无 WM 时属性是本进程请求直写的回声，
+             * 上报会把本地请求态当裁决注入回环（全屏退出后复活根因，
+             * 见 xpwn_wmPresent 注）——跳过上报，本地状态位（请求时
+             * 已落）保持事实源，与 fbdev 软件路径同语义。 */
+            if (entry && entry->m_window && xpwn_wmPresent())
                 XWindow_reportWindowStateChanged(
                     entry->m_window,
                     xpwn_queryWmWindowState(g_xpwnDisplay, entry->m_win));
@@ -5996,6 +6005,33 @@ static void xpwn_writeNetWmStateAtom(Display* display, Window win,
         merged[mergedCount++] = stateAtom;
     XChangeProperty(display, win, g_xpwnNetWmState, XA_ATOM, 32,
                     PropModeReplace, (unsigned char*)merged, mergedCount);
+}
+
+/**
+ * @brief      WM 在席判定（ICCCM 会话管理器约定：窗口管理器在屏 n 上
+ *             持有 WM_Sn 窗口选择）。
+ * @details    【无 WM 回显过滤 2026-10-23】无 WM 会话（Xvfb 裸屏、
+ *             嵌入式 X 直驱）里 _NET_WM_STATE 属性只有本进程自己的
+ *             Withdrawn 期请求直写（xpwn_writeNetWmStateAtom）——
+ *             PropertyNotify 读回的是**请求回声**而非 WM 实测结果，
+ *             把它当事实源上报会形成自注入回环：请求态经属性回读复活
+ *             （实测：无 WM Xvfb 上全屏往返，退出后入场期写入的
+ *             FULLSCREEN 原子在事件循环首泵被读回，窗口状态被重新
+ *             拉回 FullScreen，CSD 标题栏复活失败/退出还原失效）。
+ *             有 WM 时选择归属成立，读回即 WM 裁决，路径不变（桌面
+ *             零回归）。逐事件现查（属性事件本身低频，一次
+ *             XGetSelectionOwner 往返可忽略），WM 中途起停都取真值。
+ * @return     屏幕上有窗口管理器返回 true。
+ */
+static bool xpwn_wmPresent(void)
+{
+    char name[16];
+    Atom wmSelect;
+    if (!g_xpwnDisplay) return false;
+    snprintf(name, sizeof(name), "WM_S%d", g_xpwnScreenNumber);
+    wmSelect = XInternAtom(g_xpwnDisplay, name, False);
+    if (wmSelect == None) return false;
+    return XGetSelectionOwner(g_xpwnDisplay, wmSelect) != None;
 }
 
 /**

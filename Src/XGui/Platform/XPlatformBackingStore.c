@@ -160,6 +160,9 @@ static bool xpbs_softwareSingleBuffer(void)
 }
 #endif
 
+/* ==================== 换轴旋转态单缓冲钳制（2026-10-23 内存收敛） ====================
+ * 判式实现位于 struct 定义之后（需读取实例字段）；此处仅锚定段落。 */
+
 /* ==================== D1 容量化重建（收益画像：拖拽改尺寸每落地步
  * malloc/free ~1.2MB + 重叠回拷 + 清零三遍搬运，XGuiConfig.h:211-213
  * 实测 ~28ms/步的主项之一） ==================== */
@@ -279,6 +282,48 @@ struct XPlatformBackingStore
     bool m_batchOpen;                         /**< 攒批中是否存在待上屏内容。 */
 #endif
 };
+
+/* ==================== 换轴旋转态单缓冲钳制（2026-10-23 内存收敛） ==================== */
+
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+/**
+ * @brief      换轴旋转态（90/270）是否应钳制为软件单缓冲。
+ * @details    旋转态 present 是「读逻辑帧 → R⁻¹ 拷脏区落板」的单向流
+ *             （xpbs_presentRectRowsRot 只读 image、只写 fb 映射，读逻
+ *             辑写面板无读写冲突），软件第二帧在旋转态不承担任何撕裂
+ *             防护职责，纯冗余。钳成单缓冲的收益：
+ *             - 驻留：旋转态少一块全屏缓冲（1024×600×RGB565=1.2MB）；
+ *             - 峰值：换向重建按「先释放再分配」序走（见 resize 慢路
+ *               径），瞬时峰值从「旧双帧+新单帧」压到「旧单帧+新单帧」。
+ *             正确性：fb 侧差带账本（g_xpbsFbBackDirty，posix present）
+ *             记的是**面板硬件双缓冲**的缺行带，与软件缓冲数无关；脏区
+ *             双帧同步（flush 的 inactive 拷贝）与翻帧（activeIndex 翻
+ *             转）在 m_softwareSingleBuffer 置位后全部旁路——该降级机
+ *             制是既有的（驱动硬件轮换面板早已在用），本钳制只换触发
+ *             条件。180°/0° 不入本判（同形尺寸走容量快路径，0° 红线零
+ *             扰动；180° 维持既有双缓冲快路径语义）。 */
+static bool xpbs_rotationSingleBuffer(const XPlatformBackingStore* self)
+{
+    return self->m_windowRotation == 90 || self->m_windowRotation == 270;
+}
+
+/**
+ * @brief      单缓冲降级总判式（驱动硬件轮换 ∨ 换轴旋转态）。
+ * @details    慢路径重估与容量快路径口径判定共用，保证两条重建路径对
+ *             「本实例应否持第二软件帧」永不各说各话（口径漂移会让翻帧
+ *             落在空第二帧上）。 */
+static bool xpbs_effectiveSingleBuffer(const XPlatformBackingStore* self)
+{
+    return xpbs_softwareSingleBuffer() || xpbs_rotationSingleBuffer(self);
+}
+#else
+static bool xpbs_rotationSingleBuffer(const XPlatformBackingStore* self)
+{
+    (void)self;
+    return false;
+}
+#define xpbs_effectiveSingleBuffer xpbs_rotationSingleBuffer
+#endif
 
 /* ==================== 内部工具 ==================== */
 
@@ -1343,7 +1388,18 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         !self->m_externalBuffers && w > 0 && h > 0 &&
         self->m_capacityImage.m_data &&
         w <= XImage_width(&self->m_capacityImage) &&
-        h <= XImage_height(&self->m_capacityImage))
+        h <= XImage_height(&self->m_capacityImage)
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+        /* 【内存收敛 2026-10-23】单缓冲口径一致闸：本快路径不做标志重
+           估、也不建第二视图，必须先确认「现有标志 == 总判式现值」且
+           要求双缓冲时第二容量存储仍在位（旋转态曾释放）。不等/缺位
+           （90/270 旋转单缓冲 ⇄ 0/180 双缓冲的换向与回归首尺寸）一律
+           落慢路径整批重建——否则重估后的翻帧会落在空第二帧上。
+           ==1 构建无第二帧概念，整段裁剪、快路径逐位不变。 */
+        && xpbs_effectiveSingleBuffer(self) == self->m_softwareSingleBuffer &&
+        (self->m_softwareSingleBuffer || self->m_capacityImage2.m_data)
+#endif
+    )
     {
         XClassDeinit(&self->m_image);
         XImage_init(&self->m_image);
@@ -1381,6 +1437,31 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
         XClassCopy(&oldImage, active);
     ow = XImage_width(&oldImage);
     oh = XImage_height(&oldImage);
+#if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
+    /* 【内存收敛 2026-10-23】换轴旋转态（90/270）重建「先释放再分配」：
+     * 迁移源只有活动帧（oldImage 快照），非活动第二帧内容冗余（flush
+     * 每次都把脏区同步进非活动帧）——先把旧第二帧/旧第二容量存储释放
+     * 掉再分配新缓冲，重建瞬时峰值从「旧双帧+新单帧」(3×全屏) 压到
+     * 「旧单帧+新单帧」(2×全屏)，本设备口径省 1.2MB。释放即置单缓冲
+     * 标志、并复位活动帧索引到 0（m_image 恒为 flush 脏区互同步过的
+     * 有效帧；此前若奇数次 flush 已把索引翻到 1，释放的 m_image2 正是
+     * 活动帧，分配失败早退后将无帧可绘）：任何后续分配失败早退都停在
+     * 一致的「单活动帧+空第二帧」态（inactive 恒 NULL、flush 不翻帧），
+     * 绝不把空第二帧翻成活动帧。
+     * 0/180°（旋转判不命中）不入本分支，0° 慢路径字节序不变（红线）。 */
+    if (xpbs_rotationSingleBuffer(self) && !self->m_externalBuffers &&
+        !self->m_nativeBufferMode)
+    {
+        if (self->m_image2.m_data)
+            XClassDeinit(&self->m_image2);
+        XImage_init(&self->m_image2);
+        if (self->m_capacityImage2.m_data)
+            XClassDeinit(&self->m_capacityImage2);
+        XImage_init(&self->m_capacityImage2);
+        self->m_softwareSingleBuffer = true;
+        self->m_activeIndex = 0u;
+    }
+#endif
     XImage_init(&newImage);
 #if XGUI_BACKINGSTORE_BUFFER_COUNT > 1
     XImage_init(&newImage2);
@@ -1419,8 +1500,13 @@ void XPlatformBackingStore_resize(XPlatformBackingStore* self, const XSize* size
     /* 软件双缓冲降级：显示驱动自带硬件轮换时第二软件缓冲冗余，不分配
        （省一块全屏 RAM；m_softwareSingleBuffer 置位后 inactive 帧同步
        与翻转全部退化为单缓冲语义，见 flush）。降级状态按驱动注册时序
-       惰性重估（板级先注册驱动再建窗的常规时序下首次 resize 即定案）。 */
-    self->m_softwareSingleBuffer = xpbs_softwareSingleBuffer();
+       惰性重估（板级先注册驱动再建窗的常规时序下首次 resize 即定案）。
+       【内存收敛 2026-10-23】重估式并入换轴旋转态（90/270）：旋转
+       present 是「读逻辑帧→R⁻¹ 落板」单向流（见 xpbs_rotationSingleBuffer
+       注），第二软件帧纯冗余——旋转态驻留少一块全屏缓冲；0/180/无驱动
+       判式与既有逐位一致（零回归）。 */
+    self->m_softwareSingleBuffer = xpbs_softwareSingleBuffer() ||
+                                   xpbs_rotationSingleBuffer(self);
     if (w > 0 && h > 0 && !self->m_softwareSingleBuffer)
 #if XGUI_BACKINGSTORE_RENDER_MODE == XGUI_BACKINGSTORE_RENDER_MODE_PARTIAL
         xpbs_initConfiguredImage(&newImage2,
